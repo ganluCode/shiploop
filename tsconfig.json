@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": [
+    "test/**/*.ts",
+    "scripts/**/*.ts",
+    "packages/core/src/**/*.ts",
+    "packages/host/src/**/*.ts",
+    "packages/cli/src/**/*.ts"
+  ]
+}
