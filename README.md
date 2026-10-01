@@ -15,7 +15,7 @@ P01-1 工程骨架：npm workspaces、固定工具链、严格 TypeScript 构建
 | npm | `10.9.3` | 随 Node 22.19.0 的本机 npm，已实际验证 `npm ci` / `npm test` 闭环。 |
 | TypeScript | `7.0.2` | 严格类型检查与构建编译器（`tsc -b` 产物含 `.js` / `.d.ts` / sourcemap），精确锁定；已在干净副本验证。 |
 | @types/node | `22.20.4` | Node 内置模块类型；TS 7 不再自动纳入全部 `@types/*`，由 `tsconfig.base.json` 显式 `types: ["node"]`。 |
-| Vitest | `5.0.3` | 一次性（非 watch）确定性测试运行器；设计文档建议的候选，精确锁定，不使用 `^`/`~` 范围。 |
+| Vitest | `5.0.3` | 一次性（非 watch）确定性测试运行器；设计文档建议的候选，精确锁定，不使用 `^`/`~` 范围。由 `scripts/run-tests.ts` 启动器校验本地安装的工具身份与精确版本后调用，不回退全局实现或 npx 下载。 |
 
 版本一致性由以下位置共同保证，改动时必须全部同步：
 
@@ -30,9 +30,24 @@ P01-1 工程骨架：npm workspaces、固定工具链、严格 TypeScript 构建
 packages/core   shiploop-core   Core 领域与应用逻辑（后续 Feature 实现）
 packages/host   shiploop-host   Host（后续 Feature 实现）
 packages/cli    shiploop-cli    CLI（后续 Feature 实现）
-test/           仓库级确定性测试
+test/           仓库级确定性测试（*.test.{js,ts}）与夹具（test/helpers，不收集为用例）
 scripts/        工程检查脚本（TypeScript，受 typecheck 覆盖）
+vitest.config.ts 确定性测试配置（一次性、fail-closed）
 ```
+
+### 确定性测试约定（F-003）
+
+`npm test` 实际执行 `node scripts/run-tests.ts`，该启动器 fail-closed：
+
+- 只从本仓库工作区安装解析 `vitest/package.json`（经 `createRequire` 从脚本位置向上查找），**不使用 PATH 全局 vitest，也不通过 npx 临时下载**；
+- 校验包名 `vitest` 与精确版本 `5.0.3`，工具缺失、身份不符或版本不符时以退出码 1 失败，输出包含工具名、要求版本与 `npm ci` 修复提示；
+- 始终以 `run`（一次性、非 watch）模式 spawn 真实 vitest，透传额外参数，原样继承 stdio，传播退出码；信号退出、超时或进程错误一律非零。
+
+`vitest.config.ts` 固定确定性语义：`watch: false`、`passWithNoTests: false`（找不到真实测试文件即失败）、`cache: false`、`pool: 'forks'`、不随机序、有限的用例/钩子超时、`coverage.enabled: false`；只收集 `test/` 下的真实用例，`test/helpers` 与 `test/fixtures` 显式排除。没有静默 skip、空断言或“未运行即通过”的配置。
+
+临时资源统一经 `test/helpers/temp-sandbox.ts` 创建：每次在系统临时目录 `mkdtemp` 全新目录（拒绝落在受测仓库或用户 HOME 之内），`cleanup()` 递归删除并核验消失；`withTempSandbox()` 以 try/finally 保证回调抛错时同样清理。夹具包含中文多字节内容的 UTF-8 逐字节往返断言（无 BOM、无换行转换）。
+
+`test/deterministic-test-harness.test.ts` 以**真实子进程**（非 mock）回归：空测试集非零、注入失败断言非零、临时项目正向对照为零、`--version` 报出 `vitest/5.0.3`、工具缺失启动器非零且报出身份；子进程带有限超时并在结束后回收，不留下常驻进程。测试不依赖 `dist`（任何用例都不得导入三个工作区包名），干净 `npm ci` 后无需先构建即可 `npm test`。
 
 Core 源码按设计 `core-design/01-system-structure.md` 分层，目录边界由各目录下的 `README.md` 明确（拥有、允许、禁止），F-002 阶段只有无副作用的公共入口 `src/index.ts`：
 
@@ -69,10 +84,12 @@ packages/cli/src/index.ts    CLI 公共入口（当前不解析 argv、不发请
 
 ```bash
 npm ci             # 按 package-lock.json 干净安装
-npm test           # 一次性执行全部测试（vitest run），失败返回非零；无需先手工构建
-npm run typecheck  # 严格类型检查（strict），覆盖源码、测试与 scripts/ 下的 TypeScript，不产出文件
+npm test           # 启动器校验本地 vitest@5.0.3 后一次性执行全部测试，失败返回非零；无需先手工构建
+npm run typecheck  # 严格类型检查（strict），覆盖 vitest.config.ts、源码、测试（含 helpers）与 scripts/，不产出文件
 npm run build      # tsc -b 构建三个包到各自 dist，并运行构建入口冒烟脚本
 ```
+
+测试夹具与子进程只使用系统临时目录和重定向后的 HOME / XDG / TMPDIR，不读写用户仓库之外的用户数据、凭据或全局 Pi 配置，也不调用真实模型；重复运行互不依赖，不留下临时文件或受测子进程。
 
 在没有 `dist` 与类型缓存的干净临时副本中，`typecheck` 与 `build` 均须返回 0；注入明确类型错误时 `typecheck` 返回非零。`verify` 工程检查编排将在 F-005 加入；当前不存在该脚本。
 

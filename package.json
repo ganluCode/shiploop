@@ -15,7 +15,7 @@
     "packages/cli"
   ],
   "scripts": {
-    "test": "vitest run",
+    "test": "node scripts/run-tests.ts",
     "typecheck": "tsc -p tsconfig.json",
     "build": "tsc -b packages/core/tsconfig.json packages/host/tsconfig.json packages/cli/tsconfig.json && node scripts/smoke-built-entries.ts"
   },

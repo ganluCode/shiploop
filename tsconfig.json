@@ -2,9 +2,11 @@
   "$schema": "https://json.schemastore.org/tsconfig",
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
-    "noEmit": true
+    "noEmit": true,
+    "allowImportingTsExtensions": true
   },
   "include": [
+    "vitest.config.ts",
     "test/**/*.ts",
     "scripts/**/*.ts",
     "packages/core/src/**/*.ts",
