@@ -1,0 +1,23 @@
+{
+  "name": "shiploop",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "ShipLoop engineering workspace (P01-1 skeleton; private, not published)",
+  "engines": {
+    "node": "22.19.0",
+    "npm": "10.9.3"
+  },
+  "packageManager": "npm@10.9.3",
+  "workspaces": [
+    "packages/core",
+    "packages/host",
+    "packages/cli"
+  ],
+  "scripts": {
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "vitest": "5.0.3"
+  }
+}

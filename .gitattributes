@@ -1,0 +1,14 @@
+# Normalize line endings: all text files are UTF-8 with LF.
+* text=auto eol=lf
+
+# Common binary assets must never be converted.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.tgz binary
+*.gz binary

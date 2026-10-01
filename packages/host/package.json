@@ -1,0 +1,10 @@
+{
+  "name": "shiploop-host",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "ShipLoop Host (private workspace package; not published)",
+  "engines": {
+    "node": "22.19.0"
+  }
+}
