@@ -24,6 +24,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -89,19 +90,25 @@ export type SanitizeReplacements = {
   readonly snapshotRoot: string;
   readonly homeDir: string;
   readonly tempDir: string;
+  /** 额外等价前缀（如 realpath 后的临时根/仓库根）；同值合并为同一占位符。 */
+  readonly extra?: readonly (readonly [string, string])[];
 };
 
 /**
- * 把证据文本中的真实绝对路径替换为逻辑占位符。按最长前缀优先（快照 → 仓库 → 临时 →
- * 用户目录），避免仓库/临时根被较短的 HOME 前缀截断。
+ * 把证据文本中的真实绝对路径替换为逻辑占位符。合并所有前缀（含 realpath 变体）后
+ * 按长度降序替换，保证更长的仓库/快照根不会被较短的 HOME 前缀截断。
  */
 export function sanitizeEvidenceText(text: string, replacements: SanitizeReplacements): string {
-  const pairs: ReadonlyArray<readonly [string, string]> = [
+  const pairs: Array<[string, string]> = [
     [replacements.snapshotRoot, '<SNAPSHOT-ROOT>'],
     [replacements.repoRoot, '<REPO-ROOT>'],
     [replacements.tempDir, '<TMPDIR>'],
     [replacements.homeDir, '<HOME>'],
   ];
+  for (const pair of replacements.extra ?? []) {
+    pairs.push([pair[0], pair[1]]);
+  }
+  pairs.sort((a, b) => b[0].length - a[0].length);
   let result = text;
   for (const [from, to] of pairs) {
     if (from.length > 0 && result.includes(from)) {
@@ -360,6 +367,12 @@ export async function runCleanSnapshotReplay(options: ReplayOptions = {}): Promi
     snapshotRoot,
     homeDir: homedir(),
     tempDir: tmpdir(),
+    extra: [
+      [realpathSync(snapshotRoot), '<SNAPSHOT-ROOT>'],
+      [realpathSync(root), '<REPO-ROOT>'],
+      [realpathSync(tmpdir()), '<TMPDIR>'],
+      [realpathSync(homedir()), '<HOME>'],
+    ],
   };
 
   const steps: ReplayStep[] = [...REPLAY_STEPS];
@@ -478,19 +491,22 @@ export async function runCleanSnapshotReplay(options: ReplayOptions = {}): Promi
     writeEvidence('environment.json', `${JSON.stringify(environment, null, 2)}\n`);
     writeEvidence(
       'commands.json',
-      `${JSON.stringify(
-        {
-          tool: 'clean-snapshot-replay',
-          schemaVersion: 1,
-          commit,
-          branch,
-          worktree: 'clean',
-          snapshot: sanitizeEvidenceText(snapshotRoot, replacements),
-          overallExitCode: ok ? 0 : 1,
-          steps: records,
-        },
-        null,
-        2,
+      `${sanitizeEvidenceText(
+        JSON.stringify(
+          {
+            tool: 'clean-snapshot-replay',
+            schemaVersion: 1,
+            commit,
+            branch,
+            worktree: 'clean',
+            snapshot: snapshotRoot,
+            overallExitCode: ok ? 0 : 1,
+            steps: records,
+          },
+          null,
+          2,
+        ),
+        replacements,
       )}\n`,
     );
   } finally {
