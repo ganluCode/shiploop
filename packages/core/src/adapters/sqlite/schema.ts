@@ -19,8 +19,11 @@
  *   推断环，因此 references 回调显式标注 SQLiteColumn 返回类型（回调运行时仍惰性求值，
  *   行为不变）。SQLite 无法在单条普通 FK 中表达“绑定必须属于同一 project_id”，
  *   等价明确约束为：repository_bindings 上的 UNIQUE(project_id,id) 复合唯一键
- *   （设计 11 §1）+ 双向 FK 存在性与 ON DELETE RESTRICT；“绑定属于同一项目”的不变量
- *   由存储端口写入路径在事务内原子校验（F-007/F-008 回归覆盖），本 DDL 不放宽；
+ *   （设计 11 §1）+ 双向 FK 存在性与 ON DELETE RESTRICT，另加 F-008 补齐的
+ *   同项目复合外键 projects(id, repository_binding_id) → repository_bindings(project_id,
+ *   id)：repository_binding_id 非空时绑定必须属于本项目，使绕过端口校验的直接 SQL
+ *   也无法建立跨项目引用（见下方表级配置）；端口写入路径仍在事务内原子校验，
+ *   本 DDL 不放宽；
  * - artifacts 不持久化 retention_class（设计 11 列为必填但取值无设计结论，见
  *   ports/artifact-store.ts 头注释，随保留策略设计一并加入）；
  * - artifacts 不建立 source_attempt_id 列：attempts 表属执行域后续迁移，禁止为不
@@ -37,6 +40,7 @@
 import { sql } from 'drizzle-orm';
 import {
   check,
+  foreignKey,
   index,
   integer,
   sqliteTable,
@@ -74,6 +78,15 @@ export const projects = sqliteTable('projects', {
     'projects_labels_json_array_check',
     sql`json_valid(${table.labels}) AND json_type(${table.labels}) = 'array'`,
   ),
+  // F-008 同项目复合外键：(id, repository_binding_id) 命中 repository_bindings 的
+  // UNIQUE(project_id,id) 复合唯一键。repository_binding_id 非空时，绑定必须属于
+  // 本项目——直接 SQL 的跨项目引用在 DDL 级被拒绝；为 NULL 时复合外键不生效
+  // （未绑定项目合法，SQLite 对含 NULL 子列的外键视为满足）。
+  foreignKey({
+    name: 'projects_repository_binding_same_project_fk',
+    columns: [table.id, table.repositoryBindingId],
+    foreignColumns: [repositoryBindings.projectId, repositoryBindings.id],
+  }).onDelete('restrict'),
 ]);
 
 export const repositoryBindings = sqliteTable('repository_bindings', {

@@ -368,35 +368,48 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
 
   it('enforces same-project RESTRICT foreign keys declared by the Drizzle schema', () => {
     withMigratedDatabase((db) => {
+      // 期望的外键映射（子列 → 父列；复合外键逐列对应），含 F-008 补齐的同项目复合外键。
       const expectedFks = new Set([
-        'projects:repository_binding_id->repository_bindings.id',
-        'repository_bindings:project_id->projects.id',
-        'project_settings:project_id->projects.id',
-        'artifacts:project_id->projects.id',
+        'projects:(repository_binding_id)->repository_bindings.(id)',
+        'projects:(id,repository_binding_id)->repository_bindings.(project_id,id)',
+        'repository_bindings:(project_id)->projects.(id)',
+        'project_settings:(project_id)->projects.(id)',
+        'artifacts:(project_id)->projects.(id)',
       ]);
+      type FkPragmaRow = { id: number; seq: number; table: string; from: string; to: string; on_update: string; on_delete: string };
       const actualFks = new Set<string>();
       for (const [tableName, table] of SCHEMA_TABLES) {
-        const rows = db
-          .prepare<[], { from: string; table: string; to: string; on_delete: string }>(
-            `PRAGMA foreign_key_list(${tableName})`,
-          )
+        const pragmaRows = db
+          .prepare<[], FkPragmaRow>(`PRAGMA foreign_key_list(${tableName})`)
           .all();
+        // 按 FK id 分组：pragma 中每个外键占一组（复合外键一组多行）。
+        const groups = new Map<number, FkPragmaRow[]>();
+        for (const row of pragmaRows) {
+          const group = groups.get(row.id) ?? [];
+          group.push(row);
+          groups.set(row.id, group);
+        }
         const configFks = getTableConfig(table).foreignKeys;
-        expect(rows, `${tableName} 外键数量必须一致`).toHaveLength(configFks.length);
+        expect(groups.size, `${tableName} 外键数量必须一致`).toBe(configFks.length);
         for (const foreignKey of configFks) {
           const reference = foreignKey.reference();
           expect(foreignKey.onDelete, `${tableName} 外键必须 RESTRICT`).toBe('restrict');
-          const row = rows.find(
-            (candidate) =>
-              candidate.from === reference.columns[0]?.name &&
-              candidate.table === getTableName(reference.foreignTable),
+          const childNames = reference.columns.map((column) => column.name);
+          const parentTable = getTableName(reference.foreignTable);
+          const parentNames = reference.foreignColumns.map((column) => column.name);
+          // 逐列核对：找到列映射完全匹配且全组 RESTRICT 的外键组。
+          const orderedGroups = [...groups.values()].map((group) => [...group].sort((a, b) => a.seq - b.seq));
+          const match = orderedGroups.find(
+            (group) =>
+              group.length === childNames.length &&
+              group.every((row) => row.table === parentTable && row.on_delete === 'RESTRICT') &&
+              group.every((row, index) => row.from === childNames[index] && row.to === parentNames[index]),
           );
-          expect(row, `${tableName} 外键必须在实际 DDL 中存在`).toBeDefined();
-          expect(row?.to).toBe(reference.foreignColumns[0]?.name);
-          expect(row?.on_delete).toBe('RESTRICT');
-          actualFks.add(
-            `${tableName}:${reference.columns[0]?.name}->${row?.table}.${row?.to}`,
-          );
+          expect(
+            match,
+            `${tableName} 外键 (${childNames.join(',')}) -> ${parentTable}(${parentNames.join(',')}) 必须在实际 DDL 中逐列存在且 RESTRICT`,
+          ).toBeDefined();
+          actualFks.add(`${tableName}:(${childNames.join(',')})->${parentTable}.(${parentNames.join(',')})`);
         }
       }
       expect([...actualFks].sort()).toEqual([...expectedFks].sort());
