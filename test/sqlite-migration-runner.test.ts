@@ -38,9 +38,13 @@ function sha256Hex(text: string): string {
   return createHash('sha256').update(text, 'utf8').digest('hex');
 }
 
-/** 良性第二版迁移：仅新增一张升级探针表，用于升级/备份路径测试。 */
-const V2_PROBE_SQL = 'CREATE TABLE f5_upgrade_probe (id TEXT PRIMARY KEY NOT NULL);';
-const V2_PROBE = { version: 2, sql: V2_PROBE_SQL, checksum: sha256Hex(V2_PROBE_SQL) } as const;
+/** 良性升级探针迁移：接在真实迁移之后新增一张探针表，用于升级/备份路径测试。 */
+const PROBE_SQL = 'CREATE TABLE f5_upgrade_probe (id TEXT PRIMARY KEY NOT NULL);';
+const PROBE_MIGRATION = {
+  version: SQLITE_MIGRATIONS.length + 1,
+  sql: PROBE_SQL,
+  checksum: sha256Hex(PROBE_SQL),
+} as const;
 
 /** 注入 DDL 错误的第二版迁移：首条语句成功后触发语法错误。 */
 const V2_BAD_DDL_SQL =
@@ -58,7 +62,7 @@ const V2_BAD_DATA = {
   checksum: sha256Hex(V2_BAD_DATA_SQL),
 } as const;
 
-const BASE_MIGRATIONS = [...SQLITE_MIGRATIONS, V2_PROBE];
+const BASE_MIGRATIONS = [...SQLITE_MIGRATIONS, PROBE_MIGRATION];
 
 /** 异步临时沙箱：withTempSandbox 不等待 Promise，本 helper 用 try/finally 保证清理。 */
 async function withSandbox<T>(fn: (root: string) => Promise<T>): Promise<T> {
@@ -154,7 +158,10 @@ async function createSeededV1Database(root: string): Promise<string> {
   const path = join(root, 'state.db');
   const session = openSqliteStorageSession({ path });
   try {
-    await migrateSqliteStorage(session, { nowUtcMs: () => FIXED_NOW_MS });
+    await migrateSqliteStorage(session, {
+      migrations: [SQLITE_MIGRATIONS[0]!],
+      nowUtcMs: () => FIXED_NOW_MS,
+    });
     seedV1Data(session);
   } finally {
     session.close();
@@ -163,19 +170,19 @@ async function createSeededV1Database(root: string): Promise<string> {
 }
 
 describe('F-005 迁移执行与记录', () => {
-  it('空库迁移：记录版本/checksum/应用时间，建立六表，不产生备份', async () => {
+  it('空库迁移：记录版本/checksum/应用时间，建立全部表，不产生备份', async () => {
     await withSandbox(async (root) => {
       const session = openSqliteStorageSession({ path: join(root, 'state.db') });
       try {
         const result = await migrateSqliteStorage(session, { nowUtcMs: () => FIXED_NOW_MS });
         expect(result.fromVersion).toBe(0);
-        expect(result.toVersion).toBe(1);
-        expect(result.appliedVersions).toEqual([1]);
+        expect(result.toVersion).toBe(SQLITE_MIGRATIONS.length);
+        expect(result.appliedVersions).toEqual(SQLITE_MIGRATIONS.map((migration) => migration.version));
         expect(result.backupPath).toBeUndefined();
 
         const rows = migrationRows(session);
-        expect(rows).toHaveLength(1);
-        expect(rows[0]!.version).toBe(1);
+        expect(rows).toHaveLength(SQLITE_MIGRATIONS.length);
+        expect(rows.map((row) => row.version)).toEqual(SQLITE_MIGRATIONS.map((m) => m.version));
         expect(rows[0]!.checksum).toBe(SQLITE_MIGRATIONS[0]!.checksum);
         expect(rows[0]!.applied_at).toBe(FIXED_NOW_MS);
 
@@ -186,6 +193,7 @@ describe('F-005 迁移执行与记录', () => {
           'projects',
           'repository_bindings',
           'schema_migrations',
+          'state_events',
         ]);
       } finally {
         session.close();
@@ -200,11 +208,11 @@ describe('F-005 迁移执行与记录', () => {
         await migrateSqliteStorage(session, { nowUtcMs: () => FIXED_NOW_MS });
         const later = FIXED_NOW_MS + 60_000;
         const second = await migrateSqliteStorage(session, { nowUtcMs: () => later });
-        expect(second.fromVersion).toBe(1);
-        expect(second.toVersion).toBe(1);
+        expect(second.fromVersion).toBe(SQLITE_MIGRATIONS.length);
+        expect(second.toVersion).toBe(SQLITE_MIGRATIONS.length);
         expect(second.appliedVersions).toEqual([]);
         const rows = migrationRows(session);
-        expect(rows).toHaveLength(1);
+        expect(rows).toHaveLength(SQLITE_MIGRATIONS.length);
         expect(rows[0]!.applied_at).toBe(FIXED_NOW_MS);
       } finally {
         session.close();
@@ -212,7 +220,7 @@ describe('F-005 迁移执行与记录', () => {
     });
   });
 
-  it('v1 库升级到 v2：既有项目/配置逐字段保留，迁移增量与记录一致', async () => {
+  it('v1 库升级到最新版本：既有项目/配置逐字段保留，迁移增量与记录一致', async () => {
     await withSandbox(async (root) => {
       const path = await createSeededV1Database(root);
       const backupPath = join(root, 'backups', 'pre-upgrade.db');
@@ -230,23 +238,26 @@ describe('F-005 迁移执行与记录', () => {
           nowUtcMs: () => FIXED_NOW_MS + 1_000,
         });
         expect(result.fromVersion).toBe(1);
-        expect(result.toVersion).toBe(2);
-        expect(result.appliedVersions).toEqual([2]);
+        expect(result.toVersion).toBe(BASE_MIGRATIONS.length);
+        expect(result.appliedVersions).toEqual(BASE_MIGRATIONS.slice(1).map((m) => m.version));
         expect(result.backupPath).toBe(backupPath);
 
         expect(listUserTables(session)).toContain('f5_upgrade_probe');
+        expect(listUserTables(session)).toContain('state_events');
         // 既有数据逐字段保留（中文多字节、labels JSON、配置 payload）。
         expect(projectRows(session)).toEqual(before.projects);
         expect(globalSettingsPayload(session)).toBe(before.payload);
 
         const rows = migrationRows(session);
-        expect(rows).toHaveLength(2);
+        expect(rows).toHaveLength(BASE_MIGRATIONS.length);
         expect(rows[0]!.version).toBe(1);
         expect(rows[0]!.checksum).toBe(SQLITE_MIGRATIONS[0]!.checksum);
         expect(rows[0]!.applied_at).toBe(FIXED_NOW_MS);
         expect(rows[1]!.version).toBe(2);
-        expect(rows[1]!.checksum).toBe(V2_PROBE.checksum);
-        expect(rows[1]!.applied_at).toBe(FIXED_NOW_MS + 1_000);
+        expect(rows[1]!.checksum).toBe(SQLITE_MIGRATIONS[1]!.checksum);
+        expect(rows[2]!.version).toBe(PROBE_MIGRATION.version);
+        expect(rows[2]!.checksum).toBe(PROBE_MIGRATION.checksum);
+        expect(rows[2]!.applied_at).toBe(FIXED_NOW_MS + 1_000);
       } finally {
         session.close();
       }
@@ -282,7 +293,7 @@ describe('F-005 拒写：版本与 checksum 核验先于任何写入', () => {
         expect(isStorageError(caught, 'unsupported_version')).toBe(true);
         const error = caught as { operation: string; details?: Record<string, unknown> };
         expect(error.operation).toBe('storage.migrate');
-        expect(error.details).toMatchObject({ appliedVersion: 99, supportedVersion: 1 });
+        expect(error.details).toMatchObject({ appliedVersion: 99, supportedVersion: SQLITE_MIGRATIONS.length });
         expect((caught as Error).message).not.toContain(path);
 
         expect(listUserTables(session)).toEqual(tablesBefore);
@@ -368,7 +379,7 @@ describe('F-005 拒写：版本与 checksum 核验先于任何写入', () => {
 
         const gapped = [
           SQLITE_MIGRATIONS[0]!,
-          { version: 3, sql: V2_PROBE_SQL, checksum: sha256Hex(V2_PROBE_SQL) },
+          { version: 3, sql: PROBE_SQL, checksum: sha256Hex(PROBE_SQL) },
         ];
         await expect(
           migrateSqliteStorage(session, { migrations: gapped }),
@@ -440,7 +451,7 @@ describe('F-005 失败迁移回滚与证据', () => {
         expect(failure.version).toBe(2);
         expect(failure.message).not.toContain(path);
 
-        // v1 已提交且一致；v2 的 DDL 片段与记录全部回滚。
+        // v1 已提交且一致；bad v2 的 DDL 片段与记录全部回滚。
         expect(migrationRows(session).map((row) => row.version)).toEqual([1]);
         expect(listUserTables(session)).not.toContain('f5_bad_ddl');
         expect(listUserTables(session)).toContain('projects');
@@ -448,7 +459,7 @@ describe('F-005 失败迁移回滚与证据', () => {
         session.close();
       }
 
-      // 修复后重开：从一致的原版本（v1）继续，v2 正常应用。
+      // 修复后重开：从一致的原版本（v1）继续，真实 v2 与探针 v3 正常应用。
       const reopened = openSqliteStorageSession({ path });
       try {
         const result = await migrateSqliteStorage(reopened, {
@@ -456,9 +467,12 @@ describe('F-005 失败迁移回滚与证据', () => {
           nowUtcMs: () => FIXED_NOW_MS + 5_000,
         });
         expect(result.fromVersion).toBe(1);
-        expect(result.toVersion).toBe(2);
-        expect(migrationRows(reopened).map((row) => row.version)).toEqual([1, 2]);
+        expect(result.toVersion).toBe(BASE_MIGRATIONS.length);
+        expect(migrationRows(reopened).map((row) => row.version)).toEqual(
+          BASE_MIGRATIONS.map((migration) => migration.version),
+        );
         expect(listUserTables(reopened)).toContain('f5_upgrade_probe');
+        expect(listUserTables(reopened)).toContain('state_events');
       } finally {
         reopened.close();
       }
@@ -529,7 +543,7 @@ describe('F-005 失败迁移回滚与证据', () => {
           migrations: BASE_MIGRATIONS,
           backupPath: backupPath2,
         });
-        expect(result.toVersion).toBe(2);
+        expect(result.toVersion).toBe(BASE_MIGRATIONS.length);
         expect(existsSync(backupPath)).toBe(true);
         expect(existsSync(backupPath2)).toBe(true);
         expect(projectRows(reopened)).toHaveLength(1);
@@ -651,7 +665,7 @@ describe('F-005 一致性备份与恢复演练', () => {
         });
         expect(result.backupPath).toBeDefined();
         expect(result.backupPath!.startsWith(root)).toBe(true);
-        expect(result.backupPath!).toMatch(/v1-to-v2/);
+        expect(result.backupPath!).toMatch(new RegExp(`v1-to-v${BASE_MIGRATIONS.length}`));
         expect(existsSync(result.backupPath!)).toBe(true);
       } finally {
         session.close();

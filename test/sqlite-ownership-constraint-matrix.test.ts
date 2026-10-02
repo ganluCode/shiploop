@@ -453,6 +453,7 @@ describe('F-008 RESTRICT 删除保护与事务原子性', () => {
         'global_settings',
         'project_settings',
         'artifacts',
+        'state_events',
         'schema_migrations',
       ]) {
         seen.push(

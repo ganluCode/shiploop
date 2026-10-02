@@ -210,6 +210,61 @@ export const artifacts = sqliteTable('artifacts', {
   index('artifacts_project_id_status_index').on(table.projectId, table.status),
 ]);
 
+/**
+ * P01-3 / F-006 状态事件审计切片（设计 11 §9 的 state_events）。
+ *
+ * 最小审计切片：只保存 P01-3 已确认的业务状态变化（项目元数据更新等），供后续
+ * 界面重连/审计/通知消费；**不实现** SSE 推送与通知投递（Host/通知属后续）。
+ *
+ * 边界决策（依据 docs/p01-3-application-contract.md §6.3，属显式偏离并请求核对）：
+ * - `project_id` 可空：全局配置变更没有适用项目；CHECK 限定「只有 aggregate_type=
+ *   'global_settings' 才允许空」。有值时仍受项目外键（ON DELETE RESTRICT）保护。
+ * - `payload` 只保存脱敏摘要（如变更字段名），绝不保存字段值、凭据引用或绝对路径；
+ *   DDL 以 `json_valid AND json_type='object'` 做数据库级底线，完整结构校验仍在存储层。
+ * - `sequence` 为数据库持久全局游标（Host 重启不重置），唯一索引保证单调游标无重复。
+ * - run_id/task_id/attempt_id 等执行域关联列随其表在同一迁移中加入，避免为不存在的表
+ *   创建悬空外键（本 Feature 明确不建执行表）。
+ */
+export const stateEvents = sqliteTable('state_events', {
+  id: text('id').primaryKey(),
+  createdAt: integer('created_at').notNull(),
+  /** 事件为插后不可变：revision 恒为 1（与领域聚合 revision 分开）。 */
+  revision: integer('revision').notNull().default(1),
+  updatedAt: integer('updated_at').notNull(),
+  /** 所属项目；全局范围事件为 NULL（见 state_events_project_scope_check）。 */
+  projectId: text('project_id').references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  /** 持久全局递增游标；Host 重启不重置。 */
+  sequence: integer('sequence').notNull(),
+  /** 事件类型，如 'project.metadata_updated'。 */
+  eventType: text('event_type').notNull(),
+  /** 领域聚合类型（当前写入 project/global_settings/project_settings）；DDL 只要求非空。 */
+  aggregateType: text('aggregate_type').notNull(),
+  /** 领域聚合标识（全局为 'global'）。 */
+  aggregateId: text('aggregate_id').notNull(),
+  /** 事件对应写入后的聚合并发计数。 */
+  aggregateRevision: integer('aggregate_revision').notNull(),
+  /** 脱敏结构化摘要（只含字段名/键名/schemaVersion）；不存原值或凭据。 */
+  payload: text('payload').notNull(),
+  /** 发生时间 UTC 毫秒。 */
+  occurredAt: integer('occurred_at').notNull(),
+}, (table) => [
+  check('state_events_revision_positive_check', sql`${table.revision} >= 1`),
+  check('state_events_sequence_positive_check', sql`${table.sequence} >= 1`),
+  check('state_events_event_type_not_empty_check', sql`length(${table.eventType}) > 0`),
+  check('state_events_aggregate_id_not_empty_check', sql`length(${table.aggregateId}) > 0`),
+  check('state_events_aggregate_revision_positive_check', sql`${table.aggregateRevision} >= 1`),
+  check(
+    'state_events_payload_json_object_check',
+    sql`json_valid(${table.payload}) AND json_type(${table.payload}) = 'object'`,
+  ),
+  // 全局配置变更无适用项目；只有 global_settings 允许 project_id 为空。
+  check(
+    'state_events_project_scope_check',
+    sql`(${table.projectId} IS NOT NULL) OR (${table.aggregateType} = 'global_settings')`,
+  ),
+  uniqueIndex('state_events_sequence_unique').on(table.sequence),
+]);
+
 export const schemaMigrations = sqliteTable('schema_migrations', {
   id: text('id').primaryKey(),
   createdAt: integer('created_at').notNull(),

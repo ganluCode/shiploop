@@ -175,6 +175,19 @@ F-005 定案（实施契约；与 §6.2「仓库绑定读写端口」一致）�
   有测试证据）。
 - `StateStore.getRepositoryBinding(projectId)` 按项目读取绑定：项目不存在与项目尚无绑定分别
   返回带不同实体身份的 `not_found`。
+
+F-006 定案（实施契约；与 §6.3 的 `state_events` 一致）：
+
+- **查询**：`ProjectService.getProject(projectId)` 复用 `StateStore.getProject`（返回
+  `ProjectRecord`，含 `repositoryBindingId`）；`ProjectService.getRepositoryBinding(projectId)`
+  复用 `StateStore.getRepositoryBinding`（返回完整 `RepositoryBindingRecord`）。两者对未知 ID
+  返回带实体身份的 `not_found`，不新增第二套读取路径。
+- **审计落点**：项目元数据编辑复用 `StateStore.updateProject`，在同一短事务内完成 CAS 更新并
+  追加一条 `state_events`：`event_type='project.metadata_updated'`、`aggregate_type='project'`、
+  `aggregate_id`/`project_id`=项目 ID、`aggregate_revision`=写后 `revision`、`sequence` 数据库内
+  单调分配、`occurred_at`=应用 UTC 毫秒；`payload` **只含 `changedFields` 字段名数组**，不含字段值、
+  凭据或路径。注入记录写入失败时元数据与 `revision` 一并回滚（无半条记录）；校验失败/过期
+  revision 不写记录；诊断 logger 不充当权威记录。表由迁移 v2（`state_events`）建立，见 §6.3。
 - `updateProjectMetadata`：至少提供 `displayName`/`description`/`labels` 之一；匹配
   `expectedRevision` 后 `revision+1`；不改 `projectId`、`canonicalPath`、配置、PathService 位置
   或已有制品；不得借元数据编辑做 rebind。
@@ -374,7 +387,7 @@ P01-3 确认沿用前序「创建 / 更新」分离的约定，不引入 `expect
 | 扩展 | 目的 | 说明 |
 |---|---|---|
 | 仓库绑定读写端口 | 注册/幂等复用/查询绑定 | P01-2 只有 `projects.repository_binding_id`，无绑定的创建/读取方法。P01-3 增加窄方法（可置于 `StateStore` 或独立 `RepositoryBindingStore`）：按 `canonical_path` 查找、原子「项目 + 绑定」组合创建、按项目读取绑定。**F-005 已交付**：置于 `StateStore`（`createProjectWithRepositoryBinding` / `getRepositoryBinding`，无新表、无新迁移）。 |
-| 变更记录 | 元数据/配置的脱敏审计 | 见 §6.3。 |
+| 变更记录 | 元数据/配置的脱敏审计 | 见 §6.3。**F-006 已交付**：迁移 v2 建立 `state_events`，项目元数据编辑同事务追加脱敏记录；配置审计留待 F-010。 |
 | `listProjects` / 标签计数查询端口 | F-007 筛选、分页、计数 | 基于 `projects.labels` 的 `json_each` 查询；首版**不新增派生索引表**（设计 11 §10：数据增长后再加），不做跨层级求和。 |
 
 **明确不建**（本 Feature 范围外）：Phase/Feature/Task/Run/Attempt/Batch/Session/Chat 等执行表；
@@ -386,6 +399,9 @@ P01-3 确认沿用前序「创建 / 更新」分离的约定，不引入 `expect
 
 - **落点**：设计 11 §9 的 `state_events`（R1，持久化业务状态变化，供审计/重连/通知）。P01-3 只
   实现其**审计切片**：同一写事务内追加记录；**不实现** SSE 推送与通知投递（Host/通知属后续）。
+  **F-006 已落地**：迁移 v2 建立 `state_events`（`schema.ts` 的 `stateEvents` + `migrations.ts`），
+  项目元数据更新经 `StateStore.updateProject` 同事务写入 `project.metadata_updated`；配置事件类型
+  （`settings.global_updated` / `settings.project_updated`）留待 F-010 使用。
 - **记录内容**（脱敏，字段级）：
   - `event_type`：操作类型，如 `project.metadata_updated`、`settings.global_updated`、
     `settings.project_updated`。
@@ -403,8 +419,9 @@ P01-3 确认沿用前序「创建 / 更新」分离的约定，不引入 `expect
   并加 CHECK `(project_id IS NOT NULL) OR (aggregate_type = 'global_settings')`，使全局范围的
   业务事件可表达且项目 FK 在有值时仍受保护。此为对设计字典的**显式偏离**，按 F-001 要求记录
   依据并请求核对（§9-1），不静默改变语义。
-- 现有 `test/sqlite-schema-migrations.test.ts` 的 `FORBIDDEN_TABLE_NAMES` 目前包含
-  `state_events`；引入该表的任务需同步更新该守卫（把表加入期望集合，并从禁止列表移除）。
+- 现有 `test/sqlite-schema-migrations.test.ts` 的 `FORBIDDEN_TABLE_NAMES` 曾含 `state_events`；
+  F-006 引入该表时已同步更新该守卫（从禁止列表移除、加入 `SCHEMA_TABLES` 期望集合、补 FK 与
+  约束矩阵），并同步更新迁移执行器测试的版本期望（v2 为真实迁移）。
 
 ---
 
@@ -481,6 +498,7 @@ T03（当前配置原子性）、T26（当前配置基础）、T32（项目标�
 
 1. **`state_events.project_id` 可空**（§6.3）：设计 11 §9 标为必填，但全局配置变更无适用项目。
    P01-3 以「可空 + CHECK（仅 `global_settings` 允许空）」表达，属显式偏离，**请求核对**。
+   （F-006 已按此落地为迁移 v2；项目范围事件均带 `project_id`。）
 2. **配置政策段**：设计 11 §3.1 列出 `verification`/`executionLimits`/`securityPolicy`/
    `memoryPolicy`/`deliveryPolicy`，而当前 v1 Schema 只含 `strategies`。P01-3 不静默接受未知键；
    若本阶段需要政策子集，由 F-008 显式升级 schemaVersion 并补齐校验，**请求确认政策子集范围**。

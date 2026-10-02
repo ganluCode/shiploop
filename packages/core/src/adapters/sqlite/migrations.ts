@@ -137,6 +137,40 @@ CREATE TABLE schema_migrations (
 CREATE UNIQUE INDEX schema_migrations_version_unique ON schema_migrations (version);
 `;
 
+/**
+ * 第二个迁移（P01-3 / F-006）：新增 state_events 审计切片。
+ *
+ * 只为已确认的业务状态变化（项目元数据更新等）提供持久、脱敏、可与实体写入同事务的
+ * 审计记录；不建执行域表、不建通知投递表。列与约束同 ./schema.ts 的 stateEvents，
+ * 一致性由 test/sqlite-schema-migrations.test.ts 经真实 pragma 交叉核对。
+ */
+const MIGRATION_002_SQL = `
+CREATE TABLE state_events (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  project_id TEXT,
+  sequence INTEGER NOT NULL,
+  event_type TEXT NOT NULL,
+  aggregate_type TEXT NOT NULL,
+  aggregate_id TEXT NOT NULL,
+  aggregate_revision INTEGER NOT NULL,
+  payload TEXT NOT NULL,
+  occurred_at INTEGER NOT NULL,
+  CONSTRAINT state_events_revision_positive_check CHECK (revision >= 1),
+  CONSTRAINT state_events_sequence_positive_check CHECK (sequence >= 1),
+  CONSTRAINT state_events_event_type_not_empty_check CHECK (length(event_type) > 0),
+  CONSTRAINT state_events_aggregate_id_not_empty_check CHECK (length(aggregate_id) > 0),
+  CONSTRAINT state_events_aggregate_revision_positive_check CHECK (aggregate_revision >= 1),
+  CONSTRAINT state_events_payload_json_object_check CHECK (json_valid(payload) AND json_type(payload) = 'object'),
+  CONSTRAINT state_events_project_scope_check CHECK ((project_id IS NOT NULL) OR (aggregate_type = 'global_settings')),
+  CONSTRAINT state_events_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT
+);
+
+CREATE UNIQUE INDEX state_events_sequence_unique ON state_events (sequence);
+`;
+
 function sha256Hex(text: string): string {
   return createHash('sha256').update(text, 'utf8').digest('hex');
 }
@@ -147,5 +181,10 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
     version: 1,
     sql: MIGRATION_001_SQL,
     checksum: sha256Hex(MIGRATION_001_SQL),
+  },
+  {
+    version: 2,
+    sql: MIGRATION_002_SQL,
+    checksum: sha256Hex(MIGRATION_002_SQL),
   },
 ];

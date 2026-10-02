@@ -271,8 +271,8 @@ describe('F-013 SQLite/制品全链路集成闭环（独立临时数据根）', 
         expect(Buffer.from(contentAfter.content)).toEqual(Buffer.concat(contentParts.map(Buffer.from)));
         expect(contentAfter.relativePath).toBe(contentBefore.relativePath);
 
-        // FR-3：迁移记录仍在（库未被重建，先迁移后使用的一致性证据）。
-        expect(migrationRows(reopened.session)).toEqual([{ version: 1 }]);
+        // FR-3：迁移记录仍在（库未被重建，先迁移后使用的一致性证据；v1 六表 + v2 状态事件）。
+        expect(migrationRows(reopened.session)).toEqual([{ version: 1 }, { version: 2 }]);
 
         // FR-2：项目级批量核对——两制品均 verified_ready，无孤儿，未截断。
         const report = await reopened.verifier.verifyProject(projectBefore.id);
@@ -332,7 +332,7 @@ describe('F-013 SQLite/制品全链路集成闭环（独立临时数据根）', 
           const settingsAfter = await reopened.state.getProjectSettings(recovered.project.id);
           expect(projectAfter).toEqual(recovered.project);
           expect(settingsAfter).toEqual(recovered.settings);
-          expect(migrationRows(reopened.session)).toEqual([{ version: 1 }]);
+          expect(migrationRows(reopened.session)).toEqual([{ version: 1 }, { version: 2 }]);
         } finally {
           reopened.close();
         }

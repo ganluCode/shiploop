@@ -41,6 +41,8 @@ import { parseStoredSettingsPayload } from '../../ports/settings-schema.js';
 import type { SettingsPayload } from '../../ports/settings-schema.js';
 import {
   GLOBAL_SETTINGS_ID,
+  PROJECT_METADATA_UPDATED_EVENT_TYPE,
+  projectMetadataChangedFields,
   validateCreateProjectInput,
   validateCreateRepositoryBindingInput,
   validateUpdateProjectInput,
@@ -541,7 +543,30 @@ export function createSqliteStateStore(
             `项目 ${id} 不存在`,
           );
         }
-        return projectFromRow(selectProjectRow(db, id, operation), context);
+        const updated = projectFromRow(selectProjectRow(db, id, operation), context);
+        // P01-3 / F-006：同一短事务内追加脱敏审计记录，使“变更记录”与元数据
+        // 原子一致；注入记录写入失败时上面的元数据/revision 一并回滚（无半条记录）。
+        // sequence 为数据库持久全局游标：BEGIN IMMEDIATE 下由本事务分配，重启不重置。
+        const nextSequence = db
+          .prepare<[], { next: number }>('SELECT COALESCE(MAX(sequence), 0) + 1 AS next FROM state_events')
+          .get();
+        db.prepare(
+          'INSERT INTO state_events (id, created_at, revision, updated_at, project_id, sequence, event_type, aggregate_type, aggregate_id, aggregate_revision, payload, occurred_at) ' +
+            'VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        ).run(
+          randomUUID(),
+          timestamp,
+          timestamp,
+          id,
+          nextSequence?.next ?? 1,
+          PROJECT_METADATA_UPDATED_EVENT_TYPE,
+          'project',
+          id,
+          updated.revision,
+          JSON.stringify({ changedFields: projectMetadataChangedFields(valid) }),
+          timestamp,
+        );
+        return updated;
       });
     },
 

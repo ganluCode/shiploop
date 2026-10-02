@@ -5,10 +5,17 @@
 - 允许：实现 `ports` 接口；依赖 `application`/`domain` 类型；在正式接入该能力的 Feature 引入对应第三方依赖（如 Pi SDK、better-sqlite3 + Drizzle）。
 - 禁止：被 `domain`、`application`、`ports` 或公共入口直接导入；在本阶段为占位而安装或模拟 Pi、Electron、HTTP 框架；适配器写业务数据库或接管 Task 调度。
 
-当前阶段（P01-2 / F-006）：`shiploop-core` 已在适配层固定安装 `better-sqlite3@13.0.3` 与 `drizzle-orm@0.45.3`（含 `@types/better-sqlite3@9.6.0`），驱动与 ORM 的引用只允许出现在本层及装配入口（由 `scripts/check-boundaries.ts` 与 `test/typescript-build.test.ts` 强制）。`sqlite/connection.ts` 为显式位置打开、幂等关闭的最小装配；`sqlite/schema.ts` 与 `sqlite/migrations.ts` 声明 F-003 的六表 Drizzle Schema 与版本化迁移内容；`sqlite/session.ts` 提供 F-004 的连接生命周期（固定 PRAGMA 策略：foreign_keys=ON、WAL、synchronous=FULL、显式 busy_timeout，打开时核验）、短同步写事务（BEGIN IMMEDIATE，拒绝 async/Promise 回调）与有限 busy 预算重试（耗尽后返回 StorageError kind='busy'）；`sqlite/migrator.ts` 实现 F-005 的带校验记录迁移、高版本拒写与升级前一致性备份。`sqlite/state-store.ts` 实现 F-006 的 StateStore 端口（项目与全局/项目当前配置的创建、读取与 expectedRevision CAS 更新；写入前/读取时经 F-002 运行时校验，损坏 JSON 以 corrupt 拒绝）。跨进程竞争、失败注入与组合写入由 F-007 深入验证；制品索引由 F-009 起实现。Pi 适配器仍不在本阶段安装。
+当前阶段（P01-2 / F-006）：`shiploop-core` 已在适配层固定安装 `better-sqlite3@13.0.3` 与 `drizzle-orm@0.45.3`（含 `@types/better-sqlite3@9.6.0`），驱动与 ORM 的引用只允许出现在本层及装配入口（由 `scripts/check-boundaries.ts` 与 `test/typescript-build.test.ts` 强制）。`sqlite/connection.ts` 为显式位置打开、幂等关闭的最小装配；`sqlite/schema.ts` 与 `sqlite/migrations.ts` 声明 F-003 的六表 Drizzle Schema 与版本化迁移内容（F-006 起新增迁移 v2 的 `state_events` 审计表）；`sqlite/session.ts` 提供 F-004 的连接生命周期（固定 PRAGMA 策略：foreign_keys=ON、WAL、synchronous=FULL、显式 busy_timeout，打开时核验）、短同步写事务（BEGIN IMMEDIATE，拒绝 async/Promise 回调）与有限 busy 预算重试（耗尽后返回 StorageError kind='busy'）；`sqlite/migrator.ts` 实现 F-005 的带校验记录迁移、高版本拒写与升级前一致性备份。`sqlite/state-store.ts` 实现 F-006 的 StateStore 端口（项目与全局/项目当前配置的创建、读取与 expectedRevision CAS 更新；写入前/读取时经 F-002 运行时校验，损坏 JSON 以 corrupt 拒绝）。跨进程竞争、失败注入与组合写入由 F-007 深入验证；制品索引由 F-009 起实现。Pi 适配器仍不在本阶段安装。
 
 P01-3 / F-003 起新增 `fs/path-service.ts`：统一 PathService 的真实文件系统实现——显式/注入用户目录解析授权数据根（构造时 realpath 固定、只使用已存在根、不创建目录、不读取进程真实用户目录），`core.sqlite` 与 `projects/<id>` 受控定位，受权定位经注入的项目存在性核验端口（StateStore.getProject）核验存在与项目归属，沿用 realpath/祖先核对/no-follow 三层防线。
 
 P01-3 / F-004 起新增 `fs/repository-inspector.ts`：只读仓库路径检查的真实 Git 实现——execFile 独立 argv + 显式 cwd + 有限超时与输出上限（不拼接 shell），最小确定子进程环境（GIT_CONFIG_NOSYSTEM/GLOBAL/SYSTEM 隔离机器配置、GIT_TERMINAL_PROMPT=0、GIT_OPTIONAL_LOCKS=0 保证只读），canonicalPath/gitCommonDir 经实际 Git 解析并 realpath 规范化，repoIdentity 为 gitCommonDir 的 SHA-256 派生（remote 不参与身份）；拒绝子目录/裸仓库/非 Git 目录，错误脱敏（reason 码 + 退出码/信号，无绝对路径与 stderr 原文）；不接触存储端口，Git/文件检查发生在数据库写事务之外。
 
 P01-3 / F-005 起 `sqlite/state-store.ts` 扩展仓库绑定读写：`createProjectWithRepositoryBinding` 把项目与绑定封装为同一业务原子操作——两个输入在任何 SQL 之前完成运行时校验；`BEGIN IMMEDIATE` 下按 `canonical_path` 检查并插入（同路径/符号链接别名复用既有项目与绑定返回 already_exists，不新增行、不覆盖既有元数据；同 remote 不同 clone 分别注册）；唯一约束冲突时事务整体回滚后有界核对一次，不遗留孤立项目或绑定；`projects.repository_binding_id` 同事务回写（同项目复合外键由 DDL 强制）。`getRepositoryBinding` 按项目读取绑定（项目缺失/无绑定均为 not_found）。跨进程注册竞争、绑定写入失败注入回滚与端口级校验由 test/project-registration.test.ts 验证（真实临时 Git 仓库 + 真实临时 SQLite）。
+
+P01-3 / F-006 起 `sqlite/state-store.ts` 的 `updateProject` 在同一 BEGIN IMMEDIATE 事务内完成
+CAS 更新并追加一条 `state_events`（`project.metadata_updated`、项目/写后 revision 身份、
+只含变更字段名的脱敏 payload，sequence 数据库内单调分配）；注入记录写入失败时元数据与 revision
+一并回滚；`schema.ts`/`migrations.ts` 新增迁移 v2 建立 `state_events`（project_id 可空 + CHECK
+限定仅 global_settings 可为空，唯一 sequence 索引）。审计原子性与查询/编辑闭环由
+test/project-metadata-service.test.ts 与 test/sqlite-schema-migrations.test.ts 验证。

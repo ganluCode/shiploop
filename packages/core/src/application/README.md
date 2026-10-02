@@ -7,4 +7,6 @@
 
 当前阶段（P01-2 / F-011、F-012）：`artifact-publish.ts` 为首个用例服务——制品流式发布编排（pending 登记 → 事务外 staging 流式写入与同步 → hash 核验 → 同文件系统不覆盖发布 → 短事务 CAS ready），只依赖 `ports` 的 ArtifactStore/ArtifactFileStore 窄接口与 node 内置模块；限制（大小/时间/取消）显式有限，失败保留阶段化证据与 staging 残留。`artifact-verify.ts`（F-012）为制品中断核对与损坏诊断用例：关闭重开后的 pending 恢复（正式文件核验通过后 CAS 补 ready，冲突时按 revision 重新核对、不让旧结果倒写）、ready 完整性核对与三种 corrupt 诊断（missing/size_mismatch/hash_mismatch）、必要完整性检查的有效读取（缓冲受显式上限约束）与项目级批量核对/孤儿扫描（原文件保留 kept_in_place，不制造索引、不删除未知文件）。其余用例实现从后续 Feature 开始按设计 `core-design/04-scheduling-and-recovery.md` 等进入。
 
-P01-3 / F-005 起新增 `project-service.ts`：ProjectService 仓库注册用例（registerRepository）——输入运行时校验（元数据复用 F-002 共用校验器，非法输入先于任何 I/O 拒绝）→ 只读仓库检查（RepositoryInspector，数据库写事务之外）→ 单个短事务原子保存项目 + 绑定（StateStore.createProjectWithRepositoryBinding，同 canonicalPath 幂等复用返回 already_exists，不同 clone 分别注册）。只依赖 ports 窄接口，不接触适配器/驱动/HTTP/Pi SDK；元数据编辑与查询（F-006）、标签筛选（F-007）后续扩展。
+P01-3 / F-005 起新增 `project-service.ts`：ProjectService 仓库注册用例（registerRepository）——输入运行时校验（元数据复用 F-002 共用校验器，非法输入先于任何 I/O 拒绝）→ 只读仓库检查（RepositoryInspector，数据库写事务之外）→ 单个短事务原子保存项目 + 绑定（StateStore.createProjectWithRepositoryBinding，同 canonicalPath 幂等复用返回 already_exists，不同 clone 分别注册）。只依赖 ports 窄接口，不接触适配器/驱动/HTTP/Pi SDK。
+
+P01-3 / F-006 起同一 `project-service.ts` 补充：`getProject` / `getRepositoryBinding`（按 projectId 查询身份与完整绑定，未知 ID 为 not_found）与 `updateProjectMetadata`（名称/描述/标签 CAS 编辑，先经 F-002 共用校验器拒绝非法字段/标签，再交 `StateStore.updateProject` 在同一短事务内完成 CAS 更新与 `state_events` 脱敏变更记录）。改元数据不触碰 projectId、canonicalPath、配置、PathService 位置或已有制品。标签筛选（F-007）后续扩展。

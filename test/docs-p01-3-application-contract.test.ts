@@ -58,8 +58,8 @@ describe('F-001 P01-3 应用契约文档', () => {
     }
   });
 
-  it('六表迁移与受控定位/标签规范等复用规则在文档中可核对', () => {
-    expect(SQLITE_MIGRATIONS).toHaveLength(1);
+  it('版本化迁移（v1 六表 + v2 state_events 审计）与受控定位/标签规范等复用规则在文档中可核对', () => {
+    expect(SQLITE_MIGRATIONS.map((migration) => migration.version)).toEqual([1, 2]);
     const [migration] = SQLITE_MIGRATIONS;
     expect(migration?.version).toBe(1);
     const sql = migration?.sql ?? '';
@@ -74,6 +74,10 @@ describe('F-001 P01-3 应用契约文档', () => {
       expect(sql).toContain(`CREATE TABLE ${table}`);
       expect(contractDoc).toContain(table);
     }
+    // F-006 引入的 state_events 审计表由 v2 迁移建立，文档与此一致。
+    const eventsMigration = SQLITE_MIGRATIONS[1];
+    expect(eventsMigration?.sql).toContain('CREATE TABLE state_events');
+    expect(contractDoc).toContain('state_events');
     // 受控定位与标签规则是文档声明的复用契约。
     expect(contractDoc).toContain('realpath');
     expect(contractDoc).toContain('no-follow');

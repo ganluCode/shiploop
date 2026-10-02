@@ -22,13 +22,21 @@
  *   StorageError(kind='validation')，仓库检查失败为 RepositoryInspectionError，
  *   存储失败为 StorageError；任何失败分支都不产生业务行。
  *
- * 本模块不实现（后续任务）：元数据 CAS 编辑与项目查询（F-006）、标签筛选/分页/
- * 计数（F-007）、rebind、存量基线扫描、Host/CLI 路由。
+ * 本模块已实现（F-006）：项目身份/绑定查询与名称、描述、标签的 CAS 元数据编辑
+ * 用例。查询直接复用 StateStore 读取端口；编辑先经 F-002 共用校验器（非法字段/
+ * 标签先于任何 I/O 拒绝），再交由 StateStore.updateProject 在单个短事务内完成
+ * CAS 更新与脱敏变更记录（state_events）——改名称/描述/标签不触碰 projectId、
+ * canonicalPath、配置或 PathService 位置，也不改变仓库绑定。
+ *
+ * 本模块不实现（后续任务）：标签筛选/分页/计数（F-007）、配置服务（F-008~F-011）、
+ * rebind、存量基线扫描、Host/CLI 路由。
  */
 import type { RepositoryInspector } from '../ports/repository-inspector.js';
-import { validateCreateProjectInput } from '../ports/state-store.js';
+import { validateCreateProjectInput, validateUpdateProjectInput } from '../ports/state-store.js';
 import type {
+  ProjectRecord,
   ProjectWithRepositoryBindingResult,
+  RepositoryBindingRecord,
   StateStore,
   ValidatedCreateProjectInput,
 } from '../ports/state-store.js';
@@ -57,11 +65,16 @@ export interface RegisterRepositoryInput {
 export type RegisterRepositoryResult = ProjectWithRepositoryBindingResult;
 
 /**
- * 项目应用服务（F-005 先交付 registerRepository；F-006/F-007 扩展元数据编辑、
- * 查询与标签筛选）。
+ * 项目应用服务：仓库注册（F-005）与项目身份查询/元数据 CAS 编辑（F-006）。
  */
 export interface ProjectService {
   registerRepository(input: unknown): Promise<RegisterRepositoryResult>;
+  /** 按 projectId 返回持久化项目身份（含绑定 ID）；未知 ID 返回 not_found。 */
+  getProject(projectId: string): Promise<ProjectRecord>;
+  /** 按 projectId 返回完整仓库绑定；未知项目/无绑定返回 not_found。 */
+  getRepositoryBinding(projectId: string): Promise<RepositoryBindingRecord>;
+  /** 名称/描述/标签的 CAS 元数据编辑；匹配 expectedRevision 后返回递增 revision。 */
+  updateProjectMetadata(projectId: string, input: unknown): Promise<ProjectRecord>;
 }
 
 export interface ProjectServiceDeps {
@@ -136,6 +149,23 @@ export function createProjectService(deps: ProjectServiceDeps): ProjectService {
         gitCommonDir: inspection.gitCommonDir,
         repoIdentity: inspection.repoIdentity,
       });
+    },
+
+    async getProject(projectId: string): Promise<ProjectRecord> {
+      // projectId 形态校验由读取端口完成；未知 ID 返回结构化 not_found。
+      return stateStore.getProject(projectId);
+    },
+
+    async getRepositoryBinding(projectId: string): Promise<RepositoryBindingRecord> {
+      return stateStore.getRepositoryBinding(projectId);
+    },
+
+    async updateProjectMetadata(projectId: string, input: unknown): Promise<ProjectRecord> {
+      const operation = 'ProjectService.updateProjectMetadata';
+      // F-002 共用校验先于任何 I/O：非法字段/标签在接触存储前拒绝，错误定位到字段。
+      // 通过后交由存储端口在同一短事务内完成 CAS 更新 + 脱敏变更记录并返回新记录。
+      validateUpdateProjectInput(input, operation);
+      return stateStore.updateProject(projectId, input);
     },
   };
 }

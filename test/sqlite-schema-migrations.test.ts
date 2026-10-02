@@ -5,9 +5,10 @@
  * - 迁移描述符：唯一递增版本（自 1 起）、稳定 SHA-256 校验摘要（与 SQL 内容一致、
  *   可经 F-002 ports 契约 validateMigrationDescriptor 校验）；SQL 为自包含 DDL，
  *   不含文件系统路径、cwd 或源码位置，随构建产物（dist 内编译模块）可定位；
- * - 空临时库执行首个迁移后仅建立 projects、repository_bindings、global_settings、
- *   project_settings、artifacts、schema_migrations 六张表，不生成 Phase/Feature/Task/
- *   Run/Attempt/Batch/Session/Chat 等后续表；重复应用同一迁移真实失败；
+ * - 空临时库执行 v1 迁移后建立 projects、repository_bindings、global_settings、
+ *   project_settings、artifacts、schema_migrations 六表，不生成 Phase/Feature/Task/
+ *   Run/Attempt/Batch/Session/Chat 等后续表；v2 迁移（F-006）新增 state_events
+ *   审计表；重复应用同一迁移真实失败；
  * - 实际表/列/索引与 Drizzle Schema 一致：列名/可空性/主键/默认值经 pragma table_info
  *   与 getTableColumns/getTableConfig 交叉核对；命名 CHECK 与索引（含 UNIQUE）经
  *   sqlite_master 与 pragma index_list/index_info 核对；外键目标与 ON DELETE RESTRICT
@@ -36,13 +37,15 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 type CoreConnection = ReturnType<typeof openSqliteConnection>;
 type CoreDatabase = CoreConnection['database'];
 
-/** Drizzle Schema 声明的六张表：名称必须与设计 11 §3/§8/§9 的逻辑表一致。 */
+/** Drizzle Schema 声明的全部表：名称必须与设计 11 §3/§8/§9 的逻辑表一致。 */
 const SCHEMA_TABLES = [
   ['projects', schema.projects],
   ['repository_bindings', schema.repositoryBindings],
   ['global_settings', schema.globalSettings],
   ['project_settings', schema.projectSettings],
   ['artifacts', schema.artifacts],
+  // F-006：状态事件审计切片（设计 11 §9）。
+  ['state_events', schema.stateEvents],
   ['schema_migrations', schema.schemaMigrations],
 ] as const;
 
@@ -69,7 +72,6 @@ const FORBIDDEN_TABLE_NAMES = [
   'check_results',
   'approvals',
   'command_receipts',
-  'state_events',
   'operations',
   'notification_channels',
   'notification_deliveries',
@@ -185,6 +187,28 @@ function seedArtifact(db: CoreDatabase, id = 'art-1', projectId = 'proj-1'): voi
   ).run(id, NOW_MS, projectId, NOW_MS, VALID_SHA256);
 }
 
+function seedStateEvent(
+  db: CoreDatabase,
+  id = 'ev-1',
+  projectId: string | null = 'proj-1',
+  aggregateType = 'project',
+): void {
+  db.prepare(
+    'INSERT INTO state_events (id, created_at, revision, updated_at, project_id, sequence, event_type, aggregate_type, aggregate_id, aggregate_revision, payload, occurred_at) ' +
+      'VALUES (?, ?, 1, ?, ?, 1, ?, ?, ?, 1, ?, ?)',
+  ).run(
+    id,
+    NOW_MS,
+    NOW_MS,
+    projectId,
+    'project.metadata_updated',
+    aggregateType,
+    projectId ?? 'global',
+    JSON.stringify({ changedFields: ['displayName'] }),
+    NOW_MS,
+  );
+}
+
 // ---------------------------------------------------------------------------
 // 迁移描述符与自包含性
 // ---------------------------------------------------------------------------
@@ -227,9 +251,11 @@ describe('F-003 versioned migration descriptors', () => {
     expect(source).not.toMatch(/\bfrom\s+['"]node:(fs|path)['"]/);
     for (const migration of SQLITE_MIGRATIONS) {
       expect(migration.sql).not.toMatch(/\/Users\/|process\.cwd|__dirname|import\.meta/);
-      expect(migration.sql).toMatch(/CREATE TABLE projects/);
-      expect(migration.sql).toMatch(/CREATE TABLE schema_migrations/);
     }
+    // v1 建立基础六表；v2（F-006）建立 state_events 审计表。
+    expect(SQLITE_MIGRATIONS[0]?.sql).toMatch(/CREATE TABLE projects/);
+    expect(SQLITE_MIGRATIONS[0]?.sql).toMatch(/CREATE TABLE schema_migrations/);
+    expect(SQLITE_MIGRATIONS[1]?.sql).toMatch(/CREATE TABLE state_events/);
   });
 });
 
@@ -237,8 +263,8 @@ describe('F-003 versioned migration descriptors', () => {
 // 空临时库迁移执行与表集合
 // ---------------------------------------------------------------------------
 
-describe('F-003 first migration applied to an empty temporary database', () => {
-  it('creates exactly the six designed tables and no future-phase tables', () => {
+describe('F-003 versioned migrations applied to an empty temporary database', () => {
+  it('creates exactly the designed tables and no future-phase tables', () => {
     withMigratedDatabase((db) => {
       expect(listUserTables(db)).toEqual(EXPECTED_TABLE_NAMES);
       for (const forbidden of FORBIDDEN_TABLE_NAMES) {
@@ -261,7 +287,9 @@ describe('F-003 first migration applied to an empty temporary database', () => {
         const dbPath = join(root, 'state.db');
         const first = openSqliteConnection(dbPath);
         first.database.exec('PRAGMA foreign_keys = ON');
-        first.database.exec(SQLITE_MIGRATIONS[0]?.sql ?? '');
+        for (const migration of SQLITE_MIGRATIONS) {
+          first.database.exec(migration.sql);
+        }
         seedProject(first.database);
         seedProjectSettings(first.database);
         first.close();
@@ -375,6 +403,7 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
         'repository_bindings:(project_id)->projects.(id)',
         'project_settings:(project_id)->projects.(id)',
         'artifacts:(project_id)->projects.(id)',
+        'state_events:(project_id)->projects.(id)',
       ]);
       type FkPragmaRow = { id: number; seq: number; table: string; from: string; to: string; on_update: string; on_delete: string };
       const actualFks = new Set<string>();
@@ -776,6 +805,63 @@ const CONSTRAINT_CASES: readonly ConstraintCase[] = [
     params: [NOW_MS, NOW_MS, VALID_SHA256],
     table: 'artifacts',
     error: /CHECK constraint failed: artifacts_locator_not_empty_check/,
+  },
+  {
+    name: 'state_events.sequence 必须为正整数',
+    seed: (db) => seedProject(db),
+    statement:
+      "INSERT INTO state_events (id, created_at, revision, updated_at, project_id, sequence, event_type, aggregate_type, aggregate_id, aggregate_revision, payload, occurred_at) VALUES ('ev-x', ?, 1, ?, 'proj-1', 0, 'project.metadata_updated', 'project', 'proj-1', 1, '{}', ?)",
+    params: [NOW_MS, NOW_MS, NOW_MS],
+    table: 'state_events',
+    error: /CHECK constraint failed: state_events_sequence_positive_check/,
+  },
+  {
+    name: 'state_events.sequence 唯一',
+    seed: (db) => {
+      seedProject(db);
+      seedStateEvent(db);
+    },
+    statement:
+      "INSERT INTO state_events (id, created_at, revision, updated_at, project_id, sequence, event_type, aggregate_type, aggregate_id, aggregate_revision, payload, occurred_at) VALUES ('ev-2', ?, 1, ?, 'proj-1', 1, 'project.metadata_updated', 'project', 'proj-1', 1, '{}', ?)",
+    params: [NOW_MS, NOW_MS, NOW_MS],
+    table: 'state_events',
+    error: /UNIQUE constraint failed: state_events\.sequence/,
+  },
+  {
+    name: 'state_events.payload 必须是合法 JSON',
+    seed: (db) => seedProject(db),
+    statement:
+      "INSERT INTO state_events (id, created_at, revision, updated_at, project_id, sequence, event_type, aggregate_type, aggregate_id, aggregate_revision, payload, occurred_at) VALUES ('ev-x', ?, 1, ?, 'proj-1', 1, 'project.metadata_updated', 'project', 'proj-1', 1, 'broken', ?)",
+    params: [NOW_MS, NOW_MS, NOW_MS],
+    table: 'state_events',
+    error: /CHECK constraint failed: state_events_payload_json_object_check/,
+  },
+  {
+    name: 'state_events.payload 必须是 JSON 对象（拒绝数组）',
+    seed: (db) => seedProject(db),
+    statement:
+      "INSERT INTO state_events (id, created_at, revision, updated_at, project_id, sequence, event_type, aggregate_type, aggregate_id, aggregate_revision, payload, occurred_at) VALUES ('ev-x', ?, 1, ?, 'proj-1', 1, 'project.metadata_updated', 'project', 'proj-1', 1, '[]', ?)",
+    params: [NOW_MS, NOW_MS, NOW_MS],
+    table: 'state_events',
+    error: /CHECK constraint failed: state_events_payload_json_object_check/,
+  },
+  {
+    name: 'state_events 非全局事件不得缺 project_id',
+    seed: () => undefined,
+    statement:
+      "INSERT INTO state_events (id, created_at, revision, updated_at, project_id, sequence, event_type, aggregate_type, aggregate_id, aggregate_revision, payload, occurred_at) VALUES ('ev-x', ?, 1, ?, NULL, 1, 'project.metadata_updated', 'project', 'proj-1', 1, '{}', ?)",
+    params: [NOW_MS, NOW_MS, NOW_MS],
+    table: 'state_events',
+    error: /CHECK constraint failed: state_events_project_scope_check/,
+  },
+  {
+    name: 'state_events 缺失项目时外键失败',
+    seed: () => undefined,
+    statement:
+      "INSERT INTO state_events (id, created_at, revision, updated_at, project_id, sequence, event_type, aggregate_type, aggregate_id, aggregate_revision, payload, occurred_at) VALUES ('ev-x', ?, 1, ?, 'missing', 1, 'project.metadata_updated', 'project', 'missing', 1, '{}', ?)",
+    params: [NOW_MS, NOW_MS, NOW_MS],
+    table: 'state_events',
+    error: /FOREIGN KEY constraint failed/,
   },
   {
     name: 'schema_migrations.version 必须为正整数',

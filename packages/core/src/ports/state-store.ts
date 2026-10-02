@@ -35,6 +35,19 @@ import type { StorageEntityRef } from './errors.js';
 /** 全局当前配置单例的稳定记录 ID（core-design/11 §3：全局单例 id=global）。 */
 export const GLOBAL_SETTINGS_ID = 'global';
 
+/**
+ * 项目元数据更新事件类型（F-006）：状态事件审计切片使用的稳定 event_type。
+ * 事件只保存操作/实体/修订身份与**脱敏字段摘要**（变更字段名），不含字段值。
+ */
+export const PROJECT_METADATA_UPDATED_EVENT_TYPE = 'project.metadata_updated';
+
+/**
+ * P01-3 已写入的聚合类型（设计 11 §9）：F-006 写 `project`，F-010 将写
+ * `global_settings`/`project_settings`。DDL 只要求非空，以便执行域表加入新聚合时
+ * 无需重建审计表；写入方仍由本契约限定取值。
+ */
+export type StateEventAggregateType = 'project' | 'global_settings' | 'project_settings';
+
 /** 项目生命周期（core-design/02 §生命周期：active→archiving→archived；删除自 archived 起经 deleting）。 */
 export type ProjectStatus = 'active' | 'archiving' | 'archived' | 'deleting';
 
@@ -129,6 +142,26 @@ export function validateUpdateProjectInput(value: unknown, operation: string): V
     throw validationError(context, 'input', '必须至少提供 displayName、description 或 labels 之一');
   }
   return result;
+}
+
+/**
+ * 从已校验的更新输入派生**脱敏**变更字段名（顺序稳定；只含字段名，不含字段值），
+ * 供状态事件 payload 使用。注册、编辑与审计共用同一派生，不另立字段名集合。
+ */
+export function projectMetadataChangedFields(
+  input: ValidatedUpdateProjectInput,
+): readonly string[] {
+  const fields: string[] = [];
+  if (input.displayName !== undefined) {
+    fields.push('displayName');
+  }
+  if (input.description !== undefined) {
+    fields.push('description');
+  }
+  if (input.labels !== undefined) {
+    fields.push('labels');
+  }
+  return fields;
 }
 
 interface SettingsRecordBase {
@@ -297,7 +330,15 @@ export interface StateStore {
   createProject(input: unknown): Promise<ProjectRecord>;
   /** 不存在返回 StorageError(kind='not_found')。 */
   getProject(projectId: string): Promise<ProjectRecord>;
-  /** 元数据 CAS 更新；过期 expectedRevision 返回 conflict，原记录不变。 */
+  /**
+   * 元数据 CAS 更新；过期 expectedRevision 返回 conflict，原记录不变。
+   *
+   * P01-3 / F-006 起：成功更新会在**同一短事务内**追加一条 state_events 审计记录
+   * （event_type=`project.metadata_updated`，aggregate/项目/写后 revision 身份 + 脱敏的
+   * 变更字段名摘要，sequence 数据库内单调分配），使“变更记录”与元数据原子一致；
+   * 注入记录写入失败时元数据与 revision 一并回滚，不产生半条记录。校验失败/过期 revision
+   * 不写记录。诊断 logger 不充当权威记录。
+   */
   updateProject(projectId: string, input: unknown): Promise<ProjectRecord>;
 
   /**
