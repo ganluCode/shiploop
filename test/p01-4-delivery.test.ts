@@ -214,3 +214,126 @@ describe('F-010 P01 操作说明与验收配置', () => {
     }
   });
 });
+
+describe('F-010 阶段交付报告与脱敏证据', () => {
+  const REPORT_DOC_PATH = 'docs/acceptance/p01-4-f010-report.md';
+  const EVIDENCE_DIR = 'docs/acceptance/evidence-p01-4';
+  const reportDoc = readFileSync(resolve(REPO_ROOT, REPORT_DOC_PATH), 'utf-8');
+  const commands = JSON.parse(
+    readFileSync(resolve(REPO_ROOT, EVIDENCE_DIR, 'commands.json'), 'utf-8'),
+  ) as {
+    overallExitCode: number;
+    worktree: string;
+    commit: string;
+    steps: Array<{ id: string; exitCode: number | null; accept: { conclusion: string; pass: number; fail: number; notRun: number } | null }>;
+  };
+  const environment = JSON.parse(
+    readFileSync(resolve(REPO_ROOT, EVIDENCE_DIR, 'environment.json'), 'utf-8'),
+  ) as { node: string; npm: string; git: string; commit: string; platform: string };
+  const acceptReports = ['accept-1', 'accept-2'].map((run) =>
+    JSON.parse(readFileSync(resolve(REPO_ROOT, EVIDENCE_DIR, 'accept-runs', run, 'report.json'), 'utf-8')) as {
+      runId: string;
+      conclusion: string;
+      counts: { pass: number; fail: number; not_run: number; total: number };
+      git: { commit: string; worktree: string };
+    },
+  );
+  const allEvidenceText = [
+    reportDoc,
+    JSON.stringify(commands),
+    JSON.stringify(environment),
+    ...acceptReports.map((report) => JSON.stringify(report)),
+    readFileSync(resolve(REPO_ROOT, EVIDENCE_DIR, 'logs', 'npm-test.log'), 'utf-8'),
+  ].join('\n');
+
+  it('报告记录干净复跑七条命令、两次 accept 报告位置与结论', () => {
+    for (const command of [
+      'npm ci',
+      'npm test',
+      'npm run typecheck',
+      'npm run build',
+      'npm run verify',
+      'npm run accept:p01',
+    ]) {
+      expect(reportDoc).toContain(command);
+    }
+    for (const token of [
+      'evidence-p01-4',
+      'accept-runs/accept-1',
+      'accept-runs/accept-2',
+      '20261002T230202Z-1d56aa56',
+      '20261002T230217Z-19e2b169',
+      'pass 14',
+      'fail 0',
+      'not_run 0',
+    ]) {
+      expect(reportDoc).toContain(token);
+    }
+    // 受测 commit 明确为 40-hex，且与两条真实证据一致。
+    expect(reportDoc).toMatch(/[0-9a-f]{40}/);
+    expect(environment.commit).toBe(commands.commit);
+    expect(environment.commit).toMatch(/^[0-9a-f]{40}$/);
+    for (const report of acceptReports) {
+      expect(report.conclusion).toBe('pass');
+      expect(report.counts).toEqual({ pass: 14, fail: 0, not_run: 0, total: 14 });
+      expect(report.git.commit).toBe(commands.commit);
+      expect(report.git.worktree).toBe('clean');
+      expect(report.runId).toMatch(/^\d{8}T\d{6}Z-[0-9a-f]{8}$/);
+    }
+  });
+
+  it('复跑命令记录显示全部退出码为 0，且时间/工具有限可核验', () => {
+    expect(commands.overallExitCode).toBe(0);
+    expect(commands.worktree).toBe('clean');
+    expect(commands.steps.map((step) => step.id)).toEqual([
+      'npm-ci',
+      'npm-test',
+      'typecheck',
+      'build',
+      'verify',
+      'accept-1',
+      'accept-2',
+    ]);
+    for (const step of commands.steps) {
+      expect(step.exitCode).toBe(0);
+    }
+    expect(commands.steps.filter((step) => step.accept !== null)).toHaveLength(2);
+    expect(environment.node).toBe('v22.19.0');
+    expect(environment.npm).toBe('10.9.3');
+    expect(reportDoc).toContain('T03');
+    expect(reportDoc).toContain('T24');
+    expect(reportDoc).toContain('T26');
+    expect(reportDoc).toContain('T32');
+    expect(reportDoc).toContain('tasks.execution_config');
+    expect(reportDoc).toContain('T03');
+    expect(reportDoc).toContain('可信项目模式');
+  });
+
+  it('报告与证据不含个人/临时绝对路径或凭据', () => {
+    for (const raw of ['/Users/', '/private/var/', '/var/folders/', '/tmp/shiploop']) {
+      expect(allEvidenceText).not.toContain(raw);
+    }
+    expect(allEvidenceText).not.toContain('apiKey:');
+    expect(allEvidenceText).toContain('<SNAPSHOT-ROOT>');
+  });
+
+  it('固定证据文件与两份 accept 摘要/正文均在位', () => {
+    for (const relative of [
+      'commands.json',
+      'environment.json',
+      'logs/npm-ci.log',
+      'logs/npm-test.log',
+      'logs/typecheck.log',
+      'logs/build.log',
+      'logs/verify.log',
+      'logs/accept-1.log',
+      'logs/accept-2.log',
+      'accept-runs/accept-1/report.json',
+      'accept-runs/accept-1/summary.md',
+      'accept-runs/accept-2/report.json',
+      'accept-runs/accept-2/summary.md',
+    ]) {
+      expect(existsSync(resolve(REPO_ROOT, EVIDENCE_DIR, relative))).toBe(true);
+    }
+  });
+});

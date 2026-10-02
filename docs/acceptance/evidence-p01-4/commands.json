@@ -1,0 +1,126 @@
+{
+  "tool": "clean-snapshot-replay",
+  "schemaVersion": 1,
+  "commit": "815e9e6f3e6bb2387c2d0d949a17ffd6fb33d1dd",
+  "branch": "feat/2026-10-01-23-44-21_p01-4-p01",
+  "worktree": "clean",
+  "snapshot": "<SNAPSHOT-ROOT>",
+  "overallExitCode": 0,
+  "steps": [
+    {
+      "id": "npm-ci",
+      "label": "npm ci",
+      "npmArgs": [
+        "ci"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "durationMs": 2695,
+      "timedOut": false,
+      "logPath": "logs/npm-ci.log",
+      "accept": null,
+      "acceptReportPath": null
+    },
+    {
+      "id": "npm-test",
+      "label": "npm test",
+      "npmArgs": [
+        "test"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "durationMs": 8956,
+      "timedOut": false,
+      "logPath": "logs/npm-test.log",
+      "accept": null,
+      "acceptReportPath": null
+    },
+    {
+      "id": "typecheck",
+      "label": "npm run typecheck",
+      "npmArgs": [
+        "run",
+        "typecheck"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "durationMs": 581,
+      "timedOut": false,
+      "logPath": "logs/typecheck.log",
+      "accept": null,
+      "acceptReportPath": null
+    },
+    {
+      "id": "build",
+      "label": "npm run build",
+      "npmArgs": [
+        "run",
+        "build"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "durationMs": 459,
+      "timedOut": false,
+      "logPath": "logs/build.log",
+      "accept": null,
+      "acceptReportPath": null
+    },
+    {
+      "id": "verify",
+      "label": "npm run verify",
+      "npmArgs": [
+        "run",
+        "verify"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "durationMs": 7318,
+      "timedOut": false,
+      "logPath": "logs/verify.log",
+      "accept": null,
+      "acceptReportPath": null
+    },
+    {
+      "id": "accept-1",
+      "label": "npm run accept:p01（第 1 次）",
+      "npmArgs": [
+        "run",
+        "accept:p01"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "durationMs": 14361,
+      "timedOut": false,
+      "logPath": "logs/accept-1.log",
+      "accept": {
+        "runDir": "<SNAPSHOT-ROOT>/artifacts/acceptance/p01/20261002T230202Z-1d56aa56",
+        "conclusion": "pass",
+        "pass": 14,
+        "fail": 0,
+        "notRun": 0
+      },
+      "acceptReportPath": "accept-runs/accept-1/report.json"
+    },
+    {
+      "id": "accept-2",
+      "label": "npm run accept:p01（第 2 次，验证无残留依赖）",
+      "npmArgs": [
+        "run",
+        "accept:p01"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "durationMs": 14490,
+      "timedOut": false,
+      "logPath": "logs/accept-2.log",
+      "accept": {
+        "runDir": "<SNAPSHOT-ROOT>/artifacts/acceptance/p01/20261002T230217Z-19e2b169",
+        "conclusion": "pass",
+        "pass": 14,
+        "fail": 0,
+        "notRun": 0
+      },
+      "acceptReportPath": "accept-runs/accept-2/report.json"
+    }
+  ]
+}

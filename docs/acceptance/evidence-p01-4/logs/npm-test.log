@@ -1,0 +1,23 @@
+$ npm test
+
+
+> shiploop@0.0.0 test
+> node scripts/run-tests.ts
+
+run-tests: using local vitest@5.0.3 (<SNAPSHOT-ROOT>/node_modules/vitest/vitest.mjs) in run mode
+
+ RUN  v5.0.3 <SNAPSHOT-ROOT>
+
+P01_ENG_BUILD_SMOKE_SCAN {"dist_entry":"./dist/adapters/composition.js","declared_entries":["shiploop-core:./dist/adapters/composition.d.ts","shiploop-core:./dist/adapters/composition.js","shiploop-core:./dist/index.d.ts","shiploop-core:./dist/index.js"],"migration_resources":[{"file":"pkg/dist/adapters/sqlite/migrations.js","versions":[1,2]}],"path_scan_ok":true,"path_scan_findings":0,"file_manifest_count":109,"file_manifest_total_bytes":727366,"file_manifest_sha256":"05ff9d902453d096243a16bc4927398ce56d7ce7fa6f95404880538602eb35cb"}
+P01_ENG_BUILD_SMOKE_RUN {"dist_entry":"dist/adapters/composition.js","cwd_relative":true,"loaded_modules":["shiploop-core/assembly","shiploop-core"],"migration_resources_in_place":true,"artifact_reopened_verified":true,"user_data_writes":0}
+
+ Test Files  45 passed (45)
+      Tests  792 passed (792)
+   Start at  07:01:47
+   Duration  6.90s (tests 92%, transform 5%, import 3%)
+
+Cloning into '<TMPDIR>/shiploop-p013-f005-Eigy7t/clone-a'...
+done.
+Cloning into '<TMPDIR>/shiploop-p013-f005-Eigy7t/clone-b'...
+done.
+Preparing worktree (detached HEAD 6d05117)

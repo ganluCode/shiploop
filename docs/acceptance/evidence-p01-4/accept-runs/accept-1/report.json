@@ -1,0 +1,530 @@
+{
+  "reportSchemaVersion": 1,
+  "runId": "20261002T230202Z-1d56aa56",
+  "generatedAtUtc": "2026-10-02T23:02:17.001Z",
+  "plan": {
+    "phaseId": "2026-10-01-23-44-21_shiploop-p01",
+    "title": "P01-4 P01持久化闭环验收",
+    "scope": "FR-1/FR-2 持久化闭环、回滚/CAS、制品缺失/恢复、当前配置/项目标签（macOS 正式范围）",
+    "version": "0.2",
+    "digestSha256": "c305e02bbdf16612684a3d88a6cd4d7b7e414497305e388e6ea6e76833cbc914"
+  },
+  "git": {
+    "commit": "815e9e6f3e6bb2387c2d0d949a17ffd6fb33d1dd",
+    "worktree": "clean",
+    "branch": null,
+    "priorBaselines": [
+      {
+        "phase": "p01-engineering",
+        "branch": "feat/2026-10-01-23-44-21_p01-1",
+        "tipCommit": "44c8c30997c46b55d514bc429fcaf9337d755484"
+      },
+      {
+        "phase": "p01-state-artifacts",
+        "branch": "feat/2026-10-01-23-44-21_p01-2-sqlite",
+        "tipCommit": "74934acba07f6a33c9957ec66ad2ccec2606f828"
+      },
+      {
+        "phase": "p01-project-config",
+        "branch": "feat/2026-10-01-23-44-21_p01-3",
+        "tipCommit": "2578a66e28f49155fabdd5935bc228b9702459b5"
+      }
+    ]
+  },
+  "platform": {
+    "system": "Darwin",
+    "release": "25.6.0",
+    "arch": "arm64"
+  },
+  "tools": {
+    "node": "v22.19.0",
+    "npm": "10.9.3",
+    "git": "git version 2.50.1 (Apple Git-155)",
+    "sqlite": "3.53.4",
+    "betterSqlite3": "13.0.3",
+    "drizzleOrm": "0.45.3"
+  },
+  "schemaVersions": {
+    "settingsSchema": 2,
+    "settingsExportFormat": 1,
+    "sqliteMigrations": [
+      1,
+      2
+    ]
+  },
+  "commands": [
+    {
+      "label": "npm run verify（test/typecheck/build）",
+      "argv": [
+        "<node>",
+        "<npm-cli>",
+        "run",
+        "verify"
+      ],
+      "cwd": "<repo>",
+      "exitCode": 0,
+      "durationMs": 7378
+    },
+    {
+      "label": "持久化闭环场景（P01-FR1-NORMAL / P01-FR1-REOPEN）",
+      "argv": [
+        "<node>",
+        "scripts/run-tests.ts",
+        "test/p01-4-persistence-closed-loop.test.ts"
+      ],
+      "cwd": "<repo>",
+      "exitCode": 0,
+      "durationMs": 1233
+    },
+    {
+      "label": "SQLite 回滚与配置 CAS 场景（P01-FR1-ROLLBACK / P01-FR2-ROLLBACK / P01-FR2-CAS）",
+      "argv": [
+        "<node>",
+        "scripts/run-tests.ts",
+        "test/p01-4-sqlite-rollback-and-cas.test.ts"
+      ],
+      "cwd": "<repo>",
+      "exitCode": 0,
+      "durationMs": 1410
+    },
+    {
+      "label": "制品缺失/恢复负例场景（P01-FR2-ARTIFACT-MISSING / P01-FR2-ARTIFACT-RECOVERY）",
+      "argv": [
+        "<node>",
+        "scripts/run-tests.ts",
+        "test/p01-4-artifact-negative.test.ts"
+      ],
+      "cwd": "<repo>",
+      "exitCode": 0,
+      "durationMs": 1725
+    },
+    {
+      "label": "当前配置与项目标签场景（P01-FR2-CONFIG / P01-FR2-TAGS）",
+      "argv": [
+        "<node>",
+        "scripts/run-tests.ts",
+        "test/p01-4-config-and-tags.test.ts"
+      ],
+      "cwd": "<repo>",
+      "exitCode": 0,
+      "durationMs": 1595
+    },
+    {
+      "label": "构建产物冒烟与路径扫描（非源码 cwd 装配 + 制品关闭重开）",
+      "argv": [
+        "<node>",
+        "scripts/run-tests.ts",
+        "test/p01-4-build-smoke.test.ts"
+      ],
+      "cwd": "<repo>",
+      "exitCode": 0,
+      "durationMs": 715
+    }
+  ],
+  "checks": [
+    {
+      "id": "P01-ENG-VERIFY",
+      "group": "ENG",
+      "frBranch": "工程",
+      "summary": "npm run verify（test/typecheck/build）退出 0",
+      "testEntry": "npm run verify",
+      "expectedNegative": false,
+      "status": "pass",
+      "notRunReason": null,
+      "errorAssertion": null,
+      "sideEffectAssertion": null,
+      "durationMs": 7378,
+      "detail": "步骤退出 0：npm run verify（test/typecheck/build）",
+      "evidenceRefs": [
+        "evidence/checks/P01-ENG-VERIFY.json",
+        "evidence/commands/01-verify.log"
+      ]
+    },
+    {
+      "id": "P01-FR1-NORMAL",
+      "group": "FR1",
+      "frBranch": "FR-1 正常",
+      "summary": "临时数据根注册真实 Git 仓库、写全局/项目配置、发布固定正文制品",
+      "testEntry": "test/p01-4-persistence-closed-loop.test.ts",
+      "expectedNegative": false,
+      "status": "pass",
+      "notRunReason": null,
+      "errorAssertion": null,
+      "sideEffectAssertion": null,
+      "durationMs": 1233,
+      "detail": "步骤退出 0：持久化闭环场景（P01-FR1-NORMAL / P01-FR1-REOPEN）",
+      "evidenceRefs": [
+        "evidence/checks/P01-FR1-NORMAL.json",
+        "evidence/commands/02-scenario-closed-loop.log"
+      ]
+    },
+    {
+      "id": "P01-FR1-REOPEN",
+      "group": "FR1",
+      "frBranch": "FR-1 重开",
+      "summary": "关闭全部连接后以新装配实例打开同一数据根，逐字段一致",
+      "testEntry": "test/p01-4-persistence-closed-loop.test.ts",
+      "expectedNegative": false,
+      "status": "pass",
+      "notRunReason": null,
+      "errorAssertion": null,
+      "sideEffectAssertion": null,
+      "durationMs": 1233,
+      "detail": "步骤退出 0：持久化闭环场景（P01-FR1-NORMAL / P01-FR1-REOPEN）",
+      "evidenceRefs": [
+        "evidence/checks/P01-FR1-REOPEN.json",
+        "evidence/commands/02-scenario-closed-loop.log"
+      ]
+    },
+    {
+      "id": "P01-FR1-ROLLBACK",
+      "group": "FR1",
+      "frBranch": "FR-1 回滚",
+      "summary": "组合创建首个写入后注入确定性异常，项目及绑定/初始配置全部不存在",
+      "testEntry": "test/p01-4-sqlite-rollback-and-cas.test.ts",
+      "expectedNegative": true,
+      "status": "pass",
+      "notRunReason": null,
+      "errorAssertion": true,
+      "sideEffectAssertion": true,
+      "durationMs": 1410,
+      "detail": "步骤退出 0：SQLite 回滚与配置 CAS 场景（P01-FR1-ROLLBACK / P01-FR2-ROLLBACK / P01-FR2-CAS）；预期负例：错误断言与副作用断言由测试入口内的真实断言承载，步骤退出 0 表示两者同时成立",
+      "evidenceRefs": [
+        "evidence/checks/P01-FR1-ROLLBACK.json",
+        "evidence/commands/03-scenario-rollback-cas.log"
+      ]
+    },
+    {
+      "id": "P01-FR2-CONFIG",
+      "group": "FR2",
+      "frBranch": "FR-2 正常/拒绝",
+      "summary": "完整策略整体覆盖、当前值与来源重开读取、未知版本/runtime/不完整策略拒绝、凭据仅存引用",
+      "testEntry": "test/p01-4-config-and-tags.test.ts",
+      "expectedNegative": true,
+      "status": "pass",
+      "notRunReason": null,
+      "errorAssertion": true,
+      "sideEffectAssertion": true,
+      "durationMs": 1595,
+      "detail": "步骤退出 0：当前配置与项目标签场景（P01-FR2-CONFIG / P01-FR2-TAGS）；预期负例：错误断言与副作用断言由测试入口内的真实断言承载，步骤退出 0 表示两者同时成立",
+      "evidenceRefs": [
+        "evidence/checks/P01-FR2-CONFIG.json",
+        "evidence/commands/05-scenario-config-tags.log"
+      ]
+    },
+    {
+      "id": "P01-FR2-ROLLBACK",
+      "group": "FR2",
+      "frBranch": "FR-2 回滚",
+      "summary": "配置更新与脱敏变更记录提交之间注入失败，payload/revision/记录全部回滚",
+      "testEntry": "test/p01-4-sqlite-rollback-and-cas.test.ts",
+      "expectedNegative": true,
+      "status": "pass",
+      "notRunReason": null,
+      "errorAssertion": true,
+      "sideEffectAssertion": true,
+      "durationMs": 1410,
+      "detail": "步骤退出 0：SQLite 回滚与配置 CAS 场景（P01-FR1-ROLLBACK / P01-FR2-ROLLBACK / P01-FR2-CAS）；预期负例：错误断言与副作用断言由测试入口内的真实断言承载，步骤退出 0 表示两者同时成立",
+      "evidenceRefs": [
+        "evidence/checks/P01-FR2-ROLLBACK.json",
+        "evidence/commands/03-scenario-rollback-cas.log"
+      ]
+    },
+    {
+      "id": "P01-FR2-CAS",
+      "group": "FR2",
+      "frBranch": "FR-2 CAS",
+      "summary": "真实独立进程同一旧 revision 竞争更新恰一成功一 conflict，revision 仅增一次",
+      "testEntry": "test/p01-4-sqlite-rollback-and-cas.test.ts",
+      "expectedNegative": false,
+      "status": "pass",
+      "notRunReason": null,
+      "errorAssertion": null,
+      "sideEffectAssertion": null,
+      "durationMs": 1410,
+      "detail": "步骤退出 0：SQLite 回滚与配置 CAS 场景（P01-FR1-ROLLBACK / P01-FR2-ROLLBACK / P01-FR2-CAS）",
+      "evidenceRefs": [
+        "evidence/checks/P01-FR2-CAS.json",
+        "evidence/commands/03-scenario-rollback-cas.log"
+      ]
+    },
+    {
+      "id": "P01-FR2-TAGS",
+      "group": "FR2",
+      "frBranch": "T32 项目标签",
+      "summary": "标签规范化、非法数组拒绝、任一/全部筛选及去重计数",
+      "testEntry": "test/p01-4-config-and-tags.test.ts",
+      "expectedNegative": false,
+      "status": "pass",
+      "notRunReason": null,
+      "errorAssertion": null,
+      "sideEffectAssertion": null,
+      "durationMs": 1595,
+      "detail": "步骤退出 0：当前配置与项目标签场景（P01-FR2-CONFIG / P01-FR2-TAGS）",
+      "evidenceRefs": [
+        "evidence/checks/P01-FR2-TAGS.json",
+        "evidence/commands/05-scenario-config-tags.log"
+      ]
+    },
+    {
+      "id": "P01-FR2-ARTIFACT-MISSING",
+      "group": "FR2",
+      "frBranch": "FR-2 制品缺失",
+      "summary": "删除正文后读取/核对报告 missing/corrupt，不返回有效引用或空正文",
+      "testEntry": "test/p01-4-artifact-negative.test.ts",
+      "expectedNegative": true,
+      "status": "pass",
+      "notRunReason": null,
+      "errorAssertion": true,
+      "sideEffectAssertion": true,
+      "durationMs": 1725,
+      "detail": "步骤退出 0：制品缺失/恢复负例场景（P01-FR2-ARTIFACT-MISSING / P01-FR2-ARTIFACT-RECOVERY）；预期负例：错误断言与副作用断言由测试入口内的真实断言承载，步骤退出 0 表示两者同时成立",
+      "evidenceRefs": [
+        "evidence/checks/P01-FR2-ARTIFACT-MISSING.json",
+        "evidence/commands/04-scenario-artifact-negative.log"
+      ]
+    },
+    {
+      "id": "P01-FR2-ARTIFACT-RECOVERY",
+      "group": "FR2",
+      "frBranch": "FR-2 制品恢复",
+      "summary": "发布中断后重开核对；pending 仅 hash/size 匹配补 ready；孤儿保留/安全隔离",
+      "testEntry": "test/p01-4-artifact-negative.test.ts",
+      "expectedNegative": false,
+      "status": "pass",
+      "notRunReason": null,
+      "errorAssertion": null,
+      "sideEffectAssertion": null,
+      "durationMs": 1725,
+      "detail": "步骤退出 0：制品缺失/恢复负例场景（P01-FR2-ARTIFACT-MISSING / P01-FR2-ARTIFACT-RECOVERY）",
+      "evidenceRefs": [
+        "evidence/checks/P01-FR2-ARTIFACT-RECOVERY.json",
+        "evidence/commands/04-scenario-artifact-negative.log"
+      ]
+    },
+    {
+      "id": "P01-PHASE-FIXTURE",
+      "group": "PHASE",
+      "frBranch": "夹具失败",
+      "summary": "夹具准备失败明确 fail/not_run，阶段非零，且保留已取得证据",
+      "testEntry": "test/p01-4-acceptance-controller.test.ts",
+      "expectedNegative": false,
+      "status": "pass",
+      "notRunReason": null,
+      "errorAssertion": null,
+      "sideEffectAssertion": null,
+      "durationMs": null,
+      "detail": "夹具准备、步骤入口与环境事实采集完成",
+      "evidenceRefs": [
+        "evidence/config.json",
+        "evidence/environment.json"
+      ]
+    },
+    {
+      "id": "P01-PHASE-NOT-RUN",
+      "group": "PHASE",
+      "frBranch": "必需检查未运行",
+      "summary": "未提交结果/启动失败/超时/被跳过的必需项标 not_run，不得聚合为通过",
+      "testEntry": "test/p01-4-report-aggregation.test.ts",
+      "expectedNegative": false,
+      "status": "pass",
+      "notRunReason": null,
+      "errorAssertion": null,
+      "sideEffectAssertion": null,
+      "durationMs": null,
+      "detail": "全部必需检查均有提交结果；未提交/启动失败/超时/被跳过项均显式分类为 not_run",
+      "evidenceRefs": []
+    },
+    {
+      "id": "P01-ENG-BUILD-SMOKE",
+      "group": "ENG",
+      "frBranch": "构建产物",
+      "summary": "非源码 cwd 从 dist 装载公共入口与迁移执行闭环，无个人绝对路径/Nezha 依赖",
+      "testEntry": "test/p01-4-build-smoke.test.ts",
+      "expectedNegative": false,
+      "status": "pass",
+      "notRunReason": null,
+      "errorAssertion": null,
+      "sideEffectAssertion": null,
+      "durationMs": 715,
+      "detail": "步骤退出 0：构建产物冒烟与路径扫描（非源码 cwd 装配 + 制品关闭重开）",
+      "evidenceRefs": [
+        "evidence/checks/P01-ENG-BUILD-SMOKE.json",
+        "evidence/commands/06-build-smoke.log"
+      ]
+    },
+    {
+      "id": "P01-PHASE-REPORT",
+      "group": "PHASE",
+      "frBranch": "报告完整性",
+      "summary": "版本化报告 Schema、逐项结果、证据 path/hash/size、总体结论可验证",
+      "testEntry": "test/p01-4-report-aggregation.test.ts",
+      "expectedNegative": false,
+      "status": "pass",
+      "notRunReason": null,
+      "errorAssertion": null,
+      "sideEffectAssertion": null,
+      "durationMs": null,
+      "detail": "报告输入通过严格 Schema 校验且证据清单交叉完整；写出后重验决定阶段退出码",
+      "evidenceRefs": []
+    }
+  ],
+  "counts": {
+    "pass": 14,
+    "fail": 0,
+    "not_run": 0,
+    "total": 14
+  },
+  "conclusion": "pass",
+  "evidence": [
+    {
+      "path": "evidence/config.json",
+      "sha256": "70c06acc7f0827c02d284f747103b620b538314c34b046a1af65ef877274f5f3",
+      "sizeBytes": 1746,
+      "checkId": "P01-PHASE-FIXTURE"
+    },
+    {
+      "path": "evidence/environment.json",
+      "sha256": "a7e181a3a05e6577de4b8fd7c91582fced9e1de212451b35ade8f826dedabeb1",
+      "sizeBytes": 713,
+      "checkId": "P01-PHASE-FIXTURE"
+    },
+    {
+      "path": "evidence/commands/01-verify.log",
+      "sha256": "921e9d1b120f6fa40a221434af256292ee321aef13bdee88738e16083a98f08a",
+      "sizeBytes": 3254,
+      "checkId": null
+    },
+    {
+      "path": "evidence/checks/P01-ENG-VERIFY.json",
+      "sha256": "0d802858a09010679353c0305a54f3652eb4374d7fd3cd842314e6e668655916",
+      "sizeBytes": 285,
+      "checkId": "P01-ENG-VERIFY"
+    },
+    {
+      "path": "evidence/commands/02-scenario-closed-loop.log",
+      "sha256": "01de2541bb7ab68cf8e90e6dd8b445abd076adf26409c6d74ee4bd12043f5e93",
+      "sizeBytes": 757,
+      "checkId": null
+    },
+    {
+      "path": "evidence/checks/P01-FR1-NORMAL.json",
+      "sha256": "c6106d1bbbdb1c6e4b6a702a9229053bf468bc2f805af81db45154ed30b3d948",
+      "sizeBytes": 313,
+      "checkId": "P01-FR1-NORMAL"
+    },
+    {
+      "path": "evidence/checks/P01-FR1-REOPEN.json",
+      "sha256": "2caa0da4e9044bab51166cd96cdb1cb63811537f380b5a08522cd25e0c24a87e",
+      "sizeBytes": 313,
+      "checkId": "P01-FR1-REOPEN"
+    },
+    {
+      "path": "evidence/commands/03-scenario-rollback-cas.log",
+      "sha256": "61164d0b10bdb02d192fc90ac6bd1553212ea3e67ab9fd998061e5d7f80d2bd3",
+      "sizeBytes": 788,
+      "checkId": null
+    },
+    {
+      "path": "evidence/checks/P01-FR1-ROLLBACK.json",
+      "sha256": "fe1d9d5cc61c112db0d0d62fe3e2ce95f409319aeb649224dde0c7b8720863d4",
+      "sizeBytes": 463,
+      "checkId": "P01-FR1-ROLLBACK"
+    },
+    {
+      "path": "evidence/checks/P01-FR2-ROLLBACK.json",
+      "sha256": "18f4f51f0c7cfc593facc8f722b19fe70438a290ad419207549b2d562834ad40",
+      "sizeBytes": 463,
+      "checkId": "P01-FR2-ROLLBACK"
+    },
+    {
+      "path": "evidence/checks/P01-FR2-CAS.json",
+      "sha256": "0128f233842fff3524d10f71099da8f2b81826501f6f889072f62ce10c14e97a",
+      "sizeBytes": 312,
+      "checkId": "P01-FR2-CAS"
+    },
+    {
+      "path": "evidence/commands/04-scenario-artifact-negative.log",
+      "sha256": "cf5024e494d118ef7953a036eb368860f4d415be723f3765fc09e0986f38bfe6",
+      "sizeBytes": 788,
+      "checkId": null
+    },
+    {
+      "path": "evidence/checks/P01-FR2-ARTIFACT-MISSING.json",
+      "sha256": "2a0a0406fdd42975d474d9ce38bf717bb882064cf92b20e61c8d6c9455a7b940",
+      "sizeBytes": 481,
+      "checkId": "P01-FR2-ARTIFACT-MISSING"
+    },
+    {
+      "path": "evidence/checks/P01-FR2-ARTIFACT-RECOVERY.json",
+      "sha256": "026503754c3fab2872b309cffba1864cfc2a8f8d32c7086173f33dfe40cd68c2",
+      "sizeBytes": 336,
+      "checkId": "P01-FR2-ARTIFACT-RECOVERY"
+    },
+    {
+      "path": "evidence/commands/05-scenario-config-tags.log",
+      "sha256": "dbd1754d80f56622ecbc68f2946360e86ea0c390f1856f4b78e1ef57c0de8f60",
+      "sizeBytes": 759,
+      "checkId": null
+    },
+    {
+      "path": "evidence/checks/P01-FR2-CONFIG.json",
+      "sha256": "e75651f696fb36c6b54ce329545a25b965196b14f6123bb7e1e3df101233411b",
+      "sizeBytes": 459,
+      "checkId": "P01-FR2-CONFIG"
+    },
+    {
+      "path": "evidence/checks/P01-FR2-TAGS.json",
+      "sha256": "e2e775af6227b62d81747630d3e1b77a2fd884570093f33ec75d60413c95a099",
+      "sizeBytes": 311,
+      "checkId": "P01-FR2-TAGS"
+    },
+    {
+      "path": "evidence/commands/06-build-smoke.log",
+      "sha256": "c6c3f1ba98ca21b97a3a408f70c6b9175fed8ff342ff3bb2dab931dd75ea1840",
+      "sizeBytes": 1543,
+      "checkId": null
+    },
+    {
+      "path": "evidence/checks/P01-ENG-BUILD-SMOKE.json",
+      "sha256": "5ce02848cecf8c88d2dd590968ef4f4b9e650dcc93abcc4b4f6d0b5c64d598f0",
+      "sizeBytes": 299,
+      "checkId": "P01-ENG-BUILD-SMOKE"
+    }
+  ],
+  "stateDigests": {
+    "codeSha256": "601f11841a2cef436de9c7fb86c3b6ab79af07de765d5a8cb6c25aed483b3089"
+  },
+  "outOfScope": [
+    {
+      "id": "P01-OOS-MODEL-LIVE",
+      "capability": "Runtime/Pi SDK 模型 Live 调用",
+      "status": "not_run",
+      "note": "P01 无模型调用；本阶段不运行也不计入必需项通过数"
+    },
+    {
+      "id": "P01-OOS-STRONG-SANDBOX",
+      "capability": "强 OS 沙箱",
+      "status": "unsupported",
+      "note": "首版为可信项目模式，强沙箱按路线后续建设"
+    },
+    {
+      "id": "P01-OOS-NON-MACOS",
+      "capability": "Windows/WSL/Linux 平台验收",
+      "status": "not_run",
+      "note": "正式验收限 macOS；其他平台另行验收"
+    },
+    {
+      "id": "P01-OOS-HOST-CLI",
+      "capability": "Host 网络接口与 CLI 业务命令",
+      "status": "not_run",
+      "note": "本阶段无 Host 网络接口/CLI 业务能力，不编造未实现命令"
+    }
+  ],
+  "knownLimitations": [
+    "正式验收平台限 macOS；Windows/WSL/Linux 未验收。",
+    "可信项目模式不等于强 OS 沙箱；Pi 默认工具无强 OS 沙箱。",
+    "T03/T24/T26/T32 仅覆盖 P01 已实现子集（验收契约 §4）；完整 Task 策略复制属 P03，本阶段不建执行表。",
+    "P01-ENG-BUILD-SMOKE 由 test/p01-4-build-smoke.test.ts 承接：临时编译 dist 在非源码 cwd 装配并发布/重开制品，同时扫描个人绝对路径/被禁运行依赖/缺失迁移资源；verify 的 build 在它之前完成。"
+  ]
+}

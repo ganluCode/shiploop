@@ -1,0 +1,20 @@
+$ npm run accept:p01（第 1 次）
+
+
+> shiploop@0.0.0 accept:p01
+> node scripts/acceptance/p01-accept.ts
+
+accept:p01: STEP [1/6] RUN npm run verify（test/typecheck/build）
+accept:p01: STEP [1/6] EXIT 0 npm run verify（test/typecheck/build） (7.4s)
+accept:p01: STEP [2/6] RUN 持久化闭环场景（P01-FR1-NORMAL / P01-FR1-REOPEN）
+accept:p01: STEP [2/6] EXIT 0 持久化闭环场景（P01-FR1-NORMAL / P01-FR1-REOPEN） (1.2s)
+accept:p01: STEP [3/6] RUN SQLite 回滚与配置 CAS 场景（P01-FR1-ROLLBACK / P01-FR2-ROLLBACK / P01-FR2-CAS）
+accept:p01: STEP [3/6] EXIT 0 SQLite 回滚与配置 CAS 场景（P01-FR1-ROLLBACK / P01-FR2-ROLLBACK / P01-FR2-CAS） (1.4s)
+accept:p01: STEP [4/6] RUN 制品缺失/恢复负例场景（P01-FR2-ARTIFACT-MISSING / P01-FR2-ARTIFACT-RECOVERY）
+accept:p01: STEP [4/6] EXIT 0 制品缺失/恢复负例场景（P01-FR2-ARTIFACT-MISSING / P01-FR2-ARTIFACT-RECOVERY） (1.7s)
+accept:p01: STEP [5/6] RUN 当前配置与项目标签场景（P01-FR2-CONFIG / P01-FR2-TAGS）
+accept:p01: STEP [5/6] EXIT 0 当前配置与项目标签场景（P01-FR2-CONFIG / P01-FR2-TAGS） (1.6s)
+accept:p01: STEP [6/6] RUN 构建产物冒烟与路径扫描（非源码 cwd 装配 + 制品关闭重开）
+accept:p01: STEP [6/6] EXIT 0 构建产物冒烟与路径扫描（非源码 cwd 装配 + 制品关闭重开） (0.7s)
+accept:p01: REPORT <SNAPSHOT-ROOT>/artifacts/acceptance/p01/20261002T230202Z-1d56aa56（conclusion=pass，pass=14 fail=0 not_run=0）
+accept:p01: PASS exit 0

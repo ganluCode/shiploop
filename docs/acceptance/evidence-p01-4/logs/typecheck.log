@@ -1,0 +1,6 @@
+$ npm run typecheck
+
+
+> shiploop@0.0.0 typecheck
+> tsc -p tsconfig.json
+

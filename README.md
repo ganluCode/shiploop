@@ -118,6 +118,16 @@ P01-3 在 macOS（arm64，Node 22.19.0 / npm 10.9.3 / SQLite 3.53.4 / better-sql
 
 该验收仅限 P01-3 项目身份与当前配置服务，不代表 P01 阶段验收或任何业务 Live 验收通过；阶段最终报告与 `accept:p01` 由 P01-4 交付。
 
+### P01-4 P01 持久化闭环阶段验收（F-010）
+
+P01-4 在 macOS 干净源码快照中交付 P01 阶段验收：`npm ci` 后真实运行 `npm test`（45 files / 792 tests）/ `npm run typecheck` / `npm run build` / `npm run verify` / `npm run accept:p01`（连续两次），七条命令退出码均为 0；两次 `accept:p01` 结论均为 `pass`（`pass 14 / fail 0 / not_run 0`），生成独立 `artifacts/acceptance/p01/<run-id>/` 报告与证据。干净快照复跑发现并修复了 F-002 安全清理测试对受测仓库位置的隐式依赖（仓库根位于临时目录内时 `not_authorized`/`symlink_escape` 断言失效）。
+
+- [docs/p01-4-acceptance-contract.md](docs/p01-4-acceptance-contract.md)：P01-4 验收契约、14 个稳定必需检查 ID、FR 分支映射与报告/证据约定。
+- [docs/p01-4-operations.md](docs/p01-4-operations.md)：验收命令、配置与报告位置、结果三态与负例双断言、临时资源安全边界、干净复跑与失败复跑步骤、实际 Core 调用范围、T03/T24/T26/T32 子集。
+- [docs/acceptance/p01-4-f010-report.md](docs/acceptance/p01-4-f010-report.md)：受测 commit、干净复跑命令/退出码/耗时、两次 accept 报告位置与结论、前序回归修复、已知缺口与 `not_run`（证据在同目录 `evidence-p01-4/`，已脱敏）。
+
+该验收仅限 P01 持久化闭环（FR-1/FR-2 子集）；Host/CLI、Runtime/Pi SDK、执行表与 DAG、强 OS 沙箱、非 macOS 平台均 `not_run`/未支持，不计入 P01 必需项通过数。
+
 ### 单向依赖规则（F-004 起自动强制）
 
 工程包之间为**单向依赖**，由 `scripts/check-boundaries.ts`（`npm run check:boundaries`，并经 `npm test` 中的回归套件执行）自动强制；任何违规或无法解析的生产导入都使退出码为 1，诊断包含违规文件（含行号）与目标模块：
@@ -146,6 +156,8 @@ npm run typecheck  # 严格类型检查（strict），覆盖 vitest.config.ts、
 npm run build      # tsc -b 构建三个包到各自 dist，并运行构建入口冒烟脚本
 npm run check:boundaries  # 工作区单向依赖与 Core 分层边界检查（fail-closed），合法返回 0
 npm run verify     # 工程检查编排：锁文件预检 + npm test / typecheck / build 全绿才返回 0
+npm run accept:p01 # P01 阶段验收：verify + 四个固定场景 + 构建冒烟，写出 artifacts/acceptance/p01/<run-id>/ 报告与证据
+node scripts/acceptance/clean-snapshot-replay.ts --root . --out docs/acceptance/evidence-p01-4  # 干净已提交快照复跑七条命令（两次 accept:p01）
 ```
 
 测试夹具与子进程只使用系统临时目录和重定向后的 HOME / XDG / TMPDIR，不读写用户仓库之外的用户数据、凭据或全局 Pi 配置，也不调用真实模型；重复运行互不依赖，不留下临时文件或受测子进程。
