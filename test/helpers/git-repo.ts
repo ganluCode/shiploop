@@ -8,6 +8,8 @@
  * - git 不可用时 assertGitAvailable 直接抛错：必需驱动缺失时测试失败而非 skip
  *   （与 F-013「必需驱动/Git/检查缺失时失败而非 skip」一致）；
  * - commit 经 -c 注入一次性身份与禁用签名，不读取也不修改任何真实用户配置；
+ * - P01-4 / F-002 扩展：调用方可注入隔离的临时 HOME（`GitRunOptions.home`），
+ *   使仓库检查与 commit 子进程不读取真实用户 home 下的凭据/配置；
  * - 所有仓库目录由调用方在临时沙箱（helpers/temp-sandbox.ts）内提供，本文件不
  *   接触真实用户目录、凭据或网络（clone 仅允许本地路径来源）。
  */
@@ -33,11 +35,30 @@ export function gitTestEnv(): Record<string, string> {
   };
 }
 
+/** 可选的 Git 运行环境覆盖：注入隔离的临时 HOME / XDG 目录，不读取真实用户配置。 */
+export interface GitRunOptions {
+  /** 注入的临时 HOME（P01-4 夹具隔离）；不提供时沿用共享 gitTestEnv（无 HOME）。 */
+  readonly home?: string;
+  /** 附加环境变量（在最小环境之后合并，显式覆盖）。 */
+  readonly env?: Readonly<Record<string, string>>;
+}
+
 /** 以独立 argv 执行真实 git 并返回 stdout；失败抛错（测试失败而非 skip）。 */
-export function git(args: readonly string[], cwd: string): string {
+export function git(args: readonly string[], cwd: string, options: GitRunOptions = {}): string {
+  const env: Record<string, string> = { ...gitTestEnv() };
+  if (options.home !== undefined) {
+    env.HOME = options.home;
+    env.USERPROFILE = options.home;
+    env.XDG_CONFIG_HOME = `${options.home}/.config`;
+    env.XDG_DATA_HOME = `${options.home}/.local/share`;
+    env.XDG_CACHE_HOME = `${options.home}/.cache`;
+  }
+  if (options.env !== undefined) {
+    Object.assign(env, options.env);
+  }
   return execFileSync('git', [...args], {
     cwd,
-    env: gitTestEnv(),
+    env,
     encoding: 'utf8',
     timeout: GIT_TIMEOUT_MS,
     maxBuffer: GIT_MAX_OUTPUT_BYTES,
@@ -45,8 +66,14 @@ export function git(args: readonly string[], cwd: string): string {
 }
 
 /** 必需驱动核验：git 不可用即失败（不 skip）。返回 `git --version` 输出供证据记录。 */
-export function assertGitAvailable(): string {
-  return git(['--version'], process.cwd()).trim();
+export function assertGitAvailable(gitCommand = 'git'): string {
+  return (execFileSync(gitCommand, ['--version'], {
+    cwd: process.cwd(),
+    env: gitTestEnv(),
+    encoding: 'utf8',
+    timeout: GIT_TIMEOUT_MS,
+    maxBuffer: GIT_MAX_OUTPUT_BYTES,
+  }) as string).trim();
 }
 
 /** 在指定目录初始化真实仓库（默认分支固定为 main，保证机器间确定）。 */
@@ -60,8 +87,8 @@ export function initGitRepo(dir: string, options: { readonly bare?: boolean } = 
 }
 
 /** 暂存全部变更并以一次性注入身份提交；返回提交后的 HEAD。 */
-export function commitAll(dir: string, message: string): string {
-  git(['add', '-A'], dir);
+export function commitAll(dir: string, message: string, options: GitRunOptions = {}): string {
+  git(['add', '-A'], dir, options);
   git(
     [
       '-c',
@@ -76,6 +103,7 @@ export function commitAll(dir: string, message: string): string {
       message,
     ],
     dir,
+    options,
   );
-  return git(['rev-parse', 'HEAD'], dir).trim();
+  return git(['rev-parse', 'HEAD'], dir, options).trim();
 }
