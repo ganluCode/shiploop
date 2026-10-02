@@ -31,7 +31,8 @@ packages/core   shiploop-core   Core 领域与应用逻辑（后续 Feature 实�
 packages/host   shiploop-host   Host（后续 Feature 实现）
 packages/cli    shiploop-cli    CLI（后续 Feature 实现）
 test/           仓库级确定性测试（*.test.{js,ts}）与夹具（test/helpers，不收集为用例）
-scripts/        工程检查脚本（TypeScript，受 typecheck 覆盖）
+scripts/        工程检查脚本（TypeScript，受 typecheck 覆盖）：run-tests.ts（测试启动器）、
+                smoke-built-entries.ts（构建入口冒烟）、check-boundaries.ts（依赖边界检查）
 vitest.config.ts 确定性测试配置（一次性、fail-closed）
 ```
 
@@ -69,14 +70,22 @@ packages/cli/src/index.ts    CLI 公共入口（当前不解析 argv、不发请
 - **不假定 `@shiploop` scope 已获授权**；设计文档记录 npm 上裸名 `shiploop` 已被占用，正式发布前需另行确定 scope 与 CLI bin 命名冲突处理。
 - 当前初始版本统一为 `0.0.0`。
 
-### 单向依赖规则
+### 单向依赖规则（F-004 起自动强制）
 
-工程包之间为**单向依赖**，后续 Feature（F-004）会落实为自动检查：
+工程包之间为**单向依赖**，由 `scripts/check-boundaries.ts`（`npm run check:boundaries`，并经 `npm test` 中的回归套件执行）自动强制；任何违规或无法解析的生产导入都使退出码为 1，诊断包含违规文件（含行号）与目标模块：
 
 - **Host 可依赖 Core 公共入口**（仅经包名 `shiploop-core` 的 `exports`，不导入 Core 内部实现文件）。
-- **CLI 只在需要时依赖 Host 公共客户端或契约**；**不导入 Host 启动入口**或 Core 实现，不绕过 Host 直读 SQLite。
+- **CLI 只在需要时依赖 Host 公共客户端或契约**；**不导入 Host 启动入口**或 Core 实现，不绕过 Host 直读 SQLite，也不绕过 Host 直接依赖 Core。
 - **Core 不反向依赖** Host/CLI；Core 全树（含公共入口）不导入或重导出 Pi SDK、Electron、HTTP 框架、`better-sqlite3`、Drizzle 或 `node:http`/`node:net`。
 - 没有实际使用的依赖不为占位而添加；当前三个包均无任何运行时依赖，只有根工作区持有固定版本的开发工具（typescript、@types/node、vitest）。
+
+检查器同时强制的其余边界：
+
+- **扫描范围明确**：只读取根 `package.json` 的 workspaces 与各包清单，扫描 `packages/*/src/**/*.ts` 生产源码（排除 `node_modules`/`dist`/`*.d.ts`）；`test/`、`scripts/` 与测试夹具不在扫描范围内。覆盖静态 `import`/`export from`（含 type-only）、副作用 import、字面量 dynamic `import()` 与字面量 `require()`；非字面量 `import()`/`require()` 直接报错；注释与字符串字面量中的导入文本不误判。
+- **禁止跨包内部导入**：另一工作区包的子路径（如 `shiploop-core/src/...`）、逃逸出本包 `src` 根的相对路径，以及逃逸的已声明路径别名（`package.json` 的 `imports`、`tsconfig.json` 的 `paths`）一律拒绝；自包名引用同样拒绝。无法解析的生产导入（缺目标文件、未声明别名、未声明且不可解析的包名）明确报错，不默认为合法。
+- **禁止反向依赖与循环依赖**：清单依赖与源码导入共同构成依赖图，Core→Host/CLI、Host→CLI、CLI→Core 及任何环形引用均被拒绝（如 Host↔CLI 循环会同时报出方向违规与 `dependency-cycle`）。
+- **Core 分层方向**：`domain` 仅可自引用；`ports` 可导入 `domain`；`application` 可导入 `domain`/`ports`；`adapters` 可导入 `domain`/`application`/`ports`；公共入口与契约区（domain/application/ports）禁止导入 `adapters` 实现，也禁止绑定 Pi SDK、Electron、HTTP 框架、`better-sqlite3`、Drizzle 与 `node:http`/`node:https`/`node:net`/`node:dgram`；`adapters` 层对 `ports`/`domain` 类型、已声明第三方依赖与 Node 内置模块的合法引用不被误拒。
+- 正反夹具回归见 `test/boundary-check.test.ts`：合法单向依赖返回 0；注入 Core→Host/CLI 反向引用、Host↔CLI 循环、跨包内部导入、别名逃逸、契约区基础设施导入、分层方向违规等夹具均断言拒绝结果，且检查器在真实子进程中对本仓库返回 0。
 
 类型系统上，根 `tsconfig.json` 以 `noEmit` 统一覆盖 `test/**/*.ts`、`scripts/**/*.ts` 与三个包的 `src/**/*.ts`；各包自己的 `tsconfig.json`（`composite`、`rootDir: src`、`outDir: dist`）只负责产物构建。
 
@@ -87,6 +96,7 @@ npm ci             # 按 package-lock.json 干净安装
 npm test           # 启动器校验本地 vitest@5.0.3 后一次性执行全部测试，失败返回非零；无需先手工构建
 npm run typecheck  # 严格类型检查（strict），覆盖 vitest.config.ts、源码、测试（含 helpers）与 scripts/，不产出文件
 npm run build      # tsc -b 构建三个包到各自 dist，并运行构建入口冒烟脚本
+npm run check:boundaries  # 工作区单向依赖与 Core 分层边界检查（fail-closed），合法返回 0
 ```
 
 测试夹具与子进程只使用系统临时目录和重定向后的 HOME / XDG / TMPDIR，不读写用户仓库之外的用户数据、凭据或全局 Pi 配置，也不调用真实模型；重复运行互不依赖，不留下临时文件或受测子进程。
