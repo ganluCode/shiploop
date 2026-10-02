@@ -190,11 +190,21 @@ interface RepositoryInspector {
 ```ts
 interface PathService {
   dataRoot(): string;                                   // 已 realpath 的授权数据根
-  projectDirectory(projectId: string): string;          // <dataRoot>/projects/<projectId>
+  databaseFilePath(): string;                           // <dataRoot>/core.sqlite（设计 03 §4 布局）
+  projectDirectory(projectId: string): string;          // <dataRoot>/projects/<projectId>（纯推导）
   // 受权定位：先核验项目存在且属于调用绑定的项目范围，再返回范围内位置
   locateProjectResource(scope: { projectId: string }, resource: unknown): Promise<LocatedPath>;
 }
 ```
+
+实现落点（F-003 已交付）：契约 `packages/core/src/ports/path-service.ts`（常量
+`DATA_NAMESPACE="shiploop"` / `DATABASE_FILE_NAME="core.sqlite"`、纯推导、资源类型白名单
+`PROJECT_RESOURCE_TYPES`、`PathResolutionError`），适配器
+`packages/core/src/adapters/fs/path-service.ts`。项目存在性核验端口
+（`ProjectExistenceLookup = Pick<StateStore,'getProject'>`）由装配注入：先解析数据根，
+再打开存储，最后以 `withProjectLookup(stateStore)` 绑定；未装配时受权定位 fail-closed
+（`invalid_input`），不仅凭传入 projectId 授权。资源类型只含 `project_directory` /
+`artifacts_directory` / `staging_directory` / `artifact_content`（与 F-010 推导一致）。
 
 - **默认根**：稳定技术 `dataNamespace` + 注入的 macOS 用户目录解析，默认
   `~/Library/Application Support/shiploop`；**显式根**经校验与规范化后供 `StateStore`、

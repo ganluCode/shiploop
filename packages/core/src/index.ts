@@ -18,6 +18,7 @@ export * from './ports/settings-schema.js';
 export * from './ports/state-store.js';
 export * from './ports/artifact-store.js';
 export * from './ports/artifact-files.js';
+export * from './ports/path-service.js';
 export * from './ports/migrations.js';
 export * from './application/artifact-publish.js';
 export * from './application/artifact-verify.js';
