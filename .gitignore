@@ -4,6 +4,10 @@ logs
 !docs/acceptance/evidence-p01-1/*.log
 !docs/acceptance/evidence-p01-2/*.log
 !docs/acceptance/evidence-p01-3/*.log
+
+# Generated P01-4 acceptance reports/evidence (ephemeral run outputs; keep sanitized
+# copies under docs/acceptance/ when evidence must be versioned)
+artifacts/acceptance/p01/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
