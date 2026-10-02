@@ -1,0 +1,8 @@
+
+> shiploop@0.0.0 build
+> tsc -b packages/core/tsconfig.json packages/host/tsconfig.json packages/cli/tsconfig.json && node scripts/smoke-built-entries.ts
+
+ok shiploop-core: assembly entry ./dist/adapters/composition.js (141ms) -> core-assembly-smoke: ok project=db994192-1380-4a75-81fc-3c6bfa0d343c dataRootEntries=core.sqlite migrated=true
+ok shiploop-core: loaded ./dist/index.js (exit=0, 24ms, no side effects)
+ok shiploop-host: loaded ./dist/index.js (exit=0, 18ms, no side effects)
+ok shiploop-cli: loaded ./dist/index.js (exit=0, 18ms, no side effects)

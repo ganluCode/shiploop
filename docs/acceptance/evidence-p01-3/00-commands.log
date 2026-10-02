@@ -1,0 +1,8 @@
+# 干净快照（git archive 源码 tar 至系统临时目录，npm ci 重建依赖）六步验收：命令 / 退出码 / 耗时
+01-npm-ci exit=0 duration=3s
+02-npm-test exit=0 duration=7s
+03-typecheck exit=0 duration=1s
+04-build exit=0 duration=0s
+05-verify exit=0 duration=7s
+06-dist-assembly-closed-loop exit=0 duration=0s
+npm test 计数: Test Files  34 passed (34) / 695 passed

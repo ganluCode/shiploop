@@ -1,0 +1,19 @@
+
+> shiploop@0.0.0 test
+> node scripts/run-tests.ts
+
+run-tests: using local vitest@5.0.3 (/private<SNAPSHOT-ROOT>/node_modules/vitest/vitest.mjs) in run mode
+
+ RUN  v5.0.3 /private<SNAPSHOT-ROOT>
+
+Cloning into '/var/folders/03/09x81qt13yv6wjcklmvcs82m0000gn/T/shiploop-p013-f005-SIknOI/clone-a'...
+done.
+Cloning into '/var/folders/03/09x81qt13yv6wjcklmvcs82m0000gn/T/shiploop-p013-f005-SIknOI/clone-b'...
+done.
+Preparing worktree (detached HEAD ae0b8a1)
+
+ Test Files  34 passed (34)
+      Tests  695 passed (695)
+   Start at  05:14:52
+   Duration  5.67s (tests 88%, transform 7%, import 4%)
+

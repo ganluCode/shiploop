@@ -1,0 +1,11 @@
+node: v22.19.0
+npm: 10.9.3
+sw_vers: macOS
+sw_vers: ProductVersion: 26.6.2
+sw_vers: BuildVersion: 25G83
+arch: arm64
+better-sqlite3: 13.0.3
+sqlite: 3.53.4
+drizzle-orm: 0.45.3
+git: git version 2.50.1 (Apple Git-155)
+snapshot-commit: 60e93086b74009f3fa447c4153c0670c8417f2ff
