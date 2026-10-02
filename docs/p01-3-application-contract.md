@@ -657,6 +657,42 @@ F-013 需以真实资源覆盖（不止检查成功日志）：
 - 稳定 namespace / 路径逃逸 / 跨项目拒绝（A 不能定位 B 的制品）。
 - 关闭重开逐字段一致（项目 ID/绑定/元数据、配置 revision/来源、制品 hash/size）。
 
+F-013 定案（实施落点）：新增 `test/p01-3-fr-acceptance-closed-loop.test.ts`，三个真实资源用例——
+
+1. **集成闭环**（`openCoreApplication` 组合根 + 真实临时 Git 仓库/数据根）：注册（稳定
+   projectId/绑定/规范标签）→ 全局/项目配置创建与 CAS 更新 → 前序 ArtifactStore 制品发布 →
+   元数据编辑 → 有效配置精确值与逐项来源（完整条目整体替换、政策段级覆盖）→ 脱敏导出 →
+   受权定位 → 关闭重开后项目 ID/绑定/元数据、配置 revision/来源、制品 hash/size/正文逐字段
+   一致；真实行级证据（projects/repository_bindings/global_settings/project_settings/artifacts
+   各一条，恰三条脱敏 `state_events`，不含引用值/模型名/绝对路径/合成秘密）；源仓库指纹
+   （全部文件内容 + HEAD + status）闭环前后逐字节不变。
+2. **关键失败分支**（手动装配以便同一连接注入 TEMP TRIGGER）：非法标签/无效仓库零业务行；
+   明文秘密/旧 schemaVersion/未知 runtime（`unknown_runtime`）/强隔离（`unsupported_isolation`）
+   带定位拒绝且不回显秘密；未知项目 scope `not_found`；过期 revision CAS 冲突原值不变；
+   `state_events` 注入失败时元数据与 revision 一并回滚、修复后可继续；写项目 B 不触碰项目 A
+   的行；项目 A 范围定位项目 B 制品返回 `ownership`。
+3. **失败分支回归清单守护**：把「默认 `npm test` 必须运行的 FR 关键失败分支」固定为可执行
+   清单（下表），文件缺失/移出收集范围/被 skip/only/todo 静默跳过时守护失败。
+
+| FR 分支 | 承担测试（test/） |
+|---|---|
+| FR-1 重复路径/符号链接、同 remote 多 clone、跨进程竞争注册、绑定回滚 | `project-registration.test.ts`（+ `helpers/register-race-child.ts`） |
+| FR-1 仓库检查拒绝分支与只读性 | `repository-inspector.test.ts` |
+| FR-1 非法标签/名称/描述、元数据 CAS 与审计回滚 | `project-metadata-validation.test.ts`、`project-metadata-service.test.ts` |
+| T32 子集：标签筛选/分页/计数、防注入 | `project-tag-filter.test.ts` |
+| FR-2 配置结构/版本/秘密/政策拒绝 | `settings-schema-v2.test.ts` |
+| FR-2 能力兼容性 fail-closed、合法≠可执行 | `runtime-capabilities.test.ts` |
+| FR-2 / T03/T26 子集：insert-only、CAS、跨进程竞争、stale_dependency、审计回滚 | `configuration-service.test.ts`（+ `helpers/settings-race-child.ts`）、`sqlite-cas-and-atomicity.test.ts`（+ `helpers/cas-race-child.ts`） |
+| FR-2 / T24 子集：合并与来源 | `effective-settings-merge.test.ts` |
+| FR-2 查询/导出脱敏、损坏不回落 | `settings-query-service.test.ts` |
+| FR-3 namespace/逃逸/跨项目 | `path-service.test.ts` |
+| 装配闭环与导出面 | `core-assembly.test.ts` |
+| 工具/驱动缺失失败而非 skip | `deterministic-test-harness.test.ts`、`sqlite-storage-fixture.test.ts` |
+
+干净受控源码快照（`git archive` 源码 tar、`npm ci` 重建依赖）的六步验收证据（命令/退出码/
+耗时/通过计数）保存于 `docs/acceptance/evidence-p01-3/`（脱敏，快照路径以 `<SNAPSHOT-ROOT>`
+代替）。
+
 T03（当前配置原子性）、T26（当前配置基础）、T32（项目标签）、T24（默认/来源基础）在本 Feature
 只为**子集**，不得冒充认领、活动执行锁或 Task 策略复制的完整验收；`accept:p01` 与阶段最终报告
 由 P01-4 交付。
