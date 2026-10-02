@@ -362,19 +362,6 @@ export async function runCleanSnapshotReplay(options: ReplayOptions = {}): Promi
   mkdirSync(logsDir, { recursive: true });
   mkdirSync(acceptDir, { recursive: true });
 
-  const replacements: SanitizeReplacements = {
-    repoRoot: root,
-    snapshotRoot,
-    homeDir: homedir(),
-    tempDir: tmpdir(),
-    extra: [
-      [realpathSync(snapshotRoot), '<SNAPSHOT-ROOT>'],
-      [realpathSync(root), '<REPO-ROOT>'],
-      [realpathSync(tmpdir()), '<TMPDIR>'],
-      [realpathSync(homedir()), '<HOME>'],
-    ],
-  };
-
   const steps: ReplayStep[] = [...REPLAY_STEPS];
   const records: StepRecord[] = [];
   const evidence: string[] = [];
@@ -406,6 +393,21 @@ export async function runCleanSnapshotReplay(options: ReplayOptions = {}): Promi
         throw new Error(`干净快照中不应存在 ${residue}（快照未保持干净）`);
       }
     }
+
+    // 快照已存在后再解析 realpath 变体（macOS 上 /var 与 /private/var 并存），
+    // 保证日志与命令记录中的临时绝对路径全部被替换。
+    const replacements: SanitizeReplacements = {
+      repoRoot: root,
+      snapshotRoot,
+      homeDir: homedir(),
+      tempDir: tmpdir(),
+      extra: [
+        [realpathSync(snapshotRoot), '<SNAPSHOT-ROOT>'],
+        [realpathSync(root), '<REPO-ROOT>'],
+        [realpathSync(tmpdir()), '<TMPDIR>'],
+        [realpathSync(homedir()), '<HOME>'],
+      ],
+    };
 
     for (const step of steps) {
       log(`clean-snapshot-replay: RUN ${step.label}`);
