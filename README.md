@@ -16,6 +16,9 @@ P01-1 工程骨架：npm workspaces、固定工具链、严格 TypeScript 构建
 | TypeScript | `7.0.2` | 严格类型检查与构建编译器（`tsc -b` 产物含 `.js` / `.d.ts` / sourcemap），精确锁定；已在干净副本验证。 |
 | @types/node | `22.20.4` | Node 内置模块类型；TS 7 不再自动纳入全部 `@types/*`，由 `tsconfig.base.json` 显式 `types: ["node"]`。 |
 | Vitest | `5.0.3` | 一次性（非 watch）确定性测试运行器；设计文档建议的候选，精确锁定，不使用 `^`/`~` 范围。由 `scripts/run-tests.ts` 启动器校验本地安装的工具身份与精确版本后调用，不回退全局实现或 npx 下载。 |
+| better-sqlite3 | `13.0.3` | SQLite 驱动（P01-2 / F-001 起固定于 `shiploop-core` 适配层）。设计 `core-design/03` S2 实验（2026-10-01，macOS arm64 / Node 22.19.0）已验证的候选版本：跨进程认领、预算竞争、回滚、busy 超时、迁移回退与 WAL 在线备份用例均通过，预编译 `darwin-arm64` 原生模块本机加载成功。 |
+| drizzle-orm | `0.45.3` | SQLite ORM（P01-2 / F-001 起固定于 `shiploop-core` 适配层）。S2 实验在同一驱动上验证了 `immediate` 事务的提交/回滚；精确锁定，不使用 `^`/`~` 范围。 |
+| @types/better-sqlite3 | `9.6.0` | better-sqlite3 官方包不携带类型声明，锁定 DefinitelyTyped 对应版本；仅作为 `shiploop-core` 开发依赖。 |
 
 版本一致性由以下位置共同保证，改动时必须全部同步：
 
@@ -59,7 +62,7 @@ packages/core/src/
   domain/        状态规则、策略与值类型
   application/   命令、查询、执行编排
   ports/         StateStore、Runtime、凭据等窄接口
-  adapters/      sqlite、文件、git、pi 的具体实现（当前为空，不预置空壳）
+  adapters/      sqlite、文件、git、pi 的具体实现（P01-2 F-001 起：sqlite/connection.ts 驱动装配 + 固定版本驱动/ORM；其余为空，不预置空壳）
 packages/host/src/index.ts   Host 公共入口（当前不是启动入口，不监听端口）
 packages/cli/src/index.ts    CLI 公共入口（当前不解析 argv、不发请求）
 ```
@@ -93,8 +96,8 @@ P01-1 的干净安装与工程检查集成验收已在 macOS（arm64，Node 22.1
 
 - **Host 可依赖 Core 公共入口**（仅经包名 `shiploop-core` 的 `exports`，不导入 Core 内部实现文件）。
 - **CLI 只在需要时依赖 Host 公共客户端或契约**；**不导入 Host 启动入口**或 Core 实现，不绕过 Host 直读 SQLite，也不绕过 Host 直接依赖 Core。
-- **Core 不反向依赖** Host/CLI；Core 全树（含公共入口）不导入或重导出 Pi SDK、Electron、HTTP 框架、`better-sqlite3`、Drizzle 或 `node:http`/`node:net`。
-- 没有实际使用的依赖不为占位而添加；当前三个包均无任何运行时依赖，只有根工作区持有固定版本的开发工具（typescript、@types/node、vitest）。
+- **Core 不反向依赖** Host/CLI；Core 契约区（domain/application/ports/公共入口）不导入或重导出 Pi SDK、Electron、HTTP 框架、`better-sqlite3`、Drizzle 或 `node:http`/`node:net`；better-sqlite3 与 Drizzle 只允许出现在 `adapters` 层及装配入口（P01-2 F-001 起在 `shiploop-core` 适配层以精确版本固定安装）。
+- 没有实际使用的依赖不为占位而添加；当前仅 `shiploop-core` 持有运行时依赖（better-sqlite3@13.0.3、drizzle-orm@0.45.3，适配层装配使用，另有 @types/better-sqlite3 开发依赖），Host/CLI 无任何依赖；根工作区只持有开发工具（typescript、@types/node、vitest）。
 
 检查器同时强制的其余边界：
 
@@ -126,7 +129,7 @@ npm run verify     # 工程检查编排：锁文件预检 + npm test / typecheck
 - 前期验证依据：设计文档 `core-design/05-runtime-and-session-recording.md` 与 `core-design/09-testing-and-implementation.md` 记录的 2026-09-30 / 2026-10-01 macOS 实验，使用 **Pi Node SDK 0.84.2**（S1–S5：事件、工具、取消、存档、资源清单、Token 口径、凭据与进程组清理边界）。
 - 结论基线：Pi 默认工具不具备强 OS 沙箱，首版按用户明确授权的可信项目模式推进；Runner 强杀后的进程组停止核验须在 Host 监督逻辑中实现。
 - 本任务**不安装、不调用 Pi SDK**；正式接入时需在 adapter 层重新核验当时的 SDK 能力、套餐与认证政策，并锁定精确版本。
-- 本任务同样不引入 SQLite / better-sqlite3 / Drizzle 或任何业务持久化实现。
+- SQLite / better-sqlite3 / Drizzle 自 P01-2 / F-001 起已按上述设计基线在 Core 适配层固定引入（仅驱动与 ORM 装配，不含业务持久化 Schema、迁移或 StateStore 实现）。
 
 ## 非目标
 

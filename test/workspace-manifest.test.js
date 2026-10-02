@@ -41,7 +41,7 @@ describe('root workspace manifest', () => {
     expect(root.devDependencies.vitest).not.toMatch(/^[\^~]/);
   });
 
-  it('does not pull in Pi SDK or storage stacks in this task', () => {
+  it('keeps storage stacks out of the root manifest (they live only in the Core adapter layer)', () => {
     const allDependencies = {
       ...root.dependencies,
       ...root.devDependencies,

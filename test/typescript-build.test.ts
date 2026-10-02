@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
@@ -145,11 +145,25 @@ describe.each(packageDirs)('package build contract: %s', (dir) => {
     expect(existsSync(resolve(repoRoot, dir, 'src/index.ts'))).toBe(true);
   });
 
-  it('declares no runtime dependencies at the skeleton stage', () => {
-    for (const key of ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies']) {
-      const value = pkg[key];
-      if (value !== undefined) {
-        expect(Object.keys(asObject(value)), `${key} must stay empty until actually used`).toHaveLength(0);
+  it('declares only the pinned adapter-layer storage dependencies (P01-2 F-001) in Core, none in Host/CLI', () => {
+    const pinned = {
+      'better-sqlite3': '13.0.3',
+      'drizzle-orm': '0.45.3',
+    };
+    const pinnedDev = {
+      '@types/better-sqlite3': '9.6.0',
+    };
+    if (dir === 'packages/core') {
+      expect(pkg.dependencies).toEqual(pinned);
+      expect(pkg.devDependencies).toEqual(pinnedDev);
+      expect(pkg.peerDependencies ?? {}).toEqual({});
+      expect(pkg.optionalDependencies ?? {}).toEqual({});
+    } else {
+      for (const key of ['dependencies', 'devDependencies', 'peerDependencies', 'optionalDependencies']) {
+        const value = pkg[key];
+        if (value !== undefined) {
+          expect(Object.keys(asObject(value)), `${key} must stay empty until actually used`).toHaveLength(0);
+        }
       }
     }
   });
@@ -164,7 +178,7 @@ describe('Core layer boundaries', () => {
     expect(readme).toMatch(/禁止/);
   });
 
-  it('keeps the whole Core source tree free of vendor SDKs, HTTP and infrastructure drivers', () => {
+  it('keeps the Core contract zone free of vendor SDKs, HTTP and infrastructure drivers', () => {
     const bannedSpecifiers = [
       '@earendil-works/pi-coding-agent',
       'electron',
@@ -179,11 +193,52 @@ describe('Core layer boundaries', () => {
       'node:net',
       'node:dgram',
     ];
-    for (const { file, code } of readSourceTree('packages/core/src')) {
+    // 与 scripts/check-boundaries.ts 的规则一致：禁令覆盖契约区（domain/application/ports/公共入口）；
+    // adapters 层允许且仅允许已声明的固定版本驱动/ORM（better-sqlite3、drizzle-orm）。
+    const contractZone = readSourceTree('packages/core/src').filter(
+      ({ file }) => !file.startsWith(resolve(repoRoot, 'packages/core/src/adapters') + sep),
+    );
+    expect(
+      contractZone.length,
+      'contract zone scan must find real sources (domain/application/ports/entry)',
+    ).toBeGreaterThan(0);
+    for (const { file, code } of contractZone) {
       const specifiers = extractModuleSpecifiers(code);
       for (const banned of bannedSpecifiers) {
         const offenders = specifiers.filter((specifier) => specifierMatches(specifier, banned));
         expect(offenders, `${file} must not import ${banned}`).toHaveLength(0);
+      }
+    }
+  });
+
+  it('keeps the Core adapters layer free of every vendor module except the pinned storage stack', () => {
+    const allowed = ['better-sqlite3', 'drizzle-orm'];
+    const bannedSpecifiers = [
+      '@earendil-works/pi-coding-agent',
+      'electron',
+      'express',
+      'fastify',
+      'koa',
+      'hono',
+      'node:http',
+      'node:https',
+      'node:net',
+      'node:dgram',
+    ];
+    const adapters = readSourceTree('packages/core/src/adapters');
+    for (const { file, code } of adapters) {
+      const specifiers = extractModuleSpecifiers(code);
+      for (const banned of bannedSpecifiers) {
+        const offenders = specifiers.filter((specifier) => specifierMatches(specifier, banned));
+        expect(offenders, `${file} must not import ${banned}`).toHaveLength(0);
+      }
+      for (const specifier of specifiers) {
+        const isAllowed = allowed.some((name) => specifierMatches(specifier, name));
+        const isBuiltin = specifier.startsWith('node:') || specifier.startsWith('./');
+        expect(
+          isAllowed || isBuiltin,
+          `${file} must only import node builtins, relative sources or the pinned storage stack`,
+        ).toBe(true);
       }
     }
   });
