@@ -1,0 +1,7 @@
+
+> shiploop@0.0.0 build
+> tsc -b packages/core/tsconfig.json packages/host/tsconfig.json packages/cli/tsconfig.json && node scripts/smoke-built-entries.ts
+
+ok shiploop-core: loaded ./dist/index.js (exit=0, 25ms, no side effects)
+ok shiploop-host: loaded ./dist/index.js (exit=0, 18ms, no side effects)
+ok shiploop-cli: loaded ./dist/index.js (exit=0, 19ms, no side effects)

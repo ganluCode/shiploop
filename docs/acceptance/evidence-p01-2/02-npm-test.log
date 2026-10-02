@@ -1,0 +1,14 @@
+
+> shiploop@0.0.0 test
+> node scripts/run-tests.ts
+
+run-tests: using local vitest@5.0.3 (<SNAPSHOT-ROOT>/node_modules/vitest/vitest.mjs) in run mode
+
+ RUN  v5.0.3 <SNAPSHOT-ROOT>
+
+
+ Test Files  19 passed (19)
+      Tests  441 passed (441)
+   Start at  15:08:44
+   Duration  5.31s (tests 84%, transform 10%, import 5%)
+

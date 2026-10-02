@@ -1,0 +1,9 @@
+node: v22.19.0
+npm: 10.9.3
+sw_vers: ProductName:		macOS
+sw_vers: ProductVersion:		26.6.2
+sw_vers: BuildVersion:		25G83
+arch: arm64
+better-sqlite3: 13.0.3
+sqlite: 3.53.4
+drizzle-orm: 0.45.3

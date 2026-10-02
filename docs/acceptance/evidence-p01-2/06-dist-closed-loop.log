@@ -1,0 +1,4 @@
+dist-closed-loop: migrated fresh database from dist (version 1)
+dist-closed-loop: published artifact size=19 hash=df08113231f2fabc1808bb6268dc17b9b12bd9fd4dde65d13495c38af93674a0
+dist-closed-loop: reopened data root: id/revision/json/hash/size consistent, verifyProject verified_ready, no orphans
+dist-closed-loop: PASS (cwd=<TMPDIR> is outside the source tree)

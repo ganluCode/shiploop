@@ -1,0 +1,41 @@
+
+> shiploop@0.0.0 verify
+> node scripts/verify.ts
+
+verify: root <SNAPSHOT-ROOT>
+verify: 开发工程检查编排（非 ShipLoop 业务 Verifier，不含 accept:p01 验收）
+verify: step timeout 600000ms (finite; non-zero exit / signal / timeout all fail)
+verify: precheck package-lock.json OK (lockfileVersion 3, name "shiploop", version "0.0.0")
+verify: using npm via npm_execpath (<HOME>/.nvm/versions/node/v22.19.0/lib/node_modules/npm/bin/npm-cli.js)
+verify: [1/3] RUN npm test
+
+> shiploop@0.0.0 test
+> node scripts/run-tests.ts
+
+run-tests: using local vitest@5.0.3 (<SNAPSHOT-ROOT>/node_modules/vitest/vitest.mjs) in run mode
+
+ RUN  v5.0.3 <SNAPSHOT-ROOT>
+
+
+ Test Files  19 passed (19)
+      Tests  441 passed (441)
+   Start at  15:08:57
+   Duration  4.85s (tests 82%, transform 12%, import 6%)
+
+verify: [1/3] EXIT 0 npm test (5.1s)
+verify: [2/3] RUN npm run typecheck
+
+> shiploop@0.0.0 typecheck
+> tsc -p tsconfig.json
+
+verify: [2/3] EXIT 0 npm run typecheck (0.2s)
+verify: [3/3] RUN npm run build
+
+> shiploop@0.0.0 build
+> tsc -b packages/core/tsconfig.json packages/host/tsconfig.json packages/cli/tsconfig.json && node scripts/smoke-built-entries.ts
+
+ok shiploop-core: loaded ./dist/index.js (exit=0, 26ms, no side effects)
+ok shiploop-host: loaded ./dist/index.js (exit=0, 20ms, no side effects)
+ok shiploop-cli: loaded ./dist/index.js (exit=0, 18ms, no side effects)
+verify: [3/3] EXIT 0 npm run build (0.2s)
+verify: PASS 3/3 checks exited 0

@@ -1,0 +1,7 @@
+# 干净快照（无 node_modules/dist，源码 tar 快照到系统临时目录）六步验收：命令 / 退出码 / 耗时
+01 npm ci                    exit=0 duration=4s
+02 npm test                  exit=0 duration=6s (441 passed, 19 files)
+03 npm run typecheck         exit=0 duration=1s
+04 npm run build             exit=0 duration=1s (三入口冒烟 ok)
+05 npm run verify            exit=0 duration=6s (PASS 3/3)
+06 dist 非源码 cwd 存储闭环   exit=0 duration=1s
