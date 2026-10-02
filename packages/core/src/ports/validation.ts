@@ -47,6 +47,23 @@ export function validationError(
   });
 }
 
+/**
+ * 项目/实体元数据的长度与数量上限（P01-3 实施契约）。
+ *
+ * 设计未给出具体数值；这些值记录于 `docs/p01-3-application-contract.md` §3（复用规则）
+ * 并请求确认，注册、元数据编辑与查询筛选**共用同一套上限**，任何入口不得另立数值。
+ * 长度以 Unicode 码点计（emoji、组合字符不被错误截断判断），并先做标签规范化。
+ */
+export const PROJECT_DISPLAY_NAME_MAX_LENGTH = 200;
+export const DESCRIPTION_MAX_LENGTH = 10_000;
+export const LABEL_MAX_LENGTH = 64;
+export const LABELS_MAX_COUNT = 50;
+
+/** 以 Unicode 码点计数（String.length 计 UTF-16 代码单元，会把 emoji 记为 2）。 */
+function codePointLength(value: string): number {
+  return [...value].length;
+}
+
 /** 仅接受 JSON 可表达的普通对象（拒绝数组、null、类实例），防“任意对象冒充契约”。 */
 export function isPlainObject(value: unknown): value is Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
@@ -174,8 +191,73 @@ export function validateNonNegativeInteger(
 }
 
 /**
- * 项目标签规范化（设计 11 §10）：默认空数组；元素须为非空白字符串；
- * trim → Unicode NFC → ASCII 小写（仅 A-Z，不影响其他文字）；同一实体内去重。
+ * 项目展示名校验（注册/编辑共用）：必须是非空字符串，去除首尾空白后长度不超过
+ * `PROJECT_DISPLAY_NAME_MAX_LENGTH`。展示名不参与身份或物理路径（见 §3 复用规则）。
+ */
+export function validateProjectDisplayName(
+  value: unknown,
+  context: ValidationContext,
+  field = 'displayName',
+): string {
+  if (typeof value !== 'string') {
+    throw validationError(context, field, '必须是字符串', value);
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    throw validationError(context, field, '不允许为空或全空白');
+  }
+  if (codePointLength(trimmed) > PROJECT_DISPLAY_NAME_MAX_LENGTH) {
+    throw validationError(
+      context,
+      field,
+      `长度不得超过 ${PROJECT_DISPLAY_NAME_MAX_LENGTH} 个字符（Unicode 码点）`,
+      value,
+    );
+  }
+  return trimmed;
+}
+
+/**
+ * 项目说明校验（注册/编辑共用）：
+ * - 省略（undefined）表示“未提供”，由调用方决定默认值；
+ * - null、空字符串或全空白统一规范化为 null（空描述是合法输入，见 PRD）；
+ * - 其余字符串按原样保留（Markdown/Unicode/换行不转写），长度不超过 `DESCRIPTION_MAX_LENGTH`。
+ */
+export function validateProjectDescription(
+  value: unknown,
+  context: ValidationContext,
+  field = 'description',
+): string | null | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== 'string') {
+    throw validationError(context, field, '必须是字符串、null 或省略', value);
+  }
+  if (value.trim().length === 0) {
+    return null;
+  }
+  if (codePointLength(value) > DESCRIPTION_MAX_LENGTH) {
+    throw validationError(
+      context,
+      field,
+      `长度不得超过 ${DESCRIPTION_MAX_LENGTH} 个字符（Unicode 码点）`,
+      value,
+    );
+  }
+  return value;
+}
+
+/**
+ * 项目/实体标签规范化（设计 11 §10）：默认空数组；元素须为非空白字符串；
+ * trim → Unicode NFC → ASCII 小写（仅 A-Z，不影响其他文字）；同一实体内去重；
+ * 单个标签长度不超过 `LABEL_MAX_LENGTH`，去重后数量不超过 `LABELS_MAX_COUNT`。
+ *
+ * 注册、元数据编辑与查询筛选必须共用本函数（唯一标签规则），标签只作为不透明
+ * 检索元数据，不解释为模型、权限、状态或子级继承政策。
  */
 export function normalizeLabels(value: unknown, context: ValidationContext, field = 'labels'): string[] {
   if (value === undefined) {
@@ -196,10 +278,24 @@ export function normalizeLabels(value: unknown, context: ValidationContext, fiel
       throw validationError(context, itemField, '标签不允许为空或全空白');
     }
     const normalized = trimmed.normalize('NFC').replaceAll(/[A-Z]/g, (char) => char.toLowerCase());
+    if (codePointLength(normalized) > LABEL_MAX_LENGTH) {
+      throw validationError(
+        context,
+        itemField,
+        `标签长度不得超过 ${LABEL_MAX_LENGTH} 个字符（Unicode 码点）`,
+      );
+    }
     if (!seen.has(normalized)) {
       seen.add(normalized);
       result.push(normalized);
     }
+  }
+  if (result.length > LABELS_MAX_COUNT) {
+    throw validationError(
+      context,
+      field,
+      `标签数量不得超过 ${LABELS_MAX_COUNT} 个（去重后）`,
+    );
   }
   return result;
 }

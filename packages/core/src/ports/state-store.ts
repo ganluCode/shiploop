@@ -17,11 +17,11 @@ import { validateSettingsPayload } from './settings-schema.js';
 import type { SettingsPayload } from './settings-schema.js';
 import {
   normalizeLabels,
-  optionalNullableString,
   rejectUnknownKeys,
-  requireNonEmptyString,
   requirePlainObject,
   validateExpectedRevision,
+  validateProjectDescription,
+  validateProjectDisplayName,
   validationError,
 } from './validation.js';
 import type { ValidationContext } from './validation.js';
@@ -75,8 +75,8 @@ export function validateCreateProjectInput(value: unknown, operation: string): V
   const object = requirePlainObject(value, context, 'input');
   rejectUnknownKeys(object, ['displayName', 'description', 'labels'], context, 'input');
   return {
-    displayName: requireNonEmptyString(object.displayName, context, 'displayName'),
-    description: optionalNullableString(object.description, context, 'description') ?? null,
+    displayName: validateProjectDisplayName(object.displayName, context, 'displayName'),
+    description: validateProjectDescription(object.description, context, 'description') ?? null,
     labels: normalizeLabels(object.labels, context),
   };
 }
@@ -109,11 +109,11 @@ export function validateUpdateProjectInput(value: unknown, operation: string): V
   } = { expectedRevision };
   let hasField = false;
   if (object.displayName !== undefined) {
-    result.displayName = requireNonEmptyString(object.displayName, context, 'displayName');
+    result.displayName = validateProjectDisplayName(object.displayName, context, 'displayName');
     hasField = true;
   }
   if (object.description !== undefined) {
-    result.description = optionalNullableString(object.description, context, 'description') ?? null;
+    result.description = validateProjectDescription(object.description, context, 'description') ?? null;
     hasField = true;
   }
   if (object.labels !== undefined) {
