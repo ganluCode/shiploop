@@ -38,7 +38,9 @@ scripts/        工程检查脚本（TypeScript，受 typecheck 覆盖）：run-
                 smoke-built-entries.ts（构建入口冒烟）、check-boundaries.ts（依赖边界检查）、
                 verify.ts（fail-closed 工程检查编排，见下节）
 vitest.config.ts 确定性测试配置（一次性、fail-closed）
-docs/acceptance/  P01-1 集成验收报告与脱敏证据（F-006，见下文「集成验收报告」）
+docs/acceptance/  P01-1 / P01-2 验收报告与脱敏证据（见下文「集成验收报告」「P01-2 存储与制品」）
+docs/storage-operations.md  P01-2 存储操作与恢复说明（F-014）
+docs/p01-3-handoff.md       P01-3 接口交接（F-014）
 ```
 
 ### 确定性测试约定（F-003）
@@ -89,6 +91,16 @@ packages/cli/src/index.ts    CLI 公共入口（当前不解析 argv、不发请
 ### 集成验收报告（F-006）
 
 P01-1 的干净安装与工程检查集成验收已在 macOS（arm64，Node 22.19.0 / npm 10.9.3）上完成：由 `git archive` 生成无 `node_modules` / `dist` / 本机残留的独立源码快照，`npm ci`、`npm test`、`npm run typecheck`、`npm run build`、`npm run verify` 五条命令真实退出码均为 0；缺锁文件、无测试、失败断言、类型错误、构建失败、缺必需工具与违规依赖七类负向场景在隔离副本中全部非零拒绝；Core 公共入口在无厂商 SDK 的子进程环境中加载成功；源码、构建产物与 `npm pack` 清单无开发机路径、Harness 依赖或凭据，未执行 npm 发布。完整命令/退出码、证据相对路径、输入文档版本（SHA-256 清单）、已知缺口与 `not_run` 项见 [docs/acceptance/p01-1-f006-report.md](docs/acceptance/p01-1-f006-report.md)（证据在同目录 `evidence-p01-1/`，已脱敏）。该验收仅限工程骨架，不代表 P01 持久化或 `accept:p01` 通过。
+
+### P01-2 存储与制品落盘（F-014）
+
+P01-2 在 macOS（arm64，Node 22.19.0 / npm 10.9.3 / SQLite 3.53.4 / better-sqlite3 13.0.3 / drizzle-orm 0.45.3）上完成 SQLite 原子存储与制品落盘闭环：六张基础表（`projects`、`repository_bindings`、`global_settings`、`project_settings`、`artifacts`、`schema_migrations`）、版本化迁移与一致性备份、连接会话与有限 busy 预算、项目/配置 CAS 与原子组合写入、制品 `pending→ready/failed` 索引与受控文件发布、关闭重开后中断核对与损坏诊断。干净快照六条命令（`npm ci` / `npm test` / `npm run typecheck` / `npm run build` / `npm run verify` / dist 非源码 cwd 闭环）真实退出码全部为 0。
+
+- [docs/storage-operations.md](docs/storage-operations.md)：最小端口使用示例、`schemaVersion`/`revision` 含义、busy 预算、受控 locator、`pending`/`ready`/`failed` 与 corrupt 诊断、核对与迁移失败的恢复步骤、备份边界。
+- [docs/acceptance/p01-2-f014-report.md](docs/acceptance/p01-2-f014-report.md)：输入文档版本、实现范围、受测 commit、命令与退出码、证据相对路径、已建表/字段/约束、已知缺口与 `not_run`（证据在同目录 `evidence-p01-2/`，已脱敏）。
+- [docs/p01-3-handoff.md](docs/p01-3-handoff.md)：P01-3 可复用的项目/配置/CAS/制品端口、受控文件定位边界与待定组合根。
+
+该验收仅限 P01-2 存储与制品落盘，不代表 P01 阶段验收或任何业务 Live 验收通过。
 
 ### 单向依赖规则（F-004 起自动强制）
 

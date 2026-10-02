@@ -1,0 +1,47 @@
+# F-014 工作区回归：npm test（含文档示例核验）与 npm run verify
+# date: 2026-10-02T07:15:03Z
+# platform: macOS 26.6.2 arm64
+node: v22.19.0
+npm: 10.9.3
+
+> shiploop@0.0.0 verify
+> node scripts/verify.ts
+
+verify: root <WORKSPACE-ROOT>
+verify: 开发工程检查编排（非 ShipLoop 业务 Verifier，不含 accept:p01 验收）
+verify: step timeout 600000ms (finite; non-zero exit / signal / timeout all fail)
+verify: precheck package-lock.json OK (lockfileVersion 3, name "shiploop", version "0.0.0")
+verify: using npm via npm_execpath (<HOME>/.nvm/versions/node/v22.19.0/lib/node_modules/npm/bin/npm-cli.js)
+verify: [1/3] RUN npm test
+
+> shiploop@0.0.0 test
+> node scripts/run-tests.ts
+
+run-tests: using local vitest@5.0.3 (<WORKSPACE-ROOT>/node_modules/vitest/vitest.mjs) in run mode
+
+ RUN  v5.0.3 <WORKSPACE-ROOT>
+
+
+ Test Files  20 passed (20)
+      Tests  443 passed (443)
+   Start at  15:15:04
+   Duration  4.93s (tests 84%, transform 9%, import 6%)
+
+verify: [1/3] EXIT 0 npm test (5.3s)
+verify: [2/3] RUN npm run typecheck
+
+> shiploop@0.0.0 typecheck
+> tsc -p tsconfig.json
+
+verify: [2/3] EXIT 0 npm run typecheck (0.2s)
+verify: [3/3] RUN npm run build
+
+> shiploop@0.0.0 build
+> tsc -b packages/core/tsconfig.json packages/host/tsconfig.json packages/cli/tsconfig.json && node scripts/smoke-built-entries.ts
+
+ok shiploop-core: loaded ./dist/index.js (exit=0, 27ms, no side effects)
+ok shiploop-host: loaded ./dist/index.js (exit=0, 19ms, no side effects)
+ok shiploop-cli: loaded ./dist/index.js (exit=0, 19ms, no side effects)
+verify: [3/3] EXIT 0 npm run build (0.2s)
+verify: PASS 3/3 checks exited 0
+exit=0
