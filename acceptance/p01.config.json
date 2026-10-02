@@ -1,0 +1,57 @@
+{
+  "configVersion": 1,
+  "reportRoot": "artifacts/acceptance/p01",
+  "requiredChecks": [
+    "P01-ENG-VERIFY",
+    "P01-FR1-NORMAL",
+    "P01-FR1-REOPEN",
+    "P01-FR1-ROLLBACK",
+    "P01-FR2-CONFIG",
+    "P01-FR2-ROLLBACK",
+    "P01-FR2-CAS",
+    "P01-FR2-TAGS",
+    "P01-FR2-ARTIFACT-MISSING",
+    "P01-FR2-ARTIFACT-RECOVERY",
+    "P01-PHASE-FIXTURE",
+    "P01-PHASE-NOT-RUN",
+    "P01-ENG-BUILD-SMOKE",
+    "P01-PHASE-REPORT"
+  ],
+  "timeouts": {
+    "verifyMs": 1200000,
+    "scenarioMs": 300000,
+    "smokeMs": 120000,
+    "overallMs": 3600000
+  },
+  "maxCommandOutputBytes": 262144,
+  "plan": {
+    "phaseId": "2026-10-01-23-44-21_shiploop-p01",
+    "stepId": "p01-acceptance",
+    "title": "P01-4 P01持久化闭环验收",
+    "scope": "FR-1/FR-2 持久化闭环、回滚/CAS、制品缺失/恢复、当前配置/项目标签（macOS 正式范围）",
+    "version": "0.2",
+    "contractDoc": "docs/p01-4-acceptance-contract.md"
+  },
+  "priorBaselines": [
+    {
+      "phase": "p01-engineering",
+      "branch": "feat/2026-10-01-23-44-21_p01-1",
+      "tipCommit": "44c8c30997c46b55d514bc429fcaf9337d755484"
+    },
+    {
+      "phase": "p01-state-artifacts",
+      "branch": "feat/2026-10-01-23-44-21_p01-2-sqlite",
+      "tipCommit": "74934acba07f6a33c9957ec66ad2ccec2606f828"
+    },
+    {
+      "phase": "p01-project-config",
+      "branch": "feat/2026-10-01-23-44-21_p01-3",
+      "tipCommit": "2578a66e28f49155fabdd5935bc228b9702459b5"
+    }
+  ],
+  "schemaVersions": {
+    "settingsSchema": 2,
+    "settingsExportFormat": 1,
+    "sqliteMigrations": [1, 2]
+  }
+}
