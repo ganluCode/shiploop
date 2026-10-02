@@ -66,7 +66,7 @@ describe('F-002 public contract surface', () => {
     expect(typeof coreEntry.validateTransitionArtifactInput).toBe('function');
     expect(typeof coreEntry.validateMigrationDescriptor).toBe('function');
     expect(typeof coreEntry.normalizeLabels).toBe('function');
-    expect(coreEntry.SETTINGS_SCHEMA_VERSION).toBe(1);
+    expect(coreEntry.SETTINGS_SCHEMA_VERSION).toBe(2);
     expect(coreEntry.GLOBAL_SETTINGS_ID).toBe('global');
     expect(typeof coreEntry.StorageError).toBe('function');
   });
@@ -162,7 +162,7 @@ describe('F-002 project contract (create / read / metadata CAS)', () => {
 
 describe('F-002 current settings contract (global singleton and per-project)', () => {
   const VALID_PAYLOAD = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     strategies: { defaultStrategy: { runtime: 'pi', provider: 'anthropic', model: 'claude-sonnet' } },
   };
 
@@ -170,7 +170,7 @@ describe('F-002 current settings contract (global singleton and per-project)', (
     const harness = createHarness();
     const created = await harness.stateStore.createGlobalSettings({ payload: VALID_PAYLOAD });
     expect(created.id).toBe(GLOBAL_SETTINGS_ID);
-    expect(created.schemaVersion).toBe(1);
+    expect(created.schemaVersion).toBe(2);
     expect(created.payload).toEqual(VALID_PAYLOAD);
     expect(created.revision).toBe(1);
 
@@ -185,7 +185,7 @@ describe('F-002 current settings contract (global singleton and per-project)', (
   it('updates global settings via expectedRevision CAS without silent overwrite', async () => {
     const harness = createHarness();
     await harness.stateStore.createGlobalSettings({ payload: VALID_PAYLOAD });
-    const nextPayload = { schemaVersion: 1 };
+    const nextPayload = { schemaVersion: 2 };
     const updated = await harness.stateStore.updateGlobalSettings({ expectedRevision: 1, payload: nextPayload });
     expect(updated.revision).toBe(2);
     expect(updated.payload).toEqual(nextPayload);
@@ -204,8 +204,8 @@ describe('F-002 current settings contract (global singleton and per-project)', (
     for (const input of [
       {},
       { payload: {} },
-      { payload: { schemaVersion: 2 } },
-      { payload: { schemaVersion: 1, executionLimits: {} } },
+      { payload: { schemaVersion: 99 } },
+      { payload: { schemaVersion: 2, executionLimits: {} } },
       { payload: 'arbitrary' },
     ]) {
       const error = await expectStorageError('validation', () => harness.stateStore.createGlobalSettings(input));
@@ -231,19 +231,19 @@ describe('F-002 current settings contract (global singleton and per-project)', (
     const projectA = await createProject(harness, '项目A');
     const projectB = await createProject(harness, '项目B');
     await harness.stateStore.createProjectSettings(projectA.id, { payload: VALID_PAYLOAD });
-    await harness.stateStore.createProjectSettings(projectB.id, { payload: { schemaVersion: 1 } });
+    await harness.stateStore.createProjectSettings(projectB.id, { payload: { schemaVersion: 2 } });
 
     const settingsA = await harness.stateStore.getProjectSettings(projectA.id);
     const settingsB = await harness.stateStore.getProjectSettings(projectB.id);
     expect(settingsA.projectId).toBe(projectA.id);
     expect(settingsA.payload).toEqual(VALID_PAYLOAD);
-    expect(settingsB.payload).toEqual({ schemaVersion: 1 });
+    expect(settingsB.payload).toEqual({ schemaVersion: 2 });
 
     await expectStorageError('conflict', () =>
-      harness.stateStore.createProjectSettings(projectA.id, { payload: { schemaVersion: 1 } }),
+      harness.stateStore.createProjectSettings(projectA.id, { payload: { schemaVersion: 2 } }),
     );
     await expectStorageError('not_found', () =>
-      harness.stateStore.createProjectSettings('p-missing', { payload: { schemaVersion: 1 } }),
+      harness.stateStore.createProjectSettings('p-missing', { payload: { schemaVersion: 2 } }),
     );
 
     const updated = await harness.stateStore.updateProjectSettings(projectB.id, {
@@ -262,14 +262,14 @@ describe('F-002 current settings contract (global singleton and per-project)', (
     const broken = await expectStorageError('corrupt', () => harness.stateStore.getGlobalSettings());
     expect(broken.entity?.type).toBe('global_settings');
 
-    harness.raw.settings.get(GLOBAL_SETTINGS_ID)!.json = '{"schemaVersion":2}';
+    harness.raw.settings.get(GLOBAL_SETTINGS_ID)!.json = '{"schemaVersion":99}';
     await expectStorageError('corrupt', () => harness.stateStore.getGlobalSettings());
   });
 });
 
 describe('F-007 atomic project+settings composite create contract', () => {
   const VALID_PAYLOAD = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     strategies: { defaultStrategy: { runtime: 'pi', provider: 'anthropic', model: 'claude-sonnet' } },
   } as const;
 
@@ -293,7 +293,7 @@ describe('F-007 atomic project+settings composite create contract', () => {
     const badSettings = await expectStorageError('validation', () =>
       harness.stateStore.createProjectWithInitialSettings(
         { displayName: '不应残留' },
-        { payload: { schemaVersion: 2 } },
+        { payload: { schemaVersion: 99 } },
       ),
     );
     expect(badSettings.operation).toBe('StateStore.createProjectWithInitialSettings');

@@ -77,7 +77,7 @@ function createClock(start = 1_700_200_000_000) {
 type Clock = ReturnType<typeof createClock>;
 
 const VALID_PAYLOAD = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   strategies: {
     defaultStrategy: {
       runtime: 'pi',
@@ -89,7 +89,7 @@ const VALID_PAYLOAD = {
 };
 
 const UPDATED_PAYLOAD = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   strategies: {
     defaultStrategy: {
       runtime: 'pi',

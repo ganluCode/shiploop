@@ -32,7 +32,7 @@ describe('F-001 P01-3 应用契约文档', () => {
   });
 
   it('声明的 schemaVersion / 全局单例 ID 与实现的真实常量一致', () => {
-    expect(SETTINGS_SCHEMA_VERSION).toBe(1);
+    expect(SETTINGS_SCHEMA_VERSION).toBe(2);
     expect(GLOBAL_SETTINGS_ID).toBe('global');
     expect(contractDoc).toContain(`SETTINGS_SCHEMA_VERSION = ${SETTINGS_SCHEMA_VERSION}`);
     expect(contractDoc).toContain("global_settings.id='global'");

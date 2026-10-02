@@ -40,7 +40,7 @@ function createClock(start = 1_700_100_000_000) {
 type Clock = ReturnType<typeof createClock>;
 
 const VALID_PAYLOAD = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   strategies: {
     defaultStrategy: {
       runtime: 'pi',
@@ -242,7 +242,7 @@ describe('F-006 current settings (global singleton / per project)', () => {
       try {
         const created = await harness.store.createGlobalSettings({ payload: VALID_PAYLOAD });
         expect(created.id).toBe(GLOBAL_SETTINGS_ID);
-        expect(created.schemaVersion).toBe(1);
+        expect(created.schemaVersion).toBe(2);
         expect(created.payload).toEqual(VALID_PAYLOAD);
         expect(created.revision).toBe(1);
         expect(Number.isInteger(created.createdAtUtcMs)).toBe(true);
@@ -250,7 +250,7 @@ describe('F-006 current settings (global singleton / per project)', () => {
         expect(await harness.store.getGlobalSettings()).toEqual(created);
 
         const duplicate = await expectStorageError('conflict', () =>
-          harness.store.createGlobalSettings({ payload: { schemaVersion: 1 } }),
+          harness.store.createGlobalSettings({ payload: { schemaVersion: 2 } }),
         );
         expect(duplicate.entity).toEqual({ type: 'global_settings', id: GLOBAL_SETTINGS_ID });
         // 重复创建被拒绝：单例行数仍为 1，原 payload/revision 未被覆盖。
@@ -283,9 +283,9 @@ describe('F-006 current settings (global singleton / per project)', () => {
       try {
         for (const payload of [
           {},
-          { schemaVersion: 2 },
-          { schemaVersion: 1, unknown: true },
-          { schemaVersion: 1, strategies: { defaultStrategy: { runtime: 'pi' } } },
+          { schemaVersion: 99 },
+          { schemaVersion: 2, unknown: true },
+          { schemaVersion: 2, strategies: { defaultStrategy: { runtime: 'pi' } } },
           'not-an-object',
         ]) {
           const error = await expectStorageError('validation', () =>
@@ -313,29 +313,29 @@ describe('F-006 current settings (global singleton / per project)', () => {
 
         const created = await harness.store.createProjectSettings(projectA.id, { payload: VALID_PAYLOAD });
         expect(created.projectId).toBe(projectA.id);
-        expect(created.schemaVersion).toBe(1);
+        expect(created.schemaVersion).toBe(2);
         expect(created.payload).toEqual(VALID_PAYLOAD);
         expect(created.revision).toBe(1);
 
-        await harness.store.createProjectSettings(projectB.id, { payload: { schemaVersion: 1 } });
+        await harness.store.createProjectSettings(projectB.id, { payload: { schemaVersion: 2 } });
 
         const settingsA = await harness.store.getProjectSettings(projectA.id);
         const settingsB = await harness.store.getProjectSettings(projectB.id);
         expect(settingsA.payload).toEqual(VALID_PAYLOAD);
-        expect(settingsB.payload).toEqual({ schemaVersion: 1 });
+        expect(settingsB.payload).toEqual({ schemaVersion: 2 });
         expect(settingsA.revision).toBe(1);
         expect(settingsB.revision).toBe(1);
 
         // 每项目一条：重复创建 conflict 且原配置不变。
         const duplicate = await expectStorageError('conflict', () =>
-          harness.store.createProjectSettings(projectA.id, { payload: { schemaVersion: 1 } }),
+          harness.store.createProjectSettings(projectA.id, { payload: { schemaVersion: 2 } }),
         );
         expect(duplicate.entity).toEqual({ type: 'project_settings', projectId: projectA.id });
         expect((await harness.store.getProjectSettings(projectA.id)).payload).toEqual(VALID_PAYLOAD);
 
         // 项目不存在：FK 之外端口先给出明确 not_found。
         await expectStorageError('not_found', () =>
-          harness.store.createProjectSettings('p-missing', { payload: { schemaVersion: 1 } }),
+          harness.store.createProjectSettings('p-missing', { payload: { schemaVersion: 2 } }),
         );
         expect(countRows(harness.session, 'project_settings')).toBe(2);
       } finally {
@@ -500,14 +500,14 @@ describe('F-006 expectedRevision CAS baseline (races and failure injection: F-00
         const staleProject = await expectStorageError('conflict', () =>
           harness.store.updateProjectSettings(project.id, {
             expectedRevision: 9,
-            payload: { schemaVersion: 1 },
+            payload: { schemaVersion: 2 },
           }),
         );
         expect(staleProject.entity).toEqual({ type: 'project_settings', projectId: project.id });
         const staleGlobal = await expectStorageError('conflict', () =>
           harness.store.updateGlobalSettings({
             expectedRevision: 9,
-            payload: { schemaVersion: 1 },
+            payload: { schemaVersion: 2 },
           }),
         );
         expect(staleGlobal.entity).toEqual({ type: 'global_settings', id: GLOBAL_SETTINGS_ID });
@@ -521,15 +521,15 @@ describe('F-006 expectedRevision CAS baseline (races and failure injection: F-00
 
         const updated = await harness.store.updateProjectSettings(project.id, {
           expectedRevision: 1,
-          payload: { schemaVersion: 1 },
+          payload: { schemaVersion: 2 },
         });
         expect(updated.revision).toBe(2);
-        expect(updated.payload).toEqual({ schemaVersion: 1 });
+        expect(updated.payload).toEqual({ schemaVersion: 2 });
         expect(updated.createdAtUtcMs).toBe(afterSettings.createdAtUtcMs);
 
         const updatedGlobal = await harness.store.updateGlobalSettings({
           expectedRevision: 1,
-          payload: { schemaVersion: 1 },
+          payload: { schemaVersion: 2 },
         });
         expect(updatedGlobal.revision).toBe(2);
       } finally {
@@ -573,11 +573,11 @@ describe('F-006 expectedRevision CAS baseline (races and failure injection: F-00
         await expectStorageError('not_found', () =>
           harness.store.updateProjectSettings(project.id, {
             expectedRevision: 1,
-            payload: { schemaVersion: 1 },
+            payload: { schemaVersion: 2 },
           }),
         );
         await expectStorageError('not_found', () =>
-          harness.store.updateGlobalSettings({ expectedRevision: 1, payload: { schemaVersion: 1 } }),
+          harness.store.updateGlobalSettings({ expectedRevision: 1, payload: { schemaVersion: 2 } }),
         );
       } finally {
         harness.close();

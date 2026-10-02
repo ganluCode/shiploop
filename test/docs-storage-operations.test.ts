@@ -26,7 +26,7 @@ import { deriveArtifactFinalRelativePath } from '../packages/core/src/ports/arti
 import { createTempSandbox } from './helpers/temp-sandbox.ts';
 
 const PAYLOAD = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   strategies: {
     defaultStrategy: { runtime: 'pi', provider: 'anthropic', model: 'claude-sonnet' },
   },

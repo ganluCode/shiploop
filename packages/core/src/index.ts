@@ -15,6 +15,7 @@
 export * from './ports/errors.js';
 export * from './ports/validation.js';
 export * from './ports/settings-schema.js';
+export * from './ports/runtime-capabilities.js';
 export * from './ports/state-store.js';
 export * from './ports/artifact-store.js';
 export * from './ports/artifact-files.js';

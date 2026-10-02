@@ -6,7 +6,7 @@
  * - 校验原语：稳定 ID、SHA-256 摘要、expectedRevision（非正整数拒绝）、
  *   标签数组（trim + Unicode NFC + ASCII 小写 + 实体內去重，非法数组拒绝）、
  *   受控逻辑 locator（绝对路径 / 父目录穿越 / 空段 / 反斜杠 / NUL 拒绝）；
- * - 当前配置 Payload Schema（schemaVersion=1 的明确限定结构）：
+ * - 当前配置 Payload Schema（schemaVersion=2 的明确限定结构，F-008 显式升级）：
  *   有效最小/完整样例可往返；缺字段、类型错误、未知 schemaVersion、未知键、
  *   不完整策略条目（缺 runtime/provider/model）均拒绝——任意对象不能冒充可执行策略；
  * - 读取路径 parseStoredSettingsPayload：损坏 JSON 与未知格式返回 corrupt 而非有效配置；
@@ -169,18 +169,18 @@ describe('F-002 validation primitives', () => {
   });
 });
 
-describe('F-002 settings payload schema (bounded schemaVersion=1)', () => {
-  it('declares schema version 1 as the only supported storage format', () => {
-    expect(SETTINGS_SCHEMA_VERSION).toBe(1);
+describe('F-002/F-008 settings payload schema (bounded schemaVersion=2)', () => {
+  it('declares schema version 2 as the only supported storage format', () => {
+    expect(SETTINGS_SCHEMA_VERSION).toBe(2);
   });
 
   it('accepts the minimal payload with only schemaVersion', () => {
-    expect(validateSettingsPayload({ schemaVersion: 1 }, CONTEXT)).toEqual({ schemaVersion: 1 });
+    expect(validateSettingsPayload({ schemaVersion: 2 }, CONTEXT)).toEqual({ schemaVersion: 2 });
   });
 
   it('accepts a complete strategies section and returns a normalized deep copy', () => {
     const payload = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       strategies: {
         defaultStrategy: { runtime: 'pi', provider: 'anthropic', model: 'claude-sonnet' },
         modelMap: {
@@ -207,18 +207,19 @@ describe('F-002 settings payload schema (bounded schemaVersion=1)', () => {
 
   it.each([
     ['missing schemaVersion', {}],
-    ['unknown schemaVersion 2', { schemaVersion: 2 }],
+    ['unknown schemaVersion 3', { schemaVersion: 3 }],
+    ['previous schemaVersion 1 (F-008 显式升级后不再接受)', { schemaVersion: 1 }],
     ['schemaVersion 0', { schemaVersion: 0 }],
-    ['schemaVersion as string', { schemaVersion: '1' }],
-    ['schemaVersion 1.5', { schemaVersion: 1.5 }],
+    ['schemaVersion as string', { schemaVersion: '2' }],
+    ['schemaVersion 1.5', { schemaVersion: 2.5 }],
   ])('rejects unknown or missing schemaVersion: %s', (_label, value) => {
     expectValidationError(() => validateSettingsPayload(value, CONTEXT), 'payload.schemaVersion');
   });
 
   it.each([
-    ['undefined section not yet designed (executionLimits)', { schemaVersion: 1, executionLimits: {} }],
-    ['top-level modelMap shortcut', { schemaVersion: 1, modelMap: {} }],
-    ['arbitrary extra key', { schemaVersion: 1, anything: { goes: true } }],
+    ['top-level policy segment shortcut (executionLimits belongs under policies)', { schemaVersion: 2, executionLimits: {} }],
+    ['top-level modelMap shortcut', { schemaVersion: 2, modelMap: {} }],
+    ['arbitrary extra key', { schemaVersion: 2, anything: { goes: true } }],
   ])('rejects unknown top-level keys so arbitrary objects cannot pose as policy: %s', (_label, value) => {
     expectValidationError(() => validateSettingsPayload(value, CONTEXT), 'payload');
   });
@@ -232,30 +233,30 @@ describe('F-002 settings payload schema (bounded schemaVersion=1)', () => {
   });
 
   it.each([
-    ['unknown complexity key', { schemaVersion: 1, strategies: { modelMap: { turbo: { runtime: 'pi', provider: 'x', model: 'y' } } } }],
-    ['incomplete strategy missing model', { schemaVersion: 1, strategies: { modelMap: { low: { runtime: 'pi', provider: 'x' } } } }],
-    ['incomplete strategy missing provider', { schemaVersion: 1, strategies: { defaultStrategy: { runtime: 'pi', model: 'y' } } }],
-    ['empty runtime', { schemaVersion: 1, strategies: { defaultStrategy: { runtime: '  ', provider: 'x', model: 'y' } } }],
-    ['unknown strategy key', { schemaVersion: 1, strategies: { defaultStrategy: { runtime: 'pi', provider: 'x', model: 'y', temperature: 0.1 } } }],
-    ['non-string credentialRef', { schemaVersion: 1, strategies: { defaultStrategy: { runtime: 'pi', provider: 'x', model: 'y', credentialRef: 42 } } }],
-    ['unknown purpose key', { schemaVersion: 1, strategies: { purposeStrategies: { wizard: { runtime: 'pi', provider: 'x', model: 'y' } } } }],
-    ['agent override with invalid strategy', { schemaVersion: 1, strategies: { agentOverrides: { a: { runtime: 'pi' } } } }],
-    ['agent override with empty key', { schemaVersion: 1, strategies: { agentOverrides: { '': { runtime: 'pi', provider: 'x', model: 'y' } } } }],
-    ['strategies wrong type', { schemaVersion: 1, strategies: 'nope' }],
+    ['unknown complexity key', { schemaVersion: 2, strategies: { modelMap: { turbo: { runtime: 'pi', provider: 'x', model: 'y' } } } }],
+    ['incomplete strategy missing model', { schemaVersion: 2, strategies: { modelMap: { low: { runtime: 'pi', provider: 'x' } } } }],
+    ['incomplete strategy missing provider', { schemaVersion: 2, strategies: { defaultStrategy: { runtime: 'pi', model: 'y' } } }],
+    ['empty runtime', { schemaVersion: 2, strategies: { defaultStrategy: { runtime: '  ', provider: 'x', model: 'y' } } }],
+    ['unknown strategy key', { schemaVersion: 2, strategies: { defaultStrategy: { runtime: 'pi', provider: 'x', model: 'y', temperature: 0.1 } } }],
+    ['non-string credentialRef', { schemaVersion: 2, strategies: { defaultStrategy: { runtime: 'pi', provider: 'x', model: 'y', credentialRef: 42 } } }],
+    ['unknown purpose key', { schemaVersion: 2, strategies: { purposeStrategies: { wizard: { runtime: 'pi', provider: 'x', model: 'y' } } } }],
+    ['agent override with invalid strategy', { schemaVersion: 2, strategies: { agentOverrides: { a: { runtime: 'pi' } } } }],
+    ['agent override with empty key', { schemaVersion: 2, strategies: { agentOverrides: { '': { runtime: 'pi', provider: 'x', model: 'y' } } } }],
+    ['strategies wrong type', { schemaVersion: 2, strategies: 'nope' }],
   ])('rejects malformed strategy structure: %s', (_label, value) => {
     expectValidationError(() => validateSettingsPayload(value, CONTEXT));
   });
 
   it('rejects prototype-polluting agent override keys', () => {
     const payload = JSON.parse(
-      '{"schemaVersion":1,"strategies":{"agentOverrides":{"__proto__":{"runtime":"pi","provider":"x","model":"y"}}}}',
+      '{"schemaVersion":2,"strategies":{"agentOverrides":{"__proto__":{"runtime":"pi","provider":"x","model":"y"}}}}',
     ) as unknown;
     expectValidationError(() => validateSettingsPayload(payload, CONTEXT));
   });
 
   it('does not mutate the caller-supplied payload while validating', () => {
     const payload = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       strategies: { defaultStrategy: { runtime: 'pi', provider: 'x', model: 'y' } },
     };
     const snapshot = JSON.stringify(payload);
@@ -267,7 +268,7 @@ describe('F-002 settings payload schema (bounded schemaVersion=1)', () => {
 describe('F-002 stored settings read path (corruption diagnostics)', () => {
   it('round-trips a valid persisted payload', () => {
     const payload = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       strategies: { defaultStrategy: { runtime: 'pi', provider: 'x', model: 'y' } },
     };
     expect(parseStoredSettingsPayload(JSON.stringify(payload), CONTEXT)).toEqual(payload);
@@ -288,7 +289,7 @@ describe('F-002 stored settings read path (corruption diagnostics)', () => {
 
   it('returns a corrupt error for an unknown persisted schemaVersion', () => {
     try {
-      parseStoredSettingsPayload('{"schemaVersion":2,"strategies":{}}', CONTEXT);
+      parseStoredSettingsPayload('{"schemaVersion":99,"strategies":{}}', CONTEXT);
       throw new Error('expected corrupt error');
     } catch (error) {
       expect(isStorageError(error, 'corrupt')).toBe(true);

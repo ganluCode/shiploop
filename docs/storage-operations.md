@@ -28,8 +28,8 @@
 
 ### 2.1 schemaVersion 与 revision
 
-- **`schemaVersion`（数据格式版本）**：描述 JSON `payload` 的结构版本，当前为 `1`（`SettingsPayload`
-  只接受 `schemaVersion: 1`）。它是**数据格式门槛**，未知版本拒绝，不与并发计数混用。
+- **`schemaVersion`（数据格式版本）**：描述 JSON `payload` 的结构版本，当前为 `2`（`SettingsPayload`
+  只接受 `schemaVersion: 2`；F-008 由 1 显式升级为 2，新增 `policies` 政策子集，v1 不再接受）。它是**数据格式门槛**，未知版本拒绝，不与并发计数混用。
 - **`revision`（CAS 并发计数）**：每个可变聚合每次成功写入递增（≥1），用于 `expectedRevision`
   条件更新。过期 revision 返回 `StorageError(kind='conflict')`，原记录不变。
 - 三者分开表达：`schemaVersion`（格式）、`revision`（并发）、`version`（制品内容版本，≥1）。
@@ -106,7 +106,7 @@ const verifier = createArtifactVerifier({
 // 3) 原子组合创建项目 + 初始项目配置（无半条记录）。
 const created = await state.createProjectWithInitialSettings(
   { displayName: '示例项目', description: '可选说明', labels: ['P01 ', '示例'] },
-  { payload: { schemaVersion: 1, strategies: { defaultStrategy: { runtime: 'pi', provider: 'anthropic', model: 'claude-sonnet' } } } },
+  { payload: { schemaVersion: 2, strategies: { defaultStrategy: { runtime: 'pi', provider: 'anthropic', model: 'claude-sonnet' } } } },
 );
 
 // 4) 流式发布制品：pending 登记 → 事务外 staging 写入/同步 → hash 核验 → 不覆盖发布 → CAS ready。
@@ -149,7 +149,7 @@ session.close();
 校验规则（失败即 `StorageError(kind='validation')`，不产生持久化副作用）：
 
 - 项目/配置输入一律经运行时校验；TypeScript 类型不替代校验。
-- 当前配置只接受通过 `schemaVersion=1` 限定 Schema 的 `payload`；未知 schemaVersion / 未知键 /
+- 当前配置只接受通过 `schemaVersion=2` 限定 Schema 的 `payload`；未知 schemaVersion / 未知键 /
   不完整策略条目一律拒绝，任意对象不能冒充可执行策略。
 - 读取持久 JSON 时再次校验；损坏 JSON / 未知格式返回 `corrupt`，绝不作为有效配置返回。
 - 标签规范化：`trim → NFC → ASCII 小写 → 实体内去重`；默认空数组。

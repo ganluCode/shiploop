@@ -40,7 +40,7 @@ P01-3 其余任务（F-002 ~ F-014）应实现的接口语义，不代替任何�
 | 迁移 | `migrateSqliteStorage`、`SQLITE_MIGRATIONS`（当前唯一版本 `version=1`，六表） | `packages/core/src/adapters/sqlite/migrator.ts`、`migrations.ts` |
 | 连接会话 | `openSqliteStorageSession`（固定 PRAGMA、短同步写事务、有界 busy、幂等 close） | `packages/core/src/adapters/sqlite/session.ts` |
 | 结构化错误 | `StorageError`（`validation` / `not_found` / `conflict` / `busy` / `corrupt` / `unsupported_version` / `ownership`） | `packages/core/src/ports/errors.ts` |
-| 配置 Schema | `SETTINGS_SCHEMA_VERSION=1`、`validateSettingsPayload`、`parseStoredSettingsPayload` | `packages/core/src/ports/settings-schema.ts` |
+| 配置 Schema | `SETTINGS_SCHEMA_VERSION`、`validateSettingsPayload`、`parseStoredSettingsPayload`（F-008 由 1 显式升级为 2，见 §5.1） | `packages/core/src/ports/settings-schema.ts` |
 | 运行时校验原语 | `normalizeLabels`、`validateStableId`、`validateExpectedRevision`、`validateArtifactLocator` 等 | `packages/core/src/ports/validation.ts` |
 
 P01-3 建立在这些端口之上，不重建脚手架；F-002 ~ F-012 只做**增量**扩展（见 §7、§8）。
@@ -334,24 +334,56 @@ interface ConfigurationService {
 - 校验涉及的全局与项目当前配置来自**一致性视图**（同一事务/同一读取快照）。
 - 记录落点见 §6，与配置写入同事务；失败回滚。
 
+F-008 定案（实施契约；版本化校验与能力区分）：
+
+- **显式升级 schemaVersion 1 → 2**：v2 在 v1 的 `strategies` 结构之上新增**本阶段确认的
+  政策子集** `policies`（见 §5.1）；v1 payload 一律拒绝（读取持久数据时为 `corrupt`），
+  旧版本不被静默误读（§7.2）。
+- **校验分两层**：存储端口侧只做 `validateSettingsPayload` 结构/政策/凭据引用校验（纯函数，
+  适配器无法接触能力目录）；runtime/provider/model **兼容性检查**在应用层经
+  `ports/runtime-capabilities.ts` 的 `RuntimeCapabilityCatalog`（可信装配注入的窄能力描述）
+  完成——不存在封闭厂商枚举、不查询网络、不导入 Pi SDK；能力目录为空时 fail-closed。
+- **合法性 ≠ 可执行**：`assessSettingsConfiguration` 区分 configured/executable；P01 未装配
+  Runner/认证/模型执行能力，`executable` 恒为 false；未提供策略返回明确
+  `no_strategy_configured`（未配置/不可执行）。
+- **scope 校验**：`validateSettingsScope`（global 单例 / project 携带稳定 projectId），
+  非法 scope 先于任何 I/O 拒绝。
+- **凭据引用卫生**：`credentialRef`/`endpointRef` 只按引用字符串校验（拒绝带凭据 URL、
+  空白/控制字符、超长）；明文 `apiKey`/`token`/`password` 等字段作为未知键拒绝，
+  错误不回显秘密值；`envAllowlist` 只接受非敏感环境变量名（秘密形态名称拒绝）。
+
 ---
 
 ## 5. 配置语义（明确规则）
 
 ### 5.1 scope 与 schemaVersion
 
-- `scope`：`global`（单例默认）或 `project`（带 `projectId`，每项目一条覆盖）。
-- `schemaVersion`：当前唯一支持 `SETTINGS_SCHEMA_VERSION = 1`
+- `scope`：`global`（单例默认）或 `project`（带 `projectId`，每项目一条覆盖），由
+  `validateSettingsScope` 校验。
+- `schemaVersion`：**F-008 起当前唯一支持 `SETTINGS_SCHEMA_VERSION = 2`**
   （`packages/core/src/ports/settings-schema.ts`）。它是 **payload 数据格式门槛**，与 `revision`
   分离；未知版本一律 `StorageError(kind='validation')`（读取持久数据时为 `corrupt`）。
-- payload v1 顶层仅允许 `schemaVersion` 与 `strategies`，未知键一律拒绝；`strategies` 允许
-  `defaultStrategy` / `modelMap` / `purposeStrategies` / `agentOverrides`（白名单）。
-  其它政策段（`verification`/`executionLimits`/`securityPolicy`/`memoryPolicy`/`deliveryPolicy`）
-  **未定义即不属于合法 payload**，不得以任意 JSON 冒充可执行配置；需要时由 F-008 显式升级
-  schemaVersion 并补齐校验（见 §9 待核对项）。
+  v1 payload 自 F-008 起不再接受（显式升级，见 §9-2）。
+- payload v2 顶层仅允许 `schemaVersion`、`strategies` 与 `policies`，未知键一律拒绝；
+  `strategies` 允许 `defaultStrategy` / `modelMap` / `purposeStrategies` / `agentOverrides`（白名单）。
+- **F-008 确认的政策子集**（`policies`，全部可选；空对象表示不覆盖）：
+  - `executionLimits`：`maxConcurrentWorks`（1..16）、`workTimeoutMs`（1000..86400000）、
+    `maxAttemptsPerTask`（1..100）为有界整数，越界/非整数/错误类型带字段定位拒绝；
+    `envAllowlist` 只接受**非敏感环境变量名**（形态 `[A-Za-z_][A-Za-z0-9_]*`，去重后 ≤64，
+    含 SECRET/TOKEN/PASSWORD/CREDENTIAL/KEY/PRIVATE/AUTH 等分段的名称拒绝）——只含变量名，
+    绝不含值（设计 06 §3：环境变量按允许列表，不继承整个 Host 环境）。
+  - `verification`：`requireChecksBeforeDone` 仅接受布尔值。
+  - `securityPolicy`：`isolation` 仅接受 `trusted_project`（首版可信项目模式）；
+    要求强隔离（`strong_sandbox` 等）明确拒绝（`unsupported_isolation`），**不静默降级**。
+  - 其它政策段（`memoryPolicy`/`deliveryPolicy`/Agent 职责模式等）**未定义即不属于合法
+    payload**，未知政策段一律拒绝而非静默忽略；不得以任意 JSON 冒充可执行配置。
 - 完整策略条目必须同时具备 `runtime`/`provider`/`model`，缺字段即报错，不从其它条目补齐；
-  `credentialRef`/`endpointRef` 只按**引用字符串**校验与透传，不解析、不读环境/Keychain。
+  `credentialRef`/`endpointRef` 只按**引用字符串**校验与透传（非空、≤256 码点、无空白/控制
+  字符、拒绝带凭据 URL `credential_in_url`），不解析、不读环境/Keychain。
 - 复杂度键仅 `low|medium|high`；用途键仅 `planner|judge|review`。非法键拒绝。
+- runtime/provider/model **兼容性**不属于结构校验：由应用层经可信装配注入的
+  `RuntimeCapabilityCatalog` 窄能力描述核验（未知 runtime/不兼容 provider/未列举 model
+  带字段定位拒绝），不建封闭厂商枚举。
 
 ### 5.2 首次创建与 expectedRevision 约定
 
@@ -475,8 +507,10 @@ Vitest `5.0.3`、`better-sqlite3` `13.0.3`、`drizzle-orm` `0.45.3`、
 
 ### 7.2 schemaVersion
 
-配置 payload 沿用 `1`；如需新增政策段，必须显式提升 `SETTINGS_SCHEMA_VERSION` 并同步
-`validateSettingsPayload`/`parseStoredSettingsPayload`，不得让旧数据被新版本静默误读。
+配置 payload 自 F-008 起为 `2`（v1 的 `strategies` 结构 + 新增 `policies` 政策子集）。v1
+payload 与 v1 持久数据一律拒绝（读取为 `corrupt`），不被新版本静默误读；本阶段无生产存量
+数据，未提供 v1→v2 数据迁移。如需再增政策段，必须显式提升 `SETTINGS_SCHEMA_VERSION` 并同步
+`validateSettingsPayload`/`parseStoredSettingsPayload`。
 
 ### 7.3 结构化错误
 
@@ -521,8 +555,13 @@ T03（当前配置原子性）、T26（当前配置基础）、T32（项目标�
    P01-3 以「可空 + CHECK（仅 `global_settings` 允许空）」表达，属显式偏离，**请求核对**。
    （F-006 已按此落地为迁移 v2；项目范围事件均带 `project_id`。）
 2. **配置政策段**：设计 11 §3.1 列出 `verification`/`executionLimits`/`securityPolicy`/
-   `memoryPolicy`/`deliveryPolicy`，而当前 v1 Schema 只含 `strategies`。P01-3 不静默接受未知键；
-   若本阶段需要政策子集，由 F-008 显式升级 schemaVersion 并补齐校验，**请求确认政策子集范围**。
+   `memoryPolicy`/`deliveryPolicy`。**F-008 已定案**：显式升级 schemaVersion 1→2，确认本阶段
+   政策子集为 `executionLimits`（maxConcurrentWorks 1..16 / workTimeoutMs 1000..86400000 /
+   maxAttemptsPerTask 1..100 / envAllowlist 非敏感变量名 ≤64）、`verification`
+   （requireChecksBeforeDone 布尔）与 `securityPolicy`（isolation 仅 trusted_project；
+   强隔离等未支持能力明确拒绝不降级）。`memoryPolicy`/`deliveryPolicy`/Agent 职责模式段仍未
+   定义即非法。数值上限与变量名启发式为实施契约值（设计未给定），**请求核对**；若设计给出
+   不同范围，应由显式变更同步常量、文档与测试。
 3. **数据 namespace 值**：设计 01 §4/05 §161 要求「稳定技术 namespace 及精确系统路径在发布前
    确定」。P01-3 暂定 `dataNamespace = "shiploop"`、macOS 默认根
    `~/Library/Application Support/shiploop`（从注入的用户目录解析，不硬编码绝对路径）。

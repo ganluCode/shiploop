@@ -84,7 +84,7 @@ async function main(): Promise<void> {
       .updateProjectSettings(config.projectId, {
         expectedRevision: config.expectedRevision,
         payload: {
-          schemaVersion: 1,
+          schemaVersion: 2,
           strategies: {
             defaultStrategy: {
               runtime: 'pi',

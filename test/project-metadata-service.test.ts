@@ -149,7 +149,7 @@ async function registerRepo(
 }
 
 const VALID_PAYLOAD = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   strategies: {
     defaultStrategy: { runtime: 'pi', provider: 'anthropic', model: 'claude-sonnet' },
   },

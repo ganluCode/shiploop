@@ -48,7 +48,7 @@ type Clock = ReturnType<typeof createClock>;
 
 function payloadWithProvider(provider: string, credentialRef?: string): SettingsPayload {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     strategies: {
       defaultStrategy: {
         runtime: 'pi',
@@ -309,7 +309,7 @@ describe('F-007 atomic composite create (project + initial settings)', () => {
         expect(project.labels).toEqual(['core']);
         expect(settings.projectId).toBe(project.id);
         expect(settings.revision).toBe(1);
-        expect(settings.schemaVersion).toBe(1);
+        expect(settings.schemaVersion).toBe(2);
         expect(settings.createdAtUtcMs).toBe(project.createdAtUtcMs);
 
         expect(await harness.store.getProject(project.id)).toEqual(project);

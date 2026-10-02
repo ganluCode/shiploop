@@ -42,7 +42,7 @@ const BODY_TEXT = '{"content":"制品正文哨兵 🚀"}';
 
 /** F-002 Payload Schema 的最小合法配置。 */
 const PAYLOAD: SettingsPayload = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   strategies: {
     defaultStrategy: { runtime: 'pi', provider: 'anthropic', model: 'claude-sonnet' },
   },
