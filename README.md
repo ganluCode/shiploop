@@ -32,7 +32,8 @@ packages/host   shiploop-host   Host（后续 Feature 实现）
 packages/cli    shiploop-cli    CLI（后续 Feature 实现）
 test/           仓库级确定性测试（*.test.{js,ts}）与夹具（test/helpers，不收集为用例）
 scripts/        工程检查脚本（TypeScript，受 typecheck 覆盖）：run-tests.ts（测试启动器）、
-                smoke-built-entries.ts（构建入口冒烟）、check-boundaries.ts（依赖边界检查）
+                smoke-built-entries.ts（构建入口冒烟）、check-boundaries.ts（依赖边界检查）、
+                verify.ts（fail-closed 工程检查编排，见下节）
 vitest.config.ts 确定性测试配置（一次性、fail-closed）
 ```
 
@@ -70,6 +71,17 @@ packages/cli/src/index.ts    CLI 公共入口（当前不解析 argv、不发请
 - **不假定 `@shiploop` scope 已获授权**；设计文档记录 npm 上裸名 `shiploop` 已被占用，正式发布前需另行确定 scope 与 CLI bin 命名冲突处理。
 - 当前初始版本统一为 `0.0.0`。
 
+### 工程检查编排 verify（F-005）
+
+`npm run verify` 实际执行 `node scripts/verify.ts`，这是**开发工程检查编排**，不是未来 ShipLoop 的业务 Verifier；本阶段**不提供 accept:p01 验收命令**，verify 通过不代表任何业务验收。编排 fail-fast，输出中可核对每个检查命令、退出码与失败项：
+
+- **预检（不启动子命令）**：根 `package.json` 可解析且声明 `test` / `typecheck` / `build` 三个脚本（缺失即失败，检查不得跳过）；`package-lock.json` 存在、可解析、`lockfileVersion` 有效、`name`/`version` 与根清单一致。预检不看 `node_modules`，锁文件缺失不会被“依赖已安装”的表象掩盖。
+- **串联真实子命令**：依次运行 `npm test`、`npm run typecheck`、`npm run build`；只有全部退出码为 0，verify 才返回 0。优先使用 `npm_execpath` 指定的当前 npm，否则回退 PATH 上的 npm；**不通过 npx 临时下载工具，也不跳过检查恢复成功**。
+- **有限超时与进程收尾**：单步默认 600s 超时（可用 `--step-timeout-ms` 或 `SHIPLOOP_VERIFY_STEP_TIMEOUT_MS` 覆盖，供隔离夹具验收）；子命令以独立进程组运行，超时对整个进程组 SIGKILL；退出码非 0、信号退出、超时或无法启动一律算失败。
+- **NOT RUN 语义**：任一步失败即停止，后续未执行步骤明确标记 NOT RUN，绝不把未运行项标为通过。
+
+负向验收见 `test/verify.test.ts`：在系统临时目录构建独立夹具工作区（真实锁文件、真实断言的有限测试集合、真实 tsc 与构建脚本），以真实子进程运行同一个生产 `verify.ts`，分别验证缺锁文件、无测试文件、注入失败断言、注入类型错误、构建非零、必需工具被删、步骤超时与信号死亡等场景均非零退出；夹具测试子命令不回跳本仓库 `npm test`，不产生递归验收。
+
 ### 单向依赖规则（F-004 起自动强制）
 
 工程包之间为**单向依赖**，由 `scripts/check-boundaries.ts`（`npm run check:boundaries`，并经 `npm test` 中的回归套件执行）自动强制；任何违规或无法解析的生产导入都使退出码为 1，诊断包含违规文件（含行号）与目标模块：
@@ -97,11 +109,12 @@ npm test           # 启动器校验本地 vitest@5.0.3 后一次性执行全部
 npm run typecheck  # 严格类型检查（strict），覆盖 vitest.config.ts、源码、测试（含 helpers）与 scripts/，不产出文件
 npm run build      # tsc -b 构建三个包到各自 dist，并运行构建入口冒烟脚本
 npm run check:boundaries  # 工作区单向依赖与 Core 分层边界检查（fail-closed），合法返回 0
+npm run verify     # 工程检查编排：锁文件预检 + npm test / typecheck / build 全绿才返回 0
 ```
 
 测试夹具与子进程只使用系统临时目录和重定向后的 HOME / XDG / TMPDIR，不读写用户仓库之外的用户数据、凭据或全局 Pi 配置，也不调用真实模型；重复运行互不依赖，不留下临时文件或受测子进程。
 
-在没有 `dist` 与类型缓存的干净临时副本中，`typecheck` 与 `build` 均须返回 0；注入明确类型错误时 `typecheck` 返回非零。`verify` 工程检查编排将在 F-005 加入；当前不存在该脚本。
+在没有 `dist` 与类型缓存的干净临时副本中，`typecheck` 与 `build` 均须返回 0；注入明确类型错误时 `typecheck` 返回非零。`npm run verify`（F-005）把锁文件预检与上述检查串成单一 fail-closed 入口，用于干净副本的集成验收。
 
 ## Pi SDK 接入基线（本任务不接入）
 

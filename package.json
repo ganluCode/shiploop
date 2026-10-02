@@ -18,7 +18,8 @@
     "test": "node scripts/run-tests.ts",
     "typecheck": "tsc -p tsconfig.json",
     "check:boundaries": "node scripts/check-boundaries.ts",
-    "build": "tsc -b packages/core/tsconfig.json packages/host/tsconfig.json packages/cli/tsconfig.json && node scripts/smoke-built-entries.ts"
+    "build": "tsc -b packages/core/tsconfig.json packages/host/tsconfig.json packages/cli/tsconfig.json && node scripts/smoke-built-entries.ts",
+    "verify": "node scripts/verify.ts"
   },
   "devDependencies": {
     "@types/node": "22.20.4",
