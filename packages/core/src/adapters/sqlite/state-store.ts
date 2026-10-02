@@ -29,9 +29,11 @@
  *   检查并插入；同路径已注册时复用胜者返回 already_exists，不新增行、不覆盖
  *   既有元数据；唯一约束冲突时事务回滚后有界核对一次），getRepositoryBinding
  *   按项目读取绑定（项目缺失/无绑定均为 not_found）；
- * - 本模块不实现：PathService 默认 OS 数据根、标签统计筛选、
- *   配置有效合并、模型路由、项目列表分页（最小窄契约 F-002 未定义列表方法，
- *   不在本 Feature 扩展契约面）、Host/CLI 命令。
+ * - P01-3 / F-007 起补齐只读查询：listProjects 以绑定参数 + json_each 实现任一/
+ *   全部标签筛选与稳定 id 升序键集分页（无新表、无新迁移）；countProjectLabels
+ *   按项目去重计数；两者不参与写路径。
+ * - 本模块不实现：PathService 默认 OS 数据根、配置有效合并、模型路由、
+ *   Host/CLI 命令。
  */
 import { randomUUID } from 'node:crypto';
 import type Database from 'better-sqlite3';
@@ -45,12 +47,15 @@ import {
   projectMetadataChangedFields,
   validateCreateProjectInput,
   validateCreateRepositoryBindingInput,
+  validateProjectListFilter,
   validateUpdateProjectInput,
   validatePutSettingsInput,
   validateUpdateSettingsInput,
 } from '../../ports/state-store.js';
 import type {
   GlobalSettingsRecord,
+  ProjectLabelCount,
+  ProjectPage,
   ProjectRecord,
   ProjectSettingsRecord,
   ProjectStatus,
@@ -414,6 +419,65 @@ export function createSqliteStateStore(
       const context: ValidationContext = { operation, entity: { type: 'project', id } };
       const row = selectProjectRow(session.database, id, operation);
       return projectFromRow(row, context);
+    },
+
+    async listProjects(filter?: unknown): Promise<ProjectPage> {
+      const operation = 'StateStore.listProjects';
+      assertOpen(operation);
+      const valid = validateProjectListFilter(filter, operation);
+      const context: ValidationContext = { operation };
+      const db = session.database;
+      // 绑定参数 + 稳定 id 升序分页（游标 = 上一页最后一条 id）：只读路径，不改任何行。
+      const conditions: string[] = ['id > ?'];
+      const params: unknown[] = [valid.cursor ?? ''];
+      if (valid.labels.length > 0) {
+        const placeholders = valid.labels.map(() => '?').join(', ');
+        if (valid.match === 'any') {
+          conditions.push(
+            `EXISTS (SELECT 1 FROM json_each(projects.labels) AS jt WHERE jt.value IN (${placeholders}))`,
+          );
+          params.push(...valid.labels);
+        } else {
+          // all：项目内命中的请求标签数必须等于请求标签总数（标签已在实体内去重）。
+          conditions.push(
+            `(SELECT COUNT(DISTINCT jt.value) FROM json_each(projects.labels) AS jt WHERE jt.value IN (${placeholders})) = ?`,
+          );
+          params.push(...valid.labels, valid.labels.length);
+        }
+      }
+      params.push(valid.limit + 1);
+      const rows = db
+        .prepare<unknown[], ProjectRow>(
+          `SELECT * FROM projects WHERE ${conditions.join(' AND ')} ORDER BY id LIMIT ?`,
+        )
+        .all(...params) as ProjectRow[];
+      const hasMore = rows.length > valid.limit;
+      const pageRows = hasMore ? rows.slice(0, valid.limit) : rows;
+      return {
+        records: pageRows.map((row) => projectFromRow(row, context)),
+        nextCursor: hasMore ? (pageRows[pageRows.length - 1]?.id ?? null) : null,
+      };
+    },
+
+    async countProjectLabels(): Promise<readonly ProjectLabelCount[]> {
+      const operation = 'StateStore.countProjectLabels';
+      assertOpen(operation);
+      const db = session.database;
+      const rows = db
+        .prepare<[], { label: unknown; project_count: unknown }>(
+          'SELECT jt.value AS label, COUNT(DISTINCT projects.id) AS project_count ' +
+            'FROM projects, json_each(projects.labels) AS jt ' +
+            'GROUP BY jt.value ORDER BY jt.value',
+        )
+        .all();
+      return rows.map((row) => {
+        if (typeof row.label !== 'string' || typeof row.project_count !== 'number') {
+          throw new StorageError('corrupt', operation, `${operation}: 项目标签计数结果超出契约形态`, {
+            details: { reason: 'invalid_label_count_row' },
+          });
+        }
+        return { label: row.label, projectCount: row.project_count };
+      });
     },
 
     async createProjectWithRepositoryBinding(

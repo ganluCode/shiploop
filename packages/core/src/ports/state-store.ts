@@ -27,6 +27,7 @@ import {
   validateExpectedRevision,
   validateProjectDescription,
   validateProjectDisplayName,
+  validateStableId,
   validationError,
 } from './validation.js';
 import type { ValidationContext } from './validation.js';
@@ -162,6 +163,102 @@ export function projectMetadataChangedFields(
     fields.push('labels');
   }
   return fields;
+}
+
+/**
+ * P01-3 / F-007 项目标签筛选、有限分页与项目层计数窄契约（设计 11 §10、设计 08 §2）。
+ *
+ * 语义与不变量：
+ * - `match='any'`：项目标签与请求标签**任一**命中；`match='all'`：请求标签**全部**
+ *   出现在项目标签中。空标签数组表示**不加标签约束**（返回全部可见项目），不区分模式；
+ * - 查询参数一律经 `validateProjectListFilter` 运行时校验：标签复用 F-002 的
+ *   `normalizeLabels`（筛选与注册/编辑共用同一规范化规则，重复规范化输入去重），
+ *   非法 match/limit/cursor/未知键在进入 SQL 之前拒绝，实现必须以绑定参数查询；
+ * - 有限分页：默认 `PROJECT_LIST_DEFAULT_LIMIT`、上限 `PROJECT_LIST_MAX_LIMIT`，按
+ *   稳定 `id` 升序排序，游标为上一页最后一条项目 id，跨页不重复/遗漏；
+ * - 标签计数按项目去重（同一项目同标签只计一次），只统计项目层，不与其他领域层级相加；
+ *   可见范围与 `listProjects` 相同（P01-3 无授权收窄，后续授权过滤时两者共用同一谓词）。
+ *
+ * 本契约不实现按标签启动 Batch，也不提供 Phase/Feature/Task 标签查询（T32 全量由后续）。
+ */
+export type ProjectLabelMatchMode = 'any' | 'all';
+
+export interface ProjectListFilter {
+  readonly match?: ProjectLabelMatchMode;
+  readonly labels?: readonly string[];
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+
+/** 项目列表分页默认每页条目数与最大每页条目数（有限默认值 + 硬上限）。 */
+export const PROJECT_LIST_DEFAULT_LIMIT = 50;
+export const PROJECT_LIST_MAX_LIMIT = 200;
+
+export interface ValidatedProjectListFilter {
+  readonly match: ProjectLabelMatchMode;
+  readonly labels: string[];
+  readonly limit: number;
+  readonly cursor?: string;
+}
+
+/** 项目分页页：游标为下一页起始（上一页最后一条 id），无更多为 null。 */
+export interface ProjectPage {
+  readonly records: readonly ProjectRecord[];
+  readonly nextCursor: string | null;
+}
+
+/** 项目层标签计数：同一项目同标签只计一次，不跨层级求和。 */
+export interface ProjectLabelCount {
+  /** 已按 F-002 规则规范化并去重的标签。 */
+  readonly label: string;
+  /** 含该标签的项目数（同一项目同标签只计一次）。 */
+  readonly projectCount: number;
+}
+
+export function validateProjectListFilter(
+  value: unknown,
+  operation: string,
+): ValidatedProjectListFilter {
+  const context: ValidationContext = { operation };
+  if (value === undefined) {
+    return { match: 'any', labels: [], limit: PROJECT_LIST_DEFAULT_LIMIT };
+  }
+  const object = requirePlainObject(value, context, 'filter');
+  rejectUnknownKeys(object, ['match', 'labels', 'limit', 'cursor'], context, 'filter');
+  let match: ProjectLabelMatchMode = 'any';
+  if (object.match !== undefined) {
+    if (object.match !== 'any' && object.match !== 'all') {
+      throw validationError(
+        context,
+        'filter.match',
+        "必须是 'any' 或 'all'（任一/全部标签匹配）",
+        object.match,
+      );
+    }
+    match = object.match;
+  }
+  const labels = normalizeLabels(object.labels, context, 'filter.labels');
+  let limit = PROJECT_LIST_DEFAULT_LIMIT;
+  if (object.limit !== undefined) {
+    if (
+      typeof object.limit !== 'number' ||
+      !Number.isInteger(object.limit) ||
+      object.limit < 1 ||
+      object.limit > PROJECT_LIST_MAX_LIMIT
+    ) {
+      throw validationError(
+        context,
+        'filter.limit',
+        `必须是 1..${PROJECT_LIST_MAX_LIMIT} 的整数（每页上限）`,
+        object.limit,
+      );
+    }
+    limit = object.limit;
+  }
+  if (object.cursor !== undefined) {
+    return { match, labels, limit, cursor: validateStableId(object.cursor, context, 'filter.cursor') };
+  }
+  return { match, labels, limit };
 }
 
 interface SettingsRecordBase {
@@ -367,9 +464,24 @@ export interface StateStore {
   ): Promise<ProjectWithRepositoryBindingResult>;
 
   /**
-   * 按项目读取仓库绑定；项目不存在或尚无绑定返回 not_found。
+   * 按 projectId 返回完整仓库绑定；未知项目/无绑定返回 not_found。
    */
   getRepositoryBinding(projectId: string): Promise<RepositoryBindingRecord>;
+
+  /**
+   * F-007：按标签任一/全部筛选、按稳定 id 升序有界分页列出项目。
+   *
+   * 参数经 `validateProjectListFilter` 运行时校验（标签复用 `normalizeLabels`），
+   * 实现以绑定参数查询，绝不拼接标签原文；空标签数组返回全部可见项目。游标为上一页
+   * 返回的 `nextCursor`（最后一条项目 id）。非法参数在任何 SQL 之前拒绝。
+   */
+  listProjects(filter?: unknown): Promise<ProjectPage>;
+
+  /**
+   * F-007：项目层标签去重计数（同一项目同标签只计一次），只统计项目层，
+   * 不与其他领域层级（Phase/Feature/Task）相加；可见范围与 `listProjects` 相同。
+   */
+  countProjectLabels(): Promise<readonly ProjectLabelCount[]>;
 
   /** 全局单例创建；已存在返回 conflict 而非覆盖。 */
   createGlobalSettings(input: unknown): Promise<GlobalSettingsRecord>;

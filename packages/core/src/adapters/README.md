@@ -19,3 +19,9 @@ CAS 更新并追加一条 `state_events`（`project.metadata_updated`、项目/�
 一并回滚；`schema.ts`/`migrations.ts` 新增迁移 v2 建立 `state_events`（project_id 可空 + CHECK
 限定仅 global_settings 可为空，唯一 sequence 索引）。审计原子性与查询/编辑闭环由
 test/project-metadata-service.test.ts 与 test/sqlite-schema-migrations.test.ts 验证。
+
+P01-3 / F-007 起 `sqlite/state-store.ts` 补充只读查询：`listProjects` 以绑定参数 + `json_each`
+实现任一（`EXISTS`）/全部（命中计数等于请求数）标签筛选，稳定 `id` 升序键集分页（游标 = 上一页
+最后一条 id，`LIMIT ?+1` 判定下一页）；`countProjectLabels` 以 `COUNT(DISTINCT projects.id)`
+按项目去重计数并按标签升序返回。两查询无新表、无新迁移，标签不拼接 SQL（含元字符不注入），
+由 test/project-tag-filter.test.ts（真实临时 SQLite）与 test/storage-contracts.test.ts 验证。

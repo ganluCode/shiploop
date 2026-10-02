@@ -191,9 +191,30 @@ F-006 定案（实施契约；与 §6.3 的 `state_events` 一致）：
 - `updateProjectMetadata`：至少提供 `displayName`/`description`/`labels` 之一；匹配
   `expectedRevision` 后 `revision+1`；不改 `projectId`、`canonicalPath`、配置、PathService 位置
   或已有制品；不得借元数据编辑做 rebind。
-- `listProjects`：任一/全部标签匹配、有限分页（有限默认值 + 上限 + 稳定排序）；参数经运行时校验
-  并绑定参数查询（防注入）。
-- `countProjectLabels`：按项目去重（同一项目同标签只计一次），不与其他层级求和。
+
+F-007 定案（实施契约；标签筛选/分页/计数）：
+
+- **查询入口**：`ProjectService.listProjects(filter?)` 与 `ProjectService.countProjectLabels()`
+  直接复用 `StateStore.listProjects` / `StateStore.countProjectLabels`，应用层不另立第二套标签规则。
+- **筛选语义**：`filter = { match?: 'any' | 'all', labels?: string[], limit?: number, cursor?: string }`；
+  `match='any'` 为任一命中、`match='all'` 为全部命中（默认 `'any'`）。`labels` 省略或空数组表示
+  不加标签约束（返回全部可见项目）；无命中返回空页且 `nextCursor=null`；未知 `match`/未知键/
+  非字符串标签/空白标签在进入 SQL 之前返回 `validation`。
+- **共用规范化**：筛选标签复用 F-002 的 `normalizeLabels`（trim → NFC → ASCII 小写 → 去重），
+  与注册/编辑共用同一常量与规则；包含重复规范化输入的筛选得到一致结果。
+- **有限分页**：默认 `PROJECT_LIST_DEFAULT_LIMIT = 50`、上限 `PROJECT_LIST_MAX_LIMIT = 200`；
+  非法 `limit`（0、负数、小数、字符串、超过上限）与非法 `cursor`（空、含 `/`、非稳定 ID）拒绝。
+  稳定排序为项目 `id` **升序**，游标为上一页 `nextCursor`（最后一条项目 `id`），跨页遍历
+  不重复、不遗漏（与 `listArtifacts` 同一键集分页形态）。
+- **绑定参数查询（防注入）**：标签一律以绑定参数传入 SQL（`json_each(projects.labels)` 的
+  `EXISTS`/命中计数谓词），绝不拼接标签原文；含 SQL 元字符的标签被当作字面标签，既不放行全表、
+  也不破坏表。
+- **标签计数**：返回 `{ label, projectCount }[]`，按项目去重（同一项目同标签只计一次，
+  `COUNT(DISTINCT projects.id)`），仅统计项目层，**不**与 Phase/Feature/Task 层级相加；可见
+  范围与 `listProjects` 相同（P01-3 无授权收窄，后续授权过滤时两者共用同一谓词）。
+- **明确不做**：不实现「按标签启动 Batch」，不提供 Phase/Feature/Task 标签查询；不宣称 T32
+  全量完成（本 Feature 只交付项目层子集）。`listProjects`/`countProjectLabels` 为只读查询，
+  不新增表、不新增迁移、不写审计。
 
 ### 4.2 RepositoryInspector（F-004，只读）
 
@@ -388,7 +409,7 @@ P01-3 确认沿用前序「创建 / 更新」分离的约定，不引入 `expect
 |---|---|---|
 | 仓库绑定读写端口 | 注册/幂等复用/查询绑定 | P01-2 只有 `projects.repository_binding_id`，无绑定的创建/读取方法。P01-3 增加窄方法（可置于 `StateStore` 或独立 `RepositoryBindingStore`）：按 `canonical_path` 查找、原子「项目 + 绑定」组合创建、按项目读取绑定。**F-005 已交付**：置于 `StateStore`（`createProjectWithRepositoryBinding` / `getRepositoryBinding`，无新表、无新迁移）。 |
 | 变更记录 | 元数据/配置的脱敏审计 | 见 §6.3。**F-006 已交付**：迁移 v2 建立 `state_events`，项目元数据编辑同事务追加脱敏记录；配置审计留待 F-010。 |
-| `listProjects` / 标签计数查询端口 | F-007 筛选、分页、计数 | 基于 `projects.labels` 的 `json_each` 查询；首版**不新增派生索引表**（设计 11 §10：数据增长后再加），不做跨层级求和。 |
+| `listProjects` / 标签计数查询端口 | F-007 筛选、分页、计数 | 基于 `projects.labels` 的 `json_each` 查询；首版**不新增派生索引表**（设计 11 §10：数据增长后再加），不做跨层级求和。**F-007 已交付**：`StateStore.listProjects` / `countProjectLabels`（只读，无新表、无新迁移；标签绑定参数查询，稳定 `id` 升序键集分页，项目层去重计数）。 |
 
 **明确不建**（本 Feature 范围外）：Phase/Feature/Task/Run/Attempt/Batch/Session/Chat 等执行表；
 `tasks.execution_config`（Task 策略复制）；`project_profiles`/`capability_modules`、

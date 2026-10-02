@@ -20,12 +20,15 @@ import {
   GLOBAL_SETTINGS_ID,
   validateCreateProjectInput,
   validateCreateRepositoryBindingInput,
+  validateProjectListFilter,
   validateUpdateProjectInput,
   validatePutSettingsInput,
   validateUpdateSettingsInput,
 } from '../../packages/core/src/ports/state-store.ts';
 import type {
   GlobalSettingsRecord,
+  ProjectLabelCount,
+  ProjectPage,
   ProjectRecord,
   ProjectSettingsRecord,
   ProjectWithInitialSettingsRecord,
@@ -184,6 +187,47 @@ export function createInMemoryStorage(now: () => number): InMemoryStorage {
 
     async getProject(projectId: string): Promise<ProjectRecord> {
       return clone(requireProject(projectId, 'StateStore.getProject'));
+    },
+
+    async listProjects(filter?: unknown): Promise<ProjectPage> {
+      const operation = 'StateStore.listProjects';
+      const valid = validateProjectListFilter(filter, operation);
+      const cursor = valid.cursor ?? '';
+      const matches = (record: ProjectRecord): boolean => {
+        if (valid.labels.length === 0) {
+          return true;
+        }
+        if (valid.match === 'any') {
+          return valid.labels.some((label) => record.labels.includes(label));
+        }
+        return valid.labels.every((label) => record.labels.includes(label));
+      };
+      const sorted = [...projects.values()]
+        .filter((record) => record.id > cursor)
+        .filter(matches)
+        .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+      const pageRecords = sorted.slice(0, valid.limit);
+      return {
+        records: pageRecords.map(clone),
+        nextCursor: sorted.length > valid.limit ? (pageRecords[pageRecords.length - 1]?.id ?? null) : null,
+      };
+    },
+
+    async countProjectLabels(): Promise<readonly ProjectLabelCount[]> {
+      const projectIdsByLabel = new Map<string, Set<string>>();
+      for (const record of projects.values()) {
+        for (const label of record.labels) {
+          let ids = projectIdsByLabel.get(label);
+          if (ids === undefined) {
+            ids = new Set<string>();
+            projectIdsByLabel.set(label, ids);
+          }
+          ids.add(record.id);
+        }
+      }
+      return [...projectIdsByLabel.entries()]
+        .map(([label, ids]) => ({ label, projectCount: ids.size }))
+        .sort((a, b) => (a.label < b.label ? -1 : a.label > b.label ? 1 : 0));
     },
 
     async updateProject(projectId: string, input: unknown): Promise<ProjectRecord> {

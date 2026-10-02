@@ -555,3 +555,71 @@ describe('F-012 artifact list pagination contract (bounded, read-only)', () => {
     expect(harness.raw.artifacts.size).toBe(1);
   });
 });
+
+describe('F-007 project label filtering / pagination / counts contract', () => {
+  it('matches any/all labels, returns all for an empty filter and nothing for no match', async () => {
+    const harness = createHarness();
+    const backendApi = await harness.stateStore.createProject({
+      displayName: '后端 API',
+      labels: [' Backend ', 'API', 'backend'],
+    });
+    const backendUi = await harness.stateStore.createProject({
+      displayName: '后端 UI',
+      labels: ['backend', 'ui'],
+    });
+    const uiOnly = await harness.stateStore.createProject({ displayName: '仅 UI', labels: ['UI'] });
+    const noLabels = await harness.stateStore.createProject({ displayName: '无标签' });
+    const all = [backendApi.id, backendUi.id, uiOnly.id, noLabels.id].sort();
+
+    const any = await harness.stateStore.listProjects({ match: 'any', labels: ['backend'] });
+    expect(any.records.map((record) => record.id).sort()).toEqual([backendApi.id, backendUi.id].sort());
+    const allMatch = await harness.stateStore.listProjects({ match: 'all', labels: ['backend', 'ui'] });
+    expect(allMatch.records.map((record) => record.id)).toEqual([backendUi.id]);
+    const none = await harness.stateStore.listProjects({ match: 'all', labels: ['backend', 'nope'] });
+    expect(none.records).toEqual([]);
+    expect(none.nextCursor).toBeNull();
+    for (const filter of [undefined, {}, { labels: [] }]) {
+      const page = await harness.stateStore.listProjects(filter);
+      expect(page.records.map((record) => record.id).sort()).toEqual(all);
+    }
+    for (const filter of [{ match: 'some' }, { labels: [42] }, { unknown: 1 }, 'nope']) {
+      const error = await expectStorageError('validation', () => harness.stateStore.listProjects(filter));
+      expect(error.operation).toBe('StateStore.listProjects');
+    }
+  });
+
+  it('paginates by stable id without duplicates or omissions and counts each label once per project', async () => {
+    const harness = createHarness();
+    const ids: string[] = [];
+    for (let index = 0; index < 5; index += 1) {
+      const project = await harness.stateStore.createProject({ displayName: `分页 ${index}`, labels: ['paged'] });
+      ids.push(project.id);
+    }
+    const collected: string[] = [];
+    let cursor: string | undefined;
+    for (;;) {
+      const page = await harness.stateStore.listProjects({
+        match: 'all',
+        labels: ['paged'],
+        limit: 2,
+        ...(cursor !== undefined ? { cursor } : {}),
+      });
+      collected.push(...page.records.map((record) => record.id));
+      if (page.nextCursor === null) {
+        break;
+      }
+      cursor = page.nextCursor;
+    }
+    expect(collected).toEqual([...ids].sort());
+    expect(new Set(collected).size).toBe(ids.length);
+
+    // 同一项目内的重复标签去重后只计一次；不与其他层级相加。
+    const extra = await harness.stateStore.createProject({ displayName: '重复标签', labels: ['paged'] });
+    harness.raw.projects.set(extra.id, { ...extra, labels: ['paged', 'paged'] });
+    const counts = await harness.stateStore.countProjectLabels();
+    expect(counts).toEqual([{ label: 'paged', projectCount: ids.length + 1 }]);
+    for (const entry of counts) {
+      expect(Object.keys(entry).sort()).toEqual(['label', 'projectCount']);
+    }
+  });
+});

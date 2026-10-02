@@ -9,4 +9,6 @@
 
 P01-3 / F-005 起新增 `project-service.ts`：ProjectService 仓库注册用例（registerRepository）——输入运行时校验（元数据复用 F-002 共用校验器，非法输入先于任何 I/O 拒绝）→ 只读仓库检查（RepositoryInspector，数据库写事务之外）→ 单个短事务原子保存项目 + 绑定（StateStore.createProjectWithRepositoryBinding，同 canonicalPath 幂等复用返回 already_exists，不同 clone 分别注册）。只依赖 ports 窄接口，不接触适配器/驱动/HTTP/Pi SDK。
 
-P01-3 / F-006 起同一 `project-service.ts` 补充：`getProject` / `getRepositoryBinding`（按 projectId 查询身份与完整绑定，未知 ID 为 not_found）与 `updateProjectMetadata`（名称/描述/标签 CAS 编辑，先经 F-002 共用校验器拒绝非法字段/标签，再交 `StateStore.updateProject` 在同一短事务内完成 CAS 更新与 `state_events` 脱敏变更记录）。改元数据不触碰 projectId、canonicalPath、配置、PathService 位置或已有制品。标签筛选（F-007）后续扩展。
+P01-3 / F-006 起同一 `project-service.ts` 补充：`getProject` / `getRepositoryBinding`（按 projectId 查询身份与完整绑定，未知 ID 为 not_found）与 `updateProjectMetadata`（名称/描述/标签 CAS 编辑，先经 F-002 共用校验器拒绝非法字段/标签，再交 `StateStore.updateProject` 在同一短事务内完成 CAS 更新与 `state_events` 脱敏变更记录）。改元数据不触碰 projectId、canonicalPath、配置、PathService 位置或已有制品。
+
+P01-3 / F-007 起同一 `project-service.ts` 补充 `listProjects` / `countProjectLabels` 只读查询，直接复用 `StateStore.listProjects` / `StateStore.countProjectLabels`（任一/全部标签筛选、稳定 `id` 升序键集分页、项目层去重计数）；应用层不另立第二套标签规则，不实现按标签启动 Batch 或 Phase/Feature/Task 标签查询。

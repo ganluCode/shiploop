@@ -28,12 +28,18 @@
  * CAS 更新与脱敏变更记录（state_events）——改名称/描述/标签不触碰 projectId、
  * canonicalPath、配置或 PathService 位置，也不改变仓库绑定。
  *
- * 本模块不实现（后续任务）：标签筛选/分页/计数（F-007）、配置服务（F-008~F-011）、
+ * 本模块已实现（F-007）：项目标签任一/全部筛选、稳定 id 升序有界分页与项目层
+ * 标签去重计数查询（listProjects / countProjectLabels），直接复用 StateStore
+ * 只读查询端口，不另立第二套标签规则。
+ *
+ * 本模块不实现（后续任务）：配置服务（F-008~F-011）、
  * rebind、存量基线扫描、Host/CLI 路由。
  */
 import type { RepositoryInspector } from '../ports/repository-inspector.js';
 import { validateCreateProjectInput, validateUpdateProjectInput } from '../ports/state-store.js';
 import type {
+  ProjectLabelCount,
+  ProjectPage,
   ProjectRecord,
   ProjectWithRepositoryBindingResult,
   RepositoryBindingRecord,
@@ -75,6 +81,10 @@ export interface ProjectService {
   getRepositoryBinding(projectId: string): Promise<RepositoryBindingRecord>;
   /** 名称/描述/标签的 CAS 元数据编辑；匹配 expectedRevision 后返回递增 revision。 */
   updateProjectMetadata(projectId: string, input: unknown): Promise<ProjectRecord>;
+  /** F-007：按标签任一/全部筛选、稳定 id 升序有界分页列出项目。 */
+  listProjects(filter?: unknown): Promise<ProjectPage>;
+  /** F-007：项目层标签去重计数（同一项目同标签只计一次），不跨层级求和。 */
+  countProjectLabels(): Promise<readonly ProjectLabelCount[]>;
 }
 
 export interface ProjectServiceDeps {
@@ -166,6 +176,15 @@ export function createProjectService(deps: ProjectServiceDeps): ProjectService {
       // 通过后交由存储端口在同一短事务内完成 CAS 更新 + 脱敏变更记录并返回新记录。
       validateUpdateProjectInput(input, operation);
       return stateStore.updateProject(projectId, input);
+    },
+
+    async listProjects(filter?: unknown): Promise<ProjectPage> {
+      // 查询筛选/分页/绑定参数由存储端口统一完成；应用层不另立第二套标签规则。
+      return stateStore.listProjects(filter);
+    },
+
+    async countProjectLabels(): Promise<readonly ProjectLabelCount[]> {
+      return stateStore.countProjectLabels();
     },
   };
 }
