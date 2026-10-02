@@ -20,9 +20,10 @@
 | adapters | `adapters/sqlite/*` | 连接会话、迁移执行、StateStore、ArtifactStore |
 | adapters | `adapters/fs/artifact-files.ts` | 受控逻辑定位、staging、不覆盖发布、有界扫描 |
 
-**当前适配器位于 `packages/core/src/adapters/`，不经 `shiploop-core` 的 package `exports` 暴露**
-（契约区分层禁止反向依赖 `adapters`）。跨包组合根（谁把 SQLite/文件适配器接到端口上）属于 P01-3
-待定边界，见 [p01-3-handoff.md](p01-3-handoff.md)。
+**当前适配器位于 `packages/core/src/adapters/`，不经 `shiploop-core` 的 package `exports['.']` 暴露**
+（契约区分层禁止反向依赖 `adapters`）。跨包组合根已由 P01-3 / F-012 在 Core 内定案为受控装配入口
+`openCoreApplication`，经 `shiploop-core` 的 `./assembly` 子路径导出（见
+[p01-3-operations.md §1](p01-3-operations.md) 与 [p01-4-handoff.md](p01-4-handoff.md)）。
 
 ## 2. 核心概念
 
@@ -274,12 +275,19 @@ pending ──(CAS, 实测 hash 匹配 + 实际 size)──▶ ready
   分别对应缺失、跨项目归属、输入非法、持久数据损坏、不支持版本；错误携带 `operation` 与实体身份，
   消息与 details 脱敏（不含绝对路径与秘密）。
 
-## 8. 未实现 / not_run（不得冒充）
+## 8. 由 P01-3 补齐 / 仍未实现（不得冒充）
+
+> P01-3 已在本文所述端口之上补齐下列能力，细节见 [p01-3-operations.md](p01-3-operations.md)：
+> 仓库注册流程（幂等复用 / 同 remote 多 clone 分别注册）、统一 `PathService` 数据根解析与受权
+> 定位、配置有效合并 / 逐项来源、项目列表分页与标签筛选/计数、`state_events` 脱敏审计（迁移 v2）。
+
+仍未实现：
 
 - 未建立执行 / Chat / 知识等后续表（Phase/Feature/Task/Run/Attempt/Batch/Session/Chat、
   project_profiles、capability_modules、verification_batches 等）；`source_attempt_id`、
   `retention_class` 等字段随对应功能迁移增加。
-- 未实现仓库注册流程、配置有效合并 / 模型路由、Task 策略复制、凭据解析、配置历史版本表、项目列表分页。
-- 未提供 Host/CLI 命令、`accept:p01` 阶段验收、统一 PathService OS 数据根解析。
-- 未做真实断电 / 磁盘满演练、Windows/WSL/Linux 平台验收、Electron 原生模块打包、模型 Live 调用。
+- 未实现模型路由、Task 策略复制、凭据解析（只保存引用）、配置历史版本表。
+- 未提供 Host/CLI 命令、`accept:p01` 阶段验收。
+- 未做真实断电 / 磁盘满演练、Windows/WSL/Linux 平台验收、Electron 原生模块打包、模型 Live 调用、
+  强 OS 沙箱。
 - 孤儿文件安全隔离迁移（当前 `kept_in_place` 保留原位）、Host 停机升级编排与自动降级。

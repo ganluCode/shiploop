@@ -1,6 +1,6 @@
 # ShipLoop 工程工作区
 
-P01-1 工程骨架：npm workspaces、固定工具链、严格 TypeScript 构建与确定性测试入口。本仓库当前只包含工程基础设施，**不包含**任何 ShipLoop 业务实现（领域状态机、持久化、Host 网络接口、模型调用均在后续 Feature 中建设）；入口模块加载无副作用，不提供空壳的项目、调度、存储或 Runtime 服务。
+P01-1 工程骨架 + P01-2 SQLite 原子存储与制品落盘 + P01-3 项目身份与当前配置服务：npm workspaces、固定工具链、严格 TypeScript 构建、确定性测试入口，以及可独立调用的 Core 应用服务（项目注册/查询/CAS 编辑/标签筛选、当前配置 CAS/有效合并/脱敏导出、受权路径定位）。Host 网络接口、CLI 命令、Runtime/模型执行、执行表与 DAG 调度仍在后续 Feature 中建设；入口模块加载无副作用，不提供空壳的项目、调度、存储或 Runtime 服务。
 
 ## 验收平台
 
@@ -38,9 +38,12 @@ scripts/        工程检查脚本（TypeScript，受 typecheck 覆盖）：run-
                 smoke-built-entries.ts（构建入口冒烟）、check-boundaries.ts（依赖边界检查）、
                 verify.ts（fail-closed 工程检查编排，见下节）
 vitest.config.ts 确定性测试配置（一次性、fail-closed）
-docs/acceptance/  P01-1 / P01-2 验收报告与脱敏证据（见下文「集成验收报告」「P01-2 存储与制品」）
+docs/acceptance/  P01-1 / P01-2 / P01-3 验收报告与脱敏证据（见下文「集成验收报告」「P01-2 存储与制品」「P01-3 项目身份与当前配置」）
 docs/storage-operations.md  P01-2 存储操作与恢复说明（F-014）
-docs/p01-3-handoff.md       P01-3 接口交接（F-014）
+docs/p01-3-application-contract.md  P01-3 Core 应用契约与范围说明（F-001）
+docs/p01-3-operations.md   P01-3 项目身份与当前配置操作说明（F-014）
+docs/p01-3-handoff.md       P01-2 → P01-3 接口交接（P01-2 F-014）
+docs/p01-4-handoff.md       P01-3 → P01-4 / P02 接口交接（P01-3 F-014）
 ```
 
 ### 确定性测试约定（F-003）
@@ -101,6 +104,17 @@ P01-2 在 macOS（arm64，Node 22.19.0 / npm 10.9.3 / SQLite 3.53.4 / better-sql
 - [docs/p01-3-handoff.md](docs/p01-3-handoff.md)：P01-3 可复用的项目/配置/CAS/制品端口、受控文件定位边界与待定组合根。
 
 该验收仅限 P01-2 存储与制品落盘，不代表 P01 阶段验收或任何业务 Live 验收通过。
+
+### P01-3 项目身份与当前配置（F-014）
+
+P01-3 在 macOS（arm64，Node 22.19.0 / npm 10.9.3 / SQLite 3.53.4 / better-sqlite3 13.0.3 / drizzle-orm 0.45.3）上交付可独立调用的 Core 应用服务：仓库注册与幂等复用（稳定 `projectId` + 规范 `canonicalPath`）、项目元数据 CAS 编辑与标签筛选/计数、全局/项目当前配置的 insert-only 创建与 CAS 更新、有效配置合并与逐项来源、脱敏导出、统一 `PathService` 受权定位；迁移 v2 新增 `state_events` 脱敏审计。干净快照六条命令（`npm ci` / `npm test` / `npm run typecheck` / `npm run build` / `npm run verify` / dist 非源码 cwd 装配闭环）真实退出码全部为 0。
+
+- [docs/p01-3-application-contract.md](docs/p01-3-application-contract.md)：P01-3 Core 应用契约、配置语义、存储最小扩展、范围边界与待核对的设计张力。
+- [docs/p01-3-operations.md](docs/p01-3-operations.md)：项目身份（注册/重复结果、仓库支持范围、标签规则/筛选/计数）、当前配置（scope/schemaVersion/revision、首次写入与 CAS、完整策略覆盖/来源、凭据引用）、`PathService` 稳定 namespace 与最小可运行示例。
+- [docs/acceptance/p01-3-f014-report.md](docs/acceptance/p01-3-f014-report.md)：输入文档版本、受测 commit、命令与退出码、FR 分支映射、已建表/迁移、已知缺口与 `not_run`（证据在同目录 `evidence-p01-3/`，已脱敏）。
+- [docs/p01-4-handoff.md](docs/p01-4-handoff.md)：P01-4 可复跑持久化闭环与失败注入入口、P02 可包装的命令/查询契约及明确未交付边界。
+
+该验收仅限 P01-3 项目身份与当前配置服务，不代表 P01 阶段验收或任何业务 Live 验收通过；阶段最终报告与 `accept:p01` 由 P01-4 交付。
 
 ### 单向依赖规则（F-004 起自动强制）
 

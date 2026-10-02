@@ -1,0 +1,47 @@
+
+> shiploop@0.0.0 verify
+> node scripts/verify.ts
+
+verify: root <WORKSPACE-ROOT>
+verify: 开发工程检查编排（非 ShipLoop 业务 Verifier，不含 accept:p01 验收）
+verify: step timeout 600000ms (finite; non-zero exit / signal / timeout all fail)
+verify: precheck package-lock.json OK (lockfileVersion 3, name "shiploop", version "0.0.0")
+verify: using npm via npm_execpath (<NODE-PREFIX>/lib/node_modules/npm/bin/npm-cli.js)
+verify: [1/3] RUN npm test
+
+> shiploop@0.0.0 test
+> node scripts/run-tests.ts
+
+run-tests: using local vitest@5.0.3 (<WORKSPACE-ROOT>/node_modules/vitest/vitest.mjs) in run mode
+
+ RUN  v5.0.3 <WORKSPACE-ROOT>
+
+Cloning into '<TMPDIR>/shiploop-p013-f005-XXXXXX/clone-a'...
+done.
+Cloning into '<TMPDIR>/shiploop-p013-f005-XXXXXX/clone-b'...
+done.
+Preparing worktree (detached HEAD 3944a3b)
+
+ Test Files  35 passed (35)
+      Tests  700 passed (700)
+   Start at  05:19:59
+   Duration  5.44s (tests 88%, transform 7%, import 4%)
+
+verify: [1/3] EXIT 0 npm test (5.7s)
+verify: [2/3] RUN npm run typecheck
+
+> shiploop@0.0.0 typecheck
+> tsc -p tsconfig.json
+
+verify: [2/3] EXIT 0 npm run typecheck (0.2s)
+verify: [3/3] RUN npm run build
+
+> shiploop@0.0.0 build
+> tsc -b packages/core/tsconfig.json packages/host/tsconfig.json packages/cli/tsconfig.json && node scripts/smoke-built-entries.ts
+
+ok shiploop-core: assembly entry ./dist/adapters/composition.js (153ms) -> core-assembly-smoke: ok project=22b7fdaa-6b7f-42ac-9147-0c2bf8d44806 dataRootEntries=core.sqlite migrated=true
+ok shiploop-core: loaded ./dist/index.js (exit=0, 25ms, no side effects)
+ok shiploop-host: loaded ./dist/index.js (exit=0, 19ms, no side effects)
+ok shiploop-cli: loaded ./dist/index.js (exit=0, 18ms, no side effects)
+verify: [3/3] EXIT 0 npm run build (0.4s)
+verify: PASS 3/3 checks exited 0
