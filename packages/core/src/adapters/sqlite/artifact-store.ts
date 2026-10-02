@@ -27,19 +27,25 @@
  *   ready 行缺少 hash/size（直接 SQL 注入的历史损坏）一律拒绝放行，损坏诊断
  *   （missing/hash_mismatch/size_mismatch）的检测由 F-012 的中断核对实现；
  * - 会话已关闭时所有端口操作抛出明确“已关闭”错误，不使用失效连接；
+ * - listArtifacts（F-012 起）为中断核对/批量恢复提供有界只读分页（按稳定 id
+ *   排序，游标为上一页最后一条 id）：缺失项目 not_found，非法分页参数
+ *   validation，不参与任何写路径；
  * - 本模块不实现：制品文件 staging/发布（F-010/F-011）、中断核对与损坏诊断
- *   （F-012）、retention_class 持久化（取值无设计结论）、Host/CLI 命令。
+ *   的用例编排（F-012 application 层，经本端口与文件端口组合）、
+ *   retention_class 持久化（取值无设计结论）、Host/CLI 命令。
  */
 import { randomUUID } from 'node:crypto';
 import type Database from 'better-sqlite3';
 import { StorageError } from '../../ports/errors.js';
 import type { StorageEntityRef } from '../../ports/errors.js';
 import {
+  validateArtifactListOptions,
   validateRegisterArtifactInput,
   validateTransitionArtifactInput,
 } from '../../ports/artifact-store.js';
 import type {
   ArtifactInputRef,
+  ArtifactListPage,
   ArtifactRecord,
   ArtifactStatus,
   ArtifactStore,
@@ -318,6 +324,39 @@ export function createSqliteArtifactStore(
         sizeBytes: row.size_bytes,
         locator: row.storage_locator,
         version: row.version,
+      };
+    },
+
+    async listArtifacts(projectId: string, options?: unknown): Promise<ArtifactListPage> {
+      const operation = 'ArtifactStore.listArtifacts';
+      assertOpen(operation);
+      const validProjectId = validateStableId(
+        projectId,
+        { operation, entity: { type: 'project', id: projectId } },
+        'projectId',
+      );
+      const scan = validateArtifactListOptions(options, operation);
+      const context: ValidationContext = {
+        operation,
+        entity: { type: 'project', id: validProjectId },
+      };
+      const db = session.database;
+      if (db.prepare('SELECT 1 FROM projects WHERE id = ?').get(validProjectId) === undefined) {
+        throw new StorageError('not_found', operation, `项目 ${validProjectId} 不存在`, {
+          entity: { type: 'project', id: validProjectId },
+        });
+      }
+      // 按稳定 id 排序分页（游标 = 上一页最后一条 id）：只读路径，不改任何行。
+      const rows = db
+        .prepare<[string, string, number], ArtifactRow>(
+          'SELECT * FROM artifacts WHERE project_id = ? AND id > ? ORDER BY id LIMIT ?',
+        )
+        .all(validProjectId, scan.cursor ?? '', scan.limit + 1) as ArtifactRow[];
+      const hasMore = rows.length > scan.limit;
+      const pageRows = hasMore ? rows.slice(0, scan.limit) : rows;
+      return {
+        records: pageRows.map((row) => artifactFromRow(row, context)),
+        nextCursor: hasMore ? (pageRows[pageRows.length - 1]?.id ?? null) : null,
       };
     },
   };

@@ -486,3 +486,72 @@ describe('F-002 artifact index contract (pending / ready / failed)', () => {
     expect(after.revision).toBe(1);
   });
 });
+
+describe('F-012 artifact list pagination contract (bounded, read-only)', () => {
+  it('lists project artifacts page by page ordered by id, without duplicates or omissions', async () => {
+    const harness = createHarness();
+    const projectA = await createProject(harness, '项目A');
+    const projectB = await createProject(harness, '项目B');
+    const ids: string[] = [];
+    for (let index = 0; index < 5; index += 1) {
+      const artifact = await harness.artifactStore.registerArtifact({
+        projectId: projectA.id,
+        kind: 'verification-report',
+        mediaType: 'application/json',
+        expectedHash: VALID_HASH,
+        locator: `artifacts/${projectA.id}/report-${index}`,
+      });
+      ids.push(artifact.id);
+    }
+    // 项目 B 的一条：列表严格按项目隔离。
+    await harness.artifactStore.registerArtifact({
+      projectId: projectB.id,
+      kind: 'session-log',
+      mediaType: 'text/plain',
+      expectedHash: VALID_HASH,
+      locator: 'logs/b-1',
+    });
+
+    const collected: string[] = [];
+    let cursor: string | undefined;
+    for (;;) {
+      const page = await harness.artifactStore.listArtifacts(projectA.id, {
+        limit: 2,
+        ...(cursor !== undefined ? { cursor } : {}),
+      });
+      collected.push(...page.records.map((record) => record.id));
+      if (page.nextCursor === null) {
+        break;
+      }
+      cursor = page.nextCursor;
+    }
+    expect(collected).toEqual([...ids].sort());
+    const pageB = await harness.artifactStore.listArtifacts(projectB.id);
+    expect(pageB.records.length).toBe(1);
+    expect(pageB.records[0]?.projectId).toBe(projectB.id);
+    expect(pageB.nextCursor).toBeNull();
+  });
+
+  it('rejects missing projects and illegal pagination options without side effects', async () => {
+    const harness = createHarness();
+    const project = await createProject(harness);
+    await harness.artifactStore.registerArtifact({
+      projectId: project.id,
+      kind: 'verification-report',
+      mediaType: 'application/json',
+      expectedHash: VALID_HASH,
+      locator: 'artifacts/only-one',
+    });
+    const missing = await expectStorageError('not_found', () =>
+      harness.artifactStore.listArtifacts('p-missing'),
+    );
+    expect(missing.entity?.type).toBe('project');
+    for (const options of [{ limit: 0 }, { limit: 257 }, { limit: 1.5 }, { cursor: '' }, { cursor: 'a/b' }, { unknown: 1 }, 'not-an-object']) {
+      const error = await expectStorageError('validation', () =>
+        harness.artifactStore.listArtifacts(project.id, options),
+      );
+      expect(error.operation).toBe('ArtifactStore.listArtifacts');
+    }
+    expect(harness.raw.artifacts.size).toBe(1);
+  });
+});

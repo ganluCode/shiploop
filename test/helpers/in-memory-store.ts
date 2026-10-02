@@ -31,11 +31,13 @@ import type {
   StateStore,
 } from '../../packages/core/src/ports/state-store.ts';
 import {
+  validateArtifactListOptions,
   validateRegisterArtifactInput,
   validateTransitionArtifactInput,
 } from '../../packages/core/src/ports/artifact-store.ts';
 import type {
   ArtifactInputRef,
+  ArtifactListPage,
   ArtifactRecord,
   ArtifactStore,
 } from '../../packages/core/src/ports/artifact-store.ts';
@@ -417,6 +419,21 @@ export function createInMemoryStorage(now: () => number): InMemoryStorage {
         sizeBytes: record.sizeBytes,
         locator: record.locator,
         version: record.version,
+      };
+    },
+
+    async listArtifacts(projectId: string, options?: unknown): Promise<ArtifactListPage> {
+      const operation = 'ArtifactStore.listArtifacts';
+      requireProject(projectId, operation);
+      const scan = validateArtifactListOptions(options, operation);
+      const remaining = [...artifacts.values()]
+        .filter((record) => record.projectId === projectId)
+        .filter((record) => scan.cursor === undefined || record.id > (scan.cursor ?? ''))
+        .sort((a, b) => (a.id < b.id ? -1 : 1));
+      const pageRecords = remaining.slice(0, scan.limit);
+      return {
+        records: pageRecords.map(clone),
+        nextCursor: remaining.length > scan.limit ? (pageRecords[pageRecords.length - 1]?.id ?? null) : null,
       };
     },
   };

@@ -650,3 +650,74 @@ describe('F-009 session lifecycle', () => {
     });
   });
 });
+
+describe('F-012 listArtifacts bounded pagination via real SQLite port', () => {
+  it('lists project artifacts page by page ordered by id, isolated per project', async () => {
+    await withMigratedDb(async (dbPath) => {
+      const harness = openHarness(dbPath, createClock());
+      try {
+        const projectA = await createProject(harness, '项目A');
+        const projectB = await createProject(harness, '项目B');
+        const ids: string[] = [];
+        for (let index = 0; index < 5; index += 1) {
+          const artifact = await registerPending(harness, projectA.id, {
+            locator: `artifacts/${projectA.id}/report-${index}`,
+          });
+          ids.push(artifact.id);
+        }
+        await registerPending(harness, projectB.id, { locator: 'logs/b-1' });
+
+        const collected: string[] = [];
+        let cursor: string | undefined;
+        for (;;) {
+          const page = await harness.artifacts.listArtifacts(projectA.id, {
+            limit: 2,
+            ...(cursor !== undefined ? { cursor } : {}),
+          });
+          collected.push(...page.records.map((record) => record.id));
+          if (page.nextCursor === null) {
+            break;
+          }
+          cursor = page.nextCursor;
+        }
+        expect(collected).toEqual([...ids].sort());
+        // 记录字段逐项完整（与 getArtifact 相同的行映射）。
+        const first = await harness.artifacts.getArtifact(projectA.id, collected[0]!);
+        const page = await harness.artifacts.listArtifacts(projectA.id, { limit: 1 });
+        expect(page.records[0]).toEqual(first);
+        // 项目隔离：B 只有自己的制品。
+        const pageB = await harness.artifacts.listArtifacts(projectB.id);
+        expect(pageB.records.length).toBe(1);
+        expect(pageB.records[0]?.projectId).toBe(projectB.id);
+      } finally {
+        harness.close();
+      }
+    });
+  });
+
+  it('rejects missing projects and illegal pagination options with zero persisted side effects', async () => {
+    await withMigratedDb(async (dbPath) => {
+      const harness = openHarness(dbPath, createClock());
+      try {
+        const project = await createProject(harness);
+        await registerPending(harness, project.id);
+        expect(countArtifacts(harness.session)).toBe(1);
+        await expectStorageError('not_found', () =>
+          harness.artifacts.listArtifacts('11111111-2222-3333-4444-555555555555'),
+        );
+        await expectStorageError('validation', () =>
+          harness.artifacts.listArtifacts(project.id, { limit: 0 }),
+        );
+        await expectStorageError('validation', () =>
+          harness.artifacts.listArtifacts(project.id, { cursor: 'a/b' }),
+        );
+        await expectStorageError('validation', () =>
+          harness.artifacts.listArtifacts(project.id, { unknown: 1 }),
+        );
+        expect(countArtifacts(harness.session)).toBe(1);
+      } finally {
+        harness.close();
+      }
+    });
+  });
+});

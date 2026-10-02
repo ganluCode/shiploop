@@ -20,3 +20,4 @@ export * from './ports/artifact-store.js';
 export * from './ports/artifact-files.js';
 export * from './ports/migrations.js';
 export * from './application/artifact-publish.js';
+export * from './application/artifact-verify.js';

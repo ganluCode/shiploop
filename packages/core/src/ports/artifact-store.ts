@@ -182,4 +182,61 @@ export interface ArtifactStore {
   transitionArtifact(projectId: string, artifactId: string, input: unknown): Promise<ArtifactRecord>;
   /** 仅同项目 ready 制品返回有效输入引用；pending/failed 返回 conflict。 */
   getArtifactInputRef(projectId: string, artifactId: string): Promise<ArtifactInputRef>;
+  /**
+   * 有界分页列出项目制品索引（按稳定 id 排序，游标为上一页最后一条 id）。
+   * 项目不存在返回 not_found；分页参数非法返回 validation。为中断核对与
+   * 批量恢复（F-012）提供只读入口，不参与任何写路径。
+   */
+  listArtifacts(projectId: string, options?: unknown): Promise<ArtifactListPage>;
+}
+
+/** 制品列表分页默认/最大每批条目数（与制品文件扫描上限对齐）。 */
+export const ARTIFACT_LIST_DEFAULT_LIMIT = 64;
+export const ARTIFACT_LIST_MAX_LIMIT = 256;
+
+/** 制品索引分页页：游标为下一页起始（上一页最后一条 id），无更多为 null。 */
+export interface ArtifactListPage {
+  readonly records: readonly ArtifactRecord[];
+  readonly nextCursor: string | null;
+}
+
+export function validateArtifactListOptions(
+  value: unknown,
+  operation: string,
+): { limit: number; cursor?: string } {
+  const context: ValidationContext = { operation };
+  if (value === undefined) {
+    return { limit: ARTIFACT_LIST_DEFAULT_LIMIT };
+  }
+  const object = requirePlainObject(value, context, 'options');
+  rejectUnknownKeys(object, ['limit', 'cursor'], context, 'options');
+  let limit = ARTIFACT_LIST_DEFAULT_LIMIT;
+  if (object.limit !== undefined) {
+    if (
+      typeof object.limit !== 'number' ||
+      !Number.isInteger(object.limit) ||
+      object.limit < 1 ||
+      object.limit > ARTIFACT_LIST_MAX_LIMIT
+    ) {
+      throw validationError(
+        context,
+        'options.limit',
+        `必须是 1..${ARTIFACT_LIST_MAX_LIMIT} 的整数（每批读取上限）`,
+        object.limit,
+      );
+    }
+    limit = object.limit;
+  }
+  if (object.cursor !== undefined) {
+    if (
+      typeof object.cursor !== 'string' ||
+      object.cursor.length === 0 ||
+      object.cursor.includes('/') ||
+      object.cursor.includes('\0')
+    ) {
+      throw validationError(context, 'options.cursor', '必须是上一页返回的制品 id 游标', object.cursor);
+    }
+    return { limit, cursor: object.cursor };
+  }
+  return { limit };
 }
