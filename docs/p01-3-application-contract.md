@@ -317,12 +317,12 @@ interface EffectiveSettings {
 
 interface ConfigurationService {
   // 命令（首次创建 insert-only；更新 expectedRevision CAS）
-  createSettings(scope: unknown, input: unknown): Promise<SettingsRecord>;
-  updateSettings(scope: unknown, input: unknown): Promise<SettingsRecord>; // 写值 + 变更记录同事务
-  // 查询
-  getCurrentSettings(scope: unknown): Promise<SettingsRecord>;             // not_found / corrupt
-  getEffectiveSettings(projectId: string): Promise<EffectiveSettings>;     // F-009 合并 + 来源
-  exportSettings(projectId?: string): Promise<ExportedSettings>;           // 普通脱敏导出
+  createSettings(scope: unknown, input: unknown): Promise<SettingsWriteResult>;
+  updateSettings(scope: unknown, input: unknown): Promise<SettingsWriteResult>; // 写值 + 变更记录同事务
+  // 查询（F-011，只读）
+  getCurrentSettings(scope: unknown): Promise<SettingsReadResult>;         // not_found / corrupt
+  getEffectiveSettings(projectId: string): Promise<EffectiveSettings>;     // F-009 合并 + 来源；未知项目 not_found
+  exportSettings(projectId?: string): Promise<ExportedSettings>;           // 普通脱敏导出（不含秘密）
 }
 ```
 
@@ -336,7 +336,7 @@ interface ConfigurationService {
 - **记录落点**见 §6，与配置写入同事务；失败回滚。
 
 F-010 定案（实施契约；实现于 `application/configuration-service.ts` 的
-`createConfigurationService`，命令切片：createSettings / updateSettings；查询由 F-011 交付）：
+`createConfigurationService`，命令切片：createSettings / updateSettings；查询切片由 F-011 交付，见下）：
 
 - **严格顺序**：scope/输入运行时校验（`validateSettingsScope` + F-008 payload 校验，
   非法输入在任何 I/O 之前拒绝，写入端口不被调用）→（仅 project scope）读取全局当前
@@ -361,6 +361,34 @@ F-010 定案（实施契约；实现于 `application/configuration-service.ts` �
   projectId），不存在第二条传入项目身份的渠道，项目 A 范围不能更新项目 B。
 - 数据库事务短小：校验在事务外完成（纯函数），事务内只有 SQL；不进行网络、Git、
   模型或凭据解析。
+
+F-011 定案（实施契约；实现于同一 `application/configuration-service.ts` 的查询切片，
+返回类型 `SettingsReadResult` / `EffectiveSettings` / `ExportedSettings`）：
+
+- **当前值查询 `getCurrentSettings(scope)`**：scope 校验先于任何 I/O（非法 scope 读取
+  端口不被调用）→ 全局读 `StateStore.getGlobalSettings`（单例），项目读
+  `StateStore.getProjectSettings(projectId)`（每项目一条）；返回 `schemaVersion`、已校验
+  `payload` 与 `revision`。缺失为 `not_found`；持久数据未知版本/损坏为 `corrupt`（沿用
+  `parseStoredSettingsPayload`，不静默误读、不回落其他来源）。
+- **有效配置查询 `getEffectiveSettings(projectId)`**：校验稳定 projectId → `getProject`
+  核验项目存在（未知项目显式 `not_found`，与「项目存在但无覆盖」区分）→ 读取全局/项目
+  当前记录（各自缺失按 `null` 来源处理）→ 调用 F-009 `mergeEffectiveSettings` 返回精确
+  合并值与逐项来源（`global_default`/`project_default` + `sourceKey` + 来源 `scopeRevision`）。
+  双方均无任一策略时返回 `configured:false` 的明确未配置/不可执行状态，**不注入默认
+  Claude/API**。读取路径不解析凭据引用、不读环境/认证文件/Keychain/CredentialProvider。
+- **普通脱敏导出 `exportSettings(projectId?)`**（省略 projectId 导出全局，提供则导出项目）：
+  返回 `ExportedSettings`——`exportFormatVersion`（当前 `SETTINGS_EXPORT_FORMAT_VERSION = 1`）、
+  `scope`（`global`/`project`）、`projectId`（项目 scope 时）、`current`（当前值逐字段白名单
+  投影：`schemaVersion`/`revision`/`strategies`/`policies`，`credentialRef`/`endpointRef`
+  **只保留引用字符串**、不解析）与 `effective`（F-009 合并值与来源）。导出只经存储端口
+  读取，不读环境/认证文件/Keychain/CredentialProvider、不导入 Pi SDK、不监听 YAML 外部
+  覆盖；缺失为 `not_found`、损坏为 `corrupt`。导出**不**标记执行能力就绪（不含
+  executable/ready 字段）；未装配 Runner/认证/模型能力仍由 F-008 `assessSettingsConfiguration`
+  以 `executable:false` 表达。
+- **只读无副作用**：查询切片不调用任何写入端口；不写 `state_events`、不创建 Task/执行快照、
+  不改 revision；不绑定 Host/CLI 路由或 YAML 文件监听。
+- 本阶段导出字段 Schema 为实施契约值（设计 06/08 只规定「YAML/JSON 显式导入导出、不含秘密」），
+  变更须显式提升 `SETTINGS_EXPORT_FORMAT_VERSION` 并同步文档与测试；**请求核对**。
 
 F-008 定案（实施契约；版本化校验与能力区分）：
 
@@ -394,7 +422,8 @@ F-009 定案（实施契约；有效配置合并，实现于 `application/effect
 - **合并结果**：`EffectiveSettings`（`configured` / `schemaVersion` / `strategies` /
   `policies`）；每个有效策略条目与政策段附 `EffectiveSource`（`global_default` /
   `project_default` + `sourceKey` + 来源 scope 的 `scopeRevision`）。输出全部为新对象，
-  不修改原始 payload、不解析凭据引用、不创建 Task、不写执行快照。
+  不修改原始 payload、不解析凭据引用、不创建 Task、不写执行快照。从 StateStore 组装来源
+  输入的查询服务 **F-011 已交付**（`getEffectiveSettings`）。
 - **合法 ≠ 可执行**：合并结果只表达结构与来源；执行能力可用性仍由 F-008
   `assessSettingsConfiguration` 区分（P01 `executable` 恒 false）。
 - 本次只交付合并纯函数与测试，不宣称 T24 的 Task 策略复制已完成。
@@ -645,6 +674,13 @@ T03（当前配置原子性）、T26（当前配置基础）、T32（项目标�
    返回 conflict `stale_dependency`，不提交基于陈旧依赖校验过的结果；全局不存在以 `null`
    表达）。首次创建不写审计记录（只有 `*_updated` 事件类型），与 `createProject` 一致。
    这是实施契约值而非设计结论，**请求核对**。
+9. **脱敏导出的字段 Schema 与格式版本**（F-011，§4.4）：设计 06 §3 只规定「YAML 仅新格式
+   显式导入导出，不监听外部文件实时覆盖」、设计 08 §2「exportConfig 不含秘密」，未规定导出
+   的具体字段。F-011 定案：`ExportedSettings` = `exportFormatVersion`（当前 1）+ `scope` +
+   `projectId?` + `current`（当前值白名单投影）+ `effective`（F-009 合并值与来源）；引用
+   `credentialRef`/`endpointRef` 原样保留（引用不是秘密），不含 executable/ready 执行标记。
+   这是实施契约值而非设计结论，**请求核对**；若设计给出不同导出 Schema（如纳入 YAML 兼容
+   字段），应由显式变更同步 `SETTINGS_EXPORT_FORMAT_VERSION`、本文与测试。
 
 未列入的矛盾按「已有契约优先复用」处理；不得由实施任务静默改变领域语义。
 
