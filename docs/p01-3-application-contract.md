@@ -312,6 +312,7 @@ interface EffectiveSettings {
   readonly configured: boolean;                 // 无任何策略时 false（未配置/不可执行）
   readonly schemaVersion: number;
   readonly strategies: EffectiveStrategies;      // 每个键附带来源
+  readonly policies: EffectivePolicies;          // F-009：每段附带来源（段级整体覆盖）
 }
 
 interface ConfigurationService {
@@ -351,6 +352,25 @@ F-008 定案（实施契约；版本化校验与能力区分）：
 - **凭据引用卫生**：`credentialRef`/`endpointRef` 只按引用字符串校验（拒绝带凭据 URL、
   空白/控制字符、超长）；明文 `apiKey`/`token`/`password` 等字段作为未知键拒绝，
   错误不回显秘密值；`envAllowlist` 只接受非敏感环境变量名（秘密形态名称拒绝）。
+
+F-009 定案（实施契约；有效配置合并，实现于 `application/effective-settings.ts` 纯函数
+`mergeEffectiveSettings`；从 StateStore 组装来源输入的查询服务由 F-011 交付）：
+
+- **合并输入**：`{ global?: { scopeRevision, payload }, project?: { scopeRevision, payload } }`，
+  边界为 `unknown`，每个来源的 payload 在合并前重新经 `validateSettingsPayload`
+  （schemaVersion=2 门槛）校验，`scopeRevision` 为该 scope 当前记录的 revision（≥1 整数）。
+  任一来源非法（未知版本/未知键/不完整条目/非法政策）带字段定位拒绝，**不悄悄忽略或降级**
+  成另一来源；无效全局配置同样报错，不被合法项目覆盖掩盖。
+- **三类输入**：只有全局默认 / 全局+项目覆盖 / 项目无配置（无项目记录、空 payload 或空
+  `strategies:{}`/`policies:{}` 均等价于全部继承全局）；双方均无任一策略时返回
+  `configured: false` 的明确未配置结果，**不注入默认 Claude/API**。
+- **合并结果**：`EffectiveSettings`（`configured` / `schemaVersion` / `strategies` /
+  `policies`）；每个有效策略条目与政策段附 `EffectiveSource`（`global_default` /
+  `project_default` + `sourceKey` + 来源 scope 的 `scopeRevision`）。输出全部为新对象，
+  不修改原始 payload、不解析凭据引用、不创建 Task、不写执行快照。
+- **合法 ≠ 可执行**：合并结果只表达结构与来源；执行能力可用性仍由 F-008
+  `assessSettingsConfiguration` 区分（P01 `executable` 恒 false）。
+- 本次只交付合并纯函数与测试，不宣称 T24 的 Task 策略复制已完成。
 
 ---
 
@@ -410,6 +430,12 @@ P01-3 确认沿用前序「创建 / 更新」分离的约定，不引入 `expect
   空的 `modelMap: {}` / `purposeStrategies: {}` 表示不覆盖、全部继承。空数组不是合法策略值。
 - **未配置**：全局与项目均无任一策略时，`getEffectiveSettings` 返回 `configured: false`
   （明确「未配置/不可执行」），**不注入默认 Claude/API**，不猜降级。
+- **政策段合并（F-009 定案）**：政策以**段级整体覆盖**——项目提供某政策段
+  （`policies.executionLimits` / `policies.verification` / `policies.securityPolicy`）即以项目
+  段整体替换全局段，段内字段**不跨来源继承**（项目段只给 `workTimeoutMs` 时，全局段的
+  `maxConcurrentWorks` 不进入有效配置）；数组（`envAllowlist`）随段整体替换，不做并集/拼接；
+  空政策段对象 `{}` 与空 `modelMap: {}` 一致表示**不覆盖该段、继承全局**。这是实施契约值
+  （设计 06/11 未规定政策合并粒度），**请求核对**（见 §9-7）。
 - **不修改原始 payload**：合并只读，不解析凭据引用，不写执行快照，不改 `revision`。
 - **来源说明**：每个有效键附 `global_default` / `project_default` 及对应 `sourceKey`
   （如 `modelMap.low`、`purposeStrategies.planner`）与 scope `revision`；来源仅说明，不是执行时
@@ -579,6 +605,11 @@ T03（当前配置原子性）、T26（当前配置基础）、T32（项目标�
    路径分离）；`repoIdentity = gitdir-sha256:` + sha256(gitCommonDir realpath)（不含路径原文、
    同 clone 稳定、不同 clone 不合并）。这是实施契约值而非设计结论，**请求核对**；若设计给出
    不同身份规则（如需跨搬移稳定的身份），应由显式变更同步派生函数、文档与 rebind 设计。
+7. **政策段合并粒度**（F-009，§5.3）：设计 06/11 未规定有效配置合并中政策段的粒度。
+   F-009 定案为**段级整体覆盖**（段内字段不跨来源继承、数组随段整体替换、空段对象 `{}`
+   表示不覆盖该段而继承全局），与策略条目「完整整体替换」同构。这是实施契约值而非设计
+   结论，**请求核对**；若设计给出不同粒度（如段内字段级合并），应由显式变更同步
+   `mergeEffectiveSettings`、本文与测试。
 
 未列入的矛盾按「已有契约优先复用」处理；不得由实施任务静默改变领域语义。
 

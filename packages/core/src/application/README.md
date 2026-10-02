@@ -12,3 +12,5 @@ P01-3 / F-005 起新增 `project-service.ts`：ProjectService 仓库注册用例
 P01-3 / F-006 起同一 `project-service.ts` 补充：`getProject` / `getRepositoryBinding`（按 projectId 查询身份与完整绑定，未知 ID 为 not_found）与 `updateProjectMetadata`（名称/描述/标签 CAS 编辑，先经 F-002 共用校验器拒绝非法字段/标签，再交 `StateStore.updateProject` 在同一短事务内完成 CAS 更新与 `state_events` 脱敏变更记录）。改元数据不触碰 projectId、canonicalPath、配置、PathService 位置或已有制品。
 
 P01-3 / F-007 起同一 `project-service.ts` 补充 `listProjects` / `countProjectLabels` 只读查询，直接复用 `StateStore.listProjects` / `StateStore.countProjectLabels`（任一/全部标签筛选、稳定 `id` 升序键集分页、项目层去重计数）；应用层不另立第二套标签规则，不实现按标签启动 Batch 或 Phase/Feature/Task 标签查询。
+
+P01-3 / F-009 起新增 `effective-settings.ts`：全局默认与项目当前覆盖的**有效配置合并纯函数** `mergeEffectiveSettings`——键级继承、完整策略条目整体替换（不跨来源拼接 runtime/provider/model）、政策段级整体覆盖（段内不跨来源继承、数组整体替换、空段 `{}` 继承全局）、逐项来源解释（`global_default`/`project_default` + `sourceKey` + 来源 scope revision）。输入边界为 `unknown`：两个来源的 payload 合并前重新经 `validateSettingsPayload`（schemaVersion=2）校验，未知版本/未知键/不完整条目/非法政策带字段定位拒绝，不静默降级；双方均无策略时返回 `configured:false` 的明确未配置结果，不注入默认 Claude/API。纯函数：不修改原始 payload、不解析凭据引用、不创建 Task、不写执行快照；只依赖 ports。从 StateStore 组装来源输入的查询服务由 F-011 交付。
