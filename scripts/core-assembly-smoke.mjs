@@ -5,7 +5,8 @@
  * 调用序列：
  *
  *   打开 Core 应用（迁移随装配执行）→ 注册项目 → 创建全局/项目当前配置 →
- *   读取有效配置 → 受权定位项目目录 → 关闭 → 重开核验 → 关闭。
+ *   读取有效配置 → 受权定位项目目录 → 发布固定正文制品并核验读取 → 关闭 →
+ *   重开核验项目/配置/制品逐字段一致并再次核验正文 → 关闭。
  *
  * 只使用 dist 产物（不 import 任何源码 .ts）、只接收绝对路径参数；不访问真实用户
  * 目录/凭据/网络，只读 Git 元数据。任一断言失败非零退出；成功输出一行脱敏摘要。
@@ -13,6 +14,7 @@
  * 用法：node core-assembly-smoke.mjs <assemblyEntry.js> <rootEntry.js> <sandboxDir>
  */
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -87,12 +89,23 @@ if (typeof assembly.openCoreApplication !== 'function') {
 if (typeof core.createStaticRuntimeCapabilityCatalog !== 'function') {
   fail('root entry does not export createStaticRuntimeCapabilityCatalog');
 }
+if (typeof core.createArtifactPublisher !== 'function') {
+  fail('root entry does not export createArtifactPublisher');
+}
+if (typeof core.createArtifactVerifier !== 'function') {
+  fail('root entry does not export createArtifactVerifier');
+}
+
+const artifactBytes = new TextEncoder().encode('ShipLoop core assembly smoke artifact \u6b63\u6587 \ud83d\udce6\n');
+const artifactHash = createHash('sha256').update(artifactBytes).digest('hex');
 
 const capabilityCatalog = core.createStaticRuntimeCapabilityCatalog([
   { runtimeId: 'pi', providers: [{ providerId: 'anthropic', models: ['claude-sonnet'] }] },
 ]);
 
 let projectId;
+let artifactId;
+let artifactRelativePath;
 try {
   const app = await assembly.openCoreApplication({ dataRoot, capabilityCatalog });
   try {
@@ -128,6 +141,39 @@ try {
     if (located.resourceType !== 'project_directory') {
       fail('authorized path resolution must return project_directory');
     }
+
+    const publisher = core.createArtifactPublisher({
+      artifacts: app.artifactStore,
+      files: app.artifactFileStore,
+      limits: { maxSizeBytes: 1_048_576, timeoutMs: 30_000 },
+    });
+    const published = await publisher.publishArtifact({
+      projectId,
+      kind: 'smoke_report',
+      mediaType: 'text/plain; charset=utf-8',
+      expectedHash: artifactHash,
+      locator: 'smoke/assembly-artifact.txt',
+      version: 1,
+      content: [artifactBytes],
+    });
+    artifactId = published.artifact.id;
+    artifactRelativePath = published.finalRelativePath;
+    if (published.artifact.status !== 'ready' || published.artifact.contentHash !== artifactHash) {
+      fail('published artifact is not ready with the verified content hash');
+    }
+
+    const verifier = core.createArtifactVerifier({
+      artifacts: app.artifactStore,
+      files: app.artifactFileStore,
+      limits: { maxReadBytes: 1_048_576 },
+    });
+    const verified = await verifier.readVerifiedContent(projectId, artifactId);
+    if (
+      Buffer.from(verified.content).toString('utf-8') !==
+      Buffer.from(artifactBytes).toString('utf-8')
+    ) {
+      fail('verified artifact content mismatch before close');
+    }
   } finally {
     app.close();
   }
@@ -143,8 +189,30 @@ try {
       kind: 'project',
       projectId,
     });
+    const artifact = await reopened.artifactStore.getArtifact(projectId, artifactId);
     if (project.id !== projectId || settings.revision !== 1) {
       fail('reopened state mismatch');
+    }
+    if (
+      artifact.status !== 'ready' ||
+      artifact.contentHash !== artifactHash ||
+      artifact.sizeBytes !== artifactBytes.byteLength
+    ) {
+      fail('reopened artifact index mismatch');
+    }
+    const verifier = core.createArtifactVerifier({
+      artifacts: reopened.artifactStore,
+      files: reopened.artifactFileStore,
+      limits: { maxReadBytes: 1_048_576 },
+    });
+    const verified = await verifier.readVerifiedContent(projectId, artifactId);
+    if (
+      verified.relativePath !== artifactRelativePath ||
+      verified.contentHash !== artifactHash ||
+      Buffer.from(verified.content).toString('utf-8') !==
+        Buffer.from(artifactBytes).toString('utf-8')
+    ) {
+      fail('verified artifact content mismatch after reopen');
     }
   } finally {
     reopened.close();
@@ -158,5 +226,5 @@ if (!existsSync(join(dataRoot, 'core.sqlite'))) {
 }
 
 process.stdout.write(
-  `core-assembly-smoke: ok project=${projectId} dataRootEntries=core.sqlite migrated=true\n`,
+  `core-assembly-smoke: ok project=${projectId} artifact=${artifactId} artifactHash=${artifactHash.slice(0, 12)} dataRootEntries=core.sqlite migrated=true\n`,
 );

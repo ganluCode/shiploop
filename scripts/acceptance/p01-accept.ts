@@ -5,7 +5,8 @@
  * 依据 `docs/p01-4-acceptance-contract.md` §2.1/§2.4/§3.4 与 F-007 报告模块实现：
  * - 一次运行自动串联 `npm run verify`（检查 P01-ENG-VERIFY）、四个固定必需场景
  *   （持久化闭环、回滚/CAS、制品负例、配置/标签，分别承接 FR-1/FR-2 分支检查）与
- *   构建产物冒烟（P01-ENG-BUILD-SMOKE，F-009 将扩展为专用路径扫描测试）；
+ *   构建产物冒烟（P01-ENG-BUILD-SMOKE，F-009 专用 `test/p01-4-build-smoke.test.ts`：
+ *   临时编译 dist 非源码 cwd 装配/制品重开 + 路径/依赖/迁移扫描）；
  * - 每一步都是**真实有界子进程**：显式 argv/cwd、不经 Shell 拼接、独立进程组、
  *   有限超时（单步与整体预算均为有限毫秒），输出有大小上限并记录截断/缺口，
  *   超时对整个进程组 SIGKILL 并核验进程停止后才继续清理；
@@ -667,9 +668,9 @@ export function buildP01ProductionSteps(
   }
   steps.push({
     stepId: 'build-smoke',
-    label: '构建产物冒烟（dist 入口 + 非源码 cwd 装配）',
+    label: '构建产物冒烟与路径扫描（非源码 cwd 装配 + 制品关闭重开）',
     command: process.execPath,
-    args: ['scripts/smoke-built-entries.ts'],
+    args: ['scripts/run-tests.ts', 'test/p01-4-build-smoke.test.ts'],
     checkIds: ['P01-ENG-BUILD-SMOKE'],
     timeoutMs: smokeTimeoutMs,
   });
@@ -1070,7 +1071,7 @@ const P01_KNOWN_LIMITATIONS: readonly string[] = [
   '正式验收平台限 macOS；Windows/WSL/Linux 未验收。',
   '可信项目模式不等于强 OS 沙箱；Pi 默认工具无强 OS 沙箱。',
   'T03/T24/T26/T32 仅覆盖 P01 已实现子集（验收契约 §4）；完整 Task 策略复制属 P03，本阶段不建执行表。',
-  'P01-ENG-BUILD-SMOKE 由构建产物冒烟脚本承接（dist 入口校验 + 非源码 cwd 装配冒烟）；路径扫描强化属 F-009。',
+  'P01-ENG-BUILD-SMOKE 由 test/p01-4-build-smoke.test.ts 承接：临时编译 dist 在非源码 cwd 装配并发布/重开制品，同时扫描个人绝对路径/被禁运行依赖/缺失迁移资源；verify 的 build 在它之前完成。',
 ];
 
 /** 逻辑 argv/cwd 映射：报告与证据不写入个人绝对路径。 */

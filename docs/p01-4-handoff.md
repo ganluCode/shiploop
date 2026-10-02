@@ -50,7 +50,7 @@ P01-4 需运行真实持久化闭环并保存失败前后状态。以下入口�
 |---|---|---|
 | `test/p01-3-fr-acceptance-closed-loop.test.ts`「闭环」用例 | 组合根集成闭环：注册（稳定 projectId/绑定/规范标签）→ 全局/项目配置创建与 CAS 更新 → `ArtifactStore` 制品发布 → 元数据编辑 → 有效配置来源 → 脱敏导出 → 受权定位 → 关闭重开逐字段一致 | 真实行级证据（`projects`/`repository_bindings`/`global_settings`/`project_settings`/`artifacts` 各一条、恰三条脱敏 `state_events`）；源仓库指纹（全部文件内容 + HEAD + status）闭环前后逐字节不变 |
 | `examples/p01-3-standalone.ts` | 可编译独立示例：`打开 → 注册 → 查询 → CAS 编辑 → 全局/项目配置 → 有效配置来源 → 脱敏导出 → 受权定位 → 关闭重开` | 由 `test/core-assembly.test.ts` 在真实临时仓库/数据根上执行，返回可断言摘要 |
-| `scripts/core-assembly-smoke.mjs` | 构建产物冒烟：非源码 cwd 下从 dist 加载 `shiploop-core/assembly` 执行装配/注册/配置/受权定位/关闭重开 | 由 `scripts/smoke-built-entries.ts` 在 `npm run build` 中编排，断言不写用户目录 |
+| `scripts/core-assembly-smoke.mjs` | 构建产物冒烟：非源码 cwd 下从 dist 加载 `shiploop-core/assembly` 执行装配/注册/配置/受权定位/制品发布/关闭重开 | 由 `scripts/smoke-built-entries.ts` 在 `npm run build` 中编排；P01-4 F-009 另由 `test/p01-4-build-smoke.test.ts` 在临时编译产物上运行同一冒烟并做路径/依赖/迁移扫描，断言不写用户目录 |
 | `test/helpers/git-repo.ts` + `test/helpers/temp-sandbox.ts` | 真实临时 Git 仓库/数据根夹具；缺失工具即失败不 skip；清理前可导出证据 | 幂等清理，拒绝用户仓库/HOME/符号链接逃逸 |
 
 `openCoreApplication` 的 `nowUtcMs` 可注入以获得确定性时间；`dataRoot` 与 `repositoryPath` 由

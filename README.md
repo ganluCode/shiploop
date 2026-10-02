@@ -36,7 +36,9 @@ packages/cli    shiploop-cli    CLI（后续 Feature 实现）
 test/           仓库级确定性测试（*.test.{js,ts}）与夹具（test/helpers，不收集为用例）
 scripts/        工程检查脚本（TypeScript，受 typecheck 覆盖）：run-tests.ts（测试启动器）、
                 smoke-built-entries.ts（构建入口冒烟）、check-boundaries.ts（依赖边界检查）、
-                verify.ts（fail-closed 工程检查编排，见下节）
+                verify.ts（fail-closed 工程检查编排，见下节）、
+                acceptance/（P01 阶段验收：p01-accept.ts 控制器、p01-report.ts 报告、
+                build-artifact-scan.ts 可发布产物路径/依赖/迁移扫描）
 vitest.config.ts 确定性测试配置（一次性、fail-closed）
 docs/acceptance/  P01-1 / P01-2 / P01-3 验收报告与脱敏证据（见下文「集成验收报告」「P01-2 存储与制品」「P01-3 项目身份与当前配置」）
 docs/storage-operations.md  P01-2 存储操作与恢复说明（F-014）
@@ -72,7 +74,7 @@ packages/host/src/index.ts   Host 公共入口（当前不是启动入口，不�
 packages/cli/src/index.ts    CLI 公共入口（当前不解析 argv、不发请求）
 ```
 
-各包 `package.json` 的 `main` / `types` / `exports['.']` 均指向 `dist` 构建产物；`npm run build` 通过 `tsc -b` 为三个包各自生成 `dist/index.js` 与 `dist/index.d.ts`（含 sourcemap 与增量构建信息）。构建结束后执行 `scripts/smoke-built-entries.ts`：在独立 Node 子进程中加载三个入口（5 秒超时），并将 `HOME` / XDG 目录 / cwd 重定向到系统临时目录沙箱，断言退出码 0、非常驻、不写用户数据、产物与声明文件存在。
+各包 `package.json` 的 `main` / `types` / `exports['.']` 均指向 `dist` 构建产物；`npm run build` 通过 `tsc -b` 为三个包各自生成 `dist/index.js` 与 `dist/index.d.ts`（含 sourcemap 与增量构建信息）。构建结束后执行 `scripts/smoke-built-entries.ts`：在独立 Node 子进程中加载三个入口（5 秒超时），并将 `HOME` / XDG 目录 / cwd 重定向到系统临时目录沙箱，断言退出码 0、非常驻、不写用户数据、产物与声明文件存在；其中 Core 的 `./assembly` 入口还会在非源码 cwd 下执行「注册项目 → 全局/项目配置 → 发布固定正文制品 → 关闭重开逐字段核验正文」闭环（`scripts/core-assembly-smoke.mjs`）。P01 阶段验收检查 `P01-ENG-BUILD-SMOKE` 由 `test/p01-4-build-smoke.test.ts` 承接：把 Core 真实编译到临时目录（不写受测仓库），运行上述冒烟并扫描可发布构建文件/入口/依赖清单/配置，拒绝固定个人绝对路径、Nezha/供应商 SDK 运行依赖与缺失的已编译迁移资源；运行时合法的临时仓库 canonicalPath 不会被误判。
 
 命名决定（2026-10-02）：
 
