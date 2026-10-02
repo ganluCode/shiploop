@@ -10,3 +10,5 @@
 P01-3 / F-003 起新增 `fs/path-service.ts`：统一 PathService 的真实文件系统实现——显式/注入用户目录解析授权数据根（构造时 realpath 固定、只使用已存在根、不创建目录、不读取进程真实用户目录），`core.sqlite` 与 `projects/<id>` 受控定位，受权定位经注入的项目存在性核验端口（StateStore.getProject）核验存在与项目归属，沿用 realpath/祖先核对/no-follow 三层防线。
 
 P01-3 / F-004 起新增 `fs/repository-inspector.ts`：只读仓库路径检查的真实 Git 实现——execFile 独立 argv + 显式 cwd + 有限超时与输出上限（不拼接 shell），最小确定子进程环境（GIT_CONFIG_NOSYSTEM/GLOBAL/SYSTEM 隔离机器配置、GIT_TERMINAL_PROMPT=0、GIT_OPTIONAL_LOCKS=0 保证只读），canonicalPath/gitCommonDir 经实际 Git 解析并 realpath 规范化，repoIdentity 为 gitCommonDir 的 SHA-256 派生（remote 不参与身份）；拒绝子目录/裸仓库/非 Git 目录，错误脱敏（reason 码 + 退出码/信号，无绝对路径与 stderr 原文）；不接触存储端口，Git/文件检查发生在数据库写事务之外。
+
+P01-3 / F-005 起 `sqlite/state-store.ts` 扩展仓库绑定读写：`createProjectWithRepositoryBinding` 把项目与绑定封装为同一业务原子操作——两个输入在任何 SQL 之前完成运行时校验；`BEGIN IMMEDIATE` 下按 `canonical_path` 检查并插入（同路径/符号链接别名复用既有项目与绑定返回 already_exists，不新增行、不覆盖既有元数据；同 remote 不同 clone 分别注册）；唯一约束冲突时事务整体回滚后有界核对一次，不遗留孤立项目或绑定；`projects.repository_binding_id` 同事务回写（同项目复合外键由 DDL 强制）。`getRepositoryBinding` 按项目读取绑定（项目缺失/无绑定均为 not_found）。跨进程注册竞争、绑定写入失败注入回滚与端口级校验由 test/project-registration.test.ts 验证（真实临时 Git 仓库 + 真实临时 SQLite）。

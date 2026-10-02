@@ -24,7 +24,12 @@
  *   与标签不参与 ID 或物理路径推导；payload 只保存经校验的结构化 JSON，
  *   不存明文凭据（F-002 Schema 限定 credentialRef 为引用形态）；
  * - 会话已关闭时所有端口操作抛出明确“已关闭”错误，不使用失效连接；
- * - 本模块不实现：仓库注册流程、PathService 默认 OS 数据根、标签统计筛选、
+ * - P01-3 / F-005 起新增仓库绑定读写：createProjectWithRepositoryBinding 把
+ *   项目与绑定封装为同一业务原子操作（BEGIN IMMEDIATE 下按 canonical_path
+ *   检查并插入；同路径已注册时复用胜者返回 already_exists，不新增行、不覆盖
+ *   既有元数据；唯一约束冲突时事务回滚后有界核对一次），getRepositoryBinding
+ *   按项目读取绑定（项目缺失/无绑定均为 not_found）；
+ * - 本模块不实现：PathService 默认 OS 数据根、标签统计筛选、
  *   配置有效合并、模型路由、项目列表分页（最小窄契约 F-002 未定义列表方法，
  *   不在本 Feature 扩展契约面）、Host/CLI 命令。
  */
@@ -37,6 +42,7 @@ import type { SettingsPayload } from '../../ports/settings-schema.js';
 import {
   GLOBAL_SETTINGS_ID,
   validateCreateProjectInput,
+  validateCreateRepositoryBindingInput,
   validateUpdateProjectInput,
   validatePutSettingsInput,
   validateUpdateSettingsInput,
@@ -47,8 +53,11 @@ import type {
   ProjectSettingsRecord,
   ProjectStatus,
   ProjectWithInitialSettingsRecord,
+  ProjectWithRepositoryBindingResult,
+  RepositoryBindingRecord,
   StateStore,
   ValidatedCreateProjectInput,
+  ValidatedCreateRepositoryBindingInput,
 } from '../../ports/state-store.js';
 import { validateStableId } from '../../ports/validation.js';
 import type { ValidationContext } from '../../ports/validation.js';
@@ -82,6 +91,44 @@ interface GlobalSettingsRow {
 
 interface ProjectSettingsRow extends GlobalSettingsRow {
   readonly project_id: string;
+}
+
+interface RepositoryBindingRow {
+  readonly id: string;
+  readonly created_at: number;
+  readonly project_id: string;
+  readonly revision: number;
+  readonly updated_at: number;
+  readonly canonical_path: string;
+  readonly git_common_dir: string | null;
+  readonly repo_identity: string;
+  readonly binding_revision: number;
+}
+
+function bindingFromRow(row: RepositoryBindingRow): RepositoryBindingRecord {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    canonicalPath: row.canonical_path,
+    gitCommonDir: row.git_common_dir,
+    repoIdentity: row.repo_identity,
+    revision: row.revision,
+    bindingRevision: row.binding_revision,
+    createdAtUtcMs: row.created_at,
+    updatedAtUtcMs: row.updated_at,
+  };
+}
+
+/** canonical_path 唯一约束冲突识别（better-sqlite3 SqliteError 带 code 字段）。 */
+function isCanonicalPathUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    typeof (error as { code?: unknown }).code === 'string' &&
+    (error as { code: string }).code.startsWith('SQLITE_CONSTRAINT') &&
+    error instanceof Error &&
+    error.message.includes('canonical_path')
+  );
 }
 
 const PROJECT_STATUSES: readonly ProjectStatus[] = ['active', 'archiving', 'archived', 'deleting'];
@@ -246,6 +293,46 @@ export function createSqliteStateStore(
     ).run(id, timestamp, timestamp, valid.displayName, 'active', valid.description, JSON.stringify(valid.labels));
   }
 
+  /** 绑定行插入（事务内使用；调用方保证项目行已在本事务内插入且输入已校验）。 */
+  function insertBindingRow(
+    db: Database.Database,
+    id: string,
+    projectId: string,
+    timestamp: number,
+    valid: ValidatedCreateRepositoryBindingInput,
+  ): void {
+    db.prepare(
+      'INSERT INTO repository_bindings (id, created_at, project_id, revision, updated_at, canonical_path, git_common_dir, repo_identity, binding_revision) ' +
+        'VALUES (?, ?, ?, 1, ?, ?, ?, ?, 1)',
+    ).run(
+      id,
+      timestamp,
+      projectId,
+      timestamp,
+      valid.canonicalPath,
+      valid.gitCommonDir,
+      valid.repoIdentity,
+    );
+  }
+
+  function selectBindingRowByCanonicalPath(
+    db: Database.Database,
+    canonicalPath: string,
+  ): RepositoryBindingRow | undefined {
+    return db
+      .prepare<[string], RepositoryBindingRow>('SELECT * FROM repository_bindings WHERE canonical_path = ?')
+      .get(canonicalPath) as RepositoryBindingRow | undefined;
+  }
+
+  function selectBindingRowByProjectId(
+    db: Database.Database,
+    projectId: string,
+  ): RepositoryBindingRow | undefined {
+    return db
+      .prepare<[string], RepositoryBindingRow>('SELECT * FROM repository_bindings WHERE project_id = ?')
+      .get(projectId) as RepositoryBindingRow | undefined;
+  }
+
   /** 项目配置行插入（事务内使用；调用方保证项目存在且 payload 已通过 F-002 校验）。 */
   function insertProjectSettingsRow(
     db: Database.Database,
@@ -325,6 +412,97 @@ export function createSqliteStateStore(
       const context: ValidationContext = { operation, entity: { type: 'project', id } };
       const row = selectProjectRow(session.database, id, operation);
       return projectFromRow(row, context);
+    },
+
+    async createProjectWithRepositoryBinding(
+      projectInput: unknown,
+      bindingInput: unknown,
+    ): Promise<ProjectWithRepositoryBindingResult> {
+      const operation = 'StateStore.createProjectWithRepositoryBinding';
+      assertOpen(operation);
+      // 两个输入都在任何 SQL 之前完成校验：第二步校验失败不会残留项目行。
+      const validProject = validateCreateProjectInput(projectInput, operation);
+      const validBinding = validateCreateRepositoryBindingInput(bindingInput, operation);
+
+      const alreadyExists = (
+        db: Database.Database,
+        winner: RepositoryBindingRow,
+      ): ProjectWithRepositoryBindingResult => {
+        const projectRow = selectProjectRow(db, winner.project_id, operation);
+        const context: ValidationContext = {
+          operation,
+          entity: { type: 'project', id: winner.project_id },
+        };
+        return {
+          status: 'already_exists',
+          project: projectFromRow(projectRow, context),
+          binding: bindingFromRow(winner),
+        };
+      };
+
+      const timestamp = nowUtcMs();
+      const projectId = randomUUID();
+      const bindingId = randomUUID();
+      const context: ValidationContext = { operation, entity: { type: 'project', id: projectId } };
+      try {
+        return session.transactWrite(operation, (db) => {
+          // BEGIN IMMEDIATE 下检查与插入被串行化：同一路径的并发注册在此看到
+          // 胜者已提交的绑定并复用，不新增行、不覆盖既有元数据。
+          const existing = selectBindingRowByCanonicalPath(db, validBinding.canonicalPath);
+          if (existing !== undefined) {
+            return alreadyExists(db, existing);
+          }
+          insertProjectRow(db, projectId, timestamp, validProject);
+          insertBindingRow(db, bindingId, projectId, timestamp, validBinding);
+          // 绑定回写项目（同项目复合外键由 DDL 强制）；同一事务内对外不可分。
+          db.prepare('UPDATE projects SET repository_binding_id = ? WHERE id = ?').run(
+            bindingId,
+            projectId,
+          );
+          const bindingRow = selectBindingRowByCanonicalPath(db, validBinding.canonicalPath);
+          if (bindingRow === undefined) {
+            // 防御纵深：本事务刚插入的行必定可读；不可读即实现缺陷，整组回滚。
+            throw new Error(`${operation}: 绑定行插入后不可读（实现缺陷），事务回滚`);
+          }
+          return {
+            status: 'registered',
+            project: projectFromRow(selectProjectRow(db, projectId, operation), context),
+            binding: bindingFromRow(bindingRow),
+          };
+        });
+      } catch (error) {
+        // 唯一约束兜底（防御纵深：BEGIN IMMEDIATE 下正常不会到达）：冲突后事务
+        // 已整体回滚（无孤立项目），有界核对一次——核对到既有绑定则复用胜者，
+        // 否则原错误继续抛出，绝不伪装成注册成功。
+        if (isCanonicalPathUniqueViolation(error)) {
+          const winner = selectBindingRowByCanonicalPath(session.database, validBinding.canonicalPath);
+          if (winner !== undefined) {
+            return alreadyExists(session.database, winner);
+          }
+        }
+        throw error;
+      }
+    },
+
+    async getRepositoryBinding(projectId: string): Promise<RepositoryBindingRecord> {
+      const operation = 'StateStore.getRepositoryBinding';
+      assertOpen(operation);
+      const id = validateStableId(
+        projectId,
+        { operation, entity: { type: 'repository_binding', projectId } },
+        'projectId',
+      );
+      const row = selectBindingRowByProjectId(session.database, id);
+      if (row === undefined) {
+        // 区分“项目不存在”与“项目尚无绑定”，两者都是 not_found 但语义不同。
+        selectProjectRow(session.database, id, operation);
+        throw notFound(
+          operation,
+          { type: 'repository_binding', projectId: id },
+          `项目 ${id} 尚无仓库绑定`,
+        );
+      }
+      return bindingFromRow(row);
     },
 
     async updateProject(projectId: string, input: unknown): Promise<ProjectRecord> {

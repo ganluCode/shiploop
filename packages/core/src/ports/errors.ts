@@ -14,6 +14,7 @@
  */
 export type StorageEntityType =
   | 'project'
+  | 'repository_binding'
   | 'global_settings'
   | 'project_settings'
   | 'artifact'

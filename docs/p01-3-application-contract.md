@@ -154,6 +154,27 @@ interface ProjectService {
 - `registerRepository`：先做**只读**仓库检查（§4.2）得到 `canonicalPath`；再在同一短事务内原子
   保存项目 + 仓库绑定。同 `canonicalPath` 已注册 → 返回 `already_exists` 与既有项目/绑定，
   **不新增行、不覆盖**名称/描述/标签；不同 clone（remote 相同、路径不同）分别注册。
+
+F-005 定案（实施契约；与 §6.2「仓库绑定读写端口」一致）：
+
+- **幂等原语在端口内**：`StateStore.createProjectWithRepositoryBinding(project, binding)` 在单个
+  `BEGIN IMMEDIATE` 事务内「按 `canonical_path` 检查并插入」——检查与插入被写锁串行化，跨进程
+  竞争注册同一路径恰有一个 `registered`，其余复用胜者；`repository_bindings.canonical_path`
+  唯一索引为兑底，约束冲突时事务整体回滚后**有界核对一次**（重读到既有绑定则返回
+  `already_exists`，否则原错误继续抛出），绝不遗留孤立项目或绑定。应用层不经端口开事务。
+- **结果形态**：`{ status: 'registered' | 'already_exists', project, binding }`；
+  `RepositoryBindingRecord` 含 `canonicalPath`/`gitCommonDir`/`repoIdentity`/`revision`/
+  `bindingRevision`/UTC 时间；`projects.repository_binding_id` 在同一事务内回写（同项目复合
+  外键由 DDL 强制）。绑定输入经 `validateCreateRepositoryBindingInput`（NUL/相对路径/空身份
+  在任何 SQL 之前拒绝）。
+- **不持久化瞬时事实**：`headCommit`/`hasInitialCommit`/`hasUncommittedChanges` 只用于注册时
+  的只读核验，不入库；运行时状态按需重新检查。
+- **错误传播**：元数据/输入非法为 `StorageError(kind='validation')`（先于任何 I/O，检查端口
+  不被调用）；仓库检查失败为 `RepositoryInspectionError` 原样传播（零业务行）；存储失败为
+  `StorageError` 原样传播。Git/文件检查发生在数据库写事务之外（检查失败时写入端口未被调用，
+  有测试证据）。
+- `StateStore.getRepositoryBinding(projectId)` 按项目读取绑定：项目不存在与项目尚无绑定分别
+  返回带不同实体身份的 `not_found`。
 - `updateProjectMetadata`：至少提供 `displayName`/`description`/`labels` 之一；匹配
   `expectedRevision` 后 `revision+1`；不改 `projectId`、`canonicalPath`、配置、PathService 位置
   或已有制品；不得借元数据编辑做 rebind。
@@ -352,7 +373,7 @@ P01-3 确认沿用前序「创建 / 更新」分离的约定，不引入 `expect
 
 | 扩展 | 目的 | 说明 |
 |---|---|---|
-| 仓库绑定读写端口 | 注册/幂等复用/查询绑定 | P01-2 只有 `projects.repository_binding_id`，无绑定的创建/读取方法。P01-3 增加窄方法（可置于 `StateStore` 或独立 `RepositoryBindingStore`）：按 `canonical_path` 查找、原子「项目 + 绑定」组合创建、按项目读取绑定。 |
+| 仓库绑定读写端口 | 注册/幂等复用/查询绑定 | P01-2 只有 `projects.repository_binding_id`，无绑定的创建/读取方法。P01-3 增加窄方法（可置于 `StateStore` 或独立 `RepositoryBindingStore`）：按 `canonical_path` 查找、原子「项目 + 绑定」组合创建、按项目读取绑定。**F-005 已交付**：置于 `StateStore`（`createProjectWithRepositoryBinding` / `getRepositoryBinding`，无新表、无新迁移）。 |
 | 变更记录 | 元数据/配置的脱敏审计 | 见 §6.3。 |
 | `listProjects` / 标签计数查询端口 | F-007 筛选、分页、计数 | 基于 `projects.labels` 的 `json_each` 查询；首版**不新增派生索引表**（设计 11 §10：数据增长后再加），不做跨层级求和。 |
 

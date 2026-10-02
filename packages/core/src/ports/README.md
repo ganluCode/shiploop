@@ -10,3 +10,5 @@
 P01-3 / F-003 起新增 `path-service.ts`（统一 PathService 窄契约：稳定 dataNamespace 与 macOS 默认根纯推导、`core.sqlite` 与 `projects/<id>` 受控位置、资源类型白名单、受权定位入口与 `PathResolutionError`），同样为纯契约无 I/O。
 
 P01-3 / F-004 起新增 `repository-inspector.ts`（只读仓库路径检查窄契约：`RepositoryInspection`/`RepositoryInspector`、`RepositoryInspectionError` 八类 kind、有限超时与输出上限常量、`validateRepositoryInspectionPath` 纯校验与 `deriveRepoIdentity` 纯哈希派生），同样为纯契约无 I/O；真实 Git 实现在 adapters 层。
+
+P01-3 / F-005 起 `state-store.ts` 扩展仓库绑定窄契约：`RepositoryBindingRecord`、`validateCreateRepositoryBindingInput`（realpath 规范路径/非空身份在任何 SQL 之前校验）、`createProjectWithRepositoryBinding`（项目+绑定原子组合创建，`canonical_path` 唯一幂等复用返回 `registered`/`already_exists`）与 `getRepositoryBinding`；`errors.ts` 的 `StorageEntityType` 相应新增 `repository_binding`。纯契约无 I/O；真实 SQLite 实现在 adapters 层。

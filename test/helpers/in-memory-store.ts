@@ -19,6 +19,7 @@ import type { SettingsPayload } from '../../packages/core/src/ports/settings-sch
 import {
   GLOBAL_SETTINGS_ID,
   validateCreateProjectInput,
+  validateCreateRepositoryBindingInput,
   validateUpdateProjectInput,
   validatePutSettingsInput,
   validateUpdateSettingsInput,
@@ -28,6 +29,8 @@ import type {
   ProjectRecord,
   ProjectSettingsRecord,
   ProjectWithInitialSettingsRecord,
+  ProjectWithRepositoryBindingResult,
+  RepositoryBindingRecord,
   StateStore,
 } from '../../packages/core/src/ports/state-store.ts';
 import {
@@ -61,6 +64,8 @@ export type InMemoryStorage = {
     /** key 为 GLOBAL_SETTINGS_ID（全局单例）或 projectId（每项目一条）。 */
     readonly settings: Map<string, StoredSettingsRow>;
     readonly artifacts: Map<string, ArtifactRecord>;
+    /** key 为绑定 id；canonicalPath 全库唯一由 findByCanonicalPath 表达。 */
+    readonly bindings: Map<string, RepositoryBindingRecord>;
   };
 };
 
@@ -72,6 +77,16 @@ export function createInMemoryStorage(now: () => number): InMemoryStorage {
   const projects = new Map<string, ProjectRecord>();
   const settings = new Map<string, StoredSettingsRow>();
   const artifacts = new Map<string, ArtifactRecord>();
+  const bindings = new Map<string, RepositoryBindingRecord>();
+
+  function findBindingByCanonicalPath(canonicalPath: string): RepositoryBindingRecord | undefined {
+    for (const binding of bindings.values()) {
+      if (binding.canonicalPath === canonicalPath) {
+        return binding;
+      }
+    }
+    return undefined;
+  }
 
   function conflict(
     operation: string,
@@ -226,6 +241,74 @@ export function createInMemoryStorage(now: () => number): InMemoryStorage {
       const entity: StorageEntityRef = { type: 'project_settings', projectId: project.id };
       const { row, payload } = readSettingsRecord(project.id, operation, entity);
       return { project: clone(project), settings: { ...toGlobalRecord(project.id, row, payload), projectId: project.id } };
+    },
+
+    async createProjectWithRepositoryBinding(
+      projectInput: unknown,
+      bindingInput: unknown,
+    ): Promise<ProjectWithRepositoryBindingResult> {
+      const operation = 'StateStore.createProjectWithRepositoryBinding';
+      // 两个输入都在任何持久化副作用之前完成校验：第二步校验失败不得残留项目。
+      const validProject = validateCreateProjectInput(projectInput, operation);
+      const validBinding = validateCreateRepositoryBindingInput(bindingInput, operation);
+      // canonicalPath 全库唯一：同路径已注册时复用既有项目/绑定，不新增、不覆盖。
+      const existing = findBindingByCanonicalPath(validBinding.canonicalPath);
+      if (existing !== undefined) {
+        const project = projects.get(existing.projectId);
+        if (project === undefined) {
+          throw new Error(`${operation}: 绑定 ${existing.id} 引用的项目缺失（持久层不一致）`);
+        }
+        return { status: 'already_exists', project: clone(project), binding: clone(existing) };
+      }
+      const timestamp = now();
+      const bindingId = randomUUID();
+      const project: ProjectRecord = {
+        id: randomUUID(),
+        displayName: validProject.displayName,
+        description: validProject.description,
+        status: 'active',
+        labels: validProject.labels,
+        repositoryBindingId: bindingId,
+        revision: 1,
+        createdAtUtcMs: timestamp,
+        updatedAtUtcMs: timestamp,
+      };
+      const binding: RepositoryBindingRecord = {
+        id: bindingId,
+        projectId: project.id,
+        canonicalPath: validBinding.canonicalPath,
+        gitCommonDir: validBinding.gitCommonDir,
+        repoIdentity: validBinding.repoIdentity,
+        revision: 1,
+        bindingRevision: 1,
+        createdAtUtcMs: timestamp,
+        updatedAtUtcMs: timestamp,
+      };
+      // 内存实现同步执行，两步写入之间不存在交错；真实适配器以单事务保证同等原子性。
+      projects.set(project.id, project);
+      bindings.set(binding.id, binding);
+      return { status: 'registered', project: clone(project), binding: clone(binding) };
+    },
+
+    async getRepositoryBinding(projectId: string): Promise<RepositoryBindingRecord> {
+      const operation = 'StateStore.getRepositoryBinding';
+      const id = validateStableId(
+        projectId,
+        { operation, entity: { type: 'repository_binding', projectId } },
+        'projectId',
+      );
+      for (const binding of bindings.values()) {
+        if (binding.projectId === id) {
+          return clone(binding);
+        }
+      }
+      // 区分“项目不存在”与“项目尚无绑定”，两者都是 not_found 但语义不同。
+      requireProject(id, operation);
+      throw notFound(
+        operation,
+        { type: 'repository_binding', projectId: id },
+        `项目 ${id} 尚无仓库绑定`,
+      );
     },
 
     async createGlobalSettings(input: unknown): Promise<GlobalSettingsRecord> {
@@ -438,5 +521,5 @@ export function createInMemoryStorage(now: () => number): InMemoryStorage {
     },
   };
 
-  return { stateStore, artifactStore, raw: { projects, settings, artifacts } };
+  return { stateStore, artifactStore, raw: { projects, settings, artifacts, bindings } };
 }
