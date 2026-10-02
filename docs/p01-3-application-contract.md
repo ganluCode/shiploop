@@ -428,6 +428,36 @@ F-009 定案（实施契约；有效配置合并，实现于 `application/effect
   `assessSettingsConfiguration` 区分（P01 `executable` 恒 false）。
 - 本次只交付合并纯函数与测试，不宣称 T24 的 Task 策略复制已完成。
 
+### 4.5 Core 装配公共入口（F-012）
+
+F-012 定案：受控装配入口实现于 `packages/core/src/adapters/composition.ts`，经
+`shiploop-core` 包清单的 **`./assembly` 子路径导出**暴露（`exports['./assembly']` →
+`dist/adapters/composition.js` / `.d.ts`）。契约区（domain/application/ports/公共入口）仍
+不导入 `adapters`，跨包只允许依赖该已声明的公共子路径，禁止包内自引用或跨包内部相对路径。
+
+- **入口形态**：`openCoreApplication(options: unknown): Promise<CoreApplication>`。
+  `CoreApplication` 只含窄端口与用例接口——`dataRoot`、`pathService`、`stateStore`、
+  `artifactStore`、`artifactFileStore`、`repositoryInspector`、`projectService`、
+  `configurationService` 与幂等 `close()`；**不暴露** `SqliteStorageSession`、
+  better-sqlite3、Drizzle、Pi SDK 或 HTTP 类型。
+- **根解析**：`dataRoot`（绝对路径）与 `userHomeDir` 二选一；都未提供时用注入的
+  macOS 用户目录（默认 `os.homedir()`）经 `deriveDefaultDataRoot` 推导。装配只创建
+  数据根本身（mode 0700），不隐式创建项目/Run/Session 目录，不迁移源仓库。
+- **装配顺序**：选项运行时校验（能力目录形态、根来源歧义）在任何 I/O 之前 fail-closed →
+  打开状态库 → 执行版本化迁移 → 装配 StateStore/ArtifactStore/PathService（项目存在性
+  核验绑定到同一 StateStore）/RepositoryInspector/ProjectService/ConfigurationService；
+  任一步失败关闭已开会话并原样抛出结构化错误。
+- **关闭/重开**：`close()` 关闭状态库会话且幂等；关闭后用同一 `dataRoot` 再次
+  `openCoreApplication` 即重开，迁移幂等，读取值与 revision 一致。
+- **合法 ≠ 可执行**：本入口不装配 Runner/认证/模型执行能力，配置结构合法不代表可运行
+  （`assessSettingsConfiguration().executable` 恒为 false）。
+- **示例与构建冒烟**：可编译独立示例见 `examples/p01-3-standalone.ts`（由
+  `test/core-assembly.test.ts` 在真实临时仓库/数据根上执行）；构建产物冒烟由
+  `scripts/core-assembly-smoke.mjs` 在非源码 cwd 下从 dist 加载 `./assembly` 执行
+  「打开→注册→配置→受权定位→关闭重开」，经 `scripts/smoke-built-entries.ts` 在
+  `npm run build` 中编排。
+- **不扩大范围**：不新增 HTTP/SSE、不新增 `shiploop` CLI 命令；示例不编造尚未存在的 CLI。
+
 ---
 
 ## 5. 配置语义（明确规则）
@@ -601,13 +631,14 @@ payload 与 v1 持久数据一律拒绝（读取为 `corrupt`），不被新版�
 `RepositoryInspectionError`、`PathResolutionError`）时，同样携带 `operation`、实体/路径原因与
 脱敏 `details`，不把 Git/文件系统错误伪装成有效绑定。
 
-### 7.4 组合根与公共入口（F-012 方向）
+### 7.4 组合根与公共入口（F-012 定案）
 
 - 契约区（`domain`/`application`/`ports`/公共入口）**禁止**导入 `adapters` 与
   better-sqlite3/Drizzle/Pi/HTTP（`scripts/check-boundaries.ts` 强制）。
-- F-012 在 Core 内提供受控装配入口，把 `adapters`（SQLite/文件）接到 `ports`，并让应用服务只
-  依赖 `ports`；跨包只经包 `exports` 的 `"."` 使用，禁止跨包内部相对路径或包内自引用绕边界
-  （§1.2 与 `p01-3-handoff.md` §3 的待定项由 F-012 定案）。
+- F-012 **已定案**：在 Core 内提供受控装配入口 `adapters/composition.ts`，经
+  `shiploop-core` 的 `./assembly` 子路径导出，把 `adapters`（SQLite/文件）接到 `ports`，
+  并让应用服务只依赖 `ports`；跨包只经该已声明子路径使用，禁止包内自引用或跨包内部
+  相对路径绕边界（§1.2 与 `p01-3-handoff.md` §3 的待定项已由 F-012 定案，详见 §4.5）。
 
 ---
 

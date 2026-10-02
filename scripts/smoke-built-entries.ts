@@ -20,10 +20,9 @@ import { fileURLToPath } from 'node:url';
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const packageDirs = ['packages/core', 'packages/host', 'packages/cli'] as const;
 const LOAD_TIMEOUT_MS = 5000;
+const ASSEMBLY_SMOKE_TIMEOUT_MS = 60_000;
 
-type PackageExports = {
-  '.': { types?: unknown; default?: unknown };
-};
+type PackageExports = Record<string, { types?: unknown; default?: unknown } | undefined>;
 
 type PackageManifest = {
   name?: unknown;
@@ -72,6 +71,26 @@ for (const packageDir of packageDirs) {
     fail(`${name}: declaration file missing: ${rootExport.types}`);
   }
 
+  // Core 的受控装配入口经 `./assembly` 子路径导出；构建产物冒烟会在非源码 cwd 下
+  // 加载它并执行装配/配置/受权路径序列（见 scripts/core-assembly-smoke.mjs）。
+  let assemblyEntry: string | null = null;
+  if (name === 'shiploop-core') {
+    const assembly = manifest.exports?.['./assembly'];
+    if (typeof assembly?.default !== 'string' || !assembly.default.startsWith('./dist/')) {
+      fail(`${name}: exports['./assembly'].default must point at a ./dist/*.js artifact`);
+    }
+    if (typeof assembly.types !== 'string' || !assembly.types.startsWith('./dist/')) {
+      fail(`${name}: exports['./assembly'].types must point at a ./dist/*.d.ts artifact`);
+    }
+    assemblyEntry = resolve(packageRoot, assembly.default);
+    if (!existsSync(assemblyEntry)) {
+      fail(`${name}: assembly entry missing: ${assembly.default}`);
+    }
+    if (!existsSync(resolve(packageRoot, assembly.types))) {
+      fail(`${name}: assembly declaration missing: ${assembly.types}`);
+    }
+  }
+
   const sandbox = mkdtempSync(join(tmpdir(), 'shiploop-smoke-'));
   try {
     const home = join(sandbox, 'home');
@@ -111,6 +130,48 @@ for (const packageDir of packageDirs) {
     }
     if (result.status !== 0) {
       fail(`${name}: exit code ${result.status}\nstdout: ${result.stdout}\nstderr: ${result.stderr}`);
+    }
+
+    if (assemblyEntry !== null) {
+      const assemblySandbox = join(sandbox, 'core-assembly');
+      mkdirSync(assemblySandbox, { recursive: true });
+      const smokeScript = resolve(repoRoot, 'scripts/core-assembly-smoke.mjs');
+      const smokeStartedAt = Date.now();
+      const smoke = spawnSync(
+        process.execPath,
+        [smokeScript, assemblyEntry, jsEntry, assemblySandbox],
+        {
+          cwd,
+          env: {
+            PATH: process.env.PATH ?? '',
+            HOME: home,
+            USERPROFILE: home,
+            XDG_CONFIG_HOME: configHome,
+            XDG_DATA_HOME: dataHome,
+            XDG_CACHE_HOME: cacheHome,
+            TMPDIR: sandbox,
+            NODE_NO_WARNINGS: '1',
+          },
+          encoding: 'utf8',
+          timeout: ASSEMBLY_SMOKE_TIMEOUT_MS,
+        },
+      );
+      if (smoke.error) {
+        fail(
+          `${name}: assembly smoke error or timeout after ${ASSEMBLY_SMOKE_TIMEOUT_MS}ms: ${smoke.error.message}`,
+        );
+      }
+      if (smoke.signal) {
+        fail(`${name}: assembly smoke killed by signal ${smoke.signal}`);
+      }
+      if (smoke.status !== 0) {
+        fail(
+          `${name}: assembly smoke exit code ${smoke.status}\nstdout: ${smoke.stdout}\nstderr: ${smoke.stderr}`,
+        );
+      }
+      console.log(
+        `ok ${name}: assembly entry ${manifest.exports?.['./assembly']?.default} (${Date.now() - smokeStartedAt}ms) -> ${smoke.stdout.trim()}`,
+      );
     }
 
     const after = watchedDirectories.map(listFilesRelative);

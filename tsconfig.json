@@ -8,6 +8,7 @@
   "include": [
     "vitest.config.ts",
     "test/**/*.ts",
+    "examples/**/*.ts",
     "scripts/**/*.ts",
     "packages/core/src/**/*.ts",
     "packages/host/src/**/*.ts",
