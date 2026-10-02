@@ -8,3 +8,5 @@
 当前阶段（P01-2）：已建立最小契约面——`errors.ts`（结构化错误）、`validation.ts`（运行时校验原语）、`settings-schema.ts`（schemaVersion=1 的限定配置 Payload Schema）、`state-store.ts`（项目与全局/项目当前配置窄契约）、`artifact-store.ts`（制品索引、有效输入引用与 F-012 起的有界分页 listArtifacts 契约）、`artifact-files.ts`（F-010 制品文件窄契约：受控逻辑定位、staging 生命周期、不覆盖发布与有界扫描的表达形态）、`migrations.ts`（迁移记录契约）。全部为类型、常量与纯校验函数，无任何 I/O；真实 SQLite 适配器自 F-003 起、真实文件系统适配器自 F-010 起实现这些端口，语义基线由 test/storage-contracts.test.ts 与各适配器回归测试固定。
 
 P01-3 / F-003 起新增 `path-service.ts`（统一 PathService 窄契约：稳定 dataNamespace 与 macOS 默认根纯推导、`core.sqlite` 与 `projects/<id>` 受控位置、资源类型白名单、受权定位入口与 `PathResolutionError`），同样为纯契约无 I/O。
+
+P01-3 / F-004 起新增 `repository-inspector.ts`（只读仓库路径检查窄契约：`RepositoryInspection`/`RepositoryInspector`、`RepositoryInspectionError` 八类 kind、有限超时与输出上限常量、`validateRepositoryInspectionPath` 纯校验与 `deriveRepoIdentity` 纯哈希派生），同样为纯契约无 I/O；真实 Git 实现在 adapters 层。

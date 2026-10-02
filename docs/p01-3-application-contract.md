@@ -174,7 +174,7 @@ interface RepositoryInspection {
 }
 
 interface RepositoryInspector {
-  inspect(repositoryPath: string): Promise<RepositoryInspection>;
+  inspect(repositoryPath: unknown): Promise<RepositoryInspection>;  // 边界输入 unknown，运行时校验
 }
 ```
 
@@ -184,6 +184,28 @@ interface RepositoryInspector {
   哨兵内容一致。Git/文件系统检查在数据库写事务之外。
 - 缺失路径、普通文件、非 Git 目录、不符合已确认根目录契约、超时、Git 不可用、权限错误返回
   带操作与路径原因的结构化错误；不创建项目或目录，不伪装成有效绑定。
+
+F-004 定案（实施契约；理由与核对请求见 §9-6）：
+
+- **支持范围**：接受工作树根（含无初始 commit、脏工作区）、根的符号链接别名与 linked
+  worktree 顶层；明确拒绝不存在路径、普通文件、非 Git 目录、仓库**子目录**
+  （`repository_root_required`，不误绑定到外层仓库，由调用方改传工作树根）、**裸仓库**与
+  `.git` 内部目录（`bare_repository` / `not_a_worktree_root`，无工作树可绑定）。
+- **repoIdentity 派生**：`gitdir-sha256:` + sha256(gitCommonDir realpath)。同一 clone 重检/
+  关闭重开一致；同 remote 不同 clone 不合并；不含本地路径原文，可安全入索引/日志。linked
+  worktree 与主 checkout 共享公共目录：身份一致而 `canonicalPath` 不同，`canonical_path`
+  全库唯一约束仍把不同 checkout 分开（与「同 remote 多 clone 分别注册」语义一致）。
+- **gitCommonDir**：来自实际 `git rev-parse --git-common-dir`（相对输出按 cwd 解析）并
+  realpath 规范化；linked worktree 时指向主 checkout 的 `.git`（可位于 canonicalPath 之外）。
+- **HEAD/脏状态**：`rev-parse --verify --quiet HEAD^{commit}` 退出码 1 = 无初始 commit
+  （headCommit=null，不猜 main）；脏状态由 `status --porcelain --untracked-files=normal`
+  判定（显式旗标覆盖仓库配置）。
+- **子进程环境**：最小确定环境（仅 PATH + LC_ALL=C + GIT_CONFIG_NOSYSTEM/GLOBAL/SYSTEM 隔离
+  机器配置 + GIT_TERMINAL_PROMPT=0 禁交互 + GIT_OPTIONAL_LOCKS=0 保证只读）；默认有限超时
+  10s（上限 120s）与输出上限 1MiB（上限 16MiB），超限报错而非截断。
+- **错误类型**：`RepositoryInspectionError`（kind：`invalid_input` / `not_found` /
+  `not_a_directory` / `not_a_repository` / `unavailable` / `timeout` / `permission` / `io`），
+  携带 operation 与结构化 reason 码；message/details 不含绝对路径与 stderr 原文。
 
 ### 4.3 PathService（F-003）
 
@@ -451,6 +473,13 @@ T03（当前配置原子性）、T26（当前配置基础）、T32（项目标�
    标签的安全上限。P01-3 在 `ports/validation.ts` 记录并实现 §3-9 的有限上限（防止任意长输入
    进入存储与查询），注册/编辑/查询共用。这是实施契约值而非设计结论，**请求核对**；若设计给出
    不同数值，应由一个显式变更同步常量、DDL 门槛与本文。
+6. **仓库检查支持范围与 repoIdentity 派生**（F-004，§4.2）：设计 06 §1 只给出「规范路径 +
+   Git 与脏状态识别」与「同 remote 不同 clone 可注册不同项目」，未规定子目录/裸仓库/linked
+   worktree 的接受范围，也未规定 `repo_identity` 的具体派生。F-004 定案：拒绝子目录（不猜测
+   绑定外层仓库）与裸/`.git` 内部目录（无工作树），接受 linked worktree 顶层（身份同主仓库、
+   路径分离）；`repoIdentity = gitdir-sha256:` + sha256(gitCommonDir realpath)（不含路径原文、
+   同 clone 稳定、不同 clone 不合并）。这是实施契约值而非设计结论，**请求核对**；若设计给出
+   不同身份规则（如需跨搬移稳定的身份），应由显式变更同步派生函数、文档与 rebind 设计。
 
 未列入的矛盾按「已有契约优先复用」处理；不得由实施任务静默改变领域语义。
 
