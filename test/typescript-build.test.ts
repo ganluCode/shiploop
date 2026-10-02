@@ -226,6 +226,7 @@ describe('Core layer boundaries', () => {
       'node:dgram',
     ];
     const adapters = readSourceTree('packages/core/src/adapters');
+    const coreSrcRoot = resolve(repoRoot, 'packages/core/src');
     for (const { file, code } of adapters) {
       const specifiers = extractModuleSpecifiers(code);
       for (const banned of bannedSpecifiers) {
@@ -234,10 +235,16 @@ describe('Core layer boundaries', () => {
       }
       for (const specifier of specifiers) {
         const isAllowed = allowed.some((name) => specifierMatches(specifier, name));
-        const isBuiltin = specifier.startsWith('node:') || specifier.startsWith('./');
+        // F-004 起 adapters 可经相对路径引用本包 src 内的契约层（adapters→ports/domain
+        // 的分层方向由 scripts/check-boundaries.ts 强制）；此处只要求相对导入解析后
+        // 仍落在 packages/core/src 之内，不放宽任何厂商禁令。
+        const isRelativeInsideSrc =
+          (specifier.startsWith('./') || specifier.startsWith('../')) &&
+          resolve(dirname(file), specifier).startsWith(coreSrcRoot + sep);
+        const isBuiltin = specifier.startsWith('node:') || isRelativeInsideSrc;
         expect(
           isAllowed || isBuiltin,
-          `${file} must only import node builtins, relative sources or the pinned storage stack`,
+          `${file} must only import node builtins, package-internal relative sources or the pinned storage stack`,
         ).toBe(true);
       }
     }
