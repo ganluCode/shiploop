@@ -171,11 +171,15 @@ describe('F-002 safe cleanup and evidence-before-delete', () => {
     const sentinel = fixture.outsideSentinelPath;
     const sentinelDigestBefore = fixture.snapshotOutsideSentinel();
     try {
-      // 未知根：目标不在授权临时根之内。
-      const foreign = join(REPO_ROOT, 'docs');
+      // 未知根：目标不在（收窄的）授权临时根之内。使用嵌套授权根，使断言与受测仓库
+      // 实际位置无关（干净快照本身可能位于系统临时目录之内）。
+      const authorizedNarrow = join(fixture.root, 'authorized-narrow');
+      const foreign = join(fixture.root, 'foreign-target');
+      mkdirSync(authorizedNarrow, { recursive: true });
+      mkdirSync(foreign, { recursive: true });
       const unauthorized = (() => {
         try {
-          assertSafeToRemove(foreign, { authorizedRoot: REAL_TMP, protectedPaths: [REPO_ROOT] });
+          assertSafeToRemove(foreign, { authorizedRoot: authorizedNarrow, protectedPaths: [REPO_ROOT] });
           return null;
         } catch (error) {
           return error;
@@ -208,14 +212,19 @@ describe('F-002 safe cleanup and evidence-before-delete', () => {
 
   it('rejects symlink escapes without following them and keeps the external target unchanged', () => {
     const fixture = createP01AcceptanceFixture();
-    const escapeLink = join(fixture.root, 'escape-link');
+    // 使用嵌套授权根与业务子目录：逃逸判定相对授权根，而非相对系统临时目录，
+    // 因此受测仓库位于临时目录之内（干净快照）时同样成立。
+    const authorizedRoot = join(fixture.root, 'authorized');
+    const businessTarget = join(authorizedRoot, 'business');
+    mkdirSync(businessTarget, { recursive: true });
+    const escapeLink = join(businessTarget, 'escape-link');
     symlinkSync(REPO_ROOT, escapeLink, 'dir');
     try {
       const attempt = (() => {
         try {
-          assertSafeToRemove(fixture.root, {
-            authorizedRoot: REAL_TMP,
-            protectedPaths: [homedir()],
+          assertSafeToRemove(businessTarget, {
+            authorizedRoot,
+            protectedPaths: [],
           });
           return null;
         } catch (error) {
