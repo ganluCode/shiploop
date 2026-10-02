@@ -1,0 +1,36 @@
+
+> shiploop@0.0.0 test
+> node scripts/run-tests.ts
+
+run-tests: using local vitest@5.0.3 (<SNAPSHOT-ROOT>/n3-failassert/node_modules/vitest/vitest.mjs) in run mode
+
+ RUN  v5.0.3 <SNAPSHOT-ROOT>/n3-failassert
+
+ ❯ test/zz-injected-failure.test.js (1 test | 1 failed) 4ms
+   × 注入的失败断言 injected failing assertion 3ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/zz-injected-failure.test.js > 注入的失败断言 injected failing assertion
+AssertionError: expected 1 to be 2 // Object.is equality
+
+- Expected
++ Received
+
+- 2
++ 1
+
+ ❯ test/zz-injected-failure.test.js:2:60
+      1| import { it, expect } from 'vitest';
+      2| it('注入的失败断言 injected failing assertion', () => { expect(1).toBe(2); });
+       |                                                            ^
+      3|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 5 passed (6)
+      Tests  1 failed | 133 passed (134)
+   Start at  10:19:07
+   Duration  4.74s (tests 95%, transform 4%, import 1%)
+

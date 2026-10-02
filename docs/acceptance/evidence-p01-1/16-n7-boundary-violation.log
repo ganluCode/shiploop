@@ -1,0 +1,10 @@
+
+> shiploop@0.0.0 check:boundaries
+> node scripts/check-boundaries.ts
+
+check-boundaries: root <SNAPSHOT-ROOT>/n7-boundary
+check-boundaries: scope packages/core/src (shiploop-core, 1 production source files)
+check-boundaries: scope packages/host/src (shiploop-host, 1 production source files)
+check-boundaries: scope packages/cli/src (shiploop-cli, 1 production source files)
+check-boundaries: FAIL 1 diagnostic(s)
+  [violation/reverse-dependency] packages/core/src/index.ts:15 -> 'shiploop-host': 工作区包 shiploop-core(core) 不允许依赖 shiploop-host(host)：单向依赖仅允许 Host→Core 公共入口、CLI→Host 公共客户端/契约；Core 不反向依赖 Host/CLI，CLI 不绕过 Host 直连 Core

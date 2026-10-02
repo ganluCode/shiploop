@@ -1,0 +1,3 @@
+shiploop-core: dist/.tsbuildinfo, dist/index.d.ts, dist/index.d.ts.map, dist/index.js, dist/index.js.map, package.json
+shiploop-host: dist/.tsbuildinfo, dist/index.d.ts, dist/index.d.ts.map, dist/index.js, dist/index.js.map, package.json
+shiploop-cli: dist/.tsbuildinfo, dist/index.d.ts, dist/index.d.ts.map, dist/index.js, dist/index.js.map, package.json

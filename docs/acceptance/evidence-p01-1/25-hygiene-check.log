@@ -1,0 +1,21 @@
+== stray tgz after pack --dry-run (expect none) ==
+(none above = clean)
+
+== leftover test/runner processes (expect none) ==
+no leftover processes
+
+== exit code summary ==
+00-environment -> 0
+01-npm-ci -> 0
+02-npm-test -> 0
+03-typecheck -> 0
+04-build -> 0
+05-verify -> 0
+10-n1-missing-lockfile -> N1exit=1
+11-n2-no-tests -> N2exit=1
+12-n3-failing-assertion -> N3exit=1
+13-n4-type-error -> N4exit=1
+14-n5-build-failure -> N5exit=2
+15-n6-missing-tool -> N6exit=1
+16-n7-boundary-violation -> N7exit=1
+21-core-entry-load -> core-entry-loadexit=0

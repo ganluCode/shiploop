@@ -1,0 +1,13 @@
+
+> shiploop@0.0.0 test
+> node scripts/run-tests.ts
+
+run-tests: using local vitest@5.0.3 (<SNAPSHOT-ROOT>/n2-notests/node_modules/vitest/vitest.mjs) in run mode
+
+ RUN  v5.0.3 <SNAPSHOT-ROOT>/n2-notests
+
+No test files found, exiting with code 1
+
+include: **/*.{test,spec}.?(c|m)[jt]s?(x)
+exclude:  **/node_modules/**, **/dist/**, **/coverage/**, test/helpers/**, test/fixtures/**
+

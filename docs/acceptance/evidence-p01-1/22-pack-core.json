@@ -1,0 +1,46 @@
+[
+  {
+    "id": "shiploop-core@0.0.0",
+    "name": "shiploop-core",
+    "version": "0.0.0",
+    "size": 7718,
+    "unpackedSize": 45058,
+    "shasum": "a73f2af506f91b0f32dd3e67161a169b3088df5d",
+    "integrity": "sha512-DlZHgotbQ2hXxzdkmhgmZfvLuq9nbj5GMBCqpDuuJmAxnpr/4cLcCChQNuFxA83uqcOZGsQTON3Sgvzof5oG2A==",
+    "filename": "shiploop-core-0.0.0.tgz",
+    "files": [
+      {
+        "path": "dist/.tsbuildinfo",
+        "size": 43066,
+        "mode": 420
+      },
+      {
+        "path": "dist/index.d.ts",
+        "size": 623,
+        "mode": 420
+      },
+      {
+        "path": "dist/index.d.ts.map",
+        "size": 143,
+        "mode": 420
+      },
+      {
+        "path": "dist/index.js",
+        "size": 621,
+        "mode": 420
+      },
+      {
+        "path": "dist/index.js.map",
+        "size": 141,
+        "mode": 420
+      },
+      {
+        "path": "package.json",
+        "size": 464,
+        "mode": 420
+      }
+    ],
+    "entryCount": 6,
+    "bundled": []
+  }
+]

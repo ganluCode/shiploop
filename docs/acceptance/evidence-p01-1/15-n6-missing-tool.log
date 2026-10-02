@@ -1,0 +1,7 @@
+
+> shiploop@0.0.0 test
+> node scripts/run-tests.ts
+
+run-tests: FAIL required test tool "vitest"@5.0.3 is not installed locally (module resolution from <SNAPSHOT-ROOT>/n6-novitest/scripts failed: Cannot find module 'vitest/package.json'
+Require stack:
+- <SNAPSHOT-ROOT>/n6-novitest/scripts/run-tests.ts). Install pinned tooling with "npm ci" and do not replace it with a global or npx copy.

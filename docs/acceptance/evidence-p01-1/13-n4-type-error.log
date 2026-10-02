@@ -1,0 +1,34 @@
+
+> shiploop@0.0.0 verify
+> node scripts/verify.ts
+
+verify: root <SNAPSHOT-ROOT>/n4-typeerror
+verify: 开发工程检查编排（非 ShipLoop 业务 Verifier，不含 accept:p01 验收）
+verify: step timeout 600000ms (finite; non-zero exit / signal / timeout all fail)
+verify: precheck package-lock.json OK (lockfileVersion 3, name "shiploop", version "0.0.0")
+verify: using npm via npm_execpath (<HOME>/.nvm/versions/node/v22.19.0/lib/node_modules/npm/bin/npm-cli.js)
+verify: [1/3] RUN npm test
+
+> shiploop@0.0.0 test
+> node scripts/run-tests.ts
+
+run-tests: using local vitest@5.0.3 (<SNAPSHOT-ROOT>/n4-typeerror/node_modules/vitest/vitest.mjs) in run mode
+
+ RUN  v5.0.3 <SNAPSHOT-ROOT>/n4-typeerror
+
+
+ Test Files  5 passed (5)
+      Tests  133 passed (133)
+   Start at  10:19:23
+   Duration  4.82s (tests 96%, transform 3%, import 1%)
+
+verify: [1/3] EXIT 0 npm test (6.5s)
+verify: [2/3] RUN npm run typecheck
+
+> shiploop@0.0.0 typecheck
+> tsc -p tsconfig.json
+
+packages/core/src/index.ts(15,14): error TS2322: Type 'string' is not assignable to type 'number'.
+verify: [2/3] FAIL npm run typecheck -> exit code 1 after 0.5s
+verify: NOT RUN (未执行，不标记为通过): npm run build
+verify: FAIL 1/3 checks exited 0; first failing step: npm run typecheck

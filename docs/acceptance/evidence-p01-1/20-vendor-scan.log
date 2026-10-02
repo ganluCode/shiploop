@@ -1,0 +1,158 @@
+== installed top-level packages ==
+@jridgewell
+@oxc-project
+@rolldown
+@types
+@typescript
+@vitest
+assertion-error
+chai
+detect-libc
+es-module-lexer
+estree-walker
+expect-type
+fdir
+fsevents
+lightningcss
+lightningcss-darwin-arm64
+magic-string
+nanoid
+obug
+picocolors
+picomatch
+postcss
+rolldown
+shiploop-cli
+shiploop-core
+shiploop-host
+source-map-js
+std-env
+tinybench
+tinyexec
+tinyglobby
+typescript
+undici-types
+vite
+vitest
+why-is-node-running
+== vendor SDK scan (expect no matches) ==
+vendor-scan matches: 0
+shiploop@0.0.0 <SNAPSHOT-ROOT>/snapshot
+├─┬ @types/node@22.20.4
+│ └── undici-types@6.21.0
+├── shiploop-cli@0.0.0 -> ./packages/cli
+├── shiploop-core@0.0.0 -> ./packages/core
+├── shiploop-host@0.0.0 -> ./packages/host
+├─┬ typescript@7.0.2
+│ ├── UNMET OPTIONAL DEPENDENCY @typescript/typescript-aix-ppc64@7.0.2
+│ ├── @typescript/typescript-darwin-arm64@7.0.2
+│ ├── UNMET OPTIONAL DEPENDENCY @typescript/typescript-darwin-x64@7.0.2
+│ ├── UNMET OPTIONAL DEPENDENCY @typescript/typescript-freebsd-arm64@7.0.2
+│ ├── UNMET OPTIONAL DEPENDENCY @typescript/typescript-freebsd-x64@7.0.2
+│ ├── UNMET OPTIONAL DEPENDENCY @typescript/typescript-linux-arm@7.0.2
+│ ├── UNMET OPTIONAL DEPENDENCY @typescript/typescript-linux-arm64@7.0.2
+│ ├── UNMET OPTIONAL DEPENDENCY @typescript/typescript-linux-loong64@7.0.2
+│ ├── UNMET OPTIONAL DEPENDENCY @typescript/typescript-linux-mips64el@7.0.2
+│ ├── UNMET OPTIONAL DEPENDENCY @typescript/typescript-linux-ppc64@7.0.2
+│ ├── UNMET OPTIONAL DEPENDENCY @typescript/typescript-linux-riscv64@7.0.2
+│ ├── UNMET OPTIONAL DEPENDENCY @typescript/typescript-linux-s390x@7.0.2
+│ ├── UNMET OPTIONAL DEPENDENCY @typescript/typescript-linux-x64@7.0.2
+│ ├── UNMET OPTIONAL DEPENDENCY @typescript/typescript-netbsd-arm64@7.0.2
+│ ├── UNMET OPTIONAL DEPENDENCY @typescript/typescript-netbsd-x64@7.0.2
+│ ├── UNMET OPTIONAL DEPENDENCY @typescript/typescript-openbsd-arm64@7.0.2
+│ ├── UNMET OPTIONAL DEPENDENCY @typescript/typescript-openbsd-x64@7.0.2
+│ ├── UNMET OPTIONAL DEPENDENCY @typescript/typescript-sunos-x64@7.0.2
+│ ├── UNMET OPTIONAL DEPENDENCY @typescript/typescript-win32-arm64@7.0.2
+│ └── UNMET OPTIONAL DEPENDENCY @typescript/typescript-win32-x64@7.0.2
+└─┬ vitest@5.0.3
+  ├── UNMET OPTIONAL DEPENDENCY @edge-runtime/vm@*
+  ├── UNMET OPTIONAL DEPENDENCY @opentelemetry/api@^1.9.0
+  ├─┬ @types/chai@5.2.3
+  │ ├── @types/deep-eql@4.0.2
+  │ └── assertion-error@2.0.1
+  ├── @types/node@22.20.4 deduped
+  ├── UNMET OPTIONAL DEPENDENCY @vitest/browser-playwright@5.0.3
+  ├── UNMET OPTIONAL DEPENDENCY @vitest/browser-preview@5.0.3
+  ├── UNMET OPTIONAL DEPENDENCY @vitest/browser-webdriverio@^5.0.0-beta.5 || >=5.0.0
+  ├── UNMET OPTIONAL DEPENDENCY @vitest/coverage-istanbul@5.0.3
+  ├── UNMET OPTIONAL DEPENDENCY @vitest/coverage-v8@5.0.3
+  ├─┬ @vitest/mocker@5.0.3
+  │ ├─┬ @jridgewell/trace-mapping@0.3.31
+  │ │ ├── @jridgewell/resolve-uri@3.1.2
+  │ │ └── @jridgewell/sourcemap-codec@1.6.0 deduped
+  │ ├── @vitest/spy@5.0.3
+  │ ├─┬ estree-walker@3.0.3
+  │ │ └── @types/estree@1.0.9
+  │ ├── magic-string@1.4.2 deduped
+  │ ├── UNMET OPTIONAL DEPENDENCY msw@^2.4.9
+  │ └── vite@8.3.2 deduped
+  ├── UNMET OPTIONAL DEPENDENCY @vitest/ui@5.0.3
+  ├── chai@6.3.0
+  ├── es-module-lexer@2.3.2
+  ├── expect-type@1.4.0
+  ├── UNMET OPTIONAL DEPENDENCY happy-dom@*
+  ├── UNMET OPTIONAL DEPENDENCY jsdom@*
+  ├─┬ magic-string@1.4.2
+  │ └── @jridgewell/sourcemap-codec@1.6.0
+  ├── obug@2.2.1
+  ├── picomatch@4.0.7
+  ├── std-env@4.3.0
+  ├── tinybench@6.2.0
+  ├── tinyexec@1.3.1
+  ├─┬ tinyglobby@0.2.17
+  │ ├─┬ fdir@6.5.0
+  │ │ └── picomatch@4.0.7 deduped
+  │ └── picomatch@4.0.7 deduped
+  ├─┬ vite@8.3.2
+  │ ├── @types/node@22.20.4 deduped
+  │ ├── UNMET OPTIONAL DEPENDENCY @vitejs/devtools@^0.7.1
+  │ ├── UNMET OPTIONAL DEPENDENCY esbuild@^0.27.0 || ^0.28.0
+  │ ├── fsevents@2.3.3
+  │ ├── UNMET OPTIONAL DEPENDENCY jiti@>=1.21.0
+  │ ├── UNMET OPTIONAL DEPENDENCY less@^4.0.0
+  │ ├─┬ lightningcss@1.33.0
+  │ │ ├── detect-libc@2.1.2
+  │ │ ├── UNMET OPTIONAL DEPENDENCY lightningcss-android-arm64@1.33.0
+  │ │ ├── lightningcss-darwin-arm64@1.33.0
+  │ │ ├── UNMET OPTIONAL DEPENDENCY lightningcss-darwin-x64@1.33.0
+  │ │ ├── UNMET OPTIONAL DEPENDENCY lightningcss-freebsd-x64@1.33.0
+  │ │ ├── UNMET OPTIONAL DEPENDENCY lightningcss-linux-arm-gnueabihf@1.33.0
+  │ │ ├── UNMET OPTIONAL DEPENDENCY lightningcss-linux-arm64-gnu@1.33.0
+  │ │ ├── UNMET OPTIONAL DEPENDENCY lightningcss-linux-arm64-musl@1.33.0
+  │ │ ├── UNMET OPTIONAL DEPENDENCY lightningcss-linux-x64-gnu@1.33.0
+  │ │ ├── UNMET OPTIONAL DEPENDENCY lightningcss-linux-x64-musl@1.33.0
+  │ │ ├── UNMET OPTIONAL DEPENDENCY lightningcss-win32-arm64-msvc@1.33.0
+  │ │ └── UNMET OPTIONAL DEPENDENCY lightningcss-win32-x64-msvc@1.33.0
+  │ ├── picomatch@4.0.7 deduped
+  │ ├─┬ postcss@8.5.28
+  │ │ ├── nanoid@3.3.19
+  │ │ ├── picocolors@1.1.1
+  │ │ └── source-map-js@1.2.2
+  │ ├─┬ rolldown@1.2.12
+  │ │ ├── @oxc-project/types@0.152.0
+  │ │ ├── UNMET OPTIONAL DEPENDENCY @rolldown/binding-android-arm-eabi@1.2.12
+  │ │ ├── UNMET OPTIONAL DEPENDENCY @rolldown/binding-android-arm64@1.2.12
+  │ │ ├── @rolldown/binding-darwin-arm64@1.2.12
+  │ │ ├── UNMET OPTIONAL DEPENDENCY @rolldown/binding-darwin-x64@1.2.12
+  │ │ ├── UNMET OPTIONAL DEPENDENCY @rolldown/binding-freebsd-x64@1.2.12
+  │ │ ├── UNMET OPTIONAL DEPENDENCY @rolldown/binding-linux-arm-gnueabihf@1.2.12
+  │ │ ├── UNMET OPTIONAL DEPENDENCY @rolldown/binding-linux-arm64-gnu@1.2.12
+  │ │ ├── UNMET OPTIONAL DEPENDENCY @rolldown/binding-linux-arm64-musl@1.2.12
+  │ │ ├── UNMET OPTIONAL DEPENDENCY @rolldown/binding-linux-ppc64-gnu@1.2.12
+  │ │ ├── UNMET OPTIONAL DEPENDENCY @rolldown/binding-linux-s390x-gnu@1.2.12
+  │ │ ├── UNMET OPTIONAL DEPENDENCY @rolldown/binding-linux-x64-gnu@1.2.12
+  │ │ ├── UNMET OPTIONAL DEPENDENCY @rolldown/binding-linux-x64-musl@1.2.12
+  │ │ ├── UNMET OPTIONAL DEPENDENCY @rolldown/binding-openharmony-arm64@1.2.12
+  │ │ ├── UNMET OPTIONAL DEPENDENCY @rolldown/binding-win32-arm64-msvc@1.2.12
+  │ │ ├── UNMET OPTIONAL DEPENDENCY @rolldown/binding-win32-x64-msvc@1.2.12
+  │ │ └── @rolldown/pluginutils@1.0.1
+  │ ├── UNMET OPTIONAL DEPENDENCY sass-embedded@^1.70.0
+  │ ├── UNMET OPTIONAL DEPENDENCY sass@^1.70.0
+  │ ├── UNMET OPTIONAL DEPENDENCY stylus@>=0.54.8
+  │ ├── UNMET OPTIONAL DEPENDENCY sugarss@^5.0.0
+  │ ├── UNMET OPTIONAL DEPENDENCY terser@^5.16.0
+  │ ├── tinyglobby@0.2.17 deduped
+  │ ├── UNMET OPTIONAL DEPENDENCY tsx@^4.8.1
+  │ └── UNMET OPTIONAL DEPENDENCY yaml@^2.4.2
+  └── why-is-node-running@3.2.1
+

@@ -1,0 +1,9 @@
+
+> shiploop@0.0.0 verify
+> node scripts/verify.ts
+
+verify: root <SNAPSHOT-ROOT>/n1-nolock
+verify: 开发工程检查编排（非 ShipLoop 业务 Verifier，不含 accept:p01 验收）
+verify: step timeout 600000ms (finite; non-zero exit / signal / timeout all fail)
+verify: FAIL precheck: 缺少 package-lock.json（<SNAPSHOT-ROOT>/n1-nolock/package-lock.json）；锁文件缺失不会被已安装的 node_modules 掩盖，请先重新生成并提交锁文件
+verify: NOT RUN (未执行，不标记为通过): npm test, npm run typecheck, npm run build

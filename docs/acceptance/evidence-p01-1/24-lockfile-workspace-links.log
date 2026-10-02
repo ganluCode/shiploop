@@ -1,0 +1,4 @@
+node_modules/shiploop-cli -> {"resolved":"packages/cli","link":true}
+node_modules/shiploop-core -> {"resolved":"packages/core","link":true}
+node_modules/shiploop-host -> {"resolved":"packages/host","link":true}
+lockfileVersion: 3 name: shiploop version: 0.0.0

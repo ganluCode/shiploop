@@ -35,6 +35,7 @@ scripts/        工程检查脚本（TypeScript，受 typecheck 覆盖）：run-
                 smoke-built-entries.ts（构建入口冒烟）、check-boundaries.ts（依赖边界检查）、
                 verify.ts（fail-closed 工程检查编排，见下节）
 vitest.config.ts 确定性测试配置（一次性、fail-closed）
+docs/acceptance/  P01-1 集成验收报告与脱敏证据（F-006，见下文「集成验收报告」）
 ```
 
 ### 确定性测试约定（F-003）
@@ -81,6 +82,10 @@ packages/cli/src/index.ts    CLI 公共入口（当前不解析 argv、不发请
 - **NOT RUN 语义**：任一步失败即停止，后续未执行步骤明确标记 NOT RUN，绝不把未运行项标为通过。
 
 负向验收见 `test/verify.test.ts`：在系统临时目录构建独立夹具工作区（真实锁文件、真实断言的有限测试集合、真实 tsc 与构建脚本），以真实子进程运行同一个生产 `verify.ts`，分别验证缺锁文件、无测试文件、注入失败断言、注入类型错误、构建非零、必需工具被删、步骤超时与信号死亡等场景均非零退出；夹具测试子命令不回跳本仓库 `npm test`，不产生递归验收。
+
+### 集成验收报告（F-006）
+
+P01-1 的干净安装与工程检查集成验收已在 macOS（arm64，Node 22.19.0 / npm 10.9.3）上完成：由 `git archive` 生成无 `node_modules` / `dist` / 本机残留的独立源码快照，`npm ci`、`npm test`、`npm run typecheck`、`npm run build`、`npm run verify` 五条命令真实退出码均为 0；缺锁文件、无测试、失败断言、类型错误、构建失败、缺必需工具与违规依赖七类负向场景在隔离副本中全部非零拒绝；Core 公共入口在无厂商 SDK 的子进程环境中加载成功；源码、构建产物与 `npm pack` 清单无开发机路径、Harness 依赖或凭据，未执行 npm 发布。完整命令/退出码、证据相对路径、输入文档版本（SHA-256 清单）、已知缺口与 `not_run` 项见 [docs/acceptance/p01-1-f006-report.md](docs/acceptance/p01-1-f006-report.md)（证据在同目录 `evidence-p01-1/`，已脱敏）。该验收仅限工程骨架，不代表 P01 持久化或 `accept:p01` 通过。
 
 ### 单向依赖规则（F-004 起自动强制）
 

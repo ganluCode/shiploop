@@ -1,0 +1,46 @@
+[
+  {
+    "id": "shiploop-cli@0.0.0",
+    "name": "shiploop-cli",
+    "version": "0.0.0",
+    "size": 7504,
+    "unpackedSize": 44628,
+    "shasum": "d8e02b6697942afb2038ba4c7ce63b77ee8c69af",
+    "integrity": "sha512-x02QuuEfK5p/Woi/qIX/du6rU7LW6CTn36zGZCBU3XLsw2QVm/6RONuU6LSUfgdI51L+eOEoYpWpVNz9XIZFjQ==",
+    "filename": "shiploop-cli-0.0.0.tgz",
+    "files": [
+      {
+        "path": "dist/.tsbuildinfo",
+        "size": 43066,
+        "mode": 420
+      },
+      {
+        "path": "dist/index.d.ts",
+        "size": 413,
+        "mode": 420
+      },
+      {
+        "path": "dist/index.d.ts.map",
+        "size": 139,
+        "mode": 420
+      },
+      {
+        "path": "dist/index.js",
+        "size": 411,
+        "mode": 420
+      },
+      {
+        "path": "dist/index.js.map",
+        "size": 137,
+        "mode": 420
+      },
+      {
+        "path": "package.json",
+        "size": 462,
+        "mode": 420
+      }
+    ],
+    "entryCount": 6,
+    "bundled": []
+  }
+]

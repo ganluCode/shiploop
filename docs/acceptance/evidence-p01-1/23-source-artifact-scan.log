@@ -1,0 +1,19 @@
+== 1) source + dist scan for dev-machine absolute paths (expect none) ==
+NO MATCH: /Users/
+
+== 2) harness path scan (expect none) ==
+NO MATCH in source/dist (README excluded, checked separately)
+NO MATCH: README.md has no absolute/harness paths
+
+== 3) credential pattern scan (expect none) ==
+NO MATCH: credential patterns
+
+== 4) lockfile registry + dependency source check ==
+86
+"resolved": "packages/cli"
+"resolved": "packages/core"
+"resolved": "packages/host"
+NO file:/link: dependency specs in manifests
+
+== 5) tsbuildinfo / sourcemap path style ==
+"sources":["../src/index.ts"]
