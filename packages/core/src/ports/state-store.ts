@@ -17,7 +17,7 @@
  * - 不提前实现：配置合并、模型路由、Task 策略复制、凭据解析、
  *   配置历史版本表（设计明确不建）。
  */
-import { validateSettingsPayload } from './settings-schema.js';
+import { listStrategyEntries, validateSettingsPayload } from './settings-schema.js';
 import type { SettingsPayload } from './settings-schema.js';
 import {
   normalizeLabels,
@@ -25,6 +25,7 @@ import {
   requireNonEmptyString,
   requirePlainObject,
   validateExpectedRevision,
+  validatePositiveInteger,
   validateProjectDescription,
   validateProjectDisplayName,
   validateStableId,
@@ -43,7 +44,15 @@ export const GLOBAL_SETTINGS_ID = 'global';
 export const PROJECT_METADATA_UPDATED_EVENT_TYPE = 'project.metadata_updated';
 
 /**
- * P01-3 已写入的聚合类型（设计 11 §9）：F-006 写 `project`，F-010 将写
+ * 当前配置更新事件类型（F-010）：全局/项目当前配置的 CAS 更新在同一短事务内
+ * 追加一条对应类型的 state_events 脱敏审计记录（见契约文档 §4.4/§6.3）。
+ * 首次创建为 insert-only，不写审计记录（与 createProject 不写事件一致）。
+ */
+export const GLOBAL_SETTINGS_UPDATED_EVENT_TYPE = 'settings.global_updated';
+export const PROJECT_SETTINGS_UPDATED_EVENT_TYPE = 'settings.project_updated';
+
+/**
+ * P01-3 已写入的聚合类型（设计 11 §9）：F-006 写 `project`，F-010 写
  * `global_settings`/`project_settings`。DDL 只要求非空，以便执行域表加入新聚合时
  * 无需重建审计表；写入方仍由本契约限定取值。
  */
@@ -313,6 +322,104 @@ export function validateUpdateSettingsInput(
   };
 }
 
+/**
+ * 配置变更的脱敏摘要（F-010）：state_events payload 只含 schemaVersion 与
+ * 提供的策略键名/政策段名（如 `defaultStrategy`、`modelMap.low`、
+ * `executionLimits`），绝不包含策略值、credentialRef/endpointRef 引用值、
+ * 模型名或任何合成秘密。写入与审计共用同一派生，不另立第二套摘要规则。
+ */
+export interface SettingsChangeSummary {
+  readonly schemaVersion: number;
+  /** 本次 payload 实际提供的策略键名（字段路径去掉 `payload.strategies.` 前缀）。 */
+  readonly strategies: readonly string[];
+  /** 本次 payload 实际提供的政策段名（白名单内键名）。 */
+  readonly policies: readonly string[];
+}
+
+const STRATEGY_FIELD_PREFIX = 'payload.strategies.';
+
+export function settingsChangeSummary(payload: SettingsPayload): SettingsChangeSummary {
+  return {
+    schemaVersion: payload.schemaVersion,
+    strategies: listStrategyEntries(payload.strategies).map((entry) =>
+      entry.field.startsWith(STRATEGY_FIELD_PREFIX) ? entry.field.slice(STRATEGY_FIELD_PREFIX.length) : entry.field,
+    ),
+    policies: Object.keys(payload.policies ?? {}),
+  };
+}
+
+/**
+ * 项目当前配置写入的一致性前置条件（F-010；契约文档 §4.4）。
+ *
+ * 项目覆盖的写入校验（有效配置合并 + 能力兼容）依赖「全局当前配置 + 新 payload」
+ * 的一致性视图：应用服务在写事务之外读取全局配置，本前置条件把读取时看到的
+ * 全局 revision 随写入一并传入，由适配器在**同一写事务内**核对——核对不一致
+ * （全局已被并发更新/创建/删除）时返回 conflict（reason='stale_dependency'），
+ * 不提交基于陈旧依赖校验过的结果。`null` 表示校验时全局配置不存在，写入时点
+ * 仍须不存在。
+ */
+export interface SettingsWriteConsistency {
+  readonly globalRevision: number | null;
+}
+
+function validateSettingsWriteConsistency(
+  value: unknown,
+  operation: string,
+  entity?: StorageEntityRef,
+): SettingsWriteConsistency | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const context: ValidationContext = { operation, entity };
+  const object = requirePlainObject(value, context, 'input.consistency');
+  rejectUnknownKeys(object, ['globalRevision'], context, 'input.consistency');
+  if (object.globalRevision === null) {
+    return { globalRevision: null };
+  }
+  return {
+    globalRevision: validatePositiveInteger(object.globalRevision, context, 'input.consistency.globalRevision'),
+  };
+}
+
+/** 项目当前配置创建输入（端口形态）：payload + 可选一致性前置条件。 */
+export interface ValidatedCreateProjectSettingsInput extends ValidatedPutSettingsInput {
+  readonly consistency?: SettingsWriteConsistency;
+}
+
+export function validateCreateProjectSettingsInput(
+  value: unknown,
+  operation: string,
+  entity?: StorageEntityRef,
+): ValidatedCreateProjectSettingsInput {
+  const context: ValidationContext = { operation, entity };
+  const object = requirePlainObject(value, context, 'input');
+  rejectUnknownKeys(object, ['payload', 'consistency'], context, 'input');
+  return {
+    payload: validateSettingsPayload(object.payload, context),
+    consistency: validateSettingsWriteConsistency(object.consistency, operation, entity),
+  };
+}
+
+/** 项目当前配置更新输入（端口形态）：CAS + payload + 可选一致性前置条件。 */
+export interface ValidatedUpdateProjectSettingsInput extends ValidatedUpdateSettingsInput {
+  readonly consistency?: SettingsWriteConsistency;
+}
+
+export function validateUpdateProjectSettingsInput(
+  value: unknown,
+  operation: string,
+  entity?: StorageEntityRef,
+): ValidatedUpdateProjectSettingsInput {
+  const context: ValidationContext = { operation, entity };
+  const object = requirePlainObject(value, context, 'input');
+  rejectUnknownKeys(object, ['expectedRevision', 'payload', 'consistency'], context, 'input');
+  return {
+    expectedRevision: validateExpectedRevision(object.expectedRevision, context),
+    payload: validateSettingsPayload(object.payload, context),
+    consistency: validateSettingsWriteConsistency(object.consistency, operation, entity),
+  };
+}
+
 /** 项目与初始项目当前配置的原子组合创建结果（F-007）。 */
 export interface ProjectWithInitialSettingsRecord {
   readonly project: ProjectRecord;
@@ -486,10 +593,31 @@ export interface StateStore {
   /** 全局单例创建；已存在返回 conflict 而非覆盖。 */
   createGlobalSettings(input: unknown): Promise<GlobalSettingsRecord>;
   getGlobalSettings(): Promise<GlobalSettingsRecord>;
+  /**
+   * 全局当前配置 CAS 更新；过期 expectedRevision 返回 conflict，原记录不变。
+   *
+   * P01-3 / F-010 起：成功更新在同一短事务内追加一条 state_events 脱敏审计记录
+   * （event_type=`settings.global_updated`，aggregate_type='global_settings'，
+   * project_id=NULL，payload 只含 schemaVersion 与策略键名/政策段名摘要），
+   * 注入记录写入失败时配置与 revision 一并回滚。
+   */
   updateGlobalSettings(input: unknown): Promise<GlobalSettingsRecord>;
 
-  /** 每项目一条；项目不存在返回 not_found，重复创建返回 conflict。 */
+  /**
+   * 每项目一条；项目不存在返回 not_found，重复创建返回 conflict。
+   * P01-3 / F-010 起接受可选 `consistency` 一致性前置条件：提供时在同一写事务内
+   * 核对全局当前配置 revision 与校验时所读一致，不一致返回 conflict
+   * （reason='stale_dependency'），不提交基于陈旧依赖校验过的写入。
+   */
   createProjectSettings(projectId: string, input: unknown): Promise<ProjectSettingsRecord>;
   getProjectSettings(projectId: string): Promise<ProjectSettingsRecord>;
+  /**
+   * 项目当前配置 CAS 更新；过期 expectedRevision 返回 conflict，原记录不变。
+   *
+   * P01-3 / F-010 起：成功更新在同一短事务内追加一条 state_events 脱敏审计记录
+   * （event_type=`settings.project_updated`，aggregate_type='project_settings'，
+   * project_id 必填，payload 摘要同上）；接受可选 `consistency` 前置条件
+   * （语义同 createProjectSettings）；任何失败整组回滚，不产生半条记录。
+   */
   updateProjectSettings(projectId: string, input: unknown): Promise<ProjectSettingsRecord>;
 }

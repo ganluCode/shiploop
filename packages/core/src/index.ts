@@ -25,4 +25,5 @@ export * from './ports/migrations.js';
 export * from './application/artifact-publish.js';
 export * from './application/artifact-verify.js';
 export * from './application/project-service.js';
+export * from './application/configuration-service.js';
 export * from './application/effective-settings.js';

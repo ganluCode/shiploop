@@ -32,6 +32,10 @@
  * - P01-3 / F-007 起补齐只读查询：listProjects 以绑定参数 + json_each 实现任一/
  *   全部标签筛选与稳定 id 升序键集分页（无新表、无新迁移）；countProjectLabels
  *   按项目去重计数；两者不参与写路径。
+ * - P01-3 / F-010 起配置写入扩展：updateGlobalSettings/updateProjectSettings 在
+ *   CAS 成功后的同一事务内追加 state_events 脱敏审计记录（settingsChangeSummary
+ *   摘要）；createProjectSettings/updateProjectSettings 接受可选 consistency
+ *   一致性前置条件，在同一写事务内核对全局 revision（stale_dependency 拒绝）。
  * - 本模块不实现：PathService 默认 OS 数据根、配置有效合并、模型路由、
  *   Host/CLI 命令。
  */
@@ -43,13 +47,18 @@ import { parseStoredSettingsPayload } from '../../ports/settings-schema.js';
 import type { SettingsPayload } from '../../ports/settings-schema.js';
 import {
   GLOBAL_SETTINGS_ID,
+  GLOBAL_SETTINGS_UPDATED_EVENT_TYPE,
   PROJECT_METADATA_UPDATED_EVENT_TYPE,
+  PROJECT_SETTINGS_UPDATED_EVENT_TYPE,
   projectMetadataChangedFields,
+  settingsChangeSummary,
   validateCreateProjectInput,
+  validateCreateProjectSettingsInput,
   validateCreateRepositoryBindingInput,
   validateProjectListFilter,
   validateUpdateProjectInput,
   validatePutSettingsInput,
+  validateUpdateProjectSettingsInput,
   validateUpdateSettingsInput,
 } from '../../ports/state-store.js';
 import type {
@@ -62,6 +71,7 @@ import type {
   ProjectWithInitialSettingsRecord,
   ProjectWithRepositoryBindingResult,
   RepositoryBindingRecord,
+  SettingsWriteConsistency,
   StateStore,
   ValidatedCreateProjectInput,
   ValidatedCreateRepositoryBindingInput,
@@ -372,6 +382,74 @@ export function createSqliteStateStore(
     );
   }
 
+  /**
+   * state_events 审计记录插入（事务内使用；调用方保证实体写入已在本事务内成功）。
+   * sequence 为数据库持久全局游标：BEGIN IMMEDIATE 下由本事务分配，重启不重置；
+   * 本插入失败时事务整组回滚，不产生半条记录。payload 只含脱敏摘要对象。
+   */
+  function insertStateEventRow(
+    db: Database.Database,
+    timestamp: number,
+    event: {
+      readonly projectId: string | null;
+      readonly eventType: string;
+      readonly aggregateType: 'project' | 'global_settings' | 'project_settings';
+      readonly aggregateId: string;
+      readonly aggregateRevision: number;
+      readonly summary: object;
+    },
+  ): void {
+    const nextSequence = db
+      .prepare<[], { next: number }>('SELECT COALESCE(MAX(sequence), 0) + 1 AS next FROM state_events')
+      .get();
+    db.prepare(
+      'INSERT INTO state_events (id, created_at, revision, updated_at, project_id, sequence, event_type, aggregate_type, aggregate_id, aggregate_revision, payload, occurred_at) ' +
+        'VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run(
+      randomUUID(),
+      timestamp,
+      timestamp,
+      event.projectId,
+      nextSequence?.next ?? 1,
+      event.eventType,
+      event.aggregateType,
+      event.aggregateId,
+      event.aggregateRevision,
+      JSON.stringify(event.summary),
+      timestamp,
+    );
+  }
+
+  /**
+   * 一致性前置条件核对（事务内使用，F-010）：项目配置写入校验所依赖的全局当前
+   * 配置在提交时点必须与校验时所读一致（globalRevision=null 表示校验时全局
+   * 配置不存在，提交时点仍须不存在）；不一致即 conflict（stale_dependency），
+   * 事务回滚，不提交基于陈旧依赖校验过的写入。
+   */
+  function assertGlobalSettingsConsistency(
+    db: Database.Database,
+    operation: string,
+    entity: StorageEntityRef,
+    consistency: SettingsWriteConsistency,
+  ): void {
+    const row = db
+      .prepare<[string], { revision: number }>('SELECT revision FROM global_settings WHERE id = ?')
+      .get(GLOBAL_SETTINGS_ID) as { revision: number } | undefined;
+    const actual = row?.revision ?? null;
+    if (actual !== consistency.globalRevision) {
+      throw conflict(
+        operation,
+        '全局当前配置在校验后已被并发修改（一致性前置条件不满足），未提交基于陈旧依赖的写入',
+        entity,
+        {
+          reason: 'stale_dependency',
+          expectedGlobalRevision: consistency.globalRevision,
+          actualGlobalRevision: actual,
+        },
+      );
+    }
+  }
+
   return {
     async createProject(input: unknown): Promise<ProjectRecord> {
       const operation = 'StateStore.createProject';
@@ -610,26 +688,14 @@ export function createSqliteStateStore(
         const updated = projectFromRow(selectProjectRow(db, id, operation), context);
         // P01-3 / F-006：同一短事务内追加脱敏审计记录，使“变更记录”与元数据
         // 原子一致；注入记录写入失败时上面的元数据/revision 一并回滚（无半条记录）。
-        // sequence 为数据库持久全局游标：BEGIN IMMEDIATE 下由本事务分配，重启不重置。
-        const nextSequence = db
-          .prepare<[], { next: number }>('SELECT COALESCE(MAX(sequence), 0) + 1 AS next FROM state_events')
-          .get();
-        db.prepare(
-          'INSERT INTO state_events (id, created_at, revision, updated_at, project_id, sequence, event_type, aggregate_type, aggregate_id, aggregate_revision, payload, occurred_at) ' +
-            'VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-        ).run(
-          randomUUID(),
-          timestamp,
-          timestamp,
-          id,
-          nextSequence?.next ?? 1,
-          PROJECT_METADATA_UPDATED_EVENT_TYPE,
-          'project',
-          id,
-          updated.revision,
-          JSON.stringify({ changedFields: projectMetadataChangedFields(valid) }),
-          timestamp,
-        );
+        insertStateEventRow(db, timestamp, {
+          projectId: id,
+          eventType: PROJECT_METADATA_UPDATED_EVENT_TYPE,
+          aggregateType: 'project',
+          aggregateId: id,
+          aggregateRevision: updated.revision,
+          summary: { changedFields: projectMetadataChangedFields(valid) },
+        });
         return updated;
       });
     },
@@ -697,7 +763,19 @@ export function createSqliteStateStore(
             '全局当前配置不存在',
           );
         }
-        return globalSettingsFromRow(selectGlobalSettingsRow(db, operation), context);
+        const updated = globalSettingsFromRow(selectGlobalSettingsRow(db, operation), context);
+        // P01-3 / F-010：同一短事务内追加脱敏审计记录（全局范围 project_id=NULL，
+        // 由 state_events_project_scope_check 限定仅 global_settings 可为空）；
+        // 注入记录写入失败时配置与 revision 一并回滚。
+        insertStateEventRow(db, timestamp, {
+          projectId: null,
+          eventType: GLOBAL_SETTINGS_UPDATED_EVENT_TYPE,
+          aggregateType: 'global_settings',
+          aggregateId: GLOBAL_SETTINGS_ID,
+          aggregateRevision: updated.revision,
+          summary: settingsChangeSummary(valid.payload),
+        });
+        return updated;
       });
     },
 
@@ -706,7 +784,7 @@ export function createSqliteStateStore(
       assertOpen(operation);
       const id = validateProjectId(projectId, operation, 'project_settings');
       const entity: StorageEntityRef = { type: 'project_settings', projectId: id };
-      const valid = validatePutSettingsInput(input, operation, entity);
+      const valid = validateCreateProjectSettingsInput(input, operation, entity);
       const timestamp = nowUtcMs();
       const context: ValidationContext = { operation, entity };
       return session.transactWrite(operation, (db) => {
@@ -719,6 +797,10 @@ export function createSqliteStateStore(
             '该项目当前配置已存在（每项目一条），重复创建被拒绝而不是覆盖',
             entity,
           );
+        }
+        // F-010：一致性前置条件在同一写事务内核对（写入被串行化，无检查-提交窗口）。
+        if (valid.consistency !== undefined) {
+          assertGlobalSettingsConsistency(db, operation, entity, valid.consistency);
         }
         insertProjectSettingsRow(db, id, timestamp, valid.payload);
         return projectSettingsFromRow(selectProjectSettingsRow(db, id, operation), context);
@@ -740,10 +822,14 @@ export function createSqliteStateStore(
       assertOpen(operation);
       const id = validateProjectId(projectId, operation, 'project_settings');
       const entity: StorageEntityRef = { type: 'project_settings', projectId: id };
-      const valid = validateUpdateSettingsInput(input, operation, entity);
+      const valid = validateUpdateProjectSettingsInput(input, operation, entity);
       const timestamp = nowUtcMs();
       const context: ValidationContext = { operation, entity };
       return session.transactWrite(operation, (db) => {
+        // F-010：一致性前置条件在同一写事务内核对（先于 CAS 写入，失败整组回滚）。
+        if (valid.consistency !== undefined) {
+          assertGlobalSettingsConsistency(db, operation, entity, valid.consistency);
+        }
         const result = db
           .prepare(
             'UPDATE project_settings SET revision = revision + 1, updated_at = ?, schema_version = ?, payload = ? ' +
@@ -761,7 +847,18 @@ export function createSqliteStateStore(
             `项目 ${id} 的当前配置不存在`,
           );
         }
-        return projectSettingsFromRow(selectProjectSettingsRow(db, id, operation), context);
+        const updated = projectSettingsFromRow(selectProjectSettingsRow(db, id, operation), context);
+        // P01-3 / F-010：同一短事务内追加脱敏审计记录（项目范围 project_id 必填）；
+        // 注入记录写入失败时配置与 revision 一并回滚。
+        insertStateEventRow(db, timestamp, {
+          projectId: id,
+          eventType: PROJECT_SETTINGS_UPDATED_EVENT_TYPE,
+          aggregateType: 'project_settings',
+          aggregateId: updated.id,
+          aggregateRevision: updated.revision,
+          summary: settingsChangeSummary(valid.payload),
+        });
+        return updated;
       });
     },
   };

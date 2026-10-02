@@ -556,6 +556,106 @@ describe('F-012 artifact list pagination contract (bounded, read-only)', () => {
   });
 });
 
+describe('F-010 settings write consistency precondition + redacted change summary contract', () => {
+  const PAYLOAD = {
+    schemaVersion: 2,
+    strategies: { defaultStrategy: { runtime: 'pi', provider: 'openai', model: 'gpt-1' } },
+  } as const;
+
+  it('derives a redacted change summary with only key names (no values, refs or secrets)', () => {
+    const summary = coreEntry.settingsChangeSummary({
+      schemaVersion: 2,
+      strategies: {
+        defaultStrategy: {
+          runtime: 'pi',
+          provider: 'anthropic',
+          model: 'claude-sonnet',
+          credentialRef: 'keychain://shiploop/TOP-SECRET-SENTINEL',
+        },
+        modelMap: { low: { runtime: 'pi', provider: 'openai', model: 'gpt-mini' } },
+      },
+      policies: { executionLimits: { maxConcurrentWorks: 2 }, verification: { requireChecksBeforeDone: true } },
+    });
+    expect(summary).toEqual({
+      schemaVersion: 2,
+      strategies: ['defaultStrategy', 'modelMap.low'],
+      policies: ['executionLimits', 'verification'],
+    });
+    const serialized = JSON.stringify(summary);
+    expect(serialized).not.toContain('TOP-SECRET-SENTINEL');
+    expect(serialized).not.toContain('claude-sonnet');
+    expect(coreEntry.settingsChangeSummary({ schemaVersion: 2 })).toEqual({
+      schemaVersion: 2,
+      strategies: [],
+      policies: [],
+    });
+    // 公共入口导出 F-010 契约面。
+    expect(coreEntry.GLOBAL_SETTINGS_UPDATED_EVENT_TYPE).toBe('settings.global_updated');
+    expect(coreEntry.PROJECT_SETTINGS_UPDATED_EVENT_TYPE).toBe('settings.project_updated');
+    expect(typeof coreEntry.validateCreateProjectSettingsInput).toBe('function');
+    expect(typeof coreEntry.validateUpdateProjectSettingsInput).toBe('function');
+  });
+
+  it('enforces the globalRevision consistency precondition on project settings writes', async () => {
+    const harness = createHarness();
+    const projectA = await createProject(harness, '前置A');
+    const projectB = await createProject(harness, '前置B');
+
+    // 全局不存在：globalRevision=null 通过；声称见过 rev 1 被拒绝，且不留行。
+    await harness.stateStore.createProjectSettings(projectA.id, {
+      payload: PAYLOAD,
+      consistency: { globalRevision: null },
+    });
+    const phantom = await expectStorageError('conflict', () =>
+      harness.stateStore.createProjectSettings(projectB.id, {
+        payload: PAYLOAD,
+        consistency: { globalRevision: 1 },
+      }),
+    );
+    expect(phantom.details).toMatchObject({ reason: 'stale_dependency', expectedGlobalRevision: 1, actualGlobalRevision: null });
+    await expectStorageError('not_found', () => harness.stateStore.getProjectSettings(projectB.id));
+
+    // 全局存在（rev 1）后：null 前置拒绝；匹配 rev 通过；全局升级后旧 rev 拒绝且不消耗 revision。
+    await harness.stateStore.createGlobalSettings({ payload: { schemaVersion: 2 } });
+    await expectStorageError('conflict', () =>
+      harness.stateStore.updateProjectSettings(projectA.id, {
+        expectedRevision: 1,
+        payload: PAYLOAD,
+        consistency: { globalRevision: null },
+      }),
+    );
+    expect((await harness.stateStore.getProjectSettings(projectA.id)).revision).toBe(1);
+
+    const updated = await harness.stateStore.updateProjectSettings(projectA.id, {
+      expectedRevision: 1,
+      payload: { schemaVersion: 2 },
+      consistency: { globalRevision: 1 },
+    });
+    expect(updated.revision).toBe(2);
+
+    await harness.stateStore.updateGlobalSettings({ expectedRevision: 1, payload: PAYLOAD });
+    const stale = await expectStorageError('conflict', () =>
+      harness.stateStore.updateProjectSettings(projectA.id, {
+        expectedRevision: 2,
+        payload: PAYLOAD,
+        consistency: { globalRevision: 1 },
+      }),
+    );
+    expect(stale.details).toMatchObject({ reason: 'stale_dependency', expectedGlobalRevision: 1, actualGlobalRevision: 2 });
+    expect((await harness.stateStore.getProjectSettings(projectA.id)).payload).toEqual({ schemaVersion: 2 });
+
+    // 前置条件形态非法在校验阶段拒绝（零副作用）。
+    await expectStorageError('validation', () =>
+      harness.stateStore.updateProjectSettings(projectA.id, {
+        expectedRevision: 2,
+        payload: PAYLOAD,
+        consistency: { globalRevision: 0 },
+      }),
+    );
+    expect((await harness.stateStore.getProjectSettings(projectA.id)).revision).toBe(2);
+  });
+});
+
 describe('F-007 project label filtering / pagination / counts contract', () => {
   it('matches any/all labels, returns all for an empty filter and nothing for no match', async () => {
     const harness = createHarness();

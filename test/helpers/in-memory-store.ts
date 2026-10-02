@@ -19,10 +19,12 @@ import type { SettingsPayload } from '../../packages/core/src/ports/settings-sch
 import {
   GLOBAL_SETTINGS_ID,
   validateCreateProjectInput,
+  validateCreateProjectSettingsInput,
   validateCreateRepositoryBindingInput,
   validateProjectListFilter,
   validateUpdateProjectInput,
   validatePutSettingsInput,
+  validateUpdateProjectSettingsInput,
   validateUpdateSettingsInput,
 } from '../../packages/core/src/ports/state-store.ts';
 import type {
@@ -34,6 +36,7 @@ import type {
   ProjectWithInitialSettingsRecord,
   ProjectWithRepositoryBindingResult,
   RepositoryBindingRecord,
+  SettingsWriteConsistency,
   StateStore,
 } from '../../packages/core/src/ports/state-store.ts';
 import {
@@ -163,6 +166,31 @@ export function createInMemoryStorage(now: () => number): InMemoryStorage {
     };
     settings.set(key, next);
     return next;
+  }
+
+  /**
+   * F-010 一致性前置条件核对（内存契约基线）：项目配置写入所依赖的全局当前
+   * 配置 revision 必须与校验时所读一致；不一致即 conflict（stale_dependency），
+   * 不产生任何写入。真实适配器在同一写事务内核对（无检查-提交窗口）。
+   */
+  function assertGlobalConsistency(
+    operation: string,
+    entity: StorageEntityRef,
+    consistency: SettingsWriteConsistency,
+  ): void {
+    const actual = settings.get(GLOBAL_SETTINGS_ID)?.revision ?? null;
+    if (actual !== consistency.globalRevision) {
+      throw conflict(
+        operation,
+        '全局当前配置在校验后已被并发修改（一致性前置条件不满足），未提交基于陈旧依赖的写入',
+        entity,
+        {
+          reason: 'stale_dependency',
+          expectedGlobalRevision: consistency.globalRevision,
+          actualGlobalRevision: actual,
+        },
+      );
+    }
   }
 
   const stateStore: StateStore = {
@@ -391,10 +419,13 @@ export function createInMemoryStorage(now: () => number): InMemoryStorage {
     async createProjectSettings(projectId: string, input: unknown): Promise<ProjectSettingsRecord> {
       const operation = 'StateStore.createProjectSettings';
       const entity: StorageEntityRef = { type: 'project_settings', projectId };
-      const valid = validatePutSettingsInput(input, operation, entity);
+      const valid = validateCreateProjectSettingsInput(input, operation, entity);
       requireProject(projectId, operation);
       if (settings.has(projectId)) {
         throw conflict(operation, '该项目当前配置已存在（每项目一条），重复创建被拒绝而不是覆盖', entity);
+      }
+      if (valid.consistency !== undefined) {
+        assertGlobalConsistency(operation, entity, valid.consistency);
       }
       const timestamp = now();
       settings.set(projectId, {
@@ -422,7 +453,11 @@ export function createInMemoryStorage(now: () => number): InMemoryStorage {
     async updateProjectSettings(projectId: string, input: unknown): Promise<ProjectSettingsRecord> {
       const operation = 'StateStore.updateProjectSettings';
       const entity: StorageEntityRef = { type: 'project_settings', projectId };
-      const valid = validateUpdateSettingsInput(input, operation, entity);
+      const valid = validateUpdateProjectSettingsInput(input, operation, entity);
+      if (valid.consistency !== undefined) {
+        // 前置条件核对先于 CAS（与真实适配器同事务内的顺序一致）：失败既不写配置也不消耗 revision。
+        assertGlobalConsistency(operation, entity, valid.consistency);
+      }
       const row = writeCas(projectId, operation, entity, valid.expectedRevision, valid.payload);
       return { ...toGlobalRecord(projectId, row, valid.payload), projectId };
     },

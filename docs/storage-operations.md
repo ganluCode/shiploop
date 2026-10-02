@@ -143,8 +143,8 @@ session.close();
 | `getProject(projectId)` | 读取项目 | 不存在 `not_found` |
 | `updateProject(projectId, input)` | 元数据 CAS 更新（名称/说明/标签），至少一个字段 | 过期 `conflict`，原记录不变 |
 | `createProjectWithInitialSettings(project, settings)` | 项目 + 初始项目配置**原子组合创建** | 任一步失败整组回滚，无半条记录 |
-| `createGlobalSettings(input)` / `getGlobalSettings()` / `updateGlobalSettings(input)` | 全局单例（`id='global'`） | 重复创建 `conflict` |
-| `createProjectSettings(projectId, input)` / `getProjectSettings(projectId)` / `updateProjectSettings(projectId, input)` | 每项目一条 | 项目不存在 `not_found`，重复 `conflict`，过期 `conflict` |
+| `createGlobalSettings(input)` / `getGlobalSettings()` / `updateGlobalSettings(input)` | 全局单例（`id='global'`）；更新成功同事务追加 `settings.global_updated` 脱敏审计记录 | 重复创建 `conflict`，过期 `conflict` |
+| `createProjectSettings(projectId, input)` / `getProjectSettings(projectId)` / `updateProjectSettings(projectId, input)` | 每项目一条；更新成功同事务追加 `settings.project_updated` 脱敏审计记录；创建/更新接受可选 `consistency.globalRevision` 一致性前置条件（同一写事务内核对，防基于陈旧全局依赖提交） | 项目不存在 `not_found`，重复 `conflict`，过期 `conflict`，前置条件不满足 `conflict`（stale_dependency） |
 
 校验规则（失败即 `StorageError(kind='validation')`，不产生持久化副作用）：
 

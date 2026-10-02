@@ -25,3 +25,5 @@ P01-3 / F-007 起 `sqlite/state-store.ts` 补充只读查询：`listProjects` �
 最后一条 id，`LIMIT ?+1` 判定下一页）；`countProjectLabels` 以 `COUNT(DISTINCT projects.id)`
 按项目去重计数并按标签升序返回。两查询无新表、无新迁移，标签不拼接 SQL（含元字符不注入），
 由 test/project-tag-filter.test.ts（真实临时 SQLite）与 test/storage-contracts.test.ts 验证。
+
+P01-3 / F-010 起 `sqlite/state-store.ts` 的配置写入扩展：`updateGlobalSettings`/`updateProjectSettings` 在 CAS 成功后的同一 BEGIN IMMEDIATE 事务内追加 `state_events` 审计记录（`settings.global_updated`/`settings.project_updated`，全局范围 project_id=NULL 由 CHECK 限定，payload 为 `settingsChangeSummary` 脱敏摘要）；注入记录写入失败时配置与 revision 一并回滚。`createProjectSettings`/`updateProjectSettings` 接受可选 `consistency.globalRevision` 一致性前置条件，在同一写事务内核对全局当前配置 revision（BEGIN IMMEDIATE 下无检查-提交窗口），不一致返回 conflict（stale_dependency），不提交基于陈旧依赖校验过的写入。跨进程全局/项目配置 CAS 竞争、陈旧依赖拒绝、审计原子性与脱敏由 test/configuration-service.test.ts 验证（真实临时 SQLite + 同步屏障子进程）。

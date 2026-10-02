@@ -333,7 +333,34 @@ interface ConfigurationService {
 - 更新使用**条件写入**（`UPDATE ... WHERE revision = expectedRevision`），不先读后无条件覆盖；
   与默认更新竞争时以事务或 revision 核对防止基于陈旧依赖提交。
 - 校验涉及的全局与项目当前配置来自**一致性视图**（同一事务/同一读取快照）。
-- 记录落点见 §6，与配置写入同事务；失败回滚。
+- **记录落点**见 §6，与配置写入同事务；失败回滚。
+
+F-010 定案（实施契约；实现于 `application/configuration-service.ts` 的
+`createConfigurationService`，命令切片：createSettings / updateSettings；查询由 F-011 交付）：
+
+- **严格顺序**：scope/输入运行时校验（`validateSettingsScope` + F-008 payload 校验，
+  非法输入在任何 I/O 之前拒绝，写入端口不被调用）→（仅 project scope）读取全局当前
+  配置作为一致性视图来源（不存在不是错误）→ 有效配置合并校验（F-009
+  `mergeEffectiveSettings`）+ 合并后策略集合的能力兼容复检（F-008
+  `RuntimeCapabilityCatalog`，继承的全局条目随当前目录复检，未知 runtime fail-closed）
+  → 存储端口条件写入。全局 scope 的有效配置即全局 payload 自身，直接对该 payload 做
+  能力检查。
+- **一致性前置条件（防陈旧依赖）**：项目 scope 写入把读取时看到的全局 revision 作为
+  `consistency.globalRevision` 随写入传入（全局不存在为 `null`）；适配器在**同一写
+  事务内**核对（BEGIN IMMEDIATE 下无检查-提交窗口），不一致返回 conflict
+  （`reason='stale_dependency'`，details 含 expected/actualGlobalRevision），不提交基于
+  陈旧依赖校验过的结果。调用方不得自行声明 `consistency`（应用层输入白名单拒绝该键，
+  由服务从自己的读取推导）。项目配置的创建与更新端口接受该可选前置条件
+  （`validateCreateProjectSettingsInput` / `validateUpdateProjectSettingsInput`）。
+- **审计**：成功的 CAS 更新由存储端口在同一短事务内追加 `settings.global_updated` /
+  `settings.project_updated` 脱敏记录（payload 只含 `schemaVersion` 与策略键名/政策段名
+  摘要——`settingsChangeSummary` 纯函数派生，绝不含 payload 值/credentialRef/endpointRef
+  引用值/模型名/合成秘密）；注入记录写入失败时配置与 revision 一并回滚。首次创建为
+  insert-only，不写审计记录（与 createProject 一致）。
+- **scope 即授权边界**：目标身份只来自 `scope`（global 单例 / project 携带稳定
+  projectId），不存在第二条传入项目身份的渠道，项目 A 范围不能更新项目 B。
+- 数据库事务短小：校验在事务外完成（纯函数），事务内只有 SQL；不进行网络、Git、
+  模型或凭据解析。
 
 F-008 定案（实施契约；版本化校验与能力区分）：
 
@@ -466,7 +493,7 @@ P01-3 确认沿用前序「创建 / 更新」分离的约定，不引入 `expect
 | 扩展 | 目的 | 说明 |
 |---|---|---|
 | 仓库绑定读写端口 | 注册/幂等复用/查询绑定 | P01-2 只有 `projects.repository_binding_id`，无绑定的创建/读取方法。P01-3 增加窄方法（可置于 `StateStore` 或独立 `RepositoryBindingStore`）：按 `canonical_path` 查找、原子「项目 + 绑定」组合创建、按项目读取绑定。**F-005 已交付**：置于 `StateStore`（`createProjectWithRepositoryBinding` / `getRepositoryBinding`，无新表、无新迁移）。 |
-| 变更记录 | 元数据/配置的脱敏审计 | 见 §6.3。**F-006 已交付**：迁移 v2 建立 `state_events`，项目元数据编辑同事务追加脱敏记录；配置审计留待 F-010。 |
+| 变更记录 | 元数据/配置的脱敏审计 | 见 §6.3。**F-006 已交付**：迁移 v2 建立 `state_events`，项目元数据编辑同事务追加脱敏记录；**F-010 已交付**配置审计（`settings.global_updated` / `settings.project_updated`，与 CAS 更新同事务）。 |
 | `listProjects` / 标签计数查询端口 | F-007 筛选、分页、计数 | 基于 `projects.labels` 的 `json_each` 查询；首版**不新增派生索引表**（设计 11 §10：数据增长后再加），不做跨层级求和。**F-007 已交付**：`StateStore.listProjects` / `countProjectLabels`（只读，无新表、无新迁移；标签绑定参数查询，稳定 `id` 升序键集分页，项目层去重计数）。 |
 
 **明确不建**（本 Feature 范围外）：Phase/Feature/Task/Run/Attempt/Batch/Session/Chat 等执行表；
@@ -480,7 +507,8 @@ P01-3 确认沿用前序「创建 / 更新」分离的约定，不引入 `expect
   实现其**审计切片**：同一写事务内追加记录；**不实现** SSE 推送与通知投递（Host/通知属后续）。
   **F-006 已落地**：迁移 v2 建立 `state_events`（`schema.ts` 的 `stateEvents` + `migrations.ts`），
   项目元数据更新经 `StateStore.updateProject` 同事务写入 `project.metadata_updated`；配置事件类型
-  （`settings.global_updated` / `settings.project_updated`）留待 F-010 使用。
+  （`settings.global_updated` / `settings.project_updated`）**F-010 已落地**：全局/项目当前配置的
+  CAS 更新由存储端口在同一短事务内追加脱敏记录（摘要由 `settingsChangeSummary` 派生）。
 - **记录内容**（脱敏，字段级）：
   - `event_type`：操作类型，如 `project.metadata_updated`、`settings.global_updated`、
     `settings.project_updated`。
@@ -610,6 +638,13 @@ T03（当前配置原子性）、T26（当前配置基础）、T32（项目标�
    表示不覆盖该段而继承全局），与策略条目「完整整体替换」同构。这是实施契约值而非设计
    结论，**请求核对**；若设计给出不同粒度（如段内字段级合并），应由显式变更同步
    `mergeEffectiveSettings`、本文与测试。
+8. **项目配置写入的一致性前置条件与写时复检**（F-010，§4.4）：设计 06/11 未规定「项目
+   覆盖写入时是否/如何依赖全局当前配置」。F-010 定案：项目写入在一致性视图内做有效配置
+   合并校验（合并后策略集合随当前能力目录复检，继承条目不豁免），并把校验时读到的全局
+   revision 作为 `consistency.globalRevision` 前置条件由适配器在同一写事务内核对（不一致
+   返回 conflict `stale_dependency`，不提交基于陈旧依赖校验过的结果；全局不存在以 `null`
+   表达）。首次创建不写审计记录（只有 `*_updated` 事件类型），与 `createProject` 一致。
+   这是实施契约值而非设计结论，**请求核对**。
 
 未列入的矛盾按「已有契约优先复用」处理；不得由实施任务静默改变领域语义。
 
