@@ -178,6 +178,12 @@ export function validateUpdateSettingsInput(
   };
 }
 
+/** 项目与初始项目当前配置的原子组合创建结果（F-007）。 */
+export interface ProjectWithInitialSettingsRecord {
+  readonly project: ProjectRecord;
+  readonly settings: ProjectSettingsRecord;
+}
+
 /**
  * 最小 StateStore 端口：项目与当前配置的创建/读取/CAS 更新。
  * 所有方法在持久化前完成输入运行时校验；校验失败不得产生任何持久化副作用。
@@ -189,6 +195,16 @@ export interface StateStore {
   getProject(projectId: string): Promise<ProjectRecord>;
   /** 元数据 CAS 更新；过期 expectedRevision 返回 conflict，原记录不变。 */
   updateProject(projectId: string, input: unknown): Promise<ProjectRecord>;
+
+  /**
+   * 项目与初始项目当前配置的原子组合创建（F-007）：
+   * 两个输入都在任何持久化副作用之前完成运行时校验；两者在同一业务原子操作内
+   * 成功或一起回滚——第二步失败时不留下残留项目或配置（无半条业务记录）。
+   */
+  createProjectWithInitialSettings(
+    project: unknown,
+    settings: unknown,
+  ): Promise<ProjectWithInitialSettingsRecord>;
 
   /** 全局单例创建；已存在返回 conflict 而非覆盖。 */
   createGlobalSettings(input: unknown): Promise<GlobalSettingsRecord>;

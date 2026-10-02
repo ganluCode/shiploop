@@ -27,6 +27,7 @@ import type {
   GlobalSettingsRecord,
   ProjectRecord,
   ProjectSettingsRecord,
+  ProjectWithInitialSettingsRecord,
   StateStore,
 } from '../../packages/core/src/ports/state-store.ts';
 import {
@@ -190,6 +191,39 @@ export function createInMemoryStorage(now: () => number): InMemoryStorage {
       };
       projects.set(projectId, next);
       return clone(next);
+    },
+
+    async createProjectWithInitialSettings(
+      projectInput: unknown,
+      settingsInput: unknown,
+    ): Promise<ProjectWithInitialSettingsRecord> {
+      const operation = 'StateStore.createProjectWithInitialSettings';
+      // 两个输入都在任何持久化副作用之前完成校验：第二步校验失败不得残留项目。
+      const validProject = validateCreateProjectInput(projectInput, operation);
+      const validSettings = validatePutSettingsInput(settingsInput, operation, { type: 'project_settings' });
+      const timestamp = now();
+      const project: ProjectRecord = {
+        id: randomUUID(),
+        displayName: validProject.displayName,
+        description: validProject.description,
+        status: 'active',
+        labels: validProject.labels,
+        repositoryBindingId: null,
+        revision: 1,
+        createdAtUtcMs: timestamp,
+        updatedAtUtcMs: timestamp,
+      };
+      // 内存实现同步执行，两步写入之间不存在交错；真实适配器以单事务保证同等原子性。
+      projects.set(project.id, project);
+      settings.set(project.id, {
+        revision: 1,
+        createdAtUtcMs: timestamp,
+        updatedAtUtcMs: timestamp,
+        json: JSON.stringify(validSettings.payload),
+      });
+      const entity: StorageEntityRef = { type: 'project_settings', projectId: project.id };
+      const { row, payload } = readSettingsRecord(project.id, operation, entity);
+      return { project: clone(project), settings: { ...toGlobalRecord(project.id, row, payload), projectId: project.id } };
     },
 
     async createGlobalSettings(input: unknown): Promise<GlobalSettingsRecord> {

@@ -16,7 +16,10 @@
  * - 所有写入在 F-004 短同步写事务（BEGIN IMMEDIATE）内完成：重复创建以事务内
  *   存在性检查给出结构化 conflict（写入被串行化，不存在 check-then-insert 竞争窗口），
  *   CAS 更新以“UPDATE ... WHERE revision = expectedRevision”单语句完成，不采用
- *   先读后无条件覆盖；跨进程竞争、失败注入与组合写入的深度验证由 F-007 提供；
+ *   先读后无条件覆盖；createProjectWithInitialSettings（F-007）把项目与初始项目配置
+ *   封装为同一业务原子操作——两个输入都在任何 SQL 之前完成校验，第二步失败时
+ *   整组回滚，无残留项目或配置；跨进程竞争、失败注入与组合写入的深度验证见
+ *   test/sqlite-cas-and-atomicity.test.ts；
  * - 稳定 ID（UUID）与应用侧 UTC 毫秒时间由注入时钟提供；displayName/description
  *   与标签不参与 ID 或物理路径推导；payload 只保存经校验的结构化 JSON，
  *   不存明文凭据（F-002 Schema 限定 credentialRef 为引用形态）；
@@ -43,7 +46,9 @@ import type {
   ProjectRecord,
   ProjectSettingsRecord,
   ProjectStatus,
+  ProjectWithInitialSettingsRecord,
   StateStore,
+  ValidatedCreateProjectInput,
 } from '../../ports/state-store.js';
 import { validateStableId } from '../../ports/validation.js';
 import type { ValidationContext } from '../../ports/validation.js';
@@ -228,6 +233,32 @@ export function createSqliteStateStore(
     return row;
   }
 
+  /** 项目行插入（事务内使用；调用方保证输入已通过 F-002 校验）。 */
+  function insertProjectRow(
+    db: Database.Database,
+    id: string,
+    timestamp: number,
+    valid: ValidatedCreateProjectInput,
+  ): void {
+    db.prepare(
+      'INSERT INTO projects (id, created_at, revision, updated_at, display_name, status, description, labels, repository_binding_id) ' +
+        'VALUES (?, ?, 1, ?, ?, ?, ?, ?, NULL)',
+    ).run(id, timestamp, timestamp, valid.displayName, 'active', valid.description, JSON.stringify(valid.labels));
+  }
+
+  /** 项目配置行插入（事务内使用；调用方保证项目存在且 payload 已通过 F-002 校验）。 */
+  function insertProjectSettingsRow(
+    db: Database.Database,
+    projectId: string,
+    timestamp: number,
+    payload: SettingsPayload,
+  ): void {
+    db.prepare(
+      'INSERT INTO project_settings (id, created_at, project_id, revision, updated_at, schema_version, payload) ' +
+        'VALUES (?, ?, ?, 1, ?, ?, ?)',
+    ).run(randomUUID(), timestamp, projectId, timestamp, payload.schemaVersion, JSON.stringify(payload));
+  }
+
   /** CAS 更新结果为 0 行时的判定：实体缺失（not_found）或 revision 过期（conflict）。 */
   function requireCasTarget<T extends { revision: number }>(
     row: T | undefined,
@@ -256,11 +287,34 @@ export function createSqliteStateStore(
       const id = randomUUID();
       const context: ValidationContext = { operation, entity: { type: 'project', id } };
       return session.transactWrite(operation, (db) => {
-        db.prepare(
-          'INSERT INTO projects (id, created_at, revision, updated_at, display_name, status, description, labels, repository_binding_id) ' +
-            'VALUES (?, ?, 1, ?, ?, ?, ?, ?, NULL)',
-        ).run(id, timestamp, timestamp, valid.displayName, 'active', valid.description, JSON.stringify(valid.labels));
+        insertProjectRow(db, id, timestamp, valid);
         return projectFromRow(selectProjectRow(db, id, operation), context);
+      });
+    },
+
+    async createProjectWithInitialSettings(
+      projectInput: unknown,
+      settingsInput: unknown,
+    ): Promise<ProjectWithInitialSettingsRecord> {
+      const operation = 'StateStore.createProjectWithInitialSettings';
+      assertOpen(operation);
+      // 两个输入都在任何 SQL 之前完成校验：第二步校验失败不会残留项目行。
+      const validProject = validateCreateProjectInput(projectInput, operation);
+      const validSettings = validatePutSettingsInput(settingsInput, operation, { type: 'project_settings' });
+      const timestamp = nowUtcMs();
+      const projectId = randomUUID();
+      const projectContext: ValidationContext = { operation, entity: { type: 'project', id: projectId } };
+      const settingsContext: ValidationContext = {
+        operation,
+        entity: { type: 'project_settings', projectId },
+      };
+      return session.transactWrite(operation, (db) => {
+        insertProjectRow(db, projectId, timestamp, validProject);
+        insertProjectSettingsRow(db, projectId, timestamp, validSettings.payload);
+        return {
+          project: projectFromRow(selectProjectRow(db, projectId, operation), projectContext),
+          settings: projectSettingsFromRow(selectProjectSettingsRow(db, projectId, operation), settingsContext),
+        };
       });
     },
 
@@ -399,17 +453,7 @@ export function createSqliteStateStore(
             entity,
           );
         }
-        db.prepare(
-          'INSERT INTO project_settings (id, created_at, project_id, revision, updated_at, schema_version, payload) ' +
-            'VALUES (?, ?, ?, 1, ?, ?, ?)',
-        ).run(
-          randomUUID(),
-          timestamp,
-          id,
-          timestamp,
-          valid.payload.schemaVersion,
-          JSON.stringify(valid.payload),
-        );
+        insertProjectSettingsRow(db, id, timestamp, valid.payload);
         return projectSettingsFromRow(selectProjectSettingsRow(db, id, operation), context);
       });
     },

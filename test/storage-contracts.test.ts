@@ -267,6 +267,47 @@ describe('F-002 current settings contract (global singleton and per-project)', (
   });
 });
 
+describe('F-007 atomic project+settings composite create contract', () => {
+  const VALID_PAYLOAD = {
+    schemaVersion: 1,
+    strategies: { defaultStrategy: { runtime: 'pi', provider: 'anthropic', model: 'claude-sonnet' } },
+  } as const;
+
+  it('creates the project and its initial settings atomically, linked by id with revision 1', async () => {
+    const harness = createHarness();
+    const { project, settings } = await harness.stateStore.createProjectWithInitialSettings(
+      { displayName: '组合项目', labels: ['Core'] },
+      { payload: VALID_PAYLOAD },
+    );
+    expect(project.revision).toBe(1);
+    expect(project.labels).toEqual(['core']);
+    expect(settings.projectId).toBe(project.id);
+    expect(settings.revision).toBe(1);
+    expect(settings.payload).toEqual(VALID_PAYLOAD);
+    expect(await harness.stateStore.getProject(project.id)).toEqual(project);
+    expect(await harness.stateStore.getProjectSettings(project.id)).toEqual(settings);
+  });
+
+  it('persists nothing when either input fails validation (no residual project)', async () => {
+    const harness = createHarness();
+    const badSettings = await expectStorageError('validation', () =>
+      harness.stateStore.createProjectWithInitialSettings(
+        { displayName: '不应残留' },
+        { payload: { schemaVersion: 2 } },
+      ),
+    );
+    expect(badSettings.operation).toBe('StateStore.createProjectWithInitialSettings');
+    expect(harness.raw.projects.size).toBe(0);
+    expect(harness.raw.settings.size).toBe(0);
+
+    await expectStorageError('validation', () =>
+      harness.stateStore.createProjectWithInitialSettings({ displayName: '' }, { payload: VALID_PAYLOAD }),
+    );
+    expect(harness.raw.projects.size).toBe(0);
+    expect(harness.raw.settings.size).toBe(0);
+  });
+});
+
 describe('F-002 artifact index contract (pending / ready / failed)', () => {
   async function registerPending(harness: InMemoryStorage, projectId: string) {
     return harness.artifactStore.registerArtifact({
