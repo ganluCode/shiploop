@@ -4,6 +4,8 @@ logs
 !docs/acceptance/evidence-p01-1/*.log
 !docs/acceptance/evidence-p01-2/*.log
 !docs/acceptance/evidence-p01-3/*.log
+!docs/acceptance/evidence-p01-4/*.log
+!docs/acceptance/evidence-p01-4/logs/*.log
 
 # Generated P01-4 acceptance reports/evidence (ephemeral run outputs; keep sanitized
 # copies under docs/acceptance/ when evidence must be versioned)
