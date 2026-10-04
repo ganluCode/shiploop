@@ -151,13 +151,18 @@ describe('F-001 契约文档与仓库基线一致', () => {
     expect(source).not.toMatch(/node:(http|https|net|dgram|child_process)/);
   });
 
-  it('F-002/F-003 增量事实：Host 公共入口导出契约面与受保护存储，仍无网络/进程能力', () => {
+  it('F-002/F-003/F-004 增量事实：Host 导出契约/存储/直接 fd 锁，仍无网络/后台入口', () => {
     // F-002 把 host 入口从 `export {}` 骨架换成契约公共面；F-003 追加存储面
     // （docs §1.5 F-002/F-003 增量记录）；Host 网络接口/认证/启动入口尚未实现，
     // 入口加载仍不得有副作用。
     const hostIndex = readText('packages/host/src/index.ts');
     expect(hostIndex).toContain("from './contract/index.js'");
     expect(hostIndex).toContain("from './storage/index.js'");
+    expect(hostIndex).toContain("from './locking/index.js'");
+    expect(contractDoc).toContain('F-004 增量');
+    expect(contractDoc).toContain('flock(LOCK_EX | LOCK_NB)');
+    expect(readText('docs/p02-1-writer-lock.md')).toContain('实际写入进程直接持 fd');
+    expect((readJson('package.json').scripts as Record<string, string>).build).toContain('build-host-lock.ts');
     expect(hostIndex).not.toContain('export {}');
 
     // 契约面源码只允许相对导入与 node:crypto（确定性哈希），不允许网络/文件/进程/ORM/SDK。

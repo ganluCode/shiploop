@@ -66,7 +66,7 @@
 | `npm test` | `node scripts/run-tests.ts` | 仅从工作区解析 vitest 5.0.3，run 模式一次性执行；退出码原样传播 |
 | `npm run typecheck` | `tsc -p tsconfig.json` | 含 src/test/scripts/examples 全量类型检查（noEmit） |
 | `npm run check:boundaries` | `node scripts/check-boundaries.ts` | 单向依赖 + Core 分层 + 禁绑厂商模块，fail-closed |
-| `npm run build` | `tsc -b` 三包 + `node scripts/smoke-built-entries.ts` | 构建后非源码 cwd 冒烟，扫描路径/依赖/迁移 |
+| `npm run build` | F-004 起先 `node scripts/build-host-lock.ts`，再 `tsc -b` 三包 + `node scripts/smoke-built-entries.ts` | 构建后非源码 cwd 冒烟，扫描路径/依赖/迁移 |
 | `npm run verify` | `node scripts/verify.ts` | 锁文件预检 + test/typecheck/build 真实子进程串联，fail-fast |
 | `npm run accept:p01` | `node scripts/acceptance/p01-accept.ts` | P01 阶段验收入口；P02-1 **不**新增或冒用 `accept:p02`（属 P02 末项边界） |
 
@@ -105,7 +105,15 @@
     `node:fs/node:crypto/node:path`，不导入 `node:http/net/child_process`；为保持
     干净树下 `npm run typecheck` 不依赖 core dist，F-003 **未**给 host 包引入
     `shiploop-core` 依赖（默认根推导留待 F-006 装配时注入）；import 公共入口仍无
-    任何写文件/监听/进程副作用。OS 锁（F-004）、启动入口（F-006）与 HTTP 传输仍未实现。
+    任何写文件/监听/进程副作用。F-003 当时 OS 锁与启动/HTTP 尚未实现。
+  - **F-004 增量（2026-10-05）**：公共入口追加 `src/locking/`：真实 macOS
+    `flock(LOCK_EX | LOCK_NB)`，由实际 Node 写入进程直接持 fd（无辅助者）；
+    `acquireWriterLock` 有界获取与 owner 诊断，`openLockedWriter` 保证获锁后才调用
+    Core 工厂、关闭写入/持锁清理后才释锁，关闭或清理失败保锁。新编写的极小 N-API C
+    适配器经显式 build 编译到 host dist；没有 npm 新依赖、运行时编译或 import 副作用。
+    生产边界、原生工具前提与 F-006/F-008 装配要求见 [写入锁决定](p02-1-writer-lock.md)。
+    启动入口（F-006）、HTTP 认证探测与 CLI 仍未实现；owner_active 仅由可信探测端口
+    的认证成功响应 + 共享双向校验得出，不从 PID/发现推断。
 - 边界检查现状（`scripts/check-boundaries.ts`，P02-1 必须持续通过）：
   - 工作区单向依赖仅允许 `host → core`、`cli → host`；CLI 禁止绕过 Host 直连 Core；
     清单 `dependencies` 与源码导入同时检查，未声明依赖即违规。
@@ -180,7 +188,8 @@ dataRootIdentity = lower_hex(sha256(utf8Bytes(canonicalRoot)))
 ```
 
 - 三个受保护文件的相对位置：`host/discovery.json`、`host/auth.token`、`host/writer.lock`
-  （均位于规范根内）。`host/` 由 Host 入口在获锁后创建（0700）；发现与凭据只写入该目录。
+  （均位于规范根内）。`host/` 必须在获锁前创建或核验（0700），以提供 OS 锁目标父目录；
+  获锁前只允许根解析、私有目录与锁文件创建/安全核验，发现与凭据发布及 Core 写入均须获锁之后。
   发现文件不得包含任意 URL、公网地址或根外凭据路径；本协议没有「凭据路径」字段，
   客户端只从规范根 `host/auth.token` 读取。
 - 权限与所有权核验（Host 发布前与 CLI 读取前都做）：目录 0700、文件 0600、属主为当前进程用户；
@@ -260,6 +269,11 @@ dataRootIdentity = lower_hex(sha256(utf8Bytes(canonicalRoot)))
   「实际写入进程」生命周期绑定（若使用辅助进程持锁，写入者停止前辅助者不得先退出造成
   接管窗口），同时记录生产边界。不得以 PID 文件、时间戳、SQLite busy、目录创建或
   「尝试 bind 端口」替代 OS 锁；不得直接复制 Spike 源码。
+- **F-004 生产决定**：新编写 N-API 适配器直接调用 macOS `flock` 非阻塞排他锁，
+  实际 Node 写入者持 fd，关闭 fd 或该进程退出由 OS 释锁，FD_CLOEXEC 不继承给 exec
+  子进程。无辅助进程，不复制 Spike。构建要求 clang/macOS SDK/Node 头文件，缺失明确失败；
+  运行时原生模块不可加载 → unsupported_platform，不自动编译或降级。
+  详见 [p02-1-writer-lock.md](p02-1-writer-lock.md)。
 - 顺序不变量：获锁 **先于** `openCoreApplication`、SQLite 迁移与任何业务写入；
   竞争失败者不打开写库。释锁在关闭写入之后（§10.5 顺序）。
 - 陈旧信息处理：发现缺失/损坏、陈旧 PID、PID 被无关活进程占用，都**不**授权删锁/杀进程/
@@ -729,8 +743,9 @@ JSON 失败信封（stdout，仅 `--json`；诊断细节在 stderr）：
 ### 17.1 待核对 / 后续定案项
 
 1. **T26 编号语义**：见 §15.4，需负责人确认 PRD 索引指向。
-2. **锁实现形态**：生产采用直接持 fd 还是经受控辅助进程持锁，由 F-004 以真实故障测试定案；
-   无论哪种都必须满足 §6 的写入进程生命周期绑定，Spike 结论不替代生产验证。
+2. **锁实现形态已由 F-004 定案**：实际 Node 写入者通过极小 N-API 适配器直接持 macOS
+   flock fd，无辅助者；真实同步竞争、正常退出、SIGKILL/SIGABRT 与未确认关闭保锁测试落实 §6。
+   原生构建/发布边界见写入锁决定；其他平台与正式二进制分发未验收。
 3. 数值预算（16 384 B、2s/10s/15s、10s quiesce、15s 启动等待）为首版有限默认值；
    实现可在有测试依据时调整并回写本文，不得改为无界，也不得开放为用户可配的监听/安全放宽项。
 4. 未来项目命令路由（`/v1/...`，设计 08 候选名）与 SSE 在 P02-2 契约中定案；本文不冻结其字段。

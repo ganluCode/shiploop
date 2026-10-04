@@ -61,7 +61,7 @@ docs/p02-1-host-lifecycle-contract.md  P02-1 Host 单例发现与本机认证生
 
 临时资源统一经 `test/helpers/temp-sandbox.ts` 创建：每次在系统临时目录 `mkdtemp` 全新目录（拒绝落在受测仓库或用户 HOME 之内），`cleanup()` 递归删除并核验消失；`withTempSandbox()` 以 try/finally 保证回调抛错时同样清理。夹具包含中文多字节内容的 UTF-8 逐字节往返断言（无 BOM、无换行转换）。
 
-`test/deterministic-test-harness.test.ts` 以**真实子进程**（非 mock）回归：空测试集非零、注入失败断言非零、临时项目正向对照为零、`--version` 报出 `vitest/5.0.3`、工具缺失启动器非零且报出身份；子进程带有限超时并在结束后回收，不留下常驻进程。测试不依赖 `dist`（任何用例都不得导入三个工作区包名），干净 `npm ci` 后无需先构建即可 `npm test`。
+`test/deterministic-test-harness.test.ts` 以**真实子进程**（非 mock）回归：空测试集非零、注入失败断言非零、临时项目正向对照为零、`--version` 报出 `vitest/5.0.3`、工具缺失启动器非零且报出身份；子进程带有限超时并在结束后回收，不留下常驻进程。测试不依赖预存 `dist`（任何用例都不得导入三个工作区包名），干净 `npm ci` 后无需先构建即可 `npm test`；F-004 锁测试会显式编译原生锁适配器，需下述 macOS 构建工具。
 
 Core 源码按设计 `core-design/01-system-structure.md` 分层，目录边界由各目录下的 `README.md` 明确（拥有、允许、禁止），F-002 阶段只有无副作用的公共入口 `src/index.ts`：
 
@@ -71,9 +71,11 @@ packages/core/src/
   application/   命令、查询、执行编排
   ports/         StateStore、Runtime、凭据等窄接口
   adapters/      sqlite、文件、git、pi 的具体实现（P01-2 F-001 起：sqlite/connection.ts 驱动装配 + 固定版本驱动/ORM；其余为空，不预置空壳）
-packages/host/src/index.ts   Host 公共入口：F-002 起导出 src/contract/ 生命周期契约面，F-003 起追加 src/storage/ 受保护文件存储（不监听端口、不读用户目录、不启动进程；传输与启动入口尚未实现）
+packages/host/src/index.ts   Host 公共入口：F-002 契约、F-003 存储、F-004 直接持 fd 的真实 OS 锁（import 无副作用；传输与启动入口尚未实现）
 packages/host/src/contract/  P02-1 协议契约：发现/握手/status/stop 校验、身份与摘要纯函数、结构化错误（仅依赖 node:crypto）
 packages/host/src/storage/   P02-1 受保护文件存储：规范根 realpath 固定与身份、host/ 0700 与发现/凭据 0600、fail-closed 权限/符号链接核验、原子发现发布、按实例清理（仅用 node:fs/crypto/path，不触碰网络与进程）
+packages/host/src/locking/   macOS flock 与写入生命周期包装（显式调用才获锁，关闭失败保锁；无持锁辅助进程）
+packages/host/native/        极小 N-API C 适配器，显式构建输出 dist/native/writer-lock.node
 packages/cli/src/index.ts    CLI 公共入口（当前不解析 argv、不发请求）
 ```
 
@@ -137,6 +139,13 @@ P01 已由项目负责人于 2026-10-05 阶段放行（依据见 [docs/acceptanc
 
 - [docs/p02-1-host-lifecycle-contract.md](docs/p02-1-host-lifecycle-contract.md)：P01 基线与放行依据核对、规范数据根与 `dataRootIdentity` 算法、受保护发现/凭据/锁布局、发现 Schema、`/v1/host/handshake|status|stop` 协议、版本化 stop 幂等矩阵、Host 生命周期状态机、HostClient/启动器规则、CLI `host start/status/stop` 参数与四档退出码、错误码总表、FR/T 编号映射（含 T26 编号不一致核对请求）与明确非目标。F-002 ~ F-014 共用此契约，不各自定义协议。
 - 文档守护测试：`test/docs-p02-1-host-lifecycle-contract.test.ts`（冻结事实与仓库基线一致性）。
+- F-004 已交付 [macOS 写入锁决定与装配交接](docs/p02-1-writer-lock.md)：实际 Node
+  写入者直接持 flock fd，无辅助者；有界获取、获锁后打开 Core 的工厂端口、关闭失败保锁。
+  `npm run build` 先显式编译极小 N-API 模块；要求 `/usr/bin/clang`、macOS SDK
+  （Xcode Command Line Tools）与当前 Node 安装的 `include/node/node_api.h`。不新增 npm
+  依赖，不运行时编译；缺失原生模块/未知平台明确拒绝。真实测试覆盖同步 Core 竞争、
+  别名/独立根、实际写入者 SIGKILL/SIGABRT、锁文件安全、有限 owner 探测和关闭/清理失败。
+  Host 启动、HTTP 认证/CLI/Work 仍未实现，不声明 P02 通过。
 
 ### 单向依赖规则（F-004 起自动强制）
 

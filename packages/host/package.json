@@ -19,6 +19,6 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -b tsconfig.json"
+    "build": "node ../../scripts/build-host-lock.ts && tsc -b tsconfig.json"
   }
 }

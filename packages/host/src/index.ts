@@ -11,9 +11,12 @@
  *   host/ 0700 目录与 0600 发现/凭据文件、原子发现发布、按实例清理。存储
  *   模块允许使用 node:fs/node:crypto/node:path，但不导入 node:http/net/
  *   child_process，不监听端口、不启动进程；
- * - 两个面加载本模块仍不监听端口、不读用户目录、不启动进程、不写文件；
- * - Host 启动入口（获锁、Core 装配、回环监听、发现发布、认证路由）由 F-004
- *   起的后续任务在非契约区实现，本文件不预置占位。
+ * - F-004（P02-1）：导出 locking/，实际写入进程直接持 macOS flock fd；
+ *   显式调用才加载原生适配器与获锁，关闭写入与清理失败保锁；无辅助进程。
+ * - 三个面加载本模块仍不监听端口、不读用户目录、不启动进程、不写文件；
+ * - Host 启动入口（Core 装配、回环监听、发现发布、认证路由）留给 F-006 起
+ *   后续任务，本文件不预置占位。
  */
 export * from './contract/index.js';
 export * from './storage/index.js';
+export * from './locking/index.js';

@@ -297,7 +297,11 @@ export function createHostFileStore(options: HostFileStoreOptions): HostFileStor
         try {
           mkdirSync(hostDir, { mode: HOST_DIR_MODE });
         } catch (error) {
-          throw ioFailure('host_dir_create_failed', HOST_DIR_RELATIVE_PATH, error);
+          // Concurrent lock candidates may create the same parent. Re-validate below;
+          // EEXIST is not permission to trust a directory/symlink made by another actor.
+          if (fsCode(error) !== 'EEXIST') {
+            throw ioFailure('host_dir_create_failed', HOST_DIR_RELATIVE_PATH, error);
+          }
         }
       }
       const after = lstatOrNull(hostDir);
