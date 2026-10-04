@@ -145,7 +145,7 @@ describe.each(packageDirs)('package build contract: %s', (dir) => {
     expect(existsSync(resolve(repoRoot, dir, 'src/index.ts'))).toBe(true);
   });
 
-  it('declares only the pinned adapter-layer storage dependencies (P01-2 F-001) in Core, none in Host/CLI', () => {
+  it('declares only the pinned adapter-layer storage dependencies (P01-2 F-001) in Core; Host 仅声明 F-006 工作区依赖', () => {
     const pinned = {
       'better-sqlite3': '13.0.3',
       'drizzle-orm': '0.45.3',
@@ -156,6 +156,14 @@ describe.each(packageDirs)('package build contract: %s', (dir) => {
     if (dir === 'packages/core') {
       expect(pkg.dependencies).toEqual(pinned);
       expect(pkg.devDependencies).toEqual(pinnedDev);
+      expect(pkg.peerDependencies ?? {}).toEqual({});
+      expect(pkg.optionalDependencies ?? {}).toEqual({});
+    } else if (dir === 'packages/host') {
+      // F-006（契约 §13.4）：Host 启动装配经 Core 公共入口与 ./assembly 子路径
+      // 使用 openCoreApplication/deriveDefaultDataRoot，版本随工作区固定；
+      // 不引入任何第三方依赖。
+      expect(pkg.dependencies).toEqual({ 'shiploop-core': '0.0.0' });
+      expect(pkg.devDependencies ?? {}).toEqual({});
       expect(pkg.peerDependencies ?? {}).toEqual({});
       expect(pkg.optionalDependencies ?? {}).toEqual({});
     } else {
@@ -251,8 +259,8 @@ describe('Core layer boundaries', () => {
   });
 });
 
-describe('Host and CLI entry behaviour at the skeleton stage', () => {
-  const bannedModules = [
+describe('Host and CLI entry behaviour boundaries', () => {
+  const skeletonBannedModules = [
     '@earendil-works/pi-coding-agent',
     'electron',
     'better-sqlite3',
@@ -261,24 +269,87 @@ describe('Host and CLI entry behaviour at the skeleton stage', () => {
     'node:https',
     'node:net',
   ];
-  const bannedCalls = ['createServer', '.listen('];
+  const skeletonBannedCalls = ['createServer', '.listen('];
 
-  it.each(['packages/host/src', 'packages/cli/src'] as const)('%s contains no server, model or storage startup code', (dir) => {
-    const sources = readSourceTree(dir);
-    expect(sources.length, `${dir} must contain at least one TypeScript source file`).toBeGreaterThan(0);
+  it('packages/cli/src contains no server, model or storage startup code（CLI 仍为骨架）', () => {
+    const sources = readSourceTree('packages/cli/src');
+    expect(sources.length, 'packages/cli/src must contain at least one TypeScript source file').toBeGreaterThan(0);
     for (const { file, code } of sources) {
       const specifiers = extractModuleSpecifiers(code);
-      for (const banned of bannedModules) {
+      for (const banned of skeletonBannedModules) {
         const offenders = specifiers.filter((specifier) => specifierMatches(specifier, banned));
         expect(offenders, `${file} must not import ${banned} at this stage`).toHaveLength(0);
       }
       const codeWithoutComments = code
         .replaceAll(/\/\*[\s\S]*?\*\//g, '')
         .replaceAll(/^\s*\/\/.*$/gm, '');
-      for (const token of bannedCalls) {
+      for (const token of skeletonBannedCalls) {
         expect(codeWithoutComments, `${file} must not use ${token} at this stage`).not.toContain(token);
       }
     }
+  });
+
+  it('packages/host/src 非 runtime 面（contract/storage/locking）仍无网络/进程/ORM/厂商绑定', () => {
+    const runtimeDir = resolve(repoRoot, 'packages/host/src/runtime');
+    const sources = readSourceTree('packages/host/src').filter(
+      ({ file }) => !file.startsWith(runtimeDir + sep) && file !== resolve(repoRoot, 'packages/host/src/start.ts'),
+    );
+    expect(sources.length, 'host 非 runtime 面扫描必须找到真实源码').toBeGreaterThan(0);
+    for (const { file, code } of sources) {
+      const specifiers = extractModuleSpecifiers(code);
+      for (const banned of [...skeletonBannedModules, 'node:child_process', 'node:dgram', 'node:tls']) {
+        const offenders = specifiers.filter((specifier) => specifierMatches(specifier, banned));
+        expect(offenders, `${file} must not import ${banned} at this stage`).toHaveLength(0);
+      }
+      const codeWithoutComments = code
+        .replaceAll(/\/\*[\s\S]*?\*\//g, '')
+        .replaceAll(/^\s*\/\/.*$/gm, '');
+      for (const token of skeletonBannedCalls) {
+        expect(codeWithoutComments, `${file} must not use ${token} at this stage`).not.toContain(token);
+      }
+    }
+  });
+
+  it('F-006 runtime 面只允许 node:http 与 shiploop-core 公共入口，禁 ORM/厂商 SDK/其他网络与子进程', () => {
+    const runtimeDir = resolve(repoRoot, 'packages/host/src/runtime');
+    const sources = readSourceTree('packages/host/src').filter(({ file }) =>
+      file.startsWith(runtimeDir + sep),
+    );
+    // runtime 面必须真实存在（startHost 装配 + 入口逻辑 + 桶文件）。
+    expect(sources.length, 'packages/host/src/runtime 必须包含 F-006 启动装配源码').toBeGreaterThanOrEqual(3);
+    const bannedInRuntime = [
+      '@earendil-works/pi-coding-agent',
+      'electron',
+      'better-sqlite3',
+      'drizzle-orm',
+      'express',
+      'fastify',
+      'koa',
+      'hono',
+      'node:https',
+      'node:net',
+      'node:dgram',
+      'node:tls',
+      'node:child_process',
+      'node:cluster',
+      'node:worker_threads',
+    ];
+    for (const { file, code } of sources) {
+      const specifiers = extractModuleSpecifiers(code);
+      for (const banned of bannedInRuntime) {
+        const offenders = specifiers.filter((specifier) => specifierMatches(specifier, banned));
+        expect(offenders, `${file} must not import ${banned}`).toHaveLength(0);
+      }
+      // argv 只属于显式入口 start.ts；runtime 模块不直接读 process.argv。
+      const codeWithoutComments = code
+        .replaceAll(/\/\*[\s\S]*?\*\//g, '')
+        .replaceAll(/^\s*\/\/.*$/gm, '');
+      expect(codeWithoutComments, `${file} must not read process.argv directly`).not.toContain('process.argv');
+    }
+    // 显式执行入口存在且只经 runtime 公共面启动（契约 §13.1）。
+    const startEntry = readText('packages/host/src/start.ts');
+    expect(startEntry).toContain("from './runtime/index.js'");
+    expect(startEntry).toContain('runHostStartEntry');
   });
 });
 

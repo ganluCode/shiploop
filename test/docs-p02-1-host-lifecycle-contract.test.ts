@@ -151,19 +151,31 @@ describe('F-001 契约文档与仓库基线一致', () => {
     expect(source).not.toMatch(/node:(http|https|net|dgram|child_process)/);
   });
 
-  it('F-002/F-003/F-004 增量事实：Host 导出契约/存储/直接 fd 锁，仍无网络/后台入口', () => {
-    // F-002 把 host 入口从 `export {}` 骨架换成契约公共面；F-003 追加存储面
-    // （docs §1.5 F-002/F-003 增量记录）；Host 网络接口/认证/启动入口尚未实现，
-    // 入口加载仍不得有副作用。
+  it('F-002~F-006 增量事实：Host 导出契约/存储/锁/启动装配，认证路由仍未装配', () => {
+    // F-002 把 host 入口从 `export {}` 骨架换成契约公共面；F-003 追加存储面；
+    // F-004 追加直接 fd 锁；F-006 追加 runtime 启动装配与显式入口 start.ts
+    // （docs §1.5 各增量记录）。握手/status/stop 认证路由属 F-007/F-008，
+    // F-006 监听器仅为占位传输面；公共入口加载仍不得有副作用。
     const hostIndex = readText('packages/host/src/index.ts');
     expect(hostIndex).toContain("from './contract/index.js'");
     expect(hostIndex).toContain("from './storage/index.js'");
     expect(hostIndex).toContain("from './locking/index.js'");
+    expect(hostIndex).toContain("from './runtime/index.js'");
     expect(contractDoc).toContain('F-004 增量');
+    expect(contractDoc).toContain('F-006 增量');
     expect(contractDoc).toContain('flock(LOCK_EX | LOCK_NB)');
     expect(readText('docs/p02-1-writer-lock.md')).toContain('实际写入进程直接持 fd');
     expect((readJson('package.json').scripts as Record<string, string>).build).toContain('build-host-lock.ts');
     expect(hostIndex).not.toContain('export {}');
+
+    // F-006 显式启动入口存在（契约 §13.1），且只经 runtime 公共面启动。
+    const startEntry = readText('packages/host/src/start.ts');
+    expect(startEntry).toContain('runHostStartEntry');
+
+    // F-006（契约 §13.4）：host 包声明且仅声明工作区依赖 shiploop-core；
+    // storage/ 面仍不得依赖 shiploop-core（默认根由调用方预推导）。
+    const hostPkg = readJson('packages/host/package.json');
+    expect(hostPkg.dependencies).toEqual({ 'shiploop-core': '0.0.0' });
 
     // 契约面源码只允许相对导入与 node:crypto（确定性哈希），不允许网络/文件/进程/ORM/SDK。
     const contractDir = resolve(REPO_ROOT, 'packages/host/src/contract');
@@ -188,8 +200,8 @@ describe('F-001 契约文档与仓库基线一致', () => {
       );
     }
 
-    // F-003 存储面允许 node:fs/crypto/path，但仍禁止网络/进程/ORM/SDK；
-    // host 包此时仍不得声明 shiploop-core 依赖（默认根由调用方预推导，见 §13.4）。
+    // F-003 存储面允许 node:fs/crypto/path，但仍禁止网络/进程/ORM/SDK，
+    // 也不得依赖 shiploop-core（默认根由调用方预推导，见 §13.4）。
     const storageDir = resolve(REPO_ROOT, 'packages/host/src/storage');
     expect(statSync(storageDir).isDirectory()).toBe(true);
     expect(listTs(storageDir).length).toBeGreaterThanOrEqual(3);
@@ -202,8 +214,26 @@ describe('F-001 契约文档与仓库基线一致', () => {
         /from\s+['"](?:shiploop-core|better-sqlite3|drizzle-orm|@earendil-works\/pi-coding-agent|electron|express|fastify|koa|hono)['"]/,
       );
     }
-    const hostPkg = readJson('packages/host/package.json');
-    expect(hostPkg).not.toHaveProperty('dependencies');
+
+    // F-006 runtime 面允许 node:http 与 shiploop-core 公共入口（含 ./assembly），
+    // 但禁止其他网络/进程/线程内置模块与 ORM/厂商 SDK 直接绑定。
+    const runtimeDir = resolve(REPO_ROOT, 'packages/host/src/runtime');
+    expect(statSync(runtimeDir).isDirectory()).toBe(true);
+    expect(listTs(runtimeDir).length).toBeGreaterThanOrEqual(3);
+    for (const file of listTs(runtimeDir)) {
+      const source2 = readText(file);
+      expect(source2, file).not.toMatch(
+        /\b(?:import|export)[^;]*?\bfrom\s+['"]node:(?:net|https|dgram|tls|child_process|cluster|worker_threads)['"]|\bimport\s+['"]node:(?:net|https|dgram|tls|child_process|cluster|worker_threads)['"]/,
+      );
+      expect(source2, file).not.toMatch(
+        /from\s+['"](?:better-sqlite3|drizzle-orm|@earendil-works\/pi-coding-agent|electron|express|fastify|koa|hono)['"]/,
+      );
+      // argv 只属于显式入口 start.ts；剔除注释后 runtime 模块不得直接读 process.argv。
+      const codeOnly = source2
+        .replaceAll(/\/\*[\s\S]*?\*\//g, '')
+        .replaceAll(/^\s*\/\/.*$/gm, '');
+      expect(codeOnly, file).not.toContain('process.argv');
+    }
   });
 
   it('shiploop-core 的两个公共入口与文档记录一致', () => {

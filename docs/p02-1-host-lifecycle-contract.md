@@ -124,6 +124,23 @@
     协议/schema/数据根、能力撒谎、畸形 JSON 与 3xx 重定向）与脱敏 `evidence`
     （认证头只留分类，登记秘密与受保护路径扫描，fail-closed）。Host/CLI 产品包
     源码、依赖与构建行为均未改变。
+  - **F-006 增量（2026-10-05）**：公共入口追加 `src/runtime/` 启动装配面，并新增
+    显式启动入口 `src/start.ts` → `dist/start.js`（用法 `node …/dist/start.js
+    --data-root <abs>`，只接受受控 argv）。启动顺序按 §11：选项/env 监听覆盖
+    零容忍（`bind_address_override_rejected`，覆盖值不回显）→ 平台检查 →
+    resolveCanonicalDataRoot（start 语义创建根目录 0700）→ openLockedWriter
+    （获锁先于 Core）→ openCoreApplication（含版本化迁移；未知高版本 Schema
+    拒写并自动释锁）→ 127.0.0.1:0 监听并核验 `server.address()` 恰为回环字面量
+    → 新 hostInstanceId + 新凭据 → 原子发现发布（ready 提交点）→ ready。
+    失败按获取逆序关闭监听/Core 并释锁，不发布 ready。F-006 监听器是**占位
+    传输面**：任何请求一律 404 `unknown_operation`（握手/status/stop 认证路由
+    属 F-007/F-008，本阶段未实现）；生产入口注入空能力目录（不装配任何
+    runtime/Pi/模型执行）；SIGTERM 安全收尾与按实例清理属 F-008。host 包按
+    §13.4 声明 `"shiploop-core": "0.0.0"`，经包名与 `./assembly` 子路径使用
+    Core 公共入口；干净树（无 dist）下 `npm test`/`npm run typecheck` 的解析
+    路径见 §13.4 的 F-006 定案。边界检查把目标包 exports 声明的公共子路径入口
+    （如 `shiploop-core/assembly`）与包名入口同等按单向规则放行，未声明的内部
+    子路径仍然违规。`shiploop-cli` 仍为 `export {}` 骨架。
 - 边界检查现状（`scripts/check-boundaries.ts`，P02-1 必须持续通过）：
   - 工作区单向依赖仅允许 `host → core`、`cli → host`；CLI 禁止绕过 Host 直连 Core；
     清单 `dependencies` 与源码导入同时检查，未声明依赖即违规。
@@ -656,6 +673,16 @@ JSON 失败信封（stdout，仅 `--json`；诊断细节在 stderr）：
   F-003 结论：存储层不依赖 `shiploop-core`（默认根由调用方按 P01 `deriveDefaultDataRoot`
   预推导后传入），以免干净树（无 dist）下 `npm run typecheck` 失效；F-006 引入该依赖时
   须同时解决干净树类型检查路径（如构建顺序或引用调整），不得回归 P01 的干净树检查。
+  **F-006 定案**：host 包已声明 `"shiploop-core": "0.0.0"`，生产源码经包名与
+  `shiploop-core/assembly` 公共入口导入。干净树解析路径：(a) 根 `tsconfig.json`
+  以 `paths` 把两个公共入口说明符精确映射到 Core 源码（仅 noEmit 类型检查使用）；
+  (b) `vitest.config.ts` 以精确 alias 做同一映射（测试进程直接运行 packages/ 源码）；
+  (c) 测试子进程加载器 `test/helpers/node-ts-loader/hooks.mjs` 对同样两个精确说明符
+  做源码重映射（干净树下真实子进程测试）。生产构建/运行仍由 node_modules 工作区
+  链接解析到 dist 产物；host `tsconfig.json` 以 project reference 引用 core
+  （TS 7 原生编译器不保证独立项目的构建顺序，reference 保证 core 先于 host 发射，
+  并把 dist 声明重定向到源码），已实测全干净树（三包 dist 均移除）下 `npm run build`
+  退出 0；同时实测干净树下 `npm run typecheck` 与 `npm test` 退出 0。
 - 公共包 import 持续无副作用；显式入口须能从 dist、非源码 cwd 启动。
 - 新增测试进入 `npm test` 默认收集（`test/` 下，helpers 放 `test/helpers/`）；
   不修改 verify 的步骤定义，不为本 Feature 增加 `accept:p02`。

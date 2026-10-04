@@ -905,6 +905,31 @@ describe('F-002 契约模块纯度（import 无端口/目录/进程副作用）'
     }
   });
 
+  it('F-006 runtime 面只允许 node:http 与 shiploop-core 公共入口，不触其他网络/进程/ORM/argv', () => {
+    // runtime/ 承担启动装配（允许 node:http 监听与 shiploop-core/. /assembly
+    // 公共入口），但不得直接绑定 ORM/厂商 SDK、其他网络/进程/线程内置模块；
+    // argv 只属于显式入口 start.ts。
+    const runtimeSrcDir = join(hostSrcDir, 'runtime');
+    const forbiddenImport = /\bfrom\s+['"]node:(?:net|https|dgram|tls|child_process|cluster|worker_threads|readline)['"]/;
+    const forbiddenPackage = /\bfrom\s+['"](?:better-sqlite3|drizzle-orm|@earendil-works\/pi-coding-agent|electron|express|fastify|koa|hono)['"]/;
+    const files = listTsFiles(runtimeSrcDir);
+    expect(files.length).toBeGreaterThanOrEqual(3);
+    for (const file of files) {
+      const source = readFileSync(file, 'utf-8');
+      expect(source, file).not.toMatch(forbiddenImport);
+      expect(source, file).not.toMatch(forbiddenPackage);
+      // argv 只属于显式入口 start.ts；剔除注释后 runtime 模块不得直接读 process.argv。
+      const codeOnly = source
+        .replaceAll(/\/\*[\s\S]*?\*\//g, '')
+        .replaceAll(/^\s*\/\/.*$/gm, '');
+      expect(codeOnly, file).not.toContain('process.argv');
+    }
+    // 显式执行入口（契约 §13.1）只经 runtime 公共面启动。
+    const startEntry = readFileSync(join(hostSrcDir, 'start.ts'), 'utf-8');
+    expect(startEntry).toContain("from './runtime/index.js'");
+    expect(startEntry).toContain('runHostStartEntry');
+  });
+
   it('公共入口只做纯 re-export，自身无语句副作用', () => {
     const index = readFileSync(join(hostSrcDir, 'index.ts'), 'utf-8');
     expect(index).toContain("from './contract/index.js'");

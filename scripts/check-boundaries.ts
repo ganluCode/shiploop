@@ -9,8 +9,10 @@
  *    import 与字面量 require 的模块说明符；非字面量 import()/require() 一律报错；
  *    注释与字符串字面量中的“导入”文本不会触发误判；
  * 3. 强制单向依赖：仅允许 Host→Core 公共入口、CLI→Host 公共客户端/契约（清单依赖
- *    与源码导入同时检查）；Core 不反向依赖，CLI 不绕过 Host 直连 Core，禁止自包名
- *    引用、跨包子路径（内部文件）导入、相对路径或已声明路径别名（package.json
+ *    与源码导入同时检查）；公共入口包括包名本身与目标包 package.json exports 中
+ *    声明的公共子路径（如 shiploop-core/assembly 对应 exports["./assembly"]）；
+ *    Core 不反向依赖，CLI 不绕过 Host 直连 Core，禁止自包名
+ *    引用、跨包未声明子路径（内部文件）导入、相对路径或已声明路径别名（package.json
  *    imports / tsconfig paths）逃逸出本包 src；无法解析的生产导入明确报错，不默认
  *    为合法；并检测工作区包之间的循环依赖；
  * 4. 强制 Core 分层：domain 只可导入 domain；ports 可导入 domain；application 可
@@ -728,18 +730,35 @@ function classifySpecifier(
     return;
   }
 
-  // 6. 工作区包子路径：跨包内部导入，无论方向一律禁止。
+  // 6. 工作区包子路径：目标包 exports 中声明的公共子路径入口（如 ./assembly）与
+  // 包名入口同等对待（方向规则 + 依赖边）；未声明的内部子路径导入一律禁止。
   const subpathOwner = [...ctx.packagesByName.keys()].find((name) =>
     specifier.startsWith(`${name}/`),
   );
   if (subpathOwner !== undefined) {
+    const target = ctx.packagesByName.get(subpathOwner) as WorkspacePackage;
+    const exportKey = `.${specifier.slice(subpathOwner.length)}`;
+    const exportsField = target.manifest.exports;
+    const isDeclaredPublicEntry =
+      exportsField !== null &&
+      typeof exportsField === 'object' &&
+      !Array.isArray(exportsField) &&
+      Object.prototype.hasOwnProperty.call(exportsField, exportKey);
+    if (isDeclaredPublicEntry) {
+      const fromEdges = ctx.edges.get(importerPkg.name) ?? new Set<string>();
+      fromEdges.add(target.name);
+      ctx.edges.set(importerPkg.name, fromEdges);
+      checkWorkspaceDirection(ctx, importerPkg, target, importerFile, line, specifier);
+      return;
+    }
     ctx.report(
       'violation',
       'cross-package-internal',
       importerFile,
       line,
       specifier,
-      `禁止跨包内部导入 ${specifier}：只允许经包名 ${subpathOwner} 依赖其公共入口（exports 的 "."），不得引用内部文件`,
+      `禁止跨包内部导入 ${specifier}：只允许经包名 ${subpathOwner} 或其 package.json exports ` +
+        '声明的公共子路径入口依赖公共面，不得引用内部文件',
     );
     return;
   }

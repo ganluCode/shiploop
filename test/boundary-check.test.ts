@@ -66,6 +66,7 @@ type FixturePackage = {
   name: string;
   deps?: Record<string, string>;
   importsField?: Record<string, unknown>;
+  exportsField?: Record<string, unknown>;
   tsconfig?: Record<string, unknown>;
   files?: Record<string, string>;
 };
@@ -95,6 +96,9 @@ function buildWorkspaceFixture(root: string, packages: FixturePackage[]): void {
     }
     if (pkg.importsField) {
       manifest.imports = pkg.importsField;
+    }
+    if (pkg.exportsField) {
+      manifest.exports = pkg.exportsField;
     }
     writeJson(join(root, pkg.dir, 'package.json'), manifest);
     if (pkg.tsconfig) {
@@ -332,6 +336,39 @@ describe('workspace direction rules (negative fixtures rejected)', () => {
 });
 
 describe('cross-package internal imports (negative fixtures rejected)', () => {
+  it('allows subpath imports declared as public entries in the target package exports', () => {
+    // F-006：host 生产源码经 shiploop-core/assembly 依赖 Core 装配入口；
+    // 目标包 exports 声明的公共子路径与包名入口同等适用单向规则。
+    const result = checkFixture((packages) => {
+      (packages[0] as FixturePackage).exportsField = {
+        '.': './dist/index.js',
+        './assembly': './dist/adapters/composition.js',
+      };
+      (packages[1] as FixturePackage).files = {
+        'src/index.ts': importFrom(PKG_CORE) + importFrom(`${PKG_CORE}/assembly`),
+      };
+    });
+    expect(result.ok).toBe(true);
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  it('rejects CLI importing even a declared Core public subpath (CLI must go through Host)', () => {
+    const result = checkFixture((packages) => {
+      (packages[0] as FixturePackage).exportsField = {
+        '.': './dist/index.js',
+        './assembly': './dist/adapters/composition.js',
+      };
+      (packages[2] as FixturePackage).files = {
+        'src/index.ts': importFrom(PKG_HOST) + sideEffectImport(`${PKG_CORE}/assembly`),
+      };
+    });
+    expect(result.ok).toBe(false);
+    expectDiagnostic(result, 'reverse-dependency', {
+      filePart: join('packages/cli/src/index.ts'),
+      specifier: `${PKG_CORE}/assembly`,
+    });
+  });
+
   it('rejects subpath imports into another workspace package', () => {
     const internalSpecifier = `${PKG_CORE}/src/domain/rules.js`;
     const result = checkFixture((packages) => {

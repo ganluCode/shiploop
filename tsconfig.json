@@ -3,7 +3,11 @@
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
     "noEmit": true,
-    "allowImportingTsExtensions": true
+    "allowImportingTsExtensions": true,
+    "paths": {
+      "shiploop-core": ["./packages/core/src/index.ts"],
+      "shiploop-core/assembly": ["./packages/core/src/adapters/composition.ts"]
+    }
   },
   "include": [
     "vitest.config.ts",

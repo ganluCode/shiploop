@@ -71,10 +71,12 @@ packages/core/src/
   application/   命令、查询、执行编排
   ports/         StateStore、Runtime、凭据等窄接口
   adapters/      sqlite、文件、git、pi 的具体实现（P01-2 F-001 起：sqlite/connection.ts 驱动装配 + 固定版本驱动/ORM；其余为空，不预置空壳）
-packages/host/src/index.ts   Host 公共入口：F-002 契约、F-003 存储、F-004 直接持 fd 的真实 OS 锁（import 无副作用；传输与启动入口尚未实现）
+packages/host/src/index.ts   Host 公共入口：F-002 契约、F-003 存储、F-004 直接持 fd 的真实 OS 锁、F-006 启动装配（import 无副作用）
 packages/host/src/contract/  P02-1 协议契约：发现/握手/status/stop 校验、身份与摘要纯函数、结构化错误（仅依赖 node:crypto）
 packages/host/src/storage/   P02-1 受保护文件存储：规范根 realpath 固定与身份、host/ 0700 与发现/凭据 0600、fail-closed 权限/符号链接核验、原子发现发布、按实例清理（仅用 node:fs/crypto/path，不触碰网络与进程）
 packages/host/src/locking/   macOS flock 与写入生命周期包装（显式调用才获锁，关闭失败保锁；无持锁辅助进程）
+packages/host/src/runtime/   F-006 启动装配：startHost（获锁→开 Core/Schema→127.0.0.1:0 监听→新实例/凭据→原子发现）与受控 argv 入口逻辑；允许 node:http 与 shiploop-core 公共入口，import 无副作用
+packages/host/src/start.ts   F-006 显式启动入口 → dist/start.js（node …/dist/start.js --data-root <abs>；握手/status/stop 路由属 F-007/F-008，当前为 404 占位传输面）
 packages/host/native/        极小 N-API C 适配器，显式构建输出 dist/native/writer-lock.node
 packages/cli/src/index.ts    CLI 公共入口（当前不解析 argv、不发请求）
 ```
@@ -148,6 +150,10 @@ P01 已由项目负责人于 2026-10-05 阶段放行（依据见 [docs/acceptanc
   Host 启动、HTTP 认证/CLI/Work 仍未实现，不声明 P02 通过。
 - F-005 交付 Host/CLI **测试夹具套件**（`test/helpers/host/`，自测 `test/host-fixture-kit.test.ts`，26 项；不进 packages/、不被 vitest 收集为用例）：
   - `isolated-environment`：复用 temp-sandbox，沙箱内独立 home/tmp/data 与经 `resolveCanonicalDataRoot` 固定的数据根；子进程 env 为显式白名单（只透传 PATH，HOME/TMPDIR 重定向）；dispose 按「伪服务 → 受管进程 → 沙箱目录」顺序回收并核验。
+- F-006 交付 **Host 启动装配与显式入口**（`packages/host/src/runtime/` + `src/start.ts`，回归 `test/host-startup.test.ts`，45 项）：
+  - 顺序：选项/env/argv 监听覆盖零容忍（`bind_address_override_rejected`）→ 平台检查 → 规范根 → OS 锁 → openCoreApplication（含 Schema 检查，未知高版本拒写并释锁）→ 127.0.0.1:0 监听并核验套接字地址 → 新 hostInstanceId + 新凭据 → 原子发现发布 → ready；失败按逆序关闭并释锁，不发布 ready。
+  - host 包按契约 §13.4 声明 `"shiploop-core": "0.0.0"`（经包名与 `./assembly` 公共入口）；干净树（无 dist）下 `npm test`/`npm run typecheck` 由根 tsconfig paths、vitest alias 与测试子进程加载器的精确映射保障；边界检查放行 exports 声明的公共子路径入口，未声明内部子路径仍违规。
+  - 当前监听器为 404 占位传输面（认证路由 F-007/F-008）；生产入口注入空能力目录，不装配 Pi/模型执行。构建冒烟 `scripts/smoke-built-entries.ts` 从 dist、非源码 cwd 真实启动 Host：断言回环监听/发现一致/凭据不外泄、SIGKILL 后释锁且重启换新实例与凭据、`--bind` 覆盖以退出码 2 拒绝且零副作用。
   - `managed-child` + `fixture-child`：真实 Node 子进程 ready/go IPC 屏障、有界等待、真实 127.0.0.1 监听地址采集；标准场景 ready-listen / never-ready / early-exit(7) / wrong-pid-ready / crash-after-go(SIGKILL) / ignore-sigterm；回收只针对 spawn 句柄的真实 pid，IPC close→SIGTERM→SIGKILL 升级后仍无法核验退出即 `exit_unconfirmed`，绝不把无法探测当停止。
   - `fake-host-server` + `http-probe`：真实回环伪 Host，可编排错误/缺失 token、旧实例、错误协议/schema/数据根、非法生命周期状态、能力撒谎、畸形 JSON、3xx 重定向（探针绝不跟随）、stop 重放；`discovery-fixture` 经生产 `createHostFileStore` 发行 0700/0600 伪凭据与发现。
   - `evidence`：证据仅记录 PID/实例/状态/退出码/路由等非秘密字段；Authorization 头只保留 `bearer/absent/other-scheme` 分类，登记秘密与真实 HOME/仓库路径做深度扫描，违例即 fail-closed，认证头与 token 正文不进证据。

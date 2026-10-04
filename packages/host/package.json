@@ -18,6 +18,9 @@
   "files": [
     "dist"
   ],
+  "dependencies": {
+    "shiploop-core": "0.0.0"
+  },
   "scripts": {
     "build": "node ../../scripts/build-host-lock.ts && tsc -b tsconfig.json"
   }

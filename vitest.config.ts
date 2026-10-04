@@ -12,9 +12,28 @@
  * 负向夹具（临时副本删除测试、注入失败断言、工具缺失）在
  * test/deterministic-test-harness.test.ts 中以真实子进程验证。
  */
+import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
+  resolve: {
+    // F-006：host 生产源码经包公共入口说明符引用 Core；测试进程直接运行
+    // packages/ 源码，且干净树（无 dist）下 npm test 必须先于构建通过。
+    // 精确匹配两个公共入口说明符到源码文件，不做前缀匹配；生产运行时仍由
+    // node_modules 工作区链接解析到 dist 产物。
+    alias: [
+      {
+        find: /^shiploop-core\/assembly$/,
+        replacement: fileURLToPath(
+          new URL('./packages/core/src/adapters/composition.ts', import.meta.url),
+        ),
+      },
+      {
+        find: /^shiploop-core$/,
+        replacement: fileURLToPath(new URL('./packages/core/src/index.ts', import.meta.url)),
+      },
+    ],
+  },
   test: {
     watch: false,
     passWithNoTests: false,
