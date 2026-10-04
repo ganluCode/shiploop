@@ -89,9 +89,15 @@
   - 显式根必须是 POSIX 绝对路径、非文件系统根、已存在且为真实目录，构造时 `realpathSync` 固定；
     拒绝 NUL、符号链接叶、祖先 realpath 越界。
   - 当前迁移：v1 六表 + v2 `state_events`；未知高版本 Schema 拒写（启动恢复检查沿用此语义）。
-- `shiploop-host` / `shiploop-cli` 现状：两包 `src/index.ts` 均为 `export {}` 骨架注释，
-  加载无副作用；**当前没有任何 Host 网络接口、认证、发现、CLI 参数或 bin**。P02-1 在此基础上
-  增量实现，不把骨架注释当成已交付能力。
+- `shiploop-host` / `shiploop-cli` 现状：
+  - **F-001 冻结时**：两包 `src/index.ts` 均为 `export {}` 骨架注释，加载无副作用。
+  - **F-002 增量（2026-10-05）**：`shiploop-host` 公共入口改为纯 re-export `src/contract/`
+    契约面（版本/路由/预算常量、§3.2 身份与 §10.3 摘要纯函数、发现/握手/status/stop
+    类型与运行时校验、§7.3/§14 结构化错误）。契约面仅依赖 `node:crypto`，不导入
+    `node:http/net/fs/child_process`、ORM 或 Pi SDK，import 仍不监听端口、不读用户目录、
+    不启动进程，也不导出 HTTP/ORM/SDK 类型。`shiploop-cli` 仍为 `export {}` 骨架。
+  - **仍然没有**任何 Host 网络接口、认证传输、发现文件读写、OS 锁、启动入口、CLI 参数或 bin；
+    F-003 起在非契约区增量实现，不把契约类型当成已交付运行能力。
 - 边界检查现状（`scripts/check-boundaries.ts`，P02-1 必须持续通过）：
   - 工作区单向依赖仅允许 `host → core`、`cli → host`；CLI 禁止绕过 Host 直连 Core；
     清单 `dependencies` 与源码导入同时检查，未声明依赖即违规。

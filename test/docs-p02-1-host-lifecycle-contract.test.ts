@@ -7,7 +7,7 @@
  * 增量完成。本套件不新增业务实现，不扩大 P02-1 交付范围。后续任务改变 §1.5 记录的
  * 基线事实时（例如 F-006 把 Host 骨架换成真实入口），必须同步更新本守护与契约文档。
  */
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -140,16 +140,45 @@ describe('F-001 契约文档与仓库基线一致', () => {
     expect(root.scripts).not.toHaveProperty('accept:p02');
   });
 
-  it('P02-1 开工时 Host/CLI 公共入口仍是无副作用骨架（文档 §1.5 事实）', () => {
-    for (const entry of ['packages/host/src/index.ts', 'packages/cli/src/index.ts']) {
-      const source = readText(entry);
-      expect(source).toContain('export {}');
-      // 骨架阶段没有任何 import 语句（注释中可描述不做的事，代码行不允许引用基础设施）。
-      const codeLines = source
-        .split('\n')
-        .filter((line) => !line.trim().startsWith('*') && !line.trim().startsWith('/*') && !line.trim().startsWith('//'));
-      expect(codeLines.some((line) => line.startsWith('import'))).toBe(false);
-      expect(source).not.toMatch(/node:(http|https|net|dgram|child_process)/);
+  it('P02-1 开工基线：CLI 公共入口仍是无副作用骨架（文档 §1.5 事实）', () => {
+    const source = readText('packages/cli/src/index.ts');
+    expect(source).toContain('export {}');
+    // 骨架阶段没有任何 import 语句（注释中可描述不做的事，代码行不允许引用基础设施）。
+    const codeLines = source
+      .split('\n')
+      .filter((line) => !line.trim().startsWith('*') && !line.trim().startsWith('/*') && !line.trim().startsWith('//'));
+    expect(codeLines.some((line) => line.startsWith('import'))).toBe(false);
+    expect(source).not.toMatch(/node:(http|https|net|dgram|child_process)/);
+  });
+
+  it('F-002 增量事实：Host 公共入口只纯导出 contract 契约面，仍无 I/O 与网络/进程能力', () => {
+    // F-002 把 host 入口从 `export {}` 骨架换成契约公共面（docs §1.5 F-002 增量记录）；
+    // 但 Host 网络接口/认证/发现发布/启动入口尚未实现，入口加载仍不得有副作用。
+    const hostIndex = readText('packages/host/src/index.ts');
+    expect(hostIndex).toContain("from './contract/index.js'");
+    expect(hostIndex).not.toContain('export {}');
+
+    // 契约面源码只允许相对导入与 node:crypto（确定性哈希），不允许网络/文件/进程/ORM/SDK。
+    const contractDir = resolve(REPO_ROOT, 'packages/host/src/contract');
+    const listTs = (dir: string): string[] =>
+      readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+        const child = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          return listTs(child);
+        }
+        return entry.name.endsWith('.ts') && !entry.name.endsWith('.d.ts') ? [child] : [];
+      });
+    expect(statSync(contractDir).isDirectory()).toBe(true);
+    expect(listTs(contractDir).length).toBeGreaterThanOrEqual(8);
+    for (const file of listTs(contractDir)) {
+      const source2 = readText(file);
+      // 只匹配真实 import 语句，注释中描述「不导入 node:http」不误伤。
+      expect(source2, file).not.toMatch(
+        /\b(?:import|export)[^;]*?\bfrom\s+['"]node:(?:fs|os|net|http|https|dgram|child_process|cluster|worker_threads)['"]|\bimport\s+['"]node:(?:fs|os|net|http|https|dgram|child_process|cluster|worker_threads)['"]/,
+      );
+      expect(source2, file).not.toMatch(
+        /from\s+['"](?:better-sqlite3|drizzle-orm|@earendil-works\/pi-coding-agent|electron|express|fastify|koa|hono)['"]/,
+      );
     }
   });
 

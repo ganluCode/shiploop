@@ -71,7 +71,8 @@ packages/core/src/
   application/   命令、查询、执行编排
   ports/         StateStore、Runtime、凭据等窄接口
   adapters/      sqlite、文件、git、pi 的具体实现（P01-2 F-001 起：sqlite/connection.ts 驱动装配 + 固定版本驱动/ORM；其余为空，不预置空壳）
-packages/host/src/index.ts   Host 公共入口（当前不是启动入口，不监听端口）
+packages/host/src/index.ts   Host 公共入口：F-002 起纯导出 src/contract/ 生命周期契约面（类型/常量/纯校验，不监听端口、不读目录、不启动进程；传输与启动入口尚未实现）
+packages/host/src/contract/  P02-1 协议契约：发现/握手/status/stop 校验、身份与摘要纯函数、结构化错误（仅依赖 node:crypto）
 packages/cli/src/index.ts    CLI 公共入口（当前不解析 argv、不发请求）
 ```
 

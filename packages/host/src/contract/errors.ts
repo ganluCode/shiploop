@@ -1,0 +1,196 @@
+/**
+ * F-002 Host 生命周期协议结构化错误（契约纯模块，无 I/O、无网络、无进程）。
+ *
+ * 协议依据：docs/p02-1-host-lifecycle-contract.md §7.3（结构化脱敏错误）、
+ * §14（错误码与 HTTP 映射总表）。
+ *
+ * 约定：
+ * - 每个错误携带 code、operation（操作身份）与受控 details（reasonCode、
+ *   supported 列表、field/reason 等非秘密值），Host 与 CLI 只按 code 分支，
+ *   不依赖错误文案匹配；
+ * - 错误体绝不回显 token、Authorization 头、请求体原文、绝对路径、环境变量或
+ *   堆栈；校验层 details 最多记录 field/reason/receivedType，不记录收到的值；
+ * - 服务端码有唯一 HTTP 映射（§14）；仅客户端侧码没有 HTTP 状态（httpStatus
+ *   为 undefined），不得把不同客户端错误折算成「发现不存在」；
+ * - 本模块只定义错误类型与序列化形状，不导入 node:http（HTTP 适配在 F-007
+ *   的非契约区），错误类自身不做任何 I/O。
+ */
+
+/** Host 生命周期操作身份（§7.3 错误体 operation；discovery 为本地读取操作）。 */
+export const HOST_OPERATIONS = [
+  'host.discovery',
+  'host.handshake',
+  'host.status',
+  'host.stop',
+] as const;
+
+export type HostOperation = (typeof HOST_OPERATIONS)[number];
+
+/** §14 表中由服务端经 HTTP 返回的错误码（均有唯一状态码映射）。 */
+export const SERVER_ERROR_CODES = [
+  'invalid_input',
+  'unsupported_schema_version',
+  'request_digest_mismatch',
+  'request_too_large',
+  'unauthorized',
+  'forbidden',
+  'instance_mismatch',
+  'data_root_mismatch',
+  'conflict',
+  'resource_busy',
+  'not_ready',
+  'protocol_incompatible',
+  'unsupported',
+  'unknown_operation',
+  'method_not_allowed',
+  'internal',
+] as const;
+
+export type ServerErrorCode = (typeof SERVER_ERROR_CODES)[number];
+
+/** §14 表中仅客户端侧存在、没有 HTTP 响应的错误码。 */
+export const CLIENT_ONLY_ERROR_CODES = [
+  'host_not_found',
+  'unreachable',
+  'response_malformed',
+  'redirect_rejected',
+  'owner_active',
+  'owner_unknown',
+  'unsafe_discovery',
+  'invalid_discovery',
+  'start_timeout',
+  'stop_not_confirmed',
+  'bind_address_override_rejected',
+  'unsupported_platform',
+] as const;
+
+export type ClientOnlyErrorCode = (typeof CLIENT_ONLY_ERROR_CODES)[number];
+
+export type HostErrorCode = ServerErrorCode | ClientOnlyErrorCode;
+
+/** §14 HTTP 状态映射（仅服务端码；键缺失即表示该码无 HTTP 状态）。 */
+const HTTP_STATUS_BY_ERROR_CODE: Readonly<Record<ServerErrorCode, number>> = Object.freeze({
+  invalid_input: 400,
+  unsupported_schema_version: 400,
+  request_digest_mismatch: 400,
+  request_too_large: 413,
+  unauthorized: 401,
+  forbidden: 403,
+  instance_mismatch: 409,
+  data_root_mismatch: 409,
+  conflict: 409,
+  resource_busy: 409,
+  not_ready: 503,
+  protocol_incompatible: 426,
+  unsupported: 501,
+  unknown_operation: 404,
+  method_not_allowed: 405,
+  internal: 500,
+});
+
+/** 不含秘密的人类可读默认原因；具体调用可以覆盖，但覆盖文案同样不得含秘密。 */
+const DEFAULT_MESSAGE_BY_CODE: Readonly<Record<HostErrorCode, string>> = Object.freeze({
+  invalid_input: '请求未通过结构校验',
+  unsupported_schema_version: '不支持的 schema 版本',
+  request_digest_mismatch: '停止请求摘要核对失败',
+  request_too_large: '请求体超过大小上限',
+  unauthorized: '认证失败',
+  forbidden: '授权被拒绝',
+  instance_mismatch: 'Host 实例身份不匹配',
+  data_root_mismatch: '数据根身份不匹配',
+  conflict: '请求冲突',
+  resource_busy: 'Host 资源占用中',
+  not_ready: 'Host 尚未就绪',
+  protocol_incompatible: 'Host 协议版本不兼容',
+  unsupported: '请求的能力未实现',
+  unknown_operation: '未知操作',
+  method_not_allowed: '请求方法不允许',
+  internal: 'Host 内部错误',
+  host_not_found: '未发现运行中的 Host',
+  unreachable: '无法连接到 Host',
+  response_malformed: 'Host 响应结构不合法',
+  redirect_rejected: '拒绝重定向（不会向新地址发送凭据）',
+  owner_active: '已有可核验的活跃 Host 持有写入锁',
+  owner_unknown: '写入锁被持有但无法核验持有者',
+  unsafe_discovery: '发现文件不安全，拒绝信任',
+  invalid_discovery: '发现文件无效',
+  start_timeout: '等待 Host 启动超时',
+  stop_not_confirmed: '无法确认 Host 已停止',
+  bind_address_override_rejected: '拒绝覆盖监听地址（仅允许 127.0.0.1）',
+  unsupported_platform: '当前平台不受支持（首版仅正式支持 macOS）',
+});
+
+export interface HostProtocolErrorOptions {
+  /** 受控诊断字段：只允许 reason 码、支持列表、field/reason、非秘密标识。 */
+  readonly details?: Readonly<Record<string, unknown>>;
+  /** 因果链保留在进程内，绝不进入错误体序列化。 */
+  readonly cause?: unknown;
+}
+
+/** §7.3 错误体形状（toErrorBody 的返回类型）。 */
+export interface HostErrorBody {
+  readonly error: {
+    readonly code: HostErrorCode;
+    readonly message: string;
+    readonly operation: HostOperation;
+    readonly details?: Readonly<Record<string, unknown>>;
+  };
+}
+
+/**
+ * Host 生命周期协议唯一错误类型。
+ *
+ * 注意：`stack` 仅用于进程内诊断，`toErrorBody()`/JSON 序列化路径不包含堆栈；
+ * 构造与抛出都不执行任何 I/O。
+ */
+export class HostProtocolError extends Error {
+  readonly code: HostErrorCode;
+  readonly operation: HostOperation;
+  readonly details: Readonly<Record<string, unknown>> | undefined;
+
+  constructor(
+    code: HostErrorCode,
+    operation: HostOperation,
+    message?: string,
+    options: HostProtocolErrorOptions = {},
+  ) {
+    const finalMessage = message ?? DEFAULT_MESSAGE_BY_CODE[code];
+    super(finalMessage, options.cause !== undefined ? { cause: options.cause } : undefined);
+    this.name = 'HostProtocolError';
+    this.code = code;
+    this.operation = operation;
+    this.details = options.details;
+  }
+
+  /** 服务端码返回 §14 的 HTTP 状态；仅客户端码返回 undefined。 */
+  get httpStatus(): number | undefined {
+    return HTTP_STATUS_BY_ERROR_CODE[this.code as ServerErrorCode];
+  }
+
+  /**
+   * 序列化为 §7.3 错误体：仅 code/message/operation/details，
+   * 绝不包含 stack、cause、凭据或请求原文。
+   */
+  toErrorBody(): HostErrorBody {
+    const body: HostErrorBody['error'] = {
+      code: this.code,
+      message: this.message,
+      operation: this.operation,
+    };
+    if (this.details !== undefined) {
+      (body as { details?: Readonly<Record<string, unknown>> }).details = this.details;
+    }
+    return { error: body };
+  }
+}
+
+export function isHostProtocolError(value: unknown): value is HostProtocolError;
+export function isHostProtocolError<C extends HostErrorCode>(
+  value: unknown,
+  code: C,
+): value is HostProtocolError & { readonly code: C };
+export function isHostProtocolError(value: unknown, code?: HostErrorCode): boolean {
+  return (
+    value instanceof HostProtocolError && (code === undefined || value.code === code)
+  );
+}
