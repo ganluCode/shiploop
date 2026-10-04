@@ -114,6 +114,16 @@
     生产边界、原生工具前提与 F-006/F-008 装配要求见 [写入锁决定](p02-1-writer-lock.md)。
     启动入口（F-006）、HTTP 认证探测与 CLI 仍未实现；owner_active 仅由可信探测端口
     的认证成功响应 + 共享双向校验得出，不从 PID/发现推断。
+  - **F-005 增量（2026-10-05，仅测试夹具，产品入口零变化）**：新增
+    `test/helpers/host/` 夹具公共面并由 `test/host-fixture-kit.test.ts` 自测：
+    `isolated-environment`（复用 temp-sandbox、白名单 env、规范数据根与统一回收）、
+    `managed-child`（真实 Node 子进程 ready/go 屏障、有界等待、IPC close→SIGTERM→
+    SIGKILL 升级与退出核验，`exit_unconfirmed` 不冒充停止）、`fixture-child` 标准
+    异常场景（never-ready/early-exit/wrong-pid/crash/ignore-sigterm）、
+    `fake-host-server`（真实 127.0.0.1 监听，可编排错误/缺失 token、旧实例、错误
+    协议/schema/数据根、能力撒谎、畸形 JSON 与 3xx 重定向）与脱敏 `evidence`
+    （认证头只留分类，登记秘密与受保护路径扫描，fail-closed）。Host/CLI 产品包
+    源码、依赖与构建行为均未改变。
 - 边界检查现状（`scripts/check-boundaries.ts`，P02-1 必须持续通过）：
   - 工作区单向依赖仅允许 `host → core`、`cli → host`；CLI 禁止绕过 Host 直连 Core；
     清单 `dependencies` 与源码导入同时检查，未声明依赖即违规。

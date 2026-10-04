@@ -146,6 +146,11 @@ P01 已由项目负责人于 2026-10-05 阶段放行（依据见 [docs/acceptanc
   依赖，不运行时编译；缺失原生模块/未知平台明确拒绝。真实测试覆盖同步 Core 竞争、
   别名/独立根、实际写入者 SIGKILL/SIGABRT、锁文件安全、有限 owner 探测和关闭/清理失败。
   Host 启动、HTTP 认证/CLI/Work 仍未实现，不声明 P02 通过。
+- F-005 交付 Host/CLI **测试夹具套件**（`test/helpers/host/`，自测 `test/host-fixture-kit.test.ts`，26 项；不进 packages/、不被 vitest 收集为用例）：
+  - `isolated-environment`：复用 temp-sandbox，沙箱内独立 home/tmp/data 与经 `resolveCanonicalDataRoot` 固定的数据根；子进程 env 为显式白名单（只透传 PATH，HOME/TMPDIR 重定向）；dispose 按「伪服务 → 受管进程 → 沙箱目录」顺序回收并核验。
+  - `managed-child` + `fixture-child`：真实 Node 子进程 ready/go IPC 屏障、有界等待、真实 127.0.0.1 监听地址采集；标准场景 ready-listen / never-ready / early-exit(7) / wrong-pid-ready / crash-after-go(SIGKILL) / ignore-sigterm；回收只针对 spawn 句柄的真实 pid，IPC close→SIGTERM→SIGKILL 升级后仍无法核验退出即 `exit_unconfirmed`，绝不把无法探测当停止。
+  - `fake-host-server` + `http-probe`：真实回环伪 Host，可编排错误/缺失 token、旧实例、错误协议/schema/数据根、非法生命周期状态、能力撒谎、畸形 JSON、3xx 重定向（探针绝不跟随）、stop 重放；`discovery-fixture` 经生产 `createHostFileStore` 发行 0700/0600 伪凭据与发现。
+  - `evidence`：证据仅记录 PID/实例/状态/退出码/路由等非秘密字段；Authorization 头只保留 `bearer/absent/other-scheme` 分类，登记秘密与真实 HOME/仓库路径做深度扫描，违例即 fail-closed，认证头与 token 正文不进证据。
 
 ### 单向依赖规则（F-004 起自动强制）
 
