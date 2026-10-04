@@ -6,9 +6,14 @@
  * - F-002（P02-1）：导出 Host 生命周期契约公共面（`./contract`）：发现/握手/
  *   status/stop 的类型、冻结常量、身份与摘要纯函数、运行时校验和结构化错误。
  *   契约模块只使用 node:crypto 的确定性哈希，不导入 node:http/net/fs/
- *   child_process，也不依赖 ORM/Pi SDK；加载本模块仍不监听端口、不读用户
- *   目录、不启动进程；
- * - Host 启动入口（获锁、Core 装配、回环监听、发现发布、认证路由）由 F-003
+ *   child_process，也不依赖 ORM/Pi SDK；
+ * - F-003（P02-1）：导出受保护文件存储（`./storage`）：规范数据根解析、
+ *   host/ 0700 目录与 0600 发现/凭据文件、原子发现发布、按实例清理。存储
+ *   模块允许使用 node:fs/node:crypto/node:path，但不导入 node:http/net/
+ *   child_process，不监听端口、不启动进程；
+ * - 两个面加载本模块仍不监听端口、不读用户目录、不启动进程、不写文件；
+ * - Host 启动入口（获锁、Core 装配、回环监听、发现发布、认证路由）由 F-004
  *   起的后续任务在非契约区实现，本文件不预置占位。
  */
 export * from './contract/index.js';
+export * from './storage/index.js';

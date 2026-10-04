@@ -151,11 +151,13 @@ describe('F-001 契约文档与仓库基线一致', () => {
     expect(source).not.toMatch(/node:(http|https|net|dgram|child_process)/);
   });
 
-  it('F-002 增量事实：Host 公共入口只纯导出 contract 契约面，仍无 I/O 与网络/进程能力', () => {
-    // F-002 把 host 入口从 `export {}` 骨架换成契约公共面（docs §1.5 F-002 增量记录）；
-    // 但 Host 网络接口/认证/发现发布/启动入口尚未实现，入口加载仍不得有副作用。
+  it('F-002/F-003 增量事实：Host 公共入口导出契约面与受保护存储，仍无网络/进程能力', () => {
+    // F-002 把 host 入口从 `export {}` 骨架换成契约公共面；F-003 追加存储面
+    // （docs §1.5 F-002/F-003 增量记录）；Host 网络接口/认证/启动入口尚未实现，
+    // 入口加载仍不得有副作用。
     const hostIndex = readText('packages/host/src/index.ts');
     expect(hostIndex).toContain("from './contract/index.js'");
+    expect(hostIndex).toContain("from './storage/index.js'");
     expect(hostIndex).not.toContain('export {}');
 
     // 契约面源码只允许相对导入与 node:crypto（确定性哈希），不允许网络/文件/进程/ORM/SDK。
@@ -180,6 +182,23 @@ describe('F-001 契约文档与仓库基线一致', () => {
         /from\s+['"](?:better-sqlite3|drizzle-orm|@earendil-works\/pi-coding-agent|electron|express|fastify|koa|hono)['"]/,
       );
     }
+
+    // F-003 存储面允许 node:fs/crypto/path，但仍禁止网络/进程/ORM/SDK；
+    // host 包此时仍不得声明 shiploop-core 依赖（默认根由调用方预推导，见 §13.4）。
+    const storageDir = resolve(REPO_ROOT, 'packages/host/src/storage');
+    expect(statSync(storageDir).isDirectory()).toBe(true);
+    expect(listTs(storageDir).length).toBeGreaterThanOrEqual(3);
+    for (const file of listTs(storageDir)) {
+      const source2 = readText(file);
+      expect(source2, file).not.toMatch(
+        /\b(?:import|export)[^;]*?\bfrom\s+['"]node:(?:net|http|https|dgram|child_process|cluster|worker_threads)['"]|\bimport\s+['"]node:(?:net|http|https|dgram|child_process|cluster|worker_threads)['"]/,
+      );
+      expect(source2, file).not.toMatch(
+        /from\s+['"](?:shiploop-core|better-sqlite3|drizzle-orm|@earendil-works\/pi-coding-agent|electron|express|fastify|koa|hono)['"]/,
+      );
+    }
+    const hostPkg = readJson('packages/host/package.json');
+    expect(hostPkg).not.toHaveProperty('dependencies');
   });
 
   it('shiploop-core 的两个公共入口与文档记录一致', () => {

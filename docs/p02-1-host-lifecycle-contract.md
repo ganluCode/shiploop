@@ -94,10 +94,18 @@
   - **F-002 增量（2026-10-05）**：`shiploop-host` 公共入口改为纯 re-export `src/contract/`
     契约面（版本/路由/预算常量、§3.2 身份与 §10.3 摘要纯函数、发现/握手/status/stop
     类型与运行时校验、§7.3/§14 结构化错误）。契约面仅依赖 `node:crypto`，不导入
-    `node:http/net/fs/child_process`、ORM 或 Pi SDK，import 仍不监听端口、不读用户目录、
-    不启动进程，也不导出 HTTP/ORM/SDK 类型。`shiploop-cli` 仍为 `export {}` 骨架。
-  - **仍然没有**任何 Host 网络接口、认证传输、发现文件读写、OS 锁、启动入口、CLI 参数或 bin；
-    F-003 起在非契约区增量实现，不把契约类型当成已交付运行能力。
+    `node:http/net/fs/child_process`、ORM 或 Pi SDK。`shiploop-cli` 仍为 `export {}` 骨架。
+  - **F-003 增量（2026-10-05）**：`shiploop-host` 公共入口追加导出 `src/storage/`
+    受保护文件存储：`resolveCanonicalDataRoot`（显式根或调用方按 P01
+    `deriveDefaultDataRoot` 预推导的 `defaultDataRoot`；仅 start 语义允许
+    `createIfMissing` 创建根目录本身 0700；realpath 固定 + §3.2 身份）与
+    `createHostFileStore`（host/ 0700、discovery.json/auth.token 0600、属主核验、
+    符号链接/权限/形态 fail-closed、randomBytes(32) 凭据、同目录临时文件 + rename
+    原子发布、按 hostInstanceId 核对的清理且绝不触碰 writer.lock）。存储层只用
+    `node:fs/node:crypto/node:path`，不导入 `node:http/net/child_process`；为保持
+    干净树下 `npm run typecheck` 不依赖 core dist，F-003 **未**给 host 包引入
+    `shiploop-core` 依赖（默认根推导留待 F-006 装配时注入）；import 公共入口仍无
+    任何写文件/监听/进程副作用。OS 锁（F-004）、启动入口（F-006）与 HTTP 传输仍未实现。
 - 边界检查现状（`scripts/check-boundaries.ts`，P02-1 必须持续通过）：
   - 工作区单向依赖仅允许 `host → core`、`cli → host`；CLI 禁止绕过 Host 直连 Core；
     清单 `dependencies` 与源码导入同时检查，未声明依赖即违规。
@@ -621,6 +629,9 @@ JSON 失败信封（stdout，仅 `--json`；诊断细节在 stderr）：
   声明 `"shiploop-core": "0.0.0"`；F-009/F-012 CLI 使用 Host 公共面时声明
   `"shiploop-host": "0.0.0"`。版本随工作区固定，不引入新第三方依赖（如确需，必须先在本契约
   或后续契约中显式批准；Node 内置 HTTP 能力仅允许在 host 包 src 的非契约区使用）。
+  F-003 结论：存储层不依赖 `shiploop-core`（默认根由调用方按 P01 `deriveDefaultDataRoot`
+  预推导后传入），以免干净树（无 dist）下 `npm run typecheck` 失效；F-006 引入该依赖时
+  须同时解决干净树类型检查路径（如构建顺序或引用调整），不得回归 P01 的干净树检查。
 - 公共包 import 持续无副作用；显式入口须能从 dist、非源码 cwd 启动。
 - 新增测试进入 `npm test` 默认收集（`test/` 下，helpers 放 `test/helpers/`）；
   不修改 verify 的步骤定义，不为本 Feature 增加 `accept:p02`。
