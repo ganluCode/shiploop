@@ -46,6 +46,7 @@ docs/p01-3-application-contract.md  P01-3 Core 应用契约与范围说明（F-0
 docs/p01-3-operations.md   P01-3 项目身份与当前配置操作说明（F-014）
 docs/p01-3-handoff.md       P01-2 → P01-3 接口交接（P01-2 F-014）
 docs/p01-4-handoff.md       P01-3 → P01-4 / P02 接口交接（P01-3 F-014）
+docs/p02-1-host-lifecycle-contract.md  P02-1 Host 单例发现与本机认证生命周期契约（F-001）
 ```
 
 ### 确定性测试约定（F-003）
@@ -127,6 +128,13 @@ P01-4 在 macOS 干净源码快照中交付 P01 阶段验收：`npm ci` 后真�
 - [docs/acceptance/p01-4-f010-report.md](docs/acceptance/p01-4-f010-report.md)：受测 commit、干净复跑命令/退出码/耗时、两次 accept 报告位置与结论、前序回归修复、已知缺口与 `not_run`（证据在同目录 `evidence-p01-4/`，已脱敏）。
 
 该验收仅限 P01 持久化闭环（FR-1/FR-2 子集）；Host/CLI、Runtime/Pi SDK、执行表与 DAG、强 OS 沙箱、非 macOS 平台均 `not_run`/未支持，不计入 P01 必需项通过数。
+
+### P02-1 Host 单例发现与本机认证（F-001，契约先行）
+
+P01 已由项目负责人于 2026-10-05 阶段放行（依据见 [docs/acceptance/p01-review-results.md](docs/acceptance/p01-review-results.md)，放行基线 `5a43a04`，受测产品 commit `0e96535`）。P02-1 开工首项只交付**生命周期接口契约**，不含实现：
+
+- [docs/p02-1-host-lifecycle-contract.md](docs/p02-1-host-lifecycle-contract.md)：P01 基线与放行依据核对、规范数据根与 `dataRootIdentity` 算法、受保护发现/凭据/锁布局、发现 Schema、`/v1/host/handshake|status|stop` 协议、版本化 stop 幂等矩阵、Host 生命周期状态机、HostClient/启动器规则、CLI `host start/status/stop` 参数与四档退出码、错误码总表、FR/T 编号映射（含 T26 编号不一致核对请求）与明确非目标。F-002 ~ F-014 共用此契约，不各自定义协议。
+- 文档守护测试：`test/docs-p02-1-host-lifecycle-contract.test.ts`（冻结事实与仓库基线一致性）。
 
 ### 单向依赖规则（F-004 起自动强制）
 
