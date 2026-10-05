@@ -20,9 +20,10 @@
  *   `connection: close`，不留持久空闲连接；
  * - status 只读零副作用：只读装配上下文（内存值），不写库、不改文件、
  *   不触发 quiesce；
- * - stop 路由在 F-008 接线前：经完整传输与认证校验后返回 501 unsupported
- *   （details.reason = stop_not_wired；§14「请求未实现能力」），绝不触发
- *   停止、文件删除或数据库写入；
+ * - stop（F-008 已接线）：传输/结构（400/501）→ 凭据（401）→ schema 版本
+ *   （400）→ requestDigest 重算核对（400）→ 预期实例（409）后，交给停止
+ *   控制器按 §10.4/§10.5 编排（quiesce、幂等矩阵、收尾与释锁）；本层只
+ *   负责校验顺序与回执发送，自身不触发任何文件/数据库动作；
  * - 未预期异常统一 500 internal 脱敏（不回显原始消息/堆栈/路径）；仅客户端
  *   错误码（httpStatus undefined）逃逸到传输面同样折算 500，不外泄内部细节。
  *
@@ -42,17 +43,21 @@ import {
   MAX_HTTP_BODY_BYTES,
   STATUS_ROUTE,
   STOP_ROUTE,
+  assertStopTargetsCurrentInstance,
   ensureHandshakeVersionCompatibility,
+  ensureStopRequestSupported,
   parseJsonBody,
   validateHandshakeRequestShape,
+  validateStopRequestShape,
+  verifyStopRequestDigest,
 } from '../contract/index.js';
 import type {
   HandshakeResponse,
   HostOperation,
   HostStatusResponse,
   LifecycleState,
-  StopOperationView,
 } from '../contract/index.js';
+import type { HostStopController } from './host-stop.js';
 
 /**
  * §7.2 服务端有界资源（内部常量，§17.1 数值预算项）：
@@ -79,7 +84,8 @@ export interface HostLifecycleContext {
   readonly authToken: string;
   getLifecycleState(): LifecycleState;
   getActivities(): HostActivityCounts;
-  getStopView(): StopOperationView | null;
+  /** F-008 停止控制器（§10.4/§10.5 编排；getStopView 供 status 停止视图）。 */
+  readonly stop: HostStopController;
 }
 
 interface ResolvedRoute {
@@ -175,7 +181,7 @@ function buildStatusResponse(context: HostLifecycleContext): HostStatusResponse 
     pid: context.pid,
     startedAt: context.startedAt,
     activities: context.getActivities(),
-    stop: context.getStopView(),
+    stop: context.stop.getStopView(),
   };
 }
 
@@ -286,12 +292,20 @@ async function handleRequest(
       return;
     }
 
-    // host.stop：F-008 接线的停止流程。当前经完整传输与认证校验后明确拒绝，
-    // 绝不触发停止、文件删除或数据库写入。
+    // host.stop（F-008）：与 §8 同原则的校验顺序——传输层 → 严格结构/能力
+    // （400/501）→ 凭据（401）→ schema 版本（400）→ 摘要重算核对（400）→
+    // 预期实例（409）；全部通过才交给停止控制器（§10.4 幂等矩阵与 §10.5
+    // 收尾顺序）。错误实例/摘要在进入控制器前拒绝，零副作用。
+    const stopShape = validateStopRequestShape(parsedBody);
     authenticate(request, context, operation);
-    throw new HostProtocolError('unsupported', operation, '停止流程尚未接线（后续任务提供）', {
-      details: { reason: 'stop_not_wired' },
+    ensureStopRequestSupported(stopShape);
+    verifyStopRequestDigest(stopShape);
+    assertStopTargetsCurrentInstance(stopShape, context.hostInstanceId);
+    await context.stop.requestStop(stopShape, {
+      ok: (view) => sendJson(response, 200, view),
+      fail: (error) => sendJson(response, error.httpStatus ?? 500, error.toErrorBody()),
     });
+    return;
   } catch (error) {
     if (error instanceof HostProtocolError && error.httpStatus !== undefined) {
       sendJson(response, error.httpStatus, error.toErrorBody());

@@ -4,18 +4,20 @@ Host 未来承担：生命周期、单例认证、传输（本地 HTTP+SSE）、
 
 - 允许：依赖 `shiploop-core` 的公共入口（经包名），在装配入口连接 Core 应用服务与适配器。
 - 禁止：当前阶段监听端口、启动模型或常驻进程、写用户数据；反向要求 Core 依赖 Host；以空壳项目/调度/存储/Runtime 服务宣称业务已实现。
-- 当前阶段（P02-1 / F-007）：公共入口 `index.ts` 导出四个无副作用的面——
+- 当前阶段（P02-1 / F-008）：公共入口 `index.ts` 导出四个无副作用的面——
   - `contract/`（F-002）：生命周期协议类型/常量/纯校验，仅依赖 node:crypto；
   - `storage/`（F-003）：规范根解析与受保护文件存储（0700/0600、fail-closed、
     原子发布、按实例清理），仅用 node:fs/crypto/path，不监听端口、不启动进程。
   - `locking/`（F-004）：真实 macOS flock、实际写入进程直接持 fd、有界获取、
     可信认证探测端口与获锁后打开/关闭失败保锁；无辅助进程，显式调用才加载原生模块。
-  - `runtime/`（F-006/F-007）：startHost 启动装配（获锁 → openCoreApplication/Schema →
+  - `runtime/`（F-006/F-007/F-008）：startHost 启动装配（获锁 → openCoreApplication/Schema →
     127.0.0.1:0 监听并核验套接字 → 新实例/凭据 → 原子发现发布 → ready；失败逆序
     关闭并释锁）与受控 argv 入口逻辑（runHostStartEntry/parseHostStartArgv）；
     http-transport.ts（F-007）为真实生命周期传输面：握手/status 认证路由
     （Bearer timingSafeEqual、Host/Origin 校验、16 KiB 上限、有界 headers/request
-    超时、connection: close、无 CORS、脱敏错误），stop 待 F-008（接线前 501）。
+    超时、connection: close、无 CORS、脱敏错误）；host-stop.ts（F-008）为停止
+    控制器：§10.2 窄活动门控（生产恒空闲）、§10.4 幂等矩阵、§10.5 收尾顺序与
+    §10.7 SIGTERM/SIGINT 安全收尾（wireHostSignalShutdown 由 start.ts 装配）。
     允许 node:http 与 shiploop-core 公共入口（包名 + ./assembly，host 包已声明
     工作区依赖）；监听覆盖（选项/env/argv）零容忍；import 仍无副作用。
     显式启动入口 `start.ts` → dist/start.js（node …/dist/start.js --data-root <abs>）。

@@ -153,6 +153,27 @@
     `startHost` 装配顺序微调为「新实例/凭据 → 传输面监听核验 → 原子发现发布」
     （先凭据后发现不变，发现仍是就绪提交点）。SIGTERM 收尾、quiesce、按实例
     清理、幂等矩阵与 HostClient 仍属 F-008/F-009。
+  - **F-008 增量（2026-10-05）**：stop 路由完成接线，F-007 的 501 中间态移除。
+    `src/runtime/host-stop.ts` 提供：§10.2 窄活动门控端口（仅 enterQuiesce/
+    awaitQuiesce 两方法）与生产恒空闲门控 `createIdleActivityGate`；停止控制器
+    `createHostStopController`（§10.4 幂等矩阵与 §10.5 关闭顺序的进程内编排）；
+    `wireHostSignalShutdown`（§10.7：SIGTERM/SIGINT 走同一安全收尾，由
+    `dist/start.js` 与测试子进程装配，只在收尾 completed 后以退出码 0 退出）。
+    落实行为：stop 经传输/结构/凭据/版本/摘要/实例校验后 → 唯一一次
+    enterQuiesce → awaitQuiesce（默认 10 000 ms，受信注入只允许更小有界值）→
+    stopping（关 listener，在途响应仍可送达）→ 关 Core → 持锁按实例清理
+    发现/凭据 → 200 最终视图（completed/stopping）→ 释锁 → 进程退出码 0。
+    同 commandId 同摘要重放回同一结果/进度（replayed: true）；同 ID 不同摘要
+    409 conflict；quiescing 中另一 commandId 409 stop_in_progress；starting
+    503 not_ready；quiesce 未确认 409 quiesce_not_confirmed 且保持 quiescing、
+    锁与隔离（F-008 测试以真实受管子进程充当活动核验竞争者获锁 owner_unknown）。
+    被拒操作以同命令重提续跑（不重新 enterQuiesce、不重复关闭，成功回执
+    replayed: true）；收尾/清理失败按未确认处理（internal
+    stop_teardown_unconfirmed / stop_cleanup_unconfirmed，保锁不伪装成功）；
+    客户端断开不触发也不阻断收尾（响应送达失败不改变 §10.4 语义）。
+    `startHost` 新增受信注入 `activityGate`/`quiesceBudgetMs`（绝非
+    argv/env/发现字段），生产默认恒空闲门控，不新增执行表、不虚构取消能力。
+    `shiploop-cli` 仍为 `export {}` 骨架；HostClient/启动器/CLI 属后续任务。
 - 边界检查现状（`scripts/check-boundaries.ts`，P02-1 必须持续通过）：
   - 工作区单向依赖仅允许 `host → core`、`cli → host`；CLI 禁止绕过 Host 直连 Core；
     清单 `dependencies` 与源码导入同时检查，未声明依赖即违规。
@@ -475,6 +496,12 @@ dataRootIdentity = lower_hex(sha256(utf8Bytes(canonicalRoot)))
 - 预期实例不匹配 → `409 instance_mismatch`（错误实例不能停止当前 Host，零副作用）。
 - 服务端必须重新计算并核对 `requestDigest`（不接受客户端自报）；不匹配 →
   `400 request_digest_mismatch`。
+- 服务端校验顺序（与 §8 握手同原则，先失败先返回）：传输层 → 严格结构/能力
+  （400/501）→ 凭据（401）→ schema 版本（400）→ requestDigest 重算核对（400）
+  → 预期实例（409）→ 生命周期前置与幂等矩阵（503/409，见 §10.4）→ §10.5 收尾。
+  注意：v1 选项空间下「同 commandId 不同摘要」经传输层不可达（任何与登记不同
+  的摘要都先被重算核对以 400 拒绝）；§10.4 的 conflict 行由停止控制器在
+  commandId 维度先行比对后实现，作为选项空间演进时的冻结行为。
 
 ### 10.2 窄活动控制端口（唯一允许接入的活动面）
 
@@ -515,6 +542,10 @@ requestDigest = lower_hex(sha256(utf8Bytes(canonical)))
 - 同 commandId 的重复语义只在**同一 Host 实例进程**内成立；重启后是新实例（新身份/新凭据），
   旧 commandId 随旧进程消失，新实例以 `instance_mismatch` 拒绝旧请求。这不是跨重启的项目
   命令回执体系，本 Feature 不建持久回执表。
+- 被拒（`quiesce_not_confirmed`/收尾未确认）的操作仍登记同一 commandId：客户端以**同
+  commandId 同摘要**重提即续跑该操作（不重新 enterQuiesce、不重复关闭资源；成功回执
+  `replayed: true`）；在 quiescing 中换用新 commandId 仍按 `stop_in_progress` 拒绝，
+  操作员兜底是 SIGTERM（§10.7 同一安全收尾）。
 - HTTP 响应送达失败、连接断开都不改变上述语义；客户端只能按 §10.6 的外部证据判定完成。
 
 ### 10.5 关闭顺序（ready 且 quiesce 确认；P02-1 生产恒空闲）

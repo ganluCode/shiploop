@@ -6,6 +6,8 @@
  * - managed-child：真实 Node 子进程 ready/go 屏障、有界等待、退出核验与升级；
  * - child-runtime/fixture-child：子进程侧屏障运行时与标准异常场景；
  * - fake-host-server/http-probe：可编排伪 Host 与不跟随重定向的本机探针；
+ * - fake-activity-gate（F-008）：以真实受管子进程充当已接受活动的 §10.2
+ *   门控实现，与纯内存可放行门控（制造确定性的 quiescing 进行中窗口）；
  * - discovery-fixture：经生产存储路径发行伪凭据/发现；
  * - evidence：脱敏证据日志与请求头分类。
  */
@@ -61,3 +63,9 @@ export {
   type SanitizedRequestHeaders,
 } from './evidence.ts';
 export { runBarrierChild, readChildConfig, type BarrierContext, type BarrierScenario } from './child-runtime.ts';
+export {
+  createChildActivityGate,
+  createDeferredActivityGate,
+  type ChildActivityGate,
+  type DeferredActivityGate,
+} from './fake-activity-gate.ts';

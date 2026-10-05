@@ -10,6 +10,22 @@ export {
 } from './http-transport.js';
 export type { HostActivityCounts, HostLifecycleContext } from './http-transport.js';
 export {
+  createHostStopController,
+  createIdleActivityGate,
+  wireHostSignalShutdown,
+} from './host-stop.js';
+export type {
+  HostActivityCountsView,
+  HostActivityGate,
+  HostStopController,
+  HostStopControllerDeps,
+  QuiesceAwaitResult,
+  QuiesceEntryResult,
+  SignalShutdownCapable,
+  SignalShutdownOutcome,
+  StopRespond,
+} from './host-stop.js';
+export {
   HOST_START_ENTRY_USAGE,
   parseHostStartArgv,
   runHostStartEntry,

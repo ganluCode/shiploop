@@ -15,8 +15,8 @@
  * - 真实子进程：两候选竞争唯一持锁者（败者 owner_unknown 不打开写库）、
  *   SIGKILL 后 OS 释锁并可获全新实例、argv/env 覆盖拒绝 exit 2 且无副作用。
  *
- * F-007 边界：握手/status 认证路由已装配（test/host-http-transport.test.ts 专项
- * 验收）；stop 路由在 F-008 接线前返回 501 unsupported，不触发任何停止行为。
+ * F-008 边界：stop 路由已由停止控制器接线（test/host-stop-lifecycle.test.ts
+ * 专项验收）；本套件不触发停止流程。
  */
 import { execFileSync } from 'node:child_process';
 import {

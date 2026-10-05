@@ -16,7 +16,7 @@
  *      并以入口退出码退出；
  * 4. config.lockTimeoutMs（可选）仅作受信测试注入的锁预算，非 argv/env 行为。
  */
-import { runHostStartEntry } from '../../../packages/host/src/runtime/index.ts';
+import { runHostStartEntry, wireHostSignalShutdown } from '../../../packages/host/src/runtime/index.ts';
 import { readChildConfig } from './child-runtime.ts';
 
 const send = process.send?.bind(process);
@@ -104,6 +104,9 @@ if (outcome.host === undefined) {
 }
 
 send({ kind: 'host_ready', pid: process.pid, result: outcome.result, stdoutLines });
+// F-008（§10.7）：与 dist/start.js 相同的信号收尾装配——SIGTERM/SIGINT 走
+// §10.5 安全顺序（quiesce→收尾→按实例清理→释锁），完成后以退出码 0 退出。
+wireHostSignalShutdown(outcome.host, () => process.exit(0));
 await waitForGate(30_000);
 await outcome.host.close();
 clearTimeout(watchdog);

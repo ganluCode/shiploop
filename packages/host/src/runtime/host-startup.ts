@@ -21,10 +21,11 @@
  * 9. 生命周期 starting → ready（quiescing/stopping 由 F-008 的停止流程接管）。
  *
  * F-007 起监听器为真实生命周期传输面（createHostLifecycleServer，见
- * http-transport.ts）：握手/status 认证路由按 §7.2/§8/§9 生效；stop 路由在
- * F-008 接线前经完整传输与认证校验后返回 501 unsupported。SIGTERM 安全收尾
- * 与按实例清理属 F-008；本模块 close() 是装配级拆卸（关监听 → 关 Core →
- * 释锁），不删除发现/凭据（§10.5 第 5 步归 F-008）。
+ * http-transport.ts）；F-008 起 stop 路由由停止控制器接线（host-stop.ts，
+ * §10.4 幂等矩阵、§10.5 关闭顺序、§10.7 信号收尾）：恒空闲生产门控下
+ * stop → quiescing → 立即确认 → stopping（关 listener）→ 关 Core → 持锁
+ * 按实例清理发现/凭据 → 200 最终视图 → 释锁 → 进程退出。本模块 close()
+ * 仍是装配级拆卸（不删除发现/凭据），但会等待在途停止尝试并不重复释锁。
  *
  * import 本模块无副作用：不监听端口、不读文件系统、不加载原生模块、不读
  * process.env（只有 startHost 显式调用才读取注入的 env 或 process.env）。
@@ -39,12 +40,15 @@ import type { CoreApplication } from 'shiploop-core/assembly';
 import {
   HostProtocolError,
   LOOPBACK_LISTEN_ADDRESS,
+  QUIESCE_BUDGET_MS,
 } from '../contract/index.js';
 import type { LifecycleState } from '../contract/index.js';
 import { createHostFileStore, resolveCanonicalDataRoot } from '../storage/index.js';
 import { openLockedWriter } from '../locking/index.js';
 import type { WriterLockOptions } from '../locking/index.js';
 import { createHostLifecycleServer } from './http-transport.js';
+import { createHostStopController, createIdleActivityGate } from './host-stop.js';
+import type { HostActivityGate, SignalShutdownOutcome } from './host-stop.js';
 
 /** 启动阶段错误的操作身份（与锁/存储模块一致：本地启动/发现关注点）。 */
 const OPERATION = 'host.discovery';
@@ -87,6 +91,8 @@ const ALLOWED_OPTION_KEYS = [
   'nativeAddonPath',
   'lockTimeoutMs',
   'ownerProbe',
+  'activityGate',
+  'quiesceBudgetMs',
 ] as const;
 
 export interface HostStartOptions {
@@ -106,6 +112,13 @@ export interface HostStartOptions {
   readonly lockTimeoutMs?: number;
   /** owner 诊断可信探测端口（F-004 定义；F-007 起由传输层提供真实实现）。 */
   readonly ownerProbe?: WriterLockOptions['ownerProbe'];
+  /**
+   * §10.2 窄活动控制端口（受信装配/测试注入；默认生产恒空闲门控）。
+   * 绝非 argv/env/发现字段；注入非空闲实现不得新增执行表或虚构取消能力。
+   */
+  readonly activityGate?: HostActivityGate;
+  /** quiesce 有限预算（默认 10 000 ms；注入只允许 0..QUIESCE_BUDGET_MS）。 */
+  readonly quiesceBudgetMs?: number;
 }
 
 export interface RunningHost {
@@ -122,10 +135,17 @@ export interface RunningHost {
   /** 已装配 Core（F-007 起的认证路由与后续能力复用；不经本面暴露会话/驱动）。 */
   readonly core: CoreApplication;
   /**
-   * 装配级拆卸：关闭监听 → 关闭 Core → 释放 OS 锁；幂等，并发合并。
-   * 不是 §10 的停止流程（quiesce/按实例清理/回执归 F-008）；不删除发现/凭据。
+   * 装配级拆卸：等待在途停止尝试 → 关闭监听 → 关闭 Core → 释放 OS 锁；
+   * 幂等，并发合并。不是 §10 的停止流程（不删除发现/凭据）；若 §10.5
+   * 收尾已完成（HTTP stop/SIGTERM），close() 不再重复关闭或释锁。
    */
   close(): Promise<void>;
+  /**
+   * §10.7 信号收尾（SIGTERM/SIGINT 同一路径）：quiesce → 收尾 → 按实例清理
+   * → 释锁；无 commandId 与回执承诺。未确认返回 unconfirmed 并保留现场；
+   * 已有停止流程时返回 already_in_progress，不重复关闭资源。
+   */
+  requestSignalShutdown(): Promise<SignalShutdownOutcome>;
 }
 
 function invalidInput(reason: string, details: Record<string, unknown>): HostProtocolError {
@@ -174,6 +194,25 @@ function validateStartOptions(options: HostStartOptions): void {
     (options.env === null || typeof options.env !== 'object' || Array.isArray(options.env))
   ) {
     throw invalidInput('invalid_env', { field: 'env' });
+  }
+  if (options.activityGate !== undefined) {
+    const gate = options.activityGate as HostActivityGate;
+    if (
+      gate === null ||
+      typeof gate !== 'object' ||
+      typeof gate.enterQuiesce !== 'function' ||
+      typeof gate.awaitQuiesce !== 'function'
+    ) {
+      throw invalidInput('invalid_activity_gate', { field: 'activityGate' });
+    }
+  }
+  if (
+    options.quiesceBudgetMs !== undefined &&
+    (!Number.isInteger(options.quiesceBudgetMs) ||
+      options.quiesceBudgetMs < 0 ||
+      options.quiesceBudgetMs > QUIESCE_BUDGET_MS)
+  ) {
+    throw invalidInput('invalid_quiesce_budget', { field: 'quiesceBudgetMs' });
   }
 }
 
@@ -263,6 +302,7 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
 
   let server: Server | undefined;
   let lifecycle: LifecycleState = 'starting';
+  let stopTeardownCompleted = false;
   try {
     const store = createHostFileStore({ canonicalRoot });
     const hostInstanceId = randomUUID();
@@ -270,6 +310,47 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
     // 凭据先于监听与发现发布：传输面从第一个请求起即可做 timingSafeEqual
     // 比较；仅存 0600 凭据不构成可连接面（§5.2），失败由下次启动原子替换。
     const authToken = store.issueAuthToken();
+    // F-008 停止控制器（§10.4/§10.5/§10.7）：收尾端口在此闭包装配，
+    // prepareTeardown 只能在 stop/信号路径触发（close() 不走 §10.5 清理）。
+    const stopController = createHostStopController({
+      activityGate: options.activityGate ?? createIdleActivityGate(),
+      getLifecycleState: () => lifecycle,
+      setLifecycleState: (next) => {
+        lifecycle = next;
+      },
+      prepareTeardown: () => {
+        // §10.5 第 3–5 步：stopping → 关 listener（在途 stop 响应仍可送达，
+        // 连接随 connection: close 自行收尾）→ 关 Core（幂等）→ 持锁按实例
+        // 清理发现/凭据。本步骤不释放 OS 锁。
+        lifecycle = 'stopping';
+        const activeServer = server;
+        if (activeServer !== undefined && activeServer.listening) {
+          activeServer.close();
+        }
+        return Promise.resolve()
+          .then(() => locked.writer.close())
+          .then(() => {
+            const cleanup = store.cleanupInstanceFiles(hostInstanceId);
+            // 发现已缺席（外部已移除）等价于清理目标达成；其他跳过/失败形态
+            // 一律按未确认处理（保锁、不伪装成功，§10.5）。
+            if (cleanup.outcome !== 'cleaned' && cleanup.outcome !== 'skipped_discovery_absent') {
+              throw new HostProtocolError(
+                'internal',
+                'host.stop',
+                '按实例清理未确认，保留锁与现场（已脱敏）',
+                { details: { reason: 'stop_cleanup_unconfirmed', outcome: cleanup.outcome } },
+              );
+            }
+          });
+      },
+      releaseAfterTeardown: async () => {
+        // §10.5 第 6 步（最终响应送达之后）：释放 OS 锁；writer 已关闭
+        // （Core close 幂等），locked.close 只走释锁路径且并发安全。
+        await locked.close();
+        stopTeardownCompleted = true;
+      },
+      ...(options.quiesceBudgetMs !== undefined ? { quiesceBudgetMs: options.quiesceBudgetMs } : {}),
+    });
     server = createHostLifecycleServer({
       hostInstanceId,
       dataRootIdentity,
@@ -277,9 +358,8 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
       pid: process.pid,
       authToken,
       getLifecycleState: () => lifecycle,
-      // P02-1 生产装配恒空闲（无 Scheduler/Runner）；stop 视图在 F-008 接线前恒 null。
-      getActivities: () => ({ accepted: 0, quiescing: 0 }),
-      getStopView: () => null,
+      getActivities: () => stopController.getActivities(),
+      stop: stopController,
     });
     await listenOnLoopback(server);
     const address = server.address();
@@ -331,13 +411,19 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
           return inFlight ?? Promise.resolve();
         }
         inFlight ??= (async () => {
-          lifecycle = 'stopping';
-          await closeServer(listeningServer);
-          await locked.close();
+          // 与在途停止尝试协调：HTTP stop/信号收尾已在拆时不再重复拆卸；
+          // 被拒（未确认）的尝试结束后仍走装配级拆卸（不删除发现/凭据）。
+          await stopController.whenSettled();
+          if (!stopTeardownCompleted) {
+            lifecycle = 'stopping';
+            await closeServer(listeningServer);
+            await locked.close();
+          }
           closed = true;
         })();
         return inFlight;
       },
+      requestSignalShutdown: () => stopController.requestSignalShutdown(),
     };
     return host;
   } catch (error) {

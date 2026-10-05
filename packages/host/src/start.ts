@@ -8,7 +8,7 @@
  * - 本文件不是库模块：被执行即启动 Host；公共库面经 package.json exports
  *   的 index.js（加载无副作用）。
  */
-import { runHostStartEntry } from './runtime/index.js';
+import { runHostStartEntry, wireHostSignalShutdown } from './runtime/index.js';
 
 const outcome = await runHostStartEntry(process.argv, {
   stdout: (line) => process.stdout.write(`${line}\n`),
@@ -16,4 +16,8 @@ const outcome = await runHostStartEntry(process.argv, {
 });
 if (outcome.host === undefined) {
   process.exitCode = outcome.exitCode;
+} else {
+  // F-008（§10.7）：SIGTERM/SIGINT 走与显式 stop 相同的安全收尾；收尾完成
+  // （按实例清理 + 释锁）后以退出码 0 退出；未确认保留进程、锁与现场。
+  wireHostSignalShutdown(outcome.host, () => process.exit(0));
 }

@@ -10,8 +10,8 @@
  *   校验顺序：传输层 → 结构 → 凭据 → 版本 → 实例 → 数据根（§8 冻结）；
  * - 畸形 JSON、超大请求体（413）、GET 带体、未知路由（404）、方法不允许（405）
  *   均有有限资源占用与明确拒绝；服务端 headersTimeout/requestTimeout 为有界常量；
- * - stop 路由在 F-008 接线前：经完整传输与认证校验后返回 501 unsupported，
- *   绝不触发停止/文件删除/数据库写入；
+ * - stop 路由（F-008 已接线）：经传输/结构/凭据/版本/摘要/实例校验后交给停止
+ *   控制器；桩上下文装配真实控制器与空收尾端口验证接线行为；
  * - 所有响应不发 CORS 头、永不含 3xx、不回显凭据/请求体原文/绝对路径；
  * - 负例矩阵执行后零副作用：发现/凭据/数据库/锁文件逐字节不变，合法握手仍成功。
  */
@@ -28,11 +28,16 @@ import {
   MAX_HTTP_BODY_BYTES,
   SERVER_HEADERS_TIMEOUT_MS,
   SERVER_REQUEST_TIMEOUT_MS,
+  computeStopRequestDigest,
   createHostFileStore,
   createHostLifecycleServer,
+  createHostStopController,
+  createIdleActivityGate,
   startHost,
   validateHandshakeResponse,
   validateStatusResponse,
+  validateStopResultView,
+  type LifecycleState,
   type RunningHost,
 } from '../packages/host/src/index.ts';
 import { createStaticRuntimeCapabilityCatalog } from '../packages/core/src/index.ts';
@@ -71,15 +76,27 @@ interface StubTransport {
 }
 
 async function startStubTransport(): Promise<StubTransport> {
+  // F-008 起 stop 由真实停止控制器接线：桩上下文装配恒空闲门控 + 空收尾
+  // 端口（只验证传输/校验/回执接线，不触碰文件系统与进程）。
+  let lifecycle: LifecycleState = 'ready';
+  const stopController = createHostStopController({
+    activityGate: createIdleActivityGate(),
+    getLifecycleState: () => lifecycle,
+    setLifecycleState: (next) => {
+      lifecycle = next;
+    },
+    prepareTeardown: () => Promise.resolve(),
+    releaseAfterTeardown: () => Promise.resolve(),
+  });
   const server = createHostLifecycleServer({
     hostInstanceId: STUB_INSTANCE,
     dataRootIdentity: STUB_ROOT_IDENTITY,
     startedAt: STUB_STARTED_AT,
     pid: 4321,
     authToken: STUB_TOKEN,
-    getLifecycleState: () => 'ready',
-    getActivities: () => ({ accepted: 0, quiescing: 0 }),
-    getStopView: () => null,
+    getLifecycleState: () => lifecycle,
+    getActivities: () => stopController.getActivities(),
+    stop: stopController,
   });
   await new Promise<void>((resolveListen, rejectListen) => {
     server.once('error', rejectListen);
@@ -627,41 +644,52 @@ describe('F-007 传输面：畸形/超限/未知操作（有限资源占用）',
   });
 });
 
-describe('F-007 传输面：stop 路由临时边界（F-008 前 501）', () => {
-  it('认证 stop → 501 unsupported 且零副作用；未认证 stop → 401', async () => {
+describe('F-008 传输面：stop 路由接线（真实控制器 + 空收尾端口）', () => {
+  it('未认证（结构合法）stop → 401；认证合法 stop → 200 最终视图；同命令重放 replayed:true', async () => {
     const transport = await startStubTransport();
     try {
+      const commandId = 'fa3d1b0e-4b6f-4b7a-9c0d-2e6a8f1b3d55';
+      const body = {
+        schemaVersion: 1,
+        commandId,
+        hostInstanceId: STUB_INSTANCE,
+        requestDigest: computeStopRequestDigest(commandId, STUB_INSTANCE, { mode: 'graceful' }),
+      };
       const unauthenticated = await loopbackRequest({
         port: transport.port,
         method: 'POST',
         path: '/v1/host/stop',
-        body: {},
+        body,
       });
       expect(unauthenticated.statusCode).toBe(401);
       expect(errorBody(unauthenticated).code).toBe('unauthorized');
 
-      const authenticated = await loopbackRequest({
+      const stopped = await loopbackRequest({
         port: transport.port,
         method: 'POST',
         path: '/v1/host/stop',
         token: STUB_TOKEN,
-        body: {},
+        body,
       });
-      expect(authenticated.statusCode).toBe(501);
-      const error = errorBody(authenticated);
-      expect(error.code).toBe('unsupported');
-      expect(error.operation).toBe('host.stop');
-      expectTransportHygiene(authenticated, STUB_TOKEN);
+      expect(stopped.statusCode).toBe(200);
+      expect(validateStopResultView(stopped.json(), { expectedCommandId: commandId })).toEqual({
+        commandId,
+        status: 'completed',
+        stopState: 'stopping',
+        replayed: false,
+      });
+      expectTransportHygiene(stopped, STUB_TOKEN);
 
-      // 501 不是停止：服务仍存活，合法握手仍成功。
-      const handshake = await loopbackRequest({
+      // 同一实例进程内版本化去重：同 commandId 同摘要返回同一结果。
+      const replayed = await loopbackRequest({
         port: transport.port,
         method: 'POST',
-        path: '/v1/host/handshake',
+        path: '/v1/host/stop',
         token: STUB_TOKEN,
-        body: handshakeBody(),
+        body,
       });
-      expect(handshake.statusCode).toBe(200);
+      expect(replayed.statusCode).toBe(200);
+      expect(validateStopResultView(replayed.json(), { expectedCommandId: commandId }).replayed).toBe(true);
     } finally {
       await transport.close();
     }
@@ -774,7 +802,7 @@ describe('F-007 端到端：真实 startHost 的认证握手/状态与零副作�
         await loopbackRequest({ port: host.port, method: 'POST', path: '/v1/host/stop', token, body: {} }),
       );
       expect(negatives.map((response) => response.statusCode)).toEqual([
-        401, 401, 401, 401, 409, 409, 426, 400, 400, 413, 404, 405, 501,
+        401, 401, 401, 401, 409, 409, 426, 400, 400, 413, 404, 405, 400,
       ]);
       for (const response of negatives) {
         expectTransportHygiene(response, token);
