@@ -151,27 +151,33 @@ describe('F-001 契约文档与仓库基线一致', () => {
     expect(source).not.toMatch(/node:(http|https|net|dgram|child_process)/);
   });
 
-  it('F-002~F-009 增量事实：Host 导出契约/存储/锁/启动装配/认证传输面/停止控制器/HostClient', () => {
+  it('F-002~F-010 增量事实：Host 导出契约/存储/锁/启动装配/认证传输面/停止控制器/HostClient/启动器', () => {
     // F-002 把 host 入口从 `export {}` 骨架换成契约公共面；F-003 追加存储面；
     // F-004 追加直接 fd 锁；F-006 追加 runtime 启动装配与显式入口 start.ts
     // （docs §1.5 各增量记录）。F-007 以真实生命周期传输面替换 F-006 的 404
     // 占位监听器（握手/status 认证路由生效）；F-008 以停止控制器接线 stop
     // （§10.4 幂等矩阵、§10.5 收尾、§10.7 信号收尾）；F-009 追加 client/ 面
-    // （connectToHost/probeDiscoveredHost，契约 §12）；公共入口加载仍不得有副作用。
+    // （connectToHost/probeDiscoveredHost，契约 §12）；F-010 追加 launcher/ 面
+    // （ensureHostRunning，契约 §12.4 连接或启动编排与独立后台启动器）；
+    // 公共入口加载仍不得有副作用。
     const hostIndex = readText('packages/host/src/index.ts');
     expect(hostIndex).toContain("from './contract/index.js'");
     expect(hostIndex).toContain("from './storage/index.js'");
     expect(hostIndex).toContain("from './locking/index.js'");
     expect(hostIndex).toContain("from './runtime/index.js'");
     expect(hostIndex).toContain("from './client/index.js'");
+    expect(hostIndex).toContain("from './launcher/index.js'");
     expect(contractDoc).toContain('F-004 增量');
     expect(contractDoc).toContain('F-006 增量');
     expect(contractDoc).toContain('F-007 增量');
     expect(contractDoc).toContain('F-008 增量');
     expect(contractDoc).toContain('F-009 增量');
+    expect(contractDoc).toContain('F-010 增量');
     expect(contractDoc).toContain('createHostStopController');
     expect(contractDoc).toContain('wireHostSignalShutdown');
     expect(contractDoc).toContain('connectToHost');
+    expect(contractDoc).toContain('ensureHostRunning');
+    expect(contractDoc).toContain('probeDiscoveredHost');
     expect(contractDoc).toContain('flock(LOCK_EX | LOCK_NB)');
     expect(readText('docs/p02-1-writer-lock.md')).toContain('实际写入进程直接持 fd');
     expect((readJson('package.json').scripts as Record<string, string>).build).toContain('build-host-lock.ts');
@@ -263,6 +269,30 @@ describe('F-001 契约文档与仓库基线一致', () => {
         .replaceAll(/^\s*\/\/.*$/gm, '');
       expect(codeOnly, file).not.toContain('process.argv');
       expect(codeOnly, file).not.toContain('process.env');
+    }
+
+    // F-010 launcher 面承担 §12.4 连接或启动编排：唯一允许 spawn 的面
+    // （node:child_process，detached 独立 argv）；允许 node:os（默认根推导缺省）、
+    // node:url（默认入口路径）、node:path（形态校验）、node:timers/promises
+    // （有界轮询）与 shiploop-core 纯契约入口（deriveDefaultDataRoot）；禁止
+    // 文件系统（发现/凭据经 storage/）、网络直连（连接经 client/）、argv 与
+    // Core 装配子路径（不打开 SQLite）。
+    const launcherDir = resolve(REPO_ROOT, 'packages/host/src/launcher');
+    expect(statSync(launcherDir).isDirectory()).toBe(true);
+    expect(listTs(launcherDir).length).toBeGreaterThanOrEqual(2);
+    for (const file of listTs(launcherDir)) {
+      const source2 = readText(file);
+      expect(source2, file).not.toMatch(
+        /\b(?:import|export)[^;]*?\bfrom\s+['"]node:(?:fs|fs\/promises|net|http|https|dgram|tls|cluster|worker_threads|readline|crypto|perf_hooks)['"]|\bimport\s+['"]node:/,
+      );
+      expect(source2, file).not.toMatch(
+        /from\s+['"](?:better-sqlite3|drizzle-orm|@earendil-works\/pi-coding-agent|electron|express|fastify|koa|hono)['"]/,
+      );
+      expect(source2, file).not.toContain('shiploop-core/assembly');
+      const codeOnly = source2
+        .replaceAll(/\/\*[\s\S]*?\*\//g, '')
+        .replaceAll(/^\s*\/\/.*$/gm, '');
+      expect(codeOnly, file).not.toContain('process.argv');
     }
   });
 

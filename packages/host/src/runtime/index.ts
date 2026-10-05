@@ -1,7 +1,7 @@
 /**
  * F-006 runtime 面公共出口（纯 re-export；import 无副作用）。
  */
-export { startHost } from './host-startup.js';
+export { BIND_OVERRIDE_ENV_KEYS, startHost } from './host-startup.js';
 export type { HostStartOptions, RunningHost } from './host-startup.js';
 export {
   SERVER_HEADERS_TIMEOUT_MS,

@@ -71,12 +71,13 @@ packages/core/src/
   application/   命令、查询、执行编排
   ports/         StateStore、Runtime、凭据等窄接口
   adapters/      sqlite、文件、git、pi 的具体实现（P01-2 F-001 起：sqlite/connection.ts 驱动装配 + 固定版本驱动/ORM；其余为空，不预置空壳）
-packages/host/src/index.ts   Host 公共入口：F-002 契约、F-003 存储、F-004 直接持 fd 的真实 OS 锁、F-006 启动装配、F-007 认证传输面、F-008 stop/quiesce 控制器、F-009 HostClient（import 无副作用）
+packages/host/src/index.ts   Host 公共入口：F-002 契约、F-003 存储、F-004 直接持 fd 的真实 OS 锁、F-006 启动装配、F-007 认证传输面、F-008 stop/quiesce 控制器、F-009 HostClient、F-010 连接或启动启动器（import 无副作用）
 packages/host/src/contract/  P02-1 协议契约：发现/握手/status/stop 校验、身份与摘要纯函数、结构化错误（仅依赖 node:crypto）
 packages/host/src/storage/   P02-1 受保护文件存储：规范根 realpath 固定与身份、host/ 0700 与发现/凭据 0600、fail-closed 权限/符号链接核验、原子发现发布、按实例清理（仅用 node:fs/crypto/path，不触碰网络与进程）
 packages/host/src/locking/   macOS flock 与写入生命周期包装（显式调用才获锁，关闭失败保锁；无持锁辅助进程）
 packages/host/src/runtime/   F-006 启动装配（startHost：获锁→开 Core/Schema→127.0.0.1:0 监听→新实例/凭据→原子发现）与受控 argv 入口逻辑；F-007 认证传输面（http-transport.ts：握手/status 路由、Bearer/Host/Origin 校验、16 KiB 上限、有界超时、脱敏错误）；F-008 停止控制器（host-stop.ts：§10.2 门控、§10.4 幂等矩阵、§10.5 收尾、§10.7 信号收尾）；允许 node:http 与 shiploop-core 公共入口，import 无副作用
 packages/host/src/client/    F-009 HostClient（connectToHost/probeDiscoveredHost）：受保护发现/凭据读取 → 握手双向核验后才允许 status/stop；不跟重定向、§14 错误精确分类、close 只释放本地资源（允许 node:http 回环与 node:crypto，不触文件系统/进程/argv）
+packages/host/src/launcher/  F-010 连接或启动编排（ensureHostRunning）：先发现→握手，无实例才以独立 argv spawn detached 正式入口候选，预算内轮询重新发现胜者；落选/失败候选有界回收核验，owner_active/owner_unknown 诊断（允许 node:child_process/os/url/path/timers，不触文件系统/网络直连/argv/SQLite）
 packages/host/src/start.ts   F-006 显式启动入口 → dist/start.js（node …/dist/start.js --data-root <abs>；握手/status 认证路由 F-007 已生效，stop 与 SIGTERM 安全收尾 F-008 已接线）
 packages/host/native/        极小 N-API C 适配器，显式构建输出 dist/native/writer-lock.node
 packages/cli/src/index.ts    CLI 公共入口（当前不解析 argv、不发请求）
@@ -174,6 +175,11 @@ P01 已由项目负责人于 2026-10-05 阶段放行（依据见 [docs/acceptanc
   - 错误按 §14 精确分类且互不折算：host_not_found / unsafe_discovery / invalid_discovery / unreachable（连接失败/连接超时/请求超时/断连子原因）/ unauthorized / protocol_incompatible / instance_mismatch / data_root_mismatch / redirect_rejected（绝不跟随 3xx，不向新地址重发凭据）/ response_malformed（含响应超 16 KiB 上限）。服务端错误响应只信任白名单错误码与受控 details 键，不透传服务端文案。
   - §7.2 有限预算：TCP 连接 2s、握手/status 10s、stop 15s（覆盖仅允许区间内有限值）；`close()` 幂等、只释放本地观察资源、绝不调用 stop，Host 存活由另一客户端认证 status 证明（有真实用例）。
   - `probeDiscoveredHost` 为只做一次握手核验的窄探测，供 F-010 启动器 owner 诊断与 F-004 ownerProbe 真实实现复用；真实 Host 端到端用例覆盖「发现→握手→status→stop→外部三证据」。
+- F-010 交付 **CLI 的连接或启动流程与独立后台 Host 启动器**（`packages/host/src/launcher/`，回归 `test/host-launcher.test.ts`，34 项）：
+  - `ensureHostRunning`（契约 §12.4）：先「发现→握手」——有效既有实例直接返回同一 hostInstanceId（already_running，不启动进程）；仅 host_not_found/unreachable/invalid_discovery 允许继续启动，认证/协议/假服务/不安全发现一律返回对应诊断（不另起写入者）。
+  - 启动只经正式 Host 入口：独立 argv 数组 spawn（nodeExecutable + entryArgv + `--data-root` 规范根；不经 shell、不拼接），候选 detached + stdio ignore + unref，子进程 env 默认白名单 PATH/HOME/TMPDIR（注入 env 含 SHIPLOOP_HOST_* 覆盖即 bind_address_override_rejected）；启动器自身不打开 SQLite。
+  - 预算内轮询重新发现胜者（默认 15 000 ms 预算 / 100 ms 间隔）；成功路径核对「候选即所连实例」（发现 hostInstanceId 与 pid 同时匹配），落选候选由启动器 SIGTERM→SIGKILL 有界回收并核验退出；失败路径先回收候选再做锁所有者诊断（probeDiscoveredHost 经 F-004 ownerProbe，获锁即释、不开 Core）→ owner_active/owner_unknown/start_candidate_failed(internal)/start_timeout，任何失败路径不留未管理进程。
+  - 真实多进程用例：两启动器竞争同一胜者实例、陈旧发现（死端口 + 陈旧 PID 指向无关活进程，原子替换且无关进程存活）、锁被占+发现损坏 owner_unknown（不绕过锁/不覆盖损坏文件/原 Host 仍可认证）、客户端正常退出与启动中途被 SIGKILL 后 Host 仍存活并可被另一客户端认证停止。
 
 ### 单向依赖规则（F-004 起自动强制）
 

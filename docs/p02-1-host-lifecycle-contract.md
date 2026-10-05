@@ -196,6 +196,31 @@
     凭据读取一律经 storage/）、其他网络/进程/线程模块、argv 与
     shiploop-core。`shiploop-cli` 仍为 `export {}` 骨架；启动器/CLI
     参数面属 F-010/F-011/F-012。
+  - **F-010 增量（2026-10-05）**：公共入口追加 `src/launcher/` 连接或启动
+    编排面（§12.4 的实现），导出 `ensureHostRunning` 与启动预算常量
+    （`DEFAULT_START_BUDGET_MS` = 15 000、轮询默认 100ms）。流程：先经
+    F-009 HostClient「发现→握手」；有效实例直接返回同一 hostInstanceId
+    （already_running，不启动进程）；初始结果为 host_not_found /
+    unreachable / invalid_discovery 时才以独立 argv 数组
+    （nodeExecutable + entryArgv + `--data-root` + 规范根；不经 shell、
+    不字符串拼接）spawn detached + stdio ignore + unref 的正式 Host
+    入口候选（默认入口 dist/start.js，干净树测试注入等价 TS 入口），
+    子进程 env 默认白名单 PATH/HOME/TMPDIR（受信注入 env 含
+    SHIPLOOP_HOST_* 覆盖变量即 bind_address_override_rejected）；预算内
+    轮询重新发现胜者并完成握手。认证/协议/假服务/不安全发现的初始失败
+    不启动候选（§12.2/§5.2）。失败路径先回收核验自有候选（SIGTERM→
+    SIGKILL 有界确认，只针对 spawn 句柄 pid），再做锁所有者诊断（诊断性
+    acquireWriterLock + probeDiscoveredHost 真实握手探测，获锁即释、
+    不打开 Core）：owner_active / owner_unknown / 锁空闲时按候选是否
+    自行退出区分 internal(start_candidate_failed) 与 start_timeout。
+    成功路径核对「候选即所连实例」（发现 hostInstanceId 与 pid 同时
+    匹配才保留），落选候选有界回收核验退出，任何失败路径不留未管理的
+    额外 Host 进程。启动器不打开 SQLite（禁 shiploop-core/assembly）、
+    不按发现 PID 杀进程；launcher/ 允许 node:child_process/os/url/path/
+    timers/promises 与 shiploop-core 纯契约入口，禁止文件系统与网络
+    直连（发现读取经 storage/，连接经 client/）、禁止 argv。
+    `shiploop-cli` 仍为 `export {}` 骨架；CLI 参数面与纵向命令属
+    F-011/F-012。
 - 边界检查现状（`scripts/check-boundaries.ts`，P02-1 必须持续通过）：
   - 工作区单向依赖仅允许 `host → core`、`cli → host`；CLI 禁止绕过 Host 直连 Core；
     清单 `dependencies` 与源码导入同时检查，未声明依赖即违规。
@@ -661,6 +686,23 @@ quiescing ──预算内无法确认──▶ 保持 quiescing（resource_busy�
    确认；替换仍须按 §5.2 原子发布并换新身份/凭据）。陈旧 PID 指向无关活进程时不得终止该
    无关进程。
 6. 任何失败路径不得留下未经管理的额外 Host 进程；启动候选由启动器在有界预算内回收核验。
+
+F-010 定案的启动器决策表（冻结行为，实现见 `src/launcher/`）：
+
+- 初始「发现→握手」失败分类：仅 `host_not_found`/`unreachable`/`invalid_discovery`
+  允许继续启动（失效发现由获锁新 Host 按 §5.2 原子替换）；`unsafe_discovery`
+  （文件形态不安全，发布会整体被拒，启动徒劳）与认证/协议/假服务失败
+  （unauthorized、protocol_incompatible、instance_mismatch、data_root_mismatch、
+  redirect_rejected、response_malformed）直接返回对应诊断，不启动候选。
+- 轮询期（候选已 spawn）一切连接/握手错误按原子替换中的瞬态处理，预算内有界重试
+  （默认间隔 100 ms）；候选自行退出（如获锁失败 owner_unknown）则提前进入诊断。
+- 失败诊断顺序：回收核验自有候选 → 诊断性锁探测（F-009 `probeDiscoveredHost` 接
+  F-004 ownerProbe 端口，获锁即释、绝不打开 Core）→ `owner_active`（最后再连一次）/
+  `owner_unknown` / 锁空闲（候选曾自行退出 → `internal`（start_candidate_failed，
+  details 附退出码/信号）；预算耗尽 → `start_timeout`）。
+- 回收纪律：SIGTERM → SIGKILL 有界升级，信号只发给自有 spawn 句柄 pid；发现文件中的
+  PID 从不作为信号目标。成功路径仅当受保护发现同时匹配 hostInstanceId 与候选 pid 才
+  认定「候选即所连实例」，其余一律回收。
 
 `status`/`stop` **永不**启动 Host：无实例时直接返回 `host_not_found`（§14）。
 

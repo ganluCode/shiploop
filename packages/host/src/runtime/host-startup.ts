@@ -73,7 +73,7 @@ const BIND_OVERRIDE_OPTION_KEYS = [
 ] as const;
 
 /** 环境变量形式的监听覆盖（§13.2 列名 + listen/address 变体）；非空即拒。 */
-const BIND_OVERRIDE_ENV_KEYS = [
+export const BIND_OVERRIDE_ENV_KEYS = [
   'SHIPLOOP_HOST_BIND',
   'SHIPLOOP_HOST_HOST',
   'SHIPLOOP_HOST_PORT',

@@ -4,7 +4,7 @@ Host 未来承担：生命周期、单例认证、传输（本地 HTTP+SSE）、
 
 - 允许：依赖 `shiploop-core` 的公共入口（经包名），在装配入口连接 Core 应用服务与适配器。
 - 禁止：当前阶段监听端口、启动模型或常驻进程、写用户数据；反向要求 Core 依赖 Host；以空壳项目/调度/存储/Runtime 服务宣称业务已实现。
-- 当前阶段（P02-1 / F-009）：公共入口 `index.ts` 导出五个无副作用的面——
+- 当前阶段（P02-1 / F-010）：公共入口 `index.ts` 导出六个无副作用的面——
   - `contract/`（F-002）：生命周期协议类型/常量/纯校验，仅依赖 node:crypto；
   - `storage/`（F-003）：规范根解析与受保护文件存储（0700/0600、fail-closed、
     原子发布、按实例清理），仅用 node:fs/crypto/path，不监听端口、不启动进程。
@@ -28,5 +28,13 @@ Host 未来承担：生命周期、单例认证、传输（本地 HTTP+SSE）、
     通过后才允许 status/stop；不跟随 3xx、错误按契约 §14 精确分类、close() 只
     释放本地观察资源。允许 node:http（仅回环）与 node:crypto；禁止文件系统、
     其他网络/进程/线程模块与 argv/env。
+  - `launcher/`（F-010）：连接或启动编排（ensureHostRunning，契约 §12.4）。
+    先经 client/ 发现→握手，有效实例直接连接；无实例/失效发现才以独立 argv
+    （无 shell）spawn detached 正式 Host 入口候选（默认 dist/start.js），预算内
+    轮询重新发现胜者；落选/失败候选有界回收核验（SIGTERM→SIGKILL，只针对自有
+    spawn 句柄 pid），锁所有者诊断经 F-004 ownerProbe + probeDiscoveredHost
+    （获锁即释、不开 Core）。允许 node:child_process/os/url/path/timers 与
+    shiploop-core 纯契约入口；禁止文件系统、网络直连、argv 与
+    shiploop-core/assembly（不打开 SQLite）。
 
 单向依赖规则见仓库根 `README.md`。

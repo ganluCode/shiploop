@@ -34,6 +34,7 @@ import {
   publishLoopbackDiscovery,
   type MintedHostCredential,
   type PublishedLoopbackDiscovery,
+  type PublishLoopbackDiscoveryInput,
 } from './discovery-fixture.ts';
 
 const REPO_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
@@ -62,13 +63,8 @@ export interface IsolatedHostEnvironment {
   childEnv(overrides?: Record<string, string | undefined>): NodeJS.ProcessEnv;
   spawnFixtureChild(scenario: string, options?: SpawnFixtureChildOptions): ManagedChild;
   mintHostCredential(canonicalRoot: string): MintedHostCredential;
-  publishLoopbackDiscovery(input: {
-    canonicalRoot: string;
-    port: number;
-    hostInstanceId: string;
-    store?: MintedHostCredential['store'];
-    token?: string;
-  }): PublishedLoopbackDiscovery;
+  /** 经生产存储路径发布合法发现（透传夹具完整入参，含诊断 pid）。 */
+  publishLoopbackDiscovery(input: PublishLoopbackDiscoveryInput): PublishedLoopbackDiscovery;
   startFakeServer(behavior: FakeServerBehavior): Promise<FakeHostServer>;
   dispose(): Promise<void>;
 }

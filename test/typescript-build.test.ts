@@ -289,13 +289,15 @@ describe('Host and CLI entry behaviour boundaries', () => {
     }
   });
 
-  it('packages/host/src 非 runtime/client 面（contract/storage/locking）仍无网络/进程/ORM/厂商绑定', () => {
+  it('packages/host/src 非 runtime/client/launcher 面（contract/storage/locking）仍无网络/进程/ORM/厂商绑定', () => {
     const runtimeDir = resolve(repoRoot, 'packages/host/src/runtime');
     const clientDir = resolve(repoRoot, 'packages/host/src/client');
+    const launcherDir = resolve(repoRoot, 'packages/host/src/launcher');
     const sources = readSourceTree('packages/host/src').filter(
       ({ file }) =>
         !file.startsWith(runtimeDir + sep) &&
         !file.startsWith(clientDir + sep) &&
+        !file.startsWith(launcherDir + sep) &&
         file !== resolve(repoRoot, 'packages/host/src/start.ts'),
     );
     expect(sources.length, 'host 非 runtime 面扫描必须找到真实源码').toBeGreaterThan(0);
@@ -394,6 +396,53 @@ describe('Host and CLI entry behaviour boundaries', () => {
       }
       expect(codeWithoutComments, `${file} must not read process.argv directly`).not.toContain('process.argv');
       expect(codeWithoutComments, `${file} must not read process.env directly`).not.toContain('process.env');
+    }
+  });
+
+  it('F-010 launcher 面只允许 node:child_process/os/url/path/timers 与 shiploop-core 纯契约入口', () => {
+    // launcher/ 是唯一允许 spawn 的面（§12.4 detached 独立 argv 后台候选）；
+    // 不读文件系统（发现/凭据经 storage/）、不直连网络（连接经 client/）、
+    // 不读 argv、不打开 SQLite（禁止 Core 装配子路径）。
+    const launcherDir = resolve(repoRoot, 'packages/host/src/launcher');
+    const sources = readSourceTree('packages/host/src').filter(({ file }) =>
+      file.startsWith(launcherDir + sep),
+    );
+    expect(sources.length, 'packages/host/src/launcher 必须包含 F-010 启动器源码').toBeGreaterThanOrEqual(2);
+    const bannedInLauncher = [
+      '@earendil-works/pi-coding-agent',
+      'electron',
+      'better-sqlite3',
+      'drizzle-orm',
+      'express',
+      'fastify',
+      'koa',
+      'hono',
+      'shiploop-core/assembly',
+      'node:http',
+      'node:https',
+      'node:net',
+      'node:dgram',
+      'node:tls',
+      'node:fs',
+      'node:cluster',
+      'node:worker_threads',
+      'node:readline',
+      'node:crypto',
+      'node:perf_hooks',
+    ];
+    for (const { file, code } of sources) {
+      const specifiers = extractModuleSpecifiers(code);
+      for (const banned of bannedInLauncher) {
+        const offenders = specifiers.filter((specifier) => specifierMatches(specifier, banned));
+        expect(offenders, `${file} must not import ${banned}`).toHaveLength(0);
+      }
+      const codeWithoutComments = code
+        .replaceAll(/\/\*[\s\S]*?\*\//g, '')
+        .replaceAll(/^\s*\/\/.*$/gm, '');
+      for (const token of skeletonBannedCalls) {
+        expect(codeWithoutComments, `${file} must not use ${token}`).not.toContain(token);
+      }
+      expect(codeWithoutComments, `${file} must not read process.argv directly`).not.toContain('process.argv');
     }
   });
 });

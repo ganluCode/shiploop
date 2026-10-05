@@ -955,9 +955,36 @@ describe('F-002 契约模块纯度（import 无端口/目录/进程副作用）'
     }
   });
 
+  it('F-010 launcher 面只允许 node:child_process/os/url/path/timers 与 shiploop-core 纯契约入口', () => {
+    // launcher/ 承担 §12.4 连接或启动编排：唯一允许 spawn 的面（detached
+    // 独立 argv）；不读文件系统（发现/凭据经 storage/）、不直连网络（连接经
+    // client/）、不读 argv、不打开 SQLite（禁止 shiploop-core/assembly）。
+    const launcherSrcDir = join(hostSrcDir, 'launcher');
+    const forbiddenImport = /\bfrom\s+['"]node:(?:fs|fs\/promises|net|http|https|dgram|tls|cluster|worker_threads|readline|crypto|perf_hooks)['"]/;
+    const forbiddenSideEffect = /\bimport\s+['"]node:/;
+    const forbiddenPackage = /\bfrom\s+['"](?:better-sqlite3|drizzle-orm|@earendil-works\/pi-coding-agent|electron|express|fastify|koa|hono)['"]/;
+    const forbiddenCall = /(\.listen\s*\(|createServer\s*\(|readFileSync\s*\(|writeFileSync\s*\(|mkdirSync\s*\(|rmSync\s*\(|\bfetch\s*\()/;
+    const files = listTsFiles(launcherSrcDir);
+    expect(files.length).toBeGreaterThanOrEqual(2);
+    for (const file of files) {
+      const source = readFileSync(file, 'utf-8');
+      expect(source, file).not.toMatch(forbiddenImport);
+      expect(source, file).not.toMatch(forbiddenSideEffect);
+      expect(source, file).not.toMatch(forbiddenPackage);
+      expect(source, file).not.toMatch(forbiddenCall);
+      // 不打开 SQLite：禁止 Core 装配子路径（只允许 shiploop-core 纯契约入口）。
+      expect(source, file).not.toContain('shiploop-core/assembly');
+      const codeOnly = source
+        .replaceAll(/\/\*[\s\S]*?\*\//g, '')
+        .replaceAll(/^\s*\/\/.*$/gm, '');
+      expect(codeOnly, file).not.toContain('process.argv');
+    }
+  });
+
   it('公共入口只做纯 re-export，自身无语句副作用', () => {
     const index = readFileSync(join(hostSrcDir, 'index.ts'), 'utf-8');
     expect(index).toContain("from './contract/index.js'");
+    expect(index).toContain("from './launcher/index.js'");
     const codeLines = index
       .split('\n')
       .map((line) => line.trim())
