@@ -6,7 +6,8 @@
     "allowImportingTsExtensions": true,
     "paths": {
       "shiploop-core": ["./packages/core/src/index.ts"],
-      "shiploop-core/assembly": ["./packages/core/src/adapters/composition.ts"]
+      "shiploop-core/assembly": ["./packages/core/src/adapters/composition.ts"],
+      "shiploop-host": ["./packages/host/src/index.ts"]
     }
   },
   "include": [

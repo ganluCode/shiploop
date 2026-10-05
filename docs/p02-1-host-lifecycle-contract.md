@@ -221,6 +221,21 @@
     直连（发现读取经 storage/，连接经 client/）、禁止 argv。
     `shiploop-cli` 仍为 `export {}` 骨架；CLI 参数面与纵向命令属
     F-011/F-012。
+  - **F-011 增量（2026-10-06）**：`shiploop-cli` 公共入口不再是骨架，
+    导出 `src/host/` 纯面层：`parseHostCliArgs`（§13.1/§13.2 同步纯解析，
+    env 必须显式注入）、`getHostCliHelp`、§13.3 JSON 成功/失败信封构造、
+    `exitCodeForHostErrorCode`（0/1/2/3 四档，穷尽 §14 全部错误码）与
+    解析失败的人类诊断行。解析失败（含监听覆盖参数/env）在任何 I/O 之前；
+    帮助准确说明退出客户端不停止 Host、显式 `host stop`、首版仅 macOS
+    与可信本机边界、token 不防同一操作系统用户恶意进程。CLI 包按 §13.4
+    声明且仅声明工作区依赖 `"shiploop-host": "0.0.0"`（lockfile +3 行，
+    无第三方新增），只经包名公共面复用 `isUuidV4`、错误码冻结表、
+    `BIND_OVERRIDE_ENV_KEYS` 与 `DEFAULT_START_BUDGET_MS`，不引用内部子路径、
+    不直连 Core；CLI 生产源码不直接导入任何 node 内置模块。干净树解析：
+    根 tsconfig paths、vitest alias 追加精确 `shiploop-host` → Host 源码
+    映射，CLI composite 构建以 project reference 引用 host（传递 core）。
+    显式执行入口 `src/bin.ts`、package.json `bin` 字段与 HostClient/
+    启动器接线仍属 F-012；本任务没有 project/run 等命令。
 - 边界检查现状（`scripts/check-boundaries.ts`，P02-1 必须持续通过）：
   - 工作区单向依赖仅允许 `host → core`、`cli → host`；CLI 禁止绕过 Host 直连 Core；
     清单 `dependencies` 与源码导入同时检查，未声明依赖即违规。

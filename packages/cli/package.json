@@ -18,6 +18,9 @@
   "files": [
     "dist"
   ],
+  "dependencies": {
+    "shiploop-host": "0.0.0"
+  },
   "scripts": {
     "build": "tsc -b tsconfig.json"
   }

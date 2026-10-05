@@ -32,7 +32,7 @@ P01-1 工程骨架 + P01-2 SQLite 原子存储与制品落盘 + P01-3 项目身�
 ```text
 packages/core   shiploop-core   Core 领域与应用逻辑（后续 Feature 实现）
 packages/host   shiploop-host   Host（后续 Feature 实现）
-packages/cli    shiploop-cli    CLI（后续 Feature 实现）
+packages/cli    shiploop-cli    CLI（F-011 起提供 Host 生命周期纯解析/帮助/JSON/退出码面层；纵向命令 F-012）
 test/           仓库级确定性测试（*.test.{js,ts}）与夹具（test/helpers，不收集为用例）
 scripts/        工程检查脚本（TypeScript，受 typecheck 覆盖）：run-tests.ts（测试启动器）、
                 smoke-built-entries.ts（构建入口冒烟）、check-boundaries.ts（依赖边界检查）、
@@ -80,7 +80,8 @@ packages/host/src/client/    F-009 HostClient（connectToHost/probeDiscoveredHos
 packages/host/src/launcher/  F-010 连接或启动编排（ensureHostRunning）：先发现→握手，无实例才以独立 argv spawn detached 正式入口候选，预算内轮询重新发现胜者；落选/失败候选有界回收核验，owner_active/owner_unknown 诊断（允许 node:child_process/os/url/path/timers，不触文件系统/网络直连/argv/SQLite）
 packages/host/src/start.ts   F-006 显式启动入口 → dist/start.js（node …/dist/start.js --data-root <abs>；握手/status 认证路由 F-007 已生效，stop 与 SIGTERM 安全收尾 F-008 已接线）
 packages/host/native/        极小 N-API C 适配器，显式构建输出 dist/native/writer-lock.node
-packages/cli/src/index.ts    CLI 公共入口（当前不解析 argv、不发请求）
+packages/cli/src/index.ts    CLI 公共入口（F-011：re-export src/host/ 纯面层；加载不解析 argv、不读 env、不发请求；显式 bin 入口属 F-012）
+packages/cli/src/host/        F-011 Host 生命周期 CLI 纯面层：args.ts（host start/status/stop 参数解析）、help.ts（帮助文本）、output.ts（§13.3 JSON 信封与四档退出码）；唯一外部包依赖是 shiploop-host 公共面，不直接导入 node 内置模块
 ```
 
 各包 `package.json` 的 `main` / `types` / `exports['.']` 均指向 `dist` 构建产物；`npm run build` 通过 `tsc -b` 为三个包各自生成 `dist/index.js` 与 `dist/index.d.ts`（含 sourcemap 与增量构建信息）。构建结束后执行 `scripts/smoke-built-entries.ts`：在独立 Node 子进程中加载三个入口（5 秒超时），并将 `HOME` / XDG 目录 / cwd 重定向到系统临时目录沙箱，断言退出码 0、非常驻、不写用户数据、产物与声明文件存在；其中 Core 的 `./assembly` 入口还会在非源码 cwd 下执行「注册项目 → 全局/项目配置 → 发布固定正文制品 → 关闭重开逐字段核验正文」闭环（`scripts/core-assembly-smoke.mjs`）。P01 阶段验收检查 `P01-ENG-BUILD-SMOKE` 由 `test/p01-4-build-smoke.test.ts` 承接：把 Core 真实编译到临时目录（不写受测仓库），运行上述冒烟并扫描可发布构建文件/入口/依赖清单/配置，拒绝固定个人绝对路径、Nezha/供应商 SDK 运行依赖与缺失的已编译迁移资源；运行时合法的临时仓库 canonicalPath 不会被误判。
@@ -180,6 +181,10 @@ P01 已由项目负责人于 2026-10-05 阶段放行（依据见 [docs/acceptanc
   - 启动只经正式 Host 入口：独立 argv 数组 spawn（nodeExecutable + entryArgv + `--data-root` 规范根；不经 shell、不拼接），候选 detached + stdio ignore + unref，子进程 env 默认白名单 PATH/HOME/TMPDIR（注入 env 含 SHIPLOOP_HOST_* 覆盖即 bind_address_override_rejected）；启动器自身不打开 SQLite。
   - 预算内轮询重新发现胜者（默认 15 000 ms 预算 / 100 ms 间隔）；成功路径核对「候选即所连实例」（发现 hostInstanceId 与 pid 同时匹配），落选候选由启动器 SIGTERM→SIGKILL 有界回收并核验退出；失败路径先回收候选再做锁所有者诊断（probeDiscoveredHost 经 F-004 ownerProbe，获锁即释、不开 Core）→ owner_active/owner_unknown/start_candidate_failed(internal)/start_timeout，任何失败路径不留未管理进程。
   - 真实多进程用例：两启动器竞争同一胜者实例、陈旧发现（死端口 + 陈旧 PID 指向无关活进程，原子替换且无关进程存活）、锁被占+发现损坏 owner_unknown（不绕过锁/不覆盖损坏文件/原 Host 仍可认证）、客户端正常退出与启动中途被 SIGKILL 后 Host 仍存活并可被另一客户端认证停止。
+- F-011 交付 **Host 生命周期 CLI 纯面层**（`packages/cli/src/host/`，回归 `test/host-cli-args.test.ts`，127 项；解析与执行分离，127 项表驱动正反例）：
+  - `parseHostCliArgs`（§13.1/§13.2）：仅识别 `host start/status/stop`；同步纯函数，env 必须显式注入（不读 process.argv/env、不读发现、不联网、不启动 Host、不生成 stop commandId）。相对/空/NUL/`/` 数据根、未知参数、缺值、非整数/越界预算、错误命令参数、重复参数、位置参数、非 UUID v4 commandId、`--bind/--host/--address/--port/--listen*` 参数与非空 `SHIPLOOP_HOST_*` env 覆盖全部在任何 I/O 之前拒绝（退出码 2，覆盖值不回显）。默认 start 15 000（1 000..60 000）、confirm 10 000（0..30 000）。
+  - `getHostCliHelp`：top/host/start/status/stop 五个作用域，准确说明退出客户端不停止 Host、显式 `host stop` 语义、stop 回执不等于已退出、status 不启动 Host、首版仅 macOS 与可信本机边界、token 不防同一操作系统用户恶意进程；不含 token 样例与开发机路径。
+  - §13.3 JSON 成功/失败信封与 `exitCodeForHostErrorCode`：错误码穷尽映射 1/2/3（2＝输入/本地不安全发现/监听覆盖；3＝连接/协议；其余与未知码 fail-closed →1）。CLI 包声明且仅声明 `"shiploop-host": "0.0.0"`（只经包名公共面复用 isUuidV4/错误码表/env 覆盖键表/启动预算常量）；显式 `src/bin.ts` 与 package.json bin 字段属 F-012，本任务不预声明。
 
 ### 单向依赖规则（F-004 起自动强制）
 
@@ -188,7 +193,7 @@ P01 已由项目负责人于 2026-10-05 阶段放行（依据见 [docs/acceptanc
 - **Host 可依赖 Core 公共入口**（仅经包名 `shiploop-core` 的 `exports`，不导入 Core 内部实现文件）。
 - **CLI 只在需要时依赖 Host 公共客户端或契约**；**不导入 Host 启动入口**或 Core 实现，不绕过 Host 直读 SQLite，也不绕过 Host 直接依赖 Core。
 - **Core 不反向依赖** Host/CLI；Core 契约区（domain/application/ports/公共入口）不导入或重导出 Pi SDK、Electron、HTTP 框架、`better-sqlite3`、Drizzle 或 `node:http`/`node:net`；better-sqlite3 与 Drizzle 只允许出现在 `adapters` 层及装配入口（P01-2 F-001 起在 `shiploop-core` 适配层以精确版本固定安装）。
-- 没有实际使用的依赖不为占位而添加；当前仅 `shiploop-core` 持有运行时依赖（better-sqlite3@13.0.3、drizzle-orm@0.45.3，适配层装配使用，另有 @types/better-sqlite3 开发依赖），Host/CLI 无任何依赖；根工作区只持有开发工具（typescript、@types/node、vitest）。
+- 没有实际使用的依赖不为占位而添加；当前 `shiploop-core` 持有运行时依赖（better-sqlite3@13.0.3、drizzle-orm@0.45.3，适配层装配使用，另有 @types/better-sqlite3 开发依赖），`shiploop-host` 工作区依赖 `shiploop-core@0.0.0`，`shiploop-cli` 工作区依赖 `shiploop-host@0.0.0`（F-011 起；三者均无第三方运行时依赖传递到 CLI）；根工作区只持有开发工具（typescript、@types/node、vitest）。
 
 检查器同时强制的其余边界：
 

@@ -7,7 +7,7 @@
  * 增量完成。本套件不新增业务实现，不扩大 P02-1 交付范围。后续任务改变 §1.5 记录的
  * 基线事实时（例如 F-006 把 Host 骨架换成真实入口），必须同步更新本守护与契约文档。
  */
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -140,15 +140,25 @@ describe('F-001 契约文档与仓库基线一致', () => {
     expect(root.scripts).not.toHaveProperty('accept:p02');
   });
 
-  it('P02-1 开工基线：CLI 公共入口仍是无副作用骨架（文档 §1.5 事实）', () => {
+  it('F-011 增量：CLI 公共入口导出纯解析/帮助/输出面层，加载仍无副作用（文档 §1.5 事实）', () => {
     const source = readText('packages/cli/src/index.ts');
-    expect(source).toContain('export {}');
-    // 骨架阶段没有任何 import 语句（注释中可描述不做的事，代码行不允许引用基础设施）。
-    const codeLines = source
-      .split('\n')
-      .filter((line) => !line.trim().startsWith('*') && !line.trim().startsWith('/*') && !line.trim().startsWith('//'));
-    expect(codeLines.some((line) => line.startsWith('import'))).toBe(false);
-    expect(source).not.toMatch(/node:(http|https|net|dgram|child_process)/);
+    // F-011 起 CLI 入口不再是 export {} 骨架，但仍只是纯面层的 re-export。
+    expect(source).not.toContain('export {}');
+    expect(source).toContain("from './host/index.js'");
+    // 公共入口自身不直接引用 shiploop-host（经 src/host 面层）、不引用任何 node 内置模块。
+    expect(source).not.toMatch(/from\s+['"]shiploop-host['"]/);
+    expect(source).not.toMatch(/node:/);
+    // 面层源码经包公共面复用 Host 契约（isUuidV4/错误码表/env 覆盖键表/启动预算）。
+    const argsSource = readText('packages/cli/src/host/args.ts');
+    expect(argsSource).toMatch(/from\s+['"]shiploop-host['"]/);
+    expect(argsSource).toContain('isUuidV4');
+    expect(argsSource).toContain('BIND_OVERRIDE_ENV_KEYS');
+    expect(argsSource).toContain('DEFAULT_START_BUDGET_MS');
+    // 显式执行入口与 package.json bin 字段属 F-012，本任务不得提前创建。
+    expect(existsSync(resolve(REPO_ROOT, 'packages/cli/src/bin.ts'))).toBe(false);
+    const cliPkg = readJson('packages/cli/package.json');
+    expect(cliPkg.bin).toBeUndefined();
+    expect(cliPkg.dependencies).toEqual({ 'shiploop-host': '0.0.0' });
   });
 
   it('F-002~F-010 增量事实：Host 导出契约/存储/锁/启动装配/认证传输面/停止控制器/HostClient/启动器', () => {
@@ -173,6 +183,7 @@ describe('F-001 契约文档与仓库基线一致', () => {
     expect(contractDoc).toContain('F-008 增量');
     expect(contractDoc).toContain('F-009 增量');
     expect(contractDoc).toContain('F-010 增量');
+    expect(contractDoc).toContain('F-011 增量');
     expect(contractDoc).toContain('createHostStopController');
     expect(contractDoc).toContain('wireHostSignalShutdown');
     expect(contractDoc).toContain('connectToHost');

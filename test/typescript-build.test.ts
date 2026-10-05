@@ -145,7 +145,7 @@ describe.each(packageDirs)('package build contract: %s', (dir) => {
     expect(existsSync(resolve(repoRoot, dir, 'src/index.ts'))).toBe(true);
   });
 
-  it('declares only the pinned adapter-layer storage dependencies (P01-2 F-001) in Core; Host 仅声明 F-006 工作区依赖', () => {
+  it('declares only the pinned adapter-layer storage dependencies (P01-2 F-001) in Core; Host 仅声明 F-006 工作区依赖; CLI 仅声明 F-011 工作区依赖', () => {
     const pinned = {
       'better-sqlite3': '13.0.3',
       'drizzle-orm': '0.45.3',
@@ -163,6 +163,13 @@ describe.each(packageDirs)('package build contract: %s', (dir) => {
       // 使用 openCoreApplication/deriveDefaultDataRoot，版本随工作区固定；
       // 不引入任何第三方依赖。
       expect(pkg.dependencies).toEqual({ 'shiploop-core': '0.0.0' });
+      expect(pkg.devDependencies ?? {}).toEqual({});
+      expect(pkg.peerDependencies ?? {}).toEqual({});
+      expect(pkg.optionalDependencies ?? {}).toEqual({});
+    } else if (dir === 'packages/cli') {
+      // F-011（契约 §13.4）：CLI 纯面层只经包名公共面依赖 Host 公共契约；
+      // 不直连 Core，不引入任何第三方依赖。
+      expect(pkg.dependencies).toEqual({ 'shiploop-host': '0.0.0' });
       expect(pkg.devDependencies ?? {}).toEqual({});
       expect(pkg.peerDependencies ?? {}).toEqual({});
       expect(pkg.optionalDependencies ?? {}).toEqual({});
@@ -271,22 +278,38 @@ describe('Host and CLI entry behaviour boundaries', () => {
   ];
   const skeletonBannedCalls = ['createServer', '.listen('];
 
-  it('packages/cli/src contains no server, model or storage startup code（CLI 仍为骨架）', () => {
+  it('F-011 packages/cli/src 是纯解析/帮助/输出面层：仅依赖 shiploop-host 公共面，无 argv/env/网络/进程副作用', () => {
     const sources = readSourceTree('packages/cli/src');
-    expect(sources.length, 'packages/cli/src must contain at least one TypeScript source file').toBeGreaterThan(0);
+    expect(sources.length, 'packages/cli/src must contain the F-011 pure CLI surface').toBeGreaterThanOrEqual(4);
     for (const { file, code } of sources) {
       const specifiers = extractModuleSpecifiers(code);
       for (const banned of skeletonBannedModules) {
         const offenders = specifiers.filter((specifier) => specifierMatches(specifier, banned));
-        expect(offenders, `${file} must not import ${banned} at this stage`).toHaveLength(0);
+        expect(offenders, `${file} must not import ${banned}`).toHaveLength(0);
+      }
+      for (const banned of ['node:child_process', 'node:fs', 'node:os', 'node:path']) {
+        const offenders = specifiers.filter((specifier) => specifierMatches(specifier, banned));
+        expect(offenders, `${file} must not directly import ${banned} (pure parse/help/output layer)`).toHaveLength(0);
+      }
+      // F-011 唯一外部包依赖是 shiploop-host 包名公共面（不引用内部子路径、不直连 core）。
+      for (const specifier of specifiers) {
+        if (specifier.startsWith('.')) {
+          continue;
+        }
+        expect(specifier, `${file} may only depend on the shiploop-host public entry`).toBe('shiploop-host');
       }
       const codeWithoutComments = code
         .replaceAll(/\/\*[\s\S]*?\*\//g, '')
         .replaceAll(/^\s*\/\/.*$/gm, '');
-      for (const token of skeletonBannedCalls) {
-        expect(codeWithoutComments, `${file} must not use ${token} at this stage`).not.toContain(token);
+      for (const token of [...skeletonBannedCalls, 'process.argv', 'process.env', 'process.exit', 'console.']) {
+        expect(codeWithoutComments, `${file} must not use ${token}`).not.toContain(token);
       }
     }
+    // F-012 才创建显式执行入口 bin.ts 与 package.json bin 字段。
+    expect(listTsFiles('packages/cli/src').some((file) => file.endsWith('bin.ts'))).toBe(false);
+    const cliPkg = readJson('packages/cli/package.json');
+    expect(cliPkg.bin).toBeUndefined();
+    expect(cliPkg.dependencies).toEqual({ 'shiploop-host': '0.0.0' });
   });
 
   it('packages/host/src 非 runtime/client/launcher 面（contract/storage/locking）仍无网络/进程/ORM/厂商绑定', () => {
