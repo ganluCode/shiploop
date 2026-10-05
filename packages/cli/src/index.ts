@@ -10,8 +10,10 @@
  *   Host、不生成停止 commandId；env 必须显式注入。唯一外部包依赖是
  *   shiploop-host 公共面（UUID 判定、错误码表、冻结 env 覆盖键表与启动
  *   预算常量），不引用 Host 内部子路径、不直连 Core。
- * - F-012（待实现）：新增显式可执行入口 src/bin.ts（shebang）→ dist/bin.js
- *   与 package.json bin 字段，把解析结果接到 HostClient/启动器；本公共
- *   入口在 F-012 后仍保持无副作用。
+ * - F-012（P02-1）：新增执行层 src/host/execute.ts（runHostCli：解析结果
+ *   接 HostClient/启动器、§10.6 三证据停止确认）与唯一显式可执行入口
+ *   src/bin.ts（shebang → dist/bin.js，package.json bin: shiploop）。
+ *   两者都不由本公共入口 re-export；import 本文件仍不解析 argv、不读 env、
+ *   不联网、不 spawn（执行只在显式运行 dist/bin.js 时发生）。
  */
 export * from './host/index.js';

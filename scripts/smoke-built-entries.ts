@@ -15,7 +15,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { connect } from 'node:net';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,6 +25,7 @@ const packageDirs = ['packages/core', 'packages/host', 'packages/cli'] as const;
 const LOAD_TIMEOUT_MS = 5000;
 const ASSEMBLY_SMOKE_TIMEOUT_MS = 60_000;
 const HOST_START_SMOKE_TIMEOUT_MS = 30_000;
+const CLI_BIN_SMOKE_TIMEOUT_MS = 30_000;
 
 type PackageExports = Record<string, { types?: unknown; default?: unknown } | undefined>;
 
@@ -268,6 +269,276 @@ async function smokeHostStartEntry(
   );
 }
 
+/**
+ * F-012 构建冒烟：dist/bin.js 在非源码 cwd、显式临时数据根跑通纵向命令。
+ * 断言监听地址/实例身份/退出码/CLI 退出后 Host 存活/stop 三证据/停止后锁可获，
+ * 不只匹配成功日志；任何输出都不得包含 token。
+ */
+async function smokeCliBin(
+  packageRoot: string,
+  sandbox: string,
+  baseEnv: NodeJS.ProcessEnv,
+): Promise<void> {
+  const binEntry = resolve(packageRoot, 'dist/bin.js');
+  if (!existsSync(binEntry)) {
+    fail('shiploop-cli: F-012 bin entry missing: dist/bin.js');
+  }
+  const binHead = readFileSync(binEntry, 'utf8').slice(0, 32);
+  if (!binHead.startsWith('#!/usr/bin/env node')) {
+    fail('shiploop-cli: dist/bin.js must start with the #!/usr/bin/env node shebang');
+  }
+  if ((statSync(binEntry).mode & 0o111) === 0) {
+    fail('shiploop-cli: dist/bin.js must have an executable bit (prepare-cli-bin.ts)');
+  }
+
+  const workDir = join(sandbox, 'cli-bin');
+  mkdirSync(workDir, { recursive: true });
+  const dataRoot = join(workDir, 'data');
+  const hostDir = join(dataRoot, 'host');
+  const discoveryFile = join(hostDir, 'discovery.json');
+  const tokenFile = join(hostDir, 'auth.token');
+  const lockFile = join(hostDir, 'writer.lock');
+  const outputs: Array<{ name: string; stdout: string; stderr: string }> = [];
+
+  const run = (label: string, args: readonly string[]): { status: number | null; stdout: string; stderr: string } => {
+    const result = spawnSync(process.execPath, [binEntry, ...args], {
+      cwd: workDir,
+      env: baseEnv,
+      encoding: 'utf8',
+      timeout: CLI_BIN_SMOKE_TIMEOUT_MS,
+    });
+    if (result.error) {
+      fail(`shiploop-cli: ${label} spawn failed: ${result.error.message}`);
+    }
+    if (result.signal) {
+      fail(`shiploop-cli: ${label} killed by signal ${String(result.signal)}`);
+    }
+    outputs.push({ name: label, stdout: result.stdout, stderr: result.stderr });
+    return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+  };
+
+  const jsonResult = (label: string, invocation: { status: number | null; stdout: string; stderr: string }): Record<string, any> => {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(invocation.stdout.trim());
+    } catch (error) {
+      fail(`shiploop-cli: ${label} stdout is not one JSON object: ${(error as Error).message} (${invocation.stdout})`);
+    }
+    return parsed as Record<string, any>;
+  };
+
+  const assertAlive = (pid: number): void => {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      fail(`shiploop-cli: Host pid ${pid} is not alive right after a CLI invocation`);
+    }
+  };
+
+  // 1) start（经 dist/start.js 正式入口 spawn 后台 Host，非源码 cwd）。
+  const start = run('start', ['host', 'start', '--data-root', dataRoot, '--json']);
+  if (start.status !== 0) {
+    fail(`shiploop-cli: start exit ${String(start.status)}: ${start.stderr}`);
+  }
+  const startEnvelope = jsonResult('start', start);
+  if (startEnvelope.ok !== true || startEnvelope.command !== 'host.start') {
+    fail('shiploop-cli: start envelope shape mismatch');
+  }
+  const first = startEnvelope.result;
+  if (
+    first.outcome !== 'started' ||
+    first.listenAddress !== '127.0.0.1' ||
+    !Number.isInteger(first.port) ||
+    first.port < 1 ||
+    first.port > 65535 ||
+    typeof first.hostInstanceId !== 'string' ||
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(first.hostInstanceId) ||
+    !/^[0-9a-f]{64}$/.test(first.dataRootIdentity) ||
+    first.lifecycleState !== 'ready' ||
+    first.protocolVersion !== 1
+  ) {
+    fail(`shiploop-cli: start result is not a handshake-verified instance: ${JSON.stringify(first)}`);
+  }
+  const firstId = first.hostInstanceId as string;
+  const firstPort = first.port as number;
+  const discovery = JSON.parse(readFileSync(discoveryFile, 'utf8')) as Record<string, unknown>;
+  if (
+    discovery.hostInstanceId !== firstId ||
+    discovery.port !== firstPort ||
+    discovery.listenAddress !== '127.0.0.1' ||
+    typeof discovery.pid !== 'number'
+  ) {
+    fail('shiploop-cli: discovery.json is inconsistent with the start result');
+  }
+  if (realpathSync(dataRoot) && first.dataRootIdentity !== createHash('sha256').update(realpathSync(dataRoot), 'utf8').digest('hex')) {
+    fail('shiploop-cli: dataRootIdentity does not match the canonical data root');
+  }
+  const firstPid = discovery.pid as number;
+  const firstToken = readFileSync(tokenFile, 'utf8');
+  if (!/^[0-9a-f]{64}$/.test(firstToken)) {
+    fail('shiploop-cli: auth.token is not 64 lowercase hex');
+  }
+  assertAlive(firstPid);
+
+  // 2) 第二次 start：连接同一实例（CLI 进程已退出，Host 仍存活）。
+  const second = run('start-again', ['host', 'start', '--data-root', dataRoot, '--json']);
+  if (second.status !== 0) {
+    fail(`shiploop-cli: second start exit ${String(second.status)}: ${second.stderr}`);
+  }
+  const again = jsonResult('start-again', second).result;
+  if (again.outcome !== 'already_running' || again.hostInstanceId !== firstId || again.port !== firstPort) {
+    fail(`shiploop-cli: second start did not connect to the same instance: ${JSON.stringify(again)}`);
+  }
+
+  // 3) status（JSON）：真实生命周期状态。
+  const status = run('status', ['host', 'status', '--data-root', dataRoot, '--json']);
+  if (status.status !== 0) {
+    fail(`shiploop-cli: status exit ${String(status.status)}: ${status.stderr}`);
+  }
+  const statusResult = jsonResult('status', status).result;
+  if (
+    statusResult.hostInstanceId !== firstId ||
+    statusResult.lifecycleState !== 'ready' ||
+    statusResult.pid !== firstPid ||
+    JSON.stringify(statusResult.activities) !== JSON.stringify({ accepted: 0, quiescing: 0 }) ||
+    statusResult.stop !== null
+  ) {
+    fail(`shiploop-cli: status result mismatch: ${JSON.stringify(statusResult)}`);
+  }
+
+  // 4) 非 JSON 人类输出到 stdout；Host 在多个短生命周期 CLI 后仍存活。
+  const human = run('status-human', ['host', 'status', '--data-root', dataRoot]);
+  if (human.status !== 0 || !human.stdout.includes('ready') || !human.stdout.includes(firstId)) {
+    fail(`shiploop-cli: human status mismatch (exit=${String(human.status)}): ${human.stdout} ${human.stderr}`);
+  }
+  assertAlive(firstPid);
+
+  // 5) 解析失败 → 退出码 2，stdout 为空（非 JSON 模式）。
+  const badArgs = run('bad-args', ['host', 'status', '--bogus']);
+  if (badArgs.status !== 2 || badArgs.stdout !== '' || !badArgs.stderr.includes('invalid_input')) {
+    fail(`shiploop-cli: invalid args must exit 2 with stderr diagnostic: ${JSON.stringify(badArgs)}`);
+  }
+
+  // 6) status/stop 不启动 Host：全新根 → host_not_found 退出码 3，不创建根。
+  const data2 = join(workDir, 'data2');
+  const absent = run('status-absent', ['host', 'status', '--data-root', data2, '--json']);
+  if (absent.status !== 3) {
+    fail(`shiploop-cli: status on absent root must exit 3, got ${String(absent.status)}`);
+  }
+  const absentEnvelope = jsonResult('status-absent', absent);
+  if (absentEnvelope.error?.code !== 'host_not_found') {
+    fail(`shiploop-cli: absent status must report host_not_found: ${JSON.stringify(absentEnvelope)}`);
+  }
+  if (existsSync(data2)) {
+    fail('shiploop-cli: status created the data root (must never launch or create)');
+  }
+
+  // 7) 监听地址覆盖 → 退出码 2 且零文件副作用。
+  const data3 = join(workDir, 'data3');
+  const override = run('bind-override', ['host', 'start', '--data-root', data3, '--bind', '0.0.0.0', '--json']);
+  if (override.status !== 2) {
+    fail(`shiploop-cli: bind override must exit 2, got ${String(override.status)}`);
+  }
+  if (jsonResult('bind-override', override).error?.code !== 'bind_address_override_rejected') {
+    fail('shiploop-cli: bind override must report bind_address_override_rejected');
+  }
+  if (existsSync(data3)) {
+    fail('shiploop-cli: bind override rejection left filesystem side effects');
+  }
+
+  // 8) stop：三证据齐备才 stopped；随后进程退出、发现/凭据删除、锁文件保留。
+  const stop = run('stop', ['host', 'stop', '--data-root', dataRoot, '--json']);
+  if (stop.status !== 0) {
+    fail(`shiploop-cli: stop exit ${String(stop.status)}: ${stop.stderr}`);
+  }
+  const stopResult = jsonResult('stop', stop).result;
+  if (
+    stopResult.status !== 'stopped' ||
+    stopResult.hostInstanceId !== firstId ||
+    JSON.stringify(stopResult.evidence) !==
+      JSON.stringify({ processExit: 'confirmed', lock: 'acquirable', discovery: 'removed' })
+  ) {
+    fail(`shiploop-cli: stop result is not evidence-based stopped: ${JSON.stringify(stopResult)}`);
+  }
+  // 外部证据复核：进程退出（有界）、发现/凭据消失、writer.lock 保留。
+  const goneDeadline = Date.now() + 10_000;
+  let exited = false;
+  while (Date.now() < goneDeadline) {
+    try {
+      process.kill(firstPid, 0);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ESRCH') {
+        exited = true;
+        break;
+      }
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 50));
+  }
+  if (!exited) {
+    fail(`shiploop-cli: Host pid ${firstPid} did not exit after stop`);
+  }
+  if (existsSync(discoveryFile) || existsSync(tokenFile)) {
+    fail('shiploop-cli: stop did not remove discovery/token files');
+  }
+  if (!existsSync(lockFile)) {
+    fail('shiploop-cli: stop must never delete writer.lock');
+  }
+
+  // 9) 停止后锁可获：start 成功且为全新实例（新身份）；再 stop 收尾。
+  const restart = run('restart', ['host', 'start', '--data-root', dataRoot, '--json']);
+  if (restart.status !== 0) {
+    fail(`shiploop-cli: restart after stop exit ${String(restart.status)}: ${restart.stderr}`);
+  }
+  const restartResult = jsonResult('restart', restart).result;
+  if (restartResult.outcome !== 'started' || restartResult.hostInstanceId === firstId) {
+    fail(`shiploop-cli: restart must start a fresh instance: ${JSON.stringify(restartResult)}`);
+  }
+  const secondToken = readFileSync(tokenFile, 'utf8');
+  const restartPid = JSON.parse(readFileSync(discoveryFile, 'utf8')) as { pid?: number };
+  if (typeof restartPid.pid !== 'number') {
+    fail('shiploop-cli: restart discovery pid missing before final stop');
+  }
+  const restartPidValue = restartPid.pid;
+  const restartStop = run('restart-stop', ['host', 'stop', '--data-root', dataRoot, '--json']);
+  if (restartStop.status !== 0 || jsonResult('restart-stop', restartStop).result?.status !== 'stopped') {
+    fail(`shiploop-cli: final stop mismatch: ${restartStop.status} ${restartStop.stdout} ${restartStop.stderr}`);
+  }
+  const restartGoneDeadline = Date.now() + 10_000;
+  let restartExited = false;
+  while (Date.now() < restartGoneDeadline) {
+    try {
+      process.kill(restartPidValue, 0);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ESRCH') {
+        restartExited = true;
+        break;
+      }
+    }
+    await new Promise((resolveWait) => setTimeout(resolveWait, 50));
+  }
+  if (!restartExited) {
+    fail(`shiploop-cli: restart Host pid ${String(restartPidValue)} did not exit after stop`);
+  }
+  if (existsSync(discoveryFile)) {
+    fail('shiploop-cli: final stop left discovery.json behind');
+  }
+
+  // 10) 全部 CLI 输出（含错误分支）都不得泄漏任一 token。
+  for (const output of outputs) {
+    if (output.stdout.includes(firstToken) || output.stderr.includes(firstToken)) {
+      fail(`shiploop-cli: ${output.name} leaked the first auth token`);
+    }
+    if (output.stdout.includes(secondToken) || output.stderr.includes(secondToken)) {
+      fail(`shiploop-cli: ${output.name} leaked the restart auth token`);
+    }
+  }
+
+  console.log(
+    'ok shiploop-cli: dist/bin.js host start/status/stop vertical smoke (same instance on second start, '
+      + 'host alive across CLI exits, evidence-based stopped, fresh instance after stop, exit codes 0/2/3, no token leak)',
+  );
+}
+
 for (const packageDir of packageDirs) {
   const packageRoot = resolve(repoRoot, packageDir);
   const manifest = JSON.parse(
@@ -399,6 +670,16 @@ for (const packageDir of packageDirs) {
     // Host 启动入口（专用子目录，不影响上面的用户目录写入断言）。
     if (name === 'shiploop-host') {
       await smokeHostStartEntry(packageRoot, sandbox, childEnv);
+    }
+
+    // F-012：CLI bin 清单字段必须指向已发射的 dist/bin.js（侧效应加载的是
+    // exports['.'] 公共入口，bin 不在此列，单独冒烟 start/status/stop 纵切）。
+    if (name === 'shiploop-cli') {
+      const binField = (manifest as { bin?: unknown }).bin;
+      if (JSON.stringify(binField) !== JSON.stringify({ shiploop: './dist/bin.js' })) {
+        fail('shiploop-cli: package.json bin must be { shiploop: ./dist/bin.js }');
+      }
+      await smokeCliBin(packageRoot, sandbox, childEnv);
     }
 
     console.log(

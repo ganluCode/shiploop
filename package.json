@@ -18,7 +18,7 @@
     "test": "node scripts/run-tests.ts",
     "typecheck": "tsc -p tsconfig.json",
     "check:boundaries": "node scripts/check-boundaries.ts",
-    "build": "node scripts/build-host-lock.ts && tsc -b packages/core/tsconfig.json packages/host/tsconfig.json packages/cli/tsconfig.json && node scripts/smoke-built-entries.ts",
+    "build": "node scripts/build-host-lock.ts && tsc -b packages/core/tsconfig.json packages/host/tsconfig.json packages/cli/tsconfig.json && node scripts/prepare-cli-bin.ts && node scripts/smoke-built-entries.ts",
     "verify": "node scripts/verify.ts",
     "accept:p01": "node scripts/acceptance/p01-accept.ts"
   },

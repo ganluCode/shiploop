@@ -90,6 +90,66 @@ const OPTION_KEYS = [
   'onCandidateSpawned',
 ] as const;
 
+/** §13.2 status/stop 的规范根解析选项（只读，不创建任何目录）。 */
+export interface ResolveConnectRootOptions {
+  /** 显式数据根（POSIX 绝对路径）；省略时按 P01 默认根推导。 */
+  readonly dataRoot?: string;
+  /** 注入的用户目录（推导 P01 默认根）；缺省取 os.homedir()。 */
+  readonly userHomeDir?: string;
+}
+
+const RESOLVE_ROOT_OPTION_KEYS = ['dataRoot', 'userHomeDir'] as const;
+
+/**
+ * §13.2 status/stop 的规范根解析：createIfMissing=false——根或 host/ 缺失即
+ * host_not_found，绝不创建数据根、绝不启动候选（与 start 的
+ * ensureHostRunning 区分）。默认根按 P01 deriveDefaultDataRoot 推导。
+ * 纯本地文件系统核验（realpath），不联网、不 spawn、不打开 SQLite。
+ */
+export function resolveConnectDataRoot(
+  options: ResolveConnectRootOptions = {},
+): { canonicalRoot: string; dataRootIdentity: string } {
+  const input: unknown = options;
+  if (!isPlainObject(input)) {
+    throw invalidInputStatic('invalid_options');
+  }
+  for (const key of Object.keys(input)) {
+    if (!(RESOLVE_ROOT_OPTION_KEYS as readonly string[]).includes(key)) {
+      throw invalidInputStatic('unknown_option_key', { field: key });
+    }
+  }
+  if (options.dataRoot !== undefined && options.userHomeDir !== undefined) {
+    throw invalidInputStatic('root_source_ambiguous', { field: 'dataRoot' });
+  }
+  if (
+    options.dataRoot !== undefined &&
+    (typeof options.dataRoot !== 'string' || options.dataRoot.length === 0)
+  ) {
+    throw invalidInputStatic('invalid_root_type', { field: 'dataRoot' });
+  }
+  if (
+    options.userHomeDir !== undefined &&
+    (typeof options.userHomeDir !== 'string' || options.userHomeDir.length === 0)
+  ) {
+    throw invalidInputStatic('invalid_home_type', { field: 'userHomeDir' });
+  }
+  return resolveCanonicalDataRoot(
+    options.dataRoot !== undefined
+      ? { dataRoot: options.dataRoot, createIfMissing: false }
+      : {
+          defaultDataRoot: deriveDefaultDataRoot(options.userHomeDir ?? homedir()),
+          createIfMissing: false,
+        },
+  );
+}
+
+/** 选项形态校验（resolveConnectDataRoot 在模块顶层无效操作 OPERATION 复用）。 */
+function invalidInputStatic(reason: string, details: Record<string, unknown> = {}): HostProtocolError {
+  return new HostProtocolError('invalid_input', OPERATION, '连接根解析选项未通过校验', {
+    details: { reason, ...details },
+  });
+}
+
 export interface EnsureHostOptions {
   /** 显式数据根（POSIX 绝对路径；start 语义允许创建根目录本身 0700）。 */
   readonly dataRoot?: string;

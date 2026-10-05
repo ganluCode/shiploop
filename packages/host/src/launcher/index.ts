@@ -15,10 +15,12 @@ export {
   MIN_POLL_INTERVAL_MS,
   MIN_START_BUDGET_MS,
   ensureHostRunning,
+  resolveConnectDataRoot,
 } from './host-launcher.js';
 export type {
   CandidateExitInfo,
   EnsureHostOptions,
   EnsureHostResult,
   EnsuredHostCandidate,
+  ResolveConnectRootOptions,
 } from './host-launcher.js';

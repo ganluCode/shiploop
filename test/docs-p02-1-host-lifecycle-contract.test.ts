@@ -154,11 +154,21 @@ describe('F-001 契约文档与仓库基线一致', () => {
     expect(argsSource).toContain('isUuidV4');
     expect(argsSource).toContain('BIND_OVERRIDE_ENV_KEYS');
     expect(argsSource).toContain('DEFAULT_START_BUDGET_MS');
-    // 显式执行入口与 package.json bin 字段属 F-012，本任务不得提前创建。
-    expect(existsSync(resolve(REPO_ROOT, 'packages/cli/src/bin.ts'))).toBe(false);
+    // F-012：显式执行入口 bin.ts（shebang）与 package.json bin 字段已接线，
+    // 公共入口仍只是纯面层 re-export（不 re-export execute/bin）。
+    const binSource = resolve(REPO_ROOT, 'packages/cli/src/bin.ts');
+    expect(existsSync(binSource)).toBe(true);
+    expect(readText('packages/cli/src/bin.ts').startsWith('#!/usr/bin/env node')).toBe(true);
+    // 公共 barrel 不得导入/重导出执行层（注释可以说明 F-012 边界）。
+    expect(readText('packages/cli/src/index.ts')).not.toMatch(
+      /(?:from|import)\s+['"][^'"]*(?:execute|bin)\.js['"]/,
+    );
     const cliPkg = readJson('packages/cli/package.json');
-    expect(cliPkg.bin).toBeUndefined();
+    expect(cliPkg.bin).toEqual({ shiploop: './dist/bin.js' });
     expect(cliPkg.dependencies).toEqual({ 'shiploop-host': '0.0.0' });
+    // F-012 增量事实必须与契约 §1.5 同步。
+    expect(contractDoc).toContain('F-012 增量');
+    expect(contractDoc).toContain('runHostCli');
   });
 
   it('F-002~F-010 增量事实：Host 导出契约/存储/锁/启动装配/认证传输面/停止控制器/HostClient/启动器', () => {

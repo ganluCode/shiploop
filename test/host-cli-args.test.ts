@@ -608,20 +608,29 @@ describe('F-011 JSON 信封与 §13.3 退出码', () => {
   });
 });
 
-describe('F-011 公共模块边界（解析/执行分离、零副作用）', () => {
-  it('F-012 之前不存在显式执行入口 bin.ts，package.json 也不预声明 bin', () => {
-    for (const file of listTsFiles(CLI_SRC_DIR)) {
-      expect(file.endsWith('bin.ts')).toBe(false);
-    }
+describe('F-011 纯面层边界 + F-012 执行层接线（解析/执行分离、零副作用公共面）', () => {
+  // F-011 纯面层：只含解析/帮助/输出，import 无 argv/env/网络/进程副作用。
+  // F-012 新增的 execute.ts/bin.ts 是执行层/入口，不适用纯面层约束。
+  const pureLayerFiles = (): string[] =>
+    listTsFiles(CLI_SRC_DIR).filter((file) => {
+      const relative = file.slice(CLI_SRC_DIR.length + 1);
+      return relative === 'index.ts' || (!relative.includes('bin.ts') && !relative.includes('execute.ts'));
+    });
+
+  it('F-012 显式执行入口 bin.ts 存在（shebang），package.json 声明 bin 且仅依赖 shiploop-host', () => {
+    const files = listTsFiles(CLI_SRC_DIR);
+    const bin = files.find((file) => file.endsWith('bin.ts'));
+    expect(bin, 'packages/cli/src/bin.ts 必须存在').toBeDefined();
+    expect(readFileSync(bin as string, 'utf-8').startsWith('#!/usr/bin/env node')).toBe(true);
     const pkg = readCliPackageJson();
-    expect(pkg.bin).toBeUndefined();
+    expect(pkg.bin).toEqual({ shiploop: './dist/bin.js' });
     // 仅声明 shiploop-host 工作区依赖（公共面），不直连 core，无第三方依赖。
     expect(pkg.dependencies).toEqual({ 'shiploop-host': '0.0.0' });
   });
 
-  it('CLI 生产源码不直接导入任何 node 内置模块（纯解析/帮助/输出层）', () => {
-    const files = listTsFiles(CLI_SRC_DIR);
-    expect(files.length).toBeGreaterThanOrEqual(4);
+  it('F-011 纯面层（args/help/output/barrel）不直接导入任何 node 内置模块', () => {
+    const files = pureLayerFiles();
+    expect(files.length).toBeGreaterThanOrEqual(5);
     for (const file of files) {
       const code = readFileSync(file, 'utf-8');
       const withoutComments = code
@@ -632,7 +641,7 @@ describe('F-011 公共模块边界（解析/执行分离、零副作用）', () 
     }
   });
 
-  it('CLI 生产源码唯一外部包依赖是 shiploop-host 公共面（不引用内部子路径、不直连 core）', () => {
+  it('CLI 全部生产源码唯一外部包依赖是 shiploop-host 公共面（不引用内部子路径、不直连 core）', () => {
     const specifierPattern = /\b(?:import|export)\b[\s\S]*?\bfrom\s*['"]([^'"]+)['"]/g;
     for (const file of listTsFiles(CLI_SRC_DIR)) {
       const code = readFileSync(file, 'utf-8')
@@ -640,7 +649,9 @@ describe('F-011 公共模块边界（解析/执行分离、零副作用）', () 
         .replaceAll(/^\s*\/\/.*$/gm, '');
       for (const match of code.matchAll(specifierPattern)) {
         const specifier = match[1] as string;
-        if (specifier.startsWith('.')) {
+        // F-012 执行层允许白名单 node 内置（node:os/node:timers，见专用用例）；
+        // 非内置的外部包仍只允许 shiploop-host 包名公共面。
+        if (specifier.startsWith('.') || specifier.startsWith('node:')) {
           continue;
         }
         expect(specifier, `${file} -> ${specifier}`).toBe('shiploop-host');
@@ -648,7 +659,25 @@ describe('F-011 公共模块边界（解析/执行分离、零副作用）', () 
     }
   });
 
-  it('CLI 生产源码不读 argv/env、不退出进程、不打印、不联网、不 spawn', () => {
+  it('F-012 执行层只用白名单 node 内置（os/timers），不直接做 HTTP/spawn/文件系统/SQLite', () => {
+    const execute = listTsFiles(CLI_SRC_DIR).find((file) => file.endsWith('execute.ts'));
+    expect(execute, 'packages/cli/src/host/execute.ts 必须存在').toBeDefined();
+    const code = readFileSync(execute as string, 'utf-8');
+    for (const builtin of [
+      'node:http',
+      'node:https',
+      'node:net',
+      'node:child_process',
+      'node:fs',
+      'node:dgram',
+      'node:tls',
+    ]) {
+      expect(code, `execute.ts 不得直接导入 ${builtin}（能力留在 shiploop-host）`).not.toContain(builtin);
+    }
+    expect(code).toMatch(/from 'node:os'/);
+  });
+
+  it('纯面层不读 argv/env、不退出进程、不打印、不联网、不 spawn', () => {
     const bannedTokens = [
       'process.argv',
       'process.env',
@@ -662,7 +691,7 @@ describe('F-011 公共模块边界（解析/执行分离、零副作用）', () 
       'ensureHostRunning',
       'startHost',
     ];
-    for (const file of listTsFiles(CLI_SRC_DIR)) {
+    for (const file of pureLayerFiles()) {
       const code = readFileSync(file, 'utf-8')
         .replaceAll(/\/\*[\s\S]*?\*\//g, '')
         .replaceAll(/^\s*\/\/.*$/gm, '');
@@ -670,6 +699,36 @@ describe('F-011 公共模块边界（解析/执行分离、零副作用）', () 
         expect(code, `${file} must not contain ${token}`).not.toContain(token);
       }
       expect(statSync(file).isFile()).toBe(true);
+    }
+  });
+
+  it('process.argv/env/exit 只允许出现在显式入口 bin.ts；execute.ts 不解析 argv、不退出进程', () => {
+    const files = listTsFiles(CLI_SRC_DIR);
+    const bin = files.find((file) => file.endsWith('bin.ts')) as string;
+    const execute = files.find((file) => file.endsWith('execute.ts')) as string;
+    for (const token of ['process.argv', 'process.env', 'process.exit']) {
+      for (const file of files) {
+        if (file === bin) {
+          continue;
+        }
+        const code = readFileSync(file, 'utf-8')
+          .replaceAll(/\/\*[\s\S]*?\*\//g, '')
+          .replaceAll(/^\s*\/\/.*$/gm, '');
+        expect(code, `${token} 只能出现在 bin.ts（违规：${file}）`).not.toContain(token);
+      }
+    }
+    const executeCode = readFileSync(execute, 'utf-8');
+    expect(executeCode).not.toContain('console.');
+    expect(executeCode).not.toContain('startHost');
+  });
+
+  it('公共入口（index.ts 与 host/index.ts）没有任何导入/重导出触达执行层/入口', () => {
+    // 断言针对 import/export 语句而非注释文字（barrel 注释会说明 F-012 边界）。
+    const entryImportPattern = /(?:from|import)\s+['"][^'\"]*(?:execute|bin)\.js['"]/;
+    const rootBarrel = readFileSync(resolve(CLI_SRC_DIR, 'index.ts'), 'utf-8');
+    const hostBarrel = readFileSync(resolve(CLI_SRC_DIR, 'host/index.ts'), 'utf-8');
+    for (const barrel of [rootBarrel, hostBarrel]) {
+      expect(barrel).not.toMatch(entryImportPattern);
     }
   });
 });

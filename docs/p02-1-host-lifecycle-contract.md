@@ -236,6 +236,23 @@
     映射，CLI composite 构建以 project reference 引用 host（传递 core）。
     显式执行入口 `src/bin.ts`、package.json `bin` 字段与 HostClient/
     启动器接线仍属 F-012；本任务没有 project/run 等命令。
+  - **F-012 增量（2026-10-06）**：新增 CLI 执行层 `runHostCli`
+    （`packages/cli/src/host/execute.ts`，import 不读 argv/env、不联网、
+    不 spawn；只有显式调用才执行）与唯一显式可执行入口 `src/bin.ts`
+    （shebang → `dist/bin.js`，package.json `bin` 为 `{ "shiploop":
+    "./dist/bin.js" }`）：start 经 `ensureHostRunning` 连接或启动并完成握手
+    （成功结果含 outcome `already_running`/`started` 与握手实例事实）；
+    status/stop 经新增的 launcher 公共助手 `resolveConnectDataRoot`
+    （`createIfMissing=false`，缺失即 `host_not_found`）与 `connectToHost`
+    只读连接，**永不**启动 Host；stop 省略 `--stop-command-id` 时由
+    HostClient 生成 UUID v4，HTTP 回执后按 §10.6 在 `--confirm-timeout-ms`
+    预算内轮询三证据（进程 ESRCH、发现删除或实例替换、非阻塞 flock 可获
+    即释），齐备才报告 `stopped`（退出码 0），否则 `stop_not_confirmed`
+    （退出码 1，details 只含受控枚举）。公共 barrel（`src/index.ts`、
+    `src/host/index.ts`）不 re-export 执行层，加载仍无副作用；执行层只
+    导入 `shiploop-host` 包名公共面与 `node:os`/`node:timers`，不直连
+    Core、不直接使用 HTTP/child_process/fs（能力留在 Host 包）。无新增
+    第三方依赖；本任务没有 project/run 等命令。
 - 边界检查现状（`scripts/check-boundaries.ts`，P02-1 必须持续通过）：
   - 工作区单向依赖仅允许 `host → core`、`cli → host`；CLI 禁止绕过 Host 直连 Core；
     清单 `dependencies` 与源码导入同时检查，未声明依赖即违规。

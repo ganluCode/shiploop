@@ -32,7 +32,7 @@ P01-1 工程骨架 + P01-2 SQLite 原子存储与制品落盘 + P01-3 项目身�
 ```text
 packages/core   shiploop-core   Core 领域与应用逻辑（后续 Feature 实现）
 packages/host   shiploop-host   Host（后续 Feature 实现）
-packages/cli    shiploop-cli    CLI（F-011 起提供 Host 生命周期纯解析/帮助/JSON/退出码面层；纵向命令 F-012）
+packages/cli    shiploop-cli    CLI（F-011 Host 生命周期纯解析/帮助/JSON/退出码面层；F-012 执行层与 shiploop bin 纵向命令）
 test/           仓库级确定性测试（*.test.{js,ts}）与夹具（test/helpers，不收集为用例）
 scripts/        工程检查脚本（TypeScript，受 typecheck 覆盖）：run-tests.ts（测试启动器）、
                 smoke-built-entries.ts（构建入口冒烟）、check-boundaries.ts（依赖边界检查）、
@@ -80,11 +80,12 @@ packages/host/src/client/    F-009 HostClient（connectToHost/probeDiscoveredHos
 packages/host/src/launcher/  F-010 连接或启动编排（ensureHostRunning）：先发现→握手，无实例才以独立 argv spawn detached 正式入口候选，预算内轮询重新发现胜者；落选/失败候选有界回收核验，owner_active/owner_unknown 诊断（允许 node:child_process/os/url/path/timers，不触文件系统/网络直连/argv/SQLite）
 packages/host/src/start.ts   F-006 显式启动入口 → dist/start.js（node …/dist/start.js --data-root <abs>；握手/status 认证路由 F-007 已生效，stop 与 SIGTERM 安全收尾 F-008 已接线）
 packages/host/native/        极小 N-API C 适配器，显式构建输出 dist/native/writer-lock.node
-packages/cli/src/index.ts    CLI 公共入口（F-011：re-export src/host/ 纯面层；加载不解析 argv、不读 env、不发请求；显式 bin 入口属 F-012）
-packages/cli/src/host/        F-011 Host 生命周期 CLI 纯面层：args.ts（host start/status/stop 参数解析）、help.ts（帮助文本）、output.ts（§13.3 JSON 信封与四档退出码）；唯一外部包依赖是 shiploop-host 公共面，不直接导入 node 内置模块
+packages/cli/src/index.ts    CLI 公共入口（F-011：re-export src/host/ 纯面层；加载不解析 argv、不读 env、不发请求；不 re-export F-012 执行层）
+packages/cli/src/host/        F-011 纯面层 args.ts/help.ts/output.ts（参数解析、帮助、§13.3 JSON 信封与四档退出码）；F-012 执行层 execute.ts（runHostCli：start 接启动器、status/stop 接 HostClient、§10.6 三证据停止确认；允许 node:os/node:timers，HTTP/spawn/fs 能力只经 shiploop-host 公共面）
+packages/cli/src/bin.ts       F-012 唯一显式可执行入口（shebang → dist/bin.js，package.json bin: shiploop）；唯一读 process.argv/env 与退出进程的文件
 ```
 
-各包 `package.json` 的 `main` / `types` / `exports['.']` 均指向 `dist` 构建产物；`npm run build` 通过 `tsc -b` 为三个包各自生成 `dist/index.js` 与 `dist/index.d.ts`（含 sourcemap 与增量构建信息）。构建结束后执行 `scripts/smoke-built-entries.ts`：在独立 Node 子进程中加载三个入口（5 秒超时），并将 `HOME` / XDG 目录 / cwd 重定向到系统临时目录沙箱，断言退出码 0、非常驻、不写用户数据、产物与声明文件存在；其中 Core 的 `./assembly` 入口还会在非源码 cwd 下执行「注册项目 → 全局/项目配置 → 发布固定正文制品 → 关闭重开逐字段核验正文」闭环（`scripts/core-assembly-smoke.mjs`）。P01 阶段验收检查 `P01-ENG-BUILD-SMOKE` 由 `test/p01-4-build-smoke.test.ts` 承接：把 Core 真实编译到临时目录（不写受测仓库），运行上述冒烟并扫描可发布构建文件/入口/依赖清单/配置，拒绝固定个人绝对路径、Nezha/供应商 SDK 运行依赖与缺失的已编译迁移资源；运行时合法的临时仓库 canonicalPath 不会被误判。
+各包 `package.json` 的 `main` / `types` / `exports['.']` 均指向 `dist` 构建产物；`npm run build` 通过 `tsc -b` 为三个包各自生成 `dist/index.js` 与 `dist/index.d.ts`（含 sourcemap 与增量构建信息）。tsc 之后 `scripts/prepare-cli-bin.ts` 校验 `packages/cli/dist/bin.js` 的 shebang 与 package.json `bin` 字段并置可执行位 0755。构建结束后执行 `scripts/smoke-built-entries.ts`：在独立 Node 子进程中加载三个入口（5 秒超时），并将 `HOME` / XDG 目录 / cwd 重定向到系统临时目录沙箱，断言退出码 0、非常驻、不写用户数据、产物与声明文件存在；其中 Core 的 `./assembly` 入口还会在非源码 cwd 下执行「注册项目 → 全局/项目配置 → 发布固定正文制品 → 关闭重开逐字段核验正文」闭环（`scripts/core-assembly-smoke.mjs`），CLI 的 `dist/bin.js` 会在临时数据根真实跑通 start/第二次 start/status/stop/重启纵向命令（断言回环地址、实例身份、退出码、CLI 退出后 Host 存活、§10.6 停止证据与输出不泄密）。P01 阶段验收检查 `P01-ENG-BUILD-SMOKE` 由 `test/p01-4-build-smoke.test.ts` 承接：把 Core 真实编译到临时目录（不写受测仓库），运行上述冒烟并扫描可发布构建文件/入口/依赖清单/配置，拒绝固定个人绝对路径、Nezha/供应商 SDK 运行依赖与缺失的已编译迁移资源；运行时合法的临时仓库 canonicalPath 不会被误判。
 
 命名决定（2026-10-02）：
 
@@ -184,7 +185,11 @@ P01 已由项目负责人于 2026-10-05 阶段放行（依据见 [docs/acceptanc
 - F-011 交付 **Host 生命周期 CLI 纯面层**（`packages/cli/src/host/`，回归 `test/host-cli-args.test.ts`，127 项；解析与执行分离，127 项表驱动正反例）：
   - `parseHostCliArgs`（§13.1/§13.2）：仅识别 `host start/status/stop`；同步纯函数，env 必须显式注入（不读 process.argv/env、不读发现、不联网、不启动 Host、不生成 stop commandId）。相对/空/NUL/`/` 数据根、未知参数、缺值、非整数/越界预算、错误命令参数、重复参数、位置参数、非 UUID v4 commandId、`--bind/--host/--address/--port/--listen*` 参数与非空 `SHIPLOOP_HOST_*` env 覆盖全部在任何 I/O 之前拒绝（退出码 2，覆盖值不回显）。默认 start 15 000（1 000..60 000）、confirm 10 000（0..30 000）。
   - `getHostCliHelp`：top/host/start/status/stop 五个作用域，准确说明退出客户端不停止 Host、显式 `host stop` 语义、stop 回执不等于已退出、status 不启动 Host、首版仅 macOS 与可信本机边界、token 不防同一操作系统用户恶意进程；不含 token 样例与开发机路径。
-  - §13.3 JSON 成功/失败信封与 `exitCodeForHostErrorCode`：错误码穷尽映射 1/2/3（2＝输入/本地不安全发现/监听覆盖；3＝连接/协议；其余与未知码 fail-closed →1）。CLI 包声明且仅声明 `"shiploop-host": "0.0.0"`（只经包名公共面复用 isUuidV4/错误码表/env 覆盖键表/启动预算常量）；显式 `src/bin.ts` 与 package.json bin 字段属 F-012，本任务不预声明。
+  - §13.3 JSON 成功/失败信封与 `exitCodeForHostErrorCode`：错误码穷尽映射 1/2/3（2＝输入/本地不安全发现/监听覆盖；3＝连接/协议；其余与未知码 fail-closed →1）。CLI 包声明且仅声明 `"shiploop-host": "0.0.0"`（只经包名公共面复用 isUuidV4/错误码表/env 覆盖键表/启动预算常量）。
+- F-012 交付 **可运行的 start/status/stop 纵向命令**（执行层 `packages/cli/src/host/execute.ts` 的 `runHostCli`，回归 `test/host-cli-execute.test.ts`，17 项；显式入口 `src/bin.ts` → `dist/bin.js`，package.json `bin: { "shiploop": "./dist/bin.js" }`，构建经 `scripts/prepare-cli-bin.ts` 校验 shebang 并置 0755）：
+  - `host start` 只经 `ensureHostRunning` 连接或启动（成功结果含 outcome `already_running`/`started` 与握手核验的实例/回环端口/状态；两次 start 同一实例，CLI 退出后 Host 存活）；`host status`/`host stop` 经 launcher 新增的 `resolveConnectDataRoot`（`createIfMissing=false`）与 `connectToHost` 只读连接，**永不**启动 Host（无实例 host_not_found 退出码 3，不创建数据根）。
+  - `host stop` 省略 commandId 时由 HostClient 生成 UUID v4；HTTP accepted/completed 回执不当已退出——在 `--confirm-timeout-ms`（默认 10 000，0..30 000）预算内轮询 §10.6 三证据（进程 ESRCH、非阻塞 flock 获锁即释、发现删除或实例替换），齐备才输出 `stopped`（退出码 0），否则 `stop_not_confirmed`（退出码 1，details 只含受控枚举）。
+  - 公共 barrel（`src/index.ts`、`src/host/index.ts`）不 re-export 执行层，加载仍无副作用；执行层只导入 `shiploop-host` 包名公共面与 `node:os`/`node:timers`，不直连 Core、不直接使用 HTTP/child_process/fs。构建冒烟在非源码 cwd 用临时数据根真实跑通 start/start/status/stop/重启，断言监听地址、实例身份、退出码、Host 存活与停止后锁可获，且全部输出不含 token。
 
 ### 单向依赖规则（F-004 起自动强制）
 

@@ -278,16 +278,21 @@ describe('Host and CLI entry behaviour boundaries', () => {
   ];
   const skeletonBannedCalls = ['createServer', '.listen('];
 
-  it('F-011 packages/cli/src 是纯解析/帮助/输出面层：仅依赖 shiploop-host 公共面，无 argv/env/网络/进程副作用', () => {
-    const sources = readSourceTree('packages/cli/src');
-    expect(sources.length, 'packages/cli/src must contain the F-011 pure CLI surface').toBeGreaterThanOrEqual(4);
-    for (const { file, code } of sources) {
+  it('F-011 纯面层 + F-012 执行层：公共 barrel 零副作用；bin/execute 只经 shiploop-host 公共面做 I/O', () => {
+    const allSources = readSourceTree('packages/cli/src');
+    expect(allSources.length, 'packages/cli/src must contain the CLI surface').toBeGreaterThanOrEqual(6);
+    // F-012 执行层文件：execute.ts（I/O 编排）与 bin.ts（唯一 argv/env/exit 入口）。
+    const isExecutionFile = (file: string): boolean =>
+      file.endsWith(`${sep}bin.ts`) || file.includes(`${sep}host${sep}execute.ts`);
+    const pureSources = allSources.filter(({ file }) => !isExecutionFile(file));
+    expect(pureSources.length, '纯面层至少包含 index/host barrel/args/help/output').toBeGreaterThanOrEqual(5);
+    for (const { file, code } of pureSources) {
       const specifiers = extractModuleSpecifiers(code);
       for (const banned of skeletonBannedModules) {
         const offenders = specifiers.filter((specifier) => specifierMatches(specifier, banned));
         expect(offenders, `${file} must not import ${banned}`).toHaveLength(0);
       }
-      for (const banned of ['node:child_process', 'node:fs', 'node:os', 'node:path']) {
+      for (const banned of ['node:child_process', 'node:fs', 'node:os', 'node:path', 'node:timers', 'node:crypto']) {
         const offenders = specifiers.filter((specifier) => specifierMatches(specifier, banned));
         expect(offenders, `${file} must not directly import ${banned} (pure parse/help/output layer)`).toHaveLength(0);
       }
@@ -305,11 +310,33 @@ describe('Host and CLI entry behaviour boundaries', () => {
         expect(codeWithoutComments, `${file} must not use ${token}`).not.toContain(token);
       }
     }
-    // F-012 才创建显式执行入口 bin.ts 与 package.json bin 字段。
-    expect(listTsFiles('packages/cli/src').some((file) => file.endsWith('bin.ts'))).toBe(false);
+    // F-012 执行层同样只允许 shiploop-host 公共面，且不直接做 HTTP/spawn/文件系统。
+    const executionSources = allSources.filter(({ file }) => isExecutionFile(file));
+    expect(executionSources.map(({ file }) => file.split(sep).pop()).sort()).toEqual(['bin.ts', 'execute.ts']);
+    for (const { file, code } of executionSources) {
+      const specifiers = extractModuleSpecifiers(code);
+      for (const banned of [...skeletonBannedModules, 'node:child_process', 'node:fs', 'node:net', 'shiploop-core']) {
+        const offenders = specifiers.filter((specifier) => specifierMatches(specifier, banned));
+        expect(offenders, `${file} must not import ${banned}`).toHaveLength(0);
+      }
+      for (const specifier of specifiers) {
+        if (specifier.startsWith('.') || specifier.startsWith('node:')) {
+          continue;
+        }
+        expect(specifier, `${file} may only depend on the shiploop-host public entry`).toBe('shiploop-host');
+      }
+    }
+    // F-012：显式入口 bin.ts 存在（shebang），package.json bin 指向 dist/bin.js。
+    const binFiles = listTsFiles('packages/cli/src').filter((file) => file.endsWith('bin.ts'));
+    expect(binFiles).toHaveLength(1);
     const cliPkg = readJson('packages/cli/package.json');
-    expect(cliPkg.bin).toBeUndefined();
+    expect(cliPkg.bin).toEqual({ shiploop: './dist/bin.js' });
     expect(cliPkg.dependencies).toEqual({ 'shiploop-host': '0.0.0' });
+    // 公共 barrel 不得 re-export 执行层（import 公共面不得装入 runHostCli）；
+    // 只检查 import/export 语句，不禁注释对 F-012 边界的说明。
+    const entryImportPattern = /(?:from|import)\s+['"][^'\"]*(?:execute|bin)\.js['"]/;
+    expect(readText('packages/cli/src/index.ts')).not.toMatch(entryImportPattern);
+    expect(readText('packages/cli/src/host/index.ts')).not.toMatch(entryImportPattern);
   });
 
   it('packages/host/src 非 runtime/client/launcher 面（contract/storage/locking）仍无网络/进程/ORM/厂商绑定', () => {
