@@ -19,8 +19,12 @@
  *   零容忍。runtime 面允许 node:http 与 shiploop-core 公共入口（含
  *   ./assembly），但 import 本模块仍不监听端口、不读用户目录、不启动进程、
  *   不写文件；显式执行入口为 dist/start.js（见 src/start.ts）。
- *   HTTP 生命周期路由（handshake/status/stop）留给 F-007/F-008；F-006 监听器
- *   为占位传输面（任何请求一律 404 unknown_operation）。
+ *   HTTP 生命周期路由（handshake/status/stop）留给 F-007/F-008。
+ * - F-007（P02-1）：runtime 面追加 http-transport.ts（createHostLifecycleServer）
+ *   真实生命周期传输面，替换 F-006 的 404 占位监听器：握手与 status 认证路由按
+ *   契约 §7.2/§8/§9 生效（Bearer timingSafeEqual、Host/Origin 校验、16 KiB 上限、
+ *   有界 headers/request 超时、connection: close、无 CORS、结构化脱敏错误）；
+ *   stop 路由在 F-008 接线前经完整传输与认证校验后返回 501 unsupported。
  * - 三个面加载本模块仍不监听端口、不读用户目录、不启动进程、不写文件；
  */
 export * from './contract/index.js';

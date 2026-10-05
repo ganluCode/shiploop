@@ -12,27 +12,24 @@
  *    userHomeDir 缺省时才取 os.homedir()）；
  * 5. openLockedWriter：先获 macOS flock，获锁后工厂内 openCoreApplication
  *    （打开状态库 + 版本化迁移；未知高版本 Schema 拒写并自动释锁）；
- * 6. 监听 127.0.0.1:0（端口 0 = 由系统分配）；核验 server.address() 恰为
+ * 6. 新 hostInstanceId（randomUUID）+ 新凭据（randomBytes(32)，0600，先凭据
+ *    后发现）；创建生命周期传输面（F-007，认证从第一个请求起生效）；
+ * 7. 监听 127.0.0.1:0（端口 0 = 由系统分配）；核验 server.address() 恰为
  *    127.0.0.1 且取得 1..65535 的实际端口——发现中的端口必须等于该值；
- * 7. 新 hostInstanceId（randomUUID）+ 新凭据（randomBytes(32)，0600）→
- *    原子发布 discovery.json（发布是“就绪提交点”：先凭据后发现，发布失败
- *    不留下可连接的半文件——仅存 0600 凭据不构成可连接面，下次启动原子替换）；
- * 8. 生命周期 starting → ready（quiescing/stopping 由 F-008 的停止流程接管）。
+ * 8. 原子发布 discovery.json（发布是“就绪提交点”：发布失败不留下可连接的
+ *    半文件——仅存 0600 凭据不构成可连接面，下次启动原子替换）；
+ * 9. 生命周期 starting → ready（quiescing/stopping 由 F-008 的停止流程接管）。
  *
- * F-006 边界（诚实占位，不冒充后续能力）：
- * - HTTP 生命周期路由（handshake/status/stop）属 F-007/F-008；本装配的监听器是
- *   占位传输面：任何请求一律 404 unknown_operation（§14），无 CORS 头、
- *   不读取/回显请求体、connection: close；
- * - 不装配 Scheduler/Runner/Pi；能力目录由调用方注入（生产入口注入空目录，
- *   任何 runtime 配置 fail-closed）；不声明恢复任何执行记录；
- * - SIGTERM/SIGINT 安全收尾与按实例清理属 F-008；本模块 close() 是装配级拆卸
- *   （关监听 → 关 Core → 释锁），不删除发现/凭据（§10.5 第 5 步归 F-008）。
+ * F-007 起监听器为真实生命周期传输面（createHostLifecycleServer，见
+ * http-transport.ts）：握手/status 认证路由按 §7.2/§8/§9 生效；stop 路由在
+ * F-008 接线前经完整传输与认证校验后返回 501 unsupported。SIGTERM 安全收尾
+ * 与按实例清理属 F-008；本模块 close() 是装配级拆卸（关监听 → 关 Core →
+ * 释锁），不删除发现/凭据（§10.5 第 5 步归 F-008）。
  *
  * import 本模块无副作用：不监听端口、不读文件系统、不加载原生模块、不读
  * process.env（只有 startHost 显式调用才读取注入的 env 或 process.env）。
  */
 import { randomUUID } from 'node:crypto';
-import { createServer } from 'node:http';
 import type { Server } from 'node:http';
 import { homedir } from 'node:os';
 import { deriveDefaultDataRoot } from 'shiploop-core';
@@ -42,12 +39,12 @@ import type { CoreApplication } from 'shiploop-core/assembly';
 import {
   HostProtocolError,
   LOOPBACK_LISTEN_ADDRESS,
-  MAX_HTTP_BODY_BYTES,
 } from '../contract/index.js';
 import type { LifecycleState } from '../contract/index.js';
 import { createHostFileStore, resolveCanonicalDataRoot } from '../storage/index.js';
 import { openLockedWriter } from '../locking/index.js';
 import type { WriterLockOptions } from '../locking/index.js';
+import { createHostLifecycleServer } from './http-transport.js';
 
 /** 启动阶段错误的操作身份（与锁/存储模块一致：本地启动/发现关注点）。 */
 const OPERATION = 'host.discovery';
@@ -191,36 +188,9 @@ function assertNoEnvironmentOverride(env: NodeJS.ProcessEnv): void {
 }
 
 /**
- * F-006 占位传输面：生命周期路由在 F-007/F-008 装配。任何请求一律
- * 404 unknown_operation（§14 结构化脱敏错误），不读取/回显请求体，
- * 不发 CORS 头，connection: close（有界资源占用，体积上限常量见 §7.2）。
+ * F-007 起由 createHostLifecycleServer 提供真实生命周期传输面（握手/status
+ * 认证路由，stop 待 F-008 接线）；此处只保留监听与有界拆卸工具。
  */
-function createPlaceholderServer(): Server {
-  const body = JSON.stringify(
-    new HostProtocolError(
-      'unknown_operation',
-      OPERATION,
-      'Host 生命周期路由尚未装配（handshake/status/stop 由后续任务提供）',
-    ).toErrorBody(),
-  );
-  return createServer((request, response) => {
-    // 丢弃请求体（不读取、不回显）；超过 §7.2 体积上限即销毁连接（有界资源占用）。
-    let received = 0;
-    request.on('data', (chunk: Buffer) => {
-      received += chunk.length;
-      if (received > MAX_HTTP_BODY_BYTES) {
-        request.socket.destroy();
-      }
-    });
-    request.resume();
-    response.writeHead(404, {
-      'content-type': 'application/json; charset=utf-8',
-      'cache-control': 'no-store',
-      connection: 'close',
-    });
-    response.end(body);
-  });
-}
 
 function listenOnLoopback(server: Server): Promise<void> {
   return new Promise((resolveListen, rejectListen) => {
@@ -294,7 +264,23 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
   let server: Server | undefined;
   let lifecycle: LifecycleState = 'starting';
   try {
-    server = createPlaceholderServer();
+    const store = createHostFileStore({ canonicalRoot });
+    const hostInstanceId = randomUUID();
+    const startedAt = new Date().toISOString();
+    // 凭据先于监听与发现发布：传输面从第一个请求起即可做 timingSafeEqual
+    // 比较；仅存 0600 凭据不构成可连接面（§5.2），失败由下次启动原子替换。
+    const authToken = store.issueAuthToken();
+    server = createHostLifecycleServer({
+      hostInstanceId,
+      dataRootIdentity,
+      startedAt,
+      pid: process.pid,
+      authToken,
+      getLifecycleState: () => lifecycle,
+      // P02-1 生产装配恒空闲（无 Scheduler/Runner）；stop 视图在 F-008 接线前恒 null。
+      getActivities: () => ({ accepted: 0, quiescing: 0 }),
+      getStopView: () => null,
+    });
     await listenOnLoopback(server);
     const address = server.address();
     if (
@@ -310,12 +296,8 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
       });
     }
 
-    const store = createHostFileStore({ canonicalRoot });
-    const hostInstanceId = randomUUID();
-    const startedAt = new Date().toISOString();
-    // 凭据先于发现发布：发现是就绪提交点；发布失败关闭监听/Core 并释锁，
-    // 仅存 0600 凭据不构成可连接面（§5.2），下次启动原子替换。
-    store.issueAuthToken();
+    // 发现发布是“就绪提交点”（§5.2）：套接字绑定并核验后才原子发布；
+    // 发布失败关闭监听/Core 并释锁，不发布 ready。
     store.publishDiscovery({
       schemaVersion: 1,
       protocolVersion: 1,

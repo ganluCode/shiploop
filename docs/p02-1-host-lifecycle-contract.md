@@ -141,6 +141,18 @@
     路径见 §13.4 的 F-006 定案。边界检查把目标包 exports 声明的公共子路径入口
     （如 `shiploop-core/assembly`）与包名入口同等按单向规则放行，未声明的内部
     子路径仍然违规。`shiploop-cli` 仍为 `export {}` 骨架。
+  - **F-007 增量（2026-10-05）**：F-006 的 404 占位监听器由真实生命周期传输面
+    替换（`src/runtime/http-transport.ts`，经公共入口导出
+    `createHostLifecycleServer` 与有界超时常量）：握手与 status 认证路由按
+    §7.2/§8/§9 生效——Bearer timingSafeEqual 认证（子原因不可区分 401）、
+    Host 头恰为 `127.0.0.1:<实际端口>`、任何 Origin 拒绝、16 KiB 体积上限
+    （413）、POST content-type 核验、GET 带体拒绝、404/405 路由纪律、响应无
+    CORS 头且永不含 3xx、错误体脱敏（不回显凭据/原文/路径）。**stop 路由在
+    F-008 接线前**经完整传输与认证校验后返回 `501 unsupported`
+    （details.reason `stop_not_wired`），绝不触发停止/文件删除/数据库写入；
+    `startHost` 装配顺序微调为「新实例/凭据 → 传输面监听核验 → 原子发现发布」
+    （先凭据后发现不变，发现仍是就绪提交点）。SIGTERM 收尾、quiesce、按实例
+    清理、幂等矩阵与 HostClient 仍属 F-008/F-009。
 - 边界检查现状（`scripts/check-boundaries.ts`，P02-1 必须持续通过）：
   - 工作区单向依赖仅允许 `host → core`、`cli → host`；CLI 禁止绕过 Host 直连 Core；
     清单 `dependencies` 与源码导入同时检查，未声明依赖即违规。
@@ -338,6 +350,10 @@ dataRootIdentity = lower_hex(sha256(utf8Bytes(canonicalRoot)))
   方法不允许 → `405 method_not_allowed`（允许方法在错误中明示）。GET 请求带请求体 → 400。
 - 客户端预算：TCP 连接 2 000 ms；握手/状态整体（含完整响应体读取）10 000 ms；
   stop 整体 15 000 ms（含 §10 的 10 000 ms quiesce 预算 + 5 000 ms 余量）。均为有限默认值。
+- 服务端预算（F-007 定案，内部常量，不开放配置）：`headersTimeout` 5 000 ms、
+  `requestTimeout` 15 000 ms（超时由服务器以 408/关闭连接处理）；每个响应
+  `connection: close`，不留持久空闲连接；HTTP/1.1 缺失 Host 头的请求由 Node
+  内核在业务处理器之前以 400 拒绝（同为有界、零副作用的明确拒绝）。
 
 ### 7.3 结构化错误（脱敏）
 

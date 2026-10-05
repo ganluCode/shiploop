@@ -151,11 +151,12 @@ describe('F-001 契约文档与仓库基线一致', () => {
     expect(source).not.toMatch(/node:(http|https|net|dgram|child_process)/);
   });
 
-  it('F-002~F-006 增量事实：Host 导出契约/存储/锁/启动装配，认证路由仍未装配', () => {
+  it('F-002~F-007 增量事实：Host 导出契约/存储/锁/启动装配与认证传输面', () => {
     // F-002 把 host 入口从 `export {}` 骨架换成契约公共面；F-003 追加存储面；
     // F-004 追加直接 fd 锁；F-006 追加 runtime 启动装配与显式入口 start.ts
-    // （docs §1.5 各增量记录）。握手/status/stop 认证路由属 F-007/F-008，
-    // F-006 监听器仅为占位传输面；公共入口加载仍不得有副作用。
+    // （docs §1.5 各增量记录）。F-007 以真实生命周期传输面替换 F-006 的 404
+    // 占位监听器（握手/status 认证路由生效；stop 待 F-008，接线前 501）；
+    // 公共入口加载仍不得有副作用。
     const hostIndex = readText('packages/host/src/index.ts');
     expect(hostIndex).toContain("from './contract/index.js'");
     expect(hostIndex).toContain("from './storage/index.js'");
@@ -163,6 +164,7 @@ describe('F-001 契约文档与仓库基线一致', () => {
     expect(hostIndex).toContain("from './runtime/index.js'");
     expect(contractDoc).toContain('F-004 增量');
     expect(contractDoc).toContain('F-006 增量');
+    expect(contractDoc).toContain('F-007 增量');
     expect(contractDoc).toContain('flock(LOCK_EX | LOCK_NB)');
     expect(readText('docs/p02-1-writer-lock.md')).toContain('实际写入进程直接持 fd');
     expect((readJson('package.json').scripts as Record<string, string>).build).toContain('build-host-lock.ts');

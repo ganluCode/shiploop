@@ -15,8 +15,8 @@
  * - 真实子进程：两候选竞争唯一持锁者（败者 owner_unknown 不打开写库）、
  *   SIGKILL 后 OS 释锁并可获全新实例、argv/env 覆盖拒绝 exit 2 且无副作用。
  *
- * F-006 边界：HTTP 生命周期路由（握手/status/stop）属 F-007/F-008；本阶段监听器
- * 为占位传输面，任何请求一律 404 unknown_operation（不假装路由已实现）。
+ * F-007 边界：握手/status 认证路由已装配（test/host-http-transport.test.ts 专项
+ * 验收）；stop 路由在 F-008 接线前返回 501 unsupported，不触发任何停止行为。
  */
 import { execFileSync } from 'node:child_process';
 import {
@@ -110,15 +110,31 @@ describe('F-006 启动装配（in-process，真实锁/Core/监听）', () => {
       expect(token).toMatch(/^[0-9a-f]{64}$/);
       env.evidence.registerSecret(token);
 
-      // F-006 占位传输面：任何请求一律 404 unknown_operation，无 CORS 头、无凭据回显。
+      // F-007 真实认证传输面：未认证一律 401 unauthorized（子原因不可区分），
+      // 无 CORS 头、无凭据回显；合法 Bearer 握手返回真实实例。
       const response = await loopbackRequest({ port: host.port, method: 'GET', path: '/v1/host/status' });
-      expect(response.statusCode).toBe(404);
+      expect(response.statusCode).toBe(401);
       const body = response.json() as { error: { code: string; operation: string } };
-      expect(body.error.code).toBe('unknown_operation');
+      expect(body.error.code).toBe('unauthorized');
       expect(response.headers['content-type']).toContain('application/json');
       expect(response.headers['cache-control']).toBe('no-store');
       expect(response.headers['access-control-allow-origin']).toBeUndefined();
       expect(response.bodyText).not.toContain(token);
+      const handshake = await loopbackRequest({
+        port: host.port,
+        method: 'POST',
+        path: '/v1/host/handshake',
+        token,
+        body: {
+          schemaVersion: 1,
+          protocolVersion: 1,
+          hostInstanceId: host.hostInstanceId,
+          dataRootIdentity: host.dataRootIdentity,
+        },
+      });
+      expect(handshake.statusCode).toBe(200);
+      expect((handshake.json() as { hostInstanceId: string }).hostInstanceId).toBe(host.hostInstanceId);
+      expect(handshake.bodyText).not.toContain(token);
 
       env.evidence.record('host.started', {
         pid: host.pid,
@@ -576,14 +592,15 @@ describe('F-006 真实子进程：单写入者竞争与崩溃恢复', () => {
       expect(discovery.port).toBe(result.port);
       expect(discovery.pid).toBe(winner?.pid);
 
-      // 胜者真实监听回环；占位 404；stdout 无凭据。
+      // 胜者真实监听回环；认证路由未认证一律 401；stdout 无凭据。
       const token = readToken(canonicalRoot);
       env.evidence.registerSecret(token);
       for (const line of readyMessage?.stdoutLines as string[]) {
         expect(line).not.toContain(token);
       }
       const response = await loopbackRequest({ port: result.port, method: 'GET', path: '/v1/host/status' });
-      expect(response.statusCode).toBe(404);
+      expect(response.statusCode).toBe(401);
+      expect((response.json() as { error: { code: string } }).error.code).toBe('unauthorized');
       expect(response.bodyText).not.toContain(token);
 
       // 败者进程已自行以退出码 1 结束；回收并核验。
