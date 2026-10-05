@@ -25,9 +25,15 @@
  *   契约 §7.2/§8/§9 生效（Bearer timingSafeEqual、Host/Origin 校验、16 KiB 上限、
  *   有界 headers/request 超时、connection: close、无 CORS、结构化脱敏错误）；
  *   stop 路由在 F-008 接线前经完整传输与认证校验后返回 501 unsupported。
+ * - F-009（P02-1）：导出 client/ 面（connectToHost / probeDiscoveredHost）：
+ *   CLI 可复用的 HostClient——读取受保护发现/凭据 → 认证握手双向核验
+ *   （协议/实例/数据根）后才允许 status/stop；不跟随重定向、错误按 §14
+ *   精确分类、close() 只释放本地观察资源；允许 node:http（仅回环）与
+ *   node:crypto，不读 argv/环境变量、不启动进程、不打开 SQLite。
  * - 三个面加载本模块仍不监听端口、不读用户目录、不启动进程、不写文件；
  */
 export * from './contract/index.js';
 export * from './storage/index.js';
 export * from './locking/index.js';
 export * from './runtime/index.js';
+export * from './client/index.js';

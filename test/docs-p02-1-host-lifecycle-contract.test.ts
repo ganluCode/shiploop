@@ -151,23 +151,27 @@ describe('F-001 契约文档与仓库基线一致', () => {
     expect(source).not.toMatch(/node:(http|https|net|dgram|child_process)/);
   });
 
-  it('F-002~F-008 增量事实：Host 导出契约/存储/锁/启动装配/认证传输面与停止控制器', () => {
+  it('F-002~F-009 增量事实：Host 导出契约/存储/锁/启动装配/认证传输面/停止控制器/HostClient', () => {
     // F-002 把 host 入口从 `export {}` 骨架换成契约公共面；F-003 追加存储面；
     // F-004 追加直接 fd 锁；F-006 追加 runtime 启动装配与显式入口 start.ts
     // （docs §1.5 各增量记录）。F-007 以真实生命周期传输面替换 F-006 的 404
     // 占位监听器（握手/status 认证路由生效）；F-008 以停止控制器接线 stop
-    // （§10.4 幂等矩阵、§10.5 收尾、§10.7 信号收尾）；公共入口加载仍不得有副作用。
+    // （§10.4 幂等矩阵、§10.5 收尾、§10.7 信号收尾）；F-009 追加 client/ 面
+    // （connectToHost/probeDiscoveredHost，契约 §12）；公共入口加载仍不得有副作用。
     const hostIndex = readText('packages/host/src/index.ts');
     expect(hostIndex).toContain("from './contract/index.js'");
     expect(hostIndex).toContain("from './storage/index.js'");
     expect(hostIndex).toContain("from './locking/index.js'");
     expect(hostIndex).toContain("from './runtime/index.js'");
+    expect(hostIndex).toContain("from './client/index.js'");
     expect(contractDoc).toContain('F-004 增量');
     expect(contractDoc).toContain('F-006 增量');
     expect(contractDoc).toContain('F-007 增量');
     expect(contractDoc).toContain('F-008 增量');
+    expect(contractDoc).toContain('F-009 增量');
     expect(contractDoc).toContain('createHostStopController');
     expect(contractDoc).toContain('wireHostSignalShutdown');
+    expect(contractDoc).toContain('connectToHost');
     expect(contractDoc).toContain('flock(LOCK_EX | LOCK_NB)');
     expect(readText('docs/p02-1-writer-lock.md')).toContain('实际写入进程直接持 fd');
     expect((readJson('package.json').scripts as Record<string, string>).build).toContain('build-host-lock.ts');
@@ -238,6 +242,27 @@ describe('F-001 契约文档与仓库基线一致', () => {
         .replaceAll(/\/\*[\s\S]*?\*\//g, '')
         .replaceAll(/^\s*\/\/.*$/gm, '');
       expect(codeOnly, file).not.toContain('process.argv');
+    }
+
+    // F-009 client 面允许 node:http（仅回环）与 node:crypto，但禁止文件系统
+    // （发现/凭据读取一律经 storage/）、其他网络、进程/线程内置模块、argv/env
+    // 与 ORM/厂商 SDK/shiploop-core 直接绑定。
+    const clientDir = resolve(REPO_ROOT, 'packages/host/src/client');
+    expect(statSync(clientDir).isDirectory()).toBe(true);
+    expect(listTs(clientDir).length).toBeGreaterThanOrEqual(3);
+    for (const file of listTs(clientDir)) {
+      const source2 = readText(file);
+      expect(source2, file).not.toMatch(
+        /\b(?:import|export)[^;]*?\bfrom\s+['"]node:(?:fs|os|net|https|dgram|tls|child_process|cluster|worker_threads|readline|path)['"]|\bimport\s+['"]node:(?:fs|os|net|https|dgram|tls|child_process|cluster|worker_threads|readline|path)['"]/,
+      );
+      expect(source2, file).not.toMatch(
+        /from\s+['"](?:shiploop-core|better-sqlite3|drizzle-orm|@earendil-works\/pi-coding-agent|electron|express|fastify|koa|hono)['"]/,
+      );
+      const codeOnly = source2
+        .replaceAll(/\/\*[\s\S]*?\*\//g, '')
+        .replaceAll(/^\s*\/\/.*$/gm, '');
+      expect(codeOnly, file).not.toContain('process.argv');
+      expect(codeOnly, file).not.toContain('process.env');
     }
   });
 

@@ -71,11 +71,12 @@ packages/core/src/
   application/   命令、查询、执行编排
   ports/         StateStore、Runtime、凭据等窄接口
   adapters/      sqlite、文件、git、pi 的具体实现（P01-2 F-001 起：sqlite/connection.ts 驱动装配 + 固定版本驱动/ORM；其余为空，不预置空壳）
-packages/host/src/index.ts   Host 公共入口：F-002 契约、F-003 存储、F-004 直接持 fd 的真实 OS 锁、F-006 启动装配、F-007 认证传输面、F-008 stop/quiesce 控制器（import 无副作用）
+packages/host/src/index.ts   Host 公共入口：F-002 契约、F-003 存储、F-004 直接持 fd 的真实 OS 锁、F-006 启动装配、F-007 认证传输面、F-008 stop/quiesce 控制器、F-009 HostClient（import 无副作用）
 packages/host/src/contract/  P02-1 协议契约：发现/握手/status/stop 校验、身份与摘要纯函数、结构化错误（仅依赖 node:crypto）
 packages/host/src/storage/   P02-1 受保护文件存储：规范根 realpath 固定与身份、host/ 0700 与发现/凭据 0600、fail-closed 权限/符号链接核验、原子发现发布、按实例清理（仅用 node:fs/crypto/path，不触碰网络与进程）
 packages/host/src/locking/   macOS flock 与写入生命周期包装（显式调用才获锁，关闭失败保锁；无持锁辅助进程）
 packages/host/src/runtime/   F-006 启动装配（startHost：获锁→开 Core/Schema→127.0.0.1:0 监听→新实例/凭据→原子发现）与受控 argv 入口逻辑；F-007 认证传输面（http-transport.ts：握手/status 路由、Bearer/Host/Origin 校验、16 KiB 上限、有界超时、脱敏错误）；F-008 停止控制器（host-stop.ts：§10.2 门控、§10.4 幂等矩阵、§10.5 收尾、§10.7 信号收尾）；允许 node:http 与 shiploop-core 公共入口，import 无副作用
+packages/host/src/client/    F-009 HostClient（connectToHost/probeDiscoveredHost）：受保护发现/凭据读取 → 握手双向核验后才允许 status/stop；不跟重定向、§14 错误精确分类、close 只释放本地资源（允许 node:http 回环与 node:crypto，不触文件系统/进程/argv）
 packages/host/src/start.ts   F-006 显式启动入口 → dist/start.js（node …/dist/start.js --data-root <abs>；握手/status 认证路由 F-007 已生效，stop 与 SIGTERM 安全收尾 F-008 已接线）
 packages/host/native/        极小 N-API C 适配器，显式构建输出 dist/native/writer-lock.node
 packages/cli/src/index.ts    CLI 公共入口（当前不解析 argv、不发请求）
@@ -168,6 +169,11 @@ P01 已由项目负责人于 2026-10-05 阶段放行（依据见 [docs/acceptanc
   - quiesce 未确认（真实受管子进程充当活动 + 注入 300ms 预算）→ 409 quiesce_not_confirmed：Host 保持 quiescing、发现/凭据不变、竞争者真实获锁尝试 owner_unknown（无第二写入者）；活动收尾后同命令重提续跑成功（replayed:true）。收尾/清理失败按未确认处理并保锁。
   - 客户端断开/退出不触发 stop；stop 途中断开不阻断收尾（响应送达失败不改变语义），完成判据只看进程退出+锁释放+发现清理；SIGTERM 真实子进程安全收尾（exit 0 + 按实例清理 + 释锁，`dist/start.js` 与测试子进程经 `wireHostSignalShutdown` 装配）；HTTP stop 与信号并发只跑一次收尾。
   - `startHost` 新增受信注入 `activityGate`/`quiesceBudgetMs`（有界，绝非 argv/env/发现字段）；生产默认恒空闲门控，不新增执行表、不虚构取消能力。
+- F-009 交付 **CLI 可复用 HostClient**（`packages/host/src/client/`，回归 `test/host-client.test.ts`，26 项）：
+  - `connectToHost`：选项纯校验（零 I/O）→ F-003 受保护存储 fail-closed 读取发现/凭据 → 只连接发现指向的 127.0.0.1 固定端口 → 握手双向核验（§12.2）通过后才允许 status/stop；握手失败不另起写入者、不绕过锁。
+  - 错误按 §14 精确分类且互不折算：host_not_found / unsafe_discovery / invalid_discovery / unreachable（连接失败/连接超时/请求超时/断连子原因）/ unauthorized / protocol_incompatible / instance_mismatch / data_root_mismatch / redirect_rejected（绝不跟随 3xx，不向新地址重发凭据）/ response_malformed（含响应超 16 KiB 上限）。服务端错误响应只信任白名单错误码与受控 details 键，不透传服务端文案。
+  - §7.2 有限预算：TCP 连接 2s、握手/status 10s、stop 15s（覆盖仅允许区间内有限值）；`close()` 幂等、只释放本地观察资源、绝不调用 stop，Host 存活由另一客户端认证 status 证明（有真实用例）。
+  - `probeDiscoveredHost` 为只做一次握手核验的窄探测，供 F-010 启动器 owner 诊断与 F-004 ownerProbe 真实实现复用；真实 Host 端到端用例覆盖「发现→握手→status→stop→外部三证据」。
 
 ### 单向依赖规则（F-004 起自动强制）
 

@@ -174,6 +174,28 @@
     `startHost` 新增受信注入 `activityGate`/`quiesceBudgetMs`（绝非
     argv/env/发现字段），生产默认恒空闲门控，不新增执行表、不虚构取消能力。
     `shiploop-cli` 仍为 `export {}` 骨架；HostClient/启动器/CLI 属后续任务。
+  - **F-009 增量（2026-10-05）**：公共入口追加 `src/client/` HostClient 面
+    （§12 的实现），导出 `connectToHost` 与 `probeDiscoveredHost`。
+    `connectToHost`：选项纯校验（零 I/O）→ F-003 受保护存储 fail-closed
+    读取发现与凭据（本地计算 dataRootIdentity）→ 只连接发现指向的
+    127.0.0.1 固定端口 → 认证握手双向核验（§12.2：HTTP 200、协议版本
+    支持集、hostInstanceId === 发现实例、dataRootIdentity === 本地计算值、
+    能力冻结形态）通过后才允许 status/stop。错误按 §14 精确分类
+    （host_not_found / unsafe_discovery / invalid_discovery / unreachable
+    （connect_failed/connect_timeout/request_timeout/connection_lost 子原因）/
+    unauthorized / protocol_incompatible / instance_mismatch /
+    data_root_mismatch / redirect_rejected / response_malformed），互不折算；
+    绝不跟随 3xx（不向新地址重发凭据）、不自动另起写入者。请求/响应有
+    §7.2 有限超时与 16 KiB 体积预算（覆盖仅允许区间内有限值）。服务端错误
+    响应只信任白名单错误码与受控 details 键，不透传服务端 message（防对端
+    夹带秘密）。`close()` 幂等且只释放本地观察资源（之后 status/stop 以
+    invalid_input/client_closed 本地拒绝），绝不调用 stop；Host 存活由另一
+    客户端认证 status 证明。`probeDiscoveredHost` 是只做一次握手核验的窄
+    探测，供 F-010 启动器 owner 诊断与 F-004 ownerProbe 真实实现复用。
+    client/ 允许 node:http（仅回环）与 node:crypto，禁止文件系统（发现/
+    凭据读取一律经 storage/）、其他网络/进程/线程模块、argv 与
+    shiploop-core。`shiploop-cli` 仍为 `export {}` 骨架；启动器/CLI
+    参数面属 F-010/F-011/F-012。
 - 边界检查现状（`scripts/check-boundaries.ts`，P02-1 必须持续通过）：
   - 工作区单向依赖仅允许 `host → core`、`cli → host`；CLI 禁止绕过 Host 直连 Core；
     清单 `dependencies` 与源码导入同时检查，未声明依赖即违规。

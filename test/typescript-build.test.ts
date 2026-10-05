@@ -289,10 +289,14 @@ describe('Host and CLI entry behaviour boundaries', () => {
     }
   });
 
-  it('packages/host/src 非 runtime 面（contract/storage/locking）仍无网络/进程/ORM/厂商绑定', () => {
+  it('packages/host/src 非 runtime/client 面（contract/storage/locking）仍无网络/进程/ORM/厂商绑定', () => {
     const runtimeDir = resolve(repoRoot, 'packages/host/src/runtime');
+    const clientDir = resolve(repoRoot, 'packages/host/src/client');
     const sources = readSourceTree('packages/host/src').filter(
-      ({ file }) => !file.startsWith(runtimeDir + sep) && file !== resolve(repoRoot, 'packages/host/src/start.ts'),
+      ({ file }) =>
+        !file.startsWith(runtimeDir + sep) &&
+        !file.startsWith(clientDir + sep) &&
+        file !== resolve(repoRoot, 'packages/host/src/start.ts'),
     );
     expect(sources.length, 'host 非 runtime 面扫描必须找到真实源码').toBeGreaterThan(0);
     for (const { file, code } of sources) {
@@ -350,6 +354,47 @@ describe('Host and CLI entry behaviour boundaries', () => {
     const startEntry = readText('packages/host/src/start.ts');
     expect(startEntry).toContain("from './runtime/index.js'");
     expect(startEntry).toContain('runHostStartEntry');
+  });
+
+  it('F-009 client 面只允许 node:http（回环请求）与 node:crypto，禁监听/文件系统/进程/argv', () => {
+    const clientDir = resolve(repoRoot, 'packages/host/src/client');
+    const sources = readSourceTree('packages/host/src').filter(({ file }) =>
+      file.startsWith(clientDir + sep),
+    );
+    // client 面必须真实存在（HostClient + 传输原语 + 桶文件）。
+    expect(sources.length, 'packages/host/src/client 必须包含 F-009 HostClient 源码').toBeGreaterThanOrEqual(3);
+    const bannedInClient = [
+      '@earendil-works/pi-coding-agent',
+      'electron',
+      'better-sqlite3',
+      'drizzle-orm',
+      'shiploop-core',
+      'node:https',
+      'node:net',
+      'node:dgram',
+      'node:tls',
+      'node:fs',
+      'node:child_process',
+      'node:cluster',
+      'node:worker_threads',
+      'node:readline',
+    ];
+    for (const { file, code } of sources) {
+      const specifiers = extractModuleSpecifiers(code);
+      for (const banned of bannedInClient) {
+        const offenders = specifiers.filter((specifier) => specifierMatches(specifier, banned));
+        expect(offenders, `${file} must not import ${banned}`).toHaveLength(0);
+      }
+      // 客户端绝不监听端口、不读 argv/env（发现/凭据读取一律经 storage/）。
+      const codeWithoutComments = code
+        .replaceAll(/\/\*[\s\S]*?\*\//g, '')
+        .replaceAll(/^\s*\/\/.*$/gm, '');
+      for (const token of skeletonBannedCalls) {
+        expect(codeWithoutComments, `${file} must not use ${token}`).not.toContain(token);
+      }
+      expect(codeWithoutComments, `${file} must not read process.argv directly`).not.toContain('process.argv');
+      expect(codeWithoutComments, `${file} must not read process.env directly`).not.toContain('process.env');
+    }
   });
 });
 

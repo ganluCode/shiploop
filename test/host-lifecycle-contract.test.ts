@@ -930,6 +930,31 @@ describe('F-002 契约模块纯度（import 无端口/目录/进程副作用）'
     expect(startEntry).toContain('runHostStartEntry');
   });
 
+  it('F-009 client 面只允许 node:http 与 node:crypto，不触文件系统/进程/argv/ORM', () => {
+    // client/ 承担 HostClient（允许 node:http 回环请求与 node:crypto 生成
+    // commandId），发现/凭据读取一律经 storage/；禁止文件系统、其他网络、
+    // 进程/线程模块、argv 与 shiploop-core。
+    const clientSrcDir = join(hostSrcDir, 'client');
+    const forbiddenImport = /\bfrom\s+['"]node:(?:fs|fs\/promises|os|net|https|dgram|tls|child_process|cluster|worker_threads|readline|path)['"]/;
+    const forbiddenSideEffect = /\bimport\s+['"]node:/;
+    const forbiddenPackage = /\bfrom\s+['"](?:better-sqlite3|drizzle-orm|@earendil-works\/pi-coding-agent|electron|express|fastify|koa|hono|shiploop-core)['"]/;
+    const forbiddenCall = /(\.listen\s*\(|createServer\s*\(|spawn\s*\(|spawnSync\s*\(|execFile\s*\(|fork\s*\(|readFileSync\s*\(|writeFileSync\s*\(|homedir\s*\(|\bfetch\s*\()/;
+    const files = listTsFiles(clientSrcDir);
+    expect(files.length).toBeGreaterThanOrEqual(3);
+    for (const file of files) {
+      const source = readFileSync(file, 'utf-8');
+      expect(source, file).not.toMatch(forbiddenImport);
+      expect(source, file).not.toMatch(forbiddenSideEffect);
+      expect(source, file).not.toMatch(forbiddenPackage);
+      expect(source, file).not.toMatch(forbiddenCall);
+      const codeOnly = source
+        .replaceAll(/\/\*[\s\S]*?\*\//g, '')
+        .replaceAll(/^\s*\/\/.*$/gm, '');
+      expect(codeOnly, file).not.toContain('process.argv');
+      expect(codeOnly, file).not.toContain('process.env');
+    }
+  });
+
   it('公共入口只做纯 re-export，自身无语句副作用', () => {
     const index = readFileSync(join(hostSrcDir, 'index.ts'), 'utf-8');
     expect(index).toContain("from './contract/index.js'");

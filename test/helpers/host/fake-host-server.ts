@@ -3,7 +3,8 @@
  *
  * 用途：给 F-007/F-009/F-013 的传输与客户端测试提供一个**真实监听 127.0.0.1**
  * 但行为可编排的对端，覆盖 F-005 验收 2 要求的全部负例：错误/缺失 token、
- * 旧实例、错误协议/schema、错误数据根、畸形响应、能力撒谎、3xx 重定向、延迟。
+ * 旧实例、错误协议/schema、错误数据根、畸形响应、能力撒谎、3xx 重定向、延迟，
+ * 以及 F-009 客户端体积预算负例 oversized-response（合法前缀但超过 16 KiB）。
  *
  * 安全纪律：
  * - 只绑定字面量 127.0.0.1，端口由内核分配；不提供任何覆盖绑定地址的参数；
@@ -52,6 +53,7 @@ export type HandshakeFault =
   | 'bad-lifecycle-state'
   | 'capability-lie'
   | 'malformed-json'
+  | 'oversized-response'
   | 'redirect'
   | 'delay';
 
@@ -136,6 +138,7 @@ export async function startFakeHostServer(
   const observations: FakeRequestObservation[] = [];
   let seq = 0;
   const sockets = new Set<import('node:net').Socket>();
+  let closed = false;
   const stopHistory = new Map<string, { requestDigest: string; view: StopOperationView }>();
   const startedAt = new Date().toISOString();
 
@@ -289,6 +292,16 @@ export async function startFakeHostServer(
           response.end('{oops');
           return;
         }
+        if (fault === 'oversized-response') {
+          // F-009 客户端体积预算负例：合法 JSON 前缀但正文超过 16 KiB 上限。
+          httpStatus = 200;
+          response.writeHead(200, {
+            'content-type': 'application/json; charset=utf-8',
+            'cache-control': 'no-store',
+          });
+          response.end(`{"pad":"${'x'.repeat(20_000)}"}`);
+          return;
+        }
         send(200, success);
         return;
       }
@@ -406,6 +419,11 @@ export async function startFakeHostServer(
       return loopbackRequest({ port, method, path: requestPath, ...options });
     },
     async close(): Promise<void> {
+      // 幂等：测试可能先单独关闭（如不可达负例），再由环境统一回收。
+      if (closed) {
+        return;
+      }
+      closed = true;
       await new Promise<void>((resolveClose, rejectClose) => {
         server.close((error) => (error ? rejectClose(error) : resolveClose()));
         server.closeAllConnections?.();
