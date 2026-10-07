@@ -171,6 +171,52 @@ CREATE TABLE state_events (
 CREATE UNIQUE INDEX state_events_sequence_unique ON state_events (sequence);
 `;
 
+/**
+ * 第三个迁移（P02-2 / F-006）：新增 command_receipts 幂等命令回执表。
+ *
+ * 契约依据：docs/p02-2-commands-events-contract.md §10（表设计冻结）与 §15.1
+ * （project_id 可空 + scope CHECK 的显式偏离登记，与 v2 state_events 同一先例）。
+ * 列与约束同 ./schema.ts 的 commandReceipts，一致性由
+ * test/sqlite-schema-migrations.test.ts 经真实 pragma 交叉核对。
+ *
+ * 边界：不建 operations 表、不加 operation_id 列；本版本不持久化 accepted
+ * （status CHECK 只允许 completed/rejected）；唯一约束以 CREATE UNIQUE INDEX
+ * 落库（与 v1/v2 既有迁移同一表示，pragma index_list origin='c' 与 Drizzle
+ * uniqueIndex 可交叉核对），语义与表级 UNIQUE 约束等价。
+ */
+const MIGRATION_003_SQL = `
+CREATE TABLE command_receipts (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  principal_id TEXT NOT NULL,
+  command_id TEXT NOT NULL,
+  scope_kind TEXT NOT NULL,
+  project_id TEXT,
+  operation TEXT NOT NULL,
+  request_digest TEXT NOT NULL,
+  status TEXT NOT NULL,
+  result_json TEXT,
+  result_ref TEXT,
+  error_code TEXT,
+  error_message TEXT,
+  error_details TEXT,
+  issued_at INTEGER NOT NULL,
+  completed_at INTEGER NOT NULL,
+  CONSTRAINT command_receipts_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT command_receipts_scope_check CHECK ((scope_kind = 'project' AND project_id IS NOT NULL) OR (scope_kind IN ('registration','global') AND project_id IS NULL)),
+  CONSTRAINT command_receipts_status_check CHECK (status IN ('completed','rejected')),
+  CONSTRAINT command_receipts_completed_check CHECK (status <> 'completed' OR (result_json IS NOT NULL AND result_ref IS NOT NULL AND error_code IS NULL)),
+  CONSTRAINT command_receipts_rejected_check CHECK (status <> 'rejected' OR (error_code IS NOT NULL AND result_json IS NULL)),
+  CONSTRAINT command_receipts_digest_check CHECK (length(request_digest) = 64 AND request_digest NOT GLOB '*[^0-9a-f]*')
+);
+
+CREATE UNIQUE INDEX command_receipts_principal_command_unique ON command_receipts (principal_id, command_id);
+CREATE UNIQUE INDEX command_receipts_result_ref_unique ON command_receipts (result_ref);
+CREATE INDEX command_receipts_principal_project_index ON command_receipts (principal_id, project_id);
+`;
+
 function sha256Hex(text: string): string {
   return createHash('sha256').update(text, 'utf8').digest('hex');
 }
@@ -186,5 +232,10 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
     version: 2,
     sql: MIGRATION_002_SQL,
     checksum: sha256Hex(MIGRATION_002_SQL),
+  },
+  {
+    version: 3,
+    sql: MIGRATION_003_SQL,
+    checksum: sha256Hex(MIGRATION_003_SQL),
   },
 ];

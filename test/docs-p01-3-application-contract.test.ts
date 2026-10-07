@@ -59,7 +59,9 @@ describe('F-001 P01-3 应用契约文档', () => {
   });
 
   it('版本化迁移（v1 六表 + v2 state_events 审计）与受控定位/标签规范等复用规则在文档中可核对', () => {
-    expect(SQLITE_MIGRATIONS.map((migration) => migration.version)).toEqual([1, 2]);
+    // P01-3 时期事实：当时迁移止于 v2；P02-2 / F-006 起新增 v3 command_receipts，
+    // P01-3 时期的 v1/v2 必须原样保留为前缀（历史事实不改写）。
+    expect(SQLITE_MIGRATIONS.map((migration) => migration.version).slice(0, 2)).toEqual([1, 2]);
     const [migration] = SQLITE_MIGRATIONS;
     expect(migration?.version).toBe(1);
     const sql = migration?.sql ?? '';

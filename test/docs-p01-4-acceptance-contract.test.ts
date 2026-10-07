@@ -102,7 +102,10 @@ describe('F-001 P01-4 验收契约文档', () => {
     expect(SETTINGS_SCHEMA_VERSION).toBe(2);
     expect(SETTINGS_EXPORT_FORMAT_VERSION).toBe(1);
     expect(GLOBAL_SETTINGS_ID).toBe('global');
-    expect(SQLITE_MIGRATIONS.map((migration) => migration.version)).toEqual([1, 2]);
+    // P01-4 时期事实：当时迁移止于 v2；P02-2 / F-006 起新增 v3 command_receipts，
+    // P01-4 时期的 v1/v2 必须原样保留为前缀（历史事实不改写）。
+    const migrationVersions = SQLITE_MIGRATIONS.map((migration) => migration.version);
+    expect(migrationVersions.slice(0, 2)).toEqual([1, 2]);
     expect(SQLITE_MIGRATIONS[1]?.sql).toContain('CREATE TABLE state_events');
 
     expect(contractDoc).toContain(`schemaVersion\` | \`${SETTINGS_SCHEMA_VERSION}\``);

@@ -188,6 +188,7 @@ describe('F-005 迁移执行与记录', () => {
 
         expect(listUserTables(session)).toEqual([
           'artifacts',
+          'command_receipts',
           'global_settings',
           'project_settings',
           'projects',
@@ -255,9 +256,12 @@ describe('F-005 迁移执行与记录', () => {
         expect(rows[0]!.applied_at).toBe(FIXED_NOW_MS);
         expect(rows[1]!.version).toBe(2);
         expect(rows[1]!.checksum).toBe(SQLITE_MIGRATIONS[1]!.checksum);
-        expect(rows[2]!.version).toBe(PROBE_MIGRATION.version);
-        expect(rows[2]!.checksum).toBe(PROBE_MIGRATION.checksum);
-        expect(rows[2]!.applied_at).toBe(FIXED_NOW_MS + 1_000);
+        // P02-2 / F-006：v3 为真实 command_receipts 迁移；探针迁移紧随其后。
+        expect(rows[2]!.version).toBe(3);
+        expect(rows[2]!.checksum).toBe(SQLITE_MIGRATIONS[2]!.checksum);
+        expect(rows[3]!.version).toBe(PROBE_MIGRATION.version);
+        expect(rows[3]!.checksum).toBe(PROBE_MIGRATION.checksum);
+        expect(rows[3]!.applied_at).toBe(FIXED_NOW_MS + 1_000);
       } finally {
         session.close();
       }

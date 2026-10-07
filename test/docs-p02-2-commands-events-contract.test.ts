@@ -3,11 +3,13 @@
  * P02-2 命令/查询/事件/CLI 实施契约必须与仓库事实一致，避免「文档另立一套」
  * 与后续 F-002 ~ F-020 各自发明协议。
  *
- * 定位：F-001 只交付基线核对与契约文档（+ 本守护）；/v1 业务路由、回执表、
- * SSE 与 CLI 新命令由后续任务增量实现。本文中冻结的是「目标契约」，不是已
- * 实现声明——因此本套件同时核验开工时的现状事实（线消息版本仍为 1、迁移
- * 止于 v2、capabilities 仍为 unsupported、CLI 只有 host 子命令），后续任务
- * 改变这些事实时（F-006 加迁移 v3、F-011 接路由等）必须同步更新本守护与契约。
+ * 定位：F-001 只交付基线核对与契约文档（+ 本守护）；/v1 业务路由、SSE 与
+ * CLI 新命令由后续任务增量实现。本文中冻结的是「目标契约」，不是已实现
+ * 声明——因此本套件同时核验开工时的现状事实（开工基线：线消息版本 1、迁移
+ * 止于 v2、capabilities unsupported、CLI 只有 host 子命令），后续任务改变这些
+ * 事实时必须同步更新本守护与契约。当前状态：F-006 已新增迁移 v3
+ * command_receipts（本守护已同步）；线消息版本/capabilities/CLI 面仍保持
+ * 开工基线（F-011/F-013/F-014 起按契约演进）。
  */
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -207,13 +209,16 @@ describe('F-001 契约文档与仓库基线一致（开工现状事实）', () =
     expect(contractDoc).toContain('P02-2 起');
   });
 
-  it('开工时迁移止于 v2；契约登记 v3 command_receipts 由 F-006 新增', () => {
+  it('F-006 已新增迁移 v3 command_receipts（开工基线为 v2，本守护随实现同步）', () => {
     const migrations = readText('packages/core/src/adapters/sqlite/migrations.ts');
     expect(migrations).toMatch(/version: 1,/);
     expect(migrations).toMatch(/version: 2,/);
-    expect(migrations).not.toContain('command_receipts');
+    expect(migrations).toMatch(/version: 3,/);
+    expect(migrations).toContain('command_receipts');
+    expect(migrations).toContain('command_receipts_principal_command_unique');
+    expect(migrations).toContain('command_receipts_scope_check');
     expect(contractDoc).toContain('迁移 v3');
-    expect(contractDoc).toContain('UNIQUE (principal_id, command_id)');
+    expect(contractDoc).toContain('(principal_id, command_id)');
   });
 
   it('配置 payload 与导出版本、既有事件类型与契约记录一致', () => {

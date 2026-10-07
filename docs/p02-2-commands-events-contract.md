@@ -586,8 +586,8 @@ F-012 按 §9.4 以错误响应/`event: error` 帧呈现，不把坏行伪装成
 
 ## 10. SQLite 迁移 v3：`command_receipts`
 
-- 由 F-006 新增为迁移 **v3**（接 v2 `state_events` 之后）；DDL 与 `schema.ts` Drizzle 定义同步，
-  checksum 进 `schema_migrations`，漂移/高版本继续拒写（沿用 migrator 既有规则）。
+- 由 F-006 新增为迁移 **v3**（接 v2 `state_events` 之后；F-006 已实施）；DDL 与 `schema.ts`
+  Drizzle 定义同步，checksum 进 `schema_migrations`，漂移/高版本继续拒写（沿用 migrator 既有规则）。
 - 必须从**空库**与 **P01 最新库（v2）**两条路径迁移成功；既有 projects/bindings/settings/events
   与 sequence 不变；迁移与 Drizzle Schema 一致性进真实 pragma 交叉核对测试。
 - 表设计冻结（落库列名按既有 snake_case，应用层 camelCase 映射）：
@@ -612,8 +612,6 @@ CREATE TABLE command_receipts (
   error_details TEXT,                        -- JSON 对象（仅受控键）
   issued_at INTEGER NOT NULL,
   completed_at INTEGER NOT NULL,
-  CONSTRAINT command_receipts_principal_command_unique UNIQUE (principal_id, command_id),
-  CONSTRAINT command_receipts_result_ref_unique UNIQUE (result_ref),
   CONSTRAINT command_receipts_project_fk
     FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
   CONSTRAINT command_receipts_scope_check CHECK (
@@ -630,6 +628,13 @@ CREATE TABLE command_receipts (
   CONSTRAINT command_receipts_digest_check
     CHECK (length(request_digest) = 64 AND request_digest NOT GLOB '*[^0-9a-f]*')
 );
+-- (principal_id, command_id) 与 result_ref 唯一约束以 CREATE UNIQUE INDEX 落库（与
+-- v1/v2 既有迁移同一表示：pragma index_list origin='c' 可与 Drizzle uniqueIndex 交叉
+-- 核对）；语义与表级 UNIQUE 约束完全等价，唯一性与约束名不变。
+CREATE UNIQUE INDEX command_receipts_principal_command_unique
+  ON command_receipts (principal_id, command_id);
+CREATE UNIQUE INDEX command_receipts_result_ref_unique
+  ON command_receipts (result_ref);
 CREATE INDEX command_receipts_principal_project_index
   ON command_receipts (principal_id, project_id);
 ```

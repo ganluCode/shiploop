@@ -7,8 +7,9 @@
  *   不含文件系统路径、cwd 或源码位置，随构建产物（dist 内编译模块）可定位；
  * - 空临时库执行 v1 迁移后建立 projects、repository_bindings、global_settings、
  *   project_settings、artifacts、schema_migrations 六表，不生成 Phase/Feature/Task/
- *   Run/Attempt/Batch/Session/Chat 等后续表；v2 迁移（F-006）新增 state_events
- *   审计表；重复应用同一迁移真实失败；
+ *   Run/Attempt/Batch/Session/Chat 等后续表；v2 迁移（P01-3 / F-006）新增
+ *   state_events 审计表；v3 迁移（P02-2 / F-006）新增 command_receipts 幂等命令
+ *   回执表；重复应用同一迁移真实失败；
  * - 实际表/列/索引与 Drizzle Schema 一致：列名/可空性/主键/默认值经 pragma table_info
  *   与 getTableColumns/getTableConfig 交叉核对；命名 CHECK 与索引（含 UNIQUE）经
  *   sqlite_master 与 pragma index_list/index_info 核对；外键目标与 ON DELETE RESTRICT
@@ -44,8 +45,10 @@ const SCHEMA_TABLES = [
   ['global_settings', schema.globalSettings],
   ['project_settings', schema.projectSettings],
   ['artifacts', schema.artifacts],
-  // F-006：状态事件审计切片（设计 11 §9）。
+  // P01-3 / F-006：状态事件审计切片（设计 11 §9）。
   ['state_events', schema.stateEvents],
+  // P02-2 / F-006：幂等命令回执（契约 §10）。
+  ['command_receipts', schema.commandReceipts],
   ['schema_migrations', schema.schemaMigrations],
 ] as const;
 
@@ -71,7 +74,6 @@ const FORBIDDEN_TABLE_NAMES = [
   'check_definitions',
   'check_results',
   'approvals',
-  'command_receipts',
   'operations',
   'notification_channels',
   'notification_deliveries',
@@ -209,6 +211,30 @@ function seedStateEvent(
   );
 }
 
+/** P02-2 / F-006：合法 completed 注册回执种子（registration scope，project_id NULL）。 */
+function seedCommandReceipt(
+  db: CoreDatabase,
+  id = 'rc-1',
+  principalId = 'local-owner',
+  commandId = '11111111-1111-4111-8111-111111111111',
+): void {
+  db.prepare(
+    'INSERT INTO command_receipts (id, created_at, revision, updated_at, principal_id, command_id, scope_kind, project_id, operation, request_digest, status, result_json, result_ref, error_code, error_message, error_details, issued_at, completed_at) ' +
+      "VALUES (?, ?, 1, ?, ?, ?, 'registration', NULL, 'project.register', ?, 'completed', ?, ?, NULL, NULL, NULL, ?, ?)",
+  ).run(
+    id,
+    NOW_MS,
+    NOW_MS,
+    principalId,
+    commandId,
+    VALID_SHA256,
+    JSON.stringify({ status: 'registered' }),
+    `v1.${'A'.repeat(43)}`,
+    NOW_MS,
+    NOW_MS,
+  );
+}
+
 // ---------------------------------------------------------------------------
 // 迁移描述符与自包含性
 // ---------------------------------------------------------------------------
@@ -252,10 +278,12 @@ describe('F-003 versioned migration descriptors', () => {
     for (const migration of SQLITE_MIGRATIONS) {
       expect(migration.sql).not.toMatch(/\/Users\/|process\.cwd|__dirname|import\.meta/);
     }
-    // v1 建立基础六表；v2（F-006）建立 state_events 审计表。
+    // v1 建立基础六表；v2（P01-3 / F-006）建立 state_events 审计表；
+    // v3（P02-2 / F-006）建立 command_receipts 幂等回执表。
     expect(SQLITE_MIGRATIONS[0]?.sql).toMatch(/CREATE TABLE projects/);
     expect(SQLITE_MIGRATIONS[0]?.sql).toMatch(/CREATE TABLE schema_migrations/);
     expect(SQLITE_MIGRATIONS[1]?.sql).toMatch(/CREATE TABLE state_events/);
+    expect(SQLITE_MIGRATIONS[2]?.sql).toMatch(/CREATE TABLE command_receipts/);
   });
 });
 
@@ -404,6 +432,7 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
         'project_settings:(project_id)->projects.(id)',
         'artifacts:(project_id)->projects.(id)',
         'state_events:(project_id)->projects.(id)',
+        'command_receipts:(project_id)->projects.(id)',
       ]);
       type FkPragmaRow = { id: number; seq: number; table: string; from: string; to: string; on_update: string; on_delete: string };
       const actualFks = new Set<string>();
@@ -514,6 +543,31 @@ describe('F-003 real Drizzle session round-trip on the migrated database', () =>
           storageLocator: 'artifacts/art-1/v1/report.json',
         })
         .run();
+      // P02-2 / F-006：幂等命令回执表经同一 Drizzle Schema 往返。
+      session
+        .insert(schema.commandReceipts)
+        .values({
+          id: 'rc-1',
+          createdAt: NOW_MS,
+          updatedAt: NOW_MS,
+          principalId: 'local-owner',
+          commandId: '11111111-1111-4111-8111-111111111111',
+          scopeKind: 'registration',
+          projectId: null,
+          operation: 'project.register',
+          requestDigest: VALID_SHA256,
+          status: 'completed',
+          resultJson: JSON.stringify({ status: 'registered' }),
+          resultRef: `v1.${'A'.repeat(43)}`,
+          issuedAt: NOW_MS,
+          completedAt: NOW_MS,
+        })
+        .run();
+      const receipt = session.select().from(schema.commandReceipts).all()[0];
+      expect(receipt?.status).toBe('completed');
+      expect(receipt?.resultRef).toBe(`v1.${'A'.repeat(43)}`);
+      expect(receipt?.scopeKind).toBe('registration');
+      expect(receipt?.revision).toBe(1);
 
       const project = session.select().from(schema.projects).all()[0];
       expect(project?.displayName).toBe('示例项目🚢');
@@ -898,6 +952,87 @@ const CONSTRAINT_CASES: readonly ConstraintCase[] = [
     table: 'schema_migrations',
     error: /CHECK constraint failed: schema_migrations_checksum_sha256_check/,
   },
+  {
+    name: 'command_receipts 不持久化 accepted（status 枚举拒绝）',
+    seed: () => undefined,
+    statement:
+      "INSERT INTO command_receipts (id, created_at, revision, updated_at, principal_id, command_id, scope_kind, project_id, operation, request_digest, status, result_json, result_ref, error_code, error_message, error_details, issued_at, completed_at) VALUES ('rc-x', ?, 1, ?, 'local-owner', '11111111-1111-4111-8111-111111111111', 'registration', NULL, 'project.register', ?, 'accepted', NULL, NULL, NULL, NULL, NULL, ?, ?)",
+    params: [NOW_MS, NOW_MS, VALID_SHA256, NOW_MS, NOW_MS],
+    table: 'command_receipts',
+    error: /CHECK constraint failed: command_receipts_status_check/,
+  },
+  {
+    name: 'command_receipts project scope 必须携带 project_id',
+    seed: () => undefined,
+    statement:
+      "INSERT INTO command_receipts (id, created_at, revision, updated_at, principal_id, command_id, scope_kind, project_id, operation, request_digest, status, result_json, result_ref, error_code, error_message, error_details, issued_at, completed_at) VALUES ('rc-x', ?, 1, ?, 'local-owner', '11111111-1111-4111-8111-111111111111', 'project', NULL, 'project.metadata.update', ?, 'rejected', NULL, NULL, 'conflict', '冲突', NULL, ?, ?)",
+    params: [NOW_MS, NOW_MS, VALID_SHA256, NOW_MS, NOW_MS],
+    table: 'command_receipts',
+    error: /CHECK constraint failed: command_receipts_scope_check/,
+  },
+  {
+    name: 'command_receipts registration scope 不允许携带 project_id',
+    seed: (db) => seedProject(db),
+    statement:
+      "INSERT INTO command_receipts (id, created_at, revision, updated_at, principal_id, command_id, scope_kind, project_id, operation, request_digest, status, result_json, result_ref, error_code, error_message, error_details, issued_at, completed_at) VALUES ('rc-x', ?, 1, ?, 'local-owner', '11111111-1111-4111-8111-111111111111', 'registration', 'proj-1', 'project.register', ?, 'rejected', NULL, NULL, 'conflict', '冲突', NULL, ?, ?)",
+    params: [NOW_MS, NOW_MS, VALID_SHA256, NOW_MS, NOW_MS],
+    table: 'command_receipts',
+    error: /CHECK constraint failed: command_receipts_scope_check/,
+  },
+  {
+    name: 'command_receipts.request_digest 必须是 64 位小写 hex（拒绝大写）',
+    seed: () => undefined,
+    statement:
+      "INSERT INTO command_receipts (id, created_at, revision, updated_at, principal_id, command_id, scope_kind, project_id, operation, request_digest, status, result_json, result_ref, error_code, error_message, error_details, issued_at, completed_at) VALUES ('rc-x', ?, 1, ?, 'local-owner', '11111111-1111-4111-8111-111111111111', 'registration', NULL, 'project.register', ?, 'rejected', NULL, NULL, 'conflict', '冲突', NULL, ?, ?)",
+    params: [NOW_MS, NOW_MS, VALID_SHA256.toUpperCase(), NOW_MS, NOW_MS],
+    table: 'command_receipts',
+    error: /CHECK constraint failed: command_receipts_digest_check/,
+  },
+  {
+    name: 'command_receipts completed 必须携带 result 与 result_ref',
+    seed: () => undefined,
+    statement:
+      "INSERT INTO command_receipts (id, created_at, revision, updated_at, principal_id, command_id, scope_kind, project_id, operation, request_digest, status, result_json, result_ref, error_code, error_message, error_details, issued_at, completed_at) VALUES ('rc-x', ?, 1, ?, 'local-owner', '11111111-1111-4111-8111-111111111111', 'registration', NULL, 'project.register', ?, 'completed', '{}', NULL, NULL, NULL, NULL, ?, ?)",
+    params: [NOW_MS, NOW_MS, VALID_SHA256, NOW_MS, NOW_MS],
+    table: 'command_receipts',
+    error: /CHECK constraint failed: command_receipts_completed_check/,
+  },
+  {
+    name: 'command_receipts rejected 不允许携带 result_json',
+    seed: () => undefined,
+    statement:
+      "INSERT INTO command_receipts (id, created_at, revision, updated_at, principal_id, command_id, scope_kind, project_id, operation, request_digest, status, result_json, result_ref, error_code, error_message, error_details, issued_at, completed_at) VALUES ('rc-x', ?, 1, ?, 'local-owner', '11111111-1111-4111-8111-111111111111', 'registration', NULL, 'project.register', ?, 'rejected', '{}', NULL, 'conflict', '冲突', NULL, ?, ?)",
+    params: [NOW_MS, NOW_MS, VALID_SHA256, NOW_MS, NOW_MS],
+    table: 'command_receipts',
+    error: /CHECK constraint failed: command_receipts_rejected_check/,
+  },
+  {
+    name: 'command_receipts project scope 缺失项目时外键失败',
+    seed: () => undefined,
+    statement:
+      "INSERT INTO command_receipts (id, created_at, revision, updated_at, principal_id, command_id, scope_kind, project_id, operation, request_digest, status, result_json, result_ref, error_code, error_message, error_details, issued_at, completed_at) VALUES ('rc-x', ?, 1, ?, 'local-owner', '11111111-1111-4111-8111-111111111111', 'project', 'missing', 'project.metadata.update', ?, 'rejected', NULL, NULL, 'conflict', '冲突', NULL, ?, ?)",
+    params: [NOW_MS, NOW_MS, VALID_SHA256, NOW_MS, NOW_MS],
+    table: 'command_receipts',
+    error: /FOREIGN KEY constraint failed/,
+  },
+  {
+    name: 'command_receipts (principal_id, command_id) 复合唯一',
+    seed: (db) => seedCommandReceipt(db),
+    statement:
+      "INSERT INTO command_receipts (id, created_at, revision, updated_at, principal_id, command_id, scope_kind, project_id, operation, request_digest, status, result_json, result_ref, error_code, error_message, error_details, issued_at, completed_at) VALUES ('rc-2', ?, 1, ?, 'local-owner', '11111111-1111-4111-8111-111111111111', 'registration', NULL, 'project.register', ?, 'rejected', NULL, NULL, 'conflict', '冲突', NULL, ?, ?)",
+    params: [NOW_MS, NOW_MS, OTHER_SHA256, NOW_MS, NOW_MS],
+    table: 'command_receipts',
+    error: /UNIQUE constraint failed: command_receipts\.principal_id, command_receipts\.command_id/,
+  },
+  {
+    name: 'command_receipts.result_ref 全库唯一',
+    seed: (db) => seedCommandReceipt(db),
+    statement:
+      "INSERT INTO command_receipts (id, created_at, revision, updated_at, principal_id, command_id, scope_kind, project_id, operation, request_digest, status, result_json, result_ref, error_code, error_message, error_details, issued_at, completed_at) VALUES ('rc-2', ?, 1, ?, 'local-owner', '22222222-2222-4222-8222-222222222222', 'registration', NULL, 'project.register', ?, 'completed', '{}', ?, NULL, NULL, NULL, ?, ?)",
+    params: [NOW_MS, NOW_MS, OTHER_SHA256, `v1.${'A'.repeat(43)}`, NOW_MS, NOW_MS],
+    table: 'command_receipts',
+    error: /UNIQUE constraint failed: command_receipts\.result_ref/,
+  },
 ];
 
 describe.each(CONSTRAINT_CASES)('F-003 DDL constraint: %s', (testCase) => {
@@ -918,13 +1053,17 @@ describe('F-003 RESTRICT delete protection and schema_migrations record', () => 
       seedBinding(db);
       seedProjectSettings(db);
       seedArtifact(db);
-      for (const table of ['projects', 'project_settings', 'artifacts', 'repository_bindings']) {
+      // F-006：project scope 回执同样以 RESTRICT 外键保护项目行。
+      db.prepare(
+        "INSERT INTO command_receipts (id, created_at, revision, updated_at, principal_id, command_id, scope_kind, project_id, operation, request_digest, status, result_json, result_ref, error_code, error_message, error_details, issued_at, completed_at) VALUES ('rc-1', ?, 1, ?, 'local-owner', '11111111-1111-4111-8111-111111111111', 'project', 'proj-1', 'project.metadata.update', ?, 'rejected', NULL, NULL, 'conflict', '冲突', NULL, ?, ?)",
+      ).run(NOW_MS, NOW_MS, VALID_SHA256, NOW_MS, NOW_MS);
+      for (const table of ['projects', 'project_settings', 'artifacts', 'repository_bindings', 'command_receipts']) {
         expect(countRows(db, table)).toBe(1);
       }
       expect(() => db.prepare("DELETE FROM projects WHERE id = 'proj-1'").run()).toThrow(
         /FOREIGN KEY constraint failed/,
       );
-      for (const table of ['projects', 'project_settings', 'artifacts', 'repository_bindings']) {
+      for (const table of ['projects', 'project_settings', 'artifacts', 'repository_bindings', 'command_receipts']) {
         expect(countRows(db, table), `${table} 行必须保留`).toBe(1);
       }
     });

@@ -670,6 +670,8 @@ describe('F-006 当前配置检查组（P01-FR2-CONFIG）', () => {
       expect(tables).toEqual(
         [
           'artifacts',
+          // P02-2 / F-006：幂等命令回执表（迁移 v3）。
+          'command_receipts',
           'global_settings',
           'project_settings',
           'projects',

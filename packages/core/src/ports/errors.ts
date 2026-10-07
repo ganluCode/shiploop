@@ -18,7 +18,9 @@ export type StorageEntityType =
   | 'global_settings'
   | 'project_settings'
   | 'artifact'
-  | 'migration';
+  | 'migration'
+  /** P02-2 / F-006：幂等命令回执（command_receipts，迁移 v3）。 */
+  | 'command_receipt';
 
 export type StorageErrorKind =
   /** 外部输入未通过运行时校验（缺字段/类型错误/未知 schemaVersion/非法摘要等）。 */

@@ -30,6 +30,10 @@ import {
   APP_CAPABILITIES,
   LOCAL_OWNER_PRINCIPAL_ID,
 } from '../packages/core/src/ports/commands.ts';
+import { createCompletedReceipt } from '../packages/core/src/ports/commands.ts';
+import { createResultRef } from '../packages/core/src/ports/command-receipts.ts';
+import { createSqliteCommandReceiptStore } from '../packages/core/src/adapters/sqlite/command-receipts.ts';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import {
   BarrierTimeoutError,
   createCommandsTestFixture,
@@ -181,12 +185,12 @@ describe('F-004 临时沙箱与真实 A/B 资源', () => {
       const versions = probe.selectAll<{ version: number }>(
         'SELECT version FROM schema_migrations ORDER BY version',
       );
-      expect(versions.map((row) => row.version)).toEqual([1, 2]);
+      expect(versions.map((row) => row.version)).toEqual([1, 2, 3]);
       const counts = probe.counts();
       expect(counts.projects).toBe(0);
       expect(counts.state_events).toBe(0);
-      // v3 回执表属于 F-006：当前必须显式表现为「不存在」而非伪造 0 行空表。
-      expect(counts.command_receipts).toBeNull();
+      // F-006 迁移 v3 起回执表真实存在（0 行空表，不再是「表不存在」）。
+      expect(counts.command_receipts).toBe(0);
       expect(probe.maxSequence()).toBe(0);
     } finally {
       probe.close();
@@ -466,7 +470,7 @@ describe('F-004 事务故障注入（业务写后、事件/回执写前）与真
     }
   });
 
-  it('业务表写入处注入阻止首个写入；command_receipts 注入点在 v3 前显式失败', async () => {
+  it('业务表写入处注入阻止首个写入；command_receipts 注入点真实中止回执写入（F-006 起）', async () => {
     const fixture = useCommandsFixture();
     const harness = await fixture.openTransactionalHarness();
     const probe = fixture.openProbe();
@@ -497,9 +501,29 @@ describe('F-004 事务故障注入（业务写后、事件/回执写前）与真
       expect(recovered.revision).toBe(1);
       expect(probe.settingsRow('project', project.project.id)?.revision).toBe(1);
 
-      // F-006 迁移 v3 之前：回执注入点必须显式失败（无此表），不得静默安装。
-      expect(probe.counts().command_receipts).toBeNull();
-      expect(() => harness.installFault(WRITE_FAULT_POINTS.commandReceiptsBeforeInsert)).toThrow(/command_receipts/);
+      // F-006 迁移 v3 起：回执注入点真实存在；安装后同一连接的回执写入被
+      // 中止且零残留，撤除后经真实适配器写入恢复（探针独立连接核对）。
+      expect(probe.counts().command_receipts).toBe(0);
+      const receiptFault = harness.installFault(WRITE_FAULT_POINTS.commandReceiptsBeforeInsert);
+      const receiptStore = createSqliteCommandReceiptStore(harness.session);
+      const receipt = createCompletedReceipt({
+        commandId: randomUUID(),
+        principalId: fixture.localOwner().principalId,
+        operation: 'project.register',
+        scope: { kind: 'registration' },
+        requestDigest: createHash('sha256').update('f006-fixture-kit').digest('hex'),
+        issuedAt: new Date(1_760_000_000_000).toISOString(),
+        completedAt: new Date(1_760_000_000_001).toISOString(),
+        result: { status: 'registered', project: { id: randomUUID() } },
+        resultRef: createResultRef(randomBytes(32)),
+      });
+      await expect(receiptStore.saveReceipt(receipt)).rejects.toThrow(receiptFault.message);
+      expect(probe.counts().command_receipts).toBe(0);
+      expect(probe.receiptRow(receipt.principalId, receipt.commandId)).toBeUndefined();
+      receiptFault.remove();
+      await receiptStore.saveReceipt(receipt);
+      expect(probe.counts().command_receipts).toBe(1);
+      expect(probe.receiptRow(receipt.principalId, receipt.commandId)?.status).toBe('completed');
     } finally {
       probe.close();
       harness.close();

@@ -7,6 +7,8 @@
  *
  * 本 Feature 仅建立 P01-2 存储闭环所需的最小六表；phases/features/tasks/runs/
  * attempts/sessions/chat 等后续表随对应功能以新迁移版本增加，不在本 Schema 出现。
+ * P01-3 / F-006 起加入 state_events（迁移 v2），P02-2 / F-006 起加入
+ * command_receipts（迁移 v3，见下方表注释）。
  *
  * 与手写迁移 DDL（./migrations.ts）的一致性由 test/sqlite-schema-migrations.test.ts
  * 经真实 SQLite pragma 与 getTableConfig 交叉核对；两处必须同步演进。
@@ -263,6 +265,79 @@ export const stateEvents = sqliteTable('state_events', {
     sql`(${table.projectId} IS NOT NULL) OR (${table.aggregateType} = 'global_settings')`,
   ),
   uniqueIndex('state_events_sequence_unique').on(table.sequence),
+]);
+
+/**
+ * P02-2 / F-006 幂等命令回执表（docs/p02-2-commands-events-contract.md §10）。
+ *
+ * 边界决策：
+ * - `project_id` 可空 + scope CHECK（仅 registration/global 允许 NULL，project
+ *   scope 必填且有项目 FK ON DELETE RESTRICT）是对设计 11 §9「必填项目 FK」的
+ *   显式偏离登记（§15.1，与 v2 state_events 同一先例）；不使用虚构项目 ID；
+ * - 不建 operations 表、不加 operation_id 列；本版本全部为同步短事务命令，
+ *   status CHECK 只允许 completed/rejected（accepted 仅前向兼容枚举，无持久化
+ *   路径）；completed/rejected 的交叉字段约束由 completed/rejected CHECK 强制；
+ * - (principal_id, command_id) 复合唯一：同一 commandId 在不同 principal 下
+ *   独立；result_ref 全库唯一（不透明随机引用，不是路径/定位符）；
+ * - request_digest 为 64 位小写 hex SHA-256（§5.2 冻结算法，服务端重算）；
+ * - error_details 为 JSON 对象（仅受控键），完整结构校验仍在存储端口；
+ *   result_json 有界（≤16384 字节）由端口写入路径保证，DDL 不替代。
+ */
+export const commandReceipts = sqliteTable('command_receipts', {
+  id: text('id').primaryKey(),
+  createdAt: integer('created_at').notNull(),
+  /** 回执为插后不可变：revision 恒为 1（保留共同字段约定）。 */
+  revision: integer('revision').notNull().default(1),
+  updatedAt: integer('updated_at').notNull(),
+  /** 可信主体身份（生产固定 local-owner；受限主体仅测试装配）。 */
+  principalId: text('principal_id').notNull(),
+  /** 幂等键：客户端生成的 UUID v4；与 principal_id 复合唯一。 */
+  commandId: text('command_id').notNull(),
+  /** 信封 scope 三态：registration/global/project。 */
+  scopeKind: text('scope_kind').notNull(),
+  /** 仅 project scope 非空（§15.1）；registration/global 恒为 NULL。 */
+  projectId: text('project_id').references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  /** §6 命令白名单操作名。 */
+  operation: text('operation').notNull(),
+  /** §5.2 请求摘要（64 位小写 hex SHA-256）。 */
+  requestDigest: text('request_digest').notNull(),
+  /** 回执状态：completed/rejected（本版本不持久化 accepted）。 */
+  status: text('status').notNull(),
+  /** completed：有界业务结果 JSON（序列化 ≤ 16384 字节）。 */
+  resultJson: text('result_json'),
+  /** completed：不透明结果引用（v1.+43 字符 base64url；全库唯一）。 */
+  resultRef: text('result_ref'),
+  /** rejected：公开错误码。 */
+  errorCode: text('error_code'),
+  /** rejected：脱敏固定文案。 */
+  errorMessage: text('error_message'),
+  /** rejected：JSON 对象（仅受控键）；可空。 */
+  errorDetails: text('error_details'),
+  /** 信封 issuedAt（UTC 毫秒）。 */
+  issuedAt: integer('issued_at').notNull(),
+  /** 提交完成时刻（UTC 毫秒）。 */
+  completedAt: integer('completed_at').notNull(),
+}, (table) => [
+  check(
+    'command_receipts_scope_check',
+    sql`(${table.scopeKind} = 'project' AND ${table.projectId} IS NOT NULL) OR (${table.scopeKind} IN ('registration','global') AND ${table.projectId} IS NULL)`,
+  ),
+  check('command_receipts_status_check', sql`${table.status} IN ('completed','rejected')`),
+  check(
+    'command_receipts_completed_check',
+    sql`${table.status} <> 'completed' OR (${table.resultJson} IS NOT NULL AND ${table.resultRef} IS NOT NULL AND ${table.errorCode} IS NULL)`,
+  ),
+  check(
+    'command_receipts_rejected_check',
+    sql`${table.status} <> 'rejected' OR (${table.errorCode} IS NOT NULL AND ${table.resultJson} IS NULL)`,
+  ),
+  check(
+    'command_receipts_digest_check',
+    sql`length(${table.requestDigest}) = 64 AND ${table.requestDigest} NOT GLOB '*[^0-9a-f]*'`,
+  ),
+  uniqueIndex('command_receipts_principal_command_unique').on(table.principalId, table.commandId),
+  uniqueIndex('command_receipts_result_ref_unique').on(table.resultRef),
+  index('command_receipts_principal_project_index').on(table.principalId, table.projectId),
 ]);
 
 export const schemaMigrations = sqliteTable('schema_migrations', {

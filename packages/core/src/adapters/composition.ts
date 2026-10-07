@@ -28,10 +28,13 @@ import { homedir } from 'node:os';
 import { isAbsolute } from 'node:path';
 import { createConfigurationService } from '../application/configuration-service.js';
 import type { ConfigurationService } from '../application/configuration-service.js';
+import { createCommandReceiptsService } from '../application/command-receipts-service.js';
+import type { CommandReceiptsService } from '../application/command-receipts-service.js';
 import { createProjectService } from '../application/project-service.js';
 import type { ProjectService } from '../application/project-service.js';
 import type { ArtifactFileStore } from '../ports/artifact-files.js';
 import type { ArtifactStore } from '../ports/artifact-store.js';
+import type { CommandReceiptStore } from '../ports/command-receipts.js';
 import { StorageError } from '../ports/errors.js';
 import { PathResolutionError, deriveDefaultDataRoot } from '../ports/path-service.js';
 import type { PathService } from '../ports/path-service.js';
@@ -50,6 +53,7 @@ import { createPathService } from './fs/path-service.js';
 import { createRepositoryInspector } from './fs/repository-inspector.js';
 import type { RepositoryInspectorOptions } from './fs/repository-inspector.js';
 import { createSqliteArtifactStore } from './sqlite/artifact-store.js';
+import { createSqliteCommandReceiptStore } from './sqlite/command-receipts.js';
 import { migrateSqliteStorage } from './sqlite/migrator.js';
 import { openSqliteStorageSession } from './sqlite/session.js';
 import { createSqliteStateStore } from './sqlite/state-store.js';
@@ -90,6 +94,9 @@ export interface CoreApplication {
   readonly repositoryInspector: RepositoryInspector;
   readonly projectService: ProjectService;
   readonly configurationService: ConfigurationService;
+  /** P02-2 / F-006：持久命令回执窄端口与授权回执/结果读取服务。 */
+  readonly commandReceiptStore: CommandReceiptStore;
+  readonly commandReceiptsService: CommandReceiptsService;
   /** 关闭状态库会话并释放文件句柄；幂等。 */
   close(): void;
 }
@@ -231,6 +238,13 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
         : (object.repositoryInspector as unknown as RepositoryInspector);
     const projectService = createProjectService({ stateStore, repositoryInspector });
     const configurationService = createConfigurationService({ stateStore, capabilityCatalog });
+    const commandReceiptStore = createSqliteCommandReceiptStore(
+      session,
+      nowUtcMs === undefined ? {} : { nowUtcMs },
+    );
+    const commandReceiptsService = createCommandReceiptsService({
+      receiptStore: commandReceiptStore,
+    });
 
     const application: CoreApplication = {
       dataRoot: basePathService.dataRoot(),
@@ -241,6 +255,8 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       repositoryInspector,
       projectService,
       configurationService,
+      commandReceiptStore,
+      commandReceiptsService,
       close(): void {
         session.close();
       },

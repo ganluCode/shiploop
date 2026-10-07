@@ -6,7 +6,7 @@
  * 「整组回滚」断言的权威来源。只读连接在驱动层打开（readonly），夹具代码
  * 即使有 bug 也无法改动业务库；绝不以 mock 方法调用代替事务结果。
  *
- * - v1/v2 表计数始终给出；command_receipts 在 F-006 迁移 v3 之前为 null
+ * - v1/v2/v3 表计数始终给出；command_receipts 在未迁移至 v3 的库上为 null
  *   （显式「表不存在」，不伪装成 0 行空表）；
  * - 通用查询只允许 SELECT/WITH，参数走绑定；探针不暴露驱动写能力；
  * - stateEvents 按持久 sequence 升序返回行列形态（F-003 的 mapStateEvent
@@ -21,7 +21,7 @@ export interface StorageTableCounts {
   readonly global_settings: number;
   readonly state_events: number;
   readonly artifacts: number;
-  /** null：command_receipts 表尚不存在（迁移 v3 未到）。 */
+  /** null：command_receipts 表不存在（该库未迁移至 F-006 的 v3）。 */
   readonly command_receipts: number | null;
 }
 
@@ -202,7 +202,7 @@ export function openStorageProbe(dbPath: string): StorageProbe {
       assertOpen('receiptRow');
       if (!this.tableExists('command_receipts')) {
         throw new Error(
-          'StorageProbe.receiptRow: command_receipts 表尚不存在（F-006 迁移 v3 未到）',
+          'StorageProbe.receiptRow: command_receipts 表不存在（该库未迁移至 F-006 的 v3）',
         );
       }
       return this.selectOne(
