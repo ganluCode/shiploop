@@ -50,6 +50,7 @@ docs/p02-1-host-lifecycle-contract.md  P02-1 Host 单例发现与本机认证生
 docs/p02-1-operations.md  P02-1 Host 生命周期操作说明（F-014）
 docs/p02-1-handoff.md  P02-1 → P02-2 接口交接（P02-1 F-014）
 docs/acceptance/p02-1-f014-report.md  P02-1 Feature 交付报告（F-014，证据在同目录 evidence-p02-1/）
+docs/p02-2-commands-events-contract.md  P02-2 应用命令、查询与事件接口契约（F-001，实施前置契约；路由/回执/事件/SSE 尚待后续任务实现）
 ```
 
 ### 确定性测试约定（F-003）
