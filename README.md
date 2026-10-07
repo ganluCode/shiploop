@@ -190,6 +190,10 @@ P01 已由项目负责人于 2026-10-05 阶段放行（依据见 [docs/acceptanc
   - `host start` 只经 `ensureHostRunning` 连接或启动（成功结果含 outcome `already_running`/`started` 与握手核验的实例/回环端口/状态；两次 start 同一实例，CLI 退出后 Host 存活）；`host status`/`host stop` 经 launcher 新增的 `resolveConnectDataRoot`（`createIfMissing=false`）与 `connectToHost` 只读连接，**永不**启动 Host（无实例 host_not_found 退出码 3，不创建数据根）。
   - `host stop` 省略 commandId 时由 HostClient 生成 UUID v4；HTTP accepted/completed 回执不当已退出——在 `--confirm-timeout-ms`（默认 10 000，0..30 000）预算内轮询 §10.6 三证据（进程 ESRCH、非阻塞 flock 获锁即释、发现删除或实例替换），齐备才输出 `stopped`（退出码 0），否则 `stop_not_confirmed`（退出码 1，details 只含受控枚举）。
   - 公共 barrel（`src/index.ts`、`src/host/index.ts`）不 re-export 执行层，加载仍无副作用；执行层只导入 `shiploop-host` 包名公共面与 `node:os`/`node:timers`，不直连 Core、不直接使用 HTTP/child_process/fs。构建冒烟在非源码 cwd 用临时数据根真实跑通 start/start/status/stop/重启，断言监听地址、实例身份、退出码、Host 存活与停止后锁可获，且全部输出不含 token。
+- F-013 交付 **整 Feature 真实多进程集成回归**（`test/p02-1-integration-regression.test.ts`，29 项；CLI 驱动子进程夹具 `test/helpers/host/cli-driver-child.ts` 以 ready/go 同步屏障在独立真实子进程中运行生产 `runHostCli`；产品源码/依赖/构建脚本零改动）：
+  - FR-1：两/三 CLI 同步屏障竞争唯一持锁 Host（各成功连接同一实例、失败候选进程 OS 核验退出、CLI 退出后 Host 存活）、规范路径别名同锁、独立数据根双 Host 并存、陈旧 PID 指向无关活进程、持锁但发现缺失/损坏（owner_unknown 不产生第二写入者）、崩溃后重新发现、旧清理迟到不删新实例文件、公开监听覆盖（argv/env × 0.0.0.0/::/非回环 IP/域名）退出码 2。
+  - FR-2：token 第三方篡改 unauthorized、假服务与真 Host HTTP 负例矩阵（协议 426/实例与数据根 409/Origin 与伪造 Host 401/302）零文件副作用、不安全发现权限 unsafe_discovery、同 commandId 停止进行中重放（enterQuiesce 恰一次）、quiesce 未确认保留锁且 CLI 竞争者不产生第二写入者、合法 stop 三证据→重启新实例→重开 Core 前序持久数据未损坏且旧身份/token 被拒绝。
+  - 脱敏证据映射与 not_run 记录：[docs/acceptance/evidence-p02-1/f013-regression-evidence.md](docs/acceptance/evidence-p02-1/f013-regression-evidence.md)（文档守护核对；不声称项目接入、执行取消或整个 P02 已验收）。
 
 ### 单向依赖规则（F-004 起自动强制）
 

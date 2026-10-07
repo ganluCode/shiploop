@@ -15,15 +15,24 @@
  *
  * 边界：其他裸包说明符（better-sqlite3 等）走 node_modules 正常解析；
  * 钩子逻辑确定性，不读环境变量，不产生文件副作用。
+ *
+ * F-013 扩展（仍仅测试使用）：CLI 驱动子进程（test/helpers/host/
+ * cli-driver-child.ts）在独立真实子进程中运行生产 CLI 执行层 runHostCli；
+ * 该执行层经包公共入口说明符引用 Host（'shiploop-host'）。与 F-006 的 Core
+ * 映射同理，这里把该**精确的公共入口说明符**确定性重映射到 Host 源码文件，
+ * 保证干净树（无 dist）下 `npm test` 先于构建通过；不映射任何内部子路径
+ * （内部子路径仍由边界检查禁止）。
  */
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
-/** 工作区公共入口 → 源码的精确映射（与 packages/core/package.json exports 对齐）。 */
+/** 工作区公共入口 → 源码的精确映射（与各包 package.json exports 对齐）。 */
 const CORE_SRC_ROOT = new URL('../../../packages/core/src/', import.meta.url);
+const HOST_SRC_ROOT = new URL('../../../packages/host/src/', import.meta.url);
 const WORKSPACE_PUBLIC_ENTRY_SOURCES = new Map([
   ['shiploop-core', new URL('index.ts', CORE_SRC_ROOT).href],
   ['shiploop-core/assembly', new URL('adapters/composition.ts', CORE_SRC_ROOT).href],
+  ['shiploop-host', new URL('index.ts', HOST_SRC_ROOT).href],
 ]);
 
 export async function resolve(specifier, context, next) {

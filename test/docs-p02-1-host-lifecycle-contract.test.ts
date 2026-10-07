@@ -194,6 +194,19 @@ describe('F-001 契约文档与仓库基线一致', () => {
     expect(contractDoc).toContain('F-009 增量');
     expect(contractDoc).toContain('F-010 增量');
     expect(contractDoc).toContain('F-011 增量');
+    // F-013 多进程集成回归与脱敏证据文档入档（文档 §1.5 事实）。
+    expect(contractDoc).toContain('F-013 增量');
+    expect(contractDoc).toContain('多进程集成回归');
+    const evidencePath = 'docs/acceptance/evidence-p02-1/f013-regression-evidence.md';
+    expect(existsSync(resolve(REPO_ROOT, evidencePath))).toBe(true);
+    const evidenceDoc = readText(evidencePath);
+    for (const term of ['FR-1', 'FR-2', 'T10', 'T15', 'T17', 'T23', 'T26', 'not_run']) {
+      expect(evidenceDoc).toContain(term);
+    }
+    // 证据文档不得含开发机绝对路径或疑似凭据样例。
+    expect(evidenceDoc).not.toMatch(/\/Users\//);
+    expect(evidenceDoc).not.toMatch(/Bearer\s+[0-9a-fA-F]{16,}/);
+    expect(existsSync(resolve(REPO_ROOT, 'test/p02-1-integration-regression.test.ts'))).toBe(true);
     expect(contractDoc).toContain('createHostStopController');
     expect(contractDoc).toContain('wireHostSignalShutdown');
     expect(contractDoc).toContain('connectToHost');

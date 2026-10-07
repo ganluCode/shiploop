@@ -253,6 +253,22 @@
     导入 `shiploop-host` 包名公共面与 `node:os`/`node:timers`，不直连
     Core、不直接使用 HTTP/child_process/fs（能力留在 Host 包）。无新增
     第三方依赖；本任务没有 project/run 等命令。
+  - **F-013 增量（2026-10-07）**：新增整 Feature 真实多进程集成回归
+    `test/p02-1-integration-regression.test.ts`（29 项；产品源码/依赖/
+    构建脚本零改动）。CLI 驱动子进程夹具 `test/helpers/host/
+    cli-driver-child.ts` 以 ready/go 同步屏障在独立真实子进程中运行生产
+    CLI 执行层 runHostCli；测试子进程加载器增加第三处精确公共入口映射
+    （`shiploop-host` → host src，仍不映射任何内部子路径）。覆盖 §15.1 FR-1/
+    FR-2 正常分支与失败分支：多 CLI/多候选同步竞争唯一持锁 Host、路径别名
+    与独立数据根、token 第三方篡改、假服务（旧实例/数据根不匹配/协议/schema/
+    畸形响应/302）、真 Host HTTP 负例（协议 426、实例/数据根 409、Origin/
+    伪造 Host 401）、公开监听覆盖（argv/env × 0.0.0.0/::/非回环 IP/域名）与
+    不安全发现权限拒绝、持锁但发现缺失/损坏、陈旧 PID 指向无关活进程、
+    崩溃后重新发现、旧清理迟到不删新实例文件、同 commandId 停止进行中重放、
+    quiesce 未确认无第二写入者、合法 stop 三证据/重启新实例/重开 Core 前序
+    持久数据未损坏与旧身份拒绝。脱敏证据映射与 not_run 记录见
+    `docs/acceptance/evidence-p02-1/f013-regression-evidence.md`；不声称项目
+    接入、执行取消或整个 P02 已验收。
 - 边界检查现状（`scripts/check-boundaries.ts`，P02-1 必须持续通过）：
   - 工作区单向依赖仅允许 `host → core`、`cli → host`；CLI 禁止绕过 Host 直连 Core；
     清单 `dependencies` 与源码导入同时检查，未声明依赖即违规。
