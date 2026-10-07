@@ -531,8 +531,13 @@ interface PublicStateEvent {
 
 新增类型遵循 v2 迁移既有 CHECK：`project_id` 为空只允许 `aggregate_type='global_settings'`；
 `project.registered` 在事务内拿到新项目 id 后写入（project_id 非空）。白名单外的 event_type
-不得出现在 P02-2 流中；映射层遇到未知持久类型必须显式失败或跳过并计入受控诊断（F-003 定案并
-测试），**永不伪造**事件。
+不得出现在 P02-2 流中；映射层遇到未知持久类型必须显式失败或跳过并计入受控诊断。
+**F-003 定案（已实现并测试，见 `packages/core/src/ports/events.ts`）：一律显式失败**——
+未知 event_type → `corrupt_state`（reason `unknown_event_type`）；行列结构损坏 →
+`corrupt_event_row`；type/aggregate_type/project_id/aggregate_id 不一致 →
+`event_scope_mismatch`；payload 非对象或出现形状外键/非法值 → `event_payload_violation`。
+不静默跳过、不计数吞掉、不蒙混透传未知 payload 键（可能含值/秘密），**永不伪造**事件；
+F-012 按 §9.4 以错误响应/`event: error` 帧呈现，不把坏行伪装成空流。
 
 ### 9.3 游标与分页
 
