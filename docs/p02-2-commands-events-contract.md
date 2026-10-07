@@ -382,6 +382,15 @@ interface CommandReceipt {
 失败必须整组回滚（无「持久 accepted 但结果永不可知」状态）。Git/仓库检查、文件发布、网络与
 能力发现一律在写事务之外完成，提交时只重核必要的 revision。
 
+**F-007 已实施切片**：`CoreApplication.commandService.submit(principal, envelope)` 当前只接入
+`project.metadata.update`（注册/配置仍明确 unsupported，分别待 F-008/F-009）。
+`ports/atomic-commands.ts` 的同步 `AtomicCommandStore`/`CommandTransaction` 由 SQLite
+同会话原语实现；P01 元数据 CAS/事件与 F-006 回执 SQL 共用，不调用 Promise 服务、不嵌套事务。
+过期新命令先在事务外拒绝；权威回执/摘要、授权、时效、项目与 CAS 在 BEGIN IMMEDIATE 内重核。
+CAS rejected 在任何业务写入前决定；写后异常必须回滚，不折算为持久 rejected。
+回调结束上下文失效，Promise 回调回滚并阻止 await 后写入；busy 仍使用既有有限预算。
+真实竞争/故障/重开回归见 `test/atomic-commands.test.ts`；Host/CLI 接线不在该切片内。
+
 ### 5.6 resultRef 与结果读取
 
 - completed 回执内嵌有界 `result`（序列化 ≤ 16 384 字节），同时携带不透明 `resultRef`：

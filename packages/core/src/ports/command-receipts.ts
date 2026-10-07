@@ -629,3 +629,25 @@ export interface CommandReceiptStore {
   /** 按不透明 resultRef 读取；缺失返回 undefined。 */
   findReceiptByResultRef(resultRef: unknown): Promise<CommandReceipt | undefined>;
 }
+
+/**
+ * 注册回执的新建项目身份提取（§5.6：注册回执核验新建项目当前可见性）。
+ * registration + completed 回执的结果按 §6 冻结形状携带 project.id；形状不符
+ * 说明持久内容与写入侧契约不一致（corrupt_state），绝不跳过可见性核验。
+ * rejected 注册回执没有项目实体（返回 null，仅归属核验）。
+ */
+export function registrationProjectIdOf(receipt: CommandReceipt, operation: string): string | null {
+  if (receipt.scope.kind !== 'registration' || receipt.status !== 'completed') {
+    return null;
+  }
+  const result = receipt.result;
+  if (isPlainObject(result) && isPlainObject(result.project)) {
+    const projectId = result.project.id;
+    if (typeof projectId === 'string' && isUuidV4(projectId)) {
+      return projectId;
+    }
+  }
+  throw new PublicError('corrupt_state', operation, undefined, {
+    details: { reason: 'corrupt_receipt_result' },
+  });
+}

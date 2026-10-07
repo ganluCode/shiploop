@@ -21,7 +21,6 @@
  * - 行 id（UUID）由适配器生成，只作主键，不出现在任何公开返回面。
  */
 import { randomUUID } from 'node:crypto';
-import type Database from 'better-sqlite3';
 import { isValidResultRef, isUuidV4 } from '../../ports/commands.js';
 import type { CommandReceipt } from '../../ports/commands.js';
 import {
@@ -84,6 +83,18 @@ export function createSqliteCommandReceiptStore(
   session: SqliteStorageSession,
   options: SqliteCommandReceiptStoreOptions = {},
 ): CommandReceiptStore {
+  return createSqliteCommandReceiptAccess(session, options).store;
+}
+
+/** 同会话同步原语：供原子命令事务复用，绝不嵌套 Promise/事务。 */
+export function createSqliteCommandReceiptAccess(
+  session: SqliteStorageSession,
+  options: SqliteCommandReceiptStoreOptions = {},
+): {
+  store: CommandReceiptStore;
+  saveReceiptInTransaction(receipt: unknown): void;
+  findReceiptByCommandId(principalId: unknown, commandId: unknown): CommandReceipt | undefined;
+} {
   const nowUtcMs = options.nowUtcMs ?? Date.now;
 
   function assertOpen(operation: string): void {
@@ -137,91 +148,100 @@ export function createSqliteCommandReceiptStore(
     return mapPersistedCommandReceipt(toPersistedRow(row, operation), operation);
   }
 
-  return {
-    async saveReceipt(receipt: unknown): Promise<void> {
-      const operation = 'CommandReceiptStore.saveReceipt';
-      assertOpen(operation);
-      const valid = validatePersistableCommandReceipt(receipt, operation);
-      const timestamp = nowUtcMs();
-      try {
-        session.transactWrite(operation, (db: Database.Database) => {
-          db.prepare(
-            'INSERT INTO command_receipts (id, created_at, revision, updated_at, principal_id, command_id, ' +
-              'scope_kind, project_id, operation, request_digest, status, result_json, result_ref, ' +
-              'error_code, error_message, error_details, issued_at, completed_at) ' +
-              'VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-          ).run(
-            randomUUID(),
-            timestamp,
-            timestamp,
-            valid.principalId,
-            valid.commandId,
-            valid.scope.kind,
-            valid.scope.kind === 'project' ? valid.scope.projectId : null,
-            valid.operation,
-            valid.requestDigest,
-            valid.status,
-            valid.status === 'completed' ? JSON.stringify(valid.result) : null,
-            valid.status === 'completed' ? valid.resultRef : null,
-            valid.status === 'rejected' ? valid.error.code : null,
-            valid.status === 'rejected' ? valid.error.message : null,
-            valid.status === 'rejected' && valid.error.details !== undefined
-              ? JSON.stringify(valid.error.details)
-              : null,
-            Date.parse(valid.issuedAt),
-            Date.parse(valid.completedAt),
+  function saveReceiptInTransaction(receipt: unknown): void {
+    const operation = 'CommandReceiptStore.saveReceipt';
+    assertOpen(operation);
+    const valid = validatePersistableCommandReceipt(receipt, operation);
+    const timestamp = nowUtcMs();
+    try {
+      if (!session.database.inTransaction) throw new TypeError('回执写入必须位于写事务内');
+      const db = session.database;
+      db.prepare(
+        'INSERT INTO command_receipts (id, created_at, revision, updated_at, principal_id, command_id, ' +
+          'scope_kind, project_id, operation, request_digest, status, result_json, result_ref, ' +
+          'error_code, error_message, error_details, issued_at, completed_at) ' +
+          'VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(
+        randomUUID(),
+        timestamp,
+        timestamp,
+        valid.principalId,
+        valid.commandId,
+        valid.scope.kind,
+        valid.scope.kind === 'project' ? valid.scope.projectId : null,
+        valid.operation,
+        valid.requestDigest,
+        valid.status,
+        valid.status === 'completed' ? JSON.stringify(valid.result) : null,
+        valid.status === 'completed' ? valid.resultRef : null,
+        valid.status === 'rejected' ? valid.error.code : null,
+        valid.status === 'rejected' ? valid.error.message : null,
+        valid.status === 'rejected' && valid.error.details !== undefined
+          ? JSON.stringify(valid.error.details)
+          : null,
+        Date.parse(valid.issuedAt),
+        Date.parse(valid.completedAt),
+      );
+    } catch (error) {
+      // 唯一约束防御纵深（正常流由 F-007 同事务先查后写）：(principal, command)
+      // 或 result_ref 冲突映射为结构化 conflict；其余错误原样上抛。
+      if (isSqliteConstraintError(error)) {
+        if (
+          error.message.includes('command_receipts.principal_id') ||
+          error.message.includes('command_receipts_principal_command_unique')
+        ) {
+          throw new StorageError(
+            'conflict',
+            operation,
+            '同一 principal 的 commandId 回执已存在（幂等键冲突），未重复写入',
+            { entity: { type: 'command_receipt' }, details: { reason: 'duplicate_command_id' } },
           );
-        });
-      } catch (error) {
-        // 唯一约束防御纵深（正常流由 F-007 同事务先查后写）：(principal, command)
-        // 或 result_ref 冲突映射为结构化 conflict；其余错误原样上抛。
-        if (isSqliteConstraintError(error)) {
-          if (
-            error.message.includes('command_receipts.principal_id') ||
-            error.message.includes('command_receipts_principal_command_unique')
-          ) {
-            throw new StorageError(
-              'conflict',
-              operation,
-              '同一 principal 的 commandId 回执已存在（幂等键冲突），未重复写入',
-              { entity: { type: 'command_receipt' }, details: { reason: 'duplicate_command_id' } },
-            );
-          }
-          if (
-            error.message.includes('command_receipts.result_ref') ||
-            error.message.includes('command_receipts_result_ref_unique')
-          ) {
-            throw new StorageError(
-              'conflict',
-              operation,
-              'resultRef 已被占用（唯一性冲突），未写入',
-              { entity: { type: 'command_receipt' }, details: { reason: 'duplicate_result_ref' } },
-            );
-          }
         }
-        throw error;
+        if (
+          error.message.includes('command_receipts.result_ref') ||
+          error.message.includes('command_receipts_result_ref_unique')
+        ) {
+          throw new StorageError(
+            'conflict',
+            operation,
+            'resultRef 已被占用（唯一性冲突），未写入',
+            { entity: { type: 'command_receipt' }, details: { reason: 'duplicate_result_ref' } },
+          );
+        }
       }
+      throw error;
+    }
+  }
+
+  function findReceiptByCommandId(
+    principalId: unknown,
+    commandId: unknown,
+  ): CommandReceipt | undefined {
+    const operation = 'CommandReceiptStore.findReceiptByCommandId';
+    assertOpen(operation);
+    const context: ValidationContext = { operation, entity: { type: 'command_receipt' } };
+    if (typeof principalId !== 'string' || principalId.length === 0) {
+      throw validationError(context, 'principalId', '必须是非空字符串');
+    }
+    if (!isUuidV4(commandId)) {
+      throw validationError(context, 'commandId', '必须是 RFC 4122 UUID v4（小写）');
+    }
+    const row = session.database
+      .prepare<[string, string], CommandReceiptSqlRow>(
+        `SELECT ${SELECT_COLUMNS} FROM command_receipts WHERE principal_id = ? AND command_id = ?`,
+      )
+      .get(principalId, commandId) as CommandReceiptSqlRow | undefined;
+    return mapRow(row, operation);
+  }
+
+  const store: CommandReceiptStore = {
+    async saveReceipt(receipt: unknown): Promise<void> {
+      validatePersistableCommandReceipt(receipt, 'CommandReceiptStore.saveReceipt');
+      session.transactWrite('CommandReceiptStore.saveReceipt', () => saveReceiptInTransaction(receipt));
     },
 
-    async findReceiptByCommandId(
-      principalId: unknown,
-      commandId: unknown,
-    ): Promise<CommandReceipt | undefined> {
-      const operation = 'CommandReceiptStore.findReceiptByCommandId';
-      assertOpen(operation);
-      const context: ValidationContext = { operation, entity: { type: 'command_receipt' } };
-      if (typeof principalId !== 'string' || principalId.length === 0) {
-        throw validationError(context, 'principalId', '必须是非空字符串');
-      }
-      if (!isUuidV4(commandId)) {
-        throw validationError(context, 'commandId', '必须是 RFC 4122 UUID v4（小写）');
-      }
-      const row = session.database
-        .prepare<[string, string], CommandReceiptSqlRow>(
-          `SELECT ${SELECT_COLUMNS} FROM command_receipts WHERE principal_id = ? AND command_id = ?`,
-        )
-        .get(principalId, commandId) as CommandReceiptSqlRow | undefined;
-      return mapRow(row, operation);
+    async findReceiptByCommandId(principalId: unknown, commandId: unknown): Promise<CommandReceipt | undefined> {
+      return findReceiptByCommandId(principalId, commandId);
     },
 
     async findReceiptByResultRef(resultRef: unknown): Promise<CommandReceipt | undefined> {
@@ -239,4 +259,5 @@ export function createSqliteCommandReceiptStore(
       return mapRow(row, operation);
     },
   };
+  return { store, saveReceiptInTransaction, findReceiptByCommandId };
 }

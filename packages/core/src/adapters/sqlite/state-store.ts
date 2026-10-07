@@ -227,6 +227,18 @@ export function createSqliteStateStore(
   session: SqliteStorageSession,
   options: SqliteStateStoreOptions = {},
 ): StateStore {
+  return createSqliteStateAccess(session, options).store;
+}
+
+/** 适配器内部访问面：共享 P01 SQL/校验/事件，不导出到公共 assembly。 */
+export function createSqliteStateAccess(
+  session: SqliteStorageSession,
+  options: SqliteStateStoreOptions = {},
+): {
+  store: StateStore;
+  getProject(projectId: string): ProjectRecord;
+  updateProjectInTransaction(projectId: string, input: unknown, timestamp?: number): ProjectRecord;
+} {
   const nowUtcMs = options.nowUtcMs ?? Date.now;
 
   function assertOpen(operation: string): void {
@@ -450,7 +462,67 @@ export function createSqliteStateStore(
     }
   }
 
-  return {
+  // 仅适配器内部同步访问；变更调用方必须已持有本会话写事务。
+  function getProject(projectId: string): ProjectRecord {
+    const operation = 'StateStore.getProject';
+    assertOpen(operation);
+    const id = validateProjectId(projectId, operation, 'project');
+    const context: ValidationContext = { operation, entity: { type: 'project', id } };
+    const row = selectProjectRow(session.database, id, operation);
+    return projectFromRow(row, context);
+  }
+
+  function updateProjectInTransaction(projectId: string, input: unknown, timestamp = nowUtcMs()): ProjectRecord {
+    const operation = 'StateStore.updateProject';
+    assertOpen(operation);
+    if (!session.database.inTransaction) throw new TypeError('项目变更必须位于写事务内');
+    const id = validateProjectId(projectId, operation, 'project');
+    const valid = validateUpdateProjectInput(input, operation);
+    const entity: StorageEntityRef = { type: 'project', id };
+    const context: ValidationContext = { operation, entity };
+    const db = session.database;
+    const assignments = ['revision = revision + 1', 'updated_at = ?'];
+    const params: unknown[] = [timestamp];
+    if (valid.displayName !== undefined) {
+      assignments.push('display_name = ?');
+      params.push(valid.displayName);
+    }
+    if (valid.description !== undefined) {
+      assignments.push('description = ?');
+      params.push(valid.description);
+    }
+    if (valid.labels !== undefined) {
+      assignments.push('labels = ?');
+      params.push(JSON.stringify(valid.labels));
+    }
+    params.push(id, valid.expectedRevision);
+    const result = db
+      .prepare(`UPDATE projects SET ${assignments.join(', ')} WHERE id = ? AND revision = ?`)
+      .run(...params);
+    if (result.changes === 0) {
+      requireCasTarget(
+        (db.prepare('SELECT revision FROM projects WHERE id = ?').get(id) as { revision: number } | undefined),
+        operation,
+        entity,
+        valid.expectedRevision,
+        `项目 ${id} 不存在`,
+      );
+    }
+    const updated = projectFromRow(selectProjectRow(db, id, operation), context);
+    // P01-3 / F-006：同一短事务内追加脱敏审计记录，使“变更记录”与元数据
+    // 原子一致；注入记录写入失败时上面的元数据/revision 一并回滚（无半条记录）。
+    insertStateEventRow(db, timestamp, {
+      projectId: id,
+      eventType: PROJECT_METADATA_UPDATED_EVENT_TYPE,
+      aggregateType: 'project',
+      aggregateId: id,
+      aggregateRevision: updated.revision,
+      summary: { changedFields: projectMetadataChangedFields(valid) },
+    });
+    return updated;
+  }
+
+  const store: StateStore = {
     async createProject(input: unknown): Promise<ProjectRecord> {
       const operation = 'StateStore.createProject';
       assertOpen(operation);
@@ -491,12 +563,7 @@ export function createSqliteStateStore(
     },
 
     async getProject(projectId: string): Promise<ProjectRecord> {
-      const operation = 'StateStore.getProject';
-      assertOpen(operation);
-      const id = validateProjectId(projectId, operation, 'project');
-      const context: ValidationContext = { operation, entity: { type: 'project', id } };
-      const row = selectProjectRow(session.database, id, operation);
-      return projectFromRow(row, context);
+      return getProject(projectId);
     },
 
     async listProjects(filter?: unknown): Promise<ProjectPage> {
@@ -650,54 +717,13 @@ export function createSqliteStateStore(
     },
 
     async updateProject(projectId: string, input: unknown): Promise<ProjectRecord> {
+      // P01 入口也走同一同步 SQL 原语；命令入口由外层事务调用原语。
       const operation = 'StateStore.updateProject';
       assertOpen(operation);
-      const id = validateProjectId(projectId, operation, 'project');
-      const valid = validateUpdateProjectInput(input, operation);
+      validateProjectId(projectId, operation, 'project');
+      validateUpdateProjectInput(input, operation);
       const timestamp = nowUtcMs();
-      const entity: StorageEntityRef = { type: 'project', id };
-      const context: ValidationContext = { operation, entity };
-      return session.transactWrite(operation, (db) => {
-        const assignments = ['revision = revision + 1', 'updated_at = ?'];
-        const params: unknown[] = [timestamp];
-        if (valid.displayName !== undefined) {
-          assignments.push('display_name = ?');
-          params.push(valid.displayName);
-        }
-        if (valid.description !== undefined) {
-          assignments.push('description = ?');
-          params.push(valid.description);
-        }
-        if (valid.labels !== undefined) {
-          assignments.push('labels = ?');
-          params.push(JSON.stringify(valid.labels));
-        }
-        params.push(id, valid.expectedRevision);
-        const result = db
-          .prepare(`UPDATE projects SET ${assignments.join(', ')} WHERE id = ? AND revision = ?`)
-          .run(...params);
-        if (result.changes === 0) {
-          requireCasTarget(
-            (db.prepare('SELECT revision FROM projects WHERE id = ?').get(id) as { revision: number } | undefined),
-            operation,
-            entity,
-            valid.expectedRevision,
-            `项目 ${id} 不存在`,
-          );
-        }
-        const updated = projectFromRow(selectProjectRow(db, id, operation), context);
-        // P01-3 / F-006：同一短事务内追加脱敏审计记录，使“变更记录”与元数据
-        // 原子一致；注入记录写入失败时上面的元数据/revision 一并回滚（无半条记录）。
-        insertStateEventRow(db, timestamp, {
-          projectId: id,
-          eventType: PROJECT_METADATA_UPDATED_EVENT_TYPE,
-          aggregateType: 'project',
-          aggregateId: id,
-          aggregateRevision: updated.revision,
-          summary: { changedFields: projectMetadataChangedFields(valid) },
-        });
-        return updated;
-      });
+      return session.transactWrite(operation, () => updateProjectInTransaction(projectId, input, timestamp));
     },
 
     async createGlobalSettings(input: unknown): Promise<GlobalSettingsRecord> {
@@ -862,4 +888,5 @@ export function createSqliteStateStore(
       });
     },
   };
+  return { store, getProject, updateProjectInTransaction };
 }

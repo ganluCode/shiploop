@@ -32,7 +32,7 @@ import {
 } from '../ports/commands.js';
 import type { CommandReceipt } from '../ports/commands.js';
 import type { CommandReceiptStore } from '../ports/command-receipts.js';
-import { isPlainObject } from '../ports/validation.js';
+import { registrationProjectIdOf } from '../ports/command-receipts.js';
 
 /** receipts.get / results.resolve 的公开操作身份（与 §3.2 查询清单一致）。 */
 const RECEIPTS_GET_OPERATION = 'receipts.get';
@@ -59,28 +59,6 @@ export interface CommandReceiptsService {
 function receiptNotFound(operation: string): never {
   throw new PublicError('not_found', operation, undefined, {
     details: { reason: 'receipt_not_found' },
-  });
-}
-
-/**
- * 注册回执的新建项目身份提取（§5.6：注册回执核验新建项目当前可见性）。
- * registration + completed 回执的结果按 §6 冻结形状携带 project.id；形状不符
- * 说明持久内容与写入侧契约不一致（corrupt_state），绝不跳过可见性核验。
- * rejected 注册回执没有项目实体（返回 null，仅归属核验）。
- */
-function registrationProjectIdOf(receipt: CommandReceipt, operation: string): string | null {
-  if (receipt.scope.kind !== 'registration' || receipt.status !== 'completed') {
-    return null;
-  }
-  const result = receipt.result;
-  if (isPlainObject(result) && isPlainObject(result.project)) {
-    const projectId = result.project.id;
-    if (typeof projectId === 'string' && isUuidV4(projectId)) {
-      return projectId;
-    }
-  }
-  throw new PublicError('corrupt_state', operation, undefined, {
-    details: { reason: 'corrupt_receipt_result' },
   });
 }
 

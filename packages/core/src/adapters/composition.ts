@@ -30,6 +30,8 @@ import { createConfigurationService } from '../application/configuration-service
 import type { ConfigurationService } from '../application/configuration-service.js';
 import { createCommandReceiptsService } from '../application/command-receipts-service.js';
 import type { CommandReceiptsService } from '../application/command-receipts-service.js';
+import { createCommandService } from '../application/command-service.js';
+import type { CommandService } from '../application/command-service.js';
 import { createProjectService } from '../application/project-service.js';
 import type { ProjectService } from '../application/project-service.js';
 import type { ArtifactFileStore } from '../ports/artifact-files.js';
@@ -52,6 +54,7 @@ import { createArtifactFileStore } from './fs/artifact-files.js';
 import { createPathService } from './fs/path-service.js';
 import { createRepositoryInspector } from './fs/repository-inspector.js';
 import type { RepositoryInspectorOptions } from './fs/repository-inspector.js';
+import { createSqliteAtomicCommandStore } from './sqlite/atomic-commands.js';
 import { createSqliteArtifactStore } from './sqlite/artifact-store.js';
 import { createSqliteCommandReceiptStore } from './sqlite/command-receipts.js';
 import { migrateSqliteStorage } from './sqlite/migrator.js';
@@ -96,6 +99,8 @@ export interface CoreApplication {
   readonly configurationService: ConfigurationService;
   /** P02-2 / F-006：持久命令回执窄端口与授权回执/结果读取服务。 */
   readonly commandReceiptStore: CommandReceiptStore;
+  /** F-007：幂等原子命令（当前仅 metadata CAS；注册/配置后续接入）。 */
+  readonly commandService: CommandService;
   readonly commandReceiptsService: CommandReceiptsService;
   /** 关闭状态库会话并释放文件句柄；幂等。 */
   close(): void;
@@ -246,6 +251,11 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       receiptStore: commandReceiptStore,
     });
 
+    const commandService = createCommandService({
+      atomicStore: createSqliteAtomicCommandStore(session, nowUtcMs === undefined ? {} : { nowUtcMs }),
+      ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
+    });
+
     const application: CoreApplication = {
       dataRoot: basePathService.dataRoot(),
       pathService,
@@ -257,6 +267,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       configurationService,
       commandReceiptStore,
       commandReceiptsService,
+      commandService,
       close(): void {
         session.close();
       },
