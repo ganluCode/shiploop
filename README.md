@@ -47,6 +47,9 @@ docs/p01-3-operations.md   P01-3 项目身份与当前配置操作说明（F-014
 docs/p01-3-handoff.md       P01-2 → P01-3 接口交接（P01-2 F-014）
 docs/p01-4-handoff.md       P01-3 → P01-4 / P02 接口交接（P01-3 F-014）
 docs/p02-1-host-lifecycle-contract.md  P02-1 Host 单例发现与本机认证生命周期契约（F-001）
+docs/p02-1-operations.md  P02-1 Host 生命周期操作说明（F-014）
+docs/p02-1-handoff.md  P02-1 → P02-2 接口交接（P02-1 F-014）
+docs/acceptance/p02-1-f014-report.md  P02-1 Feature 交付报告（F-014，证据在同目录 evidence-p02-1/）
 ```
 
 ### 确定性测试约定（F-003）
@@ -194,6 +197,20 @@ P01 已由项目负责人于 2026-10-05 阶段放行（依据见 [docs/acceptanc
   - FR-1：两/三 CLI 同步屏障竞争唯一持锁 Host（各成功连接同一实例、失败候选进程 OS 核验退出、CLI 退出后 Host 存活）、规范路径别名同锁、独立数据根双 Host 并存、陈旧 PID 指向无关活进程、持锁但发现缺失/损坏（owner_unknown 不产生第二写入者）、崩溃后重新发现、旧清理迟到不删新实例文件、公开监听覆盖（argv/env × 0.0.0.0/::/非回环 IP/域名）退出码 2。
   - FR-2：token 第三方篡改 unauthorized、假服务与真 Host HTTP 负例矩阵（协议 426/实例与数据根 409/Origin 与伪造 Host 401/302）零文件副作用、不安全发现权限 unsafe_discovery、同 commandId 停止进行中重放（enterQuiesce 恰一次）、quiesce 未确认保留锁且 CLI 竞争者不产生第二写入者、合法 stop 三证据→重启新实例→重开 Core 前序持久数据未损坏且旧身份/token 被拒绝。
   - 脱敏证据映射与 not_run 记录：[docs/acceptance/evidence-p02-1/f013-regression-evidence.md](docs/acceptance/evidence-p02-1/f013-regression-evidence.md)（文档守护核对；不声称项目接入、执行取消或整个 P02 已验收）。
+- F-014 交付 **P02-1 操作说明、Feature 交付报告与接口交接**（仅文档与文档守护测试，不改变受测产品代码）：
+  - [docs/p02-1-operations.md](docs/p02-1-operations.md)：`host start|status|stop` 真实构建入口
+    `packages/cli/dist/bin.js` 与参数/默认值/退出码、临时数据根可复跑示例、发现/凭据/锁布局与
+    权限、停止三证据与 `stop_not_confirmed`/`owner_unknown` 诊断、证据获取与脱敏、可信本机/
+    同用户攻击/macOS 边界、未实现 `not_run`。
+  - [docs/p02-1-handoff.md](docs/p02-1-handoff.md)：`shiploop-host` 公共面（`connectToHost`/
+    `ensureHostRunning`/`acquireWriterLock`/`openLockedWriter`/`createHostFileStore`/`runHostCli`）、
+    锁持有要求与装配顺序、组合根/单向依赖、待实现能力与 Harness 验证策略交接。
+  - [docs/acceptance/p02-1-f014-report.md](docs/acceptance/p02-1-f014-report.md)：受测 commit
+    `8473f30…`、命令与退出码、FR/T 子集、安全说明、已知缺口与 `not_run`、结论（证据
+    [docs/acceptance/evidence-p02-1/](docs/acceptance/evidence-p02-1/)，已脱敏）。
+  - 文档守护 [test/docs-p02-1-operations.test.ts](test/docs-p02-1-operations.test.ts)：在真实临时
+    数据根与真实 Host 子进程上跑通操作说明纵向命令，并交叉核对命令/参数/默认值/退出码；
+    `npm run verify`（test/typecheck/build）仍 `PASS 3/3`。不提供 `accept:p02`。
 
 ### 单向依赖规则（F-004 起自动强制）
 
