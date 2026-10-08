@@ -33,7 +33,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Server } from 'node:http';
 import { homedir } from 'node:os';
-import { deriveDefaultDataRoot } from 'shiploop-core';
+import { createLocalOwnerPrincipal, deriveDefaultDataRoot } from 'shiploop-core';
 import type { RuntimeCapabilityCatalog } from 'shiploop-core';
 import { openCoreApplication } from 'shiploop-core/assembly';
 import type { CoreApplication } from 'shiploop-core/assembly';
@@ -360,6 +360,16 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
       getLifecycleState: () => lifecycle,
       getActivities: () => stopController.getActivities(),
       stop: stopController,
+      // P02-2 / F-011（§3.2/§11.1）：应用命令/查询/回执/快照路由接线。生产
+      // 装配固定绑定 local-owner 主体（Bearer 认证通过即本机用户）；Host 不
+      // 直接写库，全部授权在 Core 应用层；受限主体仅出现在测试装配。
+      application: {
+        principal: createLocalOwnerPrincipal(),
+        commandService: locked.writer.commandService,
+        queryService: locked.writer.queryService,
+        commandReceiptsService: locked.writer.commandReceiptsService,
+        getLifecycleState: () => lifecycle,
+      },
     });
     await listenOnLoopback(server);
     const address = server.address();

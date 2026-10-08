@@ -167,6 +167,17 @@ F-001 实际打开源码与测试逐项核对，下表入口与测试在开工�
 
 ### 3.2 路由总表（全部需要 Bearer 认证；前缀 `/v1`）
 
+> 实施状态：除 `GET /v1/events`（SSE，F-012 接线）外全部由 F-011 接线于
+> `packages/host/src/runtime/app-transport.ts`（生命周期传输面委派）；F-012 前
+> `/v1/events` 在认证后返回 `501 unsupported`（`details.reason='events_unsupported'`），
+> 握手能力同样不宣告 events。F-011 定案的 HTTP 查询参数：`projects.list` 接受
+> `limit`/`cursor`/`match`（any|all）/可重复 `label`；`snapshot.get` 接受
+> `scope=project|global` 与 `projectId`（project 必填、global 禁止）；其余查询路由
+> 不接受任何参数（未知/重复参数 400 invalid_input）。字面量路由
+> `/v1/projects/label-counts` 优先于 `:projectId` 形态（冻结取舍）。quiescing/
+> stopping/starting 状态下 POST /v1/commands 返回 `503 not_ready`
+> （`details.reason='host_quiescing'`），业务状态不变；只读查询不受影响。
+
 | 方法与路由 | operation | 说明 |
 |---|---|---|
 | `POST /v1/host/handshake`、`GET /v1/host/status`、`POST /v1/host/stop` | host.* | P02-1 既有，消息升 v2，语义不变 |
@@ -402,7 +413,8 @@ not_found 抛出（不积回执）。P01 直接服务首建仍不写创建事件
 CAS rejected 在任何业务写入前决定；写后异常必须回滚，不折算为持久 rejected。
 回调结束上下文失效，Promise 回调回滚并阻止 await 后写入；busy 仍使用既有有限预算。
 真实竞争/故障/重开回归见 `test/atomic-commands.test.ts`、`test/command-register.test.ts` 与
-`test/command-settings.test.ts`；Host/CLI 接线不在该切片内。
+`test/command-settings.test.ts`；Host /v1 路由接线由 F-011 完成（真实 HTTP 回归见
+`test/host-app-routes.test.ts`），CLI 接线仍后序任务（F-014~F-017）。
 
 ### 5.6 resultRef 与结果读取
 
@@ -682,6 +694,12 @@ CREATE INDEX command_receipts_principal_project_index
 
 ### 11.1 装配
 
+> 实施状态：F-011 已接线。`host-startup.ts` 在 `createHostLifecycleServer` 上装配
+> `application` 上下文（固定绑定 `createLocalOwnerPrincipal()` + Core 窄服务
+> commandService/queryService/commandReceiptsService）；Host 不直接写库、不跨包导入
+> Core 内部 SQLite 实现（边界检查继续强制）。受限主体仅经测试装配（固定于该 server
+> 实例，绝不来自请求数据）。
+
 - Host 仅经 `shiploop-core/assembly` 的受控 `openCoreApplication` 取得 Core，并新增**可信应用装配
   层**把 §4 的 principal 传入 Core 命令/查询服务；Host 传输层不直接写库、不跨包导入 Core 内部
   SQLite 实现（边界检查继续强制）。
@@ -723,6 +741,12 @@ CREATE INDEX command_receipts_principal_project_index
 
 只宣告本次真实实现的接口；未列出的能力请求即 `unsupported`。F-011 完成路由接线前，Host 不得宣告
 对应能力（保持 P02-1 现状，或按实现进度增量更新本视图与守护测试）。
+
+> 实施状态：F-011 起握手为线消息 schemaVersion=2 且 `application.commands`/
+> `application.queries` 即上表清单（与路由接线一一对应）；`application.events`
+> 在 F-012 SSE 接线前保持字面量 `"unsupported"`（上表 events 行的结构化形态随
+> F-012 生效）。客户端校验（`validateHandshakeResponse`）对该视图做精确键与集合
+> 相等核验，任何伪称/缺键一律 `response_malformed`。
 
 ## 12. CLI 参数面与退出码（F-014 ~ F-017 冻结）
 

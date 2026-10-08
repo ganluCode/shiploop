@@ -9,6 +9,13 @@ export {
   createHostLifecycleServer,
 } from './http-transport.js';
 export type { HostActivityCounts, HostLifecycleContext } from './http-transport.js';
+export { handleApplicationRequest, resolveAppRoute } from './app-transport.js';
+export type {
+  ApplicationOperation,
+  ApplicationRequestInput,
+  HostApplicationContext,
+  ResolvedAppRoute,
+} from './app-transport.js';
 export {
   createHostStopController,
   createIdleActivityGate,

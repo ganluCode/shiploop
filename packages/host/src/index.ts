@@ -37,6 +37,10 @@
  *   锁被占且无法核验时返回 owner_unknown，绝不绕过锁或按 PID 杀进程。
  *   launcher 面允许 node:child_process/os/url/path/timers；不读文件系统、
  *   不直连网络（经 client/）、不读 argv、不打开 SQLite。
+ * - F-011（P02-2）：线消息 schemaVersion 升 2（§3.1），握手 capabilities 为
+ *   §11.3 结构化视图；runtime/ 新增 app-transport.ts（§3.2 应用命令/回执/
+ *   查询/快照路由）与 http-primitives.ts（传输面共享原语），startHost 装配
+ *   固定 local-owner 主体的应用上下文；/v1/events 待 F-012。
  * - 三个面加载本模块仍不监听端口、不读用户目录、不启动进程、不写文件；
  */
 export * from './contract/index.js';

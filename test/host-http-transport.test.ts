@@ -61,7 +61,7 @@ const STUB_STARTED_AT = '2026-10-05T00:00:00.000Z';
 
 function handshakeBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     protocolVersion: 1,
     hostInstanceId: STUB_INSTANCE,
     dataRootIdentity: STUB_ROOT_IDENTITY,
@@ -184,7 +184,7 @@ describe('F-007 传输面：合法握手与状态（独立监听 + 伪上下文�
       expectTransportHygiene(response, STUB_TOKEN);
       const body = response.json();
       expect(body).toEqual({
-        schemaVersion: 1,
+        schemaVersion: 2,
         protocolVersion: 1,
         hostInstanceId: STUB_INSTANCE,
         dataRootIdentity: STUB_ROOT_IDENTITY,
@@ -197,8 +197,9 @@ describe('F-007 传输面：合法握手与状态（独立监听 + 伪上下文�
         expectedHostInstanceId: STUB_INSTANCE,
         expectedDataRootIdentity: STUB_ROOT_IDENTITY,
       });
-      expect(validated.capabilities.events).toBe('unsupported');
-      expect(validated.capabilities.projectCommands).toBe('unsupported');
+      expect(validated.capabilities.application.events).toBe('unsupported');
+      expect(validated.capabilities.application.commands).toContain('project.register');
+      expect(validated.capabilities.application.queries).toContain('snapshot.get');
       // 合法 CLI 请求不携带 Origin（§7.2 无 Origin 的本机请求合法）。
     } finally {
       await transport.close();
@@ -219,7 +220,7 @@ describe('F-007 传输面：合法握手与状态（独立监听 + 伪上下文�
         expectTransportHygiene(response, STUB_TOKEN);
         const body = response.json();
         expect(body).toEqual({
-          schemaVersion: 1,
+          schemaVersion: 2,
           protocolVersion: 1,
           hostInstanceId: STUB_INSTANCE,
           dataRootIdentity: STUB_ROOT_IDENTITY,
@@ -382,19 +383,21 @@ describe('F-007 传输面：认证与来源负例（401 子原因不可区分）
 });
 
 describe('F-007 传输面：版本与身份门禁（§8 顺序）', () => {
-  it('未知 schemaVersion → 400 unsupported_schema_version（不降级）', async () => {
+  it('未知/旧版 schemaVersion → 400 unsupported_schema_version（不降级；P02-1 的 1 同样拒绝）', async () => {
     const transport = await startStubTransport();
     try {
-      const response = await loopbackRequest({
-        port: transport.port,
-        method: 'POST',
-        path: '/v1/host/handshake',
-        token: STUB_TOKEN,
-        body: handshakeBody({ schemaVersion: 99 }),
-      });
-      expect(response.statusCode).toBe(400);
-      expect(errorBody(response).code).toBe('unsupported_schema_version');
-      expectTransportHygiene(response, STUB_TOKEN);
+      for (const legacyVersion of [1, 99]) {
+        const response = await loopbackRequest({
+          port: transport.port,
+          method: 'POST',
+          path: '/v1/host/handshake',
+          token: STUB_TOKEN,
+          body: handshakeBody({ schemaVersion: legacyVersion }),
+        });
+        expect(response.statusCode).toBe(400);
+        expect(errorBody(response).code).toBe('unsupported_schema_version');
+        expectTransportHygiene(response, STUB_TOKEN);
+      }
     } finally {
       await transport.close();
     }
@@ -458,7 +461,7 @@ describe('F-007 传输面：版本与身份门禁（§8 顺序）', () => {
         method: 'POST',
         path: '/v1/host/handshake',
         token: '0'.repeat(64),
-        body: { schemaVersion: 1, protocolVersion: 1 },
+        body: { schemaVersion: 2, protocolVersion: 1 },
       });
       expect(structureFirst.statusCode).toBe(400);
       expect(errorBody(structureFirst).code).toBe('invalid_input');
@@ -650,7 +653,7 @@ describe('F-008 传输面：stop 路由接线（真实控制器 + 空收尾端�
     try {
       const commandId = 'fa3d1b0e-4b6f-4b7a-9c0d-2e6a8f1b3d55';
       const body = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         commandId,
         hostInstanceId: STUB_INSTANCE,
         requestDigest: computeStopRequestDigest(commandId, STUB_INSTANCE, { mode: 'graceful' }),
@@ -735,7 +738,7 @@ describe('F-007 端到端：真实 startHost 的认证握手/状态与零副作�
         path: '/v1/host/handshake',
         token,
         body: {
-          schemaVersion: 1,
+          schemaVersion: 2,
           protocolVersion: 1,
           hostInstanceId: discovery.hostInstanceId,
           dataRootIdentity: host.dataRootIdentity,

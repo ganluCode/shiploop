@@ -199,14 +199,17 @@ describe('F-001 契约文档与仓库基线一致（开工现状事实）', () =
     expect(root.scripts).not.toHaveProperty('accept:p02');
   });
 
-  it('开工时线消息版本仍为 1、能力仍为 unsupported（F-011/F-013 负责按契约升版）', () => {
+  it('F-011 已升线消息 v2 并以 §11.3 结构化能力宣告真实接线（events 待 F-012）', () => {
     const constants = readText('packages/host/src/contract/constants.ts');
-    expect(constants).toMatch(/export const CURRENT_SCHEMA_VERSION = 1 as const/);
+    expect(constants).toMatch(/export const CURRENT_SCHEMA_VERSION = 2 as const/);
+    expect(constants).toMatch(/export const MAX_APP_BODY_BYTES = 65_536/);
+    expect(constants).toMatch(/export const MAX_QUERY_STRING_BYTES = 8_192/);
     const lifecycle = readText('packages/host/src/contract/lifecycle.ts');
+    expect(lifecycle).toContain('readonly application: ApplicationCapabilityView');
     expect(lifecycle).toContain("readonly events: 'unsupported'");
-    expect(lifecycle).toContain("readonly projectCommands: 'unsupported'");
-    // 契约必须记录这是待演进的现状，而非把目标当现状。
+    // 契约必须记录演进依据与独立版本纪律。
     expect(contractDoc).toContain('P02-2 起');
+    expect(contractDoc).toContain('§11.3');
   });
 
   it('F-006 已新增迁移 v3 command_receipts（开工基线为 v2，本守护随实现同步）', () => {
@@ -240,12 +243,17 @@ describe('F-001 契约文档与仓库基线一致（开工现状事实）', () =
     expect(contractDoc).toContain('shiploop events');
   });
 
-  it('当前 Host 传输面只有生命周期三路由，业务路径仍为 404/unsupported（现状基线）', () => {
+  it('F-011 已接线 §3.2 应用路由（/v1/events 除外，F-012 前 501）', () => {
+    const appTransport = readText('packages/host/src/runtime/app-transport.ts');
+    expect(appTransport).toContain('/v1/commands');
     const transport = readText('packages/host/src/runtime/http-transport.ts');
     expect(transport).toContain('HANDSHAKE_ROUTE');
     expect(transport).toContain('STATUS_ROUTE');
     expect(transport).toContain('STOP_ROUTE');
-    expect(transport).not.toContain('/v1/commands');
+    expect(transport).toContain('handleApplicationRequest');
+    const startup = readText('packages/host/src/runtime/host-startup.ts');
+    expect(startup).toContain('createLocalOwnerPrincipal');
+    expect(contractDoc).toContain('F-011 已接线');
   });
 
   it('P02-1 契约、交接与 F-014 报告仍在库且被本文显式接续', () => {

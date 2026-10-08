@@ -57,6 +57,7 @@ import {
   validateStopResultView,
   verifyStopRequestDigest,
 } from '../packages/host/src/index.ts';
+import { COMMAND_OPERATIONS, QUERY_OPERATIONS } from '../packages/core/src/index.ts';
 import type {
   HostDiscoveryRecord,
   HostErrorCode,
@@ -143,7 +144,8 @@ function expectHostError(
 describe('F-002 冻结常量与能力声明', () => {
   it('版本、回环地址、体积与预算均为契约冻结值', () => {
     expect(DISCOVERY_SCHEMA_VERSION).toBe(1);
-    expect(CURRENT_SCHEMA_VERSION).toBe(1);
+    // P02-2 §3.1：线消息升 v2；发现 schemaVersion 与线协议版本不联动。
+    expect(CURRENT_SCHEMA_VERSION).toBe(2);
     expect(CURRENT_PROTOCOL_VERSION).toBe(1);
     expect([...SUPPORTED_PROTOCOL_VERSIONS]).toEqual([1]);
     expect(LOOPBACK_LISTEN_ADDRESS).toBe('127.0.0.1');
@@ -158,7 +160,7 @@ describe('F-002 冻结常量与能力声明', () => {
     expect(STOP_ROUTE).toBe('/v1/host/stop');
   });
 
-  it('capabilities 只声明 P02-1 真实支持的能力（idle-only graceful stop，无事件/项目命令）', () => {
+  it('capabilities 只声明真实接线的能力（P02-2 §11.3 结构化视图；idle-only graceful stop，事件待 F-012）', () => {
     expect(CURRENT_HOST_CAPABILITIES).toEqual({
       lifecycleRoutes: ['handshake', 'status', 'stop'],
       stop: {
@@ -166,9 +168,35 @@ describe('F-002 冻结常量与能力声明', () => {
         idempotency: 'commandId+requestDigest',
         activityScope: 'idle-only',
       },
-      events: 'unsupported',
-      projectCommands: 'unsupported',
+      application: {
+        commands: [
+          'project.register',
+          'project.metadata.update',
+          'settings.global.create',
+          'settings.global.update',
+          'settings.project.create',
+          'settings.project.update',
+        ],
+        queries: [
+          'projects.list',
+          'projects.get',
+          'projects.binding.get',
+          'projects.labelCounts',
+          'settings.global.get',
+          'settings.global.export',
+          'settings.project.get',
+          'settings.project.effective',
+          'settings.project.export',
+          'receipts.get',
+          'results.resolve',
+          'snapshot.get',
+        ],
+        events: 'unsupported',
+      },
     });
+    // 接线宣告与 Core 支持面交叉核对（不漂移：Core 增删操作必须同步接线与宣告）。
+    expect([...CURRENT_HOST_CAPABILITIES.application.commands]).toEqual([...COMMAND_OPERATIONS]);
+    expect([...CURRENT_HOST_CAPABILITIES.application.queries]).toEqual([...QUERY_OPERATIONS]);
     expect(IDEMPOTENCY_SCHEME).toBe('commandId+requestDigest');
     expect(ACTIVITY_SCOPE_IDLE_ONLY).toBe('idle-only');
     expect([...SUPPORTED_STOP_MODES]).toEqual([STOP_MODE_GRACEFUL]);
@@ -378,7 +406,7 @@ describe('F-002 §8 握手请求校验', () => {
   it('合法请求只含 4 个冻结字段，通过结构与版本校验', () => {
     const parsed = validateHandshakeRequest(validHandshakeBody());
     expect(parsed).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       protocolVersion: 1,
       hostInstanceId: INSTANCE_ID,
       dataRootIdentity: ROOT_IDENTITY,
@@ -388,7 +416,7 @@ describe('F-002 §8 握手请求校验', () => {
   it('未知字段/缺字段/类型错误/格式错误 → invalid_input（结构先于语义）', () => {
     const malformed: Array<[string, unknown]> = [
       ['unknown', { ...validHandshakeBody(), extra: 1 }],
-      ['missing', { schemaVersion: 1, protocolVersion: 1 }],
+      ['missing', { schemaVersion: 2, protocolVersion: 1 }],
       ['schema-type', { ...validHandshakeBody(), schemaVersion: '1' }],
       ['protocol-type', { ...validHandshakeBody(), protocolVersion: '1' }],
       ['instance', { ...validHandshakeBody(), hostInstanceId: 'nope' }],
@@ -403,7 +431,7 @@ describe('F-002 §8 握手请求校验', () => {
 
   it('未知 schemaVersion → unsupported_schema_version（400 语义）', () => {
     const error = expectHostError(
-      () => validateHandshakeRequest({ ...validHandshakeBody(), schemaVersion: 2 }),
+      () => validateHandshakeRequest({ ...validHandshakeBody(), schemaVersion: 1 }),
       'unsupported_schema_version',
       'host.handshake',
     );
@@ -458,7 +486,16 @@ describe('F-002 §8 握手响应校验（客户端侧严格核验）', () => {
     expectHostError(
       () =>
         validateHandshakeResponse(
-          { ...validHandshakeResponse(), schemaVersion: 2 },
+          { ...validHandshakeResponse(), schemaVersion: 1 },
+          expectation,
+        ),
+      'unsupported_schema_version',
+      'host.handshake',
+    );
+    expectHostError(
+      () =>
+        validateHandshakeResponse(
+          { ...validHandshakeResponse(), schemaVersion: 99 },
           expectation,
         ),
       'unsupported_schema_version',
@@ -466,13 +503,16 @@ describe('F-002 §8 握手响应校验（客户端侧严格核验）', () => {
     );
   });
 
+  const applicationCapabilities = CURRENT_HOST_CAPABILITIES.application;
   const malformedResponseCases: Array<[string, Record<string, unknown>]> = [
     ['伪造生命周期状态', { lifecycleState: 'stopped' }],
-    ['伪称支持事件', { capabilities: { ...CURRENT_HOST_CAPABILITIES, events: 'sse' } }],
-    ['伪称支持项目命令', { capabilities: { ...CURRENT_HOST_CAPABILITIES, projectCommands: 'supported' } }],
+    ['伪称支持事件', { capabilities: { ...CURRENT_HOST_CAPABILITIES, application: { ...applicationCapabilities, events: 'sse' } } }],
+    ['伪称额外命令', { capabilities: { ...CURRENT_HOST_CAPABILITIES, application: { ...applicationCapabilities, commands: [...applicationCapabilities.commands, 'work.submit'] } } }],
+    ['伪称额外查询', { capabilities: { ...CURRENT_HOST_CAPABILITIES, application: { ...applicationCapabilities, queries: [...applicationCapabilities.queries, 'runs.list'] } } }],
     ['伪称 force 模式', { capabilities: { ...CURRENT_HOST_CAPABILITIES, stop: { ...CURRENT_HOST_CAPABILITIES.stop, modes: ['graceful', 'force'] } } }],
     ['伪造路由表', { capabilities: { ...CURRENT_HOST_CAPABILITIES, lifecycleRoutes: ['handshake'] } }],
     ['能力含未知键', { capabilities: { ...CURRENT_HOST_CAPABILITIES, future: 'x' } }],
+    ['应用能力缺 events', { capabilities: { lifecycleRoutes: CURRENT_HOST_CAPABILITIES.lifecycleRoutes, stop: CURRENT_HOST_CAPABILITIES.stop, application: { commands: applicationCapabilities.commands, queries: applicationCapabilities.queries } } }],
     ['顶层未知键', { future: 1 }],
     ['缺 startedAt', { startedAt: undefined }],
   ];
@@ -691,7 +731,7 @@ describe('F-002 §10 stop 请求校验与摘要', () => {
   });
 
   it('未知 schemaVersion → unsupported_schema_version（摘要核对之前的结构语义）', () => {
-    const body = stopBody({ schemaVersion: 2 });
+    const body = stopBody({ schemaVersion: 1 });
     const error = expectHostError(() => validateStopRequest(body), 'unsupported_schema_version', 'host.stop');
     expect(error.httpStatus).toBe(400);
   });

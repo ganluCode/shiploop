@@ -176,6 +176,15 @@ const HTTP_STATUS_BY_PUBLIC_CODE: Readonly<Record<PublicErrorCode, number>> = Ob
   internal: 500,
 });
 
+/**
+ * §5.7 公开错误码的唯一 HTTP 状态映射（纯函数，无 I/O）。
+ * Host 传输面（F-011）据此渲染错误响应与 rejected 回执的 HTTP 状态，
+ * 不允许传输面另立第二份映射表。
+ */
+export function publicErrorHttpStatus(code: PublicErrorCode): number {
+  return HTTP_STATUS_BY_PUBLIC_CODE[code];
+}
+
 const DEFAULT_MESSAGE_BY_PUBLIC_CODE: Readonly<Record<PublicErrorCode, string>> = Object.freeze({
   invalid_input: '请求未通过结构校验',
   unsupported_schema_version: '不支持的线消息 schema 版本',

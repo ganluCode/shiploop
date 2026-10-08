@@ -8,7 +8,7 @@
  * 先暴露版本存在性；结构问题一律 invalid_input(400)。
  *
  * 客户端侧响应校验对假服务零容忍：身份/根必须与预期一致，能力声明必须等于
- * P02-1 冻结能力集，任何伪造或畸形都拒绝（不发送后续业务请求）。
+ * 冻结能力集（P02-2 §11.3 结构化视图），任何伪造或畸形都拒绝（不发送后续业务请求）。
  */
 import {
   CURRENT_PROTOCOL_VERSION,
@@ -192,8 +192,7 @@ function validateCapabilities(input: unknown): HostCapabilities {
   requireExactKeys({ ...surface, subject: 'response.capabilities' }, input, [
     'lifecycleRoutes',
     'stop',
-    'events',
-    'projectCommands',
+    'application',
   ]);
 
   requireStringSetEqual(
@@ -230,12 +229,35 @@ function validateCapabilities(input: unknown): HostCapabilities {
     });
   }
 
-  for (const field of ['events', 'projectCommands'] as const) {
-    if (input[field] !== 'unsupported') {
-      throw new HostProtocolError('response_malformed', surface.operation, `capabilities.${field} 必须为 unsupported`, {
-        details: { field: `response.capabilities.${field}`, reason: 'capability_mismatch' },
-      });
-    }
+  // P02-2 §11.3 结构化应用能力视图：只接受 Host 实际接线的冻结清单；
+  // events 在 F-012 SSE 接线前必须为 'unsupported'，任何伪称一律拒绝。
+  const application = input.application;
+  if (!isPlainObject(application)) {
+    throw new HostProtocolError('response_malformed', surface.operation, 'capabilities.application 必须是 JSON 对象', {
+      details: { field: 'response.capabilities.application', reason: 'invalid_object' },
+    });
+  }
+  requireExactKeys({ ...surface, subject: 'response.capabilities.application' }, application, [
+    'commands',
+    'queries',
+    'events',
+  ]);
+  requireStringSetEqual(
+    surface,
+    'capabilities.application.commands',
+    application.commands,
+    CURRENT_HOST_CAPABILITIES.application.commands,
+  );
+  requireStringSetEqual(
+    surface,
+    'capabilities.application.queries',
+    application.queries,
+    CURRENT_HOST_CAPABILITIES.application.queries,
+  );
+  if (application.events !== 'unsupported') {
+    throw new HostProtocolError('response_malformed', surface.operation, 'capabilities.application.events 必须为 unsupported', {
+      details: { field: 'response.capabilities.application.events', reason: 'capability_mismatch' },
+    });
   }
 
   return JSON.parse(JSON.stringify(input)) as HostCapabilities;

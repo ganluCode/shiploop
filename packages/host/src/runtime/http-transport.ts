@@ -1,6 +1,7 @@
 /**
  * F-007 Host 生命周期 HTTP 传输面（契约 §7.2 传输规则、§8 握手校验顺序、
- * §9 只读状态、§14 错误码与 HTTP 映射）。
+ * §9 只读状态、§14 错误码与 HTTP 映射）；F-011（P02-2）起在同一监听上
+ * 接线 §3.2 应用路由（命令/回执/查询/快照，见 app-transport.ts）。
  *
  * 规则落实：
  * - 仅三条生命周期路由；未知路由 404、方法不允许 405（details 给允许方法），
@@ -30,7 +31,6 @@
  * import 本模块无副作用：不监听端口、不读文件系统、不读 argv/env；只有
  * createHostLifecycleServer 显式调用才创建（未监听的）Server。
  */
-import { timingSafeEqual } from 'node:crypto';
 import { createServer } from 'node:http';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import {
@@ -57,6 +57,13 @@ import type {
   HostStatusResponse,
   LifecycleState,
 } from '../contract/index.js';
+import {
+  bearerCredentialMatches,
+  readLimitedBody,
+  sendJson,
+} from './http-primitives.js';
+import { handleApplicationRequest, resolveAppRoute } from './app-transport.js';
+import type { HostApplicationContext } from './app-transport.js';
 import type { HostStopController } from './host-stop.js';
 
 /**
@@ -86,6 +93,11 @@ export interface HostLifecycleContext {
   getActivities(): HostActivityCounts;
   /** F-008 停止控制器（§10.4/§10.5 编排；getStopView 供 status 停止视图）。 */
   readonly stop: HostStopController;
+  /**
+   * P02-2 / F-011 应用路由装配（§3.2/§11.1）：缺席时应用路径一律 404
+   * unknown_operation（P02-1 现状）；装配后由 Core 应用服务承担全部授权。
+   */
+  readonly application?: HostApplicationContext;
 }
 
 interface ResolvedRoute {
@@ -106,45 +118,9 @@ function unauthorized(operation: HostOperation): HostProtocolError {
   });
 }
 
-/** 有界请求体读取：超过上限即停止收集并标记（继续排空由连接关闭承担）。 */
-function readLimitedBody(
-  request: IncomingMessage,
-  limit: number,
-): Promise<{ body: Buffer; exceeded: boolean }> {
-  return new Promise((resolveRead, rejectRead) => {
-    const chunks: Buffer[] = [];
-    let size = 0;
-    let exceeded = false;
-    request.on('data', (chunk: Buffer) => {
-      if (exceeded) {
-        return;
-      }
-      size += chunk.length;
-      if (size > limit) {
-        exceeded = true;
-        chunks.length = 0;
-        return;
-      }
-      chunks.push(chunk);
-    });
-    request.on('end', () => resolveRead({ body: Buffer.concat(chunks), exceeded }));
-    request.on('error', rejectRead);
-  });
-}
-
 /** timingSafeEqual 凭据比较：任何子原因（缺失/方案/长度/值）都是同一 401。 */
 function authenticate(request: IncomingMessage, context: HostLifecycleContext, operation: HostOperation): void {
-  const header = request.headers.authorization;
-  if (typeof header !== 'string') {
-    throw unauthorized(operation);
-  }
-  const match = /^bearer\s+(\S+)\s*$/i.exec(header);
-  if (match === null) {
-    throw unauthorized(operation);
-  }
-  const provided = Buffer.from(match[1] as string, 'utf8');
-  const expected = Buffer.from(context.authToken, 'utf8');
-  if (provided.length !== expected.length || !timingSafeEqual(provided, expected)) {
+  if (!bearerCredentialMatches(request, context.authToken)) {
     throw unauthorized(operation);
   }
 }
@@ -185,20 +161,6 @@ function buildStatusResponse(context: HostLifecycleContext): HostStatusResponse 
   };
 }
 
-function sendJson(response: ServerResponse, status: number, payload: unknown): void {
-  if (response.writableEnded) {
-    return;
-  }
-  const text = JSON.stringify(payload);
-  response.writeHead(status, {
-    'content-type': 'application/json; charset=utf-8',
-    'cache-control': 'no-store',
-    // 每响应关闭连接：不留持久空闲连接，拆卸与资源占用有界（§7.2）。
-    connection: 'close',
-  });
-  response.end(text);
-}
-
 async function handleRequest(
   server: Server,
   context: HostLifecycleContext,
@@ -207,10 +169,32 @@ async function handleRequest(
 ): Promise<void> {
   const method = request.method ?? '';
   // 路由匹配只看路径部分；query 不参与路由（凭据绝不允许出现在 URL，§4.2）。
-  const path = (request.url ?? '').split('?')[0] ?? '';
+  const requestUrl = request.url ?? '';
+  const queryIndex = requestUrl.indexOf('?');
+  const path = (queryIndex === -1 ? requestUrl : requestUrl.slice(0, queryIndex)) || '';
+  const rawQuery = queryIndex === -1 ? '' : requestUrl.slice(queryIndex + 1);
   const route = ROUTES[path];
+  // F-011（P02-2 §3.2）：生命周期表外路径在应用装配存在时进入应用路由解析；
+  // 表外路径（含 /v1/files 与任何 path/locator 形态）仍 404 unknown_operation。
+  const appRoute =
+    route === undefined && context.application !== undefined ? resolveAppRoute(path) : undefined;
   // 未知路由的 fallback 操作身份与 F-005 伪服务一致（host.handshake）。
   const operation: HostOperation = route?.operation ?? 'host.handshake';
+
+  if (appRoute !== undefined && context.application !== undefined) {
+    // 应用路由（命令/回执/查询/快照）由 app-transport 全权处理：体积限额、
+    // 方法/查询串白名单、Host/Origin、Bearer 认证、Core 窄服务调用与错误映射。
+    await handleApplicationRequest({
+      app: context.application,
+      authToken: context.authToken,
+      port: actualPort(server, operation),
+      route: appRoute,
+      request,
+      response,
+      rawQuery,
+    });
+    return;
+  }
 
   try {
     // 传输层第 1 步：体积有界读取（任何路由都先限体积，保证资源占用有界）。

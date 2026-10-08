@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { beforeAll, describe, expect, it } from 'vitest';
 import {
   acquireWriterLock, openLockedWriter, createHostFileStore, resolveCanonicalDataRoot,
-  CURRENT_HOST_CAPABILITIES, type HostDiscoveryRecord, type WriterLockOptions,
+  CURRENT_HOST_CAPABILITIES, CURRENT_SCHEMA_VERSION, type HostDiscoveryRecord, type WriterLockOptions,
 } from '../packages/host/src/index.ts';
 import { createTempSandbox } from './helpers/temp-sandbox.ts';
 
@@ -33,8 +33,9 @@ function record(root: string, pid = process.pid): HostDiscoveryRecord {
   };
 }
 function response(discovery: HostDiscoveryRecord) {
-  const { schemaVersion, protocolVersion, hostInstanceId, dataRootIdentity, startedAt } = discovery;
-  return { schemaVersion, protocolVersion, hostInstanceId, dataRootIdentity, startedAt,
+  const { protocolVersion, hostInstanceId, dataRootIdentity, startedAt } = discovery;
+  // 握手线消息版本与发现 schemaVersion 独立（P02-2 §3.1：线消息 v2、发现 v1）。
+  return { schemaVersion: CURRENT_SCHEMA_VERSION, protocolVersion, hostInstanceId, dataRootIdentity, startedAt,
     lifecycleState: 'ready', capabilities: CURRENT_HOST_CAPABILITIES };
 }
 

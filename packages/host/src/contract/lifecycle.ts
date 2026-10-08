@@ -2,10 +2,13 @@
  * F-002 Host 生命周期状态与能力声明（契约纯模块）。
  *
  * 协议依据：docs/p02-1-host-lifecycle-contract.md §11（状态机）、
- * §8（握手 capabilities 只描述真实支持）。
+ * §8（握手 capabilities 只描述真实支持）；P02-2
+ * docs/p02-2-commands-events-contract.md §11.3（结构化应用能力视图）。
  *
  * `stopped` 不是网络状态（进程已不存在），不在线协议枚举内；
- * P02-1 生产装配的活动数恒为 0（idle-only），事件与项目命令均 unsupported。
+ * P02-1/P02-2 生产装配的活动数恒为 0（idle-only）。
+ * P02-2 / F-011 起 capabilities 按 §11.3 宣告真实接线的应用命令与查询；
+ * SSE 事件能力在 F-012 接线前保持 'unsupported'，不提前宣告。
  */
 import {
   ACTIVITY_SCOPE_IDLE_ONLY,
@@ -33,12 +36,51 @@ export interface StopCapabilityView {
   readonly activityScope: typeof ACTIVITY_SCOPE_IDLE_ONLY;
 }
 
-/** §8 握手成功响应 capabilities（深度冻结）。 */
+/**
+ * P02-2 §11.3：Host 实际接线的应用命令（与 §3.2 命令路由一一对应）。
+ * 本清单是 Host 的接线宣告，不随 Core 支持面自动增长；新增命令必须先接线
+ * 再宣告（测试与 Core 命令操作清单交叉核对，防止漂移）。
+ */
+export const APPLICATION_COMMAND_CAPABILITIES = [
+  'project.register',
+  'project.metadata.update',
+  'settings.global.create',
+  'settings.global.update',
+  'settings.project.create',
+  'settings.project.update',
+] as const;
+
+/** P02-2 §11.3：Host 实际接线的应用查询（含回执/结果读取与快照）。 */
+export const APPLICATION_QUERY_CAPABILITIES = [
+  'projects.list',
+  'projects.get',
+  'projects.binding.get',
+  'projects.labelCounts',
+  'settings.global.get',
+  'settings.global.export',
+  'settings.project.get',
+  'settings.project.effective',
+  'settings.project.export',
+  'receipts.get',
+  'results.resolve',
+  'snapshot.get',
+] as const;
+
+/**
+ * §11.3 应用能力视图。events 在 F-012 SSE 接线前为字面量 'unsupported'；
+ * 接线后演进为 {transport, route, scopes} 结构化视图（契约随之更新）。
+ */
+export interface ApplicationCapabilityView {
+  readonly commands: readonly string[];
+  readonly queries: readonly string[];
+  readonly events: 'unsupported';
+}
+
+/** §8/§11.3 握手成功响应 capabilities（深度冻结）。 */
 export interface HostCapabilities {
   readonly lifecycleRoutes: readonly LifecycleRouteName[];
   readonly stop: StopCapabilityView;
-  readonly events: 'unsupported';
-  readonly projectCommands: 'unsupported';
+  readonly application: ApplicationCapabilityView;
 }
 
 function deepFreeze<T>(value: T): T {
@@ -52,8 +94,8 @@ function deepFreeze<T>(value: T): T {
 }
 
 /**
- * P02-1 真实支持的唯一能力集。任何假服务宣称更多能力都会被响应校验拒绝
- * （客户端以此而非名称猜测判断能力）。
+ * 真实支持的唯一能力集（P02-2 / F-011 接线后的 §11.3 视图）。任何假服务宣称
+ * 更多能力都会被响应校验拒绝（客户端以此而非名称猜测判断能力）。
  */
 export const CURRENT_HOST_CAPABILITIES: HostCapabilities = deepFreeze({
   lifecycleRoutes: [...LIFECYCLE_ROUTE_NAMES],
@@ -62,6 +104,9 @@ export const CURRENT_HOST_CAPABILITIES: HostCapabilities = deepFreeze({
     idempotency: IDEMPOTENCY_SCHEME,
     activityScope: ACTIVITY_SCOPE_IDLE_ONLY,
   },
-  events: 'unsupported',
-  projectCommands: 'unsupported',
+  application: {
+    commands: [...APPLICATION_COMMAND_CAPABILITIES],
+    queries: [...APPLICATION_QUERY_CAPABILITIES],
+    events: 'unsupported',
+  },
 });

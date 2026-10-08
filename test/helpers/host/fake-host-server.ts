@@ -279,7 +279,10 @@ export async function startFakeHostServer(
         if (fault === 'capability-lie') {
           send(200, {
             ...success,
-            capabilities: { ...CURRENT_HOST_CAPABILITIES, events: 'streaming' },
+            capabilities: {
+              ...CURRENT_HOST_CAPABILITIES,
+              application: { ...CURRENT_HOST_CAPABILITIES.application, events: 'streaming' },
+            },
           });
           return;
         }
