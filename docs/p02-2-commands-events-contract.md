@@ -382,10 +382,14 @@ interface CommandReceipt {
 失败必须整组回滚（无「持久 accepted 但结果永不可知」状态）。Git/仓库检查、文件发布、网络与
 能力发现一律在写事务之外完成，提交时只重核必要的 revision。
 
-**F-007 已实施切片**：`CoreApplication.commandService.submit(principal, envelope)` 当前只接入
-`project.metadata.update`（注册/配置仍明确 unsupported，分别待 F-008/F-009）。
-`ports/atomic-commands.ts` 的同步 `AtomicCommandStore`/`CommandTransaction` 由 SQLite
-同会话原语实现；P01 元数据 CAS/事件与 F-006 回执 SQL 共用，不调用 Promise 服务、不嵌套事务。
+**已实施切片（F-007/F-008）**：`CoreApplication.commandService.submit(principal, envelope)`
+当前接入 `project.metadata.update`（F-007）与 `project.register`（F-008）；配置命令仍明确
+unsupported（待 F-009）。`ports/atomic-commands.ts` 的同步 `AtomicCommandStore`/
+`CommandTransaction` 由 SQLite 同会话原语实现；P01 元数据 CAS/事件、注册 SQL 与 F-006
+回执 SQL 共用，不调用 Promise 服务、不嵌套事务。注册命令在写事务之外完成只读仓库检查
+（RepositoryInspector），事务内写「项目 + 绑定 + `project.registered` 创建事件 + completed
+回执」；同 canonicalPath 命中返回 already_exists（不写事件、不覆盖元数据），命中不可见
+项目按 forbidden 拒绝且不积回执。P01 直接服务首建仍不写创建事件（§15.3 边界）。
 过期新命令先在事务外拒绝；权威回执/摘要、授权、时效、项目与 CAS 在 BEGIN IMMEDIATE 内重核。
 CAS rejected 在任何业务写入前决定；写后异常必须回滚，不折算为持久 rejected。
 回调结束上下文失效，Promise 回调回滚并阻止 await 后写入；busy 仍使用既有有限预算。
@@ -531,7 +535,7 @@ interface PublicStateEvent {
 
 | type | aggregate_type | project_id | payload 形状 | 何时写 |
 |---|---|---|---|---|
-| `project.registered` | `project` | 新项目 ID（非空） | `{"registered":true}` | 仅命令路径注册成功（新增） |
+| `project.registered` | `project` | 新项目 ID（非空） | `{"registered":true}` | 仅命令路径注册成功（F-008 已实施） |
 | `project.metadata_updated` | `project` | 项目 ID | `{"changedFields":[...]}`（P01 既有） | P01 直接服务与命令路径共用，不重复 |
 | `settings.global_created` | `global_settings` | NULL | `settingsChangeSummary`（键名/段名/schemaVersion） | 仅命令路径全局首建成功（新增） |
 | `settings.project_created` | `project_settings` | 项目 ID | 同上 | 仅命令路径项目首建成功（新增） |
@@ -851,7 +855,9 @@ shiploop events (--project <id> | --global) [--cursor <cursor>] [--snapshot-only
 - 契约决定：**创建事件只在新命令提交路径写入**（原子命令提交端口，§5.5）；P01 直接应用服务方法
   （`createProjectWithRepositoryBinding`、`createGlobalSettings`、`createProjectSettings` 等）保持
   P01 语义不变，以保留前序业务语义回归（P01-3/P01-4 测试不改）。更新类事件双方共用同一
-  `*_updated` 写入，命令路径不重复写。两条路径的边界由 F-008/F-009 的测试固定。
+  `*_updated` 写入，命令路径不重复写。两条路径的边界由 F-008/F-009 的测试固定
+  （F-008 已固定项目注册边界：`test/command-register.test.ts` 断言 P01 直接服务注册零事件、
+  命令路径恰一条 `project.registered`）。
 - **请求核对**：若要求直接服务路径也补创建事件，应作为对 P01 契约的显式变更（同步 P01 测试与
   文档），不在本 Feature 静默修改。
 

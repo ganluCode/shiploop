@@ -253,6 +253,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
 
     const commandService = createCommandService({
       atomicStore: createSqliteAtomicCommandStore(session, nowUtcMs === undefined ? {} : { nowUtcMs }),
+      repositoryInspector,
       ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
     });
 

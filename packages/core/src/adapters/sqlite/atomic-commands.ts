@@ -29,6 +29,11 @@ export function createSqliteAtomicCommandStore(
           findReceipt: guarded(receipts.findReceiptByCommandId),
           getProject: guarded(state.getProject),
           updateProjectMetadata: guarded(state.updateProjectInTransaction),
+          // F-008：命令路径新建项目时同事务写 project.registered 创建事件。
+          registerProject: guarded((project: unknown, binding: unknown) =>
+            state.createProjectWithBindingInTransaction(project, binding, {
+              recordRegisteredEvent: true,
+            })),
           saveReceipt: guarded(receipts.saveReceiptInTransaction),
         });
         try {

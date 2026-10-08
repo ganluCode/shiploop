@@ -267,14 +267,14 @@ describe('F-007 原子幂等命令', () => {
     expect(s.probe.counts()).toMatchObject({ state_events: 0, command_receipts: 0 });
   });
 
-  it('本次未接入的注册明确 unsupported，不做仓库检查或任何业务写入', async () => {
+  it('本次未接入的配置命令明确 unsupported，不做任何业务写入', async () => {
     const s = await setup();
     await expect(s.service.submit(s.owner, {
-      schemaVersion: 2, commandId: randomUUID(), operation: 'project.register',
-      scope: { kind: 'registration' }, issuedAt: new Date(NOW).toISOString(),
-      payload: { repositoryPath: s.box.repoDirA, displayName: 'not yet supported' },
+      schemaVersion: 2, commandId: randomUUID(), operation: 'settings.global.create',
+      scope: { kind: 'global' }, issuedAt: new Date(NOW).toISOString(),
+      payload: { schemaVersion: 2, strategies: { defaultStrategy: { runtime: 'pi', provider: 'anthropic', model: 'claude-sonnet' } } },
     })).rejects.toMatchObject({ code: 'unsupported' });
-    expect(s.probe.counts()).toMatchObject({ projects: 1, repository_bindings: 0, state_events: 0, command_receipts: 0 });
+    expect(s.probe.counts()).toMatchObject({ projects: 1, global_settings: 0, state_events: 0, command_receipts: 0 });
   });
 
   it('关闭重开后相同回执稳定，项目后续编辑不改变原 result', async () => {

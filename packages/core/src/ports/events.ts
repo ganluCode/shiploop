@@ -33,6 +33,7 @@ import {
   GLOBAL_SETTINGS_ID,
   GLOBAL_SETTINGS_UPDATED_EVENT_TYPE,
   PROJECT_METADATA_UPDATED_EVENT_TYPE,
+  PROJECT_REGISTERED_EVENT_TYPE,
   PROJECT_SETTINGS_UPDATED_EVENT_TYPE,
 } from './state-store.js';
 import type { StateEventAggregateType } from './state-store.js';
@@ -45,7 +46,7 @@ export const EVENT_READ_OPERATION = 'events.read';
 export const PUBLIC_EVENT_SCHEMA_VERSION = 1 as const;
 
 /** 仅命令路径注册成功写入（F-008）；P01 直接服务首建不写事件（契约 §15.3）。 */
-export const PROJECT_REGISTERED_EVENT_TYPE = 'project.registered';
+export { PROJECT_REGISTERED_EVENT_TYPE };
 /** 仅命令路径全局配置首建成功写入（F-009）。 */
 export const SETTINGS_GLOBAL_CREATED_EVENT_TYPE = 'settings.global_created';
 /** 仅命令路径项目配置首建成功写入（F-009）。 */

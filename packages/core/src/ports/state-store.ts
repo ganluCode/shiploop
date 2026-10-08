@@ -44,6 +44,13 @@ export const GLOBAL_SETTINGS_ID = 'global';
 export const PROJECT_METADATA_UPDATED_EVENT_TYPE = 'project.metadata_updated';
 
 /**
+ * 项目注册创建事件类型（P02-2 / F-008）：仅命令路径注册成功（新建项目）时
+ * 与项目/绑定在同一短事务内写入；P01 直接服务首建不写事件（契约 §15.3）。
+ * payload 固定为 {"registered":true}，不含名称/标签/路径等值。
+ */
+export const PROJECT_REGISTERED_EVENT_TYPE = 'project.registered';
+
+/**
  * 当前配置更新事件类型（F-010）：全局/项目当前配置的 CAS 更新在同一短事务内
  * 追加一条对应类型的 state_events 脱敏审计记录（见契约文档 §4.4/§6.3）。
  * 首次创建为 insert-only，不写审计记录（与 createProject 不写事件一致）。

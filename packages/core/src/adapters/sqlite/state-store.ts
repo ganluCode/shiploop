@@ -28,7 +28,10 @@
  *   项目与绑定封装为同一业务原子操作（BEGIN IMMEDIATE 下按 canonical_path
  *   检查并插入；同路径已注册时复用胜者返回 already_exists，不新增行、不覆盖
  *   既有元数据；唯一约束冲突时事务回滚后有界核对一次），getRepositoryBinding
- *   按项目读取绑定（项目缺失/无绑定均为 not_found）；
+ *   按项目读取绑定（项目缺失/无绑定均为 not_found）；P02-2 / F-008 起抽取
+ *   createProjectWithBindingInTransaction 同步原语供原子命令事务复用——命令
+ *   路径新建时同事务追加唯一一条 project.registered 创建事件，P01 直接
+ *   服务首建仍不写事件（契约 §15.3），两者共用同一 SQL/校验/幂等规则；
  * - P01-3 / F-007 起补齐只读查询：listProjects 以绑定参数 + json_each 实现任一/
  *   全部标签筛选与稳定 id 升序键集分页（无新表、无新迁移）；countProjectLabels
  *   按项目去重计数；两者不参与写路径。
@@ -49,6 +52,7 @@ import {
   GLOBAL_SETTINGS_ID,
   GLOBAL_SETTINGS_UPDATED_EVENT_TYPE,
   PROJECT_METADATA_UPDATED_EVENT_TYPE,
+  PROJECT_REGISTERED_EVENT_TYPE,
   PROJECT_SETTINGS_UPDATED_EVENT_TYPE,
   projectMetadataChangedFields,
   settingsChangeSummary,
@@ -238,6 +242,15 @@ export function createSqliteStateAccess(
   store: StateStore;
   getProject(projectId: string): ProjectRecord;
   updateProjectInTransaction(projectId: string, input: unknown, timestamp?: number): ProjectRecord;
+  /**
+   * F-008：项目 + 绑定 +（可选）project.registered 创建事件的原子创建原语；
+   * 仅供适配器内部组合（原子命令事务），调用方必须已持有本会话写事务。
+   */
+  createProjectWithBindingInTransaction(
+    projectInput: unknown,
+    bindingInput: unknown,
+    options?: { readonly timestamp?: number; readonly recordRegisteredEvent?: boolean },
+  ): ProjectWithRepositoryBindingResult;
 } {
   const nowUtcMs = options.nowUtcMs ?? Date.now;
 
@@ -522,6 +535,79 @@ export function createSqliteStateAccess(
     return updated;
   }
 
+  /** already_exists 幂等复用：读胜者项目 + 绑定，不新增行、不覆盖元数据、不写事件。 */
+  function alreadyExistsResult(
+    db: Database.Database,
+    winner: RepositoryBindingRow,
+    operation: string,
+  ): ProjectWithRepositoryBindingResult {
+    const projectRow = selectProjectRow(db, winner.project_id, operation);
+    const context: ValidationContext = {
+      operation,
+      entity: { type: 'project', id: winner.project_id },
+    };
+    return {
+      status: 'already_exists',
+      project: projectFromRow(projectRow, context),
+      binding: bindingFromRow(winner),
+    };
+  }
+
+  /**
+   * 项目 + 仓库绑定原子创建同步原语（调用方必须已持有本会话写事务）。
+   * 与 P01 直接服务同一 SQL/校验/幂等规则：canonicalPath 已注册返回
+   * already_exists（不写事件、不覆盖元数据）；新建时仅当
+   * recordRegisteredEvent=true（F-008 幂等命令路径）才在同事务追加唯一一条
+   * project.registered 创建事件（P01 直接服务首建不写事件，契约 §15.3）；
+   * 事件写入失败整组回滚，不产生半条记录。
+   */
+  function createProjectWithBindingInTransaction(
+    projectInput: unknown,
+    bindingInput: unknown,
+    options: { readonly timestamp?: number; readonly recordRegisteredEvent?: boolean } = {},
+  ): ProjectWithRepositoryBindingResult {
+    const operation = 'StateStore.createProjectWithRepositoryBinding';
+    assertOpen(operation);
+    if (!session.database.inTransaction) throw new TypeError('项目与绑定创建必须位于写事务内');
+    const validProject = validateCreateProjectInput(projectInput, operation);
+    const validBinding = validateCreateRepositoryBindingInput(bindingInput, operation);
+    const timestamp = options.timestamp ?? nowUtcMs();
+    const projectId = randomUUID();
+    const bindingId = randomUUID();
+    const context: ValidationContext = { operation, entity: { type: 'project', id: projectId } };
+    const db = session.database;
+    // BEGIN IMMEDIATE 下检查与插入被串行化：同一路径的并发注册在此看到
+    // 胜者已提交的绑定并复用，不新增行、不覆盖既有元数据、不写创建事件。
+    const existing = selectBindingRowByCanonicalPath(db, validBinding.canonicalPath);
+    if (existing !== undefined) {
+      return alreadyExistsResult(db, existing, operation);
+    }
+    insertProjectRow(db, projectId, timestamp, validProject);
+    insertBindingRow(db, bindingId, projectId, timestamp, validBinding);
+    // 绑定回写项目（同项目复合外键由 DDL 强制）；同一事务内对外不可分。
+    db.prepare('UPDATE projects SET repository_binding_id = ? WHERE id = ?').run(
+      bindingId,
+      projectId,
+    );
+    const bindingRow = selectBindingRowByCanonicalPath(db, validBinding.canonicalPath);
+    if (bindingRow === undefined) {
+      // 防御纵深：本事务刚插入的行必定可读；不可读即实现缺陷，整组回滚。
+      throw new Error(`${operation}: 绑定行插入后不可读（实现缺陷），事务回滚`);
+    }
+    const project = projectFromRow(selectProjectRow(db, projectId, operation), context);
+    if (options.recordRegisteredEvent === true) {
+      insertStateEventRow(db, timestamp, {
+        projectId,
+        eventType: PROJECT_REGISTERED_EVENT_TYPE,
+        aggregateType: 'project',
+        aggregateId: projectId,
+        aggregateRevision: project.revision,
+        summary: { registered: true },
+      });
+    }
+    return { status: 'registered', project, binding: bindingFromRow(bindingRow) };
+  }
+
   const store: StateStore = {
     async createProject(input: unknown): Promise<ProjectRecord> {
       const operation = 'StateStore.createProject';
@@ -632,55 +718,13 @@ export function createSqliteStateAccess(
       const operation = 'StateStore.createProjectWithRepositoryBinding';
       assertOpen(operation);
       // 两个输入都在任何 SQL 之前完成校验：第二步校验失败不会残留项目行。
-      const validProject = validateCreateProjectInput(projectInput, operation);
+      validateCreateProjectInput(projectInput, operation);
       const validBinding = validateCreateRepositoryBindingInput(bindingInput, operation);
-
-      const alreadyExists = (
-        db: Database.Database,
-        winner: RepositoryBindingRow,
-      ): ProjectWithRepositoryBindingResult => {
-        const projectRow = selectProjectRow(db, winner.project_id, operation);
-        const context: ValidationContext = {
-          operation,
-          entity: { type: 'project', id: winner.project_id },
-        };
-        return {
-          status: 'already_exists',
-          project: projectFromRow(projectRow, context),
-          binding: bindingFromRow(winner),
-        };
-      };
-
-      const timestamp = nowUtcMs();
-      const projectId = randomUUID();
-      const bindingId = randomUUID();
-      const context: ValidationContext = { operation, entity: { type: 'project', id: projectId } };
       try {
-        return session.transactWrite(operation, (db) => {
-          // BEGIN IMMEDIATE 下检查与插入被串行化：同一路径的并发注册在此看到
-          // 胜者已提交的绑定并复用，不新增行、不覆盖既有元数据。
-          const existing = selectBindingRowByCanonicalPath(db, validBinding.canonicalPath);
-          if (existing !== undefined) {
-            return alreadyExists(db, existing);
-          }
-          insertProjectRow(db, projectId, timestamp, validProject);
-          insertBindingRow(db, bindingId, projectId, timestamp, validBinding);
-          // 绑定回写项目（同项目复合外键由 DDL 强制）；同一事务内对外不可分。
-          db.prepare('UPDATE projects SET repository_binding_id = ? WHERE id = ?').run(
-            bindingId,
-            projectId,
-          );
-          const bindingRow = selectBindingRowByCanonicalPath(db, validBinding.canonicalPath);
-          if (bindingRow === undefined) {
-            // 防御纵深：本事务刚插入的行必定可读；不可读即实现缺陷，整组回滚。
-            throw new Error(`${operation}: 绑定行插入后不可读（实现缺陷），事务回滚`);
-          }
-          return {
-            status: 'registered',
-            project: projectFromRow(selectProjectRow(db, projectId, operation), context),
-            binding: bindingFromRow(bindingRow),
-          };
-        });
+        // P01 直接服务首建不写创建事件（契约 §15.3）；F-008 命令路径经
+        // registerProject 以 recordRegisteredEvent=true 调用同一原语。
+        return session.transactWrite(operation, () =>
+          createProjectWithBindingInTransaction(projectInput, bindingInput));
       } catch (error) {
         // 唯一约束兜底（防御纵深：BEGIN IMMEDIATE 下正常不会到达）：冲突后事务
         // 已整体回滚（无孤立项目），有界核对一次——核对到既有绑定则复用胜者，
@@ -688,7 +732,7 @@ export function createSqliteStateAccess(
         if (isCanonicalPathUniqueViolation(error)) {
           const winner = selectBindingRowByCanonicalPath(session.database, validBinding.canonicalPath);
           if (winner !== undefined) {
-            return alreadyExists(session.database, winner);
+            return alreadyExistsResult(session.database, winner, operation);
           }
         }
         throw error;
@@ -888,5 +932,5 @@ export function createSqliteStateAccess(
       });
     },
   };
-  return { store, getProject, updateProjectInTransaction };
+  return { store, getProject, updateProjectInTransaction, createProjectWithBindingInTransaction };
 }

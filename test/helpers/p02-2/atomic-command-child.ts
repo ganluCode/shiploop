@@ -2,6 +2,7 @@
 import { readChildConfig, runBarrierChild } from '../host/child-runtime.ts';
 import { openSqliteStorageSession } from '../../../packages/core/src/adapters/sqlite/session.ts';
 import { createSqliteAtomicCommandStore } from '../../../packages/core/src/adapters/sqlite/atomic-commands.ts';
+import { createRepositoryInspector } from '../../../packages/core/src/adapters/fs/repository-inspector.ts';
 import { createCommandService } from '../../../packages/core/src/application/command-service.ts';
 import { createLocalOwnerPrincipal } from '../../../packages/core/src/ports/authorization.ts';
 import { mapToPublicError } from '../../../packages/core/src/ports/commands.ts';
@@ -15,7 +16,9 @@ void runBarrierChild({
       const session = openSqliteStorageSession({ path: String(config.dbPath) });
       try {
         const service = createCommandService({
-          atomicStore: createSqliteAtomicCommandStore(session, { nowUtcMs }), nowUtcMs,
+          atomicStore: createSqliteAtomicCommandStore(session, { nowUtcMs }),
+          repositoryInspector: createRepositoryInspector(),
+          nowUtcMs,
         });
         try {
           const receipt = await service.submit(createLocalOwnerPrincipal(), config.envelope);
