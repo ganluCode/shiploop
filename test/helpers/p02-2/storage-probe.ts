@@ -175,9 +175,11 @@ export function openStorageProbe(dbPath: string): StorageProbe {
     settingsRow(kind: 'global' | 'project', projectId?: string): SettingsProbeRow | undefined {
       assertOpen('settingsRow');
       if (kind === 'global') {
+        // global_settings 无 project_id 列（单例表）；以 NULL 投影保持统一行形状。
         return this.selectOne<SettingsProbeRow>(
-          'SELECT id, project_id, revision, schema_version, payload, updated_at ' +
-            "FROM global_settings WHERE id = 'global'",
+          'SELECT id, NULL AS project_id, revision, schema_version, payload, updated_at ' +
+            'FROM global_settings WHERE id = ?',
+          ['global'],
         );
       }
       if (typeof projectId !== 'string' || projectId.length === 0) {

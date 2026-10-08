@@ -6,6 +6,7 @@ import { createRepositoryInspector } from '../../../packages/core/src/adapters/f
 import { createCommandService } from '../../../packages/core/src/application/command-service.ts';
 import { createLocalOwnerPrincipal } from '../../../packages/core/src/ports/authorization.ts';
 import { mapToPublicError } from '../../../packages/core/src/ports/commands.ts';
+import { createStaticRuntimeCapabilityCatalog } from '../../../packages/core/src/ports/runtime-capabilities.ts';
 
 const config = readChildConfig();
 const nowUtcMs = () => Number(config.now);
@@ -18,6 +19,13 @@ void runBarrierChild({
         const service = createCommandService({
           atomicStore: createSqliteAtomicCommandStore(session, { nowUtcMs }),
           repositoryInspector: createRepositoryInspector(),
+          // F-009：可信装配能力目录（与 commands-fixture 同一组合），配置命令复检必需。
+          capabilityCatalog: createStaticRuntimeCapabilityCatalog([
+            {
+              runtimeId: 'pi',
+              providers: [{ providerId: 'anthropic', models: ['claude-sonnet', 'claude-sonnet-2'] }],
+            },
+          ]),
           nowUtcMs,
         });
         try {

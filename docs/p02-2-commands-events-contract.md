@@ -382,18 +382,27 @@ interface CommandReceipt {
 失败必须整组回滚（无「持久 accepted 但结果永不可知」状态）。Git/仓库检查、文件发布、网络与
 能力发现一律在写事务之外完成，提交时只重核必要的 revision。
 
-**已实施切片（F-007/F-008）**：`CoreApplication.commandService.submit(principal, envelope)`
-当前接入 `project.metadata.update`（F-007）与 `project.register`（F-008）；配置命令仍明确
-unsupported（待 F-009）。`ports/atomic-commands.ts` 的同步 `AtomicCommandStore`/
-`CommandTransaction` 由 SQLite 同会话原语实现；P01 元数据 CAS/事件、注册 SQL 与 F-006
-回执 SQL 共用，不调用 Promise 服务、不嵌套事务。注册命令在写事务之外完成只读仓库检查
-（RepositoryInspector），事务内写「项目 + 绑定 + `project.registered` 创建事件 + completed
-回执」；同 canonicalPath 命中返回 already_exists（不写事件、不覆盖元数据），命中不可见
-项目按 forbidden 拒绝且不积回执。P01 直接服务首建仍不写创建事件（§15.3 边界）。
+**已实施切片（F-007/F-008/F-009）**：`CoreApplication.commandService.submit(principal, envelope)`
+当前接入 `project.metadata.update`（F-007）、`project.register`（F-008）与
+`settings.global.create/update`、`settings.project.create/update`（F-009）；Work/Chat/基线等
+其余操作仍明确 unsupported。`ports/atomic-commands.ts` 的同步 `AtomicCommandStore`/
+`CommandTransaction` 由 SQLite 同会话原语实现；P01 元数据 CAS/事件、注册 SQL、配置读写
+SQL 与 F-006 回执 SQL 共用，不调用 Promise 服务、不嵌套事务。注册命令在写事务之外完成
+只读仓库检查（RepositoryInspector），事务内写「项目 + 绑定 + `project.registered` 创建事件
++ completed 回执」；同 canonicalPath 命中返回 already_exists（不写事件、不覆盖元数据），
+命中不可见项目按 forbidden 拒绝且不积回执。配置命令（F-009）在写事务之外完成能力目录
+复检与一致性视图（全局当前配置快照，仅新命令）：全局有效配置即全局 payload 自身直接复检，
+项目覆盖以「全局快照 + 新 payload」合并有效配置后按当前目录复检（继承条目随当前目录复检，
+与 P01 ConfigurationService 同一纯函数）；推导出的 `consistency.globalRevision` 随写入在
+同一事务内核对，不一致固化 rejected stale_dependency，不提交基于旧全局值的配置。创建成功
+同事务写 `settings.*_created` 创建事件（仅命令路径，§15.3），更新复用 P01 既有 `*_updated`
+写入不重复；重复创建（不同 commandId）固化 rejected already_exists，更新目标缺失按
+not_found 抛出（不积回执）。P01 直接服务首建仍不写创建事件（§15.3 边界）。
 过期新命令先在事务外拒绝；权威回执/摘要、授权、时效、项目与 CAS 在 BEGIN IMMEDIATE 内重核。
 CAS rejected 在任何业务写入前决定；写后异常必须回滚，不折算为持久 rejected。
 回调结束上下文失效，Promise 回调回滚并阻止 await 后写入；busy 仍使用既有有限预算。
-真实竞争/故障/重开回归见 `test/atomic-commands.test.ts`；Host/CLI 接线不在该切片内。
+真实竞争/故障/重开回归见 `test/atomic-commands.test.ts`、`test/command-register.test.ts` 与
+`test/command-settings.test.ts`；Host/CLI 接线不在该切片内。
 
 ### 5.6 resultRef 与结果读取
 
@@ -537,8 +546,8 @@ interface PublicStateEvent {
 |---|---|---|---|---|
 | `project.registered` | `project` | 新项目 ID（非空） | `{"registered":true}` | 仅命令路径注册成功（F-008 已实施） |
 | `project.metadata_updated` | `project` | 项目 ID | `{"changedFields":[...]}`（P01 既有） | P01 直接服务与命令路径共用，不重复 |
-| `settings.global_created` | `global_settings` | NULL | `settingsChangeSummary`（键名/段名/schemaVersion） | 仅命令路径全局首建成功（新增） |
-| `settings.project_created` | `project_settings` | 项目 ID | 同上 | 仅命令路径项目首建成功（新增） |
+| `settings.global_created` | `global_settings` | NULL | `settingsChangeSummary`（键名/段名/schemaVersion） | 仅命令路径全局首建成功（F-009 已实施） |
+| `settings.project_created` | `project_settings` | 项目 ID | 同上 | 仅命令路径项目首建成功（F-009 已实施） |
 | `settings.global_updated` | `global_settings` | NULL | 同上（P01 既有） | P01 直接服务与命令路径共用，不重复 |
 | `settings.project_updated` | `project_settings` | 项目 ID | 同上（P01 既有） | 同上 |
 
@@ -857,7 +866,9 @@ shiploop events (--project <id> | --global) [--cursor <cursor>] [--snapshot-only
   P01 语义不变，以保留前序业务语义回归（P01-3/P01-4 测试不改）。更新类事件双方共用同一
   `*_updated` 写入，命令路径不重复写。两条路径的边界由 F-008/F-009 的测试固定
   （F-008 已固定项目注册边界：`test/command-register.test.ts` 断言 P01 直接服务注册零事件、
-  命令路径恰一条 `project.registered`）。
+  命令路径恰一条 `project.registered`；F-009 已固定配置边界：
+  `test/command-settings.test.ts` 断言 P01 直接服务首建零事件、命令路径恰一条
+  `settings.global_created`/`settings.project_created`，且更新事件双方不重复写）。
 - **请求核对**：若要求直接服务路径也补创建事件，应作为对 P01 契约的显式变更（同步 P01 测试与
   文档），不在本 Feature 静默修改。
 

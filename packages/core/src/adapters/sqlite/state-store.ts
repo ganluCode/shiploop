@@ -38,7 +38,12 @@
  * - P01-3 / F-010 起配置写入扩展：updateGlobalSettings/updateProjectSettings 在
  *   CAS 成功后的同一事务内追加 state_events 脱敏审计记录（settingsChangeSummary
  *   摘要）；createProjectSettings/updateProjectSettings 接受可选 consistency
- *   一致性前置条件，在同一写事务内核对全局 revision（stale_dependency 拒绝）。
+ *   一致性前置条件，在同一写事务内核对全局 revision（stale_dependency 拒绝）；
+ *   P02-2 / F-009 起抽取配置读写同步原语（getGlobalSettingsOrNull、
+ *   getProjectSettingsOrNull 与各 create/update InTransaction 原语）供原子命令事务复用——
+ *   命令路径新建时同事务追加唯一一条 settings.global_created/settings.project_created
+ *   创建事件（recordCreatedEvent），P01 直接服务首建仍不写事件（契约 §15.3），
+ *   两条路径共用同一 SQL/校验/consistency 规则。
  * - 本模块不实现：PathService 默认 OS 数据根、配置有效合并、模型路由、
  *   Host/CLI 命令。
  */
@@ -49,10 +54,12 @@ import type { StorageEntityRef } from '../../ports/errors.js';
 import { parseStoredSettingsPayload } from '../../ports/settings-schema.js';
 import type { SettingsPayload } from '../../ports/settings-schema.js';
 import {
+  GLOBAL_SETTINGS_CREATED_EVENT_TYPE,
   GLOBAL_SETTINGS_ID,
   GLOBAL_SETTINGS_UPDATED_EVENT_TYPE,
   PROJECT_METADATA_UPDATED_EVENT_TYPE,
   PROJECT_REGISTERED_EVENT_TYPE,
+  PROJECT_SETTINGS_CREATED_EVENT_TYPE,
   PROJECT_SETTINGS_UPDATED_EVENT_TYPE,
   projectMetadataChangedFields,
   settingsChangeSummary,
@@ -251,6 +258,32 @@ export function createSqliteStateAccess(
     bindingInput: unknown,
     options?: { readonly timestamp?: number; readonly recordRegisteredEvent?: boolean },
   ): ProjectWithRepositoryBindingResult;
+  /** F-009：全局当前配置同步读取（未配置 null）；原子命令事务内外复用同一实现。 */
+  getGlobalSettingsOrNull(): GlobalSettingsRecord | null;
+  /** F-009：项目当前配置同步读取（未配置 null）。 */
+  getProjectSettingsOrNull(projectId: string): ProjectSettingsRecord | null;
+  /** F-009：全局配置 insert-only 首建同步原语；调用方必须已持有本会话写事务。 */
+  createGlobalSettingsInTransaction(
+    input: unknown,
+    options?: { readonly timestamp?: number; readonly recordCreatedEvent?: boolean },
+  ): GlobalSettingsRecord;
+  /** F-009：全局配置 expectedRevision CAS 更新同步原语（同事务写既有 *_updated 事件）。 */
+  updateGlobalSettingsInTransaction(
+    input: unknown,
+    options?: { readonly timestamp?: number },
+  ): GlobalSettingsRecord;
+  /** F-009：项目配置 insert-only 首建同步原语（consistency 同事务核对）。 */
+  createProjectSettingsInTransaction(
+    projectId: string,
+    input: unknown,
+    options?: { readonly timestamp?: number; readonly recordCreatedEvent?: boolean },
+  ): ProjectSettingsRecord;
+  /** F-009：项目配置 expectedRevision CAS 更新同步原语（consistency 先于 CAS 核对）。 */
+  updateProjectSettingsInTransaction(
+    projectId: string,
+    input: unknown,
+    options?: { readonly timestamp?: number },
+  ): ProjectSettingsRecord;
 } {
   const nowUtcMs = options.nowUtcMs ?? Date.now;
 
@@ -378,6 +411,7 @@ export function createSqliteStateAccess(
   /** 项目配置行插入（事务内使用；调用方保证项目存在且 payload 已通过 F-002 校验）。 */
   function insertProjectSettingsRow(
     db: Database.Database,
+    id: string,
     projectId: string,
     timestamp: number,
     payload: SettingsPayload,
@@ -385,7 +419,7 @@ export function createSqliteStateAccess(
     db.prepare(
       'INSERT INTO project_settings (id, created_at, project_id, revision, updated_at, schema_version, payload) ' +
         'VALUES (?, ?, ?, 1, ?, ?, ?)',
-    ).run(randomUUID(), timestamp, projectId, timestamp, payload.schemaVersion, JSON.stringify(payload));
+    ).run(id, timestamp, projectId, timestamp, payload.schemaVersion, JSON.stringify(payload));
   }
 
   /** CAS 更新结果为 0 行时的判定：实体缺失（not_found）或 revision 过期（conflict）。 */
@@ -473,6 +507,242 @@ export function createSqliteStateAccess(
         },
       );
     }
+  }
+
+  /**
+   * F-009 同步原语的共享选项：timestamp 缺省取注入时钟；recordCreatedEvent=true
+   * 仅命令路径（原子命令事务）在新建成功时同事务追加 settings.*_created 创建事件，
+   * P01 直接服务首建不写（契约 §15.3）。
+   */
+  interface SettingsWritePrimitiveOptions {
+    readonly timestamp?: number;
+    readonly recordCreatedEvent?: boolean;
+  }
+
+  /** 全局当前配置同步读取；未配置返回 null（不是错误），损坏 JSON/未知版本仍 corrupt。 */
+  function getGlobalSettingsOrNull(): GlobalSettingsRecord | null {
+    const operation = 'StateStore.getGlobalSettings';
+    assertOpen(operation);
+    const entity: StorageEntityRef = { type: 'global_settings', id: GLOBAL_SETTINGS_ID };
+    const context: ValidationContext = { operation, entity };
+    const row = session.database
+      .prepare<[string], GlobalSettingsRow>('SELECT * FROM global_settings WHERE id = ?')
+      .get(GLOBAL_SETTINGS_ID) as GlobalSettingsRow | undefined;
+    return row === undefined ? null : globalSettingsFromRow(row, context);
+  }
+
+  /** 项目当前配置同步读取；未配置返回 null（不区分项目缺失——由调用方先用 getProject 把关）。 */
+  function getProjectSettingsOrNull(projectId: string): ProjectSettingsRecord | null {
+    const operation = 'StateStore.getProjectSettings';
+    assertOpen(operation);
+    const id = validateProjectId(projectId, operation, 'project_settings');
+    const entity: StorageEntityRef = { type: 'project_settings', projectId: id };
+    const context: ValidationContext = { operation, entity };
+    const row = session.database
+      .prepare<[string], ProjectSettingsRow>('SELECT * FROM project_settings WHERE project_id = ?')
+      .get(id) as ProjectSettingsRow | undefined;
+    return row === undefined ? null : projectSettingsFromRow(row, context);
+  }
+
+  /**
+   * 全局配置 insert-only 首建同步原语（调用方必须已持有本会话写事务）。
+   * 与 P01 直接服务同一 SQL/校验：已存在返回 conflict（不覆盖）；
+   * recordCreatedEvent=true 时新建成功同事务追加 settings.global_created。
+   */
+  function createGlobalSettingsInTransaction(
+    input: unknown,
+    options: SettingsWritePrimitiveOptions = {},
+  ): GlobalSettingsRecord {
+    const operation = 'StateStore.createGlobalSettings';
+    assertOpen(operation);
+    if (!session.database.inTransaction) throw new TypeError('全局配置创建必须位于写事务内');
+    const entity: StorageEntityRef = { type: 'global_settings', id: GLOBAL_SETTINGS_ID };
+    const valid = validatePutSettingsInput(input, operation, entity);
+    const timestamp = options.timestamp ?? nowUtcMs();
+    const context: ValidationContext = { operation, entity };
+    const db = session.database;
+    if (db.prepare('SELECT 1 FROM global_settings WHERE id = ?').get(GLOBAL_SETTINGS_ID) !== undefined) {
+      throw conflict(
+        operation,
+        '全局当前配置已存在（单例），重复创建被拒绝而不是覆盖',
+        entity,
+      );
+    }
+    db.prepare(
+      'INSERT INTO global_settings (id, created_at, revision, updated_at, schema_version, payload) ' +
+        "VALUES (?, ?, 1, ?, ?, ?)",
+    ).run(
+      GLOBAL_SETTINGS_ID,
+      timestamp,
+      timestamp,
+      valid.payload.schemaVersion,
+      JSON.stringify(valid.payload),
+    );
+    const created = globalSettingsFromRow(selectGlobalSettingsRow(db, operation), context);
+    if (options.recordCreatedEvent === true) {
+      insertStateEventRow(db, timestamp, {
+        projectId: null,
+        eventType: GLOBAL_SETTINGS_CREATED_EVENT_TYPE,
+        aggregateType: 'global_settings',
+        aggregateId: GLOBAL_SETTINGS_ID,
+        aggregateRevision: created.revision,
+        summary: settingsChangeSummary(valid.payload),
+      });
+    }
+    return created;
+  }
+
+  /**
+   * 全局配置 expectedRevision CAS 更新同步原语（调用方必须已持有本会话写事务）。
+   * 与 P01 同一路径：CAS 成功后的同一事务内追加 settings.global_updated 脱敏审计记录。
+   */
+  function updateGlobalSettingsInTransaction(
+    input: unknown,
+    options: SettingsWritePrimitiveOptions = {},
+  ): GlobalSettingsRecord {
+    const operation = 'StateStore.updateGlobalSettings';
+    assertOpen(operation);
+    if (!session.database.inTransaction) throw new TypeError('全局配置更新必须位于写事务内');
+    const entity: StorageEntityRef = { type: 'global_settings', id: GLOBAL_SETTINGS_ID };
+    const valid = validateUpdateSettingsInput(input, operation, entity);
+    const timestamp = options.timestamp ?? nowUtcMs();
+    const context: ValidationContext = { operation, entity };
+    const db = session.database;
+    const result = db
+      .prepare(
+        'UPDATE global_settings SET revision = revision + 1, updated_at = ?, schema_version = ?, payload = ? ' +
+          'WHERE id = ? AND revision = ?',
+      )
+      .run(timestamp, valid.payload.schemaVersion, JSON.stringify(valid.payload), GLOBAL_SETTINGS_ID, valid.expectedRevision);
+    if (result.changes === 0) {
+      requireCasTarget(
+        (db
+          .prepare('SELECT revision FROM global_settings WHERE id = ?')
+          .get(GLOBAL_SETTINGS_ID) as { revision: number } | undefined),
+        operation,
+        entity,
+        valid.expectedRevision,
+        '全局当前配置不存在',
+      );
+    }
+    const updated = globalSettingsFromRow(selectGlobalSettingsRow(db, operation), context);
+    // P01-3 / F-010：同一短事务内追加脱敏审计记录（全局范围 project_id=NULL，
+    // 由 state_events_project_scope_check 限定仅 global_settings 可为空）；
+    // 注入记录写入失败时配置与 revision 一并回滚。
+    insertStateEventRow(db, timestamp, {
+      projectId: null,
+      eventType: GLOBAL_SETTINGS_UPDATED_EVENT_TYPE,
+      aggregateType: 'global_settings',
+      aggregateId: GLOBAL_SETTINGS_ID,
+      aggregateRevision: updated.revision,
+      summary: settingsChangeSummary(valid.payload),
+    });
+    return updated;
+  }
+
+  /**
+   * 项目配置 insert-only 首建同步原语（调用方必须已持有本会话写事务）。
+   * 与 P01 同一 SQL/校验：项目缺失 not_found、已存在 conflict（不覆盖）；
+   * consistency 前置条件在同一事务内核对（stale_dependency 拒绝）；
+   * recordCreatedEvent=true 时新建成功同事务追加 settings.project_created
+   * （aggregate_id 为新配置行 id）。
+   */
+  function createProjectSettingsInTransaction(
+    projectId: string,
+    input: unknown,
+    options: SettingsWritePrimitiveOptions = {},
+  ): ProjectSettingsRecord {
+    const operation = 'StateStore.createProjectSettings';
+    assertOpen(operation);
+    if (!session.database.inTransaction) throw new TypeError('项目配置创建必须位于写事务内');
+    const id = validateProjectId(projectId, operation, 'project_settings');
+    const entity: StorageEntityRef = { type: 'project_settings', projectId: id };
+    const valid = validateCreateProjectSettingsInput(input, operation, entity);
+    const timestamp = options.timestamp ?? nowUtcMs();
+    const context: ValidationContext = { operation, entity };
+    const db = session.database;
+    if (db.prepare('SELECT 1 FROM projects WHERE id = ?').get(id) === undefined) {
+      throw notFound(operation, { type: 'project', id }, `项目 ${id} 不存在`);
+    }
+    if (db.prepare('SELECT 1 FROM project_settings WHERE project_id = ?').get(id) !== undefined) {
+      throw conflict(
+        operation,
+        '该项目当前配置已存在（每项目一条），重复创建被拒绝而不是覆盖',
+        entity,
+      );
+    }
+    // F-010：一致性前置条件在同一写事务内核对（写入被串行化，无检查-提交窗口）。
+    if (valid.consistency !== undefined) {
+      assertGlobalSettingsConsistency(db, operation, entity, valid.consistency);
+    }
+    const settingsId = randomUUID();
+    insertProjectSettingsRow(db, settingsId, id, timestamp, valid.payload);
+    const created = projectSettingsFromRow(selectProjectSettingsRow(db, id, operation), context);
+    if (options.recordCreatedEvent === true) {
+      insertStateEventRow(db, timestamp, {
+        projectId: id,
+        eventType: PROJECT_SETTINGS_CREATED_EVENT_TYPE,
+        aggregateType: 'project_settings',
+        aggregateId: settingsId,
+        aggregateRevision: created.revision,
+        summary: settingsChangeSummary(valid.payload),
+      });
+    }
+    return created;
+  }
+
+  /**
+   * 项目配置 expectedRevision CAS 更新同步原语（调用方必须已持有本会话写事务）。
+   * 与 P01 同一路径：consistency 前置条件先于 CAS 写入核对；CAS 成功后同一事务
+   * 追加 settings.project_updated 脱敏审计记录。
+   */
+  function updateProjectSettingsInTransaction(
+    projectId: string,
+    input: unknown,
+    options: SettingsWritePrimitiveOptions = {},
+  ): ProjectSettingsRecord {
+    const operation = 'StateStore.updateProjectSettings';
+    assertOpen(operation);
+    if (!session.database.inTransaction) throw new TypeError('项目配置更新必须位于写事务内');
+    const id = validateProjectId(projectId, operation, 'project_settings');
+    const entity: StorageEntityRef = { type: 'project_settings', projectId: id };
+    const valid = validateUpdateProjectSettingsInput(input, operation, entity);
+    const timestamp = options.timestamp ?? nowUtcMs();
+    const context: ValidationContext = { operation, entity };
+    const db = session.database;
+    // F-010：一致性前置条件在同一写事务内核对（先于 CAS 写入，失败整组回滚）。
+    if (valid.consistency !== undefined) {
+      assertGlobalSettingsConsistency(db, operation, entity, valid.consistency);
+    }
+    const result = db
+      .prepare(
+        'UPDATE project_settings SET revision = revision + 1, updated_at = ?, schema_version = ?, payload = ? ' +
+          'WHERE project_id = ? AND revision = ?',
+      )
+      .run(timestamp, valid.payload.schemaVersion, JSON.stringify(valid.payload), id, valid.expectedRevision);
+    if (result.changes === 0) {
+      requireCasTarget(
+        (db
+          .prepare('SELECT revision FROM project_settings WHERE project_id = ?')
+          .get(id) as { revision: number } | undefined),
+        operation,
+        entity,
+        valid.expectedRevision,
+        `项目 ${id} 的当前配置不存在`,
+      );
+    }
+    const updated = projectSettingsFromRow(selectProjectSettingsRow(db, id, operation), context);
+    // P01-3 / F-010：同一短事务内追加脱敏审计记录（项目范围 project_id 必填）；
+    // 注入记录写入失败时配置与 revision 一并回滚。
+    insertStateEventRow(db, timestamp, {
+      projectId: id,
+      eventType: PROJECT_SETTINGS_UPDATED_EVENT_TYPE,
+      aggregateType: 'project_settings',
+      aggregateId: updated.id,
+      aggregateRevision: updated.revision,
+      summary: settingsChangeSummary(valid.payload),
+    });
+    return updated;
   }
 
   // 仅适配器内部同步访问；变更调用方必须已持有本会话写事务。
@@ -640,7 +910,7 @@ export function createSqliteStateAccess(
       };
       return session.transactWrite(operation, (db) => {
         insertProjectRow(db, projectId, timestamp, validProject);
-        insertProjectSettingsRow(db, projectId, timestamp, validSettings.payload);
+        insertProjectSettingsRow(db, randomUUID(), projectId, timestamp, validSettings.payload);
         return {
           project: projectFromRow(selectProjectRow(db, projectId, operation), projectContext),
           settings: projectSettingsFromRow(selectProjectSettingsRow(db, projectId, operation), settingsContext),
@@ -773,164 +1043,74 @@ export function createSqliteStateAccess(
     async createGlobalSettings(input: unknown): Promise<GlobalSettingsRecord> {
       const operation = 'StateStore.createGlobalSettings';
       assertOpen(operation);
-      const entity: StorageEntityRef = { type: 'global_settings', id: GLOBAL_SETTINGS_ID };
-      const valid = validatePutSettingsInput(input, operation, entity);
-      const timestamp = nowUtcMs();
-      const context: ValidationContext = { operation, entity };
-      return session.transactWrite(operation, (db) => {
-        if (db.prepare('SELECT 1 FROM global_settings WHERE id = ?').get(GLOBAL_SETTINGS_ID) !== undefined) {
-          throw conflict(
-            operation,
-            '全局当前配置已存在（单例），重复创建被拒绝而不是覆盖',
-            entity,
-          );
-        }
-        db.prepare(
-          'INSERT INTO global_settings (id, created_at, revision, updated_at, schema_version, payload) ' +
-            "VALUES (?, ?, 1, ?, ?, ?)",
-        ).run(
-          GLOBAL_SETTINGS_ID,
-          timestamp,
-          timestamp,
-          valid.payload.schemaVersion,
-          JSON.stringify(valid.payload),
-        );
-        return globalSettingsFromRow(selectGlobalSettingsRow(db, operation), context);
-      });
+      // 事务外先校验（非法输入不进入写事务）；同步原语在事务内重校验。
+      validatePutSettingsInput(input, operation, { type: 'global_settings', id: GLOBAL_SETTINGS_ID });
+      // P01 直接服务首建不写创建事件（契约 §15.3）；F-009 命令路径经
+      // createGlobalSettingsInTransaction 以 recordCreatedEvent=true 调用同一原语。
+      return session.transactWrite(operation, () => createGlobalSettingsInTransaction(input));
     },
 
     async getGlobalSettings(): Promise<GlobalSettingsRecord> {
-      const operation = 'StateStore.getGlobalSettings';
-      assertOpen(operation);
-      const entity: StorageEntityRef = { type: 'global_settings', id: GLOBAL_SETTINGS_ID };
-      const context: ValidationContext = { operation, entity };
-      const row = selectGlobalSettingsRow(session.database, operation);
-      return globalSettingsFromRow(row, context);
+      const record = getGlobalSettingsOrNull();
+      if (record === null) {
+        throw notFound(
+          'StateStore.getGlobalSettings',
+          { type: 'global_settings', id: GLOBAL_SETTINGS_ID },
+          '全局当前配置不存在',
+        );
+      }
+      return record;
     },
 
     async updateGlobalSettings(input: unknown): Promise<GlobalSettingsRecord> {
       const operation = 'StateStore.updateGlobalSettings';
       assertOpen(operation);
-      const entity: StorageEntityRef = { type: 'global_settings', id: GLOBAL_SETTINGS_ID };
-      const valid = validateUpdateSettingsInput(input, operation, entity);
-      const timestamp = nowUtcMs();
-      const context: ValidationContext = { operation, entity };
-      return session.transactWrite(operation, (db) => {
-        const result = db
-          .prepare(
-            'UPDATE global_settings SET revision = revision + 1, updated_at = ?, schema_version = ?, payload = ? ' +
-              'WHERE id = ? AND revision = ?',
-          )
-          .run(timestamp, valid.payload.schemaVersion, JSON.stringify(valid.payload), GLOBAL_SETTINGS_ID, valid.expectedRevision);
-        if (result.changes === 0) {
-          requireCasTarget(
-            (db
-              .prepare('SELECT revision FROM global_settings WHERE id = ?')
-              .get(GLOBAL_SETTINGS_ID) as { revision: number } | undefined),
-            operation,
-            entity,
-            valid.expectedRevision,
-            '全局当前配置不存在',
-          );
-        }
-        const updated = globalSettingsFromRow(selectGlobalSettingsRow(db, operation), context);
-        // P01-3 / F-010：同一短事务内追加脱敏审计记录（全局范围 project_id=NULL，
-        // 由 state_events_project_scope_check 限定仅 global_settings 可为空）；
-        // 注入记录写入失败时配置与 revision 一并回滚。
-        insertStateEventRow(db, timestamp, {
-          projectId: null,
-          eventType: GLOBAL_SETTINGS_UPDATED_EVENT_TYPE,
-          aggregateType: 'global_settings',
-          aggregateId: GLOBAL_SETTINGS_ID,
-          aggregateRevision: updated.revision,
-          summary: settingsChangeSummary(valid.payload),
-        });
-        return updated;
-      });
+      // 事务外先校验（非法输入不进入写事务）；同步原语在事务内重校验。
+      validateUpdateSettingsInput(input, operation, { type: 'global_settings', id: GLOBAL_SETTINGS_ID });
+      return session.transactWrite(operation, () => updateGlobalSettingsInTransaction(input));
     },
 
     async createProjectSettings(projectId: string, input: unknown): Promise<ProjectSettingsRecord> {
       const operation = 'StateStore.createProjectSettings';
       assertOpen(operation);
       const id = validateProjectId(projectId, operation, 'project_settings');
-      const entity: StorageEntityRef = { type: 'project_settings', projectId: id };
-      const valid = validateCreateProjectSettingsInput(input, operation, entity);
-      const timestamp = nowUtcMs();
-      const context: ValidationContext = { operation, entity };
-      return session.transactWrite(operation, (db) => {
-        if (db.prepare('SELECT 1 FROM projects WHERE id = ?').get(id) === undefined) {
-          throw notFound(operation, { type: 'project', id }, `项目 ${id} 不存在`);
-        }
-        if (db.prepare('SELECT 1 FROM project_settings WHERE project_id = ?').get(id) !== undefined) {
-          throw conflict(
-            operation,
-            '该项目当前配置已存在（每项目一条），重复创建被拒绝而不是覆盖',
-            entity,
-          );
-        }
-        // F-010：一致性前置条件在同一写事务内核对（写入被串行化，无检查-提交窗口）。
-        if (valid.consistency !== undefined) {
-          assertGlobalSettingsConsistency(db, operation, entity, valid.consistency);
-        }
-        insertProjectSettingsRow(db, id, timestamp, valid.payload);
-        return projectSettingsFromRow(selectProjectSettingsRow(db, id, operation), context);
-      });
+      // 事务外先校验（非法输入不进入写事务）；同步原语在事务内重校验。
+      validateCreateProjectSettingsInput(input, operation, { type: 'project_settings', projectId: id });
+      return session.transactWrite(operation, () => createProjectSettingsInTransaction(id, input));
     },
 
     async getProjectSettings(projectId: string): Promise<ProjectSettingsRecord> {
-      const operation = 'StateStore.getProjectSettings';
-      assertOpen(operation);
-      const id = validateProjectId(projectId, operation, 'project_settings');
-      const entity: StorageEntityRef = { type: 'project_settings', projectId: id };
-      const context: ValidationContext = { operation, entity };
-      const row = selectProjectSettingsRow(session.database, id, operation);
-      return projectSettingsFromRow(row, context);
+      const record = getProjectSettingsOrNull(projectId);
+      if (record === null) {
+        const id = validateProjectId(projectId, 'StateStore.getProjectSettings', 'project_settings');
+        throw notFound(
+          'StateStore.getProjectSettings',
+          { type: 'project_settings', projectId: id },
+          `项目 ${id} 的当前配置不存在`,
+        );
+      }
+      return record;
     },
 
     async updateProjectSettings(projectId: string, input: unknown): Promise<ProjectSettingsRecord> {
       const operation = 'StateStore.updateProjectSettings';
       assertOpen(operation);
       const id = validateProjectId(projectId, operation, 'project_settings');
-      const entity: StorageEntityRef = { type: 'project_settings', projectId: id };
-      const valid = validateUpdateProjectSettingsInput(input, operation, entity);
-      const timestamp = nowUtcMs();
-      const context: ValidationContext = { operation, entity };
-      return session.transactWrite(operation, (db) => {
-        // F-010：一致性前置条件在同一写事务内核对（先于 CAS 写入，失败整组回滚）。
-        if (valid.consistency !== undefined) {
-          assertGlobalSettingsConsistency(db, operation, entity, valid.consistency);
-        }
-        const result = db
-          .prepare(
-            'UPDATE project_settings SET revision = revision + 1, updated_at = ?, schema_version = ?, payload = ? ' +
-              'WHERE project_id = ? AND revision = ?',
-          )
-          .run(timestamp, valid.payload.schemaVersion, JSON.stringify(valid.payload), id, valid.expectedRevision);
-        if (result.changes === 0) {
-          requireCasTarget(
-            (db
-              .prepare('SELECT revision FROM project_settings WHERE project_id = ?')
-              .get(id) as { revision: number } | undefined),
-            operation,
-            entity,
-            valid.expectedRevision,
-            `项目 ${id} 的当前配置不存在`,
-          );
-        }
-        const updated = projectSettingsFromRow(selectProjectSettingsRow(db, id, operation), context);
-        // P01-3 / F-010：同一短事务内追加脱敏审计记录（项目范围 project_id 必填）；
-        // 注入记录写入失败时配置与 revision 一并回滚。
-        insertStateEventRow(db, timestamp, {
-          projectId: id,
-          eventType: PROJECT_SETTINGS_UPDATED_EVENT_TYPE,
-          aggregateType: 'project_settings',
-          aggregateId: updated.id,
-          aggregateRevision: updated.revision,
-          summary: settingsChangeSummary(valid.payload),
-        });
-        return updated;
-      });
+      // 事务外先校验（非法输入不进入写事务）；同步原语在事务内重校验。
+      validateUpdateProjectSettingsInput(input, operation, { type: 'project_settings', projectId: id });
+      return session.transactWrite(operation, () => updateProjectSettingsInTransaction(id, input));
     },
   };
-  return { store, getProject, updateProjectInTransaction, createProjectWithBindingInTransaction };
+  return {
+    store,
+    getProject,
+    updateProjectInTransaction,
+    createProjectWithBindingInTransaction,
+    getGlobalSettingsOrNull,
+    getProjectSettingsOrNull,
+    createGlobalSettingsInTransaction,
+    updateGlobalSettingsInTransaction,
+    createProjectSettingsInTransaction,
+    updateProjectSettingsInTransaction,
+  };
 }

@@ -16,6 +16,13 @@ export function createSqliteAtomicCommandStore(
   const receipts = createSqliteCommandReceiptAccess(session, options);
   return {
     findReceipt: receipts.findReceiptByCommandId,
+    // F-009：配置命令一致性视图的事务外只读来源；写事务内调用是编程错误。
+    getGlobalSettingsOrNull() {
+      if (session.database.inTransaction) {
+        throw new TypeError('配置一致性快照必须在写事务之外读取');
+      }
+      return state.getGlobalSettingsOrNull();
+    },
     transact<T>(operation: string, submit: (transaction: CommandTransaction) => T): T {
       // 不允许在其他事务内使用；防止 savepoint 伪装成独立原子提交。
       if (session.database.inTransaction) throw new TypeError('原子命令不能嵌套事务');
@@ -34,6 +41,18 @@ export function createSqliteAtomicCommandStore(
             state.createProjectWithBindingInTransaction(project, binding, {
               recordRegisteredEvent: true,
             })),
+          // F-009：配置读写原语；创建路径同事务写 settings.*_created 创建事件
+          // （P01 直接服务首建不写，契约 §15.3），更新路径复用 P01 既有 *_updated 写入。
+          getGlobalSettingsOrNull: guarded(state.getGlobalSettingsOrNull),
+          getProjectSettingsOrNull: guarded(state.getProjectSettingsOrNull),
+          createGlobalSettings: guarded((input: unknown) =>
+            state.createGlobalSettingsInTransaction(input, { recordCreatedEvent: true })),
+          updateGlobalSettings: guarded((input: unknown) =>
+            state.updateGlobalSettingsInTransaction(input)),
+          createProjectSettings: guarded((projectId: string, input: unknown) =>
+            state.createProjectSettingsInTransaction(projectId, input, { recordCreatedEvent: true })),
+          updateProjectSettings: guarded((projectId: string, input: unknown) =>
+            state.updateProjectSettingsInTransaction(projectId, input)),
           saveReceipt: guarded(receipts.saveReceiptInTransaction),
         });
         try {

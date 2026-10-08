@@ -59,6 +59,14 @@ export const GLOBAL_SETTINGS_UPDATED_EVENT_TYPE = 'settings.global_updated';
 export const PROJECT_SETTINGS_UPDATED_EVENT_TYPE = 'settings.project_updated';
 
 /**
+ * 配置创建事件类型（P02-2 / F-009）：仅命令路径首建成功时与配置行在同一短事务
+ * 内写入（payload 为 settingsChangeSummary 脱敏摘要）；P01 直接服务首建不写
+ * 事件（契约 §15.3，与 PROJECT_REGISTERED_EVENT_TYPE 同一边界）。
+ */
+export const GLOBAL_SETTINGS_CREATED_EVENT_TYPE = 'settings.global_created';
+export const PROJECT_SETTINGS_CREATED_EVENT_TYPE = 'settings.project_created';
+
+/**
  * P01-3 已写入的聚合类型（设计 11 §9）：F-006 写 `project`，F-010 写
  * `global_settings`/`project_settings`。DDL 只要求非空，以便执行域表加入新聚合时
  * 无需重建审计表；写入方仍由本契约限定取值。

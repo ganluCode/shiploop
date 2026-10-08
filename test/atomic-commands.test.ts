@@ -267,7 +267,9 @@ describe('F-007 原子幂等命令', () => {
     expect(s.probe.counts()).toMatchObject({ state_events: 0, command_receipts: 0 });
   });
 
-  it('本次未接入的配置命令明确 unsupported，不做任何业务写入', async () => {
+  it('未装配能力目录时配置命令明确 unsupported（防御纵深），不做任何业务写入', async () => {
+    // F-009 起配置命令已接入；本装配未传 capabilityCatalog/repositoryInspector，
+    // 缺失可信装配时配置命令必须保持 unsupported 而不是隐式跳过能力复检。
     const s = await setup();
     await expect(s.service.submit(s.owner, {
       schemaVersion: 2, commandId: randomUUID(), operation: 'settings.global.create',

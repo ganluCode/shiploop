@@ -30,10 +30,12 @@ import { isUuidV4, PublicError } from './commands.js';
 import { isStorageError } from './errors.js';
 import { SETTINGS_SCHEMA_VERSION } from './settings-schema.js';
 import {
+  GLOBAL_SETTINGS_CREATED_EVENT_TYPE as SETTINGS_GLOBAL_CREATED_EVENT_TYPE,
   GLOBAL_SETTINGS_ID,
   GLOBAL_SETTINGS_UPDATED_EVENT_TYPE,
   PROJECT_METADATA_UPDATED_EVENT_TYPE,
   PROJECT_REGISTERED_EVENT_TYPE,
+  PROJECT_SETTINGS_CREATED_EVENT_TYPE as SETTINGS_PROJECT_CREATED_EVENT_TYPE,
   PROJECT_SETTINGS_UPDATED_EVENT_TYPE,
 } from './state-store.js';
 import type { StateEventAggregateType } from './state-store.js';
@@ -47,10 +49,10 @@ export const PUBLIC_EVENT_SCHEMA_VERSION = 1 as const;
 
 /** 仅命令路径注册成功写入（F-008）；P01 直接服务首建不写事件（契约 §15.3）。 */
 export { PROJECT_REGISTERED_EVENT_TYPE };
-/** 仅命令路径全局配置首建成功写入（F-009）。 */
-export const SETTINGS_GLOBAL_CREATED_EVENT_TYPE = 'settings.global_created';
-/** 仅命令路径项目配置首建成功写入（F-009）。 */
-export const SETTINGS_PROJECT_CREATED_EVENT_TYPE = 'settings.project_created';
+/** 仅命令路径全局配置首建成功写入（F-009 已实施；P01 直接服务首建不写事件）。 */
+export { SETTINGS_GLOBAL_CREATED_EVENT_TYPE };
+/** 仅命令路径项目配置首建成功写入（F-009 已实施；P01 直接服务首建不写事件）。 */
+export { SETTINGS_PROJECT_CREATED_EVENT_TYPE };
 
 /** §9.2 P02-2 事件类型白名单（顺序即冻结顺序；白名单外不得出现在公开流中）。 */
 export const PUBLIC_STATE_EVENT_TYPES = [

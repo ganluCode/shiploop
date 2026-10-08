@@ -315,6 +315,32 @@ function strategiesPayloadFromEffective(effective: EffectiveSettings): SettingsP
 }
 
 /**
+ * 项目配置写入的合并校验纯函数（P01-3 / F-010 规则的共享实现）：以「全局当前
+ * 配置快照 + 新项目 payload」合并有效配置（两个来源在合并前重新经
+ * schemaVersion=2 校验），再对合并后的策略集合按可信装配注入的能力目录复检。
+ * nextScopeRevision 只用于来源标注，不影响校验结论。
+ * P01 ConfigurationService 与 P02-2 / F-009 幂等命令路径共用，不另立第二套规则。
+ */
+export function validateMergedProjectSettingsWrite(
+  operation: string,
+  projectId: string,
+  payload: SettingsPayload,
+  nextScopeRevision: number,
+  global: { readonly revision: number; readonly payload: SettingsPayload } | null,
+  capabilityCatalog: RuntimeCapabilityCatalog,
+): void {
+  const merged = mergeEffectiveSettings({
+    global:
+      global === null ? null : { scopeRevision: global.revision, payload: global.payload },
+    project: { scopeRevision: nextScopeRevision, payload },
+  });
+  validateStrategyCapabilities(strategiesPayloadFromEffective(merged), capabilityCatalog, {
+    operation,
+    entity: { type: 'project_settings', projectId },
+  });
+}
+
+/**
  * 装配 ConfigurationService。只校验依赖形态，不执行任何 I/O；
  * import 本模块无副作用。
  */
@@ -368,15 +394,14 @@ export function createConfigurationService(deps: ConfigurationServiceDeps): Conf
     nextScopeRevision: number,
     global: { readonly revision: number; readonly payload: SettingsPayload } | null,
   ): void {
-    const merged = mergeEffectiveSettings({
-      global:
-        global === null ? null : { scopeRevision: global.revision, payload: global.payload },
-      project: { scopeRevision: nextScopeRevision, payload },
-    });
-    validateStrategyCapabilities(strategiesPayloadFromEffective(merged), capabilityCatalog, {
+    validateMergedProjectSettingsWrite(
       operation,
-      entity: { type: 'project_settings', projectId },
-    });
+      projectId,
+      payload,
+      nextScopeRevision,
+      global,
+      capabilityCatalog,
+    );
   }
 
   /**
