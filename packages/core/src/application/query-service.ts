@@ -1,0 +1,494 @@
+/**
+ * F-010 QueryService（application 层）：授权项目/配置查询、一致读视图快照
+ * 水位与分页事件读取（docs/p02-2-commands-events-contract.md §4/§7/§8/§9.3）。
+ *
+ * 不变量：
+ * - 只依赖 ports 窄接口（AuthorizedProjectReadStore / ConsistentSnapshotStore /
+ *   StateEventReadStore / StateStore 只读子集 / ConfigurationService 查询切片）
+ *   与 F-005 纯授权判定；不接触适配器、驱动、HTTP 或 Pi SDK；import 本模块
+ *   无副作用，装配时不执行任何 I/O；
+ * - 授权在 Core 应用层执行（不经 HTTP 也拒绝）：能力核验先于数据库读取；
+ *   不可见项目与不存在项目对调用方统一 forbidden（mapProjectLookupError
+ *   折算，不回显 projectId）；全局配置/全局事件独立授权（settings.global.read，
+ *   项目能力不蕴含）；项目配置读 = project.read 或 settings.project.read；
+ * - 可见范围谓词随端口下推 SQL（先收窄再分页/计数），事件行级可见过滤器
+ *   （F-005 createEventVisibilityFilter）作为防御纵深复核：SQL 结果与谓词
+ *   不一致是适配器编程错误（TypeError），绝不静默跳过；
+ * - 快照内容（项目/绑定/当前配置/有效配置/水位）取自 ConsistentSnapshotStore
+ *   的同一 SQLite 一致读视图：水位是该视图内的 MAX(state_events.sequence)，
+ *   禁止多次独立读取后随手拼水位；有效配置（含全局来源 revision）由同一
+ *   视图记录经 F-009 mergeEffectiveSettings 纯函数合并；
+ * - 查询全部只读：不写 state_events、不创建任何行、不解析凭据引用、不执行
+ *   脚本、不接受任意文件路径参数；无配置是明确结果（configured:false /
+ *   not_found），损坏持久 JSON/未知版本为 corrupt_state，绝不降级成「已配置」；
+ * - 事件读取：游标经 F-003 decodeEventCursor 绑定数据根身份与 scope（坏游标
+ *   invalid_input(invalid_cursor)，绝不当从零读取；未来游标合法）；事件按
+ *   sequence 升序有界分页（默认 100/上限 500），eventId 供客户端去重；持久
+ *   行列经 mapStateEvents 白名单映射（损坏/未知类型显式 corrupt_state）；
+ * - principal 形状非法属于可信装配编程错误（TypeError），不折算客户端错误；
+ *   其余错误经 mapToPublicError 脱敏映射（不回显路径/payload 原文/堆栈）。
+ */
+import {
+  assertTrustedPrincipal,
+  authorizeEventSubscription,
+  authorizeGlobalSettingsRead,
+  authorizeProjectLabelCounts,
+  authorizeProjectRead,
+  authorizeProjectSettingsRead,
+  authorizeProjectsList,
+  authorizeSnapshot,
+  createEventVisibilityFilter,
+  mapProjectLookupError,
+} from '../ports/authorization.js';
+import {
+  PublicError,
+  WIRE_MESSAGE_SCHEMA_VERSION,
+  mapToPublicError,
+} from '../ports/commands.js';
+import {
+  createEventCursorBinding,
+  createEventWatermark,
+  decodeEventCursor,
+  encodeEventCursor,
+  mapStateEvents,
+  normalizeMaxEventSequence,
+  validateEventPageLimit,
+  validateEventScope,
+} from '../ports/events.js';
+import type {
+  EventCursorBinding,
+  PublicEventScope,
+  PublicStateEvent,
+} from '../ports/events.js';
+import {
+  toPublicProjectRecord,
+  toPublicRepositoryBindingRecord,
+  toPublicSettingsState,
+} from '../ports/queries.js';
+import type {
+  AuthorizedProjectReadStore,
+  ConsistentSnapshotStore,
+  ProjectBindingResult,
+  ProjectDetailResult,
+  ProjectLabelCountsResult,
+  ProjectListResult,
+  PublicSettingsState,
+} from '../ports/queries.js';
+import type { StateEventReadStore } from '../ports/events.js';
+import { isStorageError } from '../ports/errors.js';
+import type { SettingsScope } from '../ports/settings-schema.js';
+import { validateProjectListFilter } from '../ports/state-store.js';
+import type { StateStore } from '../ports/state-store.js';
+import { validateStableId } from '../ports/validation.js';
+import type { ValidationContext } from '../ports/validation.js';
+import {
+  requirePlainObject,
+  rejectUnknownKeys,
+} from '../ports/validation.js';
+import type { ConfigurationService } from './configuration-service.js';
+import type { ExportedSettings } from './configuration-service.js';
+import { mergeEffectiveSettings } from './effective-settings.js';
+import type { EffectiveSettings } from './effective-settings.js';
+import type { EventWatermark } from '../ports/events.js';
+
+/** 分页事件读取结果（Core 内部面；F-012 SSE 补读复用）。 */
+export interface StateEventPage {
+  readonly scope: PublicEventScope;
+  readonly events: readonly PublicStateEvent[];
+  /** 本页用满 limit 时为最后一事件之后的不透明续读游标；否则 null（页末明确）。 */
+  readonly nextCursor: string | null;
+  readonly limit: number;
+}
+
+interface SnapshotBase {
+  readonly schemaVersion: typeof WIRE_MESSAGE_SCHEMA_VERSION;
+  readonly watermark: EventWatermark;
+  /** 快照装配时刻（ISO UTC；注入时钟）。 */
+  readonly readAt: string;
+}
+
+/** §8 项目快照：项目 + 绑定（无则 null）+ 项目当前配置（无则 null）+ 有效配置 + 水位。 */
+export interface ProjectSnapshotResult extends SnapshotBase {
+  readonly scope: { readonly kind: 'project'; readonly projectId: string };
+  readonly project: ReturnType<typeof toPublicProjectRecord>;
+  readonly binding: ReturnType<typeof toPublicRepositoryBindingRecord> | null;
+  readonly settings: PublicSettingsState | null;
+  readonly effective: EffectiveSettings;
+}
+
+/** §8 全局快照：全局当前配置（无则 null）+ 水位。 */
+export interface GlobalSnapshotResult extends SnapshotBase {
+  readonly scope: { readonly kind: 'global' };
+  readonly settings: PublicSettingsState | null;
+}
+
+export type SnapshotResult = ProjectSnapshotResult | GlobalSnapshotResult;
+
+/**
+ * 授权查询服务：项目/绑定/配置/快照/事件。principal 由可信装配显式传入
+ * （生产固定 local-owner；受限主体仅测试装配），本服务绝不从请求数据取身份。
+ */
+export interface QueryService {
+  /** projects.list：project.read + 可见谓词下推 + P01 标签/分页规则。 */
+  listProjects(principal: unknown, filter?: unknown): Promise<ProjectListResult>;
+  /** projects.labelCounts：与列表同一可见范围的项目层标签去重计数。 */
+  countProjectLabels(principal: unknown): Promise<ProjectLabelCountsResult>;
+  /** projects.get：项目 + 绑定一次授权组装（无绑定 binding:null）。 */
+  getProject(principal: unknown, projectId: unknown): Promise<ProjectDetailResult>;
+  /** projects.binding.get：无绑定 not_found（entityType repository_binding）。 */
+  getRepositoryBinding(principal: unknown, projectId: unknown): Promise<ProjectBindingResult>;
+  /** settings.global.get：settings.global.read 独立授权；缺失 not_found。 */
+  getGlobalSettings(principal: unknown): Promise<PublicSettingsState>;
+  /** settings.project.get：project.read 或 settings.project.read + 目标可见。 */
+  getProjectSettings(principal: unknown, projectId: unknown): Promise<PublicSettingsState>;
+  /** settings.project.effective：P01 有效配置合并与逐项来源；configured:false 明确未配置。 */
+  getEffectiveSettings(principal: unknown, projectId: unknown): Promise<EffectiveSettings>;
+  /** settings.global.export：P01 脱敏导出（引用原样、不解析）。 */
+  exportGlobalSettings(principal: unknown): Promise<ExportedSettings>;
+  /** settings.project.export：同上，项目 scope。 */
+  exportProjectSettings(principal: unknown, projectId: unknown): Promise<ExportedSettings>;
+  /** snapshot.get：同一 SQLite 一致读视图 + 事件水位（游标绑定数据根与 scope）。 */
+  getSnapshot(principal: unknown, scope: unknown): Promise<SnapshotResult>;
+  /**
+   * 事件分页读取（F-012 SSE 补读复用）：events.read + 范围读能力授权；
+   * 游标必填（缺失 cursor_required），非法/跨根/跨 scope 一律 invalid_cursor。
+   */
+  listEvents(principal: unknown, input: unknown): Promise<StateEventPage>;
+}
+
+export interface QueryServiceOptions {
+  /** F-010 可见谓词下推的项目列表/计数窄读取端口。 */
+  readonly projectReads: AuthorizedProjectReadStore;
+  /** F-010 §8 一致读视图窄端口。 */
+  readonly snapshots: ConsistentSnapshotStore;
+  /** F-010 持久事件分页读取窄端口。 */
+  readonly eventReads: StateEventReadStore;
+  /** P01 StateStore 只读子集（项目/绑定详情读取）。 */
+  readonly stateStore: Pick<StateStore, 'getProject' | 'getRepositoryBinding'>;
+  /** P01 配置服务查询切片（当前值/有效配置/脱敏导出）。 */
+  readonly configurationService: Pick<
+    ConfigurationService,
+    'getCurrentSettings' | 'getEffectiveSettings' | 'exportSettings'
+  >;
+  /** 数据根身份（64hex；可信装配由 realpath 数据根派生，绝不来自请求数据）。 */
+  readonly dataRootIdentity: string;
+  /** UTC 毫秒时钟（默认 Date.now）；测试注入以获得确定性 readAt。 */
+  readonly nowUtcMs?: () => number;
+}
+
+const PROJECTS_LIST_OPERATION = 'projects.list';
+const PROJECTS_LABEL_COUNTS_OPERATION = 'projects.labelCounts';
+const PROJECTS_GET_OPERATION = 'projects.get';
+const PROJECTS_BINDING_GET_OPERATION = 'projects.binding.get';
+const SETTINGS_GLOBAL_GET_OPERATION = 'settings.global.get';
+const SETTINGS_PROJECT_GET_OPERATION = 'settings.project.get';
+const SETTINGS_PROJECT_EFFECTIVE_OPERATION = 'settings.project.effective';
+const SETTINGS_GLOBAL_EXPORT_OPERATION = 'settings.global.export';
+const SETTINGS_PROJECT_EXPORT_OPERATION = 'settings.project.export';
+const SNAPSHOT_GET_OPERATION = 'snapshot.get';
+const EVENTS_SUBSCRIBE_OPERATION_NAME = 'events.subscribe';
+
+/**
+ * 装配 QueryService。只校验依赖形态，不执行任何 I/O；import 本模块无副作用。
+ */
+export function createQueryService(options: QueryServiceOptions): QueryService {
+  if (options === null || typeof options !== 'object') {
+    throw new TypeError('createQueryService: options 必须是对象');
+  }
+  const {
+    projectReads,
+    snapshots,
+    eventReads,
+    stateStore,
+    configurationService,
+    dataRootIdentity,
+  } = options;
+  if (typeof dataRootIdentity !== 'string' || !/^[0-9a-f]{64}$/.test(dataRootIdentity)) {
+    throw new TypeError('createQueryService: dataRootIdentity 必须是 64 位小写十六进制（可信装配派生）');
+  }
+  const nowUtcMs = options.nowUtcMs ?? Date.now;
+
+  /** 游标绑定：数据根身份 + scope（每次构造；createEventCursorBinding 复核形状）。 */
+  function cursorBinding(scope: PublicEventScope, operation: string): EventCursorBinding {
+    return createEventCursorBinding({ rootIdentity: dataRootIdentity, scope }, operation);
+  }
+
+  /** 项目目标身份校验（非法稳定 ID 在任何授权/读取之前 invalid_input）。 */
+  function requireProjectId(projectId: unknown, operation: string): string {
+    const context: ValidationContext = { operation, entity: { type: 'project' } };
+    return validateStableId(projectId, context, 'projectId');
+  }
+
+  return {
+    async listProjects(principal: unknown, filter?: unknown): Promise<ProjectListResult> {
+      assertTrustedPrincipal(principal);
+      const operation = PROJECTS_LIST_OPERATION;
+      try {
+        // 能力核验先于筛选校验与任何读取；可见谓词随端口下推 SQL。
+        const visibility = authorizeProjectsList(principal, operation);
+        const valid = validateProjectListFilter(filter, operation);
+        const page = projectReads.listVisibleProjects(visibility, filter);
+        return {
+          schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION,
+          scope: 'project-list',
+          records: page.records.map(toPublicProjectRecord),
+          nextCursor: page.nextCursor,
+          limit: valid.limit,
+        };
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    async countProjectLabels(principal: unknown): Promise<ProjectLabelCountsResult> {
+      assertTrustedPrincipal(principal);
+      const operation = PROJECTS_LABEL_COUNTS_OPERATION;
+      try {
+        const visibility = authorizeProjectLabelCounts(principal, operation);
+        return { labels: [...projectReads.countVisibleProjectLabels(visibility)] };
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    async getProject(principal: unknown, projectId: unknown): Promise<ProjectDetailResult> {
+      assertTrustedPrincipal(principal);
+      const operation = PROJECTS_GET_OPERATION;
+      try {
+        const id = requireProjectId(projectId, operation);
+        authorizeProjectRead(principal, id, operation);
+        let project;
+        try {
+          project = await stateStore.getProject(id);
+        } catch (error) {
+          mapProjectLookupError(error, operation);
+        }
+        let binding = null;
+        try {
+          binding = await stateStore.getRepositoryBinding(id);
+        } catch (error) {
+          // 项目存在但尚无绑定 → binding:null；项目缺失已在上面折算 forbidden。
+          if (isStorageError(error, 'not_found') && error.entity?.type === 'repository_binding') {
+            binding = null;
+          } else {
+            throw error;
+          }
+        }
+        return {
+          project: toPublicProjectRecord(project),
+          binding: binding === null ? null : toPublicRepositoryBindingRecord(binding),
+        };
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    async getRepositoryBinding(principal: unknown, projectId: unknown): Promise<ProjectBindingResult> {
+      assertTrustedPrincipal(principal);
+      const operation = PROJECTS_BINDING_GET_OPERATION;
+      try {
+        const id = requireProjectId(projectId, operation);
+        authorizeProjectRead(principal, id, operation);
+        let binding;
+        try {
+          binding = await stateStore.getRepositoryBinding(id);
+        } catch (error) {
+          mapProjectLookupError(error, operation);
+        }
+        return { binding: toPublicRepositoryBindingRecord(binding) };
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    async getGlobalSettings(principal: unknown): Promise<PublicSettingsState> {
+      assertTrustedPrincipal(principal);
+      const operation = SETTINGS_GLOBAL_GET_OPERATION;
+      try {
+        authorizeGlobalSettingsRead(principal, operation);
+        const record = await configurationService.getCurrentSettings({ kind: 'global' });
+        return toPublicSettingsState({ kind: 'global' }, record);
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    async getProjectSettings(principal: unknown, projectId: unknown): Promise<PublicSettingsState> {
+      assertTrustedPrincipal(principal);
+      const operation = SETTINGS_PROJECT_GET_OPERATION;
+      try {
+        const id = requireProjectId(projectId, operation);
+        authorizeProjectSettingsRead(principal, id, operation);
+        const scope: SettingsScope = { kind: 'project', projectId: id };
+        const record = await configurationService.getCurrentSettings(scope);
+        return toPublicSettingsState(scope, record);
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    async getEffectiveSettings(principal: unknown, projectId: unknown): Promise<EffectiveSettings> {
+      assertTrustedPrincipal(principal);
+      const operation = SETTINGS_PROJECT_EFFECTIVE_OPERATION;
+      try {
+        const id = requireProjectId(projectId, operation);
+        authorizeProjectSettingsRead(principal, id, operation);
+        try {
+          return await configurationService.getEffectiveSettings(id);
+        } catch (error) {
+          // 项目缺失折算为与不可见相同的 forbidden；配置损坏等其余错误原样传播。
+          mapProjectLookupError(error, operation);
+        }
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    async exportGlobalSettings(principal: unknown): Promise<ExportedSettings> {
+      assertTrustedPrincipal(principal);
+      const operation = SETTINGS_GLOBAL_EXPORT_OPERATION;
+      try {
+        authorizeGlobalSettingsRead(principal, operation);
+        return await configurationService.exportSettings();
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    async exportProjectSettings(principal: unknown, projectId: unknown): Promise<ExportedSettings> {
+      assertTrustedPrincipal(principal);
+      const operation = SETTINGS_PROJECT_EXPORT_OPERATION;
+      try {
+        const id = requireProjectId(projectId, operation);
+        authorizeProjectSettingsRead(principal, id, operation);
+        try {
+          return await configurationService.exportSettings(id);
+        } catch (error) {
+          mapProjectLookupError(error, operation);
+        }
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    async getSnapshot(principal: unknown, scopeInput: unknown): Promise<SnapshotResult> {
+      assertTrustedPrincipal(principal);
+      const operation = SNAPSHOT_GET_OPERATION;
+      try {
+        const scope = validateEventScope(scopeInput, operation);
+        authorizeSnapshot(principal, scope, operation);
+        const binding = cursorBinding(scope, operation);
+        const readAt = new Date(nowUtcMs()).toISOString();
+        if (scope.kind === 'global') {
+          const view = snapshots.readGlobalSnapshotView();
+          const watermark = createEventWatermark(
+            normalizeMaxEventSequence(view.maxEventSequence, operation),
+            binding,
+          );
+          return {
+            schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION,
+            scope,
+            settings:
+              view.globalSettings === null
+                ? null
+                : toPublicSettingsState({ kind: 'global' }, view.globalSettings),
+            watermark,
+            readAt,
+          };
+        }
+        let view;
+        try {
+          view = snapshots.readProjectSnapshotView(scope.projectId);
+        } catch (error) {
+          mapProjectLookupError(error, operation);
+        }
+        if (view.project === null) {
+          // 端口契约：项目缺失必须抛 not_found 而不是返回空视图（实现缺陷）。
+          throw new TypeError('项目快照视图缺失项目行（适配器实现缺陷）');
+        }
+        const watermark = createEventWatermark(
+          normalizeMaxEventSequence(view.maxEventSequence, operation),
+          binding,
+        );
+        return {
+          schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION,
+          scope,
+          project: toPublicProjectRecord(view.project),
+          binding:
+            view.binding === null ? null : toPublicRepositoryBindingRecord(view.binding),
+          settings:
+            view.projectSettings === null
+              ? null
+              : toPublicSettingsState(scope, view.projectSettings),
+          // 有效配置与内容/水位同一读视图：全局来源 revision 随视图记录进入合并。
+          effective: mergeEffectiveSettings({
+            global:
+              view.globalSettings === null
+                ? null
+                : {
+                    scopeRevision: view.globalSettings.revision,
+                    payload: view.globalSettings.payload,
+                  },
+            project:
+              view.projectSettings === null
+                ? null
+                : {
+                    scopeRevision: view.projectSettings.revision,
+                    payload: view.projectSettings.payload,
+                  },
+          }),
+          watermark,
+          readAt,
+        };
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    async listEvents(principal: unknown, input: unknown): Promise<StateEventPage> {
+      assertTrustedPrincipal(principal);
+      const operation = EVENTS_SUBSCRIBE_OPERATION_NAME;
+      try {
+        const object = requirePlainObject(input, { operation }, 'input');
+        rejectUnknownKeys(object, ['scope', 'cursor', 'limit'], { operation }, 'input');
+        const scope = validateEventScope(object.scope, operation);
+        const binding = cursorBinding(scope, operation);
+        if (object.cursor === undefined) {
+          throw new PublicError('invalid_input', operation, undefined, {
+            details: { field: 'cursor', reason: 'cursor_required' },
+          });
+        }
+        const cursor = decodeEventCursor(object.cursor, binding, operation);
+        const limit = validateEventPageLimit(object.limit, operation);
+        // 授权在任何读取之前：events.read + 范围读能力 + 项目可见性。
+        authorizeEventSubscription(principal, scope, operation);
+        const rows = eventReads.listPersistedEvents({
+          scope,
+          afterSequence: cursor.sequence,
+          limit,
+        });
+        // 行级可见过滤器复核（F-005）：SQL 谓词已下推，此处为防御纵深——
+        // 结果与谓词不一致是适配器编程错误，绝不静默跳过/透传。
+        const visibilityFilter = createEventVisibilityFilter(scope);
+        for (const row of rows) {
+          if (!visibilityFilter(row)) {
+            throw new TypeError('事件读取结果越出授权范围（适配器实现缺陷）');
+          }
+        }
+        const events = mapStateEvents(rows, operation);
+        const last = events[events.length - 1];
+        return {
+          scope,
+          events,
+          nextCursor:
+            events.length === limit && last !== undefined
+              ? encodeEventCursor(last.sequence, binding)
+              : null,
+          limit,
+        };
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+  };
+}

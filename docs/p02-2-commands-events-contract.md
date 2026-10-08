@@ -479,6 +479,9 @@ UtcMs 记录转换）；project/binding/settings 记录字段集与 P01 端口�
 
 ## 7. 查询与分页
 
+> 实施状态：Core 应用层授权查询服务已于 F-010 落地（`application/query-service.ts`，
+> 直接应用层测试覆盖，不经 HTTP）；Host 路由仍由 F-011 接线。
+
 ### 7.1 通用规则
 
 - 所有查询经 §4 授权；可见范围谓词在 SQL 前下推，之后才分页/计数。
@@ -504,6 +507,10 @@ UtcMs 记录转换）；project/binding/settings 记录字段集与 P01 端口�
   （`exportFormatVersion:1` 白名单投影；引用字符串原样、不解析、不含 executable/ready）。
 
 ## 8. 快照与水位
+
+> 实施状态：一致读视图快照已于 F-010 落地（`ports/queries.ts` 的
+> `ConsistentSnapshotStore` 窄端口 + `adapters/sqlite` 的 DEFERRED 读事务实现
+> `readProjectSnapshotView`/`readGlobalSnapshotView`）；Host 路由仍由 F-011 接线。
 
 `GET /v1/snapshot`（参数：`scope=project&projectId=<id>` 或 `scope=global`）：
 
@@ -562,6 +569,10 @@ interface PublicStateEvent {
 F-012 按 §9.4 以错误响应/`event: error` 帧呈现，不把坏行伪装成空流。
 
 ### 9.3 游标与分页
+
+> 实施状态：持久事件分页读取已于 F-010 落地（`ports/events.ts` 的
+> `StateEventReadStore` 窄端口 + `QueryService.listEvents` 授权分页）；
+> SSE 持续订阅仍由 F-012 实现。
 
 - 不透明字符串 `evcur_v1_<base64url>`，解码内容为
   `{"v":1,"seq":<number>,"root":<dataRootIdentity 前 16hex>,"sk":<scope 指纹 hex>}`，

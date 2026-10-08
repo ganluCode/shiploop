@@ -34,11 +34,13 @@ import { createCommandService } from '../application/command-service.js';
 import type { CommandService } from '../application/command-service.js';
 import { createProjectService } from '../application/project-service.js';
 import type { ProjectService } from '../application/project-service.js';
+import { createQueryService } from '../application/query-service.js';
+import type { QueryService } from '../application/query-service.js';
 import type { ArtifactFileStore } from '../ports/artifact-files.js';
 import type { ArtifactStore } from '../ports/artifact-store.js';
 import type { CommandReceiptStore } from '../ports/command-receipts.js';
 import { StorageError } from '../ports/errors.js';
-import { PathResolutionError, deriveDefaultDataRoot } from '../ports/path-service.js';
+import { PathResolutionError, computeDataRootIdentity, deriveDefaultDataRoot } from '../ports/path-service.js';
 import type { PathService } from '../ports/path-service.js';
 import type { RepositoryInspector } from '../ports/repository-inspector.js';
 import type { RuntimeCapabilityCatalog } from '../ports/runtime-capabilities.js';
@@ -58,6 +60,7 @@ import { createSqliteAtomicCommandStore } from './sqlite/atomic-commands.js';
 import { createSqliteArtifactStore } from './sqlite/artifact-store.js';
 import { createSqliteCommandReceiptStore } from './sqlite/command-receipts.js';
 import { migrateSqliteStorage } from './sqlite/migrator.js';
+import { createSqliteQueryStore } from './sqlite/query-store.js';
 import { openSqliteStorageSession } from './sqlite/session.js';
 import { createSqliteStateStore } from './sqlite/state-store.js';
 
@@ -102,6 +105,8 @@ export interface CoreApplication {
   /** F-007：幂等原子命令（当前仅 metadata CAS；注册/配置后续接入）。 */
   readonly commandService: CommandService;
   readonly commandReceiptsService: CommandReceiptsService;
+  /** F-010：授权查询/一致读视图快照水位/分页事件读取（§7/§8/§9.3）。 */
+  readonly queryService: QueryService;
   /** 关闭状态库会话并释放文件句柄；幂等。 */
   close(): void;
 }
@@ -259,6 +264,19 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
     });
 
+    // F-010：授权查询/快照/事件读取窄端口装配；游标绑定的数据根身份由
+    // realpath 固定的数据根派生（与 Host 握手身份同一算法，不来自请求数据）。
+    const queryStore = createSqliteQueryStore(session);
+    const queryService = createQueryService({
+      projectReads: queryStore,
+      snapshots: queryStore,
+      eventReads: queryStore,
+      stateStore,
+      configurationService,
+      dataRootIdentity: computeDataRootIdentity(basePathService.dataRoot()),
+      ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
+    });
+
     const application: CoreApplication = {
       dataRoot: basePathService.dataRoot(),
       pathService,
@@ -271,6 +289,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       commandReceiptStore,
       commandReceiptsService,
       commandService,
+      queryService,
       close(): void {
         session.close();
       },

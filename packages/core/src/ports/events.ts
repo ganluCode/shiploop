@@ -22,7 +22,9 @@
  *
  * 纯度不变量：只做结构校验与数据映射；node:crypto 仅用于确定性指纹计算
  * （不读时钟/文件系统/网络），不导入 HTTP/SSE/ORM/Pi SDK/适配器，
- * 不读取 state_events（读取端口在 F-010），不从 logger 文本推断事件。
+ * 不从 logger 文本推断事件（持久读取端口已于 F-010 落地：
+ * StateEventPageRequest/validateStateEventPageRequest 与 StateEventReadStore，
+ * 见本文件末节；SSE 订阅在 F-012）。
  */
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
@@ -656,4 +658,53 @@ export function validateEventPageLimit(
     invalidInput(operation, 'limit', `必须是 1..${EVENT_PAGE_MAX_LIMIT} 的整数`, value);
   }
   return value;
+}
+
+/* ------------------------------------------------------------------ *
+ * F-010 持久事件分页读取窄端口（§9.3 补读分页）
+ * ------------------------------------------------------------------ */
+
+/**
+ * 持久事件分页读取请求（端口边界形态）：scope 经 validateEventScope 校验，
+ * afterSequence 为排他下界（读取 sequence > afterSequence 的已提交事件，
+ * 0 = 从持久序列起点读取），limit 经 validateEventPageLimit（1..500）。
+ * 实现方按 scope 把可见谓词下推到 SQL（项目流 project_id = ?，全局流
+ * project_id IS NULL），按 sequence 升序返回至多 limit 条持久行列；
+ * 行列结构/白名单核验由 mapStateEvent 负责（F-003 定案：显式失败）。
+ */
+export interface StateEventPageRequest {
+  readonly scope: PublicEventScope;
+  /** 排他下界：0..2^53-1 安全整数（0 表示从起点读取）。 */
+  readonly afterSequence: number;
+  readonly limit: number;
+}
+
+/**
+ * 校验分页读取请求（unknown → StateEventPageRequest）：未知键、非法 scope、
+ * 非安全整数/负数 afterSequence、非法 limit 一律 invalid_input 并定位字段。
+ */
+export function validateStateEventPageRequest(
+  value: unknown,
+  operation: string = EVENT_READ_OPERATION,
+): StateEventPageRequest {
+  if (!isPlainObject(value)) {
+    invalidInput(operation, 'request', '必须是对象', value);
+  }
+  exactKeys(operation, value, ['scope', 'afterSequence', 'limit'], 'request.');
+  if (!isSafeInteger(value.afterSequence, 0, Number.MAX_SAFE_INTEGER)) {
+    invalidInput(operation, 'afterSequence', '必须是 0..2^53-1 的安全整数', value.afterSequence);
+  }
+  return {
+    scope: validateEventScope(value.scope, operation),
+    afterSequence: value.afterSequence,
+    limit: validateEventPageLimit(value.limit, operation),
+  };
+}
+
+/**
+ * 持久 state_events 分页读取窄端口（F-010）：唯一事件来源是持久审计表，
+ * 内存通知/日志不得充当事件正文。只暴露应用侧行列形态，不泄漏驱动会话。
+ */
+export interface StateEventReadStore {
+  listPersistedEvents(request: unknown): readonly PersistedStateEventRow[];
 }

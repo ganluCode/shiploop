@@ -49,8 +49,17 @@
  */
 import { randomUUID } from 'node:crypto';
 import type Database from 'better-sqlite3';
+import type { PrincipalScope } from '../../ports/authorization.js';
 import { StorageError } from '../../ports/errors.js';
 import type { StorageEntityRef } from '../../ports/errors.js';
+import {
+  validateStateEventPageRequest,
+  type PersistedStateEventRow,
+} from '../../ports/events.js';
+import {
+  assertPrincipalVisibility,
+  type SnapshotView,
+} from '../../ports/queries.js';
 import { parseStoredSettingsPayload } from '../../ports/settings-schema.js';
 import type { SettingsPayload } from '../../ports/settings-schema.js';
 import {
@@ -86,6 +95,7 @@ import type {
   StateStore,
   ValidatedCreateProjectInput,
   ValidatedCreateRepositoryBindingInput,
+  ValidatedProjectListFilter,
 } from '../../ports/state-store.js';
 import { validateStableId } from '../../ports/validation.js';
 import type { ValidationContext } from '../../ports/validation.js';
@@ -147,6 +157,89 @@ function bindingFromRow(row: RepositoryBindingRow): RepositoryBindingRecord {
   };
 }
 
+/** state_events 持久行列（snake_case 列名；payload 为 JSON 文本）。 */
+interface StateEventRow {
+  readonly id: string;
+  readonly sequence: number;
+  readonly event_type: string;
+  readonly aggregate_type: string;
+  readonly aggregate_id: string;
+  readonly aggregate_revision: number;
+  readonly project_id: string | null;
+  readonly payload: string;
+  readonly occurred_at: number;
+}
+
+interface BoundQuery {
+  readonly sql: string;
+  readonly params: readonly unknown[];
+}
+
+/** 可见范围谓词（P02-2 / F-010）：先收窄再分页/计数；allowlist 为空是编程错误。 */
+function visibilityCondition(visibility: PrincipalScope, column: string): { readonly condition?: string; readonly params: readonly unknown[] } {
+  if (visibility.kind === 'all') {
+    return { params: [] };
+  }
+  if (visibility.projectIds.length === 0) {
+    throw new TypeError('可见范围 allowlist 不允许为空（可信装配编程错误）');
+  }
+  return {
+    condition: `${column} IN (${visibility.projectIds.map(() => '?').join(', ')})`,
+    params: [...visibility.projectIds],
+  };
+}
+
+/**
+ * 项目列表 SELECT 构建（P01 规则单一实现）：稳定 id 升序键集分页 + 任一/全部
+ * 标签筛选（绑定参数 + json_each），叠加 F-010 可见范围谓词下推。
+ * StateStore.listProjects（P01，无授权收窄）与 F-010 listVisibleProjects 共用。
+ */
+function buildProjectListQuery(
+  valid: ValidatedProjectListFilter,
+  visibility: PrincipalScope,
+): BoundQuery {
+  const conditions: string[] = ['id > ?'];
+  const params: unknown[] = [valid.cursor ?? ''];
+  const visible = visibilityCondition(visibility, 'id');
+  if (visible.condition !== undefined) {
+    conditions.push(visible.condition);
+    params.push(...visible.params);
+  }
+  if (valid.labels.length > 0) {
+    const placeholders = valid.labels.map(() => '?').join(', ');
+    if (valid.match === 'any') {
+      conditions.push(
+        `EXISTS (SELECT 1 FROM json_each(projects.labels) AS jt WHERE jt.value IN (${placeholders}))`,
+      );
+      params.push(...valid.labels);
+    } else {
+      // all：项目内命中的请求标签数必须等于请求标签总数（标签已在实体内去重）。
+      conditions.push(
+        `(SELECT COUNT(DISTINCT jt.value) FROM json_each(projects.labels) AS jt WHERE jt.value IN (${placeholders})) = ?`,
+      );
+      params.push(...valid.labels, valid.labels.length);
+    }
+  }
+  params.push(valid.limit + 1);
+  return {
+    sql: `SELECT * FROM projects WHERE ${conditions.join(' AND ')} ORDER BY id LIMIT ?`,
+    params,
+  };
+}
+
+/** 项目层标签去重计数 SELECT 构建（同一项目同标签只计一次）+ F-010 可见范围下推。 */
+function buildProjectLabelCountsQuery(visibility: PrincipalScope): BoundQuery {
+  const visible = visibilityCondition(visibility, 'projects.id');
+  const where = visible.condition === undefined ? '' : ` WHERE ${visible.condition}`;
+  return {
+    sql:
+      'SELECT jt.value AS label, COUNT(DISTINCT projects.id) AS project_count ' +
+      `FROM projects, json_each(projects.labels) AS jt${where} ` +
+      'GROUP BY jt.value ORDER BY jt.value',
+    params: visible.params,
+  };
+}
+
 /** canonical_path 唯一约束冲突识别（better-sqlite3 SqliteError 带 code 字段）。 */
 function isCanonicalPathUniqueViolation(error: unknown): boolean {
   return (
@@ -156,6 +249,16 @@ function isCanonicalPathUniqueViolation(error: unknown): boolean {
     (error as { code: string }).code.startsWith('SQLITE_CONSTRAINT') &&
     error instanceof Error &&
     error.message.includes('canonical_path')
+  );
+}
+
+/** better-sqlite3 的 SqliteError 带 code 字段；busy 族（含 _SNAPSHOT 等子码）按前缀识别。 */
+function isSqliteBusyReadError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    typeof (error as { code?: unknown }).code === 'string' &&
+    (error as { code: string }).code.startsWith('SQLITE_BUSY')
   );
 }
 
@@ -284,6 +387,16 @@ export function createSqliteStateAccess(
     input: unknown,
     options?: { readonly timestamp?: number },
   ): ProjectSettingsRecord;
+  /** F-010：可见范围下推的项目列表查询（复用 P01 筛选/分页 SQL 构建）。 */
+  listVisibleProjects(visibility: unknown, filter: unknown): ProjectPage;
+  /** F-010：可见范围下推的项目层标签去重计数。 */
+  countVisibleProjectLabels(visibility: unknown): readonly ProjectLabelCount[];
+  /** F-010：项目 scope 一致读视图（同一 DEFERRED 读事务；项目缺失 not_found）。 */
+  readProjectSnapshotView(projectId: unknown): SnapshotView;
+  /** F-010：全局 scope 一致读视图（同一 DEFERRED 读事务）。 */
+  readGlobalSnapshotView(): SnapshotView;
+  /** F-010：持久 state_events 授权范围分页读取（sequence 升序、排他下界、有界）。 */
+  listPersistedEvents(request: unknown): readonly PersistedStateEventRow[];
 } {
   const nowUtcMs = options.nowUtcMs ?? Date.now;
 
@@ -745,6 +858,216 @@ export function createSqliteStateAccess(
     return updated;
   }
 
+  /**
+   * F-010 一致读视图事务（BEGIN DEFERRED）：同一读事务内取得全部内容行与
+   * MAX(state_events.sequence)——视图内后续写入要么整体可见（事件 sequence
+   * 已计入水位）要么整体不可见（sequence 严格大于水位），不存在中间形态。
+   * 只读事务在 WAL 下不阻塞写者；busy 复用会话有限预算，耗尽明确失败。
+   * 嵌套于写事务内调用是编程错误（TypeError）：读视图不得静默并入写事务。
+   */
+  function transactConsistentRead<T>(operation: string, fn: (db: Database.Database) => T): T {
+    assertOpen(operation);
+    const db = session.database;
+    if (db.inTransaction) {
+      throw new TypeError(`${operation}: 一致读视图必须位于独立读事务（不得嵌套写事务）`);
+    }
+    const runner = db.transaction((inner: Database.Database) => fn(inner));
+    let lastBusy: unknown;
+    for (let attempt = 1; attempt <= session.busyRetryAttempts; attempt += 1) {
+      try {
+        return runner.deferred(db);
+      } catch (error) {
+        if (isSqliteBusyReadError(error)) {
+          lastBusy = error;
+          continue;
+        }
+        throw error;
+      }
+    }
+    throw new StorageError(
+      'busy',
+      operation,
+      `SQLite 一致读视图在有限 busy 预算内未完成（${session.busyRetryAttempts} 次尝试）`,
+      { details: { attempts: session.busyRetryAttempts }, cause: lastBusy },
+    );
+  }
+
+  /** 全局当前配置行（读事务内使用；未配置返回 undefined）。 */
+  function selectGlobalSettingsRowOrNull(db: Database.Database): GlobalSettingsRow | undefined {
+    return db
+      .prepare<[string], GlobalSettingsRow>('SELECT * FROM global_settings WHERE id = ?')
+      .get(GLOBAL_SETTINGS_ID) as GlobalSettingsRow | undefined;
+  }
+
+  /** 项目当前配置行（读事务内使用；未配置返回 undefined）。 */
+  function selectProjectSettingsRowOrNull(
+    db: Database.Database,
+    projectId: string,
+  ): ProjectSettingsRow | undefined {
+    return db
+      .prepare<[string], ProjectSettingsRow>('SELECT * FROM project_settings WHERE project_id = ?')
+      .get(projectId) as ProjectSettingsRow | undefined;
+  }
+
+  /** 一致读视图内的 MAX(state_events.sequence)（空库 0；非安全整数为持久损坏）。 */
+  function readMaxEventSequence(db: Database.Database, operation: string): number {
+    const row = db
+      .prepare<[], { m: unknown }>('SELECT COALESCE(MAX(sequence), 0) AS m FROM state_events')
+      .get();
+    const value = row?.m ?? 0;
+    if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+      throw new StorageError('corrupt', operation, `${operation}: 事件水位超出契约形态`, {
+        details: { reason: 'corrupt_watermark' },
+      });
+    }
+    return value;
+  }
+
+  /** F-010：可见范围下推的项目列表（与 P01 listProjects 同一 SQL 构建器）。 */
+  function listVisibleProjects(visibility: unknown, filter: unknown): ProjectPage {
+    const operation = 'StateStore.listProjects';
+    assertOpen(operation);
+    // 可见范围形状非法 = 可信装配编程错误（TypeError），不折算客户端错误。
+    assertPrincipalVisibility(visibility);
+    const valid = validateProjectListFilter(filter, operation);
+    const context: ValidationContext = { operation };
+    const query = buildProjectListQuery(valid, visibility);
+    const rows = session.database
+      .prepare<unknown[], ProjectRow>(query.sql)
+      .all(...query.params) as ProjectRow[];
+    const hasMore = rows.length > valid.limit;
+    const pageRows = hasMore ? rows.slice(0, valid.limit) : rows;
+    return {
+      records: pageRows.map((row) => projectFromRow(row, context)),
+      nextCursor: hasMore ? (pageRows[pageRows.length - 1]?.id ?? null) : null,
+    };
+  }
+
+  /** F-010：可见范围下推的项目层标签去重计数（与 P01 countProjectLabels 同一构建器）。 */
+  function countVisibleProjectLabels(visibility: unknown): readonly ProjectLabelCount[] {
+    const operation = 'StateStore.countProjectLabels';
+    assertOpen(operation);
+    assertPrincipalVisibility(visibility);
+    const query = buildProjectLabelCountsQuery(visibility);
+    const rows = session.database
+      .prepare<unknown[], { label: unknown; project_count: unknown }>(query.sql)
+      .all(...query.params);
+    return rows.map((row) => {
+      if (typeof row.label !== 'string' || typeof row.project_count !== 'number') {
+        throw new StorageError('corrupt', operation, `${operation}: 项目标签计数结果超出契约形态`, {
+          details: { reason: 'invalid_label_count_row' },
+        });
+      }
+      return { label: row.label, projectCount: row.project_count };
+    });
+  }
+
+  /** F-010：项目 scope 一致读视图；项目缺失 not_found（应用层折算 forbidden）。 */
+  function readProjectSnapshotView(projectId: unknown): SnapshotView {
+    const operation = 'SnapshotStore.readProjectSnapshotView';
+    const id = validateStableId(projectId, { operation, entity: { type: 'project' } }, 'projectId');
+    return transactConsistentRead(operation, (db) => {
+      const context: ValidationContext = { operation, entity: { type: 'project', id } };
+      const project = projectFromRow(selectProjectRow(db, id, operation), context);
+      const bindingRow = selectBindingRowByProjectId(db, id);
+      const settingsRow = selectProjectSettingsRowOrNull(db, id);
+      const globalRow = selectGlobalSettingsRowOrNull(db);
+      return {
+        project,
+        binding: bindingRow === undefined ? null : bindingFromRow(bindingRow),
+        projectSettings:
+          settingsRow === undefined
+            ? null
+            : projectSettingsFromRow(settingsRow, {
+                operation,
+                entity: { type: 'project_settings', projectId: id },
+              }),
+        globalSettings:
+          globalRow === undefined
+            ? null
+            : globalSettingsFromRow(globalRow, {
+                operation,
+                entity: { type: 'global_settings', id: GLOBAL_SETTINGS_ID },
+              }),
+        maxEventSequence: readMaxEventSequence(db, operation),
+      };
+    });
+  }
+
+  /** F-010：全局 scope 一致读视图（全局当前配置 + 水位，同一读事务）。 */
+  function readGlobalSnapshotView(): SnapshotView {
+    const operation = 'SnapshotStore.readGlobalSnapshotView';
+    return transactConsistentRead(operation, (db) => {
+      const globalRow = selectGlobalSettingsRowOrNull(db);
+      return {
+        project: null,
+        binding: null,
+        projectSettings: null,
+        globalSettings:
+          globalRow === undefined
+            ? null
+            : globalSettingsFromRow(globalRow, {
+                operation,
+                entity: { type: 'global_settings', id: GLOBAL_SETTINGS_ID },
+              }),
+        maxEventSequence: readMaxEventSequence(db, operation),
+      };
+    });
+  }
+
+  /** 事件 payload JSON 解析：非法 JSON 为持久损坏（F-003 定案的 corrupt_event_row）。 */
+  function parseStateEventPayload(text: string, operation: string): unknown {
+    try {
+      return JSON.parse(text) as unknown;
+    } catch (cause) {
+      throw new StorageError('corrupt', operation, `${operation}: 事件 payload 持久 JSON 损坏`, {
+        details: { reason: 'corrupt_event_row' },
+        cause,
+      });
+    }
+  }
+
+  /**
+   * F-010：持久 state_events 授权范围分页读取。scope 谓词下推 SQL（项目流
+   * project_id = ?、全局流 project_id IS NULL），sequence 升序、排他下界、
+   * 至多 limit 条；持久审计表是唯一事件来源。行列结构/白名单核验由
+   * mapStateEvent（F-003）负责，本层只做列名映射与 payload JSON 解析。
+   */
+  function listPersistedEvents(request: unknown): readonly PersistedStateEventRow[] {
+    const operation = 'StateEventReadStore.listPersistedEvents';
+    assertOpen(operation);
+    if (session.database.inTransaction) {
+      throw new TypeError(`${operation}: 事件读取不得嵌套在写事务内（编程错误）`);
+    }
+    const valid = validateStateEventPageRequest(request, operation);
+    const conditions: string[] = ['sequence > ?'];
+    const params: unknown[] = [valid.afterSequence];
+    if (valid.scope.kind === 'global') {
+      conditions.push('project_id IS NULL');
+    } else {
+      conditions.push('project_id = ?');
+      params.push(valid.scope.projectId);
+    }
+    params.push(valid.limit);
+    const rows = session.database
+      .prepare<unknown[], StateEventRow>(
+        'SELECT id, sequence, event_type, aggregate_type, aggregate_id, aggregate_revision, project_id, payload, occurred_at ' +
+          `FROM state_events WHERE ${conditions.join(' AND ')} ORDER BY sequence ASC LIMIT ?`,
+      )
+      .all(...params) as StateEventRow[];
+    return rows.map((row) => ({
+      id: row.id,
+      sequence: row.sequence,
+      eventType: row.event_type,
+      aggregateType: row.aggregate_type,
+      aggregateId: row.aggregate_id,
+      aggregateRevision: row.aggregate_revision,
+      projectId: row.project_id,
+      payload: parseStateEventPayload(row.payload, operation),
+      occurredAtUtcMs: row.occurred_at,
+    }));
+  }
+
   // 仅适配器内部同步访问；变更调用方必须已持有本会话写事务。
   function getProject(projectId: string): ProjectRecord {
     const operation = 'StateStore.getProject';
@@ -923,62 +1246,12 @@ export function createSqliteStateAccess(
     },
 
     async listProjects(filter?: unknown): Promise<ProjectPage> {
-      const operation = 'StateStore.listProjects';
-      assertOpen(operation);
-      const valid = validateProjectListFilter(filter, operation);
-      const context: ValidationContext = { operation };
-      const db = session.database;
-      // 绑定参数 + 稳定 id 升序分页（游标 = 上一页最后一条 id）：只读路径，不改任何行。
-      const conditions: string[] = ['id > ?'];
-      const params: unknown[] = [valid.cursor ?? ''];
-      if (valid.labels.length > 0) {
-        const placeholders = valid.labels.map(() => '?').join(', ');
-        if (valid.match === 'any') {
-          conditions.push(
-            `EXISTS (SELECT 1 FROM json_each(projects.labels) AS jt WHERE jt.value IN (${placeholders}))`,
-          );
-          params.push(...valid.labels);
-        } else {
-          // all：项目内命中的请求标签数必须等于请求标签总数（标签已在实体内去重）。
-          conditions.push(
-            `(SELECT COUNT(DISTINCT jt.value) FROM json_each(projects.labels) AS jt WHERE jt.value IN (${placeholders})) = ?`,
-          );
-          params.push(...valid.labels, valid.labels.length);
-        }
-      }
-      params.push(valid.limit + 1);
-      const rows = db
-        .prepare<unknown[], ProjectRow>(
-          `SELECT * FROM projects WHERE ${conditions.join(' AND ')} ORDER BY id LIMIT ?`,
-        )
-        .all(...params) as ProjectRow[];
-      const hasMore = rows.length > valid.limit;
-      const pageRows = hasMore ? rows.slice(0, valid.limit) : rows;
-      return {
-        records: pageRows.map((row) => projectFromRow(row, context)),
-        nextCursor: hasMore ? (pageRows[pageRows.length - 1]?.id ?? null) : null,
-      };
+      // P01 直接服务无授权收窄（可见范围 all）；授权下推变体见 listVisibleProjects。
+      return listVisibleProjects({ kind: 'all' }, filter);
     },
 
     async countProjectLabels(): Promise<readonly ProjectLabelCount[]> {
-      const operation = 'StateStore.countProjectLabels';
-      assertOpen(operation);
-      const db = session.database;
-      const rows = db
-        .prepare<[], { label: unknown; project_count: unknown }>(
-          'SELECT jt.value AS label, COUNT(DISTINCT projects.id) AS project_count ' +
-            'FROM projects, json_each(projects.labels) AS jt ' +
-            'GROUP BY jt.value ORDER BY jt.value',
-        )
-        .all();
-      return rows.map((row) => {
-        if (typeof row.label !== 'string' || typeof row.project_count !== 'number') {
-          throw new StorageError('corrupt', operation, `${operation}: 项目标签计数结果超出契约形态`, {
-            details: { reason: 'invalid_label_count_row' },
-          });
-        }
-        return { label: row.label, projectCount: row.project_count };
-      });
+      return countVisibleProjectLabels({ kind: 'all' });
     },
 
     async createProjectWithRepositoryBinding(
@@ -1112,5 +1385,10 @@ export function createSqliteStateAccess(
     updateGlobalSettingsInTransaction,
     createProjectSettingsInTransaction,
     updateProjectSettingsInTransaction,
+    listVisibleProjects,
+    countVisibleProjectLabels,
+    readProjectSnapshotView,
+    readGlobalSnapshotView,
+    listPersistedEvents,
   };
 }

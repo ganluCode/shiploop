@@ -30,6 +30,7 @@
  * 实现者：adapters/fs/path-service.ts（F-003）；组合根（F-012）负责把
  * StateStore/ArtifactStore 装配到同一数据根。
  */
+import { createHash } from 'node:crypto';
 import {
   deriveArtifactFinalRelativePath,
   deriveProjectArtifactsRelativeDir,
@@ -257,6 +258,25 @@ export function isPathResolutionError(
   kind?: PathResolutionErrorKind,
 ): value is PathResolutionError {
   return value instanceof PathResolutionError && (kind === undefined || value.kind === kind);
+}
+
+/**
+ * 数据根身份（P02-2 / F-010）：lower_hex(sha256(utf8(realpath 数据根)))。
+ * 与 P02-1 Host `computeDataRootIdentity`（packages/host/src/contract/identifiers.ts）
+ * 必须保持同一算法——快照水位/SSE 游标绑定该身份，Host 握手身份与 Core 游标
+ * 身份不一致会导致续读游标被判非法。纯确定性哈希，不读文件系统。
+ *
+ * 输入必须是 realpath 的原样返回字符串（不做大小写折叠或尾斜杠归一）；
+ * 非字符串/空串/NUL 是调用方编程错误，直接抛 TypeError。
+ */
+export function computeDataRootIdentity(canonicalRoot: string): string {
+  if (typeof canonicalRoot !== 'string' || canonicalRoot.length === 0) {
+    throw new TypeError('canonicalRoot 必须是非空字符串（realpath 的原样返回值）');
+  }
+  if (canonicalRoot.includes('\0')) {
+    throw new TypeError('canonicalRoot 不允许包含 NUL 字节');
+  }
+  return createHash('sha256').update(canonicalRoot, 'utf8').digest('hex');
 }
 
 /**

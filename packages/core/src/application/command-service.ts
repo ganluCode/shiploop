@@ -36,15 +36,18 @@ import {
   decideCommandReplay,
   registrationProjectIdOf,
 } from '../ports/command-receipts.js';
+import {
+  toPublicProjectRecord,
+  toPublicRepositoryBindingRecord,
+  toPublicSettingsState,
+} from '../ports/queries.js';
 import type { RepositoryInspector } from '../ports/repository-inspector.js';
 import { validateStrategyCapabilities } from '../ports/runtime-capabilities.js';
 import type { RuntimeCapabilityCatalog } from '../ports/runtime-capabilities.js';
 import { GLOBAL_SETTINGS_ID } from '../ports/state-store.js';
 import type {
   GlobalSettingsRecord,
-  ProjectRecord,
   ProjectSettingsRecord,
-  RepositoryBindingRecord,
   SettingsWriteConsistency,
 } from '../ports/state-store.js';
 import { validateMergedProjectSettingsWrite } from './configuration-service.js';
@@ -110,24 +113,8 @@ function isSettingsEnvelope(envelope: ValidatedCommandEnvelope): envelope is Set
   return envelope.operation.startsWith('settings.');
 }
 
-/** 公开记录形状：UtcMs → ISO UTC；字段集与 P01 端口记录一一对应。 */
-function publicProjectRecord(project: ProjectRecord) {
-  const { createdAtUtcMs, updatedAtUtcMs, ...fields } = project;
-  return {
-    ...fields,
-    createdAt: new Date(createdAtUtcMs).toISOString(),
-    updatedAt: new Date(updatedAtUtcMs).toISOString(),
-  };
-}
-
-function publicBindingRecord(binding: RepositoryBindingRecord) {
-  const { createdAtUtcMs, updatedAtUtcMs, ...fields } = binding;
-  return {
-    ...fields,
-    createdAt: new Date(createdAtUtcMs).toISOString(),
-    updatedAt: new Date(updatedAtUtcMs).toISOString(),
-  };
-}
+// 公开记录形状（ISO UTC 时间）：与 F-010 查询响应共用 ports/queries.ts 的同一组
+// 转换函数，不另立第二套序列化规则。
 
 export function createCommandService(options: CommandServiceOptions): CommandService {
   const store = options.atomicStore;
@@ -180,7 +167,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
     const receipt = createCompletedReceipt({
       ...identity,
       resultRef: createResultRef(randomBytes(32)),
-      result: { project: publicProjectRecord(updated) },
+      result: { project: toPublicProjectRecord(updated) },
     });
     transaction.saveReceipt(receipt);
     return receipt;
@@ -218,8 +205,8 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
       resultRef: createResultRef(randomBytes(32)),
       result: {
         status: outcome.status,
-        project: publicProjectRecord(outcome.project),
-        binding: publicBindingRecord(outcome.binding),
+        project: toPublicProjectRecord(outcome.project),
+        binding: toPublicRepositoryBindingRecord(outcome.binding),
       },
     });
     transaction.saveReceipt(receipt);
@@ -292,12 +279,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
         ...identity,
         resultRef: createResultRef(randomBytes(32)),
         // 结果只携带提交时固化的当前值事实；不声称 Task 重放/策略可执行/模型已登录。
-        result: {
-          scope: envelope.scope,
-          schemaVersion: record.schemaVersion,
-          revision: record.revision,
-          payload: record.payload,
-        },
+        result: toPublicSettingsState(envelope.scope, record),
       });
       transaction.saveReceipt(receipt);
       return receipt;
