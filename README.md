@@ -50,7 +50,9 @@ docs/p02-1-host-lifecycle-contract.md  P02-1 Host 单例发现与本机认证生
 docs/p02-1-operations.md  P02-1 Host 生命周期操作说明（F-014）
 docs/p02-1-handoff.md  P02-1 → P02-2 接口交接（P02-1 F-014）
 docs/acceptance/p02-1-f014-report.md  P02-1 Feature 交付报告（F-014，证据在同目录 evidence-p02-1/）
-docs/p02-2-commands-events-contract.md  P02-2 应用命令、查询与事件接口契约（F-001，实施前置契约；路由/回执/事件/SSE 尚待后续任务实现）
+docs/p02-2-commands-events-contract.md  P02-2 应用命令、查询与事件接口契约（F-001，实施前置契约；F-002~F-018 已按其实现路由/回执/事件/SSE）
+docs/p02-2-operations.md  P02-2 应用命令、查询与事件操作说明（F-019）
+docs/p02-2-handoff.md  P02-2 → P02-3 接口交接（F-019）
 ```
 
 ### 确定性测试约定（F-003）
@@ -212,6 +214,32 @@ P01 已由项目负责人于 2026-10-05 阶段放行（依据见 [docs/acceptanc
   - 文档守护 [test/docs-p02-1-operations.test.ts](test/docs-p02-1-operations.test.ts)：在真实临时
     数据根与真实 Host 子进程上跑通操作说明纵向命令，并交叉核对命令/参数/默认值/退出码；
     `npm run verify`（test/typecheck/build）仍 `PASS 3/3`。不提供 `accept:p02`。
+
+### P02-2 应用命令、查询与事件（F-019 文档收尾）
+
+P02-2 在 macOS（arm64，Node 22.19.0 / npm 10.9.3）上交付应用命令、持久回执、项目/配置查询、
+一致快照与 SSE 事件：`POST /v1/commands` 单一命令入口（注册/元数据 CAS/全局与项目配置创建与
+CAS 更新）、`(principal, commandId)` + 请求摘要幂等、迁移 v3 `command_receipts`、授权查询与
+分页事件、原子快照水位、`GET /v1/events` SSE 续读/`snapshot_required`/有界背压，以及 CLI
+`project.*`/`config.*`/`receipt get`/`events` 纵向接线。F-018 已完成真实 SQLite/HTTP/SSE/CLI
+集成回归，`npm run verify` `PASS 3/3`。
+
+- [docs/p02-2-operations.md](docs/p02-2-operations.md)：`packages/cli/dist/bin.js` 真实入口与
+  `project.*`/`config.*`/`receipt get`/`events` 参数/默认值/退出码、临时仓库注册、配置 CAS、
+  重复命令与查回执、授权快照与事件恢复的可复跑示例，超时先查回执/`accepted`与`completed`区别/
+  `conflict`/`unsupported`/`snapshot_required`/观察中断/慢客户端重载语义，以及 macOS 可信本机/
+  同用户攻击边界与未实现 `not_run`。
+- [docs/p02-2-handoff.md](docs/p02-2-handoff.md)：`shiploop-core/assembly` 的授权主体/原子命令/
+  回执/一致快照/持久事件端口、`shiploop-core/protocol`、`shiploop-host` HostClient 方法与
+  `/v1` 路由、迁移 v3 与事件白名单、装配顺序/跨包边界、P02-3 待实现能力与验证策略交接。
+- [docs/acceptance/evidence-p02-2/f018-regression-evidence.md](docs/acceptance/evidence-p02-2/f018-regression-evidence.md)：
+  受测入口、FR-1/FR-2 分支映射、T10/T15/T17/T23/T26 子集声明与 `not_run`（脱敏）。
+- 文档守护 [test/docs-p02-2-operations.test.ts](test/docs-p02-2-operations.test.ts)：在真实临时
+  仓库/数据根与真实 Host 子进程上跑通操作说明纵向命令（注册 → 配置 CAS → 重放/查回执 → 快照 →
+  游标恢复），并用独立只读探针核对持久状态；交叉核对命令/参数/退出码/事件与安全边界。
+
+该交付仅限 P02-2 应用命令与事件子集；基线健康、初始化确认、Skills、Pi/Work、调度与整个 P02
+阶段验收均未包含，`accept:p02` 由阶段末项定义。
 
 ### 单向依赖规则（F-004 起自动强制）
 
