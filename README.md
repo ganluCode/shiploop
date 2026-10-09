@@ -54,6 +54,7 @@ docs/p02-2-commands-events-contract.md  P02-2 应用命令、查询与事件接�
 docs/p02-2-operations.md  P02-2 应用命令、查询与事件操作说明（F-019）
 docs/p02-2-handoff.md  P02-2 → P02-3 接口交接（F-019）
 docs/acceptance/p02-2-f020-report.md  P02-2 Feature 交付报告（F-020，证据在同目录 evidence-p02-2/）
+docs/p02-3-onboarding-contract.md  P02-3 项目初始化与获准基线检查接口契约（F-001，实施前置契约；F-002~F-020 按其实现静态接入/基线授权/受监督进程/CLI）
 ```
 
 ### 确定性测试约定（F-003）
