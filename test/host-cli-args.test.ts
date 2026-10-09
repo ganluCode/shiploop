@@ -660,7 +660,7 @@ describe('F-011 纯面层边界 + F-012 执行层接线（解析/执行分离、
   });
 
   it('F-012 执行层只用白名单 node 内置（os/timers），不直接做 HTTP/spawn/文件系统/SQLite', () => {
-    const execute = listTsFiles(CLI_SRC_DIR).find((file) => file.endsWith('execute.ts'));
+    const execute = listTsFiles(CLI_SRC_DIR).find((file) => file.endsWith(join('host', 'execute.ts')));
     expect(execute, 'packages/cli/src/host/execute.ts 必须存在').toBeDefined();
     const code = readFileSync(execute as string, 'utf-8');
     for (const builtin of [
@@ -705,7 +705,7 @@ describe('F-011 纯面层边界 + F-012 执行层接线（解析/执行分离、
   it('process.argv/env/exit 只允许出现在显式入口 bin.ts；execute.ts 不解析 argv、不退出进程', () => {
     const files = listTsFiles(CLI_SRC_DIR);
     const bin = files.find((file) => file.endsWith('bin.ts')) as string;
-    const execute = files.find((file) => file.endsWith('execute.ts')) as string;
+    const execute = files.find((file) => file.endsWith(join('host', 'execute.ts'))) as string;
     for (const token of ['process.argv', 'process.env', 'process.exit']) {
       for (const file of files) {
         if (file === bin) {

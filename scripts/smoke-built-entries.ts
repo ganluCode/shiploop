@@ -13,9 +13,9 @@
  */
 import { spawn, spawnSync } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { connect } from 'node:net';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -410,6 +410,147 @@ async function smokeCliBin(
   const human = run('status-human', ['host', 'status', '--data-root', dataRoot]);
   if (human.status !== 0 || !human.stdout.includes('ready') || !human.stdout.includes(firstId)) {
     fail(`shiploop-cli: human status mismatch (exit=${String(human.status)}): ${human.stdout} ${human.stderr}`);
+  }
+  assertAlive(firstPid);
+
+  // 4b) F-015 项目命令纵向：dist/bin.js 在非源码 cwd、真实临时 Git 仓库/数据根
+  // 上完成注册/分页列表/详情+绑定/CAS 编辑/标签统计，并核验幂等与别名语义。
+  const repoDir = join(workDir, 'repo-smoke');
+  mkdirSync(repoDir, { recursive: true });
+  const gitRun = (gitArgs: readonly string[]): string => {
+    const result = spawnSync('git', [...gitArgs], {
+      cwd: repoDir,
+      env: {
+        ...baseEnv,
+        GIT_CONFIG_NOSYSTEM: '1',
+        GIT_CONFIG_GLOBAL: '/dev/null',
+        GIT_TERMINAL_PROMPT: '0',
+        LC_ALL: 'C',
+      },
+      encoding: 'utf8',
+      timeout: 30_000,
+    });
+    if (result.error || result.signal || result.status !== 0) {
+      fail(
+        `shiploop-cli: git ${gitArgs.join(' ')} failed (status=${String(result.status)}, signal=${String(result.signal)}): ${String(result.stderr).slice(0, 200)}`,
+      );
+    }
+    return String(result.stdout);
+  };
+  gitRun(['init', '--initial-branch=main', repoDir]);
+  writeFileSync(join(repoDir, 'README.md'), '# smoke repo\n', 'utf8');
+  gitRun(['add', '-A']);
+  gitRun([
+    '-c',
+    'user.name=ShipLoop Smoke',
+    '-c',
+    'user.email=smoke@example.invalid',
+    '-c',
+    'commit.gpgsign=false',
+    'commit',
+    '--quiet',
+    '-m',
+    'init',
+  ]);
+
+  const projectArgs = (rest: readonly string[]): string[] => [...rest, '--data-root', dataRoot, '--json'];
+  const register = run(
+    'project-register',
+    projectArgs(['project', 'register', repoDir, '--name', 'Smoke Repo', '--label', 'smoke']),
+  );
+  if (register.status !== 0) {
+    fail(`shiploop-cli: project register exit ${String(register.status)}: ${register.stderr}`);
+  }
+  const registerEnvelope = jsonResult('project-register', register);
+  if (registerEnvelope.ok !== true || registerEnvelope.command !== 'project.register') {
+    fail('shiploop-cli: project register envelope mismatch');
+  }
+  const registerReceipt = registerEnvelope.result as Record<string, any>;
+  if (
+    registerReceipt.status !== 'completed' ||
+    (registerReceipt.result as Record<string, any>).status !== 'registered' ||
+    typeof (registerReceipt.result as Record<string, any>).project?.id !== 'string'
+  ) {
+    fail(`shiploop-cli: project register receipt mismatch: ${JSON.stringify(registerReceipt)}`);
+  }
+  const projectId = (registerReceipt.result as Record<string, any>).project.id as string;
+  const registeredBinding = (registerReceipt.result as Record<string, any>).binding as Record<string, unknown>;
+  if (registeredBinding.canonicalPath !== realpathSync(repoDir)) {
+    fail('shiploop-cli: registered binding canonicalPath mismatch');
+  }
+
+  const list = run('project-list', projectArgs(['project', 'list', '--limit', '1']));
+  if (list.status !== 0) {
+    fail(`shiploop-cli: project list exit ${String(list.status)}: ${list.stderr}`);
+  }
+  const listResult = jsonResult('project-list', list).result as Record<string, any>;
+  if (
+    !Array.isArray(listResult.records) ||
+    listResult.records[0]?.id !== projectId ||
+    listResult.limit !== 1
+  ) {
+    fail(`shiploop-cli: project list mismatch: ${JSON.stringify(listResult)}`);
+  }
+
+  const get = run('project-get', projectArgs(['project', 'get', projectId]));
+  if (get.status !== 0) {
+    fail(`shiploop-cli: project get exit ${String(get.status)}: ${get.stderr}`);
+  }
+  const getResult = jsonResult('project-get', get).result as Record<string, any>;
+  if (getResult.project?.id !== projectId || getResult.binding?.canonicalPath !== realpathSync(repoDir)) {
+    fail(`shiploop-cli: project get mismatch: ${JSON.stringify(getResult)}`);
+  }
+
+  const labels = run('project-labels', projectArgs(['project', 'labels']));
+  if (labels.status !== 0) {
+    fail(`shiploop-cli: project labels exit ${String(labels.status)}: ${labels.stderr}`);
+  }
+  const labelRows = jsonResult('project-labels', labels).result.labels as Array<{ label: string; projectCount: number }>;
+  if (!labelRows.some((row) => row.label === 'smoke' && row.projectCount === 1)) {
+    fail(`shiploop-cli: project labels mismatch: ${JSON.stringify(labelRows)}`);
+  }
+
+  const edit = run(
+    'project-edit',
+    projectArgs(['project', 'edit', projectId, '--revision', '1', '--name', 'Smoke Renamed', '--description', 'edited']),
+  );
+  if (edit.status !== 0) {
+    fail(`shiploop-cli: project edit exit ${String(edit.status)}: ${edit.stderr}`);
+  }
+  const editProject = (jsonResult('project-edit', edit).result as Record<string, any>).result.project as Record<string, any>;
+  if (editProject.revision !== 2 || editProject.displayName !== 'Smoke Renamed') {
+    fail(`shiploop-cli: project edit result mismatch: ${JSON.stringify(editProject)}`);
+  }
+
+  // 显式相同 commandId 重放原回执；不同参数复用 ID → conflict（退出码 1）。
+  const replayId = randomUUID();
+  const replayRegister = (name: string) =>
+    run('project-idem', projectArgs(['project', 'register', repoDir, '--name', name, '--command-id', replayId]));
+  if (replayRegister('Idem Name').status !== 0) {
+    fail('shiploop-cli: first explicit-commandId register failed');
+  }
+  const secondReplay = replayRegister('Idem Name');
+  if (secondReplay.status !== 0 || jsonResult('project-idem-2', secondReplay).result?.replayed !== true) {
+    fail('shiploop-cli: second explicit-commandId register was not replayed');
+  }
+  const conflictRegister = replayRegister('Different Name');
+  if (
+    conflictRegister.status !== 1 ||
+    jsonResult('project-idem-conflict', conflictRegister).error?.code !== 'conflict'
+  ) {
+    fail(`shiploop-cli: different-params commandId reuse must exit 1 conflict: ${String(conflictRegister.stderr)}`);
+  }
+
+  // 符号链接别名复用同一项目（不新增项目/绑定/事件）。
+  const aliasDir = join(workDir, 'repo-smoke-alias');
+  symlinkSync(repoDir, aliasDir, 'dir');
+  const alias = run('project-alias', projectArgs(['project', 'register', aliasDir, '--name', 'Alias']));
+  if (alias.status !== 0) {
+    fail(`shiploop-cli: alias register exit ${String(alias.status)}: ${alias.stderr}`);
+  }
+  const aliasResult = (jsonResult('project-alias', alias).result as Record<string, any>).result as Record<string, any>;
+  if (aliasResult.status !== 'already_exists' || aliasResult.project?.id !== projectId) {
+    fail(`shiploop-cli: symlink alias duplicated project: ${JSON.stringify(aliasResult)}`);
   }
   assertAlive(firstPid);
 

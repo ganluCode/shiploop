@@ -281,9 +281,12 @@ describe('Host and CLI entry behaviour boundaries', () => {
   it('F-011 纯面层 + F-012 执行层：公共 barrel 零副作用；bin/execute 只经 shiploop-host 公共面做 I/O', () => {
     const allSources = readSourceTree('packages/cli/src');
     expect(allSources.length, 'packages/cli/src must contain the CLI surface').toBeGreaterThanOrEqual(6);
-    // F-012 执行层文件：execute.ts（I/O 编排）与 bin.ts（唯一 argv/env/exit 入口）。
+    // F-012 执行层文件：bin.ts（唯一 argv/env/exit 入口）、host/execute.ts
+    // （生命周期 I/O 编排）与 app-execute.ts（F-015 应用命令 I/O 编排）。
     const isExecutionFile = (file: string): boolean =>
-      file.endsWith(`${sep}bin.ts`) || file.includes(`${sep}host${sep}execute.ts`);
+      file.endsWith(`${sep}bin.ts`) ||
+      file.includes(`${sep}host${sep}execute.ts`) ||
+      file.endsWith(`${sep}app-execute.ts`);
     const pureSources = allSources.filter(({ file }) => !isExecutionFile(file));
     expect(pureSources.length, '纯面层至少包含 index/host barrel/args/help/output').toBeGreaterThanOrEqual(5);
     for (const { file, code } of pureSources) {
@@ -312,7 +315,11 @@ describe('Host and CLI entry behaviour boundaries', () => {
     }
     // F-012 执行层同样只允许 shiploop-host 公共面，且不直接做 HTTP/spawn/文件系统。
     const executionSources = allSources.filter(({ file }) => isExecutionFile(file));
-    expect(executionSources.map(({ file }) => file.split(sep).pop()).sort()).toEqual(['bin.ts', 'execute.ts']);
+    expect(executionSources.map(({ file }) => file.split(sep).pop()).sort()).toEqual([
+      'app-execute.ts',
+      'bin.ts',
+      'execute.ts',
+    ]);
     for (const { file, code } of executionSources) {
       const specifiers = extractModuleSpecifiers(code);
       for (const banned of [...skeletonBannedModules, 'node:child_process', 'node:fs', 'node:net', 'shiploop-core']) {
