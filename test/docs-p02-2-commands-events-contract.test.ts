@@ -277,6 +277,19 @@ describe('F-001 契约文档与仓库基线一致（开工现状事实）', () =
     expect(contractDoc).toContain('F-012 已实施');
   });
 
+  it('F-017 已接线 events 观察 CLI（快照+SSE、snapshot_required 重载、退出码 4）', () => {
+    const appExecute = readText('packages/cli/src/app-execute.ts');
+    expect(appExecute).toContain('executeEventsCommand');
+    expect(appExecute).toContain('subscribeEvents');
+    expect(appExecute).toContain('observation_interrupted');
+    expect(appExecute).toContain('snapshot_required');
+    const bin = readText('packages/cli/src/bin.ts');
+    expect(bin).toContain('SIGINT');
+    const output = readText('packages/cli/src/app/output.ts');
+    expect(output).toContain('CLI_EXIT_OBSERVATION_INTERRUPTED');
+    expect(contractDoc).toContain('F-017 已接线 events 观察');
+  });
+
   it('P02-1 契约、交接与 F-014 报告仍在库且被本文显式接续', () => {
     for (const path of [
       'docs/p02-1-host-lifecycle-contract.md',

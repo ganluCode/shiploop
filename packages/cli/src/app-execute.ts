@@ -1,5 +1,6 @@
 /**
- * F-015 应用命令 CLI 纵向执行层（契约 §12.1/§12.2/§12.3、§5.5/§5.7、§6、§7）。
+ * F-015/F-016/F-017 应用命令 CLI 纵向执行层（契约 §12.1/§12.2/§12.3、§5.5/§5.7、
+ * §6、§7、§8/§9.4）。
  *
  * 与 F-014 纯面层的边界（`app/` 目录保持纯函数、无 I/O）：
  * - 本模块允许 I/O：经 `shiploop-host` 公共面 `ensureHostRunning` 连接或受控
@@ -20,10 +21,14 @@ import { readFileSync } from 'node:fs';
 import {
   ensureHostRunning,
   isHostProtocolError,
+  isPlainObject,
   HostProtocolError,
+  SNAPSHOT_ROUTE,
   type HostClient,
   type HostClientTimeouts,
+  type HostEventSubscription,
   type SubmitCommandInput,
+  type SubscribeEventsInput,
 } from 'shiploop-host';
 import { AppCliParseError, parseAppCliArgs, parseAppInputJson } from './app/args.js';
 import type {
@@ -31,12 +36,14 @@ import type {
   ParsedAppCliCommand,
   ParsedConfigCreate,
   ParsedConfigUpdate,
+  ParsedEventsObserve,
   ParsedReceiptGet,
 } from './app/args.js';
 import { getAppCliHelp } from './app/help.js';
 import {
   buildAppCliFailureEnvelope,
   buildAppCliSuccessEnvelope,
+  CLI_EXIT_OBSERVATION_INTERRUPTED,
   exitCodeForAppErrorCode,
   exitCodeForReceiptStatus,
   formatAppCliParseError,
@@ -76,6 +83,14 @@ export interface RunAppCliOptions {
   readonly timeouts?: HostClientTimeouts;
   /** 启动器覆盖（entryArgv/子进程 env 等）。 */
   readonly launch?: AppCliLaunchOverrides;
+  /**
+   * F-017 观察中断信号（bin.ts 把 SIGINT 接入；测试注入 AbortController）。
+   * 仅 events 观察命令消费：中断只结束本次观察（退出码 4），不停止 Host、
+   * 不取消已提交命令。
+   */
+  readonly signal?: AbortSignal;
+  /** F-017 观察预算覆盖（受信装配/测试注入；绝非 argv/env；全部有界）。 */
+  readonly observe?: EventsObserveBudgets;
 }
 
 export type AppCliRunKind = 'success' | 'failure' | 'help';
@@ -551,6 +566,347 @@ async function executeConfigCommand(
 }
 
 /* ------------------------------------------------------------------ *
+ * 事件观察（F-017；契约 §8/§9.4/§12.1/§12.2/§12.3）
+ *
+ * 流程：默认先取授权快照与水位，再从水位之后订阅（--follow 为默认）；显式
+ * --cursor 为恢复语义（跳过初始快照，snapshot-only 除外——它总是先取快照做
+ * 授权核验与水位记录，显式游标仅决定补读起点）。snapshot_required（建连前 409
+ * 或建连后 error 帧）明确输出记录并重取快照恢复，不默默丢历史事件；重载预算
+ * 有界（连续无事件交付的重载超过上限即终止）。stream_overflow 与 Ctrl+C/Abort
+ * 中断以第五档退出码 4 结束：只表示本次观察结束，Host 未停止、命令未取消。
+ * JSON 观察模式输出 NDJSON 记录流（每行一个 {ok,command,result|error} 信封），
+ * 不混入普通日志；人类模式快照/事件行走 stdout，诊断走 stderr。
+ * ------------------------------------------------------------------ */
+
+/** 观察预算覆盖（受信装配/测试注入；绝非 argv/env；全部有界）。 */
+export interface EventsObserveBudgets {
+  /** snapshot-only 补读静默窗口（默认 750ms，> Host SSE 轮询 250ms；允许 100..10 000）。 */
+  readonly quietMs?: number;
+  /** snapshot-only 单次补读总预算（默认 10 000；允许 ≤120 000 且 ≥ quietMs）。 */
+  readonly drainBudgetMs?: number;
+  /** 连续 snapshot_required 重载上限（无事件交付间隔；默认 3；允许 1..10）。 */
+  readonly maxSnapshotReloads?: number;
+}
+
+const OBSERVE_QUIET_DEFAULT_MS = 750;
+const OBSERVE_DRAIN_DEFAULT_MS = 10_000;
+const OBSERVE_RELOAD_DEFAULT_MAX = 3;
+
+interface ResolvedEventsObserveBudgets {
+  readonly quietMs: number;
+  readonly drainBudgetMs: number;
+  readonly maxSnapshotReloads: number;
+}
+
+/** 校验观察预算覆盖（全部有界；非法注入以 invalid_input 拒绝，零 I/O）。 */
+function resolveObserveBudgets(
+  input: EventsObserveBudgets | undefined,
+): ResolvedEventsObserveBudgets {
+  const invalid = (reason: string, field: string): never => {
+    throw new HostProtocolError('invalid_input', 'events.subscribe', '观察预算覆盖未通过校验', {
+      details: { reason, field },
+    });
+  };
+  if (input === undefined) {
+    return {
+      quietMs: OBSERVE_QUIET_DEFAULT_MS,
+      drainBudgetMs: OBSERVE_DRAIN_DEFAULT_MS,
+      maxSnapshotReloads: OBSERVE_RELOAD_DEFAULT_MAX,
+    };
+  }
+  if (!isPlainObject(input)) {
+    throw new HostProtocolError('invalid_input', 'events.subscribe', '观察预算覆盖未通过校验', {
+      details: { reason: 'invalid_observe_budgets', field: 'observe' },
+    });
+  }
+  const raw: Record<string, unknown> = input;
+  for (const key of Object.keys(raw)) {
+    if (key !== 'quietMs' && key !== 'drainBudgetMs' && key !== 'maxSnapshotReloads') {
+      invalid('unknown_option_key', `observe.${key}`);
+    }
+  }
+  const quietMsRaw: unknown = raw.quietMs;
+  if (
+    quietMsRaw !== undefined &&
+    (typeof quietMsRaw !== 'number' ||
+      !Number.isSafeInteger(quietMsRaw) ||
+      quietMsRaw < 100 ||
+      quietMsRaw > 10_000)
+  ) {
+    invalid('invalid_quiet_ms', 'observe.quietMs');
+  }
+  const quietMs = (quietMsRaw as number | undefined) ?? OBSERVE_QUIET_DEFAULT_MS;
+  const drainBudgetMsRaw: unknown = raw.drainBudgetMs;
+  if (
+    drainBudgetMsRaw !== undefined &&
+    (typeof drainBudgetMsRaw !== 'number' ||
+      !Number.isSafeInteger(drainBudgetMsRaw) ||
+      drainBudgetMsRaw < quietMs ||
+      drainBudgetMsRaw > 120_000)
+  ) {
+    invalid('invalid_drain_budget_ms', 'observe.drainBudgetMs');
+  }
+  const drainBudgetMs = (drainBudgetMsRaw as number | undefined) ?? OBSERVE_DRAIN_DEFAULT_MS;
+  const maxSnapshotReloadsRaw: unknown = raw.maxSnapshotReloads;
+  if (
+    maxSnapshotReloadsRaw !== undefined &&
+    (typeof maxSnapshotReloadsRaw !== 'number' ||
+      !Number.isSafeInteger(maxSnapshotReloadsRaw) ||
+      maxSnapshotReloadsRaw < 1 ||
+      maxSnapshotReloadsRaw > 10)
+  ) {
+    invalid('invalid_max_snapshot_reloads', 'observe.maxSnapshotReloads');
+  }
+  const maxSnapshotReloads =
+    (maxSnapshotReloadsRaw as number | undefined) ?? OBSERVE_RELOAD_DEFAULT_MAX;
+  if (drainBudgetMs < quietMs) {
+    invalid('invalid_drain_budget_ms', 'observe.drainBudgetMs');
+  }
+  return { quietMs, drainBudgetMs, maxSnapshotReloads };
+}
+
+type EventsScope =
+  | { readonly kind: 'global' }
+  | { readonly kind: 'project'; readonly projectId: string };
+
+function eventsScope(command: ParsedEventsObserve): EventsScope {
+  if (command.scope === 'global') {
+    return { kind: 'global' };
+  }
+  return { kind: 'project', projectId: command.projectId as string };
+}
+
+/** HostClient 运行时校验后的快照/事件线类型（CLI 不复核持久语义）。 */
+type ObservedSnapshot = Awaited<ReturnType<HostClient['getSnapshot']>>;
+type ObservedEvent = Parameters<SubscribeEventsInput['onEvent']>[0];
+
+function snapshotHumanLine(snapshot: ObservedSnapshot): string {
+  return (
+    `shiploop events: snapshot scope=${scopeText(snapshot.scope)} ` +
+    `watermark=${snapshot.watermark.sequence} readAt=${snapshot.readAt}\n`
+  );
+}
+
+function eventHumanLine(event: ObservedEvent): string {
+  return `shiploop events: event seq=${event.sequence} type=${event.type} id=${event.eventId}\n`;
+}
+
+/**
+ * 观察记录输出：JSON 模式为 NDJSON 成功记录（{ok:true,command,result:{kind,...}}）；
+ * 人类模式输出人类行（notice 类走 stderr，保持 stdout 是干净记录流）。
+ */
+function emitObserveRecord(
+  io: AppCliIo,
+  command: ParsedEventsObserve,
+  kind: string,
+  body: Record<string, unknown>,
+  human: string,
+  humanToStderr = false,
+): void {
+  if (command.json) {
+    io.stdout(
+      `${JSON.stringify(buildAppCliSuccessEnvelope(command.commandId, { kind, ...body }))}\n`,
+    );
+    return;
+  }
+  if (humanToStderr) {
+    io.stderr(human);
+    return;
+  }
+  io.stdout(human);
+}
+
+async function executeEventsCommand(
+  io: AppCliIo,
+  command: ParsedEventsObserve,
+  client: HostClient,
+  signal: AbortSignal | undefined,
+  budgets: ResolvedEventsObserveBudgets,
+): Promise<AppCliRunResult> {
+  const scope = eventsScope(command);
+  let eventsObserved = 0;
+  let lastEventId: string | undefined;
+  /** 连续 snapshot_required 重载计数；每次成功交付事件后复位。 */
+  let reloads = 0;
+  let armQuiet: (() => void) | undefined;
+
+  const onEvent = (event: ObservedEvent): void => {
+    eventsObserved += 1;
+    reloads = 0;
+    lastEventId = event.eventId;
+    emitObserveRecord(io, command, 'event', { event }, eventHumanLine(event));
+    armQuiet?.();
+  };
+
+  // 异步信号读取（封装为函数调用，避免 TS 将 await 后的信号状态误判为编译期常量）。
+  const userAborted = (): boolean => signal?.aborted === true;
+
+  const takeSnapshot = async (): Promise<ObservedSnapshot> => {
+    const snapshot = await client.getSnapshot(scope);
+    emitObserveRecord(io, command, 'snapshot', { snapshot }, snapshotHumanLine(snapshot));
+    return snapshot;
+  };
+
+  let cursor: string;
+  if (command.snapshotOnly || command.cursor === undefined) {
+    const snapshot = await takeSnapshot();
+    cursor = command.cursor ?? snapshot.watermark.cursor;
+  } else {
+    cursor = command.cursor;
+  }
+
+  /** 终态记录的「最后游标」细节：当前续读游标 + 最后投递事件 ID（若有）。 */
+  const resumeDetails = (): Record<string, unknown> => ({
+    cursor,
+    ...(lastEventId !== undefined ? { lastEventId } : {}),
+  });
+
+  const interruptedResult = (): AppCliRunResult =>
+    emitFailure(io, command.json, {
+      exitCode: CLI_EXIT_OBSERVATION_INTERRUPTED,
+      command: command.commandId,
+      code: 'observation_interrupted',
+      message: '观察已中断：仅结束本次观察，Host 未停止、已提交命令不受影响',
+      details: resumeDetails(),
+    });
+
+  /**
+   * snapshot_required 恢复分支（§9.4/§12.1）：明确输出记录并重取快照，以新水位
+   * 游标续读；连续重载（无事件交付间隔）超过有限预算即终止，不无限循环。
+   */
+  const reloadFromSnapshot = async (
+    snapshotRoute: string,
+  ): Promise<'reload' | AppCliRunResult> => {
+    reloads += 1;
+    if (reloads > budgets.maxSnapshotReloads) {
+      return emitFailure(io, command.json, {
+        exitCode: exitCodeForAppErrorCode('snapshot_required'),
+        command: command.commandId,
+        code: 'snapshot_required',
+        message: '游标低于可续读下界，重取快照后仍无法续读（重载预算耗尽）',
+        details: { ...resumeDetails(), snapshotRoute },
+      });
+    }
+    emitObserveRecord(
+      io,
+      command,
+      'snapshot_required',
+      { snapshotRoute },
+      'shiploop: snapshot_required: 游标过期或低于可续读下界，重取快照恢复（不丢历史事件）\n',
+      true,
+    );
+    const snapshot = await takeSnapshot();
+    cursor = snapshot.watermark.cursor;
+    return 'reload';
+  };
+
+  for (;;) {
+    if (userAborted()) {
+      return interruptedResult();
+    }
+    let subscription: HostEventSubscription;
+    try {
+      subscription = await client.subscribeEvents({
+        scope,
+        cursor,
+        onEvent,
+        ...(signal !== undefined ? { signal } : {}),
+      });
+    } catch (error) {
+      // 建连前 409 snapshot_required（§9.4）：同一恢复分支。
+      if (isHostProtocolError(error, 'snapshot_required')) {
+        const details = error.details as Record<string, unknown> | undefined;
+        const route =
+          typeof details?.snapshotRoute === 'string' ? details.snapshotRoute : SNAPSHOT_ROUTE;
+        const reload = await reloadFromSnapshot(route);
+        if (reload !== 'reload') {
+          return reload;
+        }
+        continue;
+      }
+      throw error;
+    }
+
+    // snapshot-only：补读一页后退出——静默窗口（无新事件达 quietMs）或补读总预算
+    // 耗尽即自行关闭订阅（自关闭不视为中断）；事件到达重置静默窗口。
+    let selfClosed: boolean = false;
+    let quietTimer: NodeJS.Timeout | undefined;
+    let drainTimer: NodeJS.Timeout | undefined;
+    if (command.snapshotOnly) {
+      const closeSelf = (): void => {
+        selfClosed = true;
+        subscription.close();
+      };
+      armQuiet = () => {
+        if (quietTimer !== undefined) {
+          clearTimeout(quietTimer);
+        }
+        quietTimer = setTimeout(closeSelf, budgets.quietMs);
+      };
+      armQuiet();
+      drainTimer = setTimeout(closeSelf, budgets.drainBudgetMs);
+    }
+
+    const end = await subscription.ended;
+
+    // 结束即清理全部本地定时器/句柄（订阅本身由 HostClient 幂等收尾）。
+    if (quietTimer !== undefined) {
+      clearTimeout(quietTimer);
+    }
+    if (drainTimer !== undefined) {
+      clearTimeout(drainTimer);
+    }
+    armQuiet = undefined;
+    lastEventId = subscription.lastEventId() ?? lastEventId;
+
+    if (end.kind === 'aborted') {
+      if (command.snapshotOnly && selfClosed && !userAborted()) {
+        // 补读完成：观察到事件时重取受影响实体（快照），投影与 Core 当前状态一致。
+        if (eventsObserved > 0) {
+          await takeSnapshot();
+        }
+        emitObserveRecord(
+          io,
+          command,
+          'observation_end',
+          { reason: 'snapshot_only', eventsObserved },
+          `shiploop events: 补读完成（snapshot-only），共 ${eventsObserved} 条事件\n`,
+        );
+        return { exitCode: CLI_EXIT_OK, kind: 'success', command: command.commandId };
+      }
+      // Ctrl+C/Abort/观察超时：只结束本次观察（§12.3 第五档），Host 未停止。
+      return interruptedResult();
+    }
+    if (end.kind === 'stream_overflow') {
+      // §9.4 背压终止：明确记录 snapshotRoute 与最后游标，不默默续读。
+      return emitFailure(io, command.json, {
+        exitCode: CLI_EXIT_OBSERVATION_INTERRUPTED,
+        command: command.commandId,
+        code: 'stream_overflow',
+        message: '观察流超出缓冲上限结束：重取快照后可继续续读（持久审计未丢失）',
+        details: { ...resumeDetails(), snapshotRoute: end.snapshotRoute },
+      });
+    }
+    if (end.kind === 'snapshot_required') {
+      const reload = await reloadFromSnapshot(end.snapshotRoute);
+      if (reload !== 'reload') {
+        return reload;
+      }
+      continue;
+    }
+    // protocol_error：重连预算耗尽按连接失败归类，其余按响应畸形归类（exit 3）。
+    const code = end.reason === 'reconnect_budget_exhausted' ? 'unreachable' : 'response_malformed';
+    return emitFailure(io, command.json, {
+      exitCode: exitCodeForAppErrorCode(code),
+      command: command.commandId,
+      code,
+      message: '事件流因连接/协议问题结束（Host 与已提交命令状态未变）',
+      details: { ...resumeDetails(), reason: end.reason },
+    });
+  }
+}
+
+/* ------------------------------------------------------------------ *
  * 回执读取（F-016）
  * ------------------------------------------------------------------ */
 
@@ -579,8 +935,8 @@ async function executeReceiptCommand(
  * 连接/启动 Host → 命令编排 → §12.3 信封/退出码。返回退出码与（JSON 模式）
  * 信封；调用方（bin.ts）据此退出。
  *
- * F-015 接线 project.* ，F-016 接线 config.* 与 receipt.get；events 观察由 F-017
- * 实现，本版明确返回 `unsupported`（退出码 1），不冒充已实现。
+ * F-015 接线 project.* ，F-016 接线 config.* 与 receipt.get，F-017 接线 events
+ * 观察（快照 + SSE 跟随、snapshot_required 重载、观察中断退出码 4）。
  */
 export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunResult> {
   if (
@@ -627,19 +983,20 @@ export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunRes
     });
   }
 
-  // F-015/F-016 范围：project.*、config.*、receipt.get 经 HostClient 接线；
-  // events 观察由 F-017 实现，本版明确 unsupported。
-  if (
-    command.command !== 'project' &&
-    command.command !== 'config' &&
-    command.command !== 'receipt'
-  ) {
-    return emitFailure(io, command.json, {
-      exitCode: 1,
-      command: command.commandId,
-      code: 'unsupported',
-      message: '该命令由后续任务实现',
-    });
+  // F-015/F-016/F-017 范围：project.*、config.*、receipt.get 与 events 观察全部
+  // 经 HostClient 接线；未知顶层命令已在纯解析层拒绝，不会到达这里。
+  // events 观察预算覆盖（受信装配/测试注入）在连接 Host 之前校验：非法注入
+  // 以 invalid_input（退出码 2）拒绝，零发现/零网络副作用。
+  let observeBudgets: ResolvedEventsObserveBudgets | undefined;
+  if (command.command === 'events') {
+    try {
+      observeBudgets = resolveObserveBudgets(options.observe);
+    } catch (error) {
+      if (isHostProtocolError(error)) {
+        return emitFailure(io, command.json, protocolFailure(command.commandId, error));
+      }
+      throw error;
+    }
   }
 
   // 配置输入文件在连接 Host 之前读取/解析：缺失/畸形 JSON 以退出码 2 拒绝，
@@ -699,6 +1056,15 @@ export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunRes
     }
     if (command.command === 'receipt') {
       return await executeReceiptCommand(io, command, client);
+    }
+    if (command.command === 'events') {
+      return await executeEventsCommand(
+        io,
+        command,
+        client,
+        options.signal,
+        observeBudgets as ResolvedEventsObserveBudgets,
+      );
     }
     return await executeProjectCommand(io, command, client);
   } catch (error) {

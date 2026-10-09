@@ -775,6 +775,135 @@ async function smokeCliBin(
   }
   assertAlive(firstPid);
 
+  // 4d) F-017 事件观察纵向：dist/bin.js 快照 + 水位 + 显式游标恢复补读（NDJSON
+  // 记录流）；Ctrl+C（SIGINT）只结束本次观察（退出码 4），Host 不停止。
+  // 此时持久事件恰为：registered / metadata_updated / global_created /
+  // global_updated / project_created（水位 sequence=5）。
+  const eventsArgs = (rest: readonly string[]): string[] => [
+    'events',
+    ...rest,
+    '--data-root',
+    dataRoot,
+    '--json',
+  ];
+  const parseNdjson = (label: string, stdout: string): Array<Record<string, any>> => {
+    const trimmed = stdout.trim();
+    if (trimmed === '') {
+      fail(`shiploop-cli: ${label} produced no NDJSON records`);
+    }
+    return trimmed.split('\n').map((line) => {
+      try {
+        return JSON.parse(line) as Record<string, any>;
+      } catch {
+        fail(`shiploop-cli: ${label} stdout line is not JSON: ${line}`);
+      }
+    });
+  };
+  const recordKindsOf = (records: Array<Record<string, any>>): string[] =>
+    records.map((record) =>
+      record.ok === true ? String(record.result?.kind) : `error:${String(record.error?.code)}`,
+    );
+
+  const snapOnly = run('events-snapshot-only', eventsArgs(['--project', projectId, '--snapshot-only']));
+  if (snapOnly.status !== 0) {
+    fail(`shiploop-cli: events snapshot-only exit ${String(snapOnly.status)}: ${snapOnly.stderr}`);
+  }
+  const snapRecords = parseNdjson('events-snapshot-only', snapOnly.stdout);
+  if (recordKindsOf(snapRecords).join(',') !== 'snapshot,observation_end') {
+    fail(`shiploop-cli: events snapshot-only records mismatch: ${snapOnly.stdout}`);
+  }
+  const snapWatermark = snapRecords[0].result?.snapshot?.watermark as Record<string, any>;
+  if (
+    snapWatermark.sequence !== 5 ||
+    typeof snapWatermark.cursor !== 'string' ||
+    !snapWatermark.cursor.startsWith('evcur_v1_')
+  ) {
+    fail(`shiploop-cli: events snapshot watermark mismatch: ${JSON.stringify(snapWatermark)}`);
+  }
+  if (snapRecords[0].result?.snapshot?.project?.revision !== 2) {
+    fail('shiploop-cli: events snapshot project revision mismatch');
+  }
+  const resumeCursor = snapWatermark.cursor as string;
+
+  // 建连前写入（revision 2 → 3），再显式游标恢复补读：事件与重取快照投影一致。
+  const editAgain = run(
+    'project-edit-again',
+    projectArgs(['project', 'edit', projectId, '--revision', '2', '--description', 'edited again']),
+  );
+  if (editAgain.status !== 0) {
+    fail(`shiploop-cli: project edit again exit ${String(editAgain.status)}: ${editAgain.stderr}`);
+  }
+  const resume = run(
+    'events-resume',
+    eventsArgs(['--project', projectId, '--cursor', resumeCursor, '--snapshot-only']),
+  );
+  if (resume.status !== 0) {
+    fail(`shiploop-cli: events resume exit ${String(resume.status)}: ${resume.stderr}`);
+  }
+  const resumeRecords = parseNdjson('events-resume', resume.stdout);
+  if (recordKindsOf(resumeRecords).join(',') !== 'snapshot,event,snapshot,observation_end') {
+    fail(`shiploop-cli: events resume records mismatch: ${resume.stdout}`);
+  }
+  const resumedEvent = resumeRecords[1].result?.event as Record<string, any>;
+  if (
+    resumedEvent.type !== 'project.metadata_updated' ||
+    resumedEvent.sequence !== 6 ||
+    resumedEvent.aggregate?.revision !== 3
+  ) {
+    fail(`shiploop-cli: resumed event mismatch: ${JSON.stringify(resumedEvent)}`);
+  }
+  const finalSnapshot = resumeRecords[2].result?.snapshot as Record<string, any>;
+  if (finalSnapshot.project?.revision !== 3 || finalSnapshot.watermark?.sequence !== 6) {
+    fail('shiploop-cli: final snapshot after drain does not match Core state');
+  }
+
+  // 未知/不可见项目观察 → forbidden（退出码 1），单条失败记录。
+  const forbiddenObserve = run(
+    'events-forbidden',
+    eventsArgs(['--project', randomUUID(), '--snapshot-only']),
+  );
+  const forbiddenRecords = parseNdjson('events-forbidden', forbiddenObserve.stdout);
+  if (forbiddenObserve.status !== 1 || forbiddenRecords.at(-1)?.error?.code !== 'forbidden') {
+    fail(`shiploop-cli: events on unknown project must exit 1 forbidden: ${forbiddenObserve.stderr}`);
+  }
+
+  // follow + SIGINT：只结束本次观察（退出码 4 + observation_interrupted 终态记录），
+  // Host 不停止、已提交命令不受影响。
+  const followChild = spawn(
+    process.execPath,
+    [binEntry, 'events', '--project', projectId, '--data-root', dataRoot, '--json'],
+    { cwd: workDir, env: baseEnv },
+  );
+  let followStdout = '';
+  let followStderr = '';
+  followChild.stdout?.on('data', (chunk) => {
+    followStdout += String(chunk);
+  });
+  followChild.stderr?.on('data', (chunk) => {
+    followStderr += String(chunk);
+  });
+  const followDeadline = Date.now() + CLI_BIN_SMOKE_TIMEOUT_MS;
+  while (!followStdout.includes('"kind":"snapshot"')) {
+    if (Date.now() >= followDeadline) {
+      followChild.kill('SIGKILL');
+      fail(`shiploop-cli: events follow did not emit snapshot record: ${followStderr}`);
+    }
+    await new Promise((resolveTick) => setTimeout(resolveTick, 50));
+  }
+  followChild.kill('SIGINT');
+  const followExit = await waitChildExit(followChild, CLI_BIN_SMOKE_TIMEOUT_MS);
+  outputs.push({ name: 'events-follow-sigint', stdout: followStdout, stderr: followStderr });
+  if (followExit.code !== 4) {
+    fail(
+      `shiploop-cli: events follow SIGINT must exit 4, got ${String(followExit.code)}/${String(followExit.signal)}: ${followStderr}`,
+    );
+  }
+  const followRecords = parseNdjson('events-follow', followStdout);
+  if (followRecords.at(-1)?.error?.code !== 'observation_interrupted') {
+    fail(`shiploop-cli: events follow terminal record mismatch: ${followStdout}`);
+  }
+  assertAlive(firstPid);
+
   // 5) 解析失败 → 退出码 2，stdout 为空（非 JSON 模式）。
   const badArgs = run('bad-args', ['host', 'status', '--bogus']);
   if (badArgs.status !== 2 || badArgs.stdout !== '' || !badArgs.stderr.includes('invalid_input')) {

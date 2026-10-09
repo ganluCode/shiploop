@@ -620,7 +620,7 @@ describe('F-015 项目命令 CLI 纵向接线（真实 Host 子进程 + SQLite +
     }
   });
 
-  it('解析失败在任何 I/O 之前拒绝（退出码 2，零数据根副作用），未知命令不冒充已实现', async () => {
+  it('解析失败在任何 I/O 之前拒绝（退出码 2，零数据根副作用）', async () => {
     const root = useRoot();
     const bad = await runApp(env, ['project', 'get', 'not-a-uuid', '--data-root', root, '--json']);
     expect(bad.result.exitCode).toBe(2);
@@ -631,11 +631,14 @@ describe('F-015 项目命令 CLI 纵向接线（真实 Host 子进程 + SQLite +
     // 解析失败不得启动 Host、不得创建数据根。
     expect(existsSync(join(root, 'host', 'discovery.json'))).toBe(false);
 
-    // F-016 起 config 已接线；仍未实现的 events 观察仍明确 unsupported。
-    const unsupported = await runApp(env, ['events', '--global', '--json']);
-    expect(unsupported.result.exitCode).toBe(1);
-    const unsupportedEnvelope = parseEnvelope(unsupported);
-    expect(unsupportedEnvelope.error?.code).toBe('unsupported');
+    // F-017 起 events 观察已接线；其解析失败（缺 scope）同样在任何 I/O 前拒绝，
+    // 不发现 Host、不创建数据根。
+    const eventsParse = await runApp(env, ['events', '--data-root', root, '--json']);
+    expect(eventsParse.result.exitCode).toBe(2);
+    const eventsEnvelope = parseEnvelope(eventsParse);
+    expect(eventsEnvelope.error?.code).toBe('invalid_input');
+    expect(eventsEnvelope.command).toBe('events.observe');
+    expect(existsSync(join(root, 'host', 'discovery.json'))).toBe(false);
   });
 
   it('人类输出与 JSON 分离；源仓库 tracked/untracked 文件未被改写', async () => {

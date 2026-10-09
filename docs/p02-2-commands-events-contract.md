@@ -761,6 +761,20 @@ CREATE INDEX command_receipts_principal_project_index
 
 ## 12. CLI 参数面与退出码（F-014 ~ F-017 冻结）
 
+> 实施状态：F-014 冻结参数面/帮助/第五档退出码（纯面层）；F-015/F-016 接线
+> project.*/config.*/receipt.get；F-017 已接线 events 观察
+> （`packages/cli/src/app-execute.ts` 的 `executeEventsCommand`）：默认先取授权快照
+> 与水位再从水位之后订阅，显式 `--cursor` 为恢复语义；`--snapshot-only` 总是先取
+> 快照再补读一页后退出（补读静默窗口/总预算有界，观察到事件时重取快照使投影与
+> Core 当前状态一致）；snapshot_required（建连前 409 或建连后 error 帧）明确输出
+> NDJSON 记录并重取快照恢复，连续重载预算有界；stream_overflow 与 Ctrl+C（SIGINT
+> 经 bin.ts 接入 AbortSignal）/Abort 以退出码 4 结束，终态记录含最后游标与
+> lastEventId，不停止 Host、不取消已提交命令。真实 Host/CLI 纵向回归见
+> `test/app-cli-events-observe.test.ts`；真实 Host 生产装配不可达的
+> snapshot_required/溢出/断线分支经真实 HTTP 可编排对端覆盖
+> （`test/app-cli-events-scripted.test.ts`，与 F-013 同一夹具形态）；dist 冒烟含
+> 快照/游标恢复/SIGINT 纵切（`scripts/smoke-built-entries.ts`）。
+
 ### 12.1 命令面
 
 ```text

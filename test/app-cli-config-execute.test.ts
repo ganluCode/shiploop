@@ -801,7 +801,7 @@ describe('F-016 配置与回执 CLI 纵向接线（真实 Host 子进程 + SQLit
     expect(receiptHuman.stdout).not.toContain('"ok"');
   });
 
-  it('解析失败前不发现 Host；events 观察仍由后续任务实现（unsupported）', async () => {
+  it('解析失败前不发现 Host（含 events 观察参数面，F-017 起已接线）', async () => {
     const root = useRoot();
     const parseFailure = await runApp(env, [
       'config',
@@ -819,8 +819,10 @@ describe('F-016 配置与回执 CLI 纵向接线（真实 Host 子进程 + SQLit
     failureOf(parseFailure, 2, 'invalid_input');
     expect(existsSync(join(root, 'host', 'discovery.json'))).toBe(false);
 
-    const events = await runApp(env, ['events', '--global', '--json']);
-    expect(events.result.exitCode).toBe(1);
-    expect(parseEnvelope(events).error?.code).toBe('unsupported');
+    // F-017 起 events 观察已接线；其解析失败（缺 scope）同样零 I/O 拒绝。
+    const events = await runApp(env, ['events', '--json', '--data-root', root]);
+    expect(events.result.exitCode).toBe(2);
+    expect(parseEnvelope(events).error?.code).toBe('invalid_input');
+    expect(existsSync(join(root, 'host', 'discovery.json'))).toBe(false);
   });
 });
