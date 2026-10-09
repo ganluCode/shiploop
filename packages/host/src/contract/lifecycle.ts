@@ -8,10 +8,11 @@
  * `stopped` 不是网络状态（进程已不存在），不在线协议枚举内；
  * P02-1/P02-2 生产装配的活动数恒为 0（idle-only）。
  * P02-2 / F-011 起 capabilities 按 §11.3 宣告真实接线的应用命令与查询；
- * SSE 事件能力在 F-012 接线前保持 'unsupported'，不提前宣告。
+ * F-012 起 events 宣告结构化 SSE 能力（transport/route/scopes 冻结）。
  */
 import {
   ACTIVITY_SCOPE_IDLE_ONLY,
+  EVENTS_ROUTE,
   IDEMPOTENCY_SCHEME,
   SUPPORTED_STOP_MODES,
 } from './constants.js';
@@ -67,13 +68,22 @@ export const APPLICATION_QUERY_CAPABILITIES = [
 ] as const;
 
 /**
- * §11.3 应用能力视图。events 在 F-012 SSE 接线前为字面量 'unsupported'；
- * 接线后演进为 {transport, route, scopes} 结构化视图（契约随之更新）。
+ * §11.3 事件能力视图（F-012 SSE 接线后生效）：真实实现的唯一形态，
+ * 任何伪称（其他 transport/route/scopes）都被握手响应校验拒绝。
+ */
+export interface EventsCapabilityView {
+  readonly transport: 'sse';
+  readonly route: typeof EVENTS_ROUTE;
+  readonly scopes: readonly ['project', 'global'];
+}
+
+/**
+ * §11.3 应用能力视图。F-012 起 events 为结构化视图（SSE 已接线）。
  */
 export interface ApplicationCapabilityView {
   readonly commands: readonly string[];
   readonly queries: readonly string[];
-  readonly events: 'unsupported';
+  readonly events: EventsCapabilityView;
 }
 
 /** §8/§11.3 握手成功响应 capabilities（深度冻结）。 */
@@ -107,6 +117,6 @@ export const CURRENT_HOST_CAPABILITIES: HostCapabilities = deepFreeze({
   application: {
     commands: [...APPLICATION_COMMAND_CAPABILITIES],
     queries: [...APPLICATION_QUERY_CAPABILITIES],
-    events: 'unsupported',
+    events: { transport: 'sse', route: EVENTS_ROUTE, scopes: ['project', 'global'] },
   },
 });

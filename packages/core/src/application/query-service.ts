@@ -43,6 +43,7 @@ import {
 import {
   PublicError,
   WIRE_MESSAGE_SCHEMA_VERSION,
+  isUuidV4,
   mapToPublicError,
 } from '../ports/commands.js';
 import {
@@ -100,6 +101,24 @@ export interface StateEventPage {
   readonly limit: number;
 }
 
+/** F-012 SSE 建连恢复位置（§9.4）：授权后经游标或 Last-Event-ID 解析。 */
+export interface EventResumePosition {
+  readonly scope: PublicEventScope;
+  /** 排他下界：从 sequence > afterSequence 的已提交事件开始补读。 */
+  readonly afterSequence: number;
+  /** 同一位置的不透明续读游标（绑定数据根与 scope，供客户端落盘恢复）。 */
+  readonly resumeCursor: string;
+}
+
+/** F-012 SSE 轮询补读批次（Host 可信传输面自持位置，不来自客户端字段）。 */
+export interface StateEventBatch {
+  readonly scope: PublicEventScope;
+  readonly events: readonly PublicStateEvent[];
+  /** 本批最后一事件的 sequence；空批等于请求的 afterSequence（位置不后退）。 */
+  readonly lastSequence: number;
+  readonly limit: number;
+}
+
 interface SnapshotBase {
   readonly schemaVersion: typeof WIRE_MESSAGE_SCHEMA_VERSION;
   readonly watermark: EventWatermark;
@@ -154,6 +173,19 @@ export interface QueryService {
    * 游标必填（缺失 cursor_required），非法/跨根/跨 scope 一律 invalid_cursor。
    */
   listEvents(principal: unknown, input: unknown): Promise<StateEventPage>;
+  /**
+   * F-012 SSE 建连恢复解析（§9.4）：events.read + 范围读能力授权先于任何
+   * 读取；恢复位置按契约优先级 Last-Event-ID → cursor；两者皆缺
+   * cursor_required；Last-Event-ID 在当前 scope 内解析不到（不存在或属于
+   * 其他 scope，不区分）→ invalid_input(unknown_event_id)；非法游标
+   * invalid_cursor，绝不当从零读取；未来游标合法（等待是订阅方策略）。
+   */
+  resolveEventResume(principal: unknown, input: unknown): Promise<EventResumePosition>;
+  /**
+   * F-012 SSE 轮询补读：Host 可信传输面自持的排他下界（绝非客户端字段）+
+   * 有界分页；每次调用重新核验当前授权（能力/可见性撤销即拒绝）。
+   */
+  readEventBatch(principal: unknown, input: unknown): Promise<StateEventBatch>;
 }
 
 export interface QueryServiceOptions {
@@ -484,6 +516,93 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
             events.length === limit && last !== undefined
               ? encodeEventCursor(last.sequence, binding)
               : null,
+          limit,
+        };
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    async resolveEventResume(principal: unknown, input: unknown): Promise<EventResumePosition> {
+      assertTrustedPrincipal(principal);
+      const operation = EVENTS_SUBSCRIBE_OPERATION_NAME;
+      try {
+        const object = requirePlainObject(input, { operation }, 'input');
+        rejectUnknownKeys(object, ['scope', 'cursor', 'lastEventId'], { operation }, 'input');
+        const scope = validateEventScope(object.scope, operation);
+        // 授权在任何读取之前：events.read + 范围读能力 + 项目可见性。
+        authorizeEventSubscription(principal, scope, operation);
+        const binding = cursorBinding(scope, operation);
+        let afterSequence: number;
+        if (object.lastEventId !== undefined) {
+          // §9.4 优先级：Last-Event-ID（eventId）先于 ?cursor=；同一授权 scope
+          // 内解析，未命中不区分「不存在」与「跨 scope」（防存在性探测）。
+          if (typeof object.lastEventId !== 'string' || !isUuidV4(object.lastEventId)) {
+            throw new PublicError('invalid_input', operation, undefined, {
+              details: { field: 'lastEventId', reason: 'invalid_event_id' },
+            });
+          }
+          const sequence = eventReads.findPersistedEventSequence({
+            scope,
+            eventId: object.lastEventId,
+          });
+          if (sequence === undefined) {
+            throw new PublicError('invalid_input', operation, undefined, {
+              details: { field: 'lastEventId', reason: 'unknown_event_id' },
+            });
+          }
+          afterSequence = sequence;
+        } else if (object.cursor !== undefined) {
+          afterSequence = decodeEventCursor(object.cursor, binding, operation).sequence;
+        } else {
+          throw new PublicError('invalid_input', operation, undefined, {
+            details: { field: 'cursor', reason: 'cursor_required' },
+          });
+        }
+        return {
+          scope,
+          afterSequence,
+          resumeCursor: encodeEventCursor(afterSequence, binding),
+        };
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    async readEventBatch(principal: unknown, input: unknown): Promise<StateEventBatch> {
+      assertTrustedPrincipal(principal);
+      const operation = EVENTS_SUBSCRIBE_OPERATION_NAME;
+      try {
+        const object = requirePlainObject(input, { operation }, 'input');
+        rejectUnknownKeys(object, ['scope', 'afterSequence', 'limit'], { operation }, 'input');
+        const scope = validateEventScope(object.scope, operation);
+        const afterSequence = object.afterSequence;
+        if (
+          typeof afterSequence !== 'number' ||
+          !Number.isSafeInteger(afterSequence) ||
+          afterSequence < 0
+        ) {
+          throw new PublicError('invalid_input', operation, undefined, {
+            details: { field: 'afterSequence', reason: '必须是 0..2^53-1 的安全整数' },
+          });
+        }
+        const limit = validateEventPageLimit(object.limit, operation);
+        // 每次轮询重新核验当前授权：能力/可见性撤销即拒绝，不凭建连时快照。
+        authorizeEventSubscription(principal, scope, operation);
+        const rows = eventReads.listPersistedEvents({ scope, afterSequence, limit });
+        // 行级可见过滤器复核（与 listEvents 同一防御纵深）。
+        const visibilityFilter = createEventVisibilityFilter(scope);
+        for (const row of rows) {
+          if (!visibilityFilter(row)) {
+            throw new TypeError('事件读取结果越出授权范围（适配器实现缺陷）');
+          }
+        }
+        const events = mapStateEvents(rows, operation);
+        const last = events[events.length - 1];
+        return {
+          scope,
+          events,
+          lastSequence: last === undefined ? afterSequence : last.sequence,
           limit,
         };
       } catch (error) {

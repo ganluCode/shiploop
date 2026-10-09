@@ -17,6 +17,21 @@ export type {
   ResolvedAppRoute,
 } from './app-transport.js';
 export {
+  SSE_BATCH_LIMIT,
+  SSE_DRAIN_WAIT_MS,
+  SSE_HEARTBEAT_INTERVAL_MS,
+  SSE_MAX_BATCH_BYTES,
+  SSE_MAX_PENDING_BYTES,
+  SSE_POLL_INTERVAL_MS,
+  createEventStreamHub,
+} from './sse-transport.js';
+export type {
+  EventStreamHub,
+  EventStreamHubOptions,
+  EventStreamRequestInput,
+  ReplayLowerBoundReader,
+} from './sse-transport.js';
+export {
   createHostStopController,
   createIdleActivityGate,
   wireHostSignalShutdown,

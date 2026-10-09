@@ -15,6 +15,46 @@
 import { timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 
+/**
+ * 传输面拒绝：携带已脱敏响应体的内部控制流（绝不携带秘密/原文/路径）。
+ * 由生命周期传输面与应用传输面（含 F-012 SSE）共用；抛出方负责只放受控
+ * details（白名单 reason/field/snapshotRoute 等），捕获方统一序列化。
+ */
+export class RouteReject extends Error {
+  readonly status: number;
+  readonly code: string;
+  readonly operation: string;
+  readonly detailMessage: string;
+  readonly details: Readonly<Record<string, unknown>> | undefined;
+
+  constructor(
+    status: number,
+    code: string,
+    operation: string,
+    detailMessage: string,
+    details?: Readonly<Record<string, unknown>>,
+  ) {
+    super(detailMessage);
+    this.name = 'RouteReject';
+    this.status = status;
+    this.code = code;
+    this.operation = operation;
+    this.detailMessage = detailMessage;
+    this.details = details;
+  }
+}
+
+/** 抛出 RouteReject（控制流拒绝；不产生任何业务副作用）。 */
+export function rejectRoute(
+  status: number,
+  code: string,
+  operation: string,
+  message: string,
+  details?: Readonly<Record<string, unknown>>,
+): never {
+  throw new RouteReject(status, code, operation, message, details);
+}
+
 /** 有界请求体读取：超过上限即停止收集并标记（继续排空由连接关闭承担）。 */
 export function readLimitedBody(
   request: IncomingMessage,

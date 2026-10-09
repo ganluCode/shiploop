@@ -7,7 +7,9 @@
  * - readProjectSnapshotView / readGlobalSnapshotView：§8 一致读视图——同一
  *   BEGIN DEFERRED 读事务内取得内容行与 MAX(state_events.sequence) 水位；
  * - listPersistedEvents：持久 state_events 是唯一事件来源，scope 谓词下推，
- *   sequence 升序、排他下界、每批有界。
+ *   sequence 升序、排他下界、每批有界；F-012 起 findPersistedEventSequence
+ *   在同一 scope 谓词内把 Last-Event-ID 解析为持久 sequence（未命中即
+ *   undefined，不区分不存在与跨 scope）。
  *
  * 全部实现共享 createSqliteStateAccess 的行映射/校验/事件原语，不另立第二套
  * 规则；import 本模块无副作用，会话生命周期由调用方管理，返回面不泄漏驱动句柄。
@@ -53,6 +55,9 @@ export function createSqliteQueryStore(
     },
     listPersistedEvents(request: unknown): readonly PersistedStateEventRow[] {
       return access.listPersistedEvents(request);
+    },
+    findPersistedEventSequence(request: unknown): number | undefined {
+      return access.findPersistedEventSequence(request);
     },
   };
 }

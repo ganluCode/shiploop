@@ -7,7 +7,8 @@
  *   GET /v1/results/:resultRef、项目/配置/快照 GET 查询；表外路径（含
  *   /v1/files、/v1/artifacts/.../content 与任何 path/locator 形态）由调用方
  *   落到 404 unknown_operation，本模块永不返回文件内容；
- * - /v1/events 在 F-012 SSE 接线前为已认证后的 501 unsupported（不宣告能力）；
+ * - /v1/events 由 F-012 SSE Hub（sse-transport.ts）接管为长连接事件流；
+ *   未装配 Hub 的上下文保持已认证后的 501 unsupported（防御纵深）；
  * - Host 不做业务授权：Bearer 认证通过后把可信装配固定绑定的 principal
  *   （生产恒 local-owner；受限主体仅测试装配，绝非请求数据）传给 Core 应用
  *   服务，全部能力/可见性判定由 Core 应用层完成；Host 不直接写库；
@@ -59,9 +60,12 @@ import type { LifecycleState } from '../contract/index.js';
 import {
   bearerCredentialMatches,
   readLimitedBody,
+  rejectRoute,
+  RouteReject,
   sendJson,
   sendJsonText,
 } from './http-primitives.js';
+import type { EventStreamHub } from './sse-transport.js';
 
 /** 应用操作身份字面量（与 §3.2 路由总表一一对应；错误体 operation）。 */
 export type ApplicationOperation =
@@ -102,6 +106,11 @@ export interface HostApplicationContext {
   readonly commandReceiptsService: CommandReceiptsService;
   /** 生命周期状态读取：quiescing/stopping/starting 拒绝新变更（503）。 */
   getLifecycleState(): LifecycleState;
+  /**
+   * F-012 SSE 事件订阅 Hub（§9.4）；缺席时 /v1/events 为已认证后的 501
+   * unsupported（防御纵深：未装配绝不假装可用）。
+   */
+  readonly eventStreams?: EventStreamHub;
 }
 
 /**
@@ -211,31 +220,6 @@ interface AppErrorBody {
   };
 }
 
-/** 传输面拒绝：携带已脱敏响应体的内部控制流（绝不携带秘密/原文）。 */
-class AppRouteReject extends Error {
-  readonly status: number;
-  readonly code: string;
-  readonly operation: string;
-  readonly detailMessage: string;
-  readonly details: Readonly<Record<string, unknown>> | undefined;
-
-  constructor(
-    status: number,
-    code: string,
-    operation: string,
-    detailMessage: string,
-    details?: Readonly<Record<string, unknown>>,
-  ) {
-    super(detailMessage);
-    this.name = 'AppRouteReject';
-    this.status = status;
-    this.code = code;
-    this.operation = operation;
-    this.detailMessage = detailMessage;
-    this.details = details;
-  }
-}
-
 function reject(
   status: number,
   code: string,
@@ -243,10 +227,10 @@ function reject(
   message: string,
   details?: Readonly<Record<string, unknown>>,
 ): never {
-  throw new AppRouteReject(status, code, operation, message, details);
+  rejectRoute(status, code, operation, message, details);
 }
 
-function rejectBody(error: AppRouteReject): AppErrorBody {
+function rejectBody(error: RouteReject): AppErrorBody {
   const body: AppErrorBody['error'] = {
     code: error.code,
     message: error.detailMessage,
@@ -315,6 +299,8 @@ interface QuerySpec {
 const QUERY_SPECS: Readonly<Partial<Record<ApplicationOperation, QuerySpec>>> = Object.freeze({
   'projects.list': Object.freeze({ allowed: ['limit', 'cursor', 'label', 'match'], repeatable: ['label'] }),
   'snapshot.get': Object.freeze({ allowed: ['scope', 'projectId'], repeatable: [] }),
+  // F-012（§9.4）：订阅恢复位置 Last-Event-ID（头）优先于 ?cursor=；缺省 400。
+  'events.subscribe': Object.freeze({ allowed: ['scope', 'projectId', 'cursor'], repeatable: [] }),
 });
 
 /** 查询参数白名单校验（未知/重复 → 400，定位 query.<字段>）；空查询串恒合法。 */
@@ -488,15 +474,32 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
   const operation = route.operation;
   authenticateOrReject(request, input.authToken, operation);
 
-  if (operation === 'events.subscribe') {
-    // F-012 接线前：已认证后的明确 501（握手能力同样不宣告 events）。
-    reject(501, 'unsupported', operation, '事件订阅（SSE）在本版本尚未接线', {
-      reason: 'events_unsupported',
-    });
-  }
-
   const params = parseQueryParams(input.rawQuery, operation);
   const pathParam = route.pathParam;
+
+  if (operation === 'events.subscribe') {
+    // F-012（§9.4）：装配了 SSE Hub 时接管为长连接事件流（此后响应由 Hub
+    // 管理；建连前拒绝仍以 RouteReject/PublicError 抛出由外层序列化）；
+    // 未装配保持明确 501（不宣告能力）。
+    if (app.eventStreams === undefined) {
+      reject(501, 'unsupported', operation, '事件订阅（SSE）未在本装配中启用', {
+        reason: 'events_unsupported',
+      });
+    }
+    const scope = buildSnapshotScope(params, operation);
+    const cursor = params.get('cursor');
+    const lastEventId = request.headers['last-event-id'];
+    await app.eventStreams.handle({
+      request,
+      response,
+      scope,
+      ...(cursor !== null ? { cursor } : {}),
+      ...(typeof lastEventId === 'string' && lastEventId.length > 0
+        ? { lastEventId }
+        : {}),
+    });
+    return;
+  }
 
   let result: unknown;
   switch (operation) {
@@ -616,7 +619,7 @@ export async function handleApplicationRequest(input: ApplicationRequestInput): 
     }
     await handleQuery(input);
   } catch (error) {
-    if (error instanceof AppRouteReject) {
+    if (error instanceof RouteReject) {
       sendJson(response, error.status, rejectBody(error));
       if (error.status === 413) {
         // 超限即关闭连接：不继续读取、不处理后续字节（§7.2）。

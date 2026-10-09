@@ -160,7 +160,7 @@ describe('F-002 冻结常量与能力声明', () => {
     expect(STOP_ROUTE).toBe('/v1/host/stop');
   });
 
-  it('capabilities 只声明真实接线的能力（P02-2 §11.3 结构化视图；idle-only graceful stop，事件待 F-012）', () => {
+  it('capabilities 只声明真实接线的能力（P02-2 §11.3 结构化视图；idle-only graceful stop，F-012 起 events 为 SSE 结构化视图）', () => {
     expect(CURRENT_HOST_CAPABILITIES).toEqual({
       lifecycleRoutes: ['handshake', 'status', 'stop'],
       stop: {
@@ -191,7 +191,7 @@ describe('F-002 冻结常量与能力声明', () => {
           'results.resolve',
           'snapshot.get',
         ],
-        events: 'unsupported',
+        events: { transport: 'sse', route: '/v1/events', scopes: ['project', 'global'] },
       },
     });
     // 接线宣告与 Core 支持面交叉核对（不漂移：Core 增删操作必须同步接线与宣告）。

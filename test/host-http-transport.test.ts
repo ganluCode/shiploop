@@ -197,7 +197,11 @@ describe('F-007 传输面：合法握手与状态（独立监听 + 伪上下文�
         expectedHostInstanceId: STUB_INSTANCE,
         expectedDataRootIdentity: STUB_ROOT_IDENTITY,
       });
-      expect(validated.capabilities.application.events).toBe('unsupported');
+      expect(validated.capabilities.application.events).toEqual({
+        transport: 'sse',
+        route: '/v1/events',
+        scopes: ['project', 'global'],
+      });
       expect(validated.capabilities.application.commands).toContain('project.register');
       expect(validated.capabilities.application.queries).toContain('snapshot.get');
       // 合法 CLI 请求不携带 Origin（§7.2 无 Origin 的本机请求合法）。

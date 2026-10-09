@@ -10,12 +10,15 @@
  * - 非法 JSON、超大 body（commands 65 536 / host 16 384 双限额）、未知
  *   Schema/操作、过期命令、非法分页、身份提权字段、错误 token/Host/Origin、
  *   未知方法、未知路由与 quiescing 新变更按契约拒绝且业务状态不变；
- * - Work/Chat/基线等未实现操作 501 unsupported；/v1/events 在 F-012 前 501；
+ * - Work/Chat/基线等未实现操作 501 unsupported；/v1/events 的完整 SSE 语义
+ *   由 F-012 专用测试（host-sse-events.test.ts）覆盖，本文件固定未装配
+ *   SSE Hub 的传输面保持 501（防御纵深）；
  *   任意文件读取路由与 path/locator/伪 resultRef 一律不得返回文件内容；
  * - 授权在 Core 应用层：同一 Core 上装配的受限主体 server 跨项目/全局/回执
  *   越权全部拒绝，可见谓词先于分页收窄；
- * - 握手 schemaVersion=2 + §11.3 结构化能力（命令/查询真实清单、events
- *   仍 unsupported）；旧 v1 握手 400；真实 startHost 端到端接线 local-owner。
+ * - 握手 schemaVersion=2 + §11.3 结构化能力（命令/查询真实清单、F-012 起
+ *   events 为 SSE 结构化视图）；旧 v1 握手 400；真实 startHost 端到端接线
+ *   local-owner。
  *
  * 不读真实凭据、不调用模型、不修改开发仓库或用户 HOME。
  */
@@ -740,7 +743,7 @@ describe('F-011 传输纪律与版本门禁', () => {
     expect((list.json() as { records: unknown[] }).records).toHaveLength(1);
   });
 
-  it('/v1/events 在 F-012 接线前：认证后 501，未认证 401，非 GET 405', async () => {
+  it('/v1/events 未装配 SSE Hub 的传输面：认证后 501（防御纵深），未认证 401，非 GET 405', async () => {
     const s = await setup();
     const unauthenticated = await s.get('/v1/events', null);
     expect(unauthenticated.statusCode).toBe(401);
@@ -885,7 +888,7 @@ describe('F-011 授权边界（同一 Core 上的受限主体传输面）', () =
 });
 
 describe('F-011 握手升版与真实 startHost 端到端装配', () => {
-  it('握手 schemaVersion=2 + §11.3 能力视图（真实命令/查询清单，events unsupported）', async () => {
+  it('握手 schemaVersion=2 + §11.3 能力视图（真实命令/查询清单，F-012 起 events 结构化 SSE 视图）', async () => {
     const s = await setup();
     const handshake = await loopbackRequest({
       port: s.server.port,
@@ -928,7 +931,7 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         'results.resolve',
         'snapshot.get',
       ],
-      events: 'unsupported',
+      events: { transport: 'sse', route: '/v1/events', scopes: ['project', 'global'] },
     });
     // 旧 v1 握手被明确拒绝（Host/CLI 同仓同版发布，不猜测降级）。
     const legacy = await loopbackRequest({

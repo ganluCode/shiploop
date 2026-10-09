@@ -702,9 +702,47 @@ export function validateStateEventPageRequest(
 }
 
 /**
- * 持久 state_events 分页读取窄端口（F-010）：唯一事件来源是持久审计表，
- * 内存通知/日志不得充当事件正文。只暴露应用侧行列形态，不泄漏驱动会话。
+ * Last-Event-ID 恢复位置解析请求（端口边界形态）：eventId 必须在给定授权
+ * scope 内解析为持久 sequence；scope 校验与分页读取同一规则。
+ */
+export interface StateEventSequenceLookupRequest {
+  readonly scope: PublicEventScope;
+  /** 客户端持有的 SSE 帧 id（= state_events.id，UUID v4）。 */
+  readonly eventId: string;
+}
+
+/**
+ * 校验恢复位置解析请求（unknown → StateEventSequenceLookupRequest）：未知键、
+ * 非法 scope、非 UUID v4 的 eventId 一律 invalid_input 并定位字段。
+ */
+export function validateStateEventSequenceLookup(
+  value: unknown,
+  operation: string = EVENT_READ_OPERATION,
+): StateEventSequenceLookupRequest {
+  if (!isPlainObject(value)) {
+    invalidInput(operation, 'request', '必须是对象', value);
+  }
+  exactKeys(operation, value, ['scope', 'eventId'], 'request.');
+  if (typeof value.eventId !== 'string' || !isUuidV4(value.eventId)) {
+    invalidInput(operation, 'eventId', 'invalid_event_id', value.eventId);
+  }
+  return {
+    scope: validateEventScope(value.scope, operation),
+    eventId: value.eventId,
+  };
+}
+
+/**
+ * 持久 state_events 分页读取窄端口（F-010）与 Last-Event-ID 解析（F-012）：
+ * 唯一事件来源是持久审计表，内存通知/日志不得充当事件正文。只暴露应用侧
+ * 行列形态/sequence 标量，不泄漏驱动会话。
+ *
+ * findPersistedEventSequence 仅在请求 scope 谓词内查找 eventId：找不到
+ * （不存在或属于其他 scope）一律 undefined，不区分两种情形（防存在性探测）；
+ * 命中行的 sequence 损坏视为持久损坏（corrupt）。
  */
 export interface StateEventReadStore {
   listPersistedEvents(request: unknown): readonly PersistedStateEventRow[];
+  /** F-012：在授权 scope 内把 SSE Last-Event-ID 解析为持久 sequence。 */
+  findPersistedEventSequence(request: unknown): number | undefined;
 }

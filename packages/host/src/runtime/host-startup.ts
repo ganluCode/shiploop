@@ -49,6 +49,7 @@ import type { WriterLockOptions } from '../locking/index.js';
 import { createHostLifecycleServer } from './http-transport.js';
 import { createHostStopController, createIdleActivityGate } from './host-stop.js';
 import type { HostActivityGate, SignalShutdownOutcome } from './host-stop.js';
+import { createEventStreamHub } from './sse-transport.js';
 
 /** 启动阶段错误的操作身份（与锁/存储模块一致：本地启动/发现关注点）。 */
 const OPERATION = 'host.discovery';
@@ -322,12 +323,17 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
         // §10.5 第 3–5 步：stopping → 关 listener（在途 stop 响应仍可送达，
         // 连接随 connection: close 自行收尾）→ 关 Core（幂等）→ 持锁按实例
         // 清理发现/凭据。本步骤不释放 OS 锁。
+        // F-012：在途 SSE 流先由 Hub 在预算内结束（新订阅已 503）；定时器与
+        // 登记随连接清理，不回滚/取消任何已提交命令。
         lifecycle = 'stopping';
         const activeServer = server;
-        if (activeServer !== undefined && activeServer.listening) {
-          activeServer.close();
-        }
         return Promise.resolve()
+          .then(() => eventStreams.closeAll())
+          .then(() => {
+            if (activeServer !== undefined && activeServer.listening) {
+              activeServer.close();
+            }
+          })
           .then(() => locked.writer.close())
           .then(() => {
             const cleanup = store.cleanupInstanceFiles(hostInstanceId);
@@ -351,6 +357,14 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
       },
       ...(options.quiesceBudgetMs !== undefined ? { quiesceBudgetMs: options.quiesceBudgetMs } : {}),
     });
+    // F-012 SSE 事件订阅 Hub（§9.4/§13）：生产装配固定 local-owner 主体与
+    // 契约预算（全保留库下界恒 0，无注入缝）；closeAll 接入 §10.5 收尾与
+    // 装配级拆卸，在途流在预算内结束，重启后原持久游标可续读。
+    const eventStreams = createEventStreamHub({
+      queryService: locked.writer.queryService,
+      principal: createLocalOwnerPrincipal(),
+      getLifecycleState: () => lifecycle,
+    });
     server = createHostLifecycleServer({
       hostInstanceId,
       dataRootIdentity,
@@ -369,6 +383,7 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
         queryService: locked.writer.queryService,
         commandReceiptsService: locked.writer.commandReceiptsService,
         getLifecycleState: () => lifecycle,
+        eventStreams,
       },
     });
     await listenOnLoopback(server);
@@ -426,6 +441,7 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
           await stopController.whenSettled();
           if (!stopTeardownCompleted) {
             lifecycle = 'stopping';
+            await eventStreams.closeAll();
             await closeServer(listeningServer);
             await locked.close();
           }

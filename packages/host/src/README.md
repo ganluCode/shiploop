@@ -40,16 +40,31 @@ Host 未来承担：生命周期、单例认证、传输（本地 HTTP+SSE）、
   P02-2（契约 docs/p02-2-commands-events-contract.md）：
   - 线消息 schemaVersion 升 2（§3.1：握手/stop/status/命令/查询响应；发现
     schemaVersion=1 与 protocolVersion=1 不联动）；握手 capabilities 为 §11.3
-    结构化视图（application.commands/queries 为真实接线清单，events 在 F-012
-    前保持 'unsupported'），客户端校验对伪称/缺键零容忍。
+    结构化视图（application.commands/queries 为真实接线清单，F-012 起
+    application.events 为 {transport:'sse', route:'/v1/events',
+    scopes:['project','global']} 冻结结构化视图），客户端校验对伪称/缺键零容忍。
   - F-011 `runtime/app-transport.ts`：§3.2 应用路由（POST /v1/commands、
     GET /v1/receipts/:commandId、/v1/results/:resultRef、项目/配置/快照查询），
-    由 http-transport 在同一监听上委派；/v1/events 在 F-012 前 501。命令体积
+    由 http-transport 在同一监听上委派；未装配 SSE Hub 的传输面上下文对
+    /v1/events 保持认证后 501（防御纵深，不伪称可用）。命令体积
     上限 65 536 B（/v1/host/* 仍 16 384）、查询串 8 192 B、查询响应 65 536 B
     （超限 500 不泄漏业务内容）；信封结构 400 先于凭据、版本/未知操作 400/501
     在凭据之后；quiescing 拒绝新变更（503 not_ready）；Host 只传递可信装配
     固定绑定的 principal（生产恒 local-owner），授权全部在 Core 应用层。
     `runtime/http-primitives.ts` 为两个传输面共用底层原语（有界读体/响应/
-    Bearer timingSafeEqual）。
+    Bearer timingSafeEqual 与 RouteReject 控制流拒绝）。
+  - F-012 `runtime/sse-transport.ts`：§9.4 `GET /v1/events` SSE 订阅 Hub
+    （createEventStreamHub）——唯一事件来源是持久 state_events（每批经 Core
+    QueryService.resolveEventResume/readEventBatch，轮询仅唤醒读取；每批重新
+    核验当前授权，越权在发送任何帧之前 403）；恢复位置优先级
+    Last-Event-ID → ?cursor= → 缺省 400 cursor_required；建连前游标低于
+    可续读下界 409 snapshot_required（受控读取缝注入，生产恒 0），建连后以
+    event: error 帧 + 正常结束呈现；背压预算（§13/§15.6）：待发缓冲
+    1 048 576 B、单批 500 条/262 144 B、drain 等待 2 000 ms，超限发一帧
+    stream_overflow 后结束该流（不丢持久审计、不阻塞快客户端）；心跳
+    15 000 ms；连接关闭只清理本连接定时器/登记，客户端断开不回滚命令、
+    不停止 Host；closeAll 接入 §10.5 收尾与装配拆卸，重启后原持久游标可
+    续读；建连后解除 requestTimeout，响应仍 no-store/connection: close，
+    不发 CORS/3xx。真实回环 HTTP/SSE 回归见 test/host-sse-events.test.ts。
 
 单向依赖规则见仓库根 `README.md`。

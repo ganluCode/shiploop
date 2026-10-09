@@ -41,6 +41,12 @@
  *   §11.3 结构化视图；runtime/ 新增 app-transport.ts（§3.2 应用命令/回执/
  *   查询/快照路由）与 http-primitives.ts（传输面共享原语），startHost 装配
  *   固定 local-owner 主体的应用上下文；/v1/events 待 F-012。
+ * - F-012（P02-2）：runtime/ 新增 sse-transport.ts（§9.4 /v1/events SSE 订阅
+ *   Hub）：持久 state_events 为唯一事件来源（恢复解析/补读经 Core
+ *   QueryService，每批重新核验授权），Last-Event-ID/?cursor 恢复、
+ *   snapshot_required 下界拒绝、stream_overflow 有界背压与心跳；握手
+ *   capabilities.events 升为结构化 SSE 视图；startHost 装配 Hub 并把
+ *   closeAll 接入 §10.5 收尾；未装配 Hub 的传输面对该路由保持 501。
  * - 三个面加载本模块仍不监听端口、不读用户目录、不启动进程、不写文件；
  */
 export * from './contract/index.js';

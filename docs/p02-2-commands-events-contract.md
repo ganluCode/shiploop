@@ -167,10 +167,12 @@ F-001 实际打开源码与测试逐项核对，下表入口与测试在开工�
 
 ### 3.2 路由总表（全部需要 Bearer 认证；前缀 `/v1`）
 
-> 实施状态：除 `GET /v1/events`（SSE，F-012 接线）外全部由 F-011 接线于
-> `packages/host/src/runtime/app-transport.ts`（生命周期传输面委派）；F-012 前
-> `/v1/events` 在认证后返回 `501 unsupported`（`details.reason='events_unsupported'`），
-> 握手能力同样不宣告 events。F-011 定案的 HTTP 查询参数：`projects.list` 接受
+> 实施状态：全部路由（含 `GET /v1/events` SSE）均已接线：F-011 接线于
+> `packages/host/src/runtime/app-transport.ts`（生命周期传输面委派），F-012 将
+> `/v1/events` 接管为 `packages/host/src/runtime/sse-transport.ts` 的长连接事件流
+> Hub；未装配 Hub 的传输面上下文在认证后仍返回 `501 unsupported`
+> （`details.reason='events_unsupported'`，防御纵深，不伪称可用）。F-011 定案的
+> HTTP 查询参数：`projects.list` 接受
 > `limit`/`cursor`/`match`（any|all）/可重复 `label`；`snapshot.get` 接受
 > `scope=project|global` 与 `projectId`（project 必填、global 禁止）；其余查询路由
 > 不接受任何参数（未知/重复参数 400 invalid_input）。字面量路由
@@ -602,6 +604,12 @@ F-012 按 §9.4 以错误响应/`event: error` 帧呈现，不把坏行伪装成
 
 ### 9.4 SSE 订阅（`GET /v1/events`）
 
+> 实施状态：F-012 已实施——Host SSE Hub（`packages/host/src/runtime/sse-transport.ts`）
+> 经 Core `QueryService.resolveEventResume`/`readEventBatch` 实现恢复解析与轮询
+> 补读（每批重新核验授权）；Last-Event-ID 解析经 `StateEventReadStore
+> .findPersistedEventSequence` 窄端口；可续读下界经受控读取缝注入（生产恒 0）。
+> 实施值（§15.6）：轮询唤醒 250 ms、drain 等待预算 2 000 ms。
+
 - 入参：`scope=project&projectId=<id>` 或 `scope=global`。恢复位置三选一（优先级）：
   `Last-Event-ID` 头（值为 eventId，服务端在同一读视图映射到所属 sequence 与 scope）→
   `?cursor=` → 缺省（拒绝：必须先取快照，`400 invalid_input`，reason `cursor_required`）。
@@ -743,10 +751,10 @@ CREATE INDEX command_receipts_principal_project_index
 对应能力（保持 P02-1 现状，或按实现进度增量更新本视图与守护测试）。
 
 > 实施状态：F-011 起握手为线消息 schemaVersion=2 且 `application.commands`/
-> `application.queries` 即上表清单（与路由接线一一对应）；`application.events`
-> 在 F-012 SSE 接线前保持字面量 `"unsupported"`（上表 events 行的结构化形态随
-> F-012 生效）。客户端校验（`validateHandshakeResponse`）对该视图做精确键与集合
-> 相等核验，任何伪称/缺键一律 `response_malformed`。
+> `application.queries` 即上表清单（与路由接线一一对应）；F-012 起
+> `application.events` 为上表 events 行的结构化 SSE 视图（未装配 SSE Hub 的
+> 测试传输面仍在该路由返回 501，防御纵深）。客户端校验（`validateHandshakeResponse`）
+> 对该视图做精确键与集合相等核验，任何伪称/缺键一律 `response_malformed`。
 
 ## 12. CLI 参数面与退出码（F-014 ~ F-017 冻结）
 
@@ -923,7 +931,8 @@ unsupported_schema_version 失败替代畸形响应，且 Host/CLI 同仓同版�
 ### 15.6 本契约新增的实施值（设计未给定数值，请求核对）
 
 命令/查询体积上限 65 536 B、查询串 8 192 B、result 有界 16 384 B、事件批次 100/500 与 262 144 B、
-SSE 缓冲 1 048 576 B、心跳 15 000 ms、去重缓存 512、命令时钟偏差 ±60 000 ms、默认 TTL 60 000 ms、
+SSE 缓冲 1 048 576 B、心跳 15 000 ms、SSE 轮询唤醒 250 ms、SSE drain 等待预算 2 000 ms、
+去重缓存 512、命令时钟偏差 ±60 000 ms、默认 TTL 60 000 ms、
 最大寿命 300 000 ms、CLI 退出码 4（观察中断）、resultRef 形态、游标形态与 `local-owner`
 principalId 字面量。调整须有测试依据并回写本文，不得改无界或变为可配置放宽项。
 

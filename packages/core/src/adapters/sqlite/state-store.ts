@@ -54,6 +54,7 @@ import { StorageError } from '../../ports/errors.js';
 import type { StorageEntityRef } from '../../ports/errors.js';
 import {
   validateStateEventPageRequest,
+  validateStateEventSequenceLookup,
   type PersistedStateEventRow,
 } from '../../ports/events.js';
 import {
@@ -397,6 +398,8 @@ export function createSqliteStateAccess(
   readGlobalSnapshotView(): SnapshotView;
   /** F-010：持久 state_events 授权范围分页读取（sequence 升序、排他下界、有界）。 */
   listPersistedEvents(request: unknown): readonly PersistedStateEventRow[];
+  /** F-012：在授权 scope 内把 Last-Event-ID 解析为持久 sequence（未命中 undefined）。 */
+  findPersistedEventSequence(request: unknown): number | undefined;
 } {
   const nowUtcMs = options.nowUtcMs ?? Date.now;
 
@@ -1068,6 +1071,38 @@ export function createSqliteStateAccess(
     }));
   }
 
+  function findPersistedEventSequence(request: unknown): number | undefined {
+    const operation = 'StateEventReadStore.findPersistedEventSequence';
+    assertOpen(operation);
+    if (session.database.inTransaction) {
+      throw new TypeError(`${operation}: 事件读取不得嵌套在写事务内（编程错误）`);
+    }
+    const valid = validateStateEventSequenceLookup(request, operation);
+    const conditions: string[] = ['id = ?'];
+    const params: unknown[] = [valid.eventId];
+    if (valid.scope.kind === 'global') {
+      conditions.push('project_id IS NULL');
+    } else {
+      conditions.push('project_id = ?');
+      params.push(valid.scope.projectId);
+    }
+    const row = session.database
+      .prepare<unknown[], { sequence: unknown }>(
+        `SELECT sequence FROM state_events WHERE ${conditions.join(' AND ')}`,
+      )
+      .get(...params) as { sequence: unknown } | undefined;
+    if (row === undefined) {
+      // 不存在或属于其他 scope 一律 undefined（不区分，防存在性探测）。
+      return undefined;
+    }
+    if (typeof row.sequence !== 'number' || !Number.isSafeInteger(row.sequence) || row.sequence < 1) {
+      throw new StorageError('corrupt', operation, `${operation}: 事件 sequence 持久值损坏`, {
+        details: { reason: 'corrupt_event_row' },
+      });
+    }
+    return row.sequence;
+  }
+
   // 仅适配器内部同步访问；变更调用方必须已持有本会话写事务。
   function getProject(projectId: string): ProjectRecord {
     const operation = 'StateStore.getProject';
@@ -1390,5 +1425,6 @@ export function createSqliteStateAccess(
     readProjectSnapshotView,
     readGlobalSnapshotView,
     listPersistedEvents,
+    findPersistedEventSequence,
   };
 }

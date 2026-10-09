@@ -199,14 +199,16 @@ describe('F-001 契约文档与仓库基线一致（开工现状事实）', () =
     expect(root.scripts).not.toHaveProperty('accept:p02');
   });
 
-  it('F-011 已升线消息 v2 并以 §11.3 结构化能力宣告真实接线（events 待 F-012）', () => {
+  it('F-011 已升线消息 v2 并以 §11.3 结构化能力宣告真实接线（F-012 起 events 为 SSE 视图）', () => {
     const constants = readText('packages/host/src/contract/constants.ts');
     expect(constants).toMatch(/export const CURRENT_SCHEMA_VERSION = 2 as const/);
     expect(constants).toMatch(/export const MAX_APP_BODY_BYTES = 65_536/);
     expect(constants).toMatch(/export const MAX_QUERY_STRING_BYTES = 8_192/);
     const lifecycle = readText('packages/host/src/contract/lifecycle.ts');
     expect(lifecycle).toContain('readonly application: ApplicationCapabilityView');
-    expect(lifecycle).toContain("readonly events: 'unsupported'");
+    expect(lifecycle).toContain('readonly events: EventsCapabilityView');
+    expect(lifecycle).toContain("transport: 'sse'");
+    expect(lifecycle).toContain('scopes: [\'project\', \'global\']');
     // 契约必须记录演进依据与独立版本纪律。
     expect(contractDoc).toContain('P02-2 起');
     expect(contractDoc).toContain('§11.3');
@@ -243,7 +245,7 @@ describe('F-001 契约文档与仓库基线一致（开工现状事实）', () =
     expect(contractDoc).toContain('shiploop events');
   });
 
-  it('F-011 已接线 §3.2 应用路由（/v1/events 除外，F-012 前 501）', () => {
+  it('F-011 已接线 §3.2 应用路由；F-012 已接线 /v1/events SSE 订阅传输面', () => {
     const appTransport = readText('packages/host/src/runtime/app-transport.ts');
     expect(appTransport).toContain('/v1/commands');
     const transport = readText('packages/host/src/runtime/http-transport.ts');
@@ -254,6 +256,24 @@ describe('F-001 契约文档与仓库基线一致（开工现状事实）', () =
     const startup = readText('packages/host/src/runtime/host-startup.ts');
     expect(startup).toContain('createLocalOwnerPrincipal');
     expect(contractDoc).toContain('F-011 已接线');
+    // F-012（§9.4）：SSE Hub 传输面 + Core 恢复解析/补读 + Last-Event-ID 端口。
+    const sseTransport = readText('packages/host/src/runtime/sse-transport.ts');
+    expect(sseTransport).toContain('export const SSE_MAX_PENDING_BYTES = 1_048_576');
+    expect(sseTransport).toContain('export const SSE_HEARTBEAT_INTERVAL_MS = 15_000');
+    expect(sseTransport).toContain('export const SSE_BATCH_LIMIT = 500');
+    expect(sseTransport).toContain('export const SSE_MAX_BATCH_BYTES = 262_144');
+    expect(sseTransport).toContain('snapshot_required');
+    expect(sseTransport).toContain('stream_overflow');
+    expect(startup).toContain('createEventStreamHub');
+    const appTransportSse = readText('packages/host/src/runtime/app-transport.ts');
+    expect(appTransportSse).toContain('events.subscribe');
+    expect(appTransportSse).toContain('eventStreams');
+    const queryService = readText('packages/core/src/application/query-service.ts');
+    expect(queryService).toContain('resolveEventResume');
+    expect(queryService).toContain('readEventBatch');
+    const eventsPort = readText('packages/core/src/ports/events.ts');
+    expect(eventsPort).toContain('findPersistedEventSequence');
+    expect(contractDoc).toContain('F-012 已实施');
   });
 
   it('P02-1 契约、交接与 F-014 报告仍在库且被本文显式接续', () => {
