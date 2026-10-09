@@ -631,7 +631,8 @@ describe('F-015 项目命令 CLI 纵向接线（真实 Host 子进程 + SQLite +
     // 解析失败不得启动 Host、不得创建数据根。
     expect(existsSync(join(root, 'host', 'discovery.json'))).toBe(false);
 
-    const unsupported = await runApp(env, ['config', 'get', '--scope', 'global', '--json']);
+    // F-016 起 config 已接线；仍未实现的 events 观察仍明确 unsupported。
+    const unsupported = await runApp(env, ['events', '--global', '--json']);
     expect(unsupported.result.exitCode).toBe(1);
     const unsupportedEnvelope = parseEnvelope(unsupported);
     expect(unsupportedEnvelope.error?.code).toBe('unsupported');

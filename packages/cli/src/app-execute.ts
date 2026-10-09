@@ -16,6 +16,7 @@
  * 不访问网络、不 spawn——只有 `runAppCli` 显式调用才执行。
  * `packages/cli/src/index.ts` 公共入口不 re-export 本模块（显式入口 bin.ts 专用）。
  */
+import { readFileSync } from 'node:fs';
 import {
   ensureHostRunning,
   isHostProtocolError,
@@ -24,8 +25,14 @@ import {
   type HostClientTimeouts,
   type SubmitCommandInput,
 } from 'shiploop-host';
-import { AppCliParseError, parseAppCliArgs } from './app/args.js';
-import type { AppCliCommandId, ParsedAppCliCommand } from './app/args.js';
+import { AppCliParseError, parseAppCliArgs, parseAppInputJson } from './app/args.js';
+import type {
+  AppCliCommandId,
+  ParsedAppCliCommand,
+  ParsedConfigCreate,
+  ParsedConfigUpdate,
+  ParsedReceiptGet,
+} from './app/args.js';
 import { getAppCliHelp } from './app/help.js';
 import {
   buildAppCliFailureEnvelope,
@@ -90,6 +97,14 @@ type CompletedReceipt = Extract<CommandReceipt, { status: 'completed' }>;
 type ProjectDetailResult = Awaited<ReturnType<HostClient['getProject']>>;
 type ProjectListResult = Awaited<ReturnType<HostClient['listProjects']>>;
 type ProjectLabelCountsResult = Awaited<ReturnType<HostClient['countProjectLabels']>>;
+type SettingsStateResult = Awaited<ReturnType<HostClient['getGlobalSettings']>>;
+type EffectiveSettingsResult = Awaited<ReturnType<HostClient['getEffectiveSettings']>>;
+type ExportedSettingsResult = Awaited<ReturnType<HostClient['exportGlobalSettings']>>;
+
+/** 配置命令（create/update/get/effective/export）的解析形态。 */
+type ParsedConfigCommand = Extract<ParsedAppCliCommand, { command: 'config' }>;
+/** 携带 scope 的配置命令子集（effective 无 scope）。 */
+type ScopedConfigCommand = Extract<ParsedConfigCommand, { scope: 'global' | 'project' }>;
 
 /** 根来源二选一：显式 --data-root 优先，省略时才用注入用户目录推导默认根。 */
 function rootSource(
@@ -136,6 +151,32 @@ function protocolFailure(command: AppCliCommandId, error: HostProtocolError): Fa
     code: error.code,
     message: error.message ?? 'Host 协议错误（已脱敏）',
     ...(error.details !== undefined ? { details: error.details } : {}),
+  };
+}
+
+/** 解析失败统一出口（退出码 2）：JSON 信封到 stdout（--json），诊断到 stderr。 */
+function emitParseFailure(
+  io: AppCliIo,
+  error: AppCliParseError,
+  jsonFlag: boolean,
+): AppCliRunResult {
+  const details: Record<string, unknown> = { reason: error.reason };
+  if (error.field !== undefined) {
+    details.field = error.field;
+  }
+  const json = error.json || jsonFlag;
+  const envelope = json
+    ? buildAppCliFailureEnvelope(error.commandId, error.code, error.message, { details })
+    : undefined;
+  if (envelope !== undefined) {
+    io.stdout(`${JSON.stringify(envelope)}\n`);
+  }
+  io.stderr(formatAppCliParseError(error));
+  return {
+    exitCode: 2,
+    kind: 'failure',
+    command: error.commandId,
+    ...(envelope !== undefined ? { envelope } : {}),
   };
 }
 
@@ -211,6 +252,72 @@ function projectLabelsHumanLine(result: ProjectLabelCountsResult): string {
 }
 
 /* ------------------------------------------------------------------ *
+ * 配置与回执人类可读行（脱敏；只输出 scope/revision/来源，不打印 payload 值）
+ * ------------------------------------------------------------------ */
+
+function scopeText(scope: unknown): string {
+  if (scope !== null && typeof scope === 'object') {
+    const candidate = scope as { kind?: unknown; projectId?: unknown };
+    if (candidate.kind === 'project' && typeof candidate.projectId === 'string') {
+      return `project:${candidate.projectId}`;
+    }
+    if (candidate.kind === 'global') {
+      return 'global';
+    }
+  }
+  return 'unknown';
+}
+
+function settingsWriteHumanLine(verb: 'create' | 'update', receipt: CompletedReceipt): string {
+  const state = receipt.result as
+    | { scope?: unknown; revision?: unknown; schemaVersion?: unknown }
+    | undefined;
+  return (
+    `shiploop config ${verb}: ${receipt.status} scope=${scopeText(state?.scope)} ` +
+    `schemaVersion=${String(state?.schemaVersion)} revision=${String(state?.revision)}` +
+    `${receipt.replayed ? '（replayed）' : ''}\n`
+  );
+}
+
+function settingsCurrentHumanLine(state: SettingsStateResult): string {
+  return (
+    `shiploop config get: scope=${scopeText(state.scope)} ` +
+    `schemaVersion=${String(state.schemaVersion)} revision=${String(state.revision)}\n`
+  );
+}
+
+function effectiveSettingsHumanLine(effective: EffectiveSettingsResult): string {
+  const strategies = effective.strategies as
+    | { defaultStrategy?: unknown; modelMap?: Record<string, unknown>; purposeStrategies?: Record<string, unknown>; agentOverrides?: Record<string, unknown> }
+    | undefined;
+  const hasDefault = strategies?.defaultStrategy !== undefined;
+  const modelCount = Object.keys(strategies?.modelMap ?? {}).length;
+  const purposeCount = Object.keys(strategies?.purposeStrategies ?? {}).length;
+  const policyCount = Object.keys(effective.policies ?? {}).length;
+  return (
+    `shiploop config effective: configured=${String(effective.configured)} ` +
+    `defaultStrategy=${String(hasDefault)} modelMap=${modelCount} ` +
+    `purposeStrategies=${purposeCount} policies=${policyCount}\n`
+  );
+}
+
+function exportedSettingsHumanLine(exported: ExportedSettingsResult): string {
+  const current = exported.current as { revision?: unknown } | undefined;
+  return (
+    `shiploop config export: scope=${exported.scope} ` +
+    `format=${String(exported.exportFormatVersion)} revision=${String(current?.revision)}\n`
+  );
+}
+
+function receiptHumanLine(receipt: CommandReceipt): string {
+  const reference = receipt.status === 'completed' ? ` resultRef=${receipt.resultRef}` : '';
+  return (
+    `shiploop receipt get: ${receipt.status} commandId=${receipt.commandId} ` +
+    `operation=${receipt.operation}${reference}\n`
+  );
+}
+
+/* ------------------------------------------------------------------ *
  * 写命令：显式 commandId 先查回执、以原 issuedAt 重建同一信封
  * ------------------------------------------------------------------ */
 
@@ -257,11 +364,23 @@ async function submitCommandAndEmit(
       ...(receipt.error.details !== undefined ? { details: receipt.error.details } : {}),
     });
   }
-  const human =
-    command.commandId === 'project.edit'
-      ? projectEditedHumanLine(receipt)
-      : projectRegisteredHumanLine(receipt);
-  return emitSuccess(io, command, receipt, human);
+  return emitSuccess(io, command, receipt, writeCommandHumanLine(command.commandId, receipt));
+}
+
+/** 写命令 completed 回执的人类行（按命令身份分派；只输出脱敏字段）。 */
+function writeCommandHumanLine(commandId: AppCliCommandId, receipt: CompletedReceipt): string {
+  switch (commandId) {
+    case 'project.register':
+      return projectRegisteredHumanLine(receipt);
+    case 'project.edit':
+      return projectEditedHumanLine(receipt);
+    case 'config.create':
+      return settingsWriteHumanLine('create', receipt);
+    case 'config.update':
+      return settingsWriteHumanLine('update', receipt);
+    default:
+      return `shiploop ${commandId}: ${receipt.status}\n`;
+  }
 }
 
 /* ------------------------------------------------------------------ *
@@ -344,13 +463,124 @@ async function executeProjectCommand(
   }
 }
 
+/* ------------------------------------------------------------------ *
+ * 配置命令（F-016）
+ * ------------------------------------------------------------------ */
+
+/** 配置命令 scope 映射（project 分支的 projectId 已由纯解析层校验）。 */
+function configScope(
+  command: ScopedConfigCommand,
+): { kind: 'global' } | { kind: 'project'; projectId: string } {
+  if (command.scope === 'global') {
+    return { kind: 'global' };
+  }
+  return { kind: 'project', projectId: command.projectId as string };
+}
+
 /**
- * 执行一条应用命令 CLI 意图。解析（纯）→ 平台门禁 → 连接/启动 Host →
- * 命令编排 → §12.3 信封/退出码。返回退出码与（JSON 模式）信封；
- * 调用方（bin.ts）据此退出。
+ * 读取 `--input <file>` 文本并解析为 JSON 普通对象。文件读取是显式命令输入
+ * （不是结果读取，不接受任意 Core 数据库/结果路径）；缺失/不可读/畸形 JSON
+ * 一律在连接 Host 之前以退出码 2 拒绝。
+ */
+function readConfigInputPayload(
+  command: ParsedConfigCreate | ParsedConfigUpdate,
+): Record<string, unknown> {
+  let text: string;
+  try {
+    text = readFileSync(command.inputFile, 'utf8');
+  } catch {
+    throw new AppCliParseError(
+      'invalid_input',
+      'invalid_input_file',
+      { command: command.command, commandId: command.commandId, json: command.json },
+      'input',
+    );
+  }
+  return parseAppInputJson(text, { commandId: command.commandId, json: command.json });
+}
+
+async function executeConfigCommand(
+  io: AppCliIo,
+  command: ParsedConfigCommand,
+  client: HostClient,
+  payload: Record<string, unknown>,
+): Promise<AppCliRunResult> {
+  switch (command.commandId) {
+    case 'config.create': {
+      const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+      const input: SubmitCommandInput = {
+        operation: command.operation,
+        scope: configScope(command),
+        payload,
+        ...(command.explicitCommandId !== undefined ? { commandId: command.explicitCommandId } : {}),
+        ...(issuedAt !== undefined ? { issuedAt } : {}),
+      };
+      return submitCommandAndEmit(io, command, client, input);
+    }
+    case 'config.update': {
+      const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+      const input: SubmitCommandInput = {
+        operation: command.operation,
+        scope: configScope(command),
+        expectedRevision: command.revision,
+        payload,
+        ...(command.explicitCommandId !== undefined ? { commandId: command.explicitCommandId } : {}),
+        ...(issuedAt !== undefined ? { issuedAt } : {}),
+      };
+      return submitCommandAndEmit(io, command, client, input);
+    }
+    case 'config.get': {
+      const result =
+        command.scope === 'global'
+          ? await client.getGlobalSettings()
+          : await client.getProjectSettings(command.projectId as string);
+      return emitSuccess(io, command, result, settingsCurrentHumanLine(result));
+    }
+    case 'config.effective': {
+      const result = await client.getEffectiveSettings(command.projectId);
+      return emitSuccess(io, command, result, effectiveSettingsHumanLine(result));
+    }
+    case 'config.export': {
+      const result =
+        command.scope === 'global'
+          ? await client.exportGlobalSettings()
+          : await client.exportProjectSettings(command.projectId as string);
+      return emitSuccess(io, command, result, exportedSettingsHumanLine(result));
+    }
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * 回执读取（F-016）
+ * ------------------------------------------------------------------ */
+
+async function executeReceiptCommand(
+  io: AppCliIo,
+  command: ParsedReceiptGet,
+  client: HostClient,
+): Promise<AppCliRunResult> {
+  const receipt = await client.getReceipt(command.targetCommandId);
+  if (receipt.status === 'rejected') {
+    // 回执固化的是原命令的业务拒绝；按 §12.3 退出码 1 展示，不重发副作用。
+    return emitFailure(io, command.json, {
+      exitCode: exitCodeForReceiptStatus('rejected'),
+      command: command.commandId,
+      code: receipt.error.code,
+      message: receipt.error.message,
+      commandId: receipt.commandId,
+      ...(receipt.error.details !== undefined ? { details: receipt.error.details } : {}),
+    });
+  }
+  return emitSuccess(io, command, receipt, receiptHumanLine(receipt));
+}
+
+/**
+ * 执行一条应用命令 CLI 意图。解析（纯）→ 平台门禁 → 配置输入文件读取 →
+ * 连接/启动 Host → 命令编排 → §12.3 信封/退出码。返回退出码与（JSON 模式）
+ * 信封；调用方（bin.ts）据此退出。
  *
- * F-015 只接线 project.*；config/receipt/events 由 F-016/F-017 扩展，本版
- * 明确返回 `unsupported`（退出码 1），不冒充已实现。
+ * F-015 接线 project.* ，F-016 接线 config.* 与 receipt.get；events 观察由 F-017
+ * 实现，本版明确返回 `unsupported`（退出码 1），不冒充已实现。
  */
 export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunResult> {
   if (
@@ -370,31 +600,7 @@ export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunRes
     parsed = parseAppCliArgs(options.args, options.env ?? {});
   } catch (error) {
     if (error instanceof AppCliParseError) {
-      const details: Record<string, unknown> = { reason: error.reason };
-      if (error.field !== undefined) {
-        details.field = error.field;
-      }
-      const failure: FailureResult = {
-        exitCode: 2,
-        command: error.commandId,
-        code: error.code,
-        message: error.message,
-        details,
-      };
-      const json = error.json || jsonFlag;
-      const envelope = json
-        ? buildAppCliFailureEnvelope(failure.command, failure.code, failure.message, { details })
-        : undefined;
-      if (envelope !== undefined) {
-        io.stdout(`${JSON.stringify(envelope)}\n`);
-      }
-      io.stderr(formatAppCliParseError(error));
-      return {
-        exitCode: 2,
-        kind: 'failure',
-        command: failure.command,
-        ...(envelope !== undefined ? { envelope } : {}),
-      };
+      return emitParseFailure(io, error, jsonFlag);
     }
     return emitFailure(io, jsonFlag, {
       exitCode: 2,
@@ -421,14 +627,38 @@ export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunRes
     });
   }
 
-  // F-015 范围：project.* 经 HostClient 接线；其余命令明确 unsupported。
-  if (command.command !== 'project') {
+  // F-015/F-016 范围：project.*、config.*、receipt.get 经 HostClient 接线；
+  // events 观察由 F-017 实现，本版明确 unsupported。
+  if (
+    command.command !== 'project' &&
+    command.command !== 'config' &&
+    command.command !== 'receipt'
+  ) {
     return emitFailure(io, command.json, {
       exitCode: 1,
       command: command.commandId,
       code: 'unsupported',
       message: '该命令由后续任务实现',
     });
+  }
+
+  // 配置输入文件在连接 Host 之前读取/解析：缺失/畸形 JSON 以退出码 2 拒绝，
+  // 不发现 Host、不联网、不启动进程（与纯解析失败同一纪律）。
+  let configPayload: Record<string, unknown> | undefined;
+  if (command.commandId === 'config.create' || command.commandId === 'config.update') {
+    try {
+      configPayload = readConfigInputPayload(command);
+    } catch (error) {
+      if (error instanceof AppCliParseError) {
+        return emitParseFailure(io, error, jsonFlag);
+      }
+      return emitFailure(io, command.json, {
+        exitCode: 2,
+        command: command.commandId,
+        code: 'invalid_input',
+        message: '输入文件读取失败',
+      });
+    }
   }
 
   let client: HostClient;
@@ -464,6 +694,12 @@ export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunRes
   }
 
   try {
+    if (command.command === 'config') {
+      return await executeConfigCommand(io, command, client, configPayload as Record<string, unknown>);
+    }
+    if (command.command === 'receipt') {
+      return await executeReceiptCommand(io, command, client);
+    }
     return await executeProjectCommand(io, command, client);
   } catch (error) {
     if (isHostProtocolError(error)) {

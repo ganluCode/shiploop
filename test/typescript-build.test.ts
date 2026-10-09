@@ -322,7 +322,16 @@ describe('Host and CLI entry behaviour boundaries', () => {
     ]);
     for (const { file, code } of executionSources) {
       const specifiers = extractModuleSpecifiers(code);
-      for (const banned of [...skeletonBannedModules, 'node:child_process', 'node:fs', 'node:net', 'shiploop-core']) {
+      // F-016：app-execute.ts 是 config `--input <file>` 的显式输入文件读取层，
+      // 因此允许 node:fs（只读用户显式指定的请求输入，不打开状态库、不做 HTTP/spawn）；
+      // host/execute.ts 与 bin.ts 仍禁用 node:fs。
+      const allowsInputFileRead = file.endsWith(`${sep}app-execute.ts`);
+      const bannedBuiltins = [
+        'node:child_process',
+        'node:net',
+        ...(allowsInputFileRead ? [] : ['node:fs']),
+      ];
+      for (const banned of [...skeletonBannedModules, ...bannedBuiltins, 'shiploop-core']) {
         const offenders = specifiers.filter((specifier) => specifierMatches(specifier, banned));
         expect(offenders, `${file} must not import ${banned}`).toHaveLength(0);
       }

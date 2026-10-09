@@ -554,6 +554,227 @@ async function smokeCliBin(
   }
   assertAlive(firstPid);
 
+  // 4c) F-016 配置与回执纵向：dist/bin.js 在非源码 cwd、真实数据根上完成
+  // config create/get/effective/export 与 receipt get，并核验幂等/冲突/无配置。
+  // 生产入口能力目录为空，故配置 payload 只用 policies（策略条目会 fail-closed）。
+  const globalPayloadFile = join(workDir, 'global-config.json');
+  writeFileSync(
+    globalPayloadFile,
+    JSON.stringify({
+      schemaVersion: 2,
+      policies: { executionLimits: { maxConcurrentWorks: 1, workTimeoutMs: 600000 } },
+    }),
+    'utf8',
+  );
+  const projectPayloadFile = join(workDir, 'project-config.json');
+  writeFileSync(
+    projectPayloadFile,
+    JSON.stringify({ schemaVersion: 2, policies: { verification: { requireChecksBeforeDone: true } } }),
+    'utf8',
+  );
+
+  // 未配置项目 → not_found 退出码 1（明确区别于损坏/已配置）。
+  const noConfig = run(
+    'config-get-absent',
+    projectArgs(['config', 'get', '--scope', 'project', '--project', projectId]),
+  );
+  if (noConfig.status !== 1 || jsonResult('config-get-absent', noConfig).error?.code !== 'not_found') {
+    fail(`shiploop-cli: config get on unconfigured project must exit 1 not_found: ${noConfig.stderr}`);
+  }
+
+  const configCommandId = randomUUID();
+  const globalCreate = run(
+    'config-create-global',
+    projectArgs([
+      'config',
+      'create',
+      '--scope',
+      'global',
+      '--input',
+      globalPayloadFile,
+      '--command-id',
+      configCommandId,
+    ]),
+  );
+  if (globalCreate.status !== 0) {
+    fail(`shiploop-cli: config create global exit ${String(globalCreate.status)}: ${globalCreate.stderr}`);
+  }
+  const globalReceipt = jsonResult('config-create-global', globalCreate).result as Record<string, any>;
+  if (
+    globalReceipt.status !== 'completed' ||
+    globalReceipt.result?.revision !== 1 ||
+    globalReceipt.result?.scope?.kind !== 'global'
+  ) {
+    fail(`shiploop-cli: config create global receipt mismatch: ${JSON.stringify(globalReceipt)}`);
+  }
+
+  // 显式相同 commandId 的重复创建 → 重放原回执（不重复副作用）。
+  const globalReplay = run(
+    'config-create-global-replay',
+    projectArgs([
+      'config',
+      'create',
+      '--scope',
+      'global',
+      '--input',
+      globalPayloadFile,
+      '--command-id',
+      configCommandId,
+    ]),
+  );
+  if (globalReplay.status !== 0 || jsonResult('config-create-global-replay', globalReplay).result?.replayed !== true) {
+    fail('shiploop-cli: explicit commandId config create was not replayed');
+  }
+
+  const globalGet = run('config-get-global', projectArgs(['config', 'get', '--scope', 'global']));
+  if (globalGet.status !== 0) {
+    fail(`shiploop-cli: config get global exit ${String(globalGet.status)}: ${globalGet.stderr}`);
+  }
+  const globalGetResult = jsonResult('config-get-global', globalGet).result as Record<string, any>;
+  if (globalGetResult.revision !== 1 || globalGetResult.scope?.kind !== 'global') {
+    fail(`shiploop-cli: config get global mismatch: ${JSON.stringify(globalGetResult)}`);
+  }
+
+  // 带 revision 的成功更新 → revision 2，当前值与持久状态一致。
+  const globalUpdateFile = join(workDir, 'global-config-update.json');
+  writeFileSync(
+    globalUpdateFile,
+    JSON.stringify({
+      schemaVersion: 2,
+      policies: { executionLimits: { maxConcurrentWorks: 2, workTimeoutMs: 600000 } },
+    }),
+    'utf8',
+  );
+  const globalUpdate = run(
+    'config-update-global',
+    projectArgs(['config', 'update', '--scope', 'global', '--revision', '1', '--input', globalUpdateFile]),
+  );
+  if (globalUpdate.status !== 0) {
+    fail(`shiploop-cli: config update global exit ${String(globalUpdate.status)}: ${globalUpdate.stderr}`);
+  }
+  const globalUpdateReceipt = jsonResult('config-update-global', globalUpdate).result as Record<string, any>;
+  if (globalUpdateReceipt.status !== 'completed' || globalUpdateReceipt.result?.revision !== 2) {
+    fail(`shiploop-cli: config update global receipt mismatch: ${JSON.stringify(globalUpdateReceipt)}`);
+  }
+  const globalGetUpdated = run('config-get-global-updated', projectArgs(['config', 'get', '--scope', 'global']));
+  if (
+    globalGetUpdated.status !== 0 ||
+    (jsonResult('config-get-global-updated', globalGetUpdated).result as Record<string, any>).revision !== 2
+  ) {
+    fail('shiploop-cli: config get after update must show revision 2');
+  }
+
+  const projectCreate = run(
+    'config-create-project',
+    projectArgs([
+      'config',
+      'create',
+      '--scope',
+      'project',
+      '--project',
+      projectId,
+      '--input',
+      projectPayloadFile,
+    ]),
+  );
+  if (projectCreate.status !== 0) {
+    fail(`shiploop-cli: config create project exit ${String(projectCreate.status)}: ${projectCreate.stderr}`);
+  }
+
+  const effective = run('config-effective', projectArgs(['config', 'effective', '--project', projectId]));
+  if (effective.status !== 0) {
+    fail(`shiploop-cli: config effective exit ${String(effective.status)}: ${effective.stderr}`);
+  }
+  const effectiveResult = jsonResult('config-effective', effective).result as Record<string, any>;
+  // policies-only 配置不声称执行就绪（configured=false），但来源必须正确合并。
+  if (
+    effectiveResult.policies?.executionLimits?.source?.kind !== 'global_default' ||
+    effectiveResult.policies?.verification?.source?.kind !== 'project_default'
+  ) {
+    fail(`shiploop-cli: config effective policy sources mismatch: ${JSON.stringify(effectiveResult)}`);
+  }
+
+  const exportRes = run('config-export', projectArgs(['config', 'export', '--scope', 'global']));
+  if (exportRes.status !== 0) {
+    fail(`shiploop-cli: config export exit ${String(exportRes.status)}: ${exportRes.stderr}`);
+  }
+  const exportResult = jsonResult('config-export', exportRes).result as Record<string, any>;
+  if (
+    exportResult.exportFormatVersion !== 1 ||
+    exportResult.current?.revision !== 2 ||
+    exportResult.scope !== 'global'
+  ) {
+    fail(`shiploop-cli: config export mismatch: ${JSON.stringify(exportResult)}`);
+  }
+
+  const receiptGet = run('receipt-get', projectArgs(['receipt', 'get', configCommandId]));
+  if (receiptGet.status !== 0) {
+    fail(`shiploop-cli: receipt get exit ${String(receiptGet.status)}: ${receiptGet.stderr}`);
+  }
+  const receiptResult = jsonResult('receipt-get', receiptGet).result as Record<string, any>;
+  if (receiptResult.status !== 'completed' || receiptResult.commandId !== configCommandId) {
+    fail(`shiploop-cli: receipt get mismatch: ${JSON.stringify(receiptResult)}`);
+  }
+
+  // 相同 commandId + 不同参数 → conflict（idempotency_key_reuse），不重复副作用。
+  const reuseConflict = run(
+    'config-command-id-conflict',
+    projectArgs([
+      'config',
+      'create',
+      '--scope',
+      'global',
+      '--input',
+      projectPayloadFile,
+      '--command-id',
+      configCommandId,
+    ]),
+  );
+  if (
+    reuseConflict.status !== 1 ||
+    jsonResult('config-command-id-conflict', reuseConflict).error?.code !== 'conflict' ||
+    jsonResult('config-command-id-conflict', reuseConflict).error?.details?.reason !== 'idempotency_key_reuse'
+  ) {
+    fail(`shiploop-cli: commandId reuse with different params must exit 1 conflict: ${reuseConflict.stderr}`);
+  }
+
+  // 未装配能力目录 → 策略条目 fail-closed 拒绝（invalid_input，零写入）。
+  const strategyPayloadFile = join(workDir, 'strategy-config.json');
+  writeFileSync(
+    strategyPayloadFile,
+    JSON.stringify({
+      schemaVersion: 2,
+      strategies: { defaultStrategy: { runtime: 'pi', provider: 'anthropic', model: 'claude-sonnet' } },
+    }),
+    'utf8',
+  );
+  const incompatible = run(
+    'config-incompatible-strategy',
+    projectArgs(['config', 'create', '--scope', 'project', '--project', projectId, '--input', strategyPayloadFile]),
+  );
+  if (incompatible.status !== 2 || jsonResult('config-incompatible-strategy', incompatible).error?.code !== 'invalid_input') {
+    fail(`shiploop-cli: unassembled strategy must exit 2 invalid_input: ${incompatible.stderr}`);
+  }
+
+  // 陈旧 revision → conflict 退出码 1，且不修改已持久配置。
+  const staleUpdate = run(
+    'config-update-stale',
+    projectArgs([
+      'config',
+      'update',
+      '--scope',
+      'global',
+      '--revision',
+      '99',
+      '--input',
+      projectPayloadFile,
+    ]),
+  );
+  if (staleUpdate.status !== 1 || jsonResult('config-update-stale', staleUpdate).error?.code !== 'conflict') {
+    fail(`shiploop-cli: stale config revision must exit 1 conflict: ${staleUpdate.stderr}`);
+  }
+  assertAlive(firstPid);
+
   // 5) 解析失败 → 退出码 2，stdout 为空（非 JSON 模式）。
   const badArgs = run('bad-args', ['host', 'status', '--bogus']);
   if (badArgs.status !== 2 || badArgs.stdout !== '' || !badArgs.stderr.includes('invalid_input')) {
@@ -675,8 +896,8 @@ async function smokeCliBin(
   }
 
   console.log(
-    'ok shiploop-cli: dist/bin.js host start/status/stop vertical smoke (same instance on second start, '
-      + 'host alive across CLI exits, evidence-based stopped, fresh instance after stop, exit codes 0/2/3, no token leak)',
+    'ok shiploop-cli: dist/bin.js host start/status/stop + project/config/receipt vertical smoke (same instance on second start, '
+      + 'host alive across CLI exits, evidence-based stopped, fresh instance after stop, config idempotency/CAS/no-config, exit codes 0/1/2/3, no token leak)',
   );
 }
 
