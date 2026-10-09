@@ -290,6 +290,31 @@ describe('F-001 契约文档与仓库基线一致（开工现状事实）', () =
     expect(contractDoc).toContain('F-017 已接线 events 观察');
   });
 
+  it('F-018 整 Feature 集成回归套件与脱敏证据文档入档（§14 映射）', () => {
+    expect(contractDoc).toContain('f018-regression-evidence.md');
+    expect(existsSync(resolve(REPO_ROOT, 'test/p02-2-integration-regression.test.ts'))).toBe(true);
+    const evidencePath = 'docs/acceptance/evidence-p02-2/f018-regression-evidence.md';
+    expect(existsSync(resolve(REPO_ROOT, evidencePath))).toBe(true);
+    const evidenceDoc = readText(evidencePath);
+    for (const term of [
+      'FR-1',
+      'FR-2',
+      'T10',
+      'T15',
+      'T17',
+      'T23',
+      'T26',
+      'not_run',
+      'p02-2-integration-regression',
+      'npm run verify',
+    ]) {
+      expect(evidenceDoc).toContain(term);
+    }
+    // 证据文档不得含开发机绝对路径或疑似凭据样例。
+    expect(evidenceDoc).not.toMatch(/\/Users\//);
+    expect(evidenceDoc).not.toMatch(/Bearer\s+[0-9a-fA-F]{16,}/);
+  });
+
   it('P02-1 契约、交接与 F-014 报告仍在库且被本文显式接续', () => {
     for (const path of [
       'docs/p02-1-host-lifecycle-contract.md',

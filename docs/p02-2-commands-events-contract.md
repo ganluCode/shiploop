@@ -861,6 +861,11 @@ shiploop events (--project <id> | --global) [--cursor <cursor>] [--snapshot-only
 
 ## 14. 需求与测试编号映射
 
+> 实施状态：F-018 已将 §14.1/§14.2 的正常与关键失败分支映射到真实集成回归
+> （新增套件 `test/p02-2-integration-regression.test.ts` + 既有能力套件）；脱敏
+> 证据、编号子集声明与 not_run 见
+> `docs/acceptance/evidence-p02-2/f018-regression-evidence.md`。
+
 ### 14.1 FR 分支
 
 | 需求 | 正常分支 | 关键失败分支 |
