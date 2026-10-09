@@ -22,6 +22,7 @@ export * from './ports/artifact-files.js';
 export * from './ports/path-service.js';
 export * from './ports/repository-inspector.js';
 export * from './ports/commands.js';
+export * from './ports/baseline.js';
 export * from './ports/command-receipts.js';
 export * from './ports/atomic-commands.js';
 export * from './ports/events.js';

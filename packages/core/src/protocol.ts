@@ -8,6 +8,20 @@ export {
   WIRE_MESSAGE_SCHEMA_VERSION,
 } from './ports/commands.js';
 export type { AppOperation, CommandReceipt, CommandScope } from './ports/commands.js';
+export {
+  BASELINE_CAPABILITIES, BASELINE_CHECKS_MAX, BASELINE_CHECKS_MIN,
+  BASELINE_CHECK_OUTPUT_MAX_BYTES, BASELINE_CHECK_TAIL_MAX_BYTES,
+  BASELINE_CHECK_TIMEOUT_DEFAULT_MS, BASELINE_CHECK_TIMEOUT_MAX_MS, BASELINE_CHECK_TIMEOUT_MIN_MS,
+  BASELINE_LIST_DEFAULT_LIMIT, BASELINE_LIST_MAX_LIMIT,
+  computeBaselinePlanDigest, validateBaselineCapability, validateBaselineCheckPlan,
+  validateBaselineListQuery, validateBaselinePreviewPayload, validateBaselineRunPayload,
+  validateBaselineCancelPayload, validateProjectInitRequest, validateRepositoryRootPath,
+} from './ports/baseline.js';
+export type {
+  BaselineCapability, BaselineCheck, BaselineCheckPlan, BaselineCheckStatus,
+  BaselineListQuery, BaselineOperationStatus, BaselinePreviewPayload, BaselineRunPayload,
+  BaselineCancelPayload, ValidatedProjectInitRequest,
+} from './ports/baseline.js';
 export { computeCommandRequestDigest, validateWireCommandReceipt } from './ports/command-receipts.js';
 export {
   EVENT_CURSOR_PREFIX, PUBLIC_EVENT_SCHEMA_VERSION, PUBLIC_STATE_EVENT_TYPES,
