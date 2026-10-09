@@ -17,3 +17,4 @@
  *   不联网、不 spawn（执行只在显式运行 dist/bin.js 时发生）。
  */
 export * from './host/index.js';
+export * from './app/index.js';

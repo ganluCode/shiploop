@@ -26,5 +26,11 @@ CLI 承担：Host 生命周期命令的参数解析、结构化输出与 Host �
     `bin: { "shiploop": "./dist/bin.js" }`；是包内唯一读 process.argv/env 与
     退出进程的文件。`npm run build` 经 `scripts/prepare-cli-bin.ts` 校验 shebang
     并置 0755，构建冒烟在非源码 cwd 跑通纵向命令。
+- F-014 应用命令纯面层（经 `index.ts` 公共出口）：`app/args.ts`
+  （`parseAppCliArgs`：project/config/receipt/events 的同步纯解析；`parseAppInputJson`
+  校验 `--input` 文本）、`app/help.ts`（各命令帮助）、`app/output.ts`
+  （应用 JSON 信封、`CLI_EXIT_OBSERVATION_INTERRUPTED=4` 与观察中断诊断）。解析失败
+  在任何 I/O 之前；不新增基线/Run/模型/Profile/Skills 参数。业务命令到 HostClient
+  与正式 dist 入口的纵向接线属 F-015/F-016/F-017，本次未实现、未验收。
 
 单向依赖规则见仓库根 `README.md`。

@@ -1,0 +1,304 @@
+/**
+ * F-014 应用命令 CLI 帮助文本（契约 §12.1/§12.2/§12.3）。
+ *
+ * 纯字符串常量：不读环境、不读文件、不格式化用户输入。帮助必须准确传达：
+ * - 写命令的显式命令 ID/`--revision` 用法（幂等与 CAS）；
+ * - `--input <file>` 只是本次请求的输入，CLI 不监听文件变化、不做覆盖式配置；
+ * - `project register` 不是 P02-3 的完整 `project init`，注册成功不代表基线健康；
+ * - events 观察中断只结束本次观察，不停止 Host、不取消已提交命令。
+ */
+import type { AppHelpScope } from './args.js';
+
+const BOUNDARY_BLOCK = [
+  '边界：',
+  '- 退出 CLI 客户端不会停止 Host：Host 是独立后台进程，只有显式 `shiploop host stop` 才会停止。',
+  '- 首版仅正式支持 macOS，且仅面向可信本机单用户场景；Host 固定监听 127.0.0.1 随机端口。',
+  '- 观察中断（Ctrl+C/Abort）只结束本次观察，不停止 Host，也不取消已提交命令。',
+].join('\n');
+
+const EXIT_CODE_BLOCK = [
+  '退出码：0 成功；1 业务拒绝/操作失败；2 输入错误；3 连接/协议错误；4 观察中断（仅 events）。',
+  'JSON 模式（--json）下 stdout 只输出结构化结果或错误；人类诊断输出到 stderr；错误保留 commandId 便于查回执。',
+].join('\n');
+
+const PROJECT_HELP = [
+  'usage: shiploop project <register|list|get|edit|labels> [options]',
+  '',
+  '项目命令：',
+  '  project register <repository-path> --name <displayName> [options]  注册已有仓库',
+  '  project list [--label <l> ...] [--match any|all] [--limit <int>] [--cursor <id>]',
+  '  project get <projectId>                                            查看项目与绑定',
+  '  project edit <projectId> --revision <int> [options]                编辑名称/说明/标签',
+  '  project labels                                                     标签计数',
+  '',
+  '查看各子命令参数：shiploop project register --help',
+  '',
+  BOUNDARY_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const PROJECT_REGISTER_HELP = [
+  'usage: shiploop project register <repository-path> --name <displayName>',
+  '                                      [--description <text>] [--label <l> ...]',
+  '                                      [--command-id <uuid>] [--data-root <abs>] [--json]',
+  '',
+  '注册一个已有本地仓库（canonicalPath 去重；符号链接别名复用同一项目）。',
+  '`project register` 不是 P02-3 的完整 `project init`：没有确认流程、基线、Profile、',
+  '技术栈推断与 Skills 参数；注册成功不代表基线健康或执行就绪。',
+  '',
+  '选项：',
+  '  --name <displayName>   项目显示名（必填）',
+  '  --description <text>   可选说明',
+  '  --label <l>            可选标签，可重复',
+  '  --command-id <uuid>   显式命令 ID（UUID v4）；省略时由 HostClient 生成一次并冻结',
+  '  --data-root <abs>     规范数据根（POSIX 绝对路径；省略 = P01 默认根）',
+  '  --json                stdout 只输出结果 JSON；诊断到 stderr',
+  '',
+  BOUNDARY_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const PROJECT_LIST_HELP = [
+  'usage: shiploop project list [--label <l> ...] [--match any|all]',
+  '                             [--limit <int>] [--cursor <id>] [--data-root <abs>] [--json]',
+  '',
+  '按标签过滤可见项目并稳定分页（默认 50、上限 200，id 升序键集游标）。',
+  '',
+  '选项：',
+  '  --label <l>         标签过滤，可重复',
+  '  --match <any|all>   多标签匹配语义（默认 any）',
+  '  --limit <int>       每页条数 1..200（默认 50）',
+  '  --cursor <id>       上一页返回的 nextCursor（不透明）',
+  '  --json              stdout 只输出结果 JSON；诊断到 stderr',
+  '',
+  BOUNDARY_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const PROJECT_GET_HELP = [
+  'usage: shiploop project get <projectId> [--data-root <abs>] [--json]',
+  '',
+  '查看可见项目的元数据与仓库绑定；未知或不可见项目返回 forbidden/not_found。',
+  '',
+  '选项：',
+  '  --json  stdout 只输出结果 JSON；诊断到 stderr',
+  '',
+  BOUNDARY_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const PROJECT_EDIT_HELP = [
+  'usage: shiploop project edit <projectId> --revision <int>',
+  '                                      [--name <text>] [--description <text>]',
+  '                                      [--label <l> ...] [--command-id <uuid>]',
+  '                                      [--data-root <abs>] [--json]',
+  '',
+  '以 CAS 显式 revision 更新项目名称/说明/标签：revision 必须显式给出（≥ 1）且与',
+  '当前持久 revision 一致，陈旧 revision 返回 conflict 且不修改对象；至少提供一个',
+  '要修改的字段。省略 --command-id 时由 HostClient 生成一次并冻结；同 commandId',
+  '不同参数返回 conflict。',
+  '',
+  '选项：',
+  '  --revision <int>     期望的项目 revision（必填，≥ 1）',
+  '  --name <text>        新显示名',
+  '  --description <text> 新说明',
+  '  --label <l>          新标签，可重复（整体替换标签集合）',
+  '  --command-id <uuid>  显式命令 ID（UUID v4）',
+  '  --json               stdout 只输出结果 JSON；诊断到 stderr',
+  '',
+  BOUNDARY_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const PROJECT_LABELS_HELP = [
+  'usage: shiploop project labels [--data-root <abs>] [--json]',
+  '',
+  '返回可见项目的标签去重计数（只统计当前身份可见的项目）。',
+  '',
+  BOUNDARY_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const CONFIG_HELP = [
+  'usage: shiploop config <create|update|get|effective|export> [options]',
+  '',
+  '配置命令：',
+  '  config create --scope global|project [--project <id>] --input <file> [--command-id <uuid>]',
+  '  config update --scope global|project [--project <id>] --revision <int> --input <file>',
+  '  config get --scope global|project [--project <id>]',
+  '  config effective --project <id>',
+  '  config export --scope global|project [--project <id>]',
+  '',
+  '查看各子命令参数：shiploop config create --help',
+  '',
+  BOUNDARY_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const CONFIG_CREATE_HELP = [
+  'usage: shiploop config create --scope global --input <file>',
+  '       shiploop config create --scope project --project <id> --input <file> [--command-id <uuid>]',
+  '                                      [--data-root <abs>] [--json]',
+  '',
+  '首次创建当前配置（insert-only）。`--input <file>` 只是本次请求的输入（配置 v2 JSON）：',
+  'CLI 不监听文件变化、不做覆盖式配置，文件内容也不能指定 Core 数据库路径、结果读取',
+  '路径或提权主体。未知 runtime/provider/model、明文秘密字段与非法政策由 Core 拒绝。',
+  '',
+  '选项：',
+  '  --scope <global|project> 配置范围（必填）',
+  '  --project <id>           scope=project 时必填（UUID v4）',
+  '  --input <file>           请求输入文件（必填）',
+  '  --command-id <uuid>      显式命令 ID（UUID v4）；省略时由 HostClient 生成一次并冻结',
+  '  --json                   stdout 只输出结果 JSON；诊断到 stderr',
+  '',
+  BOUNDARY_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const CONFIG_UPDATE_HELP = [
+  'usage: shiploop config update --scope global --revision <int> --input <file>',
+  '       shiploop config update --scope project --project <id> --revision <int> --input <file>',
+  '                                      [--command-id <uuid>] [--data-root <abs>] [--json]',
+  '',
+  '以 CAS 显式 revision 更新当前配置：revision 必须显式给出（≥ 1）且与当前持久 revision',
+  '一致，陈旧 revision 或陈旧全局依赖返回 conflict，不提交基于旧值的配置。',
+  '`--input <file>` 只是本次请求输入，CLI 不监听文件变化、不做覆盖式配置。',
+  '',
+  '选项：',
+  '  --scope <global|project> 配置范围（必填）',
+  '  --project <id>           scope=project 时必填（UUID v4）',
+  '  --revision <int>         期望 revision（必填，≥ 1）',
+  '  --input <file>           请求输入文件（必填）',
+  '  --command-id <uuid>      显式命令 ID（UUID v4）',
+  '  --json                   stdout 只输出结果 JSON；诊断到 stderr',
+  '',
+  BOUNDARY_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const CONFIG_GET_HELP = [
+  'usage: shiploop config get --scope global',
+  '       shiploop config get --scope project --project <id> [--data-root <abs>] [--json]',
+  '',
+  '读取当前配置；未配置返回 configured:false（明确区别于损坏 corrupt_state）。',
+  '',
+  '选项：',
+  '  --scope <global|project> 配置范围（必填）',
+  '  --project <id>           scope=project 时必填（UUID v4）',
+  '  --json                   stdout 只输出结果 JSON；诊断到 stderr',
+  '',
+  BOUNDARY_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const CONFIG_EFFECTIVE_HELP = [
+  'usage: shiploop config effective --project <id> [--data-root <abs>] [--json]',
+  '',
+  '读取项目有效配置（全局默认 + 项目覆盖合并）及逐项来源；未知或不可见项目 forbidden。',
+  '',
+  '选项：',
+  '  --project <id>  项目 ID（必填，UUID v4）',
+  '  --json          stdout 只输出结果 JSON；诊断到 stderr',
+  '',
+  BOUNDARY_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const CONFIG_EXPORT_HELP = [
+  'usage: shiploop config export --scope global',
+  '       shiploop config export --scope project --project <id> [--data-root <abs>] [--json]',
+  '',
+  '导出脱敏配置投影（引用字符串原样、不解析、不含 executable/ready 结论与明文凭据）。',
+  '',
+  '选项：',
+  '  --scope <global|project> 配置范围（必填）',
+  '  --project <id>           scope=project 时必填（UUID v4）',
+  '  --json                   stdout 只输出结果 JSON；诊断到 stderr',
+  '',
+  BOUNDARY_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const RECEIPT_HELP = [
+  'usage: shiploop receipt get <commandId> [--data-root <abs>] [--json]',
+  '',
+  '按本 principal 的 commandId 读取持久回执（超时/响应丢失后查回执，不重发副作用）。',
+  '',
+  BOUNDARY_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const RECEIPT_GET_HELP = [
+  'usage: shiploop receipt get <commandId> [--data-root <abs>] [--json]',
+  '',
+  '读取本 principal 的持久回执。commandId 是 UUID v4；不可见或不存在返回 not_found，',
+  '不区分无权与不存在。回执 status 为 completed 才是成功；accepted 不表示完成。',
+  '',
+  '选项：',
+  '  --json  stdout 只输出结果 JSON；诊断到 stderr',
+  '',
+  BOUNDARY_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const EVENTS_HELP = [
+  'usage: shiploop events (--project <id> | --global) [--cursor <cursor>]',
+  '                      [--snapshot-only] [--follow] [--data-root <abs>] [--json]',
+  '',
+  '观察授权范围内的持久事件：先取授权快照与水位，再从水位之后持续跟随（--follow 为默认）。',
+  '--snapshot-only 只取快照与补读一页后退出，不持续跟随。--cursor 显式恢复；游标过期/低于',
+  '可续读下界返回 snapshot_required，应重取快照，不默默丢历史事件。',
+  '',
+  '观察中断（Ctrl+C/Abort/观察超时）或收到 stream_overflow 只表示本次观察结束（退出码 4）：',
+  '命令未被取消、Host 未停止，停止 Host 仍只有显式 `shiploop host stop`。',
+  '',
+  '选项：',
+  '  --project <id>      项目事件流（UUID v4；与 --global 互斥）',
+  '  --global            全局事件流（与 --project 互斥）',
+  '  --cursor <cursor>   显式恢复游标（不透明字符串）',
+  '  --snapshot-only     只取快照与补读一页后退出',
+  '  --follow            持续跟随（默认；与 --snapshot-only 互斥）',
+  '  --json              NDJSON 记录流，不混入普通日志',
+  '',
+  BOUNDARY_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const HELP_BY_SCOPE: Readonly<Record<AppHelpScope, string>> = Object.freeze({
+  project: PROJECT_HELP,
+  'project.register': PROJECT_REGISTER_HELP,
+  'project.list': PROJECT_LIST_HELP,
+  'project.get': PROJECT_GET_HELP,
+  'project.edit': PROJECT_EDIT_HELP,
+  'project.labels': PROJECT_LABELS_HELP,
+  config: CONFIG_HELP,
+  'config.create': CONFIG_CREATE_HELP,
+  'config.update': CONFIG_UPDATE_HELP,
+  'config.get': CONFIG_GET_HELP,
+  'config.effective': CONFIG_EFFECTIVE_HELP,
+  'config.export': CONFIG_EXPORT_HELP,
+  receipt: RECEIPT_HELP,
+  'receipt.get': RECEIPT_GET_HELP,
+  events: EVENTS_HELP,
+  'events.observe': EVENTS_HELP,
+});
+
+/** 返回指定作用域的应用命令帮助文本（以换行结尾）；不做任何 I/O。 */
+export function getAppCliHelp(scope: AppHelpScope): string {
+  return HELP_BY_SCOPE[scope];
+}

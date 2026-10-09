@@ -16,8 +16,10 @@ export const CLI_EXIT_REJECTED = 1;
 export const CLI_EXIT_INPUT = 2;
 /** §13.3 退出码：连接 / 协议错误。 */
 export const CLI_EXIT_CONNECTION = 3;
+/** P02-2 §12.3 退出码：观察中断（仅 events；只结束本次观察，不停止 Host）。 */
+export const CLI_EXIT_OBSERVATION_INTERRUPTED = 4;
 
-export type CliExitCode = 0 | 1 | 2 | 3;
+export type CliExitCode = 0 | 1 | 2 | 3 | 4;
 
 /**
  * 退出码 2：本地输入问题（尚未联网）。
