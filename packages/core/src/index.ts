@@ -36,4 +36,5 @@ export * from './application/configuration-service.js';
 export * from './application/command-receipts-service.js';
 export * from './application/command-service.js';
 export * from './application/query-service.js';
+export * from './application/onboarding-service.js';
 export * from './application/effective-settings.js';

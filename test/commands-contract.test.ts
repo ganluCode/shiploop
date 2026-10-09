@@ -94,7 +94,7 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
     expect(WIRE_MESSAGE_SCHEMA_VERSION).toBe(2);
   });
 
-  it('冻结九项能力，local-owner 持全部', () => {
+  it('冻结十一项能力（P02-2 九项 + P02-3 基线两项），local-owner 持全部', () => {
     expect([...APP_CAPABILITIES]).toEqual([
       'project.register',
       'project.read',
@@ -105,6 +105,8 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       'settings.project.write',
       'receipts.read',
       'events.read',
+      'baseline.read',
+      'baseline.run',
     ]);
     expect(LOCAL_OWNER_PRINCIPAL_ID).toBe('local-owner');
     expect(LOCAL_OWNER_CAPABILITIES.size).toBe(APP_CAPABILITIES.length);

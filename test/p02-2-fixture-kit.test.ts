@@ -216,11 +216,11 @@ describe('F-004 临时沙箱与真实 A/B 资源', () => {
  * ------------------------------------------------------------------ */
 
 describe('F-004 可信测试装配受限 principal（项目 A/B）', () => {
-  it('local-owner 持全部九项能力且范围为 all；冻结不可变', () => {
+  it('local-owner 持全部冻结能力且范围为 all；冻结不可变', () => {
     const owner = createLocalOwnerPrincipal();
     expect(owner.principalId).toBe(LOCAL_OWNER_PRINCIPAL_ID);
     expect([...owner.capabilities].sort()).toEqual([...APP_CAPABILITIES].sort());
-    expect(owner.capabilities.size).toBe(9);
+    expect(owner.capabilities.size).toBe(11);
     expect(owner.projectScope).toEqual({ kind: 'all' });
     expect(Object.isFrozen(owner)).toBe(true);
     expect(Object.isFrozen(owner.projectScope)).toBe(true);

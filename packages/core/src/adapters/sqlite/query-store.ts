@@ -19,18 +19,20 @@ import type { PersistedStateEventRow } from '../../ports/events.js';
 import type {
   AuthorizedProjectReadStore,
   ConsistentSnapshotStore,
+  RepositoryBindingLookupStore,
   SnapshotView,
 } from '../../ports/queries.js';
-import type { ProjectLabelCount, ProjectPage } from '../../ports/state-store.js';
+import type { ProjectLabelCount, ProjectPage, RepositoryBindingRecord } from '../../ports/state-store.js';
 import type { SqliteStorageSession } from './session.js';
 import { createSqliteStateAccess } from './state-store.js';
 import type { SqliteStateStoreOptions } from './state-store.js';
 
-/** F-010 查询读取门面：三个窄端口的并集（应用层 QueryService 的消费面）。 */
+/** F-010 查询读取门面：窄读取端口的并集（应用层 QueryService/OnboardingService 的消费面）。 */
 export interface SqliteQueryStore
   extends AuthorizedProjectReadStore,
     ConsistentSnapshotStore,
-    StateEventReadStore {}
+    StateEventReadStore,
+    RepositoryBindingLookupStore {}
 
 export function createSqliteQueryStore(
   session: SqliteStorageSession,
@@ -58,6 +60,9 @@ export function createSqliteQueryStore(
     },
     findPersistedEventSequence(request: unknown): number | undefined {
       return access.findPersistedEventSequence(request);
+    },
+    findBindingByCanonicalPath(canonicalPath: unknown): RepositoryBindingRecord | null {
+      return access.findBindingByCanonicalPath(canonicalPath);
     },
   };
 }

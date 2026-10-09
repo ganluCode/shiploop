@@ -98,7 +98,7 @@ import type {
   ValidatedCreateRepositoryBindingInput,
   ValidatedProjectListFilter,
 } from '../../ports/state-store.js';
-import { validateStableId } from '../../ports/validation.js';
+import { validateStableId, validationError } from '../../ports/validation.js';
 import type { ValidationContext } from '../../ports/validation.js';
 import type { SqliteStorageSession } from './session.js';
 
@@ -400,6 +400,8 @@ export function createSqliteStateAccess(
   listPersistedEvents(request: unknown): readonly PersistedStateEventRow[];
   /** F-012：在授权 scope 内把 Last-Event-ID 解析为持久 sequence（未命中 undefined）。 */
   findPersistedEventSequence(request: unknown): number | undefined;
+  /** P02-3 / F-004：按 canonicalPath 只读查找绑定（未命中 null；写事务外调用）。 */
+  findBindingByCanonicalPath(canonicalPath: unknown): RepositoryBindingRecord | null;
 } {
   const nowUtcMs = options.nowUtcMs ?? Date.now;
 
@@ -1103,6 +1105,30 @@ export function createSqliteStateAccess(
     return row.sequence;
   }
 
+  /**
+   * P02-3 / F-004：按 canonicalPath 只读查找绑定（projects.inspect 的
+   * alreadyRegistered 判定）。未命中返回 null；不得嵌套在写事务内调用。
+   */
+  function findBindingByCanonicalPath(canonicalPath: unknown): RepositoryBindingRecord | null {
+    const operation = 'RepositoryBindingLookup.findBindingByCanonicalPath';
+    assertOpen(operation);
+    if (session.database.inTransaction) {
+      throw new TypeError(`${operation}: 绑定查找不得嵌套在写事务内（编程错误）`);
+    }
+    const context: ValidationContext = { operation, entity: { type: 'repository_binding' } };
+    if (typeof canonicalPath !== 'string' || canonicalPath.length === 0) {
+      throw validationError(context, 'canonicalPath', '必须是非空字符串（规范仓库根绝对路径）', canonicalPath);
+    }
+    if (canonicalPath.includes('\0')) {
+      throw validationError(context, 'canonicalPath', '不允许包含 NUL 字节', canonicalPath);
+    }
+    if (!canonicalPath.startsWith('/')) {
+      throw validationError(context, 'canonicalPath', '必须是 POSIX 绝对路径', canonicalPath);
+    }
+    const row = selectBindingRowByCanonicalPath(session.database, canonicalPath);
+    return row === undefined ? null : bindingFromRow(row);
+  }
+
   // 仅适配器内部同步访问；变更调用方必须已持有本会话写事务。
   function getProject(projectId: string): ProjectRecord {
     const operation = 'StateStore.getProject';
@@ -1426,5 +1452,6 @@ export function createSqliteStateAccess(
     readGlobalSnapshotView,
     listPersistedEvents,
     findPersistedEventSequence,
+    findBindingByCanonicalPath,
   };
 }

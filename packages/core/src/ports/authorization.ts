@@ -135,7 +135,7 @@ function assertCapabilitySet(value: unknown): asserts value is ReadonlySet<AppCa
     failShape('capabilities.size 与迭代条目数不一致（伪造集合）');
   }
   if (entries.length > APP_CAPABILITIES.length) {
-    failShape(`capabilities 超出九项冻结清单（${APP_CAPABILITIES.length}）`);
+    failShape(`capabilities 超出冻结能力清单（${APP_CAPABILITIES.length} 项）`);
   }
   const seen = new Set<string>();
   for (const entry of entries) {
@@ -428,6 +428,36 @@ export function authorizeSnapshot(
     return;
   }
   authorizeProjectSettingsRead(principal, scope.projectId, operation);
+}
+
+/* ------------------------------------------------------------------ *
+ * P02-3 §4.3 静态接入授权（docs/p02-3-onboarding-contract.md）
+ * ------------------------------------------------------------------ */
+
+/**
+ * projects.inspect（§7.2/§15.1）：注册前只读仓库检查要求 project.register
+ * 能力（不新增能力位），**不**要求项目可见范围（尚无项目）；canonicalPath
+ * 命中既有绑定后的可见性把关由调用方用 requireProjectVisible 完成
+ * （不可见 → forbidden，不泄漏存在性）。
+ */
+export function authorizeRepositoryInspect(
+  principal: TrustedPrincipal,
+  operation: string = 'projects.inspect',
+): void {
+  requireCapability(principal, 'project.register', operation);
+}
+
+/**
+ * projects.overview（§7.3）：baseline.read 能力 + 目标项目可见；
+ * 不可见/未知对调用方统一 forbidden（存在性折算见 mapProjectLookupError）。
+ */
+export function authorizeProjectOverview(
+  principal: TrustedPrincipal,
+  projectId: string,
+  operation: string = 'projects.overview',
+): void {
+  requireCapability(principal, 'baseline.read', operation);
+  requireProjectVisible(principal, projectId, operation);
 }
 
 /* ------------------------------------------------------------------ *

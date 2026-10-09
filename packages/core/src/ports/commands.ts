@@ -58,6 +58,9 @@ export const APP_CAPABILITIES = [
   'settings.project.write',
   'receipts.read',
   'events.read',
+  // P02-3（docs/p02-3-onboarding-contract.md §4.2）新增两项基线能力位。
+  'baseline.read',
+  'baseline.run',
 ] as const;
 
 export type AppCapability = (typeof APP_CAPABILITIES)[number];
@@ -65,7 +68,7 @@ export type AppCapability = (typeof APP_CAPABILITIES)[number];
 /** 生产装配固定本机主体字面量（绑定发生在 Host 可信装配层，不经请求传入）。 */
 export const LOCAL_OWNER_PRINCIPAL_ID = 'local-owner';
 
-/** local-owner 持有全部九项能力；受限主体只允许由可信测试装配显式构造（F-004/F-005）。 */
+/** local-owner 持有全部冻结能力（P02-2 九项 + P02-3 两项）；受限主体只允许由可信测试装配显式构造（F-004/F-005）。 */
 export const LOCAL_OWNER_CAPABILITIES: ReadonlySet<AppCapability> = Object.freeze(
   new Set<AppCapability>(APP_CAPABILITIES),
 );

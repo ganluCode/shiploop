@@ -29,6 +29,7 @@ import type { PublicErrorCode } from './commands.js';
 import { isIsoUtcDateTime, isUuidV4 } from './commands.js';
 import { stableCanonicalJson } from './command-receipts.js';
 import { isStorageError } from './errors.js';
+import type { PublicProjectRecord, PublicRepositoryBindingRecord } from './queries.js';
 import { validateCreateProjectInput } from './state-store.js';
 import { describeValueType, isPlainObject, validateStableId } from './validation.js';
 
@@ -174,6 +175,66 @@ export interface ProjectHealthSummary {
   readonly lastBaselineOperationId: string | null;
   readonly lastCompletedAt: string | null;
   readonly reasonCode?: ProjectHealthReasonCode;
+}
+
+/* ------------------------------------------------------------------ *
+ * §7.2/§7.3 静态接入查询响应与窄读取端口
+ * ------------------------------------------------------------------ */
+
+/**
+ * §7.2/§7.3 静态接入查询响应的线消息版本：P02-3 起新增查询携带
+ * schemaVersion=3（§3.1 线消息 2 → 3；WIRE_MESSAGE_SCHEMA_VERSION 常量的
+ * 全局切换由路由接线任务完成，本常量先固定新响应的契约值）。
+ */
+export const ONBOARDING_QUERY_SCHEMA_VERSION = 3 as const;
+
+/** §7.2 projects.inspect 响应（只读仓库事实 + 适用既有项目身份）。 */
+export interface ProjectInspectionResult {
+  readonly schemaVersion: typeof ONBOARDING_QUERY_SCHEMA_VERSION;
+  /** realpath 规范化后的仓库根（符号链接别名解析到同一值）。 */
+  readonly canonicalPath: string;
+  /** 稳定本地身份（gitdir-sha256:…）；同 remote 不同 clone 不合并。 */
+  readonly repoIdentity: string;
+  /** 实际 HEAD（无初始 commit 为 null；不猜 main、不自动 commit）。 */
+  readonly headCommit: string | null;
+  readonly hasInitialCommit: boolean;
+  readonly hasUncommittedChanges: boolean;
+  /** canonicalPath 已绑定到可见项目时的既有项目身份；未绑定为 null。 */
+  readonly alreadyRegistered: { readonly projectId: string } | null;
+  /** 读取装配时刻（ISO UTC；注入时钟）。 */
+  readonly readAt: string;
+}
+
+/**
+ * §7.3 overview 的当前配置存在性及其确认信息：未配置为显式
+ * configured:false（与损坏严格区分）；已配置只回传确认信息
+ * （revision/schemaVersion），不回传 payload 内容（payload 读取走
+ * settings.project.get 的既有授权面）。
+ */
+export type ProjectSettingsPresence =
+  | { readonly configured: false }
+  | { readonly configured: true; readonly revision: number; readonly schemaVersion: number };
+
+/** §7.3 projects.overview 响应：注册状态与健康状态严格分开。 */
+export interface ProjectOverviewResult {
+  readonly schemaVersion: typeof ONBOARDING_QUERY_SCHEMA_VERSION;
+  readonly project: PublicProjectRecord;
+  readonly binding: PublicRepositoryBindingRecord | null;
+  readonly registration: { readonly status: ProjectRegistrationStatus };
+  readonly settings: ProjectSettingsPresence;
+  readonly health: ProjectHealthSummary;
+  readonly readAt: string;
+}
+
+/**
+ * §7.3 基线健康窄读取端口：overview 只经本端口取得最近一次终态基线操作
+ * 与逐项检查输入（§8.2 派生原料），不直接触碰基线表。迁移 v4（F-007）
+ * 落地前由组合根装配显式占位（operation:null/checks:[]，即「尚无检查」），
+ * 绝不以注册成功或配置存在冒充健康通过。projectId 输入为 unknown，
+ * 实现方在读取前校验稳定 ID 形态。
+ */
+export interface BaselineHealthReadStore {
+  readProjectHealthInput(projectId: unknown): ProjectHealthInput;
 }
 
 /* ------------------------------------------------------------------ *

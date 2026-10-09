@@ -231,3 +231,18 @@ export interface ConsistentSnapshotStore {
   readProjectSnapshotView(projectId: unknown): SnapshotView;
   readGlobalSnapshotView(): SnapshotView;
 }
+
+/* ------------------------------------------------------------------ *
+ * P02-3 §7.2 绑定查找窄端口（docs/p02-3-onboarding-contract.md）
+ * ------------------------------------------------------------------ */
+
+/**
+ * 按 canonicalPath 只读查找仓库绑定的窄端口：projects.inspect 的
+ * alreadyRegistered 判定只经本端口接入（不写任何行、不在写事务内调用）。
+ * canonicalPath 输入为 unknown，实现方在任何 SQL 之前校验为非空绝对路径
+ * 字符串（非法输入为 StorageError kind='validation'，由应用层映射为
+ * invalid_input）；未命中返回 null（与「不存在」显式区分，不抛错）。
+ */
+export interface RepositoryBindingLookupStore {
+  findBindingByCanonicalPath(canonicalPath: unknown): RepositoryBindingRecord | null;
+}

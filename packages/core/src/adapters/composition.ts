@@ -32,6 +32,8 @@ import { createCommandReceiptsService } from '../application/command-receipts-se
 import type { CommandReceiptsService } from '../application/command-receipts-service.js';
 import { createCommandService } from '../application/command-service.js';
 import type { CommandService } from '../application/command-service.js';
+import { createOnboardingService } from '../application/onboarding-service.js';
+import type { OnboardingService } from '../application/onboarding-service.js';
 import { createProjectService } from '../application/project-service.js';
 import type { ProjectService } from '../application/project-service.js';
 import { createQueryService } from '../application/query-service.js';
@@ -107,6 +109,8 @@ export interface CoreApplication {
   readonly commandReceiptsService: CommandReceiptsService;
   /** F-010：授权查询/一致读视图快照水位/分页事件读取（§7/§8/§9.3）。 */
   readonly queryService: QueryService;
+  /** P02-3 / F-004：静态 inspect 与注册/健康分离的 overview 用例（§7.2/§7.3）。 */
+  readonly onboardingService: OnboardingService;
   /** 关闭状态库会话并释放文件句柄；幂等。 */
   close(): void;
 }
@@ -277,6 +281,21 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
     });
 
+    // P02-3 / F-004：静态 inspect 与 overview 用例。绑定查找复用同一查询门面；
+    // 基线健康窄端口在迁移 v4（F-007）落地前装配显式占位「尚无检查」
+    // （operation:null/checks:[] → health=not_run/no_baseline），绝不以注册成功
+    // 或配置存在冒充健康通过。
+    const onboardingService = createOnboardingService({
+      repositoryInspector,
+      stateStore,
+      configurationService,
+      bindingReads: queryStore,
+      baselineReads: {
+        readProjectHealthInput: () => ({ operation: null, checks: [] }),
+      },
+      ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
+    });
+
     const application: CoreApplication = {
       dataRoot: basePathService.dataRoot(),
       pathService,
@@ -290,6 +309,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       commandReceiptsService,
       commandService,
       queryService,
+      onboardingService,
       close(): void {
         session.close();
       },

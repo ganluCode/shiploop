@@ -183,7 +183,7 @@ const SIX_COMMANDS = [
 ] as const;
 
 describe('F-005 TrustedPrincipal 产品构造与可信装配形状断言', () => {
-  it('产品 local-owner：固定 id、九项能力、scope all，整体冻结', () => {
+  it('产品 local-owner：固定 id、全部冻结能力、scope all，整体冻结', () => {
     const principal = createLocalOwnerPrincipal();
     expect(principal.principalId).toBe(LOCAL_OWNER_PRINCIPAL_ID);
     expect(principal.capabilities.size).toBe(APP_CAPABILITIES.length);
@@ -238,7 +238,7 @@ describe('F-005 TrustedPrincipal 产品构造与可信装配形状断言', () =>
       { principalId: 'x', capabilities: new Set(['project.read', 'work.execute']), projectScope: { kind: 'all' } },
     ],
     [
-      '能力数超过九项',
+      '能力数超过冻结清单',
       {
         principalId: 'x',
         capabilities: new Set([...APP_CAPABILITIES, 'extra.capability']),
