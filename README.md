@@ -53,6 +53,7 @@ docs/acceptance/p02-1-f014-report.md  P02-1 Feature 交付报告（F-014，证�
 docs/p02-2-commands-events-contract.md  P02-2 应用命令、查询与事件接口契约（F-001，实施前置契约；F-002~F-018 已按其实现路由/回执/事件/SSE）
 docs/p02-2-operations.md  P02-2 应用命令、查询与事件操作说明（F-019）
 docs/p02-2-handoff.md  P02-2 → P02-3 接口交接（F-019）
+docs/acceptance/p02-2-f020-report.md  P02-2 Feature 交付报告（F-020，证据在同目录 evidence-p02-2/）
 ```
 
 ### 确定性测试约定（F-003）
@@ -234,6 +235,8 @@ CAS 更新）、`(principal, commandId)` + 请求摘要幂等、迁移 v3 `comma
   `/v1` 路由、迁移 v3 与事件白名单、装配顺序/跨包边界、P02-3 待实现能力与验证策略交接。
 - [docs/acceptance/evidence-p02-2/f018-regression-evidence.md](docs/acceptance/evidence-p02-2/f018-regression-evidence.md)：
   受测入口、FR-1/FR-2 分支映射、T10/T15/T17/T23/T26 子集声明与 `not_run`（脱敏）。
+- [docs/acceptance/p02-2-f020-report.md](docs/acceptance/p02-2-f020-report.md)：Feature 交付报告
+  （受测 commit、环境/工具版本、命令/退出码/计数、FR 覆盖索引、脱敏证据核对与 `not_run`）。
 - 文档守护 [test/docs-p02-2-operations.test.ts](test/docs-p02-2-operations.test.ts)：在真实临时
   仓库/数据根与真实 Host 子进程上跑通操作说明纵向命令（注册 → 配置 CAS → 重放/查回执 → 快照 →
   游标恢复），并用独立只读探针核对持久状态；交叉核对命令/参数/退出码/事件与安全边界。
