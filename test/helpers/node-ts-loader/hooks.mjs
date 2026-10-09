@@ -31,6 +31,7 @@ const CORE_SRC_ROOT = new URL('../../../packages/core/src/', import.meta.url);
 const HOST_SRC_ROOT = new URL('../../../packages/host/src/', import.meta.url);
 const WORKSPACE_PUBLIC_ENTRY_SOURCES = new Map([
   ['shiploop-core', new URL('index.ts', CORE_SRC_ROOT).href],
+  ['shiploop-core/protocol', new URL('protocol.ts', CORE_SRC_ROOT).href],
   ['shiploop-core/assembly', new URL('adapters/composition.ts', CORE_SRC_ROOT).href],
   ['shiploop-host', new URL('index.ts', HOST_SRC_ROOT).href],
 ]);

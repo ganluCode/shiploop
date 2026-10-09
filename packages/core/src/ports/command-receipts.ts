@@ -454,17 +454,14 @@ function validateReceiptScope(
 }
 
 /**
- * 回执持久化输入校验（CommandReceiptStore.saveReceipt 的边界）：合法输入通常由
- * F-002 的 createCompletedReceipt/createRejectedReceipt 工厂产出，此处按 §5.3/§10
- * 不变量对 unknown 输入完整复核——校验失败抛 StorageError(kind='validation')，
- * 发生在任何 SQL 之前，不产生持久化副作用。
- *
- * `replayed` 是线上派生标记（不入库）：持久化输入必须 replayed=false，
- * 重放取回的回执再次入库属于调用方编程错误。本版本不产生 accepted 持久回执。
+ * 回执形状共享校验（§5.3 不变量）：线上与持久化两侧共用的完整复核。
+ * `replayedRule`：'persisted' 要求 replayed=false（重放标记不入库）；
+ * 'wire' 只要求布尔（线上重放取回的回执 replayed=true 合法）。
  */
-export function validatePersistableCommandReceipt(
+function validateReceiptShape(
   value: unknown,
   operation: string,
+  replayedRule: 'persisted' | 'wire',
 ): CommandReceipt {
   const context: ValidationContext = { operation, entity: { type: 'command_receipt' } };
   const object = requirePlainObject(value, context, 'receipt');
@@ -494,8 +491,12 @@ export function validatePersistableCommandReceipt(
   if (!isIsoUtcDateTime(object.issuedAt) || !isIsoUtcDateTime(object.completedAt)) {
     throw validationError(context, 'receipt.issuedAt', 'issuedAt/completedAt 必须是 ISO UTC 时间');
   }
-  if (object.replayed !== false) {
-    throw validationError(context, 'receipt.replayed', '持久化回执 replayed 必须为 false（重放标记不入库）');
+  if (replayedRule === 'persisted') {
+    if (object.replayed !== false) {
+      throw validationError(context, 'receipt.replayed', '持久化回执 replayed 必须为 false（重放标记不入库）');
+    }
+  } else if (typeof object.replayed !== 'boolean') {
+    throw validationError(context, 'receipt.replayed', '必须是布尔（线上派生标记）');
   }
 
   const base = {
@@ -507,7 +508,7 @@ export function validatePersistableCommandReceipt(
     requestDigest: object.requestDigest,
     issuedAt: object.issuedAt,
     completedAt: object.completedAt,
-    replayed: false,
+    replayed: replayedRule === 'wire' ? (object.replayed as boolean) : false,
   } as const;
 
   if (object.status === 'completed') {
@@ -570,6 +571,38 @@ export function validatePersistableCommandReceipt(
     "必须是 'completed' 或 'rejected'（本版本不持久化 accepted）",
     describeValueType(object.status),
   );
+}
+
+/**
+ * 回执持久化输入校验（CommandReceiptStore.saveReceipt 的边界）：合法输入通常由
+ * F-002 的 createCompletedReceipt/createRejectedReceipt 工厂产出，此处按 §5.3/§10
+ * 不变量对 unknown 输入完整复核——校验失败抛 StorageError(kind='validation')，
+ * 发生在任何 SQL 之前，不产生持久化副作用。
+ *
+ * `replayed` 是线上派生标记（不入库）：持久化输入必须 replayed=false，
+ * 重放取回的回执再次入库属于调用方编程错误。本版本不产生 accepted 持久回执。
+ */
+export function validatePersistableCommandReceipt(
+  value: unknown,
+  operation: string,
+): CommandReceipt {
+  return validateReceiptShape(value, operation, 'persisted');
+}
+
+/**
+ * 线上回执校验（F-013，§5.3/§11.2）：Host/HostClient 对接收到的回执 JSON 做
+ * 完整运行时复核。与持久化校验同一组不变量，唯一差异是 `replayed` 只要求
+ * 布尔（线上重放取回的回执 replayed=true 合法）。accepted 不是合法线上状态
+ * （本版本同步短事务命令不产生 accepted），一律 validation 拒绝。
+ *
+ * 纯函数：不读时钟/文件系统/网络/数据库；校验失败抛
+ * StorageError(kind='validation')（字段定位在 details.field），不回显输入值。
+ */
+export function validateWireCommandReceipt(
+  value: unknown,
+  operation: string,
+): CommandReceipt {
+  return validateReceiptShape(value, operation, 'wire');
 }
 
 /* ------------------------------------------------------------------ *

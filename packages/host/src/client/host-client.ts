@@ -18,6 +18,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import {
+  APP_REQUEST_TIMEOUT_MS,
   CURRENT_PROTOCOL_VERSION,
   CURRENT_SCHEMA_VERSION,
   HANDSHAKE_ROUTE,
@@ -26,6 +27,7 @@ import {
   STATUS_TIMEOUT_MS,
   STOP_ROUTE,
   STOP_TIMEOUT_MS,
+  SUBMIT_COMMAND_BUDGET_MS,
   TCP_CONNECT_TIMEOUT_MS,
   HostProtocolError,
   computeStopRequestDigest,
@@ -44,6 +46,8 @@ import {
 } from '../contract/index.js';
 import { createHostFileStore } from '../storage/index.js';
 import { mapErrorResponse, requestLoopbackJson } from './http-json.js';
+import { createHostClientApplication } from './app-client.js';
+import type { HostClientApplication, HostEventSubscription } from './app-client.js';
 
 /** §7.2 客户端有限预算（毫秒，全部有界；覆盖仅允许区间内的更小/更大有限值）。 */
 export interface HostClientTimeouts {
@@ -55,6 +59,10 @@ export interface HostClientTimeouts {
   readonly statusMs?: number;
   /** stop 整体预算（默认 15 000 = 10s quiesce + 5s 余量；允许 100..60 000）。 */
   readonly stopMs?: number;
+  /** F-013：应用命令/查询单请求整体预算（默认 10 000；允许 100..60 000）。 */
+  readonly appRequestMs?: number;
+  /** F-013：一个逻辑命令（含查回执与有限重发）整体预算（默认 30 000；允许 500..120 000）。 */
+  readonly submitBudgetMs?: number;
 }
 
 export interface ConnectHostClientOptions {
@@ -75,7 +83,7 @@ export interface HostClientStopOptions {
  * 已完成双向核验的 Host 会话。status/stop 仅在本会话身份（握手核验过的
  * hostInstanceId 与 dataRootIdentity）下发送；close() 只释放本地观察资源。
  */
-export interface HostClient {
+export interface HostClient extends HostClientApplication {
   readonly hostInstanceId: string;
   readonly dataRootIdentity: string;
   readonly listenAddress: '127.0.0.1';
@@ -86,7 +94,7 @@ export interface HostClient {
   status(): Promise<HostStatusResponse>;
   /** §10 版本化显式停止；返回的 completed/stopping 不等于进程已退出（§10.6）。 */
   stop(options?: HostClientStopOptions): Promise<StopResultView>;
-  /** 幂等；只释放本地观察资源，绝不调用 stop、不影响 Host 存活。 */
+  /** 幂等；只释放本地观察资源（含活跃事件订阅），绝不调用 stop、不影响 Host 存活。 */
   close(): void;
 }
 
@@ -95,10 +103,19 @@ interface ResolvedTimeouts {
   readonly handshakeMs: number;
   readonly statusMs: number;
   readonly stopMs: number;
+  readonly appRequestMs: number;
+  readonly submitBudgetMs: number;
 }
 
 const OPTION_KEYS = ['canonicalRoot', 'platform', 'timeouts'] as const;
-const TIMEOUT_KEYS = ['connectMs', 'handshakeMs', 'statusMs', 'stopMs'] as const;
+const TIMEOUT_KEYS = [
+  'connectMs',
+  'handshakeMs',
+  'statusMs',
+  'stopMs',
+  'appRequestMs',
+  'submitBudgetMs',
+] as const;
 
 function invalidInput(operation: HostOperation, reason: string, field?: string): HostProtocolError {
   return new HostProtocolError('invalid_input', operation, 'HostClient 输入未通过校验', {
@@ -154,6 +171,14 @@ function resolveOptions(options: ConnectHostClientOptions): { canonicalRoot: str
     handshakeMs: requireTimeout(timeoutsInput, 'handshakeMs', HANDSHAKE_TIMEOUT_MS, 100, 60_000),
     statusMs: requireTimeout(timeoutsInput, 'statusMs', STATUS_TIMEOUT_MS, 100, 60_000),
     stopMs: requireTimeout(timeoutsInput, 'stopMs', STOP_TIMEOUT_MS, 100, 60_000),
+    appRequestMs: requireTimeout(timeoutsInput, 'appRequestMs', APP_REQUEST_TIMEOUT_MS, 100, 60_000),
+    submitBudgetMs: requireTimeout(
+      timeoutsInput,
+      'submitBudgetMs',
+      SUBMIT_COMMAND_BUDGET_MS,
+      500,
+      120_000,
+    ),
   };
   return {
     canonicalRoot: options.canonicalRoot,
@@ -283,6 +308,7 @@ export async function connectToHost(options: ConnectHostClientOptions): Promise<
     expectedDataRootIdentity: handshake.dataRootIdentity,
   };
   let closed = false;
+  const subscriptions = new Set<HostEventSubscription>();
   const assertOpen = (operation: HostOperation): void => {
     if (closed) {
       throw new HostProtocolError('invalid_input', operation, '客户端已关闭（仅释放本地观察资源）', {
@@ -290,8 +316,23 @@ export async function connectToHost(options: ConnectHostClientOptions): Promise<
       });
     }
   };
+  const application = createHostClientApplication({
+    port: discovery.port,
+    token,
+    connectMs: resolved.timeouts.connectMs,
+    appRequestMs: resolved.timeouts.appRequestMs,
+    submitBudgetMs: resolved.timeouts.submitBudgetMs,
+    assertOpen,
+    registerSubscription: (subscription) => {
+      subscriptions.add(subscription);
+    },
+    unregisterSubscription: (subscription) => {
+      subscriptions.delete(subscription);
+    },
+  });
 
   return {
+    ...application,
     hostInstanceId: handshake.hostInstanceId,
     dataRootIdentity: handshake.dataRootIdentity,
     listenAddress: '127.0.0.1',
@@ -352,7 +393,15 @@ export async function connectToHost(options: ConnectHostClientOptions): Promise<
     },
 
     close(): void {
+      if (closed) {
+        return;
+      }
       closed = true;
+      // 级联释放本地观察资源（活跃事件订阅），绝不调用 stop。
+      for (const subscription of [...subscriptions]) {
+        subscription.close();
+      }
+      subscriptions.clear();
     },
   };
 }

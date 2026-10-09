@@ -36,6 +36,9 @@ import type { ValidationContext } from './validation.js';
 /** 本版本 Core 唯一支持的配置 payload 结构版本（F-008 由 1 显式升级为 2）。 */
 export const SETTINGS_SCHEMA_VERSION = 2;
 
+/** 线上脱敏导出格式版本；业务服务与客户端共享。 */
+export const SETTINGS_EXPORT_FORMAT_VERSION = 1;
+
 /** 完整运行时策略条目：三个必备字段齐全才构成可执行策略。 */
 export interface RuntimeStrategyV1 {
   readonly runtime: string;

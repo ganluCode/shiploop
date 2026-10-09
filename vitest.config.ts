@@ -23,6 +23,10 @@ export default defineConfig({
     // 前缀匹配；生产运行时仍由 node_modules 工作区链接解析到 dist 产物。
     alias: [
       {
+        find: /^shiploop-core\/protocol$/,
+        replacement: fileURLToPath(new URL('./packages/core/src/protocol.ts', import.meta.url)),
+      },
+      {
         find: /^shiploop-core\/assembly$/,
         replacement: fileURLToPath(
           new URL('./packages/core/src/adapters/composition.ts', import.meta.url),

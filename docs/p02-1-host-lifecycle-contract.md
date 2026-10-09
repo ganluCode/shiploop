@@ -194,7 +194,10 @@
     探测，供 F-010 启动器 owner 诊断与 F-004 ownerProbe 真实实现复用。
     client/ 允许 node:http（仅回环）与 node:crypto，禁止文件系统（发现/
     凭据读取一律经 storage/）、其他网络/进程/线程模块、argv 与
-    shiploop-core。`shiploop-cli` 仍为 `export {}` 骨架；启动器/CLI
+    Core 根入口及业务/装配入口。F-013（P02-2）仅增加纯协议子路径
+    `shiploop-core/protocol`：允许共享线协议类型、常量、校验与规范摘要算法，
+    不加载业务服务或持久化装配，其运行时依赖闭包有独立回归检查。
+    `shiploop-cli` 仍为 `export {}` 骨架；启动器/CLI
     参数面属 F-010/F-011/F-012。
   - **F-010 增量（2026-10-05）**：公共入口追加 `src/launcher/` 连接或启动
     编排面（§12.4 的实现），导出 `ensureHostRunning` 与启动预算常量
@@ -965,4 +968,3 @@ JSON 失败信封（stdout，仅 `--json`；诊断细节在 stderr）：
 S3 Spike 事实仅作方案依据：macOS `/usr/bin/lockf`、8 路竞争 1 胜、退出码 75、
 0600/0700 权限、401/409/426 拒绝分支已在隔离实验观察到；其 HTTP 字段名（如 `discoveryVersion`、
 `/v1/handshake`、`rootIdentity`）**不是**生产协议，生产字段与路由以本文 §5、§8–§10 为准。
-

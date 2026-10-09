@@ -434,7 +434,9 @@ describe('Host and CLI entry behaviour boundaries', () => {
     for (const { file, code } of sources) {
       const specifiers = extractModuleSpecifiers(code);
       for (const banned of bannedInClient) {
-        const offenders = specifiers.filter((specifier) => specifierMatches(specifier, banned));
+        // F-013 唯一例外是经过依赖闭包验证的纯协议入口，根/其他子路径仍拒绝。
+        const offenders = specifiers.filter((specifier) =>
+          specifierMatches(specifier, banned) && specifier !== 'shiploop-core/protocol');
         expect(offenders, `${file} must not import ${banned}`).toHaveLength(0);
       }
       // 客户端绝不监听端口、不读 argv/env（发现/凭据读取一律经 storage/）。

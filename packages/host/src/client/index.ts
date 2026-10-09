@@ -4,6 +4,11 @@
  * client/ 是 Host 的非契约基础设施面：允许 node:http（仅 127.0.0.1 回环）
  * 与 node:crypto；禁止文件系统（发现/凭据读取一律经 storage/）、网络其他
  * 模块、进程/线程模块与 argv。
+ *
+ * F-013 扩展（P02-2 §11.2）：HostClient 应用方法（幂等命令提交与冻结信封、
+ * 回执/结果读取、授权查询与快照、SSE 订阅）与线上响应校验器；信封/摘要复用
+ * shiploop-core 公共入口的纯校验函数（不另立第二份），事件去重缓存与重连
+ * 均有界。
  */
 export { connectToHost, probeDiscoveredHost } from './host-client.js';
 export type {
@@ -15,3 +20,34 @@ export type {
 } from './host-client.js';
 export { mapErrorResponse, requestLoopbackJson } from './http-json.js';
 export type { LoopbackJsonRequestOptions, LoopbackJsonResponse } from './http-json.js';
+export {
+  EVENT_ID_CACHE_LIMIT,
+  EVENT_RECONNECT_DELAY_MS,
+  EVENT_RECONNECT_MAX_ATTEMPTS,
+  MAX_SSE_BUFFER_BYTES,
+  MAX_SSE_FRAME_BYTES,
+  SUBMIT_MAX_ATTEMPTS,
+  SUBMIT_RECEIPT_GRACE_MS,
+  SUBMIT_RETRY_DELAY_MS,
+  createHostClientApplication,
+} from './app-client.js';
+export type {
+  AppClientContext,
+  HostClientApplication,
+  HostEventSubscription,
+  EventStreamEnd,
+  ListProjectsInput,
+  SubmitCommandInput,
+  SubmitCommandOptions,
+  SubscribeEventsInput,
+} from './app-client.js';
+export {
+  validateAppQueryResponse,
+  validateCommandReceiptWire,
+  validateStateEventWire,
+} from './app-wire.js';
+export type {
+  AppQueryOperation,
+  CommandReceiptExpectation,
+  SnapshotExpectation,
+} from './app-wire.js';

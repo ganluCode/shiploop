@@ -230,7 +230,8 @@ describe('F-001 契约文档与仓库基线一致（开工现状事实）', () =
     const schema = readText('packages/core/src/ports/settings-schema.ts');
     expect(schema).toContain('export const SETTINGS_SCHEMA_VERSION = 2');
     const configService = readText('packages/core/src/application/configuration-service.ts');
-    expect(configService).toContain('export const SETTINGS_EXPORT_FORMAT_VERSION = 1');
+    expect(schema).toContain('export const SETTINGS_EXPORT_FORMAT_VERSION = 1');
+    expect(configService).toContain("export { SETTINGS_EXPORT_FORMAT_VERSION } from '../ports/settings-schema.js'");
     const stateStorePort = readText('packages/core/src/ports/state-store.ts');
     expect(stateStorePort).toContain("PROJECT_METADATA_UPDATED_EVENT_TYPE = 'project.metadata_updated'");
     expect(stateStorePort).toContain("GLOBAL_SETTINGS_UPDATED_EVENT_TYPE = 'settings.global_updated'");

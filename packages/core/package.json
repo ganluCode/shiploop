@@ -14,6 +14,10 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./protocol": {
+      "types": "./dist/protocol.d.ts",
+      "default": "./dist/protocol.js"
+    },
     "./assembly": {
       "types": "./dist/adapters/composition.d.ts",
       "default": "./dist/adapters/composition.js"

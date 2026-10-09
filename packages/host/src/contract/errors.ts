@@ -17,11 +17,37 @@
  */
 
 /** Host 生命周期操作身份（§7.3 错误体 operation；discovery 为本地读取操作）。 */
-export const HOST_OPERATIONS = [
+export const HOST_LIFECYCLE_OPERATIONS = [
   'host.discovery',
   'host.handshake',
   'host.status',
   'host.stop',
+] as const;
+
+/**
+ * P02-2 §3.2 应用操作身份（与路由总表一一对应；F-013 起 HostClient 应用方法
+ * 的客户端侧错误也使用这些身份）。
+ */
+export const APP_OPERATIONS = [
+  'commands.submit',
+  'receipts.get',
+  'results.resolve',
+  'projects.list',
+  'projects.get',
+  'projects.binding.get',
+  'projects.labelCounts',
+  'settings.global.get',
+  'settings.global.export',
+  'settings.project.get',
+  'settings.project.effective',
+  'settings.project.export',
+  'snapshot.get',
+  'events.subscribe',
+] as const;
+
+export const HOST_OPERATIONS = [
+  ...HOST_LIFECYCLE_OPERATIONS,
+  ...APP_OPERATIONS,
 ] as const;
 
 export type HostOperation = (typeof HOST_OPERATIONS)[number];
@@ -44,6 +70,11 @@ export const SERVER_ERROR_CODES = [
   'unknown_operation',
   'method_not_allowed',
   'internal',
+  // P02-2 应用面（§5.7 公开码经 HTTP 透传；F-011/F-012 服务端已产出）。
+  'command_expired',
+  'not_found',
+  'corrupt_state',
+  'snapshot_required',
 ] as const;
 
 export type ServerErrorCode = (typeof SERVER_ERROR_CODES)[number];
@@ -62,6 +93,8 @@ export const CLIENT_ONLY_ERROR_CODES = [
   'stop_not_confirmed',
   'bind_address_override_rejected',
   'unsupported_platform',
+  // P02-2 F-013：命令提交预算耗尽仍无法确定结果（客户端侧，保留 commandId 供查回执）。
+  'outcome_unknown',
 ] as const;
 
 export type ClientOnlyErrorCode = (typeof CLIENT_ONLY_ERROR_CODES)[number];
@@ -86,6 +119,10 @@ const HTTP_STATUS_BY_ERROR_CODE: Readonly<Record<ServerErrorCode, number>> = Obj
   unknown_operation: 404,
   method_not_allowed: 405,
   internal: 500,
+  command_expired: 400,
+  not_found: 404,
+  corrupt_state: 500,
+  snapshot_required: 409,
 });
 
 /** 不含秘密的人类可读默认原因；具体调用可以覆盖，但覆盖文案同样不得含秘密。 */
@@ -106,6 +143,10 @@ const DEFAULT_MESSAGE_BY_CODE: Readonly<Record<HostErrorCode, string>> = Object.
   unknown_operation: '未知操作',
   method_not_allowed: '请求方法不允许',
   internal: 'Host 内部错误',
+  command_expired: '命令已过期',
+  not_found: '资源不存在',
+  corrupt_state: '持久状态损坏或版本不受支持',
+  snapshot_required: '恢复位置低于可续读下界，必须重取快照',
   host_not_found: '未发现运行中的 Host',
   unreachable: '无法连接到 Host',
   response_malformed: 'Host 响应结构不合法',
@@ -118,6 +159,7 @@ const DEFAULT_MESSAGE_BY_CODE: Readonly<Record<HostErrorCode, string>> = Object.
   stop_not_confirmed: '无法确认 Host 已停止',
   bind_address_override_rejected: '拒绝覆盖监听地址（仅允许 127.0.0.1）',
   unsupported_platform: '当前平台不受支持（首版仅正式支持 macOS）',
+  outcome_unknown: '命令提交结果不确定（预算耗尽；请按 commandId 查询回执）',
 });
 
 export interface HostProtocolErrorOptions {

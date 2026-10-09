@@ -72,6 +72,15 @@ export const STOP_TIMEOUT_MS = 15_000;
 /** §10.2 enterQuiesce 后等待活动收尾的有限预算。 */
 export const QUIESCE_BUDGET_MS = 10_000;
 
+/** P02-2 §13：客户端应用命令/查询单请求整体预算（毫秒）。 */
+export const APP_REQUEST_TIMEOUT_MS = 10_000;
+
+/**
+ * P02-2 §11.2/§13：客户端提交一个逻辑命令（含超时后查回执与有限重发）的
+ * 整体预算（毫秒）；耗尽仍未知 → outcome_unknown（§15.6 登记的实施值）。
+ */
+export const SUBMIT_COMMAND_BUDGET_MS = 30_000;
+
 /** §6 每规范根 OS 排他锁获取的有限等待预算。 */
 export const LOCK_ACQUIRE_TIMEOUT_MS = 10_000;
 

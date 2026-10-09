@@ -211,6 +211,11 @@ const SERVER_ERROR_CODE_SET: ReadonlySet<string> = new Set([
   'unknown_operation',
   'method_not_allowed',
   'internal',
+  // P02-2 应用面（§5.7 公开码 + §9.4 SSE 建连前拒绝）。
+  'command_expired',
+  'not_found',
+  'corrupt_state',
+  'snapshot_required',
 ]);
 
 /** 允许从服务端错误体透传的受控 details 键（§7.3；其余一律丢弃）。 */
@@ -225,6 +230,10 @@ const SAFE_DETAIL_KEYS = [
   'activityScope',
   'unsupportedCapability',
   'commandId',
+  // P02-2：CAS 冲突修订号与 snapshot_required 的重取快照指引（§9.4）。
+  'expectedRevision',
+  'actualRevision',
+  'snapshotRoute',
 ] as const;
 
 function sanitizeDetailValue(value: unknown): unknown {

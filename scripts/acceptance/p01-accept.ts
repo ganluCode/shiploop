@@ -803,8 +803,7 @@ function crossCheckSchemaVersions(repoRoot: string, config: P01AcceptanceConfig)
       'settings-schema',
     );
   }
-  const serviceSource = readSource('packages/core/src/application/configuration-service.ts');
-  const exportMatch = /export const SETTINGS_EXPORT_FORMAT_VERSION = (\d+);/.exec(serviceSource);
+  const exportMatch = /export const SETTINGS_EXPORT_FORMAT_VERSION = (\d+);/.exec(settingsSource);
   if (exportMatch === null || Number(exportMatch[1]) !== config.schemaVersions.settingsExportFormat) {
     fail(
       'preparation_failed',

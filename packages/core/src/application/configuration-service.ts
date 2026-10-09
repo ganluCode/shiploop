@@ -48,6 +48,7 @@ import { validateStrategyCapabilities } from '../ports/runtime-capabilities.js';
 import type { RuntimeCapabilityCatalog } from '../ports/runtime-capabilities.js';
 import {
   SETTINGS_SCHEMA_VERSION,
+  SETTINGS_EXPORT_FORMAT_VERSION,
   validateSettingsScope,
 } from '../ports/settings-schema.js';
 import type {
@@ -83,7 +84,7 @@ export type SettingsWriteResult = GlobalSettingsRecord | ProjectSettingsRecord;
 export type SettingsReadResult = GlobalSettingsRecord | ProjectSettingsRecord;
 
 /** 脱敏导出格式版本；导出字段 Schema 变更时必须显式递增（与文档同步）。 */
-export const SETTINGS_EXPORT_FORMAT_VERSION = 1;
+export { SETTINGS_EXPORT_FORMAT_VERSION } from '../ports/settings-schema.js';
 
 /** 导出中的策略条目：只含执行身份字段与**引用**（绝不含明文秘密值）。 */
 export interface ExportedStrategy {
