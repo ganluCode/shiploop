@@ -345,7 +345,9 @@ describe('F-014 应用命令结构错误（§12.2）', () => {
     [['feature'], 'unknown_command'],
     [['baseline'], 'unknown_command'],
     [['project'], 'missing_subcommand'],
-    [['project', 'init'], 'unknown_subcommand'],
+    // P02-3 §12.1：project init/overview 已是正式子命令；缺位置参数仍在解析期拒绝。
+    [['project', 'init'], 'missing_positional'],
+    [['project', 'overview'], 'missing_positional'],
     [['project', 'rebind'], 'unknown_subcommand'],
     [['project', 'archive'], 'unknown_subcommand'],
     [['config', 'delete'], 'unknown_subcommand'],

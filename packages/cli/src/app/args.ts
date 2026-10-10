@@ -2,11 +2,12 @@
  * F-014 应用命令 CLI 纯参数解析（契约 §12.1/§12.2）。
  *
  * 纪律：
- * - 同步纯函数：不读 process.argv / process.env（env 必须显式注入）、不读
+ * - 同步纯函数：不读 process.argv / process.env（env/cwd 必须显式注入）、不读
  *   文件、不发现 Host、不访问网络、不启动进程、不生成 commandId；解析失败
  *   即 AppCliParseError，调用方保证解析成功前不做任何 I/O；
- * - 只识别 F-001 契约白名单的 project/config/receipt/events 命令，不新增
- *   基线、Run、模型、Profile、Skills 参数（未知即 unknown_argument）；
+ * - 只识别契约白名单的 project/config/receipt/events 命令，不新增基线、Run、
+ *   模型、Profile、Skills 参数（未知即 unknown_argument）；P02-3（F-005）按
+ *   契约 §12.1 增补 project init/overview 子命令（仍无 baseline 参数）；
  * - 监听地址覆盖零容忍：--bind/--host/--address/--port/--listen* 与
  *   SHIPLOOP_HOST_* env 覆盖一律 bind_address_override_rejected；
  * - 错误只携带 code/reason/参数名/命令身份，绝不回显参数值；
@@ -24,6 +25,8 @@ export type AppCliCommand = (typeof APP_CLI_COMMANDS)[number];
 
 /** 应用命令身份（点分 CLI 路径；用于 JSON 信封 command 字段）。 */
 export type AppCliCommandId =
+  | 'project.init'
+  | 'project.overview'
   | 'project.register'
   | 'project.list'
   | 'project.get'
@@ -38,6 +41,8 @@ export type AppCliCommandId =
   | 'events.observe';
 
 export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
+  'project.init',
+  'project.overview',
   'project.register',
   'project.list',
   'project.get',
@@ -93,8 +98,12 @@ export type AppCliParseReason =
   | 'invalid_command_id'
   | 'invalid_input_file'
   | 'invalid_repository_path'
+  | 'repository_path_requires_cwd'
   | 'invalid_name'
+  | 'invalid_description'
   | 'empty_label'
+  | 'invalid_label'
+  | 'too_many_labels'
   | 'missing_positional'
   | 'too_many_positionals'
   | 'missing_required_option'
@@ -132,8 +141,12 @@ const REASON_MESSAGE: Readonly<Record<AppCliParseReason, string>> = Object.freez
   invalid_command_id: 'commandId 必须是 UUID v4',
   invalid_input_file: 'input 必须是非空文件路径',
   invalid_repository_path: '仓库路径必须是非空字符串',
+  repository_path_requires_cwd: '相对仓库路径需要以绝对 cwd 为基准解析为绝对输入',
   invalid_name: 'name 不能为空',
+  invalid_description: 'description 不合法',
   empty_label: 'label 不能为空',
+  invalid_label: 'label 不合法',
+  too_many_labels: 'label 数量超出上限',
   missing_positional: '缺少位置参数',
   too_many_positionals: '位置参数过多',
   missing_required_option: '缺少必填参数',
@@ -148,6 +161,8 @@ interface ParseState {
   command: AppCliCommand | null;
   commandId: AppCliCommandId | null;
   json: boolean;
+  /** 显式注入的解析基准（相对仓库路径 → 绝对输入）；不读 process。 */
+  cwd: string | undefined;
   readonly seen: Set<string>;
 }
 
@@ -192,6 +207,26 @@ interface AppCommandSpec {
 }
 
 const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
+  'project.init': {
+    command: 'project',
+    commandId: 'project.init',
+    valueFlags: ['--name', '--description', '--label', '--command-id'],
+    boolFlags: ['--confirm'],
+    repeatableFlags: ['--label'],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['repositoryPath'],
+  },
+  'project.overview': {
+    command: 'project',
+    commandId: 'project.overview',
+    valueFlags: [],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['projectId'],
+  },
   'project.register': {
     command: 'project',
     commandId: 'project.register',
@@ -317,6 +352,8 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
 const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, AppCliCommandId>>>> =
   Object.freeze({
     project: {
+      init: 'project.init',
+      overview: 'project.overview',
       register: 'project.register',
       list: 'project.list',
       get: 'project.get',
@@ -501,12 +538,39 @@ function takeOption(scan: ScanResult, name: string): string | undefined {
   return scan.options.get(name)?.[0];
 }
 
+/** Unicode 码点计数（与 core ports/validation 的长度上限同一口径）。 */
+function codePointLength(value: string): number {
+  return [...value].length;
+}
+
+/** 元数据上限（镜像 core ports/validation.ts 同名值；Host 公共面未导出常量）。 */
+const PROJECT_DISPLAY_NAME_MAX_LENGTH = 200;
+const DESCRIPTION_MAX_LENGTH = 10_000;
+const LABEL_MAX_LENGTH = 64;
+const LABELS_MAX_COUNT = 50;
+
 function takeLabels(scan: ScanResult, state: ParseState): readonly string[] {
   const labels = scan.options.get('--label') ?? [];
+  const normalizedKeys = new Set<string>();
   for (const label of labels) {
-    if (label.length === 0) {
+    if (label.trim().length === 0) {
       fail(state, 'empty_label', 'label');
     }
+    if (label.includes('\0')) {
+      fail(state, 'invalid_label', 'label');
+    }
+    // 与 core 唯一标签规则同口径：trim → NFC → ASCII 小写后判长度/去重计数。
+    const normalized = label
+      .trim()
+      .normalize('NFC')
+      .replaceAll(/[A-Z]/g, (char) => char.toLowerCase());
+    if (codePointLength(normalized) > LABEL_MAX_LENGTH) {
+      fail(state, 'invalid_label', 'label');
+    }
+    normalizedKeys.add(normalized);
+  }
+  if (normalizedKeys.size > LABELS_MAX_COUNT) {
+    fail(state, 'too_many_labels', 'labels');
   }
   return labels;
 }
@@ -605,6 +669,77 @@ function requireInputFile(scan: ScanResult, state: ParseState): string {
   return raw;
 }
 
+function isAbsolutePath(value: string): boolean {
+  return value.startsWith('/');
+}
+
+/** POSIX 路径规范化（纯字符串运算；不读环境、不读文件系统）。 */
+function normalizeAbsolutePath(value: string): string {
+  const stack: string[] = [];
+  for (const segment of value.split('/')) {
+    if (segment.length === 0 || segment === '.') {
+      continue;
+    }
+    if (segment === '..') {
+      stack.pop();
+      continue;
+    }
+    stack.push(segment);
+  }
+  return `/${stack.join('/')}`;
+}
+
+/**
+ * init 仓库路径：相对路径按显式注入的 cwd 解析为绝对输入（契约 §12.2：解析
+ * 先于任何 I/O）；无法解析（无合法 cwd）时定位拒绝，不回显路径值。
+ */
+function resolveRepositoryPath(
+  raw: string,
+  state: ParseState,
+): { repositoryPathInput: string; repositoryPath: string } {
+  if (raw.length === 0 || raw.includes('\0')) {
+    fail(state, 'invalid_repository_path', 'repositoryPath');
+  }
+  if (isAbsolutePath(raw)) {
+    return { repositoryPathInput: raw, repositoryPath: normalizeAbsolutePath(raw) };
+  }
+  const cwd = state.cwd;
+  if (
+    cwd === undefined ||
+    cwd.length === 0 ||
+    !isAbsolutePath(cwd) ||
+    cwd.includes('\0')
+  ) {
+    fail(state, 'repository_path_requires_cwd', 'repositoryPath');
+  }
+  return {
+    repositoryPathInput: raw,
+    repositoryPath: normalizeAbsolutePath(`${cwd}/${raw}`),
+  };
+}
+
+function resolveInitName(scan: ScanResult, state: ParseState): string | undefined {
+  const raw = takeOption(scan, '--name');
+  if (raw === undefined) {
+    return undefined;
+  }
+  if (raw.length === 0 || raw.includes('\0') || codePointLength(raw) > PROJECT_DISPLAY_NAME_MAX_LENGTH) {
+    fail(state, 'invalid_name', 'name');
+  }
+  return raw;
+}
+
+function resolveInitDescription(scan: ScanResult, state: ParseState): string | undefined {
+  const raw = takeOption(scan, '--description');
+  if (raw === undefined) {
+    return undefined;
+  }
+  if (raw.includes('\0') || codePointLength(raw) > DESCRIPTION_MAX_LENGTH) {
+    fail(state, 'invalid_description', 'description');
+  }
+  return raw;
+}
+
 function resolveScope(
   scan: ScanResult,
   state: ParseState,
@@ -649,6 +784,40 @@ function baseResult(
 }
 
 // ---- 各命令的已解析形态（F-015/F-016/F-017 消费） ----
+
+/**
+ * `project init`（契约 §12.1）：静态预览 + 显式确认后才注册。
+ * repositoryPath 已是绝对输入（相对路径按注入 cwd 解析）；confirm 是唯一
+ * 注册确认入口（显式非交互授权，只覆盖展示的实际请求）。
+ */
+export interface ParsedProjectInit {
+  readonly kind: 'command';
+  readonly command: 'project';
+  readonly commandId: 'project.init';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  /** 用户原样输入的仓库路径。 */
+  readonly repositoryPathInput: string;
+  /** 解析后的绝对路径（送给 Host/Core 的唯一路径输入）。 */
+  readonly repositoryPath: string;
+  readonly displayName?: string;
+  readonly description?: string;
+  readonly labels: readonly string[];
+  readonly confirm: boolean;
+  readonly explicitCommandId?: string;
+}
+
+/** `project overview <projectId>`（契约 §12.1）：注册状态与健康状态分开查询。 */
+export interface ParsedProjectOverview {
+  readonly kind: 'command';
+  readonly command: 'project';
+  readonly commandId: 'project.overview';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+}
 
 export interface ParsedProjectRegister {
   readonly kind: 'command';
@@ -799,6 +968,8 @@ export interface ParsedEventsObserve {
 }
 
 export type ParsedAppCliCommand =
+  | ParsedProjectInit
+  | ParsedProjectOverview
   | ParsedProjectRegister
   | ParsedProjectList
   | ParsedProjectGet
@@ -823,6 +994,35 @@ function buildProject(scan: ScanResult, state: ParseState, spec: AppCommandSpec)
   assertPositionals(scan, spec, state);
   const base = baseResult(state, scan);
   switch (spec.commandId) {
+    case 'project.init': {
+      const { repositoryPathInput, repositoryPath } = resolveRepositoryPath(
+        scan.positionals[0] as string,
+        state,
+      );
+      const displayName = resolveInitName(scan, state);
+      const description = resolveInitDescription(scan, state);
+      const explicitCommandId = optionalCommandId(scan, state);
+      return {
+        ...base,
+        command: 'project',
+        commandId: 'project.init',
+        repositoryPathInput,
+        repositoryPath,
+        ...(displayName !== undefined ? { displayName } : {}),
+        ...(description !== undefined ? { description } : {}),
+        labels: takeLabels(scan, state),
+        confirm: scan.bools.has('--confirm'),
+        ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
+      };
+    }
+    case 'project.overview': {
+      return {
+        ...base,
+        command: 'project',
+        commandId: 'project.overview',
+        projectId: requireProjectId(scan.positionals[0] as string, state),
+      };
+    }
     case 'project.register': {
       const repositoryPath = scan.positionals[0] as string;
       if (repositoryPath.length === 0 || repositoryPath.includes('\0')) {
@@ -1034,12 +1234,14 @@ function buildEvents(scan: ScanResult, state: ParseState, spec: AppCommandSpec):
 }
 
 /**
- * 纯解析受控 argv（process.argv.slice(2) 形态）与显式注入的 env。
+ * 纯解析受控 argv（process.argv.slice(2) 形态）、显式注入的 env 与可选 cwd
+ * （相对仓库路径 → 绝对输入的解析基准）。
  * 返回命令意图或帮助意图；非法输入抛 AppCliParseError（退出码 2），全程无 I/O。
  */
 export function parseAppCliArgs(
   args: readonly string[],
   env: Readonly<Record<string, string | undefined>> = {},
+  options: { readonly cwd?: string } = {},
 ): ParsedAppCli {
   if (!Array.isArray(args) || args.some((argument) => typeof argument !== 'string')) {
     throw new AppCliParseError('invalid_input', 'invalid_argv_type', {
@@ -1053,6 +1255,7 @@ export function parseAppCliArgs(
     command: null,
     commandId: null,
     json: args.includes('--json'),
+    cwd: options.cwd,
     seen: new Set<string>(),
   };
 
@@ -1123,6 +1326,7 @@ export function parseAppInputJson(
     command: null,
     commandId: context.commandId ?? null,
     json: context.json ?? false,
+    cwd: undefined,
     seen: new Set<string>(),
   };
   if (typeof text !== 'string') {

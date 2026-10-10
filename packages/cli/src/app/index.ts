@@ -28,12 +28,40 @@ export type {
   ParsedEventsObserve,
   ParsedProjectEdit,
   ParsedProjectGet,
+  ParsedProjectInit,
   ParsedProjectLabels,
   ParsedProjectList,
+  ParsedProjectOverview,
   ParsedProjectRegister,
   ParsedReceiptGet,
 } from './args.js';
 export { getAppCliHelp } from './help.js';
+export {
+  buildInitCliResult,
+  buildInitConfirmationNotice,
+  composeAppCliStreams,
+  describeHeadFact,
+  describeHealthStatus,
+  describeWorktreeFact,
+  formatInitCliResult,
+  formatInitPreview,
+  formatOverviewResult,
+  initCliExitCode,
+  resolveInitConfirmation,
+} from './onboarding.js';
+export type {
+  AppCliStreamOutput,
+  InitCliResult,
+  InitConfirmationDecision,
+  InitConfirmationInput,
+  InitNotRunReason,
+  InitRegistrationOutcome,
+  InitRequestView,
+  InspectedRepositoryView,
+  ProjectHealthView,
+  ProjectOverviewView,
+  RepositoryFactView,
+} from './onboarding.js';
 export {
   CLI_EXIT_OBSERVATION_INTERRUPTED,
   buildAppCliFailureEnvelope,
