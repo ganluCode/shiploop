@@ -277,6 +277,11 @@ HostClient/CLI 纵向接线。F-018 已完成真实 Git/SQLite/进程/Host/CLI �
 - 文档守护 [test/docs-p02-3-operations.test.ts](test/docs-p02-3-operations.test.ts)：真实纵向跑通
   操作说明示例（init 预览/确认 → overview → 基线预览/授权/查询/证据/拒绝/取消 → stop/重启后
   查询），并与命令契约面（解析、退出码、检查计划校验）交叉核对。
+- [docs/acceptance/evidence-p02-3/f020-verification-evidence.md](docs/acceptance/evidence-p02-3/f020-verification-evidence.md)：
+  验收运行记录、FR-1/FR-2 分支映射与六项关键证据、新增测试收集/前序回归核对、脱敏与清理记录（脱敏）。
+- [docs/acceptance/p02-3-f020-report.md](docs/acceptance/p02-3-f020-report.md)：Feature 交付报告
+  （受测 commit、环境/工具版本、命令/退出码/计数、FR 验收索引、契约核对请求与 `not_run`；
+  文档守护 [test/docs-p02-3-f020-report.test.ts](test/docs-p02-3-f020-report.test.ts)）。
 
 该交付仅限 P02-3 静态接入与获准基线检查子集；Work/Pi、调度、强 OS 沙箱、非 macOS 平台与整个
 P02 阶段验收均未包含，`accept:p02` 由阶段末项定义。首版仅正式支持 macOS，可信项目不等于强
