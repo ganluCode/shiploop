@@ -31,11 +31,32 @@ import {
   type SubscribeEventsInput,
 } from 'shiploop-host';
 import { AppCliParseError, parseAppCliArgs, parseAppInputJson } from './app/args.js';
-import { parseBaselineCheckPlanText } from './app/baseline.js';
-import type { BaselineCheckPlanView } from './app/baseline.js';
+import {
+  BASELINE_INPUT_TIMEOUT_MAX_MS,
+  baselineCliExitCode,
+  buildBaselineCommandResult,
+  buildBaselineEvidenceResult,
+  buildBaselineListResult,
+  buildBaselineOperationResult,
+  buildBaselinePreviewResult,
+  buildBaselineRunConfirmationNotice,
+  formatBaselineCommandResult,
+  formatBaselineEvidenceResult,
+  formatBaselineListResult,
+  formatBaselineOperationResult,
+  formatBaselinePreview,
+  parseBaselineCheckPlanText,
+} from './app/baseline.js';
+import type {
+  BaselineCheckPlanView,
+  BaselineOperationResultView,
+  BaselineOperationStatusView,
+  BaselinePreviewWireView,
+} from './app/baseline.js';
 import type {
   AppCliCommandId,
   ParsedAppCliCommand,
+  ParsedBaselineCancel,
   ParsedBaselinePreview,
   ParsedBaselineRun,
   ParsedConfigCreate,
@@ -113,6 +134,8 @@ export interface RunAppCliOptions {
   readonly signal?: AbortSignal;
   /** F-017 观察预算覆盖（受信装配/测试注入；绝非 argv/env；全部有界）。 */
   readonly observe?: EventsObserveBudgets;
+  /** F-016 基线等待/跟随观察预算覆盖（受信装配/测试注入；绝非 argv/env；全部有界）。 */
+  readonly baselineObserve?: BaselineObserveBudgets;
 }
 
 export type AppCliRunKind = 'success' | 'failure' | 'help';
@@ -139,6 +162,9 @@ type ProjectOverviewResult = Awaited<ReturnType<HostClient['getProjectOverview']
 type SettingsStateResult = Awaited<ReturnType<HostClient['getGlobalSettings']>>;
 type EffectiveSettingsResult = Awaited<ReturnType<HostClient['getEffectiveSettings']>>;
 type ExportedSettingsResult = Awaited<ReturnType<HostClient['exportGlobalSettings']>>;
+
+/** 基线子命令（preview/run/list/status/cancel/evidence）的解析形态。 */
+type ParsedBaselineCommand = Extract<ParsedAppCliCommand, { command: 'baseline' }>;
 
 /** 配置命令（create/update/get/effective/export）的解析形态。 */
 type ParsedConfigCommand = Extract<ParsedAppCliCommand, { command: 'config' }>;
@@ -183,14 +209,28 @@ function emitFailure(io: AppCliIo, json: boolean, failure: FailureResult): AppCl
   };
 }
 
-function protocolFailure(command: AppCliCommandId, error: HostProtocolError): FailureResult {
+/**
+ * 协议/传输错误 → §12.3 失败结果。提交类命令携带显式 --command-id 时保留
+ * 该 commandId（契约 §12.2：错误保留 commandId 以便查回执）。
+ */
+function protocolFailure(
+  command: AppCliCommandId,
+  error: HostProtocolError,
+  submissionCommandId?: string,
+): FailureResult {
   return {
     exitCode: exitCodeForAppErrorCode(error.code),
     command,
     code: error.code,
     message: error.message ?? 'Host 协议错误（已脱敏）',
+    ...(submissionCommandId !== undefined ? { commandId: submissionCommandId } : {}),
     ...(error.details !== undefined ? { details: error.details } : {}),
   };
+}
+
+/** 命令意图携带的显式 --command-id（提交类命令才有；供错误信封保留）。 */
+function explicitCommandIdOf(command: ParsedAppCliCommand): string | undefined {
+  return (command as { explicitCommandId?: string }).explicitCommandId;
 }
 
 /** 解析失败统一出口（退出码 2）：JSON 信封到 stdout（--json），诊断到 stderr。 */
@@ -1111,6 +1151,577 @@ async function executeEventsCommand(
 }
 
 /* ------------------------------------------------------------------ *
+ * 基线命令（F-016；契约 §6/§7/§8/§12.1/§12.2/§12.3）
+ *
+ * 接线纪律：
+ * - preview 先行（只读）：展示本次实际范围（无 HEAD/脏工作区原样）并取得
+ *   previewDigest，run 的授权绑定该完整输入摘要（argv/cwd/环境/timeout/政策/
+ *   代码身份任一实质变化即失效 → preview_stale/conflict）；
+ * - 决策只由 --confirm/--decline 显式给出（解析层冻结互斥必居其一）；decline
+ *   持久记录 not_run（显式展示，不折算成功）；authorize → accepted + 真实
+ *   operationId（同事务持久操作行）；
+ * - --wait 有界轮询终态；--follow 经 SSE 观察 baseline.* 事件（记录流）并
+ *   等待终态；Ctrl+C/观察预算耗尽只结束本次观察（退出码 4，
+ *   observation_interrupted），操作未被取消、Host 未停止；取消必须显式
+ *   `baseline cancel`（回执状态驱动展示，绝不提前声称进程已停）；
+ * - 显式 --command-id 先查回执并以原 issuedAt 重建同一信封：相同参数重放
+ *   原回执（沿用原操作），不同参数 conflict。
+ * ------------------------------------------------------------------ */
+
+/** 基线等待/跟随观察预算覆盖（受信装配/测试注入；绝非 argv/env；全部有界）。 */
+export interface BaselineObserveBudgets {
+  /** 轮询终态间隔（默认 250ms；允许 50..5 000）。 */
+  readonly pollIntervalMs?: number;
+  /** 观察总预算（缺省 = Σ检查 timeoutMs + 30 000ms 收尾余量，契约 §13；允许 100..86 400 000）。 */
+  readonly totalBudgetMs?: number;
+}
+
+const BASELINE_POLL_DEFAULT_MS = 250;
+const BASELINE_WAIT_GRACE_MS = 30_000;
+const BASELINE_TOTAL_BUDGET_MAX_MS = 86_400_000;
+
+interface ResolvedBaselineObserveBudgets {
+  readonly pollIntervalMs: number;
+  readonly totalBudgetMs: number | undefined;
+}
+
+/** 校验观察预算覆盖（全部有界；非法注入以 invalid_input 拒绝，零 I/O）。 */
+function resolveBaselineObserveBudgets(
+  input: BaselineObserveBudgets | undefined,
+): ResolvedBaselineObserveBudgets {
+  const invalid = (reason: string, field: string): never => {
+    throw new HostProtocolError('invalid_input', 'commands.submit', '基线观察预算覆盖未通过校验', {
+      details: { reason, field },
+    });
+  };
+  if (input === undefined) {
+    return { pollIntervalMs: BASELINE_POLL_DEFAULT_MS, totalBudgetMs: undefined };
+  }
+  if (!isPlainObject(input)) {
+    invalid('invalid_baseline_observe_budgets', 'baselineObserve');
+  }
+  const raw: Record<string, unknown> = { ...input };
+  for (const key of Object.keys(raw)) {
+    if (key !== 'pollIntervalMs' && key !== 'totalBudgetMs') {
+      invalid('unknown_option_key', `baselineObserve.${key}`);
+    }
+  }
+  const pollRaw: unknown = raw.pollIntervalMs;
+  if (
+    pollRaw !== undefined &&
+    (typeof pollRaw !== 'number' || !Number.isSafeInteger(pollRaw) || pollRaw < 50 || pollRaw > 5_000)
+  ) {
+    invalid('invalid_poll_interval_ms', 'baselineObserve.pollIntervalMs');
+  }
+  const totalRaw: unknown = raw.totalBudgetMs;
+  if (
+    totalRaw !== undefined &&
+    (typeof totalRaw !== 'number' ||
+      !Number.isSafeInteger(totalRaw) ||
+      totalRaw < 100 ||
+      totalRaw > BASELINE_TOTAL_BUDGET_MAX_MS)
+  ) {
+    invalid('invalid_total_budget_ms', 'baselineObserve.totalBudgetMs');
+  }
+  return {
+    pollIntervalMs: (pollRaw as number | undefined) ?? BASELINE_POLL_DEFAULT_MS,
+    totalBudgetMs: totalRaw as number | undefined,
+  };
+}
+
+/** 检查计划视图 → 线形状（字段一一对应；省略字段不产生 undefined 键）。 */
+function baselineWirePlan(plan: BaselineCheckPlanView): Record<string, unknown> {
+  return {
+    checks: plan.checks.map((check) => ({
+      checkKey: check.checkKey,
+      kind: check.kind,
+      argv: [...check.argv],
+      timeoutMs: check.timeoutMs,
+      required: check.required,
+      ...(check.cwdRef !== undefined ? { cwdRef: check.cwdRef } : {}),
+      ...(check.environmentRef !== undefined ? { environmentRef: check.environmentRef } : {}),
+    })),
+  };
+}
+
+/** 观察总预算（契约 §13：≤ 检查数 × 单检查 timeout + 30s 收尾余量）。 */
+function baselineWaitBudgetMs(
+  plan: BaselineCheckPlanView,
+  budgets: ResolvedBaselineObserveBudgets | undefined,
+): number {
+  if (budgets?.totalBudgetMs !== undefined) {
+    return budgets.totalBudgetMs;
+  }
+  const checksBudget = plan.checks.reduce((sum, check) => sum + check.timeoutMs, 0);
+  return Math.min(
+    checksBudget + BASELINE_WAIT_GRACE_MS,
+    BASELINE_INPUT_TIMEOUT_MAX_MS * plan.checks.length + BASELINE_WAIT_GRACE_MS,
+  );
+}
+
+/** 终态判定（accepted/running/cancelling 为在途；其余为终态）。 */
+function isTerminalBaselineStatus(status: BaselineOperationStatusView): boolean {
+  return (
+    status === 'completed' ||
+    status === 'cancelled' ||
+    status === 'failed' ||
+    status === 'interrupted' ||
+    status === 'not_run'
+  );
+}
+
+/** run/cancel 回执 result 的窄视图（HostClient 已做线形状校验）。 */
+interface BaselineCommandResultWire {
+  readonly operationId: string;
+  readonly status: BaselineOperationStatusView;
+  readonly reasonCode?: string;
+}
+
+type BaselineDetailResult = Awaited<ReturnType<HostClient['getBaseline']>>;
+type BaselineAcceptedReceipt = Extract<CommandReceipt, { status: 'accepted' }>;
+
+/**
+ * 基线结果输出：--json 信封/记录到 stdout，提示到 stderr；人类文本到 stdout。
+ * exitCode 非 0 时（如 --wait 非全 passed）仍输出成功信封（结果内含状态轴）。
+ */
+function emitBaselineStreams(
+  io: AppCliIo,
+  command: ParsedBaselineCommand,
+  result: unknown,
+  humanText: string,
+  notices: readonly string[],
+  exitCode: CliExitCode,
+): AppCliRunResult {
+  const streams = composeAppCliStreams({
+    json: command.json,
+    command: command.commandId,
+    result,
+    humanText,
+    notices,
+  });
+  io.stdout(streams.stdout);
+  io.stderr(streams.stderr);
+  return {
+    exitCode,
+    kind: exitCode === CLI_EXIT_OK ? 'success' : 'failure',
+    command: command.commandId,
+    ...(command.json ? { envelope: buildAppCliSuccessEnvelope(command.commandId, result) } : {}),
+  };
+}
+
+/** 业务拒绝回执 → §12.3 失败输出（保留 commandId 供查回执）。 */
+function baselineReceiptFailure(
+  io: AppCliIo,
+  command: ParsedBaselineCommand,
+  receipt: Extract<CommandReceipt, { status: 'rejected' }>,
+): AppCliRunResult {
+  return emitFailure(io, command.json, {
+    exitCode: exitCodeForReceiptStatus('rejected'),
+    command: command.commandId,
+    code: receipt.error.code,
+    message: receipt.error.message,
+    commandId: receipt.commandId,
+    ...(receipt.error.details !== undefined ? { details: receipt.error.details } : {}),
+  });
+}
+
+function operationResultOf(detail: BaselineDetailResult): BaselineOperationResultView {
+  return buildBaselineOperationResult(
+    detail.operation,
+    detail.checks,
+    detail.authorization === null ? null : detail.authorization.codeIdentity,
+  );
+}
+
+async function executeBaselinePreview(
+  io: AppCliIo,
+  command: ParsedBaselinePreview,
+  client: HostClient,
+  plan: BaselineCheckPlanView,
+): Promise<AppCliRunResult> {
+  const receipt = await client.previewBaseline({
+    projectId: command.projectId,
+    plan: baselineWirePlan(plan),
+  });
+  if (receipt.status === 'rejected') {
+    return baselineReceiptFailure(io, command, receipt);
+  }
+  if (receipt.status !== 'completed') {
+    throw new Error('unexpected_accepted_receipt');
+  }
+  const preview = buildBaselinePreviewResult(
+    command.projectId,
+    receipt.result as BaselinePreviewWireView,
+  );
+  return emitBaselineStreams(
+    io,
+    command,
+    preview,
+    formatBaselinePreview(preview),
+    [],
+    CLI_EXIT_OK,
+  );
+}
+
+async function executeBaselineRun(
+  io: AppCliIo,
+  command: ParsedBaselineRun,
+  client: HostClient,
+  plan: BaselineCheckPlanView,
+  budgets: ResolvedBaselineObserveBudgets | undefined,
+  signal: AbortSignal | undefined,
+): Promise<AppCliRunResult> {
+  const planValue = baselineWirePlan(plan);
+  // 1) 预览（只读）：展示本次实际范围并取得 previewDigest（授权绑定完整输入摘要）。
+  const previewReceipt = await client.previewBaseline({
+    projectId: command.projectId,
+    plan: planValue,
+  });
+  if (previewReceipt.status === 'rejected') {
+    return baselineReceiptFailure(io, command, previewReceipt);
+  }
+  if (previewReceipt.status !== 'completed') {
+    throw new Error('unexpected_accepted_receipt');
+  }
+  const preview = buildBaselinePreviewResult(
+    command.projectId,
+    previewReceipt.result as BaselinePreviewWireView,
+  );
+  const previewText = formatBaselinePreview(preview);
+  const notice = buildBaselineRunConfirmationNotice();
+
+  // 2) 显式决策提交（--confirm/--decline 由解析层冻结互斥必居其一）。
+  const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+  const receipt = await client.runBaseline({
+    projectId: command.projectId,
+    decision: command.decision,
+    plan: planValue,
+    previewDigest: preview.previewDigest,
+    ...(command.explicitCommandId !== undefined ? { commandId: command.explicitCommandId } : {}),
+  }, issuedAt !== undefined ? { issuedAt } : undefined);
+  if (receipt.status === 'rejected') {
+    return baselineReceiptFailure(io, command, receipt);
+  }
+  if (receipt.status === 'completed') {
+    // decline → 持久 not_run（显式展示，不折算成功；退出码 0）。
+    const result = buildBaselineCommandResult(receipt.result as BaselineCommandResultWire);
+    return emitBaselineStreams(
+      io,
+      command,
+      result,
+      `${previewText}${formatBaselineCommandResult(result)}`,
+      [notice],
+      baselineCliExitCode({ command: 'run', decision: command.decision, state: result.state }),
+    );
+  }
+
+  // accepted：真实 operationId（同事务持久操作行；默认返回后退出）。
+  const accepted = buildBaselineCommandResult({
+    operationId: (receipt as BaselineAcceptedReceipt).operationId,
+    status: 'accepted',
+  });
+  if (!command.wait && !command.follow) {
+    return emitBaselineStreams(
+      io,
+      command,
+      accepted,
+      `${previewText}${formatBaselineCommandResult(accepted)}`,
+      [notice],
+      baselineCliExitCode({ command: 'run', decision: command.decision, state: accepted.state }),
+    );
+  }
+
+  // 3) 有界观察（--wait 轮询终态；--follow 另经 SSE 观察 baseline.* 事件记录流）。
+  return observeBaselineOperation(
+    io,
+    command,
+    client,
+    plan,
+    { previewText, notice, accepted },
+    budgets,
+    signal,
+  );
+}
+
+async function observeBaselineOperation(
+  io: AppCliIo,
+  command: ParsedBaselineRun,
+  client: HostClient,
+  plan: BaselineCheckPlanView,
+  head: {
+    readonly previewText: string;
+    readonly notice: string;
+    readonly accepted: ReturnType<typeof buildBaselineCommandResult>;
+  },
+  budgets: ResolvedBaselineObserveBudgets | undefined,
+  signal: AbortSignal | undefined,
+): Promise<AppCliRunResult> {
+  const operationId = head.accepted.operationId;
+  const pollIntervalMs = budgets?.pollIntervalMs ?? BASELINE_POLL_DEFAULT_MS;
+  const deadline = Date.now() + baselineWaitBudgetMs(plan, budgets);
+  const userAborted = (): boolean => signal?.aborted === true;
+  let lastEventId: string | undefined;
+
+  /** 观察中断（第五档退出码 4）：只结束本次观察，操作未被取消、Host 未停止。 */
+  const interrupted = (reason: string): AppCliRunResult =>
+    emitFailure(io, command.json, {
+      exitCode: CLI_EXIT_OBSERVATION_INTERRUPTED,
+      command: command.commandId,
+      code: 'observation_interrupted',
+      message:
+        '观察已中断：仅结束本次观察，操作仍可能运行（未取消）；' +
+        '可用 `shiploop baseline status <operationId>` 查询，或 `shiploop baseline cancel <operationId> --confirm` 显式取消。',
+      details: {
+        operationId,
+        reason,
+        ...(lastEventId !== undefined ? { lastEventId } : {}),
+      },
+    });
+
+  if (command.follow) {
+    if (command.json) {
+      io.stdout(
+        `${JSON.stringify(
+          buildAppCliSuccessEnvelope(command.commandId, {
+            kind: 'accepted',
+            operation: head.accepted,
+          }),
+        )}\n`,
+      );
+    } else {
+      io.stdout(`${head.previewText}${formatBaselineCommandResult(head.accepted)}`);
+    }
+  }
+
+  let subscription: HostEventSubscription | undefined;
+  if (command.follow && !userAborted()) {
+    try {
+      const snapshot = await client.getSnapshot({ kind: 'project', projectId: command.projectId });
+      subscription = await client.subscribeEvents({
+        scope: { kind: 'project', projectId: command.projectId },
+        cursor: snapshot.watermark.cursor,
+        onEvent: (event) => {
+          if (!event.type.startsWith('baseline.')) {
+            return;
+          }
+          const target = (event.payload as { operationId?: unknown }).operationId;
+          if (target !== operationId) {
+            return;
+          }
+          lastEventId = event.eventId;
+          if (command.json) {
+            io.stdout(
+              `${JSON.stringify(
+                buildAppCliSuccessEnvelope(command.commandId, { kind: 'event', event }),
+              )}\n`,
+            );
+          } else {
+            io.stdout(`shiploop baseline run: event type=${event.type} seq=${event.sequence}\n`);
+          }
+        },
+        ...(signal !== undefined ? { signal } : {}),
+      });
+    } catch (error) {
+      subscription = undefined;
+      if (userAborted()) {
+        return interrupted('aborted');
+      }
+      if (!isHostProtocolError(error)) {
+        throw error;
+      }
+      // 事件观察建连失败不阻断等待：退回纯轮询（仍为有界观察）。
+    }
+  }
+
+  try {
+    for (;;) {
+      if (userAborted()) {
+        return interrupted('aborted');
+      }
+      let detail: BaselineDetailResult;
+      try {
+        detail = await client.getBaseline(operationId);
+      } catch (error) {
+        if (userAborted()) {
+          return interrupted('aborted');
+        }
+        throw error;
+      }
+      if (isTerminalBaselineStatus(detail.operation.status)) {
+        const result = operationResultOf(detail);
+        const exitCode = baselineCliExitCode({
+          command: 'run',
+          decision: command.decision,
+          state: result.state,
+          waited: true,
+        });
+        if (command.follow) {
+          if (command.json) {
+            io.stdout(
+              `${JSON.stringify(
+                buildAppCliSuccessEnvelope(command.commandId, { kind: 'operation', operation: result }),
+              )}\n`,
+            );
+          } else {
+            io.stdout(formatBaselineOperationResult(result));
+          }
+          return {
+            exitCode,
+            kind: exitCode === CLI_EXIT_OK ? 'success' : 'failure',
+            command: command.commandId,
+          };
+        }
+        return emitBaselineStreams(
+          io,
+          command,
+          result,
+          `${head.previewText}${formatBaselineOperationResult(result)}`,
+          [head.notice],
+          exitCode,
+        );
+      }
+      if (Date.now() + pollIntervalMs > deadline) {
+        return interrupted('observation_budget_exhausted');
+      }
+      await new Promise((resolveSleep) => setTimeout(resolveSleep, pollIntervalMs));
+    }
+  } finally {
+    subscription?.close();
+  }
+}
+
+async function executeBaselineCancel(
+  io: AppCliIo,
+  command: ParsedBaselineCancel,
+  client: HostClient,
+): Promise<AppCliRunResult> {
+  // 取消是唯一停止途径且必须显式：项目 scope 经 baselines.get 的授权摘要解析
+  //（不直接操作数据库/制品路径）。
+  const detail = await client.getBaseline(command.operationId);
+  const projectId = detail.authorization?.projectId;
+  if (projectId === undefined) {
+    // 拒绝授权记录（无授权行、从未启动进程）：无项目 scope 可提交取消命令；
+    // 终态幂等回答来自 baselines.get，绝不声称有任何进程被停止。
+    if (!isTerminalBaselineStatus(detail.operation.status)) {
+      return emitFailure(io, command.json, {
+        exitCode: 1,
+        command: command.commandId,
+        code: 'unsupported',
+        message: '该操作缺少授权行且仍在途，无法确定取消所属项目（请以 baseline status 查询）',
+        details: { reason: 'authorization_missing', operationId: command.operationId },
+      });
+    }
+    const current = buildBaselineCommandResult({
+      operationId: detail.operation.operationId,
+      status: detail.operation.status,
+      ...(detail.operation.reasonCode !== undefined ? { reasonCode: detail.operation.reasonCode } : {}),
+    });
+    return emitBaselineStreams(
+      io,
+      command,
+      current,
+      `${formatBaselineCommandResult(current)}（该操作从未启动进程；终态来自 baselines.get，未提交取消命令）`,
+      [],
+      baselineCliExitCode({ command: 'cancel', state: current.state }),
+    );
+  }
+  const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+  const receipt = await client.cancelBaseline(projectId, command.operationId, {
+    ...(command.explicitCommandId !== undefined ? { commandId: command.explicitCommandId } : {}),
+    ...(issuedAt !== undefined ? { issuedAt } : {}),
+  });
+  if (receipt.status === 'rejected') {
+    return baselineReceiptFailure(io, command, receipt);
+  }
+  if (receipt.status !== 'completed') {
+    throw new Error('unexpected_accepted_receipt');
+  }
+  // 回执状态驱动展示：cancelling 保持「活动」，绝不提前声称进程已停。
+  const result = buildBaselineCommandResult(receipt.result as BaselineCommandResultWire);
+  return emitBaselineStreams(
+    io,
+    command,
+    result,
+    formatBaselineCommandResult(result),
+    [],
+    baselineCliExitCode({ command: 'cancel', state: result.state }),
+  );
+}
+
+async function executeBaselineCommand(
+  io: AppCliIo,
+  command: ParsedBaselineCommand,
+  client: HostClient,
+  plan: BaselineCheckPlanView | undefined,
+  budgets: ResolvedBaselineObserveBudgets | undefined,
+  signal: AbortSignal | undefined,
+): Promise<AppCliRunResult> {
+  switch (command.commandId) {
+    case 'baseline.preview':
+    case 'baseline.run': {
+      if (plan === undefined) {
+        return emitFailure(io, command.json, {
+          exitCode: 2,
+          command: command.commandId,
+          code: 'invalid_input',
+          message: '缺少已校验的检查计划输入',
+        });
+      }
+      if (command.commandId === 'baseline.preview') {
+        return executeBaselinePreview(io, command, client, plan);
+      }
+      return executeBaselineRun(io, command, client, plan, budgets, signal);
+    }
+    case 'baseline.list': {
+      const page = await client.listBaselines(command.projectId, {
+        ...(command.limit !== undefined ? { limit: command.limit } : {}),
+        ...(command.cursor !== undefined ? { cursor: command.cursor } : {}),
+      });
+      const result = buildBaselineListResult({
+        projectId: page.projectId,
+        records: page.records,
+        nextCursor: page.nextCursor,
+        limit: page.limit,
+      });
+      return emitBaselineStreams(
+        io,
+        command,
+        result,
+        formatBaselineListResult(result),
+        [],
+        CLI_EXIT_OK,
+      );
+    }
+    case 'baseline.status': {
+      const detail = await client.getBaseline(command.operationId);
+      const result = operationResultOf(detail);
+      return emitBaselineStreams(
+        io,
+        command,
+        result,
+        formatBaselineOperationResult(result),
+        [],
+        CLI_EXIT_OK,
+      );
+    }
+    case 'baseline.cancel':
+      return executeBaselineCancel(io, command, client);
+    case 'baseline.evidence': {
+      const content = await client.readArtifactContent(command.artifactId);
+      const result = buildBaselineEvidenceResult(content.artifactId, content.content);
+      return emitBaselineStreams(
+        io,
+        command,
+        result,
+        formatBaselineEvidenceResult(result),
+        [],
+        CLI_EXIT_OK,
+      );
+    }
+  }
+}
+
+/* ------------------------------------------------------------------ *
  * 回执读取（F-016）
  * ------------------------------------------------------------------ */
 
@@ -1202,8 +1813,8 @@ export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunRes
     });
   }
 
-  // F-015/F-016/F-017 范围：project.*、config.*、receipt.get 与 events 观察全部
-  // 经 HostClient 接线；未知顶层命令已在纯解析层拒绝，不会到达这里。
+  // F-015/F-016/F-017 范围：project.*、config.*、receipt.get、baseline.* 与 events
+  // 观察全部经 HostClient 接线；未知顶层命令已在纯解析层拒绝，不会到达这里。
   // events 观察预算覆盖（受信装配/测试注入）在连接 Host 之前校验：非法注入
   // 以 invalid_input（退出码 2）拒绝，零发现/零网络副作用。
   let observeBudgets: ResolvedEventsObserveBudgets | undefined;
@@ -1237,14 +1848,15 @@ export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunRes
     }
   }
 
-  // F-015 只交付基线 CLI 纯面层（参数/输入校验/独立授权/结果格式化）；
-  // baseline.* 与 HostClient 的接线、--wait/--follow 观察与授权后启动属 F-016。
-  // 输入计划先于任何 I/O 校验；随后在任何 Host/进程副作用之前返回 unsupported
-  // 占位：不发现/不启动 Host、不启动进程。
+  // F-016：baseline.* 与 HostClient 接线（preview/run/list/status/cancel/evidence）。
+  // 输入计划先于任何 I/O 校验（畸形 JSON/Schema 以退出码 2 拒绝，不发现 Host、
+  // 不启动进程）；--wait/--follow 的观察预算覆盖同样在连接前校验（全部有界）。
+  let baselinePlan: BaselineCheckPlanView | undefined;
+  let baselineBudgets: ResolvedBaselineObserveBudgets | undefined;
   if (command.command === 'baseline') {
     if (command.commandId === 'baseline.preview' || command.commandId === 'baseline.run') {
       try {
-        readBaselinePlanInput(command);
+        baselinePlan = readBaselinePlanInput(command);
       } catch (error) {
         if (error instanceof AppCliParseError) {
           return emitParseFailure(io, error, jsonFlag);
@@ -1257,13 +1869,16 @@ export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunRes
         });
       }
     }
-    return emitFailure(io, command.json, {
-      exitCode: 1,
-      command: command.commandId,
-      code: 'unsupported',
-      message: 'baseline 子命令的 HostClient 接线由后续任务完成',
-      details: { reason: 'baseline_cli_not_wired' },
-    });
+    if (command.commandId === 'baseline.run' && (command.wait || command.follow)) {
+      try {
+        baselineBudgets = resolveBaselineObserveBudgets(options.baselineObserve);
+      } catch (error) {
+        if (isHostProtocolError(error)) {
+          return emitFailure(io, command.json, protocolFailure(command.commandId, error));
+        }
+        throw error;
+      }
+    }
   }
 
   let client: HostClient;
@@ -1299,6 +1914,9 @@ export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunRes
   }
 
   try {
+    if (command.command === 'baseline') {
+      return await executeBaselineCommand(io, command, client, baselinePlan, baselineBudgets, options.signal);
+    }
     if (command.command === 'config') {
       return await executeConfigCommand(io, command, client, configPayload as Record<string, unknown>);
     }
@@ -1317,7 +1935,11 @@ export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunRes
     return await executeProjectCommand(io, command, client);
   } catch (error) {
     if (isHostProtocolError(error)) {
-      return emitFailure(io, command.json, protocolFailure(command.commandId, error));
+      return emitFailure(
+        io,
+        command.json,
+        protocolFailure(command.commandId, error, explicitCommandIdOf(command)),
+      );
     }
     return emitFailure(io, command.json, {
       exitCode: 1,

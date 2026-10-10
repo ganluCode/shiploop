@@ -606,7 +606,7 @@ export interface BaselinePreviewResultView extends BaselinePreviewWireView {
   readonly projectId: string;
 }
 
-/** 逐项检查的结构化输出（保留结果引用；tail 只在详情中携带）。 */
+/** 逐项检查的结构化输出（保留结果引用与耗时；tail 只在详情中携带）。 */
 export interface BaselineCheckOutcomeView {
   readonly checkKey: string;
   readonly status: BaselineCheckStatusView;
@@ -615,6 +615,7 @@ export interface BaselineCheckOutcomeView {
   readonly timedOut: boolean;
   readonly exitCode: number | null;
   readonly signal: string | null;
+  readonly durationMs: number | null;
   readonly output: BaselineCheckOutputRefView | null;
 }
 
@@ -626,12 +627,16 @@ export interface BaselineCommandResultView {
   readonly reasonCode?: string;
 }
 
-/** baseline status / run --wait 终态结果。 */
+/** baseline status / run --wait 终态结果（含授权摘要的代码身份；拒绝记录为 null）。 */
 export interface BaselineOperationResultView {
   readonly operationId: string;
   readonly state: BaselineDisplayState;
   readonly status: BaselineOperationStatusView;
   readonly reasonCode?: string;
+  readonly codeIdentity: BaselineCodeIdentityView | null;
+  readonly createdAt: string;
+  readonly startedAt: string | null;
+  readonly endedAt: string | null;
   readonly summary: BaselineCheckCountsView;
   readonly checks: readonly BaselineCheckOutcomeView[];
 }
@@ -782,6 +787,7 @@ function checkOutcome(check: BaselineCheckResultView): BaselineCheckOutcomeView 
     timedOut: check.timedOut,
     exitCode: check.exitCode,
     signal: check.signal,
+    durationMs: check.durationMs,
     output: check.output === null ? null : { ...check.output },
   };
 }
@@ -835,10 +841,11 @@ export function buildBaselineCommandResult(wire: {
   };
 }
 
-/** baseline status / run --wait 终态结果（逐项检查保留结果引用）。 */
+/** baseline status / run --wait 终态结果（逐项检查保留结果引用/耗时；携带代码身份）。 */
 export function buildBaselineOperationResult(
   operation: BaselineOperationView,
   checks: readonly BaselineCheckResultView[],
+  codeIdentity?: BaselineCodeIdentityView | null,
 ): BaselineOperationResultView {
   return {
     operationId: operation.operationId,
@@ -850,6 +857,11 @@ export function buildBaselineOperationResult(
     }),
     status: operation.status,
     ...(operation.reasonCode !== undefined ? { reasonCode: operation.reasonCode } : {}),
+    codeIdentity:
+      codeIdentity === undefined || codeIdentity === null ? null : { ...codeIdentity },
+    createdAt: operation.createdAt,
+    startedAt: operation.startedAt,
+    endedAt: operation.endedAt,
     summary: { ...operation.summary },
     checks: checks.map(checkOutcome),
   };
@@ -966,14 +978,16 @@ function formatCheckOutcome(check: BaselineCheckOutcomeView): string {
   const exit = check.exitCode === null ? 'exitCode=null' : `exitCode=${check.exitCode}`;
   const signal = check.signal === null ? '' : ` signal=${check.signal}`;
   const timedOut = check.timedOut ? ' timedOut=true' : '';
+  const duration =
+    check.durationMs === null ? 'durationMs=null' : `durationMs=${check.durationMs}`;
   const output =
     check.output === null
       ? 'output=（无）'
       : `output.artifactId=${check.output.artifactId} byteSize=${check.output.byteSize} truncated=${String(check.output.truncated)}`;
-  return `    - ${check.checkKey}（${required}）status=${check.status}${reason} ${exit}${signal}${timedOut} ${output}`;
+  return `    - ${check.checkKey}（${required}）status=${check.status}${reason} ${exit}${signal}${timedOut} ${duration} ${output}`;
 }
 
-/** status/--wait 终态的人类摘要（逐项检查与结果引用；not_run 显式展示）。 */
+/** status/--wait 终态的人类摘要（逐项退出码/耗时/结果引用、代码身份；not_run 显式展示）。 */
 export function formatBaselineOperationResult(result: BaselineOperationResultView): string {
   const reason = result.reasonCode === undefined ? '' : ` reason=${result.reasonCode}`;
   const counts = result.summary;
@@ -981,6 +995,10 @@ export function formatBaselineOperationResult(result: BaselineOperationResultVie
     'baseline 操作结果：',
     `  operationId=${result.operationId}`,
     `  状态：${describeBaselineState(result.state)}（status=${result.status}${reason}）`,
+    `  时间：createdAt=${result.createdAt} startedAt=${result.startedAt ?? '（未启动）'} endedAt=${result.endedAt ?? '（未结束）'}`,
+    result.codeIdentity === null
+      ? '  代码身份：（无授权行；拒绝记录未执行任何检查）'
+      : `  代码身份：${describeCodeIdentity(result.codeIdentity)}`,
     `  检查计数：total=${counts.total} passed=${counts.passed} failed=${counts.failed} error=${counts.error} inconclusive=${counts.inconclusive} notRun=${counts.notRun}（not_run 不折算成功）`,
     '  检查明细：',
   ];

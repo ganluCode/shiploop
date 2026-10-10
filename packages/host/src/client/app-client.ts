@@ -127,6 +127,13 @@ export interface SubmitCommandInput {
 export interface SubmitCommandOptions {
   /** 中止信号：立即以 unreachable(aborted) 拒绝，不折算 outcome_unknown。 */
   readonly signal?: AbortSignal;
+  /**
+   * F-016：显式信封身份（命令幂等重放）。与输入对象中的 commandId 等价；
+   * issuedAt 用于按既有回执的原时间重建同一信封（同摘要 → 重放原回执，
+   * 不同参数 → conflict）。缺省时由客户端生成一次并冻结。
+   */
+  readonly commandId?: string;
+  readonly issuedAt?: string;
 }
 
 /** 项目列表分页/筛选输入（§7.1；取值规则由 Core 复核，客户端做形态把关）。 */
@@ -276,20 +283,25 @@ function abortedError(operation: HostOperation): HostProtocolError {
 }
 
 /**
- * 提取可选 AbortSignal（参数以 unknown 视角校验，避免类型守卫收窄干扰调用方类型）。
+ * 提取可选提交选项（参数以 unknown 视角校验，避免类型守卫收窄干扰调用方类型）：
+ * signal / 信封身份（commandId/issuedAt；F-016 幂等重放用）。
  */
 function extractAbortSignal(
-  options: { readonly signal?: unknown } | undefined,
+  options: { readonly signal?: unknown; readonly commandId?: unknown; readonly issuedAt?: unknown } | undefined,
   operation: HostOperation,
-): AbortSignal | undefined {
+): {
+  readonly signal: AbortSignal | undefined;
+  readonly commandId: string | undefined;
+  readonly issuedAt: string | undefined;
+} {
   if (options === undefined) {
-    return undefined;
+    return { signal: undefined, commandId: undefined, issuedAt: undefined };
   }
   if (!isPlainObject(options)) {
     throw invalidInput(operation, 'invalid_options');
   }
   for (const key of Object.keys(options)) {
-    if (key !== 'signal') {
+    if (key !== 'signal' && key !== 'commandId' && key !== 'issuedAt') {
       throw invalidInput(operation, 'unknown_option_key', key);
     }
   }
@@ -297,7 +309,19 @@ function extractAbortSignal(
   if (signal !== undefined && !(signal instanceof AbortSignal)) {
     throw invalidInput(operation, 'invalid_signal', 'signal');
   }
-  return signal;
+  const commandId: unknown = options.commandId;
+  if (commandId !== undefined && (typeof commandId !== 'string' || !isUuidV4(commandId))) {
+    throw invalidInput(operation, 'invalid_command_id', 'commandId');
+  }
+  const issuedAt: unknown = options.issuedAt;
+  if (issuedAt !== undefined && (typeof issuedAt !== 'string' || issuedAt.length === 0)) {
+    throw invalidInput(operation, 'invalid_issued_at', 'issuedAt');
+  }
+  return {
+    signal: signal as AbortSignal | undefined,
+    commandId: commandId as string | undefined,
+    issuedAt: issuedAt as string | undefined,
+  };
 }
 
 function isAbortError(error: unknown, signal: AbortSignal | undefined): boolean {
@@ -780,8 +804,19 @@ export function createHostClientApplication(context: AppClientContext): HostClie
     options?: SubmitCommandOptions,
   ): Promise<CommandReceipt> {
     context.assertOpen('commands.submit');
-    const signal = extractAbortSignal(options, 'commands.submit');
-    const frozen = freezeCommandEnvelope(input);
+    const submitOptions = extractAbortSignal(options, 'commands.submit');
+    const signal = submitOptions.signal;
+    // 信封身份：输入对象优先，提交选项兜底（F-016 显式 --command-id 重放：
+    // 以既有回执的原 issuedAt 重建同一信封，同摘要 → 重放原回执）。
+    const frozen = freezeCommandEnvelope({
+      ...input,
+      ...(input.commandId === undefined && submitOptions.commandId !== undefined
+        ? { commandId: submitOptions.commandId }
+        : {}),
+      ...(input.issuedAt === undefined && submitOptions.issuedAt !== undefined
+        ? { issuedAt: submitOptions.issuedAt }
+        : {}),
+    });
     const deadlineMs = Date.now() + context.submitBudgetMs;
 
     let attempt = 0;

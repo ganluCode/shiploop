@@ -32,10 +32,16 @@ CLI 承担：Host 生命周期命令的参数解析、结构化输出与 Host �
   （应用 JSON 信封、`CLI_EXIT_OBSERVATION_INTERRUPTED=4` 与观察中断诊断）。解析失败
   在任何 I/O 之前；不新增基线/Run/模型/Profile/Skills 参数。
 - F-015/F-016/F-017 应用命令执行层 `app-execute.ts`（不经公共 barrel 导出，bin.ts
-  专用）：project.*/config.*/receipt.get 经 HostClient 幂等命令与授权查询接线；
+  专用）：project.*/config.*/receipt.get/baseline.* 经 HostClient 幂等命令与授权
+  查询接线；基线（F-016）preview 先行展示实际范围并取 previewDigest，run 决策只由
+  `--confirm`/`--decline` 显式给出（authorize → accepted + 真实 operationId，
+  decline → 持久 not_run），`--wait` 有界轮询终态、`--follow` 经 SSE 观察
+  baseline.* 事件记录流，Ctrl+C/观察预算耗尽只结束本次观察（退出码 4，操作未
+  取消）；取消唯一途径是显式 `baseline cancel`（回执状态驱动展示）；显式
+  `--command-id` 以原 issuedAt 重建同一信封（重放沿用原操作，不同参数 conflict）；
   events 观察（F-017）先取授权快照与水位再从水位之后订阅，显式 `--cursor` 恢复，
   `--snapshot-only` 补读一页后退出，snapshot_required 明确记录并重取快照恢复，
   Ctrl+C（bin.ts 将 SIGINT 接入 AbortSignal）/stream_overflow 以退出码 4 只结束本次
-  观察。观察预算覆盖与中断信号为受信装配/测试注入，绝非 argv/env。
+  观察。观察/等待预算覆盖与中断信号为受信装配/测试注入，绝非 argv/env。
 
 单向依赖规则见仓库根 `README.md`。

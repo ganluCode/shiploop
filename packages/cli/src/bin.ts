@@ -5,6 +5,8 @@
  *   shiploop project register|list|get|edit|labels [options]
  *   shiploop config create|update|get|effective|export / receipt get [options]
  *   shiploop events (--project <id> | --global) [options]（F-017 观察；SIGINT 仅中断观察）
+ *   shiploop baseline <preview|run|list|status|cancel|evidence> [options]
+ *     （F-016；run --wait/--follow 的 SIGINT 仅中断观察）
  *
  * 这是 packages/cli 中唯一读 process.argv/process.env、唯一退出进程的文件：
  * - 公共入口 src/index.ts 与纯面层 import 无副作用（不解析 argv、不读 env、
@@ -28,11 +30,16 @@ const args = process.argv.slice(2);
 const isAppCommand =
   args.length > 0 && (APP_CLI_COMMANDS as readonly string[]).includes(args[0] as string);
 
-// F-017（契约 §12.3 第五档）：events 观察命令把 Ctrl+C（SIGINT）接入 AbortSignal——
-// 只结束本次观察（退出码 4），不停止 Host、不取消已提交命令；第二次 SIGINT 直接
-// 以退出码 4 强制退出（兜底，不执行 stop/cancel）。
+// F-017（契约 §12.3 第五档）：events 观察命令与 baseline run --wait/--follow 把
+// Ctrl+C（SIGINT）接入 AbortSignal——只结束本次观察（退出码 4），不停止 Host、
+// 不取消已提交命令/操作；第二次 SIGINT 直接以退出码 4 强制退出（兜底，不执行
+// stop/cancel）。
 let observationSignal: AbortSignal | undefined;
-if (isAppCommand && args[0] === 'events') {
+const observesBaseline =
+  args[0] === 'baseline' &&
+  args.includes('run') &&
+  (args.includes('--wait') || args.includes('--follow'));
+if (isAppCommand && (args[0] === 'events' || observesBaseline)) {
   const controller = new AbortController();
   let forced = false;
   process.on('SIGINT', () => {
