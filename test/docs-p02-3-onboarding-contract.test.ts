@@ -282,6 +282,26 @@ describe('F-001 契约文档与仓库基线一致（开工现状事实）', () =
     expect(contractDoc).toContain('F-007 补充');
   });
 
+  it('迁移随 F-008 升至 v5（accepted 回执 + operation_id），契约记录写回与实施注记', () => {
+    const migrations = readText('packages/core/src/adapters/sqlite/migrations.ts');
+    // F-008（P02-3）已落地迁移 v5：command_receipts 重建（accepted 持久化）。
+    expect(migrations).toMatch(/version: 5,/);
+    expect(migrations).toContain("status IN ('completed','rejected','accepted')");
+    expect(migrations).toContain('command_receipts_accepted_check');
+    expect(migrations).toContain('command_receipts_operation_id_unique');
+    // 契约写回：v5 登记与 F-008 实施注记（expectedRevision 载体/预览 result 形状）。
+    expect(contractDoc).toContain('F-008 补充（写回登记，2026-10-10）：迁移 v5');
+    expect(contractDoc).toContain('F-008 实施注记（写回登记，2026-10-10）');
+    expect(contractDoc).toContain('payload.previewDigest');
+    expect(contractDoc).toContain('policyRevision');
+    expect(contractDoc).toContain('excludedDirNames');
+    // cancel 属 F-010/F-012：实现前不进信封白名单（不冒充能力）。
+    const commandsPort = readText('packages/core/src/ports/commands.ts');
+    expect(commandsPort).toContain("'baseline.preview',");
+    expect(commandsPort).toContain("'baseline.run',");
+    expect(commandsPort).not.toContain("'baseline.cancel',");
+  });
+
   it('开工 CLI 顶层命令为 project/config/receipt/events，契约记录扩展后的基线面', () => {
     const args = readText('packages/cli/src/app/args.ts');
     expect(args).toContain("APP_CLI_COMMANDS = ['project', 'config', 'receipt', 'events']");

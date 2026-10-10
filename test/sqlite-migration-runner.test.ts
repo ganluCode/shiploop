@@ -261,14 +261,17 @@ describe('F-005 迁移执行与记录', () => {
         expect(rows[1]!.version).toBe(2);
         expect(rows[1]!.checksum).toBe(SQLITE_MIGRATIONS[1]!.checksum);
         // P02-2 / F-006：v3 为真实 command_receipts 迁移；P02-3 / F-007：v4 为
-        // 真实基线四表迁移；探针迁移紧随其后。
+        // 真实基线四表迁移；P02-3 / F-008：v5 为 command_receipts 重建
+        // （accepted + operation_id）；探针迁移紧随其后。
         expect(rows[2]!.version).toBe(3);
         expect(rows[2]!.checksum).toBe(SQLITE_MIGRATIONS[2]!.checksum);
         expect(rows[3]!.version).toBe(4);
         expect(rows[3]!.checksum).toBe(SQLITE_MIGRATIONS[3]!.checksum);
-        expect(rows[4]!.version).toBe(PROBE_MIGRATION.version);
-        expect(rows[4]!.checksum).toBe(PROBE_MIGRATION.checksum);
-        expect(rows[4]!.applied_at).toBe(FIXED_NOW_MS + 1_000);
+        expect(rows[4]!.version).toBe(5);
+        expect(rows[4]!.checksum).toBe(SQLITE_MIGRATIONS[4]!.checksum);
+        expect(rows[5]!.version).toBe(PROBE_MIGRATION.version);
+        expect(rows[5]!.checksum).toBe(PROBE_MIGRATION.checksum);
+        expect(rows[5]!.applied_at).toBe(FIXED_NOW_MS + 1_000);
       } finally {
         session.close();
       }

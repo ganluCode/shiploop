@@ -11,7 +11,8 @@
  * - 写入在 F-004 短同步写事务（BEGIN IMMEDIATE）内完成；(principal_id,
  *   command_id) 与 result_ref 的唯一约束冲突映射为 StorageError(kind=
  *   'conflict')——正常命令流由 F-007 在同一事务内先查后写，本映射是防御
- *   纵深，不充当幂等控制流；本版本不持久化 accepted（校验与 DDL 双重拒绝）；
+ *   纵深，不充当幂等控制流；P02-3 / F-008 起 accepted 随迁移 v5 持久化
+ *   （operation_id 列 + CHECK；校验与 DDL 双重把关）；
  * - 读取到的持久行必经 ports 的 mapPersistedCommandReceipt 复核：结构损坏/
  *   未知操作/scope 不一致/JSON 列损坏一律显式失败（corrupt），不作为有效
  *   回执返回；缺失返回 undefined（幂等核对的正常结果），不抛 not_found；
@@ -50,6 +51,8 @@ interface CommandReceiptSqlRow {
   readonly operation: string;
   readonly request_digest: string;
   readonly status: string;
+  /** F-008 / 迁移 v5：accepted 回执的同事务操作身份；其余状态 NULL。 */
+  readonly operation_id: string | null;
   readonly result_json: string | null;
   readonly result_ref: string | null;
   readonly error_code: string | null;
@@ -61,7 +64,7 @@ interface CommandReceiptSqlRow {
 
 const SELECT_COLUMNS =
   'principal_id, command_id, scope_kind, project_id, operation, request_digest, status, ' +
-  'result_json, result_ref, error_code, error_message, error_details, issued_at, completed_at';
+  'operation_id, result_json, result_ref, error_code, error_message, error_details, issued_at, completed_at';
 
 /** better-sqlite3 约束冲突识别（SqliteError 带 code 字段）。 */
 function isSqliteConstraintError(error: unknown): error is Error & { code: string } {
@@ -124,6 +127,7 @@ export function createSqliteCommandReceiptAccess(
       operation: row.operation,
       requestDigest: row.request_digest,
       status: row.status,
+      operationId: row.operation_id,
       // undefined 表示列 NULL：JSON.parse 永不产生 undefined，两种情形可区分。
       result:
         row.result_json === null
@@ -158,9 +162,9 @@ export function createSqliteCommandReceiptAccess(
       const db = session.database;
       db.prepare(
         'INSERT INTO command_receipts (id, created_at, revision, updated_at, principal_id, command_id, ' +
-          'scope_kind, project_id, operation, request_digest, status, result_json, result_ref, ' +
+          'scope_kind, project_id, operation, request_digest, status, operation_id, result_json, result_ref, ' +
           'error_code, error_message, error_details, issued_at, completed_at) ' +
-          'VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          'VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       ).run(
         randomUUID(),
         timestamp,
@@ -172,6 +176,7 @@ export function createSqliteCommandReceiptAccess(
         valid.operation,
         valid.requestDigest,
         valid.status,
+        valid.status === 'accepted' ? valid.operationId : null,
         valid.status === 'completed' ? JSON.stringify(valid.result) : null,
         valid.status === 'completed' ? valid.resultRef : null,
         valid.status === 'rejected' ? valid.error.code : null,

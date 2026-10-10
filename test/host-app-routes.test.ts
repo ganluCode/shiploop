@@ -684,7 +684,8 @@ describe('F-011 传输纪律与版本门禁', () => {
     expect(legacy.statusCode).toBe(400);
     expect(errorOf(legacy).code).toBe('unsupported_schema_version');
     // 认证后未知操作（Work/Chat 候选名）→ 501 + 实际实现清单。
-    for (const operation of ['work.submit', 'chat.send', 'baseline.run', 'phase.advance']) {
+    // P02-3 / F-008：baseline.run 已是正式命令（此处仅用真正未实现的能力名）。
+    for (const operation of ['work.submit', 'chat.send', 'phase.advance']) {
       const response = await s.post('/v1/commands', {
         schemaVersion: 3,
         commandId: randomUUID(),
@@ -703,6 +704,8 @@ describe('F-011 传输纪律与版本门禁', () => {
         'settings.global.update',
         'settings.project.create',
         'settings.project.update',
+        'baseline.preview',
+        'baseline.run',
       ]);
     }
     // actorId/principal 提权字段 → 400 invalid_input（未知键，定位字段）。
@@ -918,6 +921,9 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         'settings.global.update',
         'settings.project.create',
         'settings.project.update',
+        // P02-3 / F-008：基线 preview/run 经既有 /v1/commands 路由真实接线。
+        'baseline.preview',
+        'baseline.run',
       ],
       queries: [
         'projects.list',

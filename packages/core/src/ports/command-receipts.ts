@@ -43,6 +43,7 @@ import {
 } from './commands.js';
 import type {
   AppOperation,
+  AcceptedCommandReceipt,
   CommandReceipt,
   CommandScope,
   CommandScopeKind,
@@ -190,6 +191,8 @@ export interface PersistedCommandReceiptRow {
   readonly operation: string;
   readonly requestDigest: string;
   readonly status: string;
+  /** F-008 / §5.3：accepted 回执的同事务操作身份；其余状态为 null。 */
+  readonly operationId: string | null;
   readonly result: unknown;
   readonly resultRef: string | null;
   readonly errorCode: string | null;
@@ -207,6 +210,7 @@ const PERSISTED_ROW_KEYS = [
   'operation',
   'requestDigest',
   'status',
+  'operationId',
   'result',
   'resultRef',
   'errorCode',
@@ -289,8 +293,8 @@ function isBoundedJsonResult(value: unknown): boolean {
  * `replayed` 恒为 false（持久行是原始回执；重放标记由 §5.5 重放判定派生）。
  *
  * 任何不一致（结构损坏、未知操作、scope 与 operation/projectId 不匹配、
- * 持久化 accepted、completed/rejected 交叉字段违反、摘要/时间/resultRef 形态
- * 非法、错误 details 白名单外键）一律 corrupt_state（corrupt_receipt_row），
+ * completed/rejected/accepted 交叉字段违反、摘要/时间/resultRef/operationId
+ * 形态非法、错误 details 白名单外键）一律 corrupt_state（corrupt_receipt_row），
  * 错误不回显行列原文。
  */
 export function mapPersistedCommandReceipt(
@@ -371,6 +375,9 @@ export function mapPersistedCommandReceipt(
     if (row.errorCode !== null || row.errorMessage !== null || row.errorDetails !== null) {
       corrupt(operation, 'error');
     }
+    if (row.operationId !== null) {
+      corrupt(operation, 'operationId');
+    }
     const completed: CompletedCommandReceipt = {
       ...base,
       status: 'completed',
@@ -378,6 +385,24 @@ export function mapPersistedCommandReceipt(
       resultRef: row.resultRef as string,
     };
     return completed;
+  }
+  if (row.status === 'accepted') {
+    // §5.3（F-008 首次启用）：accepted 只携带同事务操作身份，不带 result/resultRef/error。
+    if (row.result !== undefined || row.resultRef !== null) {
+      corrupt(operation, 'result');
+    }
+    if (row.errorCode !== null || row.errorMessage !== null || row.errorDetails !== null) {
+      corrupt(operation, 'error');
+    }
+    if (!isUuidV4(row.operationId)) {
+      corrupt(operation, 'operationId');
+    }
+    const accepted: AcceptedCommandReceipt = {
+      ...base,
+      status: 'accepted',
+      operationId: row.operationId as string,
+    };
+    return accepted;
   }
   if (row.status === 'rejected') {
     // 持久化 accepted 或其他未知状态：显式失败，不伪造（§5.3：本版本无 accepted 写路径）。
@@ -418,6 +443,7 @@ const RECEIPT_KEYS = [
   'scope',
   'requestDigest',
   'status',
+  'operationId',
   'result',
   'resultRef',
   'error',
@@ -515,6 +541,9 @@ function validateReceiptShape(
     if (object.error !== undefined) {
       throw validationError(context, 'receipt.error', 'completed 回执不允许携带 error');
     }
+    if (object.operationId !== undefined) {
+      throw validationError(context, 'receipt.operationId', 'completed 回执不允许携带 operationId');
+    }
     if (!Object.prototype.hasOwnProperty.call(object, 'result')) {
       throw validationError(context, 'receipt.result', 'completed 回执必须携带 result');
     }
@@ -535,6 +564,21 @@ function validateReceiptShape(
       resultRef: object.resultRef,
     };
     return completed;
+  }
+  if (object.status === 'accepted') {
+    // §5.3（F-008 首次启用）：accepted 只携带 operationId；不带 result/resultRef/error。
+    if (object.result !== undefined || object.resultRef !== undefined || object.error !== undefined) {
+      throw validationError(context, 'receipt.result', 'accepted 回执不允许携带 result/resultRef/error');
+    }
+    if (!isUuidV4(object.operationId)) {
+      throw validationError(context, 'receipt.operationId', '必须是 RFC 4122 UUID v4（同事务操作身份）');
+    }
+    const accepted: AcceptedCommandReceipt = {
+      ...base,
+      status: 'accepted',
+      operationId: object.operationId,
+    };
+    return accepted;
   }
   if (object.status === 'rejected') {
     if (object.result !== undefined || object.resultRef !== undefined) {
@@ -568,7 +612,7 @@ function validateReceiptShape(
   throw validationError(
     context,
     'receipt.status',
-    "必须是 'completed' 或 'rejected'（本版本不持久化 accepted）",
+    "必须是 'completed'、'rejected' 或 'accepted'（仅 baseline.run authorize 产生 accepted）",
     describeValueType(object.status),
   );
 }
@@ -580,7 +624,8 @@ function validateReceiptShape(
  * 发生在任何 SQL 之前，不产生持久化副作用。
  *
  * `replayed` 是线上派生标记（不入库）：持久化输入必须 replayed=false，
- * 重放取回的回执再次入库属于调用方编程错误。本版本不产生 accepted 持久回执。
+ * 重放取回的回执再次入库属于调用方编程错误。P02-3 / F-008 起 accepted
+ * 持久回执仅由 baseline.run（authorize）提交事务产生。
  */
 export function validatePersistableCommandReceipt(
   value: unknown,
@@ -592,8 +637,8 @@ export function validatePersistableCommandReceipt(
 /**
  * 线上回执校验（F-013，§5.3/§11.2）：Host/HostClient 对接收到的回执 JSON 做
  * 完整运行时复核。与持久化校验同一组不变量，唯一差异是 `replayed` 只要求
- * 布尔（线上重放取回的回执 replayed=true 合法）。accepted 不是合法线上状态
- * （本版本同步短事务命令不产生 accepted），一律 validation 拒绝。
+ * 布尔（线上重放取回的回执 replayed=true 合法）。accepted 仅在携带同事务
+ * operationId 且不带 result/resultRef/error 时合法（baseline.run authorize）。
  *
  * 纯函数：不读时钟/文件系统/网络/数据库；校验失败抛
  * StorageError(kind='validation')（字段定位在 details.field），不回显输入值。

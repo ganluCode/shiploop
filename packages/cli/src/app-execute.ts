@@ -399,6 +399,11 @@ async function submitCommandAndEmit(
       ...(receipt.error.details !== undefined ? { details: receipt.error.details } : {}),
     });
   }
+  if (receipt.status === 'accepted') {
+    // F-008 起 Host 可产生 accepted（baseline.run authorize）；当前 CLI 命令面
+    // 全部为同步命令，accepted 属协议异常（fail-closed，不折算成功/失败）。
+    throw new Error('unexpected_accepted_receipt');
+  }
   return emitSuccess(io, command, receipt, writeCommandHumanLine(command.commandId, receipt));
 }
 
@@ -524,6 +529,11 @@ async function executeProjectInit(
       commandId: receipt.commandId,
       ...(receipt.error.details !== undefined ? { details: receipt.error.details } : {}),
     });
+  }
+  if (receipt.status === 'accepted') {
+    // F-008 起 Host 可产生 accepted（baseline.run authorize）；当前 CLI 命令面
+    // 全部为同步命令，accepted 属协议异常（fail-closed，不折算成功/失败）。
+    throw new Error('unexpected_accepted_receipt');
   }
   const result = buildInitCliResult(request, inspection, initRegistrationOutcome(receipt));
   return emitOnboardingResult(

@@ -482,9 +482,14 @@ async function handleCommandSubmit(
   }
 
   const receipt = await app.commandService.submit(app.principal, parsedBody);
-  // §5.3：completed → 200；业务 rejected → 按 §5.7 唯一映射，响应体仍是回执。
+  // §5.3：accepted → 202（F-008 首次启用，仅 baseline.run authorize）；
+  // completed → 200；业务 rejected → 按 §5.7 唯一映射，响应体仍是回执。
   const status =
-    receipt.status === 'completed' ? 200 : publicErrorHttpStatus(receipt.error.code);
+    receipt.status === 'accepted'
+      ? 202
+      : receipt.status === 'completed'
+        ? 200
+        : publicErrorHttpStatus(receipt.error.code);
   sendBoundedJson(response, status, receipt, MAX_APP_BODY_BYTES, operation);
 }
 

@@ -246,8 +246,11 @@ async function registerProject(
     issuedAt: NOW_ISO,
     payload: { repositoryPath: repoDir, displayName: name },
   })) as CommandReceipt;
-  if (receipt.status !== 'completed') {
+  if (receipt.status === 'rejected') {
     throw new Error(`注册未 completed：${JSON.stringify(receipt.error)}`);
+  }
+  if (receipt.status !== 'completed') {
+    throw new Error(`注册回执异常状态：${receipt.status}`);
   }
   const project = (receipt.result as { project: { id: string; revision: number } }).project;
   return { projectId: project.id, revision: project.revision };
@@ -270,8 +273,11 @@ async function submitMetadataUpdate(
     issuedAt: NOW_ISO,
     payload: { displayName: name },
   })) as CommandReceipt;
-  if (receipt.status !== 'completed') {
+  if (receipt.status === 'rejected') {
     throw new Error(`元数据更新未 completed：${JSON.stringify(receipt.error)}`);
+  }
+  if (receipt.status !== 'completed') {
+    throw new Error(`元数据更新回执异常状态：${receipt.status}`);
   }
 }
 
@@ -354,8 +360,11 @@ async function submitGlobalSettings(
     issuedAt: NOW_ISO,
     payload: largeGlobalSettingsPayload(),
   })) as CommandReceipt;
-  if (receipt.status !== 'completed') {
+  if (receipt.status === 'rejected') {
     throw new Error(`全局配置命令未 completed：${JSON.stringify(receipt.error)}`);
+  }
+  if (receipt.status !== 'completed') {
+    throw new Error(`全局配置命令回执异常状态：${receipt.status}`);
   }
   return (receipt.result as { revision: number }).revision;
 }

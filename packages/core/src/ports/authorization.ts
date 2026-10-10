@@ -460,6 +460,20 @@ export function authorizeProjectOverview(
   requireProjectVisible(principal, projectId, operation);
 }
 
+/**
+ * P02-3 §4.3：baseline.preview/run/cancel 一律 baseline.run 能力 + 目标项目
+ * 可见（projectId 只是目标选择，不扩大 projectScope）；不可见/未知统一
+ * forbidden（存在性折算由调用方 mapProjectLookupError 完成）。
+ */
+export function authorizeBaselineCommand(
+  principal: TrustedPrincipal,
+  projectId: string,
+  operation: string = 'baseline.preview',
+): void {
+  requireCapability(principal, 'baseline.run', operation);
+  requireProjectVisible(principal, projectId, operation);
+}
+
 /* ------------------------------------------------------------------ *
  * §4.3 回执 / 结果引用 / 命令重放授权
  * ------------------------------------------------------------------ */

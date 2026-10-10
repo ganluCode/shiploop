@@ -502,6 +502,9 @@ describe('F-006 Host inspect/overview 路由与握手能力（真实 Host + SQLi
       'settings.global.update',
       'settings.project.create',
       'settings.project.update',
+      // P02-3 / F-008：基线 preview/run 经既有 /v1/commands 路由真实接线。
+      'baseline.preview',
+      'baseline.run',
     ]);
     for (const legacyVersion of [2, 1]) {
       const legacy = await loopbackRequest({

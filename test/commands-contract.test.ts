@@ -115,7 +115,7 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
     }
   });
 
-  it('冻结六个命令及其 scope/变更类型/能力描述，与契约 §6 一致', () => {
+  it('冻结命令白名单及其 scope/变更类型/能力描述，与契约 §6 一致', () => {
     expect([...COMMAND_OPERATIONS]).toEqual([
       'project.register',
       'project.metadata.update',
@@ -123,6 +123,9 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       'settings.global.update',
       'settings.project.create',
       'settings.project.update',
+      // P02-3 / F-008：基线 preview/run（cancel 属 F-010/F-012，实现前进白名单）。
+      'baseline.preview',
+      'baseline.run',
     ]);
     expect(COMMAND_OPERATION_SPECS).toEqual({
       'project.register': { scopeKind: 'registration', mutation: 'create', capability: 'project.register' },
@@ -131,6 +134,8 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       'settings.global.update': { scopeKind: 'global', mutation: 'update', capability: 'settings.global.write' },
       'settings.project.create': { scopeKind: 'project', mutation: 'create', capability: 'settings.project.write' },
       'settings.project.update': { scopeKind: 'project', mutation: 'update', capability: 'settings.project.write' },
+      'baseline.preview': { scopeKind: 'project', mutation: 'create', capability: 'baseline.run' },
+      'baseline.run': { scopeKind: 'project', mutation: 'create', capability: 'baseline.run' },
     });
     for (const spec of Object.values(COMMAND_OPERATION_SPECS)) {
       expect(APP_CAPABILITIES).toContain(spec.capability);

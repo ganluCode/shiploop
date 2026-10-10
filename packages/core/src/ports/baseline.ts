@@ -1078,5 +1078,221 @@ export function summarizeBaselineOperation(input: BaselineOperationSummaryInput)
   };
 }
 
+/* ------------------------------------------------------------------ *
+ * §6.3 代码身份的工作区摘要（算法与排除表冻结；实现由 fs 适配器供料）
+ * ------------------------------------------------------------------ */
+
+/**
+ * 工作区摘要的冻结排除目录名（§6.3：至少 .git/node_modules/dist/build/.cache；
+ * 在任意层级按目录名排除）。适配器不跟随符号链接（防逃逸与不确定挂载点）；
+ * 排除范围随预览结果记录（不假装只检查 commit）。
+ */
+export const BASELINE_WORKSPACE_EXCLUDED_DIR_NAMES = [
+  '.git',
+  'node_modules',
+  'dist',
+  'build',
+  '.cache',
+] as const;
+
+/** 工作区受管文件条目（适配器采集；path 为 POSIX 相对路径、无前导 ./）。 */
+export interface BaselineWorkspaceFileEntry {
+  readonly path: string;
+  readonly sha256: string;
+}
+
+export interface BaselineWorkspaceDigestResult {
+  readonly digest: string;
+  readonly fileCount: number;
+}
+
+/**
+ * 工作区摘要纯函数：对已采集条目按路径码点排序后做
+ * sha256(stableCanonicalJson([[path, sha256], ...]))；确定性、内容敏感、
+ * 覆盖 tracked/untracked（条目集合由适配器决定，含未跟踪源文件与配置）。
+ * 重复路径 / 非法形态 → TypeError（适配器编程错误，不折算客户端错误）。
+ */
+export function computeBaselineWorkingTreeDigest(
+  entries: readonly BaselineWorkspaceFileEntry[],
+): BaselineWorkspaceDigestResult {
+  const seen = new Set<string>();
+  for (const entry of entries) {
+    if (
+      entry === null ||
+      typeof entry !== 'object' ||
+      typeof entry.path !== 'string' ||
+      entry.path.length === 0 ||
+      entry.path.startsWith('/') ||
+      entry.path.includes('\0') ||
+      entry.path.split('/').some((segment) => segment === '' || segment === '.' || segment === '..')
+    ) {
+      throw new TypeError('工作区条目 path 必须是非空 POSIX 相对路径（无空段/./..）');
+    }
+    if (typeof entry.sha256 !== 'string' || !/^[0-9a-f]{64}$/.test(entry.sha256)) {
+      throw new TypeError('工作区条目 sha256 必须是 64 位小写十六进制');
+    }
+    if (seen.has(entry.path)) {
+      throw new TypeError(`工作区条目路径重复：${entry.path}`);
+    }
+    seen.add(entry.path);
+  }
+  const sorted = [...entries].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  const material = stableCanonicalJson(sorted.map((entry) => [entry.path, entry.sha256]));
+  return {
+    digest: createHash('sha256').update(material, 'utf8').digest('hex'),
+    fileCount: sorted.length,
+  };
+}
+
+/**
+ * §5.5/§6 previewDigest：绑定完整输入摘要 —— 计划（argv/cwd 引用/环境引用/
+ * timeout/required，即检查政策）与代码身份（HEAD/工作区摘要/脏标记）任一
+ * 实质变化都使旧摘要失效（preview_stale）。纯函数。
+ */
+export function computeBaselinePreviewDigest(
+  plan: BaselineCheckPlan,
+  codeIdentity: BaselineCodeIdentity,
+): string {
+  return createHash('sha256')
+    .update(stableCanonicalJson({ plan, codeIdentity }), 'utf8')
+    .digest('hex');
+}
+
+/* ------------------------------------------------------------------ *
+ * §6.3/§6.4 预览与授权核验的窄端口（fs 适配器 / 可信装配供料）
+ * ------------------------------------------------------------------ */
+
+/** §6.3 工作区摘要视图（预览结果记录排除范围与受管文件数）。 */
+export interface BaselineWorkspaceSummary {
+  readonly digest: string;
+  readonly fileCount: number;
+  readonly excludedDirNames: readonly string[];
+}
+
+/** cwd realpath 核验结果：inside=规范绝对路径；missing=不存在；outside=逃逸。 */
+export type BaselineCwdResolution =
+  | { readonly status: 'inside'; readonly canonicalPath: string }
+  | { readonly status: 'missing' }
+  | { readonly status: 'outside' };
+
+/**
+ * §6.3 工作区读取窄端口（fs 适配器实现）：
+ * - readWorkspaceSummary：只读采集 tracked+untracked 受管文件与配置的确定性
+ *   摘要（冻结排除表；不跟随符号链接；不执行任何脚本/安装）；
+ * - resolveContainedCwd：把 cwdRef 解析为 realpath 规范 cwd 并核验落在仓库根
+ *   realpath 之内（符号链接逃逸 → outside；不存在/非目录 → missing）；
+ * - probeRelativeTarget：相对目标（如 ./scripts/tool.js）相对仓库内 cwd 的
+ *   存在性探测（只探测存在性，不读内容、不执行；argv0 相对脚本警示用）。
+ */
+export interface BaselineWorkspaceReader {
+  readWorkspaceSummary(canonicalRepositoryRoot: string): Promise<BaselineWorkspaceSummary>;
+  resolveContainedCwd(
+    canonicalRepositoryRoot: string,
+    cwdRef: string | null,
+  ): Promise<BaselineCwdResolution>;
+  probeRelativeTarget(
+    canonicalRepositoryRoot: string,
+    cwdRef: string | null,
+    relativeTarget: string,
+  ): Promise<'exists' | 'missing' | 'outside'>;
+}
+
+/** §6.4 环境允许列表（只含变量名，永不携带值）。 */
+export interface BaselineEnvironmentAllowlist {
+  readonly allowedVariables: readonly string[];
+}
+
+/**
+ * §6.4 环境引用目录窄端口（可信装配注入；生产默认空目录 → 任何
+ * environmentRef 都是未获准引用，fail-closed）。解析结果只含变量名；
+ * 值的注入属执行域（F-009），本端口不接触任何环境值。
+ */
+export interface BaselineEnvironmentDirectory {
+  resolveEnvironmentRef(environmentRef: string): BaselineEnvironmentAllowlist | null;
+}
+
+/** §6.4 最小默认环境：PATH（继承）+ 获准允许列表变量名。 */
+export const BASELINE_MINIMAL_ENVIRONMENT_VARIABLES: ReadonlyArray<string> = Object.freeze(['PATH']);
+
+const ENV_VARIABLE_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/**
+ * 核验目录解析出的允许列表（可信装配数据 → 形态错误是编程错误 TypeError）：
+ * 变量名必须是 POSIX 环境名、去重、不含 PATH 重复（PATH 恒由最小环境提供）。
+ */
+export function normalizeBaselineAllowedVariables(
+  allowlist: BaselineEnvironmentAllowlist,
+): readonly string[] {
+  if (allowlist === null || typeof allowlist !== 'object' || !Array.isArray(allowlist.allowedVariables)) {
+    throw new TypeError('环境允许列表必须是 { allowedVariables: string[] }');
+  }
+  const names: string[] = [];
+  for (const raw of allowlist.allowedVariables) {
+    if (typeof raw !== 'string' || !ENV_VARIABLE_NAME_PATTERN.test(raw)) {
+      throw new TypeError(`环境允许列表变量名非法：${String(raw)}`);
+    }
+    if (!names.includes(raw)) {
+      names.push(raw);
+    }
+  }
+  return names.filter((name) => !BASELINE_MINIMAL_ENVIRONMENT_VARIABLES.includes(name));
+}
+
+/* ------------------------------------------------------------------ *
+ * §6 预览结果形态（回执内嵌 result；非敏感：不含环境值/秘密/路径外信息）
+ * ------------------------------------------------------------------ */
+
+export const BASELINE_PREVIEW_WARNING_CODES = [
+  'shell_metacharacters_in_argument',
+  'argv0_relative_script_missing',
+  'working_tree_dirty',
+  'no_initial_commit',
+] as const;
+export type BaselinePreviewWarningCode = (typeof BASELINE_PREVIEW_WARNING_CODES)[number];
+
+export interface BaselinePreviewWarning {
+  readonly code: BaselinePreviewWarningCode;
+  readonly checkKey?: string;
+}
+
+/** 预览逐项检查视图（实际 argv 原样展示；不改写、不解释）。 */
+export interface BaselinePreviewCheckView {
+  readonly checkKey: string;
+  readonly kind: 'command';
+  readonly argv: readonly string[];
+  readonly cwdRef: string | null;
+  /** realpath 规范化后的绝对 cwd（核验落在仓库根内）。 */
+  readonly cwd: string;
+  readonly environmentRef: string | null;
+  /** 非敏感环境摘要：仅变量名（PATH + 获准允许列表），永不携带值。 */
+  readonly allowedVariables: readonly string[];
+  readonly timeoutMs: number;
+  readonly required: boolean;
+}
+
+/** §6.3 预览附带的工作区摘要范围（不假装只检查 commit）。 */
+export interface BaselinePreviewWorkspaceView {
+  readonly excludedDirNames: readonly string[];
+  readonly fileCount: number;
+}
+
+/** baseline.preview 回执 result（§6 冻结语义 + F-008 实施注记字段）。 */
+export interface BaselinePreviewResult {
+  readonly previewDigest: string;
+  /** 检查政策修订（= planDigest = sha256(stableCanonicalJson(plan))）。 */
+  readonly policyRevision: string;
+  readonly codeIdentity: BaselineCodeIdentity;
+  readonly workspace: BaselinePreviewWorkspaceView;
+  readonly checks: readonly BaselinePreviewCheckView[];
+  readonly warnings: readonly BaselinePreviewWarning[];
+}
+
+/** baseline.run 回执 result：decline → not_run 的可查询独立状态。 */
+export interface BaselineDeclinedResult {
+  readonly operationId: string;
+  readonly status: 'not_run';
+  readonly reasonCode: 'authorization_rejected';
+}
+
 // 保持 isPublicError 的显式引用，供消费方从本模块一并取得判别函数（无额外副作用）。
 export { isPublicError };

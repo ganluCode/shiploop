@@ -76,8 +76,11 @@ async function setup() {
   });
   const submit = async (operation: string, scope: unknown, changes: Record<string, unknown> = {}) => {
     const receipt = await app.commandService.submit(owner, envelope(operation, scope, changes));
-    if (receipt.status !== 'completed') {
+    if (receipt.status === 'rejected') {
       throw new Error(`命令 ${operation} 未完成：${JSON.stringify(receipt.error)}`);
+    }
+    if (receipt.status !== 'completed') {
+      throw new Error(`命令 ${operation} 回执异常状态：${receipt.status}`);
     }
     return receipt;
   };

@@ -156,12 +156,14 @@ function persistedRowOf(receipt: CommandReceipt): PersistedCommandReceiptRow {
     operation: receipt.operation,
     requestDigest: receipt.requestDigest,
     status: receipt.status,
+    operationId: null,
     issuedAtUtcMs: Date.parse(receipt.issuedAt),
     completedAtUtcMs: Date.parse(receipt.completedAt),
   };
   if (receipt.status === 'completed') {
     return {
       ...base,
+      operationId: null,
       result: receipt.result,
       resultRef: receipt.resultRef,
       errorCode: null,
@@ -169,13 +171,25 @@ function persistedRowOf(receipt: CommandReceipt): PersistedCommandReceiptRow {
       errorDetails: null,
     };
   }
+  if (receipt.status === 'rejected') {
+    return {
+      ...base,
+      operationId: null,
+      result: undefined,
+      resultRef: null,
+      errorCode: receipt.error.code,
+      errorMessage: receipt.error.message,
+      errorDetails: receipt.error.details ?? null,
+    };
+  }
   return {
     ...base,
+    operationId: receipt.operationId,
     result: undefined,
     resultRef: null,
-    errorCode: receipt.error.code,
-    errorMessage: receipt.error.message,
-    errorDetails: receipt.error.details ?? null,
+    errorCode: null,
+    errorMessage: null,
+    errorDetails: null,
   };
 }
 
@@ -852,11 +866,11 @@ describe('F-006 迁移 v3 command_receipts', () => {
       const dbPath = join(sandbox.path, 'state.db');
       const session = openSqliteStorageSession({ path: dbPath });
       await migrateSqliteStorage(session);
-      // 高版本：插入超出支持范围的迁移记录（P02-3 / F-007 起真实清单止于 v4，
-      // 探针记录为 v5）。
+      // 高版本：插入超出支持范围的迁移记录（P02-3 / F-008 起真实清单止于 v5，
+      // 探针记录为 v6）。
       session.database
         .prepare('INSERT INTO schema_migrations (id, created_at, version, checksum, applied_at) VALUES (?, ?, ?, ?, ?)')
-        .run('migration-v5', 1, SQLITE_MIGRATIONS.length + 1, DIGEST_HEX, 1);
+        .run('migration-v6', 1, SQLITE_MIGRATIONS.length + 1, DIGEST_HEX, 1);
       session.close();
       const highVersion = openSqliteStorageSession({ path: dbPath });
       let caught: unknown;

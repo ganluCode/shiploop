@@ -335,6 +335,68 @@ CREATE TABLE baseline_occupancy (
 );
 `;
 
+/**
+ * 第五个迁移（P02-3 / F-008）：command_receipts 表重建，持久化 accepted 回执。
+ *
+ * 契约依据：docs/p02-3-onboarding-contract.md §5.3（accepted 回执与操作行同一
+ * 提交事务持久化，§15.6 首次启用）与 §10 的 F-008 写回注记（v4 冻结时不含
+ * 本列；F-007 登记的张力由本迁移落定）。
+ *
+ * 变更（相对 v3 冻结 DDL，均为加强约束）：
+ * - 新增 operation_id 列（可空；accepted 回执的同事务 baseline_operations
+ *   行身份，FK ON DELETE RESTRICT + 唯一索引：一条 accepted 回执至多对应
+ *   一个操作）；
+ * - status CHECK 扩展 accepted；新增 accepted 交叉字段 CHECK（accepted 必须
+ *   携带 operation_id 且不带 result/result_ref/error）。
+ *
+ * 既有行迁移：INSERT ... SELECT 原样保留（v3/v4 行无 accepted，operation_id
+ *   置 NULL）；SQLite 不支持 ALTER 修改 CHECK，按标准十二步重建（新表→拷贝
+ * →删旧→改名→重建索引）；无其他表引用 command_receipts，DROP 安全。
+ */
+const MIGRATION_005_SQL = `
+CREATE TABLE command_receipts_v5 (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  principal_id TEXT NOT NULL,
+  command_id TEXT NOT NULL,
+  scope_kind TEXT NOT NULL,
+  project_id TEXT,
+  operation TEXT NOT NULL,
+  request_digest TEXT NOT NULL,
+  status TEXT NOT NULL,
+  operation_id TEXT,
+  result_json TEXT,
+  result_ref TEXT,
+  error_code TEXT,
+  error_message TEXT,
+  error_details TEXT,
+  issued_at INTEGER NOT NULL,
+  completed_at INTEGER NOT NULL,
+  CONSTRAINT command_receipts_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT command_receipts_operation_fk FOREIGN KEY (operation_id) REFERENCES baseline_operations (id) ON DELETE RESTRICT,
+  CONSTRAINT command_receipts_scope_check CHECK ((scope_kind = 'project' AND project_id IS NOT NULL) OR (scope_kind IN ('registration','global') AND project_id IS NULL)),
+  CONSTRAINT command_receipts_status_check CHECK (status IN ('completed','rejected','accepted')),
+  CONSTRAINT command_receipts_completed_check CHECK (status <> 'completed' OR (result_json IS NOT NULL AND result_ref IS NOT NULL AND error_code IS NULL)),
+  CONSTRAINT command_receipts_rejected_check CHECK (status <> 'rejected' OR (error_code IS NOT NULL AND result_json IS NULL)),
+  CONSTRAINT command_receipts_accepted_check CHECK (status <> 'accepted' OR (operation_id IS NOT NULL AND result_json IS NULL AND result_ref IS NULL AND error_code IS NULL)),
+  CONSTRAINT command_receipts_digest_check CHECK (length(request_digest) = 64 AND request_digest NOT GLOB '*[^0-9a-f]*')
+);
+
+INSERT INTO command_receipts_v5 (id, created_at, revision, updated_at, principal_id, command_id, scope_kind, project_id, operation, request_digest, status, operation_id, result_json, result_ref, error_code, error_message, error_details, issued_at, completed_at)
+SELECT id, created_at, revision, updated_at, principal_id, command_id, scope_kind, project_id, operation, request_digest, status, NULL, result_json, result_ref, error_code, error_message, error_details, issued_at, completed_at FROM command_receipts;
+
+DROP TABLE command_receipts;
+
+ALTER TABLE command_receipts_v5 RENAME TO command_receipts;
+
+CREATE UNIQUE INDEX command_receipts_principal_command_unique ON command_receipts (principal_id, command_id);
+CREATE UNIQUE INDEX command_receipts_result_ref_unique ON command_receipts (result_ref);
+CREATE UNIQUE INDEX command_receipts_operation_id_unique ON command_receipts (operation_id);
+CREATE INDEX command_receipts_principal_project_index ON command_receipts (principal_id, project_id);
+`;
+
 function sha256Hex(text: string): string {
   return createHash('sha256').update(text, 'utf8').digest('hex');
 }
@@ -360,5 +422,10 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
     version: 4,
     sql: MIGRATION_004_SQL,
     checksum: sha256Hex(MIGRATION_004_SQL),
+  },
+  {
+    version: 5,
+    sql: MIGRATION_005_SQL,
+    checksum: sha256Hex(MIGRATION_005_SQL),
   },
 ];

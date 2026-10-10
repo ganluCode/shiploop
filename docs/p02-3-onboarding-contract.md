@@ -435,6 +435,22 @@ stderr 原文永不进入错误体。
 | `baseline.run` | project | 必填 | `{decision:'authorize'\|'decline', plan, previewDigest}` | authorize → `accepted` `{operationId}`；decline → `completed` `{operationId, status:'not_run', reasonCode:'authorization_rejected'}`；stale → `rejected preview_stale` |
 | `baseline.cancel` | project | 缺席 | `{operationId}` | `completed`：`{operationId, status, reasonCode?}`（进程已确认停止） |
 
+**F-008 实施注记（写回登记，2026-10-10）**：
+
+1. 上表 `baseline.run` 的「expectedRevision 必填」按 CAS 纪律实际载体落地为
+   **payload.previewDigest**（信封不携带数值 expectedRevision，创建语义拒绝携带）：
+   §5.5 幂等矩阵的 stale 核对出 previewDigest（绑定计划 + 代码身份的完整输入摘要），
+   数值 expectedRevision 在本命令无实体可指向。请求核对：若要求恢复信封级数值
+   expectedRevision，需给出指向实体与语义。
+2. `baseline.preview` 回执 result 实际形状为 `{previewDigest, policyRevision,
+   codeIdentity, workspace, checks, warnings}`：在 §6 表列四键之上补充
+   `policyRevision`（= planDigest，检查政策绑定）与 `workspace`
+  （`{excludedDirNames, fileCount}`，§6.3 排除范围的记录面）；逐项 check 视图
+   为 `{checkKey, kind, argv, cwdRef, cwd, environmentRef, allowedVariables,
+   timeoutMs, required}`（`cwd` 为 realpath 规范 cwd；`allowedVariables` 仅变量名）。
+3. `baseline.cancel` 属 F-010/F-012：实现前不进信封白名单（501 unsupported），
+   不冒充能力。
+
 ### 6.1 检查计划 payload（独立授权输入，§15.2）
 
 ```ts
@@ -779,6 +795,17 @@ CREATE TABLE baseline_occupancy (
   `baseline_in_progress`）。上述行为依据 F-007 验收标准的「不可变检查输入/结果」与「可恢复的
   进程身份」要求落定；若负责人要求改为可更新的检查行或独立的 execution_version 令牌列，
   需在 F-008/F-012 实施前给出依据并修订本节。
+
+**F-008 补充（写回登记，2026-10-10）：迁移 v5 与 accepted 回执落库**。F-007 登记
+的张力（§5.3 要求 accepted 回执与操作行同事务持久化，而 v3 回执表 CHECK 只允许
+completed/rejected）由**迁移 v5**落定：`command_receipts` 表重建，新增可空
+`operation_id` 列（FK → `baseline_operations.id` ON DELETE RESTRICT + 唯一索引：
+一条 accepted 回执至多对应一个操作），status CHECK 扩展 `accepted`，并新增
+`command_receipts_accepted_check`（accepted 必须携带 operation_id 且不带
+result/result_ref/error）。既有行经 INSERT...SELECT 原样保留（operation_id 置 NULL）；
+从空库与 v4 库两条路径迁移成功。v4「不向 command_receipts 增加新结构」的约束
+限定为 F-007 迁移范围；本变更以测试依据回写（依据 §5.3/§15.6 的 accepted 定案与
+F-007 登记的核对请求）。
 
 ## 11. Host 装配、握手能力与 HostClient 扩展
 

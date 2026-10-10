@@ -7,9 +7,9 @@
  * - §4.2 九项能力冻结清单与 local-owner；
  * - §5.1 命令信封三态 scope（registration/global/project）、expectedRevision
  *   唯一权威来源（仅更新类必填）、严格未知键拒绝；
- * - §5.3 回执 accepted/completed/rejected：本版本全部为同步短事务命令，工厂
- *   只产生 completed/rejected，不导出 accepted 工厂，不建 operations 表、
- *   不伪造 operationId；
+ * - §5.3 回执 accepted/completed/rejected：P02-2 全部为同步短事务命令
+ *   （只产生 completed/rejected）；P02-3 / F-008 起 baseline.run（authorize）
+ *   首次启用 accepted 工厂（携带同事务写入的真实 operationId，不伪造）；
  * - §5.4 时效：issuedAt 必填（真实 ISO UTC）、偏差 ±60 000 ms、缺省 TTL
  *   60 000 ms、expiresAt 最大寿命 300 000 ms；时钟由调用方注入；
  * - §5.7 StorageError / RepositoryInspectionError / 未预期异常到稳定公开错误的
@@ -89,6 +89,12 @@ export const COMMAND_OPERATIONS = [
   'settings.global.update',
   'settings.project.create',
   'settings.project.update',
+  // P02-3 / F-008（docs/p02-3-onboarding-contract.md §6）：基线命令。preview/run
+  // 随 F-008 落地；baseline.cancel 的取消/停止核验属 F-010/F-012，实现前不进
+  // 白名单（信封层即 501 unsupported，不冒充能力；payload 深校验在应用服务层
+  // 经 ports/baseline.ts 完成，避免本模块反向依赖）。
+  'baseline.preview',
+  'baseline.run',
 ] as const;
 
 export type AppOperation = (typeof COMMAND_OPERATIONS)[number];
@@ -137,6 +143,11 @@ export const COMMAND_OPERATION_SPECS: Readonly<Record<AppOperation, CommandOpera
       mutation: 'update',
       capability: 'settings.project.write',
     },
+    // §4.3：基线命令一律 project scope + baseline.run 能力；创建语义
+    // （expectedRevision 必须缺席——基线 CAS 纪律由 payload.previewDigest
+    // 承载，见 §5.5 幂等矩阵与 §16 F-008 实施注记）。
+    'baseline.preview': { scopeKind: 'project', mutation: 'create', capability: 'baseline.run' },
+    'baseline.run': { scopeKind: 'project', mutation: 'create', capability: 'baseline.run' },
   });
 
 /* ------------------------------------------------------------------ *
@@ -296,6 +307,36 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
   return prototype === Object.prototype || prototype === null;
 }
 
+/** 基线命令信封层 payload 形态门槛：必须是 JSON 对象（深校验在应用层）。 */
+function isPlainObjectPayload(value: unknown): value is Record<string, unknown> {
+  return isPlainObject(value);
+}
+
+/**
+ * 基线 payload 的 undefined 键规范化：线上 JSON 不存在 undefined 值，本函数
+ * 把进程内直接提交的对象归一到同一线上形态（丢弃值为 undefined 的键，递归
+ * 数组/对象），保证 requestDigest 与后续校验对同一输入得到同一结果。
+ */
+function normalizeBaselinePayload<T extends Record<string, unknown>>(payload: T): unknown {
+  function normalizeValue(value: unknown): unknown {
+    if (Array.isArray(value)) {
+      return value.map(normalizeValue);
+    }
+    if (isPlainObject(value)) {
+      const result: Record<string, unknown> = {};
+      for (const key of Object.keys(value)) {
+        const item = value[key];
+        if (item !== undefined) {
+          result[key] = normalizeValue(item);
+        }
+      }
+      return result;
+    }
+    return value;
+  }
+  return normalizeValue(payload);
+}
+
 function describeValueType(value: unknown): string {
   if (value === null) {
     return 'null';
@@ -406,6 +447,20 @@ export type ValidatedCommandEnvelope =
       readonly scope: { readonly kind: 'project'; readonly projectId: string };
       readonly expectedRevision: number;
       readonly payload: SettingsPayload;
+    })
+  // P02-3 / F-008：基线命令信封（payload 原样透传，深校验在应用层经
+  // ports/baseline.ts 完成；.digest 计算对原样 payload 与规范化结果一致）。
+  | (EnvelopeCommon & {
+      readonly operation: 'baseline.preview';
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: null;
+      readonly payload: unknown;
+    })
+  | (EnvelopeCommon & {
+      readonly operation: 'baseline.run';
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: null;
+      readonly payload: unknown;
     });
 
 const ENVELOPE_KEYS = [
@@ -724,6 +779,24 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
       payload: validateSettingsCommandPayload(operation, object.payload, 'global'),
     };
   }
+  // P02-3 / F-008：基线命令 payload 深校验（检查计划/决策/摘要）由应用层经
+  // ports/baseline.ts 完成（本模块不反向依赖）；信封层只要求 payload 为 JSON
+  // 对象，保持与其它命令相同的“非法结构先于授权/时效/副作用拒绝”顺序。
+  if (operation === 'baseline.preview' || operation === 'baseline.run') {
+    if (scope.kind !== 'project') {
+      fail(operation, 'invalid_input', 'scope.kind', 'scope 种类与操作不匹配');
+    }
+    if (!isPlainObjectPayload(object.payload)) {
+      fail(operation, 'invalid_input', 'payload', '必须是 JSON 对象');
+    }
+    return {
+      ...base,
+      operation,
+      scope,
+      expectedRevision: null,
+      payload: normalizeBaselinePayload(object.payload),
+    } as ValidatedCommandEnvelope;
+  }
   // settings.project.create / settings.project.update
   if (scope.kind !== 'project') {
     fail(operation, 'invalid_input', 'scope.kind', 'scope 种类与操作不匹配');
@@ -826,8 +899,18 @@ export interface RejectedCommandReceipt extends ReceiptCommon {
   readonly error: PublicErrorShape;
 }
 
-/** 持久/在线回执判别联合：本版本不存在 accepted 形态的构造路径。 */
-export type CommandReceipt = CompletedCommandReceipt | RejectedCommandReceipt;
+/**
+ * P02-3 / F-008（§5.3 首次启用 accepted）：baseline.run（authorize）提交事务内
+ * 持久化的异步回执；operationId 指向同事务写入的 baseline_operations 行，
+ * 不携带 result/resultRef（结果尚未产生，§5.6）。
+ */
+export interface AcceptedCommandReceipt extends ReceiptCommon {
+  readonly status: 'accepted';
+  readonly operationId: string;
+}
+
+/** 持久/在线回执判别联合：accepted 仅由 baseline.run authorize 产生。 */
+export type CommandReceipt = CompletedCommandReceipt | RejectedCommandReceipt | AcceptedCommandReceipt;
 
 interface ReceiptInputBase {
   readonly commandId: string;
@@ -929,6 +1012,35 @@ export function createRejectedReceipt(input: RejectedReceiptInput): RejectedComm
     requestDigest: input.requestDigest,
     status: 'rejected',
     error: input.error.toErrorShape(),
+    issuedAt: input.issuedAt,
+    completedAt: input.completedAt,
+    replayed: input.replayed ?? false,
+  };
+}
+
+export interface AcceptedReceiptInput extends ReceiptInputBase {
+  /** 同事务写入的 baseline_operations 行 id（公开 operationId）。 */
+  readonly operationId: string;
+}
+
+/**
+ * 构造 accepted 回执（§5.3 首次启用；仅 baseline.run authorize 提交事务）。
+ * operationId 必须指向同事务已写入的操作行；不携带 result/resultRef。
+ */
+export function createAcceptedReceipt(input: AcceptedReceiptInput): AcceptedCommandReceipt {
+  assertReceiptIdentity(input);
+  if (!isUuidV4(input.operationId)) {
+    throw new TypeError('accepted 回执的 operationId 必须是 UUID v4');
+  }
+  return {
+    schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION,
+    commandId: input.commandId,
+    principalId: input.principalId,
+    operation: input.operation,
+    scope: input.scope,
+    requestDigest: input.requestDigest,
+    status: 'accepted',
+    operationId: input.operationId,
     issuedAt: input.issuedAt,
     completedAt: input.completedAt,
     replayed: input.replayed ?? false,

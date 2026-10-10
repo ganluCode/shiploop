@@ -21,6 +21,7 @@ import {
 } from '../ports/authorization.js';
 import type { TrustedPrincipal } from '../ports/authorization.js';
 import type { AtomicCommandStore, CommandTransaction } from '../ports/atomic-commands.js';
+import type { BaselineService } from './baseline-service.js';
 import {
   PublicError,
   createCompletedReceipt,
@@ -61,6 +62,8 @@ export interface CommandServiceOptions {
   readonly repositoryInspector?: RepositoryInspector;
   /** F-009：配置命令的能力目录复检（可信装配注入；不传则配置命令 unsupported）。 */
   readonly capabilityCatalog?: RuntimeCapabilityCatalog;
+  /** P02-3 / F-008：基线预览/授权用例（不传则基线命令 unsupported）。 */
+  readonly baselineService?: BaselineService;
   readonly nowUtcMs?: () => number;
 }
 
@@ -120,6 +123,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
   const store = options.atomicStore;
   const repositoryInspector = options.repositoryInspector;
   const capabilityCatalog = options.capabilityCatalog;
+  const baselineService = options.baselineService;
   const nowUtcMs = options.nowUtcMs ?? Date.now;
 
   /** 既有项目元数据 CAS：业务 + metadata_updated 事件 + 回执同一事务（F-007）。 */
@@ -384,9 +388,19 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
         if (isSettingsEnvelope(envelope) && capabilityCatalog === undefined) {
           throw new PublicError('unsupported', operation);
         }
+        // baseline.cancel 属 F-010/F-012（信封层未进白名单，不会被路由到此处；
+        // 防御纵深保留拒绝分支）。
+        if (
+          (envelope.operation === 'baseline.preview' || envelope.operation === 'baseline.run') &&
+          baselineService === undefined
+        ) {
+          throw new PublicError('unsupported', operation);
+        }
         if (
           envelope.operation !== 'project.metadata.update' &&
           envelope.operation !== 'project.register' &&
+          envelope.operation !== 'baseline.preview' &&
+          envelope.operation !== 'baseline.run' &&
           !isSettingsEnvelope(envelope)
         ) {
           throw new PublicError('unsupported', operation);
@@ -421,6 +435,25 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           settingsPlan = prepareSettingsWrite(envelope);
         }
 
+        // P02-3 / F-008：基线命令的只读 I/O（Git/工作区/绑定读取/stale 原料）
+        // 全部在写事务之外、仅对新命令执行；事务内只做摘要核对与原子写入。
+        let baselinePreview: unknown;
+        let baselinePrepared: import('./baseline-service.js').BaselineRunPrepared | undefined;
+        if (envelope.operation === 'baseline.preview' && existing === undefined) {
+          baselinePreview = await baselineService!.previewBaseline(
+            principal,
+            envelope.scope.projectId,
+            envelope.payload,
+          );
+        }
+        if (envelope.operation === 'baseline.run' && existing === undefined) {
+          baselinePrepared = await baselineService!.prepareBaselineRun(
+            principal,
+            envelope.scope.projectId,
+            envelope.payload,
+          );
+        }
+
         return store.transact(operation, transaction => {
           authorizeCommand(principal, envelope);
           const original = replay(
@@ -436,6 +469,42 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
             // 新注册命令必定已在事务外完成仓库检查（重放已在上面返回）。
             if (binding === undefined) throw new TypeError('注册命令缺少事务外仓库检查结果');
             return submitRegister(principal, envelope, digest, binding, transaction, now);
+          }
+          if (envelope.operation === 'baseline.preview') {
+            // 只读预览：事务外已完成全部 I/O；事务内只持久化 completed 回执。
+            if (baselinePreview === undefined) {
+              throw new TypeError('基线预览缺少事务外准备结果');
+            }
+            const receipt = createCompletedReceipt({
+              principalId: principal.principalId,
+              commandId: envelope.commandId,
+              operation: envelope.operation,
+              scope: envelope.scope,
+              requestDigest: digest,
+              issuedAt: envelope.issuedAt,
+              completedAt: new Date(now).toISOString(),
+              resultRef: createResultRef(randomBytes(32)),
+              result: baselinePreview,
+            });
+            transaction.saveReceipt(receipt);
+            return receipt;
+          }
+          if (envelope.operation === 'baseline.run') {
+            // 授权提交：stale 核对 + 授权/操作/种子/占用/事件/回执同一事务。
+            if (baselinePrepared === undefined) {
+              throw new TypeError('基线运行缺少事务外准备结果');
+            }
+            return baselineService!.submitBaselineRun(
+              transaction,
+              {
+                principalId: principal.principalId,
+                commandId: envelope.commandId,
+                scope: envelope.scope,
+                requestDigest: digest,
+                issuedAt: envelope.issuedAt,
+              },
+              baselinePrepared,
+            );
           }
           if (isSettingsEnvelope(envelope)) {
             // 新配置命令必定已在事务外完成能力复检与一致性视图（重放已在上面返回）。

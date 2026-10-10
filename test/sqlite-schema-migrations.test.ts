@@ -439,6 +439,7 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
         'artifacts:(project_id)->projects.(id)',
         'state_events:(project_id)->projects.(id)',
         'command_receipts:(project_id)->projects.(id)',
+        'command_receipts:(operation_id)->baseline_operations.(id)',
         'baseline_authorizations:(project_id)->projects.(id)',
         'baseline_authorizations:(repository_binding_id)->repository_bindings.(id)',
         'baseline_authorizations:(project_id,repository_binding_id)->repository_bindings.(project_id,id)',
@@ -1040,13 +1041,15 @@ const CONSTRAINT_CASES: readonly ConstraintCase[] = [
     error: /CHECK constraint failed: schema_migrations_checksum_sha256_check/,
   },
   {
-    name: 'command_receipts 不持久化 accepted（status 枚举拒绝）',
+    // P02-3 / F-008（迁移 v5）：accepted 合法，但必须携带同事务 operation_id
+    // 且不带 result/result_ref/error（缺 operation_id 由交叉字段 CHECK 拒绝）。
+    name: 'command_receipts accepted 必须携带同事务 operation_id',
     seed: () => undefined,
     statement:
       "INSERT INTO command_receipts (id, created_at, revision, updated_at, principal_id, command_id, scope_kind, project_id, operation, request_digest, status, result_json, result_ref, error_code, error_message, error_details, issued_at, completed_at) VALUES ('rc-x', ?, 1, ?, 'local-owner', '11111111-1111-4111-8111-111111111111', 'registration', NULL, 'project.register', ?, 'accepted', NULL, NULL, NULL, NULL, NULL, ?, ?)",
     params: [NOW_MS, NOW_MS, VALID_SHA256, NOW_MS, NOW_MS],
     table: 'command_receipts',
-    error: /CHECK constraint failed: command_receipts_status_check/,
+    error: /CHECK constraint failed: command_receipts_accepted_check/,
   },
   {
     name: 'command_receipts project scope 必须携带 project_id',

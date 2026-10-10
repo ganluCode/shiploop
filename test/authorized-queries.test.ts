@@ -68,8 +68,11 @@ async function setup() {
         payload: { repositoryPath, displayName, labels },
       }),
     );
-    if (receipt.status !== 'completed') {
+    if (receipt.status === 'rejected') {
       throw new Error(`注册失败：${JSON.stringify(receipt.error)}`);
+    }
+    if (receipt.status !== 'completed') {
+      throw new Error(`注册回执异常状态：${receipt.status}`);
     }
     const result = receipt.result as { project: { id: string } };
     return result.project.id;

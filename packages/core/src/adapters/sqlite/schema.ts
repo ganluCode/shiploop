@@ -302,8 +302,10 @@ export const commandReceipts = sqliteTable('command_receipts', {
   operation: text('operation').notNull(),
   /** §5.2 请求摘要（64 位小写 hex SHA-256）。 */
   requestDigest: text('request_digest').notNull(),
-  /** 回执状态：completed/rejected（本版本不持久化 accepted）。 */
+  /** 回执状态：completed/rejected；P02-3 / F-008 起含 accepted（迁移 v5）。 */
   status: text('status').notNull(),
+  /** accepted：同事务 baseline_operations 行身份（公开 operationId）；其余状态 NULL。 */
+  operationId: text('operation_id'),
   /** completed：有界业务结果 JSON（序列化 ≤ 16384 字节）。 */
   resultJson: text('result_json'),
   /** completed：不透明结果引用（v1.+43 字符 base64url；全库唯一）。 */
@@ -323,7 +325,10 @@ export const commandReceipts = sqliteTable('command_receipts', {
     'command_receipts_scope_check',
     sql`(${table.scopeKind} = 'project' AND ${table.projectId} IS NOT NULL) OR (${table.scopeKind} IN ('registration','global') AND ${table.projectId} IS NULL)`,
   ),
-  check('command_receipts_status_check', sql`${table.status} IN ('completed','rejected')`),
+  check(
+    'command_receipts_status_check',
+    sql`${table.status} IN ('completed','rejected','accepted')`,
+  ),
   check(
     'command_receipts_completed_check',
     sql`${table.status} <> 'completed' OR (${table.resultJson} IS NOT NULL AND ${table.resultRef} IS NOT NULL AND ${table.errorCode} IS NULL)`,
@@ -333,12 +338,24 @@ export const commandReceipts = sqliteTable('command_receipts', {
     sql`${table.status} <> 'rejected' OR (${table.errorCode} IS NOT NULL AND ${table.resultJson} IS NULL)`,
   ),
   check(
+    'command_receipts_accepted_check',
+    sql`${table.status} <> 'accepted' OR (${table.operationId} IS NOT NULL AND ${table.resultJson} IS NULL AND ${table.resultRef} IS NULL AND ${table.errorCode} IS NULL)`,
+  ),
+  check(
     'command_receipts_digest_check',
     sql`length(${table.requestDigest}) = 64 AND ${table.requestDigest} NOT GLOB '*[^0-9a-f]*'`,
   ),
   uniqueIndex('command_receipts_principal_command_unique').on(table.principalId, table.commandId),
   uniqueIndex('command_receipts_result_ref_unique').on(table.resultRef),
+  uniqueIndex('command_receipts_operation_id_unique').on(table.operationId),
   index('command_receipts_principal_project_index').on(table.principalId, table.projectId),
+  // F-008：accepted 回执的同事务操作存在性由 FK 兜底（延后定义的基线表经
+  // 惰性 extra-config 引用，避免模块定义顺序依赖）。
+  foreignKey({
+    name: 'command_receipts_operation_fk',
+    columns: [table.operationId],
+    foreignColumns: [baselineOperations.id],
+  }).onDelete('restrict'),
 ]);
 
 /**

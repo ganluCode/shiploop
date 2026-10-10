@@ -288,8 +288,8 @@ function listPublicEvents(harness: Harness) {
 // ---------------------------------------------------------------------------
 
 describe('F-007 迁移 v4：基线作用域四表', () => {
-  it('迁移版本接 v3 之后为 v4，checksum 与 SQL 内容一致', () => {
-    expect(SQLITE_MIGRATIONS.map((migration) => migration.version)).toEqual([1, 2, 3, 4]);
+  it('迁移版本接 v3 之后为 v4/v5，checksum 与 SQL 内容一致', () => {
+    expect(SQLITE_MIGRATIONS.map((migration) => migration.version)).toEqual([1, 2, 3, 4, 5]);
     const v4 = SQLITE_MIGRATIONS[3]!;
     expect(v4.sql).toContain('CREATE TABLE baseline_authorizations');
     expect(v4.sql).toContain('CREATE TABLE baseline_operations');
@@ -297,6 +297,11 @@ describe('F-007 迁移 v4：基线作用域四表', () => {
     expect(v4.sql).toContain('CREATE TABLE baseline_occupancy');
     expect(v4.sql).toContain('baseline_occupancy_process_identity_json_check');
     expect(v4.sql).toContain('baseline_authorizations_binding_same_project_fk');
+    // F-008 / 迁移 v5：command_receipts 重建（accepted + operation_id）。
+    const v5 = SQLITE_MIGRATIONS[4]!;
+    expect(v5.sql).toContain("status IN ('completed','rejected','accepted')");
+    expect(v5.sql).toContain('command_receipts_accepted_check');
+    expect(v5.sql).toContain('command_receipts_operation_id_unique');
   });
 
   it('空库迁移建立基线四表，不提前建立 Work/Task/Attempt/Chat 或通用验证表', async () => {
@@ -304,7 +309,7 @@ describe('F-007 迁移 v4：基线作用域四表', () => {
     const session = openSqliteStorageSession({ path: join(sandbox.path, 'state.db') });
     try {
       const result = await migrateSqliteStorage(session, { nowUtcMs: () => NOW_MS });
-      expect(result.appliedVersions).toEqual([1, 2, 3, 4]);
+      expect(result.appliedVersions).toEqual([1, 2, 3, 4, 5]);
       const tables = session.database
         .prepare<[], { name: string }>(
           "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
@@ -378,7 +383,7 @@ describe('F-007 迁移 v4：基线作用域四表', () => {
     try {
       const result = await migrateSqliteStorage(session, { nowUtcMs: () => NOW_MS + 1 });
       expect(result.fromVersion).toBe(3);
-      expect(result.appliedVersions).toEqual([4]);
+      expect(result.appliedVersions).toEqual([4, 5]);
       // 前序数据逐字段保留（项目 A + 其绑定；回执；事件 sequence）。
       expect(session.database.prepare('SELECT COUNT(*) AS c FROM projects').get()).toMatchObject({ c: 1 });
       expect(session.database.prepare('SELECT COUNT(*) AS c FROM command_receipts').get()).toMatchObject({

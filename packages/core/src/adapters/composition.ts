@@ -32,6 +32,8 @@ import { createCommandReceiptsService } from '../application/command-receipts-se
 import type { CommandReceiptsService } from '../application/command-receipts-service.js';
 import { createCommandService } from '../application/command-service.js';
 import type { CommandService } from '../application/command-service.js';
+import { createBaselineService } from '../application/baseline-service.js';
+import type { BaselineService } from '../application/baseline-service.js';
 import { createOnboardingService } from '../application/onboarding-service.js';
 import type { OnboardingService } from '../application/onboarding-service.js';
 import { createProjectService } from '../application/project-service.js';
@@ -40,6 +42,7 @@ import { createQueryService } from '../application/query-service.js';
 import type { QueryService } from '../application/query-service.js';
 import type { ArtifactFileStore } from '../ports/artifact-files.js';
 import type { ArtifactStore } from '../ports/artifact-store.js';
+import type { BaselineEnvironmentDirectory } from '../ports/baseline.js';
 import type { CommandReceiptStore } from '../ports/command-receipts.js';
 import { StorageError } from '../ports/errors.js';
 import { PathResolutionError, computeDataRootIdentity, deriveDefaultDataRoot } from '../ports/path-service.js';
@@ -55,6 +58,7 @@ import {
 } from '../ports/validation.js';
 import type { ValidationContext } from '../ports/validation.js';
 import { createArtifactFileStore } from './fs/artifact-files.js';
+import { createBaselineWorkspaceReader } from './fs/baseline-workspace.js';
 import { createPathService } from './fs/path-service.js';
 import { createRepositoryInspector } from './fs/repository-inspector.js';
 import type { RepositoryInspectorOptions } from './fs/repository-inspector.js';
@@ -84,6 +88,11 @@ export interface CoreApplicationOptions {
   readonly repositoryInspector?: RepositoryInspector;
   /** 真实 Git 检查适配器选项（仅在未提供 repositoryInspector 时生效）。 */
   readonly repositoryInspectorOptions?: RepositoryInspectorOptions;
+  /**
+   * P02-3 / F-008：环境允许列表目录（§6.4 可信装配注入；仅变量名，无值）。
+   * 缺席时使用空目录（fail-closed：任何 environmentRef 都是未获准引用）。
+   */
+  readonly baselineEnvironmentDirectory?: BaselineEnvironmentDirectory;
   /** 状态库单次 busy 等待预算（毫秒）；默认沿用适配器有限预算。 */
   readonly busyTimeoutMs?: number;
   /** 状态库 busy 重试次数（含首次）；默认沿用适配器有限预算。 */
@@ -115,6 +124,8 @@ export interface CoreApplication {
   readonly onboardingService: OnboardingService;
   /** P02-3 / F-007：基线窄存储读取端口（迁移 v4 四表；写经原子命令事务）。 */
   readonly baselineStore: BaselineStore;
+  /** P02-3 / F-008：基线预览与明确授权用例（§6；经 commandService 提交）。 */
+  readonly baselineService: BaselineService;
   /** 关闭状态库会话并释放文件句柄；幂等。 */
   close(): void;
 }
@@ -126,6 +137,7 @@ const ALLOWED_OPTION_KEYS = [
   'nowUtcMs',
   'repositoryInspector',
   'repositoryInspectorOptions',
+  'baselineEnvironmentDirectory',
   'busyTimeoutMs',
   'busyRetryAttempts',
 ] as const;
@@ -220,6 +232,19 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
   if (object.repositoryInspectorOptions !== undefined && !isPlainObject(object.repositoryInspectorOptions)) {
     throw validationError(context, 'repositoryInspectorOptions', '必须是对象');
   }
+  if (
+    object.baselineEnvironmentDirectory !== undefined &&
+    (object.baselineEnvironmentDirectory === null ||
+      typeof object.baselineEnvironmentDirectory !== 'object' ||
+      typeof (object.baselineEnvironmentDirectory as { resolveEnvironmentRef?: unknown })
+        .resolveEnvironmentRef !== 'function')
+  ) {
+    throw validationError(
+      context,
+      'baselineEnvironmentDirectory',
+      '必须提供 resolveEnvironmentRef 方法的环境允许列表目录',
+    );
+  }
 
   const rootCandidate = resolveRootCandidate(object, context);
   ensureDataRootDirectory(rootCandidate);
@@ -264,14 +289,27 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       receiptStore: commandReceiptStore,
     });
 
+    // P02-3 / F-008：基线预览与明确授权用例（§6：规范 cwd、最小环境引用与
+    // 代码身份绑定不可变检查输入；环境目录缺席 = 空目录 fail-closed）。
+    const baselineService = createBaselineService({
+      repositoryInspector,
+      workspaceReader: createBaselineWorkspaceReader(),
+      environmentDirectory:
+        object.baselineEnvironmentDirectory === undefined
+          ? { resolveEnvironmentRef: () => null }
+          : (object.baselineEnvironmentDirectory as BaselineEnvironmentDirectory),
+      stateStore,
+      ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
+    });
+
     const commandService = createCommandService({
       atomicStore: createSqliteAtomicCommandStore(session, nowUtcMs === undefined ? {} : { nowUtcMs }),
       repositoryInspector,
       // F-009：配置命令的能力目录复检复用同一可信装配目录。
       capabilityCatalog,
+      baselineService,
       ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
     });
-
     // F-010：授权查询/快照/事件读取窄端口装配；游标绑定的数据根身份由
     // realpath 固定的数据根派生（与 Host 握手身份同一算法，不来自请求数据）。
     const queryStore = createSqliteQueryStore(session);
@@ -316,6 +354,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       queryService,
       onboardingService,
       baselineStore,
+      baselineService,
       close(): void {
         session.close();
       },

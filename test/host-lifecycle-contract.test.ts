@@ -177,6 +177,9 @@ describe('F-002 冻结常量与能力声明', () => {
           'settings.global.update',
           'settings.project.create',
           'settings.project.update',
+          // P02-3 / F-008：基线 preview/run 经既有 /v1/commands 路由真实接线。
+          'baseline.preview',
+          'baseline.run',
         ],
         queries: [
           'projects.list',
