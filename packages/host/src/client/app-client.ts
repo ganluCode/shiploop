@@ -33,6 +33,7 @@ import {
   isUuidV4,
   isValidResultRef,
   validateCommandEnvelope,
+  WIRE_MESSAGE_SCHEMA_VERSION,
 } from 'shiploop-core/protocol';
 import type {
   AppOperation,
@@ -43,8 +44,10 @@ import type {
   GlobalSnapshotResult,
   ProjectBindingResult,
   ProjectDetailResult,
+  ProjectInspectionResult,
   ProjectLabelCountsResult,
   ProjectListResult,
+  ProjectOverviewResult,
   ProjectSnapshotResult,
   PublicSettingsState,
   PublicStateEvent,
@@ -57,6 +60,7 @@ import {
   EVENTS_ROUTE,
   HostProtocolError,
   MAX_APP_BODY_BYTES,
+  PROJECTS_INSPECT_ROUTE,
   PROJECTS_ROUTE,
   PROJECT_LABEL_COUNTS_ROUTE,
   RECEIPTS_ROUTE_PREFIX,
@@ -160,6 +164,10 @@ export interface HostClientApplication {
   resolveResult(resultRef: string): Promise<CommandReceipt>;
   listProjects(options?: ListProjectsInput): Promise<ProjectListResult>;
   getProject(projectId: string): Promise<ProjectDetailResult>;
+  /** P02-3 / F-006（§7.2）：注册前只读仓库检查（path 为仓库根绝对路径）。 */
+  inspectRepository(path: string): Promise<ProjectInspectionResult>;
+  /** P02-3 / F-006（§7.3）：注册状态与健康状态分开的项目概览。 */
+  getProjectOverview(projectId: string): Promise<ProjectOverviewResult>;
   getRepositoryBinding(projectId: string): Promise<ProjectBindingResult>;
   countProjectLabels(): Promise<ProjectLabelCountsResult>;
   getGlobalSettings(): Promise<PublicSettingsState>;
@@ -297,7 +305,8 @@ function freezeCommandEnvelope(input: SubmitCommandInput): FrozenEnvelope {
   }
   const commandId = input.commandId ?? randomUUID();
   const wire: Record<string, unknown> = {
-    schemaVersion: 2,
+    // 线消息版本随 shiploop-core 协议常量（P02-3 / F-006 起 v3），不另立字面量。
+    schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION,
     commandId,
     operation: input.operation,
     scope: input.scope,
@@ -389,6 +398,23 @@ function buildProjectListQuery(input: ListProjectsInput | undefined): string {
 }
 
 const STABLE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
+/**
+ * §7.2 inspect 输入零网络把关：path 必须是非空绝对路径字符串（无 NUL）。
+ * 完整校验（存在/目录/Git 仓库根/规范路径）由服务端 RepositoryInspector
+ * 单一权威完成；客户端只拒绝明显非法输入，不复制服务端规则。
+ */
+function requireRepositoryPathInput(path: string): string {
+  if (
+    typeof path !== 'string' ||
+    path.length === 0 ||
+    path.includes('\u0000') ||
+    !path.startsWith('/')
+  ) {
+    throw invalidInput('projects.inspect', 'invalid_repository_path', 'path');
+  }
+  return path;
+}
 
 function requireProjectId(operation: HostOperation, projectId: string): string {
   if (typeof projectId !== 'string' || !STABLE_ID_PATTERN.test(projectId)) {
@@ -1135,6 +1161,25 @@ export function createHostClientApplication(context: AppClientContext): HostClie
       const id = requireProjectId('projects.get', projectId);
       const json = await getJson('projects.get', `${PROJECTS_ROUTE}/${id}`);
       return validateAppQueryResponse('projects.get', json);
+    },
+
+    async inspectRepository(path: string): Promise<ProjectInspectionResult> {
+      context.assertOpen('projects.inspect');
+      const repositoryPath = requireRepositoryPathInput(path);
+      const params = new URLSearchParams();
+      params.append('path', repositoryPath);
+      const json = await getJson(
+        'projects.inspect',
+        `${PROJECTS_INSPECT_ROUTE}?${params.toString()}`,
+      );
+      return validateAppQueryResponse('projects.inspect', json);
+    },
+
+    async getProjectOverview(projectId: string): Promise<ProjectOverviewResult> {
+      context.assertOpen('projects.overview');
+      const id = requireProjectId('projects.overview', projectId);
+      const json = await getJson('projects.overview', `${PROJECTS_ROUTE}/${id}/overview`);
+      return validateAppQueryResponse('projects.overview', json);
     },
 
     async getRepositoryBinding(projectId: string): Promise<ProjectBindingResult> {

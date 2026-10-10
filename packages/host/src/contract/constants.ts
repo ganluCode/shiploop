@@ -23,9 +23,11 @@ export const DISCOVERY_SCHEMA_VERSION = 1 as const;
 /**
  * 线消息结构版本（握手/stop/命令信封/回执/查询响应/快照）。与发现
  * schemaVersion 独立校验：未来其中一个升版不自动改变另一个。
- * P02-2 起为 2（§3.1/§15.4；1 → 400 unsupported_schema_version，不降级）。
+ * P02-2 为 2；P02-3 / F-006 起为 3（§3.1/§15.5：握手能力视图新增
+ * projects.inspect/overview，集合变化必须显式升版；2/1 → 400
+ * unsupported_schema_version，不降级）。
  */
-export const CURRENT_SCHEMA_VERSION = 2 as const;
+export const CURRENT_SCHEMA_VERSION = 3 as const;
 
 /** 当前 Host 生命周期线协议版本；本 Feature 只实现 v1。 */
 export const CURRENT_PROTOCOL_VERSION = 1 as const;
@@ -57,6 +59,8 @@ export const RECEIPTS_ROUTE_PREFIX = '/v1/receipts/';
 export const RESULTS_ROUTE_PREFIX = '/v1/results/';
 export const PROJECTS_ROUTE = '/v1/projects';
 export const PROJECT_LABEL_COUNTS_ROUTE = '/v1/projects/label-counts';
+/** P02-3 / F-006 §3.2/§7.2：注册前只读仓库检查（字面量优先于 :projectId 形态）。 */
+export const PROJECTS_INSPECT_ROUTE = '/v1/projects/inspect';
 export const SETTINGS_GLOBAL_ROUTE = '/v1/settings/global';
 export const SETTINGS_GLOBAL_EXPORT_ROUTE = '/v1/settings/global/export';
 export const SNAPSHOT_ROUTE = '/v1/snapshot';

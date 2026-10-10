@@ -2,7 +2,7 @@
  * F-002 Core 应用命令契约（纯模块）运行时校验测试。
  *
  * 协议依据：docs/p02-2-commands-events-contract.md
- * - §3.1 线消息 schemaVersion=2（与发现/线协议/配置 payload 版本独立）；
+ * - §3.1 线消息 schemaVersion=3（P02-3/F-006 起；与发现/线协议/配置 payload 版本独立）；
  * - §4.2 九项能力冻结清单与 local-owner；
  * - §5.1 命令信封三态 scope、expectedRevision 单一权威来源；
  * - §5.3 回执 accepted/completed/rejected（本版本只产生 completed/rejected）；
@@ -62,7 +62,7 @@ type EnvelopeInput = Record<string, unknown>;
 
 function envelope(overrides: EnvelopeInput = {}): EnvelopeInput {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     commandId: UUID_A,
     operation: 'project.register',
     scope: { kind: 'registration' },
@@ -90,8 +90,8 @@ function expectPublicError(fn: () => unknown, code: string, field?: string): Pub
 }
 
 describe('F-002 冻结版本、能力与命令白名单', () => {
-  it('线消息 schemaVersion 为 2（独立于发现版本 1 与配置 payload 版本）', () => {
-    expect(WIRE_MESSAGE_SCHEMA_VERSION).toBe(2);
+  it('线消息 schemaVersion 为 3（P02-3/F-006 起；独立于发现版本 1 与配置 payload 版本 2）', () => {
+    expect(WIRE_MESSAGE_SCHEMA_VERSION).toBe(3);
   });
 
   it('冻结十一项能力（P02-2 九项 + P02-3 基线两项），local-owner 持全部', () => {
@@ -277,7 +277,7 @@ const INVALID_ENVELOPE_ROWS: InvalidRow[] = [
   { name: 'expiresAt 非 ISO', mutate: (b) => ({ ...b, expiresAt: 1700000000000 }), code: 'invalid_input', field: 'expiresAt' },
   { name: 'expiresAt 显式 null', mutate: (b) => ({ ...b, expiresAt: null }), code: 'invalid_input', field: 'expiresAt' },
   { name: 'schemaVersion=1', mutate: (b) => ({ ...b, schemaVersion: 1 }), code: 'unsupported_schema_version', field: 'schemaVersion' },
-  { name: 'schemaVersion=3', mutate: (b) => ({ ...b, schemaVersion: 3 }), code: 'unsupported_schema_version', field: 'schemaVersion' },
+  { name: 'schemaVersion=2（P02-3 起为 v3）', mutate: (b) => ({ ...b, schemaVersion: 2 }), code: 'unsupported_schema_version', field: 'schemaVersion' },
   { name: 'schemaVersion=2.5', mutate: (b) => ({ ...b, schemaVersion: 2.5 }), code: 'unsupported_schema_version', field: 'schemaVersion' },
   { name: '未知操作 work.run', mutate: (b) => ({ ...b, operation: 'work.run' }), code: 'unsupported', field: 'operation' },
   { name: '未知操作 chat.sendTurn', mutate: (b) => ({ ...b, operation: 'chat.sendTurn' }), code: 'unsupported', field: 'operation' },
@@ -316,7 +316,7 @@ describe('F-002 信封表驱动负例（结构/版本/操作）', () => {
       'unsupported_schema_version',
     );
     expect(error.httpStatus).toBe(400);
-    expect(error.details?.supportedVersion).toBe(2);
+    expect(error.details?.supportedVersion).toBe(3);
   });
 });
 
@@ -685,7 +685,7 @@ describe('F-002 回执形态与不变量', () => {
 
   it('completed 回执携带 commandId/result/resultRef，不含 error/operationId；默认不重放', () => {
     const receipt = createCompletedReceipt(completedBase);
-    expect(receipt.schemaVersion).toBe(2);
+    expect(receipt.schemaVersion).toBe(3);
     expect(receipt.status).toBe('completed');
     expect(receipt.replayed).toBe(false);
     expect(receipt.resultRef).toBe(resultRefOf('a'));

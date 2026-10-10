@@ -61,7 +61,7 @@ const STUB_STARTED_AT = '2026-10-05T00:00:00.000Z';
 
 function handshakeBody(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     protocolVersion: 1,
     hostInstanceId: STUB_INSTANCE,
     dataRootIdentity: STUB_ROOT_IDENTITY,
@@ -184,7 +184,7 @@ describe('F-007 传输面：合法握手与状态（独立监听 + 伪上下文�
       expectTransportHygiene(response, STUB_TOKEN);
       const body = response.json();
       expect(body).toEqual({
-        schemaVersion: 2,
+        schemaVersion: 3,
         protocolVersion: 1,
         hostInstanceId: STUB_INSTANCE,
         dataRootIdentity: STUB_ROOT_IDENTITY,
@@ -224,7 +224,7 @@ describe('F-007 传输面：合法握手与状态（独立监听 + 伪上下文�
         expectTransportHygiene(response, STUB_TOKEN);
         const body = response.json();
         expect(body).toEqual({
-          schemaVersion: 2,
+          schemaVersion: 3,
           protocolVersion: 1,
           hostInstanceId: STUB_INSTANCE,
           dataRootIdentity: STUB_ROOT_IDENTITY,
@@ -465,7 +465,7 @@ describe('F-007 传输面：版本与身份门禁（§8 顺序）', () => {
         method: 'POST',
         path: '/v1/host/handshake',
         token: '0'.repeat(64),
-        body: { schemaVersion: 2, protocolVersion: 1 },
+        body: { schemaVersion: 3, protocolVersion: 1 },
       });
       expect(structureFirst.statusCode).toBe(400);
       expect(errorBody(structureFirst).code).toBe('invalid_input');
@@ -657,7 +657,7 @@ describe('F-008 传输面：stop 路由接线（真实控制器 + 空收尾端�
     try {
       const commandId = 'fa3d1b0e-4b6f-4b7a-9c0d-2e6a8f1b3d55';
       const body = {
-        schemaVersion: 2,
+        schemaVersion: 3,
         commandId,
         hostInstanceId: STUB_INSTANCE,
         requestDigest: computeStopRequestDigest(commandId, STUB_INSTANCE, { mode: 'graceful' }),
@@ -742,7 +742,7 @@ describe('F-007 端到端：真实 startHost 的认证握手/状态与零副作�
         path: '/v1/host/handshake',
         token,
         body: {
-          schemaVersion: 2,
+          schemaVersion: 3,
           protocolVersion: 1,
           hostInstanceId: discovery.hostInstanceId,
           dataRootIdentity: host.dataRootIdentity,

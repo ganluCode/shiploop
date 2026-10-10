@@ -904,6 +904,260 @@ async function smokeCliBin(
   }
   assertAlive(firstPid);
 
+  // 4c2) F-006（P02-3）静态接入纵向：dist/bin.js 先静态预览（有 HEAD/无 HEAD/脏
+  // 仓库）、显式 --confirm 才经既有 project.register 注册；overview 注册/健康
+  // 分开；重复 init 同规范路径（别名）复用既有项目；同 commandId 幂等/冲突。
+  const initGitRun = (gitArgs: readonly string[], cwd: string): string => {
+    const result = spawnSync('git', [...gitArgs], {
+      cwd,
+      env: {
+        ...baseEnv,
+        GIT_CONFIG_NOSYSTEM: '1',
+        GIT_CONFIG_GLOBAL: '/dev/null',
+        GIT_TERMINAL_PROMPT: '0',
+        LC_ALL: 'C',
+      },
+      encoding: 'utf8',
+      timeout: 30_000,
+    });
+    if (result.error || result.signal || result.status !== 0) {
+      fail(
+        `shiploop-cli: git ${gitArgs.join(' ')} failed in ${cwd}: ${String(result.stderr).slice(0, 200)}`,
+      );
+    }
+    return String(result.stdout);
+  };
+  const initRepo = join(workDir, 'repo-init');
+  mkdirSync(initRepo, { recursive: true });
+  initGitRun(['init', '--initial-branch=main', initRepo], workDir);
+  writeFileSync(join(initRepo, 'README.md'), '# init smoke\n', 'utf8');
+  initGitRun(['add', '-A'], initRepo);
+  initGitRun(
+    ['-c', 'user.name=ShipLoop Smoke', '-c', 'user.email=smoke@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '--quiet', '-m', 'init'],
+    initRepo,
+  );
+  const initHead = initGitRun(['rev-parse', 'HEAD'], initRepo).trim();
+  const emptyRepo = join(workDir, 'repo-init-empty');
+  mkdirSync(emptyRepo, { recursive: true });
+  initGitRun(['init', '--initial-branch=main', emptyRepo], workDir);
+  const dirtyRepo = join(workDir, 'repo-init-dirty');
+  mkdirSync(dirtyRepo, { recursive: true });
+  initGitRun(['init', '--initial-branch=main', dirtyRepo], workDir);
+  writeFileSync(join(dirtyRepo, 'README.md'), '# dirty smoke\n', 'utf8');
+  initGitRun(['add', '-A'], dirtyRepo);
+  initGitRun(
+    ['-c', 'user.name=ShipLoop Smoke', '-c', 'user.email=smoke@example.invalid', '-c', 'commit.gpgsign=false', 'commit', '--quiet', '-m', 'dirty'],
+    dirtyRepo,
+  );
+  writeFileSync(join(dirtyRepo, 'uncommitted.txt'), 'dirty\n', 'utf8');
+
+  // 预览一：有 HEAD 新仓库（无 --confirm）→ not_run，退出码 0，零注册副作用。
+  // （projectArgs 恒附 --json；人类模式单独起一次不带 --json 的调用。）
+  const initPreviewHuman = run('project-init-preview-human', [
+    'project',
+    'init',
+    initRepo,
+    '--name',
+    'Init Smoke',
+    '--data-root',
+    dataRoot,
+  ]);
+  if (initPreviewHuman.status !== 0) {
+    fail(
+      `shiploop-cli: project init preview exit ${String(initPreviewHuman.status)}: ${initPreviewHuman.stderr}`,
+    );
+  }
+  if (
+    !initPreviewHuman.stdout.includes(realpathSync(initRepo)) ||
+    !initPreviewHuman.stdout.includes('静态预览') ||
+    !initPreviewHuman.stdout.includes('not_run') ||
+    initPreviewHuman.stderr.length === 0
+  ) {
+    fail(`shiploop-cli: project init preview must show static facts: ${initPreviewHuman.stdout}`);
+  }
+  const initPreviewJson = run(
+    'project-init-preview-json',
+    projectArgs(['project', 'init', initRepo, '--name', 'Init Smoke']),
+  );
+  const initPreviewResult = jsonResult('project-init-preview-json', initPreviewJson).result as Record<string, any>;
+  if (
+    initPreviewResult.registration?.status !== 'not_run' ||
+    initPreviewResult.health?.status !== 'not_run' ||
+    initPreviewResult.health?.reasonCode !== 'no_baseline' ||
+    initPreviewResult.preview?.headCommit !== initHead ||
+    initPreviewResult.preview?.hasUncommittedChanges !== false
+  ) {
+    fail(`shiploop-cli: project init preview result mismatch: ${JSON.stringify(initPreviewResult)}`);
+  }
+  // 预览二：无 HEAD 仓库不猜分支（headCommit=null）；脏仓库原样保留脏标记。
+  const emptyPreview = jsonResult(
+    'project-init-empty',
+    run('project-init-empty', projectArgs(['project', 'init', emptyRepo])),
+  ).result as Record<string, any>;
+  if (emptyPreview.preview?.headCommit !== null || emptyPreview.preview?.hasInitialCommit !== false) {
+    fail(`shiploop-cli: empty repo preview must show headCommit null: ${JSON.stringify(emptyPreview)}`);
+  }
+  const dirtyPreview = jsonResult(
+    'project-init-dirty',
+    run('project-init-dirty', projectArgs(['project', 'init', dirtyRepo])),
+  ).result as Record<string, any>;
+  if (dirtyPreview.preview?.hasUncommittedChanges !== true) {
+    fail(`shiploop-cli: dirty repo preview must show uncommitted changes: ${JSON.stringify(dirtyPreview)}`);
+  }
+
+  // --confirm 但缺 --name：在连接 Host 之前以退出码 2 拒绝。
+  const initNoName = run('project-init-no-name', projectArgs(['project', 'init', initRepo, '--confirm']));
+  if (
+    initNoName.status !== 2 ||
+    jsonResult('project-init-no-name', initNoName).error?.details?.reason !== 'name_required_for_registration'
+  ) {
+    fail(`shiploop-cli: project init --confirm without --name must exit 2: ${initNoName.stderr}`);
+  }
+
+  // 确认注册：返回真实 projectId，健康独立显示尚未检查。
+  const initCommandId = randomUUID();
+  const initConfirm = run(
+    'project-init-confirm',
+    projectArgs([
+      'project',
+      'init',
+      initRepo,
+      '--name',
+      'Init Smoke',
+      '--label',
+      'onboarding',
+      '--confirm',
+      '--command-id',
+      initCommandId,
+    ]),
+  );
+  if (initConfirm.status !== 0) {
+    fail(`shiploop-cli: project init --confirm exit ${String(initConfirm.status)}: ${initConfirm.stderr}`);
+  }
+  const initConfirmResult = jsonResult('project-init-confirm', initConfirm).result as Record<string, any>;
+  const initProjectId = initConfirmResult.registration?.projectId;
+  if (
+    initConfirmResult.registration?.status !== 'registered' ||
+    typeof initProjectId !== 'string' ||
+    initConfirmResult.health?.status !== 'not_run' ||
+    initConfirmResult.health?.reasonCode !== 'no_baseline'
+  ) {
+    fail(`shiploop-cli: project init confirm result mismatch: ${JSON.stringify(initConfirmResult)}`);
+  }
+
+  // overview：注册状态与健康状态分开显示（注册成功 ≠ 健康通过）。
+  const overview = run('project-overview', [
+    'project',
+    'overview',
+    initProjectId as string,
+    '--data-root',
+    dataRoot,
+  ]);
+  if (overview.status !== 0) {
+    fail(`shiploop-cli: project overview exit ${String(overview.status)}: ${overview.stderr}`);
+  }
+  if (!overview.stdout.includes('注册状态：registered') || !overview.stdout.includes('健康状态：not_run')) {
+    fail(`shiploop-cli: project overview must separate registration and health: ${overview.stdout}`);
+  }
+  const overviewJson = jsonResult(
+    'project-overview-json',
+    run('project-overview-json', projectArgs(['project', 'overview', initProjectId as string])),
+  ).result as Record<string, any>;
+  if (
+    overviewJson.registration?.status !== 'registered' ||
+    overviewJson.health?.status !== 'not_run' ||
+    overviewJson.health?.reasonCode !== 'no_baseline' ||
+    overviewJson.binding?.canonicalPath !== realpathSync(initRepo)
+  ) {
+    fail(`shiploop-cli: project overview result mismatch: ${JSON.stringify(overviewJson)}`);
+  }
+
+  // 别名路径重复 init：already_registered 复用既有项目，不覆盖元数据。
+  const initAlias = join(workDir, 'repo-init-alias');
+  symlinkSync(realpathSync(initRepo), initAlias, 'dir');
+  const initRepeat = run(
+    'project-init-repeat-alias',
+    projectArgs(['project', 'init', initAlias, '--name', 'Overwrite Name', '--confirm']),
+  );
+  if (initRepeat.status !== 0) {
+    fail(`shiploop-cli: repeated init exit ${String(initRepeat.status)}: ${initRepeat.stderr}`);
+  }
+  const initRepeatResult = jsonResult('project-init-repeat-alias', initRepeat).result as Record<string, any>;
+  if (
+    initRepeatResult.registration?.status !== 'already_registered' ||
+    initRepeatResult.registration?.projectId !== initProjectId
+  ) {
+    fail(`shiploop-cli: repeated init must reuse existing project: ${JSON.stringify(initRepeatResult)}`);
+  }
+  const overviewAfterRepeat = jsonResult(
+    'project-overview-after-repeat',
+    run('project-overview-after-repeat', projectArgs(['project', 'overview', initProjectId as string])),
+  ).result as Record<string, any>;
+  if (
+    overviewAfterRepeat.project?.displayName !== 'Init Smoke' ||
+    overviewAfterRepeat.project?.labels?.[0] !== 'onboarding'
+  ) {
+    fail(
+      `shiploop-cli: repeated init must not overwrite metadata: ${JSON.stringify(overviewAfterRepeat)}`,
+    );
+  }
+
+  // 同 commandId 同参数 → 重放原回执（注册轴仍 registered + 同 projectId）；
+  // 不同参数 → conflict 退出码 1。
+  const initReplay = run(
+    'project-init-replay',
+    projectArgs([
+      'project',
+      'init',
+      initRepo,
+      '--name',
+      'Init Smoke',
+      '--label',
+      'onboarding',
+      '--confirm',
+      '--command-id',
+      initCommandId,
+    ]),
+  );
+  if (initReplay.status !== 0) {
+    fail(`shiploop-cli: project init replay exit ${String(initReplay.status)}: ${initReplay.stderr}`);
+  }
+  const initReplayResult = jsonResult('project-init-replay', initReplay).result as Record<string, any>;
+  if (
+    initReplayResult.registration?.status !== 'registered' ||
+    initReplayResult.registration?.projectId !== initProjectId
+  ) {
+    fail(`shiploop-cli: project init replay must return original receipt outcome: ${JSON.stringify(initReplayResult)}`);
+  }
+  const initReceipt = jsonResult(
+    'project-init-receipt',
+    run('project-init-receipt', projectArgs(['receipt', 'get', initCommandId])),
+  ).result as Record<string, any>;
+  if (initReceipt.status !== 'completed' || initReceipt.commandId !== initCommandId) {
+    fail(`shiploop-cli: project init receipt mismatch: ${JSON.stringify(initReceipt)}`);
+  }
+  const initConflict = run(
+    'project-init-conflict',
+    projectArgs([
+      'project',
+      'init',
+      initRepo,
+      '--name',
+      'Different Params',
+      '--confirm',
+      '--command-id',
+      initCommandId,
+    ]),
+  );
+  if (
+    initConflict.status !== 1 ||
+    jsonResult('project-init-conflict', initConflict).error?.code !== 'conflict' ||
+    jsonResult('project-init-conflict', initConflict).error?.details?.reason !== 'idempotency_key_reuse'
+  ) {
+    fail(`shiploop-cli: init commandId reuse with different params must exit 1 conflict: ${initConflict.stderr}`);
+  }
+  assertAlive(firstPid);
+
   // 5) 解析失败 → 退出码 2，stdout 为空（非 JSON 模式）。
   const badArgs = run('bad-args', ['host', 'status', '--bogus']);
   if (badArgs.status !== 2 || badArgs.stdout !== '' || !badArgs.stderr.includes('invalid_input')) {

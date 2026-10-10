@@ -183,14 +183,18 @@ F-001 实际打开源码与测试逐项核对，下表入口与测试在开工�
   `400 unsupported_schema_version`（不猜测降级）。响应体一律 `schemaVersion:3`。发现文件与
   `protocolVersion` 不变，发现/锁/凭据流程不受影响。
 - Host 与 CLI 同仓库同版本发布；旧 P02-2 CLI 连接新 Host 会在握手得到明确
-  `unsupported_schema_version`（退出码 3），不会得到畸形响应或错误业务结果。F-014 必须更新
-  HostClient 与伪服务夹具的版本断言；P02-1/P02-2 生命周期与业务回归在 v3 上继续成立。
+  `unsupported_schema_version`（退出码 3），不会得到畸形响应或错误业务结果。
+  **实施状态（F-006）**：首个能力集合变更（握手 queries 新增 `projects.inspect`/
+  `projects.overview`）随 F-006 落地，线消息 2 → 3 的切换、HostClient 与伪服务夹具的
+  版本断言更新由 F-006 完成（F-014 接线基线路由时在同一 v3 内扩张集合）；P02-1/P02-2
+  生命周期与业务回归在 v3 上继续成立。
 
 ### 3.2 路由总表（全部需要 Bearer 认证；前缀 `/v1`）
 
-> 实施状态：本表全部为**目标契约**（F-001 冻结时尚未实现）；P02-2 既有路由见
+> 实施状态：F-001 冻结时本表全部为**目标契约**；**F-006 已接线** `projects.inspect`/
+> `projects.overview`（含握手能力宣告与 HostClient 方法）；基线路由（`baseline.*`/
+> `baselines.*`/`artifacts.get`）仍由 F-014 接线，接线前不宣告对应能力。P02-2 既有路由见
 > [p02-2-commands-events-contract.md](p02-2-commands-events-contract.md) §3.2，本文不重复其语义。
-> 新增路由由 F-006（静态接入/概览）、F-014（基线）接线。
 
 | 方法与路由 | operation | 说明 |
 |---|---|---|

@@ -194,6 +194,7 @@ async function startEventServer(
       commandService: app.commandService,
       queryService: app.queryService,
       commandReceiptsService: app.commandReceiptsService,
+      onboardingService: app.onboardingService,
       getLifecycleState: () => lifecycle,
       eventStreams: hub,
     },
@@ -238,7 +239,7 @@ async function registerProject(
   name: string,
 ): Promise<{ projectId: string; revision: number }> {
   const receipt = (await app.commandService.submit(principal, {
-    schemaVersion: 2,
+    schemaVersion: 3,
     commandId: randomUUID(),
     operation: 'project.register',
     scope: { kind: 'registration' },
@@ -261,7 +262,7 @@ async function submitMetadataUpdate(
   name: string,
 ): Promise<void> {
   const receipt = (await app.commandService.submit(principal, {
-    schemaVersion: 2,
+    schemaVersion: 3,
     commandId: randomUUID(),
     operation: 'project.metadata.update',
     scope: { kind: 'project', projectId },
@@ -345,7 +346,7 @@ async function submitGlobalSettings(
   expectedRevision?: number,
 ): Promise<number> {
   const receipt = (await app.commandService.submit(principal, {
-    schemaVersion: 2,
+    schemaVersion: 3,
     commandId: randomUUID(),
     operation,
     scope: { kind: 'global' },
@@ -839,7 +840,7 @@ describe('F-012 SSE 订阅：授权与传输纪律', () => {
     try {
       // 写入一条全局配置（命令路径首建写 settings.global_created）与一条项目事件。
       const receipt = (await s.app.commandService.submit(s.owner, {
-        schemaVersion: 2,
+        schemaVersion: 3,
         commandId: randomUUID(),
         operation: 'settings.global.create',
         scope: { kind: 'global' },
@@ -1005,7 +1006,7 @@ describe('F-012 SSE 背压、心跳与生命周期', () => {
     const register = await loopbackRequest({
       port: host.port, method: 'POST', path: '/v1/commands', token,
       body: {
-        schemaVersion: 2,
+        schemaVersion: 3,
         commandId: randomUUID(),
         operation: 'project.register',
         scope: { kind: 'registration' },
@@ -1033,7 +1034,7 @@ describe('F-012 SSE 背压、心跳与生命周期', () => {
     const update = await loopbackRequest({
       port: host.port, method: 'POST', path: '/v1/commands', token,
       body: {
-        schemaVersion: 2,
+        schemaVersion: 3,
         commandId: randomUUID(),
         operation: 'project.metadata.update',
         scope: { kind: 'project', projectId },
@@ -1063,7 +1064,7 @@ describe('F-012 SSE 背压、心跳与生命周期', () => {
       const update2 = await loopbackRequest({
         port: host2.port, method: 'POST', path: '/v1/commands', token: token2,
         body: {
-          schemaVersion: 2,
+          schemaVersion: 3,
           commandId: randomUUID(),
           operation: 'project.metadata.update',
           scope: { kind: 'project', projectId },
@@ -1101,7 +1102,7 @@ describe('F-012 SSE 背压、心跳与生命周期', () => {
       path: '/v1/host/handshake',
       token: STUB_TOKEN,
       body: {
-        schemaVersion: 2,
+        schemaVersion: 3,
         protocolVersion: 1,
         hostInstanceId: STUB_INSTANCE,
         dataRootIdentity: STUB_ROOT_IDENTITY,

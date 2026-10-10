@@ -49,6 +49,7 @@ const run = isAppCommand
   ? runAppCli({
       args,
       env: process.env,
+      cwd: process.cwd(),
       io,
       userHomeDir: homedir(),
       ...(observationSignal !== undefined ? { signal: observationSignal } : {}),

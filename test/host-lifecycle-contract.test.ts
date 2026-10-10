@@ -144,8 +144,9 @@ function expectHostError(
 describe('F-002 冻结常量与能力声明', () => {
   it('版本、回环地址、体积与预算均为契约冻结值', () => {
     expect(DISCOVERY_SCHEMA_VERSION).toBe(1);
-    // P02-2 §3.1：线消息升 v2；发现 schemaVersion 与线协议版本不联动。
-    expect(CURRENT_SCHEMA_VERSION).toBe(2);
+    // P02-2 §3.1：线消息升 v2；P02-3 / F-006 起升 v3（能力集合扩张，见
+    // docs/p02-3-onboarding-contract.md §3.1/§15.5）；发现 schemaVersion 与线协议版本不联动。
+    expect(CURRENT_SCHEMA_VERSION).toBe(3);
     expect(CURRENT_PROTOCOL_VERSION).toBe(1);
     expect([...SUPPORTED_PROTOCOL_VERSIONS]).toEqual([1]);
     expect(LOOPBACK_LISTEN_ADDRESS).toBe('127.0.0.1');
@@ -182,6 +183,8 @@ describe('F-002 冻结常量与能力声明', () => {
           'projects.get',
           'projects.binding.get',
           'projects.labelCounts',
+          'projects.inspect',
+          'projects.overview',
           'settings.global.get',
           'settings.global.export',
           'settings.project.get',
@@ -196,7 +199,16 @@ describe('F-002 冻结常量与能力声明', () => {
     });
     // 接线宣告与 Core 支持面交叉核对（不漂移：Core 增删操作必须同步接线与宣告）。
     expect([...CURRENT_HOST_CAPABILITIES.application.commands]).toEqual([...COMMAND_OPERATIONS]);
-    expect([...CURRENT_HOST_CAPABILITIES.application.queries]).toEqual([...QUERY_OPERATIONS]);
+    // P02-3 / F-006：queries = P02-2 的 QUERY_OPERATIONS + 已接线的静态接入两项
+    // （BASELINE_QUERY_OPERATIONS 中 baselines.*/artifacts.* 属 F-014，接线前不得宣告）。
+    expect([...CURRENT_HOST_CAPABILITIES.application.queries]).toEqual([
+      ...QUERY_OPERATIONS.slice(0, 4),
+      'projects.inspect',
+      'projects.overview',
+      ...QUERY_OPERATIONS.slice(4),
+    ]);
+    expect(CURRENT_HOST_CAPABILITIES.application.queries).not.toContain('baselines.list');
+    expect(CURRENT_HOST_CAPABILITIES.application.queries).not.toContain('artifacts.get');
     expect(IDEMPOTENCY_SCHEME).toBe('commandId+requestDigest');
     expect(ACTIVITY_SCOPE_IDLE_ONLY).toBe('idle-only');
     expect([...SUPPORTED_STOP_MODES]).toEqual([STOP_MODE_GRACEFUL]);
@@ -406,7 +418,7 @@ describe('F-002 §8 握手请求校验', () => {
   it('合法请求只含 4 个冻结字段，通过结构与版本校验', () => {
     const parsed = validateHandshakeRequest(validHandshakeBody());
     expect(parsed).toEqual({
-      schemaVersion: 2,
+      schemaVersion: 3,
       protocolVersion: 1,
       hostInstanceId: INSTANCE_ID,
       dataRootIdentity: ROOT_IDENTITY,
@@ -416,7 +428,7 @@ describe('F-002 §8 握手请求校验', () => {
   it('未知字段/缺字段/类型错误/格式错误 → invalid_input（结构先于语义）', () => {
     const malformed: Array<[string, unknown]> = [
       ['unknown', { ...validHandshakeBody(), extra: 1 }],
-      ['missing', { schemaVersion: 2, protocolVersion: 1 }],
+      ['missing', { schemaVersion: 3, protocolVersion: 1 }],
       ['schema-type', { ...validHandshakeBody(), schemaVersion: '1' }],
       ['protocol-type', { ...validHandshakeBody(), protocolVersion: '1' }],
       ['instance', { ...validHandshakeBody(), hostInstanceId: 'nope' }],

@@ -35,8 +35,13 @@ import { validateStableId } from './validation.js';
  * 版本与路由级操作身份
  * ------------------------------------------------------------------ */
 
-/** 线消息结构版本（P02-2 起为 2；独立于发现版本 1、线协议版本 1）。 */
-export const WIRE_MESSAGE_SCHEMA_VERSION = 2 as const;
+/**
+ * 线消息结构版本（P02-3 / F-006 起为 3；独立于发现版本 1、线协议版本 1）。
+ * 升版依据 docs/p02-3-onboarding-contract.md §3.1：握手能力视图（§11.3）自
+ * F-006 起新增 projects.inspect/overview 查询，客户端对能力集合做精确相等
+ * 核验，同版本号改集合违反「未知字段/集合一律拒绝」纪律，故显式 2 → 3。
+ */
+export const WIRE_MESSAGE_SCHEMA_VERSION = 3 as const;
 
 /**
  * 命令提交路由的操作身份：信封结构/版本/操作名在定位到具体 §6 命令之前，
@@ -359,7 +364,7 @@ export interface ValidatedProjectMetadataPayload {
 }
 
 interface EnvelopeCommon {
-  readonly schemaVersion: 2;
+  readonly schemaVersion: 3;
   readonly commandId: string;
   readonly issuedAt: string;
   readonly expiresAt: string | null;
@@ -615,13 +620,20 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
 
   const schemaVersion = object.schemaVersion;
   if (typeof schemaVersion !== 'number') {
-    fail(submit, 'invalid_input', 'schemaVersion', '必须是整数 2', schemaVersion);
+    fail(submit, 'invalid_input', 'schemaVersion', `必须是整数 ${WIRE_MESSAGE_SCHEMA_VERSION}`, schemaVersion);
   }
-  // 任何非 2 的数值版本（含小数）都是未知 schema，不猜测降级。
+  // 任何非当前版本的数值版本（含小数）都是未知 schema，不猜测降级。
   if (!Number.isInteger(schemaVersion) || schemaVersion !== WIRE_MESSAGE_SCHEMA_VERSION) {
-    fail(submit, 'unsupported_schema_version', 'schemaVersion', '本版本仅支持线消息 schemaVersion=2', schemaVersion, {
-      supportedVersion: WIRE_MESSAGE_SCHEMA_VERSION,
-    });
+    fail(
+      submit,
+      'unsupported_schema_version',
+      'schemaVersion',
+      `本版本仅支持线消息 schemaVersion=${WIRE_MESSAGE_SCHEMA_VERSION}`,
+      schemaVersion,
+      {
+        supportedVersion: WIRE_MESSAGE_SCHEMA_VERSION,
+      },
+    );
   }
 
   if (!isUuidV4(object.commandId)) {
@@ -661,7 +673,7 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
   const timing = validateTiming(operation, object.issuedAt, object.expiresAt);
 
   const base: {
-    readonly schemaVersion: 2;
+    readonly schemaVersion: 3;
     readonly commandId: string;
     readonly issuedAt: string;
     readonly expiresAt: string | null;
@@ -792,7 +804,7 @@ export type ReceiptStatus = (typeof RECEIPT_STATUSES)[number];
 export const RECEIPT_RESULT_MAX_BYTES = 16_384;
 
 interface ReceiptCommon {
-  readonly schemaVersion: 2;
+  readonly schemaVersion: 3;
   readonly commandId: string;
   readonly principalId: string;
   readonly operation: AppOperation;

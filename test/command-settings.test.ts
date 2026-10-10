@@ -75,21 +75,21 @@ async function setup() {
   const probe = box.openProbe();
   const owner = box.localOwner();
   const globalCreate = (changes: Record<string, unknown> = {}) => ({
-    schemaVersion: 2, commandId: randomUUID(), operation: 'settings.global.create',
+    schemaVersion: 3, commandId: randomUUID(), operation: 'settings.global.create',
     scope: { kind: 'global' }, issuedAt: NOW_ISO, payload: GLOBAL_PAYLOAD, ...changes,
   });
   const globalUpdate = (changes: Record<string, unknown> = {}) => ({
-    schemaVersion: 2, commandId: randomUUID(), operation: 'settings.global.update',
+    schemaVersion: 3, commandId: randomUUID(), operation: 'settings.global.update',
     scope: { kind: 'global' }, expectedRevision: 1, issuedAt: NOW_ISO,
     payload: GLOBAL_PAYLOAD_V2, ...changes,
   });
   const projectCreate = (changes: Record<string, unknown> = {}) => ({
-    schemaVersion: 2, commandId: randomUUID(), operation: 'settings.project.create',
+    schemaVersion: 3, commandId: randomUUID(), operation: 'settings.project.create',
     scope: { kind: 'project', projectId: project.id }, issuedAt: NOW_ISO,
     payload: PROJECT_PAYLOAD, ...changes,
   });
   const projectUpdate = (changes: Record<string, unknown> = {}) => ({
-    schemaVersion: 2, commandId: randomUUID(), operation: 'settings.project.update',
+    schemaVersion: 3, commandId: randomUUID(), operation: 'settings.project.update',
     scope: { kind: 'project', projectId: project.id }, expectedRevision: 1, issuedAt: NOW_ISO,
     payload: PROJECT_PAYLOAD_V2, ...changes,
   });
@@ -592,7 +592,7 @@ describe('F-009 配置幂等命令', () => {
   it('未支持的操作（Task 执行/基线等）继续 unsupported，零副作用', async () => {
     const s = await setup();
     await expect(s.service.submit(s.owner, {
-      schemaVersion: 2, commandId: randomUUID(), operation: 'task.execution.update',
+      schemaVersion: 3, commandId: randomUUID(), operation: 'task.execution.update',
       scope: { kind: 'project', projectId: s.project.id }, expectedRevision: 1, issuedAt: NOW_ISO,
       payload: {},
     })).rejects.toMatchObject({ code: 'unsupported' });

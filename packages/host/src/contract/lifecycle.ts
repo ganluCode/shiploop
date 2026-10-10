@@ -51,12 +51,14 @@ export const APPLICATION_COMMAND_CAPABILITIES = [
   'settings.project.update',
 ] as const;
 
-/** P02-2 §11.3：Host 实际接线的应用查询（含回执/结果读取与快照）。 */
+/** P02-2 §11.3：Host 实际接线的应用查询（含回执/结果读取与快照；P02-3 / F-006 新增静态接入两项）。 */
 export const APPLICATION_QUERY_CAPABILITIES = [
   'projects.list',
   'projects.get',
   'projects.binding.get',
   'projects.labelCounts',
+  'projects.inspect',
+  'projects.overview',
   'settings.global.get',
   'settings.global.export',
   'settings.project.get',

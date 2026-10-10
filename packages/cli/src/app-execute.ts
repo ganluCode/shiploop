@@ -37,9 +37,25 @@ import type {
   ParsedConfigCreate,
   ParsedConfigUpdate,
   ParsedEventsObserve,
+  ParsedProjectInit,
+  ParsedProjectOverview,
   ParsedReceiptGet,
 } from './app/args.js';
 import { getAppCliHelp } from './app/help.js';
+import {
+  buildInitCliResult,
+  buildInitConfirmationNotice,
+  composeAppCliStreams,
+  formatInitCliResult,
+  formatInitPreview,
+  formatOverviewResult,
+  resolveInitConfirmation,
+} from './app/onboarding.js';
+import type {
+  InitRegistrationOutcome,
+  InitRequestView,
+  ProjectOverviewView,
+} from './app/onboarding.js';
 import {
   buildAppCliFailureEnvelope,
   buildAppCliSuccessEnvelope,
@@ -74,6 +90,8 @@ export interface RunAppCliOptions {
   readonly args: readonly string[];
   /** 显式注入的环境（bin.ts 传 process.env）；监听覆盖在此解析。 */
   readonly env?: Readonly<Record<string, string | undefined>>;
+  /** 工作目录注入（bin.ts 传 process.cwd()）：project init 相对路径解析基准。 */
+  readonly cwd?: string;
   readonly io: AppCliIo;
   /** 平台注入口（默认 process.platform）；非 darwin 在任何 I/O 前拒绝。 */
   readonly platform?: string;
@@ -112,6 +130,8 @@ type CompletedReceipt = Extract<CommandReceipt, { status: 'completed' }>;
 type ProjectDetailResult = Awaited<ReturnType<HostClient['getProject']>>;
 type ProjectListResult = Awaited<ReturnType<HostClient['listProjects']>>;
 type ProjectLabelCountsResult = Awaited<ReturnType<HostClient['countProjectLabels']>>;
+type ProjectInspectionResult = Awaited<ReturnType<HostClient['inspectRepository']>>;
+type ProjectOverviewResult = Awaited<ReturnType<HostClient['getProjectOverview']>>;
 type SettingsStateResult = Awaited<ReturnType<HostClient['getGlobalSettings']>>;
 type EffectiveSettingsResult = Awaited<ReturnType<HostClient['getEffectiveSettings']>>;
 type ExportedSettingsResult = Awaited<ReturnType<HostClient['exportGlobalSettings']>>;
@@ -399,6 +419,145 @@ function writeCommandHumanLine(commandId: AppCliCommandId, receipt: CompletedRec
 }
 
 /* ------------------------------------------------------------------ *
+ * P02-3 / F-006 静态接入纵向（先预览后确认；§12.1/§12.2/§12.3）
+ * ------------------------------------------------------------------ */
+
+/** init/overview 结果输出：--json 信封到 stdout、提示进 stderr；人类模式结果文本到 stdout。 */
+function emitOnboardingResult(
+  io: AppCliIo,
+  command: ParsedProjectInit | ParsedProjectOverview,
+  result: unknown,
+  humanText: string,
+  notices: readonly string[],
+): AppCliRunResult {
+  const streams = composeAppCliStreams({
+    json: command.json,
+    command: command.commandId,
+    result,
+    humanText,
+    notices,
+  });
+  io.stdout(streams.stdout);
+  io.stderr(streams.stderr);
+  return {
+    exitCode: CLI_EXIT_OK,
+    kind: 'success',
+    command: command.commandId,
+    ...(command.json ? { envelope: buildAppCliSuccessEnvelope(command.commandId, result) } : {}),
+  };
+}
+
+/** init 注册结果映射：既有 project.register 回执业务状态 → 注册轴结果。 */
+function initRegistrationOutcome(receipt: CompletedReceipt): InitRegistrationOutcome {
+  const business = receipt.result as
+    | { status?: string; project?: { id?: unknown } }
+    | undefined;
+  const projectId = business?.project?.id;
+  if (business?.status === 'already_exists' && typeof projectId === 'string') {
+    return { status: 'already_registered', projectId };
+  }
+  if (typeof projectId !== 'string') {
+    throw new HostProtocolError('response_malformed', 'commands.submit', '注册回执缺少项目身份');
+  }
+  return { status: 'registered', projectId };
+}
+
+async function executeProjectInit(
+  io: AppCliIo,
+  command: ParsedProjectInit,
+  client: HostClient,
+): Promise<AppCliRunResult> {
+  // 1) 静态预览：只读 projects.inspect（不执行脚本/不安装依赖/不运行基线）。
+  const inspection: ProjectInspectionResult = await client.inspectRepository(command.repositoryPath);
+  const request: InitRequestView = {
+    repositoryPath: command.repositoryPath,
+    displayName: command.displayName ?? null,
+    description: command.description ?? null,
+    labels: [...command.labels],
+  };
+  const previewText = formatInitPreview(request, inspection);
+  // 2) 确认：CLI 非交互，唯一确认入口是显式 --confirm（§12.1）；取消/缺席 → not_run。
+  const decision = resolveInitConfirmation({
+    confirmFlag: command.confirm,
+    interactive: false,
+    answer: null,
+  });
+  if (decision.outcome === 'not_run') {
+    const result = buildInitCliResult(request, inspection, {
+      status: 'not_run',
+      reason: decision.reason,
+    });
+    return emitOnboardingResult(
+      io,
+      command,
+      result,
+      `${previewText}${formatInitCliResult(result)}`,
+      [buildInitConfirmationNotice()],
+    );
+  }
+  // 3) 确认注册：经既有 project.register 幂等命令（显式 --command-id 先查回执
+  //    并以原 issuedAt 重建同一信封；响应丢失沿用 HostClient 先查回执再重试）。
+  const payload: Record<string, unknown> = {
+    repositoryPath: command.repositoryPath,
+    displayName: command.displayName,
+  };
+  if (command.description !== undefined) {
+    payload.description = command.description;
+  }
+  if (command.labels.length > 0) {
+    payload.labels = [...command.labels];
+  }
+  const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+  const receipt = await client.submitCommand({
+    operation: 'project.register',
+    scope: { kind: 'registration' },
+    payload,
+    ...(command.explicitCommandId !== undefined ? { commandId: command.explicitCommandId } : {}),
+    ...(issuedAt !== undefined ? { issuedAt } : {}),
+  });
+  if (receipt.status === 'rejected') {
+    return emitFailure(io, command.json, {
+      exitCode: exitCodeForReceiptStatus('rejected'),
+      command: command.commandId,
+      code: receipt.error.code,
+      message: receipt.error.message,
+      commandId: receipt.commandId,
+      ...(receipt.error.details !== undefined ? { details: receipt.error.details } : {}),
+    });
+  }
+  const result = buildInitCliResult(request, inspection, initRegistrationOutcome(receipt));
+  return emitOnboardingResult(
+    io,
+    command,
+    result,
+    `${previewText}${formatInitCliResult(result)}`,
+    [],
+  );
+}
+
+async function executeProjectOverview(
+  io: AppCliIo,
+  command: ParsedProjectOverview,
+  client: HostClient,
+): Promise<AppCliRunResult> {
+  const overview: ProjectOverviewResult = await client.getProjectOverview(command.projectId);
+  const view: ProjectOverviewView = {
+    project: {
+      id: overview.project.id,
+      displayName: overview.project.displayName,
+      description: overview.project.description,
+      labels: [...overview.project.labels],
+    },
+    binding: overview.binding === null ? null : { canonicalPath: overview.binding.canonicalPath },
+    registration: overview.registration,
+    settings: overview.settings,
+    health: overview.health,
+    readAt: overview.readAt,
+  };
+  return emitOnboardingResult(io, command, view, formatOverviewResult(view), []);
+}
+
+/* ------------------------------------------------------------------ *
  * 命令分发
  * ------------------------------------------------------------------ */
 
@@ -408,6 +567,12 @@ async function executeProjectCommand(
   client: HostClient,
 ): Promise<AppCliRunResult> {
   switch (command.commandId) {
+    case 'project.init': {
+      return executeProjectInit(io, command, client);
+    }
+    case 'project.overview': {
+      return executeProjectOverview(io, command, client);
+    }
     case 'project.register': {
       const payload: Record<string, unknown> = {
         repositoryPath: command.repositoryPath,
@@ -953,7 +1118,9 @@ export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunRes
 
   let parsed;
   try {
-    parsed = parseAppCliArgs(options.args, options.env ?? {});
+    parsed = parseAppCliArgs(options.args, options.env ?? {}, {
+      ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
+    });
   } catch (error) {
     if (error instanceof AppCliParseError) {
       return emitParseFailure(io, error, jsonFlag);
@@ -980,6 +1147,19 @@ export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunRes
       code: 'unsupported_platform',
       message: '当前平台不受支持（首版仅正式支持 macOS）',
       details: { reason: 'platform_not_darwin' },
+    });
+  }
+
+  // P02-3 / F-006：确认注册（--confirm）最终经既有 project.register 命令提交，
+  // 该命令要求 displayName（唯一注册通道，不发明默认名）；缺 --name 属输入
+  // 错误（退出码 2），在发现 Host/联网之前拒绝，与解析失败同一纪律。
+  if (command.commandId === 'project.init' && command.confirm && command.displayName === undefined) {
+    return emitFailure(io, command.json, {
+      exitCode: 2,
+      command: command.commandId,
+      code: 'invalid_input',
+      message: '确认注册必须提供 --name（project.register 要求 displayName）',
+      details: { reason: 'name_required_for_registration', field: 'displayName' },
     });
   }
 

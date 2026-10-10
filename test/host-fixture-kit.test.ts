@@ -68,7 +68,7 @@ function errorBody(response: { json(): unknown }): { code: string; operation?: s
 }
 
 const HANDSHAKE_BODY = (instanceId: string, dataRootIdentity: string) => ({
-  schemaVersion: 2,
+  schemaVersion: 3,
   protocolVersion: 1,
   hostInstanceId: instanceId,
   dataRootIdentity,
@@ -429,7 +429,7 @@ describe('F-005 伪服务：协议负例矩阵', () => {
     const commandId = '22222222-2222-4222-8222-222222222222';
     const options = { mode: 'graceful' as const };
     const digest = computeStopRequestDigest(commandId, instance, options);
-    const stopBody = { schemaVersion: 2, commandId, hostInstanceId: instance, requestDigest: digest, options };
+    const stopBody = { schemaVersion: 3, commandId, hostInstanceId: instance, requestDigest: digest, options };
 
     const first = await server.jsonRequest('POST', '/v1/host/stop', { token: cred.token, body: stopBody });
     expect(first.statusCode).toBe(200);
@@ -443,7 +443,7 @@ describe('F-005 伪服务：协议负例矩阵', () => {
     const conflict = await server.jsonRequest('POST', '/v1/host/stop', {
       token: cred.token,
       body: {
-        schemaVersion: 2,
+        schemaVersion: 3,
         commandId,
         hostInstanceId: FIXED_OLD_INSTANCE,
         requestDigest: otherDigest,

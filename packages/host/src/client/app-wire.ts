@@ -18,6 +18,7 @@
  */
 import {
   EVENT_CURSOR_PREFIX,
+  ONBOARDING_QUERY_SCHEMA_VERSION,
   PUBLIC_EVENT_SCHEMA_VERSION,
   PUBLIC_STATE_EVENT_TYPES,
   SETTINGS_EXPORT_FORMAT_VERSION,
@@ -35,8 +36,12 @@ import type {
   ExportedSettings,
   ProjectBindingResult,
   ProjectDetailResult,
+  ProjectHealthSummary,
+  ProjectInspectionResult,
   ProjectLabelCountsResult,
   ProjectListResult,
+  ProjectOverviewResult,
+  ProjectSettingsPresence,
   PublicProjectRecord,
   PublicRepositoryBindingRecord,
   PublicSettingsState,
@@ -54,6 +59,8 @@ export type AppQueryOperation =
   | 'projects.get'
   | 'projects.binding.get'
   | 'projects.labelCounts'
+  | 'projects.inspect'
+  | 'projects.overview'
   | 'settings.global.get'
   | 'settings.global.export'
   | 'settings.project.get'
@@ -653,6 +660,173 @@ function validateSnapshot(
   };
 }
 
+/* ------------------------------------------------------------------ *
+ * P02-3 / F-006 静态接入查询响应（§7.2/§7.3；线消息 v3）
+ * ------------------------------------------------------------------ */
+
+const COMMIT_ID_PATTERN = /^[0-9a-f]{40}(?:[0-9a-f]{24})?$/;
+
+function requireOnboardingSchemaVersion(
+  operation: HostOperation,
+  value: unknown,
+): void {
+  if (value === ONBOARDING_QUERY_SCHEMA_VERSION) {
+    return;
+  }
+  if (typeof value === 'number') {
+    unsupportedVersion(operation, 'schemaVersion');
+  }
+  malformed(operation, 'onboarding_schema_version_invalid');
+}
+
+/** §7.2 projects.inspect 响应：只读仓库事实 + 既有项目身份，永不包含文件内容。 */
+function validateProjectInspection(
+  operation: HostOperation,
+  body: unknown,
+): ProjectInspectionResult {
+  const object = requirePlain(operation, body);
+  exactKeys(operation, object, [
+    'schemaVersion',
+    'canonicalPath',
+    'repoIdentity',
+    'headCommit',
+    'hasInitialCommit',
+    'hasUncommittedChanges',
+    'alreadyRegistered',
+    'readAt',
+  ]);
+  requireOnboardingSchemaVersion(operation, object.schemaVersion);
+  if (
+    typeof object.canonicalPath !== 'string' ||
+    object.canonicalPath.length === 0 ||
+    object.canonicalPath.includes('\u0000')
+  ) {
+    malformed(operation, 'inspection_path_invalid');
+  }
+  if (
+    typeof object.repoIdentity !== 'string' ||
+    object.repoIdentity.length === 0
+  ) {
+    malformed(operation, 'inspection_repo_identity_invalid');
+  }
+  if (
+    object.headCommit !== null &&
+    (typeof object.headCommit !== 'string' || !COMMIT_ID_PATTERN.test(object.headCommit))
+  ) {
+    malformed(operation, 'inspection_head_invalid');
+  }
+  if (typeof object.hasInitialCommit !== 'boolean' || typeof object.hasUncommittedChanges !== 'boolean') {
+    malformed(operation, 'inspection_flags_invalid');
+  }
+  let alreadyRegistered: { readonly projectId: string } | null = null;
+  if (object.alreadyRegistered !== null) {
+    const record = requirePlain(operation, object.alreadyRegistered);
+    exactKeys(operation, record, ['projectId']);
+    alreadyRegistered = { projectId: requireStableId(operation, record.projectId) };
+  }
+  if (!isIsoUtcDateTime(object.readAt)) {
+    malformed(operation, 'inspection_read_at_invalid');
+  }
+  return {
+    schemaVersion: ONBOARDING_QUERY_SCHEMA_VERSION,
+    canonicalPath: object.canonicalPath,
+    repoIdentity: object.repoIdentity,
+    headCommit: object.headCommit,
+    hasInitialCommit: object.hasInitialCommit,
+    hasUncommittedChanges: object.hasUncommittedChanges,
+    alreadyRegistered,
+    readAt: object.readAt,
+  };
+}
+
+const REGISTRATION_STATUSES = ['registered', 'not_registered'] as const;
+const HEALTH_STATUSES = ['healthy', 'unhealthy', 'not_run'] as const;
+
+/** §7.3 projects.overview 响应：注册状态与健康状态严格分开。 */
+function validateProjectOverview(
+  operation: HostOperation,
+  body: unknown,
+): ProjectOverviewResult {
+  const object = requirePlain(operation, body);
+  exactKeys(operation, object, [
+    'schemaVersion',
+    'project',
+    'binding',
+    'registration',
+    'settings',
+    'health',
+    'readAt',
+  ]);
+  requireOnboardingSchemaVersion(operation, object.schemaVersion);
+  const project = validateProjectRecord(operation, object.project);
+  const binding =
+    object.binding === null ? null : validateBindingRecord(operation, object.binding);
+  const registration = requirePlain(operation, object.registration);
+  exactKeys(operation, registration, ['status']);
+  if (!REGISTRATION_STATUSES.includes(registration.status as (typeof REGISTRATION_STATUSES)[number])) {
+    malformed(operation, 'overview_registration_status_invalid');
+  }
+  const settingsRecord = requirePlain(operation, object.settings);
+  let settings: ProjectSettingsPresence;
+  if (settingsRecord.configured === false) {
+    exactKeys(operation, settingsRecord, ['configured']);
+    settings = { configured: false };
+  } else if (settingsRecord.configured === true) {
+    exactKeys(operation, settingsRecord, ['configured', 'revision', 'schemaVersion']);
+    settings = {
+      configured: true,
+      revision: requirePositiveInteger(operation, settingsRecord.revision),
+      schemaVersion: settingsRecord.schemaVersion as number,
+    };
+  } else {
+    malformed(operation, 'overview_settings_invalid');
+  }
+  const healthRecord = requirePlain(operation, object.health);
+  let health: ProjectHealthSummary;
+  const healthKeys = Object.keys(healthRecord);
+  if (
+    !healthKeys.every((key) => ['status', 'lastBaselineOperationId', 'lastCompletedAt', 'reasonCode'].includes(key)) ||
+    healthKeys.length < 3
+  ) {
+    malformed(operation, 'overview_health_invalid');
+  }
+  if (!HEALTH_STATUSES.includes(healthRecord.status as (typeof HEALTH_STATUSES)[number])) {
+    malformed(operation, 'overview_health_status_invalid');
+  }
+  if (
+    (healthRecord.lastBaselineOperationId !== null && typeof healthRecord.lastBaselineOperationId !== 'string') ||
+    (healthRecord.lastCompletedAt !== null && typeof healthRecord.lastCompletedAt !== 'string')
+  ) {
+    malformed(operation, 'overview_health_invalid');
+  }
+  if (
+    healthRecord.reasonCode !== undefined &&
+    typeof healthRecord.reasonCode !== 'string'
+  ) {
+    malformed(operation, 'overview_health_invalid');
+  }
+  health = {
+    status: healthRecord.status as ProjectHealthSummary['status'],
+    lastBaselineOperationId: healthRecord.lastBaselineOperationId as string | null,
+    lastCompletedAt: healthRecord.lastCompletedAt as string | null,
+    ...(healthRecord.reasonCode !== undefined
+      ? { reasonCode: healthRecord.reasonCode as ProjectHealthSummary['reasonCode'] }
+      : {}),
+  };
+  if (!isIsoUtcDateTime(object.readAt)) {
+    malformed(operation, 'overview_read_at_invalid');
+  }
+  return {
+    schemaVersion: ONBOARDING_QUERY_SCHEMA_VERSION,
+    project,
+    binding,
+    registration: { status: registration.status as 'registered' | 'not_registered' },
+    settings,
+    health,
+    readAt: object.readAt,
+  };
+}
+
 export function validateAppQueryResponse(
   operation: 'projects.list',
   body: unknown,
@@ -673,6 +847,16 @@ export function validateAppQueryResponse(
   body: unknown,
   expectation?: SnapshotExpectation,
 ): ProjectLabelCountsResult;
+export function validateAppQueryResponse(
+  operation: 'projects.inspect',
+  body: unknown,
+  expectation?: SnapshotExpectation,
+): ProjectInspectionResult;
+export function validateAppQueryResponse(
+  operation: 'projects.overview',
+  body: unknown,
+  expectation?: SnapshotExpectation,
+): ProjectOverviewResult;
 export function validateAppQueryResponse(
   operation: 'settings.global.get' | 'settings.project.get',
   body: unknown,
@@ -741,6 +925,10 @@ export function validateAppQueryResponse(
       });
       return { labels };
     }
+    case 'projects.inspect':
+      return validateProjectInspection(operation, body);
+    case 'projects.overview':
+      return validateProjectOverview(operation, body);
     case 'settings.global.get':
       return validateSettingsState(operation, body);
     case 'settings.project.get':

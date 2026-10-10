@@ -16,8 +16,9 @@
  *   任意文件读取路由与 path/locator/伪 resultRef 一律不得返回文件内容；
  * - 授权在 Core 应用层：同一 Core 上装配的受限主体 server 跨项目/全局/回执
  *   越权全部拒绝，可见谓词先于分页收窄；
- * - 握手 schemaVersion=2 + §11.3 结构化能力（命令/查询真实清单、F-012 起
- *   events 为 SSE 结构化视图）；旧 v1 握手 400；真实 startHost 端到端接线
+ * - 握手 schemaVersion=3（P02-3/F-006 起）+ §11.3 结构化能力（命令/查询真实
+ *   清单含静态接入两项、F-012 起 events 为 SSE 结构化视图）；旧 v2/v1 握手
+ *   400；真实 startHost 端到端接线
  *   local-owner。
  *
  * 不读真实凭据、不调用模型、不修改开发仓库或用户 HOME。
@@ -115,6 +116,7 @@ async function startAppServer(
       commandService: app.commandService,
       queryService: app.queryService,
       commandReceiptsService: app.commandReceiptsService,
+      onboardingService: app.onboardingService,
       getLifecycleState: () => lifecycle,
     },
   });
@@ -172,7 +174,7 @@ async function setup() {
     name: string,
     options: { payload?: Record<string, unknown>; envelope?: Record<string, unknown> } = {},
   ) => ({
-    schemaVersion: 2,
+    schemaVersion: 3,
     commandId: randomUUID(),
     operation: 'project.register',
     scope: { kind: 'registration' },
@@ -201,7 +203,7 @@ describe('F-011 命令路由：注册/元数据/配置纵向（真实 HTTP + SQL
     expect(response.statusCode).toBe(200);
     const receipt = receiptOf(response);
     expect(receipt).toMatchObject({
-      schemaVersion: 2,
+      schemaVersion: 3,
       commandId: envelope.commandId,
       principalId: 'local-owner',
       operation: 'project.register',
@@ -266,7 +268,7 @@ describe('F-011 命令路由：注册/元数据/配置纵向（真实 HTTP + SQL
     const project = (registered.result as { project: { id: string; revision: number } }).project;
 
     const updateEnvelope = {
-      schemaVersion: 2,
+      schemaVersion: 3,
       commandId: randomUUID(),
       operation: 'project.metadata.update',
       scope: { kind: 'project', projectId: project.id },
@@ -303,7 +305,7 @@ describe('F-011 命令路由：注册/元数据/配置纵向（真实 HTTP + SQL
   it('全局/项目配置创建与 CAS 更新经 HTTP；有效配置/导出/当前值查询一致', async () => {
     const s = await setup();
     const created = await s.post('/v1/commands', {
-      schemaVersion: 2,
+      schemaVersion: 3,
       commandId: randomUUID(),
       operation: 'settings.global.create',
       scope: { kind: 'global' },
@@ -324,7 +326,7 @@ describe('F-011 命令路由：注册/元数据/配置纵向（真实 HTTP + SQL
 
     // CAS 更新。
     const updated = await s.post('/v1/commands', {
-      schemaVersion: 2,
+      schemaVersion: 3,
       commandId: randomUUID(),
       operation: 'settings.global.update',
       scope: { kind: 'global' },
@@ -338,7 +340,7 @@ describe('F-011 命令路由：注册/元数据/配置纵向（真实 HTTP + SQL
 
     // 重复创建（新 commandId）→ 409 rejected already_exists。
     const duplicate = await s.post('/v1/commands', {
-      schemaVersion: 2,
+      schemaVersion: 3,
       commandId: randomUUID(),
       operation: 'settings.global.create',
       scope: { kind: 'global' },
@@ -353,7 +355,7 @@ describe('F-011 命令路由：注册/元数据/配置纵向（真实 HTTP + SQL
     if (registered.status !== 'completed') throw new Error('expected completed');
     const projectId = (registered.result as { project: { id: string } }).project.id;
     const projectCreated = await s.post('/v1/commands', {
-      schemaVersion: 2,
+      schemaVersion: 3,
       commandId: randomUUID(),
       operation: 'settings.project.create',
       scope: { kind: 'project', projectId },
@@ -386,7 +388,7 @@ describe('F-011 查询与快照路由', () => {
     const page1 = await s.get('/v1/projects?limit=1');
     expect(page1.statusCode).toBe(200);
     const page1Body = page1.json() as { records: { id: string }[]; nextCursor: string | null; limit: number; schemaVersion: number; scope: string };
-    expect(page1Body).toMatchObject({ schemaVersion: 2, scope: 'project-list', limit: 1 });
+    expect(page1Body).toMatchObject({ schemaVersion: 3, scope: 'project-list', limit: 1 });
     expect(page1Body.records).toHaveLength(1);
     expect(page1Body.nextCursor).not.toBeNull();
     const page2 = await s.get(`/v1/projects?limit=1&cursor=${page1Body.nextCursor}`);
@@ -449,7 +451,7 @@ describe('F-011 查询与快照路由', () => {
       watermark: { sequence: number; cursor: string };
       readAt: string;
     };
-    expect(snapBody.schemaVersion).toBe(2);
+    expect(snapBody.schemaVersion).toBe(3);
     expect(snapBody.scope).toEqual({ kind: 'project', projectId });
     expect(snapBody.project.id).toBe(projectId);
     expect(snapBody.binding?.projectId).toBe(projectId);
@@ -460,7 +462,7 @@ describe('F-011 查询与快照路由', () => {
 
     const globalSnap = await s.get('/v1/snapshot?scope=global');
     expect(globalSnap.statusCode).toBe(200);
-    expect(globalSnap.json()).toMatchObject({ schemaVersion: 2, scope: { kind: 'global' }, settings: null });
+    expect(globalSnap.json()).toMatchObject({ schemaVersion: 3, scope: { kind: 'global' }, settings: null });
 
     // 无配置当前值 → 404 not_found（与损坏严格区分，不降级为已配置）。
     const unset = await s.get('/v1/settings/global');
@@ -667,7 +669,7 @@ describe('F-011 传输纪律与版本门禁', () => {
   it('信封校验顺序：结构 400 先于凭据；版本/未知操作 400/501 在凭据之后', async () => {
     const s = await setup();
     // 结构非法（缺 commandId）且无 token → 400（结构先于凭据，§5.1）。
-    const structural = await s.post('/v1/commands', { schemaVersion: 2, operation: 'project.register' }, null);
+    const structural = await s.post('/v1/commands', { schemaVersion: 3, operation: 'project.register' }, null);
     expect(structural.statusCode).toBe(400);
     expect(errorOf(structural).code).toBe('invalid_input');
     // 结构合法但旧版 schema 且无 token → 401（版本门禁不越过认证）。
@@ -684,7 +686,7 @@ describe('F-011 传输纪律与版本门禁', () => {
     // 认证后未知操作（Work/Chat 候选名）→ 501 + 实际实现清单。
     for (const operation of ['work.submit', 'chat.send', 'baseline.run', 'phase.advance']) {
       const response = await s.post('/v1/commands', {
-        schemaVersion: 2,
+        schemaVersion: 3,
         commandId: randomUUID(),
         operation,
         scope: { kind: 'global' },
@@ -765,7 +767,7 @@ describe('F-011 传输纪律与版本门禁', () => {
       writeFileSync(join(repoDir, 'README.md'), `repo ${index}`, 'utf-8');
       commitAll(repoDir, 'init', { home: s.box.homeDir });
       const created = await s.post('/v1/commands', {
-        schemaVersion: 2,
+        schemaVersion: 3,
         commandId: randomUUID(),
         operation: 'project.register',
         scope: { kind: 'registration' },
@@ -810,7 +812,7 @@ describe('F-011 授权边界（同一 Core 上的受限主体传输面）', () =
     const idA = (receiptA.result as { project: { id: string } }).project.id;
     const idB = (receiptB.result as { project: { id: string } }).project.id;
     await s.post('/v1/commands', {
-      schemaVersion: 2,
+      schemaVersion: 3,
       commandId: randomUUID(),
       operation: 'settings.global.create',
       scope: { kind: 'global' },
@@ -840,7 +842,7 @@ describe('F-011 授权边界（同一 Core 上的受限主体传输面）', () =
     expect((await get(`/v1/projects/${idB}`)).statusCode).toBe(403);
     expect((await get(`/v1/projects/${idB}/repository-binding`)).statusCode).toBe(403);
     const writeB = await post('/v1/commands', {
-      schemaVersion: 2,
+      schemaVersion: 3,
       commandId: randomUUID(),
       operation: 'project.metadata.update',
       scope: { kind: 'project', projectId: idB },
@@ -855,7 +857,7 @@ describe('F-011 授权边界（同一 Core 上的受限主体传输面）', () =
 
     // 可见项目 A 的合法编辑仍 200（同一检查不冤枉合法主体）。
     const writeA = await post('/v1/commands', {
-      schemaVersion: 2,
+      schemaVersion: 3,
       commandId: randomUUID(),
       operation: 'project.metadata.update',
       scope: { kind: 'project', projectId: idA },
@@ -888,7 +890,7 @@ describe('F-011 授权边界（同一 Core 上的受限主体传输面）', () =
 });
 
 describe('F-011 握手升版与真实 startHost 端到端装配', () => {
-  it('握手 schemaVersion=2 + §11.3 能力视图（真实命令/查询清单，F-012 起 events 结构化 SSE 视图）', async () => {
+  it('握手 schemaVersion=3 + §11.3 能力视图（真实命令/查询清单含静态接入两项，F-012 起 events 结构化 SSE 视图）', async () => {
     const s = await setup();
     const handshake = await loopbackRequest({
       port: s.server.port,
@@ -896,7 +898,7 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
       path: '/v1/host/handshake',
       token: STUB_TOKEN,
       body: {
-        schemaVersion: 2,
+        schemaVersion: 3,
         protocolVersion: 1,
         hostInstanceId: STUB_INSTANCE,
         dataRootIdentity: STUB_ROOT_IDENTITY,
@@ -907,7 +909,7 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
       expectedHostInstanceId: STUB_INSTANCE,
       expectedDataRootIdentity: STUB_ROOT_IDENTITY,
     });
-    expect(validated.schemaVersion).toBe(2);
+    expect(validated.schemaVersion).toBe(3);
     expect(validated.capabilities.application).toEqual({
       commands: [
         'project.register',
@@ -922,6 +924,8 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         'projects.get',
         'projects.binding.get',
         'projects.labelCounts',
+        'projects.inspect',
+        'projects.overview',
         'settings.global.get',
         'settings.global.export',
         'settings.project.get',
@@ -933,21 +937,23 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
       ],
       events: { transport: 'sse', route: '/v1/events', scopes: ['project', 'global'] },
     });
-    // 旧 v1 握手被明确拒绝（Host/CLI 同仓同版发布，不猜测降级）。
-    const legacy = await loopbackRequest({
-      port: s.server.port,
-      method: 'POST',
-      path: '/v1/host/handshake',
-      token: STUB_TOKEN,
-      body: {
-        schemaVersion: 1,
-        protocolVersion: 1,
-        hostInstanceId: STUB_INSTANCE,
-        dataRootIdentity: STUB_ROOT_IDENTITY,
-      },
-    });
-    expect(legacy.statusCode).toBe(400);
-    expect(errorOf(legacy).code).toBe('unsupported_schema_version');
+    // 旧 v2/v1 握手被明确拒绝（Host/CLI 同仓同版发布，不猜测降级）。
+    for (const legacyVersion of [2, 1]) {
+      const legacy = await loopbackRequest({
+        port: s.server.port,
+        method: 'POST',
+        path: '/v1/host/handshake',
+        token: STUB_TOKEN,
+        body: {
+          schemaVersion: legacyVersion,
+          protocolVersion: 1,
+          hostInstanceId: STUB_INSTANCE,
+          dataRootIdentity: STUB_ROOT_IDENTITY,
+        },
+      });
+      expect(legacy.statusCode, `v${legacyVersion} 握手必须明确拒绝`).toBe(400);
+      expect(errorOf(legacy).code).toBe('unsupported_schema_version');
+    }
   });
 
   it('真实 startHost：生产装配绑定 local-owner，注册/列表/快照经唯一 /v1 路由完成', async () => {
@@ -971,7 +977,7 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         path: '/v1/host/handshake',
         token,
         body: {
-          schemaVersion: 2,
+          schemaVersion: 3,
           protocolVersion: 1,
           hostInstanceId: discovery.hostInstanceId,
           dataRootIdentity: host.dataRootIdentity,
@@ -987,7 +993,7 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         path: '/v1/commands',
         token,
         body: {
-          schemaVersion: 2,
+          schemaVersion: 3,
           commandId: randomUUID(),
           operation: 'project.register',
           scope: { kind: 'registration' },
@@ -1017,7 +1023,7 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
       });
       expect(snapshot.statusCode).toBe(200);
       expect(snapshot.json()).toMatchObject({
-        schemaVersion: 2,
+        schemaVersion: 3,
         scope: { kind: 'project', projectId },
         project: { id: projectId },
       });

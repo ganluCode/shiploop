@@ -16,11 +16,14 @@ export {
   computeBaselinePlanDigest, validateBaselineCapability, validateBaselineCheckPlan,
   validateBaselineListQuery, validateBaselinePreviewPayload, validateBaselineRunPayload,
   validateBaselineCancelPayload, validateProjectInitRequest, validateRepositoryRootPath,
+  ONBOARDING_QUERY_SCHEMA_VERSION,
 } from './ports/baseline.js';
 export type {
   BaselineCapability, BaselineCheck, BaselineCheckPlan, BaselineCheckStatus,
   BaselineListQuery, BaselineOperationStatus, BaselinePreviewPayload, BaselineRunPayload,
   BaselineCancelPayload, ValidatedProjectInitRequest,
+  ProjectHealthSummary, ProjectInspectionResult, ProjectOverviewResult,
+  ProjectSettingsPresence,
 } from './ports/baseline.js';
 export { computeCommandRequestDigest, validateWireCommandReceipt } from './ports/command-receipts.js';
 export {

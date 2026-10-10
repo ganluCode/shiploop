@@ -199,9 +199,11 @@ describe('F-001 契约文档与仓库基线一致（开工现状事实）', () =
     expect(root.scripts).not.toHaveProperty('accept:p02');
   });
 
-  it('F-011 已升线消息 v2 并以 §11.3 结构化能力宣告真实接线（F-012 起 events 为 SSE 视图）', () => {
+  it('F-011 已升线消息 v2 并以 §11.3 结构化能力宣告真实接线（F-012 起 events 为 SSE 视图；P02-3/F-006 起线消息续升 v3，见 p02-3 契约）', () => {
     const constants = readText('packages/host/src/contract/constants.ts');
-    expect(constants).toMatch(/export const CURRENT_SCHEMA_VERSION = 2 as const/);
+    // P02-3 / F-006 将线消息升至 v3（握手能力集合扩张，显式升版纪律）；
+    // 本守护跟随当前实现状态，演进依据见 docs/p02-3-onboarding-contract.md §3.1/§15.5。
+    expect(constants).toMatch(/export const CURRENT_SCHEMA_VERSION = 3 as const/);
     expect(constants).toMatch(/export const MAX_APP_BODY_BYTES = 65_536/);
     expect(constants).toMatch(/export const MAX_QUERY_STRING_BYTES = 8_192/);
     const lifecycle = readText('packages/host/src/contract/lifecycle.ts');

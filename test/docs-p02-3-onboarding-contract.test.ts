@@ -229,14 +229,15 @@ describe('F-001 契约文档与仓库基线一致（开工现状事实）', () =
     expect(root.scripts).not.toHaveProperty('accept:p02');
   });
 
-  it('开工线消息 schemaVersion 仍为 2，契约记录该起点与升 v3 计划', () => {
+  it('线消息 schemaVersion 已随 F-006 升至 3（开工为 2），契约记录起点与升版定案', () => {
     const constants = readText('packages/host/src/contract/constants.ts');
-    expect(constants).toMatch(/export const CURRENT_SCHEMA_VERSION = 2 as const/);
+    // F-006 接线 projects.inspect/overview 并扩张握手能力集合，按 §3.1 显式升 v3。
+    expect(constants).toMatch(/export const CURRENT_SCHEMA_VERSION = 3 as const/);
     expect(constants).toMatch(/export const MAX_APP_BODY_BYTES = 65_536/);
     expect(constants).toMatch(/export const MAX_QUERY_STRING_BYTES = 8_192/);
     expect(constants).toContain("COMMANDS_ROUTE = '/v1/commands'");
     const commandsPort = readText('packages/core/src/ports/commands.ts');
-    expect(commandsPort).toMatch(/export const WIRE_MESSAGE_SCHEMA_VERSION = 2 as const/);
+    expect(commandsPort).toMatch(/export const WIRE_MESSAGE_SCHEMA_VERSION = 3 as const/);
     // 契约冻结线消息 2 → 3。
     expect(contractDoc).toContain('WIRE_MESSAGE_SCHEMA_VERSION');
     expect(contractDoc).toMatch(/线消息 `schemaVersion` \| \*\*`2` → `3`/);

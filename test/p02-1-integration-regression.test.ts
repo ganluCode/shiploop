@@ -705,7 +705,7 @@ describe('F-013 FR-1 失效发现、陈旧 PID、崩溃重发现与旧清理迟�
         path: '/v1/host/handshake',
         token: host.token,
         body: {
-          schemaVersion: 2,
+          schemaVersion: 3,
           protocolVersion: 1,
           hostInstanceId: host.instanceId,
           dataRootIdentity: createHostFileStore({ canonicalRoot }).dataRootIdentity,
@@ -764,7 +764,7 @@ describe('F-013 FR-1 失效发现、陈旧 PID、崩溃重发现与旧清理迟�
         path: '/v1/host/handshake',
         token: host.token,
         body: {
-          schemaVersion: 2,
+          schemaVersion: 3,
           protocolVersion: 1,
           hostInstanceId: host.instanceId,
           dataRootIdentity: createHostFileStore({ canonicalRoot }).dataRootIdentity,
@@ -884,7 +884,7 @@ describe('F-013 FR-1 失效发现、陈旧 PID、崩溃重发现与旧清理迟�
         path: '/v1/host/handshake',
         token: newToken,
         body: {
-          schemaVersion: 2,
+          schemaVersion: 3,
           protocolVersion: 1,
           hostInstanceId: crashed.instanceId,
           dataRootIdentity: createHostFileStore({ canonicalRoot }).dataRootIdentity,
@@ -1044,7 +1044,7 @@ describe('F-013 FR-2 认证负例：token 篡改、假服务、真 Host HTTP 矩
         path: '/v1/host/handshake',
         token: originalToken,
         body: {
-          schemaVersion: 2,
+          schemaVersion: 3,
           protocolVersion: 1,
           hostInstanceId: host.instanceId,
           dataRootIdentity: createHostFileStore({ canonicalRoot }).dataRootIdentity,
@@ -1167,7 +1167,7 @@ describe('F-013 FR-2 认证负例：token 篡改、假服务、真 Host HTTP 矩
       };
 
       const baseBody = {
-        schemaVersion: 2,
+        schemaVersion: 3,
         protocolVersion: 1,
         hostInstanceId: host.instanceId,
         dataRootIdentity,
@@ -1290,7 +1290,7 @@ describe('F-013 FR-2 认证负例：token 篡改、假服务、真 Host HTTP 矩
         path: '/v1/host/handshake',
         token: host.token,
         body: {
-          schemaVersion: 2,
+          schemaVersion: 3,
           protocolVersion: 1,
           hostInstanceId: host.instanceId,
           dataRootIdentity: createHostFileStore({ canonicalRoot }).dataRootIdentity,
@@ -1328,7 +1328,7 @@ describe('F-013 FR-2 认证负例：token 篡改、假服务、真 Host HTTP 矩
 /** 合法 stop 请求体（options 省略 = graceful；digest 由同一规范算法计算）。 */
 function stopBody(hostInstanceId: string, commandId: string): Record<string, unknown> {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     commandId,
     hostInstanceId,
     requestDigest: computeStopRequestDigest(commandId, hostInstanceId, { mode: 'graceful' }),
@@ -1551,7 +1551,7 @@ describe('F-013 FR-2 停止幂等、停机未确认与停止/重启闭环', () =
         path: '/v1/host/handshake',
         token: first.token,
         body: {
-          schemaVersion: 2,
+          schemaVersion: 3,
           protocolVersion: 1,
           hostInstanceId: second.instanceId,
           dataRootIdentity: createHostFileStore({ canonicalRoot }).dataRootIdentity,
@@ -1565,7 +1565,7 @@ describe('F-013 FR-2 停止幂等、停机未确认与停止/重启闭环', () =
         path: '/v1/host/handshake',
         token: second.token,
         body: {
-          schemaVersion: 2,
+          schemaVersion: 3,
           protocolVersion: 1,
           hostInstanceId: first.instanceId,
           dataRootIdentity: createHostFileStore({ canonicalRoot }).dataRootIdentity,

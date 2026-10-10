@@ -26,7 +26,7 @@ export const HOST_LIFECYCLE_OPERATIONS = [
 
 /**
  * P02-2 §3.2 应用操作身份（与路由总表一一对应；F-013 起 HostClient 应用方法
- * 的客户端侧错误也使用这些身份）。
+ * 的客户端侧错误也使用这些身份；P02-3 / F-006 新增静态接入两项）。
  */
 export const APP_OPERATIONS = [
   'commands.submit',
@@ -36,6 +36,8 @@ export const APP_OPERATIONS = [
   'projects.get',
   'projects.binding.get',
   'projects.labelCounts',
+  'projects.inspect',
+  'projects.overview',
   'settings.global.get',
   'settings.global.export',
   'settings.project.get',
