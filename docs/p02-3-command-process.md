@@ -1,9 +1,10 @@
-# F-009 受监督命令进程端口
+# F-009/F-010 受监督命令进程端口与停止路径
 
 实现入口：`shiploop-core` 导出 `CommandProcessPort`、请求/句柄/错误契约；
 `shiploop-core/assembly` 导出 `createCommandProcessAdapter()`。加载入口不启动进程，不引入 Pi SDK。
 实现位于 `packages/core/src/adapters/process/`，不是 Spike 代码。
-本任务不接线基线执行编排器或 HTTP 能力，不改变基线操作/检查的业务状态。
+F-009 不接线基线执行编排器或 HTTP 能力，不改变基线操作/检查的业务状态；
+F-010 补齐取消/超时/升级终止/停止核验与无法确认时的占用隔离接线，仍不装配编排器。
 
 ## 放行协议与持久边界
 
@@ -45,6 +46,37 @@ P02-3 的公开检查计划仍遵守 §6.1 的无 shell 拼接校验。
   `missing_command`/`permission_denied`，不回显命令、绝对路径、stderr 或回调异常。
   Runtime/命令正常结束不是基线通过，业务映射由后续 Core 编排器负责。
 
+## F-010 取消/超时/升级终止与停止核验
+
+取消、超时、输出超限、消费者退出和监督 IPC 失联全部汇入**同一条有界停止路径**：
+
+1. **请求正常停止**：Host 向监督者发 cancel，监督者沿受控组发 SIGTERM；
+   用户取消与超时分别保留 `cancelled`/`timed_out` 原因（首个停止原因生效，
+   不因后续事件覆盖），终端态只解析一次；
+2. **宽限**：监督者 5s 后自行升级 SIGKILL（不变）；Host 侧另有停止宽限预算
+   （默认 10s，覆盖监督者升级窗口的兑底）；宽限内监督者完成收尾则直接进入核验；
+3. **身份核对后强制终止**：宽限期满仍未结束时，Host 重新用 `/bin/ps` 核对
+   持久提交的身份（PID/PGID/OS `lstart`/命令行启动标识）——一致才对**整个受控组**
+   发 SIGKILL；身份探测失败或 PID 被无关进程复用/旧启动标识不一致时**不发任何
+   信号**（不误杀无关进程），返回不确定；
+4. **有界核验**：升级/收尾后在确认预算（§13 默认 5s）内轮询组成员清点，
+   只有成功的清点显示全组不存在才 `stopped.confirmed=true`；清点失败不折算为
+   已停止，`query().state='uncertain'`。
+
+决策核心位于 `adapters/process/stop-escalation.ts`（纯逻辑，探测/信号/延时全部
+注入；生产装配注入真实 `/bin/ps` 与 `kill`）。`createCommandProcessAdapter()` 接受
+可信装配选项 `stopGraceMs`/`stopConfirmMs`/`stopProbe`（只能收窄不能放宽冻结
+预算上限），用于确定性测试，不是请求可控的能力协商面。
+
+**停止未确认时的资源隔离接线**：`application/baseline-process-stop.ts` 提供
+`finalizeBaselineOccupancyAfterProcessStop`——在原子命令事务内，仅当
+`stop.confirmed=true` 才释放全局占用（仅持有者，幂等）；未确认时保留占用，
+竞争检查经既有占用获取原语被 `baseline_in_progress` 拒绝，不能启动（§8.3：
+停止未确认 → 操作 `failed`、检查 `inconclusive`、reason `stop_unconfirmed`）。
+停止/等待/信号路径不含任何仓库 reset/stash/删除逻辑；失败与取消保留源文件与
+已收输出。旧句柄重复取消幂等、不影响新执行；旧执行标识/PID 复用不会覆盖较新
+状态。旧身份的恢复核对（重启后）属 F-013。
+
 ## macOS 监督与占用边界
 
 命令及未改变进程组的后代继承监督组。监督进程即使命令父进程先退出也保持存活，
@@ -55,8 +87,8 @@ Core **不得释放全局/仓库写占用**。终止时排空 pipe 防止未消�
 
 `ps` 探测也有 1 秒、1 MiB 预算；资源过载导致探测失败时保守返回未知。
 OS 启动时间有秒级精度，UUID/活跃监督句柄/PGID 一起用于本次启动核对；这不是完整的重启恢复或
-通用 PID 复用安全终止 API。旧身份恢复核对、额外故障注入和占用隔离接线由 F-010/F-013 验收。
-Adapter 没有仓库 reset/stash/删除逻辑，没有 CPU/RSS/磁盘硬配额。
+通用 PID 复用安全终止 API。旧身份恢复核对（重启后）由 F-013 验收；F-010 已
+覆盖停止路径内的 PID 复用/旧标识负例与占用隔离接线。Adapter 没有仓库 reset/stash/删除逻辑，没有 CPU/RSS/磁盘硬配额。
 
 **仅 macOS**；未知平台拒绝，不能通过装配 platform 假装非 macOS 已支持。
 可信项目模式无法阻止任意恶意进程 setsid、改变组、创建 detached 后代或访问同用户文件/网络；
@@ -68,4 +100,10 @@ Adapter 没有仓库 reset/stash/删除逻辑，没有 CPU/RSS/磁盘硬配额�
 `test/supervised-command-process.test.ts` 使用真实 Node 命令、临时 SQLite 和既有测试 TS loader，
 覆盖提交前无哨兵、确认失败/握手中断/Host 崩溃、授权输入快照、环境/argv/stdin、
 0/非零/缺命令/权限/信号结果、有界输出、挂起查询/取消、父进程先退出后代存活和无消费者超时。
-不访问模型、网络或真实凭据；资源回收要求 `stopped.confirmed`。
+`test/supervised-process-stopping.test.ts`（F-010）覆盖升级终止决策核心的正反例
+（身份匹配/复用/探测失败/预算耗尽）、真实忽略 SIGTERM、父进程先退出后代持续写入、
+监督者被 SIGSTOP 冻结后的 Host 侧升级、探测谁报下的不确定终态与占用保留/竞争拒绝、
+重复取消幂等、自然完成后迟到取消、旧句柄不影响新执行、源文件与已收输出保留、
+以及停止路径无 reset/stash/删除的源码扫描。
+不访问模型、网络或真实凭据；所有真实进程用例有外层预算与退出核验，资源回收
+要求 `stopped.confirmed`（不确定用例单独核验后清理）。

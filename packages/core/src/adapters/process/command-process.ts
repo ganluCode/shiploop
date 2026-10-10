@@ -1,4 +1,4 @@
-/** F-009 macOS adapter. No database imports; Core supplies the durable-commit callback. */
+/** F-009/F-010 macOS adapter. No database imports; Core supplies the durable-commit callback. */
 import { execFile, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
@@ -9,11 +9,18 @@ import type {
   CommandProcessPort, CommandProcessRequest, CommandProcessIdentity, CommandProcessOutput,
   CommandProcessReason, CommandProcessResult, CommandProcessStop, CommandProcessSnapshot,
 } from '../../ports/command-process.js';
+import { confirmGroupAbsence, forceStopControlledGroup, matchesSupervisorIdentity } from './stop-escalation.js';
+import type { StopEscalationBudgets, StopEscalationProbe, SupervisedProcessRow } from './stop-escalation.js';
 
 const SYSTEM_PATH = '/usr/bin:/bin:/usr/sbin:/sbin';
 const BUFFER_LIMIT = 65_536;
 const HANDSHAKE_MS = 5_000;
-const STOP_MS = 10_000;
+/** F-010 取消/超时共用的有界停止路径预算（§13；supervisor 5s SIGTERM 升级之上的 Host 兜底宽限）。 */
+const DEFAULT_STOP_GRACE_MS = 10_000;
+const DEFAULT_STOP_CONFIRM_MS = 5_000;
+const GROUP_POLL_MS = 50;
+const STOP_GRACE_BOUNDS: readonly [number, number] = [100, DEFAULT_STOP_GRACE_MS];
+const STOP_CONFIRM_BOUNDS: readonly [number, number] = [100, DEFAULT_STOP_CONFIRM_MS];
 
 function validate(input: unknown): CommandProcessRequest {
   const bad = (): never => { throw new CommandProcessError('invalid_input'); };
@@ -54,21 +61,97 @@ function ps(args: string[]): Promise<string> {
     });
   });
 }
+function parseSupervisorRow(stdout: string, pid: number): SupervisedProcessRow | null {
+  const match = stdout.trim().match(/^(\d+)\s+(\d+)\s+(\w{3}\s+\w{3}\s+\d+\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s+(.+)$/);
+  if (!match || Number(match[1]) !== pid) return null;
+  return Object.freeze({ pid: Number(match[1]), processGroupId: Number(match[2]), startTime: match[3], command: match[4] });
+}
 async function identify(pid: number, launchId: string): Promise<CommandProcessIdentity> {
-  const value = await ps(['-p', String(pid), '-o', 'pid=,pgid=,lstart=,command=']);
-  const match = value.trim().match(/^(\d+)\s+(\d+)\s+(\w{3}\s+\w{3}\s+\d+\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s+(.+)$/);
-  if (!match || Number(match[1]) !== pid || Number(match[2]) !== pid || !match[4].endsWith(` ${launchId}`)) {
-    throw new CommandProcessError('handshake_failed');
-  }
-  return Object.freeze({ launchId, pid, processGroupId: pid, startTime: match[3] });
+  const row = parseSupervisorRow(await ps(['-p', String(pid), '-o', 'pid=,pgid=,lstart=,command=']), pid);
+  if (!row || row.processGroupId !== pid) throw new CommandProcessError('handshake_failed');
+  const identity: CommandProcessIdentity = Object.freeze({ launchId, pid, processGroupId: row.processGroupId, startTime: row.startTime });
+  if (!matchesSupervisorIdentity(row, identity)) throw new CommandProcessError('handshake_failed');
+  return identity;
 }
 async function groupAbsent(groupId: number): Promise<boolean> {
   const rows = await ps(['-axo', 'pid=,pgid=']);
   return !rows.trim().split('\n').some((row) => Number(row.trim().split(/\s+/)[1]) === groupId);
 }
+/** F-010 生产停止探测：真实 /bin/ps 身份行、成员清点、受控组信号与延时。 */
+const realStopProbe: StopEscalationProbe = {
+  async readSupervisorRow(pid) {
+    try {
+      return parseSupervisorRow(await ps(['-p', String(pid), '-o', 'pid=,pgid=,lstart=,command=']), pid);
+    } catch {
+      return undefined;
+    }
+  },
+  async listGroupMembers(processGroupId) {
+    try {
+      const rows = await ps(['-axo', 'pid=,pgid=']);
+      const members: number[] = [];
+      for (const row of rows.trim().split('\n')) {
+        const columns = row.trim().split(/\s+/);
+        if (columns.length >= 2 && Number(columns[1]) === processGroupId) members.push(Number(columns[0]));
+      }
+      return members;
+    } catch {
+      return undefined;
+    }
+  },
+  signalGroup(processGroupId, signal) {
+    try {
+      process.kill(-processGroupId, signal);
+      return true;
+    } catch {
+      return false;
+    }
+  },
+  delay: (ms) => new Promise<void>((resolve) => { setTimeout(resolve, ms); }),
+};
 
-/** Trusted assembly option only; never request-controlled platform capability negotiation. */
-export function createCommandProcessAdapter(options: { platform?: string } = {}): CommandProcessPort {
+/** 可信装配选项：平台核对与有界停止预算/探测注入（不得放宽冻结上限）。 */
+export interface CommandProcessAdapterOptions {
+  readonly platform?: string;
+  /** 停止宽限（先请求正常停止后的 Host 兜底窗口；默认 10s，上限即冻结默认）。 */
+  readonly stopGraceMs?: number;
+  /** 升级/收尾后的确认停止预算（默认 5s，§13）。 */
+  readonly stopConfirmMs?: number;
+  /** 注入停止探测（可信装配/确定性测试；默认真实 /bin/ps 与 kill）。 */
+  readonly stopProbe?: StopEscalationProbe;
+}
+
+/**
+ * Trusted assembly option only; never request-controlled platform capability negotiation.
+ * F-010: cancel/timeout/output-overflow/consumer-close all funnel into ONE bounded stop
+ * path: request graceful stop (supervisor SIGTERMs the controlled group), then after the
+ * grace budget re-verify the committed identity and force-kill the whole controlled group,
+ * then confirm group absence within a bounded budget; probe failures never count as
+ * stopped (confirmed=false keeps Core occupancy retained, §8.3).
+ */
+export function createCommandProcessAdapter(options: CommandProcessAdapterOptions = {}): CommandProcessPort {
+  if (options === null || typeof options !== 'object' || Array.isArray(options)) {
+    throw new TypeError('createCommandProcessAdapter: options 必须是对象');
+  }
+  for (const [name, value, bounds] of [
+    ['stopGraceMs', options.stopGraceMs, STOP_GRACE_BOUNDS],
+    ['stopConfirmMs', options.stopConfirmMs, STOP_CONFIRM_BOUNDS],
+  ] as const) {
+    if (value !== undefined && (!Number.isSafeInteger(value) || value < bounds[0] || value > bounds[1])) {
+      throw new TypeError(`createCommandProcessAdapter: ${name} 必须是 ${bounds[0]}..${bounds[1]} 的整数（冻结停止预算上限）`);
+    }
+  }
+  const stopProbe = options.stopProbe;
+  if (stopProbe !== undefined && (stopProbe === null || typeof stopProbe !== 'object'
+      || typeof stopProbe.readSupervisorRow !== 'function'
+      || typeof stopProbe.listGroupMembers !== 'function'
+      || typeof stopProbe.signalGroup !== 'function'
+      || typeof stopProbe.delay !== 'function')) {
+    throw new TypeError('createCommandProcessAdapter: stopProbe 必须实现受监督停止探测接口');
+  }
+  const stopGraceMs = options.stopGraceMs ?? DEFAULT_STOP_GRACE_MS;
+  const stopBudgets: StopEscalationBudgets = { confirmMs: options.stopConfirmMs ?? DEFAULT_STOP_CONFIRM_MS, pollMs: GROUP_POLL_MS };
+  const probe: StopEscalationProbe = stopProbe ?? realStopProbe;
   return {
     async start(input, confirm, signal) {
       if ((options.platform ?? process.platform) !== 'darwin' || process.platform !== 'darwin') {
@@ -106,20 +189,22 @@ export function createCommandProcessAdapter(options: { platform?: string } = {})
       const queue: CommandProcessOutput[] = [];
       let runtimeTimer: NodeJS.Timeout | undefined;
       let stopTimer: NodeJS.Timeout | undefined;
-      let verification: Promise<void> | undefined;
+      let conclusion: Promise<void> | undefined;
       let consumerTaken = false;
       const wake = () => { waiter?.(); waiter = undefined; };
       const streams = [child.stdout!, child.stderr!];
       const resume = () => streams.forEach((s) => s.resume());
       const stop = (why: CommandProcessReason) => {
-        if (finished || state === 'stopping') return;
+        // First stop reason wins: user cancel vs timed_out stay distinct through the
+        // shared path; late/old handle requests are idempotent no-ops.
+        if (finished || state === 'stopping' || conclusion) return;
         reason = why;
         state = 'stopping';
         clearTimeout(runtimeTimer);
         if (child.connected) child.send({ type: 'cancel', launchId }, () => {});
         // Draining on stop avoids a pipe backpressure deadlock. Retained data remains bounded.
         resume();
-        stopTimer = setTimeout(() => { void finish(); }, STOP_MS);
+        stopTimer = setTimeout(() => { void conclude(true); }, stopGraceMs);
       };
       const capture = (stream: 'stdout' | 'stderr', chunk: Buffer) => {
         if (finished) return;
@@ -141,17 +226,23 @@ export function createCommandProcessAdapter(options: { platform?: string } = {})
         else stop('cancelled');
       };
       signal?.addEventListener('abort', abort, { once: true });
-      const finish = (): Promise<void> => {
-        if (verification) return verification;
-        verification = (async () => {
-          let confirmed = false;
-          try { confirmed = child.pid !== undefined && await groupAbsent(child.pid); } catch { /* uncertain */ }
+      const conclude = (escalate: boolean): Promise<void> => {
+        if (conclusion) return conclusion;
+        clearTimeout(runtimeTimer);
+        clearTimeout(stopTimer);
+        conclusion = (async () => {
+          // F-010 shared bounded stop tail: graceful request already went out with stop().
+          // escalate=true（宽限期满）：核对持久提交的身份，一致才 SIGKILL 整个
+          // 受控组，再在确认预算内核验缺席；身份探测失败/PID 复用 → 不发信号且
+          // confirmed=false。escalate=false（监督者已退出）：仅核验组成员缺席。
+          const outcome = escalate
+            ? await forceStopControlledGroup(identity, probe, stopBudgets)
+            : await confirmGroupAbsence(identity, probe, stopBudgets).then((confirmed) => (
+                { confirmed, escalated: false, identity: 'absent' as const }));
           finished = true;
-          clearTimeout(runtimeTimer);
-          clearTimeout(stopTimer);
           signal?.removeEventListener('abort', abort);
-          state = confirmed ? 'stopped' : 'uncertain';
-          const stopResult = { confirmed };
+          state = outcome.confirmed ? 'stopped' : 'uncertain';
+          const stopResult = Object.freeze({ confirmed: outcome.confirmed });
           stopped.resolve(stopResult);
           result.resolve({ exitCode: commandOutcome?.exitCode ?? null, signal: commandOutcome?.signal ?? null,
             reason: reason ?? commandOutcome?.reason ?? (commandOutcome ? null : 'supervisor_lost'),
@@ -159,7 +250,7 @@ export function createCommandProcessAdapter(options: { platform?: string } = {})
           resume();
           wake();
         })();
-        return verification;
+        return conclusion;
       };
       child.on('message', (message: unknown) => {
         if (!message || typeof message !== 'object') return;
@@ -179,7 +270,7 @@ export function createCommandProcessAdapter(options: { platform?: string } = {})
         childClosed = true;
         closed.resolve();
         if (!released) startupFailure.reject(new CommandProcessError('handshake_failed'));
-        else void finish();
+        else void conclude(false);
       });
       const handshakeTimer = setTimeout(() => startupFailure.reject(new CommandProcessError('handshake_failed')), HANDSHAKE_MS);
       try {
