@@ -72,6 +72,9 @@ import { createSqliteQueryStore } from './sqlite/query-store.js';
 import { openSqliteStorageSession } from './sqlite/session.js';
 import { createSqliteStateStore } from './sqlite/state-store.js';
 
+// F-009 standalone process adapter; baseline execution orchestration is not assembled yet.
+export { createCommandProcessAdapter } from './process/command-process.js';
+
 const OPERATION = 'CoreApplication.open';
 
 /** 装配选项（边界为 unknown，经运行时校验；非法选项在任何 I/O 之前拒绝）。 */

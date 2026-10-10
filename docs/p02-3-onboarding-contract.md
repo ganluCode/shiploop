@@ -807,6 +807,12 @@ result/result_ref/error）。既有行经 INSERT...SELECT 原样保留（operati
 限定为 F-007 迁移范围；本变更以测试依据回写（依据 §5.3/§15.6 的 accepted 定案与
 F-007 登记的核对请求）。
 
+**F-009 实施注记**：受监督进程窄端口由 `shiploop-core` 导出，macOS 适配器工厂
+由 `shiploop-core/assembly` 导出；只在 Core 持久确认启动身份后传送/放行命令。
+有界异步输出、组监督、握手预算与可信项目限制见
+[p02-3-command-process.md](p02-3-command-process.md)。本任务不装配基线执行器或宣告新 HTTP 能力；
+取消/恢复的额外故障与隔离接线仍由 F-010/F-013 验收。
+
 ## 11. Host 装配、握手能力与 HostClient 扩展
 
 ### 11.1 装配
