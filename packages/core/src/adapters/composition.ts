@@ -60,6 +60,7 @@ import {
 } from '../ports/validation.js';
 import type { ValidationContext } from '../ports/validation.js';
 import { createArtifactFileStore } from './fs/artifact-files.js';
+import { createBaselinePartialOutputReader } from './fs/baseline-partial-output.js';
 import { createBaselineRepositoryGuard } from './fs/baseline-repository-guard.js';
 import { createCommandProcessAdapter } from './process/command-process.js';
 import { createBaselineWorkspaceReader } from './fs/baseline-workspace.js';
@@ -354,6 +355,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       inspector: repositoryInspector, workspace: createBaselineWorkspaceReader(),
       processes: createCommandProcessAdapter(), artifacts: artifactStore, files: artifactFileStore,
       repositoryGuard: createBaselineRepositoryGuard(),
+      recoverPartialOutput: createBaselinePartialOutputReader(basePathService.dataRoot()),
       environmentDirectory: (object.baselineEnvironmentDirectory as BaselineEnvironmentDirectory | undefined) ?? { resolveEnvironmentRef: () => null },
       resolveEnvironment: names => Object.fromEntries(names.flatMap(name => process.env[name] === undefined ? [] : [[name, process.env[name]!]])),
       ...(nowUtcMs === undefined ? {} : { nowUtcMs }),

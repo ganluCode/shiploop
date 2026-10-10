@@ -37,6 +37,7 @@ export interface BaselineExecutionOptions {
   /** Trusted assembly only: resolve approved names, never arbitrary Host environment. */
   readonly resolveEnvironment: (allowedVariables: readonly string[]) => Readonly<Record<string, string>>;
   readonly nowUtcMs?: () => number;
+  readonly recoverPartialOutput?: (projectId: string, relativePath: string) => Promise<Uint8Array>;
 }
 export interface BaselineExecutionService {
   submit(principal: unknown, envelope: unknown): Promise<CommandReceipt>;
@@ -44,6 +45,11 @@ export interface BaselineExecutionService {
   waitForIdle(): Promise<void>;
   diagnostics(): readonly { operationId: string; reasonCode: BaselineReasonCode }[];
   activeOperationIds(): readonly string[];
+  /** Trusted lifecycle entry; wait is the default, cancellation must be explicit. */
+  enterQuiesce(policy?: 'wait' | 'cancel'): { accepted: number };
+  awaitQuiesce(budgetMs: number): Promise<{ confirmed: boolean; pending: readonly string[] }>;
+  /** Call only after obtaining the data-root writer lock, before publishing Host ready. */
+  recover(): Promise<{ confirmed: boolean; pending: readonly string[] }>;
 }
 interface ActiveExecution {
   readonly principal: TrustedPrincipal;
@@ -68,6 +74,11 @@ export function createBaselineExecutionService(options: BaselineExecutionOptions
   const now = options.nowUtcMs ?? Date.now;
   const active = new Map<string, ActiveExecution>();
   const failures: { operationId: string; reasonCode: BaselineReasonCode }[] = [];
+  let quiescing = false;
+  let quiescePolicy: 'wait' | 'cancel' = 'wait';
+  let submissions = 0;
+  let recovering = false;
+  let recoveryPending: readonly string[] = [];
   const verifier = createArtifactVerifier({ artifacts: options.artifacts, files: options.files, limits: { maxReadBytes: BASELINE_OUTPUT_MAX_BYTES } });
 
   function operation(id: string): BaselineOperationRecord {
@@ -199,7 +210,19 @@ export function createBaselineExecutionService(options: BaselineExecutionOptions
           }, run.abort.signal);
           run.handle = handle;
           const evidence = await collector.collect({ projectId: initial.projectId, operationId: id, checkKey: check.checkKey,
-            request, handle, environmentRef: check.environmentRef, codeIdentity: authorizedCode });
+            request, handle, environmentRef: check.environmentRef, codeIdentity: authorizedCode,
+            async onStaging(relativePath) {
+              atomic.transact('baseline.evidence_identity', tx => {
+                assertOwner(id, run);
+                tx.heartbeatBaselineOccupancy(id, { ...baselines.readBaselineOccupancy().processIdentity, stagingRelativePath: relativePath });
+              });
+            },
+            async onOutputRegistered(artifactId) {
+              atomic.transact('baseline.output_identity', tx => {
+                assertOwner(id, run);
+                tx.heartbeatBaselineOccupancy(id, { ...baselines.readBaselineOccupancy().processIdentity, outputArtifactId: artifactId });
+              });
+            } });
           const result = { reason: evidence.processReason };
           stopConfirmed = evidence.stopConfirmed;
           const checkPublished = await publicationVerified(evidence);
@@ -258,6 +281,7 @@ export function createBaselineExecutionService(options: BaselineExecutionOptions
           // Publication failure is retryable only by explicit recovery, never re-run commands.
           return update(tx, row, run, row.status, 'evidence_incomplete');
         }
+        if (stopConfirmed) tx.heartbeatBaselineOccupancy(id, { ...baselines.readBaselineOccupancy().processIdentity, recoveryStopConfirmed: true });
         const status = !stopConfirmed ? 'failed' : reason === 'cancelled' ? 'cancelled' : 'completed';
         const finished = update(tx, row, run, status, reason, true);
         const checks = baselines.listBaselineCheckResults(id);
@@ -265,11 +289,15 @@ export function createBaselineExecutionService(options: BaselineExecutionOptions
         for (const c of checks) summary[c.status === 'not_run' ? 'notRun' : c.status]++;
         tx.appendBaselineEvent({ projectId: row.projectId, type: status === 'cancelled' ? 'baseline.cancelled' : 'baseline.completed', operationId: id,
           aggregateRevision: finished.revision, ...(status === 'cancelled' ? {} : { status, summary }), ...(reason ? { reasonCode: reason } : {}) });
-        if (stopConfirmed) tx.releaseBaselineOccupancy(id);
         return finished;
       });
       run.revision = next.revision;
-      if (stopConfirmed && published && isTerminalBaselineOperation(next.status)) await lease.release();
+      if (stopConfirmed && published && isTerminalBaselineOperation(next.status)) {
+        // Keep durable ownership until the repository claim is also gone. A crash
+        // between terminal commit and claim unlink remains in the recovery inventory.
+        await lease.release();
+        atomic.transact('baseline.release', tx => tx.releaseBaselineOccupancy(id));
+      }
     } catch (error) {
       // Uncertain persistence or callback failure MUST retain DB + repository exclusion.
       // Never swallow an async failure into passed; expose only a bounded controlled diagnostic.
@@ -284,33 +312,147 @@ export function createBaselineExecutionService(options: BaselineExecutionOptions
           const row = assertOwner(id, run);
           if (!startAttempted && (failureReason === 'baseline_in_progress' || failureReason === 'preview_stale')) {
             for (const c of baselines.listBaselineCheckResults(id)) if (c.revision === 1) checkResult(tx, id, run, c, 'not_run', failureReason);
+            tx.heartbeatBaselineOccupancy(id, { ...baselines.readBaselineOccupancy().processIdentity, recoveryStopConfirmed: true });
             const failed = update(tx, row, run, 'failed', failureReason, true);
             tx.appendBaselineEvent({ projectId: row.projectId, type: 'baseline.completed', operationId: id, aggregateRevision: failed.revision,
               status: 'failed', reasonCode: failureReason, summary: { total: authCheckCount(id), passed: 0, failed: 0, error: 0, inconclusive: 0, notRun: authCheckCount(id) } });
-            tx.releaseBaselineOccupancy(id);
             return failed;
           }
           return update(tx, row, run, row.status, failureReason);
         });
         run.revision = next.revision;
-        if (isTerminalBaselineOperation(next.status)) await lease?.release();
+        if (isTerminalBaselineOperation(next.status)) {
+          await lease?.release();
+          atomic.transact('baseline.release', tx => tx.releaseBaselineOccupancy(id));
+        }
       } catch { /* persistence still uncertain: never release */ }
     } finally { clearTimeout(timer); }
   }
   function authCheckCount(id: string) { return baselines.listBaselineCheckResults(id).length; }
 
+  function pendingIds(): readonly string[] {
+    const holder = baselines.readBaselineOccupancy().holderOperationId;
+    return [...new Set([...active.keys(), ...recoveryPending, ...(holder ? [holder] : []), ...(submissions ? ['baseline-submission'] : [])])];
+  }
+  function cancelActive(id: string, run: ActiveExecution) {
+    if (isTerminalBaselineOperation(operation(id).status)) return;
+    const row = assertOwner(id, run);
+    if (row.status !== 'cancelling') {
+      run.revision = atomic.transact('baseline.quiesce_cancel', tx => update(tx, row, run, 'cancelling', 'cancelled')).revision;
+    }
+    run.abort.abort();
+    void run.handle?.cancel().catch(() => {});
+  }
+
   return {
     async submit(principal, envelope) {
       assertTrustedPrincipal(principal);
-      const receipt = await options.commands.submit(principal, envelope);
-      if (receipt.status === 'accepted' && !receipt.replayed && receipt.operationId && !active.has(receipt.operationId)) {
-        const id = receipt.operationId;
-        const run: ActiveExecution = { principal, abort: new AbortController(), revision: operation(id).revision, done: Promise.resolve() };
-        active.set(id, run);
-        // Async execute starts only after the authorization/receipt transaction committed.
-        run.done = execute(id, run).finally(() => { active.delete(id); });
+      if (quiescing || recovering) throw new PublicError('resource_busy', 'baseline.run', undefined, { details: { reason: 'quiesce_not_confirmed' } });
+      if (recoveryPending.length) throw new PublicError('resource_busy', 'baseline.run', undefined, { details: { reason: 'baseline_in_progress' } });
+      submissions++;
+      try {
+        const receipt = await options.commands.submit(principal, envelope);
+        if (receipt.status === 'accepted' && !receipt.replayed && receipt.operationId && !active.has(receipt.operationId)) {
+          const id = receipt.operationId;
+          const run: ActiveExecution = { principal, abort: new AbortController(), revision: operation(id).revision, done: Promise.resolve() };
+          active.set(id, run);
+          // Async execute starts only after the authorization/receipt transaction committed.
+          if (quiescing && quiescePolicy === 'cancel') cancelActive(id, run);
+          run.done = execute(id, run).finally(() => { active.delete(id); });
+        }
+        return receipt;
+      } finally { submissions--; }
+    },
+    enterQuiesce(policy = 'wait') {
+      if (policy !== 'wait' && policy !== 'cancel') throw new TypeError('Invalid baseline quiesce policy');
+      quiescing = true;
+      quiescePolicy = policy;
+      if (policy === 'cancel') for (const [id, run] of active) cancelActive(id, run);
+      return { accepted: pendingIds().length };
+    },
+    async awaitQuiesce(budgetMs) {
+      if (!Number.isSafeInteger(budgetMs) || budgetMs < 0 || budgetMs > 10_000) throw new TypeError('Invalid quiesce budget');
+      const deadline = Date.now() + budgetMs;
+      while (pendingIds().length && Date.now() < deadline) {
+        await new Promise<void>(resolve => { setTimeout(resolve, Math.min(20, deadline - Date.now())); });
       }
-      return receipt;
+      const pending = pendingIds();
+      return { confirmed: pending.length === 0 && !recovering, pending };
+    },
+    async recover() {
+      if (recovering || active.size || submissions) throw new PublicError('resource_busy', 'baseline.recovery');
+      recovering = true;
+      const pending: string[] = [];
+      try {
+        for (const row of baselines.listRecoverableBaselineOperations()) {
+          const slot = baselines.readBaselineOccupancy();
+          const snapshot = slot.holderOperationId === row.id ? slot.processIdentity : null;
+          // An accepted authorization with no launch identity was never released. A
+          // running/cancelling row without the exact identity is not safe to reclaim.
+          let stopped = snapshot?.recoveryStopConfirmed === true || (row.status === 'accepted' && row.startedAtUtcMs === null &&
+            snapshot?.launchId === undefined && snapshot?.pid === undefined && snapshot?.processGroupId === undefined);
+          if (snapshot?.launchId !== undefined && snapshot.recoveryStopConfirmed !== true) {
+            try { stopped = (await options.processes.recoverStop?.(snapshot))?.confirmed === true; } catch { stopped = false; }
+          }
+          const reasonCode = stopped ? 'restart_recovery' : 'stop_unconfirmed';
+          let partialId: string | null = null;
+          // Only redacted collector staging is recoverable. Missing/failed publication
+          // stays an explicit gap, never proof of success. Existing artifacts are untouched.
+          if (stopped && typeof snapshot?.outputArtifactId === 'string') {
+            try {
+              const record = await options.artifacts.getArtifact(row.projectId, snapshot.outputArtifactId);
+              if (record.kind === 'baseline-output' && record.locator === `baseline/${row.id}/${snapshot.checkKey}/output` &&
+                  (await verifier.verifyArtifact(row.projectId, record.id)).kind === 'verified_ready') partialId = record.id;
+            } catch { /* missing/corrupt final content: try the retained staging instead */ }
+          }
+          if (stopped && partialId === null && typeof snapshot?.stagingRelativePath === 'string' && options.recoverPartialOutput) {
+            try {
+              const bytes = await options.recoverPartialOutput(row.projectId, snapshot.stagingRelativePath);
+              const publisher = createArtifactPublisher({ artifacts: options.artifacts, files: options.files,
+                limits: { maxSizeBytes: BASELINE_OUTPUT_MAX_BYTES, timeoutMs: 30_000 } });
+              const result = await publisher.publishArtifact({ projectId: row.projectId, kind: 'baseline-output', mediaType: 'text/plain; charset=utf-8',
+                expectedHash: createHash('sha256').update(bytes).digest('hex'), locator: `baseline/${row.id}/${snapshot.checkKey}/recovered-output`, content: [bytes] });
+              partialId = result.artifact.id;
+            } catch { /* missing partial evidence is recorded as restart_recovery, never passed */ }
+          }
+          try {
+            if (stopped && slot.holderOperationId === row.id) atomic.transact('baseline.recovery_stopped', tx => {
+              tx.heartbeatBaselineOccupancy(row.id, { ...snapshot, recoveryStopConfirmed: true });
+            });
+            if (!isTerminalBaselineOperation(row.status)) atomic.transact('baseline.recovery', tx => {
+              const current = operation(row.id);
+              if (current.revision !== row.revision) throw new PublicError('conflict', 'baseline.recovery');
+              for (const check of baselines.listBaselineCheckResults(row.id)) {
+                if (check.revision !== 1) continue; // immutable earlier evidence survives
+                tx.finalizeBaselineCheckResult(row.id, check.checkKey, { expectedRevision: check.revision,
+                  status: 'inconclusive', reasonCode, exitCode: null, signal: null, timedOut: false,
+                  outputArtifactId: check.checkKey === snapshot?.checkKey ? partialId : null,
+                  startedAtUtcMs: null, endedAtUtcMs: now() });
+                tx.appendBaselineEvent({ projectId: row.projectId, type: 'baseline.check_completed', operationId: row.id,
+                  aggregateRevision: row.revision, checkKey: check.checkKey, status: 'inconclusive', reasonCode });
+              }
+              const next = tx.updateBaselineOperation(row.id, { expectedRevision: row.revision, status: 'interrupted', reasonCode, endedAtUtcMs: now() });
+              const checks = baselines.listBaselineCheckResults(row.id);
+              const summary = { total: checks.length, passed: 0, failed: 0, error: 0, inconclusive: 0, notRun: 0 };
+              for (const check of checks) summary[check.status === 'not_run' ? 'notRun' : check.status]++;
+              tx.appendBaselineEvent({ projectId: row.projectId, type: 'baseline.completed', operationId: row.id,
+                aggregateRevision: next.revision, status: 'interrupted', reasonCode, summary });
+            });
+            if (!stopped) { pending.push(row.id); continue; }
+            const binding = await options.state.getRepositoryBinding(row.projectId);
+            const auth = row.authorizationId ? baselines.getBaselineAuthorization(row.authorizationId) : undefined;
+            const inspection = await options.inspector.inspect(binding.canonicalPath);
+            if (!auth || auth.repositoryBindingId !== binding.id || !binding.gitCommonDir ||
+                inspection.repoIdentity !== binding.repoIdentity || inspection.canonicalPath !== binding.canonicalPath || inspection.gitCommonDir !== binding.gitCommonDir ||
+                !(await options.repositoryGuard.releaseRecovered?.({ canonicalPath: binding.canonicalPath, gitCommonDir: binding.gitCommonDir, operationId: row.id }))) {
+              pending.push(row.id); continue;
+            }
+            if (slot.holderOperationId === row.id) atomic.transact('baseline.recovery_release', tx => tx.releaseBaselineOccupancy(row.id));
+          } catch { pending.push(row.id); }
+        }
+        recoveryPending = pending;
+        return { confirmed: pending.length === 0, pending };
+      } finally { recovering = false; }
     },
     async cancel(principal, projectId, id) {
       assertTrustedPrincipal(principal);

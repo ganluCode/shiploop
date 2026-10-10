@@ -4,5 +4,7 @@ export interface BaselineRepositoryLease {
   release(): Promise<void>;
 }
 export interface BaselineRepositoryGuard {
+  /** Only after old controlled processes are confirmed stopped. False retains quarantine. */
+  releaseRecovered?(input: { canonicalPath: string; gitCommonDir: string; operationId: string }): Promise<boolean>;
   acquire(input: { canonicalPath: string; gitCommonDir: string; operationId: string }): Promise<BaselineRepositoryLease>;
 }

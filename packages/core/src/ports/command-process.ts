@@ -63,6 +63,8 @@ export interface CommandProcessHandle {
   cancel(): Promise<{ readonly accepted: boolean }>;
 }
 export interface CommandProcessPort {
+  /** Restart-only: validate a durable launch identity before signalling; unknown stays isolated. */
+  recoverStop?(identity: unknown): Promise<CommandProcessStop>;
   start(request: CommandProcessRequest, confirm: ConfirmCommandProcessIdentity,
     signal?: AbortSignal): Promise<CommandProcessHandle>;
 }

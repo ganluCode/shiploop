@@ -22,8 +22,8 @@
  *
  * F-007 起监听器为真实生命周期传输面（createHostLifecycleServer，见
  * http-transport.ts）；F-008 起 stop 路由由停止控制器接线（host-stop.ts，
- * §10.4 幂等矩阵、§10.5 关闭顺序、§10.7 信号收尾）：恒空闲生产门控下
- * stop → quiescing → 立即确认 → stopping（关 listener）→ 关 Core → 持锁
+ * §10.4 幂等矩阵、§10.5 关闭顺序、§10.7 信号收尾）：F-013 生产门控合并
+ * 基线和额外活动，获锁后先恢复核对，stop → quiescing → 确认停止 → stopping（关 listener）→ 关 Core → 持锁
  * 按实例清理发现/凭据 → 200 最终视图 → 释锁 → 进程退出。本模块 close()
  * 仍是装配级拆卸（不删除发现/凭据），但会等待在途停止尝试并不重复释锁。
  *
@@ -47,7 +47,7 @@ import { createHostFileStore, resolveCanonicalDataRoot } from '../storage/index.
 import { openLockedWriter } from '../locking/index.js';
 import type { WriterLockOptions } from '../locking/index.js';
 import { createHostLifecycleServer } from './http-transport.js';
-import { createHostStopController, createIdleActivityGate } from './host-stop.js';
+import { createHostStopController } from './host-stop.js';
 import type { HostActivityGate, SignalShutdownOutcome } from './host-stop.js';
 import { createEventStreamHub } from './sse-transport.js';
 
@@ -93,6 +93,7 @@ const ALLOWED_OPTION_KEYS = [
   'lockTimeoutMs',
   'ownerProbe',
   'activityGate',
+  'baselineStopPolicy',
   'quiesceBudgetMs',
 ] as const;
 
@@ -114,10 +115,12 @@ export interface HostStartOptions {
   /** owner 诊断可信探测端口（F-004 定义；F-007 起由传输层提供真实实现）。 */
   readonly ownerProbe?: WriterLockOptions['ownerProbe'];
   /**
-   * §10.2 窄活动控制端口（受信装配/测试注入；默认生产恒空闲门控）。
-   * 绝非 argv/env/发现字段；注入非空闲实现不得新增执行表或虚构取消能力。
+   * §10.2 额外窄活动控制端口（受信装配/测试注入），与生产基线门控合并。
+   * 绝非 argv/env/发现字段；任何注入门控都不能覆盖或越过基线占用。
    */
   readonly activityGate?: HostActivityGate;
+  /** Trusted explicit stop strategy; wait never implicitly cancels project scripts. */
+  readonly baselineStopPolicy?: 'wait' | 'cancel';
   /** quiesce 有限预算（默认 10 000 ms；注入只允许 0..QUIESCE_BUDGET_MS）。 */
   readonly quiesceBudgetMs?: number;
 }
@@ -137,7 +140,8 @@ export interface RunningHost {
   readonly core: CoreApplication;
   /**
    * 装配级拆卸：等待在途停止尝试 → 关闭监听 → 关闭 Core → 释放 OS 锁；
-   * 幂等，并发合并。不是 §10 的停止流程（不删除发现/凭据）；若 §10.5
+   * 幂等，并发合并，活动或持久隔离未确认时拒绝并保留锁。不是 §10 的停止流程
+   * （不删除发现/凭据）；若 §10.5
    * 收尾已完成（HTTP stop/SIGTERM），close() 不再重复关闭或释锁。
    */
   close(): Promise<void>;
@@ -195,6 +199,9 @@ function validateStartOptions(options: HostStartOptions): void {
     (options.env === null || typeof options.env !== 'object' || Array.isArray(options.env))
   ) {
     throw invalidInput('invalid_env', { field: 'env' });
+  }
+  if (options.baselineStopPolicy !== undefined && options.baselineStopPolicy !== 'wait' && options.baselineStopPolicy !== 'cancel') {
+    throw invalidInput('invalid_baseline_stop_policy', { field: 'baselineStopPolicy' });
   }
   if (options.activityGate !== undefined) {
     const gate = options.activityGate as HostActivityGate;
@@ -305,6 +312,25 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
   let lifecycle: LifecycleState = 'starting';
   let stopTeardownCompleted = false;
   try {
+    // Writer lock is already held. No listener/discovery or new execution is exposed
+    // until durable old identities have been reconciled. Unconfirmed resources remain occupied.
+    await locked.writer.baselineExecutionService.recover();
+    const baseline = locked.writer.baselineExecutionService;
+    const activityGate: HostActivityGate = {
+      enterQuiesce() {
+        const local = baseline.enterQuiesce(options.baselineStopPolicy ?? 'wait');
+        const additional = options.activityGate?.enterQuiesce();
+        return { accepted: local.accepted + (additional?.accepted ?? 0) };
+      },
+      async awaitQuiesce(budgetMs) {
+        const [local, additional] = await Promise.all([
+          baseline.awaitQuiesce(budgetMs),
+          options.activityGate?.awaitQuiesce(budgetMs),
+        ]);
+        return { confirmed: local.confirmed && (additional?.confirmed ?? true),
+          pending: [...local.pending, ...(additional?.pending ?? [])] };
+      },
+    };
     const store = createHostFileStore({ canonicalRoot });
     const hostInstanceId = randomUUID();
     const startedAt = new Date().toISOString();
@@ -314,7 +340,7 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
     // F-008 停止控制器（§10.4/§10.5/§10.7）：收尾端口在此闭包装配，
     // prepareTeardown 只能在 stop/信号路径触发（close() 不走 §10.5 清理）。
     const stopController = createHostStopController({
-      activityGate: options.activityGate ?? createIdleActivityGate(),
+      activityGate,
       getLifecycleState: () => lifecycle,
       setLifecycleState: (next) => {
         lifecycle = next;
@@ -439,16 +465,23 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
         }
         inFlight ??= (async () => {
           // 与在途停止尝试协调：HTTP stop/信号收尾已在拆时不再重复拆卸；
-          // 被拒（未确认）的尝试结束后仍走装配级拆卸（不删除发现/凭据）。
+          // 被拒（未确认）的尝试结束后仍需重新核对活动，不能借 close 释锁。
           await stopController.whenSettled();
           if (!stopTeardownCompleted) {
+            // Assembly-level close is not an escape hatch around an unconfirmed stop.
+            activityGate.enterQuiesce();
+            lifecycle = 'quiescing';
+            const result = await activityGate.awaitQuiesce(options.quiesceBudgetMs ?? QUIESCE_BUDGET_MS);
+            if (!result.confirmed) throw new HostProtocolError('resource_busy', 'host.stop', '基线停止尚未确认', {
+              details: { reasonCode: 'quiesce_not_confirmed' },
+            });
             lifecycle = 'stopping';
             await eventStreams.closeAll();
             await closeServer(listeningServer);
             await locked.close();
           }
           closed = true;
-        })();
+        })().catch(error => { inFlight = undefined; throw error; });
         return inFlight;
       },
       requestSignalShutdown: () => stopController.requestSignalShutdown(),

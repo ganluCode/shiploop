@@ -15,9 +15,10 @@
   停止或发布未确认时返回 `resource_busy`，不会伪装取消成功。
 - `activeOperationIds`、`waitForIdle`、有界 `diagnostics` 供可信装配使用；失败诊断同时尽力
   保存到操作 reason。`waitForIdle` 只表示本服务调用已结束，**不证明占用已释放**。
-- 本任务不接线 Host 活动控制、恢复或 HTTP；`baseline.cancel` 信封仍未开放，HTTP 能力仍
-  不宣告基线操作。F-013/F-014 必须显式使用执行入口，不能绕回只提交授权的接口。
-  `CoreApplication.close` 拒绝仍在本服务执行的操作；停止未确认的持久隔离仍须由 F-013 核对。
+- F-013 已接线 Host 活动控制和保守重启恢复，详见
+  [p02-3-baseline-recovery.md](p02-3-baseline-recovery.md)。`baseline.cancel` 信封及执行 HTTP 路由
+  仍由 F-014 接线；不能把只提交授权的 `commandService` 当成执行入口。
+  `CoreApplication.close` 拒绝仍在本服务执行的操作；Host `close` 还必须经活动门控核对持久隔离。
 
 ## 不变量
 
@@ -28,7 +29,9 @@
    F-009/F-011 的有限收尾预算，不能以期限到达证明进程已经停止。
 3. 监督放行回调再次读取当前代码/cwd；短事务重核 principal、绑定、操作 revision、占用，
    提交 launchId/PID/PGID/启动身份和 started 事件后才放行。授权漂移不沿用旧 HEAD。
-4. 一项结果与 check_completed 事件同事务；终态、最终事件与 DB 占用释放同事务。
+4. 一项结果与 check_completed 事件同事务；终态与最终事件同事务。F-013 修补跨介质释放窗口：
+   先提交终态和停止核验标记，仍保留 DB 占用；再按 inode 释放仓库 claim，最后短事务释放 DB
+   占用。任一中断都留下可恢复持有者，避免「DB 已空闲但旧 claim 无法定位」。
    取消先提交 cancelling revision，迟到成功不能覆盖它；终态不能倒写。
 5. 停止未确认 → failed / inconclusive / stop_unconfirmed，保留隔离。发布缺口 → 非终态 /
    evidence_incomplete，保留隔离。事件、结果或收尾提交故障同样不解锁、不自动重跑。
@@ -57,8 +60,8 @@
 记录 failed / baseline_in_progress、检查 not_run，并仅释放自己的 DB 槽位。
 
 这是可信用户的持久协作占用，不是 OS 沙箱，不防外部 Git、编辑器或同用户恶意进程绕过。
-未验收断电/目录 fsync、其他平台或完整恢复；F-013 恢复必须核对旧进程和 claim 归属，不按
-「PID 不见/文件陈旧」自动删除。**仍需负责人提供 F-001 的核对依据，或确认此候选方案及
+F-013 已验收本机进程崩溃恢复、旧启动身份和 claim 归属核对；不按「PID 不见/文件陈旧」
+自动删除，其他属主或不可信 claim 保持隔离。尚未验收断电、其他平台或恶意同用户逃逸。**仍需负责人提供 F-001 的核对依据，或确认此候选方案及
 恢复责任；此前不能声称 F-012 全部验收通过。**
 
 ## 验证

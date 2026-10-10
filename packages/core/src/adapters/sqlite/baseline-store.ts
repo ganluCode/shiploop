@@ -908,6 +908,11 @@ export function createSqliteBaselineAccess(
     getBaselineAuthorization,
     readBaselineOccupancy,
     readProjectHealthInput,
+    listRecoverableBaselineOperations() {
+      assertOpen('BaselineStore.listRecoverableBaselineOperations');
+      const rows = session.database.prepare("SELECT * FROM baseline_operations WHERE status IN ('accepted','running','cancelling') OR id IN (SELECT holder_operation_id FROM baseline_occupancy) ORDER BY id").all() as OperationSqlRow[];
+      return rows.map(operationFromRow);
+    },
   };
 
   return {

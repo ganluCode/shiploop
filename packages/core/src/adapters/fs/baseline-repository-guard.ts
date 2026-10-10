@@ -4,13 +4,31 @@
  * Recovery requires explicit stopped-owner verification (F-013). Advisory trusted-user
  * boundary only: external tools and malicious same-user processes can bypass it.
  */
-import { closeSync, constants, fstatSync, fsyncSync, lstatSync, openSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, fstatSync, fsyncSync, lstatSync, openSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PublicError, isUuidV4 } from '../../ports/commands.js';
 import type { BaselineRepositoryGuard } from '../../ports/baseline-execution.js';
 
 export function createBaselineRepositoryGuard(): BaselineRepositoryGuard {
   return {
+    async releaseRecovered(input) {
+      if (!isUuidV4(input.operationId)) return false;
+      const path = join(realpathSync(input.gitCommonDir), 'shiploop-baseline.claim');
+      let fd: number;
+      try { fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW); }
+      catch (error) { return (error as NodeJS.ErrnoException).code === 'ENOENT'; }
+      try {
+        const inode = fstatSync(fd);
+        if (!inode.isFile() || inode.nlink !== 1 || inode.size > 1024) return false;
+        const owner = JSON.parse(readFileSync(fd, 'utf8')) as { operationId?: unknown };
+        if (owner.operationId !== input.operationId) return false;
+        const current = lstatSync(path);
+        if (current.dev !== inode.dev || current.ino !== inode.ino || !current.isFile() || current.nlink !== 1) return false;
+        unlinkSync(path);
+        return true;
+      } catch { return false; }
+      finally { closeSync(fd); }
+    },
     async acquire(input) {
       if (!isUuidV4(input.operationId)) throw new TypeError('Invalid repository claim owner');
       const path = join(realpathSync(input.gitCommonDir), 'shiploop-baseline.claim');

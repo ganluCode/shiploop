@@ -81,7 +81,11 @@ async function groupAbsent(groupId: number): Promise<boolean> {
 const realStopProbe: StopEscalationProbe = {
   async readSupervisorRow(pid) {
     try {
-      return parseSupervisorRow(await ps(['-p', String(pid), '-o', 'pid=,pgid=,lstart=,command=']), pid);
+      // ps -p exits nonzero for an absent PID; a successful full census distinguishes
+      // absence from a failed probe without treating either failure as an empty group.
+      const rows = await ps(['-axo', 'pid=,pgid=,lstart=,command=']);
+      const line = rows.split('\n').find(line => Number(line.trim().split(/\s+/)[0]) === pid);
+      return line === undefined ? null : parseSupervisorRow(line, pid) ?? undefined;
     } catch {
       return undefined;
     }
@@ -153,6 +157,25 @@ export function createCommandProcessAdapter(options: CommandProcessAdapterOption
   const stopBudgets: StopEscalationBudgets = { confirmMs: options.stopConfirmMs ?? DEFAULT_STOP_CONFIRM_MS, pollMs: GROUP_POLL_MS };
   const probe: StopEscalationProbe = stopProbe ?? realStopProbe;
   return {
+    async recoverStop(input) {
+      if (process.platform !== 'darwin' || !input || typeof input !== 'object') return { confirmed: false };
+      const id = input as CommandProcessIdentity;
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id.launchId) ||
+          !Number.isSafeInteger(id.pid) || id.pid <= 1 || id.processGroupId !== id.pid ||
+          typeof id.startTime !== 'string' || !id.startTime.length) return { confirmed: false };
+      const deadline = Date.now() + stopBudgets.confirmMs;
+      for (;;) {
+        const outcome = await forceStopControlledGroup(id, probe, {
+          ...stopBudgets, confirmMs: Math.max(0, deadline - Date.now()),
+        });
+        if (outcome.confirmed) return { confirmed: true };
+        // IPC loss may race ps with the supervisor's final exit (command becomes
+        // '(node)'). Never signal that mismatched row; wait for a successful absence
+        // census instead. A reused/live unrelated PID remains unconfirmed.
+        if (Date.now() >= deadline) return { confirmed: false };
+        await probe.delay(GROUP_POLL_MS);
+      }
+    },
     async start(input, confirm, signal) {
       if ((options.platform ?? process.platform) !== 'darwin' || process.platform !== 'darwin') {
         throw new CommandProcessError('unsupported_platform');

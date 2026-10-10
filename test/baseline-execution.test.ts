@@ -85,6 +85,27 @@ function gatedProcess(stopConfirmed = true, text = 'checked\n') {
 }
 
 describe('Core baseline execution invariants', () => {
+  it('quiesce includes in-flight authorization; explicit cancel fences it before any process launch', async () => {
+    const fake = gatedProcess();
+    const admitted = deferred<void>();
+    const release = deferred<void>();
+    const f = await setup(fake.port, undefined, app => ({ commands: { async submit(principal, envelope) {
+      admitted.resolve();
+      await release.promise;
+      return app.commandService.submit(principal, envelope);
+    } } }));
+    const pending = f.execution.submit(owner, await f.request([check('a', ['node', '--version'])]));
+    await admitted.promise;
+    expect(f.execution.enterQuiesce('cancel')).toEqual({ accepted: 1 });
+    expect(await f.execution.awaitQuiesce(0)).toEqual({ confirmed: false, pending: ['baseline-submission'] });
+    release.resolve();
+    const receipt = await pending;
+    await f.execution.waitForIdle();
+    expect(fake.starts()).toBe(0);
+    expect(f.app.baselineStore.getBaselineOperation(receipt.operationId)?.status).toBe('cancelled');
+    expect(f.results(receipt.operationId)).toMatchObject([{ status: 'not_run', reasonCode: 'cancelled' }]);
+    expect(await f.execution.awaitQuiesce(0)).toEqual({ confirmed: true, pending: [] });
+  });
   it('known zero-test output is inconclusive despite zero exit and complete artifacts', async () => {
     const fake = gatedProcess(true, 'Tests 0 passed (0)\n'); const f = await setup(fake.port);
     const r = await f.execution.submit(owner, await f.request([check('a', ['node', '--version'])]));

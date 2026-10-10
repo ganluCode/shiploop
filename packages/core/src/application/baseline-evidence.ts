@@ -84,6 +84,10 @@ export interface BaselineEvidenceInput {
   readonly codeIdentity: BaselineCodeIdentity;
   /** Additional explicitly known credentials; never logged or returned. */
   readonly protectedValues?: readonly string[];
+  /** Persist before consuming output so a Host crash leaves attributable partial evidence. */
+  readonly onStaging?: (relativePath: string) => Promise<void>;
+  /** Persist the pending index before publication, for result-commit crash recovery. */
+  readonly onOutputRegistered?: (artifactId: string) => Promise<void>;
 }
 export interface BaselineEvidenceOptions {
   readonly artifacts: ArtifactStore;
@@ -198,6 +202,7 @@ export function createBaselineEvidenceCollector(options: BaselineEvidenceOptions
       if (!admitted) throw new CaptureFailure([...gaps][0]);
       iterator = handle.output[Symbol.asyncIterator]();
       write = await bounded(files.openStagingWrite({ projectId, artifactId: randomUUID() }));
+      await bounded(input.onStaging?.(write.relativePath) ?? Promise.resolve());
       const redactors = { stdout: createOutputRedactor(values), stderr: createOutputRedactor(values) };
       const decoders = { stdout: new StringDecoder('utf8'), stderr: new StringDecoder('utf8') };
       async function append(stream: 'stdout' | 'stderr', text: string) {
@@ -233,6 +238,7 @@ export function createBaselineEvidenceCollector(options: BaselineEvidenceOptions
       const contentHash = hash.digest('hex');
       record = await bounded(artifacts.registerArtifact({ projectId, kind: BASELINE_OUTPUT_KIND, mediaType: 'text/plain; charset=utf-8',
         expectedHash: contentHash, locator: `baseline/${operationId}/${checkKey}/output`, version: 1 }));
+      await bounded(input.onOutputRegistered?.(record.id) ?? Promise.resolve());
       try {
         const published = await bounded(files.publishStaging(staged, { projectId, artifactId: record.id }));
         if (published.sizeBytes !== retained) throw new CaptureFailure('evidence_incomplete');

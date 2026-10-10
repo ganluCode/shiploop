@@ -1027,6 +1027,8 @@ export function isTerminalBaselineOperation(status: BaselineOperationStatus): bo
  * 扩展），本端口不提供事务外写入。
  */
 export interface BaselineStore extends BaselineHealthReadStore {
+  /** Restart inventory; includes terminal holders with unconfirmed stop. */
+  listRecoverableBaselineOperations(): readonly BaselineOperationRecord[];
   /** 按 operationId 读取操作；缺失返回 undefined；非法身份为 validation 错误。 */
   getBaselineOperation(operationId: unknown): BaselineOperationRecord | undefined;
   /** §7.4 项目操作分页（operationId 升序键集；query 经 validateBaselineListQuery）。 */
