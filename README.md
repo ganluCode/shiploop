@@ -55,6 +55,8 @@ docs/p02-2-operations.md  P02-2 应用命令、查询与事件操作说明（F-0
 docs/p02-2-handoff.md  P02-2 → P02-3 接口交接（F-019）
 docs/acceptance/p02-2-f020-report.md  P02-2 Feature 交付报告（F-020，证据在同目录 evidence-p02-2/）
 docs/p02-3-onboarding-contract.md  P02-3 项目初始化与获准基线检查接口契约（F-001，实施前置契约；F-002~F-020 按其实现静态接入/基线授权/受监督进程/CLI）
+docs/skills/project-init.md  F-017 最小操作 Skill：project init（只经 dist CLI；先只读预览，注册与基线授权分别请求用户确认）
+docs/skills/project-overview.md  F-017 最小操作 Skill：project overview（注册/配置/健康分列；不从日志或模型结论推断 passed）
 ```
 
 ### 确定性测试约定（F-003）
