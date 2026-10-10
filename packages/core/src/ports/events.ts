@@ -8,8 +8,8 @@
  * - §9.1 事件封套 schemaVersion=1（独立于发现版本 1/线协议版本 1/线消息
  *   版本 2/配置 payload 版本 2）：从持久行列单向映射，不添加不存在的
  *   Run/Task/Attempt 身份，全局事件 scope.kind='global' 且无 projectId；
- * - §9.2 六类事件白名单：type ↔ aggregate_type ↔ project_id ↔ payload 形状
- *   冻结。**F-003 定案**：映射层遇到未知持久类型或不一致行列一律显式失败
+ * - §9.2 事件类型白名单（P02-2 六类 + P02-3 / F-007 §9.2 扩展的五类基线事件）：
+ *   type ↔ aggregate_type ↔ project_id ↔ payload 形状冻结。**F-003 定案**：映射层遇到未知持久类型或不一致行列一律显式失败
  *   （corrupt_state），不静默跳过、不伪造、不蒙混透传未知 payload 键——
  *   P02-2 不做事件清理，所有事件仅由白名单写入路径产生，行列异常只可能来自
  *   持久损坏或库外篡改；F-012 按 §9.4 以 error 帧/错误响应呈现；
@@ -29,6 +29,13 @@
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { isUuidV4, PublicError } from './commands.js';
+import {
+  BASELINE_CHECK_STATUSES,
+  BASELINE_CHECKS_MAX,
+  BASELINE_CHECKS_MIN,
+  BASELINE_OPERATION_STATUSES,
+  BASELINE_REASON_CODES,
+} from './baseline.js';
 import { isStorageError } from './errors.js';
 import { SETTINGS_SCHEMA_VERSION } from './settings-schema.js';
 import {
@@ -56,6 +63,13 @@ export { SETTINGS_GLOBAL_CREATED_EVENT_TYPE };
 /** 仅命令路径项目配置首建成功写入（F-009 已实施；P01 直接服务首建不写事件）。 */
 export { SETTINGS_PROJECT_CREATED_EVENT_TYPE };
 
+/** §9.2 P02-3 / F-007 基线事件类型常量（白名单扩展，§9.3 随迁移 v4 生效）。 */
+export const BASELINE_AUTHORIZED_EVENT_TYPE = 'baseline.authorized';
+export const BASELINE_STARTED_EVENT_TYPE = 'baseline.started';
+export const BASELINE_CHECK_COMPLETED_EVENT_TYPE = 'baseline.check_completed';
+export const BASELINE_COMPLETED_EVENT_TYPE = 'baseline.completed';
+export const BASELINE_CANCELLED_EVENT_TYPE = 'baseline.cancelled';
+
 /** §9.2 P02-2 事件类型白名单（顺序即冻结顺序；白名单外不得出现在公开流中）。 */
 export const PUBLIC_STATE_EVENT_TYPES = [
   PROJECT_REGISTERED_EVENT_TYPE,
@@ -64,11 +78,24 @@ export const PUBLIC_STATE_EVENT_TYPES = [
   SETTINGS_PROJECT_CREATED_EVENT_TYPE,
   GLOBAL_SETTINGS_UPDATED_EVENT_TYPE,
   PROJECT_SETTINGS_UPDATED_EVENT_TYPE,
+  BASELINE_AUTHORIZED_EVENT_TYPE,
+  BASELINE_STARTED_EVENT_TYPE,
+  BASELINE_CHECK_COMPLETED_EVENT_TYPE,
+  BASELINE_COMPLETED_EVENT_TYPE,
+  BASELINE_CANCELLED_EVENT_TYPE,
 ] as const;
 
 export type PublicStateEventType = (typeof PUBLIC_STATE_EVENT_TYPES)[number];
 
-type EventPayloadKind = 'registered' | 'changedFields' | 'settingsSummary';
+type EventPayloadKind =
+  | 'registered'
+  | 'changedFields'
+  | 'settingsSummary'
+  | 'baselineAuthorized'
+  | 'baselineStarted'
+  | 'baselineCheckCompleted'
+  | 'baselineCompleted'
+  | 'baselineCancelled';
 
 /** 每类事件冻结的 aggregate_type、scope 种类与 payload 形状。 */
 export interface StateEventTypeSpec {
@@ -109,6 +136,33 @@ export const STATE_EVENT_TYPE_SPECS: Readonly<
     aggregateType: 'project_settings',
     scopeKind: 'project',
     payloadKind: 'settingsSummary',
+  }),
+  // P02-3 / F-007 §9.2：基线事件白名单扩展（aggregate_type='project'、
+  // project_id 非空由既有 v2 CHECK 与映射层共同保证）。
+  [BASELINE_AUTHORIZED_EVENT_TYPE]: Object.freeze({
+    aggregateType: 'project',
+    scopeKind: 'project',
+    payloadKind: 'baselineAuthorized',
+  }),
+  [BASELINE_STARTED_EVENT_TYPE]: Object.freeze({
+    aggregateType: 'project',
+    scopeKind: 'project',
+    payloadKind: 'baselineStarted',
+  }),
+  [BASELINE_CHECK_COMPLETED_EVENT_TYPE]: Object.freeze({
+    aggregateType: 'project',
+    scopeKind: 'project',
+    payloadKind: 'baselineCheckCompleted',
+  }),
+  [BASELINE_COMPLETED_EVENT_TYPE]: Object.freeze({
+    aggregateType: 'project',
+    scopeKind: 'project',
+    payloadKind: 'baselineCompleted',
+  }),
+  [BASELINE_CANCELLED_EVENT_TYPE]: Object.freeze({
+    aggregateType: 'project',
+    scopeKind: 'project',
+    payloadKind: 'baselineCancelled',
   }),
 });
 
@@ -296,6 +350,145 @@ function validateSettingsSummaryPayload(
   };
 }
 
+/* ------------------------------------------------------------------ *
+ * §9.2 P02-3 / F-007：基线事件 payload 形状（读取侧，损坏即 corrupt）
+ * ------------------------------------------------------------------ */
+
+const EVENT_SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/;
+const EVENT_CHECK_KEY_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+
+function requireEventUuid(value: unknown): value is string {
+  return typeof value === 'string' && isUuidV4(value);
+}
+
+function requireEventEnum(value: unknown, allowed: readonly string[]): value is string {
+  return typeof value === 'string' && allowed.includes(value);
+}
+
+function requireEventReasonCode(
+  payload: Record<string, unknown>,
+  operation: string,
+  required: boolean,
+): Record<string, unknown> {
+  if (payload.reasonCode === undefined) {
+    if (required) {
+      corrupt(operation, 'event_payload_violation');
+    }
+    return {};
+  }
+  if (!requireEventEnum(payload.reasonCode, BASELINE_REASON_CODES)) {
+    corrupt(operation, 'event_payload_violation');
+  }
+  return { reasonCode: payload.reasonCode };
+}
+
+function validateBaselineAuthorizedPayload(
+  payload: Record<string, unknown>,
+  operation: string,
+): Record<string, unknown> {
+  exactPayloadKeys(operation, payload, ['operationId', 'planDigest', 'checkCount']);
+  if (
+    !requireEventUuid(payload.operationId) ||
+    typeof payload.planDigest !== 'string' ||
+    !EVENT_SHA256_HEX_PATTERN.test(payload.planDigest) ||
+    typeof payload.checkCount !== 'number' ||
+    !Number.isSafeInteger(payload.checkCount) ||
+    payload.checkCount < BASELINE_CHECKS_MIN ||
+    payload.checkCount > BASELINE_CHECKS_MAX
+  ) {
+    corrupt(operation, 'event_payload_violation');
+  }
+  return { operationId: payload.operationId, planDigest: payload.planDigest, checkCount: payload.checkCount };
+}
+
+function validateBaselineOperationIdPayload(
+  payload: Record<string, unknown>,
+  operation: string,
+): Record<string, unknown> {
+  exactPayloadKeys(operation, payload, ['operationId']);
+  if (!requireEventUuid(payload.operationId)) {
+    corrupt(operation, 'event_payload_violation');
+  }
+  return { operationId: payload.operationId };
+}
+
+function validateBaselineCheckCompletedPayload(
+  payload: Record<string, unknown>,
+  operation: string,
+): Record<string, unknown> {
+  exactPayloadKeys(operation, payload, ['operationId', 'checkKey', 'status', 'reasonCode']);
+  if (
+    !requireEventUuid(payload.operationId) ||
+    typeof payload.checkKey !== 'string' ||
+    !EVENT_CHECK_KEY_PATTERN.test(payload.checkKey) ||
+    !requireEventEnum(payload.status, BASELINE_CHECK_STATUSES)
+  ) {
+    corrupt(operation, 'event_payload_violation');
+  }
+  return {
+    operationId: payload.operationId,
+    checkKey: payload.checkKey,
+    status: payload.status,
+    ...requireEventReasonCode(payload, operation, false),
+  };
+}
+
+function validateBaselineSummary(value: unknown, operation: string): Record<string, unknown> {
+  if (!isPlainObject(value)) {
+    corrupt(operation, 'event_payload_violation');
+  }
+  exactPayloadKeys(operation, value, ['total', 'passed', 'failed', 'error', 'inconclusive', 'notRun']);
+  for (const key of ['total', 'passed', 'failed', 'error', 'inconclusive', 'notRun']) {
+    const count = value[key];
+    if (
+      typeof count !== 'number' ||
+      !Number.isSafeInteger(count) ||
+      count < 0 ||
+      count > BASELINE_CHECKS_MAX
+    ) {
+      corrupt(operation, 'event_payload_violation');
+    }
+  }
+  return {
+    total: value.total,
+    passed: value.passed,
+    failed: value.failed,
+    error: value.error,
+    inconclusive: value.inconclusive,
+    notRun: value.notRun,
+  };
+}
+
+function validateBaselineCompletedPayload(
+  payload: Record<string, unknown>,
+  operation: string,
+): Record<string, unknown> {
+  exactPayloadKeys(operation, payload, ['operationId', 'status', 'reasonCode', 'summary']);
+  if (
+    !requireEventUuid(payload.operationId) ||
+    !requireEventEnum(payload.status, BASELINE_OPERATION_STATUSES)
+  ) {
+    corrupt(operation, 'event_payload_violation');
+  }
+  return {
+    operationId: payload.operationId,
+    status: payload.status,
+    ...requireEventReasonCode(payload, operation, false),
+    summary: validateBaselineSummary(payload.summary, operation),
+  };
+}
+
+function validateBaselineCancelledPayload(
+  payload: Record<string, unknown>,
+  operation: string,
+): Record<string, unknown> {
+  exactPayloadKeys(operation, payload, ['operationId', 'reasonCode']);
+  if (!requireEventUuid(payload.operationId)) {
+    corrupt(operation, 'event_payload_violation');
+  }
+  return { operationId: payload.operationId, ...requireEventReasonCode(payload, operation, false) };
+}
+
 /**
  * 持久 state_events 行列 → §9.1 公开封套（单向、确定性、无 I/O）。
  *
@@ -364,6 +557,16 @@ export function mapStateEvent(row: unknown, operation: string = EVENT_READ_OPERA
     payload = validateRegisteredPayload(row.payload, operation);
   } else if (spec.payloadKind === 'changedFields') {
     payload = validateChangedFieldsPayload(row.payload, operation);
+  } else if (spec.payloadKind === 'baselineAuthorized') {
+    payload = validateBaselineAuthorizedPayload(row.payload, operation);
+  } else if (spec.payloadKind === 'baselineStarted') {
+    payload = validateBaselineOperationIdPayload(row.payload, operation);
+  } else if (spec.payloadKind === 'baselineCheckCompleted') {
+    payload = validateBaselineCheckCompletedPayload(row.payload, operation);
+  } else if (spec.payloadKind === 'baselineCompleted') {
+    payload = validateBaselineCompletedPayload(row.payload, operation);
+  } else if (spec.payloadKind === 'baselineCancelled') {
+    payload = validateBaselineCancelledPayload(row.payload, operation);
   } else {
     payload = validateSettingsSummaryPayload(row.payload, operation);
   }

@@ -41,7 +41,7 @@ function point(
 
 /**
  * P02-2 冻结故障点。commandReceiptsBeforeInsert 依赖 F-006 迁移 v3；
- * 其余点对应 v1/v2 既有表。
+ * baseline* 点依赖 P02-3 / F-007 迁移 v4；其余点对应 v1/v2 既有表。
  */
 export const WRITE_FAULT_POINTS = Object.freeze({
   projectsBeforeInsert: point('projects', 'BEFORE', 'INSERT', 'projects_before_insert'),
@@ -94,6 +94,27 @@ export const WRITE_FAULT_POINTS = Object.freeze({
     'BEFORE',
     'INSERT',
     'command_receipts_before_insert',
+  ),
+  /** P02-3 / F-007：基线操作行插入前（授权行已写，验证整组回滚）。 */
+  baselineOperationsBeforeInsert: point(
+    'baseline_operations',
+    'BEFORE',
+    'INSERT',
+    'baseline_operations_before_insert',
+  ),
+  /** P02-3 / F-007：逐项检查结果收尾更新前（CAS 收尾失败回滚）。 */
+  baselineCheckResultsBeforeUpdate: point(
+    'baseline_check_results',
+    'BEFORE',
+    'UPDATE',
+    'baseline_check_results_before_update',
+  ),
+  /** P02-3 / F-007：占用行更新前（获取/心跳/释放失败回滚）。 */
+  baselineOccupancyBeforeUpdate: point(
+    'baseline_occupancy',
+    'BEFORE',
+    'UPDATE',
+    'baseline_occupancy_before_update',
   ),
 } satisfies Record<string, WriteFaultPoint>);
 

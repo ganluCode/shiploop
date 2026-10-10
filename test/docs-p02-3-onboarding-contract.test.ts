@@ -257,16 +257,17 @@ describe('F-001 契约文档与仓库基线一致（开工现状事实）', () =
     expect(contractDoc).toContain('11 项');
   });
 
-  it('开工迁移止于 v3 command_receipts，契约记录新增 v4', () => {
+  it('迁移随 F-007 升至 v4 基线四表（开工止于 v3），契约记录 v4 定案与 F-007 写回', () => {
     const migrations = readText('packages/core/src/adapters/sqlite/migrations.ts');
     expect(migrations).toMatch(/version: 1,/);
     expect(migrations).toMatch(/version: 2,/);
     expect(migrations).toMatch(/version: 3,/);
-    expect(migrations).not.toMatch(/version: 4,/);
+    // F-007（P02-3）已落地迁移 v4：基线作用域四表。
+    expect(migrations).toMatch(/version: 4,/);
     expect(migrations).toContain('command_receipts');
     expect(migrations).toContain('command_receipts_principal_command_unique');
     expect(migrations).toContain('command_receipts_scope_check');
-    // 契约冻结迁移 v4 与四张基线作用域表。
+    // 契约冻结迁移 v4 与四张基线作用域表（含 F-007 写回的补充注记）。
     expect(contractDoc).toContain('迁移 **v4**');
     for (const table of [
       'baseline_authorizations',
@@ -276,6 +277,9 @@ describe('F-001 契约文档与仓库基线一致（开工现状事实）', () =
     ]) {
       expect(contractDoc).toContain(table);
     }
+    expect(migrations).toContain('baseline_occupancy_process_identity_json_check');
+    expect(contractDoc).toContain('process_identity');
+    expect(contractDoc).toContain('F-007 补充');
   });
 
   it('开工 CLI 顶层命令为 project/config/receipt/events，契约记录扩展后的基线面', () => {

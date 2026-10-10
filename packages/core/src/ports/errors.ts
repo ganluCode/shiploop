@@ -20,7 +20,15 @@ export type StorageEntityType =
   | 'artifact'
   | 'migration'
   /** P02-2 / F-006：幂等命令回执（command_receipts，迁移 v3）。 */
-  | 'command_receipt';
+  | 'command_receipt'
+  /** P02-3 / F-007：不可变基线授权（baseline_authorizations，迁移 v4）。 */
+  | 'baseline_authorization'
+  /** P02-3 / F-007：基线操作生命周期（baseline_operations，迁移 v4）。 */
+  | 'baseline_operation'
+  /** P02-3 / F-007：基线逐项检查输入快照与结果（baseline_check_results，迁移 v4）。 */
+  | 'baseline_check_result'
+  /** P02-3 / F-007：全局单并发占用（baseline_occupancy，迁移 v4）。 */
+  | 'baseline_occupancy';
 
 export type StorageErrorKind =
   /** 外部输入未通过运行时校验（缺字段/类型错误/未知 schemaVersion/非法摘要等）。 */

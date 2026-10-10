@@ -760,15 +760,15 @@ describe('F-006 CommandReceiptStore SQLite 适配器（真实临时库）', () =
  * ------------------------------------------------------------------ */
 
 describe('F-006 迁移 v3 command_receipts', () => {
-  it('空库迁移建立 v1..v3 与 command_receipts 表', async () => {
+  it('空库迁移建立 v1..v4 与 command_receipts 表（P02-3 / F-007 起含基线四表）', async () => {
     const sandbox = createTempSandbox('shiploop-p02-2-f006-empty-');
     try {
       const session = openSqliteStorageSession({ path: join(sandbox.path, 'state.db') });
       try {
         const result = await migrateSqliteStorage(session);
         expect(result.fromVersion).toBe(0);
-        expect(result.toVersion).toBe(3);
-        expect(result.appliedVersions).toEqual([1, 2, 3]);
+        expect(result.toVersion).toBe(SQLITE_MIGRATIONS.length);
+        expect(result.appliedVersions).toEqual(SQLITE_MIGRATIONS.map((migration) => migration.version));
         const tables = session.database
           .prepare<[], { name: string }>(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
@@ -781,7 +781,7 @@ describe('F-006 迁移 v3 command_receipts', () => {
         const versions = session.database
           .prepare<[], { version: number }>('SELECT version FROM schema_migrations ORDER BY version')
           .all();
-        expect(versions.map((row) => row.version)).toEqual([1, 2, 3]);
+        expect(versions.map((row) => row.version)).toEqual(SQLITE_MIGRATIONS.map((migration) => migration.version));
       } finally {
         session.close();
       }
@@ -809,12 +809,12 @@ describe('F-006 迁移 v3 command_receipts', () => {
       });
       legacySession.close();
 
-      // 升级至 v3。
+      // 升级至最新（P02-3 / F-007 起为 v4；v3 仍为 v2 库之后的第一个增量）。
       const upgradedSession = openSqliteStorageSession({ path: dbPath });
       const upgraded = await migrateSqliteStorage(upgradedSession);
       expect(upgraded.fromVersion).toBe(2);
-      expect(upgraded.toVersion).toBe(3);
-      expect(upgraded.appliedVersions).toEqual([3]);
+      expect(upgraded.toVersion).toBe(SQLITE_MIGRATIONS.length);
+      expect(upgraded.appliedVersions).toEqual(SQLITE_MIGRATIONS.slice(2).map((migration) => migration.version));
       expect(upgraded.backupPath).toBeDefined();
       expect(existsSync(upgraded.backupPath as string)).toBe(true);
 
@@ -852,10 +852,11 @@ describe('F-006 迁移 v3 command_receipts', () => {
       const dbPath = join(sandbox.path, 'state.db');
       const session = openSqliteStorageSession({ path: dbPath });
       await migrateSqliteStorage(session);
-      // 高版本：插入 v4 迁移记录。
+      // 高版本：插入超出支持范围的迁移记录（P02-3 / F-007 起真实清单止于 v4，
+      // 探针记录为 v5）。
       session.database
         .prepare('INSERT INTO schema_migrations (id, created_at, version, checksum, applied_at) VALUES (?, ?, ?, ?, ?)')
-        .run('migration-v4', 1, 4, DIGEST_HEX, 1);
+        .run('migration-v5', 1, SQLITE_MIGRATIONS.length + 1, DIGEST_HEX, 1);
       session.close();
       const highVersion = openSqliteStorageSession({ path: dbPath });
       let caught: unknown;

@@ -27,6 +27,11 @@ import {
   PROJECT_SETTINGS_UPDATED_EVENT_TYPE,
 } from '../packages/core/src/ports/state-store.ts';
 import {
+  BASELINE_AUTHORIZED_EVENT_TYPE,
+  BASELINE_CANCELLED_EVENT_TYPE,
+  BASELINE_CHECK_COMPLETED_EVENT_TYPE,
+  BASELINE_COMPLETED_EVENT_TYPE,
+  BASELINE_STARTED_EVENT_TYPE,
   EVENT_CURSOR_PREFIX,
   EVENT_PAGE_DEFAULT_LIMIT,
   EVENT_PAGE_MAX_LIMIT,
@@ -103,12 +108,12 @@ function expectPublicError(fn: () => unknown, code: string, reason?: string): Pu
   throw new Error(`expected PublicError(${code}) to be thrown`);
 }
 
-describe('F-003 冻结事件封套版本与 §9.2 六类白名单', () => {
+describe('F-003 冻结事件封套版本与 §9.2 事件白名单（P02-2 六类 + P02-3/F-007 五类基线事件）', () => {
   it('封套 schemaVersion=1，与线消息/配置 payload 版本独立', () => {
     expect(PUBLIC_EVENT_SCHEMA_VERSION).toBe(1);
   });
 
-  it('白名单冻结为六类且与 P01 既有事件常量同源', () => {
+  it('白名单冻结为六类 + 五类基线事件且与既有事件常量同源', () => {
     expect([...PUBLIC_STATE_EVENT_TYPES]).toEqual([
       'project.registered',
       PROJECT_METADATA_UPDATED_EVENT_TYPE,
@@ -116,10 +121,18 @@ describe('F-003 冻结事件封套版本与 §9.2 六类白名单', () => {
       SETTINGS_PROJECT_CREATED_EVENT_TYPE,
       GLOBAL_SETTINGS_UPDATED_EVENT_TYPE,
       PROJECT_SETTINGS_UPDATED_EVENT_TYPE,
+      // P02-3 / F-007：§9.2 基线事件白名单扩展（随迁移 v4 生效，§9.3）。
+      BASELINE_AUTHORIZED_EVENT_TYPE,
+      BASELINE_STARTED_EVENT_TYPE,
+      BASELINE_CHECK_COMPLETED_EVENT_TYPE,
+      BASELINE_COMPLETED_EVENT_TYPE,
+      BASELINE_CANCELLED_EVENT_TYPE,
     ]);
     expect(PROJECT_METADATA_UPDATED_EVENT_TYPE).toBe('project.metadata_updated');
     expect(SETTINGS_GLOBAL_CREATED_EVENT_TYPE).toBe('settings.global_created');
     expect(SETTINGS_PROJECT_CREATED_EVENT_TYPE).toBe('settings.project_created');
+    expect(BASELINE_AUTHORIZED_EVENT_TYPE).toBe('baseline.authorized');
+    expect(BASELINE_CANCELLED_EVENT_TYPE).toBe('baseline.cancelled');
   });
 });
 

@@ -217,6 +217,124 @@ CREATE UNIQUE INDEX command_receipts_result_ref_unique ON command_receipts (resu
 CREATE INDEX command_receipts_principal_project_index ON command_receipts (principal_id, project_id);
 `;
 
+/**
+ * 第四个迁移（P02-3 / F-007）：基线作用域四表。
+ *
+ * 契约依据：docs/p02-3-onboarding-contract.md §10（表设计冻结）与 §15.8
+ * （基线作用域表名与设计 11 通用验证表的关系，不提前建通用验证表）。
+ *
+ * 相对契约 §10 冻结 DDL 的 F-007 补充（已写回契约 §10 注记，均为加强约束、
+ * 不改变冻结列集）：
+ * - baseline_occupancy 新增 process_identity（JSON 对象可空）：记录可恢复的
+ *   进程身份（pid/启动信息），供 F-013 重启后核对旧进程；语义与设计 11
+ *   workspace_leases.process_identity 对齐（§15.8 字段对齐要求）；
+ * - baseline_occupancy 新增单例 CHECK（id='global'）：与 global_settings 同一
+ *   先例，保证全局单并发占用只有一行；
+ * - 同项目复合外键（与 v1 projects↔repository_bindings 的 F-008 补齐同一先例）：
+ *   baseline_authorizations(project_id, repository_binding_id) →
+ *   repository_bindings(project_id, id)；baseline_operations(project_id,
+ *   authorization_id) → baseline_authorizations(project_id, id)；
+ *   baseline_check_results(project_id, operation_id) → baseline_operations
+ *   (project_id, id)；另加 baseline_check_results.output_artifact_id →
+ *   artifacts(id)（制品引用存在性）。直接 SQL 的跨项目引用在 DDL 级被拒绝。
+ *
+ * 列与约束同 ./schema.ts 的同名 Drizzle 表，一致性由
+ * test/sqlite-schema-migrations.test.ts 经真实 pragma 交叉核对。
+ * 不建 Work/Task/Attempt/Chat 或通用验证表（§2.2/§15.8）。
+ */
+const MIGRATION_004_SQL = `
+CREATE TABLE baseline_authorizations (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  repository_binding_id TEXT NOT NULL,
+  head_commit TEXT,
+  working_tree_digest TEXT NOT NULL,
+  has_uncommitted_changes INTEGER NOT NULL,
+  policy_revision TEXT NOT NULL,
+  plan_digest TEXT NOT NULL,
+  plan_json TEXT NOT NULL,
+  authorized_by TEXT NOT NULL,
+  authorized_at INTEGER NOT NULL,
+  CONSTRAINT baseline_authorizations_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT baseline_authorizations_binding_fk FOREIGN KEY (repository_binding_id) REFERENCES repository_bindings (id) ON DELETE RESTRICT,
+  CONSTRAINT baseline_authorizations_binding_same_project_fk FOREIGN KEY (project_id, repository_binding_id) REFERENCES repository_bindings (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT baseline_authorizations_digest_check CHECK (length(working_tree_digest) = 64 AND length(plan_digest) = 64),
+  CONSTRAINT baseline_authorizations_plan_json_check CHECK (json_valid(plan_json))
+);
+
+CREATE UNIQUE INDEX baseline_authorizations_project_id_id_unique ON baseline_authorizations (project_id, id);
+
+CREATE TABLE baseline_operations (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  project_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  authorization_id TEXT,
+  status TEXT NOT NULL,
+  reason_code TEXT,
+  started_at INTEGER,
+  ended_at INTEGER,
+  CONSTRAINT baseline_operations_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT baseline_operations_authorization_fk FOREIGN KEY (authorization_id) REFERENCES baseline_authorizations (id) ON DELETE RESTRICT,
+  CONSTRAINT baseline_operations_authorization_same_project_fk FOREIGN KEY (project_id, authorization_id) REFERENCES baseline_authorizations (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT baseline_operations_status_check CHECK (
+    status IN ('accepted','running','cancelling','completed','cancelled','failed','interrupted','not_run')
+  )
+);
+
+CREATE INDEX baseline_operations_project_index ON baseline_operations (project_id, id);
+CREATE UNIQUE INDEX baseline_operations_project_id_id_unique ON baseline_operations (project_id, id);
+
+CREATE TABLE baseline_check_results (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  project_id TEXT NOT NULL,
+  operation_id TEXT NOT NULL,
+  check_key TEXT NOT NULL,
+  argv_json TEXT NOT NULL,
+  cwd_ref TEXT,
+  environment_ref TEXT,
+  timeout_ms INTEGER NOT NULL,
+  required INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  reason_code TEXT,
+  exit_code INTEGER,
+  signal TEXT,
+  timed_out INTEGER NOT NULL DEFAULT 0,
+  output_artifact_id TEXT,
+  started_at INTEGER,
+  ended_at INTEGER,
+  CONSTRAINT baseline_check_results_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT baseline_check_results_operation_fk FOREIGN KEY (operation_id) REFERENCES baseline_operations (id) ON DELETE RESTRICT,
+  CONSTRAINT baseline_check_results_operation_same_project_fk FOREIGN KEY (project_id, operation_id) REFERENCES baseline_operations (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT baseline_check_results_output_artifact_fk FOREIGN KEY (output_artifact_id) REFERENCES artifacts (id) ON DELETE RESTRICT,
+  CONSTRAINT baseline_check_results_status_check CHECK (
+    status IN ('passed','failed','error','inconclusive','not_run')
+  ),
+  CONSTRAINT baseline_check_results_argv_json_check CHECK (json_valid(argv_json) AND json_type(argv_json) = 'array'),
+  CONSTRAINT baseline_check_results_timeout_positive_check CHECK (timeout_ms >= 1),
+  CONSTRAINT baseline_check_results_revision_positive_check CHECK (revision >= 1)
+);
+
+CREATE UNIQUE INDEX baseline_check_results_operation_check_unique ON baseline_check_results (operation_id, check_key);
+
+CREATE TABLE baseline_occupancy (
+  id TEXT PRIMARY KEY NOT NULL,
+  holder_operation_id TEXT,
+  acquired_at INTEGER,
+  heartbeat_at INTEGER,
+  process_identity TEXT,
+  CONSTRAINT baseline_occupancy_singleton_id_check CHECK (id = 'global'),
+  CONSTRAINT baseline_occupancy_holder_fk FOREIGN KEY (holder_operation_id) REFERENCES baseline_operations (id) ON DELETE RESTRICT,
+  CONSTRAINT baseline_occupancy_process_identity_json_check CHECK (process_identity IS NULL OR (json_valid(process_identity) AND json_type(process_identity) = 'object'))
+);
+`;
+
 function sha256Hex(text: string): string {
   return createHash('sha256').update(text, 'utf8').digest('hex');
 }
@@ -237,5 +355,10 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
     version: 3,
     sql: MIGRATION_003_SQL,
     checksum: sha256Hex(MIGRATION_003_SQL),
+  },
+  {
+    version: 4,
+    sql: MIGRATION_004_SQL,
+    checksum: sha256Hex(MIGRATION_004_SQL),
   },
 ];

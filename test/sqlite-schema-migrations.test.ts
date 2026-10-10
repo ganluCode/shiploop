@@ -19,7 +19,7 @@
  *   仓库规范路径唯一、ready 必须带 hash/size、缺失项目外键失败、被引用行 RESTRICT 删除
  *   保护——每项都断言抛错且行数不变；关闭重开后 schema 与数据逐字段一致。
  */
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -49,6 +49,11 @@ const SCHEMA_TABLES = [
   ['state_events', schema.stateEvents],
   // P02-2 / F-006：幂等命令回执（契约 §10）。
   ['command_receipts', schema.commandReceipts],
+  // P02-3 / F-007：基线作用域四表（契约 §10，迁移 v4）。
+  ['baseline_authorizations', schema.baselineAuthorizations],
+  ['baseline_operations', schema.baselineOperations],
+  ['baseline_check_results', schema.baselineCheckResults],
+  ['baseline_occupancy', schema.baselineOccupancy],
   ['schema_migrations', schema.schemaMigrations],
 ] as const;
 
@@ -424,7 +429,8 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
 
   it('enforces same-project RESTRICT foreign keys declared by the Drizzle schema', () => {
     withMigratedDatabase((db) => {
-      // 期望的外键映射（子列 → 父列；复合外键逐列对应），含 F-008 补齐的同项目复合外键。
+      // 期望的外键映射（子列 → 父列；复合外键逐列对应），含 F-008 补齐的同项目复合外键
+      // 与 P02-3 / F-007 基线四表的同项目复合外键/制品引用外键。
       const expectedFks = new Set([
         'projects:(repository_binding_id)->repository_bindings.(id)',
         'projects:(id,repository_binding_id)->repository_bindings.(project_id,id)',
@@ -433,6 +439,17 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
         'artifacts:(project_id)->projects.(id)',
         'state_events:(project_id)->projects.(id)',
         'command_receipts:(project_id)->projects.(id)',
+        'baseline_authorizations:(project_id)->projects.(id)',
+        'baseline_authorizations:(repository_binding_id)->repository_bindings.(id)',
+        'baseline_authorizations:(project_id,repository_binding_id)->repository_bindings.(project_id,id)',
+        'baseline_operations:(project_id)->projects.(id)',
+        'baseline_operations:(authorization_id)->baseline_authorizations.(id)',
+        'baseline_operations:(project_id,authorization_id)->baseline_authorizations.(project_id,id)',
+        'baseline_check_results:(project_id)->projects.(id)',
+        'baseline_check_results:(operation_id)->baseline_operations.(id)',
+        'baseline_check_results:(project_id,operation_id)->baseline_operations.(project_id,id)',
+        'baseline_check_results:(output_artifact_id)->artifacts.(id)',
+        'baseline_occupancy:(holder_operation_id)->baseline_operations.(id)',
       ]);
       type FkPragmaRow = { id: number; seq: number; table: string; from: string; to: string; on_update: string; on_delete: string };
       const actualFks = new Set<string>();
@@ -568,6 +585,76 @@ describe('F-003 real Drizzle session round-trip on the migrated database', () =>
       expect(receipt?.resultRef).toBe(`v1.${'A'.repeat(43)}`);
       expect(receipt?.scopeKind).toBe('registration');
       expect(receipt?.revision).toBe(1);
+
+      // P02-3 / F-007：基线作用域四表经同一 Drizzle Schema 往返（授权 → 操作 →
+      // 检查种子 → 占用；同项目复合外键链与 plan/argv JSON 列）。
+      session
+        .insert(schema.baselineAuthorizations)
+        .values({
+          id: '11111111-1111-4111-8111-111111111111',
+          createdAt: NOW_MS,
+          projectId: 'proj-1',
+          repositoryBindingId: 'bind-1',
+          headCommit: null,
+          workingTreeDigest: VALID_SHA256,
+          hasUncommittedChanges: 0,
+          policyRevision: VALID_SHA256,
+          planDigest: VALID_SHA256,
+          planJson: JSON.stringify({ checks: [] }),
+          authorizedBy: 'local-owner',
+          authorizedAt: NOW_MS,
+        })
+        .run();
+      session
+        .insert(schema.baselineOperations)
+        .values({
+          id: '3ba11ba1-0000-4000-8000-000000000001',
+          createdAt: NOW_MS,
+          updatedAt: NOW_MS,
+          projectId: 'proj-1',
+          kind: 'baseline',
+          authorizationId: '11111111-1111-4111-8111-111111111111',
+          status: 'accepted',
+        })
+        .run();
+      session
+        .insert(schema.baselineCheckResults)
+        .values({
+          id: randomUUID(),
+          createdAt: NOW_MS,
+          updatedAt: NOW_MS,
+          projectId: 'proj-1',
+          operationId: '3ba11ba1-0000-4000-8000-000000000001',
+          checkKey: 'unit-tests',
+          argvJson: JSON.stringify(['node', '--test']),
+          cwdRef: 'packages/core',
+          environmentRef: 'minimal',
+          timeoutMs: 600_000,
+          required: 1,
+          status: 'not_run',
+        })
+        .run();
+      session
+        .insert(schema.baselineOccupancy)
+        .values({
+          id: 'global',
+          holderOperationId: '3ba11ba1-0000-4000-8000-000000000001',
+          acquiredAt: NOW_MS,
+          heartbeatAt: NOW_MS,
+          processIdentity: JSON.stringify({ pid: 42_424 }),
+        })
+        .run();
+      const authorization = session.select().from(schema.baselineAuthorizations).all()[0];
+      expect(authorization?.planDigest).toBe(VALID_SHA256);
+      const baselineOperation = session.select().from(schema.baselineOperations).all()[0];
+      expect(baselineOperation?.status).toBe('accepted');
+      expect(baselineOperation?.revision).toBe(1);
+      const baselineCheck = session.select().from(schema.baselineCheckResults).all()[0];
+      expect(JSON.parse(baselineCheck?.argvJson ?? 'null')).toEqual(['node', '--test']);
+      expect(baselineCheck?.timedOut).toBe(0);
+      const occupancy = session.select().from(schema.baselineOccupancy).all()[0];
+      expect(occupancy?.holderOperationId).toBe('3ba11ba1-0000-4000-8000-000000000001');
+      expect(JSON.parse(occupancy?.processIdentity ?? 'null')).toEqual({ pid: 42_424 });
 
       const project = session.select().from(schema.projects).all()[0];
       expect(project?.displayName).toBe('示例项目🚢');

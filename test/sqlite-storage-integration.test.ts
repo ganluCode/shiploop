@@ -273,7 +273,7 @@ describe('F-013 SQLite/制品全链路集成闭环（独立临时数据根）', 
 
         // FR-3：迁移记录仍在（库未被重建，先迁移后使用的一致性证据；v1 六表 +
         // v2 状态事件 + P02-2 / F-006 v3 幂等命令回执）。
-        expect(migrationRows(reopened.session)).toEqual([{ version: 1 }, { version: 2 }, { version: 3 }]);
+        expect(migrationRows(reopened.session)).toEqual([{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }]);
 
         // FR-2：项目级批量核对——两制品均 verified_ready，无孤儿，未截断。
         const report = await reopened.verifier.verifyProject(projectBefore.id);
@@ -337,6 +337,7 @@ describe('F-013 SQLite/制品全链路集成闭环（独立临时数据根）', 
             { version: 1 },
             { version: 2 },
             { version: 3 },
+            { version: 4 },
           ]);
         } finally {
           reopened.close();

@@ -1,8 +1,10 @@
 /**
  * F-007：同会话同步 SQL 原语的组合；唯一写事务由此拥有。
  * 不调用异步 StateStore/CommandReceiptStore，也不嵌套事务。
+ * P02-3 / F-007 起组合基线窄存储原语（ports/baseline-store.ts 的事务面）。
  */
 import type { AtomicCommandStore, CommandTransaction } from '../../ports/atomic-commands.js';
+import { createSqliteBaselineAccess } from './baseline-store.js';
 import { createSqliteCommandReceiptAccess } from './command-receipts.js';
 import type { SqliteStorageSession } from './session.js';
 import { createSqliteStateAccess } from './state-store.js';
@@ -14,6 +16,7 @@ export function createSqliteAtomicCommandStore(
 ): AtomicCommandStore {
   const state = createSqliteStateAccess(session, options);
   const receipts = createSqliteCommandReceiptAccess(session, options);
+  const baseline = createSqliteBaselineAccess(session, options);
   return {
     findReceipt: receipts.findReceiptByCommandId,
     // F-009：配置命令一致性视图的事务外只读来源；写事务内调用是编程错误。
@@ -53,6 +56,17 @@ export function createSqliteAtomicCommandStore(
             state.createProjectSettingsInTransaction(projectId, input, { recordCreatedEvent: true })),
           updateProjectSettings: guarded((projectId: string, input: unknown) =>
             state.updateProjectSettingsInTransaction(projectId, input)),
+          // P02-3 / F-007：基线原语（不可变授权/操作 CAS/检查种子与一次性收尾/
+          // 全局占用/事件追加），同一 BEGIN IMMEDIATE 内原子生效。
+          insertBaselineAuthorization: guarded(baseline.insertBaselineAuthorizationInTransaction),
+          insertBaselineOperation: guarded(baseline.insertBaselineOperationInTransaction),
+          insertBaselineCheckResults: guarded(baseline.insertBaselineCheckResultsInTransaction),
+          finalizeBaselineCheckResult: guarded(baseline.finalizeBaselineCheckResultInTransaction),
+          updateBaselineOperation: guarded(baseline.updateBaselineOperationInTransaction),
+          acquireBaselineOccupancy: guarded(baseline.acquireBaselineOccupancyInTransaction),
+          heartbeatBaselineOccupancy: guarded(baseline.heartbeatBaselineOccupancyInTransaction),
+          releaseBaselineOccupancy: guarded(baseline.releaseBaselineOccupancyInTransaction),
+          appendBaselineEvent: guarded(baseline.appendBaselineEventInTransaction),
           saveReceipt: guarded(receipts.saveReceiptInTransaction),
         });
         try {

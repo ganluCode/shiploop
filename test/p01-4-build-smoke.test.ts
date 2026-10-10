@@ -96,7 +96,8 @@ describe('F-009 可发布构建产物路径扫描', () => {
           distDir: built.distDir,
         },
       ],
-      expectedMigrations: [{ path: built.migrationModule, versions: [1, 2, 3] }],
+      // P02-3 / F-007 起迁移清单为 v1..v4。
+      expectedMigrations: [{ path: built.migrationModule, versions: [1, 2, 3, 4] }],
       homeDir: homedir(),
       forbiddenRuntimeDependencies: [...FORBIDDEN_RUNTIME_DEPS],
     });
@@ -108,7 +109,7 @@ describe('F-009 可发布构建产物路径扫描', () => {
     expect(result.files.every((entry) => /^[0-9a-f]{64}$/.test(entry.sha256))).toBe(true);
     expect(result.files.every((entry) => entry.sizeBytes > 0)).toBe(true);
     expect(result.migrationResources).toEqual([
-      { file: expect.stringContaining('adapters/sqlite/migrations.js'), versions: [1, 2, 3] },
+      { file: expect.stringContaining('adapters/sqlite/migrations.js'), versions: [1, 2, 3, 4] },
     ]);
     expect(result.declaredEntries).toContain('shiploop-core:./dist/index.js');
     expect(result.declaredEntries).toContain('shiploop-core:./dist/index.d.ts');

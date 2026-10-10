@@ -60,6 +60,8 @@ import { createRepositoryInspector } from './fs/repository-inspector.js';
 import type { RepositoryInspectorOptions } from './fs/repository-inspector.js';
 import { createSqliteAtomicCommandStore } from './sqlite/atomic-commands.js';
 import { createSqliteArtifactStore } from './sqlite/artifact-store.js';
+import { createSqliteBaselineStore } from './sqlite/baseline-store.js';
+import type { BaselineStore } from '../ports/baseline-store.js';
 import { createSqliteCommandReceiptStore } from './sqlite/command-receipts.js';
 import { migrateSqliteStorage } from './sqlite/migrator.js';
 import { createSqliteQueryStore } from './sqlite/query-store.js';
@@ -111,6 +113,8 @@ export interface CoreApplication {
   readonly queryService: QueryService;
   /** P02-3 / F-004：静态 inspect 与注册/健康分离的 overview 用例（§7.2/§7.3）。 */
   readonly onboardingService: OnboardingService;
+  /** P02-3 / F-007：基线窄存储读取端口（迁移 v4 四表；写经原子命令事务）。 */
+  readonly baselineStore: BaselineStore;
   /** 关闭状态库会话并释放文件句柄；幂等。 */
   close(): void;
 }
@@ -282,17 +286,18 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     });
 
     // P02-3 / F-004：静态 inspect 与 overview 用例。绑定查找复用同一查询门面；
-    // 基线健康窄端口在迁移 v4（F-007）落地前装配显式占位「尚无检查」
-    // （operation:null/checks:[] → health=not_run/no_baseline），绝不以注册成功
-    // 或配置存在冒充健康通过。
+    // F-007 起基线健康读接入迁移 v4 的真实窄端口（空库 = 尚无检查 →
+    // not_run/no_baseline，不以注册成功或配置存在冒充健康通过）。
+    const baselineStore = createSqliteBaselineStore(
+      session,
+      nowUtcMs === undefined ? {} : { nowUtcMs },
+    );
     const onboardingService = createOnboardingService({
       repositoryInspector,
       stateStore,
       configurationService,
       bindingReads: queryStore,
-      baselineReads: {
-        readProjectHealthInput: () => ({ operation: null, checks: [] }),
-      },
+      baselineReads: baselineStore,
       ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
     });
 
@@ -310,6 +315,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       commandService,
       queryService,
       onboardingService,
+      baselineStore,
       close(): void {
         session.close();
       },

@@ -4,8 +4,17 @@
  * 实现须以同一 BEGIN IMMEDIATE 包住回执重核、业务 CAS/事件和回执保存，
  * 任意写入异常整组回滚；busy 复用已有有限预算。
  * F-008 起新增 registerProject：项目/绑定/创建事件的原子创建原语。
+ * P02-3 / F-007 起新增基线原语（§10 窄存储端口的事务面）：不可变授权插入、
+ * 操作生命周期 CAS、检查种子与一次性 CAS 收尾、全局占用与 §9.2 事件追加；
+ * Git/进程/文件输出/人审都在事务外，事务内不执行文件流/SDK/Git/网络/长检查。
  */
 import type { CommandReceipt } from './commands.js';
+import type {
+  BaselineAuthorizationRecord,
+  BaselineCheckResultRecord,
+  BaselineOccupancySnapshot,
+  BaselineOperationRecord,
+} from './baseline-store.js';
 import type {
   GlobalSettingsRecord,
   ProjectRecord,
@@ -47,6 +56,34 @@ export interface CommandTransaction {
   createProjectSettings(projectId: string, input: unknown): ProjectSettingsRecord;
   /** F-009：项目配置 CAS 更新 + consistency 核对 + 既有 settings.project_updated 事件。 */
   updateProjectSettings(projectId: string, input: unknown): ProjectSettingsRecord;
+  /* ---------------------------------------------------------------- *
+   * P02-3 / F-007 基线原语（§10 窄存储端口；同一事务内原子生效）
+   * ---------------------------------------------------------------- */
+  /** §6.2 不可变授权插入（insert-only；无任何更新原语）。 */
+  insertBaselineAuthorization(input: unknown): BaselineAuthorizationRecord;
+  /** §10 操作生命周期行插入（初始状态；后续经 updateBaselineOperation CAS）。 */
+  insertBaselineOperation(input: unknown): BaselineOperationRecord;
+  /** 按规范化计划为操作种子逐项检查行（获准输入快照；初始 not_run/退出码 null）。 */
+  insertBaselineCheckResults(operationId: string, plan: unknown): readonly BaselineCheckResultRecord[];
+  /** 一次性 CAS 收尾单检查（迟到执行版本/已收尾证据均 conflict）。 */
+  finalizeBaselineCheckResult(
+    operationId: string,
+    checkKey: string,
+    input: unknown,
+  ): BaselineCheckResultRecord;
+  /** 操作 CAS 更新（非终态→任意；终态不可覆盖；迟到版本 conflict）。 */
+  updateBaselineOperation(operationId: string, input: unknown): BaselineOperationRecord;
+  /** §13 全局占用获取（同持有者幂等；另一在途操作 conflict baseline_in_progress）。 */
+  acquireBaselineOccupancy(input: unknown): BaselineOccupancySnapshot;
+  /** 占用心跳 + 可恢复进程身份更新（仅持有者）。 */
+  heartbeatBaselineOccupancy(
+    operationId: string,
+    processIdentity?: unknown,
+  ): BaselineOccupancySnapshot;
+  /** 释放占用（仅持有者；清空持有者/时刻/进程身份）。 */
+  releaseBaselineOccupancy(operationId: string): BaselineOccupancySnapshot;
+  /** §9.2 基线事件追加（payload 只含受控脱敏键；与公开白名单同形）。 */
+  appendBaselineEvent(input: unknown): void;
   saveReceipt(receipt: unknown): void;
 }
 

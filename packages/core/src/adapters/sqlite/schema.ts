@@ -8,7 +8,8 @@
  * 本 Feature 仅建立 P01-2 存储闭环所需的最小六表；phases/features/tasks/runs/
  * attempts/sessions/chat 等后续表随对应功能以新迁移版本增加，不在本 Schema 出现。
  * P01-3 / F-006 起加入 state_events（迁移 v2），P02-2 / F-006 起加入
- * command_receipts（迁移 v3，见下方表注释）。
+ * command_receipts（迁移 v3，见下方表注释）；P02-3 / F-007 起加入基线作用域
+ * 四表（迁移 v4，见下方表注释）。
  *
  * 与手写迁移 DDL（./migrations.ts）的一致性由 test/sqlite-schema-migrations.test.ts
  * 经真实 SQLite pragma 与 getTableConfig 交叉核对；两处必须同步演进。
@@ -338,6 +339,165 @@ export const commandReceipts = sqliteTable('command_receipts', {
   uniqueIndex('command_receipts_principal_command_unique').on(table.principalId, table.commandId),
   uniqueIndex('command_receipts_result_ref_unique').on(table.resultRef),
   index('command_receipts_principal_project_index').on(table.principalId, table.projectId),
+]);
+
+/**
+ * P02-3 / F-007 基线作用域四表（迁移 v4，docs/p02-3-onboarding-contract.md §10）。
+ *
+ * 边界决策（相对契约 §10 冻结 DDL 的 F-007 补充，已在契约 §10 写回登记）：
+ * - baseline_occupancy.process_identity：可恢复进程身份（设计 11
+ *   workspace_leases.process_identity 同一语义），供重启恢复核对旧进程；
+ * - baseline_occupancy 单例 CHECK（id='global'）：全局单并发占用只有一行；
+ * - 同项目复合外键（v1 projects↔repository_bindings 的 F-008 补齐同一先例）：
+ *   授权↔绑定、操作↔授权、检查↔操作均要求同项目；检查的输出制品引用指向
+ *   artifacts(id)。直接 SQL 的跨项目引用在 DDL 级被拒绝；端口写入路径仍在
+ *   事务内原子校验，本 DDL 不放宽；
+ * - baseline_authorizations 为不可变授权（insert-only，无端口更新面）；
+ *   baseline_check_results 的检查输入快照（argv/cwd/environment/timeout/
+ *   required）随种子行保存，结果经一次性 CAS 收尾（revision 1→2），之后
+ *   不可覆盖（终态证据不可变）；未产生的退出码为 NULL；
+ * - baseline_operations 为操作生命周期（非终态可 CAS 更新；终态不可覆盖）；
+ *   大输出正文存受控文件（artifacts 表），不把大输出写进 SQLite。
+ */
+export const baselineAuthorizations = sqliteTable('baseline_authorizations', {
+  id: text('id').primaryKey(),
+  createdAt: integer('created_at').notNull(),
+  projectId: text('project_id')
+    .notNull()
+    .references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  repositoryBindingId: text('repository_binding_id')
+    .notNull()
+    .references((): SQLiteColumn => repositoryBindings.id, { onDelete: 'restrict' }),
+  /** 无初始 commit 时为 NULL（不猜 main）。 */
+  headCommit: text('head_commit'),
+  /** 64 位小写 hex（§6.3 工作区内容摘要）。 */
+  workingTreeDigest: text('working_tree_digest').notNull(),
+  hasUncommittedChanges: integer('has_uncommitted_changes').notNull(),
+  /** = plan_digest（§6.2）。 */
+  policyRevision: text('policy_revision').notNull(),
+  planDigest: text('plan_digest').notNull(),
+  /** 规范化检查计划 JSON（有界，端口写入前校验）。 */
+  planJson: text('plan_json').notNull(),
+  authorizedBy: text('authorized_by').notNull(),
+  authorizedAt: integer('authorized_at').notNull(),
+}, (table) => [
+  check(
+    'baseline_authorizations_digest_check',
+    sql`length(${table.workingTreeDigest}) = 64 AND length(${table.planDigest}) = 64`,
+  ),
+  check('baseline_authorizations_plan_json_check', sql`json_valid(${table.planJson})`),
+  foreignKey({
+    name: 'baseline_authorizations_binding_same_project_fk',
+    columns: [table.projectId, table.repositoryBindingId],
+    foreignColumns: [repositoryBindings.projectId, repositoryBindings.id],
+  }).onDelete('restrict'),
+  uniqueIndex('baseline_authorizations_project_id_id_unique').on(table.projectId, table.id),
+]);
+
+export const baselineOperations = sqliteTable('baseline_operations', {
+  /** = operationId（UUID v4，公开操作身份）。 */
+  id: text('id').primaryKey(),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+  /** CAS 并发计数（§5.5 迟到执行版本以 expectedRevision 拒绝）。 */
+  revision: integer('revision').notNull().default(1),
+  projectId: text('project_id')
+    .notNull()
+    .references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  /** P02-3 仅 'baseline'（预留 'init'，§10）。 */
+  kind: text('kind').notNull(),
+  /** decline/空集为 NULL（§10）。 */
+  authorizationId: text('authorization_id').references(
+    (): SQLiteColumn => baselineAuthorizations.id,
+    { onDelete: 'restrict' },
+  ),
+  /** §8.1 操作状态。 */
+  status: text('status').notNull(),
+  /** §8.3 受控 reason。 */
+  reasonCode: text('reason_code'),
+  startedAt: integer('started_at'),
+  endedAt: integer('ended_at'),
+}, (table) => [
+  check(
+    'baseline_operations_status_check',
+    sql`${table.status} IN ('accepted','running','cancelling','completed','cancelled','failed','interrupted','not_run')`,
+  ),
+  foreignKey({
+    name: 'baseline_operations_authorization_same_project_fk',
+    columns: [table.projectId, table.authorizationId],
+    foreignColumns: [baselineAuthorizations.projectId, baselineAuthorizations.id],
+  }).onDelete('restrict'),
+  index('baseline_operations_project_index').on(table.projectId, table.id),
+  uniqueIndex('baseline_operations_project_id_id_unique').on(table.projectId, table.id),
+]);
+
+export const baselineCheckResults = sqliteTable('baseline_check_results', {
+  id: text('id').primaryKey(),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+  /** 种子行 1；一次性收尾后 2；之后不可再变（终态证据）。 */
+  revision: integer('revision').notNull().default(1),
+  projectId: text('project_id')
+    .notNull()
+    .references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  operationId: text('operation_id')
+    .notNull()
+    .references((): SQLiteColumn => baselineOperations.id, { onDelete: 'restrict' }),
+  checkKey: text('check_key').notNull(),
+  /** 命令数组快照（脱敏展示用；发布制品另存 artifacts）。 */
+  argvJson: text('argv_json').notNull(),
+  cwdRef: text('cwd_ref'),
+  environmentRef: text('environment_ref'),
+  timeoutMs: integer('timeout_ms').notNull(),
+  required: integer('required').notNull(),
+  /** §8.1 检查业务状态。 */
+  status: text('status').notNull(),
+  reasonCode: text('reason_code'),
+  /** 未产生的退出码为 NULL。 */
+  exitCode: integer('exit_code'),
+  signal: text('signal'),
+  timedOut: integer('timed_out').notNull().default(0),
+  outputArtifactId: text('output_artifact_id').references((): SQLiteColumn => artifacts.id, {
+    onDelete: 'restrict',
+  }),
+  startedAt: integer('started_at'),
+  endedAt: integer('ended_at'),
+}, (table) => [
+  check(
+    'baseline_check_results_status_check',
+    sql`${table.status} IN ('passed','failed','error','inconclusive','not_run')`,
+  ),
+  check(
+    'baseline_check_results_argv_json_check',
+    sql`json_valid(${table.argvJson}) AND json_type(${table.argvJson}) = 'array'`,
+  ),
+  check('baseline_check_results_timeout_positive_check', sql`${table.timeoutMs} >= 1`),
+  check('baseline_check_results_revision_positive_check', sql`${table.revision} >= 1`),
+  foreignKey({
+    name: 'baseline_check_results_operation_same_project_fk',
+    columns: [table.projectId, table.operationId],
+    foreignColumns: [baselineOperations.projectId, baselineOperations.id],
+  }).onDelete('restrict'),
+  uniqueIndex('baseline_check_results_operation_check_unique').on(table.operationId, table.checkKey),
+]);
+
+export const baselineOccupancy = sqliteTable('baseline_occupancy', {
+  /** 固定字面量 'global'（单例 CHECK）。 */
+  id: text('id').primaryKey(),
+  holderOperationId: text('holder_operation_id').references(
+    (): SQLiteColumn => baselineOperations.id,
+    { onDelete: 'restrict' },
+  ),
+  acquiredAt: integer('acquired_at'),
+  heartbeatAt: integer('heartbeat_at'),
+  /** 可恢复进程身份（JSON 对象可空；§13 全局单并发占用的运行时证据）。 */
+  processIdentity: text('process_identity'),
+}, (table) => [
+  check('baseline_occupancy_singleton_id_check', sql`${table.id} = 'global'`),
+  check(
+    'baseline_occupancy_process_identity_json_check',
+    sql`${table.processIdentity} IS NULL OR (json_valid(${table.processIdentity}) AND json_type(${table.processIdentity}) = 'object')`,
+  ),
 ]);
 
 export const schemaMigrations = sqliteTable('schema_migrations', {

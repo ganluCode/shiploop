@@ -636,7 +636,18 @@ interface BaselineCheck {
   同步，checksum 进 `schema_migrations`，漂移/高版本继续拒写（沿用 migrator 既有规则）。
 - 必须从**空库**与 **P02-2 最新库（v3）**两条路径迁移成功；迁移与 Drizzle Schema 一致性进真实
   pragma 交叉核对测试。
-- 表设计冻结（落库列名 snake_case，应用层 camelCase 映射）。命名与设计 11 §2/§7 的
+- **F-007 补充（写回登记，2026-10-10）**：实施时在冻结 DDL 之上补齐三类加强约束，
+  均不改变冻结列集与领域语义，依据与测试见 `test/sqlite-baseline-store.test.ts`：
+  1. `baseline_occupancy.process_identity`（JSON 对象可空）：记录可恢复的进程身份
+     （pid/启动信息），供 F-013 重启后核对旧进程；语义与设计 11
+     `workspace_leases.process_identity` 对齐（§15.8 字段对齐要求）；另加单例 CHECK
+     （id='global'，与 global_settings 同一先例）保证全局单并发占用只有一行；
+  2. 同项目复合外键（与 v1 projects↔repository_bindings 的 F-008 补齐同一先例）：
+     授权↔绑定、操作↔授权、检查↔操作均要求同项目（直接 SQL 的跨项目引用在 DDL 级被拒）；
+  3. `baseline_check_results.output_artifact_id → artifacts(id)`：输出制品引用存在性由
+     FK 兜底（端口写入路径同事务校验存在且同项目）。
+- 表设计冻结（落库列名 snake_case，应用层 camelCase 映射；下列 DDL 含上述 F-007
+  补充，未标注处为 §15.8 冻结原样）。命名与设计 11 §2/§7 的
   `onboarding_operations`/`project_baselines`/`check_*` 通用验证表的**关系与偏离**见 §15.8：
 
 ```sql
@@ -658,9 +669,16 @@ CREATE TABLE baseline_authorizations (
     FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
   CONSTRAINT baseline_authorizations_binding_fk
     FOREIGN KEY (repository_binding_id) REFERENCES repository_bindings (id) ON DELETE RESTRICT,
+  -- F-007 补充：同项目复合外键（绑定必须属于授权声明的项目）。
+  CONSTRAINT baseline_authorizations_binding_same_project_fk
+    FOREIGN KEY (project_id, repository_binding_id)
+    REFERENCES repository_bindings (project_id, id) ON DELETE RESTRICT,
   CONSTRAINT baseline_authorizations_digest_check
     CHECK (length(working_tree_digest) = 64 AND length(plan_digest) = 64)
 );
+-- F-007 补充：供操作表同项目复合外键使用的复合唯一键。
+CREATE UNIQUE INDEX baseline_authorizations_project_id_id_unique
+  ON baseline_authorizations (project_id, id);
 
 -- 基线操作生命周期（非终态可更新；终态不可覆盖）
 CREATE TABLE baseline_operations (
@@ -679,11 +697,18 @@ CREATE TABLE baseline_operations (
     FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
   CONSTRAINT baseline_operations_authorization_fk
     FOREIGN KEY (authorization_id) REFERENCES baseline_authorizations (id) ON DELETE RESTRICT,
+  -- F-007 补充：同项目复合外键（授权必须属于操作声明的项目）。
+  CONSTRAINT baseline_operations_authorization_same_project_fk
+    FOREIGN KEY (project_id, authorization_id)
+    REFERENCES baseline_authorizations (project_id, id) ON DELETE RESTRICT,
   CONSTRAINT baseline_operations_status_check CHECK (
     status IN ('accepted','running','cancelling','completed','cancelled','failed','interrupted','not_run')
   )
 );
 CREATE INDEX baseline_operations_project_index
+  ON baseline_operations (project_id, id);
+-- F-007 补充：供检查结果表同项目复合外键使用的复合唯一键。
+CREATE UNIQUE INDEX baseline_operations_project_id_id_unique
   ON baseline_operations (project_id, id);
 
 -- 逐项检查结果
@@ -712,6 +737,12 @@ CREATE TABLE baseline_check_results (
     FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
   CONSTRAINT baseline_check_results_operation_fk
     FOREIGN KEY (operation_id) REFERENCES baseline_operations (id) ON DELETE RESTRICT,
+  -- F-007 补充：同项目复合外键 + 输出制品引用存在性。
+  CONSTRAINT baseline_check_results_operation_same_project_fk
+    FOREIGN KEY (project_id, operation_id)
+    REFERENCES baseline_operations (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT baseline_check_results_output_artifact_fk
+    FOREIGN KEY (output_artifact_id) REFERENCES artifacts (id) ON DELETE RESTRICT,
   CONSTRAINT baseline_check_results_status_check CHECK (
     status IN ('passed','failed','error','inconclusive','not_run')
   )
@@ -721,12 +752,17 @@ CREATE UNIQUE INDEX baseline_check_results_operation_check_unique
 
 -- 全局单并发占用（单行；确保同一时刻至多一个在途基线操作）
 CREATE TABLE baseline_occupancy (
-  id TEXT PRIMARY KEY NOT NULL,              -- 固定字面量行（如 'global'）
+  id TEXT PRIMARY KEY NOT NULL,              -- 固定字面量行（'global'；F-007 补充单例 CHECK）
   holder_operation_id TEXT,                  -- 当前持有者（nullable=空闲）
   acquired_at INTEGER,
   heartbeat_at INTEGER,
+  process_identity TEXT,                     -- F-007 补充：可恢复进程身份（JSON 对象可空）
+  CONSTRAINT baseline_occupancy_singleton_id_check CHECK (id = 'global'),
   CONSTRAINT baseline_occupancy_holder_fk
-    FOREIGN KEY (holder_operation_id) REFERENCES baseline_operations (id) ON DELETE RESTRICT
+    FOREIGN KEY (holder_operation_id) REFERENCES baseline_operations (id) ON DELETE RESTRICT,
+  CONSTRAINT baseline_occupancy_process_identity_json_check
+    CHECK (process_identity IS NULL OR
+           (json_valid(process_identity) AND json_type(process_identity) = 'object'))
 );
 ```
 
@@ -735,6 +771,14 @@ CREATE TABLE baseline_occupancy (
   不把大输出写进 SQLite。
 - 端口只暴露应用数据形态（F-007 窄端口），不泄漏 better-sqlite3/Drizzle 会话；唯一约束、CHECK、
   跨身份读取拒绝、关闭重开一致、有界 plan_json 均有真实 SQLite 测试。
+- **F-007 落定的存储语义（与上述 DDL 配套）**：授权 insert-only（无任何更新面）；
+  `baseline_check_results` 种子行保存获准输入快照（argv/cwdRef/environmentRef/timeoutMs/
+  required）且初始 not_run、退出码 NULL，终态经一次性 CAS 收尾（revision 1→2）写入，之后
+  任何再收尾一律拒绝（迟到执行版本拒绝、终态证据不可覆盖）；`baseline_operations` 非终态
+  可 CAS 更新、终态不可覆盖；占用获取/心跳/释放仅对持有者生效（另一在途操作 → conflict
+  `baseline_in_progress`）。上述行为依据 F-007 验收标准的「不可变检查输入/结果」与「可恢复的
+  进程身份」要求落定；若负责人要求改为可更新的检查行或独立的 execution_version 令牌列，
+  需在 F-008/F-012 实施前给出依据并修订本节。
 
 ## 11. Host 装配、握手能力与 HostClient 扩展
 

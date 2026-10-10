@@ -678,6 +678,11 @@ describe('F-006 当前配置检查组（P01-FR2-CONFIG）', () => {
           'repository_bindings',
           'schema_migrations',
           'state_events',
+          // P02-3 / F-007：基线作用域四表（迁移 v4；属 P01 之后的增量阶段表）。
+          'baseline_authorizations',
+          'baseline_check_results',
+          'baseline_occupancy',
+          'baseline_operations',
         ].sort(),
       );
       for (const forbidden of [
