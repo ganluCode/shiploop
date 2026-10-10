@@ -171,7 +171,7 @@ describe('macOS supervised command port', () => {
     ] as const) {
       const handle = await start(request(root, script));
       const output = await collect(handle);
-      expect(await handle.result).toMatchObject({ exitCode, signal, reason: null });
+      expect(await handle.result).toMatchObject({ exitCode, signal, reason: null, droppedOutputBytes: 0 });
       expect((await handle.stopped).confirmed).toBe(true);
       if (exitCode === 0) expect(output).toEqual({ stdout: 'out', stderr: 'err' });
     }
@@ -218,6 +218,7 @@ describe('macOS supervised command port', () => {
     }
     expect(total).toBe(100_000);
     expect(await handle.result).toMatchObject({ reason: 'output_overflow' });
+    expect((await handle.result).droppedOutputBytes).toBeGreaterThan(0);
     expect((await handle.stopped).confirmed).toBe(true);
   });
 

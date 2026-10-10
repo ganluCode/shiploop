@@ -41,7 +41,10 @@ export interface CommandProcessResult {
   readonly exitCode: number | null;
   readonly signal: string | null;
   readonly reason: CommandProcessReason | null;
+  /** Bytes retained in the bounded output consumer. */
   readonly outputBytes: number;
+  /** Observed pipe bytes omitted during overflow/stop drain; never imply completeness. */
+  readonly droppedOutputBytes: number;
   readonly stop: CommandProcessStop;
 }
 export interface CommandProcessSnapshot {

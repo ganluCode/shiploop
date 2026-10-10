@@ -184,6 +184,7 @@ export function createCommandProcessAdapter(options: CommandProcessAdapterOption
       let commandOutcome: { exitCode: number | null; signal: string | null; reason: CommandProcessReason | null } | undefined;
       let state: CommandProcessSnapshot['state'] = 'running';
       let outputBytes = 0;
+      let droppedOutputBytes = 0;
       let buffered = 0;
       let waiter: (() => void) | undefined;
       const queue: CommandProcessOutput[] = [];
@@ -208,14 +209,16 @@ export function createCommandProcessAdapter(options: CommandProcessAdapterOption
       };
       const capture = (stream: 'stdout' | 'stderr', chunk: Buffer) => {
         if (finished) return;
-        const keep = Math.min(chunk.length, request.maxOutputBytes - outputBytes);
-        if (keep > 0 && (state !== 'stopping' || buffered < BUFFER_LIMIT)) {
+        const remaining = Math.min(chunk.length, request.maxOutputBytes - outputBytes);
+        const keep = state === 'stopping' && buffered >= BUFFER_LIMIT ? 0 : remaining;
+        droppedOutputBytes += chunk.length - keep;
+        if (keep > 0) {
           queue.push({ stream, bytes: new Uint8Array(chunk.subarray(0, keep)) });
           buffered += keep;
           outputBytes += keep;
           wake();
         }
-        if (chunk.length > keep) stop('output_overflow');
+        if (chunk.length > remaining) stop('output_overflow');
         if (state === 'running' && buffered >= BUFFER_LIMIT) streams.forEach((s) => s.pause());
       };
       child.stdout!.on('data', (chunk: Buffer) => capture('stdout', chunk));
@@ -246,7 +249,7 @@ export function createCommandProcessAdapter(options: CommandProcessAdapterOption
           stopped.resolve(stopResult);
           result.resolve({ exitCode: commandOutcome?.exitCode ?? null, signal: commandOutcome?.signal ?? null,
             reason: reason ?? commandOutcome?.reason ?? (commandOutcome ? null : 'supervisor_lost'),
-            outputBytes, stop: stopResult });
+            outputBytes, droppedOutputBytes, stop: stopResult });
           resume();
           wake();
         })();

@@ -46,6 +46,10 @@ P02-3 的公开检查计划仍遵守 §6.1 的无 shell 拼接校验。
   `missing_command`/`permission_denied`，不回显命令、绝对路径、stderr 或回调异常。
   Runtime/命令正常结束不是基线通过，业务映射由后续 Core 编排器负责。
 
+F-011 的输出脱敏、制品发布、缺口门槛及授权读取见
+[p02-3-baseline-evidence.md](p02-3-baseline-evidence.md)。进程结果另外保存
+`droppedOutputBytes`（观察到但未交付队列的 pipe 字节），不把停止时丢失正文宣称完整。
+
 ## F-010 取消/超时/升级终止与停止核验
 
 取消、超时、输出超限、消费者退出和监督 IPC 失联全部汇入**同一条有界停止路径**：
