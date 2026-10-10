@@ -55,6 +55,12 @@ docs/p02-2-operations.md  P02-2 应用命令、查询与事件操作说明（F-0
 docs/p02-2-handoff.md  P02-2 → P02-3 接口交接（F-019）
 docs/acceptance/p02-2-f020-report.md  P02-2 Feature 交付报告（F-020，证据在同目录 evidence-p02-2/）
 docs/p02-3-onboarding-contract.md  P02-3 项目初始化与获准基线检查接口契约（F-001，实施前置契约；F-002~F-020 按其实现静态接入/基线授权/受监督进程/CLI）
+docs/p02-3-command-process.md  受监督命令进程端口与停止路径（F-009/F-010）
+docs/p02-3-baseline-evidence.md  基线输出与证据（F-011）
+docs/p02-3-baseline-execution.md  Core 基线执行编排（F-012）
+docs/p02-3-baseline-recovery.md  基线活动停止与重启恢复（F-013）
+docs/p02-3-operations.md  P02-3 项目接入、基线授权与故障处理操作说明（F-019）
+docs/p02-3-handoff.md  P02-3 → p02-acceptance 接口交接（F-019）
 docs/skills/project-init.md  F-017 最小操作 Skill：project init（只经 dist CLI；先只读预览，注册与基线授权分别请求用户确认）
 docs/skills/project-overview.md  F-017 最小操作 Skill：project overview（注册/配置/健康分列；不从日志或模型结论推断 passed）
 ```
@@ -246,6 +252,35 @@ CAS 更新）、`(principal, commandId)` + 请求摘要幂等、迁移 v3 `comma
 
 该交付仅限 P02-2 应用命令与事件子集；基线健康、初始化确认、Skills、Pi/Work、调度与整个 P02
 阶段验收均未包含，`accept:p02` 由阶段末项定义。
+
+### P02-3 项目初始化与获准基线检查（F-019 文档收尾）
+
+P02-3 在 macOS（arm64，Node 22.19.0 / npm 10.9.3）上交付项目静态接入与获准基线检查闭环：
+`project init`（只读预览 + 显式 `--confirm` 注册，注册确认与基线授权分开）、
+`project overview`（注册/配置/健康严格分列）、`baseline preview|run|list|status|cancel|evidence`
+（检查计划独立授权输入、`previewDigest` 绑定代码身份、显式 `--confirm`/`--decline`、单并发占用、
+显式取消），迁移 v4 基线四表，受监督命令进程（无 shell argv、放行协议、SIGTERM→SIGKILL 停止
+升级与停止核验）、有界脱敏输出证据、停止门控与保守重启恢复，以及 `/v1` 基线路由/握手能力与
+HostClient/CLI 纵向接线。F-018 已完成真实 Git/SQLite/进程/Host/CLI 端到端集成回归，
+`npm run verify` 全绿。
+
+- [docs/p02-3-operations.md](docs/p02-3-operations.md)：真实 dist CLI 的临时仓库 init、overview、
+  基线预览/确认/查询/取消、输出证据与 stop/重启示例（可复跑、不要求人工改库）；注册与健康独立、
+  拒绝/未知脚本 not_run、失败/超时/取消/停止未确认、输出缺口、过期授权与观察退出语义；
+  明确已知基线失败不是后续验收豁免，CLI/Host 不自动安装或修复仓库。
+- [docs/p02-3-handoff.md](docs/p02-3-handoff.md)：实际 Schema（迁移 v1..v4）、Core 窄服务、
+  Host 路由/能力、HostClient、CLI 退出码、受监督停止与恢复约束、测试/证据入口，供 p02-acceptance
+  组合双客户端演示；不在本 Feature 新建 `accept:p02` 或补建后序 Work/Pi。
+- 受监督进程/证据/执行编排/恢复细节见 `docs/p02-3-command-process.md`、
+  `docs/p02-3-baseline-evidence.md`、`docs/p02-3-baseline-execution.md`、
+  `docs/p02-3-baseline-recovery.md`；最小操作 Skill 见 `docs/skills/`。
+- 文档守护 [test/docs-p02-3-operations.test.ts](test/docs-p02-3-operations.test.ts)：真实纵向跑通
+  操作说明示例（init 预览/确认 → overview → 基线预览/授权/查询/证据/拒绝/取消 → stop/重启后
+  查询），并与命令契约面（解析、退出码、检查计划校验）交叉核对。
+
+该交付仅限 P02-3 静态接入与获准基线检查子集；Work/Pi、调度、强 OS 沙箱、非 macOS 平台与整个
+P02 阶段验收均未包含，`accept:p02` 由阶段末项定义。首版仅正式支持 macOS，可信项目不等于强
+文件/进程沙箱。
 
 ### 单向依赖规则（F-004 起自动强制）
 
