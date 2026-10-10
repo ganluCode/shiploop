@@ -5,9 +5,10 @@
  * - 同步纯函数：不读 process.argv / process.env（env/cwd 必须显式注入）、不读
  *   文件、不发现 Host、不访问网络、不启动进程、不生成 commandId；解析失败
  *   即 AppCliParseError，调用方保证解析成功前不做任何 I/O；
- * - 只识别契约白名单的 project/config/receipt/events 命令，不新增基线、Run、
- *   模型、Profile、Skills 参数（未知即 unknown_argument）；P02-3（F-005）按
- *   契约 §12.1 增补 project init/overview 子命令（仍无 baseline 参数）；
+ * - 只识别契约白名单的 project/config/receipt/events/baseline 命令，不新增
+ *   Run/Work、模型、Profile、Skills 参数（未知即 unknown_argument）；P02-3
+ *   （F-005）按契约 §12.1 增补 project init/overview 子命令；F-015 按契约
+ *   §12.1/§12.2 增补 baseline preview/run/list/status/cancel/evidence 子命令；
  * - 监听地址覆盖零容忍：--bind/--host/--address/--port/--listen* 与
  *   SHIPLOOP_HOST_* env 覆盖一律 bind_address_override_rejected；
  * - 错误只携带 code/reason/参数名/命令身份，绝不回显参数值；
@@ -20,7 +21,7 @@ import {
   CLI_START_TIMEOUT_MIN_MS,
 } from '../host/args.js';
 
-export const APP_CLI_COMMANDS = ['project', 'config', 'receipt', 'events'] as const;
+export const APP_CLI_COMMANDS = ['project', 'config', 'receipt', 'events', 'baseline'] as const;
 export type AppCliCommand = (typeof APP_CLI_COMMANDS)[number];
 
 /** 应用命令身份（点分 CLI 路径；用于 JSON 信封 command 字段）。 */
@@ -38,7 +39,13 @@ export type AppCliCommandId =
   | 'config.effective'
   | 'config.export'
   | 'receipt.get'
-  | 'events.observe';
+  | 'events.observe'
+  | 'baseline.preview'
+  | 'baseline.run'
+  | 'baseline.list'
+  | 'baseline.status'
+  | 'baseline.cancel'
+  | 'baseline.evidence';
 
 export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'project.init',
@@ -55,16 +62,25 @@ export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'config.export',
   'receipt.get',
   'events.observe',
+  'baseline.preview',
+  'baseline.run',
+  'baseline.list',
+  'baseline.status',
+  'baseline.cancel',
+  'baseline.evidence',
 ]);
 
-/** 写命令对应的 Core 操作身份（F-015/F-016 组装命令信封时使用）。 */
+/** 命令对应的 Core 操作身份（F-015/F-016 组装命令信封时使用）。 */
 export type AppCommandOperation =
   | 'project.register'
   | 'project.metadata.update'
   | 'settings.global.create'
   | 'settings.global.update'
   | 'settings.project.create'
-  | 'settings.project.update';
+  | 'settings.project.update'
+  | 'baseline.preview'
+  | 'baseline.run'
+  | 'baseline.cancel';
 
 export type AppHelpScope = AppCliCommand | AppCliCommandId;
 
@@ -111,12 +127,28 @@ export type AppCliParseReason =
   | 'scope_conflict'
   | 'project_required_for_scope'
   | 'conflicting_options'
-  | 'invalid_input_json';
+  | 'invalid_input_json'
+  | 'invalid_operation_id'
+  | 'invalid_artifact_id'
+  | 'invalid_baseline_limit'
+  | 'invalid_check_plan'
+  | 'empty_command'
+  | 'invalid_argv'
+  | 'invalid_check_key'
+  | 'duplicate_check_key'
+  | 'invalid_check_kind'
+  | 'invalid_check_timeout'
+  | 'invalid_required'
+  | 'invalid_cwd_ref'
+  | 'invalid_environment_ref'
+  | 'unknown_input_field'
+  | 'input_secret_field_rejected'
+  | 'input_identity_field_rejected';
 
 const REASON_MESSAGE: Readonly<Record<AppCliParseReason, string>> = Object.freeze({
   invalid_argv_type: 'argv 必须是字符串数组',
-  missing_command: '缺少命令；本版本提供 project/config/receipt/events',
-  unknown_command: '未知顶层命令；本版本仅提供 project/config/receipt/events',
+  missing_command: '缺少命令；本版本提供 project/config/receipt/events/baseline',
+  unknown_command: '未知顶层命令；本版本仅提供 project/config/receipt/events/baseline',
   missing_subcommand: '命令缺少子命令',
   unknown_subcommand: '未知子命令',
   unknown_argument: '未知参数',
@@ -155,6 +187,22 @@ const REASON_MESSAGE: Readonly<Record<AppCliParseReason, string>> = Object.freez
   project_required_for_scope: 'scope=project 时必须提供 --project',
   conflicting_options: '参数组合冲突',
   invalid_input_json: '输入 JSON 不是合法对象',
+  invalid_operation_id: 'operationId 必须是 UUID v4',
+  invalid_artifact_id: 'artifactId 必须是稳定 ID（字母数字开头，仅含 [A-Za-z0-9._-]）',
+  invalid_baseline_limit: 'limit 必须是 1..100 的整数',
+  invalid_check_plan: '检查计划不合法',
+  empty_command: '检查命令不能为空（argv 必须为非空字符串数组）',
+  invalid_argv: 'argv 参数必须是非空字符串且不含 NUL',
+  invalid_check_key: 'checkKey 必须匹配 ^[a-z0-9][a-z0-9_-]{0,63}$',
+  duplicate_check_key: 'checkKey 必须唯一',
+  invalid_check_kind: "kind 必须是 'command'",
+  invalid_check_timeout: 'timeoutMs 必须是 1..3600000 的整数毫秒',
+  invalid_required: 'required 必须是布尔值',
+  invalid_cwd_ref: 'cwdRef 必须是仓库内 POSIX 相对路径',
+  invalid_environment_ref: 'environmentRef 必须是非空环境引用（只含引用名，不携带值）',
+  unknown_input_field: '输入包含未知字段（Schema 不接受前向宽容字段）',
+  input_secret_field_rejected: '输入不允许携带明文秘密或环境值字段',
+  input_identity_field_rejected: '输入不允许携带身份/权限/可见范围字段',
 });
 
 interface ParseState {
@@ -347,6 +395,66 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
     maxPositionals: 0,
     positionalFields: [],
   },
+  'baseline.preview': {
+    command: 'baseline',
+    commandId: 'baseline.preview',
+    valueFlags: ['--project', '--input'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 0,
+    maxPositionals: 0,
+    positionalFields: [],
+  },
+  'baseline.run': {
+    command: 'baseline',
+    commandId: 'baseline.run',
+    valueFlags: ['--project', '--input', '--command-id'],
+    boolFlags: ['--confirm', '--decline', '--wait', '--follow'],
+    repeatableFlags: [],
+    minPositionals: 0,
+    maxPositionals: 0,
+    positionalFields: [],
+  },
+  'baseline.list': {
+    command: 'baseline',
+    commandId: 'baseline.list',
+    valueFlags: ['--project', '--limit', '--cursor'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 0,
+    maxPositionals: 0,
+    positionalFields: [],
+  },
+  'baseline.status': {
+    command: 'baseline',
+    commandId: 'baseline.status',
+    valueFlags: [],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['operationId'],
+  },
+  'baseline.cancel': {
+    command: 'baseline',
+    commandId: 'baseline.cancel',
+    valueFlags: ['--command-id'],
+    boolFlags: ['--confirm'],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['operationId'],
+  },
+  'baseline.evidence': {
+    command: 'baseline',
+    commandId: 'baseline.evidence',
+    valueFlags: [],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['artifactId'],
+  },
 });
 
 const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, AppCliCommandId>>>> =
@@ -369,6 +477,14 @@ const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, A
     },
     receipt: { get: 'receipt.get' },
     events: { observe: 'events.observe' },
+    baseline: {
+      preview: 'baseline.preview',
+      run: 'baseline.run',
+      list: 'baseline.list',
+      status: 'baseline.status',
+      cancel: 'baseline.cancel',
+      evidence: 'baseline.evidence',
+    },
   });
 
 const COMMON_VALUE_FLAGS = ['--data-root', '--start-timeout-ms'] as const;
@@ -548,6 +664,10 @@ const PROJECT_DISPLAY_NAME_MAX_LENGTH = 200;
 const DESCRIPTION_MAX_LENGTH = 10_000;
 const LABEL_MAX_LENGTH = 64;
 const LABELS_MAX_COUNT = 50;
+/** 基线操作列表分页上限（契约 §13：默认 20、上限 100）。 */
+const BASELINE_LIST_LIMIT_MAX = 100;
+/** 稳定制品 ID（与 HostClient/核心校验同一口径）。 */
+const ARTIFACT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 function takeLabels(scan: ScanResult, state: ParseState): readonly string[] {
   const labels = scan.options.get('--label') ?? [];
@@ -637,6 +757,20 @@ function requireOption(scan: ScanResult, name: string, state: ParseState, field:
 function requireProjectId(raw: string, state: ParseState, field = 'project'): string {
   if (!isUuidV4(raw)) {
     fail(state, 'invalid_project_id', field);
+  }
+  return raw;
+}
+
+function requireOperationId(raw: string, state: ParseState): string {
+  if (!isUuidV4(raw)) {
+    fail(state, 'invalid_operation_id', 'operationId');
+  }
+  return raw;
+}
+
+function requireArtifactId(raw: string, state: ParseState): string {
+  if (!ARTIFACT_ID_PATTERN.test(raw)) {
+    fail(state, 'invalid_artifact_id', 'artifactId');
   }
   return raw;
 }
@@ -967,6 +1101,93 @@ export interface ParsedEventsObserve {
   readonly follow: boolean;
 }
 
+/**
+ * `baseline preview --project <id> --input <file>`（契约 §12.1）：只读预览。
+ * `--input` 是本次请求的检查计划 JSON 路径；文件内容校验在纯面层
+ * `parseBaselineCheckPlanText`（F-015），解析失败在任何 I/O 之前拒绝。
+ */
+export interface ParsedBaselinePreview {
+  readonly kind: 'command';
+  readonly command: 'baseline';
+  readonly commandId: 'baseline.preview';
+  readonly operation: 'baseline.preview';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly inputFile: string;
+}
+
+/**
+ * `baseline run --project <id> --input <file> (--confirm | --decline)`（§12.1）：
+ * 独立授权入口——`--confirm`/`--decline` 互斥且必居其一（同时或缺席均退出 2），
+ * 与 `project init --confirm` 的注册确认严格分开（确认注册不隐含确认基线）。
+ */
+export interface ParsedBaselineRun {
+  readonly kind: 'command';
+  readonly command: 'baseline';
+  readonly commandId: 'baseline.run';
+  readonly operation: 'baseline.run';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly inputFile: string;
+  /** --confirm → authorize；--decline → decline（记录 not_run）。 */
+  readonly decision: 'authorize' | 'decline';
+  readonly wait: boolean;
+  readonly follow: boolean;
+  readonly explicitCommandId?: string;
+}
+
+/** `baseline list --project <id> [--limit <int>] [--cursor <id>]`（§7.4 分页）。 */
+export interface ParsedBaselineList {
+  readonly kind: 'command';
+  readonly command: 'baseline';
+  readonly commandId: 'baseline.list';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+
+/** `baseline status <operationId>`（§7.5 操作详情）。 */
+export interface ParsedBaselineStatus {
+  readonly kind: 'command';
+  readonly command: 'baseline';
+  readonly commandId: 'baseline.status';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly operationId: string;
+}
+
+/** `baseline cancel <operationId> --confirm`（唯一取消途径；必须显式）。 */
+export interface ParsedBaselineCancel {
+  readonly kind: 'command';
+  readonly command: 'baseline';
+  readonly commandId: 'baseline.cancel';
+  readonly operation: 'baseline.cancel';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly operationId: string;
+  readonly explicitCommandId?: string;
+}
+
+/** `baseline evidence <artifactId>`（§7.6 证据内容读取）。 */
+export interface ParsedBaselineEvidence {
+  readonly kind: 'command';
+  readonly command: 'baseline';
+  readonly commandId: 'baseline.evidence';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly artifactId: string;
+}
+
 export type ParsedAppCliCommand =
   | ParsedProjectInit
   | ParsedProjectOverview
@@ -981,7 +1202,13 @@ export type ParsedAppCliCommand =
   | ParsedConfigEffective
   | ParsedConfigExport
   | ParsedReceiptGet
-  | ParsedEventsObserve;
+  | ParsedEventsObserve
+  | ParsedBaselinePreview
+  | ParsedBaselineRun
+  | ParsedBaselineList
+  | ParsedBaselineStatus
+  | ParsedBaselineCancel
+  | ParsedBaselineEvidence;
 
 export interface ParsedAppCliHelp {
   readonly kind: 'help';
@@ -1234,6 +1461,111 @@ function buildEvents(scan: ScanResult, state: ParseState, spec: AppCommandSpec):
 }
 
 /**
+ * 基线子命令（契约 §12.1/§12.2）：预览/确认/启动/状态/历史分页/显式取消/证据。
+ * 决策参数（--confirm/--decline）与注册确认严格分开：`project init --confirm`
+ * 不隐含任何基线授权，基线运行必须自带显式决策（互斥且必居其一）。
+ */
+function buildBaseline(scan: ScanResult, state: ParseState, spec: AppCommandSpec): ParsedAppCliCommand {
+  assertPositionals(scan, spec, state);
+  const base = baseResult(state, scan);
+  switch (spec.commandId) {
+    case 'baseline.preview': {
+      const projectId = requireProjectId(requireOption(scan, '--project', state, 'project'), state);
+      return {
+        ...base,
+        command: 'baseline',
+        commandId: 'baseline.preview',
+        operation: 'baseline.preview',
+        projectId,
+        inputFile: requireInputFile(scan, state),
+      };
+    }
+    case 'baseline.run': {
+      const projectId = requireProjectId(requireOption(scan, '--project', state, 'project'), state);
+      const inputFile = requireInputFile(scan, state);
+      const confirm = scan.bools.has('--confirm');
+      const decline = scan.bools.has('--decline');
+      if (confirm && decline) {
+        fail(state, 'conflicting_options', 'decision');
+      }
+      if (!confirm && !decline) {
+        fail(state, 'missing_required_option', 'decision');
+      }
+      const explicitCommandId = optionalCommandId(scan, state);
+      return {
+        ...base,
+        command: 'baseline',
+        commandId: 'baseline.run',
+        operation: 'baseline.run',
+        projectId,
+        inputFile,
+        decision: confirm ? 'authorize' : 'decline',
+        wait: scan.bools.has('--wait'),
+        follow: scan.bools.has('--follow'),
+        ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
+      };
+    }
+    case 'baseline.list': {
+      const projectId = requireProjectId(requireOption(scan, '--project', state, 'project'), state);
+      const limitRaw = takeOption(scan, '--limit');
+      let limit: number | undefined;
+      if (limitRaw !== undefined) {
+        const value = parseUnsignedInteger(limitRaw);
+        if (value === undefined || value < 1 || value > BASELINE_LIST_LIMIT_MAX) {
+          fail(state, 'invalid_baseline_limit', 'limit');
+        }
+        limit = value;
+      }
+      const cursor = takeOption(scan, '--cursor');
+      if (cursor !== undefined && (cursor.length === 0 || cursor.includes('\0'))) {
+        fail(state, 'invalid_cursor', 'cursor');
+      }
+      return {
+        ...base,
+        command: 'baseline',
+        commandId: 'baseline.list',
+        projectId,
+        ...(limit !== undefined ? { limit } : {}),
+        ...(cursor !== undefined ? { cursor } : {}),
+      };
+    }
+    case 'baseline.status': {
+      return {
+        ...base,
+        command: 'baseline',
+        commandId: 'baseline.status',
+        operationId: requireOperationId(scan.positionals[0] as string, state),
+      };
+    }
+    case 'baseline.cancel': {
+      const operationId = requireOperationId(scan.positionals[0] as string, state);
+      if (!scan.bools.has('--confirm')) {
+        fail(state, 'missing_required_option', 'confirm');
+      }
+      const explicitCommandId = optionalCommandId(scan, state);
+      return {
+        ...base,
+        command: 'baseline',
+        commandId: 'baseline.cancel',
+        operation: 'baseline.cancel',
+        operationId,
+        ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
+      };
+    }
+    case 'baseline.evidence': {
+      return {
+        ...base,
+        command: 'baseline',
+        commandId: 'baseline.evidence',
+        artifactId: requireArtifactId(scan.positionals[0] as string, state),
+      };
+    }
+    default:
+      fail(state, 'unknown_subcommand');
+  }
+}
+
+/**
  * 纯解析受控 argv（process.argv.slice(2) 形态）、显式注入的 env 与可选 cwd
  * （相对仓库路径 → 绝对输入的解析基准）。
  * 返回命令意图或帮助意图；非法输入抛 AppCliParseError（退出码 2），全程无 I/O。
@@ -1309,6 +1641,8 @@ export function parseAppCliArgs(
       return buildConfig(scan, state, spec);
     case 'receipt':
       return buildReceipt(scan, state, spec);
+    case 'baseline':
+      return buildBaseline(scan, state, spec);
     default:
       fail(state, 'unknown_subcommand');
   }

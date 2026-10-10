@@ -76,14 +76,14 @@ const OTHER_PROJECT_ID = randomUUID();
 const RECEIPT_ID = randomUUID();
 
 describe('F-014 应用命令面（§12.1）', () => {
-  it('只暴露 project/config/receipt/events 四个命令，不新增 run/feature/baseline', () => {
-    expect([...APP_CLI_COMMANDS]).toEqual(['project', 'config', 'receipt', 'events']);
+  it('只暴露 project/config/receipt/events/baseline 五个命令，不新增 run/feature', () => {
+    expect([...APP_CLI_COMMANDS]).toEqual(['project', 'config', 'receipt', 'events', 'baseline']);
   });
 
   it('命令身份集合唯一且为点分 CLI 路径', () => {
     expect(new Set(APP_CLI_COMMAND_IDS).size).toBe(APP_CLI_COMMAND_IDS.length);
     for (const id of APP_CLI_COMMAND_IDS) {
-      expect(id).toMatch(/^(project|config|receipt|events)\.[a-z]+$/);
+      expect(id).toMatch(/^(project|config|receipt|events|baseline)\.[a-z]+$/);
     }
   });
 
@@ -343,7 +343,9 @@ describe('F-014 应用命令结构错误（§12.2）', () => {
   it.each([
     [['run'], 'unknown_command'],
     [['feature'], 'unknown_command'],
-    [['baseline'], 'unknown_command'],
+    [['workflow'], 'unknown_command'],
+    // P02-3 §12.1：baseline 已是正式子命令组（F-015）；缺子命令仍在解析期拒绝。
+    [['baseline'], 'missing_subcommand'],
     [['project'], 'missing_subcommand'],
     // P02-3 §12.1：project init/overview 已是正式子命令；缺位置参数仍在解析期拒绝。
     [['project', 'init'], 'missing_positional'],

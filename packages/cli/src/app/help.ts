@@ -1,11 +1,13 @@
 /**
- * F-014 应用命令 CLI 帮助文本（契约 §12.1/§12.2/§12.3）。
+ * F-014/F-015 应用命令 CLI 帮助文本（契约 §12.1/§12.2/§12.3）。
  *
  * 纯字符串常量：不读环境、不读文件、不格式化用户输入。帮助必须准确传达：
  * - 写命令的显式命令 ID/`--revision` 用法（幂等与 CAS）；
  * - `--input <file>` 只是本次请求的输入，CLI 不监听文件变化、不做覆盖式配置；
  * - `project register` 不是 P02-3 的完整 `project init`，注册成功不代表基线健康；
- * - events 观察中断只结束本次观察，不停止 Host、不取消已提交命令。
+ * - 基线授权与注册确认严格分开（确认注册不隐含确认基线），取消必须显式
+ *   `baseline cancel`；CLI 不自动安装依赖、不追加安装命令、不提取凭据；
+ * - events/基线观察中断只结束本次观察，不停止 Host、不取消已提交命令。
  */
 import type { AppHelpScope } from './args.js';
 
@@ -17,7 +19,7 @@ const BOUNDARY_BLOCK = [
 ].join('\n');
 
 const EXIT_CODE_BLOCK = [
-  '退出码：0 成功；1 业务拒绝/操作失败；2 输入错误；3 连接/协议错误；4 观察中断（仅 events）。',
+  '退出码：0 成功；1 业务拒绝/操作失败；2 输入错误；3 连接/协议错误；4 观察中断（events 与 baseline run --follow/--wait）。',
   'JSON 模式（--json）下 stdout 只输出结构化结果或错误；人类诊断输出到 stderr；错误保留 commandId 便于查回执。',
 ].join('\n');
 
@@ -328,6 +330,146 @@ const EVENTS_HELP = [
   '',
 ].join('\n');
 
+const BASELINE_HELP = [
+  'usage: shiploop baseline <preview|run|list|status|cancel|evidence> [options]',
+  '',
+  '基线命令（获准基线检查；契约 §12.1）：',
+  '  baseline preview --project <id> --input <file>         只读预览（不执行检查）',
+  '  baseline run --project <id> --input <file> (--confirm | --decline)',
+  '        [--wait] [--follow] [--command-id <uuid>]         确认后启动基线检查',
+  '  baseline list --project <id> [--limit <int>] [--cursor <id>]   历史分页',
+  '  baseline status <operationId>                          操作与逐项检查结果',
+  '  baseline cancel <operationId> --confirm [--command-id <uuid>]  显式取消',
+  '  baseline evidence <artifactId>                         读取证据内容',
+  '',
+  '- `--input <file>` 只是本次请求的输入（检查计划 JSON）：argv 以字符串数组无损',
+  '  表达（含空格/中文/特殊字符），CLI 不拼接 shell 命令、不监听文件变化；',
+  '  文件内容不得指定数据库路径、结果读取路径或提权主体，也不携带凭据/环境值。',
+  '- 授权与注册确认严格分开：确认注册不隐含确认基线；基线运行必须显式',
+  '  `--confirm`（非交互批准）或 `--decline`（记录 not_run），EOF/拒绝不默认执行。',
+  '- CLI 不自动运行仓库脚本、不自动安装依赖、不自动追加安装命令、不从配置或',
+  '  仓库文本提取凭据；预览与结果只展示受控事实。',
+  '- 观察中断（Ctrl+C/Abort/观察超时）只结束本次观察，不停止 Host、不取消已',
+  '  提交操作；取消基线必须显式 `baseline cancel`。',
+  '',
+  BOUNDARY_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const BASELINE_PREVIEW_HELP = [
+  'usage: shiploop baseline preview --project <id> --input <file>',
+  '                                 [--data-root <abs>] [--json]',
+  '',
+  '只读预览获准基线检查：展示项目、逐项 argv（原样 JSON 数组）、cwd、环境引用、',
+  'timeout、检查政策（policyRevision/required）及脏/无 HEAD 代码范围；',
+  '不执行检查命令、不安装依赖、不注册也不运行任何东西。',
+  '',
+  '选项：',
+  '  --project <id>   项目 ID（必填，UUID v4）',
+  '  --input <file>   检查计划 JSON（本次请求的输入；不监听文件变化）',
+  '  --json           stdout 只输出结果 JSON；诊断到 stderr',
+  '',
+  BOUNDARY_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const BASELINE_RUN_HELP = [
+  'usage: shiploop baseline run --project <id> --input <file>',
+  '                            (--confirm | --decline)',
+  '                            [--wait] [--follow] [--command-id <uuid>]',
+  '                            [--data-root <abs>] [--json]',
+  '',
+  '经明确授权启动基线检查：',
+  '- --confirm 是显式非交互授权，只覆盖预览展示的这一次基线请求；',
+  '- --decline 显式拒绝：记录 not_run（未执行），不折算成功；',
+  '- 两者互斥且必居其一（同时或缺席均退出码 2）；确认注册不隐含确认基线；',
+  '- 非交互必须显式批准该请求；无输入（EOF）或拒绝绝不默认执行；',
+  '- 默认返回 operationId（accepted）后退出；--wait 等待终态；--follow 观察',
+  '  baseline.* 事件；观察中断只结束本次观察，不停止 Host、不取消已提交操作；',
+  '- 取消基线必须显式 `baseline cancel`；CLI 不自动安装依赖或追加安装命令。',
+  '',
+  '选项：',
+  '  --project <id>      项目 ID（必填，UUID v4）',
+  '  --input <file>      检查计划 JSON（本次请求的输入）',
+  '  --confirm           显式授权（只覆盖本次预览请求）',
+  '  --decline           显式拒绝（记录 not_run）',
+  '  --wait              等待终态后退出（退出码见码表）',
+  '  --follow            经 SSE 观察 baseline.* 事件',
+  '  --command-id <uuid> 显式命令 ID（UUID v4；幂等重放用同一信封）',
+  '  --json              stdout 只输出结果 JSON；诊断到 stderr',
+  '',
+  BOUNDARY_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const BASELINE_LIST_HELP = [
+  'usage: shiploop baseline list --project <id> [--limit <int>] [--cursor <id>]',
+  '                             [--data-root <abs>] [--json]',
+  '',
+  '按 operationId 升序稳定键集分页基线操作历史（默认 20、上限 100）；',
+  '每条记录区分 accepted/活动/passed/failed/not_run/timeout/cancelled/停止未确认，',
+  'not_run 不折算成功。',
+  '',
+  '选项：',
+  '  --project <id>   项目 ID（必填，UUID v4）',
+  '  --limit <int>    分页大小（1..100；默认 20）',
+  '  --cursor <id>    上一页最后的 operationId（不透明游标）',
+  '  --json           stdout 只输出结果 JSON；诊断到 stderr',
+  '',
+  BOUNDARY_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const BASELINE_STATUS_HELP = [
+  'usage: shiploop baseline status <operationId> [--data-root <abs>] [--json]',
+  '',
+  '查询基线操作与逐项检查结果（含结果引用与 not_run/timeout/cancelled/停止未确认',
+  '等区分）；查询成功退出码 0，不把 not_run 折算为通过。',
+  '',
+  '选项：',
+  '  --json  stdout 只输出结果 JSON；诊断到 stderr',
+  '',
+  BOUNDARY_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const BASELINE_CANCEL_HELP = [
+  'usage: shiploop baseline cancel <operationId> --confirm [--command-id <uuid>]',
+  '                                [--data-root <abs>] [--json]',
+  '',
+  '显式取消基线操作（唯一取消途径；必须 --confirm）：',
+  '- 取消必须显式确认；观察中断/退出 CLI 都不会取消已提交操作；',
+  '- 停止核验未确认时保留 stop_unconfirmed 状态，不伪装成功。',
+  '',
+  '选项：',
+  '  --confirm           显式取消确认（必填；缺省退出码 2）',
+  '  --command-id <uuid> 显式命令 ID（UUID v4；幂等重放用同一信封）',
+  '  --json              stdout 只输出结果 JSON；诊断到 stderr',
+  '',
+  BOUNDARY_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const BASELINE_EVIDENCE_HELP = [
+  'usage: shiploop baseline evidence <artifactId> [--data-root <abs>] [--json]',
+  '',
+  '按结果引用读取基线检查输出证据（已脱敏正文原样输出）；未知或不可见制品',
+  '返回 not_found（不泄漏存在性）。',
+  '',
+  '选项：',
+  '  --json  stdout 只输出结果 JSON（含 artifactId/byteSize/content）；诊断到 stderr',
+  '',
+  BOUNDARY_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
 const HELP_BY_SCOPE: Readonly<Record<AppHelpScope, string>> = Object.freeze({
   project: PROJECT_HELP,
   'project.init': PROJECT_INIT_HELP,
@@ -347,6 +489,13 @@ const HELP_BY_SCOPE: Readonly<Record<AppHelpScope, string>> = Object.freeze({
   'receipt.get': RECEIPT_GET_HELP,
   events: EVENTS_HELP,
   'events.observe': EVENTS_HELP,
+  baseline: BASELINE_HELP,
+  'baseline.preview': BASELINE_PREVIEW_HELP,
+  'baseline.run': BASELINE_RUN_HELP,
+  'baseline.list': BASELINE_LIST_HELP,
+  'baseline.status': BASELINE_STATUS_HELP,
+  'baseline.cancel': BASELINE_CANCEL_HELP,
+  'baseline.evidence': BASELINE_EVIDENCE_HELP,
 });
 
 /** 返回指定作用域的应用命令帮助文本（以换行结尾）；不做任何 I/O。 */

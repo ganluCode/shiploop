@@ -302,15 +302,25 @@ describe('F-001 契约文档与仓库基线一致（开工现状事实）', () =
     expect(commandsPort).toContain("'baseline.cancel',");
   });
 
-  it('开工 CLI 顶层命令为 project/config/receipt/events，契约记录扩展后的基线面', () => {
+  it('CLI 顶层命令为 project/config/receipt/events/baseline，契约记录基线子命令面', () => {
     const args = readText('packages/cli/src/app/args.ts');
-    expect(args).toContain("APP_CLI_COMMANDS = ['project', 'config', 'receipt', 'events']");
+    expect(args).toContain("APP_CLI_COMMANDS = ['project', 'config', 'receipt', 'events', 'baseline']");
     expect(args).toContain('APP_CLI_COMMAND_IDS');
-    // 契约记录 project init/overview 与 baseline 子命令面。
+    // 契约记录 project init/overview 与 baseline 子命令面（F-015 已增补）。
     expect(contractDoc).toContain('shiploop project init');
     expect(contractDoc).toContain('shiploop project overview');
     expect(contractDoc).toContain('shiploop baseline run');
     expect(contractDoc).toContain('shiploop baseline cancel');
+    for (const id of [
+      "'baseline.preview'",
+      "'baseline.run'",
+      "'baseline.list'",
+      "'baseline.status'",
+      "'baseline.cancel'",
+      "'baseline.evidence'",
+    ]) {
+      expect(args).toContain(id);
+    }
   });
 
   it('退出码五档 0~4 冻结不变，契约沿用', () => {

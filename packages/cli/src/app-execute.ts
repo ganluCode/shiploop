@@ -31,9 +31,13 @@ import {
   type SubscribeEventsInput,
 } from 'shiploop-host';
 import { AppCliParseError, parseAppCliArgs, parseAppInputJson } from './app/args.js';
+import { parseBaselineCheckPlanText } from './app/baseline.js';
+import type { BaselineCheckPlanView } from './app/baseline.js';
 import type {
   AppCliCommandId,
   ParsedAppCliCommand,
+  ParsedBaselinePreview,
+  ParsedBaselineRun,
   ParsedConfigCreate,
   ParsedConfigUpdate,
   ParsedEventsObserve,
@@ -689,6 +693,31 @@ function readConfigInputPayload(
   return parseAppInputJson(text, { commandId: command.commandId, json: command.json });
 }
 
+/**
+ * 读取 `baseline preview/run` 的 `--input <file>` 检查计划并做纯面层校验（argv
+ * 无损；畸形 JSON/Schema/空命令/非法超时等在连接 Host 之前以退出码 2 拒绝，
+ * 不发现 Host、不启动进程、不提取凭据、不追加安装命令）。
+ */
+function readBaselinePlanInput(
+  command: ParsedBaselinePreview | ParsedBaselineRun,
+): BaselineCheckPlanView {
+  let text: string;
+  try {
+    text = readFileSync(command.inputFile, 'utf8');
+  } catch {
+    throw new AppCliParseError(
+      'invalid_input',
+      'invalid_input_file',
+      { command: command.command, commandId: command.commandId, json: command.json },
+      'input',
+    );
+  }
+  return parseBaselineCheckPlanText(text, {
+    commandId: command.commandId,
+    json: command.json,
+  });
+}
+
 async function executeConfigCommand(
   io: AppCliIo,
   command: ParsedConfigCommand,
@@ -1206,6 +1235,35 @@ export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunRes
         message: '输入文件读取失败',
       });
     }
+  }
+
+  // F-015 只交付基线 CLI 纯面层（参数/输入校验/独立授权/结果格式化）；
+  // baseline.* 与 HostClient 的接线、--wait/--follow 观察与授权后启动属 F-016。
+  // 输入计划先于任何 I/O 校验；随后在任何 Host/进程副作用之前返回 unsupported
+  // 占位：不发现/不启动 Host、不启动进程。
+  if (command.command === 'baseline') {
+    if (command.commandId === 'baseline.preview' || command.commandId === 'baseline.run') {
+      try {
+        readBaselinePlanInput(command);
+      } catch (error) {
+        if (error instanceof AppCliParseError) {
+          return emitParseFailure(io, error, jsonFlag);
+        }
+        return emitFailure(io, command.json, {
+          exitCode: 2,
+          command: command.commandId,
+          code: 'invalid_input',
+          message: '输入文件读取或校验失败',
+        });
+      }
+    }
+    return emitFailure(io, command.json, {
+      exitCode: 1,
+      command: command.commandId,
+      code: 'unsupported',
+      message: 'baseline 子命令的 HostClient 接线由后续任务完成',
+      details: { reason: 'baseline_cli_not_wired' },
+    });
   }
 
   let client: HostClient;

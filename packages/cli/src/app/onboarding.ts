@@ -332,7 +332,17 @@ export interface AppCliStreamOutput {
  */
 export function composeAppCliStreams(input: {
   readonly json: boolean;
-  readonly command: Extract<AppCliCommandId, 'project.init' | 'project.overview'>;
+  readonly command: Extract<
+    AppCliCommandId,
+    | 'project.init'
+    | 'project.overview'
+    | 'baseline.preview'
+    | 'baseline.run'
+    | 'baseline.list'
+    | 'baseline.status'
+    | 'baseline.cancel'
+    | 'baseline.evidence'
+  >;
   readonly result: unknown;
   readonly humanText: string;
   readonly notices: readonly string[];

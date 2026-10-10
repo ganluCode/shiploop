@@ -1,7 +1,7 @@
 /**
- * F-014 应用命令 CLI 纯面层公共出口（参数解析/帮助/JSON 信封/退出码）。
+ * F-014/F-015 应用命令 CLI 纯面层公共出口（参数解析/输入校验/授权/帮助/格式化/JSON 信封/退出码）。
  * 纯 re-export；import 无副作用，不解析 argv、不联网、不读文件、不启动进程。
- * 业务命令的 HostClient/正式 dist 接线属 F-015/F-016/F-017，不经本桶导出。
+ * 业务命令的 HostClient/正式 dist 接线属 F-016/F-017，不经本桶导出。
  */
 export {
   APP_CLI_COMMANDS,
@@ -20,6 +20,12 @@ export type {
   ParsedAppCli,
   ParsedAppCliCommand,
   ParsedAppCliHelp,
+  ParsedBaselineCancel,
+  ParsedBaselineEvidence,
+  ParsedBaselineList,
+  ParsedBaselinePreview,
+  ParsedBaselineRun,
+  ParsedBaselineStatus,
   ParsedConfigCreate,
   ParsedConfigEffective,
   ParsedConfigExport,
@@ -36,6 +42,62 @@ export type {
   ParsedReceiptGet,
 } from './args.js';
 export { getAppCliHelp } from './help.js';
+export {
+  BASELINE_INPUT_CHECKS_MAX,
+  BASELINE_INPUT_CHECKS_MIN,
+  BASELINE_INPUT_TIMEOUT_MAX_MS,
+  BASELINE_INPUT_TIMEOUT_MIN_MS,
+  baselineCliExitCode,
+  buildBaselineCommandResult,
+  buildBaselineEvidenceResult,
+  buildBaselineListResult,
+  buildBaselineOperationResult,
+  buildBaselinePreviewResult,
+  buildBaselineRunConfirmationNotice,
+  buildBaselineSuccessEnvelope,
+  classifyBaselineState,
+  describeBaselineState,
+  formatArgvLossless,
+  formatBaselineCommandResult,
+  formatBaselineEvidenceResult,
+  formatBaselineListResult,
+  formatBaselineOperationResult,
+  formatBaselinePreview,
+  parseBaselineCheckPlanText,
+  resolveBaselineAuthorization,
+  toBaselineDecision,
+  validateBaselineCancelObject,
+  validateBaselineCheckPlanObject,
+} from './baseline.js';
+export type {
+  BaselineAuthorizationInput,
+  BaselineAuthorizationOutcome,
+  BaselineCancelObjectView,
+  BaselineCheckCountsView,
+  BaselineCheckInputView,
+  BaselineCheckOutcomeView,
+  BaselineCheckOutputRefView,
+  BaselineCheckPlanView,
+  BaselineCheckResultView,
+  BaselineCheckStatusView,
+  BaselineCliCommandKind,
+  BaselineCodeIdentityView,
+  BaselineCommandResultView,
+  BaselineDisplayState,
+  BaselineEvidenceResultView,
+  BaselineInputContext,
+  BaselineListEntryView,
+  BaselineListResultView,
+  BaselineNotRunReason,
+  BaselineOperationResultView,
+  BaselineOperationStatusView,
+  BaselineOperationView,
+  BaselinePreviewCheckView,
+  BaselinePreviewResultView,
+  BaselinePreviewWarningView,
+  BaselinePreviewWireView,
+  BaselinePreviewWorkspaceView,
+} from './baseline.js';
 export {
   buildInitCliResult,
   buildInitConfirmationNotice,
