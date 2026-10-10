@@ -125,8 +125,13 @@ export function createBaselineExecutionService(options: BaselineExecutionOptions
       aggregateRevision: row.revision, checkKey: check.checkKey, status, ...(reasonCode ? { reasonCode } : {}) });
   }
   async function publicationVerified(evidence: BaselineEvidence): Promise<boolean> {
+    // report 是检查证据的持久记录（§8.4）：其缺席即发布失败，必须停住并保留占用。
+    // output 可合法缺席——如 output_overflow 中止采集时检查行以 null 引用收尾
+    //（§8.3：输出溢出 → operation completed + check inconclusive/output_overflow），
+    // 不得因此折算为发布失败而把操作永久留在非终态。
+    if (evidence.report === null) return false;
     for (const ref of [evidence.output, evidence.report]) {
-      if (!ref) return false;
+      if (ref === null) continue;
       try {
         const verified = await verifier.verifyArtifact(evidence.projectId, ref.artifactId);
         if (verified.kind !== 'verified_ready' || verified.contentHash !== ref.contentHash) return false;
