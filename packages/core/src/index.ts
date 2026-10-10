@@ -42,4 +42,6 @@ export * from './application/onboarding-service.js';
 export * from './application/baseline-service.js';
 export * from './application/baseline-process-stop.js';
 export * from './application/baseline-evidence.js';
+export * from './application/baseline-execution.js';
+export * from './ports/baseline-execution.js';
 export * from './application/effective-settings.js';

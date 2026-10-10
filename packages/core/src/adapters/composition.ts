@@ -32,6 +32,8 @@ import { createCommandReceiptsService } from '../application/command-receipts-se
 import type { CommandReceiptsService } from '../application/command-receipts-service.js';
 import { createCommandService } from '../application/command-service.js';
 import type { CommandService } from '../application/command-service.js';
+import { createBaselineExecutionService } from '../application/baseline-execution.js';
+import type { BaselineExecutionService } from '../application/baseline-execution.js';
 import { createBaselineService } from '../application/baseline-service.js';
 import type { BaselineService } from '../application/baseline-service.js';
 import { createOnboardingService } from '../application/onboarding-service.js';
@@ -58,6 +60,8 @@ import {
 } from '../ports/validation.js';
 import type { ValidationContext } from '../ports/validation.js';
 import { createArtifactFileStore } from './fs/artifact-files.js';
+import { createBaselineRepositoryGuard } from './fs/baseline-repository-guard.js';
+import { createCommandProcessAdapter } from './process/command-process.js';
 import { createBaselineWorkspaceReader } from './fs/baseline-workspace.js';
 import { createPathService } from './fs/path-service.js';
 import { createRepositoryInspector } from './fs/repository-inspector.js';
@@ -129,6 +133,8 @@ export interface CoreApplication {
   readonly baselineStore: BaselineStore;
   /** P02-3 / F-008：基线预览与明确授权用例（§6；经 commandService 提交）。 */
   readonly baselineService: BaselineService;
+  /** F-012: explicit execution entry; Host routing is wired in F-014. */
+  readonly baselineExecutionService: BaselineExecutionService;
   /** 关闭状态库会话并释放文件句柄；幂等。 */
   close(): void;
 }
@@ -305,8 +311,9 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
     });
 
+    const atomicStore = createSqliteAtomicCommandStore(session, nowUtcMs === undefined ? {} : { nowUtcMs });
     const commandService = createCommandService({
-      atomicStore: createSqliteAtomicCommandStore(session, nowUtcMs === undefined ? {} : { nowUtcMs }),
+      atomicStore,
       repositoryInspector,
       // F-009：配置命令的能力目录复检复用同一可信装配目录。
       capabilityCatalog,
@@ -342,6 +349,16 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
     });
 
+    const baselineExecutionService = createBaselineExecutionService({
+      commands: commandService, atomicStore, baselines: baselineStore, state: stateStore,
+      inspector: repositoryInspector, workspace: createBaselineWorkspaceReader(),
+      processes: createCommandProcessAdapter(), artifacts: artifactStore, files: artifactFileStore,
+      repositoryGuard: createBaselineRepositoryGuard(),
+      environmentDirectory: (object.baselineEnvironmentDirectory as BaselineEnvironmentDirectory | undefined) ?? { resolveEnvironmentRef: () => null },
+      resolveEnvironment: names => Object.fromEntries(names.flatMap(name => process.env[name] === undefined ? [] : [[name, process.env[name]!]])),
+      ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
+    });
+
     const application: CoreApplication = {
       dataRoot: basePathService.dataRoot(),
       pathService,
@@ -358,7 +375,9 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       onboardingService,
       baselineStore,
       baselineService,
+      baselineExecutionService,
       close(): void {
+        if (baselineExecutionService.activeOperationIds().length > 0) throw new StorageError('conflict', 'CoreApplication.close', '基线执行尚未收尾');
         session.close();
       },
     };

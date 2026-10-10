@@ -352,6 +352,7 @@ export function createSqliteStateAccess(
 ): {
   store: StateStore;
   getProject(projectId: string): ProjectRecord;
+  getRepositoryBinding(projectId: string): RepositoryBindingRecord;
   updateProjectInTransaction(projectId: string, input: unknown, timestamp?: number): ProjectRecord;
   /**
    * F-008：项目 + 绑定 +（可选）project.registered 创建事件的原子创建原语；
@@ -1262,6 +1263,18 @@ export function createSqliteStateAccess(
     return { status: 'registered', project, binding: bindingFromRow(bindingRow) };
   }
 
+  function getRepositoryBinding(projectId: string): RepositoryBindingRecord {
+    const operation = 'StateStore.getRepositoryBinding';
+    assertOpen(operation);
+    const id = validateStableId(projectId, { operation, entity: { type: 'repository_binding', projectId } }, 'projectId');
+    const row = selectBindingRowByProjectId(session.database, id);
+    if (row === undefined) {
+      selectProjectRow(session.database, id, operation);
+      throw notFound(operation, { type: 'repository_binding', projectId: id }, `项目 ${id} 尚无仓库绑定`);
+    }
+    return bindingFromRow(row);
+  }
+
   const store: StateStore = {
     async createProject(input: unknown): Promise<ProjectRecord> {
       const operation = 'StateStore.createProject';
@@ -1344,24 +1357,7 @@ export function createSqliteStateAccess(
     },
 
     async getRepositoryBinding(projectId: string): Promise<RepositoryBindingRecord> {
-      const operation = 'StateStore.getRepositoryBinding';
-      assertOpen(operation);
-      const id = validateStableId(
-        projectId,
-        { operation, entity: { type: 'repository_binding', projectId } },
-        'projectId',
-      );
-      const row = selectBindingRowByProjectId(session.database, id);
-      if (row === undefined) {
-        // 区分“项目不存在”与“项目尚无绑定”，两者都是 not_found 但语义不同。
-        selectProjectRow(session.database, id, operation);
-        throw notFound(
-          operation,
-          { type: 'repository_binding', projectId: id },
-          `项目 ${id} 尚无仓库绑定`,
-        );
-      }
-      return bindingFromRow(row);
+      return getRepositoryBinding(projectId);
     },
 
     async updateProject(projectId: string, input: unknown): Promise<ProjectRecord> {
@@ -1438,6 +1434,7 @@ export function createSqliteStateAccess(
   return {
     store,
     getProject,
+    getRepositoryBinding,
     updateProjectInTransaction,
     createProjectWithBindingInTransaction,
     getGlobalSettingsOrNull,

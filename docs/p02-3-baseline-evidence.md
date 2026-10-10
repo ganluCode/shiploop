@@ -2,8 +2,9 @@
 
 `shiploop-core` 导出 `createBaselineEvidenceCollector`、`readBaselineOutput` 及证据类型。
 本模块只组合已授权的 `CommandProcessHandle`、`ArtifactStore` 与 `ArtifactFileStore`，
-不启动命令、不修改基线业务状态、不增加 HTTP 能力。F-012 编排器仍须核对源码变化、
+不启动命令、不修改基线业务状态、不增加 HTTP 能力。F-012 编排器核对源码变化、
 检查政策和停止证据；`eligibleForPass` 只是必要证据门槛，不是业务 passed。
+Core 执行入口、取消与跨根协调待核对项见 [基线执行编排](p02-3-baseline-execution.md)。
 
 ## 采集与发布
 
@@ -29,7 +30,8 @@
 - JSON 报告 ≤64 KiB，经既有 ArtifactPublisher 发布。报告保存 argv 脱敏副本及实际
   argv 的 SHA-256/脱敏标记、cwd、环境引用/变量名（无值）、timeout、代码与进程身份、
   采集起止/耗时、退出码/信号、停止确认、尾部、输出引用/hash/size 和覆盖缺口。
-  起止是采集窗口；OS 启动身份另存 `processIdentity.startTime`。报告是发布前快照，
+  起止是采集窗口；OS 启动身份另存 `processIdentity.startTime`。F-012 增补受控
+  `processReason`，避免编排器在采集已判不确定后再次无限等待原结果 Promise。报告是发布前快照，
   不含自身制品引用；返回证据另含 report 引用及最终核验。数据库只存制品元数据和
   业务输出引用；不把全文塞入事件、回执或队列。
 

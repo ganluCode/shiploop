@@ -92,6 +92,8 @@ export interface BaselineRunPrepared {
   readonly claimedPreviewDigest: string;
   readonly codeIdentity: BaselineCodeIdentity;
   readonly repositoryBindingId: string;
+  readonly bindingRevision: number;
+  readonly bindingRecordRevision: number;
 }
 
 export interface BaselineService {
@@ -171,7 +173,7 @@ export function createBaselineService(options: BaselineServiceOptions): Baseline
     principal: TrustedPrincipal,
     projectId: string,
     operation: string,
-  ): Promise<{ inspection: RepositoryInspection; repositoryBindingId: string }> {
+  ): Promise<{ inspection: RepositoryInspection; repositoryBindingId: string; bindingRevision: number; bindingRecordRevision: number }> {
     authorizeBaselineCommand(principal, projectId, operation);
     let project;
     try {
@@ -201,7 +203,7 @@ export function createBaselineService(options: BaselineServiceOptions): Baseline
         details: { reason: 'binding_identity_mismatch', entityType: 'repository_binding' },
       });
     }
-    return { inspection, repositoryBindingId: binding.id };
+    return { inspection, repositoryBindingId: binding.id, bindingRevision: binding.bindingRevision, bindingRecordRevision: binding.revision };
   }
 
   /** 环境引用核验：伪引用拒绝；只返回变量名（PATH + 获准允许列表）。 */
@@ -378,7 +380,7 @@ export function createBaselineService(options: BaselineServiceOptions): Baseline
       try {
         const { decision, plan, previewDigest } = validateBaselineRunPayload(payload);
         const id = requireProjectId(projectId, operation);
-        const { inspection, repositoryBindingId } = await loadBindingContext(principal, id, operation);
+        const { inspection, repositoryBindingId, bindingRevision, bindingRecordRevision } = await loadBindingContext(principal, id, operation);
         // 与预览完全相同的核验（cwd realpath 范围 + 环境引用）；失败零副作用。
         await resolveChecks(operation, plan, inspection.canonicalPath);
         const { codeIdentity } = await computeCodeIdentity(inspection);
@@ -390,6 +392,8 @@ export function createBaselineService(options: BaselineServiceOptions): Baseline
           claimedPreviewDigest: previewDigest,
           codeIdentity,
           repositoryBindingId,
+          bindingRevision,
+          bindingRecordRevision,
         };
       } catch (error) {
         throw mapToPublicError(error, { operation });
@@ -416,7 +420,11 @@ export function createBaselineService(options: BaselineServiceOptions): Baseline
       // 执行前必须重新核验：提交计划与当前代码身份的摘要必须与用户确认的
       // previewDigest 一致（argv/cwd/环境/政策/代码身份任一实质变化 → 失效）。
       const expectedPreviewDigest = computeBaselinePreviewDigest(prepared.plan, prepared.codeIdentity);
-      if (prepared.claimedPreviewDigest !== expectedPreviewDigest) {
+      const binding = transaction.getRepositoryBinding(prepared.projectId);
+      if (prepared.claimedPreviewDigest !== expectedPreviewDigest ||
+          computeBaselinePlanDigest(prepared.plan) !== prepared.planDigest ||
+          binding.id !== prepared.repositoryBindingId || binding.bindingRevision !== prepared.bindingRevision ||
+          binding.revision !== prepared.bindingRecordRevision) {
         const receipt = createRejectedReceipt({
           ...receiptIdentity,
           error: new PublicError('conflict', operation, undefined, {
@@ -479,7 +487,11 @@ export function createBaselineService(options: BaselineServiceOptions): Baseline
       // 获准输入快照（全部检查共用同一授权 → 单一代码身份，不混用）。
       transaction.insertBaselineCheckResults(operationRow.id, prepared.plan);
       try {
-        transaction.acquireBaselineOccupancy({ operationId: operationRow.id, processIdentity: null });
+        transaction.acquireBaselineOccupancy({ operationId: operationRow.id, processIdentity: {
+          bindingRevision: prepared.bindingRevision,
+          bindingRecordRevision: prepared.bindingRecordRevision,
+          deadlineUtcMs: now + prepared.plan.checks.reduce((sum, check) => sum + check.timeoutMs, 0) + 30_000,
+        } });
       } catch (error) {
         // §8.3：另一在途操作 → resource_busy baseline_in_progress（整组回滚，
         // 零持久副作用；不落 rejected 回执——客户端可换 commandId 重试）。

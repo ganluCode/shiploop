@@ -38,6 +38,7 @@ export function createSqliteAtomicCommandStore(
         const transaction: CommandTransaction = Object.freeze({
           findReceipt: guarded(receipts.findReceiptByCommandId),
           getProject: guarded(state.getProject),
+          getRepositoryBinding: guarded(state.getRepositoryBinding),
           updateProjectMetadata: guarded(state.updateProjectInTransaction),
           // F-008：命令路径新建项目时同事务写 project.registered 创建事件。
           registerProject: guarded((project: unknown, binding: unknown) =>

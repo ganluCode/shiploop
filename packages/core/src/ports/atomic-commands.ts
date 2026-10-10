@@ -18,6 +18,7 @@ import type {
 import type {
   GlobalSettingsRecord,
   ProjectRecord,
+  RepositoryBindingRecord,
   ProjectSettingsRecord,
   ProjectWithRepositoryBindingResult,
 } from './state-store.js';
@@ -25,6 +26,8 @@ import type {
 export interface CommandTransaction {
   findReceipt(principalId: string, commandId: string): CommandReceipt | undefined;
   getProject(projectId: string): ProjectRecord;
+  /** F-012: binding revision recheck without filesystem I/O. */
+  getRepositoryBinding(projectId: string): RepositoryBindingRecord;
   /** 复用 P01 CAS + 单条 metadata_updated 事件，不开启内层事务。 */
   updateProjectMetadata(projectId: string, input: unknown): ProjectRecord;
   /**

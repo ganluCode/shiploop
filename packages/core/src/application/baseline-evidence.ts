@@ -54,6 +54,8 @@ export interface BaselineEvidence {
   readonly exitCode: number | null;
   readonly signal: string | null;
   readonly timedOut: boolean;
+  /** Supervised result reason, retained so orchestration never re-awaits an uncertain promise. */
+  readonly processReason: CommandProcessResult['reason'];
   readonly stopConfirmed: boolean;
   readonly output: ArtifactInputRef | null;
   readonly report: ArtifactInputRef | null;
@@ -270,7 +272,7 @@ export function createBaselineEvidenceCollector(options: BaselineEvidenceOptions
     let evidence: BaselineEvidence = {
       schemaVersion: 1, projectId, operationId, checkKey, execution,
       startedAtUtcMs: started, endedAtUtcMs: ended, durationMs: Math.max(0, ended - started),
-      exitCode: result?.exitCode ?? null, signal: result?.signal ?? null, timedOut: result?.reason === 'timed_out',
+      exitCode: result?.exitCode ?? null, signal: result?.signal ?? null, timedOut: result?.reason === 'timed_out', processReason: result?.reason ?? null,
       stopConfirmed: result?.stop.confirmed === true,
       output, report, interruptedArtifactId: output ? null : record?.id ?? null, tail,
       tailTruncated: retained > Buffer.byteLength(tail),
