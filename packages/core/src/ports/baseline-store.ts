@@ -1037,6 +1037,13 @@ export interface BaselineStore extends BaselineHealthReadStore {
   listBaselineCheckResults(operationId: unknown): readonly BaselineCheckResultRecord[];
   /** 按授权 ID 读取不可变授权；缺失返回 undefined。 */
   getBaselineAuthorization(authorizationId: unknown): BaselineAuthorizationRecord | undefined;
+  /**
+   * P02-3 / F-014（§7.6）：按制品身份反查检查输出制品的所属项目与操作
+   * （仅命中 baseline_check_results.output_artifact_id；未命中返回 undefined）。
+   */
+  findBaselineOutputArtifact(artifactId: unknown):
+    | { readonly projectId: string; readonly operationId: string }
+    | undefined;
   /** §13 全局占用快照（空闲为 holder:null）。 */
   readBaselineOccupancy(): BaselineOccupancySnapshot;
 }

@@ -17,6 +17,12 @@
  *   HostProtocolError，details 只含受控 reason，不回显响应原文或秘密。
  */
 import {
+  BASELINE_CHECKS_MAX,
+  BASELINE_CHECK_STATUSES,
+  BASELINE_CHECK_TAIL_MAX_BYTES,
+  BASELINE_OPERATION_STATUSES,
+  BASELINE_PREVIEW_WARNING_CODES,
+  BASELINE_REASON_CODES,
   EVENT_CURSOR_PREFIX,
   ONBOARDING_QUERY_SCHEMA_VERSION,
   PUBLIC_EVENT_SCHEMA_VERSION,
@@ -27,10 +33,19 @@ import {
   WIRE_MESSAGE_SCHEMA_VERSION,
   isIsoUtcDateTime,
   isUuidV4,
+  validateBaselineAuthorizationSummary,
   validateSettingsPayload,
   validateWireCommandReceipt,
 } from 'shiploop-core/protocol';
 import type {
+  BaselineAuthorizationSummary,
+  BaselineCheckCounts,
+  BaselineCheckOutputRef,
+  BaselineCheckResult,
+  BaselineDetailResult,
+  BaselineListResult,
+  BaselineOperationSummary,
+  BaselinePreviewResult,
   CommandReceipt,
   EffectiveSettings,
   ExportedSettings,
@@ -66,7 +81,9 @@ export type AppQueryOperation =
   | 'settings.project.get'
   | 'settings.project.effective'
   | 'settings.project.export'
-  | 'snapshot.get';
+  | 'snapshot.get'
+  | 'baselines.list'
+  | 'baselines.get';
 
 function malformed(operation: HostOperation, reason: string): never {
   throw new HostProtocolError('response_malformed', operation, 'Host 响应不符合线协议', {
@@ -133,9 +150,11 @@ export interface CommandReceiptExpectation {
 }
 
 /**
- * 校验线上回执并核对期望身份。schemaVersion ≠ 2 → unsupported_schema_version；
- * 其余形状/不变量违反与身份/摘要不符 → response_malformed。accepted 由 Core
- * 校验器拒绝（本版本不是合法线上状态），客户端绝不放行。
+ * 校验线上回执并核对期望身份。schemaVersion ≠ 当前线消息版本 →
+ * unsupported_schema_version；其余形状/不变量违反与身份/摘要不符 →
+ * response_malformed。accepted 回执（§5.3，P02-3 / F-008 起为 baseline.run
+ * authorize 的合法线上状态）由 Core 校验器按不变量放行（仅携带
+ * operationId），本层不另行禁止。
  */
 export function validateCommandReceiptWire(
   value: unknown,
@@ -218,6 +237,11 @@ function validateEventPayload(
     }
     return { changedFields: [...(fields as string[])] };
   }
+  // P02-3 / F-014（§9.2）：基线事件 payload 独立校验（脱敏摘要/身份），
+  // 绝不落入 settingsSummary 分支造成误拒。
+  if (kind.startsWith('baseline')) {
+    return validateBaselineEventPayload(operation, kind, object);
+  }
   // settingsSummary
   exactKeys(operation, object, ['schemaVersion', 'strategies', 'policies']);
   if (object.schemaVersion !== SETTINGS_SCHEMA_VERSION) {
@@ -234,6 +258,133 @@ function validateEventPayload(
     strategies: [...(object.strategies as string[])],
     policies: [...(object.policies as string[])],
   };
+}
+
+/* ------------------------------------------------------------------ *
+ * P02-3 / F-014 §9.2：基线事件 payload（与服务端 mapStateEvent 同一冻结
+ * 形状——只携带脱敏摘要与操作/检查身份，绝无输出正文/路径/环境值）
+ * ------------------------------------------------------------------ */
+
+const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/;
+const CHECK_KEY_PATTERN = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+
+function requireEventOperationId(operation: HostOperation, value: unknown): string {
+  if (!isUuidV4(value)) {
+    malformed(operation, 'event_payload_violation');
+  }
+  return value;
+}
+
+function optionalEventReasonCode(
+  operation: HostOperation,
+  object: Record<string, unknown>,
+): { readonly reasonCode?: string } {
+  if (object.reasonCode === undefined) {
+    return {};
+  }
+  if (
+    typeof object.reasonCode !== 'string' ||
+    !(BASELINE_REASON_CODES as readonly string[]).includes(object.reasonCode)
+  ) {
+    malformed(operation, 'event_payload_violation');
+  }
+  return { reasonCode: object.reasonCode };
+}
+
+function validateBaselineCountsPayload(
+  operation: HostOperation,
+  value: unknown,
+): BaselineCheckCounts {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, ['total', 'passed', 'failed', 'error', 'inconclusive', 'notRun']);
+  const counts: Record<string, number> = {};
+  for (const key of ['total', 'passed', 'failed', 'error', 'inconclusive', 'notRun'] as const) {
+    const count = object[key];
+    if (
+      typeof count !== 'number' ||
+      !Number.isSafeInteger(count) ||
+      count < 0 ||
+      count > BASELINE_CHECKS_MAX
+    ) {
+      malformed(operation, 'event_payload_violation');
+    }
+    counts[key] = count;
+  }
+  return counts as unknown as BaselineCheckCounts;
+}
+
+/** 基线事件 payload 校验（kind → 冻结形状）；返回可透传的净 payload。 */
+function validateBaselineEventPayload(
+  operation: HostOperation,
+  kind: string,
+  object: Record<string, unknown>,
+): Record<string, unknown> {
+  switch (kind) {
+    case 'baselineAuthorized': {
+      exactKeys(operation, object, ['operationId', 'planDigest', 'checkCount']);
+      const operationId = requireEventOperationId(operation, object.operationId);
+      if (typeof object.planDigest !== 'string' || !SHA256_HEX_PATTERN.test(object.planDigest)) {
+        malformed(operation, 'event_payload_violation');
+      }
+      if (
+        typeof object.checkCount !== 'number' ||
+        !Number.isSafeInteger(object.checkCount) ||
+        object.checkCount < 1 ||
+        object.checkCount > BASELINE_CHECKS_MAX
+      ) {
+        malformed(operation, 'event_payload_violation');
+      }
+      return { operationId, planDigest: object.planDigest, checkCount: object.checkCount };
+    }
+    case 'baselineStarted': {
+      exactKeys(operation, object, ['operationId']);
+      return { operationId: requireEventOperationId(operation, object.operationId) };
+    }
+    case 'baselineCheckCompleted': {
+      exactKeys(operation, object, ['operationId', 'checkKey', 'status', 'reasonCode']);
+      const operationId = requireEventOperationId(operation, object.operationId);
+      if (typeof object.checkKey !== 'string' || !CHECK_KEY_PATTERN.test(object.checkKey)) {
+        malformed(operation, 'event_payload_violation');
+      }
+      if (
+        typeof object.status !== 'string' ||
+        !(BASELINE_CHECK_STATUSES as readonly string[]).includes(object.status)
+      ) {
+        malformed(operation, 'event_payload_violation');
+      }
+      return {
+        operationId,
+        checkKey: object.checkKey,
+        status: object.status,
+        ...optionalEventReasonCode(operation, object),
+      };
+    }
+    case 'baselineCompleted': {
+      exactKeys(operation, object, ['operationId', 'status', 'reasonCode', 'summary']);
+      const operationId = requireEventOperationId(operation, object.operationId);
+      if (
+        typeof object.status !== 'string' ||
+        !(BASELINE_OPERATION_STATUSES as readonly string[]).includes(object.status)
+      ) {
+        malformed(operation, 'event_payload_violation');
+      }
+      return {
+        operationId,
+        status: object.status,
+        ...optionalEventReasonCode(operation, object),
+        summary: validateBaselineCountsPayload(operation, object.summary),
+      };
+    }
+    case 'baselineCancelled': {
+      exactKeys(operation, object, ['operationId', 'reasonCode']);
+      return {
+        operationId: requireEventOperationId(operation, object.operationId),
+        ...optionalEventReasonCode(operation, object),
+      };
+    }
+    default:
+      malformed(operation, 'event_payload_violation');
+  }
 }
 
 /**
@@ -827,6 +978,406 @@ function validateProjectOverview(
   };
 }
 
+/* ------------------------------------------------------------------ *
+ * P02-3 / F-014 基线查询与命令结果响应（§7.4/§7.5/§6；线消息 v3）
+ * ------------------------------------------------------------------ */
+
+function requireNonNegativeInteger(operation: HostOperation, value: unknown): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    malformed(operation, 'invalid_revision');
+  }
+  return value;
+}
+
+/** §7.4 操作摘要（计数经逐项把关；reasonCode 为可选键）。 */
+function validateBaselineOperationSummaryWire(
+  operation: HostOperation,
+  value: unknown,
+): BaselineOperationSummary {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, [
+    'operationId',
+    'kind',
+    'status',
+    'reasonCode',
+    'createdAt',
+    'startedAt',
+    'endedAt',
+    'summary',
+  ]);
+  if (!isUuidV4(object.operationId)) {
+    malformed(operation, 'baseline_operation_id_invalid');
+  }
+  if (object.kind !== 'baseline') {
+    malformed(operation, 'baseline_kind_invalid');
+  }
+  if (
+    typeof object.status !== 'string' ||
+    !(BASELINE_OPERATION_STATUSES as readonly string[]).includes(object.status)
+  ) {
+    malformed(operation, 'baseline_status_invalid');
+  }
+  if (
+    object.reasonCode !== undefined &&
+    (typeof object.reasonCode !== 'string' ||
+      !(BASELINE_REASON_CODES as readonly string[]).includes(object.reasonCode))
+  ) {
+    malformed(operation, 'baseline_reason_code_invalid');
+  }
+  if (!isIsoUtcDateTime(object.createdAt)) {
+    malformed(operation, 'baseline_time_invalid');
+  }
+  if (
+    (object.startedAt !== null && !isIsoUtcDateTime(object.startedAt)) ||
+    (object.endedAt !== null && !isIsoUtcDateTime(object.endedAt))
+  ) {
+    malformed(operation, 'baseline_time_invalid');
+  }
+  const summary = validateBaselineCountsPayload(operation, object.summary);
+  return {
+    operationId: object.operationId,
+    kind: 'baseline',
+    status: object.status as BaselineOperationSummary['status'],
+    ...(object.reasonCode !== undefined
+      ? { reasonCode: object.reasonCode as BaselineOperationSummary['reasonCode'] }
+      : {}),
+    createdAt: object.createdAt,
+    startedAt: object.startedAt as string | null,
+    endedAt: object.endedAt as string | null,
+    summary,
+  };
+}
+
+/** §7.5 逐项检查明细（output 引用与 tail 是脱敏尾部视图，不携带路径/环境值）。 */
+function validateBaselineCheckResultWire(
+  operation: HostOperation,
+  value: unknown,
+): BaselineCheckResult {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, [
+    'checkKey',
+    'argv',
+    'cwdRef',
+    'environmentRef',
+    'timeoutMs',
+    'required',
+    'status',
+    'reasonCode',
+    'exitCode',
+    'signal',
+    'timedOut',
+    'output',
+    'tail',
+    'startedAt',
+    'endedAt',
+    'durationMs',
+  ]);
+  if (typeof object.checkKey !== 'string' || !CHECK_KEY_PATTERN.test(object.checkKey)) {
+    malformed(operation, 'baseline_check_key_invalid');
+  }
+  if (
+    !Array.isArray(object.argv) ||
+    object.argv.length === 0 ||
+    !object.argv.every((arg) => typeof arg === 'string')
+  ) {
+    malformed(operation, 'baseline_argv_invalid');
+  }
+  if (
+    (object.cwdRef !== null && typeof object.cwdRef !== 'string') ||
+    (object.environmentRef !== null && typeof object.environmentRef !== 'string')
+  ) {
+    malformed(operation, 'baseline_check_ref_invalid');
+  }
+  if (
+    typeof object.timeoutMs !== 'number' ||
+    !Number.isSafeInteger(object.timeoutMs) ||
+    object.timeoutMs < 1
+  ) {
+    malformed(operation, 'baseline_timeout_invalid');
+  }
+  if (typeof object.required !== 'boolean' || typeof object.timedOut !== 'boolean') {
+    malformed(operation, 'baseline_check_flags_invalid');
+  }
+  if (
+    typeof object.status !== 'string' ||
+    !(BASELINE_CHECK_STATUSES as readonly string[]).includes(object.status)
+  ) {
+    malformed(operation, 'baseline_check_status_invalid');
+  }
+  if (
+    object.reasonCode !== undefined &&
+    (typeof object.reasonCode !== 'string' ||
+      !(BASELINE_REASON_CODES as readonly string[]).includes(object.reasonCode))
+  ) {
+    malformed(operation, 'baseline_reason_code_invalid');
+  }
+  if (
+    (object.exitCode !== null &&
+      (typeof object.exitCode !== 'number' || !Number.isSafeInteger(object.exitCode))) ||
+    (object.signal !== null && typeof object.signal !== 'string') ||
+    (object.durationMs !== null &&
+      (typeof object.durationMs !== 'number' ||
+        !Number.isSafeInteger(object.durationMs) ||
+        object.durationMs < 0))
+  ) {
+    malformed(operation, 'baseline_check_result_fields_invalid');
+  }
+  let output: BaselineCheckOutputRef | null = null;
+  if (object.output !== null) {
+    const ref = requirePlain(operation, object.output);
+    exactKeys(operation, ref, ['artifactId', 'byteSize', 'truncated']);
+    output = {
+      artifactId: requireStableId(operation, ref.artifactId),
+      byteSize: requireNonNegativeInteger(operation, ref.byteSize),
+      truncated: typeof ref.truncated === 'boolean' ? ref.truncated : malformed(operation, 'baseline_output_ref_invalid'),
+    };
+  }
+  if (
+    object.tail !== null &&
+    (typeof object.tail !== 'string' ||
+      Buffer.byteLength(object.tail, 'utf8') > BASELINE_CHECK_TAIL_MAX_BYTES)
+  ) {
+    malformed(operation, 'baseline_tail_invalid');
+  }
+  if (
+    (object.startedAt !== null && !isIsoUtcDateTime(object.startedAt)) ||
+    (object.endedAt !== null && !isIsoUtcDateTime(object.endedAt))
+  ) {
+    malformed(operation, 'baseline_time_invalid');
+  }
+  return {
+    checkKey: object.checkKey,
+    argv: [...(object.argv as string[])],
+    cwdRef: object.cwdRef as string | null,
+    environmentRef: object.environmentRef as string | null,
+    timeoutMs: object.timeoutMs,
+    required: object.required,
+    status: object.status as BaselineCheckResult['status'],
+    ...(object.reasonCode !== undefined
+      ? { reasonCode: object.reasonCode as BaselineCheckResult['reasonCode'] }
+      : {}),
+    exitCode: object.exitCode as number | null,
+    signal: object.signal as string | null,
+    timedOut: object.timedOut,
+    output,
+    tail: object.tail as string | null,
+    startedAt: object.startedAt as string | null,
+    endedAt: object.endedAt as string | null,
+    durationMs: object.durationMs as number | null,
+  };
+}
+
+/** §6.2 授权摘要：复用 Core 校验器（同一权威），形状违反 → response_malformed。 */
+function validateAuthorizationSummaryWire(
+  operation: HostOperation,
+  value: unknown,
+): BaselineAuthorizationSummary {
+  try {
+    return validateBaselineAuthorizationSummary(value, operation);
+  } catch {
+    malformed(operation, 'baseline_authorization_invalid');
+  }
+}
+
+function validateBaselineListPage(operation: HostOperation, body: unknown): BaselineListResult {
+  const object = requirePlain(operation, body);
+  exactKeys(operation, object, ['schemaVersion', 'projectId', 'records', 'nextCursor', 'limit']);
+  requireOnboardingSchemaVersion(operation, object.schemaVersion);
+  const projectId = requireStableId(operation, object.projectId);
+  if (!Array.isArray(object.records)) {
+    malformed(operation, 'baseline_records_invalid');
+  }
+  const records = object.records.map((record) =>
+    validateBaselineOperationSummaryWire(operation, record),
+  );
+  if (object.nextCursor !== null && !isUuidV4(object.nextCursor)) {
+    malformed(operation, 'baseline_cursor_invalid');
+  }
+  const limit = requirePositiveInteger(operation, object.limit);
+  return {
+    schemaVersion: ONBOARDING_QUERY_SCHEMA_VERSION,
+    projectId,
+    records,
+    nextCursor: object.nextCursor,
+    limit,
+  };
+}
+
+function validateBaselineDetail(operation: HostOperation, body: unknown): BaselineDetailResult {
+  const object = requirePlain(operation, body);
+  exactKeys(operation, object, ['schemaVersion', 'operation', 'authorization', 'checks']);
+  requireOnboardingSchemaVersion(operation, object.schemaVersion);
+  const summary = validateBaselineOperationSummaryWire(operation, object.operation);
+  const authorization =
+    object.authorization === null
+      ? null
+      : validateAuthorizationSummaryWire(operation, object.authorization);
+  if (!Array.isArray(object.checks)) {
+    malformed(operation, 'baseline_checks_invalid');
+  }
+  const checks = object.checks.map((check) => validateBaselineCheckResultWire(operation, check));
+  return {
+    schemaVersion: ONBOARDING_QUERY_SCHEMA_VERSION,
+    operation: summary,
+    authorization,
+    checks,
+  };
+}
+
+/**
+ * §6 baseline.preview 回执内嵌 result（completed 时）：预览摘要形状把关。
+ * 只在 completed 回执上调用；返回已校验的预览结果。
+ */
+export function validateBaselinePreviewResultWire(
+  value: unknown,
+  operation: HostOperation = 'commands.submit',
+): BaselinePreviewResult {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, [
+    'previewDigest',
+    'policyRevision',
+    'codeIdentity',
+    'workspace',
+    'checks',
+    'warnings',
+  ]);
+  if (
+    typeof object.previewDigest !== 'string' ||
+    !SHA256_HEX_PATTERN.test(object.previewDigest) ||
+    typeof object.policyRevision !== 'string' ||
+    !SHA256_HEX_PATTERN.test(object.policyRevision)
+  ) {
+    malformed(operation, 'preview_digest_invalid');
+  }
+  const codeIdentity = requirePlain(operation, object.codeIdentity);
+  exactKeys(operation, codeIdentity, ['headCommit', 'workingTreeDigest', 'hasUncommittedChanges']);
+  if (
+    (codeIdentity.headCommit !== null &&
+      (typeof codeIdentity.headCommit !== 'string' ||
+        !COMMIT_ID_PATTERN.test(codeIdentity.headCommit))) ||
+    typeof codeIdentity.workingTreeDigest !== 'string' ||
+    !SHA256_HEX_PATTERN.test(codeIdentity.workingTreeDigest) ||
+    typeof codeIdentity.hasUncommittedChanges !== 'boolean'
+  ) {
+    malformed(operation, 'preview_code_identity_invalid');
+  }
+  const workspace = requirePlain(operation, object.workspace);
+  exactKeys(operation, workspace, ['excludedDirNames', 'fileCount']);
+  if (
+    !Array.isArray(workspace.excludedDirNames) ||
+    !workspace.excludedDirNames.every((name) => typeof name === 'string') ||
+    typeof workspace.fileCount !== 'number' ||
+    !Number.isSafeInteger(workspace.fileCount) ||
+    workspace.fileCount < 0
+  ) {
+    malformed(operation, 'preview_workspace_invalid');
+  }
+  if (!Array.isArray(object.checks)) {
+    malformed(operation, 'preview_checks_invalid');
+  }
+  const checks = object.checks.map((item) => {
+    const check = requirePlain(operation, item);
+    exactKeys(operation, check, [
+      'checkKey',
+      'kind',
+      'argv',
+      'cwdRef',
+      'cwd',
+      'environmentRef',
+      'allowedVariables',
+      'timeoutMs',
+      'required',
+    ]);
+    if (
+      typeof check.checkKey !== 'string' ||
+      !CHECK_KEY_PATTERN.test(check.checkKey) ||
+      check.kind !== 'command' ||
+      !Array.isArray(check.argv) ||
+      check.argv.length === 0 ||
+      !check.argv.every((arg) => typeof arg === 'string') ||
+      (check.cwdRef !== null && typeof check.cwdRef !== 'string') ||
+      typeof check.cwd !== 'string' ||
+      !check.cwd.startsWith('/') ||
+      (check.environmentRef !== null && typeof check.environmentRef !== 'string') ||
+      !Array.isArray(check.allowedVariables) ||
+      !check.allowedVariables.every((name) => typeof name === 'string') ||
+      typeof check.timeoutMs !== 'number' ||
+      !Number.isSafeInteger(check.timeoutMs) ||
+      check.timeoutMs < 1 ||
+      typeof check.required !== 'boolean'
+    ) {
+      malformed(operation, 'preview_check_invalid');
+    }
+    return check as unknown as BaselinePreviewResult['checks'][number];
+  });
+  if (!Array.isArray(object.warnings)) {
+    malformed(operation, 'preview_warnings_invalid');
+  }
+  const warnings = object.warnings.map((item) => {
+    const warning = requirePlain(operation, item);
+    exactKeys(operation, warning, ['code', 'checkKey']);
+    if (
+      typeof warning.code !== 'string' ||
+      !(BASELINE_PREVIEW_WARNING_CODES as readonly string[]).includes(warning.code) ||
+      (warning.checkKey !== undefined && typeof warning.checkKey !== 'string')
+    ) {
+      malformed(operation, 'preview_warning_invalid');
+    }
+    return warning as unknown as BaselinePreviewResult['warnings'][number];
+  });
+  return {
+    previewDigest: object.previewDigest,
+    policyRevision: object.policyRevision,
+    codeIdentity: codeIdentity as unknown as BaselinePreviewResult['codeIdentity'],
+    workspace: workspace as unknown as BaselinePreviewResult['workspace'],
+    checks,
+    warnings,
+  };
+}
+
+/**
+ * §6 baseline.run decline / baseline.cancel 的 completed 回执内嵌 result：
+ * {operationId, status, reasonCode?}（取消/拒绝结果只含身份与三轴状态）。
+ */
+export function validateBaselineCommandResultWire(
+  value: unknown,
+  operation: HostOperation = 'commands.submit',
+): { readonly operationId: string; readonly status: string; readonly reasonCode?: string } {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, ['operationId', 'status', 'reasonCode']);
+  if (!isUuidV4(object.operationId)) {
+    malformed(operation, 'baseline_operation_id_invalid');
+  }
+  if (
+    typeof object.status !== 'string' ||
+    !(BASELINE_OPERATION_STATUSES as readonly string[]).includes(object.status)
+  ) {
+    malformed(operation, 'baseline_status_invalid');
+  }
+  if (
+    object.reasonCode !== undefined &&
+    (typeof object.reasonCode !== 'string' ||
+      !(BASELINE_REASON_CODES as readonly string[]).includes(object.reasonCode))
+  ) {
+    malformed(operation, 'baseline_reason_code_invalid');
+  }
+  return {
+    operationId: object.operationId,
+    status: object.status,
+    ...(object.reasonCode !== undefined ? { reasonCode: object.reasonCode } : {}),
+  };
+}
+
+export function validateAppQueryResponse(
+  operation: 'baselines.list',
+  body: unknown,
+  expectation?: SnapshotExpectation,
+): BaselineListResult;
+export function validateAppQueryResponse(
+  operation: 'baselines.get',
+  body: unknown,
+  expectation?: SnapshotExpectation,
+): BaselineDetailResult;
 export function validateAppQueryResponse(
   operation: 'projects.list',
   body: unknown,
@@ -940,6 +1491,10 @@ export function validateAppQueryResponse(
       return validateEffectiveSettings(operation, body);
     case 'snapshot.get':
       return validateSnapshot(operation, body, expectation);
+    case 'baselines.list':
+      return validateBaselineListPage(operation, body);
+    case 'baselines.get':
+      return validateBaselineDetail(operation, body);
     default: {
       const exhaustive: never = operation;
       throw new TypeError(`未覆盖的查询操作：${String(exhaustive)}`);

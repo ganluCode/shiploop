@@ -49,6 +49,11 @@ export interface LoopbackJsonResponse {
   readonly json: unknown;
 }
 
+/** P02-3 / F-014（§7.6）：text/plain 正文响应（artifacts.get；空体合法）。 */
+export type LoopbackTextResponse =
+  | { readonly statusCode: number; readonly ok: true; readonly text: string; readonly byteSize: number }
+  | { readonly statusCode: number; readonly ok: false; readonly json: unknown };
+
 function unreachable(
   operation: HostOperation,
   reason: string,
@@ -68,14 +73,17 @@ function malformedResponse(operation: HostOperation, reason: string): HostProtoc
 }
 
 /**
- * 对 127.0.0.1:<port> 发单个 HTTP/1.1 JSON 请求并完整读取响应。
- * 任何失败都以 HostProtocolError 拒绝；不抛未分类异常。
+ * 对 127.0.0.1:<port> 发单个 HTTP/1.1 请求并完整读取响应体（字节级）。
+ * 任何失败都以 HostProtocolError 拒绝；不抛未分类异常。JSON/文本的解析与
+ * 内容类型把关由调用方完成。
  */
-export function requestLoopbackJson(options: LoopbackJsonRequestOptions): Promise<LoopbackJsonResponse> {
+function requestLoopbackRaw(
+  options: LoopbackJsonRequestOptions,
+): Promise<{ statusCode: number; contentType: string | undefined; body: Buffer }> {
   const maxResponseBytes = options.maxResponseBytes ?? MAX_HTTP_BODY_BYTES;
   const payload = options.body !== undefined ? JSON.stringify(options.body) : undefined;
 
-  return new Promise<LoopbackJsonResponse>((resolvePromise, rejectPromise) => {
+  return new Promise((resolvePromise, rejectPromise) => {
     let settled = false;
     let connected = false;
     let req: ClientRequest | undefined;
@@ -156,21 +164,14 @@ export function requestLoopbackJson(options: LoopbackJsonRequestOptions): Promis
           if (settled) {
             return;
           }
-          const bodyText = Buffer.concat(chunks).toString('utf8');
-          if (bodyText.length === 0) {
-            fail(malformedResponse(options.operation, 'empty_body'));
-            return;
-          }
-          let json: unknown;
-          try {
-            json = JSON.parse(bodyText);
-          } catch {
-            fail(malformedResponse(options.operation, 'invalid_json'));
-            return;
-          }
           settled = true;
           cleanup();
-          resolvePromise({ statusCode, json });
+          const contentType = response.headers['content-type'];
+          resolvePromise({
+            statusCode,
+            contentType: typeof contentType === 'string' ? contentType : undefined,
+            body: Buffer.concat(chunks),
+          });
         });
         response.on('error', (error) => {
           fail(unreachable(options.operation, 'connection_lost', error));
@@ -191,6 +192,55 @@ export function requestLoopbackJson(options: LoopbackJsonRequestOptions): Promis
     }
     req.end();
   });
+}
+
+/**
+ * 对 127.0.0.1:<port> 发单个 HTTP/1.1 JSON 请求并完整读取响应。
+ * 任何失败都以 HostProtocolError 拒绝；不抛未分类异常。
+ */
+export async function requestLoopbackJson(options: LoopbackJsonRequestOptions): Promise<LoopbackJsonResponse> {
+  const raw = await requestLoopbackRaw(options);
+  const bodyText = raw.body.toString('utf8');
+  if (bodyText.length === 0) {
+    throw malformedResponse(options.operation, 'empty_body');
+  }
+  try {
+    return { statusCode: raw.statusCode, json: JSON.parse(bodyText) as unknown };
+  } catch {
+    throw malformedResponse(options.operation, 'invalid_json');
+  }
+}
+
+/**
+ * P02-3 / F-014（§7.6）：text/plain 正文请求（artifacts.get）。2xx 的
+ * content-type 必须是 text/plain（否则 response_malformed，绝不把
+ * JSON/HTML 当证据正文）；非 2xx 按 JSON 错误体返回（调用方走
+ * mapErrorResponse），空体/非 JSON → response_malformed。
+ */
+export async function requestLoopbackText(options: LoopbackJsonRequestOptions): Promise<LoopbackTextResponse> {
+  const raw = await requestLoopbackRaw(options);
+  if (raw.statusCode < 200 || raw.statusCode >= 300) {
+    // 非 2xx：正文必须是 JSON 错误体（交回调用方走 mapErrorResponse）。
+    const bodyText = raw.body.toString('utf8');
+    if (bodyText.length === 0) {
+      throw malformedResponse(options.operation, 'empty_body');
+    }
+    try {
+      return { statusCode: raw.statusCode, ok: false, json: JSON.parse(bodyText) as unknown };
+    } catch {
+      throw malformedResponse(options.operation, 'invalid_json');
+    }
+  }
+  const contentType = raw.contentType?.toLowerCase() ?? '';
+  if (!contentType.startsWith('text/plain')) {
+    throw malformedResponse(options.operation, 'content_type_not_text_plain');
+  }
+  return {
+    statusCode: raw.statusCode,
+    ok: true,
+    text: raw.body.toString('utf8'),
+    byteSize: raw.body.length,
+  };
 }
 
 /** §14：响应体中的服务端错误码白名单（仅服务端码；客户端码不可能来自线上）。 */

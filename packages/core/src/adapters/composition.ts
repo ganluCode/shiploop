@@ -34,6 +34,8 @@ import { createCommandService } from '../application/command-service.js';
 import type { CommandService } from '../application/command-service.js';
 import { createBaselineExecutionService } from '../application/baseline-execution.js';
 import type { BaselineExecutionService } from '../application/baseline-execution.js';
+import { createBaselineQueryService } from '../application/baseline-query-service.js';
+import type { BaselineQueryService } from '../application/baseline-query-service.js';
 import { createBaselineService } from '../application/baseline-service.js';
 import type { BaselineService } from '../application/baseline-service.js';
 import { createOnboardingService } from '../application/onboarding-service.js';
@@ -136,6 +138,8 @@ export interface CoreApplication {
   readonly baselineService: BaselineService;
   /** F-012: explicit execution entry; Host routing is wired in F-014. */
   readonly baselineExecutionService: BaselineExecutionService;
+  /** P02-3 / F-014：baselines.list / baselines.get / artifacts.get 只读查询（§7.4-§7.6）。 */
+  readonly baselineQueryService: BaselineQueryService;
   /** 关闭状态库会话并释放文件句柄；幂等。 */
   close(): void;
 }
@@ -313,12 +317,24 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     });
 
     const atomicStore = createSqliteAtomicCommandStore(session, nowUtcMs === undefined ? {} : { nowUtcMs });
+    // P02-3 / F-014：baseline.cancel 的取消执行端口晚绑定到 baselineExecutionService
+    // （构造环：execution 依赖 commandService.submit 做授权提交；闭包只在命令执行
+    // 时解引用，装配完成后才可达）。
+    let baselineExecutionServiceRef: BaselineExecutionService | undefined;
     const commandService = createCommandService({
       atomicStore,
       repositoryInspector,
       // F-009：配置命令的能力目录复检复用同一可信装配目录。
       capabilityCatalog,
       baselineService,
+      baselineCancel: {
+        cancel: (principal, projectId, operationId) => {
+          if (baselineExecutionServiceRef === undefined) {
+            throw new StorageError('corrupt', OPERATION, 'baseline.cancel 端口在装配完成前被调用');
+          }
+          return baselineExecutionServiceRef.cancel(principal, projectId, operationId);
+        },
+      },
       ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
     });
     // F-010：授权查询/快照/事件读取窄端口装配；游标绑定的数据根身份由
@@ -360,6 +376,16 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       resolveEnvironment: names => Object.fromEntries(names.flatMap(name => process.env[name] === undefined ? [] : [[name, process.env[name]!]])),
       ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
     });
+    baselineExecutionServiceRef = baselineExecutionService;
+
+    // P02-3 / F-014：基线查询服务（baselines.list/baselines.get/artifacts.get，
+    // §7.4-§7.6）；读取面复用同一 baselineStore/artifacts/files，完整性核验读取
+    // 由查询服务内部的有界 verifier 承担。
+    const baselineQueryService = createBaselineQueryService({
+      baselines: baselineStore,
+      artifacts: artifactStore,
+      files: artifactFileStore,
+    });
 
     const application: CoreApplication = {
       dataRoot: basePathService.dataRoot(),
@@ -378,6 +404,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       baselineStore,
       baselineService,
       baselineExecutionService,
+      baselineQueryService,
       close(): void {
         if (baselineExecutionService.activeOperationIds().length > 0) throw new StorageError('conflict', 'CoreApplication.close', '基线执行尚未收尾');
         session.close();

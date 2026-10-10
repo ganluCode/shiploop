@@ -908,6 +908,22 @@ export function createSqliteBaselineAccess(
     getBaselineAuthorization,
     readBaselineOccupancy,
     readProjectHealthInput,
+    findBaselineOutputArtifact(artifactId: unknown) {
+      const operation = 'BaselineStore.findBaselineOutputArtifact';
+      assertOpen(operation);
+      const entity: StorageEntityRef = { type: 'baseline_check_result' };
+      if (typeof artifactId !== 'string' || artifactId.length === 0 || artifactId.length > 128) {
+        throw validationError(context(operation, entity), 'artifactId', '必须是稳定制品 ID', artifactId);
+      }
+      const row = session.database
+        .prepare<[string], { project_id: string; operation_id: string }>(
+          'SELECT project_id, operation_id FROM baseline_check_results WHERE output_artifact_id = ? LIMIT 1',
+        )
+        .get(artifactId) as { project_id: string; operation_id: string } | undefined;
+      return row === undefined
+        ? undefined
+        : { projectId: row.project_id, operationId: row.operation_id };
+    },
     listRecoverableBaselineOperations() {
       assertOpen('BaselineStore.listRecoverableBaselineOperations');
       const rows = session.database.prepare("SELECT * FROM baseline_operations WHERE status IN ('accepted','running','cancelling') OR id IN (SELECT holder_operation_id FROM baseline_occupancy) ORDER BY id").all() as OperationSqlRow[];

@@ -4,9 +4,12 @@
  *
  * 规则落实：
  * - 只装配 §3.2 表内应用路由：POST /v1/commands、GET /v1/receipts/:commandId、
- *   GET /v1/results/:resultRef、项目/配置/快照 GET 查询；表外路径（含
- *   /v1/files、/v1/artifacts/.../content 与任何 path/locator 形态）由调用方
- *   落到 404 unknown_operation，本模块永不返回文件内容；
+ *   GET /v1/results/:resultRef、项目/配置/快照 GET 查询与 P02-3 / F-014 基线
+ *   查询（GET /v1/projects/:projectId/baselines、GET /v1/baselines/:operationId、
+ *   GET /v1/artifacts/:artifactId/content）；表外路径（含 /v1/files 与任何
+ *   path/locator 形态）由调用方落到 404 unknown_operation；唯一的正文返回
+ *   是 artifacts.get——只输出经 Core 授权与完整性核验的正式基线证据正文
+ *   （有界 8 MiB，text/plain），本层绝不按请求路径读文件；
  * - /v1/events 由 F-012 SSE Hub（sse-transport.ts）接管为长连接事件流；
  *   未装配 Hub 的上下文保持已认证后的 501 unsupported（防御纵深）；
  * - Host 不做业务授权：Bearer 认证通过后把可信装配固定绑定的 principal
@@ -36,6 +39,8 @@ import {
   validateCommandEnvelope,
 } from 'shiploop-core';
 import type {
+  BaselineExecutionService,
+  BaselineQueryService,
   CommandReceiptsService,
   CommandService,
   OnboardingService,
@@ -44,9 +49,13 @@ import type {
   TrustedPrincipal,
 } from 'shiploop-core';
 import {
+  ARTIFACT_CONTENT_ROUTE_SUFFIX,
+  ARTIFACTS_ROUTE_PREFIX,
+  BASELINES_ROUTE_PREFIX,
   COMMANDS_ROUTE,
   EVENTS_ROUTE,
   MAX_APP_BODY_BYTES,
+  MAX_ARTIFACT_CONTENT_BYTES,
   MAX_HTTP_BODY_BYTES,
   MAX_QUERY_STRING_BYTES,
   PROJECTS_INSPECT_ROUTE,
@@ -66,6 +75,7 @@ import {
   RouteReject,
   sendJson,
   sendJsonText,
+  sendTextContent,
 } from './http-primitives.js';
 import type { EventStreamHub } from './sse-transport.js';
 
@@ -86,6 +96,9 @@ export type ApplicationOperation =
   | 'settings.project.effective'
   | 'settings.project.export'
   | 'snapshot.get'
+  | 'baselines.list'
+  | 'baselines.get'
+  | 'artifacts.get'
   | 'events.subscribe';
 
 /** 已解析的应用路由（path 形态匹配；路径参数为未解码原始片段）。 */
@@ -93,7 +106,7 @@ export interface ResolvedAppRoute {
   readonly operation: ApplicationOperation;
   readonly method: 'GET' | 'POST';
   readonly pathParam?: {
-    readonly name: 'commandId' | 'projectId' | 'resultRef';
+    readonly name: 'commandId' | 'projectId' | 'resultRef' | 'operationId' | 'artifactId';
     readonly value: string;
   };
 }
@@ -110,6 +123,16 @@ export interface HostApplicationContext {
   readonly commandReceiptsService: CommandReceiptsService;
   /** P02-3 / F-006（§7.2/§7.3）：静态接入用例（inspect/overview）；授权在 Core。 */
   readonly onboardingService: OnboardingService;
+  /**
+   * P02-3 / F-014（§7.4-§7.6）：基线分页/详情/证据正文只读查询（授权在 Core）。
+   * 能力清单宣告 baselines.list/baselines.get/artifacts.get，必须真实接线。
+   */
+  readonly baselineQueryService: BaselineQueryService;
+  /**
+   * P02-3 / F-014（§5.3/§13）：baseline.run 经既有 POST /v1/commands 路由提交
+   * 到执行编排（accepted 后异步启动检查）；其余命令仍走 commandService。
+   */
+  readonly baselineExecutionService: Pick<BaselineExecutionService, 'submit'>;
   /** 生命周期状态读取：quiescing/stopping/starting 拒绝新变更（503）。 */
   getLifecycleState(): LifecycleState;
   /**
@@ -170,6 +193,36 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
     }
     return undefined;
   }
+  // P02-3 / F-014 §3.2：GET /v1/baselines/:operationId（单段路径参数）。
+  if (path.startsWith(BASELINES_ROUTE_PREFIX)) {
+    const segment = path.slice(BASELINES_ROUTE_PREFIX.length);
+    if (segment.length > 0 && !segment.includes('/')) {
+      return {
+        operation: 'baselines.get',
+        method: 'GET',
+        pathParam: { name: 'operationId', value: segment },
+      };
+    }
+    return undefined;
+  }
+  // P02-3 / F-014 §3.2/§7.6：GET /v1/artifacts/:artifactId/content（恰两段；
+  // 其他 /v1/artifacts/* 形态一律未匹配 → 404 unknown_operation）。
+  if (path.startsWith(ARTIFACTS_ROUTE_PREFIX)) {
+    const rest = path.slice(ARTIFACTS_ROUTE_PREFIX.length);
+    const segments = rest.split('/');
+    if (
+      segments.length === 2 &&
+      (segments[0] as string).length > 0 &&
+      segments[1] === 'content'
+    ) {
+      return {
+        operation: 'artifacts.get',
+        method: 'GET',
+        pathParam: { name: 'artifactId', value: segments[0] as string },
+      };
+    }
+    return undefined;
+  }
   if (path.startsWith(`${PROJECTS_ROUTE}/`)) {
     const rest = path.slice(PROJECTS_ROUTE.length + 1);
     const segments = rest.split('/');
@@ -212,6 +265,13 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
       case 'settings/export':
         return {
           operation: 'settings.project.export',
+          method: 'GET',
+          pathParam: { name: 'projectId', value: projectId },
+        };
+      // P02-3 / F-014 §3.2/§7.4：GET /v1/projects/:projectId/baselines。
+      case 'baselines':
+        return {
+          operation: 'baselines.list',
           method: 'GET',
           pathParam: { name: 'projectId', value: projectId },
         };
@@ -320,6 +380,8 @@ const QUERY_SPECS: Readonly<Partial<Record<ApplicationOperation, QuerySpec>>> = 
   'snapshot.get': Object.freeze({ allowed: ['scope', 'projectId'], repeatable: [] }),
   // F-012（§9.4）：订阅恢复位置 Last-Event-ID（头）优先于 ?cursor=；缺省 400。
   'events.subscribe': Object.freeze({ allowed: ['scope', 'projectId', 'cursor'], repeatable: [] }),
+  // P02-3 / F-014（§7.4）：baselines.list 分页参数（取值规则由 Core 复核）。
+  'baselines.list': Object.freeze({ allowed: ['limit', 'cursor'], repeatable: [] }),
 });
 
 /** 查询参数白名单校验（未知/重复 → 400，定位 query.<字段>）；空查询串恒合法。 */
@@ -481,7 +543,19 @@ async function handleCommandSubmit(
     });
   }
 
-  const receipt = await app.commandService.submit(app.principal, parsedBody);
+  // P02-3 / F-014（§5.3）：baseline.run 提交到执行编排（accepted 回执提交后
+  // 异步启动检查进程）；其余命令仍走 commandService。信封结构已在上方通过
+  // 校验（deferred 分支已拒绝），此处仅按已验证的操作名分流。
+  let envelopeOperation: string | undefined;
+  try {
+    envelopeOperation = validateCommandEnvelope(parsedBody).operation;
+  } catch {
+    envelopeOperation = undefined;
+  }
+  const receipt =
+    envelopeOperation === 'baseline.run'
+      ? await app.baselineExecutionService.submit(app.principal, parsedBody)
+      : await app.commandService.submit(app.principal, parsedBody);
   // §5.3：accepted → 202（F-008 首次启用，仅 baseline.run authorize）；
   // completed → 200；业务 rejected → 按 §5.7 唯一映射，响应体仍是回执。
   const status =
@@ -525,9 +599,25 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
     return;
   }
 
+  if (operation === 'artifacts.get') {
+    // P02-3 / F-014（§7.6）：正文不是 JSON——授权与完整性核验全部在 Core
+    //（readBaselineOutput：能力/可见性/成员/核验失败统一 not_found 或
+    // corrupt_state）；本层只做有界输出，绝不按请求路径读文件。
+    const content = await app.baselineQueryService.readArtifactContent(
+      app.principal,
+      pathParam?.value,
+    );
+    if (content.byteSize > MAX_ARTIFACT_CONTENT_BYTES) {
+      // Core 已保证上限；超限即装配不变量破坏，拒绝输出（不回业务内容）。
+      sendJson(response, 500, internalBody(operation, 'response_budget_exceeded'));
+      return;
+    }
+    sendTextContent(response, 200, content.content);
+    return;
+  }
+
   let result: unknown;
-  switch (operation) {
-    case 'receipts.get':
+  switch (operation) {    case 'receipts.get':
       result = await app.commandReceiptsService.getReceipt(app.principal, pathParam?.value);
       break;
     case 'results.resolve':
@@ -581,6 +671,34 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
       break;
     case 'snapshot.get':
       result = await app.queryService.getSnapshot(app.principal, buildSnapshotScope(params, operation));
+      break;
+    case 'baselines.list': {
+      // §7.4：limit/cursor 形态转换（limit 必须是十进制整数文本；范围与
+      // cursor 的 UUID 形态由 Core validateBaselineListQuery 单一权威复核）。
+      const query: Record<string, unknown> = {};
+      const limitRaw = params.get('limit');
+      if (limitRaw !== null) {
+        if (!/^(0|[1-9]\d{0,2})$/.test(limitRaw)) {
+          reject(400, 'invalid_input', operation, 'limit 必须是十进制整数文本', {
+            field: 'query.limit',
+            reason: 'invalid_integer',
+          });
+        }
+        query.limit = Number(limitRaw);
+      }
+      const cursor = params.get('cursor');
+      if (cursor !== null) {
+        query.cursor = cursor;
+      }
+      result = app.baselineQueryService.listBaselines(
+        app.principal,
+        pathParam?.value,
+        Object.keys(query).length === 0 ? undefined : query,
+      );
+      break;
+    }
+    case 'baselines.get':
+      result = await app.baselineQueryService.getBaseline(app.principal, pathParam?.value);
       break;
     default:
       // 路由表与本分发必须一一对应；缺失是装配编程错误。

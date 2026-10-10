@@ -732,7 +732,7 @@ describe('F-008 P02-3 基线预览与明确授权', () => {
     expect(readRows(app, 'SELECT COUNT(*) AS c FROM baseline_operations')).toMatchObject([{ c: 2 }]);
   });
 
-  it('未知脚本/缺命令：预览按明确契约警示（不改写 argv、不自动执行/安装）；baseline.cancel 未接线 unsupported', async () => {
+  it('未知脚本/缺命令：预览按明确契约警示（不改写 argv、不自动执行/安装）；F-014 起 baseline.cancel 已接线（未知操作 not_found）', async () => {
     const app = await openApp('unknown-script');
     const projectId = await registerProject(app, fixture.repos.withHead);
     const result = resultOf(await app.commandService.submit(
@@ -751,10 +751,11 @@ describe('F-008 P02-3 基线预览与明确授权', () => {
     expect(checks[1].argv).toEqual(['echo', 'a && b']);
     expect(existsSync(fixture.repos.maliciousSentinelPath)).toBe(false);
 
+    // F-014：baseline.cancel 已随执行服务接线；取消未知操作 → not_found（不产生回执）。
     const cancel = await catchPublicError(() =>
       app.commandService.submit(OWNER, envelope('baseline.cancel', projectId, { operationId: randomUUID() })),
     );
-    expect(cancel.code).toBe('unsupported');
+    expect(cancel.code).toBe('not_found');
   });
 
   it('预览结果超出回执有界上限 → invalid_input（不崩溃、不截断冒充）', async () => {

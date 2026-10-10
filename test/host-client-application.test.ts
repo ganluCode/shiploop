@@ -1714,6 +1714,8 @@ async function setupRealEventServer(options?: {
         queryService: app.queryService,
         commandReceiptsService: app.commandReceiptsService,
         onboardingService: app.onboardingService,
+        baselineQueryService: app.baselineQueryService,
+        baselineExecutionService: app.baselineExecutionService,
         getLifecycleState: () => lifecycle,
         eventStreams: hub,
       },

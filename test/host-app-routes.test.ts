@@ -117,6 +117,8 @@ async function startAppServer(
       queryService: app.queryService,
       commandReceiptsService: app.commandReceiptsService,
       onboardingService: app.onboardingService,
+      baselineQueryService: app.baselineQueryService,
+      baselineExecutionService: app.baselineExecutionService,
       getLifecycleState: () => lifecycle,
     },
   });
@@ -532,7 +534,10 @@ describe('F-011 回执/结果读取与拒绝语义', () => {
     }
 
     // 表外路径（任意文件读取形态）一律 404 unknown_operation。
-    for (const path of ['/v1/files?path=/etc/passwd', '/v1/artifacts/abc/content']) {
+    // P02-3 / F-014：/v1/artifacts/:artifactId/content 已是正式路由（未知制品
+    // 由 Core 统一 not_found，详见 p02-3-baseline-host-routes 测试），此处保持
+    // 对未装配文件路径形态的拒绝。
+    for (const path of ['/v1/files?path=/etc/passwd', '/v1/artifacts/abc/download']) {
       const response = await s.get(path);
       expect(response.statusCode).toBe(404);
       expect(errorOf(response).code).toBe('unknown_operation');
@@ -706,6 +711,7 @@ describe('F-011 传输纪律与版本门禁', () => {
         'settings.project.update',
         'baseline.preview',
         'baseline.run',
+        'baseline.cancel',
       ]);
     }
     // actorId/principal 提权字段 → 400 invalid_input（未知键，定位字段）。
@@ -921,9 +927,10 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         'settings.global.update',
         'settings.project.create',
         'settings.project.update',
-        // P02-3 / F-008：基线 preview/run 经既有 /v1/commands 路由真实接线。
+        // P02-3：基线 preview/run/cancel 经既有 /v1/commands 路由真实接线。
         'baseline.preview',
         'baseline.run',
+        'baseline.cancel',
       ],
       queries: [
         'projects.list',
@@ -940,6 +947,10 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         'receipts.get',
         'results.resolve',
         'snapshot.get',
+        // P02-3 / F-014：基线分页/详情/证据正文查询真实接线。
+        'baselines.list',
+        'baselines.get',
+        'artifacts.get',
       ],
       events: { transport: 'sse', route: '/v1/events', scopes: ['project', 'global'] },
     });

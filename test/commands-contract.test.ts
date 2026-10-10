@@ -123,9 +123,10 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       'settings.global.update',
       'settings.project.create',
       'settings.project.update',
-      // P02-3 / F-008：基线 preview/run（cancel 属 F-010/F-012，实现前进白名单）。
+      // P02-3 / F-008：基线 preview/run；F-014：cancel 随停止核验执行端口进白名单。
       'baseline.preview',
       'baseline.run',
+      'baseline.cancel',
     ]);
     expect(COMMAND_OPERATION_SPECS).toEqual({
       'project.register': { scopeKind: 'registration', mutation: 'create', capability: 'project.register' },
@@ -136,6 +137,7 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       'settings.project.update': { scopeKind: 'project', mutation: 'update', capability: 'settings.project.write' },
       'baseline.preview': { scopeKind: 'project', mutation: 'create', capability: 'baseline.run' },
       'baseline.run': { scopeKind: 'project', mutation: 'create', capability: 'baseline.run' },
+      'baseline.cancel': { scopeKind: 'project', mutation: 'create', capability: 'baseline.run' },
     });
     for (const spec of Object.values(COMMAND_OPERATION_SPECS)) {
       expect(APP_CAPABILITIES).toContain(spec.capability);

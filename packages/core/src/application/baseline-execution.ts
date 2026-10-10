@@ -458,7 +458,9 @@ export function createBaselineExecutionService(options: BaselineExecutionOptions
       assertTrustedPrincipal(principal);
       validateBaselineCancelPayload({ operationId: id });
       authorizeBaselineCommand(principal, projectId, 'baseline.cancel');
-      const row = operation(id);
+      const row = baselines.getBaselineOperation(id);
+      // §4.3：未知操作对取消调用方统一 not_found（操作名归到本命令，不外泄读取面）。
+      if (!row) throw new PublicError('not_found', 'baseline.cancel');
       if (row.projectId !== projectId) throw new PublicError('not_found', 'baseline.cancel');
       if (isTerminalBaselineOperation(row.status)) return row;
       const run = active.get(id);

@@ -21,6 +21,8 @@ import {
 } from '../ports/authorization.js';
 import type { TrustedPrincipal } from '../ports/authorization.js';
 import type { AtomicCommandStore, CommandTransaction } from '../ports/atomic-commands.js';
+import { validateBaselineCancelPayload } from '../ports/baseline.js';
+import type { BaselineOperationRecord } from '../ports/baseline-store.js';
 import type { BaselineService } from './baseline-service.js';
 import {
   PublicError,
@@ -56,6 +58,18 @@ import { validateMergedProjectSettingsWrite } from './configuration-service.js';
 export interface CommandService {
   submit(principal: unknown, envelope: unknown): Promise<CommandReceipt>;
 }
+/**
+ * P02-3 / F-014：baseline.cancel 的取消执行端口（进程停止核验在事务外完成）。
+ * 生产装配注入 BaselineExecutionService.cancel（组合根内晚绑定，避免与
+ * CommandService 的构造环）；返回取消后的操作记录，回执在同一事务内持久化。
+ */
+export interface BaselineCancelPort {
+  cancel(
+    principal: TrustedPrincipal,
+    projectId: string,
+    operationId: string,
+  ): Promise<BaselineOperationRecord>;
+}
 export interface CommandServiceOptions {
   readonly atomicStore: AtomicCommandStore;
   /** F-008：project.register 的只读仓库检查（写事务之外调用；不传则注册命令 unsupported）。 */
@@ -64,6 +78,8 @@ export interface CommandServiceOptions {
   readonly capabilityCatalog?: RuntimeCapabilityCatalog;
   /** P02-3 / F-008：基线预览/授权用例（不传则基线命令 unsupported）。 */
   readonly baselineService?: BaselineService;
+  /** P02-3 / F-014：baseline.cancel 的取消执行端口（不传则取消命令 unsupported）。 */
+  readonly baselineCancel?: BaselineCancelPort;
   readonly nowUtcMs?: () => number;
 }
 
@@ -124,6 +140,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
   const repositoryInspector = options.repositoryInspector;
   const capabilityCatalog = options.capabilityCatalog;
   const baselineService = options.baselineService;
+  const baselineCancel = options.baselineCancel;
   const nowUtcMs = options.nowUtcMs ?? Date.now;
 
   /** 既有项目元数据 CAS：业务 + metadata_updated 事件 + 回执同一事务（F-007）。 */
@@ -388,12 +405,15 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
         if (isSettingsEnvelope(envelope) && capabilityCatalog === undefined) {
           throw new PublicError('unsupported', operation);
         }
-        // baseline.cancel 属 F-010/F-012（信封层未进白名单，不会被路由到此处；
-        // 防御纵深保留拒绝分支）。
+        // P02-3 / F-014：baseline.cancel 已随取消/停止核验（F-010/F-012）进入白名单；
+        // 取消执行端口缺席时仍 unsupported（不冒充能力）。
         if (
           (envelope.operation === 'baseline.preview' || envelope.operation === 'baseline.run') &&
           baselineService === undefined
         ) {
+          throw new PublicError('unsupported', operation);
+        }
+        if (envelope.operation === 'baseline.cancel' && baselineCancel === undefined) {
           throw new PublicError('unsupported', operation);
         }
         if (
@@ -401,6 +421,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           envelope.operation !== 'project.register' &&
           envelope.operation !== 'baseline.preview' &&
           envelope.operation !== 'baseline.run' &&
+          envelope.operation !== 'baseline.cancel' &&
           !isSettingsEnvelope(envelope)
         ) {
           throw new PublicError('unsupported', operation);
@@ -451,6 +472,20 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
             principal,
             envelope.scope.projectId,
             envelope.payload,
+          );
+        }
+
+        // P02-3 / F-014：baseline.cancel 的进程停止核验在写事务之外、仅对新命令
+        // 执行（等待确认停止可能耗时）；取消结果随后在同一事务内核对重放并持久化
+        // completed 回执。取消执行自身的拒绝（resource_busy 等）不写回执，与
+        // baseline.run 提交冲突同一纪律。
+        let baselineCanceled: BaselineOperationRecord | undefined;
+        if (envelope.operation === 'baseline.cancel' && existing === undefined) {
+          const payload = validateBaselineCancelPayload(envelope.payload);
+          baselineCanceled = await baselineCancel!.cancel(
+            principal,
+            envelope.scope.projectId,
+            payload.operationId,
           );
         }
 
@@ -505,6 +540,31 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
               },
               baselinePrepared,
             );
+          }
+          if (envelope.operation === 'baseline.cancel') {
+            // 取消已在新命令路径完成并确认停止；事务内只重核重放并持久化回执。
+            if (baselineCanceled === undefined) {
+              throw new TypeError('基线取消缺少事务外执行结果');
+            }
+            const receipt = createCompletedReceipt({
+              principalId: principal.principalId,
+              commandId: envelope.commandId,
+              operation: envelope.operation,
+              scope: envelope.scope,
+              requestDigest: digest,
+              issuedAt: envelope.issuedAt,
+              completedAt: new Date(now).toISOString(),
+              resultRef: createResultRef(randomBytes(32)),
+              result: {
+                operationId: baselineCanceled.id,
+                status: baselineCanceled.status,
+                ...(baselineCanceled.reasonCode !== null
+                  ? { reasonCode: baselineCanceled.reasonCode }
+                  : {}),
+              },
+            });
+            transaction.saveReceipt(receipt);
+            return receipt;
           }
           if (isSettingsEnvelope(envelope)) {
             // 新配置命令必定已在事务外完成能力复检与一致性视图（重放已在上面返回）。

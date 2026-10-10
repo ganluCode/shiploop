@@ -90,11 +90,12 @@ export const COMMAND_OPERATIONS = [
   'settings.project.create',
   'settings.project.update',
   // P02-3 / F-008（docs/p02-3-onboarding-contract.md §6）：基线命令。preview/run
-  // 随 F-008 落地；baseline.cancel 的取消/停止核验属 F-010/F-012，实现前不进
-  // 白名单（信封层即 501 unsupported，不冒充能力；payload 深校验在应用服务层
-  // 经 ports/baseline.ts 完成，避免本模块反向依赖）。
+  // 随 F-008 落地；baseline.cancel 随 F-014（编排/停止核验 F-010/F-012 已具备）
+  // 进入白名单，取消执行经应用层注入的取消端口完成，回执仍走同一幂等机制
+  //（payload 深校验在应用服务层经 ports/baseline.ts 完成，避免本模块反向依赖）。
   'baseline.preview',
   'baseline.run',
+  'baseline.cancel',
 ] as const;
 
 export type AppOperation = (typeof COMMAND_OPERATIONS)[number];
@@ -148,6 +149,9 @@ export const COMMAND_OPERATION_SPECS: Readonly<Record<AppOperation, CommandOpera
     // 承载，见 §5.5 幂等矩阵与 §16 F-008 实施注记）。
     'baseline.preview': { scopeKind: 'project', mutation: 'create', capability: 'baseline.run' },
     'baseline.run': { scopeKind: 'project', mutation: 'create', capability: 'baseline.run' },
+    // F-014：取消同样要求 baseline.run 能力 + 目标项目可见（§4.3），且归属
+    // 核验（操作属于该可见项目）由应用层取消端口完成。
+    'baseline.cancel': { scopeKind: 'project', mutation: 'create', capability: 'baseline.run' },
   });
 
 /* ------------------------------------------------------------------ *
@@ -458,6 +462,12 @@ export type ValidatedCommandEnvelope =
     })
   | (EnvelopeCommon & {
       readonly operation: 'baseline.run';
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: null;
+      readonly payload: unknown;
+    })
+  | (EnvelopeCommon & {
+      readonly operation: 'baseline.cancel';
       readonly scope: { readonly kind: 'project'; readonly projectId: string };
       readonly expectedRevision: null;
       readonly payload: unknown;
@@ -782,7 +792,8 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
   // P02-3 / F-008：基线命令 payload 深校验（检查计划/决策/摘要）由应用层经
   // ports/baseline.ts 完成（本模块不反向依赖）；信封层只要求 payload 为 JSON
   // 对象，保持与其它命令相同的“非法结构先于授权/时效/副作用拒绝”顺序。
-  if (operation === 'baseline.preview' || operation === 'baseline.run') {
+  // F-014 起 baseline.cancel 同一处理（payload `{operationId}` 深校验在应用层）。
+  if (operation === 'baseline.preview' || operation === 'baseline.run' || operation === 'baseline.cancel') {
     if (scope.kind !== 'project') {
       fail(operation, 'invalid_input', 'scope.kind', 'scope 种类与操作不匹配');
     }

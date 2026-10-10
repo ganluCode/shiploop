@@ -494,7 +494,11 @@ describe('F-006 Host inspect/overview 路由与握手能力（真实 Host + SQLi
     expect(body.schemaVersion).toBe(3);
     expect(body.capabilities.application.queries).toContain('projects.inspect');
     expect(body.capabilities.application.queries).toContain('projects.overview');
-    expect(body.capabilities.application.queries).toHaveLength(14);
+    // F-014：基线分页/详情/证据正文三项查询随路由接线进入能力清单。
+    expect(body.capabilities.application.queries).toContain('baselines.list');
+    expect(body.capabilities.application.queries).toContain('baselines.get');
+    expect(body.capabilities.application.queries).toContain('artifacts.get');
+    expect(body.capabilities.application.queries).toHaveLength(17);
     expect(body.capabilities.application.commands).toEqual([
       'project.register',
       'project.metadata.update',
@@ -502,9 +506,10 @@ describe('F-006 Host inspect/overview 路由与握手能力（真实 Host + SQLi
       'settings.global.update',
       'settings.project.create',
       'settings.project.update',
-      // P02-3 / F-008：基线 preview/run 经既有 /v1/commands 路由真实接线。
+      // P02-3：基线 preview/run（F-008）与 cancel（F-014）经既有 /v1/commands 路由真实接线。
       'baseline.preview',
       'baseline.run',
+      'baseline.cancel',
     ]);
     for (const legacyVersion of [2, 1]) {
       const legacy = await loopbackRequest({

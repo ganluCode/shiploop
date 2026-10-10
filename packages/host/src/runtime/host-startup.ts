@@ -410,6 +410,10 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
         commandReceiptsService: locked.writer.commandReceiptsService,
         // P02-3 / F-006（§7.2/§7.3）：静态接入用例只经 Core 窄端口接线。
         onboardingService: locked.writer.onboardingService,
+        // P02-3 / F-014（§3.2/§7.4-§7.6）：基线查询与 baseline.run 执行编排接线
+        //（与握手能力清单一致，不宣告未接线接口）。
+        baselineQueryService: locked.writer.baselineQueryService,
+        baselineExecutionService: locked.writer.baselineExecutionService,
         getLifecycleState: () => lifecycle,
         eventStreams,
       },

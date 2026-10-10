@@ -45,6 +45,10 @@ export const APP_OPERATIONS = [
   'settings.project.export',
   'snapshot.get',
   'events.subscribe',
+  // P02-3 / F-014（§3.2/§7.4-§7.6）：基线分页、单次详情与有界证据正文读取。
+  'baselines.list',
+  'baselines.get',
+  'artifacts.get',
 ] as const;
 
 export const HOST_OPERATIONS = [

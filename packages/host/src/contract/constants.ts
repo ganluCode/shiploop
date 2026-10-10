@@ -65,6 +65,10 @@ export const SETTINGS_GLOBAL_ROUTE = '/v1/settings/global';
 export const SETTINGS_GLOBAL_EXPORT_ROUTE = '/v1/settings/global/export';
 export const SNAPSHOT_ROUTE = '/v1/snapshot';
 export const EVENTS_ROUTE = '/v1/events';
+/** P02-3 / F-014 §3.2：基线分页/详情/证据正文路由（全部 GET + Bearer）。 */
+export const BASELINES_ROUTE_PREFIX = '/v1/baselines/';
+export const ARTIFACTS_ROUTE_PREFIX = '/v1/artifacts/';
+export const ARTIFACT_CONTENT_ROUTE_SUFFIX = '/content';
 
 /** §7.2 客户端有限预算（毫秒）。 */
 export const TCP_CONNECT_TIMEOUT_MS = 2_000;
@@ -78,6 +82,12 @@ export const QUIESCE_BUDGET_MS = 10_000;
 
 /** P02-2 §13：客户端应用命令/查询单请求整体预算（毫秒）。 */
 export const APP_REQUEST_TIMEOUT_MS = 10_000;
+
+/**
+ * P02-3 / F-014 §7.6/§13：artifacts.get 响应体上限（= 基线输出制品上限
+ * 8 MiB；正文只来自已核验的正式制品，服务端 Core 保证不超限）。
+ */
+export const MAX_ARTIFACT_CONTENT_BYTES = 8_388_608;
 
 /**
  * P02-2 §11.2/§13：客户端提交一个逻辑命令（含超时后查回执与有限重发）的

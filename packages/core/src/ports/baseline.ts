@@ -351,6 +351,26 @@ export interface BaselineOperationSummary {
   readonly summary: BaselineCheckCounts;
 }
 
+/**
+ * P02-3 / F-014（§7.4）：baselines.list 查询响应（线消息 schemaVersion=3）。
+ * 按 operationId 升序稳定键集分页；cursor 为上一页最后 operationId。
+ */
+export interface BaselineListResult {
+  readonly schemaVersion: number;
+  readonly projectId: string;
+  readonly records: readonly BaselineOperationSummary[];
+  readonly nextCursor: string | null;
+  readonly limit: number;
+}
+
+/** P02-3 / F-014（§7.5）：baselines.get 查询响应（授权摘要 + 逐项检查）。 */
+export interface BaselineDetailResult {
+  readonly schemaVersion: number;
+  readonly operation: BaselineOperationSummary;
+  readonly authorization: BaselineAuthorizationSummary | null;
+  readonly checks: readonly BaselineCheckResult[];
+}
+
 /* ------------------------------------------------------------------ *
  * 校验原语（错误形状与 commands.ts 一致：PublicError + field/reason）
  * ------------------------------------------------------------------ */

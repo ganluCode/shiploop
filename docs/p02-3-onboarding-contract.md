@@ -7,6 +7,10 @@
   `preview/run/cancel` 命令、`baselines.*` 查询、`artifacts.get` 证据读取与基线 CLI 在冻结时
   **尚不存在**；F-014 前任何请求必须继续按 P02-2 现状得到 `404 unknown_operation` 或
   `501 unsupported`。
+  **实施状态（截至 F-014）**：`projects.inspect`/`projects.overview`（F-006）、基线预览/授权
+  （F-008）、取消与停止核验（F-010/F-012）、执行编排（F-012/F-013）与基线 /v1 路由 +
+  HostClient 扩展（F-014：preview/run/cancel 命令路由、baselines.list/get、artifacts.get、
+  握手能力宣告、事件 payload 客户端校验）已落地；CLI 基线子命令面属 F-015。
 - 适用平台：macOS（首个正式支持平台）；Windows/WSL/Linux 未验收。
 - 输入依据：PRD `p02-onboarding.md`（版本 0.2，2026-10-01，状态「待审阅的需求文档」，哈希见
   §17）、共同执行约束 `execution-contract.md`（2026-10-01）、知识目录 `architecture-redesign/`
@@ -186,14 +190,17 @@ F-001 实际打开源码与测试逐项核对，下表入口与测试在开工�
   `unsupported_schema_version`（退出码 3），不会得到畸形响应或错误业务结果。
   **实施状态（F-006）**：首个能力集合变更（握手 queries 新增 `projects.inspect`/
   `projects.overview`）随 F-006 落地，线消息 2 → 3 的切换、HostClient 与伪服务夹具的
-  版本断言更新由 F-006 完成（F-014 接线基线路由时在同一 v3 内扩张集合）；P02-1/P02-2
+  版本断言更新由 F-006 完成（F-014 已在同一 v3 内扩张集合：commands 新增
+  `baseline.cancel`，queries 新增 `baselines.list`/`baselines.get`/`artifacts.get`）；P02-1/P02-2
   生命周期与业务回归在 v3 上继续成立。
 
 ### 3.2 路由总表（全部需要 Bearer 认证；前缀 `/v1`）
 
-> 实施状态：F-001 冻结时本表全部为**目标契约**；**F-006 已接线** `projects.inspect`/
-> `projects.overview`（含握手能力宣告与 HostClient 方法）；基线路由（`baseline.*`/
-> `baselines.*`/`artifacts.get`）仍由 F-014 接线，接线前不宣告对应能力。P02-2 既有路由见
+> 实施状态：F-001 冻结时本表全部为目标契约；**F-006 已接线** `projects.inspect`/
+> `projects.overview`；**F-014 已接线**基线路由（`baseline.preview`/`baseline.run`/
+> `baseline.cancel` 经既有 `POST /v1/commands`，`baselines.list`/`baselines.get`/
+> `artifacts.get` 为新增 GET 路由），握手能力清单同步宣告（只宣告真实接线接口）。
+> P02-2 既有路由见
 > [p02-2-commands-events-contract.md](p02-2-commands-events-contract.md) §3.2，本文不重复其语义。
 
 | 方法与路由 | operation | 说明 |
@@ -448,8 +455,10 @@ stderr 原文永不进入错误体。
   （`{excludedDirNames, fileCount}`，§6.3 排除范围的记录面）；逐项 check 视图
    为 `{checkKey, kind, argv, cwdRef, cwd, environmentRef, allowedVariables,
    timeoutMs, required}`（`cwd` 为 realpath 规范 cwd；`allowedVariables` 仅变量名）。
-3. `baseline.cancel` 属 F-010/F-012：实现前不进信封白名单（501 unsupported），
-   不冒充能力。
+3. `baseline.cancel` 属 F-010/F-012 编排与停止核验；**F-014 已接线**：信封进入白名单，
+   取消执行经组合根晚绑定到 BaselineExecutionService（进程停止核验在写事务外完成，
+   回执在同一事务内持久化）；取消未知/跨项目操作 → `not_found`，取消自身拒绝
+   （resource_busy 等）不写回执（与 baseline.run 提交冲突同一纪律）。
 
 ### 6.1 检查计划 payload（独立授权输入，§15.2）
 
@@ -556,6 +565,11 @@ interface BaselineCheck {
   exitCode:number|null, signal:string|null, timedOut:boolean, output:{artifactId, byteSize,
   truncated:boolean}|null, tail:string|null, startedAt|null, endedAt|null, durationMs|null}`。
 - 未知/不可见/非本项目 → `not_found`。
+- **F-014 实施注记（写回登记）**：`authorization` 的公开摘要直接映射迁移 v4 不可变授权行
+  （`{projectId, repositoryBindingId, codeIdentity, policyRevision, planDigest, plan, authorizedBy,
+  authorizedAt}`；decline 无授权行 → `null`）；`tail` 为 output 制品经完整性核验读取后的末尾
+  ≤16 KiB 尾部视图，`output.truncated` 表示该内联尾部未覆盖完整正文（`byteSize > tail` 字节数）；
+  制品正文核验失败 → `corrupt_state`（绝不静默放行损坏证据）。
 
 ### 7.6 `artifacts.get`（受控证据读取）
 
@@ -563,6 +577,10 @@ interface BaselineCheck {
 - 响应：有界流式内容（`text/plain; charset=utf-8`），响应体上限见 §13；**脱敏**（已发布的制品
   在发布时已脱敏，读取不二次解析）。
 - 越权/未知/非本 Feature 制品 → `not_found`；**不得**扩展为通用文件读取（§15.7）。
+- **F-014 实施注记（写回登记）**：路由只按 `artifactId` 反查正式基线 output 制品的成员关系
+  （项目/操作归属）后委托 Core 读取；能力缺失/未知/伪造/跨项目/路径形态一律统一 `not_found`
+  （防枚举，与 F-011 `readBaselineOutput` 同一纪律）；响应正文上限 8 MiB（= 基线输出制品上限，
+  见 §13），超限响应在服务端/客户端两侧都按失败处理（不截断冒充）。
 
 ## 8. 三轴状态模型（operation / check / reason）
 
@@ -858,8 +876,9 @@ F-007 登记的核对请求）。
 }
 ```
 
-只宣告本次真实实现的接口；未列出的能力请求即 `unsupported`。F-006/F-014 完成路由接线前，Host
-不得宣告对应能力。客户端校验对视图做精确键与集合相等核验，任何伪称/缺键一律 `response_malformed`。
+只宣告本次真实实现的接口；未列出的能力请求即 `unsupported`。F-006（静态接入）与 F-014（基线
+路由）已完成接线并同步宣告；任何未接线能力不得进入清单。客户端校验对视图做精确键与集合相等
+核验，任何伪称/缺键一律 `response_malformed`。
 
 ## 12. CLI 参数面与退出码（F-005/F-015/F-016 冻结）
 

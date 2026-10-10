@@ -126,6 +126,24 @@ export function sendJson(response: ServerResponse, status: number, payload: unkn
 }
 
 /**
+ * 发送脱敏证据正文（text/plain；P02-3 / F-014 artifacts.get）：正文由 Core
+ * 授权与完整性核验后提供；每响应关闭连接，永不带 CORS 头。
+ */
+export function sendTextContent(response: ServerResponse, status: number, content: Uint8Array): void {
+  if (response.writableEnded) {
+    return;
+  }
+  response.writeHead(status, {
+    'content-type': 'text/plain; charset=utf-8',
+    'cache-control': 'no-store',
+    // 每响应关闭连接：不留持久空闲连接，拆卸与资源占用有界（§7.2）。
+    connection: 'close',
+    'content-length': content.length,
+  });
+  response.end(content);
+}
+
+/**
  * Bearer 凭据比较：任何子原因（缺失/方案/长度/值）都是同一 false。
  * 凭据只用于 timingSafeEqual 比较，从不进入响应。
  */

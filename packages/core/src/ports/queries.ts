@@ -23,6 +23,12 @@
  */
 import type { PrincipalScope } from './authorization.js';
 import { WIRE_MESSAGE_SCHEMA_VERSION, isUuidV4 } from './commands.js';
+import type {
+  BaselineAuthorizationRecord,
+  BaselineCheckResultRecord,
+  BaselineOperationPage,
+  BaselineOperationRecord,
+} from './baseline-store.js';
 import type { SettingsPayload, SettingsScope } from './settings-schema.js';
 import type {
   GlobalSettingsRecord,
@@ -245,4 +251,27 @@ export interface ConsistentSnapshotStore {
  */
 export interface RepositoryBindingLookupStore {
   findBindingByCanonicalPath(canonicalPath: unknown): RepositoryBindingRecord | null;
+}
+
+/* ------------------------------------------------------------------ *
+ * P02-3 / F-014 §7.4–§7.6 基线查询与证据读取窄端口
+ * ------------------------------------------------------------------ */
+
+/**
+ * 基线查询只读窄端口（§7.4/§7.5）：分页/单次操作/逐项检查/不可变授权的
+ * 读取面；授权与可见性判定在应用层完成后才调用。operationId 输入为 unknown，
+ * 实现方在 SQL 之前完成同一身份校验（非法稳定身份为 validation 错误）。
+ */
+export interface BaselineQueryReadStore {
+  listBaselineOperations(projectId: unknown, query: unknown): BaselineOperationPage;
+  getBaselineOperation(operationId: unknown): BaselineOperationRecord | undefined;
+  listBaselineCheckResults(operationId: unknown): readonly BaselineCheckResultRecord[];
+  getBaselineAuthorization(authorizationId: unknown): BaselineAuthorizationRecord | undefined;
+  /**
+   * §7.6 artifacts.get 的成员解析：按制品身份反查其所属项目与操作
+   * （仅 baseline_check_results.output_artifact_id 命中；未命中返回 undefined）。
+   */
+  findBaselineOutputArtifact(artifactId: unknown):
+    | { readonly projectId: string; readonly operationId: string }
+    | undefined;
 }

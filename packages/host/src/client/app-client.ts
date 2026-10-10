@@ -37,6 +37,8 @@ import {
 } from 'shiploop-core/protocol';
 import type {
   AppOperation,
+  BaselineDetailResult,
+  BaselineListResult,
   CommandReceipt,
   CommandScope,
   EffectiveSettings,
@@ -56,10 +58,14 @@ import type {
 } from 'shiploop-core/protocol';
 import {
   APP_REQUEST_TIMEOUT_MS,
+  ARTIFACT_CONTENT_ROUTE_SUFFIX,
+  ARTIFACTS_ROUTE_PREFIX,
+  BASELINES_ROUTE_PREFIX,
   COMMANDS_ROUTE,
   EVENTS_ROUTE,
   HostProtocolError,
   MAX_APP_BODY_BYTES,
+  MAX_ARTIFACT_CONTENT_BYTES,
   PROJECTS_INSPECT_ROUTE,
   PROJECTS_ROUTE,
   PROJECT_LABEL_COUNTS_ROUTE,
@@ -73,9 +79,11 @@ import {
   isPlainObject,
 } from '../contract/index.js';
 import type { HostOperation } from '../contract/index.js';
-import { mapErrorResponse, requestLoopbackJson } from './http-json.js';
+import { mapErrorResponse, requestLoopbackJson, requestLoopbackText } from './http-json.js';
 import {
   validateAppQueryResponse,
+  validateBaselineCommandResultWire,
+  validateBaselinePreviewResultWire,
   validateCommandReceiptWire,
   validateStateEventWire,
 } from './app-wire.js';
@@ -129,6 +137,39 @@ export interface ListProjectsInput {
   readonly match?: 'any' | 'all';
 }
 
+/* ------------------------------------------------------------------ *
+ * P02-3 / F-014 基线面输入/输出类型（§6/§7.4-§7.6）
+ * ------------------------------------------------------------------ */
+
+/** baseline.preview 输入（plan 形状由 Core 深校验，客户端只做结构把关）。 */
+export interface PreviewBaselineInput {
+  readonly projectId: string;
+  readonly plan: unknown;
+  readonly commandId?: string;
+}
+
+/** baseline.run 输入：decision/plan/previewDigest 绑定用户确认的完整输入摘要。 */
+export interface RunBaselineInput {
+  readonly projectId: string;
+  readonly decision: 'authorize' | 'decline';
+  readonly plan: unknown;
+  readonly previewDigest: string;
+  readonly commandId?: string;
+}
+
+/** baselines.list 分页输入（§7.4：limit 1..100；cursor 为上一页最后 operationId）。 */
+export interface ListBaselinesInput {
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+
+/** artifacts.get 的授权证据正文（§7.6：text/plain 有界内容，已脱敏）。 */
+export interface BaselineArtifactContentResult {
+  readonly artifactId: string;
+  readonly byteSize: number;
+  readonly content: string;
+}
+
 /** SSE 订阅输入：恢复位置 cursor/lastEventId 至少其一（缺省零网络拒绝）。 */
 export interface SubscribeEventsInput {
   readonly scope: SettingsScope;
@@ -179,6 +220,33 @@ export interface HostClientApplication {
   getSnapshot(scope: { readonly kind: 'global' }): Promise<GlobalSnapshotResult>;
   getSnapshot(scope: SettingsScope): Promise<SnapshotResult>;
   subscribeEvents(input: SubscribeEventsInput): Promise<HostEventSubscription>;
+  /**
+   * P02-3 / F-014（§6/§7.6）：baseline.preview 命令（只读预览）。completed
+   * 回执的 result 经预览形状校验；rejected/业务拒绝按回执原样返回。
+   */
+  previewBaseline(input: PreviewBaselineInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  /**
+   * P02-3 / F-014（§5.3/§6）：baseline.run 命令。authorize → 202 accepted
+   * 回执（携带 operationId，检查随后台异步执行；本方法不等待执行完成）；
+   * decline → completed 回执（result 经形状校验）。
+   */
+  runBaseline(input: RunBaselineInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  /**
+   * P02-3 / F-014（§6）：baseline.cancel 显式取消命令（唯一取消途径；
+   * 客户端断开/close/Abort 绝不自动取消后台检查）。completed 回执的
+   * result 经形状校验。
+   */
+  cancelBaseline(
+    projectId: string,
+    operationId: string,
+    options?: SubmitCommandOptions,
+  ): Promise<CommandReceipt>;
+  /** P02-3 / F-014（§7.4）：项目基线操作键集分页查询。 */
+  listBaselines(projectId: string, input?: ListBaselinesInput): Promise<BaselineListResult>;
+  /** P02-3 / F-014（§7.5）：单次基线操作详情（授权摘要 + 逐项检查）。 */
+  getBaseline(operationId: string): Promise<BaselineDetailResult>;
+  /** P02-3 / F-014（§7.6）：正式基线证据制品正文（有界、已授权、已脱敏）。 */
+  readArtifactContent(artifactId: string): Promise<BaselineArtifactContentResult>;
 }
 
 /** 由 connectToHost 注入的会话上下文（身份/预算/生命周期钩子）。 */
@@ -423,6 +491,71 @@ function requireProjectId(operation: HostOperation, projectId: string): string {
   return projectId;
 }
 
+/* ------------------------------------------------------------------ *
+ * P02-3 / F-014 基线输入校验（零网络拒绝）
+ * ------------------------------------------------------------------ */
+
+const PREVIEW_INPUT_KEYS = ['projectId', 'plan', 'commandId'] as const;
+const RUN_INPUT_KEYS = ['projectId', 'decision', 'plan', 'previewDigest', 'commandId'] as const;
+const BASELINE_LIST_INPUT_KEYS = ['limit', 'cursor'] as const;
+
+function rejectUnknownInputKeys(
+  operation: HostOperation,
+  input: unknown,
+  allowed: readonly string[],
+): Record<string, unknown> {
+  if (!isPlainObject(input)) {
+    throw invalidInput(operation, 'invalid_options');
+  }
+  for (const key of Object.keys(input)) {
+    if (!allowed.includes(key)) {
+      throw invalidInput(operation, 'unknown_option_key', key);
+    }
+  }
+  return input;
+}
+
+function requireOperationIdInput(operation: HostOperation, operationId: string): string {
+  if (!isUuidV4(operationId)) {
+    throw invalidInput(operation, 'invalid_operation_id', 'operationId');
+  }
+  return operationId;
+}
+
+function requireArtifactIdInput(operation: HostOperation, artifactId: string): string {
+  if (typeof artifactId !== 'string' || !STABLE_ID_PATTERN.test(artifactId)) {
+    throw invalidInput(operation, 'invalid_artifact_id', 'artifactId');
+  }
+  return artifactId;
+}
+
+/** §7.4：limit 1..100；cursor 是上一页最后 operationId（UUID v4）。键序冻结。 */
+function buildBaselineListQuery(input: ListBaselinesInput | undefined): string {
+  if (input === undefined) {
+    return '';
+  }
+  const object = rejectUnknownInputKeys('baselines.list', input, BASELINE_LIST_INPUT_KEYS);
+  const params = new URLSearchParams();
+  if (object.limit !== undefined) {
+    if (
+      typeof object.limit !== 'number' ||
+      !Number.isInteger(object.limit) ||
+      object.limit < 1 ||
+      object.limit > 100
+    ) {
+      throw invalidInput('baselines.list', 'invalid_limit', 'limit');
+    }
+    params.append('limit', String(object.limit));
+  }
+  if (object.cursor !== undefined) {
+    if (typeof object.cursor !== 'string' || !isUuidV4(object.cursor)) {
+      throw invalidInput('baselines.list', 'invalid_cursor', 'cursor');
+    }
+    params.append('cursor', object.cursor);
+  }
+  return params.toString();
+}
+
 /** §8 scope：global 无 projectId；project 必须携带稳定 ID。 */
 function validateSnapshotScope(operation: HostOperation, scope: SettingsScope): SettingsScope {
   if (!isPlainObject(scope)) {
@@ -574,7 +707,9 @@ export function createHostClientApplication(context: AppClientContext): HostClie
     return response.json;
   }
 
-  /** 提交响应 → 回执：200 必须是合法回执；非 200 体为合法回执按 §5.7 返回，否则错误映射。 */
+  /** 提交响应 → 回执：200/202 必须是合法回执（§5.3：accepted → 202，P02-3 /
+   *  F-008 起为 baseline.run authorize 的合法线上状态）；非 200/202 体为合法
+   *  回执按 §5.7 返回，否则错误映射。 */
   function receiptFromSubmitResponse(
     response: { statusCode: number; json: unknown },
     frozen: FrozenEnvelope,
@@ -584,13 +719,15 @@ export function createHostClientApplication(context: AppClientContext): HostClie
       expectedRequestDigest: frozen.requestDigest,
       expectedOperation: frozen.operation,
     };
-    if (response.statusCode === 200) {
+    if (response.statusCode === 200 || response.statusCode === 202) {
       return validateCommandReceiptWire(response.json, expectation, 'commands.submit');
     }
     if (
       isPlainObject(response.json) &&
       typeof response.json.commandId === 'string' &&
-      (response.json.status === 'completed' || response.json.status === 'rejected')
+      (response.json.status === 'completed' ||
+        response.json.status === 'rejected' ||
+        response.json.status === 'accepted')
     ) {
       return validateCommandReceiptWire(response.json, expectation, 'commands.submit');
     }
@@ -1224,5 +1361,126 @@ export function createHostClientApplication(context: AppClientContext): HostClie
     getSnapshot,
 
     subscribeEvents,
+
+    /* ------------------------------------------------------------ *
+     * P02-3 / F-014 基线命令与查询（§6/§7.4-§7.6）
+     * ------------------------------------------------------------ */
+
+    async previewBaseline(
+      input: PreviewBaselineInput,
+      options?: SubmitCommandOptions,
+    ): Promise<CommandReceipt> {
+      const object = rejectUnknownInputKeys('commands.submit', input, PREVIEW_INPUT_KEYS);
+      const projectId = requireProjectId('commands.submit', object.projectId as string);
+      const receipt = await submitCommand(
+        {
+          ...(typeof object.commandId === 'string' ? { commandId: object.commandId } : {}),
+          operation: 'baseline.preview',
+          scope: { kind: 'project', projectId },
+          payload: { plan: object.plan },
+        },
+        options,
+      );
+      // completed 回执的 result 必须是预览摘要形状（§6 冻结）。
+      if (receipt.status === 'completed') {
+        validateBaselinePreviewResultWire(receipt.result, 'commands.submit');
+      }
+      return receipt;
+    },
+
+    async runBaseline(
+      input: RunBaselineInput,
+      options?: SubmitCommandOptions,
+    ): Promise<CommandReceipt> {
+      const object = rejectUnknownInputKeys('commands.submit', input, RUN_INPUT_KEYS);
+      const projectId = requireProjectId('commands.submit', object.projectId as string);
+      if (object.decision !== 'authorize' && object.decision !== 'decline') {
+        throw invalidInput('commands.submit', 'invalid_decision', 'decision');
+      }
+      const receipt = await submitCommand(
+        {
+          ...(typeof object.commandId === 'string' ? { commandId: object.commandId } : {}),
+          operation: 'baseline.run',
+          scope: { kind: 'project', projectId },
+          payload: {
+            decision: object.decision,
+            plan: object.plan,
+            previewDigest: object.previewDigest,
+          },
+        },
+        options,
+      );
+      // decline → completed 回执 result 形状校验；accepted 只携带 operationId
+      //（线校验已保证），本方法不等待后台检查完成。
+      if (receipt.status === 'completed') {
+        validateBaselineCommandResultWire(receipt.result, 'commands.submit');
+      }
+      return receipt;
+    },
+
+    async cancelBaseline(
+      projectId: string,
+      operationId: string,
+      options?: SubmitCommandOptions,
+    ): Promise<CommandReceipt> {
+      // 取消是唯一停止途径且必须显式：本方法只发送 baseline.cancel 命令；
+      // 客户端断开/close/Abort 不触发本方法（见 subscribeEvents/close 纪律）。
+      const id = requireProjectId('commands.submit', projectId);
+      const target = requireOperationIdInput('commands.submit', operationId);
+      const receipt = await submitCommand(
+        {
+          operation: 'baseline.cancel',
+          scope: { kind: 'project', projectId: id },
+          payload: { operationId: target },
+        },
+        options,
+      );
+      if (receipt.status === 'completed') {
+        validateBaselineCommandResultWire(receipt.result, 'commands.submit');
+      }
+      return receipt;
+    },
+
+    async listBaselines(
+      projectId: string,
+      input?: ListBaselinesInput,
+    ): Promise<BaselineListResult> {
+      context.assertOpen('baselines.list');
+      const id = requireProjectId('baselines.list', projectId);
+      const query = buildBaselineListQuery(input);
+      const base = `${PROJECTS_ROUTE}/${id}/baselines`;
+      const json = await getJson(
+        'baselines.list',
+        query.length === 0 ? base : `${base}?${query}`,
+      );
+      return validateAppQueryResponse('baselines.list', json);
+    },
+
+    async getBaseline(operationId: string): Promise<BaselineDetailResult> {
+      context.assertOpen('baselines.get');
+      const id = requireOperationIdInput('baselines.get', operationId);
+      const json = await getJson('baselines.get', `${BASELINES_ROUTE_PREFIX}${id}`);
+      return validateAppQueryResponse('baselines.get', json);
+    },
+
+    async readArtifactContent(artifactId: string): Promise<BaselineArtifactContentResult> {
+      context.assertOpen('artifacts.get');
+      const id = requireArtifactIdInput('artifacts.get', artifactId);
+      const response = await requestLoopbackText({
+        port,
+        method: 'GET',
+        path: `${ARTIFACTS_ROUTE_PREFIX}${id}${ARTIFACT_CONTENT_ROUTE_SUFFIX}`,
+        operation: 'artifacts.get',
+        token,
+        connectTimeoutMs: context.connectMs,
+        overallTimeoutMs: requestBudget(),
+        // §7.6/§13：证据正文上限 8 MiB（超限即 response_malformed，不截断冒充）。
+        maxResponseBytes: MAX_ARTIFACT_CONTENT_BYTES,
+      });
+      if (!response.ok) {
+        throw mapErrorResponse(response.statusCode, response.json, 'artifacts.get');
+      }
+      return { artifactId: id, byteSize: response.byteSize, content: response.text };
+    },
   };
 }

@@ -177,9 +177,10 @@ describe('F-002 冻结常量与能力声明', () => {
           'settings.global.update',
           'settings.project.create',
           'settings.project.update',
-          // P02-3 / F-008：基线 preview/run 经既有 /v1/commands 路由真实接线。
+          // P02-3：基线 preview/run（F-008）与 cancel（F-014）经既有 /v1/commands 路由真实接线。
           'baseline.preview',
           'baseline.run',
+          'baseline.cancel',
         ],
         queries: [
           'projects.list',
@@ -196,22 +197,31 @@ describe('F-002 冻结常量与能力声明', () => {
           'receipts.get',
           'results.resolve',
           'snapshot.get',
+          // P02-3 / F-014：基线分页/详情/证据正文查询真实接线。
+          'baselines.list',
+          'baselines.get',
+          'artifacts.get',
         ],
         events: { transport: 'sse', route: '/v1/events', scopes: ['project', 'global'] },
       },
     });
     // 接线宣告与 Core 支持面交叉核对（不漂移：Core 增删操作必须同步接线与宣告）。
     expect([...CURRENT_HOST_CAPABILITIES.application.commands]).toEqual([...COMMAND_OPERATIONS]);
-    // P02-3 / F-006：queries = P02-2 的 QUERY_OPERATIONS + 已接线的静态接入两项
-    // （BASELINE_QUERY_OPERATIONS 中 baselines.*/artifacts.* 属 F-014，接线前不得宣告）。
+    // P02-3：queries = P02-2 的 QUERY_OPERATIONS + 已接线的静态接入两项（F-006）
+    // + 已接线的基线分页/详情/证据三项（F-014，与 BASELINE_QUERY_OPERATIONS 同步）。
     expect([...CURRENT_HOST_CAPABILITIES.application.queries]).toEqual([
       ...QUERY_OPERATIONS.slice(0, 4),
       'projects.inspect',
       'projects.overview',
       ...QUERY_OPERATIONS.slice(4),
+      'baselines.list',
+      'baselines.get',
+      'artifacts.get',
     ]);
-    expect(CURRENT_HOST_CAPABILITIES.application.queries).not.toContain('baselines.list');
-    expect(CURRENT_HOST_CAPABILITIES.application.queries).not.toContain('artifacts.get');
+    expect(CURRENT_HOST_CAPABILITIES.application.commands).toContain('baseline.cancel');
+    expect(CURRENT_HOST_CAPABILITIES.application.queries).toContain('baselines.list');
+    expect(CURRENT_HOST_CAPABILITIES.application.queries).toContain('baselines.get');
+    expect(CURRENT_HOST_CAPABILITIES.application.queries).toContain('artifacts.get');
     expect(IDEMPOTENCY_SCHEME).toBe('commandId+requestDigest');
     expect(ACTIVITY_SCOPE_IDLE_ONLY).toBe('idle-only');
     expect([...SUPPORTED_STOP_MODES]).toEqual([STOP_MODE_GRACEFUL]);

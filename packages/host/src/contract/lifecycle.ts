@@ -49,14 +49,14 @@ export const APPLICATION_COMMAND_CAPABILITIES = [
   'settings.global.update',
   'settings.project.create',
   'settings.project.update',
-  // P02-3 / F-008：三个基线命令经既有 POST /v1/commands 路由接线
-  //（preview/run 已由 Core CommandService 支撑；cancel 属 F-010/F-012，
-  // 未支撑前 Core 层 unsupported，不冒充能力）。
+  // P02-3：三个基线命令经既有 POST /v1/commands 路由接线（F-008 preview/run；
+  // F-014 cancel 随取消/停止核验执行端口接入）。
   'baseline.preview',
   'baseline.run',
+  'baseline.cancel',
 ] as const;
 
-/** P02-2 §11.3：Host 实际接线的应用查询（含回执/结果读取与快照；P02-3 / F-006 新增静态接入两项）。 */
+/** P02-2 §11.3：Host 实际接线的应用查询（含回执/结果读取与快照；P02-3 / F-006 新增静态接入两项；F-014 新增基线分页/详情/证据正文三项）。 */
 export const APPLICATION_QUERY_CAPABILITIES = [
   'projects.list',
   'projects.get',
@@ -72,6 +72,10 @@ export const APPLICATION_QUERY_CAPABILITIES = [
   'receipts.get',
   'results.resolve',
   'snapshot.get',
+  // P02-3 / F-014 §3.2/§7.4-§7.6：基线分页、单次详情与有界证据正文。
+  'baselines.list',
+  'baselines.get',
+  'artifacts.get',
 ] as const;
 
 /**

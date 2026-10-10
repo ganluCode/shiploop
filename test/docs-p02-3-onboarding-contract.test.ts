@@ -295,11 +295,11 @@ describe('F-001 契约文档与仓库基线一致（开工现状事实）', () =
     expect(contractDoc).toContain('payload.previewDigest');
     expect(contractDoc).toContain('policyRevision');
     expect(contractDoc).toContain('excludedDirNames');
-    // cancel 属 F-010/F-012：实现前不进信封白名单（不冒充能力）。
+    // F-014 已接线取消：baseline.cancel 随取消/停止核验（F-010/F-012）进入信封白名单。
     const commandsPort = readText('packages/core/src/ports/commands.ts');
     expect(commandsPort).toContain("'baseline.preview',");
     expect(commandsPort).toContain("'baseline.run',");
-    expect(commandsPort).not.toContain("'baseline.cancel',");
+    expect(commandsPort).toContain("'baseline.cancel',");
   });
 
   it('开工 CLI 顶层命令为 project/config/receipt/events，契约记录扩展后的基线面', () => {
