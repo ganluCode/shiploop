@@ -1,5 +1,7 @@
 /**
  * F-010 干净安装复跑（macOS 正式验收步骤的可复现工具；开发验收工具，不进 packages/）。
+ * F-012 起本模块同时作为「干净快照复跑工具」的共享积木出口（快照创建、有界子进程、
+ * 脱敏、安全清理），P02 连续复跑语义由 `p02-clean-replay.ts` 复用这些积木实现。
  *
  * 目的：在**受控临时干净源码快照**中按锁定版本 `npm ci`，真实执行
  * `npm test` / `npm run typecheck` / `npm run build` / `npm run verify` /
@@ -148,7 +150,7 @@ export function sha256Hex(text: string | Buffer): string {
   return createHash('sha256').update(text).digest('hex');
 }
 
-type BoundedResult = {
+export type BoundedResult = {
   readonly kind: 'exit' | 'signal' | 'timeout' | 'spawn-error';
   readonly code: number | null;
   readonly signal: string | null;
@@ -160,8 +162,27 @@ type BoundedResult = {
 
 const KILL_GRACE_MS = 5_000;
 
+/** 本模块仍在运行的自有子进程组（pid）；异常收尾时兜底终止，避免遗留孙进程。 */
+const activeChildPids = new Set<number>();
+
+/** 对仍在运行的自有子进程组 SIGKILL（仅异常收尾；正常路径靠 close 事件核验退出）。 */
+export function killTrackedProcessGroups(): void {
+  for (const pid of activeChildPids) {
+    try {
+      process.kill(-pid, 'SIGKILL');
+    } catch {
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {
+        // 已退出。
+      }
+    }
+  }
+  activeChildPids.clear();
+}
+
 /** 以独立进程组运行真实子进程，有限超时；超时对整个进程组 SIGKILL（含孙进程）。 */
-function runBounded(
+export function runBounded(
   command: string,
   args: readonly string[],
   cwd: string,
@@ -171,6 +192,9 @@ function runBounded(
   return new Promise((resolveResult) => {
     const started = Date.now();
     const child = spawn(command, [...args], { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+    if (child.pid !== undefined) {
+      activeChildPids.add(child.pid);
+    }
     let stdout = '';
     let stderr = '';
     let settled = false;
@@ -227,6 +251,9 @@ function runBounded(
       spawnError = error;
     });
     child.on('close', (code, signal) => {
+      if (child.pid !== undefined) {
+        activeChildPids.delete(child.pid);
+      }
       const durationMs = Date.now() - started;
       if (timedOut) {
         settle({ kind: 'timeout', code: null, signal: null, durationMs, stdout, stderr, message: `timed out after ${timeoutMs}ms` });
@@ -245,10 +272,10 @@ function runBounded(
   });
 }
 
-type NpmInvocation = { readonly command: string; readonly argsPrefix: readonly string[] };
+export type NpmInvocation = { readonly command: string; readonly argsPrefix: readonly string[] };
 
 /** 优先使用 npm_execpath（启动本工具的固定 npm），否则回退 PATH 上的 npm。 */
-function resolveNpm(): NpmInvocation {
+export function resolveNpm(): NpmInvocation {
   const execPath = process.env.npm_execpath;
   if (typeof execPath === 'string' && execPath.endsWith('.js') && existsSync(execPath)) {
     return { command: process.execPath, argsPrefix: [execPath] };
@@ -256,7 +283,7 @@ function resolveNpm(): NpmInvocation {
   return { command: 'npm', argsPrefix: [] };
 }
 
-function runNpm(
+export function runNpm(
   npm: NpmInvocation,
   args: readonly string[],
   cwd: string,
@@ -270,17 +297,17 @@ function gitCommand(root: string, args: readonly string[], timeoutMs = 120_000):
   return runBounded('git', ['-C', root, ...args], root, timeoutMs, process.env);
 }
 
-async function git(root: string, args: readonly string[]): Promise<BoundedResult> {
+export async function runGit(root: string, args: readonly string[]): Promise<BoundedResult> {
   return gitCommand(root, args);
 }
 
-function requireExit(result: BoundedResult, label: string): void {
+export function requireExit(result: BoundedResult, label: string): void {
   if (result.kind !== 'exit' || result.code !== 0) {
     throw new Error(`${label} 未正常退出：${result.kind} code=${String(result.code)} signal=${String(result.signal)} ${result.message ?? ''}`.trim());
   }
 }
 
-function assertSafeTempRoot(dir: string, prefix: string): void {
+export function assertSafeTempRoot(dir: string, prefix: string): void {
   const temp = resolve(tmpdir());
   const target = resolve(dir);
   if (!target.startsWith(temp + '/') || !basename(target).startsWith(prefix)) {
@@ -321,61 +348,68 @@ type StepRecord = {
   readonly acceptReportPath: string | null;
 };
 
-/**
- * 执行完整干净复跑：创建已提交快照 → 依次运行固定命令 → 保存脱敏证据 → 清理临时资源。
- * 任一必需命令非零退出、accept:p01 未通过或报告缺失即返回 `ok:false`（仍然写出已取得证据）。
- */
-export async function runCleanSnapshotReplay(options: ReplayOptions = {}): Promise<ReplayOutcome> {
-  const scriptDir = dirname(fileURLToPath(import.meta.url));
-  const root = resolve(options.root ?? resolve(scriptDir, '..', '..'));
-  const outDir = resolve(options.outDir ?? join(root, 'docs', 'acceptance', 'evidence-p01-4'));
-  const log = options.log ?? ((message: string): void => {
-    process.stdout.write(`${message}\n`);
-  });
+export interface CleanSnapshotOptions {
+  /** 受测仓库根（绝对路径；必须工作树 clean 且代码已提交）。 */
+  readonly root: string;
+  /** 临时根目录名前缀（安全删除据此授权）。 */
+  readonly tempPrefix: string;
+  readonly log?: (message: string) => void;
+  /**
+   * 允许出现在 `git status --porcelain` 中的路径前缀（相对仓库根的 POSIX 路径）。
+   * 仅用于豁免复跑工具自身的证据输出目录（上次运行的输出不是受测源码改动）；
+   * 其余任何脏条目一律拒绝。
+   */
+  readonly ignorePorcelainPrefixes?: readonly string[];
+}
 
-  const status = await git(root, ['status', '--porcelain']);
+export interface CleanSnapshot {
+  /** 本次持有的授权临时根；由调用方在收尾时经 assertSafeTempRoot 后删除。 */
+  readonly tempRoot: string;
+  readonly snapshotRoot: string;
+  readonly commit: string;
+  readonly branch: string;
+  readonly replacements: SanitizeReplacements;
+}
+
+/**
+ * 创建受控临时干净源码快照：断言源仓库工作树 clean → `git clone --no-hardlinks`
+ * 已提交状态（含 .git）并检出精确 commit → 断言快照不含 node_modules/dist 残留。
+ * 失败时自行清理已创建的临时根后抛出；成功则由调用方持有 tempRoot 并负责最终清理。
+ */
+export async function createCleanSnapshot(options: CleanSnapshotOptions): Promise<CleanSnapshot> {
+  const root = resolve(options.root);
+  const log = options.log ?? ((): void => undefined);
+  const ignorePrefixes = (options.ignorePorcelainPrefixes ?? []).filter(
+    (prefix) => prefix.length > 0 && !prefix.startsWith('..'),
+  );
+
+  const status = await runGit(root, ['status', '--porcelain']);
   requireExit(status, 'git status --porcelain');
-  if (status.stdout.trim() !== '') {
+  const dirtyEntries = status.stdout
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '')
+    .map((line) => line.replace(/^..\s+/, '').replace(/^"|"$/g, ''))
+    .filter(
+      (path) =>
+        !ignorePrefixes.some((prefix) => path === prefix || path.startsWith(`${prefix}/`)),
+    );
+  if (dirtyEntries.length > 0) {
     throw new Error('源仓库工作树不干净：干净安装复跑要求受测代码已提交（dirty 结果不能冒充已提交基线）');
   }
-  const commitResult = await git(root, ['rev-parse', 'HEAD']);
+  const commitResult = await runGit(root, ['rev-parse', 'HEAD']);
   requireExit(commitResult, 'git rev-parse HEAD');
   const commit = commitResult.stdout.trim();
   if (!/^[0-9a-f]{40}$/.test(commit)) {
     throw new Error(`git rev-parse HEAD 返回非法 commit：${commit}`);
   }
-  const branchResult = await git(root, ['rev-parse', '--abbrev-ref', 'HEAD']);
+  const branchResult = await runGit(root, ['rev-parse', '--abbrev-ref', 'HEAD']);
   requireExit(branchResult, 'git rev-parse --abbrev-ref HEAD');
   const branch = branchResult.stdout.trim();
 
-  const npm = resolveNpm();
-  const npmVersion = await runNpm(npm, ['--version'], root, 60_000, process.env);
-  requireExit(npmVersion, 'npm --version');
-  const gitVersion = await runBounded('git', ['--version'], root, 60_000, process.env);
-  requireExit(gitVersion, 'git --version');
-
-  const tempPrefix = 'shiploop-p01-clean-';
-  const tempRoot = mkdtempSync(join(tmpdir(), tempPrefix));
+  const tempRoot = mkdtempSync(join(tmpdir(), options.tempPrefix));
   const snapshotRoot = join(tempRoot, 'repo');
-  const logsDir = join(outDir, 'logs');
-  const acceptDir = join(outDir, 'accept-runs');
-  mkdirSync(logsDir, { recursive: true });
-  mkdirSync(acceptDir, { recursive: true });
-
-  const steps: ReplayStep[] = [...REPLAY_STEPS];
-  const records: StepRecord[] = [];
-  const evidence: string[] = [];
-  let ok = true;
-
-  const writeEvidence = (relativePath: string, content: string): void => {
-    const absolute = join(outDir, relativePath);
-    mkdirSync(dirname(absolute), { recursive: true });
-    writeFileSync(absolute, content, 'utf-8');
-    evidence.push(relativePath);
-  };
-
   try {
-    log(`clean-snapshot-replay: 源仓库 ${root}（commit ${commit}，分支 ${branch}，工作树 clean）`);
     log(`clean-snapshot-replay: 创建干净快照 ${snapshotRoot}`);
     const clone = await runBounded(
       'git',
@@ -385,7 +419,13 @@ export async function runCleanSnapshotReplay(options: ReplayOptions = {}): Promi
       process.env,
     );
     requireExit(clone, 'git clone');
-    const checkout = await runBounded('git', ['checkout', '--quiet', '--detach', commit], snapshotRoot, 120_000, process.env);
+    const checkout = await runBounded(
+      'git',
+      ['checkout', '--quiet', '--detach', commit],
+      snapshotRoot,
+      120_000,
+      process.env,
+    );
     requireExit(checkout, 'git checkout --detach');
 
     for (const residue of ['node_modules', 'dist']) {
@@ -408,6 +448,58 @@ export async function runCleanSnapshotReplay(options: ReplayOptions = {}): Promi
         [realpathSync(homedir()), '<HOME>'],
       ],
     };
+    return { tempRoot, snapshotRoot, commit, branch, replacements };
+  } catch (error) {
+    try {
+      assertSafeTempRoot(tempRoot, options.tempPrefix);
+      rmSync(tempRoot, { recursive: true, force: true });
+    } catch {
+      // 自清理失败保留现场；原始错误优先。
+    }
+    throw error;
+  }
+}
+
+/**
+ * 执行完整干净复跑：创建已提交快照 → 依次运行固定命令 → 保存脱敏证据 → 清理临时资源。
+ * 任一必需命令非零退出、accept:p01 未通过或报告缺失即返回 `ok:false`（仍然写出已取得证据）。
+ */
+export async function runCleanSnapshotReplay(options: ReplayOptions = {}): Promise<ReplayOutcome> {
+  const scriptDir = dirname(fileURLToPath(import.meta.url));
+  const root = resolve(options.root ?? resolve(scriptDir, '..', '..'));
+  const outDir = resolve(options.outDir ?? join(root, 'docs', 'acceptance', 'evidence-p01-4'));
+  const log = options.log ?? ((message: string): void => {
+    process.stdout.write(`${message}\n`);
+  });
+
+  const npm = resolveNpm();
+  const npmVersion = await runNpm(npm, ['--version'], root, 60_000, process.env);
+  requireExit(npmVersion, 'npm --version');
+  const gitVersion = await runBounded('git', ['--version'], root, 60_000, process.env);
+  requireExit(gitVersion, 'git --version');
+
+  const tempPrefix = 'shiploop-p01-clean-';
+  const snapshot = await createCleanSnapshot({ root, tempPrefix, log });
+  const { tempRoot, snapshotRoot, commit, branch, replacements } = snapshot;
+  const logsDir = join(outDir, 'logs');
+  const acceptDir = join(outDir, 'accept-runs');
+  mkdirSync(logsDir, { recursive: true });
+  mkdirSync(acceptDir, { recursive: true });
+
+  const steps: ReplayStep[] = [...REPLAY_STEPS];
+  const records: StepRecord[] = [];
+  const evidence: string[] = [];
+  let ok = true;
+
+  const writeEvidence = (relativePath: string, content: string): void => {
+    const absolute = join(outDir, relativePath);
+    mkdirSync(dirname(absolute), { recursive: true });
+    writeFileSync(absolute, content, 'utf-8');
+    evidence.push(relativePath);
+  };
+
+  try {
+    log(`clean-snapshot-replay: 源仓库 ${root}（commit ${commit}，分支 ${branch}，工作树 clean）`);
 
     for (const step of steps) {
       log(`clean-snapshot-replay: RUN ${step.label}`);
