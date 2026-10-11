@@ -37,13 +37,18 @@
 
 ## 2. 实测命令、退出码与状态摘要
 
+历史统计区分：首次产品代码验证为 116 files / 2961 tests；文档/守护回填后在
+`e6a3a46239b35fb1f89684b374bf94a08737a500` 的最终验证为 117 files / 2970 tests。
+下表保留首次记录，不把不同受测提交的统计混成一次运行。本次 acceptance/p02
+修复后的结果另见 `p02-manual-acceptance.md`，不覆盖历史证据。
+
 | 命令 | 形态 | 退出码 | 计数/结论 | 证据 |
 |---|---|---|---|---|
 | `npm run verify` | 直接运行（受测树） | 0 | npm test 116 files / 2961 tests 全过、typecheck 0、build+dist 冒烟 0 | `tool-logs/F-014-*.log`、verification-record |
 | `npm run accept:p02`（第 1 次） | 干净快照复跑 `accept-p02-1`（run-id `20261011T060231Z-2a5ef158`） | 0 | pass 15 / fail 0 / not_run 0 | `docs/acceptance/evidence-p02-4-clean-replay/accept-runs/accept-p02-1/` |
 | `npm run accept:p02`（第 2 次） | 干净快照复跑 `accept-p02-2`（run-id `20261011T060655Z-3737aea6`） | 0 | pass 15 / fail 0 / not_run 0 | `docs/acceptance/evidence-p02-4-clean-replay/accept-runs/accept-p02-2/` |
 
-- 状态摘要：SQLite 迁移 v1-v4、settings schema v2、应用线消息 schemaVersion 3、事件封套
+- 状态摘要：SQLite 迁移 v1-v5、settings schema v2、应用线消息 schemaVersion 3、事件封套
   schemaVersion 1；单 Host/单写者（`host/writer.lock`）不变量、命令幂等回执与基线四表
   持久状态均经真实 CLI/Host/SQLite 断言。运行工作树状态（`git status --porcelain`）与
   逐次 run-id 见 [verification-record](evidence-p02-4-final/verification-record.md)。

@@ -1,131 +1,20 @@
 {
-  "cwdLogical": "<TMPDIR>/smoke/cwd",
-  "homeLogical": "<TMPDIR>/smoke/home",
-  "dataRootLogical": "<TMPDIR>/smoke/data",
-  "repoLogical": "<TMPDIR>/smoke/repo",
-  "commands": [
-    {
-      "label": "git-init",
-      "argv": [
-        "git",
-        "init",
-        "--quiet",
-        "--initial-branch=main"
-      ],
-      "cwd": "<TMPDIR>/smoke/repo",
-      "exitCode": 0,
-      "durationMs": 63,
-      "timedOut": false
-    },
-    {
-      "label": "git-add",
-      "argv": [
-        "git",
-        "add",
-        "-A"
-      ],
-      "cwd": "<TMPDIR>/smoke/repo",
-      "exitCode": 0,
-      "durationMs": 14,
-      "timedOut": false
-    },
-    {
-      "label": "git-commit",
-      "argv": [
-        "git",
-        "-c",
-        "user.name=shiploop-clean-replay",
-        "-c",
-        "user.email=clean-replay@example.invalid",
-        "commit",
-        "--quiet",
-        "-m",
-        "smoke init"
-      ],
-      "cwd": "<TMPDIR>/smoke/repo",
-      "exitCode": 0,
-      "durationMs": 18,
-      "timedOut": false
-    },
-    {
-      "label": "host-start",
-      "argv": [
-        "<HOME>/.nvm/versions/node/v22.19.0/bin/node",
-        "<SNAPSHOT-ROOT>/packages/cli/dist/bin.js",
-        "host",
-        "start",
-        "--data-root",
-        "<TMPDIR>/smoke/data",
-        "--json"
-      ],
-      "cwd": "<TMPDIR>/smoke/cwd",
-      "exitCode": 0,
-      "durationMs": 166,
-      "timedOut": false
-    },
-    {
-      "label": "project-register",
-      "argv": [
-        "<HOME>/.nvm/versions/node/v22.19.0/bin/node",
-        "<SNAPSHOT-ROOT>/packages/cli/dist/bin.js",
-        "project",
-        "register",
-        "<TMPDIR>/smoke/repo",
-        "--name",
-        "clean-replay smoke",
-        "--data-root",
-        "<TMPDIR>/smoke/data",
-        "--json"
-      ],
-      "cwd": "<TMPDIR>/smoke/cwd",
-      "exitCode": 0,
-      "durationMs": 128,
-      "timedOut": false
-    },
-    {
-      "label": "host-status",
-      "argv": [
-        "<HOME>/.nvm/versions/node/v22.19.0/bin/node",
-        "<SNAPSHOT-ROOT>/packages/cli/dist/bin.js",
-        "host",
-        "status",
-        "--data-root",
-        "<TMPDIR>/smoke/data",
-        "--json"
-      ],
-      "cwd": "<TMPDIR>/smoke/cwd",
-      "exitCode": 0,
-      "durationMs": 61,
-      "timedOut": false
-    },
-    {
-      "label": "host-stop",
-      "argv": [
-        "<HOME>/.nvm/versions/node/v22.19.0/bin/node",
-        "<SNAPSHOT-ROOT>/packages/cli/dist/bin.js",
-        "host",
-        "stop",
-        "--data-root",
-        "<TMPDIR>/smoke/data",
-        "--json"
-      ],
-      "cwd": "<TMPDIR>/smoke/cwd",
-      "exitCode": 0,
-      "durationMs": 117,
-      "timedOut": false
-    }
-  ],
-  "cliEntryLogical": "<SNAPSHOT-ROOT>/packages/cli/dist/bin.js",
-  "listenAddress": "127.0.0.1",
-  "port": 59521,
-  "startedOutcome": "started",
-  "hostInstanceId": "76622271-be77-425a-b0d0-557c51ad3cb9",
-  "statusInstanceId": "76622271-be77-425a-b0d0-557c51ad3cb9",
-  "registrationStatus": "registered",
-  "projectId": "35aa65ec-21cb-4d0d-be6c-a80635bee2aa",
+  "cwdLogical": "",
+  "homeLogical": "",
+  "dataRootLogical": "",
+  "repoLogical": "",
+  "commands": [],
+  "cliEntryLogical": "",
+  "listenAddress": "",
+  "port": 0,
+  "startedOutcome": "",
+  "hostInstanceId": "",
+  "statusInstanceId": "",
+  "registrationStatus": "",
+  "projectId": "",
   "stopEvidence": {
-    "processExit": "confirmed",
-    "lock": "acquirable",
-    "discovery": "removed"
+    "processExit": "",
+    "lock": "",
+    "discovery": ""
   }
 }

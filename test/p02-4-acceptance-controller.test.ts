@@ -565,6 +565,7 @@ describe('F-011 生产接线守护（不运行完整 verify/accept:p02）', () =
       expect(step.args).toEqual(['scripts/run-tests.ts', scenario.entry]);
       expect(step.entryFile).toBe(scenario.entry);
       expect(step.timeoutMs).toBe(config.timeouts.scenarioMs);
+      expect(step.env?.SHIPLOOP_TEST_RUN_TIMEOUT_MS).toBe(String(config.timeouts.scenarioMs));
     }
     expect(steps.every((step) => Number.isFinite(step.timeoutMs) && step.timeoutMs > 0)).toBe(true);
   });
@@ -591,6 +592,7 @@ describe('F-011 生产接线守护（不运行完整 verify/accept:p02）', () =
     expect(steps[0]?.env?.[P02_ACCEPT_ENV_VERIFY_TIMEOUT_MS]).toBe('23456');
     for (const step of steps.slice(1)) {
       expect(step.timeoutMs).toBe(12_345);
+      expect(step.env?.SHIPLOOP_TEST_RUN_TIMEOUT_MS).toBe('12345');
     }
   });
 

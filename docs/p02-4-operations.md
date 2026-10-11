@@ -100,6 +100,10 @@ node packages/cli/dist/bin.js baseline evidence <artifactId> [--data-root <abs>]
 
 ## 3. 双 CLI 手工闭环（临时 Git 仓库 → 配置 → 注册 → 授权基线 → 查询 → 观察 → stop/重启 → 证据）
 
+初次人工验收优先按 [完整操作步骤](acceptance/p02-manual-acceptance.md) 执行：该文档
+包含从实际输出提取各 ID、两终端变量共享说明与最后停止动作。以下为接口示意，
+`PROJECT_ID` / `OPERATION_ID` / `ARTIFACT_ID` 须取自前一步实际输出，不能照抄占位值。
+
 两个终端（**CLI-A** 与 **CLI-B**）共享同一 `$ROOT`；并发或交错执行都只启动一个 Host，
 两条 CLI 握手核验同一个 `hostInstanceId`/`dataRootIdentity`。`$ROOT`/`$REPO` 均为
 `mktemp -d` 产生的临时绝对路径：
@@ -166,6 +170,7 @@ node packages/cli/dist/bin.js baseline status "$OPERATION_ID" --data-root "$ROOT
 node packages/cli/dist/bin.js baseline evidence "$ARTIFACT_ID" --data-root "$ROOT" --json
 
 # 7) 超时/响应丢失先查回执（同一 --command-id 重放得原回执；异参数复用得 conflict）
+# 此处 CMD 须为已提交命令的 commandId；第 5 步未指定 ID 时从回执取值。
 node packages/cli/dist/bin.js receipt get "$CMD" --data-root "$ROOT" --json
 
 # 8) 退出观察：Ctrl+C 只结束本次观察（退出码 4，observation_interrupted）
@@ -181,6 +186,7 @@ node packages/cli/dist/bin.js host start --data-root "$ROOT" --json
 node packages/cli/dist/bin.js project overview "$PROJECT_ID" --data-root "$ROOT" --json
 node packages/cli/dist/bin.js baseline status "$OPERATION_ID" --data-root "$ROOT" --json
 node packages/cli/dist/bin.js baseline evidence "$ARTIFACT_ID" --data-root "$ROOT" --json
+node packages/cli/dist/bin.js host stop --data-root "$ROOT" --json
 ```
 
 - 客户端退出（Ctrl+C/会话结束）**不停止 Host**：Host 是独立后台进程，只有显式

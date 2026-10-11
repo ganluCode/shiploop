@@ -382,6 +382,8 @@ export function buildP02ProductionSteps(
         args: ['scripts/run-tests.ts', scenario.entry],
         checkIds: [...scenario.checkIds],
         timeoutMs: scenarioTimeoutMs,
+        // 子启动器的默认十分钟不能截断阶段已批准的有限场景预算。
+        env: { SHIPLOOP_TEST_RUN_TIMEOUT_MS: String(scenarioTimeoutMs) },
         entryFile: scenario.entry,
       });
     }

@@ -74,26 +74,28 @@ afterEach(async () => {
   // 进程内用例的 Host：受控停止（dist 用例的 Host 在文件收尾统一 stop）。
   for (const root of inProcessRoots) {
     const collected = collectIo();
-    try {
-      await runHostCli({
-        args: ['host', 'stop', '--data-root', root, '--json'],
-        io: collected.io as HostCliIo,
-        env: {},
-      });
-    } catch {
-      // 尽力收尾。
-    }
+    const outcome = await runHostCli({
+      args: ['host', 'stop', '--data-root', root, '--json'],
+      io: collected.io as HostCliIo,
+      env: {},
+    });
+    expect(outcome.exitCode, collected.stderr()).toBe(0);
   }
   inProcessRoots.length = 0;
 });
 
 /** 文件收尾：停止 dist Host 并回收夹具（只回收自有资源）。 */
 afterAll(async () => {
-  try {
-    runCli(['host', 'stop', '--json']);
-  } catch {
-    // 尽力收尾；夹具 dispose 兜底回收。
-  }
+  if (!fixture) return;
+  const before = okResult(runCli(['host', 'status', ...dataArgs(), '--json']), 'host.status');
+  const stop = runCli(['host', 'stop', ...dataArgs(), '--json']);
+  const result = okResult(stop, 'host.stop');
+  expect(result.status).toBe('stopped');
+  const status = runCli(['host', 'status', ...dataArgs(), '--json']);
+  expect(status.status, status.stdout).not.toBe(0);
+  expect(() => process.kill(before.pid as number, 0)).toThrowError(
+    expect.objectContaining({ code: 'ESRCH' }),
+  );
   await fixture.dispose();
 });
 

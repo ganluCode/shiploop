@@ -76,6 +76,10 @@
 
 ## 4. 验证命令、退出码与逐项计数
 
+历史统计区分：首次产品代码验证为 116 files / 2961 tests；文档/守护回填后在
+`e6a3a46239b35fb1f89684b374bf94a08737a500` 的最终验证为 117 files / 2970 tests。
+以下保留首次记录；acceptance/p02 修复后的结果单独记录，不覆盖历史证据。
+
 - `npm run verify`（锁文件预检 + `npm test` / `npm run typecheck` / `npm run build`）：
   **退出码 0**，3/3 步骤 EXIT 0；`npm test` 116 files / 2961 tests 全过（0 skip/0 fail）。
 - `npm run accept:p02`：**退出码 0**，逐项计数 **pass 15 / fail 0 / not_run 0**；
@@ -101,7 +105,7 @@
 - 工作树状态：每次验证运行前 `git status --porcelain` 原文记录于
   [verification-record](evidence-p02-4-final/verification-record.md)（最终验证在文档交付树
   上执行且状态为 clean；记录回填提交后仅增加运行记录文本）。
-- 状态摘要：SQLite 迁移 v1-v4、settings schema v2、应用线消息 schemaVersion 3、事件封套
+- 状态摘要：SQLite 迁移 v1-v5、settings schema v2、应用线消息 schemaVersion 3、事件封套
   schemaVersion 1；`accept:p02` 报告内 `stateDigests`（代码/持久状态摘要）随各次运行
   落盘于 `artifacts/acceptance/p02/<run-id>/report.json`。
 

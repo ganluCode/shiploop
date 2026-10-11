@@ -64,6 +64,14 @@ const REGRESSION_TEST_FILES: readonly string[] = [
 ];
 
 describe('F-014 文档守护：P02 交付/阶段报告、负例矩阵与脱敏证据记录', () => {
+  it('最终统计区分首次验证与回填后验证，迁移包含 v5', () => {
+    for (const path of [REPORT_DOC_PATH, STAGE_REPORT_PATH]) {
+      const doc = readDoc(path);
+      expect(doc).toContain('117 files / 2970 tests');
+      expect(doc).toContain('116 files / 2961 tests');
+      expect(doc).toContain('SQLite 迁移 v1-v5');
+    }
+  });
   it('两份报告记录实现范围、输入计划摘要、工具版本、命令退出码、计数、耗时/资源、证据路径、遗留问题与 P03 候选基线', () => {
     for (const path of [REPORT_DOC_PATH, STAGE_REPORT_PATH]) {
       const doc = readDoc(path);
