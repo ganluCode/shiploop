@@ -186,7 +186,11 @@ function validateSecretReference(value: unknown, context: ValidationContext, fie
   return reference;
 }
 
-function validateRuntimeStrategy(
+/**
+ * 完整策略条目校验（F-003 起导出复用：Task 策略副本选择的 userOverride 与
+ * execution_config 语义校验走同一套 schemaVersion=2 条目规则，不另立第二套）。
+ */
+export function validateRuntimeStrategy(
   value: unknown,
   context: ValidationContext,
   field: string,

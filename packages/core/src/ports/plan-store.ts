@@ -26,7 +26,8 @@
  *   Task 保留计划作者指定的稳定 ID（P03-1 契约 §2.1）；创建路径 revision=1，
  *   状态恒为 open/draft(+plan_status=draft)/pending，状态迁移原语随对应功能增加；
  * - executionConfig 在本契约只校验「普通 JSON 对象且有界」：完整策略语义
- *   （schemaVersion=2 策略校验、来源选择）由 F-003 应用层校验，不在存储层重复
+ *   （schemaVersion=2 策略校验、来源选择，见 application/task-strategy-selection 的
+ *   selectTaskStrategy / validateTaskExecutionConfig）由 F-003 应用层校验，不在存储层重复
  *   或预冻结；本 Feature 不建 Feature DAG（feature_dependencies）、Batch/Run/
  *   Attempt/Approval 或配置/计划版本表。
  */
@@ -149,9 +150,9 @@ export interface TaskRecord {
   readonly acceptance: { readonly criteria: readonly string[] };
   /** 需求/验收制品引用（身份级；默认 []）。 */
   readonly requirementsRefs: readonly PlanArtifactRef[];
-  /** Task 可编辑完整策略副本（普通 JSON 对象；完整语义由 F-003 应用层校验）。 */
+  /** Task 可编辑完整策略副本（普通 JSON 对象；完整语义由 F-003 应用层校验，见 application/task-strategy-selection）。 */
   readonly executionConfig: Readonly<Record<string, unknown>>;
-  /** 策略来源（project_default/global_default/user_override；非空说明）。 */
+  /** 策略来源（project_default/global_default/user_override；F-003 定案，非空说明）。 */
   readonly configSource: string;
   /** 来源策略键（仅追踪用途；可空）。 */
   readonly configSourceKey: string | null;

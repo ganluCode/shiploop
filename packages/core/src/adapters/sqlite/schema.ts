@@ -648,7 +648,7 @@ export const tasks = sqliteTable('tasks', {
   requirementsRefs: text('requirements_refs').notNull().default('[]'),
   /** Task 可编辑完整策略副本 JSON 对象（创建时复制；完整策略语义由 F-003 应用层校验）。 */
   executionConfig: text('execution_config').notNull(),
-  /** 策略来源（project_default/global_default/user_override；非空，取值由 F-003 定案）。 */
+  /** 策略来源（project_default/global_default/user_override；F-003 定案，见 application/task-strategy-selection）。 */
   configSource: text('config_source').notNull(),
   /** 来源策略键（仅追踪用途；可空）。 */
   configSourceKey: text('config_source_key'),
