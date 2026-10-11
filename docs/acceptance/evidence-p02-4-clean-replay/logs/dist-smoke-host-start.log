@@ -2,4 +2,4 @@ $ <HOME>/.nvm/versions/node/v22.19.0/bin/node <SNAPSHOT-ROOT>/packages/cli/dist/
 cwd=<TMPDIR>/smoke/cwd
 exit=0 signal=null
 
-{"ok":true,"command":"host.start","result":{"outcome":"started","hostInstanceId":"a69b04d5-71fb-42e8-a940-f6b07740065f","dataRootIdentity":"8532b3b55a129b985498b7fe91db66a90994a1cd748b8db2ecfbb82ede9510a7","listenAddress":"127.0.0.1","port":56518,"protocolVersion":1,"lifecycleState":"ready","startedAt":"2026-10-11T04:18:24.502Z"}}
+{"ok":true,"command":"host.start","result":{"outcome":"started","hostInstanceId":"76622271-be77-425a-b0d0-557c51ad3cb9","dataRootIdentity":"0b531db23964d28678370c71dec59eb2e664ce2388cf969db27d6aa94eef5945","listenAddress":"127.0.0.1","port":59521,"protocolVersion":1,"lifecycleState":"ready","startedAt":"2026-10-11T06:02:13.598Z"}}

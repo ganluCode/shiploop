@@ -1,11 +1,11 @@
 # P02 阶段验收摘要 — 通过
 
-- 运行 ID：`20261011T042251Z-936cd56a`
-- 生成时间（UTC）：2026-10-11T04:26:57.541Z
+- 运行 ID：`20261011T060655Z-3737aea6`
+- 生成时间（UTC）：2026-10-11T06:11:02.507Z
 - 报告 Schema 版本：1
 - 输入计划：P02-4 P02 双客户端与初始化验收（2026-10-04-23-19-52_shiploop-p02-hostcli，版本 0.2，摘要 5b1d2534ce0280ab18b45092dd77d9c7f0cd722f2f699c7bf9290a5d19c5c5ff）
 - 范围：FR-1/FR-2 双客户端唯一 Host、共享项目/配置、授权基线、重复初始化/命令重放/源文件保留/认证拒绝/客户端退出/重启查询/基线失败与阶段控制检查（macOS 正式范围）
-- 受测 commit：`8f94db549dec4211f644ecb00f7c71e47a1e6952`（工作树 clean）
+- 受测 commit：`e6a3a46239b35fb1f89684b374bf94a08737a500`（工作树 clean）
 - 前序基线：p02-host-lifecycle @ `7ae5f39bb3d30a82a37a592d938a8e3d933f8c02`（feat/2026-10-04-23-19-52_p02-1-host）
 - 前序基线：p02-commands-events @ `3caca4892423fb33c2ea423edfd426c146314793`（feat/2026-10-04-23-19-52_p02-2）
 - 前序基线：p02-onboarding @ `18d490e2543c657560c3de22b770e89157d27df3`（feat/2026-10-04-23-19-52_p02-3）
@@ -38,17 +38,17 @@
 
 | 命令 | argv | cwd（逻辑） | 退出码 | 耗时（ms） |
 |---|---|---|---|---|
-| npm run verify（锁文件预检 + test/typecheck/build 实际执行） | `<node> <npm-cli> run verify` | `<repo>` | 0 | 92812 |
-| test/p02-4-dual-cli-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） | `<node> scripts/run-tests.ts test/p02-4-dual-cli-acceptance.test.ts` | `<repo>` | 0 | 14570 |
-| test/p02-4-idempotency-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） | `<node> scripts/run-tests.ts test/p02-4-idempotency-acceptance.test.ts` | `<repo>` | 0 | 14122 |
-| test/p02-4-repo-preservation-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） | `<node> scripts/run-tests.ts test/p02-4-repo-preservation-acceptance.test.ts` | `<repo>` | 0 | 16034 |
-| test/p02-4-negative-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） | `<node> scripts/run-tests.ts test/p02-4-negative-acceptance.test.ts` | `<repo>` | 0 | 19428 |
-| test/p02-4-restart-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） | `<node> scripts/run-tests.ts test/p02-4-restart-acceptance.test.ts` | `<repo>` | 0 | 44565 |
-| test/p02-4-baseline-failure-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） | `<node> scripts/run-tests.ts test/p02-4-baseline-failure-acceptance.test.ts` | `<repo>` | 0 | 39081 |
-| test/p02-4-acceptance-controller.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） | `<node> scripts/run-tests.ts test/p02-4-acceptance-controller.test.ts` | `<repo>` | 0 | 4276 |
-| test/p02-4-report-aggregation.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） | `<node> scripts/run-tests.ts test/p02-4-report-aggregation.test.ts` | `<repo>` | 0 | 344 |
-| test/p02-4-acceptance-report.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） | `<node> scripts/run-tests.ts test/p02-4-acceptance-report.test.ts` | `<repo>` | 0 | 376 |
-| test/p02-4-clean-replay.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） | `<node> scripts/run-tests.ts test/p02-4-clean-replay.test.ts` | `<repo>` | 0 | 356 |
+| npm run verify（锁文件预检 + test/typecheck/build 实际执行） | `<node> <npm-cli> run verify` | `<repo>` | 0 | 92755 |
+| test/p02-4-dual-cli-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） | `<node> scripts/run-tests.ts test/p02-4-dual-cli-acceptance.test.ts` | `<repo>` | 0 | 14619 |
+| test/p02-4-idempotency-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） | `<node> scripts/run-tests.ts test/p02-4-idempotency-acceptance.test.ts` | `<repo>` | 0 | 14320 |
+| test/p02-4-repo-preservation-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） | `<node> scripts/run-tests.ts test/p02-4-repo-preservation-acceptance.test.ts` | `<repo>` | 0 | 16420 |
+| test/p02-4-negative-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） | `<node> scripts/run-tests.ts test/p02-4-negative-acceptance.test.ts` | `<repo>` | 0 | 19238 |
+| test/p02-4-restart-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） | `<node> scripts/run-tests.ts test/p02-4-restart-acceptance.test.ts` | `<repo>` | 0 | 44943 |
+| test/p02-4-baseline-failure-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） | `<node> scripts/run-tests.ts test/p02-4-baseline-failure-acceptance.test.ts` | `<repo>` | 0 | 38995 |
+| test/p02-4-acceptance-controller.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） | `<node> scripts/run-tests.ts test/p02-4-acceptance-controller.test.ts` | `<repo>` | 0 | 4332 |
+| test/p02-4-report-aggregation.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） | `<node> scripts/run-tests.ts test/p02-4-report-aggregation.test.ts` | `<repo>` | 0 | 343 |
+| test/p02-4-acceptance-report.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） | `<node> scripts/run-tests.ts test/p02-4-acceptance-report.test.ts` | `<repo>` | 0 | 374 |
+| test/p02-4-clean-replay.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） | `<node> scripts/run-tests.ts test/p02-4-clean-replay.test.ts` | `<repo>` | 0 | 353 |
 
 ## 阶段外能力（不计入必需项通过数）
 

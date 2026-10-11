@@ -2,7 +2,7 @@
   "ok": true,
   "findings": [],
   "fileCount": 428,
-  "totalBytes": 3364467,
+  "totalBytes": 3365587,
   "declaredEntries": [
     "shiploop-cli:./dist/index.d.ts",
     "shiploop-cli:./dist/index.js",
@@ -27,5 +27,5 @@
       ]
     }
   ],
-  "manifestSummarySha256": "61ed872ca41c8506dec4f3f46b77c2725ac37bb420df68ae8376ef678bb2bbb9"
+  "manifestSummarySha256": "7436230a27d8624db4ecef943f5064ff3dbdfc879baaf3f4ae72b8a6d130529a"
 }

@@ -40,8 +40,8 @@
 | 命令 | 形态 | 退出码 | 计数/结论 | 证据 |
 |---|---|---|---|---|
 | `npm run verify` | 直接运行（受测树） | 0 | npm test 116 files / 2961 tests 全过、typecheck 0、build+dist 冒烟 0 | `tool-logs/F-014-*.log`、verification-record |
-| `npm run accept:p02`（第 1 次） | 干净快照复跑 `accept-p02-1` | 0 | pass 15 / fail 0 / not_run 0 | `docs/acceptance/evidence-p02-4-clean-replay/accept-runs/accept-p02-1/` |
-| `npm run accept:p02`（第 2 次） | 干净快照复跑 `accept-p02-2` | 0 | pass 15 / fail 0 / not_run 0 | `docs/acceptance/evidence-p02-4-clean-replay/accept-runs/accept-p02-2/` |
+| `npm run accept:p02`（第 1 次） | 干净快照复跑 `accept-p02-1`（run-id `20261011T060231Z-2a5ef158`） | 0 | pass 15 / fail 0 / not_run 0 | `docs/acceptance/evidence-p02-4-clean-replay/accept-runs/accept-p02-1/` |
+| `npm run accept:p02`（第 2 次） | 干净快照复跑 `accept-p02-2`（run-id `20261011T060655Z-3737aea6`） | 0 | pass 15 / fail 0 / not_run 0 | `docs/acceptance/evidence-p02-4-clean-replay/accept-runs/accept-p02-2/` |
 
 - 状态摘要：SQLite 迁移 v1-v4、settings schema v2、应用线消息 schemaVersion 3、事件封套
   schemaVersion 1；单 Host/单写者（`host/writer.lock`）不变量、命令幂等回执与基线四表
@@ -140,7 +140,8 @@
 
 ## 9. P03 候选基线
 
-- **P03 候选基线 = 本次文档/守护交付提交**（本报告所在提交；完整 hash 与运行记录回填
-  提交的区分见 [verification-record](evidence-p02-4-final/verification-record.md)）；
-  产品代码与 `24b8377872f25c30e3a1efcc25504c9653c2b663` 完全一致。待负责人按人工审阅
-  清单核对后放行进入 P03。
+- **P03 候选基线 = 本次运行记录回填提交**（本报告所在的最终提交；产品代码与受测提交
+  `e6a3a46239b35fb1f89684b374bf94a08737a500`（文档/守护交付提交）完全一致，产品代码
+  身份 `24b8377872f25c30e3a1efcc25504c9653c2b663`）。待负责人按人工审阅清单核对后放行
+  进入 P03（提交 hash 由 `git log` 顶部 F-014 提交确定，见
+  [verification-record](evidence-p02-4-final/verification-record.md)）。

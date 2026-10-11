@@ -14,7 +14,7 @@
       ],
       "cwd": "<TMPDIR>/smoke/repo",
       "exitCode": 0,
-      "durationMs": 59,
+      "durationMs": 63,
       "timedOut": false
     },
     {
@@ -26,7 +26,7 @@
       ],
       "cwd": "<TMPDIR>/smoke/repo",
       "exitCode": 0,
-      "durationMs": 12,
+      "durationMs": 14,
       "timedOut": false
     },
     {
@@ -44,7 +44,7 @@
       ],
       "cwd": "<TMPDIR>/smoke/repo",
       "exitCode": 0,
-      "durationMs": 16,
+      "durationMs": 18,
       "timedOut": false
     },
     {
@@ -60,7 +60,7 @@
       ],
       "cwd": "<TMPDIR>/smoke/cwd",
       "exitCode": 0,
-      "durationMs": 163,
+      "durationMs": 166,
       "timedOut": false
     },
     {
@@ -79,7 +79,7 @@
       ],
       "cwd": "<TMPDIR>/smoke/cwd",
       "exitCode": 0,
-      "durationMs": 121,
+      "durationMs": 128,
       "timedOut": false
     },
     {
@@ -95,7 +95,7 @@
       ],
       "cwd": "<TMPDIR>/smoke/cwd",
       "exitCode": 0,
-      "durationMs": 58,
+      "durationMs": 61,
       "timedOut": false
     },
     {
@@ -111,18 +111,18 @@
       ],
       "cwd": "<TMPDIR>/smoke/cwd",
       "exitCode": 0,
-      "durationMs": 114,
+      "durationMs": 117,
       "timedOut": false
     }
   ],
   "cliEntryLogical": "<SNAPSHOT-ROOT>/packages/cli/dist/bin.js",
   "listenAddress": "127.0.0.1",
-  "port": 56518,
+  "port": 59521,
   "startedOutcome": "started",
-  "hostInstanceId": "a69b04d5-71fb-42e8-a940-f6b07740065f",
-  "statusInstanceId": "a69b04d5-71fb-42e8-a940-f6b07740065f",
+  "hostInstanceId": "76622271-be77-425a-b0d0-557c51ad3cb9",
+  "statusInstanceId": "76622271-be77-425a-b0d0-557c51ad3cb9",
   "registrationStatus": "registered",
-  "projectId": "f2f1474d-405a-41d5-bb35-d7ef66cfb206",
+  "projectId": "35aa65ec-21cb-4d0d-be6c-a80635bee2aa",
   "stopEvidence": {
     "processExit": "confirmed",
     "lock": "acquirable",

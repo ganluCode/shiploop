@@ -1,7 +1,7 @@
 {
   "reportSchemaVersion": 1,
-  "runId": "20261011T042251Z-936cd56a",
-  "generatedAtUtc": "2026-10-11T04:26:57.541Z",
+  "runId": "20261011T060655Z-3737aea6",
+  "generatedAtUtc": "2026-10-11T06:11:02.507Z",
   "plan": {
     "phaseId": "2026-10-04-23-19-52_shiploop-p02-hostcli",
     "title": "P02-4 P02 双客户端与初始化验收",
@@ -10,7 +10,7 @@
     "digestSha256": "5b1d2534ce0280ab18b45092dd77d9c7f0cd722f2f699c7bf9290a5d19c5c5ff"
   },
   "git": {
-    "commit": "8f94db549dec4211f644ecb00f7c71e47a1e6952",
+    "commit": "e6a3a46239b35fb1f89684b374bf94a08737a500",
     "worktree": "clean",
     "branch": null,
     "priorBaselines": [
@@ -68,7 +68,7 @@
       ],
       "cwd": "<repo>",
       "exitCode": 0,
-      "durationMs": 92812
+      "durationMs": 92755
     },
     {
       "label": "test/p02-4-dual-cli-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）",
@@ -79,7 +79,7 @@
       ],
       "cwd": "<repo>",
       "exitCode": 0,
-      "durationMs": 14570
+      "durationMs": 14619
     },
     {
       "label": "test/p02-4-idempotency-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）",
@@ -90,7 +90,7 @@
       ],
       "cwd": "<repo>",
       "exitCode": 0,
-      "durationMs": 14122
+      "durationMs": 14320
     },
     {
       "label": "test/p02-4-repo-preservation-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）",
@@ -101,7 +101,7 @@
       ],
       "cwd": "<repo>",
       "exitCode": 0,
-      "durationMs": 16034
+      "durationMs": 16420
     },
     {
       "label": "test/p02-4-negative-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）",
@@ -112,7 +112,7 @@
       ],
       "cwd": "<repo>",
       "exitCode": 0,
-      "durationMs": 19428
+      "durationMs": 19238
     },
     {
       "label": "test/p02-4-restart-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）",
@@ -123,7 +123,7 @@
       ],
       "cwd": "<repo>",
       "exitCode": 0,
-      "durationMs": 44565
+      "durationMs": 44943
     },
     {
       "label": "test/p02-4-baseline-failure-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）",
@@ -134,7 +134,7 @@
       ],
       "cwd": "<repo>",
       "exitCode": 0,
-      "durationMs": 39081
+      "durationMs": 38995
     },
     {
       "label": "test/p02-4-acceptance-controller.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）",
@@ -145,7 +145,7 @@
       ],
       "cwd": "<repo>",
       "exitCode": 0,
-      "durationMs": 4276
+      "durationMs": 4332
     },
     {
       "label": "test/p02-4-report-aggregation.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）",
@@ -156,7 +156,7 @@
       ],
       "cwd": "<repo>",
       "exitCode": 0,
-      "durationMs": 344
+      "durationMs": 343
     },
     {
       "label": "test/p02-4-acceptance-report.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）",
@@ -167,7 +167,7 @@
       ],
       "cwd": "<repo>",
       "exitCode": 0,
-      "durationMs": 376
+      "durationMs": 374
     },
     {
       "label": "test/p02-4-clean-replay.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）",
@@ -178,7 +178,7 @@
       ],
       "cwd": "<repo>",
       "exitCode": 0,
-      "durationMs": 356
+      "durationMs": 353
     }
   ],
   "checks": [
@@ -195,7 +195,7 @@
       "errorAssertion": null,
       "zeroStartAssertion": null,
       "persistentStateAssertion": null,
-      "durationMs": 92812,
+      "durationMs": 92755,
       "detail": "步骤退出 0：npm run verify（锁文件预检 + test/typecheck/build 实际执行）",
       "evidenceRefs": [
         "evidence/checks/P02-ENG-VERIFY.json",
@@ -215,7 +215,7 @@
       "errorAssertion": null,
       "zeroStartAssertion": null,
       "persistentStateAssertion": null,
-      "durationMs": 14570,
+      "durationMs": 14619,
       "detail": "步骤退出 0：test/p02-4-dual-cli-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）",
       "evidenceRefs": [
         "evidence/checks/P02-FR1-UNIQUE-HOST.json",
@@ -235,7 +235,7 @@
       "errorAssertion": null,
       "zeroStartAssertion": null,
       "persistentStateAssertion": null,
-      "durationMs": 14570,
+      "durationMs": 14619,
       "detail": "步骤退出 0：test/p02-4-dual-cli-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）",
       "evidenceRefs": [
         "evidence/checks/P02-FR1-SHARED-STATE.json",
@@ -255,7 +255,7 @@
       "errorAssertion": null,
       "zeroStartAssertion": null,
       "persistentStateAssertion": null,
-      "durationMs": 14570,
+      "durationMs": 14619,
       "detail": "步骤退出 0：test/p02-4-dual-cli-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）",
       "evidenceRefs": [
         "evidence/checks/P02-FR1-BASELINE-OK.json",
@@ -278,7 +278,7 @@
       "errorAssertion": true,
       "zeroStartAssertion": null,
       "persistentStateAssertion": true,
-      "durationMs": 14122,
+      "durationMs": 14320,
       "detail": "步骤退出 0：test/p02-4-idempotency-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）；预期负例：错误/零启动/持久状态断言由测试入口内的真实断言承载，步骤退出 0 表示冻结断言集合同时成立",
       "evidenceRefs": [
         "evidence/checks/P02-FR2-DUPLICATE-INIT.json",
@@ -302,7 +302,7 @@
       "errorAssertion": true,
       "zeroStartAssertion": true,
       "persistentStateAssertion": true,
-      "durationMs": 14122,
+      "durationMs": 14320,
       "detail": "步骤退出 0：test/p02-4-idempotency-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）；预期负例：错误/零启动/持久状态断言由测试入口内的真实断言承载，步骤退出 0 表示冻结断言集合同时成立",
       "evidenceRefs": [
         "evidence/checks/P02-FR2-COMMAND-CONFLICT.json",
@@ -326,7 +326,7 @@
       "errorAssertion": true,
       "zeroStartAssertion": true,
       "persistentStateAssertion": true,
-      "durationMs": 16034,
+      "durationMs": 16420,
       "detail": "步骤退出 0：test/p02-4-repo-preservation-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）；预期负例：错误/零启动/持久状态断言由测试入口内的真实断言承载，步骤退出 0 表示冻结断言集合同时成立",
       "evidenceRefs": [
         "evidence/checks/P02-FR2-SOURCE-PRESERVED.json",
@@ -350,7 +350,7 @@
       "errorAssertion": true,
       "zeroStartAssertion": true,
       "persistentStateAssertion": true,
-      "durationMs": 19428,
+      "durationMs": 19238,
       "detail": "步骤退出 0：test/p02-4-negative-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）；预期负例：错误/零启动/持久状态断言由测试入口内的真实断言承载，步骤退出 0 表示冻结断言集合同时成立",
       "evidenceRefs": [
         "evidence/checks/P02-FR2-AUTH-REJECT.json",
@@ -373,7 +373,7 @@
       "errorAssertion": true,
       "zeroStartAssertion": null,
       "persistentStateAssertion": true,
-      "durationMs": 44565,
+      "durationMs": 44943,
       "detail": "步骤退出 0：test/p02-4-restart-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）；预期负例：错误/零启动/持久状态断言由测试入口内的真实断言承载，步骤退出 0 表示冻结断言集合同时成立",
       "evidenceRefs": [
         "evidence/checks/P02-FR2-CLIENT-EXIT.json",
@@ -393,7 +393,7 @@
       "errorAssertion": null,
       "zeroStartAssertion": null,
       "persistentStateAssertion": null,
-      "durationMs": 44565,
+      "durationMs": 44943,
       "detail": "步骤退出 0：test/p02-4-restart-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）",
       "evidenceRefs": [
         "evidence/checks/P02-FR1-RESTART-QUERY.json",
@@ -417,7 +417,7 @@
       "errorAssertion": true,
       "zeroStartAssertion": true,
       "persistentStateAssertion": true,
-      "durationMs": 39081,
+      "durationMs": 38995,
       "detail": "步骤退出 0：test/p02-4-baseline-failure-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）；预期负例：错误/零启动/持久状态断言由测试入口内的真实断言承载，步骤退出 0 表示冻结断言集合同时成立",
       "evidenceRefs": [
         "evidence/checks/P02-FR2-BASELINE-FAILURE.json",
@@ -437,7 +437,7 @@
       "errorAssertion": null,
       "zeroStartAssertion": null,
       "persistentStateAssertion": null,
-      "durationMs": 4276,
+      "durationMs": 4332,
       "detail": "步骤退出 0：test/p02-4-acceptance-controller.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）",
       "evidenceRefs": [
         "evidence/checks/P02-PHASE-FIXTURE.json",
@@ -457,7 +457,7 @@
       "errorAssertion": null,
       "zeroStartAssertion": null,
       "persistentStateAssertion": null,
-      "durationMs": 344,
+      "durationMs": 343,
       "detail": "步骤退出 0：test/p02-4-report-aggregation.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）；全部必需检查均已提交结果；未提交/启动失败/超时/被跳过项均显式分类为 not_run",
       "evidenceRefs": [
         "evidence/checks/P02-PHASE-NOT-RUN.json",
@@ -477,7 +477,7 @@
       "errorAssertion": null,
       "zeroStartAssertion": null,
       "persistentStateAssertion": null,
-      "durationMs": 376,
+      "durationMs": 374,
       "detail": "步骤退出 0：test/p02-4-acceptance-report.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）；报告输入通过严格 Schema 校验且证据清单交叉完整；写出后重验决定阶段退出码",
       "evidenceRefs": [
         "evidence/checks/P02-PHASE-REPORT.json",
@@ -497,7 +497,7 @@
       "errorAssertion": null,
       "zeroStartAssertion": null,
       "persistentStateAssertion": null,
-      "durationMs": 356,
+      "durationMs": 353,
       "detail": "步骤退出 0：test/p02-4-clean-replay.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）",
       "evidenceRefs": [
         "evidence/checks/P02-ENG-CLEAN-REPLAY.json",
@@ -521,169 +521,169 @@
     },
     {
       "path": "evidence/environment.json",
-      "sha256": "8b6c4f9e75c1213c282a7f62c4876af739d05c14f3f570e4d7f051f93565b1a6",
+      "sha256": "b3b08544a48b23e4f1b63364f9c225ce3e572ffc1ff0d614b9fd4a5fd1004498",
       "sizeBytes": 802,
       "checkId": "P02-PHASE-FIXTURE"
     },
     {
       "path": "evidence/commands/01-verify.log",
-      "sha256": "318de3e309326c72b20c143388ba6f38b1395b828569307cc7244e6da5b7bf12",
+      "sha256": "31877566e03e97a31f51e959e0ddbbfc1b94ae0f05e9c26477209e04c2aed0db",
       "sizeBytes": 4384,
       "checkId": null
     },
     {
       "path": "evidence/checks/P02-ENG-VERIFY.json",
-      "sha256": "23df680e7e0d1d6582cd03aebf847def4c739680f643329309b5481cfc3f07a0",
+      "sha256": "5f3e0735e6e0a29280836d6d6e0846930b71c7c6a16cf3c8f469ee6999bd533b",
       "sizeBytes": 286,
       "checkId": "P02-ENG-VERIFY"
     },
     {
       "path": "evidence/commands/02-dual-cli.log",
-      "sha256": "2cd7bdf49c47b0af5cd315e43380770f8a5dcda1ab2d6b6c4a0d984127e2f861",
+      "sha256": "d908ce409bd4e4f5c57573754ceb106fb570df9fab2505a882f74984da04d229",
       "sizeBytes": 770,
       "checkId": null
     },
     {
       "path": "evidence/checks/P02-FR1-UNIQUE-HOST.json",
-      "sha256": "357c5c31cbb889907018562250949103b17974b8887403c01e4a39dabc4adbb3",
+      "sha256": "21ce4985e1e1a2ecf092c1853a9285d57db2179aca8ea9aba7bde908007b6a47",
       "sizeBytes": 295,
       "checkId": "P02-FR1-UNIQUE-HOST"
     },
     {
       "path": "evidence/checks/P02-FR1-SHARED-STATE.json",
-      "sha256": "3017dc551b8e25e83a5593b324a3688c012606c4e71f861f77971f72e8cb7145",
+      "sha256": "7f9c360642f195bd29db40fcb14c80c09ee6492460b228ad0614f8abe7f868eb",
       "sizeBytes": 296,
       "checkId": "P02-FR1-SHARED-STATE"
     },
     {
       "path": "evidence/checks/P02-FR1-BASELINE-OK.json",
-      "sha256": "8acfe75ad83443776b9be347f08b2f8919b2a56aa9e4adb7ffa053a5d078c16c",
+      "sha256": "d4ecb2086674bd200e0fd5bb464ae339861857aeb4b9a3c292df734f0e3e16d5",
       "sizeBytes": 295,
       "checkId": "P02-FR1-BASELINE-OK"
     },
     {
       "path": "evidence/commands/03-idempotency.log",
-      "sha256": "46bd945b4155d32b2afa30b3ba2dee16f72c3ae9e724c5704cafc9d496391f59",
+      "sha256": "dcd109e64c3fe5ca0e4fa4653f9efe8014a4a6175ae5f4964a84e1156fceb41b",
       "sizeBytes": 779,
       "checkId": null
     },
     {
       "path": "evidence/checks/P02-FR2-DUPLICATE-INIT.json",
-      "sha256": "6d3bc57d7e963a6dce7589314d11712d037e7764cb06b77019ea2f6286430473",
+      "sha256": "37374c5fbe6454e9e6b4affb573a70f2b1565767398a85fd4c3730834030120d",
       "sizeBytes": 362,
       "checkId": "P02-FR2-DUPLICATE-INIT"
     },
     {
       "path": "evidence/checks/P02-FR2-COMMAND-CONFLICT.json",
-      "sha256": "0ecf2a2b020aca9c0e87a992ad21974941ad64a71bd5a4e30f34b31d37d615ca",
+      "sha256": "0c626ac8a225dde3486d7174f57a58bb1d9055e612dbef6db2d40a415ba510d4",
       "sizeBytes": 381,
       "checkId": "P02-FR2-COMMAND-CONFLICT"
     },
     {
       "path": "evidence/commands/04-repo-preservation.log",
-      "sha256": "7eebda7995f67d7d29f6cae9c127049c7c0d358295de41aff1d43ff8e2098ad5",
+      "sha256": "ed5aa30e44f3dfee20b888635ae9bee1024c53be726219bae210f37198973282",
       "sizeBytes": 797,
       "checkId": null
     },
     {
       "path": "evidence/checks/P02-FR2-SOURCE-PRESERVED.json",
-      "sha256": "120529d71d19f61a6653f45851655a6ec6e6c6d2bc6e8610d1fa891bc9f30575",
+      "sha256": "a43dd2894c2a8f72b1d6a06c0ca9713f2a174bf6c89f40ed509ce2d7114d51bc",
       "sizeBytes": 393,
       "checkId": "P02-FR2-SOURCE-PRESERVED"
     },
     {
       "path": "evidence/commands/05-auth-reject.log",
-      "sha256": "383f8608c09daae6bab88a8c67098bc03fc5278d5dafd00ac8fc0bcd3f083e02",
+      "sha256": "dfd2bcee0279a45f09b4904785675de9a768e9545c1311e998e800475615c666",
       "sizeBytes": 773,
       "checkId": null
     },
     {
       "path": "evidence/checks/P02-FR2-AUTH-REJECT.json",
-      "sha256": "df02d9d341d142ca9b25c97c24b9c0ef608e146c061898d7bd49d73cac7d4e26",
+      "sha256": "cb738950ff6aa35bb4a86aa6d371086fd1ceef6ca0d7a0766470fc21d6c819b2",
       "sizeBytes": 376,
       "checkId": "P02-FR2-AUTH-REJECT"
     },
     {
       "path": "evidence/commands/06-restart.log",
-      "sha256": "0d1b88e7f238c2f17c832d8f2c111ab72e53ee83afbe26ea60865bd4594ec2c3",
+      "sha256": "6c7809b44f9cf33f7ea30065a76115387285ea0f1a89b2f2fbc0233c7a9610ec",
       "sizeBytes": 767,
       "checkId": null
     },
     {
       "path": "evidence/checks/P02-FR2-CLIENT-EXIT.json",
-      "sha256": "71a4528571691a72c394950395d715e8ec6e4ef7dee6aa756cf672bf96310f76",
+      "sha256": "9fedb6513484dd14e6ef3a8842a4955a55d876462fbcb5aa80fd6bc3f376e20b",
       "sizeBytes": 351,
       "checkId": "P02-FR2-CLIENT-EXIT"
     },
     {
       "path": "evidence/checks/P02-FR1-RESTART-QUERY.json",
-      "sha256": "88e638bdba32beefdabe48ced64c9021c58b83ee07019336fe784a0f21db3e88",
+      "sha256": "3a0e37607d20dcf6b3b4e16d505888b6d0f0f7d46b1644a63ec8ea7cf4de88dc",
       "sizeBytes": 295,
       "checkId": "P02-FR1-RESTART-QUERY"
     },
     {
       "path": "evidence/commands/07-baseline-failure.log",
-      "sha256": "3f2f314407384d64f420938de5635a7be1903280d5f2f69e4b8e442fea63efe2",
+      "sha256": "37d306f8353020eef367e176c18a7281d3b50c3dd1b97417200575908c9bea1f",
       "sizeBytes": 794,
       "checkId": null
     },
     {
       "path": "evidence/checks/P02-FR2-BASELINE-FAILURE.json",
-      "sha256": "0028cf37b8ff95a750794cc2523cbfb08f5bde8a0f681c49570e87a74ee1afb3",
+      "sha256": "78c9094613981cc117ec5e0ac35ba804a1a733dc2dd2ab46659a3599b68677a4",
       "sizeBytes": 391,
       "checkId": "P02-FR2-BASELINE-FAILURE"
     },
     {
       "path": "evidence/commands/08-controller.log",
-      "sha256": "5344257f84df1cc41f35d3d8c3e95c21219730cb83c4959f8634bd07906def39",
+      "sha256": "3c19a1756d713d00584b4372aadcc886c6ce180d66e0cbbf3ccc68f9fbbe55d0",
       "sizeBytes": 776,
       "checkId": null
     },
     {
       "path": "evidence/checks/P02-PHASE-FIXTURE.json",
-      "sha256": "1e5332733c6a3cad24cabf456206ee7d740a48fac2c41bfe5a61b7bb6e0ae925",
+      "sha256": "7ef44a3440b2bbbe7c8ec362a6b58d277a582aa27d854d16133af80cda591b71",
       "sizeBytes": 296,
       "checkId": "P02-PHASE-FIXTURE"
     },
     {
       "path": "evidence/commands/09-report-aggregation.log",
-      "sha256": "20eb9e79ac1c82068e9dcb4ee880239f93d9de67f3b7e2c44064d14b6bf09c33",
+      "sha256": "875cd2280f04e358fe8c15ce4f81170b0ee3a048e55575304ea2b0c6a787d536",
       "sizeBytes": 801,
       "checkId": null
     },
     {
       "path": "evidence/checks/P02-PHASE-NOT-RUN.json",
-      "sha256": "8f1219075ba4beffdbbd97c45bbc488bd436fa53908ed585d61199d23f5692ae",
+      "sha256": "eb8139581b58a6a7a13466e15fe89f535d5bba99fe6571bf1be44c36bc21183c",
       "sizeBytes": 311,
       "checkId": "P02-PHASE-NOT-RUN"
     },
     {
       "path": "evidence/commands/10-acceptance-report.log",
-      "sha256": "591e791f66054eb6af7c8b8339f59579128fc38c060df6b6e663b012714f7092",
+      "sha256": "dbfe70fe912d6004c3de12d9893b622a87b2e0de272709a193a904d7581fd966",
       "sizeBytes": 798,
       "checkId": null
     },
     {
       "path": "evidence/checks/P02-PHASE-REPORT.json",
-      "sha256": "0b03ddf566bf64cd0a4b39297359640791efe212c4a68b265a6cf51e784e1b91",
+      "sha256": "9d3457a643062ae18cb7f944528c1f2dea04dadaa736f15335aed0170f62d294",
       "sizeBytes": 308,
       "checkId": "P02-PHASE-REPORT"
     },
     {
       "path": "evidence/commands/11-clean-replay.log",
-      "sha256": "daff847f55a76c55f78872a8136e1b492e6e886eb3dab2a5f45352d7661d1369",
+      "sha256": "da1530f6f2eee903fd869a14b855e18848ffe4ece3710232a03d8f06f8ab5315",
       "sizeBytes": 939,
       "checkId": null
     },
     {
       "path": "evidence/checks/P02-ENG-CLEAN-REPLAY.json",
-      "sha256": "37a44d16e62512d3816feb93bcdb4f0f5b65b73998cb96de13fae4d5e64dcffb",
+      "sha256": "931719a5a00bf9cd2a23cbe39c29e9de0bad819ff72f994be4516782f17cd9d8",
       "sizeBytes": 302,
       "checkId": "P02-ENG-CLEAN-REPLAY"
     }
   ],
   "stateDigests": {
-    "codeSha256": "90bfbbeac8144de05ccc12b0e9f99adcd47be6a9081faa330dae02df33c38633"
+    "codeSha256": "7e0ac0d917cf6ded4f0e65450c368bb69a38aa94a2bba2652eb119b933cb41a0"
   },
   "outOfScope": [
     {
