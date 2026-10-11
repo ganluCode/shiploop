@@ -508,6 +508,15 @@ v3 内扩张先例，升版评估仍归 F-009）。
   引用重核、新成员 ID 冲突、归属越权与缺能力零写入、六个写入边界故障整组回滚、幂等重放/
   参数冲突与空草稿修订。
 - F-002 的真实 SQLite 迁移/存储原语按其任务验收，不以本任务的纯函数通过冒充。
+- `test/p03-1-integration-regression.test.ts`（F-011）：正式构建产物局部集成回归——
+  beforeAll 真实 `npm run build`，全部命令经真实 `packages/cli/dist/bin.js` 子进程，Host
+  用 dist 产物（`test/helpers/host/dist-host-entry-catalog.mjs` 装配 dist/runtime + 受信
+  测试能力目录，与 F-016 目录夹具同一纪律）；覆盖端到端主线（创建 Phase → 三 Task 导入 →
+  重查 → host stop 三证据 + pid 实际退出 → 重新拉起查询一致 → 独立只读探针库重开审计
+  行/事件序/回执三方一致 → 标签摘要不变 → 实质修订摘要改变 → 最终审计）、负例与
+  幂等/CAS（非法计划零写入、同 commandId 重放零新增、旧 revision conflict）、生产构建
+  边界（dist CLI 拉起生产 dist/start.js，空能力目录对 strategies 配置 fail-closed 且
+  零写入）。交接与验证记录见 [p03-1-handoff.md](p03-1-handoff.md)。
 
 ## 8. 范围边界（本任务不做）
 
