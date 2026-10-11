@@ -43,6 +43,8 @@ import {
 type ScriptedResponse =
   | { kind: 'json'; status: number; body: unknown }
   | { kind: 'drop' }
+  /** 注册请求但永不响应响应头（挂起的订阅建连窗口）；close 时由 closeAllConnections 回收。 */
+  | { kind: 'hang' }
   | {
       kind: 'sse';
       frames: string[];
@@ -128,6 +130,10 @@ async function startScriptedServer(identity: {
     if (behavior.kind === 'drop') {
       response.destroy();
       request.socket.destroy();
+      return;
+    }
+    if (behavior.kind === 'hang') {
+      // 挂起建连窗口：不写响应头/响应体；请求已登记供断言。
       return;
     }
     response.writeHead(200, {
@@ -414,6 +420,40 @@ describe('F-017 CLI 事件观察：snapshot_required/溢出/断线续读分支�
     const subscriptions = eventsRequests();
     expect(subscriptions).toHaveLength(2);
     expect(subscriptions[1]?.query).toContain(`cursor=${NEW_CURSOR}`);
+  });
+
+  it('建连等待事件流响应头期间 Abort（Ctrl+C）：exit 4 observation_interrupted，不误报 unreachable', async () => {
+    server.setScript((obs) => {
+      if (obs.path === '/v1/snapshot') {
+        return { kind: 'json', status: 200, body: globalSnapshot(7, NEW_CURSOR) };
+      }
+      return { kind: 'hang' };
+    });
+
+    const controller = new AbortController();
+    const run = startObserve(['events', '--global'], { signal: controller.signal });
+    // 快照记录已交付、订阅建连请求在途（响应头未回）——与 built-entry smoke 的
+    // `events follow SIGINT` 同一竞争窗口。
+    await waitForCondition(() => run.stdout().includes('"kind":"snapshot"'));
+    await waitForCondition(() => eventsRequests().length >= 1);
+    controller.abort();
+    const invocation = await run.promise;
+
+    expect(invocation.result.exitCode, invocation.stderr).toBe(4);
+    const records = parseRecords(invocation.stdout);
+    expect(recordKinds(records)).toEqual(['snapshot', 'error:observation_interrupted']);
+    const terminal = records.at(-1);
+    expect(terminal?.ok).toBe(false);
+    expect(terminal?.error?.code).toBe('observation_interrupted');
+    expect(terminal?.error?.details?.cursor).toBe(NEW_CURSOR);
+    expect(invocation.stderr).toContain('observation_interrupted');
+
+    // 意外副作用核对：只发生握手/快照/订阅请求，无 stop/cancel 等写操作。
+    for (const request of server.requests) {
+      expect([HANDSHAKE_ROUTE, '/v1/snapshot', '/v1/events'], request.path).toContain(
+        request.path,
+      );
+    }
   });
 
   it('连续 snapshot_required 超过有限重载预算：exit 1，不无限循环', async () => {

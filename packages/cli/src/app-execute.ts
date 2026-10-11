@@ -960,6 +960,19 @@ function emitObserveRecord(
   io.stdout(human);
 }
 
+/**
+ * Abort（Ctrl+C/用户中断）形态错误：HostClient 对带信号操作以
+ * `unreachable(aborted)` 拒绝（app-client `abortedError`）。
+ * 观察被用户中断不是连接失败：不得误报为 unreachable（exit 3）。
+ */
+function isAbortShapedError(error: unknown): boolean {
+  return (
+    (isHostProtocolError(error, 'unreachable') &&
+      (error.details as Record<string, unknown> | undefined)?.reason === 'aborted') ||
+    (error instanceof Error && error.name === 'AbortError')
+  );
+}
+
 async function executeEventsCommand(
   io: AppCliIo,
   command: ParsedEventsObserve,
@@ -1067,6 +1080,11 @@ async function executeEventsCommand(
           return reload;
         }
         continue;
+      }
+      // Ctrl+C/Abort（含建连窗口）：只结束本次观察（§12.3 第五档 exit 4 +
+      // observation_interrupted），不得误报为连接失败（unreachable exit 3）。
+      if (userAborted() || isAbortShapedError(error)) {
+        return interruptedResult();
       }
       throw error;
     }
