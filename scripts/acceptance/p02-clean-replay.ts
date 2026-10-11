@@ -252,6 +252,8 @@ export interface P02CleanReplayCleanup {
   readonly processesRemaining: readonly number[];
   readonly discoveryFilesRemaining: readonly string[];
   readonly sentinelsRemaining: readonly string[];
+  /** 信息字段：窗口内未被写入的静态守卫哨兵（设计上保留不变，非残留风险）。 */
+  readonly sentinelStaticLeftovers: readonly string[];
   readonly continuedWrites: readonly string[];
   readonly observationWindowMs: number;
   readonly tempRootRemoved: boolean;
@@ -1159,8 +1161,12 @@ async function phaseFinalize(ctx: ReplayContext): Promise<P02CleanReplayOutcome>
   const log = ctx.log;
 
   /* ---- 清理核验（进程/发现文件/哨兵/继续写入） ---- */
+  // 发现文件：结束后不得残留（各次运行/冒烟的 Host 发现信息随停止删除）。
+  // 哨兵：验收语义是「无哨兵继续写入」——静态守卫哨兵（如 P01-4 夹具的根外哨兵，
+  // 设计上必须保持不变、业务清理绝不能触碰）不是残留风险；哨兵残留仅指观察
+  // 窗口内仍被写入/新增的哨兵文件。静态守卫清单另作信息字段保留可审计。
   const discoveryRemaining: string[] = [];
-  const sentinelsRemaining: string[] = [];
+  const sentinelStaticLeftovers: string[] = [];
   for (const area of runtimeAreas(ctx)) {
     for (const file of listFilesUnder(area)) {
       const name = basename(file);
@@ -1168,7 +1174,7 @@ async function phaseFinalize(ctx: ReplayContext): Promise<P02CleanReplayOutcome>
         discoveryRemaining.push(toPosix(file));
       }
       if (SENTINEL_PATTERN.test(name)) {
-        sentinelsRemaining.push(toPosix(file));
+        sentinelStaticLeftovers.push(toPosix(file));
       }
     }
   }
@@ -1193,9 +1199,6 @@ async function phaseFinalize(ctx: ReplayContext): Promise<P02CleanReplayOutcome>
   if (discoveryRemaining.length > 0) {
     state.problems.push(`仍有发现文件残留：${discoveryRemaining.slice(0, 5).join(', ')}`);
   }
-  if (sentinelsRemaining.length > 0) {
-    state.problems.push(`仍有哨兵文件残留：${sentinelsRemaining.slice(0, 5).join(', ')}`);
-  }
 
   // 观察窗口：结束后无任何继续写入（占锁/哨兵继续写入的最终核验）。
   const watchRoots = [...runtimeAreas(ctx)];
@@ -1207,9 +1210,17 @@ async function phaseFinalize(ctx: ReplayContext): Promise<P02CleanReplayOutcome>
   const before = treeIndex(watchRoots);
   await sleep(OBSERVATION_WINDOW_MS);
   const after = treeIndex(watchRoots);
-  const continuedWrites = treeDiff(before, after).map((path) => sanitize(ctx, path));
+  const changedPaths = treeDiff(before, after);
+  const continuedWrites = changedPaths.map((path) => sanitize(ctx, path));
+  // 哨兵继续写入 = 观察窗口内新增/变化的哨兵文件（活跃哨兵写入者未退出的直接证据）。
+  const sentinelsRemaining = changedPaths
+    .filter((path) => SENTINEL_PATTERN.test(basename(path)))
+    .map((path) => sanitize(ctx, path));
   if (continuedWrites.length > 0) {
     state.problems.push(`观察窗口内仍有文件写入：${continuedWrites.slice(0, 5).join(', ')}`);
+  }
+  if (sentinelsRemaining.length > 0) {
+    state.problems.push(`哨兵仍在继续写入：${sentinelsRemaining.slice(0, 5).join(', ')}`);
   }
 
   /* ---- 构建路径/依赖扫描（复用 build-artifact-scan.ts） ---- */
@@ -1362,7 +1373,8 @@ async function phaseFinalize(ctx: ReplayContext): Promise<P02CleanReplayOutcome>
       {
         processesRemaining,
         discoveryFilesRemaining: discoveryRemaining.map((path) => sanitize(ctx, path)),
-        sentinelsRemaining: sentinelsRemaining.map((path) => sanitize(ctx, path)),
+        sentinelsRemaining,
+        sentinelStaticLeftovers: sentinelStaticLeftovers.map((path) => sanitize(ctx, path)),
         continuedWrites,
         observationWindowMs: OBSERVATION_WINDOW_MS,
       },
@@ -1422,7 +1434,8 @@ async function phaseFinalize(ctx: ReplayContext): Promise<P02CleanReplayOutcome>
     cleanup: {
       processesRemaining,
       discoveryFilesRemaining: discoveryRemaining.map((path) => sanitize(ctx, path)),
-      sentinelsRemaining: sentinelsRemaining.map((path) => sanitize(ctx, path)),
+      sentinelsRemaining,
+      sentinelStaticLeftovers: sentinelStaticLeftovers.map((path) => sanitize(ctx, path)),
       continuedWrites,
       observationWindowMs: OBSERVATION_WINDOW_MS,
       tempRootRemoved,
@@ -1488,6 +1501,7 @@ export async function runP02CleanReplay(
           processesRemaining: [],
           discoveryFilesRemaining: [],
           sentinelsRemaining: [],
+          sentinelStaticLeftovers: [],
           continuedWrites: [],
           observationWindowMs: OBSERVATION_WINDOW_MS,
           tempRootRemoved: false,
