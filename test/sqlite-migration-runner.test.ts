@@ -269,7 +269,8 @@ describe('F-005 迁移执行与记录', () => {
         // 真实基线四表迁移；P02-3 / F-008：v5 为 command_receipts 重建
         // （accepted + operation_id）；P03-1 / F-002：v6 为真实计划结构四表迁移
         // （phases/features/tasks/task_dependencies）；P03-2 / F-002：v7 为真实
-        // 计划决策记录表迁移（approvals）；探针迁移紧随其后。
+        // 计划决策记录表迁移（approvals）；P03-2 / F-003：v8 为检查政策身份绑定
+        // （approvals.check_policy_digest）；探针迁移紧随其后。
         expect(rows[2]!.version).toBe(3);
         expect(rows[2]!.checksum).toBe(SQLITE_MIGRATIONS[2]!.checksum);
         expect(rows[3]!.version).toBe(4);
@@ -280,9 +281,11 @@ describe('F-005 迁移执行与记录', () => {
         expect(rows[5]!.checksum).toBe(SQLITE_MIGRATIONS[5]!.checksum);
         expect(rows[6]!.version).toBe(7);
         expect(rows[6]!.checksum).toBe(SQLITE_MIGRATIONS[6]!.checksum);
-        expect(rows[7]!.version).toBe(PROBE_MIGRATION.version);
-        expect(rows[7]!.checksum).toBe(PROBE_MIGRATION.checksum);
-        expect(rows[7]!.applied_at).toBe(FIXED_NOW_MS + 1_000);
+        expect(rows[7]!.version).toBe(8);
+        expect(rows[7]!.checksum).toBe(SQLITE_MIGRATIONS[7]!.checksum);
+        expect(rows[8]!.version).toBe(PROBE_MIGRATION.version);
+        expect(rows[8]!.checksum).toBe(PROBE_MIGRATION.checksum);
+        expect(rows[8]!.applied_at).toBe(FIXED_NOW_MS + 1_000);
       } finally {
         session.close();
       }

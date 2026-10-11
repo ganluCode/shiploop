@@ -140,3 +140,10 @@ planDigest 的批准或拒绝决策**（`feature.plan.decide`，能力位
   （无「提交审批」两段流；决策命令从 draft/approved 直达 approved/draft）；
 - F-003（有效批准核验与失效处理）将扩展摘要覆盖面（要求/验收/依赖/检查政策）
   与核验服务；本任务的决策记录与查询是其输入面，不提前实现核验。
+- F-003 已交付（写回登记）：决策身份自迁移 v8 起精确化为复合身份
+  `（subject_digest, check_policy_digest）`——§2 的「同一主体同一摘要至多一条
+  决策」在五列唯一索引下指同一主体同一**身份**至多一条；适用检查政策以显式
+  绑定核验值（`approvals.check_policy_digest`）覆盖，planDigest 计算不变（与
+  P03-1 摘要契约兼容）；`features.approvals` 新增 `validity` 块（fail-closed
+  有效批准评估与明确过期原因）。详见
+  `docs/p03-2-plan-approval-verification-contract.md`。

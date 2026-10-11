@@ -765,6 +765,11 @@ export const approvals = sqliteTable('approvals', {
   subjectId: text('subject_id').notNull(),
   /** 批准绑定的主体内容摘要（feature_plan 时为 planDigest；64 位小写 hex）。 */
   subjectDigest: text('subject_digest').notNull(),
+  /**
+   * 决策绑定的适用检查政策身份摘要（P03-2 / F-003 迁移 v8；64 位小写 hex）。
+   * v7 遗留行为 NULL——不等于任何当前身份（核验 fail-closed）。
+   */
+  checkPolicyDigest: text('check_policy_digest'),
   /** 决策状态（approved/rejected 为 P03-2 写入值；pending/superseded 先冻结枚举）。 */
   status: text('status').notNull().default('pending'),
   /** 决策人（可信主体 principalId；请求不能伪造身份）。 */
@@ -779,6 +784,10 @@ export const approvals = sqliteTable('approvals', {
   check(
     'approvals_subject_digest_sha256_check',
     sql`length(${table.subjectDigest}) = 64 AND ${table.subjectDigest} NOT GLOB '*[^0-9a-f]*'`,
+  ),
+  check(
+    'approvals_check_policy_digest_sha256_check',
+    sql`${table.checkPolicyDigest} IS NULL OR (length(${table.checkPolicyDigest}) = 64 AND ${table.checkPolicyDigest} NOT GLOB '*[^0-9a-f]*')`,
   ),
   check(
     'approvals_status_enum_check',
@@ -803,12 +812,15 @@ export const approvals = sqliteTable('approvals', {
     columns: [table.projectId, table.subjectId],
     foreignColumns: [features.projectId, features.id],
   }).onDelete('restrict'),
-  // 同一主体同一摘要至多一条决策（两个竞争决定最多一个生效的 DDL 兑现）。
+  // 同一主体同一身份（计划摘要 + 检查政策摘要复合，F-003 / v8）至多一条决策
+  // （两个竞争决定最多一个生效的 DDL 兑现；检查政策变化后同一 planDigest 可
+  // 重新批准当前身份，旧行作为历史证据保留）。
   uniqueIndex('approvals_subject_decision_unique').on(
     table.projectId,
     table.subjectType,
     table.subjectId,
     table.subjectDigest,
+    table.checkPolicyDigest,
   ),
   index('approvals_project_subject_index').on(table.projectId, table.subjectId),
 ]);

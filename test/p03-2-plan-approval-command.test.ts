@@ -19,8 +19,8 @@
  *   持久化故障（Feature 更新/决策记录插入/事件/回执注入点）整组回滚；
  * - 查询能区分当前决定与历史决定（按 planDigest 绑定），不把拒绝显示为已批准
  *   （feature.planStatus 权威）；重开真实库后决策状态一致；
- * - 迁移接续：v5/v6 前序库升级到 v7 保留既有数据、事件水位与历史 checksum，
- *   空库全量迁移记录 v1..v7。
+ * - 迁移接续：v5/v6/v7 前序库升级到 v8 保留既有数据、事件水位与历史
+ *   checksum，空库全量迁移记录 v1..v8。
  */
 import { createHash, randomUUID } from 'node:crypto';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -879,7 +879,7 @@ describe('F-002 决策查询（当前 vs 历史、不把拒绝显示为已批准
 });
 
 describe('F-002 迁移接续（版本接续 P03-1 v6；不改历史 checksum）', () => {
-  it('P02 v5 库升级到 v7：既有数据、事件水位与历史 checksum 逐项保留', async () => {
+  it('P02 v5 库升级到 v8：既有数据、事件水位与历史 checksum 逐项保留', async () => {
     const box = createCommandsTestFixture({ prefix: 'shiploop-p032-f002-v5-' });
     fixture = box;
     const session = openSqliteStorageSession({ path: box.dbPath });
@@ -904,16 +904,17 @@ describe('F-002 迁移接续（版本接续 P03-1 v6；不改历史 checksum）'
 
       await migrateSqliteStorage(session, { nowUtcMs: () => NOW + 1_000 });
 
-      // v1..v5 记录与 checksum 原样保留；v6/v7 为新增增量。
+      // v1..v5 记录与 checksum 原样保留；v6/v7/v8 为新增增量。
       const afterRows = session.database
         .prepare<[], { version: number; checksum: string }>(
           'SELECT version, checksum FROM schema_migrations ORDER BY version',
         )
         .all();
       expect(afterRows.slice(0, 5)).toEqual(beforeRows);
-      expect(afterRows.map((row) => row.version)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+      expect(afterRows.map((row) => row.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
       expect(afterRows[5]!.checksum).toBe(SQLITE_MIGRATIONS[5]!.checksum);
       expect(afterRows[6]!.checksum).toBe(SQLITE_MIGRATIONS[6]!.checksum);
+      expect(afterRows[7]!.checksum).toBe(SQLITE_MIGRATIONS[7]!.checksum);
       // 既有数据与事件水位保留；approvals 空表就绪。
       expect(
         session.database.prepare<[string], { display_name: string; labels: string }>(
@@ -935,7 +936,7 @@ describe('F-002 迁移接续（版本接续 P03-1 v6；不改历史 checksum）'
     }
   });
 
-  it('P03-1 v6 库升级到 v7：计划结构与既有 plan_status 逐字段保留', async () => {
+  it('P03-1 v6 库升级到 v8：计划结构与既有 plan_status 逐字段保留', async () => {
     const box = createCommandsTestFixture({ prefix: 'shiploop-p032-f002-v6-' });
     fixture = box;
     const session = openSqliteStorageSession({ path: box.dbPath });
@@ -968,7 +969,7 @@ describe('F-002 迁移接续（版本接续 P03-1 v6；不改历史 checksum）'
     }
   });
 
-  it('空库全量迁移记录 v1..v7 且 checksum 与迁移清单一致', async () => {
+  it('空库全量迁移记录 v1..v8 且 checksum 与迁移清单一致', async () => {
     const box = createCommandsTestFixture({ prefix: 'shiploop-p032-f002-empty-' });
     fixture = box;
     const session = openSqliteStorageSession({ path: box.dbPath });
@@ -976,8 +977,8 @@ describe('F-002 迁移接续（版本接续 P03-1 v6；不改历史 checksum）'
       const result = await migrateSqliteStorage(session, { nowUtcMs: () => NOW });
       expect(result.fromVersion).toBe(0);
       expect(result.toVersion).toBe(SQLITE_MIGRATIONS.length);
-      expect(result.toVersion).toBe(7);
-      expect(result.appliedVersions).toEqual([1, 2, 3, 4, 5, 6, 7]);
+      expect(result.toVersion).toBe(8);
+      expect(result.appliedVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
       const rows = session.database
         .prepare<[], { version: number; checksum: string }>(
           'SELECT version, checksum FROM schema_migrations ORDER BY version',

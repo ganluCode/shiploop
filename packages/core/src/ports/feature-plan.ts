@@ -616,8 +616,12 @@ export function detectPlanDependencyCycle(
  * 确定性业务摘要（planDigest）
  * ------------------------------------------------------------------ */
 
-/** 递归键排序的稳定 JSON 序列化（数组保持元素顺序；对象键按字典序输出）。 */
-function stableStringify(value: unknown): string {
+/**
+ * 递归键排序的稳定 JSON 序列化（数组保持元素顺序；对象键按字典序输出，
+ * undefined 值省略）。P03-2 / F-003 起导出：检查政策身份摘要与 planDigest
+ * 共用同一稳定序列化规则，不另立第二套规范化。
+ */
+export function stableStringify(value: unknown): string {
   if (Array.isArray(value)) {
     return `[${value.map((item) => stableStringify(item)).join(',')}]`;
   }

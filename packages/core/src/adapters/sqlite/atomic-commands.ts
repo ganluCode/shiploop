@@ -96,6 +96,8 @@ export function createSqliteAtomicCommandStore(
           findPlanApproval: guarded(plan.findPlanApprovalInTransaction),
           insertPlanApproval: guarded(plan.insertPlanApprovalInTransaction),
           updateFeaturePlanStatus: guarded(plan.updateFeaturePlanStatusInTransaction),
+          // P03-2 / F-003：有效批准核验的事务内决策记录读取（同一权威视图）。
+          listPlanApprovals: guarded(plan.listPlanApprovalsInTransaction),
           saveReceipt: guarded(receipts.saveReceiptInTransaction),
         });
         try {

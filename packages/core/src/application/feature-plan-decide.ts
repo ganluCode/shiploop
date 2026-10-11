@@ -10,10 +10,12 @@
  * core-design/11 §7（approvals 决策记录表）。
  *
  * 不变量：
- * - 决策绑定**提交时当前 planDigest**：请求携带的摘要与库内当前摘要不一致
+ * - 决策绑定**提交时当前计划身份**：请求携带的摘要与库内当前摘要不一致
  *   （失效摘要，含库内摘要为空）即固化 rejected（fail-closed），不提供执行
  *   依据；实质修订改变摘要后旧摘要决策自然成为历史记录，本用例不改写旧决策
- *   行（查询按摘要区分当前/历史决定）；
+ *   行（查询按摘要区分当前/历史决定）。P03-2 / F-003 起决策同时绑定提交时
+ *   当前适用检查政策身份摘要（checkPolicyDigest；决策身份 = planDigest +
+ *   检查政策摘要复合，同一写事务内从全局+项目当前配置合并计算）；
  * - actor 唯一权威来源是可信主体装配（TrustedPrincipal.principalId）：请求
  *   payload 不能伪造身份（decisionActor/principalId/approval 等字段在信封
  *   校验层即未知键拒绝），记录的 decisionActor 恒为提交主体 principalId；
@@ -54,6 +56,7 @@ import {
 } from '../ports/plan-store.js';
 import type { FeaturePlanDecision, FeaturePlanStatus } from '../ports/plan-store.js';
 import { toPublicFeatureRecord, toPublicPlanApprovalRecord } from '../ports/queries.js';
+import { resolveCurrentCheckPolicyDigest } from './plan-approval-verification.js';
 
 /** 计划批准/拒绝决策命令操作名（与 COMMAND_OPERATIONS 白名单同一冻结名）。 */
 export const FEATURE_PLAN_DECIDE_OPERATION = 'feature.plan.decide' as const;
@@ -71,6 +74,12 @@ export const FEATURE_PLAN_DECIDE_OPERATION = 'feature.plan.decide' as const;
  */
 export const PLAN_DECIDE_IMPACT = Object.freeze({
   recordsDecisionBoundToCurrentPlanDigest: true,
+  /**
+   * P03-2 / F-003：决策同时绑定提交时当前适用检查政策身份（内容摘要，同一
+   * 写事务内从全局+项目当前配置合并计算）；决策身份 = planDigest +
+   * checkPolicyDigest 复合。
+   */
+  bindsCurrentCheckPolicyIdentity: true,
   changesFeaturePlanStatus: true,
   changesFeatureOwnRevision: true,
   preservesPlanDigest: true,
@@ -158,16 +167,33 @@ export function submitFeaturePlanDecide(
     return rejected({ reason: 'plan_digest_mismatch', entityType: 'feature' });
   }
 
+  // 3b) P03-2 / F-003：当前适用检查政策身份（同一写事务内从全局+项目当前
+  //     配置合并计算的政策内容摘要）随决策绑定——不依赖可变配置路径、
+  //     通用配置 revision 或 labels。
+  const globalSettings = transaction.getGlobalSettingsOrNull();
+  const projectSettings = transaction.getProjectSettingsOrNull(projectId);
+  const checkPolicyDigest = resolveCurrentCheckPolicyDigest(
+    globalSettings === null
+      ? null
+      : { scopeRevision: globalSettings.revision, payload: globalSettings.payload },
+    projectSettings === null
+      ? null
+      : { scopeRevision: projectSettings.revision, payload: projectSettings.payload },
+  );
+
   // 4) 空任务不可执行计划：零 Task 草稿不可作为执行依据被批准或拒绝
   //    （与 FEATURE_NOT_EXECUTABLE_REASONS 的 no_tasks 同一词汇）。
   if (snapshot.tasks.length === 0) {
     return rejected({ reason: 'no_tasks', entityType: 'feature' });
   }
 
-  // 5) 重复竞争决策：同主体同摘要至多一条决策（两个竞争决定最多一个生效；
-  //    事务内重核 + DDL 唯一索引兜底，翻转任何既有决策都必须先实质修订）。
+  // 5) 重复竞争决策：同主体同身份（planDigest + 检查政策摘要复合）至多一条
+  //    决策（两个竞争决定最多一个生效；事务内重核 + DDL 唯一索引兜底，
+  //    翻转任何既有决策都必须先实质修订；检查政策变化后同一 planDigest 可
+  //    重新批准当前身份，旧行作为历史证据保留）。
   if (
-    transaction.findPlanApproval(projectId, featureId, envelope.payload.planDigest) !== undefined
+    transaction.findPlanApproval(projectId, featureId, envelope.payload.planDigest, checkPolicyDigest) !==
+    undefined
   ) {
     return rejected({ reason: 'approval_already_decided', entityType: 'feature' });
   }
@@ -216,6 +242,7 @@ export function submitFeaturePlanDecide(
     subjectType: 'feature_plan',
     subjectId: featureId,
     subjectDigest: feature.planDigest,
+    checkPolicyDigest,
     status: outcome.recordStatus,
     decisionActor: identity.principalId,
     ...(envelope.payload.reason === null ? {} : { reason: envelope.payload.reason }),

@@ -90,6 +90,8 @@ const FORBIDDEN_TABLE_NAMES = [
 ];
 
 const VALID_SHA256 = 'ab'.repeat(32);
+/** 第二个合法 64 位小写 hex（P03-2 / F-003：检查政策身份摘要种子）。 */
+const VALID_SHA256_B = 'cd'.repeat(32);
 const OTHER_SHA256 = 'cd'.repeat(32);
 const NOW_MS = 1_700_000_123_456;
 
@@ -264,7 +266,7 @@ function seedFeature(
   ).run(id, NOW_MS, projectId, NOW_MS, phaseId, planDigest);
 }
 
-/** P03-2 / F-002 计划决策种子：已决定（approved）记录绑定 subject_digest。 */
+/** P03-2 / F-002 计划决策种子：已决定（approved）记录绑定 subject_digest + 检查政策摘要（F-003）。 */
 function seedApproval(
   db: CoreDatabase,
   id = 'appr-1',
@@ -272,11 +274,12 @@ function seedApproval(
   subjectId = 'feature-1',
   subjectDigest = VALID_SHA256,
   status = 'approved',
+  checkPolicyDigest: string | null = VALID_SHA256_B,
 ): void {
   db.prepare(
-    'INSERT INTO approvals (id, created_at, project_id, revision, updated_at, subject_type, subject_id, subject_digest, status, decision_actor, reason, decided_at) ' +
-      "VALUES (?, ?, ?, 1, ?, 'feature_plan', ?, ?, ?, 'local-owner', ?, ?)",
-  ).run(id, NOW_MS, projectId, NOW_MS, subjectId, subjectDigest, status, null, NOW_MS);
+    'INSERT INTO approvals (id, created_at, project_id, revision, updated_at, subject_type, subject_id, subject_digest, check_policy_digest, status, decision_actor, reason, decided_at) ' +
+      "VALUES (?, ?, ?, 1, ?, 'feature_plan', ?, ?, ?, ?, 'local-owner', ?, ?)",
+  ).run(id, NOW_MS, projectId, NOW_MS, subjectId, subjectDigest, checkPolicyDigest, status, null, NOW_MS);
 }
 
 // ---------------------------------------------------------------------------
@@ -1321,7 +1324,7 @@ const CONSTRAINT_CASES: readonly ConstraintCase[] = [
     error: /FOREIGN KEY constraint failed/,
   },
   {
-    name: 'approvals 同主体同摘要至多一条决策（两个竞争决定最多一个生效的 DDL 兑现）',
+    name: 'approvals 同主体同身份（摘要 + 检查政策）至多一条决策（两个竞争决定最多一个生效的 DDL 兑现）',
     seed: (db) => {
       seedProject(db);
       seedPhase(db);
@@ -1329,10 +1332,23 @@ const CONSTRAINT_CASES: readonly ConstraintCase[] = [
       seedApproval(db);
     },
     statement:
-      "INSERT INTO approvals (id, created_at, project_id, revision, updated_at, subject_type, subject_id, subject_digest, status, decision_actor, reason, decided_at) VALUES ('ap-2', ?, ?, 1, ?, 'feature_plan', 'feature-1', ?, 'rejected', 'other-actor', NULL, ?)",
-    params: [NOW_MS, 'proj-1', NOW_MS, VALID_SHA256, NOW_MS],
+      "INSERT INTO approvals (id, created_at, project_id, revision, updated_at, subject_type, subject_id, subject_digest, check_policy_digest, status, decision_actor, reason, decided_at) VALUES ('ap-2', ?, ?, 1, ?, 'feature_plan', 'feature-1', ?, ?, 'rejected', 'other-actor', NULL, ?)",
+    params: [NOW_MS, 'proj-1', NOW_MS, VALID_SHA256, VALID_SHA256_B, NOW_MS],
     table: 'approvals',
-    error: /UNIQUE constraint failed: approvals\.project_id, approvals\.subject_type, approvals\.subject_id, approvals\.subject_digest/,
+    error: /UNIQUE constraint failed: approvals\.project_id, approvals\.subject_type, approvals\.subject_id, approvals\.subject_digest, approvals\.check_policy_digest/,
+  },
+  {
+    name: 'approvals.check_policy_digest 非空时必须 64 位小写 hex（F-003 / v8）',
+    seed: (db) => {
+      seedProject(db);
+      seedPhase(db);
+      seedFeature(db);
+    },
+    statement:
+      "INSERT INTO approvals (id, created_at, project_id, revision, updated_at, subject_type, subject_id, subject_digest, check_policy_digest, status, decision_actor, reason, decided_at) VALUES ('ap-x', ?, ?, 1, ?, 'feature_plan', 'feature-1', ?, ?, 'approved', 'local-owner', NULL, ?)",
+    params: [NOW_MS, 'proj-1', NOW_MS, VALID_SHA256, VALID_SHA256.toUpperCase(), NOW_MS],
+    table: 'approvals',
+    error: /CHECK constraint failed: approvals_check_policy_digest_sha256_check/,
   },
   {
     name: 'approvals.revision 必须为正整数（CAS 纪律）',

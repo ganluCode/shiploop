@@ -595,6 +595,35 @@ CREATE UNIQUE INDEX approvals_subject_decision_unique ON approvals (project_id, 
 CREATE INDEX approvals_project_subject_index ON approvals (project_id, subject_id);
 `;
 
+/**
+ * 第八个迁移（P03-2 / F-003）：approvals 决策记录绑定适用检查政策身份。
+ *
+ * 契约依据：docs/p03-2-plan-approval-verification-contract.md（本 Feature 契约
+ * 文档）与 p03-plan-approval PRD 验收标准 2（需求或检查政策改动后不能用旧
+ * 批准执行）；core-design/11 §7（approvals 只批准具体版本，主体摘要变更使旧
+ * 批准失效）。v7 冻结时「检查政策身份未入摘要」由本迁移以**显式绑定核验值**
+ * 落定（planDigest 计算不变，与 P03-1 摘要契约兼容）。
+ *
+ * 变更：
+ * - approvals 新增 check_policy_digest 列（可空；64 位小写 hex CHECK）。v8 起
+ *   决策命令恒写入当前适用检查政策内容摘要（由命令用例在同一写事务内从
+ *   全局+项目当前配置合并计算）；v7 遗留行升级为 NULL——不等于任何当前
+ *   身份，有效批准核验 fail-closed（需重新批准当前身份）；
+ * - 唯一索引重建为 (project_id, subject_type, subject_id, subject_digest,
+ *   check_policy_digest)：决策身份 = 计划摘要 + 检查政策摘要复合——检查政策
+ *   变化后同一 planDigest 可重新批准当前身份（新行），旧行作为历史证据保留；
+ *   SQLite 唯一索引中 NULL 互不相等，v7 遗留行不与新决策冲突。
+ *
+ * 边界：不建配置/计划历史版本表；不重建 approvals 表（既有行原样保留，
+ * 只增列与重建索引）。
+ */
+const MIGRATION_008_SQL = `
+ALTER TABLE approvals ADD COLUMN check_policy_digest TEXT CONSTRAINT approvals_check_policy_digest_sha256_check CHECK (check_policy_digest IS NULL OR (length(check_policy_digest) = 64 AND check_policy_digest NOT GLOB '*[^0-9a-f]*'));
+
+DROP INDEX approvals_subject_decision_unique;
+CREATE UNIQUE INDEX approvals_subject_decision_unique ON approvals (project_id, subject_type, subject_id, subject_digest, check_policy_digest);
+`;
+
 function sha256Hex(text: string): string {
   return createHash('sha256').update(text, 'utf8').digest('hex');
 }
@@ -635,5 +664,10 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
     version: 7,
     sql: MIGRATION_007_SQL,
     checksum: sha256Hex(MIGRATION_007_SQL),
+  },
+  {
+    version: 8,
+    sql: MIGRATION_008_SQL,
+    checksum: sha256Hex(MIGRATION_008_SQL),
   },
 ];

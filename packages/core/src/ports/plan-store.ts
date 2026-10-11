@@ -212,6 +212,11 @@ export interface PlanApprovalRecord {
   readonly subjectId: string;
   /** 批准绑定的主体内容摘要（64 位小写 hex）。 */
   readonly subjectDigest: string;
+  /**
+   * 决策绑定的适用检查政策身份摘要（P03-2 / F-003 迁移 v8；64 位小写 hex）。
+   * v7 遗留行升级为 null——不等于任何当前身份（核验 fail-closed，需重新批准）。
+   */
+  readonly checkPolicyDigest: string | null;
   readonly status: PlanApprovalStatus;
   /** 决策人（可信主体 principalId；pending/superseded 历史形态可空）。 */
   readonly decisionActor: string | null;
@@ -494,6 +499,7 @@ const INSERT_PLAN_APPROVAL_KEYS = [
   'subjectType',
   'subjectId',
   'subjectDigest',
+  'checkPolicyDigest',
   'status',
   'decisionActor',
   'reason',
@@ -505,6 +511,11 @@ export interface ValidatedInsertPlanApprovalInput {
   readonly subjectType: PlanApprovalSubjectType;
   readonly subjectId: string;
   readonly subjectDigest: string;
+  /**
+   * 决策绑定的适用检查政策身份摘要（P03-2 / F-003；必填，由命令用例在同一
+   * 写事务内从当前有效配置计算定值，不接受请求输入）。
+   */
+  readonly checkPolicyDigest: string;
   /** P03-2 决策命令只写 approved/rejected（pending/superseded 随后续功能扩展）。 */
   readonly status: 'approved' | 'rejected';
   /** 决策人（非空；由命令用例以可信主体 principalId 定值，不接受请求输入）。 */
@@ -564,6 +575,7 @@ export function validateInsertPlanApprovalInput(
     subjectType,
     subjectId: validateStableId(object.subjectId, context, 'subjectId'),
     subjectDigest: validateSha256Digest(object.subjectDigest, context, 'subjectDigest'),
+    checkPolicyDigest: validateSha256Digest(object.checkPolicyDigest, context, 'checkPolicyDigest'),
     status,
     decisionActor: requireNonEmptyString(object.decisionActor, context, 'decisionActor').trim(),
     reason: reasonValue === undefined || reasonValue === null ? null : (reasonValue as string).trim(),

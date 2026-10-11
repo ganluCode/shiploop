@@ -170,20 +170,29 @@ export interface CommandTransaction {
    */
   updateTaskStrategy(input: unknown): TaskRecord;
   /**
-   * P03-2 / F-002：按主体摘要查既设计划决策（只读；同一事务内重核「重复竞争
+   * P03-2 / F-002：按主体身份查既设计划决策（只读；同一事务内重核「重复竞争
    * 决策」用）。subjectType 冻结 feature_plan（subjectId 即 Feature 稳定 ID）；
-   * 同一主体同一摘要至多一条决策（DDL 唯一索引兜底），未决策返回 undefined。
+   * F-003 起决策身份 = (subjectDigest, checkPolicyDigest) 复合——同一主体同一
+   * 身份至多一条决策（DDL 唯一索引兜底），未决策返回 undefined。
    */
   findPlanApproval(
     projectId: string,
     featureId: string,
     subjectDigest: string,
+    checkPolicyDigest: string,
   ): PlanApprovalRecord | undefined;
+  /**
+   * P03-2 / F-003：列出目标 Feature 的全部计划决策记录（含历史；同一事务内
+   * 读取，供有效批准核验在写事务内复用同一权威视图）。缺失/跨项目 Feature
+   * 由调用方先行 getFeaturePlan 把关；本原语只按 (projectId, featureId) 读取。
+   */
+  listPlanApprovals(projectId: string, featureId: string): readonly PlanApprovalRecord[];
   /**
    * P03-2 / F-002：插入已决定（approved/rejected）计划决策记录（insert-only；
    * id/revision/时间戳由适配器定值，decisionActor 由命令用例以可信主体
-   * principalId 定值）；目标 Feature 缺失 not_found、跨项目 ownership、同主体
-   * 同摘要已有决策 conflict（零写入）。
+   * principalId 定值，checkPolicyDigest 由命令用例从事务内当前有效配置计算
+   * 定值）；目标 Feature 缺失 not_found、跨项目 ownership、同主体同身份已有
+   * 决策 conflict（零写入）。
    */
   insertPlanApproval(input: unknown): PlanApprovalRecord;
   /**

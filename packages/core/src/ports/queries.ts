@@ -43,6 +43,7 @@ import type {
   TaskRecord,
   TaskStatus,
 } from './plan-store.js';
+import type { PlanApprovalValidity } from './plan-approval-verification.js';
 import {
   isPlainObject,
   rejectUnknownKeys,
@@ -860,6 +861,8 @@ export interface PublicPlanApprovalRecord {
   readonly subjectId: string;
   readonly subjectType: PlanApprovalRecord['subjectType'];
   readonly subjectDigest: string;
+  /** 决策绑定的适用检查政策身份摘要（P03-2 / F-003；v7 遗留行为 null）。 */
+  readonly checkPolicyDigest: string | null;
   readonly status: PlanApprovalRecord['status'];
   readonly decisionActor: string | null;
   readonly reason: string | null;
@@ -876,6 +879,7 @@ export function toPublicPlanApprovalRecord(record: PlanApprovalRecord): PublicPl
     subjectId: record.subjectId,
     subjectType: record.subjectType,
     subjectDigest: record.subjectDigest,
+    checkPolicyDigest: record.checkPolicyDigest,
     status: record.status,
     decisionActor: record.decisionActor,
     reason: record.reason,
@@ -894,9 +898,12 @@ export interface PublicPlanApprovalDecision extends PublicPlanApprovalRecord {
 }
 
 /**
- * features.approvals → {feature, currentDecision, decisions}：Feature 与其全部
- * 决策记录来自同一一致读视图；feature.planStatus 是权威审批状态（拒绝后绝非
- * approved），decisions[].current 区分当前决定与历史决定，不把拒绝显示为已批准。
+ * features.approvals → {feature, currentDecision, decisions, validity}：Feature、
+ * 全部决策记录与全局/项目当前配置来自同一 DEFERRED 一致读视图；
+ * feature.planStatus 是权威审批状态（拒绝后绝非 approved），decisions[].current
+ * 按 planDigest 绑定区分当前决定与历史决定，不把拒绝显示为已批准；
+ * validity（P03-2 / F-003）是同一视图的 fail-closed 有效批准评估
+ * （evaluatePlanApprovalValidity 纯规则），携带明确过期原因。
  */
 export interface FeatureApprovalsResult {
   readonly feature: PublicFeatureRecord;
@@ -904,12 +911,32 @@ export interface FeatureApprovalsResult {
   readonly currentDecision: PublicPlanApprovalDecision | null;
   /** 全部决策记录（含历史；稳定排序：decisionTime → id）。 */
   readonly decisions: readonly PublicPlanApprovalDecision[];
+  /** 有效批准核验（同一权威视图；明确过期原因；批准不是启动授权）。 */
+  readonly validity: PlanApprovalValidity;
 }
 
-/** Feature + 决策记录一致读视图（单一 DEFERRED 读事务内取得）。 */
+/**
+ * 一致读视图内的配置 scope 快照（P03-2 / F-003）：scopeRevision + 已校验
+ * payload；供有效批准核验在同一视图内计算当前适用检查政策身份。
+ */
+export interface SettingsScopeSnapshot {
+  readonly scopeRevision: number;
+  readonly payload: SettingsPayload;
+}
+
+/**
+ * Feature + 决策记录 + 全局/项目当前配置的一致读视图（单一 DEFERRED 读
+ * 事务内取得；配置缺失为 null，与「项目存在但无覆盖」同一语义）。
+ */
 export interface FeatureApprovalsView {
   readonly feature: FeatureRecord;
   readonly approvals: readonly PlanApprovalRecord[];
+  /** 当前计划任务数（零 Task 不可执行；有效批准核验输入）。 */
+  readonly taskCount: number;
+  readonly settings: {
+    readonly global: SettingsScopeSnapshot | null;
+    readonly project: SettingsScopeSnapshot | null;
+  };
 }
 
 /**

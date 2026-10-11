@@ -74,7 +74,9 @@ describe('P03-2 / F-002 计划决策契约文档', () => {
 
   it('决策记录存储与 DDL 契约在文档中可核对（v7/约束/不建历史版本表）', () => {
     const doc = readContractDoc();
-    expect(SQLITE_MIGRATIONS.at(-1)?.version).toBe(7);
+    // v7 建立 approvals 表（v8 属 F-003 检查政策身份绑定，由
+    // test/docs-p03-2-plan-approval-verification-contract.test.ts 守护）。
+    expect(SQLITE_MIGRATIONS[6]!.version).toBe(7);
     expect(SQLITE_MIGRATIONS[6]!.sql).toContain('CREATE TABLE approvals');
     expect(SQLITE_MIGRATIONS[6]!.sql).toContain('approvals_subject_decision_unique');
     expect(SQLITE_MIGRATIONS[6]!.sql).toContain('approvals_feature_same_project_fk');
@@ -101,6 +103,8 @@ describe('P03-2 / F-002 计划决策契约文档', () => {
     const doc = readContractDoc();
     expect(PLAN_DECIDE_IMPACT).toEqual({
       recordsDecisionBoundToCurrentPlanDigest: true,
+      // P03-2 / F-003：决策同时绑定当前适用检查政策身份（复合决策身份）。
+      bindsCurrentCheckPolicyIdentity: true,
       changesFeaturePlanStatus: true,
       changesFeatureOwnRevision: true,
       preservesPlanDigest: true,

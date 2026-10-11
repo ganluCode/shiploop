@@ -55,6 +55,7 @@ import type {
   PlanRecordPage,
 } from '../../ports/queries.js';
 import { validateSha256Digest, validateStableId } from '../../ports/validation.js';
+import { parseStoredSettingsPayload } from '../../ports/settings-schema.js';
 import type { SqliteStorageSession } from './session.js';
 import { transactSqliteConsistentRead, visibilityCondition } from './state-store.js';
 
@@ -128,6 +129,8 @@ interface ApprovalSqlRow {
   readonly subject_type: string;
   readonly subject_id: string;
   readonly subject_digest: string;
+  /** P03-2 / F-003 迁移 v8：决策绑定的适用检查政策身份摘要（v7 遗留为 NULL）。 */
+  readonly check_policy_digest: string | null;
   readonly status: string;
   readonly decision_actor: string | null;
   readonly reason: string | null;
@@ -146,7 +149,7 @@ const SELECT_TASK_DEPENDENCY =
   'SELECT id, created_at, project_id, feature_id, task_id, depends_on_id FROM task_dependencies';
 const SELECT_APPROVAL =
   'SELECT id, created_at, project_id, revision, updated_at, subject_type, subject_id, ' +
-  'subject_digest, status, decision_actor, reason, decided_at FROM approvals';
+  'subject_digest, check_policy_digest, status, decision_actor, reason, decided_at FROM approvals';
 
 /** F-007 纯标签编辑目标映射（冻结表名/SELECT；非用户输入，查询均绑定参数）。 */
 const LABELS_EDIT_TARGET_SPECS: Readonly<
@@ -197,17 +200,27 @@ export interface SqlitePlanAccess {
    */
   updateTaskStrategyInTransaction(input: unknown): TaskRecord;
   /**
-   * P03-2 / F-002：按主体摘要查既设计划决策（只读；subjectType 冻结
-   * feature_plan；同主体同摘要至多一条决策，未决策返回 undefined）。
+   * P03-2 / F-002：按主体身份查既设计划决策（只读；subjectType 冻结
+   * feature_plan；F-003 起决策身份 = (subjectDigest, checkPolicyDigest) 复合，
+   * 同主体同身份至多一条决策，未决策返回 undefined）。
    */
   findPlanApprovalInTransaction(
     projectId: string,
     featureId: string,
     subjectDigest: string,
+    checkPolicyDigest: string,
   ): PlanApprovalRecord | undefined;
   /**
+   * P03-2 / F-003：列出目标 Feature 的全部计划决策记录（事务内只读；稳定
+   * 排序 decided_at → id；供有效批准核验在写事务内复用同一权威视图）。
+   */
+  listPlanApprovalsInTransaction(
+    projectId: string,
+    featureId: string,
+  ): readonly PlanApprovalRecord[];
+  /**
    * P03-2 / F-002：插入已决定（approved/rejected）计划决策记录（insert-only；
-   * 缺失 not_found、跨项目 ownership、同主体同摘要已有决策 conflict）。
+   * 缺失 not_found、跨项目 ownership、同主体同身份已有决策 conflict）。
    */
   insertPlanApprovalInTransaction(input: unknown): PlanApprovalRecord;
   /**
@@ -525,6 +538,7 @@ export function createSqlitePlanAccess(
       subjectType: row.subject_type as PlanApprovalRecord['subjectType'],
       subjectId: row.subject_id,
       subjectDigest: row.subject_digest,
+      checkPolicyDigest: row.check_policy_digest,
       status: row.status as PlanApprovalRecord['status'],
       decisionActor: row.decision_actor,
       reason: row.reason,
@@ -1023,6 +1037,7 @@ export function createSqlitePlanAccess(
     projectId: string,
     featureId: string,
     subjectDigest: string,
+    checkPolicyDigest: string,
   ): PlanApprovalRecord | undefined {
     const operation = 'PlanStore.findPlanApproval';
     assertOpen(operation);
@@ -1030,19 +1045,43 @@ export function createSqlitePlanAccess(
     const validProjectId = validateStableId(projectId, { operation }, 'projectId');
     const validFeatureId = validateStableId(featureId, { operation }, 'featureId');
     const validDigest = validateSha256Digest(subjectDigest, { operation }, 'subjectDigest');
+    // P03-2 / F-003：决策身份 = 计划摘要 + 检查政策摘要复合。
+    const validCheckPolicyDigest = validateSha256Digest(checkPolicyDigest, { operation }, 'checkPolicyDigest');
     const row = session.database
-      .prepare<[string, string, string], ApprovalSqlRow>(
-        `${SELECT_APPROVAL} WHERE project_id = ? AND subject_type = 'feature_plan' AND subject_id = ? AND subject_digest = ?`,
+      .prepare<[string, string, string, string], ApprovalSqlRow>(
+        `${SELECT_APPROVAL} WHERE project_id = ? AND subject_type = 'feature_plan' AND subject_id = ? AND subject_digest = ? AND check_policy_digest = ?`,
       )
-      .get(validProjectId, validFeatureId, validDigest);
+      .get(validProjectId, validFeatureId, validDigest, validCheckPolicyDigest);
     return row === undefined ? undefined : approvalFromRow(row);
   }
 
   /**
+   * P03-2 / F-003：列出目标 Feature 的全部计划决策记录（事务内只读；稳定
+   * 排序 decided_at → id；供有效批准核验在写事务内复用同一权威视图）。
+   */
+  function listPlanApprovalsInTransaction(
+    projectId: string,
+    featureId: string,
+  ): readonly PlanApprovalRecord[] {
+    const operation = 'PlanStore.listPlanApprovals';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const validProjectId = validateStableId(projectId, { operation }, 'projectId');
+    const validFeatureId = validateStableId(featureId, { operation }, 'featureId');
+    const rows = session.database
+      .prepare<[string, string], ApprovalSqlRow>(
+        `${SELECT_APPROVAL} WHERE project_id = ? AND subject_type = 'feature_plan' AND subject_id = ? ORDER BY decided_at, id`,
+      )
+      .all(validProjectId, validFeatureId) as ApprovalSqlRow[];
+    return rows.map((row) => approvalFromRow(row));
+  }
+
+  /**
    * P03-2 / F-002：插入已决定（approved/rejected）计划决策记录（事务内）。
-   * 目标 Feature 缺失 not_found、跨项目 ownership；同主体同摘要已有决策
-   * conflict（重复竞争决策 fail-closed；DDL 唯一索引兜底）；id/revision=1/
-   * 时间戳由适配器定值（UUID v4 + 注入 UTC 毫秒）。
+   * 目标 Feature 缺失 not_found、跨项目 ownership；同主体同身份（计划摘要 +
+   * 检查政策摘要复合，F-003）已有决策 conflict（重复竞争决策 fail-closed；
+   * DDL 唯一索引兜底）；id/revision=1/时间戳由适配器定值（UUID v4 + 注入
+   * UTC 毫秒）。
    */
   function insertPlanApprovalInTransaction(input: unknown): PlanApprovalRecord {
     const operation = 'PlanStore.insertPlanApproval';
@@ -1067,14 +1106,14 @@ export function createSqlitePlanAccess(
       throw ownership(operation, entity, '决策主体不属于声明的项目（跨项目目标被拒绝）');
     }
     const existing = db
-      .prepare<[string, string, string], { id: string }>(
-        "SELECT id FROM approvals WHERE project_id = ? AND subject_type = 'feature_plan' AND subject_id = ? AND subject_digest = ?",
+      .prepare<[string, string, string, string], { id: string }>(
+        "SELECT id FROM approvals WHERE project_id = ? AND subject_type = 'feature_plan' AND subject_id = ? AND subject_digest = ? AND check_policy_digest = ?",
       )
-      .get(valid.projectId, valid.subjectId, valid.subjectDigest);
+      .get(valid.projectId, valid.subjectId, valid.subjectDigest, valid.checkPolicyDigest);
     if (existing !== undefined) {
       throw conflict(
         operation,
-        '同一计划摘要已有决策记录（重复竞争决策拒绝，不覆盖）',
+        '同一计划身份（摘要 + 检查政策）已有决策记录（重复竞争决策拒绝，不覆盖）',
         entity,
         { reason: 'approval_already_decided' },
       );
@@ -1084,8 +1123,8 @@ export function createSqlitePlanAccess(
     try {
       db.prepare(
         'INSERT INTO approvals (id, created_at, project_id, revision, updated_at, subject_type, ' +
-          'subject_id, subject_digest, status, decision_actor, reason, decided_at) ' +
-          'VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)',
+          'subject_id, subject_digest, check_policy_digest, status, decision_actor, reason, decided_at) ' +
+          'VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       ).run(
         id,
         timestamp,
@@ -1094,6 +1133,7 @@ export function createSqlitePlanAccess(
         valid.subjectType,
         valid.subjectId,
         valid.subjectDigest,
+        valid.checkPolicyDigest,
         valid.status,
         valid.decisionActor,
         valid.reason,
@@ -1551,14 +1591,54 @@ export function createSqlitePlanAccess(
       if (featureRow === undefined) {
         return undefined;
       }
+      const feature = featureFromRow(featureRow);
       const approvalRows = db
         .prepare<[string], ApprovalSqlRow>(
           `${SELECT_APPROVAL} WHERE subject_type = 'feature_plan' AND subject_id = ? ORDER BY decided_at, id`,
         )
         .all(id) as ApprovalSqlRow[];
+      // P03-2 / F-003：全局与项目当前配置来自同一 DEFERRED 读视图（供有效
+      // 批准核验在同一权威视图内计算当前适用检查政策身份）；持久 payload
+      // 重新经结构校验，损坏 corrupt 拒绝（fail-closed）。
+      const globalRow = db
+        .prepare<[string], { revision: number; payload: string }>(
+          'SELECT revision, payload FROM global_settings WHERE id = ?',
+        )
+        .get('global');
+      const projectRow = db
+        .prepare<[string], { revision: number; payload: string }>(
+          'SELECT revision, payload FROM project_settings WHERE project_id = ?',
+        )
+        .get(feature.projectId);
       return {
-        feature: featureFromRow(featureRow),
+        feature,
         approvals: approvalRows.map((row) => approvalFromRow(row)),
+        taskCount:
+          db
+            .prepare<[string], { n: number }>('SELECT COUNT(*) AS n FROM tasks WHERE feature_id = ?')
+            .get(id)?.n ?? 0,
+        settings: {
+          global:
+            globalRow === undefined
+              ? null
+              : {
+                  scopeRevision: globalRow.revision,
+                  payload: parseStoredSettingsPayload(globalRow.payload, {
+                    operation,
+                    entity: { type: 'global_settings', id: 'global' },
+                  }),
+                },
+          project:
+            projectRow === undefined
+              ? null
+              : {
+                  scopeRevision: projectRow.revision,
+                  payload: parseStoredSettingsPayload(projectRow.payload, {
+                    operation,
+                    entity: { type: 'project_settings', projectId: feature.projectId },
+                  }),
+                },
+        },
       };
     });
   }
@@ -1624,6 +1704,7 @@ export function createSqlitePlanAccess(
     findPlanApprovalInTransaction,
     insertPlanApprovalInTransaction,
     updateFeaturePlanStatusInTransaction,
+    listPlanApprovalsInTransaction,
     readPhaseRecord,
     readTaskRecord,
     readFeaturePlanView,

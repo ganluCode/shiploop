@@ -118,6 +118,8 @@ import type { ConfigurationService } from './configuration-service.js';
 import type { ExportedSettings } from './configuration-service.js';
 import { mergeEffectiveSettings } from './effective-settings.js';
 import type { EffectiveSettings } from './effective-settings.js';
+import { evaluatePlanApprovalValidity } from '../ports/plan-approval-verification.js';
+import { resolveCurrentCheckPolicyDigest } from './plan-approval-verification.js';
 import type { EventWatermark } from '../ports/events.js';
 
 /** 分页事件读取结果（Core 内部面；F-012 SSE 补读复用）。 */
@@ -806,10 +808,25 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
           ...toPublicPlanApprovalRecord(record),
           current: record.subjectDigest === currentDigest,
         }));
+        // P03-2 / F-003：同一权威读视图的有效批准核验（fail-closed，明确过期
+        // 原因）——适用检查政策身份从视图内全局/项目当前配置合并计算，不依赖
+        // 可变配置路径、通用配置 revision 或 labels。
+        const checkPolicyDigest = resolveCurrentCheckPolicyDigest(
+          view.settings.global,
+          view.settings.project,
+        );
+        const validity = evaluatePlanApprovalValidity({
+          planDigest: view.feature.planDigest,
+          planStatus: view.feature.planStatus,
+          taskCount: view.taskCount,
+          decisions: view.approvals,
+          currentCheckPolicyDigest: checkPolicyDigest,
+        });
         return {
           feature: toPublicFeatureRecord(view.feature),
           currentDecision: decisions.find((decision) => decision.current) ?? null,
           decisions,
+          validity,
         };
       } catch (error) {
         throw mapToPublicError(error, { operation });
