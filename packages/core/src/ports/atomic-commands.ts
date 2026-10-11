@@ -9,6 +9,7 @@
  * Git/进程/文件输出/人审都在事务外，事务内不执行文件流/SDK/Git/网络/长检查。
  */
 import type { CommandReceipt } from './commands.js';
+import type { ArtifactInputRef } from './artifact-store.js';
 import type {
   BaselineAuthorizationRecord,
   BaselineCheckResultRecord,
@@ -116,6 +117,20 @@ export interface CommandTransaction {
    * 对应功能扩展白名单。
    */
   appendPlanEvent(input: unknown): void;
+  /* ---------------------------------------------------------------- *
+   * P03-1 / F-005 计划导入事务内重核原语（只读；同一 BEGIN IMMEDIATE 内）
+   *
+   * 导入用例在提交前以这些原语重核父 Phase（归属/open/CAS）、既有任务身份
+   * （重复业务 ID/跨 Feature 依赖解析）与需求-验收引用制品身份（复用
+   * ArtifactStore.getArtifactInputRef 同一契约语义：缺失 not_found、跨项目
+   * ownership、非 ready/缺内容身份 conflict）；文件完整性 I/O 不在事务内。
+   * ---------------------------------------------------------------- */
+  /** 读取目标 Phase（同项目；缺失 not_found、跨项目 ownership）。 */
+  getPhase(projectId: string, phaseId: string): PhaseRecord;
+  /** 读取同项目 ready 制品的有效输入引用（与 ArtifactStore 同一契约语义）。 */
+  getArtifactInputRef(projectId: string, artifactId: string): ArtifactInputRef;
+  /** 既有任务 → 所属 Feature 的解析（仅返回存在的行；跨 Feature 依赖定位用）。 */
+  getTaskFeatureLinks(taskIds: readonly string[]): ReadonlyMap<string, string>;
   saveReceipt(receipt: unknown): void;
 }
 

@@ -26,7 +26,7 @@ import {
   COMMAND_OPERATIONS,
   COMMAND_OPERATION_SPECS,
 } from '../packages/core/src/ports/commands.ts';
-import { PHASE_CREATED_EVENT_TYPE, PUBLIC_STATE_EVENT_TYPES } from '../packages/core/src/ports/events.ts';
+import { PHASE_CREATED_EVENT_TYPE, FEATURE_PLAN_IMPORTED_EVENT_TYPE, PUBLIC_STATE_EVENT_TYPES } from '../packages/core/src/ports/events.ts';
 import { SETTINGS_SCHEMA_VERSION } from '../packages/core/src/ports/settings-schema.ts';
 import { DESCRIPTION_MAX_LENGTH, LABELS_MAX_COUNT, LABEL_MAX_LENGTH } from '../packages/core/src/ports/validation.ts';
 import * as coreEntry from '../packages/core/src/index.ts';
@@ -129,5 +129,29 @@ describe('F-001 P03-1 计划导入契约文档', () => {
     expect(APP_CAPABILITIES).toContain('phase.write');
     expect(PUBLIC_STATE_EVENT_TYPES).toContain(PHASE_CREATED_EVENT_TYPE);
     expect(PHASE_CREATED_EVENT_TYPE).toBe('phase.created');
+  });
+
+  it('F-005 计划导入命令定案与实现同源（文档、命令/能力/事件白名单与 CAS 语义不漂移）', () => {
+    const doc = readFileSync(contractDocPath, 'utf-8');
+    expect(doc).toContain('feature.plan.import');
+    expect(doc).toContain('feature.plan.imported');
+    expect(doc).toContain('task_already_exists');
+    expect(doc).toContain('artifact_not_usable');
+    expect(doc).toContain('artifact_content_hash_mismatch');
+    expect(doc).toContain('no_strategy_match');
+    expect(doc).toContain('6.5');
+    expect(doc).toContain('9.7');
+    // 文档定案与实现逐项一致（不另立第二套）：信封 expectedRevision 指向 Phase 聚合。
+    expect(COMMAND_OPERATIONS).toContain('feature.plan.import');
+    expect(COMMAND_OPERATION_SPECS['feature.plan.import']).toEqual({
+      scopeKind: 'project',
+      mutation: 'update',
+      capability: 'feature.plan.import',
+    });
+    expect(APP_CAPABILITIES).toContain('feature.plan.import');
+    expect(PUBLIC_STATE_EVENT_TYPES).toContain(FEATURE_PLAN_IMPORTED_EVENT_TYPE);
+    expect(FEATURE_PLAN_IMPORTED_EVENT_TYPE).toBe('feature.plan.imported');
+    expect(typeof coreEntry.submitFeaturePlanImport).toBe('function');
+    expect(coreEntry.FEATURE_PLAN_IMPORT_OPERATION).toBe('feature.plan.import');
   });
 });

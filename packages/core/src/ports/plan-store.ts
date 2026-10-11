@@ -411,18 +411,24 @@ export function validateCreateTaskDependencyInput(
 /** F-004：Phase 创建事件（仅命令路径创建成功写入；脱敏 payload 恒为 {created:true}）。 */
 export const PHASE_CREATED_EVENT_TYPE = 'phase.created';
 
+/**
+ * F-005：Feature 计划导入事件（仅命令路径导入成功写入；脱敏 payload 恒为
+ * {imported:true}，聚合为导入创建的 Feature 自身，aggregateRevision=创建 revision）。
+ */
+export const FEATURE_PLAN_IMPORTED_EVENT_TYPE = 'feature.plan.imported';
+
 /** 计划域事件白名单（顺序即冻结顺序；白名单外不得进入公开事件流）。 */
-export const PLAN_EVENT_TYPES = [PHASE_CREATED_EVENT_TYPE] as const;
+export const PLAN_EVENT_TYPES = [PHASE_CREATED_EVENT_TYPE, FEATURE_PLAN_IMPORTED_EVENT_TYPE] as const;
 export type PlanEventType = (typeof PLAN_EVENT_TYPES)[number];
 
 export interface ValidatedPlanEventAppend {
   readonly projectId: string;
   readonly eventType: PlanEventType;
-  /** Phase 事件聚合恒为 'phase'（aggregateId=Phase 稳定 ID）。 */
-  readonly aggregateType: 'phase';
+  /** phase.created 聚合恒为 'phase'；feature.plan.imported 聚合恒为 'feature'。 */
+  readonly aggregateType: 'phase' | 'feature';
   readonly aggregateId: string;
   readonly aggregateRevision: number;
-  /** 脱敏 payload（phase.created 恒为 {created:true}，不携带业务正文）。 */
+  /** 脱敏 payload（phase.created 恒 {created:true}；feature.plan.imported 恒 {imported:true}）。 */
   readonly payload: Record<string, unknown>;
 }
 
@@ -435,28 +441,34 @@ const PLAN_EVENT_APPEND_KEYS = [
   'payload',
 ] as const;
 
-const PLAN_EVENT_TYPE_SPECS: Readonly<
-  Record<PlanEventType, { readonly aggregateType: 'phase'; readonly payloadKeys: readonly ['created'] }>
-> = Object.freeze({
-  [PHASE_CREATED_EVENT_TYPE]: Object.freeze({
-    aggregateType: 'phase',
-    payloadKeys: ['created'] as const,
+/** 每类事件冻结的聚合类型与脱敏 payload 固定键/值。 */
+interface PlanEventTypeSpec {
+  readonly aggregateType: 'phase' | 'feature';
+  readonly payloadKey: 'created' | 'imported';
+}
+
+const PLAN_EVENT_TYPE_SPECS: Readonly<Record<PlanEventType, PlanEventTypeSpec>> = Object.freeze({
+  [PHASE_CREATED_EVENT_TYPE]: Object.freeze({ aggregateType: 'phase', payloadKey: 'created' }),
+  [FEATURE_PLAN_IMPORTED_EVENT_TYPE]: Object.freeze({
+    aggregateType: 'feature',
+    payloadKey: 'imported',
   }),
 });
 
 export function validatePlanEventAppend(value: unknown, operation: string): ValidatedPlanEventAppend {
-  const context: ValidationContext = { operation, entity: { type: 'phase' } };
-  const object = requirePlainObject(value, context, 'input');
-  rejectUnknownKeys(object, PLAN_EVENT_APPEND_KEYS, context, 'input');
+  const baseContext: ValidationContext = { operation, entity: { type: 'phase' } };
+  const object = requirePlainObject(value, baseContext, 'input');
+  rejectUnknownKeys(object, PLAN_EVENT_APPEND_KEYS, baseContext, 'input');
   const eventTypeValue = object.eventType;
   if (
     typeof eventTypeValue !== 'string' ||
     !(PLAN_EVENT_TYPES as readonly string[]).includes(eventTypeValue)
   ) {
-    throw validationError(context, 'eventType', `必须是 ${PLAN_EVENT_TYPES.join(' / ')}`, eventTypeValue);
+    throw validationError(baseContext, 'eventType', `必须是 ${PLAN_EVENT_TYPES.join(' / ')}`, eventTypeValue);
   }
   const eventType = eventTypeValue as PlanEventType;
   const spec = PLAN_EVENT_TYPE_SPECS[eventType];
+  const context: ValidationContext = { operation, entity: { type: spec.aggregateType } };
   if (object.aggregateType !== spec.aggregateType) {
     throw validationError(context, 'aggregateType', `必须是 ${spec.aggregateType}`, object.aggregateType);
   }
@@ -469,17 +481,22 @@ export function validatePlanEventAppend(value: unknown, operation: string): Vali
     throw validationError(context, 'aggregateRevision', '必须是 ≥1 的安全整数', aggregateRevision);
   }
   const payload = requirePlainObject(object.payload, context, 'payload');
-  rejectUnknownKeys(payload, spec.payloadKeys, context, 'payload');
-  if (payload.created !== true) {
-    throw validationError(context, 'payload.created', '必须是 true（脱敏创建事件固定形状）', payload.created);
+  rejectUnknownKeys(payload, [spec.payloadKey], context, 'payload');
+  if (payload[spec.payloadKey] !== true) {
+    throw validationError(
+      context,
+      `payload.${spec.payloadKey}`,
+      `必须是 true（脱敏事件固定形状）`,
+      payload[spec.payloadKey],
+    );
   }
   return {
     projectId: validateStableId(object.projectId, context, 'projectId'),
     eventType,
-    aggregateType: 'phase',
+    aggregateType: spec.aggregateType,
     aggregateId: validateStableId(object.aggregateId, context, 'aggregateId'),
     aggregateRevision,
-    payload: { created: true },
+    payload: spec.payloadKey === 'created' ? { created: true } : { imported: true },
   };
 }
 

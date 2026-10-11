@@ -70,6 +70,8 @@ export const APP_CAPABILITIES = [
   // P03-1 / F-004：计划域写入能力位（Phase 创建；后续 Phase/计划写命令
   // 能力命名随对应功能冻结，见 docs/p03-1-plan-import-contract.md §6）。
   'phase.write',
+  // P03-1 / F-005：单 Feature 计划导入能力位（命名按契约 §6.1 示例定案）。
+  'feature.plan.import',
 ] as const;
 
 export type AppCapability = (typeof APP_CAPABILITIES)[number];
@@ -103,6 +105,9 @@ export const COMMAND_OPERATIONS = [
   // P03-1 / F-004：Phase 创建（project scope + phase.write；创建类命令，
   // 不携带 expectedRevision；关闭/重开/归档生命周期不在本版本）。
   'phase.create',
+  // P03-1 / F-005：单 Feature 计划导入（project scope + feature.plan.import；
+  // 信封 expectedRevision 为目标 Phase 聚合 CAS，见契约 §6.2 F-005 定案）。
+  'feature.plan.import',
 ] as const;
 
 export type AppOperation = (typeof COMMAND_OPERATIONS)[number];
@@ -161,6 +166,14 @@ export const COMMAND_OPERATION_SPECS: Readonly<Record<AppOperation, CommandOpera
     'baseline.cancel': { scopeKind: 'project', mutation: 'create', capability: 'baseline.run' },
     // P03-1 / F-004：Phase 创建归属 Phase 聚合（docs/p03-1-plan-import-contract.md §6.1）。
     'phase.create': { scopeKind: 'project', mutation: 'create', capability: 'phase.write' },
+    // P03-1 / F-005：计划导入在目标 Phase 聚合上追加成员（Feature 聚合本身为
+    // 新建，服务端生成 revision=1，不建立第二 CAS 权威），信封 expectedRevision
+    // 必填且指向 Phase 聚合当前 revision（docs/p03-1-plan-import-contract.md §6.2）。
+    'feature.plan.import': {
+      scopeKind: 'project',
+      mutation: 'update',
+      capability: 'feature.plan.import',
+    },
   });
 
 /* ------------------------------------------------------------------ *
@@ -429,6 +442,16 @@ export interface ValidatedPhaseCreatePayload {
   readonly labels: string[];
 }
 
+/**
+ * P03-1 / F-005 计划导入 payload：phaseId 为目标 Phase 稳定 ID；plan 为单
+ * Feature 草稿计划（结构深校验由应用层导入事务复用 F-001 纯校验器完成，
+ * 事务内以真实库内解析重核归属/引用/CAS，见 application/feature-plan-import）。
+ */
+export interface ValidatedFeaturePlanImportPayload {
+  readonly phaseId: string;
+  readonly plan: unknown;
+}
+
 interface EnvelopeCommon {
   readonly schemaVersion: 3;
   readonly commandId: string;
@@ -500,6 +523,15 @@ export type ValidatedCommandEnvelope =
       readonly scope: { readonly kind: 'project'; readonly projectId: string };
       readonly expectedRevision: null;
       readonly payload: ValidatedPhaseCreatePayload;
+    })
+  // P03-1 / F-005：计划导入命令信封（expectedRevision=目标 Phase 聚合 CAS；
+  // plan 深校验在应用层导入事务内复用 validateFeaturePlanInput 完成，本层只
+  // 把关 phaseId 形态与 plan 为 JSON 对象——与基线命令同一分层纪律）。
+  | (EnvelopeCommon & {
+      readonly operation: 'feature.plan.import';
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: number;
+      readonly payload: ValidatedFeaturePlanImportPayload;
     });
 
 const ENVELOPE_KEYS = [
@@ -516,6 +548,7 @@ const ENVELOPE_KEYS = [
 const REGISTER_PAYLOAD_KEYS = ['repositoryPath', 'displayName', 'description', 'labels'] as const;
 const METADATA_PAYLOAD_KEYS = ['displayName', 'description', 'labels'] as const;
 const PHASE_CREATE_PAYLOAD_KEYS = ['id', 'title', 'description', 'labels'] as const;
+const FEATURE_PLAN_IMPORT_PAYLOAD_KEYS = ['phaseId', 'plan'] as const;
 
 /**
  * P01 校验器抛 StorageError(validation)，其字段名面向端口输入（'input'、
@@ -687,6 +720,33 @@ function validatePhaseCreatePayload(
   }
 }
 
+function validateFeaturePlanImportPayload(
+  operation: AppOperation,
+  raw: unknown,
+): ValidatedFeaturePlanImportPayload {
+  const object = requireObject(operation, raw, 'payload');
+  // 严格未知键拒绝：projectId 由信封 scope 携带；featureId 由服务端生成，
+  // expectedRevision 唯一权威来源是信封顶层（payload 内出现即未知键）。
+  exactKeys(operation, object, FEATURE_PLAN_IMPORT_PAYLOAD_KEYS, 'payload.');
+  if (!isPlainObjectPayload(object.plan)) {
+    fail(operation, 'invalid_input', 'payload.plan', '必须是 JSON 对象', object.plan);
+  }
+  try {
+    return {
+      phaseId: validateStableId(object.phaseId, { operation }, 'payload.phaseId'),
+      plan: object.plan,
+    };
+  } catch (error) {
+    if (isStorageError(error, 'validation')) {
+      throw new PublicError('invalid_input', operation, undefined, {
+        details: storageValidationDetails(error.details),
+        cause: error,
+      });
+    }
+    throw error;
+  }
+}
+
 function validateSettingsCommandPayload(
   operation: AppOperation,
   raw: unknown,
@@ -826,6 +886,18 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
       scope,
       expectedRevision: null,
       payload: validatePhaseCreatePayload(operation, object.payload),
+    };
+  }
+  if (operation === 'feature.plan.import') {
+    if (scope.kind !== 'project') {
+      fail(operation, 'invalid_input', 'scope.kind', 'scope 种类与操作不匹配');
+    }
+    return {
+      ...base,
+      operation,
+      scope,
+      expectedRevision: expectedRevision as number,
+      payload: validateFeaturePlanImportPayload(operation, object.payload),
     };
   }
   if (operation === 'settings.global.create') {

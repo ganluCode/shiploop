@@ -512,6 +512,8 @@ describe('F-006 Host inspect/overview 路由与握手能力（真实 Host + SQLi
       'baseline.cancel',
       // P03-1 / F-004：Phase 创建经既有 /v1/commands 通用路由接线（集合在 v3 内增量扩张）。
       'phase.create',
+      // P03-1 / F-005：计划导入经既有 /v1/commands 通用路由接线（v3 内增量扩张，同 F-004 先例）。
+      'feature.plan.import',
     ]);
     for (const legacyVersion of [2, 1]) {
       const legacy = await loopbackRequest({

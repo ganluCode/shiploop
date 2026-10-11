@@ -119,6 +119,17 @@ export const WRITE_FAULT_POINTS = Object.freeze({
   ),
   /** P03-1 / F-002 迁移 v6：Phase 业务行插入前（命令事务首个写入即失败）。 */
   phasesBeforeInsert: point('phases', 'BEFORE', 'INSERT', 'phases_before_insert'),
+  /** P03-1 / F-005：Feature 业务行插入前（计划导入事务首个写入即失败）。 */
+  featuresBeforeInsert: point('features', 'BEFORE', 'INSERT', 'features_before_insert'),
+  /** P03-1 / F-005：Task 业务行插入前（Feature 已写、整组回滚验证）。 */
+  tasksBeforeInsert: point('tasks', 'BEFORE', 'INSERT', 'tasks_before_insert'),
+  /** P03-1 / F-005：依赖边插入前（Feature/Task 已写、整组回滚验证）。 */
+  taskDependenciesBeforeInsert: point(
+    'task_dependencies',
+    'BEFORE',
+    'INSERT',
+    'task_dependencies_before_insert',
+  ),
 } satisfies Record<string, WriteFaultPoint>);
 
 /** 允许安装故障触发器的表白名单（与冻结点一致，拒绝任意标识符拼接）。 */

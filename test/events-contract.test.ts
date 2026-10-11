@@ -36,6 +36,7 @@ import {
   EVENT_PAGE_DEFAULT_LIMIT,
   EVENT_PAGE_MAX_LIMIT,
   EVENT_READ_OPERATION,
+  FEATURE_PLAN_IMPORTED_EVENT_TYPE,
   PHASE_CREATED_EVENT_TYPE,
   PUBLIC_EVENT_SCHEMA_VERSION,
   PUBLIC_STATE_EVENT_TYPES,
@@ -130,6 +131,8 @@ describe('F-003 冻结事件封套版本与 §9.2 事件白名单（P02-2 六类
       BASELINE_CANCELLED_EVENT_TYPE,
       // P03-1 / F-004：计划域事件白名单扩展（phase.created，聚合为 Phase 自身）。
       PHASE_CREATED_EVENT_TYPE,
+      // P03-1 / F-005：计划域事件白名单扩展（feature.plan.imported，聚合为导入创建的 Feature）。
+      FEATURE_PLAN_IMPORTED_EVENT_TYPE,
     ]);
     expect(PROJECT_METADATA_UPDATED_EVENT_TYPE).toBe('project.metadata_updated');
     expect(SETTINGS_GLOBAL_CREATED_EVENT_TYPE).toBe('settings.global_created');
@@ -137,6 +140,7 @@ describe('F-003 冻结事件封套版本与 §9.2 事件白名单（P02-2 六类
     expect(BASELINE_AUTHORIZED_EVENT_TYPE).toBe('baseline.authorized');
     expect(BASELINE_CANCELLED_EVENT_TYPE).toBe('baseline.cancelled');
     expect(PHASE_CREATED_EVENT_TYPE).toBe('phase.created');
+    expect(FEATURE_PLAN_IMPORTED_EVENT_TYPE).toBe('feature.plan.imported');
   });
 });
 

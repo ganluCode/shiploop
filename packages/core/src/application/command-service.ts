@@ -59,6 +59,7 @@ import type {
   SettingsWriteConsistency,
 } from '../ports/state-store.js';
 import { validateMergedProjectSettingsWrite } from './configuration-service.js';
+import { FEATURE_PLAN_IMPORT_OPERATION, submitFeaturePlanImport } from './feature-plan-import.js';
 
 export interface CommandService {
   submit(principal: unknown, envelope: unknown): Promise<CommandReceipt>;
@@ -496,6 +497,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           envelope.operation !== 'baseline.run' &&
           envelope.operation !== 'baseline.cancel' &&
           envelope.operation !== 'phase.create' &&
+          envelope.operation !== FEATURE_PLAN_IMPORT_OPERATION &&
           !isSettingsEnvelope(envelope)
         ) {
           throw new PublicError('unsupported', operation);
@@ -643,6 +645,23 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           if (envelope.operation === 'phase.create') {
             // P03-1 / F-004：Phase 创建无事务外 I/O；项目把关/业务/事件/回执同一事务。
             return submitPhaseCreate(principal, envelope, digest, transaction, now);
+          }
+          if (envelope.operation === FEATURE_PLAN_IMPORT_OPERATION) {
+            // P03-1 / F-005：计划导入无事务外 I/O（引用仅索引级身份重核）；
+            // 归属/CAS/引用/配置重核与 Feature/Task/边/事件/回执同一事务。
+            return submitFeaturePlanImport(
+              {
+                principalId: principal.principalId,
+                commandId: envelope.commandId,
+                operation: envelope.operation,
+                scope: envelope.scope,
+                requestDigest: digest,
+                issuedAt: envelope.issuedAt,
+                completedAt: new Date(now).toISOString(),
+              },
+              envelope,
+              transaction,
+            );
           }
           if (isSettingsEnvelope(envelope)) {
             // 新配置命令必定已在事务外完成能力复检与一致性视图（重放已在上面返回）。

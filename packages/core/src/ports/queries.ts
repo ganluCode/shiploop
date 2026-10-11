@@ -30,7 +30,7 @@ import type {
   BaselineOperationRecord,
 } from './baseline-store.js';
 import type { SettingsPayload, SettingsScope } from './settings-schema.js';
-import type { PhaseRecord, PhaseStatus } from './plan-store.js';
+import type { FeatureRecord, PhaseRecord, PhaseStatus } from './plan-store.js';
 import type {
   GlobalSettingsRecord,
   ProjectLabelCount,
@@ -128,6 +128,47 @@ export function toPublicPhaseRecord(phase: PhaseRecord): PublicPhaseRecord {
     revision: phase.revision,
     createdAt: new Date(phase.createdAtUtcMs).toISOString(),
     updatedAt: new Date(phase.updatedAtUtcMs).toISOString(),
+  };
+}
+
+/**
+ * 公开 Feature 记录（P03-1 / F-005）：与 FeatureRecord 字段一一对应，时间字段
+ * 为 ISO UTC；导入命令结果与后续查询响应共用同一转换。不携带策略副本正文
+ * （策略细节经 Task 查询面读取，避免命令结果膨胀）。
+ */
+export interface PublicFeatureRecord {
+  readonly id: string;
+  readonly projectId: string;
+  readonly phaseId: string;
+  readonly title: string;
+  readonly description: string | null;
+  readonly labels: readonly string[];
+  readonly status: FeatureRecord['status'];
+  readonly planStatus: FeatureRecord['planStatus'];
+  readonly planDigest: string | null;
+  readonly sourceRefs: readonly { readonly artifactId: string; readonly contentHash?: string }[];
+  readonly revision: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export function toPublicFeatureRecord(feature: FeatureRecord): PublicFeatureRecord {
+  return {
+    id: feature.id,
+    projectId: feature.projectId,
+    phaseId: feature.phaseId,
+    title: feature.title,
+    description: feature.description,
+    labels: [...feature.labels],
+    status: feature.status,
+    planStatus: feature.planStatus,
+    planDigest: feature.planDigest,
+    sourceRefs: feature.sourceRefs.map(ref =>
+      ref.contentHash === undefined ? { artifactId: ref.artifactId } : { ...ref },
+    ),
+    revision: feature.revision,
+    createdAt: new Date(feature.createdAtUtcMs).toISOString(),
+    updatedAt: new Date(feature.updatedAtUtcMs).toISOString(),
   };
 }
 

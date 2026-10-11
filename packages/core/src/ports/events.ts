@@ -37,7 +37,7 @@ import {
   BASELINE_REASON_CODES,
 } from './baseline.js';
 import { isStorageError } from './errors.js';
-import { PHASE_CREATED_EVENT_TYPE } from './plan-store.js';
+import { FEATURE_PLAN_IMPORTED_EVENT_TYPE, PHASE_CREATED_EVENT_TYPE } from './plan-store.js';
 import { SETTINGS_SCHEMA_VERSION } from './settings-schema.js';
 import {
   GLOBAL_SETTINGS_CREATED_EVENT_TYPE as SETTINGS_GLOBAL_CREATED_EVENT_TYPE,
@@ -61,6 +61,8 @@ export const PUBLIC_EVENT_SCHEMA_VERSION = 1 as const;
 export { PROJECT_REGISTERED_EVENT_TYPE };
 /** P03-1 / F-004：仅命令路径 Phase 创建成功写入（脱敏 payload 恒为 {created:true}）。 */
 export { PHASE_CREATED_EVENT_TYPE };
+/** P03-1 / F-005：仅命令路径 Feature 计划导入成功写入（脱敏 payload 恒 {imported:true}）。 */
+export { FEATURE_PLAN_IMPORTED_EVENT_TYPE };
 /** 仅命令路径全局配置首建成功写入（F-009 已实施；P01 直接服务首建不写事件）。 */
 export { SETTINGS_GLOBAL_CREATED_EVENT_TYPE };
 /** 仅命令路径项目配置首建成功写入（F-009 已实施；P01 直接服务首建不写事件）。 */
@@ -88,6 +90,8 @@ export const PUBLIC_STATE_EVENT_TYPES = [
   BASELINE_CANCELLED_EVENT_TYPE,
   // P03-1 / F-004：计划域事件白名单扩展（aggregate_type='phase'）。
   PHASE_CREATED_EVENT_TYPE,
+  // P03-1 / F-005：计划域事件白名单扩展（aggregate_type='feature'）。
+  FEATURE_PLAN_IMPORTED_EVENT_TYPE,
 ] as const;
 
 export type PublicStateEventType = (typeof PUBLIC_STATE_EVENT_TYPES)[number];
@@ -101,7 +105,8 @@ type EventPayloadKind =
   | 'baselineCheckCompleted'
   | 'baselineCompleted'
   | 'baselineCancelled'
-  | 'phaseCreated';
+  | 'phaseCreated'
+  | 'featurePlanImported';
 
 /** 每类事件冻结的 aggregate_type、scope 种类与 payload 形状。 */
 export interface StateEventTypeSpec {
@@ -176,6 +181,14 @@ export const STATE_EVENT_TYPE_SPECS: Readonly<
     aggregateType: 'phase',
     scopeKind: 'project',
     payloadKind: 'phaseCreated',
+  }),
+  // P03-1 / F-005：Feature 计划导入事件（聚合为导入创建的 Feature 自身；
+  // project_id 非空由 scopeKind='project' 与映射层共同保证，payload 恒为
+  // {imported:true}，不携带计划正文/策略副本/批准语义）。
+  [FEATURE_PLAN_IMPORTED_EVENT_TYPE]: Object.freeze({
+    aggregateType: 'feature',
+    scopeKind: 'project',
+    payloadKind: 'featurePlanImported',
   }),
 });
 
@@ -348,6 +361,17 @@ function validatePhaseCreatedPayload(
     corrupt(operation, 'event_payload_violation');
   }
   return { created: true };
+}
+
+function validateFeaturePlanImportedPayload(
+  payload: Record<string, unknown>,
+  operation: string,
+): Record<string, unknown> {
+  exactPayloadKeys(operation, payload, ['imported']);
+  if (payload.imported !== true) {
+    corrupt(operation, 'event_payload_violation');
+  }
+  return { imported: true };
 }
 
 function validateSummaryNameList(value: unknown): value is string[] {
@@ -582,6 +606,8 @@ export function mapStateEvent(row: unknown, operation: string = EVENT_READ_OPERA
     payload = validateRegisteredPayload(row.payload, operation);
   } else if (spec.payloadKind === 'phaseCreated') {
     payload = validatePhaseCreatedPayload(row.payload, operation);
+  } else if (spec.payloadKind === 'featurePlanImported') {
+    payload = validateFeaturePlanImportedPayload(row.payload, operation);
   } else if (spec.payloadKind === 'changedFields') {
     payload = validateChangedFieldsPayload(row.payload, operation);
   } else if (spec.payloadKind === 'baselineAuthorized') {

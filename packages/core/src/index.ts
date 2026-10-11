@@ -49,3 +49,4 @@ export * from './application/baseline-query-service.js';
 export * from './ports/baseline-execution.js';
 export * from './application/effective-settings.js';
 export * from './application/task-strategy-selection.js';
+export * from './application/feature-plan-import.js';

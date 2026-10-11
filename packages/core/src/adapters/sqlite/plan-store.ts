@@ -38,6 +38,8 @@ import type {
   TaskRecord,
 } from '../../ports/plan-store.js';
 import type { PlanArtifactRef, PlanComplexity } from '../../ports/feature-plan.js';
+import type { ArtifactInputRef } from '../../ports/artifact-store.js';
+import { validateStableId } from '../../ports/validation.js';
 import type { SqliteStorageSession } from './session.js';
 
 export interface SqlitePlanStoreOptions {
@@ -128,6 +130,12 @@ export interface SqlitePlanAccess {
   insertTaskDependencyInTransaction(input: unknown): TaskDependencyRecord;
   /** F-004：计划域事件追加（脱敏 payload；与业务行/回执同一事务组合）。 */
   appendPlanEventInTransaction(input: unknown): void;
+  /** F-005：同项目读取目标 Phase（缺失 not_found、跨项目 ownership）。 */
+  getPhaseInTransaction(projectId: string, phaseId: string): PhaseRecord;
+  /** F-005：同项目 ready 制品有效输入引用（与 ArtifactStore 同一契约语义）。 */
+  getArtifactInputRefInTransaction(projectId: string, artifactId: string): ArtifactInputRef;
+  /** F-005：既有任务 → 所属 Feature 解析（仅返回存在行）。 */
+  getTaskFeatureLinksInTransaction(taskIds: readonly string[]): ReadonlyMap<string, string>;
 }
 
 export function createSqlitePlanAccess(
@@ -617,11 +625,108 @@ export function createSqlitePlanAccess(
     );
   }
 
+  /**
+   * F-005：同项目读取目标 Phase（导入事务内归属重核；缺失 not_found、
+   * 跨项目 ownership，与插入原语同一判定）。
+   */
+  function getPhaseInTransaction(projectId: string, phaseId: string): PhaseRecord {
+    const operation = 'PlanStore.getPhase';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const validProjectId = validateStableId(projectId, { operation }, 'projectId');
+    const validPhaseId = validateStableId(phaseId, { operation }, 'phaseId');
+    const entity: StorageEntityRef = { type: 'phase', projectId: validProjectId, id: validPhaseId };
+    const row = session.database
+      .prepare<[string], PhaseSqlRow>(`${SELECT_PHASE} WHERE id = ?`)
+      .get(validPhaseId);
+    if (row === undefined) {
+      throw notFound(operation, entity, `Phase ${validPhaseId} 不存在`);
+    }
+    if (row.project_id !== validProjectId) {
+      throw ownership(operation, entity, 'Phase 不属于声明的项目（跨项目父级被拒绝）');
+    }
+    return phaseFromRow(row);
+  }
+
+  /**
+   * F-005：导入事务内引用身份重核——与 ArtifactStore.getArtifactInputRef 同一
+   * 契约语义（adapters/sqlite/artifact-store.ts 同一判定：缺失 not_found、跨
+   * 项目 ownership（即使 ready 也不放行）、非 ready 或缺 hash/size 证据
+   * conflict）。索引级身份重核不含文件 I/O（文件完整性核对不在写事务内）。
+   */
+  function getArtifactInputRefInTransaction(projectId: string, artifactId: string): ArtifactInputRef {
+    const operation = 'PlanStore.getArtifactInputRef';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const validProjectId = validateStableId(projectId, { operation }, 'projectId');
+    const validArtifactId = validateStableId(artifactId, { operation }, 'artifactId');
+    const entity: StorageEntityRef = {
+      type: 'artifact',
+      projectId: validProjectId,
+      id: validArtifactId,
+    };
+    const row = session.database
+      .prepare<[string], { id: string; project_id: string; status: string; content_hash: string | null; size_bytes: number | null; storage_locator: string; version: number }>(
+        'SELECT id, project_id, status, content_hash, size_bytes, storage_locator, version FROM artifacts WHERE id = ?',
+      )
+      .get(validArtifactId);
+    if (row === undefined) {
+      throw notFound(operation, entity, `制品 ${validArtifactId} 不存在`);
+    }
+    if (row.project_id !== validProjectId) {
+      throw ownership(operation, entity, '制品不属于请求项目，禁止跨项目访问（即使制品 ready）');
+    }
+    if (row.status !== 'ready' || row.content_hash === null || row.size_bytes === null) {
+      throw conflict(operation, `制品状态 ${row.status} 不能取得有效输入引用（仅核验通过的 ready 制品可用）`, entity, {
+        status: row.status,
+      });
+    }
+    return {
+      artifactId: row.id,
+      projectId: row.project_id,
+      contentHash: row.content_hash,
+      sizeBytes: row.size_bytes,
+      locator: row.storage_locator,
+      version: row.version,
+    };
+  }
+
+  /**
+   * F-005：既有任务 → 所属 Feature 解析（重复业务 ID 预检与跨 Feature 依赖定位；
+   * 输入稳定 ID 逐项校验，仅返回存在的行）。
+   */
+  function getTaskFeatureLinksInTransaction(taskIds: readonly string[]): ReadonlyMap<string, string> {
+    const operation = 'PlanStore.getTaskFeatureLinks';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const links = new Map<string, string>();
+    const seen = new Set<string>();
+    for (const taskId of taskIds) {
+      const validTaskId = validateStableId(taskId, { operation }, 'taskIds');
+      if (seen.has(validTaskId)) {
+        continue;
+      }
+      seen.add(validTaskId);
+      const row = session.database
+        .prepare<[string], { id: string; feature_id: string }>(
+          'SELECT id, feature_id FROM tasks WHERE id = ?',
+        )
+        .get(validTaskId);
+      if (row !== undefined) {
+        links.set(row.id, row.feature_id);
+      }
+    }
+    return links;
+  }
+
   return {
     insertPhaseInTransaction,
     insertFeatureInTransaction,
     insertTaskInTransaction,
     insertTaskDependencyInTransaction,
     appendPlanEventInTransaction,
+    getPhaseInTransaction,
+    getArtifactInputRefInTransaction,
+    getTaskFeatureLinksInTransaction,
   };
 }

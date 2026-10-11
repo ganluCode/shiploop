@@ -225,9 +225,11 @@ P03-1 之后每次收尾仍须跑完整门禁（`npm run verify` 或等价的 te
 
 - 计划导入与修订是 **project scope** 的应用命令（信封 `scope.kind='project'`），目标聚合是
   **Feature 聚合**（Feature + 其 Tasks + 同 Feature 依赖边，在同一写事务内整体提交）；Phase
-  创建（F-004）归属 Phase 聚合，命名与行为已定案于 §6.4。计划导入/修订的能力命名（如
-  `feature.plan.import` / `feature.plan.update`）与命令操作名由 F-009 冻结进
-  `COMMAND_OPERATIONS`/`APP_CAPABILITIES`，本任务不预支。
+  创建（F-004）归属 Phase 聚合，命名与行为已定案于 §6.4。**F-005 定案**：计划导入的
+  能力位与命令操作名即 `feature.plan.import`（原示例命名即定案；实质修订/标签编辑命令随
+  F-007/F-008 冻结），已进入 `COMMAND_OPERATIONS`/`APP_CAPABILITIES`（§6.5）；线消息
+  `WIRE_MESSAGE_SCHEMA_VERSION` 保持 3（与 F-004 同一 v3 内扩张先例，见 §9.6；升版评估
+  仍归 F-009）。
 - 计划 payload 只携带业务内容（§2.1）；projectId/phaseId/featureId 由命令信封（scope 与
   payload 外层字段，按 P02-2 信封规范）与导入事务解析，纯校验不查归属。
 
@@ -236,8 +238,12 @@ P03-1 之后每次收尾仍须跑完整门禁（`npm run verify` 或等价的 te
 - **唯一权威来源是命令信封顶层**（P02-2 §5.1 纪律的延续）：更新类命令必填 ≥1 整数；
   **计划 payload 内出现 `expectedRevision`（或任何 revision 形态字段）即按未知键拒绝**——
   **不建立两个 CAS 权威来源**，payload 与信封各说各话的输入根本进不了校验。
-- **创建（导入新 Feature）**：不携带 expectedRevision（创建类命令禁止携带，P02-2 同纪律）；
-  服务端生成初始 revision。
+- **创建（导入新 Feature，F-005 定案修订）**：Feature 聚合本身是新建，服务端生成初始
+  revision=1，Feature 自身无 CAS、不建立两个 CAS 权威来源；但导入在目标 **Phase 聚合**上
+  追加成员，信封必须携带恰好一个 expectedRevision（= 目标 Phase 聚合当前 revision），
+  导入事务在同一写事务内 CAS 重核（不匹配固化 rejected；Phase 关闭/归档等 revision 变化
+  后旧值导入失败）。本定案收窄 F-001「创建不携带 expectedRevision」的原表述——其原意是
+  「新 Feature 无自身 CAS」，这一点保持不变；张力记录见 §9.7。
 - **更新（编辑既有 Feature 的计划）**：必须携带恰好一个 expectedRevision，对应 **Feature
   聚合的 revision**。Task 与依赖边**没有独立 CAS**：实质修订（F-008）在 Feature 聚合的同一
   写事务内整体替换计划成员与边，一次 CAS 一次递增；标签编辑（F-007）与实质修订共用同一
@@ -277,6 +283,34 @@ P03-1 之后每次收尾仍须跑完整门禁（`npm run verify` 或等价的 te
 - 本命令不执行仓库脚本、不创建执行实体；关闭/重开/归档生命周期不在 P03-1 范围（验收明确
   只提供 Phase 建立入口）。
 
+### 6.5 计划导入命令（F-005 定案）
+
+- 命令操作 `feature.plan.import`（project scope、能力位 `feature.plan.import`；信封必带
+  expectedRevision=目标 Phase 聚合 revision，§6.2 F-005 定案）；payload 只含
+  `phaseId`（稳定 ID）与 `plan`（计划 payload，§2.1 结构），**严格未知键拒绝**：featureId、
+  执行策略、批准、状态、revision 等一律不能经请求输入。计划深校验在应用层导入事务内复用
+  `validateFeaturePlanInput`（操作名 `feature.plan.import`，错误字段定位 `payload.plan.*`），
+  并以事务内真实库解析的既有任务身份为 `externalTasks` 精确区分缺依赖/跨 Feature 依赖。
+- 同一 BEGIN IMMEDIATE 短事务内重核并原子写入：项目授权（不可见/不存在统一 forbidden）、
+  Phase 归属/open 状态与聚合 CAS、既有业务 ID（计划任务 ID 与库内任何任务冲突即
+  `task_already_exists` 固化 rejected）、需求/验收引用制品身份（复用 ArtifactStore
+  `getArtifactInputRef` 同一契约语义：缺失 not_found、跨项目 ownership→forbidden、非
+  ready 或缺内容身份 conflict→`artifact_not_usable` 固化 rejected；携带 contentHash 时与
+  制品当前不可变内容身份不一致→`artifact_content_hash_mismatch` 固化 rejected）、当前
+  全局/项目配置（事务内读取，`selectTaskStrategy` 复制完整策略与来源；无匹配
+  no_strategy_match 抛 invalid_input 整组拒绝）。文件完整性 I/O 不在导入事务内（引用只做
+  索引级身份重核）。
+- 写入顺序：Feature（draft/plan_status=draft、服务端 UUID v4、planDigest）→ Tasks
+  （pending、完整 acceptance/引用/complexity/策略副本与来源）→ 依赖边 →
+  `feature.plan.imported` 脱敏事件（aggregate_type='feature'、payload 恒
+  `{"imported":true}`）→ completed 回执（结果 `{feature, tasks:[{id}], validation:
+  {taskCount, dependencyEdgeCount, executable}}`，feature 为公开记录形态；结果有界、不含
+  策略副本正文；不声称批准/可执行/Task 通过）。零 Task 草稿合法且 validation.executable
+  恒 false。幂等沿用 P02 §5.5（同 commandId 同规范化参数原回执、不同参数
+  `idempotency_key_reuse`）。
+- 本命令不创建 Batch/Run/Attempt、不写批准、不实现计划修订/标签编辑（F-007/F-008）或
+  查询面（F-006）。
+
 ## 7. 测试与守护
 
 - `test/p03-1-plan-validation.test.ts`：合法三 Task 链、空草稿不可执行、结构/DAG 负例全清单
@@ -290,8 +324,15 @@ P03-1 之后每次收尾仍须跑完整门禁（`npm run verify` 或等价的 te
 - `test/p03-1-phase-create-command.test.ts`（F-004）：真实 SQLite 应用测试覆盖 Phase 创建
   同事务持久化（Phase/脱敏事件/回执）与重开可读、幂等重放/参数冲突、重复业务 ID、
   非法元数据与提权字段、归属越权与不存在项目、三个写入边界故障整组回滚、无执行实体。
-- F-002 起的真实 SQLite 迁移/存储原语、F-005 的真实导入事务与竞争测试按各自任务验收，
-  不以本任务的纯函数通过冒充。
+- `test/p03-1-plan-import-command.test.ts`（F-005）：真实 SQLite 应用测试覆盖三 Task 链
+  导入闭环（同事务 Feature/Tasks/边/策略副本/摘要/事件/回执与重开一致）、Phase CAS 与
+  closed/archived 拒绝、重复既有任务 ID、引用重核（缺失/跨项目/非可用/哈希不匹配）、策略
+  副本来源与配置不追溯、结构/DAG 负例零写入、五个写入边界故障整组回滚、空草稿不可执行、
+  授权矩阵。
+- `test/p03-1-plan-import-race.test.ts`（F-005）：三路跨进程真实竞争（导入×2 + 配置 CAS
+  更新）——只提交满足重核条件的完整组、无半成功、每 Feature 策略副本内部一致、配置变化
+  不追溯既有 Task。
+- F-002 的真实 SQLite 迁移/存储原语按其任务验收，不以本任务的纯函数通过冒充。
 
 ## 8. 范围边界（本任务不做）
 
@@ -328,3 +369,8 @@ P03-1 之后每次收尾仍须跑完整门禁（`npm run verify` 或等价的 te
    接线宣告（不漂移守护要求 Core 与接线同步），线消息 `WIRE_MESSAGE_SCHEMA_VERSION` 保持 3
    ——与 P02-3 / F-014 在 v3 内扩张（baseline.cancel）同一先例；「能力集合变化需显式升版」
    的评估仍由 F-009 按 P02-2 纪律执行。**请求核对**。
+7. **导入命令的 expectedRevision 指向（F-005 定案）**：F-001 冻结「创建（导入新 Feature）
+   不携带 expectedRevision」，但 F-005 验收明确要求以「约定的 expectedRevision」导入并在
+   同一事务重核 CAS。定案：信封 expectedRevision 指向**目标 Phase 聚合**（导入在其上追加
+   成员），Feature 自身仍为服务端 revision=1 的新建、无第二 CAS 权威（§6.2 修订）；F-007/
+   F-008 的 Feature 聚合修订 CAS 沿用 §6.2 更新条款不变。**请求核对**。
