@@ -17,6 +17,8 @@ import type {
   BaselineOperationRecord,
 } from './baseline-store.js';
 import type {
+  FeaturePlanReplaceResult,
+  FeaturePlanSnapshot,
   FeatureRecord,
   PhaseRecord,
   TaskDependencyRecord,
@@ -139,6 +141,19 @@ export interface CommandTransaction {
   getArtifactInputRef(projectId: string, artifactId: string): ArtifactInputRef;
   /** 既有任务 → 所属 Feature 的解析（仅返回存在的行；跨 Feature 依赖定位用）。 */
   getTaskFeatureLinks(taskIds: readonly string[]): ReadonlyMap<string, string>;
+  /**
+   * P03-1 / F-008：修订事务内读取 Feature 计划快照（Feature+全部 Task+全部
+   * 边；缺失 not_found、跨项目 ownership 抛出，零写入）。
+   */
+  getFeaturePlan(projectId: string, featureId: string): FeaturePlanSnapshot;
+  /**
+   * P03-1 / F-008：实质计划修订整体替换——既有成员按稳定 ID 保留身份与既有
+   * 策略副本（不因当前默认配置或 complexity 编辑自动更换 executionConfig），
+   * 仅新成员携带创建策略副本；被移除成员与旧边删除，新边插入；Feature 聚合
+   * 一次 CAS 一次递增（expectedRevision 不匹配 conflict）；新成员 ID 与库内
+   * 任何既有任务冲突 conflict；最终边集合事务内 DFS 复核无环。
+   */
+  replaceFeaturePlan(input: unknown): FeaturePlanReplaceResult;
   saveReceipt(receipt: unknown): void;
 }
 

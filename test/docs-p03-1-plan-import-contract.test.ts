@@ -234,4 +234,41 @@ describe('F-001 P03-1 计划导入契约文档', () => {
       propagatesToParentOrChild: false,
     });
   });
+
+  it('F-008 实质计划修订定案与实现同源（文档、命令/能力/事件白名单、影响规则与纯规则不漂移）', () => {
+    const doc = readFileSync(contractDocPath, 'utf-8');
+    expect(doc).toContain('feature.plan.revise');
+    expect(doc).toContain('feature.plan.revised');
+    expect(doc).toContain('feature_not_draft');
+    expect(doc).toContain('active_execution_inputs');
+    expect(doc).toContain('NO_ACTIVE_EXECUTION_INPUTS_PROBE');
+    expect(doc).toContain('不创建假 Run 表');
+    expect(doc).toContain('6.8');
+    expect(doc).toContain('9.9');
+    // 文档定案与实现逐项一致（不另立第二套）：expectedRevision 为 Feature 聚合 revision。
+    expect(COMMAND_OPERATIONS).toContain('feature.plan.revise');
+    expect(COMMAND_OPERATION_SPECS['feature.plan.revise']).toEqual({
+      scopeKind: 'project',
+      mutation: 'update',
+      capability: 'feature.plan.revise',
+    });
+    expect(APP_CAPABILITIES).toContain('feature.plan.revise');
+    expect(PUBLIC_STATE_EVENT_TYPES).toContain(coreEntry.FEATURE_PLAN_REVISED_EVENT_TYPE);
+    expect(coreEntry.FEATURE_PLAN_REVISED_EVENT_TYPE).toBe('feature.plan.revised');
+    // 纯规则与用例经 Core 公共入口导出（不另立私有入口）。
+    expect(coreEntry.FEATURE_PLAN_REVISE_OPERATION).toBe('feature.plan.revise');
+    expect(typeof coreEntry.submitFeaturePlanRevise).toBe('function');
+    expect(typeof coreEntry.decidePlanApprovalValidity).toBe('function');
+    expect(coreEntry.PLAN_REVISE_IMPACT).toMatchObject({
+      replacesPlanMembersWholesale: true,
+      keepsExistingTaskStableIdentity: true,
+      keepsExistingTaskStrategy: true,
+      selectsStrategyForNewTasksOnly: true,
+      updatesPlanDigest: true,
+      invalidatesPriorDigestApprovals: true,
+      keepsDraftPlansDraft: true,
+      requiresSameTransactionActivityGuard: true,
+      createsExecutionEntities: false,
+    });
+  });
 });

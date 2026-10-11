@@ -10,7 +10,9 @@
   `COMMAND_OPERATIONS` 增加 `phase.create`（能力位 `phase.write`、事件 `phase.created`，见
   §6.4），Host `/v1/commands` 通用路由随之受理该命令（接线宣告同步）；CLI 仍无计划入口
   （F-009 接入）。F-006 起 Core 查询面提供计划详情/层级列表/Task DAG（§6.6 定案，能力位
-  复用 `project.read`，Host/CLI 线接入仍归 F-009/F-010）。F-005 起继续改变这些事实时必须同步更新本文与文档守护测试。
+  复用 `project.read`，Host/CLI 线接入仍归 F-009/F-010）。F-008 起实质计划修订命令
+  `feature.plan.revise`（能力位 `feature.plan.revise`、事件 `feature.plan.revised`）进入
+  白名单与 Host 接线（§6.8 定案）。F-005 起继续改变这些事实时必须同步更新本文与文档守护测试。
 - 适用平台：macOS（首个正式支持平台）；Windows/WSL/Linux 未验收。
 - 输入依据：P03-1 任务拆分（`task_list.json`，Feature 工作区）、知识目录
   `architecture-redesign/core-design/02-domain-and-lifecycle.md`（§8 两层 DAG、§10 标题/描述/标签
@@ -395,6 +397,63 @@ F-009）。
   入口**来制造测试前提。标签不参与 planDigest（§4 规范化白名单不含 labels），
   纯标签编辑不改变计划业务身份。
 
+### 6.8 实质计划修订命令（F-008 定案）
+
+未执行草稿的实质修订与纯标签编辑是**可区分的契约**（§6.7）。命令操作
+`feature.plan.revise`（project scope、能力位 `feature.plan.revise`）进入
+`COMMAND_OPERATIONS`/`APP_CAPABILITIES` 并经既有 `POST /v1/commands` 通用路由
+接线；线消息 `WIRE_MESSAGE_SCHEMA_VERSION` 保持 3（同 F-004/F-005/F-007 的
+v3 内扩张先例，升版评估仍归 F-009）。
+
+- **payload 只含 `featureId`（稳定 ID）与 `plan`（修订后的完整计划载荷，
+  §2.1 结构）**，严格未知键拒绝：`planStatus`/批准/执行结果/状态/revision
+  等一律不能经请求输入；信封 expectedRevision 唯一权威来源不变，指向**目标
+  Feature 聚合当前 revision**（§6.2 更新条款）。计划深校验在应用层修订事务
+  内复用 `validateFeaturePlanInput`（操作名 `feature.plan.revise`，错误字段定位
+  `payload.plan.*`），并以事务内真实库解析的既有任务身份为 `externalTasks`
+  精确区分缺依赖/跨 Feature 依赖。
+- **成员整体替换（一次 CAS 一次递增）**：修订在同一写事务内以最终成员/边全集
+  整体替换 Feature 计划：既有 Task 按**稳定 ID 保留身份**（同一行更新，
+  created_at/状态保留，revision 递增一次）；仅新 Task 按创建策略规则（F-003
+  `selectTaskStrategy`）从本事务读取的当前配置复制完整策略与来源；被移除成员
+  与全部旧边删除、新边插入（边插后不可变，整体替换而非逐边修改）；新成员
+  ID 与库内任何其他 Feature 任务冲突即 `task_already_exists` 固化 rejected。
+  **既有 Task 不因当前默认配置或 complexity 编辑自动更换 executionConfig**
+  （替换原语在存储层强制保留策略副本列，仅业务内容列被替换）；Task 策略编辑、
+  重新应用默认与执行输入快照属 P03-2。
+- **同一写事务重核草稿可编辑性与活动执行输入保护**：Feature 业务状态非
+  `draft`（未执行草稿语义）固化 rejected（`feature_not_draft`）；活动执行输入
+  探测在同一写事务内调用（BEGIN IMMEDIATE 串行化，探测与写入间无竞争窗口），
+  queued/running/paused/停止未知等活动依据固化 rejected
+  （`active_execution_inputs`），探测失败 **fail-closed**——异常传播整组回滚、
+  不写回执，绝不把查询失败默认为无活动；未来 start/claim 必须遵守**同一写
+  事务与聚合 CAS 契约**（不能只在事务外查一次或用进程内布尔锁），与修订的
+  竞争由同事务串行化 + Feature 聚合 revision CAS 裁决。P03-1 存储无
+  Batch/Run/Attempt 表，生产装配默认探测即「无执行实体表」的能力边界宣告
+  （`NO_ACTIVE_EXECUTION_INPUTS_PROBE`），不是查询失败兜底；本任务以受控
+  测试装配注入探测验证保护规则，**不创建假 Run 表、不宣称已验证真实 Work
+  竞争**。
+- **批准绑定 planDigest（可独立测试的纯规则）**：实质变化（修订前后摘要不同，
+  含清空/重建计划）使旧摘要批准不可继续生效——planStatus 回 `draft`；摘要
+  不变（标签不在摘要输入内，纯标签变化经由修订载荷）不失效，planStatus 保持。
+  修订后的草稿仍是草稿，不自动批准或启动执行；完整 Approval 记录/决策流程
+  属 P03-2（本阶段不建批准表）。引用重核与导入同一契约语义（缺失 not_found、
+  跨项目 forbidden 抛出；非 ready/内容哈希不匹配固化 rejected）。
+- **CAS 与幂等**：旧 revision 在任何业务写入之前固化 rejected（`conflict`，
+  details 携带 expected/actual/entityType）；同 revision 竞争修订/标签编辑共用
+  同一 Feature 聚合 CAS 空间，仅一个生效；修订提交时保留成员 Task revision
+  递增一次，使并发 Task 标签编辑的旧 revision 失效（§9.9 定案）；同 commandId
+  同规范化参数重放返回原回执（`replayed:true`）零新增写入，不同参数
+  `conflict`（`idempotency_key_reuse`，P02 §5.5）。
+- **同事务脱敏事件与有界回执**：修订成功追加 `feature.plan.revised`（聚合为
+  目标 Feature 自身，aggregateRevision=修订后聚合 revision，payload 恒
+  `{revised:true}`，不携带计划正文/成员变更明细/批准语义）；completed 回执结果
+  含公开 Feature 记录、`tasks:[{id}]`、有界 `memberChanges`
+  （kept/created/removed 计数）与 `validation`（taskCount/dependencyEdgeCount/
+  executable），不携带策略副本正文，不声称批准/可执行/Task 通过/无活动执行。
+  失败（含写入故障）整组回滚：原 Tasks/边/摘要/revision/事件保持一致，不出
+  现成功回执或删除历史证据。
+
 ## 7. 测试与守护
 
 - `test/p03-1-plan-validation.test.ts`：合法三 Task 链、空草稿不可执行、结构/DAG 负例全清单
@@ -423,6 +482,16 @@ F-009）。
   缺能力零写入）与三个写入边界故障整组回滚。
 - `test/p03-1-label-edit-rules.test.ts`（F-007）：纯规则契约（标签编辑影响面、标签规范化
   上限复用、严格未知键、事务输入面、事件白名单与公开映射同源）。
+- `test/p03-1-plan-revise-rules.test.ts`（F-008）：纯规则契约（修订影响面冻结面、批准有效
+  性纯规则矩阵、生产无 Run 装配边界宣告、命令/能力/事件白名单同源、信封与替换原语输入
+  严格未知键与结构/边界/依赖语义）。
+- `test/p03-1-plan-revise-command.test.ts`（F-008）：真实 SQLite 应用测试覆盖保留/新建/移除
+  成员整体替换闭环（既有身份与策略副本保留、新 Task 按当前配置、摘要/事件/回执同事务提交
+  与重开一致）、活动执行输入保护（四类活动依据拒绝 + 探测失败 fail-closed + 保护与 CAS
+  竞争受控装配）、非 draft 拒绝、批准摘要失效与纯标签不失效（隔离装配预置 plan_status）、
+  旧 revision/同 revision 竞争/与标签编辑共用 CAS 空间、依赖环/缺依赖/跨 Feature 依赖、
+  引用重核、新成员 ID 冲突、归属越权与缺能力零写入、六个写入边界故障整组回滚、幂等重放/
+  参数冲突与空草稿修订。
 - F-002 的真实 SQLite 迁移/存储原语按其任务验收，不以本任务的纯函数通过冒充。
 
 ## 8. 范围边界（本任务不做）
@@ -472,3 +541,13 @@ F-009）。
    不递增 Feature 聚合 revision；Feature/Phase 目标与各自聚合 revision 同源，§6.7）。两条
    规则在各自语境内自洽；F-008 实质修订整体替换 Task 成员时对并发 Task 标签编辑的合并/
    失效语义随 F-008 冻结。**请求核对**。
+9. **实质修订的成员合并/递增语义与命令命名（F-008 定案）**：（a）修订提交时保留成员的
+   业务内容（含标签）以本次计划载荷为准整体替换——先行提交的并发 Task 标签编辑结果被
+   修订载荷覆盖（聚合级整体替换语义，Feature 聚合 CAS 是唯一裁决权威）；保留成员行
+   revision 递增一次（无论字段是否实际变化），使后续以旧 Task revision 的标签编辑经
+   CAS 拒绝；新成员 revision=1；被移除成员的历史证据由事件流承载，不伪造成员「从未
+   存在」。（b）命令操作名/能力位定案为 `feature.plan.revise`，事件
+   `feature.plan.revised`（payload 恒 `{revised:true}`）；线消息保持 v3 内扩张先例（§9.6）。
+   （c）生产无 Batch/Run/Attempt 表期间，活动执行输入保护以受控测试装配验证，生产装配
+   默认探测是「无执行实体表」边界宣告而非查询失败兜底；引入执行实体后必须替换为同事务
+   真实查询且保持 fail-closed 与聚合 CAS 契约。**请求核对**。

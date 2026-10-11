@@ -84,6 +84,9 @@ export function createSqliteAtomicCommandStore(
           getPhase: guarded(plan.getPhaseInTransaction),
           getArtifactInputRef: guarded(plan.getArtifactInputRefInTransaction),
           getTaskFeatureLinks: guarded(plan.getTaskFeatureLinksInTransaction),
+          // P03-1 / F-008：实质修订事务内快照读取与整体替换原语。
+          getFeaturePlan: guarded(plan.getFeaturePlanInTransaction),
+          replaceFeaturePlan: guarded(plan.replaceFeaturePlanInTransaction),
           saveReceipt: guarded(receipts.saveReceiptInTransaction),
         });
         try {

@@ -187,6 +187,8 @@ describe('F-002 冻结常量与能力声明', () => {
           'feature.plan.import',
           // P03-1 / F-007：纯标签 CAS 编辑经既有 /v1/commands 通用路由接线。
           'plan.labels.update',
+          // P03-1 / F-008：实质计划修订经既有 /v1/commands 通用路由接线。
+          'feature.plan.revise',
         ],
         queries: [
           'projects.list',

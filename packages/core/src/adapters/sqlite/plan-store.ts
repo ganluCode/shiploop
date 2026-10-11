@@ -30,9 +30,12 @@ import {
   validateCreateTaskDependencyInput,
   validateCreateTaskInput,
   validatePlanEventAppend,
+  validateReplaceFeaturePlanInput,
   validateUpdatePlanEntityLabelsInput,
 } from '../../ports/plan-store.js';
 import type {
+  FeaturePlanReplaceResult,
+  FeaturePlanSnapshot,
   FeatureRecord,
   PhaseRecord,
   TaskDependencyRecord,
@@ -158,6 +161,14 @@ export interface SqlitePlanAccess {
   getArtifactInputRefInTransaction(projectId: string, artifactId: string): ArtifactInputRef;
   /** F-005：既有任务 → 所属 Feature 解析（仅返回存在行）。 */
   getTaskFeatureLinksInTransaction(taskIds: readonly string[]): ReadonlyMap<string, string>;
+  /** F-008：修订事务内读取 Feature 计划快照（缺失 not_found、跨项目 ownership）。 */
+  getFeaturePlanInTransaction(projectId: string, featureId: string): FeaturePlanSnapshot;
+  /**
+   * P03-1 / F-008：实质计划修订整体替换（同一写事务内原子生效）。既有成员
+   * 按稳定 ID 保留身份与策略副本，新成员携带创建策略副本，被移除成员与
+   * 全部旧边删除；Feature 聚合一次 CAS 一次递增。
+   */
+  replaceFeaturePlanInTransaction(input: unknown): FeaturePlanReplaceResult;
   /**
    * F-006 查询读取：单行详情（未命中 undefined；不在写事务内调用）。
    * 可见性折叠由应用层统一处理，本层不区分不存在与跨项目。
@@ -829,6 +840,249 @@ export function createSqlitePlanAccess(
     return links;
   }
 
+  /**
+   * F-008：修订事务内读取 Feature 计划快照（Feature + 全部 Task + 全部边；
+   * 缺失 not_found、跨项目 ownership，与插入/标签编辑原语同一判定）。
+   */
+  function getFeaturePlanInTransaction(projectId: string, featureId: string): FeaturePlanSnapshot {
+    const operation = 'PlanStore.getFeaturePlan';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const validProjectId = validateStableId(projectId, { operation }, 'projectId');
+    const validFeatureId = validateStableId(featureId, { operation }, 'featureId');
+    const entity: StorageEntityRef = { type: 'feature', projectId: validProjectId, id: validFeatureId };
+    const db = session.database;
+    const featureRow = db
+      .prepare<[string], FeatureSqlRow>(`${SELECT_FEATURE} WHERE id = ?`)
+      .get(validFeatureId);
+    if (featureRow === undefined) {
+      throw notFound(operation, entity, `Feature ${validFeatureId} 不存在`);
+    }
+    if (featureRow.project_id !== validProjectId) {
+      throw ownership(operation, entity, 'Feature 不属于声明的项目（跨项目目标被拒绝）');
+    }
+    const taskRows = db
+      .prepare<[string], TaskSqlRow>(`${SELECT_TASK} WHERE feature_id = ? ORDER BY id`)
+      .all(validFeatureId) as TaskSqlRow[];
+    const dependencyRows = db
+      .prepare<[string], TaskDependencySqlRow>(`${SELECT_TASK_DEPENDENCY} WHERE feature_id = ? ORDER BY task_id, depends_on_id`)
+      .all(validFeatureId) as TaskDependencySqlRow[];
+    return {
+      feature: featureFromRow(featureRow),
+      tasks: taskRows.map(taskFromRow),
+      dependencies: dependencyRows.map(taskDependencyFromRow),
+    };
+  }
+
+  /**
+   * P03-1 / F-008：实质计划修订整体替换（同一写事务内）。写入顺序：Feature
+   * 聚合 CAS 条件 UPDATE（一次 CAS 一次递增，先于成员写入）→ 删除全部旧边 →
+   * 删除被移除成员 → 保留成员业务内容 UPDATE（策略副本/状态/创建时间不变，
+   * revision 递增一次）→ 新建成员 INSERT（创建策略副本，pending，revision=1）→
+   * 新边 INSERT。保留/新建由库内既有成员身仈权威划分；新成员 ID 与库内任何
+   * 既有任务冲突即 conflict；最终边集合 DFS 复核无环（防御纵深）。
+   */
+  function replaceFeaturePlanInTransaction(input: unknown): FeaturePlanReplaceResult {
+    const operation = 'PlanStore.replaceFeaturePlan';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const valid = validateReplaceFeaturePlanInput(input, operation);
+    const db = session.database;
+    const entity: StorageEntityRef = {
+      type: 'feature',
+      projectId: valid.projectId,
+      id: valid.featureId,
+    };
+    const featureRow = db
+      .prepare<[string], FeatureSqlRow>(`${SELECT_FEATURE} WHERE id = ?`)
+      .get(valid.featureId);
+    if (featureRow === undefined) {
+      throw notFound(operation, entity, `Feature ${valid.featureId} 不存在`);
+    }
+    if (featureRow.project_id !== valid.projectId) {
+      throw ownership(operation, entity, 'Feature 不属于声明的项目（跨项目目标被拒绝）');
+    }
+    // 库内既有成员身份（同事务读取，串行化无竞争窗口）。
+    const existingRows = db
+      .prepare<[string], TaskSqlRow>(`${SELECT_TASK} WHERE feature_id = ? ORDER BY id`)
+      .all(valid.featureId) as TaskSqlRow[];
+    const existingIds = new Set(existingRows.map((row) => row.id));
+    const finalIds = new Set(valid.tasks.map((task) => task.id));
+    // 新成员 ID 全局唯一性：与库内任何其他 Feature 任务冲突即拒绝（不覆盖）。
+    for (const task of valid.tasks) {
+      if (existingIds.has(task.id)) {
+        continue;
+      }
+      const clash = db
+        .prepare<[string], { feature_id: string }>('SELECT feature_id FROM tasks WHERE id = ?')
+        .get(task.id);
+      if (clash !== undefined) {
+        throw conflict(
+          operation,
+          `任务 ${task.id} 已存在（重复身份拒绝，不覆盖）`,
+          { type: 'task', projectId: valid.projectId, id: task.id },
+          { reason: 'task_already_exists', taskId: task.id },
+        );
+      }
+    }
+    // 最终边集合环检测（防御纵深；应用层纯校验已先行）。
+    assertNoDependencyCycle(valid.dependencies, operation, entity);
+
+    const keptTasks = valid.tasks.filter((task) => existingIds.has(task.id));
+    const createdTasks = valid.tasks.filter((task) => !existingIds.has(task.id));
+    const removedTaskIds = existingRows
+      .filter((row) => !finalIds.has(row.id))
+      .map((row) => row.id);
+
+    // Feature 聚合 CAS：先比对再单语句条件 UPDATE（防御纵深，事务内串行化）。
+    const casConflict = (): StorageError =>
+      conflict(operation, '计划修订 CAS 不匹配（旧 revision 拒绝）', entity, {
+        reason: 'conflict',
+        expectedRevision: valid.expectedRevision,
+        actualRevision: featureRow.revision,
+        entityType: 'feature',
+      });
+    if (featureRow.revision !== valid.expectedRevision) {
+      throw casConflict();
+    }
+    const timestamp = nowUtcMs();
+    /** 防御纵深：DDL 约束违规映射为结构化错误（按写入目标表选择 kind，不泄漏 SQL 原文）。 */
+    const guarded = <R>(kind: 'feature' | 'task' | 'task_dependency', run: () => R): R => {
+      try {
+        return run();
+      } catch (error) {
+        if (error instanceof StorageError) {
+          throw error;
+        }
+        throw mapConstraintError(error, operation, entity, kind);
+      }
+    };
+    guarded('feature', () => {
+      const updatedFeature = db
+        .prepare(
+          'UPDATE features SET title = ?, description = ?, labels = ?, source_refs = ?, plan_digest = ?, ' +
+            'plan_status = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ?',
+        )
+        .run(
+          valid.feature.title,
+          valid.feature.description,
+          JSON.stringify(valid.feature.labels),
+          JSON.stringify(valid.feature.sourceRefs),
+          valid.feature.planDigest,
+          valid.feature.planStatus,
+          timestamp,
+          valid.featureId,
+          valid.expectedRevision,
+        );
+      if (updatedFeature.changes !== 1) {
+        throw casConflict();
+      }
+    });
+
+    // 旧边整体删除（边插后不可变；修订在聚合事务内整体替换）。
+    guarded('task_dependency', () => {
+      db.prepare<[string]>('DELETE FROM task_dependencies WHERE feature_id = ?').run(valid.featureId);
+    });
+    // 被移除成员删除（历史证据由事件流承载，不伪造成员“从未存在”）。
+    for (const removedId of removedTaskIds) {
+      guarded('task', () => {
+        db.prepare<[string, string]>('DELETE FROM tasks WHERE feature_id = ? AND id = ?').run(
+          valid.featureId,
+          removedId,
+        );
+      });
+    }
+    // 保留成员：业务内容整体替换（含标签），策略副本/状态/创建时间不变，
+    // revision 递增一次（聚合级整体替换的一部分，与 Feature 聚合同组生效）。
+    for (const task of keptTasks) {
+      guarded('task', () => {
+        const updatedTask = db
+          .prepare(
+            'UPDATE tasks SET title = ?, description = ?, labels = ?, complexity = ?, acceptance = ?, ' +
+              'requirements_refs = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND feature_id = ?',
+          )
+          .run(
+            task.title,
+            task.description,
+            JSON.stringify(task.labels),
+            task.complexity,
+            JSON.stringify(task.acceptance),
+            JSON.stringify(task.requirementsRefs),
+            timestamp,
+            task.id,
+            valid.featureId,
+          );
+        if (updatedTask.changes !== 1) {
+          throw new StorageError(
+            'corrupt',
+            operation,
+            `${operation}: 保留成员 ${task.id} 在替换中缺失（防御纵深拒绝）`,
+            {
+              entity: { type: 'task', id: task.id, projectId: valid.projectId },
+              details: { reason: 'kept_member_missing' },
+            },
+          );
+        }
+      });
+    }
+    // 新建成员：创建策略副本 + pending + revision=1（状态恒为创建初值）。
+    for (const task of createdTasks) {
+      guarded('task', () => {
+        db.prepare(
+          'INSERT INTO tasks (id, created_at, project_id, revision, updated_at, feature_id, title, status, ' +
+            'complexity, description, labels, acceptance, requirements_refs, execution_config, config_source, config_source_key) ' +
+            "VALUES (?, ?, ?, 1, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)",
+        ).run(
+          task.id,
+          timestamp,
+          valid.projectId,
+          timestamp,
+          valid.featureId,
+          task.title,
+          task.complexity,
+          task.description,
+          JSON.stringify(task.labels),
+          JSON.stringify(task.acceptance),
+          JSON.stringify(task.requirementsRefs),
+          JSON.stringify(task.executionConfig),
+          task.configSource,
+          task.configSourceKey,
+        );
+      });
+    }
+    // 新边插入（端点已在端口校验内限定为最终成员集合）。
+    for (const edge of valid.dependencies) {
+      guarded('task_dependency', () => {
+        db.prepare(
+          'INSERT INTO task_dependencies (id, created_at, revision, updated_at, project_id, feature_id, task_id, depends_on_id) ' +
+            'VALUES (?, ?, 1, ?, ?, ?, ?, ?)',
+        ).run(
+          randomUUID(),
+          timestamp,
+          timestamp,
+          valid.projectId,
+          valid.featureId,
+          edge.taskId,
+          edge.dependsOnId,
+        );
+      });
+    }
+
+    const feature = featureFromRow(
+      db.prepare<[string], FeatureSqlRow>(`${SELECT_FEATURE} WHERE id = ?`).get(valid.featureId)!,
+    );
+    const tasks = (
+      db.prepare<[string], TaskSqlRow>(`${SELECT_TASK} WHERE feature_id = ? ORDER BY id`).all(valid.featureId) as TaskSqlRow[]
+    ).map(taskFromRow);
+    return {
+      feature,
+      tasks,
+      keptTaskIds: keptTasks.map((task) => task.id),
+      createdTaskIds: createdTasks.map((task) => task.id),
+      removedTaskIds,
+    };
+  }
+
   /* ------------------ F-006 查询读取（非事务写路径） ------------------ */
 
   /** 查询读取：写事务内调用是编程错误（查询面绝不并入写事务/不产生副作用）。 */
@@ -1016,6 +1270,8 @@ export function createSqlitePlanAccess(
     getPhaseInTransaction,
     getArtifactInputRefInTransaction,
     getTaskFeatureLinksInTransaction,
+    getFeaturePlanInTransaction,
+    replaceFeaturePlanInTransaction,
     readPhaseRecord,
     readTaskRecord,
     readFeaturePlanView,

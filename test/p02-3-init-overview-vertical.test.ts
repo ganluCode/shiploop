@@ -516,6 +516,8 @@ describe('F-006 Host inspect/overview 路由与握手能力（真实 Host + SQLi
       'feature.plan.import',
       // P03-1 / F-007：纯标签 CAS 编辑经既有 /v1/commands 通用路由接线（v3 内增量扩张）。
       'plan.labels.update',
+      // P03-1 / F-008：实质计划修订经既有 /v1/commands 通用路由接线（v3 内增量扩张）。
+      'feature.plan.revise',
     ]);
     for (const legacyVersion of [2, 1]) {
       const legacy = await loopbackRequest({

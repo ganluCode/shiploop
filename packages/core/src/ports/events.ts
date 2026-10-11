@@ -40,6 +40,7 @@ import { isStorageError } from './errors.js';
 import {
   FEATURE_LABELS_UPDATED_EVENT_TYPE,
   FEATURE_PLAN_IMPORTED_EVENT_TYPE,
+  FEATURE_PLAN_REVISED_EVENT_TYPE,
   PHASE_CREATED_EVENT_TYPE,
   PHASE_LABELS_UPDATED_EVENT_TYPE,
   TASK_LABELS_UPDATED_EVENT_TYPE,
@@ -74,6 +75,8 @@ export { FEATURE_PLAN_IMPORTED_EVENT_TYPE };
  * {labelsUpdated:true}，聚合为目标实体自身，不携带标签正文/计划语义）。
  */
 export { PHASE_LABELS_UPDATED_EVENT_TYPE, FEATURE_LABELS_UPDATED_EVENT_TYPE, TASK_LABELS_UPDATED_EVENT_TYPE };
+/** P03-1 / F-008：仅命令路径实质计划修订成功写入（脱敏 payload 恒 {revised:true}）。 */
+export { FEATURE_PLAN_REVISED_EVENT_TYPE };
 /** 仅命令路径全局配置首建成功写入（F-009 已实施；P01 直接服务首建不写事件）。 */
 export { SETTINGS_GLOBAL_CREATED_EVENT_TYPE };
 /** 仅命令路径项目配置首建成功写入（F-009 已实施；P01 直接服务首建不写事件）。 */
@@ -107,6 +110,8 @@ export const PUBLIC_STATE_EVENT_TYPES = [
   PHASE_LABELS_UPDATED_EVENT_TYPE,
   FEATURE_LABELS_UPDATED_EVENT_TYPE,
   TASK_LABELS_UPDATED_EVENT_TYPE,
+  // P03-1 / F-008：实质计划修订事件（聚合为目标 Feature 自身）。
+  FEATURE_PLAN_REVISED_EVENT_TYPE,
 ] as const;
 
 export type PublicStateEventType = (typeof PUBLIC_STATE_EVENT_TYPES)[number];
@@ -122,7 +127,8 @@ type EventPayloadKind =
   | 'baselineCancelled'
   | 'phaseCreated'
   | 'featurePlanImported'
-  | 'planLabelsUpdated';
+  | 'planLabelsUpdated'
+  | 'featurePlanRevised';
 
 /** 每类事件冻结的 aggregate_type、scope 种类与 payload 形状。 */
 export interface StateEventTypeSpec {
@@ -222,6 +228,13 @@ export const STATE_EVENT_TYPE_SPECS: Readonly<
     aggregateType: 'task',
     scopeKind: 'project',
     payloadKind: 'planLabelsUpdated',
+  }),
+  // P03-1 / F-008：实质计划修订事件（聚合为目标 Feature 自身；payload 恒为
+  // {revised:true}，不携带计划正文/成员变更明细/批准语义）。
+  [FEATURE_PLAN_REVISED_EVENT_TYPE]: Object.freeze({
+    aggregateType: 'feature',
+    scopeKind: 'project',
+    payloadKind: 'featurePlanRevised',
   }),
 });
 
@@ -405,6 +418,18 @@ function validateFeaturePlanImportedPayload(
     corrupt(operation, 'event_payload_violation');
   }
   return { imported: true };
+}
+
+/** P03-1 / F-008：实质计划修订事件脱敏 payload（恒为 {revised:true}，无计划正文）。 */
+function validateFeaturePlanRevisedPayload(
+  payload: Record<string, unknown>,
+  operation: string,
+): Record<string, unknown> {
+  exactPayloadKeys(operation, payload, ['revised']);
+  if (payload.revised !== true) {
+    corrupt(operation, 'event_payload_violation');
+  }
+  return { revised: true };
 }
 
 /** P03-1 / F-007：纯标签编辑事件脱敏 payload（恒为 {labelsUpdated:true}，无标签正文）。 */
@@ -655,6 +680,8 @@ export function mapStateEvent(row: unknown, operation: string = EVENT_READ_OPERA
     payload = validateFeaturePlanImportedPayload(row.payload, operation);
   } else if (spec.payloadKind === 'planLabelsUpdated') {
     payload = validatePlanLabelsUpdatedPayload(row.payload, operation);
+  } else if (spec.payloadKind === 'featurePlanRevised') {
+    payload = validateFeaturePlanRevisedPayload(row.payload, operation);
   } else if (spec.payloadKind === 'changedFields') {
     payload = validateChangedFieldsPayload(row.payload, operation);
   } else if (spec.payloadKind === 'baselineAuthorized') {

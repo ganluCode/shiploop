@@ -60,6 +60,11 @@ import type {
 } from '../ports/state-store.js';
 import { validateMergedProjectSettingsWrite } from './configuration-service.js';
 import { FEATURE_PLAN_IMPORT_OPERATION, submitFeaturePlanImport } from './feature-plan-import.js';
+import {
+  FEATURE_PLAN_REVISE_OPERATION,
+  submitFeaturePlanRevise,
+} from './feature-plan-revise.js';
+import type { FeaturePlanReviseGuards } from './feature-plan-revise.js';
 import { PLAN_LABELS_UPDATE_OPERATION, submitPlanLabelsUpdate } from './plan-labels-update.js';
 
 export interface CommandService {
@@ -87,6 +92,11 @@ export interface CommandServiceOptions {
   readonly baselineService?: BaselineService;
   /** P02-3 / F-014：baseline.cancel 的取消执行端口（不传则取消命令 unsupported）。 */
   readonly baselineCancel?: BaselineCancelPort;
+  /**
+   * P03-1 / F-008：实质计划修订守卫（受控测试装配注入活动执行输入探测；
+   * 缺省为生产「无执行实体表」边界宣告，见 feature-plan-revise）。
+   */
+  readonly featurePlanReviseGuards?: FeaturePlanReviseGuards;
   readonly nowUtcMs?: () => number;
 }
 
@@ -148,6 +158,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
   const capabilityCatalog = options.capabilityCatalog;
   const baselineService = options.baselineService;
   const baselineCancel = options.baselineCancel;
+  const featurePlanReviseGuards = options.featurePlanReviseGuards;
   const nowUtcMs = options.nowUtcMs ?? Date.now;
 
   /** 既有项目元数据 CAS：业务 + metadata_updated 事件 + 回执同一事务（F-007）。 */
@@ -500,6 +511,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           envelope.operation !== 'phase.create' &&
           envelope.operation !== FEATURE_PLAN_IMPORT_OPERATION &&
           envelope.operation !== PLAN_LABELS_UPDATE_OPERATION &&
+          envelope.operation !== FEATURE_PLAN_REVISE_OPERATION &&
           !isSettingsEnvelope(envelope)
         ) {
           throw new PublicError('unsupported', operation);
@@ -680,6 +692,25 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
               },
               envelope,
               transaction,
+            );
+          }
+          if (envelope.operation === FEATURE_PLAN_REVISE_OPERATION) {
+            // P03-1 / F-008：实质计划修订无事务外 I/O；项目把关/草稿可编辑性/
+            // 活动执行输入保护/聚合 CAS/引用与策略重核/整体替换/脱敏事件/
+            // 回执同一事务。
+            return submitFeaturePlanRevise(
+              {
+                principalId: principal.principalId,
+                commandId: envelope.commandId,
+                operation: envelope.operation,
+                scope: envelope.scope,
+                requestDigest: digest,
+                issuedAt: envelope.issuedAt,
+                completedAt: new Date(now).toISOString(),
+              },
+              envelope,
+              transaction,
+              featurePlanReviseGuards,
             );
           }
           if (isSettingsEnvelope(envelope)) {

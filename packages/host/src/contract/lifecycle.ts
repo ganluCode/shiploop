@@ -63,6 +63,9 @@ export const APPLICATION_COMMAND_CAPABILITIES = [
   // P03-1 / F-007：纯标签 CAS 编辑经既有 POST /v1/commands 通用路由接线
   //（同一命令面；CLI 标签编辑入口仍由后续任务接入）。
   'plan.labels.update',
+  // P03-1 / F-008：实质计划修订经既有 POST /v1/commands 通用路由接线
+  //（同一命令面；CLI 计划修订入口仍由后续任务接入）。
+  'feature.plan.revise',
 ] as const;
 
 /** P02-2 §11.3：Host 实际接线的应用查询（含回执/结果读取与快照；P02-3 / F-006 新增静态接入两项；F-014 新增基线分页/详情/证据正文三项）。 */

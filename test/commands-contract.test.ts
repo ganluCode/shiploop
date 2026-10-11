@@ -113,6 +113,8 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       'feature.plan.import',
       // P03-1 / F-007：纯标签 CAS 编辑能力位。
       'plan.labels.write',
+      // P03-1 / F-008：实质计划修订能力位。
+      'feature.plan.revise',
     ]);
     expect(LOCAL_OWNER_PRINCIPAL_ID).toBe('local-owner');
     expect(LOCAL_OWNER_CAPABILITIES.size).toBe(APP_CAPABILITIES.length);
@@ -139,6 +141,8 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       'feature.plan.import',
       // P03-1 / F-007：纯标签 CAS 编辑（project scope + plan.labels.write；实体自身 revision CAS）。
       'plan.labels.update',
+      // P03-1 / F-008：实质计划修订（project scope + feature.plan.revise；Feature 聚合 CAS）。
+      'feature.plan.revise',
     ]);
     expect(COMMAND_OPERATION_SPECS).toEqual({
       'project.register': { scopeKind: 'registration', mutation: 'create', capability: 'project.register' },
@@ -153,6 +157,7 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       'phase.create': { scopeKind: 'project', mutation: 'create', capability: 'phase.write' },
       'feature.plan.import': { scopeKind: 'project', mutation: 'update', capability: 'feature.plan.import' },
       'plan.labels.update': { scopeKind: 'project', mutation: 'update', capability: 'plan.labels.write' },
+      'feature.plan.revise': { scopeKind: 'project', mutation: 'update', capability: 'feature.plan.revise' },
     });
     for (const spec of Object.values(COMMAND_OPERATION_SPECS)) {
       expect(APP_CAPABILITIES).toContain(spec.capability);

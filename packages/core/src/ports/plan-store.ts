@@ -34,8 +34,10 @@
 import { StorageError } from './errors.js';
 import type { StorageEntityRef } from './errors.js';
 import {
+  PLAN_DEPENDENCY_EDGES_MAX_COUNT,
   PLAN_FEATURE_SOURCE_REFS_MAX_COUNT,
   PLAN_TASK_REQUIREMENTS_REFS_MAX_COUNT,
+  PLAN_TASKS_MAX_COUNT,
   detectPlanDependencyCycle,
   validatePlanAcceptance,
   validatePlanArtifactRefs,
@@ -186,20 +188,6 @@ const CREATE_FEATURE_KEYS = [
   'labels',
   'sourceRefs',
   'planDigest',
-] as const;
-const CREATE_TASK_KEYS = [
-  'projectId',
-  'featureId',
-  'id',
-  'title',
-  'description',
-  'labels',
-  'complexity',
-  'acceptance',
-  'requirementsRefs',
-  'executionConfig',
-  'configSource',
-  'configSourceKey',
 ] as const;
 const CREATE_TASK_DEPENDENCY_KEYS = ['projectId', 'featureId', 'taskId', 'dependsOnId'] as const;
 
@@ -391,10 +379,51 @@ export interface ValidatedCreateTaskInput {
   readonly configSourceKey: string | null;
 }
 
-export function validateCreateTaskInput(value: unknown, operation: string): ValidatedCreateTaskInput {
-  const context: ValidationContext = { operation, entity: { type: 'task' } };
-  const object = requirePlainObject(value, context, 'input');
-  rejectUnknownKeys(object, CREATE_TASK_KEYS, context, 'input');
+/** Task 成员业务/策略字段（F-005 创建与 F-008 替换共用；不含归属字段）。 */
+const PLAN_TASK_MEMBER_KEYS = [
+  'id',
+  'title',
+  'description',
+  'labels',
+  'complexity',
+  'acceptance',
+  'requirementsRefs',
+  'executionConfig',
+  'configSource',
+  'configSourceKey',
+] as const;
+
+export interface ValidatedPlanTaskMemberFields {
+  readonly id: string;
+  readonly title: string;
+  readonly description: string | null;
+  readonly labels: string[];
+  readonly complexity: PlanComplexity | null;
+  readonly acceptance: { criteria: string[] };
+  readonly requirementsRefs: PlanArtifactRef[];
+  readonly executionConfig: Record<string, unknown>;
+  readonly configSource: string;
+  readonly configSourceKey: string | null;
+}
+
+/**
+ * Task 成员字段共用校验（F-002 创建输入与 F-008 替换成员同一规则；严格未知键
+ * 拒绝，策略副本仅校验「普通 JSON 对象且有界」，完整语义由 F-003 应用层校验）。
+ * extraKeys 允许创建面附加归属字段（projectId/featureId），替换面不传。
+ */
+function validatePlanTaskMemberFields(
+  object: Record<string, unknown>,
+  context: ValidationContext,
+  fieldPrefix: string,
+  extraKeys: readonly string[] = [],
+): ValidatedPlanTaskMemberFields {
+  rejectUnknownKeys(
+    object,
+    extraKeys.length > 0 ? [...PLAN_TASK_MEMBER_KEYS, ...extraKeys] : PLAN_TASK_MEMBER_KEYS,
+    context,
+    fieldPrefix,
+  );
+  const field = (name: string): string => `${fieldPrefix}.${name}`;
 
   const complexityValue = object.complexity;
   let complexity: PlanComplexity | null = null;
@@ -405,7 +434,7 @@ export function validateCreateTaskInput(value: unknown, operation: string): Vali
     ) {
       throw validationError(
         context,
-        'complexity',
+        field('complexity'),
         `必须是 ${TASK_COMPLEXITY_VALUES.join(' / ')} 或 null/省略（复用配置复杂度取值）`,
         complexityValue,
       );
@@ -417,7 +446,7 @@ export function validateCreateTaskInput(value: unknown, operation: string): Vali
   if (!isPlainObject(executionConfigValue)) {
     throw validationError(
       context,
-      'executionConfig',
+      field('executionConfig'),
       '必须是普通 JSON 对象（完整策略副本；完整策略语义由应用层校验）',
       executionConfigValue,
     );
@@ -426,33 +455,42 @@ export function validateCreateTaskInput(value: unknown, operation: string): Vali
   if (serializedBytes > EXECUTION_CONFIG_MAX_BYTES) {
     throw validationError(
       context,
-      'executionConfig',
+      field('executionConfig'),
       `序列化后不得超过 ${EXECUTION_CONFIG_MAX_BYTES} 字节（实际 ${serializedBytes}）`,
     );
   }
 
   const configSourceKey = object.configSourceKey;
   return {
-    projectId: validateStableId(object.projectId, context, 'projectId'),
-    featureId: validateStableId(object.featureId, context, 'featureId'),
-    id: validateStableId(object.id, context, 'id'),
-    title: validatePlanTitle(object.title, context, 'title'),
-    description: validatePlanDescription(object.description, context, 'description'),
-    labels: normalizeLabels(object.labels, context),
+    id: validateStableId(object.id, context, field('id')),
+    title: validatePlanTitle(object.title, context, field('title')),
+    description: validatePlanDescription(object.description, context, field('description')),
+    labels: normalizeLabels(object.labels, context, field('labels')),
     complexity,
-    acceptance: validatePlanAcceptance(object.acceptance, context, 'acceptance'),
+    acceptance: validatePlanAcceptance(object.acceptance, context, field('acceptance')),
     requirementsRefs: validatePlanArtifactRefs(
       object.requirementsRefs,
       context,
-      'requirementsRefs',
+      field('requirementsRefs'),
       PLAN_TASK_REQUIREMENTS_REFS_MAX_COUNT,
     ),
     executionConfig: executionConfigValue,
-    configSource: requireNonEmptyString(object.configSource, context, 'configSource').trim(),
+    configSource: requireNonEmptyString(object.configSource, context, field('configSource')).trim(),
     configSourceKey:
       configSourceKey === undefined || configSourceKey === null
         ? null
-        : requireNonEmptyString(configSourceKey, context, 'configSourceKey').trim(),
+        : requireNonEmptyString(configSourceKey, context, field('configSourceKey')).trim(),
+  };
+}
+
+export function validateCreateTaskInput(value: unknown, operation: string): ValidatedCreateTaskInput {
+  const context: ValidationContext = { operation, entity: { type: 'task' } };
+  const object = requirePlainObject(value, context, 'input');
+  const member = validatePlanTaskMemberFields(object, context, 'input', ['projectId', 'featureId']);
+  return {
+    projectId: validateStableId(object.projectId, context, 'projectId'),
+    featureId: validateStableId(object.featureId, context, 'featureId'),
+    ...member,
   };
 }
 
@@ -496,6 +534,261 @@ export function validateCreateTaskDependencyInput(
 }
 
 /* ------------------------------------------------------------------ *
+ * F-008 实质计划修订：计划快照读取与整体替换输入（同一写事务内使用）
+ *
+ * 修订在 Feature 聚合的同一写事务内整体替换计划成员与依赖边（一次 CAS
+ * 一次递增）；既有 Task 按稳定 ID 保留身份与既有策略副本（不因当前默认
+ * 配置或 complexity 编辑自动更换 executionConfig），仅新 Task 携带创建时
+ * 选定的策略副本。替换原语以库内既有成员身份为准确划分保留/新建/移除。
+ * ------------------------------------------------------------------ */
+
+/** 同一事务内读取的 Feature 计划快照（Feature + 全部 Task + 全部依赖边）。 */
+export interface FeaturePlanSnapshot {
+  readonly feature: FeatureRecord;
+  readonly tasks: readonly TaskRecord[];
+  readonly dependencies: readonly TaskDependencyRecord[];
+}
+
+/** 替换后的 Feature 计划（含保留/新建/移除成员分类结果）。 */
+export interface FeaturePlanReplaceResult {
+  readonly feature: FeatureRecord;
+  /** 替换后的最终 Task 成员（id 升序）。 */
+  readonly tasks: readonly TaskRecord[];
+  /** 保留成员（既有稳定身份，策略副本未变）的稳定 ID（输入序）。 */
+  readonly keptTaskIds: readonly string[];
+  /** 新建成员（按创建策略规则携带策略副本）的稳定 ID（输入序）。 */
+  readonly createdTaskIds: readonly string[];
+  /** 被本次修订移除的既有成员稳定 ID（快照序）。 */
+  readonly removedTaskIds: readonly string[];
+}
+
+export interface ValidatedReplaceFeaturePlanInput {
+  readonly projectId: string;
+  readonly featureId: string;
+  /** Feature 聚合当前 revision（唯一 CAS 权威；≥1 安全整数）。 */
+  readonly expectedRevision: number;
+  readonly feature: {
+    readonly title: string;
+    readonly description: string | null;
+    readonly labels: string[];
+    readonly sourceRefs: PlanArtifactRef[];
+    readonly planDigest: string | null;
+    /** 修订后计划审批状态（由批准有效性纯规则决定；仅限冻结枚举）。 */
+    readonly planStatus: FeaturePlanStatus;
+  };
+  readonly tasks: ValidatedPlanTaskMemberFields[];
+  readonly dependencies: { readonly taskId: string; readonly dependsOnId: string }[];
+}
+
+const REPLACE_FEATURE_PLAN_KEYS = [
+  'projectId',
+  'featureId',
+  'expectedRevision',
+  'feature',
+  'tasks',
+  'dependencies',
+] as const;
+const REPLACE_FEATURE_PLAN_FEATURE_KEYS = [
+  'title',
+  'description',
+  'labels',
+  'sourceRefs',
+  'planDigest',
+  'planStatus',
+] as const;
+const REPLACE_FEATURE_PLAN_DEPENDENCY_KEYS = ['taskId', 'dependsOnId'] as const;
+
+/**
+ * F-008：整体替换输入校验（unknown → 已校验形态；失败零副作用）。严格未知键
+ * 拒绝：成员 mode/身份状态/批准/revision 等不经输入面（保留/新建由库内既有
+ * 成员身仈权威划分）；重复 Task ID、自依赖、重复边、指向最终集合外的边一律
+ * 拒绝；成员数/边数复用计划边界常量（防御纵深，应用层纯校验已先行）。
+ */
+export function validateReplaceFeaturePlanInput(
+  value: unknown,
+  operation: string,
+): ValidatedReplaceFeaturePlanInput {
+  const context: ValidationContext = { operation, entity: { type: 'feature' } };
+  const object = requirePlainObject(value, context, 'input');
+  rejectUnknownKeys(object, REPLACE_FEATURE_PLAN_KEYS, context, 'input');
+
+  const expectedRevision = object.expectedRevision;
+  if (
+    typeof expectedRevision !== 'number' ||
+    !Number.isSafeInteger(expectedRevision) ||
+    expectedRevision < 1
+  ) {
+    throw validationError(context, 'expectedRevision', '必须是 ≥1 的安全整数', expectedRevision);
+  }
+
+  const featureObject = requirePlainObject(object.feature, context, 'feature');
+  rejectUnknownKeys(featureObject, REPLACE_FEATURE_PLAN_FEATURE_KEYS, context, 'feature');
+  const planStatus = featureObject.planStatus;
+  if (
+    typeof planStatus !== 'string' ||
+    !(FEATURE_PLAN_STATUSES as readonly string[]).includes(planStatus)
+  ) {
+    throw validationError(
+      context,
+      'feature.planStatus',
+      `必须是 ${FEATURE_PLAN_STATUSES.join(' / ')}`,
+      planStatus,
+    );
+  }
+  const feature = {
+    title: validatePlanTitle(featureObject.title, context, 'feature.title'),
+    description: validatePlanDescription(featureObject.description, context, 'feature.description'),
+    labels: normalizeLabels(featureObject.labels, context, 'feature.labels'),
+    sourceRefs: validatePlanArtifactRefs(
+      featureObject.sourceRefs,
+      context,
+      'feature.sourceRefs',
+      PLAN_FEATURE_SOURCE_REFS_MAX_COUNT,
+    ),
+    planDigest:
+      featureObject.planDigest === undefined || featureObject.planDigest === null
+        ? null
+        : validateSha256Digest(featureObject.planDigest, context, 'feature.planDigest'),
+    planStatus: planStatus as FeaturePlanStatus,
+  };
+
+  if (!Array.isArray(object.tasks)) {
+    throw validationError(context, 'tasks', '必须是 Task 成员数组（最终成员全集）', object.tasks);
+  }
+  if (object.tasks.length > PLAN_TASKS_MAX_COUNT) {
+    throw validationError(
+      context,
+      'tasks',
+      `最终成员数不得超过 ${PLAN_TASKS_MAX_COUNT}（实际 ${object.tasks.length}）`,
+    );
+  }
+  const taskContext: ValidationContext = { operation, entity: { type: 'task' } };
+  const tasks: ValidatedPlanTaskMemberFields[] = [];
+  const taskIds = new Set<string>();
+  for (const [index, taskValue] of object.tasks.entries()) {
+    const taskObject = requirePlainObject(taskValue, taskContext, `tasks[${index}]`);
+    const member = validatePlanTaskMemberFields(taskObject, taskContext, `tasks[${index}]`);
+    if (taskIds.has(member.id)) {
+      throw new StorageError(
+        'validation',
+        operation,
+        `${operation}: tasks[${index}].id 最终成员内重复 Task ID`,
+        {
+          entity: { type: 'task', id: member.id },
+          details: { field: `tasks[${index}].id`, reason: '重复 Task ID', taskId: member.id },
+        },
+      );
+    }
+    taskIds.add(member.id);
+    tasks.push(member);
+  }
+
+  if (!Array.isArray(object.dependencies)) {
+    throw validationError(
+      context,
+      'dependencies',
+      '必须是依赖边数组（最终边全集）',
+      object.dependencies,
+    );
+  }
+  if (object.dependencies.length > PLAN_DEPENDENCY_EDGES_MAX_COUNT) {
+    throw validationError(
+      context,
+      'dependencies',
+      `最终边数不得超过 ${PLAN_DEPENDENCY_EDGES_MAX_COUNT}（实际 ${object.dependencies.length}）`,
+    );
+  }
+  const dependencies: { taskId: string; dependsOnId: string }[] = [];
+  const edgeKeys = new Set<string>();
+  for (const [index, edgeValue] of object.dependencies.entries()) {
+    const edgeObject = requirePlainObject(edgeValue, context, `dependencies[${index}]`);
+    rejectUnknownKeys(
+      edgeObject,
+      REPLACE_FEATURE_PLAN_DEPENDENCY_KEYS,
+      context,
+      `dependencies[${index}]`,
+    );
+    const taskId = validateStableId(edgeObject.taskId, context, `dependencies[${index}].taskId`);
+    const dependsOnId = validateStableId(
+      edgeObject.dependsOnId,
+      context,
+      `dependencies[${index}].dependsOnId`,
+    );
+    if (taskId === dependsOnId) {
+      throw new StorageError(
+        'validation',
+        operation,
+        `${operation}: dependencies[${index}].dependsOnId 自依赖不被允许`,
+        {
+          entity: { type: 'task', id: taskId },
+          details: {
+            field: `dependencies[${index}].dependsOnId`,
+            reason: '自依赖不被允许',
+            taskId,
+            dependsOnTaskId: dependsOnId,
+          },
+        },
+      );
+    }
+    if (!taskIds.has(taskId)) {
+      throw new StorageError(
+        'validation',
+        operation,
+        `${operation}: dependencies[${index}].taskId 边端点不在最终成员集合内`,
+        {
+          entity: { type: 'task', id: taskId },
+          details: { field: `dependencies[${index}].taskId`, reason: '边端点不在最终成员集合内', taskId },
+        },
+      );
+    }
+    if (!taskIds.has(dependsOnId)) {
+      throw new StorageError(
+        'validation',
+        operation,
+        `${operation}: dependencies[${index}].dependsOnId 边端点不在最终成员集合内`,
+        {
+          entity: { type: 'task', id: dependsOnId },
+          details: {
+            field: `dependencies[${index}].dependsOnId`,
+            reason: '边端点不在最终成员集合内',
+            taskId,
+            dependsOnTaskId: dependsOnId,
+          },
+        },
+      );
+    }
+    const edgeKey = `${taskId}\u0000${dependsOnId}`;
+    if (edgeKeys.has(edgeKey)) {
+      throw new StorageError(
+        'validation',
+        operation,
+        `${operation}: dependencies[${index}] 重复依赖边`,
+        {
+          entity: { type: 'task_dependency' },
+          details: {
+            field: `dependencies[${index}]`,
+            reason: '重复依赖边',
+            taskId,
+            dependsOnTaskId: dependsOnId,
+          },
+        },
+      );
+    }
+    edgeKeys.add(edgeKey);
+    dependencies.push({ taskId, dependsOnId });
+  }
+
+  return {
+    projectId: validateStableId(object.projectId, context, 'projectId'),
+    featureId: validateStableId(object.featureId, context, 'featureId'),
+    expectedRevision,
+    feature,
+    tasks,
+    dependencies,
+  };
+}
+
+/* ------------------------------------------------------------------ *
  * 事件追加契约（F-004：Phase 创建事件；后续计划事件随对应功能扩展白名单）
  *
  * 同步事务原语（供 CommandTransaction.appendPlanEvent 使用）：payload 只允许
@@ -521,6 +814,13 @@ export const PHASE_LABELS_UPDATED_EVENT_TYPE = 'phase.labels.updated';
 export const FEATURE_LABELS_UPDATED_EVENT_TYPE = 'feature.labels.updated';
 export const TASK_LABELS_UPDATED_EVENT_TYPE = 'task.labels.updated';
 
+/**
+ * F-008：实质计划修订事件（仅命令路径修订成功写入；脱敏 payload 恒为
+ * {revised:true}，聚合为目标 Feature 自身，aggregateRevision=修订后聚合
+ * revision）。不携带计划正文/成员变更明细/策略副本/批准语义。
+ */
+export const FEATURE_PLAN_REVISED_EVENT_TYPE = 'feature.plan.revised';
+
 /** 计划域事件白名单（顺序即冻结顺序；白名单外不得进入公开事件流）。 */
 export const PLAN_EVENT_TYPES = [
   PHASE_CREATED_EVENT_TYPE,
@@ -528,6 +828,7 @@ export const PLAN_EVENT_TYPES = [
   PHASE_LABELS_UPDATED_EVENT_TYPE,
   FEATURE_LABELS_UPDATED_EVENT_TYPE,
   TASK_LABELS_UPDATED_EVENT_TYPE,
+  FEATURE_PLAN_REVISED_EVENT_TYPE,
 ] as const;
 export type PlanEventType = (typeof PLAN_EVENT_TYPES)[number];
 
@@ -538,7 +839,7 @@ export interface ValidatedPlanEventAppend {
   readonly aggregateType: 'phase' | 'feature' | 'task';
   readonly aggregateId: string;
   readonly aggregateRevision: number;
-  /** 脱敏 payload（恒定形状：{created:true}/{imported:true}/{labelsUpdated:true}）。 */
+  /** 脱敏 payload（恒定形状：{created:true}/{imported:true}/{labelsUpdated:true}/{revised:true}）。 */
   readonly payload: Record<string, unknown>;
 }
 
@@ -554,7 +855,7 @@ const PLAN_EVENT_APPEND_KEYS = [
 /** 每类事件冻结的聚合类型与脱敏 payload 固定键/值。 */
 interface PlanEventTypeSpec {
   readonly aggregateType: 'phase' | 'feature' | 'task';
-  readonly payloadKey: 'created' | 'imported' | 'labelsUpdated';
+  readonly payloadKey: 'created' | 'imported' | 'labelsUpdated' | 'revised';
 }
 
 const PLAN_EVENT_TYPE_SPECS: Readonly<Record<PlanEventType, PlanEventTypeSpec>> = Object.freeze({
@@ -574,6 +875,10 @@ const PLAN_EVENT_TYPE_SPECS: Readonly<Record<PlanEventType, PlanEventTypeSpec>> 
   [TASK_LABELS_UPDATED_EVENT_TYPE]: Object.freeze({
     aggregateType: 'task',
     payloadKey: 'labelsUpdated',
+  }),
+  [FEATURE_PLAN_REVISED_EVENT_TYPE]: Object.freeze({
+    aggregateType: 'feature',
+    payloadKey: 'revised',
   }),
 });
 
@@ -623,7 +928,9 @@ export function validatePlanEventAppend(value: unknown, operation: string): Vali
         ? { created: true }
         : spec.payloadKey === 'imported'
           ? { imported: true }
-          : { labelsUpdated: true },
+          : spec.payloadKey === 'labelsUpdated'
+            ? { labelsUpdated: true }
+            : { revised: true },
   };
 }
 
