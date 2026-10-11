@@ -1,28 +1,34 @@
 $ npm run accept:p02
-exit=1 signal=null durationMs=391074
+exit=0 signal=null durationMs=248862
 
 
 > shiploop@0.0.0 accept:p02
 > node scripts/acceptance/p02-accept.ts
 
 accept:p02: STEP [1/11] RUN npm run verify（锁文件预检 + test/typecheck/build 实际执行）
-accept:p02: REPORT <SNAPSHOT-ROOT>/artifacts/acceptance/p02/20261011T052537Z-4a12b994（conclusion=fail，pass=0 fail=1 not_run=14）
-accept:p02: FAIL exit 1
-accept:p02: problem: P02-ENG-VERIFY: fail — 步骤退出码 1（非零即失败）
-accept:p02: problem: P02-FR1-UNIQUE-HOST: not_run/startup_failure
-accept:p02: problem: P02-FR1-SHARED-STATE: not_run/startup_failure
-accept:p02: problem: P02-FR1-BASELINE-OK: not_run/startup_failure
-accept:p02: problem: P02-FR2-DUPLICATE-INIT: not_run/startup_failure
-accept:p02: problem: P02-FR2-COMMAND-CONFLICT: not_run/startup_failure
-accept:p02: problem: P02-FR2-SOURCE-PRESERVED: not_run/startup_failure
-accept:p02: problem: P02-FR2-AUTH-REJECT: not_run/startup_failure
-accept:p02: problem: P02-FR2-CLIENT-EXIT: not_run/startup_failure
-accept:p02: problem: P02-FR1-RESTART-QUERY: not_run/startup_failure
-accept:p02: problem: P02-FR2-BASELINE-FAILURE: not_run/startup_failure
-accept:p02: problem: P02-PHASE-FIXTURE: not_run/startup_failure
-accept:p02: problem: P02-PHASE-NOT-RUN: not_run/startup_failure
-accept:p02: problem: P02-PHASE-REPORT: not_run/startup_failure
-accept:p02: problem: P02-ENG-CLEAN-REPLAY: not_run/startup_failure
+accept:p02: STEP [1/11] EXIT 0 npm run verify（锁文件预检 + test/typecheck/build 实际执行） (93.6s)
+accept:p02: STEP [2/11] RUN test/p02-4-dual-cli-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）
+accept:p02: STEP [2/11] EXIT 0 test/p02-4-dual-cli-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） (14.8s)
+accept:p02: STEP [3/11] RUN test/p02-4-idempotency-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）
+accept:p02: STEP [3/11] EXIT 0 test/p02-4-idempotency-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） (14.1s)
+accept:p02: STEP [4/11] RUN test/p02-4-repo-preservation-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）
+accept:p02: STEP [4/11] EXIT 0 test/p02-4-repo-preservation-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） (15.7s)
+accept:p02: STEP [5/11] RUN test/p02-4-negative-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）
+accept:p02: STEP [5/11] EXIT 0 test/p02-4-negative-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） (19.1s)
+accept:p02: STEP [6/11] RUN test/p02-4-restart-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）
+accept:p02: STEP [6/11] EXIT 0 test/p02-4-restart-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） (44.7s)
+accept:p02: STEP [7/11] RUN test/p02-4-baseline-failure-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）
+accept:p02: STEP [7/11] EXIT 0 test/p02-4-baseline-failure-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） (40.9s)
+accept:p02: STEP [8/11] RUN test/p02-4-acceptance-controller.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）
+accept:p02: STEP [8/11] EXIT 0 test/p02-4-acceptance-controller.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） (4.3s)
+accept:p02: STEP [9/11] RUN test/p02-4-report-aggregation.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）
+accept:p02: STEP [9/11] EXIT 0 test/p02-4-report-aggregation.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） (0.3s)
+accept:p02: STEP [10/11] RUN test/p02-4-acceptance-report.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）
+accept:p02: STEP [10/11] EXIT 0 test/p02-4-acceptance-report.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） (0.4s)
+accept:p02: STEP [11/11] RUN test/p02-4-clean-replay.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）
+accept:p02: STEP [11/11] EXIT 0 test/p02-4-clean-replay.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） (0.4s)
+accept:p02: REPORT <SNAPSHOT-ROOT>/artifacts/acceptance/p02/20261011T041825Z-318ffd0d（conclusion=pass，pass=15 fail=0 not_run=0）
+accept:p02: PASS exit 0
 npm notice
 npm notice New major version of npm available! 10.9.3 -> 12.2.0
 npm notice Changelog: https://github.com/npm/cli/releases/tag/v12.2.0
