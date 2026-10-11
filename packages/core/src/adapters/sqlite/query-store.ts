@@ -19,20 +19,32 @@ import type { PersistedStateEventRow } from '../../ports/events.js';
 import type {
   AuthorizedProjectReadStore,
   ConsistentSnapshotStore,
+  FeaturePlanView,
+  PlanListRequest,
+  PlanQueryReadStore,
+  PlanRecordPage,
   RepositoryBindingLookupStore,
   SnapshotView,
 } from '../../ports/queries.js';
+import type {
+  FeatureRecord,
+  PhaseRecord,
+  TaskRecord,
+} from '../../ports/plan-store.js';
 import type { ProjectLabelCount, ProjectPage, RepositoryBindingRecord } from '../../ports/state-store.js';
 import type { SqliteStorageSession } from './session.js';
+import { createSqlitePlanAccess } from './plan-store.js';
 import { createSqliteStateAccess } from './state-store.js';
 import type { SqliteStateStoreOptions } from './state-store.js';
 
-/** F-010 查询读取门面：窄读取端口的并集（应用层 QueryService/OnboardingService 的消费面）。 */
+/** F-010 查询读取门面：窄读取端口的并集（应用层 QueryService/OnboardingService 的消费面）；
+ * P03-1 / F-006 起追加计划层级列表/详情一致读取（PlanQueryReadStore）。 */
 export interface SqliteQueryStore
   extends AuthorizedProjectReadStore,
     ConsistentSnapshotStore,
     StateEventReadStore,
-    RepositoryBindingLookupStore {}
+    RepositoryBindingLookupStore,
+    PlanQueryReadStore {}
 
 export function createSqliteQueryStore(
   session: SqliteStorageSession,
@@ -42,6 +54,10 @@ export function createSqliteQueryStore(
     throw new TypeError('createSqliteQueryStore: session 必须是 SqliteStorageSession');
   }
   const access = createSqliteStateAccess(session, options);
+  const plan = createSqlitePlanAccess(
+    session,
+    options.nowUtcMs === undefined ? {} : { nowUtcMs: options.nowUtcMs },
+  );
   return {
     listVisibleProjects(visibility: unknown, filter: unknown): ProjectPage {
       return access.listVisibleProjects(visibility, filter);
@@ -63,6 +79,38 @@ export function createSqliteQueryStore(
     },
     findBindingByCanonicalPath(canonicalPath: unknown): RepositoryBindingRecord | null {
       return access.findBindingByCanonicalPath(canonicalPath);
+    },
+    readPhaseRecord(phaseId: unknown): PhaseRecord | undefined {
+      return plan.readPhaseRecord(phaseId);
+    },
+    readTaskRecord(taskId: unknown): TaskRecord | undefined {
+      return plan.readTaskRecord(taskId);
+    },
+    readFeaturePlanView(featureId: unknown): FeaturePlanView | undefined {
+      return plan.readFeaturePlanView(featureId);
+    },
+    listPhaseRecords(
+      visibility: unknown,
+      projectId: unknown,
+      request: PlanListRequest,
+    ): PlanRecordPage<PhaseRecord> {
+      return plan.listPhaseRecords(visibility, projectId, request);
+    },
+    listFeatureRecords(
+      visibility: unknown,
+      projectId: unknown,
+      phaseId: unknown,
+      request: PlanListRequest,
+    ): PlanRecordPage<FeatureRecord> {
+      return plan.listFeatureRecords(visibility, projectId, phaseId, request);
+    },
+    listTaskRecords(
+      visibility: unknown,
+      projectId: unknown,
+      featureId: unknown,
+      request: PlanListRequest,
+    ): PlanRecordPage<TaskRecord> {
+      return plan.listTaskRecords(visibility, projectId, featureId, request);
     },
   };
 }

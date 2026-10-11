@@ -344,6 +344,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       projectReads: queryStore,
       snapshots: queryStore,
       eventReads: queryStore,
+      planReads: queryStore,
       stateStore,
       configurationService,
       dataRootIdentity: computeDataRootIdentity(basePathService.dataRoot()),

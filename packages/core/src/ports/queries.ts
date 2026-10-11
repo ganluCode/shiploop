@@ -21,8 +21,10 @@
  * TypeError）；不读时钟/文件系统/网络/数据库，不导入 HTTP/SSE/ORM/Pi SDK，
  * 不接触适配器。真实 SQLite 读取实现在 adapters 层。
  */
+import { Buffer } from 'node:buffer';
+import { createHash } from 'node:crypto';
 import type { PrincipalScope } from './authorization.js';
-import { WIRE_MESSAGE_SCHEMA_VERSION, isUuidV4 } from './commands.js';
+import { PublicError, WIRE_MESSAGE_SCHEMA_VERSION, isUuidV4 } from './commands.js';
 import type {
   BaselineAuthorizationRecord,
   BaselineCheckResultRecord,
@@ -30,7 +32,24 @@ import type {
   BaselineOperationRecord,
 } from './baseline-store.js';
 import type { SettingsPayload, SettingsScope } from './settings-schema.js';
-import type { FeatureRecord, PhaseRecord, PhaseStatus } from './plan-store.js';
+import type { PlanArtifactRef, PlanComplexity } from './feature-plan.js';
+import type {
+  FeaturePlanStatus,
+  FeatureRecord,
+  PhaseRecord,
+  PhaseStatus,
+  TaskDependencyRecord,
+  TaskRecord,
+  TaskStatus,
+} from './plan-store.js';
+import {
+  isPlainObject,
+  rejectUnknownKeys,
+  requirePlainObject,
+  validateStableId,
+  validationError,
+} from './validation.js';
+import type { ValidationContext } from './validation.js';
 import type {
   GlobalSettingsRecord,
   ProjectLabelCount,
@@ -347,3 +366,481 @@ export interface BaselineQueryReadStore {
     | { readonly projectId: string; readonly operationId: string }
     | undefined;
 }
+
+/* ------------------------------------------------------------------ *
+ * P03-1 / F-006 计划查询：公开形状、分页游标与窄读取端口
+ * （docs/p03-1-plan-import-contract.md §6.6 查询面定案）
+ * ------------------------------------------------------------------ */
+
+/**
+ * 计划查询操作身份（PublicError.operation 与后续 Host 路由共用；线接入由
+ * F-009/F-010 冻结，本清单不提前进入握手能力集合）。
+ */
+export const PLAN_QUERY_OPERATIONS = [
+  'phases.list',
+  'phases.get',
+  'features.list',
+  'features.get',
+  'tasks.list',
+  'tasks.get',
+] as const;
+
+export type PlanQueryOperation = (typeof PLAN_QUERY_OPERATIONS)[number];
+
+/* ---------------------------- 公开记录形状 ---------------------------- */
+
+/**
+ * 公开 Task 记录（P03-1 / F-006）：与 TaskRecord 字段一一对应（含结构化验收、
+ * 需求/验收引用、完整策略副本与来源说明），时间为 ISO UTC；查询响应与未来命令
+ * 结果共用同一转换。策略副本是导入事务固化的完整独立副本（不是动态引用）。
+ */
+export interface PublicTaskRecord {
+  readonly id: string;
+  readonly projectId: string;
+  readonly featureId: string;
+  readonly title: string;
+  readonly description: string | null;
+  readonly labels: readonly string[];
+  readonly status: TaskStatus;
+  readonly complexity: PlanComplexity | null;
+  readonly acceptance: { readonly criteria: readonly string[] };
+  readonly requirementsRefs: readonly PlanArtifactRef[];
+  readonly executionConfig: Readonly<Record<string, unknown>>;
+  readonly configSource: string;
+  readonly configSourceKey: string | null;
+  readonly revision: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export function toPublicTaskRecord(task: TaskRecord): PublicTaskRecord {
+  return {
+    id: task.id,
+    projectId: task.projectId,
+    featureId: task.featureId,
+    title: task.title,
+    description: task.description,
+    labels: [...task.labels],
+    status: task.status,
+    complexity: task.complexity,
+    acceptance: { criteria: [...task.acceptance.criteria] },
+    requirementsRefs: task.requirementsRefs.map(ref =>
+      ref.contentHash === undefined ? { artifactId: ref.artifactId } : { ...ref },
+    ),
+    executionConfig: task.executionConfig,
+    configSource: task.configSource,
+    configSourceKey: task.configSourceKey,
+    revision: task.revision,
+    createdAt: new Date(task.createdAtUtcMs).toISOString(),
+    updatedAt: new Date(task.updatedAtUtcMs).toISOString(),
+  };
+}
+
+/** 同 Feature Task 依赖边公开形状（只暴露业务两端，不暴露内部行身份/时间）。 */
+export interface PublicTaskDependencyEdge {
+  readonly taskId: string;
+  readonly dependsOnId: string;
+}
+
+export function toPublicTaskDependencyEdge(
+  dependency: TaskDependencyRecord,
+): PublicTaskDependencyEdge {
+  return { taskId: dependency.taskId, dependsOnId: dependency.dependsOnId };
+}
+
+/* ---------------------------- 可执行性视图 ---------------------------- */
+
+/**
+ * Feature 不可执行原因（有界枚举，稳定顺序）：
+ * - no_tasks：空草稿（F-001 §3.1 明确不可执行）；
+ * - plan_not_approved：planStatus ≠ approved，未获批准的计划不得启动执行。
+ * 只反映持久状态的推导结果，绝不虚构 Run/Attempt 结果。
+ */
+export const FEATURE_NOT_EXECUTABLE_REASONS = ['no_tasks', 'plan_not_approved'] as const;
+export type FeatureNotExecutableReason = (typeof FEATURE_NOT_EXECUTABLE_REASONS)[number];
+
+/** F-001 §3.1 同源结构校验摘要（与 feature.plan.import 回执 validation 同语义）。 */
+export interface FeaturePlanValidationSummary {
+  readonly taskCount: number;
+  readonly dependencyEdgeCount: number;
+  /** 结构前提（taskCount > 0）：不代表已批准、配置就绪或可启动 Run。 */
+  readonly executable: boolean;
+}
+
+/** 由持久状态推导不可执行原因（纯函数；稳定顺序见 FEATURE_NOT_EXECUTABLE_REASONS）。 */
+export function deriveFeatureNotExecutableReasons(input: {
+  readonly taskCount: number;
+  readonly planStatus: FeaturePlanStatus;
+}): readonly FeatureNotExecutableReason[] {
+  const reasons: FeatureNotExecutableReason[] = [];
+  if (input.taskCount === 0) reasons.push('no_tasks');
+  if (input.planStatus !== 'approved') reasons.push('plan_not_approved');
+  return reasons;
+}
+
+/* ---------------------------- 查询结果形状 ---------------------------- */
+
+/** phases.get → {phase}（真实父级 projectId 在记录内）。 */
+export interface PhaseDetailResult {
+  readonly phase: PublicPhaseRecord;
+}
+
+/** tasks.get → {task}（真实父级 featureId/projectId、验收/引用/策略副本/来源在记录内）。 */
+export interface TaskDetailResult {
+  readonly task: PublicTaskRecord;
+}
+
+/**
+ * features.get → {feature, validation, notExecutableReasons, tasks, dependencies}：
+ * Feature 与完整同 Feature Task DAG（节点 + 依赖边）来自同一一致读视图；
+ * validation 与 F-001/导入回执同源；结果有界（≤ PLAN_TASKS_MAX_COUNT 节点）
+ * 且不含任何 Run/Attempt 结果。
+ */
+export interface FeatureDetailResult {
+  readonly feature: PublicFeatureRecord;
+  readonly validation: FeaturePlanValidationSummary;
+  readonly notExecutableReasons: readonly FeatureNotExecutableReason[];
+  readonly tasks: readonly PublicTaskRecord[];
+  readonly dependencies: readonly PublicTaskDependencyEdge[];
+}
+
+/** 层级列表响应公共字段（与 ProjectListResult 同纪律：字段集冻结）。 */
+export interface PlanListResultBase {
+  readonly schemaVersion: typeof WIRE_MESSAGE_SCHEMA_VERSION;
+  readonly nextCursor: string | null;
+  readonly limit: number;
+}
+
+/** phases.list → {schemaVersion, scope:'phase-list', records, nextCursor, limit}。 */
+export interface PhaseListResult extends PlanListResultBase {
+  readonly scope: 'phase-list';
+  readonly records: readonly PublicPhaseRecord[];
+}
+
+/** features.list → {schemaVersion, scope:'feature-list', records, nextCursor, limit}。 */
+export interface FeatureListResult extends PlanListResultBase {
+  readonly scope: 'feature-list';
+  readonly records: readonly PublicFeatureRecord[];
+}
+
+/** tasks.list → {schemaVersion, scope:'task-list', records, nextCursor, limit}。 */
+export interface TaskListResult extends PlanListResultBase {
+  readonly scope: 'task-list';
+  readonly records: readonly PublicTaskRecord[];
+}
+
+/* ---------------------------- 分页过滤器 ---------------------------- */
+
+/** 计划层级列表分页：默认 50 / 上限 200（与项目列表同一量级；边界值通过、越界拒绝）。 */
+export const PLAN_LIST_DEFAULT_LIMIT = 50;
+export const PLAN_LIST_MAX_LIMIT = 200;
+
+export interface ValidatedPlanListFilter {
+  readonly limit: number;
+  /** 不透明游标原文（形态由 decodePlanListCursor 核验）。 */
+  readonly cursor?: string;
+}
+
+/**
+ * 计划层级列表过滤器校验（unknown → 已校验形态）：只允许 limit/cursor；非法
+ * limit（非 1..PLAN_LIST_MAX_LIMIT 整数）/非法 cursor 形态/未知键（含提权字段
+ * actorId/principal/capabilities/scope）在任何 SQL 之前拒绝。
+ */
+export function validatePlanListFilter(value: unknown, operation: string): ValidatedPlanListFilter {
+  const context: ValidationContext = { operation, entity: { type: 'project' } };
+  if (value === undefined || value === null) {
+    return { limit: PLAN_LIST_DEFAULT_LIMIT };
+  }
+  const object = requirePlainObject(value, context, 'filter');
+  rejectUnknownKeys(object, ['limit', 'cursor'], context, 'filter');
+  let limit = PLAN_LIST_DEFAULT_LIMIT;
+  if (object.limit !== undefined) {
+    if (
+      typeof object.limit !== 'number' ||
+      !Number.isInteger(object.limit) ||
+      object.limit < 1 ||
+      object.limit > PLAN_LIST_MAX_LIMIT
+    ) {
+      throw validationError(
+        context,
+        'filter.limit',
+        `必须是 1..${PLAN_LIST_MAX_LIMIT} 的整数（每页上限）`,
+        object.limit,
+      );
+    }
+    limit = object.limit;
+  }
+  if (object.cursor !== undefined) {
+    if (typeof object.cursor !== 'string' || object.cursor.length === 0) {
+      throw validationError(context, 'filter.cursor', '必须是非空字符串（不透明游标）', object.cursor);
+    }
+    return { limit, cursor: object.cursor };
+  }
+  return { limit };
+}
+
+/* ---------------------------- 受控分页游标 ---------------------------- */
+
+/** 游标线消息前缀与载荷版本（与事件游标同一纪律）。 */
+export const PLAN_LIST_CURSOR_PREFIX = 'plcur_v1_';
+export const PLAN_LIST_CURSOR_VERSION = 1 as const;
+
+/** 列表父级 scope：游标绑定数据根 + 列表层级 + 项目 + 父级（跨项目/跨父级拒绝）。 */
+export type PlanListScope =
+  | { readonly kind: 'phases'; readonly projectId: string }
+  | { readonly kind: 'features'; readonly projectId: string; readonly phaseId: string }
+  | { readonly kind: 'tasks'; readonly projectId: string; readonly featureId: string };
+
+/** 游标签发/解析绑定：数据根身份 + 列表 scope（只允许可信装配构造）。 */
+export interface PlanListCursorBinding {
+  readonly rootIdentity: string;
+  readonly scope: PlanListScope;
+}
+
+const PLAN_ROOT_IDENTITY_PATTERN = /^[0-9a-f]{64}$/;
+const PLAN_ROOT_FINGERPRINT_LENGTH = 16;
+const PLAN_CURSOR_STABLE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
+function planInvalidInput(operation: string, field: string, reason: string, received?: unknown): never {
+  throw new PublicError('invalid_input', operation, undefined, {
+    details: {
+      field,
+      reason,
+      ...(received !== undefined
+        ? { receivedType: received === null ? 'null' : Array.isArray(received) ? 'array' : typeof received }
+        : {}),
+    },
+  });
+}
+
+function planScopeShapeError(reason: string): never {
+  throw new TypeError(`PlanListCursorBinding 形态非法（可信装配编程错误）：${reason}`);
+}
+
+/** 可信装配形状断言：绑定必须由本模块构造；形态非法是编程错误（TypeError）。 */
+export function createPlanListCursorBinding(
+  input: unknown,
+  operation: string = 'PlanListCursor.createBinding',
+): PlanListCursorBinding {
+  if (!isPlainObject(input)) {
+    planInvalidInput(operation, 'binding', '必须是对象', input);
+  }
+  rejectUnknownKeys(input, ['rootIdentity', 'scope'], { operation }, 'binding');
+  if (typeof input.rootIdentity !== 'string' || !PLAN_ROOT_IDENTITY_PATTERN.test(input.rootIdentity)) {
+    planInvalidInput(operation, 'rootIdentity', '必须是 64 位小写十六进制数据根身份', input.rootIdentity);
+  }
+  const scope = input.scope;
+  if (!isPlainObject(scope)) {
+    planInvalidInput(operation, 'scope', '必须是对象', scope);
+  }
+  if (scope.kind === 'phases') {
+    rejectUnknownKeys(scope, ['kind', 'projectId'], { operation }, 'scope');
+    return {
+      rootIdentity: input.rootIdentity,
+      scope: {
+        kind: 'phases',
+        projectId: validateStableId(scope.projectId, { operation, entity: { type: 'project' } }, 'scope.projectId'),
+      },
+    };
+  }
+  if (scope.kind === 'features') {
+    rejectUnknownKeys(scope, ['kind', 'projectId', 'phaseId'], { operation }, 'scope');
+    return {
+      rootIdentity: input.rootIdentity,
+      scope: {
+        kind: 'features',
+        projectId: validateStableId(scope.projectId, { operation, entity: { type: 'project' } }, 'scope.projectId'),
+        phaseId: validateStableId(scope.phaseId, { operation, entity: { type: 'phase' } }, 'scope.phaseId'),
+      },
+    };
+  }
+  if (scope.kind === 'tasks') {
+    rejectUnknownKeys(scope, ['kind', 'projectId', 'featureId'], { operation }, 'scope');
+    return {
+      rootIdentity: input.rootIdentity,
+      scope: {
+        kind: 'tasks',
+        projectId: validateStableId(scope.projectId, { operation, entity: { type: 'project' } }, 'scope.projectId'),
+        featureId: validateStableId(scope.featureId, { operation, entity: { type: 'feature' } }, 'scope.featureId'),
+      },
+    };
+  }
+  planInvalidInput(operation, 'scope.kind', "必须是 'phases' / 'features' / 'tasks'", (scope as { kind?: unknown }).kind);
+}
+
+function planBindingAsTrusted(binding: PlanListCursorBinding): PlanListCursorBinding {
+  if (
+    !isPlainObject(binding) ||
+    typeof binding.rootIdentity !== 'string' ||
+    !PLAN_ROOT_IDENTITY_PATTERN.test(binding.rootIdentity) ||
+    !isPlainObject(binding.scope) ||
+    (binding.scope.kind !== 'phases' && binding.scope.kind !== 'features' && binding.scope.kind !== 'tasks')
+  ) {
+    planScopeShapeError('必须由 createPlanListCursorBinding 构造');
+  }
+  return binding;
+}
+
+/** 根指纹：数据根身份前 16hex（游标不携带完整身份，更不携带路径）。 */
+function planRootFingerprint(binding: PlanListCursorBinding): string {
+  return binding.rootIdentity.slice(0, PLAN_ROOT_FINGERPRINT_LENGTH);
+}
+
+/** scope 指纹：层级 + 项目 + 父级（缺省父级用固定域值），跨项目/跨父级必然不匹配。 */
+function planScopeFingerprint(scope: PlanListScope): string {
+  const parent = scope.kind === 'phases' ? '-' : scope.kind === 'features' ? scope.phaseId : scope.featureId;
+  return createHash('sha256')
+    .update(`shiploop:plan-list-scope:v1:${scope.kind}:${scope.projectId}:${parent}`, 'utf8')
+    .digest('hex');
+}
+
+/**
+ * 签发不透明续读游标（服务端内部调用）：plcur_v1_<base64url 紧凑 JSON>。
+ * lastId 必须是合法稳定 ID（上一页末条记录 id）。
+ */
+export function encodePlanListCursor(lastId: string, binding: PlanListCursorBinding): string {
+  const trusted = planBindingAsTrusted(binding);
+  if (typeof lastId !== 'string' || !PLAN_CURSOR_STABLE_ID_PATTERN.test(lastId)) {
+    throw new TypeError('encodePlanListCursor: lastId 必须是合法稳定 ID（服务端内部调用）');
+  }
+  const payload = JSON.stringify({
+    v: PLAN_LIST_CURSOR_VERSION,
+    id: lastId,
+    root: planRootFingerprint(trusted),
+    sk: planScopeFingerprint(trusted.scope),
+  });
+  return `${PLAN_LIST_CURSOR_PREFIX}${Buffer.from(payload, 'utf8').toString('base64url')}`;
+}
+
+export interface DecodedPlanListCursor {
+  readonly version: typeof PLAN_LIST_CURSOR_VERSION;
+  readonly lastId: string;
+}
+
+/**
+ * 解析并核验客户端回传的游标（unknown → {version,lastId}）。无法解码/非规范
+ * base64url/未知键/未知版本/root 或 scope 指纹不符（跨项目/跨父级/跨根）一律
+ * invalid_input(invalid_cursor)，绝不当作从零读取。
+ */
+export function decodePlanListCursor(
+  cursor: unknown,
+  binding: PlanListCursorBinding,
+  operation: string = 'PlanListCursor.decode',
+): DecodedPlanListCursor {
+  const trusted = planBindingAsTrusted(binding);
+  function invalid(received?: unknown): never {
+    return planInvalidInput(operation, 'cursor', 'invalid_cursor', received);
+  }
+  if (typeof cursor !== 'string' || !cursor.startsWith(PLAN_LIST_CURSOR_PREFIX)) {
+    invalid(cursor);
+  }
+  const body = cursor.slice(PLAN_LIST_CURSOR_PREFIX.length);
+  if (body.length === 0 || !/^[A-Za-z0-9_-]+$/.test(body)) {
+    invalid(cursor);
+  }
+  const bytes = Buffer.from(body, 'base64url');
+  // 规范编码核验：拒绝填充、尾随数据及一切有歧义的宽容解码。
+  if (Buffer.from(bytes).toString('base64url') !== body) {
+    invalid(cursor);
+  }
+  const text = bytes.toString('utf8');
+  if (!Buffer.from(text, 'utf8').equals(bytes)) {
+    invalid(cursor);
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text) as unknown;
+  } catch {
+    invalid(cursor);
+  }
+  if (!isPlainObject(parsed)) {
+    invalid(cursor);
+  }
+  for (const key of Object.keys(parsed)) {
+    if (key !== 'v' && key !== 'id' && key !== 'root' && key !== 'sk') {
+      invalid(cursor);
+    }
+  }
+  if (parsed.v !== PLAN_LIST_CURSOR_VERSION) {
+    invalid(cursor);
+  }
+  if (typeof parsed.id !== 'string' || !PLAN_CURSOR_STABLE_ID_PATTERN.test(parsed.id)) {
+    invalid(cursor);
+  }
+  if (
+    typeof parsed.root !== 'string' ||
+    !/^[0-9a-f]{16}$/.test(parsed.root) ||
+    parsed.root !== planRootFingerprint(trusted)
+  ) {
+    invalid(cursor);
+  }
+  if (
+    typeof parsed.sk !== 'string' ||
+    !/^[0-9a-f]{64}$/.test(parsed.sk) ||
+    parsed.sk !== planScopeFingerprint(trusted.scope)
+  ) {
+    invalid(cursor);
+  }
+  return { version: PLAN_LIST_CURSOR_VERSION, lastId: parsed.id };
+}
+
+/* ---------------------------- 窄读取端口 ---------------------------- */
+
+/** 列表读取请求：排他键集下界（'' = 从头）与有界页大小（应用层已校验）。 */
+export interface PlanListRequest {
+  readonly afterId: string | null;
+  readonly limit: number;
+}
+
+/** 列表存储页：nextId 为用满 limit 时的末条 id（供应用层编码游标），否则 null。 */
+export interface PlanRecordPage<T> {
+  readonly records: readonly T[];
+  readonly nextId: string | null;
+}
+
+/**
+ * 计划层级列表窄读取端口（§6.6）：可见范围谓词随查询下推 SQL（先收窄再分页），
+ * 稳定 id 升序键集分页；visibility 非法形状为编程错误（TypeError）。父级跨项目
+ * 或不存在均返回空页（与「空父级」不可区分，不泄漏存在性）。
+ */
+export interface PlanHierarchyReadStore {
+  listPhaseRecords(
+    visibility: unknown,
+    projectId: unknown,
+    request: PlanListRequest,
+  ): PlanRecordPage<PhaseRecord>;
+  listFeatureRecords(
+    visibility: unknown,
+    projectId: unknown,
+    phaseId: unknown,
+    request: PlanListRequest,
+  ): PlanRecordPage<FeatureRecord>;
+  listTaskRecords(
+    visibility: unknown,
+    projectId: unknown,
+    featureId: unknown,
+    request: PlanListRequest,
+  ): PlanRecordPage<TaskRecord>;
+}
+
+/** Feature 计划一致读视图：Feature + 全部 Task + 全部依赖边（单一读事务内取得）。 */
+export interface FeaturePlanView {
+  readonly feature: FeatureRecord;
+  readonly tasks: readonly TaskRecord[];
+  readonly dependencies: readonly TaskDependencyRecord[];
+}
+
+/**
+ * 计划详情窄读取端口：readFeaturePlanView 必须在单一 SQLite DEFERRED 读事务
+ * 内取得 Feature + Task + 边（并发修订只能观察到完整修订前或修订后，绝不出现
+ * 新 Task 配旧边/旧摘要的混合状态）；嵌套于写事务内调用是编程错误（TypeError）。
+ * 未命中返回 undefined（可见性折叠由应用层统一为 not_found）。
+ */
+export interface PlanDetailReadStore {
+  readPhaseRecord(phaseId: unknown): PhaseRecord | undefined;
+  readTaskRecord(taskId: unknown): TaskRecord | undefined;
+  readFeaturePlanView(featureId: unknown): FeaturePlanView | undefined;
+}
+
+/** F-006 计划查询读取门面：层级列表 + 详情窄读取端口的并集。 */
+export interface PlanQueryReadStore extends PlanHierarchyReadStore, PlanDetailReadStore {}

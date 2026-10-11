@@ -38,7 +38,11 @@ import {
   authorizeProjectsList,
   authorizeSnapshot,
   createEventVisibilityFilter,
+  isProjectVisible,
   mapProjectLookupError,
+  principalProjectVisibility,
+  requireCapability,
+  requireProjectVisible,
 } from '../ports/authorization.js';
 import {
   PublicError,
@@ -62,18 +66,39 @@ import type {
   PublicStateEvent,
 } from '../ports/events.js';
 import {
+  createPlanListCursorBinding,
+  decodePlanListCursor,
+  deriveFeatureNotExecutableReasons,
+  encodePlanListCursor,
+  toPublicFeatureRecord,
+  toPublicPhaseRecord,
   toPublicProjectRecord,
   toPublicRepositoryBindingRecord,
   toPublicSettingsState,
+  toPublicTaskDependencyEdge,
+  toPublicTaskRecord,
+  validatePlanListFilter,
 } from '../ports/queries.js';
 import type {
   AuthorizedProjectReadStore,
   ConsistentSnapshotStore,
+  FeatureDetailResult,
+  FeatureListResult,
+  FeaturePlanValidationSummary,
+  PlanListCursorBinding,
+  PlanListScope,
+  PlanListRequest,
+  PlanQueryReadStore,
+  ValidatedPlanListFilter,
   ProjectBindingResult,
   ProjectDetailResult,
   ProjectLabelCountsResult,
   ProjectListResult,
   PublicSettingsState,
+  PhaseDetailResult,
+  PhaseListResult,
+  TaskDetailResult,
+  TaskListResult,
 } from '../ports/queries.js';
 import type { StateEventReadStore } from '../ports/events.js';
 import { isStorageError } from '../ports/errors.js';
@@ -186,6 +211,25 @@ export interface QueryService {
    * 有界分页；每次调用重新核验当前授权（能力/可见性撤销即拒绝）。
    */
   readEventBatch(principal: unknown, input: unknown): Promise<StateEventBatch>;
+  /**
+   * F-006 phases.get：按 Phase ID 查询（真实父级 projectId、标题/描述/标签/
+   * revision）；能力 + 可见性先行，不可见与不存在统一 not_found。
+   */
+  getPhase(principal: unknown, phaseId: unknown): Promise<PhaseDetailResult>;
+  /**
+   * F-006 features.get：Feature 详情（真实父级、planDigest/planStatus/不可执行
+   * 原因）与完整同 Feature Task DAG（节点 + 依赖边）；内容取自同一一致读视图，
+   * 不虚构 Run/Attempt 结果。
+   */
+  getFeature(principal: unknown, featureId: unknown): Promise<FeatureDetailResult>;
+  /** F-006 tasks.get：Task 详情（真实父级、验收/需求引用/策略副本及来源）。 */
+  getTask(principal: unknown, taskId: unknown): Promise<TaskDetailResult>;
+  /** F-006 phases.list：项目内 Phase 层级列表（稳定排序、有限分页、受控游标）。 */
+  listPhases(principal: unknown, input: unknown): Promise<PhaseListResult>;
+  /** F-006 features.list：Phase 内 Feature 层级列表（游标绑定项目 + 父级）。 */
+  listFeatures(principal: unknown, input: unknown): Promise<FeatureListResult>;
+  /** F-006 tasks.list：Feature 内 Task 层级列表（游标绑定项目 + 父级）。 */
+  listTasks(principal: unknown, input: unknown): Promise<TaskListResult>;
 }
 
 export interface QueryServiceOptions {
@@ -202,6 +246,8 @@ export interface QueryServiceOptions {
     ConfigurationService,
     'getCurrentSettings' | 'getEffectiveSettings' | 'exportSettings'
   >;
+  /** P03-1 / F-006 计划层级列表/详情一致读取窄端口。 */
+  readonly planReads: PlanQueryReadStore;
   /** 数据根身份（64hex；可信装配由 realpath 数据根派生，绝不来自请求数据）。 */
   readonly dataRootIdentity: string;
   /** UTC 毫秒时钟（默认 Date.now）；测试注入以获得确定性 readAt。 */
@@ -219,6 +265,26 @@ const SETTINGS_GLOBAL_EXPORT_OPERATION = 'settings.global.export';
 const SETTINGS_PROJECT_EXPORT_OPERATION = 'settings.project.export';
 const SNAPSHOT_GET_OPERATION = 'snapshot.get';
 const EVENTS_SUBSCRIBE_OPERATION_NAME = 'events.subscribe';
+// P03-1 / F-006 计划查询操作身份（与 ports/queries.ts PLAN_QUERY_OPERATIONS 同源）。
+const PHASES_LIST_OPERATION = 'phases.list';
+const PHASES_GET_OPERATION = 'phases.get';
+const FEATURES_LIST_OPERATION = 'features.list';
+const FEATURES_GET_OPERATION = 'features.get';
+const TASKS_LIST_OPERATION = 'tasks.list';
+const TASKS_GET_OPERATION = 'tasks.get';
+
+/**
+ * F-006 计划实体「不可见/不存在」统一 not_found（与 receipts.get 同一纪律：
+ * 不区分存在性，不回显归属或实体身份）；能力缺失仍先行 forbidden。
+ */
+function planEntityNotFound(
+  operation: string,
+  entityType: 'phase' | 'feature' | 'task',
+): never {
+  throw new PublicError('not_found', operation, '计划实体不存在或不可见', {
+    details: { reason: 'plan_entity_not_found', entityType },
+  });
+}
 
 /**
  * 装配 QueryService。只校验依赖形态，不执行任何 I/O；import 本模块无副作用。
@@ -233,6 +299,7 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
     eventReads,
     stateStore,
     configurationService,
+    planReads,
     dataRootIdentity,
   } = options;
   if (typeof dataRootIdentity !== 'string' || !/^[0-9a-f]{64}$/.test(dataRootIdentity)) {
@@ -249,6 +316,37 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
   function requireProjectId(projectId: unknown, operation: string): string {
     const context: ValidationContext = { operation, entity: { type: 'project' } };
     return validateStableId(projectId, context, 'projectId');
+  }
+
+  /** F-006：层级列表分页过滤器（只取 limit/cursor；非法参数/未知键拒绝）。 */
+  function validatedPlanFilter(
+    object: Record<string, unknown>,
+    operation: string,
+  ): ValidatedPlanListFilter {
+    const filter: Record<string, unknown> = {};
+    if (object.limit !== undefined) filter.limit = object.limit;
+    if (object.cursor !== undefined) filter.cursor = object.cursor;
+    return validatePlanListFilter(filter, operation);
+  }
+
+  /** F-006：游标绑定（数据根 + 列表 scope；仅可信装配构造，绝不来自请求字段）。 */
+  function planCursorBinding(scope: PlanListScope, operation: string): PlanListCursorBinding {
+    return createPlanListCursorBinding({ rootIdentity: dataRootIdentity, scope }, operation);
+  }
+
+  /** F-006：游标 → 键集排他下界（非法/跨根/跨项目/跨父级一律 invalid_cursor）。 */
+  function planListRequest(
+    filter: ValidatedPlanListFilter,
+    binding: PlanListCursorBinding,
+    operation: string,
+  ): PlanListRequest {
+    return {
+      afterId:
+        filter.cursor === undefined
+          ? null
+          : decodePlanListCursor(filter.cursor, binding, operation).lastId,
+      limit: filter.limit,
+    };
   }
 
   return {
@@ -604,6 +702,191 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
           events,
           lastSequence: last === undefined ? afterSequence : last.sequence,
           limit,
+        };
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    async getPhase(principal: unknown, phaseId: unknown): Promise<PhaseDetailResult> {
+      assertTrustedPrincipal(principal);
+      const operation = PHASES_GET_OPERATION;
+      try {
+        const id = validateStableId(phaseId, { operation, entity: { type: 'phase' } }, 'phaseId');
+        // 能力核验先于数据库读取；不可见与不存在统一 not_found（不区分存在性）。
+        requireCapability(principal, 'project.read', operation);
+        const record = planReads.readPhaseRecord(id);
+        if (record === undefined || !isProjectVisible(principal, record.projectId)) {
+          planEntityNotFound(operation, 'phase');
+        }
+        return { phase: toPublicPhaseRecord(record) };
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    async getFeature(principal: unknown, featureId: unknown): Promise<FeatureDetailResult> {
+      assertTrustedPrincipal(principal);
+      const operation = FEATURES_GET_OPERATION;
+      try {
+        const id = validateStableId(featureId, { operation, entity: { type: 'feature' } }, 'featureId');
+        requireCapability(principal, 'project.read', operation);
+        const view = planReads.readFeaturePlanView(id);
+        if (view === undefined || !isProjectVisible(principal, view.feature.projectId)) {
+          planEntityNotFound(operation, 'feature');
+        }
+        // 防御纵深：一致读视图内 Task/边必须属于同一 Feature；混合状态是适配器
+        // 实现缺陷（TypeError），绝不静默返回半新半旧的计划。
+        const taskIds = new Set<string>();
+        for (const task of view.tasks) {
+          if (
+            task.featureId !== id ||
+            task.projectId !== view.feature.projectId ||
+            taskIds.has(task.id)
+          ) {
+            throw new TypeError('Feature 计划视图内 Task 归属不一致（适配器实现缺陷）');
+          }
+          taskIds.add(task.id);
+        }
+        for (const edge of view.dependencies) {
+          if (
+            edge.featureId !== id ||
+            edge.projectId !== view.feature.projectId ||
+            !taskIds.has(edge.taskId) ||
+            !taskIds.has(edge.dependsOnId)
+          ) {
+            throw new TypeError('Feature 计划视图内依赖边归属不一致（适配器实现缺陷）');
+          }
+        }
+        const validation: FeaturePlanValidationSummary = {
+          taskCount: view.tasks.length,
+          dependencyEdgeCount: view.dependencies.length,
+          // F-001 §3.1 同源结构前提（taskCount>0）；不代表已批准或已执行。
+          executable: view.tasks.length > 0,
+        };
+        return {
+          feature: toPublicFeatureRecord(view.feature),
+          validation,
+          notExecutableReasons: deriveFeatureNotExecutableReasons({
+            taskCount: view.tasks.length,
+            planStatus: view.feature.planStatus,
+          }),
+          tasks: view.tasks.map(toPublicTaskRecord),
+          dependencies: view.dependencies.map(toPublicTaskDependencyEdge),
+        };
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    async getTask(principal: unknown, taskId: unknown): Promise<TaskDetailResult> {
+      assertTrustedPrincipal(principal);
+      const operation = TASKS_GET_OPERATION;
+      try {
+        const id = validateStableId(taskId, { operation, entity: { type: 'task' } }, 'taskId');
+        requireCapability(principal, 'project.read', operation);
+        const record = planReads.readTaskRecord(id);
+        if (record === undefined || !isProjectVisible(principal, record.projectId)) {
+          planEntityNotFound(operation, 'task');
+        }
+        return { task: toPublicTaskRecord(record) };
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    async listPhases(principal: unknown, input: unknown): Promise<PhaseListResult> {
+      assertTrustedPrincipal(principal);
+      const operation = PHASES_LIST_OPERATION;
+      try {
+        // 能力与可见性先于分页/计数：受限主体对不可见项目 forbidden（与不存在
+        // 项目同一错误）；全量范围下未知项目自然空页，不泄漏存在性。
+        requireCapability(principal, 'project.read', operation);
+        const object = requirePlainObject(input, { operation }, 'input');
+        rejectUnknownKeys(object, ['projectId', 'limit', 'cursor'], { operation }, 'input');
+        const projectId = requireProjectId(object.projectId, operation);
+        requireProjectVisible(principal, projectId, operation);
+        const filter = validatedPlanFilter(object, operation);
+        const binding = planCursorBinding({ kind: 'phases', projectId }, operation);
+        const page = planReads.listPhaseRecords(
+          principalProjectVisibility(principal),
+          projectId,
+          planListRequest(filter, binding, operation),
+        );
+        return {
+          schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION,
+          scope: 'phase-list',
+          records: page.records.map(toPublicPhaseRecord),
+          nextCursor: page.nextId === null ? null : encodePlanListCursor(page.nextId, binding),
+          limit: filter.limit,
+        };
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    async listFeatures(principal: unknown, input: unknown): Promise<FeatureListResult> {
+      assertTrustedPrincipal(principal);
+      const operation = FEATURES_LIST_OPERATION;
+      try {
+        requireCapability(principal, 'project.read', operation);
+        const object = requirePlainObject(input, { operation }, 'input');
+        rejectUnknownKeys(object, ['projectId', 'phaseId', 'limit', 'cursor'], { operation }, 'input');
+        const projectId = requireProjectId(object.projectId, operation);
+        const phaseId = validateStableId(
+          object.phaseId,
+          { operation, entity: { type: 'phase' } },
+          'phaseId',
+        );
+        requireProjectVisible(principal, projectId, operation);
+        const filter = validatedPlanFilter(object, operation);
+        const binding = planCursorBinding({ kind: 'features', projectId, phaseId }, operation);
+        const page = planReads.listFeatureRecords(
+          principalProjectVisibility(principal),
+          projectId,
+          phaseId,
+          planListRequest(filter, binding, operation),
+        );
+        return {
+          schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION,
+          scope: 'feature-list',
+          records: page.records.map(toPublicFeatureRecord),
+          nextCursor: page.nextId === null ? null : encodePlanListCursor(page.nextId, binding),
+          limit: filter.limit,
+        };
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    async listTasks(principal: unknown, input: unknown): Promise<TaskListResult> {
+      assertTrustedPrincipal(principal);
+      const operation = TASKS_LIST_OPERATION;
+      try {
+        requireCapability(principal, 'project.read', operation);
+        const object = requirePlainObject(input, { operation }, 'input');
+        rejectUnknownKeys(object, ['projectId', 'featureId', 'limit', 'cursor'], { operation }, 'input');
+        const projectId = requireProjectId(object.projectId, operation);
+        const featureId = validateStableId(
+          object.featureId,
+          { operation, entity: { type: 'feature' } },
+          'featureId',
+        );
+        requireProjectVisible(principal, projectId, operation);
+        const filter = validatedPlanFilter(object, operation);
+        const binding = planCursorBinding({ kind: 'tasks', projectId, featureId }, operation);
+        const page = planReads.listTaskRecords(
+          principalProjectVisibility(principal),
+          projectId,
+          featureId,
+          planListRequest(filter, binding, operation),
+        );
+        return {
+          schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION,
+          scope: 'task-list',
+          records: page.records.map(toPublicTaskRecord),
+          nextCursor: page.nextId === null ? null : encodePlanListCursor(page.nextId, binding),
+          limit: filter.limit,
         };
       } catch (error) {
         throw mapToPublicError(error, { operation });

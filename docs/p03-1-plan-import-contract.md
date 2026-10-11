@@ -9,7 +9,8 @@
   `packages/core/src/adapters/sqlite/migrations.ts` 与 `ports/plan-store.ts`）；P03-1 / F-004 起
   `COMMAND_OPERATIONS` 增加 `phase.create`（能力位 `phase.write`、事件 `phase.created`，见
   §6.4），Host `/v1/commands` 通用路由随之受理该命令（接线宣告同步）；CLI 仍无计划入口
-  （F-009 接入）。F-005 起继续改变这些事实时必须同步更新本文与文档守护测试。
+  （F-009 接入）。F-006 起 Core 查询面提供计划详情/层级列表/Task DAG（§6.6 定案，能力位
+  复用 `project.read`，Host/CLI 线接入仍归 F-009/F-010）。F-005 起继续改变这些事实时必须同步更新本文与文档守护测试。
 - 适用平台：macOS（首个正式支持平台）；Windows/WSL/Linux 未验收。
 - 输入依据：P03-1 任务拆分（`task_list.json`，Feature 工作区）、知识目录
   `architecture-redesign/core-design/02-domain-and-lifecycle.md`（§8 两层 DAG、§10 标题/描述/标签
@@ -310,6 +311,44 @@ P03-1 之后每次收尾仍须跑完整门禁（`npm run verify` 或等价的 te
   `idempotency_key_reuse`）。
 - 本命令不创建 Batch/Run/Attempt、不写批准、不实现计划修订/标签编辑（F-007/F-008）或
   查询面（F-006）。
+
+### 6.6 计划查询面（F-006 定案）
+
+Core 应用层 `QueryService` 增加六个授权查询（`ports/queries.ts` 契约与窄读取端口、
+`adapters/sqlite/plan-store.ts` 读取原语、`adapters/sqlite/query-store.ts` 门面装配）；直接
+调用 Core 查询也走同一授权（不经 HTTP 也拒绝）：
+
+- **操作身份**：`PLAN_QUERY_OPERATIONS` = `phases.list` / `phases.get` / `features.list` /
+  `features.get` / `tasks.list` / `tasks.get`（方法名 listPhases/getPhase/listFeatures/
+  getFeature/listTasks/getTask）；能力位**复用 `project.read`**（不新增能力位；线消息握手
+  能力集合与升版评估仍归 F-009/F-010，本清单不提前进入握手）。
+- **详情查询（按实体 ID）**：稳定 ID 校验先于读取；返回真实父级（projectId/phaseId/
+  featureId）、标题/描述/标签/revision、结构化验收与需求/验收引用、**完整策略副本与来源**
+  （executionConfig + configSource/configSourceKey；Feature 另含 sourceRefs 来源引用）；
+  `features.get` 含 planDigest、planStatus、validation（与 F-001/导入回执同源：taskCount /
+  dependencyEdgeCount / executable=taskCount>0 结构前提）、notExecutableReasons（有界枚举
+  `no_tasks`（空草稿）/ `plan_not_approved`（planStatus≠approved），只反映持久状态推导）
+  与**完整同 Feature Task DAG**（节点 id 升序 + 依赖边按 (taskId,dependsOnId) 排序）。
+  结果字段集冻结，**不虚构 Run/Attempt 结果**（本阶段不建执行实体）。
+- **不可见/不存在统一 `not_found`**（details.reason=`plan_entity_not_found`，与 receipts.get
+  同一防枚举纪律：不区分存在性、不回显归属/实体身份，策略副本/引用不随错误泄漏）；
+  能力缺失仍先行 `forbidden`（capability_denied）。
+- **层级列表**：`phases.list` 按项目（projectId）、`features.list` 按 Phase（phaseId）、
+  `tasks.list` 按 Feature（featureId）；项目 + 父级显式传入，严格未知键拒绝（actorId/
+  principal/capabilities/scope 等提权字段一律 invalid_input）；稳定 id 升序键集分页，
+  `PLAN_LIST_DEFAULT_LIMIT=50` / `PLAN_LIST_MAX_LIMIT=200`（边界值通过、越界与非法分页
+  参数在任何 SQL 之前 invalid_input）；空列表 `records=[]` 且 `nextCursor=null`，末页
+  `nextCursor=null`（页末明确可识别）。
+- **受控游标**：`plcur_v1_<base64url 紧凑 JSON {v,id,root,sk}>`（与事件游标同一纪律）；
+  绑定数据根身份（root 16hex 指纹）+ 列表层级 + 项目 + 父级（sk=scope 指纹）；跨项目/
+  跨父级/跨层级/坏游标一律 `invalid_input(invalid_cursor)`，绝不当从零读取。
+- **可见性先于分页及计数**：能力 + 项目可见性核验先于分页参数校验与读取（不可见项目
+  + 非法 limit 仍先 forbidden）；可见范围谓词随 SQL 下推（先收窄再分页）；受限主体列表对
+  不可见/不存在项目 forbidden 且错误完全一致，全量范围下未知项目自然空页（不泄漏存在性）。
+- **一致读视图**：`features.get` 的 Feature + Task + 依赖边取自**单一 BEGIN DEFERRED 读事务**
+  （复用 F-010 `transactSqliteConsistentRead`，不另立第二套事务规则）；并发修订只能观察到
+  完整修订前或修订后，绝不出现「新 Task 配旧边/旧摘要」的混合状态；嵌套于写事务内调用
+  是编程错误（TypeError）。查询面全部只读（不写任何行/事件/回执）。
 
 ## 7. 测试与守护
 

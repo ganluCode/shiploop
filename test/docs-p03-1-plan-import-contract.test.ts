@@ -27,6 +27,12 @@ import {
   COMMAND_OPERATION_SPECS,
 } from '../packages/core/src/ports/commands.ts';
 import { PHASE_CREATED_EVENT_TYPE, FEATURE_PLAN_IMPORTED_EVENT_TYPE, PUBLIC_STATE_EVENT_TYPES } from '../packages/core/src/ports/events.ts';
+import {
+  PLAN_LIST_CURSOR_PREFIX,
+  PLAN_LIST_DEFAULT_LIMIT,
+  PLAN_LIST_MAX_LIMIT,
+  PLAN_QUERY_OPERATIONS,
+} from '../packages/core/src/ports/queries.ts';
 import { SETTINGS_SCHEMA_VERSION } from '../packages/core/src/ports/settings-schema.ts';
 import { DESCRIPTION_MAX_LENGTH, LABELS_MAX_COUNT, LABEL_MAX_LENGTH } from '../packages/core/src/ports/validation.ts';
 import * as coreEntry from '../packages/core/src/index.ts';
@@ -153,5 +159,35 @@ describe('F-001 P03-1 计划导入契约文档', () => {
     expect(FEATURE_PLAN_IMPORTED_EVENT_TYPE).toBe('feature.plan.imported');
     expect(typeof coreEntry.submitFeaturePlanImport).toBe('function');
     expect(coreEntry.FEATURE_PLAN_IMPORT_OPERATION).toBe('feature.plan.import');
+  });
+
+  it('F-006 计划查询面定案与实现同源（文档、查询操作清单、分页/游标常量与错误纪律不漂移）', () => {
+    const doc = readFileSync(contractDocPath, 'utf-8');
+    expect(doc).toContain('6.6');
+    expect(doc).toContain('plcur_v1_');
+    expect(doc).toContain('plan_entity_not_found');
+    expect(doc).toContain('invalid_cursor');
+    expect(doc).toContain('no_tasks');
+    expect(doc).toContain('plan_not_approved');
+    // 文档定案与实现逐项一致（不另立第二套）。
+    expect([...PLAN_QUERY_OPERATIONS]).toEqual([
+      'phases.list',
+      'phases.get',
+      'features.list',
+      'features.get',
+      'tasks.list',
+      'tasks.get',
+    ]);
+    expect(PLAN_LIST_DEFAULT_LIMIT).toBe(50);
+    expect(PLAN_LIST_MAX_LIMIT).toBe(200);
+    expect(PLAN_LIST_CURSOR_PREFIX).toBe('plcur_v1_');
+    for (const operation of PLAN_QUERY_OPERATIONS) {
+      expect(doc).toContain(operation);
+    }
+    // 能力位复用 project.read（不新增能力位）。
+    expect(APP_CAPABILITIES).not.toContain('plan.read');
+    expect(typeof coreEntry.encodePlanListCursor).toBe('function');
+    expect(typeof coreEntry.decodePlanListCursor).toBe('function');
+    expect(typeof coreEntry.validatePlanListFilter).toBe('function');
   });
 });

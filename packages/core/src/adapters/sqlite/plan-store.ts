@@ -39,8 +39,15 @@ import type {
 } from '../../ports/plan-store.js';
 import type { PlanArtifactRef, PlanComplexity } from '../../ports/feature-plan.js';
 import type { ArtifactInputRef } from '../../ports/artifact-store.js';
+import { assertPrincipalVisibility } from '../../ports/queries.js';
+import type {
+  FeaturePlanView,
+  PlanListRequest,
+  PlanRecordPage,
+} from '../../ports/queries.js';
 import { validateStableId } from '../../ports/validation.js';
 import type { SqliteStorageSession } from './session.js';
+import { transactSqliteConsistentRead, visibilityCondition } from './state-store.js';
 
 export interface SqlitePlanStoreOptions {
   /** UTC 毫秒时钟（默认 Date.now）；测试注入以获得确定性时间。 */
@@ -136,6 +143,32 @@ export interface SqlitePlanAccess {
   getArtifactInputRefInTransaction(projectId: string, artifactId: string): ArtifactInputRef;
   /** F-005：既有任务 → 所属 Feature 解析（仅返回存在行）。 */
   getTaskFeatureLinksInTransaction(taskIds: readonly string[]): ReadonlyMap<string, string>;
+  /**
+   * F-006 查询读取：单行详情（未命中 undefined；不在写事务内调用）。
+   * 可见性折叠由应用层统一处理，本层不区分不存在与跨项目。
+   */
+  readPhaseRecord(phaseId: unknown): PhaseRecord | undefined;
+  readTaskRecord(taskId: unknown): TaskRecord | undefined;
+  /** F-006：Feature + 全部 Task + 全部依赖边（单一 DEFERRED 读事务一致视图）。 */
+  readFeaturePlanView(featureId: unknown): FeaturePlanView | undefined;
+  /** F-006 层级列表：可见范围谓词下推 + 稳定 id 升序键集分页（先收窄再分页）。 */
+  listPhaseRecords(
+    visibility: unknown,
+    projectId: unknown,
+    request: PlanListRequest,
+  ): PlanRecordPage<PhaseRecord>;
+  listFeatureRecords(
+    visibility: unknown,
+    projectId: unknown,
+    phaseId: unknown,
+    request: PlanListRequest,
+  ): PlanRecordPage<FeatureRecord>;
+  listTaskRecords(
+    visibility: unknown,
+    projectId: unknown,
+    featureId: unknown,
+    request: PlanListRequest,
+  ): PlanRecordPage<TaskRecord>;
 }
 
 export function createSqlitePlanAccess(
@@ -719,6 +752,183 @@ export function createSqlitePlanAccess(
     return links;
   }
 
+  /* ------------------ F-006 查询读取（非事务写路径） ------------------ */
+
+  /** 查询读取：写事务内调用是编程错误（查询面绝不并入写事务/不产生副作用）。 */
+  function assertNotInTransaction(operation: string): void {
+    if (session.database.inTransaction) {
+      throw new TypeError(`${operation}: 计划查询读取不得嵌套在写事务内（编程错误）`);
+    }
+  }
+
+  /** 查询读取的稳定 ID 入口校验（未知输入 → validation；不读 SQL）。 */
+  function planReadId(
+    operation: string,
+    value: unknown,
+    field: string,
+    entityType: StorageEntityRef['type'],
+  ): string {
+    return validateStableId(value, { operation, entity: { type: entityType } }, field);
+  }
+
+  function assertPlanListRequest(request: PlanListRequest): void {
+    if (
+      request === null ||
+      typeof request !== 'object' ||
+      (request.afterId !== null &&
+        (typeof request.afterId !== 'string' || request.afterId.length === 0)) ||
+      typeof request.limit !== 'number' ||
+      !Number.isInteger(request.limit) ||
+      request.limit < 1
+    ) {
+      throw new TypeError('PlanStore.list: request 必须是 {afterId: string|null, limit: ≥1 整数}（已校验分页形态）');
+    }
+  }
+
+  /**
+   * 层级列表 SELECT：可见范围谓词（project_id）随查询下推，与父级过滤、
+   * 键集下界（id > afterId）同一条 WHERE，再 ORDER BY id LIMIT n+1——先收窄
+   * 再分页；父级跨项目/不存在/空父级统一空页，不泄漏存在性。
+   */
+  function listPlanRows<T>(
+    operation: string,
+    visibility: unknown,
+    select: string,
+    projectId: unknown,
+    parent: { readonly column: string; readonly value: unknown; readonly entityType: StorageEntityRef['type'] } | null,
+    request: PlanListRequest,
+    mapRow: (row: unknown) => T,
+  ): PlanRecordPage<T> {
+    assertOpen(operation);
+    assertNotInTransaction(operation);
+    // 可见范围形状非法 = 可信装配编程错误（TypeError），不折算客户端错误。
+    assertPrincipalVisibility(visibility);
+    assertPlanListRequest(request);
+    const validProjectId = planReadId(operation, projectId, 'projectId', 'project');
+    const conditions = ['id > ?', 'project_id = ?'];
+    const params: unknown[] = [request.afterId ?? '', validProjectId];
+    if (parent !== null) {
+      const validParentId = planReadId(operation, parent.value, parent.column, parent.entityType);
+      conditions.push(`${parent.column} = ?`);
+      params.push(validParentId);
+    }
+    const visible = visibilityCondition(visibility, 'project_id');
+    if (visible.condition !== undefined) {
+      conditions.push(visible.condition);
+      params.push(...visible.params);
+    }
+    params.push(request.limit + 1);
+    const rows = session.database
+      .prepare<unknown[], unknown>(
+        `${select} WHERE ${conditions.join(' AND ')} ORDER BY id LIMIT ?`,
+      )
+      .all(...params);
+    const hasMore = rows.length > request.limit;
+    const pageRows = hasMore ? rows.slice(0, request.limit) : rows;
+    return {
+      records: pageRows.map(mapRow),
+      nextId: hasMore ? ((pageRows[pageRows.length - 1] as { id?: string } | undefined)?.id ?? null) : null,
+    };
+  }
+
+  function readPhaseRecord(phaseId: unknown): PhaseRecord | undefined {
+    const operation = 'PlanStore.readPhase';
+    assertOpen(operation);
+    assertNotInTransaction(operation);
+    const id = planReadId(operation, phaseId, 'phaseId', 'phase');
+    const row = session.database
+      .prepare<[string], PhaseSqlRow>(`${SELECT_PHASE} WHERE id = ?`)
+      .get(id);
+    return row === undefined ? undefined : phaseFromRow(row);
+  }
+
+  function readTaskRecord(taskId: unknown): TaskRecord | undefined {
+    const operation = 'PlanStore.readTask';
+    assertOpen(operation);
+    assertNotInTransaction(operation);
+    const id = planReadId(operation, taskId, 'taskId', 'task');
+    const row = session.database
+      .prepare<[string], TaskSqlRow>(`${SELECT_TASK} WHERE id = ?`)
+      .get(id);
+    return row === undefined ? undefined : taskFromRow(row);
+  }
+
+  /**
+   * F-006：Feature 计划详情 + 完整同 Feature Task DAG 的一致读视图（单一
+   * BEGIN DEFERRED 读事务）。并发修订只能观察到完整修订前或修订后：视图内
+   * Feature 行、全部 Task 行与全部依赖边来自同一快照，不存在新 Task 配旧边/
+   * 旧摘要的混合状态；嵌套于写事务内调用是编程错误（TypeError）。
+   */
+  function readFeaturePlanView(featureId: unknown): FeaturePlanView | undefined {
+    const operation = 'PlanStore.readFeaturePlanView';
+    const id = planReadId(operation, featureId, 'featureId', 'feature');
+    return transactSqliteConsistentRead(session, operation, (db) => {
+      const featureRow = db
+        .prepare<[string], FeatureSqlRow>(`${SELECT_FEATURE} WHERE id = ?`)
+        .get(id);
+      if (featureRow === undefined) {
+        return undefined;
+      }
+      const taskRows = db
+        .prepare<[string], TaskSqlRow>(`${SELECT_TASK} WHERE feature_id = ? ORDER BY id`)
+        .all(id) as TaskSqlRow[];
+      const dependencyRows = db
+        .prepare<[string], TaskDependencySqlRow>(
+          `${SELECT_TASK_DEPENDENCY} WHERE feature_id = ? ORDER BY task_id, depends_on_id`,
+        )
+        .all(id) as TaskDependencySqlRow[];
+      return {
+        feature: featureFromRow(featureRow),
+        tasks: taskRows.map((row) => taskFromRow(row)),
+        dependencies: dependencyRows.map((row) => taskDependencyFromRow(row)),
+      };
+    });
+  }
+
+  function listPhaseRecords(
+    visibility: unknown,
+    projectId: unknown,
+    request: PlanListRequest,
+  ): PlanRecordPage<PhaseRecord> {
+    return listPlanRows('PlanStore.listPhases', visibility, SELECT_PHASE, projectId, null, request, (row) =>
+      phaseFromRow(row as PhaseSqlRow),
+    );
+  }
+
+  function listFeatureRecords(
+    visibility: unknown,
+    projectId: unknown,
+    phaseId: unknown,
+    request: PlanListRequest,
+  ): PlanRecordPage<FeatureRecord> {
+    return listPlanRows(
+      'PlanStore.listFeatures',
+      visibility,
+      SELECT_FEATURE,
+      projectId,
+      { column: 'phase_id', value: phaseId, entityType: 'phase' },
+      request,
+      (row) => featureFromRow(row as FeatureSqlRow),
+    );
+  }
+
+  function listTaskRecords(
+    visibility: unknown,
+    projectId: unknown,
+    featureId: unknown,
+    request: PlanListRequest,
+  ): PlanRecordPage<TaskRecord> {
+    return listPlanRows(
+      'PlanStore.listTasks',
+      visibility,
+      SELECT_TASK,
+      projectId,
+      { column: 'feature_id', value: featureId, entityType: 'feature' },
+      request,
+      (row) => taskFromRow(row as TaskSqlRow),
+    );
+  }
+
   return {
     insertPhaseInTransaction,
     insertFeatureInTransaction,
@@ -728,5 +938,11 @@ export function createSqlitePlanAccess(
     getPhaseInTransaction,
     getArtifactInputRefInTransaction,
     getTaskFeatureLinksInTransaction,
+    readPhaseRecord,
+    readTaskRecord,
+    readFeaturePlanView,
+    listPhaseRecords,
+    listFeatureRecords,
+    listTaskRecords,
   };
 }

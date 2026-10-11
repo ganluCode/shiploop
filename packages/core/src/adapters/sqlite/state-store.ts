@@ -177,7 +177,7 @@ interface BoundQuery {
 }
 
 /** 可见范围谓词（P02-2 / F-010）：先收窄再分页/计数；allowlist 为空是编程错误。 */
-function visibilityCondition(visibility: PrincipalScope, column: string): { readonly condition?: string; readonly params: readonly unknown[] } {
+export function visibilityCondition(visibility: PrincipalScope, column: string): { readonly condition?: string; readonly params: readonly unknown[] } {
   if (visibility.kind === 'all') {
     return { params: [] };
   }
@@ -329,6 +329,48 @@ function globalSettingsFromRow(row: GlobalSettingsRow, context: ValidationContex
 
 function projectSettingsFromRow(row: ProjectSettingsRow, context: ValidationContext): ProjectSettingsRecord {
   return { ...globalSettingsFromRow(row, context), projectId: row.project_id };
+}
+
+/**
+ * F-010 一致读视图事务（BEGIN DEFERRED）：同一读事务内取得全部内容行与
+ * MAX(state_events.sequence)——视图内后续写入要么整体可见（事件 sequence
+ * 已计入水位）要么整体不可见（sequence 严格大于水位），不存在中间形态。
+ * 只读事务在 WAL 下不阻塞写者；busy 复用会话有限预算，耗尽明确失败。
+ * 嵌套于写事务内调用是编程错误（TypeError）：读视图不得静默并入写事务。
+ * P03-1 / F-006 计划详情/DAG 一致读视图（adapters/sqlite/plan-store.ts）复用
+ * 同一实现，不另立第二套事务规则。
+ */
+export function transactSqliteConsistentRead<T>(
+  session: SqliteStorageSession,
+  operation: string,
+  fn: (db: Database.Database) => T,
+): T {
+  if (!session.isOpen()) {
+    throw new Error(`SQLite 存储会话已关闭，拒绝继续操作（operation: ${operation}）`);
+  }
+  const db = session.database;
+  if (db.inTransaction) {
+    throw new TypeError(`${operation}: 一致读视图必须位于独立读事务（不得嵌套写事务）`);
+  }
+  const runner = db.transaction((inner: Database.Database) => fn(inner));
+  let lastBusy: unknown;
+  for (let attempt = 1; attempt <= session.busyRetryAttempts; attempt += 1) {
+    try {
+      return runner.deferred(db);
+    } catch (error) {
+      if (isSqliteBusyReadError(error)) {
+        lastBusy = error;
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw new StorageError(
+    'busy',
+    operation,
+    `SQLite 一致读视图在有限 busy 预算内未完成（${session.busyRetryAttempts} 次尝试）`,
+    { details: { attempts: session.busyRetryAttempts }, cause: lastBusy },
+  );
 }
 
 /**
@@ -864,41 +906,7 @@ export function createSqliteStateAccess(
     return updated;
   }
 
-  /**
-   * F-010 一致读视图事务（BEGIN DEFERRED）：同一读事务内取得全部内容行与
-   * MAX(state_events.sequence)——视图内后续写入要么整体可见（事件 sequence
-   * 已计入水位）要么整体不可见（sequence 严格大于水位），不存在中间形态。
-   * 只读事务在 WAL 下不阻塞写者；busy 复用会话有限预算，耗尽明确失败。
-   * 嵌套于写事务内调用是编程错误（TypeError）：读视图不得静默并入写事务。
-   */
-  function transactConsistentRead<T>(operation: string, fn: (db: Database.Database) => T): T {
-    assertOpen(operation);
-    const db = session.database;
-    if (db.inTransaction) {
-      throw new TypeError(`${operation}: 一致读视图必须位于独立读事务（不得嵌套写事务）`);
-    }
-    const runner = db.transaction((inner: Database.Database) => fn(inner));
-    let lastBusy: unknown;
-    for (let attempt = 1; attempt <= session.busyRetryAttempts; attempt += 1) {
-      try {
-        return runner.deferred(db);
-      } catch (error) {
-        if (isSqliteBusyReadError(error)) {
-          lastBusy = error;
-          continue;
-        }
-        throw error;
-      }
-    }
-    throw new StorageError(
-      'busy',
-      operation,
-      `SQLite 一致读视图在有限 busy 预算内未完成（${session.busyRetryAttempts} 次尝试）`,
-      { details: { attempts: session.busyRetryAttempts }, cause: lastBusy },
-    );
-  }
-
-  /** 全局当前配置行（读事务内使用；未配置返回 undefined）。 */
+/** 全局当前配置行（读事务内使用；未配置返回 undefined）。 */
   function selectGlobalSettingsRowOrNull(db: Database.Database): GlobalSettingsRow | undefined {
     return db
       .prepare<[string], GlobalSettingsRow>('SELECT * FROM global_settings WHERE id = ?')
@@ -972,7 +980,7 @@ export function createSqliteStateAccess(
   function readProjectSnapshotView(projectId: unknown): SnapshotView {
     const operation = 'SnapshotStore.readProjectSnapshotView';
     const id = validateStableId(projectId, { operation, entity: { type: 'project' } }, 'projectId');
-    return transactConsistentRead(operation, (db) => {
+    return transactSqliteConsistentRead(session, operation, (db) => {
       const context: ValidationContext = { operation, entity: { type: 'project', id } };
       const project = projectFromRow(selectProjectRow(db, id, operation), context);
       const bindingRow = selectBindingRowByProjectId(db, id);
@@ -1003,7 +1011,7 @@ export function createSqliteStateAccess(
   /** F-010：全局 scope 一致读视图（全局当前配置 + 水位，同一读事务）。 */
   function readGlobalSnapshotView(): SnapshotView {
     const operation = 'SnapshotStore.readGlobalSnapshotView';
-    return transactConsistentRead(operation, (db) => {
+    return transactSqliteConsistentRead(session, operation, (db) => {
       const globalRow = selectGlobalSettingsRowOrNull(db);
       return {
         project: null,

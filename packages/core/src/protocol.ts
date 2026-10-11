@@ -46,6 +46,18 @@ export type {
   ProjectBindingResult, ProjectDetailResult, ProjectLabelCountsResult, ProjectListResult,
   PublicProjectRecord, PublicRepositoryBindingRecord, PublicSettingsState,
 } from './ports/queries.js';
+// P03-1 / F-006 计划查询面：公开形状、分页常量与纯校验/游标函数（服务端负责授权）。
+export {
+  PLAN_LIST_CURSOR_PREFIX, PLAN_LIST_DEFAULT_LIMIT, PLAN_LIST_MAX_LIMIT,
+  PLAN_QUERY_OPERATIONS, validatePlanListFilter,
+  encodePlanListCursor, decodePlanListCursor,
+} from './ports/queries.js';
+export type {
+  FeatureDetailResult, FeatureListResult, FeatureNotExecutableReason,
+  FeaturePlanValidationSummary, PhaseDetailResult, PhaseListResult,
+  PlanListResultBase, PublicTaskDependencyEdge, PublicTaskRecord,
+  TaskDetailResult, TaskListResult,
+} from './ports/queries.js';
 // type-only 导出擦除后不加载业务服务。
 export type { EffectiveSettings } from './application/effective-settings.js';
 export type { ExportedSettings } from './application/configuration-service.js';
