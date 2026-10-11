@@ -130,14 +130,15 @@ describe('F-001 P02-1 Host 生命周期契约文档', () => {
 });
 
 describe('F-001 契约文档与仓库基线一致', () => {
-  it('根清单脚本与版本与文档记录一致，且没有提前冒用 accept:p02', () => {
+  it('根清单脚本与版本与文档记录一致（accept:p02 自 P02-4/F-011 起正式交付，指向本地控制器）', () => {
     const root = readJson('package.json');
     expect(root.engines).toEqual({ node: '22.19.0', npm: '10.9.3' });
     expect(root.packageManager).toBe('npm@10.9.3');
     expect(Object.keys(root.scripts as Record<string, string>).sort()).toEqual(
-      ['accept:p01', 'build', 'check:boundaries', 'test', 'typecheck', 'verify'].sort(),
+      ['accept:p01', 'accept:p02', 'build', 'check:boundaries', 'test', 'typecheck', 'verify'].sort(),
     );
-    expect(root.scripts).not.toHaveProperty('accept:p02');
+    // P02-4/F-011 起正式交付：必须是本地控制器脚本，不得经由 npx/全局工具。
+    expect(root.scripts).toHaveProperty('accept:p02', 'node scripts/acceptance/p02-accept.ts');
   });
 
   it('F-011 增量：CLI 公共入口导出纯解析/帮助/输出面层，加载仍无副作用（文档 §1.5 事实）', () => {

@@ -219,14 +219,15 @@ describe('F-001 P02-3 项目初始化与获准基线检查契约文档', () => {
 });
 
 describe('F-001 契约文档与仓库基线一致（开工现状事实）', () => {
-  it('根清单脚本与版本不变，且仍未冒用 accept:p02', () => {
+  it('根清单脚本与版本不变（accept:p02 自 P02-4/F-011 起正式交付，指向本地控制器）', () => {
     const root = readJson('package.json');
     expect(root.engines).toEqual({ node: '22.19.0', npm: '10.9.3' });
     expect(root.packageManager).toBe('npm@10.9.3');
     expect(Object.keys(root.scripts as Record<string, string>).sort()).toEqual(
-      ['accept:p01', 'build', 'check:boundaries', 'test', 'typecheck', 'verify'].sort(),
+      ['accept:p01', 'accept:p02', 'build', 'check:boundaries', 'test', 'typecheck', 'verify'].sort(),
     );
-    expect(root.scripts).not.toHaveProperty('accept:p02');
+    // P02-4/F-011 起正式交付：必须是本地控制器脚本，不得经由 npx/全局工具。
+    expect(root.scripts).toHaveProperty('accept:p02', 'node scripts/acceptance/p02-accept.ts');
   });
 
   it('线消息 schemaVersion 已随 F-006 升至 3（开工为 2），契约记录起点与升版定案', () => {

@@ -20,7 +20,8 @@
     "check:boundaries": "node scripts/check-boundaries.ts",
     "build": "node scripts/build-host-lock.ts && tsc -b packages/core/tsconfig.json packages/host/tsconfig.json packages/cli/tsconfig.json && node scripts/prepare-cli-bin.ts && node scripts/smoke-built-entries.ts",
     "verify": "node scripts/verify.ts",
-    "accept:p01": "node scripts/acceptance/p01-accept.ts"
+    "accept:p01": "node scripts/acceptance/p01-accept.ts",
+    "accept:p02": "node scripts/acceptance/p02-accept.ts"
   },
   "devDependencies": {
     "@types/node": "22.20.4",

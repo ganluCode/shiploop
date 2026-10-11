@@ -189,14 +189,15 @@ describe('F-001 P02-2 应用命令/查询/事件契约文档', () => {
 });
 
 describe('F-001 契约文档与仓库基线一致（开工现状事实）', () => {
-  it('根清单脚本与版本不变，且仍未冒用 accept:p02', () => {
+  it('根清单脚本与版本不变（accept:p02 自 P02-4/F-011 起正式交付，指向本地控制器）', () => {
     const root = readJson('package.json');
     expect(root.engines).toEqual({ node: '22.19.0', npm: '10.9.3' });
     expect(root.packageManager).toBe('npm@10.9.3');
     expect(Object.keys(root.scripts as Record<string, string>).sort()).toEqual(
-      ['accept:p01', 'build', 'check:boundaries', 'test', 'typecheck', 'verify'].sort(),
+      ['accept:p01', 'accept:p02', 'build', 'check:boundaries', 'test', 'typecheck', 'verify'].sort(),
     );
-    expect(root.scripts).not.toHaveProperty('accept:p02');
+    // P02-4/F-011 起正式交付：必须是本地控制器脚本，不得经由 npx/全局工具。
+    expect(root.scripts).toHaveProperty('accept:p02', 'node scripts/acceptance/p02-accept.ts');
   });
 
   it('F-011 已升线消息 v2 并以 §11.3 结构化能力宣告真实接线（F-012 起 events 为 SSE 视图；P02-3/F-006 起线消息续升 v3，见 p02-3 契约）', () => {
