@@ -298,7 +298,7 @@ F-002 在上述基础上为 P02-4 场景提供**专属**临时数据根、真实
 |---|---|---|
 | 配置 `schemaVersion` | `2`（`SETTINGS_SCHEMA_VERSION`） | `packages/core/src/ports/settings-schema.ts` |
 | 导出格式版本 | `1`（`SETTINGS_EXPORT_FORMAT_VERSION`） | `packages/core/src/application/configuration-service.ts` |
-| SQLite 迁移 | v1..v5（v2 `state_events`、v3 `command_receipts`、v4 基线四表、v5 accepted 回执扩展） | `packages/core/src/adapters/sqlite/migrations.ts` |
+| SQLite 迁移 | v1..v6（v2 `state_events`、v3 `command_receipts`、v4 基线四表、v5 accepted 回执扩展；P03-1 / F-002 起 v6 计划结构四表，见 `docs/p03-1-plan-import-contract.md`） | `packages/core/src/adapters/sqlite/migrations.ts` |
 | 发现 / 握手 | `schemaVersion=1` / `protocolVersion=1` | `shiploop-host` 契约（P02-1） |
 | 应用线消息 / 事件封套 / 游标 / 结果引用 | `schemaVersion=3` / `schemaVersion=1` / `evcur_v1` / `v1.<43>` | `shiploop-core/protocol`、`ports/*` |
 | 阶段验收配置版本 | `configVersion`（F-010 冻结，建议 `1`） | `acceptance/p02.config.json`（见 §3.8） |

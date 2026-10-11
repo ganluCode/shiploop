@@ -615,9 +615,9 @@ describe('F-009 durability across close and reopen', () => {
         ).toEqual(readyRef);
         expect(await second.artifacts.getArtifact(failedSnapshot!.projectId, failedSnapshot!.id)).toEqual(failedSnapshot);
         // 迁移记录仍在（v1 六表 + v2 state_events + v3 command_receipts + F-007 v4 基线四表
-        // + F-008 v5 command_receipts 重建），库未被重建。
+        // + F-008 v5 command_receipts 重建 + P03-1/F-002 v6 计划结构四表），库未被重建。
         const row = second.session.database.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get() as { n: number };
-        expect(row.n).toBe(5);
+        expect(row.n).toBe(6);
       } finally {
         second.close();
       }

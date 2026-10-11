@@ -866,11 +866,11 @@ describe('F-006 迁移 v3 command_receipts', () => {
       const dbPath = join(sandbox.path, 'state.db');
       const session = openSqliteStorageSession({ path: dbPath });
       await migrateSqliteStorage(session);
-      // 高版本：插入超出支持范围的迁移记录（P02-3 / F-008 起真实清单止于 v5，
-      // 探针记录为 v6）。
+      // 高版本：插入超出支持范围的迁移记录（P03-1 / F-002 起真实清单止于 v6，
+      // 探针记录为 v7；记录 id 与真实 migration-v* 命名错开避免主键冲突）。
       session.database
         .prepare('INSERT INTO schema_migrations (id, created_at, version, checksum, applied_at) VALUES (?, ?, ?, ?, ?)')
-        .run('migration-v6', 1, SQLITE_MIGRATIONS.length + 1, DIGEST_HEX, 1);
+        .run('migration-high-probe', 1, SQLITE_MIGRATIONS.length + 1, DIGEST_HEX, 1);
       session.close();
       const highVersion = openSqliteStorageSession({ path: dbPath });
       let caught: unknown;

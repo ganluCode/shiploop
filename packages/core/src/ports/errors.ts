@@ -32,7 +32,11 @@ export type StorageEntityType =
   /** P03-1 / F-001：计划校验错误归属的 Feature 聚合（持久化表随 F-002 迁移建立）。 */
   | 'feature'
   /** P03-1 / F-001：计划 DAG 校验错误的节点定位（持久化表随 F-002 迁移建立）。 */
-  | 'task';
+  | 'task'
+  /** P03-1 / F-002：阶段（phases，迁移 v6）。 */
+  | 'phase'
+  /** P03-1 / F-002：同 Feature 任务依赖边（task_dependencies，迁移 v6）。 */
+  | 'task_dependency';
 
 export type StorageErrorKind =
   /** 外部输入未通过运行时校验（缺字段/类型错误/未知 schemaVersion/非法摘要等）。 */

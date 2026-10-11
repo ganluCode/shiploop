@@ -517,6 +517,231 @@ export const baselineOccupancy = sqliteTable('baseline_occupancy', {
   ),
 ]);
 
+/**
+ * P03-1 / F-002 计划结构四表（迁移 v6，docs/p03-1-plan-import-contract.md 与设计 11 §4）。
+ *
+ * 边界与先例（与迁移 v6 同源，一致性由 test/sqlite-schema-migrations.test.ts 交叉核对）：
+ * - phases/features/tasks 均有同项目复合唯一键 (project_id,id)：既是复合外键目标，
+ *   也供跨项目引用在 DDL 级拒绝（features→phases、tasks→features 与
+ *   task_dependencies→tasks 的同 Feature 复合外键）；
+ * - task_dependencies 两端必须同 Feature（UNIQUE(feature_id,task_id,depends_on_id)
+ *   + 自依赖 CHECK + 两个同 Feature 复合外键）；环检测不在 DDL 层，由存储原语在
+ *   事务内 DFS 校验；
+ * - requirements 多引用形态（JSON 数组 requirements_refs）按 P03-1 契约 §9.1 由本
+ *   迁移定案，与 F-001 纯校验的多引用形态一致；acceptance/execution_config 为
+ *   JSON 对象；labels/source_refs 为 JSON 数组，默认 '[]' 且不继承父级；
+ * - 状态枚举冻结设计 02/11 的完整生命周期（创建路径仅写入 open/draft/pending，
+ *   其余取值随对应功能迁移使用）；config_source 仅非空约束，取值由 F-003 定案；
+ * - 不建 feature_dependencies/execution_batches/runs/attempts/approvals 等表，
+ *   tasks 不含 kind/attempt_counter 等执行域列（随对应功能迁移增加）。
+ */
+export const phases = sqliteTable('phases', {
+  id: text('id').primaryKey(),
+  createdAt: integer('created_at').notNull(),
+  /** 所属项目；同项目归属由复合外键与端口写入路径共同保证。 */
+  projectId: text('project_id')
+    .notNull()
+    .references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  /** CAS 并发计数（≥1，每次成功写入递增）。 */
+  revision: integer('revision').notNull().default(1),
+  updatedAt: integer('updated_at').notNull(),
+  title: text('title').notNull(),
+  /** 阶段生命周期：open/closed/archived（设计 02 §1；创建恒为 open）。 */
+  status: text('status').notNull().default('open'),
+  /** 可选说明（Markdown；省略/全空白归一 null）。 */
+  description: text('description'),
+  /** 阶段标签 JSON 数组；默认 []，不向 Feature/Task 继承。 */
+  labels: text('labels').notNull().default('[]'),
+}, (table) => [
+  check('phases_revision_positive_check', sql`${table.revision} >= 1`),
+  check('phases_title_not_empty_check', sql`length(${table.title}) > 0`),
+  check('phases_status_enum_check', sql`${table.status} IN ('open', 'closed', 'archived')`),
+  check(
+    'phases_labels_json_array_check',
+    sql`json_valid(${table.labels}) AND json_type(${table.labels}) = 'array'`,
+  ),
+  // 同项目复合外键目标（与 repository_bindings 同一先例）。
+  uniqueIndex('phases_project_id_id_unique').on(table.projectId, table.id),
+]);
+
+export const features = sqliteTable('features', {
+  id: text('id').primaryKey(),
+  createdAt: integer('created_at').notNull(),
+  projectId: text('project_id')
+    .notNull()
+    .references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  /** CAS 并发计数（计划导入/编辑共用 Feature 聚合 revision，P03-1 契约 §6.2）。 */
+  revision: integer('revision').notNull().default(1),
+  updatedAt: integer('updated_at').notNull(),
+  /** 所属阶段；必须同项目（复合外键）。 */
+  phaseId: text('phase_id')
+    .notNull()
+    .references((): SQLiteColumn => phases.id, { onDelete: 'restrict' }),
+  title: text('title').notNull(),
+  /** Feature 业务状态：创建恒为 draft，其余取值随执行/审批功能使用。 */
+  status: text('status').notNull().default('draft'),
+  /** 当前计划审批状态（最小集：draft/pending_approval/approved，设计 11 §4）。 */
+  planStatus: text('plan_status').notNull().default('draft'),
+  description: text('description'),
+  labels: text('labels').notNull().default('[]'),
+  /** 输入来源制品引用 JSON 数组（身份级 {artifactId,contentHash?}）。 */
+  sourceRefs: text('source_refs').notNull().default('[]'),
+  /** 当前计划业务摘要（F-001 规范化 SHA-256；不是 CAS 依据）。 */
+  planDigest: text('plan_digest'),
+}, (table) => [
+  check('features_revision_positive_check', sql`${table.revision} >= 1`),
+  check('features_title_not_empty_check', sql`length(${table.title}) > 0`),
+  check(
+    'features_status_enum_check',
+    sql`${table.status} IN ('draft', 'ready', 'running', 'awaiting_approval', 'completed', 'partial', 'failed')`,
+  ),
+  check(
+    'features_plan_status_enum_check',
+    sql`${table.planStatus} IN ('draft', 'pending_approval', 'approved')`,
+  ),
+  check(
+    'features_labels_json_array_check',
+    sql`json_valid(${table.labels}) AND json_type(${table.labels}) = 'array'`,
+  ),
+  check(
+    'features_source_refs_json_array_check',
+    sql`json_valid(${table.sourceRefs}) AND json_type(${table.sourceRefs}) = 'array'`,
+  ),
+  check(
+    'features_plan_digest_sha256_check',
+    sql`${table.planDigest} IS NULL OR (length(${table.planDigest}) = 64 AND ${table.planDigest} NOT GLOB '*[^0-9a-f]*')`,
+  ),
+  // 同项目复合外键：跨项目 Phase 引用在 DDL 级被拒绝。
+  foreignKey({
+    name: 'features_phase_same_project_fk',
+    columns: [table.projectId, table.phaseId],
+    foreignColumns: [phases.projectId, phases.id],
+  }).onDelete('restrict'),
+  uniqueIndex('features_project_id_id_unique').on(table.projectId, table.id),
+  index('features_phase_id_status_index').on(table.phaseId, table.status),
+]);
+
+export const tasks = sqliteTable('tasks', {
+  /** 计划作者指定的稳定 ID（P03-1 契约；Phase/Feature 由应用侧生成 UUID，Task 保留计划内 ID）。 */
+  id: text('id').primaryKey(),
+  createdAt: integer('created_at').notNull(),
+  projectId: text('project_id')
+    .notNull()
+    .references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  /** CAS 并发计数（无独立 CAS：计划修订在 Feature 聚合事务内整体替换，契约 §6.2）。 */
+  revision: integer('revision').notNull().default(1),
+  updatedAt: integer('updated_at').notNull(),
+  /** 所属 Feature；必须同项目（复合外键）。 */
+  featureId: text('feature_id')
+    .notNull()
+    .references((): SQLiteColumn => features.id, { onDelete: 'restrict' }),
+  title: text('title').notNull(),
+  /** Task 持久状态：创建恒为 pending（设计 02 §4 完整枚举）。 */
+  status: text('status').notNull().default('pending'),
+  /** 任务复杂度（low/medium/high，可空；复用配置复杂度取值）。 */
+  complexity: text('complexity'),
+  description: text('description'),
+  labels: text('labels').notNull().default('[]'),
+  /** 结构化验收 {"criteria":[...]}（有序清单；引用/描述不能替代）。 */
+  acceptance: text('acceptance').notNull(),
+  /** 需求/验收制品引用 JSON 数组（身份级；P03-1 契约 §9.1 多引用形态）。 */
+  requirementsRefs: text('requirements_refs').notNull().default('[]'),
+  /** Task 可编辑完整策略副本 JSON 对象（创建时复制；完整策略语义由 F-003 应用层校验）。 */
+  executionConfig: text('execution_config').notNull(),
+  /** 策略来源（project_default/global_default/user_override；非空，取值由 F-003 定案）。 */
+  configSource: text('config_source').notNull(),
+  /** 来源策略键（仅追踪用途；可空）。 */
+  configSourceKey: text('config_source_key'),
+}, (table) => [
+  check('tasks_revision_positive_check', sql`${table.revision} >= 1`),
+  check('tasks_title_not_empty_check', sql`length(${table.title}) > 0`),
+  check(
+    'tasks_status_enum_check',
+    sql`${table.status} IN ('pending', 'running', 'passed', 'failed', 'skipped', 'cancelled')`,
+  ),
+  check(
+    'tasks_complexity_enum_check',
+    sql`${table.complexity} IS NULL OR ${table.complexity} IN ('low', 'medium', 'high')`,
+  ),
+  check(
+    'tasks_labels_json_array_check',
+    sql`json_valid(${table.labels}) AND json_type(${table.labels}) = 'array'`,
+  ),
+  check(
+    'tasks_acceptance_json_object_check',
+    sql`json_valid(${table.acceptance}) AND json_type(${table.acceptance}) = 'object'`,
+  ),
+  check(
+    'tasks_requirements_refs_json_array_check',
+    sql`json_valid(${table.requirementsRefs}) AND json_type(${table.requirementsRefs}) = 'array'`,
+  ),
+  check(
+    'tasks_execution_config_json_object_check',
+    sql`json_valid(${table.executionConfig}) AND json_type(${table.executionConfig}) = 'object'`,
+  ),
+  check('tasks_config_source_not_empty_check', sql`length(${table.configSource}) > 0`),
+  // 同项目复合外键：跨项目 Feature 引用在 DDL 级被拒绝。
+  foreignKey({
+    name: 'tasks_feature_same_project_fk',
+    columns: [table.projectId, table.featureId],
+    foreignColumns: [features.projectId, features.id],
+  }).onDelete('restrict'),
+  uniqueIndex('tasks_project_id_id_unique').on(table.projectId, table.id),
+  // 同 Feature 复合外键目标（task_dependencies 两端）：id 全局唯一使 (feature_id,id)
+  // 唯一前提成立，但 SQLite 复合外键父键需要显式唯一索引。
+  uniqueIndex('tasks_feature_id_id_unique').on(table.featureId, table.id),
+  index('tasks_feature_id_status_index').on(table.featureId, table.status),
+]);
+
+export const taskDependencies = sqliteTable('task_dependencies', {
+  id: text('id').primaryKey(),
+  createdAt: integer('created_at').notNull(),
+  /** 依赖边插后不可变：revision 恒为 1（计划修订在 Feature 聚合事务内整体替换）。 */
+  revision: integer('revision').notNull().default(1),
+  updatedAt: integer('updated_at').notNull(),
+  projectId: text('project_id')
+    .notNull()
+    .references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  featureId: text('feature_id')
+    .notNull()
+    .references((): SQLiteColumn => features.id, { onDelete: 'restrict' }),
+  /** 依赖方任务（必须属于 featureId 指定的同 Feature 任务）。 */
+  taskId: text('task_id')
+    .notNull()
+    .references((): SQLiteColumn => tasks.id, { onDelete: 'restrict' }),
+  /** 前置依赖任务（同 Feature；无自依赖、无重复边、无环）。 */
+  dependsOnId: text('depends_on_id')
+    .notNull()
+    .references((): SQLiteColumn => tasks.id, { onDelete: 'restrict' }),
+}, (table) => [
+  check('task_dependencies_revision_positive_check', sql`${table.revision} >= 1`),
+  // 自依赖拒绝（重复边由唯一索引拒绝；环由存储原语事务内 DFS 校验）。
+  check('task_dependencies_no_self_dependency_check', sql`${table.taskId} <> ${table.dependsOnId}`),
+  // 同项目复合外键：边声明的项目必须与 Feature 一致。
+  foreignKey({
+    name: 'task_dependencies_feature_same_project_fk',
+    columns: [table.projectId, table.featureId],
+    foreignColumns: [features.projectId, features.id],
+  }).onDelete('restrict'),
+  // 同 Feature 复合外键：跨 Feature 依赖在 DDL 级被拒绝（两端各一条）。
+  foreignKey({
+    name: 'task_dependencies_task_same_feature_fk',
+    columns: [table.featureId, table.taskId],
+    foreignColumns: [tasks.featureId, tasks.id],
+  }).onDelete('restrict'),
+  foreignKey({
+    name: 'task_dependencies_depends_on_same_feature_fk',
+    columns: [table.featureId, table.dependsOnId],
+    foreignColumns: [tasks.featureId, tasks.id],
+  }).onDelete('restrict'),
+  uniqueIndex('task_dependencies_feature_edge_unique').on(
+    table.featureId,
+    table.taskId,
+    table.dependsOnId,
+  ),
+  index('task_dependencies_feature_depends_on_index').on(table.featureId, table.dependsOnId),
+]);
+
 export const schemaMigrations = sqliteTable('schema_migrations', {
   id: text('id').primaryKey(),
   createdAt: integer('created_at').notNull(),

@@ -283,9 +283,10 @@ pending ──(CAS, 实测 hash 匹配 + 实际 size)──▶ ready
 
 仍未实现：
 
-- 未建立执行 / Chat / 知识等后续表（Phase/Feature/Task/Run/Attempt/Batch/Session/Chat、
-  project_profiles、capability_modules、verification_batches 等）；`source_attempt_id`、
-  `retention_class` 等字段随对应功能迁移增加。
+- 未建立执行 / Chat / 知识等后续表（feature_dependencies（Feature DAG）、Run/Attempt/Batch/
+  Session/Chat、project_profiles、capability_modules、verification_batches 等）；
+  Phase/Feature/Task/task_dependencies 已随 P03-1 / F-002（迁移 v6）建立为需求层级表，
+  不含执行域列；`source_attempt_id`、`retention_class` 等字段随对应功能迁移增加。
 - 未实现模型路由、Task 策略复制、凭据解析（只保存引用）、配置历史版本表。
 - 未提供 Host/CLI 命令、`accept:p01` 阶段验收。
 - 未做真实断电 / 磁盘满演练、Windows/WSL/Linux 平台验收、Electron 原生模块打包、模型 Live 调用、

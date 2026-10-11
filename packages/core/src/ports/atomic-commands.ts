@@ -16,6 +16,12 @@ import type {
   BaselineOperationRecord,
 } from './baseline-store.js';
 import type {
+  FeatureRecord,
+  PhaseRecord,
+  TaskDependencyRecord,
+  TaskRecord,
+} from './plan-store.js';
+import type {
   GlobalSettingsRecord,
   ProjectRecord,
   RepositoryBindingRecord,
@@ -87,6 +93,23 @@ export interface CommandTransaction {
   releaseBaselineOccupancy(operationId: string): BaselineOccupancySnapshot;
   /** §9.2 基线事件追加（payload 只含受控脱敏键；与公开白名单同形）。 */
   appendBaselineEvent(input: unknown): void;
+  /* ---------------------------------------------------------------- *
+   * P03-1 / F-002 计划结构原语（迁移 v6 四表；同一事务内原子生效）
+   *
+   * 输入一律 unknown，经 ports/plan-store.ts 校验器后才进入持久化；归属
+   * （同项目/同 Feature）在同一事务内核验，环检测在事务内 DFS 复核；
+   * Phase/Feature 创建恒为 open/draft(+plan_status=draft)，Task 保留计划
+   * 作者稳定 ID 且状态恒为 pending；事件/回执写入由后续命令用例
+   * （F-004/F-005）在其自身事务内组合，不在本原语内预支。
+   * ---------------------------------------------------------------- */
+  /** 创建 open Phase（适配器生成 UUID v4 与 UTC 毫秒；revision=1）。 */
+  insertPhase(input: unknown): PhaseRecord;
+  /** 创建 draft Feature（含最小 plan_status=draft、可选 planDigest 与来源引用）。 */
+  insertFeature(input: unknown): FeatureRecord;
+  /** 创建 pending Task（保存完整验收/引用/complexity/executionConfig 及来源）。 */
+  insertTask(input: unknown): TaskRecord;
+  /** 插入同 Feature 依赖边（自依赖/重复边/跨 Feature/环均结构化拒绝）。 */
+  insertTaskDependency(input: unknown): TaskDependencyRecord;
   saveReceipt(receipt: unknown): void;
 }
 

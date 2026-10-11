@@ -448,8 +448,9 @@ describe('F-006 durability across close and reopen', () => {
         expect(await second.store.getProject(projectB.id)).toEqual(projectB);
         expect(await second.store.getGlobalSettings()).toEqual(global);
         expect(await second.store.getProjectSettings(projectA.id)).toEqual(settingsA);
-        // 迁移记录仍在（v1 六表 + F-006 v2 state_events + P02-2 F-006 v3 command_receipts），库未被重建。
-        expect(countRows(second.session, 'schema_migrations')).toBe(5);
+        // 迁移记录仍在（v1 六表 + F-006 v2 state_events + P02-2 F-006 v3 command_receipts
+        // + P02-3 v4/v5 + P03-1 F-002 v6 计划结构四表），库未被重建。
+        expect(countRows(second.session, 'schema_migrations')).toBe(6);
       } finally {
         second.close();
       }

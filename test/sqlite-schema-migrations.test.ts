@@ -54,6 +54,11 @@ const SCHEMA_TABLES = [
   ['baseline_operations', schema.baselineOperations],
   ['baseline_check_results', schema.baselineCheckResults],
   ['baseline_occupancy', schema.baselineOccupancy],
+  // P03-1 / F-002：计划结构四表（docs/p03-1-plan-import-contract.md 与设计 11 §4，迁移 v6）。
+  ['phases', schema.phases],
+  ['features', schema.features],
+  ['tasks', schema.tasks],
+  ['task_dependencies', schema.taskDependencies],
   ['schema_migrations', schema.schemaMigrations],
 ] as const;
 
@@ -61,11 +66,7 @@ const EXPECTED_TABLE_NAMES = SCHEMA_TABLES.map(([name]) => name).sort();
 
 /** 迁移与未来功能明确不在本 Feature 建立的后续表（设计 11 §4-§7、§9）。 */
 const FORBIDDEN_TABLE_NAMES = [
-  'phases',
-  'features',
-  'tasks',
   'feature_dependencies',
-  'task_dependencies',
   'execution_batches',
   'batch_budget_revisions',
   'runs',
@@ -284,11 +285,16 @@ describe('F-003 versioned migration descriptors', () => {
       expect(migration.sql).not.toMatch(/\/Users\/|process\.cwd|__dirname|import\.meta/);
     }
     // v1 建立基础六表；v2（P01-3 / F-006）建立 state_events 审计表；
-    // v3（P02-2 / F-006）建立 command_receipts 幂等回执表。
+    // v3（P02-2 / F-006）建立 command_receipts 幂等回执表；v6（P03-1 / F-002）
+    // 建立计划结构四表（phases/features/tasks/task_dependencies）。
     expect(SQLITE_MIGRATIONS[0]?.sql).toMatch(/CREATE TABLE projects/);
     expect(SQLITE_MIGRATIONS[0]?.sql).toMatch(/CREATE TABLE schema_migrations/);
     expect(SQLITE_MIGRATIONS[1]?.sql).toMatch(/CREATE TABLE state_events/);
     expect(SQLITE_MIGRATIONS[2]?.sql).toMatch(/CREATE TABLE command_receipts/);
+    expect(SQLITE_MIGRATIONS[5]?.sql).toMatch(/CREATE TABLE phases/);
+    expect(SQLITE_MIGRATIONS[5]?.sql).toMatch(/CREATE TABLE features/);
+    expect(SQLITE_MIGRATIONS[5]?.sql).toMatch(/CREATE TABLE tasks/);
+    expect(SQLITE_MIGRATIONS[5]?.sql).toMatch(/CREATE TABLE task_dependencies/);
   });
 });
 
@@ -451,6 +457,21 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
         'baseline_check_results:(project_id,operation_id)->baseline_operations.(project_id,id)',
         'baseline_check_results:(output_artifact_id)->artifacts.(id)',
         'baseline_occupancy:(holder_operation_id)->baseline_operations.(id)',
+        // P03-1 / F-002 计划结构四表（迁移 v6）：同项目/同 Feature 复合外键。
+        'phases:(project_id)->projects.(id)',
+        'features:(project_id)->projects.(id)',
+        'features:(phase_id)->phases.(id)',
+        'features:(project_id,phase_id)->phases.(project_id,id)',
+        'tasks:(project_id)->projects.(id)',
+        'tasks:(feature_id)->features.(id)',
+        'tasks:(project_id,feature_id)->features.(project_id,id)',
+        'task_dependencies:(project_id)->projects.(id)',
+        'task_dependencies:(feature_id)->features.(id)',
+        'task_dependencies:(project_id,feature_id)->features.(project_id,id)',
+        'task_dependencies:(task_id)->tasks.(id)',
+        'task_dependencies:(feature_id,task_id)->tasks.(feature_id,id)',
+        'task_dependencies:(depends_on_id)->tasks.(id)',
+        'task_dependencies:(feature_id,depends_on_id)->tasks.(feature_id,id)',
       ]);
       type FkPragmaRow = { id: number; seq: number; table: string; from: string; to: string; on_update: string; on_delete: string };
       const actualFks = new Set<string>();

@@ -196,8 +196,12 @@ function codePointLength(value: string): number {
   return [...value].length;
 }
 
-/** 计划标题：非空字符串，trim 后有界（Feature 与 Task 共用）。 */
-function validatePlanTitle(value: unknown, context: ValidationContext, field: string): string {
+/**
+ * 计划标题：非空字符串，trim 后有界（Feature 与 Task 共用）。
+ * P03-1 / F-002 起导出供 plan-store（Phase/Feature/Task 存储端口）复用同一规则，
+ * 不另立第二套标题校验。
+ */
+export function validatePlanTitle(value: unknown, context: ValidationContext, field: string): string {
   const title = requireNonEmptyString(value, context, field);
   const trimmed = title.trim();
   if (trimmed.length === 0) {
@@ -218,9 +222,9 @@ function validatePlanTitle(value: unknown, context: ValidationContext, field: st
 /**
  * 计划描述（Feature/Task 共用）：省略（undefined）为未提供 → null；null 或全空白
  * 归一为 null（空描述是合法输入）；其余原文保留，长度 ≤ DESCRIPTION_MAX_LENGTH
- * （与项目描述同一上限与语义，不另立数值）。
+ * （与项目描述同一上限与语义，不另立数值）。P03-1 / F-002 起导出供 plan-store 复用。
  */
-function validatePlanDescription(value: unknown, context: ValidationContext, field: string): string | null {
+export function validatePlanDescription(value: unknown, context: ValidationContext, field: string): string | null {
   if (value === undefined || value === null) {
     return null;
   }
@@ -247,8 +251,9 @@ function validatePlanDescription(value: unknown, context: ValidationContext, fie
  * ——「已约定必需引用」的必需性由导入事务（F-005）重核；存在时必须是非空数组，
  * 每项是 { artifactId（稳定 ID）, contentHash?（64 位小写十六进制） }，完全相同的
  * 引用去重，输出按 (artifactId, contentHash) 排序（摘要顺序无关的基础）。
+ * P03-1 / F-002 起导出供 plan-store 复用（存储层不重复实现引用形态规则）。
  */
-function validatePlanArtifactRefs(
+export function validatePlanArtifactRefs(
   value: unknown,
   context: ValidationContext,
   field: string,
@@ -301,8 +306,11 @@ function requireSha256(value: unknown, context: ValidationContext, field: string
   return value;
 }
 
-/** 结构化验收：对象只含 criteria；≥1 条；条目非空、trim 后保留、有条数与长度上限。 */
-function validatePlanAcceptance(
+/**
+ * 结构化验收：对象只含 criteria；≥1 条；条目非空、trim 后保留、有条数与长度上限。
+ * P03-1 / F-002 起导出供 plan-store 复用（持久化验收与纯校验同形）。
+ */
+export function validatePlanAcceptance(
   value: unknown,
   context: ValidationContext,
   field: string,
@@ -524,7 +532,7 @@ export function validateFeaturePlanInput(
   }
 
   // 环检测：按 id 稳定顺序做三色 DFS，报错携带环路径节点定位。
-  const cycle = detectCycle(pendingTasks.map((task) => ({ id: task.id, dependsOn: [...task.dependsOn] })));
+  const cycle = detectPlanDependencyCycle(pendingTasks.map((task) => ({ id: task.id, dependsOn: [...task.dependsOn] })));
   if (cycle !== undefined) {
     throw planError(context, 'tasks.dependencies', '依赖存在环（环路径见 details.cycle）', {
       cycle,
@@ -556,8 +564,14 @@ export function validateFeaturePlanInput(
   return { ...plan, planDigest: computeFeaturePlanDigest(plan) };
 }
 
-/** 三色 DFS 环检测；返回从环起点回到自身的节点路径（如 [a,b,c,a]），无环返回 undefined。 */
-function detectCycle(nodes: readonly { id: string; dependsOn: string[] }[]): string[] | undefined {
+/**
+ * 三色 DFS 环检测；返回从环起点回到自身的节点路径（如 [a,b,c,a]），无环返回 undefined。
+ * P03-1 / F-002 起导出供 plan-store 存储原语在事务内复核同 Feature 依赖无环
+ * （DDL 无法表达环约束；应用层校验依据 P03-1 契约 §3）。
+ */
+export function detectPlanDependencyCycle(
+  nodes: readonly { id: string; dependsOn: string[] }[],
+): string[] | undefined {
   const WHITE = 0;
   const GRAY = 1;
   const BLACK = 2;

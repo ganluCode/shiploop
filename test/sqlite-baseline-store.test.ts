@@ -288,8 +288,8 @@ function listPublicEvents(harness: Harness) {
 // ---------------------------------------------------------------------------
 
 describe('F-007 迁移 v4：基线作用域四表', () => {
-  it('迁移版本接 v3 之后为 v4/v5，checksum 与 SQL 内容一致', () => {
-    expect(SQLITE_MIGRATIONS.map((migration) => migration.version)).toEqual([1, 2, 3, 4, 5]);
+  it('迁移版本接 v3 之后为 v4/v5（P03-1 / F-002 起继认 v6 计划结构四表），checksum 与 SQL 内容一致', () => {
+    expect(SQLITE_MIGRATIONS.map((migration) => migration.version)).toEqual([1, 2, 3, 4, 5, 6]);
     const v4 = SQLITE_MIGRATIONS[3]!;
     expect(v4.sql).toContain('CREATE TABLE baseline_authorizations');
     expect(v4.sql).toContain('CREATE TABLE baseline_operations');
@@ -302,14 +302,17 @@ describe('F-007 迁移 v4：基线作用域四表', () => {
     expect(v5.sql).toContain("status IN ('completed','rejected','accepted')");
     expect(v5.sql).toContain('command_receipts_accepted_check');
     expect(v5.sql).toContain('command_receipts_operation_id_unique');
+    // P03-1 / F-002 / 迁移 v6：计划结构四表（不在本守护展开，详见
+    // test/p03-1-plan-structure-storage.test.ts）。
+    expect(SQLITE_MIGRATIONS[5]!.sql).toContain('CREATE TABLE phases');
   });
 
-  it('空库迁移建立基线四表，不提前建立 Work/Task/Attempt/Chat 或通用验证表', async () => {
+  it('空库迁移建立基线四表；执行/Chat/验证表仍不建立（P03-1 / F-002 计划结构四表除外）', async () => {
     const sandbox = createTempSandbox('shiploop-f007-mig-empty-');
     const session = openSqliteStorageSession({ path: join(sandbox.path, 'state.db') });
     try {
       const result = await migrateSqliteStorage(session, { nowUtcMs: () => NOW_MS });
-      expect(result.appliedVersions).toEqual([1, 2, 3, 4, 5]);
+      expect(result.appliedVersions).toEqual([1, 2, 3, 4, 5, 6]);
       const tables = session.database
         .prepare<[], { name: string }>(
           "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
@@ -327,9 +330,7 @@ describe('F-007 迁移 v4：基线作用域四表', () => {
       for (const forbidden of [
         'runs',
         'attempts',
-        'tasks',
-        'features',
-        'phases',
+        'feature_dependencies',
         'execution_batches',
         'sessions',
         'chat_turns',
@@ -383,7 +384,7 @@ describe('F-007 迁移 v4：基线作用域四表', () => {
     try {
       const result = await migrateSqliteStorage(session, { nowUtcMs: () => NOW_MS + 1 });
       expect(result.fromVersion).toBe(3);
-      expect(result.appliedVersions).toEqual([4, 5]);
+      expect(result.appliedVersions).toEqual([4, 5, 6]);
       // 前序数据逐字段保留（项目 A + 其绑定；回执；事件 sequence）。
       expect(session.database.prepare('SELECT COUNT(*) AS c FROM projects').get()).toMatchObject({ c: 1 });
       expect(session.database.prepare('SELECT COUNT(*) AS c FROM command_receipts').get()).toMatchObject({

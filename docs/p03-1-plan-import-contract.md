@@ -4,8 +4,11 @@
   确定性 planDigest 计算，明确导入和编辑契约）。
 - 文档状态：P03-1 实施前置契约 + F-001 交付的纯校验模块说明（F-002 ~ F-011 的协议依据之一，
   **不是阶段验收报告**，也不是已接入命令面/存储面的能力声明）。本文冻结时 SQLite 迁移仍止于
-  P02 的 v5 前状态（迁移文件未含 Phase/Feature/Task 表），`COMMAND_OPERATIONS` 仍为 P02 的九个
-  命令，Host/CLI 尚无任何计划入口；F-002 起改变这些事实时必须同步更新本文与文档守护测试。
+  P02 的 v5 前状态；P03-1 / F-002 已追加迁移 v6（phases/features/tasks/task_dependencies
+  四表与 Drizzle 映射、CommandTransaction 插入原语，见
+  `packages/core/src/adapters/sqlite/migrations.ts` 与 `ports/plan-store.ts`），`COMMAND_OPERATIONS`
+  仍为 P02 的九个命令，Host/CLI 尚无任何计划入口；F-004 起改变这些事实时必须同步更新本文与
+  文档守护测试。
 - 适用平台：macOS（首个正式支持平台）；Windows/WSL/Linux 未验收。
 - 输入依据：P03-1 任务拆分（`task_list.json`，Feature 工作区）、知识目录
   `architecture-redesign/core-design/02-domain-and-lifecycle.md`（§8 两层 DAG、§10 标题/描述/标签
@@ -276,8 +279,10 @@ P03-1 之后每次收尾仍须跑完整门禁（`npm run verify` 或等价的 te
 
 1. **`requirements_ref` 必填 vs 纯校验可选**：core-design/11 §4 tasks 表 `requirements_ref`
    为必填 TEXT，但任务验收只把「缺名称/缺完整 acceptance」列为纯校验负例。本契约把引用的
-   结构存在交纯校验、必需性交导入事务（§2.3），F-002 落表时按「已约定必需引用」对齐
-  （单值或多值序列化形式由 F-002 与本契约 §2.3 的多引用形态对齐后定案）。**请求核对**。
+   结构存在交纯校验、必需性交导入事务（§2.3）。**F-002 定案**：迁移 v6 以多值 JSON 数组列
+   `requirements_refs`（NOT NULL DEFAULT '[]'，身份级 {artifactId,contentHash?} 形态）落表，
+   与本契约 §2.3 的多引用形态一致；「已约定必需引用」的必需性仍由 F-005 导入事务重核，
+   DDL 不强制非空数组（空引用的草稿任务合法）。
 2. **执行策略与摘要**：本契约把策略来源说明排除在业务摘要外（§4）；F-003 的
    executionConfig 副本与 configSource 是否永远不参与 planDigest（当前结论：不参与，
    策略变化不改业务计划身份，但 F-008 实质修订仍按需重算摘要仅因业务字段变化），**请求

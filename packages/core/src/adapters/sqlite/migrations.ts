@@ -397,6 +397,142 @@ CREATE UNIQUE INDEX command_receipts_operation_id_unique ON command_receipts (op
 CREATE INDEX command_receipts_principal_project_index ON command_receipts (principal_id, project_id);
 `;
 
+/**
+ * 第六个迁移（P03-1 / F-002）：计划结构四表 phases/features/tasks/task_dependencies。
+ *
+ * 契约依据：docs/p03-1-plan-import-contract.md（§2 计划 payload 契约、§9.1 多引用形态
+ * 由本迁移定案：requirements 以多值 JSON 数组 requirements_refs 存储，与 F-001 纯校验
+ * 的多引用形态一致）与 core-design/11 §4（字段与约束）、02 §10（标题/描述/标签规则）。
+ *
+ * 边界（仅建立本项必需表）：不建 feature_dependencies（Feature DAG）、
+ * execution_batches/runs/attempts（执行域）、approvals（审批域）或配置/计划版本表；
+ * tasks 不提前加 kind/attempt_counter/code_attempts_used/execution_version 等执行域列，
+ * 随对应功能迁移增加。
+ *
+ * 约束先例（与 v1/v4 同一表示）：
+ * - 同项目复合外键：features(project_id,phase_id) → phases(project_id,id)、
+ *   tasks(project_id,feature_id) → features(project_id,id)；task_dependencies 另有
+ *   同 Feature 复合外键 (feature_id,task_id)/(feature_id,depends_on_id) →
+ *   tasks(feature_id,id)——跨项目父级与跨 Feature 依赖在 DDL 级被拒绝；
+ * - 自依赖：CHECK(task_id <> depends_on_id)；重复边：UNIQUE(feature_id,task_id,
+ *   depends_on_id)；环检测不在 DDL 层（不可表达），由存储原语在事务内以 DFS 校验；
+ * - 枚举/JSON/版本检查：status/plan_status/complexity 枚举 CHECK；labels/source_refs/
+ *   requirements_refs 为 JSON 数组、acceptance/execution_config 为 JSON 对象；
+ *   revision >= 1；plan_digest 可空但携带时必须 64 位小写 hex；config_source 非空
+ *   （完整策略来源取值由 F-003 定案，不在 DDL 预冻结枚举）；
+ * - 状态枚举取自设计 02/11 的完整生命周期（与 v1 projects 同一先例：先冻结枚举，
+ *   状态迁移语义随对应功能实现）。
+ */
+const MIGRATION_006_SQL = `
+CREATE TABLE phases (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open',
+  description TEXT,
+  labels TEXT NOT NULL DEFAULT '[]',
+  CONSTRAINT phases_revision_positive_check CHECK (revision >= 1),
+  CONSTRAINT phases_title_not_empty_check CHECK (length(title) > 0),
+  CONSTRAINT phases_status_enum_check CHECK (status IN ('open', 'closed', 'archived')),
+  CONSTRAINT phases_labels_json_array_check CHECK (json_valid(labels) AND json_type(labels) = 'array'),
+  CONSTRAINT phases_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT
+);
+
+CREATE UNIQUE INDEX phases_project_id_id_unique ON phases (project_id, id);
+
+CREATE TABLE features (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  phase_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'draft',
+  plan_status TEXT NOT NULL DEFAULT 'draft',
+  description TEXT,
+  labels TEXT NOT NULL DEFAULT '[]',
+  source_refs TEXT NOT NULL DEFAULT '[]',
+  plan_digest TEXT,
+  CONSTRAINT features_revision_positive_check CHECK (revision >= 1),
+  CONSTRAINT features_title_not_empty_check CHECK (length(title) > 0),
+  CONSTRAINT features_status_enum_check CHECK (
+    status IN ('draft', 'ready', 'running', 'awaiting_approval', 'completed', 'partial', 'failed')
+  ),
+  CONSTRAINT features_plan_status_enum_check CHECK (plan_status IN ('draft', 'pending_approval', 'approved')),
+  CONSTRAINT features_labels_json_array_check CHECK (json_valid(labels) AND json_type(labels) = 'array'),
+  CONSTRAINT features_source_refs_json_array_check CHECK (json_valid(source_refs) AND json_type(source_refs) = 'array'),
+  CONSTRAINT features_plan_digest_sha256_check CHECK (plan_digest IS NULL OR (length(plan_digest) = 64 AND plan_digest NOT GLOB '*[^0-9a-f]*')),
+  CONSTRAINT features_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT features_phase_fk FOREIGN KEY (phase_id) REFERENCES phases (id) ON DELETE RESTRICT,
+  CONSTRAINT features_phase_same_project_fk FOREIGN KEY (project_id, phase_id) REFERENCES phases (project_id, id) ON DELETE RESTRICT
+);
+
+CREATE UNIQUE INDEX features_project_id_id_unique ON features (project_id, id);
+CREATE INDEX features_phase_id_status_index ON features (phase_id, status);
+
+CREATE TABLE tasks (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  feature_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  complexity TEXT,
+  description TEXT,
+  labels TEXT NOT NULL DEFAULT '[]',
+  acceptance TEXT NOT NULL,
+  requirements_refs TEXT NOT NULL DEFAULT '[]',
+  execution_config TEXT NOT NULL,
+  config_source TEXT NOT NULL,
+  config_source_key TEXT,
+  CONSTRAINT tasks_revision_positive_check CHECK (revision >= 1),
+  CONSTRAINT tasks_title_not_empty_check CHECK (length(title) > 0),
+  CONSTRAINT tasks_status_enum_check CHECK (status IN ('pending', 'running', 'passed', 'failed', 'skipped', 'cancelled')),
+  CONSTRAINT tasks_complexity_enum_check CHECK (complexity IS NULL OR complexity IN ('low', 'medium', 'high')),
+  CONSTRAINT tasks_labels_json_array_check CHECK (json_valid(labels) AND json_type(labels) = 'array'),
+  CONSTRAINT tasks_acceptance_json_object_check CHECK (json_valid(acceptance) AND json_type(acceptance) = 'object'),
+  CONSTRAINT tasks_requirements_refs_json_array_check CHECK (json_valid(requirements_refs) AND json_type(requirements_refs) = 'array'),
+  CONSTRAINT tasks_execution_config_json_object_check CHECK (json_valid(execution_config) AND json_type(execution_config) = 'object'),
+  CONSTRAINT tasks_config_source_not_empty_check CHECK (length(config_source) > 0),
+  CONSTRAINT tasks_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT tasks_feature_fk FOREIGN KEY (feature_id) REFERENCES features (id) ON DELETE RESTRICT,
+  CONSTRAINT tasks_feature_same_project_fk FOREIGN KEY (project_id, feature_id) REFERENCES features (project_id, id) ON DELETE RESTRICT
+);
+
+CREATE UNIQUE INDEX tasks_project_id_id_unique ON tasks (project_id, id);
+CREATE UNIQUE INDEX tasks_feature_id_id_unique ON tasks (feature_id, id);
+CREATE INDEX tasks_feature_id_status_index ON tasks (feature_id, status);
+
+CREATE TABLE task_dependencies (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  feature_id TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  depends_on_id TEXT NOT NULL,
+  CONSTRAINT task_dependencies_revision_positive_check CHECK (revision >= 1),
+  CONSTRAINT task_dependencies_no_self_dependency_check CHECK (task_id <> depends_on_id),
+  CONSTRAINT task_dependencies_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT task_dependencies_feature_fk FOREIGN KEY (feature_id) REFERENCES features (id) ON DELETE RESTRICT,
+  CONSTRAINT task_dependencies_feature_same_project_fk FOREIGN KEY (project_id, feature_id) REFERENCES features (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT task_dependencies_task_fk FOREIGN KEY (task_id) REFERENCES tasks (id) ON DELETE RESTRICT,
+  CONSTRAINT task_dependencies_task_same_feature_fk FOREIGN KEY (feature_id, task_id) REFERENCES tasks (feature_id, id) ON DELETE RESTRICT,
+  CONSTRAINT task_dependencies_depends_on_fk FOREIGN KEY (depends_on_id) REFERENCES tasks (id) ON DELETE RESTRICT,
+  CONSTRAINT task_dependencies_depends_on_same_feature_fk FOREIGN KEY (feature_id, depends_on_id) REFERENCES tasks (feature_id, id) ON DELETE RESTRICT
+);
+
+CREATE UNIQUE INDEX task_dependencies_feature_edge_unique ON task_dependencies (feature_id, task_id, depends_on_id);
+CREATE INDEX task_dependencies_feature_depends_on_index ON task_dependencies (feature_id, depends_on_id);
+`;
+
 function sha256Hex(text: string): string {
   return createHash('sha256').update(text, 'utf8').digest('hex');
 }
@@ -427,5 +563,10 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
     version: 5,
     sql: MIGRATION_005_SQL,
     checksum: sha256Hex(MIGRATION_005_SQL),
+  },
+  {
+    version: 6,
+    sql: MIGRATION_006_SQL,
+    checksum: sha256Hex(MIGRATION_006_SQL),
   },
 ];

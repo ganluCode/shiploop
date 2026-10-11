@@ -6,6 +6,7 @@
 import type { AtomicCommandStore, CommandTransaction } from '../../ports/atomic-commands.js';
 import { createSqliteBaselineAccess } from './baseline-store.js';
 import { createSqliteCommandReceiptAccess } from './command-receipts.js';
+import { createSqlitePlanAccess } from './plan-store.js';
 import type { SqliteStorageSession } from './session.js';
 import { createSqliteStateAccess } from './state-store.js';
 import type { SqliteStateStoreOptions } from './state-store.js';
@@ -17,6 +18,7 @@ export function createSqliteAtomicCommandStore(
   const state = createSqliteStateAccess(session, options);
   const receipts = createSqliteCommandReceiptAccess(session, options);
   const baseline = createSqliteBaselineAccess(session, options);
+  const plan = createSqlitePlanAccess(session, options);
   return {
     findReceipt: receipts.findReceiptByCommandId,
     // F-009：配置命令一致性视图的事务外只读来源；写事务内调用是编程错误。
@@ -68,6 +70,12 @@ export function createSqliteAtomicCommandStore(
           heartbeatBaselineOccupancy: guarded(baseline.heartbeatBaselineOccupancyInTransaction),
           releaseBaselineOccupancy: guarded(baseline.releaseBaselineOccupancyInTransaction),
           appendBaselineEvent: guarded(baseline.appendBaselineEventInTransaction),
+          // P03-1 / F-002：计划结构原语（Phase/Feature/Task/依赖边插入；归属核验与
+          // 环检测在同一事务内完成），同一 BEGIN IMMEDIATE 内原子生效。
+          insertPhase: guarded(plan.insertPhaseInTransaction),
+          insertFeature: guarded(plan.insertFeatureInTransaction),
+          insertTask: guarded(plan.insertTaskInTransaction),
+          insertTaskDependency: guarded(plan.insertTaskDependencyInTransaction),
           saveReceipt: guarded(receipts.saveReceiptInTransaction),
         });
         try {

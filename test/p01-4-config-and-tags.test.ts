@@ -631,7 +631,7 @@ describe('F-006 当前配置检查组（P01-FR2-CONFIG）', () => {
     });
   });
 
-  it('P01 子集边界：仅当前配置/项目/制品表，无 Task/Attempt/Batch 执行表，合法≠可执行', async () => {
+  it('P01 子集边界：仅当前配置/项目/制品表与后续阶段增量表，无 Attempt/Batch/Run 执行表，合法≠可执行', async () => {
     await withP01AcceptanceFixture(async (fixture) => {
       const outsideBefore = fixture.snapshotOutsideSentinel();
       const app = await fixture.openApplication({ capabilityCatalog: createCatalog() });
@@ -683,17 +683,21 @@ describe('F-006 当前配置检查组（P01-FR2-CONFIG）', () => {
           'baseline_check_results',
           'baseline_occupancy',
           'baseline_operations',
+          // P03-1 / F-002：计划结构四表（迁移 v6；需求层级表，无执行/审批表）。
+          'phases',
+          'features',
+          'tasks',
+          'task_dependencies',
         ].sort(),
       );
       for (const forbidden of [
-        'tasks',
         'attempts',
         'batches',
         'runs',
         'sessions',
         'works',
-        'phases',
-        'features',
+        'feature_dependencies',
+        'approvals',
       ]) {
         expect(tables).not.toContain(forbidden);
       }
