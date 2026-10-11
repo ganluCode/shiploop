@@ -32,6 +32,7 @@ import {
   validatePlanEventAppend,
   validateReplaceFeaturePlanInput,
   validateUpdatePlanEntityLabelsInput,
+  validateUpdateTaskStrategyInput,
 } from '../../ports/plan-store.js';
 import type {
   FeaturePlanReplaceResult,
@@ -163,6 +164,16 @@ export interface SqlitePlanAccess {
   getTaskFeatureLinksInTransaction(taskIds: readonly string[]): ReadonlyMap<string, string>;
   /** F-008：修订事务内读取 Feature 计划快照（缺失 not_found、跨项目 ownership）。 */
   getFeaturePlanInTransaction(projectId: string, featureId: string): FeaturePlanSnapshot;
+  /**
+   * P03-2 / F-001：策略编辑事务内读取目标 Task（缺失 not_found、跨项目
+   * ownership 抛出，零写入）。
+   */
+  getTaskInTransaction(projectId: string, taskId: string): TaskRecord;
+  /**
+   * P03-2 / F-001：Task 策略副本 CAS 编辑（单语句条件 UPDATE；缺失 not_found、
+   * 跨项目 ownership、revision 不匹配 conflict）。
+   */
+  updateTaskStrategyInTransaction(input: unknown): TaskRecord;
   /**
    * P03-1 / F-008：实质计划修订整体替换（同一写事务内原子生效）。既有成员
    * 按稳定 ID 保留身份与策略副本，新成员携带创建策略副本，被移除成员与
@@ -841,6 +852,90 @@ export function createSqlitePlanAccess(
   }
 
   /**
+   * P03-2 / F-001：读取目标 Task（同项目；缺失 not_found、跨项目 ownership
+   * 抛出，零写入），供策略编辑事务内重核归属/revision。
+   */
+  function getTaskInTransaction(projectId: string, taskId: string): TaskRecord {
+    const operation = 'PlanStore.getTask';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const validProjectId = validateStableId(projectId, { operation }, 'projectId');
+    const validTaskId = validateStableId(taskId, { operation }, 'taskId');
+    const entity: StorageEntityRef = { type: 'task', projectId: validProjectId, id: validTaskId };
+    const row = session.database
+      .prepare<[string], TaskSqlRow>(`${SELECT_TASK} WHERE id = ?`)
+      .get(validTaskId);
+    if (row === undefined) {
+      throw notFound(operation, entity, `Task ${validTaskId} 不存在`);
+    }
+    if (row.project_id !== validProjectId) {
+      throw ownership(operation, entity, 'Task 不属于声明的项目（跨项目目标被拒绝）');
+    }
+    return taskFromRow(row);
+  }
+
+  /**
+   * P03-2 / F-001：Task 策略副本 CAS 编辑（事务内）。单语句条件 UPDATE 只
+   * 触达 execution_config/config_source/config_source_key/revision/updated_at
+   * （不改标题/验收/依赖/planDigest/planStatus，不影响其他 Task）；目标缺失
+   * not_found、跨项目 ownership（抛出零写入）；expectedRevision 为 Task 自身
+   * revision，不匹配或条件 UPDATE 未命中均 conflict（details 携带
+   * expectedRevision/actualRevision）。
+   */
+  function updateTaskStrategyInTransaction(input: unknown): TaskRecord {
+    const operation = 'PlanStore.updateTaskStrategy';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const valid = validateUpdateTaskStrategyInput(input, operation);
+    const db = session.database;
+    const entity: StorageEntityRef = {
+      type: 'task',
+      projectId: valid.projectId,
+      id: valid.taskId,
+    };
+    const row = db
+      .prepare<[string], { project_id: string; revision: number }>(
+        `${SELECT_TASK} WHERE id = ?`,
+      )
+      .get(valid.taskId);
+    if (row === undefined) {
+      throw notFound(operation, entity, `Task ${valid.taskId} 不存在`);
+    }
+    if (row.project_id !== valid.projectId) {
+      throw ownership(operation, entity, '目标 Task 不属于声明的项目（跨项目目标被拒绝）');
+    }
+    const casConflict = (): StorageError =>
+      conflict(operation, '策略编辑 CAS 不匹配（旧 revision 拒绝）', entity, {
+        reason: 'conflict',
+        expectedRevision: valid.expectedRevision,
+        actualRevision: row.revision,
+      });
+    if (row.revision !== valid.expectedRevision) {
+      throw casConflict();
+    }
+    const timestamp = nowUtcMs();
+    // 单语句条件 UPDATE（而非先读后无条件覆盖）：同 revision 竞争编辑仅一个生效。
+    const updated = db
+      .prepare(
+        'UPDATE tasks SET execution_config = ?, config_source = ?, config_source_key = ?, ' +
+          'revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ?',
+      )
+      .run(
+        JSON.stringify(valid.executionConfig),
+        valid.configSource,
+        valid.configSourceKey,
+        timestamp,
+        valid.taskId,
+        valid.expectedRevision,
+      );
+    if (updated.changes !== 1) {
+      throw casConflict();
+    }
+    const reread = db.prepare<[string], TaskSqlRow>(`${SELECT_TASK} WHERE id = ?`).get(valid.taskId);
+    return taskFromRow(reread as TaskSqlRow);
+  }
+
+  /**
    * F-008：修订事务内读取 Feature 计划快照（Feature + 全部 Task + 全部边；
    * 缺失 not_found、跨项目 ownership，与插入/标签编辑原语同一判定）。
    */
@@ -1272,6 +1367,8 @@ export function createSqlitePlanAccess(
     getTaskFeatureLinksInTransaction,
     getFeaturePlanInTransaction,
     replaceFeaturePlanInTransaction,
+    getTaskInTransaction,
+    updateTaskStrategyInTransaction,
     readPhaseRecord,
     readTaskRecord,
     readFeaturePlanView,

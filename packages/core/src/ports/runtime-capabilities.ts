@@ -18,7 +18,7 @@
  */
 import { StorageError } from './errors.js';
 import { listStrategyEntries } from './settings-schema.js';
-import type { SettingsPayload } from './settings-schema.js';
+import type { RuntimeStrategyV1, SettingsPayload } from './settings-schema.js';
 import { isPlainObject, requireNonEmptyString, validationError } from './validation.js';
 import type { ValidationContext } from './validation.js';
 
@@ -126,6 +126,46 @@ export function createStaticRuntimeCapabilityCatalog(descriptors: unknown): Runt
 }
 
 /**
+ * 单个完整策略条目的能力兼容性校验（纯函数）：runtime 必须被可信能力目录
+ * 确认，provider 必须在该 runtime 的能力描述中；provider 已枚举模型时 model
+ * 必须在列表内（未枚举时 model 作不透明字符串透传）。P03-2 / F-001 起
+ * Task 策略副本编辑复用同一校验（不另立第二套能力判断）。
+ */
+export function validateRuntimeStrategyCapabilities(
+  strategy: RuntimeStrategyV1,
+  catalog: RuntimeCapabilityCatalog,
+  context: ValidationContext,
+  field: string,
+): void {
+  const descriptor = catalog.resolve(strategy.runtime);
+  if (descriptor === undefined) {
+    throw capabilityError(
+      context,
+      `${field}.runtime`,
+      'unknown_runtime',
+      `未知 runtime '${strategy.runtime}'（可信能力目录未装配该 runtime）`,
+    );
+  }
+  const provider = descriptor.providers.find((candidate) => candidate.providerId === strategy.provider);
+  if (provider === undefined) {
+    throw capabilityError(
+      context,
+      `${field}.provider`,
+      'incompatible_provider',
+      `provider '${strategy.provider}' 不在 runtime '${strategy.runtime}' 的能力描述中（不兼容或未注册）`,
+    );
+  }
+  if (provider.models !== undefined && provider.models.length > 0 && !provider.models.includes(strategy.model)) {
+    throw capabilityError(
+      context,
+      `${field}.model`,
+      'unsupported_model',
+      `model '${strategy.model}' 不在 provider '${strategy.provider}' 已确认的模型列表中`,
+    );
+  }
+}
+
+/**
  * 兼容性校验（纯函数）：payload 中**每个提供的策略条目**的 runtime/provider/model
  * 必须被注入能力目录确认；任何未知/不兼容都带字段定位拒绝，不从其他策略补齐。
  * payload 无策略条目时平凡通过（未配置由 assessSettingsConfiguration 表达）。
@@ -136,32 +176,7 @@ export function validateStrategyCapabilities(
   context: ValidationContext,
 ): void {
   for (const { field, strategy } of listStrategyEntries(payload.strategies)) {
-    const descriptor = catalog.resolve(strategy.runtime);
-    if (descriptor === undefined) {
-      throw capabilityError(
-        context,
-        `${field}.runtime`,
-        'unknown_runtime',
-        `未知 runtime '${strategy.runtime}'（可信能力目录未装配该 runtime）`,
-      );
-    }
-    const provider = descriptor.providers.find((candidate) => candidate.providerId === strategy.provider);
-    if (provider === undefined) {
-      throw capabilityError(
-        context,
-        `${field}.provider`,
-        'incompatible_provider',
-        `provider '${strategy.provider}' 不在 runtime '${strategy.runtime}' 的能力描述中（不兼容或未注册）`,
-      );
-    }
-    if (provider.models !== undefined && provider.models.length > 0 && !provider.models.includes(strategy.model)) {
-      throw capabilityError(
-        context,
-        `${field}.model`,
-        'unsupported_model',
-        `model '${strategy.model}' 不在 provider '${strategy.provider}' 已确认的模型列表中`,
-      );
-    }
+    validateRuntimeStrategyCapabilities(strategy, catalog, context, field);
   }
 }
 

@@ -286,6 +286,85 @@ export function validateUpdatePlanEntityLabelsInput(
   };
 }
 
+/* ------------------------------------------------------------------ *
+ * P03-2 / F-001 Task 策略副本 CAS 编辑（executionConfig/config_source/
+ * config_source_key/revision/updated_at 单语句条件 UPDATE）
+ * ------------------------------------------------------------------ */
+
+const UPDATE_TASK_STRATEGY_KEYS = [
+  'projectId',
+  'taskId',
+  'executionConfig',
+  'configSource',
+  'configSourceKey',
+  'expectedRevision',
+] as const;
+
+export interface ValidatedUpdateTaskStrategyInput {
+  readonly projectId: string;
+  readonly taskId: string;
+  /** 完整策略副本（本层只校验「普通 JSON 对象且有界」；完整语义由 F-003
+   * 应用层 validateTaskExecutionConfig 校验，与创建/替换同一分层纪律）。 */
+  readonly executionConfig: Record<string, unknown>;
+  /** 编辑后来源（非空说明字符串；由命令用例以 task_edit 定值，不接受请求输入）。 */
+  readonly configSource: string;
+  readonly configSourceKey: string | null;
+  /** 目标 Task 自身 revision（唯一 CAS 权威；≥1 安全整数）。 */
+  readonly expectedRevision: number;
+}
+
+/**
+ * P03-2 / F-001：事务写入原语输入校验（严格未知键拒绝；失败零副作用）。
+ * executionConfig 与成员字段同一形状门槛（普通 JSON 对象 + 有界字节），
+ * 策略语义校验不在此层重复；configSource/configSourceKey 只作非空说明
+ * 字符串校验（值域由命令用例定值）。
+ */
+export function validateUpdateTaskStrategyInput(
+  value: unknown,
+  operation: string,
+): ValidatedUpdateTaskStrategyInput {
+  const context: ValidationContext = { operation, entity: { type: 'task' } };
+  const object = requirePlainObject(value, context, 'input');
+  rejectUnknownKeys(object, UPDATE_TASK_STRATEGY_KEYS, context, 'input');
+  const expectedRevision = object.expectedRevision;
+  if (
+    typeof expectedRevision !== 'number' ||
+    !Number.isSafeInteger(expectedRevision) ||
+    expectedRevision < 1
+  ) {
+    throw validationError(context, 'expectedRevision', '必须是 ≥1 的安全整数', expectedRevision);
+  }
+  const executionConfigValue = object.executionConfig;
+  if (!isPlainObject(executionConfigValue)) {
+    throw validationError(
+      context,
+      'executionConfig',
+      '必须是普通 JSON 对象（完整策略副本；完整策略语义由应用层校验）',
+      executionConfigValue,
+    );
+  }
+  const serializedBytes = Buffer.byteLength(JSON.stringify(executionConfigValue), 'utf8');
+  if (serializedBytes > EXECUTION_CONFIG_MAX_BYTES) {
+    throw validationError(
+      context,
+      'executionConfig',
+      `序列化后不得超过 ${EXECUTION_CONFIG_MAX_BYTES} 字节（实际 ${serializedBytes}）`,
+    );
+  }
+  const configSourceKey = object.configSourceKey;
+  return {
+    projectId: validateStableId(object.projectId, context, 'projectId'),
+    taskId: validateStableId(object.taskId, context, 'taskId'),
+    executionConfig: executionConfigValue,
+    configSource: requireNonEmptyString(object.configSource, context, 'configSource').trim(),
+    configSourceKey:
+      configSourceKey === undefined || configSourceKey === null
+        ? null
+        : requireNonEmptyString(configSourceKey, context, 'configSourceKey').trim(),
+    expectedRevision,
+  };
+}
+
 export interface ValidatedCreatePhaseInput {
   /** 调用方指定的稳定 ID；缺省 null 时由适配器生成 UUID v4（F-002 定案保持不变）。 */
   readonly id: string | null;
@@ -821,6 +900,14 @@ export const TASK_LABELS_UPDATED_EVENT_TYPE = 'task.labels.updated';
  */
 export const FEATURE_PLAN_REVISED_EVENT_TYPE = 'feature.plan.revised';
 
+/**
+ * P03-2 / F-001：Task 策略副本 CAS 编辑事件（仅命令路径编辑成功写入；脱敏
+ * payload 恒为 {strategyUpdated:true}，聚合为目标 Task 自身，
+ * aggregateRevision=编辑后 Task revision）。不携带策略副本正文/凭据引用/
+ * 批准或执行语义。
+ */
+export const TASK_STRATEGY_UPDATED_EVENT_TYPE = 'task.strategy.updated';
+
 /** 计划域事件白名单（顺序即冻结顺序；白名单外不得进入公开事件流）。 */
 export const PLAN_EVENT_TYPES = [
   PHASE_CREATED_EVENT_TYPE,
@@ -829,6 +916,7 @@ export const PLAN_EVENT_TYPES = [
   FEATURE_LABELS_UPDATED_EVENT_TYPE,
   TASK_LABELS_UPDATED_EVENT_TYPE,
   FEATURE_PLAN_REVISED_EVENT_TYPE,
+  TASK_STRATEGY_UPDATED_EVENT_TYPE,
 ] as const;
 export type PlanEventType = (typeof PLAN_EVENT_TYPES)[number];
 
@@ -855,7 +943,7 @@ const PLAN_EVENT_APPEND_KEYS = [
 /** 每类事件冻结的聚合类型与脱敏 payload 固定键/值。 */
 interface PlanEventTypeSpec {
   readonly aggregateType: 'phase' | 'feature' | 'task';
-  readonly payloadKey: 'created' | 'imported' | 'labelsUpdated' | 'revised';
+  readonly payloadKey: 'created' | 'imported' | 'labelsUpdated' | 'revised' | 'strategyUpdated';
 }
 
 const PLAN_EVENT_TYPE_SPECS: Readonly<Record<PlanEventType, PlanEventTypeSpec>> = Object.freeze({
@@ -879,6 +967,10 @@ const PLAN_EVENT_TYPE_SPECS: Readonly<Record<PlanEventType, PlanEventTypeSpec>> 
   [FEATURE_PLAN_REVISED_EVENT_TYPE]: Object.freeze({
     aggregateType: 'feature',
     payloadKey: 'revised',
+  }),
+  [TASK_STRATEGY_UPDATED_EVENT_TYPE]: Object.freeze({
+    aggregateType: 'task',
+    payloadKey: 'strategyUpdated',
   }),
 });
 
@@ -930,7 +1022,9 @@ export function validatePlanEventAppend(value: unknown, operation: string): Vali
           ? { imported: true }
           : spec.payloadKey === 'labelsUpdated'
             ? { labelsUpdated: true }
-            : { revised: true },
+            : spec.payloadKey === 'revised'
+              ? { revised: true }
+              : { strategyUpdated: true },
   };
 }
 

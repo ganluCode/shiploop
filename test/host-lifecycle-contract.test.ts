@@ -191,6 +191,8 @@ describe('F-002 冻结常量与能力声明', () => {
           'plan.labels.update',
           // P03-1 / F-008：实质计划修订经既有 /v1/commands 通用路由接线。
           'feature.plan.revise',
+          // P03-2 / F-001：Task 策略副本 CAS 编辑经既有 /v1/commands 通用路由接线。
+          'task.strategy.update',
         ],
         queries: [
           'projects.list',

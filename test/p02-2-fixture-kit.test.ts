@@ -221,8 +221,8 @@ describe('F-004 可信测试装配受限 principal（项目 A/B）', () => {
     expect(owner.principalId).toBe(LOCAL_OWNER_PRINCIPAL_ID);
     expect([...owner.capabilities].sort()).toEqual([...APP_CAPABILITIES].sort());
     // P03-1 计划域四项（phase.write / feature.plan.import / plan.labels.write /
-    // feature.plan.revise）后冻结 15 项。
-    expect(owner.capabilities.size).toBe(15);
+    // feature.plan.revise）+ P03-2 / F-001 Task 策略编辑一项后冻结 16 项。
+    expect(owner.capabilities.size).toBe(16);
     expect(owner.projectScope).toEqual({ kind: 'all' });
     expect(Object.isFrozen(owner)).toBe(true);
     expect(Object.isFrozen(owner.projectScope)).toBe(true);

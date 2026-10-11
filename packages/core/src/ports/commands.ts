@@ -81,6 +81,9 @@ export const APP_CAPABILITIES = [
   // P03-1 / F-008：未执行草稿的实质计划修订能力位（契约 §6.8 定案；与纯
   // 标签编辑可区分的契约，更新摘要并使旧摘要批准失效）。
   'feature.plan.revise',
+  // P03-2 / F-001：Task 策略副本 CAS 编辑能力位（完整 executionConfig 副本
+  // 授权编辑；与计划实质修订、纯标签编辑可区分的契约）。
+  'task.strategy.write',
 ] as const;
 
 export type AppCapability = (typeof APP_CAPABILITIES)[number];
@@ -124,6 +127,10 @@ export const COMMAND_OPERATIONS = [
   // feature.plan.revise；信封 expectedRevision 为 Feature 聚合 revision，
   // 同一写事务内整体替换成员与边，见契约 §6.2/§6.8）。
   'feature.plan.revise',
+  // P03-2 / F-001：Task 策略副本 CAS 编辑（project scope + task.strategy.write；
+  // 信封 expectedRevision 为目标 Task 自身 revision，同一写事务内重核活动
+  // 执行输入保护与能力兼容性）。
+  'task.strategy.update',
 ] as const;
 
 export type AppOperation = (typeof COMMAND_OPERATIONS)[number];
@@ -205,6 +212,14 @@ export const COMMAND_OPERATION_SPECS: Readonly<Record<AppOperation, CommandOpera
       scopeKind: 'project',
       mutation: 'update',
       capability: 'feature.plan.revise',
+    },
+    // P03-2 / F-001：Task 策略副本 CAS 编辑（完整 executionConfig 副本授权
+    // 编辑）。信封 expectedRevision 指向目标 Task 自身 revision；能力兼容
+    // 校验复用可信目录（未装配/空目录 fail-closed）。
+    'task.strategy.update': {
+      scopeKind: 'project',
+      mutation: 'update',
+      capability: 'task.strategy.write',
     },
   });
 
@@ -507,6 +522,19 @@ export interface ValidatedFeaturePlanRevisePayload {
   readonly plan: unknown;
 }
 
+/**
+ * P03-2 / F-001 Task 策略副本 CAS 编辑 payload：taskId 为目标 Task 稳定 ID；
+ * executionConfig 为完整策略副本 JSON 对象（schemaVersion=2 条目；结构深校验
+ * 由应用层编辑事务复用 F-003 validateTaskExecutionConfig 完成，与计划导入/
+ * 修订同一分层纪律）。严格未知键拒绝：configSource/configSourceKey/status/
+ * planStatus/approval/revision 等服务端决定字段不能经请求输入（编辑后来源
+ * 由服务端定值为 task_edit，不接受请求声明）。
+ */
+export interface ValidatedTaskStrategyUpdatePayload {
+  readonly taskId: string;
+  readonly executionConfig: Record<string, unknown>;
+}
+
 interface EnvelopeCommon {
   readonly schemaVersion: typeof WIRE_MESSAGE_SCHEMA_VERSION;
   readonly commandId: string;
@@ -603,6 +631,14 @@ export type ValidatedCommandEnvelope =
       readonly scope: { readonly kind: 'project'; readonly projectId: string };
       readonly expectedRevision: number;
       readonly payload: ValidatedFeaturePlanRevisePayload;
+    })
+  // P03-2 / F-001：Task 策略副本 CAS 编辑命令信封（expectedRevision=目标
+  // Task 自身 revision；payload 只含 taskId/executionConfig）。
+  | (EnvelopeCommon & {
+      readonly operation: 'task.strategy.update';
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: number;
+      readonly payload: ValidatedTaskStrategyUpdatePayload;
     });
 
 const ENVELOPE_KEYS = [
@@ -622,6 +658,7 @@ const PHASE_CREATE_PAYLOAD_KEYS = ['id', 'title', 'description', 'labels'] as co
 const FEATURE_PLAN_IMPORT_PAYLOAD_KEYS = ['phaseId', 'plan'] as const;
 const PLAN_LABELS_UPDATE_PAYLOAD_KEYS = ['entityType', 'id', 'labels'] as const;
 const FEATURE_PLAN_REVISE_PAYLOAD_KEYS = ['featureId', 'plan'] as const;
+const TASK_STRATEGY_UPDATE_PAYLOAD_KEYS = ['taskId', 'executionConfig'] as const;
 
 /**
  * P01 校验器抛 StorageError(validation)，其字段名面向端口输入（'input'、
@@ -864,6 +901,35 @@ function validateFeaturePlanRevisePayload(
   }
 }
 
+function validateTaskStrategyUpdatePayload(
+  operation: AppOperation,
+  raw: unknown,
+): ValidatedTaskStrategyUpdatePayload {
+  const object = requireObject(operation, raw, 'payload');
+  // 严格未知键拒绝：只接受策略编辑面（taskId/executionConfig）；expectedRevision
+  // 唯一权威来源是信封顶层（Task 自身 CAS）；configSource/configSourceKey/status/
+  // planStatus/approval/revision 等服务端决定字段一律不能经请求输入（payload 内
+  // 出现即未知键，定位 payload.<key>）。
+  exactKeys(operation, object, TASK_STRATEGY_UPDATE_PAYLOAD_KEYS, 'payload.');
+  if (!isPlainObjectPayload(object.executionConfig)) {
+    fail(operation, 'invalid_input', 'payload.executionConfig', '必须是 JSON 对象', object.executionConfig);
+  }
+  try {
+    return {
+      taskId: validateStableId(object.taskId, { operation }, 'payload.taskId'),
+      executionConfig: object.executionConfig,
+    };
+  } catch (error) {
+    if (isStorageError(error, 'validation')) {
+      throw new PublicError('invalid_input', operation, undefined, {
+        details: storageValidationDetails(error.details),
+        cause: error,
+      });
+    }
+    throw error;
+  }
+}
+
 function validateSettingsCommandPayload(
   operation: AppOperation,
   raw: unknown,
@@ -1039,6 +1105,18 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
       scope,
       expectedRevision: expectedRevision as number,
       payload: validateFeaturePlanRevisePayload(operation, object.payload),
+    };
+  }
+  if (operation === 'task.strategy.update') {
+    if (scope.kind !== 'project') {
+      fail(operation, 'invalid_input', 'scope.kind', 'scope 种类与操作不匹配');
+    }
+    return {
+      ...base,
+      operation,
+      scope,
+      expectedRevision: expectedRevision as number,
+      payload: validateTaskStrategyUpdatePayload(operation, object.payload),
     };
   }
   if (operation === 'settings.global.create') {

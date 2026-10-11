@@ -46,6 +46,7 @@ import {
   SETTINGS_GLOBAL_CREATED_EVENT_TYPE,
   SETTINGS_PROJECT_CREATED_EVENT_TYPE,
   TASK_LABELS_UPDATED_EVENT_TYPE,
+  TASK_STRATEGY_UPDATED_EVENT_TYPE,
   createEventCursorBinding,
   createEventWatermark,
   decodeEventCursor,
@@ -119,7 +120,7 @@ describe('F-003 冻结事件封套版本与 §9.2 事件白名单（P02-2 六类
     expect(PUBLIC_EVENT_SCHEMA_VERSION).toBe(1);
   });
 
-  it('白名单冻结为六类 + 五类基线事件 + 四类计划事件且与既有事件常量同源', () => {
+  it('白名单冻结为六类 + 五类基线事件 + 五类计划事件且与既有事件常量同源', () => {
     expect([...PUBLIC_STATE_EVENT_TYPES]).toEqual([
       'project.registered',
       PROJECT_METADATA_UPDATED_EVENT_TYPE,
@@ -143,6 +144,8 @@ describe('F-003 冻结事件封套版本与 §9.2 事件白名单（P02-2 六类
       TASK_LABELS_UPDATED_EVENT_TYPE,
       // P03-1 / F-008：实质计划修订事件（聚合为目标 Feature，payload 恒 {revised:true}）。
       FEATURE_PLAN_REVISED_EVENT_TYPE,
+      // P03-2 / F-001：Task 策略副本 CAS 编辑事件（聚合为目标 Task，payload 恒 {strategyUpdated:true}）。
+      TASK_STRATEGY_UPDATED_EVENT_TYPE,
     ]);
     expect(PROJECT_METADATA_UPDATED_EVENT_TYPE).toBe('project.metadata_updated');
     expect(SETTINGS_GLOBAL_CREATED_EVENT_TYPE).toBe('settings.global_created');
@@ -154,6 +157,7 @@ describe('F-003 冻结事件封套版本与 §9.2 事件白名单（P02-2 六类
     expect(PHASE_LABELS_UPDATED_EVENT_TYPE).toBe('phase.labels.updated');
     expect(FEATURE_LABELS_UPDATED_EVENT_TYPE).toBe('feature.labels.updated');
     expect(TASK_LABELS_UPDATED_EVENT_TYPE).toBe('task.labels.updated');
+    expect(TASK_STRATEGY_UPDATED_EVENT_TYPE).toBe('task.strategy.updated');
   });
 });
 

@@ -154,6 +154,20 @@ export interface CommandTransaction {
    * 任何既有任务冲突 conflict；最终边集合事务内 DFS 复核无环。
    */
   replaceFeaturePlan(input: unknown): FeaturePlanReplaceResult;
+  /**
+   * P03-2 / F-001：读取目标 Task（同项目；缺失 not_found、跨项目 ownership
+   * 抛出，零写入），供策略编辑事务内重核归属/revision 与活动保护目标。
+   */
+  getTask(projectId: string, taskId: string): TaskRecord;
+  /**
+   * P03-2 / F-001：Task 策略副本 CAS 编辑。单语句条件 UPDATE 只触达目标
+   * Task 的 execution_config/config_source/config_source_key/revision/
+   * updated_at：expectedRevision 为 Task 自身 revision，不匹配或条件 UPDATE
+   * 未命中均 conflict（携带 expected/actual）；目标缺失 not_found、跨项目
+   * ownership（抛出零写入）；不改标题/验收/依赖/planDigest/planStatus，
+   * 不影响其他 Task。
+   */
+  updateTaskStrategy(input: unknown): TaskRecord;
   saveReceipt(receipt: unknown): void;
 }
 

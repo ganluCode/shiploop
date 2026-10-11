@@ -87,6 +87,9 @@ export function createSqliteAtomicCommandStore(
           // P03-1 / F-008：实质修订事务内快照读取与整体替换原语。
           getFeaturePlan: guarded(plan.getFeaturePlanInTransaction),
           replaceFeaturePlan: guarded(plan.replaceFeaturePlanInTransaction),
+          // P03-2 / F-001：Task 策略副本 CAS 编辑事务内读取与写入原语。
+          getTask: guarded(plan.getTaskInTransaction),
+          updateTaskStrategy: guarded(plan.updateTaskStrategyInTransaction),
           saveReceipt: guarded(receipts.saveReceiptInTransaction),
         });
         try {
