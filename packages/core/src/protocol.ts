@@ -45,11 +45,12 @@ export type { SettingsScope } from './ports/settings-schema.js';
 export type {
   ProjectBindingResult, ProjectDetailResult, ProjectLabelCountsResult, ProjectListResult,
   PublicProjectRecord, PublicRepositoryBindingRecord, PublicSettingsState,
+  PublicPhaseRecord, PublicFeatureRecord,
 } from './ports/queries.js';
 // P03-1 / F-006 计划查询面：公开形状、分页常量与纯校验/游标函数（服务端负责授权）。
 export {
   PLAN_LIST_CURSOR_PREFIX, PLAN_LIST_DEFAULT_LIMIT, PLAN_LIST_MAX_LIMIT,
-  PLAN_QUERY_OPERATIONS, validatePlanListFilter,
+  PLAN_QUERY_OPERATIONS, FEATURE_NOT_EXECUTABLE_REASONS, validatePlanListFilter,
   encodePlanListCursor, decodePlanListCursor,
 } from './ports/queries.js';
 export type {

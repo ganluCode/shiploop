@@ -130,7 +130,7 @@ function envelope(
   expectedRevision: number | null,
 ): ValidatedCommandEnvelope {
   const base = {
-    schemaVersion: 3 as const,
+    schemaVersion: 4 as const,
     commandId: COMMAND_ID,
     issuedAt: ISSUED_AT,
     expiresAt: null,
@@ -496,7 +496,7 @@ describe('F-005 命令授权（§4.3 矩阵：能力 + 项目可见性）', () =
 
   it('F-002 校验后的真实信封可直接进入 authorizeCommand；提权字段在校验阶段即拒绝', () => {
     const raw = {
-      schemaVersion: 3,
+      schemaVersion: 4,
       commandId: COMMAND_ID,
       operation: 'project.register',
       scope: { kind: 'registration' },

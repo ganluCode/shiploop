@@ -193,6 +193,10 @@ F-001 实际打开源码与测试逐项核对，下表入口与测试在开工�
   版本断言更新由 F-006 完成（F-014 已在同一 v3 内扩张集合：commands 新增
   `baseline.cancel`，queries 新增 `baselines.list`/`baselines.get`/`artifacts.get`）；P02-1/P02-2
   生命周期与业务回归在 v3 上继续成立。
+- **后续演进（P03-1 / F-009 起 v4）**：P03-1 计划域命令/查询进入握手能力集合，
+  按同一升版纪律显式升线消息 `schemaVersion` 3 → 4（定案与依据见
+  `docs/p03-1-plan-import-contract.md` §5/§9.6）；v3/v2/v1 一律明确拒绝。P02-3 本节的
+  2 → 3 定案作为历史记录保留。
 
 ### 3.2 路由总表（全部需要 Bearer 认证；前缀 `/v1`）
 

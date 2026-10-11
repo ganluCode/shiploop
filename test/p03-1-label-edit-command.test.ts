@@ -149,7 +149,7 @@ async function setup() {
   const probe = box.openProbe();
   const owner = box.localOwner();
 
-  const envelopeBase = { schemaVersion: 3, issuedAt: NOW_ISO };
+  const envelopeBase = { schemaVersion: 4, issuedAt: NOW_ISO };
   const submit = async (
     operation: string,
     payload: Record<string, unknown>,

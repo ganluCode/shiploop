@@ -24,7 +24,7 @@ const catalog = createStaticRuntimeCapabilityCatalog([{ runtimeId: 'pi', provide
 const cleanup: Array<() => Promise<void>> = [];
 afterEach(async () => { for (const close of cleanup.splice(0)) await close(); });
 function command(operation: string, projectId: string, payload: unknown, commandId = randomUUID()) {
-  return { schemaVersion: 3, operation, scope: { kind: 'project', projectId }, commandId, issuedAt: new Date().toISOString(), payload };
+  return { schemaVersion: 4, operation, scope: { kind: 'project', projectId }, commandId, issuedAt: new Date().toISOString(), payload };
 }
 function check(checkKey: string, argv: string[], timeoutMs = 10_000): BaselineCheck {
   return { checkKey, kind: 'command' as const, argv, required: true, timeoutMs };

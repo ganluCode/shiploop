@@ -74,7 +74,7 @@ const DIGEST_HEX = 'ab'.repeat(32);
 const OTHER_DIGEST_HEX = 'cd'.repeat(32);
 
 const PROJECT_UPDATE_ENVELOPE_RAW = {
-  schemaVersion: 3,
+  schemaVersion: 4,
   commandId: '11111111-1111-4111-8111-111111111111',
   operation: 'project.metadata.update',
   scope: { kind: 'project', projectId: '22222222-2222-4222-8222-222222222222' },
@@ -85,10 +85,10 @@ const PROJECT_UPDATE_ENVELOPE_RAW = {
 
 /** 固定摘要向量（实现无关；算法漂移立即失败）。 */
 const PROJECT_UPDATE_DIGEST =
-  'bb844e6c081d93e16407ca3ac3e521eb420dc69601457845921fb8c8e3a60ff7';
+  'd3f7c2dee1bd5e045a76d49042eb631dc6a7789aa2e3e50370da705a3c6c223c';
 
 const REGISTER_ENVELOPE_RAW = {
-  schemaVersion: 3,
+  schemaVersion: 4,
   commandId: '33333333-3333-4333-8333-333333333333',
   operation: 'project.register',
   scope: { kind: 'registration' },
@@ -97,7 +97,7 @@ const REGISTER_ENVELOPE_RAW = {
   payload: { repositoryPath: '/repo/a', displayName: '示例项目' },
 } as const;
 
-const REGISTER_DIGEST = '4512a8982abaa219e37fb1bc4a05e5b6f7d69d652daa83e4ab3e85e987d65940';
+const REGISTER_DIGEST = '4d8236a97ba46f53c0e76bf9d09df967dd004ff85b29ae8645402ddb3daee2d4';
 
 /** 确定性 resultRef（32 字节 0x07）。 */
 const RESULT_REF = 'v1.BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc';
@@ -300,7 +300,7 @@ describe('F-006 §5.2 computeCommandRequestDigest', () => {
     expect(computeCommandRequestDigest(register)).toBe(REGISTER_DIGEST);
     // 与 P02-1 Host 实现共用同一算法（规范 JSON 文本逐字节相同）。
     const canonicalInput = {
-      schemaVersion: 3,
+      schemaVersion: 4,
       operation: envelope.operation,
       scope: envelope.scope,
       expectedRevision: envelope.expectedRevision,
@@ -323,7 +323,7 @@ describe('F-006 §5.2 computeCommandRequestDigest', () => {
       scope: { projectId: '22222222-2222-4222-8222-222222222222', kind: 'project' },
       operation: 'project.metadata.update',
       commandId: '11111111-1111-4111-8111-111111111111',
-      schemaVersion: 3,
+      schemaVersion: 4,
     });
     expect(computeCommandRequestDigest(a)).toBe(computeCommandRequestDigest(reordered));
     const otherCommandId = validateCommandEnvelope({
@@ -360,7 +360,7 @@ describe('F-006 §5.2 computeCommandRequestDigest', () => {
   it('操作不同摘要不同（settings.project.update vs project.metadata.update）', () => {
     const metadata = validateCommandEnvelope(PROJECT_UPDATE_ENVELOPE_RAW);
     const settings = validateCommandEnvelope({
-      schemaVersion: 3,
+      schemaVersion: 4,
       commandId: '11111111-1111-4111-8111-111111111111',
       operation: 'settings.project.update',
       scope: { kind: 'project', projectId: '22222222-2222-4222-8222-222222222222' },

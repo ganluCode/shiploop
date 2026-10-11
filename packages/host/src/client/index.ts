@@ -40,14 +40,28 @@ export type {
   SubmitCommandInput,
   SubmitCommandOptions,
   SubscribeEventsInput,
+  CreatePhaseInput,
+  ImportFeaturePlanInput,
+  UpdatePlanLabelsInput,
+  ReviseFeaturePlanInput,
+  PlanListPageInput,
+  PlanLabelEntityType,
 } from './app-client.js';
 export {
   validateAppQueryResponse,
   validateCommandReceiptWire,
   validateStateEventWire,
+  validatePhaseCreateResultWire,
+  validateFeaturePlanImportResultWire,
+  validatePlanLabelsUpdateResultWire,
+  validateFeaturePlanReviseResultWire,
 } from './app-wire.js';
 export type {
   AppQueryOperation,
   CommandReceiptExpectation,
   SnapshotExpectation,
+  PhaseCreateResult,
+  FeaturePlanImportResult,
+  PlanLabelsUpdateResult,
+  FeaturePlanReviseResult,
 } from './app-wire.js';

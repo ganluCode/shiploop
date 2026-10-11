@@ -937,7 +937,7 @@ describe('P02-FR1-RESTART-QUERY Host 安全停止/重启与持久身份查询', 
 
     // --- 旧 token / 旧实例对新 Host 明确拒绝（真实回环请求；对照新凭据可用）。 ---
     const handshakeBody = (hostInstanceId: string): Record<string, unknown> => ({
-      schemaVersion: 3,
+      schemaVersion: 4,
       protocolVersion: 1,
       hostInstanceId,
       dataRootIdentity,

@@ -49,6 +49,13 @@ export const APP_OPERATIONS = [
   'baselines.list',
   'baselines.get',
   'artifacts.get',
+  // P03-1 / F-009（§6.6）：计划域层级列表/详情/Task DAG 查询。
+  'phases.list',
+  'phases.get',
+  'features.list',
+  'features.get',
+  'tasks.list',
+  'tasks.get',
 ] as const;
 
 export const HOST_OPERATIONS = [

@@ -209,13 +209,17 @@ P03-1 之后每次收尾仍须跑完整门禁（`npm run verify` 或等价的 te
 ## 5. 版本兼容
 
 - `FEATURE_PLAN_SCHEMA_VERSION = 1` 是计划 payload 的独立结构版本，与
-  `SETTINGS_SCHEMA_VERSION = 2`（配置 payload）、`WIRE_MESSAGE_SCHEMA_VERSION = 3`（线消息）
-  **互不联动**，各自显式演进。
+  `SETTINGS_SCHEMA_VERSION = 2`（配置 payload）、`WIRE_MESSAGE_SCHEMA_VERSION = 4`（线消息，
+  P03-1 / F-009 起）**互不联动**，各自显式演进。
 - 未知/更高 `schemaVersion` 一律拒绝（kind='validation'），**不静默降级**、不猜测旧格式。
-- F-009 把计划命令接入 Host/HostClient 时，须按 P02-2 既定纪律评估线消息版本与能力集合的
-  精确核验（能力集合变化需显式升版），本文不预先替 F-009 冻结线协议版本号。F-004 已在
-  v3 内增量加入 `phase.create`/`phase.write`（与 P02-3 / F-014 在 v3 内扩张 `baseline.cancel`
-  同一先例，见 §9.6）；升版评估仍归 F-009。
+- **F-009 定案（升版 3 → 4）**：P03-1 把计划域四命令（`phase.create`/
+  `feature.plan.import`/`plan.labels.update`/`feature.plan.revise`，F-004 ~ F-008 已在 v3 内
+  增量宣告，见 §9.6）与六查询（§6.6）纳入握手能力集合。P02-2 纪律要求客户端对能力集合做
+  精确相等核验，同版本号改集合违反「未知字段/集合一律拒绝」纪律，故显式升
+  `WIRE_MESSAGE_SCHEMA_VERSION = 4`（Host `CURRENT_SCHEMA_VERSION` 同步；与 P02-3 / F-006
+  的 2 → 3 同一升版理由）。旧 v3/v2/v1 客户端在握手/命令信封得到明确
+  `unsupported_schema_version`（400），不猜测降级；发现 schemaVersion 与 protocolVersion
+  不变；持久回执读取时以当前常量重盖 schemaVersion，升级不破坏既有库。
 - 错误归属实体类型扩展：`StorageEntityType` 新增 `feature` / `task`（P03-1/F-001），供计划
   校验错误定位；持久化表随 F-002 迁移建立，错误类型先于表存在不构成存储承诺。
 
@@ -322,8 +326,16 @@ Core 应用层 `QueryService` 增加六个授权查询（`ports/queries.ts` 契�
 
 - **操作身份**：`PLAN_QUERY_OPERATIONS` = `phases.list` / `phases.get` / `features.list` /
   `features.get` / `tasks.list` / `tasks.get`（方法名 listPhases/getPhase/listFeatures/
-  getFeature/listTasks/getTask）；能力位**复用 `project.read`**（不新增能力位；线消息握手
-  能力集合与升版评估仍归 F-009/F-010，本清单不提前进入握手）。
+  getFeature/listTasks/getTask）；能力位**复用 `project.read`**（不新增能力位）。**F-009 定案**：
+  六项进入握手能力集合（线消息升 v4，§5），Host 路由为集合根 + 查询参数的平坦形态——
+  `GET /v1/phases?projectId=&limit=&cursor=`（phases.list）、`GET /v1/features?projectId=&phaseId=`
+  （features.list）、`GET /v1/tasks?projectId=&featureId=`（tasks.list）与单段详情
+  `GET /v1/phases/:phaseId` / `GET /v1/features/:featureId` / `GET /v1/tasks/:taskId`；父级身份
+  是 Core 查询服务的显式输入（Host 不解析层级、不读 SQLite），嵌套/多段形态一律 404；
+  limit 十进制整数文本在传输层把关、范围与游标由 Core 单一权威复核；HostClient 公共方法
+  `listPhases/getPhase/listFeatures/getFeature/listTasks/getTask` 与四个计划命令方法
+  （`createPhase/importFeaturePlan/updatePlanLabels/reviseFeaturePlan`）经既有 /v1/commands 与
+  授权查询模式接线，completed 回执内嵌结果与新事件 payload 均有客户端线校验器。
 - **详情查询（按实体 ID）**：稳定 ID 校验先于读取；返回真实父级（projectId/phaseId/
   featureId）、标题/描述/标签/revision、结构化验收与需求/验收引用、**完整策略副本与来源**
   （executionConfig + configSource/configSourceKey；Feature 另含 sourceRefs 来源引用）；
@@ -525,10 +537,11 @@ v3 内扩张先例，升版评估仍归 F-009）。
    生成 UUID v4」，而 F-004 验收要求「创建含稳定 ID…」且「重复业务 ID…拒绝」。定案：命令
    payload 的 `id` 可缺省（缺省生成 UUID v4，F-002 语义不变），指定时作为业务 ID 并启用重复
    拒绝（§6.4）；两者不冲突但语义边界需确认。**请求核对**。
-6. **命令/能力集合在 v3 内扩张（F-004）**：`phase.create`/`phase.write` 进入冻结清单与 Host
-   接线宣告（不漂移守护要求 Core 与接线同步），线消息 `WIRE_MESSAGE_SCHEMA_VERSION` 保持 3
+6. **命令/能力集合在 v3 内扩张（F-004，已由 F-009 定案）**：`phase.create`/`phase.write` 进入冻结清单与 Host
+   接线宣告（不漂移守护要求 Core 与接线同步），线消息 `WIRE_MESSAGE_SCHEMA_VERSION` 曾保持 3
    ——与 P02-3 / F-014 在 v3 内扩张（baseline.cancel）同一先例；「能力集合变化需显式升版」
-   的评估仍由 F-009 按 P02-2 纪律执行。**请求核对**。
+   的评估已由 F-009 按 P02-2 纪律执行并定案：**升版 3 → 4**（§5），P03-1 计划域能力集合变更
+   全部落在 v4 宣告内，旧版本客户端得到明确拒绝。
 7. **导入命令的 expectedRevision 指向（F-005 定案）**：F-001 冻结「创建（导入新 Feature）
    不携带 expectedRevision」，但 F-005 验收明确要求以「约定的 expectedRevision」导入并在
    同一事务重核 CAS。定案：信封 expectedRevision 指向**目标 Phase 聚合**（导入在其上追加

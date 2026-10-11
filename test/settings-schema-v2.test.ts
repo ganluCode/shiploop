@@ -84,7 +84,7 @@ describe('F-008 settings schema version upgrade (v2)', () => {
   });
 
   it('rejects other unknown versions (0, 3, string, fractional, missing)', () => {
-    for (const value of [{}, { schemaVersion: 0 }, { schemaVersion: 3 }, { schemaVersion: '2' }, { schemaVersion: 2.5 }]) {
+    for (const value of [{}, { schemaVersion: 0 }, { schemaVersion: 4 }, { schemaVersion: '2' }, { schemaVersion: 2.5 }]) {
       expectValidationError(() => validateSettingsPayload(value, CONTEXT), 'payload.schemaVersion');
     }
   });

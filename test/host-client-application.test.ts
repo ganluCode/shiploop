@@ -373,7 +373,7 @@ function registerInput(): SubmitCommandInput {
 
 describe('F-013 Core 线上回执校验 validateWireCommandReceipt', () => {
   const baseReceipt = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     commandId: randomUUID(),
     principalId: 'local-owner',
     operation: 'project.register',
@@ -399,7 +399,7 @@ describe('F-013 Core 线上回执校验 validateWireCommandReceipt', () => {
   it.each([
     ['accepted 状态', { ...baseReceipt, status: 'accepted', result: undefined, resultRef: undefined }],
     ['未知键', { ...baseReceipt, extra: 1 }],
-    ['未知 schema 版本', { ...baseReceipt, schemaVersion: 4 }],
+    ['未知 schema 版本', { ...baseReceipt, schemaVersion: 5 }],
     ['坏 resultRef', { ...baseReceipt, resultRef: '../etc/passwd' }],
     ['rejected 携带 result', { ...baseReceipt, status: 'rejected', result: { ok: 1 }, resultRef: undefined, error: { code: 'conflict', message: '冲突' } }],
     ['error details 白名单外键', { ...baseReceipt, status: 'rejected', result: undefined, resultRef: undefined, error: { code: 'conflict', message: '冲突', details: { secret: 'x' } } }],
@@ -446,7 +446,7 @@ const SAMPLE_EVENT: PublicStateEvent = {
 describe('F-013 客户端响应校验器', () => {
   it('validateCommandReceiptWire：合法回执通过并核对身份/摘要', () => {
     const envelope = validateCommandEnvelope({
-      schemaVersion: 3,
+      schemaVersion: 4,
       commandId: randomUUID(),
       operation: 'project.register',
       scope: { kind: 'registration' },
@@ -477,13 +477,13 @@ describe('F-013 客户端响应校验器', () => {
   it.each([
     ['digest 不符', { expectedRequestDigest: 'b'.repeat(64) }, 'response_malformed'],
     ['commandId 不符', { expectedCommandId: randomUUID() }, 'response_malformed'],
-    ['未知 schema 版本', { schemaVersion: 4 }, 'unsupported_schema_version'],
+    ['未知 schema 版本', { schemaVersion: 5 }, 'unsupported_schema_version'],
     ['accepted 回执', { status: 'accepted', result: undefined, resultRef: undefined }, 'response_malformed'],
   ])(
     'validateCommandReceiptWire 拒绝：%s → %s',
     (_label, patch, expectedCode) => {
       const receipt = {
-        schemaVersion: 3,
+        schemaVersion: 4,
         commandId: randomUUID(),
         principalId: 'local-owner',
         operation: 'project.register',
@@ -540,7 +540,7 @@ describe('F-013 客户端响应校验器', () => {
 
   it('validateAppQueryResponse：列表/详情/配置/快照正例通过', () => {
     const list = validateAppQueryResponse('projects.list', {
-      schemaVersion: 3,
+      schemaVersion: 4,
       scope: 'project-list',
       records: [SAMPLE_PROJECT],
       nextCursor: null,
@@ -552,7 +552,7 @@ describe('F-013 客户端响应校验器', () => {
     const snapshot = validateAppQueryResponse(
       'snapshot.get',
       {
-        schemaVersion: 3,
+        schemaVersion: 4,
         scope: { kind: 'project', projectId: 'prj-f013' },
         project: SAMPLE_PROJECT,
         binding: null,
@@ -571,7 +571,7 @@ describe('F-013 客户端响应校验器', () => {
       (() => {
         try {
           validateAppQueryResponse('projects.list', {
-            schemaVersion: 3,
+            schemaVersion: 4,
             scope: 'project-list',
             records: [],
             nextCursor: null,
@@ -589,7 +589,7 @@ describe('F-013 客户端响应校验器', () => {
       (() => {
         try {
           validateAppQueryResponse('projects.list', {
-            schemaVersion: 4,
+            schemaVersion: 5,
             scope: 'project-list',
             records: [],
             nextCursor: null,
@@ -606,7 +606,7 @@ describe('F-013 客户端响应校验器', () => {
       (() => {
         try {
           validateAppQueryResponse('snapshot.get', {
-            schemaVersion: 3,
+            schemaVersion: 4,
             scope: { kind: 'global' },
             settings: null,
             watermark: { sequence: 0, cursor: 'evcur_v1_x' },
@@ -761,7 +761,7 @@ describe('F-013 submitCommand 冻结信封与有限重试（可编排伪 Host）
           kind: 'json',
           status: 409,
           body: {
-            schemaVersion: 3,
+            schemaVersion: 4,
             commandId: envelope.commandId,
             principalId: 'local-owner',
             operation: envelope.operation,
@@ -827,7 +827,7 @@ describe('F-013 submitCommand 冻结信封与有限重试（可编排伪 Host）
         }
         if (behavior.kind === 'json' && behavior.body === 'version-placeholder') {
           const receipt = receiptFor(observation);
-          return { kind: 'json', status: 200, body: { ...receipt, schemaVersion: 4 } };
+          return { kind: 'json', status: 200, body: { ...receipt, schemaVersion: 5 } };
         }
         if (label === '畸形 JSON') {
           return { kind: 'json', status: 200, body: undefined };
@@ -931,7 +931,7 @@ describe('F-013 查询、分页与回执读取', () => {
             kind: 'json',
             status: 200,
             body: {
-              schemaVersion: 3,
+              schemaVersion: 4,
               scope: 'project-list',
               records: [SAMPLE_PROJECT],
               nextCursor: 'prj-next',
@@ -996,7 +996,7 @@ describe('F-013 查询、分页与回执读取', () => {
         if (observation.path.startsWith('/v1/receipts/')) {
           const commandId = observation.path.slice('/v1/receipts/'.length);
           const envelope = validateCommandEnvelope({
-            schemaVersion: 3,
+            schemaVersion: 4,
             commandId,
             operation: 'project.register',
             scope: { kind: 'registration' },
@@ -1045,7 +1045,7 @@ describe('F-013 查询、分页与回执读取', () => {
             kind: 'json',
             status: 200,
             body: {
-              schemaVersion: 3,
+              schemaVersion: 4,
               scope: { kind: 'global' },
               settings: null,
               watermark: { sequence: 0, cursor: 'evcur_v1_' + 'B'.repeat(48) },
@@ -1063,7 +1063,7 @@ describe('F-013 查询、分页与回执读取', () => {
         kind: 'json',
         status: 200,
         body: {
-          schemaVersion: 3,
+          schemaVersion: 4,
           scope: { kind: 'global' },
           settings: null,
           watermark: { sequence: 0, cursor: 'evcur_v1_x' },
@@ -1117,7 +1117,7 @@ describe('F-013 查询、分页与回执读取', () => {
       setup.server.setScript((observation) => {
         if (observation.path === `/v1/results/${resultRef}`) {
           const envelope = validateCommandEnvelope({
-            schemaVersion: 3,
+            schemaVersion: 4,
             commandId: randomUUID(),
             operation: 'project.register',
             scope: { kind: 'registration' },
@@ -1178,7 +1178,7 @@ describe('F-013 真实 Host：命令、回执、结果与查询闭环', () => {
       const token = readFileSync(join(fixture.dataRoot, 'host', 'auth.token'), 'utf8');
       environment.evidence.registerSecret(token);
       const client = await connectToHost({ canonicalRoot: fixture.dataRoot });
-      expect(client.handshake.schemaVersion).toBe(3);
+      expect(client.handshake.schemaVersion).toBe(4);
 
       const input: SubmitCommandInput = {
         operation: 'project.register',

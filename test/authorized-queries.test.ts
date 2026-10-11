@@ -54,7 +54,7 @@ async function setup() {
   const probe = box.openProbe();
   const owner = box.localOwner();
   const envelope = (operation: string, scope: unknown, changes: Record<string, unknown> = {}) => ({
-    schemaVersion: 3,
+    schemaVersion: 4,
     commandId: randomUUID(),
     operation,
     scope,
@@ -120,7 +120,7 @@ describe('F-010 授权项目列表与标签计数', () => {
     const s = await setup();
     const ids = await createPlainProjects(s, 3, [['dev'], ['ops'], ['dev', 'ops']]);
     const page1 = await s.app.queryService.listProjects(s.owner, { limit: 2 });
-    expect(page1.schemaVersion).toBe(3);
+    expect(page1.schemaVersion).toBe(4);
     expect(page1.scope).toBe('project-list');
     expect(page1.limit).toBe(2);
     expect(page1.records.map((record) => record.id)).toEqual([ids[0], ids[1]]);

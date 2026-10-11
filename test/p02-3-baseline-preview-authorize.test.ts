@@ -33,7 +33,7 @@ import {
   computeBaselinePreviewDigest,
   computeBaselineWorkingTreeDigest,
   isPublicError,
-  ONBOARDING_QUERY_SCHEMA_VERSION,
+  WIRE_MESSAGE_SCHEMA_VERSION,
 } from '../packages/core/src/index.ts';
 import type { BaselineCodeIdentity, BaselineWorkspaceFileEntry, CommandReceipt } from '../packages/core/src/index.ts';
 import { createStaticRuntimeCapabilityCatalog } from '../packages/core/src/ports/runtime-capabilities.ts';
@@ -78,7 +78,9 @@ function envelope(
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
   return {
-    schemaVersion: ONBOARDING_QUERY_SCHEMA_VERSION,
+    // 命令信封用线消息版本（P03-1 / F-009 起 v4）；ONBOARDING_QUERY_SCHEMA_VERSION
+    // 是接入查询响应的独立版本族，不共用。
+    schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION,
     commandId: randomUUID(),
     operation,
     scope: { kind: 'project', projectId },

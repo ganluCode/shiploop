@@ -67,7 +67,7 @@ import {
   createLocalOwnerPrincipal,
   createStaticRuntimeCapabilityCatalog,
   LOCAL_OWNER_CAPABILITIES,
-  ONBOARDING_QUERY_SCHEMA_VERSION,
+  WIRE_MESSAGE_SCHEMA_VERSION,
 } from '../packages/core/src/index.ts';
 import type { CoreApplication } from '../packages/core/src/adapters/composition.ts';
 import { openCoreApplication } from '../packages/core/src/adapters/composition.ts';
@@ -405,7 +405,9 @@ function commandEnvelope(
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
   return {
-    schemaVersion: ONBOARDING_QUERY_SCHEMA_VERSION,
+    // 命令信封用线消息版本（P03-1 / F-009 起 v4）；ONBOARDING_QUERY_SCHEMA_VERSION
+    // 是 inspect/overview/baselines 查询响应的独立版本族，不共用。
+    schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION,
     commandId: randomUUID(),
     operation,
     scope,
@@ -589,7 +591,7 @@ describe('P02-FR2-AUTH-REJECT 认证/身份/协议负例（真实 Host）', () =
     f.evidence.registerSecret(token);
     const wrongToken = 'f'.repeat(64);
     const handshakeBody = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
-      schemaVersion: 3,
+      schemaVersion: 4,
       protocolVersion: 1,
       hostInstanceId,
       dataRootIdentity,
@@ -683,7 +685,7 @@ describe('P02-FR2-AUTH-REJECT 认证/身份/协议负例（真实 Host）', () =
     });
     expectRejected(wrongRoot, 409, 'data_root_mismatch', 'host.handshake');
 
-    for (const legacyVersion of [1, 99]) {
+    for (const legacyVersion of [3, 2, 1, 99]) {
       const legacySchema = await loopbackRequest({
         port,
         method: 'POST',
@@ -692,7 +694,7 @@ describe('P02-FR2-AUTH-REJECT 认证/身份/协议负例（真实 Host）', () =
         body: handshakeBody({ schemaVersion: legacyVersion }),
       });
       const error = expectRejected(legacySchema, 400, 'unsupported_schema_version', 'host.handshake');
-      expect(error.details?.supportedSchemaVersions).toEqual([3]);
+      expect(error.details?.supportedSchemaVersions).toEqual([4]);
     }
 
     const protocolMismatch = await loopbackRequest({
@@ -758,7 +760,7 @@ describe('P02-FR2-AUTH-REJECT 认证/身份/协议负例（真实 Host）', () =
       path: '/v1/host/handshake',
       token: oldToken,
       body: {
-        schemaVersion: 3,
+        schemaVersion: 4,
         protocolVersion: 1,
         hostInstanceId: newInstance,
         dataRootIdentity,
@@ -773,7 +775,7 @@ describe('P02-FR2-AUTH-REJECT 认证/身份/协议负例（真实 Host）', () =
       path: '/v1/host/handshake',
       token: newToken,
       body: {
-        schemaVersion: 3,
+        schemaVersion: 4,
         protocolVersion: 1,
         hostInstanceId: oldInstance,
         dataRootIdentity,
@@ -788,7 +790,7 @@ describe('P02-FR2-AUTH-REJECT 认证/身份/协议负例（真实 Host）', () =
       path: '/v1/host/handshake',
       token: newToken,
       body: {
-        schemaVersion: 3,
+        schemaVersion: 4,
         protocolVersion: 1,
         hostInstanceId: newInstance,
         dataRootIdentity: 'b'.repeat(64),
@@ -803,7 +805,7 @@ describe('P02-FR2-AUTH-REJECT 认证/身份/协议负例（真实 Host）', () =
       path: '/v1/host/handshake',
       token: newToken,
       body: {
-        schemaVersion: 3,
+        schemaVersion: 4,
         protocolVersion: 1,
         hostInstanceId: newInstance,
         dataRootIdentity,
@@ -1500,7 +1502,7 @@ describe('P02-FR2-AUTH-REJECT 固定回环监听（T23 组合复验）', () => {
         path: '/v1/host/handshake',
         token,
         headers: { origin },
-        body: { schemaVersion: 3, protocolVersion: 1, hostInstanceId: discovery.hostInstanceId, dataRootIdentity: discovery.dataRootIdentity },
+        body: { schemaVersion: 4, protocolVersion: 1, hostInstanceId: discovery.hostInstanceId, dataRootIdentity: discovery.dataRootIdentity },
       });
       expectRejected(response, 401, 'unauthorized', 'host.handshake');
       expectTransportHygiene(response, secrets);
@@ -1509,7 +1511,7 @@ describe('P02-FR2-AUTH-REJECT 固定回环监听（T23 组合复验）', () => {
       port,
       method: 'POST',
       path: `/v1/host/handshake?token=${token}`,
-      body: { schemaVersion: 3, protocolVersion: 1, hostInstanceId: discovery.hostInstanceId, dataRootIdentity: discovery.dataRootIdentity },
+      body: { schemaVersion: 4, protocolVersion: 1, hostInstanceId: discovery.hostInstanceId, dataRootIdentity: discovery.dataRootIdentity },
     });
     expectRejected(queryCredential, 401, 'unauthorized', 'host.handshake');
     expect(queryCredential.bodyText).not.toContain(token);
@@ -1614,8 +1616,8 @@ describe('P02-FR2-AUTH-REJECT 证据脱敏', () => {
     // 拒绝 JSON 输出：错误 token / 缺失 token 的 HTTP 响应体。
     const rejectedBodies: string[] = [];
     for (const options of [
-      { method: 'POST' as const, path: '/v1/host/handshake', body: { schemaVersion: 3, protocolVersion: 1, hostInstanceId: startResult.hostInstanceId, dataRootIdentity: startResult.dataRootIdentity } },
-      { method: 'POST' as const, path: '/v1/host/handshake', token: synthesizedTokens[0], body: { schemaVersion: 3, protocolVersion: 1, hostInstanceId: startResult.hostInstanceId, dataRootIdentity: startResult.dataRootIdentity } },
+      { method: 'POST' as const, path: '/v1/host/handshake', body: { schemaVersion: 4, protocolVersion: 1, hostInstanceId: startResult.hostInstanceId, dataRootIdentity: startResult.dataRootIdentity } },
+      { method: 'POST' as const, path: '/v1/host/handshake', token: synthesizedTokens[0], body: { schemaVersion: 4, protocolVersion: 1, hostInstanceId: startResult.hostInstanceId, dataRootIdentity: startResult.dataRootIdentity } },
       { method: 'GET' as const, path: '/v1/projects', token: synthesizedTokens[0] },
     ]) {
       const response = await loopbackRequest({ port, ...options });

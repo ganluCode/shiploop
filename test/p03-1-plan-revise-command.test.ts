@@ -283,7 +283,7 @@ async function setup(options: { withFeatureInB?: boolean } = {}): Promise<Revise
   const probe = box.openProbe();
   const owner = box.localOwner();
 
-  const envelopeBase = { schemaVersion: 3, issuedAt: NOW_ISO };
+  const envelopeBase = { schemaVersion: 4, issuedAt: NOW_ISO };
   const submit = async (payload: Record<string, unknown>, operation: string, extra: Record<string, unknown> = {}) =>
     service.submit(owner, { ...envelopeBase, commandId: randomUUID(), operation, payload, ...extra });
 
@@ -618,7 +618,7 @@ describe('F-008 feature.plan.revise 修订闭环', () => {
     expect((await s.service.submit(s.owner, s.reviseEnvelope())).status).toBe('completed');
     // Feature 标签编辑以聚合新 revision 成功。
     const labelsEnvelope = (entityType: string, id: string, revision: number) => ({
-      schemaVersion: 3,
+      schemaVersion: 4,
       commandId: randomUUID(),
       operation: 'plan.labels.update' as const,
       scope: { kind: 'project', projectId: s.projectId },
@@ -681,7 +681,7 @@ describe('F-008 feature.plan.revise 修订闭环', () => {
     const protected_ = await s.service.submit(s.owner, s.reviseEnvelope());
     expect(rejectedError(protected_).details).toMatchObject({ reason: 'active_execution_inputs' });
     const startClaim = {
-      schemaVersion: 3,
+      schemaVersion: 4,
       commandId: randomUUID(),
       operation: 'plan.labels.update' as const,
       scope: { kind: 'project', projectId: s.projectId },

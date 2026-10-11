@@ -48,7 +48,7 @@ async function setup() {
   const probe = box.openProbe();
   const owner = box.localOwner();
   const envelope = (changes: Record<string, unknown> = {}) => ({
-    schemaVersion: 3, commandId: randomUUID(), operation: 'project.register',
+    schemaVersion: 4, commandId: randomUUID(), operation: 'project.register',
     scope: { kind: 'registration' }, issuedAt: NOW_ISO,
     payload: { repositoryPath: box.repoDirA, displayName: 'Repo A', labels: [' Team ', 'team', 'core'] },
     ...changes,
@@ -338,7 +338,7 @@ describe('F-008 注册命令', () => {
     const projectId = registered.project.id as string;
     const bindingBefore = s.probe.selectOne('SELECT * FROM repository_bindings WHERE project_id = ?', [projectId]);
     const receipt = await s.service.submit(s.owner, {
-      schemaVersion: 3, commandId: randomUUID(), operation: 'project.metadata.update',
+      schemaVersion: 4, commandId: randomUUID(), operation: 'project.metadata.update',
       scope: { kind: 'project', projectId }, expectedRevision: 1, issuedAt: NOW_ISO,
       payload: { labels: [' Beta ', 'alpha', 'beta'], description: 'updated' },
     });
@@ -361,7 +361,7 @@ describe('F-008 注册命令', () => {
     });
     // 过期 revision：rejected 固化，对象与事件不再变化。
     const stale = await s.service.submit(s.owner, {
-      schemaVersion: 3, commandId: randomUUID(), operation: 'project.metadata.update',
+      schemaVersion: 4, commandId: randomUUID(), operation: 'project.metadata.update',
       scope: { kind: 'project', projectId }, expectedRevision: 1, issuedAt: NOW_ISO,
       payload: { displayName: 'stale write' },
     });

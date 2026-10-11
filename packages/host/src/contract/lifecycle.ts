@@ -68,7 +68,7 @@ export const APPLICATION_COMMAND_CAPABILITIES = [
   'feature.plan.revise',
 ] as const;
 
-/** P02-2 §11.3：Host 实际接线的应用查询（含回执/结果读取与快照；P02-3 / F-006 新增静态接入两项；F-014 新增基线分页/详情/证据正文三项）。 */
+/** P02-2 §11.3：Host 实际接线的应用查询（含回执/结果读取与快照；P02-3 / F-006 新增静态接入两项；F-014 新增基线分页/详情/证据正文三项；P03-1 / F-009 新增计划层级/详情/DAG 六项）。 */
 export const APPLICATION_QUERY_CAPABILITIES = [
   'projects.list',
   'projects.get',
@@ -88,6 +88,14 @@ export const APPLICATION_QUERY_CAPABILITIES = [
   'baselines.list',
   'baselines.get',
   'artifacts.get',
+  // P03-1 / F-009 §6.6：计划层级列表/详情/同 Feature Task DAG（能力位复用
+  // project.read；与 Core PLAN_QUERY_OPERATIONS 同步，不漂移）。
+  'phases.list',
+  'phases.get',
+  'features.list',
+  'features.get',
+  'tasks.list',
+  'tasks.get',
 ] as const;
 
 /**

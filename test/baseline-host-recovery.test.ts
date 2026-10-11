@@ -32,7 +32,7 @@ async function fixture(policy: 'wait' | 'cancel' = 'wait') {
 async function request(host: RunningHost, projectId: string, argv = [process.execPath, '--version']) {
   const plan = { checks: [{ checkKey: 'a', kind: 'command', argv, required: true, timeoutMs: 10_000 }] };
   const preview = await host.core.baselineService.previewBaseline(owner, projectId, { plan });
-  return { schemaVersion: 3, commandId: randomUUID(), operation: 'baseline.run', scope: { kind: 'project', projectId }, issuedAt: new Date().toISOString(), payload: { decision: 'authorize', plan, previewDigest: preview.previewDigest } };
+  return { schemaVersion: 4, commandId: randomUUID(), operation: 'baseline.run', scope: { kind: 'project', projectId }, issuedAt: new Date().toISOString(), payload: { decision: 'authorize', plan, previewDigest: preview.previewDigest } };
 }
 
 describe('baseline Host quiesce and restart', () => {
@@ -53,7 +53,7 @@ describe('baseline Host quiesce and restart', () => {
     const next = await request(f.host, f.projectId);
     const token = readFileSync(join(f.root, 'host', 'auth.token'), 'utf8');
     const commandId = randomUUID();
-    const body = { schemaVersion: 3, commandId, hostInstanceId: f.host.hostInstanceId,
+    const body = { schemaVersion: 4, commandId, hostInstanceId: f.host.hostInstanceId,
       requestDigest: computeStopRequestDigest(commandId, f.host.hostInstanceId, { mode: 'graceful' }) };
     const stop = () => loopbackRequest({ port: f.host.port, method: 'POST', path: '/v1/host/stop', token, body });
     const first = await stop();

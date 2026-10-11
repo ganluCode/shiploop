@@ -104,7 +104,7 @@ async function setup() {
   const owner = box.localOwner();
 
   const registerInput = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     commandId: randomUUID(),
     operation: 'project.register',
     scope: { kind: 'registration' },
@@ -123,7 +123,7 @@ async function setup() {
   const projectId = (registered.result as { project: { id: string } }).project.id;
 
   const phaseEnvelope = (changes: Record<string, unknown> = {}) => ({
-    schemaVersion: 3,
+    schemaVersion: 4,
     commandId: randomUUID(),
     operation: 'phase.create',
     scope: { kind: 'project', projectId },

@@ -38,12 +38,14 @@ import { validateStableId } from './validation.js';
  * ------------------------------------------------------------------ */
 
 /**
- * 线消息结构版本（P02-3 / F-006 起为 3；独立于发现版本 1、线协议版本 1）。
- * 升版依据 docs/p02-3-onboarding-contract.md §3.1：握手能力视图（§11.3）自
- * F-006 起新增 projects.inspect/overview 查询，客户端对能力集合做精确相等
- * 核验，同版本号改集合违反「未知字段/集合一律拒绝」纪律，故显式 2 → 3。
+ * 线消息结构版本（P03-1 / F-009 起为 4；独立于发现版本 1、线协议版本 1）。
+ * 升版依据 docs/p03-1-plan-import-contract.md §5/§9.6（F-009 定案）：P03-1 计划域
+ * 四命令（F-004/F-005/F-007/F-008）与六查询（F-009）进入握手能力集合，客户端
+ * 对能力集合做精确相等核验，同版本号改集合违反「未知字段/集合一律拒绝」
+ * 纪律，故显式 3 → 4（与 P02-3 / F-006 的 2 → 3 同一升版理由）；旧 v3/v2/v1
+ * 客户端得到明确 unsupported_schema_version，不猜测降级。
  */
-export const WIRE_MESSAGE_SCHEMA_VERSION = 3 as const;
+export const WIRE_MESSAGE_SCHEMA_VERSION = 4 as const;
 
 /**
  * 命令提交路由的操作身份：信封结构/版本/操作名在定位到具体 §6 命令之前，
@@ -506,7 +508,7 @@ export interface ValidatedFeaturePlanRevisePayload {
 }
 
 interface EnvelopeCommon {
-  readonly schemaVersion: 3;
+  readonly schemaVersion: typeof WIRE_MESSAGE_SCHEMA_VERSION;
   readonly commandId: string;
   readonly issuedAt: string;
   readonly expiresAt: string | null;
@@ -958,7 +960,7 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
   const timing = validateTiming(operation, object.issuedAt, object.expiresAt);
 
   const base: {
-    readonly schemaVersion: 3;
+    readonly schemaVersion: typeof WIRE_MESSAGE_SCHEMA_VERSION;
     readonly commandId: string;
     readonly issuedAt: string;
     readonly expiresAt: string | null;
@@ -1156,7 +1158,7 @@ export type ReceiptStatus = (typeof RECEIPT_STATUSES)[number];
 export const RECEIPT_RESULT_MAX_BYTES = 16_384;
 
 interface ReceiptCommon {
-  readonly schemaVersion: 3;
+  readonly schemaVersion: typeof WIRE_MESSAGE_SCHEMA_VERSION;
   readonly commandId: string;
   readonly principalId: string;
   readonly operation: AppOperation;

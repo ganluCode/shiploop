@@ -67,7 +67,7 @@ async function setup() {
   const probe = box.openProbe();
   const owner = box.localOwner();
   const envelope = (operation: string, scope: unknown, changes: Record<string, unknown> = {}) => ({
-    schemaVersion: 3,
+    schemaVersion: 4,
     commandId: randomUUID(),
     operation,
     scope,
@@ -111,7 +111,7 @@ describe('F-010 快照：一致读视图与水位', () => {
   it('空库全局快照：settings 为 null、水位 0、游标可解码且绑定数据根与 scope', async () => {
     const s = await setup();
     const snapshot = await s.app.queryService.getSnapshot(s.owner, { kind: 'global' });
-    expect(snapshot.schemaVersion).toBe(3);
+    expect(snapshot.schemaVersion).toBe(4);
     expect(snapshot.scope).toEqual({ kind: 'global' });
     expect(snapshot.settings).toBeNull();
     expect(snapshot.watermark.sequence).toBe(0);

@@ -200,7 +200,7 @@ async function setup(options: { withSettings?: boolean; withProjectB?: boolean }
   const owner = box.localOwner();
 
   const envelopeBase = {
-    schemaVersion: 3,
+    schemaVersion: 4,
     issuedAt: NOW_ISO,
   };
   const submit = async (payload: Record<string, unknown>, operation: string, extra: Record<string, unknown> = {}) =>
@@ -611,7 +611,7 @@ describe('F-005 feature.plan.import 导入闭环', () => {
     expect(s.planCounts()).toEqual({ features: 0, tasks: 0, taskDependencies: 0 });
     // 建立配置后导入成功；随后更新配置，既有 Task 副本不变、新导入用新配置。
     await s.service.submit(s.owner, {
-      schemaVersion: 3,
+      schemaVersion: 4,
       commandId: randomUUID(),
       operation: 'settings.global.create',
       scope: { kind: 'global' },
@@ -619,7 +619,7 @@ describe('F-005 feature.plan.import 导入闭环', () => {
       payload: GLOBAL_SETTINGS_PAYLOAD,
     });
     await s.service.submit(s.owner, {
-      schemaVersion: 3,
+      schemaVersion: 4,
       commandId: randomUUID(),
       operation: 'settings.project.create',
       scope: { kind: 'project', projectId: s.projectId },
@@ -633,7 +633,7 @@ describe('F-005 feature.plan.import 导入闭环', () => {
     )!.execution_config;
     expect(JSON.parse(firstModel)).toMatchObject({ model: 'claude-sonnet-2' });
     await s.service.submit(s.owner, {
-      schemaVersion: 3,
+      schemaVersion: 4,
       commandId: randomUUID(),
       operation: 'settings.project.update',
       scope: { kind: 'project', projectId: s.projectId },

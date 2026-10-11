@@ -36,7 +36,7 @@ async function setup() {
   const probe = box.openProbe();
   const owner = box.localOwner();
   const envelope = (changes: Record<string, unknown> = {}) => ({
-    schemaVersion: 3, commandId: randomUUID(), operation: 'project.metadata.update',
+    schemaVersion: 4, commandId: randomUUID(), operation: 'project.metadata.update',
     scope: { kind: 'project', projectId: project.id }, expectedRevision: 1,
     issuedAt: new Date(NOW).toISOString(), payload: { displayName: 'edited', labels: [' NEW ', 'new'] },
     ...changes,
@@ -272,7 +272,7 @@ describe('F-007 原子幂等命令', () => {
     // 缺失可信装配时配置命令必须保持 unsupported 而不是隐式跳过能力复检。
     const s = await setup();
     await expect(s.service.submit(s.owner, {
-      schemaVersion: 3, commandId: randomUUID(), operation: 'settings.global.create',
+      schemaVersion: 4, commandId: randomUUID(), operation: 'settings.global.create',
       scope: { kind: 'global' }, issuedAt: new Date(NOW).toISOString(),
       payload: { schemaVersion: 2, strategies: { defaultStrategy: { runtime: 'pi', provider: 'anthropic', model: 'claude-sonnet' } } },
     })).rejects.toMatchObject({ code: 'unsupported' });

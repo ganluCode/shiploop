@@ -25,9 +25,11 @@ export const DISCOVERY_SCHEMA_VERSION = 1 as const;
  * schemaVersion 独立校验：未来其中一个升版不自动改变另一个。
  * P02-2 为 2；P02-3 / F-006 起为 3（§3.1/§15.5：握手能力视图新增
  * projects.inspect/overview，集合变化必须显式升版；2/1 → 400
- * unsupported_schema_version，不降级）。
+ * unsupported_schema_version，不降级）；P03-1 / F-009 起为 4
+ *（docs/p03-1-plan-import-contract.md §5/§9.6：计划域四命令与六查询进入握手
+ * 能力集合，同一升版纪律；旧 v3/v2/v1 → 400，不猜测降级）。
  */
-export const CURRENT_SCHEMA_VERSION = 3 as const;
+export const CURRENT_SCHEMA_VERSION = 4 as const;
 
 /** 当前 Host 生命周期线协议版本；本 Feature 只实现 v1。 */
 export const CURRENT_PROTOCOL_VERSION = 1 as const;
@@ -69,6 +71,19 @@ export const EVENTS_ROUTE = '/v1/events';
 export const BASELINES_ROUTE_PREFIX = '/v1/baselines/';
 export const ARTIFACTS_ROUTE_PREFIX = '/v1/artifacts/';
 export const ARTIFACT_CONTENT_ROUTE_SUFFIX = '/content';
+
+/**
+ * P03-1 / F-009 §6.6：计划域查询路由（全部 GET + Bearer；docs/p03-1-plan-import-
+ * contract.md）。层级列表为集合根 + 查询参数（projectId/phaseId/featureId 是
+ * Core 查询服务的显式输入，Host 不解析层级、不读 SQLite）；详情为单段路径
+ * 参数。任何嵌套形态（如 /v1/phases/:id/features）未冻结 → 404 unknown_operation。
+ */
+export const PHASES_ROUTE = '/v1/phases';
+export const PHASES_ROUTE_PREFIX = '/v1/phases/';
+export const FEATURES_ROUTE = '/v1/features';
+export const FEATURES_ROUTE_PREFIX = '/v1/features/';
+export const TASKS_ROUTE = '/v1/tasks';
+export const TASKS_ROUTE_PREFIX = '/v1/tasks/';
 
 /** §7.2 客户端有限预算（毫秒）。 */
 export const TCP_CONNECT_TIMEOUT_MS = 2_000;

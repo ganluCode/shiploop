@@ -118,7 +118,7 @@ async function main(): Promise<void> {
     const issuedAt = new Date().toISOString();
     if (config.role === 'import') {
       const envelope = {
-        schemaVersion: 3,
+        schemaVersion: 4,
         commandId: randomUUID(),
         operation: 'feature.plan.import',
         scope: { kind: 'project', projectId: config.projectId },
@@ -142,7 +142,7 @@ async function main(): Promise<void> {
       }
     } else {
       const envelope = {
-        schemaVersion: 3,
+        schemaVersion: 4,
         commandId: randomUUID(),
         operation: 'settings.project.update',
         scope: { kind: 'project', projectId: config.projectId },

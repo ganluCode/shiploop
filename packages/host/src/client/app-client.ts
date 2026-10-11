@@ -29,6 +29,8 @@
 import { randomUUID } from 'node:crypto';
 import { request as httpRequest, type ClientRequest, type IncomingMessage } from 'node:http';
 import {
+  PLAN_LIST_CURSOR_PREFIX,
+  PLAN_LIST_MAX_LIMIT,
   computeCommandRequestDigest,
   isUuidV4,
   isValidResultRef,
@@ -43,7 +45,11 @@ import type {
   CommandScope,
   EffectiveSettings,
   ExportedSettings,
+  FeatureDetailResult,
+  FeatureListResult,
   GlobalSnapshotResult,
+  PhaseDetailResult,
+  PhaseListResult,
   ProjectBindingResult,
   ProjectDetailResult,
   ProjectInspectionResult,
@@ -55,6 +61,8 @@ import type {
   PublicStateEvent,
   SettingsScope,
   SnapshotResult,
+  TaskDetailResult,
+  TaskListResult,
 } from 'shiploop-core/protocol';
 import {
   APP_REQUEST_TIMEOUT_MS,
@@ -63,9 +71,13 @@ import {
   BASELINES_ROUTE_PREFIX,
   COMMANDS_ROUTE,
   EVENTS_ROUTE,
+  FEATURES_ROUTE,
+  FEATURES_ROUTE_PREFIX,
   HostProtocolError,
   MAX_APP_BODY_BYTES,
   MAX_ARTIFACT_CONTENT_BYTES,
+  PHASES_ROUTE,
+  PHASES_ROUTE_PREFIX,
   PROJECTS_INSPECT_ROUTE,
   PROJECTS_ROUTE,
   PROJECT_LABEL_COUNTS_ROUTE,
@@ -75,6 +87,8 @@ import {
   SETTINGS_GLOBAL_ROUTE,
   SNAPSHOT_ROUTE,
   SUBMIT_COMMAND_BUDGET_MS,
+  TASKS_ROUTE,
+  TASKS_ROUTE_PREFIX,
   isHostProtocolError,
   isPlainObject,
 } from '../contract/index.js';
@@ -85,6 +99,10 @@ import {
   validateBaselineCommandResultWire,
   validateBaselinePreviewResultWire,
   validateCommandReceiptWire,
+  validateFeaturePlanImportResultWire,
+  validateFeaturePlanReviseResultWire,
+  validatePhaseCreateResultWire,
+  validatePlanLabelsUpdateResultWire,
   validateStateEventWire,
 } from './app-wire.js';
 
@@ -166,6 +184,57 @@ export interface RunBaselineInput {
 
 /** baselines.list 分页输入（§7.4：limit 1..100；cursor 为上一页最后 operationId）。 */
 export interface ListBaselinesInput {
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+
+/* ------------------------------------------------------------------ *
+ * P03-1 / F-009 计划域输入类型（§6.4-§6.8/§6.6）
+ * ------------------------------------------------------------------ */
+
+/** phase.create 输入（id 可缺省由服务端生成；字段语义由服务端单一权威复核）。 */
+export interface CreatePhaseInput {
+  readonly projectId: string;
+  readonly id?: string;
+  readonly title: string;
+  readonly description?: string | null;
+  readonly labels?: readonly string[];
+  readonly commandId?: string;
+}
+
+/** feature.plan.import 输入（expectedRevision 为目标 Phase 聚合 CAS）。 */
+export interface ImportFeaturePlanInput {
+  readonly projectId: string;
+  readonly phaseId: string;
+  readonly expectedRevision: number;
+  readonly plan: unknown;
+  readonly commandId?: string;
+}
+
+/** plan.labels.update 目标实体类型（phase/feature/task）。 */
+export type PlanLabelEntityType = 'phase' | 'feature' | 'task';
+
+/** plan.labels.update 输入（expectedRevision 为目标实体自身 revision）。 */
+export interface UpdatePlanLabelsInput {
+  readonly projectId: string;
+  readonly entityType: PlanLabelEntityType;
+  readonly id: string;
+  readonly expectedRevision: number;
+  readonly labels: readonly string[];
+  readonly commandId?: string;
+}
+
+/** feature.plan.revise 输入（expectedRevision 为目标 Feature 聚合 revision）。 */
+export interface ReviseFeaturePlanInput {
+  readonly projectId: string;
+  readonly featureId: string;
+  readonly expectedRevision: number;
+  readonly plan: unknown;
+  readonly commandId?: string;
+}
+
+/** 计划层级列表分页输入（limit 1..200；cursor 为不透明 plcur_v1_ 游标）。 */
+export interface PlanListPageInput {
   readonly limit?: number;
   readonly cursor?: string;
 }
@@ -254,6 +323,46 @@ export interface HostClientApplication {
   getBaseline(operationId: string): Promise<BaselineDetailResult>;
   /** P02-3 / F-014（§7.6）：正式基线证据制品正文（有界、已授权、已脱敏）。 */
   readArtifactContent(artifactId: string): Promise<BaselineArtifactContentResult>;
+  /* ------------------------------------------------------------ *
+   * P03-1 / F-009 计划域命令与查询（§6.4-§6.8/§6.6）
+   * ------------------------------------------------------------ */
+  /** phase.create：创建 open Phase（completed 回执 result 经线校验器复核）。 */
+  createPhase(input: CreatePhaseInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  /** feature.plan.import：单 Feature 草稿计划导入（Phase 聚合 CAS）。 */
+  importFeaturePlan(
+    input: ImportFeaturePlanInput,
+    options?: SubmitCommandOptions,
+  ): Promise<CommandReceipt>;
+  /** plan.labels.update：纯标签 CAS 编辑（目标实体自身 revision）。 */
+  updatePlanLabels(
+    input: UpdatePlanLabelsInput,
+    options?: SubmitCommandOptions,
+  ): Promise<CommandReceipt>;
+  /** feature.plan.revise：未执行草稿的实质计划修订（Feature 聚合 CAS）。 */
+  reviseFeaturePlan(
+    input: ReviseFeaturePlanInput,
+    options?: SubmitCommandOptions,
+  ): Promise<CommandReceipt>;
+  /** phases.list：项目内 Phase 层级列表（稳定排序、受控游标）。 */
+  listPhases(projectId: string, input?: PlanListPageInput): Promise<PhaseListResult>;
+  /** phases.get：Phase 详情（真实父级/标签/revision）。 */
+  getPhase(phaseId: string): Promise<PhaseDetailResult>;
+  /** features.list：Phase 内 Feature 层级列表。 */
+  listFeatures(
+    projectId: string,
+    phaseId: string,
+    input?: PlanListPageInput,
+  ): Promise<FeatureListResult>;
+  /** features.get：Feature 详情与完整同 Feature Task DAG（一致读视图）。 */
+  getFeature(featureId: string): Promise<FeatureDetailResult>;
+  /** tasks.list：Feature 内 Task 层级列表。 */
+  listTasks(
+    projectId: string,
+    featureId: string,
+    input?: PlanListPageInput,
+  ): Promise<TaskListResult>;
+  /** tasks.get：Task 详情（验收/引用/策略副本与来源）。 */
+  getTask(taskId: string): Promise<TaskDetailResult>;
 }
 
 /** 由 connectToHost 注入的会话上下文（身份/预算/生命周期钩子）。 */
@@ -604,6 +713,91 @@ function validateSnapshotScope(operation: HostOperation, scope: SettingsScope): 
     return { kind: 'project', projectId };
   }
   throw invalidInput(operation, 'invalid_scope_kind', 'scope.kind');
+}
+
+/* ------------------------------------------------------------------ *
+ * P03-1 / F-009 计划域输入校验（零网络拒绝）
+ * ------------------------------------------------------------------ */
+
+const CREATE_PHASE_INPUT_KEYS = ['projectId', 'id', 'title', 'description', 'labels', 'commandId'] as const;
+const IMPORT_PLAN_INPUT_KEYS = ['projectId', 'phaseId', 'expectedRevision', 'plan', 'commandId'] as const;
+const UPDATE_PLAN_LABELS_INPUT_KEYS = ['projectId', 'entityType', 'id', 'expectedRevision', 'labels', 'commandId'] as const;
+const REVISE_PLAN_INPUT_KEYS = ['projectId', 'featureId', 'expectedRevision', 'plan', 'commandId'] as const;
+const PLAN_LIST_INPUT_KEYS = ['limit', 'cursor'] as const;
+
+function requireStableIdInput(operation: HostOperation, value: unknown, field: string): string {
+  if (typeof value !== 'string' || !STABLE_ID_PATTERN.test(value)) {
+    throw invalidInput(operation, 'invalid_stable_id', field);
+  }
+  return value;
+}
+
+function requireExpectedRevisionInput(operation: HostOperation, value: unknown): number {
+  if (
+    typeof value !== 'number' ||
+    !Number.isInteger(value) ||
+    value < 1
+  ) {
+    throw invalidInput(operation, 'invalid_expected_revision', 'expectedRevision');
+  }
+  return value;
+}
+
+function optionalCommandIdInput(operation: HostOperation, value: unknown): { readonly commandId?: string } {
+  if (value === undefined) {
+    return {};
+  }
+  if (typeof value !== 'string' || !isUuidV4(value)) {
+    throw invalidInput(operation, 'invalid_command_id', 'commandId');
+  }
+  return { commandId: value };
+}
+
+/** 计划列表分页输入：limit 1..PLAN_LIST_MAX_LIMIT；cursor 为 plcur_v1_ 形态。 */
+function buildPlanListQuery(input: PlanListPageInput | undefined, operation: HostOperation): string {
+  if (input === undefined) {
+    return '';
+  }
+  const object = rejectUnknownInputKeys(operation, input, PLAN_LIST_INPUT_KEYS);
+  const params = new URLSearchParams();
+  if (object.limit !== undefined) {
+    if (
+      typeof object.limit !== 'number' ||
+      !Number.isInteger(object.limit) ||
+      object.limit < 1 ||
+      object.limit > PLAN_LIST_MAX_LIMIT
+    ) {
+      throw invalidInput(operation, 'invalid_limit', 'limit');
+    }
+    params.append('limit', String(object.limit));
+  }
+  if (object.cursor !== undefined) {
+    if (
+      typeof object.cursor !== 'string' ||
+      !object.cursor.startsWith(PLAN_LIST_CURSOR_PREFIX) ||
+      !/^[A-Za-z0-9_-]+$/.test(object.cursor.slice(PLAN_LIST_CURSOR_PREFIX.length))
+    ) {
+      throw invalidInput(operation, 'invalid_cursor', 'cursor');
+    }
+    params.append('cursor', object.cursor);
+  }
+  return params.toString();
+}
+
+/** 计划列表查询串（父级身份 + 分页；键序冻结）。 */
+function planListPath(
+  base: string,
+  parents: readonly [string, string][],
+  input: PlanListPageInput | undefined,
+  operation: HostOperation,
+): string {
+  const params = new URLSearchParams();
+  for (const [key, value] of parents) {
+    params.append(key, value);
+  }
+  const paging = buildPlanListQuery(input, operation);
+  const query = `${params.toString()}${paging.length === 0 ? '' : `&${paging}`}`;
+  return `${base}?${query}`;
 }
 
 /* ------------------------------------------------------------------ *
@@ -1516,6 +1710,195 @@ export function createHostClientApplication(context: AppClientContext): HostClie
         throw mapErrorResponse(response.statusCode, response.json, 'artifacts.get');
       }
       return { artifactId: id, byteSize: response.byteSize, content: response.text };
+    },
+
+    /* ------------------------------------------------------------ *
+     * P03-1 / F-009 计划域命令与查询（§6.4-§6.8/§6.6）
+     * ------------------------------------------------------------ */
+
+    async createPhase(
+      input: CreatePhaseInput,
+      options?: SubmitCommandOptions,
+    ): Promise<CommandReceipt> {
+      const object = rejectUnknownInputKeys('commands.submit', input, CREATE_PHASE_INPUT_KEYS);
+      const projectId = requireProjectId('commands.submit', object.projectId as string);
+      if (object.id !== undefined) {
+        requireStableIdInput('commands.submit', object.id, 'id');
+      }
+      if (typeof object.title !== 'string' || object.title.trim().length === 0) {
+        throw invalidInput('commands.submit', 'invalid_title', 'title');
+      }
+      if (object.description !== undefined && object.description !== null && typeof object.description !== 'string') {
+        throw invalidInput('commands.submit', 'invalid_description', 'description');
+      }
+      if (object.labels !== undefined && !Array.isArray(object.labels)) {
+        throw invalidInput('commands.submit', 'invalid_labels', 'labels');
+      }
+      const receipt = await submitCommand(
+        {
+          ...optionalCommandIdInput('commands.submit', object.commandId),
+          operation: 'phase.create',
+          scope: { kind: 'project', projectId },
+          payload: {
+            ...(object.id !== undefined ? { id: object.id } : {}),
+            title: object.title,
+            description: object.description ?? null,
+            labels: object.labels ?? [],
+          },
+        },
+        options,
+      );
+      // completed 回执的 result 必须是 Phase 记录形状（§6.4 冻结）。
+      if (receipt.status === 'completed') {
+        validatePhaseCreateResultWire(receipt.result, 'commands.submit');
+      }
+      return receipt;
+    },
+
+    async importFeaturePlan(
+      input: ImportFeaturePlanInput,
+      options?: SubmitCommandOptions,
+    ): Promise<CommandReceipt> {
+      const object = rejectUnknownInputKeys('commands.submit', input, IMPORT_PLAN_INPUT_KEYS);
+      const projectId = requireProjectId('commands.submit', object.projectId as string);
+      const phaseId = requireStableIdInput('commands.submit', object.phaseId, 'phaseId');
+      const expectedRevision = requireExpectedRevisionInput('commands.submit', object.expectedRevision);
+      const receipt = await submitCommand(
+        {
+          ...optionalCommandIdInput('commands.submit', object.commandId),
+          operation: 'feature.plan.import',
+          scope: { kind: 'project', projectId },
+          expectedRevision,
+          payload: { phaseId, plan: object.plan },
+        },
+        options,
+      );
+      if (receipt.status === 'completed') {
+        validateFeaturePlanImportResultWire(receipt.result, 'commands.submit');
+      }
+      return receipt;
+    },
+
+    async updatePlanLabels(
+      input: UpdatePlanLabelsInput,
+      options?: SubmitCommandOptions,
+    ): Promise<CommandReceipt> {
+      const object = rejectUnknownInputKeys('commands.submit', input, UPDATE_PLAN_LABELS_INPUT_KEYS);
+      const projectId = requireProjectId('commands.submit', object.projectId as string);
+      if (
+        object.entityType !== 'phase' &&
+        object.entityType !== 'feature' &&
+        object.entityType !== 'task'
+      ) {
+        throw invalidInput('commands.submit', 'invalid_entity_type', 'entityType');
+      }
+      const id = requireStableIdInput('commands.submit', object.id, 'id');
+      const expectedRevision = requireExpectedRevisionInput('commands.submit', object.expectedRevision);
+      if (
+        !Array.isArray(object.labels) ||
+        !object.labels.every((label) => typeof label === 'string')
+      ) {
+        throw invalidInput('commands.submit', 'invalid_labels', 'labels');
+      }
+      const receipt = await submitCommand(
+        {
+          ...optionalCommandIdInput('commands.submit', object.commandId),
+          operation: 'plan.labels.update',
+          scope: { kind: 'project', projectId },
+          expectedRevision,
+          payload: { entityType: object.entityType, id, labels: object.labels },
+        },
+        options,
+      );
+      if (receipt.status === 'completed') {
+        validatePlanLabelsUpdateResultWire(receipt.result, 'commands.submit');
+      }
+      return receipt;
+    },
+
+    async reviseFeaturePlan(
+      input: ReviseFeaturePlanInput,
+      options?: SubmitCommandOptions,
+    ): Promise<CommandReceipt> {
+      const object = rejectUnknownInputKeys('commands.submit', input, REVISE_PLAN_INPUT_KEYS);
+      const projectId = requireProjectId('commands.submit', object.projectId as string);
+      const featureId = requireStableIdInput('commands.submit', object.featureId, 'featureId');
+      const expectedRevision = requireExpectedRevisionInput('commands.submit', object.expectedRevision);
+      const receipt = await submitCommand(
+        {
+          ...optionalCommandIdInput('commands.submit', object.commandId),
+          operation: 'feature.plan.revise',
+          scope: { kind: 'project', projectId },
+          expectedRevision,
+          payload: { featureId, plan: object.plan },
+        },
+        options,
+      );
+      if (receipt.status === 'completed') {
+        validateFeaturePlanReviseResultWire(receipt.result, 'commands.submit');
+      }
+      return receipt;
+    },
+
+    async listPhases(projectId: string, input?: PlanListPageInput): Promise<PhaseListResult> {
+      context.assertOpen('phases.list');
+      const id = requireProjectId('phases.list', projectId);
+      const json = await getJson(
+        'phases.list',
+        planListPath(PHASES_ROUTE, [['projectId', id]], input, 'phases.list'),
+      );
+      return validateAppQueryResponse('phases.list', json);
+    },
+
+    async getPhase(phaseId: string): Promise<PhaseDetailResult> {
+      context.assertOpen('phases.get');
+      const id = requireStableIdInput('phases.get', phaseId, 'phaseId');
+      const json = await getJson('phases.get', `${PHASES_ROUTE_PREFIX}${id}`);
+      return validateAppQueryResponse('phases.get', json);
+    },
+
+    async listFeatures(
+      projectId: string,
+      phaseId: string,
+      input?: PlanListPageInput,
+    ): Promise<FeatureListResult> {
+      context.assertOpen('features.list');
+      const id = requireProjectId('features.list', projectId);
+      const parent = requireStableIdInput('features.list', phaseId, 'phaseId');
+      const json = await getJson(
+        'features.list',
+        planListPath(FEATURES_ROUTE, [['projectId', id], ['phaseId', parent]], input, 'features.list'),
+      );
+      return validateAppQueryResponse('features.list', json);
+    },
+
+    async getFeature(featureId: string): Promise<FeatureDetailResult> {
+      context.assertOpen('features.get');
+      const id = requireStableIdInput('features.get', featureId, 'featureId');
+      const json = await getJson('features.get', `${FEATURES_ROUTE_PREFIX}${id}`);
+      return validateAppQueryResponse('features.get', json);
+    },
+
+    async listTasks(
+      projectId: string,
+      featureId: string,
+      input?: PlanListPageInput,
+    ): Promise<TaskListResult> {
+      context.assertOpen('tasks.list');
+      const id = requireProjectId('tasks.list', projectId);
+      const parent = requireStableIdInput('tasks.list', featureId, 'featureId');
+      const json = await getJson(
+        'tasks.list',
+        planListPath(TASKS_ROUTE, [['projectId', id], ['featureId', parent]], input, 'tasks.list'),
+      );
+      return validateAppQueryResponse('tasks.list', json);
+    },
+
+    async getTask(taskId: string): Promise<TaskDetailResult> {
+      context.assertOpen('tasks.get');
+      const id = requireStableIdInput('tasks.get', taskId, 'taskId');
+      const json = await getJson('tasks.get', `${TASKS_ROUTE_PREFIX}${id}`);
+      return validateAppQueryResponse('tasks.get', json);
     },
   };
 }

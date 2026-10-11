@@ -123,7 +123,7 @@ function fakeFacts(): P02EnvironmentFacts {
       settingsSchema: 2,
       settingsExportFormat: 1,
       sqliteMigrations: [1, 2, 3, 4, 5],
-      applicationWireSchema: 3,
+      applicationWireSchema: 4,
       eventEnvelopeSchema: 1,
     },
     planDigestSha256: 'c'.repeat(64),
@@ -625,7 +625,7 @@ describe('F-011 生产接线守护（不运行完整 verify/accept:p02）', () =
     expect(facts.tools.betterSqlite3).toBe('13.0.3');
     expect(facts.tools.drizzleOrm).toBe('0.45.3');
     expect(facts.schemaVersions).toEqual(config.schemaVersions);
-    expect(facts.schemaVersions.applicationWireSchema).toBe(3);
+    expect(facts.schemaVersions.applicationWireSchema).toBe(4);
     expect(facts.schemaVersions.eventEnvelopeSchema).toBe(1);
     expect(facts.planDigestSha256).toMatch(/^[0-9a-f]{64}$/);
   });

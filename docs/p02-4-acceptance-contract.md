@@ -235,8 +235,10 @@ F-002 在上述基础上为 P02-4 场景提供**专属**临时数据根、真实
   `baseline.run`/`baseline.cancel`）、`GET /v1/projects/:projectId/baselines`（分页默认 20、
   上限 100）、`GET /v1/baselines/:operationId`（含逐项检查与 ≤16 KiB tail）、
   `GET /v1/artifacts/:artifactId/content`（有界 ≤8 MiB、授权、脱敏）。
-- 线消息 `schemaVersion=3`（P02-3 升版冻结，P02-2 起点为 2）；事件封套 `schemaVersion=1`；
-  游标 `evcur_v1_<base64url>` 绑定数据根与 scope；未知版本/能力 → `unsupported_schema_version`/
+- 线消息 `schemaVersion=4`（P03-1 / F-009 升版：计划域能力进入握手集合，见
+  `docs/p03-1-plan-import-contract.md` §5；P02-3 冻结时为 3，P02-2 起点为 2）；事件封套
+  `schemaVersion=1`；游标 `evcur_v1_<base64url>` 绑定数据根与 scope（计划列表另有
+  `plcur_v1_`）；未知版本/能力 → `unsupported_schema_version`/
   `unsupported`，不猜测降级。表外路径 → `unsupported`/`404`，永不返回文件内容。
 - `quiescing`/`stopping`/`starting` 下 `POST /v1/commands` 返回 `503 not_ready`，只读查询不受
   影响；体积/分页/超时为契约 §13 有限值，不可配置放宽。
@@ -300,7 +302,7 @@ F-002 在上述基础上为 P02-4 场景提供**专属**临时数据根、真实
 | 导出格式版本 | `1`（`SETTINGS_EXPORT_FORMAT_VERSION`） | `packages/core/src/application/configuration-service.ts` |
 | SQLite 迁移 | v1..v6（v2 `state_events`、v3 `command_receipts`、v4 基线四表、v5 accepted 回执扩展；P03-1 / F-002 起 v6 计划结构四表，见 `docs/p03-1-plan-import-contract.md`） | `packages/core/src/adapters/sqlite/migrations.ts` |
 | 发现 / 握手 | `schemaVersion=1` / `protocolVersion=1` | `shiploop-host` 契约（P02-1） |
-| 应用线消息 / 事件封套 / 游标 / 结果引用 | `schemaVersion=3` / `schemaVersion=1` / `evcur_v1` / `v1.<43>` | `shiploop-core/protocol`、`ports/*` |
+| 应用线消息 / 事件封套 / 游标 / 结果引用 | `schemaVersion=4`（P03-1 / F-009 起）/ `schemaVersion=1` / `evcur_v1`（计划列表 `plcur_v1`）/ `v1.<43>` | `shiploop-core/protocol`、`ports/*` |
 | 阶段验收配置版本 | `configVersion`（F-010 冻结，建议 `1`） | `acceptance/p02.config.json`（见 §3.8） |
 
 ### 3.8 报告位置、配置入口与有限超时（F-009 / F-010 / F-011 实现、F-001 冻结约定）

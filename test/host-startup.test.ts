@@ -126,7 +126,7 @@ describe('F-006 启动装配（in-process，真实锁/Core/监听）', () => {
         path: '/v1/host/handshake',
         token,
         body: {
-          schemaVersion: 3,
+          schemaVersion: 4,
           protocolVersion: 1,
           hostInstanceId: host.hostInstanceId,
           dataRootIdentity: host.dataRootIdentity,

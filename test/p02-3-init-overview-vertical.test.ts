@@ -9,7 +9,7 @@
  * project.register 幂等命令注册」的纵向闭环：
  * - HostClient 新方法只访问 §3.2 正式路由并对响应做运行时校验（畸形/未知
  *   版本 → 协议错误，绝不放行）；非法输入零网络拒绝；
- * - Host 路由复用既有认证/传输纪律：握手能力视图精确集合（线消息 v3），
+ * - Host 路由复用既有认证/传输纪律：握手能力视图精确集合（线消息 v4，P03-1/F-009 起），
  *   inspect 的 path 是唯一例外（仓库根、经 RepositoryInspector 校验），
  *   永不返回文件内容；负例全部结构化拒绝；
  * - CLI 纵向：有 HEAD/无 HEAD/脏仓库先展示静态事实；无 --confirm 得到
@@ -466,7 +466,7 @@ describe('F-006 Host inspect/overview 路由与握手能力（真实 Host + SQLi
       path: '/v1/commands',
       token,
       body: {
-        schemaVersion: 3,
+        schemaVersion: 4,
         commandId: randomUUID(),
         operation: 'project.register',
         scope: { kind: 'registration' },
@@ -476,7 +476,7 @@ describe('F-006 Host inspect/overview 路由与握手能力（真实 Host + SQLi
     });
   }
 
-  it('握手：线消息 v3 + 能力视图精确集合新增 projects.inspect/overview；v2/v1 均被拒', async () => {
+  it('握手：线消息 v4（P03-1/F-009 起）+ 能力视图精确集合新增 projects.inspect/overview；v3/v2/v1 均被拒', async () => {
     fixture = createCommandsTestFixture({ prefix: 'shiploop-f006-routes-' });
     const { port, token, hostInstanceId, dataRootIdentity } = await startRealHost(fixture.dataRoot);
     const handshake = await loopbackRequest({
@@ -484,21 +484,24 @@ describe('F-006 Host inspect/overview 路由与握手能力（真实 Host + SQLi
       method: 'POST',
       path: HANDSHAKE_ROUTE,
       token,
-      body: { schemaVersion: 3, protocolVersion: 1, hostInstanceId, dataRootIdentity },
+      body: { schemaVersion: 4, protocolVersion: 1, hostInstanceId, dataRootIdentity },
     });
     expect(handshake.statusCode).toBe(200);
     const body = handshake.json() as {
       schemaVersion: number;
       capabilities: { application: { commands: string[]; queries: string[] } };
     };
-    expect(body.schemaVersion).toBe(3);
+    expect(body.schemaVersion).toBe(4);
     expect(body.capabilities.application.queries).toContain('projects.inspect');
     expect(body.capabilities.application.queries).toContain('projects.overview');
     // F-014：基线分页/详情/证据正文三项查询随路由接线进入能力清单。
     expect(body.capabilities.application.queries).toContain('baselines.list');
     expect(body.capabilities.application.queries).toContain('baselines.get');
     expect(body.capabilities.application.queries).toContain('artifacts.get');
-    expect(body.capabilities.application.queries).toHaveLength(17);
+    // P03-1 / F-009：计划域六项查询随 /v1/phases|features|tasks 路由接线进入能力清单（17 → 23）。
+    expect(body.capabilities.application.queries).toContain('phases.list');
+    expect(body.capabilities.application.queries).toContain('tasks.get');
+    expect(body.capabilities.application.queries).toHaveLength(23);
     expect(body.capabilities.application.commands).toEqual([
       'project.register',
       'project.metadata.update',
@@ -519,7 +522,7 @@ describe('F-006 Host inspect/overview 路由与握手能力（真实 Host + SQLi
       // P03-1 / F-008：实质计划修订经既有 /v1/commands 通用路由接线（v3 内增量扩张）。
       'feature.plan.revise',
     ]);
-    for (const legacyVersion of [2, 1]) {
+    for (const legacyVersion of [3, 2, 1]) {
       const legacy = await loopbackRequest({
         port,
         method: 'POST',
@@ -604,6 +607,7 @@ describe('F-006 Host inspect/overview 路由与握手能力（真实 Host + SQLi
       settings: { configured: boolean };
       health: { status: string; reasonCode?: string };
     };
+    // overview 响应是独立的 onboarding 查询 schema（=3），不是线消息版本。
     expect(body.schemaVersion).toBe(3);
     expect(body.registration.status).toBe('registered');
     expect(body.settings.configured).toBe(false);

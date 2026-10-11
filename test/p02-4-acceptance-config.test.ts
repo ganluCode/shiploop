@@ -172,7 +172,7 @@ function baseRaw(): Record<string, unknown> {
       settingsSchema: 2,
       settingsExportFormat: 1,
       sqliteMigrations: [1, 2, 3, 4, 5],
-      applicationWireSchema: 3,
+      applicationWireSchema: 4,
       eventEnvelopeSchema: 1,
     },
   };

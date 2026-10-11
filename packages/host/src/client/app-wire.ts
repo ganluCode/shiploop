@@ -24,7 +24,9 @@ import {
   BASELINE_PREVIEW_WARNING_CODES,
   BASELINE_REASON_CODES,
   EVENT_CURSOR_PREFIX,
+  FEATURE_NOT_EXECUTABLE_REASONS,
   ONBOARDING_QUERY_SCHEMA_VERSION,
+  PLAN_LIST_CURSOR_PREFIX,
   PUBLIC_EVENT_SCHEMA_VERSION,
   PUBLIC_STATE_EVENT_TYPES,
   SETTINGS_EXPORT_FORMAT_VERSION,
@@ -49,6 +51,10 @@ import type {
   CommandReceipt,
   EffectiveSettings,
   ExportedSettings,
+  FeatureDetailResult,
+  FeatureListResult,
+  PhaseDetailResult,
+  PhaseListResult,
   ProjectBindingResult,
   ProjectDetailResult,
   ProjectHealthSummary,
@@ -57,13 +63,18 @@ import type {
   ProjectListResult,
   ProjectOverviewResult,
   ProjectSettingsPresence,
+  PublicFeatureRecord,
+  PublicPhaseRecord,
   PublicProjectRecord,
   PublicRepositoryBindingRecord,
   PublicSettingsState,
   PublicStateEvent,
   PublicStateEventType,
+  PublicTaskRecord,
   SettingsScope,
   SnapshotResult,
+  TaskDetailResult,
+  TaskListResult,
 } from 'shiploop-core/protocol';
 import { HostProtocolError, isPlainObject } from '../contract/index.js';
 import type { HostOperation } from '../contract/index.js';
@@ -83,7 +94,14 @@ export type AppQueryOperation =
   | 'settings.project.export'
   | 'snapshot.get'
   | 'baselines.list'
-  | 'baselines.get';
+  | 'baselines.get'
+  // P03-1 / F-009 §6.6：计划域查询（与 Core PLAN_QUERY_OPERATIONS 同源）。
+  | 'phases.list'
+  | 'phases.get'
+  | 'features.list'
+  | 'features.get'
+  | 'tasks.list'
+  | 'tasks.get';
 
 function malformed(operation: HostOperation, reason: string): never {
   throw new HostProtocolError('response_malformed', operation, 'Host 响应不符合线协议', {
@@ -233,6 +251,31 @@ function validateEventPayload(
       malformed(operation, 'event_payload_violation');
     }
     return { created: true };
+  }
+  // P03-1 / F-005（§9.2）：Feature 计划导入事件脱敏 payload。
+  if (kind === 'featurePlanImported') {
+    exactKeys(operation, object, ['imported']);
+    if (object.imported !== true) {
+      malformed(operation, 'event_payload_violation');
+    }
+    return { imported: true };
+  }
+  // P03-1 / F-007（§9.2）：纯标签 CAS 编辑事件脱敏 payload（phase/feature/task
+  // 三个目标实体各自一条，均不携带标签正文）。
+  if (kind === 'planLabelsUpdated') {
+    exactKeys(operation, object, ['labelsUpdated']);
+    if (object.labelsUpdated !== true) {
+      malformed(operation, 'event_payload_violation');
+    }
+    return { labelsUpdated: true };
+  }
+  // P03-1 / F-008（§9.2）：实质计划修订事件脱敏 payload（不携带成员变更明细）。
+  if (kind === 'featurePlanRevised') {
+    exactKeys(operation, object, ['revised']);
+    if (object.revised !== true) {
+      malformed(operation, 'event_payload_violation');
+    }
+    return { revised: true };
   }
   if (kind === 'changedFields') {
     exactKeys(operation, object, ['changedFields']);
@@ -681,6 +724,498 @@ function validateExportedSettings(operation: HostOperation, value: unknown): Exp
   }
   validateEffectiveSettings(operation, object.effective);
   return value as ExportedSettings;
+}
+
+/* ------------------------------------------------------------------ *
+ * P03-1 / F-009 计划域查询响应与命令结果（§6.6；线消息 v4）
+ * ------------------------------------------------------------------ */
+
+const PLAN_CURSOR_BODY_PATTERN = /^[A-Za-z0-9_-]+$/;
+
+/** 计划列表 nextCursor：plcur_v1_ 前缀 + base64url 字符集（不透明透传）。 */
+function requirePlanCursorOrNull(
+  operation: HostOperation,
+  value: unknown,
+): string | null {
+  if (value === null) {
+    return null;
+  }
+  if (
+    typeof value !== 'string' ||
+    !value.startsWith(PLAN_LIST_CURSOR_PREFIX) ||
+    !PLAN_CURSOR_BODY_PATTERN.test(value.slice(PLAN_LIST_CURSOR_PREFIX.length))
+  ) {
+    malformed(operation, 'plan_cursor_invalid');
+  }
+  return value;
+}
+
+function requireLabelsArray(operation: HostOperation, value: unknown): string[] {
+  if (!Array.isArray(value) || !value.every((label) => typeof label === 'string')) {
+    malformed(operation, 'plan_labels_invalid');
+  }
+  return [...(value as string[])];
+}
+
+/** 引用条目（sourceRefs/requirementsRefs）：{artifactId, contentHash?}。 */
+function validatePlanArtifactRefsWire(
+  operation: HostOperation,
+  value: unknown,
+): { readonly artifactId: string; readonly contentHash?: string }[] {
+  if (!Array.isArray(value)) {
+    malformed(operation, 'plan_refs_invalid');
+  }
+  return value.map((item) => {
+    const object = requirePlain(operation, item);
+    exactKeys(operation, object, ['artifactId', 'contentHash']);
+    const ref: { artifactId: string; contentHash?: string } = {
+      artifactId: requireStableId(operation, object.artifactId),
+    };
+    if (object.contentHash !== undefined) {
+      if (typeof object.contentHash !== 'string' || !/^[0-9a-f]{64}$/.test(object.contentHash)) {
+        malformed(operation, 'plan_refs_invalid');
+      }
+      ref.contentHash = object.contentHash;
+    }
+    return ref;
+  });
+}
+
+/** Phase 公开记录（§7.2 字段集冻结；status 由服务端枚举管理，客户端只做结构把关）。 */
+function validatePhaseRecordWire(operation: HostOperation, value: unknown): PublicPhaseRecord {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, [
+    'id',
+    'projectId',
+    'title',
+    'description',
+    'labels',
+    'status',
+    'revision',
+    'createdAt',
+    'updatedAt',
+  ]);
+  const record = {
+    id: requireStableId(operation, object.id),
+    projectId: requireStableId(operation, object.projectId),
+    title: typeof object.title === 'string' && object.title.length > 0 ? object.title : malformed(operation, 'plan_title_invalid'),
+    description:
+      object.description === null || typeof object.description === 'string'
+        ? object.description
+        : malformed(operation, 'plan_description_invalid'),
+    labels: requireLabelsArray(operation, object.labels),
+    status: typeof object.status === 'string' && object.status.length > 0 ? object.status : malformed(operation, 'plan_status_invalid'),
+    revision: requirePositiveInteger(operation, object.revision),
+  };
+  if (!isIsoUtcDateTime(object.createdAt) || !isIsoUtcDateTime(object.updatedAt)) {
+    malformed(operation, 'plan_time_invalid');
+  }
+  return {
+    ...record,
+    status: record.status as PublicPhaseRecord['status'],
+    createdAt: object.createdAt,
+    updatedAt: object.updatedAt,
+  };
+}
+
+/** Feature 公开记录（planDigest 64hex 或 null；不携带策略副本正文）。 */
+function validateFeatureRecordWire(operation: HostOperation, value: unknown): PublicFeatureRecord {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, [
+    'id',
+    'projectId',
+    'phaseId',
+    'title',
+    'description',
+    'labels',
+    'status',
+    'planStatus',
+    'planDigest',
+    'sourceRefs',
+    'revision',
+    'createdAt',
+    'updatedAt',
+  ]);
+  if (
+    object.planDigest !== null &&
+    (typeof object.planDigest !== 'string' || !/^[0-9a-f]{64}$/.test(object.planDigest))
+  ) {
+    malformed(operation, 'plan_digest_invalid');
+  }
+  const record = {
+    id: requireStableId(operation, object.id),
+    projectId: requireStableId(operation, object.projectId),
+    phaseId: requireStableId(operation, object.phaseId),
+    title: typeof object.title === 'string' && object.title.length > 0 ? object.title : malformed(operation, 'plan_title_invalid'),
+    description:
+      object.description === null || typeof object.description === 'string'
+        ? object.description
+        : malformed(operation, 'plan_description_invalid'),
+    labels: requireLabelsArray(operation, object.labels),
+    status: typeof object.status === 'string' && object.status.length > 0 ? object.status : malformed(operation, 'plan_status_invalid'),
+    planStatus:
+      typeof object.planStatus === 'string' && object.planStatus.length > 0
+        ? object.planStatus
+        : malformed(operation, 'plan_status_invalid'),
+    sourceRefs: validatePlanArtifactRefsWire(operation, object.sourceRefs),
+    revision: requirePositiveInteger(operation, object.revision),
+  };
+  if (!isIsoUtcDateTime(object.createdAt) || !isIsoUtcDateTime(object.updatedAt)) {
+    malformed(operation, 'plan_time_invalid');
+  }
+  return {
+    ...record,
+    status: record.status as PublicFeatureRecord['status'],
+    planStatus: record.planStatus as PublicFeatureRecord['planStatus'],
+    planDigest: object.planDigest,
+    createdAt: object.createdAt,
+    updatedAt: object.updatedAt,
+  };
+}
+
+/**
+ * Task 公开记录（含结构化验收、引用与完整策略副本）。executionConfig 只做
+ * JSON 对象结构把关（深度语义由服务端 validateTaskExecutionConfig 单一权威
+ * 校验，客户端不复制第二份配置 Schema）。
+ */
+function validateTaskRecordWire(operation: HostOperation, value: unknown): PublicTaskRecord {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, [
+    'id',
+    'projectId',
+    'featureId',
+    'title',
+    'description',
+    'labels',
+    'status',
+    'complexity',
+    'acceptance',
+    'requirementsRefs',
+    'executionConfig',
+    'configSource',
+    'configSourceKey',
+    'revision',
+    'createdAt',
+    'updatedAt',
+  ]);
+  if (
+    object.complexity !== null &&
+    (typeof object.complexity !== 'string' || object.complexity.length === 0)
+  ) {
+    malformed(operation, 'plan_complexity_invalid');
+  }
+  const acceptance = requirePlain(operation, object.acceptance);
+  exactKeys(operation, acceptance, ['criteria']);
+  if (
+    !Array.isArray(acceptance.criteria) ||
+    !acceptance.criteria.every((item) => typeof item === 'string' && item.length > 0)
+  ) {
+    malformed(operation, 'plan_acceptance_invalid');
+  }
+  if (!isPlainObject(object.executionConfig)) {
+    malformed(operation, 'plan_execution_config_invalid');
+  }
+  if (
+    typeof object.configSource !== 'string' ||
+    object.configSource.length === 0 ||
+    (object.configSourceKey !== null && typeof object.configSourceKey !== 'string')
+  ) {
+    malformed(operation, 'plan_config_source_invalid');
+  }
+  const record = {
+    id: requireStableId(operation, object.id),
+    projectId: requireStableId(operation, object.projectId),
+    featureId: requireStableId(operation, object.featureId),
+    title: typeof object.title === 'string' && object.title.length > 0 ? object.title : malformed(operation, 'plan_title_invalid'),
+    description:
+      object.description === null || typeof object.description === 'string'
+        ? object.description
+        : malformed(operation, 'plan_description_invalid'),
+    labels: requireLabelsArray(operation, object.labels),
+    status: typeof object.status === 'string' && object.status.length > 0 ? object.status : malformed(operation, 'plan_status_invalid'),
+    acceptance: { criteria: [...(acceptance.criteria as string[])] },
+    requirementsRefs: validatePlanArtifactRefsWire(operation, object.requirementsRefs),
+    executionConfig: object.executionConfig as Record<string, unknown>,
+    configSource: object.configSource,
+    configSourceKey: object.configSourceKey as string | null,
+    revision: requirePositiveInteger(operation, object.revision),
+  };
+  if (!isIsoUtcDateTime(object.createdAt) || !isIsoUtcDateTime(object.updatedAt)) {
+    malformed(operation, 'plan_time_invalid');
+  }
+  return {
+    ...record,
+    status: record.status as PublicTaskRecord['status'],
+    complexity: object.complexity as PublicTaskRecord['complexity'],
+    createdAt: object.createdAt,
+    updatedAt: object.updatedAt,
+  };
+}
+
+/** 计划层级列表页（schemaVersion + scope 字面量 + 记录数组 + 受控游标）。 */
+interface ValidatedPlanListPage<R> {
+  readonly schemaVersion: typeof WIRE_MESSAGE_SCHEMA_VERSION;
+  readonly records: readonly R[];
+  readonly nextCursor: string | null;
+  readonly limit: number;
+}
+
+function validatePlanListPageOf<R>(
+  operation: HostOperation,
+  scope: 'phase-list' | 'feature-list' | 'task-list',
+  validateRecord: (op: HostOperation, value: unknown) => R,
+  body: unknown,
+): ValidatedPlanListPage<R> {
+  const object = requirePlain(operation, body);
+  exactKeys(operation, object, ['schemaVersion', 'scope', 'records', 'nextCursor', 'limit']);
+  if (object.schemaVersion !== WIRE_MESSAGE_SCHEMA_VERSION) {
+    if (typeof object.schemaVersion === 'number') {
+      unsupportedVersion(operation, 'schemaVersion');
+    }
+    malformed(operation, 'list_schema_version_invalid');
+  }
+  if (object.scope !== scope) {
+    malformed(operation, 'list_scope_invalid');
+  }
+  if (!Array.isArray(object.records)) {
+    malformed(operation, 'list_records_invalid');
+  }
+  const records = object.records.map((record) => validateRecord(operation, record));
+  const nextCursor = requirePlanCursorOrNull(operation, object.nextCursor);
+  const limit = requirePositiveInteger(operation, object.limit);
+  return {
+    schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION,
+    records,
+    nextCursor,
+    limit,
+  };
+}
+
+function validatePhaseListPage(operation: HostOperation, body: unknown): PhaseListResult {
+  const page = validatePlanListPageOf(operation, 'phase-list', validatePhaseRecordWire, body);
+  return { schemaVersion: page.schemaVersion, scope: 'phase-list', records: page.records, nextCursor: page.nextCursor, limit: page.limit };
+}
+
+function validateFeatureListPage(operation: HostOperation, body: unknown): FeatureListResult {
+  const page = validatePlanListPageOf(operation, 'feature-list', validateFeatureRecordWire, body);
+  return { schemaVersion: page.schemaVersion, scope: 'feature-list', records: page.records, nextCursor: page.nextCursor, limit: page.limit };
+}
+
+function validateTaskListPage(operation: HostOperation, body: unknown): TaskListResult {
+  const page = validatePlanListPageOf(operation, 'task-list', validateTaskRecordWire, body);
+  return { schemaVersion: page.schemaVersion, scope: 'task-list', records: page.records, nextCursor: page.nextCursor, limit: page.limit };
+}
+
+/** features.get 完整 DAG 详情（Feature + 校验摘要 + 不可执行原因 + Task + 边）。 */
+function validateFeaturePlanDetailWire(operation: HostOperation, body: unknown): FeatureDetailResult {
+  const object = requirePlain(operation, body);
+  exactKeys(operation, object, [
+    'feature',
+    'validation',
+    'notExecutableReasons',
+    'tasks',
+    'dependencies',
+  ]);
+  const feature = validateFeatureRecordWire(operation, object.feature);
+  const validation = requirePlain(operation, object.validation);
+  exactKeys(operation, validation, ['taskCount', 'dependencyEdgeCount', 'executable']);
+  for (const key of ['taskCount', 'dependencyEdgeCount'] as const) {
+    if (
+      typeof validation[key] !== 'number' ||
+      !Number.isSafeInteger(validation[key]) ||
+      validation[key] < 0
+    ) {
+      malformed(operation, 'plan_validation_invalid');
+    }
+  }
+  if (typeof validation.executable !== 'boolean') {
+    malformed(operation, 'plan_validation_invalid');
+  }
+  if (!Array.isArray(object.notExecutableReasons)) {
+    malformed(operation, 'plan_not_executable_invalid');
+  }
+  const reasons = object.notExecutableReasons.map((reason) => {
+    if (
+      typeof reason !== 'string' ||
+      !(FEATURE_NOT_EXECUTABLE_REASONS as readonly string[]).includes(reason)
+    ) {
+      malformed(operation, 'plan_not_executable_invalid');
+    }
+    return reason as FeatureDetailResult['notExecutableReasons'][number];
+  });
+  if (!Array.isArray(object.tasks)) {
+    malformed(operation, 'plan_tasks_invalid');
+  }
+  const tasks = object.tasks.map((task) => validateTaskRecordWire(operation, task));
+  if (!Array.isArray(object.dependencies)) {
+    malformed(operation, 'plan_dependencies_invalid');
+  }
+  const taskIds = new Set(tasks.map((task) => task.id));
+  const dependencies = object.dependencies.map((edge) => {
+    const edgeObject = requirePlain(operation, edge);
+    exactKeys(operation, edgeObject, ['taskId', 'dependsOnId']);
+    const taskEdge = {
+      taskId: requireStableId(operation, edgeObject.taskId),
+      dependsOnId: requireStableId(operation, edgeObject.dependsOnId),
+    };
+    if (!taskIds.has(taskEdge.taskId) || !taskIds.has(taskEdge.dependsOnId)) {
+      malformed(operation, 'plan_dependencies_invalid');
+    }
+    return taskEdge;
+  });
+  return {
+    feature,
+    validation: {
+      taskCount: validation.taskCount as number,
+      dependencyEdgeCount: validation.dependencyEdgeCount as number,
+      executable: validation.executable as boolean,
+    },
+    notExecutableReasons: reasons,
+    tasks,
+    dependencies,
+  };
+}
+
+/* ------------------------- 命令结果（completed 回执内嵌） ------------------------- */
+
+/** phase.create completed 结果：{phase}。 */
+export interface PhaseCreateResult {
+  readonly phase: PublicPhaseRecord;
+}
+
+export function validatePhaseCreateResultWire(
+  value: unknown,
+  operation: HostOperation = 'commands.submit',
+): PhaseCreateResult {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, ['phase']);
+  return { phase: validatePhaseRecordWire(operation, object.phase) };
+}
+
+/** feature.plan.import completed 结果：{feature, tasks:[{id}], validation}。 */
+export interface FeaturePlanImportResult {
+  readonly feature: PublicFeatureRecord;
+  readonly tasks: readonly { readonly id: string }[];
+  readonly validation: { readonly taskCount: number; readonly dependencyEdgeCount: number; readonly executable: boolean };
+}
+
+function validatePlanValidationSummaryWire(
+  operation: HostOperation,
+  value: unknown,
+): FeaturePlanImportResult['validation'] {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, ['taskCount', 'dependencyEdgeCount', 'executable']);
+  if (
+    typeof object.taskCount !== 'number' ||
+    !Number.isSafeInteger(object.taskCount) ||
+    object.taskCount < 0 ||
+    typeof object.dependencyEdgeCount !== 'number' ||
+    !Number.isSafeInteger(object.dependencyEdgeCount) ||
+    object.dependencyEdgeCount < 0 ||
+    typeof object.executable !== 'boolean'
+  ) {
+    malformed(operation, 'plan_validation_invalid');
+  }
+  return {
+    taskCount: object.taskCount,
+    dependencyEdgeCount: object.dependencyEdgeCount,
+    executable: object.executable,
+  };
+}
+
+function validateTaskIdListWire(
+  operation: HostOperation,
+  value: unknown,
+): readonly { readonly id: string }[] {
+  if (!Array.isArray(value)) {
+    malformed(operation, 'plan_task_ids_invalid');
+  }
+  return value.map((item) => {
+    const object = requirePlain(operation, item);
+    exactKeys(operation, object, ['id']);
+    return { id: requireStableId(operation, object.id) };
+  });
+}
+
+export function validateFeaturePlanImportResultWire(
+  value: unknown,
+  operation: HostOperation = 'commands.submit',
+): FeaturePlanImportResult {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, ['feature', 'tasks', 'validation']);
+  return {
+    feature: validateFeatureRecordWire(operation, object.feature),
+    tasks: validateTaskIdListWire(operation, object.tasks),
+    validation: validatePlanValidationSummaryWire(operation, object.validation),
+  };
+}
+
+/** plan.labels.update completed 结果：{entityType, id, labels, revision, updatedAt}。 */
+export interface PlanLabelsUpdateResult {
+  readonly entityType: 'phase' | 'feature' | 'task';
+  readonly id: string;
+  readonly labels: readonly string[];
+  readonly revision: number;
+  readonly updatedAt: string;
+}
+
+export function validatePlanLabelsUpdateResultWire(
+  value: unknown,
+  operation: HostOperation = 'commands.submit',
+): PlanLabelsUpdateResult {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, ['entityType', 'id', 'labels', 'revision', 'updatedAt']);
+  if (object.entityType !== 'phase' && object.entityType !== 'feature' && object.entityType !== 'task') {
+    malformed(operation, 'plan_entity_type_invalid');
+  }
+  if (!isIsoUtcDateTime(object.updatedAt)) {
+    malformed(operation, 'plan_time_invalid');
+  }
+  return {
+    entityType: object.entityType,
+    id: requireStableId(operation, object.id),
+    labels: requireLabelsArray(operation, object.labels),
+    revision: requirePositiveInteger(operation, object.revision),
+    updatedAt: object.updatedAt,
+  };
+}
+
+/** feature.plan.revise completed 结果：导入结果 + 有界成员分类。 */
+export interface FeaturePlanReviseResult extends FeaturePlanImportResult {
+  readonly memberChanges: {
+    readonly keptTaskCount: number;
+    readonly createdTaskCount: number;
+    readonly removedTaskCount: number;
+  };
+}
+
+export function validateFeaturePlanReviseResultWire(
+  value: unknown,
+  operation: HostOperation = 'commands.submit',
+): FeaturePlanReviseResult {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, ['feature', 'tasks', 'memberChanges', 'validation']);
+  const memberChanges = requirePlain(operation, object.memberChanges);
+  exactKeys(operation, memberChanges, ['keptTaskCount', 'createdTaskCount', 'removedTaskCount']);
+  for (const key of ['keptTaskCount', 'createdTaskCount', 'removedTaskCount'] as const) {
+    if (
+      typeof memberChanges[key] !== 'number' ||
+      !Number.isSafeInteger(memberChanges[key]) ||
+      memberChanges[key] < 0
+    ) {
+      malformed(operation, 'plan_member_changes_invalid');
+    }
+  }
+  return {
+    feature: validateFeatureRecordWire(operation, object.feature),
+    tasks: validateTaskIdListWire(operation, object.tasks),
+    memberChanges: {
+      keptTaskCount: memberChanges.keptTaskCount as number,
+      createdTaskCount: memberChanges.createdTaskCount as number,
+      removedTaskCount: memberChanges.removedTaskCount as number,
+    },
+    validation: validatePlanValidationSummaryWire(operation, object.validation),
+  };
 }
 
 /* ------------------------------------------------------------------ *
@@ -1387,6 +1922,37 @@ export function validateAppQueryResponse(
   body: unknown,
   expectation?: SnapshotExpectation,
 ): BaselineDetailResult;
+// P03-1 / F-009 §6.6：计划域查询响应重载。
+export function validateAppQueryResponse(
+  operation: 'phases.list',
+  body: unknown,
+  expectation?: SnapshotExpectation,
+): PhaseListResult;
+export function validateAppQueryResponse(
+  operation: 'phases.get',
+  body: unknown,
+  expectation?: SnapshotExpectation,
+): PhaseDetailResult;
+export function validateAppQueryResponse(
+  operation: 'features.list',
+  body: unknown,
+  expectation?: SnapshotExpectation,
+): FeatureListResult;
+export function validateAppQueryResponse(
+  operation: 'features.get',
+  body: unknown,
+  expectation?: SnapshotExpectation,
+): FeatureDetailResult;
+export function validateAppQueryResponse(
+  operation: 'tasks.list',
+  body: unknown,
+  expectation?: SnapshotExpectation,
+): TaskListResult;
+export function validateAppQueryResponse(
+  operation: 'tasks.get',
+  body: unknown,
+  expectation?: SnapshotExpectation,
+): TaskDetailResult;
 export function validateAppQueryResponse(
   operation: 'projects.list',
   body: unknown,
@@ -1504,6 +2070,25 @@ export function validateAppQueryResponse(
       return validateBaselineListPage(operation, body);
     case 'baselines.get':
       return validateBaselineDetail(operation, body);
+    // P03-1 / F-009 §6.6：计划域查询响应分发（同一冻结字段集纪律）。
+    case 'phases.list':
+      return validatePhaseListPage(operation, body);
+    case 'phases.get': {
+      const object = requirePlain(operation, body);
+      exactKeys(operation, object, ['phase']);
+      return { phase: validatePhaseRecordWire(operation, object.phase) };
+    }
+    case 'features.list':
+      return validateFeatureListPage(operation, body);
+    case 'features.get':
+      return validateFeaturePlanDetailWire(operation, body);
+    case 'tasks.list':
+      return validateTaskListPage(operation, body);
+    case 'tasks.get': {
+      const object = requirePlain(operation, body);
+      exactKeys(operation, object, ['task']);
+      return { task: validateTaskRecordWire(operation, object.task) };
+    }
     default: {
       const exhaustive: never = operation;
       throw new TypeError(`未覆盖的查询操作：${String(exhaustive)}`);

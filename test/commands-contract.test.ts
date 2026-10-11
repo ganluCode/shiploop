@@ -62,7 +62,7 @@ type EnvelopeInput = Record<string, unknown>;
 
 function envelope(overrides: EnvelopeInput = {}): EnvelopeInput {
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     commandId: UUID_A,
     operation: 'project.register',
     scope: { kind: 'registration' },
@@ -90,8 +90,8 @@ function expectPublicError(fn: () => unknown, code: string, field?: string): Pub
 }
 
 describe('F-002 冻结版本、能力与命令白名单', () => {
-  it('线消息 schemaVersion 为 3（P02-3/F-006 起；独立于发现版本 1 与配置 payload 版本 2）', () => {
-    expect(WIRE_MESSAGE_SCHEMA_VERSION).toBe(3);
+  it('线消息 schemaVersion 为 4（P03-1/F-009 起；独立于发现版本 1 与配置 payload 版本 2）', () => {
+    expect(WIRE_MESSAGE_SCHEMA_VERSION).toBe(4);
   });
 
   it('冻结十四项能力（P02-2 九项 + P02-3 基线两项 + P03-1 计划域三项），local-owner 持全部', () => {
@@ -343,7 +343,7 @@ describe('F-002 信封表驱动负例（结构/版本/操作）', () => {
       'unsupported_schema_version',
     );
     expect(error.httpStatus).toBe(400);
-    expect(error.details?.supportedVersion).toBe(3);
+    expect(error.details?.supportedVersion).toBe(4);
   });
 });
 
@@ -712,7 +712,7 @@ describe('F-002 回执形态与不变量', () => {
 
   it('completed 回执携带 commandId/result/resultRef，不含 error/operationId；默认不重放', () => {
     const receipt = createCompletedReceipt(completedBase);
-    expect(receipt.schemaVersion).toBe(3);
+    expect(receipt.schemaVersion).toBe(4);
     expect(receipt.status).toBe('completed');
     expect(receipt.replayed).toBe(false);
     expect(receipt.resultRef).toBe(resultRefOf('a'));

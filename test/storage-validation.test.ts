@@ -207,7 +207,7 @@ describe('F-002/F-008 settings payload schema (bounded schemaVersion=2)', () => 
 
   it.each([
     ['missing schemaVersion', {}],
-    ['unknown schemaVersion 3', { schemaVersion: 3 }],
+    ['unknown schemaVersion 3', { schemaVersion: 4 }],
     ['previous schemaVersion 1 (F-008 显式升级后不再接受)', { schemaVersion: 1 }],
     ['schemaVersion 0', { schemaVersion: 0 }],
     ['schemaVersion as string', { schemaVersion: '2' }],

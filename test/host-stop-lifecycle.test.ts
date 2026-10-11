@@ -90,7 +90,7 @@ function stopBody(
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     commandId,
     hostInstanceId,
     requestDigest: computeStopRequestDigest(commandId, hostInstanceId, { mode: 'graceful' }),
@@ -552,7 +552,7 @@ describe('F-008 客户端断开与 SIGTERM 安全收尾', () => {
         path: '/v1/host/handshake',
         token,
         body: {
-          schemaVersion: 3,
+          schemaVersion: 4,
           protocolVersion: 1,
           hostInstanceId: host.hostInstanceId,
           dataRootIdentity: host.dataRootIdentity,

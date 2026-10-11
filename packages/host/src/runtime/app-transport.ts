@@ -54,10 +54,14 @@ import {
   BASELINES_ROUTE_PREFIX,
   COMMANDS_ROUTE,
   EVENTS_ROUTE,
+  FEATURES_ROUTE,
+  FEATURES_ROUTE_PREFIX,
   MAX_APP_BODY_BYTES,
   MAX_ARTIFACT_CONTENT_BYTES,
   MAX_HTTP_BODY_BYTES,
   MAX_QUERY_STRING_BYTES,
+  PHASES_ROUTE,
+  PHASES_ROUTE_PREFIX,
   PROJECTS_INSPECT_ROUTE,
   PROJECTS_ROUTE,
   PROJECT_LABEL_COUNTS_ROUTE,
@@ -66,6 +70,8 @@ import {
   SETTINGS_GLOBAL_EXPORT_ROUTE,
   SETTINGS_GLOBAL_ROUTE,
   SNAPSHOT_ROUTE,
+  TASKS_ROUTE,
+  TASKS_ROUTE_PREFIX,
 } from '../contract/index.js';
 import type { LifecycleState } from '../contract/index.js';
 import {
@@ -99,14 +105,21 @@ export type ApplicationOperation =
   | 'baselines.list'
   | 'baselines.get'
   | 'artifacts.get'
-  | 'events.subscribe';
+  | 'events.subscribe'
+  // P03-1 / F-009 §6.6：计划域查询操作身份（与 Core PLAN_QUERY_OPERATIONS 同源）。
+  | 'phases.list'
+  | 'phases.get'
+  | 'features.list'
+  | 'features.get'
+  | 'tasks.list'
+  | 'tasks.get';
 
 /** 已解析的应用路由（path 形态匹配；路径参数为未解码原始片段）。 */
 export interface ResolvedAppRoute {
   readonly operation: ApplicationOperation;
   readonly method: 'GET' | 'POST';
   readonly pathParam?: {
-    readonly name: 'commandId' | 'projectId' | 'resultRef' | 'operationId' | 'artifactId';
+    readonly name: 'commandId' | 'projectId' | 'resultRef' | 'operationId' | 'artifactId' | 'phaseId' | 'featureId' | 'taskId';
     readonly value: string;
   };
 }
@@ -201,6 +214,51 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
         operation: 'baselines.get',
         method: 'GET',
         pathParam: { name: 'operationId', value: segment },
+      };
+    }
+    return undefined;
+  }
+  // P03-1 / F-009 §6.6：计划域查询路由。层级列表为集合根（父级身份经查询
+  // 参数显式传入，与 Core 查询服务输入一一对应）；详情为单段路径参数；
+  // 任何嵌套/多段形态一律未匹配 → 404 unknown_operation。
+  if (path === PHASES_ROUTE) {
+    return { operation: 'phases.list', method: 'GET' };
+  }
+  if (path.startsWith(PHASES_ROUTE_PREFIX)) {
+    const segment = path.slice(PHASES_ROUTE_PREFIX.length);
+    if (segment.length > 0 && !segment.includes('/')) {
+      return {
+        operation: 'phases.get',
+        method: 'GET',
+        pathParam: { name: 'phaseId', value: segment },
+      };
+    }
+    return undefined;
+  }
+  if (path === FEATURES_ROUTE) {
+    return { operation: 'features.list', method: 'GET' };
+  }
+  if (path.startsWith(FEATURES_ROUTE_PREFIX)) {
+    const segment = path.slice(FEATURES_ROUTE_PREFIX.length);
+    if (segment.length > 0 && !segment.includes('/')) {
+      return {
+        operation: 'features.get',
+        method: 'GET',
+        pathParam: { name: 'featureId', value: segment },
+      };
+    }
+    return undefined;
+  }
+  if (path === TASKS_ROUTE) {
+    return { operation: 'tasks.list', method: 'GET' };
+  }
+  if (path.startsWith(TASKS_ROUTE_PREFIX)) {
+    const segment = path.slice(TASKS_ROUTE_PREFIX.length);
+    if (segment.length > 0 && !segment.includes('/')) {
+      return {
+        operation: 'tasks.get',
+        method: 'GET',
+        pathParam: { name: 'taskId', value: segment },
       };
     }
     return undefined;
@@ -382,6 +440,17 @@ const QUERY_SPECS: Readonly<Partial<Record<ApplicationOperation, QuerySpec>>> = 
   'events.subscribe': Object.freeze({ allowed: ['scope', 'projectId', 'cursor'], repeatable: [] }),
   // P02-3 / F-014（§7.4）：baselines.list 分页参数（取值规则由 Core 复核）。
   'baselines.list': Object.freeze({ allowed: ['limit', 'cursor'], repeatable: [] }),
+  // P03-1 / F-009 §6.6：计划层级列表查询参数（父级身份 + 分页；取值规则由
+  // Core validatePlanListFilter 单一权威复核）。
+  'phases.list': Object.freeze({ allowed: ['projectId', 'limit', 'cursor'], repeatable: [] }),
+  'features.list': Object.freeze({
+    allowed: ['projectId', 'phaseId', 'limit', 'cursor'],
+    repeatable: [],
+  }),
+  'tasks.list': Object.freeze({
+    allowed: ['projectId', 'featureId', 'limit', 'cursor'],
+    repeatable: [],
+  }),
 });
 
 /** 查询参数白名单校验（未知/重复 → 400，定位 query.<字段>）；空查询串恒合法。 */
@@ -470,6 +539,46 @@ function buildSnapshotScope(
     });
   }
   return { kind: 'project', projectId: projectId as string };
+}
+
+/**
+ * P03-1 / F-009 §6.6：计划层级列表查询串 → Core 查询输入（形态转换）。
+ * 父级身份必填（缺失是结构错误 400，不是空列表）；limit 必须是十进制整数
+ * 文本（范围由 Core 单一权威复核）；cursor 不透明透传（绑定数据根/父级由
+ * Core decodePlanListCursor 核验，坏游标绝不当从零读取）。
+ */
+function buildPlanListQuery(
+  params: URLSearchParams,
+  operation: ApplicationOperation,
+  ...parents: readonly ('projectId' | 'phaseId' | 'featureId')[]
+): Record<string, unknown> {
+  const query: Record<string, unknown> = {};
+  for (const parent of parents) {
+    const value = params.get(parent);
+    if (value === null) {
+      reject(400, 'invalid_input', operation, `${operation} 必须携带 ${parent} 查询参数`, {
+        field: `query.${parent}`,
+        // snake_case 受控 reason（与 snapshot.get 的 missing_project_id 同一纪律）。
+        reason: `missing_${parent.replace(/[A-Z]/g, (char) => `_${char.toLowerCase()}`)}`,
+      });
+    }
+    query[parent] = value;
+  }
+  const limitRaw = params.get('limit');
+  if (limitRaw !== null) {
+    if (!/^(0|[1-9]\d{0,2})$/.test(limitRaw)) {
+      reject(400, 'invalid_input', operation, 'limit 必须是十进制整数文本', {
+        field: 'query.limit',
+        reason: 'invalid_integer',
+      });
+    }
+    query.limit = Number(limitRaw);
+  }
+  const cursor = params.get('cursor');
+  if (cursor !== null) {
+    query.cursor = cursor;
+  }
+  return query;
 }
 
 /* ------------------------------------------------------------------ *
@@ -699,6 +808,35 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
     }
     case 'baselines.get':
       result = await app.baselineQueryService.getBaseline(app.principal, pathParam?.value);
+      break;
+    // P03-1 / F-009 §6.6：计划域查询分发。传输层只做形态转换（父级必填、
+    // limit 十进制整数文本）；授权/可见性/分页范围/游标全部由 Core 单一权威复核。
+    case 'phases.list':
+      result = await app.queryService.listPhases(
+        app.principal,
+        buildPlanListQuery(params, operation, 'projectId'),
+      );
+      break;
+    case 'phases.get':
+      result = await app.queryService.getPhase(app.principal, pathParam?.value);
+      break;
+    case 'features.list':
+      result = await app.queryService.listFeatures(
+        app.principal,
+        buildPlanListQuery(params, operation, 'projectId', 'phaseId'),
+      );
+      break;
+    case 'features.get':
+      result = await app.queryService.getFeature(app.principal, pathParam?.value);
+      break;
+    case 'tasks.list':
+      result = await app.queryService.listTasks(
+        app.principal,
+        buildPlanListQuery(params, operation, 'projectId', 'featureId'),
+      );
+      break;
+    case 'tasks.get':
+      result = await app.queryService.getTask(app.principal, pathParam?.value);
       break;
     default:
       // 路由表与本分发必须一一对应；缺失是装配编程错误。

@@ -249,7 +249,7 @@ describe('F-008 命令/能力/事件白名单同源', () => {
 
 describe('F-008 修订信封与 payload 校验（纯校验器）', () => {
   const envelope = (changes: Record<string, unknown> = {}) => ({
-    schemaVersion: 3,
+    schemaVersion: 4,
     commandId: randomUUID(),
     operation: 'feature.plan.revise',
     scope: { kind: 'project', projectId: PROJECT_ID },

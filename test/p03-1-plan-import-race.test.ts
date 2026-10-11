@@ -101,7 +101,7 @@ describe('F-005 计划导入跨进程竞争（导入×2 + 配置 CAS 更新）',
     // 父进程准备竞争前提：项目 + 全局默认 + 项目 modelMap.low(v1=claude-sonnet-2)
     // + open Phase（revision=1）。子进程只做竞争提交。
     const registered = await service.submit(owner, {
-      schemaVersion: 3,
+      schemaVersion: 4,
       commandId: randomUUID(),
       operation: 'project.register',
       scope: { kind: 'registration' },
@@ -117,7 +117,7 @@ describe('F-005 计划导入跨进程竞争（导入×2 + 配置 CAS 更新）',
       ['settings.project.create', { schemaVersion: 2, strategies: { modelMap: { low: { runtime: 'pi', provider: 'anthropic', model: 'claude-sonnet-2' } } } }, { kind: 'project', projectId }],
     ] as const) {
       const receipt = await service.submit(owner, {
-        schemaVersion: 3,
+        schemaVersion: 4,
         commandId: randomUUID(),
         operation,
         scope,
@@ -129,7 +129,7 @@ describe('F-005 计划导入跨进程竞争（导入×2 + 配置 CAS 更新）',
       }
     }
     const phase = await service.submit(owner, {
-      schemaVersion: 3,
+      schemaVersion: 4,
       commandId: randomUUID(),
       operation: 'phase.create',
       scope: { kind: 'project', projectId },
