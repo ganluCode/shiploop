@@ -188,7 +188,7 @@ async function setup(options: { withFeatureInB?: boolean } = {}): Promise<Decide
   const probe = box.openProbe();
   const owner = box.localOwner();
 
-  const envelopeBase = { schemaVersion: 4, issuedAt: NOW_ISO };
+  const envelopeBase = { schemaVersion: 5, issuedAt: NOW_ISO };
   const submit = async (payload: Record<string, unknown>, operation: string, extra: Record<string, unknown> = {}) =>
     service.submit(owner, { ...envelopeBase, commandId: randomUUID(), operation, payload, ...extra });
 
@@ -476,7 +476,7 @@ describe('F-002 批准保留既有计划（不重建 Task）', () => {
     const s = await setup();
     // 决策前对 t-2 做一次显式策略编辑（task_edit 来源），验证批准不按当前默认值覆盖。
     const edited = await s.service.submit(s.owner, {
-      schemaVersion: 4,
+      schemaVersion: 5,
       issuedAt: NOW_ISO,
       commandId: randomUUID(),
       operation: 'task.strategy.update',
@@ -573,7 +573,7 @@ describe('F-002 拒绝矩阵（fail-closed 零业务写入）', () => {
     const staleDigest = s.planDigest;
     // 实质修订改变摘要（planStatus 规则由 F-008 覆盖）。
     const revised = await s.service.submit(s.owner, {
-      schemaVersion: 4,
+      schemaVersion: 5,
       issuedAt: NOW_ISO,
       commandId: randomUUID(),
       operation: 'feature.plan.revise',
@@ -613,7 +613,7 @@ describe('F-002 拒绝矩阵（fail-closed 零业务写入）', () => {
   it('空任务不可执行计划：批准与拒绝均固化 rejected（no_tasks）且零业务写入', async () => {
     const s = await setup();
     const emptyImported = await s.service.submit(s.owner, {
-      schemaVersion: 4,
+      schemaVersion: 5,
       issuedAt: NOW_ISO,
       commandId: randomUUID(),
       operation: 'feature.plan.import',
@@ -650,7 +650,7 @@ describe('F-002 拒绝矩阵（fail-closed 零业务写入）', () => {
     const before = s.counts();
     // 纯标签编辑递增 Feature revision（摘要不变、无决策记录）。
     const labels = await s.service.submit(s.owner, {
-      schemaVersion: 4,
+      schemaVersion: 5,
       issuedAt: NOW_ISO,
       commandId: randomUUID(),
       operation: 'plan.labels.update',
@@ -782,7 +782,7 @@ describe('F-002 决策查询（当前 vs 历史、不把拒绝显示为已批准
     expect((await s.service.submit(s.owner, s.decideEnvelope({}, 'approve'))).status).toBe('completed');
     const digestA = s.planDigest;
     const revised = await s.service.submit(s.owner, {
-      schemaVersion: 4,
+      schemaVersion: 5,
       issuedAt: NOW_ISO,
       commandId: randomUUID(),
       operation: 'feature.plan.revise',

@@ -9,7 +9,7 @@
  * project.register 幂等命令注册」的纵向闭环：
  * - HostClient 新方法只访问 §3.2 正式路由并对响应做运行时校验（畸形/未知
  *   版本 → 协议错误，绝不放行）；非法输入零网络拒绝；
- * - Host 路由复用既有认证/传输纪律：握手能力视图精确集合（线消息 v4，P03-1/F-009 起），
+ * - Host 路由复用既有认证/传输纪律：握手能力视图精确集合（线消息 v5，P03-2/F-007 起），
  *   inspect 的 path 是唯一例外（仓库根、经 RepositoryInspector 校验），
  *   永不返回文件内容；负例全部结构化拒绝；
  * - CLI 纵向：有 HEAD/无 HEAD/脏仓库先展示静态事实；无 --confirm 得到
@@ -466,7 +466,7 @@ describe('F-006 Host inspect/overview 路由与握手能力（真实 Host + SQLi
       path: '/v1/commands',
       token,
       body: {
-        schemaVersion: 4,
+        schemaVersion: 5,
         commandId: randomUUID(),
         operation: 'project.register',
         scope: { kind: 'registration' },
@@ -476,7 +476,7 @@ describe('F-006 Host inspect/overview 路由与握手能力（真实 Host + SQLi
     });
   }
 
-  it('握手：线消息 v4（P03-1/F-009 起）+ 能力视图精确集合新增 projects.inspect/overview；v3/v2/v1 均被拒', async () => {
+  it('握手：线消息 v5（P03-2/F-007 起）+ 能力视图精确集合含静态接入/基线/计划域/审批查询；v4/v3/v2/v1 均被拒', async () => {
     fixture = createCommandsTestFixture({ prefix: 'shiploop-f006-routes-' });
     const { port, token, hostInstanceId, dataRootIdentity } = await startRealHost(fixture.dataRoot);
     const handshake = await loopbackRequest({
@@ -484,14 +484,14 @@ describe('F-006 Host inspect/overview 路由与握手能力（真实 Host + SQLi
       method: 'POST',
       path: HANDSHAKE_ROUTE,
       token,
-      body: { schemaVersion: 4, protocolVersion: 1, hostInstanceId, dataRootIdentity },
+      body: { schemaVersion: 5, protocolVersion: 1, hostInstanceId, dataRootIdentity },
     });
     expect(handshake.statusCode).toBe(200);
     const body = handshake.json() as {
       schemaVersion: number;
       capabilities: { application: { commands: string[]; queries: string[] } };
     };
-    expect(body.schemaVersion).toBe(4);
+    expect(body.schemaVersion).toBe(5);
     expect(body.capabilities.application.queries).toContain('projects.inspect');
     expect(body.capabilities.application.queries).toContain('projects.overview');
     // F-014：基线分页/详情/证据正文三项查询随路由接线进入能力清单。
@@ -501,7 +501,9 @@ describe('F-006 Host inspect/overview 路由与握手能力（真实 Host + SQLi
     // P03-1 / F-009：计划域六项查询随 /v1/phases|features|tasks 路由接线进入能力清单（17 → 23）。
     expect(body.capabilities.application.queries).toContain('phases.list');
     expect(body.capabilities.application.queries).toContain('tasks.get');
-    expect(body.capabilities.application.queries).toHaveLength(23);
+    // P03-2 / F-007：审批决策查询随 /v1/features/:featureId/approvals 接线进入能力清单（23 → 24）。
+    expect(body.capabilities.application.queries).toContain('features.approvals');
+    expect(body.capabilities.application.queries).toHaveLength(24);
     expect(body.capabilities.application.commands).toEqual([
       'project.register',
       'project.metadata.update',
@@ -522,16 +524,16 @@ describe('F-006 Host inspect/overview 路由与握手能力（真实 Host + SQLi
       // P03-1 / F-008：实质计划修订经既有 /v1/commands 通用路由接线（v3 内增量扩张）。
       'feature.plan.revise',
       // P03-2 / F-001：Task 策略副本 CAS 编辑经既有 /v1/commands 通用路由接线
-      //（v4 内增量扩张，同 F-004 先例；升版待 F-007 接线任务定案）。
+      //（v4 内增量宣告，升版随 F-007 接线定案 v5）。
       'task.strategy.update',
       // P03-2 / F-002：计划批准/拒绝决策经既有 /v1/commands 通用路由接线
-      //（v4 内增量扩张；决策查询路由与 HostClient 入口属 F-007）。
+      //（v4 内增量宣告；决策查询路由与 HostClient 入口 F-007 已接线）。
       'feature.plan.decide',
       // P03-2 / F-006：执行输入制品组准备经既有 /v1/commands 通用路由接线
-      //（v4 内增量扩张；HostClient/CLI 入口属 F-007/F-008）。
+      //（v4 内增量宣告；HostClient 入口 F-007、CLI 入口 F-008）。
       'execution.input.prepare',
     ]);
-    for (const legacyVersion of [3, 2, 1]) {
+    for (const legacyVersion of [4, 3, 2, 1]) {
       const legacy = await loopbackRequest({
         port,
         method: 'POST',

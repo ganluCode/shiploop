@@ -57,7 +57,7 @@ import {
   validateStopResultView,
   verifyStopRequestDigest,
 } from '../packages/host/src/index.ts';
-import { COMMAND_OPERATIONS, PLAN_QUERY_OPERATIONS, QUERY_OPERATIONS } from '../packages/core/src/index.ts';
+import { COMMAND_OPERATIONS, PLAN_APPROVAL_QUERY_OPERATION, PLAN_QUERY_OPERATIONS, QUERY_OPERATIONS } from '../packages/core/src/index.ts';
 import type {
   HostDiscoveryRecord,
   HostErrorCode,
@@ -147,8 +147,9 @@ describe('F-002 冻结常量与能力声明', () => {
     // P02-2 §3.1：线消息升 v2；P02-3 / F-006 起升 v3（能力集合扩张，见
     // docs/p02-3-onboarding-contract.md §3.1/§15.5）；P03-1 / F-009 起升 v4
     //（计划域命令/查询进入握手能力集合，见 docs/p03-1-plan-import-contract.md §5/§9.6）；
-    // 发现 schemaVersion 与线协议版本不联动。
-    expect(CURRENT_SCHEMA_VERSION).toBe(4);
+    // P03-2 / F-007 起升 v5（决策/策略/输入准备三命令与审批查询进入能力集合，
+    // 见 docs/p03-2-plan-approval-contract.md）；发现 schemaVersion 与线协议版本不联动。
+    expect(CURRENT_SCHEMA_VERSION).toBe(5);
     expect(CURRENT_PROTOCOL_VERSION).toBe(1);
     expect([...SUPPORTED_PROTOCOL_VERSIONS]).toEqual([1]);
     expect(LOOPBACK_LISTEN_ADDRESS).toBe('127.0.0.1');
@@ -225,6 +226,8 @@ describe('F-002 冻结常量与能力声明', () => {
           'features.get',
           'tasks.list',
           'tasks.get',
+          // P03-2 / F-007：审批决策查询真实接线（能力位复用 project.read）。
+          'features.approvals',
         ],
         events: { transport: 'sse', route: '/v1/events', scopes: ['project', 'global'] },
       },
@@ -233,7 +236,8 @@ describe('F-002 冻结常量与能力声明', () => {
     expect([...CURRENT_HOST_CAPABILITIES.application.commands]).toEqual([...COMMAND_OPERATIONS]);
     // P02-3：queries = P02-2 的 QUERY_OPERATIONS + 已接线的静态接入两项（F-006）
     // + 已接线的基线分页/详情/证据三项（F-014，与 BASELINE_QUERY_OPERATIONS 同步）
-    // + P03-1 / F-009 计划域六项（与 PLAN_QUERY_OPERATIONS 同步，能力位复用 project.read）。
+    // + P03-1 / F-009 计划域六项（与 PLAN_QUERY_OPERATIONS 同步，能力位复用 project.read）
+    // + P03-2 / F-007 审批决策查询（与 PLAN_APPROVAL_QUERY_OPERATION 同步）。
     expect([...CURRENT_HOST_CAPABILITIES.application.queries]).toEqual([
       ...QUERY_OPERATIONS.slice(0, 4),
       'projects.inspect',
@@ -243,6 +247,7 @@ describe('F-002 冻结常量与能力声明', () => {
       'baselines.get',
       'artifacts.get',
       ...PLAN_QUERY_OPERATIONS,
+      PLAN_APPROVAL_QUERY_OPERATION,
     ]);
     expect(CURRENT_HOST_CAPABILITIES.application.commands).toContain('baseline.cancel');
     expect(CURRENT_HOST_CAPABILITIES.application.queries).toContain('baselines.list');
@@ -457,7 +462,7 @@ describe('F-002 §8 握手请求校验', () => {
   it('合法请求只含 4 个冻结字段，通过结构与版本校验', () => {
     const parsed = validateHandshakeRequest(validHandshakeBody());
     expect(parsed).toEqual({
-      schemaVersion: 4,
+      schemaVersion: 5,
       protocolVersion: 1,
       hostInstanceId: INSTANCE_ID,
       dataRootIdentity: ROOT_IDENTITY,
@@ -467,7 +472,7 @@ describe('F-002 §8 握手请求校验', () => {
   it('未知字段/缺字段/类型错误/格式错误 → invalid_input（结构先于语义）', () => {
     const malformed: Array<[string, unknown]> = [
       ['unknown', { ...validHandshakeBody(), extra: 1 }],
-      ['missing', { schemaVersion: 4, protocolVersion: 1 }],
+      ['missing', { schemaVersion: 5, protocolVersion: 1 }],
       ['schema-type', { ...validHandshakeBody(), schemaVersion: '1' }],
       ['protocol-type', { ...validHandshakeBody(), protocolVersion: '1' }],
       ['instance', { ...validHandshakeBody(), hostInstanceId: 'nope' }],

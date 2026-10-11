@@ -220,7 +220,7 @@ async function setup(): Promise<VerificationSetup> {
   const probe = box.openProbe();
   const owner = box.localOwner();
 
-  const envelopeBase = { schemaVersion: 4, issuedAt: NOW_ISO };
+  const envelopeBase = { schemaVersion: 5, issuedAt: NOW_ISO };
   const submit = (
     payload: Record<string, unknown>,
     operation: string,

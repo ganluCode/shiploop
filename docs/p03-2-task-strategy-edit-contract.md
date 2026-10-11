@@ -1,8 +1,11 @@
 # P03-2 Task 策略副本授权 CAS 编辑契约（F-001）
 
-- 文档状态：P03-2 / F-001 交付的命令用例契约（Core 层）；Host/HostClient/CLI 接线属
-  P03-2 后续任务（F-007/F-008），本版本不改动线消息 schemaVersion=4 与 Host 握手能力
-  清单（Host 能力清单是手动接线宣告，不随 Core 支持面自动增长）。
+- 文档状态：P03-2 / F-001 交付的命令用例契约（Core 层）；CLI 入口属 F-008。
+  **F-007 接线定案（写回登记）**：HostClient 公共方法 `updateTaskStrategy` 经既有
+  `POST /v1/commands` 通用路由接线（冻结信封/回执/有限重试），completed 回执
+  内嵌结果经线校验器 `validateTaskStrategyUpdateResultWire` 复核；线消息
+  schemaVersion 随 P03-2 能力集合变化显式升 v5（Host 握手能力清单手动接线
+  宣告，不随 Core 支持面自动增长）。
 - 实现入口：`packages/core/src/application/task-strategy-update.ts`（经 `shiploop-core`
   公共入口导出：`submitTaskStrategyUpdate` 与全部常量/类型；结构化错误 operation 固定
   为 `task.strategy.update`）。

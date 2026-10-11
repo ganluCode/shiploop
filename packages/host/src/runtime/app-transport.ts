@@ -54,6 +54,7 @@ import {
   BASELINES_ROUTE_PREFIX,
   COMMANDS_ROUTE,
   EVENTS_ROUTE,
+  FEATURE_APPROVALS_ROUTE_SUFFIX,
   FEATURES_ROUTE,
   FEATURES_ROUTE_PREFIX,
   MAX_APP_BODY_BYTES,
@@ -112,7 +113,9 @@ export type ApplicationOperation =
   | 'features.list'
   | 'features.get'
   | 'tasks.list'
-  | 'tasks.get';
+  | 'tasks.get'
+  // P03-2 / F-007：Feature 审批决策查询（与 Core PLAN_APPROVAL_QUERY_OPERATION 同源）。
+  | 'features.approvals';
 
 /** 已解析的应用路由（path 形态匹配；路径参数为未解码原始片段）。 */
 export interface ResolvedAppRoute {
@@ -220,7 +223,8 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
   }
   // P03-1 / F-009 §6.6：计划域查询路由。层级列表为集合根（父级身份经查询
   // 参数显式传入，与 Core 查询服务输入一一对应）；详情为单段路径参数；
-  // 任何嵌套/多段形态一律未匹配 → 404 unknown_operation。
+  // 嵌套/多段形态除 P03-2 / F-007 冻结的 GET /v1/features/:featureId/approvals
+  // 外一律未匹配 → 404 unknown_operation。
   if (path === PHASES_ROUTE) {
     return { operation: 'phases.list', method: 'GET' };
   }
@@ -239,12 +243,25 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
     return { operation: 'features.list', method: 'GET' };
   }
   if (path.startsWith(FEATURES_ROUTE_PREFIX)) {
-    const segment = path.slice(FEATURES_ROUTE_PREFIX.length);
-    if (segment.length > 0 && !segment.includes('/')) {
+    const rest = path.slice(FEATURES_ROUTE_PREFIX.length);
+    const segments = rest.split('/');
+    if (segments.some((segment) => segment.length === 0)) {
+      return undefined;
+    }
+    if (segments.length === 1) {
       return {
         operation: 'features.get',
         method: 'GET',
-        pathParam: { name: 'featureId', value: segment },
+        pathParam: { name: 'featureId', value: segments[0] as string },
+      };
+    }
+    // P03-2 / F-007：唯一冻结的 Feature 子资源形态
+    // GET /v1/features/:featureId/approvals；其余多段形态一律未匹配 → 404。
+    if (segments.length === 2 && segments[1] === FEATURE_APPROVALS_ROUTE_SUFFIX.slice(1)) {
+      return {
+        operation: 'features.approvals',
+        method: 'GET',
+        pathParam: { name: 'featureId', value: segments[0] as string },
       };
     }
     return undefined;
@@ -837,6 +854,11 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
       break;
     case 'tasks.get':
       result = await app.queryService.getTask(app.principal, pathParam?.value);
+      break;
+    // P03-2 / F-007：审批决策查询分发（授权/可见性由 Core 单一权威复核；
+    // 不可见/不存在统一 not_found，不区分存在性）。
+    case 'features.approvals':
+      result = await app.queryService.getFeatureApprovals(app.principal, pathParam?.value);
       break;
     default:
       // 路由表与本分发必须一一对应；缺失是装配编程错误。

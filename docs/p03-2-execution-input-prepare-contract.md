@@ -4,8 +4,8 @@
   `docs/p03-2-execution-input-contract.md`（F-004 采集与校验读取）、
   `docs/p03-2-context-build-contract.md`（F-005 有版本 ContextBuilder）、
   `docs/p03-2-plan-approval-verification-contract.md`（F-003 有效批准复合身份）。
-  Host/CLI 接线属 F-007/F-008；Run/Attempt 绑定与 startRun 属 P03-3/4
-  （本项不创建任何执行实体）。
+  Host/CLI 接线属 F-007/F-008（F-007 Host 侧已交付，见 §8 写回登记）；Run/Attempt
+  绑定与 startRun 属 P03-3/4（本项不创建任何执行实体）。
 - 实现入口：`packages/core/src/ports/execution-input-prepare.ts`（受控制品
   词汇、策略副本/权限面内容身份摘要、一致读视图与权限读取端口形态、
   制品组身份形态与失败原因词汇）、`packages/core/src/application/execution-input-prepare.ts`
@@ -114,3 +114,16 @@ Host/CLI 接线（F-007/F-008）、Run/Attempt 绑定与 startRun（P03-3/4）�
 批输入/项目级中断核对（F-012 verifyProject）、ProjectProfile/检索/LLM 蒸馏
 （F-005 契约 §6 同一边界）、强 OS 沙箱（可信项目模式，见
 `docs/p03-2-execution-input-contract.md` §3）。
+
+## 8. F-007 接线定案（写回登记）
+
+- HostClient 公共方法 `prepareExecutionInput` 经既有 `POST /v1/commands` 通用路由
+  接线（创建类冻结信封/回执/有限重试），completed 回执内嵌制品组身份经客户端
+  线校验器 `validateExecutionInputPrepareResultWire` 复核（bindable/bodyRef/
+  requiredInputs/digests/approval/tokenEstimate 冻结字段集，正文永不内联）；
+- 制品组身份查询沿用既有回执/结果读取（`receipts.get`/`results.resolve`），
+  不新增查询面；线消息 schemaVersion 随 P03-2 能力集合变化显式升 v5；
+- 受控制品组读取边界：输入正文若经 Host 提供，只允许按获准制品组内 Artifact
+  身份作有界校验读取（F-004 `captureRequiredInputs` 归属/ready/身份核验）；
+  不新增接受任意 path/locator 的通用文件接口（表外路径 404），跨项目或未知
+  正文统一 not_found/forbidden，不泄漏存在性与物理路径；CLI 入口属 F-008。

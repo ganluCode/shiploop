@@ -59,6 +59,39 @@ export type {
   PlanListResultBase, PublicTaskDependencyEdge, PublicTaskRecord,
   TaskDetailResult, TaskListResult,
 } from './ports/queries.js';
+// P03-2 / F-007 计划审批查询与决策记录：公开形状（服务端负责授权；HostClient
+// 线校验器复用同一形状与原因词汇）。
+export { PLAN_APPROVAL_QUERY_OPERATION, toPublicPlanApprovalRecord } from './ports/queries.js';
+export type {
+  FeatureApprovalsResult, PublicPlanApprovalDecision, PublicPlanApprovalRecord,
+} from './ports/queries.js';
+export {
+  FEATURE_PLAN_DECISIONS, PLAN_APPROVAL_STATUSES, PLAN_APPROVAL_SUBJECT_TYPES,
+} from './ports/plan-store.js';
+export type {
+  FeaturePlanDecision, PlanApprovalStatus, PlanApprovalSubjectType,
+} from './ports/plan-store.js';
+export {
+  PLAN_APPROVAL_VERIFICATION_REASONS,
+} from './ports/plan-approval-verification.js';
+export type {
+  PlanApprovalValidity, PlanApprovalVerificationReason,
+} from './ports/plan-approval-verification.js';
+// P03-2 / F-007 执行输入制品组身份（回执 result 形状的公共成分；正文永不内联）。
+export type { ContextTokenEstimate } from './ports/context-build.js';
+export type { ExecutionInputOrigin, ExecutionInputRef } from './ports/execution-input.js';
+export {
+  EXECUTION_INPUT_GROUP_LOCATOR_PREFIX,
+  EXECUTION_GROUP_JSON_MEDIA_TYPE,
+  EXECUTION_GROUP_PROMPT_MEDIA_TYPE,
+  EXECUTION_GROUP_MANIFEST_PURPOSE,
+  EXECUTION_GROUP_PROMPT_PURPOSE,
+  EXECUTION_GROUP_SNAPSHOT_PURPOSE,
+} from './ports/execution-input-prepare.js';
+export type {
+  ExecutionInputGroupBodyRef, ExecutionInputGroupDigests, ExecutionInputApprovalIdentity,
+  PreparedExecutionInputGroup,
+} from './ports/execution-input-prepare.js';
 // type-only 导出擦除后不加载业务服务。
 export type { EffectiveSettings } from './application/effective-settings.js';
 export type { ExportedSettings } from './application/configuration-service.js';

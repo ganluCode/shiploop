@@ -45,6 +45,7 @@ import type {
   CommandScope,
   EffectiveSettings,
   ExportedSettings,
+  FeatureApprovalsResult,
   FeatureDetailResult,
   FeatureListResult,
   GlobalSnapshotResult,
@@ -71,6 +72,7 @@ import {
   BASELINES_ROUTE_PREFIX,
   COMMANDS_ROUTE,
   EVENTS_ROUTE,
+  FEATURE_APPROVALS_ROUTE_SUFFIX,
   FEATURES_ROUTE,
   FEATURES_ROUTE_PREFIX,
   HostProtocolError,
@@ -99,11 +101,14 @@ import {
   validateBaselineCommandResultWire,
   validateBaselinePreviewResultWire,
   validateCommandReceiptWire,
+  validateExecutionInputPrepareResultWire,
+  validateFeaturePlanDecideResultWire,
   validateFeaturePlanImportResultWire,
   validateFeaturePlanReviseResultWire,
   validatePhaseCreateResultWire,
   validatePlanLabelsUpdateResultWire,
   validateStateEventWire,
+  validateTaskStrategyUpdateResultWire,
 } from './app-wire.js';
 
 /* ------------------------------------------------------------------ *
@@ -239,6 +244,49 @@ export interface PlanListPageInput {
   readonly cursor?: string;
 }
 
+/* ------------------------------------------------------------------ *
+ * P03-2 / F-007 决策/策略/输入准备输入类型
+ * ------------------------------------------------------------------ */
+
+/**
+ * feature.plan.decide 输入（expectedRevision 为 Feature 聚合 revision；
+ * planDigest 为提交时绑定的当前计划摘要，失效即 fail-closed；decisionActor
+ * 等身份一律不能经请求输入，决策人由可信装配固定绑定）。
+ */
+export interface DecideFeaturePlanInput {
+  readonly projectId: string;
+  readonly featureId: string;
+  readonly planDigest: string;
+  readonly decision: 'approve' | 'reject';
+  readonly reason?: string | null;
+  readonly expectedRevision: number;
+  readonly commandId?: string;
+}
+
+/**
+ * task.strategy.update 输入（expectedRevision 为 Task 自身 revision；
+ * executionConfig 为完整策略副本，configSource 等来源字段由服务端定值）。
+ */
+export interface UpdateTaskStrategyInput {
+  readonly projectId: string;
+  readonly taskId: string;
+  readonly executionConfig: Record<string, unknown>;
+  readonly expectedRevision: number;
+  readonly commandId?: string;
+}
+
+/**
+ * execution.input.prepare 输入（创建类：不携带 expectedRevision；items 为
+ * 必需输入采集清单，逐项深校验在应用层，拒绝任何内联正文/任意路径形态）。
+ */
+export interface PrepareExecutionInputInput {
+  readonly projectId: string;
+  readonly featureId: string;
+  readonly taskId: string;
+  readonly items: readonly unknown[];
+  readonly commandId?: string;
+}
+
 /** artifacts.get 的授权证据正文（§7.6：text/plain 有界内容，已脱敏）。 */
 export interface BaselineArtifactContentResult {
   readonly artifactId: string;
@@ -363,6 +411,32 @@ export interface HostClientApplication {
   ): Promise<TaskListResult>;
   /** tasks.get：Task 详情（验收/引用/策略副本与来源）。 */
   getTask(taskId: string): Promise<TaskDetailResult>;
+  /* ------------------------------------------------------------ *
+   * P03-2 / F-007 决策/策略/输入准备命令与授权查询
+   * ------------------------------------------------------------ */
+  /**
+   * feature.plan.decide：批准/拒绝当前计划摘要（Feature 聚合 CAS；批准只
+   * 确认现有计划，不是启动授权）。completed 回执 result 经线校验器复核。
+   */
+  decideFeaturePlan(
+    input: DecideFeaturePlanInput,
+    options?: SubmitCommandOptions,
+  ): Promise<CommandReceipt>;
+  /** task.strategy.update：Task 策略副本 CAS 编辑（来源服务端定值 task_edit）。 */
+  updateTaskStrategy(
+    input: UpdateTaskStrategyInput,
+    options?: SubmitCommandOptions,
+  ): Promise<CommandReceipt>;
+  /**
+   * execution.input.prepare：执行输入制品组准备（可绑定输入身份；正文永不
+   * 内联，不创建执行实体、不声称已启动执行）。
+   */
+  prepareExecutionInput(
+    input: PrepareExecutionInputInput,
+    options?: SubmitCommandOptions,
+  ): Promise<CommandReceipt>;
+  /** features.approvals：当前批准 vs 历史决定 + fail-closed 有效批准评估。 */
+  getFeatureApprovals(featureId: string): Promise<FeatureApprovalsResult>;
 }
 
 /** 由 connectToHost 注入的会话上下文（身份/预算/生命周期钩子）。 */
@@ -724,6 +798,31 @@ const IMPORT_PLAN_INPUT_KEYS = ['projectId', 'phaseId', 'expectedRevision', 'pla
 const UPDATE_PLAN_LABELS_INPUT_KEYS = ['projectId', 'entityType', 'id', 'expectedRevision', 'labels', 'commandId'] as const;
 const REVISE_PLAN_INPUT_KEYS = ['projectId', 'featureId', 'expectedRevision', 'plan', 'commandId'] as const;
 const PLAN_LIST_INPUT_KEYS = ['limit', 'cursor'] as const;
+// P03-2 / F-007：决策/策略编辑/输入准备输入键（严格未知键拒绝；身份字段
+//（decisionActor/principalId 等）不能经请求输入，命令信封 payload 面冻结）。
+const DECIDE_PLAN_INPUT_KEYS = [
+  'projectId',
+  'featureId',
+  'planDigest',
+  'decision',
+  'reason',
+  'expectedRevision',
+  'commandId',
+] as const;
+const UPDATE_TASK_STRATEGY_INPUT_KEYS = [
+  'projectId',
+  'taskId',
+  'executionConfig',
+  'expectedRevision',
+  'commandId',
+] as const;
+const PREPARE_EXECUTION_INPUT_KEYS = [
+  'projectId',
+  'featureId',
+  'taskId',
+  'items',
+  'commandId',
+] as const;
 
 function requireStableIdInput(operation: HostOperation, value: unknown, field: string): string {
   if (typeof value !== 'string' || !STABLE_ID_PATTERN.test(value)) {
@@ -1899,6 +1998,113 @@ export function createHostClientApplication(context: AppClientContext): HostClie
       const id = requireStableIdInput('tasks.get', taskId, 'taskId');
       const json = await getJson('tasks.get', `${TASKS_ROUTE_PREFIX}${id}`);
       return validateAppQueryResponse('tasks.get', json);
+    },
+
+    /* ------------------------------------------------------------ *
+     * P03-2 / F-007 决策/策略/输入准备命令与授权查询
+     * ------------------------------------------------------------ */
+
+    async decideFeaturePlan(
+      input: DecideFeaturePlanInput,
+      options?: SubmitCommandOptions,
+    ): Promise<CommandReceipt> {
+      const object = rejectUnknownInputKeys('commands.submit', input, DECIDE_PLAN_INPUT_KEYS);
+      const projectId = requireProjectId('commands.submit', object.projectId as string);
+      const featureId = requireStableIdInput('commands.submit', object.featureId, 'featureId');
+      if (typeof object.planDigest !== 'string' || !/^[0-9a-f]{64}$/.test(object.planDigest)) {
+        throw invalidInput('commands.submit', 'invalid_plan_digest', 'planDigest');
+      }
+      if (object.decision !== 'approve' && object.decision !== 'reject') {
+        throw invalidInput('commands.submit', 'invalid_decision', 'decision');
+      }
+      const reason = object.reason ?? null;
+      if (reason !== null && typeof reason !== 'string') {
+        throw invalidInput('commands.submit', 'invalid_reason', 'reason');
+      }
+      const expectedRevision = requireExpectedRevisionInput('commands.submit', object.expectedRevision);
+      const receipt = await submitCommand(
+        {
+          ...optionalCommandIdInput('commands.submit', object.commandId),
+          operation: 'feature.plan.decide',
+          scope: { kind: 'project', projectId },
+          expectedRevision,
+          payload: {
+            featureId,
+            planDigest: object.planDigest,
+            decision: object.decision,
+            reason,
+          },
+        },
+        options,
+      );
+      if (receipt.status === 'completed') {
+        validateFeaturePlanDecideResultWire(receipt.result, 'commands.submit');
+      }
+      return receipt;
+    },
+
+    async updateTaskStrategy(
+      input: UpdateTaskStrategyInput,
+      options?: SubmitCommandOptions,
+    ): Promise<CommandReceipt> {
+      const object = rejectUnknownInputKeys('commands.submit', input, UPDATE_TASK_STRATEGY_INPUT_KEYS);
+      const projectId = requireProjectId('commands.submit', object.projectId as string);
+      const taskId = requireStableIdInput('commands.submit', object.taskId, 'taskId');
+      if (!isPlainObject(object.executionConfig)) {
+        throw invalidInput('commands.submit', 'invalid_execution_config', 'executionConfig');
+      }
+      const expectedRevision = requireExpectedRevisionInput('commands.submit', object.expectedRevision);
+      const receipt = await submitCommand(
+        {
+          ...optionalCommandIdInput('commands.submit', object.commandId),
+          operation: 'task.strategy.update',
+          scope: { kind: 'project', projectId },
+          expectedRevision,
+          payload: { taskId, executionConfig: object.executionConfig },
+        },
+        options,
+      );
+      if (receipt.status === 'completed') {
+        validateTaskStrategyUpdateResultWire(receipt.result, 'commands.submit');
+      }
+      return receipt;
+    },
+
+    async prepareExecutionInput(
+      input: PrepareExecutionInputInput,
+      options?: SubmitCommandOptions,
+    ): Promise<CommandReceipt> {
+      const object = rejectUnknownInputKeys('commands.submit', input, PREPARE_EXECUTION_INPUT_KEYS);
+      const projectId = requireProjectId('commands.submit', object.projectId as string);
+      const featureId = requireStableIdInput('commands.submit', object.featureId, 'featureId');
+      const taskId = requireStableIdInput('commands.submit', object.taskId, 'taskId');
+      if (!Array.isArray(object.items)) {
+        throw invalidInput('commands.submit', 'invalid_items', 'items');
+      }
+      // 创建类命令：不携带 expectedRevision（信封校验在公共层统一把关）。
+      const receipt = await submitCommand(
+        {
+          ...optionalCommandIdInput('commands.submit', object.commandId),
+          operation: 'execution.input.prepare',
+          scope: { kind: 'project', projectId },
+          payload: { featureId, taskId, items: object.items },
+        },
+        options,
+      );
+      if (receipt.status === 'completed') {
+        validateExecutionInputPrepareResultWire(receipt.result, 'commands.submit');
+      }
+      return receipt;
+    },
+
+    async getFeatureApprovals(featureId: string): Promise<FeatureApprovalsResult> {
+      context.assertOpen('features.approvals');
+      const id = requireStableIdInput('features.approvals', featureId, 'featureId');
+      const json = await getJson(
+        'features.approvals',
+        `${FEATURES_ROUTE_PREFIX}${id}${FEATURE_APPROVALS_ROUTE_SUFFIX}`,
+      );
+      return validateAppQueryResponse('features.approvals', json);
     },
   };
 }

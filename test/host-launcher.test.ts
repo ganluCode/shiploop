@@ -548,7 +548,7 @@ describe('F-010 连接或启动（真实锁 / 真实进程）', () => {
         path: '/v1/host/handshake',
         token,
         body: {
-          schemaVersion: 4,
+          schemaVersion: 5,
           protocolVersion: 1,
           hostInstanceId: existing.hostInstanceId,
           dataRootIdentity: createHostFileStore({ canonicalRoot }).dataRootIdentity,

@@ -115,7 +115,7 @@ async function startRealHost(box: CommandsTestFixture): Promise<{ host: RunningH
 }
 
 interface CommandEnvelope {
-  readonly schemaVersion: 4;
+  readonly schemaVersion: 5;
   readonly commandId: string;
   readonly operation: string;
   readonly scope: Record<string, unknown>;
@@ -135,7 +135,7 @@ function commandEnvelope(partial: {
   payload: Record<string, unknown>;
 }): CommandEnvelope {
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     commandId: partial.commandId ?? randomUUID(),
     operation: partial.operation,
     scope: partial.scope,

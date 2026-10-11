@@ -196,7 +196,7 @@ const FINAL_CURSOR = 'evcur_v1_ZmluYWwtcg';
 
 function globalSnapshot(sequence: number, cursor: string): Record<string, unknown> {
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     scope: { kind: 'global' },
     settings: null,
     watermark: { sequence, cursor },

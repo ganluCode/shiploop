@@ -73,7 +73,7 @@ async function fresh(host: RunningHost, f: Awaited<ReturnType<typeof fault>>) {
   const plan = { checks: [{ checkKey: 'a', kind: 'command', argv: [process.execPath, f.script, f.counter, f.release, 'once'],
     required: true, timeoutMs: 10_000 }] };
   const preview = await host.core.baselineService.previewBaseline(owner, f.checkpoint.projectId, { plan });
-  return { schemaVersion: 4, commandId: randomUUID(), operation: 'baseline.run', issuedAt: new Date().toISOString(),
+  return { schemaVersion: 5, commandId: randomUUID(), operation: 'baseline.run', issuedAt: new Date().toISOString(),
     scope: { kind: 'project', projectId: f.checkpoint.projectId }, payload: { decision: 'authorize', plan, previewDigest: preview.previewDigest } };
 }
 

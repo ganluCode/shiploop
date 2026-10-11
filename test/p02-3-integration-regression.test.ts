@@ -451,7 +451,7 @@ function commandEnvelope(
   overrides: Record<string, unknown> = {},
 ): Record<string, unknown> {
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     commandId: randomUUID(),
     operation,
     scope,
@@ -1816,7 +1816,7 @@ describe('F-018 FR-3：并发与授权边界（同数据根唯一 Host + 单次�
     const planB = planOf([check('b-owner', [process.execPath, '-e', 'process.stdout.write("b-ok")'])]);
       const ownerPreview = await app.baselineService.previewBaseline(OWNER, projectB, { plan: planB });
       const receiptB = await app.baselineExecutionService.submit(OWNER, {
-        schemaVersion: 4,
+        schemaVersion: 5,
         commandId: randomUUID(),
         operation: 'baseline.run',
         scope: { kind: 'project', projectId: projectB },

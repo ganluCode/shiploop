@@ -1,11 +1,18 @@
 # P03-2 计划批准/拒绝决策契约（F-002）
 
-- 文档状态：P03-2 / F-002 交付的决策用例契约（Core 层）；Host/HostClient/CLI 接线属
-  P03-2 后续任务（F-007/F-008）。命令面经既有 `POST /v1/commands` 通用路由接线宣告
+- 文档状态：P03-2 / F-002 交付的决策用例契约（Core 层）；CLI 入口属 F-008。
+  命令面经既有 `POST /v1/commands` 通用路由接线宣告
   （`packages/host/src/contract/lifecycle.ts` 的 `APPLICATION_COMMAND_CAPABILITIES`
-  追加 `feature.plan.decide`，同 F-001 先例；线消息 schemaVersion 仍为 4，升版留
-  F-007）。决策查询（`features.approvals`）是 Core 查询面新增操作，Host 路由接线
-  与握手能力清单同步属 F-007。
+  追加 `feature.plan.decide`，同 F-001 先例）。**F-007 接线定案（写回登记）**：
+  线消息 `schemaVersion` 显式升 4 → 5（P02-2 能力集合变化升版纪律，同 P03-1 /
+  F-009 先例；Host `CURRENT_SCHEMA_VERSION` 同步，旧 v4/v3/v2/v1 明确
+  `unsupported_schema_version`）；决策查询（`features.approvals`）Host 路由定案为
+  `GET /v1/features/:featureId/approvals`（Feature 唯一冻结子资源形态，其余嵌套
+  多段形态 404）并同步握手查询能力清单；HostClient 公共方法 `decideFeaturePlan`
+  （命令面，冻结信封/回执/有限重试）与 `getFeatureApprovals`（查询）接线，
+  completed 回执内嵌结果与查询响应均有客户端线校验器
+ （`validateFeaturePlanDecideResultWire`/`validateFeatureApprovalsResultWire`，复用
+  公共协议校验与结构化错误）。
 - 实现入口：`packages/core/src/application/feature-plan-decide.ts`（经 `shiploop-core`
   公共入口导出：`submitFeaturePlanDecide`、`PLAN_DECIDE_IMPACT`、
   `decideFeaturePlanOutcome` 与全部常量/类型；结构化错误 operation 固定为
@@ -114,8 +121,8 @@ planDigest 的批准或拒绝决策**（`feature.plan.decide`，能力位
   同一 DEFERRED 一致读视图；`decisions[].current` 标记是否绑定当前 planDigest
   （当前决定 vs 历史决定；同摘要至多一条），`feature.planStatus` 是权威审批
   状态（拒绝后绝非 `approved`）；不可见/不存在统一 not_found（不区分存在性）；
-- Host 传输路由/线协议/HostClient 接线与握手查询清单同步属 F-007（本文不宣称
-  已接线）；CLI 入口属 F-008。
+- Host 传输路由/线协议/HostClient 接线与握手查询清单同步**已由 F-007 交付**
+ （路由/升版/线校验器见上文写回登记）；CLI 入口属 F-008。
 
 ## 6. 迁移接续与版本兼容（沿用既有纪律）
 

@@ -230,20 +230,23 @@ describe('F-001 契约文档与仓库基线一致（开工现状事实）', () =
     expect(root.scripts).toHaveProperty('accept:p02', 'node scripts/acceptance/p02-accept.ts');
   });
 
-  it('线消息 schemaVersion 已随 F-006 升至 3（开工为 2），契约记录起点与升版定案；P03-1/F-009 起续升 v4', () => {
+  it('线消息 schemaVersion 已随 F-006 升至 3（开工为 2），契约记录起点与升版定案；P03-2/F-007 起续升 v5', () => {
     const constants = readText('packages/host/src/contract/constants.ts');
     // F-006 接线 projects.inspect/overview 并扩张握手能力集合，按 §3.1 显式升 v3；
-    // P03-1 / F-009 计划域能力进入集合后续升 v4（docs/p03-1-plan-import-contract.md §5）。
-    expect(constants).toMatch(/export const CURRENT_SCHEMA_VERSION = 4 as const/);
+    // P03-1 / F-009 计划域能力后续升 v4；P03-2 / F-007 决策/策略/输入准备与审批
+    // 查询进入能力集合后续升 v5（docs/p03-2-plan-approval-contract.md）。
+    expect(constants).toMatch(/export const CURRENT_SCHEMA_VERSION = 5 as const/);
     expect(constants).toMatch(/export const MAX_APP_BODY_BYTES = 65_536/);
     expect(constants).toMatch(/export const MAX_QUERY_STRING_BYTES = 8_192/);
     expect(constants).toContain("COMMANDS_ROUTE = '/v1/commands'");
     const commandsPort = readText('packages/core/src/ports/commands.ts');
-    expect(commandsPort).toMatch(/export const WIRE_MESSAGE_SCHEMA_VERSION = 4 as const/);
-    // 契约冻结线消息 2 → 3（P02-3 历史定案）；P03-1 续升 3 → 4 见 p03-1 契约。
+    expect(commandsPort).toMatch(/export const WIRE_MESSAGE_SCHEMA_VERSION = 5 as const/);
+    // 契约冻结线消息 2 → 3（P02-3 历史定案）；P03-1 续升 3 → 4 见 p03-1 契约；
+    // P03-2 / F-007 续升 4 → 5 见 p03-2 契约。
     expect(contractDoc).toContain('WIRE_MESSAGE_SCHEMA_VERSION');
     expect(contractDoc).toMatch(/线消息 `schemaVersion` \| \*\*`2` → `3`/);
     expect(contractDoc).toContain('P03-1 / F-009');
+    expect(contractDoc).toContain('P03-2 / F-007');
   });
 
   it('开工能力清单为 9 项、命令清单为 6 项，契约记录扩展后的 11 项/9 项', () => {

@@ -140,7 +140,7 @@ async function setup() {
   const probe = box.openProbe();
   const owner = box.localOwner();
   const envelope = (operation: string, scope: unknown, changes: Record<string, unknown> = {}) => ({
-    schemaVersion: 4,
+    schemaVersion: 5,
     commandId: randomUUID(),
     operation,
     scope,
@@ -414,7 +414,7 @@ describe('F-006 层级列表：稳定排序、有限分页与受控游标', () =
 
     // Phase 层级：3 个 phase，limit=2 → 两页。
     const phasePage1 = await s.app.queryService.listPhases(s.owner, { projectId: s.projectIdA, limit: 2 });
-    expect(phasePage1).toMatchObject({ schemaVersion: 4, scope: 'phase-list', limit: 2 });
+    expect(phasePage1).toMatchObject({ schemaVersion: 5, scope: 'phase-list', limit: 2 });
     expect(phasePage1.records.map((record) => record.id)).toEqual(['phase-1', 'phase-2']);
     expect(phasePage1.nextCursor).toMatch(/^plcur_v1_/);
     const phasePage2 = await s.app.queryService.listPhases(s.owner, {

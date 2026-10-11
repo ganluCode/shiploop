@@ -591,7 +591,7 @@ describe('P02-FR2-AUTH-REJECT 认证/身份/协议负例（真实 Host）', () =
     f.evidence.registerSecret(token);
     const wrongToken = 'f'.repeat(64);
     const handshakeBody = (overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
-      schemaVersion: 4,
+      schemaVersion: 5,
       protocolVersion: 1,
       hostInstanceId,
       dataRootIdentity,
@@ -694,7 +694,7 @@ describe('P02-FR2-AUTH-REJECT 认证/身份/协议负例（真实 Host）', () =
         body: handshakeBody({ schemaVersion: legacyVersion }),
       });
       const error = expectRejected(legacySchema, 400, 'unsupported_schema_version', 'host.handshake');
-      expect(error.details?.supportedSchemaVersions).toEqual([4]);
+      expect(error.details?.supportedSchemaVersions).toEqual([5]);
     }
 
     const protocolMismatch = await loopbackRequest({
@@ -760,7 +760,7 @@ describe('P02-FR2-AUTH-REJECT 认证/身份/协议负例（真实 Host）', () =
       path: '/v1/host/handshake',
       token: oldToken,
       body: {
-        schemaVersion: 4,
+        schemaVersion: 5,
         protocolVersion: 1,
         hostInstanceId: newInstance,
         dataRootIdentity,
@@ -775,7 +775,7 @@ describe('P02-FR2-AUTH-REJECT 认证/身份/协议负例（真实 Host）', () =
       path: '/v1/host/handshake',
       token: newToken,
       body: {
-        schemaVersion: 4,
+        schemaVersion: 5,
         protocolVersion: 1,
         hostInstanceId: oldInstance,
         dataRootIdentity,
@@ -790,7 +790,7 @@ describe('P02-FR2-AUTH-REJECT 认证/身份/协议负例（真实 Host）', () =
       path: '/v1/host/handshake',
       token: newToken,
       body: {
-        schemaVersion: 4,
+        schemaVersion: 5,
         protocolVersion: 1,
         hostInstanceId: newInstance,
         dataRootIdentity: 'b'.repeat(64),
@@ -805,7 +805,7 @@ describe('P02-FR2-AUTH-REJECT 认证/身份/协议负例（真实 Host）', () =
       path: '/v1/host/handshake',
       token: newToken,
       body: {
-        schemaVersion: 4,
+        schemaVersion: 5,
         protocolVersion: 1,
         hostInstanceId: newInstance,
         dataRootIdentity,
@@ -1502,7 +1502,7 @@ describe('P02-FR2-AUTH-REJECT 固定回环监听（T23 组合复验）', () => {
         path: '/v1/host/handshake',
         token,
         headers: { origin },
-        body: { schemaVersion: 4, protocolVersion: 1, hostInstanceId: discovery.hostInstanceId, dataRootIdentity: discovery.dataRootIdentity },
+        body: { schemaVersion: 5, protocolVersion: 1, hostInstanceId: discovery.hostInstanceId, dataRootIdentity: discovery.dataRootIdentity },
       });
       expectRejected(response, 401, 'unauthorized', 'host.handshake');
       expectTransportHygiene(response, secrets);
@@ -1511,7 +1511,7 @@ describe('P02-FR2-AUTH-REJECT 固定回环监听（T23 组合复验）', () => {
       port,
       method: 'POST',
       path: `/v1/host/handshake?token=${token}`,
-      body: { schemaVersion: 4, protocolVersion: 1, hostInstanceId: discovery.hostInstanceId, dataRootIdentity: discovery.dataRootIdentity },
+      body: { schemaVersion: 5, protocolVersion: 1, hostInstanceId: discovery.hostInstanceId, dataRootIdentity: discovery.dataRootIdentity },
     });
     expectRejected(queryCredential, 401, 'unauthorized', 'host.handshake');
     expect(queryCredential.bodyText).not.toContain(token);
@@ -1616,8 +1616,8 @@ describe('P02-FR2-AUTH-REJECT 证据脱敏', () => {
     // 拒绝 JSON 输出：错误 token / 缺失 token 的 HTTP 响应体。
     const rejectedBodies: string[] = [];
     for (const options of [
-      { method: 'POST' as const, path: '/v1/host/handshake', body: { schemaVersion: 4, protocolVersion: 1, hostInstanceId: startResult.hostInstanceId, dataRootIdentity: startResult.dataRootIdentity } },
-      { method: 'POST' as const, path: '/v1/host/handshake', token: synthesizedTokens[0], body: { schemaVersion: 4, protocolVersion: 1, hostInstanceId: startResult.hostInstanceId, dataRootIdentity: startResult.dataRootIdentity } },
+      { method: 'POST' as const, path: '/v1/host/handshake', body: { schemaVersion: 5, protocolVersion: 1, hostInstanceId: startResult.hostInstanceId, dataRootIdentity: startResult.dataRootIdentity } },
+      { method: 'POST' as const, path: '/v1/host/handshake', token: synthesizedTokens[0], body: { schemaVersion: 5, protocolVersion: 1, hostInstanceId: startResult.hostInstanceId, dataRootIdentity: startResult.dataRootIdentity } },
       { method: 'GET' as const, path: '/v1/projects', token: synthesizedTokens[0] },
     ]) {
       const response = await loopbackRequest({ port, ...options });

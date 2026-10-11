@@ -27,7 +27,7 @@ const projectId = (await app.projectService.registerRepository({ repositoryPath:
 const plan = { checks: [{ checkKey: 'a', kind: 'command', argv: [process.execPath, config.script, config.counter, config.release,
   config.mode === 'result-uncommitted' ? 'once' : 'hang'], required: true, timeoutMs: 30_000 }] };
 const preview = await app.baselineService.previewBaseline(owner, projectId, { plan });
-const request = { schemaVersion: 4, commandId: randomUUID(), operation: 'baseline.run', scope: { kind: 'project', projectId },
+const request = { schemaVersion: 5, commandId: randomUUID(), operation: 'baseline.run', scope: { kind: 'project', projectId },
   issuedAt: new Date().toISOString(), payload: { decision: 'authorize', plan, previewDigest: preview.previewDigest } };
 const session = openSqliteStorageSession({ path: app.pathService.databaseFilePath() });
 const atomic = createSqliteAtomicCommandStore(session);

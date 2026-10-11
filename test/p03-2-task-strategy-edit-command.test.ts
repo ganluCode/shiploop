@@ -212,7 +212,7 @@ async function setup(options: { withTaskInB?: boolean } = {}): Promise<EditSetup
   const probe = box.openProbe();
   const owner = box.localOwner();
 
-  const envelopeBase = { schemaVersion: 4, issuedAt: NOW_ISO };
+  const envelopeBase = { schemaVersion: 5, issuedAt: NOW_ISO };
   const submit = async (payload: Record<string, unknown>, operation: string, extra: Record<string, unknown> = {}) =>
     service.submit(owner, { ...envelopeBase, commandId: randomUUID(), operation, payload, ...extra });
 
@@ -423,7 +423,7 @@ describe('F-001 task.strategy.update 编辑闭环', () => {
     // complexity 更新（经 feature.plan.revise 把 t-1 low→high）不替换既有策略副本。
     const featureRow = s.featureRow()!;
     const revised = await s.service.submit(s.owner, {
-      schemaVersion: 4,
+      schemaVersion: 5,
       issuedAt: NOW_ISO,
       commandId: randomUUID(),
       operation: 'feature.plan.revise',
@@ -502,7 +502,7 @@ describe('F-001 task.strategy.update 编辑闭环', () => {
     });
     // 同 Task 标签编辑共用 Task 自身 CAS 空间：旧 revision 固化 rejected。
     const labelsStale = await s.service.submit(s.owner, {
-      schemaVersion: 4,
+      schemaVersion: 5,
       issuedAt: NOW_ISO,
       commandId: randomUUID(),
       operation: 'plan.labels.update',
@@ -512,7 +512,7 @@ describe('F-001 task.strategy.update 编辑闭环', () => {
     });
     expect(rejectedError(labelsStale).details).toMatchObject({ reason: 'conflict' });
     const labelsCurrent = await s.service.submit(s.owner, {
-      schemaVersion: 4,
+      schemaVersion: 5,
       issuedAt: NOW_ISO,
       commandId: randomUUID(),
       operation: 'plan.labels.update',

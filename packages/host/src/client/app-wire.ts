@@ -33,6 +33,16 @@ import {
   SETTINGS_SCHEMA_VERSION,
   STATE_EVENT_TYPE_SPECS,
   WIRE_MESSAGE_SCHEMA_VERSION,
+  EXECUTION_INPUT_GROUP_LOCATOR_PREFIX,
+  EXECUTION_GROUP_JSON_MEDIA_TYPE,
+  EXECUTION_GROUP_MANIFEST_PURPOSE,
+  EXECUTION_GROUP_PROMPT_MEDIA_TYPE,
+  EXECUTION_GROUP_PROMPT_PURPOSE,
+  EXECUTION_GROUP_SNAPSHOT_PURPOSE,
+  FEATURE_PLAN_DECISIONS,
+  PLAN_APPROVAL_STATUSES,
+  PLAN_APPROVAL_SUBJECT_TYPES,
+  PLAN_APPROVAL_VERIFICATION_REASONS,
   isIsoUtcDateTime,
   isUuidV4,
   validateBaselineAuthorizationSummary,
@@ -49,12 +59,17 @@ import type {
   BaselineOperationSummary,
   BaselinePreviewResult,
   CommandReceipt,
+  ContextTokenEstimate,
   EffectiveSettings,
+  ExecutionInputOrigin,
   ExportedSettings,
+  FeatureApprovalsResult,
   FeatureDetailResult,
   FeatureListResult,
+  FeaturePlanDecision,
   PhaseDetailResult,
   PhaseListResult,
+  PlanApprovalValidity,
   ProjectBindingResult,
   ProjectDetailResult,
   ProjectHealthSummary,
@@ -65,6 +80,7 @@ import type {
   ProjectSettingsPresence,
   PublicFeatureRecord,
   PublicPhaseRecord,
+  PublicPlanApprovalDecision,
   PublicProjectRecord,
   PublicRepositoryBindingRecord,
   PublicSettingsState,
@@ -101,7 +117,9 @@ export type AppQueryOperation =
   | 'features.list'
   | 'features.get'
   | 'tasks.list'
-  | 'tasks.get';
+  | 'tasks.get'
+  // P03-2 / F-007：审批决策查询（与 Core PLAN_APPROVAL_QUERY_OPERATION 同源）。
+  | 'features.approvals';
 
 function malformed(operation: HostOperation, reason: string): never {
   throw new HostProtocolError('response_malformed', operation, 'Host 响应不符合线协议', {
@@ -1218,6 +1236,498 @@ export function validateFeaturePlanReviseResultWire(
   };
 }
 
+/* --------------------- P03-2 / F-007 决策/策略/输入准备结果 --------------------- */
+
+/** 64 位小写 hex 摘要（身份级；不是正文）。 */
+function requireSha256Hex(operation: HostOperation, value: unknown, reason: string): string {
+  if (typeof value !== 'string' || !/^[0-9a-f]{64}$/.test(value)) {
+    malformed(operation, reason);
+  }
+  return value;
+}
+
+function requireSha256HexOrNull(
+  operation: HostOperation,
+  value: unknown,
+  reason: string,
+): string | null {
+  return value === null ? null : requireSha256Hex(operation, value, reason);
+}
+
+function requireNonEmptyString(
+  operation: HostOperation,
+  value: unknown,
+  reason: string,
+): string {
+  if (typeof value !== 'string' || value.length === 0) {
+    malformed(operation, reason);
+  }
+  return value;
+}
+
+/**
+ * 公开决策记录（PublicPlanApprovalDecision）：服务端权威字段集冻结；
+ * `requireCurrent` 时 `current` 必须为 true（completed 结果的当前决定形态）。
+ */
+function validatePlanApprovalDecisionWire(
+  operation: HostOperation,
+  value: unknown,
+  options: { readonly requireCurrent: boolean },
+): PublicPlanApprovalDecision {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, [
+    'id',
+    'projectId',
+    'subjectId',
+    'subjectType',
+    'subjectDigest',
+    'checkPolicyDigest',
+    'status',
+    'decisionActor',
+    'reason',
+    'decidedAt',
+    'revision',
+    'createdAt',
+    'updatedAt',
+    'current',
+  ]);
+  if (
+    typeof object.subjectType !== 'string' ||
+    !(PLAN_APPROVAL_SUBJECT_TYPES as readonly string[]).includes(object.subjectType)
+  ) {
+    malformed(operation, 'approval_subject_type_invalid');
+  }
+  if (
+    typeof object.status !== 'string' ||
+    !(PLAN_APPROVAL_STATUSES as readonly string[]).includes(object.status)
+  ) {
+    malformed(operation, 'approval_status_invalid');
+  }
+  if (
+    object.decisionActor !== null &&
+    (typeof object.decisionActor !== 'string' || object.decisionActor.length === 0)
+  ) {
+    malformed(operation, 'approval_actor_invalid');
+  }
+  if (object.reason !== null && typeof object.reason !== 'string') {
+    malformed(operation, 'approval_reason_invalid');
+  }
+  if (
+    (object.decidedAt !== null && !isIsoUtcDateTime(object.decidedAt)) ||
+    !isIsoUtcDateTime(object.createdAt) ||
+    !isIsoUtcDateTime(object.updatedAt)
+  ) {
+    malformed(operation, 'approval_time_invalid');
+  }
+  if (typeof object.current !== 'boolean') {
+    malformed(operation, 'approval_current_invalid');
+  }
+  if (options.requireCurrent && object.current !== true) {
+    malformed(operation, 'approval_current_invalid');
+  }
+  return {
+    id: requireStableId(operation, object.id),
+    projectId: requireStableId(operation, object.projectId),
+    subjectId: requireStableId(operation, object.subjectId),
+    subjectType: object.subjectType as PublicPlanApprovalDecision['subjectType'],
+    subjectDigest: requireSha256Hex(operation, object.subjectDigest, 'approval_digest_invalid'),
+    checkPolicyDigest: requireSha256HexOrNull(
+      operation,
+      object.checkPolicyDigest,
+      'approval_digest_invalid',
+    ),
+    status: object.status as PublicPlanApprovalDecision['status'],
+    decisionActor: object.decisionActor as string | null,
+    reason: object.reason as string | null,
+    decidedAt: object.decidedAt as string | null,
+    revision: requirePositiveInteger(operation, object.revision),
+    createdAt: object.createdAt,
+    updatedAt: object.updatedAt,
+    current: object.current,
+  };
+}
+
+/** 有效批准评估块（fail-closed 词汇；批准不是启动授权）。 */
+function validatePlanApprovalValidityWire(
+  operation: HostOperation,
+  value: unknown,
+): PlanApprovalValidity {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, [
+    'valid',
+    'reason',
+    'planDigest',
+    'checkPolicyDigest',
+    'currentDecisionId',
+  ]);
+  if (typeof object.valid !== 'boolean') {
+    malformed(operation, 'approval_validity_invalid');
+  }
+  if (
+    typeof object.reason !== 'string' ||
+    !(PLAN_APPROVAL_VERIFICATION_REASONS as readonly string[]).includes(object.reason)
+  ) {
+    malformed(operation, 'approval_validity_invalid');
+  }
+  if (
+    object.currentDecisionId !== null &&
+    (typeof object.currentDecisionId !== 'string' || object.currentDecisionId.length === 0)
+  ) {
+    malformed(operation, 'approval_validity_invalid');
+  }
+  return {
+    valid: object.valid,
+    reason: object.reason as PlanApprovalValidity['reason'],
+    planDigest: requireSha256HexOrNull(operation, object.planDigest, 'approval_validity_invalid'),
+    checkPolicyDigest: requireSha256Hex(operation, object.checkPolicyDigest, 'approval_validity_invalid'),
+    currentDecisionId: object.currentDecisionId as string | null,
+  };
+}
+
+/** feature.plan.decide completed 结果：{feature, decision, approval(current)}。 */
+export interface FeaturePlanDecideResult {
+  readonly feature: PublicFeatureRecord;
+  readonly decision: FeaturePlanDecision;
+  readonly approval: PublicPlanApprovalDecision;
+}
+
+export function validateFeaturePlanDecideResultWire(
+  value: unknown,
+  operation: HostOperation = 'commands.submit',
+): FeaturePlanDecideResult {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, ['feature', 'decision', 'approval']);
+  if (
+    typeof object.decision !== 'string' ||
+    !(FEATURE_PLAN_DECISIONS as readonly string[]).includes(object.decision)
+  ) {
+    malformed(operation, 'plan_decision_invalid');
+  }
+  return {
+    feature: validateFeatureRecordWire(operation, object.feature),
+    decision: object.decision as FeaturePlanDecision,
+    approval: validatePlanApprovalDecisionWire(operation, object.approval, {
+      requireCurrent: true,
+    }),
+  };
+}
+
+/** task.strategy.update completed 结果：{task}（策略副本与来源是编辑事实）。 */
+export interface TaskStrategyUpdateResult {
+  readonly task: PublicTaskRecord;
+}
+
+export function validateTaskStrategyUpdateResultWire(
+  value: unknown,
+  operation: HostOperation = 'commands.submit',
+): TaskStrategyUpdateResult {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, ['task']);
+  return { task: validateTaskRecordWire(operation, object.task) };
+}
+
+/** 制品组单正文引用（身份级；正文永不内联）。 */
+export interface ExecutionInputGroupBodyRefWire {
+  readonly artifactId: string;
+  readonly version: number;
+  readonly contentHash: string;
+  readonly sizeBytes: number;
+  readonly locator: string;
+  readonly mediaType: string;
+}
+
+function validateExecutionInputGroupBodyRefWire(
+  operation: HostOperation,
+  value: unknown,
+  part: 'snapshot' | 'manifest' | 'prompt',
+): ExecutionInputGroupBodyRefWire {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, [
+    'artifactId',
+    'version',
+    'contentHash',
+    'sizeBytes',
+    'locator',
+    'mediaType',
+  ]);
+  const expectedMediaType =
+    part === 'prompt' ? EXECUTION_GROUP_PROMPT_MEDIA_TYPE : EXECUTION_GROUP_JSON_MEDIA_TYPE;
+  const locator = requireNonEmptyString(operation, object.locator, 'input_group_locator_invalid');
+  // locator = <EXECUTION_INPUT_GROUP_LOCATOR_PREFIX>/<taskId>/<part>（身份字段，
+  // 不是文件路径；物理位置仅由 artifactId 推导，本层绝不按 locator 读文件）。
+  const pattern = new RegExp(
+    `^${EXECUTION_INPUT_GROUP_LOCATOR_PREFIX}/[A-Za-z0-9][A-Za-z0-9._-]{0,127}/${part}$`,
+  );
+  if (!pattern.test(locator)) {
+    malformed(operation, 'input_group_locator_invalid');
+  }
+  if (object.mediaType !== expectedMediaType) {
+    malformed(operation, 'input_group_media_type_invalid');
+  }
+  if (
+    typeof object.sizeBytes !== 'number' ||
+    !Number.isSafeInteger(object.sizeBytes) ||
+    object.sizeBytes < 0
+  ) {
+    malformed(operation, 'input_group_size_invalid');
+  }
+  return {
+    artifactId: requireStableId(operation, object.artifactId),
+    version: requirePositiveInteger(operation, object.version),
+    contentHash: requireSha256Hex(operation, object.contentHash, 'input_group_hash_invalid'),
+    sizeBytes: object.sizeBytes,
+    locator,
+    mediaType: expectedMediaType,
+  };
+}
+
+/** 必需输入引用（F-004 ExecutionInputRef 的回执投影：不含 projectId/kind）。 */
+export interface ExecutionInputRefWire {
+  readonly purpose: string;
+  readonly artifactId: string;
+  readonly version: number;
+  readonly contentHash: string;
+  readonly sizeBytes: number;
+  readonly locator: string;
+  readonly mediaType: string;
+  readonly origin: ExecutionInputOrigin;
+}
+
+function validateExecutionInputOriginWire(
+  operation: HostOperation,
+  value: unknown,
+): ExecutionInputOrigin {
+  const object = requirePlain(operation, value);
+  if (object.kind === 'artifact') {
+    exactKeys(operation, object, ['kind']);
+    return { kind: 'artifact' };
+  }
+  if (object.kind === 'file') {
+    exactKeys(operation, object, ['kind', 'root', 'relativePath']);
+    const relativePath = requireNonEmptyString(
+      operation,
+      object.relativePath,
+      'input_origin_invalid',
+    );
+    if (relativePath.startsWith('/') || relativePath.split('/').includes('..')) {
+      malformed(operation, 'input_origin_invalid');
+    }
+    return {
+      kind: 'file',
+      root: requireStableId(operation, object.root),
+      relativePath,
+    };
+  }
+  malformed(operation, 'input_origin_invalid');
+}
+
+function validateExecutionInputRefWire(
+  operation: HostOperation,
+  value: unknown,
+): ExecutionInputRefWire {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, [
+    'purpose',
+    'artifactId',
+    'version',
+    'contentHash',
+    'sizeBytes',
+    'locator',
+    'mediaType',
+    'origin',
+  ]);
+  if (
+    typeof object.sizeBytes !== 'number' ||
+    !Number.isSafeInteger(object.sizeBytes) ||
+    object.sizeBytes < 0
+  ) {
+    malformed(operation, 'input_ref_size_invalid');
+  }
+  return {
+    purpose: requireNonEmptyString(operation, object.purpose, 'input_ref_purpose_invalid'),
+    artifactId: requireStableId(operation, object.artifactId),
+    version: requirePositiveInteger(operation, object.version),
+    contentHash: requireSha256Hex(operation, object.contentHash, 'input_ref_hash_invalid'),
+    sizeBytes: object.sizeBytes,
+    locator: requireNonEmptyString(operation, object.locator, 'input_ref_locator_invalid'),
+    mediaType: requireNonEmptyString(operation, object.mediaType, 'input_ref_media_invalid'),
+    origin: validateExecutionInputOriginWire(operation, object.origin),
+  };
+}
+
+/** execution.input.prepare completed 结果（可绑定制品组身份；正文永不内联）。 */
+export interface ExecutionInputPrepareResult {
+  readonly schemaVersion: number;
+  readonly bindable: true;
+  readonly preparedAt: string;
+  readonly group: {
+    readonly snapshot: ExecutionInputGroupBodyRefWire;
+    readonly manifest: ExecutionInputGroupBodyRefWire;
+    readonly prompt: ExecutionInputGroupBodyRefWire;
+  };
+  readonly requiredInputs: readonly ExecutionInputRefWire[];
+  readonly digests: {
+    readonly snapshotDigest: string;
+    readonly manifestDigest: string;
+    readonly promptDigest: string;
+    readonly strategyCopyDigest: string;
+    readonly permissionsDigest: string;
+  };
+  readonly approval: {
+    readonly planDigest: string;
+    readonly checkPolicyDigest: string;
+    readonly decisionId: string | null;
+    readonly featureRevision: number;
+  };
+  readonly taskRevision: number;
+  readonly promptBytes: number;
+  readonly tokenEstimate: ContextTokenEstimate;
+}
+
+export function validateExecutionInputPrepareResultWire(
+  value: unknown,
+  operation: HostOperation = 'commands.submit',
+): ExecutionInputPrepareResult {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, [
+    'schemaVersion',
+    'bindable',
+    'preparedAt',
+    'group',
+    'requiredInputs',
+    'digests',
+    'approval',
+    'taskRevision',
+    'promptBytes',
+    'tokenEstimate',
+  ]);
+  if (object.bindable !== true) {
+    malformed(operation, 'input_group_not_bindable');
+  }
+  if (!isIsoUtcDateTime(object.preparedAt)) {
+    malformed(operation, 'input_group_time_invalid');
+  }
+  const group = requirePlain(operation, object.group);
+  exactKeys(operation, group, ['snapshot', 'manifest', 'prompt']);
+  if (!Array.isArray(object.requiredInputs)) {
+    malformed(operation, 'input_refs_invalid');
+  }
+  const digests = requirePlain(operation, object.digests);
+  exactKeys(operation, digests, [
+    'snapshotDigest',
+    'manifestDigest',
+    'promptDigest',
+    'strategyCopyDigest',
+    'permissionsDigest',
+  ]);
+  const approval = requirePlain(operation, object.approval);
+  exactKeys(operation, approval, [
+    'planDigest',
+    'checkPolicyDigest',
+    'decisionId',
+    'featureRevision',
+  ]);
+  if (
+    approval.decisionId !== null &&
+    (typeof approval.decisionId !== 'string' || approval.decisionId.length === 0)
+  ) {
+    malformed(operation, 'input_group_approval_invalid');
+  }
+  if (
+    typeof object.promptBytes !== 'number' ||
+    !Number.isSafeInteger(object.promptBytes) ||
+    object.promptBytes < 0
+  ) {
+    malformed(operation, 'input_group_size_invalid');
+  }
+  const tokenEstimate = requirePlain(operation, object.tokenEstimate);
+  exactKeys(operation, tokenEstimate, ['value', 'kind', 'method']);
+  if (
+    tokenEstimate.kind !== 'estimation' ||
+    typeof tokenEstimate.value !== 'number' ||
+    !Number.isSafeInteger(tokenEstimate.value) ||
+    tokenEstimate.value < 0
+  ) {
+    malformed(operation, 'input_group_token_estimate_invalid');
+  }
+  return {
+    schemaVersion: requirePositiveInteger(operation, object.schemaVersion),
+    bindable: true,
+    preparedAt: object.preparedAt,
+    group: {
+      snapshot: validateExecutionInputGroupBodyRefWire(operation, group.snapshot, 'snapshot'),
+      manifest: validateExecutionInputGroupBodyRefWire(operation, group.manifest, 'manifest'),
+      prompt: validateExecutionInputGroupBodyRefWire(operation, group.prompt, 'prompt'),
+    },
+    requiredInputs: (object.requiredInputs as unknown[]).map((item) =>
+      validateExecutionInputRefWire(operation, item),
+    ),
+    digests: {
+      snapshotDigest: requireSha256Hex(operation, digests.snapshotDigest, 'input_group_hash_invalid'),
+      manifestDigest: requireSha256Hex(operation, digests.manifestDigest, 'input_group_hash_invalid'),
+      promptDigest: requireSha256Hex(operation, digests.promptDigest, 'input_group_hash_invalid'),
+      strategyCopyDigest: requireSha256Hex(
+        operation,
+        digests.strategyCopyDigest,
+        'input_group_hash_invalid',
+      ),
+      permissionsDigest: requireSha256Hex(
+        operation,
+        digests.permissionsDigest,
+        'input_group_hash_invalid',
+      ),
+    },
+    approval: {
+      planDigest: requireSha256Hex(operation, approval.planDigest, 'input_group_approval_invalid'),
+      checkPolicyDigest: requireSha256Hex(
+        operation,
+        approval.checkPolicyDigest,
+        'input_group_approval_invalid',
+      ),
+      decisionId: approval.decisionId as string | null,
+      featureRevision: requirePositiveInteger(operation, approval.featureRevision),
+    },
+    taskRevision: requirePositiveInteger(operation, object.taskRevision),
+    promptBytes: object.promptBytes,
+    tokenEstimate: {
+      value: tokenEstimate.value as number,
+      kind: 'estimation',
+      method: requireNonEmptyString(operation, tokenEstimate.method, 'input_group_token_estimate_invalid'),
+    },
+  };
+}
+
+/** features.approvals 查询响应（当前决定 vs 历史 + fail-closed validity）。 */
+export function validateFeatureApprovalsResultWire(
+  operation: HostOperation,
+  body: unknown,
+): FeatureApprovalsResult {
+  const object = requirePlain(operation, body);
+  exactKeys(operation, object, ['feature', 'currentDecision', 'decisions', 'validity']);
+  const currentDecision =
+    object.currentDecision === null
+      ? null
+      : validatePlanApprovalDecisionWire(operation, object.currentDecision, {
+          requireCurrent: true,
+        });
+  if (!Array.isArray(object.decisions)) {
+    malformed(operation, 'approval_decisions_invalid');
+  }
+  const decisions = object.decisions.map((item) =>
+    validatePlanApprovalDecisionWire(operation, item, { requireCurrent: false }),
+  );
+  // 同一主体同一身份至多一条当前决定（服务端契约；漂移即协议错误）。
+  if (decisions.filter((decision) => decision.current).length > 1) {
+    malformed(operation, 'approval_decisions_invalid');
+  }
+  return {
+    feature: validateFeatureRecordWire(operation, object.feature),
+    currentDecision,
+    decisions,
+    validity: validatePlanApprovalValidityWire(operation, object.validity),
+  };
+}
+
 /* ------------------------------------------------------------------ *
  * 查询响应分发（§7.2/§8）
  * ------------------------------------------------------------------ */
@@ -1953,6 +2463,12 @@ export function validateAppQueryResponse(
   body: unknown,
   expectation?: SnapshotExpectation,
 ): TaskDetailResult;
+// P03-2 / F-007：审批决策查询响应重载。
+export function validateAppQueryResponse(
+  operation: 'features.approvals',
+  body: unknown,
+  expectation?: SnapshotExpectation,
+): FeatureApprovalsResult;
 export function validateAppQueryResponse(
   operation: 'projects.list',
   body: unknown,
@@ -2089,6 +2605,9 @@ export function validateAppQueryResponse(
       exactKeys(operation, object, ['task']);
       return { task: validateTaskRecordWire(operation, object.task) };
     }
+    // P03-2 / F-007：审批决策查询响应分发（同一冻结字段集纪律）。
+    case 'features.approvals':
+      return validateFeatureApprovalsResultWire(operation, body);
     default: {
       const exhaustive: never = operation;
       throw new TypeError(`未覆盖的查询操作：${String(exhaustive)}`);

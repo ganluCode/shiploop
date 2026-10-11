@@ -193,9 +193,10 @@ describe('F-001 P02-4 验收契约文档', () => {
       expect(contractDoc).toContain(route);
     }
     for (const token of [
-      // P03-1 / F-009 起线消息升 v4（P02-3 冻结时为 3，历史记录保留）。
-      'schemaVersion=4',
+      // P03-2 / F-007 起线消息升 v5（P03-1 冻结时为 4，历史记录保留）。
+      'schemaVersion=5',
       'P03-1 / F-009',
+      'P03-2 / F-007',
       'evcur_v1',
       'local-owner',
       'TrustedPrincipal',

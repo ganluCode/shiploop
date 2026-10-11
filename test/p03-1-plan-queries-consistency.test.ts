@@ -133,7 +133,7 @@ describe('F-006 计划详情一致读视图（跨进程修订竞争 × 持续读
       changes: Record<string, unknown> = {},
     ): Promise<CommandReceipt> =>
       app.commandService.submit(owner, {
-        schemaVersion: 4,
+        schemaVersion: 5,
         commandId: randomUUID(),
         operation,
         scope,

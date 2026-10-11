@@ -27,9 +27,12 @@ export const DISCOVERY_SCHEMA_VERSION = 1 as const;
  * projects.inspect/overview，集合变化必须显式升版；2/1 → 400
  * unsupported_schema_version，不降级）；P03-1 / F-009 起为 4
  *（docs/p03-1-plan-import-contract.md §5/§9.6：计划域四命令与六查询进入握手
- * 能力集合，同一升版纪律；旧 v3/v2/v1 → 400，不猜测降级）。
+ * 能力集合，同一升版纪律）；P03-2 / F-007 起为 5（docs/p03-2-plan-approval-
+ * contract.md：task.strategy.update/feature.plan.decide/execution.input.prepare
+ * 三命令与 features.approvals 查询进入能力集合，同一升版纪律；旧 v4/v3/v2/v1
+ * → 400，不猜测降级）。
  */
-export const CURRENT_SCHEMA_VERSION = 4 as const;
+export const CURRENT_SCHEMA_VERSION = 5 as const;
 
 /** 当前 Host 生命周期线协议版本；本 Feature 只实现 v1。 */
 export const CURRENT_PROTOCOL_VERSION = 1 as const;
@@ -82,6 +85,8 @@ export const PHASES_ROUTE = '/v1/phases';
 export const PHASES_ROUTE_PREFIX = '/v1/phases/';
 export const FEATURES_ROUTE = '/v1/features';
 export const FEATURES_ROUTE_PREFIX = '/v1/features/';
+/** P03-2 / F-007：Feature 审批决策子资源（GET /v1/features/:featureId/approvals）。 */
+export const FEATURE_APPROVALS_ROUTE_SUFFIX = '/approvals';
 export const TASKS_ROUTE = '/v1/tasks';
 export const TASKS_ROUTE_PREFIX = '/v1/tasks/';
 

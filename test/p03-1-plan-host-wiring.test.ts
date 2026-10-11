@@ -7,7 +7,7 @@
  *   completed 回执内嵌结果经客户端线校验器运行时复核；
  * - 层级列表/详情/DAG 查询经既有授权查询模式暴露（/v1/phases、/v1/features、
  *   /v1/tasks），Host 不直接读写 SQLite；分页/游标/体积上限沿用既有实现；
- * - 握手与线消息版本（P03-1 / F-009 升 v4）对旧客户端明确拒绝
+ * - 握手与线消息版本（P03-2 / F-007 升 v5）对旧客户端明确拒绝
  *   （unsupported_schema_version），畸形响应/未知字段/未知版本一律协议错误；
  * - 新事件（phase.created/feature.plan.imported/*.labels.updated/
  *   feature.plan.revised）经 SSE 线校验可读；幂等重放零新增副作用；
@@ -210,7 +210,7 @@ describe('F-009 计划域 HostClient 纵向（真实 Host + SQLite）', () => {
     const s = await setupWired('vertical');
     try {
       const { projectId, phaseId } = await s.seedProjectWithPhase('phase-main');
-      expect(CURRENT_SCHEMA_VERSION).toBe(4);
+      expect(CURRENT_SCHEMA_VERSION).toBe(5);
 
       // 事件观察：以命令前水位续读（SSE 线校验覆盖新事件类型）。
       const snapshotBefore = await s.client.getSnapshot({ kind: 'project', projectId });
@@ -429,11 +429,11 @@ describe('F-009 计划域 HostClient 纵向（真实 Host + SQLite）', () => {
  * B. 版本与路由负例（明确拒绝，不猜测降级）
  * ------------------------------------------------------------------ */
 
-describe('F-009 线消息 v4 与旧客户端明确拒绝', () => {
-  it('握手对 v3/v2/v1 明确 400 unsupported_schema_version（不跨越认证暴露版本）', async () => {
+describe('F-009 线消息升级与旧客户端明确拒绝（现为 v5，旧 v4/v3/v2/v1 明确拒绝）', () => {
+  it('握手对 v4/v3/v2/v1 明确 400 unsupported_schema_version（不跨越认证暴露版本）', async () => {
     const s = await setupWired('legacy');
     try {
-      for (const legacyVersion of [3, 2, 1]) {
+      for (const legacyVersion of [4, 3, 2, 1]) {
         const legacy = await loopbackRequest({
           port: s.port,
           method: 'POST',
@@ -724,7 +724,7 @@ describe('F-009 计划面线校验器（畸形响应/未知版本拒绝）', () 
 
   it('phases.list 正例通过；未知版本/未知键/坏 scope/坏游标前缀/坏记录拒绝', async () => {
     const page = validateAppQueryResponse('phases.list', {
-      schemaVersion: 4,
+      schemaVersion: 5,
       scope: 'phase-list',
       records: [phaseRecord],
       nextCursor: null,
@@ -747,7 +747,7 @@ describe('F-009 计划面线校验器（畸形响应/未知版本拒绝）', () 
     expectProtocolError(
       await rejectionOf(() =>
         validateAppQueryResponse('phases.list', {
-          schemaVersion: 4,
+          schemaVersion: 5,
           scope: 'phase-list',
           records: [],
           nextCursor: null,
@@ -760,7 +760,7 @@ describe('F-009 计划面线校验器（畸形响应/未知版本拒绝）', () 
     expectProtocolError(
       await rejectionOf(() =>
         validateAppQueryResponse('phases.list', {
-          schemaVersion: 4,
+          schemaVersion: 5,
           scope: 'project-list',
           records: [],
           nextCursor: null,
@@ -772,7 +772,7 @@ describe('F-009 计划面线校验器（畸形响应/未知版本拒绝）', () 
     expectProtocolError(
       await rejectionOf(() =>
         validateAppQueryResponse('phases.list', {
-          schemaVersion: 4,
+          schemaVersion: 5,
           scope: 'phase-list',
           records: [],
           nextCursor: 'evcur_v1_x',
@@ -784,7 +784,7 @@ describe('F-009 计划面线校验器（畸形响应/未知版本拒绝）', () 
     expectProtocolError(
       await rejectionOf(() =>
         validateAppQueryResponse('phases.list', {
-          schemaVersion: 4,
+          schemaVersion: 5,
           scope: 'phase-list',
           records: [{ ...phaseRecord, revision: 'one' }],
           nextCursor: null,

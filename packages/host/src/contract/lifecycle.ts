@@ -67,17 +67,17 @@ export const APPLICATION_COMMAND_CAPABILITIES = [
   //（同一命令面；CLI 计划修订入口仍由后续任务接入）。
   'feature.plan.revise',
   // P03-2 / F-001：Task 策略副本 CAS 编辑经既有 POST /v1/commands 通用路由
-  // 接线（同一命令面；HostClient/CLI 入口由后续任务接入）。
+  // 接线（同一命令面；HostClient 入口 F-007，CLI 入口 F-008）。
   'task.strategy.update',
   // P03-2 / F-002：计划批准/拒绝决策经既有 POST /v1/commands 通用路由接线
-  //（同一命令面；HostClient/CLI 入口与决策查询路由由后续任务接入）。
+  //（同一命令面；HostClient 入口 F-007，CLI 入口 F-008）。
   'feature.plan.decide',
   // P03-2 / F-006：执行输入制品组准备经既有 POST /v1/commands 通用路由
-  // 接线（同一命令面；HostClient/CLI 入口由后续任务接入）。
+  // 接线（同一命令面；HostClient 入口 F-007，CLI 入口 F-008）。
   'execution.input.prepare',
 ] as const;
 
-/** P02-2 §11.3：Host 实际接线的应用查询（含回执/结果读取与快照；P02-3 / F-006 新增静态接入两项；F-014 新增基线分页/详情/证据正文三项；P03-1 / F-009 新增计划层级/详情/DAG 六项）。 */
+/** P02-2 §11.3：Host 实际接线的应用查询（含回执/结果读取与快照；P02-3 / F-006 新增静态接入两项；F-014 新增基线分页/详情/证据正文三项；P03-1 / F-009 新增计划层级/详情/DAG 六项；P03-2 / F-007 新增审批决策查询一项）。 */
 export const APPLICATION_QUERY_CAPABILITIES = [
   'projects.list',
   'projects.get',
@@ -105,6 +105,9 @@ export const APPLICATION_QUERY_CAPABILITIES = [
   'features.get',
   'tasks.list',
   'tasks.get',
+  // P03-2 / F-007：Feature 审批决策查询（能力位复用 project.read；与 Core
+  // PLAN_APPROVAL_QUERY_OPERATION 同步，不漂移）。
+  'features.approvals',
 ] as const;
 
 /**

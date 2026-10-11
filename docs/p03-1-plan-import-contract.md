@@ -212,8 +212,8 @@ P03-1 之后每次收尾仍须跑完整门禁（`npm run verify` 或等价的 te
 ## 5. 版本兼容
 
 - `FEATURE_PLAN_SCHEMA_VERSION = 1` 是计划 payload 的独立结构版本，与
-  `SETTINGS_SCHEMA_VERSION = 2`（配置 payload）、`WIRE_MESSAGE_SCHEMA_VERSION = 4`（线消息，
-  P03-1 / F-009 起）**互不联动**，各自显式演进。
+  `SETTINGS_SCHEMA_VERSION = 2`（配置 payload）、`WIRE_MESSAGE_SCHEMA_VERSION = 5`（线消息，
+  P03-2 / F-007 起；P03-1 / F-009 冻结时为 4）**互不联动**，各自显式演进。
 - 未知/更高 `schemaVersion` 一律拒绝（kind='validation'），**不静默降级**、不猜测旧格式。
 - **F-009 定案（升版 3 → 4）**：P03-1 把计划域四命令（`phase.create`/
   `feature.plan.import`/`plan.labels.update`/`feature.plan.revise`，F-004 ~ F-008 已在 v3 内
@@ -223,6 +223,10 @@ P03-1 之后每次收尾仍须跑完整门禁（`npm run verify` 或等价的 te
   的 2 → 3 同一升版理由）。旧 v3/v2/v1 客户端在握手/命令信封得到明确
   `unsupported_schema_version`（400），不猜测降级；发现 schemaVersion 与 protocolVersion
   不变；持久回执读取时以当前常量重盖 schemaVersion，升级不破坏既有库。
+- **后续演进（P03-2 / F-007 定案：升版 4 → 5）**：P03-2 把 Task 策略编辑/计划决策/
+  执行输入准备三命令与 `features.approvals` 审批查询纳入握手能力集合，按同一纪律显式升
+  `WIRE_MESSAGE_SCHEMA_VERSION = 5`（Host `CURRENT_SCHEMA_VERSION` 同步）；旧 v4/v3/v2/v1
+  客户端得到明确 `unsupported_schema_version`（400）。本节的 3 → 4 定案作为历史记录保留。
 - 错误归属实体类型扩展：`StorageEntityType` 新增 `feature` / `task`（P03-1/F-001），供计划
   校验错误定位；持久化表随 F-002 迁移建立，错误类型先于表存在不构成存储承诺。
 

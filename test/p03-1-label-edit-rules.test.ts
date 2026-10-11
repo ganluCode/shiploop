@@ -230,7 +230,7 @@ describe('F-007 标签字段纯校验（复用规范化与 64/50 上限、严格
 
 describe('F-007 plan.labels.update 命令契约（与实质计划编辑可区分）', () => {
   const validEnvelope = (changes: Record<string, unknown> = {}) => ({
-    schemaVersion: 4,
+    schemaVersion: 5,
     commandId: randomUUID(),
     operation: 'plan.labels.update',
     scope: { kind: 'project', projectId: PROJECT_ID },

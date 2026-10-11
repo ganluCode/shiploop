@@ -44,6 +44,9 @@ export type {
   ImportFeaturePlanInput,
   UpdatePlanLabelsInput,
   ReviseFeaturePlanInput,
+  DecideFeaturePlanInput,
+  UpdateTaskStrategyInput,
+  PrepareExecutionInputInput,
   PlanListPageInput,
   PlanLabelEntityType,
 } from './app-client.js';
@@ -55,6 +58,10 @@ export {
   validateFeaturePlanImportResultWire,
   validatePlanLabelsUpdateResultWire,
   validateFeaturePlanReviseResultWire,
+  validateFeaturePlanDecideResultWire,
+  validateTaskStrategyUpdateResultWire,
+  validateExecutionInputPrepareResultWire,
+  validateFeatureApprovalsResultWire,
 } from './app-wire.js';
 export type {
   AppQueryOperation,
@@ -64,4 +71,9 @@ export type {
   FeaturePlanImportResult,
   PlanLabelsUpdateResult,
   FeaturePlanReviseResult,
+  FeaturePlanDecideResult,
+  TaskStrategyUpdateResult,
+  ExecutionInputPrepareResult,
+  ExecutionInputGroupBodyRefWire,
+  ExecutionInputRefWire,
 } from './app-wire.js';

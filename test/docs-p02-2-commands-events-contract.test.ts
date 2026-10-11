@@ -200,12 +200,12 @@ describe('F-001 契约文档与仓库基线一致（开工现状事实）', () =
     expect(root.scripts).toHaveProperty('accept:p02', 'node scripts/acceptance/p02-accept.ts');
   });
 
-  it('F-011 已升线消息 v2 并以 §11.3 结构化能力宣告真实接线（F-012 起 events 为 SSE 视图；P03-1/F-009 起线消息续升 v4，见 p03-1 契约）', () => {
+  it('F-011 已升线消息 v2 并以 §11.3 结构化能力宣告真实接线（F-012 起 events 为 SSE 视图；P03-2/F-007 起线消息续升 v5，见 p03-2 契约）', () => {
     const constants = readText('packages/host/src/contract/constants.ts');
-    // P03-1 / F-009 将线消息升至 v4（计划域命令/查询进入握手能力集合，显式
-    // 升版纪律）；本守护跟随当前实现状态，演进依据见
-    // docs/p03-1-plan-import-contract.md §5/§9.6。
-    expect(constants).toMatch(/export const CURRENT_SCHEMA_VERSION = 4 as const/);
+    // P03-2 / F-007 将线消息升至 v5（决策/策略/输入准备三命令与审批查询进入
+    // 握手能力集合，显式升版纪律）；本守护跟随当前实现状态，演进依据见
+    // docs/p03-2-plan-approval-contract.md。
+    expect(constants).toMatch(/export const CURRENT_SCHEMA_VERSION = 5 as const/);
     expect(constants).toMatch(/export const MAX_APP_BODY_BYTES = 65_536/);
     expect(constants).toMatch(/export const MAX_QUERY_STRING_BYTES = 8_192/);
     const lifecycle = readText('packages/host/src/contract/lifecycle.ts');
