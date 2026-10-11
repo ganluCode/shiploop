@@ -2,4 +2,4 @@ $ <HOME>/.nvm/versions/node/v22.19.0/bin/node <SNAPSHOT-ROOT>/packages/cli/dist/
 cwd=<TMPDIR>/smoke/cwd
 exit=0 signal=null
 
-{"ok":true,"command":"host.stop","result":{"commandId":"78c3874b-9a81-4dcd-9354-38a4ec7ed49c","status":"stopped","hostInstanceId":"76622271-be77-425a-b0d0-557c51ad3cb9","replayed":false,"evidence":{"processExit":"confirmed","lock":"acquirable","discovery":"removed"}}}
+{"ok":true,"command":"host.stop","result":{"commandId":"8adb7c0f-7b04-41e0-bcf1-fc15f45d6dbc","status":"stopped","hostInstanceId":"4f28ac2f-ca90-43d5-9ce4-825b78a39988","replayed":false,"evidence":{"processExit":"confirmed","lock":"acquirable","discovery":"removed"}}}

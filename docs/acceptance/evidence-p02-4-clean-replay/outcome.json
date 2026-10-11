@@ -1,46 +1,663 @@
 {
-  "ok": false,
-  "problems": [
-    "复跑异常中断：源仓库工作树不干净：干净安装复跑要求受测代码已提交（dirty 结果不能冒充已提交基线）",
-    "缺少干净快照，无法执行构建扫描",
-    "未取得两次独立的 accept:p02 运行"
+  "ok": true,
+  "problems": [],
+  "commit": "ca63e21a6a5c4e86c170345476d7d62b131077ca",
+  "branch": "acceptance/p02",
+  "steps": [
+    {
+      "id": "npm-ci",
+      "label": "npm ci",
+      "npmArgs": [
+        "ci"
+      ],
+      "exitCode": 0,
+      "durationMs": 4215,
+      "timedOut": false,
+      "logPath": "logs/npm-ci.log"
+    },
+    {
+      "id": "build",
+      "label": "npm run build",
+      "npmArgs": [
+        "run",
+        "build"
+      ],
+      "exitCode": 0,
+      "durationMs": 10730,
+      "timedOut": false,
+      "logPath": "logs/build.log"
+    },
+    {
+      "id": "public-import-smoke",
+      "label": "公共入口 import 无进程/网络副作用冒烟",
+      "npmArgs": [],
+      "exitCode": 0,
+      "durationMs": 67,
+      "timedOut": false,
+      "logPath": "logs/public-import-smoke.log"
+    },
+    {
+      "id": "dist-smoke",
+      "label": "正式 CLI/Host 非源码 cwd 冒烟（隔离 HOME/数据根/TMPDIR/Git 仓库）",
+      "npmArgs": [],
+      "exitCode": 0,
+      "durationMs": 644,
+      "timedOut": false,
+      "logPath": "logs/dist-smoke-*.log"
+    },
+    {
+      "id": "accept-p02-1",
+      "label": "npm run accept:p02（第 1 次）",
+      "npmArgs": [
+        "run",
+        "accept:p02"
+      ],
+      "exitCode": 0,
+      "durationMs": 265231,
+      "timedOut": false,
+      "logPath": "logs/accept-p02-1.log"
+    },
+    {
+      "id": "accept-p02-2",
+      "label": "npm run accept:p02（第 2 次，验证不复用上次项目/数据库/发现文件）",
+      "npmArgs": [
+        "run",
+        "accept:p02"
+      ],
+      "exitCode": 0,
+      "durationMs": 268133,
+      "timedOut": false,
+      "logPath": "logs/accept-p02-2.log"
+    }
   ],
-  "commit": "",
-  "branch": "",
-  "steps": [],
   "smoke": {
-    "cwdLogical": "",
-    "homeLogical": "",
-    "dataRootLogical": "",
-    "repoLogical": "",
-    "commands": [],
-    "cliEntryLogical": "",
-    "listenAddress": "",
-    "port": 0,
-    "startedOutcome": "",
-    "hostInstanceId": "",
-    "statusInstanceId": "",
-    "registrationStatus": "",
-    "projectId": "",
+    "cwdLogical": "<TMPDIR>/smoke/cwd",
+    "homeLogical": "<TMPDIR>/smoke/home",
+    "dataRootLogical": "<TMPDIR>/smoke/data",
+    "repoLogical": "<TMPDIR>/smoke/repo",
+    "commands": [
+      {
+        "label": "git-init",
+        "argv": [
+          "git",
+          "init",
+          "--quiet",
+          "--initial-branch=main"
+        ],
+        "cwd": "<TMPDIR>/smoke/repo",
+        "exitCode": 0,
+        "durationMs": 81,
+        "timedOut": false
+      },
+      {
+        "label": "git-add",
+        "argv": [
+          "git",
+          "add",
+          "-A"
+        ],
+        "cwd": "<TMPDIR>/smoke/repo",
+        "exitCode": 0,
+        "durationMs": 16,
+        "timedOut": false
+      },
+      {
+        "label": "git-commit",
+        "argv": [
+          "git",
+          "-c",
+          "user.name=shiploop-clean-replay",
+          "-c",
+          "user.email=clean-replay@example.invalid",
+          "commit",
+          "--quiet",
+          "-m",
+          "smoke init"
+        ],
+        "cwd": "<TMPDIR>/smoke/repo",
+        "exitCode": 0,
+        "durationMs": 23,
+        "timedOut": false
+      },
+      {
+        "label": "host-start",
+        "argv": [
+          "<HOME>/.nvm/versions/node/v22.19.0/bin/node",
+          "<SNAPSHOT-ROOT>/packages/cli/dist/bin.js",
+          "host",
+          "start",
+          "--data-root",
+          "<TMPDIR>/smoke/data",
+          "--json"
+        ],
+        "cwd": "<TMPDIR>/smoke/cwd",
+        "exitCode": 0,
+        "durationMs": 177,
+        "timedOut": false
+      },
+      {
+        "label": "project-register",
+        "argv": [
+          "<HOME>/.nvm/versions/node/v22.19.0/bin/node",
+          "<SNAPSHOT-ROOT>/packages/cli/dist/bin.js",
+          "project",
+          "register",
+          "<TMPDIR>/smoke/repo",
+          "--name",
+          "clean-replay smoke",
+          "--data-root",
+          "<TMPDIR>/smoke/data",
+          "--json"
+        ],
+        "cwd": "<TMPDIR>/smoke/cwd",
+        "exitCode": 0,
+        "durationMs": 146,
+        "timedOut": false
+      },
+      {
+        "label": "host-status",
+        "argv": [
+          "<HOME>/.nvm/versions/node/v22.19.0/bin/node",
+          "<SNAPSHOT-ROOT>/packages/cli/dist/bin.js",
+          "host",
+          "status",
+          "--data-root",
+          "<TMPDIR>/smoke/data",
+          "--json"
+        ],
+        "cwd": "<TMPDIR>/smoke/cwd",
+        "exitCode": 0,
+        "durationMs": 71,
+        "timedOut": false
+      },
+      {
+        "label": "host-stop",
+        "argv": [
+          "<HOME>/.nvm/versions/node/v22.19.0/bin/node",
+          "<SNAPSHOT-ROOT>/packages/cli/dist/bin.js",
+          "host",
+          "stop",
+          "--data-root",
+          "<TMPDIR>/smoke/data",
+          "--json"
+        ],
+        "cwd": "<TMPDIR>/smoke/cwd",
+        "exitCode": 0,
+        "durationMs": 130,
+        "timedOut": false
+      }
+    ],
+    "cliEntryLogical": "<SNAPSHOT-ROOT>/packages/cli/dist/bin.js",
+    "listenAddress": "127.0.0.1",
+    "port": 49435,
+    "startedOutcome": "started",
+    "hostInstanceId": "4f28ac2f-ca90-43d5-9ce4-825b78a39988",
+    "statusInstanceId": "4f28ac2f-ca90-43d5-9ce4-825b78a39988",
+    "registrationStatus": "registered",
+    "projectId": "5f9f7a68-6898-49bc-9b79-fb526bc4374b",
     "stopEvidence": {
-      "processExit": "",
-      "lock": "",
-      "discovery": ""
+      "processExit": "confirmed",
+      "lock": "acquirable",
+      "discovery": "removed"
     }
   },
-  "acceptRuns": [],
+  "acceptRuns": [
+    {
+      "stepId": "accept-p02-1",
+      "exitCode": 0,
+      "timedOut": false,
+      "runId": "20261011T081822Z-503abc69",
+      "conclusion": "pass",
+      "counts": {
+        "pass": 15,
+        "fail": 0,
+        "notRun": 0
+      },
+      "checkStatuses": [
+        {
+          "id": "P02-ENG-VERIFY",
+          "status": "pass"
+        },
+        {
+          "id": "P02-FR1-UNIQUE-HOST",
+          "status": "pass"
+        },
+        {
+          "id": "P02-FR1-SHARED-STATE",
+          "status": "pass"
+        },
+        {
+          "id": "P02-FR1-BASELINE-OK",
+          "status": "pass"
+        },
+        {
+          "id": "P02-FR2-DUPLICATE-INIT",
+          "status": "pass"
+        },
+        {
+          "id": "P02-FR2-COMMAND-CONFLICT",
+          "status": "pass"
+        },
+        {
+          "id": "P02-FR2-SOURCE-PRESERVED",
+          "status": "pass"
+        },
+        {
+          "id": "P02-FR2-AUTH-REJECT",
+          "status": "pass"
+        },
+        {
+          "id": "P02-FR2-CLIENT-EXIT",
+          "status": "pass"
+        },
+        {
+          "id": "P02-FR1-RESTART-QUERY",
+          "status": "pass"
+        },
+        {
+          "id": "P02-FR2-BASELINE-FAILURE",
+          "status": "pass"
+        },
+        {
+          "id": "P02-PHASE-FIXTURE",
+          "status": "pass"
+        },
+        {
+          "id": "P02-PHASE-NOT-RUN",
+          "status": "pass"
+        },
+        {
+          "id": "P02-PHASE-REPORT",
+          "status": "pass"
+        },
+        {
+          "id": "P02-ENG-CLEAN-REPLAY",
+          "status": "pass"
+        }
+      ],
+      "runDirLogical": "<SNAPSHOT-ROOT>/artifacts/acceptance/p02/20261011T081822Z-503abc69",
+      "reportVerified": true,
+      "reportProblems": [],
+      "evidenceDigests": [
+        {
+          "path": "evidence/config.json",
+          "sha256": "261a1d0946a17aaa5cf426d25e25a177401e56e9ed567439d795f974e53249a4",
+          "sizeBytes": 4308
+        },
+        {
+          "path": "evidence/environment.json",
+          "sha256": "7beed518e2fc641ad80aa5ee0aa02795bebfbdbb9e4f625dcecfacdde044d73b",
+          "sizeBytes": 802
+        },
+        {
+          "path": "evidence/commands/01-verify.log",
+          "sha256": "6d9d73728573e053dd2e9cf1f0e82e24bd53d1621ab2742b442d97332bc790b6",
+          "sizeBytes": 97843
+        },
+        {
+          "path": "evidence/checks/P02-ENG-VERIFY.json",
+          "sha256": "d1b33ac08f5dec0fec5b8e054cfdb721712892331957949631860424b981f4d9",
+          "sizeBytes": 287
+        },
+        {
+          "path": "evidence/commands/02-dual-cli.log",
+          "sha256": "9e1089199eda80ad29107c9751bdfe7bee863ee2ad4ddaf23b09a8d86be38905",
+          "sizeBytes": 1928
+        },
+        {
+          "path": "evidence/checks/P02-FR1-UNIQUE-HOST.json",
+          "sha256": "da59aa1f885459a4483d9e4114cb344647204cffe8aeafc04de09762d465abf7",
+          "sizeBytes": 295
+        },
+        {
+          "path": "evidence/checks/P02-FR1-SHARED-STATE.json",
+          "sha256": "583edcb0d3494c3e8a942e279fc1619cb24d9d772ba2f07ae135e3ff207468fe",
+          "sizeBytes": 296
+        },
+        {
+          "path": "evidence/checks/P02-FR1-BASELINE-OK.json",
+          "sha256": "bc65c7e9298d19f48cca7820b6afeb9c15640c4c98af54a05aa5721890f16e0d",
+          "sizeBytes": 295
+        },
+        {
+          "path": "evidence/commands/03-idempotency.log",
+          "sha256": "30f926825e1ea0ecb3fa7330177914391fffee7e7737bc5249e10fc99e0eebf2",
+          "sizeBytes": 1652
+        },
+        {
+          "path": "evidence/checks/P02-FR2-DUPLICATE-INIT.json",
+          "sha256": "895028e972ce2d08737d2e4f505e20e8ffa09cc33c181862cec5f578ce24fcfd",
+          "sizeBytes": 362
+        },
+        {
+          "path": "evidence/checks/P02-FR2-COMMAND-CONFLICT.json",
+          "sha256": "fe2adb4f406085e3ee7461b0b5aa032f642057ee567b344229c9518ae0f72041",
+          "sizeBytes": 381
+        },
+        {
+          "path": "evidence/commands/04-repo-preservation.log",
+          "sha256": "feed202ad119796d172961d28a8885d3c1bc157a676ea161e7a6924b3a826f6e",
+          "sizeBytes": 1978
+        },
+        {
+          "path": "evidence/checks/P02-FR2-SOURCE-PRESERVED.json",
+          "sha256": "df9c09511346a43319ec1066bc5137375a661fe140852f73a0c2673cdb66ebab",
+          "sizeBytes": 393
+        },
+        {
+          "path": "evidence/commands/05-auth-reject.log",
+          "sha256": "2c3bc0cbb5f8182e7cc0e5fb4ef2a9326498186bfc942a2a87547bc5b8a16e0b",
+          "sizeBytes": 2543
+        },
+        {
+          "path": "evidence/checks/P02-FR2-AUTH-REJECT.json",
+          "sha256": "44e9a791524fdc76c08c2c87a3606606945dad94df7ecf5fdd145f698817904c",
+          "sizeBytes": 376
+        },
+        {
+          "path": "evidence/commands/06-restart.log",
+          "sha256": "bf40289a1abfe45f4db62a638c41090a3e955ed2da70635aa329d36bcb2aad09",
+          "sizeBytes": 2214
+        },
+        {
+          "path": "evidence/checks/P02-FR2-CLIENT-EXIT.json",
+          "sha256": "87a02f492e1f95bf8ba48e724f397cb6fe046b7466070c7c7354320c8ef5435f",
+          "sizeBytes": 351
+        },
+        {
+          "path": "evidence/checks/P02-FR1-RESTART-QUERY.json",
+          "sha256": "08dfa88e709924f408eac65cabd8e7e4ce880c691faaf265f380cc86202a7609",
+          "sizeBytes": 295
+        },
+        {
+          "path": "evidence/commands/07-baseline-failure.log",
+          "sha256": "656fdf1cb6795e810ed80b58158d4f6d6f4a329256ca2cfb8c372f528e7c0623",
+          "sizeBytes": 2876
+        },
+        {
+          "path": "evidence/checks/P02-FR2-BASELINE-FAILURE.json",
+          "sha256": "fd3dade408eba6004a536a9bb3a8135d541081690a6678b5b4c17f698137ee20",
+          "sizeBytes": 391
+        },
+        {
+          "path": "evidence/commands/08-controller.log",
+          "sha256": "0791cecdb5e914815dd3c44ff39906a7b68b68ea7c9c19b9db7af148a4eee2cc",
+          "sizeBytes": 1531
+        },
+        {
+          "path": "evidence/checks/P02-PHASE-FIXTURE.json",
+          "sha256": "6d5c7aec45f39755273c16f4a0c41226f75a7164964fd5685f5e4d752a51c4db",
+          "sizeBytes": 296
+        },
+        {
+          "path": "evidence/commands/09-report-aggregation.log",
+          "sha256": "186ced416baac3f99fb30f6e44cf17add610f4357c3d2010c9b7b726da116f56",
+          "sizeBytes": 1066
+        },
+        {
+          "path": "evidence/checks/P02-PHASE-NOT-RUN.json",
+          "sha256": "eb8139581b58a6a7a13466e15fe89f535d5bba99fe6571bf1be44c36bc21183c",
+          "sizeBytes": 311
+        },
+        {
+          "path": "evidence/commands/10-acceptance-report.log",
+          "sha256": "993589bd2de9d539c39902c857257acb39866f9d052ccd84e09dc31d543d0de2",
+          "sizeBytes": 1064
+        },
+        {
+          "path": "evidence/checks/P02-PHASE-REPORT.json",
+          "sha256": "b5e2728b6d972326f352557af396881c3d0a8418b1ae49ad647b726f90c64ac1",
+          "sizeBytes": 308
+        },
+        {
+          "path": "evidence/commands/11-clean-replay.log",
+          "sha256": "4d8dee9ea8ce4f4bba5688f9d6a014713afbe8e493977e81a57d8b1279cbe202",
+          "sizeBytes": 1198
+        },
+        {
+          "path": "evidence/checks/P02-ENG-CLEAN-REPLAY.json",
+          "sha256": "de3cc07aced3f0de0be1a2279bc70785fe2eac746a9e89eea4207f948088e74e",
+          "sizeBytes": 302
+        }
+      ],
+      "tempRootLogical": "<TMPDIR>/accept-1"
+    },
+    {
+      "stepId": "accept-p02-2",
+      "exitCode": 0,
+      "timedOut": false,
+      "runId": "20261011T082247Z-9a3e2260",
+      "conclusion": "pass",
+      "counts": {
+        "pass": 15,
+        "fail": 0,
+        "notRun": 0
+      },
+      "checkStatuses": [
+        {
+          "id": "P02-ENG-VERIFY",
+          "status": "pass"
+        },
+        {
+          "id": "P02-FR1-UNIQUE-HOST",
+          "status": "pass"
+        },
+        {
+          "id": "P02-FR1-SHARED-STATE",
+          "status": "pass"
+        },
+        {
+          "id": "P02-FR1-BASELINE-OK",
+          "status": "pass"
+        },
+        {
+          "id": "P02-FR2-DUPLICATE-INIT",
+          "status": "pass"
+        },
+        {
+          "id": "P02-FR2-COMMAND-CONFLICT",
+          "status": "pass"
+        },
+        {
+          "id": "P02-FR2-SOURCE-PRESERVED",
+          "status": "pass"
+        },
+        {
+          "id": "P02-FR2-AUTH-REJECT",
+          "status": "pass"
+        },
+        {
+          "id": "P02-FR2-CLIENT-EXIT",
+          "status": "pass"
+        },
+        {
+          "id": "P02-FR1-RESTART-QUERY",
+          "status": "pass"
+        },
+        {
+          "id": "P02-FR2-BASELINE-FAILURE",
+          "status": "pass"
+        },
+        {
+          "id": "P02-PHASE-FIXTURE",
+          "status": "pass"
+        },
+        {
+          "id": "P02-PHASE-NOT-RUN",
+          "status": "pass"
+        },
+        {
+          "id": "P02-PHASE-REPORT",
+          "status": "pass"
+        },
+        {
+          "id": "P02-ENG-CLEAN-REPLAY",
+          "status": "pass"
+        }
+      ],
+      "runDirLogical": "<SNAPSHOT-ROOT>/artifacts/acceptance/p02/20261011T082247Z-9a3e2260",
+      "reportVerified": true,
+      "reportProblems": [],
+      "evidenceDigests": [
+        {
+          "path": "evidence/config.json",
+          "sha256": "261a1d0946a17aaa5cf426d25e25a177401e56e9ed567439d795f974e53249a4",
+          "sizeBytes": 4308
+        },
+        {
+          "path": "evidence/environment.json",
+          "sha256": "7beed518e2fc641ad80aa5ee0aa02795bebfbdbb9e4f625dcecfacdde044d73b",
+          "sizeBytes": 802
+        },
+        {
+          "path": "evidence/commands/01-verify.log",
+          "sha256": "32a035bdb6db43f1a32643d1aaa724089605e7fb1843024e556113e9f0ccaf1e",
+          "sizeBytes": 94372
+        },
+        {
+          "path": "evidence/checks/P02-ENG-VERIFY.json",
+          "sha256": "1a097ddd5bcde2e6760983a442d15e543ab1ad08791c2eddab057078895821b2",
+          "sizeBytes": 287
+        },
+        {
+          "path": "evidence/commands/02-dual-cli.log",
+          "sha256": "741583db256ea407eeb1ea826246affb304d9d1d4af11b999c3df8a123babf80",
+          "sizeBytes": 1939
+        },
+        {
+          "path": "evidence/checks/P02-FR1-UNIQUE-HOST.json",
+          "sha256": "e5fb6370a6aab2225d742d8ff27c6f7fd0ddbe4949e273736e4533c9101fd4d7",
+          "sizeBytes": 295
+        },
+        {
+          "path": "evidence/checks/P02-FR1-SHARED-STATE.json",
+          "sha256": "925c6890033a8a9889ffdd3d52d78795d4e6c865fbbdcd9e7e546e8ba095934a",
+          "sizeBytes": 296
+        },
+        {
+          "path": "evidence/checks/P02-FR1-BASELINE-OK.json",
+          "sha256": "9ce37eea0b0eeed052a9179259821beeab281b47f2e18832d2ccc0944ccac297",
+          "sizeBytes": 295
+        },
+        {
+          "path": "evidence/commands/03-idempotency.log",
+          "sha256": "7b62fbe9e04f1e68fca53488dfd40524d867458e3e7d7dd44a67c3ad58601ade",
+          "sizeBytes": 1652
+        },
+        {
+          "path": "evidence/checks/P02-FR2-DUPLICATE-INIT.json",
+          "sha256": "a95b90fc43e108b57b331261fd6c914a214ffa4aa8f3366fa6449566560ba5b8",
+          "sizeBytes": 362
+        },
+        {
+          "path": "evidence/checks/P02-FR2-COMMAND-CONFLICT.json",
+          "sha256": "8e83a8af1d80f96cc7c4152207ed96573f3b874352bdf2ed8260186e9a36657f",
+          "sizeBytes": 381
+        },
+        {
+          "path": "evidence/commands/04-repo-preservation.log",
+          "sha256": "ea38f838c3c01447d906a07c8c0db09a9260056d7836aa02d9d7da86be7f77a8",
+          "sizeBytes": 1978
+        },
+        {
+          "path": "evidence/checks/P02-FR2-SOURCE-PRESERVED.json",
+          "sha256": "43a7e51368f3d7877dae389c4c6599f6583d53c1c1f6009fb21ba39003e5cd8b",
+          "sizeBytes": 393
+        },
+        {
+          "path": "evidence/commands/05-auth-reject.log",
+          "sha256": "ba1ae1c7035ee97032dc2d3d5e7fa50829e27ac9601a1795df0ce0a6587216e2",
+          "sizeBytes": 2543
+        },
+        {
+          "path": "evidence/checks/P02-FR2-AUTH-REJECT.json",
+          "sha256": "46fdd1a2a708f1fd61b58442cc049ae9871007d2b3075806655a3be1593f93e6",
+          "sizeBytes": 376
+        },
+        {
+          "path": "evidence/commands/06-restart.log",
+          "sha256": "6b83adf7d9b7e54fe42ae40430852e83e4706173144b7e7899a0156f52d5f5ae",
+          "sizeBytes": 2214
+        },
+        {
+          "path": "evidence/checks/P02-FR2-CLIENT-EXIT.json",
+          "sha256": "ba909f21236228c91bb86ae68a1732a9baba4d2167c11d872b37ae8310b139b0",
+          "sizeBytes": 351
+        },
+        {
+          "path": "evidence/checks/P02-FR1-RESTART-QUERY.json",
+          "sha256": "73df47a5d3053ab8e2880e7f0367f0f78c51057ce497bd3141e7fccf422ed08d",
+          "sizeBytes": 295
+        },
+        {
+          "path": "evidence/commands/07-baseline-failure.log",
+          "sha256": "b817075ec55530a0c7021322ab6bfbe7ccb35a79434942598af5873ca69b9f84",
+          "sizeBytes": 2876
+        },
+        {
+          "path": "evidence/checks/P02-FR2-BASELINE-FAILURE.json",
+          "sha256": "ff08f70550d23e105d47dac5204be1b7f0af895b3566bbd9b27df6f9bf32433c",
+          "sizeBytes": 391
+        },
+        {
+          "path": "evidence/commands/08-controller.log",
+          "sha256": "b920ec50d778982a3d5ac35e9b68012bbc11aaa72fc8afb662a603f79705223b",
+          "sizeBytes": 1542
+        },
+        {
+          "path": "evidence/checks/P02-PHASE-FIXTURE.json",
+          "sha256": "950cb9d4f14ccdbef6fdc403ae609864ded5ca2ef8cccc3b9b79950557c6c947",
+          "sizeBytes": 296
+        },
+        {
+          "path": "evidence/commands/09-report-aggregation.log",
+          "sha256": "91618d4666a991e79556e40c4fa37e4ba42c0fb1ade7fd274060e2defb54423d",
+          "sizeBytes": 1066
+        },
+        {
+          "path": "evidence/checks/P02-PHASE-NOT-RUN.json",
+          "sha256": "6bf24dea41751567bbb49cb10040f1b78d4112c7a0b59ed41033c91eb01eb9bb",
+          "sizeBytes": 311
+        },
+        {
+          "path": "evidence/commands/10-acceptance-report.log",
+          "sha256": "2388af6d611a9770f9372d3cbbc416cd87f9f095f3d3f09d119e7c56dae5f939",
+          "sizeBytes": 1064
+        },
+        {
+          "path": "evidence/checks/P02-PHASE-REPORT.json",
+          "sha256": "d0d99b11cdd1a8fd2cebc248684f107ac27365ff021842d3b2618e31cc6a926b",
+          "sizeBytes": 308
+        },
+        {
+          "path": "evidence/commands/11-clean-replay.log",
+          "sha256": "b2cbcbf20bfddf9fe50c229279a14808202d689ad054ed06d2fc764567fe6c91",
+          "sizeBytes": 1198
+        },
+        {
+          "path": "evidence/checks/P02-ENG-CLEAN-REPLAY.json",
+          "sha256": "06ce699012b2ef92366bc8b70374ef1b69ff60b1a69b9e8f06466055a2302c22",
+          "sizeBytes": 302
+        }
+      ],
+      "tempRootLogical": "<TMPDIR>/accept-2"
+    }
+  ],
   "independence": {
-    "distinctRunIds": false,
-    "distinctRunDirs": false,
-    "distinctTempRoots": false,
-    "noCrossRunIdReference": false,
-    "firstEvidenceUnchanged": false
+    "distinctRunIds": true,
+    "distinctRunDirs": true,
+    "distinctTempRoots": true,
+    "noCrossRunIdReference": true,
+    "firstEvidenceUnchanged": true
   },
   "cleanup": {
     "processesRemaining": [],
     "discoveryFilesRemaining": [],
     "sentinelsRemaining": [],
-    "sentinelStaticLeftovers": [],
+    "sentinelStaticLeftovers": [
+      "<TMPDIR>/accept-1/tmp/shiploop-p01-4-guard-HJqXVE/outside-sentinel.txt",
+      "<TMPDIR>/accept-2/tmp/shiploop-p01-4-guard-lseFol/outside-sentinel.txt"
+    ],
     "continuedWrites": [],
     "observationWindowMs": 2000,
     "tempRootRemoved": true
@@ -72,8 +689,8 @@
   ],
   "evidenceLeakHits": [],
   "buildScan": {
-    "ok": false,
+    "ok": true,
     "findings": [],
-    "fileCount": 0
+    "fileCount": 428
   }
 }

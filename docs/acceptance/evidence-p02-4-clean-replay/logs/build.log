@@ -1,14 +1,14 @@
 $ npm run build
-exit=0 signal=null durationMs=9168
+exit=0 signal=null durationMs=10730
 
 
 > shiploop@0.0.0 build
 > node scripts/build-host-lock.ts && tsc -b packages/core/tsconfig.json packages/host/tsconfig.json packages/cli/tsconfig.json && node scripts/prepare-cli-bin.ts && node scripts/smoke-built-entries.ts
 
 prepare-cli-bin: ok dist/bin.js shebang verified, mode 644 -> 755
-ok shiploop-core: assembly entry ./dist/adapters/composition.js (562ms) -> core-assembly-smoke: ok project=d944455b-b00b-4789-84db-bb9868de20ec artifact=29b85ef1-4919-449e-b2cf-1c09f4e1e8d0 artifactHash=57f73f0da44d dataRootEntries=core.sqlite migrated=true
-ok shiploop-core: loaded ./dist/index.js (exit=0, 32ms, no side effects)
+ok shiploop-core: assembly entry ./dist/adapters/composition.js (541ms) -> core-assembly-smoke: ok project=4aa48145-7c78-4404-99a0-ec7a7f129f58 artifact=9a5718bc-4d5e-4616-a4b9-4f9db40be157 artifactHash=57f73f0da44d dataRootEntries=core.sqlite migrated=true
+ok shiploop-core: loaded ./dist/index.js (exit=0, 35ms, no side effects)
 ok shiploop-host: start entry dist/start.js (loopback 127.0.0.1, discovery==socket, no token leak, fresh instance+token after SIGKILL, bind override exit=2)
-ok shiploop-host: loaded ./dist/index.js (exit=0, 58ms, no side effects)
+ok shiploop-host: loaded ./dist/index.js (exit=0, 65ms, no side effects)
 ok shiploop-cli: dist/bin.js host start/status/stop + project/config/receipt vertical smoke (same instance on second start, host alive across CLI exits, evidence-based stopped, fresh instance after stop, config idempotency/CAS/no-config, exit codes 0/1/2/3, no token leak)
-ok shiploop-cli: loaded ./dist/index.js (exit=0, 57ms, no side effects)
+ok shiploop-cli: loaded ./dist/index.js (exit=0, 63ms, no side effects)
