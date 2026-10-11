@@ -667,18 +667,20 @@ async function runPublicImportSmoke(ctx: ReplayContext): Promise<void> {
   for (const dir of probeEnvDirs) {
     mkdirSync(dir, { recursive: true });
   }
+  // 环境变量一律使用 realpath 拼写（macOS /var → /private/var 别名不得造成拼写分歿）。
+  const probeEnvReal = probeEnvDirs.map((dir) => realpathSync(dir));
   const probeScript = join(snapshotRoot, 'scripts/acceptance/p02-clean-replay-import-probe.mjs');
   const entries = ['packages/core/dist/index.js', 'packages/host/dist/index.js', 'packages/cli/dist/index.js'].map(
     (entry) => join(snapshotRoot, ...entry.split('/')),
   );
   const env: NodeJS.ProcessEnv = {
     PATH: process.env.PATH ?? '/usr/bin:/bin',
-    HOME: probeEnvDirs[0] as string,
-    TMPDIR: probeEnvDirs[1] as string,
+    HOME: probeEnvReal[0] as string,
+    TMPDIR: probeEnvReal[1] as string,
     NODE_NO_WARNINGS: '1',
-    XDG_CONFIG_HOME: probeEnvDirs[2] as string,
-    XDG_DATA_HOME: probeEnvDirs[3] as string,
-    XDG_CACHE_HOME: probeEnvDirs[4] as string,
+    XDG_CONFIG_HOME: probeEnvReal[2] as string,
+    XDG_DATA_HOME: probeEnvReal[3] as string,
+    XDG_CACHE_HOME: probeEnvReal[4] as string,
   };
   const before = treeIndex(probeEnvDirs);
   const result = await runBounded(
@@ -714,8 +716,8 @@ async function runDistSmoke(ctx: ReplayContext): Promise<void> {
   }
   const env: NodeJS.ProcessEnv = {
     PATH: process.env.PATH ?? '/usr/bin:/bin',
-    HOME: smokeHome,
-    TMPDIR: smokeTmp,
+    HOME: realpathSync(smokeHome),
+    TMPDIR: realpathSync(smokeTmp),
     NODE_NO_WARNINGS: '1',
   };
   const gitEnv: NodeJS.ProcessEnv = {
@@ -992,12 +994,12 @@ async function phaseAccept(ctx: ReplayContext, index: 1 | 2): Promise<void> {
   const tmpDir = join(runTempRoot, 'tmp');
   mkdirSync(homeDir, { recursive: true });
   mkdirSync(tmpDir, { recursive: true });
-  // 每次运行独立的 HOME/TMPDIR + 复跑深度护栏（嵌套同名场景不递归复跑）。
+  // 每次运行独立的 HOME/TMPDIR（realpath 拼写）+ 复跑深度护栏（嵌套同名场景不递归复跑）。
   const env = replayChildEnv(
     {
       PATH: process.env.PATH ?? '/usr/bin:/bin',
-      HOME: homeDir,
-      TMPDIR: tmpDir,
+      HOME: realpathSync(homeDir),
+      TMPDIR: realpathSync(tmpDir),
       NODE_NO_WARNINGS: '1',
     },
     1,
@@ -1012,9 +1014,10 @@ async function phaseAccept(ctx: ReplayContext, index: 1 | 2): Promise<void> {
     ctx.state.problems.push(`步骤 ${step.id}：无法从输出解析 accept:p02 REPORT 行`);
     return;
   }
-  const runDir = resolve(summary.runDir);
+  // 报告根/报告目录均按 realpath 对比（macOS /var → /private/var 别名）。
+  const runDir = realpathSync(resolve(summary.runDir));
   const runId = basename(runDir);
-  const reportRoot = join(snapshotRoot, 'artifacts/acceptance/p02');
+  const reportRoot = realpathSync(join(snapshotRoot, 'artifacts/acceptance/p02'));
   if (!runDir.startsWith(reportRoot + '/')) {
     ctx.state.problems.push(`步骤 ${step.id}：报告目录不在快照报告根下：${runDir}`);
     return;
