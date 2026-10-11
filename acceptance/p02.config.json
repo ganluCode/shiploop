@@ -1,0 +1,127 @@
+{
+  "configVersion": 1,
+  "reportRoot": "artifacts/acceptance/p02",
+  "requiredChecks": [
+    "P02-ENG-VERIFY",
+    "P02-FR1-UNIQUE-HOST",
+    "P02-FR1-SHARED-STATE",
+    "P02-FR1-BASELINE-OK",
+    "P02-FR2-DUPLICATE-INIT",
+    "P02-FR2-COMMAND-CONFLICT",
+    "P02-FR2-SOURCE-PRESERVED",
+    "P02-FR2-AUTH-REJECT",
+    "P02-FR2-CLIENT-EXIT",
+    "P02-FR1-RESTART-QUERY",
+    "P02-FR2-BASELINE-FAILURE",
+    "P02-PHASE-FIXTURE",
+    "P02-PHASE-NOT-RUN",
+    "P02-PHASE-REPORT",
+    "P02-ENG-CLEAN-REPLAY"
+  ],
+  "scenarios": [
+    {
+      "id": "verify",
+      "kind": "command",
+      "entry": "npm run verify",
+      "checkIds": ["P02-ENG-VERIFY"]
+    },
+    {
+      "id": "dual-cli",
+      "kind": "test",
+      "entry": "test/p02-4-dual-cli-acceptance.test.ts",
+      "checkIds": ["P02-FR1-UNIQUE-HOST", "P02-FR1-SHARED-STATE", "P02-FR1-BASELINE-OK"]
+    },
+    {
+      "id": "idempotency",
+      "kind": "test",
+      "entry": "test/p02-4-idempotency-acceptance.test.ts",
+      "checkIds": ["P02-FR2-DUPLICATE-INIT", "P02-FR2-COMMAND-CONFLICT"]
+    },
+    {
+      "id": "repo-preservation",
+      "kind": "test",
+      "entry": "test/p02-4-repo-preservation-acceptance.test.ts",
+      "checkIds": ["P02-FR2-SOURCE-PRESERVED"]
+    },
+    {
+      "id": "auth-reject",
+      "kind": "test",
+      "entry": "test/p02-4-negative-acceptance.test.ts",
+      "checkIds": ["P02-FR2-AUTH-REJECT"]
+    },
+    {
+      "id": "restart",
+      "kind": "test",
+      "entry": "test/p02-4-restart-acceptance.test.ts",
+      "checkIds": ["P02-FR2-CLIENT-EXIT", "P02-FR1-RESTART-QUERY"]
+    },
+    {
+      "id": "baseline-failure",
+      "kind": "test",
+      "entry": "test/p02-4-baseline-failure-acceptance.test.ts",
+      "checkIds": ["P02-FR2-BASELINE-FAILURE"]
+    },
+    {
+      "id": "controller",
+      "kind": "test",
+      "entry": "test/p02-4-acceptance-controller.test.ts",
+      "checkIds": ["P02-PHASE-FIXTURE"]
+    },
+    {
+      "id": "report-aggregation",
+      "kind": "test",
+      "entry": "test/p02-4-report-aggregation.test.ts",
+      "checkIds": ["P02-PHASE-NOT-RUN"]
+    },
+    {
+      "id": "acceptance-report",
+      "kind": "test",
+      "entry": "test/p02-4-acceptance-report.test.ts",
+      "checkIds": ["P02-PHASE-REPORT"]
+    },
+    {
+      "id": "clean-replay",
+      "kind": "test",
+      "entry": "test/p02-4-clean-replay.test.ts",
+      "checkIds": ["P02-ENG-CLEAN-REPLAY"]
+    }
+  ],
+  "timeouts": {
+    "verifyMs": 600000,
+    "scenarioMs": 1200000,
+    "overallMs": 7200000
+  },
+  "maxCommandOutputBytes": 262144,
+  "plan": {
+    "phaseId": "2026-10-04-23-19-52_shiploop-p02-hostcli",
+    "stepId": "p02-acceptance",
+    "title": "P02-4 P02 双客户端与初始化验收",
+    "scope": "FR-1/FR-2 双客户端唯一 Host、共享项目/配置、授权基线、重复初始化/命令重放/源文件保留/认证拒绝/客户端退出/重启查询/基线失败与阶段控制检查（macOS 正式范围）",
+    "version": "0.2",
+    "contractDoc": "docs/p02-4-acceptance-contract.md"
+  },
+  "priorBaselines": [
+    {
+      "phase": "p02-host-lifecycle",
+      "branch": "feat/2026-10-04-23-19-52_p02-1-host",
+      "tipCommit": "7ae5f39bb3d30a82a37a592d938a8e3d933f8c02"
+    },
+    {
+      "phase": "p02-commands-events",
+      "branch": "feat/2026-10-04-23-19-52_p02-2",
+      "tipCommit": "3caca4892423fb33c2ea423edfd426c146314793"
+    },
+    {
+      "phase": "p02-onboarding",
+      "branch": "feat/2026-10-04-23-19-52_p02-3",
+      "tipCommit": "18d490e2543c657560c3de22b770e89157d27df3"
+    }
+  ],
+  "schemaVersions": {
+    "settingsSchema": 2,
+    "settingsExportFormat": 1,
+    "sqliteMigrations": [1, 2, 3, 4, 5],
+    "applicationWireSchema": 3,
+    "eventEnvelopeSchema": 1
+  }
+}
