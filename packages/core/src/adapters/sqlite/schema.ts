@@ -742,6 +742,77 @@ export const taskDependencies = sqliteTable('task_dependencies', {
   index('task_dependencies_feature_depends_on_index').on(table.featureId, table.dependsOnId),
 ]);
 
+/**
+ * 计划批准/拒绝决策记录（P03-2 / F-002 迁移 v7；设计 11 §7 approvals）。
+ *
+ * subject_type 冻结为 'feature_plan'（subject_id 即 Feature 稳定 ID）；决策绑定
+ * subject_digest（当前 planDigest），主体摘要变更后旧决策自然成为历史记录，
+ * 不改写旧行。P03-2 只插入已决定（approved/rejected）行；pending/superseded
+ * 为设计完整枚举先冻结，后续两段流/superseded 改写随对应功能扩展。
+ */
+export const approvals = sqliteTable('approvals', {
+  id: text('id').primaryKey(),
+  createdAt: integer('created_at').notNull(),
+  projectId: text('project_id')
+    .notNull()
+    .references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  /** CAS 并发计数（决策插入恒为 1；后续更新原语随对应功能扩展）。 */
+  revision: integer('revision').notNull().default(1),
+  updatedAt: integer('updated_at').notNull(),
+  /** 受审批主体类型（先冻结 feature_plan；后续审批对象类型随对应功能扩展迁移）。 */
+  subjectType: text('subject_type').notNull(),
+  /** 受审批主体稳定 ID（feature_plan 时为 Feature 稳定 ID；同项目复合外键）。 */
+  subjectId: text('subject_id').notNull(),
+  /** 批准绑定的主体内容摘要（feature_plan 时为 planDigest；64 位小写 hex）。 */
+  subjectDigest: text('subject_digest').notNull(),
+  /** 决策状态（approved/rejected 为 P03-2 写入值；pending/superseded 先冻结枚举）。 */
+  status: text('status').notNull().default('pending'),
+  /** 决策人（可信主体 principalId；请求不能伪造身份）。 */
+  decisionActor: text('decision_actor'),
+  /** 适用原因（可选；有界说明）。 */
+  reason: text('reason'),
+  /** 决策时间 UTC 毫秒（approved/rejected 必填，DDL CHECK 兑现）。 */
+  decidedAt: integer('decided_at'),
+}, (table) => [
+  check('approvals_revision_positive_check', sql`${table.revision} >= 1`),
+  check('approvals_subject_type_enum_check', sql`${table.subjectType} = 'feature_plan'`),
+  check(
+    'approvals_subject_digest_sha256_check',
+    sql`length(${table.subjectDigest}) = 64 AND ${table.subjectDigest} NOT GLOB '*[^0-9a-f]*'`,
+  ),
+  check(
+    'approvals_status_enum_check',
+    sql`${table.status} IN ('pending', 'approved', 'rejected', 'superseded')`,
+  ),
+  check(
+    'approvals_decision_actor_not_empty_check',
+    sql`${table.decisionActor} IS NULL OR length(${table.decisionActor}) > 0`,
+  ),
+  // 已决定形态：approved/rejected 必须携带决策人与决策时间；pending 不得携带。
+  check(
+    'approvals_decided_shape_check',
+    sql`(${table.status} IN ('approved', 'rejected') AND ${table.decisionActor} IS NOT NULL AND ${table.decidedAt} IS NOT NULL) OR (${table.status} = 'pending' AND ${table.decisionActor} IS NULL AND ${table.decidedAt} IS NULL) OR ${table.status} = 'superseded'`,
+  ),
+  check(
+    'approvals_decided_at_non_negative_check',
+    sql`${table.decidedAt} IS NULL OR ${table.decidedAt} >= 0`,
+  ),
+  // 同项目复合外键：跨项目审批主体在 DDL 级被拒绝。
+  foreignKey({
+    name: 'approvals_feature_same_project_fk',
+    columns: [table.projectId, table.subjectId],
+    foreignColumns: [features.projectId, features.id],
+  }).onDelete('restrict'),
+  // 同一主体同一摘要至多一条决策（两个竞争决定最多一个生效的 DDL 兑现）。
+  uniqueIndex('approvals_subject_decision_unique').on(
+    table.projectId,
+    table.subjectType,
+    table.subjectId,
+    table.subjectDigest,
+  ),
+  index('approvals_project_subject_index').on(table.projectId, table.subjectId),
+]);
+
 export const schemaMigrations = sqliteTable('schema_migrations', {
   id: text('id').primaryKey(),
   createdAt: integer('created_at').notNull(),

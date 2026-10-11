@@ -38,6 +38,7 @@ import type {
   FeatureRecord,
   PhaseRecord,
   PhaseStatus,
+  PlanApprovalRecord,
   TaskDependencyRecord,
   TaskRecord,
   TaskStatus,
@@ -842,5 +843,86 @@ export interface PlanDetailReadStore {
   readFeaturePlanView(featureId: unknown): FeaturePlanView | undefined;
 }
 
-/** F-006 计划查询读取门面：层级列表 + 详情窄读取端口的并集。 */
-export interface PlanQueryReadStore extends PlanHierarchyReadStore, PlanDetailReadStore {}
+/* ---------------------- P03-2 / F-002 计划审批决策查询 ---------------------- */
+
+/**
+ * 计划审批决策查询操作身份（Core 查询面）。Host 传输接线与线协议同步属
+ * P03-2 / F-007（与命令面 v4 内增量同一纪律：能力位复用 project.read，
+ * 不新增查询能力位）。
+ */
+export const PLAN_APPROVAL_QUERY_OPERATION = 'features.approvals' as const;
+
+/** 公开计划审批决策记录（时间 ISO UTC；与 PlanApprovalRecord 字段一一对应）。 */
+export interface PublicPlanApprovalRecord {
+  readonly id: string;
+  readonly projectId: string;
+  /** 受审批主体稳定 ID（feature_plan 时为 Feature 稳定 ID）。 */
+  readonly subjectId: string;
+  readonly subjectType: PlanApprovalRecord['subjectType'];
+  readonly subjectDigest: string;
+  readonly status: PlanApprovalRecord['status'];
+  readonly decisionActor: string | null;
+  readonly reason: string | null;
+  readonly decidedAt: string | null;
+  readonly revision: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export function toPublicPlanApprovalRecord(record: PlanApprovalRecord): PublicPlanApprovalRecord {
+  return {
+    id: record.id,
+    projectId: record.projectId,
+    subjectId: record.subjectId,
+    subjectType: record.subjectType,
+    subjectDigest: record.subjectDigest,
+    status: record.status,
+    decisionActor: record.decisionActor,
+    reason: record.reason,
+    decidedAt:
+      record.decidedAtUtcMs === null ? null : new Date(record.decidedAtUtcMs).toISOString(),
+    revision: record.revision,
+    createdAt: new Date(record.createdAtUtcMs).toISOString(),
+    updatedAt: new Date(record.updatedAtUtcMs).toISOString(),
+  };
+}
+
+/** 决策记录查询项：附带「是否绑定当前 planDigest」标记（当前决定 vs 历史决定）。 */
+export interface PublicPlanApprovalDecision extends PublicPlanApprovalRecord {
+  /** subjectDigest 等于当前 planDigest 时为 true（每摘要至多一条决策）。 */
+  readonly current: boolean;
+}
+
+/**
+ * features.approvals → {feature, currentDecision, decisions}：Feature 与其全部
+ * 决策记录来自同一一致读视图；feature.planStatus 是权威审批状态（拒绝后绝非
+ * approved），decisions[].current 区分当前决定与历史决定，不把拒绝显示为已批准。
+ */
+export interface FeatureApprovalsResult {
+  readonly feature: PublicFeatureRecord;
+  /** 当前决定（绑定当前 planDigest 的记录）；尚无决定时为 null。 */
+  readonly currentDecision: PublicPlanApprovalDecision | null;
+  /** 全部决策记录（含历史；稳定排序：decisionTime → id）。 */
+  readonly decisions: readonly PublicPlanApprovalDecision[];
+}
+
+/** Feature + 决策记录一致读视图（单一 DEFERRED 读事务内取得）。 */
+export interface FeatureApprovalsView {
+  readonly feature: FeatureRecord;
+  readonly approvals: readonly PlanApprovalRecord[];
+}
+
+/**
+ * 计划审批决策窄读取端口：readFeatureApprovalsView 在单一 DEFERRED 读事务内
+ * 取得 Feature 行与全部决策记录（并发决策/修订只能观察到完整前后状态）；
+ * 未命中返回 undefined（可见性折叠由应用层统一为 not_found）。
+ */
+export interface PlanApprovalReadStore {
+  readFeatureApprovalsView(featureId: unknown): FeatureApprovalsView | undefined;
+}
+
+/** F-006 计划查询读取门面：层级列表 + 详情窄读取端口的并集；P03-2 / F-002 起含审批决策读取。 */
+export interface PlanQueryReadStore
+  extends PlanHierarchyReadStore,
+    PlanDetailReadStore,
+    PlanApprovalReadStore {}

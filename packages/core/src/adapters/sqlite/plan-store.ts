@@ -29,8 +29,10 @@ import {
   validateCreatePhaseInput,
   validateCreateTaskDependencyInput,
   validateCreateTaskInput,
+  validateInsertPlanApprovalInput,
   validatePlanEventAppend,
   validateReplaceFeaturePlanInput,
+  validateUpdateFeaturePlanStatusInput,
   validateUpdatePlanEntityLabelsInput,
   validateUpdateTaskStrategyInput,
 } from '../../ports/plan-store.js';
@@ -39,6 +41,7 @@ import type {
   FeaturePlanSnapshot,
   FeatureRecord,
   PhaseRecord,
+  PlanApprovalRecord,
   TaskDependencyRecord,
   TaskRecord,
 } from '../../ports/plan-store.js';
@@ -46,11 +49,12 @@ import type { PlanArtifactRef, PlanComplexity } from '../../ports/feature-plan.j
 import type { ArtifactInputRef } from '../../ports/artifact-store.js';
 import { assertPrincipalVisibility } from '../../ports/queries.js';
 import type {
+  FeatureApprovalsView,
   FeaturePlanView,
   PlanListRequest,
   PlanRecordPage,
 } from '../../ports/queries.js';
-import { validateStableId } from '../../ports/validation.js';
+import { validateSha256Digest, validateStableId } from '../../ports/validation.js';
 import type { SqliteStorageSession } from './session.js';
 import { transactSqliteConsistentRead, visibilityCondition } from './state-store.js';
 
@@ -115,6 +119,21 @@ interface TaskDependencySqlRow {
   readonly depends_on_id: string;
 }
 
+interface ApprovalSqlRow {
+  readonly id: string;
+  readonly created_at: number;
+  readonly project_id: string;
+  readonly revision: number;
+  readonly updated_at: number;
+  readonly subject_type: string;
+  readonly subject_id: string;
+  readonly subject_digest: string;
+  readonly status: string;
+  readonly decision_actor: string | null;
+  readonly reason: string | null;
+  readonly decided_at: number | null;
+}
+
 const SELECT_PHASE =
   'SELECT id, created_at, project_id, revision, updated_at, title, status, description, labels FROM phases';
 const SELECT_FEATURE =
@@ -125,6 +144,9 @@ const SELECT_TASK =
   'description, labels, acceptance, requirements_refs, execution_config, config_source, config_source_key FROM tasks';
 const SELECT_TASK_DEPENDENCY =
   'SELECT id, created_at, project_id, feature_id, task_id, depends_on_id FROM task_dependencies';
+const SELECT_APPROVAL =
+  'SELECT id, created_at, project_id, revision, updated_at, subject_type, subject_id, ' +
+  'subject_digest, status, decision_actor, reason, decided_at FROM approvals';
 
 /** F-007 纯标签编辑目标映射（冻结表名/SELECT；非用户输入，查询均绑定参数）。 */
 const LABELS_EDIT_TARGET_SPECS: Readonly<
@@ -175,6 +197,26 @@ export interface SqlitePlanAccess {
    */
   updateTaskStrategyInTransaction(input: unknown): TaskRecord;
   /**
+   * P03-2 / F-002：按主体摘要查既设计划决策（只读；subjectType 冻结
+   * feature_plan；同主体同摘要至多一条决策，未决策返回 undefined）。
+   */
+  findPlanApprovalInTransaction(
+    projectId: string,
+    featureId: string,
+    subjectDigest: string,
+  ): PlanApprovalRecord | undefined;
+  /**
+   * P03-2 / F-002：插入已决定（approved/rejected）计划决策记录（insert-only；
+   * 缺失 not_found、跨项目 ownership、同主体同摘要已有决策 conflict）。
+   */
+  insertPlanApprovalInTransaction(input: unknown): PlanApprovalRecord;
+  /**
+   * P03-2 / F-002：Feature 计划审批状态 CAS 更新（单语句条件 UPDATE 只触达
+   * plan_status/revision/updated_at；缺失 not_found、跨项目 ownership、
+   * revision 不匹配 conflict）。
+   */
+  updateFeaturePlanStatusInTransaction(input: unknown): FeatureRecord;
+  /**
    * P03-1 / F-008：实质计划修订整体替换（同一写事务内原子生效）。既有成员
    * 按稳定 ID 保留身份与策略副本，新成员携带创建策略副本，被移除成员与
    * 全部旧边删除；Feature 聚合一次 CAS 一次递增。
@@ -188,6 +230,8 @@ export interface SqlitePlanAccess {
   readTaskRecord(taskId: unknown): TaskRecord | undefined;
   /** F-006：Feature + 全部 Task + 全部依赖边（单一 DEFERRED 读事务一致视图）。 */
   readFeaturePlanView(featureId: unknown): FeaturePlanView | undefined;
+  /** P03-2 / F-002：Feature + 全部计划决策记录（单一 DEFERRED 读事务一致视图）。 */
+  readFeatureApprovalsView(featureId: unknown): FeatureApprovalsView | undefined;
   /** F-006 层级列表：可见范围谓词下推 + 稳定 id 升序键集分页（先收窄再分页）。 */
   listPhaseRecords(
     visibility: unknown,
@@ -280,7 +324,7 @@ export function createSqlitePlanAccess(
     error: unknown,
     operation: string,
     entity: StorageEntityRef,
-    kind: 'phase' | 'feature' | 'task' | 'task_dependency',
+    kind: 'phase' | 'feature' | 'task' | 'task_dependency' | 'approval',
   ): StorageError {
     const code = isSqliteConstraintError(error) ? error.code : '';
     if (code.startsWith('SQLITE_CONSTRAINT_UNIQUE')) {
@@ -452,6 +496,42 @@ export function createSqlitePlanAccess(
       taskId: row.task_id,
       dependsOnId: row.depends_on_id,
       createdAtUtcMs: row.created_at,
+    };
+  }
+
+  /**
+   * P03-2 / F-002：approvals 行 → PlanApprovalRecord（枚举/形态损坏 corrupt 拒绝，
+   * 不作为有效记录返回；与 features/tasks 读取映射同一纪律）。
+   */
+  function approvalFromRow(row: ApprovalSqlRow): PlanApprovalRecord {
+    const operation = 'PlanStore.readApproval';
+    if (
+      !(
+        row.subject_type === 'feature_plan' &&
+        (row.status === 'pending' ||
+          row.status === 'approved' ||
+          row.status === 'rejected' ||
+          row.status === 'superseded')
+      )
+    ) {
+      throw new StorageError('corrupt', operation, 'approvals 行不是合法枚举值', {
+        entity: { type: 'feature', projectId: row.project_id, id: row.subject_id },
+        details: { reason: 'invalid_approval_status' },
+      });
+    }
+    return {
+      id: row.id,
+      projectId: row.project_id,
+      subjectType: row.subject_type as PlanApprovalRecord['subjectType'],
+      subjectId: row.subject_id,
+      subjectDigest: row.subject_digest,
+      status: row.status as PlanApprovalRecord['status'],
+      decisionActor: row.decision_actor,
+      reason: row.reason,
+      decidedAtUtcMs: row.decided_at,
+      revision: row.revision,
+      createdAtUtcMs: row.created_at,
+      updatedAtUtcMs: row.updated_at,
     };
   }
 
@@ -936,6 +1016,151 @@ export function createSqlitePlanAccess(
   }
 
   /**
+   * P03-2 / F-002：按主体摘要查既设计划决策（只读；subjectType 冻结
+   * feature_plan，subjectId 即 Feature 稳定 ID；同主体同摘要至多一条决策）。
+   */
+  function findPlanApprovalInTransaction(
+    projectId: string,
+    featureId: string,
+    subjectDigest: string,
+  ): PlanApprovalRecord | undefined {
+    const operation = 'PlanStore.findPlanApproval';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const validProjectId = validateStableId(projectId, { operation }, 'projectId');
+    const validFeatureId = validateStableId(featureId, { operation }, 'featureId');
+    const validDigest = validateSha256Digest(subjectDigest, { operation }, 'subjectDigest');
+    const row = session.database
+      .prepare<[string, string, string], ApprovalSqlRow>(
+        `${SELECT_APPROVAL} WHERE project_id = ? AND subject_type = 'feature_plan' AND subject_id = ? AND subject_digest = ?`,
+      )
+      .get(validProjectId, validFeatureId, validDigest);
+    return row === undefined ? undefined : approvalFromRow(row);
+  }
+
+  /**
+   * P03-2 / F-002：插入已决定（approved/rejected）计划决策记录（事务内）。
+   * 目标 Feature 缺失 not_found、跨项目 ownership；同主体同摘要已有决策
+   * conflict（重复竞争决策 fail-closed；DDL 唯一索引兜底）；id/revision=1/
+   * 时间戳由适配器定值（UUID v4 + 注入 UTC 毫秒）。
+   */
+  function insertPlanApprovalInTransaction(input: unknown): PlanApprovalRecord {
+    const operation = 'PlanStore.insertPlanApproval';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const valid = validateInsertPlanApprovalInput(input, operation);
+    const db = session.database;
+    const entity: StorageEntityRef = {
+      type: 'feature',
+      projectId: valid.projectId,
+      id: valid.subjectId,
+    };
+    const featureRow = db
+      .prepare<[string], { project_id: string }>(
+        'SELECT project_id FROM features WHERE id = ?',
+      )
+      .get(valid.subjectId);
+    if (featureRow === undefined) {
+      throw notFound(operation, entity, `Feature ${valid.subjectId} 不存在`);
+    }
+    if (featureRow.project_id !== valid.projectId) {
+      throw ownership(operation, entity, '决策主体不属于声明的项目（跨项目目标被拒绝）');
+    }
+    const existing = db
+      .prepare<[string, string, string], { id: string }>(
+        "SELECT id FROM approvals WHERE project_id = ? AND subject_type = 'feature_plan' AND subject_id = ? AND subject_digest = ?",
+      )
+      .get(valid.projectId, valid.subjectId, valid.subjectDigest);
+    if (existing !== undefined) {
+      throw conflict(
+        operation,
+        '同一计划摘要已有决策记录（重复竞争决策拒绝，不覆盖）',
+        entity,
+        { reason: 'approval_already_decided' },
+      );
+    }
+    const timestamp = nowUtcMs();
+    const id = randomUUID();
+    try {
+      db.prepare(
+        'INSERT INTO approvals (id, created_at, project_id, revision, updated_at, subject_type, ' +
+          'subject_id, subject_digest, status, decision_actor, reason, decided_at) ' +
+          'VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(
+        id,
+        timestamp,
+        valid.projectId,
+        timestamp,
+        valid.subjectType,
+        valid.subjectId,
+        valid.subjectDigest,
+        valid.status,
+        valid.decisionActor,
+        valid.reason,
+        valid.decidedAtUtcMs,
+      );
+    } catch (error) {
+      throw mapConstraintError(error, operation, entity, 'approval');
+    }
+    const reread = db.prepare<[string], ApprovalSqlRow>(`${SELECT_APPROVAL} WHERE id = ?`).get(id);
+    return approvalFromRow(reread as ApprovalSqlRow);
+  }
+
+  /**
+   * P03-2 / F-002：Feature 计划审批状态 CAS 更新（事务内）。单语句条件 UPDATE
+   * 只触达 plan_status/revision/updated_at（不改计划内容/摘要/标题/Task）；
+   * 目标缺失 not_found、跨项目 ownership（抛出零写入）；expectedRevision 为
+   * Feature 聚合 revision，不匹配或条件 UPDATE 未命中均 conflict（携带
+   * expected/actual）。
+   */
+  function updateFeaturePlanStatusInTransaction(input: unknown): FeatureRecord {
+    const operation = 'PlanStore.updateFeaturePlanStatus';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const valid = validateUpdateFeaturePlanStatusInput(input, operation);
+    const db = session.database;
+    const entity: StorageEntityRef = {
+      type: 'feature',
+      projectId: valid.projectId,
+      id: valid.featureId,
+    };
+    const row = db
+      .prepare<[string], FeatureSqlRow>(`${SELECT_FEATURE} WHERE id = ?`)
+      .get(valid.featureId);
+    if (row === undefined) {
+      throw notFound(operation, entity, `Feature ${valid.featureId} 不存在`);
+    }
+    if (row.project_id !== valid.projectId) {
+      throw ownership(operation, entity, '目标 Feature 不属于声明的项目（跨项目目标被拒绝）');
+    }
+    const casConflict = (): StorageError =>
+      conflict(operation, '计划审批状态更新 CAS 不匹配（旧 revision 拒绝）', entity, {
+        reason: 'conflict',
+        expectedRevision: valid.expectedRevision,
+        actualRevision: row.revision,
+        entityType: 'feature',
+      });
+    if (row.revision !== valid.expectedRevision) {
+      throw casConflict();
+    }
+    const timestamp = nowUtcMs();
+    // 单语句条件 UPDATE：同 revision 竞争决策/编辑仅一个生效。
+    const updated = db
+      .prepare(
+        'UPDATE features SET plan_status = ?, revision = revision + 1, updated_at = ? ' +
+          'WHERE id = ? AND revision = ?',
+      )
+      .run(valid.planStatus, timestamp, valid.featureId, valid.expectedRevision);
+    if (updated.changes !== 1) {
+      throw casConflict();
+    }
+    const reread = db
+      .prepare<[string], FeatureSqlRow>(`${SELECT_FEATURE} WHERE id = ?`)
+      .get(valid.featureId);
+    return featureFromRow(reread as FeatureSqlRow);
+  }
+
+  /**
    * F-008：修订事务内读取 Feature 计划快照（Feature + 全部 Task + 全部边；
    * 缺失 not_found、跨项目 ownership，与插入/标签编辑原语同一判定）。
    */
@@ -1311,6 +1536,33 @@ export function createSqlitePlanAccess(
     });
   }
 
+  /**
+   * P03-2 / F-002：Feature + 全部决策记录的一致读视图（单一 DEFERRED 读事务）；
+   * 排序稳定（decided_at → id）；未命中返回 undefined（可见性折叠由应用层
+   * 统一为 not_found）。
+   */
+  function readFeatureApprovalsView(featureId: unknown): FeatureApprovalsView | undefined {
+    const operation = 'PlanStore.readFeatureApprovalsView';
+    const id = planReadId(operation, featureId, 'featureId', 'feature');
+    return transactSqliteConsistentRead(session, operation, (db) => {
+      const featureRow = db
+        .prepare<[string], FeatureSqlRow>(`${SELECT_FEATURE} WHERE id = ?`)
+        .get(id);
+      if (featureRow === undefined) {
+        return undefined;
+      }
+      const approvalRows = db
+        .prepare<[string], ApprovalSqlRow>(
+          `${SELECT_APPROVAL} WHERE subject_type = 'feature_plan' AND subject_id = ? ORDER BY decided_at, id`,
+        )
+        .all(id) as ApprovalSqlRow[];
+      return {
+        feature: featureFromRow(featureRow),
+        approvals: approvalRows.map((row) => approvalFromRow(row)),
+      };
+    });
+  }
+
   function listPhaseRecords(
     visibility: unknown,
     projectId: unknown,
@@ -1369,9 +1621,13 @@ export function createSqlitePlanAccess(
     replaceFeaturePlanInTransaction,
     getTaskInTransaction,
     updateTaskStrategyInTransaction,
+    findPlanApprovalInTransaction,
+    insertPlanApprovalInTransaction,
+    updateFeaturePlanStatusInTransaction,
     readPhaseRecord,
     readTaskRecord,
     readFeaturePlanView,
+    readFeatureApprovalsView,
     listPhaseRecords,
     listFeatureRecords,
     listTaskRecords,

@@ -47,6 +47,8 @@ import {
   SETTINGS_PROJECT_CREATED_EVENT_TYPE,
   TASK_LABELS_UPDATED_EVENT_TYPE,
   TASK_STRATEGY_UPDATED_EVENT_TYPE,
+  FEATURE_PLAN_APPROVED_EVENT_TYPE,
+  FEATURE_PLAN_REJECTED_EVENT_TYPE,
   createEventCursorBinding,
   createEventWatermark,
   decodeEventCursor,
@@ -120,7 +122,7 @@ describe('F-003 冻结事件封套版本与 §9.2 事件白名单（P02-2 六类
     expect(PUBLIC_EVENT_SCHEMA_VERSION).toBe(1);
   });
 
-  it('白名单冻结为六类 + 五类基线事件 + 五类计划事件且与既有事件常量同源', () => {
+  it('白名单冻结为六类 + 五类基线事件 + 七类计划事件且与既有事件常量同源', () => {
     expect([...PUBLIC_STATE_EVENT_TYPES]).toEqual([
       'project.registered',
       PROJECT_METADATA_UPDATED_EVENT_TYPE,
@@ -146,6 +148,10 @@ describe('F-003 冻结事件封套版本与 §9.2 事件白名单（P02-2 六类
       FEATURE_PLAN_REVISED_EVENT_TYPE,
       // P03-2 / F-001：Task 策略副本 CAS 编辑事件（聚合为目标 Task，payload 恒 {strategyUpdated:true}）。
       TASK_STRATEGY_UPDATED_EVENT_TYPE,
+      // P03-2 / F-002：计划批准/拒绝决策事件（聚合为目标 Feature；批准/拒绝两类
+      // 事件可区分，不把拒绝伪装为批准）。
+      FEATURE_PLAN_APPROVED_EVENT_TYPE,
+      FEATURE_PLAN_REJECTED_EVENT_TYPE,
     ]);
     expect(PROJECT_METADATA_UPDATED_EVENT_TYPE).toBe('project.metadata_updated');
     expect(SETTINGS_GLOBAL_CREATED_EVENT_TYPE).toBe('settings.global_created');
@@ -158,6 +164,8 @@ describe('F-003 冻结事件封套版本与 §9.2 事件白名单（P02-2 六类
     expect(FEATURE_LABELS_UPDATED_EVENT_TYPE).toBe('feature.labels.updated');
     expect(TASK_LABELS_UPDATED_EVENT_TYPE).toBe('task.labels.updated');
     expect(TASK_STRATEGY_UPDATED_EVENT_TYPE).toBe('task.strategy.updated');
+    expect(FEATURE_PLAN_APPROVED_EVENT_TYPE).toBe('feature.plan.approved');
+    expect(FEATURE_PLAN_REJECTED_EVENT_TYPE).toBe('feature.plan.rejected');
   });
 });
 

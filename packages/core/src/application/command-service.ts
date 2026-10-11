@@ -59,6 +59,7 @@ import type {
   SettingsWriteConsistency,
 } from '../ports/state-store.js';
 import { validateMergedProjectSettingsWrite } from './configuration-service.js';
+import { FEATURE_PLAN_DECIDE_OPERATION, submitFeaturePlanDecide } from './feature-plan-decide.js';
 import { FEATURE_PLAN_IMPORT_OPERATION, submitFeaturePlanImport } from './feature-plan-import.js';
 import {
   FEATURE_PLAN_REVISE_OPERATION,
@@ -529,6 +530,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           envelope.operation !== PLAN_LABELS_UPDATE_OPERATION &&
           envelope.operation !== FEATURE_PLAN_REVISE_OPERATION &&
           envelope.operation !== TASK_STRATEGY_UPDATE_OPERATION &&
+          envelope.operation !== FEATURE_PLAN_DECIDE_OPERATION &&
           !isSettingsEnvelope(envelope)
         ) {
           throw new PublicError('unsupported', operation);
@@ -750,6 +752,25 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
                 capabilityCatalog: capabilityCatalog!,
                 ...(taskStrategyEditGuards !== undefined ? { guards: taskStrategyEditGuards } : {}),
               },
+            );
+          }
+          if (envelope.operation === FEATURE_PLAN_DECIDE_OPERATION) {
+            // P03-2 / F-002：计划批准/拒绝决策无事务外 I/O（无 Runtime/Git/检查
+            // 进程）；项目把关/摘要绑定/空任务/重复决策/聚合 CAS 重核、决策
+            // 记录、plan_status 更新、脱敏事件与回执同一短写事务。
+            return submitFeaturePlanDecide(
+              {
+                principalId: principal.principalId,
+                commandId: envelope.commandId,
+                operation: envelope.operation,
+                scope: envelope.scope,
+                requestDigest: digest,
+                issuedAt: envelope.issuedAt,
+                completedAt: new Date(now).toISOString(),
+              },
+              envelope,
+              transaction,
+              now,
             );
           }
           if (isSettingsEnvelope(envelope)) {

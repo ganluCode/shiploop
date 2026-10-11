@@ -41,6 +41,8 @@ import {
   FEATURE_LABELS_UPDATED_EVENT_TYPE,
   FEATURE_PLAN_IMPORTED_EVENT_TYPE,
   FEATURE_PLAN_REVISED_EVENT_TYPE,
+  FEATURE_PLAN_APPROVED_EVENT_TYPE,
+  FEATURE_PLAN_REJECTED_EVENT_TYPE,
   PHASE_CREATED_EVENT_TYPE,
   PHASE_LABELS_UPDATED_EVENT_TYPE,
   TASK_LABELS_UPDATED_EVENT_TYPE,
@@ -80,6 +82,10 @@ export { PHASE_LABELS_UPDATED_EVENT_TYPE, FEATURE_LABELS_UPDATED_EVENT_TYPE, TAS
 export { FEATURE_PLAN_REVISED_EVENT_TYPE };
 /** P03-2 / F-001：仅命令路径 Task 策略副本 CAS 编辑成功写入（脱敏 payload 恒 {strategyUpdated:true}）。 */
 export { TASK_STRATEGY_UPDATED_EVENT_TYPE };
+/** P03-2 / F-002：仅命令路径计划批准成功写入（脱敏 payload 恒 {approved:true}）。 */
+export { FEATURE_PLAN_APPROVED_EVENT_TYPE };
+/** P03-2 / F-002：仅命令路径计划拒绝成功写入（脱敏 payload 恒 {rejected:true}）。 */
+export { FEATURE_PLAN_REJECTED_EVENT_TYPE };
 /** 仅命令路径全局配置首建成功写入（F-009 已实施；P01 直接服务首建不写事件）。 */
 export { SETTINGS_GLOBAL_CREATED_EVENT_TYPE };
 /** 仅命令路径项目配置首建成功写入（F-009 已实施；P01 直接服务首建不写事件）。 */
@@ -117,6 +123,10 @@ export const PUBLIC_STATE_EVENT_TYPES = [
   FEATURE_PLAN_REVISED_EVENT_TYPE,
   // P03-2 / F-001：Task 策略副本 CAS 编辑事件（聚合为目标 Task 自身）。
   TASK_STRATEGY_UPDATED_EVENT_TYPE,
+  // P03-2 / F-002：计划批准/拒绝决策事件（聚合为目标 Feature 自身，两类
+  // 事件可区分，不把拒绝伪装为批准）。
+  FEATURE_PLAN_APPROVED_EVENT_TYPE,
+  FEATURE_PLAN_REJECTED_EVENT_TYPE,
 ] as const;
 
 export type PublicStateEventType = (typeof PUBLIC_STATE_EVENT_TYPES)[number];
@@ -134,7 +144,9 @@ type EventPayloadKind =
   | 'featurePlanImported'
   | 'planLabelsUpdated'
   | 'featurePlanRevised'
-  | 'taskStrategyUpdated';
+  | 'taskStrategyUpdated'
+  | 'featurePlanApproved'
+  | 'featurePlanRejected';
 
 /** 每类事件冻结的 aggregate_type、scope 种类与 payload 形状。 */
 export interface StateEventTypeSpec {
@@ -248,6 +260,20 @@ export const STATE_EVENT_TYPE_SPECS: Readonly<
     aggregateType: 'task',
     scopeKind: 'project',
     payloadKind: 'taskStrategyUpdated',
+  }),
+  // P03-2 / F-002：计划批准事件（聚合为目标 Feature 自身；payload 恒为
+  // {approved:true}，不携带计划正文/决策人身份/原因/执行语义）。
+  [FEATURE_PLAN_APPROVED_EVENT_TYPE]: Object.freeze({
+    aggregateType: 'feature',
+    scopeKind: 'project',
+    payloadKind: 'featurePlanApproved',
+  }),
+  // P03-2 / F-002：计划拒绝事件（聚合为目标 Feature 自身；payload 恒为
+  // {rejected:true}，与批准事件可区分，不把拒绝伪装为批准）。
+  [FEATURE_PLAN_REJECTED_EVENT_TYPE]: Object.freeze({
+    aggregateType: 'feature',
+    scopeKind: 'project',
+    payloadKind: 'featurePlanRejected',
   }),
 });
 
@@ -467,6 +493,30 @@ function validateTaskStrategyUpdatedPayload(
     corrupt(operation, 'event_payload_violation');
   }
   return { strategyUpdated: true };
+}
+
+/** P03-2 / F-002：计划批准事件脱敏 payload（恒为 {approved:true}，无决策人/原因/计划正文）。 */
+function validateFeaturePlanApprovedPayload(
+  payload: Record<string, unknown>,
+  operation: string,
+): Record<string, unknown> {
+  exactPayloadKeys(operation, payload, ['approved']);
+  if (payload.approved !== true) {
+    corrupt(operation, 'event_payload_violation');
+  }
+  return { approved: true };
+}
+
+/** P03-2 / F-002：计划拒绝事件脱敏 payload（恒为 {rejected:true}，与批准事件可区分）。 */
+function validateFeaturePlanRejectedPayload(
+  payload: Record<string, unknown>,
+  operation: string,
+): Record<string, unknown> {
+  exactPayloadKeys(operation, payload, ['rejected']);
+  if (payload.rejected !== true) {
+    corrupt(operation, 'event_payload_violation');
+  }
+  return { rejected: true };
 }
 
 function validateSummaryNameList(value: unknown): value is string[] {
@@ -709,6 +759,10 @@ export function mapStateEvent(row: unknown, operation: string = EVENT_READ_OPERA
     payload = validateFeaturePlanRevisedPayload(row.payload, operation);
   } else if (spec.payloadKind === 'taskStrategyUpdated') {
     payload = validateTaskStrategyUpdatedPayload(row.payload, operation);
+  } else if (spec.payloadKind === 'featurePlanApproved') {
+    payload = validateFeaturePlanApprovedPayload(row.payload, operation);
+  } else if (spec.payloadKind === 'featurePlanRejected') {
+    payload = validateFeaturePlanRejectedPayload(row.payload, operation);
   } else if (spec.payloadKind === 'changedFields') {
     payload = validateChangedFieldsPayload(row.payload, operation);
   } else if (spec.payloadKind === 'baselineAuthorized') {

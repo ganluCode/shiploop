@@ -193,6 +193,8 @@ describe('F-002 冻结常量与能力声明', () => {
           'feature.plan.revise',
           // P03-2 / F-001：Task 策略副本 CAS 编辑经既有 /v1/commands 通用路由接线。
           'task.strategy.update',
+          // P03-2 / F-002：计划批准/拒绝决策经既有 /v1/commands 通用路由接线。
+          'feature.plan.decide',
         ],
         queries: [
           'projects.list',

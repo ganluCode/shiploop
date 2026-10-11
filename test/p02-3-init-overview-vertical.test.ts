@@ -524,6 +524,9 @@ describe('F-006 Host inspect/overview 路由与握手能力（真实 Host + SQLi
       // P03-2 / F-001：Task 策略副本 CAS 编辑经既有 /v1/commands 通用路由接线
       //（v4 内增量扩张，同 F-004 先例；升版待 F-007 接线任务定案）。
       'task.strategy.update',
+      // P03-2 / F-002：计划批准/拒绝决策经既有 /v1/commands 通用路由接线
+      //（v4 内增量扩张；决策查询路由与 HostClient 入口属 F-007）。
+      'feature.plan.decide',
     ]);
     for (const legacyVersion of [3, 2, 1]) {
       const legacy = await loopbackRequest({

@@ -24,8 +24,12 @@
  *   提权字段按未知键拒绝，永不成为可信身份来源。
  */
 import { isStorageError, StorageError } from './errors.js';
-import { validatePhaseFields, validatePlanLabelsFields } from './plan-store.js';
-import type { PlanEntityType } from './plan-store.js';
+import {
+  validatePhaseFields,
+  validatePlanLabelsFields,
+  validateFeaturePlanDecideFields,
+} from './plan-store.js';
+import type { PlanEntityType, FeaturePlanDecision } from './plan-store.js';
 import { RepositoryInspectionError } from './repository-inspector.js';
 import type { RepositoryInspectionErrorKind } from './repository-inspector.js';
 import { validateSettingsPayload } from './settings-schema.js';
@@ -84,6 +88,9 @@ export const APP_CAPABILITIES = [
   // P03-2 / F-001：Task 策略副本 CAS 编辑能力位（完整 executionConfig 副本
   // 授权编辑；与计划实质修订、纯标签编辑可区分的契约）。
   'task.strategy.write',
+  // P03-2 / F-002：计划批准/拒绝决策能力位（绑定当前 planDigest 的决策记录；
+  // 批准只确认现有计划，不是启动授权）。
+  'feature.plan.decide',
 ] as const;
 
 export type AppCapability = (typeof APP_CAPABILITIES)[number];
@@ -131,6 +138,10 @@ export const COMMAND_OPERATIONS = [
   // 信封 expectedRevision 为目标 Task 自身 revision，同一写事务内重核活动
   // 执行输入保护与能力兼容性）。
   'task.strategy.update',
+  // P03-2 / F-002：计划批准/拒绝决策（project scope + feature.plan.decide；
+  // 信封 expectedRevision 为 Feature 聚合 revision，同一写事务内记录决策、
+  // 更新 planStatus、事件与回执；批准不是启动授权）。
+  'feature.plan.decide',
 ] as const;
 
 export type AppOperation = (typeof COMMAND_OPERATIONS)[number];
@@ -220,6 +231,14 @@ export const COMMAND_OPERATION_SPECS: Readonly<Record<AppOperation, CommandOpera
       scopeKind: 'project',
       mutation: 'update',
       capability: 'task.strategy.write',
+    },
+    // P03-2 / F-002：计划批准/拒绝决策（绑定当前 planDigest）。信封
+    // expectedRevision 指向目标 Feature 聚合 revision；决策只记录与更新
+    // planStatus，不启动执行、不创建执行实体。
+    'feature.plan.decide': {
+      scopeKind: 'project',
+      mutation: 'update',
+      capability: 'feature.plan.decide',
     },
   });
 
@@ -535,6 +554,20 @@ export interface ValidatedTaskStrategyUpdatePayload {
   readonly executionConfig: Record<string, unknown>;
 }
 
+/**
+ * P03-2 / F-002 计划批准/拒绝决策 payload：featureId 为目标 Feature 稳定 ID；
+ * planDigest 为提交时绑定的当前计划摘要（失效即 fail-closed）；decision 为
+ * approve/reject；reason 为可选适用原因。严格未知键拒绝：decisionActor/
+ * principalId/approval/status/planStatus/revision 等服务端决定字段（含身份）
+ * 一律不能经请求输入——actor 只能来自可信主体装配。
+ */
+export interface ValidatedFeaturePlanDecidePayload {
+  readonly featureId: string;
+  readonly planDigest: string;
+  readonly decision: FeaturePlanDecision;
+  readonly reason: string | null;
+}
+
 interface EnvelopeCommon {
   readonly schemaVersion: typeof WIRE_MESSAGE_SCHEMA_VERSION;
   readonly commandId: string;
@@ -639,6 +672,14 @@ export type ValidatedCommandEnvelope =
       readonly scope: { readonly kind: 'project'; readonly projectId: string };
       readonly expectedRevision: number;
       readonly payload: ValidatedTaskStrategyUpdatePayload;
+    })
+  // P03-2 / F-002：计划批准/拒绝决策命令信封（expectedRevision=目标 Feature
+  // 聚合 revision；payload 只含 featureId/planDigest/decision/reason）。
+  | (EnvelopeCommon & {
+      readonly operation: 'feature.plan.decide';
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: number;
+      readonly payload: ValidatedFeaturePlanDecidePayload;
     });
 
 const ENVELOPE_KEYS = [
@@ -659,6 +700,7 @@ const FEATURE_PLAN_IMPORT_PAYLOAD_KEYS = ['phaseId', 'plan'] as const;
 const PLAN_LABELS_UPDATE_PAYLOAD_KEYS = ['entityType', 'id', 'labels'] as const;
 const FEATURE_PLAN_REVISE_PAYLOAD_KEYS = ['featureId', 'plan'] as const;
 const TASK_STRATEGY_UPDATE_PAYLOAD_KEYS = ['taskId', 'executionConfig'] as const;
+const FEATURE_PLAN_DECIDE_PAYLOAD_KEYS = ['featureId', 'planDigest', 'decision', 'reason'] as const;
 
 /**
  * P01 校验器抛 StorageError(validation)，其字段名面向端口输入（'input'、
@@ -930,6 +972,23 @@ function validateTaskStrategyUpdatePayload(
   }
 }
 
+function validateFeaturePlanDecidePayload(
+  operation: AppOperation,
+  raw: unknown,
+): ValidatedFeaturePlanDecidePayload {
+  const object = requireObject(operation, raw, 'payload');
+  // 严格未知键拒绝：只接受决策面（featureId/planDigest/decision/reason）；
+  // expectedRevision 唯一权威来源是信封顶层（Feature 聚合 CAS）；decisionActor/
+  // principalId/approval/status/planStatus/revision 等服务端决定字段（含身份）
+  // 一律不能经请求输入（payload 内出现即未知键，定位 payload.<key>）。
+  exactKeys(operation, object, FEATURE_PLAN_DECIDE_PAYLOAD_KEYS, 'payload.');
+  try {
+    return validateFeaturePlanDecideFields(object, operation);
+  } catch (error) {
+    throw fromProjectValidatorError(error, operation);
+  }
+}
+
 function validateSettingsCommandPayload(
   operation: AppOperation,
   raw: unknown,
@@ -1117,6 +1176,18 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
       scope,
       expectedRevision: expectedRevision as number,
       payload: validateTaskStrategyUpdatePayload(operation, object.payload),
+    };
+  }
+  if (operation === 'feature.plan.decide') {
+    if (scope.kind !== 'project') {
+      fail(operation, 'invalid_input', 'scope.kind', 'scope 种类与操作不匹配');
+    }
+    return {
+      ...base,
+      operation,
+      scope,
+      expectedRevision: expectedRevision as number,
+      payload: validateFeaturePlanDecidePayload(operation, object.payload),
     };
   }
   if (operation === 'settings.global.create') {

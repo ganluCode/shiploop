@@ -683,11 +683,13 @@ describe('F-006 当前配置检查组（P01-FR2-CONFIG）', () => {
           'baseline_check_results',
           'baseline_occupancy',
           'baseline_operations',
-          // P03-1 / F-002：计划结构四表（迁移 v6；需求层级表，无执行/审批表）。
+          // P03-1 / F-002：计划结构四表（迁移 v6；需求层级表，无执行表）。
           'phases',
           'features',
           'tasks',
           'task_dependencies',
+          // P03-2 / F-002：审批决策记录表（迁移 v7；记录表，无执行实体）。
+          'approvals',
         ].sort(),
       );
       for (const forbidden of [
@@ -697,7 +699,6 @@ describe('F-006 当前配置检查组（P01-FR2-CONFIG）', () => {
         'sessions',
         'works',
         'feature_dependencies',
-        'approvals',
       ]) {
         expect(tables).not.toContain(forbidden);
       }

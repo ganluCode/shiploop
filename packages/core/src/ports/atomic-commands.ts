@@ -21,6 +21,7 @@ import type {
   FeaturePlanSnapshot,
   FeatureRecord,
   PhaseRecord,
+  PlanApprovalRecord,
   TaskDependencyRecord,
   TaskRecord,
 } from './plan-store.js';
@@ -168,6 +169,31 @@ export interface CommandTransaction {
    * 不影响其他 Task。
    */
   updateTaskStrategy(input: unknown): TaskRecord;
+  /**
+   * P03-2 / F-002：按主体摘要查既设计划决策（只读；同一事务内重核「重复竞争
+   * 决策」用）。subjectType 冻结 feature_plan（subjectId 即 Feature 稳定 ID）；
+   * 同一主体同一摘要至多一条决策（DDL 唯一索引兜底），未决策返回 undefined。
+   */
+  findPlanApproval(
+    projectId: string,
+    featureId: string,
+    subjectDigest: string,
+  ): PlanApprovalRecord | undefined;
+  /**
+   * P03-2 / F-002：插入已决定（approved/rejected）计划决策记录（insert-only；
+   * id/revision/时间戳由适配器定值，decisionActor 由命令用例以可信主体
+   * principalId 定值）；目标 Feature 缺失 not_found、跨项目 ownership、同主体
+   * 同摘要已有决策 conflict（零写入）。
+   */
+  insertPlanApproval(input: unknown): PlanApprovalRecord;
+  /**
+   * P03-2 / F-002：Feature 计划审批状态 CAS 更新。单语句条件 UPDATE 只触达
+   * 目标 Feature 的 plan_status/revision/updated_at：expectedRevision 为
+   * Feature 聚合 revision，不匹配或未命中均 conflict（携带 expected/actual）；
+   * 目标缺失 not_found、跨项目 ownership（抛出零写入）；不改计划内容/摘要/
+   * 标题/Task，与决策记录/事件/回执同一事务提交。
+   */
+  updateFeaturePlanStatus(input: unknown): FeatureRecord;
   saveReceipt(receipt: unknown): void;
 }
 

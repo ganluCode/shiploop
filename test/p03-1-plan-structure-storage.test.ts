@@ -185,8 +185,8 @@ async function seedStructure(
  * ------------------------------------------------------------------ */
 
 describe('F-002 迁移 v6：计划结构四表', () => {
-  it('历史 v1–v5 SQL/checksum 与开工冻结摘要一致，v6 为新增追加版本', () => {
-    expect(SQLITE_MIGRATIONS.length).toBe(6);
+  it('历史 v1–v5 SQL/checksum 与开工冻结摘要一致，v6/v7 为新增追加版本', () => {
+    expect(SQLITE_MIGRATIONS.length).toBe(7);
     for (const [version, frozen] of Object.entries(FROZEN_V1_TO_V5_CHECKSUMS)) {
       const migration = SQLITE_MIGRATIONS[Number(version) - 1];
       expect(migration?.version, `v${version} 版本号`).toBe(Number(version));
@@ -203,23 +203,32 @@ describe('F-002 迁移 v6：计划结构四表', () => {
     for (const forbidden of V6_FORBIDDEN_TABLES) {
       expect(v6?.sql, `v6 不得建立 ${forbidden}`).not.toContain(`CREATE TABLE ${forbidden}`);
     }
+    // P03-2 / F-002：v7 为 v6 之后的新增追加版本（approvals 决策记录表；checkpoint
+    // 接续纪律——历史 v1–v6 SQL/checksum 不变，已由上方冻结摘要循环覆盖 v1–v5，
+    // v6 内容断言仍在本用例，v7 内容/约束由 test/sqlite-schema-migrations.test.ts 覆盖）。
+    const v7 = SQLITE_MIGRATIONS[6];
+    expect(v7?.version).toBe(7);
+    expect(v7?.checksum).toBe(sha256Hex(v7?.sql ?? ''));
+    expect(v7?.sql).toContain('CREATE TABLE approvals (');
+    expect(v6?.checksum).toBe(sha256Hex(v6?.sql ?? ''));
   });
 
-  it('真实空库迁移到 v6：四表建立且为空，不建立后续表', async () => {
+  it('真实空库迁移到 v7：计划结构四表与 approvals 建立且为空，不建立后续表', async () => {
     const sandbox = createTempSandbox('shiploop-p03-1-f002-empty-');
     try {
       const { session } = openSession(join(sandbox.path, 'state.db'));
       try {
         const result = await migrateSqliteStorage(session);
         expect(result.fromVersion).toBe(0);
-        expect(result.toVersion).toBe(6);
-        expect(result.appliedVersions).toEqual([1, 2, 3, 4, 5, 6]);
+        expect(result.toVersion).toBe(7);
+        expect(result.appliedVersions).toEqual([1, 2, 3, 4, 5, 6, 7]);
         const tables = listUserTables(session.database);
-        for (const table of V6_TABLES) {
+        for (const table of [...V6_TABLES, 'approvals']) {
           expect(tables).toContain(table);
           expect(session.database.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get()).toEqual({ n: 0 });
         }
-        for (const forbidden of V6_FORBIDDEN_TABLES) {
+        // v7 起 approvals 是正式表；其余后续表（执行域/配置或计划版本表）仍不得生成。
+        for (const forbidden of V6_FORBIDDEN_TABLES.filter((name) => name !== 'approvals')) {
           expect(tables, `不得生成后续表 ${forbidden}`).not.toContain(forbidden);
         }
       } finally {
@@ -269,20 +278,21 @@ describe('F-002 迁移 v6：计划结构四表', () => {
 
         const result = await migrateSqliteStorage(session, { nowUtcMs: tick });
         expect(result.fromVersion).toBe(5);
-        expect(result.toVersion).toBe(6);
-        expect(result.appliedVersions).toEqual([6]);
+        expect(result.toVersion).toBe(7);
+        expect(result.appliedVersions).toEqual([6, 7]);
         expect(snapshotTables(session.database)).toEqual(before);
-        // 迁移记录：v1–v5 checksum 原样，v6 为新记录。
+        // 迁移记录：v1–v5 checksum 原样，v6/v7 为新记录。
         const rows = session.database
           .prepare<[], { version: number; checksum: string }>(
             'SELECT version, checksum FROM schema_migrations ORDER BY version',
           )
           .all();
-        expect(rows).toHaveLength(6);
+        expect(rows).toHaveLength(7);
         for (const [version, frozen] of Object.entries(FROZEN_V1_TO_V5_CHECKSUMS)) {
           expect(rows[Number(version) - 1]?.checksum).toBe(frozen);
         }
         expect(rows[5]?.checksum).toBe(SQLITE_MIGRATIONS[5]?.checksum);
+        expect(rows[6]?.checksum).toBe(SQLITE_MIGRATIONS[6]?.checksum);
         // 重开再核对：数据仍在、四表为空且结构可写（插入合法行成功）。
         session.close();
         const reopened = openSqliteStorageSession({ path: dbPath });
@@ -336,8 +346,9 @@ describe('F-002 迁移 v6：计划结构四表', () => {
         expect(versions).toHaveLength(5);
         // 修复后（真实清单）从一致 v5 继续升级成功。
         const retry = await migrateSqliteStorage(session, { nowUtcMs: tick });
-        expect(retry.appliedVersions).toEqual([6]);
+        expect(retry.appliedVersions).toEqual([6, 7]);
         expect(listUserTables(session.database)).toContain('task_dependencies');
+        expect(listUserTables(session.database)).toContain('approvals');
         expect(project.id).toMatch(/^[A-Za-z0-9._-]+$/);
       } finally {
         session.close();
@@ -347,17 +358,17 @@ describe('F-002 迁移 v6：计划结构四表', () => {
     }
   });
 
-  it('高版本与 checksum 漂移拒写在 v6 清单下继续有效', async () => {
+  it('高版本与 checksum 漂移拒写在 v7 清单下继续有效', async () => {
     const sandbox = createTempSandbox('shiploop-p03-1-f002-reject-');
     try {
       const dbPath = join(sandbox.path, 'state.db');
       const { session } = openSession(dbPath);
       try {
         await migrateSqliteStorage(session);
-        // 高版本：插入 v7 探针记录（超出支持范围）。
+        // 高版本：插入 v8 探针记录（超出支持范围）。
         session.database
           .prepare('INSERT INTO schema_migrations (id, created_at, version, checksum, applied_at) VALUES (?, ?, ?, ?, ?)')
-          .run('migration-v7', 1, 7, VALID_SHA256, 1);
+          .run('migration-v8', 1, 8, VALID_SHA256, 1);
         session.close();
         const highVersion = openSqliteStorageSession({ path: dbPath });
         let high: unknown;

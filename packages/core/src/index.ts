@@ -53,3 +53,4 @@ export * from './application/feature-plan-import.js';
 export * from './application/plan-labels-update.js';
 export * from './application/feature-plan-revise.js';
 export * from './application/task-strategy-update.js';
+export * from './application/feature-plan-decide.js';

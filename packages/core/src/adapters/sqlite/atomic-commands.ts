@@ -90,6 +90,12 @@ export function createSqliteAtomicCommandStore(
           // P03-2 / F-001：Task 策略副本 CAS 编辑事务内读取与写入原语。
           getTask: guarded(plan.getTaskInTransaction),
           updateTaskStrategy: guarded(plan.updateTaskStrategyInTransaction),
+          // P03-2 / F-002：计划批准/拒绝决策事务内原语（重复决策重核、决策
+          // 记录插入与 Feature plan_status CAS 更新），同一 BEGIN IMMEDIATE 内
+          // 原子生效。
+          findPlanApproval: guarded(plan.findPlanApprovalInTransaction),
+          insertPlanApproval: guarded(plan.insertPlanApprovalInTransaction),
+          updateFeaturePlanStatus: guarded(plan.updateFeaturePlanStatusInTransaction),
           saveReceipt: guarded(receipts.saveReceiptInTransaction),
         });
         try {

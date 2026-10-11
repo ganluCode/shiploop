@@ -42,7 +42,7 @@ function point(
 /**
  * P02-2 冻结故障点。commandReceiptsBeforeInsert 依赖 F-006 迁移 v3；
  * baseline* 点依赖 P02-3 / F-007 迁移 v4；phasesBeforeInsert 依赖 P03-1 / F-002
- * 迁移 v6；其余点对应 v1/v2 既有表。
+ * 迁移 v6；approvalsBeforeInsert 依赖 P03-2 / F-002 迁移 v7；其余点对应 v1/v2 既有表。
  */
 export const WRITE_FAULT_POINTS = Object.freeze({
   projectsBeforeInsert: point('projects', 'BEFORE', 'INSERT', 'projects_before_insert'),
@@ -134,6 +134,8 @@ export const WRITE_FAULT_POINTS = Object.freeze({
   phasesBeforeUpdate: point('phases', 'BEFORE', 'UPDATE', 'phases_before_update'),
   featuresBeforeUpdate: point('features', 'BEFORE', 'UPDATE', 'features_before_update'),
   tasksBeforeUpdate: point('tasks', 'BEFORE', 'UPDATE', 'tasks_before_update'),
+  /** P03-2 / F-002 迁移 v7：决策记录插入前（Feature plan_status 已写、整组回滚验证）。 */
+  approvalsBeforeInsert: point('approvals', 'BEFORE', 'INSERT', 'approvals_before_insert'),
 } satisfies Record<string, WriteFaultPoint>);
 
 /** 允许安装故障触发器的表白名单（与冻结点一致，拒绝任意标识符拼接）。 */

@@ -59,6 +59,8 @@ const SCHEMA_TABLES = [
   ['features', schema.features],
   ['tasks', schema.tasks],
   ['task_dependencies', schema.taskDependencies],
+  // P03-2 / F-002：计划决策记录（docs/p03-2-plan-approval-contract.md 与设计 11 §7，迁移 v7）。
+  ['approvals', schema.approvals],
   ['schema_migrations', schema.schemaMigrations],
 ] as const;
 
@@ -79,7 +81,6 @@ const FORBIDDEN_TABLE_NAMES = [
   'verification_batches',
   'check_definitions',
   'check_results',
-  'approvals',
   'operations',
   'notification_channels',
   'notification_deliveries',
@@ -241,6 +242,43 @@ function seedCommandReceipt(
   );
 }
 
+/** P03-1 计划结构种子：open Phase（proj-1）。 */
+function seedPhase(db: CoreDatabase, id = 'phase-1', projectId = 'proj-1'): void {
+  db.prepare(
+    'INSERT INTO phases (id, created_at, project_id, revision, updated_at, title, status, description, labels) ' +
+      "VALUES (?, ?, ?, 1, ?, '阶段一', 'open', NULL, '[]')",
+  ).run(id, NOW_MS, projectId, NOW_MS);
+}
+
+/** P03-1 计划结构种子：draft Feature（含当前 plan_digest）。 */
+function seedFeature(
+  db: CoreDatabase,
+  id = 'feature-1',
+  projectId = 'proj-1',
+  phaseId = 'phase-1',
+  planDigest: string | null = VALID_SHA256,
+): void {
+  db.prepare(
+    'INSERT INTO features (id, created_at, project_id, revision, updated_at, phase_id, title, status, plan_status, description, labels, source_refs, plan_digest) ' +
+      "VALUES (?, ?, ?, 1, ?, ?, '特性一', 'draft', 'draft', NULL, '[]', '[]', ?)",
+  ).run(id, NOW_MS, projectId, NOW_MS, phaseId, planDigest);
+}
+
+/** P03-2 / F-002 计划决策种子：已决定（approved）记录绑定 subject_digest。 */
+function seedApproval(
+  db: CoreDatabase,
+  id = 'appr-1',
+  projectId = 'proj-1',
+  subjectId = 'feature-1',
+  subjectDigest = VALID_SHA256,
+  status = 'approved',
+): void {
+  db.prepare(
+    'INSERT INTO approvals (id, created_at, project_id, revision, updated_at, subject_type, subject_id, subject_digest, status, decision_actor, reason, decided_at) ' +
+      "VALUES (?, ?, ?, 1, ?, 'feature_plan', ?, ?, ?, 'local-owner', ?, ?)",
+  ).run(id, NOW_MS, projectId, NOW_MS, subjectId, subjectDigest, status, null, NOW_MS);
+}
+
 // ---------------------------------------------------------------------------
 // 迁移描述符与自包含性
 // ---------------------------------------------------------------------------
@@ -295,6 +333,12 @@ describe('F-003 versioned migration descriptors', () => {
     expect(SQLITE_MIGRATIONS[5]?.sql).toMatch(/CREATE TABLE features/);
     expect(SQLITE_MIGRATIONS[5]?.sql).toMatch(/CREATE TABLE tasks/);
     expect(SQLITE_MIGRATIONS[5]?.sql).toMatch(/CREATE TABLE task_dependencies/);
+    expect(SQLITE_MIGRATIONS[6]?.sql).toMatch(/CREATE TABLE approvals/);
+    // P03-2 / F-002：不建计划/配置历史版本表（PRD §5 明确不建设范围）。
+    const allMigrationSql = SQLITE_MIGRATIONS.map((migration) => migration.sql).join('\n');
+    for (const forbidden of ['plan_revisions', 'configuration_revisions', 'feature_revisions']) {
+      expect(allMigrationSql).not.toMatch(new RegExp(`CREATE TABLE (IF NOT EXISTS )?${forbidden}`));
+    }
   });
 });
 
@@ -472,6 +516,9 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
         'task_dependencies:(feature_id,task_id)->tasks.(feature_id,id)',
         'task_dependencies:(depends_on_id)->tasks.(id)',
         'task_dependencies:(feature_id,depends_on_id)->tasks.(feature_id,id)',
+        // P03-2 / F-002 计划决策记录（迁移 v7）：项目归属 + 同项目 Feature 复合外键。
+        'approvals:(project_id)->projects.(id)',
+        'approvals:(project_id,subject_id)->features.(project_id,id)',
       ]);
       type FkPragmaRow = { id: number; seq: number; table: string; from: string; to: string; on_update: string; on_delete: string };
       const actualFks = new Set<string>();
@@ -677,6 +724,53 @@ describe('F-003 real Drizzle session round-trip on the migrated database', () =>
       const occupancy = session.select().from(schema.baselineOccupancy).all()[0];
       expect(occupancy?.holderOperationId).toBe('3ba11ba1-0000-4000-8000-000000000001');
       expect(JSON.parse(occupancy?.processIdentity ?? 'null')).toEqual({ pid: 42_424 });
+
+      // P03-2 / F-002：计划决策记录经同一 Drizzle Schema 往返（Phase → Feature →
+      // 绑定当前摘要的已决定记录；同项目复合外键链）。
+      session
+        .insert(schema.phases)
+        .values({
+          id: 'phase-1',
+          createdAt: NOW_MS,
+          projectId: 'proj-1',
+          updatedAt: NOW_MS,
+          title: '阶段一',
+        })
+        .run();
+      session
+        .insert(schema.features)
+        .values({
+          id: 'feature-1',
+          createdAt: NOW_MS,
+          projectId: 'proj-1',
+          updatedAt: NOW_MS,
+          phaseId: 'phase-1',
+          title: '特性一',
+          planDigest: VALID_SHA256,
+        })
+        .run();
+      session
+        .insert(schema.approvals)
+        .values({
+          id: randomUUID(),
+          createdAt: NOW_MS,
+          projectId: 'proj-1',
+          updatedAt: NOW_MS,
+          subjectType: 'feature_plan',
+          subjectId: 'feature-1',
+          subjectDigest: VALID_SHA256,
+          status: 'approved',
+          decisionActor: 'local-owner',
+          reason: '首次批准',
+          decidedAt: NOW_MS,
+        })
+        .run();
+      const approval = session.select().from(schema.approvals).all()[0];
+      expect(approval?.subjectDigest).toBe(VALID_SHA256);
+      expect(approval?.status).toBe('approved');
+      expect(approval?.decisionActor).toBe('local-owner');
+      // 未显式提供的默认值来自 DDL 默认表达式，而非内存缓存。
+      expect(approval?.revision).toBe(1);
 
       const project = session.select().from(schema.projects).all()[0];
       expect(project?.displayName).toBe('示例项目🚢');
@@ -1143,6 +1237,115 @@ const CONSTRAINT_CASES: readonly ConstraintCase[] = [
     params: [NOW_MS, NOW_MS, OTHER_SHA256, `v1.${'A'.repeat(43)}`, NOW_MS, NOW_MS],
     table: 'command_receipts',
     error: /UNIQUE constraint failed: command_receipts\.result_ref/,
+  },
+  // P03-2 / F-002：approvals 决策记录约束（项目归属、摘要、状态、CAS、竞争决策）。
+  {
+    name: 'approvals.subject_type 只允许 feature_plan',
+    seed: (db) => {
+      seedProject(db);
+      seedPhase(db);
+      seedFeature(db);
+    },
+    statement:
+      "INSERT INTO approvals (id, created_at, project_id, revision, updated_at, subject_type, subject_id, subject_digest, status, decision_actor, reason, decided_at) VALUES ('ap-x', ?, ?, 1, ?, 'change_request', 'feature-1', ?, 'approved', 'local-owner', NULL, ?)",
+    params: [NOW_MS, 'proj-1', NOW_MS, VALID_SHA256, NOW_MS],
+    table: 'approvals',
+    error: /CHECK constraint failed: approvals_subject_type_enum_check/,
+  },
+  {
+    name: 'approvals.subject_digest 必须 64 位小写 hex',
+    seed: (db) => {
+      seedProject(db);
+      seedPhase(db);
+      seedFeature(db);
+    },
+    statement:
+      "INSERT INTO approvals (id, created_at, project_id, revision, updated_at, subject_type, subject_id, subject_digest, status, decision_actor, reason, decided_at) VALUES ('ap-x', ?, ?, 1, ?, 'feature_plan', 'feature-1', ?, 'approved', 'local-owner', NULL, ?)",
+    params: [NOW_MS, 'proj-1', NOW_MS, VALID_SHA256.toUpperCase(), NOW_MS],
+    table: 'approvals',
+    error: /CHECK constraint failed: approvals_subject_digest_sha256_check/,
+  },
+  {
+    name: 'approvals.status 枚举外取值拒绝',
+    seed: (db) => {
+      seedProject(db);
+      seedPhase(db);
+      seedFeature(db);
+    },
+    statement:
+      "INSERT INTO approvals (id, created_at, project_id, revision, updated_at, subject_type, subject_id, subject_digest, status, decision_actor, reason, decided_at) VALUES ('ap-x', ?, ?, 1, ?, 'feature_plan', 'feature-1', ?, 'undecided', 'local-owner', NULL, ?)",
+    params: [NOW_MS, 'proj-1', NOW_MS, VALID_SHA256, NOW_MS],
+    table: 'approvals',
+    error: /CHECK constraint failed: approvals_status_enum_check/,
+  },
+  {
+    name: 'approvals 已决定必须携带 decision_actor 与 decided_at',
+    seed: (db) => {
+      seedProject(db);
+      seedPhase(db);
+      seedFeature(db);
+    },
+    statement:
+      "INSERT INTO approvals (id, created_at, project_id, revision, updated_at, subject_type, subject_id, subject_digest, status, decision_actor, reason, decided_at) VALUES ('ap-x', ?, ?, 1, ?, 'feature_plan', 'feature-1', ?, 'rejected', NULL, NULL, NULL)",
+    params: [NOW_MS, 'proj-1', NOW_MS, VALID_SHA256],
+    table: 'approvals',
+    error: /CHECK constraint failed: approvals_decided_shape_check/,
+  },
+  {
+    name: 'approvals 缺失项目外键失败',
+    seed: (db) => {
+      seedProject(db);
+      seedPhase(db);
+      seedFeature(db);
+    },
+    statement:
+      "INSERT INTO approvals (id, created_at, project_id, revision, updated_at, subject_type, subject_id, subject_digest, status, decision_actor, reason, decided_at) VALUES ('ap-x', ?, 'missing', 1, ?, 'feature_plan', 'feature-1', ?, 'approved', 'local-owner', NULL, ?)",
+    params: [NOW_MS, NOW_MS, VALID_SHA256, NOW_MS],
+    table: 'approvals',
+    error: /FOREIGN KEY constraint failed/,
+  },
+  {
+    name: 'approvals 跨项目 Feature 主体被同项目复合外键拒绝',
+    seed: (db) => {
+      seedProject(db, 'proj-1');
+      seedProject(db, 'proj-2');
+      seedPhase(db, 'phase-1', 'proj-1');
+      seedPhase(db, 'phase-2', 'proj-2');
+      seedFeature(db, 'feature-1', 'proj-1', 'phase-1');
+      seedFeature(db, 'feature-2', 'proj-2', 'phase-2');
+    },
+    statement:
+      "INSERT INTO approvals (id, created_at, project_id, revision, updated_at, subject_type, subject_id, subject_digest, status, decision_actor, reason, decided_at) VALUES ('ap-x', ?, 'proj-2', 1, ?, 'feature_plan', 'feature-1', ?, 'approved', 'local-owner', NULL, ?)",
+    params: [NOW_MS, NOW_MS, VALID_SHA256, NOW_MS],
+    table: 'approvals',
+    error: /FOREIGN KEY constraint failed/,
+  },
+  {
+    name: 'approvals 同主体同摘要至多一条决策（两个竞争决定最多一个生效的 DDL 兑现）',
+    seed: (db) => {
+      seedProject(db);
+      seedPhase(db);
+      seedFeature(db);
+      seedApproval(db);
+    },
+    statement:
+      "INSERT INTO approvals (id, created_at, project_id, revision, updated_at, subject_type, subject_id, subject_digest, status, decision_actor, reason, decided_at) VALUES ('ap-2', ?, ?, 1, ?, 'feature_plan', 'feature-1', ?, 'rejected', 'other-actor', NULL, ?)",
+    params: [NOW_MS, 'proj-1', NOW_MS, VALID_SHA256, NOW_MS],
+    table: 'approvals',
+    error: /UNIQUE constraint failed: approvals\.project_id, approvals\.subject_type, approvals\.subject_id, approvals\.subject_digest/,
+  },
+  {
+    name: 'approvals.revision 必须为正整数（CAS 纪律）',
+    seed: (db) => {
+      seedProject(db);
+      seedPhase(db);
+      seedFeature(db);
+    },
+    statement:
+      "INSERT INTO approvals (id, created_at, project_id, revision, updated_at, subject_type, subject_id, subject_digest, status, decision_actor, reason, decided_at) VALUES ('ap-x', ?, ?, 0, ?, 'feature_plan', 'feature-1', ?, 'approved', 'local-owner', NULL, ?)",
+    params: [NOW_MS, 'proj-1', NOW_MS, VALID_SHA256, NOW_MS],
+    table: 'approvals',
+    error: /CHECK constraint failed: approvals_revision_positive_check/,
   },
 ];
 

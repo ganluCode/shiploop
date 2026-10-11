@@ -722,6 +722,8 @@ describe('F-011 传输纪律与版本门禁', () => {
         'feature.plan.revise',
         // P03-2 / F-001：Task 策略副本 CAS 编辑随 Core 白名单进入接线宣告。
         'task.strategy.update',
+        // P03-2 / F-002：计划批准/拒绝决策随 Core 白名单进入接线宣告。
+        'feature.plan.decide',
       ]);
     }
     // actorId/principal 提权字段 → 400 invalid_input（未知键，定位字段）。
@@ -951,6 +953,8 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         'feature.plan.revise',
         // P03-2 / F-001：Task 策略副本 CAS 编辑经既有 /v1/commands 通用路由接线。
         'task.strategy.update',
+        // P03-2 / F-002：计划批准/拒绝决策经既有 /v1/commands 通用路由接线。
+        'feature.plan.decide',
       ],
       queries: [
         'projects.list',

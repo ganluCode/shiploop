@@ -19,6 +19,7 @@ import type { PersistedStateEventRow } from '../../ports/events.js';
 import type {
   AuthorizedProjectReadStore,
   ConsistentSnapshotStore,
+  FeatureApprovalsView,
   FeaturePlanView,
   PlanListRequest,
   PlanQueryReadStore,
@@ -88,6 +89,9 @@ export function createSqliteQueryStore(
     },
     readFeaturePlanView(featureId: unknown): FeaturePlanView | undefined {
       return plan.readFeaturePlanView(featureId);
+    },
+    readFeatureApprovalsView(featureId: unknown): FeatureApprovalsView | undefined {
+      return plan.readFeatureApprovalsView(featureId);
     },
     listPhaseRecords(
       visibility: unknown,

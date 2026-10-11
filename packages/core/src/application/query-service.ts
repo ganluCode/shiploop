@@ -70,8 +70,10 @@ import {
   decodePlanListCursor,
   deriveFeatureNotExecutableReasons,
   encodePlanListCursor,
+  PLAN_APPROVAL_QUERY_OPERATION,
   toPublicFeatureRecord,
   toPublicPhaseRecord,
+  toPublicPlanApprovalRecord,
   toPublicProjectRecord,
   toPublicRepositoryBindingRecord,
   toPublicSettingsState,
@@ -82,6 +84,7 @@ import {
 import type {
   AuthorizedProjectReadStore,
   ConsistentSnapshotStore,
+  FeatureApprovalsResult,
   FeatureDetailResult,
   FeatureListResult,
   FeaturePlanValidationSummary,
@@ -222,6 +225,12 @@ export interface QueryService {
    * 不虚构 Run/Attempt 结果。
    */
   getFeature(principal: unknown, featureId: unknown): Promise<FeatureDetailResult>;
+  /**
+   * P03-2 / F-002 features.approvals：Feature 计划审批决策查询（当前决定 vs
+   * 历史决定按 planDigest 绑定区分；feature.planStatus 为权威审批状态，拒绝
+   * 后绝非 approved）。能力位复用 project.read；Host 传输接线属 F-007。
+   */
+  getFeatureApprovals(principal: unknown, featureId: unknown): Promise<FeatureApprovalsResult>;
   /** F-006 tasks.get：Task 详情（真实父级、验收/需求引用/策略副本及来源）。 */
   getTask(principal: unknown, taskId: unknown): Promise<TaskDetailResult>;
   /** F-006 phases.list：项目内 Phase 层级列表（稳定排序、有限分页、受控游标）。 */
@@ -773,6 +782,34 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
           }),
           tasks: view.tasks.map(toPublicTaskRecord),
           dependencies: view.dependencies.map(toPublicTaskDependencyEdge),
+        };
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    async getFeatureApprovals(principal: unknown, featureId: unknown): Promise<FeatureApprovalsResult> {
+      assertTrustedPrincipal(principal);
+      const operation = PLAN_APPROVAL_QUERY_OPERATION;
+      try {
+        const id = validateStableId(featureId, { operation, entity: { type: 'feature' } }, 'featureId');
+        requireCapability(principal, 'project.read', operation);
+        const view = planReads.readFeatureApprovalsView(id);
+        if (view === undefined || !isProjectVisible(principal, view.feature.projectId)) {
+          planEntityNotFound(operation, 'feature');
+        }
+        // 当前决定 = 绑定当前 planDigest 的记录（同主体同摘要至多一条，DDL
+        // 唯一索引保证）；摘要变更后旧决策自然成为历史。planStatus 是权威审批
+        // 状态（拒绝后绝非 approved），不把拒绝显示为已批准。
+        const currentDigest = view.feature.planDigest;
+        const decisions = view.approvals.map((record) => ({
+          ...toPublicPlanApprovalRecord(record),
+          current: record.subjectDigest === currentDigest,
+        }));
+        return {
+          feature: toPublicFeatureRecord(view.feature),
+          currentDecision: decisions.find((decision) => decision.current) ?? null,
+          decisions,
         };
       } catch (error) {
         throw mapToPublicError(error, { operation });

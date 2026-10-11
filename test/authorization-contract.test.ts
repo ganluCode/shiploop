@@ -240,6 +240,18 @@ function envelope(
           executionConfig: { schemaVersion: 2, runtime: 'pi', provider: 'anthropic', model: 'claude-sonnet' },
         },
       } as ValidatedCommandEnvelope;
+    case 'feature.plan.decide':
+      return {
+        ...base,
+        operation,
+        scope,
+        expectedRevision: expectedRevision ?? 1,
+        payload: {
+          featureId: 'f-1',
+          planDigest: 'ab'.repeat(32),
+          decision: 'approve',
+        },
+      } as ValidatedCommandEnvelope;
   }
 }
 
@@ -260,6 +272,8 @@ const COMMANDS_MATRIX = [
   { operation: 'feature.plan.revise', scope: { kind: 'project', projectId: PROJECT_A }, revision: 1, capability: 'feature.plan.revise' },
   // P03-2 / F-001：Task 策略副本 CAS 编辑（project scope + task.strategy.write；expectedRevision 为目标 Task 自身 revision）。
   { operation: 'task.strategy.update', scope: { kind: 'project', projectId: PROJECT_A }, revision: 1, capability: 'task.strategy.write' },
+  // P03-2 / F-002：计划批准/拒绝决策（project scope + feature.plan.decide；expectedRevision 为 Feature 聚合 CAS）。
+  { operation: 'feature.plan.decide', scope: { kind: 'project', projectId: PROJECT_A }, revision: 1, capability: 'feature.plan.decide' },
 ] as const;
 
 describe('F-005 TrustedPrincipal 产品构造与可信装配形状断言', () => {

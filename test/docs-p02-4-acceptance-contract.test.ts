@@ -239,9 +239,10 @@ describe('F-001 P02-4 验收契约文档', () => {
     expect(SETTINGS_SCHEMA_VERSION).toBe(2);
     expect(SETTINGS_EXPORT_FORMAT_VERSION).toBe(1);
     const migrationVersions = SQLITE_MIGRATIONS.map((migration) => migration.version);
-    // P03-1 / F-002 起新增 v6 计划结构四表（P02-4 冻结时止于 v5；事实演进同步登记）。
-    expect(migrationVersions).toEqual([1, 2, 3, 4, 5, 6]);
-    expect(contractDoc).toContain('v1..v6');
+    // P03-1 / F-002 起新增 v6 计划结构四表、P03-2 / F-002 起新增 v7 approvals 决策
+    // 记录表（P02-4 冻结时止于 v5；事实演进同步登记）。
+    expect(migrationVersions).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(contractDoc).toContain('v1..v7');
     expect(contractDoc).toContain('state_events');
     expect(contractDoc).toContain('command_receipts');
   });

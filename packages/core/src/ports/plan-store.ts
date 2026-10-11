@@ -51,6 +51,8 @@ import {
   rejectUnknownKeys,
   requireNonEmptyString,
   requirePlainObject,
+  validateExpectedRevision,
+  validateNonNegativeInteger,
   validateSha256Digest,
   validateStableId,
   validationError,
@@ -90,6 +92,29 @@ export type TaskStatus = (typeof TASK_STATUSES)[number];
 
 /** Task 复杂度取值（复用配置复杂度 low/medium/high；可空）。 */
 export const TASK_COMPLEXITY_VALUES = ['low', 'medium', 'high'] as const;
+
+/* ------------------------------------------------------------------ *
+ * P03-2 / F-002 计划批准/拒绝决策（approvals 迁移 v7；设计 11 §7）
+ * ------------------------------------------------------------------ */
+
+/** 受审批主体类型（先冻结 feature_plan；后续审批对象类型随对应功能扩展迁移）。 */
+export const PLAN_APPROVAL_SUBJECT_TYPES = ['feature_plan'] as const;
+export type PlanApprovalSubjectType = (typeof PLAN_APPROVAL_SUBJECT_TYPES)[number];
+
+/**
+ * 决策状态（设计 11 §7 完整枚举先冻结，与 v1 projects 同一先例）：P03-2 决策
+ * 命令只写 approved/rejected；pending（两段流）与 superseded（改写旧决策）
+ * 随对应功能扩展，本版本无更新原语。
+ */
+export const PLAN_APPROVAL_STATUSES = ['pending', 'approved', 'rejected', 'superseded'] as const;
+export type PlanApprovalStatus = (typeof PLAN_APPROVAL_STATUSES)[number];
+
+/** 决策命令的决策方向词汇（approve/reject；记录状态映射为 approved/rejected）。 */
+export const FEATURE_PLAN_DECISIONS = ['approve', 'reject'] as const;
+export type FeaturePlanDecision = (typeof FEATURE_PLAN_DECISIONS)[number];
+
+/** 决策原因说明上限（Unicode 码点；适用原因可选，防无界正文入库）。 */
+export const PLAN_APPROVAL_REASON_MAX_CODE_POINTS = 2_000;
 
 /**
  * executionConfig 序列化上限（字节；实施契约值）。完整策略副本是小型 JSON 对象
@@ -171,6 +196,32 @@ export interface TaskDependencyRecord {
   readonly taskId: string;
   readonly dependsOnId: string;
   readonly createdAtUtcMs: number;
+}
+
+/**
+ * 计划批准/拒绝决策记录（P03-2 / F-002 迁移 v7；设计 11 §7 approvals）。
+ * 决策绑定 subject_digest（feature_plan 时为提交时当前 planDigest）：主体
+ * 摘要变更后旧决策自然成为历史记录（查询按摘要区分当前/历史），不改写旧行。
+ * decisionActor 为可信主体 principalId（请求不能伪造身份）。
+ */
+export interface PlanApprovalRecord {
+  readonly id: string;
+  readonly projectId: string;
+  readonly subjectType: PlanApprovalSubjectType;
+  /** 受审批主体稳定 ID（feature_plan 时为 Feature 稳定 ID）。 */
+  readonly subjectId: string;
+  /** 批准绑定的主体内容摘要（64 位小写 hex）。 */
+  readonly subjectDigest: string;
+  readonly status: PlanApprovalStatus;
+  /** 决策人（可信主体 principalId；pending/superseded 历史形态可空）。 */
+  readonly decisionActor: string | null;
+  /** 适用原因（可选）。 */
+  readonly reason: string | null;
+  /** 决策时间 UTC 毫秒（approved/rejected 必填）。 */
+  readonly decidedAtUtcMs: number | null;
+  readonly revision: number;
+  readonly createdAtUtcMs: number;
+  readonly updatedAtUtcMs: number;
 }
 
 /* ------------------------------------------------------------------ *
@@ -362,6 +413,205 @@ export function validateUpdateTaskStrategyInput(
         ? null
         : requireNonEmptyString(configSourceKey, context, 'configSourceKey').trim(),
     expectedRevision,
+  };
+}
+
+/* ------------------------------------------------------------------ *
+ * P03-2 / F-002 计划批准/拒绝决策写入面（decision 命令 payload 字段 +
+ * approvals 插入与 Feature plan_status CAS 更新原语输入）
+ * ------------------------------------------------------------------ */
+
+function codePointLength(value: string): number {
+  return [...value].length;
+}
+
+const FEATURE_PLAN_DECIDE_FIELD_KEYS = ['featureId', 'planDigest', 'decision', 'reason'] as const;
+
+/** 决策命令 payload 业务字段（严格未知键拒绝；失败零副作用）。 */
+export interface ValidatedFeaturePlanDecideFields {
+  readonly featureId: string;
+  /** 提交时绑定的目标计划摘要（必须等于当前 planDigest，否则 fail-closed）。 */
+  readonly planDigest: string;
+  readonly decision: FeaturePlanDecision;
+  /** 适用原因（可选；全空白归一 null）。 */
+  readonly reason: string | null;
+}
+
+/**
+ * F-002：决策命令业务字段校验（featureId/planDigest/decision/reason）。
+ * 严格未知键拒绝——decisionActor/principalId/approval/status/planStatus/
+ * revision 等服务端决定字段一律不能经请求输入（payload 内出现即未知键），
+ * 身份只能来自可信主体装配；reason 全空白归一 null，超限拒绝。
+ */
+export function validateFeaturePlanDecideFields(
+  value: unknown,
+  operation: string,
+): ValidatedFeaturePlanDecideFields {
+  const context: ValidationContext = { operation, entity: { type: 'feature' } };
+  const object = requirePlainObject(value, context, 'input');
+  rejectUnknownKeys(object, FEATURE_PLAN_DECIDE_FIELD_KEYS, context, 'input');
+  const decision = object.decision;
+  if (
+    typeof decision !== 'string' ||
+    !(FEATURE_PLAN_DECISIONS as readonly string[]).includes(decision)
+  ) {
+    throw validationError(
+      context,
+      'decision',
+      `必须是 ${FEATURE_PLAN_DECISIONS.join(' / ')}`,
+      decision,
+    );
+  }
+  const validDecision = decision as FeaturePlanDecision;
+  const reasonValue = object.reason;
+  let reason: string | null = null;
+  if (reasonValue !== undefined && reasonValue !== null) {
+    if (typeof reasonValue !== 'string') {
+      throw validationError(context, 'reason', '必须是字符串、null 或省略', reasonValue);
+    }
+    if (reasonValue.trim().length > 0) {
+      if (codePointLength(reasonValue) > PLAN_APPROVAL_REASON_MAX_CODE_POINTS) {
+        throw validationError(
+          context,
+          'reason',
+          `长度不得超过 ${PLAN_APPROVAL_REASON_MAX_CODE_POINTS} 个字符（Unicode 码点）`,
+          reasonValue,
+        );
+      }
+      reason = reasonValue.trim();
+    }
+  }
+  return {
+    featureId: validateStableId(object.featureId, context, 'featureId'),
+    planDigest: validateSha256Digest(object.planDigest, context, 'planDigest'),
+    decision: validDecision,
+    reason,
+  };
+}
+
+const INSERT_PLAN_APPROVAL_KEYS = [
+  'projectId',
+  'subjectType',
+  'subjectId',
+  'subjectDigest',
+  'status',
+  'decisionActor',
+  'reason',
+  'decidedAtUtcMs',
+] as const;
+
+export interface ValidatedInsertPlanApprovalInput {
+  readonly projectId: string;
+  readonly subjectType: PlanApprovalSubjectType;
+  readonly subjectId: string;
+  readonly subjectDigest: string;
+  /** P03-2 决策命令只写 approved/rejected（pending/superseded 随后续功能扩展）。 */
+  readonly status: 'approved' | 'rejected';
+  /** 决策人（非空；由命令用例以可信主体 principalId 定值，不接受请求输入）。 */
+  readonly decisionActor: string;
+  readonly reason: string | null;
+  readonly decidedAtUtcMs: number;
+}
+
+/**
+ * F-002：approvals 决策记录插入原语输入校验（严格未知键拒绝；失败零副作用）。
+ * 已决定形态在端口层先行校验（approved/rejected 必须携带决策人与决策时间），
+ * DDL CHECK 作防御纵深；revision 恒为 1，不接受请求输入。
+ */
+export function validateInsertPlanApprovalInput(
+  value: unknown,
+  operation: string,
+): ValidatedInsertPlanApprovalInput {
+  const context: ValidationContext = { operation, entity: { type: 'feature' } };
+  const object = requirePlainObject(value, context, 'input');
+  rejectUnknownKeys(object, INSERT_PLAN_APPROVAL_KEYS, context, 'input');
+  const subjectTypeValue = object.subjectType;
+  if (
+    typeof subjectTypeValue !== 'string' ||
+    !(PLAN_APPROVAL_SUBJECT_TYPES as readonly string[]).includes(subjectTypeValue)
+  ) {
+    throw validationError(
+      context,
+      'subjectType',
+      `必须是 ${PLAN_APPROVAL_SUBJECT_TYPES.join(' / ')}`,
+      subjectTypeValue,
+    );
+  }
+  const subjectType = subjectTypeValue as PlanApprovalSubjectType;
+  const status = object.status;
+  if (status !== 'approved' && status !== 'rejected') {
+    throw validationError(
+      context,
+      'status',
+      '决策插入只允许 approved / rejected（pending/superseded 随后续功能扩展）',
+      status,
+    );
+  }
+  const reasonValue = object.reason;
+  if (reasonValue !== undefined && reasonValue !== null && typeof reasonValue !== 'string') {
+    throw validationError(context, 'reason', '必须是字符串、null 或省略', reasonValue);
+  }
+  if (typeof reasonValue === 'string' && codePointLength(reasonValue) > PLAN_APPROVAL_REASON_MAX_CODE_POINTS) {
+    throw validationError(
+      context,
+      'reason',
+      `长度不得超过 ${PLAN_APPROVAL_REASON_MAX_CODE_POINTS} 个字符（Unicode 码点）`,
+      reasonValue,
+    );
+  }
+  return {
+    projectId: validateStableId(object.projectId, context, 'projectId'),
+    subjectType,
+    subjectId: validateStableId(object.subjectId, context, 'subjectId'),
+    subjectDigest: validateSha256Digest(object.subjectDigest, context, 'subjectDigest'),
+    status,
+    decisionActor: requireNonEmptyString(object.decisionActor, context, 'decisionActor').trim(),
+    reason: reasonValue === undefined || reasonValue === null ? null : (reasonValue as string).trim(),
+    decidedAtUtcMs: validateNonNegativeInteger(object.decidedAtUtcMs, context, 'decidedAtUtcMs'),
+  };
+}
+
+const UPDATE_FEATURE_PLAN_STATUS_KEYS = [
+  'projectId',
+  'featureId',
+  'planStatus',
+  'expectedRevision',
+] as const;
+
+export interface ValidatedUpdateFeaturePlanStatusInput {
+  readonly projectId: string;
+  readonly featureId: string;
+  readonly planStatus: FeaturePlanStatus;
+  /** Feature 聚合 revision（唯一 CAS 权威；≥1 安全整数）。 */
+  readonly expectedRevision: number;
+}
+
+/**
+ * F-002：Feature 计划审批状态 CAS 更新原语输入校验（严格未知键拒绝；失败零
+ * 副作用）。单语句条件 UPDATE 只触达 plan_status/revision/updated_at；计划
+ * 内容/摘要/标题等一律不经本原语（实质变化走 feature.plan.revise）。
+ */
+export function validateUpdateFeaturePlanStatusInput(
+  value: unknown,
+  operation: string,
+): ValidatedUpdateFeaturePlanStatusInput {
+  const context: ValidationContext = { operation, entity: { type: 'feature' } };
+  const object = requirePlainObject(value, context, 'input');
+  rejectUnknownKeys(object, UPDATE_FEATURE_PLAN_STATUS_KEYS, context, 'input');
+  const planStatus = object.planStatus;
+  if (typeof planStatus !== 'string' || !(FEATURE_PLAN_STATUSES as readonly string[]).includes(planStatus)) {
+    throw validationError(
+      context,
+      'planStatus',
+      `必须是 ${FEATURE_PLAN_STATUSES.join(' / ')}`,
+      planStatus,
+    );
+  }
+  return {
+    projectId: validateStableId(object.projectId, context, 'projectId'),
+    featureId: validateStableId(object.featureId, context, 'featureId'),
+    planStatus: planStatus as FeaturePlanStatus,
+    expectedRevision: validateExpectedRevision(object.expectedRevision, context),
   };
 }
 
@@ -908,6 +1158,20 @@ export const FEATURE_PLAN_REVISED_EVENT_TYPE = 'feature.plan.revised';
  */
 export const TASK_STRATEGY_UPDATED_EVENT_TYPE = 'task.strategy.updated';
 
+/**
+ * P03-2 / F-002：计划批准事件（仅命令路径批准成功写入；脱敏 payload 恒为
+ * {approved:true}，聚合为目标 Feature 自身，aggregateRevision=决策后 Feature
+ * 聚合 revision）。不携带计划正文/决策人身份/原因/执行语义。
+ */
+export const FEATURE_PLAN_APPROVED_EVENT_TYPE = 'feature.plan.approved';
+
+/**
+ * P03-2 / F-002：计划拒绝事件（仅命令路径拒绝成功写入；脱敏 payload 恒为
+ * {rejected:true}，聚合为目标 Feature 自身，aggregateRevision=决策后 Feature
+ * 聚合 revision）。不携带计划正文/决策人身份/原因/执行语义。
+ */
+export const FEATURE_PLAN_REJECTED_EVENT_TYPE = 'feature.plan.rejected';
+
 /** 计划域事件白名单（顺序即冻结顺序；白名单外不得进入公开事件流）。 */
 export const PLAN_EVENT_TYPES = [
   PHASE_CREATED_EVENT_TYPE,
@@ -917,6 +1181,8 @@ export const PLAN_EVENT_TYPES = [
   TASK_LABELS_UPDATED_EVENT_TYPE,
   FEATURE_PLAN_REVISED_EVENT_TYPE,
   TASK_STRATEGY_UPDATED_EVENT_TYPE,
+  FEATURE_PLAN_APPROVED_EVENT_TYPE,
+  FEATURE_PLAN_REJECTED_EVENT_TYPE,
 ] as const;
 export type PlanEventType = (typeof PLAN_EVENT_TYPES)[number];
 
@@ -943,7 +1209,14 @@ const PLAN_EVENT_APPEND_KEYS = [
 /** 每类事件冻结的聚合类型与脱敏 payload 固定键/值。 */
 interface PlanEventTypeSpec {
   readonly aggregateType: 'phase' | 'feature' | 'task';
-  readonly payloadKey: 'created' | 'imported' | 'labelsUpdated' | 'revised' | 'strategyUpdated';
+  readonly payloadKey:
+    | 'created'
+    | 'imported'
+    | 'labelsUpdated'
+    | 'revised'
+    | 'strategyUpdated'
+    | 'approved'
+    | 'rejected';
 }
 
 const PLAN_EVENT_TYPE_SPECS: Readonly<Record<PlanEventType, PlanEventTypeSpec>> = Object.freeze({
@@ -971,6 +1244,14 @@ const PLAN_EVENT_TYPE_SPECS: Readonly<Record<PlanEventType, PlanEventTypeSpec>> 
   [TASK_STRATEGY_UPDATED_EVENT_TYPE]: Object.freeze({
     aggregateType: 'task',
     payloadKey: 'strategyUpdated',
+  }),
+  [FEATURE_PLAN_APPROVED_EVENT_TYPE]: Object.freeze({
+    aggregateType: 'feature',
+    payloadKey: 'approved',
+  }),
+  [FEATURE_PLAN_REJECTED_EVENT_TYPE]: Object.freeze({
+    aggregateType: 'feature',
+    payloadKey: 'rejected',
   }),
 });
 
@@ -1024,7 +1305,11 @@ export function validatePlanEventAppend(value: unknown, operation: string): Vali
             ? { labelsUpdated: true }
             : spec.payloadKey === 'revised'
               ? { revised: true }
-              : { strategyUpdated: true },
+              : spec.payloadKey === 'strategyUpdated'
+                ? { strategyUpdated: true }
+                : spec.payloadKey === 'approved'
+                  ? { approved: true }
+                  : { rejected: true },
   };
 }
 

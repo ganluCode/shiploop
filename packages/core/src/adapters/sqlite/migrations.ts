@@ -533,6 +533,68 @@ CREATE UNIQUE INDEX task_dependencies_feature_edge_unique ON task_dependencies (
 CREATE INDEX task_dependencies_feature_depends_on_index ON task_dependencies (feature_id, depends_on_id);
 `;
 
+/**
+ * 第七个迁移（P03-2 / F-002）：计划批准/拒绝决策记录表 approvals。
+ *
+ * 契约依据：docs/p03-2-plan-approval-contract.md（本 Feature 契约文档）与
+ * core-design/11 §7（approvals：subject_type/subject_id/subject_digest/status/
+ * decision_actor/reason/decided_at；主体摘要变更使旧批准失效——按摘要绑定区分
+ * 当前/历史决定，不改写旧行）；v6 冻结时登记的「approvals（审批域）」张力
+ * 由本迁移落定。
+ *
+ * 边界：只建决策记录表，不建计划/配置历史版本表（PlanRevision/
+ * configuration_revisions 均属 PRD 明确不建设范围，设计 11 §3/§5）；
+ * P03-2 决策命令只插入已决定（approved/rejected）行，pending/superseded
+ * 为设计完整枚举先冻结（与 v1 projects/v6 features 同一先例），不提前实现
+ * pending→decided 两段流或 superseded 改写原语。
+ *
+ * 约束先例（与 v1/v4/v6 同一表示）：
+ * - 同项目复合外键 approvals(project_id,subject_id) → features(project_id,id)
+ *  ——subject_type='feature_plan' 时 subject_id 即 Feature 稳定 ID，跨项目
+ *   主体在 DDL 级被拒绝；subject_type 枚举 CHECK 先冻结仅 'feature_plan'，
+ *   后续审批对象类型随对应功能扩展迁移；
+ * - 状态枚举 CHECK（pending/approved/rejected/superseded）与已决定形态 CHECK
+ *   （approved/rejected 必须携带 decision_actor 与 decided_at；pending 不得
+ *   携带）——「不把拒绝显示为已批准」在行级即有形态约束；
+ * - UNIQUE(project_id,subject_type,subject_id,subject_digest)：同一主体同一
+ *   摘要至多一条决策（两个竞争决定最多一个生效的 DDL 兜底；命令层以
+ *   Feature 聚合 CAS 先行裁决）；CAS 纪律经 revision ≥1 与命令层条件 UPDATE
+ *   保证（本版本决策行为 insert-only，无更新原语）；
+ * - 摘要 64 位小写 hex CHECK（与 features.plan_digest 同一形态）。
+ */
+const MIGRATION_007_SQL = `
+CREATE TABLE approvals (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  subject_type TEXT NOT NULL,
+  subject_id TEXT NOT NULL,
+  subject_digest TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  decision_actor TEXT,
+  reason TEXT,
+  decided_at INTEGER,
+  CONSTRAINT approvals_revision_positive_check CHECK (revision >= 1),
+  CONSTRAINT approvals_subject_type_enum_check CHECK (subject_type = 'feature_plan'),
+  CONSTRAINT approvals_subject_digest_sha256_check CHECK (length(subject_digest) = 64 AND subject_digest NOT GLOB '*[^0-9a-f]*'),
+  CONSTRAINT approvals_status_enum_check CHECK (status IN ('pending', 'approved', 'rejected', 'superseded')),
+  CONSTRAINT approvals_decision_actor_not_empty_check CHECK (decision_actor IS NULL OR length(decision_actor) > 0),
+  CONSTRAINT approvals_decided_shape_check CHECK (
+    (status IN ('approved', 'rejected') AND decision_actor IS NOT NULL AND decided_at IS NOT NULL)
+    OR (status = 'pending' AND decision_actor IS NULL AND decided_at IS NULL)
+    OR status = 'superseded'
+  ),
+  CONSTRAINT approvals_decided_at_non_negative_check CHECK (decided_at IS NULL OR decided_at >= 0),
+  CONSTRAINT approvals_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT approvals_feature_same_project_fk FOREIGN KEY (project_id, subject_id) REFERENCES features (project_id, id) ON DELETE RESTRICT
+);
+
+CREATE UNIQUE INDEX approvals_subject_decision_unique ON approvals (project_id, subject_type, subject_id, subject_digest);
+CREATE INDEX approvals_project_subject_index ON approvals (project_id, subject_id);
+`;
+
 function sha256Hex(text: string): string {
   return createHash('sha256').update(text, 'utf8').digest('hex');
 }
@@ -568,5 +630,10 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
     version: 6,
     sql: MIGRATION_006_SQL,
     checksum: sha256Hex(MIGRATION_006_SQL),
+  },
+  {
+    version: 7,
+    sql: MIGRATION_007_SQL,
+    checksum: sha256Hex(MIGRATION_007_SQL),
   },
 ];
