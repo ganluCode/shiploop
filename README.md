@@ -63,6 +63,9 @@ docs/p02-3-operations.md  P02-3 项目接入、基线授权与故障处理操作
 docs/p02-3-handoff.md  P02-3 → p02-acceptance 接口交接（F-019）
 docs/skills/project-init.md  F-017 最小操作 Skill：project init（只经 dist CLI；先只读预览，注册与基线授权分别请求用户确认）
 docs/skills/project-overview.md  F-017 最小操作 Skill：project overview（注册/配置/健康分列；不从日志或模型结论推断 passed）
+docs/p02-4-acceptance-contract.md  P02-4 阶段验收契约与检查清单（F-001：冻结检查 ID/证据字段/接口映射）
+docs/p02-4-operations.md  P02-4 P02 操作指南与验收复跑说明（F-013：双 CLI 闭环、accept:p02 复跑、诊断与边界）
+docs/acceptance/p02-4-review-checklist.md  P02-4 人工审阅清单（F-013：FR-1/FR-2 逐项核对；人工未审阅=未完成，不自动签字）
 ```
 
 ### 确定性测试约定（F-003）
@@ -283,9 +286,27 @@ HostClient/CLI 纵向接线。F-018 已完成真实 Git/SQLite/进程/Host/CLI �
   （受测 commit、环境/工具版本、命令/退出码/计数、FR 验收索引、契约核对请求与 `not_run`；
   文档守护 [test/docs-p02-3-f020-report.test.ts](test/docs-p02-3-f020-report.test.ts)）。
 
-该交付仅限 P02-3 静态接入与获准基线检查子集；Work/Pi、调度、强 OS 沙箱、非 macOS 平台与整个
-P02 阶段验收均未包含，`accept:p02` 由阶段末项定义。首版仅正式支持 macOS，可信项目不等于强
-文件/进程沙箱。
+P02-3 交付仅限静态接入与获准基线检查子集；Work/Pi、调度、强 OS 沙箱、非 macOS 平台与整个
+P02 阶段验收在该 Feature 内未包含（`accept:p02` 由阶段末项定义）。首版仅正式支持 macOS，
+可信项目不等于强文件/进程沙箱。
+
+### P02-4 P02 双客户端与初始化验收（F-013 文档交接）
+
+- 阶段验收自 F-011 起正式提供 `npm run accept:p02`（本地控制器
+  `scripts/acceptance/p02-accept.ts` + 版本化配置 `acceptance/p02.config.json`；报告在
+  `artifacts/acceptance/p02/<run-id>/`，任一必需检查 `fail`/`not_run` 即非零退出）。
+- [docs/p02-4-operations.md](docs/p02-4-operations.md)：P02 操作指南与验收复跑说明——按真实参数
+  从临时 Git 仓库启动双 CLI、确认配置、注册、授权基线、查询、退出观察、显式 stop/重启与读取
+  证据的完整步骤；`accept:p02` 配置/报告位置/非零处理、干净快照连续复跑与深度护栏；诊断表
+  （注册与健康独立、重复 init、commandId 重放/冲突、超时先查回执、认证/协议拒绝、
+  failed/not_run/cancelled、stop_unconfirmed），明确不得手工改库/删锁。
+- [docs/acceptance/p02-4-review-checklist.md](docs/acceptance/p02-4-review-checklist.md)：人工审阅
+  清单——FR-1/FR-2 逐项引用稳定检查 ID、真实测试与证据，列出 T 索引（T10/T15/T17/T23/T26）
+  覆盖子集与已知限制；人工未审阅明确未完成，不自动签字，Nezha 的 completed 不等于放行。
+- 文档守护 [test/docs-p02-4-operations.test.ts](test/docs-p02-4-operations.test.ts)：示例命令经真实
+  CLI 解析面核对，复跑说明与 `accept:p02` 控制器/配置一致，清单引用的测试/证据真实存在。
+- 阶段边界：正式支持仅 macOS，可信项目模式不具备强 OS 沙箱；Pi/Work、Web、rebind 等未实现
+  能力不冒充完成（`not_run`/未支持）。
 
 ### 单向依赖规则（F-004 起自动强制）
 
