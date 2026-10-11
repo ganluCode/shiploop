@@ -1,0 +1,4 @@
+$ node p02-clean-replay-import-probe.mjs <3 public entries>
+exit=0 signal=null durationMs=59
+
+import-probe: OK 3 entries imported without process/network side effects

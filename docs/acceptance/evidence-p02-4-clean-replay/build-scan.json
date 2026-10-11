@@ -1,0 +1,31 @@
+{
+  "ok": true,
+  "findings": [],
+  "fileCount": 428,
+  "totalBytes": 3364467,
+  "declaredEntries": [
+    "shiploop-cli:./dist/index.d.ts",
+    "shiploop-cli:./dist/index.js",
+    "shiploop-core:./dist/adapters/composition.d.ts",
+    "shiploop-core:./dist/adapters/composition.js",
+    "shiploop-core:./dist/index.d.ts",
+    "shiploop-core:./dist/index.js",
+    "shiploop-core:./dist/protocol.d.ts",
+    "shiploop-core:./dist/protocol.js",
+    "shiploop-host:./dist/index.d.ts",
+    "shiploop-host:./dist/index.js"
+  ],
+  "migrationResources": [
+    {
+      "file": "packages/core/dist/adapters/sqlite/migrations.js",
+      "versions": [
+        1,
+        2,
+        3,
+        4,
+        5
+      ]
+    }
+  ],
+  "manifestSummarySha256": "61ed872ca41c8506dec4f3f46b77c2725ac37bb420df68ae8376ef678bb2bbb9"
+}

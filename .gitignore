@@ -7,6 +7,9 @@ logs
 !docs/acceptance/evidence-p01-4/*.log
 !docs/acceptance/evidence-p01-4/logs/
 !docs/acceptance/evidence-p01-4/logs/*.log
+!docs/acceptance/evidence-p02-4-clean-replay/*.log
+!docs/acceptance/evidence-p02-4-clean-replay/logs/
+!docs/acceptance/evidence-p02-4-clean-replay/logs/*.log
 
 # Generated P01-4 acceptance reports/evidence (ephemeral run outputs; keep sanitized
 # copies under docs/acceptance/ when evidence must be versioned)

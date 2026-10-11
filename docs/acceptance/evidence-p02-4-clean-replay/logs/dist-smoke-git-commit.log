@@ -1,0 +1,4 @@
+$ git -c user.name=shiploop-clean-replay -c user.email=clean-replay@example.invalid commit --quiet -m smoke init
+cwd=<TMPDIR>/smoke/repo
+exit=0 signal=null
+

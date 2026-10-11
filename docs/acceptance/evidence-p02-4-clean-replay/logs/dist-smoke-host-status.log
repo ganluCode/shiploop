@@ -1,0 +1,5 @@
+$ <HOME>/.nvm/versions/node/v22.19.0/bin/node <SNAPSHOT-ROOT>/packages/cli/dist/bin.js host status --data-root <TMPDIR>/smoke/data --json
+cwd=<TMPDIR>/smoke/cwd
+exit=0 signal=null
+
+{"ok":true,"command":"host.status","result":{"schemaVersion":3,"protocolVersion":1,"hostInstanceId":"a69b04d5-71fb-42e8-a940-f6b07740065f","dataRootIdentity":"8532b3b55a129b985498b7fe91db66a90994a1cd748b8db2ecfbb82ede9510a7","lifecycleState":"ready","pid":71985,"startedAt":"2026-10-11T04:18:24.502Z","activities":{"accepted":0,"quiescing":0},"stop":null}}

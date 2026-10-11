@@ -1,0 +1,11 @@
+{
+  "processesRemaining": [],
+  "discoveryFilesRemaining": [],
+  "sentinelsRemaining": [],
+  "sentinelStaticLeftovers": [
+    "<TMPDIR>/accept-1/tmp/shiploop-p01-4-guard-FkxZtw/outside-sentinel.txt",
+    "<TMPDIR>/accept-2/tmp/shiploop-p01-4-guard-FSlXpd/outside-sentinel.txt"
+  ],
+  "continuedWrites": [],
+  "observationWindowMs": 2000
+}

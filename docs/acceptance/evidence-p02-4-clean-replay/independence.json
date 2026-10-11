@@ -1,0 +1,7 @@
+{
+  "distinctRunIds": true,
+  "distinctRunDirs": true,
+  "distinctTempRoots": true,
+  "noCrossRunIdReference": true,
+  "firstEvidenceUnchanged": true
+}

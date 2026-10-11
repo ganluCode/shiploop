@@ -1,0 +1,4 @@
+$ git add -A
+cwd=<TMPDIR>/smoke/repo
+exit=0 signal=null
+

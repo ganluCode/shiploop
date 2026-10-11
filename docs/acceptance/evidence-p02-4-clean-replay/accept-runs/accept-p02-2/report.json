@@ -1,0 +1,720 @@
+{
+  "reportSchemaVersion": 1,
+  "runId": "20261011T042251Z-936cd56a",
+  "generatedAtUtc": "2026-10-11T04:26:57.541Z",
+  "plan": {
+    "phaseId": "2026-10-04-23-19-52_shiploop-p02-hostcli",
+    "title": "P02-4 P02 双客户端与初始化验收",
+    "scope": "FR-1/FR-2 双客户端唯一 Host、共享项目/配置、授权基线、重复初始化/命令重放/源文件保留/认证拒绝/客户端退出/重启查询/基线失败与阶段控制检查（macOS 正式范围）",
+    "version": "0.2",
+    "digestSha256": "5b1d2534ce0280ab18b45092dd77d9c7f0cd722f2f699c7bf9290a5d19c5c5ff"
+  },
+  "git": {
+    "commit": "8f94db549dec4211f644ecb00f7c71e47a1e6952",
+    "worktree": "clean",
+    "branch": null,
+    "priorBaselines": [
+      {
+        "phase": "p02-host-lifecycle",
+        "branch": "feat/2026-10-04-23-19-52_p02-1-host",
+        "tipCommit": "7ae5f39bb3d30a82a37a592d938a8e3d933f8c02"
+      },
+      {
+        "phase": "p02-commands-events",
+        "branch": "feat/2026-10-04-23-19-52_p02-2",
+        "tipCommit": "3caca4892423fb33c2ea423edfd426c146314793"
+      },
+      {
+        "phase": "p02-onboarding",
+        "branch": "feat/2026-10-04-23-19-52_p02-3",
+        "tipCommit": "18d490e2543c657560c3de22b770e89157d27df3"
+      }
+    ]
+  },
+  "platform": {
+    "system": "Darwin",
+    "release": "25.6.0",
+    "arch": "arm64"
+  },
+  "tools": {
+    "node": "v22.19.0",
+    "npm": "10.9.3",
+    "git": "git version 2.50.1 (Apple Git-155)",
+    "sqlite": "3.53.4",
+    "betterSqlite3": "13.0.3",
+    "drizzleOrm": "0.45.3"
+  },
+  "schemaVersions": {
+    "settingsSchema": 2,
+    "settingsExportFormat": 1,
+    "sqliteMigrations": [
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "applicationWireSchema": 3,
+    "eventEnvelopeSchema": 1
+  },
+  "commands": [
+    {
+      "label": "npm run verify（锁文件预检 + test/typecheck/build 实际执行）",
+      "argv": [
+        "<node>",
+        "<npm-cli>",
+        "run",
+        "verify"
+      ],
+      "cwd": "<repo>",
+      "exitCode": 0,
+      "durationMs": 92812
+    },
+    {
+      "label": "test/p02-4-dual-cli-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）",
+      "argv": [
+        "<node>",
+        "scripts/run-tests.ts",
+        "test/p02-4-dual-cli-acceptance.test.ts"
+      ],
+      "cwd": "<repo>",
+      "exitCode": 0,
+      "durationMs": 14570
+    },
+    {
+      "label": "test/p02-4-idempotency-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）",
+      "argv": [
+        "<node>",
+        "scripts/run-tests.ts",
+        "test/p02-4-idempotency-acceptance.test.ts"
+      ],
+      "cwd": "<repo>",
+      "exitCode": 0,
+      "durationMs": 14122
+    },
+    {
+      "label": "test/p02-4-repo-preservation-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）",
+      "argv": [
+        "<node>",
+        "scripts/run-tests.ts",
+        "test/p02-4-repo-preservation-acceptance.test.ts"
+      ],
+      "cwd": "<repo>",
+      "exitCode": 0,
+      "durationMs": 16034
+    },
+    {
+      "label": "test/p02-4-negative-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）",
+      "argv": [
+        "<node>",
+        "scripts/run-tests.ts",
+        "test/p02-4-negative-acceptance.test.ts"
+      ],
+      "cwd": "<repo>",
+      "exitCode": 0,
+      "durationMs": 19428
+    },
+    {
+      "label": "test/p02-4-restart-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）",
+      "argv": [
+        "<node>",
+        "scripts/run-tests.ts",
+        "test/p02-4-restart-acceptance.test.ts"
+      ],
+      "cwd": "<repo>",
+      "exitCode": 0,
+      "durationMs": 44565
+    },
+    {
+      "label": "test/p02-4-baseline-failure-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）",
+      "argv": [
+        "<node>",
+        "scripts/run-tests.ts",
+        "test/p02-4-baseline-failure-acceptance.test.ts"
+      ],
+      "cwd": "<repo>",
+      "exitCode": 0,
+      "durationMs": 39081
+    },
+    {
+      "label": "test/p02-4-acceptance-controller.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）",
+      "argv": [
+        "<node>",
+        "scripts/run-tests.ts",
+        "test/p02-4-acceptance-controller.test.ts"
+      ],
+      "cwd": "<repo>",
+      "exitCode": 0,
+      "durationMs": 4276
+    },
+    {
+      "label": "test/p02-4-report-aggregation.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）",
+      "argv": [
+        "<node>",
+        "scripts/run-tests.ts",
+        "test/p02-4-report-aggregation.test.ts"
+      ],
+      "cwd": "<repo>",
+      "exitCode": 0,
+      "durationMs": 344
+    },
+    {
+      "label": "test/p02-4-acceptance-report.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）",
+      "argv": [
+        "<node>",
+        "scripts/run-tests.ts",
+        "test/p02-4-acceptance-report.test.ts"
+      ],
+      "cwd": "<repo>",
+      "exitCode": 0,
+      "durationMs": 376
+    },
+    {
+      "label": "test/p02-4-clean-replay.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）",
+      "argv": [
+        "<node>",
+        "scripts/run-tests.ts",
+        "test/p02-4-clean-replay.test.ts"
+      ],
+      "cwd": "<repo>",
+      "exitCode": 0,
+      "durationMs": 356
+    }
+  ],
+  "checks": [
+    {
+      "id": "P02-ENG-VERIFY",
+      "group": "ENG",
+      "frBranch": "工程",
+      "summary": "npm run verify（锁文件预检 + test/typecheck/build）退出 0",
+      "testEntry": "npm run verify",
+      "expectedNegative": false,
+      "requiredAssertions": [],
+      "status": "pass",
+      "notRunReason": null,
+      "errorAssertion": null,
+      "zeroStartAssertion": null,
+      "persistentStateAssertion": null,
+      "durationMs": 92812,
+      "detail": "步骤退出 0：npm run verify（锁文件预检 + test/typecheck/build 实际执行）",
+      "evidenceRefs": [
+        "evidence/checks/P02-ENG-VERIFY.json",
+        "evidence/commands/01-verify.log"
+      ]
+    },
+    {
+      "id": "P02-FR1-UNIQUE-HOST",
+      "group": "FR1",
+      "frBranch": "FR-1 唯一 Host",
+      "summary": "双真实 dist CLI 同步竞争同一临时数据根：恰一持锁 Host/写入者、同一 hostInstanceId 与数据根身份、127.0.0.1 随机端口、发现目录权限合规",
+      "testEntry": "test/p02-4-dual-cli-acceptance.test.ts",
+      "expectedNegative": false,
+      "requiredAssertions": [],
+      "status": "pass",
+      "notRunReason": null,
+      "errorAssertion": null,
+      "zeroStartAssertion": null,
+      "persistentStateAssertion": null,
+      "durationMs": 14570,
+      "detail": "步骤退出 0：test/p02-4-dual-cli-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）",
+      "evidenceRefs": [
+        "evidence/checks/P02-FR1-UNIQUE-HOST.json",
+        "evidence/commands/02-dual-cli.log"
+      ]
+    },
+    {
+      "id": "P02-FR1-SHARED-STATE",
+      "group": "FR1",
+      "frBranch": "FR-1 共享项目/配置",
+      "summary": "CLI A 确认注册 + 配置写入后，CLI B 经列表/详情/overview/配置查询读到同一 projectId、绑定、描述、标签、当前值、revision 与有效来源",
+      "testEntry": "test/p02-4-dual-cli-acceptance.test.ts",
+      "expectedNegative": false,
+      "requiredAssertions": [],
+      "status": "pass",
+      "notRunReason": null,
+      "errorAssertion": null,
+      "zeroStartAssertion": null,
+      "persistentStateAssertion": null,
+      "durationMs": 14570,
+      "detail": "步骤退出 0：test/p02-4-dual-cli-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）",
+      "evidenceRefs": [
+        "evidence/checks/P02-FR1-SHARED-STATE.json",
+        "evidence/commands/02-dual-cli.log"
+      ]
+    },
+    {
+      "id": "P02-FR1-BASELINE-OK",
+      "group": "FR1",
+      "frBranch": "FR-1 授权基线",
+      "summary": "用户明确确认的确定性成功命令：双客户端查询同一 operationId、逐项检查结果、退出码 0、代码身份与可校验输出制品；accepted 不作 passed 依据",
+      "testEntry": "test/p02-4-dual-cli-acceptance.test.ts",
+      "expectedNegative": false,
+      "requiredAssertions": [],
+      "status": "pass",
+      "notRunReason": null,
+      "errorAssertion": null,
+      "zeroStartAssertion": null,
+      "persistentStateAssertion": null,
+      "durationMs": 14570,
+      "detail": "步骤退出 0：test/p02-4-dual-cli-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）",
+      "evidenceRefs": [
+        "evidence/checks/P02-FR1-BASELINE-OK.json",
+        "evidence/commands/02-dual-cli.log"
+      ]
+    },
+    {
+      "id": "P02-FR2-DUPLICATE-INIT",
+      "group": "FR2",
+      "frBranch": "FR-2 重复初始化",
+      "summary": "同规范路径及其真实路径别名重复 init 得同一 projectId；项目/绑定各一份，原名称/描述/标签/配置未被重复初始化覆盖",
+      "testEntry": "test/p02-4-idempotency-acceptance.test.ts",
+      "expectedNegative": true,
+      "requiredAssertions": [
+        "error",
+        "persistentState"
+      ],
+      "status": "pass",
+      "notRunReason": null,
+      "errorAssertion": true,
+      "zeroStartAssertion": null,
+      "persistentStateAssertion": true,
+      "durationMs": 14122,
+      "detail": "步骤退出 0：test/p02-4-idempotency-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）；预期负例：错误/零启动/持久状态断言由测试入口内的真实断言承载，步骤退出 0 表示冻结断言集合同时成立",
+      "evidenceRefs": [
+        "evidence/checks/P02-FR2-DUPLICATE-INIT.json",
+        "evidence/commands/03-idempotency.log"
+      ]
+    },
+    {
+      "id": "P02-FR2-COMMAND-CONFLICT",
+      "group": "FR2",
+      "frBranch": "FR-2 命令重放/冲突",
+      "summary": "显式同一 commandId 重放返回原持久回执与结果身份、零重复副作用；同 principal/commandId 异参数得 conflict 且无额外变更，原回执仍可查",
+      "testEntry": "test/p02-4-idempotency-acceptance.test.ts",
+      "expectedNegative": true,
+      "requiredAssertions": [
+        "error",
+        "zeroStart",
+        "persistentState"
+      ],
+      "status": "pass",
+      "notRunReason": null,
+      "errorAssertion": true,
+      "zeroStartAssertion": true,
+      "persistentStateAssertion": true,
+      "durationMs": 14122,
+      "detail": "步骤退出 0：test/p02-4-idempotency-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）；预期负例：错误/零启动/持久状态断言由测试入口内的真实断言承载，步骤退出 0 表示冻结断言集合同时成立",
+      "evidenceRefs": [
+        "evidence/checks/P02-FR2-COMMAND-CONFLICT.json",
+        "evidence/commands/03-idempotency.log"
+      ]
+    },
+    {
+      "id": "P02-FR2-SOURCE-PRESERVED",
+      "group": "FR2",
+      "frBranch": "FR-2 源文件保留",
+      "summary": "干净/脏仓库接入前后 HEAD、索引、Git 状态与文件摘要一致；恶意脚本哨兵零执行、无意外产物；取消确认按契约返回 not_run 且零启动",
+      "testEntry": "test/p02-4-repo-preservation-acceptance.test.ts",
+      "expectedNegative": true,
+      "requiredAssertions": [
+        "error",
+        "zeroStart",
+        "persistentState"
+      ],
+      "status": "pass",
+      "notRunReason": null,
+      "errorAssertion": true,
+      "zeroStartAssertion": true,
+      "persistentStateAssertion": true,
+      "durationMs": 16034,
+      "detail": "步骤退出 0：test/p02-4-repo-preservation-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）；预期负例：错误/零启动/持久状态断言由测试入口内的真实断言承载，步骤退出 0 表示冻结断言集合同时成立",
+      "evidenceRefs": [
+        "evidence/checks/P02-FR2-SOURCE-PRESERVED.json",
+        "evidence/commands/04-repo-preservation.log"
+      ]
+    },
+    {
+      "id": "P02-FR2-AUTH-REJECT",
+      "group": "FR2",
+      "frBranch": "FR-2 认证拒绝",
+      "summary": "缺失/错误 token、旧实例身份、数据根不匹配、未知协议/Schema、非法输入、越权与监听覆盖明确拒绝；零副作用、实际绑定 127.0.0.1 且不泄漏凭据",
+      "testEntry": "test/p02-4-negative-acceptance.test.ts",
+      "expectedNegative": true,
+      "requiredAssertions": [
+        "error",
+        "zeroStart",
+        "persistentState"
+      ],
+      "status": "pass",
+      "notRunReason": null,
+      "errorAssertion": true,
+      "zeroStartAssertion": true,
+      "persistentStateAssertion": true,
+      "durationMs": 19428,
+      "detail": "步骤退出 0：test/p02-4-negative-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）；预期负例：错误/零启动/持久状态断言由测试入口内的真实断言承载，步骤退出 0 表示冻结断言集合同时成立",
+      "evidenceRefs": [
+        "evidence/checks/P02-FR2-AUTH-REJECT.json",
+        "evidence/commands/05-auth-reject.log"
+      ]
+    },
+    {
+      "id": "P02-FR2-CLIENT-EXIT",
+      "group": "FR2",
+      "frBranch": "FR-2 客户端退出",
+      "summary": "运行基线时退出/中断 CLI 的 wait/follow（observation_interrupted）：不发 stop/cancel、Host 存活、另一 CLI 仍可认证查询同一 Host",
+      "testEntry": "test/p02-4-restart-acceptance.test.ts",
+      "expectedNegative": true,
+      "requiredAssertions": [
+        "error",
+        "persistentState"
+      ],
+      "status": "pass",
+      "notRunReason": null,
+      "errorAssertion": true,
+      "zeroStartAssertion": null,
+      "persistentStateAssertion": true,
+      "durationMs": 44565,
+      "detail": "步骤退出 0：test/p02-4-restart-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）；预期负例：错误/零启动/持久状态断言由测试入口内的真实断言承载，步骤退出 0 表示冻结断言集合同时成立",
+      "evidenceRefs": [
+        "evidence/checks/P02-FR2-CLIENT-EXIT.json",
+        "evidence/commands/06-restart.log"
+      ]
+    },
+    {
+      "id": "P02-FR1-RESTART-QUERY",
+      "group": "FR1",
+      "frBranch": "FR-1 重启查询",
+      "summary": "正式显式 host stop 核验后重启取新 hostInstanceId；新 CLI 读到原 projectId、配置值/revision、基线结果、代码身份与输出制品 hash/size 一致；旧凭据被拒、原基线不重跑",
+      "testEntry": "test/p02-4-restart-acceptance.test.ts",
+      "expectedNegative": false,
+      "requiredAssertions": [],
+      "status": "pass",
+      "notRunReason": null,
+      "errorAssertion": null,
+      "zeroStartAssertion": null,
+      "persistentStateAssertion": null,
+      "durationMs": 44565,
+      "detail": "步骤退出 0：test/p02-4-restart-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）",
+      "evidenceRefs": [
+        "evidence/checks/P02-FR1-RESTART-QUERY.json",
+        "evidence/commands/06-restart.log"
+      ]
+    },
+    {
+      "id": "P02-FR2-BASELINE-FAILURE",
+      "group": "FR2",
+      "frBranch": "FR-2 基线失败",
+      "summary": "固定非零退出、拒绝授权 not_run（零启动）、缺命令/未知脚本、超时/取消/停止未确认；失败不撤销注册、不删证据、不冒充通过",
+      "testEntry": "test/p02-4-baseline-failure-acceptance.test.ts",
+      "expectedNegative": true,
+      "requiredAssertions": [
+        "error",
+        "zeroStart",
+        "persistentState"
+      ],
+      "status": "pass",
+      "notRunReason": null,
+      "errorAssertion": true,
+      "zeroStartAssertion": true,
+      "persistentStateAssertion": true,
+      "durationMs": 39081,
+      "detail": "步骤退出 0：test/p02-4-baseline-failure-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）；预期负例：错误/零启动/持久状态断言由测试入口内的真实断言承载，步骤退出 0 表示冻结断言集合同时成立",
+      "evidenceRefs": [
+        "evidence/checks/P02-FR2-BASELINE-FAILURE.json",
+        "evidence/commands/07-baseline-failure.log"
+      ]
+    },
+    {
+      "id": "P02-PHASE-FIXTURE",
+      "group": "PHASE",
+      "frBranch": "夹具失败",
+      "summary": "夹具准备失败明确 fail/not_run，阶段非零，保留已取得证据并回收自有进程/临时资源",
+      "testEntry": "test/p02-4-acceptance-controller.test.ts",
+      "expectedNegative": false,
+      "requiredAssertions": [],
+      "status": "pass",
+      "notRunReason": null,
+      "errorAssertion": null,
+      "zeroStartAssertion": null,
+      "persistentStateAssertion": null,
+      "durationMs": 4276,
+      "detail": "步骤退出 0：test/p02-4-acceptance-controller.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）",
+      "evidenceRefs": [
+        "evidence/checks/P02-PHASE-FIXTURE.json",
+        "evidence/commands/08-controller.log"
+      ]
+    },
+    {
+      "id": "P02-PHASE-NOT-RUN",
+      "group": "PHASE",
+      "frBranch": "必需检查未运行",
+      "summary": "未提交结果/启动失败/超时/被跳过的必需项标 not_run，不得聚合为通过",
+      "testEntry": "test/p02-4-report-aggregation.test.ts",
+      "expectedNegative": false,
+      "requiredAssertions": [],
+      "status": "pass",
+      "notRunReason": null,
+      "errorAssertion": null,
+      "zeroStartAssertion": null,
+      "persistentStateAssertion": null,
+      "durationMs": 344,
+      "detail": "步骤退出 0：test/p02-4-report-aggregation.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）；全部必需检查均已提交结果；未提交/启动失败/超时/被跳过项均显式分类为 not_run",
+      "evidenceRefs": [
+        "evidence/checks/P02-PHASE-NOT-RUN.json",
+        "evidence/commands/09-report-aggregation.log"
+      ]
+    },
+    {
+      "id": "P02-PHASE-REPORT",
+      "group": "PHASE",
+      "frBranch": "报告完整性",
+      "summary": "版本化报告 Schema、逐项结果、证据 path/hash/size、脱敏与总体结论可验证",
+      "testEntry": "test/p02-4-acceptance-report.test.ts",
+      "expectedNegative": false,
+      "requiredAssertions": [],
+      "status": "pass",
+      "notRunReason": null,
+      "errorAssertion": null,
+      "zeroStartAssertion": null,
+      "persistentStateAssertion": null,
+      "durationMs": 376,
+      "detail": "步骤退出 0：test/p02-4-acceptance-report.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）；报告输入通过严格 Schema 校验且证据清单交叉完整；写出后重验决定阶段退出码",
+      "evidenceRefs": [
+        "evidence/checks/P02-PHASE-REPORT.json",
+        "evidence/commands/10-acceptance-report.log"
+      ]
+    },
+    {
+      "id": "P02-ENG-CLEAN-REPLAY",
+      "group": "ENG",
+      "frBranch": "重复运行不依赖残留",
+      "summary": "干净源码快照 npm ci/build 后从非源码 cwd 连续两次 accept:p02 均退出 0；run-id/报告/临时资源独立、互不覆盖",
+      "testEntry": "test/p02-4-clean-replay.test.ts",
+      "expectedNegative": false,
+      "requiredAssertions": [],
+      "status": "pass",
+      "notRunReason": null,
+      "errorAssertion": null,
+      "zeroStartAssertion": null,
+      "persistentStateAssertion": null,
+      "durationMs": 356,
+      "detail": "步骤退出 0：test/p02-4-clean-replay.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host）",
+      "evidenceRefs": [
+        "evidence/checks/P02-ENG-CLEAN-REPLAY.json",
+        "evidence/commands/11-clean-replay.log"
+      ]
+    }
+  ],
+  "counts": {
+    "pass": 15,
+    "fail": 0,
+    "not_run": 0,
+    "total": 15
+  },
+  "conclusion": "pass",
+  "evidence": [
+    {
+      "path": "evidence/config.json",
+      "sha256": "261a1d0946a17aaa5cf426d25e25a177401e56e9ed567439d795f974e53249a4",
+      "sizeBytes": 4308,
+      "checkId": "P02-PHASE-FIXTURE"
+    },
+    {
+      "path": "evidence/environment.json",
+      "sha256": "8b6c4f9e75c1213c282a7f62c4876af739d05c14f3f570e4d7f051f93565b1a6",
+      "sizeBytes": 802,
+      "checkId": "P02-PHASE-FIXTURE"
+    },
+    {
+      "path": "evidence/commands/01-verify.log",
+      "sha256": "318de3e309326c72b20c143388ba6f38b1395b828569307cc7244e6da5b7bf12",
+      "sizeBytes": 4384,
+      "checkId": null
+    },
+    {
+      "path": "evidence/checks/P02-ENG-VERIFY.json",
+      "sha256": "23df680e7e0d1d6582cd03aebf847def4c739680f643329309b5481cfc3f07a0",
+      "sizeBytes": 286,
+      "checkId": "P02-ENG-VERIFY"
+    },
+    {
+      "path": "evidence/commands/02-dual-cli.log",
+      "sha256": "2cd7bdf49c47b0af5cd315e43380770f8a5dcda1ab2d6b6c4a0d984127e2f861",
+      "sizeBytes": 770,
+      "checkId": null
+    },
+    {
+      "path": "evidence/checks/P02-FR1-UNIQUE-HOST.json",
+      "sha256": "357c5c31cbb889907018562250949103b17974b8887403c01e4a39dabc4adbb3",
+      "sizeBytes": 295,
+      "checkId": "P02-FR1-UNIQUE-HOST"
+    },
+    {
+      "path": "evidence/checks/P02-FR1-SHARED-STATE.json",
+      "sha256": "3017dc551b8e25e83a5593b324a3688c012606c4e71f861f77971f72e8cb7145",
+      "sizeBytes": 296,
+      "checkId": "P02-FR1-SHARED-STATE"
+    },
+    {
+      "path": "evidence/checks/P02-FR1-BASELINE-OK.json",
+      "sha256": "8acfe75ad83443776b9be347f08b2f8919b2a56aa9e4adb7ffa053a5d078c16c",
+      "sizeBytes": 295,
+      "checkId": "P02-FR1-BASELINE-OK"
+    },
+    {
+      "path": "evidence/commands/03-idempotency.log",
+      "sha256": "46bd945b4155d32b2afa30b3ba2dee16f72c3ae9e724c5704cafc9d496391f59",
+      "sizeBytes": 779,
+      "checkId": null
+    },
+    {
+      "path": "evidence/checks/P02-FR2-DUPLICATE-INIT.json",
+      "sha256": "6d3bc57d7e963a6dce7589314d11712d037e7764cb06b77019ea2f6286430473",
+      "sizeBytes": 362,
+      "checkId": "P02-FR2-DUPLICATE-INIT"
+    },
+    {
+      "path": "evidence/checks/P02-FR2-COMMAND-CONFLICT.json",
+      "sha256": "0ecf2a2b020aca9c0e87a992ad21974941ad64a71bd5a4e30f34b31d37d615ca",
+      "sizeBytes": 381,
+      "checkId": "P02-FR2-COMMAND-CONFLICT"
+    },
+    {
+      "path": "evidence/commands/04-repo-preservation.log",
+      "sha256": "7eebda7995f67d7d29f6cae9c127049c7c0d358295de41aff1d43ff8e2098ad5",
+      "sizeBytes": 797,
+      "checkId": null
+    },
+    {
+      "path": "evidence/checks/P02-FR2-SOURCE-PRESERVED.json",
+      "sha256": "120529d71d19f61a6653f45851655a6ec6e6c6d2bc6e8610d1fa891bc9f30575",
+      "sizeBytes": 393,
+      "checkId": "P02-FR2-SOURCE-PRESERVED"
+    },
+    {
+      "path": "evidence/commands/05-auth-reject.log",
+      "sha256": "383f8608c09daae6bab88a8c67098bc03fc5278d5dafd00ac8fc0bcd3f083e02",
+      "sizeBytes": 773,
+      "checkId": null
+    },
+    {
+      "path": "evidence/checks/P02-FR2-AUTH-REJECT.json",
+      "sha256": "df02d9d341d142ca9b25c97c24b9c0ef608e146c061898d7bd49d73cac7d4e26",
+      "sizeBytes": 376,
+      "checkId": "P02-FR2-AUTH-REJECT"
+    },
+    {
+      "path": "evidence/commands/06-restart.log",
+      "sha256": "0d1b88e7f238c2f17c832d8f2c111ab72e53ee83afbe26ea60865bd4594ec2c3",
+      "sizeBytes": 767,
+      "checkId": null
+    },
+    {
+      "path": "evidence/checks/P02-FR2-CLIENT-EXIT.json",
+      "sha256": "71a4528571691a72c394950395d715e8ec6e4ef7dee6aa756cf672bf96310f76",
+      "sizeBytes": 351,
+      "checkId": "P02-FR2-CLIENT-EXIT"
+    },
+    {
+      "path": "evidence/checks/P02-FR1-RESTART-QUERY.json",
+      "sha256": "88e638bdba32beefdabe48ced64c9021c58b83ee07019336fe784a0f21db3e88",
+      "sizeBytes": 295,
+      "checkId": "P02-FR1-RESTART-QUERY"
+    },
+    {
+      "path": "evidence/commands/07-baseline-failure.log",
+      "sha256": "3f2f314407384d64f420938de5635a7be1903280d5f2f69e4b8e442fea63efe2",
+      "sizeBytes": 794,
+      "checkId": null
+    },
+    {
+      "path": "evidence/checks/P02-FR2-BASELINE-FAILURE.json",
+      "sha256": "0028cf37b8ff95a750794cc2523cbfb08f5bde8a0f681c49570e87a74ee1afb3",
+      "sizeBytes": 391,
+      "checkId": "P02-FR2-BASELINE-FAILURE"
+    },
+    {
+      "path": "evidence/commands/08-controller.log",
+      "sha256": "5344257f84df1cc41f35d3d8c3e95c21219730cb83c4959f8634bd07906def39",
+      "sizeBytes": 776,
+      "checkId": null
+    },
+    {
+      "path": "evidence/checks/P02-PHASE-FIXTURE.json",
+      "sha256": "1e5332733c6a3cad24cabf456206ee7d740a48fac2c41bfe5a61b7bb6e0ae925",
+      "sizeBytes": 296,
+      "checkId": "P02-PHASE-FIXTURE"
+    },
+    {
+      "path": "evidence/commands/09-report-aggregation.log",
+      "sha256": "20eb9e79ac1c82068e9dcb4ee880239f93d9de67f3b7e2c44064d14b6bf09c33",
+      "sizeBytes": 801,
+      "checkId": null
+    },
+    {
+      "path": "evidence/checks/P02-PHASE-NOT-RUN.json",
+      "sha256": "8f1219075ba4beffdbbd97c45bbc488bd436fa53908ed585d61199d23f5692ae",
+      "sizeBytes": 311,
+      "checkId": "P02-PHASE-NOT-RUN"
+    },
+    {
+      "path": "evidence/commands/10-acceptance-report.log",
+      "sha256": "591e791f66054eb6af7c8b8339f59579128fc38c060df6b6e663b012714f7092",
+      "sizeBytes": 798,
+      "checkId": null
+    },
+    {
+      "path": "evidence/checks/P02-PHASE-REPORT.json",
+      "sha256": "0b03ddf566bf64cd0a4b39297359640791efe212c4a68b265a6cf51e784e1b91",
+      "sizeBytes": 308,
+      "checkId": "P02-PHASE-REPORT"
+    },
+    {
+      "path": "evidence/commands/11-clean-replay.log",
+      "sha256": "daff847f55a76c55f78872a8136e1b492e6e886eb3dab2a5f45352d7661d1369",
+      "sizeBytes": 939,
+      "checkId": null
+    },
+    {
+      "path": "evidence/checks/P02-ENG-CLEAN-REPLAY.json",
+      "sha256": "37a44d16e62512d3816feb93bcdb4f0f5b65b73998cb96de13fae4d5e64dcffb",
+      "sizeBytes": 302,
+      "checkId": "P02-ENG-CLEAN-REPLAY"
+    }
+  ],
+  "stateDigests": {
+    "codeSha256": "90bfbbeac8144de05ccc12b0e9f99adcd47be6a9081faa330dae02df33c38633"
+  },
+  "outOfScope": [
+    {
+      "id": "P02-OOS-MODEL-LIVE",
+      "capability": "Runtime/Pi SDK 模型 Live 调用",
+      "status": "not_run",
+      "note": "P02 无模型调用；本阶段不运行也不计入必需项通过数"
+    },
+    {
+      "id": "P02-OOS-WEB-CLIENT",
+      "capability": "托管 Web/Electron 客户端",
+      "status": "not_run",
+      "note": "客户端按路线后续建设，本阶段仅 CLI/Host"
+    },
+    {
+      "id": "P02-OOS-NON-MACOS",
+      "capability": "Windows/WSL/Linux 平台验收",
+      "status": "not_run",
+      "note": "正式验收限 macOS；其他平台另行验收"
+    },
+    {
+      "id": "P02-OOS-STRONG-SANDBOX",
+      "capability": "强 OS 沙箱",
+      "status": "unsupported",
+      "note": "首版为可信项目模式，强沙箱按路线后续建设"
+    }
+  ],
+  "knownLimitations": [
+    "正式验收平台限 macOS；Windows/WSL/Linux 未验收。",
+    "可信项目模式不等于强 OS 沙箱；Pi 默认工具无强 OS 沙箱。",
+    "P02-ENG-CLEAN-REPLAY 由 test/p02-4-clean-replay.test.ts 承接（F-012 交付）：入口未交付时该检查 not_run/startup_failure，阶段退出码非零。",
+    "场景步骤经 scripts/run-tests.ts 以本地锁定 vitest 运行真实测试入口；verify 步骤先行完成锁文件预检/test/typecheck/build。"
+  ]
+}

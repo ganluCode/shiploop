@@ -1,0 +1,5 @@
+$ <HOME>/.nvm/versions/node/v22.19.0/bin/node <SNAPSHOT-ROOT>/packages/cli/dist/bin.js host stop --data-root <TMPDIR>/smoke/data --json
+cwd=<TMPDIR>/smoke/cwd
+exit=0 signal=null
+
+{"ok":true,"command":"host.stop","result":{"commandId":"630edd1f-e8b2-44f8-ac22-77df69f6f173","status":"stopped","hostInstanceId":"a69b04d5-71fb-42e8-a940-f6b07740065f","replayed":false,"evidence":{"processExit":"confirmed","lock":"acquirable","discovery":"removed"}}}

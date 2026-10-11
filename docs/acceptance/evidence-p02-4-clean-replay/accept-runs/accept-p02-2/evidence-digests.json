@@ -1,0 +1,142 @@
+[
+  {
+    "path": "evidence/config.json",
+    "sha256": "261a1d0946a17aaa5cf426d25e25a177401e56e9ed567439d795f974e53249a4",
+    "sizeBytes": 4308
+  },
+  {
+    "path": "evidence/environment.json",
+    "sha256": "8b6c4f9e75c1213c282a7f62c4876af739d05c14f3f570e4d7f051f93565b1a6",
+    "sizeBytes": 802
+  },
+  {
+    "path": "evidence/commands/01-verify.log",
+    "sha256": "318de3e309326c72b20c143388ba6f38b1395b828569307cc7244e6da5b7bf12",
+    "sizeBytes": 4384
+  },
+  {
+    "path": "evidence/checks/P02-ENG-VERIFY.json",
+    "sha256": "23df680e7e0d1d6582cd03aebf847def4c739680f643329309b5481cfc3f07a0",
+    "sizeBytes": 286
+  },
+  {
+    "path": "evidence/commands/02-dual-cli.log",
+    "sha256": "2cd7bdf49c47b0af5cd315e43380770f8a5dcda1ab2d6b6c4a0d984127e2f861",
+    "sizeBytes": 770
+  },
+  {
+    "path": "evidence/checks/P02-FR1-UNIQUE-HOST.json",
+    "sha256": "357c5c31cbb889907018562250949103b17974b8887403c01e4a39dabc4adbb3",
+    "sizeBytes": 295
+  },
+  {
+    "path": "evidence/checks/P02-FR1-SHARED-STATE.json",
+    "sha256": "3017dc551b8e25e83a5593b324a3688c012606c4e71f861f77971f72e8cb7145",
+    "sizeBytes": 296
+  },
+  {
+    "path": "evidence/checks/P02-FR1-BASELINE-OK.json",
+    "sha256": "8acfe75ad83443776b9be347f08b2f8919b2a56aa9e4adb7ffa053a5d078c16c",
+    "sizeBytes": 295
+  },
+  {
+    "path": "evidence/commands/03-idempotency.log",
+    "sha256": "46bd945b4155d32b2afa30b3ba2dee16f72c3ae9e724c5704cafc9d496391f59",
+    "sizeBytes": 779
+  },
+  {
+    "path": "evidence/checks/P02-FR2-DUPLICATE-INIT.json",
+    "sha256": "6d3bc57d7e963a6dce7589314d11712d037e7764cb06b77019ea2f6286430473",
+    "sizeBytes": 362
+  },
+  {
+    "path": "evidence/checks/P02-FR2-COMMAND-CONFLICT.json",
+    "sha256": "0ecf2a2b020aca9c0e87a992ad21974941ad64a71bd5a4e30f34b31d37d615ca",
+    "sizeBytes": 381
+  },
+  {
+    "path": "evidence/commands/04-repo-preservation.log",
+    "sha256": "7eebda7995f67d7d29f6cae9c127049c7c0d358295de41aff1d43ff8e2098ad5",
+    "sizeBytes": 797
+  },
+  {
+    "path": "evidence/checks/P02-FR2-SOURCE-PRESERVED.json",
+    "sha256": "120529d71d19f61a6653f45851655a6ec6e6c6d2bc6e8610d1fa891bc9f30575",
+    "sizeBytes": 393
+  },
+  {
+    "path": "evidence/commands/05-auth-reject.log",
+    "sha256": "383f8608c09daae6bab88a8c67098bc03fc5278d5dafd00ac8fc0bcd3f083e02",
+    "sizeBytes": 773
+  },
+  {
+    "path": "evidence/checks/P02-FR2-AUTH-REJECT.json",
+    "sha256": "df02d9d341d142ca9b25c97c24b9c0ef608e146c061898d7bd49d73cac7d4e26",
+    "sizeBytes": 376
+  },
+  {
+    "path": "evidence/commands/06-restart.log",
+    "sha256": "0d1b88e7f238c2f17c832d8f2c111ab72e53ee83afbe26ea60865bd4594ec2c3",
+    "sizeBytes": 767
+  },
+  {
+    "path": "evidence/checks/P02-FR2-CLIENT-EXIT.json",
+    "sha256": "71a4528571691a72c394950395d715e8ec6e4ef7dee6aa756cf672bf96310f76",
+    "sizeBytes": 351
+  },
+  {
+    "path": "evidence/checks/P02-FR1-RESTART-QUERY.json",
+    "sha256": "88e638bdba32beefdabe48ced64c9021c58b83ee07019336fe784a0f21db3e88",
+    "sizeBytes": 295
+  },
+  {
+    "path": "evidence/commands/07-baseline-failure.log",
+    "sha256": "3f2f314407384d64f420938de5635a7be1903280d5f2f69e4b8e442fea63efe2",
+    "sizeBytes": 794
+  },
+  {
+    "path": "evidence/checks/P02-FR2-BASELINE-FAILURE.json",
+    "sha256": "0028cf37b8ff95a750794cc2523cbfb08f5bde8a0f681c49570e87a74ee1afb3",
+    "sizeBytes": 391
+  },
+  {
+    "path": "evidence/commands/08-controller.log",
+    "sha256": "5344257f84df1cc41f35d3d8c3e95c21219730cb83c4959f8634bd07906def39",
+    "sizeBytes": 776
+  },
+  {
+    "path": "evidence/checks/P02-PHASE-FIXTURE.json",
+    "sha256": "1e5332733c6a3cad24cabf456206ee7d740a48fac2c41bfe5a61b7bb6e0ae925",
+    "sizeBytes": 296
+  },
+  {
+    "path": "evidence/commands/09-report-aggregation.log",
+    "sha256": "20eb9e79ac1c82068e9dcb4ee880239f93d9de67f3b7e2c44064d14b6bf09c33",
+    "sizeBytes": 801
+  },
+  {
+    "path": "evidence/checks/P02-PHASE-NOT-RUN.json",
+    "sha256": "8f1219075ba4beffdbbd97c45bbc488bd436fa53908ed585d61199d23f5692ae",
+    "sizeBytes": 311
+  },
+  {
+    "path": "evidence/commands/10-acceptance-report.log",
+    "sha256": "591e791f66054eb6af7c8b8339f59579128fc38c060df6b6e663b012714f7092",
+    "sizeBytes": 798
+  },
+  {
+    "path": "evidence/checks/P02-PHASE-REPORT.json",
+    "sha256": "0b03ddf566bf64cd0a4b39297359640791efe212c4a68b265a6cf51e784e1b91",
+    "sizeBytes": 308
+  },
+  {
+    "path": "evidence/commands/11-clean-replay.log",
+    "sha256": "daff847f55a76c55f78872a8136e1b492e6e886eb3dab2a5f45352d7661d1369",
+    "sizeBytes": 939
+  },
+  {
+    "path": "evidence/checks/P02-ENG-CLEAN-REPLAY.json",
+    "sha256": "37a44d16e62512d3816feb93bcdb4f0f5b65b73998cb96de13fae4d5e64dcffb",
+    "sizeBytes": 302
+  }
+]
