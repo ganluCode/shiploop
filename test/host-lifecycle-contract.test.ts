@@ -181,6 +181,8 @@ describe('F-002 冻结常量与能力声明', () => {
           'baseline.preview',
           'baseline.run',
           'baseline.cancel',
+          // P03-1 / F-004：Phase 创建经既有 /v1/commands 通用路由接线。
+          'phase.create',
         ],
         queries: [
           'projects.list',

@@ -175,7 +175,9 @@ export interface TaskDependencyRecord {
  * 写输入校验（unknown → 已校验形态；失败零副作用）
  * ------------------------------------------------------------------ */
 
-const CREATE_PHASE_KEYS = ['projectId', 'title', 'description', 'labels'] as const;
+const CREATE_PHASE_KEYS = ['projectId', 'id', 'title', 'description', 'labels'] as const;
+/** F-004 命令 payload 字段面（projectId 由信封 scope 携带，不进 payload）。 */
+const PHASE_FIELD_KEYS = ['id', 'title', 'description', 'labels'] as const;
 const CREATE_FEATURE_KEYS = [
   'projectId',
   'phaseId',
@@ -202,17 +204,42 @@ const CREATE_TASK_KEYS = [
 const CREATE_TASK_DEPENDENCY_KEYS = ['projectId', 'featureId', 'taskId', 'dependsOnId'] as const;
 
 export interface ValidatedCreatePhaseInput {
+  /** 调用方指定的稳定 ID；缺省 null 时由适配器生成 UUID v4（F-002 定案保持不变）。 */
+  readonly id: string | null;
   readonly projectId: string;
   readonly title: string;
   readonly description: string | null;
   readonly labels: string[];
 }
 
+/** Phase 业务字段（id/title/description/labels）共用校验；id 可缺省。 */
+export interface ValidatedPhaseFields {
+  readonly id: string | null;
+  readonly title: string;
+  readonly description: string | null;
+  readonly labels: string[];
+}
+
+export function validatePhaseFields(value: unknown, operation: string): ValidatedPhaseFields {
+  const context: ValidationContext = { operation, entity: { type: 'phase' } };
+  const object = requirePlainObject(value, context, 'input');
+  rejectUnknownKeys(object, PHASE_FIELD_KEYS, context, 'input');
+  const idValue = object.id;
+  return {
+    id: idValue === undefined || idValue === null ? null : validateStableId(idValue, context, 'id'),
+    title: validatePlanTitle(object.title, context, 'title'),
+    description: validatePlanDescription(object.description, context, 'description'),
+    labels: normalizeLabels(object.labels, context),
+  };
+}
+
 export function validateCreatePhaseInput(value: unknown, operation: string): ValidatedCreatePhaseInput {
   const context: ValidationContext = { operation, entity: { type: 'phase' } };
   const object = requirePlainObject(value, context, 'input');
   rejectUnknownKeys(object, CREATE_PHASE_KEYS, context, 'input');
+  const idValue = object.id;
   return {
+    id: idValue === undefined || idValue === null ? null : validateStableId(idValue, context, 'id'),
     projectId: validateStableId(object.projectId, context, 'projectId'),
     title: validatePlanTitle(object.title, context, 'title'),
     description: validatePlanDescription(object.description, context, 'description'),
@@ -371,6 +398,89 @@ export function validateCreateTaskDependencyInput(
     );
   }
   return valid;
+}
+
+/* ------------------------------------------------------------------ *
+ * 事件追加契约（F-004：Phase 创建事件；后续计划事件随对应功能扩展白名单）
+ *
+ * 同步事务原语（供 CommandTransaction.appendPlanEvent 使用）：payload 只允许
+ * 受控脱敏形状，写入行必须能被 ports/events.ts 公开映射读取（白名单同源）。
+ * 事件写入由命令用例在同一事务内与业务行、回执组合（F-002 不预支进插入原语）。
+ * ------------------------------------------------------------------ */
+
+/** F-004：Phase 创建事件（仅命令路径创建成功写入；脱敏 payload 恒为 {created:true}）。 */
+export const PHASE_CREATED_EVENT_TYPE = 'phase.created';
+
+/** 计划域事件白名单（顺序即冻结顺序；白名单外不得进入公开事件流）。 */
+export const PLAN_EVENT_TYPES = [PHASE_CREATED_EVENT_TYPE] as const;
+export type PlanEventType = (typeof PLAN_EVENT_TYPES)[number];
+
+export interface ValidatedPlanEventAppend {
+  readonly projectId: string;
+  readonly eventType: PlanEventType;
+  /** Phase 事件聚合恒为 'phase'（aggregateId=Phase 稳定 ID）。 */
+  readonly aggregateType: 'phase';
+  readonly aggregateId: string;
+  readonly aggregateRevision: number;
+  /** 脱敏 payload（phase.created 恒为 {created:true}，不携带业务正文）。 */
+  readonly payload: Record<string, unknown>;
+}
+
+const PLAN_EVENT_APPEND_KEYS = [
+  'projectId',
+  'eventType',
+  'aggregateType',
+  'aggregateId',
+  'aggregateRevision',
+  'payload',
+] as const;
+
+const PLAN_EVENT_TYPE_SPECS: Readonly<
+  Record<PlanEventType, { readonly aggregateType: 'phase'; readonly payloadKeys: readonly ['created'] }>
+> = Object.freeze({
+  [PHASE_CREATED_EVENT_TYPE]: Object.freeze({
+    aggregateType: 'phase',
+    payloadKeys: ['created'] as const,
+  }),
+});
+
+export function validatePlanEventAppend(value: unknown, operation: string): ValidatedPlanEventAppend {
+  const context: ValidationContext = { operation, entity: { type: 'phase' } };
+  const object = requirePlainObject(value, context, 'input');
+  rejectUnknownKeys(object, PLAN_EVENT_APPEND_KEYS, context, 'input');
+  const eventTypeValue = object.eventType;
+  if (
+    typeof eventTypeValue !== 'string' ||
+    !(PLAN_EVENT_TYPES as readonly string[]).includes(eventTypeValue)
+  ) {
+    throw validationError(context, 'eventType', `必须是 ${PLAN_EVENT_TYPES.join(' / ')}`, eventTypeValue);
+  }
+  const eventType = eventTypeValue as PlanEventType;
+  const spec = PLAN_EVENT_TYPE_SPECS[eventType];
+  if (object.aggregateType !== spec.aggregateType) {
+    throw validationError(context, 'aggregateType', `必须是 ${spec.aggregateType}`, object.aggregateType);
+  }
+  const aggregateRevision = object.aggregateRevision;
+  if (
+    typeof aggregateRevision !== 'number' ||
+    !Number.isSafeInteger(aggregateRevision) ||
+    aggregateRevision < 1
+  ) {
+    throw validationError(context, 'aggregateRevision', '必须是 ≥1 的安全整数', aggregateRevision);
+  }
+  const payload = requirePlainObject(object.payload, context, 'payload');
+  rejectUnknownKeys(payload, spec.payloadKeys, context, 'payload');
+  if (payload.created !== true) {
+    throw validationError(context, 'payload.created', '必须是 true（脱敏创建事件固定形状）', payload.created);
+  }
+  return {
+    projectId: validateStableId(object.projectId, context, 'projectId'),
+    eventType,
+    aggregateType: 'phase',
+    aggregateId: validateStableId(object.aggregateId, context, 'aggregateId'),
+    aggregateRevision,
+    payload: { created: true },
+  };
 }
 
 /* ------------------------------------------------------------------ *

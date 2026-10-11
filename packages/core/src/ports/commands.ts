@@ -24,6 +24,7 @@
  *   提权字段按未知键拒绝，永不成为可信身份来源。
  */
 import { isStorageError, StorageError } from './errors.js';
+import { validatePhaseFields } from './plan-store.js';
 import { RepositoryInspectionError } from './repository-inspector.js';
 import type { RepositoryInspectionErrorKind } from './repository-inspector.js';
 import { validateSettingsPayload } from './settings-schema.js';
@@ -66,6 +67,9 @@ export const APP_CAPABILITIES = [
   // P02-3（docs/p02-3-onboarding-contract.md §4.2）新增两项基线能力位。
   'baseline.read',
   'baseline.run',
+  // P03-1 / F-004：计划域写入能力位（Phase 创建；后续 Phase/计划写命令
+  // 能力命名随对应功能冻结，见 docs/p03-1-plan-import-contract.md §6）。
+  'phase.write',
 ] as const;
 
 export type AppCapability = (typeof APP_CAPABILITIES)[number];
@@ -73,7 +77,7 @@ export type AppCapability = (typeof APP_CAPABILITIES)[number];
 /** 生产装配固定本机主体字面量（绑定发生在 Host 可信装配层，不经请求传入）。 */
 export const LOCAL_OWNER_PRINCIPAL_ID = 'local-owner';
 
-/** local-owner 持有全部冻结能力（P02-2 九项 + P02-3 两项）；受限主体只允许由可信测试装配显式构造（F-004/F-005）。 */
+/** local-owner 持有全部冻结能力（P02-2 九项 + P02-3 两项 + P03-1 / F-004 一项）；受限主体只允许由可信测试装配显式构造（F-004/F-005）。 */
 export const LOCAL_OWNER_CAPABILITIES: ReadonlySet<AppCapability> = Object.freeze(
   new Set<AppCapability>(APP_CAPABILITIES),
 );
@@ -96,6 +100,9 @@ export const COMMAND_OPERATIONS = [
   'baseline.preview',
   'baseline.run',
   'baseline.cancel',
+  // P03-1 / F-004：Phase 创建（project scope + phase.write；创建类命令，
+  // 不携带 expectedRevision；关闭/重开/归档生命周期不在本版本）。
+  'phase.create',
 ] as const;
 
 export type AppOperation = (typeof COMMAND_OPERATIONS)[number];
@@ -152,6 +159,8 @@ export const COMMAND_OPERATION_SPECS: Readonly<Record<AppOperation, CommandOpera
     // F-014：取消同样要求 baseline.run 能力 + 目标项目可见（§4.3），且归属
     // 核验（操作属于该可见项目）由应用层取消端口完成。
     'baseline.cancel': { scopeKind: 'project', mutation: 'create', capability: 'baseline.run' },
+    // P03-1 / F-004：Phase 创建归属 Phase 聚合（docs/p03-1-plan-import-contract.md §6.1）。
+    'phase.create': { scopeKind: 'project', mutation: 'create', capability: 'phase.write' },
   });
 
 /* ------------------------------------------------------------------ *
@@ -408,6 +417,18 @@ export interface ValidatedProjectMetadataPayload {
   readonly labels?: string[];
 }
 
+/**
+ * P03-1 / F-004 Phase 创建 payload：复用计划字段规则（稳定 ID/标题/描述/标签）；
+ * id 可缺省（服务端生成 UUID v4 稳定 ID），指定时为调用方稳定 ID；projectId 由
+ * 信封 scope 携带，批准/执行结果/主体身份等字段一律未知键拒绝。
+ */
+export interface ValidatedPhaseCreatePayload {
+  readonly id: string | null;
+  readonly title: string;
+  readonly description: string | null;
+  readonly labels: string[];
+}
+
 interface EnvelopeCommon {
   readonly schemaVersion: 3;
   readonly commandId: string;
@@ -471,6 +492,14 @@ export type ValidatedCommandEnvelope =
       readonly scope: { readonly kind: 'project'; readonly projectId: string };
       readonly expectedRevision: null;
       readonly payload: unknown;
+    })
+  // P03-1 / F-004：Phase 创建命令信封（创建类禁止携带 expectedRevision；
+  // payload 只含业务字段，归属由 scope 携带）。
+  | (EnvelopeCommon & {
+      readonly operation: 'phase.create';
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: null;
+      readonly payload: ValidatedPhaseCreatePayload;
     });
 
 const ENVELOPE_KEYS = [
@@ -486,6 +515,7 @@ const ENVELOPE_KEYS = [
 
 const REGISTER_PAYLOAD_KEYS = ['repositoryPath', 'displayName', 'description', 'labels'] as const;
 const METADATA_PAYLOAD_KEYS = ['displayName', 'description', 'labels'] as const;
+const PHASE_CREATE_PAYLOAD_KEYS = ['id', 'title', 'description', 'labels'] as const;
 
 /**
  * P01 校验器抛 StorageError(validation)，其字段名面向端口输入（'input'、
@@ -642,6 +672,21 @@ function validateMetadataPayload(
   }
 }
 
+function validatePhaseCreatePayload(
+  operation: AppOperation,
+  raw: unknown,
+): ValidatedPhaseCreatePayload {
+  const object = requireObject(operation, raw, 'payload');
+  // 严格未知键拒绝：projectId 属于信封 scope；主体/批准/执行结果/状态/revision
+  // 等字段不存在于 Phase 创建输入面（不建立第二条提权路径）。
+  exactKeys(operation, object, PHASE_CREATE_PAYLOAD_KEYS, 'payload.');
+  try {
+    return validatePhaseFields(object, operation);
+  } catch (error) {
+    throw fromProjectValidatorError(error, operation);
+  }
+}
+
 function validateSettingsCommandPayload(
   operation: AppOperation,
   raw: unknown,
@@ -712,7 +757,7 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
   }
   const spec = COMMAND_OPERATION_SPECS[operationName as AppOperation];
   if (spec === undefined) {
-    fail(submit, 'unsupported', 'operation', '未知操作（Work/Chat/Phase 等能力本版本不提供）', operationName, {
+    fail(submit, 'unsupported', 'operation', '未知操作（Work/Chat 等能力本版本不提供）', operationName, {
       supportedOperations: [...COMMAND_OPERATIONS],
     });
   }
@@ -769,6 +814,18 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
       scope: projectScope,
       expectedRevision: expectedRevision as number,
       payload: validateMetadataPayload(operation, object.payload, expectedRevision as number),
+    };
+  }
+  if (operation === 'phase.create') {
+    if (scope.kind !== 'project') {
+      fail(operation, 'invalid_input', 'scope.kind', 'scope 种类与操作不匹配');
+    }
+    return {
+      ...base,
+      operation,
+      scope,
+      expectedRevision: null,
+      payload: validatePhaseCreatePayload(operation, object.payload),
     };
   }
   if (operation === 'settings.global.create') {

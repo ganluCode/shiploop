@@ -220,7 +220,7 @@ describe('F-004 可信测试装配受限 principal（项目 A/B）', () => {
     const owner = createLocalOwnerPrincipal();
     expect(owner.principalId).toBe(LOCAL_OWNER_PRINCIPAL_ID);
     expect([...owner.capabilities].sort()).toEqual([...APP_CAPABILITIES].sort());
-    expect(owner.capabilities.size).toBe(11);
+    expect(owner.capabilities.size).toBe(12);
     expect(owner.projectScope).toEqual({ kind: 'all' });
     expect(Object.isFrozen(owner)).toBe(true);
     expect(Object.isFrozen(owner.projectScope)).toBe(true);

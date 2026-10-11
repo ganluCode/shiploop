@@ -225,6 +225,15 @@ function validateEventPayload(
     }
     return { registered: true };
   }
+  // P03-1 / F-004（§9.2）：Phase 创建事件脱敏 payload（与服务端 mapStateEvent
+  // 同一冻结形状），绝不落入 settingsSummary 分支造成误拒。
+  if (kind === 'phaseCreated') {
+    exactKeys(operation, object, ['created']);
+    if (object.created !== true) {
+      malformed(operation, 'event_payload_violation');
+    }
+    return { created: true };
+  }
   if (kind === 'changedFields') {
     exactKeys(operation, object, ['changedFields']);
     const fields = object.changedFields;

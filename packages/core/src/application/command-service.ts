@@ -29,6 +29,7 @@ import {
   createCompletedReceipt,
   createRejectedReceipt,
   evaluateCommandTiming,
+  mapStorageError,
   mapToPublicError,
   validateCommandEnvelope,
 } from '../ports/commands.js';
@@ -39,7 +40,11 @@ import {
   decideCommandReplay,
   registrationProjectIdOf,
 } from '../ports/command-receipts.js';
+import { isStorageError } from '../ports/errors.js';
+import { PHASE_CREATED_EVENT_TYPE } from '../ports/plan-store.js';
+import type { PhaseRecord } from '../ports/plan-store.js';
 import {
+  toPublicPhaseRecord,
   toPublicProjectRecord,
   toPublicRepositoryBindingRecord,
   toPublicSettingsState,
@@ -235,6 +240,74 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
   }
 
   /**
+   * P03-1 / F-004：Phase 创建——父级项目把关 + open Phase + phase.created 脱敏
+   * 事件 + completed 回执同一事务；重复业务 ID 在任何写入之前固化 rejected
+   * （settings 首建 already_exists 同一纪律），不覆盖既有 Phase、不写事件。
+   * 不执行仓库脚本、不创建执行实体；批准/执行结果不能经请求输入。
+   */
+  function submitPhaseCreate(
+    principal: TrustedPrincipal,
+    envelope: Extract<ValidatedCommandEnvelope, { operation: 'phase.create' }>,
+    digest: string,
+    transaction: CommandTransaction,
+    now: number,
+  ): CommandReceipt {
+    // 父级项目把关：不存在折算为与不可见相同的 forbidden，不泄漏存在性。
+    try {
+      transaction.getProject(envelope.scope.projectId);
+    } catch (error) {
+      mapProjectLookupError(error, envelope.operation);
+    }
+    const identity: ReceiptIdentity = {
+      principalId: principal.principalId,
+      commandId: envelope.commandId,
+      operation: envelope.operation,
+      scope: envelope.scope,
+      requestDigest: digest,
+      issuedAt: envelope.issuedAt,
+      completedAt: new Date(now).toISOString(),
+    };
+    let phase: PhaseRecord;
+    try {
+      phase = transaction.insertPhase({
+        ...(envelope.payload.id !== null ? { id: envelope.payload.id } : {}),
+        projectId: envelope.scope.projectId,
+        title: envelope.payload.title,
+        description: envelope.payload.description,
+        labels: envelope.payload.labels,
+      });
+    } catch (error) {
+      // 重复业务 ID：插入原语在任何 SQL 写入之前决定（存在性检查/唯一兜底），
+      // 按既有公开错误映射固化 rejected；写后异常不属于本分支，只回滚不吞成 rejected。
+      if (isStorageError(error, 'conflict')) {
+        const receipt = createRejectedReceipt({
+          ...identity,
+          error: mapStorageError(error, { operation: envelope.operation }),
+        });
+        transaction.saveReceipt(receipt);
+        return receipt;
+      }
+      throw error;
+    }
+    transaction.appendPlanEvent({
+      projectId: envelope.scope.projectId,
+      eventType: PHASE_CREATED_EVENT_TYPE,
+      aggregateType: 'phase',
+      aggregateId: phase.id,
+      aggregateRevision: phase.revision,
+      payload: { created: true },
+    });
+    const receipt = createCompletedReceipt({
+      ...identity,
+      resultRef: createResultRef(randomBytes(32)),
+      // 结果只携带提交时固化的 Phase 事实；不声称批准、可执行或执行结果。
+      result: { phase: toPublicPhaseRecord(phase) },
+    });
+    transaction.saveReceipt(receipt);
+    return receipt;
+  }
+
+  /**
    * F-009：配置命令的事务外写入计划——能力兼容复检与一致性视图（全局当前配置
    * 快照）都在写事务之外完成（仅新命令；重放已在权威事务内返回原回执）。
    * 全局有效配置即全局 payload 自身，直接复检；项目覆盖以「全局快照 + 新
@@ -422,6 +495,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           envelope.operation !== 'baseline.preview' &&
           envelope.operation !== 'baseline.run' &&
           envelope.operation !== 'baseline.cancel' &&
+          envelope.operation !== 'phase.create' &&
           !isSettingsEnvelope(envelope)
         ) {
           throw new PublicError('unsupported', operation);
@@ -565,6 +639,10 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
             });
             transaction.saveReceipt(receipt);
             return receipt;
+          }
+          if (envelope.operation === 'phase.create') {
+            // P03-1 / F-004：Phase 创建无事务外 I/O；项目把关/业务/事件/回执同一事务。
+            return submitPhaseCreate(principal, envelope, digest, transaction, now);
           }
           if (isSettingsEnvelope(envelope)) {
             // 新配置命令必定已在事务外完成能力复检与一致性视图（重放已在上面返回）。

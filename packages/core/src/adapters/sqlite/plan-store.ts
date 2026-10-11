@@ -29,6 +29,7 @@ import {
   validateCreatePhaseInput,
   validateCreateTaskDependencyInput,
   validateCreateTaskInput,
+  validatePlanEventAppend,
 } from '../../ports/plan-store.js';
 import type {
   FeatureRecord,
@@ -125,6 +126,8 @@ export interface SqlitePlanAccess {
   insertFeatureInTransaction(input: unknown): FeatureRecord;
   insertTaskInTransaction(input: unknown): TaskRecord;
   insertTaskDependencyInTransaction(input: unknown): TaskDependencyRecord;
+  /** F-004：计划域事件追加（脱敏 payload；与业务行/回执同一事务组合）。 */
+  appendPlanEventInTransaction(input: unknown): void;
 }
 
 export function createSqlitePlanAccess(
@@ -193,7 +196,8 @@ export function createSqlitePlanAccess(
     return parsed as PlanArtifactRef[];
   }
 
-  /** 防御纵深：端口核验未命中时由 DDL（FK/复合外键/CHECK）兜底拒写，映射为结构化错误。 */
+  /** 防御纵深：端口核验未命中时由 DDL（FK/复合外键/CHECK）兜底拒写，映射为结构化错误；
+   * 触发器 ABORT（仅测试故障注入/库外装置产生）与非约束异常原样抛出，公开映射为 internal。 */
   function mapConstraintError(
     error: unknown,
     operation: string,
@@ -206,11 +210,18 @@ export function createSqlitePlanAccess(
         reason: `${kind}_already_exists`,
       });
     }
-    return new StorageError('validation', operation, `${operation}: 输入违反存储约束（外键/CHECK 兜底）`, {
-      entity,
-      details: { reason: `${kind}_constraint_rejected`, sqliteCode: code },
-      cause: error,
-    });
+    if (
+      code === 'SQLITE_CONSTRAINT_CHECK' ||
+      code === 'SQLITE_CONSTRAINT_FOREIGNKEY' ||
+      code === 'SQLITE_CONSTRAINT_NOTNULL'
+    ) {
+      return new StorageError('validation', operation, `${operation}: 输入违反存储约束（外键/CHECK 兜底）`, {
+        entity,
+        details: { reason: `${kind}_constraint_rejected`, sqliteCode: code },
+        cause: error,
+      });
+    }
+    throw error;
   }
 
   /** 事务内项目存在性核验（绑定参数；缺失 → not_found）。 */
@@ -371,11 +382,24 @@ export function createSqlitePlanAccess(
     assertOpen(operation);
     assertInTransaction(operation);
     const valid = validateCreatePhaseInput(input, operation);
-    const entity: StorageEntityRef = { type: 'phase', projectId: valid.projectId };
+    const entity: StorageEntityRef = {
+      type: 'phase',
+      projectId: valid.projectId,
+      ...(valid.id !== null ? { id: valid.id } : {}),
+    };
     const db = session.database;
     assertProjectExists(db, operation, valid.projectId, entity);
+    // 稳定 ID：调用方可指定（validateStableId）；缺省由适配器生成 UUID v4（F-002 定案）。
+    const id = valid.id ?? randomUUID();
+    // 重复身份：事务内存在性检查（写入串行化，无竞争窗口；唯一索引兜底）。
+    const existing = db.prepare<[string], { id: string }>('SELECT id FROM phases WHERE id = ?').get(id);
+    if (existing !== undefined) {
+      throw conflict(operation, `Phase ${id} 已存在（重复业务 ID 拒绝，不覆盖）`, entity, {
+        reason: 'phase_already_exists',
+        phaseId: id,
+      });
+    }
     const timestamp = nowUtcMs();
-    const id = randomUUID();
     let row: PhaseSqlRow | undefined;
     try {
       db.prepare(
@@ -561,10 +585,43 @@ export function createSqlitePlanAccess(
     return taskDependencyFromRow(row!);
   }
 
+  /**
+   * F-004：计划域事件追加（事务内使用；调用方保证业务行已在本事务内成功）。
+   * payload 只含受控脱敏形状（ports/plan-store.ts 校验器同源）；插入失败整组回滚。
+   */
+  function appendPlanEventInTransaction(input: unknown): void {
+    const operation = 'PlanStore.appendPlanEvent';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const valid = validatePlanEventAppend(input, operation);
+    const db = session.database;
+    const timestamp = nowUtcMs();
+    const nextSequence = db
+      .prepare<[], { next: number }>('SELECT COALESCE(MAX(sequence), 0) + 1 AS next FROM state_events')
+      .get();
+    db.prepare(
+      'INSERT INTO state_events (id, created_at, revision, updated_at, project_id, sequence, event_type, aggregate_type, aggregate_id, aggregate_revision, payload, occurred_at) ' +
+        'VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+    ).run(
+      randomUUID(),
+      timestamp,
+      timestamp,
+      valid.projectId,
+      nextSequence?.next ?? 1,
+      valid.eventType,
+      valid.aggregateType,
+      valid.aggregateId,
+      valid.aggregateRevision,
+      JSON.stringify(valid.payload),
+      timestamp,
+    );
+  }
+
   return {
     insertPhaseInTransaction,
     insertFeatureInTransaction,
     insertTaskInTransaction,
     insertTaskDependencyInTransaction,
+    appendPlanEventInTransaction,
   };
 }

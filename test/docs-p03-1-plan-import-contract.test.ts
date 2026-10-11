@@ -21,6 +21,12 @@ import {
   PLAN_TITLE_MAX_LENGTH,
 } from '../packages/core/src/ports/feature-plan.ts';
 import { WIRE_MESSAGE_SCHEMA_VERSION } from '../packages/core/src/ports/commands.ts';
+import {
+  APP_CAPABILITIES,
+  COMMAND_OPERATIONS,
+  COMMAND_OPERATION_SPECS,
+} from '../packages/core/src/ports/commands.ts';
+import { PHASE_CREATED_EVENT_TYPE, PUBLIC_STATE_EVENT_TYPES } from '../packages/core/src/ports/events.ts';
 import { SETTINGS_SCHEMA_VERSION } from '../packages/core/src/ports/settings-schema.ts';
 import { DESCRIPTION_MAX_LENGTH, LABELS_MAX_COUNT, LABEL_MAX_LENGTH } from '../packages/core/src/ports/validation.ts';
 import * as coreEntry from '../packages/core/src/index.ts';
@@ -104,5 +110,24 @@ describe('F-001 P03-1 计划导入契约文档', () => {
     expect(typeof coreEntry.validateFeaturePlanInput).toBe('function');
     expect(typeof coreEntry.computeFeaturePlanDigest).toBe('function');
     expect(typeof coreEntry.canonicalFeaturePlanBusinessJson).toBe('function');
+  });
+
+  it('F-004 Phase 创建命令定案与实现同源（文档、命令白名单、能力位与事件白名单不漂移）', () => {
+    const doc = readFileSync(contractDocPath, 'utf-8');
+    expect(doc).toContain('phase.create');
+    expect(doc).toContain('phase.write');
+    expect(doc).toContain('phase.created');
+    expect(doc).toContain('phase_already_exists');
+    expect(doc).toContain('6.4');
+    // 文档定案与实现逐项一致（不另立第二套）。
+    expect(COMMAND_OPERATIONS).toContain('phase.create');
+    expect(COMMAND_OPERATION_SPECS['phase.create']).toEqual({
+      scopeKind: 'project',
+      mutation: 'create',
+      capability: 'phase.write',
+    });
+    expect(APP_CAPABILITIES).toContain('phase.write');
+    expect(PUBLIC_STATE_EVENT_TYPES).toContain(PHASE_CREATED_EVENT_TYPE);
+    expect(PHASE_CREATED_EVENT_TYPE).toBe('phase.created');
   });
 });

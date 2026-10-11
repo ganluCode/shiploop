@@ -194,16 +194,26 @@ function envelope(
         expectedRevision,
         payload: { schemaVersion: 2 },
       } as ValidatedCommandEnvelope;
+    case 'phase.create':
+      return {
+        ...base,
+        operation,
+        scope,
+        expectedRevision: null,
+        payload: { id: 'phase-1', title: '阶段', description: null, labels: [] },
+      } as ValidatedCommandEnvelope;
   }
 }
 
-const SIX_COMMANDS = [
+const COMMANDS_MATRIX = [
   { operation: 'project.register', scope: { kind: 'registration' }, revision: null, capability: 'project.register' },
   { operation: 'project.metadata.update', scope: { kind: 'project', projectId: PROJECT_A }, revision: 2, capability: 'project.metadata.write' },
   { operation: 'settings.global.create', scope: { kind: 'global' }, revision: null, capability: 'settings.global.write' },
   { operation: 'settings.global.update', scope: { kind: 'global' }, revision: 4, capability: 'settings.global.write' },
   { operation: 'settings.project.create', scope: { kind: 'project', projectId: PROJECT_A }, revision: null, capability: 'settings.project.write' },
   { operation: 'settings.project.update', scope: { kind: 'project', projectId: PROJECT_A }, revision: 1, capability: 'settings.project.write' },
+  // P03-1 / F-004：Phase 创建（project scope + phase.write）。
+  { operation: 'phase.create', scope: { kind: 'project', projectId: PROJECT_A }, revision: null, capability: 'phase.write' },
 ] as const;
 
 describe('F-005 TrustedPrincipal 产品构造与可信装配形状断言', () => {
@@ -384,20 +394,20 @@ describe('F-005 能力与可见性原语', () => {
 });
 
 describe('F-005 命令授权（§4.3 矩阵：能力 + 项目可见性）', () => {
-  it.each(SIX_COMMANDS)('local-owner 可执行 %s', ({ operation, scope, revision }) => {
+  it.each(COMMANDS_MATRIX)('local-owner 可执行 %s', ({ operation, scope, revision }) => {
     expect(() =>
       authorizeCommand(owner(), envelope(operation, scope as CommandScope, revision)),
     ).not.toThrow();
   });
 
-  it.each(SIX_COMMANDS)('持恰切能力且目标可见的受限主体可执行 %s', ({ operation, scope, revision, capability }) => {
+  it.each(COMMANDS_MATRIX)('持恰切能力且目标可见的受限主体可执行 %s', ({ operation, scope, revision, capability }) => {
     const principal = restricted([capability]);
     expect(() =>
       authorizeCommand(principal, envelope(operation, scope as CommandScope, revision)),
     ).not.toThrow();
   });
 
-  it.each(SIX_COMMANDS)('缺能力一律 forbidden（capability_denied）：%s', ({ operation, scope, revision }) => {
+  it.each(COMMANDS_MATRIX)('缺能力一律 forbidden（capability_denied）：%s', ({ operation, scope, revision }) => {
     const principal = restricted(['receipts.read']);
     expectPublicError(
       () => authorizeCommand(principal, envelope(operation, scope as CommandScope, revision)),

@@ -30,6 +30,7 @@ import type {
   BaselineOperationRecord,
 } from './baseline-store.js';
 import type { SettingsPayload, SettingsScope } from './settings-schema.js';
+import type { PhaseRecord, PhaseStatus } from './plan-store.js';
 import type {
   GlobalSettingsRecord,
   ProjectLabelCount,
@@ -97,6 +98,36 @@ export function toPublicRepositoryBindingRecord(
     bindingRevision: binding.bindingRevision,
     createdAt: new Date(binding.createdAtUtcMs).toISOString(),
     updatedAt: new Date(binding.updatedAtUtcMs).toISOString(),
+  };
+}
+
+/**
+ * 公开 Phase 记录（P03-1 / F-004）：与 PhaseRecord 字段一一对应，时间字段为
+ * ISO UTC；命令结果与后续查询响应共用同一转换。
+ */
+export interface PublicPhaseRecord {
+  readonly id: string;
+  readonly projectId: string;
+  readonly title: string;
+  readonly description: string | null;
+  readonly labels: readonly string[];
+  readonly status: PhaseStatus;
+  readonly revision: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export function toPublicPhaseRecord(phase: PhaseRecord): PublicPhaseRecord {
+  return {
+    id: phase.id,
+    projectId: phase.projectId,
+    title: phase.title,
+    description: phase.description,
+    labels: [...phase.labels],
+    status: phase.status,
+    revision: phase.revision,
+    createdAt: new Date(phase.createdAtUtcMs).toISOString(),
+    updatedAt: new Date(phase.updatedAtUtcMs).toISOString(),
   };
 }
 

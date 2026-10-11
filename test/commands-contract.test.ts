@@ -94,7 +94,7 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
     expect(WIRE_MESSAGE_SCHEMA_VERSION).toBe(3);
   });
 
-  it('冻结十一项能力（P02-2 九项 + P02-3 基线两项），local-owner 持全部', () => {
+  it('冻结十二项能力（P02-2 九项 + P02-3 基线两项 + P03-1 / F-004 计划域一项），local-owner 持全部', () => {
     expect([...APP_CAPABILITIES]).toEqual([
       'project.register',
       'project.read',
@@ -107,6 +107,8 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       'events.read',
       'baseline.read',
       'baseline.run',
+      // P03-1 / F-004：Phase 创建能力位。
+      'phase.write',
     ]);
     expect(LOCAL_OWNER_PRINCIPAL_ID).toBe('local-owner');
     expect(LOCAL_OWNER_CAPABILITIES.size).toBe(APP_CAPABILITIES.length);
@@ -127,6 +129,8 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       'baseline.preview',
       'baseline.run',
       'baseline.cancel',
+      // P03-1 / F-004：Phase 创建（project scope + phase.write）。
+      'phase.create',
     ]);
     expect(COMMAND_OPERATION_SPECS).toEqual({
       'project.register': { scopeKind: 'registration', mutation: 'create', capability: 'project.register' },
@@ -138,6 +142,7 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       'baseline.preview': { scopeKind: 'project', mutation: 'create', capability: 'baseline.run' },
       'baseline.run': { scopeKind: 'project', mutation: 'create', capability: 'baseline.run' },
       'baseline.cancel': { scopeKind: 'project', mutation: 'create', capability: 'baseline.run' },
+      'phase.create': { scopeKind: 'project', mutation: 'create', capability: 'phase.write' },
     });
     for (const spec of Object.values(COMMAND_OPERATION_SPECS)) {
       expect(APP_CAPABILITIES).toContain(spec.capability);

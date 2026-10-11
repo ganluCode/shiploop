@@ -110,6 +110,12 @@ export interface CommandTransaction {
   insertTask(input: unknown): TaskRecord;
   /** 插入同 Feature 依赖边（自依赖/重复边/跨 Feature/环均结构化拒绝）。 */
   insertTaskDependency(input: unknown): TaskDependencyRecord;
+  /**
+   * F-004：计划域脱敏事件追加（phase.created；payload 恒 {created:true}）。由命令
+   * 用例在同一事务内与业务行/回执组合（F-002 不预支进插入原语）；F-005 起随
+   * 对应功能扩展白名单。
+   */
+  appendPlanEvent(input: unknown): void;
   saveReceipt(receipt: unknown): void;
 }
 

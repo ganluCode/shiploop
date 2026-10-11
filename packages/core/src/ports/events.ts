@@ -37,6 +37,7 @@ import {
   BASELINE_REASON_CODES,
 } from './baseline.js';
 import { isStorageError } from './errors.js';
+import { PHASE_CREATED_EVENT_TYPE } from './plan-store.js';
 import { SETTINGS_SCHEMA_VERSION } from './settings-schema.js';
 import {
   GLOBAL_SETTINGS_CREATED_EVENT_TYPE as SETTINGS_GLOBAL_CREATED_EVENT_TYPE,
@@ -58,6 +59,8 @@ export const PUBLIC_EVENT_SCHEMA_VERSION = 1 as const;
 
 /** 仅命令路径注册成功写入（F-008）；P01 直接服务首建不写事件（契约 §15.3）。 */
 export { PROJECT_REGISTERED_EVENT_TYPE };
+/** P03-1 / F-004：仅命令路径 Phase 创建成功写入（脱敏 payload 恒为 {created:true}）。 */
+export { PHASE_CREATED_EVENT_TYPE };
 /** 仅命令路径全局配置首建成功写入（F-009 已实施；P01 直接服务首建不写事件）。 */
 export { SETTINGS_GLOBAL_CREATED_EVENT_TYPE };
 /** 仅命令路径项目配置首建成功写入（F-009 已实施；P01 直接服务首建不写事件）。 */
@@ -83,6 +86,8 @@ export const PUBLIC_STATE_EVENT_TYPES = [
   BASELINE_CHECK_COMPLETED_EVENT_TYPE,
   BASELINE_COMPLETED_EVENT_TYPE,
   BASELINE_CANCELLED_EVENT_TYPE,
+  // P03-1 / F-004：计划域事件白名单扩展（aggregate_type='phase'）。
+  PHASE_CREATED_EVENT_TYPE,
 ] as const;
 
 export type PublicStateEventType = (typeof PUBLIC_STATE_EVENT_TYPES)[number];
@@ -95,7 +100,8 @@ type EventPayloadKind =
   | 'baselineStarted'
   | 'baselineCheckCompleted'
   | 'baselineCompleted'
-  | 'baselineCancelled';
+  | 'baselineCancelled'
+  | 'phaseCreated';
 
 /** 每类事件冻结的 aggregate_type、scope 种类与 payload 形状。 */
 export interface StateEventTypeSpec {
@@ -163,6 +169,13 @@ export const STATE_EVENT_TYPE_SPECS: Readonly<
     aggregateType: 'project',
     scopeKind: 'project',
     payloadKind: 'baselineCancelled',
+  }),
+  // P03-1 / F-004：Phase 创建事件（聚合为 Phase 自身；project_id 非空由
+  // scopeKind='project' 与映射层共同保证，payload 恒为 {created:true}）。
+  [PHASE_CREATED_EVENT_TYPE]: Object.freeze({
+    aggregateType: 'phase',
+    scopeKind: 'project',
+    payloadKind: 'phaseCreated',
   }),
 });
 
@@ -323,6 +336,18 @@ function validateRegisteredPayload(
     corrupt(operation, 'event_payload_violation');
   }
   return { registered: true };
+}
+
+/** P03-1 / F-004：Phase 创建事件脱敏 payload（恒为 {created:true}，无业务正文）。 */
+function validatePhaseCreatedPayload(
+  payload: Record<string, unknown>,
+  operation: string,
+): Record<string, unknown> {
+  exactPayloadKeys(operation, payload, ['created']);
+  if (payload.created !== true) {
+    corrupt(operation, 'event_payload_violation');
+  }
+  return { created: true };
 }
 
 function validateSummaryNameList(value: unknown): value is string[] {
@@ -555,6 +580,8 @@ export function mapStateEvent(row: unknown, operation: string = EVENT_READ_OPERA
   let payload: Record<string, unknown>;
   if (spec.payloadKind === 'registered') {
     payload = validateRegisteredPayload(row.payload, operation);
+  } else if (spec.payloadKind === 'phaseCreated') {
+    payload = validatePhaseCreatedPayload(row.payload, operation);
   } else if (spec.payloadKind === 'changedFields') {
     payload = validateChangedFieldsPayload(row.payload, operation);
   } else if (spec.payloadKind === 'baselineAuthorized') {

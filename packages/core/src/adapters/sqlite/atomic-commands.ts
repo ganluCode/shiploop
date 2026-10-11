@@ -76,6 +76,8 @@ export function createSqliteAtomicCommandStore(
           insertFeature: guarded(plan.insertFeatureInTransaction),
           insertTask: guarded(plan.insertTaskInTransaction),
           insertTaskDependency: guarded(plan.insertTaskDependencyInTransaction),
+          // P03-1 / F-004：计划域脱敏事件追加（同一 BEGIN IMMEDIATE 内原子生效）。
+          appendPlanEvent: guarded(plan.appendPlanEventInTransaction),
           saveReceipt: guarded(receipts.saveReceiptInTransaction),
         });
         try {
