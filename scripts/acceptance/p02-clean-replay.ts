@@ -566,7 +566,7 @@ function writeStepLog(
   writeEvidence(
     ctx,
     logPath,
-    `$ ${header}\nexit=${String(result.code)} signal=${String(result.signal)} durationMs=${result.durationMs}\n\n${result.stdout}${result.stderr}`,
+    `$ ${header}\nexit=${String(result.code)} signal=${String(result.signal)} durationMs=${result.durationMs}${result.message === null ? '' : ` message=${result.message}`}\n\n${result.stdout}${result.stderr}`,
   );
   return logPath;
 }
@@ -709,7 +709,7 @@ async function runDistSmoke(ctx: ReplayContext): Promise<void> {
   const smokeTmp = join(smokeRoot, 'tmp');
   const dataRoot = join(smokeRoot, 'data');
   const repoDir = join(smokeRoot, 'repo');
-  for (const dir of [smokeCwd, smokeHome, smokeTmp, dataRoot]) {
+  for (const dir of [smokeCwd, smokeHome, smokeTmp, dataRoot, repoDir]) {
     mkdirSync(dir, { recursive: true });
   }
   const env: NodeJS.ProcessEnv = {
@@ -746,7 +746,7 @@ async function runDistSmoke(ctx: ReplayContext): Promise<void> {
     writeEvidence(
       ctx,
       `logs/dist-smoke-${label}.log`,
-      `$ ${command} ${args.join(' ')}\ncwd=${cwd}\nexit=${String(result.code)} signal=${String(result.signal)}\n\n${result.stdout}${result.stderr}`,
+      `$ ${command} ${args.join(' ')}\ncwd=${cwd}\nexit=${String(result.code)} signal=${String(result.signal)}${result.message === null ? '' : ` message=${result.message}`}\n\n${result.stdout}${result.stderr}`,
     );
     return result;
   };
