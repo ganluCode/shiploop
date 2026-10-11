@@ -24,7 +24,8 @@
  *   提权字段按未知键拒绝，永不成为可信身份来源。
  */
 import { isStorageError, StorageError } from './errors.js';
-import { validatePhaseFields } from './plan-store.js';
+import { validatePhaseFields, validatePlanLabelsFields } from './plan-store.js';
+import type { PlanEntityType } from './plan-store.js';
 import { RepositoryInspectionError } from './repository-inspector.js';
 import type { RepositoryInspectionErrorKind } from './repository-inspector.js';
 import { validateSettingsPayload } from './settings-schema.js';
@@ -72,6 +73,9 @@ export const APP_CAPABILITIES = [
   'phase.write',
   // P03-1 / F-005：单 Feature 计划导入能力位（命名按契约 §6.1 示例定案）。
   'feature.plan.import',
+  // P03-1 / F-007：Phase/Feature/Task 纯标签 CAS 编辑能力位（契约 §6.7 定案；
+  // 标签是元数据，与计划业务批准语义分离）。
+  'plan.labels.write',
 ] as const;
 
 export type AppCapability = (typeof APP_CAPABILITIES)[number];
@@ -108,6 +112,9 @@ export const COMMAND_OPERATIONS = [
   // P03-1 / F-005：单 Feature 计划导入（project scope + feature.plan.import；
   // 信封 expectedRevision 为目标 Phase 聚合 CAS，见契约 §6.2 F-005 定案）。
   'feature.plan.import',
+  // P03-1 / F-007：纯标签 CAS 编辑（project scope + plan.labels.write；
+  // 信封 expectedRevision 为目标实体自身 revision，见契约 §6.7 F-007 定案）。
+  'plan.labels.update',
 ] as const;
 
 export type AppOperation = (typeof COMMAND_OPERATIONS)[number];
@@ -173,6 +180,14 @@ export const COMMAND_OPERATION_SPECS: Readonly<Record<AppOperation, CommandOpera
       scopeKind: 'project',
       mutation: 'update',
       capability: 'feature.plan.import',
+    },
+    // P03-1 / F-007：纯标签 CAS 编辑（docs/p03-1-plan-import-contract.md §6.7）。
+    // 信封 expectedRevision 指向目标实体（Phase/Feature/Task）自身 revision；
+    // 与实质计划编辑（F-008）是可区分的契约，不是同一命令的两个模式。
+    'plan.labels.update': {
+      scopeKind: 'project',
+      mutation: 'update',
+      capability: 'plan.labels.write',
     },
   });
 
@@ -452,6 +467,17 @@ export interface ValidatedFeaturePlanImportPayload {
   readonly plan: unknown;
 }
 
+/**
+ * P03-1 / F-007 纯标签 CAS 编辑 payload：entityType（phase/feature/task）+ 目标
+ * 实体稳定 ID + 完整标签集合；严格未知键拒绝（需求/依赖/验收/状态/批准/标题/
+ * revision 等一律不能经本编辑面进入，与实质计划编辑可区分）。
+ */
+export interface ValidatedPlanLabelsUpdatePayload {
+  readonly entityType: PlanEntityType;
+  readonly id: string;
+  readonly labels: string[];
+}
+
 interface EnvelopeCommon {
   readonly schemaVersion: 3;
   readonly commandId: string;
@@ -532,6 +558,14 @@ export type ValidatedCommandEnvelope =
       readonly scope: { readonly kind: 'project'; readonly projectId: string };
       readonly expectedRevision: number;
       readonly payload: ValidatedFeaturePlanImportPayload;
+    })
+  // P03-1 / F-007：纯标签 CAS 编辑命令信封（expectedRevision=目标实体自身
+  // revision；payload 只含 entityType/id/labels，契约 §6.7）。
+  | (EnvelopeCommon & {
+      readonly operation: 'plan.labels.update';
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: number;
+      readonly payload: ValidatedPlanLabelsUpdatePayload;
     });
 
 const ENVELOPE_KEYS = [
@@ -549,6 +583,7 @@ const REGISTER_PAYLOAD_KEYS = ['repositoryPath', 'displayName', 'description', '
 const METADATA_PAYLOAD_KEYS = ['displayName', 'description', 'labels'] as const;
 const PHASE_CREATE_PAYLOAD_KEYS = ['id', 'title', 'description', 'labels'] as const;
 const FEATURE_PLAN_IMPORT_PAYLOAD_KEYS = ['phaseId', 'plan'] as const;
+const PLAN_LABELS_UPDATE_PAYLOAD_KEYS = ['entityType', 'id', 'labels'] as const;
 
 /**
  * P01 校验器抛 StorageError(validation)，其字段名面向端口输入（'input'、
@@ -747,6 +782,22 @@ function validateFeaturePlanImportPayload(
   }
 }
 
+function validatePlanLabelsUpdatePayload(
+  operation: AppOperation,
+  raw: unknown,
+): ValidatedPlanLabelsUpdatePayload {
+  const object = requireObject(operation, raw, 'payload');
+  // 严格未知键拒绝：只接受标签编辑面（entityType/id/labels）；expectedRevision
+  // 唯一权威来源是信封顶层；需求/依赖/状态等字段不属于本契约（payload 内出现
+  // 即未知键，定位 payload.<key>）。
+  exactKeys(operation, object, PLAN_LABELS_UPDATE_PAYLOAD_KEYS, 'payload.');
+  try {
+    return validatePlanLabelsFields(object, operation);
+  } catch (error) {
+    throw fromProjectValidatorError(error, operation);
+  }
+}
+
 function validateSettingsCommandPayload(
   operation: AppOperation,
   raw: unknown,
@@ -898,6 +949,18 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
       scope,
       expectedRevision: expectedRevision as number,
       payload: validateFeaturePlanImportPayload(operation, object.payload),
+    };
+  }
+  if (operation === 'plan.labels.update') {
+    if (scope.kind !== 'project') {
+      fail(operation, 'invalid_input', 'scope.kind', 'scope 种类与操作不匹配');
+    }
+    return {
+      ...base,
+      operation,
+      scope,
+      expectedRevision: expectedRevision as number,
+      payload: validatePlanLabelsUpdatePayload(operation, object.payload),
     };
   }
   if (operation === 'settings.global.create') {

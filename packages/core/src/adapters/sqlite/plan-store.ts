@@ -30,6 +30,7 @@ import {
   validateCreateTaskDependencyInput,
   validateCreateTaskInput,
   validatePlanEventAppend,
+  validateUpdatePlanEntityLabelsInput,
 } from '../../ports/plan-store.js';
 import type {
   FeatureRecord,
@@ -121,6 +122,15 @@ const SELECT_TASK =
 const SELECT_TASK_DEPENDENCY =
   'SELECT id, created_at, project_id, feature_id, task_id, depends_on_id FROM task_dependencies';
 
+/** F-007 纯标签编辑目标映射（冻结表名/SELECT；非用户输入，查询均绑定参数）。 */
+const LABELS_EDIT_TARGET_SPECS: Readonly<
+  Record<'phase' | 'feature' | 'task', { readonly table: string; readonly select: string }>
+> = Object.freeze({
+  phase: Object.freeze({ table: 'phases', select: SELECT_PHASE }),
+  feature: Object.freeze({ table: 'features', select: SELECT_FEATURE }),
+  task: Object.freeze({ table: 'tasks', select: SELECT_TASK }),
+});
+
 function isSqliteConstraintError(error: unknown): error is Error & { code: string } {
   return (
     error instanceof Error &&
@@ -135,6 +145,11 @@ export interface SqlitePlanAccess {
   insertFeatureInTransaction(input: unknown): FeatureRecord;
   insertTaskInTransaction(input: unknown): TaskRecord;
   insertTaskDependencyInTransaction(input: unknown): TaskDependencyRecord;
+  /**
+   * P03-1 / F-007：纯标签 CAS 编辑（单语句条件 UPDATE；缺失 not_found、
+   * 跨项目 ownership、revision 不匹配 conflict）。
+   */
+  updatePlanEntityLabelsInTransaction(input: unknown): PhaseRecord | FeatureRecord | TaskRecord;
   /** F-004：计划域事件追加（脱敏 payload；与业务行/回执同一事务组合）。 */
   appendPlanEventInTransaction(input: unknown): void;
   /** F-005：同项目读取目标 Phase（缺失 not_found、跨项目 ownership）。 */
@@ -682,6 +697,68 @@ export function createSqlitePlanAccess(
   }
 
   /**
+   * P03-1 / F-007：纯标签 CAS 编辑（事务内）。单语句条件 UPDATE 只触达
+   * labels/revision/updated_at（不改标题/描述/状态/策略/摘要/引用/依赖，不向
+   * 父子实体传播）；目标缺失 not_found、跨项目 ownership（抛出零写入）；
+   * expectedRevision 为实体自身 revision，不匹配或条件 UPDATE 未命中均
+   * conflict（details 携带 expectedRevision/actualRevision）。
+   */
+  function updatePlanEntityLabelsInTransaction(
+    input: unknown,
+  ): PhaseRecord | FeatureRecord | TaskRecord {
+    const operation = 'PlanStore.updatePlanEntityLabels';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const valid = validateUpdatePlanEntityLabelsInput(input, operation);
+    const db = session.database;
+    const entity: StorageEntityRef = {
+      type: valid.entityType,
+      projectId: valid.projectId,
+      id: valid.id,
+    };
+    // 表名/SELECT 来自冻结映射（非用户输入）；全部查询使用绑定参数。
+    const spec = LABELS_EDIT_TARGET_SPECS[valid.entityType];
+    const row = db
+      .prepare<[string], { project_id: string; revision: number }>(`${spec.select} WHERE id = ?`)
+      .get(valid.id);
+    if (row === undefined) {
+      throw notFound(operation, entity, `${valid.entityType} ${valid.id} 不存在`);
+    }
+    if (row.project_id !== valid.projectId) {
+      throw ownership(operation, entity, '目标实体不属于声明的项目（跨项目目标被拒绝）');
+    }
+    const casConflict = (): StorageError =>
+      conflict(operation, '标签编辑 CAS 不匹配（旧 revision 拒绝）', entity, {
+        reason: 'conflict',
+        expectedRevision: valid.expectedRevision,
+        actualRevision: row.revision,
+      });
+    if (row.revision !== valid.expectedRevision) {
+      throw casConflict();
+    }
+    const timestamp = nowUtcMs();
+    // 单语句条件 UPDATE（而非先读后无条件覆盖）：同 revision 竞争编辑仅一个生效。
+    const updated = db
+      .prepare(
+        `UPDATE ${spec.table} SET labels = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND revision = ?`,
+      )
+      .run(JSON.stringify(valid.labels), timestamp, valid.id, valid.expectedRevision);
+    if (updated.changes !== 1) {
+      throw casConflict();
+    }
+    const reread = (): unknown =>
+      db.prepare<[string], unknown>(`${spec.select} WHERE id = ?`).get(valid.id);
+    switch (valid.entityType) {
+      case 'phase':
+        return phaseFromRow(reread() as PhaseSqlRow);
+      case 'feature':
+        return featureFromRow(reread() as FeatureSqlRow);
+      case 'task':
+        return taskFromRow(reread() as TaskSqlRow);
+    }
+  }
+
+  /**
    * F-005：导入事务内引用身份重核——与 ArtifactStore.getArtifactInputRef 同一
    * 契约语义（adapters/sqlite/artifact-store.ts 同一判定：缺失 not_found、跨
    * 项目 ownership（即使 ready 也不放行）、非 ready 或缺 hash/size 证据
@@ -934,6 +1011,7 @@ export function createSqlitePlanAccess(
     insertFeatureInTransaction,
     insertTaskInTransaction,
     insertTaskDependencyInTransaction,
+    updatePlanEntityLabelsInTransaction,
     appendPlanEventInTransaction,
     getPhaseInTransaction,
     getArtifactInputRefInTransaction,

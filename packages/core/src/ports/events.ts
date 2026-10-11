@@ -37,7 +37,13 @@ import {
   BASELINE_REASON_CODES,
 } from './baseline.js';
 import { isStorageError } from './errors.js';
-import { FEATURE_PLAN_IMPORTED_EVENT_TYPE, PHASE_CREATED_EVENT_TYPE } from './plan-store.js';
+import {
+  FEATURE_LABELS_UPDATED_EVENT_TYPE,
+  FEATURE_PLAN_IMPORTED_EVENT_TYPE,
+  PHASE_CREATED_EVENT_TYPE,
+  PHASE_LABELS_UPDATED_EVENT_TYPE,
+  TASK_LABELS_UPDATED_EVENT_TYPE,
+} from './plan-store.js';
 import { SETTINGS_SCHEMA_VERSION } from './settings-schema.js';
 import {
   GLOBAL_SETTINGS_CREATED_EVENT_TYPE as SETTINGS_GLOBAL_CREATED_EVENT_TYPE,
@@ -63,6 +69,11 @@ export { PROJECT_REGISTERED_EVENT_TYPE };
 export { PHASE_CREATED_EVENT_TYPE };
 /** P03-1 / F-005：仅命令路径 Feature 计划导入成功写入（脱敏 payload 恒 {imported:true}）。 */
 export { FEATURE_PLAN_IMPORTED_EVENT_TYPE };
+/**
+ * P03-1 / F-007：仅命令路径纯标签 CAS 编辑成功写入（脱敏 payload 恒
+ * {labelsUpdated:true}，聚合为目标实体自身，不携带标签正文/计划语义）。
+ */
+export { PHASE_LABELS_UPDATED_EVENT_TYPE, FEATURE_LABELS_UPDATED_EVENT_TYPE, TASK_LABELS_UPDATED_EVENT_TYPE };
 /** 仅命令路径全局配置首建成功写入（F-009 已实施；P01 直接服务首建不写事件）。 */
 export { SETTINGS_GLOBAL_CREATED_EVENT_TYPE };
 /** 仅命令路径项目配置首建成功写入（F-009 已实施；P01 直接服务首建不写事件）。 */
@@ -92,6 +103,10 @@ export const PUBLIC_STATE_EVENT_TYPES = [
   PHASE_CREATED_EVENT_TYPE,
   // P03-1 / F-005：计划域事件白名单扩展（aggregate_type='feature'）。
   FEATURE_PLAN_IMPORTED_EVENT_TYPE,
+  // P03-1 / F-007：纯标签 CAS 编辑事件（phase/feature/task 三个目标实体各自一条）。
+  PHASE_LABELS_UPDATED_EVENT_TYPE,
+  FEATURE_LABELS_UPDATED_EVENT_TYPE,
+  TASK_LABELS_UPDATED_EVENT_TYPE,
 ] as const;
 
 export type PublicStateEventType = (typeof PUBLIC_STATE_EVENT_TYPES)[number];
@@ -106,7 +121,8 @@ type EventPayloadKind =
   | 'baselineCompleted'
   | 'baselineCancelled'
   | 'phaseCreated'
-  | 'featurePlanImported';
+  | 'featurePlanImported'
+  | 'planLabelsUpdated';
 
 /** 每类事件冻结的 aggregate_type、scope 种类与 payload 形状。 */
 export interface StateEventTypeSpec {
@@ -189,6 +205,23 @@ export const STATE_EVENT_TYPE_SPECS: Readonly<
     aggregateType: 'feature',
     scopeKind: 'project',
     payloadKind: 'featurePlanImported',
+  }),
+  // P03-1 / F-007：纯标签 CAS 编辑事件（聚合为目标实体自身；payload 恒为
+  // {labelsUpdated:true}，不携带标签正文/批准语义；'task' 聚合随本事件进入白名单）。
+  [PHASE_LABELS_UPDATED_EVENT_TYPE]: Object.freeze({
+    aggregateType: 'phase',
+    scopeKind: 'project',
+    payloadKind: 'planLabelsUpdated',
+  }),
+  [FEATURE_LABELS_UPDATED_EVENT_TYPE]: Object.freeze({
+    aggregateType: 'feature',
+    scopeKind: 'project',
+    payloadKind: 'planLabelsUpdated',
+  }),
+  [TASK_LABELS_UPDATED_EVENT_TYPE]: Object.freeze({
+    aggregateType: 'task',
+    scopeKind: 'project',
+    payloadKind: 'planLabelsUpdated',
   }),
 });
 
@@ -372,6 +405,18 @@ function validateFeaturePlanImportedPayload(
     corrupt(operation, 'event_payload_violation');
   }
   return { imported: true };
+}
+
+/** P03-1 / F-007：纯标签编辑事件脱敏 payload（恒为 {labelsUpdated:true}，无标签正文）。 */
+function validatePlanLabelsUpdatedPayload(
+  payload: Record<string, unknown>,
+  operation: string,
+): Record<string, unknown> {
+  exactPayloadKeys(operation, payload, ['labelsUpdated']);
+  if (payload.labelsUpdated !== true) {
+    corrupt(operation, 'event_payload_violation');
+  }
+  return { labelsUpdated: true };
 }
 
 function validateSummaryNameList(value: unknown): value is string[] {
@@ -608,6 +653,8 @@ export function mapStateEvent(row: unknown, operation: string = EVENT_READ_OPERA
     payload = validatePhaseCreatedPayload(row.payload, operation);
   } else if (spec.payloadKind === 'featurePlanImported') {
     payload = validateFeaturePlanImportedPayload(row.payload, operation);
+  } else if (spec.payloadKind === 'planLabelsUpdated') {
+    payload = validatePlanLabelsUpdatedPayload(row.payload, operation);
   } else if (spec.payloadKind === 'changedFields') {
     payload = validateChangedFieldsPayload(row.payload, operation);
   } else if (spec.payloadKind === 'baselineAuthorized') {

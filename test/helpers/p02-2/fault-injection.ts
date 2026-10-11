@@ -130,6 +130,10 @@ export const WRITE_FAULT_POINTS = Object.freeze({
     'INSERT',
     'task_dependencies_before_insert',
   ),
+  /** P03-1 / F-007：纯标签 CAS 编辑的业务行条件 UPDATE 前（三实体各自一个注入点）。 */
+  phasesBeforeUpdate: point('phases', 'BEFORE', 'UPDATE', 'phases_before_update'),
+  featuresBeforeUpdate: point('features', 'BEFORE', 'UPDATE', 'features_before_update'),
+  tasksBeforeUpdate: point('tasks', 'BEFORE', 'UPDATE', 'tasks_before_update'),
 } satisfies Record<string, WriteFaultPoint>);
 
 /** 允许安装故障触发器的表白名单（与冻结点一致，拒绝任意标识符拼接）。 */

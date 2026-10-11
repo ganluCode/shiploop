@@ -220,7 +220,8 @@ describe('F-004 可信测试装配受限 principal（项目 A/B）', () => {
     const owner = createLocalOwnerPrincipal();
     expect(owner.principalId).toBe(LOCAL_OWNER_PRINCIPAL_ID);
     expect([...owner.capabilities].sort()).toEqual([...APP_CAPABILITIES].sort());
-    expect(owner.capabilities.size).toBe(13);
+    // P03-1 计划域三项（phase.write / feature.plan.import / plan.labels.write）后冻结 14 项。
+    expect(owner.capabilities.size).toBe(14);
     expect(owner.projectScope).toEqual({ kind: 'all' });
     expect(Object.isFrozen(owner)).toBe(true);
     expect(Object.isFrozen(owner.projectScope)).toBe(true);

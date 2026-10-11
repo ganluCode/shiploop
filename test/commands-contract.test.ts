@@ -94,7 +94,7 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
     expect(WIRE_MESSAGE_SCHEMA_VERSION).toBe(3);
   });
 
-  it('冻结十三项能力（P02-2 九项 + P02-3 基线两项 + P03-1 计划域两项），local-owner 持全部', () => {
+  it('冻结十四项能力（P02-2 九项 + P02-3 基线两项 + P03-1 计划域三项），local-owner 持全部', () => {
     expect([...APP_CAPABILITIES]).toEqual([
       'project.register',
       'project.read',
@@ -111,6 +111,8 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       'phase.write',
       // P03-1 / F-005：计划导入能力位。
       'feature.plan.import',
+      // P03-1 / F-007：纯标签 CAS 编辑能力位。
+      'plan.labels.write',
     ]);
     expect(LOCAL_OWNER_PRINCIPAL_ID).toBe('local-owner');
     expect(LOCAL_OWNER_CAPABILITIES.size).toBe(APP_CAPABILITIES.length);
@@ -135,6 +137,8 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       'phase.create',
       // P03-1 / F-005：计划导入（project scope + feature.plan.import；Phase 聚合 CAS）。
       'feature.plan.import',
+      // P03-1 / F-007：纯标签 CAS 编辑（project scope + plan.labels.write；实体自身 revision CAS）。
+      'plan.labels.update',
     ]);
     expect(COMMAND_OPERATION_SPECS).toEqual({
       'project.register': { scopeKind: 'registration', mutation: 'create', capability: 'project.register' },
@@ -148,6 +152,7 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       'baseline.cancel': { scopeKind: 'project', mutation: 'create', capability: 'baseline.run' },
       'phase.create': { scopeKind: 'project', mutation: 'create', capability: 'phase.write' },
       'feature.plan.import': { scopeKind: 'project', mutation: 'update', capability: 'feature.plan.import' },
+      'plan.labels.update': { scopeKind: 'project', mutation: 'update', capability: 'plan.labels.write' },
     });
     for (const spec of Object.values(COMMAND_OPERATION_SPECS)) {
       expect(APP_CAPABILITIES).toContain(spec.capability);

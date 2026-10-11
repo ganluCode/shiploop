@@ -716,6 +716,8 @@ describe('F-011 传输纪律与版本门禁', () => {
         'phase.create',
         // P03-1 / F-005：计划导入随 Core 白名单进入接线宣告。
         'feature.plan.import',
+        // P03-1 / F-007：纯标签 CAS 编辑随 Core 白名单进入接线宣告。
+        'plan.labels.update',
       ]);
     }
     // actorId/principal 提权字段 → 400 invalid_input（未知键，定位字段）。
@@ -939,6 +941,8 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         'phase.create',
         // P03-1 / F-005：计划导入经既有 /v1/commands 通用路由接线。
         'feature.plan.import',
+        // P03-1 / F-007：纯标签 CAS 编辑经既有 /v1/commands 通用路由接线。
+        'plan.labels.update',
       ],
       queries: [
         'projects.list',

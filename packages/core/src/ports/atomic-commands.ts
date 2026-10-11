@@ -105,6 +105,14 @@ export interface CommandTransaction {
    * ---------------------------------------------------------------- */
   /** 创建 open Phase（适配器生成 UUID v4 与 UTC 毫秒；revision=1）。 */
   insertPhase(input: unknown): PhaseRecord;
+  /**
+   * P03-1 / F-007：纯标签 CAS 编辑（Phase/Feature/Task）。单语句条件 UPDATE
+   * 只触达目标实体 labels/revision/updated_at：expectedRevision 为实体自身
+   * revision，不匹配 conflict（携带 expected/actual）；目标缺失 not_found、
+   * 跨项目 ownership（抛出零写入）；不改计划内容/策略/planDigest/planStatus，
+   * 不向父子实体传播。
+   */
+  updatePlanEntityLabels(input: unknown): PhaseRecord | FeatureRecord | TaskRecord;
   /** 创建 draft Feature（含最小 plan_status=draft、可选 planDigest 与来源引用）。 */
   insertFeature(input: unknown): FeatureRecord;
   /** 创建 pending Task（保存完整验收/引用/complexity/executionConfig 及来源）。 */

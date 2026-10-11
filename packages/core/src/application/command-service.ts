@@ -60,6 +60,7 @@ import type {
 } from '../ports/state-store.js';
 import { validateMergedProjectSettingsWrite } from './configuration-service.js';
 import { FEATURE_PLAN_IMPORT_OPERATION, submitFeaturePlanImport } from './feature-plan-import.js';
+import { PLAN_LABELS_UPDATE_OPERATION, submitPlanLabelsUpdate } from './plan-labels-update.js';
 
 export interface CommandService {
   submit(principal: unknown, envelope: unknown): Promise<CommandReceipt>;
@@ -498,6 +499,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           envelope.operation !== 'baseline.cancel' &&
           envelope.operation !== 'phase.create' &&
           envelope.operation !== FEATURE_PLAN_IMPORT_OPERATION &&
+          envelope.operation !== PLAN_LABELS_UPDATE_OPERATION &&
           !isSettingsEnvelope(envelope)
         ) {
           throw new PublicError('unsupported', operation);
@@ -650,6 +652,23 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
             // P03-1 / F-005：计划导入无事务外 I/O（引用仅索引级身份重核）；
             // 归属/CAS/引用/配置重核与 Feature/Task/边/事件/回执同一事务。
             return submitFeaturePlanImport(
+              {
+                principalId: principal.principalId,
+                commandId: envelope.commandId,
+                operation: envelope.operation,
+                scope: envelope.scope,
+                requestDigest: digest,
+                issuedAt: envelope.issuedAt,
+                completedAt: new Date(now).toISOString(),
+              },
+              envelope,
+              transaction,
+            );
+          }
+          if (envelope.operation === PLAN_LABELS_UPDATE_OPERATION) {
+            // P03-1 / F-007：纯标签 CAS 编辑无事务外 I/O；项目把关/归属/标签 CAS
+            // 更新/脱敏事件/回执同一事务。
+            return submitPlanLabelsUpdate(
               {
                 principalId: principal.principalId,
                 commandId: envelope.commandId,

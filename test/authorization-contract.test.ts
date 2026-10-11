@@ -210,6 +210,14 @@ function envelope(
         expectedRevision: 1,
         payload: { phaseId: 'phase-1', plan: { schemaVersion: 1, feature: { title: 'F' }, tasks: [] } },
       } as ValidatedCommandEnvelope;
+    case 'plan.labels.update':
+      return {
+        ...base,
+        operation,
+        scope,
+        expectedRevision: expectedRevision ?? 1,
+        payload: { entityType: 'phase', id: 'phase-1', labels: [] },
+      } as ValidatedCommandEnvelope;
   }
 }
 
@@ -224,6 +232,8 @@ const COMMANDS_MATRIX = [
   { operation: 'phase.create', scope: { kind: 'project', projectId: PROJECT_A }, revision: null, capability: 'phase.write' },
   // P03-1 / F-005：计划导入（project scope + feature.plan.import；expectedRevision 为 Phase 聚合 CAS）。
   { operation: 'feature.plan.import', scope: { kind: 'project', projectId: PROJECT_A }, revision: 1, capability: 'feature.plan.import' },
+  // P03-1 / F-007：纯标签 CAS 编辑（project scope + plan.labels.write；expectedRevision 为目标实体自身 revision）。
+  { operation: 'plan.labels.update', scope: { kind: 'project', projectId: PROJECT_A }, revision: 1, capability: 'plan.labels.write' },
 ] as const;
 
 describe('F-005 TrustedPrincipal 产品构造与可信装配形状断言', () => {

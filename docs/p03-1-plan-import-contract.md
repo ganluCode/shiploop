@@ -350,6 +350,51 @@ Core 应用层 `QueryService` 增加六个授权查询（`ports/queries.ts` 契�
   完整修订前或修订后，绝不出现「新 Task 配旧边/旧摘要」的混合状态；嵌套于写事务内调用
   是编程错误（TypeError）。查询面全部只读（不写任何行/事件/回执）。
 
+### 6.7 纯标签 CAS 编辑命令（F-007 定案）
+
+标签是元数据（core-design/02 §10）：纯标签编辑与实质计划编辑是**可区分的契约**，
+不是同一命令的两个模式（实质修订归 F-008）。命令操作 `plan.labels.update`
+（project scope、能力位 `plan.labels.write`）进入 `COMMAND_OPERATIONS`/
+`APP_CAPABILITIES` 并经既有 `POST /v1/commands` 通用路由接线；线消息
+`WIRE_MESSAGE_SCHEMA_VERSION` 保持 3（同 F-004/F-005 v3 内扩张先例，升版评估仍归
+F-009）。
+
+- **payload 只含 `entityType`（`phase`/`feature`/`task`）/`id`/`labels`**，严格未知键
+  拒绝：需求/依赖/验收/状态/批准/标题/描述/revision 等混入即 `invalid_input`
+  定位 `payload.<key>`；`expectedRevision` 唯一权威来源是信封顶层（payload 内
+  出现即未知键，§6.2 纪律不变）。`labels` 必须显式提交完整集合（`[]` 即清空，
+  缺省不静默清空），复用既有 `normalizeLabels`（trim → NFC → ASCII 小写 →
+  实体内去重；`LABEL_MAX_LENGTH = 64`、`LABELS_MAX_COUNT = 50`）。
+- **expectedRevision 指向目标实体自身 revision**（core-design/02「须按实体
+  revision 做 CAS」）：编辑只更新目标实体 labels 与自身 revision（连带
+  updated_at），**标签不向父子传播**；计划内容、Task 策略副本、acceptance、
+  引用、依赖边、planDigest 与 planStatus 一律不变。与 §6.2 的关系：Feature
+  目标的标签编辑与实质修订共用同一 Feature 聚合 revision（同一 CAS 空间）；
+  Phase 目标与 Phase 聚合 revision 同源（与导入 Phase CAS 同一计数）；Task
+  目标按 Task 自身 revision CAS（与「实质修订整体替换无独立 CAS」的边界见
+  §9.8 张力记录）。
+- **CAS 与幂等**：旧 revision 在任何业务写入之前固化 rejected 回执（`conflict`，
+  details `{reason:'conflict', expectedRevision, actualRevision, entityType}`）；
+  同 revision 竞争编辑经单语句条件 UPDATE 裁决**仅一个生效**（revision 只增加
+  一次）；同 commandId 同规范化参数重放返回原回执（`replayed:true`）且不再次
+  增加 revision/事件，不同参数 `conflict`（`idempotency_key_reuse`，P02 §5.5）。
+- **同事务脱敏事件**：编辑成功在写事务内追加 `phase.labels.updated` /
+  `feature.labels.updated` / `task.labels.updated`（聚合为目标实体自身，
+  aggregateRevision=编辑后 revision，payload 恒 `{labelsUpdated:true}`，不携带
+  标签正文/批准语义）；三个事件类型进入计划域与公开事件白名单。
+- **归属与拒绝**：项目把关先行（不可见/不存在统一 `forbidden`（
+  `project_not_visible`））；跨项目目标 `forbidden`（`ownership_denied`）；目标
+  缺失 `not_found`；非法标签/混入字段 `invalid_input` 定位 `payload.*`。上述
+  拒绝不写任何业务数据（零实体/事件/回执）。完成回执结果**有界**
+  `{entityType, id, labels, revision, updatedAt}`，不声称批准、可执行或执行结果。
+- **approved 语义与活动输入不失效**（core-design/02：「不因单纯改标签使计划
+  审批、Task 通过结果或活动 Run 失效」）：以纯规则 `PLAN_LABELS_EDIT_IMPACT`
+  （`application/plan-labels-update.ts`，经 Core 公共入口导出：不改摘要/批准
+  语义/计划内容/策略、不传播、不使批准与活动输入失效）+ 隔离测试装配验证
+  （直接持久列预置 `plan_status='approved'`）；P03-1 **不增加生产审批/Run 创建
+  入口**来制造测试前提。标签不参与 planDigest（§4 规范化白名单不含 labels），
+  纯标签编辑不改变计划业务身份。
+
 ## 7. 测试与守护
 
 - `test/p03-1-plan-validation.test.ts`：合法三 Task 链、空草稿不可执行、结构/DAG 负例全清单
@@ -371,6 +416,13 @@ Core 应用层 `QueryService` 增加六个授权查询（`ports/queries.ts` 契�
 - `test/p03-1-plan-import-race.test.ts`（F-005）：三路跨进程真实竞争（导入×2 + 配置 CAS
   更新）——只提交满足重核条件的完整组、无半成功、每 Feature 策略副本内部一致、配置变化
   不追溯既有 Task。
+- `test/p03-1-label-edit-command.test.ts`（F-007）：真实 SQLite 应用测试覆盖三实体标签
+  编辑闭环（只改 labels/revision、不传播、摘要保持不变、同事务脱敏事件与重开一致）、
+  approved 语义与活动输入不失效（隔离装配）、元数据 CAS（旧 revision 拒绝/同 revision
+  竞争仅一个生效/跨进程真实竞争/重放不重复递增）、拒绝矩阵（非法标签/混入字段/跨项目/
+  缺能力零写入）与三个写入边界故障整组回滚。
+- `test/p03-1-label-edit-rules.test.ts`（F-007）：纯规则契约（标签编辑影响面、标签规范化
+  上限复用、严格未知键、事务输入面、事件白名单与公开映射同源）。
 - F-002 的真实 SQLite 迁移/存储原语按其任务验收，不以本任务的纯函数通过冒充。
 
 ## 8. 范围边界（本任务不做）
@@ -413,3 +465,10 @@ Core 应用层 `QueryService` 增加六个授权查询（`ports/queries.ts` 契�
    同一事务重核 CAS。定案：信封 expectedRevision 指向**目标 Phase 聚合**（导入在其上追加
    成员），Feature 自身仍为服务端 revision=1 的新建、无第二 CAS 权威（§6.2 修订）；F-007/
    F-008 的 Feature 聚合修订 CAS 沿用 §6.2 更新条款不变。**请求核对**。
+8. **Task 标签编辑的 CAS 空间（F-007 定案）**：§6.2 冻结「Task 与依赖边没有独立 CAS」的
+   语境是 F-008 实质修订在 Feature 聚合事务内整体替换成员（一次 CAS 一次递增）；而 F-007
+   验收要求「编辑只更新目标实体标签和 revision」「同 revision 竞争编辑仅一个生效」，故纯
+   标签编辑按**目标实体自身 revision**做 CAS 并递增（Task 标签编辑递增 Task 自身 revision，
+   不递增 Feature 聚合 revision；Feature/Phase 目标与各自聚合 revision 同源，§6.7）。两条
+   规则在各自语境内自洽；F-008 实质修订整体替换 Task 成员时对并发 Task 标签编辑的合并/
+   失效语义随 F-008 冻结。**请求核对**。

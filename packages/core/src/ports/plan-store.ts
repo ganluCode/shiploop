@@ -203,6 +203,101 @@ const CREATE_TASK_KEYS = [
 ] as const;
 const CREATE_TASK_DEPENDENCY_KEYS = ['projectId', 'featureId', 'taskId', 'dependsOnId'] as const;
 
+/* ------------------------------------------------------------------ *
+ * F-007 纯标签 CAS 编辑（Phase/Feature/Task 标签元数据编辑）
+ * ------------------------------------------------------------------ */
+
+/** 可编辑标签的计划实体类型（Project 标签走 project.metadata.update，不在本面）。 */
+export const PLAN_ENTITY_TYPES = ['phase', 'feature', 'task'] as const;
+export type PlanEntityType = (typeof PLAN_ENTITY_TYPES)[number];
+
+const PLAN_LABELS_FIELD_KEYS = ['entityType', 'id', 'labels'] as const;
+const UPDATE_PLAN_ENTITY_LABELS_KEYS = [
+  'entityType',
+  'projectId',
+  'id',
+  'labels',
+  'expectedRevision',
+] as const;
+
+export interface ValidatedPlanLabelsFields {
+  readonly entityType: PlanEntityType;
+  readonly id: string;
+  /** 规范化标签全集（复用 normalizeLabels：trim/NFC/ASCII 小写/去重 + 64/50 上限）。 */
+  readonly labels: string[];
+}
+
+function requirePlanEntityType(value: unknown, context: ValidationContext): PlanEntityType {
+  if (typeof value !== 'string' || !(PLAN_ENTITY_TYPES as readonly string[]).includes(value)) {
+    throw validationError(context, 'entityType', `必须是 ${PLAN_ENTITY_TYPES.join(' / ')}`, value);
+  }
+  return value as PlanEntityType;
+}
+
+/**
+ * F-007：纯标签编辑业务字段（entityType/id/labels）；严格未知键拒绝——需求/依赖/
+ * 验收/状态/批准/标题/描述/revision 等一律不得经本编辑面进入（与实质计划编辑
+ * 是可区分的契约）。labels 必须显式提交（编辑以完整标签集合为准，`[]` 即清空；
+ * 缺省不静默清空）。
+ */
+export function validatePlanLabelsFields(
+  value: unknown,
+  operation: string,
+): ValidatedPlanLabelsFields {
+  const context: ValidationContext = { operation, entity: { type: 'phase' } };
+  const object = requirePlainObject(value, context, 'input');
+  rejectUnknownKeys(object, PLAN_LABELS_FIELD_KEYS, context, 'input');
+  const entityType = requirePlanEntityType(object.entityType, context);
+  const entityContext: ValidationContext = { operation, entity: { type: entityType } };
+  if (!Array.isArray(object.labels)) {
+    throw validationError(entityContext, 'labels', '必须是字符串数组（编辑以完整标签集合提交）', object.labels);
+  }
+  return {
+    entityType,
+    id: validateStableId(object.id, entityContext, 'id'),
+    labels: normalizeLabels(object.labels, entityContext, 'labels'),
+  };
+}
+
+export interface ValidatedUpdatePlanEntityLabelsInput {
+  readonly entityType: PlanEntityType;
+  readonly projectId: string;
+  readonly id: string;
+  readonly labels: string[];
+  /** 目标实体自身 revision（唯一 CAS 权威；≥1 整数）。 */
+  readonly expectedRevision: number;
+}
+
+/** F-007：事务写入原语输入（entityType/projectId/id/labels/expectedRevision）。 */
+export function validateUpdatePlanEntityLabelsInput(
+  value: unknown,
+  operation: string,
+): ValidatedUpdatePlanEntityLabelsInput {
+  const context: ValidationContext = { operation, entity: { type: 'phase' } };
+  const object = requirePlainObject(value, context, 'input');
+  rejectUnknownKeys(object, UPDATE_PLAN_ENTITY_LABELS_KEYS, context, 'input');
+  const entityType = requirePlanEntityType(object.entityType, context);
+  const entityContext: ValidationContext = { operation, entity: { type: entityType } };
+  const expectedRevision = object.expectedRevision;
+  if (
+    typeof expectedRevision !== 'number' ||
+    !Number.isSafeInteger(expectedRevision) ||
+    expectedRevision < 1
+  ) {
+    throw validationError(entityContext, 'expectedRevision', '必须是 ≥1 的安全整数', expectedRevision);
+  }
+  if (!Array.isArray(object.labels)) {
+    throw validationError(entityContext, 'labels', '必须是字符串数组（编辑以完整标签集合提交）', object.labels);
+  }
+  return {
+    entityType,
+    projectId: validateStableId(object.projectId, entityContext, 'projectId'),
+    id: validateStableId(object.id, entityContext, 'id'),
+    labels: normalizeLabels(object.labels, entityContext, 'labels'),
+    expectedRevision,
+  };
+}
+
 export interface ValidatedCreatePhaseInput {
   /** 调用方指定的稳定 ID；缺省 null 时由适配器生成 UUID v4（F-002 定案保持不变）。 */
   readonly id: string | null;
@@ -417,18 +512,33 @@ export const PHASE_CREATED_EVENT_TYPE = 'phase.created';
  */
 export const FEATURE_PLAN_IMPORTED_EVENT_TYPE = 'feature.plan.imported';
 
+/**
+ * F-007：纯标签 CAS 编辑事件（仅命令路径编辑成功写入；脱敏 payload 恒为
+ * {labelsUpdated:true}，聚合为目标实体自身，aggregateRevision=编辑后 revision）。
+ * 标签是元数据：事件不携带标签正文/计划语义。
+ */
+export const PHASE_LABELS_UPDATED_EVENT_TYPE = 'phase.labels.updated';
+export const FEATURE_LABELS_UPDATED_EVENT_TYPE = 'feature.labels.updated';
+export const TASK_LABELS_UPDATED_EVENT_TYPE = 'task.labels.updated';
+
 /** 计划域事件白名单（顺序即冻结顺序；白名单外不得进入公开事件流）。 */
-export const PLAN_EVENT_TYPES = [PHASE_CREATED_EVENT_TYPE, FEATURE_PLAN_IMPORTED_EVENT_TYPE] as const;
+export const PLAN_EVENT_TYPES = [
+  PHASE_CREATED_EVENT_TYPE,
+  FEATURE_PLAN_IMPORTED_EVENT_TYPE,
+  PHASE_LABELS_UPDATED_EVENT_TYPE,
+  FEATURE_LABELS_UPDATED_EVENT_TYPE,
+  TASK_LABELS_UPDATED_EVENT_TYPE,
+] as const;
 export type PlanEventType = (typeof PLAN_EVENT_TYPES)[number];
 
 export interface ValidatedPlanEventAppend {
   readonly projectId: string;
   readonly eventType: PlanEventType;
-  /** phase.created 聚合恒为 'phase'；feature.plan.imported 聚合恒为 'feature'。 */
-  readonly aggregateType: 'phase' | 'feature';
+  /** phase.* 聚合恒为 'phase'；feature.* 恒为 'feature'；task.labels.updated 恒为 'task'。 */
+  readonly aggregateType: 'phase' | 'feature' | 'task';
   readonly aggregateId: string;
   readonly aggregateRevision: number;
-  /** 脱敏 payload（phase.created 恒 {created:true}；feature.plan.imported 恒 {imported:true}）。 */
+  /** 脱敏 payload（恒定形状：{created:true}/{imported:true}/{labelsUpdated:true}）。 */
   readonly payload: Record<string, unknown>;
 }
 
@@ -443,8 +553,8 @@ const PLAN_EVENT_APPEND_KEYS = [
 
 /** 每类事件冻结的聚合类型与脱敏 payload 固定键/值。 */
 interface PlanEventTypeSpec {
-  readonly aggregateType: 'phase' | 'feature';
-  readonly payloadKey: 'created' | 'imported';
+  readonly aggregateType: 'phase' | 'feature' | 'task';
+  readonly payloadKey: 'created' | 'imported' | 'labelsUpdated';
 }
 
 const PLAN_EVENT_TYPE_SPECS: Readonly<Record<PlanEventType, PlanEventTypeSpec>> = Object.freeze({
@@ -452,6 +562,18 @@ const PLAN_EVENT_TYPE_SPECS: Readonly<Record<PlanEventType, PlanEventTypeSpec>> 
   [FEATURE_PLAN_IMPORTED_EVENT_TYPE]: Object.freeze({
     aggregateType: 'feature',
     payloadKey: 'imported',
+  }),
+  [PHASE_LABELS_UPDATED_EVENT_TYPE]: Object.freeze({
+    aggregateType: 'phase',
+    payloadKey: 'labelsUpdated',
+  }),
+  [FEATURE_LABELS_UPDATED_EVENT_TYPE]: Object.freeze({
+    aggregateType: 'feature',
+    payloadKey: 'labelsUpdated',
+  }),
+  [TASK_LABELS_UPDATED_EVENT_TYPE]: Object.freeze({
+    aggregateType: 'task',
+    payloadKey: 'labelsUpdated',
   }),
 });
 
@@ -496,7 +618,12 @@ export function validatePlanEventAppend(value: unknown, operation: string): Vali
     aggregateType: spec.aggregateType,
     aggregateId: validateStableId(object.aggregateId, context, 'aggregateId'),
     aggregateRevision,
-    payload: spec.payloadKey === 'created' ? { created: true } : { imported: true },
+    payload:
+      spec.payloadKey === 'created'
+        ? { created: true }
+        : spec.payloadKey === 'imported'
+          ? { imported: true }
+          : { labelsUpdated: true },
   };
 }
 

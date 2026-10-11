@@ -28,6 +28,11 @@ import {
 } from '../packages/core/src/ports/commands.ts';
 import { PHASE_CREATED_EVENT_TYPE, FEATURE_PLAN_IMPORTED_EVENT_TYPE, PUBLIC_STATE_EVENT_TYPES } from '../packages/core/src/ports/events.ts';
 import {
+  FEATURE_LABELS_UPDATED_EVENT_TYPE,
+  PHASE_LABELS_UPDATED_EVENT_TYPE,
+  TASK_LABELS_UPDATED_EVENT_TYPE,
+} from '../packages/core/src/ports/plan-store.ts';
+import {
   PLAN_LIST_CURSOR_PREFIX,
   PLAN_LIST_DEFAULT_LIMIT,
   PLAN_LIST_MAX_LIMIT,
@@ -189,5 +194,44 @@ describe('F-001 P03-1 计划导入契约文档', () => {
     expect(typeof coreEntry.encodePlanListCursor).toBe('function');
     expect(typeof coreEntry.decodePlanListCursor).toBe('function');
     expect(typeof coreEntry.validatePlanListFilter).toBe('function');
+  });
+
+  it('F-007 纯标签 CAS 编辑定案与实现同源（文档、命令/能力/事件白名单与影响规则不漂移）', () => {
+    const doc = readFileSync(contractDocPath, 'utf-8');
+    expect(doc).toContain('plan.labels.update');
+    expect(doc).toContain('plan.labels.write');
+    expect(doc).toContain('phase.labels.updated');
+    expect(doc).toContain('feature.labels.updated');
+    expect(doc).toContain('task.labels.updated');
+    expect(doc).toContain('6.7');
+    expect(doc).toContain('9.8');
+    // 文档定案与实现逐项一致（不另立第二套）：expectedRevision 为目标实体自身 revision。
+    expect(COMMAND_OPERATIONS).toContain('plan.labels.update');
+    expect(COMMAND_OPERATION_SPECS['plan.labels.update']).toEqual({
+      scopeKind: 'project',
+      mutation: 'update',
+      capability: 'plan.labels.write',
+    });
+    expect(APP_CAPABILITIES).toContain('plan.labels.write');
+    for (const eventType of [
+      PHASE_LABELS_UPDATED_EVENT_TYPE,
+      FEATURE_LABELS_UPDATED_EVENT_TYPE,
+      TASK_LABELS_UPDATED_EVENT_TYPE,
+    ]) {
+      expect(PUBLIC_STATE_EVENT_TYPES).toContain(eventType);
+    }
+    expect(PHASE_LABELS_UPDATED_EVENT_TYPE).toBe('phase.labels.updated');
+    expect(FEATURE_LABELS_UPDATED_EVENT_TYPE).toBe('feature.labels.updated');
+    expect(TASK_LABELS_UPDATED_EVENT_TYPE).toBe('task.labels.updated');
+    // 纯规则与用例经 Core 公共入口导出（不另立私有入口）。
+    expect(coreEntry.PLAN_LABELS_UPDATE_OPERATION).toBe('plan.labels.update');
+    expect(typeof coreEntry.submitPlanLabelsUpdate).toBe('function');
+    expect(coreEntry.PLAN_LABELS_EDIT_IMPACT).toMatchObject({
+      changesPlanDigest: false,
+      changesPlanStatus: false,
+      invalidatesPlanApproval: false,
+      invalidatesActiveInputs: false,
+      propagatesToParentOrChild: false,
+    });
   });
 });
