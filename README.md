@@ -305,6 +305,18 @@ P02 阶段验收在该 Feature 内未包含（`accept:p02` 由阶段末项定义
   覆盖子集与已知限制；人工未审阅明确未完成，不自动签字，Nezha 的 completed 不等于放行。
 - 文档守护 [test/docs-p02-4-operations.test.ts](test/docs-p02-4-operations.test.ts)：示例命令经真实
   CLI 解析面核对，复跑说明与 `accept:p02` 控制器/配置一致，清单引用的测试/证据真实存在。
+- F-014 阶段最终集成核验与交付：
+  - [docs/acceptance/p02-4-f014-report.md](docs/acceptance/p02-4-f014-report.md)：P02-4 Feature
+    交付报告（实现范围、输入计划摘要、工具版本、受测 commit/工作树状态、命令退出码、
+    逐项计数、耗时/资源、证据路径、遗留问题、P03 候选基线）。
+  - [docs/acceptance/p02-stage-report.md](docs/acceptance/p02-stage-report.md)：P02 阶段报告
+    （15 项必需检查逐项结果、负例拒绝/状态/意外副作用核对矩阵、阶段边界与放行状态）。
+  - [docs/acceptance/evidence-p02-4-final/verification-record.md](docs/acceptance/evidence-p02-4-final/verification-record.md)：
+    脱敏验证记录（命令/退出码、受测身份分层、证据 hash/size 复验、临时进程/资源清理）。
+  - 最终集成核验修复必需行为缺陷：事件订阅建连窗口 Abort 误报 `unreachable`（应为
+    `observation_interrupted`/退出码 4），含确定性失败回归
+    （`test/app-cli-events-scripted.test.ts`）。
+  - 文档守护 [test/docs-p02-4-f014-report.test.ts](test/docs-p02-4-f014-report.test.ts)。
 - 阶段边界：正式支持仅 macOS，可信项目模式不具备强 OS 沙箱；Pi/Work、Web、rebind 等未实现
   能力不冒充完成（`not_run`/未支持）。
 

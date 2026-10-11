@@ -1,10 +1,9 @@
 $ npm ci
-exit=0 signal=null durationMs=3881
+exit=0 signal=null durationMs=9895
 
 
-added 47 packages, and audited 51 packages in 4s
+added 47 packages in 10s
 
 12 packages are looking for funding
   run `npm fund` for details
-
-found 0 vulnerabilities
+npm notice This endpoint is being retired. Use the bulk advisory endpoint instead. See the following docs for more info: https://api-docs.npmjs.com/#tag/Audit
