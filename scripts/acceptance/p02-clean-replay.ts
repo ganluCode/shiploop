@@ -667,7 +667,8 @@ async function runPublicImportSmoke(ctx: ReplayContext): Promise<void> {
   for (const dir of probeEnvDirs) {
     mkdirSync(dir, { recursive: true });
   }
-  // 环境变量一律使用 realpath 拼写（macOS /var → /private/var 别名不得造成拼写分歿）。
+  // 环境拼写契约（与真实用户环境一致）：HOME 用 realpath 规范拼写；TMPDIR 保留
+  // 创建时的自然拼写（macOS /var 别名）；不得混用，否则跨拼写受保护串比对会失配。
   const probeEnvReal = probeEnvDirs.map((dir) => realpathSync(dir));
   const probeScript = join(snapshotRoot, 'scripts/acceptance/p02-clean-replay-import-probe.mjs');
   const entries = ['packages/core/dist/index.js', 'packages/host/dist/index.js', 'packages/cli/dist/index.js'].map(
@@ -676,7 +677,7 @@ async function runPublicImportSmoke(ctx: ReplayContext): Promise<void> {
   const env: NodeJS.ProcessEnv = {
     PATH: process.env.PATH ?? '/usr/bin:/bin',
     HOME: probeEnvReal[0] as string,
-    TMPDIR: probeEnvReal[1] as string,
+    TMPDIR: probeEnvDirs[1] as string,
     NODE_NO_WARNINGS: '1',
     XDG_CONFIG_HOME: probeEnvReal[2] as string,
     XDG_DATA_HOME: probeEnvReal[3] as string,
@@ -717,7 +718,7 @@ async function runDistSmoke(ctx: ReplayContext): Promise<void> {
   const env: NodeJS.ProcessEnv = {
     PATH: process.env.PATH ?? '/usr/bin:/bin',
     HOME: realpathSync(smokeHome),
-    TMPDIR: realpathSync(smokeTmp),
+    TMPDIR: smokeTmp,
     NODE_NO_WARNINGS: '1',
   };
   const gitEnv: NodeJS.ProcessEnv = {
@@ -994,12 +995,13 @@ async function phaseAccept(ctx: ReplayContext, index: 1 | 2): Promise<void> {
   const tmpDir = join(runTempRoot, 'tmp');
   mkdirSync(homeDir, { recursive: true });
   mkdirSync(tmpDir, { recursive: true });
-  // 每次运行独立的 HOME/TMPDIR（realpath 拼写）+ 复跑深度护栏（嵌套同名场景不递归复跑）。
+  // 每次运行独立的 HOME/TMPDIR + 复跑深度护栏（嵌套同名场景不递归复跑）。
+  // 拼写契约同冒烟：HOME=realpath，TMPDIR=创建时自然拼写（与真实用户环境一致）。
   const env = replayChildEnv(
     {
       PATH: process.env.PATH ?? '/usr/bin:/bin',
       HOME: realpathSync(homeDir),
-      TMPDIR: realpathSync(tmpDir),
+      TMPDIR: tmpDir,
       NODE_NO_WARNINGS: '1',
     },
     1,
