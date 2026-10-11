@@ -49,6 +49,7 @@ import {
   TASK_STRATEGY_UPDATED_EVENT_TYPE,
   FEATURE_PLAN_APPROVED_EVENT_TYPE,
   FEATURE_PLAN_REJECTED_EVENT_TYPE,
+  EXECUTION_INPUT_PREPARED_EVENT_TYPE,
   createEventCursorBinding,
   createEventWatermark,
   decodeEventCursor,
@@ -152,6 +153,9 @@ describe('F-003 冻结事件封套版本与 §9.2 事件白名单（P02-2 六类
       // 事件可区分，不把拒绝伪装为批准）。
       FEATURE_PLAN_APPROVED_EVENT_TYPE,
       FEATURE_PLAN_REJECTED_EVENT_TYPE,
+      // P03-2 / F-006：执行输入制品组准备完成事件（聚合为目标 Task；准备输入
+      // 不是启动执行，不携带制品正文/策略副本/执行语义）。
+      EXECUTION_INPUT_PREPARED_EVENT_TYPE,
     ]);
     expect(PROJECT_METADATA_UPDATED_EVENT_TYPE).toBe('project.metadata_updated');
     expect(SETTINGS_GLOBAL_CREATED_EVENT_TYPE).toBe('settings.global_created');
@@ -166,6 +170,7 @@ describe('F-003 冻结事件封套版本与 §9.2 事件白名单（P02-2 六类
     expect(TASK_STRATEGY_UPDATED_EVENT_TYPE).toBe('task.strategy.updated');
     expect(FEATURE_PLAN_APPROVED_EVENT_TYPE).toBe('feature.plan.approved');
     expect(FEATURE_PLAN_REJECTED_EVENT_TYPE).toBe('feature.plan.rejected');
+    expect(EXECUTION_INPUT_PREPARED_EVENT_TYPE).toBe('execution.input.prepared');
   });
 });
 

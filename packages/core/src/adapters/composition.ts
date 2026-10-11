@@ -44,6 +44,18 @@ import { createProjectService } from '../application/project-service.js';
 import type { ProjectService } from '../application/project-service.js';
 import { createQueryService } from '../application/query-service.js';
 import type { QueryService } from '../application/query-service.js';
+import { createExecutionInputService } from '../application/execution-input.js';
+import { createContextBuilder } from '../application/context-build.js';
+import type { ContextBudget } from '../application/context-build.js';
+import { createArtifactPublisher } from '../application/artifact-publish.js';
+import { createArtifactVerifier } from '../application/artifact-verify.js';
+import {
+  DEFAULT_EXECUTION_INPUT_CONTEXT_BUDGET,
+  DEFAULT_EXECUTION_INPUT_PREPARE_LIMITS,
+  createExecutionInputPrepareService,
+} from '../application/execution-input-prepare.js';
+import type { ExecutionInputPreparePort } from '../application/execution-input-prepare.js';
+import { TRUSTED_PROJECT_PERMISSIONS_READER } from '../ports/execution-input-prepare.js';
 import type { ArtifactFileStore } from '../ports/artifact-files.js';
 import type { ArtifactStore } from '../ports/artifact-store.js';
 import type { BaselineEnvironmentDirectory } from '../ports/baseline.js';
@@ -76,8 +88,10 @@ import type { BaselineStore } from '../ports/baseline-store.js';
 import { createSqliteCommandReceiptStore } from './sqlite/command-receipts.js';
 import { migrateSqliteStorage } from './sqlite/migrator.js';
 import { createSqliteQueryStore } from './sqlite/query-store.js';
+import { createSqlitePlanAccess } from './sqlite/plan-store.js';
 import { openSqliteStorageSession } from './sqlite/session.js';
 import { createSqliteStateStore } from './sqlite/state-store.js';
+import { createInputSourceFileReader } from './fs/input-source-files.js';
 
 // F-009 standalone process adapter; baseline execution orchestration is not assembled yet.
 export { createCommandProcessAdapter } from './process/command-process.js';
@@ -103,6 +117,13 @@ export interface CoreApplicationOptions {
    * 缺席时使用空目录（fail-closed：任何 environmentRef 都是未获准引用）。
    */
   readonly baselineEnvironmentDirectory?: BaselineEnvironmentDirectory;
+  /**
+   * P03-2 / F-006：执行输入采集的获准源文件根白名单（rootId → 授权根绝对
+   * 路径；可信装配注入，缺省空名单——任何 file 来源都是未获准引用
+   * unknown_root，制品来源不受影响）。预算面使用 Core 冻结缺省
+   * （DEFAULT_EXECUTION_INPUT_PREPARE_LIMITS + F-004/F-005 限制契约）。
+   */
+  readonly inputSourceRoots?: Readonly<Record<string, string>>;
   /** 状态库单次 busy 等待预算（毫秒）；默认沿用适配器有限预算。 */
   readonly busyTimeoutMs?: number;
   /** 状态库 busy 重试次数（含首次）；默认沿用适配器有限预算。 */
@@ -127,6 +148,11 @@ export interface CoreApplication {
   readonly commandReceiptStore: CommandReceiptStore;
   /** F-007：幂等原子命令（当前仅 metadata CAS；注册/配置后续接入）。 */
   readonly commandService: CommandService;
+  /**
+   * P03-2 / F-006：执行输入制品组准备端口（事务外准备 + 同步权限读取；
+   * 命令面经 commandService 的 execution.input.prepare 接线同一能力）。
+   */
+  readonly executionInputPrepare: ExecutionInputPreparePort;
   readonly commandReceiptsService: CommandReceiptsService;
   /** F-010：授权查询/一致读视图快照水位/分页事件读取（§7/§8/§9.3）。 */
   readonly queryService: QueryService;
@@ -152,6 +178,7 @@ const ALLOWED_OPTION_KEYS = [
   'repositoryInspector',
   'repositoryInspectorOptions',
   'baselineEnvironmentDirectory',
+  'inputSourceRoots',
   'busyTimeoutMs',
   'busyRetryAttempts',
 ] as const;
@@ -317,6 +344,53 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     });
 
     const atomicStore = createSqliteAtomicCommandStore(session, nowUtcMs === undefined ? {} : { nowUtcMs });
+    // P03-2 / F-006：执行输入准备服务（视图捕获 + 事务外采集/组装/发布 +
+    // 正文复验；命令服务在同一装配内接线，最终重核/事件/回执在命令短写事务内）。
+    // 获准源文件根白名单由可信装配注入（缺省空名单 fail-closed）；预算面使用
+    // Core 冻结缺省（F-004 采集限制/F-005 组装预算/发布与复验限制同一契约）。
+    const executionInputPrepare: ExecutionInputPreparePort = createExecutionInputPrepareService({
+      views: createSqlitePlanAccess(session, nowUtcMs === undefined ? {} : { nowUtcMs }),
+      inputs: createExecutionInputService({
+        artifacts: artifactStore,
+        publisher: createArtifactPublisher({
+          artifacts: artifactStore,
+          files: artifactFileStore,
+          limits: { maxSizeBytes: 16_000_000, timeoutMs: 60_000 },
+        }),
+        verifier: createArtifactVerifier({
+          artifacts: artifactStore,
+          files: artifactFileStore,
+          limits: { maxReadBytes: 16_000_000 },
+        }),
+        sources: createInputSourceFileReader({
+          roots: { ...(object.inputSourceRoots as Record<string, string> | undefined) },
+        }),
+        limits: {
+          maxItems: 64,
+          maxItemBytes: 4_000_000,
+          maxTotalBytes: 16_000_000,
+          captureTimeoutMs: 60_000,
+          readTimeoutMs: 60_000,
+        },
+        ...(nowUtcMs === undefined ? {} : { nowMs: nowUtcMs }),
+      }),
+      builder: createContextBuilder({
+        budget: DEFAULT_EXECUTION_INPUT_CONTEXT_BUDGET,
+      }),
+      publisher: createArtifactPublisher({
+        artifacts: artifactStore,
+        files: artifactFileStore,
+        limits: { maxSizeBytes: 2_000_000, timeoutMs: 60_000 },
+      }),
+      verifier: createArtifactVerifier({
+        artifacts: artifactStore,
+        files: artifactFileStore,
+        limits: { maxReadBytes: 2_000_000 },
+      }),
+      permissions: TRUSTED_PROJECT_PERMISSIONS_READER,
+      limits: DEFAULT_EXECUTION_INPUT_PREPARE_LIMITS,
+      ...(nowUtcMs === undefined ? {} : { nowMs: nowUtcMs }),
+    });
     // P02-3 / F-014：baseline.cancel 的取消执行端口晚绑定到 baselineExecutionService
     // （构造环：execution 依赖 commandService.submit 做授权提交；闭包只在命令执行
     // 时解引用，装配完成后才可达）。
@@ -327,6 +401,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       // F-009：配置命令的能力目录复检复用同一可信装配目录。
       capabilityCatalog,
       baselineService,
+      executionInputPrepare,
       baselineCancel: {
         cancel: (principal, projectId, operationId) => {
           if (baselineExecutionServiceRef === undefined) {
@@ -400,6 +475,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       commandReceiptStore,
       commandReceiptsService,
       commandService,
+      executionInputPrepare,
       queryService,
       onboardingService,
       baselineStore,

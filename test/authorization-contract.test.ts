@@ -252,6 +252,18 @@ function envelope(
           decision: 'approve',
         },
       } as ValidatedCommandEnvelope;
+    case 'execution.input.prepare':
+      return {
+        ...base,
+        operation,
+        scope,
+        expectedRevision: null,
+        payload: {
+          featureId: 'f-1',
+          taskId: 't-1',
+          items: [],
+        },
+      } as ValidatedCommandEnvelope;
   }
 }
 
@@ -274,6 +286,8 @@ const COMMANDS_MATRIX = [
   { operation: 'task.strategy.update', scope: { kind: 'project', projectId: PROJECT_A }, revision: 1, capability: 'task.strategy.write' },
   // P03-2 / F-002：计划批准/拒绝决策（project scope + feature.plan.decide；expectedRevision 为 Feature 聚合 CAS）。
   { operation: 'feature.plan.decide', scope: { kind: 'project', projectId: PROJECT_A }, revision: 1, capability: 'feature.plan.decide' },
+  // P03-2 / F-006：执行输入制品组准备（project scope + execution.input.prepare；创建类不携带 expectedRevision）。
+  { operation: 'execution.input.prepare', scope: { kind: 'project', projectId: PROJECT_A }, revision: null, capability: 'execution.input.prepare' },
 ] as const;
 
 describe('F-005 TrustedPrincipal 产品构造与可信装配形状断言', () => {

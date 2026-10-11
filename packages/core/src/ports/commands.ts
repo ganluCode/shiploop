@@ -91,6 +91,9 @@ export const APP_CAPABILITIES = [
   // P03-2 / F-002：计划批准/拒绝决策能力位（绑定当前 planDigest 的决策记录；
   // 批准只确认现有计划，不是启动授权）。
   'feature.plan.decide',
+  // P03-2 / F-006：执行输入制品组准备能力位（发布可验证的不可变
+  // snapshot/manifest/prompt 并最终重核批准与 Task 输入身份；不创建运行实体）。
+  'execution.input.prepare',
 ] as const;
 
 export type AppCapability = (typeof APP_CAPABILITIES)[number];
@@ -142,6 +145,10 @@ export const COMMAND_OPERATIONS = [
   // 信封 expectedRevision 为 Feature 聚合 revision，同一写事务内记录决策、
   // 更新 planStatus、事件与回执；批准不是启动授权）。
   'feature.plan.decide',
+  // P03-2 / F-006：执行输入制品组准备（project scope + execution.input.prepare；
+  // 创建类命令不携带 expectedRevision；采集/组装/发布为事务外 I/O，最终重核、
+  // 事件与回执同一短写事务）。
+  'execution.input.prepare',
 ] as const;
 
 export type AppOperation = (typeof COMMAND_OPERATIONS)[number];
@@ -239,6 +246,14 @@ export const COMMAND_OPERATION_SPECS: Readonly<Record<AppOperation, CommandOpera
       scopeKind: 'project',
       mutation: 'update',
       capability: 'feature.plan.decide',
+    },
+    // P03-2 / F-006：执行输入制品组准备（创建类：不携带 expectedRevision，
+    // 不 CAS 任何实体）。采集/组装/发布为事务外 I/O；最终同一写事务内重核
+    // 批准/要求/检查政策/Task 策略/权限/制品身份并原子提交事件与回执。
+    'execution.input.prepare': {
+      scopeKind: 'project',
+      mutation: 'create',
+      capability: 'execution.input.prepare',
     },
   });
 
@@ -568,6 +583,20 @@ export interface ValidatedFeaturePlanDecidePayload {
   readonly reason: string | null;
 }
 
+/**
+ * P03-2 / F-006 执行输入准备 payload：featureId/taskId 为目标稳定 ID；items
+ * 为必需输入采集清单（purpose + source；深校验在应用层复用
+ * ports/execution-input 契约，携带用途身份的错误定位）。严格未知键拒绝：
+ * snapshot/manifest/prompt/permissions/approval/decisionId 等服务端决定字段
+ * 一律不能经请求输入。
+ */
+export interface ValidatedExecutionInputPreparePayload {
+  readonly featureId: string;
+  readonly taskId: string;
+  /** 必需输入采集清单（可为空数组；逐项深校验在应用层）。 */
+  readonly items: readonly Record<string, unknown>[];
+}
+
 interface EnvelopeCommon {
   readonly schemaVersion: typeof WIRE_MESSAGE_SCHEMA_VERSION;
   readonly commandId: string;
@@ -680,6 +709,14 @@ export type ValidatedCommandEnvelope =
       readonly scope: { readonly kind: 'project'; readonly projectId: string };
       readonly expectedRevision: number;
       readonly payload: ValidatedFeaturePlanDecidePayload;
+    })
+  // P03-2 / F-006：执行输入制品组准备命令信封（创建类禁止携带 expectedRevision；
+  // payload 只含 featureId/taskId/items，items 深校验在应用层）。
+  | (EnvelopeCommon & {
+      readonly operation: 'execution.input.prepare';
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: null;
+      readonly payload: ValidatedExecutionInputPreparePayload;
     });
 
 const ENVELOPE_KEYS = [
@@ -701,6 +738,7 @@ const PLAN_LABELS_UPDATE_PAYLOAD_KEYS = ['entityType', 'id', 'labels'] as const;
 const FEATURE_PLAN_REVISE_PAYLOAD_KEYS = ['featureId', 'plan'] as const;
 const TASK_STRATEGY_UPDATE_PAYLOAD_KEYS = ['taskId', 'executionConfig'] as const;
 const FEATURE_PLAN_DECIDE_PAYLOAD_KEYS = ['featureId', 'planDigest', 'decision', 'reason'] as const;
+const EXECUTION_INPUT_PREPARE_PAYLOAD_KEYS = ['featureId', 'taskId', 'items'] as const;
 
 /**
  * P01 校验器抛 StorageError(validation)，其字段名面向端口输入（'input'、
@@ -989,6 +1027,40 @@ function validateFeaturePlanDecidePayload(
   }
 }
 
+function validateExecutionInputPreparePayload(
+  operation: AppOperation,
+  raw: unknown,
+): ValidatedExecutionInputPreparePayload {
+  const object = requireObject(operation, raw, 'payload');
+  // 严格未知键拒绝：只接受准备面（featureId/taskId/items）；创建类命令不携带
+  // expectedRevision；snapshot/manifest/prompt/permissions/approval 等服务端
+  // 决定字段一律不能经请求输入（payload 内出现即未知键，定位 payload.<key>）。
+  exactKeys(operation, object, EXECUTION_INPUT_PREPARE_PAYLOAD_KEYS, 'payload.');
+  if (!Array.isArray(object.items)) {
+    fail(operation, 'invalid_input', 'payload.items', '必须是必需输入采集项数组', object.items);
+  }
+  for (const [index, item] of (object.items as unknown[]).entries()) {
+    if (!isPlainObjectPayload(item)) {
+      fail(operation, 'invalid_input', `payload.items[${index}]`, '必须是 JSON 对象', item);
+    }
+  }
+  try {
+    return {
+      featureId: validateStableId(object.featureId, { operation }, 'payload.featureId'),
+      taskId: validateStableId(object.taskId, { operation }, 'payload.taskId'),
+      items: object.items as Record<string, unknown>[],
+    };
+  } catch (error) {
+    if (isStorageError(error, 'validation')) {
+      throw new PublicError('invalid_input', operation, undefined, {
+        details: storageValidationDetails(error.details),
+        cause: error,
+      });
+    }
+    throw error;
+  }
+}
+
 function validateSettingsCommandPayload(
   operation: AppOperation,
   raw: unknown,
@@ -1188,6 +1260,18 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
       scope,
       expectedRevision: expectedRevision as number,
       payload: validateFeaturePlanDecidePayload(operation, object.payload),
+    };
+  }
+  if (operation === 'execution.input.prepare') {
+    if (scope.kind !== 'project') {
+      fail(operation, 'invalid_input', 'scope.kind', 'scope 种类与操作不匹配');
+    }
+    return {
+      ...base,
+      operation,
+      scope,
+      expectedRevision: null,
+      payload: validateExecutionInputPreparePayload(operation, object.payload),
     };
   }
   if (operation === 'settings.global.create') {

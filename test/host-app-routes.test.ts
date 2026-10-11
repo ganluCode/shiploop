@@ -724,6 +724,9 @@ describe('F-011 传输纪律与版本门禁', () => {
         'task.strategy.update',
         // P03-2 / F-002：计划批准/拒绝决策随 Core 白名单进入接线宣告。
         'feature.plan.decide',
+        // P03-2 / F-006：执行输入制品组准备随 Core 白名单进入接线宣告
+        //（HostClient/CLI 入口属 F-007/F-008）。
+        'execution.input.prepare',
       ]);
     }
     // actorId/principal 提权字段 → 400 invalid_input（未知键，定位字段）。
@@ -955,6 +958,8 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         'task.strategy.update',
         // P03-2 / F-002：计划批准/拒绝决策经既有 /v1/commands 通用路由接线。
         'feature.plan.decide',
+        // P03-2 / F-006：执行输入制品组准备经既有 /v1/commands 通用路由接线。
+        'execution.input.prepare',
       ],
       queries: [
         'projects.list',

@@ -72,6 +72,9 @@ export const APPLICATION_COMMAND_CAPABILITIES = [
   // P03-2 / F-002：计划批准/拒绝决策经既有 POST /v1/commands 通用路由接线
   //（同一命令面；HostClient/CLI 入口与决策查询路由由后续任务接入）。
   'feature.plan.decide',
+  // P03-2 / F-006：执行输入制品组准备经既有 POST /v1/commands 通用路由
+  // 接线（同一命令面；HostClient/CLI 入口由后续任务接入）。
+  'execution.input.prepare',
 ] as const;
 
 /** P02-2 §11.3：Host 实际接线的应用查询（含回执/结果读取与快照；P02-3 / F-006 新增静态接入两项；F-014 新增基线分页/详情/证据正文三项；P03-1 / F-009 新增计划层级/详情/DAG 六项）。 */

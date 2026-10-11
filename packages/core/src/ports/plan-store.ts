@@ -1184,6 +1184,14 @@ export const FEATURE_PLAN_APPROVED_EVENT_TYPE = 'feature.plan.approved';
  */
 export const FEATURE_PLAN_REJECTED_EVENT_TYPE = 'feature.plan.rejected';
 
+/**
+ * P03-2 / F-006：执行输入制品组准备完成事件（仅命令路径最终重核通过后写入；
+ * 脱敏 payload 恒为 {prepared:true}，聚合为目标 Task 自身，aggregateRevision=
+ * 最终重核时 Task revision）。不携带 snapshot/manifest/prompt 正文、策略副本、
+ * 凭据引用或执行/启动语义（准备输入不是启动执行）。
+ */
+export const EXECUTION_INPUT_PREPARED_EVENT_TYPE = 'execution.input.prepared';
+
 /** 计划域事件白名单（顺序即冻结顺序；白名单外不得进入公开事件流）。 */
 export const PLAN_EVENT_TYPES = [
   PHASE_CREATED_EVENT_TYPE,
@@ -1195,6 +1203,7 @@ export const PLAN_EVENT_TYPES = [
   TASK_STRATEGY_UPDATED_EVENT_TYPE,
   FEATURE_PLAN_APPROVED_EVENT_TYPE,
   FEATURE_PLAN_REJECTED_EVENT_TYPE,
+  EXECUTION_INPUT_PREPARED_EVENT_TYPE,
 ] as const;
 export type PlanEventType = (typeof PLAN_EVENT_TYPES)[number];
 
@@ -1228,7 +1237,8 @@ interface PlanEventTypeSpec {
     | 'revised'
     | 'strategyUpdated'
     | 'approved'
-    | 'rejected';
+    | 'rejected'
+    | 'prepared';
 }
 
 const PLAN_EVENT_TYPE_SPECS: Readonly<Record<PlanEventType, PlanEventTypeSpec>> = Object.freeze({
@@ -1264,6 +1274,10 @@ const PLAN_EVENT_TYPE_SPECS: Readonly<Record<PlanEventType, PlanEventTypeSpec>> 
   [FEATURE_PLAN_REJECTED_EVENT_TYPE]: Object.freeze({
     aggregateType: 'feature',
     payloadKey: 'rejected',
+  }),
+  [EXECUTION_INPUT_PREPARED_EVENT_TYPE]: Object.freeze({
+    aggregateType: 'task',
+    payloadKey: 'prepared',
   }),
 });
 
@@ -1321,7 +1335,9 @@ export function validatePlanEventAppend(value: unknown, operation: string): Vali
                 ? { strategyUpdated: true }
                 : spec.payloadKey === 'approved'
                   ? { approved: true }
-                  : { rejected: true },
+                  : spec.payloadKey === 'rejected'
+                    ? { rejected: true }
+                    : { prepared: true },
   };
 }
 

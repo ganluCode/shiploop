@@ -54,6 +54,7 @@ import type {
   PlanListRequest,
   PlanRecordPage,
 } from '../../ports/queries.js';
+import type { ExecutionInputPreparationView } from '../../ports/execution-input-prepare.js';
 import { validateSha256Digest, validateStableId } from '../../ports/validation.js';
 import { parseStoredSettingsPayload } from '../../ports/settings-schema.js';
 import type { SqliteStorageSession } from './session.js';
@@ -245,6 +246,16 @@ export interface SqlitePlanAccess {
   readFeaturePlanView(featureId: unknown): FeaturePlanView | undefined;
   /** P03-2 / F-002：Feature + 全部计划决策记录（单一 DEFERRED 读事务一致视图）。 */
   readFeatureApprovalsView(featureId: unknown): FeatureApprovalsView | undefined;
+  /**
+   * P03-2 / F-006：执行输入准备一致读视图（Feature + 全部 Task + 全部依赖边 +
+   * 全部决策记录 + 全局/项目当前配置；单一 DEFERRED 读事务内取得）。目标
+   * Feature 缺失返回 undefined；跨项目抛 StorageError(ownership)（与写事务内
+   * getFeaturePlan 同一判定）；嵌套于写事务内调用是编程错误（TypeError）。
+   */
+  readExecutionInputPreparationView(
+    projectId: string,
+    featureId: string,
+  ): ExecutionInputPreparationView | undefined;
   /** F-006 层级列表：可见范围谓词下推 + 稳定 id 升序键集分页（先收窄再分页）。 */
   listPhaseRecords(
     visibility: unknown,
@@ -1643,6 +1654,86 @@ export function createSqlitePlanAccess(
     });
   }
 
+  /**
+   * P03-2 / F-006：执行输入准备一致读视图（单一 DEFERRED 读事务）：Feature +
+   * 全部 Task + 全部依赖边 + 全部决策记录 + 全局/项目当前配置在同一快照内
+   * 取得（并发修订/决策/配置变化只能观察到完整前后状态）。跨项目抛
+   * ownership；嵌套写事务 TypeError（transactSqliteConsistentRead 把关）。
+   */
+  function readExecutionInputPreparationView(
+    projectId: string,
+    featureId: string,
+  ): ExecutionInputPreparationView | undefined {
+    const operation = 'PlanStore.readExecutionInputPreparationView';
+    const validProjectId = validateStableId(projectId, { operation }, 'projectId');
+    const validFeatureId = validateStableId(featureId, { operation }, 'featureId');
+    const entity: StorageEntityRef = { type: 'feature', projectId: validProjectId, id: validFeatureId };
+    return transactSqliteConsistentRead(session, operation, (db) => {
+      const featureRow = db
+        .prepare<[string], FeatureSqlRow>(`${SELECT_FEATURE} WHERE id = ?`)
+        .get(validFeatureId);
+      if (featureRow === undefined) {
+        return undefined;
+      }
+      if (featureRow.project_id !== validProjectId) {
+        throw ownership(operation, entity, 'Feature 不属于声明的项目（跨项目目标被拒绝）');
+      }
+      const taskRows = db
+        .prepare<[string], TaskSqlRow>(`${SELECT_TASK} WHERE feature_id = ? ORDER BY id`)
+        .all(validFeatureId) as TaskSqlRow[];
+      const dependencyRows = db
+        .prepare<[string], TaskDependencySqlRow>(
+          `${SELECT_TASK_DEPENDENCY} WHERE feature_id = ? ORDER BY task_id, depends_on_id`,
+        )
+        .all(validFeatureId) as TaskDependencySqlRow[];
+      const approvalRows = db
+        .prepare<[string], ApprovalSqlRow>(
+          `${SELECT_APPROVAL} WHERE subject_type = 'feature_plan' AND subject_id = ? ORDER BY decided_at, id`,
+        )
+        .all(validFeatureId) as ApprovalSqlRow[];
+      // 全局与项目当前配置来自同一 DEFERRED 读视图（检查政策身份的权威输入）；
+      // 持久 payload 重新经结构校验，损坏 corrupt 拒绝（fail-closed）。
+      const globalRow = db
+        .prepare<[string], { revision: number; payload: string }>(
+          'SELECT revision, payload FROM global_settings WHERE id = ?',
+        )
+        .get('global');
+      const projectRow = db
+        .prepare<[string], { revision: number; payload: string }>(
+          'SELECT revision, payload FROM project_settings WHERE project_id = ?',
+        )
+        .get(validProjectId);
+      return {
+        feature: featureFromRow(featureRow),
+        tasks: taskRows.map((row) => taskFromRow(row)),
+        dependencies: dependencyRows.map((row) => taskDependencyFromRow(row)),
+        approvals: approvalRows.map((row) => approvalFromRow(row)),
+        settings: {
+          global:
+            globalRow === undefined
+              ? null
+              : {
+                  scopeRevision: globalRow.revision,
+                  payload: parseStoredSettingsPayload(globalRow.payload, {
+                    operation,
+                    entity: { type: 'global_settings', id: 'global' },
+                  }),
+                },
+          project:
+            projectRow === undefined
+              ? null
+              : {
+                  scopeRevision: projectRow.revision,
+                  payload: parseStoredSettingsPayload(projectRow.payload, {
+                    operation,
+                    entity: { type: 'project_settings', projectId: validProjectId },
+                  }),
+                },
+        },
+      };
+    });
+  }
+
   function listPhaseRecords(
     visibility: unknown,
     projectId: unknown,
@@ -1709,6 +1800,7 @@ export function createSqlitePlanAccess(
     readTaskRecord,
     readFeaturePlanView,
     readFeatureApprovalsView,
+    readExecutionInputPreparationView,
     listPhaseRecords,
     listFeatureRecords,
     listTaskRecords,

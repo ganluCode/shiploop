@@ -94,7 +94,7 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
     expect(WIRE_MESSAGE_SCHEMA_VERSION).toBe(4);
   });
 
-  it('冻结十七项能力（P02-2 九项 + P02-3 基线两项 + P03-1 计划域三项 + P03-2 Task 策略编辑/计划决策两项），local-owner 持全部', () => {
+  it('冻结十八项能力（P02-2 九项 + P02-3 基线两项 + P03-1 计划域三项 + P03-2 Task 策略编辑/计划决策/执行输入准备三项），local-owner 持全部', () => {
     expect([...APP_CAPABILITIES]).toEqual([
       'project.register',
       'project.read',
@@ -119,6 +119,8 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       'task.strategy.write',
       // P03-2 / F-002：计划批准/拒绝决策能力位。
       'feature.plan.decide',
+      // P03-2 / F-006：执行输入制品组准备能力位。
+      'execution.input.prepare',
     ]);
     expect(LOCAL_OWNER_PRINCIPAL_ID).toBe('local-owner');
     expect(LOCAL_OWNER_CAPABILITIES.size).toBe(APP_CAPABILITIES.length);
@@ -151,6 +153,9 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       'task.strategy.update',
       // P03-2 / F-002：计划批准/拒绝决策（project scope + feature.plan.decide；Feature 聚合 CAS）。
       'feature.plan.decide',
+      // P03-2 / F-006：执行输入制品组准备（project scope + execution.input.prepare；
+      // 创建类不携带 expectedRevision；采集/组装/发布为事务外 I/O）。
+      'execution.input.prepare',
     ]);
     expect(COMMAND_OPERATION_SPECS).toEqual({
       'project.register': { scopeKind: 'registration', mutation: 'create', capability: 'project.register' },
@@ -168,6 +173,7 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       'feature.plan.revise': { scopeKind: 'project', mutation: 'update', capability: 'feature.plan.revise' },
       'task.strategy.update': { scopeKind: 'project', mutation: 'update', capability: 'task.strategy.write' },
       'feature.plan.decide': { scopeKind: 'project', mutation: 'update', capability: 'feature.plan.decide' },
+      'execution.input.prepare': { scopeKind: 'project', mutation: 'create', capability: 'execution.input.prepare' },
     });
     for (const spec of Object.values(COMMAND_OPERATION_SPECS)) {
       expect(APP_CAPABILITIES).toContain(spec.capability);

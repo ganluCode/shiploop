@@ -68,6 +68,12 @@ import {
 import type { FeaturePlanReviseGuards } from './feature-plan-revise.js';
 import { PLAN_LABELS_UPDATE_OPERATION, submitPlanLabelsUpdate } from './plan-labels-update.js';
 import {
+  EXECUTION_INPUT_PREPARE_OPERATION,
+  submitExecutionInputPrepare,
+} from './execution-input-prepare.js';
+import type { ExecutionInputPreparePort } from './execution-input-prepare.js';
+import type { PreparedExecutionInputGroup } from '../ports/execution-input-prepare.js';
+import {
   TASK_STRATEGY_UPDATE_OPERATION,
   submitTaskStrategyUpdate,
 } from './task-strategy-update.js';
@@ -108,6 +114,12 @@ export interface CommandServiceOptions {
    * 探测；缺省为生产「无执行实体表」边界宣告，见 task-strategy-update）。
    */
   readonly taskStrategyEditGuards?: TaskStrategyEditGuards;
+  /**
+   * P03-2 / F-006：执行输入制品组准备端口（事务外采集/组装/发布 + 同步权限
+   * 读取；不传则命令 unsupported，不冒充能力）。装配者：composition 根；
+   * 受控测试可直接注入窄端口实现。
+   */
+  readonly executionInputPrepare?: ExecutionInputPreparePort;
   readonly nowUtcMs?: () => number;
 }
 
@@ -171,6 +183,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
   const baselineCancel = options.baselineCancel;
   const featurePlanReviseGuards = options.featurePlanReviseGuards;
   const taskStrategyEditGuards = options.taskStrategyEditGuards;
+  const executionInputPrepare = options.executionInputPrepare;
   const nowUtcMs = options.nowUtcMs ?? Date.now;
 
   /** 既有项目元数据 CAS：业务 + metadata_updated 事件 + 回执同一事务（F-007）。 */
@@ -519,6 +532,11 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
         if (envelope.operation === 'baseline.cancel' && baselineCancel === undefined) {
           throw new PublicError('unsupported', operation);
         }
+        // P03-2 / F-006：执行输入准备端口缺席时 unsupported（与基线命令同一纪律；
+        // 不冒充准备能力）。
+        if (envelope.operation === EXECUTION_INPUT_PREPARE_OPERATION && executionInputPrepare === undefined) {
+          throw new PublicError('unsupported', operation);
+        }
         if (
           envelope.operation !== 'project.metadata.update' &&
           envelope.operation !== 'project.register' &&
@@ -531,6 +549,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           envelope.operation !== FEATURE_PLAN_REVISE_OPERATION &&
           envelope.operation !== TASK_STRATEGY_UPDATE_OPERATION &&
           envelope.operation !== FEATURE_PLAN_DECIDE_OPERATION &&
+          envelope.operation !== EXECUTION_INPUT_PREPARE_OPERATION &&
           !isSettingsEnvelope(envelope)
         ) {
           throw new PublicError('unsupported', operation);
@@ -595,6 +614,17 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
             principal,
             envelope.scope.projectId,
             payload.operationId,
+          );
+        }
+
+        // P03-2 / F-006：执行输入准备的视图捕获/采集/组装/发布/正文复验全部在
+        // 写事务之外、仅对新命令执行（外部 I/O 不在写事务内等待）；最终身份
+        // 重核、脱敏事件与回执在同一短写事务内原子提交。
+        let executionInputPrepared: PreparedExecutionInputGroup | undefined;
+        if (envelope.operation === EXECUTION_INPUT_PREPARE_OPERATION && existing === undefined) {
+          executionInputPrepared = await executionInputPrepare!.prepareExecutionInput(
+            envelope.scope.projectId,
+            envelope.payload,
           );
         }
 
@@ -771,6 +801,29 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
               envelope,
               transaction,
               now,
+            );
+          }
+          if (envelope.operation === EXECUTION_INPUT_PREPARE_OPERATION) {
+            // P03-2 / F-006：执行输入准备的事务外 I/O（视图捕获/采集/组装/发布/
+            // 正文复验）已在上面完成；本事务内只做身份重核、脱敏事件与回执的
+            // 原子提交（外部 I/O 不在写事务内等待）。
+            if (executionInputPrepared === undefined) {
+              throw new TypeError('执行输入准备缺少事务外准备结果');
+            }
+            return submitExecutionInputPrepare(
+              {
+                principalId: principal.principalId,
+                commandId: envelope.commandId,
+                operation: envelope.operation,
+                scope: envelope.scope,
+                requestDigest: digest,
+                issuedAt: envelope.issuedAt,
+                completedAt: new Date(now).toISOString(),
+              },
+              envelope,
+              transaction,
+              executionInputPrepared,
+              executionInputPrepare!,
             );
           }
           if (isSettingsEnvelope(envelope)) {
