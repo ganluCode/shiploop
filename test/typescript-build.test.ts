@@ -43,6 +43,8 @@ function readSourceTree(dir: string): { file: string; code: string }[] {
 /**
  * 提取源码中真实出现的模块说明符（静态 import/export from、副作用 import、
  * 字面量 dynamic import 与 require）。先剔除注释，使“禁止导入 X”的文档注释不会被误判。
+ * 静态语句以行首语句形态锚定（声明段不跨 `;`），避免把源码中的命令身份字符串
+ * （如 `'feature.import'`）误判为副作用 import 的假阳性。
  * 这是 F-004 分层依赖检查器的最小前身，当前只服务于入口边界断言。
  */
 function extractModuleSpecifiers(code: string): string[] {
@@ -51,8 +53,8 @@ function extractModuleSpecifiers(code: string): string[] {
     .replaceAll(/^\s*\/\/.*$/gm, '');
   const specifiers: string[] = [];
   const patterns = [
-    /\b(?:import|export)\b[\s\S]*?\bfrom\s*['"]([^'"]+)['"]/g,
-    /\bimport\s*['"]([^'"]+)['"]/g,
+    /^\s*(?:import|export)\b[^;]*?\bfrom\s*['"]([^'"]+)['"]/gm,
+    /^\s*import\s*['"]([^'"]+)['"]/gm,
     /\b(?:import|require)\s*\(\s*['"]([^'"]+)['"]\s*\)/g,
   ];
   for (const pattern of patterns) {

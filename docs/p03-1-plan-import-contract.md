@@ -8,9 +8,12 @@
   四表与 Drizzle 映射、CommandTransaction 插入原语，见
   `packages/core/src/adapters/sqlite/migrations.ts` 与 `ports/plan-store.ts`）；P03-1 / F-004 起
   `COMMAND_OPERATIONS` 增加 `phase.create`（能力位 `phase.write`、事件 `phase.created`，见
-  §6.4），Host `/v1/commands` 通用路由随之受理该命令（接线宣告同步）；CLI 仍无计划入口
-  （F-009 接入）。F-006 起 Core 查询面提供计划详情/层级列表/Task DAG（§6.6 定案，能力位
-  复用 `project.read`，Host/CLI 线接入仍归 F-009/F-010）。F-008 起实质计划修订命令
+  §6.4），Host `/v1/commands` 通用路由随之受理该命令（接线宣告同步）；F-009 接入 Host
+  传输与 HostClient，F-010 增补 CLI 计划入口（`phase create|list|get|labels`、
+  `feature import|list|get|revise|labels`、`task list|get|labels`，计划文件为有界
+  UTF-8 `--input`，均经 Host 公共客户端）。F-006 起 Core 查询面提供计划详情/层级列表/
+  Task DAG（§6.6 定案，能力位复用 `project.read`，Host/CLI 线接入已由 F-009/F-010
+  完成）。F-008 起实质计划修订命令
   `feature.plan.revise`（能力位 `feature.plan.revise`、事件 `feature.plan.revised`）进入
   白名单与 Host 接线（§6.8 定案）。F-005 起继续改变这些事实时必须同步更新本文与文档守护测试。
 - 适用平台：macOS（首个正式支持平台）；Windows/WSL/Linux 未验收。

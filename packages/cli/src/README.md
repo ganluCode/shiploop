@@ -43,5 +43,12 @@ CLI 承担：Host 生命周期命令的参数解析、结构化输出与 Host �
   `--snapshot-only` 补读一页后退出，snapshot_required 明确记录并重取快照恢复，
   Ctrl+C（bin.ts 将 SIGINT 接入 AbortSignal）/stream_overflow 以退出码 4 只结束本次
   观察。观察/等待预算覆盖与中断信号为受信装配/测试注入，绝非 argv/env。
+- F-010 计划命令（phase/feature/task）：纯面层增补 Phase 建立、单 Feature 计划
+  导入、层级/DAG 查询、草稿修订与纯标签 CAS 编辑（`--revision` 是唯一
+  expectedRevision 入口）；执行层经 HostClient 公共方法（createPhase/
+  importFeaturePlan/updatePlanLabels/reviseFeaturePlan 与六个查询）接线，
+  `--input` 计划文件以与 Host 应用请求体同值的 MAX_APP_BODY_BYTES 有界 UTF-8
+  受控读取（不执行文件内容、不把开发机路径写成产品运行依赖）；导入/修订只保存
+  草稿（planStatus=draft），帮助与结构化输出不宣称审批批准、Task 通过或 Work 运行。
 
 单向依赖规则见仓库根 `README.md`。

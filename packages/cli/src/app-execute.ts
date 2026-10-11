@@ -1,6 +1,6 @@
 /**
- * F-015/F-016/F-017 应用命令 CLI 纵向执行层（契约 §12.1/§12.2/§12.3、§5.5/§5.7、
- * §6、§7、§8/§9.4）。
+ * F-015/F-016/F-017/F-010 应用命令 CLI 纵向执行层（契约 §12.1/§12.2/§12.3、
+ * §5.5/§5.7、§6、§7、§8/§9.4）。
  *
  * 与 F-014 纯面层的边界（`app/` 目录保持纯函数、无 I/O）：
  * - 本模块允许 I/O：经 `shiploop-host` 公共面 `ensureHostRunning` 连接或受控
@@ -17,12 +17,13 @@
  * 不访问网络、不 spawn——只有 `runAppCli` 显式调用才执行。
  * `packages/cli/src/index.ts` 公共入口不 re-export 本模块（显式入口 bin.ts 专用）。
  */
-import { readFileSync } from 'node:fs';
+import { closeSync, openSync, readFileSync, readSync } from 'node:fs';
 import {
   ensureHostRunning,
   isHostProtocolError,
   isPlainObject,
   HostProtocolError,
+  MAX_APP_BODY_BYTES,
   SNAPSHOT_ROUTE,
   type HostClient,
   type HostClientTimeouts,
@@ -62,6 +63,9 @@ import type {
   ParsedConfigCreate,
   ParsedConfigUpdate,
   ParsedEventsObserve,
+  ParsedFeatureImport,
+  ParsedFeatureRevise,
+  ParsedPlanLabels,
   ParsedProjectInit,
   ParsedProjectOverview,
   ParsedReceiptGet,
@@ -162,6 +166,15 @@ type ProjectOverviewResult = Awaited<ReturnType<HostClient['getProjectOverview']
 type SettingsStateResult = Awaited<ReturnType<HostClient['getGlobalSettings']>>;
 type EffectiveSettingsResult = Awaited<ReturnType<HostClient['getEffectiveSettings']>>;
 type ExportedSettingsResult = Awaited<ReturnType<HostClient['exportGlobalSettings']>>;
+type PhaseListResult = Awaited<ReturnType<HostClient['listPhases']>>;
+type PhaseDetailResult = Awaited<ReturnType<HostClient['getPhase']>>;
+type FeatureListResult = Awaited<ReturnType<HostClient['listFeatures']>>;
+type FeatureDetailResult = Awaited<ReturnType<HostClient['getFeature']>>;
+type TaskListResult = Awaited<ReturnType<HostClient['listTasks']>>;
+type TaskDetailResult = Awaited<ReturnType<HostClient['getTask']>>;
+
+/** 计划命令（phase/feature/task）的解析形态（F-010）。 */
+type ParsedPlanCommand = Extract<ParsedAppCliCommand, { command: 'phase' | 'feature' | 'task' }>;
 
 /** 基线子命令（preview/run/list/status/cancel/evidence）的解析形态。 */
 type ParsedBaselineCommand = Extract<ParsedAppCliCommand, { command: 'baseline' }>;
@@ -397,6 +410,105 @@ function receiptHumanLine(receipt: CommandReceipt): string {
 }
 
 /* ------------------------------------------------------------------ *
+ * 计划命令人类可读行（F-010；脱敏事实字段，不宣称审批/通过/运行）
+ * ------------------------------------------------------------------ */
+
+function phaseCreatedHumanLine(receipt: CompletedReceipt): string {
+  const result = receipt.result as
+    | { phase?: { id?: unknown; revision?: unknown; status?: unknown } }
+    | undefined;
+  const phase = result?.phase ?? {};
+  return (
+    `shiploop phase create: ${receipt.status} phase=${String(phase.id)} ` +
+    `revision=${String(phase.revision)} status=${String(phase.status)}` +
+    `${receipt.replayed ? '（replayed）' : ''}\n`
+  );
+}
+
+function featureImportedHumanLine(receipt: CompletedReceipt): string {
+  const result = receipt.result as
+    | {
+        feature?: { id?: unknown; revision?: unknown; planStatus?: unknown; planDigest?: unknown };
+        tasks?: readonly { id: string }[];
+        validation?: { taskCount?: unknown };
+      }
+    | undefined;
+  const feature = result?.feature ?? {};
+  return (
+    `shiploop feature import: ${receipt.status} feature=${String(feature.id)} ` +
+    `revision=${String(feature.revision)} planStatus=${String(feature.planStatus)} ` +
+    `planDigest=${String(feature.planDigest)} tasks=${result?.validation?.taskCount ?? result?.tasks?.length ?? 0}` +
+    `${receipt.replayed ? '（replayed）' : ''}\n`
+  );
+}
+
+function featureRevisedHumanLine(receipt: CompletedReceipt): string {
+  const result = receipt.result as
+    | {
+        feature?: { id?: unknown; revision?: unknown; planStatus?: unknown; planDigest?: unknown };
+        memberChanges?: { keptTaskCount?: unknown; createdTaskCount?: unknown; removedTaskCount?: unknown };
+      }
+    | undefined;
+  const feature = result?.feature ?? {};
+  const changes = result?.memberChanges ?? {};
+  return (
+    `shiploop feature revise: ${receipt.status} feature=${String(feature.id)} ` +
+    `revision=${String(feature.revision)} planStatus=${String(feature.planStatus)} ` +
+    `planDigest=${String(feature.planDigest)} ` +
+    `kept=${String(changes.keptTaskCount)} created=${String(changes.createdTaskCount)} ` +
+    `removed=${String(changes.removedTaskCount)}${receipt.replayed ? '（replayed）' : ''}\n`
+  );
+}
+
+function planLabelsHumanLine(commandId: AppCliCommandId, receipt: CompletedReceipt): string {
+  const result = receipt.result as
+    | { entityType?: unknown; id?: unknown; revision?: unknown; labels?: readonly string[] }
+    | undefined;
+  return (
+    `shiploop ${commandId}: ${receipt.status} ${String(result?.entityType)}=${String(result?.id)} ` +
+    `revision=${String(result?.revision)} labels=${result?.labels?.length ?? 0}` +
+    `${receipt.replayed ? '（replayed）' : ''}\n`
+  );
+}
+
+function planListHumanLine(
+  noun: 'phase' | 'feature' | 'task',
+  result: { records: readonly { id: string }[]; nextCursor: string | null },
+): string {
+  const lines = [`shiploop ${noun} list: ${result.records.length} ${noun}(s)`];
+  for (const record of result.records) {
+    lines.push(`  - ${record.id}`);
+  }
+  if (result.nextCursor !== null) {
+    lines.push(`  nextCursor=${result.nextCursor}`);
+  }
+  return `${lines.join('\n')}\n`;
+}
+
+function phaseDetailHumanLine(detail: PhaseDetailResult): string {
+  return (
+    `shiploop phase get: ${detail.phase.id} project=${detail.phase.projectId} ` +
+    `revision=${detail.phase.revision} status=${detail.phase.status}\n`
+  );
+}
+
+function featureDetailHumanLine(detail: FeatureDetailResult): string {
+  return (
+    `shiploop feature get: ${detail.feature.id} revision=${detail.feature.revision} ` +
+    `planStatus=${detail.feature.planStatus} tasks=${detail.tasks.length} ` +
+    `planDigest=${String(detail.feature.planDigest)}\n`
+  );
+}
+
+function taskDetailHumanLine(detail: TaskDetailResult): string {
+  return (
+    `shiploop task get: ${detail.task.id} feature=${detail.task.featureId} ` +
+    `revision=${detail.task.revision} status=${detail.task.status} ` +
+    `criteria=${detail.task.acceptance.criteria.length}\n`
+  );
+}
+
+/* ------------------------------------------------------------------ *
  * 写命令：显式 commandId 先查回执、以原 issuedAt 重建同一信封
  * ------------------------------------------------------------------ */
 
@@ -433,6 +545,19 @@ async function submitCommandAndEmit(
   input: SubmitCommandInput,
 ): Promise<AppCliRunResult> {
   const receipt = await client.submitCommand(input);
+  return emitCommandReceipt(io, command, receipt);
+}
+
+/**
+ * 命令回执 → §12.3 输出（写命令共用）：rejected 是业务拒绝（退出码 1，保留
+ * commandId 可查回执）；accepted 对同步计划/配置命令属协议异常（fail-closed）；
+ * completed 才是成功（退出码 0）。
+ */
+function emitCommandReceipt(
+  io: AppCliIo,
+  command: ParsedAppCliCommand,
+  receipt: CommandReceipt,
+): AppCliRunResult {
   if (receipt.status === 'rejected') {
     return emitFailure(io, command.json, {
       exitCode: exitCodeForReceiptStatus('rejected'),
@@ -444,8 +569,8 @@ async function submitCommandAndEmit(
     });
   }
   if (receipt.status === 'accepted') {
-    // F-008 起 Host 可产生 accepted（baseline.run authorize）；当前 CLI 命令面
-    // 全部为同步命令，accepted 属协议异常（fail-closed，不折算成功/失败）。
+    // F-008 起 Host 可产生 accepted（baseline.run authorize）；除基线外的 CLI
+    // 命令面全部为同步命令，accepted 属协议异常（fail-closed，不折算成功/失败）。
     throw new Error('unexpected_accepted_receipt');
   }
   return emitSuccess(io, command, receipt, writeCommandHumanLine(command.commandId, receipt));
@@ -462,6 +587,16 @@ function writeCommandHumanLine(commandId: AppCliCommandId, receipt: CompletedRec
       return settingsWriteHumanLine('create', receipt);
     case 'config.update':
       return settingsWriteHumanLine('update', receipt);
+    case 'phase.create':
+      return phaseCreatedHumanLine(receipt);
+    case 'feature.import':
+      return featureImportedHumanLine(receipt);
+    case 'feature.revise':
+      return featureRevisedHumanLine(receipt);
+    case 'phase.labels':
+    case 'feature.labels':
+    case 'task.labels':
+      return planLabelsHumanLine(commandId, receipt);
     default:
       return `shiploop ${commandId}: ${receipt.status}\n`;
   }
@@ -805,6 +940,169 @@ async function executeConfigCommand(
           ? await client.exportGlobalSettings()
           : await client.exportProjectSettings(command.projectId as string);
       return emitSuccess(io, command, result, exportedSettingsHumanLine(result));
+    }
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * 计划命令（P03-1 / F-010）
+ * ------------------------------------------------------------------ */
+
+/**
+ * 计划 `--input <file>` 的有界 UTF-8 受控读取：上限与 Host 应用请求体同一
+ * 常量（MAX_APP_BODY_BYTES，不另立数值）；严格 UTF-8 解码（非法字节拒绝）；
+ * 只读取文本并解析为 JSON 普通对象，绝不执行文件内容；缺失/不可读/超限/
+ * 非法编码/畸形 JSON 一律在连接 Host 之前以退出码 2 拒绝，错误不回显文件内容。
+ */
+function readPlanInputPayload(
+  command: ParsedFeatureImport | ParsedFeatureRevise,
+): Record<string, unknown> {
+  const state = {
+    command: command.command,
+    commandId: command.commandId,
+    json: command.json,
+  };
+  let handle: number | undefined;
+  try {
+    handle = openSync(command.inputFile, 'r');
+    const buffer = Buffer.alloc(MAX_APP_BODY_BYTES + 1);
+    const bytesRead = readSync(handle, buffer, 0, buffer.length, 0);
+    if (bytesRead > MAX_APP_BODY_BYTES) {
+      throw new AppCliParseError('invalid_input', 'input_file_too_large', state, 'input');
+    }
+    let text: string;
+    try {
+      text = new TextDecoder('utf-8', { fatal: true }).decode(buffer.subarray(0, bytesRead));
+    } catch {
+      throw new AppCliParseError('invalid_input', 'input_file_encoding', state, 'input');
+    }
+    return parseAppInputJson(text, { commandId: command.commandId, json: command.json });
+  } catch (error) {
+    if (error instanceof AppCliParseError) {
+      throw error;
+    }
+    throw new AppCliParseError('invalid_input', 'invalid_input_file', state, 'input');
+  } finally {
+    if (handle !== undefined) {
+      try {
+        closeSync(handle);
+      } catch {
+        // 关闭失败不改变读取结论（句柄随进程退出回收）。
+      }
+    }
+  }
+}
+
+/** 显式 --command-id 的信封身份选项（重放以原 issuedAt 重建同一信封）。 */
+function envelopeIdentityOptions(
+  explicitCommandId: string | undefined,
+  issuedAt: string | undefined,
+): { commandId?: string; issuedAt?: string } {
+  return {
+    ...(explicitCommandId !== undefined ? { commandId: explicitCommandId } : {}),
+    ...(issuedAt !== undefined ? { issuedAt } : {}),
+  };
+}
+
+/**
+ * 执行一条计划命令意图：全部经 HostClient 公共方法（四个计划命令 + 六个查询），
+ * 不打开状态库、不读取凭据、不运行模型；计划文件已在连接前受控读取。
+ */
+async function executePlanCommand(
+  io: AppCliIo,
+  command: ParsedPlanCommand,
+  client: HostClient,
+  planPayload: Record<string, unknown> | undefined,
+): Promise<AppCliRunResult> {
+  switch (command.commandId) {
+    case 'phase.create': {
+      const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+      const receipt = await client.createPhase(
+        {
+          projectId: command.projectId,
+          title: command.title,
+          description: command.description ?? null,
+          labels: command.labels,
+        },
+        envelopeIdentityOptions(command.explicitCommandId, issuedAt),
+      );
+      return emitCommandReceipt(io, command, receipt);
+    }
+    case 'feature.import': {
+      const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+      const receipt = await client.importFeaturePlan(
+        {
+          projectId: command.projectId,
+          phaseId: command.phaseId,
+          expectedRevision: command.revision,
+          plan: planPayload,
+        },
+        envelopeIdentityOptions(command.explicitCommandId, issuedAt),
+      );
+      return emitCommandReceipt(io, command, receipt);
+    }
+    case 'feature.revise': {
+      const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+      const receipt = await client.reviseFeaturePlan(
+        {
+          projectId: command.projectId,
+          featureId: command.featureId,
+          expectedRevision: command.revision,
+          plan: planPayload,
+        },
+        envelopeIdentityOptions(command.explicitCommandId, issuedAt),
+      );
+      return emitCommandReceipt(io, command, receipt);
+    }
+    case 'phase.labels':
+    case 'feature.labels':
+    case 'task.labels': {
+      const labels: ParsedPlanLabels = command;
+      const issuedAt = await replayIssuedAt(client, labels.explicitCommandId);
+      const receipt = await client.updatePlanLabels(
+        {
+          projectId: labels.projectId,
+          entityType: labels.entityType,
+          id: labels.id,
+          expectedRevision: labels.revision,
+          labels: labels.labels,
+        },
+        envelopeIdentityOptions(labels.explicitCommandId, issuedAt),
+      );
+      return emitCommandReceipt(io, command, receipt);
+    }
+    case 'phase.list': {
+      const result = await client.listPhases(command.projectId, {
+        ...(command.limit !== undefined ? { limit: command.limit } : {}),
+        ...(command.cursor !== undefined ? { cursor: command.cursor } : {}),
+      });
+      return emitSuccess(io, command, result, planListHumanLine('phase', result));
+    }
+    case 'phase.get': {
+      const result = await client.getPhase(command.phaseId);
+      return emitSuccess(io, command, result, phaseDetailHumanLine(result));
+    }
+    case 'feature.list': {
+      const result = await client.listFeatures(command.projectId, command.phaseId, {
+        ...(command.limit !== undefined ? { limit: command.limit } : {}),
+        ...(command.cursor !== undefined ? { cursor: command.cursor } : {}),
+      });
+      return emitSuccess(io, command, result, planListHumanLine('feature', result));
+    }
+    case 'feature.get': {
+      const result = await client.getFeature(command.featureId);
+      return emitSuccess(io, command, result, featureDetailHumanLine(result));
+    }
+    case 'task.list': {
+      const result = await client.listTasks(command.projectId, command.featureId, {
+        ...(command.limit !== undefined ? { limit: command.limit } : {}),
+        ...(command.cursor !== undefined ? { cursor: command.cursor } : {}),
+      });
+      return emitSuccess(io, command, result, planListHumanLine('task', result));
+    }
+    case 'task.get': {
+      const result = await client.getTask(command.taskId);
+      return emitSuccess(io, command, result, taskDetailHumanLine(result));
     }
   }
 }
@@ -1899,6 +2197,26 @@ export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunRes
     }
   }
 
+  // F-010：计划文件（feature import/revise 的 --input）在连接 Host 之前有界
+  // UTF-8 受控读取：超限/非法编码/畸形 JSON 以退出码 2 拒绝，不发现 Host、
+  // 不执行文件内容、不把开发机路径写成产品运行依赖。
+  let planPayload: Record<string, unknown> | undefined;
+  if (command.commandId === 'feature.import' || command.commandId === 'feature.revise') {
+    try {
+      planPayload = readPlanInputPayload(command);
+    } catch (error) {
+      if (error instanceof AppCliParseError) {
+        return emitParseFailure(io, error, jsonFlag);
+      }
+      return emitFailure(io, command.json, {
+        exitCode: 2,
+        command: command.commandId,
+        code: 'invalid_input',
+        message: '输入文件读取或校验失败',
+      });
+    }
+  }
+
   let client: HostClient;
   try {
     const ensured = await ensureHostRunning({
@@ -1949,6 +2267,9 @@ export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunRes
         options.signal,
         observeBudgets as ResolvedEventsObserveBudgets,
       );
+    }
+    if (command.command === 'phase' || command.command === 'feature' || command.command === 'task') {
+      return await executePlanCommand(io, command, client, planPayload);
     }
     return await executeProjectCommand(io, command, client);
   } catch (error) {

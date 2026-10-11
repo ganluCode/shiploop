@@ -21,8 +21,16 @@ import {
   CLI_START_TIMEOUT_MIN_MS,
 } from '../host/args.js';
 
-export const APP_CLI_COMMANDS = ['project', 'config', 'receipt', 'events', 'baseline'] as const;
-export type AppCliCommand = (typeof APP_CLI_COMMANDS)[number];
+export const APP_CLI_COMMANDS = [
+  'project',
+  'config',
+  'receipt',
+  'events',
+  'baseline',
+  'phase',
+  'feature',
+  'task',
+] as const;export type AppCliCommand = (typeof APP_CLI_COMMANDS)[number];
 
 /** 应用命令身份（点分 CLI 路径；用于 JSON 信封 command 字段）。 */
 export type AppCliCommandId =
@@ -45,7 +53,19 @@ export type AppCliCommandId =
   | 'baseline.list'
   | 'baseline.status'
   | 'baseline.cancel'
-  | 'baseline.evidence';
+  | 'baseline.evidence'
+  | 'phase.create'
+  | 'phase.list'
+  | 'phase.get'
+  | 'phase.labels'
+  | 'feature.import'
+  | 'feature.list'
+  | 'feature.get'
+  | 'feature.revise'
+  | 'feature.labels'
+  | 'task.list'
+  | 'task.get'
+  | 'task.labels';
 
 export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'project.init',
@@ -68,6 +88,18 @@ export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'baseline.status',
   'baseline.cancel',
   'baseline.evidence',
+  'phase.create',
+  'phase.list',
+  'phase.get',
+  'phase.labels',
+  'feature.import',
+  'feature.list',
+  'feature.get',
+  'feature.revise',
+  'feature.labels',
+  'task.list',
+  'task.get',
+  'task.labels',
 ]);
 
 /** 命令对应的 Core 操作身份（F-015/F-016 组装命令信封时使用）。 */
@@ -80,7 +112,11 @@ export type AppCommandOperation =
   | 'settings.project.update'
   | 'baseline.preview'
   | 'baseline.run'
-  | 'baseline.cancel';
+  | 'baseline.cancel'
+  | 'phase.create'
+  | 'feature.plan.import'
+  | 'plan.labels.update'
+  | 'feature.plan.revise';
 
 export type AppHelpScope = AppCliCommand | AppCliCommandId;
 
@@ -143,12 +179,16 @@ export type AppCliParseReason =
   | 'invalid_environment_ref'
   | 'unknown_input_field'
   | 'input_secret_field_rejected'
-  | 'input_identity_field_rejected';
+  | 'input_identity_field_rejected'
+  | 'invalid_title'
+  | 'invalid_plan_id'
+  | 'input_file_too_large'
+  | 'input_file_encoding';
 
 const REASON_MESSAGE: Readonly<Record<AppCliParseReason, string>> = Object.freeze({
   invalid_argv_type: 'argv 必须是字符串数组',
-  missing_command: '缺少命令；本版本提供 project/config/receipt/events/baseline',
-  unknown_command: '未知顶层命令；本版本仅提供 project/config/receipt/events/baseline',
+  missing_command: '缺少命令；本版本提供 project/config/receipt/events/baseline/phase/feature/task',
+  unknown_command: '未知顶层命令；本版本仅提供 project/config/receipt/events/baseline/phase/feature/task',
   missing_subcommand: '命令缺少子命令',
   unknown_subcommand: '未知子命令',
   unknown_argument: '未知参数',
@@ -203,6 +243,10 @@ const REASON_MESSAGE: Readonly<Record<AppCliParseReason, string>> = Object.freez
   unknown_input_field: '输入包含未知字段（Schema 不接受前向宽容字段）',
   input_secret_field_rejected: '输入不允许携带明文秘密或环境值字段',
   input_identity_field_rejected: '输入不允许携带身份/权限/可见范围字段',
+  invalid_title: 'title 不能为空且不能为空白',
+  invalid_plan_id: '计划实体 ID 必须是稳定 ID（字母数字开头，仅含 [A-Za-z0-9._-]）',
+  input_file_too_large: '输入文件超过大小上限',
+  input_file_encoding: '输入文件必须是合法 UTF-8 文本',
 });
 
 interface ParseState {
@@ -455,6 +499,126 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
     maxPositionals: 1,
     positionalFields: ['artifactId'],
   },
+  'phase.create': {
+    command: 'phase',
+    commandId: 'phase.create',
+    valueFlags: ['--project', '--title', '--description', '--label', '--command-id'],
+    boolFlags: [],
+    repeatableFlags: ['--label'],
+    minPositionals: 0,
+    maxPositionals: 0,
+    positionalFields: [],
+  },
+  'phase.list': {
+    command: 'phase',
+    commandId: 'phase.list',
+    valueFlags: ['--project', '--limit', '--cursor'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 0,
+    maxPositionals: 0,
+    positionalFields: [],
+  },
+  'phase.get': {
+    command: 'phase',
+    commandId: 'phase.get',
+    valueFlags: [],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['phaseId'],
+  },
+  'phase.labels': {
+    command: 'phase',
+    commandId: 'phase.labels',
+    valueFlags: ['--project', '--revision', '--label', '--command-id'],
+    boolFlags: [],
+    repeatableFlags: ['--label'],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['phaseId'],
+  },
+  'feature.import': {
+    command: 'feature',
+    commandId: 'feature.import',
+    valueFlags: ['--project', '--phase', '--revision', '--input', '--command-id'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 0,
+    maxPositionals: 0,
+    positionalFields: [],
+  },
+  'feature.list': {
+    command: 'feature',
+    commandId: 'feature.list',
+    valueFlags: ['--project', '--phase', '--limit', '--cursor'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 0,
+    maxPositionals: 0,
+    positionalFields: [],
+  },
+  'feature.get': {
+    command: 'feature',
+    commandId: 'feature.get',
+    valueFlags: [],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['featureId'],
+  },
+  'feature.revise': {
+    command: 'feature',
+    commandId: 'feature.revise',
+    valueFlags: ['--project', '--revision', '--input', '--command-id'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['featureId'],
+  },
+  'feature.labels': {
+    command: 'feature',
+    commandId: 'feature.labels',
+    valueFlags: ['--project', '--revision', '--label', '--command-id'],
+    boolFlags: [],
+    repeatableFlags: ['--label'],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['featureId'],
+  },
+  'task.list': {
+    command: 'task',
+    commandId: 'task.list',
+    valueFlags: ['--project', '--feature', '--limit', '--cursor'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 0,
+    maxPositionals: 0,
+    positionalFields: [],
+  },
+  'task.get': {
+    command: 'task',
+    commandId: 'task.get',
+    valueFlags: [],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['taskId'],
+  },
+  'task.labels': {
+    command: 'task',
+    commandId: 'task.labels',
+    valueFlags: ['--project', '--revision', '--label', '--command-id'],
+    boolFlags: [],
+    repeatableFlags: ['--label'],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['taskId'],
+  },
 });
 
 const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, AppCliCommandId>>>> =
@@ -484,6 +648,24 @@ const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, A
       status: 'baseline.status',
       cancel: 'baseline.cancel',
       evidence: 'baseline.evidence',
+    },
+    phase: {
+      create: 'phase.create',
+      list: 'phase.list',
+      get: 'phase.get',
+      labels: 'phase.labels',
+    },
+    feature: {
+      import: 'feature.import',
+      list: 'feature.list',
+      get: 'feature.get',
+      revise: 'feature.revise',
+      labels: 'feature.labels',
+    },
+    task: {
+      list: 'task.list',
+      get: 'task.get',
+      labels: 'task.labels',
     },
   });
 
@@ -666,6 +848,11 @@ const LABEL_MAX_LENGTH = 64;
 const LABELS_MAX_COUNT = 50;
 /** 基线操作列表分页上限（契约 §13：默认 20、上限 100）。 */
 const BASELINE_LIST_LIMIT_MAX = 100;
+/**
+ * 计划层级列表分页上限（镜像 core ports/queries 的 PLAN_LIST_MAX_LIMIT=200；
+ * Host 公共面未导出常量，不另立数值）。
+ */
+const PLAN_LIST_LIMIT_MAX = 200;
 /** 稳定制品 ID（与 HostClient/核心校验同一口径）。 */
 const ARTIFACT_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
@@ -801,6 +988,56 @@ function requireInputFile(scan: ScanResult, state: ParseState): string {
     fail(state, 'invalid_input_file', 'input');
   }
   return raw;
+}
+
+/** 计划实体稳定 ID（Phase/Feature/Task；与 HostClient 形态把关同一口径）。 */
+function requirePlanId(raw: string, state: ParseState, field: string): string {
+  if (!ARTIFACT_ID_PATTERN.test(raw)) {
+    fail(state, 'invalid_plan_id', field);
+  }
+  return raw;
+}
+
+/** 计划实体 ID 选项（--phase/--feature）；形态把关不回显值。 */
+function requirePlanIdOption(scan: ScanResult, name: string, state: ParseState, field: string): string {
+  return requirePlanId(requireOption(scan, name, state, field), state, field);
+}
+
+/** Phase 标题：必填非空（深度语义由 Core 单一权威复核）。 */
+function resolvePlanTitle(scan: ScanResult, state: ParseState): string {
+  const raw = requireOption(scan, '--title', state, 'title');
+  if (
+    raw.trim().length === 0 ||
+    raw.includes('\0') ||
+    codePointLength(raw) > PROJECT_DISPLAY_NAME_MAX_LENGTH
+  ) {
+    fail(state, 'invalid_title', 'title');
+  }
+  return raw;
+}
+
+/** 计划层级列表分页：limit 1..200、cursor 非空不透明（深校验由 Core 复核）。 */
+function optionalPlanListPage(
+  scan: ScanResult,
+  state: ParseState,
+): { limit?: number; cursor?: string } {
+  const limitRaw = takeOption(scan, '--limit');
+  let limit: number | undefined;
+  if (limitRaw !== undefined) {
+    const value = parseUnsignedInteger(limitRaw);
+    if (value === undefined || value < 1 || value > PLAN_LIST_LIMIT_MAX) {
+      fail(state, 'invalid_limit', 'limit');
+    }
+    limit = value;
+  }
+  const cursor = takeOption(scan, '--cursor');
+  if (cursor !== undefined && (cursor.length === 0 || cursor.includes('\0'))) {
+    fail(state, 'invalid_cursor', 'cursor');
+  }
+  return {
+    ...(limit !== undefined ? { limit } : {}),
+    ...(cursor !== undefined ? { cursor } : {}),
+  };
 }
 
 function isAbsolutePath(value: string): boolean {
@@ -1188,6 +1425,157 @@ export interface ParsedBaselineEvidence {
   readonly artifactId: string;
 }
 
+/* ---- P03-1 / F-010 计划命令（phase/feature/task） ---- */
+
+/** `phase create --project <id> --title <t> [...]`：建立 open Phase。 */
+export interface ParsedPhaseCreate {
+  readonly kind: 'command';
+  readonly command: 'phase';
+  readonly commandId: 'phase.create';
+  readonly operation: 'phase.create';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly title: string;
+  readonly description?: string;
+  readonly labels: readonly string[];
+  readonly explicitCommandId?: string;
+}
+
+/** `phase list --project <id> [--limit <int>] [--cursor <c>]`：层级分页。 */
+export interface ParsedPhaseList {
+  readonly kind: 'command';
+  readonly command: 'phase';
+  readonly commandId: 'phase.list';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+
+/** `phase get <phaseId>`：Phase 详情。 */
+export interface ParsedPhaseGet {
+  readonly kind: 'command';
+  readonly command: 'phase';
+  readonly commandId: 'phase.get';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly phaseId: string;
+}
+
+/**
+ * 计划实体纯标签编辑（phase/feature/task labels）：`--revision` 是目标实体
+ * 自身 revision 的唯一 CAS 入口；`--label` 可重复，省略即清空（整体替换）。
+ */
+export interface ParsedPlanLabels {
+  readonly kind: 'command';
+  readonly command: 'phase' | 'feature' | 'task';
+  readonly commandId: 'phase.labels' | 'feature.labels' | 'task.labels';
+  readonly operation: 'plan.labels.update';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly entityType: 'phase' | 'feature' | 'task';
+  readonly id: string;
+  readonly projectId: string;
+  readonly revision: number;
+  readonly labels: readonly string[];
+  readonly explicitCommandId?: string;
+}
+
+/**
+ * `feature import --project <id> --phase <id> --revision <int> --input <file>`：
+ * 单 Feature 草稿计划导入（`--revision` 是 Phase 聚合 CAS；`--input` 是本次
+ * 请求的计划 JSON，有界 UTF-8 受控读取，不执行文件内容）。
+ */
+export interface ParsedFeatureImport {
+  readonly kind: 'command';
+  readonly command: 'feature';
+  readonly commandId: 'feature.import';
+  readonly operation: 'feature.plan.import';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly phaseId: string;
+  readonly revision: number;
+  readonly inputFile: string;
+  readonly explicitCommandId?: string;
+}
+
+/** `feature list --project <id> --phase <id> [...]`：Phase 内 Feature 分页。 */
+export interface ParsedFeatureList {
+  readonly kind: 'command';
+  readonly command: 'feature';
+  readonly commandId: 'feature.list';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly phaseId: string;
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+
+/** `feature get <featureId>`：Feature 详情与完整同 Feature Task DAG。 */
+export interface ParsedFeatureGet {
+  readonly kind: 'command';
+  readonly command: 'feature';
+  readonly commandId: 'feature.get';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly featureId: string;
+}
+
+/**
+ * `feature revise <featureId> --project <id> --revision <int> --input <file>`：
+ * 未执行草稿的实质计划修订（`--revision` 是 Feature 聚合 CAS）。
+ */
+export interface ParsedFeatureRevise {
+  readonly kind: 'command';
+  readonly command: 'feature';
+  readonly commandId: 'feature.revise';
+  readonly operation: 'feature.plan.revise';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly featureId: string;
+  readonly revision: number;
+  readonly inputFile: string;
+  readonly explicitCommandId?: string;
+}
+
+/** `task list --project <id> --feature <id> [...]`：Feature 内 Task 分页。 */
+export interface ParsedTaskList {
+  readonly kind: 'command';
+  readonly command: 'task';
+  readonly commandId: 'task.list';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly featureId: string;
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+
+/** `task get <taskId>`：Task 详情（验收/引用/策略副本与来源）。 */
+export interface ParsedTaskGet {
+  readonly kind: 'command';
+  readonly command: 'task';
+  readonly commandId: 'task.get';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly taskId: string;
+}
+
 export type ParsedAppCliCommand =
   | ParsedProjectInit
   | ParsedProjectOverview
@@ -1208,7 +1596,17 @@ export type ParsedAppCliCommand =
   | ParsedBaselineList
   | ParsedBaselineStatus
   | ParsedBaselineCancel
-  | ParsedBaselineEvidence;
+  | ParsedBaselineEvidence
+  | ParsedPhaseCreate
+  | ParsedPhaseList
+  | ParsedPhaseGet
+  | ParsedPlanLabels
+  | ParsedFeatureImport
+  | ParsedFeatureList
+  | ParsedFeatureGet
+  | ParsedFeatureRevise
+  | ParsedTaskList
+  | ParsedTaskGet;
 
 export interface ParsedAppCliHelp {
   readonly kind: 'help';
@@ -1565,6 +1963,147 @@ function buildBaseline(scan: ScanResult, state: ParseState, spec: AppCommandSpec
   }
 }
 
+/** 计划实体标签子命令的目标实体类型（由命令身份前缀派生，不另设参数）。 */
+function planLabelsEntityType(
+  commandId: 'phase.labels' | 'feature.labels' | 'task.labels',
+): 'phase' | 'feature' | 'task' {
+  return commandId.split('.')[0] as 'phase' | 'feature' | 'task';
+}
+
+/**
+ * 计划命令（P03-1 / F-010）：Phase 建立、单 Feature 计划导入、层级/DAG 查询、
+ * 草稿修订与纯标签编辑。expectedRevision（`--revision`）是唯一 CAS 入口；
+ * `--input` 计划文件的有界读取在执行层（解析层零 I/O）。
+ */
+function buildPlanEntity(
+  scan: ScanResult,
+  state: ParseState,
+  spec: AppCommandSpec,
+): ParsedAppCliCommand {
+  assertPositionals(scan, spec, state);
+  const base = baseResult(state, scan);
+  switch (spec.commandId) {
+    case 'phase.create': {
+      const projectId = requireProjectId(requireOption(scan, '--project', state, 'project'), state);
+      const title = resolvePlanTitle(scan, state);
+      const description = resolveInitDescription(scan, state);
+      const explicitCommandId = optionalCommandId(scan, state);
+      return {
+        ...base,
+        command: 'phase',
+        commandId: 'phase.create',
+        operation: 'phase.create',
+        projectId,
+        title,
+        labels: takeLabels(scan, state),
+        ...(description !== undefined ? { description } : {}),
+        ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
+      };
+    }
+    case 'phase.list': {
+      return {
+        ...base,
+        command: 'phase',
+        commandId: 'phase.list',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        ...optionalPlanListPage(scan, state),
+      };
+    }
+    case 'phase.get': {
+      return {
+        ...base,
+        command: 'phase',
+        commandId: 'phase.get',
+        phaseId: requirePlanId(scan.positionals[0] as string, state, 'phaseId'),
+      };
+    }
+    case 'phase.labels':
+    case 'feature.labels':
+    case 'task.labels': {
+      const entityType = planLabelsEntityType(spec.commandId);
+      const explicitCommandId = optionalCommandId(scan, state);
+      return {
+        ...base,
+        command: entityType,
+        commandId: spec.commandId,
+        operation: 'plan.labels.update',
+        entityType,
+        id: requirePlanId(scan.positionals[0] as string, state, 'id'),
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        revision: requireRevision(scan, state),
+        labels: takeLabels(scan, state),
+        ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
+      };
+    }
+    case 'feature.import': {
+      const explicitCommandId = optionalCommandId(scan, state);
+      return {
+        ...base,
+        command: 'feature',
+        commandId: 'feature.import',
+        operation: 'feature.plan.import',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        phaseId: requirePlanIdOption(scan, '--phase', state, 'phaseId'),
+        revision: requireRevision(scan, state),
+        inputFile: requireInputFile(scan, state),
+        ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
+      };
+    }
+    case 'feature.list': {
+      return {
+        ...base,
+        command: 'feature',
+        commandId: 'feature.list',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        phaseId: requirePlanIdOption(scan, '--phase', state, 'phaseId'),
+        ...optionalPlanListPage(scan, state),
+      };
+    }
+    case 'feature.get': {
+      return {
+        ...base,
+        command: 'feature',
+        commandId: 'feature.get',
+        featureId: requirePlanId(scan.positionals[0] as string, state, 'featureId'),
+      };
+    }
+    case 'feature.revise': {
+      const explicitCommandId = optionalCommandId(scan, state);
+      return {
+        ...base,
+        command: 'feature',
+        commandId: 'feature.revise',
+        operation: 'feature.plan.revise',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        featureId: requirePlanId(scan.positionals[0] as string, state, 'featureId'),
+        revision: requireRevision(scan, state),
+        inputFile: requireInputFile(scan, state),
+        ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
+      };
+    }
+    case 'task.list': {
+      return {
+        ...base,
+        command: 'task',
+        commandId: 'task.list',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        featureId: requirePlanIdOption(scan, '--feature', state, 'featureId'),
+        ...optionalPlanListPage(scan, state),
+      };
+    }
+    case 'task.get': {
+      return {
+        ...base,
+        command: 'task',
+        commandId: 'task.get',
+        taskId: requirePlanId(scan.positionals[0] as string, state, 'taskId'),
+      };
+    }
+    default:
+      fail(state, 'unknown_subcommand');
+  }
+}
+
 /**
  * 纯解析受控 argv（process.argv.slice(2) 形态）、显式注入的 env 与可选 cwd
  * （相对仓库路径 → 绝对输入的解析基准）。
@@ -1643,6 +2182,10 @@ export function parseAppCliArgs(
       return buildReceipt(scan, state, spec);
     case 'baseline':
       return buildBaseline(scan, state, spec);
+    case 'phase':
+    case 'feature':
+    case 'task':
+      return buildPlanEntity(scan, state, spec);
     default:
       fail(state, 'unknown_subcommand');
   }

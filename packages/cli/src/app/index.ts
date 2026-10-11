@@ -32,6 +32,14 @@ export type {
   ParsedConfigGet,
   ParsedConfigUpdate,
   ParsedEventsObserve,
+  ParsedFeatureGet,
+  ParsedFeatureImport,
+  ParsedFeatureList,
+  ParsedFeatureRevise,
+  ParsedPhaseCreate,
+  ParsedPhaseGet,
+  ParsedPhaseList,
+  ParsedPlanLabels,
   ParsedProjectEdit,
   ParsedProjectGet,
   ParsedProjectInit,
@@ -40,6 +48,8 @@ export type {
   ParsedProjectOverview,
   ParsedProjectRegister,
   ParsedReceiptGet,
+  ParsedTaskGet,
+  ParsedTaskList,
 } from './args.js';
 export { getAppCliHelp } from './help.js';
 export {
