@@ -28,7 +28,11 @@ export type StorageEntityType =
   /** P02-3 / F-007：基线逐项检查输入快照与结果（baseline_check_results，迁移 v4）。 */
   | 'baseline_check_result'
   /** P02-3 / F-007：全局单并发占用（baseline_occupancy，迁移 v4）。 */
-  | 'baseline_occupancy';
+  | 'baseline_occupancy'
+  /** P03-1 / F-001：计划校验错误归属的 Feature 聚合（持久化表随 F-002 迁移建立）。 */
+  | 'feature'
+  /** P03-1 / F-001：计划 DAG 校验错误的节点定位（持久化表随 F-002 迁移建立）。 */
+  | 'task';
 
 export type StorageErrorKind =
   /** 外部输入未通过运行时校验（缺字段/类型错误/未知 schemaVersion/非法摘要等）。 */

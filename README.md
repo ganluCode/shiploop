@@ -66,6 +66,7 @@ docs/skills/project-overview.md  F-017 最小操作 Skill：project overview（�
 docs/p02-4-acceptance-contract.md  P02-4 阶段验收契约与检查清单（F-001：冻结检查 ID/证据字段/接口映射）
 docs/p02-4-operations.md  P02-4 P02 操作指南与验收复跑说明（F-013：双 CLI 闭环、accept:p02 复跑、诊断与边界）
 docs/acceptance/p02-4-review-checklist.md  P02-4 人工审阅清单（F-013：FR-1/FR-2 逐项核对；人工未审阅=未完成，不自动签字）
+docs/p03-1-plan-import-contract.md  P03-1 单 Feature 草稿计划校验/DAG/摘要与导入编辑契约（F-001，实施前置契约；纯校验模块已实现，存储/命令随 F-002~ 落地）
 ```
 
 ### 确定性测试约定（F-003）

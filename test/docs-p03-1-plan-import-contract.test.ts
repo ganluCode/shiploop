@@ -1,0 +1,108 @@
+/**
+ * F-001 文档核验：`docs/p03-1-plan-import-contract.md` 记录的 P02 基线、公共端口
+ * 复用、计划 payload 契约、DAG 错误定位、planDigest 规范与导入/编辑 CAS 契约必须
+ * 与仓库事实一致，避免「文档另立一套」与后续 F-002 ~ F-011 各自发明规则。
+ *
+ * 定位：F-001 只交付纯校验模块、摘要计算与契约文档（+ 本守护）；SQLite 迁移、
+ * 命令注册、查询与 Host/CLI 接入由后续任务增量实现，本文冻结的是目标契约。
+ */
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { describe, expect, it } from 'vitest';
+import {
+  FEATURE_PLAN_SCHEMA_VERSION,
+  PLAN_ACCEPTANCE_CRITERIA_MAX_COUNT,
+  PLAN_ACCEPTANCE_STATEMENT_MAX_LENGTH,
+  PLAN_DEPENDENCY_EDGES_MAX_COUNT,
+  PLAN_FEATURE_SOURCE_REFS_MAX_COUNT,
+  PLAN_TASK_REQUIREMENTS_REFS_MAX_COUNT,
+  PLAN_TASKS_MAX_COUNT,
+  PLAN_TITLE_MAX_LENGTH,
+} from '../packages/core/src/ports/feature-plan.ts';
+import { WIRE_MESSAGE_SCHEMA_VERSION } from '../packages/core/src/ports/commands.ts';
+import { SETTINGS_SCHEMA_VERSION } from '../packages/core/src/ports/settings-schema.ts';
+import { DESCRIPTION_MAX_LENGTH, LABELS_MAX_COUNT, LABEL_MAX_LENGTH } from '../packages/core/src/ports/validation.ts';
+import * as coreEntry from '../packages/core/src/index.ts';
+
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const CONTRACT_DOC_PATH = 'docs/p03-1-plan-import-contract.md';
+const contractDocPath = resolve(REPO_ROOT, CONTRACT_DOC_PATH);
+
+describe('F-001 P03-1 计划导入契约文档', () => {
+  it('文档存在且记录开工基线核验（P02 放行基线、分支、worktree 与实测命令）', () => {
+    expect(existsSync(contractDocPath)).toBe(true);
+    const doc = readFileSync(contractDocPath, 'utf-8');
+    // P02 放行基线（完整 hash）与执行环境事实。
+    expect(doc).toContain('0e76ad8d9ae7a9e03949c8af4bae8e7e236acd56');
+    expect(doc).toContain('feat/2026-10-11-17-45-49_p03-1');
+    expect(doc).toContain('shiploop-2026-10-11-17-45-49_p03-1');
+    expect(doc).toContain('npm run verify');
+    expect(doc).toContain('117 test files / 2971 tests passed');
+    // 文档明确不是阶段验收报告。
+    expect(doc).toContain('不是阶段验收报告');
+  });
+
+  it('计划 payload 版本与边界常量与实现一致', () => {
+    const doc = readFileSync(contractDocPath, 'utf-8');
+    expect(FEATURE_PLAN_SCHEMA_VERSION).toBe(1);
+    expect(doc).toContain(`FEATURE_PLAN_SCHEMA_VERSION = ${FEATURE_PLAN_SCHEMA_VERSION}`);
+    expect(doc).toContain(`PLAN_TITLE_MAX_LENGTH = ${PLAN_TITLE_MAX_LENGTH}`);
+    expect(doc).toContain(`PLAN_TASKS_MAX_COUNT = ${PLAN_TASKS_MAX_COUNT}`);
+    expect(doc).toContain(`PLAN_DEPENDENCY_EDGES_MAX_COUNT = ${PLAN_DEPENDENCY_EDGES_MAX_COUNT}`);
+    expect(doc).toContain(`PLAN_ACCEPTANCE_CRITERIA_MAX_COUNT = ${PLAN_ACCEPTANCE_CRITERIA_MAX_COUNT}`);
+    expect(doc).toContain(`PLAN_ACCEPTANCE_STATEMENT_MAX_LENGTH = ${PLAN_ACCEPTANCE_STATEMENT_MAX_LENGTH}`);
+    expect(doc).toContain(`PLAN_TASK_REQUIREMENTS_REFS_MAX_COUNT = ${PLAN_TASK_REQUIREMENTS_REFS_MAX_COUNT}`);
+    expect(doc).toContain(`PLAN_FEATURE_SOURCE_REFS_MAX_COUNT = ${PLAN_FEATURE_SOURCE_REFS_MAX_COUNT}`);
+    // 复用的既有上限（描述长度与标签规则）在文档中可核对。
+    expect(doc).toContain(`DESCRIPTION_MAX_LENGTH = ${DESCRIPTION_MAX_LENGTH}`);
+    expect(doc).toContain(`LABEL_MAX_LENGTH = ${LABEL_MAX_LENGTH}`);
+    expect(doc).toContain(`LABELS_MAX_COUNT = ${LABELS_MAX_COUNT}`);
+  });
+
+  it('版本兼容记录：与线消息版本、配置 payload 版本相互独立', () => {
+    const doc = readFileSync(contractDocPath, 'utf-8');
+    expect(doc).toContain(`WIRE_MESSAGE_SCHEMA_VERSION = ${WIRE_MESSAGE_SCHEMA_VERSION}`);
+    expect(doc).toContain(`SETTINGS_SCHEMA_VERSION = ${SETTINGS_SCHEMA_VERSION}`);
+    expect(doc).toContain('不静默降级');
+  });
+
+  it('DAG 错误清单与节点定位规则在文档中逐项可核对', () => {
+    const doc = readFileSync(contractDocPath, 'utf-8');
+    for (const keyword of ['重复 ID', '缺依赖', '自依赖', '重复依赖', '环', '跨 Feature']) {
+      expect(doc).toContain(keyword);
+    }
+    // 错误带字段或节点定位且脱敏。
+    expect(doc).toContain('字段或节点定位');
+    expect(doc).toContain('脱敏');
+  });
+
+  it('CAS 与归属契约：expectedRevision 唯一权威来源、创建/更新区别、单一 CAS 权威', () => {
+    const doc = readFileSync(contractDocPath, 'utf-8');
+    expect(doc).toContain('expectedRevision');
+    expect(doc).toContain('信封');
+    expect(doc).toContain('唯一权威来源');
+    expect(doc).toContain('Feature 聚合');
+    expect(doc).toContain('不建立两个 CAS 权威');
+    // 归属与引用存在性留给事务提交重核。
+    expect(doc).toContain('事务提交重核');
+    // planDigest 不是 CAS 依据。
+    expect(doc).toContain('不是 CAS');
+  });
+
+  it('摘要规范与草稿语义在文档中可核对', () => {
+    const doc = readFileSync(contractDocPath, 'utf-8');
+    expect(doc).toContain('planDigest');
+    expect(doc).toContain('顺序');
+    expect(doc).toContain('纯标签');
+    expect(doc).toContain('不可执行');
+    expect(doc).toContain('不生成 Run');
+  });
+
+  it('契约模块经 Core 公共入口导出（不另立私有入口）', () => {
+    expect(coreEntry.FEATURE_PLAN_SCHEMA_VERSION).toBe(FEATURE_PLAN_SCHEMA_VERSION);
+    expect(typeof coreEntry.validateFeaturePlanInput).toBe('function');
+    expect(typeof coreEntry.computeFeaturePlanDigest).toBe('function');
+    expect(typeof coreEntry.canonicalFeaturePlanBusinessJson).toBe('function');
+  });
+});
