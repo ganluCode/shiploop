@@ -69,6 +69,7 @@ docs/acceptance/p02-4-review-checklist.md  P02-4 人工审阅清单（F-013：FR
 docs/p03-1-plan-import-contract.md  P03-1 单 Feature 草稿计划校验/DAG/摘要与导入编辑契约（F-001，实施前置契约；纯校验模块已实现，存储/命令随 F-002~ 落地）
 docs/p03-1-task-strategy-selection.md  P03-1 Task 策略副本与来源选择契约（F-003 纯选择模块；导入/修订/查询的协议依据）
 docs/p03-1-handoff.md  P03-1 → P03-2/P03-10 接口交接（F-011 局部集成回归门禁：实现范围/Schema/复用面/负例矩阵复核/验收索引映射/验证记录与已知缺口）
+docs/p03-2-handoff.md  P03-2 → P03-3/4/P03-10 接口交接（F-009 跨模块集成回归门禁：批准/策略/固定输入复用面、T24/T25/T26/T37 映射、验证记录与已知缺口）
 ```
 
 ### 确定性测试约定（F-003）

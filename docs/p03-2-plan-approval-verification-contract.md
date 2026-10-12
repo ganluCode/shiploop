@@ -111,3 +111,16 @@
   区分当前/历史决定；有效批准的最终判定以 `validity` 块为准；
 - 线协议不变（schemaVersion 仍为 4；决策 payload 无新键；Host 查询接线属
   F-007）；能力位不变（决策 `feature.plan.decide`、查询复用 `project.read`）。
+
+## 10. F-009 集成回归写回登记
+
+- `test/p03-2-integration-regression.test.ts`（正式构建 dist CLI + dist Host + 隔离
+  真实 SQLite）以真实命令复核本契约的失效语义：检查政策内容变化 → HTTP
+  `features.approvals` 查询 `validity.reason=check_policy_changed` 且新
+  `execution.input.prepare` fail-closed；恢复同内容政策后按内容身份自动恢复有效
+ （不依赖配置 revision）；实质修订（要求变化）→ `plan_changed` + planStatus 回
+  draft，重批当前身份后恢复；纯标签编辑与不影响 Task 副本的 modelMap 更新不失效。
+- 集成回归同时复核「未创建 Batch/Run/Attempt、未启动 Work」：库内无执行实体表、
+  事件全部落在冻结白名单且无执行启动事件、命令白名单无 Work/Run/模型调用操作。
+- 交接文档 `docs/p03-2-handoff.md` §3.1/§6 冻结本契约核验入口与失败词汇的
+  P03-3/4 复用方式；`accept:p03` 与真实 Pi live 显式 not_run。

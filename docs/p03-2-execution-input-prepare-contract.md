@@ -129,3 +129,22 @@ Host/CLI 接线（F-007/F-008）、Run/Attempt 绑定与 startRun（P03-3/4）�
   正文统一 not_found/forbidden，不泄漏存在性与物理路径；CLI 入口属 F-008
  （已交付：`task prepare`/`task inputs`，制品组身份查询沿用既有回执读取，
   操作说明见 `docs/p03-2-cli-approval-input-operations.md`）。
+
+## 9. F-009 集成回归写回登记
+
+- `test/p03-2-integration-regression.test.ts`（正式构建 dist CLI + dist Host + 隔离
+  真实 SQLite）以真实命令复核本契约的漂移与不可变纪律：非活动 Task 副本编辑后新
+  制品组摘要改变、旧 snapshot/manifest/prompt 逐字节不变且历史回执保留原身份；
+  modelMap 更新不进入捕获身份（新准备照常可绑定）；纯标签编辑不误报。
+- 历史增长（40 份大段报告制品 + 8 次标签 CAS）后新准备的三正文摘要与正文逐字节
+  不变、报告标记零泄漏、prompt ≤ maxPromptBytes、acceptance 逐项完整可读——
+  T37「不因历史增长膨胀提示词」的正式链路证据。
+- fail-closed 矩阵：必需输入缺失（`required_input_not_found`）、file 来源越界
+ （生产装配获准根白名单缺省为空 → `unknown_root`；词法穿越结构层拒绝）、制品索引
+  声明超 `maxItemBytes` → `limit_exceeded`、跨项目制品 → `ownership_denied`、
+  秘密字段连接前拒绝；输出零路径/零秘密泄漏。篡改后回执身份不被修复或掩盖、新准备
+  发布新制品组不覆盖旧正文（失败证据保留；逐字节校验读取 → `corrupt` 的运行时
+  语义在 Core `readVerifiedContent` 层覆盖，见交接文档 §8.2——Host `artifacts.get`
+  仅限 P02-3 基线输出成员，无通用制品正文读取面）。
+- 交接文档 `docs/p03-2-handoff.md` §3.3/§3.4 冻结制品组绑定身份、漂移词汇与预算
+  缺省的 P03-3/4 复用方式。

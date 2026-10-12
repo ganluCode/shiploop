@@ -98,3 +98,14 @@ $ shiploop task prepare 22222222-3333-4444-8555-666666666666 \
 $ shiploop task inputs <prepare 命令 ID> --json
 → 同一制品组身份（version/hash/用途）经回执查询读取复验
 ```
+
+## F-009 集成回归登记
+
+- `test/p03-2-integration-regression.test.ts` 以正式构建 `dist/bin.js` + dist Host
+  复核本文档操作主线：三 Task 导入 → `task get` 查看策略副本 → 批准前可选覆盖
+ （`task strategy`，来源 task_edit）→ `feature approve --digest` 指定摘要批准 →
+  `task prepare`/`task inputs` 固定输入准备与读取复验 → `host stop`（三证据 +
+  pid 退出）→ 重开后查询/回执/制品正文逐字节一致；失败退出按本文档约定
+ （参数/结构失败 2、业务拒绝 1，具体原因在 `details.reason`）。
+- 结构化输出的执行边界视图（`started:false, capability:"unknown", runnable:false`）
+  在主线与重开复验中均保持「未启动执行、未知执行能力不显示为可运行」。
