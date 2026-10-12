@@ -33,8 +33,8 @@ describe('P03-3 / F-006 Task 尝试预算预占契约文档', () => {
   it('迁移事实一致：v11 为追加版本且包含 tasks 双计数列与预占账本表', () => {
     const doc = readContractDoc();
     const migrations = SQLITE_MIGRATIONS;
-    expect(migrations.at(-1)?.version).toBe(11);
-    expect(migrations).toHaveLength(11);
+    expect(migrations.at(-1)?.version).toBe(12);
+    expect(migrations).toHaveLength(12);
     const v11 = migrations[10];
     expect(v11?.sql).toContain('ALTER TABLE tasks ADD COLUMN attempt_counter');
     expect(v11?.sql).toContain('ALTER TABLE tasks ADD COLUMN code_attempts_used');
@@ -43,7 +43,7 @@ describe('P03-3 / F-006 Task 尝试预算预占契约文档', () => {
     expect(v11?.sql).toContain("classified_by = 'core'");
     expect(v11?.sql).toContain('task_attempt_reservations_task_attempt_key_unique');
     // 历史迁移不被改写（v1..v10 版本号连续）。
-    for (let index = 0; index < 10; index += 1) {
+    for (let index = 0; index < 11; index += 1) {
       expect(migrations[index]?.version).toBe(index + 1);
     }
     expect(doc).toContain('迁移 v11');

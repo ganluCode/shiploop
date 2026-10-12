@@ -4,6 +4,8 @@
  * 原子命令事务在同一 BEGIN IMMEDIATE 内组合使用（ports/execution-store.ts 契约）。
  * P03-3 / F-006 起追加迁移 v11 的 Task 尝试预算预占与分类记账原语（tasks 双计数列
  * + task_attempt_reservations 账本表；同事务原子生效，详见 reserveTaskAttempt）。
+ * P03-3 / F-007 起追加迁移 v12 的 Runtime 启动额度预占原语（SDK 启动前原子递增
+ * execution_batches.runtime_starts 并落幂等启动身份账本行，详见 reserveRuntimeStart）。
  *
  * 不变量：
  * - 写原语只允许在写事务内调用（唯一事务由原子命令事务拥有）；事务内不执行
@@ -21,8 +23,8 @@
  *   有界结构化 JSON。
  *
  * 本适配器不实现：启动命令编排（application/execution-start）、Run 生命周期 CAS
- * 与结算/无进展计数（F-008）、预算修订（F-009）、查询面（F-010）、Runtime 启动
- * 预占（F-007）、完整 Attempt 生命周期/owner/fencing/进程执行（P03-4）。
+ * 与结算/无进展计数（F-008）、预算修订（F-009）、查询面（F-010）、完整 Attempt
+ * 生命周期/owner/fencing/进程执行（P03-4）、Runner/停止管理/会话记录（后续任务）。
  */
 import { randomUUID } from 'node:crypto';
 import { StorageError } from '../../ports/errors.js';
@@ -43,6 +45,7 @@ import {
   validateExecutionBatchInsertInput,
   validateExecutionEventAppendInput,
   validateExecutionRunInsertInput,
+  validateRuntimeStartReservationInput,
   validateTaskAttemptReclassifyInput,
   validateTaskAttemptReservationInput,
 } from '../../ports/execution-store.js';
@@ -51,6 +54,7 @@ import type {
   ExecutionBatchRecord,
   ExecutionBatchStatus,
   RunRecord,
+  RuntimeStartReservationRecord,
   TaskAttemptClassification,
   TaskAttemptReservationRecord,
   TaskExecutionCountersRecord,
@@ -121,6 +125,17 @@ interface TaskAttemptReservationSqlRow {
   readonly reason: string | null;
 }
 
+interface RuntimeStartReservationSqlRow {
+  readonly id: string;
+  readonly created_at: number;
+  readonly project_id: string;
+  readonly revision: number;
+  readonly updated_at: number;
+  readonly batch_id: string;
+  readonly run_id: string;
+  readonly start_key: string;
+}
+
 const SELECT_BATCH =
   'SELECT id, created_at, project_id, revision, updated_at, phase_id, feature_id, scope_snapshot, ' +
   'config_snapshot, status, budget_revision, budget_snapshot, runs_created, attempts_created, ' +
@@ -132,6 +147,9 @@ const SELECT_RUN =
 const SELECT_RESERVATION =
   'SELECT id, created_at, project_id, revision, updated_at, batch_id, run_id, task_id, attempt_key, ' +
   'classification, classified_by, reason FROM task_attempt_reservations';
+const SELECT_RUNTIME_START_RESERVATION =
+  'SELECT id, created_at, project_id, revision, updated_at, batch_id, run_id, start_key ' +
+  'FROM runtime_start_reservations';
 
 const BATCH_STATUS_SET = new Set<string>([
   'queued', 'running', 'pausing', 'paused', 'cancelling', 'cancelled', 'succeeded', 'failed', 'interrupted',
@@ -189,6 +207,23 @@ export interface SqliteExecutionAccess {
   getTaskExecutionCountersInTransaction(projectId: string, taskId: string): TaskExecutionCountersRecord;
   /** 读取目标 Run（缺失 not_found、跨项目 ownership；计数断言与组合事务读取用）。 */
   getExecutionRunInTransaction(projectId: string, runId: string): RunRecord;
+  /* ---------------------------------------------------------------- *
+   * P03-3 / F-007 Runtime 启动额度预占（迁移 v12；受信 Core 内部原语）
+   * ---------------------------------------------------------------- */
+  /**
+   * Runtime 启动预占（SDK 启动前的受信边界；同事务原子生效）：校验同项目
+   * Batch/Run 归属、有效控制状态与父 Batch 的 maxRuntimeStarts/绝对 deadline 后，
+   * 一次调用原子递增 execution_batches.runtime_starts 并落一条幂等启动身份账本行；
+   * 同身份重放返回既有记录不重复计数；跨 Run 复用同身份 conflict；额度耗尽或
+   * deadline 到达拒绝（budget_exhausted）且零写入。启动失败保守保留计数（无退额）。
+   */
+  reserveRuntimeStartInTransaction(input: unknown): RuntimeStartReservationRecord;
+  /** 同项目同 Run 同启动身份的账本行（无则 null）。 */
+  getRuntimeStartReservationInTransaction(
+    projectId: string,
+    runId: string,
+    startKey: string,
+  ): RuntimeStartReservationRecord | null;
 }
 
 function isSqliteConstraintError(error: unknown): error is Error & { code: string } {
@@ -1090,6 +1125,184 @@ export function createSqliteExecutionAccess(
     return runFromRow(row, operation);
   }
 
+  /* ------------------------------------------------------------ *
+   * P03-3 / F-007 Runtime 启动额度预占（迁移 v12）
+   * ------------------------------------------------------------ */
+
+  function runtimeStartReservationFromRow(
+    row: RuntimeStartReservationSqlRow,
+    operation: string,
+  ): RuntimeStartReservationRecord {
+    return {
+      id: row.id,
+      createdAtUtcMs: row.created_at,
+      projectId: row.project_id,
+      revision: row.revision,
+      updatedAtUtcMs: row.updated_at,
+      batchId: row.batch_id,
+      runId: row.run_id,
+      startKey: row.start_key,
+    };
+  }
+
+  function reserveRuntimeStartInTransaction(input: unknown): RuntimeStartReservationRecord {
+    const operation = 'ExecutionStore.reserveRuntimeStart';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const valid = validateRuntimeStartReservationInput(input, operation);
+    const db = session.database;
+    const entity: StorageEntityRef = {
+      type: 'runtime_start_reservation',
+      projectId: valid.projectId,
+      id: valid.startKey,
+    };
+
+    // 1) 归属核验（同事务绑定参数查询；复合外键为兕底）：预占只能关联当前获准 Run
+    //    ——父 Batch 与 Run 必须存在、同项目，且 Run 属于声明的 Batch。
+    const batchRow = db
+      .prepare<[string], ExecutionBatchSqlRow>(`${SELECT_BATCH} WHERE id = ?`)
+      .get(valid.batchId) as ExecutionBatchSqlRow | undefined;
+    if (batchRow === undefined) {
+      throw notFound(operation, entity, `Batch ${valid.batchId} 不存在`);
+    }
+    if (batchRow.project_id !== valid.projectId) {
+      throw ownership(operation, entity, 'Batch 不属于声明的项目（跨项目目标被拒绝）');
+    }
+    const runRow = db
+      .prepare<[string], RunSqlRow>(`${SELECT_RUN} WHERE id = ?`)
+      .get(valid.runId) as RunSqlRow | undefined;
+    if (runRow === undefined) {
+      throw notFound(operation, entity, `Run ${valid.runId} 不存在`);
+    }
+    if (runRow.project_id !== valid.projectId) {
+      throw ownership(operation, entity, 'Run 不属于声明的项目（跨项目目标被拒绝）');
+    }
+    if (runRow.batch_id !== valid.batchId) {
+      throw ownership(operation, entity, 'Run 不属于声明的 Batch（预占只能关联当前获准 Run）');
+    }
+
+    // 2) 幂等身份去重先于控制状态与额度判定：同启动身份重放返回既有记录（不重复
+    //    计数）；同身份绑定其他 Batch/Run（过期/跨 Run 身份）拒绝。
+    const existing = db
+      .prepare<[string, string], RuntimeStartReservationSqlRow>(
+        `${SELECT_RUNTIME_START_RESERVATION} WHERE project_id = ? AND start_key = ?`,
+      )
+      .get(valid.projectId, valid.startKey) as RuntimeStartReservationSqlRow | undefined;
+    if (existing !== undefined) {
+      if (existing.batch_id !== valid.batchId || existing.run_id !== valid.runId) {
+        throw new StorageError(
+          'conflict',
+          operation,
+          `${operation}: 启动身份 ${valid.startKey} 已绑定其他 Batch/Run，拒绝复用（过期身份）`,
+          { entity, details: { reason: 'start_key_reused' } },
+        );
+      }
+      return runtimeStartReservationFromRow(existing, operation);
+    }
+
+    // 3) 有效控制状态（活动集与迁移 v9 条件唯一索引同源；paused/interrupted
+    //    不是可绕过的终态）。仅创建 Run/预览/准备输入/最终检查不进入本边界，
+    //    也不增加 runtimeStarts（各自测试面断言）。
+    if (!isExecutionActiveStatus(batchRow.status)) {
+      throw new StorageError(
+        'conflict',
+        operation,
+        `${operation}: Batch ${valid.batchId} 状态 ${batchRow.status} 不接受新 Runtime 启动预占`,
+        { entity, details: { reason: 'batch_not_active', status: batchRow.status } },
+      );
+    }
+    if (!isExecutionActiveStatus(runRow.status)) {
+      throw new StorageError(
+        'conflict',
+        operation,
+        `${operation}: Run ${valid.runId} 状态 ${runRow.status} 不是当前获准 Run，不接受启动预占`,
+        { entity, details: { reason: 'run_not_active', status: runRow.status } },
+      );
+    }
+
+    // 4) 额度判定（全部先于任何写入；耗尽拒绝且零写入，计数不溢出）：父 Batch
+    //    启动额度与绝对 deadline（当前批准预算快照为权威；deadline 到达即拒绝
+    //    新启动，作为必须受控停止的原因——不清空占用、不假称进程已停止）。
+    const now = nowUtcMs();
+    const budgetSnapshot = parseBudgetSnapshot(batchRow.budget_snapshot, operation, 'execution_batch');
+    const reasons: ReservationBudgetReason[] = [];
+    if (batchRow.runtime_starts >= budgetSnapshot.batch.maxRuntimeStarts) {
+      reasons.push({
+        layer: 'batch',
+        dimension: 'maxRuntimeStarts',
+        limit: budgetSnapshot.batch.maxRuntimeStarts,
+        used: batchRow.runtime_starts,
+      });
+    }
+    if (now >= budgetSnapshot.batch.deadlineUtcMs) {
+      reasons.push({
+        layer: 'batch',
+        dimension: 'deadlineUtcMs',
+        limit: budgetSnapshot.batch.deadlineUtcMs,
+        used: now,
+      });
+    }
+    if (reasons.length > 0) {
+      throw budgetExhaustedError(operation, entity, reasons);
+    }
+
+    // 5) 同事务原子写入：父 Batch runtime_starts+1（条件 UPDATE 仅活动态命中）与
+    //    账本行插入一次调用全部生效。预占后启动失败保守保留这一次计数（无退额
+    //    原语）；账本行不含 token/cost 或 sdk_started 列——不伪造用量或已启动事实。
+    const timestamp = nowUtcMs();
+    const batchUpdate = db
+      .prepare(
+        `UPDATE execution_batches SET runtime_starts = runtime_starts + 1, revision = revision + 1, updated_at = ? ` +
+          `WHERE id = ? AND project_id = ? AND status IN (${ACTIVE_PLACEHOLDERS})`,
+      )
+      .run(timestamp, valid.batchId, valid.projectId, ...(EXECUTION_ACTIVE_STATUSES as readonly string[]));
+    if (batchUpdate.changes !== 1) {
+      throw new StorageError(
+        'conflict',
+        operation,
+        `${operation}: Batch ${valid.batchId} 状态变化，不接受新启动预占`,
+        { entity, details: { reason: 'batch_not_active' } },
+      );
+    }
+    const id = randomUUID();
+    try {
+      db.prepare(
+        'INSERT INTO runtime_start_reservations (id, created_at, project_id, revision, updated_at, batch_id, run_id, start_key) ' +
+          'VALUES (?, ?, ?, 1, ?, ?, ?, ?)',
+      ).run(id, timestamp, valid.projectId, timestamp, valid.batchId, valid.runId, valid.startKey);
+    } catch (error) {
+      if (isSqliteConstraintError(error)) {
+        throw new StorageError(
+          'conflict',
+          operation,
+          `${operation}: 启动预占账本写入被 DDL 约束拒绝（幂等启动身份/归属链）`,
+          { entity, cause: error },
+        );
+      }
+      throw error;
+    }
+    const inserted = db
+      .prepare<[string], RuntimeStartReservationSqlRow>(`${SELECT_RUNTIME_START_RESERVATION} WHERE id = ?`)
+      .get(id) as RuntimeStartReservationSqlRow;
+    return runtimeStartReservationFromRow(inserted, operation);
+  }
+
+  function getRuntimeStartReservationInTransaction(
+    projectId: string,
+    runId: string,
+    startKey: string,
+  ): RuntimeStartReservationRecord | null {
+    const operation = 'ExecutionStore.getRuntimeStartReservation';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const row = session.database
+      .prepare<[string, string, string], RuntimeStartReservationSqlRow>(
+        `${SELECT_RUNTIME_START_RESERVATION} WHERE project_id = ? AND run_id = ? AND start_key = ?`,
+      )
+      .get(projectId, runId, startKey) as RuntimeStartReservationSqlRow | undefined;
+    return row === undefined ? null : runtimeStartReservationFromRow(row, operation);
+  }
+
   return {
     insertExecutionBatchInTransaction,
     insertBatchBudgetRevisionInTransaction,
@@ -1105,5 +1318,7 @@ export function createSqliteExecutionAccess(
     getTaskAttemptReservationInTransaction,
     getTaskExecutionCountersInTransaction,
     getExecutionRunInTransaction,
+    reserveRuntimeStartInTransaction,
+    getRuntimeStartReservationInTransaction,
   };
 }

@@ -121,6 +121,10 @@ export function createSqliteAtomicCommandStore(
           getTaskAttemptReservation: guarded(executions.getTaskAttemptReservationInTransaction),
           getTaskExecutionCounters: guarded(executions.getTaskExecutionCountersInTransaction),
           getExecutionRun: guarded(executions.getExecutionRunInTransaction),
+          // P03-3 / F-007：Runtime 启动额度预占原语（迁移 v12；同一 BEGIN IMMEDIATE
+          // 内原子生效；SDK 启动前的受信边界，不经命令路由暴露）。
+          reserveRuntimeStart: guarded(executions.reserveRuntimeStartInTransaction),
+          getRuntimeStartReservation: guarded(executions.getRuntimeStartReservationInTransaction),
           saveReceipt: guarded(receipts.saveReceiptInTransaction),
         });
         try {

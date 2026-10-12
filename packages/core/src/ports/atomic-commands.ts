@@ -270,6 +270,24 @@ export interface CommandTransaction {
   ): import('./execution-store.js').TaskExecutionCountersRecord;
   /** 读取目标 Run（含累计计数与冻结快照；缺失 not_found、跨项目 ownership）。 */
   getExecutionRun(projectId: string, runId: string): RunRecord;
+  /* ---------------------------------------------------------------- *
+   * P03-3 / F-007 Runtime 启动额度预占（迁移 v12；受信 Core 内部原语，
+   * 不经命令面暴露；SDK 启动前的受信边界）
+   * ---------------------------------------------------------------- */
+  /**
+   * Runtime 启动预占：同事务校验同项目 Batch/Run 归属、有效控制状态与父 Batch
+   * 的 maxRuntimeStarts/绝对 deadline 后，一次调用原子递增
+   * execution_batches.runtime_starts 并落幂等启动身份账本行；同身份重放返回既有
+   * 记录不重复计数；额度耗尽/deadline 到达 conflict budget_exhausted 且零写入；
+   * 启动失败保守保留计数（无退额原语）。
+   */
+  reserveRuntimeStart(input: unknown): import('./execution-store.js').RuntimeStartReservationRecord;
+  /** 同项目同 Run 同启动身份的账本行（无则 null；剩余额度由持久计数回答）。 */
+  getRuntimeStartReservation(
+    projectId: string,
+    runId: string,
+    startKey: string,
+  ): import('./execution-store.js').RuntimeStartReservationRecord | null;
   saveReceipt(receipt: unknown): void;
 }
 

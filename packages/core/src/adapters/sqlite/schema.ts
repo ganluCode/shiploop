@@ -1195,6 +1195,51 @@ export const taskAttemptReservations = sqliteTable('task_attempt_reservations', 
   index('task_attempt_reservations_run_id_index').on(table.runId),
 ]);
 
+/**
+ * P03-3 / F-007 Runtime 启动预占账本（迁移 v12；SDK 启动前的受信边界）。
+ *
+ * - 幂等启动身份 UNIQUE(project_id,start_key)：同身份重放去重只计一次、跨 Run
+ *   复用同身份被 DDL 拒绝（启动身份属于其获准 Run，过期身份不可重放）；
+ * - 预占一次对应 execution_batches.runtime_starts+1（同事务原子生效）；启动失败
+ *   保守保留计数——本表无退额列，也无任何退额原语；
+ * - 账本行只是预占证据：无 token/cost 用量列、无 sdk_started/outcome/进程列
+ *   （不伪造实际用量或真实 SDK 已启动事实）；Runner/停止管理/会话记录属后续
+ *   任务，不在本表预支。
+ */
+export const runtimeStartReservations = sqliteTable('runtime_start_reservations', {
+  id: text('id').primaryKey(),
+  createdAt: integer('created_at').notNull(),
+  projectId: text('project_id')
+    .notNull()
+    .references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  revision: integer('revision').notNull().default(1),
+  updatedAt: integer('updated_at').notNull(),
+  /** 归属 Batch（同项目复合外键；预占受父 Batch 启动额度与 deadline 约束）。 */
+  batchId: text('batch_id').notNull(),
+  /** 当前获准 Run（同项目同 Batch 复合外键）。 */
+  runId: text('run_id').notNull(),
+  /** 启动身份（受信 Core 生成的稳定键；同身份重放只计一次）。 */
+  startKey: text('start_key').notNull(),
+}, (table) => [
+  check('runtime_start_reservations_revision_positive_check', sql`${table.revision} >= 1`),
+  check('runtime_start_reservations_start_key_not_empty_check', sql`length(${table.startKey}) > 0`),
+  foreignKey({
+    name: 'runtime_start_reservations_batch_fk',
+    columns: [table.projectId, table.batchId],
+    foreignColumns: [executionBatches.projectId, executionBatches.id],
+  }).onDelete('restrict'),
+  foreignKey({
+    name: 'runtime_start_reservations_run_fk',
+    columns: [table.projectId, table.batchId, table.runId],
+    foreignColumns: [runs.projectId, runs.batchId, runs.id],
+  }).onDelete('restrict'),
+  uniqueIndex('runtime_start_reservations_project_start_key_unique').on(
+    table.projectId,
+    table.startKey,
+  ),
+  index('runtime_start_reservations_run_id_index').on(table.runId),
+]);
+
 export const schemaMigrations = sqliteTable('schema_migrations', {
   id: text('id').primaryKey(),
   createdAt: integer('created_at').notNull(),

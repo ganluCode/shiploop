@@ -62,11 +62,13 @@ const SCHEMA_TABLES = [
   // P03-2 / F-002：计划决策记录（docs/p03-2-plan-approval-contract.md 与设计 11 §7，迁移 v7）。
   ['approvals', schema.approvals],
   // P03-3 / F-002：单 Feature 执行域三表（docs/p03-3-execution-schema-contract.md 与
-  // 设计 11 §5，迁移 v9）；P03-3 / F-006：Task 尝试预占账本（迁移 v11）。
+  // 设计 11 §5，迁移 v9）；P03-3 / F-006：Task 尝试预占账本（迁移 v11）；
+  // P03-3 / F-007：Runtime 启动预占账本（迁移 v12）。
   ['execution_batches', schema.executionBatches],
   ['runs', schema.runs],
   ['batch_budget_revisions', schema.batchBudgetRevisions],
   ['task_attempt_reservations', schema.taskAttemptReservations],
+  ['runtime_start_reservations', schema.runtimeStartReservations],
   ['schema_migrations', schema.schemaMigrations],
 ] as const;
 
@@ -509,6 +511,10 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
         'task_attempt_reservations:(project_id,batch_id)->execution_batches.(project_id,id)',
         'task_attempt_reservations:(project_id,batch_id,run_id)->runs.(project_id,batch_id,id)',
         'task_attempt_reservations:(project_id,task_id)->tasks.(project_id,id)',
+        // P03-3 / F-007：Runtime 启动预占账本的同项目归属外键链。
+        'runtime_start_reservations:(project_id)->projects.(id)',
+        'runtime_start_reservations:(project_id,batch_id)->execution_batches.(project_id,id)',
+        'runtime_start_reservations:(project_id,batch_id,run_id)->runs.(project_id,batch_id,id)',
         'command_receipts:(project_id)->projects.(id)',
         'command_receipts:(baseline_operation_id)->baseline_operations.(id)',
         'command_receipts:(project_id,baseline_operation_id)->baseline_operations.(project_id,id)',
@@ -920,6 +926,25 @@ describe('F-003 real Drizzle session round-trip on the migrated database', () =>
       expect(reservation?.classifiedBy).toBe('core');
       expect(reservation?.reason).toBeNull();
       expect(reservation?.revision).toBe(1);
+
+      // P03-3 / F-007：Runtime 启动预占账本经同一 Drizzle Schema 往返（同项目归属
+      // 复合外键链 + 幂等启动身份；无用量/已启动列）。
+      session
+        .insert(schema.runtimeStartReservations)
+        .values({
+          id: randomUUID(),
+          createdAt: NOW_MS,
+          projectId: 'proj-1',
+          updatedAt: NOW_MS,
+          batchId: 'batch-1',
+          runId: 'run-1',
+          startKey: 'start-1',
+        })
+        .run();
+      const startReservation = session.select().from(schema.runtimeStartReservations).all()[0];
+      expect(startReservation?.startKey).toBe('start-1');
+      expect(startReservation?.batchId).toBe('batch-1');
+      expect(startReservation?.revision).toBe(1);
 
       const project = session.select().from(schema.projects).all()[0];
       expect(project?.displayName).toBe('示例项目🚢');

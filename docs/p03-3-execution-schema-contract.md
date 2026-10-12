@@ -114,6 +114,9 @@ Drizzle 无法表达触发器；不可变内容由迁移 v9 触发器承载（�
 - **F-006**：迁移 v11（tasks 双计数列 attempt_counter/code_attempts_used 与
   task_attempt_reservations 预占账本表；总 Attempt 预占/受信基础设施重分类原语）
   见 `docs/p03-3-attempt-budget-contract.md`；本契约的三表 DDL 与不变量不变。
+- **F-007**：迁移 v12（runtime_start_reservations 启动预占账本表；SDK 启动前的
+  runtime_starts 原子预占原语）见 `docs/p03-3-runtime-start-contract.md`；本契约的
+  三表 DDL 与不变量不变。
 
 ## 7. 验证记录（F-002）
 

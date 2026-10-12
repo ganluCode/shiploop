@@ -702,6 +702,8 @@ describe('F-006 当前配置检查组（P01-FR2-CONFIG）', () => {
           'batch_budget_revisions',
           // P03-3 / F-006：Task 尝试预占账本（迁移 v11；空表，无执行实体行）。
           'task_attempt_reservations',
+          // P03-3 / F-007：Runtime 启动预占账本（迁移 v12；空表，无执行实体行）。
+          'runtime_start_reservations',
         ].sort(),
       );
       for (const forbidden of [

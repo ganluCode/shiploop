@@ -919,6 +919,43 @@ CREATE UNIQUE INDEX task_attempt_reservations_task_attempt_key_unique ON task_at
 CREATE INDEX task_attempt_reservations_run_id_index ON task_attempt_reservations (run_id);
 `;
 
+/**
+ * v12: P03-3 / F-007 Runtime 启动额度预占账本表。
+ *
+ * - 新建 runtime_start_reservations 预占账本表：SDK 启动前原子预占
+ *   runtime_starts（设计 04 §6.1「SDK启动前预占runtimeStart额度，启动失败可
+ *   保守计数，不盲目退还」）；幂等启动身份 UNIQUE(project_id,start_key)（同身份
+ *   重放去重只计一次、跨 Run 复用同身份被 DDL 拒绝——启动身份属于其获准 Run），
+ *   同项目复合外键链（execution_batches(project_id,id) / runs(project_id,batch_id,id)，
+ *   全部 ON DELETE RESTRICT）；
+ * - 账本行只是预占证据：不含 token/cost 用量列、不含 sdk_started/outcome/进程
+ *   列（不伪造实际用量或真实 SDK 已启动事实；Runner/停止管理/会话记录属后续
+ *   任务），启动失败保守保留计数——无任何退额列或退额原语承载；
+ * - 本迁移不建 sessions/recording_manifests 等会话记录表（P03-4），不建
+ *   workspace_leases/通知表，state_events 不加 runtime 启动事件类型（派发事件
+ *   execution.run.dispatched 语义仍为派发而非已启动）。
+ */
+const MIGRATION_012_SQL = `
+CREATE TABLE runtime_start_reservations (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  batch_id TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  start_key TEXT NOT NULL,
+  CONSTRAINT runtime_start_reservations_revision_positive_check CHECK (revision >= 1),
+  CONSTRAINT runtime_start_reservations_start_key_not_empty_check CHECK (length(start_key) > 0),
+  CONSTRAINT runtime_start_reservations_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT runtime_start_reservations_batch_fk FOREIGN KEY (project_id, batch_id) REFERENCES execution_batches (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT runtime_start_reservations_run_fk FOREIGN KEY (project_id, batch_id, run_id) REFERENCES runs (project_id, batch_id, id) ON DELETE RESTRICT
+);
+
+CREATE UNIQUE INDEX runtime_start_reservations_project_start_key_unique ON runtime_start_reservations (project_id, start_key);
+CREATE INDEX runtime_start_reservations_run_id_index ON runtime_start_reservations (run_id);
+`;
+
 function sha256Hex(text: string): string {
   return createHash('sha256').update(text, 'utf8').digest('hex');
 }
@@ -979,5 +1016,10 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
     version: 11,
     sql: MIGRATION_011_SQL,
     checksum: sha256Hex(MIGRATION_011_SQL),
+  },
+  {
+    version: 12,
+    sql: MIGRATION_012_SQL,
+    checksum: sha256Hex(MIGRATION_012_SQL),
   },
 ];

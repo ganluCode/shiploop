@@ -367,7 +367,9 @@ function expectNoExecutionEntities(probe: StorageProbe): void {
     'runs',
     // P03-3 / F-006 起预占账本表由迁移 v11 建立（空表）：仍不代表创建执行实体。
     'task_attempt_reservations',
-  ]);
+    // P03-3 / F-007 起启动预占账本表由迁移 v12 建立（空表）：仍不代表启动 Runtime。
+    'runtime_start_reservations',
+  ].sort());
   for (const table of present) {
     expect(probe.selectAll(`SELECT COUNT(*) AS n FROM ${table}`), `${table} 不得有执行实体行`).toEqual([
       { n: 0 },

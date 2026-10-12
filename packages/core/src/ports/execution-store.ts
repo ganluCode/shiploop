@@ -24,7 +24,8 @@
  *
  * 本模块不实现：启动命令编排（application/execution-start）、预算结算与无进展
  * 计数（F-008）、预算修订命令（F-009）、查询面（F-010）；P03-3 / F-006 起本模块
- * 追加 Task 尝试预算预占与分类记账的记录形态与事务原语输入校验。
+ * 追加 Task 尝试预算预占与分类记账的记录形态与事务原语输入校验；P03-3 / F-007
+ * 起追加 Runtime 启动额度预占的记录形态与输入校验（SDK 启动前的受信边界）。
  */
 import type { ExecutionBudgetSnapshot } from './execution-budget.js';
 import {
@@ -616,4 +617,68 @@ export function validateTaskAttemptReclassifyInput(
     attemptKey: requireAttemptKey(object.attemptKey, context, 'attemptKey'),
     reason: object.reason,
   };
+}
+
+/* ------------------------------------------------------------------ *
+ * P03-3 / F-007 Runtime 启动额度预占（迁移 v12；受信 Core 内部原语）
+ *
+ * 预占语义：SDK 启动前在同一写事务内校验同项目 Batch/Run 归属、有效控制状态
+ * 与父 Batch 的 maxRuntimeStarts/绝对 deadline，然后原子递增
+ * execution_batches.runtime_starts 并落一条幂等启动身份账本行（设计 04 §6.1
+ * 「SDK启动前预占runtimeStart额度，启动失败可保守计数，不盲目退还」）。
+ * 仅创建 Run、预览、准备输入或最终检查不增加 runtimeStarts；预占后启动失败
+ * 保守保留一次启动计数，不伪造 token/cost 或真实 SDK 已启动事实：账本行
+ * 只是预占证据，无用量列、无 sdk_started/outcome/进程列，也无任何退额原语。
+ * 本原语不经命令面暴露，客户端/模型无自报入口；Runner、停止管理与会话
+ * 记录属后续任务，不在此预支。
+ * ------------------------------------------------------------------ */
+
+/** Runtime 启动预占账本记录（迁移 v12 runtime_start_reservations 行的应用侧形态）。 */
+export interface RuntimeStartReservationRecord {
+  readonly id: string;
+  readonly createdAtUtcMs: number;
+  readonly projectId: string;
+  readonly revision: number;
+  readonly updatedAtUtcMs: number;
+  readonly batchId: string;
+  readonly runId: string;
+  /** 启动身份（受信 Core 生成的稳定键；同身份重放只计一次）。 */
+  readonly startKey: string;
+}
+
+export interface ValidatedRuntimeStartReservationInput {
+  readonly projectId: string;
+  readonly batchId: string;
+  readonly runId: string;
+  readonly startKey: string;
+}
+
+const RUNTIME_START_RESERVATION_KEYS = ['projectId', 'batchId', 'runId', 'startKey'] as const;
+
+/**
+ * Runtime 启动预占输入校验：仅接受同项目 Batch/Run + 启动身份；token/cost 用量、
+ * sdkStarted/outcome/runner/进程等执行域字段都是未知键（预占不携带也不自报
+ * 实际用量或已启动事实），classification 类记账字段同样拒绝（Runtime 启动无
+ * 分类语义）。
+ */
+export function validateRuntimeStartReservationInput(
+  value: unknown,
+  operation: string,
+): ValidatedRuntimeStartReservationInput {
+  const context: ValidationContext = { operation, entity: { type: 'runtime_start_reservation' } };
+  const object = requirePlainObject(value, context, 'input');
+  rejectUnknownKeys(object, RUNTIME_START_RESERVATION_KEYS, context, 'input');
+  return {
+    projectId: requireStableIdField(object.projectId, context, 'projectId'),
+    batchId: requireStableIdField(object.batchId, context, 'batchId'),
+    runId: requireStableIdField(object.runId, context, 'runId'),
+    startKey: requireStartKey(object.startKey, context, 'startKey'),
+  };
+}
+
+function requireStartKey(value: unknown, context: ValidationContext, field: string): string {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 128 || value.trim().length === 0) {
+    throw validationError(context, field, '必须是非空非空白字符串（≤128 字符；受信 Core 生成的启动身份）', value);
+  }
+  return value;
 }

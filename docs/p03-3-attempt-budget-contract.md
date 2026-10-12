@@ -104,6 +104,8 @@ caps 与持久计数合并计算（`resolveTaskAttemptCaps` + 计数），不由
 - 不实现 Task 拓扑选择、完整 Attempt 生命周期、owner/fencing、lease 或进程执行
   ——P03-4 在同一事务接入真实 Attempt 创建（以本账本行为同事务预算预占依据），
   不能用空接口或独立提前扣额替代本契约。
-- Runtime 启动预占（F-007）、Run 结果结算与无进展计数（F-008）、预算修订命令
-  （F-009）、只读查询面（F-010）分别由后续任务建设；本任务不新增命令操作、
-  事件类型或回执形态。
+- Runtime 启动预占已由 F-007 建设（迁移 v12 与 reserveRuntimeStart 原语，见
+  `docs/p03-3-runtime-start-contract.md`；重分类不退已预占 Runtime 启动的语义由
+  该契约承接）；Run 结果结算与无进展计数（F-008）、预算修订命令（F-009）、
+  只读查询面（F-010）分别由后续任务建设；本任务不新增命令操作、事件类型或
+  回执形态。
