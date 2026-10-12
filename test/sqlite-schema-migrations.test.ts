@@ -61,6 +61,11 @@ const SCHEMA_TABLES = [
   ['task_dependencies', schema.taskDependencies],
   // P03-2 / F-002：计划决策记录（docs/p03-2-plan-approval-contract.md 与设计 11 §7，迁移 v7）。
   ['approvals', schema.approvals],
+  // P03-3 / F-002：单 Feature 执行域三表（docs/p03-3-execution-schema-contract.md 与
+  // 设计 11 §5，迁移 v9）。
+  ['execution_batches', schema.executionBatches],
+  ['runs', schema.runs],
+  ['batch_budget_revisions', schema.batchBudgetRevisions],
   ['schema_migrations', schema.schemaMigrations],
 ] as const;
 
@@ -69,9 +74,6 @@ const EXPECTED_TABLE_NAMES = SCHEMA_TABLES.map(([name]) => name).sort();
 /** 迁移与未来功能明确不在本 Feature 建立的后续表（设计 11 §4-§7、§9）。 */
 const FORBIDDEN_TABLE_NAMES = [
   'feature_dependencies',
-  'execution_batches',
-  'batch_budget_revisions',
-  'runs',
   'attempts',
   'workspace_leases',
   'sessions',
@@ -455,7 +457,7 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
       for (const [tableName, table] of SCHEMA_TABLES) {
         const configIndexes = getTableConfig(table).indexes;
         const actualRows = db
-          .prepare<[], { name: string; unique: number; origin: string }>(
+          .prepare<[], { name: string; unique: number; origin: string; partial: number }>(
             `PRAGMA index_list(${tableName})`,
           )
           .all()
@@ -468,6 +470,11 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
           const row = actualRows.find((candidate) => candidate.name === index.config.name);
           expect(row, `${tableName} 索引 ${index.config.name} 必须存在`).toBeDefined();
           expect(row?.unique).toBe(index.config.unique ? 1 : 0);
+          // 部分索引（条件唯一）：DDL 的 WHERE 谓词存在性与 Drizzle .where() 一致。
+          expect(
+            row?.partial ?? 0,
+            `${tableName} 索引 ${index.config.name} 的 partial 标志必须一致`,
+          ).toBe(index.config.where ? 1 : 0);
           const actualColumns = db
             .prepare<[string], { name: string }>('SELECT name FROM pragma_index_info(?)')
             .all(index.config.name)
@@ -522,6 +529,20 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
         // P03-2 / F-002 计划决策记录（迁移 v7）：项目归属 + 同项目 Feature 复合外键。
         'approvals:(project_id)->projects.(id)',
         'approvals:(project_id,subject_id)->features.(project_id,id)',
+        // P03-3 / F-002 单 Feature 执行域三表（迁移 v9）：同项目/同范围复合外键。
+        'execution_batches:(project_id)->projects.(id)',
+        'execution_batches:(phase_id)->phases.(id)',
+        'execution_batches:(feature_id)->features.(id)',
+        'execution_batches:(project_id,phase_id,feature_id)->features.(project_id,phase_id,id)',
+        'runs:(project_id)->projects.(id)',
+        'runs:(batch_id)->execution_batches.(id)',
+        'runs:(feature_id)->features.(id)',
+        'runs:(project_id,batch_id)->execution_batches.(project_id,id)',
+        'runs:(project_id,feature_id)->features.(project_id,id)',
+        'runs:(batch_id,feature_id)->execution_batches.(id,feature_id)',
+        'batch_budget_revisions:(project_id)->projects.(id)',
+        'batch_budget_revisions:(batch_id)->execution_batches.(id)',
+        'batch_budget_revisions:(project_id,batch_id)->execution_batches.(project_id,id)',
       ]);
       type FkPragmaRow = { id: number; seq: number; table: string; from: string; to: string; on_update: string; on_delete: string };
       const actualFks = new Set<string>();
@@ -774,6 +795,77 @@ describe('F-003 real Drizzle session round-trip on the migrated database', () =>
       expect(approval?.decisionActor).toBe('local-owner');
       // 未显式提供的默认值来自 DDL 默认表达式，而非内存缓存。
       expect(approval?.revision).toBe(1);
+
+      // P03-3 / F-002：单 Feature 执行域三表经同一 Drizzle Schema 往返（Batch →
+      // Run → 预算修订初始版本；同项目/同范围复合外键链与快照 JSON 列）。
+      session
+        .insert(schema.executionBatches)
+        .values({
+          id: 'batch-1',
+          createdAt: NOW_MS,
+          projectId: 'proj-1',
+          updatedAt: NOW_MS,
+          phaseId: 'phase-1',
+          featureId: 'feature-1',
+          scopeSnapshot: JSON.stringify({ schemaVersion: 1, featureIds: ['feature-1'], purpose: 'execute' }),
+          configSnapshot: JSON.stringify({ schemaVersion: 2, strategyKey: 'defaultStrategy' }),
+          budgetSnapshot: JSON.stringify({
+            schemaVersion: 1,
+            batch: { maxRuns: 2, maxTotalAttempts: 6, maxRuntimeStarts: 6, maxNoProgressRuns: 2, deadlineUtcMs: NOW_MS + 86_400_000 },
+            run: { maxAttemptsPerRun: 3, runTimeLimitMs: 3_600_000 },
+          }),
+          deadlineAt: NOW_MS + 86_400_000,
+        })
+        .run();
+      session
+        .insert(schema.runs)
+        .values({
+          id: 'run-1',
+          createdAt: NOW_MS,
+          projectId: 'proj-1',
+          updatedAt: NOW_MS,
+          batchId: 'batch-1',
+          featureId: 'feature-1',
+          purpose: 'execute',
+          inputSnapshot: JSON.stringify({ schemaVersion: 1, tasks: ['t-1'], acceptance: ['验收一'] }),
+          configSnapshot: JSON.stringify({ schemaVersion: 2, strategyKey: 'defaultStrategy' }),
+          scopeDigest: VALID_SHA256,
+          workKey: 'work-1',
+          maxAttemptsPerRun: 3,
+          runTimeLimitMs: 3_600_000,
+          startedAt: NOW_MS,
+        })
+        .run();
+      session
+        .insert(schema.batchBudgetRevisions)
+        .values({
+          id: 'bre-1',
+          createdAt: NOW_MS,
+          projectId: 'proj-1',
+          updatedAt: NOW_MS,
+          batchId: 'batch-1',
+          version: 1,
+          budgetSnapshot: JSON.stringify({ schemaVersion: 1 }),
+          deadlineAt: NOW_MS + 86_400_000,
+          approvedBy: 'local-owner',
+          reason: '初始授权',
+        })
+        .run();
+      const batch = session.select().from(schema.executionBatches).all()[0];
+      expect(batch?.featureId).toBe('feature-1');
+      expect(JSON.parse(batch?.scopeSnapshot ?? 'null')).toEqual({
+        schemaVersion: 1,
+        featureIds: ['feature-1'],
+        purpose: 'execute',
+      });
+      expect(batch?.runsCreated).toBe(0);
+      const run = session.select().from(schema.runs).all()[0];
+      expect(run?.workKey).toBe('work-1');
+      expect(run?.dispatchOrdinal).toBe(1);
+      expect(run?.maxAttemptsPerRun).toBe(3);
+      const budgetRevision = session.select().from(schema.batchBudgetRevisions).all()[0];
+      expect(budgetRevision?.version).toBe(1);
+      expect(budgetRevision?.approvedBy).toBe('local-owner');
 
       const project = session.select().from(schema.projects).all()[0];
       expect(project?.displayName).toBe('示例项目🚢');

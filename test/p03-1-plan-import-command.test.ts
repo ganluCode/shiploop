@@ -828,10 +828,13 @@ describe('F-005 feature.plan.import 导入闭环', () => {
     expect(result.feature).toMatchObject({ status: 'draft', planStatus: 'draft' });
     expect(JSON.stringify(result)).not.toMatch(/"executable":\s*true|approved|batch|attempt|run/i);
     expect(s.planCounts()).toEqual({ features: 1, tasks: 0, taskDependencies: 0 });
-    // 执行域表尚未建立；导入成功不代表 Task 通过或 Feature 完成。
-    expect(s.probe.tableExists('runs')).toBe(false);
+    // 执行域表由 P03-3 / F-002 迁移 v9 建立但为空；导入成功不代表 Task 通过、
+    // Feature 完成或创建执行实体（attempts 等后续表仍未建立）。
+    expect(s.probe.tableExists('runs')).toBe(true);
+    expect(s.probe.selectAll('SELECT COUNT(*) AS n FROM runs')).toEqual([{ n: 0 }]);
     expect(s.probe.tableExists('attempts')).toBe(false);
-    expect(s.probe.tableExists('execution_batches')).toBe(false);
+    expect(s.probe.tableExists('execution_batches')).toBe(true);
+    expect(s.probe.selectAll('SELECT COUNT(*) AS n FROM execution_batches')).toEqual([{ n: 0 }]);
     expect(
       s.probe.selectOne<{ plan_status: string }>('SELECT plan_status FROM features')?.plan_status,
     ).toBe('draft');

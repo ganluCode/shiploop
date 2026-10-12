@@ -554,11 +554,14 @@ describe('F-008 feature.plan.revise 修订闭环', () => {
       replayed: false,
     });
     expect(s.rowBy('features', s.featureId)?.plan_digest).toBe(expectedDigest);
-    // 修订后仍是草稿；不产生执行实体或自动批准。
+    // 修订后仍是草稿；不产生执行实体或自动批准（执行域表由 P03-3 / F-002 迁移
+    // v9 建立但为空；attempts 等后续表仍未建立）。
     expect(featureRow.plan_status).toBe('draft');
-    expect(s.probe.tableExists('runs')).toBe(false);
+    expect(s.probe.tableExists('runs')).toBe(true);
+    expect(s.probe.selectAll('SELECT COUNT(*) AS n FROM runs')).toEqual([{ n: 0 }]);
     expect(s.probe.tableExists('attempts')).toBe(false);
-    expect(s.probe.tableExists('execution_batches')).toBe(false);
+    expect(s.probe.tableExists('execution_batches')).toBe(true);
+    expect(s.probe.selectAll('SELECT COUNT(*) AS n FROM execution_batches')).toEqual([{ n: 0 }]);
     expect(JSON.stringify(result)).not.toMatch(/approved|batch|attempt|"run"/i);
   });
 

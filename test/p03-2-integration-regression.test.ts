@@ -355,11 +355,22 @@ function receiptStatus(probe: StorageProbe, commandId: string): string | undefin
   return row?.status;
 }
 
-/** 「未创建 Batch/Run/Attempt、未启动 Work」三方核验之一：库表清单。 */
+/** 「未创建 Batch/Run/Attempt、未启动 Work」三方核验之一：库表清单与行数。 */
 function expectNoExecutionEntities(probe: StorageProbe): void {
   const tables = sqliteTableNames(probe);
-  const executionTables = tables.filter((name) => /batch|run|attempt|work/i.test(name));
-  expect(executionTables, `不得存在执行实体表（实际表：${tables.join(',')}）`).toEqual([]);
+  // P03-3 / F-002 起执行域表由迁移 v9 建立（空表）：「未创建执行实体」以零行核验；
+  // attempts/workspace_leases 等后续表仍不得存在。
+  const present = tables.filter((name) => /batch|run|attempt|work/i.test(name)).sort();
+  expect(present, `执行域表清单漂移（实际表：${tables.join(',')}）`).toEqual([
+    'batch_budget_revisions',
+    'execution_batches',
+    'runs',
+  ]);
+  for (const table of present) {
+    expect(probe.selectAll(`SELECT COUNT(*) AS n FROM ${table}`), `${table} 不得有执行实体行`).toEqual([
+      { n: 0 },
+    ]);
+  }
 }
 
 /**

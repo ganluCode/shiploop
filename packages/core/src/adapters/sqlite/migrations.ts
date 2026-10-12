@@ -624,6 +624,195 @@ DROP INDEX approvals_subject_decision_unique;
 CREATE UNIQUE INDEX approvals_subject_decision_unique ON approvals (project_id, subject_type, subject_id, subject_digest, check_policy_digest);
 `;
 
+/**
+ * 第九个迁移（P03-3 / F-002）：单 Feature 执行域三表 execution_batches/runs/
+ * batch_budget_revisions（+不可变内容校验触发器）。
+ *
+ * 契约依据：core-design/11 §5（表字段与约束）、§10（条件唯一/不可变内容校验须有
+ * 失败用例/常用索引/ON DELETE RESTRICT）与 02 §3/§8（Run/Batch 状态机：活动集 =
+ * queued/running/pausing/paused/cancelling/interrupted，终态 = succeeded/failed/
+ * cancelled）；docs/p03-3-execution-schema-contract.md（本 Feature 契约文档，含
+ * 相对设计 11 的登记偏离）。
+ *
+ * 边界（仅建立本项必需持久数据）：不建完整 attempts/workspace_leases/sessions/
+ * chat_turns/recording_manifests/通知表（随 P03-4+ 对应功能迁移），不建计划/配置
+ * 业务版本表（设计 11 §3/§5 明确不建设）；state_events 不加 run_id/task_id/
+ * attempt_id 列（随其关联表同迁移加入）。
+ *
+ * 约束先例（与 v1/v4/v6 同一表示）：
+ * - 同项目/同归属复合外键：execution_batches(project_id,phase_id,feature_id) →
+ *   features(project_id,phase_id,id)（跨项目引用拒绝且 batch 的 phase_id 必须是
+ *   其 Feature 的真实 Phase，直接 SQL 伪造归属被拒）；runs(project_id,batch_id) →
+ *   execution_batches(project_id,id)、runs(project_id,feature_id) →
+ *   features(project_id,id)、runs(batch_id,feature_id) →
+ *   execution_batches(id,feature_id)（Run 必须落在父 Batch 的单 Feature 范围内）；
+ *   batch_budget_revisions(project_id,batch_id) → execution_batches(project_id,id)；
+ *   全部 ON DELETE RESTRICT；
+ * - 单 Feature 不可变范围：Batch 以 feature_id（NOT NULL）+ scope_snapshot 保存恰
+ *   一个 Feature 的范围，CHECK 强制 scope_snapshot.featureIds 为恰含一个成员的 JSON
+ *   数组；config_snapshot/input_snapshot 为 JSON 对象（完整结构校验在端口，DDL 为
+ *   合法性底线）；
+ * - 有限初始预算与累计计数：budget_snapshot（JSON 对象，形态由 ports/
+ *   execution-budget 的 schemaVersion=1 契约校验）+ budget_revision(≥1) +
+ *   deadline_at(≥1 绝对 UTC 毫秒)；runs_created/attempts_created/runtime_starts/
+ *   no_progress_runs 非负（负计数在 DDL 级拒绝）；Run 上限 max_attempts_per_run/
+ *   run_time_limit_ms 存于 Run 行（派发时冻结；精确范围归 ports 契约，DDL 只保正
+ *   底线，避免把待确认的实施范围值冻结进不可变迁移）；
+ * - 条件唯一（设计 11 §10）：同 Phase 有效活动 Batch 唯一、同 Feature 有效活动 Run
+ *   唯一（部分唯一索引；活动集含 paused/interrupted——暂停与归属待核对不是可绕过的
+ *   终态）；派发身份 UNIQUE(batch_id,work_key,dispatch_ordinal)；修订身份
+ *   UNIQUE(batch_id,version)；
+ * - 不可变内容（触发器 + 失败用例）：Batch 身份/范围/配置快照、Run 身份/输入快照/
+ *   派发身份/Run 上限与时间依据（started_at 设定后不可改）UPDATE 拒绝；
+ *   batch_budget_revisions 为初始与历史预算快照证据行，UPDATE/DELETE 一律拒绝
+ *   ——当前预算在 Batch 行上正常演进时不覆盖任何历史版本。
+ */
+const MIGRATION_009_SQL = `
+CREATE TABLE execution_batches (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  phase_id TEXT NOT NULL,
+  feature_id TEXT NOT NULL,
+  scope_snapshot TEXT NOT NULL,
+  config_snapshot TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'queued',
+  budget_revision INTEGER NOT NULL DEFAULT 1,
+  budget_snapshot TEXT NOT NULL,
+  runs_created INTEGER NOT NULL DEFAULT 0,
+  attempts_created INTEGER NOT NULL DEFAULT 0,
+  runtime_starts INTEGER NOT NULL DEFAULT 0,
+  no_progress_runs INTEGER NOT NULL DEFAULT 0,
+  deadline_at INTEGER NOT NULL,
+  reason TEXT,
+  CONSTRAINT execution_batches_revision_positive_check CHECK (revision >= 1),
+  CONSTRAINT execution_batches_status_enum_check CHECK (status IN ('queued', 'running', 'pausing', 'paused', 'cancelling', 'cancelled', 'succeeded', 'failed', 'interrupted')),
+  CONSTRAINT execution_batches_scope_snapshot_json_check CHECK (json_valid(scope_snapshot) AND json_type(scope_snapshot) = 'object'),
+  CONSTRAINT execution_batches_scope_single_feature_check CHECK (json_type(scope_snapshot, '$.featureIds') IS 'array' AND json_array_length(scope_snapshot, '$.featureIds') = 1),
+  CONSTRAINT execution_batches_config_snapshot_json_check CHECK (json_valid(config_snapshot) AND json_type(config_snapshot) = 'object'),
+  CONSTRAINT execution_batches_budget_revision_positive_check CHECK (budget_revision >= 1),
+  CONSTRAINT execution_batches_budget_snapshot_json_check CHECK (json_valid(budget_snapshot) AND json_type(budget_snapshot) = 'object'),
+  CONSTRAINT execution_batches_runs_created_non_negative_check CHECK (runs_created >= 0),
+  CONSTRAINT execution_batches_attempts_created_non_negative_check CHECK (attempts_created >= 0),
+  CONSTRAINT execution_batches_runtime_starts_non_negative_check CHECK (runtime_starts >= 0),
+  CONSTRAINT execution_batches_no_progress_runs_non_negative_check CHECK (no_progress_runs >= 0),
+  CONSTRAINT execution_batches_deadline_at_positive_check CHECK (deadline_at >= 1),
+  CONSTRAINT execution_batches_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT execution_batches_phase_fk FOREIGN KEY (phase_id) REFERENCES phases (id) ON DELETE RESTRICT,
+  CONSTRAINT execution_batches_feature_fk FOREIGN KEY (feature_id) REFERENCES features (id) ON DELETE RESTRICT,
+  CONSTRAINT execution_batches_feature_phase_same_project_fk FOREIGN KEY (project_id, phase_id, feature_id) REFERENCES features (project_id, phase_id, id) ON DELETE RESTRICT
+);
+
+CREATE UNIQUE INDEX execution_batches_project_id_id_unique ON execution_batches (project_id, id);
+CREATE UNIQUE INDEX execution_batches_id_feature_id_unique ON execution_batches (id, feature_id);
+CREATE UNIQUE INDEX execution_batches_active_phase_unique ON execution_batches (phase_id) WHERE status IN ('queued', 'running', 'pausing', 'paused', 'cancelling', 'interrupted');
+
+CREATE TABLE runs (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  batch_id TEXT NOT NULL,
+  feature_id TEXT NOT NULL,
+  purpose TEXT NOT NULL,
+  input_snapshot TEXT NOT NULL,
+  config_snapshot TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'queued',
+  scope_digest TEXT NOT NULL,
+  work_key TEXT NOT NULL,
+  dispatch_ordinal INTEGER NOT NULL DEFAULT 1,
+  max_attempts_per_run INTEGER NOT NULL,
+  run_time_limit_ms INTEGER NOT NULL,
+  attempts_created INTEGER NOT NULL DEFAULT 0,
+  reason TEXT,
+  started_at INTEGER,
+  ended_at INTEGER,
+  CONSTRAINT runs_revision_positive_check CHECK (revision >= 1),
+  CONSTRAINT runs_purpose_not_empty_check CHECK (length(purpose) > 0),
+  CONSTRAINT runs_input_snapshot_json_check CHECK (json_valid(input_snapshot) AND json_type(input_snapshot) = 'object'),
+  CONSTRAINT runs_config_snapshot_json_check CHECK (json_valid(config_snapshot) AND json_type(config_snapshot) = 'object'),
+  CONSTRAINT runs_status_enum_check CHECK (status IN ('queued', 'running', 'pausing', 'paused', 'cancelling', 'cancelled', 'succeeded', 'failed', 'interrupted')),
+  CONSTRAINT runs_scope_digest_sha256_check CHECK (length(scope_digest) = 64 AND scope_digest NOT GLOB '*[^0-9a-f]*'),
+  CONSTRAINT runs_work_key_not_empty_check CHECK (length(work_key) > 0),
+  CONSTRAINT runs_dispatch_ordinal_positive_check CHECK (dispatch_ordinal >= 1),
+  CONSTRAINT runs_max_attempts_per_run_positive_check CHECK (max_attempts_per_run >= 1),
+  CONSTRAINT runs_run_time_limit_ms_positive_check CHECK (run_time_limit_ms >= 1),
+  CONSTRAINT runs_attempts_created_non_negative_check CHECK (attempts_created >= 0),
+  CONSTRAINT runs_started_at_non_negative_check CHECK (started_at IS NULL OR started_at >= 0),
+  CONSTRAINT runs_ended_at_non_negative_check CHECK (ended_at IS NULL OR ended_at >= 0),
+  CONSTRAINT runs_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT runs_batch_fk FOREIGN KEY (batch_id) REFERENCES execution_batches (id) ON DELETE RESTRICT,
+  CONSTRAINT runs_feature_fk FOREIGN KEY (feature_id) REFERENCES features (id) ON DELETE RESTRICT,
+  CONSTRAINT runs_batch_same_project_fk FOREIGN KEY (project_id, batch_id) REFERENCES execution_batches (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT runs_feature_same_project_fk FOREIGN KEY (project_id, feature_id) REFERENCES features (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT runs_batch_feature_same_scope_fk FOREIGN KEY (batch_id, feature_id) REFERENCES execution_batches (id, feature_id) ON DELETE RESTRICT
+);
+
+CREATE UNIQUE INDEX runs_dispatch_identity_unique ON runs (batch_id, work_key, dispatch_ordinal);
+CREATE UNIQUE INDEX runs_active_feature_unique ON runs (feature_id) WHERE status IN ('queued', 'running', 'pausing', 'paused', 'cancelling', 'interrupted');
+CREATE INDEX runs_batch_id_status_index ON runs (batch_id, status);
+
+CREATE TABLE batch_budget_revisions (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  batch_id TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  budget_snapshot TEXT NOT NULL,
+  deadline_at INTEGER NOT NULL,
+  approved_by TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  CONSTRAINT batch_budget_revisions_revision_positive_check CHECK (revision >= 1),
+  CONSTRAINT batch_budget_revisions_version_positive_check CHECK (version >= 1),
+  CONSTRAINT batch_budget_revisions_budget_snapshot_json_check CHECK (json_valid(budget_snapshot) AND json_type(budget_snapshot) = 'object'),
+  CONSTRAINT batch_budget_revisions_deadline_at_positive_check CHECK (deadline_at >= 1),
+  CONSTRAINT batch_budget_revisions_approved_by_not_empty_check CHECK (length(approved_by) > 0),
+  CONSTRAINT batch_budget_revisions_reason_not_empty_check CHECK (length(reason) > 0),
+  CONSTRAINT batch_budget_revisions_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT batch_budget_revisions_batch_fk FOREIGN KEY (batch_id) REFERENCES execution_batches (id) ON DELETE RESTRICT,
+  CONSTRAINT batch_budget_revisions_batch_same_project_fk FOREIGN KEY (project_id, batch_id) REFERENCES execution_batches (project_id, id) ON DELETE RESTRICT
+);
+
+CREATE UNIQUE INDEX batch_budget_revisions_batch_version_unique ON batch_budget_revisions (batch_id, version);
+
+CREATE UNIQUE INDEX features_project_phase_id_id_unique ON features (project_id, phase_id, id);
+
+CREATE TRIGGER execution_batches_immutable_columns_update BEFORE UPDATE ON execution_batches
+WHEN NEW.id IS NOT OLD.id OR NEW.created_at IS NOT OLD.created_at OR NEW.project_id IS NOT OLD.project_id
+  OR NEW.phase_id IS NOT OLD.phase_id OR NEW.feature_id IS NOT OLD.feature_id
+  OR NEW.scope_snapshot IS NOT OLD.scope_snapshot OR NEW.config_snapshot IS NOT OLD.config_snapshot
+BEGIN
+  SELECT RAISE(ABORT, 'execution_batches immutable scope, config and identity columns cannot be updated');
+END;
+
+CREATE TRIGGER runs_immutable_columns_update BEFORE UPDATE ON runs
+WHEN NEW.id IS NOT OLD.id OR NEW.created_at IS NOT OLD.created_at OR NEW.project_id IS NOT OLD.project_id
+  OR NEW.batch_id IS NOT OLD.batch_id OR NEW.feature_id IS NOT OLD.feature_id
+  OR NEW.purpose IS NOT OLD.purpose OR NEW.input_snapshot IS NOT OLD.input_snapshot
+  OR NEW.config_snapshot IS NOT OLD.config_snapshot OR NEW.scope_digest IS NOT OLD.scope_digest
+  OR NEW.work_key IS NOT OLD.work_key OR NEW.dispatch_ordinal IS NOT OLD.dispatch_ordinal
+  OR NEW.max_attempts_per_run IS NOT OLD.max_attempts_per_run OR NEW.run_time_limit_ms IS NOT OLD.run_time_limit_ms
+  OR (OLD.started_at IS NOT NULL AND NEW.started_at IS NOT OLD.started_at)
+BEGIN
+  SELECT RAISE(ABORT, 'runs immutable input, dispatch identity and time basis columns cannot be updated');
+END;
+
+CREATE TRIGGER batch_budget_revisions_immutable_update BEFORE UPDATE ON batch_budget_revisions
+BEGIN
+  SELECT RAISE(ABORT, 'batch_budget_revisions rows are immutable snapshots');
+END;
+
+CREATE TRIGGER batch_budget_revisions_immutable_delete BEFORE DELETE ON batch_budget_revisions
+BEGIN
+  SELECT RAISE(ABORT, 'batch_budget_revisions rows are immutable snapshots');
+END;
+`;
+
 function sha256Hex(text: string): string {
   return createHash('sha256').update(text, 'utf8').digest('hex');
 }
@@ -669,5 +858,10 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
     version: 8,
     sql: MIGRATION_008_SQL,
     checksum: sha256Hex(MIGRATION_008_SQL),
+  },
+  {
+    version: 9,
+    sql: MIGRATION_009_SQL,
+    checksum: sha256Hex(MIGRATION_009_SQL),
   },
 ];

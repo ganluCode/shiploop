@@ -9,7 +9,8 @@
  * attempts/sessions/chat 等后续表随对应功能以新迁移版本增加，不在本 Schema 出现。
  * P01-3 / F-006 起加入 state_events（迁移 v2），P02-2 / F-006 起加入
  * command_receipts（迁移 v3，见下方表注释）；P02-3 / F-007 起加入基线作用域
- * 四表（迁移 v4，见下方表注释）。
+ * 四表（迁移 v4，见下方表注释）；P03-3 / F-002 起加入单 Feature 执行域三表
+ * execution_batches/runs/batch_budget_revisions（迁移 v9，见下方表注释）。
  *
  * 与手写迁移 DDL（./migrations.ts）的一致性由 test/sqlite-schema-migrations.test.ts
  * 经真实 SQLite pragma 与 getTableConfig 交叉核对；两处必须同步演进。
@@ -618,6 +619,10 @@ export const features = sqliteTable('features', {
     foreignColumns: [phases.projectId, phases.id],
   }).onDelete('restrict'),
   uniqueIndex('features_project_id_id_unique').on(table.projectId, table.id),
+  // P03-3 / F-002：同项目同 Phase 复合唯一键（迁移 v9）：供
+  // execution_batches(project_id,phase_id,feature_id) 复合外键引用——
+  // Batch 的 phase_id 必须是其 Feature 的真实 Phase，直接 SQL 伪造归属被拒绝。
+  uniqueIndex('features_project_phase_id_id_unique').on(table.projectId, table.phaseId, table.id),
   index('features_phase_id_status_index').on(table.phaseId, table.status),
 ]);
 
@@ -823,6 +828,273 @@ export const approvals = sqliteTable('approvals', {
     table.checkPolicyDigest,
   ),
   index('approvals_project_subject_index').on(table.projectId, table.subjectId),
+]);
+
+/**
+ * P03-3 / F-002 单 Feature ExecutionBatch（迁移 v9；core-design/11 §5 与
+ * docs/p03-3-execution-schema-contract.md）。
+ *
+ * 边界与登记决策（相对设计 11 的偏离均已在契约文档登记）：
+ * - P03-3 首版为单 Feature 批次：feature_id NOT NULL + scope_snapshot 强制
+ *   featureIds 恰含一个成员（CHECK）；phase_id NOT NULL（设计 11 列为可空，
+ *   单 Feature 批次恒取所属 Feature 的 Phase，使「同 Phase 活动 Batch 唯一」可
+ *   由部分唯一索引保证；多 Feature 跑批属后续路线，届时另行迁移）；
+ * - (project_id, phase_id, feature_id) 复合外键 → features(project_id, phase_id,
+ *   id)：跨项目引用与 phase 归属伪造在 DDL 级被拒绝；
+ * - budget_snapshot/budget_revision/deadline_at 为**当前**批准预算（F-009 修订
+ *   在此演进）；初始与历史版本逐行留存于 batch_budget_revisions（含创建时的
+ *   初始版本行），不可被当前预算更新覆盖；
+ * - 条件唯一：同 Phase 有效活动 Batch 唯一（部分唯一索引；活动集含
+ *   paused/interrupted，终态不参与）；
+ * - 不可变列（id/created_at/project_id/phase_id/feature_id/scope_snapshot/
+ *   config_snapshot）由迁移 v9 触发器禁止 UPDATE 覆盖（Drizzle 无法表达触发器，
+ *   一致性由 test/sqlite-schema-migrations.test.ts 交叉核对列/索引/外键，
+ *   触发器行为由 test/p03-3-execution-schema.test.ts 失败用例覆盖）。
+ */
+export const executionBatches = sqliteTable('execution_batches', {
+  id: text('id').primaryKey(),
+  createdAt: integer('created_at').notNull(),
+  projectId: text('project_id')
+    .notNull()
+    .references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  /** CAS 并发计数（≥1，每次成功写入递增）。 */
+  revision: integer('revision').notNull().default(1),
+  updatedAt: integer('updated_at').notNull(),
+  /** 所属 Phase（= 所属 Feature 的 Phase；复合外键保证一致）。 */
+  phaseId: text('phase_id')
+    .notNull()
+    .references((): SQLiteColumn => phases.id, { onDelete: 'restrict' }),
+  /** 单 Feature 范围身份（恰一个 Feature；不可变）。 */
+  featureId: text('feature_id')
+    .notNull()
+    .references((): SQLiteColumn => features.id, { onDelete: 'restrict' }),
+  /** 授权范围快照（JSON 对象；featureIds 恰含一个成员由 CHECK 强制；不可变）。 */
+  scopeSnapshot: text('scope_snapshot').notNull(),
+  /** 输入配置依据（脱敏配置快照 JSON 对象；不可变）。 */
+  configSnapshot: text('config_snapshot').notNull(),
+  /** 批次生命周期：queued/running/pausing/paused/cancelling/cancelled/succeeded/failed/interrupted。 */
+  status: text('status').notNull().default('queued'),
+  /** 当前预算审批修订号（≥1；与 batch_budget_revisions.version 对应）。 */
+  budgetRevision: integer('budget_revision').notNull().default(1),
+  /** 当前批准预算内容（ports/execution-budget schemaVersion=1 契约；DDL 只保 JSON 底线）。 */
+  budgetSnapshot: text('budget_snapshot').notNull(),
+  /** 累计创建 Run 数（含成功；非负，不随重启清零）。 */
+  runsCreated: integer('runs_created').notNull().default(0),
+  /** 累计创建 Attempt 数（非负；Attempt 表随 P03-4+ 建立）。 */
+  attemptsCreated: integer('attempts_created').notNull().default(0),
+  /** 累计预占 Runtime 启动数（非负）。 */
+  runtimeStarts: integer('runtime_starts').notNull().default(0),
+  /** 连续无进展 Run 数（非负；有有效领域进展才重置）。 */
+  noProgressRuns: integer('no_progress_runs').notNull().default(0),
+  /** 绝对 UTC 截止时间（epoch 毫秒；暂停不自动延长，延期走预算修订）。 */
+  deadlineAt: integer('deadline_at').notNull(),
+  /** 原因说明（可空）。 */
+  reason: text('reason'),
+}, (table) => [
+  check('execution_batches_revision_positive_check', sql`${table.revision} >= 1`),
+  check(
+    'execution_batches_status_enum_check',
+    sql`${table.status} IN ('queued', 'running', 'pausing', 'paused', 'cancelling', 'cancelled', 'succeeded', 'failed', 'interrupted')`,
+  ),
+  check(
+    'execution_batches_scope_snapshot_json_check',
+    sql`json_valid(${table.scopeSnapshot}) AND json_type(${table.scopeSnapshot}) = 'object'`,
+  ),
+  // 恰一个 Feature 的不可变范围：featureIds 必须是恰含一个成员的 JSON 数组。
+  // 缺失键时 json_type 为 NULL，必须以 IS 判定显式失败（CHECK 对 NULL 视为通过）。
+  check(
+    'execution_batches_scope_single_feature_check',
+    sql`json_type(${table.scopeSnapshot}, '$.featureIds') IS 'array' AND json_array_length(${table.scopeSnapshot}, '$.featureIds') = 1`,
+  ),
+  check(
+    'execution_batches_config_snapshot_json_check',
+    sql`json_valid(${table.configSnapshot}) AND json_type(${table.configSnapshot}) = 'object'`,
+  ),
+  check('execution_batches_budget_revision_positive_check', sql`${table.budgetRevision} >= 1`),
+  check(
+    'execution_batches_budget_snapshot_json_check',
+    sql`json_valid(${table.budgetSnapshot}) AND json_type(${table.budgetSnapshot}) = 'object'`,
+  ),
+  check('execution_batches_runs_created_non_negative_check', sql`${table.runsCreated} >= 0`),
+  check('execution_batches_attempts_created_non_negative_check', sql`${table.attemptsCreated} >= 0`),
+  check('execution_batches_runtime_starts_non_negative_check', sql`${table.runtimeStarts} >= 0`),
+  check('execution_batches_no_progress_runs_non_negative_check', sql`${table.noProgressRuns} >= 0`),
+  check('execution_batches_deadline_at_positive_check', sql`${table.deadlineAt} >= 1`),
+  // 同项目复合外键 + Phase/Feature 归属一致：伪造归属的直接 SQL 被拒绝。
+  foreignKey({
+    name: 'execution_batches_feature_phase_same_project_fk',
+    columns: [table.projectId, table.phaseId, table.featureId],
+    foreignColumns: [features.projectId, features.phaseId, features.id],
+  }).onDelete('restrict'),
+  uniqueIndex('execution_batches_project_id_id_unique').on(table.projectId, table.id),
+  // runs(batch_id,feature_id) 复合外键目标：Run 必须落在单 Feature 范围内。
+  uniqueIndex('execution_batches_id_feature_id_unique').on(table.id, table.featureId),
+  // 同 Phase 有效活动 Batch 唯一（paused/interrupted 不是可绕过的终态）。
+  uniqueIndex('execution_batches_active_phase_unique')
+    .on(table.phaseId)
+    .where(
+      sql`${table.status} IN ('queued', 'running', 'pausing', 'paused', 'cancelling', 'interrupted')`,
+    ),
+]);
+
+/**
+ * P03-3 / F-002 Run（迁移 v9；core-design/11 §5 runs）。
+ *
+ * - 引用同项目 Batch 与 Feature，且 (batch_id,feature_id) 复合外键保证落在父 Batch
+ *   的单 Feature 范围内；
+ * - 保存 purpose、workKey、dispatchOrdinal（派发身份 UNIQUE(batch_id,work_key,
+ *   dispatch_ordinal)）、输入快照与配置快照（不可变）、Run 上限（max_attempts_per_run/
+ *   run_time_limit_ms，派发时冻结，精确范围归 ports/execution-budget 契约）与时间
+ *   依据（started_at 设定后不可改，ended_at 收尾记录）；
+ * - 条件唯一：同 Feature 有效活动 Run 唯一（部分唯一索引；活动集含
+ *   paused/interrupted）；
+ * - 不可变列由迁移 v9 触发器保护（同 executionBatches 注释）。
+ */
+export const runs = sqliteTable('runs', {
+  id: text('id').primaryKey(),
+  createdAt: integer('created_at').notNull(),
+  projectId: text('project_id')
+    .notNull()
+    .references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  revision: integer('revision').notNull().default(1),
+  updatedAt: integer('updated_at').notNull(),
+  /** 父 Batch（同项目复合外键；缺失父 Batch 在 DDL 级被拒绝）。 */
+  batchId: text('batch_id')
+    .notNull()
+    .references((): SQLiteColumn => executionBatches.id, { onDelete: 'restrict' }),
+  /** 目标 Feature（必须是父 Batch 的同一 Feature）。 */
+  featureId: text('feature_id')
+    .notNull()
+    .references((): SQLiteColumn => features.id, { onDelete: 'restrict' }),
+  /** 执行用途（execute/plan 等；非空）。 */
+  purpose: text('purpose').notNull(),
+  /** 本次输入快照（任务定义/依赖/验收规则 JSON 对象；不可变）。 */
+  inputSnapshot: text('input_snapshot').notNull(),
+  /** 脱敏配置快照（JSON 对象；不可变）。 */
+  configSnapshot: text('config_snapshot').notNull(),
+  /** Run 生命周期（与 Batch 同枚举；succeeded/failed/cancelled 为不可重开终态）。 */
+  status: text('status').notNull().default('queued'),
+  /** 执行范围摘要（64 位小写 hex）。 */
+  scopeDigest: text('scope_digest').notNull(),
+  /** 逻辑工作去重键（非空；成功后禁止自动再派发）。 */
+  workKey: text('work_key').notNull(),
+  /** 同工作派发序号（≥1；失败重试递增，不退还计数）。 */
+  dispatchOrdinal: integer('dispatch_ordinal').notNull().default(1),
+  /** Run 尝试上限（派发时从预算契约冻结；≥1）。 */
+  maxAttemptsPerRun: integer('max_attempts_per_run').notNull(),
+  /** Run 时间上限毫秒（派发时冻结；≥1）。 */
+  runTimeLimitMs: integer('run_time_limit_ms').notNull(),
+  /** 累计创建 Attempt 数（非负）。 */
+  attemptsCreated: integer('attempts_created').notNull().default(0),
+  /** 原因说明（可空）。 */
+  reason: text('reason'),
+  /** 时间依据：开始时间（UTC 毫秒；设定后不可改，runTimeLimitMs 从此计）。 */
+  startedAt: integer('started_at'),
+  /** 收尾时间（UTC 毫秒；可空）。 */
+  endedAt: integer('ended_at'),
+}, (table) => [
+  check('runs_revision_positive_check', sql`${table.revision} >= 1`),
+  check('runs_purpose_not_empty_check', sql`length(${table.purpose}) > 0`),
+  check(
+    'runs_input_snapshot_json_check',
+    sql`json_valid(${table.inputSnapshot}) AND json_type(${table.inputSnapshot}) = 'object'`,
+  ),
+  check(
+    'runs_config_snapshot_json_check',
+    sql`json_valid(${table.configSnapshot}) AND json_type(${table.configSnapshot}) = 'object'`,
+  ),
+  check(
+    'runs_status_enum_check',
+    sql`${table.status} IN ('queued', 'running', 'pausing', 'paused', 'cancelling', 'cancelled', 'succeeded', 'failed', 'interrupted')`,
+  ),
+  check(
+    'runs_scope_digest_sha256_check',
+    sql`length(${table.scopeDigest}) = 64 AND ${table.scopeDigest} NOT GLOB '*[^0-9a-f]*'`,
+  ),
+  check('runs_work_key_not_empty_check', sql`length(${table.workKey}) > 0`),
+  check('runs_dispatch_ordinal_positive_check', sql`${table.dispatchOrdinal} >= 1`),
+  check('runs_max_attempts_per_run_positive_check', sql`${table.maxAttemptsPerRun} >= 1`),
+  check('runs_run_time_limit_ms_positive_check', sql`${table.runTimeLimitMs} >= 1`),
+  check('runs_attempts_created_non_negative_check', sql`${table.attemptsCreated} >= 0`),
+  check('runs_started_at_non_negative_check', sql`${table.startedAt} IS NULL OR ${table.startedAt} >= 0`),
+  check('runs_ended_at_non_negative_check', sql`${table.endedAt} IS NULL OR ${table.endedAt} >= 0`),
+  foreignKey({
+    name: 'runs_batch_same_project_fk',
+    columns: [table.projectId, table.batchId],
+    foreignColumns: [executionBatches.projectId, executionBatches.id],
+  }).onDelete('restrict'),
+  foreignKey({
+    name: 'runs_feature_same_project_fk',
+    columns: [table.projectId, table.featureId],
+    foreignColumns: [features.projectId, features.id],
+  }).onDelete('restrict'),
+  // 单 Feature 范围：Run 的 Feature 必须是父 Batch 的同一 Feature。
+  foreignKey({
+    name: 'runs_batch_feature_same_scope_fk',
+    columns: [table.batchId, table.featureId],
+    foreignColumns: [executionBatches.id, executionBatches.featureId],
+  }).onDelete('restrict'),
+  // 派发身份唯一（重复派发在 DDL 级被拒绝；失败重试以递增 dispatch_ordinal 表达）。
+  uniqueIndex('runs_dispatch_identity_unique').on(table.batchId, table.workKey, table.dispatchOrdinal),
+  // 同 Feature 有效活动 Run 唯一（paused/interrupted 不是可绕过的终态）。
+  uniqueIndex('runs_active_feature_unique')
+    .on(table.featureId)
+    .where(
+      sql`${table.status} IN ('queued', 'running', 'pausing', 'paused', 'cancelling', 'interrupted')`,
+    ),
+  index('runs_batch_id_status_index').on(table.batchId, table.status),
+]);
+
+/**
+ * P03-3 / F-002 批次预算修订记录（迁移 v9；core-design/11 §5 batch_budget_revisions）。
+ *
+ * - 关联同项目 Batch（复合外键）；修订身份 UNIQUE(batch_id,version)；保存操作者
+ *   （approved_by）、理由（reason）、预算（budget_snapshot）与时间（deadline_at +
+ *   created_at）；
+ * - 初始（version=1，随 Batch 创建落行）与历史快照为不可变证据行：UPDATE/DELETE
+ *   由迁移 v9 触发器拒绝——当前预算更新不覆盖任何历史版本；
+ * - 不建计划/配置业务版本表（设计 11 §3/§5 明确不建设范围）。
+ */
+export const batchBudgetRevisions = sqliteTable('batch_budget_revisions', {
+  id: text('id').primaryKey(),
+  createdAt: integer('created_at').notNull(),
+  projectId: text('project_id')
+    .notNull()
+    .references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  /** 修订记录插后不可变：revision 恒为 1（保留共同字段约定）。 */
+  revision: integer('revision').notNull().default(1),
+  updatedAt: integer('updated_at').notNull(),
+  /** 所属批次（同项目复合外键）。 */
+  batchId: text('batch_id')
+    .notNull()
+    .references((): SQLiteColumn => executionBatches.id, { onDelete: 'restrict' }),
+  /** 预算修订身份（≥1；UNIQUE(batch_id,version)）。 */
+  version: integer('version').notNull(),
+  /** 该版本批准的预算内容（JSON 对象；与 ports/execution-budget 契约同形）。 */
+  budgetSnapshot: text('budget_snapshot').notNull(),
+  /** 该版本批准的绝对截止时间（UTC 毫秒；≥1）。 */
+  deadlineAt: integer('deadline_at').notNull(),
+  /** 预算批准人（可信主体；请求不能伪造）。 */
+  approvedBy: text('approved_by').notNull(),
+  /** 修订理由（非空；增额/延期必须显式说明）。 */
+  reason: text('reason').notNull(),
+}, (table) => [
+  check('batch_budget_revisions_revision_positive_check', sql`${table.revision} >= 1`),
+  check('batch_budget_revisions_version_positive_check', sql`${table.version} >= 1`),
+  check(
+    'batch_budget_revisions_budget_snapshot_json_check',
+    sql`json_valid(${table.budgetSnapshot}) AND json_type(${table.budgetSnapshot}) = 'object'`,
+  ),
+  check('batch_budget_revisions_deadline_at_positive_check', sql`${table.deadlineAt} >= 1`),
+  check('batch_budget_revisions_approved_by_not_empty_check', sql`length(${table.approvedBy}) > 0`),
+  check('batch_budget_revisions_reason_not_empty_check', sql`length(${table.reason}) > 0`),
+  foreignKey({
+    name: 'batch_budget_revisions_batch_same_project_fk',
+    columns: [table.projectId, table.batchId],
+    foreignColumns: [executionBatches.projectId, executionBatches.id],
+  }).onDelete('restrict'),
+  // 修订身份唯一：同 Batch 同版本至多一条历史快照。
+  uniqueIndex('batch_budget_revisions_batch_version_unique').on(table.batchId, table.version),
 ]);
 
 export const schemaMigrations = sqliteTable('schema_migrations', {

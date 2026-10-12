@@ -568,8 +568,10 @@ describe('F-003 批准绑定当前适用检查政策身份', () => {
       checkPolicyDigest: EXPECTED_POLICY_DIGEST,
     });
     expect(validity.currentDecisionId).toBe(s.approvalsRows()[0]?.id);
-    // 批准不是启动授权：不创建任何执行实体。
-    expect(s.probe.tableExists('runs')).toBe(false);
+    // 批准不是启动授权：不创建任何执行实体（P03-3 / F-002 起执行域表已由迁移 v9
+    // 建立但为空；attempts 等后续表仍未建立）。
+    expect(s.probe.tableExists('runs')).toBe(true);
+    expect(s.probe.selectAll('SELECT COUNT(*) AS n FROM runs')).toEqual([{ n: 0 }]);
     expect(s.probe.tableExists('attempts')).toBe(false);
   });
 
@@ -1023,8 +1025,9 @@ describe('F-003 迁移 v8（approvals.check_policy_digest）', () => {
 
       const result = await migrateSqliteStorage(session, { nowUtcMs: () => NOW + 1_000 });
       expect(result.fromVersion).toBe(7);
-      expect(result.toVersion).toBe(8);
-      expect(result.appliedVersions).toEqual([8]);
+      // P03-3 / F-002 起接续 v9（执行域三表；v8 仍为检查政策身份绑定迁移）。
+      expect(result.toVersion).toBe(9);
+      expect(result.appliedVersions).toEqual([8, 9]);
 
       // 既有决策行逐字段保留；check_policy_digest 为 NULL（不等于任何当前身份）。
       const row = session.database

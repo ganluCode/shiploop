@@ -662,8 +662,14 @@ describe('F-006 当前配置检查组（P01-FR2-CONFIG）', () => {
         path: join(fixture.dataRoot, DATABASE_FILE_NAME),
       });
       let tables: string[] = [];
+      let executionRowCounts: Record<string, number> = {};
       try {
         tables = listUserTables(rawSession);
+        for (const table of ['execution_batches', 'runs', 'batch_budget_revisions']) {
+          executionRowCounts[table] = (
+            rawSession.database.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }
+          ).n;
+        }
       } finally {
         rawSession.close();
       }
@@ -690,18 +696,27 @@ describe('F-006 当前配置检查组（P01-FR2-CONFIG）', () => {
           'task_dependencies',
           // P03-2 / F-002：审批决策记录表（迁移 v7；记录表，无执行实体）。
           'approvals',
+          // P03-3 / F-002：单 Feature 执行域三表（迁移 v9；空表，无执行实体行）。
+          'execution_batches',
+          'runs',
+          'batch_budget_revisions',
         ].sort(),
       );
       for (const forbidden of [
         'attempts',
         'batches',
-        'runs',
         'sessions',
         'works',
         'feature_dependencies',
       ]) {
         expect(tables).not.toContain(forbidden);
       }
+      // P01 子集边界不创建执行实体：执行域表为迁移 v9 建立的空表。
+      expect(executionRowCounts).toEqual({
+        execution_batches: 0,
+        runs: 0,
+        batch_budget_revisions: 0,
+      });
 
       const ref = fixture.writeEvidence(
         'config-and-tags/p01-subset-boundary.json',
@@ -711,7 +726,10 @@ describe('F-006 当前配置检查组（P01-FR2-CONFIG）', () => {
             status: 'pass',
             scenario: 'p01_subset_boundary',
             storage_tables: tables,
-            execution_tables_present: false,
+            // P03-3 / F-002 起执行域表随迁移 v9 建立（空表）；P01 子集边界仍是
+            // 无执行实体行（accepted/queued 不等于执行已发生）。
+            execution_tables_present: true,
+            execution_entity_rows_present: false,
             strategy_copy_tables_present: false,
             configured_but_not_executable: true,
             p01_subset: P01_SUBSET,
@@ -728,7 +746,8 @@ describe('F-006 当前配置检查组（P01-FR2-CONFIG）', () => {
         outsideBefore,
       );
       expect(parsed[0]?.scenario).toBe('p01_subset_boundary');
-      expect(parsed[0]?.execution_tables_present).toBe(false);
+      expect(parsed[0]?.execution_tables_present).toBe(true);
+      expect(parsed[0]?.execution_entity_rows_present).toBe(false);
       expect(parsed[0]?.strategy_copy_tables_present).toBe(false);
       expect(parsed[0]?.configured_but_not_executable).toBe(true);
     });

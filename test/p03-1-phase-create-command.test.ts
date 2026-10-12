@@ -467,9 +467,12 @@ describe('F-004 phase.create 创建闭环', () => {
       baselineOperations: 0,
       baselineCheckResults: 0,
     });
-    // 执行域表（Batch/Run/Attempt）尚未建立；计划导入/执行不在本 Feature。
-    expect(s.probe.tableExists('runs')).toBe(false);
+    // 执行域表由 P03-3 / F-002 迁移 v9 建立但为空；本命令不创建执行实体
+    // （attempts 等后续表仍未建立；计划导入/执行不在本 Feature）。
+    expect(s.probe.tableExists('runs')).toBe(true);
+    expect(s.probe.selectAll('SELECT COUNT(*) AS n FROM runs')).toEqual([{ n: 0 }]);
     expect(s.probe.tableExists('attempts')).toBe(false);
-    expect(s.probe.tableExists('execution_batches')).toBe(false);
+    expect(s.probe.tableExists('execution_batches')).toBe(true);
+    expect(s.probe.selectAll('SELECT COUNT(*) AS n FROM execution_batches')).toEqual([{ n: 0 }]);
   });
 });

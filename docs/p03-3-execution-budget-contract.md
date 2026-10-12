@@ -14,6 +14,9 @@
   p03-2 审批/策略编辑/固定输入）。**已在当前分支实际核对**：
   - 迁移版本：`packages/core/src/adapters/sqlite/migrations.ts` 存在 v1..v8（v6 计划域、
     v7 审批、v8 `approvals.check_policy_digest`），与 p03-2 F-009 交接一致；
+    P03-3 / F-002 接续：追加迁移 v9（单 Feature 执行域三表 `execution_batches`/
+    `runs`/`batch_budget_revisions`，见 `docs/p03-3-execution-schema-contract.md`），
+    历史 v1..v8 checksum 不变；
   - 实际代码：`feature-plan-import` / `feature-plan-decide` / `feature-plan-revise` /
     `plan-approval-verification` / `task-strategy-update` / `execution-input-prepare` 均在
     `application/` 落地，命令面经 `command-service` 接线；

@@ -288,8 +288,8 @@ function listPublicEvents(harness: Harness) {
 // ---------------------------------------------------------------------------
 
 describe('F-007 迁移 v4：基线作用域四表', () => {
-  it('迁移版本接 v3 之后为 v4/v5（P03-1 / F-002 起继认 v6 计划结构四表；P03-2 / F-002 起继认 v7 approvals 决策记录表、F-003 起继认 v8 检查政策身份绑定），checksum 与 SQL 内容一致', () => {
-    expect(SQLITE_MIGRATIONS.map((migration) => migration.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+  it('迁移版本接 v3 之后为 v4/v5（P03-1 / F-002 起继认 v6 计划结构四表；P03-2 / F-002 起继认 v7 approvals 决策记录表、F-003 起继认 v8 检查政策身份绑定；P03-3 / F-002 起继认 v9 单 Feature 执行域三表），checksum 与 SQL 内容一致', () => {
+    expect(SQLITE_MIGRATIONS.map((migration) => migration.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
     const v4 = SQLITE_MIGRATIONS[3]!;
     expect(v4.sql).toContain('CREATE TABLE baseline_authorizations');
     expect(v4.sql).toContain('CREATE TABLE baseline_operations');
@@ -311,14 +311,19 @@ describe('F-007 迁移 v4：基线作用域四表', () => {
     // （增列 + 决策身份复合唯一索引重建，不重建表）。
     expect(SQLITE_MIGRATIONS[7]!.sql).toContain('ALTER TABLE approvals ADD COLUMN check_policy_digest');
     expect(SQLITE_MIGRATIONS[7]!.sql).not.toContain('CREATE TABLE');
+    // P03-3 / F-002 / 迁移 v9：单 Feature 执行域三表（同守护归属，详见
+    // test/p03-3-execution-schema.test.ts）。
+    expect(SQLITE_MIGRATIONS[8]!.sql).toContain('CREATE TABLE execution_batches');
+    expect(SQLITE_MIGRATIONS[8]!.sql).toContain('CREATE TABLE runs');
+    expect(SQLITE_MIGRATIONS[8]!.sql).toContain('CREATE TABLE batch_budget_revisions');
   });
 
-  it('空库迁移建立基线四表；执行/Chat/验证表仍不建立（P03-1 / F-002 计划结构四表与 P03-2 / F-002 approvals 表除外）', async () => {
+  it('空库迁移建立基线四表；完整 Attempt/Session/验证表仍不建立（计划结构四表、approvals 与 P03-3 / F-002 执行域三表除外）', async () => {
     const sandbox = createTempSandbox('shiploop-f007-mig-empty-');
     const session = openSqliteStorageSession({ path: join(sandbox.path, 'state.db') });
     try {
       const result = await migrateSqliteStorage(session, { nowUtcMs: () => NOW_MS });
-      expect(result.appliedVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+      expect(result.appliedVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
       const tables = session.database
         .prepare<[], { name: string }>(
           "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
@@ -334,10 +339,9 @@ describe('F-007 迁移 v4：基线作用域四表', () => {
         expect(tables).toContain(table);
       }
       for (const forbidden of [
-        'runs',
+        // P03-3 / F-002 起 runs/execution_batches 为正式空表（不代表创建执行实体）。
         'attempts',
         'feature_dependencies',
-        'execution_batches',
         'sessions',
         'chat_turns',
         'check_definitions',
@@ -390,7 +394,7 @@ describe('F-007 迁移 v4：基线作用域四表', () => {
     try {
       const result = await migrateSqliteStorage(session, { nowUtcMs: () => NOW_MS + 1 });
       expect(result.fromVersion).toBe(3);
-      expect(result.appliedVersions).toEqual([4, 5, 6, 7, 8]);
+      expect(result.appliedVersions).toEqual([4, 5, 6, 7, 8, 9]);
       // 前序数据逐字段保留（项目 A + 其绑定；回执；事件 sequence）。
       expect(session.database.prepare('SELECT COUNT(*) AS c FROM projects').get()).toMatchObject({ c: 1 });
       expect(session.database.prepare('SELECT COUNT(*) AS c FROM command_receipts').get()).toMatchObject({

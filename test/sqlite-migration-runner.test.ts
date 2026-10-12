@@ -193,13 +193,16 @@ describe('F-005 迁移执行与记录', () => {
           'baseline_check_results',
           'baseline_occupancy',
           'baseline_operations',
+          'batch_budget_revisions',
           'command_receipts',
+          'execution_batches',
           'features',
           'global_settings',
           'phases',
           'project_settings',
           'projects',
           'repository_bindings',
+          'runs',
           'schema_migrations',
           'state_events',
           'task_dependencies',
@@ -270,7 +273,8 @@ describe('F-005 迁移执行与记录', () => {
         // （accepted + operation_id）；P03-1 / F-002：v6 为真实计划结构四表迁移
         // （phases/features/tasks/task_dependencies）；P03-2 / F-002：v7 为真实
         // 计划决策记录表迁移（approvals）；P03-2 / F-003：v8 为检查政策身份绑定
-        // （approvals.check_policy_digest）；探针迁移紧随其后。
+        // （approvals.check_policy_digest）；P03-3 / F-002：v9 为单 Feature 执行域
+        // 三表迁移（execution_batches/runs/batch_budget_revisions）；探针迁移紧随其后。
         expect(rows[2]!.version).toBe(3);
         expect(rows[2]!.checksum).toBe(SQLITE_MIGRATIONS[2]!.checksum);
         expect(rows[3]!.version).toBe(4);
@@ -283,9 +287,11 @@ describe('F-005 迁移执行与记录', () => {
         expect(rows[6]!.checksum).toBe(SQLITE_MIGRATIONS[6]!.checksum);
         expect(rows[7]!.version).toBe(8);
         expect(rows[7]!.checksum).toBe(SQLITE_MIGRATIONS[7]!.checksum);
-        expect(rows[8]!.version).toBe(PROBE_MIGRATION.version);
-        expect(rows[8]!.checksum).toBe(PROBE_MIGRATION.checksum);
-        expect(rows[8]!.applied_at).toBe(FIXED_NOW_MS + 1_000);
+        expect(rows[8]!.version).toBe(9);
+        expect(rows[8]!.checksum).toBe(SQLITE_MIGRATIONS[8]!.checksum);
+        expect(rows[9]!.version).toBe(PROBE_MIGRATION.version);
+        expect(rows[9]!.checksum).toBe(PROBE_MIGRATION.checksum);
+        expect(rows[9]!.applied_at).toBe(FIXED_NOW_MS + 1_000);
       } finally {
         session.close();
       }

@@ -45,11 +45,13 @@ function readContractDoc(): string {
 }
 
 describe('P03-3 / F-001 执行预算契约文档', () => {
-  it('前序核对记录与仓库事实一致：迁移到 v8、main 基线 0e76ad8、未重建计划导入/审批', () => {
+  it('前序核对记录与仓库事实一致：迁移到 v8（F-002 接续 v9）、main 基线 0e76ad8、未重建计划导入/审批', () => {
     const doc = readContractDoc();
-    const latestVersion = SQLITE_MIGRATIONS.reduce((max, migration) => Math.max(max, migration.version), 0);
-    expect(latestVersion).toBe(8);
+    const versions = SQLITE_MIGRATIONS.map((migration) => migration.version);
+    // §1 开工事实为 v1..v8（原文保留）；P03-3 / F-002 接续 v9 并在 §1 登记。
+    expect(versions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
     expect(doc).toContain('v1..v8');
+    expect(doc).toContain('v9');
     expect(doc).toContain('0e76ad8');
     expect(doc).toContain('不重建计划导入\n  或审批');
     expect(doc).toContain('前序未缺失、未发现契约冲突');

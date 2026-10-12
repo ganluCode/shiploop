@@ -486,8 +486,11 @@ describe('F-006 正常制品组（视图捕获 → 组装发布 → 最终重核
       aggregate: { type: 'task', id: 't-2' },
       payload: { prepared: true },
     });
-    // P03-2 存储边界：不创建 Batch/Run/Attempt 等执行实体表。
-    for (const table of ['runs', 'attempts', 'batches', 'sessions']) {
+    // P03-2 存储边界：不创建 Batch/Run/Attempt 等执行实体（P03-3 / F-002 起
+    // runs 表由迁移 v9 建立但为空；attempts/batches/sessions 等后续表仍未建立）。
+    expect(s.probe.tableExists('runs')).toBe(true);
+    expect(s.probe.selectAll('SELECT COUNT(*) AS n FROM runs')).toEqual([{ n: 0 }]);
+    for (const table of ['attempts', 'batches', 'sessions']) {
       expect(s.probe.tableExists(table)).toBe(false);
     }
   });
