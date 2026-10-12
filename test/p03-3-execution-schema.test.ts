@@ -32,7 +32,7 @@ import { isStorageError } from '../packages/core/src/ports/errors.ts';
 import type { SettingsPayload } from '../packages/core/src/ports/settings-schema.ts';
 import type { AtomicCommandStore } from '../packages/core/src/ports/atomic-commands.ts';
 import { SQLITE_MIGRATIONS } from '../packages/core/src/adapters/sqlite/migrations.ts';
-import { migrateSqliteStorage, SqliteMigrationError } from '../packages/core/src/adapters/sqlite/migrator.ts';
+import { migrateSqliteStorage as migrateDeclaredSqliteStorage, SqliteMigrationError } from '../packages/core/src/adapters/sqlite/migrator.ts';
 import { openSqliteStorageSession } from '../packages/core/src/adapters/sqlite/session.ts';
 import type { SqliteStorageSession } from '../packages/core/src/adapters/sqlite/session.ts';
 import { createSqliteStateStore } from '../packages/core/src/adapters/sqlite/state-store.ts';
@@ -43,6 +43,13 @@ const NOW_MS = 1_700_800_000_000;
 const VALID_SHA256 = 'ab'.repeat(32);
 /** 形态合法但不存在的稳定 ID（走外键失败而非格式校验路径）。 */
 const MISSING_ID = 'missing-parent-0f8';
+const V9_MIGRATIONS = SQLITE_MIGRATIONS.slice(0, 9);
+
+// Historical F-002 contract: later migrations must not change this suite's target.
+function migrateSqliteStorage(session: SqliteStorageSession,
+  options: Parameters<typeof migrateDeclaredSqliteStorage>[1] = {}) {
+  return migrateDeclaredSqliteStorage(session, { migrations: V9_MIGRATIONS, ...options });
+}
 
 /** F-002 Payload Schema 的最小合法配置（真实 P02 v5 库种子）。 */
 const PAYLOAD: SettingsPayload = {
@@ -451,7 +458,7 @@ async function withExecutionHarness(
 
 describe('F-002 迁移 v9：单 Feature 执行三表', () => {
   it('历史 v1–v8 SQL/checksum 与开工冻结摘要一致，v9 为唯一新增追加版本', () => {
-    expect(SQLITE_MIGRATIONS.length).toBe(9);
+    expect(V9_MIGRATIONS.map((migration) => migration.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
     for (const [version, frozen] of Object.entries(FROZEN_V1_TO_V8_CHECKSUMS)) {
       const migration = SQLITE_MIGRATIONS[Number(version) - 1];
       expect(migration?.version, `v${version} 版本号`).toBe(Number(version));

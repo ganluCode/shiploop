@@ -520,7 +520,7 @@ export function authorizeReceiptScopeVisibility(
 /** 回执授权目标（持久回执行的应用侧最小形态；F-006 读取端口映射）。 */
 export interface ReceiptAuthorizationTarget {
   readonly principalId: string;
-  readonly operation: AppOperation;
+  readonly operation: AppOperation | 'execution.start';
   readonly scope: CommandScope;
 }
 
@@ -550,6 +550,12 @@ export function authorizeCommandReplay(
   operation: string,
 ): void {
   assertTrustedPrincipal(principal);
+  // Receipt-only extension: submitting/re-authorizing Work awaits its command capability.
+  if (receipt.operation === 'execution.start') {
+    throw new PublicError('unsupported', operation, undefined, {
+      details: { reason: 'work_command_not_wired' },
+    });
+  }
   requireCapability(principal, COMMAND_OPERATION_SPECS[receipt.operation].capability, operation);
   if (receipt.principalId !== principal.principalId) {
     receiptNotFound(operation);

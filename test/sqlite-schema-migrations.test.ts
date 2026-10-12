@@ -142,10 +142,11 @@ type TableInfoRow = {
   notnull: number;
   dflt_value: string | null;
   pk: number;
+  hidden: number;
 };
 
 function tableInfo(db: CoreDatabase, tableName: string): TableInfoRow[] {
-  return db.prepare<[], TableInfoRow>(`PRAGMA table_info(${tableName})`).all();
+  return db.prepare<[], TableInfoRow>(`PRAGMA table_xinfo(${tableName})`).all();
 }
 
 function tableDdl(db: CoreDatabase, tableName: string): string {
@@ -411,6 +412,7 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
             notNull: boolean;
             primary: boolean;
             hasDefault: boolean;
+            generated?: { mode?: string };
           }[]
         ).sort((a, b) => a.name.localeCompare(b.name));
         expect(
@@ -428,8 +430,11 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
               column.notNull ? 1 : 0,
             );
           }
+          expect(info?.hidden, `${tableName}.${column.name} 生成列模式必须一致`).toBe(
+            column.generated === undefined ? 0 : column.generated.mode === 'stored' ? 3 : 2,
+          );
           expect(info?.dflt_value !== null, `${tableName}.${column.name} 默认值存在性必须一致`).toBe(
-            column.hasDefault,
+            column.hasDefault && column.generated === undefined,
           );
         }
       }
@@ -499,7 +504,10 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
         'artifacts:(project_id)->projects.(id)',
         'state_events:(project_id)->projects.(id)',
         'command_receipts:(project_id)->projects.(id)',
-        'command_receipts:(operation_id)->baseline_operations.(id)',
+        'command_receipts:(baseline_operation_id)->baseline_operations.(id)',
+        'command_receipts:(project_id,baseline_operation_id)->baseline_operations.(project_id,id)',
+        'command_receipts:(project_id,batch_id)->execution_batches.(project_id,id)',
+        'command_receipts:(project_id,batch_id,run_id)->runs.(project_id,batch_id,id)',
         'baseline_authorizations:(project_id)->projects.(id)',
         'baseline_authorizations:(repository_binding_id)->repository_bindings.(id)',
         'baseline_authorizations:(project_id,repository_binding_id)->repository_bindings.(project_id,id)',

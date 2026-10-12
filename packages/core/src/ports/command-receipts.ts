@@ -36,6 +36,8 @@ import {
   RECEIPT_RESULT_MAX_BYTES,
   RESULT_REF_PREFIX,
   WIRE_MESSAGE_SCHEMA_VERSION,
+  WORK_ACCEPTED_SCHEMA_VERSION,
+  WORK_ACCEPTED_OPERATION,
   PublicError,
   isIsoUtcDateTime,
   isUuidV4,
@@ -193,6 +195,10 @@ export interface PersistedCommandReceiptRow {
   readonly status: string;
   /** F-008 / §5.3：accepted 回执的同事务操作身份；其余状态为 null。 */
   readonly operationId: string | null;
+  /** Missing only in pre-v10 pure mapping fixtures; legacy version defaults to v5. */
+  readonly receiptVersion?: number;
+  readonly batchId?: string | null;
+  readonly runId?: string | null;
   readonly result: unknown;
   readonly resultRef: string | null;
   readonly errorCode: string | null;
@@ -211,6 +217,9 @@ const PERSISTED_ROW_KEYS = [
   'requestDigest',
   'status',
   'operationId',
+  'receiptVersion',
+  'batchId',
+  'runId',
   'result',
   'resultRef',
   'errorCode',
@@ -332,6 +341,28 @@ export function mapPersistedCommandReceipt(
   }
   if (typeof row.operation !== 'string') {
     corrupt(operation, 'operation');
+  }
+  if (row.receiptVersion === WORK_ACCEPTED_SCHEMA_VERSION) {
+    if (row.result !== undefined || row.resultRef !== null || row.errorCode !== null ||
+        row.errorMessage !== null || row.errorDetails !== null ||
+        !isSafeNonNegativeInteger(row.issuedAtUtcMs) || !isSafeNonNegativeInteger(row.completedAtUtcMs)) {
+      corrupt(operation, 'association');
+    }
+    try {
+      return validateReceiptShape({
+        schemaVersion: row.receiptVersion, commandId: row.commandId, principalId: row.principalId,
+        operation: row.operation, scope: { kind: row.scopeKind, projectId: row.projectId },
+        requestDigest: row.requestDigest, status: row.status, operationId: row.operationId,
+        batchId: row.batchId, runId: row.runId, issuedAt: new Date(row.issuedAtUtcMs).toISOString(),
+        completedAt: new Date(row.completedAtUtcMs).toISOString(), replayed: false,
+      }, operation, 'persisted');
+    } catch {
+      corrupt(operation, 'association');
+    }
+  }
+  if ((row.receiptVersion !== undefined && row.receiptVersion !== WIRE_MESSAGE_SCHEMA_VERSION) ||
+      row.batchId != null || row.runId != null) {
+    corrupt(operation, 'association');
   }
   const spec = COMMAND_OPERATION_SPECS[row.operation as AppOperation];
   if (spec === undefined) {
@@ -491,9 +522,10 @@ function validateReceiptShape(
 ): CommandReceipt {
   const context: ValidationContext = { operation, entity: { type: 'command_receipt' } };
   const object = requirePlainObject(value, context, 'receipt');
-  rejectUnknownKeys(object, RECEIPT_KEYS, context, 'receipt');
+  const isWork = object.schemaVersion === WORK_ACCEPTED_SCHEMA_VERSION;
+  rejectUnknownKeys(object, isWork ? [...RECEIPT_KEYS, 'batchId', 'runId'] : RECEIPT_KEYS, context, 'receipt');
 
-  if (object.schemaVersion !== WIRE_MESSAGE_SCHEMA_VERSION) {
+  if (!isWork && object.schemaVersion !== WIRE_MESSAGE_SCHEMA_VERSION) {
     throw validationError(context, 'receipt.schemaVersion', `必须是 ${WIRE_MESSAGE_SCHEMA_VERSION}`);
   }
   if (!isUuidV4(object.commandId)) {
@@ -506,11 +538,12 @@ function validateReceiptShape(
     throw validationError(context, 'receipt.operation', '必须是命令名字符串');
   }
   const spec = COMMAND_OPERATION_SPECS[object.operation as AppOperation];
-  if (spec === undefined) {
-    throw validationError(context, 'receipt.operation', '未知操作');
+  const scopeKind = isWork && object.operation === WORK_ACCEPTED_OPERATION ? 'project' : (!isWork ? spec?.scopeKind : undefined);
+  if (scopeKind === undefined) {
+    throw validationError(context, 'receipt.operation', '未知操作或版本不匹配');
   }
   const operation_ = object.operation as AppOperation;
-  const scope = validateReceiptScope(object.scope, spec.scopeKind, context);
+  const scope = validateReceiptScope(object.scope, scopeKind, context);
   if (!isSha256Hex(object.requestDigest)) {
     throw validationError(context, 'receipt.requestDigest', '必须是 64 位小写十六进制 SHA-256');
   }
@@ -536,6 +569,19 @@ function validateReceiptShape(
     completedAt: object.completedAt,
     replayed: replayedRule === 'wire' ? (object.replayed as boolean) : false,
   } as const;
+
+  if (isWork) {
+    if (object.status !== 'accepted' || object.result !== undefined || object.resultRef !== undefined || object.error !== undefined) {
+      throw validationError(context, 'receipt.status', 'Work v6 仅支持 accepted，且不携带结果或错误');
+    }
+    if (!isUuidV4(object.batchId) || !isUuidV4(object.runId) || object.operationId !== object.batchId) {
+      throw validationError(context, 'receipt.association', 'Work accepted 必须携带 UUID Batch/Run 且 operationId = batchId');
+    }
+    return {
+      ...base, schemaVersion: WORK_ACCEPTED_SCHEMA_VERSION, operation: WORK_ACCEPTED_OPERATION,
+      status: 'accepted', operationId: object.batchId, batchId: object.batchId, runId: object.runId,
+    };
+  }
 
   if (object.status === 'completed') {
     if (object.error !== undefined) {
@@ -624,8 +670,8 @@ function validateReceiptShape(
  * 发生在任何 SQL 之前，不产生持久化副作用。
  *
  * `replayed` 是线上派生标记（不入库）：持久化输入必须 replayed=false，
- * 重放取回的回执再次入库属于调用方编程错误。P02-3 / F-008 起 accepted
- * 持久回执仅由 baseline.run（authorize）提交事务产生。
+ * 重放取回的回执再次入库属于调用方编程错误。accepted 包含既有 v5 baseline
+ * 关联与显式 v6 Work Batch/Run 关联；命令提交能力不随回执扩展启用。
  */
 export function validatePersistableCommandReceipt(
   value: unknown,
@@ -638,7 +684,8 @@ export function validatePersistableCommandReceipt(
  * 线上回执校验（F-013，§5.3/§11.2）：Host/HostClient 对接收到的回执 JSON 做
  * 完整运行时复核。与持久化校验同一组不变量，唯一差异是 `replayed` 只要求
  * 布尔（线上重放取回的回执 replayed=true 合法）。accepted 仅在携带同事务
- * operationId 且不带 result/resultRef/error 时合法（baseline.run authorize）。
+ * operationId 且不带 result/resultRef/error 时合法；v6 Work 额外携带
+ * batchId/runId 并要求 operationId = batchId，不放宽 v5 未知字段集合。
  *
  * 纯函数：不读时钟/文件系统/网络/数据库；校验失败抛
  * StorageError(kind='validation')（字段定位在 details.field），不回显输入值。

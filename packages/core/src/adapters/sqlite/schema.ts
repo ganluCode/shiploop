@@ -305,8 +305,14 @@ export const commandReceipts = sqliteTable('command_receipts', {
   requestDigest: text('request_digest').notNull(),
   /** 回执状态：completed/rejected；P02-3 / F-008 起含 accepted（迁移 v5）。 */
   status: text('status').notNull(),
-  /** accepted：同事务 baseline_operations 行身份（公开 operationId）；其余状态 NULL。 */
+  /** Public asynchronous operation identity; v5 baseline, v6 Work Batch. */
   operationId: text('operation_id'),
+  receiptVersion: integer('receipt_version').notNull().default(5),
+  baselineOperationId: text('baseline_operation_id').generatedAlwaysAs(
+    sql`CASE WHEN receipt_version = 5 THEN operation_id END`, { mode: 'stored' },
+  ),
+  batchId: text('batch_id'),
+  runId: text('run_id'),
   /** completed：有界业务结果 JSON（序列化 ≤ 16384 字节）。 */
   resultJson: text('result_json'),
   /** completed：不透明结果引用（v1.+43 字符 base64url；全库唯一）。 */
@@ -343,6 +349,10 @@ export const commandReceipts = sqliteTable('command_receipts', {
     sql`${table.status} <> 'accepted' OR (${table.operationId} IS NOT NULL AND ${table.resultJson} IS NULL AND ${table.resultRef} IS NULL AND ${table.errorCode} IS NULL)`,
   ),
   check(
+    'command_receipts_association_check',
+    sql`(${table.receiptVersion} = 5 AND ${table.batchId} IS NULL AND ${table.runId} IS NULL) OR (${table.receiptVersion} = 6 AND ${table.operation} = 'execution.start' AND ${table.status} = 'accepted' AND ${table.scopeKind} = 'project' AND ${table.batchId} IS NOT NULL AND ${table.runId} IS NOT NULL AND ${table.operationId} = ${table.batchId} AND ${table.errorMessage} IS NULL AND ${table.errorDetails} IS NULL)`,
+  ),
+  check(
     'command_receipts_digest_check',
     sql`length(${table.requestDigest}) = 64 AND ${table.requestDigest} NOT GLOB '*[^0-9a-f]*'`,
   ),
@@ -354,8 +364,23 @@ export const commandReceipts = sqliteTable('command_receipts', {
   // 惰性 extra-config 引用，避免模块定义顺序依赖）。
   foreignKey({
     name: 'command_receipts_operation_fk',
-    columns: [table.operationId],
+    columns: [table.baselineOperationId],
     foreignColumns: [baselineOperations.id],
+  }).onDelete('restrict'),
+  foreignKey({
+    name: 'command_receipts_baseline_same_project_fk',
+    columns: [table.projectId, table.baselineOperationId],
+    foreignColumns: [baselineOperations.projectId, baselineOperations.id],
+  }).onDelete('restrict'),
+  foreignKey({
+    name: 'command_receipts_work_batch_fk',
+    columns: [table.projectId, table.batchId],
+    foreignColumns: [executionBatches.projectId, executionBatches.id],
+  }).onDelete('restrict'),
+  foreignKey({
+    name: 'command_receipts_work_run_fk',
+    columns: [table.projectId, table.batchId, table.runId],
+    foreignColumns: [runs.projectId, runs.batchId, runs.id],
   }).onDelete('restrict'),
 ]);
 
@@ -1035,6 +1060,7 @@ export const runs = sqliteTable('runs', {
     foreignColumns: [executionBatches.id, executionBatches.featureId],
   }).onDelete('restrict'),
   // 派发身份唯一（重复派发在 DDL 级被拒绝；失败重试以递增 dispatch_ordinal 表达）。
+  uniqueIndex('runs_receipt_identity_unique').on(table.projectId, table.batchId, table.id),
   uniqueIndex('runs_dispatch_identity_unique').on(table.batchId, table.workKey, table.dispatchOrdinal),
   // 同 Feature 有效活动 Run 唯一（paused/interrupted 不是可绕过的终态）。
   uniqueIndex('runs_active_feature_unique')

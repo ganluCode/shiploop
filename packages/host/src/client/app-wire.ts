@@ -33,6 +33,7 @@ import {
   SETTINGS_SCHEMA_VERSION,
   STATE_EVENT_TYPE_SPECS,
   WIRE_MESSAGE_SCHEMA_VERSION,
+  WORK_ACCEPTED_SCHEMA_VERSION,
   EXECUTION_INPUT_GROUP_LOCATOR_PREFIX,
   EXECUTION_GROUP_JSON_MEDIA_TYPE,
   EXECUTION_GROUP_MANIFEST_PURPOSE,
@@ -186,11 +187,10 @@ export interface CommandReceiptExpectation {
 }
 
 /**
- * 校验线上回执并核对期望身份。schemaVersion ≠ 当前线消息版本 →
+ * 接受既有 v5 与显式 Work accepted v6；其他 schemaVersion →
  * unsupported_schema_version；其余形状/不变量违反与身份/摘要不符 →
- * response_malformed。accepted 回执（§5.3，P02-3 / F-008 起为 baseline.run
- * authorize 的合法线上状态）由 Core 校验器按不变量放行（仅携带
- * operationId），本层不另行禁止。
+ * response_malformed。Core 同时核验版本、操作和关联身份，不能用 v6
+ * 绕过 v5 回执的未知字段拒绝规则。握手能力与命令白名单不随本扩展变化。
  */
 export function validateCommandReceiptWire(
   value: unknown,
@@ -200,7 +200,9 @@ export function validateCommandReceiptWire(
   if (
     isPlainObject(value) &&
     typeof value.schemaVersion === 'number' &&
-    value.schemaVersion !== WIRE_MESSAGE_SCHEMA_VERSION
+    value.schemaVersion !== WIRE_MESSAGE_SCHEMA_VERSION &&
+    !(value.schemaVersion === WORK_ACCEPTED_SCHEMA_VERSION &&
+      value.operation === 'execution.start' && value.status === 'accepted')
   ) {
     unsupportedVersion(operation, 'schemaVersion');
   }

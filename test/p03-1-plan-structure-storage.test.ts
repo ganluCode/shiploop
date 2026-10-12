@@ -24,8 +24,8 @@ import type { StorageError } from '../packages/core/src/ports/errors.ts';
 import type { SettingsPayload } from '../packages/core/src/ports/settings-schema.ts';
 import type { ProjectRecord, StateStore } from '../packages/core/src/ports/state-store.ts';
 import type { AtomicCommandStore, CommandTransaction } from '../packages/core/src/ports/atomic-commands.ts';
-import { SQLITE_MIGRATIONS } from '../packages/core/src/adapters/sqlite/migrations.ts';
-import { migrateSqliteStorage, SqliteMigrationError } from '../packages/core/src/adapters/sqlite/migrator.ts';
+import { SQLITE_MIGRATIONS as DECLARED_SQLITE_MIGRATIONS } from '../packages/core/src/adapters/sqlite/migrations.ts';
+import { migrateSqliteStorage as migrateDeclaredSqliteStorage, SqliteMigrationError } from '../packages/core/src/adapters/sqlite/migrator.ts';
 import { openSqliteStorageSession } from '../packages/core/src/adapters/sqlite/session.ts';
 import type { SqliteStorageSession } from '../packages/core/src/adapters/sqlite/session.ts';
 import { createSqliteStateStore } from '../packages/core/src/adapters/sqlite/state-store.ts';
@@ -34,6 +34,12 @@ import { createTempSandbox } from './helpers/temp-sandbox.ts';
 
 const NOW_MS = 1_700_600_000_000;
 const VALID_SHA256 = 'ab'.repeat(32);
+// Historical migration snapshots include the v9 receipt columns, before v10 rebuilds them.
+const SQLITE_MIGRATIONS = DECLARED_SQLITE_MIGRATIONS.slice(0, 9);
+function migrateSqliteStorage(session: SqliteStorageSession,
+  options: Parameters<typeof migrateDeclaredSqliteStorage>[1] = {}) {
+  return migrateDeclaredSqliteStorage(session, { migrations: SQLITE_MIGRATIONS, ...options });
+}
 /** 形态合法但不存在的稳定 ID（走 not_found 而非格式校验路径）。 */
 const MISSING_ID = 'missing-entity-0f8';
 

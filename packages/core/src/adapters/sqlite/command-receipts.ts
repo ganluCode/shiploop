@@ -53,6 +53,9 @@ interface CommandReceiptSqlRow {
   readonly status: string;
   /** F-008 / 迁移 v5：accepted 回执的同事务操作身份；其余状态 NULL。 */
   readonly operation_id: string | null;
+  readonly receipt_version: number;
+  readonly batch_id: string | null;
+  readonly run_id: string | null;
   readonly result_json: string | null;
   readonly result_ref: string | null;
   readonly error_code: string | null;
@@ -64,7 +67,7 @@ interface CommandReceiptSqlRow {
 
 const SELECT_COLUMNS =
   'principal_id, command_id, scope_kind, project_id, operation, request_digest, status, ' +
-  'operation_id, result_json, result_ref, error_code, error_message, error_details, issued_at, completed_at';
+  'operation_id, receipt_version, batch_id, run_id, result_json, result_ref, error_code, error_message, error_details, issued_at, completed_at';
 
 /** better-sqlite3 约束冲突识别（SqliteError 带 code 字段）。 */
 function isSqliteConstraintError(error: unknown): error is Error & { code: string } {
@@ -128,6 +131,9 @@ export function createSqliteCommandReceiptAccess(
       requestDigest: row.request_digest,
       status: row.status,
       operationId: row.operation_id,
+      receiptVersion: row.receipt_version,
+      batchId: row.batch_id,
+      runId: row.run_id,
       // undefined 表示列 NULL：JSON.parse 永不产生 undefined，两种情形可区分。
       result:
         row.result_json === null
@@ -160,11 +166,22 @@ export function createSqliteCommandReceiptAccess(
     try {
       if (!session.database.inTransaction) throw new TypeError('回执写入必须位于写事务内');
       const db = session.database;
+      if (valid.status === 'accepted') {
+        const target = valid.schemaVersion === 6
+          ? db.prepare('SELECT id FROM runs WHERE project_id = ? AND batch_id = ? AND id = ?')
+              .get(valid.scope.kind === 'project' ? valid.scope.projectId : null, valid.batchId, valid.runId)
+          : db.prepare('SELECT id FROM baseline_operations WHERE project_id = ? AND id = ?')
+              .get(valid.scope.kind === 'project' ? valid.scope.projectId : null, valid.operationId);
+        if (target === undefined) {
+          throw validationError({ operation, entity: { type: 'command_receipt' } },
+            'receipt.association', '操作实体必须存在且 Batch/Run 与回执属于同一项目');
+        }
+      }
       db.prepare(
         'INSERT INTO command_receipts (id, created_at, revision, updated_at, principal_id, command_id, ' +
-          'scope_kind, project_id, operation, request_digest, status, operation_id, result_json, result_ref, ' +
+          'scope_kind, project_id, operation, request_digest, status, operation_id, receipt_version, batch_id, run_id, result_json, result_ref, ' +
           'error_code, error_message, error_details, issued_at, completed_at) ' +
-          'VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          'VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       ).run(
         randomUUID(),
         timestamp,
@@ -177,6 +194,9 @@ export function createSqliteCommandReceiptAccess(
         valid.requestDigest,
         valid.status,
         valid.status === 'accepted' ? valid.operationId : null,
+        valid.schemaVersion,
+        valid.status === 'accepted' && valid.schemaVersion === 6 ? valid.batchId : null,
+        valid.status === 'accepted' && valid.schemaVersion === 6 ? valid.runId : null,
         valid.status === 'completed' ? JSON.stringify(valid.result) : null,
         valid.status === 'completed' ? valid.resultRef : null,
         valid.status === 'rejected' ? valid.error.code : null,
@@ -201,6 +221,11 @@ export function createSqliteCommandReceiptAccess(
             '同一 principal 的 commandId 回执已存在（幂等键冲突），未重复写入',
             { entity: { type: 'command_receipt' }, details: { reason: 'duplicate_command_id' } },
           );
+        }
+        if (error.message.includes('command_receipts.operation_id')) {
+          throw new StorageError('conflict', operation, '操作身份已关联命令回执，未重复写入', {
+            entity: { type: 'command_receipt' }, details: { reason: 'duplicate_operation_id' },
+          });
         }
         if (
           error.message.includes('command_receipts.result_ref') ||

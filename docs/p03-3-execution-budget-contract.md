@@ -17,6 +17,8 @@
     P03-3 / F-002 接续：追加迁移 v9（单 Feature 执行域三表 `execution_batches`/
     `runs`/`batch_budget_revisions`，见 `docs/p03-3-execution-schema-contract.md`），
     历史 v1..v8 checksum 不变；
+    P03-3 / F-003 接续 v10：既有 accepted 回执扩展为真实 Batch/Run 关联，
+    历史 v1..v9 checksum 不变，见 `docs/p03-3-work-command-receipts-contract.md`；
   - 实际代码：`feature-plan-import` / `feature-plan-decide` / `feature-plan-revise` /
     `plan-approval-verification` / `task-strategy-update` / `execution-input-prepare` 均在
     `application/` 落地，命令面经 `command-service` 接线；

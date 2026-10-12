@@ -289,9 +289,11 @@ describe('F-005 迁移执行与记录', () => {
         expect(rows[7]!.checksum).toBe(SQLITE_MIGRATIONS[7]!.checksum);
         expect(rows[8]!.version).toBe(9);
         expect(rows[8]!.checksum).toBe(SQLITE_MIGRATIONS[8]!.checksum);
-        expect(rows[9]!.version).toBe(PROBE_MIGRATION.version);
-        expect(rows[9]!.checksum).toBe(PROBE_MIGRATION.checksum);
-        expect(rows[9]!.applied_at).toBe(FIXED_NOW_MS + 1_000);
+        expect(rows[9]!.version).toBe(10);
+        expect(rows[9]!.checksum).toBe(SQLITE_MIGRATIONS[9]!.checksum);
+        expect(rows[10]!.version).toBe(PROBE_MIGRATION.version);
+        expect(rows[10]!.checksum).toBe(PROBE_MIGRATION.checksum);
+        expect(rows[10]!.applied_at).toBe(FIXED_NOW_MS + 1_000);
       } finally {
         session.close();
       }

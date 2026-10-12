@@ -1414,17 +1414,30 @@ export interface RejectedCommandReceipt extends ReceiptCommon {
   readonly error: PublicErrorShape;
 }
 
-/**
- * P02-3 / F-008（§5.3 首次启用 accepted）：baseline.run（authorize）提交事务内
- * 持久化的异步回执；operationId 指向同事务写入的 baseline_operations 行，
- * 不携带 result/resultRef（结果尚未产生，§5.6）。
- */
-export interface AcceptedCommandReceipt extends ReceiptCommon {
+/** Receipt-only extension; command/envelope capabilities remain v5. */
+export const WORK_ACCEPTED_SCHEMA_VERSION = 6 as const;
+export const WORK_ACCEPTED_OPERATION = 'execution.start' as const;
+
+/** Legacy accepted receipt: operationId references a real baseline operation. */
+export interface BaselineAcceptedCommandReceipt extends ReceiptCommon {
   readonly status: 'accepted';
   readonly operationId: string;
 }
 
-/** 持久/在线回执判别联合：accepted 仅由 baseline.run authorize 产生。 */
+/** Receipt-only v6 extension; this does not advertise a new command capability. */
+export interface WorkAcceptedCommandReceipt extends Omit<ReceiptCommon, 'schemaVersion' | 'operation'> {
+  readonly schemaVersion: typeof WORK_ACCEPTED_SCHEMA_VERSION;
+  readonly operation: typeof WORK_ACCEPTED_OPERATION;
+  readonly status: 'accepted';
+  /** Work operation identity is the authorization Batch, never a synthetic baseline. */
+  readonly operationId: string;
+  readonly batchId: string;
+  readonly runId: string;
+}
+
+export type AcceptedCommandReceipt = BaselineAcceptedCommandReceipt | WorkAcceptedCommandReceipt;
+
+/** Persisted/wire union: legacy v5 receipts and explicit Work accepted v6 receipts. */
 export type CommandReceipt = CompletedCommandReceipt | RejectedCommandReceipt | AcceptedCommandReceipt;
 
 interface ReceiptInputBase {
@@ -1438,7 +1451,9 @@ interface ReceiptInputBase {
   readonly replayed?: boolean;
 }
 
-function assertReceiptIdentity(input: ReceiptInputBase): void {
+function assertReceiptIdentity(input: Omit<ReceiptInputBase, 'operation'> & {
+  readonly operation: AppOperation | typeof WORK_ACCEPTED_OPERATION;
+}, allowWork = false): void {
   if (!isUuidV4(input.commandId)) {
     throw new TypeError('回执身份字段不合法：commandId 必须是 UUID v4');
   }
@@ -1451,8 +1466,10 @@ function assertReceiptIdentity(input: ReceiptInputBase): void {
   if (!isIsoUtcDateTime(input.issuedAt) || !isIsoUtcDateTime(input.completedAt)) {
     throw new TypeError('issuedAt/completedAt 必须是 ISO UTC 时间');
   }
-  const spec = COMMAND_OPERATION_SPECS[input.operation];
-  if (spec.scopeKind !== input.scope.kind) {
+  const scopeKind = input.operation === WORK_ACCEPTED_OPERATION
+    ? (allowWork ? 'project' : undefined)
+    : COMMAND_OPERATION_SPECS[input.operation]?.scopeKind;
+  if (scopeKind === undefined || scopeKind !== input.scope.kind) {
     throw new TypeError(`scope 与操作 ${input.operation} 不匹配`);
   }
   if (input.scope.kind === 'project') {
@@ -1538,28 +1555,41 @@ export interface AcceptedReceiptInput extends ReceiptInputBase {
   readonly operationId: string;
 }
 
-/**
- * 构造 accepted 回执（§5.3 首次启用；仅 baseline.run authorize 提交事务）。
- * operationId 必须指向同事务已写入的操作行；不携带 result/resultRef。
- */
-export function createAcceptedReceipt(input: AcceptedReceiptInput): AcceptedCommandReceipt {
-  assertReceiptIdentity(input);
+export interface WorkAcceptedReceiptInput extends Omit<AcceptedReceiptInput, 'operation'> {
+  readonly operation: typeof WORK_ACCEPTED_OPERATION;
+  readonly batchId: string;
+  readonly runId: string;
+}
+
+/** Existing factory; v5 baseline identity or explicit v6 Work Batch/Run identity. */
+export function createAcceptedReceipt(input: AcceptedReceiptInput): BaselineAcceptedCommandReceipt;
+export function createAcceptedReceipt(input: WorkAcceptedReceiptInput): WorkAcceptedCommandReceipt;
+export function createAcceptedReceipt(input: AcceptedReceiptInput | WorkAcceptedReceiptInput): AcceptedCommandReceipt {
+  assertReceiptIdentity(input, true);
   if (!isUuidV4(input.operationId)) {
     throw new TypeError('accepted 回执的 operationId 必须是 UUID v4');
   }
-  return {
-    schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION,
+  const base = {
     commandId: input.commandId,
     principalId: input.principalId,
-    operation: input.operation,
     scope: input.scope,
     requestDigest: input.requestDigest,
-    status: 'accepted',
+    status: 'accepted' as const,
     operationId: input.operationId,
     issuedAt: input.issuedAt,
     completedAt: input.completedAt,
     replayed: input.replayed ?? false,
   };
+  if (input.operation === WORK_ACCEPTED_OPERATION) {
+    if (!isUuidV4(input.batchId) || !isUuidV4(input.runId) || input.operationId !== input.batchId) {
+      throw new TypeError('Work accepted requires UUID Batch/Run IDs and operationId = batchId');
+    }
+    return {
+      ...base, schemaVersion: WORK_ACCEPTED_SCHEMA_VERSION, operation: input.operation,
+      batchId: input.batchId, runId: input.runId,
+    };
+  }
+  return { ...base, schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION, operation: input.operation };
 }
 
 /* ------------------------------------------------------------------ *

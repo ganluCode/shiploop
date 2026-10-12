@@ -6,6 +6,10 @@
 守护测试：`test/p03-3-execution-schema.test.ts`、`test/sqlite-schema-migrations.test.ts`、
 `test/sqlite-migration-runner.test.ts`、`test/docs-p03-3-execution-schema-contract.test.ts`。
 
+F-003 接续登记：追加迁移 v10 扩展既有命令回执关联；历史 v1..v9 checksum 不变。
+Work 回执不虚建基线实体，使用真实 Batch/Run 外键；v9 历史升级测试继续固定到 v9。
+详见 [Work accepted 回执契约](p03-3-work-command-receipts-contract.md)。
+
 ## 1. 迁移接续（acceptance 1）
 
 - 从前序真实最新迁移 **v8** 继续追加 **v9**；历史 v1..v8（含 v1..v5 与已合入前序 v6/v7/v8）

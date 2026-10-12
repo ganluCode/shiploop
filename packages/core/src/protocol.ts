@@ -6,6 +6,7 @@
 export {
   isIsoUtcDateTime, isUuidV4, isValidResultRef, validateCommandEnvelope,
   WIRE_MESSAGE_SCHEMA_VERSION,
+  WORK_ACCEPTED_SCHEMA_VERSION,
 } from './ports/commands.js';
 export type { AppOperation, CommandReceipt, CommandScope } from './ports/commands.js';
 export {

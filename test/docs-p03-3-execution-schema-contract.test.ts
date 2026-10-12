@@ -22,7 +22,7 @@ describe('P03-3 / F-002 执行域 Schema 契约文档', () => {
   it('迁移接续与仓库事实一致：v1..v8 不变、v9 追加单 Feature 执行三表', () => {
     const doc = readContractDoc();
     const versions = SQLITE_MIGRATIONS.map((migration) => migration.version);
-    expect(versions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(versions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     const v9 = SQLITE_MIGRATIONS[8]!;
     for (const table of ['execution_batches', 'runs', 'batch_budget_revisions']) {
       expect(v9.sql, `v9 必须建立 ${table}`).toContain(`CREATE TABLE ${table} (`);
