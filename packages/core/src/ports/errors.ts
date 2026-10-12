@@ -36,7 +36,13 @@ export type StorageEntityType =
   /** P03-1 / F-002：阶段（phases，迁移 v6）。 */
   | 'phase'
   /** P03-1 / F-002：同 Feature 任务依赖边（task_dependencies，迁移 v6）。 */
-  | 'task_dependency';
+  | 'task_dependency'
+  /** P03-3 / F-002：单 Feature 执行批次（execution_batches，迁移 v9）。 */
+  | 'execution_batch'
+  /** P03-3 / F-002：执行 Run（runs，迁移 v9）。 */
+  | 'run'
+  /** P03-3 / F-002：批次预算修订记录（batch_budget_revisions，迁移 v9）。 */
+  | 'batch_budget_revision';
 
 export type StorageErrorKind =
   /** 外部输入未通过运行时校验（缺字段/类型错误/未知 schemaVersion/非法摘要等）。 */

@@ -50,6 +50,7 @@ import {
   FEATURE_PLAN_APPROVED_EVENT_TYPE,
   FEATURE_PLAN_REJECTED_EVENT_TYPE,
   EXECUTION_INPUT_PREPARED_EVENT_TYPE,
+  EXECUTION_RUN_DISPATCHED_EVENT_TYPE,
   createEventCursorBinding,
   createEventWatermark,
   decodeEventCursor,
@@ -123,7 +124,7 @@ describe('F-003 冻结事件封套版本与 §9.2 事件白名单（P02-2 六类
     expect(PUBLIC_EVENT_SCHEMA_VERSION).toBe(1);
   });
 
-  it('白名单冻结为六类 + 五类基线事件 + 七类计划事件且与既有事件常量同源', () => {
+  it('白名单冻结为六类 + 五类基线事件 + 七类计划事件 + 执行域事件且与既有事件常量同源', () => {
     expect([...PUBLIC_STATE_EVENT_TYPES]).toEqual([
       'project.registered',
       PROJECT_METADATA_UPDATED_EVENT_TYPE,
@@ -156,6 +157,9 @@ describe('F-003 冻结事件封套版本与 §9.2 事件白名单（P02-2 六类
       // P03-2 / F-006：执行输入制品组准备完成事件（聚合为目标 Task；准备输入
       // 不是启动执行，不携带制品正文/策略副本/执行语义）。
       EXECUTION_INPUT_PREPARED_EVENT_TYPE,
+      // P03-3 / F-005：执行 Run 派发事件（聚合为派发创建的 Run；派发不等于
+      // Runtime 已启动，不携带预算数值/计划正文/输入正文/启动语义）。
+      EXECUTION_RUN_DISPATCHED_EVENT_TYPE,
     ]);
     expect(PROJECT_METADATA_UPDATED_EVENT_TYPE).toBe('project.metadata_updated');
     expect(SETTINGS_GLOBAL_CREATED_EVENT_TYPE).toBe('settings.global_created');

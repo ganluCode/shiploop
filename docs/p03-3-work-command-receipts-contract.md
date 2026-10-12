@@ -44,9 +44,14 @@ query path; it does not implement execution preview, start, scheduling or Runtim
   fail with `response_malformed`. Older clients reject v6 instead of silently
   interpreting it as v5.
 - Envelope/wire handshake version, advertised capabilities and command operation
-  whitelist stay unchanged. Submitting `execution.start` remains unsupported;
-  replay reauthorization reports `unsupported` / `work_command_not_wired` until
-  the later controller task explicitly wires that capability.
+  whitelist stay unchanged except that the later controller task (P03-3 / F-005)
+  has since wired `execution.start` into `COMMAND_OPERATIONS`: replay
+  reauthorization now re-checks the `execution.start` capability (the interim
+  unsupported/work-not-wired rejection is retired), retry dispatches return v5
+  completed receipts for `execution.start`, and the completed/rejected factories
+  reject Work association fields (`batchId`/`runId`) — association identity
+  remains exclusive to Work accepted v6. See
+  [p03-3-execution-start-contract.md](p03-3-execution-start-contract.md).
 - Existing receipt queries use the trusted principal and project visibility
   policy. Corrupt persisted versions/associations fail with `corrupt_state`.
   No request-digest algorithm or authentication mechanism is replaced.

@@ -37,6 +37,7 @@ import {
   BASELINE_REASON_CODES,
 } from './baseline.js';
 import { isStorageError } from './errors.js';
+import { EXECUTION_RUN_DISPATCHED_EVENT_TYPE } from './execution-store.js';
 import {
   EXECUTION_INPUT_PREPARED_EVENT_TYPE,
   FEATURE_LABELS_UPDATED_EVENT_TYPE,
@@ -89,6 +90,8 @@ export { FEATURE_PLAN_APPROVED_EVENT_TYPE };
 export { FEATURE_PLAN_REJECTED_EVENT_TYPE };
 /** P03-2 / F-006：仅命令路径最终重核通过后写入（脱敏 payload 恒 {prepared:true}）。 */
 export { EXECUTION_INPUT_PREPARED_EVENT_TYPE };
+/** P03-3 / F-005：仅命令路径派发成功后写入（脱敏 payload 恒 {dispatched:true}）。 */
+export { EXECUTION_RUN_DISPATCHED_EVENT_TYPE };
 /** 仅命令路径全局配置首建成功写入（F-009 已实施；P01 直接服务首建不写事件）。 */
 export { SETTINGS_GLOBAL_CREATED_EVENT_TYPE };
 /** 仅命令路径项目配置首建成功写入（F-009 已实施；P01 直接服务首建不写事件）。 */
@@ -133,6 +136,10 @@ export const PUBLIC_STATE_EVENT_TYPES = [
   // P03-2 / F-006：执行输入制品组准备完成事件（聚合为目标 Task 自身；
   // payload 恒为 {prepared:true}，不携带制品正文/策略副本/执行语义）。
   EXECUTION_INPUT_PREPARED_EVENT_TYPE,
+  // P03-3 / F-005：执行 Run 派发事件（聚合为派发创建的 Run 自身；payload 恒为
+  // {dispatched:true}，不携带预算数值/计划正文/输入正文——派发不等于 Runtime
+  // 已启动，不伪造执行进度）。
+  EXECUTION_RUN_DISPATCHED_EVENT_TYPE,
 ] as const;
 
 export type PublicStateEventType = (typeof PUBLIC_STATE_EVENT_TYPES)[number];
@@ -153,7 +160,8 @@ type EventPayloadKind =
   | 'taskStrategyUpdated'
   | 'featurePlanApproved'
   | 'featurePlanRejected'
-  | 'executionInputPrepared';
+  | 'executionInputPrepared'
+  | 'executionRunDispatched';
 
 /** 每类事件冻结的 aggregate_type、scope 种类与 payload 形状。 */
 export interface StateEventTypeSpec {
@@ -288,6 +296,13 @@ export const STATE_EVENT_TYPE_SPECS: Readonly<
     aggregateType: 'task',
     scopeKind: 'project',
     payloadKind: 'executionInputPrepared',
+  }),
+  // P03-3 / F-005：执行 Run 派发事件（聚合为派发创建的 Run 自身；payload 恒为
+  // {dispatched:true}，不携带预算数值/计划正文/输入正文/启动语义）。
+  [EXECUTION_RUN_DISPATCHED_EVENT_TYPE]: Object.freeze({
+    aggregateType: 'run',
+    scopeKind: 'project',
+    payloadKind: 'executionRunDispatched',
   }),
 });
 
@@ -545,6 +560,18 @@ function validateExecutionInputPreparedPayload(
   return { prepared: true };
 }
 
+/** P03-3 / F-005：执行 Run 派发事件脱敏 payload（恒 {dispatched:true}，无预算数值/计划/输入/启动语义）。 */
+function validateExecutionRunDispatchedPayload(
+  payload: Record<string, unknown>,
+  operation: string,
+): Record<string, unknown> {
+  exactPayloadKeys(operation, payload, ['dispatched']);
+  if (payload.dispatched !== true) {
+    corrupt(operation, 'event_payload_violation');
+  }
+  return { dispatched: true };
+}
+
 function validateSummaryNameList(value: unknown): value is string[] {
   if (!Array.isArray(value) || value.length > SUMMARY_LIST_MAX_ENTRIES) {
     return false;
@@ -791,6 +818,8 @@ export function mapStateEvent(row: unknown, operation: string = EVENT_READ_OPERA
     payload = validateFeaturePlanRejectedPayload(row.payload, operation);
   } else if (spec.payloadKind === 'executionInputPrepared') {
     payload = validateExecutionInputPreparedPayload(row.payload, operation);
+  } else if (spec.payloadKind === 'executionRunDispatched') {
+    payload = validateExecutionRunDispatchedPayload(row.payload, operation);
   } else if (spec.payloadKind === 'changedFields') {
     payload = validateChangedFieldsPayload(row.payload, operation);
   } else if (spec.payloadKind === 'baselineAuthorized') {

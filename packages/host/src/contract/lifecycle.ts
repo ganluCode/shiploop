@@ -76,9 +76,13 @@ export const APPLICATION_COMMAND_CAPABILITIES = [
   // 接线（同一命令面；HostClient 入口 F-007，CLI 入口 F-008）。
   'execution.input.prepare',
   // P03-3 / F-004：单 Feature 执行 prepare 预览经既有 POST /v1/commands 通用
-  // 路由接线（同一命令面；只读预览不创建执行实体；HostClient/CLI 入口与
-  // execution.start 启动命令随后续任务接入；v5 内增量，升版随接线任务评估）。
+  // 路由接线（同一命令面；只读预览不创建执行实体；HostClient/CLI 入口随后续
+  // 任务接入；v5 内增量，升版随接线任务评估）。
   'execution.preview',
+  // P03-3 / F-005：显式执行启动经既有 POST /v1/commands 通用路由接线（同一
+  // 命令面；短写事务内重核并原子提交 Batch/Run/事件与 Work accepted v6 回执；
+  // HostClient/CLI 入口属 F-011/F-012；Run 保留 queued，不伪造已启动）。
+  'execution.start',
 ] as const;
 
 /** P02-2 §11.3：Host 实际接线的应用查询（含回执/结果读取与快照；P02-3 / F-006 新增静态接入两项；F-014 新增基线分页/详情/证据正文三项；P03-1 / F-009 新增计划层级/详情/DAG 六项；P03-2 / F-007 新增审批决策查询一项）。 */

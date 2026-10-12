@@ -1,6 +1,8 @@
 # P03-3 执行预览契约（F-004：单 Feature prepare 预览、固定授权范围与完整输入身份）
 
-状态：已实现（F-004 范围：只读预览；start 启动命令/Batch/Run 创建随 F-005、预算预占随 F-006/F-007、HostClient/CLI 入口随后续接线任务）。
+状态：已实现（F-004 范围：只读预览；start 启动命令/preview_stale 事务重核已在 F-005
+落地（见 [p03-3-execution-start-contract.md](p03-3-execution-start-contract.md)）；
+预算预占随 F-006/F-007、HostClient/CLI 入口随后续接线任务）。
 权威实现：`packages/core/src/ports/execution-preview.ts`（契约、状态/原因词汇与
 previewDigest 纯函数）、`packages/core/src/application/execution-preview.ts`（预览编排）、
 `packages/core/src/adapters/sqlite/plan-store.ts`（`readExecutionPreviewView` 一致读视图）、
@@ -127,7 +129,10 @@ JSON，键排序；任务/权限/输入按身份键稳定排序）。成分：
   扩大；活动 Run/活动 Batch 唯一由迁移 v9 条件唯一索引承担，预览提前以可理解
   原因呈现（启动仍以 DDL/事务为权威）。
 - core-design/09 T31（preview_stale/no_work 不静默扩大范围）：no_work 词汇落地；
-  preview_stale 判定随 F-005 启动事务实现（本任务提供身份基线 previewDigest）。
+  preview_stale 判定已随 F-005 启动事务实现（本任务提供身份基线 previewDigest）。
+- 与 F-005 的接续：同 Feature 存在活动 Batch（含重试窗口中的父 Batch）时新授权
+  预览必报 active_batch_in_phase blocked；同父 Batch 显式重试不重算预览，工作
+  身份由 workKey 绑定（见启动契约 §1/§4）。
 
 ## 8. 验证记录（F-004，attempt 1）
 

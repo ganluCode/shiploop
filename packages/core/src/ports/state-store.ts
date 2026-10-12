@@ -69,7 +69,8 @@ export const PROJECT_SETTINGS_CREATED_EVENT_TYPE = 'settings.project_created';
 /**
  * P01-3 已写入的聚合类型（设计 11 §9）：F-006 写 `project`，F-010 写
  * `global_settings`/`project_settings`，P03-1 / F-004 写 `phase`（计划域聚合，
- * 随迁移 v6 phases 表生效）。DDL 只要求非空，以便执行域表加入新聚合时
+ * 随迁移 v6 phases 表生效），P03-3 / F-005 写 `run`（执行域聚合，随迁移 v9
+ * runs 表生效）。DDL 只要求非空，以便执行域表加入新聚合时
  * 无需重建审计表；写入方仍由本契约限定取值。
  */
 export type StateEventAggregateType =
@@ -78,7 +79,8 @@ export type StateEventAggregateType =
   | 'project_settings'
   | 'phase'
   | 'feature'
-  | 'task';
+  | 'task'
+  | 'run';
 
 /** 项目生命周期（core-design/02 §生命周期：active→archiving→archived；删除自 archived 起经 deleting）。 */
 export type ProjectStatus = 'active' | 'archiving' | 'archived' | 'deleting';

@@ -58,6 +58,8 @@ import type { ExecutionInputPreparePort } from '../application/execution-input-p
 import { TRUSTED_PROJECT_PERMISSIONS_READER } from '../ports/execution-input-prepare.js';
 import { createExecutionPreviewService } from '../application/execution-preview.js';
 import type { ExecutionPreviewPort } from '../application/execution-preview.js';
+import { createExecutionStartService } from '../application/execution-start.js';
+import type { ExecutionStartPort } from '../ports/execution-start.js';
 import type { ArtifactFileStore } from '../ports/artifact-files.js';
 import type { ArtifactStore } from '../ports/artifact-store.js';
 import type { BaselineEnvironmentDirectory } from '../ports/baseline.js';
@@ -161,6 +163,13 @@ export interface CoreApplication {
    * commandService 的 execution.preview 接线同一能力）。
    */
   readonly executionPreview: ExecutionPreviewPort;
+  /**
+   * P03-3 / F-005：显式执行启动端口（事务外准备 + 短写事务内重核与原子提交；
+   * 命令面经 commandService 的 execution.start 接线同一能力；提交后唤醒与
+   * Scheduler/Runtime 装配属后续任务——本阶段 Run 保留 queued +
+   * scheduler_not_assembled 可查询原因，runtime_starts 恒为 0）。
+   */
+  readonly executionStart: ExecutionStartPort;
   readonly commandReceiptsService: CommandReceiptsService;
   /** F-010：授权查询/一致读视图快照水位/分页事件读取（§7/§8/§9.3）。 */
   readonly queryService: QueryService;
@@ -414,6 +423,15 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       permissions: TRUSTED_PROJECT_PERMISSIONS_READER,
       ...(nowUtcMs === undefined ? {} : { nowMs: nowUtcMs }),
     });
+    // P03-3 / F-005：显式执行启动服务（ExecutionController：事务外预算/范围/
+    // 预览重算 + 短写事务内重核与原子提交 Batch/Run/事件/回执；提交后唤醒与
+    // Scheduler/Runtime 装配属后续任务——不装配唤醒端口，Run 保留 queued +
+    // scheduler_not_assembled 可查询原因，不伪造已启动）。
+    const executionStart: ExecutionStartPort = createExecutionStartService({
+      preview: executionPreview,
+      permissions: TRUSTED_PROJECT_PERMISSIONS_READER,
+      ...(nowUtcMs === undefined ? {} : { nowMs: nowUtcMs }),
+    });
     const commandService = createCommandService({
       atomicStore,
       repositoryInspector,
@@ -422,6 +440,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       baselineService,
       executionInputPrepare,
       executionPreview,
+      executionStart,
       baselineCancel: {
         cancel: (principal, projectId, operationId) => {
           if (baselineExecutionServiceRef === undefined) {
@@ -497,6 +516,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       commandService,
       executionInputPrepare,
       executionPreview,
+      executionStart,
       queryService,
       onboardingService,
       baselineStore,

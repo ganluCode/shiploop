@@ -6,6 +6,7 @@
 import type { AtomicCommandStore, CommandTransaction } from '../../ports/atomic-commands.js';
 import { createSqliteBaselineAccess } from './baseline-store.js';
 import { createSqliteCommandReceiptAccess } from './command-receipts.js';
+import { createSqliteExecutionAccess } from './execution-store.js';
 import { createSqlitePlanAccess } from './plan-store.js';
 import type { SqliteStorageSession } from './session.js';
 import { createSqliteStateAccess } from './state-store.js';
@@ -19,6 +20,7 @@ export function createSqliteAtomicCommandStore(
   const receipts = createSqliteCommandReceiptAccess(session, options);
   const baseline = createSqliteBaselineAccess(session, options);
   const plan = createSqlitePlanAccess(session, options);
+  const executions = createSqliteExecutionAccess(session, options);
   return {
     findReceipt: receipts.findReceiptByCommandId,
     // F-009：配置命令一致性视图的事务外只读来源；写事务内调用是编程错误。
@@ -70,6 +72,8 @@ export function createSqliteAtomicCommandStore(
           heartbeatBaselineOccupancy: guarded(baseline.heartbeatBaselineOccupancyInTransaction),
           releaseBaselineOccupancy: guarded(baseline.releaseBaselineOccupancyInTransaction),
           appendBaselineEvent: guarded(baseline.appendBaselineEventInTransaction),
+          // P02-3 / F-013：全局占用只读快照（执行启动事务内重核基线占用）。
+          readBaselineOccupancy: guarded(baseline.readBaselineOccupancy),
           // P03-1 / F-002：计划结构原语（Phase/Feature/Task/依赖边插入；归属核验与
           // 环检测在同一事务内完成），同一 BEGIN IMMEDIATE 内原子生效。
           insertPhase: guarded(plan.insertPhaseInTransaction),
@@ -98,6 +102,16 @@ export function createSqliteAtomicCommandStore(
           updateFeaturePlanStatus: guarded(plan.updateFeaturePlanStatusInTransaction),
           // P03-2 / F-003：有效批准核验的事务内决策记录读取（同一权威视图）。
           listPlanApprovals: guarded(plan.listPlanApprovalsInTransaction),
+          // P03-3 / F-005：执行域原语（迁移 v9 三表；同事务原子生效）。
+          insertExecutionBatch: guarded(executions.insertExecutionBatchInTransaction),
+          insertBatchBudgetRevision: guarded(executions.insertBatchBudgetRevisionInTransaction),
+          getExecutionBatch: guarded(executions.getExecutionBatchInTransaction),
+          listExecutionRunsForWorkKey: guarded(executions.listExecutionRunsForWorkKeyInTransaction),
+          getActiveExecutionRun: guarded(executions.getActiveExecutionRunInTransaction),
+          getActivePhaseExecutionBatch: guarded(executions.getActivePhaseExecutionBatchInTransaction),
+          recordExecutionRunDispatch: guarded(executions.recordExecutionRunDispatchInTransaction),
+          insertExecutionRun: guarded(executions.insertExecutionRunInTransaction),
+          appendExecutionEvent: guarded(executions.appendExecutionEventInTransaction),
           saveReceipt: guarded(receipts.saveReceiptInTransaction),
         });
         try {

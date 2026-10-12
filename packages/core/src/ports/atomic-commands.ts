@@ -17,6 +17,11 @@ import type {
   BaselineOperationRecord,
 } from './baseline-store.js';
 import type {
+  BatchBudgetRevisionRecord,
+  ExecutionBatchRecord,
+  RunRecord,
+} from './execution-store.js';
+import type {
   FeaturePlanReplaceResult,
   FeaturePlanSnapshot,
   FeatureRecord,
@@ -97,6 +102,8 @@ export interface CommandTransaction {
   releaseBaselineOccupancy(operationId: string): BaselineOccupancySnapshot;
   /** §9.2 基线事件追加（payload 只含受控脱敏键；与公开白名单同形）。 */
   appendBaselineEvent(input: unknown): void;
+  /** §13 全局占用只读快照（同事务内重核基线在途/隔离占用；持久行是权威）。 */
+  readBaselineOccupancy(): BaselineOccupancySnapshot;
   /* ---------------------------------------------------------------- *
    * P03-1 / F-002 计划结构原语（迁移 v6 四表；同一事务内原子生效）
    *
@@ -203,6 +210,36 @@ export interface CommandTransaction {
    * 标题/Task，与决策记录/事件/回执同一事务提交。
    */
   updateFeaturePlanStatus(input: unknown): FeatureRecord;
+  /* ---------------------------------------------------------------- *
+   * P03-3 / F-005 执行域原语（迁移 v9 三表；同一 BEGIN IMMEDIATE 内原子生效）
+   *
+   * 输入一律 unknown，经 ports/execution-store.ts 校验器后才进入持久化；归属
+   * （同项目/同范围）与活动唯一在同一事务内核验，迁移 v9 复合外键/条件唯一
+   * 索引/不可变触发器作为防御纵深；快照只保存身份级内容（摘要/版本/引用），
+   * 绝不内联制品正文或绝对路径。
+   * ---------------------------------------------------------------- */
+  /** 创建单 Feature 执行批次（初始 queued、runsCreated ≥1、同 Phase 活动唯一）。 */
+  insertExecutionBatch(input: unknown): ExecutionBatchRecord;
+  /** 插入批次预算修订行（初始 version=1 随 Batch 同事务落行；插后不可变）。 */
+  insertBatchBudgetRevision(input: unknown): BatchBudgetRevisionRecord;
+  /** 读取目标 Batch（同项目；缺失 not_found、跨项目 ownership 抛出，零写入）。 */
+  getExecutionBatch(projectId: string, batchId: string): ExecutionBatchRecord;
+  /** 同 Batch 同 workKey 的全部 Run（按 dispatchOrdinal 升序；重派发判定输入）。 */
+  listExecutionRunsForWorkKey(
+    projectId: string,
+    batchId: string,
+    workKey: string,
+  ): readonly RunRecord[];
+  /** 同 Feature 当前活动 Run（条件唯一索引同源活动集；无则 null）。 */
+  getActiveExecutionRun(projectId: string, featureId: string): RunRecord | null;
+  /** 同 Phase 当前活动 Batch（条件唯一索引同源活动集；无则 null）。 */
+  getActivePhaseExecutionBatch(projectId: string, phaseId: string): ExecutionBatchRecord | null;
+  /** 派发计数原子递增（runs_created+1；仅非终态 Batch 命中，终态 conflict）。 */
+  recordExecutionRunDispatch(projectId: string, batchId: string): ExecutionBatchRecord;
+  /** 创建执行 Run（派发身份/上限冻结；同 Feature 活动 Run 唯一兜底）。 */
+  insertExecutionRun(input: unknown): RunRecord;
+  /** 执行域脱敏事件追加（execution.run.dispatched；与公开白名单同形）。 */
+  appendExecutionEvent(input: unknown): void;
   saveReceipt(receipt: unknown): void;
 }
 

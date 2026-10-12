@@ -284,6 +284,28 @@ function envelope(
           },
         },
       } as ValidatedCommandEnvelope;
+    case 'execution.start':
+      return {
+        ...base,
+        operation,
+        scope,
+        expectedRevision: null,
+        payload: {
+          featureIds: ['f-1'],
+          budget: {
+            batch: {
+              maxRuns: 1,
+              maxTotalAttempts: 3,
+              maxRuntimeStarts: 3,
+              maxNoProgressRuns: 1,
+              deadlineUtcMs: 1_900_000_000_000,
+            },
+            run: { maxAttemptsPerRun: 3, runTimeLimitMs: 3_600_000 },
+          },
+          previewDigest: 'ab'.repeat(32),
+          retryBatchId: null,
+        },
+      } as ValidatedCommandEnvelope;
   }
 }
 
@@ -311,6 +333,9 @@ const COMMANDS_MATRIX = [
   // P03-3 / F-004：单 Feature 执行 prepare 预览（project scope + execution.start；
   // 只读预览不携带 expectedRevision）。
   { operation: 'execution.preview', scope: { kind: 'project', projectId: PROJECT_A }, revision: null, capability: 'execution.start' },
+  // P03-3 / F-005：显式执行启动（project scope + execution.start；创建类不携带
+  // expectedRevision；与预览共享授权面）。
+  { operation: 'execution.start', scope: { kind: 'project', projectId: PROJECT_A }, revision: null, capability: 'execution.start' },
 ] as const;
 
 describe('F-005 TrustedPrincipal 产品构造与可信装配形状断言', () => {

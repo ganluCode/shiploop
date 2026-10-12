@@ -179,6 +179,8 @@ export interface SqliteBaselineAccess {
   ): BaselineOccupancySnapshot;
   releaseBaselineOccupancyInTransaction(operationId: string): BaselineOccupancySnapshot;
   appendBaselineEventInTransaction(input: unknown): void;
+  /** 全局占用只读快照（同事务内重核基线在途/隔离占用；持久行是权威）。 */
+  readBaselineOccupancy(): BaselineOccupancySnapshot;
 }
 
 export function createSqliteBaselineAccess(
@@ -942,5 +944,6 @@ export function createSqliteBaselineAccess(
     heartbeatBaselineOccupancyInTransaction,
     releaseBaselineOccupancyInTransaction,
     appendBaselineEventInTransaction,
+    readBaselineOccupancy,
   };
 }

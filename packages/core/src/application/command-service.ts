@@ -76,6 +76,13 @@ import type { PreparedExecutionInputGroup } from '../ports/execution-input-prepa
 import { EXECUTION_PREVIEW_OPERATION } from '../ports/execution-preview.js';
 import type { ExecutionPreviewPort } from './execution-preview.js';
 import type { ExecutionPreviewResult } from '../ports/execution-preview.js';
+import { EXECUTION_START_OPERATION } from '../ports/execution-start.js';
+import type {
+  ExecutionDispatchSignalPort,
+  ExecutionStartPort,
+  PreparedExecutionStart,
+} from '../ports/execution-start.js';
+import { signalRunDispatchAfterCommit } from './execution-start.js';
 import {
   TASK_STRATEGY_UPDATE_OPERATION,
   submitTaskStrategyUpdate,
@@ -129,6 +136,18 @@ export interface CommandServiceOptions {
    * unsupported，不冒充能力）。装配者：composition 根；受控测试可直接注入。
    */
   readonly executionPreview?: ExecutionPreviewPort;
+  /**
+   * P03-3 / F-005：显式执行启动端口（事务外有界输入核验与预览重算 + 短写事务
+   * 内重核与原子提交；不传则命令 unsupported，不冒充能力）。装配者：
+   * composition 根；受控测试可直接注入。
+   */
+  readonly executionStart?: ExecutionStartPort;
+  /**
+   * P03-3 / F-005：派发唤醒窄端口（仅写事务成功提交且非重放的新 Work accepted
+   * 后 best-effort 调用；失败吞掉，持久 queued Run 是权威；不传则 Run 保留
+   * queued + scheduler_not_assembled 可查询原因）。
+   */
+  readonly executionDispatchSignal?: ExecutionDispatchSignalPort;
   readonly nowUtcMs?: () => number;
 }
 
@@ -194,6 +213,8 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
   const taskStrategyEditGuards = options.taskStrategyEditGuards;
   const executionInputPrepare = options.executionInputPrepare;
   const executionPreview = options.executionPreview;
+  const executionStart = options.executionStart;
+  const executionDispatchSignal = options.executionDispatchSignal;
   const nowUtcMs = options.nowUtcMs ?? Date.now;
 
   /** 既有项目元数据 CAS：业务 + metadata_updated 事件 + 回执同一事务（F-007）。 */
@@ -552,6 +573,11 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
         if (envelope.operation === EXECUTION_PREVIEW_OPERATION && executionPreview === undefined) {
           throw new PublicError('unsupported', operation);
         }
+        // P03-3 / F-005：执行启动端口缺席时 unsupported（不冒充启动能力；
+        // 命令面能力位与预览共享授权面，端口装配是真实支持边界）。
+        if (envelope.operation === EXECUTION_START_OPERATION && executionStart === undefined) {
+          throw new PublicError('unsupported', operation);
+        }
         if (
           envelope.operation !== 'project.metadata.update' &&
           envelope.operation !== 'project.register' &&
@@ -566,6 +592,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           envelope.operation !== FEATURE_PLAN_DECIDE_OPERATION &&
           envelope.operation !== EXECUTION_INPUT_PREPARE_OPERATION &&
           envelope.operation !== EXECUTION_PREVIEW_OPERATION &&
+          envelope.operation !== EXECUTION_START_OPERATION &&
           !isSettingsEnvelope(envelope)
         ) {
           throw new PublicError('unsupported', operation);
@@ -655,7 +682,18 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           );
         }
 
-        return store.transact(operation, transaction => {
+        // P03-3 / F-005：显式执行启动的事务外准备（预算深校验 + 范围形态 +
+        // 只读预览重算；全部仓库/制品 I/O 在写事务之外、仅对新命令执行）；
+        // 短写事务内重核前置条件并原子提交 Batch/Run/事件/回执。
+        let executionStartPrepared: PreparedExecutionStart | undefined;
+        if (envelope.operation === EXECUTION_START_OPERATION && existing === undefined) {
+          executionStartPrepared = await executionStart!.prepareExecutionStart(
+            envelope.scope.projectId,
+            envelope.payload,
+          );
+        }
+
+        const receipt = store.transact(operation, transaction => {
           authorizeCommand(principal, envelope);
           const original = replay(
             principal,
@@ -873,6 +911,27 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
             transaction.saveReceipt(receipt);
             return receipt;
           }
+          if (envelope.operation === EXECUTION_START_OPERATION) {
+            // P03-3 / F-005：显式执行启动——事务外准备（预览重算/仓库 I/O）已在
+            // 上面完成；本事务内重核全部前置条件并原子提交 Batch/Run/初始预算
+            // 修订行/脱敏事件与 Work accepted v6 回执（任一失败整组回滚）。
+            if (executionStartPrepared === undefined) {
+              throw new TypeError('执行启动缺少事务外准备结果');
+            }
+            return executionStart!.submitExecutionStart(
+              {
+                principalId: principal.principalId,
+                commandId: envelope.commandId,
+                scope: envelope.scope,
+                requestDigest: digest,
+                issuedAt: envelope.issuedAt,
+              },
+              envelope,
+              transaction,
+              executionStartPrepared,
+              { schedulerAssembled: executionDispatchSignal !== undefined },
+            );
+          }
           if (isSettingsEnvelope(envelope)) {
             // 新配置命令必定已在事务外完成能力复检与一致性视图（重放已在上面返回）。
             if (settingsPlan === undefined) throw new TypeError('配置命令缺少事务外写入计划');
@@ -880,6 +939,17 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           }
           return submitMetadataUpdate(principal, envelope, digest, transaction, now);
         });
+        // P03-3 / F-005：提交后唤醒——仅写事务成功提交且非重放的新 Work accepted
+        // 时经窄端口 best-effort 发信号（事务失败在上方抛出，不会到达这里；
+        // 唤醒失败吞掉，持久 queued Run 是权威，不重复创建 Run）。
+        if (envelope.operation === EXECUTION_START_OPERATION) {
+          signalRunDispatchAfterCommit(
+            executionDispatchSignal,
+            receipt,
+            envelope.payload.featureIds[0] ?? '',
+          );
+        }
+        return receipt;
       } catch (error) {
         throw mapToPublicError(error, { operation });
       }

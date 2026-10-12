@@ -159,6 +159,12 @@ export const COMMAND_OPERATIONS = [
   // no_work 与阻塞原因；不创建 Batch/Run、不扣预算、不调用 Runtime；预算深
   // 校验在应用层经 ports/execution-budget 完成）。
   'execution.preview',
+  // P03-3 / F-005：显式执行启动（project scope + execution.start；创建类不
+  // 携带 expectedRevision；payload 冻结 featureIds/budget/previewDigest/
+  // retryBatchId?——事务外有界输入核验与只读预览重算，短写事务内重核项目
+  // active/Phase 可执行/批准依据/预览身份/活动执行与预算并原子提交
+  // Batch/Run/预算修订行/事件与 Work accepted v6 回执）。
+  'execution.start',
 ] as const;
 
 export type AppOperation = (typeof COMMAND_OPERATIONS)[number];
@@ -272,6 +278,7 @@ export const COMMAND_OPERATION_SPECS: Readonly<Record<AppOperation, CommandOpera
       mutation: 'create',
       capability: 'execution.start',
     },
+    'execution.start': { scopeKind: 'project', mutation: 'create', capability: 'execution.start' },
   });
 
 /* ------------------------------------------------------------------ *
@@ -627,6 +634,29 @@ export interface ValidatedExecutionPreviewPayload {
   readonly budget: Record<string, unknown>;
 }
 
+/**
+ * P03-3 / F-005 显式执行启动 payload：两种互斥形态。新授权形态 featureIds 固定
+ * 单成员（空范围/多成员结构化拒绝——启动必须携带明确目标），budget 为完整
+ * 有限预算提案（深校验在应用层复用 ports/execution-budget 权威校验器），
+ * previewDigest 为用户确认的预览摘要（服务端重算比对，漂移 preview_stale）；
+ * 同父 Batch 显式重试形态只携带 featureIds + retryBatchId（预算/预览摘要缺席：
+ * 重试共享父预算，工作身份由 workKey 绑定，不携带新授权依据）。严格未知键
+ * 拒绝：batchId/runId/status/runsCreated 等服务端决定字段一律不能经请求输入。
+ */
+export type ValidatedExecutionStartPayload =
+  | {
+      readonly featureIds: readonly string[];
+      readonly budget: Record<string, unknown>;
+      readonly previewDigest: string;
+      readonly retryBatchId: null;
+    }
+  | {
+      readonly featureIds: readonly string[];
+      readonly budget: null;
+      readonly previewDigest: null;
+      readonly retryBatchId: string;
+    };
+
 interface EnvelopeCommon {
   readonly schemaVersion: typeof WIRE_MESSAGE_SCHEMA_VERSION;
   readonly commandId: string;
@@ -756,6 +786,15 @@ export type ValidatedCommandEnvelope =
       readonly scope: { readonly kind: 'project'; readonly projectId: string };
       readonly expectedRevision: null;
       readonly payload: ValidatedExecutionPreviewPayload;
+    })
+  // P03-3 / F-005：显式执行启动命令信封（创建类禁止携带 expectedRevision；
+  // payload 冻结 featureIds/budget/previewDigest/retryBatchId?，预算深校验与
+  // 预览重算在应用层；Batch/Run/事件与 Work accepted v6 回执同一短写事务）。
+  | (EnvelopeCommon & {
+      readonly operation: 'execution.start';
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: null;
+      readonly payload: ValidatedExecutionStartPayload;
     });
 
 const ENVELOPE_KEYS = [
@@ -1153,6 +1192,68 @@ function validateExecutionPreviewPayload(
   return { featureIds, budget: object.budget as Record<string, unknown> };
 }
 
+const EXECUTION_START_PAYLOAD_KEYS = ['featureIds', 'budget', 'previewDigest', 'retryBatchId'] as const;
+
+/** previewDigest 形态：64 位小写十六进制 SHA-256（与预览结果同一摘要形态）。 */
+function validateExecutionStartPreviewDigest(
+  operation: AppOperation,
+  value: unknown,
+): string {
+  if (typeof value !== 'string' || !/^[0-9a-f]{64}$/.test(value)) {
+    fail(operation, 'invalid_input', 'payload.previewDigest',
+      '必须是 64 位小写十六进制的预览摘要（用户确认的 execution.preview 结果）', value);
+  }
+  return value;
+}
+
+function validateExecutionStartPayload(
+  operation: AppOperation,
+  raw: unknown,
+): ValidatedExecutionStartPayload {
+  const object = requireObject(operation, raw, 'payload');
+  // 严格未知键拒绝：batchId/runId/status/runsCreated 等服务端决定字段不能经
+  // 请求输入（身份由服务端派发并在同事务回执返回）。两种互斥形态：
+  // - 新授权：{ featureIds, budget, previewDigest }（retryBatchId 可显式 null）；
+  // - 同父 Batch 显式重试：{ featureIds, retryBatchId }（预算/预览摘要必须缺席
+  //   ——重试共享父预算，工作身份由 workKey 绑定，不携带新授权依据）。
+  const hasRetryBatchId =
+    Object.prototype.hasOwnProperty.call(object, 'retryBatchId') &&
+    object.retryBatchId !== undefined &&
+    object.retryBatchId !== null;
+  if (hasRetryBatchId) {
+    exactKeys(operation, object, ['featureIds', 'retryBatchId'], 'payload.');
+    if (typeof object.retryBatchId !== 'string' || !isUuidV4(object.retryBatchId)) {
+      fail(operation, 'invalid_input', 'payload.retryBatchId', '必须是 UUID v4（同父 Batch 显式重试）', object.retryBatchId);
+    }
+    // 复用预览面的 featureIds 校验（合成 budget 占位；仅取回 featureIds）。
+    const scope = validateExecutionPreviewPayload(operation, {
+      featureIds: object.featureIds,
+      budget: {},
+    });
+    return {
+      featureIds: scope.featureIds,
+      budget: null,
+      previewDigest: null,
+      retryBatchId: object.retryBatchId,
+    };
+  }
+  exactKeys(operation, object, EXECUTION_START_PAYLOAD_KEYS, 'payload.');
+  if (object.retryBatchId !== undefined && object.retryBatchId !== null) {
+    fail(operation, 'invalid_input', 'payload.retryBatchId', '必须是 UUID v4 或缺席/null', object.retryBatchId);
+  }
+  const scopeIds = validateExecutionPreviewPayload(operation, {
+    featureIds: object.featureIds,
+    budget: object.budget,
+  });
+  const previewDigest = validateExecutionStartPreviewDigest(operation, object.previewDigest);
+  return {
+    featureIds: scopeIds.featureIds,
+    budget: scopeIds.budget,
+    previewDigest,
+    retryBatchId: null,
+  };
+}
+
 function validateSettingsCommandPayload(
   operation: AppOperation,
   raw: unknown,
@@ -1378,6 +1479,18 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
       payload: validateExecutionPreviewPayload(operation, object.payload),
     };
   }
+  if (operation === 'execution.start') {
+    if (scope.kind !== 'project') {
+      fail(operation, 'invalid_input', 'scope.kind', 'scope 种类与操作不匹配');
+    }
+    return {
+      ...base,
+      operation,
+      scope,
+      expectedRevision: null,
+      payload: validateExecutionStartPayload(operation, object.payload),
+    };
+  }
   if (operation === 'settings.global.create') {
     return {
       ...base,
@@ -1569,9 +1682,11 @@ function assertReceiptIdentity(input: Omit<ReceiptInputBase, 'operation'> & {
   if (!isIsoUtcDateTime(input.issuedAt) || !isIsoUtcDateTime(input.completedAt)) {
     throw new TypeError('issuedAt/completedAt 必须是 ISO UTC 时间');
   }
-  const scopeKind = input.operation === WORK_ACCEPTED_OPERATION
-    ? (allowWork ? 'project' : undefined)
-    : COMMAND_OPERATION_SPECS[input.operation]?.scopeKind;
+  // P03-3 / F-005 起 'execution.start' 进入 COMMAND_OPERATION_SPECS：scope
+  // 判定统一从操作描述推导（Work accepted 专属 allowWork 分支退役；
+  // completed/rejected 的 execution.start 与其他 v5 回执同一 project scope 纪律）。
+  void allowWork;
+  const scopeKind = COMMAND_OPERATION_SPECS[input.operation]?.scopeKind;
   if (scopeKind === undefined || scopeKind !== input.scope.kind) {
     throw new TypeError(`scope 与操作 ${input.operation} 不匹配`);
   }
@@ -1605,9 +1720,21 @@ export interface CompletedReceiptInput extends ReceiptInputBase {
 /**
  * 构造 completed 回执（同步短事务命令提交即完成）。输入全部来自服务端可信
  * 提交边界，非法不变量是编程错误（TypeError），不构造成面向客户端的错误体。
+ * P03-3 / F-005：execution.start 的重试派发结果是合法 v5 completed 形态，
+ * 但 Work 关联字段（batchId/runId）仍仅限 Work accepted v6——completed/
+ * rejected 工厂携带即拒绝，防止关联身份经错误状态混入。
  */
+function assertNoWorkAssociation(input: object, factory: string): void {
+  if ('batchId' in input || 'runId' in input) {
+    throw new TypeError(
+      `${factory}: completed/rejected 不允许携带 Work 关联字段（Batch/Run 关联仅限 Work accepted v6）`,
+    );
+  }
+}
+
 export function createCompletedReceipt(input: CompletedReceiptInput): CompletedCommandReceipt {
   assertReceiptIdentity(input);
+  assertNoWorkAssociation(input, 'createCompletedReceipt');
   if (!isValidResultRef(input.resultRef)) {
     throw new TypeError('resultRef 形态非法');
   }
@@ -1635,6 +1762,7 @@ export interface RejectedReceiptInput extends ReceiptInputBase {
 /** 构造 rejected 回执：错误以脱敏 shape 固化，堆栈/cause 不进入回执。 */
 export function createRejectedReceipt(input: RejectedReceiptInput): RejectedCommandReceipt {
   assertReceiptIdentity(input);
+  assertNoWorkAssociation(input, 'createRejectedReceipt');
   if (!(input.error instanceof PublicError)) {
     throw new TypeError('rejected 回执必须携带 PublicError');
   }
@@ -1654,6 +1782,10 @@ export function createRejectedReceipt(input: RejectedReceiptInput): RejectedComm
 }
 
 export interface AcceptedReceiptInput extends ReceiptInputBase {
+  /** v5 baseline accepted 操作：类型层排除 Work 操作 execution.start（P03-3 /
+   * F-005 起 'execution.start' 进入命令白名单，但 Work accepted 仍只能经
+   * WorkAcceptedReceiptInput 构造，避免重载歧义与 v5 形态混入）。 */
+  readonly operation: Exclude<AppOperation, typeof WORK_ACCEPTED_OPERATION>;
   /** 同事务写入的 baseline_operations 行 id（公开 operationId）。 */
   readonly operationId: string;
 }
@@ -1683,6 +1815,8 @@ export function createAcceptedReceipt(input: AcceptedReceiptInput | WorkAccepted
     completedAt: input.completedAt,
     replayed: input.replayed ?? false,
   };
+  // P03-3 / F-005 起 'execution.start' 进入 AppOperation 白名单：v5 baseline
+  // accepted 的 operation 类型层排除 Work 操作，联合判别恢复互斥。
   if (input.operation === WORK_ACCEPTED_OPERATION) {
     if (!isUuidV4(input.batchId) || !isUuidV4(input.runId) || input.operationId !== input.batchId) {
       throw new TypeError('Work accepted requires UUID Batch/Run IDs and operationId = batchId');

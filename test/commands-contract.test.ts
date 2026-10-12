@@ -162,6 +162,9 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       // P03-3 / F-004：单 Feature 执行 prepare 预览（project scope +
       // execution.start；只读预览不 CAS 任何实体）。
       'execution.preview',
+      // P03-3 / F-005：显式执行启动（project scope + execution.start；创建类
+      // 不携带 expectedRevision；事务外准备 + 短写事务内重核与原子提交）。
+      'execution.start',
     ]);
     expect(COMMAND_OPERATION_SPECS).toEqual({
       'project.register': { scopeKind: 'registration', mutation: 'create', capability: 'project.register' },
@@ -181,6 +184,7 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       'feature.plan.decide': { scopeKind: 'project', mutation: 'update', capability: 'feature.plan.decide' },
       'execution.input.prepare': { scopeKind: 'project', mutation: 'create', capability: 'execution.input.prepare' },
       'execution.preview': { scopeKind: 'project', mutation: 'create', capability: 'execution.start' },
+      'execution.start': { scopeKind: 'project', mutation: 'create', capability: 'execution.start' },
     });
     for (const spec of Object.values(COMMAND_OPERATION_SPECS)) {
       expect(APP_CAPABILITIES).toContain(spec.capability);

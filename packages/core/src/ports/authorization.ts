@@ -550,12 +550,9 @@ export function authorizeCommandReplay(
   operation: string,
 ): void {
   assertTrustedPrincipal(principal);
-  // Receipt-only extension: submitting/re-authorizing Work awaits its command capability.
-  if (receipt.operation === 'execution.start') {
-    throw new PublicError('unsupported', operation, undefined, {
-      details: { reason: 'work_command_not_wired' },
-    });
-  }
+  // P03-3 / F-005 起 execution.start 已接线命令能力：重放重新核验当前能力
+  // （execution.start 与预览共享授权面）；未接线时期保留的
+  // work_command_not_wired 拒绝已随启动命令接线退役。
   requireCapability(principal, COMMAND_OPERATION_SPECS[receipt.operation].capability, operation);
   if (receipt.principalId !== principal.principalId) {
     receiptNotFound(operation);
