@@ -70,6 +70,7 @@ docs/p03-1-plan-import-contract.md  P03-1 单 Feature 草稿计划校验/DAG/摘
 docs/p03-1-task-strategy-selection.md  P03-1 Task 策略副本与来源选择契约（F-003 纯选择模块；导入/修订/查询的协议依据）
 docs/p03-1-handoff.md  P03-1 → P03-2/P03-10 接口交接（F-011 局部集成回归门禁：实现范围/Schema/复用面/负例矩阵复核/验收索引映射/验证记录与已知缺口）
 docs/p03-2-handoff.md  P03-2 → P03-3/4/P03-10 接口交接（F-009 跨模块集成回归门禁：批准/策略/固定输入复用面、T24/T25/T26/T37 映射、验证记录与已知缺口）
+docs/p03-3-execution-budget-contract.md  P03-3 执行预算契约（F-001：前序核对记录、分层预算校验与 reason 词汇、maxCodeAttempts 兼容规则、配置 schemaVersion 维持 2 决策、Task 快照捕获路径、并发授权与纯判定语义）
 ```
 
 ### 确定性测试约定（F-003）

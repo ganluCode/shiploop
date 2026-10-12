@@ -14,6 +14,11 @@
  * - 复用既有校验，不另立第二套：来源 payload 经 mergeEffectiveSettings 重新以
  *   schemaVersion=2 校验（未知键、不完整条目、秘密正文字段、非法引用一律拒绝），
  *   userOverride 与副本语义经 settings-schema 的完整条目校验 validateRuntimeStrategy；
+ * - P03-3 / F-001 起，副本可选携带代码尝试上限 maxCodeAttempts（配置了
+ *   policies.executionLimits.maxCodeAttempts 即捕获进快照；未配置不注入字段，
+ *   使用时按 ports/execution-budget 缺省解析含首次共三次）。政策解析与策略条目
+ *   来源正交（userOverride 路径同样从有效配置捕获）；快照不可变，后续默认配置
+ *   变化不追溯改写既有副本，也不改写已保存 Task 的 execution_config；
  * - 选择整体条目，绝不跨来源拼接 runtime/provider/model；输出为全新独立副本
  *   （调用方输入对象后续变化不改变已生成副本；重复调用不共享引用）；
  * - 覆盖优先级：明确完整用户覆盖 userOverride > modelMap.<复杂度> > defaultStrategy
@@ -34,6 +39,7 @@ import {
   validateRuntimeStrategy,
 } from '../ports/settings-schema.js';
 import type { ModelComplexity, RuntimeStrategyV1 } from '../ports/settings-schema.js';
+import { TASK_MAX_CODE_ATTEMPTS_MAX, TASK_MAX_CODE_ATTEMPTS_MIN } from '../ports/execution-budget.js';
 import { TASK_COMPLEXITY_VALUES } from '../ports/plan-store.js';
 import { StorageError } from '../ports/errors.js';
 import {
@@ -61,6 +67,10 @@ export const TASK_STRATEGY_USER_OVERRIDE_SOURCE_KEY = 'userOverride';
  * tasks.execution_config 的完整策略独立副本：schemaVersion=2 标记 + 完整条目
  * 扁平副本（core-design/11 §3.1 的执行配置字段子集；推理参数/环境参数在当前
  * schemaVersion=2 策略条目中未定义，不在副本中编造）。
+ *
+ * P03-3 / F-001 起可选携带 maxCodeAttempts（代码尝试上限，含首次）：创建时从
+ * 当前有效配置捕获（旧快照无此字段仍有效，使用时按缺省含首次共三次解析；
+ * 显式调整复用 task.strategy.update 整体替换 CAS 通道，不另建配置体系）。
  */
 export interface TaskExecutionConfigV1 {
   readonly schemaVersion: typeof SETTINGS_SCHEMA_VERSION;
@@ -69,6 +79,7 @@ export interface TaskExecutionConfigV1 {
   readonly model: string;
   readonly credentialRef?: string;
   readonly endpointRef?: string;
+  readonly maxCodeAttempts?: number;
 }
 
 /** 一次纯选择的结果：完整策略独立副本 + 来源说明（仅解释用途）。 */
@@ -86,10 +97,11 @@ const TASK_EXECUTION_CONFIG_KEYS = [
   'model',
   'credentialRef',
   'endpointRef',
+  'maxCodeAttempts',
 ] as const;
 
-/** 由完整策略条目构造全新独立副本（不与任何输入共享引用）。 */
-function copyExecutionConfig(strategy: RuntimeStrategyV1): TaskExecutionConfigV1 {
+/** 由完整策略条目构造全新独立副本（不与任何输入共享引用；可选携带代码尝试上限）。 */
+function copyExecutionConfig(strategy: RuntimeStrategyV1, maxCodeAttempts?: number): TaskExecutionConfigV1 {
   const copy: {
     schemaVersion: typeof SETTINGS_SCHEMA_VERSION;
     runtime: string;
@@ -97,6 +109,7 @@ function copyExecutionConfig(strategy: RuntimeStrategyV1): TaskExecutionConfigV1
     model: string;
     credentialRef?: string;
     endpointRef?: string;
+    maxCodeAttempts?: number;
   } = {
     schemaVersion: SETTINGS_SCHEMA_VERSION,
     runtime: strategy.runtime,
@@ -109,13 +122,16 @@ function copyExecutionConfig(strategy: RuntimeStrategyV1): TaskExecutionConfigV1
   if (strategy.endpointRef !== undefined) {
     copy.endpointRef = strategy.endpointRef;
   }
+  if (maxCodeAttempts !== undefined) {
+    copy.maxCodeAttempts = maxCodeAttempts;
+  }
   return copy;
 }
 
-/** 把有效配置中的整体条目转为选择结果（副本 + 既有来源说明）。 */
-function selectionFromEntry(entry: EffectiveStrategyEntry): TaskStrategySelection {
+/** 把有效配置中的整体条目转为选择结果（副本 + 既有来源说明；可选携带政策）。 */
+function selectionFromEntry(entry: EffectiveStrategyEntry, maxCodeAttempts?: number): TaskStrategySelection {
   return {
-    executionConfig: copyExecutionConfig(entry.strategy),
+    executionConfig: copyExecutionConfig(entry.strategy, maxCodeAttempts),
     configSource: entry.source.kind,
     configSourceKey: entry.source.sourceKey,
   };
@@ -163,12 +179,18 @@ export function selectTaskStrategy(input: unknown): TaskStrategySelection {
     complexity = complexityValue as ModelComplexity;
   }
 
+  // 0) 有效政策解析（与策略条目来源正交）：配置了 maxCodeAttempts 即捕获进副本；
+  //    未配置不注入字段（使用时按 ports/execution-budget 缺省解析含首次共三次）。
+  //    userOverride 路径同样解析（来源非法仍 fail-closed 拒绝，不因覆盖而忽略）。
+  const effective = mergeEffectiveSettings({ global: object.global, project: object.project });
+  const maxCodeAttempts = effective.policies.executionLimits?.value.maxCodeAttempts;
+
   // 1) 明确完整用户覆盖：优先于全部默认解析；不完整/未知键/秘密正文/非法引用在
   //    条目校验阶段明确拒绝，不回退、不从默认条目拼补。
   if (object.userOverride !== undefined) {
     const strategy = validateRuntimeStrategy(object.userOverride, context, 'userOverride');
     return {
-      executionConfig: copyExecutionConfig(strategy),
+      executionConfig: copyExecutionConfig(strategy, maxCodeAttempts),
       configSource: 'user_override',
       configSourceKey: TASK_STRATEGY_USER_OVERRIDE_SOURCE_KEY,
     };
@@ -176,17 +198,15 @@ export function selectTaskStrategy(input: unknown): TaskStrategySelection {
 
   // 2/3) 有效配置解析（复用 mergeEffectiveSettings：来源重新经 schemaVersion=2 校验，
   //      完整条目整体替换已在合并层保证不跨来源拼接）。
-  const effective = mergeEffectiveSettings({ global: object.global, project: object.project });
-
   if (complexity !== null) {
     const complexityEntry = effective.strategies.modelMap[complexity];
     if (complexityEntry !== undefined) {
-      return selectionFromEntry(complexityEntry);
+      return selectionFromEntry(complexityEntry, maxCodeAttempts);
     }
   }
   const fallback = effective.strategies.defaultStrategy;
   if (fallback !== undefined) {
-    return selectionFromEntry(fallback);
+    return selectionFromEntry(fallback, maxCodeAttempts);
   }
 
   // 4) 无匹配的已确认默认：明确的配置错误，不猜复杂度、不猜模型。
@@ -207,6 +227,8 @@ export function selectTaskStrategy(input: unknown): TaskStrategySelection {
  * tasks.execution_config 副本形态的完整语义校验（F-003 定案）：schemaVersion=2
  * 标记 + 完整条目字段。复用 settings-schema 的完整条目校验（缺任一必需策略字段、
  * 未知字段、秘密正文字段、非法引用一律拒绝）；返回规范化新对象。
+ * P03-3 / F-001 起 maxCodeAttempts 为可选字段（旧快照无该字段仍有效）；
+ * 提供时必须是 1..100 的整数（与 settings/execution-budget 契约同源）。
  */
 export function validateTaskExecutionConfig(value: unknown, operation: string): TaskExecutionConfigV1 {
   const context: ValidationContext = { operation, entity: { type: 'task' } };
@@ -231,5 +253,22 @@ export function validateTaskExecutionConfig(value: unknown, operation: string): 
   if (object.endpointRef !== undefined) {
     entry.endpointRef = object.endpointRef;
   }
-  return copyExecutionConfig(validateRuntimeStrategy(entry, context, 'executionConfig'));
+  let maxCodeAttempts: number | undefined;
+  if (object.maxCodeAttempts !== undefined) {
+    if (
+      typeof object.maxCodeAttempts !== 'number' ||
+      !Number.isInteger(object.maxCodeAttempts) ||
+      object.maxCodeAttempts < TASK_MAX_CODE_ATTEMPTS_MIN ||
+      object.maxCodeAttempts > TASK_MAX_CODE_ATTEMPTS_MAX
+    ) {
+      throw validationError(
+        context,
+        'executionConfig.maxCodeAttempts',
+        `必须是 ${TASK_MAX_CODE_ATTEMPTS_MIN}..${TASK_MAX_CODE_ATTEMPTS_MAX} 的整数（代码尝试上限，含首次）`,
+        object.maxCodeAttempts,
+      );
+    }
+    maxCodeAttempts = object.maxCodeAttempts;
+  }
+  return copyExecutionConfig(validateRuntimeStrategy(entry, context, 'executionConfig'), maxCodeAttempts);
 }

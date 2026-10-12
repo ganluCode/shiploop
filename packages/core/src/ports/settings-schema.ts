@@ -24,6 +24,10 @@
  */
 import { StorageError } from './errors.js';
 import {
+  TASK_MAX_CODE_ATTEMPTS_MAX,
+  TASK_MAX_CODE_ATTEMPTS_MIN,
+} from './execution-budget.js';
+import {
   rejectUnknownKeys,
   requireNonEmptyString,
   requirePlainObject,
@@ -90,6 +94,20 @@ export interface ExecutionLimitsPolicyV2 {
   /** 每 Task 最大 Attempt 数（有界整数）。 */
   readonly maxAttemptsPerTask?: number;
   /**
+   * 每 Task 代码尝试上限（含首次；P03-3 / F-001 新增，有界整数）。
+   *
+   * 语义与兼容（core-design/04 §6）：maxCodeAttempts 是「首次代码执行 + 最多
+   * 两次代码修复」的新策略定义，缺省含首次共三次；现有 maxAttemptsPerTask
+   * 保持**总 Attempt 上限**语义不变，两者同时生效按 min 解析（见
+   * ports/execution-budget.ts resolveTaskAttemptCaps），旧配置不被重解释。
+   *
+   * 版本决策：schemaVersion 维持 2——本字段为 executionLimits 内可选新增键，
+   * 旧 v2 payload（无该键）继续有效且语义不变；新 payload 含该键时旧版本
+   * Core 因未知键 fail-closed 拒绝（不静默丢弃）。未知/未来版本仍一律拒绝
+   * （validateSettingsPayload 的 schemaVersion 门槛不变）。
+   */
+  readonly maxCodeAttempts?: number;
+  /**
    * 允许透传给执行环境的**非敏感环境变量名**允许列表（只含变量名，绝不含值；
    * 设计 06 §3「环境变量按允许列表，不继承整个 Host 环境」）。秘密形态名称
    * （SECRET/TOKEN/PASSWORD/CREDENTIAL/KEY/PRIVATE/AUTH 等分段）一律拒绝。
@@ -140,7 +158,7 @@ const STRATEGY_ENTRY_KEYS = ['runtime', 'provider', 'model', 'credentialRef', 'e
 const MODEL_MAP_KEYS = ['low', 'medium', 'high'] as const;
 const PURPOSE_KEYS = ['planner', 'judge', 'review'] as const;
 const POLICIES_KEYS = ['executionLimits', 'verification', 'securityPolicy'] as const;
-const EXECUTION_LIMITS_KEYS = ['maxConcurrentWorks', 'workTimeoutMs', 'maxAttemptsPerTask', 'envAllowlist'] as const;
+const EXECUTION_LIMITS_KEYS = ['maxConcurrentWorks', 'workTimeoutMs', 'maxAttemptsPerTask', 'maxCodeAttempts', 'envAllowlist'] as const;
 const VERIFICATION_KEYS = ['requireChecksBeforeDone'] as const;
 const SECURITY_POLICY_KEYS = ['isolation'] as const;
 
@@ -363,6 +381,7 @@ function validateExecutionLimitsPolicy(
     maxConcurrentWorks?: number;
     workTimeoutMs?: number;
     maxAttemptsPerTask?: number;
+    maxCodeAttempts?: number;
     envAllowlist?: readonly string[];
   } = {};
   if (object.maxConcurrentWorks !== undefined) {
@@ -390,6 +409,17 @@ function validateExecutionLimitsPolicy(
       `${field}.maxAttemptsPerTask`,
       MAX_ATTEMPTS_PER_TASK_MIN,
       MAX_ATTEMPTS_PER_TASK_MAX,
+    );
+  }
+  if (object.maxCodeAttempts !== undefined) {
+    // P03-3 / F-001：代码尝试上限（含首次）复用同一有界整数校验；
+    // 范围与 ports/execution-budget 的 Task 契约同源（1..100，缺省 3）。
+    result.maxCodeAttempts = validateBoundedInteger(
+      object.maxCodeAttempts,
+      context,
+      `${field}.maxCodeAttempts`,
+      TASK_MAX_CODE_ATTEMPTS_MIN,
+      TASK_MAX_CODE_ATTEMPTS_MAX,
     );
   }
   if (object.envAllowlist !== undefined) {
