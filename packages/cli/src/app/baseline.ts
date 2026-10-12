@@ -20,7 +20,7 @@
  */
 import { isUuidV4 } from 'shiploop-host';
 import { AppCliParseError, parseAppInputJson } from './args.js';
-import type { AppCliCommandId, AppCliParseReason } from './args.js';
+import type { AppCliCommand, AppCliCommandId, AppCliParseReason } from './args.js';
 import { buildAppCliSuccessEnvelope } from './output.js';
 import type { AppCliSuccessEnvelope } from './output.js';
 import { CLI_EXIT_OK, CLI_EXIT_REJECTED } from '../host/output.js';
@@ -31,6 +31,8 @@ import type { CliExitCode } from '../host/output.js';
  * ------------------------------------------------------------------ */
 
 export interface BaselineInputContext {
+  /** 所属命令组（省略即 baseline；F-008 决策/策略/固定输入复用同一守护）。 */
+  readonly command?: AppCliCommand;
   readonly commandId?: AppCliCommandId | null;
   readonly json?: boolean;
 }
@@ -44,7 +46,7 @@ function failInput(
     'invalid_input',
     reason,
     {
-      command: 'baseline',
+      command: context.command ?? 'baseline',
       commandId: context.commandId ?? null,
       json: context.json ?? false,
     },
@@ -147,7 +149,7 @@ function normalizeKeyToken(key: string): string {
 }
 
 /** 递归扫描键名：秘密/环境值字段与身份字段一律定位拒绝（只看键名，不读值）。 */
-function rejectForbiddenFields(
+export function rejectForbiddenFields(
   value: unknown,
   field: string,
   context: BaselineInputContext,

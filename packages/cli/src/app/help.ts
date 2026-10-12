@@ -488,6 +488,14 @@ const PLAN_INPUT_BLOCK = [
   '- 计划正文（标题/Task/依赖/验收）由 Core 单一权威校验，非法计划整组拒绝、零部分写入。',
 ].join('\n');
 
+/** P03-2 / F-008 决策/策略/固定输入执行边界：不宣称执行可用。 */
+const EXECUTION_BOUNDARY_BLOCK = [
+  '执行边界：',
+  '- 批准/拒绝只确认当前计划摘要（planDigest）：未启动执行，不重新应用默认策略，不覆盖 Task 策略副本；',
+  '- 未知执行能力不显示为可运行：本版本不提供 Run/Work 启动命令，任何命令都不启动模型或执行进程；',
+  '- 秘密/身份字段名在连接 Host 之前拒绝（input_secret_field_rejected / input_identity_field_rejected），错误不回显值。',
+].join('\n');
+
 const PHASE_HELP = [
   'usage: shiploop phase <create|list|get|labels> [options]',
   '',
@@ -581,7 +589,7 @@ const PHASE_LABELS_HELP = [
 ].join('\n');
 
 const FEATURE_HELP = [
-  'usage: shiploop feature <import|list|get|revise|labels> [options]',
+  'usage: shiploop feature <import|list|get|revise|labels|approve|reject> [options]',
   '',
   'Feature 命令（单 Feature 计划）：',
   '  feature import --project <id> --phase <id> --revision <int> --input <file> [--command-id <uuid>]',
@@ -591,6 +599,8 @@ const FEATURE_HELP = [
   '  feature revise <featureId> --project <id> --revision <int> --input <file> [--command-id <uuid>]',
   '                                                    实质计划修订（草稿）',
   '  feature labels <featureId> --project <id> --revision <int> [--label <l> ...]  纯标签 CAS 编辑',
+  '  feature approve <featureId> --project <id> --digest <hex64> --revision <int>  批准当前计划摘要（未启动执行）',
+  '  feature reject <featureId> --project <id> --digest <hex64> --revision <int>   拒绝当前计划摘要（未启动执行）',
   '',
   '查看各子命令参数：shiploop feature import --help',
   '',
@@ -708,12 +718,15 @@ const FEATURE_LABELS_HELP = [
 ].join('\n');
 
 const TASK_HELP = [
-  'usage: shiploop task <list|get|labels> [options]',
+  'usage: shiploop task <list|get|labels|strategy|prepare|inputs> [options]',
   '',
   'Task 命令（同 Feature 内 Task）：',
   '  task list --project <id> --feature <id> [--limit <int>] [--cursor <c>]   层级分页',
   '  task get <taskId>                       详情（结构化验收/引用/策略副本/来源）',
   '  task labels <taskId> --project <id> --revision <int> [--label <l> ...]  纯标签 CAS 编辑',
+  '  task strategy <taskId> --project <id> --revision <int> --input <file>   完整策略副本 CAS 编辑',
+  '  task prepare <taskId> --project <id> --feature <id> --input <file>      准备固定输入制品组（未启动执行）',
+  '  task inputs <commandId>                 查看已准备的固定输入（经既有回执查询）',
   '',
   '查看各子命令参数：shiploop task get --help',
   '',
@@ -776,6 +789,127 @@ const TASK_LABELS_HELP = [
   '',
 ].join('\n');
 
+const FEATURE_APPROVE_HELP = [
+  'usage: shiploop feature approve <featureId> --project <id> --digest <hex64>',
+  '                                      --revision <int> [--reason <text>]',
+  '                                      [--command-id <uuid>] [--data-root <abs>] [--json]',
+  '',
+  '批准当前计划摘要（feature.plan.decide）：只确认现有计划，未启动执行。',
+  '- `--digest` 是提交时绑定的当前计划摘要（64 位小写 hex）：与库内当前摘要',
+  '  不一致即固化拒绝（plan_digest_mismatch），失效摘要 fail-closed；',
+  '- `--revision` 是唯一 CAS 入口（目标 Feature 聚合 expectedRevision）；',
+  '  陈旧 revision 返回 conflict 且零写入；',
+  '- 批准不会顺便重新应用默认策略，也不覆盖 Task 策略副本（需覆盖请先 task strategy）；',
+  '- 输出含实际计划身份（planDigest/subjectDigest）、当前审批状态（approval.status）',
+  '  与执行边界视图（execution.started=false）；未知执行能力不显示为可运行；',
+  '- 同请求恢复：同 `--command-id` 先查回执并以原信封重放，不重新生成参数。',
+  '',
+  '选项：',
+  '  --project <id>        项目 ID（必填，UUID v4）',
+  '  --digest <hex64>      当前计划摘要（必填，64 位小写 hex）',
+  '  --revision <int>      期望的 Feature 聚合 revision（必填，≥ 1）',
+  '  --reason <text>       可选决策原因（≤2000 字符；不携带秘密）',
+  '  --command-id <uuid>   显式命令 ID（UUID v4）；幂等重放用同一信封',
+  '  --json                stdout 只输出结果 JSON；诊断到 stderr',
+  '',
+  EXECUTION_BOUNDARY_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const FEATURE_REJECT_HELP = [
+  'usage: shiploop feature reject <featureId> --project <id> --digest <hex64>',
+  '                                      --revision <int> [--reason <text>]',
+  '                                      [--command-id <uuid>] [--data-root <abs>] [--json]',
+  '',
+  '拒绝当前计划摘要（feature.plan.decide）：拒绝不删除计划，也未启动执行。',
+  '- `--digest` 是提交时绑定的当前计划摘要（64 位小写 hex）：失效摘要 fail-closed；',
+  '- `--revision` 是唯一 CAS 入口（目标 Feature 聚合 expectedRevision）；',
+  '- 翻转任何既有决定必须先实质修订（新摘要新决策）；批准不会顺便重新应用默认策略；',
+  '- 输出含实际计划身份、当前审批状态（approval.status=rejected）与',
+  '  执行边界视图（execution.started=false）；未知执行能力不显示为可运行。',
+  '',
+  '选项：',
+  '  --project <id>        项目 ID（必填，UUID v4）',
+  '  --digest <hex64>      当前计划摘要（必填，64 位小写 hex）',
+  '  --revision <int>      期望的 Feature 聚合 revision（必填，≥ 1）',
+  '  --reason <text>       可选决策原因（≤2000 字符；不携带秘密）',
+  '  --command-id <uuid>   显式命令 ID（UUID v4）；幂等重放用同一信封',
+  '  --json                stdout 只输出结果 JSON；诊断到 stderr',
+  '',
+  EXECUTION_BOUNDARY_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const TASK_STRATEGY_HELP = [
+  'usage: shiploop task strategy <taskId> --project <id> --revision <int>',
+  '                                      --input <file> [--command-id <uuid>]',
+  '                                      [--data-root <abs>] [--json]',
+  '',
+  '完整策略副本 CAS 编辑（task.strategy.update）：整体替换 Task 执行策略副本。',
+  '- `--input` 是完整 executionConfig JSON（schemaVersion=2 标记；runtime/provider/model',
+  '  必需，可选 credentialRef/endpointRef 引用）：不从既有副本/默认配置拼补字段，不回落其他模型；',
+  '- 秘密正文字段（apiKey/token/password 等）与身份字段在连接 Host 之前拒绝；',
+  '- 编辑成功后来源由服务端定值 task_edit（不接受请求声明 configSource/status 等）；',
+  '- `--revision` 是目标 Task 自身 revision（唯一 CAS 入口）；陈旧 revision 为 conflict 零写入；',
+  '- 批准前的 Task 覆盖走同一策略 CAS 命令；不重读 modelMap、未启动执行。',
+  '',
+  '选项：',
+  '  --project <id>        项目 ID（必填，UUID v4）',
+  '  --revision <int>      期望的 Task 自身 revision（必填，≥ 1）',
+  '  --input <file>        完整策略副本 JSON 文件（必填）',
+  '  --command-id <uuid>   显式命令 ID（UUID v4）；幂等重放用同一信封',
+  '  --json                stdout 只输出结果 JSON；诊断到 stderr',
+  '',
+  EXECUTION_BOUNDARY_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const TASK_PREPARE_HELP = [
+  'usage: shiploop task prepare <taskId> --project <id> --feature <id>',
+  '                                      --input <file> [--command-id <uuid>]',
+  '                                      [--data-root <abs>] [--json]',
+  '',
+  '准备固定输入制品组（execution.input.prepare）：可绑定输入身份；正文永不内联。',
+  '- `--input` 是 `{items: [...]}` 必需输入采集清单（必填）：缺失必需输入必须显式',
+  '  声明，空清单由服务端明确拒绝；来源只有逻辑身份（artifact 制品 ID，或获准根',
+  '  ID + 相对路径），拒绝内联正文/秘密字段；',
+  '- 输出含制品组 snapshot/manifest/prompt 的 version/hash/用途、必需输入引用',
+  '  （purpose/version/contentHash）与批准复合身份（planDigest/checkPolicyDigest）；',
+  '- 准备只固定输入：不创建执行实体、未启动执行；缺失必需输入/批准过期明确失败。',
+  '',
+  '选项：',
+  '  --project <id>        项目 ID（必填，UUID v4）',
+  '  --feature <id>        目标 Feature 稳定 ID（必填）',
+  '  --input <file>        `{items:[...]}` 清单文件（必填）',
+  '  --command-id <uuid>   显式命令 ID（UUID v4）；幂等重放用同一信封',
+  '  --json                stdout 只输出结果 JSON；诊断到 stderr',
+  '',
+  EXECUTION_BOUNDARY_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const TASK_INPUTS_HELP = [
+  'usage: shiploop task inputs <commandId> [--data-root <abs>] [--json]',
+  '',
+  '查看已准备的固定输入制品组（沿用既有回执查询 receipts.get，不新增查询面）：',
+  '- <commandId> 是 `task prepare` 命令的命令 ID（UUID v4，位置参数）；',
+  '- 只读取回执内嵌的制品组身份（version/hash/用途与必需输入 purpose），',
+  '  不读取任何正文、不接受任意路径/locator；',
+  '- 非 execution.input.prepare 回执或未完成回执明确失败退出，不折算成功；',
+  '- 查看不创建执行实体、未启动执行。',
+  '',
+  '选项：',
+  '  --json  stdout 只输出结果 JSON；诊断到 stderr',
+  '',
+  EXECUTION_BOUNDARY_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
 const HELP_BY_SCOPE: Readonly<Record<AppHelpScope, string>> = Object.freeze({
   project: PROJECT_HELP,
   'project.init': PROJECT_INIT_HELP,
@@ -813,10 +947,15 @@ const HELP_BY_SCOPE: Readonly<Record<AppHelpScope, string>> = Object.freeze({
   'feature.get': FEATURE_GET_HELP,
   'feature.revise': FEATURE_REVISE_HELP,
   'feature.labels': FEATURE_LABELS_HELP,
+  'feature.approve': FEATURE_APPROVE_HELP,
+  'feature.reject': FEATURE_REJECT_HELP,
   task: TASK_HELP,
   'task.list': TASK_LIST_HELP,
   'task.get': TASK_GET_HELP,
   'task.labels': TASK_LABELS_HELP,
+  'task.strategy': TASK_STRATEGY_HELP,
+  'task.prepare': TASK_PREPARE_HELP,
+  'task.inputs': TASK_INPUTS_HELP,
 });
 
 /** 返回指定作用域的应用命令帮助文本（以换行结尾）；不做任何 I/O。 */

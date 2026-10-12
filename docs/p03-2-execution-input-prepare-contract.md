@@ -4,7 +4,7 @@
   `docs/p03-2-execution-input-contract.md`（F-004 采集与校验读取）、
   `docs/p03-2-context-build-contract.md`（F-005 有版本 ContextBuilder）、
   `docs/p03-2-plan-approval-verification-contract.md`（F-003 有效批准复合身份）。
-  Host/CLI 接线属 F-007/F-008（F-007 Host 侧已交付，见 §8 写回登记）；Run/Attempt
+  Host/CLI 接线属 F-007/F-008（F-007 Host 侧与 F-008 CLI 侧均已交付，见 §8 写回登记）；Run/Attempt
   绑定与 startRun 属 P03-3/4（本项不创建任何执行实体）。
 - 实现入口：`packages/core/src/ports/execution-input-prepare.ts`（受控制品
   词汇、策略副本/权限面内容身份摘要、一致读视图与权限读取端口形态、
@@ -126,4 +126,6 @@ Host/CLI 接线（F-007/F-008）、Run/Attempt 绑定与 startRun（P03-3/4）�
 - 受控制品组读取边界：输入正文若经 Host 提供，只允许按获准制品组内 Artifact
   身份作有界校验读取（F-004 `captureRequiredInputs` 归属/ready/身份核验）；
   不新增接受任意 path/locator 的通用文件接口（表外路径 404），跨项目或未知
-  正文统一 not_found/forbidden，不泄漏存在性与物理路径；CLI 入口属 F-008。
+  正文统一 not_found/forbidden，不泄漏存在性与物理路径；CLI 入口属 F-008
+ （已交付：`task prepare`/`task inputs`，制品组身份查询沿用既有回执读取，
+  操作说明见 `docs/p03-2-cli-approval-input-operations.md`）。

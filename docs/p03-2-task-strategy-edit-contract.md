@@ -1,6 +1,9 @@
 # P03-2 Task 策略副本授权 CAS 编辑契约（F-001）
 
-- 文档状态：P03-2 / F-001 交付的命令用例契约（Core 层）；CLI 入口属 F-008。
+- 文档状态：P03-2 / F-001 交付的命令用例契约（Core 层）；CLI 入口属 F-008
+ （**F-008 已交付**：`task strategy` 子命令经 HostClient `updateTaskStrategy`，
+  `--input` 完整副本整体替换、来源服务端定值；操作说明见
+  `docs/p03-2-cli-approval-input-operations.md`）。
   **F-007 接线定案（写回登记）**：HostClient 公共方法 `updateTaskStrategy` 经既有
   `POST /v1/commands` 通用路由接线（冻结信封/回执/有限重试），completed 回执
   内嵌结果经线校验器 `validateTaskStrategyUpdateResultWire` 复核；线消息

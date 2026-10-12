@@ -50,5 +50,14 @@ CLI 承担：Host 生命周期命令的参数解析、结构化输出与 Host �
   `--input` 计划文件以与 Host 应用请求体同值的 MAX_APP_BODY_BYTES 有界 UTF-8
   受控读取（不执行文件内容、不把开发机路径写成产品运行依赖）；导入/修订只保存
   草稿（planStatus=draft），帮助与结构化输出不宣称审批批准、Task 通过或 Work 运行。
+- F-008 计划决策/Task 策略编辑/固定输入（P03-2）：纯面层增补 `feature approve`
+  /`feature reject`（绑定 planDigest + Feature 聚合 revision 的决策）、`task strategy`
+  （完整策略副本 CAS 编辑）、`task prepare`/`task inputs`（固定输入制品组准备与
+  经既有回执查询的查看）；策略/清单输入在连接前拒绝秘密与身份字段（复用
+  baseline 字段词汇表）；执行层经 HostClient 公共方法（decideFeaturePlan/
+  updateTaskStrategy/prepareExecutionInput/getReceipt）接线，结构化输出含实际
+  计划身份/当前审批状态/Task 策略与来源/制品组 version/hash/用途，批准/拒绝/准备
+  均明确未启动执行、未知执行能力不显示为可运行（操作说明见
+  `docs/p03-2-cli-approval-input-operations.md`）。
 
 单向依赖规则见仓库根 `README.md`。

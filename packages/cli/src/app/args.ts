@@ -63,9 +63,14 @@ export type AppCliCommandId =
   | 'feature.get'
   | 'feature.revise'
   | 'feature.labels'
+  | 'feature.approve'
+  | 'feature.reject'
   | 'task.list'
   | 'task.get'
-  | 'task.labels';
+  | 'task.labels'
+  | 'task.strategy'
+  | 'task.prepare'
+  | 'task.inputs';
 
 export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'project.init',
@@ -97,9 +102,14 @@ export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'feature.get',
   'feature.revise',
   'feature.labels',
+  'feature.approve',
+  'feature.reject',
   'task.list',
   'task.get',
   'task.labels',
+  'task.strategy',
+  'task.prepare',
+  'task.inputs',
 ]);
 
 /** 命令对应的 Core 操作身份（F-015/F-016 组装命令信封时使用）。 */
@@ -116,7 +126,10 @@ export type AppCommandOperation =
   | 'phase.create'
   | 'feature.plan.import'
   | 'plan.labels.update'
-  | 'feature.plan.revise';
+  | 'feature.plan.revise'
+  | 'feature.plan.decide'
+  | 'task.strategy.update'
+  | 'execution.input.prepare';
 
 export type AppHelpScope = AppCliCommand | AppCliCommandId;
 
@@ -182,6 +195,9 @@ export type AppCliParseReason =
   | 'input_identity_field_rejected'
   | 'invalid_title'
   | 'invalid_plan_id'
+  | 'invalid_plan_digest'
+  | 'invalid_reason'
+  | 'input_items_invalid'
   | 'input_file_too_large'
   | 'input_file_encoding';
 
@@ -245,6 +261,9 @@ const REASON_MESSAGE: Readonly<Record<AppCliParseReason, string>> = Object.freez
   input_identity_field_rejected: '输入不允许携带身份/权限/可见范围字段',
   invalid_title: 'title 不能为空且不能为空白',
   invalid_plan_id: '计划实体 ID 必须是稳定 ID（字母数字开头，仅含 [A-Za-z0-9._-]）',
+  invalid_plan_digest: '计划摘要必须是 64 位小写十六进制',
+  invalid_reason: '决策原因不合法（不允许 NUL；长度不超过 2000 字符）',
+  input_items_invalid: '必需输入清单必须是数组',
   input_file_too_large: '输入文件超过大小上限',
   input_file_encoding: '输入文件必须是合法 UTF-8 文本',
 });
@@ -619,6 +638,56 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
     maxPositionals: 1,
     positionalFields: ['taskId'],
   },
+  'feature.approve': {
+    command: 'feature',
+    commandId: 'feature.approve',
+    valueFlags: ['--project', '--digest', '--revision', '--reason', '--command-id'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['featureId'],
+  },
+  'feature.reject': {
+    command: 'feature',
+    commandId: 'feature.reject',
+    valueFlags: ['--project', '--digest', '--revision', '--reason', '--command-id'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['featureId'],
+  },
+  'task.strategy': {
+    command: 'task',
+    commandId: 'task.strategy',
+    valueFlags: ['--project', '--revision', '--input', '--command-id'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['taskId'],
+  },
+  'task.prepare': {
+    command: 'task',
+    commandId: 'task.prepare',
+    valueFlags: ['--project', '--feature', '--input', '--command-id'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['taskId'],
+  },
+  'task.inputs': {
+    command: 'task',
+    commandId: 'task.inputs',
+    valueFlags: [],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['commandId'],
+  },
 });
 
 const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, AppCliCommandId>>>> =
@@ -661,11 +730,16 @@ const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, A
       get: 'feature.get',
       revise: 'feature.revise',
       labels: 'feature.labels',
+      approve: 'feature.approve',
+      reject: 'feature.reject',
     },
     task: {
       list: 'task.list',
       get: 'task.get',
       labels: 'task.labels',
+      strategy: 'task.strategy',
+      prepare: 'task.prepare',
+      inputs: 'task.inputs',
     },
   });
 
@@ -978,6 +1052,27 @@ function optionalCommandId(scan: ScanResult, state: ParseState): string | undefi
   }
   if (!isUuidV4(raw)) {
     fail(state, 'invalid_command_id', 'command-id');
+  }
+  return raw;
+}
+
+/** 计划摘要（64 位小写 hex；审批绑定身份，不是 CAS 依据）。 */
+function requirePlanDigest(scan: ScanResult, state: ParseState): string {
+  const raw = requireOption(scan, '--digest', state, 'digest');
+  if (!/^[0-9a-f]{64}$/.test(raw)) {
+    fail(state, 'invalid_plan_digest', 'digest');
+  }
+  return raw;
+}
+
+/** 可选决策原因：不允许 NUL、≤2000 字符（深度语义由服务端复核）。 */
+function optionalReason(scan: ScanResult, state: ParseState): string | undefined {
+  const raw = takeOption(scan, '--reason');
+  if (raw === undefined) {
+    return undefined;
+  }
+  if (raw.includes('\0') || codePointLength(raw) > 2000) {
+    fail(state, 'invalid_reason', 'reason');
   }
   return raw;
 }
@@ -1576,6 +1671,84 @@ export interface ParsedTaskGet {
   readonly taskId: string;
 }
 
+/**
+ * P03-2 / F-008 计划批准/拒绝（feature.plan.decide）：`--digest` 是提交时
+ * 绑定的当前计划摘要（64 位小写 hex，审批绑定身份不是 CAS 依据），
+ * `--revision` 是 Feature 聚合 expectedRevision（唯一 CAS 入口）；decision 由
+ * 子命令给定（approve/reject），不接受请求侧身份/状态字段。
+ */
+export interface ParsedFeatureDecision {
+  readonly kind: 'command';
+  readonly command: 'feature';
+  readonly commandId: 'feature.approve' | 'feature.reject';
+  readonly operation: 'feature.plan.decide';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly featureId: string;
+  readonly planDigest: string;
+  readonly revision: number;
+  readonly reason?: string;
+  readonly explicitCommandId?: string;
+}
+
+/**
+ * `task strategy <taskId> --project <id> --revision <int> --input <file>`：
+ * 完整策略副本 CAS 编辑（task.strategy.update；来源由服务端定值 task_edit，
+ * 不接受请求声明）；`--input` 是完整 executionConfig JSON（有界受控读取）。
+ */
+export interface ParsedTaskStrategy {
+  readonly kind: 'command';
+  readonly command: 'task';
+  readonly commandId: 'task.strategy';
+  readonly operation: 'task.strategy.update';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly taskId: string;
+  readonly revision: number;
+  readonly inputFile: string;
+  readonly explicitCommandId?: string;
+}
+
+/**
+ * `task prepare <taskId> --project <id> --feature <id> --input <file>`：
+ * 固定输入制品组准备（execution.input.prepare；创建类不携带 expectedRevision）；
+ * `--input` 是 `{items: [...]}` 必需输入采集清单（必填——缺失必需输入必须
+ * 显式声明，空清单由服务端明确拒绝）。
+ */
+export interface ParsedTaskPrepare {
+  readonly kind: 'command';
+  readonly command: 'task';
+  readonly commandId: 'task.prepare';
+  readonly operation: 'execution.input.prepare';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly featureId: string;
+  readonly taskId: string;
+  readonly inputFile: string;
+  readonly explicitCommandId?: string;
+}
+
+/**
+ * `task inputs <commandId>`：固定输入查看——沿用既有回执查询流程（receipts.get）
+ * 读取 execution.input.prepare 制品组身份（version/hash/用途），不新增查询面、
+ * 不读任何正文。
+ */
+export interface ParsedTaskInputs {
+  readonly kind: 'command';
+  readonly command: 'task';
+  readonly commandId: 'task.inputs';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly targetCommandId: string;
+}
+
 export type ParsedAppCliCommand =
   | ParsedProjectInit
   | ParsedProjectOverview
@@ -1605,8 +1778,12 @@ export type ParsedAppCliCommand =
   | ParsedFeatureList
   | ParsedFeatureGet
   | ParsedFeatureRevise
+  | ParsedFeatureDecision
   | ParsedTaskList
-  | ParsedTaskGet;
+  | ParsedTaskGet
+  | ParsedTaskStrategy
+  | ParsedTaskPrepare
+  | ParsedTaskInputs;
 
 export interface ParsedAppCliHelp {
   readonly kind: 'help';
@@ -2098,6 +2275,58 @@ function buildPlanEntity(
         commandId: 'task.get',
         taskId: requirePlanId(scan.positionals[0] as string, state, 'taskId'),
       };
+    }
+    case 'feature.approve':
+    case 'feature.reject': {
+      const explicitCommandId = optionalCommandId(scan, state);
+      const reason = optionalReason(scan, state);
+      return {
+        ...base,
+        command: 'feature',
+        commandId: spec.commandId,
+        operation: 'feature.plan.decide',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        featureId: requirePlanId(scan.positionals[0] as string, state, 'featureId'),
+        planDigest: requirePlanDigest(scan, state),
+        revision: requireRevision(scan, state),
+        ...(reason !== undefined ? { reason } : {}),
+        ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
+      };
+    }
+    case 'task.strategy': {
+      const explicitCommandId = optionalCommandId(scan, state);
+      return {
+        ...base,
+        command: 'task',
+        commandId: 'task.strategy',
+        operation: 'task.strategy.update',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        taskId: requirePlanId(scan.positionals[0] as string, state, 'taskId'),
+        revision: requireRevision(scan, state),
+        inputFile: requireInputFile(scan, state),
+        ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
+      };
+    }
+    case 'task.prepare': {
+      const explicitCommandId = optionalCommandId(scan, state);
+      return {
+        ...base,
+        command: 'task',
+        commandId: 'task.prepare',
+        operation: 'execution.input.prepare',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        featureId: requirePlanIdOption(scan, '--feature', state, 'featureId'),
+        taskId: requirePlanId(scan.positionals[0] as string, state, 'taskId'),
+        inputFile: requireInputFile(scan, state),
+        ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
+      };
+    }
+    case 'task.inputs': {
+      const targetCommandId = scan.positionals[0] as string;
+      if (!isUuidV4(targetCommandId)) {
+        fail(state, 'invalid_command_id', 'commandId');
+      }
+      return { ...base, command: 'task', commandId: 'task.inputs', targetCommandId };
     }
     default:
       fail(state, 'unknown_subcommand');

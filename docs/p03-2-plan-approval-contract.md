@@ -1,6 +1,9 @@
 # P03-2 计划批准/拒绝决策契约（F-002）
 
-- 文档状态：P03-2 / F-002 交付的决策用例契约（Core 层）；CLI 入口属 F-008。
+- 文档状态：P03-2 / F-002 交付的决策用例契约（Core 层）；CLI 入口属 F-008
+ （**F-008 已交付**：`feature approve`/`feature.reject` 子命令经 HostClient
+  `decideFeaturePlan`，输出明确未启动执行；操作说明见
+  `docs/p03-2-cli-approval-input-operations.md`）。
   命令面经既有 `POST /v1/commands` 通用路由接线宣告
   （`packages/host/src/contract/lifecycle.ts` 的 `APPLICATION_COMMAND_CAPABILITIES`
   追加 `feature.plan.decide`，同 F-001 先例）。**F-007 接线定案（写回登记）**：
@@ -122,7 +125,8 @@ planDigest 的批准或拒绝决策**（`feature.plan.decide`，能力位
   （当前决定 vs 历史决定；同摘要至多一条），`feature.planStatus` 是权威审批
   状态（拒绝后绝非 `approved`）；不可见/不存在统一 not_found（不区分存在性）；
 - Host 传输路由/线协议/HostClient 接线与握手查询清单同步**已由 F-007 交付**
- （路由/升版/线校验器见上文写回登记）；CLI 入口属 F-008。
+ （路由/升版/线校验器见上文写回登记）；CLI 入口属 F-008（已交付：
+  `feature.approve`/`feature.reject`，批准/拒绝均不启动执行、不重新应用默认策略）。
 
 ## 6. 迁移接续与版本兼容（沿用既有纪律）
 

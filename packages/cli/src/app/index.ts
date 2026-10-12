@@ -36,6 +36,7 @@ export type {
   ParsedFeatureImport,
   ParsedFeatureList,
   ParsedFeatureRevise,
+  ParsedFeatureDecision,
   ParsedPhaseCreate,
   ParsedPhaseGet,
   ParsedPhaseList,
@@ -49,7 +50,10 @@ export type {
   ParsedProjectRegister,
   ParsedReceiptGet,
   ParsedTaskGet,
+  ParsedTaskInputs,
   ParsedTaskList,
+  ParsedTaskPrepare,
+  ParsedTaskStrategy,
 } from './args.js';
 export { getAppCliHelp } from './help.js';
 export {
@@ -143,3 +147,24 @@ export {
   formatAppCliParseError,
 } from './output.js';
 export type { AppCliFailureEnvelope, AppCliSuccessEnvelope } from './output.js';
+export {
+  EXECUTION_BOUNDARY_VIEW,
+  buildExecutionInputView,
+  buildFeaturePlanDecisionView,
+  buildTaskStrategyEditView,
+  formatExecutionInputView,
+  formatFeaturePlanDecisionView,
+  formatTaskStrategyEditView,
+  parsePrepareItemsPayload,
+  scanStrategyInputFields,
+} from './decisions.js';
+export type {
+  DecisionsInputContext,
+  ExecutionBoundaryView,
+  ExecutionInputCliView,
+  ExecutionInputGroupPartView,
+  ExecutionInputRefView,
+  FeaturePlanApprovalView,
+  FeaturePlanDecisionCliView,
+  TaskStrategyEditCliView,
+} from './decisions.js';
