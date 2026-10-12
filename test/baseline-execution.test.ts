@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { chmodSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { chmodSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { openCoreApplication } from '../packages/core/src/adapters/composition.ts';
 import type { BaselineExecutionOptions } from '../packages/core/src/application/baseline-execution.ts';
@@ -29,6 +29,15 @@ function command(operation: string, projectId: string, payload: unknown, command
 function check(checkKey: string, argv: string[], timeoutMs = 10_000): BaselineCheck {
   return { checkKey, kind: 'command' as const, argv, required: true, timeoutMs };
 }
+/**
+ * npm CLI 绝对路径（检查 argv 不经 shell，子进程环境 PATH 受限，必须绝对路径）：
+ * 优先 `npm run` 注入的 npm_execpath；测试被直接以 node 运行（如验收选中清单经
+ * `node scripts/run-tests.ts` 执行）时回退 Node 安装前缀的标准 npm 布局
+ *（<prefix>/lib/node_modules/npm/bin/npm-cli.js），不依赖启动器环境。
+ */
+const npmCliPath =
+  process.env.npm_execpath ??
+  join(dirname(realpathSync(process.execPath)), '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js');
 async function setup(processes: CommandProcessPort = createCommandProcessAdapter(), decorate?: (s: AtomicCommandStore) => AtomicCommandStore,
   overrides?: (app: Awaited<ReturnType<typeof openCoreApplication>>) => Partial<BaselineExecutionOptions>) {
   const box = createBaselineFixture();
@@ -152,7 +161,7 @@ describe('Core baseline execution invariants', () => {
     const receipt = await f.execution.submit(owner, await f.request([
       check('a', [process.execPath, '-e', 'process.exit(7)']), check('b', ['shiploop-not-a-command']),
       check('c', ['./absent-script']), check('d', ['./denied']),
-      { ...check('e', [process.execPath, process.env.npm_execpath!, 'run', 'shiploop-absent-script']), environmentRef: 'test-home' },
+      { ...check('e', [process.execPath, npmCliPath, 'run', 'shiploop-absent-script']), environmentRef: 'test-home' },
     ]));
     await f.execution.waitForIdle();
     expect(f.results(receipt.operationId!)).toMatchObject([{ status: 'failed', exitCode: 7 }, { status: 'error', reasonCode: 'missing_command' },
