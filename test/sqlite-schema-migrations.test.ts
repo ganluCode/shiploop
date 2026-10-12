@@ -62,10 +62,11 @@ const SCHEMA_TABLES = [
   // P03-2 / F-002：计划决策记录（docs/p03-2-plan-approval-contract.md 与设计 11 §7，迁移 v7）。
   ['approvals', schema.approvals],
   // P03-3 / F-002：单 Feature 执行域三表（docs/p03-3-execution-schema-contract.md 与
-  // 设计 11 §5，迁移 v9）。
+  // 设计 11 §5，迁移 v9）；P03-3 / F-006：Task 尝试预占账本（迁移 v11）。
   ['execution_batches', schema.executionBatches],
   ['runs', schema.runs],
   ['batch_budget_revisions', schema.batchBudgetRevisions],
+  ['task_attempt_reservations', schema.taskAttemptReservations],
   ['schema_migrations', schema.schemaMigrations],
 ] as const;
 
@@ -503,6 +504,11 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
         'project_settings:(project_id)->projects.(id)',
         'artifacts:(project_id)->projects.(id)',
         'state_events:(project_id)->projects.(id)',
+        // P03-3 / F-006：Task 尝试预占账本的同项目归属外键链。
+        'task_attempt_reservations:(project_id)->projects.(id)',
+        'task_attempt_reservations:(project_id,batch_id)->execution_batches.(project_id,id)',
+        'task_attempt_reservations:(project_id,batch_id,run_id)->runs.(project_id,batch_id,id)',
+        'task_attempt_reservations:(project_id,task_id)->tasks.(project_id,id)',
         'command_receipts:(project_id)->projects.(id)',
         'command_receipts:(baseline_operation_id)->baseline_operations.(id)',
         'command_receipts:(project_id,baseline_operation_id)->baseline_operations.(project_id,id)',
@@ -874,6 +880,46 @@ describe('F-003 real Drizzle session round-trip on the migrated database', () =>
       const budgetRevision = session.select().from(schema.batchBudgetRevisions).all()[0];
       expect(budgetRevision?.version).toBe(1);
       expect(budgetRevision?.approvedBy).toBe('local-owner');
+
+      // P03-3 / F-006：Task 尝试预占账本经同一 Drizzle Schema 往返（同项目归属
+      // 复合外键链 + 受信分类定值；tasks 双计数列默认 0）。
+      session
+        .insert(schema.tasks)
+        .values({
+          id: 'task-1',
+          createdAt: NOW_MS,
+          projectId: 'proj-1',
+          updatedAt: NOW_MS,
+          featureId: 'feature-1',
+          title: '任务一',
+          acceptance: JSON.stringify({ criteria: ['验收一'] }),
+          executionConfig: JSON.stringify({ schemaVersion: 2, runtime: 'pi', provider: 'anthropic', model: 'claude-sonnet' }),
+          configSource: 'project_default',
+        })
+        .run();
+      const seededTask = session.select().from(schema.tasks).all()[0];
+      expect(seededTask?.attemptCounter).toBe(0);
+      expect(seededTask?.codeAttemptsUsed).toBe(0);
+      session
+        .insert(schema.taskAttemptReservations)
+        .values({
+          id: randomUUID(),
+          createdAt: NOW_MS,
+          projectId: 'proj-1',
+          updatedAt: NOW_MS,
+          batchId: 'batch-1',
+          runId: 'run-1',
+          taskId: 'task-1',
+          attemptKey: 'attempt-1',
+          classification: 'code',
+          classifiedBy: 'core',
+        })
+        .run();
+      const reservation = session.select().from(schema.taskAttemptReservations).all()[0];
+      expect(reservation?.classification).toBe('code');
+      expect(reservation?.classifiedBy).toBe('core');
+      expect(reservation?.reason).toBeNull();
+      expect(reservation?.revision).toBe(1);
 
       const project = session.select().from(schema.projects).all()[0];
       expect(project?.displayName).toBe('示例项目🚢');

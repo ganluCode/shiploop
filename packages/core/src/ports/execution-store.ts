@@ -22,11 +22,16 @@
  * - 快照列（scope/config/input）只保存身份级内容（摘要、版本、引用身份），
  *   绝不内联制品正文或绝对路径；序列化有界（EXECUTION_SNAPSHOT_MAX_BYTES）。
  *
- * 本模块不实现：启动命令编排（application/execution-start）、预算预占与结算
- * （F-006..F-008）、查询面（F-010）。
+ * 本模块不实现：启动命令编排（application/execution-start）、预算结算与无进展
+ * 计数（F-008）、预算修订命令（F-009）、查询面（F-010）；P03-3 / F-006 起本模块
+ * 追加 Task 尝试预算预占与分类记账的记录形态与事务原语输入校验。
  */
 import type { ExecutionBudgetSnapshot } from './execution-budget.js';
-import { validateExecutionBudgetSnapshot } from './execution-budget.js';
+import {
+  TASK_MAX_ATTEMPTS_PER_TASK_MAX,
+  TASK_MAX_ATTEMPTS_PER_TASK_MIN,
+  validateExecutionBudgetSnapshot,
+} from './execution-budget.js';
 import type { StorageEntityRef } from './errors.js';
 import { StorageError } from './errors.js';
 import {
@@ -466,4 +471,149 @@ export function executionCorruptError(
     entity,
     ...(cause === undefined ? {} : { cause }),
   });
+}
+
+/* ------------------------------------------------------------------ *
+ * P03-3 / F-006 Task 尝试预算预占与分类记账（迁移 v11；受信 Core 内部原语）
+ *
+ * 预占语义：总 Attempt 预占在同一写事务内校验同项目 Batch/Run/Task 归属、有效
+ * 控制状态与绝对 deadline，并原子地同时递增 Batch 与 Run 的 attempts_created 及
+ * Task 双计数（attempt_counter/code_attempts_used），同时落一条预占账本行；
+ * 不允许先提交扣额再另事务创建 Attempt（P03-4 在同事务接入真实 Attempt 创建）。
+ * 预占恒记为 code（首次代码执行与代码修复都消耗代码额度）；基础设施失败由
+ * 受信 Core 事后单向重分类为 infrastructure（仅退还代码额度，总 Attempt、已预占
+ * Runtime 启动与绝对时间不退还）。本原语不经命令面暴露，客户端/模型无自报入口。
+ * ------------------------------------------------------------------ */
+
+/** Task 尝试记账分类：预占恒为 code；infrastructure 仅受信 Core 重分类可达。 */
+export const TASK_ATTEMPT_CLASSIFICATIONS = ['code', 'infrastructure'] as const;
+export type TaskAttemptClassification = (typeof TASK_ATTEMPT_CLASSIFICATIONS)[number];
+
+/** 受信分类主体定值（DDL CHECK 同源；预占/重分类原语内部固定，不接受请求输入）。 */
+export const TASK_ATTEMPT_CLASSIFIED_BY_CORE = 'core';
+
+/** Task 尝试预占账本记录（迁移 v11 task_attempt_reservations 行的应用侧形态）。 */
+export interface TaskAttemptReservationRecord {
+  readonly id: string;
+  readonly createdAtUtcMs: number;
+  readonly projectId: string;
+  readonly revision: number;
+  readonly updatedAtUtcMs: number;
+  readonly batchId: string;
+  readonly runId: string;
+  readonly taskId: string;
+  readonly attemptKey: string;
+  readonly classification: TaskAttemptClassification;
+  readonly classifiedBy: typeof TASK_ATTEMPT_CLASSIFIED_BY_CORE;
+  readonly reason: string | null;
+}
+
+/** Task 预算双计数的持久读取形态（剩余额度 = caps 与计数合并计算）。 */
+export interface TaskExecutionCountersRecord {
+  readonly projectId: string;
+  readonly taskId: string;
+  readonly attemptCounter: number;
+  readonly codeAttemptsUsed: number;
+  readonly revision: number;
+  readonly updatedAtUtcMs: number;
+}
+
+export interface ValidatedTaskAttemptReservationInput {
+  readonly projectId: string;
+  readonly batchId: string;
+  readonly runId: string;
+  readonly taskId: string;
+  readonly attemptKey: string;
+  /** 总 Attempt 上限（executionLimits.maxAttemptsPerTask；受信 Core 事务外解析后传入；
+   *  null = 未配置。与 Task 副本中的 maxCodeAttempts 同时生效，见 resolveTaskAttemptCaps）。 */
+  readonly maxAttemptsPerTask: number | null;
+}
+
+const TASK_ATTEMPT_RESERVATION_KEYS = [
+  'projectId',
+  'batchId',
+  'runId',
+  'taskId',
+  'attemptKey',
+  'maxAttemptsPerTask',
+] as const;
+
+function requireAttemptKey(value: unknown, context: ValidationContext, field: string): string {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 128 || value.trim().length === 0) {
+    throw validationError(context, field, '必须是非空非空白字符串（≤128 字符；受信 Core 生成的预占身份）', value);
+  }
+  return value;
+}
+
+/**
+ * 预占输入校验：预占身份为受信 Core 生成的稳定键；maxAttemptsPerTask 可选
+ * （1..100，与 settings executionLimits 同源；缺省/null = 未配置总上限）；
+ * classification/owner/lease 等执行域字段不是预占请求字段（分类只能走受信
+ * 重分类原语；owner/fencing 属 P03-4）。
+ */
+export function validateTaskAttemptReservationInput(
+  value: unknown,
+  operation: string,
+): ValidatedTaskAttemptReservationInput {
+  const context: ValidationContext = { operation, entity: { type: 'task_attempt_reservation' } };
+  const object = requirePlainObject(value, context, 'input');
+  rejectUnknownKeys(object, TASK_ATTEMPT_RESERVATION_KEYS, context, 'input');
+  const rawCap = object.maxAttemptsPerTask;
+  let maxAttemptsPerTask: number | null = null;
+  if (rawCap !== undefined && rawCap !== null) {
+    if (
+      typeof rawCap !== 'number' ||
+      !Number.isInteger(rawCap) ||
+      rawCap < TASK_MAX_ATTEMPTS_PER_TASK_MIN ||
+      rawCap > TASK_MAX_ATTEMPTS_PER_TASK_MAX
+    ) {
+      throw validationError(
+        context,
+        'maxAttemptsPerTask',
+        `必须是 ${TASK_MAX_ATTEMPTS_PER_TASK_MIN}..${TASK_MAX_ATTEMPTS_PER_TASK_MAX} 的整数或 null（未配置）`,
+        rawCap,
+      );
+    }
+    maxAttemptsPerTask = rawCap;
+  }
+  return {
+    projectId: requireStableIdField(object.projectId, context, 'projectId'),
+    batchId: requireStableIdField(object.batchId, context, 'batchId'),
+    runId: requireStableIdField(object.runId, context, 'runId'),
+    taskId: requireStableIdField(object.taskId, context, 'taskId'),
+    attemptKey: requireAttemptKey(object.attemptKey, context, 'attemptKey'),
+    maxAttemptsPerTask,
+  };
+}
+
+export interface ValidatedTaskAttemptReclassifyInput {
+  readonly projectId: string;
+  readonly taskId: string;
+  readonly attemptKey: string;
+  readonly reason: string;
+}
+
+const TASK_ATTEMPT_RECLASSIFY_KEYS = ['projectId', 'taskId', 'attemptKey', 'reason'] as const;
+
+/**
+ * 重分类输入校验：仅接受同项目 Task + 预占身份 + 非空理由（审计）；分类主体
+ * 恒为受信 Core（classifiedBy 定值，不接受请求输入），方向恒为 code→
+ * infrastructure（单向，不可回调为代码额度）。
+ */
+export function validateTaskAttemptReclassifyInput(
+  value: unknown,
+  operation: string,
+): ValidatedTaskAttemptReclassifyInput {
+  const context: ValidationContext = { operation, entity: { type: 'task_attempt_reservation' } };
+  const object = requirePlainObject(value, context, 'input');
+  rejectUnknownKeys(object, TASK_ATTEMPT_RECLASSIFY_KEYS, context, 'input');
+  if (typeof object.reason !== 'string' || object.reason.trim().length === 0 || object.reason.length > 512) {
+    throw validationError(context, 'reason', '必须是非空说明（≤512 字符；受信 Core 分类审计理由）', object.reason);
+  }
+  return {
+    projectId: requireStableIdField(object.projectId, context, 'projectId'),
+    taskId: requireStableIdField(object.taskId, context, 'taskId'),
+    attemptKey: requireAttemptKey(object.attemptKey, context, 'attemptKey'),
+    reason: object.reason,
+  };
 }

@@ -619,7 +619,7 @@ describe('F-009 durability across close and reopen', () => {
         // + P03-2/F-002 v7 approvals 决策记录表 + P03-2/F-003 v8 检查政策身份
         // 绑定 + P03-3/F-002 v9 单 Feature 执行域三表），库未被重建。
         const row = second.session.database.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get() as { n: number };
-        expect(row.n).toBe(10);
+        expect(row.n).toBe(11);
       } finally {
         second.close();
       }

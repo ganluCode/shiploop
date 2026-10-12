@@ -75,6 +75,7 @@ docs/p03-3-execution-schema-contract.md  P03-3 执行域 Schema 契约（F-002�
 docs/p03-3-work-command-receipts-contract.md  P03-3 Work accepted 回执契约（F-003：迁移 v10 真实 Batch/Run 关联、v5/v6 显式兼容、查询与事务回滚、命令能力暂未接线；F-005 起启动命令接线、重试回执与工厂边界更新）
 docs/p03-3-execution-preview-contract.md  P03-3 执行预览契约（F-004：单 Feature prepare 预览、固定授权范围、完整输入身份 previewDigest、no_work 与阻塞原因词汇、授权先于仓库/制品 I/O、只读边界）
 docs/p03-3-execution-start-contract.md  P03-3 显式执行启动契约（F-005：ExecutionController 启动与同父 Batch 重试派发、原子提交范围与 runsCreated、workKey 工作身份、拒绝/冲突词汇、提交后唤醒窄端口与 queued 可查询原因）
+docs/p03-3-attempt-budget-contract.md  P03-3 Task 尝试预算预占契约（F-006：迁移 v11 tasks 双计数列与预占账本表、同事务 reserveTaskAttempt 三层额度判定与幂等身份去重、受信 Core 基础设施重分类仅退代码额度、P03-4 同事务 Attempt 创建交接）
 ```
 
 ### 确定性测试约定（F-003）

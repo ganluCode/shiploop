@@ -871,6 +871,54 @@ CREATE UNIQUE INDEX command_receipts_operation_id_unique ON command_receipts (op
 CREATE INDEX command_receipts_principal_project_index ON command_receipts (principal_id, project_id);
 `;
 
+/**
+ * v11: P03-3 / F-006 Task 尝试计数列与预占账本表。
+ *
+ * - tasks 追加执行域累计计数列（设计 11 §3.1 tasks.attempt_counter /
+ *   code_attempts_used；总尝试与代码尝试分开）：非负且 code ≤ total 的列级
+ *   CHECK 底线（ALTER TABLE ADD COLUMN 的内联 CHECK；不具名——具名约束无法
+ *   经 ADD COLUMN 声明，精确范围校验属 ports 契约）；既有行默认 0；
+ * - 新建 task_attempt_reservations 预占账本表：受信 Core 分类定值
+ *   classified_by='core'（DDL 拒绝任何其他主体，客户端/模型不能自报）、
+ *   classification ∈ {code,infrastructure}、幂等身份 UNIQUE(project_id,
+ *   task_id,attempt_key)（同身份重放去重、跨 Run 复用冲突）、同项目复合外键
+ *   链（execution_batches(project_id,id) / runs(project_id,batch_id,id) /
+ *   tasks(project_id,id)，全部 ON DELETE RESTRICT）；
+ * - 本迁移不建完整 attempts 表（UNIQUE(task_id,number)、owner/lease/进程字段
+ *   属 P03-4 真实 Attempt 生命周期），也不建 workspace_leases/sessions/通知表；
+ *   state_events 不加 attempt 关联列（随 attempts 表同迁移加入）。
+ */
+const MIGRATION_011_SQL = `
+ALTER TABLE tasks ADD COLUMN attempt_counter INTEGER NOT NULL DEFAULT 0 CHECK (attempt_counter >= 0);
+ALTER TABLE tasks ADD COLUMN code_attempts_used INTEGER NOT NULL DEFAULT 0 CHECK (code_attempts_used >= 0 AND code_attempts_used <= attempt_counter);
+
+CREATE TABLE task_attempt_reservations (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  batch_id TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  attempt_key TEXT NOT NULL,
+  classification TEXT NOT NULL,
+  classified_by TEXT NOT NULL,
+  reason TEXT,
+  CONSTRAINT task_attempt_reservations_revision_positive_check CHECK (revision >= 1),
+  CONSTRAINT task_attempt_reservations_attempt_key_not_empty_check CHECK (length(attempt_key) > 0),
+  CONSTRAINT task_attempt_reservations_classification_enum_check CHECK (classification IN ('code', 'infrastructure')),
+  CONSTRAINT task_attempt_reservations_classified_by_core_check CHECK (classified_by = 'core'),
+  CONSTRAINT task_attempt_reservations_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT task_attempt_reservations_batch_fk FOREIGN KEY (project_id, batch_id) REFERENCES execution_batches (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT task_attempt_reservations_run_fk FOREIGN KEY (project_id, batch_id, run_id) REFERENCES runs (project_id, batch_id, id) ON DELETE RESTRICT,
+  CONSTRAINT task_attempt_reservations_task_fk FOREIGN KEY (project_id, task_id) REFERENCES tasks (project_id, id) ON DELETE RESTRICT
+);
+
+CREATE UNIQUE INDEX task_attempt_reservations_task_attempt_key_unique ON task_attempt_reservations (project_id, task_id, attempt_key);
+CREATE INDEX task_attempt_reservations_run_id_index ON task_attempt_reservations (run_id);
+`;
+
 function sha256Hex(text: string): string {
   return createHash('sha256').update(text, 'utf8').digest('hex');
 }
@@ -926,5 +974,10 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
     version: 10,
     sql: MIGRATION_010_SQL,
     checksum: sha256Hex(MIGRATION_010_SQL),
+  },
+  {
+    version: 11,
+    sql: MIGRATION_011_SQL,
+    checksum: sha256Hex(MIGRATION_011_SQL),
   },
 ];

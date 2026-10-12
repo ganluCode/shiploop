@@ -42,7 +42,9 @@ export type StorageEntityType =
   /** P03-3 / F-002：执行 Run（runs，迁移 v9）。 */
   | 'run'
   /** P03-3 / F-002：批次预算修订记录（batch_budget_revisions，迁移 v9）。 */
-  | 'batch_budget_revision';
+  | 'batch_budget_revision'
+  /** P03-3 / F-006：Task 尝试预占账本（task_attempt_reservations，迁移 v11）。 */
+  | 'task_attempt_reservation';
 
 export type StorageErrorKind =
   /** 外部输入未通过运行时校验（缺字段/类型错误/未知 schemaVersion/非法摘要等）。 */

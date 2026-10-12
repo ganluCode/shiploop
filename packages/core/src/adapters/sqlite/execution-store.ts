@@ -2,6 +2,8 @@
  * P03-3 / F-005 执行域 SQLite 适配器（adapters 层）：迁移 v9 三表
  * （execution_batches/runs/batch_budget_revisions）的同会话同步事务原语，供
  * 原子命令事务在同一 BEGIN IMMEDIATE 内组合使用（ports/execution-store.ts 契约）。
+ * P03-3 / F-006 起追加迁移 v11 的 Task 尝试预算预占与分类记账原语（tasks 双计数列
+ * + task_attempt_reservations 账本表；同事务原子生效，详见 reserveTaskAttempt）。
  *
  * 不变量：
  * - 写原语只允许在写事务内调用（唯一事务由原子命令事务拥有）；事务内不执行
@@ -18,27 +20,40 @@
  * - 时间为注入的 UTC 毫秒；id 由适配器生成 UUID v4；JSON 列只写入经校验的
  *   有界结构化 JSON。
  *
- * 本适配器不实现：启动命令编排（application/execution-start）、预算预占/结算
- * （F-006..F-008）、Run 生命周期 CAS（F-008）、查询面（F-010）。
+ * 本适配器不实现：启动命令编排（application/execution-start）、Run 生命周期 CAS
+ * 与结算/无进展计数（F-008）、预算修订（F-009）、查询面（F-010）、Runtime 启动
+ * 预占（F-007）、完整 Attempt 生命周期/owner/fencing/进程执行（P03-4）。
  */
 import { randomUUID } from 'node:crypto';
 import { StorageError } from '../../ports/errors.js';
 import type { StorageEntityRef } from '../../ports/errors.js';
-import { validateExecutionBudgetSnapshot } from '../../ports/execution-budget.js';
+import {
+  evaluateRunBudgetReservation,
+  evaluateTaskCodeAttemptReservation,
+  resolveTaskAttemptCaps,
+  validateExecutionBudgetSnapshot,
+} from '../../ports/execution-budget.js';
 import type { ExecutionBudgetSnapshot } from '../../ports/execution-budget.js';
 import {
   EXECUTION_ACTIVE_STATUSES,
   executionCorruptError,
+  isExecutionActiveStatus,
+  TASK_ATTEMPT_CLASSIFIED_BY_CORE,
   validateBatchBudgetRevisionInsertInput,
   validateExecutionBatchInsertInput,
   validateExecutionEventAppendInput,
   validateExecutionRunInsertInput,
+  validateTaskAttemptReclassifyInput,
+  validateTaskAttemptReservationInput,
 } from '../../ports/execution-store.js';
 import type {
   BatchBudgetRevisionRecord,
   ExecutionBatchRecord,
   ExecutionBatchStatus,
   RunRecord,
+  TaskAttemptClassification,
+  TaskAttemptReservationRecord,
+  TaskExecutionCountersRecord,
 } from '../../ports/execution-store.js';
 import type { SqliteStorageSession } from './session.js';
 
@@ -91,6 +106,21 @@ interface RunSqlRow {
   readonly ended_at: number | null;
 }
 
+interface TaskAttemptReservationSqlRow {
+  readonly id: string;
+  readonly created_at: number;
+  readonly project_id: string;
+  readonly revision: number;
+  readonly updated_at: number;
+  readonly batch_id: string;
+  readonly run_id: string;
+  readonly task_id: string;
+  readonly attempt_key: string;
+  readonly classification: string;
+  readonly classified_by: string;
+  readonly reason: string | null;
+}
+
 const SELECT_BATCH =
   'SELECT id, created_at, project_id, revision, updated_at, phase_id, feature_id, scope_snapshot, ' +
   'config_snapshot, status, budget_revision, budget_snapshot, runs_created, attempts_created, ' +
@@ -99,6 +129,9 @@ const SELECT_RUN =
   'SELECT id, created_at, project_id, revision, updated_at, batch_id, feature_id, purpose, ' +
   'input_snapshot, config_snapshot, status, scope_digest, work_key, dispatch_ordinal, ' +
   'max_attempts_per_run, run_time_limit_ms, attempts_created, reason, started_at, ended_at FROM runs';
+const SELECT_RESERVATION =
+  'SELECT id, created_at, project_id, revision, updated_at, batch_id, run_id, task_id, attempt_key, ' +
+  'classification, classified_by, reason FROM task_attempt_reservations';
 
 const BATCH_STATUS_SET = new Set<string>([
   'queued', 'running', 'pausing', 'paused', 'cancelling', 'cancelled', 'succeeded', 'failed', 'interrupted',
@@ -129,6 +162,33 @@ export interface SqliteExecutionAccess {
   recordExecutionRunDispatchInTransaction(projectId: string, batchId: string): ExecutionBatchRecord;
   /** 执行域脱敏事件追加（state_events；与公开白名单同形）。 */
   appendExecutionEventInTransaction(input: unknown): void;
+  /* ---------------------------------------------------------------- *
+   * P03-3 / F-006 Task 尝试预算预占与分类记账（迁移 v11；受信 Core 内部原语）
+   * ---------------------------------------------------------------- */
+  /**
+   * 总 Attempt 预占（同事务原子生效）：校验同项目 Batch/Run/Task 归属、有效控制
+   * 状态与绝对 deadline 后，一次调用同时递增 Batch 与 Run 的 attempts_created 及
+   * Task 双计数（attempt_counter/code_attempts_used，预占恒记 code），并落一条
+   * 幂等身份账本行；同身份重放返回既有记录不重复调账；任一层额度耗尽拒绝
+   * （budget_exhausted）且零写入。P03-4 在同一事务内接入真实 Attempt 创建。
+   */
+  reserveTaskAttemptInTransaction(input: unknown): TaskAttemptReservationRecord;
+  /**
+   * 受信 Core 基础设施重分类（单向 code→infrastructure）：仅退还代码额度
+   * （code_attempts_used-1），总 Attempt（attempt_counter）、Batch/Run 累计计数、
+   * runtime_starts 与绝对时间不退还；重复分类幂等不重复调账。
+   */
+  reclassifyTaskAttemptAsInfrastructureInTransaction(input: unknown): TaskAttemptReservationRecord;
+  /** 同项目同 Task 同预占身份的账本行（无则 null）。 */
+  getTaskAttemptReservationInTransaction(
+    projectId: string,
+    taskId: string,
+    attemptKey: string,
+  ): TaskAttemptReservationRecord | null;
+  /** Task 预算双计数的持久读取（缺失 not_found、跨项目 ownership）。 */
+  getTaskExecutionCountersInTransaction(projectId: string, taskId: string): TaskExecutionCountersRecord;
+  /** 读取目标 Run（缺失 not_found、跨项目 ownership；计数断言与组合事务读取用）。 */
+  getExecutionRunInTransaction(projectId: string, runId: string): RunRecord;
 }
 
 function isSqliteConstraintError(error: unknown): error is Error & { code: string } {
@@ -579,6 +639,457 @@ export function createSqliteExecutionAccess(
     );
   }
 
+  /* ------------------------------------------------------------ *
+   * P03-3 / F-006 Task 尝试预算预占与分类记账（迁移 v11）
+   * ------------------------------------------------------------ */
+
+  function reservationFromRow(row: TaskAttemptReservationSqlRow, operation: string): TaskAttemptReservationRecord {
+    if (row.classification !== 'code' && row.classification !== 'infrastructure') {
+      throw executionCorruptError(
+        operation,
+        { type: 'task_attempt_reservation', projectId: row.project_id, id: row.id },
+        `预占账本分类非法（${row.classification}）`,
+      );
+    }
+    return {
+      id: row.id,
+      createdAtUtcMs: row.created_at,
+      projectId: row.project_id,
+      revision: row.revision,
+      updatedAtUtcMs: row.updated_at,
+      batchId: row.batch_id,
+      runId: row.run_id,
+      taskId: row.task_id,
+      attemptKey: row.attempt_key,
+      classification: row.classification,
+      classifiedBy: row.classified_by as typeof TASK_ATTEMPT_CLASSIFIED_BY_CORE,
+      reason: row.reason,
+    };
+  }
+
+  interface TaskBudgetRow {
+    readonly project_id: string;
+    readonly feature_id: string;
+    readonly execution_config: string;
+    readonly attempt_counter: number;
+    readonly code_attempts_used: number;
+    readonly revision: number;
+    readonly updated_at: number;
+  }
+
+  /** tasks.execution_config 内的 maxCodeAttempts 提取（快照权威；漂移 corrupt）。 */
+  function readTaskMaxCodeAttempts(
+    row: TaskBudgetRow,
+    taskId: string,
+    operation: string,
+  ): number | undefined {
+    const entity: StorageEntityRef = { type: 'task', projectId: row.project_id, id: taskId };
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(row.execution_config);
+    } catch (cause) {
+      throw executionCorruptError(operation, entity, 'tasks.execution_config JSON 损坏', cause);
+    }
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw executionCorruptError(operation, entity, 'tasks.execution_config 不是 JSON 对象');
+    }
+    const raw = (parsed as Record<string, unknown>).maxCodeAttempts;
+    if (raw === undefined) {
+      return undefined;
+    }
+    if (
+      typeof raw !== 'number' ||
+      !Number.isInteger(raw) ||
+      raw < 1 ||
+      raw > 100
+    ) {
+      throw executionCorruptError(
+        operation,
+        entity,
+        'tasks.execution_config.maxCodeAttempts 形态非法（应为 1..100 整数或缺省）',
+      );
+    }
+    return raw;
+  }
+
+  interface ReservationBudgetReason {
+    readonly layer: 'batch' | 'run' | 'task';
+    readonly dimension: string;
+    readonly limit: number;
+    readonly used: number | null;
+  }
+
+  function budgetExhaustedError(
+    operation: string,
+    entity: StorageEntityRef,
+    reasons: readonly ReservationBudgetReason[],
+  ): StorageError {
+    return new StorageError(
+      'conflict',
+      operation,
+      `${operation}: 预算额度已耗尽，拒绝新预占（budget_exhausted）`,
+      { entity, details: { reason: 'budget_exhausted', reasons } },
+    );
+  }
+
+  function reserveTaskAttemptInTransaction(input: unknown): TaskAttemptReservationRecord {
+    const operation = 'ExecutionStore.reserveTaskAttempt';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const valid = validateTaskAttemptReservationInput(input, operation);
+    const db = session.database;
+    const entity: StorageEntityRef = {
+      type: 'task_attempt_reservation',
+      projectId: valid.projectId,
+      id: valid.attemptKey,
+    };
+
+    // 1) 归属核验（同事务绑定参数查询；复合外键为兕底）。
+    const batchRow = db
+      .prepare<[string], ExecutionBatchSqlRow>(`${SELECT_BATCH} WHERE id = ?`)
+      .get(valid.batchId) as ExecutionBatchSqlRow | undefined;
+    if (batchRow === undefined) {
+      throw notFound(operation, entity, `Batch ${valid.batchId} 不存在`);
+    }
+    if (batchRow.project_id !== valid.projectId) {
+      throw ownership(operation, entity, 'Batch 不属于声明的项目（跨项目目标被拒绝）');
+    }
+    const runRow = db
+      .prepare<[string], RunSqlRow>(`${SELECT_RUN} WHERE id = ?`)
+      .get(valid.runId) as RunSqlRow | undefined;
+    if (runRow === undefined) {
+      throw notFound(operation, entity, `Run ${valid.runId} 不存在`);
+    }
+    if (runRow.project_id !== valid.projectId) {
+      throw ownership(operation, entity, 'Run 不属于声明的项目（跨项目目标被拒绝）');
+    }
+    if (runRow.batch_id !== valid.batchId) {
+      throw ownership(operation, entity, 'Run 不属于声明的 Batch（预占必须落在当前 Run 上）');
+    }
+    const taskRow = db
+      .prepare<[string], TaskBudgetRow>(
+        'SELECT project_id, feature_id, execution_config, attempt_counter, code_attempts_used, revision, updated_at FROM tasks WHERE id = ?',
+      )
+      .get(valid.taskId) as TaskBudgetRow | undefined;
+    if (taskRow === undefined) {
+      throw notFound(operation, entity, `Task ${valid.taskId} 不存在`);
+    }
+    if (taskRow.project_id !== valid.projectId) {
+      throw ownership(operation, entity, 'Task 不属于声明的项目（跨项目目标被拒绝）');
+    }
+    if (taskRow.feature_id !== batchRow.feature_id) {
+      throw ownership(operation, entity, 'Task 不在 Batch 的单 Feature 范围内');
+    }
+
+    // 2) 幂等身份去重先于控制状态与额度判定：同身份重放返回既有记录（不重复
+    //    调账）；跨 Batch/Run 复用同身份为身份冲突。
+    const existing = db
+      .prepare<[string, string, string], TaskAttemptReservationSqlRow>(
+        `${SELECT_RESERVATION} WHERE project_id = ? AND task_id = ? AND attempt_key = ?`,
+      )
+      .get(valid.projectId, valid.taskId, valid.attemptKey) as TaskAttemptReservationSqlRow | undefined;
+    if (existing !== undefined) {
+      if (existing.batch_id !== valid.batchId || existing.run_id !== valid.runId) {
+        throw new StorageError(
+          'conflict',
+          operation,
+          `${operation}: 预占身份 ${valid.attemptKey} 已被其他 Batch/Run 使用，拒绝重复预占`,
+          { entity, details: { reason: 'attempt_key_reused' } },
+        );
+      }
+      return reservationFromRow(existing, operation);
+    }
+
+    // 3) 有效控制状态（活动集与迁移 v9 条件唯一索引同源；paused/interrupted
+    //    不是可绕过的终态）。
+    if (!isExecutionActiveStatus(batchRow.status)) {
+      throw new StorageError(
+        'conflict',
+        operation,
+        `${operation}: Batch ${valid.batchId} 状态 ${batchRow.status} 不接受新预占`,
+        { entity, details: { reason: 'batch_not_active', status: batchRow.status } },
+      );
+    }
+    if (!isExecutionActiveStatus(runRow.status)) {
+      throw new StorageError(
+        'conflict',
+        operation,
+        `${operation}: Run ${valid.runId} 状态 ${runRow.status} 不接受新预占`,
+        { entity, details: { reason: 'run_not_active', status: runRow.status } },
+      );
+    }
+
+    // 4) 额度判定（全部先于任何写入；耗尽拒绝且零写入，计数不溢出）。
+    const now = nowUtcMs();
+    const budgetSnapshot = parseBudgetSnapshot(batchRow.budget_snapshot, operation, 'execution_batch');
+    const reasons: ReservationBudgetReason[] = [];
+    // Batch 层：总 Attempt 上限与绝对 deadline（当前批准预算快照为权威）。
+    if (batchRow.attempts_created >= budgetSnapshot.batch.maxTotalAttempts) {
+      reasons.push({
+        layer: 'batch',
+        dimension: 'maxTotalAttempts',
+        limit: budgetSnapshot.batch.maxTotalAttempts,
+        used: batchRow.attempts_created,
+      });
+    }
+    if (now >= budgetSnapshot.batch.deadlineUtcMs) {
+      reasons.push({
+        layer: 'batch',
+        dimension: 'deadlineUtcMs',
+        limit: budgetSnapshot.batch.deadlineUtcMs,
+        used: now,
+      });
+    }
+    // Run 层：单 Run 尝试上限与时间上限（未启动时时间维度未知）。
+    const runDecision = evaluateRunBudgetReservation(
+      { maxAttemptsPerRun: runRow.max_attempts_per_run, runTimeLimitMs: runRow.run_time_limit_ms },
+      { attemptsCreated: runRow.attempts_created, startedAtUtcMs: runRow.started_at },
+      now,
+    );
+    for (const reason of runDecision.reasons) {
+      reasons.push({
+        layer: 'run',
+        dimension: reason.dimension,
+        limit: reason.limit,
+        used: reason.used,
+      });
+    }
+    // Task 层：代码尝试上限（副本 maxCodeAttempts 为权威，缺省含首次共三次）与
+    // 总 Attempt 上限（executionLimits.maxAttemptsPerTask 由受信 Core 解析后传入）。
+    const caps = resolveTaskAttemptCaps(
+      {
+        maxCodeAttempts: readTaskMaxCodeAttempts(taskRow, valid.taskId, operation) ?? null,
+        maxAttemptsPerTask: valid.maxAttemptsPerTask,
+      },
+      { operation, entity: { type: 'task', projectId: valid.projectId, id: valid.taskId } },
+    );
+    const codeDecision = evaluateTaskCodeAttemptReservation(caps, taskRow.code_attempts_used);
+    if (!codeDecision.allowed) {
+      reasons.push({
+        layer: 'task',
+        dimension: 'maxCodeAttempts',
+        limit: codeDecision.limit,
+        used: codeDecision.used,
+      });
+    }
+    if (caps.maxAttemptsPerTask !== null && taskRow.attempt_counter >= caps.maxAttemptsPerTask) {
+      reasons.push({
+        layer: 'task',
+        dimension: 'maxAttemptsPerTask',
+        limit: caps.maxAttemptsPerTask,
+        used: taskRow.attempt_counter,
+      });
+    }
+    if (reasons.length > 0) {
+      throw budgetExhaustedError(operation, entity, reasons);
+    }
+
+    // 5) 同事务原子写入：Batch 与 Run 累计计数 + Task 双计数 + 账本行（一次调用
+    //    全部生效；后续任何同事务写入失败则整组回滚——不允许先提交扣额再另事务
+    //    创建 Attempt）。
+    const timestamp = nowUtcMs();
+    const batchUpdate = db
+      .prepare(
+        `UPDATE execution_batches SET attempts_created = attempts_created + 1, revision = revision + 1, updated_at = ? ` +
+          `WHERE id = ? AND project_id = ? AND status IN (${ACTIVE_PLACEHOLDERS})`,
+      )
+      .run(timestamp, valid.batchId, valid.projectId, ...(EXECUTION_ACTIVE_STATUSES as readonly string[]));
+    if (batchUpdate.changes !== 1) {
+      throw new StorageError(
+        'conflict',
+        operation,
+        `${operation}: Batch ${valid.batchId} 状态变化，不接受新预占`,
+        { entity, details: { reason: 'batch_not_active' } },
+      );
+    }
+    const runUpdate = db
+      .prepare(
+        `UPDATE runs SET attempts_created = attempts_created + 1, revision = revision + 1, updated_at = ? ` +
+          `WHERE id = ? AND project_id = ? AND batch_id = ? AND status IN (${ACTIVE_PLACEHOLDERS})`,
+      )
+      .run(timestamp, valid.runId, valid.projectId, valid.batchId, ...(EXECUTION_ACTIVE_STATUSES as readonly string[]));
+    if (runUpdate.changes !== 1) {
+      throw new StorageError(
+        'conflict',
+        operation,
+        `${operation}: Run ${valid.runId} 状态变化，不接受新预占`,
+        { entity, details: { reason: 'run_not_active' } },
+      );
+    }
+    const taskUpdate = db
+      .prepare(
+        'UPDATE tasks SET attempt_counter = attempt_counter + 1, code_attempts_used = code_attempts_used + 1, ' +
+          'revision = revision + 1, updated_at = ? WHERE id = ? AND project_id = ?',
+      )
+      .run(timestamp, valid.taskId, valid.projectId);
+    if (taskUpdate.changes !== 1) {
+      throw notFound(operation, entity, `Task ${valid.taskId} 不存在`);
+    }
+    const id = randomUUID();
+    try {
+      db.prepare(
+        'INSERT INTO task_attempt_reservations (id, created_at, project_id, revision, updated_at, batch_id, run_id, task_id, attempt_key, classification, classified_by, reason) ' +
+          "VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, 'code', ?, NULL)",
+      ).run(
+        id,
+        timestamp,
+        valid.projectId,
+        timestamp,
+        valid.batchId,
+        valid.runId,
+        valid.taskId,
+        valid.attemptKey,
+        TASK_ATTEMPT_CLASSIFIED_BY_CORE,
+      );
+    } catch (error) {
+      if (isSqliteConstraintError(error)) {
+        throw new StorageError(
+          'conflict',
+          operation,
+          `${operation}: 预占账本写入被 DDL 约束拒绝（幂等身份/归属链）`,
+          { entity, cause: error },
+        );
+      }
+      throw error;
+    }
+    const inserted = db
+      .prepare<[string], TaskAttemptReservationSqlRow>(`${SELECT_RESERVATION} WHERE id = ?`)
+      .get(id) as TaskAttemptReservationSqlRow;
+    return reservationFromRow(inserted, operation);
+  }
+
+  function reclassifyTaskAttemptAsInfrastructureInTransaction(input: unknown): TaskAttemptReservationRecord {
+    const operation = 'ExecutionStore.reclassifyTaskAttemptAsInfrastructure';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const valid = validateTaskAttemptReclassifyInput(input, operation);
+    const db = session.database;
+    const entity: StorageEntityRef = {
+      type: 'task_attempt_reservation',
+      projectId: valid.projectId,
+      id: valid.attemptKey,
+    };
+    const taskRow = db
+      .prepare<[string], { project_id: string }>('SELECT project_id FROM tasks WHERE id = ?')
+      .get(valid.taskId) as { project_id: string } | undefined;
+    if (taskRow === undefined) {
+      throw notFound(operation, entity, `Task ${valid.taskId} 不存在`);
+    }
+    if (taskRow.project_id !== valid.projectId) {
+      throw ownership(operation, entity, 'Task 不属于声明的项目（跨项目目标被拒绝）');
+    }
+    const existing = db
+      .prepare<[string, string, string], TaskAttemptReservationSqlRow>(
+        `${SELECT_RESERVATION} WHERE project_id = ? AND task_id = ? AND attempt_key = ?`,
+      )
+      .get(valid.projectId, valid.taskId, valid.attemptKey) as TaskAttemptReservationSqlRow | undefined;
+    if (existing === undefined) {
+      throw notFound(operation, entity, `预占 ${valid.attemptKey} 不存在（分类对象必须是已预占尝试）`);
+    }
+    // 重复分类不重复调账：已为 infrastructure 时幂等返回当前记录。
+    if (existing.classification === 'infrastructure') {
+      return reservationFromRow(existing, operation);
+    }
+    const timestamp = nowUtcMs();
+    // 受信单向重分类（code→infrastructure）：账本行分类/理由持久 + 仅退还代码
+    // 额度；总 Attempt（attempt_counter）、Batch/Run 累计计数、runtime_starts 与
+    // 绝对时间不退还不触碰。分类主体为受信 Core 定值（DDL 拒绝其他主体）。
+    const ledgerUpdate = db
+      .prepare(
+        "UPDATE task_attempt_reservations SET classification = 'infrastructure', reason = ?, " +
+          'revision = revision + 1, updated_at = ? WHERE id = ? AND project_id = ? AND classification = \'code\'',
+      )
+      .run(valid.reason, timestamp, existing.id, valid.projectId);
+    if (ledgerUpdate.changes !== 1) {
+      throw new StorageError(
+        'conflict',
+        operation,
+        `${operation}: 预占 ${valid.attemptKey} 分类状态变化，重分类失败`,
+        { entity, details: { reason: 'classification_conflict' } },
+      );
+    }
+    const taskUpdate = db
+      .prepare(
+        'UPDATE tasks SET code_attempts_used = code_attempts_used - 1, revision = revision + 1, updated_at = ? ' +
+          'WHERE id = ? AND project_id = ? AND code_attempts_used >= 1',
+      )
+      .run(timestamp, valid.taskId, valid.projectId);
+    if (taskUpdate.changes !== 1) {
+      // 账本为 code 但 Task 代码计数已为零：持久状态不一致，fail-closed。
+      throw executionCorruptError(
+        operation,
+        entity,
+        'Task 代码尝试计数与预占账本不一致（code_attempts_used 已为零但存在 code 预占）',
+      );
+    }
+    const updated = db
+      .prepare<[string], TaskAttemptReservationSqlRow>(`${SELECT_RESERVATION} WHERE id = ?`)
+      .get(existing.id) as TaskAttemptReservationSqlRow;
+    return reservationFromRow(updated, operation);
+  }
+
+  function getTaskAttemptReservationInTransaction(
+    projectId: string,
+    taskId: string,
+    attemptKey: string,
+  ): TaskAttemptReservationRecord | null {
+    const operation = 'ExecutionStore.getTaskAttemptReservation';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const row = session.database
+      .prepare<[string, string, string], TaskAttemptReservationSqlRow>(
+        `${SELECT_RESERVATION} WHERE project_id = ? AND task_id = ? AND attempt_key = ?`,
+      )
+      .get(projectId, taskId, attemptKey) as TaskAttemptReservationSqlRow | undefined;
+    return row === undefined ? null : reservationFromRow(row, operation);
+  }
+
+  function getTaskExecutionCountersInTransaction(
+    projectId: string,
+    taskId: string,
+  ): TaskExecutionCountersRecord {
+    const operation = 'ExecutionStore.getTaskExecutionCounters';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const entity: StorageEntityRef = { type: 'task', projectId, id: taskId };
+    const row = session.database
+      .prepare<[string], TaskBudgetRow>(
+        'SELECT project_id, feature_id, execution_config, attempt_counter, code_attempts_used, revision, updated_at FROM tasks WHERE id = ?',
+      )
+      .get(taskId) as TaskBudgetRow | undefined;
+    if (row === undefined) {
+      throw notFound(operation, entity, `Task ${taskId} 不存在`);
+    }
+    if (row.project_id !== projectId) {
+      throw ownership(operation, entity, 'Task 不属于声明的项目（跨项目目标被拒绝）');
+    }
+    return {
+      projectId,
+      taskId,
+      attemptCounter: row.attempt_counter,
+      codeAttemptsUsed: row.code_attempts_used,
+      revision: row.revision,
+      updatedAtUtcMs: row.updated_at,
+    };
+  }
+
+  function getExecutionRunInTransaction(projectId: string, runId: string): RunRecord {
+    const operation = 'ExecutionStore.getExecutionRun';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const entity: StorageEntityRef = { type: 'run', projectId, id: runId };
+    const row = session.database
+      .prepare<[string], RunSqlRow>(`${SELECT_RUN} WHERE id = ?`)
+      .get(runId) as RunSqlRow | undefined;
+    if (row === undefined) {
+      throw notFound(operation, entity, `Run ${runId} 不存在`);
+    }
+    if (row.project_id !== projectId) {
+      throw ownership(operation, entity, 'Run 不属于声明的项目（跨项目目标被拒绝）');
+    }
+    return runFromRow(row, operation);
+  }
+
   return {
     insertExecutionBatchInTransaction,
     insertBatchBudgetRevisionInTransaction,
@@ -589,5 +1100,10 @@ export function createSqliteExecutionAccess(
     getActivePhaseExecutionBatchInTransaction,
     recordExecutionRunDispatchInTransaction,
     appendExecutionEventInTransaction,
+    reserveTaskAttemptInTransaction,
+    reclassifyTaskAttemptAsInfrastructureInTransaction,
+    getTaskAttemptReservationInTransaction,
+    getTaskExecutionCountersInTransaction,
+    getExecutionRunInTransaction,
   };
 }

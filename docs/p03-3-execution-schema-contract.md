@@ -106,6 +106,15 @@ Drizzle 无法表达触发器；不可变内容由迁移 v9 触发器承载（�
 - 无存储写原语、命令/回执扩展、prepare/start/预占/结算/修订/查询——分别属
   F-003..F-010；本项只保证 Schema 承载与其 DDL 级不变量。
 
+### 接续登记（后续 Feature 对本契约的增量）
+
+- **F-005**：迁移 v10（command_receipts 重建，真实 Batch/Run 关联）见
+  `docs/p03-3-work-command-receipts-contract.md`；启动命令与派发计数原语见
+  `docs/p03-3-execution-start-contract.md`。
+- **F-006**：迁移 v11（tasks 双计数列 attempt_counter/code_attempts_used 与
+  task_attempt_reservations 预占账本表；总 Attempt 预占/受信基础设施重分类原语）
+  见 `docs/p03-3-attempt-budget-contract.md`；本契约的三表 DDL 与不变量不变。
+
 ## 7. 验证记录（F-002）
 
 - 新增：`test/p03-3-execution-schema.test.ts`（10 用例：迁移接续/冻结 checksum/空库/

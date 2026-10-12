@@ -240,6 +240,36 @@ export interface CommandTransaction {
   insertExecutionRun(input: unknown): RunRecord;
   /** 执行域脱敏事件追加（execution.run.dispatched；与公开白名单同形）。 */
   appendExecutionEvent(input: unknown): void;
+  /* ---------------------------------------------------------------- *
+   * P03-3 / F-006 Task 尝试预算预占与分类记账（迁移 v11；受信 Core 内部原语，
+   * 不经命令面暴露；P03-4 在同一事务内接入真实 Attempt 创建）
+   * ---------------------------------------------------------------- */
+  /**
+   * 总 Attempt 预占：同事务校验归属/控制状态/deadline 与三层额度后，一次调用
+   * 同时递增 Batch 与 Run 累计计数与 Task 双计数并落幂等身份账本行；同身份重放
+   * 返回既有记录；任一层耗尽 conflict budget_exhausted 且零写入。
+   */
+  reserveTaskAttempt(input: unknown): import('./execution-store.js').TaskAttemptReservationRecord;
+  /**
+   * 受信 Core 基础设施重分类（单向 code→infrastructure，幂等）：仅退还代码额度；
+   * 总 Attempt、已预占 Runtime 启动与绝对时间不退还。
+   */
+  reclassifyTaskAttemptAsInfrastructure(
+    input: unknown,
+  ): import('./execution-store.js').TaskAttemptReservationRecord;
+  /** 同项目同 Task 同预占身份的账本行（无则 null）。 */
+  getTaskAttemptReservation(
+    projectId: string,
+    taskId: string,
+    attemptKey: string,
+  ): import('./execution-store.js').TaskAttemptReservationRecord | null;
+  /** Task 预算双计数持久读取（剩余额度断言与调度决策输入）。 */
+  getTaskExecutionCounters(
+    projectId: string,
+    taskId: string,
+  ): import('./execution-store.js').TaskExecutionCountersRecord;
+  /** 读取目标 Run（含累计计数与冻结快照；缺失 not_found、跨项目 ownership）。 */
+  getExecutionRun(projectId: string, runId: string): RunRecord;
   saveReceipt(receipt: unknown): void;
 }
 

@@ -558,8 +558,9 @@ export const baselineOccupancy = sqliteTable('baseline_occupancy', {
  *   JSON 对象；labels/source_refs 为 JSON 数组，默认 '[]' 且不继承父级；
  * - 状态枚举冻结设计 02/11 的完整生命周期（创建路径仅写入 open/draft/pending，
  *   其余取值随对应功能迁移使用）；config_source 仅非空约束，取值由 F-003 定案；
- * - 不建 feature_dependencies/execution_batches/runs/attempts/approvals 等表，
- *   tasks 不含 kind/attempt_counter 等执行域列（随对应功能迁移增加）。
+ * - 不建 feature_dependencies/execution_batches/runs/attempts/approvals 等表；
+ *   tasks 的执行域计数列（attempt_counter/code_attempts_used）由 P03-3 / F-006
+ *   迁移 v11 追加，kind 等其余执行域列仍随后续功能迁移增加。
  */
 export const phases = sqliteTable('phases', {
   id: text('id').primaryKey(),
@@ -682,6 +683,12 @@ export const tasks = sqliteTable('tasks', {
   configSource: text('config_source').notNull(),
   /** 来源策略键（仅追踪用途；可空）。 */
   configSourceKey: text('config_source_key'),
+  /** P03-3 / F-006（迁移 v11）：Task 总尝试累计计数（含基础设施分类；非负，不随
+   *  换 Run/换模型/重开清零；非负与 code ≤ total 由迁移 v11 内联 CHECK 底线保护）。 */
+  attemptCounter: integer('attempt_counter').notNull().default(0),
+  /** P03-3 / F-006（迁移 v11）：已消耗代码尝试计数（首次代码执行与代码修复；
+   *  仅受信 Core 基础设施重分类可退还，成功/取消/失败不退）。 */
+  codeAttemptsUsed: integer('code_attempts_used').notNull().default(0),
 }, (table) => [
   check('tasks_revision_positive_check', sql`${table.revision} >= 1`),
   check('tasks_title_not_empty_check', sql`length(${table.title}) > 0`),
@@ -1121,6 +1128,71 @@ export const batchBudgetRevisions = sqliteTable('batch_budget_revisions', {
   }).onDelete('restrict'),
   // 修订身份唯一：同 Batch 同版本至多一条历史快照。
   uniqueIndex('batch_budget_revisions_batch_version_unique').on(table.batchId, table.version),
+]);
+
+/**
+ * P03-3 / F-006 Task 尝试预占账本（迁移 v11；F-006 验收的实际预算存储）。
+ *
+ * - 预占身份 UNIQUE(project_id,task_id,attempt_key)：同身份重放去重（不重复调账）、
+ *   跨 Run 复用同一 attemptKey 被拒绝（预占身份属于 Task 尝试，不属于 Run）；
+ * - classification ∈ {code,infrastructure}：预占恒为 code（首次代码执行与代码修复
+ *   都消耗代码额度）；仅受信 Core 重分类原语可单向 code→infrastructure（退还代码
+ *   额度但不退总 Attempt）；classified_by 恒 'core'（DDL 拒绝其他主体，客户端/模型
+ *   不能自报基础设施错误）；
+ * - 本表不是完整 attempts 表：无 number/owner/lease/进程执行字段（P03-4 在同事务
+ *   接入真实 Attempt 创建时以本表为同事务预算预占依据）。
+ */
+export const taskAttemptReservations = sqliteTable('task_attempt_reservations', {
+  id: text('id').primaryKey(),
+  createdAt: integer('created_at').notNull(),
+  projectId: text('project_id')
+    .notNull()
+    .references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  revision: integer('revision').notNull().default(1),
+  updatedAt: integer('updated_at').notNull(),
+  /** 归属 Batch（同项目复合外键；预占时受有效控制状态与预算约束）。 */
+  batchId: text('batch_id').notNull(),
+  /** 归属 Run（同项目同 Batch 复合外键）。 */
+  runId: text('run_id').notNull(),
+  /** 预占的 Task（同项目复合外键；必须在 Batch 单 Feature 范围内）。 */
+  taskId: text('task_id').notNull(),
+  /** 预占身份（受信 Core 生成的稳定键；与未来 attempts 行同事务关联）。 */
+  attemptKey: text('attempt_key').notNull(),
+  /** 当前记账分类（code→infrastructure 单向重分类）。 */
+  classification: text('classification').notNull(),
+  /** 受信分类主体（恒 'core'；DDL CHECK 拒绝其他值）。 */
+  classifiedBy: text('classified_by').notNull(),
+  /** 重分类理由（审计；初始预占为 NULL）。 */
+  reason: text('reason'),
+}, (table) => [
+  check('task_attempt_reservations_revision_positive_check', sql`${table.revision} >= 1`),
+  check('task_attempt_reservations_attempt_key_not_empty_check', sql`length(${table.attemptKey}) > 0`),
+  check(
+    'task_attempt_reservations_classification_enum_check',
+    sql`${table.classification} IN ('code', 'infrastructure')`,
+  ),
+  check('task_attempt_reservations_classified_by_core_check', sql`${table.classifiedBy} = 'core'`),
+  foreignKey({
+    name: 'task_attempt_reservations_batch_fk',
+    columns: [table.projectId, table.batchId],
+    foreignColumns: [executionBatches.projectId, executionBatches.id],
+  }).onDelete('restrict'),
+  foreignKey({
+    name: 'task_attempt_reservations_run_fk',
+    columns: [table.projectId, table.batchId, table.runId],
+    foreignColumns: [runs.projectId, runs.batchId, runs.id],
+  }).onDelete('restrict'),
+  foreignKey({
+    name: 'task_attempt_reservations_task_fk',
+    columns: [table.projectId, table.taskId],
+    foreignColumns: [tasks.projectId, tasks.id],
+  }).onDelete('restrict'),
+  uniqueIndex('task_attempt_reservations_task_attempt_key_unique').on(
+    table.projectId,
+    table.taskId,
+    table.attemptKey,
+  ),
+  index('task_attempt_reservations_run_id_index').on(table.runId),
 ]);
 
 export const schemaMigrations = sqliteTable('schema_migrations', {

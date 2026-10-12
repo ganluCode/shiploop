@@ -112,6 +112,15 @@ export function createSqliteAtomicCommandStore(
           recordExecutionRunDispatch: guarded(executions.recordExecutionRunDispatchInTransaction),
           insertExecutionRun: guarded(executions.insertExecutionRunInTransaction),
           appendExecutionEvent: guarded(executions.appendExecutionEventInTransaction),
+          // P03-3 / F-006：Task 尝试预算预占与分类记账原语（迁移 v11；同一
+          // BEGIN IMMEDIATE 内原子生效；受信 Core 内部面，不经命令路由暴露）。
+          reserveTaskAttempt: guarded(executions.reserveTaskAttemptInTransaction),
+          reclassifyTaskAttemptAsInfrastructure: guarded(
+            executions.reclassifyTaskAttemptAsInfrastructureInTransaction,
+          ),
+          getTaskAttemptReservation: guarded(executions.getTaskAttemptReservationInTransaction),
+          getTaskExecutionCounters: guarded(executions.getTaskExecutionCountersInTransaction),
+          getExecutionRun: guarded(executions.getExecutionRunInTransaction),
           saveReceipt: guarded(receipts.saveReceiptInTransaction),
         });
         try {
