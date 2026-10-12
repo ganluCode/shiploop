@@ -75,6 +75,10 @@ export const APPLICATION_COMMAND_CAPABILITIES = [
   // P03-2 / F-006：执行输入制品组准备经既有 POST /v1/commands 通用路由
   // 接线（同一命令面；HostClient 入口 F-007，CLI 入口 F-008）。
   'execution.input.prepare',
+  // P03-3 / F-004：单 Feature 执行 prepare 预览经既有 POST /v1/commands 通用
+  // 路由接线（同一命令面；只读预览不创建执行实体；HostClient/CLI 入口与
+  // execution.start 启动命令随后续任务接入；v5 内增量，升版随接线任务评估）。
+  'execution.preview',
 ] as const;
 
 /** P02-2 §11.3：Host 实际接线的应用查询（含回执/结果读取与快照；P02-3 / F-006 新增静态接入两项；F-014 新增基线分页/详情/证据正文三项；P03-1 / F-009 新增计划层级/详情/DAG 六项；P03-2 / F-007 新增审批决策查询一项）。 */

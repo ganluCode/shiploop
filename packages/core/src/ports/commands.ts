@@ -95,6 +95,10 @@ export const APP_CAPABILITIES = [
   // P03-2 / F-006：执行输入制品组准备能力位（发布可验证的不可变
   // snapshot/manifest/prompt 并最终重核批准与 Task 输入身份；不创建运行实体）。
   'execution.input.prepare',
+  // P03-3 / F-004：执行授权面能力位（与 baseline.preview/run 共享 baseline.run
+  // 同一先例）：execution.preview 现在使用；execution.start 启动命令随后续
+  // 控制器任务接线同一能力位。预算授权预览不宣称已具备 Runtime 执行能力。
+  'execution.start',
 ] as const;
 
 export type AppCapability = (typeof APP_CAPABILITIES)[number];
@@ -150,6 +154,11 @@ export const COMMAND_OPERATIONS = [
   // 创建类命令不携带 expectedRevision；采集/组装/发布为事务外 I/O，最终重核、
   // 事件与回执同一短写事务）。
   'execution.input.prepare',
+  // P03-3 / F-004：单 Feature 执行 prepare 预览（project scope +
+  // execution.start；只读预览：固定单成员范围/完整输入身份 previewDigest/
+  // no_work 与阻塞原因；不创建 Batch/Run、不扣预算、不调用 Runtime；预算深
+  // 校验在应用层经 ports/execution-budget 完成）。
+  'execution.preview',
 ] as const;
 
 export type AppOperation = (typeof COMMAND_OPERATIONS)[number];
@@ -255,6 +264,13 @@ export const COMMAND_OPERATION_SPECS: Readonly<Record<AppOperation, CommandOpera
       scopeKind: 'project',
       mutation: 'create',
       capability: 'execution.input.prepare',
+    },
+    // P03-3 / F-004：单 Feature 执行 prepare 预览（创建类：不携带
+    // expectedRevision；只读预览不 CAS 任何实体，回执承载预览结果）。
+    'execution.preview': {
+      scopeKind: 'project',
+      mutation: 'create',
+      capability: 'execution.start',
     },
   });
 
@@ -598,6 +614,19 @@ export interface ValidatedExecutionInputPreparePayload {
   readonly items: readonly Record<string, unknown>[];
 }
 
+/**
+ * P03-3 / F-004 执行预览 payload：featureIds 为选中范围（稳定 ID 清单；本阶段
+ * 形态上限 16 防无界数组，空范围 → no_work、多成员 → 应用层结构化拒绝，
+ * 不静默截断）；budget 为完整有限预算提案（Batch + Run 两层；深校验在应用层
+ * 复用 ports/execution-budget 权威校验器）。严格未知键拒绝：previewDigest/
+ * summary/blocked 等服务端决定字段一律不能经请求输入。
+ */
+export interface ValidatedExecutionPreviewPayload {
+  readonly featureIds: readonly string[];
+  /** 完整预算提案（深校验在应用层；此处只保证 JSON 对象形态）。 */
+  readonly budget: Record<string, unknown>;
+}
+
 interface EnvelopeCommon {
   readonly schemaVersion: typeof WIRE_MESSAGE_SCHEMA_VERSION;
   readonly commandId: string;
@@ -718,6 +747,15 @@ export type ValidatedCommandEnvelope =
       readonly scope: { readonly kind: 'project'; readonly projectId: string };
       readonly expectedRevision: null;
       readonly payload: ValidatedExecutionInputPreparePayload;
+    })
+  // P03-3 / F-004：单 Feature 执行 prepare 预览命令信封（创建类禁止携带
+  // expectedRevision；只读预览不 CAS 任何实体；payload 只含 featureIds/budget，
+  // budget 深校验在应用层）。
+  | (EnvelopeCommon & {
+      readonly operation: 'execution.preview';
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: null;
+      readonly payload: ValidatedExecutionPreviewPayload;
     });
 
 const ENVELOPE_KEYS = [
@@ -740,6 +778,9 @@ const FEATURE_PLAN_REVISE_PAYLOAD_KEYS = ['featureId', 'plan'] as const;
 const TASK_STRATEGY_UPDATE_PAYLOAD_KEYS = ['taskId', 'executionConfig'] as const;
 const FEATURE_PLAN_DECIDE_PAYLOAD_KEYS = ['featureId', 'planDigest', 'decision', 'reason'] as const;
 const EXECUTION_INPUT_PREPARE_PAYLOAD_KEYS = ['featureId', 'taskId', 'items'] as const;
+const EXECUTION_PREVIEW_PAYLOAD_KEYS = ['featureIds', 'budget'] as const;
+/** 执行预览范围的形态上限（防无界数组；本阶段业务上限固定单成员）。 */
+export const EXECUTION_PREVIEW_FEATURE_IDS_MAX = 16;
 
 /**
  * P01 校验器抛 StorageError(validation)，其字段名面向端口输入（'input'、
@@ -1062,6 +1103,56 @@ function validateExecutionInputPreparePayload(
   }
 }
 
+function validateExecutionPreviewPayload(
+  operation: AppOperation,
+  raw: unknown,
+): ValidatedExecutionPreviewPayload {
+  const object = requireObject(operation, raw, 'payload');
+  // 严格未知键拒绝：只接受预览面（featureIds/budget）；创建类命令不携带
+  // expectedRevision；previewDigest/summary/blocked/noWorkReason 等服务端决定
+  // 字段一律不能经请求输入（payload 内出现即未知键，定位 payload.<key>）。
+  exactKeys(operation, object, EXECUTION_PREVIEW_PAYLOAD_KEYS, 'payload.');
+  if (!Array.isArray(object.featureIds)) {
+    fail(operation, 'invalid_input', 'payload.featureIds', '必须是 Feature 稳定 ID 数组', object.featureIds);
+  }
+  const featureIds: string[] = [];
+  const seen = new Set<string>();
+  for (const [index, candidate] of (object.featureIds as unknown[]).entries()) {
+    if (typeof candidate !== 'string') {
+      fail(operation, 'invalid_input', `payload.featureIds[${index}]`, '必须是稳定 ID 字符串', candidate);
+    }
+    if (seen.has(candidate)) {
+      fail(operation, 'invalid_input', `payload.featureIds[${index}]`, '范围成员重复', candidate, {
+        reason: 'duplicate_feature_id',
+      });
+    }
+    seen.add(candidate);
+    featureIds.push(candidate);
+  }
+  if (featureIds.length > EXECUTION_PREVIEW_FEATURE_IDS_MAX) {
+    fail(operation, 'invalid_input', 'payload.featureIds',
+      `成员数不得超过 ${EXECUTION_PREVIEW_FEATURE_IDS_MAX}（形态上限；本阶段固定单成员）`,
+      featureIds.length, { reason: 'limit_exceeded' });
+  }
+  if (!isPlainObjectPayload(object.budget)) {
+    fail(operation, 'invalid_input', 'payload.budget', '必须是 JSON 对象（完整预算提案）', object.budget);
+  }
+  try {
+    for (const [index, id] of featureIds.entries()) {
+      featureIds[index] = validateStableId(id, { operation }, `payload.featureIds[${index}]`);
+    }
+  } catch (error) {
+    if (isStorageError(error, 'validation')) {
+      throw new PublicError('invalid_input', operation, undefined, {
+        details: storageValidationDetails(error.details),
+        cause: error,
+      });
+    }
+    throw error;
+  }
+  return { featureIds, budget: object.budget as Record<string, unknown> };
+}
+
 function validateSettingsCommandPayload(
   operation: AppOperation,
   raw: unknown,
@@ -1273,6 +1364,18 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
       scope,
       expectedRevision: null,
       payload: validateExecutionInputPreparePayload(operation, object.payload),
+    };
+  }
+  if (operation === 'execution.preview') {
+    if (scope.kind !== 'project') {
+      fail(operation, 'invalid_input', 'scope.kind', 'scope 种类与操作不匹配');
+    }
+    return {
+      ...base,
+      operation,
+      scope,
+      expectedRevision: null,
+      payload: validateExecutionPreviewPayload(operation, object.payload),
     };
   }
   if (operation === 'settings.global.create') {

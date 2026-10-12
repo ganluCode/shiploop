@@ -73,6 +73,7 @@ docs/p03-2-handoff.md  P03-2 → P03-3/4/P03-10 接口交接（F-009 跨模块�
 docs/p03-3-execution-budget-contract.md  P03-3 执行预算契约（F-001：前序核对记录、分层预算校验与 reason 词汇、maxCodeAttempts 兼容规则、配置 schemaVersion 维持 2 决策、Task 快照捕获路径、并发授权与纯判定语义）
 docs/p03-3-execution-schema-contract.md  P03-3 执行域 Schema 契约（F-002：迁移 v9 单 Feature ExecutionBatch/Run/预算修订三表、条件唯一与不可变内容触发器、相对设计 11 登记决策与范围边界）
 docs/p03-3-work-command-receipts-contract.md  P03-3 Work accepted 回执契约（F-003：迁移 v10 真实 Batch/Run 关联、v5/v6 显式兼容、查询与事务回滚、命令能力暂未接线）
+docs/p03-3-execution-preview-contract.md  P03-3 执行预览契约（F-004：单 Feature prepare 预览、固定授权范围、完整输入身份 previewDigest、no_work 与阻塞原因词汇、授权先于仓库/制品 I/O、只读边界）
 ```
 
 ### 确定性测试约定（F-003）

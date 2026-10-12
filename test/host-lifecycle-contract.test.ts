@@ -199,6 +199,9 @@ describe('F-002 冻结常量与能力声明', () => {
           // P03-2 / F-006：执行输入制品组准备经既有 /v1/commands 通用路由接线
           //（HostClient/CLI 入口属后续任务）。
           'execution.input.prepare',
+          // P03-3 / F-004：单 Feature 执行 prepare 预览经既有 /v1/commands 通用
+          // 路由接线（只读预览；HostClient/CLI 入口属后续任务）。
+          'execution.preview',
         ],
         queries: [
           'projects.list',

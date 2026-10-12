@@ -55,6 +55,9 @@ import type {
   PlanRecordPage,
 } from '../../ports/queries.js';
 import type { ExecutionInputPreparationView } from '../../ports/execution-input-prepare.js';
+import { ACTIVE_EXECUTION_STATUSES } from '../../ports/execution-preview.js';
+import type { ExecutionPreviewResolvedInput, ExecutionPreviewView } from '../../ports/execution-preview.js';
+import type { ProjectStatus } from '../../ports/state-store.js';
 import { validateSha256Digest, validateStableId } from '../../ports/validation.js';
 import { parseStoredSettingsPayload } from '../../ports/settings-schema.js';
 import type { SqliteStorageSession } from './session.js';
@@ -256,6 +259,14 @@ export interface SqlitePlanAccess {
     projectId: string,
     featureId: string,
   ): ExecutionInputPreparationView | undefined;
+  /**
+   * P03-3 / F-004：执行预览一致读视图（项目状态/绑定/Phase/Feature/全部
+   * Task/依赖边/决策记录/全局与项目配置/必需输入解析/同 Feature 活动 Run/
+   * 同 Phase 活动 Batch/基线占用；单一 DEFERRED 读事务内取得）。目标
+   * Feature 缺失返回 undefined；跨项目抛 StorageError(ownership)；嵌套于
+   * 写事务内调用是编程错误（TypeError）。
+   */
+  readExecutionPreviewView(projectId: string, featureId: string): ExecutionPreviewView | undefined;
   /** F-006 层级列表：可见范围谓词下推 + 稳定 id 升序键集分页（先收窄再分页）。 */
   listPhaseRecords(
     visibility: unknown,
@@ -1734,6 +1745,206 @@ export function createSqlitePlanAccess(
     });
   }
 
+  function readExecutionPreviewView(
+    projectId: string,
+    featureId: string,
+  ): ExecutionPreviewView | undefined {
+    const operation = 'PlanStore.readExecutionPreviewView';
+    const validProjectId = validateStableId(projectId, { operation }, 'projectId');
+    const validFeatureId = validateStableId(featureId, { operation }, 'featureId');
+    const entity: StorageEntityRef = { type: 'feature', projectId: validProjectId, id: validFeatureId };
+    const activeStatusList = ACTIVE_EXECUTION_STATUSES as readonly string[];
+    const activePlaceholders = activeStatusList.map(() => '?').join(', ');
+    return transactSqliteConsistentRead(session, operation, (db) => {
+      const featureRow = db
+        .prepare<[string], FeatureSqlRow>(`${SELECT_FEATURE} WHERE id = ?`)
+        .get(validFeatureId);
+      if (featureRow === undefined) {
+        return undefined;
+      }
+      if (featureRow.project_id !== validProjectId) {
+        throw ownership(operation, entity, 'Feature 不属于声明的项目（跨项目目标被拒绝）');
+      }
+      // Phase 行来自同一读视图（Feature 复合外键保证归属一致）。
+      const phaseRow = db
+        .prepare<[string], PhaseSqlRow>(`${SELECT_PHASE} WHERE id = ?`)
+        .get(featureRow.phase_id) as PhaseSqlRow | undefined;
+      if (phaseRow === undefined) {
+        throw new StorageError(
+          'corrupt',
+          operation,
+          `${operation}: Feature 所属 Phase 缺失（外部键漂移）`,
+          { entity: { type: 'phase', projectId: validProjectId, id: featureRow.phase_id } },
+        );
+      }
+      // 项目最小只读面（状态）与绑定最小只读面（身份）。状态值经枚举核验，
+      // 损坏行 fail-closed（不作为有效视图返回）。
+      const projectRow = db
+        .prepare<[string], { id: string; status: string }>(
+          'SELECT id, status FROM projects WHERE id = ?',
+        )
+        .get(validProjectId) as { id: string; status: string } | undefined;
+      if (projectRow === undefined) {
+        throw notFound(operation, { type: 'project', id: validProjectId }, `项目 ${validProjectId} 不存在`);
+      }
+      const projectStatuses = ['active', 'archiving', 'archived', 'deleting'] as const;
+      if (!(projectStatuses as readonly string[]).includes(projectRow.status)) {
+        throw new StorageError(
+          'corrupt',
+          operation,
+          `${operation}: 项目状态非法（${projectRow.status}）`,
+          { entity: { type: 'project', id: validProjectId }, details: { reason: 'invalid_status' } },
+        );
+      }
+      const bindingRow = db
+        .prepare<[string], { canonical_path: string; repo_identity: string }>(
+          'SELECT canonical_path, repo_identity FROM repository_bindings WHERE project_id = ?',
+        )
+        .get(validProjectId) as { canonical_path: string; repo_identity: string } | undefined;
+
+      const taskRows = db
+        .prepare<[string], TaskSqlRow>(`${SELECT_TASK} WHERE feature_id = ? ORDER BY id`)
+        .all(validFeatureId) as TaskSqlRow[];
+      const dependencyRows = db
+        .prepare<[string], TaskDependencySqlRow>(
+          `${SELECT_TASK_DEPENDENCY} WHERE feature_id = ? ORDER BY task_id, depends_on_id`,
+        )
+        .all(validFeatureId) as TaskDependencySqlRow[];
+      const approvalRows = db
+        .prepare<[string], ApprovalSqlRow>(
+          `${SELECT_APPROVAL} WHERE subject_type = 'feature_plan' AND subject_id = ? ORDER BY decided_at, id`,
+        )
+        .all(validFeatureId) as ApprovalSqlRow[];
+      const globalRow = db
+        .prepare<[string], { revision: number; payload: string }>(
+          'SELECT revision, payload FROM global_settings WHERE id = ?',
+        )
+        .get('global');
+      const projectSettingsRow = db
+        .prepare<[string], { revision: number; payload: string }>(
+          'SELECT revision, payload FROM project_settings WHERE project_id = ?',
+        )
+        .get(validProjectId);
+
+      // 必需不可变输入引用解析（Feature sourceRefs + Task requirementsRefs 去重；
+      // 同一读事务内查权威制品索引，正文永不内联）。
+      const feature = featureFromRow(featureRow);
+      const tasks = taskRows.map((row) => taskFromRow(row));
+      const refMap = new Map<string, ExecutionPreviewResolvedInput>();
+      const collectRefs = (refs: readonly PlanArtifactRef[]): void => {
+        for (const ref of refs) {
+          const key = `${ref.artifactId}\u0000${ref.contentHash ?? ''}`;
+          if (!refMap.has(key)) {
+            refMap.set(key, {
+              artifactId: ref.artifactId,
+              declaredContentHash: ref.contentHash ?? null,
+              resolved: null,
+              unavailableReason: null,
+            });
+          }
+        }
+      };
+      collectRefs(feature.sourceRefs);
+      for (const task of tasks) {
+        collectRefs(task.requirementsRefs);
+      }
+      const resolvedInputs: ExecutionPreviewResolvedInput[] = Array.from(refMap.values())
+        .map((input) => {
+          const artifactRow = db
+            .prepare<[string, string], { version: number; content_hash: string | null; size_bytes: number | null; status: string }>(
+              'SELECT version, content_hash, size_bytes, status FROM artifacts WHERE project_id = ? AND id = ?',
+            )
+            .get(validProjectId, input.artifactId) as
+            | { version: number; content_hash: string | null; size_bytes: number | null; status: string }
+            | undefined;
+          if (artifactRow === undefined) {
+            return { ...input, resolved: null, unavailableReason: 'not_found' as const };
+          }
+          if (
+            artifactRow.status !== 'ready' ||
+            artifactRow.content_hash === null ||
+            artifactRow.size_bytes === null
+          ) {
+            return { ...input, resolved: null, unavailableReason: 'not_ready' as const };
+          }
+          return {
+            ...input,
+            resolved: {
+              version: artifactRow.version,
+              contentHash: artifactRow.content_hash,
+              sizeBytes: artifactRow.size_bytes,
+            },
+            unavailableReason: null,
+          };
+        });
+
+      // 活动执行（与迁移 v9 条件唯一部分索引同源的活动集）与基线占用。
+      const activeRuns = (
+        db
+          .prepare<unknown[], { id: string; status: string }>(
+            `SELECT id, status FROM runs WHERE project_id = ? AND feature_id = ? AND status IN (${activePlaceholders}) ORDER BY id`,
+          )
+          .all(validProjectId, validFeatureId, ...activeStatusList) as { id: string; status: string }[]
+      ).map((row) => ({ id: row.id, status: row.status }));
+      const activeBatchRow = db
+        .prepare<unknown[], { id: string; feature_id: string; status: string }>(
+          `SELECT id, feature_id, status FROM execution_batches WHERE project_id = ? AND phase_id = ? AND status IN (${activePlaceholders}) ORDER BY id LIMIT 1`,
+        )
+        .all(validProjectId, featureRow.phase_id, ...activeStatusList)[0] as
+        | { id: string; feature_id: string; status: string }
+        | undefined;
+      const occupancyRow = db
+        .prepare<[], { holder_operation_id: string | null }>(
+          "SELECT holder_operation_id FROM baseline_occupancy WHERE id = 'global'",
+        )
+        .get() as { holder_operation_id: string | null } | undefined;
+
+      return {
+        project: { id: projectRow.id, status: projectRow.status as ProjectStatus },
+        binding:
+          bindingRow === undefined
+            ? null
+            : { canonicalPath: bindingRow.canonical_path, repoIdentity: bindingRow.repo_identity },
+        phase: phaseFromRow(phaseRow),
+        feature,
+        tasks,
+        dependencies: dependencyRows.map((row) => taskDependencyFromRow(row)),
+        approvals: approvalRows.map((row) => approvalFromRow(row)),
+        settings: {
+          global:
+            globalRow === undefined
+              ? null
+              : {
+                  scopeRevision: globalRow.revision,
+                  payload: parseStoredSettingsPayload(globalRow.payload, {
+                    operation,
+                    entity: { type: 'global_settings', id: 'global' },
+                  }),
+                },
+          project:
+            projectSettingsRow === undefined
+              ? null
+              : {
+                  scopeRevision: projectSettingsRow.revision,
+                  payload: parseStoredSettingsPayload(projectSettingsRow.payload, {
+                    operation,
+                    entity: { type: 'project_settings', projectId: validProjectId },
+                  }),
+                },
+        },
+        resolvedInputs,
+        activeRuns,
+        activePhaseBatch:
+          activeBatchRow === undefined
+            ? null
+            : { id: activeBatchRow.id, featureId: activeBatchRow.feature_id, status: activeBatchRow.status },
+        baselineOccupancy: {
+          holderOperationId: occupancyRow === undefined ? null : occupancyRow.holder_operation_id,
+        },
+      };
+    });
+  }
+
   function listPhaseRecords(
     visibility: unknown,
     projectId: unknown,
@@ -1801,6 +2012,7 @@ export function createSqlitePlanAccess(
     readFeaturePlanView,
     readFeatureApprovalsView,
     readExecutionInputPreparationView,
+    readExecutionPreviewView,
     listPhaseRecords,
     listFeatureRecords,
     listTaskRecords,

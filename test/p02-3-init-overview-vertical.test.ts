@@ -532,6 +532,9 @@ describe('F-006 Host inspect/overview 路由与握手能力（真实 Host + SQLi
       // P03-2 / F-006：执行输入制品组准备经既有 /v1/commands 通用路由接线
       //（v4 内增量宣告；HostClient 入口 F-007、CLI 入口 F-008）。
       'execution.input.prepare',
+      // P03-3 / F-004：单 Feature 执行 prepare 预览经既有 /v1/commands 通用路由
+      // 接线（v5 内增量宣告；HostClient/CLI 入口与 execution.start 随后续任务）。
+      'execution.preview',
     ]);
     for (const legacyVersion of [4, 3, 2, 1]) {
       const legacy = await loopbackRequest({

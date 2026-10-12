@@ -73,6 +73,9 @@ import {
 } from './execution-input-prepare.js';
 import type { ExecutionInputPreparePort } from './execution-input-prepare.js';
 import type { PreparedExecutionInputGroup } from '../ports/execution-input-prepare.js';
+import { EXECUTION_PREVIEW_OPERATION } from '../ports/execution-preview.js';
+import type { ExecutionPreviewPort } from './execution-preview.js';
+import type { ExecutionPreviewResult } from '../ports/execution-preview.js';
 import {
   TASK_STRATEGY_UPDATE_OPERATION,
   submitTaskStrategyUpdate,
@@ -120,6 +123,12 @@ export interface CommandServiceOptions {
    * 受控测试可直接注入窄端口实现。
    */
   readonly executionInputPrepare?: ExecutionInputPreparePort;
+  /**
+   * P03-3 / F-004：单 Feature 执行 prepare 预览端口（只读预览：事务外完成全部
+   * I/O 与身份计算，命令短写事务内只持久化 completed 回执；不传则命令
+   * unsupported，不冒充能力）。装配者：composition 根；受控测试可直接注入。
+   */
+  readonly executionPreview?: ExecutionPreviewPort;
   readonly nowUtcMs?: () => number;
 }
 
@@ -184,6 +193,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
   const featurePlanReviseGuards = options.featurePlanReviseGuards;
   const taskStrategyEditGuards = options.taskStrategyEditGuards;
   const executionInputPrepare = options.executionInputPrepare;
+  const executionPreview = options.executionPreview;
   const nowUtcMs = options.nowUtcMs ?? Date.now;
 
   /** 既有项目元数据 CAS：业务 + metadata_updated 事件 + 回执同一事务（F-007）。 */
@@ -537,6 +547,11 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
         if (envelope.operation === EXECUTION_INPUT_PREPARE_OPERATION && executionInputPrepare === undefined) {
           throw new PublicError('unsupported', operation);
         }
+        // P03-3 / F-004：执行预览端口缺席时 unsupported（与基线/准备命令同一纪律；
+        // 不冒充预览能力）。
+        if (envelope.operation === EXECUTION_PREVIEW_OPERATION && executionPreview === undefined) {
+          throw new PublicError('unsupported', operation);
+        }
         if (
           envelope.operation !== 'project.metadata.update' &&
           envelope.operation !== 'project.register' &&
@@ -550,6 +565,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           envelope.operation !== TASK_STRATEGY_UPDATE_OPERATION &&
           envelope.operation !== FEATURE_PLAN_DECIDE_OPERATION &&
           envelope.operation !== EXECUTION_INPUT_PREPARE_OPERATION &&
+          envelope.operation !== EXECUTION_PREVIEW_OPERATION &&
           !isSettingsEnvelope(envelope)
         ) {
           throw new PublicError('unsupported', operation);
@@ -623,6 +639,17 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
         let executionInputPrepared: PreparedExecutionInputGroup | undefined;
         if (envelope.operation === EXECUTION_INPUT_PREPARE_OPERATION && existing === undefined) {
           executionInputPrepared = await executionInputPrepare!.prepareExecutionInput(
+            envelope.scope.projectId,
+            envelope.payload,
+          );
+        }
+
+        // P03-3 / F-004：执行预览为只读预览（授权与纯校验先于仓库/制品 I/O；
+        // 不创建执行实体、不扣预算、不写业务事件）；事务外完成全部计算，
+        // 命令短写事务内只持久化 completed 回执（与 baseline.preview 同一纪律）。
+        let executionPreviewResult: ExecutionPreviewResult | undefined;
+        if (envelope.operation === EXECUTION_PREVIEW_OPERATION && existing === undefined) {
+          executionPreviewResult = await executionPreview!.previewExecution(
             envelope.scope.projectId,
             envelope.payload,
           );
@@ -825,6 +852,26 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
               executionInputPrepared,
               executionInputPrepare!,
             );
+          }
+          if (envelope.operation === EXECUTION_PREVIEW_OPERATION) {
+            // 只读预览：事务外已完成全部 I/O 与身份计算；事务内只持久化
+            // completed 回执（零执行实体、零预算变更、零业务事件）。
+            if (executionPreviewResult === undefined) {
+              throw new TypeError('执行预览缺少事务外准备结果');
+            }
+            const receipt = createCompletedReceipt({
+              principalId: principal.principalId,
+              commandId: envelope.commandId,
+              operation: envelope.operation,
+              scope: envelope.scope,
+              requestDigest: digest,
+              issuedAt: envelope.issuedAt,
+              completedAt: new Date(now).toISOString(),
+              resultRef: createResultRef(randomBytes(32)),
+              result: executionPreviewResult,
+            });
+            transaction.saveReceipt(receipt);
+            return receipt;
           }
           if (isSettingsEnvelope(envelope)) {
             // 新配置命令必定已在事务外完成能力复检与一致性视图（重放已在上面返回）。

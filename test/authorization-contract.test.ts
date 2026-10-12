@@ -264,6 +264,26 @@ function envelope(
           items: [],
         },
       } as ValidatedCommandEnvelope;
+    case 'execution.preview':
+      return {
+        ...base,
+        operation,
+        scope,
+        expectedRevision: null,
+        payload: {
+          featureIds: ['f-1'],
+          budget: {
+            batch: {
+              maxRuns: 1,
+              maxTotalAttempts: 3,
+              maxRuntimeStarts: 3,
+              maxNoProgressRuns: 1,
+              deadlineUtcMs: 1_900_000_000_000,
+            },
+            run: { maxAttemptsPerRun: 3, runTimeLimitMs: 3_600_000 },
+          },
+        },
+      } as ValidatedCommandEnvelope;
   }
 }
 
@@ -288,6 +308,9 @@ const COMMANDS_MATRIX = [
   { operation: 'feature.plan.decide', scope: { kind: 'project', projectId: PROJECT_A }, revision: 1, capability: 'feature.plan.decide' },
   // P03-2 / F-006：执行输入制品组准备（project scope + execution.input.prepare；创建类不携带 expectedRevision）。
   { operation: 'execution.input.prepare', scope: { kind: 'project', projectId: PROJECT_A }, revision: null, capability: 'execution.input.prepare' },
+  // P03-3 / F-004：单 Feature 执行 prepare 预览（project scope + execution.start；
+  // 只读预览不携带 expectedRevision）。
+  { operation: 'execution.preview', scope: { kind: 'project', projectId: PROJECT_A }, revision: null, capability: 'execution.start' },
 ] as const;
 
 describe('F-005 TrustedPrincipal 产品构造与可信装配形状断言', () => {

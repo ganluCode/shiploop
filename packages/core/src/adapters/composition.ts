@@ -56,6 +56,8 @@ import {
 } from '../application/execution-input-prepare.js';
 import type { ExecutionInputPreparePort } from '../application/execution-input-prepare.js';
 import { TRUSTED_PROJECT_PERMISSIONS_READER } from '../ports/execution-input-prepare.js';
+import { createExecutionPreviewService } from '../application/execution-preview.js';
+import type { ExecutionPreviewPort } from '../application/execution-preview.js';
 import type { ArtifactFileStore } from '../ports/artifact-files.js';
 import type { ArtifactStore } from '../ports/artifact-store.js';
 import type { BaselineEnvironmentDirectory } from '../ports/baseline.js';
@@ -153,6 +155,12 @@ export interface CoreApplication {
    * 命令面经 commandService 的 execution.input.prepare 接线同一能力）。
    */
   readonly executionInputPrepare: ExecutionInputPreparePort;
+  /**
+   * P03-3 / F-004：单 Feature 执行 prepare 预览端口（只读预览：固定单成员
+   * 范围/完整输入身份 previewDigest/no_work 与阻塞原因；命令面经
+   * commandService 的 execution.preview 接线同一能力）。
+   */
+  readonly executionPreview: ExecutionPreviewPort;
   readonly commandReceiptsService: CommandReceiptsService;
   /** F-010：授权查询/一致读视图快照水位/分页事件读取（§7/§8/§9.3）。 */
   readonly queryService: QueryService;
@@ -395,6 +403,17 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     // （构造环：execution 依赖 commandService.submit 做授权提交；闭包只在命令执行
     // 时解引用，装配完成后才可达）。
     let baselineExecutionServiceRef: BaselineExecutionService | undefined;
+    // P03-3 / F-004：单 Feature 执行 prepare 预览服务（只读预览：一致读视图 +
+    // 受控仓库检查；授权与纯校验先于仓库/制品 I/O；不创建执行实体、不扣预算；
+    // 权限面沿用 P03-2 生产缺省空集边界宣告，运行时授权面随后续阶段引入时
+    // 替换为真实权威读取并保持同一重核契约）。
+    const executionPreview: ExecutionPreviewPort = createExecutionPreviewService({
+      views: createSqlitePlanAccess(session, nowUtcMs === undefined ? {} : { nowUtcMs }),
+      inspector: repositoryInspector,
+      workspace: createBaselineWorkspaceReader(),
+      permissions: TRUSTED_PROJECT_PERMISSIONS_READER,
+      ...(nowUtcMs === undefined ? {} : { nowMs: nowUtcMs }),
+    });
     const commandService = createCommandService({
       atomicStore,
       repositoryInspector,
@@ -402,6 +421,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       capabilityCatalog,
       baselineService,
       executionInputPrepare,
+      executionPreview,
       baselineCancel: {
         cancel: (principal, projectId, operationId) => {
           if (baselineExecutionServiceRef === undefined) {
@@ -476,6 +496,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       commandReceiptsService,
       commandService,
       executionInputPrepare,
+      executionPreview,
       queryService,
       onboardingService,
       baselineStore,
