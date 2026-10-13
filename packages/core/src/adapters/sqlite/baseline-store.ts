@@ -659,6 +659,11 @@ export function createSqliteBaselineAccess(
     if (operationRow === undefined) {
       throw notFound(operation, entity, '占用持有者操作不存在');
     }
+    if (db.prepare('SELECT id FROM workspace_leases LIMIT 1').get() !== undefined) {
+      throw conflict(operation, 'Work holds or quarantines the shared execution resources', entity, {
+        reason: 'work_in_progress',
+      });
+    }
     const timestamp = nowUtcMs();
     const identityJson =
       valid.processIdentity === null ? null : JSON.stringify(valid.processIdentity);

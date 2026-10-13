@@ -1,3 +1,5 @@
+import { validateWorkProcessIdentity } from './work-resources.js';
+import type { CommandProcessIdentity } from './command-process.js';
 import type { PreparedExecutionInputGroup, ExecutionInputGroupBodyRef } from './execution-input-prepare.js';
 import { CONTEXT_INPUT_SCHEMA_VERSION } from './context-build.js';
 import { validateExecutionInputRef } from './execution-input.js';
@@ -67,7 +69,7 @@ export interface WorkspaceLeaseRecord {
   readonly executionVersion: number;
   readonly state: 'held' | 'quarantined';
   readonly leaseUntilUtcMs: number;
-  readonly processIdentity: AttemptProcessIdentity | null;
+  readonly processIdentity: AttemptProcessIdentity | ({ readonly schemaVersion: 2 } & CommandProcessIdentity) | null;
 }
 export interface AttemptProcessIdentity {
   readonly schemaVersion: 1;
@@ -207,12 +209,18 @@ export function validateAttemptRecord(value: unknown): AttemptRecord {
 export function validateWorkspaceLeaseRecord(value: unknown): WorkspaceLeaseRecord {
   const raw = object(value, ['id', 'createdAtUtcMs', 'updatedAtUtcMs', 'revision', 'projectId', 'resourceKey', 'resourceKind',
     'ownerKind', 'owner', 'hostInstanceId', 'executionVersion', 'state', 'leaseUntilUtcMs', 'processIdentity'], 'lease');
-  let processIdentity: AttemptProcessIdentity | null = null;
+  let processIdentity: WorkspaceLeaseRecord['processIdentity'] = null;
   if (raw.processIdentity !== null) {
-    const process = object(raw.processIdentity, ['schemaVersion', 'pid', 'startedAtUtcMs', 'processGroupId'], 'processIdentity');
-    processIdentity = { schemaVersion: version(process.schemaVersion, 'processIdentity.schemaVersion'), pid: positive(process.pid, 'processIdentity.pid'),
-      startedAtUtcMs: nonnegative(process.startedAtUtcMs, 'processIdentity.startedAtUtcMs'),
-      processGroupId: nullable(process.processGroupId, positive, 'processIdentity.processGroupId') };
+    const candidate = requirePlainObject(raw.processIdentity, context, 'processIdentity');
+    if (candidate.schemaVersion === 2) {
+      const { schemaVersion: _version, ...identity } = candidate;
+      processIdentity = { schemaVersion: 2, ...validateWorkProcessIdentity(identity) };
+    } else {
+      const process = object(candidate, ['schemaVersion', 'pid', 'startedAtUtcMs', 'processGroupId'], 'processIdentity');
+      processIdentity = { schemaVersion: version(process.schemaVersion, 'processIdentity.schemaVersion'), pid: positive(process.pid, 'processIdentity.pid'),
+        startedAtUtcMs: nonnegative(process.startedAtUtcMs, 'processIdentity.startedAtUtcMs'),
+        processGroupId: nullable(process.processGroupId, positive, 'processIdentity.processGroupId') };
+    }
   }
   return { id: id(raw.id, 'id'), createdAtUtcMs: nonnegative(raw.createdAtUtcMs, 'createdAtUtcMs'),
     updatedAtUtcMs: nonnegative(raw.updatedAtUtcMs, 'updatedAtUtcMs'), revision: positive(raw.revision, 'revision'), projectId: id(raw.projectId, 'projectId'),
