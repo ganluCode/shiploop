@@ -68,6 +68,11 @@ import { StorageError } from '../ports/errors.js';
 import { PathResolutionError, computeDataRootIdentity, deriveDefaultDataRoot } from '../ports/path-service.js';
 import type { PathService } from '../ports/path-service.js';
 import type { RepositoryInspector } from '../ports/repository-inspector.js';
+import { createRuntimeRecoveryService } from '../application/runtime-recovery.js';
+import type { RuntimeRecoveryService } from '../application/runtime-recovery.js';
+import { createStaticRuntimeRecoveryCatalog } from '../ports/runtime-recovery-catalog.js';
+import type { RuntimeRecoveryCapabilities } from '../ports/runtime-recovery.js';
+import type { RuntimeRecoverySourceReader } from '../ports/runtime-recovery-source.js';
 import type { RuntimeCapabilityCatalog } from '../ports/runtime-capabilities.js';
 import type { StateStore } from '../ports/state-store.js';
 import {
@@ -110,6 +115,10 @@ export interface CoreApplicationOptions {
   readonly userHomeDir?: string;
   /** 可信装配注入的只读能力目录（F-008）；空目录 fail-closed。 */
   readonly capabilityCatalog: RuntimeCapabilityCatalog;
+  /** Optional trusted recovery evidence; no Runtime implementation is installed. */
+  readonly runtimeRecoveryDescriptors?: readonly RuntimeRecoveryCapabilities[];
+  /** Optional internal authority/source lookup; absence refuses source recovery. */
+  readonly runtimeRecoverySources?: RuntimeRecoverySourceReader;
   /** UTC 毫秒时钟（默认 Date.now）；测试注入以获得确定性时间。 */
   readonly nowUtcMs?: () => number;
   /** 仓库检查端口；未提供时按 repositoryInspectorOptions 装配真实 Git 实现。 */
@@ -169,6 +178,7 @@ export interface CoreApplication {
    * Scheduler/Runtime 装配属后续任务——本阶段 Run 保留 queued +
    * scheduler_not_assembled 可查询原因，runtime_starts 恒为 0）。
    */
+  readonly runtimeRecovery: RuntimeRecoveryService;
   readonly executionStart: ExecutionStartPort;
   readonly commandReceiptsService: CommandReceiptsService;
   /** F-010：授权查询/一致读视图快照水位/分页事件读取（§7/§8/§9.3）。 */
@@ -191,6 +201,8 @@ const ALLOWED_OPTION_KEYS = [
   'dataRoot',
   'userHomeDir',
   'capabilityCatalog',
+  'runtimeRecoveryDescriptors',
+  'runtimeRecoverySources',
   'nowUtcMs',
   'repositoryInspector',
   'repositoryInspectorOptions',
@@ -274,6 +286,14 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
   const object = requirePlainObject(options, context, 'options');
   rejectUnknownKeys(object, ALLOWED_OPTION_KEYS, context, 'options');
   const capabilityCatalog = requireCapabilityCatalog(object.capabilityCatalog, context);
+  const recoveryCatalog = createStaticRuntimeRecoveryCatalog(object.runtimeRecoveryDescriptors ?? [], capabilityCatalog);
+  if (object.runtimeRecoverySources !== undefined && (
+    object.runtimeRecoverySources === null || typeof object.runtimeRecoverySources !== 'object' ||
+    typeof (object.runtimeRecoverySources as RuntimeRecoverySourceReader).readCurrent !== 'function' ||
+    typeof (object.runtimeRecoverySources as RuntimeRecoverySourceReader).readSource !== 'function'
+  )) {
+    throw validationError(context, 'runtimeRecoverySources', 'source_reader_required');
+  }
 
   if (object.nowUtcMs !== undefined && typeof object.nowUtcMs !== 'function') {
     throw validationError(context, 'nowUtcMs', '必须是返回 UTC 毫秒的函数');
@@ -330,6 +350,14 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       nowUtcMs === undefined ? {} : { nowUtcMs },
     );
     const artifactFileStore = createArtifactFileStore({ dataRoot: basePathService.dataRoot() });
+    const runtimeRecovery = createRuntimeRecoveryService({
+      configuration: capabilityCatalog,
+      capabilities: recoveryCatalog,
+      sources: object.runtimeRecoverySources as RuntimeRecoverySourceReader | undefined,
+      artifacts: artifactStore,
+      verifier: createArtifactVerifier({ artifacts: artifactStore, files: artifactFileStore,
+        limits: { maxReadBytes: 16_000_000 } }),
+    });
     const pathService = basePathService.withProjectLookup(stateStore);
     const repositoryInspector =
       object.repositoryInspector === undefined
@@ -518,6 +546,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       executionInputPrepare,
       executionPreview,
       executionStart,
+      runtimeRecovery,
       queryService,
       onboardingService,
       baselineStore,
