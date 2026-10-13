@@ -79,6 +79,7 @@ docs/p03-3-attempt-budget-contract.md  P03-3 Task 尝试预算预占契约（F-0
 docs/p03-3-runtime-start-contract.md  P03-3 Runtime 启动额度预占契约（F-007：迁移 v12 启动预占账本表、SDK 启动前同事务 reserveRuntimeStart 父 Batch 启动额度/deadline/控制状态原子检查、幂等启动身份与过期身份拒绝、启动失败保守保留计数无退额、区分准备失败/启动失败/实际用量）
 docs/p03-3-run-outcome-settlement-contract.md  P03-3 Run 结果幂等结算契约（F-008：迁移 v13 不可变结果账本与首次通过事实、受信内部事务/CAS、连续无进展上限、预算不退款、时间持久化及成功 workKey 不重派发）
 docs/p03-3-budget-revision-contract.md  P03-3 批次预算显式修订契约（F-009：execution.budget.revise 命令面与能力位、reviseBatchBudget 短事务预算版本 CAS 原语、仅增额或延期单调判定、不可变修订历史与脱敏事件/回执、仅增额不自动启动或恢复 Run、Task 代码尝试上限唯一显式通道）
+docs/p03-3-execution-budget-query-contract.md  P03-3 执行预算只读查询契约（F-010：execution.budget.get/revisions 一致读视图、固定 Feature 范围与各层上限/已用/剩余、绝对 deadline 与阻塞原因冻结词汇、修订历史有界分页与受控游标、未知字段不填零与启动预占/实际用量分离、输出脱敏边界）
 ```
 
 ### 确定性测试约定（F-003）

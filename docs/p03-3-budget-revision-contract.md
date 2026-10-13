@@ -134,7 +134,9 @@ IMMEDIATE 短写事务内：
 
 ## 6. 范围边界（本 Feature 不实现）
 
-查询面（F-010：Batch/修订历史读取查询）、Host/CLI 入口（F-011/F-012：
+查询面已由 **F-010 落地**（`execution.budget.get` / `execution.budget.revisions`，
+见 `docs/p03-3-execution-budget-query-contract.md`：Batch/修订历史只读查询、
+有界分页与受控游标）、Host/CLI 入口（F-011/F-012：
 HostClient 方法与 CLI 子命令；命令已可经既有 POST /v1/commands 通用路由提交）、
 暂停/取消/恢复命令（后续控制面任务）、token/cost 实际用量结算（结算行无用量
 列，F-008 边界不变）、Scheduler/Runner 装配与唤醒（后续任务）。修订能力位不

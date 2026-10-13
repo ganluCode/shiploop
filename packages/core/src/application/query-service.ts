@@ -121,6 +121,17 @@ import type { EffectiveSettings } from './effective-settings.js';
 import { evaluatePlanApprovalValidity } from '../ports/plan-approval-verification.js';
 import { resolveCurrentCheckPolicyDigest } from './plan-approval-verification.js';
 import type { EventWatermark } from '../ports/events.js';
+import {
+  EXECUTION_BUDGET_GET_OPERATION,
+  EXECUTION_BUDGET_REVISIONS_OPERATION,
+  buildExecutionBudgetStatus,
+  toPublicBatchBudgetRevisionRecord,
+} from '../ports/execution-budget-query.js';
+import type {
+  BudgetRevisionListResult,
+  ExecutionBudgetQueryReadStore,
+  ExecutionBudgetStatusResult,
+} from '../ports/execution-budget-query.js';
 
 /** 分页事件读取结果（Core 内部面；F-012 SSE 补读复用）。 */
 export interface StateEventPage {
@@ -235,6 +246,19 @@ export interface QueryService {
   getFeatureApprovals(principal: unknown, featureId: unknown): Promise<FeatureApprovalsResult>;
   /** F-006 tasks.get：Task 详情（真实父级、验收/需求引用/策略副本及来源）。 */
   getTask(principal: unknown, taskId: unknown): Promise<TaskDetailResult>;
+  /**
+   * P03-3 / F-010 execution.budget.get：执行预算只读查询（一致读视图：固定
+   * 单 Feature 范围、Batch/Run 身份、各层上限、已用/剩余、绝对 deadline、
+   * 无进展次数与阻塞原因）；能力位 project.read；跨项目/不存在目标统一
+   * not_found（不泄漏存在性）；查询零写入、零事件、零唤醒。
+   */
+  getExecutionBudgetStatus(principal: unknown, input: unknown): Promise<ExecutionBudgetStatusResult>;
+  /**
+   * P03-3 / F-010 execution.budget.revisions：预算修订历史（复用计划分页的
+   * 有界 limit/受控游标规则；游标绑定数据根 + 项目 + Batch，跨批次/跨项目
+   * 重放 invalid_cursor；非法分页与跨项目目标拒绝且不泄漏存在性）。
+   */
+  listBatchBudgetRevisions(principal: unknown, input: unknown): Promise<BudgetRevisionListResult>;
   /** F-006 phases.list：项目内 Phase 层级列表（稳定排序、有限分页、受控游标）。 */
   listPhases(principal: unknown, input: unknown): Promise<PhaseListResult>;
   /** F-006 features.list：Phase 内 Feature 层级列表（游标绑定项目 + 父级）。 */
@@ -259,6 +283,8 @@ export interface QueryServiceOptions {
   >;
   /** P03-1 / F-006 计划层级列表/详情一致读取窄端口。 */
   readonly planReads: PlanQueryReadStore;
+  /** P03-3 / F-010 执行预算查询一致读取窄端口（只读）。 */
+  readonly executionBudgetReads: ExecutionBudgetQueryReadStore;
   /** 数据根身份（64hex；可信装配由 realpath 数据根派生，绝不来自请求数据）。 */
   readonly dataRootIdentity: string;
   /** UTC 毫秒时钟（默认 Date.now）；测试注入以获得确定性 readAt。 */
@@ -298,6 +324,16 @@ function planEntityNotFound(
 }
 
 /**
+ * P03-3 / F-010 执行域目标「不可见/不存在/跨项目」统一 not_found（同一错误
+ * 形状，不区分存在性，不回显归属或实体身份）；能力缺失仍先行 forbidden。
+ */
+function executionEntityNotFound(operation: string): never {
+  throw new PublicError('not_found', operation, '执行实体不存在或不可见', {
+    details: { reason: 'execution_entity_not_found', entityType: 'execution_batch' },
+  });
+}
+
+/**
  * 装配 QueryService。只校验依赖形态，不执行任何 I/O；import 本模块无副作用。
  */
 export function createQueryService(options: QueryServiceOptions): QueryService {
@@ -311,6 +347,7 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
     stateStore,
     configurationService,
     planReads,
+    executionBudgetReads,
     dataRootIdentity,
   } = options;
   if (typeof dataRootIdentity !== 'string' || !/^[0-9a-f]{64}$/.test(dataRootIdentity)) {
@@ -844,6 +881,83 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
           planEntityNotFound(operation, 'task');
         }
         return { task: toPublicTaskRecord(record) };
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    async getExecutionBudgetStatus(
+      principal: unknown,
+      input: unknown,
+    ): Promise<ExecutionBudgetStatusResult> {
+      assertTrustedPrincipal(principal);
+      const operation = EXECUTION_BUDGET_GET_OPERATION;
+      try {
+        requireCapability(principal, 'project.read', operation);
+        const object = requirePlainObject(input, { operation }, 'input');
+        rejectUnknownKeys(object, ['projectId', 'batchId'], { operation }, 'input');
+        const projectId = requireProjectId(object.projectId, operation);
+        const batchId = validateStableId(
+          object.batchId,
+          { operation, entity: { type: 'execution_batch' } },
+          'batchId',
+        );
+        requireProjectVisible(principal, projectId, operation);
+        const view = executionBudgetReads.readExecutionBudgetView(projectId, batchId);
+        if (view === undefined) {
+          executionEntityNotFound(operation);
+        }
+        // 总 Attempt 上限：同一读视图内全局/项目配置段合并（未配置 = null，
+        // 不虚构上限；策略副本的 maxCodeAttempts 由纯投影单独解析）。
+        const effective = mergeEffectiveSettings({
+          global: view.settings.global,
+          project: view.settings.project,
+        });
+        const maxAttemptsPerTask = effective.policies.executionLimits?.value.maxAttemptsPerTask ?? null;
+        return buildExecutionBudgetStatus(view, { nowUtcMs: nowUtcMs(), maxAttemptsPerTask });
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    async listBatchBudgetRevisions(
+      principal: unknown,
+      input: unknown,
+    ): Promise<BudgetRevisionListResult> {
+      assertTrustedPrincipal(principal);
+      const operation = EXECUTION_BUDGET_REVISIONS_OPERATION;
+      try {
+        requireCapability(principal, 'project.read', operation);
+        const object = requirePlainObject(input, { operation }, 'input');
+        rejectUnknownKeys(object, ['projectId', 'batchId', 'limit', 'cursor'], { operation }, 'input');
+        const projectId = requireProjectId(object.projectId, operation);
+        const batchId = validateStableId(
+          object.batchId,
+          { operation, entity: { type: 'execution_batch' } },
+          'batchId',
+        );
+        requireProjectVisible(principal, projectId, operation);
+        const filter = validatedPlanFilter(object, operation);
+        const binding = planCursorBinding({ kind: 'budget-revisions', projectId, batchId }, operation);
+        // 游标解析先于任何读取：跨批次/跨项目/跨根重放一律 invalid_cursor，
+        // 绝不当作从零读取，也不先泄漏目标存在性。
+        const request = planListRequest(filter, binding, operation);
+        if (executionBudgetReads.findExecutionBatchRecord(projectId, batchId) === undefined) {
+          executionEntityNotFound(operation);
+        }
+        const page = executionBudgetReads.listBatchBudgetRevisionRecords(
+          principalProjectVisibility(principal),
+          projectId,
+          batchId,
+          request,
+        );
+        return {
+          schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION,
+          scope: 'budget-revision-list',
+          records: page.records.map(toPublicBatchBudgetRevisionRecord),
+          nextCursor: page.nextId === null ? null : encodePlanListCursor(page.nextId, binding),
+          limit: filter.limit,
+        };
       } catch (error) {
         throw mapToPublicError(error, { operation });
       }

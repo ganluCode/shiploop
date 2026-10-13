@@ -27,6 +27,12 @@ import type {
   RepositoryBindingLookupStore,
   SnapshotView,
 } from '../../ports/queries.js';
+import type { ExecutionBudgetQueryReadStore } from '../../ports/execution-budget-query.js';
+import type {
+  BatchBudgetRevisionRecord,
+  ExecutionBatchRecord,
+} from '../../ports/execution-store.js';
+import type { ExecutionBudgetView } from '../../ports/execution-budget-query.js';
 import type {
   FeatureRecord,
   PhaseRecord,
@@ -36,16 +42,19 @@ import type { ProjectLabelCount, ProjectPage, RepositoryBindingRecord } from '..
 import type { SqliteStorageSession } from './session.js';
 import { createSqlitePlanAccess } from './plan-store.js';
 import { createSqliteStateAccess } from './state-store.js';
+import { createSqliteExecutionAccess } from './execution-store.js';
 import type { SqliteStateStoreOptions } from './state-store.js';
 
 /** F-010 查询读取门面：窄读取端口的并集（应用层 QueryService/OnboardingService 的消费面）；
- * P03-1 / F-006 起追加计划层级列表/详情一致读取（PlanQueryReadStore）。 */
+ * P03-1 / F-006 起追加计划层级列表/详情一致读取（PlanQueryReadStore）；
+ * P03-3 / F-010 起追加执行预算查询窄读取（ExecutionBudgetQueryReadStore）。 */
 export interface SqliteQueryStore
   extends AuthorizedProjectReadStore,
     ConsistentSnapshotStore,
     StateEventReadStore,
     RepositoryBindingLookupStore,
-    PlanQueryReadStore {}
+    PlanQueryReadStore,
+    ExecutionBudgetQueryReadStore {}
 
 export function createSqliteQueryStore(
   session: SqliteStorageSession,
@@ -56,6 +65,10 @@ export function createSqliteQueryStore(
   }
   const access = createSqliteStateAccess(session, options);
   const plan = createSqlitePlanAccess(
+    session,
+    options.nowUtcMs === undefined ? {} : { nowUtcMs: options.nowUtcMs },
+  );
+  const execution = createSqliteExecutionAccess(
     session,
     options.nowUtcMs === undefined ? {} : { nowUtcMs: options.nowUtcMs },
   );
@@ -115,6 +128,20 @@ export function createSqliteQueryStore(
       request: PlanListRequest,
     ): PlanRecordPage<TaskRecord> {
       return plan.listTaskRecords(visibility, projectId, featureId, request);
+    },
+    readExecutionBudgetView(projectId: unknown, batchId: unknown): ExecutionBudgetView | undefined {
+      return execution.readExecutionBudgetView(projectId, batchId);
+    },
+    findExecutionBatchRecord(projectId: unknown, batchId: unknown): ExecutionBatchRecord | undefined {
+      return execution.findExecutionBatchRecord(projectId, batchId);
+    },
+    listBatchBudgetRevisionRecords(
+      visibility: unknown,
+      projectId: unknown,
+      batchId: unknown,
+      request: PlanListRequest,
+    ): PlanRecordPage<BatchBudgetRevisionRecord> {
+      return execution.listBatchBudgetRevisionRecords(visibility, projectId, batchId, request);
     },
   };
 }

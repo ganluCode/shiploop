@@ -38,6 +38,7 @@ export * from './ports/execution-input.js';
 export * from './ports/context-build.js';
 export * from './ports/execution-input-prepare.js';
 export * from './ports/execution-preview.js';
+export * from './ports/execution-budget-query.js';
 export * from './application/artifact-publish.js';
 export * from './application/artifact-verify.js';
 export * from './application/project-service.js';

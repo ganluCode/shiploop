@@ -78,6 +78,26 @@ export {
 export type {
   PlanApprovalValidity, PlanApprovalVerificationReason,
 } from './ports/plan-approval-verification.js';
+// P03-3 / F-010 执行预算只读查询面：公开形状、操作身份与阻塞原因冻结词汇
+// （服务端负责授权；HostClient 线校验器复用同一形状）。
+export {
+  EXECUTION_BUDGET_BLOCK_REASONS,
+  EXECUTION_BUDGET_GET_OPERATION,
+  EXECUTION_BUDGET_QUERY_OPERATIONS,
+  EXECUTION_BUDGET_REVISIONS_OPERATION,
+} from './ports/execution-budget-query.js';
+export type {
+  BudgetRevisionListResult,
+  ExecutionBudgetBlockDimension,
+  ExecutionBudgetBlockReasonCode,
+  ExecutionBudgetQueryOperation,
+  ExecutionBudgetStatusResult,
+  PublicBatchBudgetRevisionRecord,
+  PublicExecutionBudgetBatchView,
+  PublicExecutionBudgetBlockReason,
+  PublicExecutionBudgetRunView,
+  PublicExecutionBudgetTaskView,
+} from './ports/execution-budget-query.js';
 // P03-2 / F-007 执行输入制品组身份（回执 result 形状的公共成分；正文永不内联）。
 export type { ContextTokenEstimate } from './ports/context-build.js';
 export type { ExecutionInputOrigin, ExecutionInputRef } from './ports/execution-input.js';

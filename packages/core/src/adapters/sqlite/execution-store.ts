@@ -24,8 +24,11 @@
  *
  * 本适配器不实现：启动命令编排（application/execution-start）、预算修订命令编排
  * （application/execution-budget-revise；P03-3 / F-009 起本适配器提供
- * reviseBatchBudget 存储 CAS 原语）、查询面（F-010）、完整 Attempt
+ * reviseBatchBudget 存储 CAS 原语）、完整 Attempt
  * 生命周期/owner/fencing/进程执行（P03-4）、Runner/停止管理/会话记录（后续任务）。
+ * P03-3 / F-010 起提供只读查询面（readExecutionBudgetView / findExecutionBatchRecord /
+ * listBatchBudgetRevisionRecords）：一致读视图零写入、零事件、零唤醒，跨项目/
+ * 不存在目标统一 undefined（存在性折叠由应用层承担）。
  */
 import { randomUUID } from 'node:crypto';
 import { StorageError } from '../../ports/errors.js';
@@ -68,7 +71,19 @@ import type {
   TaskAttemptReservationRecord,
   TaskExecutionCountersRecord,
 } from '../../ports/execution-store.js';
+import type {
+  ExecutionBudgetQueryReadStore,
+  ExecutionBudgetTaskRow,
+  ExecutionBudgetView,
+} from '../../ports/execution-budget-query.js';
+import { TASK_STATUSES } from '../../ports/plan-store.js';
+import type { TaskStatus } from '../../ports/plan-store.js';
+import { assertPrincipalVisibility } from '../../ports/queries.js';
+import type { PlanListRequest, PlanRecordPage, SettingsScopeSnapshot } from '../../ports/queries.js';
+import { parseStoredSettingsPayload } from '../../ports/settings-schema.js';
+import { validateStableId } from '../../ports/validation.js';
 import type { SqliteStorageSession } from './session.js';
+import { transactSqliteConsistentRead, visibilityCondition } from './state-store.js';
 
 export interface SqliteExecutionStoreOptions {
   /** UTC 毫秒时钟（默认 Date.now）；测试注入以获得确定性时间。 */
@@ -179,6 +194,34 @@ const SELECT_RUNTIME_START_RESERVATION =
 const SELECT_SETTLEMENT =
   'SELECT id, created_at, project_id, revision, updated_at, batch_id, run_id, result_key, outcome, ' +
   'progress_type, progress_task_id, run_ended_at, no_progress_runs_after, reason FROM run_outcome_settlements';
+const SELECT_REVISION =
+  'SELECT id, created_at, project_id, revision, updated_at, batch_id, version, budget_snapshot, ' +
+  'deadline_at, approved_by, reason FROM batch_budget_revisions';
+
+/** 迁移 v9 batch_budget_revisions 行（F-010 修订历史分页读取）。 */
+interface BatchBudgetRevisionSqlRow {
+  readonly id: string;
+  readonly created_at: number;
+  readonly project_id: string;
+  readonly revision: number;
+  readonly updated_at: number;
+  readonly batch_id: string;
+  readonly version: number;
+  readonly budget_snapshot: string;
+  readonly deadline_at: number;
+  readonly approved_by: string;
+  readonly reason: string;
+}
+
+/** tasks 执行计数/策略副本列（F-010 Task 层查询读取）。 */
+interface TaskBudgetSqlRow {
+  readonly id: string;
+  readonly status: string;
+  readonly first_passed_at: number | null;
+  readonly attempt_counter: number;
+  readonly code_attempts_used: number;
+  readonly execution_config: string;
+}
 
 const BATCH_STATUS_SET = new Set<string>([
   'queued', 'running', 'pausing', 'paused', 'cancelling', 'cancelled', 'succeeded', 'failed', 'interrupted',
@@ -279,6 +322,23 @@ export interface SqliteExecutionAccess {
     runId: string,
     resultKey: string,
   ): RunOutcomeSettlementRecord | null;
+  /* ---------------------------------------------------------------- *
+   * P03-3 / F-010 只读查询面（一致读视图；零写入零事件零唤醒）
+   * ---------------------------------------------------------------- */
+  /**
+   * 执行预算一致读视图（单一 DEFERRED 读事务）：Batch + 全部 Run + 固定范围
+   * Task 计数/策略副本 + 全局/项目当前配置；跨项目/不存在目标统一 undefined。
+   */
+  readExecutionBudgetView(projectId: unknown, batchId: unknown): ExecutionBudgetView | undefined;
+  /** 同项目 Batch 行（修订分页前的存在性/归属把关；无则 undefined）。 */
+  findExecutionBatchRecord(projectId: unknown, batchId: unknown): ExecutionBatchRecord | undefined;
+  /** 预算修订历史有界分页（版本升序键集；可见范围谓词下推）。 */
+  listBatchBudgetRevisionRecords(
+    visibility: unknown,
+    projectId: unknown,
+    batchId: unknown,
+    request: PlanListRequest,
+  ): PlanRecordPage<BatchBudgetRevisionRecord>;
 }
 
 function isSqliteConstraintError(error: unknown): error is Error & { code: string } {
@@ -1790,6 +1850,215 @@ export function createSqliteExecutionAccess(
     return row === undefined ? null : settlementFromRow(row, operation);
   }
 
+  /* ------------------------------------------------------------ *
+   * P03-3 / F-010 只读查询面（一致读视图；零写入零事件零唤醒）
+   * ------------------------------------------------------------ */
+
+  function assertNotInTransaction(operation: string): void {
+    if (session.database.inTransaction) {
+      throw new TypeError(`${operation}: 执行域查询读取不得嵌套在写事务内（编程错误）`);
+    }
+  }
+
+  function executionReadId(
+    operation: string,
+    value: unknown,
+    field: string,
+    entityType: StorageEntityRef['type'],
+  ): string {
+    return validateStableId(value, { operation, entity: { type: entityType } }, field);
+  }
+
+  function revisionFromRow(row: BatchBudgetRevisionSqlRow, operation: string): BatchBudgetRevisionRecord {
+    return {
+      id: row.id,
+      createdAtUtcMs: row.created_at,
+      projectId: row.project_id,
+      batchId: row.batch_id,
+      version: row.version,
+      budgetSnapshot: parseBudgetSnapshot(row.budget_snapshot, operation, 'batch_budget_revision'),
+      deadlineAtUtcMs: row.deadline_at,
+      approvedBy: row.approved_by,
+      reason: row.reason,
+    };
+  }
+
+  function taskBudgetRowFromRow(row: TaskBudgetSqlRow, operation: string): ExecutionBudgetTaskRow {
+    if (!(TASK_STATUSES as readonly string[]).includes(row.status)) {
+      throw executionCorruptError(operation, { type: 'task', id: row.id }, `Task 状态非法（${row.status}）`);
+    }
+    let executionConfig: Record<string, unknown>;
+    try {
+      const parsed: unknown = JSON.parse(row.execution_config);
+      if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('not an object');
+      }
+      executionConfig = parsed as Record<string, unknown>;
+    } catch (cause) {
+      throw executionCorruptError(operation, { type: 'task', id: row.id }, 'Task 策略副本 JSON 损坏', cause);
+    }
+    return {
+      taskId: row.id,
+      status: row.status as TaskStatus,
+      firstPassedAtUtcMs: row.first_passed_at,
+      attemptCounter: row.attempt_counter,
+      codeAttemptsUsed: row.code_attempts_used,
+      executionConfig,
+    };
+  }
+
+  function readExecutionBudgetView(
+    projectId: unknown,
+    batchId: unknown,
+  ): ExecutionBudgetView | undefined {
+    const operation = 'ExecutionStore.readExecutionBudgetView';
+    assertOpen(operation);
+    assertNotInTransaction(operation);
+    const validProjectId = executionReadId(operation, projectId, 'projectId', 'project');
+    const validBatchId = executionReadId(operation, batchId, 'batchId', 'execution_batch');
+    return transactSqliteConsistentRead(session, operation, (db) => {
+      const batchRow = db
+        .prepare<[string, string], ExecutionBatchSqlRow>(`${SELECT_BATCH} WHERE id = ? AND project_id = ?`)
+        .get(validBatchId, validProjectId) as ExecutionBatchSqlRow | undefined;
+      if (batchRow === undefined) {
+        return undefined;
+      }
+      const batch = batchFromRow(batchRow, operation);
+      const runRows = db
+        .prepare<[string, string], RunSqlRow>(
+          `${SELECT_RUN} WHERE batch_id = ? AND project_id = ? ORDER BY dispatch_ordinal, id`,
+        )
+        .all(validBatchId, validProjectId) as RunSqlRow[];
+      const taskRows = db
+        .prepare<[string, string], TaskBudgetSqlRow>(
+          'SELECT id, status, first_passed_at, attempt_counter, code_attempts_used, execution_config ' +
+            'FROM tasks WHERE feature_id = ? AND project_id = ? ORDER BY id',
+        )
+        .all(batch.featureId, validProjectId) as TaskBudgetSqlRow[];
+      const globalRow = db
+        .prepare<[string], { revision: number; payload: string }>(
+          'SELECT revision, payload FROM global_settings WHERE id = ?',
+        )
+        .get('global');
+      const projectRow = db
+        .prepare<[string], { revision: number; payload: string }>(
+          'SELECT revision, payload FROM project_settings WHERE project_id = ?',
+        )
+        .get(validProjectId);
+      const settings: {
+        global: SettingsScopeSnapshot | null;
+        project: SettingsScopeSnapshot | null;
+      } = {
+        global:
+          globalRow === undefined
+            ? null
+            : {
+                scopeRevision: globalRow.revision,
+                payload: parseStoredSettingsPayload(globalRow.payload, {
+                  operation,
+                  entity: { type: 'global_settings', id: 'global' },
+                }),
+              },
+        project:
+          projectRow === undefined
+            ? null
+            : {
+                scopeRevision: projectRow.revision,
+                payload: parseStoredSettingsPayload(projectRow.payload, {
+                  operation,
+                  entity: { type: 'project_settings', projectId: validProjectId },
+                }),
+              },
+      };
+      return {
+        batch,
+        runs: runRows.map((row) => runFromRow(row, operation)),
+        tasks: taskRows.map((row) => taskBudgetRowFromRow(row, operation)),
+        settings,
+      };
+    });
+  }
+
+  function findExecutionBatchRecord(
+    projectId: unknown,
+    batchId: unknown,
+  ): ExecutionBatchRecord | undefined {
+    const operation = 'ExecutionStore.findExecutionBatch';
+    assertOpen(operation);
+    assertNotInTransaction(operation);
+    const validProjectId = executionReadId(operation, projectId, 'projectId', 'project');
+    const validBatchId = executionReadId(operation, batchId, 'batchId', 'execution_batch');
+    return transactSqliteConsistentRead(session, operation, (db) => {
+      const row = db
+        .prepare<[string, string], ExecutionBatchSqlRow>(`${SELECT_BATCH} WHERE id = ? AND project_id = ?`)
+        .get(validBatchId, validProjectId) as ExecutionBatchSqlRow | undefined;
+      return row === undefined ? undefined : batchFromRow(row, operation);
+    });
+  }
+
+  function listBatchBudgetRevisionRecords(
+    visibility: unknown,
+    projectId: unknown,
+    batchId: unknown,
+    request: PlanListRequest,
+  ): PlanRecordPage<BatchBudgetRevisionRecord> {
+    const operation = 'ExecutionStore.listBatchBudgetRevisions';
+    assertOpen(operation);
+    assertNotInTransaction(operation);
+    // 可见范围形状非法 = 可信装配编程错误（TypeError），不折算客户端错误。
+    assertPrincipalVisibility(visibility);
+    if (
+      request === null ||
+      typeof request !== 'object' ||
+      (request.afterId !== null && (typeof request.afterId !== 'string' || request.afterId.length === 0)) ||
+      typeof request.limit !== 'number' ||
+      !Number.isInteger(request.limit) ||
+      request.limit < 1
+    ) {
+      throw new TypeError(
+        'ExecutionStore.listBatchBudgetRevisions: request 必须是 {afterId: string|null, limit: ≥1 整数}（已校验分页形态）',
+      );
+    }
+    const validProjectId = executionReadId(operation, projectId, 'projectId', 'project');
+    const validBatchId = executionReadId(operation, batchId, 'batchId', 'execution_batch');
+    return transactSqliteConsistentRead(session, operation, (db) => {
+      // 键集下界按修订版本解析（UNIQUE(batch_id,version)；游标经应用层绑定
+      // Batch/项目，跨批次/跨项目游标已折叠 invalid_cursor；不可解析下界安全
+      // 返回空页，绝不当作从零重读）。
+      let afterVersion = 0;
+      if (request.afterId !== null) {
+        const anchor = db
+          .prepare<[string, string, string], { version: number }>(
+            'SELECT version FROM batch_budget_revisions WHERE id = ? AND batch_id = ? AND project_id = ?',
+          )
+          .get(request.afterId, validBatchId, validProjectId);
+        if (anchor === undefined) {
+          return { records: [], nextId: null };
+        }
+        afterVersion = anchor.version;
+      }
+      const visible = visibilityCondition(visibility, 'project_id');
+      const conditions = ['project_id = ?', 'batch_id = ?', 'version > ?'];
+      const params: unknown[] = [validProjectId, validBatchId, afterVersion];
+      if (visible.condition !== undefined) {
+        conditions.push(visible.condition);
+        params.push(...visible.params);
+      }
+      params.push(request.limit + 1);
+      const rows = db
+        .prepare<unknown[], BatchBudgetRevisionSqlRow>(
+          `${SELECT_REVISION} WHERE ${conditions.join(' AND ')} ORDER BY version LIMIT ?`,
+        )
+        .all(...params) as BatchBudgetRevisionSqlRow[];
+      const hasMore = rows.length > request.limit;
+      const pageRows = hasMore ? rows.slice(0, request.limit) : rows;
+      return {
+        records: pageRows.map((row) => revisionFromRow(row, operation)),
+        nextId: hasMore ? (pageRows[pageRows.length - 1]?.id ?? null) : null,
+      };
+    });
+  }
+
   return {
     insertExecutionBatchInTransaction,
     insertBatchBudgetRevisionInTransaction,
@@ -1810,5 +2079,8 @@ export function createSqliteExecutionAccess(
     getRuntimeStartReservationInTransaction,
     settleExecutionRunOutcomeInTransaction,
     getRunOutcomeSettlementInTransaction,
+    readExecutionBudgetView,
+    findExecutionBatchRecord,
+    listBatchBudgetRevisionRecords,
   };
 }
