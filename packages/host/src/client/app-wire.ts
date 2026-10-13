@@ -47,6 +47,10 @@ import {
   isIsoUtcDateTime,
   isUuidV4,
   validateBaselineAuthorizationSummary,
+  validateExecutionBudgetProposal,
+  EXECUTION_BATCH_STATUSES,
+  TASK_STATUSES,
+  EXECUTION_BUDGET_BLOCK_REASONS,
   validateSettingsPayload,
   validateWireCommandReceipt,
 } from 'shiploop-core/protocol';
@@ -65,6 +69,9 @@ import type {
   ExecutionInputOrigin,
   ExportedSettings,
   FeatureApprovalsResult,
+  ExecutionBudgetStatusResult,
+  BudgetRevisionListResult,
+  ExecutionPreviewResult,
   FeatureDetailResult,
   FeatureListResult,
   FeaturePlanDecision,
@@ -120,7 +127,9 @@ export type AppQueryOperation =
   | 'tasks.list'
   | 'tasks.get'
   // P03-2 / F-007：审批决策查询（与 Core PLAN_APPROVAL_QUERY_OPERATION 同源）。
-  | 'features.approvals';
+  | 'features.approvals'
+  | 'execution.budget.get'
+  | 'execution.budget.revisions';
 
 function malformed(operation: HostOperation, reason: string): never {
   throw new HostProtocolError('response_malformed', operation, 'Host 响应不符合线协议', {
@@ -2424,11 +2433,335 @@ export function validateBaselineCommandResultWire(
   };
 }
 
+function validateExecutionPreviewSummaryWire(operation: HostOperation, value: unknown): void {
+  const summary = requirePlain(operation, value);
+  exactKeys(operation, summary, ['approval', 'plan', 'code', 'checkPolicyDigest', 'tasks', 'permissions', 'inputs', 'budget', 'concurrency']);
+  const hash = (value: unknown): void => { requireSha256Hex(operation, value, 'execution_preview_digest_invalid'); };
+  const text = (value: unknown): void => { requireNonEmptyString(operation, value, 'execution_preview_text_invalid'); };
+  const rows = (value: unknown): unknown[] => {
+    if (!Array.isArray(value)) malformed(operation, 'execution_preview_rows_invalid');
+    return value;
+  };
+  const approval = requirePlain(operation, summary.approval);
+  exactKeys(operation, approval, ['planDigest', 'checkPolicyDigest', 'decisionId']);
+  hash(approval.planDigest);
+  hash(approval.checkPolicyDigest);
+  if (approval.decisionId !== null) requireStableId(operation, approval.decisionId);
+  hash(summary.checkPolicyDigest);
+  const plan = requirePlain(operation, summary.plan);
+  exactKeys(operation, plan, ['planDigest', 'taskCount', 'pendingTaskIds']);
+  if (plan.planDigest !== null) hash(plan.planDigest);
+  requireNonNegativeInteger(operation, plan.taskCount);
+  for (const id of rows(plan.pendingTaskIds)) requireStableId(operation, id);
+  const code = requirePlain(operation, summary.code);
+  exactKeys(operation, code, ['headCommit', 'workingTreeDigest', 'hasUncommittedChanges']);
+  if (code.headCommit !== null && (typeof code.headCommit !== 'string' || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(code.headCommit))) {
+    malformed(operation, 'execution_preview_commit_invalid');
+  }
+  hash(code.workingTreeDigest);
+  if (typeof code.hasUncommittedChanges !== 'boolean') malformed(operation, 'execution_preview_code_invalid');
+  const tasks = rows(summary.tasks);
+  for (const value of tasks) {
+    const task = requirePlain(operation, value);
+    exactKeys(operation, task, ['taskId', 'status', 'strategyCopyDigest', 'strategyConfigSource']);
+    requireStableId(operation, task.taskId);
+    text(task.status);
+    hash(task.strategyCopyDigest);
+    text(task.strategyConfigSource);
+  }
+  const permissions = requirePlain(operation, summary.permissions);
+  exactKeys(operation, permissions, ['tasks']);
+  for (const value of rows(permissions.tasks)) {
+    const task = requirePlain(operation, value);
+    exactKeys(operation, task, ['taskId', 'digest']);
+    requireStableId(operation, task.taskId);
+    hash(task.digest);
+  }
+  const inputs = requirePlain(operation, summary.inputs);
+  exactKeys(operation, inputs, ['refs']);
+  for (const value of rows(inputs.refs)) {
+    const ref = requirePlain(operation, value);
+    exactKeys(operation, ref, ['artifactId', 'version', 'contentHash', 'sizeBytes']);
+    requireStableId(operation, ref.artifactId);
+    requirePositiveInteger(operation, ref.version);
+    hash(ref.contentHash);
+    requireNonNegativeInteger(operation, ref.sizeBytes);
+  }
+  try {
+    validateExecutionBudgetProposal(summary.budget, { operation: `${operation}.preview.budget` });
+  } catch {
+    malformed(operation, 'execution_preview_budget_invalid');
+  }
+  const concurrency = requirePlain(operation, summary.concurrency);
+  exactKeys(operation, concurrency, ['maxConcurrentWorks', 'source']);
+  if (concurrency.maxConcurrentWorks !== 1) malformed(operation, 'execution_preview_concurrency_invalid');
+  text(concurrency.source);
+}
+
+function validateExecutionPreviewBlockerWire(operation: HostOperation, value: unknown): void {
+  const row = requirePlain(operation, value);
+  const fields: Record<string, readonly string[]> = {
+    plan_approval: ['kind', 'reason'], project_not_active: ['kind', 'status'],
+    phase_not_executable: ['kind', 'status'], active_run: ['kind', 'runId', 'status'],
+    active_batch_in_phase: ['kind', 'batchId', 'featureId', 'status'],
+    baseline_occupancy: ['kind', 'holderOperationId'],
+    required_input_unavailable: ['kind', 'artifactId', 'detail'],
+  };
+  if (typeof row.kind !== 'string' || !Object.hasOwn(fields, row.kind)) malformed(operation, 'execution_preview_blocked_invalid');
+  exactKeys(operation, row, fields[row.kind]!);
+  for (const key of fields[row.kind]!) {
+    if (key.endsWith('Id')) requireStableId(operation, row[key]);
+    else requireNonEmptyString(operation, row[key], 'execution_preview_blocked_invalid');
+  }
+  if (row.kind === 'required_input_unavailable' && !['not_found', 'not_ready', 'content_mismatch'].includes(row.detail as string)) {
+    malformed(operation, 'execution_preview_blocked_invalid');
+  }
+}
+
+export function validateExecutionPreviewResultWire(
+  value: unknown,
+  operation: HostOperation = 'commands.submit',
+): ExecutionPreviewResult {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, [
+    'schemaVersion', 'projectId', 'scope', 'status', 'noWorkReason', 'blocked',
+    'previewDigest', 'summary', 'runtimeExecution', 'generatedAtUtcMs',
+  ]);
+  if (object.schemaVersion !== 1) unsupportedVersion(operation, 'result.schemaVersion');
+  requireStableId(operation, object.projectId);
+  const scope = requirePlain(operation, object.scope);
+  exactKeys(operation, scope, ['featureIds']);
+  if (!Array.isArray(scope.featureIds) || scope.featureIds.length > 1) {
+    malformed(operation, 'execution_preview_scope_invalid');
+  }
+  for (const id of scope.featureIds) requireStableId(operation, id);
+  if (object.status !== 'ready' && object.status !== 'no_work' && object.status !== 'blocked') {
+    malformed(operation, 'execution_preview_status_invalid');
+  }
+  if (object.noWorkReason !== null && object.noWorkReason !== 'empty_scope' && object.noWorkReason !== 'no_pending_tasks') {
+    malformed(operation, 'execution_preview_no_work_reason_invalid');
+  }
+  if (!Array.isArray(object.blocked)) malformed(operation, 'execution_preview_blocked_invalid');
+  for (const reason of object.blocked) validateExecutionPreviewBlockerWire(operation, reason);
+  if (object.previewDigest !== null) requireSha256Hex(operation, object.previewDigest, 'execution_preview_digest_invalid');
+  if (object.summary !== null) validateExecutionPreviewSummaryWire(operation, object.summary);
+  if (object.runtimeExecution !== false || typeof object.generatedAtUtcMs !== 'number' || !Number.isSafeInteger(object.generatedAtUtcMs) || object.generatedAtUtcMs < 0) {
+    malformed(operation, 'execution_preview_runtime_invalid');
+  }
+  if (object.status === 'ready' && (object.previewDigest === null || object.summary === null || object.noWorkReason !== null || object.blocked.length !== 0 || scope.featureIds.length !== 1)) {
+    malformed(operation, 'execution_preview_ready_invariant');
+  }
+  if (object.status !== 'ready' && (object.previewDigest !== null || object.summary !== null)) {
+    malformed(operation, 'execution_preview_non_ready_invariant');
+  }
+  if (object.status === 'blocked' && (object.blocked.length === 0 || object.noWorkReason !== null || scope.featureIds.length !== 1)) {
+    malformed(operation, 'execution_preview_blocked_invariant');
+  }
+  if (object.status === 'no_work' && (object.noWorkReason === null || object.blocked.length !== 0 || (object.noWorkReason === 'empty_scope') !== (scope.featureIds.length === 0))) {
+    malformed(operation, 'execution_preview_no_work_invariant');
+  }
+  return object as unknown as ExecutionPreviewResult;
+}
+
+function validateBudgetSnapshot(operation: HostOperation, value: unknown, field: string): void {
+  const snapshot = requirePlain(operation, value);
+  exactKeys(operation, snapshot, ['schemaVersion', 'batch', 'run']);
+  if (snapshot.schemaVersion !== 1) unsupportedVersion(operation, `${field}.schemaVersion`);
+  try {
+    validateExecutionBudgetProposal(
+      { batch: snapshot.batch, run: snapshot.run },
+      { operation: `${operation}.${field}` },
+    );
+  } catch {
+    malformed(operation, 'execution_budget_snapshot_invalid');
+  }
+}
+
+function validateExecutionBudgetCommon(
+  operation: HostOperation,
+  value: unknown,
+  expectedScope: string,
+  keys: readonly string[],
+): Record<string, unknown> {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, keys);
+  if (object.schemaVersion !== WIRE_MESSAGE_SCHEMA_VERSION) unsupportedVersion(operation, 'result.schemaVersion');
+  if (object.scope !== expectedScope) malformed(operation, 'execution_budget_scope_invalid');
+  return object;
+}
+
+function budgetNumber(operation: HostOperation, value: unknown, nullable = false): void {
+  if (nullable && value === null) return;
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) malformed(operation, 'execution_budget_number_invalid');
+}
+
+function budgetDate(operation: HostOperation, value: unknown, nullable = false): void {
+  if (nullable && value === null) return;
+  if (!isIsoUtcDateTime(value)) malformed(operation, 'execution_budget_date_invalid');
+}
+
+function budgetDimensions(operation: HostOperation, value: unknown, keys: readonly string[], optional: readonly string[] = []): void {
+  const dimensions = requirePlain(operation, value);
+  exactKeys(operation, dimensions, [...keys, ...optional.filter((key) => Object.hasOwn(dimensions, key))]);
+  if (keys.some((key) => !Object.hasOwn(dimensions, key))) malformed(operation, 'execution_budget_dimension_invalid');
+  for (const value of Object.values(dimensions)) {
+    const dimension = requirePlain(operation, value);
+    exactKeys(operation, dimension, ['limit', 'used', 'remaining', 'exhausted']);
+    budgetNumber(operation, dimension.limit);
+    budgetNumber(operation, dimension.used, true);
+    budgetNumber(operation, dimension.remaining, true);
+    if (dimension.used === null ? dimension.remaining !== null || dimension.exhausted !== null : typeof dimension.exhausted !== 'boolean' || dimension.remaining === null) {
+      malformed(operation, 'execution_budget_dimension_invalid');
+    }
+  }
+}
+
+export function validateExecutionBudgetStatusResultWire(
+  value: unknown,
+  operation: HostOperation = 'execution.budget.get',
+): ExecutionBudgetStatusResult {
+  const object = validateExecutionBudgetCommon(
+    operation, value, 'execution-budget', ['schemaVersion', 'scope', 'batch', 'runs', 'tasks', 'blockingReasons'],
+  );
+  const batch = requirePlain(operation, object.batch);
+  exactKeys(operation, batch, [
+    'id', 'projectId', 'phaseId', 'featureId', 'featureIds', 'status', 'budgetRevision',
+    'budget', 'deadlineAtUtcMs', 'dimensions', 'unconfirmedDimensions', 'runtimeStartsReserved',
+    'usage', 'reason', 'createdAt', 'updatedAt',
+  ]);
+  requireStableId(operation, batch.id);
+  requireStableId(operation, batch.projectId);
+  requireStableId(operation, batch.phaseId);
+  requireStableId(operation, batch.featureId);
+  if (!(EXECUTION_BATCH_STATUSES as readonly unknown[]).includes(batch.status)) malformed(operation, 'execution_budget_status_invalid');
+  budgetDate(operation, batch.createdAt);
+  budgetDate(operation, batch.updatedAt);
+  if (batch.reason !== null) requireNonEmptyString(operation, batch.reason, 'execution_budget_reason_invalid');
+  requireNonNegativeInteger(operation, batch.runtimeStartsReserved);
+  if (!Array.isArray(batch.featureIds) || batch.featureIds.length !== 1 || batch.featureIds[0] !== batch.featureId) {
+    malformed(operation, 'execution_budget_feature_scope_invalid');
+  }
+  if (typeof batch.budgetRevision !== 'number' || !Number.isSafeInteger(batch.budgetRevision) || batch.budgetRevision < 1) {
+    malformed(operation, 'execution_budget_revision_invalid');
+  }
+  if (typeof batch.deadlineAtUtcMs !== 'number' || !Number.isSafeInteger(batch.deadlineAtUtcMs)) {
+    malformed(operation, 'execution_budget_deadline_invalid');
+  }
+  validateBudgetSnapshot(operation, batch.budget, 'batch.budget');
+  if (!isPlainObject(batch.dimensions) || !Array.isArray(batch.unconfirmedDimensions)) {
+    malformed(operation, 'execution_budget_batch_invalid');
+  }
+  budgetDimensions(operation, batch.dimensions, ['maxRuns', 'maxTotalAttempts', 'maxRuntimeStarts', 'maxNoProgressRuns', 'deadlineUtcMs'], ['maxTokenTotal', 'maxCostTotal']);
+  if (!batch.unconfirmedDimensions.every((dimension) => dimension === 'maxTokenTotal' || dimension === 'maxCostTotal')) malformed(operation, 'execution_budget_dimension_invalid');
+  const usage = requirePlain(operation, batch.usage);
+  exactKeys(operation, usage, ['tokenUsed', 'costUsed']);
+  budgetNumber(operation, usage.tokenUsed, true);
+  budgetNumber(operation, usage.costUsed, true);
+  if (!Array.isArray(object.runs) || !Array.isArray(object.tasks) || !Array.isArray(object.blockingReasons)) {
+    malformed(operation, 'execution_budget_rows_invalid');
+  }
+  for (const value of object.runs) {
+    const run = requirePlain(operation, value);
+    exactKeys(operation, run, ['id', 'batchId', 'featureId', 'purpose', 'workKey', 'dispatchOrdinal', 'status', 'limits', 'dimensions', 'attemptsCreated', 'startedAt', 'endedAt', 'elapsedMs', 'reason', 'createdAt']);
+    requireStableId(operation, run.id);
+    if (run.batchId !== batch.id || run.featureId !== batch.featureId || !(EXECUTION_BATCH_STATUSES as readonly unknown[]).includes(run.status)) malformed(operation, 'execution_budget_run_invalid');
+    requireNonEmptyString(operation, run.purpose, 'execution_budget_run_invalid');
+    requireNonEmptyString(operation, run.workKey, 'execution_budget_run_invalid');
+    requirePositiveInteger(operation, run.dispatchOrdinal);
+    requireNonNegativeInteger(operation, run.attemptsCreated);
+    const limits = requirePlain(operation, run.limits);
+    exactKeys(operation, limits, ['maxAttemptsPerRun', 'runTimeLimitMs']);
+    requirePositiveInteger(operation, limits.maxAttemptsPerRun);
+    requirePositiveInteger(operation, limits.runTimeLimitMs);
+    budgetDimensions(operation, run.dimensions, ['maxAttemptsPerRun', 'runTimeLimitMs']);
+    budgetDate(operation, run.startedAt, true);
+    budgetDate(operation, run.endedAt, true);
+    budgetDate(operation, run.createdAt);
+    if (run.elapsedMs !== null) requireNonNegativeInteger(operation, run.elapsedMs);
+    if (run.reason !== null) requireNonEmptyString(operation, run.reason, 'execution_budget_reason_invalid');
+  }
+  for (const value of object.tasks) {
+    const task = requirePlain(operation, value);
+    exactKeys(operation, task, ['taskId', 'status', 'firstPassedAt', 'attempts', 'codeAttempts', 'caps']);
+    requireStableId(operation, task.taskId);
+    if (!(TASK_STATUSES as readonly unknown[]).includes(task.status)) malformed(operation, 'execution_budget_task_invalid');
+    budgetDate(operation, task.firstPassedAt, true);
+    for (const field of ['attempts', 'codeAttempts']) {
+      const counts = requirePlain(operation, task[field]);
+      exactKeys(operation, counts, ['used', 'limit', 'remaining']);
+      requireNonNegativeInteger(operation, counts.used);
+      if (field === 'attempts' && counts.limit === null) {
+        if (counts.remaining !== null) malformed(operation, 'execution_budget_task_invalid');
+      } else {
+        requirePositiveInteger(operation, counts.limit);
+        requireNonNegativeInteger(operation, counts.remaining);
+      }
+    }
+    const caps = requirePlain(operation, task.caps);
+    exactKeys(operation, caps, ['maxCodeAttempts', 'maxAttemptsPerTask', 'effectiveMaxCodeAttempts', 'rule']);
+    requirePositiveInteger(operation, caps.maxCodeAttempts);
+    if (caps.maxAttemptsPerTask !== null) requirePositiveInteger(operation, caps.maxAttemptsPerTask);
+    requirePositiveInteger(operation, caps.effectiveMaxCodeAttempts);
+    if (!['code_cap_default', 'code_cap_only', 'total_cap_only', 'code_cap_binds', 'total_cap_binds', 'equal', 'code_cap_default_bounded_by_total'].includes(caps.rule as string)) malformed(operation, 'execution_budget_task_invalid');
+  }
+  for (const value of object.blockingReasons) {
+    const reason = requirePlain(operation, value);
+    const optional = ['dimension', 'limit', 'used'].filter((key) => Object.hasOwn(reason, key));
+    exactKeys(operation, reason, ['layer', 'layerId', 'reason', ...optional]);
+    requireStableId(operation, reason.layerId);
+    if (!['batch', 'run', 'task'].includes(reason.layer as string) || !(EXECUTION_BUDGET_BLOCK_REASONS as readonly unknown[]).includes(reason.reason)) malformed(operation, 'execution_budget_block_invalid');
+    if (Object.hasOwn(reason, 'dimension') && !['maxRuns', 'maxTotalAttempts', 'maxRuntimeStarts', 'maxNoProgressRuns', 'deadlineUtcMs', 'maxTokenTotal', 'maxCostTotal', 'maxAttemptsPerRun', 'runTimeLimitMs', 'maxCodeAttempts', 'maxAttemptsPerTask'].includes(reason.dimension as string)) malformed(operation, 'execution_budget_dimension_invalid');
+    if (Object.hasOwn(reason, 'limit')) budgetNumber(operation, reason.limit);
+    if (Object.hasOwn(reason, 'used')) budgetNumber(operation, reason.used, true);
+  }
+  return object as unknown as ExecutionBudgetStatusResult;
+}
+
+export function validateBudgetRevisionListResultWire(
+  value: unknown,
+  operation: HostOperation = 'execution.budget.revisions',
+): BudgetRevisionListResult {
+  const object = validateExecutionBudgetCommon(
+    operation, value, 'budget-revision-list', ['schemaVersion', 'scope', 'records', 'nextCursor', 'limit'],
+  );
+  if (!Array.isArray(object.records) || (object.nextCursor !== null && typeof object.nextCursor !== 'string')) {
+    malformed(operation, 'execution_budget_revisions_invalid');
+  }
+  if (typeof object.limit !== 'number' || !Number.isSafeInteger(object.limit) || object.limit < 1 || object.limit > 200 || object.records.length > object.limit) {
+    malformed(operation, 'execution_budget_limit_invalid');
+  }
+  for (const recordValue of object.records) {
+    const record = requirePlain(operation, recordValue);
+    exactKeys(operation, record, ['id', 'batchId', 'version', 'budget', 'deadlineAtUtcMs', 'approvedBy', 'reason', 'createdAt']);
+    requireStableId(operation, record.id);
+    requireStableId(operation, record.batchId);
+    validateBudgetSnapshot(operation, record.budget, 'revision.budget');
+    if (typeof record.version !== 'number' || !Number.isSafeInteger(record.version) || record.version < 1) {
+      malformed(operation, 'execution_budget_revision_record_invalid');
+    }
+    if (typeof record.deadlineAtUtcMs !== 'number' || !Number.isSafeInteger(record.deadlineAtUtcMs) || typeof record.approvedBy !== 'string' || typeof record.reason !== 'string' || !isIsoUtcDateTime(record.createdAt)) {
+      malformed(operation, 'execution_budget_revision_record_invalid');
+    }
+  }
+  return object as unknown as BudgetRevisionListResult;
+}
+
+export function validateAppQueryResponse(
+  operation: 'execution.budget.get',
+  body: unknown,
+  expectation?: SnapshotExpectation,
+): ExecutionBudgetStatusResult;
+export function validateAppQueryResponse(
+  operation: 'execution.budget.revisions',
+  body: unknown,
+  expectation?: SnapshotExpectation,
+): BudgetRevisionListResult;
 export function validateAppQueryResponse(
   operation: 'baselines.list',
   body: unknown,
   expectation?: SnapshotExpectation,
 ): BaselineListResult;
+
 export function validateAppQueryResponse(
   operation: 'baselines.get',
   body: unknown,
@@ -2610,6 +2943,10 @@ export function validateAppQueryResponse(
     // P03-2 / F-007：审批决策查询响应分发（同一冻结字段集纪律）。
     case 'features.approvals':
       return validateFeatureApprovalsResultWire(operation, body);
+    case 'execution.budget.get':
+      return validateExecutionBudgetStatusResultWire(body, operation);
+    case 'execution.budget.revisions':
+      return validateBudgetRevisionListResultWire(body, operation);
     default: {
       const exhaustive: never = operation;
       throw new TypeError(`未覆盖的查询操作：${String(exhaustive)}`);

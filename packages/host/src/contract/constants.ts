@@ -32,6 +32,8 @@ export const DISCOVERY_SCHEMA_VERSION = 1 as const;
  * 三命令与 features.approvals 查询进入能力集合，同一升版纪律；旧 v4/v3/v2/v1
  * → 400，不猜测降级）。
  */
+// P03-3 / F-011: execution capabilities are an additive v5 wiring change;
+// application envelopes and query results remain on their existing versions.
 export const CURRENT_SCHEMA_VERSION = 5 as const;
 
 /** 当前 Host 生命周期线协议版本；本 Feature 只实现 v1。 */
@@ -89,6 +91,8 @@ export const FEATURES_ROUTE_PREFIX = '/v1/features/';
 export const FEATURE_APPROVALS_ROUTE_SUFFIX = '/approvals';
 export const TASKS_ROUTE = '/v1/tasks';
 export const TASKS_ROUTE_PREFIX = '/v1/tasks/';
+/** F-011: GET :batchId/budget and :batchId/budget/revisions; projectId is required. */
+export const BATCHES_ROUTE_PREFIX = '/v1/batches/';
 
 /** §7.2 客户端有限预算（毫秒）。 */
 export const TCP_CONNECT_TIMEOUT_MS = 2_000;

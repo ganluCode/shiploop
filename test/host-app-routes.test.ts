@@ -1004,6 +1004,9 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         'tasks.get',
         // P03-2 / F-007：审批决策查询真实接线（能力位复用 project.read）。
         'features.approvals',
+        // P03-3 / F-011：预算状态与修订历史只读查询经 Batch 路由真实接线。
+        'execution.budget.get',
+        'execution.budget.revisions',
       ],
       events: { transport: 'sse', route: '/v1/events', scopes: ['project', 'global'] },
     });

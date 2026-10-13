@@ -49,6 +49,7 @@ import type {
   TrustedPrincipal,
 } from 'shiploop-core';
 import {
+  BATCHES_ROUTE_PREFIX,
   ARTIFACT_CONTENT_ROUTE_SUFFIX,
   ARTIFACTS_ROUTE_PREFIX,
   BASELINES_ROUTE_PREFIX,
@@ -115,14 +116,16 @@ export type ApplicationOperation =
   | 'tasks.list'
   | 'tasks.get'
   // P03-2 / F-007：Feature 审批决策查询（与 Core PLAN_APPROVAL_QUERY_OPERATION 同源）。
-  | 'features.approvals';
+  | 'features.approvals'
+  | 'execution.budget.get'
+  | 'execution.budget.revisions';
 
 /** 已解析的应用路由（path 形态匹配；路径参数为未解码原始片段）。 */
 export interface ResolvedAppRoute {
   readonly operation: ApplicationOperation;
   readonly method: 'GET' | 'POST';
   readonly pathParam?: {
-    readonly name: 'commandId' | 'projectId' | 'resultRef' | 'operationId' | 'artifactId' | 'phaseId' | 'featureId' | 'taskId';
+    readonly name: 'commandId' | 'projectId' | 'resultRef' | 'operationId' | 'artifactId' | 'phaseId' | 'featureId' | 'taskId' | 'batchId';
     readonly value: string;
   };
 }
@@ -186,6 +189,17 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
       return { operation: 'events.subscribe', method: 'GET' };
     default:
       break;
+  }
+  if (path.startsWith(BATCHES_ROUTE_PREFIX)) {
+    const segments = path.slice(BATCHES_ROUTE_PREFIX.length).split('/');
+    if (segments.length >= 2 && segments[0] !== '' && segments[1] === 'budget') {
+      const operation = segments.length === 2 ? 'execution.budget.get'
+        : segments.length === 3 && segments[2] === 'revisions' ? 'execution.budget.revisions' : undefined;
+      if (operation !== undefined) {
+        return { operation, method: 'GET', pathParam: { name: 'batchId', value: segments[0]! } };
+      }
+    }
+    return undefined;
   }
   if (path.startsWith(RECEIPTS_ROUTE_PREFIX)) {
     const segment = path.slice(RECEIPTS_ROUTE_PREFIX.length);
@@ -448,6 +462,8 @@ interface QuerySpec {
 }
 
 const QUERY_SPECS: Readonly<Partial<Record<ApplicationOperation, QuerySpec>>> = Object.freeze({
+  'execution.budget.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
+  'execution.budget.revisions': Object.freeze({ allowed: ['projectId', 'limit', 'cursor'], repeatable: [] }),
   'projects.list': Object.freeze({ allowed: ['limit', 'cursor', 'label', 'match'], repeatable: ['label'] }),
   // P02-3 / F-006（§7.2）：path 是唯一例外查询参数（仓库根绝对路径，经
   // RepositoryInspector 校验；不是通用文件读取）。
@@ -857,6 +873,15 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
       break;
     // P03-2 / F-007：审批决策查询分发（授权/可见性由 Core 单一权威复核；
     // 不可见/不存在统一 not_found，不区分存在性）。
+    case 'execution.budget.get':
+    case 'execution.budget.revisions': {
+      const query = buildPlanListQuery(params, operation, 'projectId');
+      query.batchId = pathParam?.value;
+      result = operation === 'execution.budget.get'
+        ? await app.queryService.getExecutionBudgetStatus(app.principal, query)
+        : await app.queryService.listBatchBudgetRevisions(app.principal, query);
+      break;
+    }
     case 'features.approvals':
       result = await app.queryService.getFeatureApprovals(app.principal, pathParam?.value);
       break;

@@ -237,6 +237,8 @@ describe('F-002 冻结常量与能力声明', () => {
           'tasks.get',
           // P03-2 / F-007：审批决策查询真实接线（能力位复用 project.read）。
           'features.approvals',
+          'execution.budget.get',
+          'execution.budget.revisions',
         ],
         events: { transport: 'sse', route: '/v1/events', scopes: ['project', 'global'] },
       },
@@ -257,6 +259,8 @@ describe('F-002 冻结常量与能力声明', () => {
       'artifacts.get',
       ...PLAN_QUERY_OPERATIONS,
       PLAN_APPROVAL_QUERY_OPERATION,
+      'execution.budget.get',
+      'execution.budget.revisions',
     ]);
     expect(CURRENT_HOST_CAPABILITIES.application.commands).toContain('baseline.cancel');
     expect(CURRENT_HOST_CAPABILITIES.application.queries).toContain('baselines.list');

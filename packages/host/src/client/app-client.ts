@@ -46,6 +46,8 @@ import type {
   EffectiveSettings,
   ExportedSettings,
   FeatureApprovalsResult,
+  ExecutionBudgetStatusResult,
+  BudgetRevisionListResult,
   FeatureDetailResult,
   FeatureListResult,
   GlobalSnapshotResult,
@@ -69,6 +71,7 @@ import {
   APP_REQUEST_TIMEOUT_MS,
   ARTIFACT_CONTENT_ROUTE_SUFFIX,
   ARTIFACTS_ROUTE_PREFIX,
+  BATCHES_ROUTE_PREFIX,
   BASELINES_ROUTE_PREFIX,
   COMMANDS_ROUTE,
   EVENTS_ROUTE,
@@ -102,6 +105,9 @@ import {
   validateBaselinePreviewResultWire,
   validateCommandReceiptWire,
   validateExecutionInputPrepareResultWire,
+  validateExecutionPreviewResultWire,
+  validateExecutionBudgetStatusResultWire,
+  validateBudgetRevisionListResultWire,
   validateFeaturePlanDecideResultWire,
   validateFeaturePlanImportResultWire,
   validateFeaturePlanReviseResultWire,
@@ -287,6 +293,37 @@ export interface PrepareExecutionInputInput {
   readonly commandId?: string;
 }
 
+/** execution.preview/start 的单 Feature 授权输入。预算深校验由 Core 完成。 */
+export interface PreviewExecutionInput {
+  readonly projectId: string;
+  readonly featureIds: readonly string[];
+  readonly budget: unknown;
+  readonly commandId?: string;
+}
+
+export interface StartExecutionInput {
+  readonly projectId: string;
+  readonly featureIds: readonly string[];
+  readonly budget?: unknown;
+  readonly previewDigest?: string;
+  readonly retryBatchId?: string;
+  readonly commandId?: string;
+}
+
+export interface ReviseExecutionBudgetInput {
+  readonly projectId: string;
+  readonly batchId: string;
+  readonly expectedRevision: number;
+  readonly budget: unknown;
+  readonly reason: string;
+  readonly commandId?: string;
+}
+
+export interface BudgetRevisionListInput {
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+
 /** artifacts.get 的授权证据正文（§7.6：text/plain 有界内容，已脱敏）。 */
 export interface BaselineArtifactContentResult {
   readonly artifactId: string;
@@ -437,6 +474,14 @@ export interface HostClientApplication {
   ): Promise<CommandReceipt>;
   /** features.approvals：当前批准 vs 历史决定 + fail-closed 有效批准评估。 */
   getFeatureApprovals(featureId: string): Promise<FeatureApprovalsResult>;
+  /** execution.preview：只读授权预览，completed result 经线协议校验。 */
+  previewExecution(input: PreviewExecutionInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  /** execution.start：返回 completed/rejected 或 Work accepted；不等待 Runtime。 */
+  startExecution(input: StartExecutionInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  /** execution.budget.revise：通过既有幂等命令入口提交 CAS 修订。 */
+  reviseExecutionBudget(input: ReviseExecutionBudgetInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  getExecutionBudgetStatus(projectId: string, batchId: string): Promise<ExecutionBudgetStatusResult>;
+  listBatchBudgetRevisions(projectId: string, batchId: string, input?: BudgetRevisionListInput): Promise<BudgetRevisionListResult>;
 }
 
 /** 由 connectToHost 注入的会话上下文（身份/预算/生命周期钩子）。 */
@@ -823,6 +868,51 @@ const PREPARE_EXECUTION_INPUT_KEYS = [
   'items',
   'commandId',
 ] as const;
+const EXECUTION_PREVIEW_INPUT_KEYS = ['projectId', 'featureIds', 'budget', 'commandId'] as const;
+const EXECUTION_START_INPUT_KEYS = ['projectId', 'featureIds', 'budget', 'previewDigest', 'retryBatchId', 'commandId'] as const;
+const EXECUTION_BUDGET_REVISE_INPUT_KEYS = ['projectId', 'batchId', 'expectedRevision', 'budget', 'reason', 'commandId'] as const;
+const BUDGET_REVISION_LIST_INPUT_KEYS = ['limit', 'cursor'] as const;
+
+function requireFeatureIds(operation: HostOperation, value: unknown): string[] {
+  if (!Array.isArray(value) || !value.every((id) => typeof id === 'string' && STABLE_ID_PATTERN.test(id))) {
+    throw invalidInput(operation, 'invalid_feature_ids', 'featureIds');
+  }
+  return [...value];
+}
+
+function requireBudgetObject(operation: HostOperation, value: unknown, field: string): Record<string, unknown> {
+  if (!isPlainObject(value)) throw invalidInput(operation, 'invalid_budget', field);
+  return value;
+}
+
+function requireSha256Input(operation: HostOperation, value: unknown, field: string): string {
+  if (typeof value !== 'string' || !/^[0-9a-f]{64}$/.test(value)) {
+    throw invalidInput(operation, 'invalid_digest', field);
+  }
+  return value;
+}
+
+function buildBudgetRevisionListQuery(
+  input: BudgetRevisionListInput | undefined,
+  operation: HostOperation,
+): string {
+  if (input === undefined) return '';
+  const object = rejectUnknownInputKeys(operation, input, BUDGET_REVISION_LIST_INPUT_KEYS);
+  const params = new URLSearchParams();
+  if (object.limit !== undefined) {
+    if (typeof object.limit !== 'number' || !Number.isInteger(object.limit) || object.limit < 1 || object.limit > PLAN_LIST_MAX_LIMIT) {
+      throw invalidInput(operation, 'invalid_limit', 'limit');
+    }
+    params.append('limit', String(object.limit));
+  }
+  if (object.cursor !== undefined) {
+    if (typeof object.cursor !== 'string' || !object.cursor.startsWith(PLAN_LIST_CURSOR_PREFIX)) {
+      throw invalidInput(operation, 'invalid_cursor', 'cursor');
+    }
+    params.append('cursor', object.cursor);
+  }
+  return params.toString();
+}
 
 function requireStableIdInput(operation: HostOperation, value: unknown, field: string): string {
   if (typeof value !== 'string' || !STABLE_ID_PATTERN.test(value)) {
@@ -2105,6 +2195,116 @@ export function createHostClientApplication(context: AppClientContext): HostClie
         `${FEATURES_ROUTE_PREFIX}${id}${FEATURE_APPROVALS_ROUTE_SUFFIX}`,
       );
       return validateAppQueryResponse('features.approvals', json);
+    },
+
+    async previewExecution(
+      input: PreviewExecutionInput,
+      options?: SubmitCommandOptions,
+    ): Promise<CommandReceipt> {
+      const object = rejectUnknownInputKeys('commands.submit', input, EXECUTION_PREVIEW_INPUT_KEYS);
+      const projectId = requireProjectId('commands.submit', object.projectId as string);
+      const featureIds = requireFeatureIds('commands.submit', object.featureIds);
+      const budget = requireBudgetObject('commands.submit', object.budget, 'budget');
+      const receipt = await submitCommand(
+        {
+          ...optionalCommandIdInput('commands.submit', object.commandId),
+          operation: 'execution.preview',
+          scope: { kind: 'project', projectId },
+          payload: { featureIds, budget },
+        },
+        options,
+      );
+      if (receipt.status === 'completed') {
+        validateExecutionPreviewResultWire(receipt.result, 'commands.submit');
+      }
+      return receipt;
+    },
+
+    async startExecution(
+      input: StartExecutionInput,
+      options?: SubmitCommandOptions,
+    ): Promise<CommandReceipt> {
+      const object = rejectUnknownInputKeys('commands.submit', input, EXECUTION_START_INPUT_KEYS);
+      const projectId = requireProjectId('commands.submit', object.projectId as string);
+      const featureIds = requireFeatureIds('commands.submit', object.featureIds);
+      const retryBatchId = object.retryBatchId;
+      let payload: Record<string, unknown>;
+      if (retryBatchId !== undefined) {
+        if (typeof retryBatchId !== 'string' || !isUuidV4(retryBatchId) || object.budget !== undefined || object.previewDigest !== undefined) {
+          throw invalidInput('commands.submit', 'invalid_retry_shape', 'retryBatchId');
+        }
+        payload = { featureIds, retryBatchId };
+      } else {
+        const budget = requireBudgetObject('commands.submit', object.budget, 'budget');
+        const previewDigest = requireSha256Input('commands.submit', object.previewDigest, 'previewDigest');
+        payload = { featureIds, budget, previewDigest, retryBatchId: null };
+      }
+      return submitCommand(
+        {
+          ...optionalCommandIdInput('commands.submit', object.commandId),
+          operation: 'execution.start',
+          scope: { kind: 'project', projectId },
+          payload,
+        },
+        options,
+      );
+    },
+
+    async reviseExecutionBudget(
+      input: ReviseExecutionBudgetInput,
+      options?: SubmitCommandOptions,
+    ): Promise<CommandReceipt> {
+      const object = rejectUnknownInputKeys('commands.submit', input, EXECUTION_BUDGET_REVISE_INPUT_KEYS);
+      const projectId = requireProjectId('commands.submit', object.projectId as string);
+      const batchId = requireStableIdInput('commands.submit', object.batchId, 'batchId');
+      const expectedRevision = requireExpectedRevisionInput('commands.submit', object.expectedRevision);
+      const budget = requireBudgetObject('commands.submit', object.budget, 'budget');
+      if (typeof object.reason !== 'string' || object.reason.trim().length === 0) {
+        throw invalidInput('commands.submit', 'invalid_reason', 'reason');
+      }
+      return submitCommand(
+        {
+          ...optionalCommandIdInput('commands.submit', object.commandId),
+          operation: 'execution.budget.revise',
+          scope: { kind: 'project', projectId },
+          expectedRevision,
+          payload: { batchId, budget, reason: object.reason },
+        },
+        options,
+      );
+    },
+
+    async getExecutionBudgetStatus(projectId: string, batchId: string): Promise<ExecutionBudgetStatusResult> {
+      context.assertOpen('execution.budget.get');
+      const project = requireProjectId('execution.budget.get', projectId);
+      const batch = requireStableIdInput('execution.budget.get', batchId, 'batchId');
+      const json = await getJson(
+        'execution.budget.get',
+        `${BATCHES_ROUTE_PREFIX}${batch}/budget?projectId=${encodeURIComponent(project)}`,
+      );
+      const result = validateAppQueryResponse('execution.budget.get', json);
+      if (result.batch.projectId !== project || result.batch.id !== batch) {
+        throw new HostProtocolError('response_malformed', 'execution.budget.get', '预算响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
+      }
+      return result;
+    },
+
+    async listBatchBudgetRevisions(
+      projectId: string,
+      batchId: string,
+      input?: BudgetRevisionListInput,
+    ): Promise<BudgetRevisionListResult> {
+      context.assertOpen('execution.budget.revisions');
+      const project = requireProjectId('execution.budget.revisions', projectId);
+      const batch = requireStableIdInput('execution.budget.revisions', batchId, 'batchId');
+      const paging = buildBudgetRevisionListQuery(input, 'execution.budget.revisions');
+      const query = `projectId=${encodeURIComponent(project)}${paging.length === 0 ? '' : `&${paging}`}`;
+      const json = await getJson('execution.budget.revisions', `${BATCHES_ROUTE_PREFIX}${batch}/budget/revisions?${query}`);
+      const result = validateAppQueryResponse('execution.budget.revisions', json);
+      if (result.records.some((record) => record.batchId !== batch)) {
+        throw new HostProtocolError('response_malformed', 'execution.budget.revisions', '预算修订响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
+      }
+      return result;
     },
   };
 }

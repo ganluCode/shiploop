@@ -100,6 +100,11 @@ export type {
 } from './ports/execution-budget-query.js';
 // P03-2 / F-007 执行输入制品组身份（回执 result 形状的公共成分；正文永不内联）。
 export type { ContextTokenEstimate } from './ports/context-build.js';
+export { validateExecutionBudgetProposal } from './ports/execution-budget.js';
+export type { ExecutionBudgetProposal } from './ports/execution-budget.js';
+export type { ExecutionPreviewResult } from './ports/execution-preview.js';
+export { EXECUTION_BATCH_STATUSES } from './ports/execution-store.js';
+export { TASK_STATUSES } from './ports/plan-store.js';
 export type { ExecutionInputOrigin, ExecutionInputRef } from './ports/execution-input.js';
 export {
   EXECUTION_INPUT_GROUP_LOCATOR_PREFIX,

@@ -120,6 +120,8 @@ export const APPLICATION_QUERY_CAPABILITIES = [
   // P03-2 / F-007：Feature 审批决策查询（能力位复用 project.read；与 Core
   // PLAN_APPROVAL_QUERY_OPERATION 同步，不漂移）。
   'features.approvals',
+  'execution.budget.get',
+  'execution.budget.revisions',
 ] as const;
 
 /**

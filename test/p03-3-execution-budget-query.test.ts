@@ -13,6 +13,9 @@
  *    状态断言；输出不含秘密正文、任意文件内容或开发机绝对路径。
  */
 import { randomUUID } from 'node:crypto';
+import { createHostClientApplication } from '../packages/host/src/client/app-client.ts';
+import { validateExecutionBudgetStatusResultWire, validateExecutionPreviewResultWire } from '../packages/host/src/client/app-wire.ts';
+import { createHostLifecycleServer, createHostStopController, createIdleActivityGate } from '../packages/host/src/index.ts';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createSqliteExecutionAccess } from '../packages/core/src/adapters/sqlite/execution-store.ts';
 import type { SqliteStorageSession } from '../packages/core/src/adapters/sqlite/session.ts';
@@ -123,6 +126,8 @@ interface VerticalHarness {
   readonly taskId: string;
   readonly batchId: string;
   readonly runId: string;
+  readonly startCommandId: string;
+  readonly previewCommandId: string;
   readonly clock: { value: number };
   readonly session: SqliteStorageSession;
   readonly revise: (
@@ -304,6 +309,8 @@ async function setup(options: { readonly budget?: Record<string, unknown> } = {}
     taskId,
     batchId,
     runId,
+    startCommandId: started.commandId,
+    previewCommandId: previewReceipt.commandId,
     clock,
     session,
     revise: (expectedRevision: number, nextBudget: Record<string, unknown>, reason: string) =>
@@ -326,6 +333,79 @@ async function setup(options: { readonly budget?: Record<string, unknown> } = {}
 }
 
 describe('F-010 执行预算只读查询（一致读视图/已知与未知字段）', () => {
+  it('F-011 real Host routes preserve Batch/Run identity, revisions and retry scope', async () => {
+    const s = await setup();
+    const stop = createHostStopController({
+      activityGate: createIdleActivityGate(), getLifecycleState: () => 'ready',
+      setLifecycleState() {}, prepareTeardown: () => Promise.resolve(), releaseAfterTeardown: () => Promise.resolve(),
+    });
+    const server = createHostLifecycleServer({
+      hostInstanceId: randomUUID(), dataRootIdentity: 'a'.repeat(64), startedAt: NOW_ISO,
+      pid: process.pid, authToken: 'fixture-token', getLifecycleState: () => 'ready',
+      getActivities: () => stop.getActivities(), stop,
+      application: {
+        principal: s.owner, commandService: s.app.commandService, queryService: s.app.queryService,
+        commandReceiptsService: s.app.commandReceiptsService, onboardingService: s.app.onboardingService,
+        baselineQueryService: s.app.baselineQueryService, baselineExecutionService: s.app.baselineExecutionService,
+        getLifecycleState: () => 'ready',
+      },
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (address === null || typeof address === 'string') throw new Error('missing port');
+    const client = createHostClientApplication({
+      port: address.port, token: 'fixture-token', connectMs: 1_000, appRequestMs: 2_000,
+      submitBudgetMs: 5_000, assertOpen() {}, registerSubscription() {}, unregisterSubscription() {},
+    });
+    try {
+      const before = await client.getExecutionBudgetStatus(s.projectId, s.batchId);
+      const originalStart = await client.getReceipt(s.startCommandId);
+      expect(originalStart).toMatchObject({ status: 'accepted', batchId: s.batchId, runId: s.runId });
+      const originalPreview = await client.getReceipt(s.previewCommandId);
+      if (originalPreview.status !== 'completed') throw new Error('missing ready preview');
+      expect(validateExecutionPreviewResultWire(originalPreview.result).status).toBe('ready');
+      const malformedResponses = [
+        (value: any) => { value.batch.usage.tokenUsed = -1; },
+        (value: any) => { value.batch.dimensions = {}; },
+        (value: any) => { value.runs[0].batchId = randomUUID(); },
+        (value: any) => { value.runs[0].elapsedMs = -1; },
+        (value: any) => { value.tasks[0].codeAttempts.used = -1; },
+        (value: any) => { value.tasks[0].caps = {}; },
+        (value: any) => { value.blockingReasons = [{}]; },
+      ];
+      for (const mutate of malformedResponses) {
+        const value = structuredClone(before);
+        mutate(value);
+        expect(() => validateExecutionBudgetStatusResultWire(value)).toThrow();
+      }
+      expect(before.batch.runtimeStartsReserved).toBe(0);
+      expect(before.runs[0]).toMatchObject({ id: s.runId, status: 'queued', reason: 'scheduler_not_assembled' });
+      const preview = await client.previewExecution({ projectId: s.projectId, featureIds: [s.featureId], budget: MAIN_BUDGET }, { issuedAt: NOW_ISO });
+      expect(preview.status).toBe('completed');
+      if (preview.status !== 'completed') throw new Error('missing preview');
+      expect(preview.result).toMatchObject({ status: 'blocked', runtimeExecution: false });
+      const commandId = randomUUID();
+      const revised = await client.reviseExecutionBudget({
+        projectId: s.projectId, batchId: s.batchId, expectedRevision: 1,
+        budget: { ...MAIN_BUDGET, batch: { ...MAIN_BUDGET.batch, maxRuns: 3 } }, reason: 'Explicit fixture revision', commandId,
+      }, { issuedAt: NOW_ISO });
+      expect(revised.status).toBe('completed');
+      expect(await client.getReceipt(commandId)).toMatchObject({ commandId, status: 'completed' });
+      expect((await client.listBatchBudgetRevisions(s.projectId, s.batchId)).records).toHaveLength(2);
+      // Existing queued Run must block a second Run; local input validation must allow the retry wire.
+      await expect(client.startExecution({ projectId: s.projectId, featureIds: [s.featureId], retryBatchId: s.batchId }, { issuedAt: NOW_ISO }))
+        .rejects.toMatchObject({ code: 'conflict' });
+      const after = await client.getExecutionBudgetStatus(s.projectId, s.batchId);
+      expect(after.batch.id).toBe(s.batchId);
+      expect(after.runs.map((run) => run.id)).toEqual([s.runId]);
+      expect(after.batch.dimensions.maxRuns.used).toBe(1);
+      expect(after.batch.runtimeStartsReserved).toBe(0);
+      await expect(client.getExecutionBudgetStatus(s.projectIdB, s.batchId)).rejects.toBeDefined();
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    }
+  });
   it('返回固定 Feature 范围、Batch/Run 身份、各层上限、已用/剩余、绝对 deadline、无进展次数与阻塞原因；数据库重开前后一致', async () => {
     const s = await setup();
     const result = await s.app.queryService.getExecutionBudgetStatus(s.owner, {
