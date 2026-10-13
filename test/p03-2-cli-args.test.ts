@@ -101,7 +101,7 @@ describe('F-008 决策/策略/固定输入命令面', () => {
     }
     expect(new Set(APP_CLI_COMMAND_IDS).size).toBe(APP_CLI_COMMAND_IDS.length);
     for (const id of APP_CLI_COMMAND_IDS) {
-      expect(id).toMatch(/^(project|config|receipt|events|baseline|phase|feature|task)\.[a-z]+$/);
+      expect(id).toMatch(/^(project|config|receipt|events|baseline|phase|feature|task|execution)\.[a-z]+$/);
     }
   });
 

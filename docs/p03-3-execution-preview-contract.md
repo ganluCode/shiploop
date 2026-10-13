@@ -2,7 +2,9 @@
 
 状态：已实现（F-004 范围：只读预览；start 启动命令/preview_stale 事务重核已在 F-005
 落地（见 [p03-3-execution-start-contract.md](p03-3-execution-start-contract.md)）；
-预算预占随 F-006/F-007、HostClient/CLI 入口随后续接线任务）。
+预算预占随 F-006/F-007、HostClient/CLI 入口随后续接线任务——F-011/F-012 已落地：
+HostClient `previewExecution` 与 `shiploop execution preview`（见
+`docs/p03-3-cli-execution-operations.md`））。
 权威实现：`packages/core/src/ports/execution-preview.ts`（契约、状态/原因词汇与
 previewDigest 纯函数）、`packages/core/src/application/execution-preview.ts`（预览编排）、
 `packages/core/src/adapters/sqlite/plan-store.ts`（`readExecutionPreviewView` 一致读视图）、

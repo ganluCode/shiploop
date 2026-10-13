@@ -910,6 +910,140 @@ const TASK_INPUTS_HELP = [
   '',
 ].join('\n');
 
+/* ------------------------------------------------------------------ *
+ * P03-3 / F-012 执行授权命令帮助（execution preview/start/budget/revise）
+ * ------------------------------------------------------------------ */
+
+/** 执行授权边界：预览/查询不是授权；授权只经 execution start 显式确认。 */
+const EXECUTION_AUTHORIZATION_BLOCK = [
+  '执行授权边界：',
+  '- 预览不是授权：execution preview 只读展示候选执行身份与预算，不创建 Batch/Run、不扣预算；',
+  '- 授权只经 execution start --confirm + --preview-digest（或同父 Batch 重试 --retry-batch）；',
+  '- 本版本只支持单 Feature 单并发执行：有效并发大于一按输入错误拒绝；',
+  '- accepted 只代表执行授权提交成功：尚未执行、未验收，不代表 Feature 完成或业务完成；',
+  '- 本命令面不提供 wait/cancel/resume；task prepare 也不升级为执行授权。',
+].join('\n');
+
+const EXECUTION_HELP = [
+  'usage: shiploop execution <preview|start|budget|revise> [options]',
+  '',
+  '执行授权命令（单 Feature 显式授权与持久预算）：',
+  '  execution preview <featureId> --project <id> --input <file>             执行预览（只读，不是授权）',
+  '  execution start <featureId> --project <id> --input <file> --preview-digest <hex64> --confirm',
+  '                                                                          显式授权启动（accepted 不等于完成）',
+  '  execution start <featureId> --project <id> --retry-batch <batchId> --confirm   同父 Batch 显式重试',
+  '  execution budget <batchId> --project <id> [--limit <int>] [--cursor <c>] 预算状态与修订历史（剩余额度）',
+  '  execution revise <batchId> --project <id> --revision <int> --reason <text> --input <file>',
+  '                                                                          预算显式修订（CAS + 理由）',
+  '',
+  '查看各子命令参数：shiploop execution preview --help',
+  '',
+  EXECUTION_AUTHORIZATION_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const EXECUTION_PREVIEW_HELP = [
+  'usage: shiploop execution preview <featureId> --project <id> --input <file>',
+  '                                      [--command-id <uuid>] [--data-root <abs>] [--json]',
+  '',
+  '单 Feature 执行预览（execution.preview；只读）：展示计划/代码/策略/检查/权限/输入',
+  '身份与完整有限预算，返回 previewDigest（完整输入身份）。',
+  '- `--input` 是预算文档（必填）：`{batch:{...},run:{...},concurrency?:{maxConcurrentWorks}}`；',
+  '  deadlineUtcMs 接受 epoch 毫秒整数或 ISO-8601 UTC 日期（映射为毫秒）；缺少预算、',
+  '  非法日期/整数、越界、未知键与有效并发大于一在连接前拒绝（不发请求）；',
+  '- 预览不是授权：不创建执行实体、不扣预算；无待执行工作为 no_work（稳定原因），',
+  '  阻塞项逐条列出（blocked），不虚构摘要；',
+  '- runtimeExecution 恒 false：预览不代表已具备 Runtime 执行能力或已启动执行。',
+  '',
+  '选项：',
+  '  --project <id>        项目 ID（必填，UUID v4）',
+  '  --input <file>        预算文档（必填；本次请求的输入）',
+  '  --command-id <uuid>   显式命令 ID（UUID v4）；幂等重放用同一信封',
+  '  --json                stdout 只输出结果 JSON；诊断到 stderr',
+  '',
+  EXECUTION_AUTHORIZATION_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const EXECUTION_START_HELP = [
+  'usage: shiploop execution start <featureId> --project <id> --input <file>',
+  '                                      --preview-digest <hex64> --confirm',
+  '                                      [--command-id <uuid>] [--data-root <abs>] [--json]',
+  '       execution start <featureId> --project <id> --retry-batch <batchId> --confirm [...]',
+  '',
+  '显式授权启动单 Feature 执行（execution.start）：必须 --confirm 明确确认，携带',
+  '`--preview-digest`（previewDigest：用户确认的预览摘要，服务端重算比对）与完整有限预算。',
+  '- 缺失确认、缺少预算、非法日期/整数、有效并发大于一与冲突参数在连接前拒绝',
+  '  （不发启动请求）；重试形态（--retry-batch）与预算/预览摘要互斥；',
+  '- accepted 只代表提交成功（退出码 0）：创建真实 Batch/Run 并返回其 ID，Run 保持',
+  '  queued（无 Scheduler/Runtime 时 reason=scheduler_not_assembled）；尚未执行、未验收，',
+  '  不代表 Feature 已验收通过或业务完成（业务完成只由受信结算/查询事实显示）；',
+  '- 无待执行工作/预览过期/预算耗尽/授权拒绝按稳定原因（no_work/preview_stale/',
+  '  budget_exhausted/authorization 等）固化为非成功分类（退出码 1，可查回执）；',
+  '- 同 `--command-id` 重复提交先查回执并以原信封重放（同参 → 原 Batch/Run；异参 → conflict）。',
+  '',
+  '选项：',
+  '  --project <id>        项目 ID（必填，UUID v4）',
+  '  --input <file>        预算文档（新授权形态必填）',
+  '  --preview-digest <hex64>  已确认的预览摘要（新授权形态必填）',
+  '  --retry-batch <batchId>   同父 Batch 显式重试（与 --input/--preview-digest 互斥）',
+  '  --confirm             显式启动确认（必填；缺省退出码 2）',
+  '  --command-id <uuid>   显式命令 ID（UUID v4）；幂等重放用同一信封',
+  '  --json                stdout 只输出结果 JSON；诊断到 stderr',
+  '',
+  EXECUTION_AUTHORIZATION_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const EXECUTION_BUDGET_HELP = [
+  'usage: shiploop execution budget <batchId> --project <id> [--limit <int>] [--cursor <c>]',
+  '                                      [--data-root <abs>] [--json]',
+  '',
+  '查询 Batch 预算状态与修订历史（execution.budget.get / execution.budget.revisions）：',
+  '- 显示真实 Batch/Run 身份、各层上限与已用/剩余额度、绝对 deadline、无进展次数与',
+  '  阻塞原因；未启动/未知用量保持 null/unknown，不填零；启动预占与实际用量分开；',
+  '- 结构化输出区分 accepted、尚未执行（not_executed）、预算耗尽（budget_exhausted）',
+  '  与业务完成（business_completed）；accepted/queued 不显示为验收成功；',
+  '- 修订历史复用既有有界分页（默认 50、上限 200）；查询不扣预算、不发事件、不唤醒执行。',
+  '',
+  '选项：',
+  '  --project <id>   项目 ID（必填，UUID v4）',
+  '  --limit <int>    每页条数 1..200（默认 50）',
+  '  --cursor <c>     上一页返回的 nextCursor（不透明）',
+  '  --json           stdout 只输出结果 JSON；诊断到 stderr',
+  '',
+  EXECUTION_AUTHORIZATION_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const EXECUTION_REVISE_HELP = [
+  'usage: shiploop execution revise <batchId> --project <id> --revision <int>',
+  '                                      --reason <text> --input <file>',
+  '                                      [--command-id <uuid>] [--data-root <abs>] [--json]',
+  '',
+  '预算显式修订（execution.budget.revise）：仅增额或延期，不得静默降额到已用之下。',
+  '- `--revision` 是目标 Batch 当前 budget_revision（唯一 CAS 入口）；陈旧 revision 返回',
+  '  conflict 且零写入；`--reason` 必填（审计理由，不携带秘密）；',
+  '- `--input` 是修订后的完整有限预算（校验纪律同 preview/start）；',
+  '- 修订不启动执行、不清计数；历史修订行不可变，输出含前后预算版本对照。',
+  '',
+  '选项：',
+  '  --project <id>        项目 ID（必填，UUID v4）',
+  '  --revision <int>      期望的当前 budget_revision（必填，≥ 1）',
+  '  --reason <text>       修订理由（必填非空，≤2000 字符）',
+  '  --input <file>        修订后的预算文档（必填）',
+  '  --command-id <uuid>   显式命令 ID（UUID v4）；幂等重放用同一信封',
+  '  --json                stdout 只输出结果 JSON；诊断到 stderr',
+  '',
+  EXECUTION_AUTHORIZATION_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
 const HELP_BY_SCOPE: Readonly<Record<AppHelpScope, string>> = Object.freeze({
   project: PROJECT_HELP,
   'project.init': PROJECT_INIT_HELP,
@@ -956,6 +1090,11 @@ const HELP_BY_SCOPE: Readonly<Record<AppHelpScope, string>> = Object.freeze({
   'task.strategy': TASK_STRATEGY_HELP,
   'task.prepare': TASK_PREPARE_HELP,
   'task.inputs': TASK_INPUTS_HELP,
+  execution: EXECUTION_HELP,
+  'execution.preview': EXECUTION_PREVIEW_HELP,
+  'execution.start': EXECUTION_START_HELP,
+  'execution.budget': EXECUTION_BUDGET_HELP,
+  'execution.revise': EXECUTION_REVISE_HELP,
 });
 
 /** 返回指定作用域的应用命令帮助文本（以换行结尾）；不做任何 I/O。 */

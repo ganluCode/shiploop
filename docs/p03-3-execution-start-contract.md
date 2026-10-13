@@ -3,7 +3,9 @@
 状态：已实现（F-005 范围：显式启动命令与同父 Batch 重试派发、原子提交、runsCreated
 计数、Run 快照、回执与脱敏事件、提交后唤醒窄端口与 queued 可查询原因；预算预占与
 Attempt 记账随 F-006/F-007、结算随 F-008、查询面随 F-010、
-HostClient/CLI 入口随 F-011/F-012；批次预算显式修订已由 F-009 建设并回写本契约
+HostClient/CLI 入口随 F-011/F-012（已落地：HostClient `startExecution` 与
+`shiploop execution start`（新授权/同父 Batch 重试两形态、--confirm 明确确认、
+accepted 仅代表提交成功），见 `docs/p03-3-cli-execution-operations.md`）；批次预算显式修订已由 F-009 建设并回写本契约
 既有事实——`execution.budget.revise` 见 `docs/p03-3-budget-revision-contract.md`，
 修订仅更新 Batch 当前预算与追加不可变修订行，不产生新 workKey、不重派发、不
 触碰 runsCreated 与派发身份）。

@@ -107,7 +107,9 @@ used?}`，reason 冻结为 `EXECUTION_BUDGET_BLOCK_REASONS`：
 
 ## 7. 范围边界（本 Feature 不实现）
 
-Host 路由/HostClient 方法与 CLI 子命令（F-011/F-012）、跨进程竞争与故障边界
+Host 路由/HostClient 方法与 CLI 子命令（F-011/F-012 已落地：HostClient
+`getExecutionBudgetStatus`/`listBatchBudgetRevisions` 与 `shiploop execution budget`，
+见 `docs/p03-3-cli-execution-operations.md`）、跨进程竞争与故障边界
 （F-013）、集成验收（F-014）；暂停/取消/恢复命令、token/cost 实际用量结算、
 Scheduler/Runner 装配仍属后续任务（查询如实呈现 queued/
 `scheduler_not_assembled`，不虚构执行能力）。本契约只覆盖 Core 查询面。

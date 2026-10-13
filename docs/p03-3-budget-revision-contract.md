@@ -136,8 +136,9 @@ IMMEDIATE 短写事务内：
 
 查询面已由 **F-010 落地**（`execution.budget.get` / `execution.budget.revisions`，
 见 `docs/p03-3-execution-budget-query-contract.md`：Batch/修订历史只读查询、
-有界分页与受控游标）、Host/CLI 入口（F-011/F-012：
-HostClient 方法与 CLI 子命令；命令已可经既有 POST /v1/commands 通用路由提交）、
+有界分页与受控游标）、Host/CLI 入口（F-011/F-012 已落地：
+HostClient 方法与 `shiploop execution revise/budget` CLI 子命令，见
+`docs/p03-3-cli-execution-operations.md`；命令已可经既有 POST /v1/commands 通用路由提交）、
 暂停/取消/恢复命令（后续控制面任务）、token/cost 实际用量结算（结算行无用量
 列，F-008 边界不变）、Scheduler/Runner 装配与唤醒（后续任务）。修订能力位不
 代表已具备上述能力。

@@ -47,6 +47,10 @@ export type {
   DecideFeaturePlanInput,
   UpdateTaskStrategyInput,
   PrepareExecutionInputInput,
+  PreviewExecutionInput,
+  StartExecutionInput,
+  ReviseExecutionBudgetInput,
+  BudgetRevisionListInput,
   PlanListPageInput,
   PlanLabelEntityType,
 } from './app-client.js';
@@ -62,6 +66,9 @@ export {
   validateTaskStrategyUpdateResultWire,
   validateExecutionInputPrepareResultWire,
   validateFeatureApprovalsResultWire,
+  validateExecutionPreviewResultWire,
+  validateExecutionBudgetStatusResultWire,
+  validateBudgetRevisionListResultWire,
 } from './app-wire.js';
 export type {
   AppQueryOperation,
@@ -76,4 +83,7 @@ export type {
   ExecutionInputPrepareResult,
   ExecutionInputGroupBodyRefWire,
   ExecutionInputRefWire,
+  ExecutionPreviewResult,
+  ExecutionBudgetStatusResult,
+  BudgetRevisionListResult,
 } from './app-wire.js';

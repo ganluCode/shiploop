@@ -103,6 +103,13 @@ import type {
 import { HostProtocolError, isPlainObject } from '../contract/index.js';
 import type { HostOperation } from '../contract/index.js';
 
+/** P03-3 / F-012：执行预览/预算查询结果形状经公共面再导出（供 CLI 纯视图层使用）。 */
+export type {
+  ExecutionPreviewResult,
+  ExecutionBudgetStatusResult,
+  BudgetRevisionListResult,
+} from 'shiploop-core/protocol';
+
 /** §11.3 查询能力清单（回执/结果读取经 validateCommandReceiptWire，不在本类型内）。 */
 export type AppQueryOperation =
   | 'projects.list'

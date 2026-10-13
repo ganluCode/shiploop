@@ -76,7 +76,7 @@ const OTHER_PROJECT_ID = randomUUID();
 const RECEIPT_ID = randomUUID();
 
 describe('F-014 应用命令面（§12.1）', () => {
-  it('只暴露 project/config/receipt/events/baseline/phase/feature/task 八个命令，不新增 run/work', () => {
+  it('只暴露 project/config/receipt/events/baseline/phase/feature/task/execution 九个命令，不新增 run/work', () => {
     expect([...APP_CLI_COMMANDS]).toEqual([
       'project',
       'config',
@@ -86,13 +86,14 @@ describe('F-014 应用命令面（§12.1）', () => {
       'phase',
       'feature',
       'task',
+      'execution',
     ]);
   });
 
   it('命令身份集合唯一且为点分 CLI 路径', () => {
     expect(new Set(APP_CLI_COMMAND_IDS).size).toBe(APP_CLI_COMMAND_IDS.length);
     for (const id of APP_CLI_COMMAND_IDS) {
-      expect(id).toMatch(/^(project|config|receipt|events|baseline|phase|feature|task)\.[a-z]+$/);
+      expect(id).toMatch(/^(project|config|receipt|events|baseline|phase|feature|task|execution)\.[a-z]+$/);
     }
   });
 

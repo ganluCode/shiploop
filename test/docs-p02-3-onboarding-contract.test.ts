@@ -308,10 +308,10 @@ describe('F-001 契约文档与仓库基线一致（开工现状事实）', () =
     expect(commandsPort).toContain("'baseline.cancel',");
   });
 
-  it('CLI 顶层命令为 project/config/receipt/events/baseline/phase/feature/task，契约记录基线子命令面', () => {
+  it('CLI 顶层命令为 project/config/receipt/events/baseline/phase/feature/task/execution，契约记录基线子命令面', () => {
     const args = readText('packages/cli/src/app/args.ts');
     expect(args.replace(/\s+/g, ' ')).toContain(
-      "APP_CLI_COMMANDS = [ 'project', 'config', 'receipt', 'events', 'baseline', 'phase', 'feature', 'task', ] as const;",
+      "APP_CLI_COMMANDS = [ 'project', 'config', 'receipt', 'events', 'baseline', 'phase', 'feature', 'task', 'execution', ] as const;",
     );
     expect(args).toContain('APP_CLI_COMMAND_IDS');
     // 契约记录 project init/overview 与 baseline 子命令面（F-015 已增补）。

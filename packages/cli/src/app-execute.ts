@@ -27,6 +27,7 @@ import {
   SNAPSHOT_ROUTE,
   validateExecutionInputPrepareResultWire,
   type ExecutionInputPrepareResult,
+  type ExecutionPreviewResult,
   type FeaturePlanDecideResult,
   type HostClient,
   type HostClientTimeouts,
@@ -36,6 +37,18 @@ import {
   type TaskStrategyUpdateResult,
 } from 'shiploop-host';
 import { AppCliParseError, parseAppCliArgs, parseAppInputJson } from './app/args.js';
+import {
+  buildExecutionBudgetView,
+  buildExecutionPreviewView,
+  buildExecutionReviseView,
+  buildExecutionStartView,
+  formatExecutionBudgetView,
+  formatExecutionPreviewView,
+  formatExecutionReviseView,
+  formatExecutionStartView,
+  parseExecutionBudgetDocument,
+} from './app/execution.js';
+import type { ExecutionBudgetWire } from './app/execution.js';
 import {
   buildExecutionInputView,
   buildFeaturePlanDecisionView,
@@ -191,6 +204,9 @@ type TaskDetailResult = Awaited<ReturnType<HostClient['getTask']>>;
 
 /** 计划命令（phase/feature/task）的解析形态（F-010）。 */
 type ParsedPlanCommand = Extract<ParsedAppCliCommand, { command: 'phase' | 'feature' | 'task' }>;
+
+/** P03-3 / F-012 执行授权命令（execution preview/start/budget/revise）的解析形态。 */
+type ParsedExecutionCommand = Extract<ParsedAppCliCommand, { command: 'execution' }>;
 
 /** 基线子命令（preview/run/list/status/cancel/evidence）的解析形态。 */
 type ParsedBaselineCommand = Extract<ParsedAppCliCommand, { command: 'baseline' }>;
@@ -1254,6 +1270,140 @@ async function executePlanCommand(
       const prepared = validateExecutionInputPrepareResultWire(receipt.result);
       const view = buildExecutionInputView(receipt.commandId, receipt.replayed, prepared);
       return emitSuccess(io, command, view, formatExecutionInputView(view, 'task.inputs'));
+    }
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * P03-3 / F-012 执行授权命令（execution preview/start/budget/revise）
+ *
+ * 全部经既有 HostClient 公共面：预览/启动/修订走冻结信封与回执（显式
+ * --command-id 先查回执重放）；预算查询走授权只读查询。CLI 不打开状态库、
+ * 不读取凭据、不运行模型；accepted 只是提交成功（退出码 0），结构化输出
+ * 明确未执行/未验收，不被描述为 Feature 已验收通过；本面不实现
+ * wait/cancel/resume。
+ * ------------------------------------------------------------------ */
+
+/** execution.start 的 accepted 回执（Work accepted v6：真实 Batch/Run 关联）。 */
+type WorkAcceptedReceipt = Extract<CommandReceipt, { batchId: string }>;
+
+/**
+ * execution.start 回执 → §12.3 输出：
+ * - rejected：业务拒绝（preview_stale/budget_exhausted/… 稳定原因）→ 退出码 1；
+ * - accepted：执行授权提交成功（真实 Batch/Run 创建）→ 退出码 0（提交成功）；
+ *   输出 completion.featureVerified=false 并注明未执行/未验收；
+ * - completed：execution.start 不产生 completed 回执（fail-closed）。
+ */
+function emitExecutionStartReceipt(
+  io: AppCliIo,
+  command: ParsedExecutionCommand & { commandId: 'execution.start' },
+  receipt: CommandReceipt,
+): AppCliRunResult {
+  if (receipt.status === 'rejected') {
+    return emitFailure(io, command.json, {
+      exitCode: exitCodeForReceiptStatus('rejected'),
+      command: command.commandId,
+      code: receipt.error.code,
+      message: receipt.error.message,
+      commandId: receipt.commandId,
+      ...(receipt.error.details !== undefined ? { details: receipt.error.details } : {}),
+    });
+  }
+  if (receipt.status !== 'accepted' || !('batchId' in receipt)) {
+    throw new Error('unexpected_completed_receipt');
+  }
+  const accepted = receipt as WorkAcceptedReceipt;
+  const view = buildExecutionStartView(
+    {
+      commandId: accepted.commandId,
+      replayed: accepted.replayed,
+      featureIds: [command.featureId],
+      previewDigest: command.previewDigest ?? null,
+      retryBatchId: command.retryBatchId ?? null,
+    },
+    { operationId: accepted.operationId, batchId: accepted.batchId, runId: accepted.runId },
+  );
+  return emitSuccess(io, command, view, formatExecutionStartView(view));
+}
+
+/** 执行一条执行授权命令意图（预览/启动/预算查询/预算修订）。 */
+async function executeExecutionCommand(
+  io: AppCliIo,
+  command: ParsedExecutionCommand,
+  client: HostClient,
+  inputs: { readonly budget?: ExecutionBudgetWire },
+): Promise<AppCliRunResult> {
+  switch (command.commandId) {
+    case 'execution.preview': {
+      const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+      const receipt = await client.previewExecution(
+        {
+          projectId: command.projectId,
+          featureIds: [command.featureId],
+          budget: inputs.budget,
+        },
+        envelopeIdentityOptions(command.explicitCommandId, issuedAt),
+      );
+      return emitDomainReceipt(
+        io,
+        command,
+        receipt,
+        (commandId, replayed, result) =>
+          buildExecutionPreviewView(commandId, replayed, result as ExecutionPreviewResult),
+        formatExecutionPreviewView,
+      );
+    }
+    case 'execution.start': {
+      const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+      const receipt =
+        command.retryBatchId !== undefined
+          ? await client.startExecution(
+              {
+                projectId: command.projectId,
+                featureIds: [command.featureId],
+                retryBatchId: command.retryBatchId,
+              },
+              envelopeIdentityOptions(command.explicitCommandId, issuedAt),
+            )
+          : await client.startExecution(
+              {
+                projectId: command.projectId,
+                featureIds: [command.featureId],
+                budget: inputs.budget,
+                previewDigest: command.previewDigest as string,
+              },
+              envelopeIdentityOptions(command.explicitCommandId, issuedAt),
+            );
+      return emitExecutionStartReceipt(io, command, receipt);
+    }
+    case 'execution.budget': {
+      const status = await client.getExecutionBudgetStatus(command.projectId, command.batchId);
+      const revisions = await client.listBatchBudgetRevisions(command.projectId, command.batchId, {
+        ...(command.limit !== undefined ? { limit: command.limit } : {}),
+        ...(command.cursor !== undefined ? { cursor: command.cursor } : {}),
+      });
+      const view = buildExecutionBudgetView(status, revisions);
+      return emitSuccess(io, command, view, formatExecutionBudgetView(view));
+    }
+    case 'execution.revise': {
+      const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+      const receipt = await client.reviseExecutionBudget(
+        {
+          projectId: command.projectId,
+          batchId: command.batchId,
+          expectedRevision: command.revision,
+          budget: inputs.budget,
+          reason: command.reason,
+        },
+        envelopeIdentityOptions(command.explicitCommandId, issuedAt),
+      );
+      return emitDomainReceipt(
+        io,
+        command,
+        receipt,
+        (commandId, replayed, result) => buildExecutionReviseView(commandId, replayed, result),
+        formatExecutionReviseView,
+      );
     }
   }
 }
@@ -2417,6 +2567,40 @@ export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunRes
     }
   }
 
+  // P03-3 / F-012：执行预算文档（execution preview/start/revise 的 --input）在连接
+  // Host 之前读取/校验：缺少预算、非法日期/整数、有效并发大于一、未知键与形态
+  // 错误以退出码 2 拒绝（输入错误不发启动请求）。
+  let executionBudget: ExecutionBudgetWire | undefined;
+  const executionBudgetFile =
+    command.commandId === 'execution.preview' || command.commandId === 'execution.revise'
+      ? command.inputFile
+      : command.commandId === 'execution.start' && command.retryBatchId === undefined
+        ? command.inputFile
+        : undefined;
+  if (executionBudgetFile !== undefined) {
+    try {
+      executionBudget = parseExecutionBudgetDocument(
+        readPlanInputPayload({
+          command: 'execution',
+          commandId: command.commandId,
+          json: command.json,
+          inputFile: executionBudgetFile,
+        }),
+        { command: command.command, commandId: command.commandId, json: command.json },
+      );
+    } catch (error) {
+      if (error instanceof AppCliParseError) {
+        return emitParseFailure(io, error, jsonFlag);
+      }
+      return emitFailure(io, command.json, {
+        exitCode: 2,
+        command: command.commandId,
+        code: 'invalid_input',
+        message: '输入文件读取或校验失败',
+      });
+    }
+  }
+
   let client: HostClient;
   try {
     const ensured = await ensureHostRunning({
@@ -2473,6 +2657,11 @@ export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunRes
         ...(planPayload !== undefined ? { planPayload } : {}),
         ...(strategyPayload !== undefined ? { strategyPayload } : {}),
         ...(prepareItems !== undefined ? { prepareItems } : {}),
+      });
+    }
+    if (command.command === 'execution') {
+      return await executeExecutionCommand(io, command, client, {
+        ...(executionBudget !== undefined ? { budget: executionBudget } : {}),
       });
     }
     return await executeProjectCommand(io, command, client);

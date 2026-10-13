@@ -9,6 +9,8 @@
  *   Run/Work、模型、Profile、Skills 参数（未知即 unknown_argument）；P02-3
  *   （F-005）按契约 §12.1 增补 project init/overview 子命令；F-015 按契约
  *   §12.1/§12.2 增补 baseline preview/run/list/status/cancel/evidence 子命令；
+ *   P03-3 / F-012 增补执行授权 execution preview/start/budget/revise 子命令
+ *   （单 Feature 显式授权 + 预算查询/修订；不新增 wait/cancel/resume）；
  * - 监听地址覆盖零容忍：--bind/--host/--address/--port/--listen* 与
  *   SHIPLOOP_HOST_* env 覆盖一律 bind_address_override_rejected；
  * - 错误只携带 code/reason/参数名/命令身份，绝不回显参数值；
@@ -30,7 +32,9 @@ export const APP_CLI_COMMANDS = [
   'phase',
   'feature',
   'task',
-] as const;export type AppCliCommand = (typeof APP_CLI_COMMANDS)[number];
+  'execution',
+] as const;
+export type AppCliCommand = (typeof APP_CLI_COMMANDS)[number];
 
 /** 应用命令身份（点分 CLI 路径；用于 JSON 信封 command 字段）。 */
 export type AppCliCommandId =
@@ -70,7 +74,11 @@ export type AppCliCommandId =
   | 'task.labels'
   | 'task.strategy'
   | 'task.prepare'
-  | 'task.inputs';
+  | 'task.inputs'
+  | 'execution.preview'
+  | 'execution.start'
+  | 'execution.budget'
+  | 'execution.revise';
 
 export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'project.init',
@@ -110,6 +118,10 @@ export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'task.strategy',
   'task.prepare',
   'task.inputs',
+  'execution.preview',
+  'execution.start',
+  'execution.budget',
+  'execution.revise',
 ]);
 
 /** 命令对应的 Core 操作身份（F-015/F-016 组装命令信封时使用）。 */
@@ -129,7 +141,10 @@ export type AppCommandOperation =
   | 'feature.plan.revise'
   | 'feature.plan.decide'
   | 'task.strategy.update'
-  | 'execution.input.prepare';
+  | 'execution.input.prepare'
+  | 'execution.preview'
+  | 'execution.start'
+  | 'execution.budget.revise';
 
 export type AppHelpScope = AppCliCommand | AppCliCommandId;
 
@@ -199,12 +214,19 @@ export type AppCliParseReason =
   | 'invalid_reason'
   | 'input_items_invalid'
   | 'input_file_too_large'
-  | 'input_file_encoding';
+  | 'input_file_encoding'
+  | 'missing_budget'
+  | 'invalid_budget'
+  | 'invalid_budget_date'
+  | 'invalid_preview_digest'
+  | 'invalid_batch_id'
+  | 'concurrency_not_supported'
+  | 'confirmation_required';
 
 const REASON_MESSAGE: Readonly<Record<AppCliParseReason, string>> = Object.freeze({
   invalid_argv_type: 'argv 必须是字符串数组',
-  missing_command: '缺少命令；本版本提供 project/config/receipt/events/baseline/phase/feature/task',
-  unknown_command: '未知顶层命令；本版本仅提供 project/config/receipt/events/baseline/phase/feature/task',
+  missing_command: '缺少命令；本版本提供 project/config/receipt/events/baseline/phase/feature/task/execution',
+  unknown_command: '未知顶层命令；本版本仅提供 project/config/receipt/events/baseline/phase/feature/task/execution',
   missing_subcommand: '命令缺少子命令',
   unknown_subcommand: '未知子命令',
   unknown_argument: '未知参数',
@@ -266,6 +288,13 @@ const REASON_MESSAGE: Readonly<Record<AppCliParseReason, string>> = Object.freez
   input_items_invalid: '必需输入清单必须是数组',
   input_file_too_large: '输入文件超过大小上限',
   input_file_encoding: '输入文件必须是合法 UTF-8 文本',
+  missing_budget: '缺少完整有限预算（--input 或预算字段缺失）',
+  invalid_budget: '执行预算形态不合法（未知键或结构错误）',
+  invalid_budget_date: '预算日期不合法（deadlineUtcMs 须为 epoch 毫秒整数或 ISO-8601 UTC 日期）',
+  invalid_preview_digest: 'previewDigest 必须是 64 位小写十六进制',
+  invalid_batch_id: 'batchId 必须是 UUID v4',
+  concurrency_not_supported: '有效并发大于一：本版本只支持单并发执行',
+  confirmation_required: '显式启动必须明确确认（--confirm）',
 });
 
 interface ParseState {
@@ -688,6 +717,46 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
     maxPositionals: 1,
     positionalFields: ['commandId'],
   },
+  'execution.preview': {
+    command: 'execution',
+    commandId: 'execution.preview',
+    valueFlags: ['--project', '--input', '--command-id'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['featureId'],
+  },
+  'execution.start': {
+    command: 'execution',
+    commandId: 'execution.start',
+    valueFlags: ['--project', '--input', '--preview-digest', '--retry-batch', '--command-id'],
+    boolFlags: ['--confirm'],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['featureId'],
+  },
+  'execution.budget': {
+    command: 'execution',
+    commandId: 'execution.budget',
+    valueFlags: ['--project', '--limit', '--cursor'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['batchId'],
+  },
+  'execution.revise': {
+    command: 'execution',
+    commandId: 'execution.revise',
+    valueFlags: ['--project', '--revision', '--reason', '--input', '--command-id'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['batchId'],
+  },
 });
 
 const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, AppCliCommandId>>>> =
@@ -740,6 +809,12 @@ const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, A
       strategy: 'task.strategy',
       prepare: 'task.prepare',
       inputs: 'task.inputs',
+    },
+    execution: {
+      preview: 'execution.preview',
+      start: 'execution.start',
+      budget: 'execution.budget',
+      revise: 'execution.revise',
     },
   });
 
@@ -1749,6 +1824,82 @@ export interface ParsedTaskInputs {
   readonly targetCommandId: string;
 }
 
+/**
+ * P03-3 / F-012 执行预览（execution.preview；只读授权预览）：固定单 Feature +
+ * 完整有限预算（`--input` 预算文档，参数映射见 app/execution.ts）；预览不是
+ * 授权，不创建执行实体。
+ */
+export interface ParsedExecutionPreview {
+  readonly kind: 'command';
+  readonly command: 'execution';
+  readonly commandId: 'execution.preview';
+  readonly operation: 'execution.preview';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly featureId: string;
+  readonly inputFile: string;
+  readonly explicitCommandId?: string;
+}
+
+/**
+ * 显式执行启动（execution.start）：新授权形态需要 `--input` 完整有限预算 +
+ * `--preview-digest`（用户确认的预览摘要）+ `--confirm` 明确确认；同父 Batch
+ * 显式重试形态只携带 `--retry-batch`（与预算/预览摘要互斥，同现即冲突参数）。
+ * 缺失确认/缺少预算/冲突参数在任何 I/O 之前拒绝（不发启动请求）。
+ */
+export interface ParsedExecutionStart {
+  readonly kind: 'command';
+  readonly command: 'execution';
+  readonly commandId: 'execution.start';
+  readonly operation: 'execution.start';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly featureId: string;
+  readonly confirm: true;
+  readonly inputFile?: string;
+  readonly previewDigest?: string;
+  readonly retryBatchId?: string;
+  readonly explicitCommandId?: string;
+}
+
+/** Batch 预算状态 + 修订历史只读查询（execution.budget；不扣预算不唤醒执行）。 */
+export interface ParsedExecutionBudget {
+  readonly kind: 'command';
+  readonly command: 'execution';
+  readonly commandId: 'execution.budget';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly batchId: string;
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+
+/**
+ * 预算显式修订（execution.budget.revise）：`--revision` 是目标 Batch 当前
+ * budget_revision（唯一 CAS 入口），`--reason` 必填；`--input` 是完整有限预算。
+ */
+export interface ParsedExecutionRevise {
+  readonly kind: 'command';
+  readonly command: 'execution';
+  readonly commandId: 'execution.revise';
+  readonly operation: 'execution.budget.revise';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly batchId: string;
+  readonly revision: number;
+  readonly reason: string;
+  readonly inputFile: string;
+  readonly explicitCommandId?: string;
+}
+
 export type ParsedAppCliCommand =
   | ParsedProjectInit
   | ParsedProjectOverview
@@ -1783,7 +1934,11 @@ export type ParsedAppCliCommand =
   | ParsedTaskGet
   | ParsedTaskStrategy
   | ParsedTaskPrepare
-  | ParsedTaskInputs;
+  | ParsedTaskInputs
+  | ParsedExecutionPreview
+  | ParsedExecutionStart
+  | ParsedExecutionBudget
+  | ParsedExecutionRevise;
 
 export interface ParsedAppCliHelp {
   readonly kind: 'help';
@@ -2147,6 +2302,139 @@ function planLabelsEntityType(
   return commandId.split('.')[0] as 'phase' | 'feature' | 'task';
 }
 
+/** 执行批次稳定身份（UUID v4；服务端派发的 Batch 身份，不接受任意字符串）。 */
+function requireBatchId(raw: string, state: ParseState): string {
+  if (!isUuidV4(raw)) {
+    fail(state, 'invalid_batch_id', 'batchId');
+  }
+  return raw;
+}
+
+/** 执行预算文件（缺失即缺少预算；形态校验在 app/execution.ts 纯层）。 */
+function requireBudgetFile(scan: ScanResult, state: ParseState): string {
+  const raw = takeOption(scan, '--input');
+  if (raw === undefined) {
+    fail(state, 'missing_budget', 'input');
+  }
+  if (raw.length === 0 || raw.includes('\0')) {
+    fail(state, 'invalid_input_file', 'input');
+  }
+  return raw;
+}
+
+/** 用户确认的预览摘要（64 位小写 hex；启动授权的身份依据，不是命令幂等身份）。 */
+function requirePreviewDigest(scan: ScanResult, state: ParseState): string {
+  const raw = requireOption(scan, '--preview-digest', state, 'preview-digest');
+  if (!/^[0-9a-f]{64}$/.test(raw)) {
+    fail(state, 'invalid_preview_digest', 'preview-digest');
+  }
+  return raw;
+}
+
+/** 预算修订理由（必填非空；不允许 NUL、≤2000 码点；深度语义由服务端复核）。 */
+function requireReason(scan: ScanResult, state: ParseState): string {
+  const raw = requireOption(scan, '--reason', state, 'reason');
+  if (raw.trim().length === 0 || raw.includes('\0') || codePointLength(raw) > 2000) {
+    fail(state, 'invalid_reason', 'reason');
+  }
+  return raw;
+}
+
+/**
+ * P03-3 / F-012 执行授权命令（execution preview/start/budget/revise）：固定单
+ * Feature 显式授权、完整有限预算参数映射、预算查询与显式修订；不实现本 Feature
+ * 之外的 wait/cancel/resume；`task prepare` 不经本面升级为授权。
+ */
+function buildExecution(
+  scan: ScanResult,
+  state: ParseState,
+  spec: AppCommandSpec,
+): ParsedAppCliCommand {
+  assertPositionals(scan, spec, state);
+  const base = baseResult(state, scan);
+  switch (spec.commandId) {
+    case 'execution.preview': {
+      const explicitCommandId = optionalCommandId(scan, state);
+      return {
+        ...base,
+        command: 'execution',
+        commandId: 'execution.preview',
+        operation: 'execution.preview',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        featureId: requirePlanId(scan.positionals[0] as string, state, 'featureId'),
+        inputFile: requireBudgetFile(scan, state),
+        ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
+      };
+    }
+    case 'execution.start': {
+      const explicitCommandId = optionalCommandId(scan, state);
+      // 明确确认先于一切：缺 --confirm 即输入错误（不发启动请求）。
+      if (!scan.bools.has('--confirm')) {
+        fail(state, 'confirmation_required', 'confirm');
+      }
+      const projectId = requireProjectId(requireOption(scan, '--project', state, 'project'), state);
+      const featureId = requirePlanId(scan.positionals[0] as string, state, 'featureId');
+      const retryBatchId = takeOption(scan, '--retry-batch');
+      if (retryBatchId !== undefined) {
+        // 重试形态与新授权形态互斥（冲突参数拒绝，不发启动请求）。
+        if (scan.options.has('--input') || scan.options.has('--preview-digest')) {
+          fail(state, 'conflicting_options');
+        }
+        return {
+          ...base,
+          command: 'execution',
+          commandId: 'execution.start',
+          operation: 'execution.start',
+          projectId,
+          featureId,
+          retryBatchId: requireBatchId(retryBatchId, state),
+          confirm: true,
+          ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
+        };
+      }
+      return {
+        ...base,
+        command: 'execution',
+        commandId: 'execution.start',
+        operation: 'execution.start',
+        projectId,
+        featureId,
+        inputFile: requireBudgetFile(scan, state),
+        previewDigest: requirePreviewDigest(scan, state),
+        confirm: true,
+        ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
+      };
+    }
+    case 'execution.budget': {
+      return {
+        ...base,
+        command: 'execution',
+        commandId: 'execution.budget',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        batchId: requireBatchId(scan.positionals[0] as string, state),
+        ...optionalPlanListPage(scan, state),
+      };
+    }
+    case 'execution.revise': {
+      const explicitCommandId = optionalCommandId(scan, state);
+      return {
+        ...base,
+        command: 'execution',
+        commandId: 'execution.revise',
+        operation: 'execution.budget.revise',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        batchId: requireBatchId(scan.positionals[0] as string, state),
+        revision: requireRevision(scan, state),
+        reason: requireReason(scan, state),
+        inputFile: requireBudgetFile(scan, state),
+        ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
+      };
+    }
+    default:
+      fail(state, 'unknown_subcommand');
+  }
+}
+
 /**
  * 计划命令（P03-1 / F-010）：Phase 建立、单 Feature 计划导入、层级/DAG 查询、
  * 草稿修订与纯标签编辑。expectedRevision（`--revision`）是唯一 CAS 入口；
@@ -2415,6 +2703,8 @@ export function parseAppCliArgs(
     case 'feature':
     case 'task':
       return buildPlanEntity(scan, state, spec);
+    case 'execution':
+      return buildExecution(scan, state, spec);
     default:
       fail(state, 'unknown_subcommand');
   }
