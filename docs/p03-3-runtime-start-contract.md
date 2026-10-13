@@ -91,7 +91,10 @@ deadline 按受控取消流程停止、所有计数与对象创建在同一事�
 
 - 不实现 Runner、停止管理、会话记录、token/cost 实际用量结算（P03-4 与后续
   任务）；普通测试仅记录受信启动边界调用，不调用 Pi、网络或模型。
-- Run 结果结算与无进展计数（F-008，见 `docs/p03-3-run-outcome-settlement-contract.md`）、预算修订命令（F-009）、只读查询面
-  （F-010）分别由后续任务建设；本任务不新增命令操作、事件类型或回执形态
+- Run 结果结算与无进展计数（F-008，见 `docs/p03-3-run-outcome-settlement-contract.md`）；
+  批次预算显式修订已由 F-009 建设（`execution.budget.revise`，见
+  `docs/p03-3-budget-revision-contract.md`；修订仅增额或延期且不自动启动或
+  恢复 Run，不触碰本契约的启动预占账本与 runtime_starts 计数）；只读查询面
+  （F-010）由后续任务建设；F-007 本身不新增命令操作、事件类型或回执形态
   （命令面/能力面不含任何 runtime start/reserve 操作——客户端与模型没有
   自报入口）。

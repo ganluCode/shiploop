@@ -18,6 +18,7 @@ import type {
 } from './baseline-store.js';
 import type {
   BatchBudgetRevisionRecord,
+  BatchBudgetRevisionResult,
   ExecutionBatchRecord,
   RunRecord,
 } from './execution-store.js';
@@ -222,6 +223,12 @@ export interface CommandTransaction {
   insertExecutionBatch(input: unknown): ExecutionBatchRecord;
   /** 插入批次预算修订行（初始 version=1 随 Batch 同事务落行；插后不可变）。 */
   insertBatchBudgetRevision(input: unknown): BatchBudgetRevisionRecord;
+  /**
+   * P03-3 / F-009 批次预算显式修订（同一写事务内原子生效）：CAS 于当前
+   * budget_revision、仅限活动 Batch、仅增额或延期（携带累计用量的降额防御），
+   * 单条件 UPDATE 更新当前预算并追加不可变修订行；任一步失败整组回滚。
+   */
+  reviseBatchBudget(input: unknown): BatchBudgetRevisionResult;
   /** 读取目标 Batch（同项目；缺失 not_found、跨项目 ownership 抛出，零写入）。 */
   getExecutionBatch(projectId: string, batchId: string): ExecutionBatchRecord;
   /** 同 Batch 同 workKey 的全部 Run（按 dispatchOrdinal 升序；重派发判定输入）。 */
@@ -238,7 +245,7 @@ export interface CommandTransaction {
   recordExecutionRunDispatch(projectId: string, batchId: string): ExecutionBatchRecord;
   /** 创建执行 Run（派发身份/上限冻结；同 Feature 活动 Run 唯一兜底）。 */
   insertExecutionRun(input: unknown): RunRecord;
-  /** 执行域脱敏事件追加（execution.run.dispatched；与公开白名单同形）。 */
+  /** 执行域脱敏事件追加（execution.run.dispatched/execution.budget.revised；与公开白名单同形）。 */
   appendExecutionEvent(input: unknown): void;
   /* ---------------------------------------------------------------- *
    * P03-3 / F-006 Task 尝试预算预占与分类记账（迁移 v11；受信 Core 内部原语，

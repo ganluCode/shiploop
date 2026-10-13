@@ -2,8 +2,11 @@
 
 状态：已实现（F-005 范围：显式启动命令与同父 Batch 重试派发、原子提交、runsCreated
 计数、Run 快照、回执与脱敏事件、提交后唤醒窄端口与 queued 可查询原因；预算预占与
-Attempt 记账随 F-006/F-007、结算随 F-008、预算修订随 F-009、查询面随 F-010、
-HostClient/CLI 入口随 F-011/F-012）。
+Attempt 记账随 F-006/F-007、结算随 F-008、查询面随 F-010、
+HostClient/CLI 入口随 F-011/F-012；批次预算显式修订已由 F-009 建设并回写本契约
+既有事实——`execution.budget.revise` 见 `docs/p03-3-budget-revision-contract.md`，
+修订仅更新 Batch 当前预算与追加不可变修订行，不产生新 workKey、不重派发、不
+触碰 runsCreated 与派发身份）。
 权威实现：`packages/core/src/ports/execution-start.ts`（操作常量、workKey 纯函数、
 唤醒窄端口、准备/提交端口形态与拒绝词汇）、`packages/core/src/application/execution-start.ts`
 （事务外准备 + 短写事务内提交编排与提交后唤醒边界）、`packages/core/src/ports/execution-store.ts`

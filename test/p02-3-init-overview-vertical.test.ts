@@ -538,6 +538,10 @@ describe('F-006 Host inspect/overview 路由与握手能力（真实 Host + SQLi
       // P03-3 / F-005：显式执行启动经既有 /v1/commands 通用路由接线（v5 内
       // 增量宣告；HostClient/CLI 入口属 F-011/F-012）。
       'execution.start',
+      // P03-3 / F-009：批次预算显式修订经既有 /v1/commands 通用路由接线
+      //（v5 内增量宣告；仅增额不自动启动或恢复 Run；HostClient/CLI 入口属
+      // F-011/F-012）。
+      'execution.budget.revise',
     ]);
     for (const legacyVersion of [4, 3, 2, 1]) {
       const legacy = await loopbackRequest({

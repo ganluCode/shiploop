@@ -83,6 +83,10 @@ export const APPLICATION_COMMAND_CAPABILITIES = [
   // 命令面；短写事务内重核并原子提交 Batch/Run/事件与 Work accepted v6 回执；
   // HostClient/CLI 入口属 F-011/F-012；Run 保留 queued，不伪造已启动）。
   'execution.start',
+  // P03-3 / F-009：批次预算显式修订经既有 POST /v1/commands 通用路由接线
+  //（同一命令面；短写事务内 CAS+单调判定原子更新当前预算/不可变修订行/脱敏
+  // 事件与回执；仅增额不自动启动或恢复 Run；HostClient/CLI 入口属 F-011/F-012）。
+  'execution.budget.revise',
 ] as const;
 
 /** P02-2 §11.3：Host 实际接线的应用查询（含回执/结果读取与快照；P02-3 / F-006 新增静态接入两项；F-014 新增基线分页/详情/证据正文三项；P03-1 / F-009 新增计划层级/详情/DAG 六项；P03-2 / F-007 新增审批决策查询一项）。 */

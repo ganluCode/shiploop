@@ -51,6 +51,7 @@ import {
   FEATURE_PLAN_REJECTED_EVENT_TYPE,
   EXECUTION_INPUT_PREPARED_EVENT_TYPE,
   EXECUTION_RUN_DISPATCHED_EVENT_TYPE,
+  EXECUTION_BUDGET_REVISED_EVENT_TYPE,
   createEventCursorBinding,
   createEventWatermark,
   decodeEventCursor,
@@ -160,6 +161,9 @@ describe('F-003 冻结事件封套版本与 §9.2 事件白名单（P02-2 六类
       // P03-3 / F-005：执行 Run 派发事件（聚合为派发创建的 Run；派发不等于
       // Runtime 已启动，不携带预算数值/计划正文/输入正文/启动语义）。
       EXECUTION_RUN_DISPATCHED_EVENT_TYPE,
+      // P03-3 / F-009：批次预算修订事件（聚合为目标 Batch；payload 恒
+      // {revised:true}，不携带预算数值/理由/批准主体——修订不自动启动或恢复 Run）。
+      EXECUTION_BUDGET_REVISED_EVENT_TYPE,
     ]);
     expect(PROJECT_METADATA_UPDATED_EVENT_TYPE).toBe('project.metadata_updated');
     expect(SETTINGS_GLOBAL_CREATED_EVENT_TYPE).toBe('settings.global_created');

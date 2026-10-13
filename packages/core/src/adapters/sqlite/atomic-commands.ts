@@ -105,6 +105,7 @@ export function createSqliteAtomicCommandStore(
           // P03-3 / F-005：执行域原语（迁移 v9 三表；同事务原子生效）。
           insertExecutionBatch: guarded(executions.insertExecutionBatchInTransaction),
           insertBatchBudgetRevision: guarded(executions.insertBatchBudgetRevisionInTransaction),
+          reviseBatchBudget: guarded(executions.reviseBatchBudgetInTransaction),
           getExecutionBatch: guarded(executions.getExecutionBatchInTransaction),
           listExecutionRunsForWorkKey: guarded(executions.listExecutionRunsForWorkKeyInTransaction),
           getActiveExecutionRun: guarded(executions.getActiveExecutionRunInTransaction),

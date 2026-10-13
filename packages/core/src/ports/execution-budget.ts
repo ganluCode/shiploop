@@ -822,3 +822,137 @@ export function evaluateTaskCodeAttemptReservation(
     ? { allowed: false, used, remaining: 0, limit, reason: 'code_attempts_exhausted' }
     : { allowed: true, used, remaining: limit - used, limit };
 }
+
+/* ------------------- 预算修订纯判定（P03-3 / F-009） ------------------- */
+
+/** 预算修订单维度违规（受控 reason；不携带输入原文）。 */
+export interface BatchBudgetRevisionViolation {
+  readonly dimension: BudgetDimension;
+  /** not_increased：任一上限/deadline 回退；cap_removed/cap_introduced：可选资源上限不可中途移除或引入；limit_below_used：降到已使用值以下（防御纵深）。 */
+  readonly reason: 'not_increased' | 'cap_removed' | 'cap_introduced' | 'limit_below_used';
+  readonly previousLimit: number | null;
+  readonly proposedLimit: number | null;
+}
+
+export interface BatchBudgetRevisionDecision {
+  readonly allowed: boolean;
+  readonly violations: readonly BatchBudgetRevisionViolation[];
+}
+
+export interface BatchBudgetRevisionEvaluationInput {
+  /** 当前批准预算快照（权威持久值）。 */
+  readonly current: unknown;
+  /** 修订提案（完整快照形态）。 */
+  readonly proposed: unknown;
+  /** 可选累计用量（防御：新上限低于已用量时单独标记 limit_below_used）。 */
+  readonly usage?: {
+    readonly runsCreated: number;
+    readonly attemptsCreated: number;
+    readonly runtimeStarts: number;
+    readonly noProgressRuns: number;
+  };
+}
+
+/**
+ * 预算修订纯判定（F-009：仅增额或延期，单调不回退）：
+ * - 计数维度（maxRuns/maxTotalAttempts/maxRuntimeStarts/maxNoProgressRuns）与
+ *   绝对 deadline：proposed ≥ current（延期即 deadline 增大或不变）；
+ * - Run 层上限（maxAttemptsPerRun/runTimeLimitMs）同样只增不减（新 Run 上限
+ *   随预算快照演进，旧 Run 派发冻结上限不受影响）；
+ * - 可选资源总额（maxTokenTotal/maxCostTotal）：不可中途引入或移除——只在
+ *   已设上限上增额（移除上限 = 无界增额，引入上限 = 收紧，均不属于显式
+ *   增额/延期语义）；
+ * - 携带 usage 时（防御纵深）：proposed 低于已用计数 → limit_below_used。
+ * 纯函数不读时钟；deadline 结构合法性由调用方经预算快照校验器先行把关。
+ */
+export function evaluateBatchBudgetRevision(
+  input: BatchBudgetRevisionEvaluationInput,
+): BatchBudgetRevisionDecision {
+  const context: ValidationContext = { operation: EXECUTION_BUDGET_VALIDATION_OPERATION };
+  const object = requireBudgetObject(input, context, 'input');
+  rejectBudgetUnknownKeys(object, ['current', 'proposed', 'usage'], context, 'input');
+  const current = validateExecutionBudgetSnapshot(object.current, context);
+  const proposed = validateExecutionBudgetSnapshot(object.proposed, context);
+  let usage: BatchBudgetRevisionEvaluationInput['usage'] | undefined;
+  if (object.usage !== undefined) {
+    const rawUsage = requireBudgetObject(object.usage, context, 'usage');
+    rejectBudgetUnknownKeys(
+      rawUsage,
+      ['runsCreated', 'attemptsCreated', 'runtimeStarts', 'noProgressRuns'],
+      context,
+      'usage',
+    );
+    usage = {
+      runsCreated: requireKnownCounter(rawUsage.runsCreated, context, 'usage.runsCreated'),
+      attemptsCreated: requireKnownCounter(rawUsage.attemptsCreated, context, 'usage.attemptsCreated'),
+      runtimeStarts: requireKnownCounter(rawUsage.runtimeStarts, context, 'usage.runtimeStarts'),
+      noProgressRuns: requireKnownCounter(rawUsage.noProgressRuns, context, 'usage.noProgressRuns'),
+    };
+  }
+
+  const violations: BatchBudgetRevisionViolation[] = [];
+  const counterDimension = (
+    dimension: BudgetDimension,
+    previousLimit: number,
+    proposedLimit: number,
+    used: number | null,
+  ): void => {
+    if (proposedLimit < previousLimit) {
+      violations.push({ dimension, reason: 'not_increased', previousLimit, proposedLimit });
+      return;
+    }
+    if (used !== null && proposedLimit < used) {
+      violations.push({ dimension, reason: 'limit_below_used', previousLimit, proposedLimit });
+    }
+  };
+  counterDimension('maxRuns', current.batch.maxRuns, proposed.batch.maxRuns, usage?.runsCreated ?? null);
+  counterDimension(
+    'maxTotalAttempts',
+    current.batch.maxTotalAttempts,
+    proposed.batch.maxTotalAttempts,
+    usage?.attemptsCreated ?? null,
+  );
+  counterDimension(
+    'maxRuntimeStarts',
+    current.batch.maxRuntimeStarts,
+    proposed.batch.maxRuntimeStarts,
+    usage?.runtimeStarts ?? null,
+  );
+  counterDimension(
+    'maxNoProgressRuns',
+    current.batch.maxNoProgressRuns,
+    proposed.batch.maxNoProgressRuns,
+    usage?.noProgressRuns ?? null,
+  );
+  counterDimension('deadlineUtcMs', current.batch.deadlineUtcMs, proposed.batch.deadlineUtcMs, null);
+
+  const resourceDimension = (
+    dimension: BudgetResourceDimension,
+    previousLimit: number | undefined,
+    proposedLimit: number | undefined,
+  ): void => {
+    if (previousLimit === undefined && proposedLimit !== undefined) {
+      violations.push({ dimension, reason: 'cap_introduced', previousLimit: null, proposedLimit });
+      return;
+    }
+    if (previousLimit !== undefined && proposedLimit === undefined) {
+      violations.push({ dimension, reason: 'cap_removed', previousLimit, proposedLimit: null });
+      return;
+    }
+    if (previousLimit !== undefined && proposedLimit !== undefined && proposedLimit < previousLimit) {
+      violations.push({ dimension, reason: 'not_increased', previousLimit, proposedLimit });
+    }
+  };
+  resourceDimension('maxTokenTotal', current.batch.maxTokenTotal, proposed.batch.maxTokenTotal);
+  resourceDimension('maxCostTotal', current.batch.maxCostTotal, proposed.batch.maxCostTotal);
+
+  counterDimension(
+    'maxAttemptsPerRun',
+    current.run.maxAttemptsPerRun,
+    proposed.run.maxAttemptsPerRun,
+    null,
+  );
+  counterDimension('runTimeLimitMs', current.run.runTimeLimitMs, proposed.run.runTimeLimitMs, null);
+
+  return { allowed: violations.length === 0, violations };
+}

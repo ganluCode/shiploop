@@ -37,7 +37,7 @@ import {
   BASELINE_REASON_CODES,
 } from './baseline.js';
 import { isStorageError } from './errors.js';
-import { EXECUTION_RUN_DISPATCHED_EVENT_TYPE } from './execution-store.js';
+import { EXECUTION_BUDGET_REVISED_EVENT_TYPE, EXECUTION_RUN_DISPATCHED_EVENT_TYPE } from './execution-store.js';
 import {
   EXECUTION_INPUT_PREPARED_EVENT_TYPE,
   FEATURE_LABELS_UPDATED_EVENT_TYPE,
@@ -92,6 +92,8 @@ export { FEATURE_PLAN_REJECTED_EVENT_TYPE };
 export { EXECUTION_INPUT_PREPARED_EVENT_TYPE };
 /** P03-3 / F-005：仅命令路径派发成功后写入（脱敏 payload 恒 {dispatched:true}）。 */
 export { EXECUTION_RUN_DISPATCHED_EVENT_TYPE };
+/** P03-3 / F-009：仅命令路径预算修订成功后写入（脱敏 payload 恒 {revised:true}）。 */
+export { EXECUTION_BUDGET_REVISED_EVENT_TYPE };
 /** 仅命令路径全局配置首建成功写入（F-009 已实施；P01 直接服务首建不写事件）。 */
 export { SETTINGS_GLOBAL_CREATED_EVENT_TYPE };
 /** 仅命令路径项目配置首建成功写入（F-009 已实施；P01 直接服务首建不写事件）。 */
@@ -140,6 +142,10 @@ export const PUBLIC_STATE_EVENT_TYPES = [
   // {dispatched:true}，不携带预算数值/计划正文/输入正文——派发不等于 Runtime
   // 已启动，不伪造执行进度）。
   EXECUTION_RUN_DISPATCHED_EVENT_TYPE,
+  // P03-3 / F-009：批次预算修订事件（聚合为目标 Batch 自身；payload 恒为
+  // {revised:true}，不携带预算数值/理由正文/批准主体——审计细节在不可变修订行
+  // 与回执；修订不自动启动或恢复 Run）。
+  EXECUTION_BUDGET_REVISED_EVENT_TYPE,
 ] as const;
 
 export type PublicStateEventType = (typeof PUBLIC_STATE_EVENT_TYPES)[number];
@@ -161,7 +167,8 @@ type EventPayloadKind =
   | 'featurePlanApproved'
   | 'featurePlanRejected'
   | 'executionInputPrepared'
-  | 'executionRunDispatched';
+  | 'executionRunDispatched'
+  | 'executionBudgetRevised';
 
 /** 每类事件冻结的 aggregate_type、scope 种类与 payload 形状。 */
 export interface StateEventTypeSpec {
@@ -303,6 +310,13 @@ export const STATE_EVENT_TYPE_SPECS: Readonly<
     aggregateType: 'run',
     scopeKind: 'project',
     payloadKind: 'executionRunDispatched',
+  }),
+  // P03-3 / F-009：批次预算修订事件（聚合为目标 Batch 自身；payload 恒为
+  // {revised:true}，不携带预算数值/理由/批准主体/启动或恢复语义）。
+  [EXECUTION_BUDGET_REVISED_EVENT_TYPE]: Object.freeze({
+    aggregateType: 'execution_batch',
+    scopeKind: 'project',
+    payloadKind: 'executionBudgetRevised',
   }),
 });
 
@@ -572,6 +586,18 @@ function validateExecutionRunDispatchedPayload(
   return { dispatched: true };
 }
 
+/** P03-3 / F-009：批次预算修订事件脱敏 payload（恒 {revised:true}，无预算数值/理由/批准主体）。 */
+function validateExecutionBudgetRevisedPayload(
+  payload: Record<string, unknown>,
+  operation: string,
+): Record<string, unknown> {
+  exactPayloadKeys(operation, payload, ['revised']);
+  if (payload.revised !== true) {
+    corrupt(operation, 'event_payload_violation');
+  }
+  return { revised: true };
+}
+
 function validateSummaryNameList(value: unknown): value is string[] {
   if (!Array.isArray(value) || value.length > SUMMARY_LIST_MAX_ENTRIES) {
     return false;
@@ -820,6 +846,8 @@ export function mapStateEvent(row: unknown, operation: string = EVENT_READ_OPERA
     payload = validateExecutionInputPreparedPayload(row.payload, operation);
   } else if (spec.payloadKind === 'executionRunDispatched') {
     payload = validateExecutionRunDispatchedPayload(row.payload, operation);
+  } else if (spec.payloadKind === 'executionBudgetRevised') {
+    payload = validateExecutionBudgetRevisedPayload(row.payload, operation);
   } else if (spec.payloadKind === 'changedFields') {
     payload = validateChangedFieldsPayload(row.payload, operation);
   } else if (spec.payloadKind === 'baselineAuthorized') {

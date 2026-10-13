@@ -84,6 +84,10 @@ import type {
 } from '../ports/execution-start.js';
 import { signalRunDispatchAfterCommit } from './execution-start.js';
 import {
+  EXECUTION_BUDGET_REVISE_OPERATION,
+  submitExecutionBudgetRevise,
+} from './execution-budget-revise.js';
+import {
   TASK_STRATEGY_UPDATE_OPERATION,
   submitTaskStrategyUpdate,
 } from './task-strategy-update.js';
@@ -593,6 +597,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           envelope.operation !== EXECUTION_INPUT_PREPARE_OPERATION &&
           envelope.operation !== EXECUTION_PREVIEW_OPERATION &&
           envelope.operation !== EXECUTION_START_OPERATION &&
+          envelope.operation !== EXECUTION_BUDGET_REVISE_OPERATION &&
           !isSettingsEnvelope(envelope)
         ) {
           throw new PublicError('unsupported', operation);
@@ -930,6 +935,26 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
               transaction,
               executionStartPrepared,
               { schedulerAssembled: executionDispatchSignal !== undefined },
+            );
+          }
+          if (envelope.operation === EXECUTION_BUDGET_REVISE_OPERATION) {
+            // P03-3 / F-009：批次预算显式修订——无事务外 I/O；项目把关/预算深
+            // 校验/CAS/单调判定/原子写入（当前预算+不可变修订行）/脱敏事件与
+            // completed 回执同一短写事务（任一失败整组回滚；仅增额不自动
+            // 启动或恢复 Run）。
+            return submitExecutionBudgetRevise(
+              {
+                principalId: principal.principalId,
+                commandId: envelope.commandId,
+                operation: envelope.operation,
+                scope: envelope.scope,
+                requestDigest: digest,
+                issuedAt: envelope.issuedAt,
+                completedAt: new Date(now).toISOString(),
+              },
+              envelope,
+              transaction,
+              now,
             );
           }
           if (isSettingsEnvelope(envelope)) {

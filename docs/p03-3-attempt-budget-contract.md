@@ -106,6 +106,8 @@ caps 与持久计数合并计算（`resolveTaskAttemptCaps` + 计数），不由
   不能用空接口或独立提前扣额替代本契约。
 - Runtime 启动预占已由 F-007 建设（迁移 v12 与 reserveRuntimeStart 原语，见
   `docs/p03-3-runtime-start-contract.md`；重分类不退已预占 Runtime 启动的语义由
-  该契约承接）；Run 结果结算与无进展计数（F-008，见 `docs/p03-3-run-outcome-settlement-contract.md`）、预算修订命令（F-009）、
-  只读查询面（F-010）分别由后续任务建设；本任务不新增命令操作、事件类型或
-  回执形态。
+  该契约承接）；Run 结果结算与无进展计数（F-008，见 `docs/p03-3-run-outcome-settlement-contract.md`）；
+  批次预算显式修订已由 F-009 建设（`execution.budget.revise` 命令面与
+  reviseBatchBudget 预算版本 CAS 原语，见 `docs/p03-3-budget-revision-contract.md`；
+  修订不触碰本契约的 Task 双计数与预占账本）；只读查询面（F-010）由后续任务
+  建设；F-006 本身不新增命令操作、事件类型或回执形态。

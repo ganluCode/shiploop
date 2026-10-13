@@ -22,8 +22,9 @@
  * - 快照列（scope/config/input）只保存身份级内容（摘要、版本、引用身份），
  *   绝不内联制品正文或绝对路径；序列化有界（EXECUTION_SNAPSHOT_MAX_BYTES）。
  *
- * 本模块不实现：启动命令编排（application/execution-start）、预算修订命令（F-009）、
- * 查询面（F-010）；P03-3 / F-006 起本模块
+ * 本模块不实现：启动命令编排（application/execution-start）、预算修订命令编排
+ * （application/execution-budget-revise，P03-3 / F-009 起本模块提供其存储原语
+ * 与输入校验）、查询面（F-010）；P03-3 / F-006 起本模块
  * 追加 Task 尝试预算预占与分类记账的记录形态与事务原语输入校验；P03-3 / F-007
  * 起追加 Runtime 启动额度预占的记录形态与输入校验（SDK 启动前的受信边界）。
  */
@@ -49,6 +50,30 @@ import type { ValidationContext } from './validation.js';
  * 不携带预算数值/计划正文/输入正文/启动语义（派发不等于 Runtime 已启动）。
  */
 export const EXECUTION_RUN_DISPATCHED_EVENT_TYPE = 'execution.run.dispatched';
+
+/**
+ * P03-3 / F-009 批次预算修订事件（仅命令路径修订成功后写入；脱敏 payload 恒为
+ * {revised:true}，聚合为目标 Batch 自身，aggregateRevision=修订后 Batch 行 revision）。
+ * 不携带预算数值、理由正文或批准主体身份（审计细节在不可变修订行与回执）。
+ */
+export const EXECUTION_BUDGET_REVISED_EVENT_TYPE = 'execution.budget.revised';
+
+/** 执行域事件白名单（与 ports/events.ts 公开白名单同源）。 */
+export const EXECUTION_EVENT_TYPES = [
+  EXECUTION_RUN_DISPATCHED_EVENT_TYPE,
+  EXECUTION_BUDGET_REVISED_EVENT_TYPE,
+] as const;
+export type ExecutionEventType = (typeof EXECUTION_EVENT_TYPES)[number];
+
+interface ExecutionEventSpec {
+  readonly aggregateType: 'run' | 'execution_batch';
+  readonly payloadKey: 'dispatched' | 'revised';
+}
+
+const EXECUTION_EVENT_SPECS: Readonly<Record<ExecutionEventType, ExecutionEventSpec>> = Object.freeze({
+  [EXECUTION_RUN_DISPATCHED_EVENT_TYPE]: Object.freeze({ aggregateType: 'run', payloadKey: 'dispatched' }),
+  [EXECUTION_BUDGET_REVISED_EVENT_TYPE]: Object.freeze({ aggregateType: 'execution_batch', payloadKey: 'revised' }),
+});
 
 /** 快照 JSON 列（scope/config/input）序列化字节上限（有界，拒绝无界快照）。 */
 export const EXECUTION_SNAPSHOT_MAX_BYTES = 65_536;
@@ -149,6 +174,18 @@ export interface BatchBudgetRevisionRecord {
   readonly deadlineAtUtcMs: number;
   readonly approvedBy: string;
   readonly reason: string;
+}
+
+/**
+ * 预算修订原语结果（F-009）：修订后的 Batch 当前状态 + 新增不可变修订行 +
+ * 修订前事实（上一版本号/预算快照/deadline；供回执与审计携带前后值）。
+ */
+export interface BatchBudgetRevisionResult {
+  readonly batch: ExecutionBatchRecord;
+  readonly revision: BatchBudgetRevisionRecord;
+  readonly previousBudgetRevision: number;
+  readonly previousBudgetSnapshot: ExecutionBudgetSnapshot;
+  readonly previousDeadlineAtUtcMs: number;
 }
 
 /* ------------------------------------------------------------------ *
@@ -321,6 +358,92 @@ export function validateBatchBudgetRevisionInsertInput(
   };
 }
 
+export interface ValidatedBatchBudgetRevisionInput {
+  readonly projectId: string;
+  readonly batchId: string;
+  /** CAS：调用方持有的当前 Batch budget_revision（过期拒绝，零部分更新）。 */
+  readonly expectedBudgetRevision: number;
+  /** 修订后的完整预算快照（经权威校验；仅增额或延期）。 */
+  readonly budgetSnapshot: ExecutionBudgetSnapshot;
+  /** 批准主体（服务端可信身份绑定，不接受请求输入）。 */
+  readonly approvedBy: string;
+  /** 非空修订理由（审计）。 */
+  readonly reason: string;
+}
+
+const BATCH_BUDGET_REVISION_KEYS = [
+  'projectId',
+  'batchId',
+  'expectedBudgetRevision',
+  'budgetSnapshot',
+  'approvedBy',
+  'reason',
+] as const;
+
+/** 修订理由上限（与决策/结算理由同量级；有界拒绝无界文本）。 */
+export const BATCH_BUDGET_REVISION_REASON_MAX_BYTES = 512;
+
+/** 批准主体上限（principal 形态；拒绝无界身份文本）。 */
+export const BATCH_BUDGET_REVISION_APPROVED_BY_MAX = 128;
+
+/**
+ * 预算修订原语输入校验（F-009）：expectedBudgetRevision ≥1 的 CAS 期望；
+ * approvedBy/reason 非空有界（理由 ≤512 字符；tokenUsed/costUsed/outcome/
+ * runsCreated/status 等执行域字段都是未知键——修订不携带也不自报用量或状态）。
+ */
+export function validateBatchBudgetRevisionInput(
+  value: unknown,
+  operation: string,
+): ValidatedBatchBudgetRevisionInput {
+  const context: ValidationContext = { operation, entity: { type: 'batch_budget_revision' } };
+  const object = requirePlainObject(value, context, 'input');
+  rejectUnknownKeys(object, BATCH_BUDGET_REVISION_KEYS, context, 'input');
+  if (
+    typeof object.expectedBudgetRevision !== 'number' ||
+    !Number.isSafeInteger(object.expectedBudgetRevision) ||
+    object.expectedBudgetRevision < 1
+  ) {
+    throw validationError(
+      context,
+      'expectedBudgetRevision',
+      '必须是 ≥1 的安全整数（当前 Batch budget_revision CAS 期望）',
+      object.expectedBudgetRevision,
+    );
+  }
+  if (
+    typeof object.approvedBy !== 'string' ||
+    object.approvedBy.length === 0 ||
+    object.approvedBy.length > BATCH_BUDGET_REVISION_APPROVED_BY_MAX
+  ) {
+    throw validationError(
+      context,
+      'approvedBy',
+      `必须是非空字符串（≤${BATCH_BUDGET_REVISION_APPROVED_BY_MAX} 字符；服务端可信主体）`,
+      object.approvedBy,
+    );
+  }
+  if (
+    typeof object.reason !== 'string' ||
+    object.reason.trim().length === 0 ||
+    object.reason.length > BATCH_BUDGET_REVISION_REASON_MAX_BYTES
+  ) {
+    throw validationError(
+      context,
+      'reason',
+      `必须是非空说明（≤${BATCH_BUDGET_REVISION_REASON_MAX_BYTES} 字符）`,
+      object.reason,
+    );
+  }
+  return {
+    projectId: requireStableIdField(object.projectId, context, 'projectId'),
+    batchId: requireStableIdField(object.batchId, context, 'batchId'),
+    expectedBudgetRevision: object.expectedBudgetRevision,
+    budgetSnapshot: validateExecutionBudgetSnapshot(object.budgetSnapshot, context),
+    approvedBy: object.approvedBy,
+    reason: object.reason,
+  };
+}
+
 export interface ValidatedExecutionRunInsertInput {
   readonly projectId: string;
   readonly batchId: string;
@@ -411,8 +534,8 @@ export function validateExecutionRunInsertInput(
 
 export interface ValidatedExecutionEventAppendInput {
   readonly projectId: string;
-  readonly eventType: typeof EXECUTION_RUN_DISPATCHED_EVENT_TYPE;
-  readonly aggregateType: 'run';
+  readonly eventType: ExecutionEventType;
+  readonly aggregateType: 'run' | 'execution_batch';
   readonly aggregateId: string;
   readonly aggregateRevision: number;
   readonly payload: Readonly<Record<string, unknown>>;
@@ -427,7 +550,10 @@ const EXECUTION_EVENT_APPEND_KEYS = [
   'payload',
 ] as const;
 
-/** 执行域事件追加输入校验（白名单单成员；payload 恒 {dispatched:true}）。 */
+/**
+ * 执行域事件追加输入校验（白名单双成员：Run 派发与 Batch 预算修订；payload 为
+ * 事件类型冻结的单一脱敏键，聚合类型与事件类型绑定）。
+ */
 export function validateExecutionEventAppendInput(
   value: unknown,
   operation: string,
@@ -435,11 +561,22 @@ export function validateExecutionEventAppendInput(
   const context: ValidationContext = { operation, entity: { type: 'run' } };
   const object = requirePlainObject(value, context, 'input');
   rejectUnknownKeys(object, EXECUTION_EVENT_APPEND_KEYS, context, 'input');
-  if (object.eventType !== EXECUTION_RUN_DISPATCHED_EVENT_TYPE) {
-    throw validationError(context, 'eventType', `必须是 ${EXECUTION_RUN_DISPATCHED_EVENT_TYPE}`, object.eventType);
+  const eventTypeValue = object.eventType;
+  if (
+    typeof eventTypeValue !== 'string' ||
+    !(EXECUTION_EVENT_TYPES as readonly string[]).includes(eventTypeValue)
+  ) {
+    throw validationError(context, 'eventType', `必须是 ${EXECUTION_EVENT_TYPES.join(' / ')}`, eventTypeValue);
   }
-  if (object.aggregateType !== 'run') {
-    throw validationError(context, 'aggregateType', '必须是 run', object.aggregateType);
+  const eventType = eventTypeValue as ExecutionEventType;
+  const spec = EXECUTION_EVENT_SPECS[eventType];
+  if (object.aggregateType !== spec.aggregateType) {
+    throw validationError(
+      context,
+      'aggregateType',
+      `事件 ${eventType} 的聚合类型必须是 ${spec.aggregateType}`,
+      object.aggregateType,
+    );
   }
   if (
     typeof object.aggregateRevision !== 'number' ||
@@ -448,16 +585,22 @@ export function validateExecutionEventAppendInput(
   ) {
     throw validationError(context, 'aggregateRevision', '必须是 ≥1 的安全整数', object.aggregateRevision);
   }
-  if (!isPlainObject(object.payload) || object.payload.dispatched !== true) {
-    throw validationError(context, 'payload', '必须是 {dispatched:true}（脱敏事件固定形状）', object.payload);
+  if (!isPlainObject(object.payload) || object.payload[spec.payloadKey] !== true) {
+    throw validationError(
+      context,
+      'payload',
+      `必须是 {${spec.payloadKey}:true}（脱敏事件固定形状）`,
+      object.payload,
+    );
   }
+  const payload: Readonly<Record<string, unknown>> = { [spec.payloadKey]: true };
   return {
     projectId: requireStableIdField(object.projectId, context, 'projectId'),
-    eventType: EXECUTION_RUN_DISPATCHED_EVENT_TYPE,
-    aggregateType: 'run',
+    eventType,
+    aggregateType: spec.aggregateType,
     aggregateId: requireStableIdField(object.aggregateId, context, 'aggregateId'),
     aggregateRevision: object.aggregateRevision,
-    payload: { dispatched: true },
+    payload,
   };
 }
 

@@ -80,7 +80,8 @@ export type StateEventAggregateType =
   | 'phase'
   | 'feature'
   | 'task'
-  | 'run';
+  | 'run'
+  | 'execution_batch';
 
 /** 项目生命周期（core-design/02 §生命周期：active→archiving→archived；删除自 archived 起经 deleting）。 */
 export type ProjectStatus = 'active' | 'archiving' | 'archived' | 'deleting';

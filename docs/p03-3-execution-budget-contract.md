@@ -119,8 +119,9 @@
 
 SQLite 迁移与 budget_snapshot 存储（F-002）、accepted 回执扩展（F-003）、prepare 预览
 （F-004）、ExecutionController 启动（F-005）、预占/分类记账（F-006/F-007）、结算与
-无进展（F-008）、修订 CAS（F-009）、查询（F-010）、Host/CLI 接线（F-011/F-012）、
-跨进程竞争（F-013）与集成验收（F-014）。
+无进展（F-008）、修订 CAS（F-009 已实施：`evaluateBatchBudgetRevision` 纯判定随本
+契约同源，命令面见 `docs/p03-3-budget-revision-contract.md`）、查询（F-010）、
+Host/CLI 接线（F-011/F-012）、跨进程竞争（F-013）与集成验收（F-014）。
 
 ## 10. 验证记录（F-001）
 

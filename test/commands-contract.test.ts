@@ -94,7 +94,7 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
     expect(WIRE_MESSAGE_SCHEMA_VERSION).toBe(5);
   });
 
-  it('冻结十九项能力（P02-2 九项 + P02-3 基线两项 + P03-1 计划域三项 + P03-2 三项 + P03-3 执行授权面一项），local-owner 持全部', () => {
+  it('冻结二十项能力（P02-2 九项 + P02-3 基线两项 + P03-1 计划域三项 + P03-2 三项 + P03-3 执行授权面与预算修订两项），local-owner 持全部', () => {
     expect([...APP_CAPABILITIES]).toEqual([
       'project.register',
       'project.read',
@@ -124,6 +124,9 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       // P03-3 / F-004：执行授权面能力位（execution.preview 预览使用；
       // execution.start 启动随后续控制器任务接线）。
       'execution.start',
+      // P03-3 / F-009：批次预算显式修订能力位（增额/延期是新的明确授权，
+      // 与启动能力分离；修订不自动启动或恢复 Run）。
+      'execution.budget.revise',
     ]);
     expect(LOCAL_OWNER_PRINCIPAL_ID).toBe('local-owner');
     expect(LOCAL_OWNER_CAPABILITIES.size).toBe(APP_CAPABILITIES.length);
@@ -165,6 +168,9 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       // P03-3 / F-005：显式执行启动（project scope + execution.start；创建类
       // 不携带 expectedRevision；事务外准备 + 短写事务内重核与原子提交）。
       'execution.start',
+      // P03-3 / F-009：批次预算显式修订（project scope + execution.budget.revise；
+      // 更新类 expectedRevision=目标 Batch 当前 budget_revision；仅增额或延期）。
+      'execution.budget.revise',
     ]);
     expect(COMMAND_OPERATION_SPECS).toEqual({
       'project.register': { scopeKind: 'registration', mutation: 'create', capability: 'project.register' },
@@ -185,6 +191,7 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       'execution.input.prepare': { scopeKind: 'project', mutation: 'create', capability: 'execution.input.prepare' },
       'execution.preview': { scopeKind: 'project', mutation: 'create', capability: 'execution.start' },
       'execution.start': { scopeKind: 'project', mutation: 'create', capability: 'execution.start' },
+      'execution.budget.revise': { scopeKind: 'project', mutation: 'update', capability: 'execution.budget.revise' },
     });
     for (const spec of Object.values(COMMAND_OPERATION_SPECS)) {
       expect(APP_CAPABILITIES).toContain(spec.capability);

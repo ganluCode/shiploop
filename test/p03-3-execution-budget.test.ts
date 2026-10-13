@@ -25,6 +25,7 @@ import {
   BUDGET_SNAPSHOT_SCHEMA_VERSION,
   DEFAULT_TASK_MAX_CODE_ATTEMPTS,
   evaluateBatchBudgetReservation,
+  evaluateBatchBudgetRevision,
   evaluateRunBudgetReservation,
   evaluateTaskCodeAttemptReservation,
   RUN_MAX_ATTEMPTS_MAX,
@@ -749,5 +750,105 @@ describe('P03-3 / F-001 Task 代码尝试纯判定', () => {
     const caps = resolveTaskAttemptCaps({}, CONTEXT);
     expect(() => evaluateTaskCodeAttemptReservation(caps, -1)).toThrow(StorageError);
     expect(() => evaluateTaskCodeAttemptReservation(caps, Number.POSITIVE_INFINITY)).toThrow(StorageError);
+  });
+});
+
+describe('P03-3 / F-009 预算修订纯判定（仅增额或延期；单调不回退）', () => {
+  const current = {
+    schemaVersion: 1,
+    batch: {
+      maxRuns: 4,
+      maxTotalAttempts: 8,
+      maxRuntimeStarts: 6,
+      maxNoProgressRuns: 2,
+      deadlineUtcMs: 2_000,
+      maxTokenTotal: 1_000,
+      maxCostTotal: 5.5,
+    },
+    run: { maxAttemptsPerRun: 3, runTimeLimitMs: 3_600_000 },
+  } as const;
+  const proposed = (batch: Record<string, unknown>, run?: Record<string, unknown>) => ({
+    schemaVersion: 1,
+    batch: { ...current.batch, ...batch },
+    run: run === undefined ? { ...current.run } : { ...current.run, ...run },
+  });
+
+  it('全维度增额或延期允许；完全相同（无变化）也允许（记录为审计事实）', () => {
+    const raised = evaluateBatchBudgetRevision({
+      current,
+      proposed: proposed({
+        maxRuns: 5,
+        maxTotalAttempts: 10,
+        maxRuntimeStarts: 7,
+        maxNoProgressRuns: 3,
+        deadlineUtcMs: 3_000,
+        maxTokenTotal: 2_000,
+        maxCostTotal: 6.5,
+      }, { maxAttemptsPerRun: 4, runTimeLimitMs: 7_200_000 }),
+    });
+    expect(raised.allowed).toBe(true);
+    expect(raised.violations).toEqual([]);
+    const same = evaluateBatchBudgetRevision({ current, proposed: proposed({}) });
+    expect(same.allowed).toBe(true);
+  });
+
+  it('计数维度任一降低都拒绝（含降到已使用值以下的降额形态）', () => {
+    for (const [dimension, patch] of [
+      ['maxRuns', { maxRuns: 3 }],
+      ['maxTotalAttempts', { maxTotalAttempts: 7 }],
+      ['maxRuntimeStarts', { maxRuntimeStarts: 5 }],
+      ['maxNoProgressRuns', { maxNoProgressRuns: 1 }],
+      ['deadlineUtcMs', { deadlineUtcMs: 1_999 }],
+      ['maxTokenTotal', { maxTokenTotal: 999 }],
+      ['maxCostTotal', { maxCostTotal: 5.4 }],
+    ] as const) {
+      const decision = evaluateBatchBudgetRevision({ current, proposed: proposed(patch) });
+      expect(decision.allowed).toBe(false);
+      expect(decision.violations).toHaveLength(1);
+      expect(decision.violations[0]).toMatchObject({ dimension, reason: 'not_increased' });
+    }
+  });
+
+  it('Run 层上限同样只增不减', () => {
+    for (const [dimension, run] of [
+      ['maxAttemptsPerRun', { maxAttemptsPerRun: 2 }],
+      ['runTimeLimitMs', { runTimeLimitMs: 3_599_999 }],
+    ] as const) {
+      const decision = evaluateBatchBudgetRevision({ current, proposed: proposed({}, run) });
+      expect(decision.allowed).toBe(false);
+      expect(decision.violations[0]).toMatchObject({ dimension, reason: 'not_increased' });
+    }
+  });
+
+  it('可选资源上限不可中途引入或移除（只在已设上限上增额）', () => {
+    const noCaps = { ...current, batch: { ...current.batch, maxTokenTotal: undefined, maxCostTotal: undefined } };
+    const introduce = evaluateBatchBudgetRevision({
+      current: noCaps,
+      proposed: { ...noCaps, batch: { ...noCaps.batch, maxTokenTotal: 500 } },
+    });
+    expect(introduce.allowed).toBe(false);
+    expect(introduce.violations[0]).toMatchObject({ dimension: 'maxTokenTotal', reason: 'cap_introduced' });
+    const removed = evaluateBatchBudgetRevision({
+      current,
+      proposed: proposed({ maxTokenTotal: undefined }),
+    });
+    expect(removed.allowed).toBe(false);
+    expect(removed.violations[0]).toMatchObject({ dimension: 'maxTokenTotal', reason: 'cap_removed' });
+  });
+
+  it('携带累计用量时降低到已使用值以下单独标记 limit_below_used（fail-closed 防御）', () => {
+    const inconsistent = { ...current, batch: { ...current.batch, maxRuns: 4 } };
+    const decision = evaluateBatchBudgetRevision({
+      current: inconsistent,
+      proposed: proposed({ maxRuns: 4 }),
+      usage: { runsCreated: 5, attemptsCreated: 0, runtimeStarts: 0, noProgressRuns: 0 },
+    });
+    expect(decision.allowed).toBe(false);
+    expect(decision.violations[0]).toMatchObject({ dimension: 'maxRuns', reason: 'limit_below_used' });
+  });
+
+  it('非法输入拒绝（缺 batch/proposed 非对象不做默认补齐）', () => {
+    expect(() => evaluateBatchBudgetRevision({ current: {}, proposed: proposed({}) })).toThrow(StorageError);
+    expect(() => evaluateBatchBudgetRevision({ current, proposed: null })).toThrow(StorageError);
   });
 });

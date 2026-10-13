@@ -205,6 +205,9 @@ describe('F-002 冻结常量与能力声明', () => {
           // P03-3 / F-005：显式执行启动经既有 /v1/commands 通用路由接线（同一
           // 命令面；HostClient/CLI 入口属 F-011/F-012）。
           'execution.start',
+          // P03-3 / F-009：批次预算显式修订经既有 /v1/commands 通用路由接线
+          //（仅增额不自动启动或恢复 Run；HostClient/CLI 入口属 F-011/F-012）。
+          'execution.budget.revise',
         ],
         queries: [
           'projects.list',

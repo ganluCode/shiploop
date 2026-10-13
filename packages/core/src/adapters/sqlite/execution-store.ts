@@ -22,14 +22,16 @@
  * - 时间为注入的 UTC 毫秒；id 由适配器生成 UUID v4；JSON 列只写入经校验的
  *   有界结构化 JSON。
  *
- * 本适配器不实现：启动命令编排（application/execution-start）、预算修订（F-009）、
- * 查询面（F-010）、完整 Attempt
+ * 本适配器不实现：启动命令编排（application/execution-start）、预算修订命令编排
+ * （application/execution-budget-revise；P03-3 / F-009 起本适配器提供
+ * reviseBatchBudget 存储 CAS 原语）、查询面（F-010）、完整 Attempt
  * 生命周期/owner/fencing/进程执行（P03-4）、Runner/停止管理/会话记录（后续任务）。
  */
 import { randomUUID } from 'node:crypto';
 import { StorageError } from '../../ports/errors.js';
 import type { StorageEntityRef } from '../../ports/errors.js';
 import {
+  evaluateBatchBudgetRevision,
   evaluateRunBudgetReservation,
   evaluateTaskCodeAttemptReservation,
   resolveTaskAttemptCaps,
@@ -44,6 +46,7 @@ import {
   RUN_NO_PROGRESS_EXHAUSTION_REASON,
   TASK_ATTEMPT_CLASSIFIED_BY_CORE,
   validateBatchBudgetRevisionInsertInput,
+  validateBatchBudgetRevisionInput,
   validateExecutionBatchInsertInput,
   validateExecutionEventAppendInput,
   validateExecutionRunInsertInput,
@@ -54,6 +57,7 @@ import {
 } from '../../ports/execution-store.js';
 import type {
   BatchBudgetRevisionRecord,
+  BatchBudgetRevisionResult,
   ExecutionBatchRecord,
   ExecutionBatchStatus,
   RunOutcomeSettlementOutcome,
@@ -187,6 +191,15 @@ export interface SqliteExecutionAccess {
   insertExecutionBatchInTransaction(input: unknown): ExecutionBatchRecord;
   /** 插入批次预算修订行（初始 version=1 与历史快照；插后不可变）。 */
   insertBatchBudgetRevisionInTransaction(input: unknown): BatchBudgetRevisionRecord;
+  /**
+   * P03-3 / F-009 批次预算显式修订（同事务原子生效）：CAS 于当前
+   * budget_revision（过期零部分更新）且仅限活动 Batch；仅增额或延期
+   * （evaluateBatchBudgetRevision 单调判定，携带累计用量防御降额到已用值
+   * 以下）；一次调用原子更新当前预算（budget_snapshot/budget_revision/
+   * deadline_at/revision/updated_at）并追加不可变修订行（version+1），不触碰
+   * 累计计数与任何快照列；任一步失败整组回滚。
+   */
+  reviseBatchBudgetInTransaction(input: unknown): BatchBudgetRevisionResult;
   /** 创建执行 Run（派发身份/上限冻结；同 Feature 活动 Run 唯一兜底）。 */
   insertExecutionRunInTransaction(input: unknown): RunRecord;
   /** 读取目标 Batch（同项目；缺失 not_found、跨项目 ownership）。 */
@@ -521,6 +534,157 @@ export function createSqliteExecutionAccess(
       deadlineAtUtcMs: valid.budgetSnapshot.batch.deadlineUtcMs,
       approvedBy: valid.approvedBy,
       reason: valid.reason,
+    };
+  }
+
+  /* ------------------------------------------------------------ *
+   * P03-3 / F-009 批次预算显式修订（短事务 CAS 原语）
+   * ------------------------------------------------------------ */
+
+  function reviseBatchBudgetInTransaction(input: unknown): BatchBudgetRevisionResult {
+    const operation = 'ExecutionStore.reviseBatchBudget';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const valid = validateBatchBudgetRevisionInput(input, operation);
+    const db = session.database;
+    const entity: StorageEntityRef = { type: 'execution_batch', projectId: valid.projectId, id: valid.batchId };
+
+    // 1) 归属核验（同事务绑定参数；迁移 v9 复合外键为兕底）：跨项目拒绝。
+    const row = db
+      .prepare<[string], ExecutionBatchSqlRow>(`${SELECT_BATCH} WHERE id = ?`)
+      .get(valid.batchId) as ExecutionBatchSqlRow | undefined;
+    if (row === undefined) {
+      throw notFound(operation, entity, `Batch ${valid.batchId} 不存在`);
+    }
+    if (row.project_id !== valid.projectId) {
+      throw ownership(operation, entity, 'Batch 不属于声明的项目（跨项目目标被拒绝）');
+    }
+
+    // 2) 预算 CAS（过期 revision 拒绝，零部分更新）与活动集（终态 Batch 不接受
+    //    修订——授权关闭，新工作需新授权；paused/interrupted 不是可绕过的终态）。
+    if (row.budget_revision !== valid.expectedBudgetRevision) {
+      throw new StorageError(
+        'conflict',
+        operation,
+        `${operation}: Batch ${valid.batchId} budget_revision 已变化（旧 revision 不重复修订）`,
+        {
+          entity,
+          details: {
+            reason: 'budget_revision_stale',
+            expectedRevision: valid.expectedBudgetRevision,
+            actualRevision: row.budget_revision,
+          },
+        },
+      );
+    }
+    if (!isExecutionActiveStatus(row.status)) {
+      throw new StorageError(
+        'conflict',
+        operation,
+        `${operation}: Batch ${valid.batchId} 状态 ${row.status} 不接受预算修订（授权已关闭）`,
+        { entity, details: { reason: 'batch_not_active', status: row.status } },
+      );
+    }
+
+    // 3) 仅增额或延期（纯函数单调判定；携带累计用量做降额防御）——全部先于
+    //    任何写入；违规拒绝且零写入（预算快照已在上面的输入校验中经权威校验）。
+    const currentSnapshot = parseBudgetSnapshot(row.budget_snapshot, operation, 'execution_batch');
+    const decision = evaluateBatchBudgetRevision({
+      current: currentSnapshot,
+      proposed: valid.budgetSnapshot,
+      usage: {
+        runsCreated: row.runs_created,
+        attemptsCreated: row.attempts_created,
+        runtimeStarts: row.runtime_starts,
+        noProgressRuns: row.no_progress_runs,
+      },
+    });
+    if (!decision.allowed) {
+      const primary = decision.violations[0];
+      throw new StorageError(
+        'conflict',
+        operation,
+        `${operation}: 预算修订仅允许增额或延期（${primary.dimension} ${primary.reason}）`,
+        {
+          entity,
+          details: {
+            reason: primary.reason === 'limit_below_used' ? 'limit_below_used' : 'revision_not_increased',
+            violations: decision.violations,
+          },
+        },
+      );
+    }
+
+    // 4) 同事务原子写入：单语句条件 UPDATE 同时完成 CAS（budget_revision=
+    //    expected）与活动集复核，并更新当前预算三列 + 行 revision；随后追加
+    //    不可变修订行（version+1）。任一步失败整组回滚（无部分更新）；累计
+    //    计数与身份/范围/配置快照列不触碰（迁移 v9 触发器保护不可变列）。
+    const timestamp = nowUtcMs();
+    const update = db
+      .prepare(
+        `UPDATE execution_batches SET budget_snapshot = ?, budget_revision = budget_revision + 1, ` +
+          `deadline_at = ?, revision = revision + 1, updated_at = ? ` +
+          `WHERE id = ? AND project_id = ? AND budget_revision = ? AND status IN (${ACTIVE_PLACEHOLDERS})`,
+      )
+      .run(
+        JSON.stringify(valid.budgetSnapshot),
+        valid.budgetSnapshot.batch.deadlineUtcMs,
+        timestamp,
+        valid.batchId,
+        valid.projectId,
+        valid.expectedBudgetRevision,
+        ...(EXECUTION_ACTIVE_STATUSES as readonly string[]),
+      );
+    if (update.changes !== 1) {
+      // 与步骤 2/3 之间的串行化窗口内状态变化：以当前行重判拒绝原因。
+      const current = db
+        .prepare<[string], ExecutionBatchSqlRow>(`${SELECT_BATCH} WHERE id = ?`)
+        .get(valid.batchId) as ExecutionBatchSqlRow | undefined;
+      if (current === undefined) {
+        throw notFound(operation, entity, `Batch ${valid.batchId} 不存在`);
+      }
+      if (current.budget_revision !== valid.expectedBudgetRevision) {
+        throw new StorageError(
+          'conflict',
+          operation,
+          `${operation}: Batch ${valid.batchId} budget_revision 已变化（旧 revision 不重复修订）`,
+          {
+            entity,
+            details: {
+              reason: 'budget_revision_stale',
+              expectedRevision: valid.expectedBudgetRevision,
+              actualRevision: current.budget_revision,
+            },
+          },
+        );
+      }
+      throw new StorageError(
+        'conflict',
+        operation,
+        `${operation}: Batch ${valid.batchId} 状态 ${current.status} 不接受预算修订（授权已关闭）`,
+        { entity, details: { reason: 'batch_not_active', status: current.status } },
+      );
+    }
+    const updatedRow = db
+      .prepare<[string], ExecutionBatchSqlRow>(`${SELECT_BATCH} WHERE id = ?`)
+      .get(valid.batchId) as ExecutionBatchSqlRow;
+    const newVersion = valid.expectedBudgetRevision + 1;
+    // 追加不可变修订行（同事务）：任何失败（如修订身份唯一冲突）直接传播，
+    // 上面的预算 UPDATE 随整组事务回滚——不允许部分更新。
+    const revision = insertBatchBudgetRevisionInTransaction({
+      projectId: valid.projectId,
+      batchId: valid.batchId,
+      version: newVersion,
+      budgetSnapshot: valid.budgetSnapshot,
+      approvedBy: valid.approvedBy,
+      reason: valid.reason,
+    });
+    return {
+      batch: batchFromRow(updatedRow, operation),
+      revision,
+      previousBudgetRevision: row.budget_revision,
+      previousBudgetSnapshot: currentSnapshot,
+      previousDeadlineAtUtcMs: row.deadline_at,
     };
   }
 
@@ -1629,6 +1793,7 @@ export function createSqliteExecutionAccess(
   return {
     insertExecutionBatchInTransaction,
     insertBatchBudgetRevisionInTransaction,
+    reviseBatchBudgetInTransaction,
     insertExecutionRunInTransaction,
     getExecutionBatchInTransaction,
     listExecutionRunsForWorkKeyInTransaction,

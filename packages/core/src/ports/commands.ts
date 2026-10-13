@@ -99,6 +99,10 @@ export const APP_CAPABILITIES = [
   // 同一先例）：execution.preview 现在使用；execution.start 启动命令随后续
   // 控制器任务接线同一能力位。预算授权预览不宣称已具备 Runtime 执行能力。
   'execution.start',
+  // P03-3 / F-009：批次预算显式修订能力位（增额/延期是新的明确用户授权：
+  // 修订只调整当前批准预算，不自动启动或恢复 Run；模型提出的理由或客户端
+  // 自声明批准不授予本能力）。
+  'execution.budget.revise',
 ] as const;
 
 export type AppCapability = (typeof APP_CAPABILITIES)[number];
@@ -165,6 +169,12 @@ export const COMMAND_OPERATIONS = [
   // active/Phase 可执行/批准依据/预览身份/活动执行与预算并原子提交
   // Batch/Run/预算修订行/事件与 Work accepted v6 回执）。
   'execution.start',
+  // P03-3 / F-009：批次预算显式修订（project scope + execution.budget.revise；
+  // 更新类：信封 expectedRevision 为目标 Batch 当前 budget_revision CAS；
+  // payload 冻结 batchId/budget/reason——仅增额或延期，短写事务内原子更新
+  // 当前预算/追加不可变修订行/脱敏事件与 completed 回执；不自动启动或
+  // 恢复 Run，不触碰累计计数与快照）。
+  'execution.budget.revise',
 ] as const;
 
 export type AppOperation = (typeof COMMAND_OPERATIONS)[number];
@@ -279,6 +289,13 @@ export const COMMAND_OPERATION_SPECS: Readonly<Record<AppOperation, CommandOpera
       capability: 'execution.start',
     },
     'execution.start': { scopeKind: 'project', mutation: 'create', capability: 'execution.start' },
+    // P03-3 / F-009：批次预算显式修订（更新类：expectedRevision=目标 Batch
+    // 当前 budget_revision；增额/延期是新的明确授权，与启动能力分离）。
+    'execution.budget.revise': {
+      scopeKind: 'project',
+      mutation: 'update',
+      capability: 'execution.budget.revise',
+    },
   });
 
 /* ------------------------------------------------------------------ *
@@ -657,6 +674,22 @@ export type ValidatedExecutionStartPayload =
       readonly retryBatchId: string;
     };
 
+/**
+ * P03-3 / F-009 批次预算显式修订 payload：batchId 定位目标（归属与 CAS 在事务
+ * 内重核），budget 为修订后的完整预算快照（深校验在应用层复用
+ * ports/execution-budget 权威校验器——仅增额或延期），reason 为非空有界修订
+ * 理由（审计）。严格未知键拒绝：approvedBy/principalId（身份由服务端绑定）、
+ * revision/version（CAS 唯一权威在信封顶层 expectedRevision）、tokenUsed/
+ * costUsed/status/runsCreated（用量与状态不是修订输入）、Task 上限字段
+ * （Task maxCodeAttempts 显式调整只经 task.strategy.update 策略 CAS 通道）。
+ */
+export interface ValidatedExecutionBudgetRevisePayload {
+  readonly batchId: string;
+  /** 修订后的完整预算快照（深校验在应用层；此处只保证 JSON 对象形态）。 */
+  readonly budget: Record<string, unknown>;
+  readonly reason: string;
+}
+
 interface EnvelopeCommon {
   readonly schemaVersion: typeof WIRE_MESSAGE_SCHEMA_VERSION;
   readonly commandId: string;
@@ -795,6 +828,14 @@ export type ValidatedCommandEnvelope =
       readonly scope: { readonly kind: 'project'; readonly projectId: string };
       readonly expectedRevision: null;
       readonly payload: ValidatedExecutionStartPayload;
+    })
+  // P03-3 / F-009：批次预算显式修订命令信封（更新类必须携带 expectedRevision
+  // =目标 Batch 当前 budget_revision；payload 只含 batchId/budget/reason）。
+  | (EnvelopeCommon & {
+      readonly operation: 'execution.budget.revise';
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: number;
+      readonly payload: ValidatedExecutionBudgetRevisePayload;
     });
 
 const ENVELOPE_KEYS = [
@@ -1193,6 +1234,7 @@ function validateExecutionPreviewPayload(
 }
 
 const EXECUTION_START_PAYLOAD_KEYS = ['featureIds', 'budget', 'previewDigest', 'retryBatchId'] as const;
+const EXECUTION_BUDGET_REVISE_PAYLOAD_KEYS = ['batchId', 'budget', 'reason'] as const;
 
 /** previewDigest 形态：64 位小写十六进制 SHA-256（与预览结果同一摘要形态）。 */
 function validateExecutionStartPreviewDigest(
@@ -1251,6 +1293,38 @@ function validateExecutionStartPayload(
     budget: scopeIds.budget,
     previewDigest,
     retryBatchId: null,
+  };
+}
+
+/**
+ * P03-3 / F-009 预算修订 payload 校验：严格未知键拒绝（approvedBy/principalId/
+ * revision/version/tokenUsed/costUsed/status/runsCreated/Task 上限字段都是未知
+ * 键）；batchId 为 UUID v4（执行批次身份由服务端派发）；budget 为 JSON 对象
+ * （仅增额或延期的深校验在应用层事务内）；reason 非空有界（≤512 字符）。
+ */
+function validateExecutionBudgetRevisePayload(
+  operation: AppOperation,
+  raw: unknown,
+): ValidatedExecutionBudgetRevisePayload {
+  const object = requireObject(operation, raw, 'payload');
+  exactKeys(operation, object, EXECUTION_BUDGET_REVISE_PAYLOAD_KEYS, 'payload.');
+  if (typeof object.batchId !== 'string' || !isUuidV4(object.batchId)) {
+    fail(operation, 'invalid_input', 'payload.batchId', '必须是 UUID v4（目标执行批次）', object.batchId);
+  }
+  if (!isPlainObjectPayload(object.budget)) {
+    fail(operation, 'invalid_input', 'payload.budget', '必须是 JSON 对象（修订后的完整预算快照）', object.budget);
+  }
+  if (
+    typeof object.reason !== 'string' ||
+    object.reason.trim().length === 0 ||
+    object.reason.length > 512
+  ) {
+    fail(operation, 'invalid_input', 'payload.reason', '必须是非空说明（≤512 字符；显式授权理由）', object.reason);
+  }
+  return {
+    batchId: object.batchId,
+    budget: object.budget as Record<string, unknown>,
+    reason: object.reason,
   };
 }
 
@@ -1489,6 +1563,18 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
       scope,
       expectedRevision: null,
       payload: validateExecutionStartPayload(operation, object.payload),
+    };
+  }
+  if (operation === 'execution.budget.revise') {
+    if (scope.kind !== 'project') {
+      fail(operation, 'invalid_input', 'scope.kind', 'scope 种类与操作不匹配');
+    }
+    return {
+      ...base,
+      operation,
+      scope,
+      expectedRevision: expectedRevision as number,
+      payload: validateExecutionBudgetRevisePayload(operation, object.payload),
     };
   }
   if (operation === 'settings.global.create') {
