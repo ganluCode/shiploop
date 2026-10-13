@@ -59,10 +59,11 @@ describe('F-009 budget revision contract', () => {
     ]) {
       expect(doc).toContain(word);
     }
-    // 执行域事件白名单双成员（Run 派发 + 预算修订）。
+    // 执行域事件白名单（Run 派发、预算修订与 Task 原子认领）。
     expect([...EXECUTION_EVENT_TYPES]).toEqual([
       'execution.run.dispatched',
       'execution.budget.revised',
+      'task.claimed',
     ]);
   });
 

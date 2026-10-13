@@ -1373,6 +1373,22 @@ export const workspaceLeases = sqliteTable('workspace_leases', {
   index('workspace_leases_owner_id_index').on(table.ownerId),
 ]);
 
+export const taskClaimReceipts = sqliteTable('task_claim_receipts', {
+  id: text('id').primaryKey(), projectId: text('project_id').notNull(), attemptId: text('attempt_id').notNull(),
+  requestDigest: text('request_digest').notNull(), receipt: text('receipt').notNull(),
+}, table => [
+  check('task_claim_receipts_id_check', sql`length(${table.id}) > 0`),
+  check('task_claim_receipts_digest_check', sql`length(${table.requestDigest}) = 64 AND ${table.requestDigest} NOT GLOB '*[^0-9a-f]*'`),
+  check('task_claim_receipts_json_check', sql`CASE WHEN json_valid(${table.receipt}) THEN
+    json_type(${table.receipt}) = 'object' AND json_extract(${table.receipt}, '$.schemaVersion') IS 1
+    AND json_extract(${table.receipt}, '$.claimKey') IS ${table.id}
+    AND json_extract(${table.receipt}, '$.attempt.id') IS ${table.attemptId}
+    AND json_extract(${table.receipt}, '$.attempt.projectId') IS ${table.projectId} ELSE 0 END`),
+  foreignKey({ name: 'task_claim_receipts_attempt_fk', columns: [table.projectId, table.attemptId],
+    foreignColumns: [attempts.projectId, attempts.id] }).onDelete('restrict'),
+  uniqueIndex('task_claim_receipts_attempt_unique').on(table.attemptId),
+]);
+
 export const schemaMigrations = sqliteTable('schema_migrations', {
   id: text('id').primaryKey(),
   createdAt: integer('created_at').notNull(),

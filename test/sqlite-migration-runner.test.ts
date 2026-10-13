@@ -209,6 +209,7 @@ describe('F-005 迁移执行与记录', () => {
           'schema_migrations',
           'state_events',
           'task_attempt_reservations',
+          'task_claim_receipts',
           'task_dependencies',
           'tasks',
           'workspace_leases',
@@ -311,9 +312,11 @@ describe('F-005 迁移执行与记录', () => {
         expect(rows[13]!.checksum).toBe(SQLITE_MIGRATIONS[13]!.checksum);
         expect(rows[14]!.version).toBe(15);
         expect(rows[14]!.checksum).toBe(SQLITE_MIGRATIONS[14]!.checksum);
-        expect(rows[15]!.version).toBe(PROBE_MIGRATION.version);
-        expect(rows[15]!.checksum).toBe(PROBE_MIGRATION.checksum);
-        expect(rows[15]!.applied_at).toBe(FIXED_NOW_MS + 1_000);
+        expect(rows[15]!.version).toBe(16);
+        expect(rows[15]!.checksum).toBe(SQLITE_MIGRATIONS[15]!.checksum);
+        expect(rows[16]!.version).toBe(PROBE_MIGRATION.version);
+        expect(rows[16]!.checksum).toBe(PROBE_MIGRATION.checksum);
+        expect(rows[16]!.applied_at).toBe(FIXED_NOW_MS + 1_000);
       } finally {
         session.close();
       }

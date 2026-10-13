@@ -260,7 +260,7 @@ export interface SqliteExecutionAccess {
   /** 派发计数原子递增（runs_created+1/revision+1/updated_at；仅非终态 Batch 命中）。 */
   recordExecutionRunDispatchInTransaction(projectId: string, batchId: string): ExecutionBatchRecord;
   /** 执行域脱敏事件追加（state_events；与公开白名单同形）。 */
-  appendExecutionEventInTransaction(input: unknown): void;
+  appendExecutionEventInTransaction(input: unknown): string;
   /* ---------------------------------------------------------------- *
    * P03-3 / F-006 Task 尝试预算预占与分类记账（迁移 v11；受信 Core 内部原语）
    * ---------------------------------------------------------------- */
@@ -912,7 +912,7 @@ export function createSqliteExecutionAccess(
     return runFromRow(row, operation);
   }
 
-  function appendExecutionEventInTransaction(input: unknown): void {
+  function appendExecutionEventInTransaction(input: unknown): string {
     const operation = 'ExecutionStore.appendExecutionEvent';
     assertOpen(operation);
     assertInTransaction(operation);
@@ -922,11 +922,12 @@ export function createSqliteExecutionAccess(
     const nextSequence = db
       .prepare<[], { next: number }>('SELECT COALESCE(MAX(sequence), 0) + 1 AS next FROM state_events')
       .get();
+    const eventId = randomUUID();
     db.prepare(
       'INSERT INTO state_events (id, created_at, revision, updated_at, project_id, sequence, event_type, aggregate_type, aggregate_id, aggregate_revision, payload, occurred_at) ' +
         'VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
     ).run(
-      randomUUID(),
+      eventId,
       timestamp,
       timestamp,
       valid.projectId,
@@ -938,6 +939,7 @@ export function createSqliteExecutionAccess(
       JSON.stringify(valid.payload),
       timestamp,
     );
+    return eventId;
   }
 
   /* ------------------------------------------------------------ *

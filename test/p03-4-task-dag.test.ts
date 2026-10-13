@@ -261,7 +261,7 @@ describe('P03-4 deterministic Task DAG', () => {
         VALUES ('task-1', 'project-1', 'feature-1', ?, ?, 'Old', '{"criteria":["test"]}', '{"schemaVersion":2}', 'user_override')`).run(NOW, NOW);
       const task = db.prepare<[], Record<string, unknown>>('SELECT * FROM tasks').get();
       const migrations = db.prepare('SELECT * FROM schema_migrations').all();
-      expect((await migrateSqliteStorage(session)).appliedVersions).toEqual([15]);
+      expect((await migrateSqliteStorage(session)).appliedVersions).toEqual([15, 16]);
       expect(db.prepare('SELECT * FROM tasks').get()).toEqual({ ...task, kind: 'coding', manual_block: 0 });
       expect(db.prepare('SELECT * FROM schema_migrations WHERE version <= 14').all()).toEqual(migrations);
       expect(() => db.prepare("UPDATE tasks SET kind = 'runtime'").run()).toThrow();
@@ -271,7 +271,7 @@ describe('P03-4 deterministic Task DAG', () => {
   });
 
   it('freezes v1-v14 checksums while appending the Task kind/manual block migration', () => {
-    expect(SQLITE_MIGRATIONS.at(-1)?.version).toBe(15);
+    expect(SQLITE_MIGRATIONS[14]?.version).toBe(15);
     expect(createHash('sha256').update(SQLITE_MIGRATIONS.slice(0, 14).map(m => m.checksum).join('\n')).digest('hex'))
       .toBe('a40bab7fd76d55e42472425df6057b88b8ff7411c47564d95fef87041294cf96');
   });

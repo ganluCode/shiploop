@@ -1,0 +1,60 @@
+import type { AttemptRecord, WorkspaceLeaseRecord } from './attempt-store.js';
+import { validateAttemptInputSnapshot } from './attempt-store.js';
+import type { PreparedExecutionInputGroup } from './execution-input-prepare.js';
+import type { VerifiedWorkWorkspace } from './work-resources.js';
+import { requirePlainObject, rejectUnknownKeys, validateStableId, validationError } from './validation.js';
+
+export interface TaskClaimInput {
+  readonly claimKey: string;
+  readonly projectId: string;
+  readonly runId: string;
+  readonly taskId: string;
+  readonly owner: string;
+  readonly hostInstanceId: string;
+  readonly expectedRevision: number;
+  /** Expected current Task fence, not a native Session/request/checkpoint identity. */
+  readonly executionVersion: number;
+  readonly workspace: VerifiedWorkWorkspace;
+  readonly leaseUntilUtcMs: number;
+  readonly inputSnapshot: PreparedExecutionInputGroup;
+}
+export interface TaskClaimReceipt {
+  readonly schemaVersion: 1;
+  readonly claimKey: string;
+  readonly batchId: string;
+  readonly attempt: AttemptRecord;
+  readonly taskRevision: number;
+  readonly reservationId: string;
+  readonly leases: readonly WorkspaceLeaseRecord[];
+  readonly counts: { readonly batchAttempts: number; readonly runAttempts: number;
+    readonly taskAttempts: number; readonly codeAttempts: number };
+  readonly eventId: string;
+}
+export interface TaskClaimResult {
+  /** Historical replay is evidence, never permission to start another invocation. */
+  readonly replayed: boolean;
+  readonly receipt: TaskClaimReceipt;
+}
+export interface TaskClaimStore {
+  /** Returns only after committing its own short synchronous write transaction. */
+  claimTask(input: unknown): TaskClaimResult;
+}
+
+export function validateTaskClaimInput(value: unknown, inspectWorkspace: (token: unknown) => VerifiedWorkWorkspace): TaskClaimInput {
+  const context = { operation: 'TaskClaim.validate' };
+  const raw = requirePlainObject(value, context, 'input');
+  rejectUnknownKeys(raw, ['claimKey', 'projectId', 'runId', 'taskId', 'owner', 'hostInstanceId',
+    'expectedRevision', 'executionVersion', 'workspace', 'leaseUntilUtcMs', 'inputSnapshot'], context, 'input');
+  const id = (key: string) => validateStableId(raw[key], context, key);
+  const integer = (key: string, minimum: number) => {
+    const n = raw[key];
+    if (!Number.isSafeInteger(n) || Number(n) < minimum || Number(n) >= Number.MAX_SAFE_INTEGER) {
+      throw validationError(context, key, 'invalid_safe_integer');
+    }
+    return n as number;
+  };
+  return { claimKey: id('claimKey'), projectId: id('projectId'), runId: id('runId'), taskId: id('taskId'),
+    owner: id('owner'), hostInstanceId: id('hostInstanceId'), expectedRevision: integer('expectedRevision', 1),
+    executionVersion: integer('executionVersion', 0), leaseUntilUtcMs: integer('leaseUntilUtcMs', 1),
+    workspace: inspectWorkspace(raw.workspace), inputSnapshot: validateAttemptInputSnapshot(raw.inputSnapshot) };
+}

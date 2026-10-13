@@ -1204,6 +1204,29 @@ ALTER TABLE tasks ADD COLUMN manual_block INTEGER NOT NULL DEFAULT 0
   CONSTRAINT tasks_manual_block_check CHECK (typeof(manual_block) = 'integer' AND manual_block IN (0, 1));
 `;
 
+const MIGRATION_016_SQL = `
+CREATE TABLE task_claim_receipts (
+  id TEXT PRIMARY KEY NOT NULL,
+  project_id TEXT NOT NULL,
+  attempt_id TEXT NOT NULL,
+  request_digest TEXT NOT NULL,
+  receipt TEXT NOT NULL,
+  CONSTRAINT task_claim_receipts_id_check CHECK (length(id) > 0),
+  CONSTRAINT task_claim_receipts_digest_check CHECK (length(request_digest) = 64 AND request_digest NOT GLOB '*[^0-9a-f]*'),
+  CONSTRAINT task_claim_receipts_json_check CHECK (CASE WHEN json_valid(receipt) THEN
+    json_type(receipt) = 'object' AND json_extract(receipt, '$.schemaVersion') IS 1
+    AND json_extract(receipt, '$.claimKey') IS id
+    AND json_extract(receipt, '$.attempt.id') IS attempt_id
+    AND json_extract(receipt, '$.attempt.projectId') IS project_id ELSE 0 END),
+  CONSTRAINT task_claim_receipts_attempt_fk FOREIGN KEY (project_id, attempt_id) REFERENCES attempts (project_id, id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX task_claim_receipts_attempt_unique ON task_claim_receipts (attempt_id);
+CREATE TRIGGER task_claim_receipts_immutable_update BEFORE UPDATE ON task_claim_receipts
+BEGIN SELECT RAISE(ABORT, 'task claim receipts are immutable'); END;
+CREATE TRIGGER task_claim_receipts_immutable_delete BEFORE DELETE ON task_claim_receipts
+BEGIN SELECT RAISE(ABORT, 'task claim receipts are immutable'); END;
+`;
+
 /** 已声明的全部 SQLite 迁移，按版本升序；F-005 的执行器按此顺序应用并核对摘要。 */
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
@@ -1280,5 +1303,10 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
     version: 15,
     sql: MIGRATION_015_SQL,
     checksum: sha256Hex(MIGRATION_015_SQL),
+  },
+  {
+    version: 16,
+    sql: MIGRATION_016_SQL,
+    checksum: sha256Hex(MIGRATION_016_SQL),
   },
 ];

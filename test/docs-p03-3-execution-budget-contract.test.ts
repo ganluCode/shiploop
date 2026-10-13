@@ -49,7 +49,7 @@ describe('P03-3 / F-001 执行预算契约文档', () => {
     const doc = readContractDoc();
     const versions = SQLITE_MIGRATIONS.map((migration) => migration.version);
     // §1 开工事实为 v1..v8（原文保留）；P03-3 / F-002 接续 v9 并在 §1 登记。
-    expect(versions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+    expect(versions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
     expect(doc).toContain('v1..v8');
     expect(doc).toContain('v9');
     expect(doc).toContain('0e76ad8');

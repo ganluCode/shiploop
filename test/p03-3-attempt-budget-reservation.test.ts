@@ -373,7 +373,7 @@ describe('F-006 迁移 v11：Task 尝试计数列与预占账本表', () => {
       expect(task).toEqual({ revision: 3, attempt_counter: 0, code_attempts_used: 0 });
       const applied = db.prepare('SELECT version FROM schema_migrations ORDER BY version').all() as { version: number }[];
       // v10 数据经 v11（双计数列/账本表）升级保留；P03-3 / F-007 起全量迁移止于 v12。
-      expect(applied.at(-1)).toEqual({ version: 15 });
+      expect(applied.at(-1)).toEqual({ version: 16 });
     } finally {
       session.close();
     }

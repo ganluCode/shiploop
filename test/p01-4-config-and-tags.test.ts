@@ -665,7 +665,7 @@ describe('F-006 当前配置检查组（P01-FR2-CONFIG）', () => {
       let executionRowCounts: Record<string, number> = {};
       try {
         tables = listUserTables(rawSession);
-        for (const table of ['execution_batches', 'runs', 'batch_budget_revisions', 'attempts', 'workspace_leases']) {
+        for (const table of ['execution_batches', 'runs', 'batch_budget_revisions', 'attempts', 'workspace_leases', 'task_claim_receipts']) {
           executionRowCounts[table] = (
             rawSession.database.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }
           ).n;
@@ -702,6 +702,7 @@ describe('F-006 当前配置检查组（P01-FR2-CONFIG）', () => {
           'batch_budget_revisions',
           // P03-3 / F-006：Task 尝试预占账本（迁移 v11；空表，无执行实体行）。
           'task_attempt_reservations',
+          'task_claim_receipts',
           // P03-3 / F-007：Runtime 启动预占账本（迁移 v12；空表，无执行实体行）。
           'runtime_start_reservations',
           'run_outcome_settlements',
@@ -724,6 +725,7 @@ describe('F-006 当前配置检查组（P01-FR2-CONFIG）', () => {
         batch_budget_revisions: 0,
         attempts: 0,
         workspace_leases: 0,
+        task_claim_receipts: 0,
       });
 
       const ref = fixture.writeEvidence(

@@ -58,20 +58,24 @@ export const EXECUTION_RUN_DISPATCHED_EVENT_TYPE = 'execution.run.dispatched';
  */
 export const EXECUTION_BUDGET_REVISED_EVENT_TYPE = 'execution.budget.revised';
 
+export const TASK_CLAIMED_EVENT_TYPE = 'task.claimed';
+
 /** 执行域事件白名单（与 ports/events.ts 公开白名单同源）。 */
 export const EXECUTION_EVENT_TYPES = [
   EXECUTION_RUN_DISPATCHED_EVENT_TYPE,
   EXECUTION_BUDGET_REVISED_EVENT_TYPE,
+  TASK_CLAIMED_EVENT_TYPE,
 ] as const;
 export type ExecutionEventType = (typeof EXECUTION_EVENT_TYPES)[number];
 
 interface ExecutionEventSpec {
-  readonly aggregateType: 'run' | 'execution_batch';
-  readonly payloadKey: 'dispatched' | 'revised';
+  readonly aggregateType: 'run' | 'execution_batch' | 'task';
+  readonly payloadKey: 'dispatched' | 'revised' | 'claimed';
 }
 
 const EXECUTION_EVENT_SPECS: Readonly<Record<ExecutionEventType, ExecutionEventSpec>> = Object.freeze({
   [EXECUTION_RUN_DISPATCHED_EVENT_TYPE]: Object.freeze({ aggregateType: 'run', payloadKey: 'dispatched' }),
+  [TASK_CLAIMED_EVENT_TYPE]: Object.freeze({ aggregateType: 'task', payloadKey: 'claimed' }),
   [EXECUTION_BUDGET_REVISED_EVENT_TYPE]: Object.freeze({ aggregateType: 'execution_batch', payloadKey: 'revised' }),
 });
 
@@ -535,7 +539,7 @@ export function validateExecutionRunInsertInput(
 export interface ValidatedExecutionEventAppendInput {
   readonly projectId: string;
   readonly eventType: ExecutionEventType;
-  readonly aggregateType: 'run' | 'execution_batch';
+  readonly aggregateType: 'run' | 'execution_batch' | 'task';
   readonly aggregateId: string;
   readonly aggregateRevision: number;
   readonly payload: Readonly<Record<string, unknown>>;
