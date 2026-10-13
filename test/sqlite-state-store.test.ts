@@ -453,7 +453,7 @@ describe('F-006 durability across close and reopen', () => {
         // approvals 决策记录表 + P03-2 F-003 v8 检查政策身份绑定 + P03-3 F-002 v9
         // 单 Feature 执行域三表 + P03-3 F-003 v10 回执重建 + P03-3 F-006 v11 Task
         // 尝试预占账本 + P03-3 F-007 v12 Runtime 启动预占账本），库未被重建。
-        expect(countRows(second.session, 'schema_migrations')).toBe(13);
+        expect(countRows(second.session, 'schema_migrations')).toBe(14);
       } finally {
         second.close();
       }

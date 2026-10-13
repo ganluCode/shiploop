@@ -1055,6 +1055,144 @@ BEGIN
 END;
 `;
 
+const MIGRATION_014_SQL = `
+CREATE UNIQUE INDEX runs_feature_id_id_unique ON runs (feature_id, id);
+CREATE UNIQUE INDEX artifacts_project_id_id_unique ON artifacts (project_id, id);
+ALTER TABLE tasks ADD COLUMN execution_version INTEGER NOT NULL DEFAULT 0
+  CONSTRAINT tasks_execution_version_non_negative_check CHECK (typeof(execution_version) = 'integer' AND execution_version >= 0);
+
+CREATE TABLE attempts (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  feature_id TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  number INTEGER NOT NULL,
+  owner_id TEXT NOT NULL,
+  host_instance_id TEXT NOT NULL,
+  execution_version INTEGER NOT NULL,
+  lease_until INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'preparing',
+  execution_stage TEXT NOT NULL DEFAULT 'preflight',
+  input_snapshot TEXT NOT NULL,
+  input_digest TEXT NOT NULL,
+  input_ref TEXT NOT NULL,
+  session_id TEXT,
+  invocation_id TEXT,
+  code_ref TEXT,
+  error_kind TEXT,
+  diagnostic_ref TEXT,
+  started_at INTEGER,
+  ended_at INTEGER,
+  duration_ms INTEGER,
+  exit_code INTEGER,
+  usage_summary TEXT,
+  CONSTRAINT attempts_revision_check CHECK (revision >= 1),
+  CONSTRAINT attempts_number_check CHECK (typeof(number) = 'integer' AND number >= 1),
+  CONSTRAINT attempts_version_check CHECK (typeof(execution_version) = 'integer' AND execution_version >= 1),
+  CONSTRAINT attempts_owner_check CHECK (length(owner_id) > 0 AND length(host_instance_id) > 0),
+  CONSTRAINT attempts_lease_check CHECK (typeof(lease_until) = 'integer' AND lease_until >= 0),
+  CONSTRAINT attempts_status_check CHECK (status IN ('preparing', 'executing', 'verifying', 'succeeded', 'failed', 'cancelled', 'interrupted')),
+  CONSTRAINT attempts_stage_check CHECK (execution_stage IN ('preflight', 'runtime', 'verification', 'commit', 'cleanup')),
+  CONSTRAINT attempts_snapshot_check CHECK (CASE WHEN json_valid(input_snapshot) THEN
+    json_type(input_snapshot) = 'object' AND json_type(input_snapshot, '$.schemaVersion') IS 'integer'
+    AND json_extract(input_snapshot, '$.schemaVersion') = 1
+    AND json_extract(input_snapshot, '$.projectId') IS project_id
+    AND json_extract(input_snapshot, '$.featureId') IS feature_id
+    AND json_extract(input_snapshot, '$.taskId') IS task_id
+    AND json_extract(input_snapshot, '$.digests.snapshotDigest') IS input_digest
+    AND json_extract(input_snapshot, '$.group.snapshot.artifactId') IS input_ref
+    ELSE 0 END),
+  CONSTRAINT attempts_digest_check CHECK (length(input_digest) = 64 AND input_digest NOT GLOB '*[^0-9a-f]*'),
+  CONSTRAINT attempts_duration_check CHECK (duration_ms IS NULL OR (typeof(duration_ms) = 'integer' AND duration_ms >= 0)),
+  CONSTRAINT attempts_exit_check CHECK (exit_code IS NULL OR typeof(exit_code) = 'integer'),
+  CONSTRAINT attempts_times_check CHECK ((started_at IS NULL OR (typeof(started_at) = 'integer' AND started_at >= 0))
+    AND (ended_at IS NULL OR (typeof(ended_at) = 'integer' AND ended_at >= 0))
+    AND (started_at IS NULL OR ended_at IS NULL OR ended_at >= started_at)),
+  CONSTRAINT attempts_usage_check CHECK (usage_summary IS NULL OR CASE WHEN json_valid(usage_summary) THEN
+    json_type(usage_summary) = 'object' AND json_type(usage_summary, '$.schemaVersion') IS 'integer'
+    AND json_extract(usage_summary, '$.schemaVersion') = 1 ELSE 0 END),
+  CONSTRAINT attempts_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT attempts_feature_fk FOREIGN KEY (project_id, feature_id) REFERENCES features (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT attempts_run_fk FOREIGN KEY (feature_id, run_id) REFERENCES runs (feature_id, id) ON DELETE RESTRICT,
+  CONSTRAINT attempts_task_fk FOREIGN KEY (feature_id, task_id) REFERENCES tasks (feature_id, id) ON DELETE RESTRICT,
+  CONSTRAINT attempts_input_fk FOREIGN KEY (project_id, input_ref) REFERENCES artifacts (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT attempts_code_fk FOREIGN KEY (project_id, code_ref) REFERENCES artifacts (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT attempts_diagnostic_fk FOREIGN KEY (project_id, diagnostic_ref) REFERENCES artifacts (project_id, id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX attempts_project_id_id_unique ON attempts (project_id, id);
+CREATE UNIQUE INDEX attempts_task_number_unique ON attempts (task_id, number);
+CREATE UNIQUE INDEX attempts_active_task_unique ON attempts (task_id) WHERE status IN ('preparing', 'executing', 'verifying');
+CREATE UNIQUE INDEX attempts_session_unique ON attempts (session_id) WHERE session_id IS NOT NULL;
+CREATE UNIQUE INDEX attempts_invocation_unique ON attempts (invocation_id) WHERE invocation_id IS NOT NULL;
+CREATE INDEX attempts_run_id_index ON attempts (run_id);
+
+CREATE TRIGGER attempts_group_artifacts_check BEFORE INSERT ON attempts
+WHEN EXISTS (
+  SELECT 1 FROM json_each(NEW.input_snapshot, '$.group') AS ref
+  WHERE NOT EXISTS (SELECT 1 FROM artifacts AS a WHERE a.project_id = NEW.project_id
+    AND a.id = json_extract(ref.value, '$.artifactId') AND a.status = 'ready'
+    AND a.version = json_extract(ref.value, '$.version')
+    AND a.content_hash = json_extract(ref.value, '$.contentHash')
+    AND a.size_bytes = json_extract(ref.value, '$.sizeBytes')
+    AND a.storage_locator = json_extract(ref.value, '$.locator')
+    AND a.media_type = json_extract(ref.value, '$.mediaType'))
+) OR EXISTS (
+  SELECT 1 FROM json_each(NEW.input_snapshot, '$.requiredInputs') AS ref
+  WHERE NOT EXISTS (SELECT 1 FROM artifacts AS a WHERE a.project_id = NEW.project_id
+    AND json_extract(ref.value, '$.projectId') = NEW.project_id
+    AND a.id = json_extract(ref.value, '$.artifactId') AND a.status = 'ready'
+    AND a.version = json_extract(ref.value, '$.version')
+    AND a.content_hash = json_extract(ref.value, '$.contentHash')
+    AND a.size_bytes = json_extract(ref.value, '$.sizeBytes')
+    AND a.storage_locator = json_extract(ref.value, '$.locator')
+    AND a.media_type = json_extract(ref.value, '$.mediaType'))
+)
+BEGIN SELECT RAISE(ABORT, 'attempt input artifact identity mismatch'); END;
+
+CREATE TRIGGER attempts_input_immutable BEFORE UPDATE ON attempts
+WHEN NEW.input_snapshot IS NOT OLD.input_snapshot OR NEW.input_digest IS NOT OLD.input_digest
+  OR NEW.input_ref IS NOT OLD.input_ref OR NEW.project_id IS NOT OLD.project_id
+  OR NEW.feature_id IS NOT OLD.feature_id OR NEW.task_id IS NOT OLD.task_id
+  OR NEW.run_id IS NOT OLD.run_id OR NEW.number IS NOT OLD.number
+  OR NEW.id IS NOT OLD.id OR NEW.owner_id IS NOT OLD.owner_id
+  OR NEW.host_instance_id IS NOT OLD.host_instance_id OR NEW.execution_version IS NOT OLD.execution_version
+  OR (OLD.session_id IS NOT NULL AND NEW.session_id IS NOT OLD.session_id)
+  OR (OLD.invocation_id IS NOT NULL AND NEW.invocation_id IS NOT OLD.invocation_id)
+BEGIN SELECT RAISE(ABORT, 'attempt input and business identity are immutable'); END;
+
+CREATE TABLE workspace_leases (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  resource_key TEXT NOT NULL,
+  resource_kind TEXT NOT NULL,
+  owner_kind TEXT NOT NULL,
+  owner_id TEXT NOT NULL,
+  host_instance_id TEXT NOT NULL,
+  execution_version INTEGER NOT NULL,
+  state TEXT NOT NULL DEFAULT 'held',
+  lease_until INTEGER NOT NULL,
+  process_identity TEXT,
+  CONSTRAINT workspace_leases_revision_check CHECK (revision >= 1),
+  CONSTRAINT workspace_leases_resource_check CHECK (length(resource_key) > 0 AND resource_kind IN ('global', 'project', 'workspace')),
+  CONSTRAINT workspace_leases_owner_check CHECK (owner_kind = 'attempt' AND length(host_instance_id) > 0),
+  CONSTRAINT workspace_leases_version_check CHECK (typeof(execution_version) = 'integer' AND execution_version >= 1),
+  CONSTRAINT workspace_leases_state_check CHECK (state IN ('held', 'quarantined')),
+  CONSTRAINT workspace_leases_lease_check CHECK (typeof(lease_until) = 'integer' AND lease_until >= 0),
+  CONSTRAINT workspace_leases_process_check CHECK (process_identity IS NULL OR (json_valid(process_identity) AND json_type(process_identity) = 'object')),
+  CONSTRAINT workspace_leases_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT workspace_leases_attempt_fk FOREIGN KEY (project_id, owner_id) REFERENCES attempts (project_id, id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX workspace_leases_resource_key_unique ON workspace_leases (resource_key);
+CREATE INDEX workspace_leases_owner_id_index ON workspace_leases (owner_id);
+`;
+
 function sha256Hex(text: string): string {
   return createHash('sha256').update(text, 'utf8').digest('hex');
 }
@@ -1125,5 +1263,10 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
     version: 13,
     sql: MIGRATION_013_SQL,
     checksum: sha256Hex(MIGRATION_013_SQL),
+  },
+  {
+    version: 14,
+    sql: MIGRATION_014_SQL,
+    checksum: sha256Hex(MIGRATION_014_SQL),
   },
 ];

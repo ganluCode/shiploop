@@ -559,7 +559,9 @@ describe('F-008 feature.plan.revise 修订闭环', () => {
     expect(featureRow.plan_status).toBe('draft');
     expect(s.probe.tableExists('runs')).toBe(true);
     expect(s.probe.selectAll('SELECT COUNT(*) AS n FROM runs')).toEqual([{ n: 0 }]);
-    expect(s.probe.tableExists('attempts')).toBe(false);
+    expect(s.probe.tableExists('attempts')).toBe(true);
+    expect(s.probe.selectAll('SELECT COUNT(*) AS n FROM attempts')).toEqual([{ n: 0 }]);
+    expect(s.probe.selectAll('SELECT COUNT(*) AS n FROM workspace_leases')).toEqual([{ n: 0 }]);
     expect(s.probe.tableExists('execution_batches')).toBe(true);
     expect(s.probe.selectAll('SELECT COUNT(*) AS n FROM execution_batches')).toEqual([{ n: 0 }]);
     expect(JSON.stringify(result)).not.toMatch(/approved|batch|attempt|"run"/i);

@@ -1,0 +1,223 @@
+import type { PreparedExecutionInputGroup, ExecutionInputGroupBodyRef } from './execution-input-prepare.js';
+import { CONTEXT_INPUT_SCHEMA_VERSION } from './context-build.js';
+import { validateExecutionInputRef } from './execution-input.js';
+import { EXECUTION_SNAPSHOT_MAX_BYTES } from './execution-store.js';
+import {
+  rejectUnknownKeys, requirePlainObject, validateStableId, validateSha256Digest,
+  validateArtifactLocator, validateNonNegativeInteger, validatePositiveInteger, validationError,
+} from './validation.js';
+
+export const ATTEMPT_STATUSES = ['preparing', 'executing', 'verifying', 'succeeded', 'failed', 'cancelled', 'interrupted'] as const;
+export const ACTIVE_ATTEMPT_STATUSES = ['preparing', 'executing', 'verifying'] as const;
+export const ATTEMPT_EXECUTION_STAGES = ['preflight', 'runtime', 'verification', 'commit', 'cleanup'] as const;
+export type AttemptStatus = typeof ATTEMPT_STATUSES[number];
+export type AttemptExecutionStage = typeof ATTEMPT_EXECUTION_STAGES[number];
+
+/** Unknown measurements remain null, including partially reported usage. */
+export interface AttemptUsageSummary {
+  readonly schemaVersion: 1;
+  readonly inputTokens: number | null;
+  readonly outputTokens: number | null;
+  readonly costMicros: number | null;
+  readonly currency: string | null;
+}
+export interface AttemptRecord {
+  readonly id: string;
+  readonly createdAtUtcMs: number;
+  readonly updatedAtUtcMs: number;
+  readonly revision: number;
+  readonly projectId: string;
+  readonly featureId: string;
+  readonly runId: string;
+  readonly taskId: string;
+  readonly number: number;
+  readonly owner: string;
+  readonly hostInstanceId: string;
+  readonly executionVersion: number;
+  readonly leaseUntilUtcMs: number;
+  readonly status: AttemptStatus;
+  readonly executionStage: AttemptExecutionStage;
+  /** Frozen P03-2 prepared group identity; bodies live in immutable Artifacts. */
+  readonly inputSnapshot: PreparedExecutionInputGroup;
+  readonly inputDigest: string;
+  readonly inputRef: string;
+  /** Core identities, never SDK requestId/providerSessionId aliases. No Session table here. */
+  readonly sessionId: string | null;
+  readonly invocationId: string | null;
+  readonly codeRef: string | null;
+  readonly errorKind: string | null;
+  readonly diagnosticRef: string | null;
+  readonly startedAtUtcMs: number | null;
+  readonly endedAtUtcMs: number | null;
+  readonly durationMs: number | null;
+  readonly exitCode: number | null;
+  readonly usageSummary: AttemptUsageSummary | null;
+}
+export interface WorkspaceLeaseRecord {
+  readonly id: string;
+  readonly createdAtUtcMs: number;
+  readonly updatedAtUtcMs: number;
+  readonly revision: number;
+  readonly projectId: string;
+  readonly resourceKey: string;
+  readonly resourceKind: 'global' | 'project' | 'workspace';
+  readonly ownerKind: 'attempt';
+  readonly owner: string;
+  readonly hostInstanceId: string;
+  readonly executionVersion: number;
+  readonly state: 'held' | 'quarantined';
+  readonly leaseUntilUtcMs: number;
+  readonly processIdentity: AttemptProcessIdentity | null;
+}
+export interface AttemptProcessIdentity {
+  readonly schemaVersion: 1;
+  readonly pid: number;
+  readonly startedAtUtcMs: number;
+  readonly processGroupId: number | null;
+}
+/** Synchronous consistent reads, also usable inside the caller's transaction. */
+export interface AttemptStore {
+  getAttempt(projectId: unknown, attemptId: unknown): AttemptRecord;
+  listTaskAttempts(projectId: unknown, taskId: unknown): readonly AttemptRecord[];
+  listWorkspaceLeases(projectId: unknown): readonly WorkspaceLeaseRecord[];
+}
+
+const context = { operation: 'AttemptStore.validate' };
+function object(value: unknown, keys: readonly string[], field: string): Record<string, unknown> {
+  const raw = requirePlainObject(value, context, field);
+  rejectUnknownKeys(raw, keys, context, field);
+  return raw;
+}
+function text(value: unknown, field: string, max = 128): string {
+  if (typeof value !== 'string' || !value.trim() || value.length > max || /[\0-\x1f\x7f]/.test(value)) {
+    throw validationError(context, field, 'invalid_bounded_text');
+  }
+  return value;
+}
+function id(value: unknown, field: string): string { return validateStableId(value, context, field); }
+function digest(value: unknown, field: string): string { return validateSha256Digest(value, context, field); }
+function nonnegative(value: unknown, field: string): number {
+  if (!Number.isSafeInteger(value)) throw validationError(context, field, 'invalid_safe_integer');
+  return validateNonNegativeInteger(value, context, field);
+}
+function positive(value: unknown, field: string): number {
+  if (!Number.isSafeInteger(value)) throw validationError(context, field, 'invalid_safe_integer');
+  return validatePositiveInteger(value, context, field);
+}
+function nullable<T>(value: unknown, validate: (v: unknown, f: string) => T, field: string): T | null {
+  return value === null ? null : validate(value, field);
+}
+function member<T extends string>(value: unknown, allowed: readonly T[], field: string): T {
+  if (!allowed.includes(value as T)) throw validationError(context, field, 'invalid_enum');
+  return value as T;
+}
+function version(value: unknown, field: string): 1 {
+  if (value !== 1) throw validationError(context, field, 'unsupported_schema_version');
+  return 1;
+}
+function bodyRef(value: unknown, field: string): ExecutionInputGroupBodyRef {
+  const raw = object(value, ['artifactId', 'version', 'contentHash', 'sizeBytes', 'locator', 'mediaType'], field);
+  return { artifactId: id(raw.artifactId, `${field}.artifactId`), version: positive(raw.version, `${field}.version`),
+    contentHash: digest(raw.contentHash, `${field}.contentHash`), sizeBytes: nonnegative(raw.sizeBytes, `${field}.sizeBytes`),
+    locator: validateArtifactLocator(raw.locator, context, `${field}.locator`), mediaType: text(raw.mediaType, `${field}.mediaType`) };
+}
+
+/** Reuses the prepared input contract; no inline content, credential or arbitrary JSON fields. */
+export function validateAttemptInputSnapshot(value: unknown): PreparedExecutionInputGroup {
+  const raw = object(value, ['schemaVersion', 'projectId', 'featureId', 'taskId', 'group', 'requiredInputs',
+    'digests', 'approval', 'taskRevision', 'promptBytes', 'tokenEstimate', 'preparedAtUtcMs'], 'inputSnapshot');
+  version(raw.schemaVersion, 'inputSnapshot.schemaVersion');
+  if (raw.schemaVersion !== CONTEXT_INPUT_SCHEMA_VERSION) throw validationError(context, 'inputSnapshot', 'unsupported_context_version');
+  const projectId = id(raw.projectId, 'inputSnapshot.projectId');
+  const group = object(raw.group, ['snapshot', 'manifest', 'prompt'], 'inputSnapshot.group');
+  const digests = object(raw.digests, ['snapshotDigest', 'manifestDigest', 'promptDigest', 'strategyCopyDigest', 'permissionsDigest'], 'inputSnapshot.digests');
+  const approval = object(raw.approval, ['planDigest', 'checkPolicyDigest', 'decisionId', 'featureRevision'], 'inputSnapshot.approval');
+  const estimate = object(raw.tokenEstimate, ['value', 'kind', 'method'], 'inputSnapshot.tokenEstimate');
+  if (!Array.isArray(raw.requiredInputs) || raw.requiredInputs.length > 256) throw validationError(context, 'inputSnapshot.requiredInputs', 'invalid_bounded_array');
+  const requiredInputs = raw.requiredInputs.map(ref => {
+    const input = validateExecutionInputRef(ref, context.operation);
+    positive(input.version, 'inputSnapshot.requiredInputs.version');
+    nonnegative(input.sizeBytes, 'inputSnapshot.requiredInputs.sizeBytes');
+    return input;
+  });
+  if (requiredInputs.some(ref => ref.projectId !== projectId)) throw validationError(context, 'inputSnapshot.requiredInputs', 'project_mismatch');
+  const result: PreparedExecutionInputGroup = {
+    schemaVersion: 1, projectId, featureId: id(raw.featureId, 'inputSnapshot.featureId'), taskId: id(raw.taskId, 'inputSnapshot.taskId'),
+    group: { snapshot: bodyRef(group.snapshot, 'inputSnapshot.group.snapshot'),
+      manifest: bodyRef(group.manifest, 'inputSnapshot.group.manifest'), prompt: bodyRef(group.prompt, 'inputSnapshot.group.prompt') },
+    requiredInputs, digests: { snapshotDigest: digest(digests.snapshotDigest, 'inputSnapshot.digests.snapshotDigest'),
+      manifestDigest: digest(digests.manifestDigest, 'inputSnapshot.digests.manifestDigest'),
+      promptDigest: digest(digests.promptDigest, 'inputSnapshot.digests.promptDigest'),
+      strategyCopyDigest: digest(digests.strategyCopyDigest, 'inputSnapshot.digests.strategyCopyDigest'),
+      permissionsDigest: digest(digests.permissionsDigest, 'inputSnapshot.digests.permissionsDigest') },
+    approval: { planDigest: digest(approval.planDigest, 'inputSnapshot.approval.planDigest'),
+      checkPolicyDigest: digest(approval.checkPolicyDigest, 'inputSnapshot.approval.checkPolicyDigest'),
+      decisionId: nullable(approval.decisionId, id, 'inputSnapshot.approval.decisionId'),
+      featureRevision: positive(approval.featureRevision, 'inputSnapshot.approval.featureRevision') },
+    taskRevision: positive(raw.taskRevision, 'inputSnapshot.taskRevision'), promptBytes: nonnegative(raw.promptBytes, 'inputSnapshot.promptBytes'),
+    tokenEstimate: { value: nonnegative(estimate.value, 'inputSnapshot.tokenEstimate.value'),
+      kind: member(estimate.kind, ['estimation'], 'inputSnapshot.tokenEstimate.kind'), method: text(estimate.method, 'inputSnapshot.tokenEstimate.method') },
+    preparedAtUtcMs: nonnegative(raw.preparedAtUtcMs, 'inputSnapshot.preparedAtUtcMs'),
+  };
+  if (Buffer.byteLength(JSON.stringify(result), 'utf8') > EXECUTION_SNAPSHOT_MAX_BYTES) throw validationError(context, 'inputSnapshot', 'limit_exceeded');
+  return result;
+}
+
+export function validateAttemptUsageSummary(value: unknown): AttemptUsageSummary | null {
+  if (value === null) return null;
+  const raw = object(value, ['schemaVersion', 'inputTokens', 'outputTokens', 'costMicros', 'currency'], 'usageSummary');
+  const currency = nullable(raw.currency, text, 'usageSummary.currency');
+  if (currency !== null && !/^[A-Z]{3}$/.test(currency)) throw validationError(context, 'usageSummary.currency', 'invalid_currency');
+  const costMicros = nullable(raw.costMicros, nonnegative, 'usageSummary.costMicros');
+  if (costMicros !== null && currency === null) throw validationError(context, 'usageSummary.currency', 'cost_requires_currency');
+  return { schemaVersion: version(raw.schemaVersion, 'usageSummary.schemaVersion'),
+    inputTokens: nullable(raw.inputTokens, nonnegative, 'usageSummary.inputTokens'),
+    outputTokens: nullable(raw.outputTokens, nonnegative, 'usageSummary.outputTokens'), costMicros, currency };
+}
+
+export function validateAttemptRecord(value: unknown): AttemptRecord {
+  const raw = object(value, ['id', 'createdAtUtcMs', 'updatedAtUtcMs', 'revision', 'projectId', 'featureId', 'runId', 'taskId',
+    'number', 'owner', 'hostInstanceId', 'executionVersion', 'leaseUntilUtcMs', 'status', 'executionStage',
+    'inputSnapshot', 'inputDigest', 'inputRef', 'sessionId', 'invocationId', 'codeRef', 'errorKind', 'diagnosticRef',
+    'startedAtUtcMs', 'endedAtUtcMs', 'durationMs', 'exitCode', 'usageSummary'], 'attempt');
+  const inputSnapshot = validateAttemptInputSnapshot(raw.inputSnapshot);
+  const projectId = id(raw.projectId, 'projectId'), featureId = id(raw.featureId, 'featureId'), taskId = id(raw.taskId, 'taskId');
+  const inputDigest = digest(raw.inputDigest, 'inputDigest'), inputRef = id(raw.inputRef, 'inputRef');
+  if (inputSnapshot.projectId !== projectId || inputSnapshot.featureId !== featureId || inputSnapshot.taskId !== taskId
+    || inputSnapshot.digests.snapshotDigest !== inputDigest || inputSnapshot.group.snapshot.artifactId !== inputRef) {
+    throw validationError(context, 'inputSnapshot', 'identity_mismatch');
+  }
+  const startedAtUtcMs = nullable(raw.startedAtUtcMs, nonnegative, 'startedAtUtcMs');
+  const endedAtUtcMs = nullable(raw.endedAtUtcMs, nonnegative, 'endedAtUtcMs');
+  if (startedAtUtcMs !== null && endedAtUtcMs !== null && endedAtUtcMs < startedAtUtcMs) throw validationError(context, 'endedAtUtcMs', 'invalid_time_order');
+  if (raw.exitCode !== null && (typeof raw.exitCode !== 'number' || !Number.isSafeInteger(raw.exitCode))) throw validationError(context, 'exitCode', 'invalid_integer');
+  return { id: id(raw.id, 'id'), createdAtUtcMs: nonnegative(raw.createdAtUtcMs, 'createdAtUtcMs'),
+    updatedAtUtcMs: nonnegative(raw.updatedAtUtcMs, 'updatedAtUtcMs'), revision: positive(raw.revision, 'revision'),
+    projectId, featureId, taskId, runId: id(raw.runId, 'runId'), number: positive(raw.number, 'number'),
+    owner: id(raw.owner, 'owner'), hostInstanceId: id(raw.hostInstanceId, 'hostInstanceId'),
+    executionVersion: positive(raw.executionVersion, 'executionVersion'), leaseUntilUtcMs: nonnegative(raw.leaseUntilUtcMs, 'leaseUntilUtcMs'),
+    status: member(raw.status, ATTEMPT_STATUSES, 'status'), executionStage: member(raw.executionStage, ATTEMPT_EXECUTION_STAGES, 'executionStage'),
+    inputSnapshot, inputDigest, inputRef, sessionId: nullable(raw.sessionId, id, 'sessionId'), invocationId: nullable(raw.invocationId, id, 'invocationId'),
+    codeRef: nullable(raw.codeRef, id, 'codeRef'), diagnosticRef: nullable(raw.diagnosticRef, id, 'diagnosticRef'),
+    errorKind: nullable(raw.errorKind, text, 'errorKind'), startedAtUtcMs, endedAtUtcMs,
+    durationMs: nullable(raw.durationMs, nonnegative, 'durationMs'), exitCode: raw.exitCode as number | null,
+    usageSummary: validateAttemptUsageSummary(raw.usageSummary) };
+}
+
+export function validateWorkspaceLeaseRecord(value: unknown): WorkspaceLeaseRecord {
+  const raw = object(value, ['id', 'createdAtUtcMs', 'updatedAtUtcMs', 'revision', 'projectId', 'resourceKey', 'resourceKind',
+    'ownerKind', 'owner', 'hostInstanceId', 'executionVersion', 'state', 'leaseUntilUtcMs', 'processIdentity'], 'lease');
+  let processIdentity: AttemptProcessIdentity | null = null;
+  if (raw.processIdentity !== null) {
+    const process = object(raw.processIdentity, ['schemaVersion', 'pid', 'startedAtUtcMs', 'processGroupId'], 'processIdentity');
+    processIdentity = { schemaVersion: version(process.schemaVersion, 'processIdentity.schemaVersion'), pid: positive(process.pid, 'processIdentity.pid'),
+      startedAtUtcMs: nonnegative(process.startedAtUtcMs, 'processIdentity.startedAtUtcMs'),
+      processGroupId: nullable(process.processGroupId, positive, 'processIdentity.processGroupId') };
+  }
+  return { id: id(raw.id, 'id'), createdAtUtcMs: nonnegative(raw.createdAtUtcMs, 'createdAtUtcMs'),
+    updatedAtUtcMs: nonnegative(raw.updatedAtUtcMs, 'updatedAtUtcMs'), revision: positive(raw.revision, 'revision'), projectId: id(raw.projectId, 'projectId'),
+    resourceKey: text(raw.resourceKey, 'resourceKey', 4096), resourceKind: member(raw.resourceKind, ['global', 'project', 'workspace'], 'resourceKind'),
+    ownerKind: member(raw.ownerKind, ['attempt'], 'ownerKind'), owner: id(raw.owner, 'owner'), hostInstanceId: id(raw.hostInstanceId, 'hostInstanceId'),
+    executionVersion: positive(raw.executionVersion, 'executionVersion'), state: member(raw.state, ['held', 'quarantined'], 'state'),
+    leaseUntilUtcMs: nonnegative(raw.leaseUntilUtcMs, 'leaseUntilUtcMs'), processIdentity };
+}

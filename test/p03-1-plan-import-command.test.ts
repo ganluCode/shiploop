@@ -832,7 +832,9 @@ describe('F-005 feature.plan.import 导入闭环', () => {
     // Feature 完成或创建执行实体（attempts 等后续表仍未建立）。
     expect(s.probe.tableExists('runs')).toBe(true);
     expect(s.probe.selectAll('SELECT COUNT(*) AS n FROM runs')).toEqual([{ n: 0 }]);
-    expect(s.probe.tableExists('attempts')).toBe(false);
+    expect(s.probe.tableExists('attempts')).toBe(true);
+    expect(s.probe.selectAll('SELECT COUNT(*) AS n FROM attempts')).toEqual([{ n: 0 }]);
+    expect(s.probe.selectAll('SELECT COUNT(*) AS n FROM workspace_leases')).toEqual([{ n: 0 }]);
     expect(s.probe.tableExists('execution_batches')).toBe(true);
     expect(s.probe.selectAll('SELECT COUNT(*) AS n FROM execution_batches')).toEqual([{ n: 0 }]);
     expect(

@@ -305,11 +305,12 @@ afterEach(() => {
 async function openHarness(
   options: SeedOptions = {},
   clockInitial: number = NOW,
+  schemaVersion = SQLITE_MIGRATIONS.length,
 ): Promise<Harness> {
   const sandbox = createTempSandbox('shiploop-p033-f007-');
   openSandbox = sandbox;
   const session = openSqliteStorageSession({ path: join(sandbox.path, 'state.db') });
-  await migrateSqliteStorage(session);
+  await migrateSqliteStorage(session, { migrations: SQLITE_MIGRATIONS.slice(0, schemaVersion) });
   let clock = clockInitial;
   const access = createSqliteExecutionAccess(session, { nowUtcMs: () => clock });
   const seed = seedGraph(session.database, options);
@@ -388,8 +389,8 @@ function expectBudgetExhausted(
  * ------------------------------------------------------------------ */
 
 describe('F-007 迁移 v12：Runtime 启动预占账本表', () => {
-  it('空库全量迁移后账本表就绪（幂等身份/外键链），不提前建设会话记录或 Runner 表', async () => {
-    const h = await openHarness();
+  it('空库迁移至 v12 后账本表就绪（幂等身份/外键链），不提前建设会话记录或 Runner 表', async () => {
+    const h = await openHarness({}, NOW, 12);
     try {
       const columns = h.db
         .prepare('SELECT name FROM pragma_table_info(?)')
@@ -467,7 +468,7 @@ describe('F-007 迁移 v12：Runtime 启动预占账本表', () => {
     const session = openSqliteStorageSession({ path: dbPath });
     try {
       const result = await migrateSqliteStorage(session);
-      expect(result.appliedVersions).toEqual([12, 13]);
+      expect(result.appliedVersions).toEqual([12, 13, 14]);
       const batch = session.database
         .prepare('SELECT runtime_starts, attempts_created, budget_snapshot FROM execution_batches WHERE id = ?')
         .get(graph.batchId) as { runtime_starts: number; attempts_created: number; budget_snapshot: string };
@@ -503,7 +504,7 @@ describe('F-007 迁移 v12：Runtime 启动预占账本表', () => {
     }
     // 历史迁移不被改写：版本连续且 v12 为唯一新增追加。
     expect(SQLITE_MIGRATIONS.map((migration) => migration.version)).toEqual([
-      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13,
+      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14,
     ]);
   });
 

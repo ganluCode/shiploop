@@ -358,10 +358,11 @@ function receiptStatus(probe: StorageProbe, commandId: string): string | undefin
 /** 「未创建 Batch/Run/Attempt、未启动 Work」三方核验之一：库表清单与行数。 */
 function expectNoExecutionEntities(probe: StorageProbe): void {
   const tables = sqliteTableNames(probe);
-  // P03-3 / F-002 起执行域表由迁移 v9 建立（空表）：「未创建执行实体」以零行核验；
-  // attempts/workspace_leases 等后续表仍不得存在。
+  // Migration-created execution tables must remain empty in this planning-only flow.
   const present = tables.filter((name) => /batch|run|attempt|work/i.test(name)).sort();
   expect(present, `执行域表清单漂移（实际表：${tables.join(',')}）`).toEqual([
+    'attempts',
+    'workspace_leases',
     'batch_budget_revisions',
     'execution_batches',
     'runs',

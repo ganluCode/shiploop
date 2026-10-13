@@ -398,7 +398,9 @@ describe('F-002 决策闭环（正常路径）', () => {
     expect(s.tableCount('execution_batches')).toBe(0);
     expect(s.probe.tableExists('runs')).toBe(true);
     expect(s.tableCount('runs')).toBe(0);
-    expect(s.probe.tableExists('attempts')).toBe(false);
+    expect(s.probe.tableExists('attempts')).toBe(true);
+    expect(s.probe.selectAll('SELECT COUNT(*) AS n FROM attempts')).toEqual([{ n: 0 }]);
+    expect(s.probe.selectAll('SELECT COUNT(*) AS n FROM workspace_leases')).toEqual([{ n: 0 }]);
   });
 
   it('拒绝：记录 rejected、planStatus 落 draft（不提供执行依据）、feature.plan.rejected 事件', async () => {
@@ -914,7 +916,7 @@ describe('F-002 迁移接续（版本接续 P03-1 v6；不改历史 checksum）'
         )
         .all();
       expect(afterRows.slice(0, 5)).toEqual(beforeRows);
-      expect(afterRows.map((row) => row.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
+      expect(afterRows.map((row) => row.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
       expect(afterRows[5]!.checksum).toBe(SQLITE_MIGRATIONS[5]!.checksum);
       expect(afterRows[6]!.checksum).toBe(SQLITE_MIGRATIONS[6]!.checksum);
       expect(afterRows[7]!.checksum).toBe(SQLITE_MIGRATIONS[7]!.checksum);
@@ -981,8 +983,8 @@ describe('F-002 迁移接续（版本接续 P03-1 v6；不改历史 checksum）'
       const result = await migrateSqliteStorage(session, { nowUtcMs: () => NOW });
       expect(result.fromVersion).toBe(0);
       expect(result.toVersion).toBe(SQLITE_MIGRATIONS.length);
-      expect(result.toVersion).toBe(13);
-      expect(result.appliedVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
+      expect(result.toVersion).toBe(14);
+      expect(result.appliedVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
       const rows = session.database
         .prepare<[], { version: number; checksum: string }>(
           'SELECT version, checksum FROM schema_migrations ORDER BY version',

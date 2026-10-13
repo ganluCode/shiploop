@@ -490,7 +490,9 @@ describe('F-006 正常制品组（视图捕获 → 组装发布 → 最终重核
     // runs 表由迁移 v9 建立但为空；attempts/batches/sessions 等后续表仍未建立）。
     expect(s.probe.tableExists('runs')).toBe(true);
     expect(s.probe.selectAll('SELECT COUNT(*) AS n FROM runs')).toEqual([{ n: 0 }]);
-    for (const table of ['attempts', 'batches', 'sessions']) {
+    expect(s.probe.selectAll('SELECT COUNT(*) AS n FROM attempts')).toEqual([{ n: 0 }]);
+    expect(s.probe.selectAll('SELECT COUNT(*) AS n FROM workspace_leases')).toEqual([{ n: 0 }]);
+    for (const table of ['batches', 'sessions']) {
       expect(s.probe.tableExists(table)).toBe(false);
     }
   });

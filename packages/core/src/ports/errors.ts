@@ -48,6 +48,8 @@ export type StorageEntityType =
   /** P03-3 / F-007：Runtime 启动预占账本（runtime_start_reservations，迁移 v12）。 */
   | 'runtime_start_reservation'
   /** P03-3 / F-008：Run 结果结算账本（run_outcome_settlements，迁移 v13）。 */
+  | 'attempt'
+  | 'workspace_lease'
   | 'run_outcome_settlement';
 
 export type StorageErrorKind =

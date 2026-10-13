@@ -70,6 +70,8 @@ const SCHEMA_TABLES = [
   ['task_attempt_reservations', schema.taskAttemptReservations],
   ['runtime_start_reservations', schema.runtimeStartReservations],
   ['run_outcome_settlements', schema.runOutcomeSettlements],
+  ['attempts', schema.attempts],
+  ['workspace_leases', schema.workspaceLeases],
   ['schema_migrations', schema.schemaMigrations],
 ] as const;
 
@@ -78,8 +80,6 @@ const EXPECTED_TABLE_NAMES = SCHEMA_TABLES.map(([name]) => name).sort();
 /** 迁移与未来功能明确不在本 Feature 建立的后续表（设计 11 §4-§7、§9）。 */
 const FORBIDDEN_TABLE_NAMES = [
   'feature_dependencies',
-  'attempts',
-  'workspace_leases',
   'sessions',
   'chat_turns',
   'session_messages',
@@ -506,6 +506,15 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
         'repository_bindings:(project_id)->projects.(id)',
         'project_settings:(project_id)->projects.(id)',
         'artifacts:(project_id)->projects.(id)',
+        'attempts:(project_id)->projects.(id)',
+        'attempts:(project_id,feature_id)->features.(project_id,id)',
+        'attempts:(feature_id,run_id)->runs.(feature_id,id)',
+        'attempts:(feature_id,task_id)->tasks.(feature_id,id)',
+        'attempts:(project_id,input_ref)->artifacts.(project_id,id)',
+        'attempts:(project_id,code_ref)->artifacts.(project_id,id)',
+        'attempts:(project_id,diagnostic_ref)->artifacts.(project_id,id)',
+        'workspace_leases:(project_id)->projects.(id)',
+        'workspace_leases:(project_id,owner_id)->attempts.(project_id,id)',
         'state_events:(project_id)->projects.(id)',
         // P03-3 / F-006：Task 尝试预占账本的同项目归属外键链。
         'task_attempt_reservations:(project_id)->projects.(id)',

@@ -572,7 +572,9 @@ describe('F-003 批准绑定当前适用检查政策身份', () => {
     // 建立但为空；attempts 等后续表仍未建立）。
     expect(s.probe.tableExists('runs')).toBe(true);
     expect(s.probe.selectAll('SELECT COUNT(*) AS n FROM runs')).toEqual([{ n: 0 }]);
-    expect(s.probe.tableExists('attempts')).toBe(false);
+    expect(s.probe.tableExists('attempts')).toBe(true);
+    expect(s.probe.selectAll('SELECT COUNT(*) AS n FROM attempts')).toEqual([{ n: 0 }]);
+    expect(s.probe.selectAll('SELECT COUNT(*) AS n FROM workspace_leases')).toEqual([{ n: 0 }]);
   });
 
   it('双方均未配置 verification 段：绑定显式缺席形态摘要（确定性）', async () => {
@@ -1026,8 +1028,8 @@ describe('F-003 迁移 v8（approvals.check_policy_digest）', () => {
       const result = await migrateSqliteStorage(session, { nowUtcMs: () => NOW + 1_000 });
       expect(result.fromVersion).toBe(7);
       // P03-3 / F-002 起接续 v9（执行域三表；v8 仍为检查政策身份绑定迁移）。
-      expect(result.toVersion).toBe(13);
-      expect(result.appliedVersions).toEqual([8, 9, 10, 11, 12, 13]);
+      expect(result.toVersion).toBe(14);
+      expect(result.appliedVersions).toEqual([8, 9, 10, 11, 12, 13, 14]);
 
       // 既有决策行逐字段保留；check_policy_digest 为 NULL（不等于任何当前身份）。
       const row = session.database

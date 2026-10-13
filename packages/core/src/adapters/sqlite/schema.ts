@@ -211,6 +211,7 @@ export const artifacts = sqliteTable('artifacts', {
     'artifacts_ready_identity_check',
     sql`${table.status} <> 'ready' OR (${table.contentHash} IS NOT NULL AND ${table.sizeBytes} IS NOT NULL)`,
   ),
+  uniqueIndex('artifacts_project_id_id_unique').on(table.projectId, table.id),
   index('artifacts_project_id_status_index').on(table.projectId, table.status),
 ]);
 
@@ -689,9 +690,12 @@ export const tasks = sqliteTable('tasks', {
   /** P03-3 / F-006（迁移 v11）：已消耗代码尝试计数（首次代码执行与代码修复；
    *  仅受信 Core 基础设施重分类可退还，成功/取消/失败不退）。 */
   codeAttemptsUsed: integer('code_attempts_used').notNull().default(0),
+  /** P03-4: monotonic Task fencing version, advanced only by atomic claiming. */
+  executionVersion: integer('execution_version').notNull().default(0),
   /** F-008：首次受信通过的时间事实；元数据更新和旧状态重放不可改写。 */
   firstPassedAt: integer('first_passed_at'),
 }, (table) => [
+  check('tasks_execution_version_non_negative_check', sql`typeof(${table.executionVersion}) = 'integer' AND ${table.executionVersion} >= 0`),
   check('tasks_first_passed_at_positive_check', sql`${table.firstPassedAt} IS NULL OR ${table.firstPassedAt} >= 1`),
   check('tasks_revision_positive_check', sql`${table.revision} >= 1`),
   check('tasks_title_not_empty_check', sql`length(${table.title}) > 0`),
@@ -1071,6 +1075,7 @@ export const runs = sqliteTable('runs', {
   }).onDelete('restrict'),
   // 派发身份唯一（重复派发在 DDL 级被拒绝；失败重试以递增 dispatch_ordinal 表达）。
   uniqueIndex('runs_receipt_identity_unique').on(table.projectId, table.batchId, table.id),
+  uniqueIndex('runs_feature_id_id_unique').on(table.featureId, table.id),
   uniqueIndex('runs_dispatch_identity_unique').on(table.batchId, table.workKey, table.dispatchOrdinal),
   // 同 Feature 有效活动 Run 唯一（paused/interrupted 不是可绕过的终态）。
   uniqueIndex('runs_active_feature_unique')
@@ -1289,6 +1294,79 @@ export const runOutcomeSettlements = sqliteTable('run_outcome_settlements', {
   uniqueIndex('run_outcome_settlements_progress_evidence_unique').on(table.projectId, table.progressTaskId)
     .where(sql`${table.progressType} = 'new_valid_task_passed'`),
   uniqueIndex('run_outcome_settlements_run_id_unique').on(table.runId),
+]);
+
+/** P03-4 F-001: immutable input identity and independently retained resource occupancy. */
+export const attempts = sqliteTable('attempts', {
+  id: text('id').primaryKey(), createdAt: integer('created_at').notNull(),
+  projectId: text('project_id').notNull().references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  revision: integer('revision').notNull().default(1), updatedAt: integer('updated_at').notNull(),
+  featureId: text('feature_id').notNull(), runId: text('run_id').notNull(), taskId: text('task_id').notNull(),
+  number: integer('number').notNull(), ownerId: text('owner_id').notNull(), hostInstanceId: text('host_instance_id').notNull(),
+  executionVersion: integer('execution_version').notNull(), leaseUntil: integer('lease_until').notNull(),
+  status: text('status').notNull().default('preparing'), executionStage: text('execution_stage').notNull().default('preflight'),
+  inputSnapshot: text('input_snapshot').notNull(), inputDigest: text('input_digest').notNull(), inputRef: text('input_ref').notNull(),
+  sessionId: text('session_id'), invocationId: text('invocation_id'), codeRef: text('code_ref'), errorKind: text('error_kind'),
+  diagnosticRef: text('diagnostic_ref'), startedAt: integer('started_at'), endedAt: integer('ended_at'),
+  durationMs: integer('duration_ms'), exitCode: integer('exit_code'), usageSummary: text('usage_summary'),
+}, table => [
+  check('attempts_revision_check', sql`${table.revision} >= 1`),
+  check('attempts_number_check', sql`typeof(${table.number}) = 'integer' AND ${table.number} >= 1`),
+  check('attempts_version_check', sql`typeof(${table.executionVersion}) = 'integer' AND ${table.executionVersion} >= 1`),
+  check('attempts_owner_check', sql`length(${table.ownerId}) > 0 AND length(${table.hostInstanceId}) > 0`),
+  check('attempts_lease_check', sql`typeof(${table.leaseUntil}) = 'integer' AND ${table.leaseUntil} >= 0`),
+  check('attempts_status_check', sql`${table.status} IN ('preparing', 'executing', 'verifying', 'succeeded', 'failed', 'cancelled', 'interrupted')`),
+  check('attempts_stage_check', sql`${table.executionStage} IN ('preflight', 'runtime', 'verification', 'commit', 'cleanup')`),
+  check('attempts_snapshot_check', sql`CASE WHEN json_valid(${table.inputSnapshot}) THEN
+    json_type(${table.inputSnapshot}) = 'object' AND json_type(${table.inputSnapshot}, '$.schemaVersion') IS 'integer'
+    AND json_extract(${table.inputSnapshot}, '$.schemaVersion') = 1
+    AND json_extract(${table.inputSnapshot}, '$.projectId') IS ${table.projectId}
+    AND json_extract(${table.inputSnapshot}, '$.featureId') IS ${table.featureId}
+    AND json_extract(${table.inputSnapshot}, '$.taskId') IS ${table.taskId}
+    AND json_extract(${table.inputSnapshot}, '$.digests.snapshotDigest') IS ${table.inputDigest}
+    AND json_extract(${table.inputSnapshot}, '$.group.snapshot.artifactId') IS ${table.inputRef} ELSE 0 END`),
+  check('attempts_digest_check', sql`length(${table.inputDigest}) = 64 AND ${table.inputDigest} NOT GLOB '*[^0-9a-f]*'`),
+  check('attempts_duration_check', sql`${table.durationMs} IS NULL OR (typeof(${table.durationMs}) = 'integer' AND ${table.durationMs} >= 0)`),
+  check('attempts_exit_check', sql`${table.exitCode} IS NULL OR typeof(${table.exitCode}) = 'integer'`),
+  check('attempts_times_check', sql`(${table.startedAt} IS NULL OR (typeof(${table.startedAt}) = 'integer' AND ${table.startedAt} >= 0))
+    AND (${table.endedAt} IS NULL OR (typeof(${table.endedAt}) = 'integer' AND ${table.endedAt} >= 0))
+    AND (${table.startedAt} IS NULL OR ${table.endedAt} IS NULL OR ${table.endedAt} >= ${table.startedAt})`),
+  check('attempts_usage_check', sql`${table.usageSummary} IS NULL OR CASE WHEN json_valid(${table.usageSummary}) THEN
+    json_type(${table.usageSummary}) = 'object' AND json_type(${table.usageSummary}, '$.schemaVersion') IS 'integer'
+    AND json_extract(${table.usageSummary}, '$.schemaVersion') = 1 ELSE 0 END`),
+  foreignKey({ name: 'attempts_feature_fk', columns: [table.projectId, table.featureId], foreignColumns: [features.projectId, features.id] }).onDelete('restrict'),
+  foreignKey({ name: 'attempts_run_fk', columns: [table.featureId, table.runId], foreignColumns: [runs.featureId, runs.id] }).onDelete('restrict'),
+  foreignKey({ name: 'attempts_task_fk', columns: [table.featureId, table.taskId], foreignColumns: [tasks.featureId, tasks.id] }).onDelete('restrict'),
+  foreignKey({ name: 'attempts_input_fk', columns: [table.projectId, table.inputRef], foreignColumns: [artifacts.projectId, artifacts.id] }).onDelete('restrict'),
+  foreignKey({ name: 'attempts_code_fk', columns: [table.projectId, table.codeRef], foreignColumns: [artifacts.projectId, artifacts.id] }).onDelete('restrict'),
+  foreignKey({ name: 'attempts_diagnostic_fk', columns: [table.projectId, table.diagnosticRef], foreignColumns: [artifacts.projectId, artifacts.id] }).onDelete('restrict'),
+  uniqueIndex('attempts_project_id_id_unique').on(table.projectId, table.id),
+  uniqueIndex('attempts_task_number_unique').on(table.taskId, table.number),
+  uniqueIndex('attempts_active_task_unique').on(table.taskId).where(sql`${table.status} IN ('preparing', 'executing', 'verifying')`),
+  uniqueIndex('attempts_session_unique').on(table.sessionId).where(sql`${table.sessionId} IS NOT NULL`),
+  uniqueIndex('attempts_invocation_unique').on(table.invocationId).where(sql`${table.invocationId} IS NOT NULL`),
+  index('attempts_run_id_index').on(table.runId),
+]);
+
+export const workspaceLeases = sqliteTable('workspace_leases', {
+  id: text('id').primaryKey(), createdAt: integer('created_at').notNull(),
+  projectId: text('project_id').notNull().references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  revision: integer('revision').notNull().default(1), updatedAt: integer('updated_at').notNull(),
+  resourceKey: text('resource_key').notNull(), resourceKind: text('resource_kind').notNull(),
+  ownerKind: text('owner_kind').notNull(), ownerId: text('owner_id').notNull(), hostInstanceId: text('host_instance_id').notNull(),
+  executionVersion: integer('execution_version').notNull(), state: text('state').notNull().default('held'),
+  leaseUntil: integer('lease_until').notNull(), processIdentity: text('process_identity'),
+}, table => [
+  check('workspace_leases_revision_check', sql`${table.revision} >= 1`),
+  check('workspace_leases_resource_check', sql`length(${table.resourceKey}) > 0 AND ${table.resourceKind} IN ('global', 'project', 'workspace')`),
+  check('workspace_leases_owner_check', sql`${table.ownerKind} = 'attempt' AND length(${table.hostInstanceId}) > 0`),
+  check('workspace_leases_version_check', sql`typeof(${table.executionVersion}) = 'integer' AND ${table.executionVersion} >= 1`),
+  check('workspace_leases_state_check', sql`${table.state} IN ('held', 'quarantined')`),
+  check('workspace_leases_lease_check', sql`typeof(${table.leaseUntil}) = 'integer' AND ${table.leaseUntil} >= 0`),
+  check('workspace_leases_process_check', sql`${table.processIdentity} IS NULL OR (json_valid(${table.processIdentity}) AND json_type(${table.processIdentity}) = 'object')`),
+  foreignKey({ name: 'workspace_leases_attempt_fk', columns: [table.projectId, table.ownerId], foreignColumns: [attempts.projectId, attempts.id] }).onDelete('restrict'),
+  uniqueIndex('workspace_leases_resource_key_unique').on(table.resourceKey),
+  index('workspace_leases_owner_id_index').on(table.ownerId),
 ]);
 
 export const schemaMigrations = sqliteTable('schema_migrations', {

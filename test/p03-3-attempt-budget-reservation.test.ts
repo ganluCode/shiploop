@@ -235,11 +235,11 @@ afterEach(() => {
   }
 });
 
-async function openHarness(options: SeedOptions = {}, clockInitial: number = NOW): Promise<Harness> {
+async function openHarness(options: SeedOptions = {}, clockInitial: number = NOW, schemaVersion = SQLITE_MIGRATIONS.length): Promise<Harness> {
   const sandbox = createTempSandbox('shiploop-p033-f006-');
   openSandbox = sandbox;
   const session = openSqliteStorageSession({ path: join(sandbox.path, 'state.db') });
-  await migrateSqliteStorage(session);
+  await migrateSqliteStorage(session, { migrations: SQLITE_MIGRATIONS.slice(0, schemaVersion) });
   let clock = clockInitial;
   const access = createSqliteExecutionAccess(session, { nowUtcMs: () => clock });
   const seed = seedGraph(session.database, options);
@@ -322,8 +322,8 @@ function expectBudgetExhausted(
 }
 
 describe('F-006 迁移 v11：Task 尝试计数列与预占账本表', () => {
-  it('空库全量迁移后 tasks 具备双计数列（默认 0）且账本表就绪，不提前建设完整执行表', async () => {
-    const harness = await openHarness();
+  it('空库迁移至 v11 后 tasks 具备双计数列（默认 0）且账本表就绪，不提前建设完整执行表', async () => {
+    const harness = await openHarness({}, NOW, 11);
     try {
       const columns = harness.db.prepare('PRAGMA table_xinfo(tasks)').all() as { name: string }[];
       const names = columns.map((column) => column.name);
@@ -373,7 +373,7 @@ describe('F-006 迁移 v11：Task 尝试计数列与预占账本表', () => {
       expect(task).toEqual({ revision: 3, attempt_counter: 0, code_attempts_used: 0 });
       const applied = db.prepare('SELECT version FROM schema_migrations ORDER BY version').all() as { version: number }[];
       // v10 数据经 v11（双计数列/账本表）升级保留；P03-3 / F-007 起全量迁移止于 v12。
-      expect(applied.at(-1)).toEqual({ version: 13 });
+      expect(applied.at(-1)).toEqual({ version: 14 });
     } finally {
       session.close();
     }
