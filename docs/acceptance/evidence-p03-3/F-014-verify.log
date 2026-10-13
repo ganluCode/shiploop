@@ -1,0 +1,48 @@
+{"command":["npm","run","verify"],"started":"2026-10-13T10:55:52.485Z","exitCode":1,"signal":null}
+
+> shiploop@0.0.0 verify
+> node scripts/verify.ts
+
+verify: root [REDACTED:bf2950728f84]
+verify: 开发工程检查编排（非 ShipLoop 业务 Verifier，不含 accept:p01 验收）
+verify: step timeout 600000ms (finite; non-zero exit / signal / timeout all fail)
+verify: precheck package-lock.json OK (lockfileVersion 3, name "shiploop", version "0.0.0")
+verify: using npm via npm_execpath ([REDACTED:361d21e1eb19]/.nvm/versions/node/v22.19.0/lib/node_modules/npm/bin/npm-cli.js)
+verify: [1/3] RUN npm test
+
+> shiploop@0.0.0 test
+> node scripts/run-tests.ts
+
+run-tests: using local vitest@5.0.3 ([REDACTED:bf2950728f84]/node_modules/vitest/vitest.mjs) in run mode
+
+ RUN  v5.0.3 [REDACTED:bf2950728f84]
+
+P01_ENG_BUILD_SMOKE_SCAN {"dist_entry":"./dist/adapters/composition.js","declared_entries":["shiploop-core:./dist/adapters/composition.d.ts","shiploop-core:./dist/adapters/composition.js","shiploop-core:./dist/index.d.ts","shiploop-core:./dist/index.js","shiploop-core:./dist/protocol.d.ts","shiploop-core:./dist/protocol.js"],"migration_resources":[{"file":"pkg/dist/adapters/sqlite/migrations.js","versions":[1,2,3,4,5,6,7,8,9,10,11,12,13]}],"path_scan_ok":true,"path_scan_findings":0,"file_manifest_count":345,"file_manifest_total_bytes":3517918,"file_manifest_sha256":"28a5a7ffbd5428ddc82680ec6795a32df80f0c55611e403f4e4129577960fa3c"}
+P01_ENG_BUILD_SMOKE_RUN {"dist_entry":"dist/adapters/composition.js","cwd_relative":true,"loaded_modules":["shiploop-core/assembly","shiploop-core"],"migration_resources_in_place":true,"artifact_reopened_verified":true,"user_data_writes":0}
+
+ Test Files  183 passed (183)
+      Tests  3944 passed (3944)
+   Start at  18:55:52
+   Duration  126.18s (tests 98%, import 1%, transform 1%)
+
+verify: [1/3] EXIT 0 npm test (126.5s)
+verify: [2/3] RUN npm run typecheck
+
+> shiploop@0.0.0 typecheck
+> tsc -p tsconfig.json
+
+test/p03-3-cli-built.test.ts(141,40): error TS2554: Expected 2 arguments, but got 1.
+verify: NOT RUN (未执行，不标记为通过): npm run build
+fatal: ambiguous argument 'HEAD': unknown revision or path not in the working tree.
+Use '--' to separate paths from revisions, like this:
+'git <command> [<revision>...] -- [<file>...]'
+Cloning into '<tmp>'...
+done.
+Cloning into '<tmp>'...
+done.
+fatal: ambiguous argument 'HEAD': unknown revision or path not in the working tree.
+Use '--' to separate paths from revisions, like this:
+'git <command> [<revision>...] -- [<file>...]'
+Preparing worktree (detached HEAD 64a8db5)
+verify: [2/3] FAIL npm run typecheck -> exit code 1 after 0.7s
+verify: FAIL 1/3 checks exited 0; first failing step: npm run typecheck

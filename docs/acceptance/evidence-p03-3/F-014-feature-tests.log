@@ -1,0 +1,10 @@
+{"command":["node","scripts/run-tests.ts","p03-3"],"exitCode":0,"signal":null}
+run-tests: using local vitest@5.0.3 ([REDACTED:bf2950728f84]/node_modules/vitest/vitest.mjs) in run mode
+
+ RUN  v5.0.3 [REDACTED:bf2950728f84]
+
+
+ Test Files  27 passed (27)
+      Tests  436 passed (436)
+   Start at  18:59:06
+   Duration  25.05s (tests 92%, transform 6%, import 2%)

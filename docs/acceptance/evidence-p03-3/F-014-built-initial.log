@@ -1,0 +1,38 @@
+{"command":["node","scripts/run-tests.ts","test/p03-3-cli-built.test.ts"],"exitCode":1,"signal":null}
+run-tests: using local vitest@5.0.3 ([REDACTED:bf2950728f84]/node_modules/vitest/vitest.mjs) in run mode
+
+ RUN  v5.0.3 [REDACTED:bf2950728f84]
+
+ ❯ test/p03-3-cli-built.test.ts (1 test | 1 failed) 11263ms
+   ❯ F-014 built CLI acceptance (1)
+     × prepare -> preview -> explicit start -> replay -> revise -> restart; negative cases never complete work 1709ms
+
+ Test Files  1 failed (1)
+      Tests  1 failed (1)
+   Start at  18:48:49
+   Duration  11.81s (tests 96%, transform 3%, import 1%)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/p03-3-cli-built.test.ts > F-014 built CLI acceptance > prepare -> preview -> explicit start -> replay -> revise -> restart; negative cases never complete work
+AssertionError: expected { started: false, …(2) } to deeply equal { started: false }
+
+- Expected
++ Received
+
+  {
++   "capability": "unknown",
++   "runnable": false,
+    "started": false,
+  }
+
+ ❯ test/p03-3-cli-built.test.ts:223:34
+    221|       const prepared = await ok(['task', 'prepare', 'f014-task', ...pr…
+    222|       expect(prepared.bindable).toBe(true);
+    223|       expect(prepared.execution).toEqual({ started: false });
+       |                                  ^
+    224|       expect(prepared.group).toHaveLength(3);
+    225|       const preview = await ok<{ status: string; previewDigest: string…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯

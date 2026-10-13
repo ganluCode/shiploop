@@ -1,0 +1,10 @@
+{"command":["node","scripts/run-tests.ts","test/p03-3-cli-built.test.ts","test/docs-p03-3-handoff.test.ts"],"exitCode":0,"signal":null}
+run-tests: using local vitest@5.0.3 ([REDACTED:bf2950728f84]/node_modules/vitest/vitest.mjs) in run mode
+
+ RUN  v5.0.3 [REDACTED:bf2950728f84]
+
+
+ Test Files  2 passed (2)
+      Tests  2 passed (2)
+   Start at  18:55:09
+   Duration  13.51s (tests 95%, transform 4%, import 1%)

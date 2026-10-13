@@ -1,0 +1,10 @@
+{"command":["npm","run","check:boundaries"],"exitCode":0,"signal":null}
+
+> shiploop@0.0.0 check:boundaries
+> node scripts/check-boundaries.ts
+
+check-boundaries: root [REDACTED:bf2950728f84]
+check-boundaries: scope packages/core/src (shiploop-core, 86 production source files)
+check-boundaries: scope packages/host/src (shiploop-host, 33 production source files)
+check-boundaries: scope packages/cli/src (shiploop-cli, 16 production source files)
+check-boundaries: PASS 135 production source files scanned, 0 diagnostics

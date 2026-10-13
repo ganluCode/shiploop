@@ -1,0 +1,48 @@
+{"command":["node","scripts/run-tests.ts","test/p03-3-cli-built.test.ts"],"exitCode":1,"signal":null}
+run-tests: using local vitest@5.0.3 ([REDACTED:bf2950728f84]/node_modules/vitest/vitest.mjs) in run mode
+
+ RUN  v5.0.3 [REDACTED:bf2950728f84]
+
+ ❯ test/p03-3-cli-built.test.ts (1 test | 1 failed) 11288ms
+   ❯ F-014 built CLI acceptance (1)
+     × prepare -> preview -> explicit start -> replay -> revise -> restart; negative cases never complete work 2329ms
+
+ Test Files  1 failed (1)
+      Tests  1 failed (1)
+   Start at  18:49:47
+   Duration  11.83s (tests 96%, transform 3%, import 1%)
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/p03-3-cli-built.test.ts > F-014 built CLI acceptance > prepare -> preview -> explicit start -> replay -> revise -> restart; negative cases never complete work
+AssertionError: expected { …(5) } to deeply equal { …(5) }
+
+- Expected
++ Received
+
+@@ -22,12 +22,12 @@
+        "deadlineAtUtcMs": 4083955200000,
+        "dimensions": {
+          "deadlineUtcMs": {
+            "exhausted": false,
+            "limit": 4083955200000,
+-           "remaining": 2292066600754,
+-           "used": 1791888599246,
++           "remaining": 2292066600606,
++           "used": 1791888599394,
+          },
+          "maxCostTotal": {
+            "exhausted": null,
+            "limit": 12.5,
+            "remaining": null,
+
+ ❯ test/p03-3-cli-built.test.ts:249:50
+    247|       const replay = await ok([...start, '--confirm']);
+    248|       expect(replay).toMatchObject({ replayed: true, batchId: started.…
+    249|       expect(await ok<BudgetResult>(budgetArgs)).toEqual(before);
+       |                                                  ^
+    250|       const revisionPath = file('budget-revised.json', revisedBudget);
+    251|       const reviseArgs = ['execution', 'revise', started.batchId, ...p…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯

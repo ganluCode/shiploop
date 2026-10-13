@@ -1,0 +1,4 @@
+{"command":["npm","run","typecheck"],"exitCode":0,"signal":null}
+
+> shiploop@0.0.0 typecheck
+> tsc -p tsconfig.json
