@@ -2,6 +2,8 @@
 
 端口层：StateStore、RuntimeAdapter、ArtifactStore、Git、凭据、通知等窄接口与契约类型（错误码、事件游标、取消语义等）。
 
+P03-3A / F-001 新增 `runtime-recovery.ts`：Work/Chat 判别身份、稳定 invocationId、不可变 Artifact 恢复引用、auto/new/required 选择及五项独立运行期能力证据。运行时校验与能力判定均为纯函数；配置目录 `runtime-capabilities.ts` 保持不变，不把配置合法性当可执行或可恢复。命名、字段及后续来源/权限核验职责见 [恢复契约](../../../../docs/p03-3a-runtime-recovery-contract.md)。
+
 - 允许：仅声明接口、类型、结构化错误与契约常量；引用 `domain` 类型。
 - 禁止：任何具体实现与可执行副作用；导入或重导出 Pi SDK、Electron、HTTP Request/Response 对象、HTTP 框架、`better-sqlite3`、Drizzle；为占位而声明当前没有使用者的端口。
 
