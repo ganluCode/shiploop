@@ -1,0 +1,685 @@
+{
+  "versions": {
+    "node": "22.19.0",
+    "sqlite": "3.50.4",
+    "sdk": "1.2.0"
+  },
+  "duplicate": {
+    "submissionSame": true,
+    "conflictingPayloadSame": true,
+    "userEntries": 1,
+    "providerCalls": 1,
+    "reopenedProviderCalls": 0,
+    "providerSessionSame": true,
+    "status": "done"
+  },
+  "crashes": [
+    {
+      "point": "before-tool",
+      "replay": "unsafe",
+      "missingTool": false,
+      "exit": {
+        "code": null,
+        "signal": "SIGKILL"
+      },
+      "checkpoints": [
+        {
+          "id": 12,
+          "conversationId": 1,
+          "kind": "pi.tool",
+          "version": 2,
+          "input": {
+            "kind": "model",
+            "assistant": 11,
+            "callId": "tool-1"
+          },
+          "owner": 9,
+          "background": false,
+          "abortRequested": false,
+          "state": {
+            "status": "running",
+            "checkpoint": {
+              "phase": "call"
+            }
+          },
+          "startedAt": 1791907640157
+        }
+      ],
+      "effects": 1,
+      "beforeHooks": 2,
+      "afterHooks": 1,
+      "status": "done",
+      "toolResults": [
+        {
+          "model": [
+            {
+              "role": "toolResult",
+              "toolCallId": "tool-1",
+              "toolName": "effect",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "recovered effect"
+                }
+              ],
+              "isError": false,
+              "durationMs": 0,
+              "timestamp": 1791907640168
+            }
+          ],
+          "data": {
+            "diagnostics": []
+          },
+          "kind": "pi.tool-result",
+          "id": 13,
+          "conversationId": 1,
+          "byTaskId": 12
+        }
+      ],
+      "liveTasks": 0,
+      "userEntries": 1
+    },
+    {
+      "point": "execute",
+      "replay": "unsafe",
+      "missingTool": false,
+      "exit": {
+        "code": null,
+        "signal": "SIGKILL"
+      },
+      "checkpoints": [
+        {
+          "id": 12,
+          "conversationId": 1,
+          "kind": "pi.tool",
+          "version": 2,
+          "input": {
+            "kind": "model",
+            "assistant": 11,
+            "callId": "tool-1"
+          },
+          "owner": 9,
+          "background": false,
+          "abortRequested": false,
+          "state": {
+            "status": "running",
+            "checkpoint": {
+              "phase": "execute",
+              "arguments": {},
+              "replay": "unsafe"
+            }
+          },
+          "startedAt": 1791907640296
+        }
+      ],
+      "effects": 1,
+      "beforeHooks": 1,
+      "afterHooks": 0,
+      "status": "done",
+      "toolResults": [
+        {
+          "model": [
+            {
+              "role": "toolResult",
+              "toolCallId": "tool-1",
+              "toolName": "effect",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "<harness>\n[error] Tool effect was interrupted and may have partially run\n</harness>"
+                }
+              ],
+              "details": {
+                "marker": "effect-written"
+              },
+              "isError": true,
+              "timestamp": 1791907640304
+            }
+          ],
+          "data": {
+            "diagnostics": [
+              {
+                "severity": "error",
+                "code": "interrupted",
+                "message": "Tool effect was interrupted and may have partially run"
+              }
+            ]
+          },
+          "kind": "pi.tool-result",
+          "id": 13,
+          "conversationId": 1,
+          "byTaskId": 12
+        }
+      ],
+      "liveTasks": 0,
+      "userEntries": 1
+    },
+    {
+      "point": "after-tool",
+      "replay": "unsafe",
+      "missingTool": false,
+      "exit": {
+        "code": null,
+        "signal": "SIGKILL"
+      },
+      "checkpoints": [
+        {
+          "id": 12,
+          "conversationId": 1,
+          "kind": "pi.tool",
+          "version": 2,
+          "input": {
+            "kind": "model",
+            "assistant": 11,
+            "callId": "tool-1"
+          },
+          "owner": 9,
+          "background": false,
+          "abortRequested": false,
+          "state": {
+            "status": "running",
+            "checkpoint": {
+              "phase": "execute",
+              "arguments": {},
+              "replay": "unsafe"
+            }
+          },
+          "startedAt": 1791907640428
+        }
+      ],
+      "effects": 1,
+      "beforeHooks": 1,
+      "afterHooks": 1,
+      "status": "done",
+      "toolResults": [
+        {
+          "model": [
+            {
+              "role": "toolResult",
+              "toolCallId": "tool-1",
+              "toolName": "effect",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "<harness>\n[error] Tool effect was interrupted and may have partially run\n</harness>"
+                }
+              ],
+              "details": {
+                "marker": "effect-written"
+              },
+              "isError": true,
+              "timestamp": 1791907640436
+            }
+          ],
+          "data": {
+            "diagnostics": [
+              {
+                "severity": "error",
+                "code": "interrupted",
+                "message": "Tool effect was interrupted and may have partially run"
+              }
+            ]
+          },
+          "kind": "pi.tool-result",
+          "id": 13,
+          "conversationId": 1,
+          "byTaskId": 12
+        }
+      ],
+      "liveTasks": 0,
+      "userEntries": 1
+    },
+    {
+      "point": "execute",
+      "replay": "safe",
+      "missingTool": false,
+      "exit": {
+        "code": null,
+        "signal": "SIGKILL"
+      },
+      "checkpoints": [
+        {
+          "id": 12,
+          "conversationId": 1,
+          "kind": "pi.tool",
+          "version": 2,
+          "input": {
+            "kind": "model",
+            "assistant": 11,
+            "callId": "tool-1"
+          },
+          "owner": 9,
+          "background": false,
+          "abortRequested": false,
+          "state": {
+            "status": "running",
+            "checkpoint": {
+              "phase": "execute",
+              "arguments": {},
+              "replay": "safe"
+            }
+          },
+          "startedAt": 1791907640558
+        }
+      ],
+      "effects": 2,
+      "beforeHooks": 1,
+      "afterHooks": 1,
+      "status": "done",
+      "toolResults": [
+        {
+          "model": [
+            {
+              "role": "toolResult",
+              "toolCallId": "tool-1",
+              "toolName": "effect",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "recovered effect"
+                }
+              ],
+              "isError": false,
+              "durationMs": 0,
+              "timestamp": 1791907640566
+            }
+          ],
+          "data": {
+            "diagnostics": []
+          },
+          "kind": "pi.tool-result",
+          "id": 13,
+          "conversationId": 1,
+          "byTaskId": 12
+        }
+      ],
+      "liveTasks": 0,
+      "userEntries": 1
+    },
+    {
+      "point": "after-tool",
+      "replay": "safe",
+      "missingTool": false,
+      "exit": {
+        "code": null,
+        "signal": "SIGKILL"
+      },
+      "checkpoints": [
+        {
+          "id": 12,
+          "conversationId": 1,
+          "kind": "pi.tool",
+          "version": 2,
+          "input": {
+            "kind": "model",
+            "assistant": 11,
+            "callId": "tool-1"
+          },
+          "owner": 9,
+          "background": false,
+          "abortRequested": false,
+          "state": {
+            "status": "running",
+            "checkpoint": {
+              "phase": "execute",
+              "arguments": {},
+              "replay": "safe"
+            }
+          },
+          "startedAt": 1791907640689
+        }
+      ],
+      "effects": 2,
+      "beforeHooks": 1,
+      "afterHooks": 2,
+      "status": "done",
+      "toolResults": [
+        {
+          "model": [
+            {
+              "role": "toolResult",
+              "toolCallId": "tool-1",
+              "toolName": "effect",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "recovered effect"
+                }
+              ],
+              "isError": false,
+              "durationMs": 0,
+              "timestamp": 1791907640698
+            }
+          ],
+          "data": {
+            "diagnostics": []
+          },
+          "kind": "pi.tool-result",
+          "id": 13,
+          "conversationId": 1,
+          "byTaskId": 12
+        }
+      ],
+      "liveTasks": 0,
+      "userEntries": 1
+    },
+    {
+      "point": "after-commit",
+      "replay": "unsafe",
+      "missingTool": false,
+      "exit": {
+        "code": null,
+        "signal": "SIGKILL"
+      },
+      "checkpoints": [
+        {
+          "id": 12,
+          "conversationId": 1,
+          "kind": "pi.tool",
+          "version": 2,
+          "input": {
+            "kind": "model",
+            "assistant": 11,
+            "callId": "tool-1"
+          },
+          "owner": 9,
+          "background": false,
+          "abortRequested": false,
+          "state": {
+            "status": "terminal",
+            "outcome": {
+              "status": "completed",
+              "result": {
+                "kind": "model",
+                "entryId": 13
+              }
+            }
+          },
+          "startedAt": 1791907640819,
+          "endedAt": 1791907640822
+        }
+      ],
+      "effects": 1,
+      "beforeHooks": 1,
+      "afterHooks": 1,
+      "status": "done",
+      "toolResults": [
+        {
+          "model": [
+            {
+              "role": "toolResult",
+              "toolCallId": "tool-1",
+              "toolName": "effect",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "effect complete"
+                }
+              ],
+              "details": {
+                "marker": "effect-written"
+              },
+              "isError": false,
+              "durationMs": 1,
+              "timestamp": 1791907640822
+            }
+          ],
+          "data": {
+            "diagnostics": []
+          },
+          "kind": "pi.tool-result",
+          "id": 13,
+          "conversationId": 1,
+          "byTaskId": 12
+        }
+      ],
+      "liveTasks": 0,
+      "userEntries": 1
+    },
+    {
+      "point": "execute",
+      "replay": "unsafe",
+      "missingTool": false,
+      "exit": {
+        "code": null,
+        "signal": "SIGTERM"
+      },
+      "checkpoints": [
+        {
+          "id": 12,
+          "conversationId": 1,
+          "kind": "pi.tool",
+          "version": 2,
+          "input": {
+            "kind": "model",
+            "assistant": 11,
+            "callId": "tool-1"
+          },
+          "owner": 9,
+          "background": false,
+          "abortRequested": false,
+          "state": {
+            "status": "running",
+            "checkpoint": {
+              "phase": "execute",
+              "arguments": {},
+              "replay": "unsafe"
+            }
+          },
+          "startedAt": 1791907640953
+        }
+      ],
+      "effects": 1,
+      "beforeHooks": 1,
+      "afterHooks": 0,
+      "status": "done",
+      "toolResults": [
+        {
+          "model": [
+            {
+              "role": "toolResult",
+              "toolCallId": "tool-1",
+              "toolName": "effect",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "<harness>\n[error] Tool effect was interrupted and may have partially run\n</harness>"
+                }
+              ],
+              "details": {
+                "marker": "effect-written"
+              },
+              "isError": true,
+              "timestamp": 1791907640962
+            }
+          ],
+          "data": {
+            "diagnostics": [
+              {
+                "severity": "error",
+                "code": "interrupted",
+                "message": "Tool effect was interrupted and may have partially run"
+              }
+            ]
+          },
+          "kind": "pi.tool-result",
+          "id": 13,
+          "conversationId": 1,
+          "byTaskId": 12
+        }
+      ],
+      "liveTasks": 0,
+      "userEntries": 1
+    },
+    {
+      "point": "execute",
+      "replay": "safe",
+      "missingTool": true,
+      "exit": {
+        "code": null,
+        "signal": "SIGKILL"
+      },
+      "checkpoints": [
+        {
+          "id": 12,
+          "conversationId": 1,
+          "kind": "pi.tool",
+          "version": 2,
+          "input": {
+            "kind": "model",
+            "assistant": 11,
+            "callId": "tool-1"
+          },
+          "owner": 9,
+          "background": false,
+          "abortRequested": false,
+          "state": {
+            "status": "running",
+            "checkpoint": {
+              "phase": "execute",
+              "arguments": {},
+              "replay": "safe"
+            }
+          },
+          "startedAt": 1791907641085
+        }
+      ],
+      "effects": 1,
+      "beforeHooks": 1,
+      "afterHooks": 0,
+      "status": "done",
+      "toolResults": [
+        {
+          "model": [
+            {
+              "role": "toolResult",
+              "toolCallId": "tool-1",
+              "toolName": "effect",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "<harness>\n[error] Tool effect was interrupted and may have partially run\n</harness>"
+                }
+              ],
+              "details": {
+                "marker": "effect-written"
+              },
+              "isError": true,
+              "timestamp": 1791907641095
+            }
+          ],
+          "data": {
+            "diagnostics": [
+              {
+                "severity": "error",
+                "code": "interrupted",
+                "message": "Tool effect was interrupted and may have partially run"
+              }
+            ]
+          },
+          "kind": "pi.tool-result",
+          "id": 13,
+          "conversationId": 1,
+          "byTaskId": 12
+        }
+      ],
+      "liveTasks": 0,
+      "userEntries": 1
+    }
+  ],
+  "cancellation": [
+    {
+      "action": "abort",
+      "waiterRejected": true,
+      "stillRunningAfterWaitCancel": true,
+      "toolExited": true,
+      "closePendingBeforeRelease": false,
+      "liveTasks": 0
+    },
+    {
+      "action": "close",
+      "waiterRejected": true,
+      "stillRunningAfterWaitCancel": true,
+      "toolExited": true,
+      "closePendingBeforeRelease": false,
+      "liveTasks": null
+    },
+    {
+      "action": "non-cooperative",
+      "waiterRejected": true,
+      "stillRunningAfterWaitCancel": true,
+      "toolExited": true,
+      "closePendingBeforeRelease": true,
+      "liveTasks": null
+    }
+  ],
+  "orphan": {
+    "parentSignal": "SIGKILL",
+    "orphanAliveAfterParentExit": true,
+    "outputContinued": true
+  },
+  "storageAndEvents": {
+    "journal": "wal",
+    "schemaVersion": 1,
+    "tables": [
+      "conversations",
+      "document_revisions",
+      "documents",
+      "durable_metadata",
+      "durable_schema",
+      "entries",
+      "record_ids",
+      "submissions",
+      "tasks"
+    ],
+    "duringOpen": [
+      "native.sqlite",
+      "native.sqlite-shm",
+      "native.sqlite-wal"
+    ],
+    "afterClose": [
+      "backup.sqlite",
+      "native.sqlite"
+    ],
+    "secondWriterOpened": true,
+    "writerCode": 0,
+    "writerError": "(node:23825) ExperimentalWarning: SQLite is an experimental feature and might change at any time\n(Use `node --trace-warnings ...` to show where the warning was created)\n",
+    "snapshotEntries": 8,
+    "copyEntries": 8,
+    "eventTypes": [
+      "snapshot",
+      "message_start",
+      "message_end",
+      "submission",
+      "run_start",
+      "turn_start",
+      "usage_changed",
+      "tool_execution_start",
+      "tool_execution_end",
+      "turn_end",
+      "run_end"
+    ],
+    "toolEvents": [
+      {
+        "type": "tool_execution_start",
+        "toolCallId": "tool-1",
+        "taskId": 12
+      },
+      {
+        "type": "tool_execution_end",
+        "toolCallId": "tool-1",
+        "taskId": 12
+      }
+    ],
+    "reconnect": {
+      "type": "snapshot",
+      "entries": 5,
+      "tools": 0
+    },
+    "modelSwitch": {
+      "dispatchedModel": "faux-2",
+      "providerSessionSame": true,
+      "tools": 0
+    }
+  }
+}
