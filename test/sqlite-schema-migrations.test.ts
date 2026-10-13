@@ -69,6 +69,7 @@ const SCHEMA_TABLES = [
   ['batch_budget_revisions', schema.batchBudgetRevisions],
   ['task_attempt_reservations', schema.taskAttemptReservations],
   ['runtime_start_reservations', schema.runtimeStartReservations],
+  ['run_outcome_settlements', schema.runOutcomeSettlements],
   ['schema_migrations', schema.schemaMigrations],
 ] as const;
 
@@ -515,6 +516,10 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
         'runtime_start_reservations:(project_id)->projects.(id)',
         'runtime_start_reservations:(project_id,batch_id)->execution_batches.(project_id,id)',
         'runtime_start_reservations:(project_id,batch_id,run_id)->runs.(project_id,batch_id,id)',
+        'run_outcome_settlements:(project_id)->projects.(id)',
+        'run_outcome_settlements:(project_id,batch_id)->execution_batches.(project_id,id)',
+        'run_outcome_settlements:(project_id,batch_id,run_id)->runs.(project_id,batch_id,id)',
+        'run_outcome_settlements:(project_id,progress_task_id)->tasks.(project_id,id)',
         'command_receipts:(project_id)->projects.(id)',
         'command_receipts:(baseline_operation_id)->baseline_operations.(id)',
         'command_receipts:(project_id,baseline_operation_id)->baseline_operations.(project_id,id)',

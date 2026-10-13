@@ -956,6 +956,105 @@ CREATE UNIQUE INDEX runtime_start_reservations_project_start_key_unique ON runti
 CREATE INDEX runtime_start_reservations_run_id_index ON runtime_start_reservations (run_id);
 `;
 
+/**
+ * v13: P03-3 / F-008 Run 结果结算账本与时间依据保护。
+ *
+ * - 新建 run_outcome_settlements 结算账本表：受信 Core 内部结算入口一次性
+ *   记录 Run 结果与 Batch 无进展计数（设计 04 §6.1「记录结果 不退还 Run 次数」
+ *   「连续无进展次数仅在有效 Task 通过、批准的新产物或其他预定义领域进展时
+ *   重置，不能靠模型报告成功重置」）；幂等结算身份 UNIQUE(project_id,result_key)
+ *   （同 resultKey 重放去重不重复调账、跨 Run 复用同身份被 DDL 拒绝——结算身份
+ *   属于其 Run），生效进展证据部分唯一索引（同 (project_id,progress_task_id)
+ *   的 new_valid_task_passed 证据至多一条——重放旧成功证据不得再次重置计数），
+ *   同项目复合外键链（execution_batches(project_id,id) / runs(project_id,batch_id,id) /
+ *   tasks(project_id,id) 进展证据归属，全部 ON DELETE RESTRICT）；
+ * - 结算行是不可变证据行（UPDATE/DELETE 一律拒绝，与 batch_budget_revisions 同
+ *   风格）：outcome 仅终态（succeeded/failed/cancelled），progress_type 冻结为
+ *   none/new_valid_task_passed 两枚举（运行成功文本、SDK 正常结束、心跳、日志、
+ *   换模型都不是进展类型——不进入 DDL 枚举，输入面即拒绝）；无 token/cost
+ *   用量列（用量结算属后续任务，不伪造）；
+ * - runs.ended_at 结算后不可重写触发器：时间依据（started_at 已由 v9 保护）在
+ *   重开、暂停及后续 Run 中保持不变，终态不得倒写；首次设定（NULL→值）仍允许；
+ * - 本迁移不建 Verifier/check_results 表（结算入口不代替后续 Verifier）、不建
+ *   暂停/取消/恢复流程表，state_events 不加结算事件类型（查询面属 F-010）。
+ */
+const MIGRATION_013_SQL = `
+ALTER TABLE tasks ADD COLUMN first_passed_at INTEGER
+  CONSTRAINT tasks_first_passed_at_positive_check CHECK (first_passed_at IS NULL OR first_passed_at >= 1);
+
+-- Existing passes are historical facts, not progress produced by a later Run.
+UPDATE tasks SET first_passed_at = updated_at WHERE status = 'passed';
+
+CREATE TRIGGER tasks_first_passed_at_insert AFTER INSERT ON tasks
+WHEN NEW.status = 'passed' AND NEW.first_passed_at IS NULL
+BEGIN
+  UPDATE tasks SET first_passed_at = NEW.updated_at WHERE id = NEW.id;
+END;
+
+CREATE TRIGGER tasks_first_passed_at_record AFTER UPDATE OF status ON tasks
+WHEN OLD.status <> 'passed' AND NEW.status = 'passed' AND OLD.first_passed_at IS NULL
+BEGIN
+  UPDATE tasks SET first_passed_at = NEW.updated_at WHERE id = NEW.id;
+END;
+
+CREATE TRIGGER tasks_first_passed_at_immutable BEFORE UPDATE ON tasks
+WHEN OLD.first_passed_at IS NOT NULL AND NEW.first_passed_at IS NOT OLD.first_passed_at
+BEGIN
+  SELECT RAISE(ABORT, 'task first_passed_at is immutable');
+END;
+
+CREATE TABLE run_outcome_settlements (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  batch_id TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  result_key TEXT NOT NULL,
+  outcome TEXT NOT NULL,
+  progress_type TEXT NOT NULL,
+  progress_task_id TEXT,
+  run_ended_at INTEGER NOT NULL,
+  no_progress_runs_after INTEGER NOT NULL,
+  reason TEXT,
+  CONSTRAINT run_outcome_settlements_revision_positive_check CHECK (revision >= 1),
+  CONSTRAINT run_outcome_settlements_result_key_not_empty_check CHECK (length(result_key) > 0),
+  CONSTRAINT run_outcome_settlements_outcome_terminal_check CHECK (outcome IN ('succeeded', 'failed', 'cancelled')),
+  CONSTRAINT run_outcome_settlements_progress_type_enum_check CHECK (progress_type IN ('none', 'new_valid_task_passed')),
+  CONSTRAINT run_outcome_settlements_progress_shape_check CHECK (
+    (progress_type = 'none' AND progress_task_id IS NULL)
+    OR (progress_type = 'new_valid_task_passed' AND progress_task_id IS NOT NULL AND length(progress_task_id) > 0)
+  ),
+  CONSTRAINT run_outcome_settlements_run_ended_at_positive_check CHECK (run_ended_at >= 1),
+  CONSTRAINT run_outcome_settlements_no_progress_after_non_negative_check CHECK (no_progress_runs_after >= 0),
+  CONSTRAINT run_outcome_settlements_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT run_outcome_settlements_batch_fk FOREIGN KEY (project_id, batch_id) REFERENCES execution_batches (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT run_outcome_settlements_run_fk FOREIGN KEY (project_id, batch_id, run_id) REFERENCES runs (project_id, batch_id, id) ON DELETE RESTRICT,
+  CONSTRAINT run_outcome_settlements_progress_task_fk FOREIGN KEY (project_id, progress_task_id) REFERENCES tasks (project_id, id) ON DELETE RESTRICT
+);
+
+CREATE UNIQUE INDEX run_outcome_settlements_project_result_key_unique ON run_outcome_settlements (project_id, result_key);
+CREATE UNIQUE INDEX run_outcome_settlements_progress_evidence_unique ON run_outcome_settlements (project_id, progress_task_id) WHERE progress_type = 'new_valid_task_passed';
+CREATE UNIQUE INDEX run_outcome_settlements_run_id_unique ON run_outcome_settlements (run_id);
+
+CREATE TRIGGER run_outcome_settlements_immutable_update BEFORE UPDATE ON run_outcome_settlements
+BEGIN
+  SELECT RAISE(ABORT, 'run outcome settlement rows are immutable evidence');
+END;
+
+CREATE TRIGGER run_outcome_settlements_immutable_delete BEFORE DELETE ON run_outcome_settlements
+BEGIN
+  SELECT RAISE(ABORT, 'run outcome settlement rows are immutable evidence');
+END;
+
+CREATE TRIGGER runs_ended_at_immutable_update BEFORE UPDATE ON runs
+WHEN OLD.ended_at IS NOT NULL AND NEW.ended_at IS NOT OLD.ended_at
+BEGIN
+  SELECT RAISE(ABORT, 'runs ended_at cannot be rewritten after settlement');
+END;
+`;
+
 function sha256Hex(text: string): string {
   return createHash('sha256').update(text, 'utf8').digest('hex');
 }
@@ -1021,5 +1120,10 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
     version: 12,
     sql: MIGRATION_012_SQL,
     checksum: sha256Hex(MIGRATION_012_SQL),
+  },
+  {
+    version: 13,
+    sql: MIGRATION_013_SQL,
+    checksum: sha256Hex(MIGRATION_013_SQL),
   },
 ];

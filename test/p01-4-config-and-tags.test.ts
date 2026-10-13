@@ -704,6 +704,7 @@ describe('F-006 当前配置检查组（P01-FR2-CONFIG）', () => {
           'task_attempt_reservations',
           // P03-3 / F-007：Runtime 启动预占账本（迁移 v12；空表，无执行实体行）。
           'runtime_start_reservations',
+    'run_outcome_settlements',
         ].sort(),
       );
       for (const forbidden of [

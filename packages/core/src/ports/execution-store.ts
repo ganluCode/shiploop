@@ -22,8 +22,8 @@
  * - 快照列（scope/config/input）只保存身份级内容（摘要、版本、引用身份），
  *   绝不内联制品正文或绝对路径；序列化有界（EXECUTION_SNAPSHOT_MAX_BYTES）。
  *
- * 本模块不实现：启动命令编排（application/execution-start）、预算结算与无进展
- * 计数（F-008）、预算修订命令（F-009）、查询面（F-010）；P03-3 / F-006 起本模块
+ * 本模块不实现：启动命令编排（application/execution-start）、预算修订命令（F-009）、
+ * 查询面（F-010）；P03-3 / F-006 起本模块
  * 追加 Task 尝试预算预占与分类记账的记录形态与事务原语输入校验；P03-3 / F-007
  * 起追加 Runtime 启动额度预占的记录形态与输入校验（SDK 启动前的受信边界）。
  */
@@ -681,4 +681,161 @@ function requireStartKey(value: unknown, context: ValidationContext, field: stri
     throw validationError(context, field, '必须是非空非空白字符串（≤128 字符；受信 Core 生成的启动身份）', value);
   }
   return value;
+}
+
+/* ------------------------------------------------------------------ *
+ * P03-3 / F-008 Run 结果幂等预算结算与连续无进展保护（迁移 v13；受信 Core
+ * 内部原语，不经命令面暴露）
+ *
+ * 结算语义：受信 Core 在同一写事务内一次性记录 Run 终态结果（CAS 于 Run
+ * revision 与活动状态）与 Batch 无进展计数：有新有效领域进展才重置
+ * no_progress_runs（→0），否则恰好 +1；到 maxNoProgressRuns 后同事务终态化
+ * Batch（failed）并持久化 budget_exhausted 原因，阻止同 Batch 新 Run。重复
+ * 结果（同 resultKey）或旧 revision（runRevision CAS）不重复结算、不倒写
+ * 终态；runs_created/attempts_created/runtime_starts 不因任何结果退还（无退额
+ * 列、无退额原语）；绝对 Batch deadline 与 Run 时间依据（started_at/ended_at）
+ * 保持不变（v9/v13 触发器保护）。
+ *
+ * 有效进展类型限定为 Core 可核验的领域事实：new_valid_task_passed（同项目、
+ * Batch 单 Feature 范围内、tasks.status='passed' 的持久行——passed 只能由后续
+ * Verifier 的受信写入产生，不能由模型自报）。运行成功文本、SDK 正常结束、
+ * 心跳、日志、换模型不是进展证据类型（未知键/未知类型在输入面拒绝）；重放
+ * 旧成功证据（同 (project,task) 证据已生效）不重置无进展计数（视为无进展）。
+ * 本原语不代替后续 Verifier，也不实现完整暂停/取消/恢复流程；token/cost 实际
+ * 用量结算属后续任务，结算行无用量列（不伪造用量）。
+ * ------------------------------------------------------------------ */
+
+/** 可结算的 Run 终态（与迁移 v13 outcome CHECK 同枚举；不可重开）。 */
+export const RUN_OUTCOME_SETTLEMENT_OUTCOMES = ['succeeded', 'failed', 'cancelled'] as const;
+export type RunOutcomeSettlementOutcome = (typeof RUN_OUTCOME_SETTLEMENT_OUTCOMES)[number];
+
+/** 生效进展类型（与迁移 v13 progress_type CHECK 同枚举）。 */
+export const RUN_PROGRESS_EVIDENCE_TYPES = ['new_valid_task_passed'] as const;
+export type RunProgressEvidenceType = (typeof RUN_PROGRESS_EVIDENCE_TYPES)[number];
+
+/** Batch 因无进展耗尽而终态化时持久化的受控原因（reason 列定值）。 */
+export const RUN_NO_PROGRESS_EXHAUSTION_REASON = 'budget_exhausted';
+
+/** Run 结果结算账本记录（迁移 v13 run_outcome_settlements 行的应用侧形态）。 */
+export interface RunOutcomeSettlementRecord {
+  readonly id: string;
+  readonly createdAtUtcMs: number;
+  readonly projectId: string;
+  readonly revision: number;
+  readonly updatedAtUtcMs: number;
+  readonly batchId: string;
+  readonly runId: string;
+  /** 幂等结算身份（受信 Core 生成的稳定键；同身份重放只结算一次）。 */
+  readonly resultKey: string;
+  readonly outcome: RunOutcomeSettlementOutcome;
+  /** 生效进展类型：none（无新有效领域进展）或 new_valid_task_passed。 */
+  readonly progressType: 'none' | RunProgressEvidenceType;
+  /** 进展证据 Task（仅 progressType=new_valid_task_passed 时非空）。 */
+  readonly progressTaskId: string | null;
+  /** Run 结束时间依据（结算一次性写入；v13 触发器保护不可重写）。 */
+  readonly runEndedAtUtcMs: number;
+  /** 结算后的 Batch 连续无进展计数终值（审计证据）。 */
+  readonly noProgressRunsAfter: number;
+  readonly reason: string | null;
+}
+
+export interface ValidatedRunOutcomeSettlementInput {
+  readonly projectId: string;
+  readonly batchId: string;
+  readonly runId: string;
+  readonly resultKey: string;
+  /** CAS：调用方持有的当前 Run revision；不匹配（旧 revision）拒绝结算。 */
+  readonly runRevision: number;
+  readonly outcome: RunOutcomeSettlementOutcome;
+  readonly reason: string | null;
+  readonly progressEvidence: { readonly type: RunProgressEvidenceType; readonly taskId: string } | null;
+}
+
+const RUN_OUTCOME_SETTLEMENT_KEYS = [
+  'projectId',
+  'batchId',
+  'runId',
+  'resultKey',
+  'runRevision',
+  'outcome',
+  'reason',
+  'progressEvidence',
+] as const;
+
+const RUN_PROGRESS_EVIDENCE_KEYS = ['type', 'taskId'] as const;
+
+/**
+ * 结算输入校验：仅接受同项目 Batch/Run + 幂等结算身份 + CAS revision + 终态
+ * 结果 + 可选进展证据（恰 new_valid_task_passed 形态）。tokenUsed/costUsed/
+ * sdkEnded/outputText/logs/modelChanged/progress 等运行事实都是未知键（运行
+ * 成功文本、SDK 正常结束、心跳、日志、换模型不是进展证据输入字段，非法输入
+ * 在任何 SQL 之前拒绝）；进展证据类型冻结为 RUN_PROGRESS_EVIDENCE_TYPES。
+ */
+export function validateRunOutcomeSettlementInput(
+  value: unknown,
+  operation: string,
+): ValidatedRunOutcomeSettlementInput {
+  const context: ValidationContext = { operation, entity: { type: 'run_outcome_settlement' } };
+  const object = requirePlainObject(value, context, 'input');
+  rejectUnknownKeys(object, RUN_OUTCOME_SETTLEMENT_KEYS, context, 'input');
+  if (
+    typeof object.resultKey !== 'string' || object.resultKey.length === 0 ||
+    object.resultKey.length > 128 || object.resultKey.trim().length === 0
+  ) {
+    throw validationError(context, 'resultKey', '必须是非空非空白字符串（≤128 字符；受信 Core 生成的结算身份）', object.resultKey);
+  }
+  if (
+    typeof object.runRevision !== 'number' ||
+    !Number.isSafeInteger(object.runRevision) ||
+    object.runRevision < 1
+  ) {
+    throw validationError(context, 'runRevision', '必须是 ≥1 的安全整数（当前 Run revision）', object.runRevision);
+  }
+  if (
+    typeof object.outcome !== 'string' ||
+    !(RUN_OUTCOME_SETTLEMENT_OUTCOMES as readonly string[]).includes(object.outcome)
+  ) {
+    throw validationError(
+      context,
+      'outcome',
+      `必须是 ${RUN_OUTCOME_SETTLEMENT_OUTCOMES.join('/')}（可结算终态）`,
+      object.outcome,
+    );
+  }
+  if (object.reason !== null && typeof object.reason !== 'string') {
+    throw validationError(context, 'reason', '必须是字符串或 null', object.reason);
+  }
+  if (object.reason !== null && (object.reason.length === 0 || object.reason.trim().length === 0 || object.reason.length > 512)) {
+    throw validationError(context, 'reason', '必须是非空说明（≤512 字符）或 null', object.reason);
+  }
+  let progressEvidence: ValidatedRunOutcomeSettlementInput['progressEvidence'] = null;
+  if (object.progressEvidence !== undefined && object.progressEvidence !== null) {
+    const evidence = requirePlainObject(object.progressEvidence, context, 'progressEvidence');
+    rejectUnknownKeys(evidence, RUN_PROGRESS_EVIDENCE_KEYS, context, 'progressEvidence');
+    if (
+      typeof evidence.type !== 'string' ||
+      !(RUN_PROGRESS_EVIDENCE_TYPES as readonly string[]).includes(evidence.type)
+    ) {
+      throw validationError(
+        context,
+        'progressEvidence.type',
+        `必须是 ${RUN_PROGRESS_EVIDENCE_TYPES.join('/')}（Core 可核验领域进展类型；运行成功文本/SDK 正常结束/心跳/日志/换模型不是进展）`,
+        evidence.type,
+      );
+    }
+    progressEvidence = {
+      type: evidence.type as RunProgressEvidenceType,
+      taskId: requireStableIdField(evidence.taskId, context, 'progressEvidence.taskId'),
+    };
+  }
+  return {
+    projectId: requireStableIdField(object.projectId, context, 'projectId'),
+    batchId: requireStableIdField(object.batchId, context, 'batchId'),
+    runId: requireStableIdField(object.runId, context, 'runId'),
+    resultKey: object.resultKey,
+    runRevision: object.runRevision,
+    outcome: object.outcome as RunOutcomeSettlementOutcome,
+    reason: object.reason,
+    progressEvidence,
+  };
 }

@@ -33,8 +33,8 @@ describe('P03-3 / F-006 Task 尝试预算预占契约文档', () => {
   it('迁移事实一致：v11 为追加版本且包含 tasks 双计数列与预占账本表', () => {
     const doc = readContractDoc();
     const migrations = SQLITE_MIGRATIONS;
-    expect(migrations.at(-1)?.version).toBe(12);
-    expect(migrations).toHaveLength(12);
+    expect(migrations.at(-1)?.version).toBe(13);
+    expect(migrations).toHaveLength(13);
     const v11 = migrations[10];
     expect(v11?.sql).toContain('ALTER TABLE tasks ADD COLUMN attempt_counter');
     expect(v11?.sql).toContain('ALTER TABLE tasks ADD COLUMN code_attempts_used');

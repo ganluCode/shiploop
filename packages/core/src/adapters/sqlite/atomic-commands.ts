@@ -125,6 +125,9 @@ export function createSqliteAtomicCommandStore(
           // 内原子生效；SDK 启动前的受信边界，不经命令路由暴露）。
           reserveRuntimeStart: guarded(executions.reserveRuntimeStartInTransaction),
           getRuntimeStartReservation: guarded(executions.getRuntimeStartReservationInTransaction),
+          // F-008：受信结果结算与账本读取，仅在此短写事务上下文内有效。
+          settleExecutionRunOutcome: guarded(executions.settleExecutionRunOutcomeInTransaction),
+          getRunOutcomeSettlement: guarded(executions.getRunOutcomeSettlementInTransaction),
           saveReceipt: guarded(receipts.saveReceiptInTransaction),
         });
         try {

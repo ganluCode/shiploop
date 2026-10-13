@@ -288,6 +288,14 @@ export interface CommandTransaction {
     runId: string,
     startKey: string,
   ): import('./execution-store.js').RuntimeStartReservationRecord | null;
+  /** F-008：受信 Core 内部 Run 终态 CAS 与无进展计数的原子幂等结算；不经命令路由暴露。 */
+  settleExecutionRunOutcome(input: unknown): import('./execution-store.js').RunOutcomeSettlementRecord;
+  /** 同项目同 Run 同结算身份的不可变结果账本（无则 null）。 */
+  getRunOutcomeSettlement(
+    projectId: string,
+    runId: string,
+    resultKey: string,
+  ): import('./execution-store.js').RunOutcomeSettlementRecord | null;
   saveReceipt(receipt: unknown): void;
 }
 

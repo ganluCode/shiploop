@@ -46,7 +46,9 @@ export type StorageEntityType =
   /** P03-3 / F-006：Task 尝试预占账本（task_attempt_reservations，迁移 v11）。 */
   | 'task_attempt_reservation'
   /** P03-3 / F-007：Runtime 启动预占账本（runtime_start_reservations，迁移 v12）。 */
-  | 'runtime_start_reservation';
+  | 'runtime_start_reservation'
+  /** P03-3 / F-008：Run 结果结算账本（run_outcome_settlements，迁移 v13）。 */
+  | 'run_outcome_settlement';
 
 export type StorageErrorKind =
   /** 外部输入未通过运行时校验（缺字段/类型错误/未知 schemaVersion/非法摘要等）。 */

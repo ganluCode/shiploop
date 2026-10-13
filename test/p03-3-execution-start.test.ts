@@ -43,6 +43,7 @@ import type {
 import { EXECUTION_PREVIEW_OPERATION } from '../packages/core/src/ports/execution-preview.ts';
 import { EXECUTION_START_OPERATION } from '../packages/core/src/ports/execution-start.ts';
 import type { ExecutionDispatchSignalInput } from '../packages/core/src/ports/execution-start.ts';
+import type { RunOutcomeSettlementOutcome, RunOutcomeSettlementRecord } from '../packages/core/src/ports/execution-store.ts';
 import { EXECUTION_RUN_DISPATCHED_EVENT_TYPE } from '../packages/core/src/ports/execution-store.ts';
 import { TRUSTED_PROJECT_PERMISSIONS_READER } from '../packages/core/src/ports/execution-input-prepare.ts';
 import { mapStateEvents, PUBLIC_STATE_EVENT_TYPES } from '../packages/core/src/ports/events.ts';
@@ -134,6 +135,7 @@ interface PreparedHarness {
   };
   readonly batchRow: () => Record<string, unknown> | undefined;
   readonly runRow: () => Record<string, unknown> | undefined;
+  readonly settleRunOutcome: (runId: string, outcome: RunOutcomeSettlementOutcome) => RunOutcomeSettlementRecord;
   readonly markRunStatus: (runId: string, status: string) => void;
   readonly seedBaselineOccupancy: () => string;
   readonly commitWorkspaceChange: () => Promise<void>;
@@ -415,9 +417,17 @@ async function setup(options: HarnessOptions = {}): Promise<PreparedHarness> {
   const batchRow = () =>
     db().prepare('SELECT * FROM execution_batches').get() as Record<string, unknown> | undefined;
   const runRow = () => db().prepare('SELECT * FROM runs').get() as Record<string, unknown> | undefined;
+  const settleRunOutcome = (runId: string, outcome: RunOutcomeSettlementOutcome): RunOutcomeSettlementRecord =>
+    atomicStore.transact('test.trustedCoreSettlement', (tx) => {
+      const run = tx.getExecutionRun(projectId, runId);
+      return tx.settleExecutionRunOutcome({
+        projectId, batchId: run.batchId, runId, resultKey: `result-${runId}`,
+        runRevision: run.revision, outcome, reason: null, progressEvidence: null,
+      });
+    });
   const markRunStatus = (runId: string, status: string): void => {
     db()
-      .prepare('UPDATE runs SET status = ?, ended_at = ? WHERE id = ?')
+      .prepare('UPDATE runs SET status = ?, ended_at = COALESCE(ended_at, ?) WHERE id = ?')
       .run(status, nowUtcMs(), runId);
   };
   const seedBaselineOccupancy = (): string => {
@@ -479,6 +489,7 @@ async function setup(options: HarnessOptions = {}): Promise<PreparedHarness> {
     rows,
     batchRow,
     runRow,
+    settleRunOutcome,
     markRunStatus,
     seedBaselineOccupancy,
     commitWorkspaceChange,
@@ -512,6 +523,52 @@ function rejectedReasonOf(receipt: CommandReceipt): { code: string; reason: stri
   const error = (receipt as unknown as { error: { code: string; details?: { reason?: string } } }).error;
   return { code: error.code, reason: typeof error.details?.reason === 'string' ? error.details.reason : '' };
 }
+
+describe('F-008 受信结算后的真实命令重试边界', () => {
+  it('失败结算后重试累计无进展；达到上限后拒绝同 Batch 新 Run，不退款或延期', async () => {
+    const s = await setup();
+    const budget = { batch: { ...VALID_BUDGET.batch, maxRuns: 4, maxNoProgressRuns: 2 }, run: VALID_BUDGET.run };
+    const digest = await freshPreviewWithBudget(s, budget);
+    const first = acceptedOf(await s.service.submit(s.owner, s.startEnvelope({
+      payload: { featureIds: [s.featureId], budget, previewDigest: digest },
+    })));
+    const before = s.batchRow()!;
+    const firstRun = s.runRow()!;
+    s.settleRunOutcome(first.runId, 'failed');
+    expect(s.batchRow()).toMatchObject({ no_progress_runs: 1, runs_created: 1, status: 'queued' });
+    const retry = await s.startOnce({ payload: { retryBatchId: first.batchId } });
+    expect(retry.status).toBe('completed');
+    const secondRunId = (retry as { result: { runId: string } }).result.runId;
+    expect(s.batchRow()).toMatchObject({ no_progress_runs: 1, runs_created: 2 });
+    s.settleRunOutcome(secondRunId, 'failed');
+    expect(s.batchRow()).toMatchObject({
+      no_progress_runs: 2, runs_created: 2, attempts_created: 0, runtime_starts: 0,
+      status: 'failed', reason: 'budget_exhausted', deadline_at: before.deadline_at,
+      budget_snapshot: before.budget_snapshot, budget_revision: before.budget_revision,
+    });
+    const stopped = await s.startOnce({ payload: { retryBatchId: first.batchId } });
+    expect(rejectedReasonOf(stopped).reason).toBe('batch_not_active');
+    expect(s.rows().runs).toBe(2);
+    const preserved = s.session.database.prepare('SELECT * FROM runs WHERE id = ?').get(first.runId);
+    expect(preserved).toMatchObject({ created_at: firstRun.created_at, started_at: firstRun.started_at, status: 'failed' });
+  });
+
+  it('经受信结算 succeeded 后，新的重试命令拒绝 work_key_succeeded，原 Run 终态不倒写', async () => {
+    const s = await setup();
+    const budget = { batch: { ...VALID_BUDGET.batch, maxNoProgressRuns: 2 }, run: VALID_BUDGET.run };
+    const digest = await freshPreviewWithBudget(s, budget);
+    const first = acceptedOf(await s.service.submit(s.owner, s.startEnvelope({
+      payload: { featureIds: [s.featureId], budget, previewDigest: digest },
+    })));
+    s.settleRunOutcome(first.runId, 'succeeded');
+    const settled = s.runRow();
+    const retry = await s.startOnce({ payload: { retryBatchId: first.batchId } });
+    expect(rejectedReasonOf(retry).reason).toBe('work_key_succeeded');
+    expect(s.rows().runs).toBe(1);
+    expect(s.batchRow()).toMatchObject({ runs_created: 1, no_progress_runs: 1 });
+    expect(s.runRow()).toEqual(settled);
+  });
+});
 
 describe('F-005 首次明确授权：原子创建 Batch/Run/回执/事件（验收 2/6）', () => {
   it('创建单 Feature Batch + Run：runsCreated=1、真实 Batch/Run ID、runtime_starts=0、queued+可查询原因、初始预算修订行与脱敏事件同事务', async () => {

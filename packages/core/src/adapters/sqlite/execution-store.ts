@@ -22,8 +22,8 @@
  * - 时间为注入的 UTC 毫秒；id 由适配器生成 UUID v4；JSON 列只写入经校验的
  *   有界结构化 JSON。
  *
- * 本适配器不实现：启动命令编排（application/execution-start）、Run 生命周期 CAS
- * 与结算/无进展计数（F-008）、预算修订（F-009）、查询面（F-010）、完整 Attempt
+ * 本适配器不实现：启动命令编排（application/execution-start）、预算修订（F-009）、
+ * 查询面（F-010）、完整 Attempt
  * 生命周期/owner/fencing/进程执行（P03-4）、Runner/停止管理/会话记录（后续任务）。
  */
 import { randomUUID } from 'node:crypto';
@@ -40,12 +40,15 @@ import {
   EXECUTION_ACTIVE_STATUSES,
   executionCorruptError,
   isExecutionActiveStatus,
+  isExecutionTerminalStatus,
+  RUN_NO_PROGRESS_EXHAUSTION_REASON,
   TASK_ATTEMPT_CLASSIFIED_BY_CORE,
   validateBatchBudgetRevisionInsertInput,
   validateExecutionBatchInsertInput,
   validateExecutionEventAppendInput,
   validateExecutionRunInsertInput,
   validateRuntimeStartReservationInput,
+  validateRunOutcomeSettlementInput,
   validateTaskAttemptReclassifyInput,
   validateTaskAttemptReservationInput,
 } from '../../ports/execution-store.js';
@@ -53,6 +56,8 @@ import type {
   BatchBudgetRevisionRecord,
   ExecutionBatchRecord,
   ExecutionBatchStatus,
+  RunOutcomeSettlementOutcome,
+  RunOutcomeSettlementRecord,
   RunRecord,
   RuntimeStartReservationRecord,
   TaskAttemptClassification,
@@ -136,6 +141,23 @@ interface RuntimeStartReservationSqlRow {
   readonly start_key: string;
 }
 
+interface RunOutcomeSettlementSqlRow {
+  readonly id: string;
+  readonly created_at: number;
+  readonly project_id: string;
+  readonly revision: number;
+  readonly updated_at: number;
+  readonly batch_id: string;
+  readonly run_id: string;
+  readonly result_key: string;
+  readonly outcome: string;
+  readonly progress_type: string;
+  readonly progress_task_id: string | null;
+  readonly run_ended_at: number;
+  readonly no_progress_runs_after: number;
+  readonly reason: string | null;
+}
+
 const SELECT_BATCH =
   'SELECT id, created_at, project_id, revision, updated_at, phase_id, feature_id, scope_snapshot, ' +
   'config_snapshot, status, budget_revision, budget_snapshot, runs_created, attempts_created, ' +
@@ -150,6 +172,9 @@ const SELECT_RESERVATION =
 const SELECT_RUNTIME_START_RESERVATION =
   'SELECT id, created_at, project_id, revision, updated_at, batch_id, run_id, start_key ' +
   'FROM runtime_start_reservations';
+const SELECT_SETTLEMENT =
+  'SELECT id, created_at, project_id, revision, updated_at, batch_id, run_id, result_key, outcome, ' +
+  'progress_type, progress_task_id, run_ended_at, no_progress_runs_after, reason FROM run_outcome_settlements';
 
 const BATCH_STATUS_SET = new Set<string>([
   'queued', 'running', 'pausing', 'paused', 'cancelling', 'cancelled', 'succeeded', 'failed', 'interrupted',
@@ -224,6 +249,23 @@ export interface SqliteExecutionAccess {
     runId: string,
     startKey: string,
   ): RuntimeStartReservationRecord | null;
+  /* ---------------------------------------------------------------- *
+   * P03-3 / F-008 Run 结果结算与连续无进展保护（迁移 v13；受信 Core 内部原语）
+   * ---------------------------------------------------------------- */
+  /**
+   * Run 结果幂等结算（同事务原子生效）：一次性记录 Run 终态（CAS 于 runRevision
+   * 与活动状态；不倒写终态、ended_at 一次写入不可重写）与 Batch 无进展计数
+   * （新有效领域进展重置为 0，否则恰好 +1；到 maxNoProgressRuns 同事务终态化
+   * Batch failed 并持久化 budget_exhausted 原因）；同 resultKey 重放返回既有
+   * 记录；runs_created/attempts_created/runtime_starts 不退还（无退额路径）。
+   */
+  settleExecutionRunOutcomeInTransaction(input: unknown): RunOutcomeSettlementRecord;
+  /** 同项目同 Run 同结算身份的账本行（无则 null）。 */
+  getRunOutcomeSettlementInTransaction(
+    projectId: string,
+    runId: string,
+    resultKey: string,
+  ): RunOutcomeSettlementRecord | null;
 }
 
 function isSqliteConstraintError(error: unknown): error is Error & { code: string } {
@@ -1303,6 +1345,287 @@ export function createSqliteExecutionAccess(
     return row === undefined ? null : runtimeStartReservationFromRow(row, operation);
   }
 
+  /* ------------------------------------------------------------ *
+   * P03-3 / F-008 Run 结果结算与连续无进展保护（迁移 v13）
+   * ------------------------------------------------------------ */
+
+  function settlementFromRow(row: RunOutcomeSettlementSqlRow, operation: string): RunOutcomeSettlementRecord {
+    const entity: StorageEntityRef = { type: 'run_outcome_settlement', projectId: row.project_id, id: row.id };
+    if (
+      row.outcome !== 'succeeded' &&
+      row.outcome !== 'failed' &&
+      row.outcome !== 'cancelled'
+    ) {
+      throw executionCorruptError(operation, entity, `结算 outcome 非法（${row.outcome}）`);
+    }
+    if (row.progress_type !== 'none' && row.progress_type !== 'new_valid_task_passed') {
+      throw executionCorruptError(operation, entity, `结算进展类型非法（${row.progress_type}）`);
+    }
+    if ((row.progress_type === 'none') !== (row.progress_task_id === null)) {
+      throw executionCorruptError(operation, entity, '结算进展证据形态损坏（none 与 taskId 必须一致）');
+    }
+    return {
+      id: row.id,
+      createdAtUtcMs: row.created_at,
+      projectId: row.project_id,
+      revision: row.revision,
+      updatedAtUtcMs: row.updated_at,
+      batchId: row.batch_id,
+      runId: row.run_id,
+      resultKey: row.result_key,
+      outcome: row.outcome as RunOutcomeSettlementOutcome,
+      progressType: row.progress_type,
+      progressTaskId: row.progress_task_id,
+      runEndedAtUtcMs: row.run_ended_at,
+      noProgressRunsAfter: row.no_progress_runs_after,
+      reason: row.reason,
+    };
+  }
+
+  function settleExecutionRunOutcomeInTransaction(input: unknown): RunOutcomeSettlementRecord {
+    const operation = 'ExecutionStore.settleExecutionRunOutcome';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const valid = validateRunOutcomeSettlementInput(input, operation);
+    const db = session.database;
+    const entity: StorageEntityRef = {
+      type: 'run_outcome_settlement',
+      projectId: valid.projectId,
+      id: valid.resultKey,
+    };
+
+    // 1) 归属核验（同事务绑定参数查询；复合外键为兜底）：结算只能落在同项目
+    //    Batch/Run 且 Run 属于声明 Batch。
+    const batchRow = db
+      .prepare<[string], ExecutionBatchSqlRow>(`${SELECT_BATCH} WHERE id = ?`)
+      .get(valid.batchId) as ExecutionBatchSqlRow | undefined;
+    if (batchRow === undefined) {
+      throw notFound(operation, entity, `Batch ${valid.batchId} 不存在`);
+    }
+    if (batchRow.project_id !== valid.projectId) {
+      throw ownership(operation, entity, 'Batch 不属于声明的项目（跨项目目标被拒绝）');
+    }
+    const runRow = db
+      .prepare<[string], RunSqlRow>(`${SELECT_RUN} WHERE id = ?`)
+      .get(valid.runId) as RunSqlRow | undefined;
+    if (runRow === undefined) {
+      throw notFound(operation, entity, `Run ${valid.runId} 不存在`);
+    }
+    if (runRow.project_id !== valid.projectId) {
+      throw ownership(operation, entity, 'Run 不属于声明的项目（跨项目目标被拒绝）');
+    }
+    if (runRow.batch_id !== valid.batchId) {
+      throw ownership(operation, entity, 'Run 不属于声明的 Batch（结算只能落在声明 Run 上）');
+    }
+
+    // 2) 幂等结算去重先于 CAS 与状态判定：同 resultKey 重放返回既有记录（Run/
+    //    Batch 已终态仍幂等——不重复调账、不倒写终态）；同身份绑定其他 Batch/Run
+    //    （跨 Run 复用结算身份）拒绝。
+    const existing = db
+      .prepare<[string, string], RunOutcomeSettlementSqlRow>(
+        `${SELECT_SETTLEMENT} WHERE project_id = ? AND result_key = ?`,
+      )
+      .get(valid.projectId, valid.resultKey) as RunOutcomeSettlementSqlRow | undefined;
+    if (existing !== undefined) {
+      if (existing.batch_id !== valid.batchId || existing.run_id !== valid.runId) {
+        throw new StorageError(
+          'conflict',
+          operation,
+          `${operation}: 结算身份 ${valid.resultKey} 已绑定其他 Batch/Run，拒绝复用`,
+          { entity, details: { reason: 'result_key_reused' } },
+        );
+      }
+      return settlementFromRow(existing, operation);
+    }
+
+    // 3) Run CAS（旧 revision 不重复结算）与终态保护（不倒写终态）。
+    if (runRow.revision !== valid.runRevision) {
+      throw new StorageError(
+        'conflict',
+        operation,
+        `${operation}: Run ${valid.runId} revision 已变化（旧 revision 不重复结算）`,
+        {
+          entity,
+          details: { reason: 'run_revision_stale', expected: valid.runRevision, actual: runRow.revision },
+        },
+      );
+    }
+    if (isExecutionTerminalStatus(runRow.status)) {
+      throw new StorageError(
+        'conflict',
+        operation,
+        `${operation}: Run ${valid.runId} 已终态（${runRow.status}），不倒写终态`,
+        { entity, details: { reason: 'run_already_settled', status: runRow.status } },
+      );
+    }
+
+    // 4) 进展证据核验（Core 可核验领域事实；fail-closed）：Task 必须存在、同项目、
+    //    在 Batch 单 Feature 范围内且 tasks.status='passed'。首次通过必须发生在
+    //    Run 创建之后且不晚于结算，元数据修改及已经消费的旧事实不算新进展。
+    const timestamp = nowUtcMs();
+    let hasNewProgress = false;
+    let progressTaskId: string | null = null;
+    if (valid.progressEvidence !== null) {
+      const taskRow = db
+        .prepare<[string], { project_id: string; feature_id: string; status: string; first_passed_at: number | null }>(
+          'SELECT project_id, feature_id, status, first_passed_at FROM tasks WHERE id = ?',
+        )
+        .get(valid.progressEvidence.taskId) as { project_id: string; feature_id: string; status: string; first_passed_at: number | null } | undefined;
+      if (taskRow === undefined) {
+        throw notFound(operation, entity, `进展证据 Task ${valid.progressEvidence.taskId} 不存在`);
+      }
+      if (taskRow.project_id !== valid.projectId) {
+        throw ownership(operation, entity, '进展证据 Task 不属于声明的项目（跨项目目标被拒绝）');
+      }
+      if (taskRow.feature_id !== batchRow.feature_id) {
+        throw ownership(operation, entity, '进展证据 Task 不在 Batch 的单 Feature 范围内');
+      }
+      if (taskRow.status !== 'passed') {
+        throw new StorageError(
+          'conflict',
+          operation,
+          `${operation}: 进展证据 Task ${valid.progressEvidence.taskId} 状态 ${taskRow.status} 未通过核验（passed 只能由受信核验产生）`,
+          { entity, details: { reason: 'progress_evidence_not_verified', taskId: valid.progressEvidence.taskId, status: taskRow.status } },
+        );
+      }
+      const priorEvidence = db
+        .prepare<[string, string], RunOutcomeSettlementSqlRow>(
+          `${SELECT_SETTLEMENT} WHERE project_id = ? AND progress_type = 'new_valid_task_passed' AND progress_task_id = ?`,
+        )
+        .get(valid.projectId, valid.progressEvidence.taskId) as RunOutcomeSettlementSqlRow | undefined;
+      if (
+        priorEvidence === undefined &&
+        taskRow.first_passed_at !== null &&
+        taskRow.first_passed_at > runRow.created_at &&
+        taskRow.first_passed_at <= timestamp
+      ) {
+        hasNewProgress = true;
+        progressTaskId = valid.progressEvidence.taskId;
+      }
+    }
+
+    // 5) 无进展计数（有新有效领域进展才重置为 0；否则恰好 +1）与上限终态化
+    //    （当前批准预算快照为权威；终态 Batch 不倒写 status/reason）。
+    const budgetSnapshot = parseBudgetSnapshot(batchRow.budget_snapshot, operation, 'execution_batch');
+    const noProgressAfter = hasNewProgress ? 0 : batchRow.no_progress_runs + 1;
+    const shouldTerminalize =
+      noProgressAfter >= budgetSnapshot.batch.maxNoProgressRuns &&
+      isExecutionActiveStatus(batchRow.status);
+
+    // 6) 同事务原子写入：Run 终态 CAS（revision + 活动集双条件；ended_at 一次
+    //    写入，v13 触发器保护不可重写）+ Batch 计数（+上限时终态化 failed 并
+    //    持久化 budget_exhausted 原因）+ 结算账本行一次调用全部生效；后续任何
+    //    同事务写入失败整组回滚。runs_created/attempts_created/runtime_starts
+    //    不退还（无退额路径，不触碰）。
+    const runUpdate = db
+      .prepare(
+        `UPDATE runs SET status = ?, ended_at = ?, reason = ?, revision = revision + 1, updated_at = ? ` +
+          `WHERE id = ? AND project_id = ? AND revision = ? AND status IN (${ACTIVE_PLACEHOLDERS})`,
+      )
+      .run(
+        valid.outcome,
+        timestamp,
+        valid.reason,
+        timestamp,
+        valid.runId,
+        valid.projectId,
+        valid.runRevision,
+        ...(EXECUTION_ACTIVE_STATUSES as readonly string[]),
+      );
+    if (runUpdate.changes !== 1) {
+      const current = db
+        .prepare<[string], RunSqlRow>(`${SELECT_RUN} WHERE id = ?`)
+        .get(valid.runId) as RunSqlRow | undefined;
+      if (current === undefined) {
+        throw notFound(operation, entity, `Run ${valid.runId} 不存在`);
+      }
+      if (current.revision !== valid.runRevision) {
+        throw new StorageError(
+          'conflict',
+          operation,
+          `${operation}: Run ${valid.runId} revision 已变化（旧 revision 不重复结算）`,
+          {
+            entity,
+            details: { reason: 'run_revision_stale', expected: valid.runRevision, actual: current.revision },
+          },
+        );
+      }
+      throw new StorageError(
+        'conflict',
+        operation,
+        `${operation}: Run ${valid.runId} 已终态（${current.status}），不倒写终态`,
+        { entity, details: { reason: 'run_already_settled', status: current.status } },
+      );
+    }
+    const batchUpdate = shouldTerminalize
+      ? db
+          .prepare(
+            `UPDATE execution_batches SET no_progress_runs = ?, status = 'failed', reason = ?, revision = revision + 1, updated_at = ? ` +
+              'WHERE id = ? AND project_id = ?',
+          )
+          .run(noProgressAfter, RUN_NO_PROGRESS_EXHAUSTION_REASON, timestamp, valid.batchId, valid.projectId)
+      : db
+          .prepare(
+            'UPDATE execution_batches SET no_progress_runs = ?, revision = revision + 1, updated_at = ? ' +
+              'WHERE id = ? AND project_id = ?',
+          )
+          .run(noProgressAfter, timestamp, valid.batchId, valid.projectId);
+    if (batchUpdate.changes !== 1) {
+      throw notFound(operation, entity, `Batch ${valid.batchId} 不存在`);
+    }
+    const id = randomUUID();
+    try {
+      db.prepare(
+        'INSERT INTO run_outcome_settlements (id, created_at, project_id, revision, updated_at, batch_id, run_id, result_key, outcome, progress_type, progress_task_id, run_ended_at, no_progress_runs_after, reason) ' +
+          'VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(
+        id,
+        timestamp,
+        valid.projectId,
+        timestamp,
+        valid.batchId,
+        valid.runId,
+        valid.resultKey,
+        valid.outcome,
+        hasNewProgress ? 'new_valid_task_passed' : 'none',
+        progressTaskId,
+        timestamp,
+        noProgressAfter,
+        valid.reason,
+      );
+    } catch (error) {
+      if (isSqliteConstraintError(error)) {
+        throw new StorageError(
+          'conflict',
+          operation,
+          `${operation}: 结算账本写入被 DDL 约束拒绝（幂等结算身份/证据唯一/归属链）`,
+          { entity, cause: error },
+        );
+      }
+      throw error;
+    }
+    const inserted = db
+      .prepare<[string], RunOutcomeSettlementSqlRow>(`${SELECT_SETTLEMENT} WHERE id = ?`)
+      .get(id) as RunOutcomeSettlementSqlRow;
+    return settlementFromRow(inserted, operation);
+  }
+
+  function getRunOutcomeSettlementInTransaction(
+    projectId: string,
+    runId: string,
+    resultKey: string,
+  ): RunOutcomeSettlementRecord | null {
+    const operation = 'ExecutionStore.getRunOutcomeSettlement';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const row = session.database
+      .prepare<[string, string, string], RunOutcomeSettlementSqlRow>(
+        `${SELECT_SETTLEMENT} WHERE project_id = ? AND run_id = ? AND result_key = ?`,
+      )
+      .get(projectId, runId, resultKey) as RunOutcomeSettlementSqlRow | undefined;
+    return row === undefined ? null : settlementFromRow(row, operation);
+  }
+
   return {
     insertExecutionBatchInTransaction,
     insertBatchBudgetRevisionInTransaction,
@@ -1320,5 +1643,7 @@ export function createSqliteExecutionAccess(
     getExecutionRunInTransaction,
     reserveRuntimeStartInTransaction,
     getRuntimeStartReservationInTransaction,
+    settleExecutionRunOutcomeInTransaction,
+    getRunOutcomeSettlementInTransaction,
   };
 }

@@ -274,7 +274,7 @@ describe('F-003 Work accepted receipts', () => {
   });
 
   it('v10 rollback preserves v9 receipts and allows a verified retry; historical checksums stay frozen', async () => {
-    expect(SQLITE_MIGRATIONS.map((migration) => migration.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+    expect(SQLITE_MIGRATIONS.map((migration) => migration.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13]);
     expect(SQLITE_MIGRATIONS[8]?.checksum).toBe('f1439930aac135ac710910e340023e591e121e5020a73503fe9d1e5d84698053');
     await withDb(async (session) => {
       const v10 = SQLITE_MIGRATIONS[9]!;
@@ -291,7 +291,7 @@ describe('F-003 Work accepted receipts', () => {
       );
       const result = await migrateSqliteStorage(session);
       // P03-3 / F-006 起 v11（Task 尝试计数列与预占账本表）随修复后重试一并应用。
-      expect(result.appliedVersions).toEqual([10, 11, 12]);
+      expect(result.appliedVersions).toEqual([10, 11, 12, 13]);
       expect(session.database.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
     }, 9);
   });

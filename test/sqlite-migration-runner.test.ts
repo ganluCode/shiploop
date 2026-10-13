@@ -202,6 +202,7 @@ describe('F-005 迁移执行与记录', () => {
           'project_settings',
           'projects',
           'repository_bindings',
+          'run_outcome_settlements',
           'runs',
           'runtime_start_reservations',
           'schema_migrations',
@@ -302,9 +303,11 @@ describe('F-005 迁移执行与记录', () => {
         // P03-3 / F-007：v12 为 Runtime 启动预占账本表迁移；探针迁移紧随其后。
         expect(rows[11]!.version).toBe(12);
         expect(rows[11]!.checksum).toBe(SQLITE_MIGRATIONS[11]!.checksum);
-        expect(rows[12]!.version).toBe(PROBE_MIGRATION.version);
-        expect(rows[12]!.checksum).toBe(PROBE_MIGRATION.checksum);
-        expect(rows[12]!.applied_at).toBe(FIXED_NOW_MS + 1_000);
+        expect(rows[12]!.version).toBe(13);
+        expect(rows[12]!.checksum).toBe(SQLITE_MIGRATIONS[12]!.checksum);
+        expect(rows[13]!.version).toBe(PROBE_MIGRATION.version);
+        expect(rows[13]!.checksum).toBe(PROBE_MIGRATION.checksum);
+        expect(rows[13]!.applied_at).toBe(FIXED_NOW_MS + 1_000);
       } finally {
         session.close();
       }

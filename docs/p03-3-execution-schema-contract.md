@@ -117,6 +117,10 @@ Drizzle 无法表达触发器；不可变内容由迁移 v9 触发器承载（�
 - **F-007**：迁移 v12（runtime_start_reservations 启动预占账本表；SDK 启动前的
   runtime_starts 原子预占原语）见 `docs/p03-3-runtime-start-contract.md`；本契约的
   三表 DDL 与不变量不变。
+- **F-008**：迁移 v13（run_outcome_settlements 不可变结果账本、tasks.first_passed_at
+  首次领域通过事实、runs.ended_at 不可改写）见
+  `docs/p03-3-run-outcome-settlement-contract.md`；受信事务一次性结算 Run 与连续无进展
+  计数，启动累计消耗不退款，deadline/输入快照不延期或重置。
 
 ## 7. 验证记录（F-002）
 

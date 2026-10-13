@@ -689,7 +689,10 @@ export const tasks = sqliteTable('tasks', {
   /** P03-3 / F-006（迁移 v11）：已消耗代码尝试计数（首次代码执行与代码修复；
    *  仅受信 Core 基础设施重分类可退还，成功/取消/失败不退）。 */
   codeAttemptsUsed: integer('code_attempts_used').notNull().default(0),
+  /** F-008：首次受信通过的时间事实；元数据更新和旧状态重放不可改写。 */
+  firstPassedAt: integer('first_passed_at'),
 }, (table) => [
+  check('tasks_first_passed_at_positive_check', sql`${table.firstPassedAt} IS NULL OR ${table.firstPassedAt} >= 1`),
   check('tasks_revision_positive_check', sql`${table.revision} >= 1`),
   check('tasks_title_not_empty_check', sql`length(${table.title}) > 0`),
   check(
@@ -1238,6 +1241,54 @@ export const runtimeStartReservations = sqliteTable('runtime_start_reservations'
     table.startKey,
   ),
   index('runtime_start_reservations_run_id_index').on(table.runId),
+]);
+
+/** F-008：不可变 Run 结果结算账本，DDL 与迁移 v13 保持一致。 */
+export const runOutcomeSettlements = sqliteTable('run_outcome_settlements', {
+  id: text('id').primaryKey(),
+  createdAt: integer('created_at').notNull(),
+  projectId: text('project_id').notNull().references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  revision: integer('revision').notNull().default(1),
+  updatedAt: integer('updated_at').notNull(),
+  batchId: text('batch_id').notNull(),
+  runId: text('run_id').notNull(),
+  resultKey: text('result_key').notNull(),
+  outcome: text('outcome').notNull(),
+  progressType: text('progress_type').notNull(),
+  progressTaskId: text('progress_task_id'),
+  runEndedAt: integer('run_ended_at').notNull(),
+  noProgressRunsAfter: integer('no_progress_runs_after').notNull(),
+  reason: text('reason'),
+}, (table) => [
+  check('run_outcome_settlements_revision_positive_check', sql`${table.revision} >= 1`),
+  check('run_outcome_settlements_result_key_not_empty_check', sql`length(${table.resultKey}) > 0`),
+  check('run_outcome_settlements_outcome_terminal_check', sql`${table.outcome} IN ('succeeded', 'failed', 'cancelled')`),
+  check('run_outcome_settlements_progress_type_enum_check', sql`${table.progressType} IN ('none', 'new_valid_task_passed')`),
+  check('run_outcome_settlements_progress_shape_check', sql`
+    (${table.progressType} = 'none' AND ${table.progressTaskId} IS NULL)
+    OR (${table.progressType} = 'new_valid_task_passed' AND ${table.progressTaskId} IS NOT NULL AND length(${table.progressTaskId}) > 0)
+  `),
+  check('run_outcome_settlements_run_ended_at_positive_check', sql`${table.runEndedAt} >= 1`),
+  check('run_outcome_settlements_no_progress_after_non_negative_check', sql`${table.noProgressRunsAfter} >= 0`),
+  foreignKey({
+    name: 'run_outcome_settlements_batch_fk',
+    columns: [table.projectId, table.batchId],
+    foreignColumns: [executionBatches.projectId, executionBatches.id],
+  }).onDelete('restrict'),
+  foreignKey({
+    name: 'run_outcome_settlements_run_fk',
+    columns: [table.projectId, table.batchId, table.runId],
+    foreignColumns: [runs.projectId, runs.batchId, runs.id],
+  }).onDelete('restrict'),
+  foreignKey({
+    name: 'run_outcome_settlements_progress_task_fk',
+    columns: [table.projectId, table.progressTaskId],
+    foreignColumns: [tasks.projectId, tasks.id],
+  }).onDelete('restrict'),
+  uniqueIndex('run_outcome_settlements_project_result_key_unique').on(table.projectId, table.resultKey),
+  uniqueIndex('run_outcome_settlements_progress_evidence_unique').on(table.projectId, table.progressTaskId)
+    .where(sql`${table.progressType} = 'new_valid_task_passed'`),
+  uniqueIndex('run_outcome_settlements_run_id_unique').on(table.runId),
 ]);
 
 export const schemaMigrations = sqliteTable('schema_migrations', {
