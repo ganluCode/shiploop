@@ -40,7 +40,7 @@ import type {
   ExecutionBudgetStatusResult,
   BudgetRevisionListResult,
   ExecutionPreviewResult,
-} from 'shiploop-host';
+} from '../packages/host/src/index.ts';
 
 const PROJECT_ID = randomUUID();
 const FEATURE_ID = randomUUID();
