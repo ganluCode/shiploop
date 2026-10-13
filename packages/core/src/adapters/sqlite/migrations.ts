@@ -1197,6 +1197,13 @@ function sha256Hex(text: string): string {
   return createHash('sha256').update(text, 'utf8').digest('hex');
 }
 
+const MIGRATION_015_SQL = `
+ALTER TABLE tasks ADD COLUMN kind TEXT NOT NULL DEFAULT 'coding'
+  CONSTRAINT tasks_kind_check CHECK (kind IN ('coding', 'planning'));
+ALTER TABLE tasks ADD COLUMN manual_block INTEGER NOT NULL DEFAULT 0
+  CONSTRAINT tasks_manual_block_check CHECK (typeof(manual_block) = 'integer' AND manual_block IN (0, 1));
+`;
+
 /** 已声明的全部 SQLite 迁移，按版本升序；F-005 的执行器按此顺序应用并核对摘要。 */
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
@@ -1268,5 +1275,10 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
     version: 14,
     sql: MIGRATION_014_SQL,
     checksum: sha256Hex(MIGRATION_014_SQL),
+  },
+  {
+    version: 15,
+    sql: MIGRATION_015_SQL,
+    checksum: sha256Hex(MIGRATION_015_SQL),
   },
 ];

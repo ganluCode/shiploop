@@ -16,6 +16,8 @@ export * from './ports/errors.js';
 export * from './ports/validation.js';
 export * from './ports/settings-schema.js';
 export * from './ports/runtime-capabilities.js';
+export * from './ports/task-dag.js';
+export * from './application/task-dag.js';
 export * from './ports/attempt-store.js';
 export * from './ports/runtime-recovery.js';
 export * from './ports/runtime-recovery-catalog.js';

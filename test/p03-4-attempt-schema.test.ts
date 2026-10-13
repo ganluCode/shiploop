@@ -56,7 +56,7 @@ async function fixture() {
 
 describe('P03-4 F-001 persistent execution model', () => {
   it('appends v14 without changing the delivered v1-v13 checksums', () => {
-    expect(SQLITE_MIGRATIONS.at(-1)?.version).toBe(14);
+    expect(SQLITE_MIGRATIONS[13]?.version).toBe(14);
     // Frozen from the predecessor source, not recomputed from the new descriptors.
     const oldSql = SQLITE_MIGRATIONS.slice(0, 13).map(m => m.checksum).join('\n');
     expect(createHash('sha256').update(oldSql).digest('hex')).toBe('5b24e6221a7b22e44f52b645b58fe439597855c3bb69b4568b672ac2e5ef9e00');
@@ -236,11 +236,11 @@ describe('P03-4 F-001 persistent execution model', () => {
         session.database.prepare("INSERT INTO projects (id, created_at, updated_at, display_name, status, labels) VALUES ('old-project', ?, ?, 'Preserved', 'active', '[]')").run(NOW, NOW);
       }
       const before = version > 0 ? session.database.prepare('SELECT * FROM schema_migrations').all() : [];
-      expect((await migrateSqliteStorage(session)).toVersion).toBe(14);
+      expect((await migrateSqliteStorage(session)).toVersion).toBe(SQLITE_MIGRATIONS.length);
       expect(session.database.prepare('SELECT * FROM schema_migrations WHERE version <= ?').all(version)).toEqual(before);
       if (version > 0) expect(session.database.prepare('SELECT display_name FROM projects').get()).toEqual({ display_name: 'Preserved' });
       expect((await migrateSqliteStorage(session)).appliedVersions).toEqual([]);
-      expect(session.database.prepare('SELECT count(*) AS n FROM schema_migrations').get()).toEqual({ n: 14 });
+      expect(session.database.prepare('SELECT count(*) AS n FROM schema_migrations').get()).toEqual({ n: SQLITE_MIGRATIONS.length });
     } finally { session.close(); sandbox.cleanup(); }
   });
 
@@ -275,12 +275,14 @@ describe('P03-4 F-001 persistent execution model', () => {
         db.prepare('UPDATE projects SET repository_binding_id = ? WHERE id = ?').run(binding.repository_binding_id, f.box.projectId);
       });
       const before = Object.fromEntries(tables.map(table => [table, predecessor.database.prepare(`SELECT * FROM ${table} ORDER BY id`).all()]));
-      expect((await migrateSqliteStorage(predecessor)).appliedVersions).toEqual([14]);
+      expect((await migrateSqliteStorage(predecessor)).appliedVersions).toEqual([14, 15]);
       for (const table of tables) {
         const after = predecessor.database.prepare(`SELECT * FROM ${table} ORDER BY id`).all() as Record<string, unknown>[];
         if (table === 'tasks') {
           expect(after[0]?.execution_version).toBe(0);
-          for (const row of after) delete row.execution_version;
+          expect(after[0]?.kind).toBe('coding');
+          expect(after[0]?.manual_block).toBe(0);
+          for (const row of after) { delete row.execution_version; delete row.kind; delete row.manual_block; }
         }
         expect(after, table).toEqual(before[table]);
       }
@@ -295,14 +297,14 @@ describe('P03-4 F-001 persistent execution model', () => {
     const session = openSqliteStorageSession({ path: join(sandbox.path, 'state.db') });
     try {
       await migrateSqliteStorage(session, { migrations: SQLITE_MIGRATIONS.slice(0, 13) });
-      const last = SQLITE_MIGRATIONS.at(-1)!;
+      const last = SQLITE_MIGRATIONS[13]!;
       const sql = `${last.sql}\nCREATE TABLE broken (id INTEGER); INSERT INTO absent VALUES (1);`;
       await expect(migrateSqliteStorage(session, { migrations: [...SQLITE_MIGRATIONS.slice(0, 13),
         { version: 14, sql, checksum: createHash('sha256').update(sql).digest('hex') }] })).rejects.toMatchObject({ step: 'apply', version: 14 });
       expect(session.database.prepare("SELECT name FROM sqlite_master WHERE name IN ('attempts', 'workspace_leases', 'broken')").all()).toEqual([]);
       expect(session.database.prepare('SELECT max(version) AS v FROM schema_migrations').get()).toEqual({ v: 13 });
       expect(session.database.prepare('PRAGMA table_info(tasks)').all()).not.toEqual(expect.arrayContaining([expect.objectContaining({ name: 'execution_version' })]));
-      expect((await migrateSqliteStorage(session, { backupPath: join(sandbox.path, 'retry.db') })).toVersion).toBe(14);
+      expect((await migrateSqliteStorage(session, { backupPath: join(sandbox.path, 'retry.db') })).toVersion).toBe(SQLITE_MIGRATIONS.length);
     } finally { session.close(); sandbox.cleanup(); }
   });
 });

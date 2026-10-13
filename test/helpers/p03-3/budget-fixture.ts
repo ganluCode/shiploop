@@ -1,3 +1,4 @@
+import type { ExecutionBudgetProposal } from '../../../packages/core/src/ports/execution-budget.ts';
 import { randomUUID } from 'node:crypto';
 import { createCommandService } from '../../../packages/core/src/application/command-service.ts';
 import { createExecutionPreviewService } from '../../../packages/core/src/application/execution-preview.ts';
@@ -44,7 +45,7 @@ export function budgetServices(session: SqliteStorageSession) {
   return { atomic, commands, preview, signals };
 }
 
-export async function openBudgetFixture(budget = BUDGET) {
+export async function openBudgetFixture(budget: ExecutionBudgetProposal = BUDGET, tasks = [{ id: 't-1', title: 'Task', acceptance: { criteria: ['budget consistency'] }, dependsOn: [] as string[] }]) {
   const box = createCommandsTestFixture({ prefix: 'shiploop-f013-budget-' });
   try {
     const harness = await box.openTransactionalHarness();
@@ -74,7 +75,7 @@ export async function openBudgetFixture(budget = BUDGET) {
     const imported = await requireCompleted(submit('feature.plan.import', {
       phaseId: 'phase-1', plan: {
         schemaVersion: 1, feature: { title: 'Budget race', description: null, labels: [], sourceRefs: [] },
-        tasks: [{ id: 't-1', title: 'Task', acceptance: { criteria: ['budget consistency'] } }],
+        tasks,
       },
     }, { scope, expectedRevision: 1 }));
     const featureId = (imported as { feature: { id: string } }).feature.id;
@@ -82,7 +83,7 @@ export async function openBudgetFixture(budget = BUDGET) {
     await requireCompleted(submit('feature.plan.decide', {
       featureId, planDigest: feature.plan_digest, decision: 'approve', reason: 'test authorization',
     }, { scope, expectedRevision: feature.revision }));
-    const preview = await services.preview.previewExecution(projectId, { featureIds: [featureId], budget });
+    const preview = await services.preview.previewExecution(projectId, { featureIds: [featureId], budget: { ...budget } });
     if (preview.status !== 'ready') throw new Error(`fixture not ready: ${JSON.stringify(preview)}`);
     const startEnvelope = () => envelope('execution.start', { featureIds: [featureId], budget, previewDigest: preview.previewDigest }, { scope });
     const retryEnvelope = (batchId: string) => envelope('execution.start', { featureIds: [featureId], retryBatchId: batchId }, { scope });

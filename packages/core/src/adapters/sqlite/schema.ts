@@ -692,9 +692,13 @@ export const tasks = sqliteTable('tasks', {
   codeAttemptsUsed: integer('code_attempts_used').notNull().default(0),
   /** P03-4: monotonic Task fencing version, advanced only by atomic claiming. */
   executionVersion: integer('execution_version').notNull().default(0),
+  kind: text('kind').notNull().default('coding'),
+  manualBlock: integer('manual_block').notNull().default(0),
   /** F-008：首次受信通过的时间事实；元数据更新和旧状态重放不可改写。 */
   firstPassedAt: integer('first_passed_at'),
 }, (table) => [
+  check('tasks_kind_check', sql`${table.kind} IN ('coding', 'planning')`),
+  check('tasks_manual_block_check', sql`typeof(${table.manualBlock}) = 'integer' AND ${table.manualBlock} IN (0, 1)`),
   check('tasks_execution_version_non_negative_check', sql`typeof(${table.executionVersion}) = 'integer' AND ${table.executionVersion} >= 0`),
   check('tasks_first_passed_at_positive_check', sql`${table.firstPassedAt} IS NULL OR ${table.firstPassedAt} >= 1`),
   check('tasks_revision_positive_check', sql`${table.revision} >= 1`),
