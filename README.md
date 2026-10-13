@@ -80,6 +80,7 @@ docs/p03-3-runtime-start-contract.md  P03-3 Runtime 启动额度预占契约（F
 docs/p03-3-run-outcome-settlement-contract.md  P03-3 Run 结果幂等结算契约（F-008：迁移 v13 不可变结果账本与首次通过事实、受信内部事务/CAS、连续无进展上限、预算不退款、时间持久化及成功 workKey 不重派发）
 docs/p03-3-budget-revision-contract.md  P03-3 批次预算显式修订契约（F-009：execution.budget.revise 命令面与能力位、reviseBatchBudget 短事务预算版本 CAS 原语、仅增额或延期单调判定、不可变修订历史与脱敏事件/回执、仅增额不自动启动或恢复 Run、Task 代码尝试上限唯一显式通道）
 docs/p03-3-execution-budget-query-contract.md  P03-3 执行预算只读查询契约（F-010：execution.budget.get/revisions 一致读视图、固定 Feature 范围与各层上限/已用/剩余、绝对 deadline 与阻塞原因冻结词汇、修订历史有界分页与受控游标、未知字段不填零与启动预占/实际用量分离、输出脱敏边界）
+docs/acceptance/p03-3-f014-report.md  F-014 交付报告（完整门禁、输入/实现提交、逐命令退出码、脱敏证据摘要和 not_run 边界）
 docs/p03-3-handoff.md  P03-3 集成验收与 P03-4/6/9 接口交接（F-014：正式构建 CLI 到持久预算、FR-1/FR-2 与预算子集覆盖、显式测试目录边界、accepted 兼容与组合事务）
 docs/p03-3-cli-execution-operations.md  P03-3 执行授权 CLI 操作说明（F-012：execution preview/start/budget/revise 命令面、完整有限预算参数映射与有效并发把关、previewDigest 明确确认、四态结构化输出与 accepted 仅提交成功语义、失败退出码与同请求恢复）
 ```

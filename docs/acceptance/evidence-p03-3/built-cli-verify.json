@@ -1,0 +1,747 @@
+{
+  "schemaVersion": 1,
+  "passed": true,
+  "runtimeExecution": false,
+  "stockHostConfiguration": "not_run: production catalog empty (known P03-1 gap)",
+  "records": [
+    {
+      "kind": "host",
+      "entry": "test/helpers/host/dist-host-entry-catalog.mjs",
+      "catalog": "explicit test pi/anthropic/openai; no runtime",
+      "pid": 40291
+    },
+    {
+      "kind": "command",
+      "argv": [
+        "node",
+        "packages/cli/dist/bin.js",
+        "project",
+        "register",
+        "<sandbox>/project",
+        "--name",
+        "F-014",
+        "--data-root",
+        "<sandbox>/data/app",
+        "--json"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "stdout": "{\n  \"ok\": true,\n  \"command\": \"project.register\",\n  \"result\": {\n    \"schemaVersion\": 5,\n    \"commandId\": \"df259c1e-0254-4f88-bd21-3d4d6a3d9e49\",\n    \"principalId\": \"local-owner\",\n    \"operation\": \"project.register\",\n    \"scope\": {\n      \"kind\": \"registration\"\n    },\n    \"requestDigest\": \"ac4b4a62621522e90474421905198fd44e5adfd73f39ffa9026d6c61c1a370a0\",\n    \"issuedAt\": \"2026-10-13T11:02:10.103Z\",\n    \"completedAt\": \"2026-10-13T11:02:10.201Z\",\n    \"replayed\": false,\n    \"status\": \"completed\",\n    \"result\": {\n      \"status\": \"registered\",\n      \"project\": {\n        \"id\": \"7d4ad8c2-430b-44b6-b552-4b1677269792\",\n        \"displayName\": \"F-014\",\n        \"description\": null,\n        \"status\": \"active\",\n        \"labels\": [],\n        \"repositoryBindingId\": \"b7458127-e6a5-4d73-b572-76aab97deb4d\",\n        \"revision\": 1,\n        \"createdAt\": \"2026-10-13T11:02:10.201Z\",\n        \"updatedAt\": \"2026-10-13T11:02:10.201Z\"\n      },\n      \"binding\": {\n        \"id\": \"b7458127-e6a5-4d73-b572-76aab97deb4d\",\n        \"projectId\": \"7d4ad8c2-430b-44b6-b552-4b1677269792\",\n        \"canonicalPath\": \"<sandbox>/project\",\n        \"gitCommonDir\": \"<sandbox>/project/.git\",\n        \"repoIdentity\": \"gitdir-sha256:054f852953e00de3db6368ffa79c68cda49ae9ec55f4c21cbe74b3058c8aba3e\",\n        \"revision\": 1,\n        \"bindingRevision\": 1,\n        \"createdAt\": \"2026-10-13T11:02:10.201Z\",\n        \"updatedAt\": \"2026-10-13T11:02:10.201Z\"\n      }\n    },\n    \"resultRef\": \"v1.0L-RmM-J3aVY-Z0UZLmOSHB5yc1fuflvpeLbj0DV_58\"\n  }\n}",
+      "stderr": ""
+    },
+    {
+      "kind": "input",
+      "path": "<sandbox>/config.json",
+      "document": {
+        "schemaVersion": 2,
+        "strategies": {
+          "defaultStrategy": {
+            "runtime": "pi",
+            "provider": "anthropic",
+            "model": "claude-sonnet"
+          },
+          "modelMap": {
+            "low": {
+              "runtime": "pi",
+              "provider": "anthropic",
+              "model": "claude-sonnet"
+            }
+          }
+        },
+        "policies": {
+          "executionLimits": {
+            "maxConcurrentWorks": 1,
+            "workTimeoutMs": 600000
+          },
+          "verification": {
+            "requireChecksBeforeDone": true
+          }
+        }
+      }
+    },
+    {
+      "kind": "command",
+      "argv": [
+        "node",
+        "packages/cli/dist/bin.js",
+        "config",
+        "create",
+        "--scope",
+        "global",
+        "--input",
+        "<sandbox>/config.json",
+        "--data-root",
+        "<sandbox>/data/app",
+        "--json"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "stdout": "{\n  \"ok\": true,\n  \"command\": \"config.create\",\n  \"result\": {\n    \"schemaVersion\": 5,\n    \"commandId\": \"ef59dd78-be35-4e20-87f6-6bc29460a35c\",\n    \"principalId\": \"local-owner\",\n    \"operation\": \"settings.global.create\",\n    \"scope\": {\n      \"kind\": \"global\"\n    },\n    \"requestDigest\": \"ec51fccd59caad66fb7c391c1d9cd95ae48a7896b3054d92cd49cbb0346f0e38\",\n    \"issuedAt\": \"2026-10-13T11:02:10.290Z\",\n    \"completedAt\": \"2026-10-13T11:02:10.294Z\",\n    \"replayed\": false,\n    \"status\": \"completed\",\n    \"result\": {\n      \"scope\": {\n        \"kind\": \"global\"\n      },\n      \"schemaVersion\": 2,\n      \"revision\": 1,\n      \"payload\": {\n        \"schemaVersion\": 2,\n        \"strategies\": {\n          \"defaultStrategy\": {\n            \"runtime\": \"pi\",\n            \"provider\": \"anthropic\",\n            \"model\": \"claude-sonnet\"\n          },\n          \"modelMap\": {\n            \"low\": {\n              \"runtime\": \"pi\",\n              \"provider\": \"anthropic\",\n              \"model\": \"claude-sonnet\"\n            }\n          }\n        },\n        \"policies\": {\n          \"executionLimits\": {\n            \"maxConcurrentWorks\": 1,\n            \"workTimeoutMs\": 600000\n          },\n          \"verification\": {\n            \"requireChecksBeforeDone\": true\n          }\n        }\n      }\n    },\n    \"resultRef\": \"v1.y8ygx_kKDxvL1iHUaLZK36vnZPhOicLsavDpqRHBD8A\"\n  }\n}",
+      "stderr": ""
+    },
+    {
+      "kind": "input",
+      "path": "<sandbox>/checks.json",
+      "document": {
+        "checks": [
+          {
+            "checkKey": "requirements",
+            "kind": "command",
+            "argv": [
+              "<node>",
+              "-e",
+              "process.stdout.write(\"F-014 requirement: explicit authorization and finite persistent budgets\")"
+            ],
+            "timeoutMs": 10000,
+            "required": true
+          }
+        ]
+      }
+    },
+    {
+      "kind": "command",
+      "argv": [
+        "node",
+        "packages/cli/dist/bin.js",
+        "baseline",
+        "run",
+        "--project",
+        "7d4ad8c2-430b-44b6-b552-4b1677269792",
+        "--input",
+        "<sandbox>/checks.json",
+        "--confirm",
+        "--wait",
+        "--data-root",
+        "<sandbox>/data/app",
+        "--json"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "stdout": "{\n  \"ok\": true,\n  \"command\": \"baseline.run\",\n  \"result\": {\n    \"operationId\": \"a69e73c1-8ed6-4277-a93f-4f964d82a494\",\n    \"state\": \"passed\",\n    \"status\": \"completed\",\n    \"codeIdentity\": {\n      \"headCommit\": \"f437657cc56465ae8f316150f15930107f3ee6fb\",\n      \"workingTreeDigest\": \"abcc71b45d87def6db1b8cd0869020a493a42f5ba6e09c25d52840e2dc2af30f\",\n      \"hasUncommittedChanges\": false\n    },\n    \"createdAt\": \"2026-10-13T11:02:10.562Z\",\n    \"startedAt\": \"2026-10-13T11:02:10.762Z\",\n    \"endedAt\": \"2026-10-13T11:02:11.093Z\",\n    \"summary\": {\n      \"total\": 1,\n      \"passed\": 1,\n      \"failed\": 0,\n      \"error\": 0,\n      \"inconclusive\": 0,\n      \"notRun\": 0\n    },\n    \"checks\": [\n      {\n        \"checkKey\": \"requirements\",\n        \"status\": \"passed\",\n        \"required\": true,\n        \"timedOut\": false,\n        \"exitCode\": 0,\n        \"signal\": null,\n        \"durationMs\": 167,\n        \"output\": {\n          \"artifactId\": \"a5ddedfe-3a52-4a5f-b608-0abd5c595223\",\n          \"byteSize\": 96,\n          \"truncated\": false\n        }\n      }\n    ]\n  }\n}",
+      "stderr": "基线授权确认（与注册确认严格分开）：\n  --confirm 是显式非交互授权，只覆盖预览展示的这一次基线请求（argv/cwd/环境/timeout/政策/代码身份绑定 previewDigest）。\n  --decline 显式拒绝：记录 not_run（未执行），绝不伪装成功。\n  确认注册（project init --confirm）不隐含确认基线：基线必须自带独立确认。\n  非交互必须显式批准该请求；无输入（EOF）或拒绝绝不默认执行。\n"
+    },
+    {
+      "kind": "command",
+      "argv": [
+        "node",
+        "packages/cli/dist/bin.js",
+        "phase",
+        "create",
+        "--project",
+        "7d4ad8c2-430b-44b6-b552-4b1677269792",
+        "--title",
+        "F-014 phase",
+        "--data-root",
+        "<sandbox>/data/app",
+        "--json"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "stdout": "{\n  \"ok\": true,\n  \"command\": \"phase.create\",\n  \"result\": {\n    \"schemaVersion\": 5,\n    \"commandId\": \"9d4b1db6-47bc-4ebc-84f9-7d9f044234c0\",\n    \"principalId\": \"local-owner\",\n    \"operation\": \"phase.create\",\n    \"scope\": {\n      \"kind\": \"project\",\n      \"projectId\": \"7d4ad8c2-430b-44b6-b552-4b1677269792\"\n    },\n    \"requestDigest\": \"3005af2ab013e25a69e1364af7897fae07e39b4787611b67afee3dc188b54618\",\n    \"issuedAt\": \"2026-10-13T11:02:11.414Z\",\n    \"completedAt\": \"2026-10-13T11:02:11.417Z\",\n    \"replayed\": false,\n    \"status\": \"completed\",\n    \"result\": {\n      \"phase\": {\n        \"id\": \"c8ae67b7-514d-4372-a78a-2c9829bc444f\",\n        \"projectId\": \"7d4ad8c2-430b-44b6-b552-4b1677269792\",\n        \"title\": \"F-014 phase\",\n        \"description\": null,\n        \"labels\": [],\n        \"status\": \"open\",\n        \"revision\": 1,\n        \"createdAt\": \"2026-10-13T11:02:11.418Z\",\n        \"updatedAt\": \"2026-10-13T11:02:11.418Z\"\n      }\n    },\n    \"resultRef\": \"v1.7fFCC0mCYNxAU4hreJSkQ1g7jW4R6ESrEXq3AQw95CQ\"\n  }\n}",
+      "stderr": ""
+    },
+    {
+      "kind": "input",
+      "path": "<sandbox>/plan.json",
+      "document": {
+        "schemaVersion": 1,
+        "feature": {
+          "title": "F-014 feature",
+          "description": "Built budget acceptance",
+          "sourceRefs": [],
+          "labels": []
+        },
+        "tasks": [
+          {
+            "id": "f014-task",
+            "title": "Budget task",
+            "complexity": "low",
+            "acceptance": {
+              "criteria": [
+                "Explicit authorization"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "command",
+      "argv": [
+        "node",
+        "packages/cli/dist/bin.js",
+        "feature",
+        "import",
+        "--project",
+        "7d4ad8c2-430b-44b6-b552-4b1677269792",
+        "--phase",
+        "c8ae67b7-514d-4372-a78a-2c9829bc444f",
+        "--revision",
+        "1",
+        "--input",
+        "<sandbox>/plan.json",
+        "--data-root",
+        "<sandbox>/data/app",
+        "--json"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "stdout": "{\n  \"ok\": true,\n  \"command\": \"feature.import\",\n  \"result\": {\n    \"schemaVersion\": 5,\n    \"commandId\": \"ee5dea2c-2163-4a7a-9a8f-a1f8ee17f126\",\n    \"principalId\": \"local-owner\",\n    \"operation\": \"feature.plan.import\",\n    \"scope\": {\n      \"kind\": \"project\",\n      \"projectId\": \"7d4ad8c2-430b-44b6-b552-4b1677269792\"\n    },\n    \"requestDigest\": \"7ea889340a7fd88b035851ece204417234605af843aa819c5962e362888674b9\",\n    \"issuedAt\": \"2026-10-13T11:02:11.499Z\",\n    \"completedAt\": \"2026-10-13T11:02:11.501Z\",\n    \"replayed\": false,\n    \"status\": \"completed\",\n    \"result\": {\n      \"feature\": {\n        \"id\": \"56028ad4-1549-43f5-bfdc-79294ad8c0ff\",\n        \"projectId\": \"7d4ad8c2-430b-44b6-b552-4b1677269792\",\n        \"phaseId\": \"c8ae67b7-514d-4372-a78a-2c9829bc444f\",\n        \"title\": \"F-014 feature\",\n        \"description\": \"Built budget acceptance\",\n        \"labels\": [],\n        \"status\": \"draft\",\n        \"planStatus\": \"draft\",\n        \"planDigest\": \"67e0433fc21f605092c50278282d22c9946799782b8be94765a1443a3b2881e9\",\n        \"sourceRefs\": [],\n        \"revision\": 1,\n        \"createdAt\": \"2026-10-13T11:02:11.502Z\",\n        \"updatedAt\": \"2026-10-13T11:02:11.502Z\"\n      },\n      \"tasks\": [\n        {\n          \"id\": \"f014-task\"\n        }\n      ],\n      \"validation\": {\n        \"taskCount\": 1,\n        \"dependencyEdgeCount\": 0,\n        \"executable\": true\n      }\n    },\n    \"resultRef\": \"v1.0G-g0KBvK4sQdN1URUnYv0WvDVhYWPX-3ZJ-6hqtfQs\"\n  }\n}",
+      "stderr": ""
+    },
+    {
+      "kind": "input",
+      "path": "<sandbox>/budget.json",
+      "document": {
+        "batch": {
+          "maxRuns": 2,
+          "maxTotalAttempts": 4,
+          "maxRuntimeStarts": 3,
+          "maxNoProgressRuns": 2,
+          "deadlineUtcMs": "2099-06-01T00:00:00.000Z",
+          "maxTokenTotal": 1000,
+          "maxCostTotal": 12.5
+        },
+        "run": {
+          "maxAttemptsPerRun": 2,
+          "runTimeLimitMs": 3600000
+        }
+      }
+    },
+    {
+      "kind": "command",
+      "argv": [
+        "node",
+        "packages/cli/dist/bin.js",
+        "execution",
+        "preview",
+        "56028ad4-1549-43f5-bfdc-79294ad8c0ff",
+        "--project",
+        "7d4ad8c2-430b-44b6-b552-4b1677269792",
+        "--input",
+        "<sandbox>/budget.json",
+        "--data-root",
+        "<sandbox>/data/app",
+        "--json"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "stdout": "{\n  \"ok\": true,\n  \"command\": \"execution.preview\",\n  \"result\": {\n    \"commandId\": \"2e67e976-b4c7-4f0e-b110-0ec68d4f4c28\",\n    \"replayed\": false,\n    \"operation\": \"execution.preview\",\n    \"projectId\": \"7d4ad8c2-430b-44b6-b552-4b1677269792\",\n    \"featureIds\": [\n      \"56028ad4-1549-43f5-bfdc-79294ad8c0ff\"\n    ],\n    \"status\": \"blocked\",\n    \"noWorkReason\": null,\n    \"blocked\": [\n      {\n        \"kind\": \"plan_approval\",\n        \"reason\": \"not_approved\"\n      }\n    ],\n    \"previewDigest\": null,\n    \"authorization_redacted\": \"[REDACTED]\",\n    \"execution\": {\n      \"started\": false,\n      \"runtimeExecution\": false\n    },\n    \"summary\": null,\n    \"generatedAtUtcMs\": 1791889331588\n  }\n}",
+      "stderr": ""
+    },
+    {
+      "kind": "command",
+      "argv": [
+        "node",
+        "packages/cli/dist/bin.js",
+        "feature",
+        "approve",
+        "56028ad4-1549-43f5-bfdc-79294ad8c0ff",
+        "--project",
+        "7d4ad8c2-430b-44b6-b552-4b1677269792",
+        "--digest",
+        "67e0433fc21f605092c50278282d22c9946799782b8be94765a1443a3b2881e9",
+        "--revision",
+        "1",
+        "--data-root",
+        "<sandbox>/data/app",
+        "--json"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "stdout": "{\n  \"ok\": true,\n  \"command\": \"feature.approve\",\n  \"result\": {\n    \"commandId\": \"892515f2-837b-4942-ad0c-22425184cda0\",\n    \"replayed\": false,\n    \"feature\": {\n      \"id\": \"56028ad4-1549-43f5-bfdc-79294ad8c0ff\",\n      \"revision\": 2,\n      \"planStatus\": \"approved\",\n      \"planDigest\": \"67e0433fc21f605092c50278282d22c9946799782b8be94765a1443a3b2881e9\"\n    },\n    \"decision\": \"approve\",\n    \"approval\": {\n      \"decisionId\": \"d007c53c-5893-4cf5-887a-a03cdb35bb90\",\n      \"status\": \"approved\",\n      \"current\": true,\n      \"subjectDigest\": \"67e0433fc21f605092c50278282d22c9946799782b8be94765a1443a3b2881e9\",\n      \"checkPolicyDigest\": \"6f397bd203917b3fc303da77e57c962362e492177f7f7b9d4abe68dbde89379a\",\n      \"reason\": null,\n      \"decidedAt\": \"2026-10-13T11:02:11.674Z\",\n      \"decisionActor\": \"local-owner\"\n    },\n    \"execution\": {\n      \"started\": false,\n      \"capability\": \"unknown\",\n      \"runnable\": false\n    }\n  }\n}",
+      "stderr": ""
+    },
+    {
+      "kind": "input",
+      "path": "<sandbox>/items.json",
+      "document": {
+        "items": [
+          {
+            "purpose": "requirements",
+            "source": {
+              "kind": "artifact",
+              "artifactId": "a5ddedfe-3a52-4a5f-b608-0abd5c595223"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kind": "command",
+      "argv": [
+        "node",
+        "packages/cli/dist/bin.js",
+        "task",
+        "prepare",
+        "f014-task",
+        "--project",
+        "7d4ad8c2-430b-44b6-b552-4b1677269792",
+        "--feature",
+        "56028ad4-1549-43f5-bfdc-79294ad8c0ff",
+        "--input",
+        "<sandbox>/items.json",
+        "--data-root",
+        "<sandbox>/data/app",
+        "--json"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "stdout": "{\n  \"ok\": true,\n  \"command\": \"task.prepare\",\n  \"result\": {\n    \"commandId\": \"babac246-fa3f-48d3-94ce-bbb8a30769ba\",\n    \"replayed\": false,\n    \"schemaVersion\": 1,\n    \"bindable\": true,\n    \"preparedAt\": \"2026-10-13T11:02:11.811Z\",\n    \"group\": [\n      {\n        \"purpose\": \"snapshot\",\n        \"artifactId\": \"eebd7965-cc07-49a4-bfe3-ee2c5695fd4c\",\n        \"version\": 1,\n        \"contentHash\": \"add8e1a2f40a691300437f00042ad9a4becc6a36a58b499921186e0c7fa0009c\",\n        \"sizeBytes\": 1080,\n        \"locator\": \"execution-input-groups/f014-task/snapshot\",\n        \"mediaType\": \"application/json\"\n      },\n      {\n        \"purpose\": \"manifest\",\n        \"artifactId\": \"a46373d5-844d-40ef-b84a-7cd1731381a6\",\n        \"version\": 1,\n        \"contentHash\": \"950223303948cfff5c1c17b391f7713f878e5434d239e5e2958cd3d5e575a56c\",\n        \"sizeBytes\": 3501,\n        \"locator\": \"execution-input-groups/f014-task/manifest\",\n        \"mediaType\": \"application/json\"\n      },\n      {\n        \"purpose\": \"prompt\",\n        \"artifactId\": \"da095daa-ca5f-46cb-9232-2e47b2e10bb6\",\n        \"version\": 1,\n        \"contentHash\": \"f07bd1a38ca751be85a704eb210ca40b978ea6ba6dc633bae64296df99f2c2c4\",\n        \"sizeBytes\": 1769,\n        \"locator\": \"execution-input-groups/f014-task/prompt\",\n        \"mediaType\": \"text/plain\"\n      }\n    ],\n    \"requiredInputs\": [\n      {\n        \"purpose\": \"requirements\",\n        \"artifactId\": \"a5ddedfe-3a52-4a5f-b608-0abd5c595223\",\n        \"version\": 1,\n        \"contentHash\": \"84b253d33fa9a90bceab9ee23ce86d1c5b5a298f5534061995578fcb3b29d98e\",\n        \"sizeBytes\": 96,\n        \"locator\": \"baseline/a69e73c1-8ed6-4277-a93f-4f964d82a494/requirements/output\",\n        \"mediaType\": \"text/plain; charset=utf-8\",\n        \"origin\": {\n          \"kind\": \"artifact\"\n        }\n      }\n    ],\n    \"digests\": {\n      \"snapshotDigest\": \"d284513c170cd70268c69788abe31e4b4a06bd7f8f9329a0a61ea3307f4661bf\",\n      \"manifestDigest\": \"e85b949aeb48c32675fcf069a01b6de4f5e93d6a99fe4f48521983d6bd31e394\",\n      \"promptDigest\": \"cd688fc3225f0f3a2dc4cb0104c9f710deee9015e0e7235a012a847e602c8253\",\n      \"strategyCopyDigest\": \"187b96f225a3c8da1930f8db050eb68221751d50ad00ecbb42811993d9341d9c\",\n      \"permissionsDigest\": \"19c578ca1360fe56930caeb628be0e51a902e4ac35d6379aea5bda20e2efe819\"\n    },\n    \"approval\": {\n      \"planDigest\": \"67e0433fc21f605092c50278282d22c9946799782b8be94765a1443a3b2881e9\",\n      \"checkPolicyDigest\": \"6f397bd203917b3fc303da77e57c962362e492177f7f7b9d4abe68dbde89379a\",\n      \"decisionId\": \"d007c53c-5893-4cf5-887a-a03cdb35bb90\",\n      \"featureRevision\": 2\n    },\n    \"taskRevision\": 1,\n    \"promptBytes\": 1769,\n    \"tokenEstimate\": {\n      \"value\": 443,\n      \"kind\": \"estimation\",\n      \"method\": \"utf8-bytes/4\"\n    },\n    \"execution\": {\n      \"started\": false,\n      \"capability\": \"unknown\",\n      \"runnable\": false\n    }\n  }\n}",
+      "stderr": ""
+    },
+    {
+      "kind": "command",
+      "argv": [
+        "node",
+        "packages/cli/dist/bin.js",
+        "execution",
+        "preview",
+        "56028ad4-1549-43f5-bfdc-79294ad8c0ff",
+        "--project",
+        "7d4ad8c2-430b-44b6-b552-4b1677269792",
+        "--input",
+        "<sandbox>/budget.json",
+        "--data-root",
+        "<sandbox>/data/app",
+        "--json"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "stdout": "{\n  \"ok\": true,\n  \"command\": \"execution.preview\",\n  \"result\": {\n    \"commandId\": \"211d1999-6811-497f-b54e-fa59cfd2a377\",\n    \"replayed\": false,\n    \"operation\": \"execution.preview\",\n    \"projectId\": \"7d4ad8c2-430b-44b6-b552-4b1677269792\",\n    \"featureIds\": [\n      \"56028ad4-1549-43f5-bfdc-79294ad8c0ff\"\n    ],\n    \"status\": \"ready\",\n    \"noWorkReason\": null,\n    \"blocked\": [],\n    \"previewDigest\": \"6cf999bfe62bf834a9469eca5b97d139f80bda3a3a75685daf3b1ed82ec52252\",\n    \"authorization_redacted\": \"[REDACTED]\",\n    \"execution\": {\n      \"started\": false,\n      \"runtimeExecution\": false\n    },\n    \"summary\": {\n      \"approval\": {\n        \"planDigest\": \"67e0433fc21f605092c50278282d22c9946799782b8be94765a1443a3b2881e9\",\n        \"checkPolicyDigest\": \"6f397bd203917b3fc303da77e57c962362e492177f7f7b9d4abe68dbde89379a\",\n        \"decisionId\": \"d007c53c-5893-4cf5-887a-a03cdb35bb90\"\n      },\n      \"plan\": {\n        \"planDigest\": \"67e0433fc21f605092c50278282d22c9946799782b8be94765a1443a3b2881e9\",\n        \"taskCount\": 1,\n        \"pendingTaskIds\": [\n          \"f014-task\"\n        ]\n      },\n      \"code\": {\n        \"headCommit\": \"f437657cc56465ae8f316150f15930107f3ee6fb\",\n        \"workingTreeDigest\": \"abcc71b45d87def6db1b8cd0869020a493a42f5ba6e09c25d52840e2dc2af30f\",\n        \"hasUncommittedChanges\": false\n      },\n      \"checkPolicyDigest\": \"6f397bd203917b3fc303da77e57c962362e492177f7f7b9d4abe68dbde89379a\",\n      \"tasks\": [\n        {\n          \"taskId\": \"f014-task\",\n          \"status\": \"pending\",\n          \"strategyCopyDigest\": \"187b96f225a3c8da1930f8db050eb68221751d50ad00ecbb42811993d9341d9c\",\n          \"strategyConfigSource\": \"global_default\"\n        }\n      ],\n      \"permissions\": {\n        \"tasks\": [\n          {\n            \"taskId\": \"f014-task\",\n            \"digest\": \"19c578ca1360fe56930caeb628be0e51a902e4ac35d6379aea5bda20e2efe819\"\n          }\n        ]\n      },\n      \"inputs\": {\n        \"refs\": []\n      },\n      \"budget\": {\n        \"batch\": {\n          \"maxRuns\": 2,\n          \"maxTotalAttempts\": 4,\n          \"maxRuntimeStarts\": 3,\n          \"maxNoProgressRuns\": 2,\n          \"deadlineUtcMs\": 4083955200000,\n          \"maxTokenTotal\": 1000,\n          \"maxCostTotal\": 12.5\n        },\n        \"run\": {\n          \"maxAttemptsPerRun\": 2,\n          \"runTimeLimitMs\": 3600000\n        }\n      },\n      \"concurrency\": {\n        \"maxConcurrentWorks\": 1,\n        \"source\": \"global_default\"\n      }\n    },\n    \"generatedAtUtcMs\": 1791889331897\n  }\n}",
+      "stderr": ""
+    },
+    {
+      "kind": "command",
+      "argv": [
+        "node",
+        "packages/cli/dist/bin.js",
+        "feature",
+        "get",
+        "56028ad4-1549-43f5-bfdc-79294ad8c0ff",
+        "--data-root",
+        "<sandbox>/data/app",
+        "--json"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "stdout": "{\n  \"ok\": true,\n  \"command\": \"feature.get\",\n  \"result\": {\n    \"feature\": {\n      \"id\": \"56028ad4-1549-43f5-bfdc-79294ad8c0ff\",\n      \"projectId\": \"7d4ad8c2-430b-44b6-b552-4b1677269792\",\n      \"phaseId\": \"c8ae67b7-514d-4372-a78a-2c9829bc444f\",\n      \"title\": \"F-014 feature\",\n      \"description\": \"Built budget acceptance\",\n      \"labels\": [],\n      \"status\": \"draft\",\n      \"planStatus\": \"approved\",\n      \"sourceRefs\": [],\n      \"revision\": 2,\n      \"planDigest\": \"67e0433fc21f605092c50278282d22c9946799782b8be94765a1443a3b2881e9\",\n      \"createdAt\": \"2026-10-13T11:02:11.502Z\",\n      \"updatedAt\": \"2026-10-13T11:02:11.674Z\"\n    },\n    \"validation\": {\n      \"taskCount\": 1,\n      \"dependencyEdgeCount\": 0,\n      \"executable\": true\n    },\n    \"notExecutableReasons\": [],\n    \"tasks\": [\n      {\n        \"id\": \"f014-task\",\n        \"projectId\": \"7d4ad8c2-430b-44b6-b552-4b1677269792\",\n        \"featureId\": \"56028ad4-1549-43f5-bfdc-79294ad8c0ff\",\n        \"title\": \"Budget task\",\n        \"description\": null,\n        \"labels\": [],\n        \"status\": \"pending\",\n        \"acceptance\": {\n          \"criteria\": [\n            \"Explicit authorization\"\n          ]\n        },\n        \"requirementsRefs\": [],\n        \"executionConfig\": {\n          \"schemaVersion\": 2,\n          \"runtime\": \"pi\",\n          \"provider\": \"anthropic\",\n          \"model\": \"claude-sonnet\"\n        },\n        \"configSource\": \"global_default\",\n        \"configSourceKey\": \"modelMap.low\",\n        \"revision\": 1,\n        \"complexity\": \"low\",\n        \"createdAt\": \"2026-10-13T11:02:11.503Z\",\n        \"updatedAt\": \"2026-10-13T11:02:11.503Z\"\n      }\n    ],\n    \"dependencies\": []\n  }\n}",
+      "stderr": ""
+    },
+    {
+      "kind": "command",
+      "argv": [
+        "node",
+        "packages/cli/dist/bin.js",
+        "execution",
+        "start",
+        "56028ad4-1549-43f5-bfdc-79294ad8c0ff",
+        "--project",
+        "7d4ad8c2-430b-44b6-b552-4b1677269792",
+        "--input",
+        "<sandbox>/budget.json",
+        "--preview-digest",
+        "6cf999bfe62bf834a9469eca5b97d139f80bda3a3a75685daf3b1ed82ec52252",
+        "--command-id",
+        "c7f536e1-a089-4f49-a9b5-4d5388ebdbd7",
+        "--data-root",
+        "<sandbox>/data/app",
+        "--json"
+      ],
+      "exitCode": 2,
+      "signal": null,
+      "stdout": "{\n  \"ok\": false,\n  \"command\": \"execution.start\",\n  \"error\": {\n    \"code\": \"invalid_input\",\n    \"message\": \"显式启动必须明确确认（--confirm）\",\n    \"details\": {\n      \"reason\": \"confirmation_required\",\n      \"field\": \"confirm\"\n    }\n  }\n}",
+      "stderr": "shiploop: invalid_input: confirmation_required（confirm）：显式启动必须明确确认（--confirm）\n"
+    },
+    {
+      "kind": "command",
+      "argv": [
+        "node",
+        "packages/cli/dist/bin.js",
+        "receipt",
+        "get",
+        "c7f536e1-a089-4f49-a9b5-4d5388ebdbd7",
+        "--data-root",
+        "<sandbox>/data/app",
+        "--json"
+      ],
+      "exitCode": 1,
+      "signal": null,
+      "stdout": "{\n  \"ok\": false,\n  \"command\": \"receipt.get\",\n  \"error\": {\n    \"code\": \"not_found\",\n    \"message\": \"资源不存在\",\n    \"details\": {\n      \"httpStatus\": 404,\n      \"reason\": \"receipt_not_found\"\n    }\n  }\n}",
+      "stderr": "shiploop: not_found: 资源不存在\n"
+    },
+    {
+      "kind": "command",
+      "argv": [
+        "node",
+        "packages/cli/dist/bin.js",
+        "execution",
+        "start",
+        "56028ad4-1549-43f5-bfdc-79294ad8c0ff",
+        "--project",
+        "7d4ad8c2-430b-44b6-b552-4b1677269792",
+        "--input",
+        "<sandbox>/budget.json",
+        "--preview-digest",
+        "0000000000000000000000000000000000000000000000000000000000000000",
+        "--confirm",
+        "--data-root",
+        "<sandbox>/data/app",
+        "--json"
+      ],
+      "exitCode": 1,
+      "signal": null,
+      "stdout": "{\n  \"ok\": false,\n  \"command\": \"execution.start\",\n  \"error\": {\n    \"code\": \"conflict\",\n    \"message\": \"请求冲突\",\n    \"commandId\": \"959675c6-0456-4f45-8a91-959dc91c3713\",\n    \"details\": {\n      \"reason\": \"preview_stale\"\n    }\n  }\n}",
+      "stderr": "shiploop: conflict: 请求冲突\n"
+    },
+    {
+      "kind": "command",
+      "argv": [
+        "node",
+        "packages/cli/dist/bin.js",
+        "execution",
+        "start",
+        "56028ad4-1549-43f5-bfdc-79294ad8c0ff",
+        "--project",
+        "7d4ad8c2-430b-44b6-b552-4b1677269792",
+        "--input",
+        "<sandbox>/budget.json",
+        "--preview-digest",
+        "6cf999bfe62bf834a9469eca5b97d139f80bda3a3a75685daf3b1ed82ec52252",
+        "--command-id",
+        "c7f536e1-a089-4f49-a9b5-4d5388ebdbd7",
+        "--confirm",
+        "--data-root",
+        "<sandbox>/data/app",
+        "--json"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "stdout": "{\n  \"ok\": true,\n  \"command\": \"execution.start\",\n  \"result\": {\n    \"commandId\": \"c7f536e1-a089-4f49-a9b5-4d5388ebdbd7\",\n    \"replayed\": false,\n    \"operation\": \"execution.start\",\n    \"status\": \"accepted\",\n    \"executionState\": \"accepted\",\n    \"featureIds\": [\n      \"56028ad4-1549-43f5-bfdc-79294ad8c0ff\"\n    ],\n    \"batchId\": \"7b34da82-899e-4a90-95b1-1331f951c5c7\",\n    \"runId\": \"a72cef03-e788-4c0c-a22c-0c9f7cf9ce83\",\n    \"operationId\": \"7b34da82-899e-4a90-95b1-1331f951c5c7\",\n    \"authorization_redacted\": \"[REDACTED]\",\n    \"completion\": {\n      \"featureVerified\": false,\n      \"businessCompleted\": false,\n      \"note\": \"accepted 仅表示执行授权提交成功：尚未执行、未验收，不代表 Feature 完成或业务完成\"\n    }\n  }\n}",
+      "stderr": ""
+    },
+    {
+      "kind": "command",
+      "argv": [
+        "node",
+        "packages/cli/dist/bin.js",
+        "execution",
+        "budget",
+        "7b34da82-899e-4a90-95b1-1331f951c5c7",
+        "--project",
+        "7d4ad8c2-430b-44b6-b552-4b1677269792",
+        "--data-root",
+        "<sandbox>/data/app",
+        "--json"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "stdout": "{\n  \"ok\": true,\n  \"command\": \"execution.budget\",\n  \"result\": {\n    \"operation\": \"execution.budget.get\",\n    \"executionState\": \"not_executed\",\n    \"states\": {\n      \"accepted\": true,\n      \"notExecuted\": true,\n      \"budgetExhausted\": false,\n      \"businessCompleted\": false\n    },\n    \"budget\": {\n      \"schemaVersion\": 5,\n      \"scope\": \"execution-budget\",\n      \"batch\": {\n        \"id\": \"7b34da82-899e-4a90-95b1-1331f951c5c7\",\n        \"projectId\": \"7d4ad8c2-430b-44b6-b552-4b1677269792\",\n        \"phaseId\": \"c8ae67b7-514d-4372-a78a-2c9829bc444f\",\n        \"featureId\": \"56028ad4-1549-43f5-bfdc-79294ad8c0ff\",\n        \"featureIds\": [\n          \"56028ad4-1549-43f5-bfdc-79294ad8c0ff\"\n        ],\n        \"status\": \"queued\",\n        \"budgetRevision\": 1,\n        \"budget\": {\n          \"schemaVersion\": 1,\n          \"batch\": {\n            \"maxRuns\": 2,\n            \"maxTotalAttempts\": 4,\n            \"maxRuntimeStarts\": 3,\n            \"maxNoProgressRuns\": 2,\n            \"deadlineUtcMs\": 4083955200000,\n            \"maxTokenTotal\": 1000,\n            \"maxCostTotal\": 12.5\n          },\n          \"run\": {\n            \"maxAttemptsPerRun\": 2,\n            \"runTimeLimitMs\": 3600000\n          }\n        },\n        \"deadlineAtUtcMs\": 4083955200000,\n        \"dimensions\": {\n          \"maxRuns\": {\n            \"limit\": 2,\n            \"used\": 1,\n            \"remaining\": 1,\n            \"exhausted\": false\n          },\n          \"maxTotalAttempts\": {\n            \"limit\": 4,\n            \"used\": 0,\n            \"remaining\": 4,\n            \"exhausted\": false\n          },\n          \"maxRuntimeStarts\": {\n            \"limit\": 3,\n            \"used\": 0,\n            \"remaining\": 3,\n            \"exhausted\": false\n          },\n          \"maxNoProgressRuns\": {\n            \"limit\": 2,\n            \"used\": 0,\n            \"remaining\": 2,\n            \"exhausted\": false\n          },\n          \"deadlineUtcMs\": {\n            \"limit\": 4083955200000,\n            \"used\": 1791889332610,\n            \"remaining\": 2292065867390,\n            \"exhausted\": false\n          },\n          \"maxTokenTotal\": {\n            \"limit\": 1000,\n            \"used\": null,\n            \"remaining\": null,\n            \"exhausted\": null\n          },\n          \"maxCostTotal\": {\n            \"limit\": 12.5,\n            \"used\": null,\n            \"remaining\": null,\n            \"exhausted\": null\n          }\n        },\n        \"unconfirmedDimensions\": [\n          \"maxTokenTotal\",\n          \"maxCostTotal\"\n        ],\n        \"runtimeStartsReserved\": 0,\n        \"usage\": {\n          \"tokenUsed\": null,\n          \"costUsed\": null\n        },\n        \"reason\": null,\n        \"createdAt\": \"2026-10-13T11:02:12.530Z\",\n        \"updatedAt\": \"2026-10-13T11:02:12.530Z\"\n      },\n      \"runs\": [\n        {\n          \"id\": \"a72cef03-e788-4c0c-a22c-0c9f7cf9ce83\",\n          \"batchId\": \"7b34da82-899e-4a90-95b1-1331f951c5c7\",\n          \"featureId\": \"56028ad4-1549-43f5-bfdc-79294ad8c0ff\",\n          \"purpose\": \"execute\",\n          \"workKey\": \"13f336b2d67825b0ceb700b640f33c4d673426deb18981cddbe436a9447f0f30\",\n          \"dispatchOrdinal\": 1,\n          \"status\": \"queued\",\n          \"limits\": {\n            \"maxAttemptsPerRun\": 2,\n            \"runTimeLimitMs\": 3600000\n          },\n          \"dimensions\": {\n            \"maxAttemptsPerRun\": {\n              \"limit\": 2,\n              \"used\": 0,\n              \"remaining\": 2,\n              \"exhausted\": false\n            },\n            \"runTimeLimitMs\": {\n              \"limit\": 3600000,\n              \"used\": null,\n              \"remaining\": null,\n              \"exhausted\": null\n            }\n          },\n          \"attemptsCreated\": 0,\n          \"startedAt\": null,\n          \"endedAt\": null,\n          \"elapsedMs\": null,\n          \"reason\": \"scheduler_not_assembled\",\n          \"createdAt\": \"2026-10-13T11:02:12.530Z\"\n        }\n      ],\n      \"tasks\": [\n        {\n          \"taskId\": \"f014-task\",\n          \"status\": \"pending\",\n          \"firstPassedAt\": null,\n          \"attempts\": {\n            \"used\": 0,\n            \"limit\": null,\n            \"remaining\": null\n          },\n          \"codeAttempts\": {\n            \"used\": 0,\n            \"limit\": 3,\n            \"remaining\": 3\n          },\n          \"caps\": {\n            \"maxCodeAttempts\": 3,\n            \"maxAttemptsPerTask\": null,\n            \"effectiveMaxCodeAttempts\": 3,\n            \"rule\": \"code_cap_default\"\n          }\n        }\n      ],\n      \"blockingReasons\": [\n        {\n          \"layer\": \"run\",\n          \"layerId\": \"a72cef03-e788-4c0c-a22c-0c9f7cf9ce83\",\n          \"reason\": \"scheduler_not_assembled\"\n        }\n      ]\n    },\n    \"revisions\": {\n      \"schemaVersion\": 5,\n      \"scope\": \"budget-revision-list\",\n      \"records\": [\n        {\n          \"id\": \"7dbdb02b-a4cf-4adf-8ea9-32c45d6851e9\",\n          \"batchId\": \"7b34da82-899e-4a90-95b1-1331f951c5c7\",\n          \"version\": 1,\n          \"budget\": {\n            \"schemaVersion\": 1,\n            \"batch\": {\n              \"maxRuns\": 2,\n              \"maxTotalAttempts\": 4,\n              \"maxRuntimeStarts\": 3,\n              \"maxNoProgressRuns\": 2,\n              \"deadlineUtcMs\": 4083955200000,\n              \"maxTokenTotal\": 1000,\n              \"maxCostTotal\": 12.5\n            },\n            \"run\": {\n              \"maxAttemptsPerRun\": 2,\n              \"runTimeLimitMs\": 3600000\n            }\n          },\n          \"deadlineAtUtcMs\": 4083955200000,\n          \"approvedBy\": \"local-owner\",\n          \"reason\": \"initial_authorization\",\n          \"createdAt\": \"2026-10-13T11:02:12.530Z\"\n        }\n      ],\n      \"nextCursor\": null,\n      \"limit\": 50\n    }\n  }\n}",
+      "stderr": ""
+    },
+    {
+      "kind": "command",
+      "argv": [
+        "node",
+        "packages/cli/dist/bin.js",
+        "execution",
+        "start",
+        "56028ad4-1549-43f5-bfdc-79294ad8c0ff",
+        "--project",
+        "7d4ad8c2-430b-44b6-b552-4b1677269792",
+        "--input",
+        "<sandbox>/budget.json",
+        "--preview-digest",
+        "6cf999bfe62bf834a9469eca5b97d139f80bda3a3a75685daf3b1ed82ec52252",
+        "--command-id",
+        "c7f536e1-a089-4f49-a9b5-4d5388ebdbd7",
+        "--confirm",
+        "--data-root",
+        "<sandbox>/data/app",
+        "--json"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "stdout": "{\n  \"ok\": true,\n  \"command\": \"execution.start\",\n  \"result\": {\n    \"commandId\": \"c7f536e1-a089-4f49-a9b5-4d5388ebdbd7\",\n    \"replayed\": true,\n    \"operation\": \"execution.start\",\n    \"status\": \"accepted\",\n    \"executionState\": \"accepted\",\n    \"featureIds\": [\n      \"56028ad4-1549-43f5-bfdc-79294ad8c0ff\"\n    ],\n    \"batchId\": \"7b34da82-899e-4a90-95b1-1331f951c5c7\",\n    \"runId\": \"a72cef03-e788-4c0c-a22c-0c9f7cf9ce83\",\n    \"operationId\": \"7b34da82-899e-4a90-95b1-1331f951c5c7\",\n    \"authorization_redacted\": \"[REDACTED]\",\n    \"completion\": {\n      \"featureVerified\": false,\n      \"businessCompleted\": false,\n      \"note\": \"accepted 仅表示执行授权提交成功：尚未执行、未验收，不代表 Feature 完成或业务完成\"\n    }\n  }\n}",
+      "stderr": ""
+    },
+    {
+      "kind": "command",
+      "argv": [
+        "node",
+        "packages/cli/dist/bin.js",
+        "execution",
+        "budget",
+        "7b34da82-899e-4a90-95b1-1331f951c5c7",
+        "--project",
+        "7d4ad8c2-430b-44b6-b552-4b1677269792",
+        "--data-root",
+        "<sandbox>/data/app",
+        "--json"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "stdout": "{\n  \"ok\": true,\n  \"command\": \"execution.budget\",\n  \"result\": {\n    \"operation\": \"execution.budget.get\",\n    \"executionState\": \"not_executed\",\n    \"states\": {\n      \"accepted\": true,\n      \"notExecuted\": true,\n      \"budgetExhausted\": false,\n      \"businessCompleted\": false\n    },\n    \"budget\": {\n      \"schemaVersion\": 5,\n      \"scope\": \"execution-budget\",\n      \"batch\": {\n        \"id\": \"7b34da82-899e-4a90-95b1-1331f951c5c7\",\n        \"projectId\": \"7d4ad8c2-430b-44b6-b552-4b1677269792\",\n        \"phaseId\": \"c8ae67b7-514d-4372-a78a-2c9829bc444f\",\n        \"featureId\": \"56028ad4-1549-43f5-bfdc-79294ad8c0ff\",\n        \"featureIds\": [\n          \"56028ad4-1549-43f5-bfdc-79294ad8c0ff\"\n        ],\n        \"status\": \"queued\",\n        \"budgetRevision\": 1,\n        \"budget\": {\n          \"schemaVersion\": 1,\n          \"batch\": {\n            \"maxRuns\": 2,\n            \"maxTotalAttempts\": 4,\n            \"maxRuntimeStarts\": 3,\n            \"maxNoProgressRuns\": 2,\n            \"deadlineUtcMs\": 4083955200000,\n            \"maxTokenTotal\": 1000,\n            \"maxCostTotal\": 12.5\n          },\n          \"run\": {\n            \"maxAttemptsPerRun\": 2,\n            \"runTimeLimitMs\": 3600000\n          }\n        },\n        \"deadlineAtUtcMs\": 4083955200000,\n        \"dimensions\": {\n          \"maxRuns\": {\n            \"limit\": 2,\n            \"used\": 1,\n            \"remaining\": 1,\n            \"exhausted\": false\n          },\n          \"maxTotalAttempts\": {\n            \"limit\": 4,\n            \"used\": 0,\n            \"remaining\": 4,\n            \"exhausted\": false\n          },\n          \"maxRuntimeStarts\": {\n            \"limit\": 3,\n            \"used\": 0,\n            \"remaining\": 3,\n            \"exhausted\": false\n          },\n          \"maxNoProgressRuns\": {\n            \"limit\": 2,\n            \"used\": 0,\n            \"remaining\": 2,\n            \"exhausted\": false\n          },\n          \"deadlineUtcMs\": {\n            \"limit\": 4083955200000,\n            \"used\": 1791889332778,\n            \"remaining\": 2292065867222,\n            \"exhausted\": false\n          },\n          \"maxTokenTotal\": {\n            \"limit\": 1000,\n            \"used\": null,\n            \"remaining\": null,\n            \"exhausted\": null\n          },\n          \"maxCostTotal\": {\n            \"limit\": 12.5,\n            \"used\": null,\n            \"remaining\": null,\n            \"exhausted\": null\n          }\n        },\n        \"unconfirmedDimensions\": [\n          \"maxTokenTotal\",\n          \"maxCostTotal\"\n        ],\n        \"runtimeStartsReserved\": 0,\n        \"usage\": {\n          \"tokenUsed\": null,\n          \"costUsed\": null\n        },\n        \"reason\": null,\n        \"createdAt\": \"2026-10-13T11:02:12.530Z\",\n        \"updatedAt\": \"2026-10-13T11:02:12.530Z\"\n      },\n      \"runs\": [\n        {\n          \"id\": \"a72cef03-e788-4c0c-a22c-0c9f7cf9ce83\",\n          \"batchId\": \"7b34da82-899e-4a90-95b1-1331f951c5c7\",\n          \"featureId\": \"56028ad4-1549-43f5-bfdc-79294ad8c0ff\",\n          \"purpose\": \"execute\",\n          \"workKey\": \"13f336b2d67825b0ceb700b640f33c4d673426deb18981cddbe436a9447f0f30\",\n          \"dispatchOrdinal\": 1,\n          \"status\": \"queued\",\n          \"limits\": {\n            \"maxAttemptsPerRun\": 2,\n            \"runTimeLimitMs\": 3600000\n          },\n          \"dimensions\": {\n            \"maxAttemptsPerRun\": {\n              \"limit\": 2,\n              \"used\": 0,\n              \"remaining\": 2,\n              \"exhausted\": false\n            },\n            \"runTimeLimitMs\": {\n              \"limit\": 3600000,\n              \"used\": null,\n              \"remaining\": null,\n              \"exhausted\": null\n            }\n          },\n          \"attemptsCreated\": 0,\n          \"startedAt\": null,\n          \"endedAt\": null,\n          \"elapsedMs\": null,\n          \"reason\": \"scheduler_not_assembled\",\n          \"createdAt\": \"2026-10-13T11:02:12.530Z\"\n        }\n      ],\n      \"tasks\": [\n        {\n          \"taskId\": \"f014-task\",\n          \"status\": \"pending\",\n          \"firstPassedAt\": null,\n          \"attempts\": {\n            \"used\": 0,\n            \"limit\": null,\n            \"remaining\": null\n          },\n          \"codeAttempts\": {\n            \"used\": 0,\n            \"limit\": 3,\n            \"remaining\": 3\n          },\n          \"caps\": {\n            \"maxCodeAttempts\": 3,\n            \"maxAttemptsPerTask\": null,\n            \"effectiveMaxCodeAttempts\": 3,\n            \"rule\": \"code_cap_default\"\n          }\n        }\n      ],\n      \"blockingReasons\": [\n        {\n          \"layer\": \"run\",\n          \"layerId\": \"a72cef03-e788-4c0c-a22c-0c9f7cf9ce83\",\n          \"reason\": \"scheduler_not_assembled\"\n        }\n      ]\n    },\n    \"revisions\": {\n      \"schemaVersion\": 5,\n      \"scope\": \"budget-revision-list\",\n      \"records\": [\n        {\n          \"id\": \"7dbdb02b-a4cf-4adf-8ea9-32c45d6851e9\",\n          \"batchId\": \"7b34da82-899e-4a90-95b1-1331f951c5c7\",\n          \"version\": 1,\n          \"budget\": {\n            \"schemaVersion\": 1,\n            \"batch\": {\n              \"maxRuns\": 2,\n              \"maxTotalAttempts\": 4,\n              \"maxRuntimeStarts\": 3,\n              \"maxNoProgressRuns\": 2,\n              \"deadlineUtcMs\": 4083955200000,\n              \"maxTokenTotal\": 1000,\n              \"maxCostTotal\": 12.5\n            },\n            \"run\": {\n              \"maxAttemptsPerRun\": 2,\n              \"runTimeLimitMs\": 3600000\n            }\n          },\n          \"deadlineAtUtcMs\": 4083955200000,\n          \"approvedBy\": \"local-owner\",\n          \"reason\": \"initial_authorization\",\n          \"createdAt\": \"2026-10-13T11:02:12.530Z\"\n        }\n      ],\n      \"nextCursor\": null,\n      \"limit\": 50\n    }\n  }\n}",
+      "stderr": ""
+    },
+    {
+      "kind": "input",
+      "path": "<sandbox>/budget-revised.json",
+      "document": {
+        "batch": {
+          "maxRuns": 3,
+          "maxTotalAttempts": 6,
+          "maxRuntimeStarts": 5,
+          "maxNoProgressRuns": 3,
+          "deadlineUtcMs": "2099-07-01T00:00:00.000Z",
+          "maxTokenTotal": 2000,
+          "maxCostTotal": 20
+        },
+        "run": {
+          "maxAttemptsPerRun": 3,
+          "runTimeLimitMs": 7200000
+        }
+      }
+    },
+    {
+      "kind": "command",
+      "argv": [
+        "node",
+        "packages/cli/dist/bin.js",
+        "execution",
+        "revise",
+        "7b34da82-899e-4a90-95b1-1331f951c5c7",
+        "--project",
+        "7d4ad8c2-430b-44b6-b552-4b1677269792",
+        "--revision",
+        "1",
+        "--reason",
+        "F-014 explicit increase",
+        "--input",
+        "<sandbox>/budget-revised.json",
+        "--command-id",
+        "d0b88c47-6a4b-4367-98bb-7b731623ddcc",
+        "--data-root",
+        "<sandbox>/data/app",
+        "--json"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "stdout": "{\n  \"ok\": true,\n  \"command\": \"execution.revise\",\n  \"result\": {\n    \"commandId\": \"d0b88c47-6a4b-4367-98bb-7b731623ddcc\",\n    \"replayed\": false,\n    \"operation\": \"execution.budget.revise\",\n    \"batchId\": \"7b34da82-899e-4a90-95b1-1331f951c5c7\",\n    \"budgetRevision\": 2,\n    \"approvedBy\": \"local-owner\",\n    \"reason\": \"F-014 explicit increase\",\n    \"revisedAt\": \"2026-10-13T11:02:12.864Z\",\n    \"previous\": {\n      \"version\": 1,\n      \"deadlineAtUtcMs\": 4083955200000,\n      \"budget\": {\n        \"schemaVersion\": 1,\n        \"batch\": {\n          \"maxRuns\": 2,\n          \"maxTotalAttempts\": 4,\n          \"maxRuntimeStarts\": 3,\n          \"maxNoProgressRuns\": 2,\n          \"deadlineUtcMs\": 4083955200000,\n          \"maxTokenTotal\": 1000,\n          \"maxCostTotal\": 12.5\n        },\n        \"run\": {\n          \"maxAttemptsPerRun\": 2,\n          \"runTimeLimitMs\": 3600000\n        }\n      }\n    },\n    \"revised\": {\n      \"version\": 2,\n      \"deadlineAtUtcMs\": 4086547200000,\n      \"budget\": {\n        \"schemaVersion\": 1,\n        \"batch\": {\n          \"maxRuns\": 3,\n          \"maxTotalAttempts\": 6,\n          \"maxRuntimeStarts\": 5,\n          \"maxNoProgressRuns\": 3,\n          \"deadlineUtcMs\": 4086547200000,\n          \"maxTokenTotal\": 2000,\n          \"maxCostTotal\": 20\n        },\n        \"run\": {\n          \"maxAttemptsPerRun\": 3,\n          \"runTimeLimitMs\": 7200000\n        }\n      }\n    }\n  }\n}",
+      "stderr": ""
+    },
+    {
+      "kind": "command",
+      "argv": [
+        "node",
+        "packages/cli/dist/bin.js",
+        "execution",
+        "revise",
+        "7b34da82-899e-4a90-95b1-1331f951c5c7",
+        "--project",
+        "7d4ad8c2-430b-44b6-b552-4b1677269792",
+        "--revision",
+        "1",
+        "--reason",
+        "F-014 explicit increase",
+        "--input",
+        "<sandbox>/budget-revised.json",
+        "--command-id",
+        "d0b88c47-6a4b-4367-98bb-7b731623ddcc",
+        "--data-root",
+        "<sandbox>/data/app",
+        "--json"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "stdout": "{\n  \"ok\": true,\n  \"command\": \"execution.revise\",\n  \"result\": {\n    \"commandId\": \"d0b88c47-6a4b-4367-98bb-7b731623ddcc\",\n    \"replayed\": true,\n    \"operation\": \"execution.budget.revise\",\n    \"batchId\": \"7b34da82-899e-4a90-95b1-1331f951c5c7\",\n    \"budgetRevision\": 2,\n    \"approvedBy\": \"local-owner\",\n    \"reason\": \"F-014 explicit increase\",\n    \"revisedAt\": \"2026-10-13T11:02:12.864Z\",\n    \"previous\": {\n      \"version\": 1,\n      \"deadlineAtUtcMs\": 4083955200000,\n      \"budget\": {\n        \"schemaVersion\": 1,\n        \"batch\": {\n          \"maxRuns\": 2,\n          \"maxTotalAttempts\": 4,\n          \"maxRuntimeStarts\": 3,\n          \"maxNoProgressRuns\": 2,\n          \"deadlineUtcMs\": 4083955200000,\n          \"maxTokenTotal\": 1000,\n          \"maxCostTotal\": 12.5\n        },\n        \"run\": {\n          \"maxAttemptsPerRun\": 2,\n          \"runTimeLimitMs\": 3600000\n        }\n      }\n    },\n    \"revised\": {\n      \"version\": 2,\n      \"deadlineAtUtcMs\": 4086547200000,\n      \"budget\": {\n        \"schemaVersion\": 1,\n        \"batch\": {\n          \"maxRuns\": 3,\n          \"maxTotalAttempts\": 6,\n          \"maxRuntimeStarts\": 5,\n          \"maxNoProgressRuns\": 3,\n          \"deadlineUtcMs\": 4086547200000,\n          \"maxTokenTotal\": 2000,\n          \"maxCostTotal\": 20\n        },\n        \"run\": {\n          \"maxAttemptsPerRun\": 3,\n          \"runTimeLimitMs\": 7200000\n        }\n      }\n    }\n  }\n}",
+      "stderr": ""
+    },
+    {
+      "kind": "command",
+      "argv": [
+        "node",
+        "packages/cli/dist/bin.js",
+        "execution",
+        "revise",
+        "7b34da82-899e-4a90-95b1-1331f951c5c7",
+        "--project",
+        "7d4ad8c2-430b-44b6-b552-4b1677269792",
+        "--revision",
+        "1",
+        "--reason",
+        "F-014 explicit increase",
+        "--input",
+        "<sandbox>/budget-revised.json",
+        "--data-root",
+        "<sandbox>/data/app",
+        "--json"
+      ],
+      "exitCode": 1,
+      "signal": null,
+      "stdout": "{\n  \"ok\": false,\n  \"command\": \"execution.revise\",\n  \"error\": {\n    \"code\": \"conflict\",\n    \"message\": \"请求冲突\",\n    \"commandId\": \"34b236f8-6f57-4291-8b49-b6596126ec8a\",\n    \"details\": {\n      \"reason\": \"budget_revision_stale\",\n      \"expectedRevision\": 1,\n      \"actualRevision\": 2,\n      \"entityType\": \"execution_batch\"\n    }\n  }\n}",
+      "stderr": "shiploop: conflict: 请求冲突\n"
+    },
+    {
+      "kind": "command",
+      "argv": [
+        "node",
+        "packages/cli/dist/bin.js",
+        "execution",
+        "budget",
+        "7b34da82-899e-4a90-95b1-1331f951c5c7",
+        "--project",
+        "7d4ad8c2-430b-44b6-b552-4b1677269792",
+        "--data-root",
+        "<sandbox>/data/app",
+        "--json"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "stdout": "{\n  \"ok\": true,\n  \"command\": \"execution.budget\",\n  \"result\": {\n    \"operation\": \"execution.budget.get\",\n    \"executionState\": \"not_executed\",\n    \"states\": {\n      \"accepted\": true,\n      \"notExecuted\": true,\n      \"budgetExhausted\": false,\n      \"businessCompleted\": false\n    },\n    \"budget\": {\n      \"schemaVersion\": 5,\n      \"scope\": \"execution-budget\",\n      \"batch\": {\n        \"id\": \"7b34da82-899e-4a90-95b1-1331f951c5c7\",\n        \"projectId\": \"7d4ad8c2-430b-44b6-b552-4b1677269792\",\n        \"phaseId\": \"c8ae67b7-514d-4372-a78a-2c9829bc444f\",\n        \"featureId\": \"56028ad4-1549-43f5-bfdc-79294ad8c0ff\",\n        \"featureIds\": [\n          \"56028ad4-1549-43f5-bfdc-79294ad8c0ff\"\n        ],\n        \"status\": \"queued\",\n        \"budgetRevision\": 2,\n        \"budget\": {\n          \"schemaVersion\": 1,\n          \"batch\": {\n            \"maxRuns\": 3,\n            \"maxTotalAttempts\": 6,\n            \"maxRuntimeStarts\": 5,\n            \"maxNoProgressRuns\": 3,\n            \"deadlineUtcMs\": 4086547200000,\n            \"maxTokenTotal\": 2000,\n            \"maxCostTotal\": 20\n          },\n          \"run\": {\n            \"maxAttemptsPerRun\": 3,\n            \"runTimeLimitMs\": 7200000\n          }\n        },\n        \"deadlineAtUtcMs\": 4086547200000,\n        \"dimensions\": {\n          \"maxRuns\": {\n            \"limit\": 3,\n            \"used\": 1,\n            \"remaining\": 2,\n            \"exhausted\": false\n          },\n          \"maxTotalAttempts\": {\n            \"limit\": 6,\n            \"used\": 0,\n            \"remaining\": 6,\n            \"exhausted\": false\n          },\n          \"maxRuntimeStarts\": {\n            \"limit\": 5,\n            \"used\": 0,\n            \"remaining\": 5,\n            \"exhausted\": false\n          },\n          \"maxNoProgressRuns\": {\n            \"limit\": 3,\n            \"used\": 0,\n            \"remaining\": 3,\n            \"exhausted\": false\n          },\n          \"deadlineUtcMs\": {\n            \"limit\": 4086547200000,\n            \"used\": 1791889333116,\n            \"remaining\": 2294657866884,\n            \"exhausted\": false\n          },\n          \"maxTokenTotal\": {\n            \"limit\": 2000,\n            \"used\": null,\n            \"remaining\": null,\n            \"exhausted\": null\n          },\n          \"maxCostTotal\": {\n            \"limit\": 20,\n            \"used\": null,\n            \"remaining\": null,\n            \"exhausted\": null\n          }\n        },\n        \"unconfirmedDimensions\": [\n          \"maxTokenTotal\",\n          \"maxCostTotal\"\n        ],\n        \"runtimeStartsReserved\": 0,\n        \"usage\": {\n          \"tokenUsed\": null,\n          \"costUsed\": null\n        },\n        \"reason\": null,\n        \"createdAt\": \"2026-10-13T11:02:12.530Z\",\n        \"updatedAt\": \"2026-10-13T11:02:12.865Z\"\n      },\n      \"runs\": [\n        {\n          \"id\": \"a72cef03-e788-4c0c-a22c-0c9f7cf9ce83\",\n          \"batchId\": \"7b34da82-899e-4a90-95b1-1331f951c5c7\",\n          \"featureId\": \"56028ad4-1549-43f5-bfdc-79294ad8c0ff\",\n          \"purpose\": \"execute\",\n          \"workKey\": \"13f336b2d67825b0ceb700b640f33c4d673426deb18981cddbe436a9447f0f30\",\n          \"dispatchOrdinal\": 1,\n          \"status\": \"queued\",\n          \"limits\": {\n            \"maxAttemptsPerRun\": 2,\n            \"runTimeLimitMs\": 3600000\n          },\n          \"dimensions\": {\n            \"maxAttemptsPerRun\": {\n              \"limit\": 2,\n              \"used\": 0,\n              \"remaining\": 2,\n              \"exhausted\": false\n            },\n            \"runTimeLimitMs\": {\n              \"limit\": 3600000,\n              \"used\": null,\n              \"remaining\": null,\n              \"exhausted\": null\n            }\n          },\n          \"attemptsCreated\": 0,\n          \"startedAt\": null,\n          \"endedAt\": null,\n          \"elapsedMs\": null,\n          \"reason\": \"scheduler_not_assembled\",\n          \"createdAt\": \"2026-10-13T11:02:12.530Z\"\n        }\n      ],\n      \"tasks\": [\n        {\n          \"taskId\": \"f014-task\",\n          \"status\": \"pending\",\n          \"firstPassedAt\": null,\n          \"attempts\": {\n            \"used\": 0,\n            \"limit\": null,\n            \"remaining\": null\n          },\n          \"codeAttempts\": {\n            \"used\": 0,\n            \"limit\": 3,\n            \"remaining\": 3\n          },\n          \"caps\": {\n            \"maxCodeAttempts\": 3,\n            \"maxAttemptsPerTask\": null,\n            \"effectiveMaxCodeAttempts\": 3,\n            \"rule\": \"code_cap_default\"\n          }\n        }\n      ],\n      \"blockingReasons\": [\n        {\n          \"layer\": \"run\",\n          \"layerId\": \"a72cef03-e788-4c0c-a22c-0c9f7cf9ce83\",\n          \"reason\": \"scheduler_not_assembled\"\n        }\n      ]\n    },\n    \"revisions\": {\n      \"schemaVersion\": 5,\n      \"scope\": \"budget-revision-list\",\n      \"records\": [\n        {\n          \"id\": \"7dbdb02b-a4cf-4adf-8ea9-32c45d6851e9\",\n          \"batchId\": \"7b34da82-899e-4a90-95b1-1331f951c5c7\",\n          \"version\": 1,\n          \"budget\": {\n            \"schemaVersion\": 1,\n            \"batch\": {\n              \"maxRuns\": 2,\n              \"maxTotalAttempts\": 4,\n              \"maxRuntimeStarts\": 3,\n              \"maxNoProgressRuns\": 2,\n              \"deadlineUtcMs\": 4083955200000,\n              \"maxTokenTotal\": 1000,\n              \"maxCostTotal\": 12.5\n            },\n            \"run\": {\n              \"maxAttemptsPerRun\": 2,\n              \"runTimeLimitMs\": 3600000\n            }\n          },\n          \"deadlineAtUtcMs\": 4083955200000,\n          \"approvedBy\": \"local-owner\",\n          \"reason\": \"initial_authorization\",\n          \"createdAt\": \"2026-10-13T11:02:12.530Z\"\n        },\n        {\n          \"id\": \"aebcee76-7dd8-4955-8c8e-6bb8d2efdf5c\",\n          \"batchId\": \"7b34da82-899e-4a90-95b1-1331f951c5c7\",\n          \"version\": 2,\n          \"budget\": {\n            \"schemaVersion\": 1,\n            \"batch\": {\n              \"maxRuns\": 3,\n              \"maxTotalAttempts\": 6,\n              \"maxRuntimeStarts\": 5,\n              \"maxNoProgressRuns\": 3,\n              \"deadlineUtcMs\": 4086547200000,\n              \"maxTokenTotal\": 2000,\n              \"maxCostTotal\": 20\n            },\n            \"run\": {\n              \"maxAttemptsPerRun\": 3,\n              \"runTimeLimitMs\": 7200000\n            }\n          },\n          \"deadlineAtUtcMs\": 4086547200000,\n          \"approvedBy\": \"local-owner\",\n          \"reason\": \"F-014 explicit increase\",\n          \"createdAt\": \"2026-10-13T11:02:12.865Z\"\n        }\n      ],\n      \"nextCursor\": null,\n      \"limit\": 50\n    }\n  }\n}",
+      "stderr": ""
+    },
+    {
+      "kind": "command",
+      "argv": [
+        "node",
+        "packages/cli/dist/bin.js",
+        "project",
+        "register",
+        "<sandbox>/other-project",
+        "--name",
+        "F-014 other",
+        "--data-root",
+        "<sandbox>/data/app",
+        "--json"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "stdout": "{\n  \"ok\": true,\n  \"command\": \"project.register\",\n  \"result\": {\n    \"schemaVersion\": 5,\n    \"commandId\": \"f268ada8-d58b-4d6a-aada-254c665e6e52\",\n    \"principalId\": \"local-owner\",\n    \"operation\": \"project.register\",\n    \"scope\": {\n      \"kind\": \"registration\"\n    },\n    \"requestDigest\": \"a3fa6957963873f12871183cbbfd555a2f362a882bb5e7866b956bfd0c4cba47\",\n    \"issuedAt\": \"2026-10-13T11:02:13.277Z\",\n    \"completedAt\": \"2026-10-13T11:02:13.346Z\",\n    \"replayed\": false,\n    \"status\": \"completed\",\n    \"result\": {\n      \"status\": \"registered\",\n      \"project\": {\n        \"id\": \"6395f8c8-b71a-4f9a-8ed9-7bf855b1af26\",\n        \"displayName\": \"F-014 other\",\n        \"description\": null,\n        \"status\": \"active\",\n        \"labels\": [],\n        \"repositoryBindingId\": \"183cc383-d066-4b15-8d12-9af587747b4e\",\n        \"revision\": 1,\n        \"createdAt\": \"2026-10-13T11:02:13.346Z\",\n        \"updatedAt\": \"2026-10-13T11:02:13.346Z\"\n      },\n      \"binding\": {\n        \"id\": \"183cc383-d066-4b15-8d12-9af587747b4e\",\n        \"projectId\": \"6395f8c8-b71a-4f9a-8ed9-7bf855b1af26\",\n        \"canonicalPath\": \"<sandbox>/other-project\",\n        \"gitCommonDir\": \"<sandbox>/other-project/.git\",\n        \"repoIdentity\": \"gitdir-sha256:6fe1764fbfbcd0771f5e89104d5fa3f70371776ca4ced4306c0df8848c969ff7\",\n        \"revision\": 1,\n        \"bindingRevision\": 1,\n        \"createdAt\": \"2026-10-13T11:02:13.346Z\",\n        \"updatedAt\": \"2026-10-13T11:02:13.346Z\"\n      }\n    },\n    \"resultRef\": \"v1.1W_pXSQeriNPwbtbpIfYpmQjz5IZVDNuZFrKGz-B2qE\"\n  }\n}",
+      "stderr": ""
+    },
+    {
+      "kind": "command",
+      "argv": [
+        "node",
+        "packages/cli/dist/bin.js",
+        "execution",
+        "budget",
+        "7b34da82-899e-4a90-95b1-1331f951c5c7",
+        "--project",
+        "6395f8c8-b71a-4f9a-8ed9-7bf855b1af26",
+        "--data-root",
+        "<sandbox>/data/app",
+        "--json"
+      ],
+      "exitCode": 1,
+      "signal": null,
+      "stdout": "{\n  \"ok\": false,\n  \"command\": \"execution.budget\",\n  \"error\": {\n    \"code\": \"not_found\",\n    \"message\": \"资源不存在\",\n    \"details\": {\n      \"httpStatus\": 404,\n      \"reason\": \"execution_entity_not_found\"\n    }\n  }\n}",
+      "stderr": "shiploop: not_found: 资源不存在\n"
+    },
+    {
+      "kind": "command",
+      "argv": [
+        "node",
+        "packages/cli/dist/bin.js",
+        "host",
+        "stop",
+        "--data-root",
+        "<sandbox>/data/app",
+        "--json"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "stdout": "{\n  \"ok\": true,\n  \"command\": \"host.stop\",\n  \"result\": {\n    \"commandId\": \"202b2e83-a819-40bd-ab31-75e188291a6c\",\n    \"status\": \"stopped\",\n    \"hostInstanceId\": \"80e9be09-4491-4c79-be43-01979368d690\",\n    \"replayed\": false,\n    \"evidence\": {\n      \"processExit\": \"confirmed\",\n      \"lock\": \"acquirable\",\n      \"discovery\": \"removed\"\n    }\n  }\n}",
+      "stderr": ""
+    },
+    {
+      "kind": "host",
+      "entry": "test/helpers/host/dist-host-entry-catalog.mjs",
+      "catalog": "explicit test pi/anthropic/openai; no runtime",
+      "pid": 61582
+    },
+    {
+      "kind": "command",
+      "argv": [
+        "node",
+        "packages/cli/dist/bin.js",
+        "execution",
+        "budget",
+        "7b34da82-899e-4a90-95b1-1331f951c5c7",
+        "--project",
+        "7d4ad8c2-430b-44b6-b552-4b1677269792",
+        "--data-root",
+        "<sandbox>/data/app",
+        "--json"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "stdout": "{\n  \"ok\": true,\n  \"command\": \"execution.budget\",\n  \"result\": {\n    \"operation\": \"execution.budget.get\",\n    \"executionState\": \"not_executed\",\n    \"states\": {\n      \"accepted\": true,\n      \"notExecuted\": true,\n      \"budgetExhausted\": false,\n      \"businessCompleted\": false\n    },\n    \"budget\": {\n      \"schemaVersion\": 5,\n      \"scope\": \"execution-budget\",\n      \"batch\": {\n        \"id\": \"7b34da82-899e-4a90-95b1-1331f951c5c7\",\n        \"projectId\": \"7d4ad8c2-430b-44b6-b552-4b1677269792\",\n        \"phaseId\": \"c8ae67b7-514d-4372-a78a-2c9829bc444f\",\n        \"featureId\": \"56028ad4-1549-43f5-bfdc-79294ad8c0ff\",\n        \"featureIds\": [\n          \"56028ad4-1549-43f5-bfdc-79294ad8c0ff\"\n        ],\n        \"status\": \"queued\",\n        \"budgetRevision\": 2,\n        \"budget\": {\n          \"schemaVersion\": 1,\n          \"batch\": {\n            \"maxRuns\": 3,\n            \"maxTotalAttempts\": 6,\n            \"maxRuntimeStarts\": 5,\n            \"maxNoProgressRuns\": 3,\n            \"deadlineUtcMs\": 4086547200000,\n            \"maxTokenTotal\": 2000,\n            \"maxCostTotal\": 20\n          },\n          \"run\": {\n            \"maxAttemptsPerRun\": 3,\n            \"runTimeLimitMs\": 7200000\n          }\n        },\n        \"deadlineAtUtcMs\": 4086547200000,\n        \"dimensions\": {\n          \"maxRuns\": {\n            \"limit\": 3,\n            \"used\": 1,\n            \"remaining\": 2,\n            \"exhausted\": false\n          },\n          \"maxTotalAttempts\": {\n            \"limit\": 6,\n            \"used\": 0,\n            \"remaining\": 6,\n            \"exhausted\": false\n          },\n          \"maxRuntimeStarts\": {\n            \"limit\": 5,\n            \"used\": 0,\n            \"remaining\": 5,\n            \"exhausted\": false\n          },\n          \"maxNoProgressRuns\": {\n            \"limit\": 3,\n            \"used\": 0,\n            \"remaining\": 3,\n            \"exhausted\": false\n          },\n          \"deadlineUtcMs\": {\n            \"limit\": 4086547200000,\n            \"used\": 1791889333758,\n            \"remaining\": 2294657866242,\n            \"exhausted\": false\n          },\n          \"maxTokenTotal\": {\n            \"limit\": 2000,\n            \"used\": null,\n            \"remaining\": null,\n            \"exhausted\": null\n          },\n          \"maxCostTotal\": {\n            \"limit\": 20,\n            \"used\": null,\n            \"remaining\": null,\n            \"exhausted\": null\n          }\n        },\n        \"unconfirmedDimensions\": [\n          \"maxTokenTotal\",\n          \"maxCostTotal\"\n        ],\n        \"runtimeStartsReserved\": 0,\n        \"usage\": {\n          \"tokenUsed\": null,\n          \"costUsed\": null\n        },\n        \"reason\": null,\n        \"createdAt\": \"2026-10-13T11:02:12.530Z\",\n        \"updatedAt\": \"2026-10-13T11:02:12.865Z\"\n      },\n      \"runs\": [\n        {\n          \"id\": \"a72cef03-e788-4c0c-a22c-0c9f7cf9ce83\",\n          \"batchId\": \"7b34da82-899e-4a90-95b1-1331f951c5c7\",\n          \"featureId\": \"56028ad4-1549-43f5-bfdc-79294ad8c0ff\",\n          \"purpose\": \"execute\",\n          \"workKey\": \"13f336b2d67825b0ceb700b640f33c4d673426deb18981cddbe436a9447f0f30\",\n          \"dispatchOrdinal\": 1,\n          \"status\": \"queued\",\n          \"limits\": {\n            \"maxAttemptsPerRun\": 2,\n            \"runTimeLimitMs\": 3600000\n          },\n          \"dimensions\": {\n            \"maxAttemptsPerRun\": {\n              \"limit\": 2,\n              \"used\": 0,\n              \"remaining\": 2,\n              \"exhausted\": false\n            },\n            \"runTimeLimitMs\": {\n              \"limit\": 3600000,\n              \"used\": null,\n              \"remaining\": null,\n              \"exhausted\": null\n            }\n          },\n          \"attemptsCreated\": 0,\n          \"startedAt\": null,\n          \"endedAt\": null,\n          \"elapsedMs\": null,\n          \"reason\": \"scheduler_not_assembled\",\n          \"createdAt\": \"2026-10-13T11:02:12.530Z\"\n        }\n      ],\n      \"tasks\": [\n        {\n          \"taskId\": \"f014-task\",\n          \"status\": \"pending\",\n          \"firstPassedAt\": null,\n          \"attempts\": {\n            \"used\": 0,\n            \"limit\": null,\n            \"remaining\": null\n          },\n          \"codeAttempts\": {\n            \"used\": 0,\n            \"limit\": 3,\n            \"remaining\": 3\n          },\n          \"caps\": {\n            \"maxCodeAttempts\": 3,\n            \"maxAttemptsPerTask\": null,\n            \"effectiveMaxCodeAttempts\": 3,\n            \"rule\": \"code_cap_default\"\n          }\n        }\n      ],\n      \"blockingReasons\": [\n        {\n          \"layer\": \"run\",\n          \"layerId\": \"a72cef03-e788-4c0c-a22c-0c9f7cf9ce83\",\n          \"reason\": \"scheduler_not_assembled\"\n        }\n      ]\n    },\n    \"revisions\": {\n      \"schemaVersion\": 5,\n      \"scope\": \"budget-revision-list\",\n      \"records\": [\n        {\n          \"id\": \"7dbdb02b-a4cf-4adf-8ea9-32c45d6851e9\",\n          \"batchId\": \"7b34da82-899e-4a90-95b1-1331f951c5c7\",\n          \"version\": 1,\n          \"budget\": {\n            \"schemaVersion\": 1,\n            \"batch\": {\n              \"maxRuns\": 2,\n              \"maxTotalAttempts\": 4,\n              \"maxRuntimeStarts\": 3,\n              \"maxNoProgressRuns\": 2,\n              \"deadlineUtcMs\": 4083955200000,\n              \"maxTokenTotal\": 1000,\n              \"maxCostTotal\": 12.5\n            },\n            \"run\": {\n              \"maxAttemptsPerRun\": 2,\n              \"runTimeLimitMs\": 3600000\n            }\n          },\n          \"deadlineAtUtcMs\": 4083955200000,\n          \"approvedBy\": \"local-owner\",\n          \"reason\": \"initial_authorization\",\n          \"createdAt\": \"2026-10-13T11:02:12.530Z\"\n        },\n        {\n          \"id\": \"aebcee76-7dd8-4955-8c8e-6bb8d2efdf5c\",\n          \"batchId\": \"7b34da82-899e-4a90-95b1-1331f951c5c7\",\n          \"version\": 2,\n          \"budget\": {\n            \"schemaVersion\": 1,\n            \"batch\": {\n              \"maxRuns\": 3,\n              \"maxTotalAttempts\": 6,\n              \"maxRuntimeStarts\": 5,\n              \"maxNoProgressRuns\": 3,\n              \"deadlineUtcMs\": 4086547200000,\n              \"maxTokenTotal\": 2000,\n              \"maxCostTotal\": 20\n            },\n            \"run\": {\n              \"maxAttemptsPerRun\": 3,\n              \"runTimeLimitMs\": 7200000\n            }\n          },\n          \"deadlineAtUtcMs\": 4086547200000,\n          \"approvedBy\": \"local-owner\",\n          \"reason\": \"F-014 explicit increase\",\n          \"createdAt\": \"2026-10-13T11:02:12.865Z\"\n        }\n      ],\n      \"nextCursor\": null,\n      \"limit\": 50\n    }\n  }\n}",
+      "stderr": ""
+    },
+    {
+      "kind": "command",
+      "argv": [
+        "node",
+        "packages/cli/dist/bin.js",
+        "execution",
+        "start",
+        "56028ad4-1549-43f5-bfdc-79294ad8c0ff",
+        "--project",
+        "7d4ad8c2-430b-44b6-b552-4b1677269792",
+        "--input",
+        "<sandbox>/budget.json",
+        "--preview-digest",
+        "6cf999bfe62bf834a9469eca5b97d139f80bda3a3a75685daf3b1ed82ec52252",
+        "--command-id",
+        "c7f536e1-a089-4f49-a9b5-4d5388ebdbd7",
+        "--confirm",
+        "--data-root",
+        "<sandbox>/data/app",
+        "--json"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "stdout": "{\n  \"ok\": true,\n  \"command\": \"execution.start\",\n  \"result\": {\n    \"commandId\": \"c7f536e1-a089-4f49-a9b5-4d5388ebdbd7\",\n    \"replayed\": true,\n    \"operation\": \"execution.start\",\n    \"status\": \"accepted\",\n    \"executionState\": \"accepted\",\n    \"featureIds\": [\n      \"56028ad4-1549-43f5-bfdc-79294ad8c0ff\"\n    ],\n    \"batchId\": \"7b34da82-899e-4a90-95b1-1331f951c5c7\",\n    \"runId\": \"a72cef03-e788-4c0c-a22c-0c9f7cf9ce83\",\n    \"operationId\": \"7b34da82-899e-4a90-95b1-1331f951c5c7\",\n    \"authorization_redacted\": \"[REDACTED]\",\n    \"completion\": {\n      \"featureVerified\": false,\n      \"businessCompleted\": false,\n      \"note\": \"accepted 仅表示执行授权提交成功：尚未执行、未验收，不代表 Feature 完成或业务完成\"\n    }\n  }\n}",
+      "stderr": ""
+    },
+    {
+      "kind": "command",
+      "argv": [
+        "node",
+        "packages/cli/dist/bin.js",
+        "feature",
+        "get",
+        "56028ad4-1549-43f5-bfdc-79294ad8c0ff",
+        "--data-root",
+        "<sandbox>/data/app",
+        "--json"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "stdout": "{\n  \"ok\": true,\n  \"command\": \"feature.get\",\n  \"result\": {\n    \"feature\": {\n      \"id\": \"56028ad4-1549-43f5-bfdc-79294ad8c0ff\",\n      \"projectId\": \"7d4ad8c2-430b-44b6-b552-4b1677269792\",\n      \"phaseId\": \"c8ae67b7-514d-4372-a78a-2c9829bc444f\",\n      \"title\": \"F-014 feature\",\n      \"description\": \"Built budget acceptance\",\n      \"labels\": [],\n      \"status\": \"draft\",\n      \"planStatus\": \"approved\",\n      \"sourceRefs\": [],\n      \"revision\": 2,\n      \"planDigest\": \"67e0433fc21f605092c50278282d22c9946799782b8be94765a1443a3b2881e9\",\n      \"createdAt\": \"2026-10-13T11:02:11.502Z\",\n      \"updatedAt\": \"2026-10-13T11:02:11.674Z\"\n    },\n    \"validation\": {\n      \"taskCount\": 1,\n      \"dependencyEdgeCount\": 0,\n      \"executable\": true\n    },\n    \"notExecutableReasons\": [],\n    \"tasks\": [\n      {\n        \"id\": \"f014-task\",\n        \"projectId\": \"7d4ad8c2-430b-44b6-b552-4b1677269792\",\n        \"featureId\": \"56028ad4-1549-43f5-bfdc-79294ad8c0ff\",\n        \"title\": \"Budget task\",\n        \"description\": null,\n        \"labels\": [],\n        \"status\": \"pending\",\n        \"acceptance\": {\n          \"criteria\": [\n            \"Explicit authorization\"\n          ]\n        },\n        \"requirementsRefs\": [],\n        \"executionConfig\": {\n          \"schemaVersion\": 2,\n          \"runtime\": \"pi\",\n          \"provider\": \"anthropic\",\n          \"model\": \"claude-sonnet\"\n        },\n        \"configSource\": \"global_default\",\n        \"configSourceKey\": \"modelMap.low\",\n        \"revision\": 1,\n        \"complexity\": \"low\",\n        \"createdAt\": \"2026-10-13T11:02:11.503Z\",\n        \"updatedAt\": \"2026-10-13T11:02:11.503Z\"\n      }\n    ],\n    \"dependencies\": []\n  }\n}",
+      "stderr": ""
+    },
+    {
+      "kind": "command",
+      "argv": [
+        "node",
+        "packages/cli/dist/bin.js",
+        "host",
+        "stop",
+        "--data-root",
+        "<sandbox>/data/app",
+        "--json"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "stdout": "{\n  \"ok\": true,\n  \"command\": \"host.stop\",\n  \"result\": {\n    \"commandId\": \"452b6f73-65bf-420d-9b94-31a74f00c9c2\",\n    \"status\": \"stopped\",\n    \"hostInstanceId\": \"51f7dd82-9ad1-4fc3-9454-06735643eab1\",\n    \"replayed\": false,\n    \"evidence\": {\n      \"processExit\": \"confirmed\",\n      \"lock\": \"acquirable\",\n      \"discovery\": \"removed\"\n    }\n  }\n}",
+      "stderr": ""
+    },
+    {
+      "kind": "cleanup",
+      "ownedHostsExited": true
+    }
+  ]
+}

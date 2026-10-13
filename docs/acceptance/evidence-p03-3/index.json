@@ -1,0 +1,205 @@
+{
+  "schemaVersion": 1,
+  "feature": "F-014",
+  "verificationScope": "full",
+  "implementationCommit": "2bdcff145e1870fe30ab9cbae476c1970cb8f335",
+  "input": {
+    "file": "input/p03-execution-budget.md",
+    "version": "0.3",
+    "sha256": "4f732cb9d0b23d4d7af82d75bb629f3a2d8cc7baa8cbfb257ba16abe85780cf9"
+  },
+  "tools": {
+    "node": "v22.19.0",
+    "npm": "10.9.3",
+    "vitest": "5.0.3",
+    "typescript": "7.0.2",
+    "betterSqlite3": "13.0.3",
+    "platform": "darwin",
+    "arch": "arm64"
+  },
+  "sanitization": {
+    "homeRepoAndSandboxPathsRedacted": true,
+    "credentialShapeScan": "passed_recursive",
+    "credentialNamedFields": "replaced with <key>_redacted=[REDACTED], including public preview authorization summary",
+    "authFileExported": false
+  },
+  "entries": [
+    {
+      "source": "tool-logs/F-014-red.log",
+      "file": "F-014-red.log",
+      "rawSha256": "03a72000f7486aa1466b3e0a64914af8b5db7e85807bdf880ffa8873e5501859",
+      "sha256": "d7ef7b053ee4b427a21d38f0dee223d6f427e86d8dbbc8b89acdf0063509cfce",
+      "bytes": 1376,
+      "result": {
+        "command": [
+          "node",
+          "scripts/run-tests.ts",
+          "test/docs-p03-3-handoff.test.ts"
+        ],
+        "exitCode": 1,
+        "signal": null
+      }
+    },
+    {
+      "source": "tool-logs/F-014-built-initial.log",
+      "file": "F-014-built-initial.log",
+      "rawSha256": "cdb3f0a77bb47e4b65b51b83a0001101a99306a855b44556bca65a67d1d71be5",
+      "sha256": "91c83d1f0728ea36aeda9a47525adb045dbc2f5a1dc8827ad606ad8436203f53",
+      "bytes": 1537,
+      "result": {
+        "command": [
+          "node",
+          "scripts/run-tests.ts",
+          "test/p03-3-cli-built.test.ts"
+        ],
+        "exitCode": 1,
+        "signal": null
+      }
+    },
+    {
+      "source": "tool-logs/F-014-built-second.log",
+      "file": "F-014-built-second.log",
+      "rawSha256": "5038912698f7bda67d37fdef72cfb7b3f9687a6bcfb9bbb73f6a25d70f120a01",
+      "sha256": "f49c550f7cc001a8a472357ea8e560aa9a17b207c80feae05962df355a8dc906",
+      "bytes": 1951,
+      "result": {
+        "command": [
+          "node",
+          "scripts/run-tests.ts",
+          "test/p03-3-cli-built.test.ts"
+        ],
+        "exitCode": 1,
+        "signal": null
+      }
+    },
+    {
+      "source": "tool-logs/F-014-focused.log",
+      "file": "F-014-focused.log",
+      "rawSha256": "28c4d1df9c548343ead698ec47e38aa018c173fcc93f9997877973a3742b390a",
+      "sha256": "9cebee50066847133a0ca5ca9b9b6ecaf1028b56eac2054a929c45cf76651071",
+      "bytes": 413,
+      "result": {
+        "command": [
+          "node",
+          "scripts/run-tests.ts",
+          "test/p03-3-cli-built.test.ts",
+          "test/docs-p03-3-handoff.test.ts"
+        ],
+        "exitCode": 0,
+        "signal": null
+      }
+    },
+    {
+      "source": "tool-logs/F-014-verify.log",
+      "file": "F-014-verify.log",
+      "rawSha256": "73d401b4de647ec9a84fe08ec8144d6fd423b9124a80a912cac3724f93fbb6d8",
+      "sha256": "c5040d3606b81e778a9d83b2aef2098a11f968f06ebef4bcfe5c060cacabfa45",
+      "bytes": 2712,
+      "result": {
+        "command": [
+          "npm",
+          "run",
+          "verify"
+        ],
+        "started": "2026-10-13T10:55:52.485Z",
+        "exitCode": 1,
+        "signal": null
+      }
+    },
+    {
+      "source": "tool-logs/F-014-boundaries.log",
+      "file": "F-014-boundaries.log",
+      "rawSha256": "0fb05ed6d466897a78a6cdd185cb74ccbc4bb058a2e54b8897e9e17f5fb218bf",
+      "sha256": "348b0220969634627eb5f38f83938c6533d77331a90f749fc9241a16f736b7c8",
+      "bytes": 520,
+      "result": {
+        "command": [
+          "npm",
+          "run",
+          "check:boundaries"
+        ],
+        "exitCode": 0,
+        "signal": null
+      }
+    },
+    {
+      "source": "tool-logs/F-014-feature-tests.log",
+      "file": "F-014-feature-tests.log",
+      "rawSha256": "d443f47750c203ee547a0019321e1dc15b5d0a8519cd80e62e460d9145f94f48",
+      "sha256": "16f61df46777b572b5a35e3433072f917bc260a8f25fe6c79d0df97c3d1dd315",
+      "bytes": 362,
+      "result": {
+        "command": [
+          "node",
+          "scripts/run-tests.ts",
+          "p03-3"
+        ],
+        "exitCode": 0,
+        "signal": null
+      }
+    },
+    {
+      "source": "tool-logs/F-014-typecheck.log",
+      "file": "F-014-typecheck.log",
+      "rawSha256": "8c57f6623ac59fe52e11080517178e2fe2aacf55826ae17c337dc3ecd96734dd",
+      "sha256": "8c57f6623ac59fe52e11080517178e2fe2aacf55826ae17c337dc3ecd96734dd",
+      "bytes": 117,
+      "result": {
+        "command": [
+          "npm",
+          "run",
+          "typecheck"
+        ],
+        "exitCode": 0,
+        "signal": null
+      }
+    },
+    {
+      "source": "tool-logs/F-014-verify-final.log",
+      "file": "F-014-verify-final.log",
+      "rawSha256": "ef96edd1534b23a3c3a61f7500cec2053d35f37f89fcec86250f3754bc603bcb",
+      "sha256": "920aae66b9cdebe5dbdace4db1bf3bd34f9137e6f76b30194a03fcb7046c4d67",
+      "bytes": 3779,
+      "result": {
+        "command": [
+          "npm",
+          "run",
+          "verify"
+        ],
+        "started": "2026-10-13T11:00:24.231Z",
+        "exitCode": 0,
+        "signal": null
+      }
+    },
+    {
+      "source": "verifications/F-014/built-cli.json",
+      "file": "built-cli.json",
+      "rawSha256": "b86ed09ea8d2a1d26988b42012608daa29da3c1c630c1b731149c1f2fd5b9db6",
+      "sha256": "7f55501e3b870f203808b44dda37e80404a40e8b43edbb4874d075d7b6cf9941",
+      "bytes": 19175,
+      "result": {
+        "passed": false
+      }
+    },
+    {
+      "source": "verifications/F-014/built-cli-second.json",
+      "file": "built-cli-second.json",
+      "rawSha256": "6405b3ce9e602bd9cf3ea056ec61b2ef770144e349d3eed6b5b1def270a49bf0",
+      "sha256": "2b3a0caac27d3e394e46dced6c32505438bdc7540af201cdf5d6f4ff29639aed",
+      "bytes": 41025,
+      "result": {
+        "passed": false
+      }
+    },
+    {
+      "source": "verifications/F-014/built-cli-verify.json",
+      "file": "built-cli-verify.json",
+      "rawSha256": "e22e4490b62df04e41553fb0acad9ca2944e1f1599c08a9c82fabca167cf9969",
+      "sha256": "1d79b78b0148cb1297d5940596889181eb3558216973820a4d097eafc000387c",
+      "bytes": 71942,
+      "result": {
+        "passed": true
+      }
+    }
+  ]
+}
