@@ -82,6 +82,9 @@ docs/p03-3-budget-revision-contract.md  P03-3 批次预算显式修订契约（F
 docs/p03-3-execution-budget-query-contract.md  P03-3 执行预算只读查询契约（F-010：execution.budget.get/revisions 一致读视图、固定 Feature 范围与各层上限/已用/剩余、绝对 deadline 与阻塞原因冻结词汇、修订历史有界分页与受控游标、未知字段不填零与启动预占/实际用量分离、输出脱敏边界）
 docs/acceptance/p03-3-f014-report.md  F-014 交付报告（完整门禁、输入/实现提交、逐命令退出码、脱敏证据摘要和 not_run 边界）
 docs/p03-3a-runtime-recovery-contract.md  P03-3A F-001 恢复契约（Work/Chat 身份、稳定调用 ID、不可变来源引用、五项运行期能力证据、纯校验/能力判定与前置核验职责）
+docs/p03-3a-synthetic-recovery-fixtures.md  P03-3A F-003 Synthetic 恢复夹具边界（确定性故障注入、可识别副作用去重、事件水位与用量范围；非真实 SDK/生产 Recorder）
+docs/p03-3a-pi-durable-capability-matrix.md  P03-3A F-004 Pi Durable 1.2.0 锁定实验与 P04 决策（真实 SDK 能力矩阵、证据/版本锁定、not_run 门槛；默认保留标准 Pi SDK）
+docs/p03-3a-handoff.md  P03-3A F-005 通用恢复协议交接（实际交付接口索引、Core 权威与 Work/Chat 独立控制、公共入口兼容冻结断言、P03-4/6/9 实施依据与 P04 门槛追溯）
 docs/p03-3-handoff.md  P03-3 集成验收与 P03-4/6/9 接口交接（F-014：正式构建 CLI 到持久预算、FR-1/FR-2 与预算子集覆盖、显式测试目录边界、accepted 兼容与组合事务）
 docs/p03-3-cli-execution-operations.md  P03-3 执行授权 CLI 操作说明（F-012：execution preview/start/budget/revise 命令面、完整有限预算参数映射与有效并发把关、previewDigest 明确确认、四态结构化输出与 accepted 仅提交成功语义、失败退出码与同请求恢复）
 ```
