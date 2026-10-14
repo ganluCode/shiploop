@@ -69,6 +69,9 @@ export {
   validateExecutionPreviewResultWire,
   validateExecutionBudgetStatusResultWire,
   validateBudgetRevisionListResultWire,
+  validateRunScheduleStatusResultWire,
+  validateAttemptListResultWire,
+  validateAttemptDiagnosticsResultWire,
 } from './app-wire.js';
 export type {
   AppQueryOperation,
@@ -86,4 +89,7 @@ export type {
   ExecutionPreviewResult,
   ExecutionBudgetStatusResult,
   BudgetRevisionListResult,
+  RunScheduleStatusResult,
+  AttemptListResult,
+  AttemptDiagnosticsResult,
 } from './app-wire.js';

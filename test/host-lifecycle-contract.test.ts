@@ -57,7 +57,7 @@ import {
   validateStopResultView,
   verifyStopRequestDigest,
 } from '../packages/host/src/index.ts';
-import { COMMAND_OPERATIONS, PLAN_APPROVAL_QUERY_OPERATION, PLAN_QUERY_OPERATIONS, QUERY_OPERATIONS } from '../packages/core/src/index.ts';
+import { COMMAND_OPERATIONS, EXECUTION_SCHEDULE_QUERY_OPERATIONS, PLAN_APPROVAL_QUERY_OPERATION, PLAN_QUERY_OPERATIONS, QUERY_OPERATIONS } from '../packages/core/src/index.ts';
 import type {
   HostDiscoveryRecord,
   HostErrorCode,
@@ -240,6 +240,10 @@ describe('F-002 冻结常量与能力声明', () => {
           'features.approvals',
           'execution.budget.get',
           'execution.budget.revisions',
+          // P03-4 / F-008：调度诊断与 Attempt 审计三查询真实接线（同上能力位）。
+          'execution.run.schedule',
+          'execution.attempts.list',
+          'execution.attempt.diagnostics',
         ],
         events: { transport: 'sse', route: '/v1/events', scopes: ['project', 'global'] },
       },
@@ -249,7 +253,8 @@ describe('F-002 冻结常量与能力声明', () => {
     // P02-3：queries = P02-2 的 QUERY_OPERATIONS + 已接线的静态接入两项（F-006）
     // + 已接线的基线分页/详情/证据三项（F-014，与 BASELINE_QUERY_OPERATIONS 同步）
     // + P03-1 / F-009 计划域六项（与 PLAN_QUERY_OPERATIONS 同步，能力位复用 project.read）
-    // + P03-2 / F-007 审批决策查询（与 PLAN_APPROVAL_QUERY_OPERATION 同步）。
+    // + P03-2 / F-007 审批决策查询（与 PLAN_APPROVAL_QUERY_OPERATION 同步）
+    // + P03-4 / F-008 调度诊断/Attempt 审计三项（与 EXECUTION_SCHEDULE_QUERY_OPERATIONS 同步）。
     expect([...CURRENT_HOST_CAPABILITIES.application.queries]).toEqual([
       ...QUERY_OPERATIONS.slice(0, 4),
       'projects.inspect',
@@ -262,6 +267,7 @@ describe('F-002 冻结常量与能力声明', () => {
       PLAN_APPROVAL_QUERY_OPERATION,
       'execution.budget.get',
       'execution.budget.revisions',
+      ...EXECUTION_SCHEDULE_QUERY_OPERATIONS,
     ]);
     expect(CURRENT_HOST_CAPABILITIES.application.commands).toContain('baseline.cancel');
     expect(CURRENT_HOST_CAPABILITIES.application.queries).toContain('baselines.list');

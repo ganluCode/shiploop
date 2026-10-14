@@ -90,7 +90,7 @@ export const APPLICATION_COMMAND_CAPABILITIES = [
   'execution.budget.revise',
 ] as const;
 
-/** P02-2 §11.3：Host 实际接线的应用查询（含回执/结果读取与快照；P02-3 / F-006 新增静态接入两项；F-014 新增基线分页/详情/证据正文三项；P03-1 / F-009 新增计划层级/详情/DAG 六项；P03-2 / F-007 新增审批决策查询一项）。 */
+/** P02-2 §11.3：Host 实际接线的应用查询（含回执/结果读取与快照；P02-3 / F-006 新增静态接入两项；F-014 新增基线分页/详情/证据正文三项；P03-1 / F-009 新增计划层级/详情/DAG 六项；P03-2 / F-007 新增审批决策查询一项；P03-4 / F-008 新增调度诊断/Attempt 审计三项）。 */
 export const APPLICATION_QUERY_CAPABILITIES = [
   'projects.list',
   'projects.get',
@@ -123,6 +123,12 @@ export const APPLICATION_QUERY_CAPABILITIES = [
   'features.approvals',
   'execution.budget.get',
   'execution.budget.revisions',
+  // P03-4 / F-008：Run 调度诊断与 Attempt/通知诊断审计只读查询真实接线
+  //（能力位复用 project.read；与 Core EXECUTION_SCHEDULE_QUERY_OPERATIONS
+  // 同步，不漂移）。
+  'execution.run.schedule',
+  'execution.attempts.list',
+  'execution.attempt.diagnostics',
 ] as const;
 
 /**

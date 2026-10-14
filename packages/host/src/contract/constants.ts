@@ -34,6 +34,8 @@ export const DISCOVERY_SCHEMA_VERSION = 1 as const;
  */
 // P03-3 / F-011: execution capabilities are an additive v5 wiring change;
 // application envelopes and query results remain on their existing versions.
+// P03-4 / F-008：调度诊断/Attempt 审计三查询进入能力集合，同为 v5 内增量
+// 接线变化（形状集新增不改动既有字段，同一纪律）。
 export const CURRENT_SCHEMA_VERSION = 5 as const;
 
 /** 当前 Host 生命周期线协议版本；本 Feature 只实现 v1。 */
@@ -93,6 +95,21 @@ export const TASKS_ROUTE = '/v1/tasks';
 export const TASKS_ROUTE_PREFIX = '/v1/tasks/';
 /** F-011: GET :batchId/budget and :batchId/budget/revisions; projectId is required. */
 export const BATCHES_ROUTE_PREFIX = '/v1/batches/';
+/**
+ * P03-4 / F-008：Run 调度诊断与 Attempt/通知诊断审计只读查询路由（全部
+ * GET + Bearer；与 Core EXECUTION_SCHEDULE_QUERY_OPERATIONS 一一对应）。
+ * - GET /v1/runs/:runId/schedule?projectId=（单段路径参数 + 必填 projectId；
+ *   与 /v1/batches/:batchId/budget 同一冻结形态）；
+ * - GET /v1/attempts?projectId=&taskId=（集合根 + 父级身份查询参数，与
+ *   /v1/tasks 列表同一纪律；分页 limit/cursor 复用计划规范）；
+ * - GET /v1/attempts/:attemptId/diagnostics?projectId=（唯一冻结的 Attempt
+ *   子资源形态）；其他嵌套/多段形态一律未匹配 → 404 unknown_operation。
+ */
+export const RUNS_ROUTE_PREFIX = '/v1/runs/';
+export const RUN_SCHEDULE_ROUTE_SUFFIX = 'schedule';
+export const ATTEMPTS_ROUTE = '/v1/attempts';
+export const ATTEMPTS_ROUTE_PREFIX = '/v1/attempts/';
+export const ATTEMPT_DIAGNOSTICS_ROUTE_SUFFIX = 'diagnostics';
 
 /** §7.2 客户端有限预算（毫秒）。 */
 export const TCP_CONNECT_TIMEOUT_MS = 2_000;

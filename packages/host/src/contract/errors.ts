@@ -60,6 +60,10 @@ export const APP_OPERATIONS = [
   'features.approvals',
   'execution.budget.get',
   'execution.budget.revisions',
+  // P03-4 / F-008：Run 调度诊断与 Attempt/通知诊断审计只读查询。
+  'execution.run.schedule',
+  'execution.attempts.list',
+  'execution.attempt.diagnostics',
 ] as const;
 
 export const HOST_OPERATIONS = [

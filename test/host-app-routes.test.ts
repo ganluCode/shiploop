@@ -1009,6 +1009,10 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         // P03-3 / F-011：预算状态与修订历史只读查询经 Batch 路由真实接线。
         'execution.budget.get',
         'execution.budget.revisions',
+        // P03-4 / F-008：Run 调度诊断与 Attempt/通知诊断审计只读查询真实接线。
+        'execution.run.schedule',
+        'execution.attempts.list',
+        'execution.attempt.diagnostics',
       ],
       events: { transport: 'sse', route: '/v1/events', scopes: ['project', 'global'] },
     });

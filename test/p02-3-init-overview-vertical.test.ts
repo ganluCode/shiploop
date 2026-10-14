@@ -506,7 +506,11 @@ describe('F-006 Host inspect/overview 路由与握手能力（真实 Host + SQLi
     // P03-3 / F-011：预算状态/修订历史只读查询进入能力清单（24 → 26）。
     expect(body.capabilities.application.queries).toContain('execution.budget.get');
     expect(body.capabilities.application.queries).toContain('execution.budget.revisions');
-    expect(body.capabilities.application.queries).toHaveLength(26);
+    // P03-4 / F-008：调度诊断/Attempt 审计三查询进入能力清单（26 → 29）。
+    expect(body.capabilities.application.queries).toContain('execution.run.schedule');
+    expect(body.capabilities.application.queries).toContain('execution.attempts.list');
+    expect(body.capabilities.application.queries).toContain('execution.attempt.diagnostics');
+    expect(body.capabilities.application.queries).toHaveLength(29);
     expect(body.capabilities.application.commands).toEqual([
       'project.register',
       'project.metadata.update',

@@ -17,6 +17,9 @@
  *   HostProtocolError，details 只含受控 reason，不回显响应原文或秘密。
  */
 import {
+  ATTEMPT_EXECUTION_STAGES,
+  ATTEMPT_NOTIFICATION_DIAGNOSTIC_REASONS,
+  ATTEMPT_STATUSES,
   BASELINE_CHECKS_MAX,
   BASELINE_CHECK_STATUSES,
   BASELINE_CHECK_TAIL_MAX_BYTES,
@@ -32,6 +35,7 @@ import {
   SETTINGS_EXPORT_FORMAT_VERSION,
   SETTINGS_SCHEMA_VERSION,
   STATE_EVENT_TYPE_SPECS,
+  TASK_DAG_REASONS,
   WIRE_MESSAGE_SCHEMA_VERSION,
   WORK_ACCEPTED_SCHEMA_VERSION,
   EXECUTION_INPUT_GROUP_LOCATOR_PREFIX,
@@ -55,6 +59,8 @@ import {
   validateWireCommandReceipt,
 } from 'shiploop-core/protocol';
 import type {
+  AttemptDiagnosticsResult,
+  AttemptListResult,
   BaselineAuthorizationSummary,
   BaselineCheckCounts,
   BaselineCheckOutputRef,
@@ -95,6 +101,7 @@ import type {
   PublicStateEvent,
   PublicStateEventType,
   PublicTaskRecord,
+  RunScheduleStatusResult,
   SettingsScope,
   SnapshotResult,
   TaskDetailResult,
@@ -108,6 +115,13 @@ export type {
   ExecutionPreviewResult,
   ExecutionBudgetStatusResult,
   BudgetRevisionListResult,
+} from 'shiploop-core/protocol';
+
+/** P03-4 / F-008：调度诊断与 Attempt 审计查询结果形状经公共面再导出。 */
+export type {
+  RunScheduleStatusResult,
+  AttemptListResult,
+  AttemptDiagnosticsResult,
 } from 'shiploop-core/protocol';
 
 /** §11.3 查询能力清单（回执/结果读取经 validateCommandReceiptWire，不在本类型内）。 */
@@ -136,7 +150,12 @@ export type AppQueryOperation =
   // P03-2 / F-007：审批决策查询（与 Core PLAN_APPROVAL_QUERY_OPERATION 同源）。
   | 'features.approvals'
   | 'execution.budget.get'
-  | 'execution.budget.revisions';
+  | 'execution.budget.revisions'
+  // P03-4 / F-008：调度诊断与 Attempt 审计查询（与 Core
+  // EXECUTION_SCHEDULE_QUERY_OPERATIONS 同源）。
+  | 'execution.run.schedule'
+  | 'execution.attempts.list'
+  | 'execution.attempt.diagnostics';
 
 function malformed(operation: HostOperation, reason: string): never {
   throw new HostProtocolError('response_malformed', operation, 'Host 响应不符合线协议', {
@@ -2753,6 +2772,384 @@ export function validateBudgetRevisionListResultWire(
   return object as unknown as BudgetRevisionListResult;
 }
 
+/* ------------------------------------------------------------------ *
+ * P03-4 / F-008 调度诊断与 Attempt 审计查询响应（与 Core 公开形状同一冻结面）
+ * ------------------------------------------------------------------ */
+
+/** ISO UTC 时间或 null（未启动/未结束等未知事实保持 null，不接受 0 冒充）。 */
+function requireIsoUtcOrNull(operation: HostOperation, value: unknown): string | null {
+  if (value === null) {
+    return null;
+  }
+  if (!isIsoUtcDateTime(value)) {
+    malformed(operation, 'execution_schedule_date_invalid');
+  }
+  return value;
+}
+
+/** 有界非负整数或 null（已知耗时/退出信息保留，未知保持 null）。 */
+function requireNonNegativeIntegerOrNull(operation: HostOperation, value: unknown): number | null {
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    malformed(operation, 'execution_schedule_number_invalid');
+  }
+  return value;
+}
+
+/** 稳定身份或 null（session/invocation/code/diagnostic 链接身份）。 */
+function requireStableIdOrNull(operation: HostOperation, value: unknown): string | null {
+  if (value === null) {
+    return null;
+  }
+  return requireStableId(operation, value);
+}
+
+/** 非负有界数或 null（用量度量；部分上报的未知维度保持 null）。 */
+function requireUsageMeasureOrNull(operation: HostOperation, value: unknown): number | null {
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
+    malformed(operation, 'execution_attempt_usage_invalid');
+  }
+  return value;
+}
+
+function validateAttemptUsageSummaryWire(operation: HostOperation, value: unknown): void {
+  const summary = requirePlain(operation, value);
+  exactKeys(operation, summary, [
+    'schemaVersion',
+    'inputTokens',
+    'outputTokens',
+    'costMicros',
+    'currency',
+  ]);
+  if (summary.schemaVersion !== 1) {
+    if (typeof summary.schemaVersion === 'number') {
+      unsupportedVersion(operation, 'usageSummary.schemaVersion');
+    }
+    malformed(operation, 'execution_attempt_usage_invalid');
+  }
+  requireUsageMeasureOrNull(operation, summary.inputTokens);
+  requireUsageMeasureOrNull(operation, summary.outputTokens);
+  requireUsageMeasureOrNull(operation, summary.costMicros);
+  if (summary.currency !== null && typeof summary.currency !== 'string') {
+    malformed(operation, 'execution_attempt_usage_invalid');
+  }
+}
+
+/** Attempt 审计公开记录（精确键集：快照正文/凭据/路径字段一律未知键拒绝）。 */
+function validatePublicAttemptRecordWire(operation: HostOperation, value: unknown): void {
+  const record = requirePlain(operation, value);
+  exactKeys(operation, record, [
+    'id',
+    'projectId',
+    'featureId',
+    'runId',
+    'taskId',
+    'number',
+    'owner',
+    'hostInstanceId',
+    'executionVersion',
+    'leaseUntil',
+    'status',
+    'executionStage',
+    'inputDigest',
+    'inputRef',
+    'sessionId',
+    'invocationId',
+    'codeRef',
+    'errorKind',
+    'diagnosticRef',
+    'startedAt',
+    'endedAt',
+    'durationMs',
+    'exitCode',
+    'usageSummary',
+    'revision',
+    'createdAt',
+    'updatedAt',
+  ]);
+  requireStableId(operation, record.id);
+  requireStableId(operation, record.projectId);
+  requireStableId(operation, record.featureId);
+  requireStableId(operation, record.runId);
+  requireStableId(operation, record.taskId);
+  requirePositiveInteger(operation, record.number);
+  requireNonEmptyString(operation, record.owner, 'execution_attempt_record_invalid');
+  requireNonEmptyString(operation, record.hostInstanceId, 'execution_attempt_record_invalid');
+  requireNonNegativeInteger(operation, record.executionVersion);
+  if (!isIsoUtcDateTime(record.leaseUntil)) {
+    malformed(operation, 'execution_schedule_date_invalid');
+  }
+  if (!(ATTEMPT_STATUSES as readonly unknown[]).includes(record.status)) {
+    malformed(operation, 'execution_attempt_status_invalid');
+  }
+  if (!(ATTEMPT_EXECUTION_STAGES as readonly unknown[]).includes(record.executionStage)) {
+    malformed(operation, 'execution_attempt_stage_invalid');
+  }
+  requireSha256Hex(operation, record.inputDigest, 'execution_attempt_digest_invalid');
+  requireStableId(operation, record.inputRef);
+  requireStableIdOrNull(operation, record.sessionId);
+  requireStableIdOrNull(operation, record.invocationId);
+  requireStableIdOrNull(operation, record.codeRef);
+  requireStableIdOrNull(operation, record.diagnosticRef);
+  if (record.errorKind !== null && typeof record.errorKind !== 'string') {
+    malformed(operation, 'execution_attempt_record_invalid');
+  }
+  requireIsoUtcOrNull(operation, record.startedAt);
+  requireIsoUtcOrNull(operation, record.endedAt);
+  requireNonNegativeIntegerOrNull(operation, record.durationMs);
+  if (record.exitCode !== null && !Number.isSafeInteger(record.exitCode)) {
+    malformed(operation, 'execution_attempt_record_invalid');
+  }
+  if (record.usageSummary !== null) {
+    validateAttemptUsageSummaryWire(operation, record.usageSummary);
+  }
+  requirePositiveInteger(operation, record.revision);
+  if (!isIsoUtcDateTime(record.createdAt) || !isIsoUtcDateTime(record.updatedAt)) {
+    malformed(operation, 'execution_schedule_date_invalid');
+  }
+}
+
+/** 任务最近 Attempt 摘要（调度视图内嵌；executionStage 原样展示不代表验收）。 */
+function validatePublicAttemptSummaryWire(operation: HostOperation, value: unknown): void {
+  const summary = requirePlain(operation, value);
+  exactKeys(operation, summary, [
+    'id',
+    'number',
+    'status',
+    'executionStage',
+    'exitCode',
+    'durationMs',
+    'startedAt',
+    'endedAt',
+    'errorKind',
+  ]);
+  requireStableId(operation, summary.id);
+  requirePositiveInteger(operation, summary.number);
+  if (!(ATTEMPT_STATUSES as readonly unknown[]).includes(summary.status)) {
+    malformed(operation, 'execution_attempt_status_invalid');
+  }
+  if (!(ATTEMPT_EXECUTION_STAGES as readonly unknown[]).includes(summary.executionStage)) {
+    malformed(operation, 'execution_attempt_stage_invalid');
+  }
+  if (summary.exitCode !== null && !Number.isSafeInteger(summary.exitCode)) {
+    malformed(operation, 'execution_attempt_record_invalid');
+  }
+  requireNonNegativeIntegerOrNull(operation, summary.durationMs);
+  requireIsoUtcOrNull(operation, summary.startedAt);
+  requireIsoUtcOrNull(operation, summary.endedAt);
+  if (summary.errorKind !== null && typeof summary.errorKind !== 'string') {
+    malformed(operation, 'execution_attempt_record_invalid');
+  }
+}
+
+function validateScheduleResultCommon(
+  operation: HostOperation,
+  value: unknown,
+  expectedScope: string,
+): Record<string, unknown> {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, ['schemaVersion', 'scope', 'records', 'nextCursor', 'limit']);
+  if (object.schemaVersion !== WIRE_MESSAGE_SCHEMA_VERSION) {
+    if (typeof object.schemaVersion === 'number') {
+      unsupportedVersion(operation, 'schemaVersion');
+    }
+    malformed(operation, 'list_schema_version_invalid');
+  }
+  if (object.scope !== expectedScope) {
+    malformed(operation, 'list_scope_invalid');
+  }
+  if (!Array.isArray(object.records)) {
+    malformed(operation, 'list_records_invalid');
+  }
+  requirePlanCursorOrNull(operation, object.nextCursor);
+  requirePositiveInteger(operation, object.limit);
+  return object;
+}
+
+/** execution.run.schedule：Run 调度原因 + Task 派生就绪视图 + 占用审计。 */
+export function validateRunScheduleStatusResultWire(
+  value: unknown,
+  operation: HostOperation = 'execution.run.schedule',
+): RunScheduleStatusResult {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, ['schemaVersion', 'scope', 'run', 'schedule', 'tasks', 'occupancy']);
+  if (object.schemaVersion !== WIRE_MESSAGE_SCHEMA_VERSION) {
+    if (typeof object.schemaVersion === 'number') {
+      unsupportedVersion(operation, 'schemaVersion');
+    }
+    malformed(operation, 'execution_schedule_version_invalid');
+  }
+  if (object.scope !== 'run-schedule') {
+    malformed(operation, 'execution_schedule_scope_invalid');
+  }
+  const run = requirePlain(operation, object.run);
+  exactKeys(operation, run, [
+    'id',
+    'projectId',
+    'batchId',
+    'featureId',
+    'purpose',
+    'workKey',
+    'dispatchOrdinal',
+    'status',
+    'reason',
+    'startedAt',
+    'endedAt',
+    'createdAt',
+  ]);
+  requireStableId(operation, run.id);
+  requireStableId(operation, run.projectId);
+  requireStableId(operation, run.batchId);
+  requireStableId(operation, run.featureId);
+  requireNonEmptyString(operation, run.purpose, 'execution_schedule_run_invalid');
+  requireSha256Hex(operation, run.workKey, 'execution_schedule_digest_invalid');
+  requirePositiveInteger(operation, run.dispatchOrdinal);
+  if (!(EXECUTION_BATCH_STATUSES as readonly unknown[]).includes(run.status)) {
+    malformed(operation, 'execution_schedule_status_invalid');
+  }
+  if (run.reason !== null) {
+    requireNonEmptyString(operation, run.reason, 'execution_schedule_run_invalid');
+  }
+  requireIsoUtcOrNull(operation, run.startedAt);
+  requireIsoUtcOrNull(operation, run.endedAt);
+  if (!isIsoUtcDateTime(run.createdAt)) {
+    malformed(operation, 'execution_schedule_date_invalid');
+  }
+  const schedule = requirePlain(operation, object.schedule);
+  exactKeys(operation, schedule, ['reason', 'diagnostic', 'readyTaskIds', 'handoff']);
+  if (!(TASK_DAG_REASONS as readonly unknown[]).includes(schedule.reason)) {
+    malformed(operation, 'execution_schedule_reason_invalid');
+  }
+  if (schedule.diagnostic !== null && typeof schedule.diagnostic !== 'string') {
+    malformed(operation, 'execution_schedule_diagnostic_invalid');
+  }
+  if (!Array.isArray(schedule.readyTaskIds)) {
+    malformed(operation, 'execution_schedule_ready_invalid');
+  }
+  for (const taskId of schedule.readyTaskIds) {
+    requireStableId(operation, taskId);
+  }
+  if (schedule.handoff !== null && schedule.handoff !== 'feature_final_verification') {
+    malformed(operation, 'execution_schedule_handoff_invalid');
+  }
+  if (!Array.isArray(object.tasks) || !Array.isArray(object.occupancy)) {
+    malformed(operation, 'execution_schedule_rows_invalid');
+  }
+  const taskRows = object.tasks as unknown[];
+  const occupancyRows = object.occupancy as unknown[];
+  for (const value of taskRows) {
+    const task = requirePlain(operation, value);
+    exactKeys(operation, task, [
+      'taskId',
+      'status',
+      'reason',
+      'dependencyIds',
+      'executionVersion',
+      'manualBlock',
+      'latestAttempt',
+    ]);
+    requireStableId(operation, task.taskId);
+    if (!(TASK_STATUSES as readonly unknown[]).includes(task.status)) {
+      malformed(operation, 'execution_schedule_status_invalid');
+    }
+    if (!(TASK_DAG_REASONS as readonly unknown[]).includes(task.reason)) {
+      malformed(operation, 'execution_schedule_reason_invalid');
+    }
+    if (!Array.isArray(task.dependencyIds)) {
+      malformed(operation, 'execution_schedule_dependencies_invalid');
+    }
+    for (const dependencyId of task.dependencyIds) {
+      requireStableId(operation, dependencyId);
+    }
+    requireNonNegativeInteger(operation, task.executionVersion);
+    if (typeof task.manualBlock !== 'boolean') {
+      malformed(operation, 'execution_schedule_task_invalid');
+    }
+    if (task.latestAttempt !== null) {
+      validatePublicAttemptSummaryWire(operation, task.latestAttempt);
+    }
+  }
+  for (const value of occupancyRows) {
+    const lease = requirePlain(operation, value);
+    exactKeys(operation, lease, [
+      'id',
+      'attemptId',
+      'runId',
+      'resourceKind',
+      'resourceKey',
+      'state',
+      'leaseUntil',
+      'processIdentity',
+    ]);
+    requireStableId(operation, lease.id);
+    requireStableId(operation, lease.attemptId);
+    requireStableId(operation, lease.runId);
+    if (!['global', 'project', 'workspace'].includes(lease.resourceKind as string)) {
+      malformed(operation, 'execution_occupancy_kind_invalid');
+    }
+    requireNonEmptyString(operation, lease.resourceKey, 'execution_occupancy_invalid');
+    if (lease.state !== 'held' && lease.state !== 'quarantined') {
+      malformed(operation, 'execution_occupancy_state_invalid');
+    }
+    if (!isIsoUtcDateTime(lease.leaseUntil)) {
+      malformed(operation, 'execution_schedule_date_invalid');
+    }
+    if (typeof lease.processIdentity !== 'boolean') {
+      malformed(operation, 'execution_occupancy_invalid');
+    }
+  }
+  return object as unknown as RunScheduleStatusResult;
+}
+
+/** execution.attempts.list：Task 的 Attempt 审计分页（受控游标复用计划规范）。 */
+export function validateAttemptListResultWire(
+  value: unknown,
+  operation: HostOperation = 'execution.attempts.list',
+): AttemptListResult {
+  const object = validateScheduleResultCommon(operation, value, 'attempt-list');
+  for (const record of object.records as unknown[]) {
+    validatePublicAttemptRecordWire(operation, record);
+  }
+  return object as unknown as AttemptListResult;
+}
+
+/** execution.attempt.diagnostics：迟到/越权通知诊断分页（固定原因冻结词汇）。 */
+export function validateAttemptDiagnosticsResultWire(
+  value: unknown,
+  operation: HostOperation = 'execution.attempt.diagnostics',
+): AttemptDiagnosticsResult {
+  const object = validateScheduleResultCommon(operation, value, 'attempt-diagnostic-list');
+  for (const value of object.records as unknown[]) {
+    const record = requirePlain(operation, value);
+    exactKeys(operation, record, [
+      'id',
+      'projectId',
+      'attemptId',
+      'notificationDigest',
+      'reason',
+      'occurredAt',
+    ]);
+    requireStableId(operation, record.id);
+    requireStableId(operation, record.projectId);
+    requireStableId(operation, record.attemptId);
+    requireSha256Hex(operation, record.notificationDigest, 'execution_diagnostic_digest_invalid');
+    if (
+      !(ATTEMPT_NOTIFICATION_DIAGNOSTIC_REASONS as readonly unknown[]).includes(record.reason)
+    ) {
+      malformed(operation, 'execution_diagnostic_reason_invalid');
+    }
+    if (!isIsoUtcDateTime(record.occurredAt)) {
+      malformed(operation, 'execution_schedule_date_invalid');
+    }
+  }
+  return object as unknown as AttemptDiagnosticsResult;
+}
+
 export function validateAppQueryResponse(
   operation: 'execution.budget.get',
   body: unknown,
@@ -2811,6 +3208,22 @@ export function validateAppQueryResponse(
   body: unknown,
   expectation?: SnapshotExpectation,
 ): FeatureApprovalsResult;
+// P03-4 / F-008：调度诊断与 Attempt 审计查询响应重载。
+export function validateAppQueryResponse(
+  operation: 'execution.run.schedule',
+  body: unknown,
+  expectation?: SnapshotExpectation,
+): RunScheduleStatusResult;
+export function validateAppQueryResponse(
+  operation: 'execution.attempts.list',
+  body: unknown,
+  expectation?: SnapshotExpectation,
+): AttemptListResult;
+export function validateAppQueryResponse(
+  operation: 'execution.attempt.diagnostics',
+  body: unknown,
+  expectation?: SnapshotExpectation,
+): AttemptDiagnosticsResult;
 export function validateAppQueryResponse(
   operation: 'projects.list',
   body: unknown,
@@ -2954,6 +3367,13 @@ export function validateAppQueryResponse(
       return validateExecutionBudgetStatusResultWire(body, operation);
     case 'execution.budget.revisions':
       return validateBudgetRevisionListResultWire(body, operation);
+    // P03-4 / F-008：调度诊断与 Attempt 审计查询响应分发（同一冻结字段集纪律）。
+    case 'execution.run.schedule':
+      return validateRunScheduleStatusResultWire(body, operation);
+    case 'execution.attempts.list':
+      return validateAttemptListResultWire(body, operation);
+    case 'execution.attempt.diagnostics':
+      return validateAttemptDiagnosticsResultWire(body, operation);
     default: {
       const exhaustive: never = operation;
       throw new TypeError(`未覆盖的查询操作：${String(exhaustive)}`);

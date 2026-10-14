@@ -121,6 +121,11 @@ export type {
   RunScheduleEvaluation,
   RunScheduleStatusResult,
 } from './ports/execution-schedule-query.js';
+// P03-4 / F-008 Host 线校验复用的冻结词汇（同一来源，不复制第二份枚举）。
+export { TASK_DAG_REASONS } from './ports/task-dag.js';
+export type { TaskDagReason } from './ports/task-dag.js';
+export { ATTEMPT_EXECUTION_STAGES, ATTEMPT_STATUSES } from './ports/attempt-store.js';
+export type { AttemptExecutionStage, AttemptStatus, AttemptUsageSummary } from './ports/attempt-store.js';
 // P03-2 / F-007 执行输入制品组身份（回执 result 形状的公共成分；正文永不内联）。
 export type { ContextTokenEstimate } from './ports/context-build.js';
 export { validateExecutionBudgetProposal } from './ports/execution-budget.js';

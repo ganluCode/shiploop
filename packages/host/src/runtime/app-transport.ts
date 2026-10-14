@@ -49,6 +49,9 @@ import type {
   TrustedPrincipal,
 } from 'shiploop-core';
 import {
+  ATTEMPTS_ROUTE,
+  ATTEMPTS_ROUTE_PREFIX,
+  ATTEMPT_DIAGNOSTICS_ROUTE_SUFFIX,
   BATCHES_ROUTE_PREFIX,
   ARTIFACT_CONTENT_ROUTE_SUFFIX,
   ARTIFACTS_ROUTE_PREFIX,
@@ -69,6 +72,8 @@ import {
   PROJECT_LABEL_COUNTS_ROUTE,
   RECEIPTS_ROUTE_PREFIX,
   RESULTS_ROUTE_PREFIX,
+  RUNS_ROUTE_PREFIX,
+  RUN_SCHEDULE_ROUTE_SUFFIX,
   SETTINGS_GLOBAL_EXPORT_ROUTE,
   SETTINGS_GLOBAL_ROUTE,
   SNAPSHOT_ROUTE,
@@ -118,14 +123,19 @@ export type ApplicationOperation =
   // P03-2 / F-007：Feature 审批决策查询（与 Core PLAN_APPROVAL_QUERY_OPERATION 同源）。
   | 'features.approvals'
   | 'execution.budget.get'
-  | 'execution.budget.revisions';
+  | 'execution.budget.revisions'
+  // P03-4 / F-008：Run 调度诊断与 Attempt/通知诊断审计只读查询（与 Core
+  // EXECUTION_SCHEDULE_QUERY_OPERATIONS 同源）。
+  | 'execution.run.schedule'
+  | 'execution.attempts.list'
+  | 'execution.attempt.diagnostics';
 
 /** 已解析的应用路由（path 形态匹配；路径参数为未解码原始片段）。 */
 export interface ResolvedAppRoute {
   readonly operation: ApplicationOperation;
   readonly method: 'GET' | 'POST';
   readonly pathParam?: {
-    readonly name: 'commandId' | 'projectId' | 'resultRef' | 'operationId' | 'artifactId' | 'phaseId' | 'featureId' | 'taskId' | 'batchId';
+    readonly name: 'commandId' | 'projectId' | 'resultRef' | 'operationId' | 'artifactId' | 'phaseId' | 'featureId' | 'taskId' | 'batchId' | 'runId' | 'attemptId';
     readonly value: string;
   };
 }
@@ -189,6 +199,41 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
       return { operation: 'events.subscribe', method: 'GET' };
     default:
       break;
+  }
+  // P03-4 / F-008：GET /v1/runs/:runId/schedule（恰两段；与 batches 同一
+  // 冻结形态）。其他 /v1/runs/* 形态一律未匹配 → 404 unknown_operation。
+  if (path.startsWith(RUNS_ROUTE_PREFIX)) {
+    const segments = path.slice(RUNS_ROUTE_PREFIX.length).split('/');
+    if (segments.some((segment) => segment.length === 0)) {
+      return undefined;
+    }
+    if (segments.length === 2 && segments[1] === RUN_SCHEDULE_ROUTE_SUFFIX) {
+      return {
+        operation: 'execution.run.schedule',
+        method: 'GET',
+        pathParam: { name: 'runId', value: segments[0] as string },
+      };
+    }
+    return undefined;
+  }
+  // P03-4 / F-008：GET /v1/attempts（集合根 + projectId/taskId 查询参数）与
+  // 唯一冻结的 Attempt 子资源 GET /v1/attempts/:attemptId/diagnostics。
+  if (path === ATTEMPTS_ROUTE) {
+    return { operation: 'execution.attempts.list', method: 'GET' };
+  }
+  if (path.startsWith(ATTEMPTS_ROUTE_PREFIX)) {
+    const segments = path.slice(ATTEMPTS_ROUTE_PREFIX.length).split('/');
+    if (segments.some((segment) => segment.length === 0)) {
+      return undefined;
+    }
+    if (segments.length === 2 && segments[1] === ATTEMPT_DIAGNOSTICS_ROUTE_SUFFIX) {
+      return {
+        operation: 'execution.attempt.diagnostics',
+        method: 'GET',
+        pathParam: { name: 'attemptId', value: segments[0] as string },
+      };
+    }
+    return undefined;
   }
   if (path.startsWith(BATCHES_ROUTE_PREFIX)) {
     const segments = path.slice(BATCHES_ROUTE_PREFIX.length).split('/');
@@ -464,6 +509,16 @@ interface QuerySpec {
 const QUERY_SPECS: Readonly<Partial<Record<ApplicationOperation, QuerySpec>>> = Object.freeze({
   'execution.budget.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
   'execution.budget.revisions': Object.freeze({ allowed: ['projectId', 'limit', 'cursor'], repeatable: [] }),
+  // P03-4 / F-008：调度/审计查询参数白名单（取值规则由 Core 单一权威复核）。
+  'execution.run.schedule': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
+  'execution.attempts.list': Object.freeze({
+    allowed: ['projectId', 'taskId', 'limit', 'cursor'],
+    repeatable: [],
+  }),
+  'execution.attempt.diagnostics': Object.freeze({
+    allowed: ['projectId', 'limit', 'cursor'],
+    repeatable: [],
+  }),
   'projects.list': Object.freeze({ allowed: ['limit', 'cursor', 'label', 'match'], repeatable: ['label'] }),
   // P02-3 / F-006（§7.2）：path 是唯一例外查询参数（仓库根绝对路径，经
   // RepositoryInspector 校验；不是通用文件读取）。
@@ -583,7 +638,7 @@ function buildSnapshotScope(
 function buildPlanListQuery(
   params: URLSearchParams,
   operation: ApplicationOperation,
-  ...parents: readonly ('projectId' | 'phaseId' | 'featureId')[]
+  ...parents: readonly ('projectId' | 'phaseId' | 'featureId' | 'taskId')[]
 ): Record<string, unknown> {
   const query: Record<string, unknown> = {};
   for (const parent of parents) {
@@ -880,6 +935,27 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
       result = operation === 'execution.budget.get'
         ? await app.queryService.getExecutionBudgetStatus(app.principal, query)
         : await app.queryService.listBatchBudgetRevisions(app.principal, query);
+      break;
+    }
+    // P03-4 / F-008：调度诊断与 Attempt 审计查询分发（本层只做形态转换；
+    // 授权/可见性折叠/分页范围/游标绑定全部由 Core 单一权威复核；跨项目与
+    // 不存在目标统一 not_found，不区分存在性）。
+    case 'execution.run.schedule': {
+      const query = buildPlanListQuery(params, operation, 'projectId');
+      query.runId = pathParam?.value;
+      result = await app.queryService.getRunScheduleStatus(app.principal, query);
+      break;
+    }
+    case 'execution.attempts.list':
+      result = await app.queryService.listExecutionAttempts(
+        app.principal,
+        buildPlanListQuery(params, operation, 'projectId', 'taskId'),
+      );
+      break;
+    case 'execution.attempt.diagnostics': {
+      const query = buildPlanListQuery(params, operation, 'projectId');
+      query.attemptId = pathParam?.value;
+      result = await app.queryService.listAttemptDiagnostics(app.principal, query);
       break;
     }
     case 'features.approvals':

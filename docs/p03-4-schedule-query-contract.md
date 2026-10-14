@@ -11,7 +11,8 @@ narrow port over one DEFERRED consistent read transaction),
 `packages/core/src/application/query-service.ts` (three authorized use cases),
 wired through `packages/core/src/adapters/sqlite/query-store.ts` and
 `packages/core/src/adapters/composition.ts` (`scheduleReads`). Host transport and
-HostClient exposure are F-008; no HTTP, CLI or scheduler behavior changes here.
+HostClient exposure are F-008 (see Host Exposure below); no HTTP, CLI or
+scheduler behavior changes here.
 
 ## Query Surface
 
@@ -77,6 +78,44 @@ cover the ready view, preparation failure, late diagnostics, waiting for human
 review, dependency failure, budget exhaustion and quarantined occupancy, and
 assert byte-identical persisted tables (attempts, leases, reservations, events)
 before and after every query.
+
+## Host Exposure (F-008)
+
+F-008 wires the three read-only operations through the existing Host query
+dispatch, capability whitelist and HostClient — no new HTTP service, auth
+scheme, claim/runtime-result entrypoint or direct SQLite access:
+
+| Operation | Frozen route (GET + Bearer) | Query parameters |
+|---|---|---|
+| `execution.run.schedule` | `/v1/runs/:runId/schedule` | `projectId` (required) |
+| `execution.attempts.list` | `/v1/attempts` | `projectId`, `taskId` (required), `limit`, `cursor` |
+| `execution.attempt.diagnostics` | `/v1/attempts/:attemptId/diagnostics` | `projectId` (required), `limit`, `cursor` |
+
+- The routes are additive within wire schema v5 (same discipline as the P03-3
+  execution wiring); the handshake capability whitelist
+  (`APPLICATION_QUERY_CAPABILITIES`) lists exactly the three operations, kept
+  in sync with `EXECUTION_SCHEDULE_QUERY_OPERATIONS`.
+- The transport layer only validates the parameter whitelist (unknown/duplicate
+  → 400 `invalid_input` at `query.<field>`), required parent identities and the
+  decimal `limit` shape; authorization, visibility folding, range and cursor
+  binding remain with the Core query service as the single authority. Any other
+  nested/multi-segment shape is unmatched → 404 `unknown_operation`.
+- HostClient gains `getRunScheduleStatus` / `listExecutionAttempts` /
+  `listAttemptDiagnostics` with zero-network input guards, runtime wire
+  validators (`validateRunScheduleStatusResultWire`,
+  `validateAttemptListResultWire`, `validateAttemptDiagnosticsResultWire` —
+  exact-key sets, frozen vocabularies shared from `shiploop-core/protocol`)
+  and scope-mismatch rechecks (response Run/Task/Attempt ownership must equal
+  the request).
+- Queries replay with zero side effects; cross-project/nonexistent targets
+  fold to the same `not_found` body, and error bodies carry no other-project
+  identity, artifact body or absolute path.
+
+Evidence: `test/p03-4-schedule-host-wiring.test.ts` (real `startHost` +
+`connectToHost` + temporary seeded SQLite: legal queries with cursor-chain
+replay, 401 indistinguishability, 400 parameter negatives, cross-project fold,
+read-only table snapshot equality, receipt/event identity association) plus
+wire-validator unit cases.
 
 ## Evidence
 

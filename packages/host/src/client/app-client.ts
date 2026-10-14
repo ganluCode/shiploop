@@ -39,6 +39,8 @@ import {
 } from 'shiploop-core/protocol';
 import type {
   AppOperation,
+  AttemptDiagnosticsResult,
+  AttemptListResult,
   BaselineDetailResult,
   BaselineListResult,
   CommandReceipt,
@@ -62,6 +64,7 @@ import type {
   ProjectSnapshotResult,
   PublicSettingsState,
   PublicStateEvent,
+  RunScheduleStatusResult,
   SettingsScope,
   SnapshotResult,
   TaskDetailResult,
@@ -71,6 +74,9 @@ import {
   APP_REQUEST_TIMEOUT_MS,
   ARTIFACT_CONTENT_ROUTE_SUFFIX,
   ARTIFACTS_ROUTE_PREFIX,
+  ATTEMPTS_ROUTE,
+  ATTEMPTS_ROUTE_PREFIX,
+  ATTEMPT_DIAGNOSTICS_ROUTE_SUFFIX,
   BATCHES_ROUTE_PREFIX,
   BASELINES_ROUTE_PREFIX,
   COMMANDS_ROUTE,
@@ -88,6 +94,8 @@ import {
   PROJECT_LABEL_COUNTS_ROUTE,
   RECEIPTS_ROUTE_PREFIX,
   RESULTS_ROUTE_PREFIX,
+  RUNS_ROUTE_PREFIX,
+  RUN_SCHEDULE_ROUTE_SUFFIX,
   SETTINGS_GLOBAL_EXPORT_ROUTE,
   SETTINGS_GLOBAL_ROUTE,
   SNAPSHOT_ROUTE,
@@ -482,6 +490,26 @@ export interface HostClientApplication {
   reviseExecutionBudget(input: ReviseExecutionBudgetInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
   getExecutionBudgetStatus(projectId: string, batchId: string): Promise<ExecutionBudgetStatusResult>;
   listBatchBudgetRevisions(projectId: string, batchId: string, input?: BudgetRevisionListInput): Promise<BudgetRevisionListResult>;
+  /* ------------------------------------------------------------ *
+   * P03-4 / F-008 调度诊断与 Attempt 审计只读查询
+   * ------------------------------------------------------------ */
+  /**
+   * execution.run.schedule：Run 调度原因与 Task 派生就绪视图（只读派生；
+   * ready/blocked 不是第二套可写状态，executionStage 原样展示不代表验收）。
+   */
+  getRunScheduleStatus(projectId: string, runId: string): Promise<RunScheduleStatusResult>;
+  /** execution.attempts.list：Task 的 Attempt 审计分页（受控 plcur_v1_ 游标）。 */
+  listExecutionAttempts(
+    projectId: string,
+    taskId: string,
+    input?: PlanListPageInput,
+  ): Promise<AttemptListResult>;
+  /** execution.attempt.diagnostics：Attempt 迟到/越权通知诊断审计分页。 */
+  listAttemptDiagnostics(
+    projectId: string,
+    attemptId: string,
+    input?: PlanListPageInput,
+  ): Promise<AttemptDiagnosticsResult>;
 }
 
 /** 由 connectToHost 注入的会话上下文（身份/预算/生命周期钩子）。 */
@@ -2303,6 +2331,72 @@ export function createHostClientApplication(context: AppClientContext): HostClie
       const result = validateAppQueryResponse('execution.budget.revisions', json);
       if (result.records.some((record) => record.batchId !== batch)) {
         throw new HostProtocolError('response_malformed', 'execution.budget.revisions', '预算修订响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
+      }
+      return result;
+    },
+
+    /* ------------------------------------------------------------ *
+     * P03-4 / F-008 调度诊断与 Attempt 审计只读查询
+     * ------------------------------------------------------------ */
+
+    async getRunScheduleStatus(projectId: string, runId: string): Promise<RunScheduleStatusResult> {
+      context.assertOpen('execution.run.schedule');
+      const project = requireProjectId('execution.run.schedule', projectId);
+      const run = requireStableIdInput('execution.run.schedule', runId, 'runId');
+      const json = await getJson(
+        'execution.run.schedule',
+        `${RUNS_ROUTE_PREFIX}${run}/${RUN_SCHEDULE_ROUTE_SUFFIX}?projectId=${encodeURIComponent(project)}`,
+      );
+      const result = validateAppQueryResponse('execution.run.schedule', json);
+      if (result.run.projectId !== project || result.run.id !== run) {
+        throw new HostProtocolError('response_malformed', 'execution.run.schedule', '调度响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
+      }
+      return result;
+    },
+
+    async listExecutionAttempts(
+      projectId: string,
+      taskId: string,
+      input?: PlanListPageInput,
+    ): Promise<AttemptListResult> {
+      context.assertOpen('execution.attempts.list');
+      const project = requireProjectId('execution.attempts.list', projectId);
+      const task = requireStableIdInput('execution.attempts.list', taskId, 'taskId');
+      const paging = buildPlanListQuery(input, 'execution.attempts.list');
+      const query =
+        `projectId=${encodeURIComponent(project)}&taskId=${encodeURIComponent(task)}` +
+        `${paging.length === 0 ? '' : `&${paging}`}`;
+      const json = await getJson('execution.attempts.list', `${ATTEMPTS_ROUTE}?${query}`);
+      const result = validateAppQueryResponse('execution.attempts.list', json);
+      if (
+        result.records.some((record) => record.projectId !== project || record.taskId !== task)
+      ) {
+        throw new HostProtocolError('response_malformed', 'execution.attempts.list', 'Attempt 审计响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
+      }
+      return result;
+    },
+
+    async listAttemptDiagnostics(
+      projectId: string,
+      attemptId: string,
+      input?: PlanListPageInput,
+    ): Promise<AttemptDiagnosticsResult> {
+      context.assertOpen('execution.attempt.diagnostics');
+      const project = requireProjectId('execution.attempt.diagnostics', projectId);
+      const attempt = requireStableIdInput('execution.attempt.diagnostics', attemptId, 'attemptId');
+      const paging = buildPlanListQuery(input, 'execution.attempt.diagnostics');
+      const query =
+        `projectId=${encodeURIComponent(project)}` +
+        `${paging.length === 0 ? '' : `&${paging}`}`;
+      const json = await getJson(
+        'execution.attempt.diagnostics',
+        `${ATTEMPTS_ROUTE_PREFIX}${attempt}/${ATTEMPT_DIAGNOSTICS_ROUTE_SUFFIX}?${query}`,
+      );
+      const result = validateAppQueryResponse('execution.attempt.diagnostics', json);
+      if (
+        result.records.some((record) => record.projectId !== project || record.attemptId !== attempt)
+      ) {
+        throw new HostProtocolError('response_malformed', 'execution.attempt.diagnostics', '诊断响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
       }
       return result;
     },
