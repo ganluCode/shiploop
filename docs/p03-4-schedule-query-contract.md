@@ -1,0 +1,93 @@
+# P03-4 Schedule & Attempt Audit Query Contract
+
+## Scope
+
+F-007 extends the Core authorized query service with the Run scheduling reason,
+the derived per-Task readiness view and the Attempt/occupancy audit reads.
+Implementation: `packages/core/src/ports/execution-schedule-query.ts` (public
+shapes, frozen vocabulary, composite cursor keys),
+`packages/core/src/adapters/sqlite/execution-schedule-query-store.ts` (read-only
+narrow port over one DEFERRED consistent read transaction),
+`packages/core/src/application/query-service.ts` (three authorized use cases),
+wired through `packages/core/src/adapters/sqlite/query-store.ts` and
+`packages/core/src/adapters/composition.ts` (`scheduleReads`). Host transport and
+HostClient exposure are F-008; no HTTP, CLI or scheduler behavior changes here.
+
+## Query Surface
+
+Three read-only operations (capability bit reuses `project.read`; ability checks
+precede any read, cross-project/nonexistent targets fold to an identical
+`not_found` with `details.reason = 'execution_entity_not_found'`):
+
+| Operation | Input (strict unknown-key rejection) | Output |
+|---|---|---|
+| `execution.run.schedule` | `{ projectId, runId }` | `RunScheduleStatusResult` (scope `run-schedule`) |
+| `execution.attempts.list` | `{ projectId, taskId, limit?, cursor? }` | `AttemptListResult` (scope `attempt-list`) |
+| `execution.attempt.diagnostics` | `{ projectId, attemptId, limit?, cursor? }` | `AttemptDiagnosticsResult` (scope `attempt-diagnostic-list`) |
+
+- `execution.run.schedule` returns the Run identity block
+  (Project/Feature/Batch/Run/workKey/dispatchOrdinal), the derived schedule
+  evaluation (`reason`, `diagnostic`, stable `readyTaskIds`, `handoff`), the
+  per-Task derived view in stable topological order (`reason`, `dependencyIds`,
+  persisted `status`/`executionVersion`/`manualBlock`, `latestAttempt` with
+  `executionStage`) and the retained occupancy audit (held/quarantined leases
+  with owner Attempt and owner Run correlation).
+- The readiness verdict is recomputed from the same `evaluateTaskDag` pure rule
+  over the same consistent SQLite view used by the claim/scheduler path. It is
+  never read from logs, wake-up hints or an in-memory queue, and ready/blocked
+  is never persisted as a second writable Task state. Closing and reopening the
+  database yields identical results.
+- A corrupt persisted DAG view degrades to `invalid_graph` with
+  `diagnostic: 'corrupt_persisted_view'` (the F-002 service semantics); the Run,
+  Attempt and occupancy facts remain readable. The query never fabricates ready.
+
+## Pagination and Cursors
+
+Both lists reuse the plan-list discipline: default limit 50 / maximum 200
+(`validatePlanListFilter`), opaque `plcur_v1_` cursors bound to the data root,
+project and parent entity. `PlanListScope` gains `task-attempts` (parent Task)
+and `attempt-diagnostics` (parent Attempt); existing scope fingerprints are
+unchanged. Cursor payloads carry a composite key
+(`encodeExecutionListKey`: `<sort>_<rowId>`, Attempt number / diagnostic
+occurredAt plus row identity) giving stable keyset pagination over
+`(number, id)` and `(occurred_at, id)`. Cursor decoding precedes any existence
+read: cross-project/cross-parent/cross-root replays and tampered payloads are
+`invalid_input(invalid_cursor)`, never treated as reading from the start.
+
+## Known/Unknown and Redaction Discipline
+
+- Known exit codes, durations, start/end times and usage are preserved verbatim;
+  unknown values stay `null` (never zero-filled). `executionStage` is shown
+  as-is: `verifying` is not acceptance, `queued` is not success.
+- Diagnostic rows retain only the same-project Attempt link, the request
+  digest, the fixed reason (`stale_execution_identity` /
+  `invalid_transition` / `notification_id_reused`) and the occurrence time —
+  never the supplied identifiers, messages, output, paths or credentials.
+- Outputs contain only structured facts: no `inputSnapshot`/`configSnapshot`/
+  `scopeSnapshot` bodies, no credential material, no arbitrary file content and
+  no absolute paths. Occupancy `resourceKey` values are normalized hash keys
+  (`global:execution`, `project:<id>:work`, `workspace:<sha256>`), not paths;
+  the supervised process identity is exposed only as a known/unknown boolean.
+
+## Read-Only Guarantee
+
+The query surface owns no write primitive: it creates no Attempt, charges no
+budget, renews no lease, starts no work and appends no event. Directed tests
+cover the ready view, preparation failure, late diagnostics, waiting for human
+review, dependency failure, budget exhaustion and quarantined occupancy, and
+assert byte-identical persisted tables (attempts, leases, reservations, events)
+before and after every query.
+
+## Evidence
+
+`test/p03-4-schedule-query.test.ts` (9 cases): stable candidate order with
+read-only and reopen-consistency assertions; retained preparation failure with
+stage/errorKind and null unknowns; bounded stable diagnostic pagination with a
+replayed cursor chain; manual-block/dependency-failure/budget-exhaustion
+reasons from the same readiness rule; held and quarantined occupancy audit
+without release or renewal; default/max limits, composite cursor continuation,
+invalid filters and tampered/cross-parent cursor rejection; cross-project and
+invisible-project folding without existence leaks; snapshot-body/credential/
+path redaction assertions; corrupt-graph degradation. Existing plan query,
+budget query, claim, lifecycle, DAG, scheduler and assembly suites remain
+regression coverage.

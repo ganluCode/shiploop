@@ -98,6 +98,29 @@ export type {
   PublicExecutionBudgetRunView,
   PublicExecutionBudgetTaskView,
 } from './ports/execution-budget-query.js';
+// P03-4 / F-007 Run 调度原因/Task 派生就绪视图与 Attempt/占用审计只读查询面：
+// 公开形状、操作身份与诊断原因冻结词汇（服务端负责授权；Host 接线属 F-008）。
+export {
+  ATTEMPT_NOTIFICATION_DIAGNOSTIC_REASONS,
+  EXECUTION_ATTEMPT_DIAGNOSTICS_OPERATION,
+  EXECUTION_ATTEMPTS_LIST_OPERATION,
+  EXECUTION_RUN_SCHEDULE_OPERATION,
+  EXECUTION_SCHEDULE_QUERY_OPERATIONS,
+} from './ports/execution-schedule-query.js';
+export type {
+  AttemptDiagnosticsResult,
+  AttemptListResult,
+  AttemptNotificationDiagnosticReason,
+  ExecutionScheduleQueryOperation,
+  PublicAttemptDiagnosticRecord,
+  PublicAttemptRecord,
+  PublicAttemptSummary,
+  PublicOccupancyRecord,
+  PublicScheduleRunView,
+  PublicScheduleTaskView,
+  RunScheduleEvaluation,
+  RunScheduleStatusResult,
+} from './ports/execution-schedule-query.js';
 // P03-2 / F-007 执行输入制品组身份（回执 result 形状的公共成分；正文永不内联）。
 export type { ContextTokenEstimate } from './ports/context-build.js';
 export { validateExecutionBudgetProposal } from './ports/execution-budget.js';

@@ -132,6 +132,25 @@ import type {
   ExecutionBudgetQueryReadStore,
   ExecutionBudgetStatusResult,
 } from '../ports/execution-budget-query.js';
+import {
+  EXECUTION_ATTEMPT_DIAGNOSTICS_OPERATION,
+  EXECUTION_ATTEMPTS_LIST_OPERATION,
+  EXECUTION_RUN_SCHEDULE_OPERATION,
+  decodeExecutionListKey,
+  encodeExecutionListKey,
+  toPublicAttemptDiagnosticRecord,
+  toPublicAttemptRecord,
+} from '../ports/execution-schedule-query.js';
+import type {
+  AttemptDiagnosticsResult,
+  AttemptListResult,
+  ExecutionScheduleQueryReadStore,
+  PublicScheduleTaskView,
+  RunScheduleEvaluation,
+  RunScheduleStatusResult,
+} from '../ports/execution-schedule-query.js';
+import type { AttemptRecord } from '../ports/attempt-store.js';
+import { evaluateTaskDag } from './task-dag.js';
 
 /** 分页事件读取结果（Core 内部面；F-012 SSE 补读复用）。 */
 export interface StateEventPage {
@@ -259,6 +278,27 @@ export interface QueryService {
    * 重放 invalid_cursor；非法分页与跨项目目标拒绝且不泄漏存在性）。
    */
   listBatchBudgetRevisions(principal: unknown, input: unknown): Promise<BudgetRevisionListResult>;
+  /**
+   * P03-4 / F-007 execution.run.schedule：Run 调度原因与 Task 派生就绪视图
+   * （同一 evaluateTaskDag 就绪规则从一致读视图派生；逐任务 blocked 原因、
+   * 稳定候选顺序、最近 Attempt executionStage 与占用 held/quarantined 审计）。
+   * 能力位 project.read；跨项目/不存在目标统一 not_found；查询零写入、
+   * 零事件、零续租；ready/blocked 不落库为第二套可写 Task 状态。
+   */
+  getRunScheduleStatus(principal: unknown, input: unknown): Promise<RunScheduleStatusResult>;
+  /**
+   * P03-4 / F-007 execution.attempts.list：Task 的 Attempt 审计分页（关联
+   * 身份/围栏身份/executionStage/已知退出与耗时原样保留，未知为 null；
+   * 不含 inputSnapshot 正文；复用计划分页的有界 limit/受控游标规则，
+   * 游标绑定数据根 + 项目 + Task，跨项目/跨 Task 重放 invalid_cursor）。
+   */
+  listExecutionAttempts(principal: unknown, input: unknown): Promise<AttemptListResult>;
+  /**
+   * P03-4 / F-007 execution.attempt.diagnostics：Attempt 迟到/越权通知诊断
+   * 审计分页（只含同项目 Attempt 链接、摘要、固定原因与时间；复用同一
+   * 分页/游标规范，游标绑定数据根 + 项目 + Attempt）。
+   */
+  listAttemptDiagnostics(principal: unknown, input: unknown): Promise<AttemptDiagnosticsResult>;
   /** F-006 phases.list：项目内 Phase 层级列表（稳定排序、有限分页、受控游标）。 */
   listPhases(principal: unknown, input: unknown): Promise<PhaseListResult>;
   /** F-006 features.list：Phase 内 Feature 层级列表（游标绑定项目 + 父级）。 */
@@ -285,6 +325,8 @@ export interface QueryServiceOptions {
   readonly planReads: PlanQueryReadStore;
   /** P03-3 / F-010 执行预算查询一致读取窄端口（只读）。 */
   readonly executionBudgetReads: ExecutionBudgetQueryReadStore;
+  /** P03-4 / F-007 Run 调度/Attempt/占用审计查询一致读取窄端口（只读）。 */
+  readonly scheduleReads: ExecutionScheduleQueryReadStore;
   /** 数据根身份（64hex；可信装配由 realpath 数据根派生，绝不来自请求数据）。 */
   readonly dataRootIdentity: string;
   /** UTC 毫秒时钟（默认 Date.now）；测试注入以获得确定性 readAt。 */
@@ -334,6 +376,20 @@ function executionEntityNotFound(operation: string): never {
 }
 
 /**
+ * P03-4 / F-007 调度/审计目标「不可见/不存在/跨项目」统一 not_found（与
+ * executionEntityNotFound 同一形状纪律：不区分存在性，不回显归属或实体
+ * 身份，逐字段一致）；能力缺失仍先行 forbidden。
+ */
+function executionScheduleTargetNotFound(
+  operation: string,
+  entityType: 'run' | 'task' | 'attempt',
+): never {
+  throw new PublicError('not_found', operation, '执行实体不存在或不可见', {
+    details: { reason: 'execution_entity_not_found', entityType },
+  });
+}
+
+/**
  * 装配 QueryService。只校验依赖形态，不执行任何 I/O；import 本模块无副作用。
  */
 export function createQueryService(options: QueryServiceOptions): QueryService {
@@ -348,6 +404,7 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
     configurationService,
     planReads,
     executionBudgetReads,
+    scheduleReads,
     dataRootIdentity,
   } = options;
   if (typeof dataRootIdentity !== 'string' || !/^[0-9a-f]{64}$/.test(dataRootIdentity)) {
@@ -956,6 +1013,224 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
           scope: 'budget-revision-list',
           records: page.records.map(toPublicBatchBudgetRevisionRecord),
           nextCursor: page.nextId === null ? null : encodePlanListCursor(page.nextId, binding),
+          limit: filter.limit,
+        };
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    async getRunScheduleStatus(
+      principal: unknown,
+      input: unknown,
+    ): Promise<RunScheduleStatusResult> {
+      assertTrustedPrincipal(principal);
+      const operation = EXECUTION_RUN_SCHEDULE_OPERATION;
+      try {
+        requireCapability(principal, 'project.read', operation);
+        const object = requirePlainObject(input, { operation }, 'input');
+        rejectUnknownKeys(object, ['projectId', 'runId'], { operation }, 'input');
+        const projectId = requireProjectId(object.projectId, operation);
+        const runId = validateStableId(object.runId, { operation, entity: { type: 'run' } }, 'runId');
+        requireProjectVisible(principal, projectId, operation);
+        const view = scheduleReads.readRunScheduleView(projectId, runId);
+        if (view === undefined) {
+          executionScheduleTargetNotFound(operation, 'run');
+        }
+        // 同一就绪判定规则（evaluateTaskDag）从一致读视图派生；ready/blocked
+        // 是只读派生结果，绝不落库为第二套可写 Task 状态。损坏持久视图降级为
+        // invalid_graph（diagnostic 明确），Run/Attempt/占用事实仍如实可读。
+        let schedule: RunScheduleEvaluation;
+        let tasks: readonly PublicScheduleTaskView[];
+        if (view.dag === null) {
+          schedule = {
+            reason: 'invalid_graph',
+            diagnostic: 'corrupt_persisted_view',
+            readyTaskIds: [],
+            handoff: null,
+          };
+          tasks = [];
+        } else {
+          const evaluation = evaluateTaskDag(view.dag, nowUtcMs());
+          schedule = {
+            reason: evaluation.reason,
+            diagnostic: evaluation.diagnostic,
+            readyTaskIds: [...evaluation.readyTaskIds],
+            handoff: evaluation.handoff,
+          };
+          const planTasks = new Map(view.dag.plan.tasks.map((task) => [task.id, task]));
+          const facts = new Map(view.dag.facts.map((fact) => [fact.taskId, fact]));
+          const latestByTask = new Map<string, AttemptRecord>();
+          for (const attempt of view.attempts) {
+            const existing = latestByTask.get(attempt.taskId);
+            if (existing === undefined || attempt.number > existing.number) {
+              latestByTask.set(attempt.taskId, attempt);
+            }
+          }
+          tasks = evaluation.tasks.map((entry) => {
+            const planTask = planTasks.get(entry.taskId);
+            const fact = facts.get(entry.taskId);
+            if (planTask === undefined || fact === undefined) {
+              throw new TypeError('DAG 评估结果与一致读视图不一致（适配器实现缺陷）');
+            }
+            const latest = latestByTask.get(entry.taskId);
+            return {
+              taskId: entry.taskId,
+              status: planTask.status,
+              reason: entry.reason,
+              dependencyIds: [...entry.dependencyIds],
+              executionVersion: fact.executionVersion,
+              manualBlock: fact.manualBlock,
+              latestAttempt:
+                latest === undefined
+                  ? null
+                  : {
+                      id: latest.id,
+                      number: latest.number,
+                      status: latest.status,
+                      executionStage: latest.executionStage,
+                      exitCode: latest.exitCode,
+                      durationMs: latest.durationMs,
+                      startedAt:
+                        latest.startedAtUtcMs === null
+                          ? null
+                          : new Date(latest.startedAtUtcMs).toISOString(),
+                      endedAt:
+                        latest.endedAtUtcMs === null
+                          ? null
+                          : new Date(latest.endedAtUtcMs).toISOString(),
+                      errorKind: latest.errorKind,
+                    },
+            };
+          });
+        }
+        const run = view.run;
+        return {
+          schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION,
+          scope: 'run-schedule',
+          run: {
+            id: run.id,
+            projectId: run.projectId,
+            batchId: run.batchId,
+            featureId: run.featureId,
+            purpose: run.purpose,
+            workKey: run.workKey,
+            dispatchOrdinal: run.dispatchOrdinal,
+            status: run.status,
+            reason: run.reason,
+            startedAt:
+              run.startedAtUtcMs === null ? null : new Date(run.startedAtUtcMs).toISOString(),
+            endedAt: run.endedAtUtcMs === null ? null : new Date(run.endedAtUtcMs).toISOString(),
+            createdAt: new Date(run.createdAtUtcMs).toISOString(),
+          },
+          schedule,
+          tasks,
+          occupancy: view.occupancy.map((row) => ({
+            id: row.lease.id,
+            attemptId: row.lease.owner,
+            runId: row.runId,
+            resourceKind: row.lease.resourceKind,
+            resourceKey: row.lease.resourceKey,
+            state: row.lease.state,
+            leaseUntil: new Date(row.lease.leaseUntilUtcMs).toISOString(),
+            processIdentity: row.lease.processIdentity !== null,
+          })),
+        };
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    async listExecutionAttempts(principal: unknown, input: unknown): Promise<AttemptListResult> {
+      assertTrustedPrincipal(principal);
+      const operation = EXECUTION_ATTEMPTS_LIST_OPERATION;
+      try {
+        requireCapability(principal, 'project.read', operation);
+        const object = requirePlainObject(input, { operation }, 'input');
+        rejectUnknownKeys(object, ['projectId', 'taskId', 'limit', 'cursor'], { operation }, 'input');
+        const projectId = requireProjectId(object.projectId, operation);
+        const taskId = validateStableId(object.taskId, { operation, entity: { type: 'task' } }, 'taskId');
+        requireProjectVisible(principal, projectId, operation);
+        const filter = validatedPlanFilter(object, operation);
+        const binding = planCursorBinding({ kind: 'task-attempts', projectId, taskId }, operation);
+        // 游标解析先于任何读取：跨 Task/跨项目/跨根重放或篡改载荷一律
+        // invalid_cursor，绝不当作从零读取，也不先泄漏目标存在性。
+        const after = planListRequest(filter, binding, operation);
+        const request = {
+          after: after.afterId === null ? null : decodeExecutionListKey(after.afterId, operation),
+          limit: filter.limit,
+        };
+        const task = planReads.readTaskRecord(taskId);
+        if (task === undefined || task.projectId !== projectId) {
+          executionScheduleTargetNotFound(operation, 'task');
+        }
+        const page = scheduleReads.listTaskAttemptRecords(
+          principalProjectVisibility(principal),
+          projectId,
+          taskId,
+          request,
+        );
+        return {
+          schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION,
+          scope: 'attempt-list',
+          records: page.records.map(toPublicAttemptRecord),
+          nextCursor:
+            page.nextKey === null
+              ? null
+              : encodePlanListCursor(encodeExecutionListKey(page.nextKey), binding),
+          limit: filter.limit,
+        };
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    async listAttemptDiagnostics(
+      principal: unknown,
+      input: unknown,
+    ): Promise<AttemptDiagnosticsResult> {
+      assertTrustedPrincipal(principal);
+      const operation = EXECUTION_ATTEMPT_DIAGNOSTICS_OPERATION;
+      try {
+        requireCapability(principal, 'project.read', operation);
+        const object = requirePlainObject(input, { operation }, 'input');
+        rejectUnknownKeys(
+          object,
+          ['projectId', 'attemptId', 'limit', 'cursor'],
+          { operation },
+          'input',
+        );
+        const projectId = requireProjectId(object.projectId, operation);
+        const attemptId = validateStableId(
+          object.attemptId,
+          { operation, entity: { type: 'attempt' } },
+          'attemptId',
+        );
+        requireProjectVisible(principal, projectId, operation);
+        const filter = validatedPlanFilter(object, operation);
+        const binding = planCursorBinding({ kind: 'attempt-diagnostics', projectId, attemptId }, operation);
+        const after = planListRequest(filter, binding, operation);
+        const request = {
+          after: after.afterId === null ? null : decodeExecutionListKey(after.afterId, operation),
+          limit: filter.limit,
+        };
+        if (scheduleReads.readAttemptRecord(projectId, attemptId) === undefined) {
+          executionScheduleTargetNotFound(operation, 'attempt');
+        }
+        const page = scheduleReads.listAttemptDiagnosticRecords(
+          principalProjectVisibility(principal),
+          projectId,
+          attemptId,
+          request,
+        );
+        return {
+          schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION,
+          scope: 'attempt-diagnostic-list',
+          records: page.records.map(toPublicAttemptDiagnosticRecord),
+          nextCursor:
+            page.nextKey === null
+              ? null
+              : encodePlanListCursor(encodeExecutionListKey(page.nextKey), binding),
           limit: filter.limit,
         };
       } catch (error) {

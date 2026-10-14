@@ -34,6 +34,15 @@ import type {
 } from '../../ports/execution-store.js';
 import type { ExecutionBudgetView } from '../../ports/execution-budget-query.js';
 import type {
+  AttemptNotificationDiagnosticRecord,
+  ExecutionListRequest,
+  ExecutionRecordPage,
+  ExecutionScheduleQueryReadStore,
+  RunScheduleView,
+} from '../../ports/execution-schedule-query.js';
+import type { AttemptRecord } from '../../ports/attempt-store.js';
+import { createSqliteExecutionScheduleQueryStore } from './execution-schedule-query-store.js';
+import type {
   FeatureRecord,
   PhaseRecord,
   TaskRecord,
@@ -47,14 +56,16 @@ import type { SqliteStateStoreOptions } from './state-store.js';
 
 /** F-010 查询读取门面：窄读取端口的并集（应用层 QueryService/OnboardingService 的消费面）；
  * P03-1 / F-006 起追加计划层级列表/详情一致读取（PlanQueryReadStore）；
- * P03-3 / F-010 起追加执行预算查询窄读取（ExecutionBudgetQueryReadStore）。 */
+ * P03-3 / F-010 起追加执行预算查询窄读取（ExecutionBudgetQueryReadStore）；
+ * P03-4 / F-007 起追加调度/审计查询窄读取（ExecutionScheduleQueryReadStore）。 */
 export interface SqliteQueryStore
   extends AuthorizedProjectReadStore,
     ConsistentSnapshotStore,
     StateEventReadStore,
     RepositoryBindingLookupStore,
     PlanQueryReadStore,
-    ExecutionBudgetQueryReadStore {}
+    ExecutionBudgetQueryReadStore,
+    ExecutionScheduleQueryReadStore {}
 
 export function createSqliteQueryStore(
   session: SqliteStorageSession,
@@ -72,6 +83,7 @@ export function createSqliteQueryStore(
     session,
     options.nowUtcMs === undefined ? {} : { nowUtcMs: options.nowUtcMs },
   );
+  const schedule = createSqliteExecutionScheduleQueryStore(session);
   return {
     listVisibleProjects(visibility: unknown, filter: unknown): ProjectPage {
       return access.listVisibleProjects(visibility, filter);
@@ -142,6 +154,28 @@ export function createSqliteQueryStore(
       request: PlanListRequest,
     ): PlanRecordPage<BatchBudgetRevisionRecord> {
       return execution.listBatchBudgetRevisionRecords(visibility, projectId, batchId, request);
+    },
+    readRunScheduleView(projectId: unknown, runId: unknown): RunScheduleView | undefined {
+      return schedule.readRunScheduleView(projectId, runId);
+    },
+    readAttemptRecord(projectId: unknown, attemptId: unknown): AttemptRecord | undefined {
+      return schedule.readAttemptRecord(projectId, attemptId);
+    },
+    listTaskAttemptRecords(
+      visibility: unknown,
+      projectId: unknown,
+      taskId: unknown,
+      request: ExecutionListRequest,
+    ): ExecutionRecordPage<AttemptRecord> {
+      return schedule.listTaskAttemptRecords(visibility, projectId, taskId, request);
+    },
+    listAttemptDiagnosticRecords(
+      visibility: unknown,
+      projectId: unknown,
+      attemptId: unknown,
+      request: ExecutionListRequest,
+    ): ExecutionRecordPage<AttemptNotificationDiagnosticRecord> {
+      return schedule.listAttemptDiagnosticRecords(visibility, projectId, attemptId, request);
     },
   };
 }

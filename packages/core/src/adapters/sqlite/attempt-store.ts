@@ -7,7 +7,7 @@ import { validateStableId } from '../../ports/validation.js';
 import type { SqliteStorageSession } from './session.js';
 import { transactSqliteConsistentRead } from './state-store.js';
 
-interface AttemptRow {
+export interface AttemptRow {
   id: string; created_at: number; updated_at: number; revision: number;
   project_id: string; feature_id: string; run_id: string; task_id: string; number: number;
   owner_id: string; host_instance_id: string; execution_version: number; lease_until: number;
@@ -16,12 +16,12 @@ interface AttemptRow {
   diagnostic_ref: string | null; started_at: number | null; ended_at: number | null;
   duration_ms: number | null; exit_code: number | null; usage_summary: string | null;
 }
-interface LeaseRow {
+export interface LeaseRow {
   id: string; created_at: number; updated_at: number; revision: number; project_id: string;
   resource_key: string; resource_kind: string; owner_kind: string; owner_id: string; host_instance_id: string;
   execution_version: number; state: string; lease_until: number; process_identity: string | null;
 }
-function attemptFromRow(row: AttemptRow): AttemptRecord {
+export function attemptFromRow(row: AttemptRow): AttemptRecord {
   try {
     return validateAttemptRecord({ id: row.id, createdAtUtcMs: row.created_at, updatedAtUtcMs: row.updated_at,
       revision: row.revision, projectId: row.project_id, featureId: row.feature_id, runId: row.run_id, taskId: row.task_id,
@@ -36,7 +36,7 @@ function attemptFromRow(row: AttemptRow): AttemptRecord {
       { entity: { type: 'attempt', id: row.id, projectId: row.project_id } });
   }
 }
-function leaseFromRow(row: LeaseRow): WorkspaceLeaseRecord {
+export function leaseFromRow(row: LeaseRow): WorkspaceLeaseRecord {
   try {
     return validateWorkspaceLeaseRecord({ id: row.id, createdAtUtcMs: row.created_at, updatedAtUtcMs: row.updated_at,
       revision: row.revision, projectId: row.project_id, resourceKey: row.resource_key, resourceKind: row.resource_kind,
