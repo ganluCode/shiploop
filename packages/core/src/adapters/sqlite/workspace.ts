@@ -30,6 +30,8 @@ export function createSqliteWorkspaceAccess(session: SqliteStorageSession, optio
   readonly nowUtcMs?: () => number;
   /** Trusted retention store only; it separately verifies release evidence and resource/Attempt CAS. */
   readonly allowRetentionFinalization?: boolean;
+  /** Trusted cleaner store only; it separately verifies success, stop/release evidence and approval gates. */
+  readonly allowCleanupFinalization?: boolean;
 }): WorkspaceOperationAccess {
   const db = session.database;
   const receipts = createSqliteCommandReceiptAccess(session);
@@ -100,6 +102,8 @@ export function createSqliteWorkspaceAccess(session: SqliteStorageSession, optio
   function commitResult(input: BeginWorkspaceOperationInput | FinishWorkspaceOperationInput, ws: ManagedWorkspaceRecord, op: WorkspaceOperationRecord, receipt: CommandReceipt, replay: boolean): WorkspaceOperationCommit {
     return { workspace: ws, operation: op, receipt, replay };
   }
+  const trustedFinalization = (kind: 'prepare' | 'retain' | 'cleanup') =>
+    (kind === 'retain' && options.allowRetentionFinalization) || (kind === 'cleanup' && options.allowCleanupFinalization);
   function begin(raw: unknown): WorkspaceOperationCommit {
     write(); const input = validateBeginWorkspaceOperation(raw);
     const prior = receipts.findReceiptByCommandId(input.receipt.principalId, input.receipt.commandId);
@@ -114,7 +118,7 @@ export function createSqliteWorkspaceAccess(session: SqliteStorageSession, optio
       if (existingInput !== requestedInput) fail('conflict', 'commandId replay input differs');
       return commitResult(input, workspace(db.prepare(`SELECT ${WORKSPACE_COLUMNS} FROM managed_workspaces WHERE project_id = ? AND id = ?`).get(input.identity.projectId, mapped.workspaceId) as WorkspaceRow)!, mapped, prior, true);
     }
-    if (input.kind === 'retain' && options.allowRetentionFinalization) options.resources.read(input.identity);
+    if (trustedFinalization(input.kind)) options.resources.read(input.identity);
     else ensureIdentity(input.identity);
     const attempt = db.prepare<[string, string], { run_id: string; feature_id: string; owner_id: string; host_instance_id: string; execution_version: number }>(`SELECT a.run_id, t.feature_id, a.owner_id, a.host_instance_id, a.execution_version
       FROM attempts a JOIN tasks t ON t.id = a.task_id WHERE a.project_id = ? AND a.id = ?`).get(input.identity.projectId, input.identity.attemptId);
@@ -127,7 +131,7 @@ export function createSqliteWorkspaceAccess(session: SqliteStorageSession, optio
     if (binding!.repo_identity !== input.baseline.repoIdentity || binding!.git_common_dir !== input.baseline.gitCommonDir) fail('ownership', 'repository metadata mismatch');
     const resourceKey = `workspace:${createHash('sha256').update(JSON.stringify([input.baseline.repoIdentity, input.baseline.canonicalPath])).digest('hex')}`;
     const occupied = options.resources.read(input.identity);
-    if ((input.kind !== 'retain' || !options.allowRetentionFinalization || occupied.leases.length !== 0)
+    if ((!trustedFinalization(input.kind) || occupied.leases.length !== 0)
       && !occupied.leases.some(lease => lease.resourceKind === 'workspace' && lease.resourceKey === resourceKey)) fail('ownership', 'workspace path does not match held resource');
     if (input.kind === 'retain' && db.prepare('SELECT id FROM workspace_leases WHERE owner_id <> ? LIMIT 1').get(input.identity.attemptId)) fail('conflict', 'another execution occupies work resources');
     const existing = db.prepare(`SELECT ${WORKSPACE_COLUMNS} FROM managed_workspaces WHERE project_id = ? AND feature_id = ?`).get(input.identity.projectId, input.featureId) as WorkspaceRow | undefined;
@@ -171,7 +175,7 @@ export function createSqliteWorkspaceAccess(session: SqliteStorageSession, optio
       if (!isDeepStrictEqual(json(currentRow.finish_snapshot, 'finish_snapshot'), finishSnapshot)) fail('conflict', 'terminal workspace result differs');
       return commitResult(input, ws, op, terminalReceipt, true);
     }
-    if (input.status !== 'blocked' && !(op.kind === 'retain' && options.allowRetentionFinalization)) ensureIdentity(input.identity);
+    if (input.status !== 'blocked' && !trustedFinalization(op.kind)) ensureIdentity(input.identity);
     else options.resources.read(input.identity);
     if (input.status === 'succeeded' && ((op.kind === 'prepare' && input.workspaceStatus !== 'ready') || (op.kind === 'retain' && input.workspaceStatus !== 'retained') || (op.kind === 'cleanup' && input.workspaceStatus !== 'cleaned'))) fail('conflict', 'workspace status does not match operation kind');
     if (op.revision !== input.expectedRevision || ws.revision !== input.expectedWorkspaceRevision) fail('conflict', 'workspace revision conflict', { expectedRevision: input.expectedRevision, actualRevision: op.revision });
