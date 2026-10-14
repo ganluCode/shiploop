@@ -168,6 +168,7 @@ export interface CommandTransaction {
    * 抛出，零写入），供策略编辑事务内重核归属/revision 与活动保护目标。
    */
   getTask(projectId: string, taskId: string): TaskRecord;
+  blockTaskApproval(input: { readonly projectId: string; readonly taskId: string; readonly expectedRevision: number }): number;
   /**
    * P03-2 / F-001：Task 策略副本 CAS 编辑。单语句条件 UPDATE 只触达目标
    * Task 的 execution_config/config_source/config_source_key/revision/

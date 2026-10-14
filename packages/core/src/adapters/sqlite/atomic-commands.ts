@@ -3,6 +3,7 @@
  * 不调用异步 StateStore/CommandReceiptStore，也不嵌套事务。
  * P02-3 / F-007 起组合基线窄存储原语（ports/baseline-store.ts 的事务面）。
  */
+import { StorageError } from '../../ports/errors.js';
 import type { AtomicCommandStore, CommandTransaction } from '../../ports/atomic-commands.js';
 import { createSqliteBaselineAccess } from './baseline-store.js';
 import { createSqliteCommandReceiptAccess } from './command-receipts.js';
@@ -93,6 +94,17 @@ export function createSqliteAtomicCommandStore(
           replaceFeaturePlan: guarded(plan.replaceFeaturePlanInTransaction),
           // P03-2 / F-001：Task 策略副本 CAS 编辑事务内读取与写入原语。
           getTask: guarded(plan.getTaskInTransaction),
+          blockTaskApproval: guarded((input: { readonly projectId: string; readonly taskId: string; readonly expectedRevision: number }) => {
+            const task = plan.getTaskInTransaction(input.projectId, input.taskId);
+            if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 1) {
+              throw new StorageError('validation', operation, 'Invalid Task revision');
+            }
+            const changed = session.database.prepare(`UPDATE tasks SET manual_block = 1, revision = revision + 1, updated_at = ?
+              WHERE project_id = ? AND id = ? AND revision = ?`).run((options.nowUtcMs ?? Date.now)(), input.projectId, input.taskId, input.expectedRevision);
+            if (changed.changes !== 1) throw new StorageError('conflict', operation, 'Task revision conflict', {
+              details: { expectedRevision: input.expectedRevision, actualRevision: task.revision } });
+            return task.revision + 1;
+          }),
           updateTaskStrategy: guarded(plan.updateTaskStrategyInTransaction),
           // P03-2 / F-002：计划批准/拒绝决策事务内原语（重复决策重核、决策
           // 记录插入与 Feature plan_status CAS 更新），同一 BEGIN IMMEDIATE 内

@@ -159,6 +159,7 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       'task.strategy.update',
       // P03-2 / F-002：计划批准/拒绝决策（project scope + feature.plan.decide；Feature 聚合 CAS）。
       'feature.plan.decide',
+      'task.approval.block',
       // P03-2 / F-006：执行输入制品组准备（project scope + execution.input.prepare；
       // 创建类不携带 expectedRevision；采集/组装/发布为事务外 I/O）。
       'execution.input.prepare',
@@ -187,6 +188,7 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       'plan.labels.update': { scopeKind: 'project', mutation: 'update', capability: 'plan.labels.write' },
       'feature.plan.revise': { scopeKind: 'project', mutation: 'update', capability: 'feature.plan.revise' },
       'task.strategy.update': { scopeKind: 'project', mutation: 'update', capability: 'task.strategy.write' },
+      'task.approval.block': { scopeKind: 'project', mutation: 'update', capability: 'feature.plan.decide' },
       'feature.plan.decide': { scopeKind: 'project', mutation: 'update', capability: 'feature.plan.decide' },
       'execution.input.prepare': { scopeKind: 'project', mutation: 'create', capability: 'execution.input.prepare' },
       'execution.preview': { scopeKind: 'project', mutation: 'create', capability: 'execution.start' },

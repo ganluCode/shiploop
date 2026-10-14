@@ -21,6 +21,7 @@ export * from './application/task-dag.js';
 export * from './ports/work-resources.js';
 export * from './application/work-resource-stop.js';
 export * from './ports/attempt-store.js';
+export * from './ports/attempt-lifecycle.js';
 export * from './ports/runtime-recovery.js';
 export * from './ports/runtime-recovery-catalog.js';
 export * from './ports/runtime-recovery-source.js';

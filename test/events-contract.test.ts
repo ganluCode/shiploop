@@ -165,6 +165,8 @@ describe('F-003 冻结事件封套版本与 §9.2 事件白名单（P02-2 六类
       // {revised:true}，不携带预算数值/理由/批准主体——修订不自动启动或恢复 Run）。
       EXECUTION_BUDGET_REVISED_EVENT_TYPE,
       'task.claimed',
+      'task.attempt.updated',
+      'task.approval.blocked',
     ]);
     expect(PROJECT_METADATA_UPDATED_EVENT_TYPE).toBe('project.metadata_updated');
     expect(SETTINGS_GLOBAL_CREATED_EVENT_TYPE).toBe('settings.global_created');
@@ -238,6 +240,17 @@ describe('F-003 mapStateEvent：持久行列 → 公开封套', () => {
       expect(event.scope.kind).toBe(projectId === null ? 'global' : 'project');
     }
   });
+
+  it.each([['task.attempt.updated', 'updated'], ['task.approval.blocked', 'blocked']])(
+    'maps the redacted %s event and rejects raw extra fields', (type, key) => {
+      const row = eventRow({ eventType: type, aggregateType: 'task', aggregateId: SETTINGS_ROW_ID, payload: { [key]: true } });
+      expect(mapStateEvent(row).payload).toEqual({ [key]: true });
+      for (const payload of [{ [key]: false }, { [key]: true, output: 'credential-secret' }]) {
+        const error = expectPublicError(() => mapStateEvent({ ...row, payload }), 'corrupt_state', 'event_payload_violation');
+        expect(JSON.stringify(error)).not.toContain('credential-secret');
+      }
+    },
+  );
 
   it('occurredAt 由毫秒转为以 Z 结尾的 ISO UTC，可往返且不混用聚合 revision', () => {
     const event = mapStateEvent(eventRow({ occurredAtUtcMs: 0 }));

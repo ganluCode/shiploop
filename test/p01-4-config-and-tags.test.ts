@@ -707,6 +707,8 @@ describe('F-006 当前配置检查组（P01-FR2-CONFIG）', () => {
           'runtime_start_reservations',
           'run_outcome_settlements',
           'attempts',
+          'attempt_notifications',
+          'attempt_notification_diagnostics',
           'workspace_leases',
         ].sort(),
       );

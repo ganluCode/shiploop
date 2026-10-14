@@ -59,6 +59,7 @@ import type {
   SettingsWriteConsistency,
 } from '../ports/state-store.js';
 import { validateMergedProjectSettingsWrite } from './configuration-service.js';
+import { submitTaskApprovalBlock, TASK_APPROVAL_BLOCK_OPERATION } from './task-approval-block.js';
 import { FEATURE_PLAN_DECIDE_OPERATION, submitFeaturePlanDecide } from './feature-plan-decide.js';
 import { FEATURE_PLAN_IMPORT_OPERATION, submitFeaturePlanImport } from './feature-plan-import.js';
 import {
@@ -594,6 +595,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           envelope.operation !== FEATURE_PLAN_REVISE_OPERATION &&
           envelope.operation !== TASK_STRATEGY_UPDATE_OPERATION &&
           envelope.operation !== FEATURE_PLAN_DECIDE_OPERATION &&
+          envelope.operation !== TASK_APPROVAL_BLOCK_OPERATION &&
           envelope.operation !== EXECUTION_INPUT_PREPARE_OPERATION &&
           envelope.operation !== EXECUTION_PREVIEW_OPERATION &&
           envelope.operation !== EXECUTION_START_OPERATION &&
@@ -853,6 +855,11 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
                 ...(taskStrategyEditGuards !== undefined ? { guards: taskStrategyEditGuards } : {}),
               },
             );
+          }
+          if (envelope.operation === TASK_APPROVAL_BLOCK_OPERATION) {
+            return submitTaskApprovalBlock({ principalId: principal.principalId, commandId: envelope.commandId,
+              operation: envelope.operation, scope: envelope.scope, requestDigest: digest, issuedAt: envelope.issuedAt,
+              completedAt: new Date(now).toISOString() }, envelope, transaction);
           }
           if (envelope.operation === FEATURE_PLAN_DECIDE_OPERATION) {
             // P03-2 / F-002：计划批准/拒绝决策无事务外 I/O（无 Runtime/Git/检查

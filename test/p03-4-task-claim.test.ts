@@ -251,7 +251,7 @@ describe('F-004 atomic Task claim', () => {
         .rejects.toMatchObject({ step: 'apply', version: 16 });
       expect(snapshot()).toEqual(before);
       expect(predecessor.database.prepare("SELECT name FROM sqlite_master WHERE name = 'task_claim_receipts'").all()).toEqual([]);
-      expect((await migrateSqliteStorage(predecessor)).appliedVersions).toEqual([16]);
+      expect((await migrateSqliteStorage(predecessor)).appliedVersions).toEqual([16, 17]);
       expect({ ...snapshot(), schema_migrations: predecessor.database.prepare('SELECT * FROM schema_migrations WHERE version <= 15 ORDER BY id').all() })
         .toEqual(before);
       expect((await migrateSqliteStorage(predecessor)).appliedVersions).toEqual([]);

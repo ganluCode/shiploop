@@ -532,6 +532,7 @@ describe('F-006 Host inspect/overview 路由与握手能力（真实 Host + SQLi
       // P03-2 / F-002：计划批准/拒绝决策经既有 /v1/commands 通用路由接线
       //（v4 内增量宣告；决策查询路由与 HostClient 入口 F-007 已接线）。
       'feature.plan.decide',
+      'task.approval.block',
       // P03-2 / F-006：执行输入制品组准备经既有 /v1/commands 通用路由接线
       //（v4 内增量宣告；HostClient 入口 F-007、CLI 入口 F-008）。
       'execution.input.prepare',

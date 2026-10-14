@@ -362,6 +362,8 @@ function expectNoExecutionEntities(probe: StorageProbe): void {
   const present = tables.filter((name) => /batch|run|attempt|work/i.test(name)).sort();
   expect(present, `执行域表清单漂移（实际表：${tables.join(',')}）`).toEqual([
     'attempts',
+    'attempt_notifications',
+    'attempt_notification_diagnostics',
     'workspace_leases',
     'batch_budget_revisions',
     'execution_batches',

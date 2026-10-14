@@ -154,6 +154,7 @@ export const COMMAND_OPERATIONS = [
   // 信封 expectedRevision 为 Feature 聚合 revision，同一写事务内记录决策、
   // 更新 planStatus、事件与回执；批准不是启动授权）。
   'feature.plan.decide',
+  'task.approval.block',
   // P03-2 / F-006：执行输入制品组准备（project scope + execution.input.prepare；
   // 创建类命令不携带 expectedRevision；采集/组装/发布为事务外 I/O，最终重核、
   // 事件与回执同一短写事务）。
@@ -265,6 +266,8 @@ export const COMMAND_OPERATION_SPECS: Readonly<Record<AppOperation, CommandOpera
       mutation: 'update',
       capability: 'task.strategy.write',
     },
+    // P03-4 / F-005：只加人工阻塞；expectedRevision 指向 Task 自身。
+    'task.approval.block': { scopeKind: 'project', mutation: 'update', capability: 'feature.plan.decide' },
     // P03-2 / F-002：计划批准/拒绝决策（绑定当前 planDigest）。信封
     // expectedRevision 指向目标 Feature 聚合 revision；决策只记录与更新
     // planStatus，不启动执行、不创建执行实体。
@@ -795,8 +798,14 @@ export type ValidatedCommandEnvelope =
       readonly expectedRevision: number;
       readonly payload: ValidatedTaskStrategyUpdatePayload;
     })
-  // P03-2 / F-002：计划批准/拒绝决策命令信封（expectedRevision=目标 Feature
-  // 聚合 revision；payload 只含 featureId/planDigest/decision/reason）。
+  // P03-4 / F-005：人工阻塞命令（expectedRevision=目标 Task revision）。
+  | (EnvelopeCommon & {
+      readonly operation: 'task.approval.block';
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: number;
+      readonly payload: { readonly taskId: string; readonly planDigest: string };
+    })
+  // P03-2 / F-002：计划批准/拒绝决策命令信封（expectedRevision=目标 Feature）。
   | (EnvelopeCommon & {
       readonly operation: 'feature.plan.decide';
       readonly scope: { readonly kind: 'project'; readonly projectId: string };
@@ -1516,6 +1525,17 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
       expectedRevision: expectedRevision as number,
       payload: validateTaskStrategyUpdatePayload(operation, object.payload),
     };
+  }
+  if (operation === 'task.approval.block') {
+    if (scope.kind !== 'project') fail(operation, 'invalid_input', 'scope.kind', 'scope mismatch');
+    if (!isPlainObject(object.payload)) fail(operation, 'invalid_input', 'payload', 'expected object');
+    const payload = object.payload as Record<string, unknown>;
+    if (Object.keys(payload).some(k => !['taskId', 'planDigest'].includes(k))
+      || typeof payload.planDigest !== 'string' || !/^[0-9a-f]{64}$/.test(payload.planDigest)) {
+      fail(operation, 'invalid_input', 'payload', 'invalid approval identity');
+    }
+    return { ...base, operation, scope: scope as { kind: 'project'; projectId: string }, expectedRevision: expectedRevision as number,
+      payload: { taskId: validateStableId(payload.taskId, { operation }, 'taskId'), planDigest: payload.planDigest as string } };
   }
   if (operation === 'feature.plan.decide') {
     if (scope.kind !== 'project') {

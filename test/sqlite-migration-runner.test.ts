@@ -189,6 +189,8 @@ describe('F-005 迁移执行与记录', () => {
         expect(listUserTables(session)).toEqual([
           'approvals',
           'artifacts',
+          'attempt_notification_diagnostics',
+          'attempt_notifications',
           'attempts',
           'baseline_authorizations',
           'baseline_check_results',
@@ -314,9 +316,11 @@ describe('F-005 迁移执行与记录', () => {
         expect(rows[14]!.checksum).toBe(SQLITE_MIGRATIONS[14]!.checksum);
         expect(rows[15]!.version).toBe(16);
         expect(rows[15]!.checksum).toBe(SQLITE_MIGRATIONS[15]!.checksum);
-        expect(rows[16]!.version).toBe(PROBE_MIGRATION.version);
-        expect(rows[16]!.checksum).toBe(PROBE_MIGRATION.checksum);
-        expect(rows[16]!.applied_at).toBe(FIXED_NOW_MS + 1_000);
+        expect(rows[16]!.version).toBe(17);
+        expect(rows[16]!.checksum).toBe(SQLITE_MIGRATIONS[16]!.checksum);
+        expect(rows[17]!.version).toBe(PROBE_MIGRATION.version);
+        expect(rows[17]!.checksum).toBe(PROBE_MIGRATION.checksum);
+        expect(rows[17]!.applied_at).toBe(FIXED_NOW_MS + 1_000);
       } finally {
         session.close();
       }

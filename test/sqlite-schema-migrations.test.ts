@@ -73,6 +73,8 @@ const SCHEMA_TABLES = [
   ['attempts', schema.attempts],
   ['workspace_leases', schema.workspaceLeases],
   ['task_claim_receipts', schema.taskClaimReceipts],
+  ['attempt_notifications', schema.attemptNotifications],
+  ['attempt_notification_diagnostics', schema.attemptNotificationDiagnostics],
   ['schema_migrations', schema.schemaMigrations],
 ] as const;
 
@@ -515,6 +517,8 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
         'attempts:(project_id,code_ref)->artifacts.(project_id,id)',
         'attempts:(project_id,diagnostic_ref)->artifacts.(project_id,id)',
         'task_claim_receipts:(project_id,attempt_id)->attempts.(project_id,id)',
+        'attempt_notifications:(project_id,attempt_id)->attempts.(project_id,id)',
+        'attempt_notification_diagnostics:(project_id,attempt_id)->attempts.(project_id,id)',
         'workspace_leases:(project_id)->projects.(id)',
         'workspace_leases:(project_id,owner_id)->attempts.(project_id,id)',
         'state_events:(project_id)->projects.(id)',

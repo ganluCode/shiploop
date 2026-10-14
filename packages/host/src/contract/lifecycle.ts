@@ -72,6 +72,7 @@ export const APPLICATION_COMMAND_CAPABILITIES = [
   // P03-2 / F-002：计划批准/拒绝决策经既有 POST /v1/commands 通用路由接线
   //（同一命令面；HostClient 入口 F-007，CLI 入口 F-008）。
   'feature.plan.decide',
+  'task.approval.block',
   // P03-2 / F-006：执行输入制品组准备经既有 POST /v1/commands 通用路由
   // 接线（同一命令面；HostClient 入口 F-007，CLI 入口 F-008）。
   'execution.input.prepare',

@@ -1227,6 +1227,45 @@ CREATE TRIGGER task_claim_receipts_immutable_delete BEFORE DELETE ON task_claim_
 BEGIN SELECT RAISE(ABORT, 'task claim receipts are immutable'); END;
 `;
 
+const MIGRATION_017_SQL = `
+CREATE TABLE attempt_notifications (
+  id TEXT PRIMARY KEY NOT NULL,
+  project_id TEXT NOT NULL,
+  attempt_id TEXT NOT NULL,
+  notification_id TEXT NOT NULL,
+  request_digest TEXT NOT NULL,
+  receipt TEXT NOT NULL,
+  CONSTRAINT attempt_notifications_digest_check CHECK (length(request_digest) = 64 AND request_digest NOT GLOB '*[^0-9a-f]*'),
+  CONSTRAINT attempt_notifications_receipt_check CHECK (length(receipt) <= 8192 AND json_valid(receipt) AND json_type(receipt) = 'object'),
+  FOREIGN KEY (project_id, attempt_id) REFERENCES attempts (project_id, id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX attempt_notifications_identity_unique ON attempt_notifications (attempt_id, notification_id);
+CREATE TRIGGER attempt_notifications_immutable_update BEFORE UPDATE ON attempt_notifications
+BEGIN SELECT RAISE(ABORT, 'attempt notifications are immutable'); END;
+CREATE TRIGGER attempt_notifications_immutable_delete BEFORE DELETE ON attempt_notifications
+BEGIN SELECT RAISE(ABORT, 'attempt notifications are immutable'); END;
+CREATE TABLE attempt_notification_diagnostics (
+  id TEXT PRIMARY KEY NOT NULL,
+  project_id TEXT NOT NULL,
+  attempt_id TEXT NOT NULL,
+  notification_digest TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  occurred_at INTEGER NOT NULL,
+  CONSTRAINT attempt_diagnostics_digest_check CHECK (length(notification_digest) = 64 AND notification_digest NOT GLOB '*[^0-9a-f]*'),
+  CONSTRAINT attempt_diagnostics_reason_check CHECK (reason IN ('stale_execution_identity', 'invalid_transition', 'notification_id_reused')),
+  CONSTRAINT attempt_diagnostics_time_check CHECK (occurred_at >= 0),
+  FOREIGN KEY (project_id, attempt_id) REFERENCES attempts (project_id, id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX attempt_diagnostics_identity_unique ON attempt_notification_diagnostics (attempt_id, notification_digest);
+CREATE TRIGGER attempt_diagnostics_bounded BEFORE INSERT ON attempt_notification_diagnostics
+WHEN (SELECT count(*) FROM attempt_notification_diagnostics WHERE attempt_id = NEW.attempt_id) >= 32
+BEGIN SELECT RAISE(IGNORE); END;
+CREATE TRIGGER attempt_diagnostics_immutable_update BEFORE UPDATE ON attempt_notification_diagnostics
+BEGIN SELECT RAISE(ABORT, 'attempt diagnostics are immutable'); END;
+CREATE TRIGGER attempt_diagnostics_immutable_delete BEFORE DELETE ON attempt_notification_diagnostics
+BEGIN SELECT RAISE(ABORT, 'attempt diagnostics are immutable'); END;
+`;
+
 /** 已声明的全部 SQLite 迁移，按版本升序；F-005 的执行器按此顺序应用并核对摘要。 */
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
@@ -1309,4 +1348,5 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
     sql: MIGRATION_016_SQL,
     checksum: sha256Hex(MIGRATION_016_SQL),
   },
+  { version: 17, sql: MIGRATION_017_SQL, checksum: sha256Hex(MIGRATION_017_SQL) },
 ];

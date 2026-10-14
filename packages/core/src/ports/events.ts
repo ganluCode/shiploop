@@ -37,7 +37,7 @@ import {
   BASELINE_REASON_CODES,
 } from './baseline.js';
 import { isStorageError } from './errors.js';
-import { EXECUTION_BUDGET_REVISED_EVENT_TYPE, EXECUTION_RUN_DISPATCHED_EVENT_TYPE, TASK_CLAIMED_EVENT_TYPE } from './execution-store.js';
+import { ATTEMPT_UPDATED_EVENT_TYPE, TASK_APPROVAL_BLOCKED_EVENT_TYPE, EXECUTION_BUDGET_REVISED_EVENT_TYPE, EXECUTION_RUN_DISPATCHED_EVENT_TYPE, TASK_CLAIMED_EVENT_TYPE } from './execution-store.js';
 import {
   EXECUTION_INPUT_PREPARED_EVENT_TYPE,
   FEATURE_LABELS_UPDATED_EVENT_TYPE,
@@ -147,6 +147,8 @@ export const PUBLIC_STATE_EVENT_TYPES = [
   // 与回执；修订不自动启动或恢复 Run）。
   EXECUTION_BUDGET_REVISED_EVENT_TYPE,
   TASK_CLAIMED_EVENT_TYPE,
+  ATTEMPT_UPDATED_EVENT_TYPE,
+  TASK_APPROVAL_BLOCKED_EVENT_TYPE,
 ] as const;
 
 export type PublicStateEventType = (typeof PUBLIC_STATE_EVENT_TYPES)[number];
@@ -170,7 +172,9 @@ type EventPayloadKind =
   | 'executionInputPrepared'
   | 'executionRunDispatched'
   | 'executionBudgetRevised'
-  | 'taskClaimed';
+  | 'taskClaimed'
+  | 'attemptUpdated'
+  | 'taskApprovalBlocked';
 
 /** 每类事件冻结的 aggregate_type、scope 种类与 payload 形状。 */
 export interface StateEventTypeSpec {
@@ -316,6 +320,8 @@ export const STATE_EVENT_TYPE_SPECS: Readonly<
   [TASK_CLAIMED_EVENT_TYPE]: Object.freeze({
     aggregateType: 'task', scopeKind: 'project', payloadKind: 'taskClaimed',
   }),
+  [ATTEMPT_UPDATED_EVENT_TYPE]: Object.freeze({ aggregateType: 'task', scopeKind: 'project', payloadKind: 'attemptUpdated' }),
+  [TASK_APPROVAL_BLOCKED_EVENT_TYPE]: Object.freeze({ aggregateType: 'task', scopeKind: 'project', payloadKind: 'taskApprovalBlocked' }),
   // P03-3 / F-009：批次预算修订事件（聚合为目标 Batch 自身；payload 恒为
   // {revised:true}，不携带预算数值/理由/批准主体/启动或恢复语义）。
   [EXECUTION_BUDGET_REVISED_EVENT_TYPE]: Object.freeze({
@@ -851,6 +857,10 @@ export function mapStateEvent(row: unknown, operation: string = EVENT_READ_OPERA
     payload = validateExecutionInputPreparedPayload(row.payload, operation);
   } else if (spec.payloadKind === 'executionRunDispatched') {
     payload = validateExecutionRunDispatchedPayload(row.payload, operation);
+  } else if (spec.payloadKind === 'attemptUpdated' || spec.payloadKind === 'taskApprovalBlocked') {
+    const key = spec.payloadKind === 'attemptUpdated' ? 'updated' : 'blocked';
+    if (Object.keys(row.payload).length !== 1 || row.payload[key] !== true) corrupt(operation, 'event_payload_violation');
+    payload = { [key]: true };
   } else if (spec.payloadKind === 'taskClaimed') {
     if (Object.keys(row.payload).length !== 1 || row.payload.claimed !== true) corrupt(operation, 'event_payload_violation');
     payload = { claimed: true };

@@ -1389,6 +1389,29 @@ export const taskClaimReceipts = sqliteTable('task_claim_receipts', {
   uniqueIndex('task_claim_receipts_attempt_unique').on(table.attemptId),
 ]);
 
+export const attemptNotifications = sqliteTable('attempt_notifications', {
+  id: text('id').primaryKey(), projectId: text('project_id').notNull(), attemptId: text('attempt_id').notNull(),
+  notificationId: text('notification_id').notNull(), requestDigest: text('request_digest').notNull(), receipt: text('receipt').notNull(),
+}, table => [
+  check('attempt_notifications_digest_check', sql`length(${table.requestDigest}) = 64 AND ${table.requestDigest} NOT GLOB '*[^0-9a-f]*'`),
+  check('attempt_notifications_receipt_check', sql`length(${table.receipt}) <= 8192 AND json_valid(${table.receipt}) AND json_type(${table.receipt}) = 'object'`),
+  foreignKey({ name: 'attempt_notifications_attempt_fk', columns: [table.projectId, table.attemptId],
+    foreignColumns: [attempts.projectId, attempts.id] }).onDelete('restrict'),
+  uniqueIndex('attempt_notifications_identity_unique').on(table.attemptId, table.notificationId),
+]);
+
+export const attemptNotificationDiagnostics = sqliteTable('attempt_notification_diagnostics', {
+  id: text('id').primaryKey(), projectId: text('project_id').notNull(), attemptId: text('attempt_id').notNull(),
+  notificationDigest: text('notification_digest').notNull(), reason: text('reason').notNull(), occurredAt: integer('occurred_at').notNull(),
+}, table => [
+  check('attempt_diagnostics_digest_check', sql`length(${table.notificationDigest}) = 64 AND ${table.notificationDigest} NOT GLOB '*[^0-9a-f]*'`),
+  check('attempt_diagnostics_reason_check', sql`${table.reason} IN ('stale_execution_identity', 'invalid_transition', 'notification_id_reused')`),
+  check('attempt_diagnostics_time_check', sql`${table.occurredAt} >= 0`),
+  foreignKey({ name: 'attempt_diagnostics_attempt_fk', columns: [table.projectId, table.attemptId],
+    foreignColumns: [attempts.projectId, attempts.id] }).onDelete('restrict'),
+  uniqueIndex('attempt_diagnostics_identity_unique').on(table.attemptId, table.notificationDigest),
+]);
+
 export const schemaMigrations = sqliteTable('schema_migrations', {
   id: text('id').primaryKey(),
   createdAt: integer('created_at').notNull(),
