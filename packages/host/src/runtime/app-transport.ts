@@ -74,6 +74,10 @@ import {
   RESULTS_ROUTE_PREFIX,
   RUNS_ROUTE_PREFIX,
   RUN_SCHEDULE_ROUTE_SUFFIX,
+  WORKSPACES_ROUTE,
+  WORKSPACES_ROUTE_PREFIX,
+  WORKSPACE_OPERATIONS_ROUTE,
+  WORKSPACE_OPERATIONS_ROUTE_PREFIX,
   SETTINGS_GLOBAL_EXPORT_ROUTE,
   SETTINGS_GLOBAL_ROUTE,
   SNAPSHOT_ROUTE,
@@ -128,7 +132,12 @@ export type ApplicationOperation =
   // EXECUTION_SCHEDULE_QUERY_OPERATIONS 同源）。
   | 'execution.run.schedule'
   | 'execution.attempts.list'
-  | 'execution.attempt.diagnostics';
+  | 'execution.attempt.diagnostics'
+  // P03-5 / F-011：工作区状态只读查询（与 Core WORKSPACE_QUERY_OPERATIONS 同源）。
+  | 'workspaces.list'
+  | 'workspaces.get'
+  | 'workspace.operations.list'
+  | 'workspace.operations.get';
 
 /** 已解析的应用路由（path 形态匹配；路径参数为未解码原始片段）。 */
 export interface ResolvedAppRoute {
@@ -199,6 +208,44 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
       return { operation: 'events.subscribe', method: 'GET' };
     default:
       break;
+  }
+  // P03-5 / F-011：GET /v1/workspaces（集合根 + projectId/可选 featureId/分页
+  // 查询参数）与单段路径参数 GET /v1/workspaces/:featureId；其他形态未匹配。
+  if (path === WORKSPACES_ROUTE) {
+    return { operation: 'workspaces.list', method: 'GET' };
+  }
+  if (path.startsWith(WORKSPACES_ROUTE_PREFIX)) {
+    const segments = path.slice(WORKSPACES_ROUTE_PREFIX.length).split('/');
+    if (segments.some((segment) => segment.length === 0)) {
+      return undefined;
+    }
+    if (segments.length === 1) {
+      return {
+        operation: 'workspaces.get',
+        method: 'GET',
+        pathParam: { name: 'featureId', value: segments[0] as string },
+      };
+    }
+    return undefined;
+  }
+  // P03-5 / F-011：GET /v1/workspace-operations（集合根 + projectId/可选
+  // featureId/分页查询参数）与单段路径参数 GET /v1/workspace-operations/:operationId。
+  if (path === WORKSPACE_OPERATIONS_ROUTE) {
+    return { operation: 'workspace.operations.list', method: 'GET' };
+  }
+  if (path.startsWith(WORKSPACE_OPERATIONS_ROUTE_PREFIX)) {
+    const segments = path.slice(WORKSPACE_OPERATIONS_ROUTE_PREFIX.length).split('/');
+    if (segments.some((segment) => segment.length === 0)) {
+      return undefined;
+    }
+    if (segments.length === 1) {
+      return {
+        operation: 'workspace.operations.get',
+        method: 'GET',
+        pathParam: { name: 'operationId', value: segments[0] as string },
+      };
+    }
+    return undefined;
   }
   // P03-4 / F-008：GET /v1/runs/:runId/schedule（恰两段；与 batches 同一
   // 冻结形态）。其他 /v1/runs/* 形态一律未匹配 → 404 unknown_operation。
@@ -539,6 +586,17 @@ const QUERY_SPECS: Readonly<Partial<Record<ApplicationOperation, QuerySpec>>> = 
     allowed: ['projectId', 'featureId', 'limit', 'cursor'],
     repeatable: [],
   }),
+  // P03-5 / F-011：工作区状态查询参数白名单（取值规则由 Core 单一权威复核）。
+  'workspaces.list': Object.freeze({
+    allowed: ['projectId', 'featureId', 'limit', 'cursor'],
+    repeatable: [],
+  }),
+  'workspaces.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
+  'workspace.operations.list': Object.freeze({
+    allowed: ['projectId', 'featureId', 'limit', 'cursor'],
+    repeatable: [],
+  }),
+  'workspace.operations.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
 });
 
 /** 查询参数白名单校验（未知/重复 → 400，定位 query.<字段>）；空查询串恒合法。 */
@@ -961,6 +1019,39 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
     case 'features.approvals':
       result = await app.queryService.getFeatureApprovals(app.principal, pathParam?.value);
       break;
+    // P03-5 / F-011：工作区状态查询分发（本层只做形态转换；授权/可见性折叠/
+    // 分页范围/游标绑定全部由 Core 单一权威复核；项目可见性失败 forbidden，
+    // 项目内实体跨项目/不存在统一 not_found）。
+    case 'workspaces.list': {
+      const query = buildPlanListQuery(params, operation, 'projectId');
+      const featureId = params.get('featureId');
+      if (featureId !== null) {
+        query.featureId = featureId;
+      }
+      result = await app.queryService.listWorkspaces(app.principal, query);
+      break;
+    }
+    case 'workspaces.get': {
+      const query = buildPlanListQuery(params, operation, 'projectId');
+      query.featureId = pathParam?.value;
+      result = await app.queryService.getWorkspace(app.principal, query);
+      break;
+    }
+    case 'workspace.operations.list': {
+      const query = buildPlanListQuery(params, operation, 'projectId');
+      const featureId = params.get('featureId');
+      if (featureId !== null) {
+        query.featureId = featureId;
+      }
+      result = await app.queryService.listWorkspaceOperations(app.principal, query);
+      break;
+    }
+    case 'workspace.operations.get': {
+      const query = buildPlanListQuery(params, operation, 'projectId');
+      query.operationId = pathParam?.value;
+      result = await app.queryService.getWorkspaceOperation(app.principal, query);
+      break;
+    }
     default:
       // 路由表与本分发必须一一对应；缺失是装配编程错误。
       throw new TypeError(`应用路由未接线：${operation}`);

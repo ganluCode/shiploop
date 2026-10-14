@@ -38,6 +38,12 @@ function toEntry(entry: WorkspaceContentEntry): WorkspaceDiscardPreviewEntry {
   return { path: entry.path, state: entry.state, sizeBytes: entry.sizeBytes, protection: entry.protection };
 }
 
+/** P03-5 / F-011：丢弃服务窄端口（命令层消费面；preview 只读，confirm 走专属幂等通道）。 */
+export interface WorkspaceDiscardService {
+  preview(raw: unknown): Promise<WorkspaceDiscardPreview>;
+  confirm(raw: unknown): Promise<WorkspaceOperationCommit>;
+}
+
 export function createWorkspaceDiscardService(options: {
   readonly previewStore: WorkspaceDiscardPreviewStore;
   readonly store: WorkspaceDiscardStore;
@@ -51,7 +57,7 @@ export function createWorkspaceDiscardService(options: {
   readonly nowUtcMs?: () => number;
   readonly previewTtlMs?: number;
   readonly maxPreviewEntries?: number;
-}) {
+}): WorkspaceDiscardService {
   const now = options.nowUtcMs ?? Date.now;
   const previewTtlMs = options.previewTtlMs ?? WORKSPACE_DISCARD_PREVIEW_TTL_DEFAULT_MS;
   const maxPreviewEntries = options.maxPreviewEntries ?? WORKSPACE_DISCARD_PREVIEW_MAX_ENTRIES;
@@ -148,10 +154,11 @@ export function createWorkspaceDiscardService(options: {
       const input = toWorkspaceDiscardStoreInput(validated);
       const intent: WorkspaceDiscardIntent = options.store.begin(input);
       if (intent.commit.operation.status !== 'pending') return intent.commit;
+      // 未拿到锁的重复请求尚未触碰 Git，不能隔离另一个持锁请求正在完成的意图。
+      const lease = await options.gitLock.acquire({ repoIdentity: intent.baseline.repoIdentity,
+        gitCommonDir: intent.baseline.gitCommonDir, workspacePath: intent.binding.canonicalPath,
+        operationId: input.operationId });
       try {
-        const lease = await options.gitLock.acquire({ repoIdentity: intent.baseline.repoIdentity,
-          gitCommonDir: intent.baseline.gitCommonDir, workspacePath: intent.binding.canonicalPath,
-          operationId: input.operationId });
         try {
           let journal = options.store.readJournal(input, intent);
           for (const process of journal.unfinishedProcesses) {

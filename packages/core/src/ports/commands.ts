@@ -183,6 +183,10 @@ export const COMMAND_OPERATIONS = [
   // 创建类命令不携带 expectedRevision——工作区 revision 与预览绑定在 payload
   // 内由应用层深校验；Host 接线随 F-011）。
   'workspace.discard',
+  // P03-5 / F-011：人工丢弃预览命令（创建类；只读检查 + 不可变证据发布，
+  // completed 回执携带预览；复用 workspace.discard 能力位，信封层只要求
+  // JSON 对象 payload，{featureId} 深校验在应用层）。
+  'workspace.discard.preview',
 ] as const;
 
 export type AppOperation = (typeof COMMAND_OPERATIONS)[number];
@@ -309,6 +313,13 @@ export const COMMAND_OPERATION_SPECS: Readonly<Record<AppOperation, CommandOpera
     // P03-5 / F-010：人工丢弃（创建类；预览绑定与 revision CAS 由应用层在
     // payload 深校验中重核，不经信封 expectedRevision）。
     'workspace.discard': {
+      scopeKind: 'project',
+      mutation: 'create',
+      capability: 'workspace.discard',
+    },
+    // P03-5 / F-011：人工丢弃预览（创建类命令；只读检查与证据发布在事务外，
+    // 事务内只持久化 completed 回执，与 execution.preview 同一纪律）。
+    'workspace.discard.preview': {
       scopeKind: 'project',
       mutation: 'create',
       capability: 'workspace.discard',
@@ -865,6 +876,14 @@ export type ValidatedCommandEnvelope =
   // 依赖 workspace 端口）。
   | (EnvelopeCommon & {
       readonly operation: 'workspace.discard';
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: null;
+      readonly payload: Readonly<Record<string, unknown>>;
+    })
+  // P03-5 / F-011：人工丢弃预览命令信封（同一纪律：JSON 对象 payload，
+  // {featureId} 深校验在应用层）。
+  | (EnvelopeCommon & {
+      readonly operation: 'workspace.discard.preview';
       readonly scope: { readonly kind: 'project'; readonly projectId: string };
       readonly expectedRevision: null;
       readonly payload: Readonly<Record<string, unknown>>;
@@ -1657,9 +1676,9 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
       payload: normalizeBaselinePayload(object.payload),
     } as ValidatedCommandEnvelope;
   }
-  if (operation === 'workspace.discard') {
-    // P03-5 / F-010：与 baseline.cancel 同一纪律——信封层只要求 project scope
-    // 与 JSON 对象 payload；预览绑定/占用/停止证据深校验在应用层完成。
+  if (operation === 'workspace.discard' || operation === 'workspace.discard.preview') {
+    // P03-5 / F-010+F-011：与 baseline.cancel 同一纪律——信封层只要求 project
+    // scope 与 JSON 对象 payload；预览绑定/占用/停止证据深校验在应用层完成。
     if (scope.kind !== 'project') {
       fail(operation, 'invalid_input', 'scope.kind', 'scope 种类与操作不匹配');
     }

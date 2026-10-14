@@ -313,7 +313,7 @@ describe('F-010 配置内容边界（无绝对路径 / 不解析认证 / 不依�
     expect(schemaVersions.settingsExportFormat).toBe(SETTINGS_EXPORT_FORMAT_VERSION);
     expect(schemaVersions.applicationWireSchema).toBe(WIRE_MESSAGE_SCHEMA_VERSION);
     expect(schemaVersions.eventEnvelopeSchema).toBe(PUBLIC_EVENT_SCHEMA_VERSION);
-    expect(schemaVersions.sqliteMigrations).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]);
+    expect(schemaVersions.sqliteMigrations).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]);
 
     for (const baseline of raw.priorBaselines as Record<string, string>[]) {
       expect(CONTRACT_DOC).toContain(baseline.tipCommit.slice(0, 7));

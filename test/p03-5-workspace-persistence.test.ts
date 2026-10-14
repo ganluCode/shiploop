@@ -292,7 +292,7 @@ describe('F-002 append-only migration', () => {
       const path = join(root, 'db.sqlite'); let session = openSqliteStorageSession({ path });
       try {
         await migrateSqliteStorage(session, { migrations: SQLITE_MIGRATIONS.slice(0, 17) });
-        const sql = `${SQLITE_MIGRATIONS.at(-1)!.sql}\nSELECT * FROM nonexistent;`;
+        const sql = `${SQLITE_MIGRATIONS.find(migration => migration.version === 18)!.sql}\nSELECT * FROM nonexistent;`;
         await expect(migrateSqliteStorage(session, { backupPath: join(root, 'fault-backup'), migrations: [...SQLITE_MIGRATIONS.slice(0, 17),
           { version: 18, sql, checksum: createHash('sha256').update(sql).digest('hex') }] })).rejects.toMatchObject({ step: 'apply', version: 18 });
         expect(session.database.prepare("SELECT name FROM sqlite_master WHERE name = 'managed_workspaces'").get()).toBeUndefined();

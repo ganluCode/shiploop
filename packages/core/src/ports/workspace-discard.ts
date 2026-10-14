@@ -31,6 +31,8 @@ import {
 import type { ValidationContext } from './validation.js';
 
 export const WORKSPACE_DISCARD_OPERATION = 'workspace.discard' as const;
+/** P03-5 / F-011：人工丢弃预览命令操作身份（能力位复用 workspace.discard）。 */
+export const WORKSPACE_DISCARD_PREVIEW_OPERATION = 'workspace.discard.preview' as const;
 /** 丢弃范围固定为受管工作区目录与其 Git 登记；分支/源仓库/审计永远不在范围内。 */
 export const WORKSPACE_DISCARD_SCOPE = 'worktree_only' as const;
 export const WORKSPACE_DISCARD_PREVIEW_TTL_DEFAULT_MS = 300_000;
@@ -270,6 +272,15 @@ export function toWorkspaceDiscardStoreInput(input: WorkspaceDiscardConfirmInput
     preview: input.preview,
     evidenceRefs: input.evidenceRefs,
   };
+}
+
+/**
+ * P03-5 / F-011：丢弃确认用户回执的请求摘要（单一权威，纯计算）。
+ * 存储适配器在 begin 事务内以此持久化幂等锚点；命令层重放预检用同一摘要
+ * 比对「同 commandId 不同参数」冲突（conflict(command_reused)）。
+ */
+export function computeWorkspaceDiscardRequestDigest(input: WorkspaceDiscardInput): string {
+  return createHash('sha256').update(stableStringify({ schemaVersion: 1, input })).digest('hex');
 }
 
 export function validateWorkspaceDiscardInput(value: unknown): WorkspaceDiscardInput {

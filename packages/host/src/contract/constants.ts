@@ -110,6 +110,20 @@ export const RUN_SCHEDULE_ROUTE_SUFFIX = 'schedule';
 export const ATTEMPTS_ROUTE = '/v1/attempts';
 export const ATTEMPTS_ROUTE_PREFIX = '/v1/attempts/';
 export const ATTEMPT_DIAGNOSTICS_ROUTE_SUFFIX = 'diagnostics';
+/**
+ * P03-5 / F-011：工作区状态只读查询路由（全部 GET + Bearer；与 Core
+ * WORKSPACE_QUERY_OPERATIONS 一一对应，docs/p03-5-workspace-host-integration-contract.md §4）。
+ * - GET /v1/workspaces?projectId=&featureId?=&limit?=&cursor?=（集合根 +
+ *   查询参数；Host 不解析归属、不读 SQLite）；
+ * - GET /v1/workspaces/:featureId?projectId=（单段路径参数 + 必填 projectId）；
+ * - GET /v1/workspace-operations?projectId=&featureId?=&limit?=&cursor?=；
+ * - GET /v1/workspace-operations/:operationId?projectId=；
+ * 其他嵌套/多段形态一律未匹配 → 404 unknown_operation。
+ */
+export const WORKSPACES_ROUTE = '/v1/workspaces';
+export const WORKSPACES_ROUTE_PREFIX = '/v1/workspaces/';
+export const WORKSPACE_OPERATIONS_ROUTE = '/v1/workspace-operations';
+export const WORKSPACE_OPERATIONS_ROUTE_PREFIX = '/v1/workspace-operations/';
 
 /** §7.2 客户端有限预算（毫秒）。 */
 export const TCP_CONNECT_TIMEOUT_MS = 2_000;

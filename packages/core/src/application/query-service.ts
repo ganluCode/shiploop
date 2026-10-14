@@ -149,6 +149,19 @@ import type {
   RunScheduleEvaluation,
   RunScheduleStatusResult,
 } from '../ports/execution-schedule-query.js';
+import {
+  createWorkspaceListCursorBinding,
+  decodeWorkspaceListCursor,
+  encodeWorkspaceListCursor,
+  toPublicWorkspaceOperationRecord,
+  toPublicWorkspaceRecord,
+  validateWorkspaceListFilter,
+  type WorkspaceDetailResult,
+  type WorkspaceListResult,
+  type WorkspaceOperationDetailResult,
+  type WorkspaceOperationListResult,
+  type WorkspaceQueryReadStore,
+} from '../ports/workspace-query.js';
 import type { AttemptRecord } from '../ports/attempt-store.js';
 import { evaluateTaskDag } from './task-dag.js';
 
@@ -305,6 +318,17 @@ export interface QueryService {
   listFeatures(principal: unknown, input: unknown): Promise<FeatureListResult>;
   /** F-006 tasks.list：Feature 内 Task 层级列表（游标绑定项目 + 父级）。 */
   listTasks(principal: unknown, input: unknown): Promise<TaskListResult>;
+  /**
+   * P03-5 / F-011 workspaces.list：项目（可选 Feature 过滤）工作区列表，
+   * 稳定 id 排序、有界分页、wscur_v1_ 游标绑定数据根 + 项目 + Feature。
+   */
+  listWorkspaces(principal: unknown, input: unknown): Promise<WorkspaceListResult>;
+  /** P03-5 / F-011 workspaces.get：按 Feature 的工作区详情（含准备/最新 operation）。 */
+  getWorkspace(principal: unknown, input: unknown): Promise<WorkspaceDetailResult>;
+  /** P03-5 / F-011 workspace.operations.list：项目（可选 Feature 过滤）操作审计分页。 */
+  listWorkspaceOperations(principal: unknown, input: unknown): Promise<WorkspaceOperationListResult>;
+  /** P03-5 / F-011 workspace.operations.get：按 operationId 的操作详情（含回执引用）。 */
+  getWorkspaceOperation(principal: unknown, input: unknown): Promise<WorkspaceOperationDetailResult>;
 }
 
 export interface QueryServiceOptions {
@@ -327,6 +351,8 @@ export interface QueryServiceOptions {
   readonly executionBudgetReads: ExecutionBudgetQueryReadStore;
   /** P03-4 / F-007 Run 调度/Attempt/占用审计查询一致读取窄端口（只读）。 */
   readonly scheduleReads: ExecutionScheduleQueryReadStore;
+  /** P03-5 / F-011 工作区状态查询一致读取窄端口（只读；脱敏投影在端口层）。 */
+  readonly workspaceReads: WorkspaceQueryReadStore;
   /** 数据根身份（64hex；可信装配由 realpath 数据根派生，绝不来自请求数据）。 */
   readonly dataRootIdentity: string;
   /** UTC 毫秒时钟（默认 Date.now）；测试注入以获得确定性 readAt。 */
@@ -390,6 +416,20 @@ function executionScheduleTargetNotFound(
 }
 
 /**
+ * P03-5 / F-011 工作区目标「不可见/不存在/跨项目」统一 not_found（同一形状
+ * 纪律：不区分存在性，不回显归属或实体身份，逐字段一致）；能力缺失仍先行
+ * forbidden。
+ */
+function workspaceTargetNotFound(
+  operation: string,
+  entityType: 'workspace' | 'workspace_operation',
+): never {
+  throw new PublicError('not_found', operation, '工作区实体不存在或不可见', {
+    details: { reason: 'workspace_entity_not_found', entityType },
+  });
+}
+
+/**
  * 装配 QueryService。只校验依赖形态，不执行任何 I/O；import 本模块无副作用。
  */
 export function createQueryService(options: QueryServiceOptions): QueryService {
@@ -405,6 +445,7 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
     planReads,
     executionBudgetReads,
     scheduleReads,
+    workspaceReads,
     dataRootIdentity,
   } = options;
   if (typeof dataRootIdentity !== 'string' || !/^[0-9a-f]{64}$/.test(dataRootIdentity)) {
@@ -1331,6 +1372,131 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
           nextCursor: page.nextId === null ? null : encodePlanListCursor(page.nextId, binding),
           limit: filter.limit,
         };
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    // P03-5 / F-011：工作区状态只读查询（§4：能力核验 → 身份/过滤器校验 →
+    // 项目可见 → 一致读；跨项目/不存在折叠 not_found；脱敏投影在端口层）。
+    async listWorkspaces(principal: unknown, input: unknown): Promise<WorkspaceListResult> {
+      assertTrustedPrincipal(principal);
+      const operation = 'workspaces.list';
+      try {
+        requireCapability(principal, 'project.read', operation);
+        const object = requirePlainObject(input, { operation }, 'input');
+        const projectId = requireProjectId(object.projectId, operation);
+        const filter = validateWorkspaceListFilter(object, operation);
+        requireProjectVisible(principal, projectId, operation);
+        const binding = createWorkspaceListCursorBinding(
+          { rootIdentity: dataRootIdentity, scope: { kind: 'workspaces', projectId, featureId: filter.featureId } },
+          operation,
+        );
+        const page = workspaceReads.listWorkspaceRecords(projectId, filter.featureId, {
+          afterId:
+            filter.cursor === undefined
+              ? null
+              : decodeWorkspaceListCursor(filter.cursor, binding, operation).lastId,
+          limit: filter.limit,
+        });
+        return {
+          schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION,
+          scope: 'workspace-list',
+          records: page.records.map(toPublicWorkspaceRecord),
+          nextCursor: page.nextId === null ? null : encodeWorkspaceListCursor(page.nextId, binding),
+          limit: filter.limit,
+        };
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    async getWorkspace(principal: unknown, input: unknown): Promise<WorkspaceDetailResult> {
+      assertTrustedPrincipal(principal);
+      const operation = 'workspaces.get';
+      try {
+        requireCapability(principal, 'project.read', operation);
+        const object = requirePlainObject(input, { operation }, 'input');
+        rejectUnknownKeys(object, ['projectId', 'featureId'], { operation }, 'input');
+        const projectId = requireProjectId(object.projectId, operation);
+        const featureId = validateStableId(
+          object.featureId,
+          { operation, entity: { type: 'feature' } },
+          'featureId',
+        );
+        requireProjectVisible(principal, projectId, operation);
+        const detail = workspaceReads.readWorkspaceDetail(projectId, featureId);
+        if (detail === undefined) {
+          workspaceTargetNotFound(operation, 'workspace');
+        }
+        return {
+          workspace: toPublicWorkspaceRecord(detail.workspace),
+          preparationOperation:
+            detail.preparation === null ? null : toPublicWorkspaceOperationRecord(detail.preparation),
+          latestOperation: detail.latest === null ? null : toPublicWorkspaceOperationRecord(detail.latest),
+        };
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    async listWorkspaceOperations(
+      principal: unknown,
+      input: unknown,
+    ): Promise<WorkspaceOperationListResult> {
+      assertTrustedPrincipal(principal);
+      const operation = 'workspace.operations.list';
+      try {
+        requireCapability(principal, 'project.read', operation);
+        const object = requirePlainObject(input, { operation }, 'input');
+        const projectId = requireProjectId(object.projectId, operation);
+        const filter = validateWorkspaceListFilter(object, operation);
+        requireProjectVisible(principal, projectId, operation);
+        const binding = createWorkspaceListCursorBinding(
+          { rootIdentity: dataRootIdentity, scope: { kind: 'workspace-operations', projectId, featureId: filter.featureId } },
+          operation,
+        );
+        const page = workspaceReads.listWorkspaceOperationViews(projectId, filter.featureId, {
+          afterId:
+            filter.cursor === undefined
+              ? null
+              : decodeWorkspaceListCursor(filter.cursor, binding, operation).lastId,
+          limit: filter.limit,
+        });
+        return {
+          schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION,
+          scope: 'workspace-operation-list',
+          records: page.records.map(toPublicWorkspaceOperationRecord),
+          nextCursor: page.nextId === null ? null : encodeWorkspaceListCursor(page.nextId, binding),
+          limit: filter.limit,
+        };
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    async getWorkspaceOperation(
+      principal: unknown,
+      input: unknown,
+    ): Promise<WorkspaceOperationDetailResult> {
+      assertTrustedPrincipal(principal);
+      const operation = 'workspace.operations.get';
+      try {
+        requireCapability(principal, 'project.read', operation);
+        const object = requirePlainObject(input, { operation }, 'input');
+        rejectUnknownKeys(object, ['projectId', 'operationId'], { operation }, 'input');
+        const projectId = requireProjectId(object.projectId, operation);
+        const operationId = validateStableId(
+          object.operationId,
+          { operation, entity: { type: 'workspace_operation' } },
+          'operationId',
+        );
+        requireProjectVisible(principal, projectId, operation);
+        const view = workspaceReads.readWorkspaceOperationView(projectId, operationId);
+        if (view === undefined) {
+          workspaceTargetNotFound(operation, 'workspace_operation');
+        }
+        return { operation: toPublicWorkspaceOperationRecord(view) };
       } catch (error) {
         throw mapToPublicError(error, { operation });
       }

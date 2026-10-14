@@ -737,6 +737,8 @@ describe('F-011 传输纪律与版本门禁', () => {
         // P03-3 / F-009：批次预算显式修订随 Core 白名单进入接线宣告（仅增额
         // 不自动启动或恢复 Run；HostClient/CLI 入口属 F-011/F-012）。
         'execution.budget.revise',
+        'workspace.discard',
+        'workspace.discard.preview',
       ]);
     }
     // actorId/principal 提权字段 → 400 invalid_input（未知键，定位字段）。
@@ -977,6 +979,8 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         'execution.start',
         // P03-3 / F-009：批次预算显式修订经既有 /v1/commands 通用路由接线。
         'execution.budget.revise',
+        'workspace.discard',
+        'workspace.discard.preview',
       ],
       queries: [
         'projects.list',
@@ -1013,6 +1017,10 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         'execution.run.schedule',
         'execution.attempts.list',
         'execution.attempt.diagnostics',
+        'workspaces.list',
+        'workspaces.get',
+        'workspace.operations.list',
+        'workspace.operations.get',
       ],
       events: { transport: 'sse', route: '/v1/events', scopes: ['project', 'global'] },
     });

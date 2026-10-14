@@ -25,6 +25,45 @@ const OPERATION_COLUMNS = `id, created_at, project_id, revision, updated_at, fea
  owner_id, host_instance_id, execution_version, kind, execution_stage, principal_id, command_id, request_digest,
  input_snapshot, status, result_json, receipt_id, finish_snapshot`;
 
+function rowFailure(kind: 'conflict' | 'ownership' | 'corrupt' | 'not_found', message: string, details?: Record<string, unknown>): never {
+  throw new StorageError(kind, 'Workspace', message, { entity: { type: 'workspace' }, details });
+}
+function rowJson(value: unknown, field: string): Record<string, unknown> {
+  try {
+    const parsed: unknown = JSON.parse(String(value));
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return rowFailure('corrupt', `${field} is not a JSON object`);
+    return parsed as Record<string, unknown>;
+  } catch (cause) { throw new StorageError('corrupt', 'Workspace', `${field} is invalid JSON`, { cause }); }
+}
+function operationResultFromRow(value: unknown): WorkspaceOperationResult | null {
+  if (value === null) return null;
+  try { return validateWorkspaceOperationResult(rowJson(value, 'result_json')); }
+  catch (cause) { throw new StorageError('corrupt', 'Workspace', 'Invalid persisted workspace result', { cause }); }
+}
+/** P03-5 / F-011：行→记录映射提取为模块级纯函数，供只读查询装配复用（同一校验规则，不另立第二套）。 */
+export function mapManagedWorkspaceRow(row: WorkspaceRow | undefined): ManagedWorkspaceRecord | null {
+  if (row === undefined) return null;
+  workspaceMember(row.status, WORKSPACE_STATUSES, 'status');
+  validateWorkspaceBaseline({ repositoryBindingId: row.repository_binding_id, repositoryBindingRevision: row.repository_binding_revision,
+    repoIdentity: row.repo_identity, canonicalPath: row.canonical_path, gitCommonDir: row.git_common_dir, branch: row.branch, baseCommit: row.base_commit });
+  return { id: String(row.id), createdAtUtcMs: Number(row.created_at), projectId: String(row.project_id), revision: Number(row.revision), updatedAtUtcMs: Number(row.updated_at),
+    featureId: String(row.feature_id), repositoryBindingId: String(row.repository_binding_id), repositoryBindingRevision: Number(row.repository_binding_revision), repoIdentity: String(row.repo_identity),
+    canonicalPath: String(row.canonical_path), gitCommonDir: String(row.git_common_dir), branch: String(row.branch), baseCommit: String(row.base_commit), headCommit: row.head_commit as string | null,
+    codeDigest: row.code_digest as string | null, status: row.status as ManagedWorkspaceRecord['status'], preparationOperationId: String(row.preparation_operation_id),
+    ownerId: String(row.owner_id), hostInstanceId: String(row.host_instance_id), executionVersion: Number(row.execution_version), runId: String(row.run_id), attemptId: String(row.attempt_id) };
+}
+/** P03-5 / F-011：operation 行→记录映射（同一校验规则；含 work 身份重建）。 */
+export function mapWorkspaceOperationRow(row: WorkspaceRow | undefined): WorkspaceOperationRecord | null {
+  if (row === undefined) return null;
+  workspaceMember(row.status, WORKSPACE_OPERATION_STATUSES, 'status');
+  workspaceMember(row.kind, WORKSPACE_OPERATION_KINDS, 'kind');
+  workspaceMember(row.execution_stage, ATTEMPT_EXECUTION_STAGES, 'executionStage');
+  const identity: WorkResourceIdentity = { projectId: String(row.project_id), attemptId: String(row.attempt_id), owner: String(row.owner_id), hostInstanceId: String(row.host_instance_id), executionVersion: Number(row.execution_version) };
+  return { id: String(row.id), projectId: String(row.project_id), featureId: String(row.feature_id), workspaceId: String(row.workspace_id), runId: String(row.run_id), identity,
+    kind: row.kind as WorkspaceOperationRecord['kind'], executionStage: row.execution_stage as WorkspaceOperationRecord['executionStage'], principalId: String(row.principal_id), commandId: String(row.command_id), requestDigest: String(row.request_digest),
+    inputSnapshot: rowJson(row.input_snapshot, 'input_snapshot'), status: row.status as WorkspaceOperationRecord['status'], result: operationResultFromRow(row.result_json), revision: Number(row.revision), createdAtUtcMs: Number(row.created_at), updatedAtUtcMs: Number(row.updated_at) };
+}
+
 export function createSqliteWorkspaceAccess(session: SqliteStorageSession, options: {
   readonly resources: WorkResourceAccess;
   readonly nowUtcMs?: () => number;
@@ -55,32 +94,8 @@ export function createSqliteWorkspaceAccess(session: SqliteStorageSession, optio
       return parsed as Record<string, unknown>;
     } catch (cause) { throw new StorageError('corrupt', 'Workspace', `${field} is invalid JSON`, { cause }); }
   };
-  const resultFromRow = (value: unknown): WorkspaceOperationResult | null => {
-    if (value === null) return null;
-    try { return validateWorkspaceOperationResult(json(value, 'result_json')); }
-    catch (cause) { throw new StorageError('corrupt', 'Workspace', 'Invalid persisted workspace result', { cause }); }
-  };
-  function workspace(row: WorkspaceRow | undefined): ManagedWorkspaceRecord | null {
-    if (row === undefined) return null;
-    workspaceMember(row.status, WORKSPACE_STATUSES, 'status');
-    validateWorkspaceBaseline({ repositoryBindingId: row.repository_binding_id, repositoryBindingRevision: row.repository_binding_revision,
-      repoIdentity: row.repo_identity, canonicalPath: row.canonical_path, gitCommonDir: row.git_common_dir, branch: row.branch, baseCommit: row.base_commit });
-    return { id: String(row.id), createdAtUtcMs: Number(row.created_at), projectId: String(row.project_id), revision: Number(row.revision), updatedAtUtcMs: Number(row.updated_at),
-      featureId: String(row.feature_id), repositoryBindingId: String(row.repository_binding_id), repositoryBindingRevision: Number(row.repository_binding_revision), repoIdentity: String(row.repo_identity),
-      canonicalPath: String(row.canonical_path), gitCommonDir: String(row.git_common_dir), branch: String(row.branch), baseCommit: String(row.base_commit), headCommit: row.head_commit as string | null,
-      codeDigest: row.code_digest as string | null, status: row.status as ManagedWorkspaceRecord['status'], preparationOperationId: String(row.preparation_operation_id),
-      ownerId: String(row.owner_id), hostInstanceId: String(row.host_instance_id), executionVersion: Number(row.execution_version), runId: String(row.run_id), attemptId: String(row.attempt_id) };
-  }
-  function operation(row: WorkspaceRow | undefined): WorkspaceOperationRecord | null {
-    if (row === undefined) return null;
-    workspaceMember(row.status, WORKSPACE_OPERATION_STATUSES, 'status');
-    workspaceMember(row.kind, WORKSPACE_OPERATION_KINDS, 'kind');
-    workspaceMember(row.execution_stage, ATTEMPT_EXECUTION_STAGES, 'executionStage');
-    const identity: WorkResourceIdentity = { projectId: String(row.project_id), attemptId: String(row.attempt_id), owner: String(row.owner_id), hostInstanceId: String(row.host_instance_id), executionVersion: Number(row.execution_version) };
-    return { id: String(row.id), projectId: String(row.project_id), featureId: String(row.feature_id), workspaceId: String(row.workspace_id), runId: String(row.run_id), identity,
-      kind: row.kind as WorkspaceOperationRecord['kind'], executionStage: row.execution_stage as WorkspaceOperationRecord['executionStage'], principalId: String(row.principal_id), commandId: String(row.command_id), requestDigest: String(row.request_digest),
-      inputSnapshot: json(row.input_snapshot, 'input_snapshot'), status: row.status as WorkspaceOperationRecord['status'], result: resultFromRow(row.result_json), revision: Number(row.revision), createdAtUtcMs: Number(row.created_at), updatedAtUtcMs: Number(row.updated_at) };
-  }
+  const workspace = mapManagedWorkspaceRow;
+  const operation = mapWorkspaceOperationRow;
   function readReceiptById(id: string): CommandReceipt {
     const row = db.prepare<[string], { principal_id: string; command_id: string }>('SELECT principal_id, command_id FROM command_receipts WHERE id = ?').get(id);
     if (!row) return fail('corrupt', 'workspace operation receipt is missing');

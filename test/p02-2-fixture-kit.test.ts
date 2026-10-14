@@ -185,7 +185,7 @@ describe('F-004 临时沙箱与真实 A/B 资源', () => {
       const versions = probe.selectAll<{ version: number }>(
         'SELECT version FROM schema_migrations ORDER BY version',
       );
-      expect(versions.map((row) => row.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]);
+      expect(versions.map((row) => row.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]);
       const counts = probe.counts();
       expect(counts.projects).toBe(0);
       expect(counts.state_events).toBe(0);
@@ -223,8 +223,8 @@ describe('F-004 可信测试装配受限 principal（项目 A/B）', () => {
     // P03-1 计划域四项（phase.write / feature.plan.import / plan.labels.write /
     // feature.plan.revise）+ P03-2 / F-001 Task 策略编辑、F-002 计划决策与
     // F-006 执行输入准备三项 + P03-3 / F-004 执行授权面与 F-009 预算修订两项后
-    // 冻结 20 项。
-    expect(owner.capabilities.size).toBe(20);
+    // 加上 P03-5 workspace.discard 后冻结 21 项。
+    expect(owner.capabilities.size).toBe(21);
     expect(owner.projectScope).toEqual({ kind: 'all' });
     expect(Object.isFrozen(owner)).toBe(true);
     expect(Object.isFrozen(owner.projectScope)).toBe(true);

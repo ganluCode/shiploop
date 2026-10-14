@@ -57,6 +57,7 @@ function assembleQueries(box: BudgetFixture): QueryService {
     planReads: queryStore,
     executionBudgetReads: queryStore,
     scheduleReads: queryStore,
+    workspaceReads: queryStore,
     dataRootIdentity: computeDataRootIdentity(box.box.dataRoot),
     nowUtcMs: () => NOW,
   });

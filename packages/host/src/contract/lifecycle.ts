@@ -88,6 +88,11 @@ export const APPLICATION_COMMAND_CAPABILITIES = [
   //（同一命令面；短写事务内 CAS+单调判定原子更新当前预算/不可变修订行/脱敏
   // 事件与回执；仅增额不自动启动或恢复 Run；HostClient/CLI 入口属 F-011/F-012）。
   'execution.budget.revise',
+  // P03-5 / F-011：人工丢弃预览/确认经既有 POST /v1/commands 通用路由接线
+  //（同一信封/回执/幂等命令面；预览发布不可变证据，确认走 F-010 专属幂等
+  // 通道；HostClient/CLI 入口属 F-012）。
+  'workspace.discard',
+  'workspace.discard.preview',
 ] as const;
 
 /** P02-2 §11.3：Host 实际接线的应用查询（含回执/结果读取与快照；P02-3 / F-006 新增静态接入两项；F-014 新增基线分页/详情/证据正文三项；P03-1 / F-009 新增计划层级/详情/DAG 六项；P03-2 / F-007 新增审批决策查询一项；P03-4 / F-008 新增调度诊断/Attempt 审计三项）。 */
@@ -129,6 +134,12 @@ export const APPLICATION_QUERY_CAPABILITIES = [
   'execution.run.schedule',
   'execution.attempts.list',
   'execution.attempt.diagnostics',
+  // P03-5 / F-011：工作区状态只读查询真实接线（能力位复用 project.read；
+  // 与 Core WORKSPACE_QUERY_OPERATIONS 同步，不漂移）。
+  'workspaces.list',
+  'workspaces.get',
+  'workspace.operations.list',
+  'workspace.operations.get',
 ] as const;
 
 /**

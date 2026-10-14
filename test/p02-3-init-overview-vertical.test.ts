@@ -510,7 +510,7 @@ describe('F-006 Host inspect/overview 路由与握手能力（真实 Host + SQLi
     expect(body.capabilities.application.queries).toContain('execution.run.schedule');
     expect(body.capabilities.application.queries).toContain('execution.attempts.list');
     expect(body.capabilities.application.queries).toContain('execution.attempt.diagnostics');
-    expect(body.capabilities.application.queries).toHaveLength(29);
+    expect(body.capabilities.application.queries).toHaveLength(33);
     expect(body.capabilities.application.commands).toEqual([
       'project.register',
       'project.metadata.update',
@@ -550,6 +550,8 @@ describe('F-006 Host inspect/overview 路由与握手能力（真实 Host + SQLi
       //（v5 内增量宣告；仅增额不自动启动或恢复 Run；HostClient/CLI 入口属
       // F-011/F-012）。
       'execution.budget.revise',
+      'workspace.discard',
+      'workspace.discard.preview',
     ]);
     for (const legacyVersion of [4, 3, 2, 1]) {
       const legacy = await loopbackRequest({

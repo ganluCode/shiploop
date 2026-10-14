@@ -78,6 +78,17 @@ import { EXECUTION_PREVIEW_OPERATION } from '../ports/execution-preview.js';
 import type { ExecutionPreviewPort } from './execution-preview.js';
 import type { ExecutionPreviewResult } from '../ports/execution-preview.js';
 import { EXECUTION_START_OPERATION } from '../ports/execution-start.js';
+import {
+  computeWorkspaceDiscardRequestDigest,
+  toWorkspaceDiscardStoreInput,
+  validateWorkspaceDiscardConfirmInput,
+  WORKSPACE_DISCARD_OPERATION,
+  WORKSPACE_DISCARD_PREVIEW_OPERATION,
+} from '../ports/workspace-discard.js';
+import type {
+  WorkspaceDiscardPreview,
+} from '../ports/workspace-discard.js';
+import type { WorkspaceDiscardService } from './workspace-discard.js';
 import type {
   ExecutionDispatchSignalPort,
   ExecutionStartPort,
@@ -153,6 +164,14 @@ export interface CommandServiceOptions {
    * queued + scheduler_not_assembled 可查询原因）。
    */
   readonly executionDispatchSignal?: ExecutionDispatchSignalPort;
+  /**
+   * P03-5 / F-011：人工丢弃预览/确认服务端口（不传则两个丢弃命令
+   * unsupported，不冒充能力）。预览走通用命令事务（事务外只读检查与证据
+   * 发布，事务内只持久化 completed 回执）；确认不经通用回执事务——存储在
+   * begin 事务内以真实主体+commandId 持久化幂等锚点回执（请求摘要 =
+   * computeWorkspaceDiscardRequestDigest），命令层重放预检同源比对。
+   */
+  readonly workspaceDiscard?: WorkspaceDiscardService;
   readonly nowUtcMs?: () => number;
 }
 
@@ -220,6 +239,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
   const executionPreview = options.executionPreview;
   const executionStart = options.executionStart;
   const executionDispatchSignal = options.executionDispatchSignal;
+  const workspaceDiscard = options.workspaceDiscard;
   const nowUtcMs = options.nowUtcMs ?? Date.now;
 
   /** 既有项目元数据 CAS：业务 + metadata_updated 事件 + 回执同一事务（F-007）。 */
@@ -583,6 +603,15 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
         if (envelope.operation === EXECUTION_START_OPERATION && executionStart === undefined) {
           throw new PublicError('unsupported', operation);
         }
+        // P03-5 / F-011：人工丢弃预览/确认服务端口缺席时 unsupported（不冒充
+        // 能力；命令面能力位与预览/确认共享授权面，端口装配是真实支持边界）。
+        if (
+          (envelope.operation === WORKSPACE_DISCARD_OPERATION ||
+            envelope.operation === WORKSPACE_DISCARD_PREVIEW_OPERATION) &&
+          workspaceDiscard === undefined
+        ) {
+          throw new PublicError('unsupported', operation);
+        }
         if (
           envelope.operation !== 'project.metadata.update' &&
           envelope.operation !== 'project.register' &&
@@ -600,6 +629,8 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           envelope.operation !== EXECUTION_PREVIEW_OPERATION &&
           envelope.operation !== EXECUTION_START_OPERATION &&
           envelope.operation !== EXECUTION_BUDGET_REVISE_OPERATION &&
+          envelope.operation !== WORKSPACE_DISCARD_OPERATION &&
+          envelope.operation !== WORKSPACE_DISCARD_PREVIEW_OPERATION &&
           !isSettingsEnvelope(envelope)
         ) {
           throw new PublicError('unsupported', operation);
@@ -609,7 +640,9 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
         // 预读只决定新命令的事务外时效拒绝；重放仍必须进入权威写事务重读。
         if (existing === undefined) {
           checkTiming(envelope, nowUtcMs());
-        } else {
+        } else if (envelope.operation !== WORKSPACE_DISCARD_OPERATION) {
+          // P03-5 / F-011：丢弃确认的用户回执由 F-010 存储以丢弃请求摘要锚定，
+          // 不经通用回执事务；其重放预检走专属通道（见下方 confirm 分支）。
           replay(principal, existing, digest, operation);
         }
 
@@ -698,6 +731,52 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
             envelope.scope.projectId,
             envelope.payload,
           );
+        }
+
+        // P03-5 / F-011：人工丢弃预览为只读检查 + 不可变证据发布（事务外、
+        // 仅对新命令执行）；命令短写事务内只持久化 completed 回执（与
+        // execution.preview 同一纪律）。payload 深校验（featureId）在服务内。
+        let workspaceDiscardPreviewResult: WorkspaceDiscardPreview | undefined;
+        if (envelope.operation === WORKSPACE_DISCARD_PREVIEW_OPERATION && existing === undefined) {
+          const payloadKeys = Object.keys(envelope.payload as Record<string, unknown>);
+          if (payloadKeys.some(key => key !== 'featureId')) {
+            throw new PublicError('invalid_input', operation, undefined, {
+              details: { field: 'payload', reason: 'unknown_keys' },
+            });
+          }
+          workspaceDiscardPreviewResult = await workspaceDiscard!.preview({
+            principal,
+            projectId: envelope.scope.projectId,
+            featureId: (envelope.payload as Record<string, unknown>).featureId,
+          });
+        }
+
+        // P03-5 / F-011：人工丢弃确认不经通用回执事务——F-010 存储在 begin
+        // 事务内以真实主体+commandId 持久化幂等锚点回执（请求摘要为丢弃输入
+        // 摘要）；命令层负责重放预检（能力/归属重核 + 同源摘要比对）与时效。
+        if (envelope.operation === WORKSPACE_DISCARD_OPERATION) {
+          const confirmInput = validateWorkspaceDiscardConfirmInput({
+            ...(envelope.payload as Record<string, unknown>),
+            principal,
+            commandId: envelope.commandId,
+            projectId: envelope.scope.projectId,
+          });
+          const storeInput = toWorkspaceDiscardStoreInput(confirmInput);
+          if (existing !== undefined) {
+            authorizeCommandReplay(principal, existing, registrationProjectIdOf(existing, operation), operation);
+            if (existing.requestDigest !== computeWorkspaceDiscardRequestDigest(storeInput)) {
+              throw new PublicError('conflict', operation, undefined, {
+                details: { reason: 'command_reused' },
+              });
+            }
+            // 意图回执不代表操作终态：交回服务恢复 pending，终态由 store.begin 幂等返回。
+          }
+          await workspaceDiscard!.confirm(confirmInput);
+          const persisted = store.findReceipt(principal.principalId, envelope.commandId);
+          if (persisted === undefined) {
+            throw new TypeError('丢弃确认已提交但用户回执不可读（存储装配错误）');
+          }
+          return existing === undefined ? persisted : { ...persisted, replayed: true };
         }
 
         const receipt = store.transact(operation, transaction => {
@@ -963,6 +1042,26 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
               transaction,
               now,
             );
+          }
+          if (envelope.operation === WORKSPACE_DISCARD_PREVIEW_OPERATION) {
+            // P03-5 / F-011：只读预览——事务外已完成检查与证据发布；事务内只
+            // 持久化 completed 回执（零工作区变更、零事件、零预算）。
+            if (workspaceDiscardPreviewResult === undefined) {
+              throw new TypeError('丢弃预览缺少事务外准备结果');
+            }
+            const receipt = createCompletedReceipt({
+              principalId: principal.principalId,
+              commandId: envelope.commandId,
+              operation: envelope.operation,
+              scope: envelope.scope,
+              requestDigest: digest,
+              issuedAt: envelope.issuedAt,
+              completedAt: new Date(now).toISOString(),
+              resultRef: createResultRef(randomBytes(32)),
+              result: workspaceDiscardPreviewResult,
+            });
+            transaction.saveReceipt(receipt);
+            return receipt;
           }
           if (isSettingsEnvelope(envelope)) {
             // 新配置命令必定已在事务外完成能力复检与一致性视图（重放已在上面返回）。

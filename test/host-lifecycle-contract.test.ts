@@ -209,6 +209,8 @@ describe('F-002 冻结常量与能力声明', () => {
           // P03-3 / F-009：批次预算显式修订经既有 /v1/commands 通用路由接线
           //（仅增额不自动启动或恢复 Run；HostClient/CLI 入口属 F-011/F-012）。
           'execution.budget.revise',
+          'workspace.discard',
+          'workspace.discard.preview',
         ],
         queries: [
           'projects.list',
@@ -244,6 +246,10 @@ describe('F-002 冻结常量与能力声明', () => {
           'execution.run.schedule',
           'execution.attempts.list',
           'execution.attempt.diagnostics',
+          'workspaces.list',
+          'workspaces.get',
+          'workspace.operations.list',
+          'workspace.operations.get',
         ],
         events: { transport: 'sse', route: '/v1/events', scopes: ['project', 'global'] },
       },
@@ -268,6 +274,10 @@ describe('F-002 冻结常量与能力声明', () => {
       'execution.budget.get',
       'execution.budget.revisions',
       ...EXECUTION_SCHEDULE_QUERY_OPERATIONS,
+      'workspaces.list',
+      'workspaces.get',
+      'workspace.operations.list',
+      'workspace.operations.get',
     ]);
     expect(CURRENT_HOST_CAPABILITIES.application.commands).toContain('baseline.cancel');
     expect(CURRENT_HOST_CAPABILITIES.application.queries).toContain('baselines.list');

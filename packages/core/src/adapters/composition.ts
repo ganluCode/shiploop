@@ -24,6 +24,7 @@
  *   可运行（见 ports/runtime-capabilities 的 assessSettingsConfiguration）。
  */
 import { existsSync, mkdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { isAbsolute } from 'node:path';
 import { createConfigurationService } from '../application/configuration-service.js';
@@ -49,6 +50,36 @@ import { createContextBuilder } from '../application/context-build.js';
 import type { ContextBudget } from '../application/context-build.js';
 import { createArtifactPublisher } from '../application/artifact-publish.js';
 import { createArtifactVerifier } from '../application/artifact-verify.js';
+import { createWorkWorkspaceAuthority } from './fs/work-workspace.js';
+import { createWorkspaceInspector } from './fs/workspace-inspector.js';
+import { createFeatureWorktreePreparer } from './fs/feature-worktree-preparer.js';
+import { createFeatureWorktreeCleaner } from './fs/feature-worktree-cleaner.js';
+import { createFeatureWorktreeDiscarder } from './fs/feature-worktree-discarder.js';
+import { createSqliteWorkResourceAccess } from './sqlite/work-resources.js';
+import { createSqliteTaskClaimStore } from './sqlite/task-claim-store.js';
+import { createSqliteWorkspacePreparationStore } from './sqlite/workspace-preparation.js';
+import { createSqliteWorkspaceRetentionStore } from './sqlite/workspace-retention.js';
+import { createSqliteWorkspaceCleanerStore } from './sqlite/workspace-cleaner.js';
+import { createSqliteWorkspaceDiscardStore } from './sqlite/workspace-discard.js';
+import { createSqliteWorkspaceDiscardPreviewStore } from './sqlite/workspace-discard.js';
+import { createWorkResourceStopVerifier } from '../application/work-resource-stop.js';
+import { createWorkspacePreparationService } from '../application/workspace-preparation.js';
+import { createWorkspaceRetentionService } from '../application/workspace-retention.js';
+import { createWorkspaceCleanerService } from '../application/workspace-cleaner.js';
+import { createWorkspaceDiscardService } from '../application/workspace-discard.js';
+import type { WorkspaceDiscardService } from '../application/workspace-discard.js';
+import type { PreparationWorkspaceAuthority } from '../ports/workspace-preparation.js';
+import type { WorkspacePreparationInput } from '../ports/workspace-preparation.js';
+import { validateWorkspaceRetentionInput } from '../ports/workspace-retention.js';
+import { validateWorkspaceCleanerInput } from '../ports/workspace-cleaner.js';
+import {
+  validateWorkspaceDiscardConfirmInput,
+  validateWorkspaceDiscardPreviewInput,
+} from '../ports/workspace-discard.js';
+import type { WorkResourceAccess } from '../ports/work-resources.js';
+import type { TaskClaimStore } from '../ports/task-claim.js';
+import type { CommandProcessIdentity } from '../ports/command-process.js';
+import type { WorkspaceOperationCommit } from '../ports/workspace.js';
 import {
   DEFAULT_EXECUTION_INPUT_CONTEXT_BUDGET,
   DEFAULT_EXECUTION_INPUT_PREPARE_LIMITS,
@@ -80,6 +111,7 @@ import {
   isPlainObject,
   rejectUnknownKeys,
   requirePlainObject,
+  validateStableId,
   validationError,
 } from '../ports/validation.js';
 import type { ValidationContext } from '../ports/validation.js';
@@ -197,6 +229,26 @@ export interface CoreApplication {
   readonly baselineExecutionService: BaselineExecutionService;
   /** P02-3 / F-014：baselines.list / baselines.get / artifacts.get 只读查询（§7.4-§7.6）。 */
   readonly baselineQueryService: BaselineQueryService;
+  /** P03-5 / F-011：工作区资源门禁（P03-4 durable 工作资源 + 可信停止核验）。 */
+  readonly workResources: WorkResourceAccess;
+  /** P03-5 / F-011：workspace 授权权标颁发（授权根=数据根 + 登记绑定规范源路径）。 */
+  readonly workWorkspaceAuthority: PreparationWorkspaceAuthority;
+  /** P03-5 / F-011：Task 认领窄端口（P03-4 认领契约；调度消费者装配属后续任务）。 */
+  readonly taskClaims: TaskClaimStore;
+  /** P03-5 / F-011：workspace 准备服务（F-005/F-006；按调用构造受界检查器/预备器）。 */
+  readonly workspacePreparation: {
+    prepare(raw: unknown): Promise<WorkspaceOperationCommit>;
+  };
+  /** P03-5 / F-011：失败现场保留服务（F-007；无文件系统变更，可信停止核验接线）。 */
+  readonly workspaceRetention: {
+    retain(raw: unknown): Promise<WorkspaceOperationCommit>;
+  };
+  /** P03-5 / F-011：受控清理执行（F-009；按调用构造受界检查器/清理器）。 */
+  readonly workspaceCleaner: {
+    clean(raw: unknown): Promise<WorkspaceOperationCommit>;
+  };
+  /** P03-5 / F-011：人工丢弃预览/确认（F-010；命令面经 commandService 接线同一能力）。 */
+  readonly workspaceDiscard: WorkspaceDiscardService;
   /** 关闭状态库会话并释放文件句柄；幂等。 */
   close(): void;
 }
@@ -469,6 +521,182 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       permissions: TRUSTED_PROJECT_PERMISSIONS_READER,
       ...(nowUtcMs === undefined ? {} : { nowMs: nowUtcMs }),
     });
+    // P03-5 / F-011：workspace 栈装配（docs/p03-5-workspace-host-integration-contract.md §2）。
+    // 授权根=数据根 + 登记绑定规范源路径（后者由 work-workspace authority 在每次
+    // 核验时 realpath + repoIdentity/gitCommonDir 复核）；worktree 目标恒在数据根内。
+    const workWorkspaceAuthority = createWorkWorkspaceAuthority({
+      authorizedRoots: [basePathService.dataRoot()],
+      preparationPaths: pathService,
+    });
+    const workspaceCommandProcess = createCommandProcessAdapter();
+    if (typeof workspaceCommandProcess.recoverStop !== 'function') {
+      throw new StorageError('corrupt', OPERATION, 'recoverStop 未装配（生产进程适配器必须提供整组缺席证明）');
+    }
+    const recoverWorkspaceStop = workspaceCommandProcess.recoverStop;
+    const verifyWorkspaceStop = (identity: CommandProcessIdentity) =>
+      recoverWorkspaceStop(identity);
+    const workspaceStopVerifier = createWorkResourceStopVerifier({
+      process: workspaceCommandProcess,
+      // 真实可信停止证据是整组缺席证明（recoverStop）；无额外外部收尾步骤。
+      finalize: async () => true,
+    });
+    const workResources = createSqliteWorkResourceAccess(session, {
+      workspaceAuthority: workWorkspaceAuthority,
+      stopVerifier: workspaceStopVerifier,
+      ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
+    });
+    const workspacePublisher = createArtifactPublisher({
+      artifacts: artifactStore,
+      files: artifactFileStore,
+      limits: { maxSizeBytes: 4 * 1024 * 1024, timeoutMs: 30_000 },
+    });
+    /** workspace_evidence 证据发布：绝不在 SQLite 事务内调用（装配不变量断言）。 */
+    const publishWorkspaceEvidence = async (
+      projectId: string,
+      operationId: string,
+      evidence: Readonly<Record<string, unknown>>,
+    ): Promise<string> => {
+      if (session.database.inTransaction) {
+        throw new TypeError('workspace 证据发布不得在 SQLite 事务内（装配不变量）');
+      }
+      const body = Buffer.from(JSON.stringify(evidence));
+      const published = await workspacePublisher.publishArtifact({
+        projectId,
+        kind: 'workspace_evidence',
+        mediaType: 'application/json',
+        expectedHash: createHash('sha256').update(body).digest('hex'),
+        locator: `evidence/${operationId}.json`,
+        content: [body],
+      });
+      return published.artifact.id;
+    };
+    /** 进程身份确认：先持久提交身份证据（evidence/<launchId>.json）再放行变更性 argv。 */
+    const confirmWorkspaceProcessIdentity = (projectId: string) =>
+      async (identity: CommandProcessIdentity): Promise<CommandProcessIdentity> => {
+        await publishWorkspaceEvidence(projectId, identity.launchId, {
+          schemaVersion: 1,
+          processIdentity: identity,
+        });
+        return identity;
+      };
+    const workspaceGitLock = createGitPublicMetadataLock();
+    const taskClaims = createSqliteTaskClaimStore(session, {
+      workspaceAuthority: workWorkspaceAuthority,
+      ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
+    });
+    const workspacePreparationStore = createSqliteWorkspacePreparationStore(session, {
+      resources: workResources,
+      workspaceAuthority: workWorkspaceAuthority,
+      ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
+    });
+    const workspaceRetentionStore = createSqliteWorkspaceRetentionStore(session, {
+      resources: workResources,
+      workspaceAuthority: workWorkspaceAuthority,
+      ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
+    });
+    const workspaceCleanerStore = createSqliteWorkspaceCleanerStore(session, {
+      resources: workResources,
+      ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
+    });
+    const workspaceDiscardStore = createSqliteWorkspaceDiscardStore(session, {
+      resources: workResources,
+      ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
+    });
+    /** 按调用构造受界检查器：数据根 + 该次调用项目登记绑定的规范源路径。 */
+    const workspaceInspectorForCall = async (projectId: string) => {
+      const binding = await stateStore.getRepositoryBinding(projectId);
+      return createWorkspaceInspector({
+        authorizedRoots: [basePathService.dataRoot(), binding.canonicalPath],
+        confirmProcessIdentity: confirmWorkspaceProcessIdentity(projectId),
+      });
+    };
+    const workspacePreparation = {
+      async prepare(raw: unknown): Promise<WorkspaceOperationCommit> {
+        // 服务入口立即复核完整输入；此处只最小提取 projectId 以装配受界检查器。
+        const input = raw as WorkspacePreparationInput;
+        const projectId = validateStableId(
+          (input?.identity as { projectId?: unknown } | undefined)?.projectId,
+          { operation: 'Workspace.prepare' },
+          'identity.projectId',
+        );
+        const inspector = await workspaceInspectorForCall(projectId);
+        const confirm = confirmWorkspaceProcessIdentity(projectId);
+        return createWorkspacePreparationService({
+          store: workspacePreparationStore,
+          authority: workWorkspaceAuthority,
+          resources: workResources,
+          gitLock: workspaceGitLock,
+          preparer: createFeatureWorktreePreparer({ inspector, confirmProcessIdentity: confirm }),
+          verifyPreparationStop: verifyWorkspaceStop,
+          publishEvidence: publishWorkspaceEvidence,
+        }).prepare(input);
+      },
+    };
+    const workspaceRetentionService = createWorkspaceRetentionService({
+      store: workspaceRetentionStore,
+      stopVerifier: workspaceStopVerifier,
+      publishEvidence: publishWorkspaceEvidence,
+    });
+    const workspaceRetention = {
+      retain(raw: unknown): Promise<WorkspaceOperationCommit> {
+        return workspaceRetentionService.retain(validateWorkspaceRetentionInput(raw));
+      },
+    };
+    const workspaceCleaner = {
+      async clean(raw: unknown): Promise<WorkspaceOperationCommit> {
+        const input = validateWorkspaceCleanerInput(raw);
+        const inspector = await workspaceInspectorForCall(input.identity.projectId);
+        return createWorkspaceCleanerService({
+          store: workspaceCleanerStore,
+          gitLock: workspaceGitLock,
+          cleaner: createFeatureWorktreeCleaner({
+            inspector,
+            confirmProcessIdentity: confirmWorkspaceProcessIdentity(input.identity.projectId),
+          }),
+          verifyCleanupStop: verifyWorkspaceStop,
+          publishEvidence: publishWorkspaceEvidence,
+        }).clean(input);
+      },
+    };
+    const workspaceDiscardPreviewStore = createSqliteWorkspaceDiscardPreviewStore(session, {
+      resources: workResources,
+    });
+    const workspaceDiscard: WorkspaceDiscardService = {
+      async preview(raw: unknown) {
+        const input = validateWorkspaceDiscardPreviewInput(raw);
+        const inspector = await workspaceInspectorForCall(input.projectId);
+        return createWorkspaceDiscardService({
+          previewStore: workspaceDiscardPreviewStore,
+          store: workspaceDiscardStore,
+          inspector,
+          gitLock: workspaceGitLock,
+          discarder: createFeatureWorktreeDiscarder({
+            inspector,
+            confirmProcessIdentity: confirmWorkspaceProcessIdentity(input.projectId),
+          }),
+          verifyDiscardStop: verifyWorkspaceStop,
+          publishEvidence: publishWorkspaceEvidence,
+          ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
+        }).preview(input);
+      },
+      async confirm(raw: unknown) {
+        const input = validateWorkspaceDiscardConfirmInput(raw);
+        const inspector = await workspaceInspectorForCall(input.projectId);
+        return createWorkspaceDiscardService({
+          previewStore: workspaceDiscardPreviewStore,
+          store: workspaceDiscardStore,
+          inspector,
+          gitLock: workspaceGitLock,
+          discarder: createFeatureWorktreeDiscarder({
+            inspector,
+            confirmProcessIdentity: confirmWorkspaceProcessIdentity(input.projectId),
+          }),
+          verifyDiscardStop: verifyWorkspaceStop,
+          publishEvidence: publishWorkspaceEvidence,
+          ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
+        }).confirm(input);
+      },
+    };
     const commandService = createCommandService({
       atomicStore,
       repositoryInspector,
@@ -478,6 +706,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       executionInputPrepare,
       executionPreview,
       executionStart,
+      workspaceDiscard,
       baselineCancel: {
         cancel: (principal, projectId, operationId) => {
           if (baselineExecutionServiceRef === undefined) {
@@ -498,6 +727,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       planReads: queryStore,
       executionBudgetReads: queryStore,
       scheduleReads: queryStore,
+      workspaceReads: queryStore,
       stateStore,
       configurationService,
       dataRootIdentity: computeDataRootIdentity(basePathService.dataRoot()),
@@ -565,6 +795,13 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       baselineService,
       baselineExecutionService,
       baselineQueryService,
+      workResources,
+      workWorkspaceAuthority,
+      taskClaims,
+      workspacePreparation,
+      workspaceRetention,
+      workspaceCleaner,
+      workspaceDiscard,
       close(): void {
         if (baselineExecutionService.activeOperationIds().length > 0) throw new StorageError('conflict', 'CoreApplication.close', '基线执行尚未收尾');
         session.close();

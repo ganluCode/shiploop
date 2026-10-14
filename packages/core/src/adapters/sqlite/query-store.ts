@@ -42,6 +42,8 @@ import type {
 } from '../../ports/execution-schedule-query.js';
 import type { AttemptRecord } from '../../ports/attempt-store.js';
 import { createSqliteExecutionScheduleQueryStore } from './execution-schedule-query-store.js';
+import { createSqliteWorkspaceQueryStore } from './workspace-query-store.js';
+import type { WorkspaceQueryReadStore } from '../../ports/workspace-query.js';
 import type {
   FeatureRecord,
   PhaseRecord,
@@ -57,7 +59,8 @@ import type { SqliteStateStoreOptions } from './state-store.js';
 /** F-010 查询读取门面：窄读取端口的并集（应用层 QueryService/OnboardingService 的消费面）；
  * P03-1 / F-006 起追加计划层级列表/详情一致读取（PlanQueryReadStore）；
  * P03-3 / F-010 起追加执行预算查询窄读取（ExecutionBudgetQueryReadStore）；
- * P03-4 / F-007 起追加调度/审计查询窄读取（ExecutionScheduleQueryReadStore）。 */
+ * P03-4 / F-007 起追加调度/审计查询窄读取（ExecutionScheduleQueryReadStore）；
+ * P03-5 / F-011 起追加工作区状态查询窄读取（WorkspaceQueryReadStore）。 */
 export interface SqliteQueryStore
   extends AuthorizedProjectReadStore,
     ConsistentSnapshotStore,
@@ -65,7 +68,8 @@ export interface SqliteQueryStore
     RepositoryBindingLookupStore,
     PlanQueryReadStore,
     ExecutionBudgetQueryReadStore,
-    ExecutionScheduleQueryReadStore {}
+    ExecutionScheduleQueryReadStore,
+    WorkspaceQueryReadStore {}
 
 export function createSqliteQueryStore(
   session: SqliteStorageSession,
@@ -84,6 +88,7 @@ export function createSqliteQueryStore(
     options.nowUtcMs === undefined ? {} : { nowUtcMs: options.nowUtcMs },
   );
   const schedule = createSqliteExecutionScheduleQueryStore(session);
+  const workspace = createSqliteWorkspaceQueryStore(session);
   return {
     listVisibleProjects(visibility: unknown, filter: unknown): ProjectPage {
       return access.listVisibleProjects(visibility, filter);
@@ -177,5 +182,13 @@ export function createSqliteQueryStore(
     ): ExecutionRecordPage<AttemptNotificationDiagnosticRecord> {
       return schedule.listAttemptDiagnosticRecords(visibility, projectId, attemptId, request);
     },
+    readWorkspaceDetail: (projectId: unknown, featureId: unknown) =>
+      workspace.readWorkspaceDetail(projectId, featureId),
+    readWorkspaceOperationView: (projectId: unknown, operationId: unknown) =>
+      workspace.readWorkspaceOperationView(projectId, operationId),
+    listWorkspaceRecords: (projectId: unknown, featureId: unknown, request: never) =>
+      workspace.listWorkspaceRecords(projectId, featureId, request),
+    listWorkspaceOperationViews: (projectId: unknown, featureId: unknown, request: never) =>
+      workspace.listWorkspaceOperationViews(projectId, featureId, request),
   };
 }

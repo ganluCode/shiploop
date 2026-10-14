@@ -48,7 +48,11 @@ export function createWorkWorkspaceAuthority(options: {
         throw new StorageError('validation', 'WorkWorkspace.verify', 'Invalid workspace path');
       }
       const canonicalPath = realpathSync(input);
-      const authorizedRoot = roots.find(root => inside(root, canonicalPath));
+      // P03-5 / F-011：登记绑定的规范源路径本身即已授权（登记时审查 + 每次
+      // realpath/repoIdentity/gitCommonDir 复核）；其余路径仍须在授权根内。
+      const authorizedRoot =
+        roots.find(root => inside(root, canonicalPath)) ??
+        (canonicalPath === binding.canonicalPath ? canonicalPath : undefined);
       if (!authorizedRoot) throw new StorageError('ownership', 'WorkWorkspace.verify', 'Workspace outside authorized roots');
       const inspected = await inspector.inspect(canonicalPath);
       if (inspected.canonicalPath !== canonicalPath || inspected.repoIdentity !== binding.repoIdentity

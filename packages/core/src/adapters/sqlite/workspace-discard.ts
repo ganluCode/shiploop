@@ -24,6 +24,7 @@ import { createCompletedReceipt } from '../../ports/commands.js';
 import { createResultRef } from '../../ports/command-receipts.js';
 import { StorageError } from '../../ports/errors.js';
 import { stableStringify } from '../../ports/feature-plan.js';
+import { computeWorkspaceDiscardRequestDigest } from '../../ports/workspace-discard.js';
 import { validateWorkProcessIdentity, validateWorkResourceIdentity } from '../../ports/work-resources.js';
 import type { WorkResourceAccess, WorkResourceIdentity } from '../../ports/work-resources.js';
 import { validateSha256Digest, validateStableId } from '../../ports/validation.js';
@@ -138,7 +139,7 @@ export function createSqliteWorkspaceDiscardStore(session: SqliteStorageSession,
     const timestamp = new Date(now()).toISOString();
     return createCompletedReceipt({ commandId: input.commandId, principalId: input.principalId,
       operation: WORKSPACE_DISCARD_OPERATION, scope: { kind: 'project', projectId: input.projectId },
-      requestDigest: createHash('sha256').update(stableStringify({ schemaVersion: 1, input })).digest('hex'),
+      requestDigest: computeWorkspaceDiscardRequestDigest(input),
       issuedAt: timestamp, completedAt: timestamp,
       result: { workspaceOperationId: input.operationId, workspaceId: input.workspaceId, previewDigest: input.preview.previewDigest },
       resultRef: createResultRef(randomBytes(32)) });

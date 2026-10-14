@@ -178,6 +178,9 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       // P03-5 / F-010：人工丢弃受管工作区（project scope + workspace.discard；
       // 创建类不携带 expectedRevision；预览绑定在 payload 内由应用层重核）。
       'workspace.discard',
+      // P03-5 / F-011：人工丢弃预览（project scope + workspace.discard 能力位；
+      // 创建类；只读检查与证据发布在事务外，事务内只持久化 completed 回执）。
+      'workspace.discard.preview',
     ]);
     expect(COMMAND_OPERATION_SPECS).toEqual({
       'project.register': { scopeKind: 'registration', mutation: 'create', capability: 'project.register' },
@@ -201,6 +204,7 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       'execution.start': { scopeKind: 'project', mutation: 'create', capability: 'execution.start' },
       'execution.budget.revise': { scopeKind: 'project', mutation: 'update', capability: 'execution.budget.revise' },
       'workspace.discard': { scopeKind: 'project', mutation: 'create', capability: 'workspace.discard' },
+      'workspace.discard.preview': { scopeKind: 'project', mutation: 'create', capability: 'workspace.discard' },
     });
     for (const spec of Object.values(COMMAND_OPERATION_SPECS)) {
       expect(APP_CAPABILITIES).toContain(spec.capability);
