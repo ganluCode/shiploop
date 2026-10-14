@@ -68,6 +68,7 @@ import { StorageError } from '../ports/errors.js';
 import { PathResolutionError, computeDataRootIdentity, deriveDefaultDataRoot } from '../ports/path-service.js';
 import type { PathService } from '../ports/path-service.js';
 import type { RepositoryInspector } from '../ports/repository-inspector.js';
+import type { GitPublicMetadataLock } from '../ports/git-public-metadata-lock.js';
 import { createRuntimeRecoveryService } from '../application/runtime-recovery.js';
 import type { RuntimeRecoveryService } from '../application/runtime-recovery.js';
 import { createStaticRuntimeRecoveryCatalog } from '../ports/runtime-recovery-catalog.js';
@@ -85,6 +86,7 @@ import type { ValidationContext } from '../ports/validation.js';
 import { createArtifactFileStore } from './fs/artifact-files.js';
 import { createBaselinePartialOutputReader } from './fs/baseline-partial-output.js';
 import { createBaselineRepositoryGuard } from './fs/baseline-repository-guard.js';
+import { createGitPublicMetadataLock } from './fs/git-public-metadata-lock.js';
 import { createCommandProcessAdapter } from './process/command-process.js';
 import { createBaselineWorkspaceReader } from './fs/baseline-workspace.js';
 import { createPathService } from './fs/path-service.js';
@@ -155,6 +157,8 @@ export interface CoreApplication {
   readonly artifactStore: ArtifactStore;
   readonly artifactFileStore: ArtifactFileStore;
   readonly repositoryInspector: RepositoryInspector;
+  /** F-003：跨数据根、跨 Host 共用的 Git common-dir 短操作锁。 */
+  readonly gitPublicMetadataLock: GitPublicMetadataLock;
   readonly projectService: ProjectService;
   readonly configurationService: ConfigurationService;
   /** P02-2 / F-006：持久命令回执窄端口与授权回执/结果读取服务。 */
@@ -516,11 +520,12 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
     });
 
+    const gitPublicMetadataLock = createGitPublicMetadataLock();
     const baselineExecutionService = createBaselineExecutionService({
       commands: commandService, atomicStore, baselines: baselineStore, state: stateStore,
       inspector: repositoryInspector, workspace: createBaselineWorkspaceReader(),
       processes: createCommandProcessAdapter(), artifacts: artifactStore, files: artifactFileStore,
-      repositoryGuard: createBaselineRepositoryGuard(),
+      repositoryGuard: createBaselineRepositoryGuard({ lock: gitPublicMetadataLock }),
       recoverPartialOutput: createBaselinePartialOutputReader(basePathService.dataRoot()),
       environmentDirectory: (object.baselineEnvironmentDirectory as BaselineEnvironmentDirectory | undefined) ?? { resolveEnvironmentRef: () => null },
       resolveEnvironment: names => Object.fromEntries(names.flatMap(name => process.env[name] === undefined ? [] : [[name, process.env[name]!]])),
@@ -544,6 +549,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       artifactStore,
       artifactFileStore,
       repositoryInspector,
+      gitPublicMetadataLock,
       projectService,
       configurationService,
       commandReceiptStore,
