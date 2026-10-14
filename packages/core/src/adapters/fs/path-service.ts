@@ -18,7 +18,10 @@
  *   3. 目标叶存在时执行 lstat 核对：符号链接一律 escape 拒绝（不跟随）；
  * - 受权定位核验「项目真实存在 + 资源归属调用绑定的项目范围」：存在性由装配注入
  *   的 ProjectExistenceLookup（StateStore.getProject）核验；未装配核验端口时
- *   fail-closed（invalid_input），不能仅凭传入 projectId 授权；
+ *   fail-closed（invalid_input），不能仅凭传入 projectId 授权；feature_worktree_directory
+ *   （P03-5 / F-001）另核验「Feature 同项目归属」（FeatureOwnershipLookup，
+ *   readFeaturePlanView 未命中 not_found、跨项目 ownership），未装配时同样
+ *   fail-closed；定位只返回受控位置，不创建 worktree、不修改源仓库；
  * - 错误脱敏：StorageError（validation/not_found/ownership）与 PathResolutionError
  *   的消息与 details 只含受控根内相对位置、稳定 ID 与脱敏错误码，不含绝对路径；
  * - 可信项目模式边界：检查（realpath/lstat）与后续文件操作之间的并发替换窗口由
@@ -26,10 +29,10 @@
  * - import 本模块无副作用；createPathService 只做根核验（realpath/lstat），不创建
  *   任何目录或文件。
  *
- * 本模块不实现：Run/Session/Worktree 等未实现目录类型、Host/CLI 装配（F-012）、
- * 制品文件读写（F-010 ArtifactFileStore 的职责）。
+ * 本模块不实现：Run/Session 等未实现目录类型、Host/CLI 装配（F-012）、
+ * 制品文件读写（F-010 ArtifactFileStore 的职责）与 worktree 创建（后续任务）。
  */
-import { existsSync, lstatSync, realpathSync } from 'node:fs';
+import { lstatSync, realpathSync } from 'node:fs';
 import { dirname, isAbsolute, join, sep } from 'node:path';
 import { StorageError } from '../../ports/errors.js';
 import { validateStableId } from '../../ports/validation.js';
@@ -43,6 +46,7 @@ import {
   validateProjectScope,
 } from '../../ports/path-service.js';
 import type {
+  FeatureOwnershipLookup,
   LocatedPath,
   PathService,
   ProjectExistenceLookup,
@@ -89,6 +93,8 @@ export interface PathServiceOptions {
   readonly userHomeDir?: string;
   /** 项目存在性核验端口；未装配时 locateProjectResource fail-closed。 */
   readonly projectLookup?: ProjectExistenceLookup;
+  /** Feature 归属核验端口；未装配时 feature_worktree_directory 定位 fail-closed。 */
+  readonly featureLookup?: FeatureOwnershipLookup;
 }
 
 /** 适配器返回形态：在 PathService 端口之上提供装配期延迟绑定存在性核验端口。 */
@@ -98,6 +104,11 @@ export interface FsPathService extends PathService {
    * 组合根顺序：先解析数据根 → 打开数据库/存储 → 再以 StateStore 绑定核验端口。
    */
   withProjectLookup(lookup: ProjectExistenceLookup): FsPathService;
+  /**
+   * 返回共享同一已解析数据根、并装配 Feature 归属核验端口的 PathService
+   * （P03-5 / F-001）；未装配时 feature_worktree_directory 定位 fail-closed。
+   */
+  withFeatureLookup(lookup: FeatureOwnershipLookup): FsPathService;
 }
 
 /**
@@ -124,7 +135,11 @@ export function createPathService(options: PathServiceOptions): FsPathService {
   const rootReal = resolveExistingRoot(candidate, operation);
   const lookup =
     options.projectLookup === undefined ? undefined : validateLookup(options.projectLookup, operation);
-  return buildService(rootReal, lookup);
+  const featureLookup =
+    options.featureLookup === undefined
+      ? undefined
+      : validateFeatureLookup(options.featureLookup, operation);
+  return buildService(rootReal, lookup, featureLookup);
 }
 
 function validateExplicitRoot(dataRoot: string, operation: string): string {
@@ -184,7 +199,27 @@ function validateLookup(lookup: unknown, operation: string): ProjectExistenceLoo
   return lookup as ProjectExistenceLookup;
 }
 
-function buildService(rootReal: string, projectLookup: ProjectExistenceLookup | undefined): FsPathService {
+function validateFeatureLookup(lookup: unknown, operation: string): FeatureOwnershipLookup {
+  if (
+    lookup === null ||
+    typeof lookup !== 'object' ||
+    typeof (lookup as { readFeaturePlanView?: unknown }).readFeaturePlanView !== 'function'
+  ) {
+    throw new PathResolutionError(
+      'invalid_input',
+      operation,
+      `${operation}: featureLookup 必须提供 readFeaturePlanView 归属核验（PlanStore 结构子集）`,
+      { details: { reason: 'feature_lookup_invalid' } },
+    );
+  }
+  return lookup as FeatureOwnershipLookup;
+}
+
+function buildService(
+  rootReal: string,
+  projectLookup: ProjectExistenceLookup | undefined,
+  featureLookup: FeatureOwnershipLookup | undefined,
+): FsPathService {
   /** 受控根内相对位置 → 绝对路径（词法防线；输入校验已使越界不可能，防御纵深）。 */
   function toAbsolute(relativePath: string, op: string): string {
     const abs = join(rootReal, ...relativePath.split('/'));
@@ -196,41 +231,53 @@ function buildService(rootReal: string, projectLookup: ProjectExistenceLookup | 
     return abs;
   }
 
-  /** 已存在祖先的 realpath 必须位于授权根之内（符号链接祖先防线）。 */
+  /**
+   * 已存在祖先的 realpath 必须位于授权根之内（符号链接祖先防线）；祖先链上
+   * 的符号链接一律先 lstat 命中再 realpath 核对：悬空/环路链接视为不可信
+   * （escape），越出授权根的祖先 realpath 同样 escape（不跟随、不穿透）。
+   */
   function assertAncestorsInsideRoot(absPath: string, relativePath: string, op: string): void {
     let current = absPath;
     for (;;) {
-      let exists = false;
+      let stat;
       try {
-        exists = existsSync(current);
+        stat = lstatSync(current);
       } catch (error) {
+        if (errorCode(error) === 'ENOENT') {
+          const parent = dirname(current);
+          if (parent === current) {
+            // 不可达（rootReal 已存在），防御纵深。
+            throw new PathResolutionError('escape', op, `${op}: 无法定位授权数据根内的祖先`, {
+              details: { relativePath, reason: 'no_existing_ancestor' },
+            });
+          }
+          current = parent;
+          continue;
+        }
         throw mapFsError(error, op, relativePath);
       }
-      if (exists) {
-        let real: string;
-        try {
-          real = realpathSync(current);
-        } catch (error) {
-          throw mapFsError(error, op, relativePath);
-        }
-        if (real !== rootReal && !real.startsWith(rootReal + sep)) {
-          throw new PathResolutionError(
-            'escape',
-            op,
-            `${op}: 已存在祖先的真实位置越出授权数据根（符号链接逃逸）`,
-            { details: { relativePath, reason: 'ancestor_realpath_outside_root' } },
-          );
-        }
-        return;
-      }
-      const parent = dirname(current);
-      if (parent === current) {
-        // 不可达（rootReal 已存在），防御纵深。
-        throw new PathResolutionError('escape', op, `${op}: 无法定位授权数据根内的祖先`, {
-          details: { relativePath, reason: 'no_existing_ancestor' },
+      let real: string;
+      try {
+        real = realpathSync(current);
+      } catch (error) {
+        // lstat 命中但 realpath 失败：悬空或环路符号链接，一律按不可信链接拒绝。
+        throw new PathResolutionError('escape', op, `${op}: 祖先包含悬空符号链接，拒绝不可信链接`, {
+          details: {
+            relativePath,
+            reason: stat.isSymbolicLink() ? 'dangling_symlink' : 'ancestor_realpath_failed',
+          },
+          cause: error,
         });
       }
-      current = parent;
+      if (real !== rootReal && !real.startsWith(rootReal + sep)) {
+        throw new PathResolutionError(
+          'escape',
+          op,
+          `${op}: 已存在祖先的真实位置越出授权数据根（符号链接逃逸）`,
+          { details: { relativePath, reason: 'ancestor_realpath_outside_root' } },
+        );
+      }
+      return;
     }
   }
 
@@ -295,8 +342,43 @@ function buildService(rootReal: string, projectLookup: ProjectExistenceLookup | 
           },
         );
       }
+      if (validResource.type === 'feature_worktree_directory' && featureLookup === undefined) {
+        throw new PathResolutionError(
+          'invalid_input',
+          op,
+          `${op}: 未装配 Feature 归属核验端口，拒绝仅凭传入 featureId 授权`,
+          {
+            details: {
+              relativePath: deriveProjectRelativeDir(validScope.projectId),
+              reason: 'feature_lookup_not_configured',
+            },
+          },
+        );
+      }
       // 存在性核验：未知项目由 StateStore 抛 StorageError(kind='not_found')，原样透出。
       await projectLookup.getProject(validScope.projectId);
+      if (validResource.type === 'feature_worktree_directory') {
+        // Feature 归属核验：未命中 not_found；跨项目（scope A 定位项目 B 的 Feature）ownership。
+        const featureId = validResource.featureId as string;
+        const view = (featureLookup as FeatureOwnershipLookup).readFeaturePlanView(featureId);
+        if (view === undefined) {
+          throw new StorageError('not_found', op, `${op}: Feature ${featureId} 不存在`, {
+            entity: { type: 'feature', id: featureId },
+            details: { field: 'resource.featureId', reason: 'feature_not_found' },
+          });
+        }
+        if (view.feature.projectId !== validScope.projectId) {
+          throw new StorageError(
+            'ownership',
+            op,
+            `${op}: Feature 不属于调用绑定的项目范围，拒绝跨项目定位`,
+            {
+              entity: { type: 'project', id: validScope.projectId },
+              details: { field: 'resource.featureId', reason: 'cross_project_feature' },
+            },
+          );
+        }
+      }
       const relativePath = deriveResourceRelativePath(validScope.projectId, validResource);
       const absolutePath = toAbsolute(relativePath, op);
       assertAncestorsInsideRoot(absolutePath, relativePath, op);
@@ -310,7 +392,19 @@ function buildService(rootReal: string, projectLookup: ProjectExistenceLookup | 
     },
 
     withProjectLookup(lookup: ProjectExistenceLookup): FsPathService {
-      return buildService(rootReal, validateLookup(lookup, 'PathService.withProjectLookup'));
+      return buildService(
+        rootReal,
+        validateLookup(lookup, 'PathService.withProjectLookup'),
+        featureLookup,
+      );
+    },
+
+    withFeatureLookup(lookup: FeatureOwnershipLookup): FsPathService {
+      return buildService(
+        rootReal,
+        projectLookup,
+        validateFeatureLookup(lookup, 'PathService.withFeatureLookup'),
+      );
     },
   };
   return service;

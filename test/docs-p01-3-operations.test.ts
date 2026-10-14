@@ -223,6 +223,7 @@ describe('F-014 P01-3 操作说明文档', () => {
       'artifacts_directory',
       'staging_directory',
       'artifact_content',
+      'feature_worktree_directory',
     ]);
 
     for (const token of [

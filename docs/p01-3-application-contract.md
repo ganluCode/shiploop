@@ -274,14 +274,23 @@ interface PathService {
 }
 ```
 
-实现落点（F-003 已交付）：契约 `packages/core/src/ports/path-service.ts`（常量
+实现落点（F-003 已交付，P03-5 / F-001 扩展）：契约 `packages/core/src/ports/path-service.ts`（常量
 `DATA_NAMESPACE="shiploop"` / `DATABASE_FILE_NAME="core.sqlite"`、纯推导、资源类型白名单
 `PROJECT_RESOURCE_TYPES`、`PathResolutionError`），适配器
 `packages/core/src/adapters/fs/path-service.ts`。项目存在性核验端口
 （`ProjectExistenceLookup = Pick<StateStore,'getProject'>`）由装配注入：先解析数据根，
 再打开存储，最后以 `withProjectLookup(stateStore)` 绑定；未装配时受权定位 fail-closed
-（`invalid_input`），不仅凭传入 projectId 授权。资源类型只含 `project_directory` /
-`artifacts_directory` / `staging_directory` / `artifact_content`（与 F-010 推导一致）。
+（`invalid_input`），不仅凭传入 projectId 授权。资源类型含 `project_directory` /
+`artifacts_directory` / `staging_directory` / `artifact_content`（与 F-010 推导一致）/
+`feature_worktree_directory`（P03-5 / F-001：`projects/<projectId>/worktrees/<featureId>`，
+设计 03 §4 布局）。
+
+Feature worktree 定位（`feature_worktree_directory`）在项目存在性核验之外另核验
+「Feature 同项目归属」：归属核验端口
+（`FeatureOwnershipLookup = Pick<PlanDetailReadStore,'readFeaturePlanView'>`）由装配以
+`withFeatureLookup(planReads)` 绑定；未命中 `not_found`、跨项目 `ownership`，未装配该
+端口时 fail-closed。路径仅由已 realpath 授权数据根 + 稳定 projectId/featureId 推导，
+Feature 标题/描述/标签变化不改变位置；定位 ≠ 创建，不创建 worktree、不修改源仓库。
 
 - **默认根**：稳定技术 `dataNamespace` + 注入的 macOS 用户目录解析，默认
   `~/Library/Application Support/shiploop`；**显式根**经校验与规范化后供 `StateStore`、
@@ -294,8 +303,10 @@ interface PathService {
 - 拒绝非法 ID、绝对 locator、父目录穿越、目录/文件符号链接逃逸（沿用 realpath/祖先核对/
   no-follow）；真实根外哨兵文件不变。
 - 受权定位核验「所请求项目存在且属于调用时绑定的项目范围」；项目 A 范围不能定位项目 B 的制品；
-  未知项目返回明确错误；**不能仅凭传入 `projectId` 授权**。
-- 只支持已实现目录类型（项目/制品）；未知资源类型拒绝；不提前创建 Run/Session/Worktree。
+  未知项目返回明确错误；**不能仅凭传入 `projectId` 授权**。`feature_worktree_directory`
+  另核验 Feature 同项目归属（`FeatureOwnershipLookup`）。
+- 只支持已实现目录类型（项目/制品/Feature worktree 位置）；未知资源类型拒绝；
+  不提前创建 Run/Session 目录，worktree 定位也不创建目录。
 - 可信项目模式 ≠ 强 OS 沙箱：检查与操作之间的并发替换窗口由「单 Host 写入者 + 用户明确授权」
   前提收窄，不宣称强隔离。
 

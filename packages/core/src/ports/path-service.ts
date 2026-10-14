@@ -13,14 +13,18 @@
  * - 默认根（macOS）：<注入的用户目录>/Library/Application Support/shiploop。
  *   用户目录由装配方显式注入（deriveDefaultDataRoot 是纯推导）；本契约不读取
  *   真实用户目录，测试以临时 home/dataRoot 注入；
- * - 物理位置只由「已 realpath 的授权数据根 + 稳定 projectId/artifactId」推导；
+ * - 物理位置只由「已 realpath 的授权数据根 + 稳定 projectId/artifactId/featureId」
+ *   推导；
  *   数据库（core.sqlite）与项目制品共用同一数据根，与源仓库分离；
- * - 只支持当前已实现的资源类型（PROJECT_RESOURCE_TYPES）；Run/Session/Worktree
- *   等尚未实现的类型一律拒绝，不提前创建其目录形态；
+ * - 只支持当前已实现的资源类型（PROJECT_RESOURCE_TYPES）；Run/Session 等尚未
+ *   实现的类型一律拒绝，不提前创建其目录形态。feature_worktree_directory
+ *   （P03-5 / F-001）只定位受控 worktree 位置，不创建 worktree、不修改源仓库；
  * - 受权定位（locateProjectResource）先核验「项目真实存在且资源归属调用绑定的
  *   项目范围」，再返回范围内位置：项目存在性由装配注入的 ProjectExistenceLookup
  *   （StateStore.getProject 结构子集）核验，不能仅凭传入 projectId 授权；
  *   跨项目归属违规抛 StorageError(kind='ownership')，未知项目 not_found；
+ *   feature_worktree_directory 另核验「Feature 同项目归属」（FeatureOwnershipLookup，
+ *   缺失 not_found、跨项目 ownership），未装配时 fail-closed（invalid_input）；
  * - 输入校验失败抛 StorageError(kind='validation')（复用 F-002 校验器）；文件系统
  *   运行期条件（根不存在/逃逸/权限）抛 PathResolutionError，消息与 details 只含
  *   受控根内相对位置与脱敏错误码，不含绝对路径；
@@ -36,6 +40,7 @@ import {
   deriveProjectArtifactsRelativeDir,
   deriveStagingRelativeDir,
 } from './artifact-files.js';
+import type { PlanDetailReadStore } from './queries.js';
 import type { StateStore } from './state-store.js';
 import {
   rejectUnknownKeys,
@@ -98,6 +103,19 @@ export function deriveProjectRelativeDir(projectId: string): string {
   return `${PROJECTS_RELATIVE_ROOT}/${projectId}`;
 }
 
+/** 数据根内 Feature 受控 worktree 区相对根（POSIX 分隔，设计 03 §4 布局）。 */
+export const FEATURE_WORKTREES_RELATIVE_DIR = 'worktrees';
+
+/**
+ * Feature 受控 worktree 目录在数据根内的相对位置（POSIX 分隔）：
+ * <root>/projects/<projectId>/worktrees/<featureId>（设计 03 §4 布局）。
+ * 路径仅由授权数据根 + 稳定 projectId/featureId 推导；Feature 标题、描述、标签
+ * 变化不改变该位置。调用前两个 ID 须已过 validateStableId。
+ */
+export function deriveFeatureWorktreeRelativeDir(projectId: string, featureId: string): string {
+  return `${deriveProjectRelativeDir(projectId)}/${FEATURE_WORKTREES_RELATIVE_DIR}/${featureId}`;
+}
+
 /**
  * 当前已实现的受控资源类型（白名单）。Run/Session/Worktree/documents 等目录形态
  * 尚未实现，一律拒绝，不提前创建。
@@ -111,6 +129,12 @@ export const PROJECT_RESOURCE_TYPES = [
   'staging_directory',
   /** 单制品正式文件：<root>/projects/<projectId>/artifacts/<artifactId>/content。 */
   'artifact_content',
+  /**
+   * Feature 受控 worktree 目录（P03-5 / F-001）：
+   * <root>/projects/<projectId>/worktrees/<featureId>（设计 03 §4 布局）。
+   * 定位 ≠ 创建：只返回受控位置，不创建 worktree、不修改源仓库。
+   */
+  'feature_worktree_directory',
 ] as const;
 
 export type ProjectResourceType = (typeof PROJECT_RESOURCE_TYPES)[number];
@@ -124,6 +148,8 @@ export interface ProjectResourceRequest {
   readonly projectId?: string;
   /** 仅 artifact_content 必填；其余类型携带即拒绝。 */
   readonly artifactId?: string;
+  /** 仅 feature_worktree_directory 必填；其余类型携带即拒绝。 */
+  readonly featureId?: string;
 }
 
 export function validateProjectResourceRequest(
@@ -132,12 +158,12 @@ export function validateProjectResourceRequest(
 ): ProjectResourceRequest {
   const context: ValidationContext = { operation, entity: { type: 'project' } };
   const object = requirePlainObject(value, context, 'resource');
-  rejectUnknownKeys(object, ['type', 'projectId', 'artifactId'], context, 'resource');
+  rejectUnknownKeys(object, ['type', 'projectId', 'artifactId', 'featureId'], context, 'resource');
   if (typeof object.type !== 'string' || !(PROJECT_RESOURCE_TYPES as readonly string[]).includes(object.type)) {
     throw validationError(
       context,
       'resource.type',
-      `必须是已实现的资源类型之一（${PROJECT_RESOURCE_TYPES.join(' / ')}）；Run/Session/Worktree 等类型尚未实现，一律拒绝`,
+      `必须是已实现的资源类型之一（${PROJECT_RESOURCE_TYPES.join(' / ')}）；Run/Session 等类型尚未实现，一律拒绝`,
       object.type,
     );
   }
@@ -146,9 +172,16 @@ export function validateProjectResourceRequest(
     object.projectId === undefined
       ? undefined
       : validateStableId(object.projectId, context, 'resource.projectId');
+  const featureId =
+    object.featureId === undefined
+      ? undefined
+      : validateStableId(object.featureId, context, 'resource.featureId');
   if (type === 'artifact_content') {
     if (object.artifactId === undefined) {
       throw validationError(context, 'resource.artifactId', 'artifact_content 定位必须提供 artifactId');
+    }
+    if (featureId !== undefined) {
+      throw validationError(context, 'resource.featureId', 'artifact_content 不接受 featureId');
     }
     return {
       type,
@@ -156,11 +189,31 @@ export function validateProjectResourceRequest(
       artifactId: validateStableId(object.artifactId, context, 'resource.artifactId'),
     };
   }
+  if (type === 'feature_worktree_directory') {
+    if (featureId === undefined) {
+      throw validationError(
+        context,
+        'resource.featureId',
+        'feature_worktree_directory 定位必须提供 featureId',
+      );
+    }
+    if (object.artifactId !== undefined) {
+      throw validationError(context, 'resource.artifactId', 'feature_worktree_directory 不接受 artifactId');
+    }
+    return { type, ...(projectId !== undefined ? { projectId } : {}), featureId };
+  }
   if (object.artifactId !== undefined) {
     throw validationError(
       context,
       'resource.artifactId',
       `仅 artifact_content 允许携带 artifactId（${type} 不接受）`,
+    );
+  }
+  if (featureId !== undefined) {
+    throw validationError(
+      context,
+      'resource.featureId',
+      `仅 feature_worktree_directory 允许携带 featureId（${type} 不接受）`,
     );
   }
   return { type, ...(projectId !== undefined ? { projectId } : {}) };
@@ -205,6 +258,8 @@ export function deriveResourceRelativePath(
         projectId,
         artifactId: resource.artifactId as string,
       });
+    case 'feature_worktree_directory':
+      return deriveFeatureWorktreeRelativeDir(projectId, resource.featureId as string);
   }
 }
 
@@ -286,11 +341,23 @@ export function computeDataRootIdentity(canonicalRoot: string): string {
 export type ProjectExistenceLookup = Pick<StateStore, 'getProject'>;
 
 /**
+ * Feature 同项目归属核验端口（P03-5 / F-001）：PlanStore/QueryStore 读取面的
+ * 结构子集（与 ProjectExistenceLookup 同一「结构子集」先例）。readFeaturePlanView
+ * 按稳定 featureId 返回 Feature 身份一致视图（含 feature.projectId），未命中
+ * 返回 undefined。跨项目判定由 locateProjectResource 比对调用绑定的 scope 后
+ * 抛 StorageError(kind='ownership')；未装配该端口时 feature_worktree_directory
+ * 定位 fail-closed（invalid_input）。
+ */
+export type FeatureOwnershipLookup = Pick<PlanDetailReadStore, 'readFeaturePlanView'>;
+
+/**
  * 统一 PathService 窄端口（docs/p01-3-application-contract.md §4.3）。
  *
  * - dataRoot/databaseFilePath/projectDirectory 是纯派生读取（构造时根已 realpath
  *   固定），只校验输入 ID，不核验项目存在性；受权入口是 locateProjectResource；
  * - locateProjectResource 先核验项目存在且资源归属 scope 项目，再返回范围内位置；
+ *   feature_worktree_directory 另核验 Feature 同项目归属（装配注入的
+ *   FeatureOwnershipLookup），只定位不创建 worktree；
  * - 可信项目模式不等于强 OS 沙箱（见文件头说明）。
  */
 export interface PathService {

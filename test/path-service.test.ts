@@ -13,8 +13,8 @@
  *   项目 A 范围不能定位项目 B 的资源，未知项目 not_found，未装配核验端口时
  *   fail-closed（不仅凭传入 projectId 授权）；
  * - 关闭重开后 dataRoot/projectDirectory/locate 结果逐字段一致；只支持当前已实现
- *   目录类型（project/artifacts/staging/artifact_content），Run/Session/Worktree
- *   等未知类型一律拒绝。
+ *   目录类型（project/artifacts/staging/artifact_content/feature_worktree_directory），
+ *   Run/Session 等未知类型一律拒绝。
  */
 import {
   existsSync,
@@ -365,16 +365,23 @@ describe('F-003 PathService 受权定位', () => {
           'artifacts_directory',
           'staging_directory',
           'artifact_content',
+          'feature_worktree_directory',
         ]);
         for (const type of ['worktree', 'session_directory', 'run_directory', 'documents', '']) {
           await expectStorageErr('validation', () => authed.locateProjectResource(scope, { type }));
         }
-        // artifact_content 缺 artifactId / 其他类型携带 artifactId / 非对象输入。
+        // artifact_content 缺 artifactId / 其他类型携带 artifactId / featureId 形态错误 / 非对象输入。
         await expectStorageErr('validation', () =>
           authed.locateProjectResource(scope, { type: 'artifact_content' }),
         );
         await expectStorageErr('validation', () =>
           authed.locateProjectResource(scope, { type: 'project_directory', artifactId: ARTIFACT_1 }),
+        );
+        await expectStorageErr('validation', () =>
+          authed.locateProjectResource(scope, { type: 'feature_worktree_directory' }),
+        );
+        await expectStorageErr('validation', () =>
+          authed.locateProjectResource(scope, { type: 'project_directory', featureId: 'feat-1' }),
         );
         await expectStorageErr('validation', () => authed.locateProjectResource(scope, null));
         await expectStorageErr('validation', () =>

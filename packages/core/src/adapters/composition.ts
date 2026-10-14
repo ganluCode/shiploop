@@ -358,7 +358,12 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       verifier: createArtifactVerifier({ artifacts: artifactStore, files: artifactFileStore,
         limits: { maxReadBytes: 16_000_000 } }),
     });
-    const pathService = basePathService.withProjectLookup(stateStore);
+    // P03-5 / F-001：查询门面提前装配，PathService 的 Feature 归属核验与
+    // QueryService 共用同一 PlanStore 读取面（createSqliteQueryStore）。
+    const queryStore = createSqliteQueryStore(session);
+    const pathService = basePathService
+      .withProjectLookup(stateStore)
+      .withFeatureLookup(queryStore);
     const repositoryInspector =
       object.repositoryInspector === undefined
         ? createRepositoryInspector(
@@ -481,7 +486,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     });
     // F-010：授权查询/快照/事件读取窄端口装配；游标绑定的数据根身份由
     // realpath 固定的数据根派生（与 Host 握手身份同一算法，不来自请求数据）。
-    const queryStore = createSqliteQueryStore(session);
+    // queryStore 已在 PathService 装配处创建（P03-5 / F-001 共用同一读取面）。
     const queryService = createQueryService({
       projectReads: queryStore,
       snapshots: queryStore,

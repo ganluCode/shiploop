@@ -239,13 +239,18 @@ const exportJson = await app.configurationService.exportSettings(projectId); // 
 - 项目目录按稳定 `projectId` 定位（`<root>/projects/<projectId>`）；`displayName`/`description`/
   标签/标题变化不移动位置。数据库与项目制品与源仓库**分离**。
 - 受权定位资源类型（`PROJECT_RESOURCE_TYPES`，白名单）：
-  `project_directory` / `artifacts_directory` / `staging_directory` / `artifact_content`；
-  未知类型（Run/Session/Worktree 等）一律拒绝。
+  `project_directory` / `artifacts_directory` / `staging_directory` / `artifact_content` /
+  `feature_worktree_directory`；未知类型（Run/Session 等）一律拒绝。
+  `feature_worktree_directory`（P03-5 / F-001）定位 Feature 受控 worktree 目录
+  （`projects/<projectId>/worktrees/<featureId>`），路径仅由数据根与稳定 ID 推导，
+  Feature 标题/描述/标签变化不改变位置；定位 ≠ 创建，不创建 worktree、不修改源仓库。
 - 受权定位 `locateProjectResource(scope, resource)` 先核验项目存在且属于调用绑定的项目范围，
   再返回范围内位置；项目 A 范围不能定位项目 B 的资源（`ownership`），未知项目 `not_found`；
-  未装配存在性核验端口时 fail-closed。
+  未装配存在性核验端口时 fail-closed。`feature_worktree_directory` 另核验 Feature 同项目
+  归属（`FeatureOwnershipLookup`，未命中 `not_found`、跨项目 `ownership`），未装配该端口时
+  同样 fail-closed；目录穿越、NUL、绝对路径注入在任何文件副作用前 `validation` 拒绝。
 - 拒绝非法 ID、绝对 locator、父目录穿越、目录/文件符号链接逃逸（realpath/祖先核对/no-follow
-  三层防线）；真实根外哨兵文件不变。
+  三层防线，悬空符号链接同样拒绝）；真实根外哨兵文件不变。
 - **可信项目模式 ≠ 强 OS 沙箱**：检查与操作之间的并发替换窗口由「单 Host 写入者 + 用户明确
   授权」收窄，不宣称强隔离。
 
