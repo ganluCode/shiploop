@@ -1458,7 +1458,7 @@ export const workspaceOperations = sqliteTable('workspace_operations', {
   inputSnapshot: text('input_snapshot').notNull(), status: text('status').notNull(), resultJson: text('result_json'), receiptId: text('receipt_id').notNull(), finishSnapshot: text('finish_snapshot'),
 }, (table) => [
   check('workspace_operations_revision_check', sql`${table.revision} >= 1`),
-  check('workspace_operations_kind_check', sql`${table.kind} IN ('prepare','retain','cleanup')`),
+  check('workspace_operations_kind_check', sql`${table.kind} IN ('prepare','retain','cleanup','discard')`),
   check('workspace_operations_stage_check', sql`${table.executionStage} IN ('preflight','runtime','verification','commit','cleanup')`),
   check('workspace_operations_status_check', sql`${table.status} IN ('pending','succeeded','failed','blocked')`),
   check('workspace_operations_digest_check', sql`length(${table.requestDigest}) = 64 AND ${table.requestDigest} NOT GLOB '*[^0-9a-f]*'`),

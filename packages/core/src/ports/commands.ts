@@ -103,6 +103,9 @@ export const APP_CAPABILITIES = [
   // 修订只调整当前批准预算，不自动启动或恢复 Run；模型提出的理由或客户端
   // 自声明批准不授予本能力）。
   'execution.budget.revise',
+  // P03-5 / F-010：人工丢弃受管工作区能力位（独立预览+确认操作；预览与确认
+  // 共用该能力位，授权与 F-008/F-009 自动清理授权互不通用）。
+  'workspace.discard',
 ] as const;
 
 export type AppCapability = (typeof APP_CAPABILITIES)[number];
@@ -176,6 +179,10 @@ export const COMMAND_OPERATIONS = [
   // 当前预算/追加不可变修订行/脱敏事件与 completed 回执；不自动启动或
   // 恢复 Run，不触碰累计计数与快照）。
   'execution.budget.revise',
+  // P03-5 / F-010：人工丢弃受管工作区（project scope + workspace.discard；
+  // 创建类命令不携带 expectedRevision——工作区 revision 与预览绑定在 payload
+  // 内由应用层深校验；Host 接线随 F-011）。
+  'workspace.discard',
 ] as const;
 
 export type AppOperation = (typeof COMMAND_OPERATIONS)[number];
@@ -298,6 +305,13 @@ export const COMMAND_OPERATION_SPECS: Readonly<Record<AppOperation, CommandOpera
       scopeKind: 'project',
       mutation: 'update',
       capability: 'execution.budget.revise',
+    },
+    // P03-5 / F-010：人工丢弃（创建类；预览绑定与 revision CAS 由应用层在
+    // payload 深校验中重核，不经信封 expectedRevision）。
+    'workspace.discard': {
+      scopeKind: 'project',
+      mutation: 'create',
+      capability: 'workspace.discard',
     },
   });
 
@@ -845,6 +859,15 @@ export type ValidatedCommandEnvelope =
       readonly scope: { readonly kind: 'project'; readonly projectId: string };
       readonly expectedRevision: number;
       readonly payload: ValidatedExecutionBudgetRevisePayload;
+    })
+  // P03-5 / F-010：人工丢弃确认命令信封（创建类禁止携带 expectedRevision；
+  // payload 深校验——预览绑定/revision/范围——在应用层完成，避免本模块反向
+  // 依赖 workspace 端口）。
+  | (EnvelopeCommon & {
+      readonly operation: 'workspace.discard';
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: null;
+      readonly payload: Readonly<Record<string, unknown>>;
     });
 
 const ENVELOPE_KEYS = [
@@ -1633,6 +1656,23 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
       expectedRevision: null,
       payload: normalizeBaselinePayload(object.payload),
     } as ValidatedCommandEnvelope;
+  }
+  if (operation === 'workspace.discard') {
+    // P03-5 / F-010：与 baseline.cancel 同一纪律——信封层只要求 project scope
+    // 与 JSON 对象 payload；预览绑定/占用/停止证据深校验在应用层完成。
+    if (scope.kind !== 'project') {
+      fail(operation, 'invalid_input', 'scope.kind', 'scope 种类与操作不匹配');
+    }
+    if (!isPlainObjectPayload(object.payload)) {
+      fail(operation, 'invalid_input', 'payload', '必须是 JSON 对象');
+    }
+    return {
+      ...base,
+      operation,
+      scope,
+      expectedRevision: null,
+      payload: normalizeBaselinePayload(object.payload) as Record<string, unknown>,
+    };
   }
   // settings.project.create / settings.project.update
   if (scope.kind !== 'project') {

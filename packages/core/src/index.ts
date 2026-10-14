@@ -32,6 +32,8 @@ export * from './ports/workspace-cleanup.js';
 export * from './application/workspace-cleanup-policy.js';
 export * from './ports/workspace-cleaner.js';
 export * from './application/workspace-cleaner.js';
+export * from './ports/workspace-discard.js';
+export * from './application/workspace-discard.js';
 export * from './application/work-resource-stop.js';
 export * from './ports/attempt-store.js';
 export * from './ports/attempt-lifecycle.js';

@@ -94,7 +94,7 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
     expect(WIRE_MESSAGE_SCHEMA_VERSION).toBe(5);
   });
 
-  it('冻结二十项能力（P02-2 九项 + P02-3 基线两项 + P03-1 计划域三项 + P03-2 三项 + P03-3 执行授权面与预算修订两项），local-owner 持全部', () => {
+  it('冻结二十一项能力（P02-2 九项 + P02-3 基线两项 + P03-1 计划域三项 + P03-2 三项 + P03-3 执行授权面与预算修订两项 + P03-5 人工丢弃一项），local-owner 持全部', () => {
     expect([...APP_CAPABILITIES]).toEqual([
       'project.register',
       'project.read',
@@ -127,6 +127,9 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       // P03-3 / F-009：批次预算显式修订能力位（增额/延期是新的明确授权，
       // 与启动能力分离；修订不自动启动或恢复 Run）。
       'execution.budget.revise',
+      // P03-5 / F-010：人工丢弃受管工作区能力位（预览+确认共用；与自动清理
+      // 授权互不通用）。
+      'workspace.discard',
     ]);
     expect(LOCAL_OWNER_PRINCIPAL_ID).toBe('local-owner');
     expect(LOCAL_OWNER_CAPABILITIES.size).toBe(APP_CAPABILITIES.length);
@@ -172,6 +175,9 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       // P03-3 / F-009：批次预算显式修订（project scope + execution.budget.revise；
       // 更新类 expectedRevision=目标 Batch 当前 budget_revision；仅增额或延期）。
       'execution.budget.revise',
+      // P03-5 / F-010：人工丢弃受管工作区（project scope + workspace.discard；
+      // 创建类不携带 expectedRevision；预览绑定在 payload 内由应用层重核）。
+      'workspace.discard',
     ]);
     expect(COMMAND_OPERATION_SPECS).toEqual({
       'project.register': { scopeKind: 'registration', mutation: 'create', capability: 'project.register' },
@@ -194,6 +200,7 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       'execution.preview': { scopeKind: 'project', mutation: 'create', capability: 'execution.start' },
       'execution.start': { scopeKind: 'project', mutation: 'create', capability: 'execution.start' },
       'execution.budget.revise': { scopeKind: 'project', mutation: 'update', capability: 'execution.budget.revise' },
+      'workspace.discard': { scopeKind: 'project', mutation: 'create', capability: 'workspace.discard' },
     });
     for (const spec of Object.values(COMMAND_OPERATION_SPECS)) {
       expect(APP_CAPABILITIES).toContain(spec.capability);

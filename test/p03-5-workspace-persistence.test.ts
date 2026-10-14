@@ -280,7 +280,7 @@ describe('F-002 append-only migration', () => {
         if (version) session.database.prepare("INSERT INTO global_settings (id, created_at, updated_at, schema_version, payload) VALUES ('global', 1, 1, 2, '{}')").run();
         const previous = version ? session.database.prepare('SELECT * FROM schema_migrations ORDER BY version').all() : [];
         await migrateSqliteStorage(session);
-        expect(SQLITE_MIGRATIONS.at(-1)?.version).toBe(18);
+        expect(SQLITE_MIGRATIONS.at(-1)?.version).toBe(19);
         expect(session.database.prepare('SELECT * FROM schema_migrations ORDER BY version').all().slice(0, version)).toEqual(previous);
         if (version) expect(session.database.prepare("SELECT payload FROM global_settings WHERE id = 'global'").get()).toEqual({ payload: '{}' });
         expect((await migrateSqliteStorage(session)).appliedVersions).toEqual([]);

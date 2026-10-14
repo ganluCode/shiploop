@@ -13,7 +13,7 @@ import type { ValidationContext } from './validation.js';
 
 export const WORKSPACE_STATUSES = ['preparing', 'ready', 'retained', 'quarantined', 'cleanup_pending', 'cleaned'] as const;
 export type WorkspaceStatus = typeof WORKSPACE_STATUSES[number];
-export const WORKSPACE_OPERATION_KINDS = ['prepare', 'retain', 'cleanup'] as const;
+export const WORKSPACE_OPERATION_KINDS = ['prepare', 'retain', 'cleanup', 'discard'] as const;
 export type WorkspaceOperationKind = typeof WORKSPACE_OPERATION_KINDS[number];
 export const WORKSPACE_OPERATION_STATUSES = ['pending', 'succeeded', 'failed', 'blocked'] as const;
 export type WorkspaceOperationStatus = typeof WORKSPACE_OPERATION_STATUSES[number];

@@ -32,6 +32,8 @@ export function createSqliteWorkspaceAccess(session: SqliteStorageSession, optio
   readonly allowRetentionFinalization?: boolean;
   /** Trusted cleaner store only; it separately verifies success, stop/release evidence and approval gates. */
   readonly allowCleanupFinalization?: boolean;
+  /** Trusted discard store only; it separately re-verifies the preview binding, occupancy and stop gates. */
+  readonly allowDiscardFinalization?: boolean;
 }): WorkspaceOperationAccess {
   const db = session.database;
   const receipts = createSqliteCommandReceiptAccess(session);
@@ -102,8 +104,9 @@ export function createSqliteWorkspaceAccess(session: SqliteStorageSession, optio
   function commitResult(input: BeginWorkspaceOperationInput | FinishWorkspaceOperationInput, ws: ManagedWorkspaceRecord, op: WorkspaceOperationRecord, receipt: CommandReceipt, replay: boolean): WorkspaceOperationCommit {
     return { workspace: ws, operation: op, receipt, replay };
   }
-  const trustedFinalization = (kind: 'prepare' | 'retain' | 'cleanup') =>
-    (kind === 'retain' && options.allowRetentionFinalization) || (kind === 'cleanup' && options.allowCleanupFinalization);
+  const trustedFinalization = (kind: 'prepare' | 'retain' | 'cleanup' | 'discard') =>
+    (kind === 'retain' && options.allowRetentionFinalization) || (kind === 'cleanup' && options.allowCleanupFinalization)
+    || (kind === 'discard' && options.allowDiscardFinalization);
   function begin(raw: unknown): WorkspaceOperationCommit {
     write(); const input = validateBeginWorkspaceOperation(raw);
     const prior = receipts.findReceiptByCommandId(input.receipt.principalId, input.receipt.commandId);
@@ -177,7 +180,7 @@ export function createSqliteWorkspaceAccess(session: SqliteStorageSession, optio
     }
     if (input.status !== 'blocked' && !trustedFinalization(op.kind)) ensureIdentity(input.identity);
     else options.resources.read(input.identity);
-    if (input.status === 'succeeded' && ((op.kind === 'prepare' && input.workspaceStatus !== 'ready') || (op.kind === 'retain' && input.workspaceStatus !== 'retained') || (op.kind === 'cleanup' && input.workspaceStatus !== 'cleaned'))) fail('conflict', 'workspace status does not match operation kind');
+    if (input.status === 'succeeded' && ((op.kind === 'prepare' && input.workspaceStatus !== 'ready') || (op.kind === 'retain' && input.workspaceStatus !== 'retained') || (op.kind === 'cleanup' && input.workspaceStatus !== 'cleaned') || (op.kind === 'discard' && input.workspaceStatus !== 'cleaned'))) fail('conflict', 'workspace status does not match operation kind');
     if (op.revision !== input.expectedRevision || ws.revision !== input.expectedWorkspaceRevision) fail('conflict', 'workspace revision conflict', { expectedRevision: input.expectedRevision, actualRevision: op.revision });
     const receiptExisting = receipts.findReceiptByCommandId(input.receipt.principalId, input.receipt.commandId);
     if (receiptExisting && (receiptExisting.requestDigest !== input.receipt.requestDigest || !isDeepStrictEqual(receiptExisting.scope, input.receipt.scope)

@@ -330,6 +330,14 @@ function envelope(
           reason: '显式增额',
         },
       } as ValidatedCommandEnvelope;
+    case 'workspace.discard':
+      return {
+        ...base,
+        operation,
+        scope,
+        expectedRevision: null,
+        payload: { workspaceId: '0f0d9c36-765a-4b62-a6b9-38a5ff4f4bf1' },
+      } as ValidatedCommandEnvelope;
   }
 }
 
@@ -364,6 +372,9 @@ const COMMANDS_MATRIX = [
   // 更新类 expectedRevision=目标 Batch 当前 budget_revision；增额/延期授权面
   // 与启动能力分离）。
   { operation: 'execution.budget.revise', scope: { kind: 'project', projectId: PROJECT_A }, revision: 1, capability: 'execution.budget.revise' },
+  // P03-5 / F-010：人工丢弃确认（project scope + workspace.discard；创建类不携带
+  // expectedRevision，预览绑定与 revision CAS 由应用层重核）。
+  { operation: 'workspace.discard', scope: { kind: 'project', projectId: PROJECT_A }, revision: null, capability: 'workspace.discard' },
 ] as const;
 
 describe('F-005 TrustedPrincipal 产品构造与可信装配形状断言', () => {

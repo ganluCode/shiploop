@@ -1350,6 +1350,61 @@ WHEN OLD.status != 'pending'
 BEGIN SELECT RAISE(ABORT, 'workspace operation result is immutable'); END;
 `;
 
+/**
+ * v19: P03-5 / F-010 人工丢弃 operation kind（workspace_operations 追加
+ * 'discard' 枚举值）。SQLite 不能 ALTER CHECK，按既有先例（v5/v10
+ * command_receipts 重建）重建子表：新建 workspace_operations_v19（除
+ * kind_check 外逐列/约束/外键一致）→ 整表复制 → DROP 旧表（无其他表引用
+ * workspace_operations，子表删除不触碰父表 managed_workspaces）→ RENAME →
+ * 重建索引与三个不变量触发器。历史行、迁移记录与 checksum 不变；
+ * managed_workspaces 不变（丢弃终态复用 'cleaned'：目录确证消失、审计保留）。
+ */
+const MIGRATION_019_SQL = `
+CREATE TABLE workspace_operations_v19 (
+  id TEXT PRIMARY KEY NOT NULL, created_at INTEGER NOT NULL, project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1, updated_at INTEGER NOT NULL, feature_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL, run_id TEXT NOT NULL, attempt_id TEXT NOT NULL,
+  owner_id TEXT NOT NULL, host_instance_id TEXT NOT NULL, execution_version INTEGER NOT NULL,
+  kind TEXT NOT NULL, execution_stage TEXT NOT NULL, principal_id TEXT NOT NULL,
+  command_id TEXT NOT NULL, request_digest TEXT NOT NULL, input_snapshot TEXT NOT NULL,
+  status TEXT NOT NULL, result_json TEXT, receipt_id TEXT NOT NULL, finish_snapshot TEXT,
+  CONSTRAINT workspace_operations_revision_check CHECK (revision >= 1),
+  CONSTRAINT workspace_operations_kind_check CHECK (kind IN ('prepare','retain','cleanup','discard')),
+  CONSTRAINT workspace_operations_stage_check CHECK (execution_stage IN ('preflight','runtime','verification','commit','cleanup')),
+  CONSTRAINT workspace_operations_status_check CHECK (status IN ('pending','succeeded','failed','blocked')),
+  CONSTRAINT workspace_operations_digest_check CHECK (length(request_digest) = 64 AND request_digest NOT GLOB '*[^0-9a-f]*'),
+  CONSTRAINT workspace_operations_input_json_check CHECK (json_valid(input_snapshot) AND json_type(input_snapshot) = 'object'),
+  CONSTRAINT workspace_operations_result_json_check CHECK (result_json IS NULL OR (json_valid(result_json) AND json_type(result_json) = 'object')),
+  CONSTRAINT workspace_operations_finish_json_check CHECK (finish_snapshot IS NULL OR (json_valid(finish_snapshot) AND json_type(finish_snapshot) = 'object')),
+  CONSTRAINT workspace_operations_execution_version_check CHECK (execution_version >= 1),
+  CONSTRAINT workspace_operations_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT workspace_operations_workspace_fk FOREIGN KEY (project_id, workspace_id) REFERENCES managed_workspaces (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT workspace_operations_feature_same_project_fk FOREIGN KEY (project_id, feature_id) REFERENCES features (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT workspace_operations_run_same_project_fk FOREIGN KEY (project_id, run_id) REFERENCES runs (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT workspace_operations_attempt_same_project_fk FOREIGN KEY (project_id, attempt_id) REFERENCES attempts (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT workspace_operations_receipt_fk FOREIGN KEY (receipt_id) REFERENCES command_receipts (id) ON DELETE RESTRICT
+);
+INSERT INTO workspace_operations_v19 (id, created_at, project_id, revision, updated_at, feature_id, workspace_id, run_id, attempt_id, owner_id, host_instance_id, execution_version, kind, execution_stage, principal_id, command_id, request_digest, input_snapshot, status, result_json, receipt_id, finish_snapshot)
+SELECT id, created_at, project_id, revision, updated_at, feature_id, workspace_id, run_id, attempt_id, owner_id, host_instance_id, execution_version, kind, execution_stage, principal_id, command_id, request_digest, input_snapshot, status, result_json, receipt_id, finish_snapshot FROM workspace_operations;
+DROP TABLE workspace_operations;
+ALTER TABLE workspace_operations_v19 RENAME TO workspace_operations;
+CREATE UNIQUE INDEX workspace_operations_principal_command_unique ON workspace_operations (principal_id, command_id);
+CREATE UNIQUE INDEX workspace_operations_project_id_id_unique ON workspace_operations (project_id, id);
+CREATE INDEX workspace_operations_project_created_index ON workspace_operations (project_id, created_at, id);
+CREATE TRIGGER workspace_operations_execution_identity BEFORE INSERT ON workspace_operations
+WHEN NOT EXISTS (SELECT 1 FROM attempts a JOIN tasks t ON t.id = a.task_id
+  JOIN managed_workspaces w ON w.id = NEW.workspace_id AND w.project_id = NEW.project_id AND w.feature_id = NEW.feature_id
+  WHERE a.project_id = NEW.project_id AND a.id = NEW.attempt_id AND a.run_id = NEW.run_id
+    AND t.feature_id = NEW.feature_id AND a.owner_id = NEW.owner_id AND a.host_instance_id = NEW.host_instance_id
+    AND a.execution_version = NEW.execution_version AND t.execution_version = NEW.execution_version)
+BEGIN SELECT RAISE(ABORT, 'workspace operation execution identity mismatch'); END;
+CREATE TRIGGER workspace_operations_immutable_input BEFORE UPDATE OF project_id, feature_id, workspace_id, run_id, attempt_id, owner_id, host_instance_id, execution_version, kind, execution_stage, principal_id, command_id, request_digest, input_snapshot ON workspace_operations
+BEGIN SELECT RAISE(ABORT, 'workspace operation intent is immutable'); END;
+CREATE TRIGGER workspace_operations_immutable_result BEFORE UPDATE ON workspace_operations
+WHEN OLD.status != 'pending'
+BEGIN SELECT RAISE(ABORT, 'workspace operation result is immutable'); END;
+`;
+
 /** 已声明的全部 SQLite 迁移，按版本升序；F-005 的执行器按此顺序应用并核对摘要。 */
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
@@ -1434,4 +1489,5 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   },
   { version: 17, sql: MIGRATION_017_SQL, checksum: sha256Hex(MIGRATION_017_SQL) },
   { version: 18, sql: MIGRATION_018_SQL, checksum: sha256Hex(MIGRATION_018_SQL) },
+  { version: 19, sql: MIGRATION_019_SQL, checksum: sha256Hex(MIGRATION_019_SQL) },
 ];
