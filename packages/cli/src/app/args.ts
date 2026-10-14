@@ -11,6 +11,8 @@
  *   §12.1/§12.2 增补 baseline preview/run/list/status/cancel/evidence 子命令；
  *   P03-3 / F-012 增补执行授权 execution preview/start/budget/revise 子命令
  *   （单 Feature 显式授权 + 预算查询/修订；不新增 wait/cancel/resume）；
+ *   P03-4 / F-009 增补 execution schedule/attempts/diagnostics 只读诊断子命令
+ *   （Run 调度原因/Task 就绪视图、Attempt 归属与通知诊断审计；只读不认领）；
  * - 监听地址覆盖零容忍：--bind/--host/--address/--port/--listen* 与
  *   SHIPLOOP_HOST_* env 覆盖一律 bind_address_override_rejected；
  * - 错误只携带 code/reason/参数名/命令身份，绝不回显参数值；
@@ -78,7 +80,10 @@ export type AppCliCommandId =
   | 'execution.preview'
   | 'execution.start'
   | 'execution.budget'
-  | 'execution.revise';
+  | 'execution.revise'
+  | 'execution.schedule'
+  | 'execution.attempts'
+  | 'execution.diagnostics';
 
 export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'project.init',
@@ -122,6 +127,9 @@ export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'execution.start',
   'execution.budget',
   'execution.revise',
+  'execution.schedule',
+  'execution.attempts',
+  'execution.diagnostics',
 ]);
 
 /** 命令对应的 Core 操作身份（F-015/F-016 组装命令信封时使用）。 */
@@ -220,6 +228,8 @@ export type AppCliParseReason =
   | 'invalid_budget_date'
   | 'invalid_preview_digest'
   | 'invalid_batch_id'
+  | 'invalid_run_id'
+  | 'invalid_attempt_id'
   | 'concurrency_not_supported'
   | 'confirmation_required';
 
@@ -293,6 +303,8 @@ const REASON_MESSAGE: Readonly<Record<AppCliParseReason, string>> = Object.freez
   invalid_budget_date: '预算日期不合法（deadlineUtcMs 须为 epoch 毫秒整数或 ISO-8601 UTC 日期）',
   invalid_preview_digest: 'previewDigest 必须是 64 位小写十六进制',
   invalid_batch_id: 'batchId 必须是 UUID v4',
+  invalid_run_id: 'runId 必须是 UUID v4',
+  invalid_attempt_id: 'attemptId 必须是 UUID v4',
   concurrency_not_supported: '有效并发大于一：本版本只支持单并发执行',
   confirmation_required: '显式启动必须明确确认（--confirm）',
 });
@@ -757,6 +769,36 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
     maxPositionals: 1,
     positionalFields: ['batchId'],
   },
+  'execution.schedule': {
+    command: 'execution',
+    commandId: 'execution.schedule',
+    valueFlags: ['--project'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['runId'],
+  },
+  'execution.attempts': {
+    command: 'execution',
+    commandId: 'execution.attempts',
+    valueFlags: ['--project', '--limit', '--cursor'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['taskId'],
+  },
+  'execution.diagnostics': {
+    command: 'execution',
+    commandId: 'execution.diagnostics',
+    valueFlags: ['--project', '--limit', '--cursor'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['attemptId'],
+  },
 });
 
 const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, AppCliCommandId>>>> =
@@ -815,6 +857,9 @@ const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, A
       start: 'execution.start',
       budget: 'execution.budget',
       revise: 'execution.revise',
+      schedule: 'execution.schedule',
+      attempts: 'execution.attempts',
+      diagnostics: 'execution.diagnostics',
     },
   });
 
@@ -1881,6 +1926,50 @@ export interface ParsedExecutionBudget {
 }
 
 /**
+ * P03-4 / F-009 Run 调度诊断只读查询（execution.schedule；经 HostClient
+ * execution.run.schedule）：派生就绪评估 + 逐任务阻塞原因 + 占用审计，
+ * 不认领、不扣额、不唤醒执行。
+ */
+export interface ParsedExecutionSchedule {
+  readonly kind: 'command';
+  readonly command: 'execution';
+  readonly commandId: 'execution.schedule';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly runId: string;
+}
+
+/** P03-4 / F-009 Task 的 Attempt 审计分页查询（execution.attempts）。 */
+export interface ParsedExecutionAttempts {
+  readonly kind: 'command';
+  readonly command: 'execution';
+  readonly commandId: 'execution.attempts';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly taskId: string;
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+
+/** P03-4 / F-009 Attempt 迟到/越权通知诊断审计分页查询（execution.diagnostics）。 */
+export interface ParsedExecutionDiagnostics {
+  readonly kind: 'command';
+  readonly command: 'execution';
+  readonly commandId: 'execution.diagnostics';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly attemptId: string;
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+
+/**
  * 预算显式修订（execution.budget.revise）：`--revision` 是目标 Batch 当前
  * budget_revision（唯一 CAS 入口），`--reason` 必填；`--input` 是完整有限预算。
  */
@@ -1938,7 +2027,10 @@ export type ParsedAppCliCommand =
   | ParsedExecutionPreview
   | ParsedExecutionStart
   | ParsedExecutionBudget
-  | ParsedExecutionRevise;
+  | ParsedExecutionRevise
+  | ParsedExecutionSchedule
+  | ParsedExecutionAttempts
+  | ParsedExecutionDiagnostics;
 
 export interface ParsedAppCliHelp {
   readonly kind: 'help';
@@ -2310,6 +2402,22 @@ function requireBatchId(raw: string, state: ParseState): string {
   return raw;
 }
 
+/** Run 稳定身份（UUID v4；服务端派发，P03-4 / F-009 调度诊断查询目标）。 */
+function requireRunId(raw: string, state: ParseState): string {
+  if (!isUuidV4(raw)) {
+    fail(state, 'invalid_run_id', 'runId');
+  }
+  return raw;
+}
+
+/** Attempt 稳定身份（UUID v4；服务端派发，P03-4 / F-009 诊断审计查询目标）。 */
+function requireAttemptId(raw: string, state: ParseState): string {
+  if (!isUuidV4(raw)) {
+    fail(state, 'invalid_attempt_id', 'attemptId');
+  }
+  return raw;
+}
+
 /** 执行预算文件（缺失即缺少预算；形态校验在 app/execution.ts 纯层）。 */
 function requireBudgetFile(scan: ScanResult, state: ParseState): string {
   const raw = takeOption(scan, '--input');
@@ -2428,6 +2536,35 @@ function buildExecution(
         reason: requireReason(scan, state),
         inputFile: requireBudgetFile(scan, state),
         ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
+      };
+    }
+    case 'execution.schedule': {
+      return {
+        ...base,
+        command: 'execution',
+        commandId: 'execution.schedule',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        runId: requireRunId(scan.positionals[0] as string, state),
+      };
+    }
+    case 'execution.attempts': {
+      return {
+        ...base,
+        command: 'execution',
+        commandId: 'execution.attempts',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        taskId: requirePlanId(scan.positionals[0] as string, state, 'taskId'),
+        ...optionalPlanListPage(scan, state),
+      };
+    }
+    case 'execution.diagnostics': {
+      return {
+        ...base,
+        command: 'execution',
+        commandId: 'execution.diagnostics',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        attemptId: requireAttemptId(scan.positionals[0] as string, state),
+        ...optionalPlanListPage(scan, state),
       };
     }
     default:

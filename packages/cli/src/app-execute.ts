@@ -50,6 +50,14 @@ import {
 } from './app/execution.js';
 import type { ExecutionBudgetWire } from './app/execution.js';
 import {
+  buildExecutionAttemptsView,
+  buildExecutionDiagnosticsView,
+  buildExecutionScheduleView,
+  formatExecutionAttemptsView,
+  formatExecutionDiagnosticsView,
+  formatExecutionScheduleView,
+} from './app/schedule.js';
+import {
   buildExecutionInputView,
   buildFeaturePlanDecisionView,
   buildTaskStrategyEditView,
@@ -1404,6 +1412,31 @@ async function executeExecutionCommand(
         (commandId, replayed, result) => buildExecutionReviseView(commandId, replayed, result),
         formatExecutionReviseView,
       );
+    }
+    /* ------------------------------------------------------------ *
+     * P03-4 / F-009 调度诊断与 Attempt 审计只读查询
+     *（只经 HostClient 授权只读查询：不认领、不扣额、不启动 Runtime）
+     * ------------------------------------------------------------ */
+    case 'execution.schedule': {
+      const result = await client.getRunScheduleStatus(command.projectId, command.runId);
+      const view = buildExecutionScheduleView(result);
+      return emitSuccess(io, command, view, formatExecutionScheduleView(view));
+    }
+    case 'execution.attempts': {
+      const result = await client.listExecutionAttempts(command.projectId, command.taskId, {
+        ...(command.limit !== undefined ? { limit: command.limit } : {}),
+        ...(command.cursor !== undefined ? { cursor: command.cursor } : {}),
+      });
+      const view = buildExecutionAttemptsView(result);
+      return emitSuccess(io, command, view, formatExecutionAttemptsView(view));
+    }
+    case 'execution.diagnostics': {
+      const result = await client.listAttemptDiagnostics(command.projectId, command.attemptId, {
+        ...(command.limit !== undefined ? { limit: command.limit } : {}),
+        ...(command.cursor !== undefined ? { cursor: command.cursor } : {}),
+      });
+      const view = buildExecutionDiagnosticsView(result);
+      return emitSuccess(io, command, view, formatExecutionDiagnosticsView(view));
     }
   }
 }

@@ -924,8 +924,19 @@ const EXECUTION_AUTHORIZATION_BLOCK = [
   '- 本命令面不提供 wait/cancel/resume；task prepare 也不升级为执行授权。',
 ].join('\n');
 
+/** P03-4 / F-009 诊断只读边界：本 Feature 尚无完整执行/验证闭环。 */
+const EXECUTION_DIAGNOSTICS_BLOCK = [
+  '调度诊断边界（P03-4 / F-009）：',
+  '- execution schedule/attempts/diagnostics 是只读审计查询：不认领、不扣预算、不启动 Runtime；',
+  '- 结构化输出区分 all_passed 待 Feature 最终验收、Runtime 结果待验证（verifying）、',
+  '  准备失败（failed+preflight）、审批等待（waiting_approval/manualBlock）与资源隔离',
+  '  （resource_busy/quarantined）；',
+  '- accepted、无 ready 或执行文本成功（exitCode=0）均不显示为交付成功；',
+  '- 本 Feature（P03-4）尚无完整执行/验证闭环：查询视图不代表交付或验收结论。',
+].join('\n');
+
 const EXECUTION_HELP = [
-  'usage: shiploop execution <preview|start|budget|revise> [options]',
+  'usage: shiploop execution <preview|start|budget|revise|schedule|attempts|diagnostics> [options]',
   '',
   '执行授权命令（单 Feature 显式授权与持久预算）：',
   '  execution preview <featureId> --project <id> --input <file>             执行预览（只读，不是授权）',
@@ -935,10 +946,17 @@ const EXECUTION_HELP = [
   '  execution budget <batchId> --project <id> [--limit <int>] [--cursor <c>] 预算状态与修订历史（剩余额度）',
   '  execution revise <batchId> --project <id> --revision <int> --reason <text> --input <file>',
   '                                                                          预算显式修订（CAS + 理由）',
+  '  execution schedule <runId> --project <id>                              Run 调度原因/就绪视图/占用审计（只读）',
+  '  execution attempts <taskId> --project <id> [--limit <int>] [--cursor <c>]',
+  '                                                                          Task 的 Attempt 归属与审计（只读）',
+  '  execution diagnostics <attemptId> --project <id> [--limit <int>] [--cursor <c>]',
+  '                                                                          Attempt 迟到/越权通知诊断（只读）',
   '',
   '查看各子命令参数：shiploop execution preview --help',
   '',
   EXECUTION_AUTHORIZATION_BLOCK,
+  '',
+  EXECUTION_DIAGNOSTICS_BLOCK,
   EXIT_CODE_BLOCK,
   '',
 ].join('\n');
@@ -1044,6 +1062,73 @@ const EXECUTION_REVISE_HELP = [
   '',
 ].join('\n');
 
+const EXECUTION_SCHEDULE_HELP = [
+  'usage: shiploop execution schedule <runId> --project <id>',
+  '                                      [--data-root <abs>] [--json]',
+  '',
+  'Run 调度诊断只读查询（execution.run.schedule）：显示 Run 身份（Project/Feature/',
+  'Batch/workKey/dispatchOrdinal）、同一就绪判定规则的派生评估（reason/diagnostic/',
+  '稳定 readyTaskIds/handoff）、逐任务阻塞原因（状态/executionVersion/manualBlock/',
+  '最近 Attempt 阶段）与项目 retained 占用审计（held/quarantined，属主 Attempt/Run）。',
+  '- 结构化输出区分 all_passed 待 Feature 最终验收（awaiting_feature_final_verification，',
+  '  不是交付成功）、Runtime 结果待验证（verifying）、准备失败（failed+preflight）、',
+  '  审批等待（waiting_approval/manualBlock）与资源隔离（resource_busy/quarantined）；',
+  '- 持久视图损坏降级为 invalid_graph（diagnostic 明确），Run/占用仍如实可读，不伪造 ready；',
+  '- 只读：不认领、不扣预算、不续租、不唤醒执行；重复查询零副作用。',
+  '',
+  '选项：',
+  '  --project <id>   项目 ID（必填，UUID v4）',
+  '  --json           stdout 只输出结果 JSON；诊断到 stderr',
+  '',
+  EXECUTION_DIAGNOSTICS_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const EXECUTION_ATTEMPTS_HELP = [
+  'usage: shiploop execution attempts <taskId> --project <id> [--limit <int>] [--cursor <c>]',
+  '                                      [--data-root <abs>] [--json]',
+  '',
+  'Task 的 Attempt 归属与审计分页查询（execution.attempts.list）：显示 Attempt 身份',
+  '（所属 Run/Task/序号/owner/hostInstanceId）、围栏 executionVersion、状态与执行阶段',
+  '（原样展示）、已知退出码/耗时（未知保持 null）与租约到期。',
+  '- verifying 是 Runtime 结果待验证（不是验收通过）；failed+preflight 是准备失败；',
+  '  succeeded 只是 Attempt 级完成，不代表 Task 通过、Feature 验收或交付成功；',
+  '- 复用既有有界分页（默认 50、上限 200）与受控 plcur_v1_ 游标（绑定数据根/项目/',
+  '  父级 Task；跨项目/跨父级重放一律 invalid_cursor）；只读零副作用。',
+  '',
+  '选项：',
+  '  --project <id>   项目 ID（必填，UUID v4）',
+  '  --limit <int>    每页条数 1..200（默认 50）',
+  '  --cursor <c>     上一页返回的 nextCursor（不透明）',
+  '  --json           stdout 只输出结果 JSON；诊断到 stderr',
+  '',
+  EXECUTION_DIAGNOSTICS_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const EXECUTION_DIAGNOSTICS_HELP = [
+  'usage: shiploop execution diagnostics <attemptId> --project <id> [--limit <int>] [--cursor <c>]',
+  '                                      [--data-root <abs>] [--json]',
+  '',
+  'Attempt 迟到/越权通知诊断审计分页查询（execution.attempt.diagnostics）：只保留同项目',
+  'Attempt 链接、通知摘要、固定原因（stale_execution_identity/invalid_transition/',
+  'notification_id_reused）与发生时间；绝不保留原通知的标识符、消息、输出、路径或凭据。',
+  '- 诊断是拒绝证据：不折算为 Attempt 状态变化，也不代表验收或交付结论；',
+  '- 复用既有有界分页（默认 50、上限 200）与受控 plcur_v1_ 游标；只读零副作用。',
+  '',
+  '选项：',
+  '  --project <id>   项目 ID（必填，UUID v4）',
+  '  --limit <int>    每页条数 1..200（默认 50）',
+  '  --cursor <c>     上一页返回的 nextCursor（不透明）',
+  '  --json           stdout 只输出结果 JSON；诊断到 stderr',
+  '',
+  EXECUTION_DIAGNOSTICS_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
 const HELP_BY_SCOPE: Readonly<Record<AppHelpScope, string>> = Object.freeze({
   project: PROJECT_HELP,
   'project.init': PROJECT_INIT_HELP,
@@ -1095,6 +1180,9 @@ const HELP_BY_SCOPE: Readonly<Record<AppHelpScope, string>> = Object.freeze({
   'execution.start': EXECUTION_START_HELP,
   'execution.budget': EXECUTION_BUDGET_HELP,
   'execution.revise': EXECUTION_REVISE_HELP,
+  'execution.schedule': EXECUTION_SCHEDULE_HELP,
+  'execution.attempts': EXECUTION_ATTEMPTS_HELP,
+  'execution.diagnostics': EXECUTION_DIAGNOSTICS_HELP,
 });
 
 /** 返回指定作用域的应用命令帮助文本（以换行结尾）；不做任何 I/O。 */

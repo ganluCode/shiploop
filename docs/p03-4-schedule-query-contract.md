@@ -117,6 +117,45 @@ replay, 401 indistinguishability, 400 parameter negatives, cross-project fold,
 read-only table snapshot equality, receipt/event identity association) plus
 wire-validator unit cases.
 
+## CLI Exposure (F-009)
+
+F-009 wires the three read-only operations into the existing `execution` CLI
+group and HostClient — no new top-level command, no direct SQLite/ORM/log
+access, no second state source:
+
+| CLI subcommand | Command identity | HostClient operation |
+|---|---|---|
+| `shiploop execution schedule <runId> --project <id>` | `execution.schedule` | `getRunScheduleStatus` |
+| `shiploop execution attempts <taskId> --project <id> [--limit --cursor]` | `execution.attempts` | `listExecutionAttempts` |
+| `shiploop execution diagnostics <attemptId> --project <id> [--limit --cursor]` | `execution.diagnostics` | `listAttemptDiagnostics` |
+
+- Parsing stays in the pure layer (`app/args.ts`): `runId`/`attemptId` must be
+  UUID v4 (`invalid_run_id`/`invalid_attempt_id`), `taskId` a stable plan ID,
+  `--limit` 1..200 and `--cursor` a non-empty opaque token — all rejected with
+  exit code 2 before any I/O; unknown options keep `unknown_argument`.
+- The pure view layer (`app/schedule.ts`) projects the wire results into a
+  structured readiness classification: `all_passed` + handoff surfaces as
+  `awaiting_feature_final_verification` (pending Feature final verification,
+  not delivery), an Attempt in `verifying` as runtime result pending
+  verification, `failed`+`preflight` as preparation failure,
+  `waiting_approval`/`manualBlock` as approval waiting and
+  `resource_busy`/quarantined leases as resource isolation.
+  `completion.featureVerified`/`delivered` are always `false`: accepted,
+  no-ready or execution text success are never shown as delivery success.
+- Errors reuse the existing exit-code discipline: invalid input 2, business
+  fold `not_found` 1 (cross-project/nonexistent indistinguishable), Host
+  unreachable/start timeout 3; the CLI only talks to the Host.
+- Help text for `execution` and the three subcommands states that this
+  Feature (P03-4) has no complete execution/verification loop yet.
+
+Evidence: `test/p03-4-cli-schedule-args.test.ts` (pure parse/view/help),
+`test/p03-4-cli-schedule-vertical.test.ts` (real temporary Host + seeded
+SQLite via `runAppCli`: normal queries, cursor chains, invalid input/paging,
+cross-project fold, unreachable exit 3, repeated queries leave persisted
+tables byte-identical — no claim, no budget charge, no runtime start) and
+`test/p03-4-cli-schedule-built.test.ts` (the same checks through the
+officially built CLI entry `packages/cli/dist/bin.js`).
+
 ## Evidence
 
 `test/p03-4-schedule-query.test.ts` (9 cases): stable candidate order with
