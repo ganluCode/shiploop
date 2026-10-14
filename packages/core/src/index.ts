@@ -28,6 +28,8 @@ export * from './ports/workspace-preparation.js';
 export * from './application/workspace-preparation.js';
 export * from './ports/workspace-retention.js';
 export * from './application/workspace-retention.js';
+export * from './ports/workspace-cleanup.js';
+export * from './application/workspace-cleanup-policy.js';
 export * from './application/work-resource-stop.js';
 export * from './ports/attempt-store.js';
 export * from './ports/attempt-lifecycle.js';
