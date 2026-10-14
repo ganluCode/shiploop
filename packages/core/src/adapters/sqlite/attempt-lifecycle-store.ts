@@ -20,6 +20,8 @@ import type { SqliteStorageSession } from './session.js';
 
 export interface SqliteAttemptLifecycleStore extends AttemptLifecycleStore {
   /** Trusted composition only: joins workspace/result CAS without opening a nested transaction. */
+  recordWorkspaceRetentionInTransaction(transaction: CommandTransaction, identity: WorkResourceIdentity,
+    expectedRevision: number, evidenceRef: string): void;
   applyPreparationFailureInTransaction(transaction: CommandTransaction, input: unknown,
     isolation: 'unstarted' | 'uncertain'): AttemptApplicationResult;
 }
@@ -154,6 +156,17 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
     apply(input, stopEvidence) {
       validateAttemptNotification(input);
       return atomic.transact(operation, transaction => applyInTransaction(transaction, input, stopEvidence));
+    },
+    recordWorkspaceRetentionInTransaction(transaction, identity, expectedRevision, evidenceRef) {
+      if (!db.inTransaction) throw new TypeError('Attempt retention requires a write transaction');
+      resources.read(identity);
+      transaction.getArtifactInputRef(identity.projectId, evidenceRef);
+      const changed = db.prepare(`UPDATE attempts SET diagnostic_ref = ?, revision = revision + 1, updated_at = ?
+        WHERE project_id = ? AND id = ? AND owner_id = ? AND host_instance_id = ? AND execution_version = ? AND revision = ?
+          AND EXISTS (SELECT 1 FROM tasks WHERE id = attempts.task_id AND execution_version = ?)`)
+        .run(evidenceRef, (options.nowUtcMs ?? Date.now)(), identity.projectId, identity.attemptId, identity.owner,
+          identity.hostInstanceId, identity.executionVersion, expectedRevision, identity.executionVersion);
+      if (changed.changes !== 1) throw new StorageError('conflict', operation, 'Attempt retention CAS failed');
     },
     applyPreparationFailureInTransaction(transaction, input, isolation) {
       if (validateAttemptNotification(input).kind !== 'preparation_failed'
