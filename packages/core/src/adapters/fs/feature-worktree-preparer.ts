@@ -1,4 +1,5 @@
 import { lstat, mkdir, readFile, realpath } from 'node:fs/promises';
+import { isDeepStrictEqual } from 'node:util';
 import { dirname } from 'node:path';
 import type { CommandProcessIdentity, CommandProcessPort } from '../../ports/command-process.js';
 import { CommandProcessError } from '../../ports/command-process.js';
@@ -18,15 +19,25 @@ export function createFeatureWorktreePreparer(options: {
 }): FeatureWorktreePreparer {
   const processes = options.commandProcess ?? createCommandProcessAdapter();
   return {
-    async prepare(binding, rawBaseline, _operationId, admit) {
+    async prepare(binding, rawBaseline, _operationId, admit, checkpoint) {
       const baseline = validateWorkspaceBaseline(rawBaseline);
       const startedAtUtcMs = Date.now();
-      let isolated = false, exitCode: number | null = null, signal: string | null = null;
+      let isolated = checkpoint.directoryIdentity !== null, exitCode: number | null = null, signal: string | null = null;
+      let persistenceFailed = false;
+      function persist(action: () => void) {
+        try { action(); } catch (error) { persistenceFailed = true; throw error; }
+      }
+      async function directoryIdentity() {
+        if (await realpath(baseline.canonicalPath) !== baseline.canonicalPath) throw new Error('directory_identity_changed');
+        const stat = await lstat(baseline.canonicalPath, { bigint: true });
+        if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('directory_identity_changed');
+        return { device: String(stat.dev), inode: String(stat.ino), birthtimeNs: String(stat.birthtimeNs) };
+      }
       function result() {
         const endedAtUtcMs = Date.now();
         return { startedAtUtcMs, endedAtUtcMs, durationMs: endedAtUtcMs - startedAtUtcMs, exitCode, signal };
       }
-      async function git(args: string[], allowed = [0]) {
+      async function git(args: string[], allowed = [0], mutating = false) {
         admit();
         if (await realpath(binding.canonicalPath) !== binding.canonicalPath) throw new Error('source_path_changed');
         const previouslyIsolated = isolated;
@@ -40,7 +51,10 @@ export function createFeatureWorktreePreparer(options: {
             GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_SYSTEM: devNull, GIT_CONFIG_GLOBAL: devNull,
             GIT_NO_REPLACE_OBJECTS: '1', GIT_NO_LAZY_FETCH: '1' },
           maxInputBytes: 65_536, maxOutputBytes: options.maxOutputBytes ?? 1024 * 1024,
-          timeoutMs: options.timeoutMs ?? 30_000 }, options.confirmProcessIdentity);
+          timeoutMs: options.timeoutMs ?? 30_000 }, async identity => {
+            if (mutating) persist(() => checkpoint.recordProcess(identity));
+            return options.confirmProcessIdentity(identity);
+          });
         const chunks: Buffer[] = [];
         let outputFailed = false;
         try { for await (const event of handle.output) if (event.stream === 'stdout') chunks.push(Buffer.from(event.bytes)); }
@@ -48,15 +62,28 @@ export function createFeatureWorktreePreparer(options: {
         const completed = await handle.result;
         exitCode = completed.exitCode; signal = completed.signal;
         if (!completed.stop.confirmed || !(await handle.stopped).confirmed) throw new Error('stop_unconfirmed');
+        if (mutating) persist(() => checkpoint.recordStop(handle.identity));
         isolated = previouslyIsolated || outputFailed;
         if (outputFailed || completed.reason !== null || completed.droppedOutputBytes !== 0 || signal !== null
           || !allowed.includes(exitCode ?? -1)) throw new Error('git_command_failed');
         return { output: Buffer.concat(chunks).toString('utf8'), exitCode };
       }
       try {
+        admit();
+        if (checkpoint.unfinishedProcesses.length !== 0) throw new Error('previous_git_stop_unconfirmed');
         if ((await git(['rev-parse', '--path-format=absolute', '--git-common-dir'])).output.trim() !== baseline.gitCommonDir) throw new Error('source_common_dir_changed');
         await git(['cat-file', '-e', baseline.baseCommit + '^{commit}']);
         if ((await git(['rev-parse', '--verify', baseline.baseCommit + '^{commit}'])).output.trim() !== baseline.baseCommit) throw new Error('base_commit_mismatch');
+        if (checkpoint.directoryIdentity !== null) {
+          // Never infer permission from ancestry or an existing branch/directory alone.
+          if (!isDeepStrictEqual(await directoryIdentity(), checkpoint.directoryIdentity)) throw new Error('directory_identity_changed');
+          admit();
+          const inspection = await options.inspector.inspect(baseline);
+          if (inspection.repository.headCommit !== checkpoint.expectedHead) throw new Error('unexpected_head');
+          if (!isDeepStrictEqual(await directoryIdentity(), checkpoint.directoryIdentity)) throw new Error('directory_identity_changed');
+          admit();
+          return { inspection, isolated: false, reason: null, result: result() };
+        }
         const occupied = await git(['show-ref', '--verify', '--quiet', 'refs/heads/' + baseline.branch], [0, 1]);
         if (occupied.exitCode === 0) throw new Error('branch_conflict');
         const listing = (await git(['worktree', 'list', '--porcelain', '-z'])).output;
@@ -80,7 +107,10 @@ export function createFeatureWorktreePreparer(options: {
         if (await realpath(dirname(baseline.canonicalPath)) !== dirname(baseline.canonicalPath)) throw new Error('preparation_parent_changed');
         admit();
         isolated = true;
-        await git(['worktree', 'add', '-b', baseline.branch, baseline.canonicalPath, baseline.baseCommit]);
+        await mkdir(baseline.canonicalPath);
+        const createdDirectory = await directoryIdentity();
+        persist(() => checkpoint.recordDirectory(createdDirectory));
+        await git(['worktree', 'add', '-b', baseline.branch, baseline.canonicalPath, baseline.baseCommit], [0], true);
         const inspection = await options.inspector.inspect(baseline);
         if (inspection.repository.headCommit !== baseline.baseCommit || inspection.statusPorcelainBase64 !== ''
           || inspection.contents.untracked.length > 0 || inspection.contents.ignored.length > 0) throw new Error('created_worktree_not_at_baseline');
@@ -91,11 +121,15 @@ export function createFeatureWorktreePreparer(options: {
           || sourceAfter.codeDigest !== sourceBefore.codeDigest || sourceAfter.ignoredDigest !== sourceBefore.ignoredDigest
           || JSON.stringify(sourceAfter.contents) !== JSON.stringify(sourceBefore.contents)
           || !(await readFile(indexPath)).equals(index)) throw new Error('source_protection_changed');
+        if (!isDeepStrictEqual(await directoryIdentity(), createdDirectory)) throw new Error('directory_identity_changed');
+        admit();
         return { inspection, isolated: false, reason: null, result: result() };
       } catch (error) {
+        if (persistenceFailed) throw error;
         if ((error instanceof WorkspaceInspectionError || error instanceof CommandProcessError)
           && error.reason === 'stop_unconfirmed') isolated = true;
-        return { inspection: null, isolated, reason: error instanceof Error && /^[a-z_]+$/.test(error.message) ? error.message : 'workspace_preparation_failed', result: result() };
+        return { inspection: null, isolated, reason: error instanceof WorkspaceInspectionError ? error.reason
+          : error instanceof Error && /^[a-z_]+$/.test(error.message) ? error.message : 'workspace_preparation_failed', result: result() };
       }
     },
   };

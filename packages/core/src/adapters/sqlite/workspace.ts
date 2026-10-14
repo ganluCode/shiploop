@@ -125,7 +125,8 @@ export function createSqliteWorkspaceAccess(session: SqliteStorageSession, optio
     const resourceKey = `workspace:${createHash('sha256').update(JSON.stringify([input.baseline.repoIdentity, input.baseline.canonicalPath])).digest('hex')}`;
     if (!options.resources.read(input.identity).leases.some(lease => lease.resourceKind === 'workspace' && lease.resourceKey === resourceKey)) fail('ownership', 'workspace path does not match held resource');
     const existing = db.prepare(`SELECT ${WORKSPACE_COLUMNS} FROM managed_workspaces WHERE project_id = ? AND feature_id = ?`).get(input.identity.projectId, input.featureId) as WorkspaceRow | undefined;
-    if (existing && input.kind === 'prepare') fail('conflict', 'Feature already has a managed workspace');
+    if (existing && input.kind === 'prepare' && input.expectedWorkspaceRevision === null) fail('conflict', 'Feature already has a managed workspace');
+    if (existing && input.kind === 'prepare' && !['ready', 'retained', 'quarantined'].includes(String(existing.status))) fail('conflict', 'workspace cannot be prepared again');
     if (!existing && input.kind !== 'prepare') fail('not_found', 'workspace is required for retain or cleanup');
     const existingWorkspace = workspace(existing);
     if (existingWorkspace && existingWorkspace.id !== input.workspaceId) fail('conflict', 'workspace identity differs');

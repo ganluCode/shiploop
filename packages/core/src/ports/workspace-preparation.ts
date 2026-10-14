@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { validateStableId } from './validation.js';
 import type { WorkResourceIdentity, WorkWorkspaceAuthority, VerifiedWorkWorkspace } from './work-resources.js';
 import type { RepositoryBindingRecord } from './state-store.js';
+import type { CommandProcessIdentity } from './command-process.js';
 import type { WorkspaceBaseline, WorkspaceOperationCommit, WorkspaceOperationResult } from './workspace.js';
 import type { WorkspaceInspection } from './workspace-inspector.js';
 
@@ -36,13 +37,33 @@ export interface WorkspacePreparationOutcome {
   /** Includes an attempted mutating Git command, uncertain stop, or changed metadata. */
   readonly isolated: boolean;
 }
+export interface PreparationDirectoryIdentity {
+  readonly device: string;
+  readonly inode: string;
+  readonly birthtimeNs: string;
+}
+/** Durable admission facts, not Runtime/session recovery authority. */
+export interface WorkspacePreparationJournal {
+  readonly directoryIdentity: PreparationDirectoryIdentity | null;
+  readonly expectedHead: string;
+  readonly unfinishedProcesses: readonly CommandProcessIdentity[];
+}
+export interface WorkspacePreparationCheckpoint extends WorkspacePreparationJournal {
+  recordDirectory(identity: PreparationDirectoryIdentity): void;
+  recordProcess(identity: CommandProcessIdentity): void;
+  recordStop(identity: CommandProcessIdentity): void;
+}
 export interface WorkspacePreparationStore {
   readAuthorization(input: WorkspacePreparationInput): WorkspacePreparationAuthorization;
   begin(input: WorkspacePreparationInput, baseline: WorkspaceBaseline): WorkspaceOperationCommit;
+  readJournal(input: WorkspacePreparationInput, intent: WorkspaceOperationCommit): WorkspacePreparationJournal;
+  recordCheckpoint(input: WorkspacePreparationInput, intent: WorkspaceOperationCommit,
+    kind: 'directory' | 'process' | 'stop', value: PreparationDirectoryIdentity | CommandProcessIdentity): void;
+  assertCurrent(input: WorkspacePreparationInput, intent: WorkspaceOperationCommit): void;
   finish(input: WorkspacePreparationInput, intent: WorkspaceOperationCommit, outcome: WorkspacePreparationOutcome, evidenceRef: string): WorkspaceOperationCommit;
-  quarantine(input: WorkspacePreparationInput): void;
+  quarantine(input: WorkspacePreparationInput, intent?: WorkspaceOperationCommit): void;
 }
 export interface FeatureWorktreePreparer {
   prepare(binding: RepositoryBindingRecord, baseline: WorkspaceBaseline, operationId: string,
-    admit: () => void): Promise<WorkspacePreparationOutcome>;
+    admit: () => void, checkpoint: WorkspacePreparationCheckpoint): Promise<WorkspacePreparationOutcome>;
 }
