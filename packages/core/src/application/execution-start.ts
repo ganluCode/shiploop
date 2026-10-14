@@ -556,7 +556,10 @@ export function createExecutionStartService(deps: ExecutionStartServiceDeps): Ex
         dispatchOrdinal = 1;
         runScopeDigest = fresh.previewDigest;
         runLimits = fresh.budget.run;
-        runInputSnapshot = { schemaVersion: 1, previewDigest: fresh.previewDigest, ...baseInputSnapshot };
+        const binding = transaction.getRepositoryBinding(projectId);
+        runInputSnapshot = { schemaVersion: 1, previewDigest: fresh.previewDigest, ...baseInputSnapshot,
+          workspaceBaseline: { repositoryBindingId: binding.id, repositoryBindingRevision: binding.bindingRevision,
+            baseCommit: fresh.code.headCommit } };
       } else {
         /* 11b. 显式失败重试：同一父 Batch，共享父预算（不携带新预算/新授权依据）；
          * 终态 Batch 不接受新派发；重试工作身份必须与父 Batch 既有 Run 的
@@ -617,7 +620,8 @@ export function createExecutionStartService(deps: ExecutionStartServiceDeps): Ex
           maxAttemptsPerRun: parent.budgetSnapshot.run.maxAttemptsPerRun,
           runTimeLimitMs: parent.budgetSnapshot.run.runTimeLimitMs,
         };
-        runInputSnapshot = { schemaVersion: 1, previewDigest: parentPreviewDigest, ...baseInputSnapshot };
+        runInputSnapshot = { schemaVersion: 1, previewDigest: parentPreviewDigest, ...baseInputSnapshot,
+          workspaceBaseline: workRuns[0].inputSnapshot.workspaceBaseline ?? null };
       }
 
       /* 12. Run 创建（派发身份/上限冻结；queued + 可查询排队原因；不启动任何

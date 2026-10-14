@@ -15,14 +15,21 @@ import { createSqliteExecutionAccess } from './execution-store.js';
 import { createSqliteAttemptAccess } from './attempt-store.js';
 import { createSqliteTaskDagStore } from './task-dag-store.js';
 import { createSqliteWorkResourceAccess } from './work-resources.js';
+import type { CommandTransaction } from '../../ports/atomic-commands.js';
 import type { SqliteStorageSession } from './session.js';
+
+export interface SqliteAttemptLifecycleStore extends AttemptLifecycleStore {
+  /** Trusted composition only: joins workspace/result CAS without opening a nested transaction. */
+  applyPreparationFailureInTransaction(transaction: CommandTransaction, input: unknown,
+    isolation: 'unstarted' | 'uncertain'): AttemptApplicationResult;
+}
 
 /** Owns a short committing transaction; no Runtime, Git, filesystem or process I/O. */
 export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession, options: {
   readonly workspaceAuthority: WorkWorkspaceAuthority;
   readonly stopVerifier?: Pick<WorkResourceStopVerifier, 'inspect'>;
   readonly nowUtcMs?: () => number;
-}): AttemptLifecycleStore {
+}): SqliteAttemptLifecycleStore {
   const operation = 'AttemptLifecycle.apply';
   const db = session.database;
   const attempts = createSqliteAttemptAccess(session);
@@ -30,15 +37,15 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
   const atomic = createSqliteAtomicCommandStore(session, options);
   const resources = createSqliteWorkResourceAccess(session, options);
   const dag = createSqliteTaskDagStore(session);
-  return {
-    apply(input, stopEvidence) {
+  function applyInTransaction(transaction: CommandTransaction, input: unknown, stopEvidence?: unknown,
+    preparationIsolated = false): AttemptApplicationResult {
+      if (!db.inTransaction) throw new TypeError('Attempt lifecycle primitive requires a write transaction');
       const valid = validateAttemptNotification(input);
       const identity: WorkResourceIdentity = { projectId: valid.projectId, attemptId: valid.attemptId,
         owner: valid.owner, hostInstanceId: valid.hostInstanceId, executionVersion: valid.executionVersion };
       const digest = createHash('sha256').update(stableStringify(valid)).digest('hex');
       const targetStatus = valid.kind === 'executing' ? 'executing'
         : valid.kind === 'preparation_failed' || valid.exitCode !== 0 ? 'failed' : 'verifying';
-      return atomic.transact(operation, transaction => {
         const now = (options.nowUtcMs ?? Date.now)();
         if (!Number.isSafeInteger(now) || now < 1) throw new StorageError('validation', operation, 'Invalid lifecycle clock');
         const row = db.prepare<[string], { project_id: string }>('SELECT project_id FROM attempts WHERE id = ?').get(valid.attemptId);
@@ -97,7 +104,7 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
           || approval.currentDecision?.id !== snapshot.decisionId || graph.reason === 'invalid_graph';
         let stopConfirmed = false;
         if (valid.kind === 'preparation_failed') {
-          const unstarted = attempt.invocationId === null && attempt.startedAtUtcMs === null
+          const unstarted = !preparationIsolated && attempt.invocationId === null && attempt.startedAtUtcMs === null
             && attempt.executionStage === 'preflight' && occupied.leases.every(l => l.processIdentity === null);
           if (unstarted) {
             resources.releaseUnstartedInTransaction(identity);
@@ -142,7 +149,16 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
         db.prepare(`INSERT INTO attempt_notifications (id, project_id, attempt_id, notification_id, request_digest, receipt)
           VALUES (?, ?, ?, ?, ?, ?)`).run(randomUUID(), valid.projectId, attempt.id, valid.notificationId, digest, JSON.stringify(receipt));
         return receipt;
-      });
+  }
+  return {
+    apply(input, stopEvidence) {
+      validateAttemptNotification(input);
+      return atomic.transact(operation, transaction => applyInTransaction(transaction, input, stopEvidence));
+    },
+    applyPreparationFailureInTransaction(transaction, input, isolation) {
+      if (validateAttemptNotification(input).kind !== 'preparation_failed'
+        || !['unstarted', 'uncertain'].includes(isolation)) throw new TypeError('Expected trusted preparation failure');
+      return applyInTransaction(transaction, input, undefined, isolation === 'uncertain');
     },
   };
 }

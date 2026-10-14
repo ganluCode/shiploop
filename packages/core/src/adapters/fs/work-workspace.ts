@@ -5,13 +5,16 @@ import type { RepositoryBindingRecord } from '../../ports/state-store.js';
 import type { RepositoryInspector } from '../../ports/repository-inspector.js';
 import type { WorkWorkspaceAuthority, VerifiedWorkWorkspace } from '../../ports/work-resources.js';
 import { StorageError } from '../../ports/errors.js';
+import type { PathService } from '../../ports/path-service.js';
+import type { PreparationWorkspaceAuthority } from '../../ports/workspace-preparation.js';
 import { createRepositoryInspector } from './repository-inspector.js';
 
 /** Explicit roots are trusted assembly policy, not Planner or command arguments. */
 export function createWorkWorkspaceAuthority(options: {
   readonly authorizedRoots: readonly string[];
   readonly inspector?: RepositoryInspector;
-}): WorkWorkspaceAuthority {
+  readonly preparationPaths?: PathService;
+}): PreparationWorkspaceAuthority {
   const tokens = new WeakSet<object>();
   const inspector = options.inspector ?? createRepositoryInspector();
   const roots = options.authorizedRoots.map(root => {
@@ -22,7 +25,24 @@ export function createWorkWorkspaceAuthority(options: {
     const suffix = relative(root, path);
     return suffix === '' || (!isAbsolute(suffix) && suffix !== '..' && !suffix.startsWith(`..${sep}`));
   };
+  const issue = (binding: RepositoryBindingRecord, canonicalPath: string, authorizedRoot: string) => {
+    const token: VerifiedWorkWorkspace = Object.freeze({ binding: Object.freeze({ ...binding }), authorizedRoot, canonicalPath,
+      resourceKey: `workspace:${createHash('sha256').update(JSON.stringify([binding.repoIdentity, canonicalPath])).digest('hex')}` });
+    tokens.add(token);
+    return token;
+  };
   return {
+    async verifyPreparation(binding, featureId) {
+      if (!options.preparationPaths) throw new StorageError('validation', 'WorkWorkspace.prepare', 'Preparation PathService is not assembled');
+      const source = await this.verify(binding, binding.canonicalPath);
+      const target = await options.preparationPaths.locateProjectResource({ projectId: binding.projectId },
+        { type: 'feature_worktree_directory', featureId });
+      const authorizedRoot = roots.find(root => inside(root, target.absolutePath));
+      if (!authorizedRoot || source.binding.projectId !== target.projectId) {
+        throw new StorageError('ownership', 'WorkWorkspace.prepare', 'Preparation path outside authorized roots');
+      }
+      return issue(binding, target.absolutePath, authorizedRoot);
+    },
     async verify(binding, input) {
       if (typeof input !== 'string' || !isAbsolute(input) || input.split(sep).includes('..') || /[\0-\x1f\x7f]/.test(input)) {
         throw new StorageError('validation', 'WorkWorkspace.verify', 'Invalid workspace path');
@@ -35,10 +55,7 @@ export function createWorkWorkspaceAuthority(options: {
         || inspected.gitCommonDir !== binding.gitCommonDir) {
         throw new StorageError('ownership', 'WorkWorkspace.verify', 'Workspace repository identity mismatch');
       }
-      const token: VerifiedWorkWorkspace = Object.freeze({ binding: Object.freeze({ ...binding }), authorizedRoot, canonicalPath,
-        resourceKey: `workspace:${createHash('sha256').update(JSON.stringify([binding.repoIdentity, canonicalPath])).digest('hex')}` });
-      tokens.add(token);
-      return token;
+      return issue(binding, canonicalPath, authorizedRoot);
     },
     inspect(token) {
       if (!token || typeof token !== 'object' || !tokens.has(token)) {
