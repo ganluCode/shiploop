@@ -365,6 +365,8 @@ function expectNoExecutionEntities(probe: StorageProbe): void {
     'attempt_notifications',
     'attempt_notification_diagnostics',
     'workspace_leases',
+    'workspace_operations',
+    'managed_workspaces',
     'batch_budget_revisions',
     'execution_batches',
     'runs',

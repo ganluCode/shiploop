@@ -250,6 +250,11 @@ export const stateEvents = sqliteTable('state_events', {
   aggregateRevision: integer('aggregate_revision').notNull(),
   /** 脱敏结构化摘要（只含字段名/键名/schemaVersion）；不存原值或凭据。 */
   payload: text('payload').notNull(),
+  /** Preparation/retain/cleanup events are linked without introducing a second lease system. */
+  operationId: text('operation_id'),
+  runId: text('run_id'),
+  attemptId: text('attempt_id'),
+  executionStage: text('execution_stage'),
   /** 发生时间 UTC 毫秒。 */
   occurredAt: integer('occurred_at').notNull(),
 }, (table) => [
@@ -1078,6 +1083,7 @@ export const runs = sqliteTable('runs', {
     foreignColumns: [executionBatches.id, executionBatches.featureId],
   }).onDelete('restrict'),
   // 派发身份唯一（重复派发在 DDL 级被拒绝；失败重试以递增 dispatch_ordinal 表达）。
+  uniqueIndex('runs_project_id_id_unique').on(table.projectId, table.id),
   uniqueIndex('runs_receipt_identity_unique').on(table.projectId, table.batchId, table.id),
   uniqueIndex('runs_feature_id_id_unique').on(table.featureId, table.id),
   uniqueIndex('runs_dispatch_identity_unique').on(table.batchId, table.workKey, table.dispatchOrdinal),
@@ -1410,6 +1416,64 @@ export const attemptNotificationDiagnostics = sqliteTable('attempt_notification_
   foreignKey({ name: 'attempt_diagnostics_attempt_fk', columns: [table.projectId, table.attemptId],
     foreignColumns: [attempts.projectId, attempts.id] }).onDelete('restrict'),
   uniqueIndex('attempt_diagnostics_identity_unique').on(table.attemptId, table.notificationDigest),
+]);
+
+export const managedWorkspaces = sqliteTable('managed_workspaces', {
+  id: text('id').primaryKey(), createdAt: integer('created_at').notNull(),
+  projectId: text('project_id').notNull().references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  revision: integer('revision').notNull().default(1), updatedAt: integer('updated_at').notNull(),
+  featureId: text('feature_id').notNull(), repositoryBindingId: text('repository_binding_id').notNull(),
+  repositoryBindingRevision: integer('repository_binding_revision').notNull(), repoIdentity: text('repo_identity').notNull(),
+  canonicalPath: text('canonical_path').notNull(), gitCommonDir: text('git_common_dir').notNull(), branch: text('branch').notNull(),
+  baseCommit: text('base_commit').notNull(), headCommit: text('head_commit'), codeDigest: text('code_digest'),
+  status: text('status').notNull(), preparationOperationId: text('preparation_operation_id').notNull(),
+  ownerId: text('owner_id').notNull(), hostInstanceId: text('host_instance_id').notNull(), executionVersion: integer('execution_version').notNull(),
+  runId: text('run_id').notNull(), attemptId: text('attempt_id').notNull(),
+}, (table) => [
+  check('managed_workspaces_revision_check', sql`${table.revision} >= 1`),
+  check('managed_workspaces_status_check', sql`${table.status} IN ('preparing','ready','retained','quarantined','cleanup_pending','cleaned')`),
+  check('managed_workspaces_code_digest_check', sql`${table.codeDigest} IS NULL OR (length(${table.codeDigest}) = 64 AND ${table.codeDigest} NOT GLOB '*[^0-9a-f]*')`),
+  check('managed_workspaces_base_commit_check', sql`length(${table.baseCommit}) IN (40,64) AND ${table.baseCommit} NOT GLOB '*[^0-9a-f]*'`),
+  check('managed_workspaces_revision_binding_check', sql`${table.repositoryBindingRevision} >= 1`),
+  check('managed_workspaces_execution_version_check', sql`${table.executionVersion} >= 1`),
+  foreignKey({ name: 'managed_workspaces_feature_same_project_fk', columns: [table.projectId, table.featureId], foreignColumns: [features.projectId, features.id] }).onDelete('restrict'),
+  foreignKey({ name: 'managed_workspaces_binding_same_project_fk', columns: [table.projectId, table.repositoryBindingId], foreignColumns: [repositoryBindings.projectId, repositoryBindings.id] }).onDelete('restrict'),
+  foreignKey({ name: 'managed_workspaces_run_same_project_fk', columns: [table.projectId, table.runId], foreignColumns: [runs.projectId, runs.id] }).onDelete('restrict'),
+  foreignKey({ name: 'managed_workspaces_attempt_same_project_fk', columns: [table.projectId, table.attemptId], foreignColumns: [attempts.projectId, attempts.id] }).onDelete('restrict'),
+  uniqueIndex('managed_workspaces_project_feature_unique').on(table.projectId, table.featureId),
+  uniqueIndex('managed_workspaces_canonical_path_unique').on(table.canonicalPath),
+  uniqueIndex('managed_workspaces_project_id_id_unique').on(table.projectId, table.id),
+  index('managed_workspaces_project_updated_index').on(table.projectId, table.updatedAt, table.id),
+]);
+
+export const workspaces = managedWorkspaces;
+
+export const workspaceOperations = sqliteTable('workspace_operations', {
+  id: text('id').primaryKey(), createdAt: integer('created_at').notNull(),
+  projectId: text('project_id').notNull().references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  revision: integer('revision').notNull().default(1), updatedAt: integer('updated_at').notNull(),
+  featureId: text('feature_id').notNull(), workspaceId: text('workspace_id').notNull(), runId: text('run_id').notNull(), attemptId: text('attempt_id').notNull(),
+  ownerId: text('owner_id').notNull(), hostInstanceId: text('host_instance_id').notNull(), executionVersion: integer('execution_version').notNull(),
+  kind: text('kind').notNull(), executionStage: text('execution_stage').notNull(), principalId: text('principal_id').notNull(), commandId: text('command_id').notNull(), requestDigest: text('request_digest').notNull(),
+  inputSnapshot: text('input_snapshot').notNull(), status: text('status').notNull(), resultJson: text('result_json'), receiptId: text('receipt_id').notNull(), finishSnapshot: text('finish_snapshot'),
+}, (table) => [
+  check('workspace_operations_revision_check', sql`${table.revision} >= 1`),
+  check('workspace_operations_kind_check', sql`${table.kind} IN ('prepare','retain','cleanup')`),
+  check('workspace_operations_stage_check', sql`${table.executionStage} IN ('preflight','runtime','verification','commit','cleanup')`),
+  check('workspace_operations_status_check', sql`${table.status} IN ('pending','succeeded','failed','blocked')`),
+  check('workspace_operations_digest_check', sql`length(${table.requestDigest}) = 64 AND ${table.requestDigest} NOT GLOB '*[^0-9a-f]*'`),
+  check('workspace_operations_input_json_check', sql`json_valid(${table.inputSnapshot}) AND json_type(${table.inputSnapshot}) = 'object'`),
+  check('workspace_operations_result_json_check', sql`${table.resultJson} IS NULL OR (json_valid(${table.resultJson}) AND json_type(${table.resultJson}) = 'object')`),
+  check('workspace_operations_finish_json_check', sql`${table.finishSnapshot} IS NULL OR (json_valid(${table.finishSnapshot}) AND json_type(${table.finishSnapshot}) = 'object')`),
+  check('workspace_operations_execution_version_check', sql`${table.executionVersion} >= 1`),
+  foreignKey({ name: 'workspace_operations_workspace_fk', columns: [table.projectId, table.workspaceId], foreignColumns: [managedWorkspaces.projectId, managedWorkspaces.id] }).onDelete('restrict'),
+  foreignKey({ name: 'workspace_operations_feature_same_project_fk', columns: [table.projectId, table.featureId], foreignColumns: [features.projectId, features.id] }).onDelete('restrict'),
+  foreignKey({ name: 'workspace_operations_run_same_project_fk', columns: [table.projectId, table.runId], foreignColumns: [runs.projectId, runs.id] }).onDelete('restrict'),
+  foreignKey({ name: 'workspace_operations_attempt_same_project_fk', columns: [table.projectId, table.attemptId], foreignColumns: [attempts.projectId, attempts.id] }).onDelete('restrict'),
+  foreignKey({ name: 'workspace_operations_receipt_fk', columns: [table.receiptId], foreignColumns: [commandReceipts.id] }).onDelete('restrict'),
+  uniqueIndex('workspace_operations_principal_command_unique').on(table.principalId, table.commandId),
+  uniqueIndex('workspace_operations_project_id_id_unique').on(table.projectId, table.id),
+  index('workspace_operations_project_created_index').on(table.projectId, table.createdAt, table.id),
 ]);
 
 export const schemaMigrations = sqliteTable('schema_migrations', {

@@ -72,6 +72,8 @@ const SCHEMA_TABLES = [
   ['run_outcome_settlements', schema.runOutcomeSettlements],
   ['attempts', schema.attempts],
   ['workspace_leases', schema.workspaceLeases],
+  ['managed_workspaces', schema.managedWorkspaces],
+  ['workspace_operations', schema.workspaceOperations],
   ['task_claim_receipts', schema.taskClaimReceipts],
   ['attempt_notifications', schema.attemptNotifications],
   ['attempt_notification_diagnostics', schema.attemptNotificationDiagnostics],
@@ -583,6 +585,18 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
         'batch_budget_revisions:(project_id)->projects.(id)',
         'batch_budget_revisions:(batch_id)->execution_batches.(id)',
         'batch_budget_revisions:(project_id,batch_id)->execution_batches.(project_id,id)',
+        // P03-5 / F-002: managed workspace and operation project-scoped references.
+        'managed_workspaces:(project_id)->projects.(id)',
+        'managed_workspaces:(project_id,feature_id)->features.(project_id,id)',
+        'managed_workspaces:(project_id,repository_binding_id)->repository_bindings.(project_id,id)',
+        'managed_workspaces:(project_id,run_id)->runs.(project_id,id)',
+        'managed_workspaces:(project_id,attempt_id)->attempts.(project_id,id)',
+        'workspace_operations:(project_id)->projects.(id)',
+        'workspace_operations:(project_id,workspace_id)->managed_workspaces.(project_id,id)',
+        'workspace_operations:(project_id,feature_id)->features.(project_id,id)',
+        'workspace_operations:(project_id,run_id)->runs.(project_id,id)',
+        'workspace_operations:(project_id,attempt_id)->attempts.(project_id,id)',
+        'workspace_operations:(receipt_id)->command_receipts.(id)',
       ]);
       type FkPragmaRow = { id: number; seq: number; table: string; from: string; to: string; on_update: string; on_delete: string };
       const actualFks = new Set<string>();

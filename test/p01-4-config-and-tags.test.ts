@@ -710,6 +710,8 @@ describe('F-006 当前配置检查组（P01-FR2-CONFIG）', () => {
           'attempt_notifications',
           'attempt_notification_diagnostics',
           'workspace_leases',
+          'workspace_operations',
+          'managed_workspaces',
         ].sort(),
       );
       for (const forbidden of [

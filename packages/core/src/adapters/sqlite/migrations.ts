@@ -1266,6 +1266,90 @@ CREATE TRIGGER attempt_diagnostics_immutable_delete BEFORE DELETE ON attempt_not
 BEGIN SELECT RAISE(ABORT, 'attempt diagnostics are immutable'); END;
 `;
 
+const MIGRATION_018_SQL = `
+ALTER TABLE state_events ADD COLUMN operation_id TEXT;
+ALTER TABLE state_events ADD COLUMN run_id TEXT;
+ALTER TABLE state_events ADD COLUMN attempt_id TEXT;
+ALTER TABLE state_events ADD COLUMN execution_stage TEXT;
+
+CREATE UNIQUE INDEX runs_project_id_id_unique ON runs (project_id, id);
+CREATE UNIQUE INDEX IF NOT EXISTS attempts_project_id_id_unique ON attempts (project_id, id);
+
+CREATE TABLE managed_workspaces (
+  id TEXT PRIMARY KEY NOT NULL, created_at INTEGER NOT NULL, project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1, updated_at INTEGER NOT NULL, feature_id TEXT NOT NULL,
+  repository_binding_id TEXT NOT NULL, repository_binding_revision INTEGER NOT NULL, repo_identity TEXT NOT NULL,
+  canonical_path TEXT NOT NULL, git_common_dir TEXT NOT NULL, branch TEXT NOT NULL, base_commit TEXT NOT NULL,
+  head_commit TEXT, code_digest TEXT, status TEXT NOT NULL, preparation_operation_id TEXT NOT NULL,
+  owner_id TEXT NOT NULL, host_instance_id TEXT NOT NULL, execution_version INTEGER NOT NULL,
+  run_id TEXT NOT NULL, attempt_id TEXT NOT NULL,
+  CONSTRAINT managed_workspaces_revision_check CHECK (revision >= 1),
+  CONSTRAINT managed_workspaces_status_check CHECK (status IN ('preparing','ready','retained','quarantined','cleanup_pending','cleaned')),
+  CONSTRAINT managed_workspaces_base_commit_check CHECK (length(base_commit) IN (40,64) AND base_commit NOT GLOB '*[^0-9a-f]*'),
+  CONSTRAINT managed_workspaces_code_digest_check CHECK (code_digest IS NULL OR (length(code_digest) = 64 AND code_digest NOT GLOB '*[^0-9a-f]*')),
+  CONSTRAINT managed_workspaces_revision_binding_check CHECK (repository_binding_revision >= 1),
+  CONSTRAINT managed_workspaces_execution_version_check CHECK (execution_version >= 1),
+  CONSTRAINT managed_workspaces_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT managed_workspaces_feature_same_project_fk FOREIGN KEY (project_id, feature_id) REFERENCES features (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT managed_workspaces_binding_same_project_fk FOREIGN KEY (project_id, repository_binding_id) REFERENCES repository_bindings (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT managed_workspaces_run_same_project_fk FOREIGN KEY (project_id, run_id) REFERENCES runs (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT managed_workspaces_attempt_same_project_fk FOREIGN KEY (project_id, attempt_id) REFERENCES attempts (project_id, id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX managed_workspaces_project_feature_unique ON managed_workspaces (project_id, feature_id);
+CREATE UNIQUE INDEX managed_workspaces_canonical_path_unique ON managed_workspaces (canonical_path);
+CREATE UNIQUE INDEX managed_workspaces_project_id_id_unique ON managed_workspaces (project_id, id);
+CREATE INDEX managed_workspaces_project_updated_index ON managed_workspaces (project_id, updated_at, id);
+
+CREATE TABLE workspace_operations (
+  id TEXT PRIMARY KEY NOT NULL, created_at INTEGER NOT NULL, project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1, updated_at INTEGER NOT NULL, feature_id TEXT NOT NULL,
+  workspace_id TEXT NOT NULL, run_id TEXT NOT NULL, attempt_id TEXT NOT NULL,
+  owner_id TEXT NOT NULL, host_instance_id TEXT NOT NULL, execution_version INTEGER NOT NULL,
+  kind TEXT NOT NULL, execution_stage TEXT NOT NULL, principal_id TEXT NOT NULL,
+  command_id TEXT NOT NULL, request_digest TEXT NOT NULL, input_snapshot TEXT NOT NULL,
+  status TEXT NOT NULL, result_json TEXT, receipt_id TEXT NOT NULL, finish_snapshot TEXT,
+  CONSTRAINT workspace_operations_revision_check CHECK (revision >= 1),
+  CONSTRAINT workspace_operations_kind_check CHECK (kind IN ('prepare','retain','cleanup')),
+  CONSTRAINT workspace_operations_stage_check CHECK (execution_stage IN ('preflight','runtime','verification','commit','cleanup')),
+  CONSTRAINT workspace_operations_status_check CHECK (status IN ('pending','succeeded','failed','blocked')),
+  CONSTRAINT workspace_operations_digest_check CHECK (length(request_digest) = 64 AND request_digest NOT GLOB '*[^0-9a-f]*'),
+  CONSTRAINT workspace_operations_input_json_check CHECK (json_valid(input_snapshot) AND json_type(input_snapshot) = 'object'),
+  CONSTRAINT workspace_operations_result_json_check CHECK (result_json IS NULL OR (json_valid(result_json) AND json_type(result_json) = 'object')),
+  CONSTRAINT workspace_operations_finish_json_check CHECK (finish_snapshot IS NULL OR (json_valid(finish_snapshot) AND json_type(finish_snapshot) = 'object')),
+  CONSTRAINT workspace_operations_execution_version_check CHECK (execution_version >= 1),
+  CONSTRAINT workspace_operations_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT workspace_operations_workspace_fk FOREIGN KEY (project_id, workspace_id) REFERENCES managed_workspaces (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT workspace_operations_feature_same_project_fk FOREIGN KEY (project_id, feature_id) REFERENCES features (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT workspace_operations_run_same_project_fk FOREIGN KEY (project_id, run_id) REFERENCES runs (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT workspace_operations_attempt_same_project_fk FOREIGN KEY (project_id, attempt_id) REFERENCES attempts (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT workspace_operations_receipt_fk FOREIGN KEY (receipt_id) REFERENCES command_receipts (id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX workspace_operations_principal_command_unique ON workspace_operations (principal_id, command_id);
+CREATE UNIQUE INDEX workspace_operations_project_id_id_unique ON workspace_operations (project_id, id);
+CREATE INDEX workspace_operations_project_created_index ON workspace_operations (project_id, created_at, id);
+
+CREATE TRIGGER managed_workspaces_execution_identity BEFORE INSERT ON managed_workspaces
+WHEN NOT EXISTS (SELECT 1 FROM attempts a JOIN tasks t ON t.id = a.task_id
+  WHERE a.project_id = NEW.project_id AND a.id = NEW.attempt_id AND a.run_id = NEW.run_id
+    AND t.feature_id = NEW.feature_id AND a.owner_id = NEW.owner_id AND a.host_instance_id = NEW.host_instance_id
+    AND a.execution_version = NEW.execution_version AND t.execution_version = NEW.execution_version)
+BEGIN SELECT RAISE(ABORT, 'managed workspace execution identity mismatch'); END;
+CREATE TRIGGER workspace_operations_execution_identity BEFORE INSERT ON workspace_operations
+WHEN NOT EXISTS (SELECT 1 FROM attempts a JOIN tasks t ON t.id = a.task_id
+  JOIN managed_workspaces w ON w.id = NEW.workspace_id AND w.project_id = NEW.project_id AND w.feature_id = NEW.feature_id
+  WHERE a.project_id = NEW.project_id AND a.id = NEW.attempt_id AND a.run_id = NEW.run_id
+    AND t.feature_id = NEW.feature_id AND a.owner_id = NEW.owner_id AND a.host_instance_id = NEW.host_instance_id
+    AND a.execution_version = NEW.execution_version AND t.execution_version = NEW.execution_version)
+BEGIN SELECT RAISE(ABORT, 'workspace operation execution identity mismatch'); END;
+CREATE TRIGGER managed_workspaces_immutable_baseline BEFORE UPDATE OF project_id, feature_id, repository_binding_id, repository_binding_revision, repo_identity, canonical_path, git_common_dir, branch, base_commit, preparation_operation_id, run_id, attempt_id, owner_id, host_instance_id, execution_version ON managed_workspaces
+BEGIN SELECT RAISE(ABORT, 'managed workspace baseline is immutable'); END;
+CREATE TRIGGER workspace_operations_immutable_input BEFORE UPDATE OF project_id, feature_id, workspace_id, run_id, attempt_id, owner_id, host_instance_id, execution_version, kind, execution_stage, principal_id, command_id, request_digest, input_snapshot ON workspace_operations
+BEGIN SELECT RAISE(ABORT, 'workspace operation intent is immutable'); END;
+CREATE TRIGGER workspace_operations_immutable_result BEFORE UPDATE ON workspace_operations
+WHEN OLD.status != 'pending'
+BEGIN SELECT RAISE(ABORT, 'workspace operation result is immutable'); END;
+`;
+
 /** 已声明的全部 SQLite 迁移，按版本升序；F-005 的执行器按此顺序应用并核对摘要。 */
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
@@ -1349,4 +1433,5 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
     checksum: sha256Hex(MIGRATION_016_SQL),
   },
   { version: 17, sql: MIGRATION_017_SQL, checksum: sha256Hex(MIGRATION_017_SQL) },
+  { version: 18, sql: MIGRATION_018_SQL, checksum: sha256Hex(MIGRATION_018_SQL) },
 ];

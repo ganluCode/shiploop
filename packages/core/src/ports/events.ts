@@ -61,6 +61,8 @@ import {
   PROJECT_SETTINGS_UPDATED_EVENT_TYPE,
 } from './state-store.js';
 import type { StateEventAggregateType } from './state-store.js';
+import { ATTEMPT_EXECUTION_STAGES } from './attempt-store.js';
+import { WORKSPACE_EVENT_TYPE, WORKSPACE_OPERATION_STATUSES } from './workspace.js';
 import { validateStableId } from './validation.js';
 
 /** 事件读取面的默认操作身份（快照/SSE/补读映射共用；具体路由可传自己的 operation）。 */
@@ -149,6 +151,7 @@ export const PUBLIC_STATE_EVENT_TYPES = [
   TASK_CLAIMED_EVENT_TYPE,
   ATTEMPT_UPDATED_EVENT_TYPE,
   TASK_APPROVAL_BLOCKED_EVENT_TYPE,
+  WORKSPACE_EVENT_TYPE,
 ] as const;
 
 export type PublicStateEventType = (typeof PUBLIC_STATE_EVENT_TYPES)[number];
@@ -174,7 +177,8 @@ type EventPayloadKind =
   | 'executionBudgetRevised'
   | 'taskClaimed'
   | 'attemptUpdated'
-  | 'taskApprovalBlocked';
+  | 'taskApprovalBlocked'
+  | 'workspaceOperationUpdated';
 
 /** 每类事件冻结的 aggregate_type、scope 种类与 payload 形状。 */
 export interface StateEventTypeSpec {
@@ -320,6 +324,7 @@ export const STATE_EVENT_TYPE_SPECS: Readonly<
   [TASK_CLAIMED_EVENT_TYPE]: Object.freeze({
     aggregateType: 'task', scopeKind: 'project', payloadKind: 'taskClaimed',
   }),
+  [WORKSPACE_EVENT_TYPE]: Object.freeze({ aggregateType: 'feature', scopeKind: 'project', payloadKind: 'workspaceOperationUpdated' }),
   [ATTEMPT_UPDATED_EVENT_TYPE]: Object.freeze({ aggregateType: 'task', scopeKind: 'project', payloadKind: 'attemptUpdated' }),
   [TASK_APPROVAL_BLOCKED_EVENT_TYPE]: Object.freeze({ aggregateType: 'task', scopeKind: 'project', payloadKind: 'taskApprovalBlocked' }),
   // P03-3 / F-009：批次预算修订事件（聚合为目标 Batch 自身；payload 恒为
@@ -857,6 +862,13 @@ export function mapStateEvent(row: unknown, operation: string = EVENT_READ_OPERA
     payload = validateExecutionInputPreparedPayload(row.payload, operation);
   } else if (spec.payloadKind === 'executionRunDispatched') {
     payload = validateExecutionRunDispatchedPayload(row.payload, operation);
+  } else if (spec.payloadKind === 'workspaceOperationUpdated') {
+    exactPayloadKeys(operation, row.payload, ['schemaVersion', 'operationId', 'status', 'executionStage']);
+    if (row.payload.schemaVersion !== 1 || !requireEventEnum(row.payload.status, WORKSPACE_OPERATION_STATUSES)
+      || !requireEventEnum(row.payload.executionStage, ATTEMPT_EXECUTION_STAGES)) corrupt(operation, 'event_payload_violation');
+    try { validateStableId(row.payload.operationId, { operation }, 'operationId'); }
+    catch { corrupt(operation, 'event_payload_violation'); }
+    payload = { schemaVersion: 1, operationId: row.payload.operationId, status: row.payload.status, executionStage: row.payload.executionStage };
   } else if (spec.payloadKind === 'attemptUpdated' || spec.payloadKind === 'taskApprovalBlocked') {
     const key = spec.payloadKind === 'attemptUpdated' ? 'updated' : 'blocked';
     if (Object.keys(row.payload).length !== 1 || row.payload[key] !== true) corrupt(operation, 'event_payload_violation');

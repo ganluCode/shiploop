@@ -50,7 +50,9 @@ export type StorageEntityType =
   /** P03-3 / F-008：Run 结果结算账本（run_outcome_settlements，迁移 v13）。 */
   | 'attempt'
   | 'workspace_lease'
-  | 'run_outcome_settlement';
+  | 'run_outcome_settlement'
+  | 'workspace'
+  | 'workspace_operation';
 
 export type StorageErrorKind =
   /** 外部输入未通过运行时校验（缺字段/类型错误/未知 schemaVersion/非法摘要等）。 */

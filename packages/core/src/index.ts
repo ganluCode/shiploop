@@ -21,6 +21,7 @@ export * from './ports/work-scheduler.js';
 export * from './application/task-dag.js';
 export * from './application/work-scheduler.js';
 export * from './ports/work-resources.js';
+export * from './ports/workspace.js';
 export * from './application/work-resource-stop.js';
 export * from './ports/attempt-store.js';
 export * from './ports/attempt-lifecycle.js';

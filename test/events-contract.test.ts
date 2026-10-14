@@ -167,6 +167,7 @@ describe('F-003 冻结事件封套版本与 §9.2 事件白名单（P02-2 六类
       'task.claimed',
       'task.attempt.updated',
       'task.approval.blocked',
+      'workspace.operation_updated',
     ]);
     expect(PROJECT_METADATA_UPDATED_EVENT_TYPE).toBe('project.metadata_updated');
     expect(SETTINGS_GLOBAL_CREATED_EVENT_TYPE).toBe('settings.global_created');
@@ -186,6 +187,14 @@ describe('F-003 冻结事件封套版本与 §9.2 事件白名单（P02-2 六类
 });
 
 describe('F-003 mapStateEvent：持久行列 → 公开封套', () => {
+  it('maps workspace events without exposing paths or accepting unknown payload fields', () => {
+    const payload = { schemaVersion: 1, operationId: EVENT_ID, status: 'pending', executionStage: 'preflight' };
+    const row = eventRow({ eventType: 'workspace.operation_updated', aggregateType: 'feature', payload });
+    expect(mapStateEvent(row).payload).toEqual(payload);
+    for (const extra of [{ status: 'unknown' }, { executionStage: 'unknown' }, { schemaVersion: 2 }, { operationId: '../escape' }, { token: 'secret' }]) {
+      expectPublicError(() => mapStateEvent({ ...row, payload: { ...payload, ...extra } }), 'corrupt_state', 'event_payload_violation');
+    }
+  });
   it('项目元数据事件：字段逐一映射，scope 携带 projectId', () => {
     const event = mapStateEvent(eventRow());
     expect(event).toEqual({

@@ -275,7 +275,7 @@ describe('P03-4 F-001 persistent execution model', () => {
         db.prepare('UPDATE projects SET repository_binding_id = ? WHERE id = ?').run(binding.repository_binding_id, f.box.projectId);
       });
       const before = Object.fromEntries(tables.map(table => [table, predecessor.database.prepare(`SELECT * FROM ${table} ORDER BY id`).all()]));
-      expect((await migrateSqliteStorage(predecessor)).appliedVersions).toEqual([14, 15, 16, 17]);
+      expect((await migrateSqliteStorage(predecessor)).appliedVersions).toEqual([14, 15, 16, 17, 18]);
       for (const table of tables) {
         const after = predecessor.database.prepare(`SELECT * FROM ${table} ORDER BY id`).all() as Record<string, unknown>[];
         if (table === 'tasks') {
@@ -283,6 +283,14 @@ describe('P03-4 F-001 persistent execution model', () => {
           expect(after[0]?.kind).toBe('coding');
           expect(after[0]?.manual_block).toBe(0);
           for (const row of after) { delete row.execution_version; delete row.kind; delete row.manual_block; }
+        }
+        if (table === 'state_events') {
+          for (const row of after) {
+            for (const column of ['operation_id', 'run_id', 'attempt_id', 'execution_stage']) {
+              expect(row[column]).toBeNull();
+              delete row[column];
+            }
+          }
         }
         expect(after, table).toEqual(before[table]);
       }
