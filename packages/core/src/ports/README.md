@@ -4,6 +4,8 @@
 
 P03-3A / F-001 新增 `runtime-recovery.ts`：Work/Chat 判别身份、稳定 invocationId、不可变 Artifact 恢复引用、auto/new/required 选择及五项独立运行期能力证据。运行时校验与能力判定均为纯函数；配置目录 `runtime-capabilities.ts` 保持不变，不把配置合法性当可执行或可恢复。命名、字段及后续来源/权限核验职责见 [恢复契约](../../../../docs/p03-3a-runtime-recovery-contract.md)。
 
+P03-6 / F-001 新增 `runtime-execution.ts` 与 `runtime-registry.ts`：异步 Runtime 执行契约（RuntimeRequest 固定 Project/Feature/Run/Task/Attempt/Session、owner/hostInstanceId、executionVersion、完整策略、prompt/inputManifest 不可变引用、受控 cwd、权限与有限超时/事件/输出政策；恢复选择直接委托 P03-3A 校验器，不重建第二套）、RuntimeHandle/RuntimeAdapter 窄端口（events AsyncIterable、唯一 result、cancel 回执与独立 stopped；不要求 PID）、事件/结果/停止证据/取消回执的版本化运行时校验（未知终态为 protocol 错误、未知公开事件保留受限诊断、缺失指标为显式 null）、九类 RuntimeError 分类（信息型限流告警是 warning 事件而非 rate_limited 错误）与可信静态注册表（注入式适配器对象，重复/未知 ID、契约版本不兼容、provider/model 与配置目录不一致一律拒绝，不热加载模块）。纯契约无 I/O；会话包装在 application 层。
+
 - 允许：仅声明接口、类型、结构化错误与契约常量；引用 `domain` 类型。
 - 禁止：任何具体实现与可执行副作用；导入或重导出 Pi SDK、Electron、HTTP Request/Response 对象、HTTP 框架、`better-sqlite3`、Drizzle；为占位而声明当前没有使用者的端口。
 
