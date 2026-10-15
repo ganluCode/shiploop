@@ -11,9 +11,11 @@
  * - 脚本是纯数据（plain object），带 schemaVersion 严格白名单；绝不是模块
  *   说明符、文件路径、shell 文本或函数——本层只校验数据形态，任何可执行
  *   来源在校验边界即拒绝；
- * - 步骤词汇固定七种：read_input（读取获准输入）/ read_file / write_file
+ * - 步骤词汇固定八种：read_input（读取获准输入）/ read_file / write_file
  *   （真实读写 workspace 相对位置）/ message / tool（关联消息与工具事件）/
- *   usage（synthetic 用量事件）/ fail（受控失败注入）；未知操作一律拒绝；
+ *   usage（synthetic 用量事件）/ fail（受控失败注入）/ tool_command（F-004
+ *   受控真实工具命令：只以名称引用可信装配批准的命令定义，脚本绝不携带
+ *   argv/环境/shell 等可执行内容）；未知操作一律拒绝；
  * - 工作区路径复用 validateArtifactLocator 的 POSIX 相对位置规则（拒绝
  *   绝对路径、反斜杠、. 与 .. 段、NUL），词法越界在脚本校验期即拒绝；
  * - 有界性：脚本序列化字节、步骤数量、单步正文（write_file content）与
@@ -73,6 +75,7 @@ export const FAKE_RUNTIME_USAGE_BASIS = 'synthetic' as const;
 
 export const FAKE_RUNTIME_SCRIPT_OPS = [
   'read_input', 'read_file', 'write_file', 'message', 'tool', 'usage', 'fail',
+  'tool_command',
 ] as const;
 export type FakeRuntimeScriptOp = (typeof FAKE_RUNTIME_SCRIPT_OPS)[number];
 
@@ -82,6 +85,8 @@ export type FakeRuntimeScriptStep =
   | { readonly op: 'write_file'; readonly path: string; readonly content: string }
   | { readonly op: 'message'; readonly role: RuntimeEventRole; readonly text: string }
   | { readonly op: 'tool'; readonly name: string; readonly exitCode: number | null }
+  /** F-004：只引用可信装配批准的命令定义名；argv/环境/超时等在装配侧固定。 */
+  | { readonly op: 'tool_command'; readonly name: string }
   | {
       readonly op: 'usage';
       readonly inputTokens: number | null;
@@ -236,6 +241,9 @@ function scriptStep(value: unknown, field: string, acc: StepAccumulator): FakeRu
         name: reasonToken(raw.name, `${field}.name`),
         exitCode: nullableExitCode(raw.exitCode, `${field}.exitCode`) };
     }
+    case 'tool_command':
+      rejectUnknownKeys(raw, ['op', 'name'], SCRIPT_CONTEXT, field);
+      return { op: 'tool_command', name: reasonToken(raw.name, `${field}.name`) };
     case 'usage': {
       rejectUnknownKeys(raw, ['op', 'inputTokens', 'outputTokens', 'costUsdMicros'], SCRIPT_CONTEXT, field);
       return { op: 'usage',

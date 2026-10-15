@@ -31,8 +31,18 @@
  *   检查与操作之间的并发替换窗口由「单写入者 + 可信项目」前提收窄，
  *   本适配器不宣称强 OS 沙箱；
  * - Fake 不接触 Core 状态库（不导入 SQLite/ORM/状态存取模块）、不决定
- *   Task 验收（结果终态词汇无 passed）、不执行 shell/模块/任意命令
- *   （真实工具进程步骤属 F-004 CommandProcess 通道）；
+ *   Task 验收（结果终态词汇无 passed）、不执行 shell/模块/任意命令；
+ * - F-004 受控真实工具命令步骤（tool_command）：脚本步骤只以名称引用可信
+ *   装配批准的命令定义（argv/白名单环境/stdin/有限超时与输入输出上限在
+ *   装配侧校验并快照固定，脚本绝不携带可执行内容）；进程启动复用注入的
+ *   CommandProcess 端口（不新建进程监督系统、不 import child_process），
+ *   launchId/PID/PGID/OS 启动身份经 Core 回调提交后才由既有握手放行命令，
+ *   提交失败命令不执行且运行受控失败；工具输出以滚动摘要并行有界消费
+ *   （不累积全文），tool_finished 事件如实携带 toolCallId、退出码/信号、
+ *   实际原因、已知保留输出字节与最后活动时间；Runtime stopped 只有在脚
+ *   本步骤结束且所有登记受控工具进程组核验停止后才 confirmed——父退子活、
+ *   身份核验失败与进程监督丢失均报告 confirmed=false；cancel 向活动工具
+ *   句柄传播，走既有身份匹配升级终止路径；
  * - 用量：脚本声明的计数一律以 basis 'synthetic' 发出；未知计数为 null；
  *   durationMs 不测量真实时钟（取脚本声明或 null），保证同脚本同输入
  *   产生可核对的同一操作顺序与同一事件序列。
@@ -42,6 +52,13 @@ import {
   existsSync, lstatSync, realpathSync, readFileSync, writeFileSync,
 } from 'node:fs';
 import { dirname, isAbsolute, join, relative, sep } from 'node:path';
+import { CommandProcessError } from '../ports/command-process.js';
+import type {
+  CommandProcessHandle,
+  CommandProcessIdentity,
+  CommandProcessPort,
+  CommandProcessStop,
+} from '../ports/command-process.js';
 import {
   isExecutionInputBindingError,
 } from '../ports/execution-input-binding.js';
@@ -87,8 +104,52 @@ export const FAKE_RUNTIME_FAILURE_REASONS = [
   'input_reader_missing', 'input_missing', 'unbound_input_read', 'input_read_failed',
   'file_missing', 'file_too_large', 'not_regular_file', 'read_denied',
   'parent_missing', 'target_is_directory', 'write_denied',
-  'path_escape', 'symlink_escape', 'output_limit_exceeded', 'internal_error',
+  'path_escape', 'symlink_escape', 'output_limit_exceeded',
+  'tool_identity_commit_failed', 'tool_launch_failed', 'tool_stop_unconfirmed',
+  'internal_error',
 ] as const;
+
+/** F-004：tool_command 步骤引用的可信装配批准命令定义（装配侧校验并快照）。 */
+export interface FakeRuntimeToolCommandDefinition {
+  /** 字面 argv（绝不拼接 shell；首元素为可执行文件）。 */
+  readonly argv: readonly string[];
+  /** 白名单环境（只含批准值，绝不继承 Host 环境）。 */
+  readonly environment?: Readonly<Record<string, string>>;
+  /** 有限标准输入字节。 */
+  readonly stdin?: Uint8Array;
+  /** 有限工具超时（毫秒；1..3_600_000）。 */
+  readonly timeoutMs: number;
+  /** 序列化启动输入 + stdin 上限（默认 65_536）。 */
+  readonly maxInputBytes?: number;
+  /** 合并 stdout/stderr 保留上限（默认 1_048_576，上限 8_388_608）。 */
+  readonly maxOutputBytes?: number;
+}
+
+/** F-004：身份提交回调上下文——工具调用与当前 Attempt 关联。 */
+export interface FakeRuntimeToolLaunchContext {
+  readonly toolCallId: string;
+  readonly invocationId: string;
+  readonly attemptId: string | undefined;
+}
+
+/**
+ * F-004：Core 身份提交回调。launchId/PID/PGID/OS 启动身份先经本回调提交到
+ * 当前 Attempt/占用，返回匹配 launchId 才放行命令；回调拒绝/超时/返回不符
+ * 即 confirmation_failed，命令不执行。Runtime 本身不打开 SQLite。
+ */
+export type FakeRuntimeCommitCommandIdentity = (
+  identity: CommandProcessIdentity,
+  context: FakeRuntimeToolLaunchContext,
+) => Promise<{ readonly launchId: string }>;
+
+/** F-004 工具命令定义的有界常量（与 CommandProcess 端口冻结上限一致）。 */
+export const FAKE_RUNTIME_TOOL_TIMEOUT_MS_MAX = 3_600_000;
+export const FAKE_RUNTIME_TOOL_MAX_INPUT_BYTES = 65_536;
+export const FAKE_RUNTIME_TOOL_MAX_OUTPUT_BYTES_CAP = 8_388_608;
+export const FAKE_RUNTIME_TOOL_DEFAULT_OUTPUT_BYTES = 1_048_576;
+const TOOL_ARGV_MAX_ITEMS = 256;
+const TOOL_ENV_MAX_ENTRIES = 64;
+const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
 /** 单条操作记录（无时间戳：同脚本同输入两次运行可逐条全等核对）。 */
 export interface FakeRuntimeOpRecord {
@@ -100,6 +161,13 @@ export interface FakeRuntimeOpRecord {
   readonly reason: string | null;
   readonly bytes: number | null;
   readonly digest: string | null;
+  /** F-004 tool_command 记录：工具调用关联与真实结果。 */
+  readonly toolCallId?: string;
+  readonly exitCode?: number | null;
+  readonly signal?: string | null;
+  readonly lastActivityAtUtc?: string | null;
+  readonly droppedOutputBytes?: number;
+  readonly stopConfirmed?: boolean;
 }
 
 /** 事件缓冲高水位（背压验证证据）。 */
@@ -136,6 +204,16 @@ export interface FakeRuntimeOptions {
   readonly nowUtcMs?: () => number;
   /** 事件缓冲上限（只能收窄硬上限）。 */
   readonly buffer?: { readonly maxEvents?: number; readonly maxBytes?: number };
+  /**
+   * F-004：可信装配批准的命令定义（名称 → 定义）。脚本 tool_command 步骤
+   * 只能引用此处批准的名称；定义在装配时逐项校验并快照，调用方事后篡改
+   * 不影响已批准内容。
+   */
+  readonly toolCommands?: Readonly<Record<string, FakeRuntimeToolCommandDefinition>>;
+  /** F-004：既有 CommandProcess 端口（注入复用；脚本含 tool_command 时必需）。 */
+  readonly commandProcess?: CommandProcessPort;
+  /** F-004：Core 身份提交回调（脚本含 tool_command 时必需）。 */
+  readonly commitCommandIdentity?: FakeRuntimeCommitCommandIdentity;
 }
 
 /**
@@ -298,6 +376,78 @@ function resolveReadTarget(realRoot: string, base: string, rel: string): string 
 }
 
 /* ------------------------------------------------------------------ *
+ * F-004 批准命令定义校验（装配期 fail-fast；返回值与输入快照分离）
+ * ------------------------------------------------------------------ */
+
+interface ValidatedToolCommandDefinition {
+  readonly argv: readonly string[];
+  readonly environment: Readonly<Record<string, string>>;
+  readonly stdin: Uint8Array | undefined;
+  readonly timeoutMs: number;
+  readonly maxInputBytes: number;
+  readonly maxOutputBytes: number;
+}
+
+function validateToolCommandDefinition(
+  name: string,
+  value: unknown,
+): ValidatedToolCommandDefinition {
+  const bad = (detail: string): never => {
+    throw new TypeError(`FakeRuntime.create: toolCommands.${name} ${detail}`);
+  };
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) bad('必须是对象');
+  const raw = value as Record<string, unknown>;
+  for (const key of Object.keys(raw)) {
+    if (!['argv', 'environment', 'stdin', 'timeoutMs', 'maxInputBytes', 'maxOutputBytes'].includes(key)) {
+      bad(`未知键 ${key}`);
+    }
+  }
+  const argv = raw.argv;
+  if (!Array.isArray(argv) || argv.length < 1 || argv.length > TOOL_ARGV_MAX_ITEMS ||
+      argv.some((item) => typeof item !== 'string' || item.includes('\0')) ||
+      (argv[0] as string).length === 0) {
+    bad('argv 必须是 1..256 个无 NUL 字符串且首元素非空');
+  }
+  const environment: Record<string, string> = {};
+  if (raw.environment !== undefined) {
+    if (raw.environment === null || typeof raw.environment !== 'object' || Array.isArray(raw.environment)) {
+      bad('environment 必须是白名单键值对象');
+    }
+    const entries = Object.entries(raw.environment as Record<string, unknown>);
+    if (entries.length > TOOL_ENV_MAX_ENTRIES) bad('environment 超出条目上限');
+    for (const [key, envValue] of entries) {
+      if (!ENV_KEY_PATTERN.test(key)) bad('environment 键非法');
+      if (typeof envValue !== 'string' || envValue.includes('\0')) bad('environment 值非法');
+      environment[key] = envValue as string;
+    }
+  }
+  if (raw.stdin !== undefined && !(raw.stdin instanceof Uint8Array)) bad('stdin 必须是 Uint8Array');
+  const timeoutMs = raw.timeoutMs;
+  if (!Number.isSafeInteger(timeoutMs) || (timeoutMs as number) < 1 ||
+      (timeoutMs as number) > FAKE_RUNTIME_TOOL_TIMEOUT_MS_MAX) {
+    bad('timeoutMs 必须是有限工具超时');
+  }
+  const maxInputBytes = raw.maxInputBytes ?? FAKE_RUNTIME_TOOL_MAX_INPUT_BYTES;
+  if (!Number.isSafeInteger(maxInputBytes) || (maxInputBytes as number) < 1 ||
+      (maxInputBytes as number) > FAKE_RUNTIME_TOOL_MAX_INPUT_BYTES) {
+    bad('maxInputBytes 超出有界输入上限');
+  }
+  const maxOutputBytes = raw.maxOutputBytes ?? FAKE_RUNTIME_TOOL_DEFAULT_OUTPUT_BYTES;
+  if (!Number.isSafeInteger(maxOutputBytes) || (maxOutputBytes as number) < 1 ||
+      (maxOutputBytes as number) > FAKE_RUNTIME_TOOL_MAX_OUTPUT_BYTES_CAP) {
+    bad('maxOutputBytes 超出有界输出上限');
+  }
+  return Object.freeze({
+    argv: Object.freeze([...(argv as string[])]),
+    environment: Object.freeze(environment),
+    stdin: raw.stdin === undefined ? undefined : new Uint8Array(raw.stdin as Uint8Array),
+    timeoutMs: timeoutMs as number,
+    maxInputBytes: maxInputBytes as number,
+    maxOutputBytes: maxOutputBytes as number,
+  });
+}
+
+/* ------------------------------------------------------------------ *
  * 运行循环
  * ------------------------------------------------------------------ */
 
@@ -359,6 +509,33 @@ export function createFakeRuntime(options: FakeRuntimeOptions): FakeRuntimeAssem
     canonicalRoots.set(rootId, real);
   }
 
+  /* F-004：批准命令定义装配期终验与快照；脚本含 tool_command 时必须装配
+   * CommandProcess 端口与 Core 身份提交回调（缺任何一项即装配错误）。 */
+  const toolCommandDefinitions = new Map<string, ValidatedToolCommandDefinition>();
+  for (const [name, definition] of Object.entries(options.toolCommands ?? {})) {
+    requireSafeRecordKey(name, assemblyContext, `toolCommands.${name}`);
+    toolCommandDefinitions.set(name, validateToolCommandDefinition(name, definition));
+  }
+  const referencedToolCommands = new Set(
+    script.steps.filter((step) => step.op === 'tool_command').map((step) => step.name),
+  );
+  if (referencedToolCommands.size > 0) {
+    const port = options.commandProcess;
+    if (port === null || typeof port !== 'object' || typeof port.start !== 'function') {
+      throw new TypeError('FakeRuntime.create: 脚本含 tool_command 时必须注入 CommandProcess 端口');
+    }
+    if (typeof options.commitCommandIdentity !== 'function') {
+      throw new TypeError('FakeRuntime.create: 脚本含 tool_command 时必须注入 Core 身份提交回调');
+    }
+    for (const name of referencedToolCommands) {
+      if (!toolCommandDefinitions.has(name)) {
+        throw new TypeError(`FakeRuntime.create: tool_command 引用未批准命令定义 ${name}`);
+      }
+    }
+  }
+  const commandProcess = options.commandProcess;
+  const commitCommandIdentity = options.commitCommandIdentity;
+
   const descriptor: RuntimeAdapterDescriptor = {
     schemaVersion: 1,
     runtimeId: FAKE_RUNTIME_ID,
@@ -392,6 +569,11 @@ export function createFakeRuntime(options: FakeRuntimeOptions): FakeRuntimeAssem
       let messageSeq = 0;
       let toolSeq = 0;
       let cancelled = false;
+      /* F-004 受控工具进程登记：活动句柄用于取消传播；停止核验用于最终证据。 */
+      const activeTools = new Set<CommandProcessHandle>();
+      const toolStops: Array<{ toolCallId: string; stop: Promise<CommandProcessStop> }> = [];
+      let uncleanToolLaunch = 0;
+      const startAbort = new AbortController();
 
       let settleResult!: (result: RuntimeExecutionResult) => void;
       const result = new Promise<RuntimeExecutionResult>((resolve) => { settleResult = resolve; });
@@ -432,11 +614,21 @@ export function createFakeRuntime(options: FakeRuntimeOptions): FakeRuntimeAssem
 
       const record = (
         op: string, target: string, outcome: 'ok' | 'failed',
-        extra: { reason?: string | null; bytes?: number | null; digest?: string | null } = {},
+        extra: {
+          reason?: string | null; bytes?: number | null; digest?: string | null;
+          toolCallId?: string; exitCode?: number | null; signal?: string | null;
+          lastActivityAtUtc?: string | null; droppedOutputBytes?: number; stopConfirmed?: boolean;
+        } = {},
       ): void => {
         opLog.push({
           index: opLog.length + 1, op, target, outcome,
           reason: extra.reason ?? null, bytes: extra.bytes ?? null, digest: extra.digest ?? null,
+          ...(extra.toolCallId === undefined ? {} : { toolCallId: extra.toolCallId }),
+          ...(extra.exitCode === undefined ? {} : { exitCode: extra.exitCode }),
+          ...(extra.signal === undefined ? {} : { signal: extra.signal }),
+          ...(extra.lastActivityAtUtc === undefined ? {} : { lastActivityAtUtc: extra.lastActivityAtUtc }),
+          ...(extra.droppedOutputBytes === undefined ? {} : { droppedOutputBytes: extra.droppedOutputBytes }),
+          ...(extra.stopConfirmed === undefined ? {} : { stopConfirmed: extra.stopConfirmed }),
         });
       };
 
@@ -517,6 +709,83 @@ export function createFakeRuntime(options: FakeRuntimeOptions): FakeRuntimeAssem
             record('tool', step.name, 'ok');
             return;
           }
+          case 'tool_command': {
+            /* F-004：只以名称引用装配批准定义；argv/环境/超时快照自装配侧。 */
+            toolSeq += 1;
+            const toolCallId = `tool.${correlation}.${toolSeq}`;
+            const definition = toolCommandDefinitions.get(step.name) as ValidatedToolCommandDefinition;
+            const port = commandProcess as CommandProcessPort;
+            const commit = commitCommandIdentity as FakeRuntimeCommitCommandIdentity;
+            let tool: CommandProcessHandle;
+            try {
+              /* launchId/PID/PGID/OS 启动身份经 Core 回调提交到当前 Attempt/占用
+               * 后才由既有 CommandProcess 握手放行；提交失败命令不执行。 */
+              tool = await port.start({
+                argv: definition.argv,
+                cwd: base,
+                environment: definition.environment,
+                stdin: definition.stdin,
+                timeoutMs: definition.timeoutMs,
+                maxInputBytes: definition.maxInputBytes,
+                maxOutputBytes: definition.maxOutputBytes,
+              }, (identity) => commit(identity, {
+                toolCallId,
+                invocationId: request.invocationId,
+                attemptId: request.identity.purpose === 'work' ? request.identity.attemptId : undefined,
+              }), startAbort.signal);
+            } catch (error) {
+              const reason = !(error instanceof CommandProcessError)
+                ? 'tool_launch_failed'
+                : error.reason === 'confirmation_failed'
+                  ? 'tool_identity_commit_failed'
+                  : error.reason === 'stop_unconfirmed'
+                    ? 'tool_stop_unconfirmed'
+                    : 'tool_launch_failed';
+              if (reason === 'tool_stop_unconfirmed') uncleanToolLaunch += 1;
+              record('tool_command', step.name, 'failed', { reason, toolCallId });
+              if (cancelled) throw new ChannelClosed();
+              throw new FailRun(reason);
+            }
+            activeTools.add(tool);
+            if (cancelled) void tool.cancel().catch(() => undefined);
+            toolStops.push({ toolCallId, stop: tool.stopped });
+            try {
+              await emit({ kind: 'tool_started', toolCallId, toolName: step.name });
+              /* 输出与结果并行有界消费：滚动摘要 + 最后活动，不累积全文。 */
+              const digest = createHash('sha256');
+              let lastActivity: string | null = null;
+              const consume = (async () => {
+                for await (const chunk of tool.output) {
+                  digest.update(chunk.bytes);
+                  lastActivity = isoNow();
+                }
+              })();
+              const commandResult = await tool.result;
+              await consume;
+              const stop = await tool.stopped;
+              const ok = commandResult.reason === null && commandResult.exitCode === 0;
+              record('tool_command', step.name, ok ? 'ok' : 'failed', {
+                reason: commandResult.reason,
+                bytes: commandResult.outputBytes,
+                digest: commandResult.outputBytes > 0 ? digest.digest('hex') : null,
+                toolCallId,
+                exitCode: commandResult.exitCode,
+                signal: commandResult.signal,
+                lastActivityAtUtc: lastActivity,
+                droppedOutputBytes: commandResult.droppedOutputBytes,
+                stopConfirmed: stop.confirmed,
+              });
+              await emit({
+                kind: 'tool_finished', toolCallId,
+                exitCode: commandResult.exitCode, signal: commandResult.signal,
+                reason: commandResult.reason, outputBytes: commandResult.outputBytes,
+                lastActivityAtUtc: lastActivity,
+              });
+            } finally {
+              activeTools.delete(tool);
+            }
+            return;
+          }
           case 'usage':
             await emit({
               kind: 'usage',
@@ -581,8 +850,24 @@ export function createFakeRuntime(options: FakeRuntimeOptions): FakeRuntimeAssem
           }
         } finally {
           channel.close();
+          /* F-004：Runtime stopped 只有在脚本步骤结束且所有登记受控工具进程组
+           * 核验停止后才 confirmed；父退子活、身份核验失败与进程监督丢失
+           * （含启动失败且清理未核验的 launch）均报告 confirmed=false。 */
+          const outcomes = await Promise.all(toolStops.map(async (entry) => ({
+            toolCallId: entry.toolCallId,
+            confirmed: await entry.stop.then((stop) => stop.confirmed, () => false),
+          })));
+          const unconfirmed = outcomes.filter((outcome) => !outcome.confirmed)
+            .map((outcome) => outcome.toolCallId);
+          for (let index = 0; index < uncleanToolLaunch; index += 1) {
+            unconfirmed.push('launch_unverified');
+          }
+          const confirmedStop = unconfirmed.length === 0;
           settleStoppedOnce({
-            schemaVersion: 1, confirmed: true, checkedAtUtc: isoNow(), detail: null,
+            schemaVersion: 1,
+            confirmed: confirmedStop,
+            checkedAtUtc: isoNow(),
+            detail: confirmedStop ? null : `unconfirmed_tool_stop:${unconfirmed.join(',')}`.slice(0, 200),
           });
         }
       })();
@@ -595,6 +880,11 @@ export function createFakeRuntime(options: FakeRuntimeOptions): FakeRuntimeAssem
         cancel: async () => {
           if (!cancelled) {
             cancelled = true;
+            startAbort.abort();
+            /* 取消向活动受控工具传播：走既有身份匹配升级终止路径。 */
+            for (const active of [...activeTools]) {
+              void active.cancel().catch(() => undefined);
+            }
             channel.close();
             settleOnce(cancelledResult());
           }

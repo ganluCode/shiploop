@@ -24,6 +24,8 @@
  * - 事件/结果/停止证据/取消回执是适配器侧产出，畸形一律 RuntimeError('protocol')
  *   （未知终态 unknown_terminal 不映射成 failed）；schemaVersion 白名单严格匹配；
  *   缺少退出码/信号/用量/耗时必须为显式 null（键缺席即非法，绝不填 0）；
+ *   F-004 起 tool_finished 可附加可选的 reason/outputBytes/lastActivityAtUtc
+ *   （真实工具命令的实际原因、已知保留输出字节与最后活动时间；出现即受控校验）；
  * - 未知公开事件不中断流：classifyRuntimeEvent 判为 unknown，由会话层保留受限
  *   诊断（有界条目、有界长度），不透传未知 payload；
  * - 错误分类 RUNTIME_ERROR_KINDS 固定九类：configuration/missing_runtime/
@@ -307,7 +309,14 @@ export interface RuntimeUsageReport {
 export type RuntimeEventPayload =
   | { readonly kind: 'message'; readonly messageId: string; readonly role: RuntimeEventRole; readonly preview: string }
   | { readonly kind: 'tool_started'; readonly toolCallId: string; readonly toolName: string }
-  | { readonly kind: 'tool_finished'; readonly toolCallId: string; readonly exitCode: number | null; readonly signal: string | null }
+  /**
+   * tool_finished：F-001 三键（toolCallId/exitCode/signal）必填；F-004 起可
+   * 选附加 reason（实际原因 token，正常退出为 null）、outputBytes（已知保留
+   * 输出字节）与 lastActivityAtUtc（最后活动时间，无活动为 null）。可选键
+   * 出现时必须为显式值或 null，不填 0/不伪造。
+   */
+  | { readonly kind: 'tool_finished'; readonly toolCallId: string; readonly exitCode: number | null; readonly signal: string | null;
+      readonly reason?: string | null; readonly outputBytes?: number | null; readonly lastActivityAtUtc?: string | null }
   | { readonly kind: 'usage'; readonly usage: RuntimeUsageReport }
   | { readonly kind: 'warning'; readonly code: RuntimeWarningCode; readonly message: string }
   | { readonly kind: 'diagnostic'; readonly code: string; readonly message: string };
@@ -385,10 +394,26 @@ function eventPayload(kind: RuntimeEventKind, value: unknown): RuntimeEventPaylo
     case 'tool_started':
       return { kind, toolCallId: eventToken(raw.toolCallId, `${field}.toolCallId`),
         toolName: eventToken(raw.toolName, `${field}.toolName`) };
-    case 'tool_finished':
-      return { kind, toolCallId: eventToken(raw.toolCallId, `${field}.toolCallId`),
+    case 'tool_finished': {
+      const finished: {
+        kind: RuntimeEventKind; toolCallId: string; exitCode: number | null; signal: string | null;
+        reason?: string | null; outputBytes?: number | null; lastActivityAtUtc?: string | null;
+      } = { kind, toolCallId: eventToken(raw.toolCallId, `${field}.toolCallId`),
         exitCode: nullableExitCode(raw.exitCode, `${field}.exitCode`),
         signal: nullableToken(raw.signal, `${field}.signal`) };
+      if (raw.reason !== undefined) {
+        finished.reason = nullableToken(raw.reason, `${field}.reason`);
+      }
+      if (raw.outputBytes !== undefined) {
+        finished.outputBytes = nullableCount(raw.outputBytes, `${field}.outputBytes`);
+      }
+      if (raw.lastActivityAtUtc !== undefined) {
+        if (raw.lastActivityAtUtc === null) finished.lastActivityAtUtc = null;
+        else if (isIsoUtcDateTime(raw.lastActivityAtUtc)) finished.lastActivityAtUtc = raw.lastActivityAtUtc;
+        else throw protocolError('invalid_timestamp', `${field}.lastActivityAtUtc`);
+      }
+      return finished as RuntimeEventPayload;
+    }
     case 'usage':
       return { kind, usage: validateRuntimeUsageReport(raw, field) };
     case 'warning': {
@@ -406,7 +431,7 @@ function payloadKeys(kind: RuntimeEventKind): readonly string[] {
   switch (kind) {
     case 'message': return ['messageId', 'role', 'preview'];
     case 'tool_started': return ['toolCallId', 'toolName'];
-    case 'tool_finished': return ['toolCallId', 'exitCode', 'signal'];
+    case 'tool_finished': return ['toolCallId', 'exitCode', 'signal', 'reason', 'outputBytes', 'lastActivityAtUtc'];
     case 'usage': return ['basis', 'inputTokens', 'outputTokens', 'costUsdMicros'];
     case 'warning': return ['code', 'message'];
     case 'diagnostic': return ['code', 'message'];
