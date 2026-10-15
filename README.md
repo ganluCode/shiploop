@@ -87,6 +87,7 @@ docs/p03-3a-pi-durable-capability-matrix.md  P03-3A F-004 Pi Durable 1.2.0 锁�
 docs/p03-3a-handoff.md  P03-3A F-005 通用恢复协议交接（实际交付接口索引、Core 权威与 Work/Chat 独立控制、公共入口兼容冻结断言、P03-4/6/9 实施依据与 P04 门槛追溯）
 docs/p03-3-handoff.md  P03-3 集成验收与 P03-4/6/9 接口交接（F-014：正式构建 CLI 到持久预算、FR-1/FR-2 与预算子集覆盖、显式测试目录边界、accepted 兼容与组合事务）
 docs/p03-3-cli-execution-operations.md  P03-3 执行授权 CLI 操作说明（F-012：execution preview/start/budget/revise 命令面、完整有限预算参数映射与有效并发把关、previewDigest 明确确认、四态结构化输出与 accepted 仅提交成功语义、失败退出码与同请求恢复）
+docs/p03-5-handoff.md  P03-5 → P03-6/8/9 及 P03-10 接口交接（F-013 真实资源集成回归：准备/恢复/保留/清理/丢弃公共面、负例矩阵复核、T08/T29/T36 映射、恢复边界与验证记录）
 ```
 
 ### 确定性测试约定（F-003）
