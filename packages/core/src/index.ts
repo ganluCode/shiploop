@@ -46,6 +46,8 @@ export * from './ports/runtime-execution.js';
 export * from './ports/runtime-registry.js';
 export * from './application/runtime-execution.js';
 export * from './ports/fake-runtime-script.js';
+export * from './ports/work-evidence-recorder.js';
+export * from './application/work-evidence-recorder.js';
 export * from './ports/execution-input-binding.js';
 export * from './application/execution-input-binding.js';
 export * from './ports/feature-plan.js';
