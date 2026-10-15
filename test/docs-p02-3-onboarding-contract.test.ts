@@ -308,10 +308,12 @@ describe('F-001 契约文档与仓库基线一致（开工现状事实）', () =
     expect(commandsPort).toContain("'baseline.cancel',");
   });
 
-  it('CLI 顶层命令为 project/config/receipt/events/baseline/phase/feature/task/execution，契约记录基线子命令面', () => {
+  it('CLI 顶层命令为 project/config/receipt/events/baseline/phase/feature/task/execution/workspace，契约记录基线子命令面', () => {
     const args = readText('packages/cli/src/app/args.ts');
+    // P03-5 / F-012 追加 workspace（工作区状态展示与人工丢弃预览/确认），
+    // 与 p03-1/p03-2/p03-3/app-cli-args 冻结面同步扩展。
     expect(args.replace(/\s+/g, ' ')).toContain(
-      "APP_CLI_COMMANDS = [ 'project', 'config', 'receipt', 'events', 'baseline', 'phase', 'feature', 'task', 'execution', ] as const;",
+      "APP_CLI_COMMANDS = [ 'project', 'config', 'receipt', 'events', 'baseline', 'phase', 'feature', 'task', 'execution', 'workspace', ] as const;",
     );
     expect(args).toContain('APP_CLI_COMMAND_IDS');
     // 契约记录 project init/overview 与 baseline 子命令面（F-015 已增补）。
