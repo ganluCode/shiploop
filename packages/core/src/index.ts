@@ -45,6 +45,8 @@ export * from './application/runtime-recovery.js';
 export * from './ports/runtime-execution.js';
 export * from './ports/runtime-registry.js';
 export * from './application/runtime-execution.js';
+export * from './ports/execution-input-binding.js';
+export * from './application/execution-input-binding.js';
 export * from './ports/feature-plan.js';
 export * from './ports/plan-store.js';
 export * from './ports/command-process.js';
