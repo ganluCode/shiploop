@@ -210,6 +210,7 @@ describe('F-005 迁移执行与记录', () => {
           'runs',
           'runtime_start_reservations',
           'schema_migrations',
+          'sessions',
           'state_events',
           'task_attempt_reservations',
           'task_claim_receipts',
@@ -322,9 +323,10 @@ describe('F-005 迁移执行与记录', () => {
         expect(rows[16]!.checksum).toBe(SQLITE_MIGRATIONS[16]!.checksum);
         expect(rows[17]!.version).toBe(SQLITE_MIGRATIONS[17]!.version);
         expect(rows[17]!.checksum).toBe(SQLITE_MIGRATIONS[17]!.checksum);
-        expect(rows[19]!.version).toBe(PROBE_MIGRATION.version);
-        expect(rows[19]!.checksum).toBe(PROBE_MIGRATION.checksum);
-        expect(rows[19]!.applied_at).toBe(FIXED_NOW_MS + 1_000);
+        // P03-6 / F-006：v20 为最小 Work Session 表迁移；探针迁移紧随其后。
+        expect(rows[20]!.version).toBe(PROBE_MIGRATION.version);
+        expect(rows[20]!.checksum).toBe(PROBE_MIGRATION.checksum);
+        expect(rows[20]!.applied_at).toBe(FIXED_NOW_MS + 1_000);
       } finally {
         session.close();
       }

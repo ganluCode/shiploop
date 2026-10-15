@@ -468,7 +468,7 @@ describe('F-007 迁移 v12：Runtime 启动预占账本表', () => {
     const session = openSqliteStorageSession({ path: dbPath });
     try {
       const result = await migrateSqliteStorage(session);
-      expect(result.appliedVersions).toEqual([12, 13, 14, 15, 16, 17, 18, 19]);
+      expect(result.appliedVersions).toEqual([12, 13, 14, 15, 16, 17, 18, 19, 20]);
       const batch = session.database
         .prepare('SELECT runtime_starts, attempts_created, budget_snapshot FROM execution_batches WHERE id = ?')
         .get(graph.batchId) as { runtime_starts: number; attempts_created: number; budget_snapshot: string };
@@ -504,7 +504,7 @@ describe('F-007 迁移 v12：Runtime 启动预占账本表', () => {
     }
     // 历史迁移不被改写：版本连续且 v12 为唯一新增追加。
     expect(SQLITE_MIGRATIONS.map((migration) => migration.version)).toEqual([
-      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
     ]);
   });
 

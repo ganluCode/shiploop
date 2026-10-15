@@ -28,8 +28,8 @@ describe('P03-3 / F-007 Runtime 启动额度预占契约文档', () => {
   it('迁移事实一致：v12 为追加版本且包含启动预占账本表（幂等身份/外键链/无用量列）', () => {
     const doc = readContractDoc();
     const migrations = SQLITE_MIGRATIONS;
-    expect(migrations.at(-1)?.version).toBe(19);
-    expect(migrations).toHaveLength(19);
+    expect(migrations.at(-1)?.version).toBe(20);
+    expect(migrations).toHaveLength(20);
     const v12 = migrations[11];
     expect(v12?.sql).toContain('CREATE TABLE runtime_start_reservations');
     expect(v12?.sql).toContain('runtime_start_reservations_project_start_key_unique');

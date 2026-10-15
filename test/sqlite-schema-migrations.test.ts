@@ -77,6 +77,8 @@ const SCHEMA_TABLES = [
   ['task_claim_receipts', schema.taskClaimReceipts],
   ['attempt_notifications', schema.attemptNotifications],
   ['attempt_notification_diagnostics', schema.attemptNotificationDiagnostics],
+  // P03-6 / F-006：最小 Work Session 与 Attempt 执行诊断持久关联（迁移 v20）。
+  ['sessions', schema.sessions],
   ['schema_migrations', schema.schemaMigrations],
 ] as const;
 
@@ -85,7 +87,6 @@ const EXPECTED_TABLE_NAMES = SCHEMA_TABLES.map(([name]) => name).sort();
 /** 迁移与未来功能明确不在本 Feature 建立的后续表（设计 11 §4-§7、§9）。 */
 const FORBIDDEN_TABLE_NAMES = [
   'feature_dependencies',
-  'sessions',
   'chat_turns',
   'session_messages',
   'recording_manifests',
@@ -597,6 +598,12 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
         'workspace_operations:(project_id,run_id)->runs.(project_id,id)',
         'workspace_operations:(project_id,attempt_id)->attempts.(project_id,id)',
         'workspace_operations:(receipt_id)->command_receipts.(id)',
+        // P03-6 / F-006 最小 Work Session（迁移 v20）：同项目 Attempt/父会话/制品引用外键。
+        'sessions:(project_id)->projects.(id)',
+        'sessions:(project_id,attempt_id)->attempts.(project_id,id)',
+        'sessions:(project_id,parent_session_id)->sessions.(project_id,id)',
+        'sessions:(project_id,input_ref)->artifacts.(project_id,id)',
+        'sessions:(project_id,result_ref)->artifacts.(project_id,id)',
       ]);
       type FkPragmaRow = { id: number; seq: number; table: string; from: string; to: string; on_update: string; on_delete: string };
       const actualFks = new Set<string>();

@@ -1405,6 +1405,112 @@ WHEN OLD.status != 'pending'
 BEGIN SELECT RAISE(ABORT, 'workspace operation result is immutable'); END;
 `;
 
+const MIGRATION_020_SQL = `
+-- v20（P03-6 / F-006）：最小 Work Session 与 Attempt 执行诊断持久关联。
+-- 顶层 Work Session 唯一关联同项目 Attempt（attempt_id 部分唯一）；区分启动预占
+-- （reserved）/实际已启动（started）/执行已结束（ended）/已停止（stopped）；可读
+-- 实际 runtime、适配版本、输入引用（与 Attempt 输入快照一致）、executionStage、
+-- 结果/诊断制品引用与最后活动；保存可见记录范围（recording_watermark）与缺口
+-- （recording_gaps）最小元数据。不建 ChatTurn/session_messages/SessionRecorder 表组；
+-- 正文一律经 ready Artifact 引用；未知指标保持 NULL。复用既有 Artifact/状态事件/
+-- JSON 形状约定，不引入配置/计划版本表。
+CREATE TABLE sessions (
+  id TEXT PRIMARY KEY NOT NULL, created_at INTEGER NOT NULL, project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1, updated_at INTEGER NOT NULL,
+  attempt_id TEXT, parent_session_id TEXT, kind TEXT NOT NULL, title TEXT,
+  purpose TEXT NOT NULL, runtime TEXT NOT NULL, adapter_version TEXT NOT NULL,
+  provider_session_id TEXT, status TEXT NOT NULL DEFAULT 'reserved',
+  execution_stage TEXT NOT NULL DEFAULT 'preflight', input_ref TEXT NOT NULL, result_ref TEXT,
+  last_activity_at INTEGER NOT NULL, started_at INTEGER, ended_at INTEGER, stopped_at INTEGER,
+  native_ref TEXT, recording_watermark INTEGER, recording_gaps TEXT,
+  CONSTRAINT sessions_revision_check CHECK (revision >= 1),
+  CONSTRAINT sessions_kind_check CHECK (kind IN ('work', 'chat')),
+  CONSTRAINT sessions_status_check CHECK (status IN ('reserved', 'started', 'ended', 'stopped')),
+  CONSTRAINT sessions_stage_check CHECK (execution_stage IN ('preflight', 'runtime', 'verification', 'commit', 'cleanup')),
+  CONSTRAINT sessions_descriptor_check CHECK (length(purpose) > 0 AND length(runtime) > 0
+    AND length(adapter_version) > 0
+    AND (provider_session_id IS NULL OR length(provider_session_id) > 0)
+    AND (title IS NULL OR (length(title) BETWEEN 1 AND 200))),
+  CONSTRAINT sessions_times_check CHECK (typeof(created_at) = 'integer' AND created_at >= 0
+    AND typeof(updated_at) = 'integer' AND updated_at >= 0
+    AND typeof(last_activity_at) = 'integer' AND last_activity_at >= 0
+    AND (started_at IS NULL OR (typeof(started_at) = 'integer' AND started_at >= 0))
+    AND (ended_at IS NULL OR (typeof(ended_at) = 'integer' AND ended_at >= 0))
+    AND (stopped_at IS NULL OR (typeof(stopped_at) = 'integer' AND stopped_at >= 0))),
+  CONSTRAINT sessions_native_ref_check CHECK (native_ref IS NULL OR (json_valid(native_ref)
+    AND json_type(native_ref) = 'object'
+    AND json_type(native_ref, '$.schemaVersion') IS 'integer'
+    AND json_extract(native_ref, '$.schemaVersion') = 1
+    AND json_type(native_ref, '$.storageKind') = 'text'
+    AND length(json_extract(native_ref, '$.storageKind')) > 0
+    AND json_type(native_ref, '$.formatVersion') = 'text'
+    AND length(json_extract(native_ref, '$.formatVersion')) > 0)),
+  CONSTRAINT sessions_watermark_check CHECK (recording_watermark IS NULL
+    OR (typeof(recording_watermark) = 'integer' AND recording_watermark >= 0)),
+  CONSTRAINT sessions_gaps_check CHECK (recording_gaps IS NULL OR (json_valid(recording_gaps)
+    AND json_type(recording_gaps) = 'array' AND length(recording_gaps) <= 8192)),
+  -- 形状：chat 不关联 Attempt；顶层 Work Session 必须关联 Attempt；子 Session 属于父会话。
+  CONSTRAINT sessions_lifecycle_shape_check CHECK (
+    (kind = 'chat' AND attempt_id IS NULL)
+    OR (kind = 'work' AND parent_session_id IS NULL AND attempt_id IS NOT NULL)
+    OR (kind = 'work' AND parent_session_id IS NOT NULL AND attempt_id IS NULL)),
+  -- 生命周期形状：reserved 无时间/结果；started 必有 started_at；ended 可无 started_at
+  -- （启动失败）但时间单调；stopped 必有 ended/stopped 且单调；result_ref 仅 ended/stopped。
+  CONSTRAINT sessions_status_shape_check CHECK (
+    (status = 'reserved' AND started_at IS NULL AND ended_at IS NULL AND stopped_at IS NULL AND result_ref IS NULL)
+    OR (status = 'started' AND started_at IS NOT NULL AND ended_at IS NULL AND stopped_at IS NULL AND result_ref IS NULL)
+    OR (status = 'ended' AND ended_at IS NOT NULL AND stopped_at IS NULL
+        AND (started_at IS NULL OR ended_at >= started_at))
+    OR (status = 'stopped' AND ended_at IS NOT NULL AND stopped_at IS NOT NULL
+        AND stopped_at >= ended_at AND (started_at IS NULL OR ended_at >= started_at))),
+  CONSTRAINT sessions_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT sessions_attempt_fk FOREIGN KEY (project_id, attempt_id) REFERENCES attempts (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT sessions_parent_fk FOREIGN KEY (project_id, parent_session_id) REFERENCES sessions (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT sessions_input_ref_fk FOREIGN KEY (project_id, input_ref) REFERENCES artifacts (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT sessions_result_ref_fk FOREIGN KEY (project_id, result_ref) REFERENCES artifacts (project_id, id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX sessions_project_id_id_unique ON sessions (project_id, id);
+-- 顶层 Work Session 唯一：同一 Attempt 至多一条 Session。
+CREATE UNIQUE INDEX sessions_attempt_unique ON sessions (attempt_id) WHERE attempt_id IS NOT NULL;
+CREATE INDEX sessions_project_kind_activity_index ON sessions (project_id, kind, last_activity_at);
+-- Session 输入引用必须与所关联 Attempt 的输入快照引用一致（防止错误 Attempt 关联）。
+CREATE TRIGGER sessions_attempt_input_check BEFORE INSERT ON sessions
+WHEN NEW.attempt_id IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM attempts WHERE attempts.id = NEW.attempt_id AND attempts.project_id = NEW.project_id
+    AND attempts.input_ref = NEW.input_ref)
+BEGIN SELECT RAISE(ABORT, 'sessions attempt input mismatch'); END;
+-- 结果/诊断制品引用必须指向同项目 ready Artifact（正文不落入 sessions 表）。
+CREATE TRIGGER sessions_result_ref_ready_insert BEFORE INSERT ON sessions
+WHEN NEW.result_ref IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM artifacts WHERE artifacts.project_id = NEW.project_id AND artifacts.id = NEW.result_ref
+    AND artifacts.status = 'ready')
+BEGIN SELECT RAISE(ABORT, 'sessions result artifact is not ready'); END;
+CREATE TRIGGER sessions_result_ref_ready_update BEFORE UPDATE OF result_ref ON sessions
+WHEN NEW.result_ref IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM artifacts WHERE artifacts.project_id = NEW.project_id AND artifacts.id = NEW.result_ref
+    AND artifacts.status = 'ready')
+BEGIN SELECT RAISE(ABORT, 'sessions result artifact is not ready'); END;
+-- 身份/运行时/输入列不可变。
+CREATE TRIGGER sessions_identity_immutable BEFORE UPDATE ON sessions
+WHEN NEW.project_id IS NOT OLD.project_id OR NEW.attempt_id IS NOT OLD.attempt_id
+  OR NEW.parent_session_id IS NOT OLD.parent_session_id OR NEW.kind IS NOT OLD.kind
+  OR NEW.runtime IS NOT OLD.runtime OR NEW.adapter_version IS NOT OLD.adapter_version
+  OR NEW.input_ref IS NOT OLD.input_ref
+BEGIN SELECT RAISE(ABORT, 'sessions identity fields are immutable'); END;
+-- 已绑定事实只可写一次；记录水位与最后活动只前进不后退。
+CREATE TRIGGER sessions_bound_facts_set_once BEFORE UPDATE ON sessions
+WHEN (OLD.provider_session_id IS NOT NULL AND NEW.provider_session_id IS NOT OLD.provider_session_id)
+  OR (OLD.native_ref IS NOT NULL AND NEW.native_ref IS NOT OLD.native_ref)
+  OR (OLD.started_at IS NOT NULL AND NEW.started_at IS NOT OLD.started_at)
+  OR (OLD.ended_at IS NOT NULL AND NEW.ended_at IS NOT OLD.ended_at)
+  OR (OLD.stopped_at IS NOT NULL AND NEW.stopped_at IS NOT OLD.stopped_at)
+  OR (OLD.result_ref IS NOT NULL AND NEW.result_ref IS NOT OLD.result_ref)
+  OR (OLD.recording_watermark IS NOT NULL
+      AND (NEW.recording_watermark IS NULL OR NEW.recording_watermark < OLD.recording_watermark))
+  OR NEW.last_activity_at < OLD.last_activity_at
+BEGIN SELECT RAISE(ABORT, 'sessions bound facts are set-once or monotonic'); END;
+`;
+
 /** 已声明的全部 SQLite 迁移，按版本升序；F-005 的执行器按此顺序应用并核对摘要。 */
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
@@ -1490,4 +1596,5 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 17, sql: MIGRATION_017_SQL, checksum: sha256Hex(MIGRATION_017_SQL) },
   { version: 18, sql: MIGRATION_018_SQL, checksum: sha256Hex(MIGRATION_018_SQL) },
   { version: 19, sql: MIGRATION_019_SQL, checksum: sha256Hex(MIGRATION_019_SQL) },
+  { version: 20, sql: MIGRATION_020_SQL, checksum: sha256Hex(MIGRATION_020_SQL) },
 ];

@@ -52,7 +52,9 @@ export type StorageEntityType =
   | 'workspace_lease'
   | 'run_outcome_settlement'
   | 'workspace'
-  | 'workspace_operation';
+  | 'workspace_operation'
+  /** P03-6 / F-006：最小 Work Session（sessions，迁移 v20）。 */
+  | 'work_session';
 
 export type StorageErrorKind =
   /** 外部输入未通过运行时校验（缺字段/类型错误/未知 schemaVersion/非法摘要等）。 */

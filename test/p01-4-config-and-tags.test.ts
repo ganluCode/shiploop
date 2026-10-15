@@ -665,7 +665,7 @@ describe('F-006 当前配置检查组（P01-FR2-CONFIG）', () => {
       let executionRowCounts: Record<string, number> = {};
       try {
         tables = listUserTables(rawSession);
-        for (const table of ['execution_batches', 'runs', 'batch_budget_revisions', 'attempts', 'workspace_leases', 'task_claim_receipts']) {
+        for (const table of ['execution_batches', 'runs', 'batch_budget_revisions', 'attempts', 'workspace_leases', 'task_claim_receipts', 'sessions']) {
           executionRowCounts[table] = (
             rawSession.database.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number }
           ).n;
@@ -712,11 +712,12 @@ describe('F-006 当前配置检查组（P01-FR2-CONFIG）', () => {
           'workspace_leases',
           'workspace_operations',
           'managed_workspaces',
+          // P03-6 / F-006：最小 Work Session 表（迁移 v20；空表，无执行实体行）。
+          'sessions',
         ].sort(),
       );
       for (const forbidden of [
         'batches',
-        'sessions',
         'works',
         'feature_dependencies',
       ]) {
@@ -730,6 +731,7 @@ describe('F-006 当前配置检查组（P01-FR2-CONFIG）', () => {
         attempts: 0,
         workspace_leases: 0,
         task_claim_receipts: 0,
+        sessions: 0,
       });
 
       const ref = fixture.writeEvidence(

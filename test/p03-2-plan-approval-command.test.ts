@@ -916,7 +916,7 @@ describe('F-002 迁移接续（版本接续 P03-1 v6；不改历史 checksum）'
         )
         .all();
       expect(afterRows.slice(0, 5)).toEqual(beforeRows);
-      expect(afterRows.map((row) => row.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]);
+      expect(afterRows.map((row) => row.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]);
       expect(afterRows[5]!.checksum).toBe(SQLITE_MIGRATIONS[5]!.checksum);
       expect(afterRows[6]!.checksum).toBe(SQLITE_MIGRATIONS[6]!.checksum);
       expect(afterRows[7]!.checksum).toBe(SQLITE_MIGRATIONS[7]!.checksum);
@@ -983,8 +983,8 @@ describe('F-002 迁移接续（版本接续 P03-1 v6；不改历史 checksum）'
       const result = await migrateSqliteStorage(session, { nowUtcMs: () => NOW });
       expect(result.fromVersion).toBe(0);
       expect(result.toVersion).toBe(SQLITE_MIGRATIONS.length);
-      expect(result.toVersion).toBe(19);
-      expect(result.appliedVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]);
+      expect(result.toVersion).toBe(20);
+      expect(result.appliedVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]);
       const rows = session.database
         .prepare<[], { version: number; checksum: string }>(
           'SELECT version, checksum FROM schema_migrations ORDER BY version',

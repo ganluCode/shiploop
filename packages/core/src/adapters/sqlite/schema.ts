@@ -1492,3 +1492,71 @@ export const schemaMigrations = sqliteTable('schema_migrations', {
   ),
   uniqueIndex('schema_migrations_version_unique').on(table.version),
 ]);
+
+/**
+ * P03-6 / F-006：最小 Work Session 与 Attempt 执行诊断持久关联（sessions，迁移 v20）。
+ * 顶层 Work Session 唯一关联同项目 Attempt（attempt_id 部分唯一）；生命周期区分
+ * 启动预占（reserved）/实际已启动（started）/执行已结束（ended）/已停止（stopped）；
+ * 正文一律经 ready Artifact 引用；未知指标保持 NULL。不建 ChatTurn/session_messages/
+ * SessionRecorder 表组；不引入配置/计划版本表。
+ */
+export const sessions = sqliteTable('sessions', {
+  id: text('id').primaryKey(), createdAt: integer('created_at').notNull(),
+  projectId: text('project_id').notNull().references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  revision: integer('revision').notNull().default(1), updatedAt: integer('updated_at').notNull(),
+  attemptId: text('attempt_id'), parentSessionId: text('parent_session_id'),
+  kind: text('kind').notNull(), title: text('title'),
+  purpose: text('purpose').notNull(), runtime: text('runtime').notNull(), adapterVersion: text('adapter_version').notNull(),
+  providerSessionId: text('provider_session_id'),
+  status: text('status').notNull().default('reserved'),
+  executionStage: text('execution_stage').notNull().default('preflight'),
+  inputRef: text('input_ref').notNull(), resultRef: text('result_ref'),
+  lastActivityAt: integer('last_activity_at').notNull(),
+  startedAt: integer('started_at'), endedAt: integer('ended_at'), stoppedAt: integer('stopped_at'),
+  nativeRef: text('native_ref'), recordingWatermark: integer('recording_watermark'), recordingGaps: text('recording_gaps'),
+}, table => [
+  check('sessions_revision_check', sql`${table.revision} >= 1`),
+  check('sessions_kind_check', sql`${table.kind} IN ('work', 'chat')`),
+  check('sessions_status_check', sql`${table.status} IN ('reserved', 'started', 'ended', 'stopped')`),
+  check('sessions_stage_check', sql`${table.executionStage} IN ('preflight', 'runtime', 'verification', 'commit', 'cleanup')`),
+  check('sessions_descriptor_check', sql`length(${table.purpose}) > 0 AND length(${table.runtime}) > 0
+    AND length(${table.adapterVersion}) > 0
+    AND (${table.providerSessionId} IS NULL OR length(${table.providerSessionId}) > 0)
+    AND (${table.title} IS NULL OR (length(${table.title}) BETWEEN 1 AND 200))`),
+  check('sessions_times_check', sql`typeof(${table.createdAt}) = 'integer' AND ${table.createdAt} >= 0
+    AND typeof(${table.updatedAt}) = 'integer' AND ${table.updatedAt} >= 0
+    AND typeof(${table.lastActivityAt}) = 'integer' AND ${table.lastActivityAt} >= 0
+    AND (${table.startedAt} IS NULL OR (typeof(${table.startedAt}) = 'integer' AND ${table.startedAt} >= 0))
+    AND (${table.endedAt} IS NULL OR (typeof(${table.endedAt}) = 'integer' AND ${table.endedAt} >= 0))
+    AND (${table.stoppedAt} IS NULL OR (typeof(${table.stoppedAt}) = 'integer' AND ${table.stoppedAt} >= 0))`),
+  check('sessions_native_ref_check', sql`${table.nativeRef} IS NULL OR (json_valid(${table.nativeRef})
+    AND json_type(${table.nativeRef}) = 'object'
+    AND json_type(${table.nativeRef}, '$.schemaVersion') IS 'integer'
+    AND json_extract(${table.nativeRef}, '$.schemaVersion') = 1
+    AND json_type(${table.nativeRef}, '$.storageKind') = 'text'
+    AND length(json_extract(${table.nativeRef}, '$.storageKind')) > 0
+    AND json_type(${table.nativeRef}, '$.formatVersion') = 'text'
+    AND length(json_extract(${table.nativeRef}, '$.formatVersion')) > 0)`),
+  check('sessions_watermark_check', sql`${table.recordingWatermark} IS NULL
+    OR (typeof(${table.recordingWatermark}) = 'integer' AND ${table.recordingWatermark} >= 0)`),
+  check('sessions_gaps_check', sql`${table.recordingGaps} IS NULL OR (json_valid(${table.recordingGaps})
+    AND json_type(${table.recordingGaps}) = 'array' AND length(${table.recordingGaps}) <= 8192)`),
+  check('sessions_lifecycle_shape_check', sql`
+    (${table.kind} = 'chat' AND ${table.attemptId} IS NULL)
+    OR (${table.kind} = 'work' AND ${table.parentSessionId} IS NULL AND ${table.attemptId} IS NOT NULL)
+    OR (${table.kind} = 'work' AND ${table.parentSessionId} IS NOT NULL AND ${table.attemptId} IS NULL)`),
+  check('sessions_status_shape_check', sql`
+    (${table.status} = 'reserved' AND ${table.startedAt} IS NULL AND ${table.endedAt} IS NULL AND ${table.stoppedAt} IS NULL AND ${table.resultRef} IS NULL)
+    OR (${table.status} = 'started' AND ${table.startedAt} IS NOT NULL AND ${table.endedAt} IS NULL AND ${table.stoppedAt} IS NULL AND ${table.resultRef} IS NULL)
+    OR (${table.status} = 'ended' AND ${table.endedAt} IS NOT NULL AND ${table.stoppedAt} IS NULL
+        AND (${table.startedAt} IS NULL OR ${table.endedAt} >= ${table.startedAt}))
+    OR (${table.status} = 'stopped' AND ${table.endedAt} IS NOT NULL AND ${table.stoppedAt} IS NOT NULL
+        AND ${table.stoppedAt} >= ${table.endedAt} AND (${table.startedAt} IS NULL OR ${table.endedAt} >= ${table.startedAt}))`),
+  foreignKey({ name: 'sessions_attempt_fk', columns: [table.projectId, table.attemptId], foreignColumns: [attempts.projectId, attempts.id] }).onDelete('restrict'),
+  foreignKey({ name: 'sessions_parent_fk', columns: [table.projectId, table.parentSessionId], foreignColumns: [table.projectId, table.id] }).onDelete('restrict'),
+  foreignKey({ name: 'sessions_input_ref_fk', columns: [table.projectId, table.inputRef], foreignColumns: [artifacts.projectId, artifacts.id] }).onDelete('restrict'),
+  foreignKey({ name: 'sessions_result_ref_fk', columns: [table.projectId, table.resultRef], foreignColumns: [artifacts.projectId, artifacts.id] }).onDelete('restrict'),
+  uniqueIndex('sessions_project_id_id_unique').on(table.projectId, table.id),
+  uniqueIndex('sessions_attempt_unique').on(table.attemptId).where(sql`${table.attemptId} IS NOT NULL`),
+  index('sessions_project_kind_activity_index').on(table.projectId, table.kind, table.lastActivityAt),
+]);
