@@ -46,6 +46,26 @@
  * - 用量：脚本声明的计数一律以 basis 'synthetic' 发出；未知计数为 null；
  *   durationMs 不测量真实时钟（取脚本声明或 null），保证同脚本同输入
  *   产生可核对的同一操作顺序与同一事件序列。
+ * - F-005 可控故障与生命周期脚本（全部纯数据声明 + 装配注入门闩，无随机
+ *   睡眠）：
+ *   · await_gate 步骤挂起在命名门闩上，取消有界中断等待（acceptOnly 模式
+ *     下取消不中断，由门闩释放收尾）；raise 步骤注入意外异常（折算
+ *     internal_error，区别于受控 fail）；
+ *   · startFailure 装配选项使 start 按受控 kind/reason 抛出（启动抛错）；
+ *   · lifecycle.events：drop 丢失留序列缺口（水位照常推进）、duplicate
+ *     原样重投同 eventId/sequence、reorderAt 相邻乱序、endGate 延迟通道
+ *     关闭（结果先到）；
+ *   · lifecycle.result：gate 延迟结果结算（事件先结束；通道先关闭再挂起
+ *     结果）、terminalOverride 产出词汇外终态（会话层 unknown_terminal）；
+ *   · lifecycle.cancel.acceptOnly：首次取消只返回接受回执而不中断运行/
+ *     确认停止（再次取消走真实取消语义）；
+ *   · lifecycle.stopped：gate 延迟停止证据结算（释放后才聚合真实受控组
+ *     核验结果，不以预设布尔冒充进程已退出）、unconfirmed 注入监督边界
+ *     故障（confirmed=false + stop_verification_fault，如实表现为未知）；
+ *   · 请求携带非 new 恢复选择时首事件为 diagnostic fake_fresh_execution，
+ *     如实声明确定性全新执行，不冒充 SDK 检查点/对话续接验收；
+ *   · 门闩仅由可信装配经 gates 选项注入（脚本引用的名称在装配期核对），
+ *     无远端/环境/文件触发入口。
  */
 import { createHash } from 'node:crypto';
 import {
@@ -63,15 +83,17 @@ import {
   isExecutionInputBindingError,
 } from '../ports/execution-input-binding.js';
 import type { BoundExecutionInputReader } from '../ports/execution-input-binding.js';
-import { validateFakeRuntimeScript } from '../ports/fake-runtime-script.js';
+import { validateFakeRuntimeScript, collectFakeRuntimeGateRefs } from '../ports/fake-runtime-script.js';
 import type {
   FakeRuntimeScriptStep,
   FakeRuntimeScriptV1,
 } from '../ports/fake-runtime-script.js';
 import type { ProviderCapabilityDescriptor } from '../ports/runtime-capabilities.js';
-import { RuntimeError } from '../ports/runtime-execution.js';
+import { RuntimeError, RUNTIME_ERROR_KINDS } from '../ports/runtime-execution.js';
 import type {
   RuntimeAdapter,
+  RuntimeErrorKind,
+  RuntimeTerminalState,
   RuntimeEvent,
   RuntimeEventPayload,
   RuntimeExecutionRequest,
@@ -107,7 +129,47 @@ export const FAKE_RUNTIME_FAILURE_REASONS = [
   'path_escape', 'symlink_escape', 'output_limit_exceeded',
   'tool_identity_commit_failed', 'tool_launch_failed', 'tool_stop_unconfirmed',
   'internal_error',
+  /* F-005：await_gate 被取消中断的 op log 原因（不作为 result.reason）。 */
+  'cancelled',
 ] as const;
+
+/* ------------------------------------------------------------------ *
+ * F-005 测试专用门闩与启动故障装配选项
+ * ------------------------------------------------------------------ */
+
+/**
+ * 测试专用门闩：释放前 wait() 挂起；release() 幂等。只由可信测试装配经
+ * gates 选项注入，脚本以名称引用——无任何远端/环境/文件触发入口。
+ */
+export interface FakeRuntimeGate {
+  wait(): Promise<void>;
+  readonly released: boolean;
+}
+
+export interface FakeRuntimeGateControl extends FakeRuntimeGate {
+  release(): void;
+}
+
+export function createFakeRuntimeGate(): FakeRuntimeGateControl {
+  let released = false;
+  let wake!: () => void;
+  const promise = new Promise<void>((resolve) => { wake = resolve; });
+  return {
+    get released() { return released; },
+    wait: () => promise,
+    release: () => {
+      if (released) return;
+      released = true;
+      wake();
+    },
+  };
+}
+
+/** F-005 启动抛错注入：start 按受控 kind/reason 抛 RuntimeError。 */
+export interface FakeRuntimeStartFailure {
+  readonly kind: RuntimeErrorKind;
+  readonly reason: string;
+}
 
 /** F-004：tool_command 步骤引用的可信装配批准命令定义（装配侧校验并快照）。 */
 export interface FakeRuntimeToolCommandDefinition {
@@ -214,6 +276,14 @@ export interface FakeRuntimeOptions {
   readonly commandProcess?: CommandProcessPort;
   /** F-004：Core 身份提交回调（脚本含 tool_command 时必需）。 */
   readonly commitCommandIdentity?: FakeRuntimeCommitCommandIdentity;
+  /**
+   * F-005：可信测试装配注入的命名门闩。脚本经 await_gate 步骤与 lifecycle
+   * 的 endGate/result.gate/stopped.gate 以名称引用；脚本引用未装配名称在
+   * 装配期 fail-fast。
+   */
+  readonly gates?: Readonly<Record<string, FakeRuntimeGate>>;
+  /** F-005：启动抛错注入（start 按受控 kind/reason 拒绝）。 */
+  readonly startFailure?: FakeRuntimeStartFailure;
 }
 
 /**
@@ -536,6 +606,34 @@ export function createFakeRuntime(options: FakeRuntimeOptions): FakeRuntimeAssem
   const commandProcess = options.commandProcess;
   const commitCommandIdentity = options.commitCommandIdentity;
 
+  /* F-005：命名门闩装配核验（脚本引用必须全部装配；门闩形态 fail-fast）。 */
+  const gateMap = new Map<string, FakeRuntimeGate>();
+  for (const [name, gate] of Object.entries(options.gates ?? {})) {
+    requireSafeRecordKey(name, assemblyContext, `gates.${name}`);
+    if (gate === null || typeof gate !== 'object' ||
+        typeof (gate as FakeRuntimeGate).wait !== 'function') {
+      throw new TypeError(`FakeRuntime.create: gates.${name} 必须提供 wait()`);
+    }
+    gateMap.set(name, gate);
+  }
+  for (const ref of collectFakeRuntimeGateRefs(script)) {
+    if (!gateMap.has(ref)) {
+      throw new TypeError(`FakeRuntime.create: 脚本引用未装配门闩 ${ref}`);
+    }
+  }
+  /* F-005：启动抛错注入校验（受控 kind + 原因 token；快照冻结）。 */
+  let startFailure: FakeRuntimeStartFailure | undefined;
+  if (options.startFailure !== undefined) {
+    const raw = options.startFailure;
+    if (raw === null || typeof raw !== 'object' ||
+        !(RUNTIME_ERROR_KINDS as readonly string[]).includes(raw.kind as string) ||
+        typeof raw.reason !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(raw.reason)) {
+      throw new TypeError('FakeRuntime.create: startFailure 必须是受控 kind 与原因 token');
+    }
+    startFailure = Object.freeze({ kind: raw.kind, reason: raw.reason });
+  }
+  const lifecycle = script.lifecycle;
+
   const descriptor: RuntimeAdapterDescriptor = {
     schemaVersion: 1,
     runtimeId: FAKE_RUNTIME_ID,
@@ -548,6 +646,10 @@ export function createFakeRuntime(options: FakeRuntimeOptions): FakeRuntimeAssem
 
   const adapter: RuntimeAdapter = {
     async start(request: RuntimeExecutionRequest): Promise<RuntimeHandle> {
+      /* F-005：启动抛错注入（在创建任何运行现场之前拒绝）。 */
+      if (startFailure !== undefined) {
+        throw new RuntimeError(startFailure.kind, startFailure.reason);
+      }
       const realRoot = canonicalRoots.get(request.cwd.root);
       if (realRoot === undefined) {
         throw new RuntimeError('configuration', 'cwd_root_unknown', { field: 'request.cwd.root' });
@@ -575,6 +677,28 @@ export function createFakeRuntime(options: FakeRuntimeOptions): FakeRuntimeAssem
       let uncleanToolLaunch = 0;
       const startAbort = new AbortController();
 
+      /* F-005：取消通知（门闩等待的有界中断）与故障/生命周期配置快照。 */
+      let cancelNotify!: () => void;
+      const cancelNotified = new Promise<void>((resolve) => { cancelNotify = resolve; });
+      const dropSet = new Set(lifecycle?.events?.drop ?? []);
+      const duplicateSet = new Set(lifecycle?.events?.duplicate ?? []);
+      const reorderAt = lifecycle?.events?.reorderAt;
+      const eventsEndGate = lifecycle?.events?.endGate;
+      const resultGate = lifecycle?.result?.gate;
+      const terminalOverride = lifecycle?.result?.terminalOverride;
+      const acceptOnlyCancel = lifecycle?.cancel?.acceptOnly === true;
+      const stoppedGate = lifecycle?.stopped?.gate;
+      const stoppedUnconfirmedFault = lifecycle?.stopped?.unconfirmed === true;
+      let acceptOnlyConsumed = false;
+      let heldEvent: { event: WireRuntimeEvent; bytes: number } | null = null;
+
+      /** 门闩等待：真实取消有界中断（ChannelClosed）；acceptOnly 首次取消不中断。 */
+      const raceGate = async (name: string): Promise<void> => {
+        const gate = gateMap.get(name) as FakeRuntimeGate;
+        await Promise.race([gate.wait(), cancelNotified]);
+        if (cancelled) throw new ChannelClosed();
+      };
+
       let settleResult!: (result: RuntimeExecutionResult) => void;
       const result = new Promise<RuntimeExecutionResult>((resolve) => { settleResult = resolve; });
       let resultSettled = false;
@@ -594,6 +718,32 @@ export function createFakeRuntime(options: FakeRuntimeOptions): FakeRuntimeAssem
 
       const isoNow = (): string => new Date(nowUtcMs()).toISOString();
 
+      const pushEvent = async (event: WireRuntimeEvent, bytes: number): Promise<void> => {
+        if (outputBytes + bytes > maxOutputBytes) throw new FailRun('output_limit_exceeded');
+        if (!(await channel.push(event, bytes))) throw new ChannelClosed();
+        outputBytes += bytes;
+      };
+
+      /** 有暂存事件时先投当前事件再投暂存（reorderAt 相邻乱序）。 */
+      const deliverOrdered = async (event: WireRuntimeEvent, bytes: number): Promise<void> => {
+        if (heldEvent === null) {
+          await pushEvent(event, bytes);
+          return;
+        }
+        const held = heldEvent;
+        heldEvent = null;
+        await pushEvent(event, bytes);
+        await pushEvent(held.event, held.bytes);
+      };
+
+      /** 冲刷暂存事件（drop 命中时保持既有顺序；通闩关闭前收尾）。 */
+      const flushHeld = async (): Promise<void> => {
+        if (heldEvent === null) return;
+        const held = heldEvent;
+        heldEvent = null;
+        await pushEvent(held.event, held.bytes);
+      };
+
       const emit = async (payload: RuntimeEventPayload): Promise<void> => {
         const nextSequence = sequence + 1;
         const { kind, ...wirePayload } = payload;
@@ -606,10 +756,28 @@ export function createFakeRuntime(options: FakeRuntimeOptions): FakeRuntimeAssem
           payload: wirePayload,
         };
         const bytes = Buffer.byteLength(JSON.stringify(event), 'utf8');
-        if (outputBytes + bytes > maxOutputBytes) throw new FailRun('output_limit_exceeded');
-        if (!(await channel.push(event, bytes))) throw new ChannelClosed();
-        outputBytes += bytes;
+        const faulted = heldEvent !== null || dropSet.has(nextSequence) ||
+          duplicateSet.has(nextSequence) || reorderAt === nextSequence;
+        if (!faulted) {
+          /* 无故障路径与 F-003 逐语句一致（相同微任务跳数）：push 成功后推进序列。 */
+          if (outputBytes + bytes > maxOutputBytes) throw new FailRun('output_limit_exceeded');
+          if (!(await channel.push(event, bytes))) throw new ChannelClosed();
+          outputBytes += bytes;
+          sequence = nextSequence;
+          return;
+        }
+        /* F-005 故障路径：序列在生成时推进（丢失计入水位缺口）。 */
         sequence = nextSequence;
+        if (dropSet.has(nextSequence)) {
+          await flushHeld();
+          return;
+        }
+        if (reorderAt === nextSequence) {
+          heldEvent = { event, bytes };
+          return;
+        }
+        await deliverOrdered(event, bytes);
+        if (duplicateSet.has(nextSequence)) await pushEvent(event, bytes);
       };
 
       const record = (
@@ -749,6 +917,8 @@ export function createFakeRuntime(options: FakeRuntimeOptions): FakeRuntimeAssem
             activeTools.add(tool);
             if (cancelled) void tool.cancel().catch(() => undefined);
             toolStops.push({ toolCallId, stop: tool.stopped });
+            /* 防止未聚合路径（如停止核验故障注入跳过聚合）产生未处理拒绝。 */
+            void tool.stopped.then(() => undefined, () => undefined);
             try {
               await emit({ kind: 'tool_started', toolCallId, toolName: step.name });
               /* 输出与结果并行有界消费：滚动摘要 + 最后活动，不累积全文。 */
@@ -801,6 +971,20 @@ export function createFakeRuntime(options: FakeRuntimeOptions): FakeRuntimeAssem
           case 'fail':
             record('fail', step.reason, 'failed', { reason: step.reason });
             throw new FailRun(step.reason);
+          case 'await_gate':
+            /* F-005：挂起在装配注入门闩；取消有界中断等待（acceptOnly 除外）。 */
+            try {
+              await raceGate(step.name);
+            } catch (error) {
+              record('await_gate', step.name, 'failed', { reason: 'cancelled' });
+              throw error;
+            }
+            record('await_gate', step.name, 'ok');
+            return;
+          case 'raise':
+            /* F-005：意外异常注入（非 FailRun → 运行循环折算 internal_error）。 */
+            record('raise', step.reason, 'failed', { reason: step.reason });
+            throw new Error(`fake_runtime_raise:${step.reason}`);
         }
       };
 
@@ -814,7 +998,9 @@ export function createFakeRuntime(options: FakeRuntimeOptions): FakeRuntimeAssem
       });
       const scriptResult = (): RuntimeExecutionResult => ({
         schemaVersion: 1,
-        terminal: script.result.terminal,
+        /* F-005：terminalOverride 产出词汇外终态（仅正常完成路径；会话层
+         * 校验为 protocol unknown_terminal，不折算 failed）。 */
+        terminal: (terminalOverride ?? script.result.terminal) as RuntimeTerminalState,
         reason: script.result.reason,
         exitCode: script.result.exitCode,
         signal: script.result.signal,
@@ -824,12 +1010,28 @@ export function createFakeRuntime(options: FakeRuntimeOptions): FakeRuntimeAssem
       });
 
       const run = (async (): Promise<void> => {
+        /* F-005：result.gate 延迟结果结算（事件先结束）；取消竞态由
+         * settleOnce 一次结算规则兜底。 */
+        let deferred: (() => RuntimeExecutionResult) | null = null;
         try {
+          /* 请求携带非 new 恢复选择时如实声明：确定性全新执行，不冒充
+           * SDK 检查点/对话续接验收（core-design/14 恢复边界）。 */
+          if (request.recovery.mode !== 'new') {
+            await emit({
+              kind: 'diagnostic',
+              code: 'fake_fresh_execution',
+              message: 'recovery requested; deterministic fresh run, no native checkpoint or conversation state resumed',
+            });
+          }
           for (const step of script.steps) {
             if (cancelled) break;
             await executeStep(step);
           }
-          settleOnce(cancelled ? cancelledResult() : scriptResult());
+          if (resultGate === undefined) {
+            settleOnce(cancelled ? cancelledResult() : scriptResult());
+          } else {
+            deferred = () => (cancelled ? cancelledResult() : scriptResult());
+          }
         } catch (error) {
           if (error instanceof ChannelClosed) {
             settleOnce(cancelledResult());
@@ -849,26 +1051,48 @@ export function createFakeRuntime(options: FakeRuntimeOptions): FakeRuntimeAssem
             settleOnce(failedResult(reason));
           }
         } finally {
+          /* F-005：事件结束门闩——结果可先于事件结束结算（结果先到）；取消
+           * 竞态下关闭优先（有界结束等待与事件通道）。 */
+          if (eventsEndGate !== undefined) await raceGate(eventsEndGate).catch(() => undefined);
+          await flushHeld().catch(() => undefined);
           channel.close();
-          /* F-004：Runtime stopped 只有在脚本步骤结束且所有登记受控工具进程组
-           * 核验停止后才 confirmed；父退子活、身份核验失败与进程监督丢失
-           * （含启动失败且清理未核验的 launch）均报告 confirmed=false。 */
-          const outcomes = await Promise.all(toolStops.map(async (entry) => ({
-            toolCallId: entry.toolCallId,
-            confirmed: await entry.stop.then((stop) => stop.confirmed, () => false),
-          })));
-          const unconfirmed = outcomes.filter((outcome) => !outcome.confirmed)
-            .map((outcome) => outcome.toolCallId);
-          for (let index = 0; index < uncleanToolLaunch; index += 1) {
-            unconfirmed.push('launch_unverified');
+          /* F-005：结果门闩——事件通道已关闭而结果可继续挂起（事件先结束）。 */
+          if (deferred !== null) {
+            await raceGate(resultGate as string).catch(() => undefined);
+            settleOnce(deferred());
           }
-          const confirmedStop = unconfirmed.length === 0;
-          settleStoppedOnce({
-            schemaVersion: 1,
-            confirmed: confirmedStop,
-            checkedAtUtc: isoNow(),
-            detail: confirmedStop ? null : `unconfirmed_tool_stop:${unconfirmed.join(',')}`.slice(0, 200),
-          });
+          /* F-005：停止证据门闩——释放后才聚合真实受控组核验结果（不以预设
+           * 布尔冒充真实进程已退出）。 */
+          if (stoppedGate !== undefined) await raceGate(stoppedGate).catch(() => undefined);
+          if (stoppedUnconfirmedFault) {
+            /* 监督边界故障注入：如实报告未知，不冒充已停止。 */
+            settleStoppedOnce({
+              schemaVersion: 1,
+              confirmed: false,
+              checkedAtUtc: isoNow(),
+              detail: 'stop_verification_fault',
+            });
+          } else {
+            /* F-004：Runtime stopped 只有在脚本步骤结束且所有登记受控工具进程组
+             * 核验停止后才 confirmed；父退子活、身份核验失败与进程监督丢失
+             * （含启动失败且清理未核验的 launch）均报告 confirmed=false。 */
+            const outcomes = await Promise.all(toolStops.map(async (entry) => ({
+              toolCallId: entry.toolCallId,
+              confirmed: await entry.stop.then((stop) => stop.confirmed, () => false),
+            })));
+            const unconfirmed = outcomes.filter((outcome) => !outcome.confirmed)
+              .map((outcome) => outcome.toolCallId);
+            for (let index = 0; index < uncleanToolLaunch; index += 1) {
+              unconfirmed.push('launch_unverified');
+            }
+            const confirmedStop = unconfirmed.length === 0;
+            settleStoppedOnce({
+              schemaVersion: 1,
+              confirmed: confirmedStop,
+              checkedAtUtc: isoNow(),
+              detail: confirmedStop ? null : `unconfirmed_tool_stop:${unconfirmed.join(',')}`.slice(0, 200),
+            });
+          }
         }
       })();
       void run;
@@ -878,8 +1102,15 @@ export function createFakeRuntime(options: FakeRuntimeOptions): FakeRuntimeAssem
         result,
         stopped,
         cancel: async () => {
+          /* F-005 acceptOnly：首次取消只返回接受回执，不中断运行、不自动
+           * 确认停止；再次取消走真实取消语义（幂等）。 */
+          if (acceptOnlyCancel && !acceptOnlyConsumed) {
+            acceptOnlyConsumed = true;
+            return { accepted: true, reason: null };
+          }
           if (!cancelled) {
             cancelled = true;
+            cancelNotify();
             startAbort.abort();
             /* 取消向活动受控工具传播：走既有身份匹配升级终止路径。 */
             for (const active of [...activeTools]) {
