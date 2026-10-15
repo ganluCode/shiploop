@@ -31,6 +31,8 @@ import { request as httpRequest, type ClientRequest, type IncomingMessage } from
 import {
   PLAN_LIST_CURSOR_PREFIX,
   PLAN_LIST_MAX_LIMIT,
+  WORKSPACE_LIST_CURSOR_PREFIX,
+  WORKSPACE_LIST_MAX_LIMIT,
   computeCommandRequestDigest,
   isUuidV4,
   isValidResultRef,
@@ -69,6 +71,11 @@ import type {
   SnapshotResult,
   TaskDetailResult,
   TaskListResult,
+  WorkspaceDetailResult,
+  WorkspaceDiscardPreviewBinding,
+  WorkspaceListResult,
+  WorkspaceOperationDetailResult,
+  WorkspaceOperationListResult,
 } from 'shiploop-core/protocol';
 import {
   APP_REQUEST_TIMEOUT_MS,
@@ -102,6 +109,10 @@ import {
   SUBMIT_COMMAND_BUDGET_MS,
   TASKS_ROUTE,
   TASKS_ROUTE_PREFIX,
+  WORKSPACES_ROUTE,
+  WORKSPACES_ROUTE_PREFIX,
+  WORKSPACE_OPERATIONS_ROUTE,
+  WORKSPACE_OPERATIONS_ROUTE_PREFIX,
   isHostProtocolError,
   isPlainObject,
 } from '../contract/index.js';
@@ -123,6 +134,8 @@ import {
   validatePlanLabelsUpdateResultWire,
   validateStateEventWire,
   validateTaskStrategyUpdateResultWire,
+  validateWorkspaceDiscardConfirmResultWire,
+  validateWorkspaceDiscardPreviewWire,
 } from './app-wire.js';
 
 /* ------------------------------------------------------------------ *
@@ -332,6 +345,46 @@ export interface BudgetRevisionListInput {
   readonly cursor?: string;
 }
 
+/* ------------------------------------------------------------------ *
+ * P03-5 / F-012 工作区状态查询与人工丢弃预览/确认输入类型
+ * ------------------------------------------------------------------ */
+
+/** workspaces.list 分页/筛选输入（limit 1..500；cursor 为 wscur_v1_ 不透明游标）。 */
+export interface ListWorkspacesInput {
+  readonly featureId?: string;
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+
+/** workspace.operations.list 分页/筛选输入（同一工作区分页纪律）。 */
+export interface ListWorkspaceOperationsInput {
+  readonly featureId?: string;
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+
+/** workspace.discard.preview 输入：只读预览 + 不可变证据发布（创建类命令）。 */
+export interface PreviewWorkspaceDiscardInput {
+  readonly projectId: string;
+  readonly featureId: string;
+  readonly commandId?: string;
+}
+
+/**
+ * workspace.discard 输入：人工确认丢弃（绑定当前 workspace revision、HEAD、
+ * 内容摘要与明确预览摘要；客户端只做形态把关，深校验与门禁由 Core 单一权威）。
+ */
+export interface ConfirmWorkspaceDiscardInput {
+  readonly projectId: string;
+  readonly featureId: string;
+  readonly workspaceId: string;
+  readonly operationId: string;
+  readonly expectedWorkspaceRevision: number;
+  readonly preview: WorkspaceDiscardPreviewBinding;
+  readonly evidenceRefs: readonly string[];
+  readonly commandId?: string;
+}
+
 /** artifacts.get 的授权证据正文（§7.6：text/plain 有界内容，已脱敏）。 */
 export interface BaselineArtifactContentResult {
   readonly artifactId: string;
@@ -510,6 +563,40 @@ export interface HostClientApplication {
     attemptId: string,
     input?: PlanListPageInput,
   ): Promise<AttemptDiagnosticsResult>;
+  /* ------------------------------------------------------------ *
+   * P03-5 / F-012 工作区状态只读查询与人工丢弃预览/确认
+   * ------------------------------------------------------------ */
+  /** workspaces.list：项目内受管工作区键集分页（只读；不修改任何状态）。 */
+  listWorkspaces(projectId: string, input?: ListWorkspacesInput): Promise<WorkspaceListResult>;
+  /** workspaces.get：工作区详情（准备 operation 与最新 operation 完整视图）。 */
+  getWorkspace(projectId: string, featureId: string): Promise<WorkspaceDetailResult>;
+  /** workspace.operations.list：工作区 operation 审计键集分页。 */
+  listWorkspaceOperations(
+    projectId: string,
+    input?: ListWorkspaceOperationsInput,
+  ): Promise<WorkspaceOperationListResult>;
+  /** workspace.operations.get：单次 operation 详情（结果与当前回执投影）。 */
+  getWorkspaceOperation(
+    projectId: string,
+    operationId: string,
+  ): Promise<WorkspaceOperationDetailResult>;
+  /**
+   * workspace.discard.preview：人工丢弃只读预览（completed 回执 result 经预览
+   * 形状线校验；预览不是删除，也不授权自动确认）。
+   */
+  previewWorkspaceDiscard(
+    input: PreviewWorkspaceDiscardInput,
+    options?: SubmitCommandOptions,
+  ): Promise<CommandReceipt>;
+  /**
+   * workspace.discard：人工确认丢弃（专属幂等通道；completed 回执 result 经
+   * 登记摘要线校验——命令 completed ≠ 丢弃成功，实际结果经 workspace.operations
+   * 查询读取）。
+   */
+  confirmWorkspaceDiscard(
+    input: ConfirmWorkspaceDiscardInput,
+    options?: SubmitCommandOptions,
+  ): Promise<CommandReceipt>;
 }
 
 /** 由 connectToHost 注入的会话上下文（身份/预算/生命周期钩子）。 */
@@ -1018,6 +1105,105 @@ function planListPath(
 }
 
 /* ------------------------------------------------------------------ *
+ * P03-5 / F-012 工作区查询/命令输入校验（零网络拒绝）
+ * ------------------------------------------------------------------ */
+
+const WORKSPACE_LIST_INPUT_KEYS = ['featureId', 'limit', 'cursor'] as const;
+const PREVIEW_WORKSPACE_DISCARD_INPUT_KEYS = ['projectId', 'featureId', 'commandId'] as const;
+const CONFIRM_WORKSPACE_DISCARD_INPUT_KEYS = [
+  'projectId',
+  'featureId',
+  'workspaceId',
+  'operationId',
+  'expectedWorkspaceRevision',
+  'preview',
+  'evidenceRefs',
+  'commandId',
+] as const;
+const DISCARD_PREVIEW_BINDING_KEYS = [
+  'previewDigest',
+  'headCommit',
+  'codeDigest',
+  'ignoredDigest',
+  'workspaceRevision',
+  'expiresAtUtcMs',
+] as const;
+
+/** 工作区列表分页输入：limit 1..500；cursor 为 wscur_v1_ 形态（键序冻结）。 */
+function buildWorkspaceListQuery(
+  input: ListWorkspacesInput | ListWorkspaceOperationsInput | undefined,
+  operation: HostOperation,
+): string {
+  if (input === undefined) {
+    return '';
+  }
+  const object = rejectUnknownInputKeys(operation, input, WORKSPACE_LIST_INPUT_KEYS);
+  const params = new URLSearchParams();
+  if (object.featureId !== undefined) {
+    params.append('featureId', requireStableIdInput(operation, object.featureId, 'featureId'));
+  }
+  if (object.limit !== undefined) {
+    if (
+      typeof object.limit !== 'number' ||
+      !Number.isInteger(object.limit) ||
+      object.limit < 1 ||
+      object.limit > WORKSPACE_LIST_MAX_LIMIT
+    ) {
+      throw invalidInput(operation, 'invalid_limit', 'limit');
+    }
+    params.append('limit', String(object.limit));
+  }
+  if (object.cursor !== undefined) {
+    if (
+      typeof object.cursor !== 'string' ||
+      !object.cursor.startsWith(WORKSPACE_LIST_CURSOR_PREFIX) ||
+      !/^[A-Za-z0-9_-]+$/.test(object.cursor.slice(WORKSPACE_LIST_CURSOR_PREFIX.length))
+    ) {
+      throw invalidInput(operation, 'invalid_cursor', 'cursor');
+    }
+    params.append('cursor', object.cursor);
+  }
+  return params.toString();
+}
+
+/** 确认预览绑定（客户端形态把关；previewDigest 重算与门禁由 Core 单一权威）。 */
+function requireDiscardPreviewBinding(
+  operation: HostOperation,
+  value: unknown,
+): WorkspaceDiscardPreviewBinding {
+  const object = rejectUnknownInputKeys(operation, value, DISCARD_PREVIEW_BINDING_KEYS);
+  const previewDigest = requireSha256Input(operation, object.previewDigest, 'preview.previewDigest');
+  const headCommit = object.headCommit;
+  if (typeof headCommit !== 'string' || !/^[0-9a-f]{40}$/.test(headCommit)) {
+    throw invalidInput(operation, 'invalid_commit', 'preview.headCommit');
+  }
+  const workspaceRevision = object.workspaceRevision;
+  if (
+    typeof workspaceRevision !== 'number' ||
+    !Number.isInteger(workspaceRevision) ||
+    workspaceRevision < 1
+  ) {
+    throw invalidInput(operation, 'invalid_workspace_revision', 'preview.workspaceRevision');
+  }
+  const expiresAtUtcMs = object.expiresAtUtcMs;
+  if (
+    typeof expiresAtUtcMs !== 'number' ||
+    !Number.isInteger(expiresAtUtcMs) ||
+    expiresAtUtcMs < 1
+  ) {
+    throw invalidInput(operation, 'invalid_preview_expiry', 'preview.expiresAtUtcMs');
+  }
+  return {
+    previewDigest,
+    headCommit,
+    codeDigest: requireSha256Input(operation, object.codeDigest, 'preview.codeDigest'),
+    ignoredDigest: requireSha256Input(operation, object.ignoredDigest, 'preview.ignoredDigest'),
+    workspaceRevision,
+    expiresAtUtcMs,
+  };
+}
+
+/* ------------------------------------------------------------------ *
  * SSE 订阅
  * ------------------------------------------------------------------ */
 
@@ -1142,16 +1328,27 @@ export function createHostClientApplication(context: AppClientContext): HostClie
     return response.json;
   }
 
+  /**
+   * 回执摘要期望：默认要求回执 requestDigest 与冻结信封一致；P03-5 / F-011
+   * workspace.discard 走 F-010 专属幂等通道——持久用户回执以丢弃请求摘要
+   *（computeWorkspaceDiscardRequestDigest，含服务端主体身份）锚定，与信封摘要
+   * 不同不是协议畸形；该操作仅核对 commandId/operation。
+   */
+  type ReceiptDigestExpectation = 'envelope' | 'server_anchored';
+
   /** 提交响应 → 回执：200/202 必须是合法回执（§5.3：accepted → 202，P02-3 /
    *  F-008 起为 baseline.run authorize 的合法线上状态）；非 200/202 体为合法
    *  回执按 §5.7 返回，否则错误映射。 */
   function receiptFromSubmitResponse(
     response: { statusCode: number; json: unknown },
     frozen: FrozenEnvelope,
+    digestExpectation: ReceiptDigestExpectation,
   ): CommandReceipt {
     const expectation = {
       expectedCommandId: frozen.commandId,
-      expectedRequestDigest: frozen.requestDigest,
+      ...(digestExpectation === 'envelope'
+        ? { expectedRequestDigest: frozen.requestDigest }
+        : {}),
       expectedOperation: frozen.operation,
     };
     if (response.statusCode === 200 || response.statusCode === 202) {
@@ -1174,6 +1371,7 @@ export function createHostClientApplication(context: AppClientContext): HostClie
     frozen: FrozenEnvelope,
     signal: AbortSignal | undefined,
     deadlineMs: number,
+    digestExpectation: ReceiptDigestExpectation,
   ): Promise<CommandReceipt | undefined> {
     try {
       const response = await requestLoopbackJson({
@@ -1194,7 +1392,9 @@ export function createHostClientApplication(context: AppClientContext): HostClie
         response.json,
         {
           expectedCommandId: frozen.commandId,
-          expectedRequestDigest: frozen.requestDigest,
+          ...(digestExpectation === 'envelope'
+            ? { expectedRequestDigest: frozen.requestDigest }
+            : {}),
           expectedOperation: frozen.operation,
         },
         'receipts.get',
@@ -1213,6 +1413,7 @@ export function createHostClientApplication(context: AppClientContext): HostClie
   async function submitCommand(
     input: SubmitCommandInput,
     options?: SubmitCommandOptions,
+    digestExpectation: ReceiptDigestExpectation = 'envelope',
   ): Promise<CommandReceipt> {
     context.assertOpen('commands.submit');
     const submitOptions = extractAbortSignal(options, 'commands.submit');
@@ -1258,7 +1459,7 @@ export function createHostClientApplication(context: AppClientContext): HostClie
           maxResponseBytes: MAX_APP_BODY_BYTES,
           ...(signal !== undefined ? { signal } : {}),
         });
-        return receiptFromSubmitResponse(response, frozen);
+        return receiptFromSubmitResponse(response, frozen, digestExpectation);
       } catch (error) {
         if (isAbortError(error, signal)) {
           throw abortedError('commands.submit');
@@ -1271,7 +1472,7 @@ export function createHostClientApplication(context: AppClientContext): HostClie
       }
       // 传输失败：先等待有界提交窗口，再查本 principal 名下回执。
       await boundedDelay(SUBMIT_RECEIPT_GRACE_MS, signal, deadlineMs, 'commands.submit');
-      const receipt = await lookupReceipt(frozen, signal, deadlineMs);
+      const receipt = await lookupReceipt(frozen, signal, deadlineMs, digestExpectation);
       if (receipt !== undefined) {
         return receipt;
       }
@@ -2399,6 +2600,173 @@ export function createHostClientApplication(context: AppClientContext): HostClie
         throw new HostProtocolError('response_malformed', 'execution.attempt.diagnostics', '诊断响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
       }
       return result;
+    },
+
+    /* ------------------------------------------------------------ *
+     * P03-5 / F-012 工作区状态只读查询与人工丢弃预览/确认
+     * ------------------------------------------------------------ */
+
+    async listWorkspaces(
+      projectId: string,
+      input?: ListWorkspacesInput,
+    ): Promise<WorkspaceListResult> {
+      context.assertOpen('workspaces.list');
+      const project = requireProjectId('workspaces.list', projectId);
+      const paging = buildWorkspaceListQuery(input, 'workspaces.list');
+      const query =
+        `projectId=${encodeURIComponent(project)}` +
+        `${paging.length === 0 ? '' : `&${paging}`}`;
+      const json = await getJson('workspaces.list', `${WORKSPACES_ROUTE}?${query}`);
+      const result = validateAppQueryResponse('workspaces.list', json);
+      if (
+        result.records.some(
+          (record) =>
+            record.projectId !== project ||
+            (input?.featureId !== undefined && record.featureId !== input.featureId)
+        )
+      ) {
+        throw new HostProtocolError('response_malformed', 'workspaces.list', '工作区响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
+      }
+      return result;
+    },
+
+    async getWorkspace(projectId: string, featureId: string): Promise<WorkspaceDetailResult> {
+      context.assertOpen('workspaces.get');
+      const project = requireProjectId('workspaces.get', projectId);
+      const feature = requireStableIdInput('workspaces.get', featureId, 'featureId');
+      const json = await getJson(
+        'workspaces.get',
+        `${WORKSPACES_ROUTE_PREFIX}${encodeURIComponent(feature)}?projectId=${encodeURIComponent(project)}`,
+      );
+      const result = validateAppQueryResponse('workspaces.get', json);
+      if (result.workspace.projectId !== project || result.workspace.featureId !== feature) {
+        throw new HostProtocolError('response_malformed', 'workspaces.get', '工作区响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
+      }
+      return result;
+    },
+
+    async listWorkspaceOperations(
+      projectId: string,
+      input?: ListWorkspaceOperationsInput,
+    ): Promise<WorkspaceOperationListResult> {
+      context.assertOpen('workspace.operations.list');
+      const project = requireProjectId('workspace.operations.list', projectId);
+      const paging = buildWorkspaceListQuery(input, 'workspace.operations.list');
+      const query =
+        `projectId=${encodeURIComponent(project)}` +
+        `${paging.length === 0 ? '' : `&${paging}`}`;
+      const json = await getJson('workspace.operations.list', `${WORKSPACE_OPERATIONS_ROUTE}?${query}`);
+      const result = validateAppQueryResponse('workspace.operations.list', json);
+      if (
+        result.records.some(
+          (record) =>
+            record.projectId !== project ||
+            (input?.featureId !== undefined && record.featureId !== input.featureId)
+        )
+      ) {
+        throw new HostProtocolError('response_malformed', 'workspace.operations.list', '工作区操作响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
+      }
+      return result;
+    },
+
+    async getWorkspaceOperation(
+      projectId: string,
+      operationId: string,
+    ): Promise<WorkspaceOperationDetailResult> {
+      context.assertOpen('workspace.operations.get');
+      const project = requireProjectId('workspace.operations.get', projectId);
+      const id = requireStableIdInput('workspace.operations.get', operationId, 'operationId');
+      const json = await getJson(
+        'workspace.operations.get',
+        `${WORKSPACE_OPERATIONS_ROUTE_PREFIX}${encodeURIComponent(id)}?projectId=${encodeURIComponent(project)}`,
+      );
+      const result = validateAppQueryResponse('workspace.operations.get', json);
+      if (result.operation.projectId !== project || result.operation.id !== id) {
+        throw new HostProtocolError('response_malformed', 'workspace.operations.get', '工作区操作响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
+      }
+      return result;
+    },
+
+    async previewWorkspaceDiscard(
+      input: PreviewWorkspaceDiscardInput,
+      options?: SubmitCommandOptions,
+    ): Promise<CommandReceipt> {
+      context.assertOpen('commands.submit');
+      const object = rejectUnknownInputKeys(
+        'commands.submit',
+        input,
+        PREVIEW_WORKSPACE_DISCARD_INPUT_KEYS,
+      );
+      const projectId = requireProjectId('commands.submit', object.projectId as string);
+      const featureId = requireStableIdInput('commands.submit', object.featureId, 'featureId');
+      const receipt = await submitCommand(
+        {
+          ...(typeof object.commandId === 'string' ? { commandId: object.commandId } : {}),
+          operation: 'workspace.discard.preview',
+          scope: { kind: 'project', projectId },
+          payload: { featureId },
+        },
+        options,
+      );
+      // completed 回执的 result 必须是丢弃预览形状（绑定摘要/有界清单/不可逆影响）。
+      if (receipt.status === 'completed') {
+        validateWorkspaceDiscardPreviewWire(receipt.result, 'commands.submit');
+      }
+      return receipt;
+    },
+
+    async confirmWorkspaceDiscard(
+      input: ConfirmWorkspaceDiscardInput,
+      options?: SubmitCommandOptions,
+    ): Promise<CommandReceipt> {
+      context.assertOpen('commands.submit');
+      const object = rejectUnknownInputKeys(
+        'commands.submit',
+        input,
+        CONFIRM_WORKSPACE_DISCARD_INPUT_KEYS,
+      );
+      const projectId = requireProjectId('commands.submit', object.projectId as string);
+      const featureId = requireStableIdInput('commands.submit', object.featureId, 'featureId');
+      const workspaceId = requireStableIdInput('commands.submit', object.workspaceId, 'workspaceId');
+      const operationId = requireStableIdInput('commands.submit', object.operationId, 'operationId');
+      const expectedWorkspaceRevision = requireExpectedRevisionInput(
+        'commands.submit',
+        object.expectedWorkspaceRevision,
+      );
+      const preview = requireDiscardPreviewBinding('commands.submit', object.preview);
+      const evidenceRefs = object.evidenceRefs;
+      if (
+        !Array.isArray(evidenceRefs) ||
+        evidenceRefs.length < 1 ||
+        evidenceRefs.length > 49 ||
+        !evidenceRefs.every((ref) => typeof ref === 'string' && STABLE_ID_PATTERN.test(ref))
+      ) {
+        throw invalidInput('commands.submit', 'invalid_evidence_refs', 'evidenceRefs');
+      }
+      const receipt = await submitCommand(
+        {
+          ...(typeof object.commandId === 'string' ? { commandId: object.commandId } : {}),
+          operation: 'workspace.discard',
+          scope: { kind: 'project', projectId },
+          payload: {
+            featureId,
+            workspaceId,
+            operationId,
+            expectedWorkspaceRevision,
+            preview,
+            evidenceRefs: [...evidenceRefs],
+          },
+        },
+        options,
+        // F-010 专属幂等通道：持久用户回执以丢弃请求摘要锚定（非信封摘要）。
+        'server_anchored',
+      );
+      // completed 回执的 result 必须是登记摘要形状；命令 completed ≠ 丢弃成功，
+      // 实际删除结果经 workspace.operations 查询读取（本方法不冒充操作终态）。
+      if (receipt.status === 'completed') {
+        validateWorkspaceDiscardConfirmResultWire(receipt.result, 'commands.submit');
+      }
+      return receipt;
     },
   };
 }

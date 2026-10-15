@@ -137,7 +137,7 @@ describe('F-012 执行授权命令面（execution preview/start/budget/revise）
     expect([...APP_CLI_COMMANDS]).not.toContain('work');
     for (const id of APP_CLI_COMMAND_IDS) {
       expect(id).toMatch(
-        /^(project|config|receipt|events|baseline|phase|feature|task|execution)\.[a-z]+$/,
+        /^(project|config|receipt|events|baseline|phase|feature|task|execution|workspace)\.[a-z-]+$/,
       );
     }
   });

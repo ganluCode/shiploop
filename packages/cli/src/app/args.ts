@@ -13,6 +13,9 @@
  *   （单 Feature 显式授权 + 预算查询/修订；不新增 wait/cancel/resume）；
  *   P03-4 / F-009 增补 execution schedule/attempts/diagnostics 只读诊断子命令
  *   （Run 调度原因/Task 就绪视图、Attempt 归属与通知诊断审计；只读不认领）；
+ *   P03-5 / F-012 增补 workspace list/get/operations/operation 只读状态子命令
+ *   与 discard-preview/discard 人工丢弃预览确认子命令（破坏性确认缺 --confirm
+ *   或 --preview-file 在解析层本地拒绝，不隐式预览后自动同意）；
  * - 监听地址覆盖零容忍：--bind/--host/--address/--port/--listen* 与
  *   SHIPLOOP_HOST_* env 覆盖一律 bind_address_override_rejected；
  * - 错误只携带 code/reason/参数名/命令身份，绝不回显参数值；
@@ -35,6 +38,7 @@ export const APP_CLI_COMMANDS = [
   'feature',
   'task',
   'execution',
+  'workspace',
 ] as const;
 export type AppCliCommand = (typeof APP_CLI_COMMANDS)[number];
 
@@ -83,7 +87,13 @@ export type AppCliCommandId =
   | 'execution.revise'
   | 'execution.schedule'
   | 'execution.attempts'
-  | 'execution.diagnostics';
+  | 'execution.diagnostics'
+  | 'workspace.list'
+  | 'workspace.get'
+  | 'workspace.operations'
+  | 'workspace.operation'
+  | 'workspace.discard-preview'
+  | 'workspace.discard';
 
 export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'project.init',
@@ -130,6 +140,12 @@ export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'execution.schedule',
   'execution.attempts',
   'execution.diagnostics',
+  'workspace.list',
+  'workspace.get',
+  'workspace.operations',
+  'workspace.operation',
+  'workspace.discard-preview',
+  'workspace.discard',
 ]);
 
 /** 命令对应的 Core 操作身份（F-015/F-016 组装命令信封时使用）。 */
@@ -152,7 +168,9 @@ export type AppCommandOperation =
   | 'execution.input.prepare'
   | 'execution.preview'
   | 'execution.start'
-  | 'execution.budget.revise';
+  | 'execution.budget.revise'
+  | 'workspace.discard'
+  | 'workspace.discard.preview';
 
 export type AppHelpScope = AppCliCommand | AppCliCommandId;
 
@@ -231,7 +249,9 @@ export type AppCliParseReason =
   | 'invalid_run_id'
   | 'invalid_attempt_id'
   | 'concurrency_not_supported'
-  | 'confirmation_required';
+  | 'confirmation_required'
+  | 'invalid_preview_file'
+  | 'preview_feature_mismatch';
 
 const REASON_MESSAGE: Readonly<Record<AppCliParseReason, string>> = Object.freeze({
   invalid_argv_type: 'argv 必须是字符串数组',
@@ -306,7 +326,9 @@ const REASON_MESSAGE: Readonly<Record<AppCliParseReason, string>> = Object.freez
   invalid_run_id: 'runId 必须是 UUID v4',
   invalid_attempt_id: 'attemptId 必须是 UUID v4',
   concurrency_not_supported: '有效并发大于一：本版本只支持单并发执行',
-  confirmation_required: '显式启动必须明确确认（--confirm）',
+  confirmation_required: '破坏性操作必须明确确认（--confirm）',
+  invalid_preview_file: '丢弃预览文件不是合法的工作区丢弃预览（形状或绑定字段不合法）',
+  preview_feature_mismatch: '丢弃预览文件的 Feature 与命令目标 Feature 不一致',
 });
 
 interface ParseState {
@@ -799,6 +821,68 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
     maxPositionals: 1,
     positionalFields: ['attemptId'],
   },
+  /* P03-5 / F-012 工作区状态展示与人工丢弃预览/确认（沿用既有参数解析与
+   * 命令身份纪律；不新增草案命令）。 */
+  'workspace.list': {
+    command: 'workspace',
+    commandId: 'workspace.list',
+    valueFlags: ['--project', '--feature', '--limit', '--cursor'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 0,
+    maxPositionals: 0,
+    positionalFields: [],
+  },
+  'workspace.get': {
+    command: 'workspace',
+    commandId: 'workspace.get',
+    valueFlags: ['--project'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['featureId'],
+  },
+  'workspace.operations': {
+    command: 'workspace',
+    commandId: 'workspace.operations',
+    valueFlags: ['--project', '--feature', '--limit', '--cursor'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 0,
+    maxPositionals: 0,
+    positionalFields: [],
+  },
+  'workspace.operation': {
+    command: 'workspace',
+    commandId: 'workspace.operation',
+    valueFlags: ['--project'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['operationId'],
+  },
+  'workspace.discard-preview': {
+    command: 'workspace',
+    commandId: 'workspace.discard-preview',
+    valueFlags: ['--project', '--command-id'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['featureId'],
+  },
+  'workspace.discard': {
+    command: 'workspace',
+    commandId: 'workspace.discard',
+    valueFlags: ['--project', '--preview-file', '--command-id'],
+    boolFlags: ['--confirm'],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['featureId'],
+  },
 });
 
 const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, AppCliCommandId>>>> =
@@ -860,6 +944,14 @@ const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, A
       schedule: 'execution.schedule',
       attempts: 'execution.attempts',
       diagnostics: 'execution.diagnostics',
+    },
+    workspace: {
+      list: 'workspace.list',
+      get: 'workspace.get',
+      operations: 'workspace.operations',
+      operation: 'workspace.operation',
+      'discard-preview': 'workspace.discard-preview',
+      discard: 'workspace.discard',
     },
   });
 
@@ -1229,6 +1321,30 @@ function resolvePlanTitle(scan: ScanResult, state: ParseState): string {
     fail(state, 'invalid_title', 'title');
   }
   return raw;
+}
+
+/** P03-5 / F-012 工作区列表分页：limit 1..500、cursor 非空不透明（深校验由 Core 复核）。 */
+function optionalWorkspaceListPage(
+  scan: ScanResult,
+  state: ParseState,
+): { limit?: number; cursor?: string } {
+  const limitRaw = takeOption(scan, '--limit');
+  let limit: number | undefined;
+  if (limitRaw !== undefined) {
+    const value = parseUnsignedInteger(limitRaw);
+    if (value === undefined || value < 1 || value > 500) {
+      fail(state, 'invalid_limit', 'limit');
+    }
+    limit = value;
+  }
+  const cursor = takeOption(scan, '--cursor');
+  if (cursor !== undefined && (cursor.length === 0 || cursor.includes('\0'))) {
+    fail(state, 'invalid_cursor', 'cursor');
+  }
+  return {
+    ...(limit !== undefined ? { limit } : {}),
+    ...(cursor !== undefined ? { cursor } : {}),
+  };
 }
 
 /** 计划层级列表分页：limit 1..200、cursor 非空不透明（深校验由 Core 复核）。 */
@@ -1970,6 +2086,101 @@ export interface ParsedExecutionDiagnostics {
 }
 
 /**
+ * P03-5 / F-012 工作区列表（workspaces.list）：项目内受管工作区键集分页
+ *（只读；`--feature` 可选过滤；limit 默认 100、上限 500，cursor 为 wscur_v1_
+ * 不透明游标）。
+ */
+export interface ParsedWorkspaceList {
+  readonly kind: 'command';
+  readonly command: 'workspace';
+  readonly commandId: 'workspace.list';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly featureId?: string;
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+
+/** `workspace get <featureId>`：工作区详情（准备/保留/复用/隔离/清理原因）。 */
+export interface ParsedWorkspaceGet {
+  readonly kind: 'command';
+  readonly command: 'workspace';
+  readonly commandId: 'workspace.get';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly featureId: string;
+}
+
+/** 工作区 operation 审计分页（workspace.operations.list；只读）。 */
+export interface ParsedWorkspaceOperations {
+  readonly kind: 'command';
+  readonly command: 'workspace';
+  readonly commandId: 'workspace.operations';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly featureId?: string;
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+
+/** `workspace operation <operationId>`：单次 operation 详情与当前回执投影。 */
+export interface ParsedWorkspaceOperationGet {
+  readonly kind: 'command';
+  readonly command: 'workspace';
+  readonly commandId: 'workspace.operation';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly operationId: string;
+}
+
+/**
+ * 人工丢弃只读预览（workspace.discard.preview）：预览不是删除，completed 回执
+ * 携带绑定摘要/有界内容清单/不可逆影响与证据引用；确认必须另行显式
+ * `workspace discard --preview-file <file> --confirm`。
+ */
+export interface ParsedWorkspaceDiscardPreview {
+  readonly kind: 'command';
+  readonly command: 'workspace';
+  readonly commandId: 'workspace.discard-preview';
+  readonly operation: 'workspace.discard.preview';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly featureId: string;
+  readonly explicitCommandId?: string;
+}
+
+/**
+ * 人工确认丢弃（workspace.discard）：`--preview-file` 是本次确认的丢弃预览
+ * JSON（有界受控读取；预览摘要绑定在任何 I/O 前本地核验），`--confirm` 是
+ * 显式非交互确认——缺确认或缺预览摘要在连接 Host 之前拒绝，不隐式预览后
+ * 自动同意。
+ */
+export interface ParsedWorkspaceDiscard {
+  readonly kind: 'command';
+  readonly command: 'workspace';
+  readonly commandId: 'workspace.discard';
+  readonly operation: 'workspace.discard';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly featureId: string;
+  readonly previewFile: string;
+  readonly confirm: true;
+  readonly explicitCommandId?: string;
+}
+
+/**
  * 预算显式修订（execution.budget.revise）：`--revision` 是目标 Batch 当前
  * budget_revision（唯一 CAS 入口），`--reason` 必填；`--input` 是完整有限预算。
  */
@@ -2030,7 +2241,13 @@ export type ParsedAppCliCommand =
   | ParsedExecutionRevise
   | ParsedExecutionSchedule
   | ParsedExecutionAttempts
-  | ParsedExecutionDiagnostics;
+  | ParsedExecutionDiagnostics
+  | ParsedWorkspaceList
+  | ParsedWorkspaceGet
+  | ParsedWorkspaceOperations
+  | ParsedWorkspaceOperationGet
+  | ParsedWorkspaceDiscardPreview
+  | ParsedWorkspaceDiscard;
 
 export interface ParsedAppCliHelp {
   readonly kind: 'help';
@@ -2573,6 +2790,104 @@ function buildExecution(
 }
 
 /**
+ * 工作区命令（P03-5 / F-012）：状态查询与人工丢弃预览/确认。
+ * 解析层零 I/O：`--preview-file` 的有界读取与预览绑定核验在执行层、连接
+ * Host 之前完成；缺 `--confirm` 或缺 `--preview-file` 在解析层本地拒绝
+ *（破坏性操作不隐式预览后自动同意）。
+ */
+function buildWorkspace(
+  scan: ScanResult,
+  state: ParseState,
+  spec: AppCommandSpec,
+): ParsedAppCliCommand {
+  assertPositionals(scan, spec, state);
+  const base = baseResult(state, scan);
+  const projectId = requireProjectId(requireOption(scan, '--project', state, 'project'), state);
+  switch (spec.commandId) {
+    case 'workspace.list': {
+      const featureId = takeOption(scan, '--feature');
+      return {
+        ...base,
+        command: 'workspace',
+        commandId: 'workspace.list',
+        projectId,
+        ...(featureId !== undefined
+          ? { featureId: requirePlanId(featureId, state, 'feature') }
+          : {}),
+        ...optionalWorkspaceListPage(scan, state),
+      };
+    }
+    case 'workspace.get': {
+      return {
+        ...base,
+        command: 'workspace',
+        commandId: 'workspace.get',
+        projectId,
+        featureId: requirePlanId(scan.positionals[0] as string, state, 'featureId'),
+      };
+    }
+    case 'workspace.operations': {
+      const featureId = takeOption(scan, '--feature');
+      return {
+        ...base,
+        command: 'workspace',
+        commandId: 'workspace.operations',
+        projectId,
+        ...(featureId !== undefined
+          ? { featureId: requirePlanId(featureId, state, 'feature') }
+          : {}),
+        ...optionalWorkspaceListPage(scan, state),
+      };
+    }
+    case 'workspace.operation': {
+      return {
+        ...base,
+        command: 'workspace',
+        commandId: 'workspace.operation',
+        projectId,
+        operationId: requireOperationId(scan.positionals[0] as string, state),
+      };
+    }
+    case 'workspace.discard-preview': {
+      const explicitCommandId = optionalCommandId(scan, state);
+      return {
+        ...base,
+        command: 'workspace',
+        commandId: 'workspace.discard-preview',
+        operation: 'workspace.discard.preview',
+        projectId,
+        featureId: requirePlanId(scan.positionals[0] as string, state, 'featureId'),
+        ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
+      };
+    }
+    case 'workspace.discard': {
+      // 破坏性操作：缺明确确认或缺预览摘要文件在解析层本地拒绝（零 I/O）。
+      if (!scan.bools.has('--confirm')) {
+        fail(state, 'confirmation_required', 'confirm');
+      }
+      const previewFile = requireOption(scan, '--preview-file', state, 'preview-file');
+      if (previewFile.length === 0 || previewFile.includes('\0')) {
+        fail(state, 'invalid_input_file', 'preview-file');
+      }
+      const explicitCommandId = optionalCommandId(scan, state);
+      return {
+        ...base,
+        command: 'workspace',
+        commandId: 'workspace.discard',
+        operation: 'workspace.discard',
+        projectId,
+        featureId: requirePlanId(scan.positionals[0] as string, state, 'featureId'),
+        previewFile,
+        confirm: true,
+        ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
+      };
+    }
+    default:
+      fail(state, 'unknown_subcommand');
+  }
+}
+
+/**
  * 计划命令（P03-1 / F-010）：Phase 建立、单 Feature 计划导入、层级/DAG 查询、
  * 草稿修订与纯标签编辑。expectedRevision（`--revision`）是唯一 CAS 入口；
  * `--input` 计划文件的有界读取在执行层（解析层零 I/O）。
@@ -2842,6 +3157,8 @@ export function parseAppCliArgs(
       return buildPlanEntity(scan, state, spec);
     case 'execution':
       return buildExecution(scan, state, spec);
+    case 'workspace':
+      return buildWorkspace(scan, state, spec);
     default:
       fail(state, 'unknown_subcommand');
   }

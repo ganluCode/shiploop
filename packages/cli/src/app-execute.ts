@@ -17,6 +17,7 @@
  * 不访问网络、不 spawn——只有 `runAppCli` 显式调用才执行。
  * `packages/cli/src/index.ts` 公共入口不 re-export 本模块（显式入口 bin.ts 专用）。
  */
+import { randomUUID } from 'node:crypto';
 import { closeSync, openSync, readFileSync, readSync } from 'node:fs';
 import {
   ensureHostRunning,
@@ -57,6 +58,26 @@ import {
   formatExecutionDiagnosticsView,
   formatExecutionScheduleView,
 } from './app/schedule.js';
+import {
+  buildWorkspaceDiscardConfirmPayload,
+  buildWorkspaceDiscardPreviewView,
+  buildWorkspaceDiscardSubmitView,
+  buildWorkspaceDetailView,
+  buildWorkspaceListView,
+  buildWorkspaceOperationDetailView,
+  buildWorkspaceOperationListView,
+  formatWorkspaceDiscardPreviewView,
+  formatWorkspaceDiscardSubmitView,
+  formatWorkspaceDetailView,
+  formatWorkspaceListView,
+  formatWorkspaceOperationDetailView,
+  formatWorkspaceOperationListView,
+  parseWorkspaceDiscardPreviewDocument,
+} from './app/workspace.js';
+import type {
+  WorkspaceDiscardConfirmPayload,
+  WorkspaceDiscardSubmitResult,
+} from './app/workspace.js';
 import {
   buildExecutionInputView,
   buildFeaturePlanDecisionView,
@@ -107,6 +128,9 @@ import type {
   ParsedTaskPrepare,
   ParsedTaskStrategy,
 } from './app/args.js';
+import type {
+  WorkspaceDiscardPreview,
+} from 'shiploop-host';
 import { getAppCliHelp } from './app/help.js';
 import {
   buildInitCliResult,
@@ -1442,6 +1466,115 @@ async function executeExecutionCommand(
 }
 
 /* ------------------------------------------------------------------ *
+ * P03-5 / F-012 工作区状态展示与人工丢弃预览/确认
+ *
+ * 只经 HostClient 公共方法：状态查询只读零副作用；丢弃预览/确认复用冻结信封、
+ * 显式命令身份与「超时先查回执」纪律（响应丢失不更换 commandId、不产生重复
+ * 副作用）；CLI 不打开 SQLite、不读写代码工作目录、不直接调用 Git。
+ * ------------------------------------------------------------------ */
+
+type ParsedWorkspaceCommand = Extract<ParsedAppCliCommand, { command: 'workspace' }>;
+
+interface WorkspaceCommandInputs {
+  readonly discardPayload?: WorkspaceDiscardConfirmPayload;
+}
+
+async function executeWorkspaceCommand(
+  io: AppCliIo,
+  command: ParsedWorkspaceCommand,
+  client: HostClient,
+  inputs: WorkspaceCommandInputs,
+): Promise<AppCliRunResult> {
+  switch (command.commandId) {
+    case 'workspace.list': {
+      const result = await client.listWorkspaces(command.projectId, {
+        ...(command.featureId !== undefined ? { featureId: command.featureId } : {}),
+        ...(command.limit !== undefined ? { limit: command.limit } : {}),
+        ...(command.cursor !== undefined ? { cursor: command.cursor } : {}),
+      });
+      const view = buildWorkspaceListView(result);
+      return emitSuccess(io, command, view, formatWorkspaceListView(view));
+    }
+    case 'workspace.get': {
+      const result = await client.getWorkspace(command.projectId, command.featureId);
+      const view = buildWorkspaceDetailView(result);
+      return emitSuccess(io, command, view, formatWorkspaceDetailView(view));
+    }
+    case 'workspace.operations': {
+      const result = await client.listWorkspaceOperations(command.projectId, {
+        ...(command.featureId !== undefined ? { featureId: command.featureId } : {}),
+        ...(command.limit !== undefined ? { limit: command.limit } : {}),
+        ...(command.cursor !== undefined ? { cursor: command.cursor } : {}),
+      });
+      const view = buildWorkspaceOperationListView(result);
+      return emitSuccess(io, command, view, formatWorkspaceOperationListView(view));
+    }
+    case 'workspace.operation': {
+      const result = await client.getWorkspaceOperation(command.projectId, command.operationId);
+      const view = buildWorkspaceOperationDetailView(result);
+      return emitSuccess(io, command, view, formatWorkspaceOperationDetailView(view));
+    }
+    case 'workspace.discard-preview': {
+      const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+      const receipt = await client.previewWorkspaceDiscard(
+        {
+          projectId: command.projectId,
+          featureId: command.featureId,
+          ...(command.explicitCommandId !== undefined
+            ? { commandId: command.explicitCommandId }
+            : {}),
+        },
+        envelopeIdentityOptions(command.explicitCommandId, issuedAt),
+      );
+      return emitDomainReceipt(
+        io,
+        command,
+        receipt,
+        (commandId, replayed, result) =>
+          buildWorkspaceDiscardPreviewView(commandId, replayed, result as WorkspaceDiscardPreview),
+        formatWorkspaceDiscardPreviewView,
+      );
+    }
+    case 'workspace.discard': {
+      const payload = inputs.discardPayload;
+      if (payload === undefined) {
+        // 装配错误：预览负载必须在连接前派生（缺确认/缺文件已在解析层拒绝）。
+        throw new TypeError('workspace.discard 缺少预览确认负载');
+      }
+      const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+      // 命令身份与 operation 身份同源：一次逻辑命令一个丢弃 operation，显式
+      // --command-id 重放以同一信封命中服务端幂等锚点（不更换 commandId）。
+      const commandId = command.explicitCommandId ?? randomUUID();
+      const receipt = await client.confirmWorkspaceDiscard(
+        {
+          projectId: command.projectId,
+          featureId: payload.featureId,
+          workspaceId: payload.workspaceId,
+          operationId: commandId,
+          expectedWorkspaceRevision: payload.expectedWorkspaceRevision,
+          preview: payload.preview,
+          evidenceRefs: payload.evidenceRefs,
+          commandId,
+        },
+        envelopeIdentityOptions(command.explicitCommandId, issuedAt),
+      );
+      return emitDomainReceipt(
+        io,
+        command,
+        receipt,
+        (receiptCommandId, replayed, result) =>
+          buildWorkspaceDiscardSubmitView(
+            receiptCommandId,
+            replayed,
+            result as WorkspaceDiscardSubmitResult,
+          ),
+        formatWorkspaceDiscardSubmitView,
+      );
+    }
+  }
+}
+
+/* ------------------------------------------------------------------ *
  * 事件观察（F-017；契约 §8/§9.4/§12.1/§12.2/§12.3）
  *
  * 流程：默认先取授权快照与水位，再从水位之后订阅（--follow 为默认）；显式
@@ -2634,13 +2767,54 @@ export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunRes
     }
   }
 
+  // P03-5 / F-012：workspace.discard 的 --preview-file 在连接 Host 之前受控读取
+  // 并本地核验预览形状与 Feature 一致性（缺确认已在解析层拒绝；伪造/畸形预览
+  // 以退出码 2 拒绝，不发现 Host、不联网）。服务端仍重算 previewDigest 复核。
+  let workspaceDiscardPayload: WorkspaceDiscardConfirmPayload | undefined;
+  if (command.commandId === 'workspace.discard') {
+    try {
+      const document = parseWorkspaceDiscardPreviewDocument(
+        readPlanInputPayload({
+          command: 'workspace',
+          commandId: 'workspace.discard',
+          json: command.json,
+          inputFile: command.previewFile,
+        }),
+        { command: 'workspace', commandId: 'workspace.discard', json: command.json },
+      );
+      workspaceDiscardPayload = buildWorkspaceDiscardConfirmPayload(document, command.featureId, {
+        command: 'workspace',
+        commandId: 'workspace.discard',
+        json: command.json,
+      });
+    } catch (error) {
+      if (error instanceof AppCliParseError) {
+        return emitParseFailure(io, error, jsonFlag);
+      }
+      return emitFailure(io, command.json, {
+        exitCode: 2,
+        command: command.commandId,
+        code: 'invalid_input',
+        message: '预览文件读取或校验失败',
+      });
+    }
+  }
+
+  // P03-5 / F-012：workspace.discard 确认在服务端包含 Git 删除与整组停止证明
+  //（固有有界等待，实测约 13s），默认 10s 单请求预算会无谓落入响应丢失路径；
+  // 本命令使用受界放大预算（仍有限：60s 单请求 / 120s 总预算），显式注入逐字段优先。
+  const commandTimeouts: HostClientTimeouts | undefined =
+    command.commandId === 'workspace.discard'
+      ? { appRequestMs: 60_000, submitBudgetMs: 120_000, ...(options.timeouts ?? {}) }
+      : options.timeouts;
+
   let client: HostClient;
   try {
     const ensured = await ensureHostRunning({
       ...rootSource(command.dataRoot, options.userHomeDir),
       platform,
       startBudgetMs: command.startTimeoutMs,
-      ...(options.timeouts !== undefined ? { timeouts: options.timeouts } : {}),
+      ...(commandTimeouts !== undefined ? { timeouts: commandTimeouts } : {}),
       ...(options.launch?.entryArgv !== undefined ? { entryArgv: options.launch.entryArgv } : {}),
       ...(options.launch?.nodeExecutable !== undefined
         ? { nodeExecutable: options.launch.nodeExecutable }
@@ -2695,6 +2869,11 @@ export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunRes
     if (command.command === 'execution') {
       return await executeExecutionCommand(io, command, client, {
         ...(executionBudget !== undefined ? { budget: executionBudget } : {}),
+      });
+    }
+    if (command.command === 'workspace') {
+      return await executeWorkspaceCommand(io, command, client, {
+        ...(workspaceDiscardPayload !== undefined ? { discardPayload: workspaceDiscardPayload } : {}),
       });
     }
     return await executeProjectCommand(io, command, client);

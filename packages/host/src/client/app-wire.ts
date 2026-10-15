@@ -37,6 +37,13 @@ import {
   STATE_EVENT_TYPE_SPECS,
   TASK_DAG_REASONS,
   WIRE_MESSAGE_SCHEMA_VERSION,
+  WORKSPACE_DISCARD_BLOCKERS,
+  WORKSPACE_DISCARD_SCOPE,
+  WORKSPACE_LIST_CURSOR_PREFIX,
+  WORKSPACE_LIST_MAX_LIMIT,
+  WORKSPACE_OPERATION_KINDS,
+  WORKSPACE_OPERATION_STATUSES,
+  WORKSPACE_STATUSES,
   WORK_ACCEPTED_SCHEMA_VERSION,
   EXECUTION_INPUT_GROUP_LOCATOR_PREFIX,
   EXECUTION_GROUP_JSON_MEDIA_TYPE,
@@ -106,6 +113,11 @@ import type {
   SnapshotResult,
   TaskDetailResult,
   TaskListResult,
+  WorkspaceDetailResult,
+  WorkspaceDiscardPreview,
+  WorkspaceListResult,
+  WorkspaceOperationDetailResult,
+  WorkspaceOperationListResult,
 } from 'shiploop-core/protocol';
 import { HostProtocolError, isPlainObject } from '../contract/index.js';
 import type { HostOperation } from '../contract/index.js';
@@ -122,6 +134,21 @@ export type {
   RunScheduleStatusResult,
   AttemptListResult,
   AttemptDiagnosticsResult,
+} from 'shiploop-core/protocol';
+
+/** P03-5 / F-012：工作区状态查询与人工丢弃预览/确认结果形状经公共面再导出。 */
+export type {
+  PublicWorkspaceOperationRecord,
+  PublicWorkspaceOperationResult,
+  PublicWorkspaceRecord,
+  WorkspaceDetailResult,
+  WorkspaceDiscardPreview,
+  WorkspaceDiscardPreviewBinding,
+  WorkspaceDiscardPreviewEntry,
+  WorkspaceListResult,
+  WorkspaceOperationDetailResult,
+  WorkspaceOperationListResult,
+  WorkspaceOperationReceiptView,
 } from 'shiploop-core/protocol';
 
 /** §11.3 查询能力清单（回执/结果读取经 validateCommandReceiptWire，不在本类型内）。 */
@@ -155,7 +182,12 @@ export type AppQueryOperation =
   // EXECUTION_SCHEDULE_QUERY_OPERATIONS 同源）。
   | 'execution.run.schedule'
   | 'execution.attempts.list'
-  | 'execution.attempt.diagnostics';
+  | 'execution.attempt.diagnostics'
+  // P03-5 / F-011/F-012：工作区状态只读查询（与 Core WORKSPACE_QUERY_OPERATIONS 同源）。
+  | 'workspaces.list'
+  | 'workspaces.get'
+  | 'workspace.operations.list'
+  | 'workspace.operations.get';
 
 function malformed(operation: HostOperation, reason: string): never {
   throw new HostProtocolError('response_malformed', operation, 'Host 响应不符合线协议', {
@@ -3150,6 +3182,423 @@ export function validateAttemptDiagnosticsResultWire(
   return object as unknown as AttemptDiagnosticsResult;
 }
 
+/* ------------------------------------------------------------------ *
+ * P03-5 / F-012 工作区状态查询与人工丢弃预览/确认线校验
+ *（冻结字段集精确键校验；公开投影不含绝对路径与内部身份哈希）
+ * ------------------------------------------------------------------ */
+
+const COMMIT_HEX_PATTERN = /^[0-9a-f]{40}$/;
+const WORKSPACE_CURSOR_BODY_PATTERN = /^[A-Za-z0-9_-]+$/;
+
+function requireCommitHex(operation: HostOperation, value: unknown): string {
+  if (typeof value !== 'string' || !COMMIT_HEX_PATTERN.test(value)) {
+    malformed(operation, 'workspace_commit_invalid');
+  }
+  return value;
+}
+
+function requireCommitHexOrNull(operation: HostOperation, value: unknown): string | null {
+  return value === null ? null : requireCommitHex(operation, value);
+}
+
+function requireWorkspaceCursorOrNull(operation: HostOperation, value: unknown): string | null {
+  if (value === null) {
+    return null;
+  }
+  if (
+    typeof value !== 'string' ||
+    !value.startsWith(WORKSPACE_LIST_CURSOR_PREFIX) ||
+    !WORKSPACE_CURSOR_BODY_PATTERN.test(value.slice(WORKSPACE_LIST_CURSOR_PREFIX.length))
+  ) {
+    malformed(operation, 'workspace_cursor_invalid');
+  }
+  return value;
+}
+
+/** 公开工作区记录（PublicWorkspaceRecord）：剔除路径/内部哈希后的冻结字段集。 */
+function validatePublicWorkspaceRecordWire(operation: HostOperation, value: unknown): void {
+  const record = requirePlain(operation, value);
+  exactKeys(operation, record, [
+    'id',
+    'projectId',
+    'featureId',
+    'runId',
+    'attemptId',
+    'preparationOperationId',
+    'status',
+    'revision',
+    'branch',
+    'baseCommit',
+    'headCommit',
+    'codeDigest',
+    'repositoryBindingId',
+    'repositoryBindingRevision',
+    'ownerId',
+    'hostInstanceId',
+    'executionVersion',
+    'createdAt',
+    'updatedAt',
+  ]);
+  requireStableId(operation, record.id);
+  requireStableId(operation, record.projectId);
+  requireStableId(operation, record.featureId);
+  requireStableId(operation, record.runId);
+  requireStableId(operation, record.attemptId);
+  requireStableId(operation, record.preparationOperationId);
+  if (!(WORKSPACE_STATUSES as readonly unknown[]).includes(record.status)) {
+    malformed(operation, 'workspace_status_invalid');
+  }
+  requirePositiveInteger(operation, record.revision);
+  requireNonEmptyString(operation, record.branch, 'workspace_branch_invalid');
+  requireCommitHex(operation, record.baseCommit);
+  requireCommitHexOrNull(operation, record.headCommit);
+  requireSha256HexOrNull(operation, record.codeDigest, 'workspace_digest_invalid');
+  requireStableId(operation, record.repositoryBindingId);
+  requirePositiveInteger(operation, record.repositoryBindingRevision);
+  requireStableId(operation, record.ownerId);
+  requireStableId(operation, record.hostInstanceId);
+  requireNonNegativeInteger(operation, record.executionVersion);
+  if (!isIsoUtcDateTime(record.createdAt) || !isIsoUtcDateTime(record.updatedAt)) {
+    malformed(operation, 'workspace_date_invalid');
+  }
+}
+
+/** operation 结果投影：已知耗时/退出信息保留，未知保持 null（不填零）。 */
+function validateWorkspaceOperationResultWire(operation: HostOperation, value: unknown): void {
+  const result = requirePlain(operation, value);
+  exactKeys(operation, result, [
+    'evidenceRefs',
+    'errorRef',
+    'startedAt',
+    'endedAt',
+    'durationMs',
+    'exitCode',
+    'signal',
+  ]);
+  if (!Array.isArray(result.evidenceRefs)) {
+    malformed(operation, 'workspace_operation_result_invalid');
+  }
+  for (const evidenceRef of result.evidenceRefs) {
+    requireStableId(operation, evidenceRef);
+  }
+  if (result.errorRef !== null) {
+    requireStableId(operation, result.errorRef);
+  }
+  requireIsoUtcOrNull(operation, result.startedAt);
+  requireIsoUtcOrNull(operation, result.endedAt);
+  requireNonNegativeIntegerOrNull(operation, result.durationMs);
+  if (result.exitCode !== null) {
+    if (typeof result.exitCode !== 'number' || !Number.isSafeInteger(result.exitCode)) {
+      malformed(operation, 'workspace_operation_result_invalid');
+    }
+  }
+  if (result.signal !== null && typeof result.signal !== 'string') {
+    malformed(operation, 'workspace_operation_result_invalid');
+  }
+}
+
+/**
+ * 公开工作区 operation 记录（PublicWorkspaceOperationRecord）：用户命令身份
+ * （principalId/commandId）与当前 receipt 投影分层；receipt.reason 只从持久
+ * 回执结果白名单解析，缺失为 null，绝不回显正文/路径。
+ */
+function validatePublicWorkspaceOperationRecordWire(operation: HostOperation, value: unknown): void {
+  const record = requirePlain(operation, value);
+  exactKeys(operation, record, [
+    'id',
+    'projectId',
+    'featureId',
+    'workspaceId',
+    'runId',
+    'attemptId',
+    'kind',
+    'executionStage',
+    'status',
+    'revision',
+    'principalId',
+    'commandId',
+    'requestDigest',
+    'result',
+    'receipt',
+    'createdAt',
+    'updatedAt',
+  ]);
+  requireStableId(operation, record.id);
+  requireStableId(operation, record.projectId);
+  requireStableId(operation, record.featureId);
+  requireStableId(operation, record.workspaceId);
+  requireStableId(operation, record.runId);
+  requireStableId(operation, record.attemptId);
+  if (!(WORKSPACE_OPERATION_KINDS as readonly unknown[]).includes(record.kind)) {
+    malformed(operation, 'workspace_operation_kind_invalid');
+  }
+  if (!(ATTEMPT_EXECUTION_STAGES as readonly unknown[]).includes(record.executionStage)) {
+    malformed(operation, 'workspace_operation_stage_invalid');
+  }
+  if (!(WORKSPACE_OPERATION_STATUSES as readonly unknown[]).includes(record.status)) {
+    malformed(operation, 'workspace_operation_status_invalid');
+  }
+  requirePositiveInteger(operation, record.revision);
+  requireStableId(operation, record.principalId);
+  if (!isUuidV4(record.commandId)) {
+    malformed(operation, 'workspace_operation_command_invalid');
+  }
+  requireSha256Hex(operation, record.requestDigest, 'workspace_operation_digest_invalid');
+  if (record.result !== null) {
+    validateWorkspaceOperationResultWire(operation, record.result);
+  }
+  const receipt = requirePlain(operation, record.receipt);
+  exactKeys(operation, receipt, ['commandId', 'resultRef', 'status', 'reason']);
+  if (!isUuidV4(receipt.commandId)) {
+    malformed(operation, 'workspace_operation_command_invalid');
+  }
+  if (receipt.resultRef !== null) {
+    requireNonEmptyString(operation, receipt.resultRef, 'workspace_operation_receipt_invalid');
+  }
+  if (receipt.status !== 'completed' && receipt.status !== 'rejected') {
+    malformed(operation, 'workspace_operation_receipt_invalid');
+  }
+  if (receipt.reason !== null && typeof receipt.reason !== 'string') {
+    malformed(operation, 'workspace_operation_receipt_invalid');
+  }
+  if (!isIsoUtcDateTime(record.createdAt) || !isIsoUtcDateTime(record.updatedAt)) {
+    malformed(operation, 'workspace_date_invalid');
+  }
+}
+
+function validateWorkspaceListCommon(
+  operation: HostOperation,
+  value: unknown,
+  expectedScope: 'workspace-list' | 'workspace-operation-list',
+): Record<string, unknown> {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, ['schemaVersion', 'scope', 'records', 'nextCursor', 'limit']);
+  if (object.schemaVersion !== WIRE_MESSAGE_SCHEMA_VERSION) {
+    if (typeof object.schemaVersion === 'number') {
+      unsupportedVersion(operation, 'schemaVersion');
+    }
+    malformed(operation, 'workspace_list_version_invalid');
+  }
+  if (object.scope !== expectedScope) {
+    malformed(operation, 'workspace_list_scope_invalid');
+  }
+  if (!Array.isArray(object.records)) {
+    malformed(operation, 'workspace_list_records_invalid');
+  }
+  requireWorkspaceCursorOrNull(operation, object.nextCursor);
+  const limit = requirePositiveInteger(operation, object.limit);
+  if (limit > WORKSPACE_LIST_MAX_LIMIT) {
+    malformed(operation, 'workspace_list_limit_invalid');
+  }
+  return object;
+}
+
+/** workspaces.list：项目内受管工作区分页（wscur_v1_ 受控游标）。 */
+export function validateWorkspaceListResultWire(
+  value: unknown,
+  operation: HostOperation = 'workspaces.list',
+): WorkspaceListResult {
+  const object = validateWorkspaceListCommon(operation, value, 'workspace-list');
+  for (const record of object.records as unknown[]) {
+    validatePublicWorkspaceRecordWire(operation, record);
+  }
+  return object as unknown as WorkspaceListResult;
+}
+
+/** workspaces.get：工作区 + 准备 operation + 最新 operation（缺失为 null）。 */
+export function validateWorkspaceDetailResultWire(
+  value: unknown,
+  operation: HostOperation = 'workspaces.get',
+): WorkspaceDetailResult {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, ['workspace', 'preparationOperation', 'latestOperation']);
+  validatePublicWorkspaceRecordWire(operation, object.workspace);
+  if (object.preparationOperation !== null) {
+    validatePublicWorkspaceOperationRecordWire(operation, object.preparationOperation);
+  }
+  if (object.latestOperation !== null) {
+    validatePublicWorkspaceOperationRecordWire(operation, object.latestOperation);
+  }
+  return object as unknown as WorkspaceDetailResult;
+}
+
+/** workspace.operations.list：工作区 operation 审计分页（wscur_v1_ 受控游标）。 */
+export function validateWorkspaceOperationListResultWire(
+  value: unknown,
+  operation: HostOperation = 'workspace.operations.list',
+): WorkspaceOperationListResult {
+  const object = validateWorkspaceListCommon(operation, value, 'workspace-operation-list');
+  for (const record of object.records as unknown[]) {
+    validatePublicWorkspaceOperationRecordWire(operation, record);
+  }
+  return object as unknown as WorkspaceOperationListResult;
+}
+
+/** workspace.operations.get：单次 operation 详情（含结果与当前回执投影）。 */
+export function validateWorkspaceOperationDetailResultWire(
+  value: unknown,
+  operation: HostOperation = 'workspace.operations.get',
+): WorkspaceOperationDetailResult {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, ['operation']);
+  validatePublicWorkspaceOperationRecordWire(operation, object.operation);
+  return object as unknown as WorkspaceOperationDetailResult;
+}
+
+/** 丢弃预览内容条目（有界清单；相对路径，state/protection 冻结词汇）。 */
+function validateDiscardPreviewEntryWire(operation: HostOperation, value: unknown): void {
+  const entry = requirePlain(operation, value);
+  exactKeys(operation, entry, ['path', 'state', 'sizeBytes', 'protection']);
+  requireNonEmptyString(operation, entry.path, 'discard_preview_entry_invalid');
+  if (entry.state !== 'present' && entry.state !== 'deleted') {
+    malformed(operation, 'discard_preview_entry_invalid');
+  }
+  requireNonNegativeIntegerOrNull(operation, entry.sizeBytes);
+  if (entry.protection !== 'preserve' && entry.protection !== 'tracked') {
+    malformed(operation, 'discard_preview_entry_invalid');
+  }
+}
+
+const DISCARD_PREVIEW_PRESERVES = [
+  'source_repository',
+  'feature_branch',
+  'committed_work',
+  'audit_records',
+] as const;
+
+/**
+ * workspace.discard.preview completed 回执 result（WorkspaceDiscardPreview）：
+ * 只读预览 + 确认绑定（previewDigest/HEAD/内容摘要/revision/有效期）；
+ * 不携带绝对路径；blockers 为冻结词汇。
+ */
+export function validateWorkspaceDiscardPreviewWire(
+  value: unknown,
+  operation: HostOperation = 'commands.submit',
+): WorkspaceDiscardPreview {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, [
+    'schemaVersion',
+    'projectId',
+    'featureId',
+    'workspaceId',
+    'branch',
+    'baseCommit',
+    'status',
+    'scope',
+    'workspaceRevision',
+    'headCommit',
+    'codeDigest',
+    'ignoredDigest',
+    'expiresAtUtcMs',
+    'previewDigest',
+    'contents',
+    'impact',
+    'blockers',
+    'observedAtUtcMs',
+    'evidenceRef',
+  ]);
+  if (object.schemaVersion !== 1) {
+    if (typeof object.schemaVersion === 'number') {
+      unsupportedVersion(operation, 'schemaVersion');
+    }
+    malformed(operation, 'discard_preview_version_invalid');
+  }
+  requireStableId(operation, object.projectId);
+  requireStableId(operation, object.featureId);
+  requireStableId(operation, object.workspaceId);
+  requireNonEmptyString(operation, object.branch, 'discard_preview_branch_invalid');
+  requireCommitHex(operation, object.baseCommit);
+  if (!(WORKSPACE_STATUSES as readonly unknown[]).includes(object.status)) {
+    malformed(operation, 'workspace_status_invalid');
+  }
+  if (object.scope !== WORKSPACE_DISCARD_SCOPE) {
+    malformed(operation, 'discard_preview_scope_invalid');
+  }
+  requirePositiveInteger(operation, object.workspaceRevision);
+  requireCommitHex(operation, object.headCommit);
+  requireSha256Hex(operation, object.codeDigest, 'discard_preview_digest_invalid');
+  requireSha256Hex(operation, object.ignoredDigest, 'discard_preview_digest_invalid');
+  requireSha256Hex(operation, object.previewDigest, 'discard_preview_digest_invalid');
+  requirePositiveInteger(operation, object.expiresAtUtcMs);
+  requirePositiveInteger(operation, object.observedAtUtcMs);
+  const contents = requirePlain(operation, object.contents);
+  exactKeys(operation, contents, ['tracked', 'untracked', 'ignored', 'counts', 'truncated']);
+  for (const key of ['tracked', 'untracked', 'ignored'] as const) {
+    const entries = contents[key];
+    if (!Array.isArray(entries)) {
+      malformed(operation, 'discard_preview_contents_invalid');
+    }
+    for (const entry of entries) {
+      validateDiscardPreviewEntryWire(operation, entry);
+    }
+  }
+  const counts = requirePlain(operation, contents.counts);
+  exactKeys(operation, counts, ['tracked', 'untracked', 'ignored', 'bytes']);
+  requireNonNegativeInteger(operation, counts.tracked);
+  requireNonNegativeInteger(operation, counts.untracked);
+  requireNonNegativeInteger(operation, counts.ignored);
+  requireNonNegativeInteger(operation, counts.bytes);
+  if (typeof contents.truncated !== 'boolean') {
+    malformed(operation, 'discard_preview_contents_invalid');
+  }
+  const impact = requirePlain(operation, object.impact);
+  exactKeys(operation, impact, [
+    'irreversible',
+    'discardsUncommittedTrackedChanges',
+    'discardsUntrackedFiles',
+    'discardsIgnoredFiles',
+    'discardsBytes',
+    'preserves',
+  ]);
+  if (impact.irreversible !== true) {
+    malformed(operation, 'discard_preview_impact_invalid');
+  }
+  requireNonNegativeInteger(operation, impact.discardsUncommittedTrackedChanges);
+  requireNonNegativeInteger(operation, impact.discardsUntrackedFiles);
+  requireNonNegativeInteger(operation, impact.discardsIgnoredFiles);
+  requireNonNegativeInteger(operation, impact.discardsBytes);
+  if (
+    !Array.isArray(impact.preserves) ||
+    impact.preserves.length !== DISCARD_PREVIEW_PRESERVES.length ||
+    !DISCARD_PREVIEW_PRESERVES.every((preserve) => (impact.preserves as unknown[]).includes(preserve))
+  ) {
+    malformed(operation, 'discard_preview_impact_invalid');
+  }
+  if (!Array.isArray(object.blockers)) {
+    malformed(operation, 'discard_preview_blockers_invalid');
+  }
+  for (const blocker of object.blockers) {
+    if (!(WORKSPACE_DISCARD_BLOCKERS as readonly unknown[]).includes(blocker)) {
+      malformed(operation, 'discard_preview_blockers_invalid');
+    }
+  }
+  requireStableId(operation, object.evidenceRef);
+  return object as unknown as WorkspaceDiscardPreview;
+}
+
+/**
+ * workspace.discard completed 回执 result：确认命令已登记的用户回执摘要
+ *（命令 completed ≠ 丢弃成功；实际删除结果经 workspace.operations 查询读取）。
+ */
+export function validateWorkspaceDiscardConfirmResultWire(
+  value: unknown,
+  operation: HostOperation = 'commands.submit',
+): WorkspaceDiscardConfirmResult {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, ['workspaceOperationId', 'workspaceId', 'previewDigest']);
+  requireStableId(operation, object.workspaceOperationId);
+  requireStableId(operation, object.workspaceId);
+  requireSha256Hex(operation, object.previewDigest, 'discard_confirm_digest_invalid');
+  return object as unknown as WorkspaceDiscardConfirmResult;
+}
+
+/** workspace.discard 用户回执 result 形状（脱敏摘要；不含路径/正文）。 */
+export interface WorkspaceDiscardConfirmResult {
+  readonly workspaceOperationId: string;
+  readonly workspaceId: string;
+  readonly previewDigest: string;
+}
+
 export function validateAppQueryResponse(
   operation: 'execution.budget.get',
   body: unknown,
@@ -3224,6 +3673,27 @@ export function validateAppQueryResponse(
   body: unknown,
   expectation?: SnapshotExpectation,
 ): AttemptDiagnosticsResult;
+// P03-5 / F-012：工作区状态只读查询响应重载。
+export function validateAppQueryResponse(
+  operation: 'workspaces.list',
+  body: unknown,
+  expectation?: SnapshotExpectation,
+): WorkspaceListResult;
+export function validateAppQueryResponse(
+  operation: 'workspaces.get',
+  body: unknown,
+  expectation?: SnapshotExpectation,
+): WorkspaceDetailResult;
+export function validateAppQueryResponse(
+  operation: 'workspace.operations.list',
+  body: unknown,
+  expectation?: SnapshotExpectation,
+): WorkspaceOperationListResult;
+export function validateAppQueryResponse(
+  operation: 'workspace.operations.get',
+  body: unknown,
+  expectation?: SnapshotExpectation,
+): WorkspaceOperationDetailResult;
 export function validateAppQueryResponse(
   operation: 'projects.list',
   body: unknown,
@@ -3374,6 +3844,15 @@ export function validateAppQueryResponse(
       return validateAttemptListResultWire(body, operation);
     case 'execution.attempt.diagnostics':
       return validateAttemptDiagnosticsResultWire(body, operation);
+    // P03-5 / F-012：工作区状态查询响应分发（同一冻结字段集纪律）。
+    case 'workspaces.list':
+      return validateWorkspaceListResultWire(body, operation);
+    case 'workspaces.get':
+      return validateWorkspaceDetailResultWire(body, operation);
+    case 'workspace.operations.list':
+      return validateWorkspaceOperationListResultWire(body, operation);
+    case 'workspace.operations.get':
+      return validateWorkspaceOperationDetailResultWire(body, operation);
     default: {
       const exhaustive: never = operation;
       throw new TypeError(`未覆盖的查询操作：${String(exhaustive)}`);

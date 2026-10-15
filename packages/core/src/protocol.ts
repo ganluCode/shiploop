@@ -146,6 +146,48 @@ export type {
   ExecutionInputGroupBodyRef, ExecutionInputGroupDigests, ExecutionInputApprovalIdentity,
   PreparedExecutionInputGroup,
 } from './ports/execution-input-prepare.js';
+// P03-5 / F-012 工作区状态只读查询与人工丢弃预览/确认公共面：公开投影形状、
+// 状态/kind/阶段冻结词汇、分页常量与预览形状（服务端负责授权与业务语义；
+// Host 接线属 F-011，HostClient/CLI 入口属 F-012）。
+export {
+  WORKSPACE_STATUSES,
+  WORKSPACE_OPERATION_KINDS,
+  WORKSPACE_OPERATION_STATUSES,
+} from './ports/workspace.js';
+export type {
+  WorkspaceStatus,
+  WorkspaceOperationKind,
+  WorkspaceOperationStatus,
+} from './ports/workspace.js';
+export {
+  WORKSPACE_LIST_CURSOR_PREFIX,
+  WORKSPACE_LIST_DEFAULT_LIMIT,
+  WORKSPACE_LIST_MAX_LIMIT,
+  WORKSPACE_QUERY_OPERATIONS,
+} from './ports/workspace-query.js';
+export type {
+  PublicWorkspaceOperationRecord,
+  PublicWorkspaceOperationResult,
+  PublicWorkspaceRecord,
+  WorkspaceDetailResult,
+  WorkspaceListResult,
+  WorkspaceOperationDetailResult,
+  WorkspaceOperationListResult,
+  WorkspaceOperationReceiptView,
+} from './ports/workspace-query.js';
+export {
+  WORKSPACE_DISCARD_BLOCKERS,
+  WORKSPACE_DISCARD_OPERATION,
+  WORKSPACE_DISCARD_PREVIEW_MAX_ENTRIES,
+  WORKSPACE_DISCARD_PREVIEW_OPERATION,
+  WORKSPACE_DISCARD_SCOPE,
+} from './ports/workspace-discard.js';
+export type {
+  WorkspaceDiscardBlocker,
+  WorkspaceDiscardPreview,
+  WorkspaceDiscardPreviewBinding,
+  WorkspaceDiscardPreviewEntry,
+} from './ports/workspace-discard.js';
 // type-only 导出擦除后不加载业务服务。
 export type { EffectiveSettings } from './application/effective-settings.js';
 export type { ExportedSettings } from './application/configuration-service.js';

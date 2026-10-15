@@ -54,6 +54,12 @@ export type {
   ParsedTaskList,
   ParsedTaskPrepare,
   ParsedTaskStrategy,
+  ParsedWorkspaceDiscard,
+  ParsedWorkspaceDiscardPreview,
+  ParsedWorkspaceGet,
+  ParsedWorkspaceList,
+  ParsedWorkspaceOperationGet,
+  ParsedWorkspaceOperations,
 } from './args.js';
 export { getAppCliHelp } from './help.js';
 export {
@@ -158,6 +164,43 @@ export {
   parsePrepareItemsPayload,
   scanStrategyInputFields,
 } from './decisions.js';
+export {
+  WORKSPACE_COMPLETION_NOTE,
+  WORKSPACE_DISCARD_PREVIEW_NOTICE,
+  WORKSPACE_DISCARD_SUBMIT_NOTICE,
+  buildWorkspaceDiscardConfirmPayload,
+  buildWorkspaceDiscardPreviewView,
+  buildWorkspaceDiscardSubmitView,
+  buildWorkspaceDetailView,
+  buildWorkspaceListView,
+  buildWorkspaceOperationDetailView,
+  buildWorkspaceOperationListView,
+  classifyWorkspaceOperation,
+  classifyWorkspaceState,
+  formatWorkspaceDiscardPreviewView,
+  formatWorkspaceDiscardSubmitView,
+  formatWorkspaceDetailView,
+  formatWorkspaceListView,
+  formatWorkspaceOperationDetailView,
+  formatWorkspaceOperationListView,
+  parseWorkspaceDiscardPreviewDocument,
+} from './workspace.js';
+export type {
+  WorkspaceCompletionBoundary,
+  WorkspaceDetailView,
+  WorkspaceDiscardConfirmPayload,
+  WorkspaceDiscardPreviewView,
+  WorkspaceDiscardSubmitResult,
+  WorkspaceDiscardSubmitView,
+  WorkspaceDisplayState,
+  WorkspaceInputContext,
+  WorkspaceListEntryView,
+  WorkspaceListView,
+  WorkspaceOperationClassification,
+  WorkspaceOperationDetailView,
+  WorkspaceOperationEntryView,
+  WorkspaceOperationListView,
+} from './workspace.js';
 export type {
   DecisionsInputContext,
   ExecutionBoundaryView,

@@ -61,7 +61,7 @@ describe('F-010 计划命令面（phase/feature/task 顶层命令）', () => {
     }
     expect(new Set(APP_CLI_COMMAND_IDS).size).toBe(APP_CLI_COMMAND_IDS.length);
     for (const id of APP_CLI_COMMAND_IDS) {
-      expect(id).toMatch(/^(project|config|receipt|events|baseline|phase|feature|task|execution)\.[a-z]+$/);
+      expect(id).toMatch(/^(project|config|receipt|events|baseline|phase|feature|task|execution|workspace)\.[a-z-]+$/);
     }
   });
 

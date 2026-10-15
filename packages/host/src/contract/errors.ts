@@ -64,6 +64,12 @@ export const APP_OPERATIONS = [
   'execution.run.schedule',
   'execution.attempts.list',
   'execution.attempt.diagnostics',
+  // P03-5 / F-011/F-012：工作区状态只读查询（服务端路由 F-011 已接线；
+  // HostClient 入口属 F-012）。
+  'workspaces.list',
+  'workspaces.get',
+  'workspace.operations.list',
+  'workspace.operations.get',
 ] as const;
 
 export const HOST_OPERATIONS = [

@@ -53,6 +53,10 @@ export type {
   BudgetRevisionListInput,
   PlanListPageInput,
   PlanLabelEntityType,
+  ListWorkspacesInput,
+  ListWorkspaceOperationsInput,
+  PreviewWorkspaceDiscardInput,
+  ConfirmWorkspaceDiscardInput,
 } from './app-client.js';
 export {
   validateAppQueryResponse,
@@ -72,6 +76,12 @@ export {
   validateRunScheduleStatusResultWire,
   validateAttemptListResultWire,
   validateAttemptDiagnosticsResultWire,
+  validateWorkspaceListResultWire,
+  validateWorkspaceDetailResultWire,
+  validateWorkspaceOperationListResultWire,
+  validateWorkspaceOperationDetailResultWire,
+  validateWorkspaceDiscardPreviewWire,
+  validateWorkspaceDiscardConfirmResultWire,
 } from './app-wire.js';
 export type {
   AppQueryOperation,
@@ -92,4 +102,16 @@ export type {
   RunScheduleStatusResult,
   AttemptListResult,
   AttemptDiagnosticsResult,
+  WorkspaceListResult,
+  WorkspaceDetailResult,
+  WorkspaceOperationListResult,
+  WorkspaceOperationDetailResult,
+  WorkspaceDiscardConfirmResult,
+  PublicWorkspaceRecord,
+  PublicWorkspaceOperationRecord,
+  PublicWorkspaceOperationResult,
+  WorkspaceOperationReceiptView,
+  WorkspaceDiscardPreview,
+  WorkspaceDiscardPreviewBinding,
+  WorkspaceDiscardPreviewEntry,
 } from './app-wire.js';
