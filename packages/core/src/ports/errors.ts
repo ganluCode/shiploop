@@ -54,7 +54,11 @@ export type StorageEntityType =
   | 'workspace'
   | 'workspace_operation'
   /** P03-6 / F-006：最小 Work Session（sessions，迁移 v20）。 */
-  | 'work_session';
+  | 'work_session'
+  /** P03-7 / F-002：验证批次（verification_batches，迁移 v21）。 */
+  | 'verification_batch'
+  /** P03-7 / F-002：逐项检查结果（check_results，迁移 v21）。 */
+  | 'check_result';
 
 export type StorageErrorKind =
   /** 外部输入未通过运行时校验（缺字段/类型错误/未知 schemaVersion/非法摘要等）。 */

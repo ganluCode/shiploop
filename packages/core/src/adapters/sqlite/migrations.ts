@@ -1511,6 +1511,129 @@ WHEN (OLD.provider_session_id IS NOT NULL AND NEW.provider_session_id IS NOT OLD
 BEGIN SELECT RAISE(ABORT, 'sessions bound facts are set-once or monotonic'); END;
 `;
 
+const MIGRATION_021_SQL = `
+-- v21（P03-7 / F-002）：VerificationBatch / CheckResult 与不可变验证证据身份。
+-- 批次把针对同一代码状态的一组可信检查归为权威边界：关联 Project/Feature/Run/Task/
+-- Attempt/executionVersion 与 operation，保存代码身份（code_digest）、检查定义快照
+-- （check_snapshot）、策略身份（policy_digest）、环境身份（environment_summary）与
+-- 选择/回退理由（selection）；逐项保存状态、argv/cwd/timeout 快照、时间、exit_code/
+-- signal、输出 Artifact 引用与有界 tail；未知指标保持 NULL，不填 0。不建
+-- check_definitions 表（定义存 settings，批次保存快照）与配置/计划版本表；大输出
+-- 正文永不进库，仅引用同项目 ready Artifact 并记录其摘要身份（output_digest）。
+CREATE TABLE verification_batches (
+  id TEXT PRIMARY KEY NOT NULL, created_at INTEGER NOT NULL, project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1, updated_at INTEGER NOT NULL,
+  feature_id TEXT NOT NULL, run_id TEXT NOT NULL, task_id TEXT NOT NULL,
+  attempt_id TEXT NOT NULL, execution_version INTEGER NOT NULL,
+  operation TEXT NOT NULL, code_digest TEXT NOT NULL, policy_digest TEXT NOT NULL,
+  environment_summary TEXT NOT NULL, check_snapshot TEXT NOT NULL, selection TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'running', started_at INTEGER, ended_at INTEGER,
+  CONSTRAINT verification_batches_revision_check CHECK (revision >= 1),
+  CONSTRAINT verification_batches_version_check CHECK (typeof(execution_version) = 'integer' AND execution_version >= 1),
+  CONSTRAINT verification_batches_operation_check CHECK (length(operation) > 0 AND length(operation) <= 128),
+  CONSTRAINT verification_batches_digest_check CHECK (length(code_digest) = 64 AND code_digest NOT GLOB '*[^0-9a-f]*'
+    AND length(policy_digest) = 64 AND policy_digest NOT GLOB '*[^0-9a-f]*'),
+  CONSTRAINT verification_batches_environment_check CHECK (json_valid(environment_summary)
+    AND json_type(environment_summary) = 'object' AND length(environment_summary) <= 8192),
+  CONSTRAINT verification_batches_snapshot_check CHECK (json_valid(check_snapshot)
+    AND json_type(check_snapshot) = 'array' AND json_array_length(check_snapshot) >= 1
+    AND length(check_snapshot) <= 65536),
+  CONSTRAINT verification_batches_selection_check CHECK (json_valid(selection)
+    AND json_type(selection) = 'object' AND length(selection) <= 16384),
+  CONSTRAINT verification_batches_status_check CHECK (status IN ('running', 'passed', 'failed', 'error', 'inconclusive')),
+  -- 生命周期形状：running 无 ended_at；终态必须有 ended_at 且不早于 started_at；未知时间为 NULL。
+  CONSTRAINT verification_batches_times_check CHECK (typeof(created_at) = 'integer' AND created_at >= 0
+    AND typeof(updated_at) = 'integer' AND updated_at >= 0
+    AND (started_at IS NULL OR (typeof(started_at) = 'integer' AND started_at >= 0))
+    AND (ended_at IS NULL OR (typeof(ended_at) = 'integer' AND ended_at >= 0))
+    AND ((status = 'running' AND ended_at IS NULL)
+      OR (status <> 'running' AND ended_at IS NOT NULL AND (started_at IS NULL OR ended_at >= started_at)))),
+  CONSTRAINT verification_batches_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT verification_batches_feature_fk FOREIGN KEY (project_id, feature_id) REFERENCES features (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT verification_batches_run_fk FOREIGN KEY (project_id, run_id) REFERENCES runs (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT verification_batches_task_fk FOREIGN KEY (feature_id, task_id) REFERENCES tasks (feature_id, id) ON DELETE RESTRICT,
+  CONSTRAINT verification_batches_attempt_fk FOREIGN KEY (project_id, attempt_id) REFERENCES attempts (project_id, id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX verification_batches_project_id_id_unique ON verification_batches (project_id, id);
+CREATE INDEX verification_batches_project_attempt_index ON verification_batches (project_id, attempt_id, id);
+-- 批次关联必须与 Attempt 当前身份一致（防止跨项目或混用不同 Attempt/代际的验证记录）。
+CREATE TRIGGER verification_batches_attempt_identity_check BEFORE INSERT ON verification_batches
+WHEN NOT EXISTS (
+  SELECT 1 FROM attempts JOIN tasks ON tasks.id = attempts.task_id AND tasks.project_id = attempts.project_id
+  WHERE attempts.id = NEW.attempt_id AND attempts.project_id = NEW.project_id
+    AND attempts.feature_id = NEW.feature_id AND attempts.run_id = NEW.run_id
+    AND attempts.task_id = NEW.task_id AND attempts.execution_version = NEW.execution_version
+    AND tasks.execution_version = NEW.execution_version)
+BEGIN SELECT RAISE(ABORT, 'verification batch attempt identity mismatch'); END;
+-- 身份与快照列不可变（代码身份、检查定义、策略/环境身份与选择理由一经保存不可改写）。
+CREATE TRIGGER verification_batches_identity_immutable BEFORE UPDATE ON verification_batches
+WHEN NEW.project_id IS NOT OLD.project_id OR NEW.feature_id IS NOT OLD.feature_id
+  OR NEW.run_id IS NOT OLD.run_id OR NEW.task_id IS NOT OLD.task_id
+  OR NEW.attempt_id IS NOT OLD.attempt_id OR NEW.execution_version IS NOT OLD.execution_version
+  OR NEW.operation IS NOT OLD.operation OR NEW.code_digest IS NOT OLD.code_digest
+  OR NEW.policy_digest IS NOT OLD.policy_digest OR NEW.environment_summary IS NOT OLD.environment_summary
+  OR NEW.check_snapshot IS NOT OLD.check_snapshot OR NEW.selection IS NOT OLD.selection
+  OR NEW.started_at IS NOT OLD.started_at
+BEGIN SELECT RAISE(ABORT, 'verification batch identity fields are immutable'); END;
+-- 定版一次性：仅 running 可进入终态，终态不可改写或回退 running；ended_at 只写一次。
+CREATE TRIGGER verification_batches_terminal_immutable BEFORE UPDATE OF status, ended_at ON verification_batches
+WHEN OLD.status <> 'running' OR NEW.status = 'running'
+  OR (OLD.ended_at IS NOT NULL AND NEW.ended_at IS NOT OLD.ended_at)
+BEGIN SELECT RAISE(ABORT, 'verification batch terminal status is immutable'); END;
+CREATE TABLE check_results (
+  id TEXT PRIMARY KEY NOT NULL, created_at INTEGER NOT NULL, project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1, updated_at INTEGER NOT NULL,
+  batch_id TEXT NOT NULL, check_key TEXT NOT NULL, argv_json TEXT NOT NULL,
+  cwd_ref TEXT, environment_ref TEXT, timeout_ms INTEGER NOT NULL, required INTEGER NOT NULL,
+  status TEXT NOT NULL, exit_code INTEGER, signal TEXT, timed_out INTEGER NOT NULL DEFAULT 0,
+  output_artifact_id TEXT, output_digest TEXT, output_tail TEXT,
+  started_at INTEGER, ended_at INTEGER,
+  CONSTRAINT check_results_revision_check CHECK (revision >= 1),
+  CONSTRAINT check_results_check_key_check CHECK (length(check_key) > 0 AND length(check_key) <= 128),
+  CONSTRAINT check_results_status_check CHECK (status IN ('passed', 'failed', 'error', 'inconclusive', 'not_run')),
+  CONSTRAINT check_results_argv_json_check CHECK (json_valid(argv_json) AND json_type(argv_json) = 'array'
+    AND json_array_length(argv_json) >= 1),
+  CONSTRAINT check_results_timeout_check CHECK (typeof(timeout_ms) = 'integer' AND timeout_ms >= 1),
+  CONSTRAINT check_results_required_check CHECK (required IN (0, 1)),
+  CONSTRAINT check_results_timed_out_check CHECK (timed_out IN (0, 1)),
+  CONSTRAINT check_results_exit_check CHECK (exit_code IS NULL OR typeof(exit_code) = 'integer'),
+  CONSTRAINT check_results_signal_check CHECK (signal IS NULL OR (length(signal) > 0 AND length(signal) <= 32)),
+  CONSTRAINT check_results_digest_check CHECK (output_digest IS NULL
+    OR (length(output_digest) = 64 AND output_digest NOT GLOB '*[^0-9a-f]*')),
+  CONSTRAINT check_results_tail_check CHECK (output_tail IS NULL OR length(output_tail) <= 8192),
+  CONSTRAINT check_results_times_check CHECK (typeof(created_at) = 'integer' AND created_at >= 0
+    AND typeof(updated_at) = 'integer' AND updated_at >= 0
+    AND (started_at IS NULL OR (typeof(started_at) = 'integer' AND started_at >= 0))
+    AND (ended_at IS NULL OR (typeof(ended_at) = 'integer' AND ended_at >= 0))
+    AND (started_at IS NULL OR ended_at IS NULL OR ended_at >= started_at)),
+  -- 证据身份形状：制品引用与记录摘要同时存在或同时为 NULL。
+  CONSTRAINT check_results_output_shape_check CHECK ((output_artifact_id IS NULL) = (output_digest IS NULL)),
+  -- 状态形状：not_run 无退出码/信号/超时/时间；passed 必须 exit_code=0 且未超时；
+  -- 超时只允许 failed/error（未知指标保持 NULL，不填 0）。
+  CONSTRAINT check_results_status_shape_check CHECK (
+    (status = 'not_run' AND exit_code IS NULL AND signal IS NULL AND timed_out = 0
+      AND started_at IS NULL AND ended_at IS NULL)
+    OR (status = 'passed' AND exit_code = 0 AND timed_out = 0)
+    OR (status IN ('failed', 'error', 'inconclusive'))),
+  CONSTRAINT check_results_timed_out_shape_check CHECK (timed_out = 0 OR status IN ('failed', 'error')),
+  CONSTRAINT check_results_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT check_results_batch_fk FOREIGN KEY (project_id, batch_id) REFERENCES verification_batches (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT check_results_output_artifact_fk FOREIGN KEY (project_id, output_artifact_id) REFERENCES artifacts (project_id, id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX check_results_project_id_id_unique ON check_results (project_id, id);
+CREATE UNIQUE INDEX check_results_batch_check_unique ON check_results (batch_id, check_key);
+-- 输出证据引用必须指向同项目 ready Artifact 且记录摘要与实测摘要一致。
+CREATE TRIGGER check_results_output_ready_insert BEFORE INSERT ON check_results
+WHEN NEW.output_artifact_id IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM artifacts WHERE artifacts.project_id = NEW.project_id
+    AND artifacts.id = NEW.output_artifact_id AND artifacts.status = 'ready'
+    AND artifacts.content_hash = NEW.output_digest)
+BEGIN SELECT RAISE(ABORT, 'check result output artifact is not ready or digest mismatch'); END;
+-- 逐项结果不可变：结论、定义快照与证据身份一经保存不可改写（历史失败记录不被覆盖）。
+CREATE TRIGGER check_results_immutable_update BEFORE UPDATE ON check_results
+BEGIN SELECT RAISE(ABORT, 'check results are immutable'); END;
+`;
+
 /** 已声明的全部 SQLite 迁移，按版本升序；F-005 的执行器按此顺序应用并核对摘要。 */
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
@@ -1597,4 +1720,5 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 18, sql: MIGRATION_018_SQL, checksum: sha256Hex(MIGRATION_018_SQL) },
   { version: 19, sql: MIGRATION_019_SQL, checksum: sha256Hex(MIGRATION_019_SQL) },
   { version: 20, sql: MIGRATION_020_SQL, checksum: sha256Hex(MIGRATION_020_SQL) },
+  { version: 21, sql: MIGRATION_021_SQL, checksum: sha256Hex(MIGRATION_021_SQL) },
 ];

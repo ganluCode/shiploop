@@ -197,6 +197,7 @@ describe('F-005 迁移执行与记录', () => {
           'baseline_occupancy',
           'baseline_operations',
           'batch_budget_revisions',
+          'check_results',
           'command_receipts',
           'execution_batches',
           'features',
@@ -216,6 +217,7 @@ describe('F-005 迁移执行与记录', () => {
           'task_claim_receipts',
           'task_dependencies',
           'tasks',
+          'verification_batches',
           'workspace_leases',
           'workspace_operations',
         ]);
@@ -323,10 +325,13 @@ describe('F-005 迁移执行与记录', () => {
         expect(rows[16]!.checksum).toBe(SQLITE_MIGRATIONS[16]!.checksum);
         expect(rows[17]!.version).toBe(SQLITE_MIGRATIONS[17]!.version);
         expect(rows[17]!.checksum).toBe(SQLITE_MIGRATIONS[17]!.checksum);
-        // P03-6 / F-006：v20 为最小 Work Session 表迁移；探针迁移紧随其后。
-        expect(rows[20]!.version).toBe(PROBE_MIGRATION.version);
-        expect(rows[20]!.checksum).toBe(PROBE_MIGRATION.checksum);
-        expect(rows[20]!.applied_at).toBe(FIXED_NOW_MS + 1_000);
+        // P03-6 / F-006：v20 为最小 Work Session 表迁移；P03-7 / F-002：v21 为验证记录
+        // 两表迁移；探针迁移紧随其后。
+        expect(rows[20]!.version).toBe(21);
+        expect(rows[20]!.checksum).toBe(SQLITE_MIGRATIONS[20]!.checksum);
+        expect(rows[21]!.version).toBe(PROBE_MIGRATION.version);
+        expect(rows[21]!.checksum).toBe(PROBE_MIGRATION.checksum);
+        expect(rows[21]!.applied_at).toBe(FIXED_NOW_MS + 1_000);
       } finally {
         session.close();
       }

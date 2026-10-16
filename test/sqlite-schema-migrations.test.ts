@@ -79,6 +79,9 @@ const SCHEMA_TABLES = [
   ['attempt_notification_diagnostics', schema.attemptNotificationDiagnostics],
   // P03-6 / F-006：最小 Work Session 与 Attempt 执行诊断持久关联（迁移 v20）。
   ['sessions', schema.sessions],
+  // P03-7 / F-002：VerificationBatch / CheckResult 与不可变验证证据身份（迁移 v21）。
+  ['verification_batches', schema.verificationBatches],
+  ['check_results', schema.checkResults],
   ['schema_migrations', schema.schemaMigrations],
 ] as const;
 
@@ -90,9 +93,7 @@ const FORBIDDEN_TABLE_NAMES = [
   'chat_turns',
   'session_messages',
   'recording_manifests',
-  'verification_batches',
   'check_definitions',
-  'check_results',
   'operations',
   'notification_channels',
   'notification_deliveries',
@@ -604,6 +605,15 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
         'sessions:(project_id,parent_session_id)->sessions.(project_id,id)',
         'sessions:(project_id,input_ref)->artifacts.(project_id,id)',
         'sessions:(project_id,result_ref)->artifacts.(project_id,id)',
+        // P03-7 / F-002 验证记录两表（迁移 v21）：同项目 Feature/Run/Task/Attempt 关联与制品引用外键。
+        'verification_batches:(project_id)->projects.(id)',
+        'verification_batches:(project_id,feature_id)->features.(project_id,id)',
+        'verification_batches:(project_id,run_id)->runs.(project_id,id)',
+        'verification_batches:(feature_id,task_id)->tasks.(feature_id,id)',
+        'verification_batches:(project_id,attempt_id)->attempts.(project_id,id)',
+        'check_results:(project_id)->projects.(id)',
+        'check_results:(project_id,batch_id)->verification_batches.(project_id,id)',
+        'check_results:(project_id,output_artifact_id)->artifacts.(project_id,id)',
       ]);
       type FkPragmaRow = { id: number; seq: number; table: string; from: string; to: string; on_update: string; on_delete: string };
       const actualFks = new Set<string>();

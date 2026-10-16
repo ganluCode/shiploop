@@ -714,6 +714,9 @@ describe('F-006 当前配置检查组（P01-FR2-CONFIG）', () => {
           'managed_workspaces',
           // P03-6 / F-006：最小 Work Session 表（迁移 v20；空表，无执行实体行）。
           'sessions',
+          // P03-7 / F-002：验证批次与逐项结果表（迁移 v21；空表，无验证记录行）。
+          'verification_batches',
+          'check_results',
         ].sort(),
       );
       for (const forbidden of [

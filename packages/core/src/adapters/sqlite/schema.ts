@@ -1560,3 +1560,91 @@ export const sessions = sqliteTable('sessions', {
   uniqueIndex('sessions_attempt_unique').on(table.attemptId).where(sql`${table.attemptId} IS NOT NULL`),
   index('sessions_project_kind_activity_index').on(table.projectId, table.kind, table.lastActivityAt),
 ]);
+
+/**
+ * P03-7 / F-002：VerificationBatch / CheckResult 与不可变验证证据身份（迁移 v21）。
+ * 批次把针对同一代码状态的一组可信检查归为权威边界（代码/策略/环境身份 + 检查定义
+ * 快照 + 选择/回退理由）；逐项结果保存状态、argv/cwd/timeout 快照、时间、exit_code/
+ * signal、输出 Artifact 引用与有界 tail；未知指标保持 NULL。不建 check_definitions
+ * 表与配置/计划版本表；大输出正文仅引用同项目 ready Artifact 并记录摘要身份。
+ */
+export const verificationBatches = sqliteTable('verification_batches', {
+  id: text('id').primaryKey(), createdAt: integer('created_at').notNull(),
+  projectId: text('project_id').notNull().references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  revision: integer('revision').notNull().default(1), updatedAt: integer('updated_at').notNull(),
+  featureId: text('feature_id').notNull(), runId: text('run_id').notNull(), taskId: text('task_id').notNull(),
+  attemptId: text('attempt_id').notNull(), executionVersion: integer('execution_version').notNull(),
+  operation: text('operation').notNull(), codeDigest: text('code_digest').notNull(), policyDigest: text('policy_digest').notNull(),
+  environmentSummary: text('environment_summary').notNull(), checkSnapshot: text('check_snapshot').notNull(),
+  selection: text('selection').notNull(), status: text('status').notNull().default('running'),
+  startedAt: integer('started_at'), endedAt: integer('ended_at'),
+}, (table) => [
+  check('verification_batches_revision_check', sql`${table.revision} >= 1`),
+  check('verification_batches_version_check', sql`typeof(${table.executionVersion}) = 'integer' AND ${table.executionVersion} >= 1`),
+  check('verification_batches_operation_check', sql`length(${table.operation}) > 0 AND length(${table.operation}) <= 128`),
+  check('verification_batches_digest_check', sql`length(${table.codeDigest}) = 64 AND ${table.codeDigest} NOT GLOB '*[^0-9a-f]*'
+    AND length(${table.policyDigest}) = 64 AND ${table.policyDigest} NOT GLOB '*[^0-9a-f]*'`),
+  check('verification_batches_environment_check', sql`json_valid(${table.environmentSummary})
+    AND json_type(${table.environmentSummary}) = 'object' AND length(${table.environmentSummary}) <= 8192`),
+  check('verification_batches_snapshot_check', sql`json_valid(${table.checkSnapshot})
+    AND json_type(${table.checkSnapshot}) = 'array' AND json_array_length(${table.checkSnapshot}) >= 1
+    AND length(${table.checkSnapshot}) <= 65536`),
+  check('verification_batches_selection_check', sql`json_valid(${table.selection})
+    AND json_type(${table.selection}) = 'object' AND length(${table.selection}) <= 16384`),
+  check('verification_batches_status_check', sql`${table.status} IN ('running', 'passed', 'failed', 'error', 'inconclusive')`),
+  check('verification_batches_times_check', sql`typeof(${table.createdAt}) = 'integer' AND ${table.createdAt} >= 0
+    AND typeof(${table.updatedAt}) = 'integer' AND ${table.updatedAt} >= 0
+    AND (${table.startedAt} IS NULL OR (typeof(${table.startedAt}) = 'integer' AND ${table.startedAt} >= 0))
+    AND (${table.endedAt} IS NULL OR (typeof(${table.endedAt}) = 'integer' AND ${table.endedAt} >= 0))
+    AND ((${table.status} = 'running' AND ${table.endedAt} IS NULL)
+      OR (${table.status} <> 'running' AND ${table.endedAt} IS NOT NULL AND (${table.startedAt} IS NULL OR ${table.endedAt} >= ${table.startedAt})))`),
+  foreignKey({ name: 'verification_batches_feature_fk', columns: [table.projectId, table.featureId], foreignColumns: [features.projectId, features.id] }).onDelete('restrict'),
+  foreignKey({ name: 'verification_batches_run_fk', columns: [table.projectId, table.runId], foreignColumns: [runs.projectId, runs.id] }).onDelete('restrict'),
+  foreignKey({ name: 'verification_batches_task_fk', columns: [table.featureId, table.taskId], foreignColumns: [tasks.featureId, tasks.id] }).onDelete('restrict'),
+  foreignKey({ name: 'verification_batches_attempt_fk', columns: [table.projectId, table.attemptId], foreignColumns: [attempts.projectId, attempts.id] }).onDelete('restrict'),
+  uniqueIndex('verification_batches_project_id_id_unique').on(table.projectId, table.id),
+  index('verification_batches_project_attempt_index').on(table.projectId, table.attemptId, table.id),
+]);
+
+export const checkResults = sqliteTable('check_results', {
+  id: text('id').primaryKey(), createdAt: integer('created_at').notNull(),
+  projectId: text('project_id').notNull().references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  revision: integer('revision').notNull().default(1), updatedAt: integer('updated_at').notNull(),
+  batchId: text('batch_id').notNull(), checkKey: text('check_key').notNull(),
+  argvJson: text('argv_json').notNull(), cwdRef: text('cwd_ref'), environmentRef: text('environment_ref'),
+  timeoutMs: integer('timeout_ms').notNull(), required: integer('required').notNull(),
+  status: text('status').notNull(), exitCode: integer('exit_code'), signal: text('signal'),
+  timedOut: integer('timed_out').notNull().default(0),
+  outputArtifactId: text('output_artifact_id'), outputDigest: text('output_digest'), outputTail: text('output_tail'),
+  startedAt: integer('started_at'), endedAt: integer('ended_at'),
+}, (table) => [
+  check('check_results_revision_check', sql`${table.revision} >= 1`),
+  check('check_results_check_key_check', sql`length(${table.checkKey}) > 0 AND length(${table.checkKey}) <= 128`),
+  check('check_results_status_check', sql`${table.status} IN ('passed', 'failed', 'error', 'inconclusive', 'not_run')`),
+  check('check_results_argv_json_check', sql`json_valid(${table.argvJson}) AND json_type(${table.argvJson}) = 'array'
+    AND json_array_length(${table.argvJson}) >= 1`),
+  check('check_results_timeout_check', sql`typeof(${table.timeoutMs}) = 'integer' AND ${table.timeoutMs} >= 1`),
+  check('check_results_required_check', sql`${table.required} IN (0, 1)`),
+  check('check_results_timed_out_check', sql`${table.timedOut} IN (0, 1)`),
+  check('check_results_exit_check', sql`${table.exitCode} IS NULL OR typeof(${table.exitCode}) = 'integer'`),
+  check('check_results_signal_check', sql`${table.signal} IS NULL OR (length(${table.signal}) > 0 AND length(${table.signal}) <= 32)`),
+  check('check_results_digest_check', sql`${table.outputDigest} IS NULL
+    OR (length(${table.outputDigest}) = 64 AND ${table.outputDigest} NOT GLOB '*[^0-9a-f]*')`),
+  check('check_results_tail_check', sql`${table.outputTail} IS NULL OR length(${table.outputTail}) <= 8192`),
+  check('check_results_times_check', sql`typeof(${table.createdAt}) = 'integer' AND ${table.createdAt} >= 0
+    AND typeof(${table.updatedAt}) = 'integer' AND ${table.updatedAt} >= 0
+    AND (${table.startedAt} IS NULL OR (typeof(${table.startedAt}) = 'integer' AND ${table.startedAt} >= 0))
+    AND (${table.endedAt} IS NULL OR (typeof(${table.endedAt}) = 'integer' AND ${table.endedAt} >= 0))
+    AND (${table.startedAt} IS NULL OR ${table.endedAt} IS NULL OR ${table.endedAt} >= ${table.startedAt})`),
+  check('check_results_output_shape_check', sql`(${table.outputArtifactId} IS NULL) = (${table.outputDigest} IS NULL)`),
+  check('check_results_status_shape_check', sql`
+    (${table.status} = 'not_run' AND ${table.exitCode} IS NULL AND ${table.signal} IS NULL AND ${table.timedOut} = 0
+      AND ${table.startedAt} IS NULL AND ${table.endedAt} IS NULL)
+    OR (${table.status} = 'passed' AND ${table.exitCode} = 0 AND ${table.timedOut} = 0)
+    OR (${table.status} IN ('failed', 'error', 'inconclusive'))`),
+  check('check_results_timed_out_shape_check', sql`${table.timedOut} = 0 OR ${table.status} IN ('failed', 'error')`),
+  foreignKey({ name: 'check_results_batch_fk', columns: [table.projectId, table.batchId], foreignColumns: [verificationBatches.projectId, verificationBatches.id] }).onDelete('restrict'),
+  foreignKey({ name: 'check_results_output_artifact_fk', columns: [table.projectId, table.outputArtifactId], foreignColumns: [artifacts.projectId, artifacts.id] }).onDelete('restrict'),
+  uniqueIndex('check_results_project_id_id_unique').on(table.projectId, table.id),
+  uniqueIndex('check_results_batch_check_unique').on(table.batchId, table.checkKey),
+]);
