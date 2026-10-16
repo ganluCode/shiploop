@@ -130,6 +130,8 @@ import { createSqliteAtomicCommandStore } from './sqlite/atomic-commands.js';
 import { createSqliteArtifactStore } from './sqlite/artifact-store.js';
 import { createSqliteBaselineStore } from './sqlite/baseline-store.js';
 import type { BaselineStore } from '../ports/baseline-store.js';
+import { createSqliteVerificationStore } from './sqlite/verification-store.js';
+import type { VerificationStore } from '../ports/verification-store.js';
 import { createSqliteCommandReceiptStore } from './sqlite/command-receipts.js';
 import { migrateSqliteStorage } from './sqlite/migrator.js';
 import { createSqliteQueryStore } from './sqlite/query-store.js';
@@ -228,6 +230,8 @@ export interface CoreApplication {
   readonly onboardingService: OnboardingService;
   /** P02-3 / F-007：基线窄存储读取端口（迁移 v4 四表；写经原子命令事务）。 */
   readonly baselineStore: BaselineStore;
+  /** P03-7 / F-005：Task Node 检查批次与逐项结果窄存储。 */
+  readonly verificationStore: VerificationStore;
   /** P02-3 / F-008：基线预览与明确授权用例（§6；经 commandService 提交）。 */
   readonly baselineService: BaselineService;
   /** F-012: explicit execution entry; Host routing is wired in F-014. */
@@ -459,6 +463,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     });
 
     const atomicStore = createSqliteAtomicCommandStore(session, nowUtcMs === undefined ? {} : { nowUtcMs });
+    const verificationStore = createSqliteVerificationStore(session, nowUtcMs === undefined ? {} : { nowUtcMs });
     // P03-2 / F-006：执行输入准备服务（视图捕获 + 事务外采集/组装/发布 +
     // 正文复验；命令服务在同一装配内接线，最终重核/事件/回执在命令短写事务内）。
     // 获准源文件根白名单由可信装配注入（缺省空名单 fail-closed）；预算面使用
@@ -811,6 +816,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       queryService,
       onboardingService,
       baselineStore,
+      verificationStore,
       baselineService,
       baselineExecutionService,
       baselineQueryService,
