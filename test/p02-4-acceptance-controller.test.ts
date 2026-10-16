@@ -278,7 +278,7 @@ describe('F-011 验收控制器（真实有界子进程 + 隔离夹具）', () =
     const sandbox = newSandbox();
     const result = await runController({
       sandbox,
-      steps: fakeSteps({ verify: { script: 'console.log("safe diagnostic"); console.error(JSON.stringify({token:"synthetic-sensitive-value"},null,2)); console.error("Bearer synthetic-sensitive-header"); process.exit(1)' } }),
+      steps: fakeSteps({ verify: { script: 'console.log("safe diagnostic"); console.error(JSON.stringify({token:"synthetic-sensitive-value"},null,2)); console.error("Bearer synthetic-sensitive-header"); console.error(" FAIL  test/synthetic.test.ts > private title"); process.exit(1)' } }),
     });
     expect(result.exitCode).toBe(1);
     expect(result.reportWritten).toBe(true);
@@ -288,6 +288,8 @@ describe('F-011 验收控制器（真实有界子进程 + 隔离夹具）', () =
     const log = readFileSync(join(result.runDir as string, 'evidence/commands/01-verify.log'), 'utf8');
     expect(log).toContain('safe diagnostic');
     expect(log).toContain('credential-shaped output redacted');
+    expect(log).toContain('failed_test_file: test/synthetic.test.ts');
+    expect(log).not.toContain('private title');
     expect(log).not.toContain('synthetic-sensitive-value');
     expect(log).not.toContain('synthetic-sensitive-header');
     expect(verifyP02ReportDirectory(result.runDir as string).ok).toBe(true);

@@ -47,6 +47,7 @@ import { createRequire } from 'node:module';
 import { arch, release as osRelease, type as osType } from 'node:os';
 import { dirname, isAbsolute, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { stripVTControlCharacters } from 'node:util';
 import {
   P02_ACCEPT_ENV_VERIFY_TIMEOUT_MS,
   P02_ACCEPT_SCRIPT_NAME,
@@ -843,8 +844,10 @@ function renderStepLog(
 // Omit the whole affected stream: a credential value can span multiple lines.
 // The report still records outcome, byte counts and a digest, and keeps its fail-closed scanner.
 function redactCommandOutput(text: string): string {
-  return scanTextForCredentialShapes(text).length === 0 ? text
-    : `[credential-shaped output redacted; sha256=${createHash('sha256').update(text).digest('hex')}]`;
+  if (scanTextForCredentialShapes(text).length === 0) return text;
+  const failedFiles = [...new Set([...stripVTControlCharacters(text).matchAll(/^\s*FAIL\s+(test\/[A-Za-z0-9._/-]+\.(?:test|spec)\.ts)(?:\s|$)/gm)].map((match) => match[1]))];
+  return [`[credential-shaped output redacted; sha256=${createHash('sha256').update(text).digest('hex')}]`,
+    ...failedFiles.map((path) => `failed_test_file: ${path}`)].join('\n');
 }
 
 /* ---------------- 控制检查求值（P02-PHASE-*） ---------------- */

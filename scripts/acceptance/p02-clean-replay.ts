@@ -378,6 +378,14 @@ export function replayMigrationVersions(snapshotRoot: string): readonly number[]
   return loadP02AcceptanceConfig(join(snapshotRoot, 'acceptance/p02.config.json')).schemaVersions.sqliteMigrations;
 }
 
+/** Only verified report command logs; their sanitized copies are diagnostics, not original hash evidence. */
+export function replayCommandLogs(runDir: string, paths: readonly string[]): { path: string; content: string }[] {
+  return paths.filter((path) => path.startsWith('evidence/commands/')).map((path) => {
+    if (!/^evidence\/commands\/[a-z0-9-]+\.log$/.test(path)) throw new Error('Invalid replay command log path');
+    return { path, content: readFileSync(join(runDir, path), 'utf8') };
+  });
+}
+
 export function replayAcceptanceEnv(source: NodeJS.ProcessEnv, isolated: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   return replayChildEnv({
     ...isolated,
@@ -1113,6 +1121,11 @@ async function phaseAccept(ctx: ReplayContext, index: 1 | 2): Promise<void> {
   const exportDir = `accept-runs/${step.id}`;
   const summaryPath = join(runDir, 'summary.md');
   writeEvidence(ctx, `${exportDir}/report.json`, rawReport);
+  if (verification.ok) {
+    for (const entry of replayCommandLogs(runDir, evidenceEntries.map((raw) => String(asRecord(raw).path ?? '')))) {
+      writeEvidence(ctx, `${exportDir}/diagnostics/${entry.path}`, entry.content);
+    }
+  }
   if (existsSync(summaryPath)) {
     writeEvidence(ctx, `${exportDir}/summary.md`, readFileSync(summaryPath, 'utf-8'));
   }

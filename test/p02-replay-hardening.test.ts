@@ -1,10 +1,17 @@
 import { mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { replayAcceptanceEnv, replayMigrationVersions, treeIndex } from '../scripts/acceptance/p02-clean-replay.ts';
+import { replayAcceptanceEnv, replayMigrationVersions, replayCommandLogs, treeIndex } from '../scripts/acceptance/p02-clean-replay.ts';
 import { withTempSandbox } from './helpers/temp-sandbox.ts';
 
 describe('P02 replay infrastructure regression', () => {
+  it('exports actual command logs before snapshot removal, refusing traversal', () => withTempSandbox((root) => {
+    mkdirSync(join(root, 'evidence/commands'), { recursive: true });
+    writeFileSync(join(root, 'evidence/commands/01-verify.log'), 'outcome: exit 1\nfailed_test_file: test/regression.test.ts');
+    const fn = replayCommandLogs;
+    expect(fn(root, ['evidence/config.json', 'evidence/commands/01-verify.log'])).toEqual([{ path: 'evidence/commands/01-verify.log', content: 'outcome: exit 1\nfailed_test_file: test/regression.test.ts' }]);
+    expect(() => fn(root, ['evidence/commands/../../outside.log'])).toThrow();
+  }));
   it('isolated acceptance propagates only approved budgets, never user credentials', () => {
     const fn = replayAcceptanceEnv;
     const result = fn({ SHIPLOOP_VERIFY_STEP_TIMEOUT_MS: '1200000', SHIPLOOP_TEST_RUN_TIMEOUT_MS: '4800000', API_KEY: 'do-not-import', SHIPLOOP_TEST_EXPLICIT_FILTERS: '["wrong"]' }, { PATH: '/bin', HOME: '/isolated', TMPDIR: '/isolated/tmp' });

@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 type ProcessIdentity = { pid: number; ppid: number; identity: string; zombie: boolean };
 
 function processTable(): ProcessIdentity[] {
-  const text = execFileSync('ps', ['-axo', 'pid=,ppid=,stat=,lstart=,args='], {
+  const text = execFileSync('/bin/ps', ['-axo', 'pid=,ppid=,stat=,lstart=,args='], {
     encoding: 'utf8', timeout: 2000, maxBuffer: 8 * 1024 * 1024,
   });
   return text.split('\n').flatMap((line) => {
@@ -17,6 +17,8 @@ export class OwnedProcessTree {
   private readonly owned = new Map<number, string>();
   private readonly timer: ReturnType<typeof setInterval>;
   private scanFailed = false;
+  private lastScanError = 'none';
+  private lastRemaining: number[] = [];
   private readonly rootPid: number | undefined;
 
   constructor(rootPid: number | undefined) {
@@ -43,8 +45,9 @@ export class OwnedProcessTree {
         }
       }
       return rows;
-    } catch {
+    } catch (error) {
       this.scanFailed = true;
+      this.lastScanError = String((error as NodeJS.ErrnoException).code ?? 'scan_error');
       return [];
     }
   }
@@ -64,9 +67,14 @@ export class OwnedProcessTree {
     const deadline = Date.now() + 2000;
     do {
       const remaining = this.capture().filter((row) => !row.zombie && this.owned.get(row.pid) === row.identity);
+      this.lastRemaining = remaining.map((row) => row.pid);
       if (remaining.length === 0) return !this.scanFailed;
       await new Promise((resolve) => setTimeout(resolve, 25));
     } while (Date.now() < deadline);
     return false;
+  }
+
+  diagnostic(): string {
+    return `ownership_scan_failed=${this.scanFailed}; last_scan_error=${this.lastScanError}; remaining_owned_pids=${this.lastRemaining.join(',')}`;
   }
 }

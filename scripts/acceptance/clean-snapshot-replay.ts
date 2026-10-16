@@ -214,7 +214,7 @@ export function runBounded(
         clearTimeout(graceTimer);
       }
       void processTree.finish(timedOut || result.code !== 0).then((stopped) => {
-        resolveResult(stopped ? result : { ...result, kind: 'spawn-error', code: null, message: 'Owned descendants did not stop or ownership scan failed' });
+        resolveResult(stopped ? result : { ...result, kind: 'spawn-error', code: null, message: `Owned descendants did not stop or ownership scan failed (${processTree.diagnostic()})` });
       });
     };
 
