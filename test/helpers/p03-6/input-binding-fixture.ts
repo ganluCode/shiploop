@@ -70,6 +70,8 @@ export interface BindingFixtureOptions {
   readonly bindingNowMs?: () => number;
   /** 第二 Task（独立 spec 输入、无依赖；用于 Task 上下文隔离）。 */
   readonly secondTask?: boolean;
+  /** F-014：第二 Task 声明 dependsOn: ['t-1']（须与 secondTask 同用），用于后继未解锁断言。 */
+  readonly secondTaskDependsOnFirst?: boolean;
 }
 
 export interface BoundAttempt {
@@ -121,6 +123,9 @@ export interface BindingFixture {
 }
 
 export async function openBindingFixture(options: BindingFixtureOptions = {}): Promise<BindingFixture> {
+  if (options.secondTaskDependsOnFirst === true && options.secondTask !== true) {
+    throw new TypeError('openBindingFixture: secondTaskDependsOnFirst 须与 secondTask 同用');
+  }
   const box = createCommandsTestFixture({ prefix: 'shiploop-p036-f002-' });
   let session: SqliteStorageSession | undefined;
   try {
@@ -247,6 +252,7 @@ export async function openBindingFixture(options: BindingFixtureOptions = {}): P
       tasks.push({
         id: 't-2', title: '绑定任务二', acceptance: { criteria: ['任务二验收'] },
         requirementsRefs: [{ artifactId: secondRequirementArtifactId }],
+        ...(options.secondTaskDependsOnFirst === true ? { dependsOn: ['t-1'] } : {}),
       });
     }
     const imported = requireCompleted(
