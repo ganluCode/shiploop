@@ -60,6 +60,8 @@ async function fixture() {
   const ids = await box.start();
   const inputSnapshot = preparedInput(box.projectId, box.featureId);
   const db = box.session.database;
+  // Match claimTask's durable Task/Attempt generation when seeding rows directly.
+  db.prepare('UPDATE tasks SET execution_version = 1 WHERE id = ?').run(ids.taskId);
   const insertArtifact = (id: string, status: 'ready' | 'pending', locator = `inputs/${id}`) => {
     db.prepare(`INSERT INTO artifacts (id, created_at, updated_at, project_id, kind, status, media_type,
       expected_hash, content_hash, size_bytes, storage_locator) VALUES (?, ?, ?, ?, 'execution-input', ?, 'application/json', ?, ?, ?, ?)`)

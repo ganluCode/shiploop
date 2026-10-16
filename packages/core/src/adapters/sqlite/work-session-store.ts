@@ -10,7 +10,8 @@
  * Attempt 关联、水位后退与未 ready 的结果制品引用。未知指标（结果/水位/缺口/
  * 原生引用/停止时间）保持 null；正文一律经 ready Artifact 引用。
  */
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
+import { validateWorkResourceIdentity } from '../../ports/work-resources.js';
 import { StorageError } from '../../ports/errors.js';
 import { validateStableId } from '../../ports/validation.js';
 import { ACTIVE_ATTEMPT_STATUSES } from '../../ports/attempt-store.js';
@@ -51,7 +52,7 @@ const SESSION_COLUMNS = `id, created_at, updated_at, revision, project_id, attem
 interface AttemptIdentityRow {
   project_id: string; run_id: string; status: string; revision: number;
   owner_id: string; host_instance_id: string; execution_version: number;
-  session_id: string | null; input_ref: string; execution_stage: string;
+  session_id: string | null; input_ref: string; execution_stage: string; task_execution_version: number;
 }
 
 export function createSqliteWorkSessionStore(
@@ -94,8 +95,9 @@ export function createSqliteWorkSessionStore(
 
   function readAttempt(attemptId: string): AttemptIdentityRow | undefined {
     return db.prepare<[string], AttemptIdentityRow>(
-      `SELECT project_id, run_id, status, revision, owner_id, host_instance_id, execution_version,
-        session_id, input_ref, execution_stage FROM attempts WHERE id = ?`).get(attemptId);
+      `SELECT a.project_id, a.run_id, a.status, a.revision, a.owner_id, a.host_instance_id, a.execution_version,
+        a.session_id, a.input_ref, a.execution_stage, t.execution_version AS task_execution_version
+        FROM attempts a JOIN tasks t ON t.id = a.task_id AND t.project_id = a.project_id WHERE a.id = ?`).get(attemptId);
   }
 
   function assertIdentity(operation: string, input: { projectId: string; attemptId: string; owner: string;
@@ -104,7 +106,7 @@ export function createSqliteWorkSessionStore(
     const row = attempt!;
     if (row.project_id !== input.projectId) fail('ownership', operation, 'Attempt belongs to another project', sessionId, input.projectId);
     if (row.owner_id !== input.owner || row.host_instance_id !== input.hostInstanceId
-      || row.execution_version !== input.executionVersion) {
+      || row.execution_version !== input.executionVersion || row.task_execution_version !== input.executionVersion) {
       fail('conflict', operation, 'Stale execution identity (owner/host/version)', sessionId, input.projectId);
     }
     return row;
@@ -183,6 +185,9 @@ export function createSqliteWorkSessionStore(
       fail('conflict', operation, 'Recording watermark regression', input.sessionId, input.projectId);
     }
     if (input.kind === 'activity') {
+      if (!(ACTIVE_ATTEMPT_STATUSES as readonly string[]).includes(attempt.status)) {
+        fail('conflict', operation, 'Late activity from terminal Attempt', input.sessionId, input.projectId);
+      }
       if (record.status === 'stopped') fail('conflict', operation, 'Stopped work session is terminal', input.sessionId, input.projectId);
     } else {
       const allowed = WORK_SESSION_TRANSITIONS[record.status];
@@ -240,6 +245,32 @@ export function createSqliteWorkSessionStore(
   }
 
   return {
+    checkWorkSessionFence(raw) {
+      const operation = 'WorkSessionStore.checkFence';
+      const { sessionId: rawSessionId, ...rawIdentity } = raw;
+      const identity = validateWorkResourceIdentity(rawIdentity);
+      const sessionId = validateStableId(rawSessionId, { operation }, 'sessionId');
+      assertOpen(operation);
+      const check = () => {
+        const attempt = readAttempt(identity.attemptId);
+        const row = readSessionRow(sessionId);
+        return attempt?.project_id === identity.projectId && attempt.owner_id === identity.owner
+          && attempt.host_instance_id === identity.hostInstanceId && attempt.execution_version === identity.executionVersion
+          && attempt.task_execution_version === identity.executionVersion
+          && ['preparing', 'executing'].includes(attempt.status) && attempt.session_id === sessionId
+          && row?.project_id === identity.projectId && row.attempt_id === identity.attemptId && row.status === 'started';
+      };
+      const current = db.inTransaction ? check() : transactSqliteConsistentRead(session, operation, check);
+      if (!current) atomic.transact(operation, () => {
+        if (readAttempt(identity.attemptId)?.project_id === identity.projectId) {
+          db.prepare(`INSERT OR IGNORE INTO attempt_notification_diagnostics
+            (id, project_id, attempt_id, notification_digest, reason, occurred_at) VALUES (?, ?, ?, ?, 'stale_execution_identity', ?)`)
+            .run(randomUUID(), identity.projectId, identity.attemptId,
+              createHash('sha256').update(JSON.stringify({ ...identity, sessionId })).digest('hex'), now());
+        }
+      });
+      return current;
+    },
     getWorkSession(projectId: string, sessionId: string): WorkSessionRecord {
       const operation = 'WorkSessionStore.read';
       const validProjectId = validateStableId(projectId, { operation }, 'projectId');

@@ -82,6 +82,8 @@ export async function openEvidenceFixture(options: EvidenceFixtureOptions): Prom
     const ids = await budget.start();
     const session = budget.session;
     const db = session.database;
+    // Direct fixture seeding mirrors claimTask's Task/Attempt generation CAS.
+    db.prepare('UPDATE tasks SET execution_version = 1 WHERE id = ?').run(ids.taskId);
     const nowUtcMs = () => EVIDENCE_NOW;
 
     /* 输入制品索引（ready；会话创建只核对存在性与身份）。 */

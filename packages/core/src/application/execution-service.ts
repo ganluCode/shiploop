@@ -24,6 +24,7 @@ import type { AttemptStore } from '../ports/attempt-store.js';
 import { evaluateTaskDag } from './task-dag.js';
 import { computeExecutionPermissionsDigest, TRUSTED_PROJECT_PERMISSIONS_READER, type ExecutionPermissionsReader } from '../ports/execution-input-prepare.js';
 import type { WorkEvidenceRecorder, WorkEvidenceRecordingOutcome } from './work-evidence-recorder.js';
+import type { RuntimeSettlementService } from './runtime-settlement.js';
 import type { RuntimeRecoverySelection } from '../ports/runtime-recovery.js';
 import type { RuntimeStrategyV1 } from '../ports/settings-schema.js';
 import { createHash } from 'node:crypto';
@@ -65,6 +66,8 @@ export interface ExecutionServiceDeps {
   readonly dag: TaskDagStore;
   readonly attempts: Pick<AttemptStore, 'getAttempt'>;
   readonly recorder: WorkEvidenceRecorder;
+  /** Trusted assembly; startup errors use the same fenced settlement as execution results. */
+  readonly settlement?: RuntimeSettlementService;
   /** Trusted event identity rule supplied by the adapter assembly. */
   readonly eventIdentityPrefix: (request: RuntimeExecutionRequest) => string;
   readonly permissions?: ExecutionPermissionsReader;
@@ -194,6 +197,15 @@ export function createExecutionService(deps: ExecutionServiceDeps): ExecutionSer
     try {
       runtime = await deps.runtime.start(bound.request);
     } catch (error) {
+      if (deps.settlement) {
+        try {
+          await deps.settlement.settle({ request: bound.request, result: { status: 'rejected', reason: error }, recording: null, stopped: null });
+        } catch {
+          // A failed evidence/DB commit cannot replace the original Runtime error or free the lease.
+          quarantineUnstarted(workIdentity);
+        }
+        throw isRuntimeError(error) ? error : new RuntimeError('process', 'adapter_start_failed', { cause: error });
+      }
       // The start budget remains consumed by design. Session is ended after the
       // adapter call, while the launch gate remains durable for diagnosis/recovery.
       try {

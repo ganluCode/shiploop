@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { evaluateTaskDag } from '../../application/task-dag.js';
 import { verifyFeaturePlanApprovalInTransaction } from '../../application/plan-approval-verification.js';
+import { createSqliteWorkSessionStore } from './work-session-store.js';
 import { ACTIVE_ATTEMPT_STATUSES } from '../../ports/attempt-store.js';
 import { rejectUnknownKeys, requirePlainObject, validateStableId } from '../../ports/validation.js';
 import {
@@ -39,6 +40,7 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
   const atomic = createSqliteAtomicCommandStore(session, options);
   const resources = createSqliteWorkResourceAccess(session, options);
   const dag = createSqliteTaskDagStore(session);
+  const sessions = createSqliteWorkSessionStore(session, options);
   function applyInTransaction(transaction: CommandTransaction, input: unknown, stopEvidence?: unknown,
     preparationIsolated = false): AttemptApplicationResult {
       if (!db.inTransaction) throw new TypeError('Attempt lifecycle primitive requires a write transaction');
@@ -46,8 +48,10 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
       const identity: WorkResourceIdentity = { projectId: valid.projectId, attemptId: valid.attemptId,
         owner: valid.owner, hostInstanceId: valid.hostInstanceId, executionVersion: valid.executionVersion };
       const digest = createHash('sha256').update(stableStringify(valid)).digest('hex');
+      const runtime = valid.kind === 'runtime_settled' ? valid.runtime : null;
       const targetStatus = valid.kind === 'executing' ? 'executing'
-        : valid.kind === 'preparation_failed' || valid.exitCode !== 0 ? 'failed' : 'verifying';
+        : runtime !== null ? runtime.failure === null && runtime.result?.terminal === 'completed' ? 'verifying' : 'failed'
+        : valid.kind === 'preparation_failed' || (valid.kind === 'runtime_completed' && valid.exitCode !== 0) ? 'failed' : 'verifying';
         const now = (options.nowUtcMs ?? Date.now)();
         if (!Number.isSafeInteger(now) || now < 1) throw new StorageError('validation', operation, 'Invalid lifecycle clock');
         const row = db.prepare<[string], { project_id: string }>('SELECT project_id FROM attempts WHERE id = ?').get(valid.attemptId);
@@ -78,10 +82,12 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
             validateStableId(receipt.eventId, context, 'eventId');
             if (receipt.disposition !== 'applied' || receipt.attemptId !== attempt.id || receipt.reason !== null
               || receipt.status !== targetStatus
-              || (valid.kind === 'runtime_completed' && valid.exitCode === 0
-                ? !['approval', 'verification_not_assembled'].includes(String(receipt.waitingFor)) : receipt.waitingFor !== null)
+              || (runtime !== null && targetStatus === 'verifying'
+                ? !['approval', 'verification_not_assembled', 'recording_required', 'execution_uncertain'].includes(String(receipt.waitingFor))
+                : valid.kind === 'runtime_completed' && valid.exitCode === 0
+                  ? !['approval', 'verification_not_assembled'].includes(String(receipt.waitingFor)) : receipt.waitingFor !== null)
               || ![receipt.runtimeCompleted, receipt.resultSaved, receipt.stopConfirmed].every(v => typeof v === 'boolean')
-              || receipt.runtimeCompleted !== (valid.kind === 'runtime_completed')
+              || receipt.runtimeCompleted !== (runtime !== null ? runtime.result?.terminal === 'completed' : valid.kind === 'runtime_completed')
               || receipt.resultSaved !== (valid.kind !== 'executing')
               || (valid.kind === 'executing' && receipt.stopConfirmed !== false)) throw new Error('invalid_receipt');
             return { ...receipt, disposition: 'replayed' } as unknown as AttemptApplicationResult;
@@ -91,12 +97,26 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
           || task.status !== 'running'
           || (valid.kind === 'executing' && (attempt.status !== 'preparing' || attempt.executionStage !== 'runtime'))
           || (valid.kind === 'preparation_failed' && attempt.status !== 'preparing')
-          || (valid.kind === 'runtime_completed' && attempt.status !== 'executing')) return ignored('invalid_transition');
+          || (valid.kind === 'runtime_completed' && attempt.status !== 'executing')
+          || (runtime !== null && !['preparing', 'executing'].includes(attempt.status))) return ignored('invalid_transition');
         if (now < (attempt.startedAtUtcMs ?? attempt.createdAtUtcMs)) throw new StorageError('validation', operation, 'Lifecycle clock precedes Attempt');
         const occupied = resources.read(identity);
         if (valid.kind === 'executing' && (occupied.leases.length !== 3 || occupied.leases.some(l => l.state !== 'held' || l.leaseUntilUtcMs <= now)
           || occupied.invocationId === null || occupied.processIdentity === null)) return ignored('invalid_transition');
         if (valid.kind !== 'executing') transaction.getArtifactInputRef(valid.projectId, valid.evidenceRef);
+        let settlementRevision = attempt.revision;
+        const workSession = runtime === null ? null : sessions.getWorkSession(valid.projectId, runtime.sessionId);
+        if (runtime !== null) {
+          if (workSession === null || workSession.attemptId !== attempt.id
+            || !['reserved', 'started'].includes(workSession.status) || attempt.invocationId !== runtime.invocationId) return ignored('stale_execution_identity');
+          if (runtime.recording.manifestRef !== null) transaction.getArtifactInputRef(valid.projectId, runtime.recording.manifestRef);
+          const ended = sessions.applyWorkSessionProgressInTransaction(transaction, { ...identity, sessionId: runtime.sessionId,
+            expectedRevision: workSession.revision, kind: 'ended', executionStage: targetStatus === 'verifying' ? 'verification' : 'runtime',
+            resultRef: valid.kind === 'runtime_settled' ? valid.evidenceRef : null });
+          if (runtime.stopped?.confirmed) sessions.applyWorkSessionProgressInTransaction(transaction, { ...identity,
+            sessionId: runtime.sessionId, expectedRevision: ended.session.revision, kind: 'stopped' });
+          settlementRevision = attempts.getAttempt(valid.projectId, valid.attemptId).revision;
+        }
         const approval = verifyFeaturePlanApprovalInTransaction(transaction, valid.projectId, attempt.featureId);
         const view = dag.readTaskDagView(valid.projectId, attempt.runId);
         const graph = evaluateTaskDag(view, now);
@@ -105,7 +125,11 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
           || approval.planDigest !== snapshot.planDigest || approval.checkPolicyDigest !== snapshot.checkPolicyDigest
           || approval.currentDecision?.id !== snapshot.decisionId || graph.reason === 'invalid_graph';
         let stopConfirmed = false;
-        if (valid.kind === 'preparation_failed') {
+        if (runtime !== null) {
+          stopConfirmed = runtime.stopped?.confirmed === true;
+          // Runtime stop is an observation, not authorization to release a workspace before verification/retention.
+          if (!stopConfirmed || targetStatus === 'failed') resources.quarantineInTransaction(identity);
+        } else if (valid.kind === 'preparation_failed') {
           const unstarted = !preparationIsolated && attempt.invocationId === null && attempt.startedAtUtcMs === null
             && attempt.executionStage === 'preflight' && occupied.leases.every(l => l.processIdentity === null);
           if (unstarted) {
@@ -122,19 +146,26 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
         }
         const status = targetStatus;
         const stage = valid.kind === 'executing' ? 'runtime' : valid.kind === 'preparation_failed' ? attempt.executionStage
-          : valid.exitCode === 0 ? 'verification' : 'runtime';
-        const errorKind = valid.kind === 'preparation_failed' ? valid.errorKind
-          : valid.kind === 'runtime_completed' && valid.exitCode !== 0 ? 'runtime' : null;
+          : targetStatus === 'verifying' ? 'verification' : 'runtime';
+        const errorKind = runtime !== null ? runtime.failure?.kind ?? (targetStatus === 'failed' ? 'runtime' : null)
+          : valid.kind === 'preparation_failed' ? valid.errorKind
+            : valid.kind === 'runtime_completed' && valid.exitCode !== 0 ? 'runtime' : null;
+        const startedAt = attempt.startedAtUtcMs ?? workSession?.startedAtUtcMs ?? null;
         const changed = db.prepare(`UPDATE attempts SET status = ?, execution_stage = ?, error_kind = ?, diagnostic_ref = ?,
-          started_at = ?, ended_at = ?, exit_code = ?, duration_ms = ?, updated_at = ?, revision = revision + 1
+          started_at = ?, ended_at = ?, exit_code = ?, duration_ms = ?, usage_summary = ?, updated_at = ?, revision = revision + 1
           WHERE id = ? AND owner_id = ? AND host_instance_id = ? AND execution_version = ? AND revision = ?
           AND status IN ('preparing', 'executing', 'verifying')
           AND EXISTS (SELECT 1 FROM tasks WHERE id = attempts.task_id AND execution_version = ? AND status = 'running')`)
           .run(status, stage, errorKind, valid.kind === 'executing' ? null : valid.evidenceRef,
-            valid.kind === 'executing' ? now : attempt.startedAtUtcMs, valid.kind === 'executing' ? null : now,
-            valid.kind === 'runtime_completed' ? valid.exitCode : null,
-            valid.kind === 'executing' || attempt.startedAtUtcMs === null ? null : now - attempt.startedAtUtcMs,
-            now, attempt.id, valid.owner, valid.hostInstanceId, valid.executionVersion, attempt.revision, valid.executionVersion);
+            valid.kind === 'executing' ? now : startedAt, valid.kind === 'executing' ? null : now,
+            runtime !== null ? runtime.result?.exitCode ?? null : valid.kind === 'runtime_completed' ? valid.exitCode : null,
+            runtime !== null ? runtime.result?.durationMs ?? null : valid.kind === 'executing' || startedAt === null ? null : now - startedAt,
+            // Preserve synthetic observations with their basis in the result Artifact; never book them as real usage.
+            runtime?.result?.usage?.basis === 'reported' ? JSON.stringify({ schemaVersion: 1,
+              inputTokens: runtime.result.usage.inputTokens, outputTokens: runtime.result.usage.outputTokens,
+              costMicros: runtime.result.usage.costUsdMicros,
+              currency: runtime.result.usage.costUsdMicros === null ? null : 'USD' }) : null,
+            now, attempt.id, valid.owner, valid.hostInstanceId, valid.executionVersion, settlementRevision, valid.executionVersion);
         if (changed.changes !== 1) throw new StorageError('conflict', operation, 'Attempt CAS failed');
         // Never clear manual_block, grant acceptance or reset budgets, even for exitCode 0.
         const taskChanged = db.prepare(`UPDATE tasks SET status = ?, revision = revision + 1, updated_at = ?
@@ -144,10 +175,20 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
         const counters = transaction.getTaskExecutionCounters(valid.projectId, valid.taskId);
         const eventId = executions.appendExecutionEventInTransaction({ projectId: valid.projectId, eventType: ATTEMPT_UPDATED_EVENT_TYPE,
           aggregateType: 'task', aggregateId: valid.taskId, aggregateRevision: counters.revision, payload: { updated: true } });
+        const waitingFor: AttemptApplicationResult['waitingFor'] = runtime !== null && targetStatus === 'verifying'
+          ? approvalWaiting ? 'approval' : !stopConfirmed ? 'execution_uncertain'
+            : !runtime.recording.complete ? 'recording_required' : 'verification_not_assembled'
+          : valid.kind === 'runtime_completed' && valid.exitCode === 0
+            ? approvalWaiting ? 'approval' : 'verification_not_assembled' : null;
+        if (runtime !== null) {
+          // A single transaction fences the result, Session, phase, pause, occupancy and notification event.
+          db.prepare(`UPDATE runs SET status = 'paused', reason = ?, revision = revision + 1, updated_at = ?
+            WHERE id = ? AND project_id = ? AND status IN ('queued', 'running', 'pausing')`)
+            .run(waitingFor ?? runtime.failure?.reason ?? runtime.result?.reason ?? 'runtime_failed', now, valid.runId, valid.projectId);
+        }
         const receipt: AttemptApplicationResult = { disposition: 'applied', attemptId: attempt.id, status, reason: null,
-          waitingFor: valid.kind === 'runtime_completed' && valid.exitCode === 0
-            ? approvalWaiting ? 'approval' : 'verification_not_assembled' : null,
-          runtimeCompleted: valid.kind === 'runtime_completed', resultSaved: valid.kind !== 'executing', stopConfirmed, eventId };
+          waitingFor, runtimeCompleted: runtime !== null ? runtime.result?.terminal === 'completed' : valid.kind === 'runtime_completed',
+          resultSaved: valid.kind !== 'executing', stopConfirmed, eventId };
         db.prepare(`INSERT INTO attempt_notifications (id, project_id, attempt_id, notification_id, request_digest, receipt)
           VALUES (?, ?, ?, ?, ?, ?)`).run(randomUUID(), valid.projectId, attempt.id, valid.notificationId, digest, JSON.stringify(receipt));
         return receipt;

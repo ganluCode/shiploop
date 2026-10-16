@@ -103,6 +103,10 @@ export type WorkEvidenceRecordingFailureReason =
   | 'validation'
   /** Session 缺失/归属不符/状态冲突，记录无法关联。 */
   | 'session_mismatch'
+  /** 当前 Task/Attempt 代次失效：只留有界诊断，不发布迟到正文。 */
+  | 'stale_execution_identity'
+  /** Runtime 事件迭代器异常；与磁盘/记录能力缺失分别诊断。 */
+  | 'event_stream_failed'
   /** 事件分块经 Artifact 发布端口落盘失败（含注入 ENOSPC/短写/hash 漂移）。 */
   | 'event_publish_failed'
   /** 覆盖清单发布失败。 */
@@ -300,6 +304,12 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
         executionVersion: request.executionVersion,
       };
 
+      const assertCurrent = (): void => {
+        if (!deps.sessions.checkWorkSessionFence({ ...identity, sessionId: request.sessionId })) {
+          throw new WorkEvidenceRecordingError('stale_execution_identity', `${OPERATION}: stale_execution_identity`,
+            { watermark: null, gaps: [], safeStopRequired: true });
+        }
+      };
       /* Session 关联核验：必须存在、属于同一 Attempt、runtime 一致；水位/
        * 缺口由本采集器独占推进（单写入者前提，revision CAS 兜底）。 */
       let sessionRevision: number;
@@ -325,6 +335,7 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
         );
       }
 
+      assertCurrent();
       const gaps = createGapSink();
       const diagnostics = createDiagnosticSink();
       const stats = {
@@ -367,6 +378,7 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
 
       /** 推进 Session 水位（activity）：只指向已持久内容，缺口同步。 */
       const advanceWatermark = async (): Promise<void> => {
+        assertCurrent();
         try {
           const mutation = deps.sessions.applyWorkSessionProgress({
             ...identity,
@@ -385,6 +397,7 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
       /** 有界分块持久化：先落盘核验 ready，再推进水位。 */
       const flushChunk = async (): Promise<void> => {
         if (chunkEventCount === 0) return;
+        assertCurrent();
         const content = Buffer.concat(chunkLines);
         const locator = `sessions/${request.sessionId}/event-log/${String(chunkIndex).padStart(6, '0')}.ndjson`;
         let published;
@@ -406,6 +419,7 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
         } catch (error) {
           throw new RecordingFailure('event_publish_failed', '事件正文完整性核验失败', error);
         }
+        assertCurrent();
         stats.eventsPersisted += chunkEventCount;
         stats.bytesPersisted += chunkBytes;
         for (const event of chunkEvents) {
@@ -667,6 +681,7 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
             eventsDone = true;
             break;
           }
+          assertCurrent();
           stats.eventsReceived += 1;
           if (stats.eventsReceived > limits.maxTotalEvents) {
             throw new RecordingFailure('total_event_limit_exceeded', '接收事件总数超限（受控停止）');
@@ -836,6 +851,7 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
 
       let manifestArtifactId: string;
       try {
+        assertCurrent();
         const body = Buffer.from(JSON.stringify(manifest), 'utf8');
         const published = await deps.publisher.publishArtifact({
           projectId: request.projectId,
@@ -865,9 +881,11 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
 
       /* ---------------- required 失败统一出口 ---------------- */
       async function failRecording(error: unknown, manifestDraft?: WorkEvidenceManifest): Promise<never> {
+        // Fencing loss is not a recording repair: leave the new owner's evidence untouched.
+        assertCurrent();
         const failure = error instanceof RecordingFailure
           ? error
-          : new RecordingFailure('validation', '采集输入非法', error);
+          : new RecordingFailure('event_stream_failed', 'Runtime 事件流异常', error);
         const aborted = failure.failureReason === 'aborted';
         {
           /* 取消接受不代表停止；等待有界，安全停止由调用方核验。 */

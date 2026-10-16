@@ -342,6 +342,8 @@ export interface WorkSessionMutation {
 
 /** P03-6 / F-006：Work Session 访问面（读取 + 同端口下的事务化推进）。 */
 export interface WorkSessionStore {
+  /** Current Attempt/Task generation and active recording Session; stale checks retain only bounded diagnostics. */
+  checkWorkSessionFence(input: WorkResourceIdentity & { readonly sessionId: string }): boolean;
   getWorkSession(projectId: string, sessionId: string): WorkSessionRecord;
   getAttemptWorkSession(projectId: string, attemptId: string): WorkSessionRecord | null;
   createWorkSession(input: WorkSessionCreateInput): WorkSessionMutation;
