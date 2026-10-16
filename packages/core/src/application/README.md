@@ -33,4 +33,8 @@ P03-6 / F-002 新增 `execution-input-binding.ts`：`createExecutionInputBinding
 
 其余执行会话职责仍由 `runtime-execution.ts` 提供；F-002 只负责把不可变输入安全接到 RuntimeRequest，FakeRuntime 的声明式文件/工具执行、Session 持久化和结果结算由后续任务实现。
 
+P03-6 / F-008 新增 `execution-service.ts`：`createExecutionService` 消费已提交 claim 与工作区令牌，先以既有资源协议生成稳定 invocation，再在事务外执行输入绑定与 Runtime 能力预检。最终短事务复核 DAG 授权、owner/host/version、held 租约、权限摘要、当前输入引用和预算，原子预占 Runtime 启动次数并创建 reserved Work Session，提交后才调用适配器。准备失败隔离未启动现场且不计启动次数；启动抛错保留已提交次数和租约，尽力写入 Session 结构化缺口。
+
+启动成功后，服务立即独立观察 result/stopped，交由既有 Evidence Recorder 消费事件，并按项目/Attempt 保存句柄、AbortController 与三个已观察的结算 Promise。启动后持久化或采集失败仍保留上下文并尽力取消；`forget` 仅在结果、采集均结算且 stopped 明确 confirmed 后丢弃内存上下文，资源释放由后续生命周期协议决定。Runtime 的 `prepare` 复用 start 的纯能力/权限检查，可信装配的权限读取器必须同步且不执行外部 I/O；采集器同时接受适配器 wire payload 与会话已校验 payload。组合根装配、fenced 业务结算与超时政策仍沿用 F-009/F-010/F-012 的边界。
+
 P03-6 / F-007 起新增 `work-evidence-recorder.ts`：`createWorkEvidenceRecorder` 最小有界公开事件与结果证据采集器——事件与结果同时接收（result 立即挂载观察，事件主循环可被结果结算唤醒进入有界尾部）；逐条 classify 并凭 eventIdentityPrefix 核验归属（外来事件仅留有界诊断不进水位）；稳定 eventId 去重（全等重投丢弃计数、身份冲突记缺口）、声明有限乱序窗口（超窗记 missing_sequences、窗口前迟到不持久化）；有界分块先经 Artifact 发布端口落盘 ready 后再以 activity 推进 Session recording_watermark（未持久不计入水位，缺口同步 ≤32 条）；脱敏在结构化序列化前递归处理（秘密字面量不进入正文），不解析凭据引用；尾部等待有界（result_tail_timeout/events_tail_timeout）；required 记录失败尽力取消句柄、标 recording_failed 缺口、发布 coverage='failed' 诚实清单并抛 WorkEvidenceRecordingError（safeStopRequired=true）阻止后继执行；清单 coverage complete 只对无缺口已声明范围成立。不推进 Session ended/stopped（F-009/F-010），不决定 Task 验收，不实现完整供应商 Recorder。

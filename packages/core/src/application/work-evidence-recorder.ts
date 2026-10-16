@@ -675,10 +675,18 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
           const normalizedValue = (() => {
             if (rawValue !== null && typeof rawValue === 'object' && !Array.isArray(rawValue)) {
               const rawEvent = rawValue as Record<string, unknown>;
-              if (rawEvent.kind === 'usage' && rawEvent.payload !== null &&
-                  typeof rawEvent.payload === 'object' && !Array.isArray(rawEvent.payload) &&
-                  'usage' in (rawEvent.payload as Record<string, unknown>)) {
-                return { ...rawEvent, payload: (rawEvent.payload as Record<string, unknown>).usage };
+              const payload = rawEvent.payload;
+              if (payload !== null && typeof payload === 'object' && !Array.isArray(payload)) {
+                const fields = payload as Record<string, unknown>;
+                // RuntimeSession returns the validated discriminated payload; raw
+                // adapters use wire payloads. Only remove a matching discriminator.
+                const { kind, ...body } = fields;
+                if (kind === rawEvent.kind) {
+                  return { ...rawEvent, payload: rawEvent.kind === 'usage' && Object.keys(body).length === 1 && 'usage' in body ? body.usage : body };
+                }
+                if (kind === undefined && rawEvent.kind === 'usage' && Object.keys(fields).length === 1 && 'usage' in fields) {
+                  return { ...rawEvent, payload: fields.usage };
+                }
               }
             }
             return rawValue;

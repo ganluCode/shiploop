@@ -46,7 +46,7 @@ import {
   validateRuntimeExecutionResult,
   validateRuntimeStopEvidence,
 } from '../ports/runtime-execution.js';
-import type { RuntimeRegistry } from '../ports/runtime-registry.js';
+import type { RuntimeRegistry, RuntimeAdapterDescriptor } from '../ports/runtime-registry.js';
 
 /** 会话状态快照：四项事实互相独立；stopConfirmed 在 stopped 未结算时为 null。 */
 export interface RuntimeSessionStatus {
@@ -70,6 +70,8 @@ export interface RuntimeSession {
 }
 
 export interface RuntimeExecutionService {
+  /** Pure capability/permission preflight; never calls the adapter. */
+  prepare(request: unknown): RuntimeAdapterDescriptor;
   start(request: unknown): Promise<RuntimeSession>;
 }
 
@@ -93,40 +95,46 @@ function assertHandleShape(value: unknown): RuntimeHandle {
 }
 
 export function createRuntimeExecutionService(deps: RuntimeExecutionServiceDeps): RuntimeExecutionService {
-  return {
-    async start(value: unknown): Promise<RuntimeSession> {
-      const request: RuntimeExecutionRequest = validateRuntimeExecutionRequest(value);
-      const strategyContext = { operation: 'RuntimeExecution.start' };
-      try {
-        validateRuntimeStrategyCapabilities(request.strategy, deps.configuration, strategyContext, 'request.strategy');
-      } catch (error) {
-        if (isStorageError(error, 'validation')) {
-          const reason = (error.details as { reason?: string } | undefined)?.reason ?? 'incompatible_strategy';
-          throw new RuntimeError('configuration', reason);
-        }
-        throw error;
+  function prepare(value: unknown) {
+    const request: RuntimeExecutionRequest = validateRuntimeExecutionRequest(value);
+    const strategyContext = { operation: 'RuntimeExecution.start' };
+    try {
+      validateRuntimeStrategyCapabilities(request.strategy, deps.configuration, strategyContext, 'request.strategy');
+    } catch (error) {
+      if (isStorageError(error, 'validation')) {
+        const reason = (error.details as { reason?: string } | undefined)?.reason ?? 'incompatible_strategy';
+        throw new RuntimeError('configuration', reason);
       }
-      const entry = deps.registry.resolve(request.strategy.runtime);
-      if (entry === undefined) throw new RuntimeError('missing_runtime', 'runtime_not_registered');
-      const descriptor = entry.descriptor;
-      if (descriptor.runtimeId !== request.strategy.runtime) {
-        throw new RuntimeError('configuration', 'descriptor_runtime_mismatch');
+      throw error;
+    }
+    const entry = deps.registry.resolve(request.strategy.runtime);
+    if (entry === undefined) throw new RuntimeError('missing_runtime', 'runtime_not_registered');
+    const descriptor = entry.descriptor;
+    if (descriptor.runtimeId !== request.strategy.runtime) {
+      throw new RuntimeError('configuration', 'descriptor_runtime_mismatch');
+    }
+    const provider = descriptor.providers.find((candidate) => candidate.providerId === request.strategy.provider);
+    if (provider === undefined) throw new RuntimeError('configuration', 'incompatible_provider');
+    if (provider.models !== undefined && provider.models.length > 0 &&
+        !provider.models.includes(request.strategy.model)) {
+      throw new RuntimeError('configuration', 'unsupported_model');
+    }
+    for (const grant of request.permissions.grants) {
+      if (!descriptor.permissionGrants.includes(grant)) {
+        throw new RuntimeError('permission', 'grant_not_enforceable', { field: 'request.permissions.grants' });
       }
-      const provider = descriptor.providers.find((candidate) => candidate.providerId === request.strategy.provider);
-      if (provider === undefined) throw new RuntimeError('configuration', 'incompatible_provider');
-      if (provider.models !== undefined && provider.models.length > 0 &&
-          !provider.models.includes(request.strategy.model)) {
-        throw new RuntimeError('configuration', 'unsupported_model');
-      }
-      for (const grant of request.permissions.grants) {
-        if (!descriptor.permissionGrants.includes(grant)) {
-          throw new RuntimeError('permission', 'grant_not_enforceable', { field: 'request.permissions.grants' });
-        }
-      }
-      if (!descriptor.isolationModes.includes(request.permissions.isolation)) {
-        throw new RuntimeError('permission', 'isolation_not_providable', { field: 'request.permissions.isolation' });
-      }
+    }
+    if (!descriptor.isolationModes.includes(request.permissions.isolation)) {
+      throw new RuntimeError('permission', 'isolation_not_providable', { field: 'request.permissions.isolation' });
+    }
 
+    return entry;
+  }
+  return {
+    prepare(value) { return prepare(value).descriptor; },
+    async start(value: unknown): Promise<RuntimeSession> {
+      const request = validateRuntimeExecutionRequest(value);
+      const entry = prepare(request);
       let handle: RuntimeHandle;
       try {
         handle = assertHandleShape(await entry.adapter.start(request));

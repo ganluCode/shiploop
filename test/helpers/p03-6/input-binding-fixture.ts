@@ -362,7 +362,7 @@ export async function openBindingFixture(options: BindingFixtureOptions = {}): P
       sessionId: `session-${bound.taskId}-1`,
       invocationId: 'invocationId' in bound ? bound.invocationId : 'invocation-not-launched',
       strategy: { ...FAKE_STRATEGY },
-      permissions: { grants: [], isolation: 'trusted-project' },
+      permissions: { grants: [], isolation: 'trusted_project' },
       limits: { timeoutMs: 60_000, maxEvents: 1_000, maxOutputBytes: 1_048_576 },
       recovery: { mode: 'new' },
       cwdRoot: 'workspace-root',
