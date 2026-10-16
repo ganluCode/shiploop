@@ -167,6 +167,7 @@ describe('F-003 冻结事件封套版本与 §9.2 事件白名单（P02-2 六类
       'task.claimed',
       'task.attempt.updated',
       'task.approval.blocked',
+      'task.approval.decided',
       'workspace.operation_updated',
     ]);
     expect(PROJECT_METADATA_UPDATED_EVENT_TYPE).toBe('project.metadata_updated');
@@ -250,7 +251,7 @@ describe('F-003 mapStateEvent：持久行列 → 公开封套', () => {
     }
   });
 
-  it.each([['task.attempt.updated', 'updated'], ['task.approval.blocked', 'blocked']])(
+  it.each([['task.attempt.updated', 'updated'], ['task.approval.blocked', 'blocked'], ['task.approval.decided', 'decided']])(
     'maps the redacted %s event and rejects raw extra fields', (type, key) => {
       const row = eventRow({ eventType: type, aggregateType: 'task', aggregateId: SETTINGS_ROW_ID, payload: { [key]: true } });
       expect(mapStateEvent(row).payload).toEqual({ [key]: true });

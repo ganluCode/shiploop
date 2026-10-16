@@ -60,6 +60,7 @@ import type {
 } from '../ports/state-store.js';
 import { validateMergedProjectSettingsWrite } from './configuration-service.js';
 import { submitTaskApprovalBlock, TASK_APPROVAL_BLOCK_OPERATION } from './task-approval-block.js';
+import { submitTaskApprovalDecision, TASK_APPROVAL_DECISION_OPERATIONS } from './task-approval-decision.js';
 import { FEATURE_PLAN_DECIDE_OPERATION, submitFeaturePlanDecide } from './feature-plan-decide.js';
 import { FEATURE_PLAN_IMPORT_OPERATION, submitFeaturePlanImport } from './feature-plan-import.js';
 import {
@@ -634,6 +635,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           envelope.operation !== TASK_STRATEGY_UPDATE_OPERATION &&
           envelope.operation !== FEATURE_PLAN_DECIDE_OPERATION &&
           envelope.operation !== TASK_APPROVAL_BLOCK_OPERATION &&
+          !TASK_APPROVAL_DECISION_OPERATIONS.includes(envelope.operation as (typeof TASK_APPROVAL_DECISION_OPERATIONS)[number]) &&
           envelope.operation !== EXECUTION_INPUT_PREPARE_OPERATION &&
           envelope.operation !== EXECUTION_PREVIEW_OPERATION &&
           envelope.operation !== EXECUTION_START_OPERATION &&
@@ -959,6 +961,11 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
               operation: envelope.operation, scope: envelope.scope, requestDigest: digest, issuedAt: envelope.issuedAt,
               completedAt: new Date(now).toISOString() }, envelope, transaction);
           }
+          if (envelope.operation === 'task.approval.approve' || envelope.operation === 'task.approval.reject' || envelope.operation === 'task.approval.unblock') {
+            return submitTaskApprovalDecision({ principalId: principal.principalId, capabilities: principal.capabilities, commandId: envelope.commandId,
+              operation: envelope.operation, scope: envelope.scope, requestDigest: digest, issuedAt: envelope.issuedAt,
+              completedAt: new Date(now).toISOString() }, envelope, transaction);
+          }
           if (envelope.operation === FEATURE_PLAN_DECIDE_OPERATION) {
             // P03-2 / F-002：计划批准/拒绝决策无事务外 I/O（无 Runtime/Git/检查
             // 进程）；项目把关/摘要绑定/空任务/重复决策/聚合 CAS 重核、决策
@@ -1087,7 +1094,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
             if (settingsPlan === undefined) throw new TypeError('配置命令缺少事务外写入计划');
             return submitSettingsCommand(principal, envelope, digest, settingsPlan, transaction, now);
           }
-          return submitMetadataUpdate(principal, envelope, digest, transaction, now);
+          return submitMetadataUpdate(principal, envelope as Extract<ValidatedCommandEnvelope, { operation: 'project.metadata.update' }>, digest, transaction, now);
         });
         // P03-3 / F-005：提交后唤醒——仅写事务成功提交且非重放的新 Work accepted
         // 时经窄端口 best-effort 发信号（事务失败在上方抛出，不会到达这里；

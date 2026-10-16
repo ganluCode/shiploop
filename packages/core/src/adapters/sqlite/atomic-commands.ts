@@ -112,6 +112,7 @@ export function createSqliteAtomicCommandStore(
           }),
           insertTaskApprovalItem: guarded(plan.insertTaskApprovalItemInTransaction),
           listTaskApprovalItems: guarded(plan.listTaskApprovalItemsInTransaction),
+          decideTaskApprovalItem: guarded(plan.decideTaskApprovalItemInTransaction),
           updateTaskStrategy: guarded(plan.updateTaskStrategyInTransaction),
           // P03-2 / F-002：计划批准/拒绝决策事务内原语（重复决策重核、决策
           // 记录插入与 Feature plan_status CAS 更新），同一 BEGIN IMMEDIATE 内

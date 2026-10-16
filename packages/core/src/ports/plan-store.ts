@@ -167,7 +167,8 @@ export interface TaskApprovalArtifactRef {
 }
 
 export type TaskApprovalItemKind = 'block' | 'approval';
-export type TaskApprovalItemStatus = 'pending';
+export type TaskApprovalItemStatus = 'pending' | 'approved' | 'rejected' | 'unblocked';
+export type TaskApprovalDecision = 'approve' | 'reject' | 'unblock';
 
 export interface TaskApprovalItemRecord {
   readonly id: string;
@@ -183,8 +184,27 @@ export interface TaskApprovalItemRecord {
   readonly artifactRefs: readonly TaskApprovalArtifactRef[];
   readonly status: TaskApprovalItemStatus;
   readonly createdBy: string;
+  readonly decision: TaskApprovalDecision | null;
+  readonly decisionActor: string | null;
+  readonly decisionReason: string | null;
+  readonly decisionCodeDigest: string | null;
+  readonly decisionArtifactRefs: readonly TaskApprovalArtifactRef[];
+  readonly decidedAtUtcMs: number | null;
   readonly createdAtUtcMs: number;
   readonly updatedAtUtcMs: number;
+}
+
+export interface TaskApprovalItemDecisionInput {
+  readonly projectId: string;
+  readonly taskId: string;
+  readonly itemId: string;
+  readonly expectedRevision: number;
+  readonly decision: TaskApprovalDecision;
+  readonly planDigest: string;
+  readonly codeDigest: string;
+  readonly artifactRefs: readonly TaskApprovalArtifactRef[];
+  readonly reason: string | null;
+  readonly decisionActor: string;
 }
 
 export interface TaskApprovalItemInput {

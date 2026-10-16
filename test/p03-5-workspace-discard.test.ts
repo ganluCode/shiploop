@@ -580,7 +580,7 @@ describe('F-010 migration v19 workspace_operations kind rebuild', () => {
     await withTempSandboxAsync(async root => {
       const session = openSqliteStorageSession({ path: join(root, 'db.sqlite') });
       try {
-        expect(SQLITE_MIGRATIONS.at(-1)?.version).toBe(22);
+        expect(SQLITE_MIGRATIONS.at(-1)?.version).toBe(23);
         await migrateSqliteStorage(session, { migrations: SQLITE_MIGRATIONS.slice(0, 18) });
         const db = session.database;
         const digest = 'a'.repeat(64);

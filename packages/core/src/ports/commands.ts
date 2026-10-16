@@ -159,6 +159,11 @@ export const COMMAND_OPERATIONS = [
   // 更新 planStatus、事件与回执；批准不是启动授权）。
   'feature.plan.decide',
   'task.approval.block',
+  // F-008：Task approval item 的三个独立决定命令；只改变事项决定事实，
+  // 不授予 execution.start，不创建 Run/Attempt。
+  'task.approval.approve',
+  'task.approval.reject',
+  'task.approval.unblock',
   // P03-2 / F-006：执行输入制品组准备（project scope + execution.input.prepare；
   // 创建类命令不携带 expectedRevision；采集/组装/发布为事务外 I/O，最终重核、
   // 事件与回执同一短写事务）。
@@ -288,6 +293,10 @@ export const COMMAND_OPERATION_SPECS: Readonly<Record<AppOperation, CommandOpera
       mutation: 'update',
       capability: 'feature.plan.decide',
     },
+    // F-008：事项决定使用同一计划决定能力；责任主体仍由可信主体装配绑定。
+    'task.approval.approve': { scopeKind: 'project', mutation: 'update', capability: 'feature.plan.decide' },
+    'task.approval.reject': { scopeKind: 'project', mutation: 'update', capability: 'feature.plan.decide' },
+    'task.approval.unblock': { scopeKind: 'project', mutation: 'update', capability: 'feature.plan.decide' },
     // P03-2 / F-006：执行输入制品组准备（创建类：不携带 expectedRevision，
     // 不 CAS 任何实体）。采集/组装/发布为事务外 I/O；最终同一写事务内重核
     // 批准/要求/检查政策/Task 策略/权限/制品身份并原子提交事件与回执。
@@ -664,6 +673,16 @@ export interface ValidatedFeaturePlanDecidePayload {
   readonly reason: string | null;
 }
 
+/** F-008：事项决定 payload；身份字段由可信主体绑定，不接受请求声明。 */
+export interface ValidatedTaskApprovalDecisionPayload {
+  readonly taskId: string;
+  readonly itemId: string;
+  readonly planDigest: string;
+  readonly codeDigest: string;
+  readonly artifactRefs: readonly { readonly artifactId: string; readonly contentHash: string | null }[];
+  readonly reason: string | null;
+}
+
 /**
  * P03-2 / F-006 执行输入准备 payload：featureId/taskId 为目标稳定 ID；items
  * 为必需输入采集清单（purpose + source；深校验在应用层复用
@@ -855,6 +874,13 @@ export type ValidatedCommandEnvelope =
       readonly expectedRevision: number;
       readonly payload: ValidatedFeaturePlanDecidePayload;
     })
+  | (EnvelopeCommon & {
+      readonly operation: 'task.approval.approve' | 'task.approval.reject' | 'task.approval.unblock';
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: number;
+      readonly payload: ValidatedTaskApprovalDecisionPayload;
+    })
+
   // P03-2 / F-006：执行输入制品组准备命令信封（创建类禁止携带 expectedRevision；
   // payload 只含 featureId/taskId/items，items 深校验在应用层）。
   | (EnvelopeCommon & {
@@ -926,6 +952,8 @@ const PLAN_LABELS_UPDATE_PAYLOAD_KEYS = ['entityType', 'id', 'labels'] as const;
 const FEATURE_PLAN_REVISE_PAYLOAD_KEYS = ['featureId', 'plan'] as const;
 const TASK_STRATEGY_UPDATE_PAYLOAD_KEYS = ['taskId', 'executionConfig'] as const;
 const TASK_APPROVAL_BLOCK_PAYLOAD_KEYS = ['taskId', 'planDigest', 'kind', 'description', 'responsibleParty', 'codeDigest', 'artifactRefs'] as const;
+const TASK_APPROVAL_DECISION_PAYLOAD_KEYS = ['taskId', 'itemId', 'planDigest', 'codeDigest', 'artifactRefs', 'reason'] as const;
+
 const FEATURE_PLAN_DECIDE_PAYLOAD_KEYS = ['featureId', 'planDigest', 'decision', 'reason'] as const;
 const EXECUTION_INPUT_PREPARE_PAYLOAD_KEYS = ['featureId', 'taskId', 'items'] as const;
 const EXECUTION_PREVIEW_PAYLOAD_KEYS = ['featureIds', 'budget'] as const;
@@ -1208,6 +1236,25 @@ function validateTaskApprovalBlockPayload(operation: AppOperation, raw: unknown)
     codeDigest: (object.codeDigest ?? null) as string | null, artifactRefs };
 }
 
+function validateTaskApprovalDecisionPayload(operation: AppOperation, raw: unknown): ValidatedTaskApprovalDecisionPayload {
+  const object = requireObject(operation, raw, 'payload');
+  exactKeys(operation, object, TASK_APPROVAL_DECISION_PAYLOAD_KEYS, 'payload.');
+  if (typeof object.planDigest !== 'string' || !/^[0-9a-f]{64}$/.test(object.planDigest)) fail(operation, 'invalid_input', 'payload.planDigest', '必须是 64 位小写 SHA-256 摘要');
+  if (typeof object.codeDigest !== 'string' || !/^[0-9a-f]{64}$/.test(object.codeDigest)) fail(operation, 'invalid_input', 'payload.codeDigest', '必须是 64 位小写 SHA-256 摘要');
+  if (!Array.isArray(object.artifactRefs) || object.artifactRefs.length > 64) fail(operation, 'invalid_input', 'payload.artifactRefs', '必须是最多 64 项的数组');
+  const seenArtifactIds = new Set<string>();
+  const artifactRefs = (object.artifactRefs as unknown[]).map((rawRef, index) => {
+    const ref = requireObject(operation, rawRef, `payload.artifactRefs[${index}]`);
+    exactKeys(operation, ref, ['artifactId', 'contentHash'], `payload.artifactRefs[${index}].`);
+    const artifactId = validateStableId(ref.artifactId, { operation }, `payload.artifactRefs[${index}].artifactId`);
+    if (seenArtifactIds.has(artifactId)) fail(operation, 'invalid_input', `payload.artifactRefs[${index}].artifactId`, '不得重复引用同一制品');
+    seenArtifactIds.add(artifactId);
+    if (ref.contentHash !== null && (typeof ref.contentHash !== 'string' || !/^[0-9a-f]{64}$/.test(ref.contentHash))) fail(operation, 'invalid_input', `payload.artifactRefs[${index}].contentHash`, '必须是 64 位小写 SHA-256 摘要或 null');
+    return { artifactId, contentHash: (ref.contentHash ?? null) as string | null };
+  });
+  if (object.reason !== null && (typeof object.reason !== 'string' || object.reason.trim().length === 0 || object.reason.length > 2000)) fail(operation, 'invalid_input', 'payload.reason', '必须是 null 或 1-2000 个字符的理由');
+  return { taskId: validateStableId(object.taskId, { operation }, 'payload.taskId'), itemId: validateStableId(object.itemId, { operation }, 'payload.itemId'), planDigest: object.planDigest, codeDigest: object.codeDigest, artifactRefs, reason: object.reason as string | null };
+}
 function validateTaskStrategyUpdatePayload(
   operation: AppOperation,
   raw: unknown,
@@ -1626,6 +1673,11 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
     if (scope.kind !== 'project') fail(operation, 'invalid_input', 'scope.kind', 'scope mismatch');
     return { ...base, operation, scope: scope as { kind: 'project'; projectId: string }, expectedRevision: expectedRevision as number,
       payload: validateTaskApprovalBlockPayload(operation, object.payload) };
+  }
+  if (operation === 'task.approval.approve' || operation === 'task.approval.reject' || operation === 'task.approval.unblock') {
+    if (scope.kind !== 'project') fail(operation, 'invalid_input', 'scope.kind', 'scope mismatch');
+    return { ...base, operation, scope: scope as { kind: 'project'; projectId: string }, expectedRevision: expectedRevision as number,
+      payload: validateTaskApprovalDecisionPayload(operation, object.payload) };
   }
   if (operation === 'feature.plan.decide') {
     if (scope.kind !== 'project') {

@@ -1656,6 +1656,38 @@ CREATE UNIQUE INDEX task_approval_items_task_identity_unique ON task_approval_it
 CREATE INDEX task_approval_items_task_status_index ON task_approval_items (project_id, task_id, status);
 `;
 
+/** F-008：为人审事项增加不可变决定事实与终态；历史 pending 行逐条保留。 */
+const MIGRATION_023_SQL = `
+CREATE TABLE task_approval_items_v23 (
+  id TEXT PRIMARY KEY NOT NULL, created_at INTEGER NOT NULL, project_id TEXT NOT NULL,
+  feature_id TEXT NOT NULL, task_id TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL, kind TEXT NOT NULL, description TEXT NOT NULL,
+  responsible_party TEXT NOT NULL, plan_digest TEXT NOT NULL, code_digest TEXT,
+  artifact_refs TEXT NOT NULL DEFAULT '[]', status TEXT NOT NULL DEFAULT 'pending', created_by TEXT NOT NULL,
+  decision TEXT, decision_actor TEXT, decision_reason TEXT, decision_code_digest TEXT,
+  decision_artifact_refs TEXT NOT NULL DEFAULT '[]', decided_at INTEGER,
+  CONSTRAINT task_approval_items_revision_check CHECK (revision >= 1),
+  CONSTRAINT task_approval_items_kind_check CHECK (kind IN ('block', 'approval')),
+  CONSTRAINT task_approval_items_status_check CHECK (status IN ('pending', 'approved', 'rejected', 'unblocked')),
+  CONSTRAINT task_approval_items_decision_check CHECK (decision IS NULL OR decision IN ('approve', 'reject', 'unblock')),
+  CONSTRAINT task_approval_items_decision_binding_check CHECK ((status = 'pending' AND decision IS NULL AND decision_actor IS NULL AND decided_at IS NULL) OR (status = 'approved' AND decision = 'approve' AND decision_actor IS NOT NULL AND decided_at IS NOT NULL) OR (status = 'rejected' AND decision = 'reject' AND decision_actor IS NOT NULL AND decided_at IS NOT NULL) OR (status = 'unblocked' AND decision = 'unblock' AND decision_actor IS NOT NULL AND decided_at IS NOT NULL)),
+  CONSTRAINT task_approval_items_plan_digest_check CHECK (length(plan_digest) = 64 AND plan_digest NOT GLOB '*[^0-9a-f]*'),
+  CONSTRAINT task_approval_items_code_digest_check CHECK (code_digest IS NULL OR (length(code_digest) = 64 AND code_digest NOT GLOB '*[^0-9a-f]*')),
+  CONSTRAINT task_approval_items_decision_code_digest_check CHECK (decision_code_digest IS NULL OR (length(decision_code_digest) = 64 AND decision_code_digest NOT GLOB '*[^0-9a-f]*')),
+  CONSTRAINT task_approval_items_artifacts_check CHECK (json_valid(artifact_refs) AND json_type(artifact_refs) = 'array' AND json_valid(decision_artifact_refs) AND json_type(decision_artifact_refs) = 'array'),
+  CONSTRAINT task_approval_items_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT task_approval_items_feature_fk FOREIGN KEY (project_id, feature_id) REFERENCES features (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT task_approval_items_task_fk FOREIGN KEY (feature_id, task_id) REFERENCES tasks (feature_id, id) ON DELETE RESTRICT
+);
+INSERT INTO task_approval_items_v23 (id, created_at, project_id, feature_id, task_id, revision, updated_at, kind, description, responsible_party, plan_digest, code_digest, artifact_refs, status, created_by)
+  SELECT id, created_at, project_id, feature_id, task_id, revision, updated_at, kind, description, responsible_party, plan_digest, code_digest, artifact_refs, status, created_by FROM task_approval_items;
+DROP TABLE task_approval_items;
+ALTER TABLE task_approval_items_v23 RENAME TO task_approval_items;
+CREATE UNIQUE INDEX task_approval_items_project_id_id_unique ON task_approval_items (project_id, id);
+CREATE UNIQUE INDEX task_approval_items_task_identity_unique ON task_approval_items (project_id, feature_id, task_id, kind, description, responsible_party, plan_digest, code_digest, artifact_refs);
+CREATE INDEX task_approval_items_task_status_index ON task_approval_items (project_id, task_id, status);
+`;
+
 /** 已声明的全部 SQLite 迁移，按版本升序；F-005 的执行器按此顺序应用并核对摘要。 */
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
@@ -1744,4 +1776,5 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 20, sql: MIGRATION_020_SQL, checksum: sha256Hex(MIGRATION_020_SQL) },
   { version: 21, sql: MIGRATION_021_SQL, checksum: sha256Hex(MIGRATION_021_SQL) },
   { version: 22, sql: MIGRATION_022_SQL, checksum: sha256Hex(MIGRATION_022_SQL) },
+  { version: 23, sql: MIGRATION_023_SQL, checksum: sha256Hex(MIGRATION_023_SQL) },
 ];

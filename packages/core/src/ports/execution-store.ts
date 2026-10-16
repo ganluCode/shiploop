@@ -61,6 +61,7 @@ export const EXECUTION_BUDGET_REVISED_EVENT_TYPE = 'execution.budget.revised';
 export const TASK_CLAIMED_EVENT_TYPE = 'task.claimed';
 export const ATTEMPT_UPDATED_EVENT_TYPE = 'task.attempt.updated';
 export const TASK_APPROVAL_BLOCKED_EVENT_TYPE = 'task.approval.blocked';
+export const TASK_APPROVAL_DECIDED_EVENT_TYPE = 'task.approval.decided';
 
 /** 执行域事件白名单（与 ports/events.ts 公开白名单同源）。 */
 export const EXECUTION_EVENT_TYPES = [
@@ -69,12 +70,13 @@ export const EXECUTION_EVENT_TYPES = [
   TASK_CLAIMED_EVENT_TYPE,
   ATTEMPT_UPDATED_EVENT_TYPE,
   TASK_APPROVAL_BLOCKED_EVENT_TYPE,
+  TASK_APPROVAL_DECIDED_EVENT_TYPE,
 ] as const;
 export type ExecutionEventType = (typeof EXECUTION_EVENT_TYPES)[number];
 
 interface ExecutionEventSpec {
   readonly aggregateType: 'run' | 'execution_batch' | 'task';
-  readonly payloadKey: 'dispatched' | 'revised' | 'claimed' | 'updated' | 'blocked';
+  readonly payloadKey: 'dispatched' | 'revised' | 'claimed' | 'updated' | 'blocked' | 'decided';
 }
 
 const EXECUTION_EVENT_SPECS: Readonly<Record<ExecutionEventType, ExecutionEventSpec>> = Object.freeze({
@@ -82,6 +84,7 @@ const EXECUTION_EVENT_SPECS: Readonly<Record<ExecutionEventType, ExecutionEventS
   [TASK_CLAIMED_EVENT_TYPE]: Object.freeze({ aggregateType: 'task', payloadKey: 'claimed' }),
   [ATTEMPT_UPDATED_EVENT_TYPE]: Object.freeze({ aggregateType: 'task', payloadKey: 'updated' }),
   [TASK_APPROVAL_BLOCKED_EVENT_TYPE]: Object.freeze({ aggregateType: 'task', payloadKey: 'blocked' }),
+  [TASK_APPROVAL_DECIDED_EVENT_TYPE]: Object.freeze({ aggregateType: 'task', payloadKey: 'decided' }),
   [EXECUTION_BUDGET_REVISED_EVENT_TYPE]: Object.freeze({ aggregateType: 'execution_batch', payloadKey: 'revised' }),
 });
 

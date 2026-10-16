@@ -31,6 +31,7 @@ import type {
   TaskDependencyRecord,
   TaskApprovalItemInsertResult,
   TaskApprovalItemRecord,
+  TaskApprovalItemDecisionInput,
   TaskRecord,
 } from './plan-store.js';
 import type {
@@ -175,6 +176,8 @@ export interface CommandTransaction {
   insertTaskApprovalItem(input: unknown): TaskApprovalItemInsertResult;
   /** F-007：完成事务重新读取同 Task 的运行期事项。 */
   listTaskApprovalItems(projectId: string, taskId: string): readonly TaskApprovalItemRecord[];
+  /** F-008：按事项 revision CAS 写入批准/拒绝/解除阻塞决定；不触碰 Run/Attempt/Runtime。 */
+  decideTaskApprovalItem(input: TaskApprovalItemDecisionInput): TaskApprovalItemRecord;
   /**
    * P03-2 / F-001：Task 策略副本 CAS 编辑。单语句条件 UPDATE 只触达目标
    * Task 的 execution_config/config_source/config_source_key/revision/

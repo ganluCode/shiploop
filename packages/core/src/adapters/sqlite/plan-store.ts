@@ -46,6 +46,7 @@ import type {
   TaskApprovalItemInput,
   TaskApprovalItemInsertResult,
   TaskApprovalItemRecord,
+  TaskApprovalItemDecisionInput,
   TaskDependencyRecord,
   TaskRecord,
 } from '../../ports/plan-store.js';
@@ -125,6 +126,8 @@ interface TaskApprovalItemSqlRow {
   readonly updated_at: number; readonly kind: string; readonly description: string;
   readonly responsible_party: string; readonly plan_digest: string; readonly code_digest: string | null;
   readonly artifact_refs: string; readonly status: string; readonly created_by: string;
+  readonly decision: string | null; readonly decision_actor: string | null; readonly decision_reason: string | null;
+  readonly decision_code_digest: string | null; readonly decision_artifact_refs: string; readonly decided_at: number | null;
 }
 
 interface TaskDependencySqlRow {
@@ -212,6 +215,7 @@ export interface SqlitePlanAccess {
   getTaskInTransaction(projectId: string, taskId: string): TaskRecord;
   insertTaskApprovalItemInTransaction(input: unknown): TaskApprovalItemInsertResult;
   listTaskApprovalItemsInTransaction(projectId: string, taskId: string): readonly TaskApprovalItemRecord[];
+  decideTaskApprovalItemInTransaction(input: TaskApprovalItemDecisionInput): TaskApprovalItemRecord;
   /**
    * P03-2 / F-001：Task 策略副本 CAS 编辑（单语句条件 UPDATE；缺失 not_found、
    * 跨项目 ownership、revision 不匹配 conflict）。
@@ -1010,16 +1014,32 @@ export function createSqlitePlanAccess(
     if (!Array.isArray(refs) || refs.some((ref) => typeof ref !== 'object' || ref === null)) {
       throw new StorageError('corrupt', operation, '人审事项 Artifact 引用损坏');
     }
-    if (row.kind !== 'block' && row.kind !== 'approval' || row.status !== 'pending') {
+    if (row.kind !== 'block' && row.kind !== 'approval' || !['pending', 'approved', 'rejected', 'unblocked'].includes(row.status)) {
       throw new StorageError('corrupt', operation, '人审事项状态损坏');
+    }
+    const decisionRefs = parseJsonColumn(row.decision_artifact_refs, operation, 'invalid_decision_artifact_refs_json');
+    if (!Array.isArray(decisionRefs) || decisionRefs.some((ref) => typeof ref !== 'object' || ref === null)) {
+      throw new StorageError('corrupt', operation, '人审事项决定制品引用损坏');
+    }
+    const decision = row.decision === null ? null : row.decision as TaskApprovalItemRecord['decision'];
+    if (decision !== null && decision !== 'approve' && decision !== 'reject' && decision !== 'unblock') {
+      throw new StorageError('corrupt', operation, '人审事项决定损坏');
+    }
+    const expectedDecision = row.status === 'pending' ? null : row.status === 'approved' ? 'approve' : row.status === 'rejected' ? 'reject' : 'unblock';
+    if (decision !== expectedDecision || (decision === null && (row.decision_actor !== null || row.decided_at !== null))
+      || (decision !== null && (row.decision_actor === null || row.decided_at === null))) {
+      throw new StorageError('corrupt', operation, '人审事项决定绑定损坏');
     }
     return {
       id: row.id, projectId: row.project_id, featureId: row.feature_id, taskId: row.task_id,
-      revision: row.revision, kind: row.kind, description: row.description,
+      revision: row.revision, kind: row.kind as TaskApprovalItemRecord['kind'], description: row.description,
       responsibleParty: row.responsible_party, planDigest: row.plan_digest,
       codeDigest: row.code_digest,
-      artifactRefs: refs as TaskApprovalItemRecord['artifactRefs'], status: 'pending',
-      createdBy: row.created_by, createdAtUtcMs: row.created_at, updatedAtUtcMs: row.updated_at,
+      artifactRefs: refs as TaskApprovalItemRecord['artifactRefs'], status: row.status as TaskApprovalItemRecord['status'],
+      createdBy: row.created_by, decision, decisionActor: row.decision_actor, decisionReason: row.decision_reason,
+      decisionCodeDigest: row.decision_code_digest,
+      decisionArtifactRefs: decisionRefs as TaskApprovalItemRecord['decisionArtifactRefs'], decidedAtUtcMs: row.decided_at,
+      createdAtUtcMs: row.created_at, updatedAtUtcMs: row.updated_at,
     };
   }
 
@@ -1030,8 +1050,41 @@ export function createSqlitePlanAccess(
     const validTaskId = validateStableId(taskId, { operation }, 'taskId');
     getTaskInTransaction(validProjectId, validTaskId);
     return session.database.prepare<[string, string], TaskApprovalItemSqlRow>(
-      'SELECT id, created_at, project_id, feature_id, task_id, revision, updated_at, kind, description, responsible_party, plan_digest, code_digest, artifact_refs, status, created_by FROM task_approval_items WHERE project_id = ? AND task_id = ? ORDER BY created_at, id',
+      'SELECT id, created_at, project_id, feature_id, task_id, revision, updated_at, kind, description, responsible_party, plan_digest, code_digest, artifact_refs, status, created_by, decision, decision_actor, decision_reason, decision_code_digest, decision_artifact_refs, decided_at FROM task_approval_items WHERE project_id = ? AND task_id = ? ORDER BY created_at, id',
     ).all(validProjectId, validTaskId).map(taskApprovalItemFromRow);
+  }
+
+  function decideTaskApprovalItemInTransaction(input: TaskApprovalItemDecisionInput): TaskApprovalItemRecord {
+    const operation = 'PlanStore.decideTaskApprovalItem';
+    assertOpen(operation); assertInTransaction(operation);
+    const projectId = validateStableId(input.projectId, { operation }, 'projectId');
+    const taskId = validateStableId(input.taskId, { operation }, 'taskId');
+    const itemId = validateStableId(input.itemId, { operation }, 'itemId');
+    const task = getTaskInTransaction(projectId, taskId);
+    const row = session.database.prepare<[string, string, string], TaskApprovalItemSqlRow>(
+      'SELECT id, created_at, project_id, feature_id, task_id, revision, updated_at, kind, description, responsible_party, plan_digest, code_digest, artifact_refs, status, created_by, decision, decision_actor, decision_reason, decision_code_digest, decision_artifact_refs, decided_at FROM task_approval_items WHERE project_id = ? AND task_id = ? AND id = ?',
+    ).get(projectId, taskId, itemId);
+    if (row === undefined) throw new StorageError('not_found', operation, '人审事项不存在');
+    if (row.feature_id !== task.featureId) throw new StorageError('ownership', operation, '人审事项不属于目标 Task');
+    if (row.status !== 'pending') throw new StorageError('conflict', operation, '人审事项已经决定');
+    if (row.revision !== input.expectedRevision) throw new StorageError('conflict', operation, '人审事项 revision 已变化');
+    const status = input.decision === 'approve' ? 'approved' : input.decision === 'reject' ? 'rejected' : 'unblocked';
+    const now = nowUtcMs();
+    const result = session.database.prepare(
+      `UPDATE task_approval_items SET status = ?, decision = ?, decision_actor = ?, decision_reason = ?, decision_code_digest = ?, decision_artifact_refs = ?, decided_at = ?, updated_at = ?, revision = revision + 1 WHERE project_id = ? AND task_id = ? AND id = ? AND revision = ? AND status = 'pending'`,
+    ).run(status, input.decision, input.decisionActor, input.reason, input.codeDigest, JSON.stringify(input.artifactRefs), now, now, projectId, taskId, itemId, input.expectedRevision);
+    if (result.changes !== 1) throw new StorageError('conflict', operation, '人审事项 revision 已变化');
+    if (input.decision === 'unblock') {
+      const remainingBlock = session.database.prepare<[string, string], { id: string }>(
+        "SELECT id FROM task_approval_items WHERE project_id = ? AND task_id = ? AND kind = 'block' AND status = 'pending' LIMIT 1",
+      ).get(projectId, taskId);
+      if (remainingBlock === undefined) {
+        session.database.prepare("UPDATE tasks SET manual_block = 0, revision = revision + 1, updated_at = ? WHERE project_id = ? AND id = ? AND manual_block = 1").run(now, projectId, taskId);
+      }
+    }
+    return taskApprovalItemFromRow(session.database.prepare<[string, string, string], TaskApprovalItemSqlRow>(
+      'SELECT id, created_at, project_id, feature_id, task_id, revision, updated_at, kind, description, responsible_party, plan_digest, code_digest, artifact_refs, status, created_by, decision, decision_actor, decision_reason, decision_code_digest, decision_artifact_refs, decided_at FROM task_approval_items WHERE project_id = ? AND task_id = ? AND id = ?',
+    ).get(projectId, taskId, itemId)!);
   }
 
   function insertTaskApprovalItemInTransaction(input: unknown): TaskApprovalItemInsertResult {
@@ -1051,7 +1104,7 @@ export function createSqlitePlanAccess(
     });
     const artifactJson = JSON.stringify(artifactRefs);
     const existing = session.database.prepare<[string, string, string, string, string, string, string, string | null, string], TaskApprovalItemSqlRow>(
-      'SELECT id, created_at, project_id, feature_id, task_id, revision, updated_at, kind, description, responsible_party, plan_digest, code_digest, artifact_refs, status, created_by FROM task_approval_items WHERE project_id = ? AND feature_id = ? AND task_id = ? AND kind = ? AND description = ? AND responsible_party = ? AND plan_digest = ? AND code_digest IS ? AND artifact_refs = ?',
+      'SELECT id, created_at, project_id, feature_id, task_id, revision, updated_at, kind, description, responsible_party, plan_digest, code_digest, artifact_refs, status, created_by, decision, decision_actor, decision_reason, decision_code_digest, decision_artifact_refs, decided_at FROM task_approval_items WHERE project_id = ? AND feature_id = ? AND task_id = ? AND kind = ? AND description = ? AND responsible_party = ? AND plan_digest = ? AND code_digest IS ? AND artifact_refs = ?',
     ).get(valid.projectId, valid.featureId, valid.taskId, valid.kind, valid.description, valid.responsibleParty, valid.planDigest, valid.codeDigest, artifactJson);
     if (existing !== undefined) return { record: taskApprovalItemFromRow(existing), created: false };
     const timestamp = nowUtcMs();
@@ -1061,7 +1114,7 @@ export function createSqlitePlanAccess(
     ).run(id, timestamp, valid.projectId, valid.featureId, valid.taskId, timestamp, valid.kind, valid.description,
       valid.responsibleParty, valid.planDigest, valid.codeDigest, artifactJson, valid.createdBy);
     const row = session.database.prepare<[string], TaskApprovalItemSqlRow>(
-      'SELECT id, created_at, project_id, feature_id, task_id, revision, updated_at, kind, description, responsible_party, plan_digest, code_digest, artifact_refs, status, created_by FROM task_approval_items WHERE id = ?',
+      'SELECT id, created_at, project_id, feature_id, task_id, revision, updated_at, kind, description, responsible_party, plan_digest, code_digest, artifact_refs, status, created_by, decision, decision_actor, decision_reason, decision_code_digest, decision_artifact_refs, decided_at FROM task_approval_items WHERE id = ?',
     ).get(id);
     if (row === undefined) throw new StorageError('corrupt', operation, '人审事项写入后无法读取');
     return { record: taskApprovalItemFromRow(row), created: true };
@@ -2081,6 +2134,7 @@ export function createSqlitePlanAccess(
     getTaskInTransaction,
     insertTaskApprovalItemInTransaction,
     listTaskApprovalItemsInTransaction,
+    decideTaskApprovalItemInTransaction,
     updateTaskStrategyInTransaction,
     findPlanApprovalInTransaction,
     insertPlanApprovalInTransaction,

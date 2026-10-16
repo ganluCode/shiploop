@@ -37,7 +37,7 @@ import {
   BASELINE_REASON_CODES,
 } from './baseline.js';
 import { isStorageError } from './errors.js';
-import { ATTEMPT_UPDATED_EVENT_TYPE, TASK_APPROVAL_BLOCKED_EVENT_TYPE, EXECUTION_BUDGET_REVISED_EVENT_TYPE, EXECUTION_RUN_DISPATCHED_EVENT_TYPE, TASK_CLAIMED_EVENT_TYPE } from './execution-store.js';
+import { ATTEMPT_UPDATED_EVENT_TYPE, TASK_APPROVAL_BLOCKED_EVENT_TYPE, TASK_APPROVAL_DECIDED_EVENT_TYPE, EXECUTION_BUDGET_REVISED_EVENT_TYPE, EXECUTION_RUN_DISPATCHED_EVENT_TYPE, TASK_CLAIMED_EVENT_TYPE } from './execution-store.js';
 import {
   EXECUTION_INPUT_PREPARED_EVENT_TYPE,
   FEATURE_LABELS_UPDATED_EVENT_TYPE,
@@ -151,6 +151,7 @@ export const PUBLIC_STATE_EVENT_TYPES = [
   TASK_CLAIMED_EVENT_TYPE,
   ATTEMPT_UPDATED_EVENT_TYPE,
   TASK_APPROVAL_BLOCKED_EVENT_TYPE,
+  TASK_APPROVAL_DECIDED_EVENT_TYPE,
   WORKSPACE_EVENT_TYPE,
 ] as const;
 
@@ -178,6 +179,7 @@ type EventPayloadKind =
   | 'taskClaimed'
   | 'attemptUpdated'
   | 'taskApprovalBlocked'
+  | 'taskApprovalDecided'
   | 'workspaceOperationUpdated';
 
 /** 每类事件冻结的 aggregate_type、scope 种类与 payload 形状。 */
@@ -327,6 +329,7 @@ export const STATE_EVENT_TYPE_SPECS: Readonly<
   [WORKSPACE_EVENT_TYPE]: Object.freeze({ aggregateType: 'feature', scopeKind: 'project', payloadKind: 'workspaceOperationUpdated' }),
   [ATTEMPT_UPDATED_EVENT_TYPE]: Object.freeze({ aggregateType: 'task', scopeKind: 'project', payloadKind: 'attemptUpdated' }),
   [TASK_APPROVAL_BLOCKED_EVENT_TYPE]: Object.freeze({ aggregateType: 'task', scopeKind: 'project', payloadKind: 'taskApprovalBlocked' }),
+  [TASK_APPROVAL_DECIDED_EVENT_TYPE]: Object.freeze({ aggregateType: 'task', scopeKind: 'project', payloadKind: 'taskApprovalDecided' }),
   // P03-3 / F-009：批次预算修订事件（聚合为目标 Batch 自身；payload 恒为
   // {revised:true}，不携带预算数值/理由/批准主体/启动或恢复语义）。
   [EXECUTION_BUDGET_REVISED_EVENT_TYPE]: Object.freeze({
@@ -869,8 +872,8 @@ export function mapStateEvent(row: unknown, operation: string = EVENT_READ_OPERA
     try { validateStableId(row.payload.operationId, { operation }, 'operationId'); }
     catch { corrupt(operation, 'event_payload_violation'); }
     payload = { schemaVersion: 1, operationId: row.payload.operationId, status: row.payload.status, executionStage: row.payload.executionStage };
-  } else if (spec.payloadKind === 'attemptUpdated' || spec.payloadKind === 'taskApprovalBlocked') {
-    const key = spec.payloadKind === 'attemptUpdated' ? 'updated' : 'blocked';
+  } else if (spec.payloadKind === 'attemptUpdated' || spec.payloadKind === 'taskApprovalBlocked' || spec.payloadKind === 'taskApprovalDecided') {
+    const key = spec.payloadKind === 'attemptUpdated' ? 'updated' : spec.payloadKind === 'taskApprovalBlocked' ? 'blocked' : 'decided';
     if (Object.keys(row.payload).length !== 1 || row.payload[key] !== true) corrupt(operation, 'event_payload_violation');
     payload = { [key]: true };
   } else if (spec.payloadKind === 'taskClaimed') {

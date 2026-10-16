@@ -726,6 +726,9 @@ describe('F-011 传输纪律与版本门禁', () => {
         // P03-2 / F-002：计划批准/拒绝决策随 Core 白名单进入接线宣告。
         'feature.plan.decide',
         'task.approval.block',
+        'task.approval.approve',
+        'task.approval.reject',
+        'task.approval.unblock',
         // P03-2 / F-006：执行输入制品组准备随 Core 白名单进入接线宣告
         //（HostClient/CLI 入口属 F-007/F-008）。
         'execution.input.prepare',
@@ -973,6 +976,9 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         // P03-2 / F-002：计划批准/拒绝决策经既有 /v1/commands 通用路由接线。
         'feature.plan.decide',
         'task.approval.block',
+        'task.approval.approve',
+        'task.approval.reject',
+        'task.approval.unblock',
         // P03-2 / F-006：执行输入制品组准备经既有 /v1/commands 通用路由接线。
         'execution.input.prepare',
         // P03-3 / F-004：单 Feature 执行 prepare 预览经既有 /v1/commands 通用路由接线。
