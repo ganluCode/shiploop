@@ -36,6 +36,14 @@ import {
   validationError,
 } from './validation.js';
 import type { ValidationContext } from './validation.js';
+import {
+  validateConfirmedTaskVerificationPolicy,
+} from './task-verification-policy.js';
+import type {
+  CheckDefinition,
+  VerificationFullFallback,
+  VerificationModuleDefinition,
+} from './task-verification-policy.js';
 
 /** 本版本 Core 唯一支持的配置 payload 结构版本（F-008 由 1 显式升级为 2）。 */
 export const SETTINGS_SCHEMA_VERSION = 2;
@@ -118,6 +126,12 @@ export interface ExecutionLimitsPolicyV2 {
 export interface VerificationPolicyV2 {
   /** 完成前是否必须通过检查（布尔；不含执行编排语义）。 */
   readonly requireChecksBeforeDone?: boolean;
+  /** F-001 用户确认的项目内检查定义。 */
+  readonly checkDefinitions?: readonly CheckDefinition[];
+  /** F-001 用户确认的显式模块边界。 */
+  readonly modules?: readonly VerificationModuleDefinition[];
+  /** F-001 安全全量回退所引用的定义。 */
+  readonly fullFallback?: VerificationFullFallback;
 }
 
 export interface SecurityPolicyV2 {
@@ -159,7 +173,6 @@ const MODEL_MAP_KEYS = ['low', 'medium', 'high'] as const;
 const PURPOSE_KEYS = ['planner', 'judge', 'review'] as const;
 const POLICIES_KEYS = ['executionLimits', 'verification', 'securityPolicy'] as const;
 const EXECUTION_LIMITS_KEYS = ['maxConcurrentWorks', 'workTimeoutMs', 'maxAttemptsPerTask', 'maxCodeAttempts', 'envAllowlist'] as const;
-const VERIFICATION_KEYS = ['requireChecksBeforeDone'] as const;
 const SECURITY_POLICY_KEYS = ['isolation'] as const;
 
 /** 以 Unicode 码点计数（String.length 会把 emoji 记为 2）。 */
@@ -434,15 +447,11 @@ function validateVerificationPolicy(
   field: string,
 ): VerificationPolicyV2 {
   const object = requirePlainObject(value, context, field);
-  rejectUnknownKeys(object, VERIFICATION_KEYS, context, field);
-  const result: { requireChecksBeforeDone?: boolean } = {};
-  if (object.requireChecksBeforeDone !== undefined) {
-    if (typeof object.requireChecksBeforeDone !== 'boolean') {
-      throw validationError(context, `${field}.requireChecksBeforeDone`, '必须是布尔值', object.requireChecksBeforeDone);
-    }
-    result.requireChecksBeforeDone = object.requireChecksBeforeDone;
-  }
-  return result;
+  const confirmed = validateConfirmedTaskVerificationPolicy(object, context, field);
+  return {
+    ...confirmed,
+    ...(object.requireChecksBeforeDone === undefined ? {} : { requireChecksBeforeDone: object.requireChecksBeforeDone as boolean }),
+  };
 }
 
 function validateSecurityPolicy(

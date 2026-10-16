@@ -15,6 +15,7 @@
 export * from './ports/errors.js';
 export * from './ports/validation.js';
 export * from './ports/settings-schema.js';
+export * from './ports/task-verification-policy.js';
 export * from './ports/runtime-capabilities.js';
 export * from './ports/task-dag.js';
 export * from './ports/work-scheduler.js';
