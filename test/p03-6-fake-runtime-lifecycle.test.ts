@@ -838,7 +838,7 @@ describe('F-005 一次结算规则与竞争', () => {
  * ------------------------------------------------------------------ */
 
 describe('F-005 已知指标保留', () => {
-  it('错误路径：usage 事件保留 synthetic 计数；failed 结果未知指标为显式 null', async () => {
+  it('错误路径：usage 事件与 failed 结果保留 synthetic 计数；未知指标为显式 null', async () => {
     const env = openSandbox();
     try {
       const handle = await startHandle({
@@ -854,11 +854,12 @@ describe('F-005 已知指标保留', () => {
       ]);
       const usage = events.find((event) => event.kind === 'usage');
       expect(usage?.payload).toEqual({
-        usage: { basis: 'synthetic', inputTokens: 12, outputTokens: 34, costUsdMicros: 56 },
+        basis: 'synthetic', inputTokens: 12, outputTokens: 34, costUsdMicros: 56,
       });
       expect(result).toMatchObject({
         terminal: 'failed', reason: 'scripted_failure',
-        exitCode: null, signal: null, durationMs: null, usage: null,
+        exitCode: null, signal: null, durationMs: null,
+        usage: { basis: 'synthetic', inputTokens: 12, outputTokens: 34, costUsdMicros: 56 },
       });
       // 水位指向实际最后事件（usage + 失败诊断），不统一归零。
       expect(result.lastEventSequence).toBe(events[events.length - 1]?.sequence);

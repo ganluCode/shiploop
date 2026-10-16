@@ -3,6 +3,12 @@ import type { RuntimeErrorKind, RuntimeExecutionResult, RuntimeStopEvidence } fr
 import { RUNTIME_ERROR_KINDS, validateRuntimeExecutionResult, validateRuntimeStopEvidence } from './runtime-execution.js';
 import { rejectUnknownKeys, requirePlainObject, validateStableId, validationError } from './validation.js';
 
+export interface RuntimeControlFacts {
+  readonly reason: 'user_cancelled' | 'service_close' | 'runtime_timeout' | 'tool_timeout' | 'parent_deadline' | 'recording_failed'
+    | 'runtime_failed' | 'runtime_cancelled' | 'stop_unconfirmed';
+  readonly cancel: 'accepted' | 'rejected' | 'failed' | 'unobserved';
+}
+
 export interface RuntimeSettlementFacts {
   readonly sessionId: string;
   readonly invocationId: string;
@@ -11,12 +17,13 @@ export interface RuntimeSettlementFacts {
   readonly recording: { readonly complete: boolean; readonly manifestRef: string | null };
   /** null means no stop observation, never confirmed by inference. */
   readonly stopped: RuntimeStopEvidence | null;
+  readonly control?: RuntimeControlFacts;
 }
 
 export function validateRuntimeSettlementFacts(value: unknown): RuntimeSettlementFacts {
   const context = { operation: 'AttemptLifecycle.runtimeSettlement' };
   const raw = requirePlainObject(value, context, 'runtime');
-  rejectUnknownKeys(raw, ['sessionId', 'invocationId', 'result', 'failure', 'recording', 'stopped'], context, 'runtime');
+  rejectUnknownKeys(raw, ['sessionId', 'invocationId', 'result', 'failure', 'recording', 'stopped', 'control'], context, 'runtime');
   const recording = requirePlainObject(raw.recording, context, 'recording');
   rejectUnknownKeys(recording, ['complete', 'manifestRef'], context, 'recording');
   if (typeof recording.complete !== 'boolean') throw validationError(context, 'recording.complete', 'invalid_boolean');
@@ -31,9 +38,17 @@ export function validateRuntimeSettlementFacts(value: unknown): RuntimeSettlemen
     failure = { kind: f.kind as RuntimeErrorKind, reason: f.reason };
   }
   const result = raw.result === null ? null : validateRuntimeExecutionResult(raw.result);
-  if (result === null && failure === null) throw validationError(context, 'failure', 'missing_execution_outcome');
+  if (result === null && failure === null && raw.control === undefined) throw validationError(context, 'failure', 'missing_execution_outcome');
+  let control: RuntimeControlFacts | undefined;
+  if (raw.control !== undefined) {
+    const c = requirePlainObject(raw.control, context, 'control');
+    rejectUnknownKeys(c, ['reason', 'cancel'], context, 'control');
+    if (!['user_cancelled', 'service_close', 'runtime_timeout', 'tool_timeout', 'parent_deadline', 'recording_failed', 'runtime_failed', 'runtime_cancelled', 'stop_unconfirmed'].includes(String(c.reason))
+      || !['accepted', 'rejected', 'failed', 'unobserved'].includes(String(c.cancel))) throw validationError(context, 'control', 'invalid_control_facts');
+    control = { reason: c.reason as RuntimeControlFacts['reason'], cancel: c.cancel as RuntimeControlFacts['cancel'] };
+  }
   return { sessionId: validateStableId(raw.sessionId, context, 'sessionId'),
     invocationId: validateStableId(raw.invocationId, context, 'invocationId'), result, failure,
     recording: { complete: recording.complete, manifestRef },
-    stopped: raw.stopped === null ? null : validateRuntimeStopEvidence(raw.stopped) };
+    stopped: raw.stopped === null ? null : validateRuntimeStopEvidence(raw.stopped), ...(control ? { control } : {}) };
 }

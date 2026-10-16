@@ -10,7 +10,8 @@ import type { AttemptStore } from '../ports/attempt-store.js';
 import type { TaskDagStore } from '../ports/task-dag.js';
 import { isRuntimeError, validateRuntimeExecutionRequest, validateRuntimeExecutionResult, validateRuntimeStopEvidence,
   type RuntimeExecutionRequest, type RuntimeExecutionResult, type RuntimeStopEvidence } from '../ports/runtime-execution.js';
-import type { RuntimeSettlementFacts } from '../ports/runtime-settlement.js';
+import type { WorkResourceIdentity } from '../ports/work-resources.js';
+import type { RuntimeSettlementFacts, RuntimeControlFacts } from '../ports/runtime-settlement.js';
 import type { WorkEvidenceRecordingOutcome } from './work-evidence-recorder.js';
 import { WorkEvidenceRecordingError } from './work-evidence-recorder.js';
 
@@ -20,9 +21,12 @@ export interface RuntimeSettlementInput {
   readonly recording: PromiseSettledResult<WorkEvidenceRecordingOutcome> | null;
   /** A bounded controller observation; null explicitly means stop not observed. */
   readonly stopped: PromiseSettledResult<RuntimeStopEvidence> | null;
+  readonly control?: RuntimeControlFacts;
 }
 export interface RuntimeSettlementService {
   settle(input: RuntimeSettlementInput): Promise<AttemptApplicationResult>;
+  rejectLaunch?(input: { readonly identity: WorkResourceIdentity; readonly taskId: string; readonly runId: string;
+    readonly error: unknown }): Promise<{ readonly receipt: AttemptApplicationResult; readonly evidenceRef: string }>;
 }
 export interface RuntimeSettlementDeps {
   readonly lifecycle: AttemptLifecycleStore;
@@ -42,7 +46,18 @@ export function createRuntimeSettlementService(deps: RuntimeSettlementDeps): Run
   const failure = (error: unknown, fallback: string): NonNullable<RuntimeSettlementFacts['failure']> =>
     isRuntimeError(error) ? { kind: error.kind, reason: token(error.reason) } : { kind: 'protocol', reason: fallback };
 
-  return { async settle(input) {
+  return { async rejectLaunch(input) {
+    const { identity, taskId, runId } = input;
+    const error = failure(input.error, 'launch_rejected');
+    const body = Buffer.from(JSON.stringify({ schemaVersion: 1, kind: 'runtime-not-started', identity,
+      taskId, runId, failure: error, recording: { complete: false, gaps: ['runtime_not_started'] } }));
+    const published = await deps.publisher.publishArtifact({ projectId: identity.projectId, kind: 'runtime-settlement',
+      mediaType: 'application/json', expectedHash: createHash('sha256').update(body).digest('hex'),
+      locator: `attempts/${identity.attemptId}/launch-rejection.json`, content: [body] });
+    const receipt = deps.lifecycle.apply({ ...identity, taskId, runId, notificationId: 'runtime-not-started',
+      kind: 'preparation_failed', errorKind: 'input', evidenceRef: published.artifact.id });
+    return { receipt, evidenceRef: published.artifact.id };
+  }, async settle(input) {
     const request = validateRuntimeExecutionRequest(input.request);
     if (request.identity.purpose !== 'work') throw new TypeError('Work settlement requires a Work identity');
     const identity = { projectId: request.projectId, attemptId: request.identity.attemptId,
@@ -78,8 +93,15 @@ export function createRuntimeSettlementService(deps: RuntimeSettlementDeps): Run
     if (executionFailure === null && recordingError instanceof WorkEvidenceRecordingError && recordingError.reason === 'event_stream_failed') {
       executionFailure = { kind: 'protocol', reason: 'runtime_events_failed' };
     }
+    if (input.control?.reason === 'user_cancelled' || input.control?.reason === 'service_close') executionFailure = null;
+    else if (input.control?.reason === 'runtime_timeout' || input.control?.reason === 'tool_timeout' || input.control?.reason === 'parent_deadline') {
+      executionFailure = { kind: 'timeout', reason: input.control.reason };
+    } else if (input.control?.reason === 'recording_failed' && (executionFailure === null || result?.terminal === 'cancelled')) {
+      executionFailure = { kind: 'protocol', reason: 'recording_failed' };
+    }
     const runtime: RuntimeSettlementFacts = { sessionId: request.sessionId, invocationId: request.invocationId,
-      result, failure: executionFailure, recording: { complete: recording?.status === 'complete', manifestRef }, stopped };
+      result, failure: executionFailure, recording: { complete: recording?.status === 'complete', manifestRef }, stopped,
+      ...(input.control ? { control: input.control } : {}) };
     const attempt = deps.attempts.getAttempt(identity.projectId, identity.attemptId);
     const task = deps.dag.readTaskDagView(identity.projectId, identity.runId).facts.find(f => f.taskId === identity.taskId);
     const current = attempt.owner === identity.owner && attempt.hostInstanceId === identity.hostInstanceId
@@ -96,8 +118,9 @@ export function createRuntimeSettlementService(deps: RuntimeSettlementDeps): Run
       identity: { ...identity, sessionId: request.sessionId, invocationId: request.invocationId },
       execution: { result, failure: executionFailure },
       recording: { complete: runtime.recording.complete, manifestRef, failure: recordingFailure,
+        gaps: (recording?.gaps ?? (recordingError instanceof WorkEvidenceRecordingError ? recordingError.gaps : ['recording_unobserved'])).slice(0, 32).map(token),
         watermark: recording?.watermark ?? (recordingError instanceof WorkEvidenceRecordingError ? recordingError.watermark : null) },
-      stop: { evidence: stopped, failure: stopFailure } }), 'utf8');
+      stop: { evidence: stopped, failure: stopFailure }, ...(input.control ? { control: input.control } : {}) }), 'utf8');
     const published = await deps.publisher.publishArtifact({ projectId: request.projectId,
       kind: 'runtime-settlement', mediaType: 'application/json', expectedHash: createHash('sha256').update(body).digest('hex'),
       locator: `sessions/${request.sessionId}/runtime-settlement.json`, content: [body] });

@@ -28,6 +28,10 @@ import type { RuntimeSettlementService } from './runtime-settlement.js';
 import type { RuntimeRecoverySelection } from '../ports/runtime-recovery.js';
 import type { RuntimeStrategyV1 } from '../ports/settings-schema.js';
 import { createHash } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
+import { superviseExecution, observeWithin, type ExecutionCompletion, type ExecutionSupervisionOptions, type ExecutionStopReason } from './execution-supervision.js';
+import type { WorkResourceStopVerifier, WorkResourceSnapshot } from '../ports/work-resources.js';
+export type { ExecutionCompletion, ExecutionSupervisionOptions, ExecutionRetentionInput } from './execution-supervision.js';
 
 export interface ExecutionServiceInput {
   readonly claim: TaskClaimReceipt;
@@ -55,6 +59,7 @@ export interface ExecutionContext {
   readonly result: Promise<PromiseSettledResult<RuntimeExecutionResult>>;
   readonly stopped: Promise<PromiseSettledResult<RuntimeStopEvidence>>;
   readonly recording: Promise<PromiseSettledResult<WorkEvidenceRecordingOutcome>>;
+  readonly completion?: Promise<ExecutionCompletion>;
 }
 
 export interface ExecutionServiceDeps {
@@ -68,6 +73,8 @@ export interface ExecutionServiceDeps {
   readonly recorder: WorkEvidenceRecorder;
   /** Trusted assembly; startup errors use the same fenced settlement as execution results. */
   readonly settlement?: RuntimeSettlementService;
+  /** F-010 trusted lifecycle policy; mandatory when assembling a managed Work runner. */
+  readonly supervision?: ExecutionSupervisionOptions;
   /** Trusted event identity rule supplied by the adapter assembly. */
   readonly eventIdentityPrefix: (request: RuntimeExecutionRequest) => string;
   readonly permissions?: ExecutionPermissionsReader;
@@ -79,6 +86,10 @@ export interface ExecutionService {
   get(projectId: string, attemptId: string): ExecutionContext | undefined;
   /** Only discard an observed, settled context; never releases resource leases. */
   forget(projectId: string, attemptId: string): boolean;
+  cancel(identity: WorkResourceIdentity): Promise<ExecutionCompletion | null>;
+  close(): Promise<{ readonly closed: boolean; readonly pendingAttemptIds: readonly string[] }>;
+  /** In-memory evidence authority: never accepts serialized confirmed booleans. */
+  readonly stopVerifier: WorkResourceStopVerifier;
 }
 
 function startKey(attemptId: string, executionVersion: number): string {
@@ -118,14 +129,81 @@ export function createExecutionService(deps: ExecutionServiceDeps): ExecutionSer
   for (const name of ['atomic', 'resources', 'sessions', 'inputBinding', 'runtime', 'dag', 'attempts', 'recorder', 'eventIdentityPrefix'] as const) {
     if (deps[name] === undefined || deps[name] === null) throw new TypeError(`ExecutionService dependency ${name} is required`);
   }
-  const contexts = new Map<string, { context: ExecutionContext; settled: boolean }>();
+  if (deps.supervision) {
+    if (!deps.settlement?.rejectLaunch || typeof deps.supervision.retain !== 'function') throw new TypeError('Supervision requires settlement and workspace retention');
+    for (const name of ['stopWaitMs', 'drainWaitMs', 'closeWaitMs'] as const) {
+      const value = deps.supervision[name];
+      if (!Number.isSafeInteger(value) || value < 1 || value > 60_000) throw new TypeError(`Invalid supervision ${name}`);
+    }
+  }
+  let closing = false;
+  const uncertainStarts = new Set<string>();
+  const launching = new Set<Promise<ExecutionServiceResult>>();
+  const unstarted = new Map<string, { identity: WorkResourceIdentity; invocationId: string; safe: boolean }>();
+  const stopTokens = new WeakMap<object, WorkResourceSnapshot>();
+  const contexts = new Map<string, { context: ExecutionContext; settled: boolean; safe: boolean; stop?: (reason: ExecutionStopReason) => void }>();
   const key = (projectId: string, attemptId: string) => JSON.stringify([projectId, attemptId]);
+  const stopVerifier: WorkResourceStopVerifier = {
+    async verify(snapshot) {
+      const frozen = structuredClone(snapshot);
+      if (frozen.leases.length !== 3) return null;
+      const id = key(frozen.identity.projectId, frozen.identity.attemptId);
+      const proof = unstarted.get(id);
+      let confirmed = proof !== undefined && proof.invocationId === frozen.invocationId && isDeepStrictEqual(proof.identity, frozen.identity)
+        && frozen.processIdentity === null && frozen.leases.every(lease => lease.processIdentity === null);
+      if (!confirmed) {
+        const context = contexts.get(id)?.context;
+        if (!context || context.request.invocationId !== frozen.invocationId
+          || !matches(context.request, frozen.identity)) return null;
+        const stopped = await observeWithin(context.stopped, deps.supervision?.stopWaitMs ?? 1_000);
+        confirmed = stopped?.status === 'fulfilled' && stopped.value.confirmed;
+      }
+      if (!confirmed) return null;
+      const token = Object.freeze({});
+      stopTokens.set(token, frozen);
+      return token;
+    },
+    inspect(token) {
+      const snapshot = token !== null && typeof token === 'object' ? stopTokens.get(token) : undefined;
+      if (!snapshot) throw new StorageError('validation', 'Execution.stopVerifier', 'Unverified stop evidence');
+      return structuredClone(snapshot);
+    },
+  };
   return {
-    start,
+    start(value) {
+      if (closing) return Promise.reject(new RuntimeError('process', 'execution_service_closing'));
+      const promise = start(value);
+      launching.add(promise);
+      void promise.then(() => launching.delete(promise), () => launching.delete(promise));
+      return promise;
+    },
+    stopVerifier,
+    async cancel(identity) {
+      const entry = contexts.get(key(identity.projectId, identity.attemptId));
+      if (!entry || !matches(entry.context.request, identity)) return null;
+      if (!entry.stop) throw new RuntimeError('configuration', 'execution_supervision_not_assembled');
+      entry.stop('user_cancelled');
+      return entry.context.completion!;
+    },
+    async close() {
+      closing = true;
+      const waitMs = deps.supervision?.closeWaitMs ?? 1_000;
+      // Mark closing before observing launches; newly returned handles stop on admission.
+      for (const entry of contexts.values()) entry.stop?.('service_close');
+      await observeWithin(Promise.all([...launching].map(p => settled(p))).then(async () => {
+        for (const entry of contexts.values()) entry.stop?.('service_close');
+        await Promise.all([...contexts.values()].map(entry => entry.context.completion ?? Promise.all([entry.context.result, entry.context.stopped, entry.context.recording])));
+      }), waitMs);
+      const pendingAttemptIds = [...contexts.values()].filter(entry => !entry.safe).map(entry => entry.context.request.identity.purpose === 'work' ? entry.context.request.identity.attemptId : 'unknown');
+      pendingAttemptIds.push(...[...unstarted.values()].filter(entry => !entry.safe).map(entry => entry.identity.attemptId));
+      pendingAttemptIds.push(...uncertainStarts);
+      return { closed: launching.size === 0 && pendingAttemptIds.length === 0, pendingAttemptIds };
+    },
     get(projectId, attemptId) { return contexts.get(key(projectId, attemptId))?.context; },
     forget(projectId, attemptId) {
       const id = key(projectId, attemptId);
-      if (!contexts.get(id)?.settled) return false;
+      if (!(deps.supervision ? contexts.get(id)?.safe : contexts.get(id)?.settled)) return false;
+      unstarted.delete(id);
       return contexts.delete(id);
     },
   };
@@ -142,6 +220,7 @@ export function createExecutionService(deps: ExecutionServiceDeps): ExecutionSer
       return result.invocationId;
     });
 
+    unstarted.set(key(workIdentity.projectId, workIdentity.attemptId), { identity: workIdentity, invocationId, safe: false });
     let bound: Awaited<ReturnType<ExecutionInputBindingService['bind']>>;
     let adapterVersion: string;
     let eventIdentityPrefix: string;
@@ -159,12 +238,14 @@ export function createExecutionService(deps: ExecutionServiceDeps): ExecutionSer
       // quarantine the lease group on a pre-start failure; do not debit the Runtime
       // start budget or pretend the authorization never existed.
       quarantineUnstarted(workIdentity);
+      await finalizeUnstarted(input, error);
       throw error;
     }
 
     let reservedSession: WorkSessionRecord;
     try {
       reservedSession = deps.atomic.transact('execution.reserve-runtime-start', (transaction) => {
+        if (closing) throw new RuntimeError('process', 'execution_service_closing');
         assertAuthorized(input, invocationId);
         for (const ref of [...Object.values(input.claim.attempt.inputSnapshot.group), ...input.claim.attempt.inputSnapshot.requiredInputs]) {
           const current = transaction.getArtifactInputRef(workIdentity.projectId, ref.artifactId);
@@ -190,16 +271,30 @@ export function createExecutionService(deps: ExecutionServiceDeps): ExecutionSer
       });
     } catch (error) {
       quarantineUnstarted(workIdentity);
+      await finalizeUnstarted(input, error);
       throw error;
     }
 
+    const launchedAt = (deps.nowUtcMs ?? Date.now)();
+    const view = deps.dag.readTaskDagView(workIdentity.projectId, input.claim.attempt.runId);
+    const parentDeadline = Math.min(view.batch.deadlineAtUtcMs, view.batch.budgetSnapshot.batch.deadlineUtcMs,
+      (view.run.startedAtUtcMs ?? launchedAt) + view.run.runTimeLimitMs);
     let runtime: RuntimeSession;
     try {
+      unstarted.delete(key(workIdentity.projectId, workIdentity.attemptId));
+      uncertainStarts.add(workIdentity.attemptId);
       runtime = await deps.runtime.start(bound.request);
+      uncertainStarts.delete(workIdentity.attemptId);
+      if (deps.supervision) {
+        const handle = runtime;
+        let cancel: ReturnType<RuntimeSession['cancel']> | undefined;
+        runtime = { ...handle, cancel: () => cancel ??= Promise.resolve().then(() => handle.cancel()) };
+      }
     } catch (error) {
       if (deps.settlement) {
         try {
-          await deps.settlement.settle({ request: bound.request, result: { status: 'rejected', reason: error }, recording: null, stopped: null });
+          await deps.settlement.settle({ request: bound.request, result: { status: 'rejected', reason: error }, recording: null, stopped: null,
+            ...(deps.supervision ? { control: { reason: 'runtime_failed' as const, cancel: 'unobserved' as const } } : {}) });
         } catch {
           // A failed evidence/DB commit cannot replace the original Runtime error or free the lease.
           quarantineUnstarted(workIdentity);
@@ -230,12 +325,18 @@ export function createExecutionService(deps: ExecutionServiceDeps): ExecutionSer
     const stopped = settled(runtime.stopped);
     let started: ReturnType<WorkSessionStore['applyWorkSessionProgress']>;
     let recording: ExecutionContext['recording'];
+    let recordingFailureRequested = false;
+    let recordingStop: (() => void) | undefined;
+    const recordingHandle: RuntimeSession = { ...runtime, cancel: () => {
+      if (!controller.signal.aborted) { recordingFailureRequested = true; recordingStop?.(); }
+      return runtime.cancel();
+    } };
     try {
       started = deps.sessions.applyWorkSessionProgress({
         ...workIdentity, sessionId: reservedSession.id,
         expectedRevision: reservedSession.revision, kind: 'started', executionStage: 'runtime',
       });
-      recording = settled(deps.recorder.record({ request: bound.request, handle: runtime, eventIdentityPrefix, signal: controller.signal }));
+      recording = settled(deps.recorder.record({ request: bound.request, handle: recordingHandle, eventIdentityPrefix, signal: controller.signal }));
     } catch (error) {
       // Keep the handle and stop observation even when post-start persistence fails.
       recording = Promise.resolve({ status: 'rejected', reason: error });
@@ -248,16 +349,49 @@ export function createExecutionService(deps: ExecutionServiceDeps): ExecutionSer
 
     function retain(): ExecutionContext {
       const context: ExecutionContext = { request: bound.request, runtime, controller, result, stopped, recording };
-      const entry = { context, settled: false };
+      const entry: { context: ExecutionContext; settled: boolean; safe: boolean; stop?: (reason: ExecutionStopReason) => void } = { context, settled: false, safe: false };
       contexts.set(key(workIdentity.projectId, workIdentity.attemptId), entry);
+      if (deps.supervision && deps.settlement) {
+        const runtimeDeadline = launchedAt + bound.request.limits.timeoutMs;
+        const supervision = superviseExecution({ request: bound.request, runtime, controller, result, stopped, recording,
+          options: deps.supervision, settlement: deps.settlement,
+          quarantine: () => quarantineUnstarted(workIdentity),
+          evidenceRef: () => deps.sessions.getWorkSession(workIdentity.projectId, bound.request.sessionId)?.resultRef ?? null,
+          timeoutMs: Math.min(runtimeDeadline, parentDeadline) - (deps.nowUtcMs ?? Date.now)(),
+          timeoutReason: parentDeadline <= runtimeDeadline ? 'parent_deadline' : 'runtime_timeout' });
+        Object.assign(context, { completion: supervision.completion });
+        entry.stop = supervision.stop;
+        recordingStop = () => supervision.stop('recording_failed');
+        if (recordingFailureRequested) recordingStop();
+        void supervision.completion.then(outcome => {
+          entry.safe = entry.settled && outcome.stopConfirmed && outcome.persisted && outcome.error === null;
+        });
+        if (closing) supervision.stop('service_close');
+      }
       void recording.then(outcome => {
         if (outcome.status === 'rejected') void runtime.cancel().catch(() => undefined);
       });
       void Promise.all([result, stopped, recording]).then(([, stop]) => {
         entry.settled = stop.status === 'fulfilled' && stop.value.confirmed;
+        if (!deps.supervision) entry.safe = entry.settled;
+        else void context.completion!.then(outcome => { entry.safe = entry.settled && outcome.stopConfirmed && outcome.persisted && outcome.error === null; });
       });
       return context;
     }
+  }
+
+  async function finalizeUnstarted(input: ExecutionServiceInput, error: unknown): Promise<void> {
+    if (!deps.supervision || !deps.settlement?.rejectLaunch) return;
+    const workIdentity = identity(input.claim);
+    try {
+      const { receipt, evidenceRef } = await deps.settlement.rejectLaunch({ identity: workIdentity,
+        taskId: input.claim.attempt.taskId, runId: input.claim.attempt.runId, error });
+      if (!receipt.resultSaved || !['applied', 'replayed'].includes(receipt.disposition)) return;
+      await deps.supervision.retain({ identity: workIdentity, taskId: input.claim.attempt.taskId,
+        runId: input.claim.attempt.runId, featureId: input.claim.attempt.featureId, reason: 'execution_error', evidenceRef });
+      const proof = unstarted.get(key(workIdentity.projectId, workIdentity.attemptId));
+      if (proof) proof.safe = true;
+    } catch { quarantineUnstarted(workIdentity); }
   }
 
   function quarantineUnstarted(workIdentity: WorkResourceIdentity): void {
@@ -297,6 +431,12 @@ export function createExecutionService(deps: ExecutionServiceDeps): ExecutionSer
     if (now >= view.batch.deadlineAtUtcMs || now >= limits.deadlineUtcMs) deny('deadline_exhausted');
     if (view.batch.noProgressRuns >= limits.maxNoProgressRuns || limits.maxCostTotal !== undefined || limits.maxTokenTotal !== undefined) deny('budget_exhausted');
   }
+}
+
+function matches(request: RuntimeExecutionRequest, identity: WorkResourceIdentity): boolean {
+  return request.identity.purpose === 'work' && request.projectId === identity.projectId
+    && request.identity.attemptId === identity.attemptId && request.owner.principalId === identity.owner
+    && request.owner.hostInstanceId === identity.hostInstanceId && request.executionVersion === identity.executionVersion;
 }
 
 function settled<T>(promise: Promise<T>): Promise<PromiseSettledResult<T>> {

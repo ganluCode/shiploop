@@ -539,7 +539,7 @@ describe('F-004 真实工具结果记录', () => {
       expect(finished?.payload).toMatchObject({
         exitCode: null, reason: 'timed_out', lastActivityAtUtc: null,
       });
-      expect(result.terminal).toBe('completed');
+      expect(result).toMatchObject({ terminal: 'timed_out', reason: 'tool_timeout' });
       expect(stopped.confirmed).toBe(true);
       expect(handle.inspection.opLog()[0]).toMatchObject({
         outcome: 'failed', reason: 'timed_out', bytes: 0, digest: null, stopConfirmed: true,

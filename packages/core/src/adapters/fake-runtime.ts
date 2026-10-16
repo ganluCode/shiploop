@@ -668,6 +668,7 @@ export function createFakeRuntime(options: FakeRuntimeOptions): FakeRuntimeAssem
       const maxOutputBytes = request.limits.maxOutputBytes;
       let outputBytes = 0;
       let sequence = 0;
+      let observedUsage: RuntimeExecutionResult['usage'] = null;
       let messageSeq = 0;
       let toolSeq = 0;
       let cancelled = false;
@@ -753,7 +754,7 @@ export function createFakeRuntime(options: FakeRuntimeOptions): FakeRuntimeAssem
           kind,
           sequence: nextSequence,
           occurredAtUtc: isoNow(),
-          payload: wirePayload,
+          payload: payload.kind === 'usage' ? { ...payload.usage } : wirePayload,
         };
         const bytes = Buffer.byteLength(JSON.stringify(event), 'utf8');
         const faulted = heldEvent !== null || dropSet.has(nextSequence) ||
@@ -951,23 +952,27 @@ export function createFakeRuntime(options: FakeRuntimeOptions): FakeRuntimeAssem
                 reason: commandResult.reason, outputBytes: commandResult.outputBytes,
                 lastActivityAtUtc: lastActivity,
               });
+              // A timed out tool must not admit the next script side effect. Core still
+              // observes the independent stopped promise before any resource release.
+              if (commandResult.reason === 'timed_out') throw new FailRun('tool_timeout');
             } finally {
               activeTools.delete(tool);
             }
             return;
           }
-          case 'usage':
-            await emit({
-              kind: 'usage',
-              usage: {
-                basis: 'synthetic',
-                inputTokens: step.inputTokens,
-                outputTokens: step.outputTokens,
-                costUsdMicros: step.costUsdMicros,
-              },
-            });
+          case 'usage': {
+            const delta = { basis: 'synthetic' as const, inputTokens: step.inputTokens,
+              outputTokens: step.outputTokens, costUsdMicros: step.costUsdMicros };
+            const sumKnown = (left: number | null, right: number | null): number | null =>
+              left === null || right === null || !Number.isSafeInteger(left + right) ? null : left + right;
+            observedUsage = observedUsage === null ? delta : { basis: 'synthetic',
+              inputTokens: sumKnown(observedUsage.inputTokens, delta.inputTokens),
+              outputTokens: sumKnown(observedUsage.outputTokens, delta.outputTokens),
+              costUsdMicros: sumKnown(observedUsage.costUsdMicros, delta.costUsdMicros) };
+            await emit({ kind: 'usage', usage: delta });
             record('usage', 'usage', 'ok');
             return;
+          }
           case 'fail':
             record('fail', step.reason, 'failed', { reason: step.reason });
             throw new FailRun(step.reason);
@@ -990,11 +995,11 @@ export function createFakeRuntime(options: FakeRuntimeOptions): FakeRuntimeAssem
 
       const cancelledResult = (): RuntimeExecutionResult => ({
         schemaVersion: 1, terminal: 'cancelled', reason: null, exitCode: null, signal: null,
-        durationMs: null, usage: null, lastEventSequence: sequence,
+        durationMs: null, usage: observedUsage, lastEventSequence: sequence,
       });
       const failedResult = (reason: string): RuntimeExecutionResult => ({
-        schemaVersion: 1, terminal: 'failed', reason, exitCode: null, signal: null,
-        durationMs: null, usage: null, lastEventSequence: sequence,
+        schemaVersion: 1, terminal: reason === 'tool_timeout' ? 'timed_out' : 'failed', reason, exitCode: null, signal: null,
+        durationMs: null, usage: observedUsage, lastEventSequence: sequence,
       });
       const scriptResult = (): RuntimeExecutionResult => ({
         schemaVersion: 1,

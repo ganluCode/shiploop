@@ -285,7 +285,7 @@ describe('F-003 确定性脚本执行与同序可核对', () => {
       ]);
       const usageEvent = events[3];
       expect(usageEvent?.payload).toEqual({
-        usage: { basis: 'synthetic', inputTokens: 12, outputTokens: 8, costUsdMicros: null },
+        basis: 'synthetic', inputTokens: 12, outputTokens: 8, costUsdMicros: null,
       });
       // 唯一结果：completed，synthetic 用量，绝不携带 Task 验收结论。
       expect(result.terminal).toBe('completed');
