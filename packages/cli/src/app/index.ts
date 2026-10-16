@@ -49,6 +49,10 @@ export type {
   ParsedProjectOverview,
   ParsedProjectRegister,
   ParsedReceiptGet,
+  ParsedExecutionSessions,
+  ParsedExecutionSession,
+  ParsedExecutionSessionEvidence,
+  ParsedExecutionCancel,
   ParsedTaskGet,
   ParsedTaskInputs,
   ParsedTaskList,
@@ -211,3 +215,24 @@ export type {
   FeaturePlanDecisionCliView,
   TaskStrategyEditCliView,
 } from './decisions.js';
+export {
+  buildAttemptCancelView,
+  buildWorkSessionDetailView,
+  buildWorkSessionEvidenceView,
+  buildWorkSessionListView,
+  formatAttemptCancelView,
+  formatWorkSessionDetailView,
+  formatWorkSessionEvidenceView,
+  formatWorkSessionListView,
+} from './work-session.js';
+export type {
+  AttemptCancelAcceptanceFacts,
+  AttemptCancelDisplay,
+  WorkSessionAcceptanceFacts,
+  WorkSessionDetailDisplay,
+  WorkSessionEvidenceDisplay,
+  WorkSessionListDisplay,
+  WorkSessionRuntimeResultDisplay,
+  WorkSessionStopDisplay,
+  WorkSessionUsageDisplay,
+} from './work-session.js';

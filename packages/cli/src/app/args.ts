@@ -16,6 +16,10 @@
  *   P03-5 / F-012 增补 workspace list/get/operations/operation 只读状态子命令
  *   与 discard-preview/discard 人工丢弃预览确认子命令（破坏性确认缺 --confirm
  *   或 --preview-file 在解析层本地拒绝，不隐式预览后自动同意）；
+ *   P03-6 / F-013 增补 execution sessions/session/session-evidence/cancel
+ *   子命令（实际 Host 公共契约 execution.sessions.list/execution.session.get/
+ *   execution.session.evidence.get/execution.attempt.cancel 的参数映射；
+ *   取消必须 --confirm 显式确认，不猜测草案命令）；
  * - 监听地址覆盖零容忍：--bind/--host/--address/--port/--listen* 与
  *   SHIPLOOP_HOST_* env 覆盖一律 bind_address_override_rejected；
  * - 错误只携带 code/reason/参数名/命令身份，绝不回显参数值；
@@ -88,6 +92,10 @@ export type AppCliCommandId =
   | 'execution.schedule'
   | 'execution.attempts'
   | 'execution.diagnostics'
+  | 'execution.sessions'
+  | 'execution.session'
+  | 'execution.session-evidence'
+  | 'execution.cancel'
   | 'workspace.list'
   | 'workspace.get'
   | 'workspace.operations'
@@ -140,6 +148,10 @@ export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'execution.schedule',
   'execution.attempts',
   'execution.diagnostics',
+  'execution.sessions',
+  'execution.session',
+  'execution.session-evidence',
+  'execution.cancel',
   'workspace.list',
   'workspace.get',
   'workspace.operations',
@@ -821,6 +833,48 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
     maxPositionals: 1,
     positionalFields: ['attemptId'],
   },
+  /* P03-6 / F-013 Work Session 状态/证据查询与 Attempt 取消（实际 Host 公共
+   * 契约的参数映射；sessions 的父级 Run/Task 二选一，取消必须 --confirm）。 */
+  'execution.sessions': {
+    command: 'execution',
+    commandId: 'execution.sessions',
+    valueFlags: ['--project', '--run', '--task', '--limit', '--cursor'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 0,
+    maxPositionals: 0,
+    positionalFields: [],
+  },
+  'execution.session': {
+    command: 'execution',
+    commandId: 'execution.session',
+    valueFlags: ['--project'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['attemptId'],
+  },
+  'execution.session-evidence': {
+    command: 'execution',
+    commandId: 'execution.session-evidence',
+    valueFlags: ['--project', '--artifact'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['attemptId'],
+  },
+  'execution.cancel': {
+    command: 'execution',
+    commandId: 'execution.cancel',
+    valueFlags: ['--project', '--command-id'],
+    boolFlags: ['--confirm'],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['attemptId'],
+  },
   /* P03-5 / F-012 工作区状态展示与人工丢弃预览/确认（沿用既有参数解析与
    * 命令身份纪律；不新增草案命令）。 */
   'workspace.list': {
@@ -944,6 +998,10 @@ const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, A
       schedule: 'execution.schedule',
       attempts: 'execution.attempts',
       diagnostics: 'execution.diagnostics',
+      sessions: 'execution.sessions',
+      session: 'execution.session',
+      'session-evidence': 'execution.session-evidence',
+      cancel: 'execution.cancel',
     },
     workspace: {
       list: 'workspace.list',
@@ -2086,6 +2144,68 @@ export interface ParsedExecutionDiagnostics {
 }
 
 /**
+ * P03-6 / F-013 Work Session 列表（execution.sessions.list）：父级 Run/Task
+ * 二选一（--run/--task，同现或缺失均本地拒绝）；有界分页同计划列表。
+ */
+export interface ParsedExecutionSessions {
+  readonly kind: 'command';
+  readonly command: 'execution';
+  readonly commandId: 'execution.sessions';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly runId?: string;
+  readonly taskId?: string;
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+
+/** P03-6 / F-013 Work Session 详情（execution.session.get；含 Runtime 结果/停止证据）。 */
+export interface ParsedExecutionSession {
+  readonly kind: 'command';
+  readonly command: 'execution';
+  readonly commandId: 'execution.session';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly attemptId: string;
+}
+
+/** P03-6 / F-013 诊断证据正文（execution.session.evidence.get；只按稳定身份取成员制品）。 */
+export interface ParsedExecutionSessionEvidence {
+  readonly kind: 'command';
+  readonly command: 'execution';
+  readonly commandId: 'execution.session-evidence';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly attemptId: string;
+  readonly artifactId: string;
+}
+
+/**
+ * P03-6 / F-013 Attempt 显式取消（execution.attempt.cancel）：缺 --confirm 在
+ * 任何 I/O 之前本地拒绝；`--command-id` 复用原信封幂等重放（响应丢失先查回执，
+ * 不更换命令身份、不额外启动工作）。
+ */
+export interface ParsedExecutionCancel {
+  readonly kind: 'command';
+  readonly command: 'execution';
+  readonly commandId: 'execution.cancel';
+  readonly operation: 'execution.attempt.cancel';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly attemptId: string;
+  readonly confirm: true;
+  readonly explicitCommandId?: string;
+}
+
+/**
  * P03-5 / F-012 工作区列表（workspaces.list）：项目内受管工作区键集分页
  *（只读；`--feature` 可选过滤；limit 默认 100、上限 500，cursor 为 wscur_v1_
  * 不透明游标）。
@@ -2242,6 +2362,10 @@ export type ParsedAppCliCommand =
   | ParsedExecutionSchedule
   | ParsedExecutionAttempts
   | ParsedExecutionDiagnostics
+  | ParsedExecutionSessions
+  | ParsedExecutionSession
+  | ParsedExecutionSessionEvidence
+  | ParsedExecutionCancel
   | ParsedWorkspaceList
   | ParsedWorkspaceGet
   | ParsedWorkspaceOperations
@@ -2782,6 +2906,63 @@ function buildExecution(
         projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
         attemptId: requireAttemptId(scan.positionals[0] as string, state),
         ...optionalPlanListPage(scan, state),
+      };
+    }
+    case 'execution.sessions': {
+      // 父级 Run/Task 二选一（实际 Host 契约的 xor 选择器；缺失/同现均本地拒绝）。
+      const runRaw = takeOption(scan, '--run');
+      const taskRaw = takeOption(scan, '--task');
+      if (runRaw === undefined && taskRaw === undefined) {
+        fail(state, 'missing_required_option', 'parent');
+      }
+      if (runRaw !== undefined && taskRaw !== undefined) {
+        fail(state, 'conflicting_options');
+      }
+      return {
+        ...base,
+        command: 'execution',
+        commandId: 'execution.sessions',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        ...(runRaw !== undefined
+          ? { runId: requireRunId(runRaw, state) }
+          : { taskId: requirePlanId(taskRaw as string, state, 'taskId') }),
+        ...optionalPlanListPage(scan, state),
+      };
+    }
+    case 'execution.session': {
+      return {
+        ...base,
+        command: 'execution',
+        commandId: 'execution.session',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        attemptId: requireAttemptId(scan.positionals[0] as string, state),
+      };
+    }
+    case 'execution.session-evidence': {
+      return {
+        ...base,
+        command: 'execution',
+        commandId: 'execution.session-evidence',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        attemptId: requireAttemptId(scan.positionals[0] as string, state),
+        artifactId: requireArtifactId(requireOption(scan, '--artifact', state, 'artifactId'), state),
+      };
+    }
+    case 'execution.cancel': {
+      // 明确取消确认先于一切：缺 --confirm 即输入错误（不发取消请求）。
+      if (!scan.bools.has('--confirm')) {
+        fail(state, 'confirmation_required', 'confirm');
+      }
+      const explicitCommandId = optionalCommandId(scan, state);
+      return {
+        ...base,
+        command: 'execution',
+        commandId: 'execution.cancel',
+        operation: 'execution.attempt.cancel',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        attemptId: requireAttemptId(scan.positionals[0] as string, state),
+        confirm: true,
+        ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
       };
     }
     default:

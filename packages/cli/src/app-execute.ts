@@ -59,6 +59,16 @@ import {
   formatExecutionScheduleView,
 } from './app/schedule.js';
 import {
+  buildAttemptCancelView,
+  buildWorkSessionDetailView,
+  buildWorkSessionEvidenceView,
+  buildWorkSessionListView,
+  formatAttemptCancelView,
+  formatWorkSessionDetailView,
+  formatWorkSessionEvidenceView,
+  formatWorkSessionListView,
+} from './app/work-session.js';
+import {
   buildWorkspaceDiscardConfirmPayload,
   buildWorkspaceDiscardPreviewView,
   buildWorkspaceDiscardSubmitView,
@@ -1461,6 +1471,60 @@ async function executeExecutionCommand(
       });
       const view = buildExecutionDiagnosticsView(result);
       return emitSuccess(io, command, view, formatExecutionDiagnosticsView(view));
+    }
+    /* ------------------------------------------------------------ *
+     * P03-6 / F-013 Work Session 状态/证据与取消接受结构化输出
+     *（只经 HostClient 公共契约；查询只读零副作用，取消必须解析层 --confirm）
+     * ------------------------------------------------------------ */
+    case 'execution.sessions': {
+      const result = await client.listWorkSessions(command.projectId, {
+        ...(command.runId !== undefined ? { runId: command.runId } : { taskId: command.taskId }),
+        ...(command.limit !== undefined ? { limit: command.limit } : {}),
+        ...(command.cursor !== undefined ? { cursor: command.cursor } : {}),
+      });
+      const view = buildWorkSessionListView(
+        result,
+        command.runId !== undefined ? { runId: command.runId } : { taskId: command.taskId as string },
+      );
+      return emitSuccess(io, command, view, formatWorkSessionListView(view));
+    }
+    case 'execution.session': {
+      const result = await client.getWorkSession(command.projectId, command.attemptId);
+      const view = buildWorkSessionDetailView(result);
+      return emitSuccess(io, command, view, formatWorkSessionDetailView(view));
+    }
+    case 'execution.session-evidence': {
+      const result = await client.readWorkSessionEvidence(
+        command.projectId,
+        command.attemptId,
+        command.artifactId,
+      );
+      const view = buildWorkSessionEvidenceView(result);
+      return emitSuccess(io, command, view, formatWorkSessionEvidenceView(view));
+    }
+    case 'execution.cancel': {
+      // 取消响应丢失沿用回执查询与原信封（同一 --command-id 重放命中服务端摘要
+      // 重放返回原回执），不额外启动工作、不更换命令身份。
+      const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+      const receipt = await client.cancelAttempt(
+        {
+          projectId: command.projectId,
+          attemptId: command.attemptId,
+          ...(command.explicitCommandId !== undefined ? { commandId: command.explicitCommandId } : {}),
+        },
+        envelopeIdentityOptions(command.explicitCommandId, issuedAt),
+      );
+      return emitDomainReceipt(
+        io,
+        command,
+        receipt,
+        (commandId, replayed, result) =>
+          buildAttemptCancelView(commandId, replayed, result, {
+            projectId: command.projectId,
+            attemptId: command.attemptId,
+          }),
+        formatAttemptCancelView,
+      );
     }
   }
 }
