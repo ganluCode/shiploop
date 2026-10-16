@@ -88,6 +88,7 @@ export * from './ports/execution-budget-query.js';
 export * from './ports/execution-schedule-query.js';
 export * from './application/artifact-publish.js';
 export * from './application/verification-candidates.js';
+export * from './application/verification-plan.js';
 export * from './application/artifact-verify.js';
 export * from './application/project-service.js';
 export * from './application/configuration-service.js';
