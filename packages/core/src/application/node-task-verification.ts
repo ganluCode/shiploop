@@ -72,6 +72,8 @@ export interface NodeTaskVerificationInput {
   readonly batchId: string;
   readonly operation: string;
   readonly codeDigest: string;
+  /** Actual pre-runtime identity when the caller captured it; digest is only a compatibility fallback. */
+  readonly codeIdentity?: BaselineCodeIdentity;
   readonly policyDigest: string;
   readonly environmentSummary: Readonly<Record<string, unknown>>;
   readonly plan: Pick<VerificationPlan, 'status' | 'selectedChecks'>;
@@ -88,6 +90,7 @@ export interface NodeTaskVerificationResult {
     readonly status: CheckResultStatus;
     readonly reason: string | null;
     readonly resultId: string;
+    readonly testCount: number | null;
     readonly evidence: BaselineEvidence | null;
   }[];
 }
@@ -205,7 +208,7 @@ export function createNodeTaskVerificationExecutor(options: NodeTaskVerification
     if (!mutation.created && batch.status !== 'running') {
       const historical = options.verification.listCheckResults(input.projectId, input.batchId);
       return { batchId: input.batchId, status: batch.status as NodeTaskVerificationResult['status'], results: historical.map(result => ({
-        checkKey: result.checkKey, status: result.status, reason: 'replayed', resultId: result.id, evidence: null,
+        checkKey: result.checkKey, status: result.status, reason: 'replayed', resultId: result.id, testCount: null, evidence: null,
       })) };
     }
     if (!mutation.created && options.verification.listCheckResults(input.projectId, input.batchId).length > 0) {
@@ -240,7 +243,7 @@ export function createNodeTaskVerificationExecutor(options: NodeTaskVerification
       resultId, projectId: input.projectId, batchId: input.batchId, checkKey: check.checkKey, status: 'not_run',
       exitCode: null, signal: null, timedOut: false, outputArtifactId: null, outputTail: null, startedAtUtcMs: null, endedAtUtcMs: now(),
     }));
-    return { checkKey: check.checkKey, status: saved.result.status, reason, resultId: saved.result.id, evidence: null };
+    return { checkKey: check.checkKey, status: saved.result.status, reason, resultId: saved.result.id, testCount: null, evidence: null };
   }
   async function runCheck(input: NodeTaskVerificationInput, check: VerificationPlanCheck) {
     const started = now();
@@ -250,6 +253,7 @@ export function createNodeTaskVerificationExecutor(options: NodeTaskVerification
     let status: CheckResultStatus = 'inconclusive';
     let handle: CommandProcessHandle | undefined;
     let identityConfirmed = false;
+    let testCount: number | null = null;
     try {
       request = {
         argv: [...check.argv], cwd: await options.resolveCwd(check.cwdRef),
@@ -267,8 +271,10 @@ export function createNodeTaskVerificationExecutor(options: NodeTaskVerification
         return confirmed;
       }, input.signal);
       const observed = await observeProtocol(handle, input.targets);
+      testCount = observed.report?.testCount ?? null;
       captured = await evidence.collect({ projectId: input.projectId, operationId: input.operation, checkKey: check.checkKey,
-        request, handle: observed.handle, environmentRef: check.environmentRef, codeIdentity: codeIdentity(input.codeDigest) });
+        request, handle: observed.handle, environmentRef: check.environmentRef,
+        codeIdentity: input.codeIdentity ?? codeIdentity(input.codeDigest) });
       const resultReason: CommandProcessReason | null = captured.processReason;
       if (!captured.stopConfirmed) reason = 'stop_unconfirmed';
       else if (resultReason === 'missing_command' || resultReason === 'permission_denied' || resultReason === 'spawn_failed') { status = 'error'; reason = resultReason; }
@@ -299,7 +305,10 @@ export function createNodeTaskVerificationExecutor(options: NodeTaskVerification
       outputArtifactId: captured?.output?.artifactId ?? null, outputTail: captured?.tail || null,
       startedAtUtcMs: captured?.startedAtUtcMs ?? started, endedAtUtcMs: captured?.endedAtUtcMs ?? now(),
     }));
-    return { checkKey: check.checkKey, status: saved.result.status, reason, resultId: saved.result.id, evidence: captured };
+    return {
+      checkKey: check.checkKey, status: saved.result.status, reason, resultId: saved.result.id,
+      testCount, evidence: captured,
+    };
   }
   return { start };
 }
