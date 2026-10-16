@@ -635,6 +635,29 @@ export function toPublicWorkSessionResultEvidence(
   };
 }
 
+/** Pure validation of the public projection, shared by HostClient. */
+export function validatePublicWorkSessionResultEvidence(value: unknown): PublicWorkSessionResultEvidence {
+  const raw = requirePlainObject(value, EVIDENCE_CONTEXT, 'evidence');
+  const keys = ['kind', 'result', 'failure', 'recording', 'stop', 'control'];
+  rejectUnknownKeys(raw, keys, EVIDENCE_CONTEXT, 'evidence');
+  if (keys.some(key => !Object.hasOwn(raw, key))) throw validationError(EVIDENCE_CONTEXT, 'evidence', 'missing_field');
+  const recording = requirePlainObject(raw.recording, EVIDENCE_CONTEXT, 'evidence.recording');
+  const stop = requirePlainObject(raw.stop, EVIDENCE_CONTEXT, 'evidence.stop');
+  rejectUnknownKeys(recording, ['complete', 'manifestRef', 'failure', 'gaps', 'watermark'], EVIDENCE_CONTEXT, 'evidence.recording');
+  rejectUnknownKeys(stop, ['evidence', 'failure'], EVIDENCE_CONTEXT, 'evidence.stop');
+  if (raw.kind === 'runtime-not-started') {
+    if (raw.result !== null || raw.control !== null || recording.complete !== false || recording.manifestRef !== null ||
+        recording.failure !== null || recording.watermark !== null || stop.evidence !== null || stop.failure !== null) {
+      throw validationError(EVIDENCE_CONTEXT, 'evidence', 'invalid_unstarted_projection');
+    }
+    return toPublicWorkSessionResultEvidence(validateWorkSessionResultEvidence({ schemaVersion: 1, kind: raw.kind,
+      identity: {}, taskId: 'projection', runId: 'projection', failure: raw.failure,
+      recording: { complete: false, gaps: recording.gaps } }));
+  }
+  return toPublicWorkSessionResultEvidence(validateWorkSessionResultEvidence({ schemaVersion: 1, kind: raw.kind,
+    identity: {}, execution: { result: raw.result, failure: raw.failure }, recording, stop, control: raw.control }));
+}
+
 /* ------------------------------------------------------------------ *
  * 查询结果信封
  * ------------------------------------------------------------------ */

@@ -214,6 +214,7 @@ describe('vitest deterministic configuration', () => {
     expect(options.passWithNoTests).toBe(false);
     expect(options.cache).toBe(false);
     expect(options.pool).toBe('forks');
+    expect(options.maxWorkers).toBe(4);
     expect(Array.isArray(options.include)).toBe(true);
     const include = options.include as unknown[];
     expect(include.some((pattern) => String(pattern).includes('test'))).toBe(true);

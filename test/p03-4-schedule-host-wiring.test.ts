@@ -73,6 +73,11 @@ afterEach(async () => {
   const host = activeHost;
   activeHost = undefined;
   if (host !== undefined) {
+    // This fixture seeds synthetic process identities and never launches a process.
+    // Explicitly retire its leases before the production stop gate checks persisted occupancy.
+    activeFixture!.box.session.transactWrite('fixture.retireSyntheticOccupancy', () => {
+      activeFixture!.box.session.database.prepare('DELETE FROM workspace_leases').run();
+    });
     await host.close();
   }
   const fixture = activeFixture;

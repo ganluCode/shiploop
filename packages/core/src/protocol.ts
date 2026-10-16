@@ -183,6 +183,7 @@ export {
   EXECUTION_WORK_SESSIONS_LIST_OPERATION,
   WORK_SESSION_QUERY_OPERATIONS,
   WORK_SESSION_QUERY_STATES,
+  validatePublicWorkSessionResultEvidence,
 } from './ports/work-session-query.js';
 export type {
   PublicWorkSessionAttempt,

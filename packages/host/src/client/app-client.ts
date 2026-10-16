@@ -71,6 +71,9 @@ import type {
   SnapshotResult,
   TaskDetailResult,
   TaskListResult,
+  WorkSessionListResult,
+  WorkSessionDetailResult,
+  WorkSessionEvidenceContent,
   WorkspaceDetailResult,
   WorkspaceDiscardPreviewBinding,
   WorkspaceListResult,
@@ -94,6 +97,7 @@ import {
   HostProtocolError,
   MAX_APP_BODY_BYTES,
   MAX_ARTIFACT_CONTENT_BYTES,
+  MAX_WORK_SESSION_EVIDENCE_RESPONSE_BYTES,
   PHASES_ROUTE,
   PHASES_ROUTE_PREFIX,
   PROJECTS_INSPECT_ROUTE,
@@ -422,6 +426,10 @@ export interface HostEventSubscription {
 
 /** HostClient 应用面方法集（connectToHost 返回对象的一部分）。 */
 export interface HostClientApplication {
+  listWorkSessions(projectId: string, input: { readonly runId?: string; readonly taskId?: string; readonly limit?: number; readonly cursor?: string }): Promise<WorkSessionListResult>;
+  getWorkSession(projectId: string, attemptId: string): Promise<WorkSessionDetailResult>;
+  readWorkSessionEvidence(projectId: string, attemptId: string, artifactId: string): Promise<WorkSessionEvidenceContent>;
+  cancelAttempt(input: { readonly projectId: string; readonly attemptId: string; readonly commandId?: string }, options?: SubmitCommandOptions): Promise<CommandReceipt>;
   submitCommand(input: SubmitCommandInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
   getReceipt(commandId: string): Promise<CommandReceipt>;
   resolveResult(resultRef: string): Promise<CommandReceipt>;
@@ -1320,7 +1328,7 @@ export function createHostClientApplication(context: AppClientContext): HostClie
       token,
       connectTimeoutMs: context.connectMs,
       overallTimeoutMs: requestBudget(),
-      maxResponseBytes: MAX_APP_BODY_BYTES,
+      maxResponseBytes: operation === 'execution.session.evidence.get' ? MAX_WORK_SESSION_EVIDENCE_RESPONSE_BYTES : MAX_APP_BODY_BYTES,
     });
     if (response.statusCode !== 200) {
       throw mapErrorResponse(response.statusCode, response.json, operation);
@@ -2539,6 +2547,46 @@ export function createHostClientApplication(context: AppClientContext): HostClie
     /* ------------------------------------------------------------ *
      * P03-4 / F-008 调度诊断与 Attempt 审计只读查询
      * ------------------------------------------------------------ */
+
+    async listWorkSessions(projectId, input) {
+      const op = 'execution.sessions.list';
+      context.assertOpen(op);
+      const project = requireProjectId(op, projectId);
+      const object = rejectUnknownInputKeys(op, input, ['runId', 'taskId', 'limit', 'cursor']);
+      if ((object.runId !== undefined) === (object.taskId !== undefined)) throw invalidInput(op, 'parent_required');
+      const key = object.runId !== undefined ? 'runId' : 'taskId';
+      const parent = requireStableIdInput(op, object[key], key);
+      const paging = buildPlanListQuery({ limit: input.limit, cursor: input.cursor }, op);
+      const query = `projectId=${encodeURIComponent(project)}&${key}=${encodeURIComponent(parent)}${paging ? `&${paging}` : ''}`;
+      const result = validateAppQueryResponse(op, await getJson(op, `/v1/work-sessions?${query}`));
+      if (result.records.some(row => row.projectId !== project || row[key] !== parent)) {
+        throw new HostProtocolError('response_malformed', op, '会话列表归属不匹配');
+      }
+      return result;
+    },
+    async getWorkSession(projectId, attemptId) {
+      const op = 'execution.session.get';
+      context.assertOpen(op);
+      const project = requireProjectId(op, projectId), target = requireStableIdInput(op, attemptId, 'attemptId');
+      const result = validateAppQueryResponse(op, await getJson(op, `/v1/attempts/${target}/session?projectId=${encodeURIComponent(project)}`));
+      if (result.attempt.projectId !== project || result.attempt.id !== target) throw new HostProtocolError('response_malformed', op, '会话详情归属不匹配');
+      return result;
+    },
+    async readWorkSessionEvidence(projectId, attemptId, artifactId) {
+      const op = 'execution.session.evidence.get';
+      context.assertOpen(op);
+      const project = requireProjectId(op, projectId), target = requireStableIdInput(op, attemptId, 'attemptId');
+      const artifact = requireStableIdInput(op, artifactId, 'artifactId');
+      const result = validateAppQueryResponse(op, await getJson(op, `/v1/attempts/${target}/session/evidence?projectId=${encodeURIComponent(project)}&artifactId=${artifact}`));
+      if (result.artifact.artifactId !== artifact) throw new HostProtocolError('response_malformed', op, '证据归属不匹配');
+      return result;
+    },
+    async cancelAttempt(input, options) {
+      const object = rejectUnknownInputKeys('commands.submit', input, ['projectId', 'attemptId', 'commandId']);
+      return submitCommand({ ...optionalCommandIdInput('commands.submit', object.commandId), operation: 'execution.attempt.cancel',
+        scope: { kind: 'project', projectId: requireProjectId('commands.submit', object.projectId as string) },
+        payload: { attemptId: requireStableIdInput('commands.submit', object.attemptId, 'attemptId') } }, options);
+    },
 
     async getRunScheduleStatus(projectId: string, runId: string): Promise<RunScheduleStatusResult> {
       context.assertOpen('execution.run.schedule');

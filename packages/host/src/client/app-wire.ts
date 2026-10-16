@@ -16,6 +16,9 @@
  * - 本模块只做结构校验：无 I/O、不读时钟、不导入 node:http/net/fs；错误为
  *   HostProtocolError，details 只含受控 reason，不回显响应原文或秘密。
  */
+import { validateWorkSessionListWire, validateWorkSessionDetailWire, validateWorkSessionEvidenceWire } from './work-session-wire.js';
+import type { WorkSessionListResult, WorkSessionDetailResult, WorkSessionEvidenceContent } from 'shiploop-core/protocol';
+export type { WorkSessionListResult, WorkSessionDetailResult, WorkSessionEvidenceContent } from 'shiploop-core/protocol';
 import {
   ATTEMPT_EXECUTION_STAGES,
   ATTEMPT_NOTIFICATION_DIAGNOSTIC_REASONS,
@@ -153,6 +156,9 @@ export type {
 
 /** §11.3 查询能力清单（回执/结果读取经 validateCommandReceiptWire，不在本类型内）。 */
 export type AppQueryOperation =
+  | 'execution.sessions.list'
+  | 'execution.session.get'
+  | 'execution.session.evidence.get'
   | 'projects.list'
   | 'projects.get'
   | 'projects.binding.get'
@@ -3689,6 +3695,9 @@ export function validateAppQueryResponse(
   body: unknown,
   expectation?: SnapshotExpectation,
 ): WorkspaceOperationListResult;
+export function validateAppQueryResponse(operation: 'execution.sessions.list', body: unknown, expectation?: SnapshotExpectation): WorkSessionListResult;
+export function validateAppQueryResponse(operation: 'execution.session.get', body: unknown, expectation?: SnapshotExpectation): WorkSessionDetailResult;
+export function validateAppQueryResponse(operation: 'execution.session.evidence.get', body: unknown, expectation?: SnapshotExpectation): WorkSessionEvidenceContent;
 export function validateAppQueryResponse(
   operation: 'workspace.operations.get',
   body: unknown,
@@ -3754,6 +3763,9 @@ export function validateAppQueryResponse(
   expectation?: SnapshotExpectation,
 ): unknown {
   switch (operation) {
+    case 'execution.sessions.list': return validateWorkSessionListWire(body);
+    case 'execution.session.get': return validateWorkSessionDetailWire(body);
+    case 'execution.session.evidence.get': return validateWorkSessionEvidenceWire(body);
     case 'projects.list':
       return validateProjectListPage(operation, body);
     case 'projects.get': {

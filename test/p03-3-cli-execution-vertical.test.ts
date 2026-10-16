@@ -7,7 +7,7 @@
  *   提交成功（退出码 0），输出不被描述为 Feature 已验收通过；
  * - 同命令重放：同 `--command-id` 冻结信封 + 先查回执重放，返回同一 Batch/Run；
  * - 状态查询：`execution budget` 显示真实 Batch/Run ID、各层剩余额度、queued 未
- *   执行事实（runtimeStarts=0、scheduler_not_assembled）与修订历史；
+ *   执行事实（runtimeStarts=0、runtime_not_found）与修订历史；
  * - 显式修订：`execution revise --revision <budget_revision> --reason` CAS 修订，
  *   陈旧 revision 拒绝；修订历史与剩余额度经查询复核；
  * - 参数校验（缺少预算/非法日期/非法整数/有效并发大于一/冲突参数/缺失确认）
@@ -432,7 +432,7 @@ describe('F-012 执行授权 CLI 纵向（真实 Host + SQLite + Git）', () => 
     expect(queried.budget.runs.map((run) => run.id)).toEqual([started.runId]);
     expect(queried.budget.runs[0]).toMatchObject({
       status: 'queued',
-      reason: 'scheduler_not_assembled',
+      reason: 'runtime_not_found',
       startedAt: null,
     });
     expect(queried.revisions.records.map((record) => record.version)).toEqual([1]);

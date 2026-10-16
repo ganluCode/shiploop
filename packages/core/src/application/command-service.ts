@@ -121,6 +121,11 @@ export interface BaselineCancelPort {
   ): Promise<BaselineOperationRecord>;
 }
 export interface CommandServiceOptions {
+  /** Validation is synchronous in the receipt transaction; stop runs after commit. */
+  readonly executionCancel?: {
+    assertCancel(projectId: string, attemptId: string): import('../ports/work-resources.js').WorkResourceIdentity;
+    cancel(identity: import('../ports/work-resources.js').WorkResourceIdentity): Promise<void>;
+  };
   readonly atomicStore: AtomicCommandStore;
   /** F-008：project.register 的只读仓库检查（写事务之外调用；不传则注册命令 unsupported）。 */
   readonly repositoryInspector?: RepositoryInspector;
@@ -585,6 +590,9 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
         ) {
           throw new PublicError('unsupported', operation);
         }
+        if (envelope.operation === 'execution.attempt.cancel' && options.executionCancel === undefined) {
+          throw new PublicError('unsupported', operation);
+        }
         if (envelope.operation === 'baseline.cancel' && baselineCancel === undefined) {
           throw new PublicError('unsupported', operation);
         }
@@ -617,6 +625,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           envelope.operation !== 'project.register' &&
           envelope.operation !== 'baseline.preview' &&
           envelope.operation !== 'baseline.run' &&
+          envelope.operation !== 'execution.attempt.cancel' &&
           envelope.operation !== 'baseline.cancel' &&
           envelope.operation !== 'phase.create' &&
           envelope.operation !== FEATURE_PLAN_IMPORT_OPERATION &&
@@ -779,6 +788,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           return existing === undefined ? persisted : { ...persisted, replayed: true };
         }
 
+        let cancelIdentity: import('../ports/work-resources.js').WorkResourceIdentity | undefined;
         const receipt = store.transact(operation, transaction => {
           authorizeCommand(principal, envelope);
           const original = replay(
@@ -794,6 +804,15 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
             // 新注册命令必定已在事务外完成仓库检查（重放已在上面返回）。
             if (binding === undefined) throw new TypeError('注册命令缺少事务外仓库检查结果');
             return submitRegister(principal, envelope, digest, binding, transaction, now);
+          }
+          if (envelope.operation === 'execution.attempt.cancel') {
+            cancelIdentity = options.executionCancel!.assertCancel(envelope.scope.projectId, envelope.payload.attemptId);
+            const receipt = createCompletedReceipt({ principalId: principal.principalId, commandId: envelope.commandId,
+              operation: envelope.operation, scope: envelope.scope, requestDigest: digest, issuedAt: envelope.issuedAt,
+              completedAt: new Date(now).toISOString(), resultRef: createResultRef(randomBytes(32)),
+              result: { attemptId: envelope.payload.attemptId, cancellationRequested: true } });
+            transaction.saveReceipt(receipt);
+            return receipt;
           }
           if (envelope.operation === 'baseline.preview') {
             // 只读预览：事务外已完成全部 I/O；事务内只持久化 completed 回执。
@@ -1080,6 +1099,9 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
             envelope.payload.featureIds[0] ?? '',
           );
         }
+        // Persist the authorization/receipt before touching the Runtime. Replays never
+        // resubmit cancellation, even if the HTTP response was lost.
+        if (cancelIdentity) void options.executionCancel!.cancel(cancelIdentity).catch(() => undefined);
         return receipt;
       } catch (error) {
         throw mapToPublicError(error, { operation });

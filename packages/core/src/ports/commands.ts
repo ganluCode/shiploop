@@ -123,6 +123,7 @@ export const LOCAL_OWNER_CAPABILITIES: ReadonlySet<AppCapability> = Object.freez
  * ------------------------------------------------------------------ */
 
 export const COMMAND_OPERATIONS = [
+  'execution.attempt.cancel',
   'project.register',
   'project.metadata.update',
   'settings.global.create',
@@ -302,6 +303,7 @@ export const COMMAND_OPERATION_SPECS: Readonly<Record<AppOperation, CommandOpera
       mutation: 'create',
       capability: 'execution.start',
     },
+    'execution.attempt.cancel': { scopeKind: 'project', mutation: 'create', capability: 'execution.start' },
     'execution.start': { scopeKind: 'project', mutation: 'create', capability: 'execution.start' },
     // P03-3 / F-009：批次预算显式修订（更新类：expectedRevision=目标 Batch
     // 当前 budget_revision；增额/延期是新的明确授权，与启动能力分离）。
@@ -775,6 +777,12 @@ export type ValidatedCommandEnvelope =
       readonly scope: { readonly kind: 'project'; readonly projectId: string };
       readonly expectedRevision: null;
       readonly payload: unknown;
+    })
+  | (EnvelopeCommon & {
+      readonly operation: 'execution.attempt.cancel';
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: null;
+      readonly payload: { readonly attemptId: string };
     })
   | (EnvelopeCommon & {
       readonly operation: 'baseline.cancel';
@@ -1675,6 +1683,16 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
       expectedRevision: null,
       payload: normalizeBaselinePayload(object.payload),
     } as ValidatedCommandEnvelope;
+  }
+  if (operation === 'execution.attempt.cancel') {
+    if (scope.kind !== 'project') fail(operation, 'invalid_input', 'scope.kind', 'scope 种类与操作不匹配');
+    if (!isPlainObjectPayload(object.payload)) fail(operation, 'invalid_input', 'payload', '必须是 JSON 对象');
+    const payload = object.payload as Record<string, unknown>;
+    if (Object.keys(payload).length !== 1 || typeof payload.attemptId !== 'string' ||
+        !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(payload.attemptId)) {
+      fail(operation, 'invalid_input', 'payload.attemptId', '必须提供唯一目标 Attempt 标识');
+    }
+    return { ...base, operation, scope, expectedRevision: null, payload: { attemptId: payload.attemptId } };
   }
   if (operation === 'workspace.discard' || operation === 'workspace.discard.preview') {
     // P03-5 / F-010+F-011：与 baseline.cancel 同一纪律——信封层只要求 project

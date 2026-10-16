@@ -63,6 +63,7 @@ import {
   FEATURES_ROUTE_PREFIX,
   MAX_APP_BODY_BYTES,
   MAX_ARTIFACT_CONTENT_BYTES,
+  MAX_WORK_SESSION_EVIDENCE_RESPONSE_BYTES,
   MAX_HTTP_BODY_BYTES,
   MAX_QUERY_STRING_BYTES,
   PHASES_ROUTE,
@@ -98,6 +99,9 @@ import type { EventStreamHub } from './sse-transport.js';
 
 /** 应用操作身份字面量（与 §3.2 路由总表一一对应；错误体 operation）。 */
 export type ApplicationOperation =
+  | 'execution.sessions.list'
+  | 'execution.session.get'
+  | 'execution.session.evidence.get'
   | 'commands.submit'
   | 'receipts.get'
   | 'results.resolve'
@@ -265,6 +269,10 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
   }
   // P03-4 / F-008：GET /v1/attempts（集合根 + projectId/taskId 查询参数）与
   // 唯一冻结的 Attempt 子资源 GET /v1/attempts/:attemptId/diagnostics。
+  if (path === '/v1/work-sessions') return { operation: 'execution.sessions.list', method: 'GET' };
+  const sessionPath = /^\/v1\/attempts\/([^/]+)\/session(\/evidence)?$/.exec(path);
+  if (sessionPath) return { operation: sessionPath[2] ? 'execution.session.evidence.get' : 'execution.session.get',
+    method: 'GET', pathParam: { name: 'attemptId', value: sessionPath[1]! } };
   if (path === ATTEMPTS_ROUTE) {
     return { operation: 'execution.attempts.list', method: 'GET' };
   }
@@ -558,6 +566,9 @@ const QUERY_SPECS: Readonly<Partial<Record<ApplicationOperation, QuerySpec>>> = 
   'execution.budget.revisions': Object.freeze({ allowed: ['projectId', 'limit', 'cursor'], repeatable: [] }),
   // P03-4 / F-008：调度/审计查询参数白名单（取值规则由 Core 单一权威复核）。
   'execution.run.schedule': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
+  'execution.sessions.list': Object.freeze({ allowed: ['projectId', 'runId', 'taskId', 'limit', 'cursor'], repeatable: [] }),
+  'execution.session.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
+  'execution.session.evidence.get': Object.freeze({ allowed: ['projectId', 'artifactId'], repeatable: [] }),
   'execution.attempts.list': Object.freeze({
     allowed: ['projectId', 'taskId', 'limit', 'cursor'],
     repeatable: [],
@@ -1004,6 +1015,21 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
       result = await app.queryService.getRunScheduleStatus(app.principal, query);
       break;
     }
+    case 'execution.sessions.list': {
+      const query = buildPlanListQuery(params, operation, 'projectId');
+      for (const key of ['runId', 'taskId']) if (params.has(key)) query[key] = params.get(key);
+      result = await app.queryService.listWorkSessions(app.principal, query);
+      break;
+    }
+    case 'execution.session.get':
+      result = await app.queryService.getWorkSession(app.principal, { projectId: params.get('projectId'), attemptId: pathParam?.value });
+      break;
+    case 'execution.session.evidence.get': {
+      const evidence = await app.queryService.readWorkSessionEvidence(app.principal, {
+        projectId: params.get('projectId'), attemptId: pathParam?.value, artifactId: params.get('artifactId') });
+      result = { ...evidence, content: Buffer.from(evidence.content).toString('base64') };
+      break;
+    }
     case 'execution.attempts.list':
       result = await app.queryService.listExecutionAttempts(
         app.principal,
@@ -1056,7 +1082,7 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
       // 路由表与本分发必须一一对应；缺失是装配编程错误。
       throw new TypeError(`应用路由未接线：${operation}`);
   }
-  sendBoundedJson(response, 200, result, MAX_APP_BODY_BYTES, operation);
+  sendBoundedJson(response, 200, result, operation === 'execution.session.evidence.get' ? MAX_WORK_SESSION_EVIDENCE_RESPONSE_BYTES : MAX_APP_BODY_BYTES, operation);
 }
 
 /**

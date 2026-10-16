@@ -74,6 +74,7 @@ export const EXECUTION_BUDGET_BLOCK_REASONS = [
   'code_attempts_exhausted',
   'budget_exhausted',
   'scheduler_not_assembled',
+  'runtime_not_found',
 ] as const;
 export type ExecutionBudgetBlockReasonCode = (typeof EXECUTION_BUDGET_BLOCK_REASONS)[number];
 
@@ -379,8 +380,8 @@ export function buildExecutionBudgetStatus(
           used: reason.used,
         });
       }
-      if (run.reason === EXECUTION_RUN_NOT_READY_REASON && run.startedAtUtcMs === null) {
-        blockingReasons.push({ layer: 'run', layerId: run.id, reason: 'scheduler_not_assembled' });
+      if ((run.reason === EXECUTION_RUN_NOT_READY_REASON || run.reason === 'runtime_not_found') && run.startedAtUtcMs === null) {
+        blockingReasons.push({ layer: 'run', layerId: run.id, reason: run.reason });
       }
     }
     return {

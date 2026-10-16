@@ -7,6 +7,7 @@
     "paths": {
       "shiploop-core": ["./packages/core/src/index.ts"],
       "shiploop-core/protocol": ["./packages/core/src/protocol.ts"],
+      "shiploop-core/testing": ["./packages/core/src/adapters/testing.ts"],
       "shiploop-core/assembly": ["./packages/core/src/adapters/composition.ts"],
       "shiploop-host": ["./packages/host/src/index.ts"]
     }

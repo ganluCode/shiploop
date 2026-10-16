@@ -7,7 +7,7 @@
  * - 组合根装配 workspace 栈（workResources/authority/taskClaims/准备/保留/
  *   清理/丢弃/查询门面），不新增 Host/命令队列/事件工作流；
  * - 已认领 Attempt 的准备入口复用 P03-4 已提交认领回执；Run 保持 queued +
- *   scheduler_not_assembled（不认领空 Attempt、不启动 Runtime）；
+ *   runtime_not_found（不认领空 Attempt、不启动 Runtime）；
  * - 命令面：workspace.discard.preview（通用事务，事务外只读检查+证据发布）与
  *   workspace.discard（专属幂等通道：重放预检 + 丢弃摘要比对）；
  * - 查询面：四查询经 GET 路由 + project.read 能力位；分页有界、游标绑定；
@@ -248,7 +248,7 @@ describe('F-011 生产组合根纵向：认领→准备→保留→预览→确�
     expect(operations.records.find(record => record.kind === 'discard')?.status).toBe('succeeded');
   }, 120_000);
 
-  it('经生产命令面启动的 Run 保持 queued + scheduler_not_assembled；不伪造 Runtime/Verifier 能力', async () => {
+  it('经生产命令面启动的 Run 保持 queued + runtime_not_found；不伪造 Runtime/Verifier 能力', async () => {
     // 独立夹具（不经 workspace 纵向）：验证生产组合根的启动纪律。
     const { maxTokenTotal: _tokens, maxCostTotal: _cost, ...batch } = BUDGET.batch;
     const budget = { ...BUDGET, batch };
@@ -284,7 +284,7 @@ describe('F-011 生产组合根纵向：认领→准备→保留→预览→确�
         runId,
       });
       expect(schedule.run.status).toBe('queued');
-      expect(schedule.run.reason).toBe('scheduler_not_assembled');
+      expect(schedule.run.reason).toBe('runtime_not_found');
       for (const table of ['attempts', 'runtime_start_reservations']) {
         const count = fixture.session.database.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get() as { n: number };
         expect(count.n).toBe(0);

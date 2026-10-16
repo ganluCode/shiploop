@@ -144,6 +144,9 @@ export const APP_REQUEST_TIMEOUT_MS = 10_000;
  */
 export const MAX_ARTIFACT_CONTENT_BYTES = 8_388_608;
 
+/** Work evidence is JSON encoded base64 plus bounded metadata. */
+export const MAX_WORK_SESSION_EVIDENCE_RESPONSE_BYTES = Math.ceil(MAX_ARTIFACT_CONTENT_BYTES / 3) * 4 + MAX_APP_BODY_BYTES;
+
 /**
  * P02-2 §11.2/§13：客户端提交一个逻辑命令（含超时后查回执与有限重发）的
  * 整体预算（毫秒）；耗尽仍未知 → outcome_unknown（§15.6 登记的实施值）。

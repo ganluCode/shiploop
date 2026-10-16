@@ -267,7 +267,7 @@ describe('F-014 built CLI acceptance', () => {
       expect(before.budget.batch.dimensions.maxTotalAttempts?.used).toBe(0);
       expect(before.budget.batch.usage).toEqual({ tokenUsed: null, costUsed: null });
       expect(before.budget.runs).toHaveLength(1);
-      expect(before.budget.runs[0]).toMatchObject({ id: started.runId, status: 'queued', reason: 'scheduler_not_assembled', startedAt: null });
+      expect(before.budget.runs[0]).toMatchObject({ id: started.runId, status: 'queued', reason: 'runtime_not_found', startedAt: null });
       const replay = await ok([...start, '--confirm']);
       expect(replay).toMatchObject({ replayed: true, batchId: started.batchId, runId: started.runId });
       expectPersistentBudget(await ok<BudgetResult>(budgetArgs), before);

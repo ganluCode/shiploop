@@ -23,6 +23,7 @@ import { readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { readPublishedPid } from './helpers/pid-file.ts';
 import {
   createRuntimeExecutionService,
   createStaticRuntimeCapabilityCatalog,
@@ -139,7 +140,7 @@ async function waitFor(condition: () => boolean, label: string, timeoutMs = 10_0
 
 /** 精确清理：只按本测试捕获的 pid 发信号，绝不触碰其他进程。 */
 function killIfAlive(pid: number | undefined): void {
-  if (pid === undefined || pid <= 1) return;
+  if (pid === undefined || !Number.isSafeInteger(pid) || pid <= 1) return;
   try {
     process.kill(pid, 'SIGKILL');
   } catch { /* 已退出 */ }
@@ -614,8 +615,8 @@ describe('F-004 Runtime 停止证据与受控进程组核验', () => {
       const iterator = (handle.events as AsyncIterable<RuntimeEvent>)[Symbol.asyncIterator]();
       const started = await iterator.next();
       expect(started.value?.kind).toBe('tool_started');
-      await waitFor(() => existsSync(pidFile), '子进程登记 pid');
-      descendant = Number(readFileSync(pidFile, 'utf8'));
+      await waitFor(() => readPublishedPid(pidFile) !== undefined, '子进程登记有效 pid');
+      descendant = readPublishedPid(pidFile);
       expect(descendant).toBeGreaterThan(1);
       // 给运行循环充分推进机会：父进程已退出但子进程活跃时，结果与停止证据
       // 都不得结算（不报告已停止，也不把工具冒充完成）。
@@ -678,8 +679,8 @@ describe('F-004 Runtime 停止证据与受控进程组核验', () => {
       const started = await iterator.next();
       expect(started.value?.kind).toBe('tool_started');
       // 监督者真实失联（SIGKILL），受控命令进程仍活跃在同组。
-      await waitFor(() => existsSync(pidFile), '工具命令写入 pid');
-      commandPid = Number(readFileSync(pidFile, 'utf8'));
+      await waitFor(() => readPublishedPid(pidFile) !== undefined, '工具命令写入有效 pid');
+      commandPid = readPublishedPid(pidFile);
       process.kill((supervisor as CommandProcessIdentity).pid, 'SIGKILL');
       const [result, stopped] = await Promise.all([
         handle.result as Promise<RuntimeExecutionResult>,
@@ -731,8 +732,8 @@ describe('F-004 Runtime 停止证据与受控进程组核验', () => {
       const iterator = (handle.events as AsyncIterable<RuntimeEvent>)[Symbol.asyncIterator]();
       const started = await iterator.next();
       expect(started.value?.kind).toBe('tool_started');
-      await waitFor(() => existsSync(pidFile), '子进程登记 pid');
-      descendant = Number(readFileSync(pidFile, 'utf8'));
+      await waitFor(() => readPublishedPid(pidFile) !== undefined, '子进程登记有效 pid');
+      descendant = readPublishedPid(pidFile);
       expect(() => process.kill(descendant as number, 0)).not.toThrow();
       const receipt = await handle.cancel();
       expect(receipt).toEqual({ accepted: true, reason: null });

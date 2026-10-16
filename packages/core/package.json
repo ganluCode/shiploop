@@ -18,6 +18,10 @@
       "types": "./dist/protocol.d.ts",
       "default": "./dist/protocol.js"
     },
+    "./testing": {
+      "types": "./dist/adapters/testing.d.ts",
+      "default": "./dist/adapters/testing.js"
+    },
     "./assembly": {
       "types": "./dist/adapters/composition.d.ts",
       "default": "./dist/adapters/composition.js"

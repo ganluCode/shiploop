@@ -22,6 +22,7 @@ export default defineConfig({
     // 下 npm test 必须先于构建通过。精确匹配公共入口说明符到源码文件，不做
     // 前缀匹配；生产运行时仍由 node_modules 工作区链接解析到 dist 产物。
     alias: [
+      { find: /^shiploop-core\/testing$/, replacement: fileURLToPath(new URL('./packages/core/src/adapters/testing.ts', import.meta.url)) },
       {
         find: /^shiploop-core\/protocol$/,
         replacement: fileURLToPath(new URL('./packages/core/src/protocol.ts', import.meta.url)),
@@ -47,6 +48,9 @@ export default defineConfig({
     passWithNoTests: false,
     cache: false,
     pool: 'forks',
+    // Each integration file can launch real Git/Host/process trees. Bound file
+    // concurrency instead of multiplying those resources by every CPU core.
+    maxWorkers: 4,
     include: ['**/*.{test,spec}.?(c|m)[jt]s?(x)'],
     exclude: [
       '**/node_modules/**',

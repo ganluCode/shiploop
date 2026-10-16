@@ -65,7 +65,9 @@ describe('P03-3 / F-006 Task 尝试预算预占契约文档', () => {
     expect(TASK_ATTEMPT_CLASSIFICATIONS).toEqual(['code', 'infrastructure']);
     expect(TASK_ATTEMPT_CLASSIFIED_BY_CORE).toBe('core');
     expect(DEFAULT_TASK_MAX_CODE_ATTEMPTS).toBe(3);
-    expect(COMMAND_OPERATIONS.filter((operation) => /attempt|reserve|reclassify/i.test(operation))).toEqual([]);
+    // Cancellation is authorized control, never client-supplied budget accounting.
+    expect(COMMAND_OPERATIONS.filter((operation) => /attempt|reserve|reclassify/i.test(operation)))
+      .toEqual(['execution.attempt.cancel']);
     expect(APP_CAPABILITIES.filter((capability) => /attempt|reserve|reclassify/i.test(capability))).toEqual([]);
     expect(doc).toContain('客户端/模型不能自报');
     expect(doc).toContain('P03-4');

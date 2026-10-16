@@ -62,6 +62,9 @@ export const APP_OPERATIONS = [
   'execution.budget.revisions',
   // P03-4 / F-008：Run 调度诊断与 Attempt/通知诊断审计只读查询。
   'execution.run.schedule',
+  'execution.sessions.list',
+  'execution.session.get',
+  'execution.session.evidence.get',
   'execution.attempts.list',
   'execution.attempt.diagnostics',
   // P03-5 / F-011/F-012：工作区状态只读查询（服务端路由 F-011 已接线；

@@ -174,6 +174,7 @@ describe('F-002 冻结常量与能力声明', () => {
       },
       application: {
         commands: [
+          'execution.attempt.cancel',
           'project.register',
           'project.metadata.update',
           'settings.global.create',
@@ -213,6 +214,9 @@ describe('F-002 冻结常量与能力声明', () => {
           'workspace.discard.preview',
         ],
         queries: [
+          'execution.sessions.list',
+          'execution.session.get',
+          'execution.session.evidence.get',
           'projects.list',
           'projects.get',
           'projects.binding.get',
@@ -262,6 +266,9 @@ describe('F-002 冻结常量与能力声明', () => {
     // + P03-2 / F-007 审批决策查询（与 PLAN_APPROVAL_QUERY_OPERATION 同步）
     // + P03-4 / F-008 调度诊断/Attempt 审计三项（与 EXECUTION_SCHEDULE_QUERY_OPERATIONS 同步）。
     expect([...CURRENT_HOST_CAPABILITIES.application.queries]).toEqual([
+      'execution.sessions.list',
+      'execution.session.get',
+      'execution.session.evidence.get',
       ...QUERY_OPERATIONS.slice(0, 4),
       'projects.inspect',
       'projects.overview',

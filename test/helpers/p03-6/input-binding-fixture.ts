@@ -92,6 +92,7 @@ export interface BindingFixture {
   readonly projectId: string;
   readonly featureId: string;
   readonly runId: string;
+  readonly startEnvelope: Readonly<Record<string, unknown>>;
   readonly requirementArtifactId: string;
   readonly requirementContent: string;
   readonly workspace: VerifiedWorkWorkspace;
@@ -314,9 +315,10 @@ export async function openBindingFixture(options: BindingFixtureOptions = {}): P
     if (previewResult.status !== 'ready') {
       throw new Error(`夹具预览失败: ${JSON.stringify(previewResult)}`);
     }
-    const started = await submit('execution.start', {
-      featureIds: [featureId], budget: BINDING_BUDGET, previewDigest: previewResult.previewDigest,
-    }, { scope });
+    const startEnvelope = { schemaVersion: 5, commandId: randomUUID(), issuedAt: new Date(now).toISOString(),
+      operation: 'execution.start', scope,
+      payload: { featureIds: [featureId], budget: BINDING_BUDGET, previewDigest: previewResult.previewDigest } };
+    const started = await commands.submit(owner, startEnvelope as never);
     if (started.status !== 'accepted' || !('runId' in started)) {
       throw new Error(`夹具启动失败: ${JSON.stringify(started)}`);
     }
@@ -392,7 +394,7 @@ export async function openBindingFixture(options: BindingFixtureOptions = {}): P
     });
 
     return {
-      box, session: activeSession, projectId, featureId, runId,
+      box, session: activeSession, projectId, featureId, runId, startEnvelope,
       requirementArtifactId, requirementContent,
       workspace, authority, artifacts, verifier, publisher, bindingService,
       advance, claimTask, launch, claimAndLaunch, expireLeases, createResources: resources, bindingInput,

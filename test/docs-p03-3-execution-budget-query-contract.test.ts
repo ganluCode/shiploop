@@ -31,6 +31,7 @@ describe('F-010 execution budget query contract', () => {
       'code_attempts_exhausted',
       'budget_exhausted',
       'scheduler_not_assembled',
+      'runtime_not_found',
     ]);
     for (const word of [
       '本 Feature 不新增迁移',

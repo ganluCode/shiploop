@@ -43,6 +43,7 @@ export interface StopCapabilityView {
  * 再宣告（测试与 Core 命令操作清单交叉核对，防止漂移）。
  */
 export const APPLICATION_COMMAND_CAPABILITIES = [
+  'execution.attempt.cancel',
   'project.register',
   'project.metadata.update',
   'settings.global.create',
@@ -97,6 +98,9 @@ export const APPLICATION_COMMAND_CAPABILITIES = [
 
 /** P02-2 §11.3：Host 实际接线的应用查询（含回执/结果读取与快照；P02-3 / F-006 新增静态接入两项；F-014 新增基线分页/详情/证据正文三项；P03-1 / F-009 新增计划层级/详情/DAG 六项；P03-2 / F-007 新增审批决策查询一项；P03-4 / F-008 新增调度诊断/Attempt 审计三项）。 */
 export const APPLICATION_QUERY_CAPABILITIES = [
+  'execution.sessions.list',
+  'execution.session.get',
+  'execution.session.evidence.get',
   'projects.list',
   'projects.get',
   'projects.binding.get',

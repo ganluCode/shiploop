@@ -703,6 +703,7 @@ describe('F-011 传输纪律与版本门禁', () => {
       const error = errorOf(response);
       expect(error.code).toBe('unsupported');
       expect(error.details?.supportedOperations).toEqual([
+        'execution.attempt.cancel',
         'project.register',
         'project.metadata.update',
         'settings.global.create',
@@ -948,6 +949,7 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
     expect(validated.schemaVersion).toBe(5);
     expect(validated.capabilities.application).toEqual({
       commands: [
+        'execution.attempt.cancel',
         'project.register',
         'project.metadata.update',
         'settings.global.create',
@@ -983,6 +985,9 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         'workspace.discard.preview',
       ],
       queries: [
+        'execution.sessions.list',
+        'execution.session.get',
+        'execution.session.evidence.get',
         'projects.list',
         'projects.get',
         'projects.binding.get',

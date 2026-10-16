@@ -140,6 +140,7 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
 
   it('冻结命令白名单及其 scope/变更类型/能力描述，与契约 §6 一致', () => {
     expect([...COMMAND_OPERATIONS]).toEqual([
+      'execution.attempt.cancel',
       'project.register',
       'project.metadata.update',
       'settings.global.create',
@@ -183,6 +184,7 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       'workspace.discard.preview',
     ]);
     expect(COMMAND_OPERATION_SPECS).toEqual({
+      'execution.attempt.cancel': { scopeKind: 'project', mutation: 'create', capability: 'execution.start' },
       'project.register': { scopeKind: 'registration', mutation: 'create', capability: 'project.register' },
       'project.metadata.update': { scopeKind: 'project', mutation: 'update', capability: 'project.metadata.write' },
       'settings.global.create': { scopeKind: 'global', mutation: 'create', capability: 'settings.global.write' },

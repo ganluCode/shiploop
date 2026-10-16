@@ -36,7 +36,7 @@ import { homedir } from 'node:os';
 import { createLocalOwnerPrincipal, deriveDefaultDataRoot } from 'shiploop-core';
 import type { RuntimeCapabilityCatalog } from 'shiploop-core';
 import { openCoreApplication } from 'shiploop-core/assembly';
-import type { CoreApplication } from 'shiploop-core/assembly';
+import type { CoreApplication, WorkRuntimeFactory } from 'shiploop-core/assembly';
 import {
   HostProtocolError,
   LOOPBACK_LISTEN_ADDRESS,
@@ -84,6 +84,7 @@ export const BIND_OVERRIDE_ENV_KEYS = [
 ] as const;
 
 const ALLOWED_OPTION_KEYS = [
+  'workRuntimeFactory',
   'dataRoot',
   'userHomeDir',
   'capabilityCatalog',
@@ -98,6 +99,8 @@ const ALLOWED_OPTION_KEYS = [
 ] as const;
 
 export interface HostStartOptions {
+  /** Trusted code injection only; not accepted from CLI, environment or discovery. */
+  readonly workRuntimeFactory?: WorkRuntimeFactory;
   /** 显式数据根（POSIX 绝对路径）；与 userHomeDir 二选一。 */
   readonly dataRoot?: string;
   /** 注入的用户目录（推导 P01 默认根）；与 dataRoot 二选一，缺省取 os.homedir()。 */
@@ -305,6 +308,7 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
     openCoreApplication({
       dataRoot: canonicalRoot,
       capabilityCatalog: options.capabilityCatalog,
+      workRuntimeFactory: options.workRuntimeFactory,
     }),
   );
 
@@ -316,19 +320,22 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
     // until durable old identities have been reconciled. Unconfirmed resources remain occupied.
     await locked.writer.baselineExecutionService.recover();
     const baseline = locked.writer.baselineExecutionService;
+    const work = locked.writer.workExecution;
     const activityGate: HostActivityGate = {
       enterQuiesce() {
         const local = baseline.enterQuiesce(options.baselineStopPolicy ?? 'wait');
+        const runtime = work.enterQuiesce();
         const additional = options.activityGate?.enterQuiesce();
-        return { accepted: local.accepted + (additional?.accepted ?? 0) };
+        return { accepted: local.accepted + runtime.accepted + (additional?.accepted ?? 0) };
       },
       async awaitQuiesce(budgetMs) {
-        const [local, additional] = await Promise.all([
+        const [local, runtime, additional] = await Promise.all([
           baseline.awaitQuiesce(budgetMs),
+          work.awaitQuiesce(budgetMs),
           options.activityGate?.awaitQuiesce(budgetMs),
         ]);
-        return { confirmed: local.confirmed && (additional?.confirmed ?? true),
-          pending: [...local.pending, ...(additional?.pending ?? [])] };
+        return { confirmed: local.confirmed && runtime.confirmed && (additional?.confirmed ?? true),
+          pending: [...local.pending, ...runtime.pending, ...(additional?.pending ?? [])] };
       },
     };
     const store = createHostFileStore({ canonicalRoot });
@@ -446,6 +453,7 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
       startedAt,
     });
     lifecycle = 'ready';
+    work.start();
 
     const listeningServer = server;
     const port = address.port;
@@ -498,6 +506,7 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
         // 拆卸失败以原始启动错误为准（锁仍由 locked.close 释放/保留规则处理）。
       });
     }
+    await locked.writer.workExecution.close();
     await locked.close();
     throw error;
   }

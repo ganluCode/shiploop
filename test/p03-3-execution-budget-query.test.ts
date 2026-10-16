@@ -379,7 +379,7 @@ describe('F-010 执行预算只读查询（一致读视图/已知与未知字段
         expect(() => validateExecutionBudgetStatusResultWire(value)).toThrow();
       }
       expect(before.batch.runtimeStartsReserved).toBe(0);
-      expect(before.runs[0]).toMatchObject({ id: s.runId, status: 'queued', reason: 'scheduler_not_assembled' });
+      expect(before.runs[0]).toMatchObject({ id: s.runId, status: 'queued', reason: 'runtime_not_found' });
       const preview = await client.previewExecution({ projectId: s.projectId, featureIds: [s.featureId], budget: MAIN_BUDGET }, { issuedAt: NOW_ISO });
       expect(preview.status).toBe('completed');
       if (preview.status !== 'completed') throw new Error('missing preview');
@@ -473,7 +473,7 @@ describe('F-010 执行预算只读查询（一致读视图/已知与未知字段
 
     // 阻塞原因：当前仅「未装配调度器」这一持久控制原因（无预算阻塞）。
     expect(result.blockingReasons).toEqual([
-      { layer: 'run', layerId: s.runId, reason: 'scheduler_not_assembled' },
+      { layer: 'run', layerId: s.runId, reason: 'runtime_not_found' },
     ]);
 
     // 数据库重开前后结果一致（注入固定时钟）。

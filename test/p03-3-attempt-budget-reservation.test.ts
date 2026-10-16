@@ -852,7 +852,7 @@ describe('F-006 验收 3：代码尝试分类记账（受信 Core 分类）', ()
   });
 
   it('客户端或模型不能自报：命令/能力面无预占与分类操作，预占输入不含分类字段', async () => {
-    expect(COMMAND_OPERATIONS.filter((operation) => /attempt|reserve|reclassify/i.test(operation))).toEqual([]);
+    expect(COMMAND_OPERATIONS.filter((operation) => /attempt|reserve|reclassify/i.test(operation))).toEqual(['execution.attempt.cancel']);
     expect(APP_CAPABILITIES.filter((capability) => /attempt|reserve|reclassify/i.test(capability))).toEqual([]);
     const base = { projectId: 'proj-1', batchId: 'batch-1', runId: 'run-1', taskId: 'task-1' };
     const input = validateTaskAttemptReservationInput({ ...base, attemptKey: 'a1' }, 'Test.validate');

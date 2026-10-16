@@ -510,8 +510,12 @@ describe('F-006 Host inspect/overview 路由与握手能力（真实 Host + SQLi
     expect(body.capabilities.application.queries).toContain('execution.run.schedule');
     expect(body.capabilities.application.queries).toContain('execution.attempts.list');
     expect(body.capabilities.application.queries).toContain('execution.attempt.diagnostics');
-    expect(body.capabilities.application.queries).toHaveLength(33);
+    expect(body.capabilities.application.queries).toContain('execution.sessions.list');
+    expect(body.capabilities.application.queries).toContain('execution.session.get');
+    expect(body.capabilities.application.queries).toContain('execution.session.evidence.get');
+    expect(body.capabilities.application.queries).toHaveLength(36);
     expect(body.capabilities.application.commands).toEqual([
+      'execution.attempt.cancel',
       'project.register',
       'project.metadata.update',
       'settings.global.create',

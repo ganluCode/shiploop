@@ -101,6 +101,9 @@ caps 与持久计数合并计算（`resolveTaskAttemptCaps` + 计数），不由
 
 ## 4. 范围边界（本 Feature 不实现）
 
+后续P03-6增加`execution.attempt.cancel`授权控制命令，不提供预算预占、计数或分类自报入口；
+客户端/模型仍不能指定扣额或重分类结果。命令契约守护须区分取消控制与本节禁止的记账自报。
+
 - 不实现 Task 拓扑选择、完整 Attempt 生命周期、owner/fencing、lease 或进程执行
   ——P03-4 在同一事务接入真实 Attempt 创建（以本账本行为同事务预算预占依据），
   不能用空接口或独立提前扣额替代本契约。

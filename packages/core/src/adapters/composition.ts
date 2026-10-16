@@ -20,9 +20,11 @@
  *   PathService 的项目存在性核验端口绑定到同一 StateStore（受权定位 fail-closed）；
  * - 返回面只含窄端口与用例接口（不暴露 SqliteStorageSession、better-sqlite3、
  *   Drizzle、Pi SDK 或 HTTP 类型）；close() 关闭状态库会话且幂等；
- * - 结构合法 ≠ 可执行：本入口不装配 Runner/认证/模型执行能力，配置合法不代表
- *   可运行（见 ports/runtime-capabilities 的 assessSettingsConfiguration）。
+ * - Runtime 仅由可信函数显式注入；默认注册表为空，配置合法不代表可运行。
+ *   使用 Runtime 时须先 await workExecution.close() 核验停止，再 close() 状态库。
  */
+import { assembleWorkExecution, type WorkRuntimeFactory, type WorkExecution } from './work-execution.js';
+export type { WorkRuntimeFactory, WorkRuntimeContext } from './work-execution.js';
 import { existsSync, mkdirSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { homedir } from 'node:os';
@@ -143,6 +145,8 @@ const OPERATION = 'CoreApplication.open';
 
 /** 装配选项（边界为 unknown，经运行时校验；非法选项在任何 I/O 之前拒绝）。 */
 export interface CoreApplicationOptions {
+  /** Trusted static adapter assembly; never a settings/argv/env field. */
+  readonly workRuntimeFactory?: WorkRuntimeFactory;
   /** 显式授权数据根（绝对路径）；与 userHomeDir 二选一。 */
   readonly dataRoot?: string;
   /** 注入的 macOS 用户目录；用于解析默认根，与 dataRoot 二选一。 */
@@ -182,6 +186,7 @@ export interface CoreApplicationOptions {
  * 生命周期由 close() 管理，重复调用安全。
  */
 export interface CoreApplication {
+  readonly workExecution: WorkExecution;
   /** 已 realpath 固定的授权数据根。 */
   readonly dataRoot: string;
   readonly pathService: PathService;
@@ -254,6 +259,7 @@ export interface CoreApplication {
 }
 
 const ALLOWED_OPTION_KEYS = [
+  'workRuntimeFactory',
   'dataRoot',
   'userHomeDir',
   'capabilityCatalog',
@@ -342,6 +348,9 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
   const object = requirePlainObject(options, context, 'options');
   rejectUnknownKeys(object, ALLOWED_OPTION_KEYS, context, 'options');
   const capabilityCatalog = requireCapabilityCatalog(object.capabilityCatalog, context);
+  if (object.workRuntimeFactory !== undefined && typeof object.workRuntimeFactory !== 'function') {
+    throw validationError(context, 'workRuntimeFactory', 'trusted_factory_required');
+  }
   const recoveryCatalog = createStaticRuntimeRecoveryCatalog(object.runtimeRecoveryDescriptors ?? [], capabilityCatalog);
   if (object.runtimeRecoverySources !== undefined && (
     object.runtimeRecoverySources === null || typeof object.runtimeRecoverySources !== 'object' ||
@@ -697,6 +706,10 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
         }).confirm(input);
       },
     };
+    const workExecution = assembleWorkExecution({ session,
+      application: { dataRoot: basePathService.dataRoot(), artifactStore, artifactFileStore, stateStore,
+        configurationService, workWorkspaceAuthority, taskClaims, workspacePreparation, executionInputPrepare },
+      capabilityCatalog, runtimeFactory: object.workRuntimeFactory as WorkRuntimeFactory | undefined, nowUtcMs });
     const commandService = createCommandService({
       atomicStore,
       repositoryInspector,
@@ -706,6 +719,8 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       executionInputPrepare,
       executionPreview,
       executionStart,
+      executionDispatchSignal: workExecution,
+      executionCancel: workExecution,
       workspaceDiscard,
       baselineCancel: {
         cancel: (principal, projectId, operationId) => {
@@ -776,6 +791,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     });
 
     const application: CoreApplication = {
+      workExecution,
       dataRoot: basePathService.dataRoot(),
       pathService,
       stateStore,
@@ -806,6 +822,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       workspaceCleaner,
       workspaceDiscard,
       close(): void {
+        if (object.workRuntimeFactory !== undefined && !workExecution.isClosed()) throw new StorageError('conflict', 'CoreApplication.close', 'Work 执行须先完成关闭核验');
         if (baselineExecutionService.activeOperationIds().length > 0) throw new StorageError('conflict', 'CoreApplication.close', '基线执行尚未收尾');
         session.close();
       },

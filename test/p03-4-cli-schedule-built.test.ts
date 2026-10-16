@@ -102,6 +102,14 @@ afterAll(async () => {
   const running = host;
   host = undefined;
   if (running !== undefined) {
+    // The fixture registers a synthetic PID but launches no actual process.
+    // Retire only its test-owned leases; preserve the production stop gate.
+    if (fixture !== undefined && attempt !== undefined) {
+      fixture.box.session.transactWrite('fixture.retireSyntheticOccupancy', () => {
+        fixture!.box.session.database.prepare('DELETE FROM workspace_leases WHERE project_id = ? AND owner_id = ?')
+          .run(attempt!.projectId, attempt!.id);
+      });
+    }
     await running.close();
   }
   const box = fixture;

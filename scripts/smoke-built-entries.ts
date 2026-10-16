@@ -1370,6 +1370,23 @@ for (const packageDir of packageDirs) {
       fail(`${name}: exit code ${result.status}\nstdout: ${result.stdout}\nstderr: ${result.stderr}`);
     }
 
+    // Explicit Fake entries must also load from dist without SDK, login or side effects.
+    if (name === 'shiploop-core' || name === 'shiploop-host') {
+      const testing = manifest.exports?.['./testing'];
+      if (typeof testing?.default !== 'string' || !testing.default.startsWith('./dist/') ||
+          typeof testing.types !== 'string' || !testing.types.startsWith('./dist/') ||
+          !existsSync(resolve(packageRoot, testing.default)) || !existsSync(resolve(packageRoot, testing.types))) {
+        fail(`${name}: testing export must provide built JS and declarations`);
+      }
+      const loaded = spawnSync(process.execPath, [resolve(packageRoot, testing.default)], {
+        cwd, env: childEnv, encoding: 'utf8', timeout: LOAD_TIMEOUT_MS,
+      });
+      if (loaded.error || loaded.signal || loaded.status !== 0) {
+        fail(`${name}: testing entry failed: ${loaded.error?.message ?? loaded.stderr}`);
+      }
+      console.log(`ok ${name}: explicit testing entry ${testing.default}`);
+    }
+
     if (assemblyEntry !== null) {
       const assemblySandbox = join(sandbox, 'core-assembly');
       mkdirSync(assemblySandbox, { recursive: true });

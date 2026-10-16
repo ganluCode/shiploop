@@ -1,5 +1,8 @@
 # P03-3 / F-010 执行预算只读查询契约
 
+P03-6装配执行服务后，阻塞原因新增`runtime_not_found`：生产未注册适配器时零外部启动，
+不能把Run已接受或queued当成正在执行。`scheduler_not_assembled`仍保留用于尚未装配调度器的路径。
+
 实施契约：`packages/core/src/ports/execution-budget-query.ts`（公开形状、冻结
 词汇与 `buildExecutionBudgetStatus` 纯投影）、
 `packages/core/src/adapters/sqlite/execution-store.ts`（只读查询面

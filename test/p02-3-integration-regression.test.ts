@@ -48,6 +48,7 @@ import { request as httpRequest } from 'node:http';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { readPublishedPid } from './helpers/pid-file.ts';
 import {
   connectToHost,
   createHostFileStore,
@@ -310,6 +311,7 @@ async function waitFor<T>(
 
 /** 有界等待进程真正消失（探测失败不算停止）。 */
 async function waitForPidGone(pid: number, budgetMs: number): Promise<void> {
+  if (!Number.isSafeInteger(pid) || pid <= 1) throw new Error('Invalid test PID');
   await waitFor(() => {
     try {
       process.kill(pid, 0);
@@ -322,6 +324,7 @@ async function waitForPidGone(pid: number, budgetMs: number): Promise<void> {
 
 /** 进程真实存活核验（不把探测失败当作已停止）。 */
 function pidAlive(pid: number): boolean {
+  if (!Number.isSafeInteger(pid) || pid <= 1) throw new Error('Invalid test PID');
   try {
     process.kill(pid, 0);
     return true;
@@ -1125,7 +1128,7 @@ describe('F-018 FR-2：基线执行矩阵（真实进程/事件/占用/证据）
         throw new Error(`预期 accepted 回执，实际 ${hangAccepted.status}`);
       }
       const hungPid = await waitFor(
-        () => (existsSync(pidFile) ? Number.parseInt(readFileSync(pidFile, 'utf8'), 10) : undefined),
+        () => readPublishedPid(pidFile),
         30_000,
       );
       expect(pidAlive(hungPid)).toBe(true);
@@ -1158,7 +1161,7 @@ describe('F-018 FR-2：基线执行矩阵（真实进程/事件/占用/证据）
         reasonCode: 'timed_out',
         timedOut: true,
       });
-      const timedOutPid = Number.parseInt(readFileSync(timeoutPidFile, 'utf8'), 10);
+      const timedOutPid = await waitFor(() => readPublishedPid(timeoutPidFile), 30_000);
       await waitForPidGone(timedOutPid, 15_000);
 
       // 3) 忽略 SIGTERM 的进程树：显式取消 → SIGTERM 被忽略 → 升级 SIGKILL 整组；
