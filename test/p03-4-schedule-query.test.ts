@@ -22,6 +22,8 @@ import type { BudgetFixture } from './helpers/p03-3/budget-fixture.ts';
 import { openClaimFixture } from './helpers/p03-4/task-claim-fixture.ts';
 import { createSqliteQueryStore } from '../packages/core/src/adapters/sqlite/query-store.ts';
 import { createSqliteStateStore } from '../packages/core/src/adapters/sqlite/state-store.ts';
+import { createSqliteArtifactStore } from '../packages/core/src/adapters/sqlite/artifact-store.ts';
+import { createArtifactFileStore } from '../packages/core/src/adapters/fs/artifact-files.ts';
 import { createSqliteAttemptLifecycleStore } from '../packages/core/src/adapters/sqlite/attempt-lifecycle-store.ts';
 import { createSqliteWorkResourceAccess } from '../packages/core/src/adapters/sqlite/work-resources.ts';
 import { createSqliteExecutionAccess } from '../packages/core/src/adapters/sqlite/execution-store.ts';
@@ -58,6 +60,9 @@ function assembleQueries(box: BudgetFixture): QueryService {
     executionBudgetReads: queryStore,
     scheduleReads: queryStore,
     workspaceReads: queryStore,
+    workSessionReads: queryStore,
+    artifacts: createSqliteArtifactStore(box.session),
+    artifactFiles: createArtifactFileStore({ dataRoot: box.box.dataRoot }),
     dataRootIdentity: computeDataRootIdentity(box.box.dataRoot),
     nowUtcMs: () => NOW,
   });

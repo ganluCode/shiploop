@@ -59,7 +59,7 @@ export interface SqliteArtifactStoreOptions {
   readonly nowUtcMs?: () => number;
 }
 
-interface ArtifactRow {
+export interface ArtifactRow {
   readonly id: string;
   readonly created_at: number;
   readonly project_id: string;
@@ -91,7 +91,8 @@ function statusFromRow(row: ArtifactRow, context: ValidationContext): ArtifactSt
   return status;
 }
 
-function artifactFromRow(row: ArtifactRow, context: ValidationContext): ArtifactRecord {
+/** 行 → ArtifactRecord；P03-6 / F-011 只读查询适配器复用同一映射规则。 */
+export function artifactFromRow(row: ArtifactRow, context: ValidationContext): ArtifactRecord {
   return {
     id: row.id,
     projectId: row.project_id,

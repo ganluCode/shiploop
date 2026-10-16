@@ -35,7 +35,7 @@ import type { SqliteStorageSession } from './session.js';
 import { transactSqliteConsistentRead } from './state-store.js';
 import { createSqliteAtomicCommandStore } from './atomic-commands.js';
 
-interface SessionRow {
+export interface SessionRow {
   id: string; created_at: number; updated_at: number; revision: number; project_id: string;
   attempt_id: string | null; parent_session_id: string | null; kind: string; title: string | null;
   purpose: string; runtime: string; adapter_version: string; provider_session_id: string | null;
@@ -44,10 +44,35 @@ interface SessionRow {
   native_ref: string | null; recording_watermark: number | null; recording_gaps: string | null;
 }
 
-const SESSION_COLUMNS = `id, created_at, updated_at, revision, project_id, attempt_id, parent_session_id,
+export const SESSION_COLUMNS = `id, created_at, updated_at, revision, project_id, attempt_id, parent_session_id,
   kind, title, purpose, runtime, adapter_version, provider_session_id, status, execution_stage,
   input_ref, result_ref, last_activity_at, started_at, ended_at, stopped_at, native_ref,
   recording_watermark, recording_gaps`;
+
+/**
+ * 行 → WorkSessionRecord（fail-closed：损坏行抛 StorageError corrupt，不把原始
+ * 内容泄漏进错误）；P03-6 / F-011 只读查询适配器复用同一映射规则。
+ */
+export function workSessionRecordFromRow(row: SessionRow): WorkSessionRecord {
+  try {
+    return validateWorkSessionRecord({
+      id: row.id, createdAtUtcMs: row.created_at, updatedAtUtcMs: row.updated_at, revision: row.revision,
+      projectId: row.project_id, attemptId: row.attempt_id, parentSessionId: row.parent_session_id,
+      kind: row.kind, title: row.title, purpose: row.purpose, runtime: row.runtime,
+      adapterVersion: row.adapter_version, providerSessionId: row.provider_session_id,
+      status: row.status, executionStage: row.execution_stage, inputRef: row.input_ref,
+      resultRef: row.result_ref, lastActivityAtUtcMs: row.last_activity_at, startedAtUtcMs: row.started_at,
+      endedAtUtcMs: row.ended_at, stoppedAtUtcMs: row.stopped_at,
+      nativeRef: row.native_ref === null ? null : JSON.parse(row.native_ref),
+      recordingWatermark: row.recording_watermark,
+      recordingGaps: row.recording_gaps === null ? null : JSON.parse(row.recording_gaps),
+    });
+  } catch {
+    throw new StorageError('corrupt', 'WorkSessionStore.read', 'Invalid stored work session', {
+      entity: { type: 'work_session', id: row.id, projectId: row.project_id },
+    });
+  }
+}
 
 interface AttemptIdentityRow {
   project_id: string; run_id: string; status: string; revision: number;
@@ -70,23 +95,7 @@ export function createSqliteWorkSessionStore(
   }
 
   function sessionFromRow(row: SessionRow): WorkSessionRecord {
-    try {
-      return validateWorkSessionRecord({
-        id: row.id, createdAtUtcMs: row.created_at, updatedAtUtcMs: row.updated_at, revision: row.revision,
-        projectId: row.project_id, attemptId: row.attempt_id, parentSessionId: row.parent_session_id,
-        kind: row.kind, title: row.title, purpose: row.purpose, runtime: row.runtime,
-        adapterVersion: row.adapter_version, providerSessionId: row.provider_session_id,
-        status: row.status, executionStage: row.execution_stage, inputRef: row.input_ref,
-        resultRef: row.result_ref, lastActivityAtUtcMs: row.last_activity_at, startedAtUtcMs: row.started_at,
-        endedAtUtcMs: row.ended_at, stoppedAtUtcMs: row.stopped_at,
-        nativeRef: row.native_ref === null ? null : JSON.parse(row.native_ref),
-        recordingWatermark: row.recording_watermark,
-        recordingGaps: row.recording_gaps === null ? null : JSON.parse(row.recording_gaps),
-      });
-    } catch {
-      // fail-closed：损坏行读取失败，不把原始内容泄漏进错误。
-      fail('corrupt', 'WorkSessionStore.read', 'Invalid stored work session', row.id, row.project_id);
-    }
+    return workSessionRecordFromRow(row);
   }
 
   function readSessionRow(sessionId: string): SessionRow | undefined {

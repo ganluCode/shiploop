@@ -150,6 +150,9 @@ async function preparedFixture() {
     executionBudgetReads: queryStore,
     scheduleReads: queryStore,
     workspaceReads: queryStore,
+    workSessionReads: queryStore,
+    artifacts: createSqliteArtifactStore(session),
+    artifactFiles: createArtifactFileStore({ dataRoot }),
     dataRootIdentity: computeDataRootIdentity(dataRoot),
     nowUtcMs: () => NOW,
   });

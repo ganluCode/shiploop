@@ -44,6 +44,11 @@ import type { AttemptRecord } from '../../ports/attempt-store.js';
 import { createSqliteExecutionScheduleQueryStore } from './execution-schedule-query-store.js';
 import { createSqliteWorkspaceQueryStore } from './workspace-query-store.js';
 import type { WorkspaceQueryReadStore } from '../../ports/workspace-query.js';
+import { createSqliteWorkSessionQueryStore } from './work-session-query-store.js';
+import type {
+  WorkSessionDetailView,
+  WorkSessionQueryReadStore,
+} from '../../ports/work-session-query.js';
 import type {
   FeatureRecord,
   PhaseRecord,
@@ -60,7 +65,8 @@ import type { SqliteStateStoreOptions } from './state-store.js';
  * P03-1 / F-006 起追加计划层级列表/详情一致读取（PlanQueryReadStore）；
  * P03-3 / F-010 起追加执行预算查询窄读取（ExecutionBudgetQueryReadStore）；
  * P03-4 / F-007 起追加调度/审计查询窄读取（ExecutionScheduleQueryReadStore）；
- * P03-5 / F-011 起追加工作区状态查询窄读取（WorkspaceQueryReadStore）。 */
+ * P03-5 / F-011 起追加工作区状态查询窄读取（WorkspaceQueryReadStore）；
+ * P03-6 / F-011 起追加 Work Session/证据查询窄读取（WorkSessionQueryReadStore）。 */
 export interface SqliteQueryStore
   extends AuthorizedProjectReadStore,
     ConsistentSnapshotStore,
@@ -69,7 +75,8 @@ export interface SqliteQueryStore
     PlanQueryReadStore,
     ExecutionBudgetQueryReadStore,
     ExecutionScheduleQueryReadStore,
-    WorkspaceQueryReadStore {}
+    WorkspaceQueryReadStore,
+    WorkSessionQueryReadStore {}
 
 export function createSqliteQueryStore(
   session: SqliteStorageSession,
@@ -89,6 +96,7 @@ export function createSqliteQueryStore(
   );
   const schedule = createSqliteExecutionScheduleQueryStore(session);
   const workspace = createSqliteWorkspaceQueryStore(session);
+  const workSessions = createSqliteWorkSessionQueryStore(session);
   return {
     listVisibleProjects(visibility: unknown, filter: unknown): ProjectPage {
       return access.listVisibleProjects(visibility, filter);
@@ -190,5 +198,12 @@ export function createSqliteQueryStore(
       workspace.listWorkspaceRecords(projectId, featureId, request),
     listWorkspaceOperationViews: (projectId: unknown, featureId: unknown, request: never) =>
       workspace.listWorkspaceOperationViews(projectId, featureId, request),
+    readRunRef: (projectId: unknown, runId: unknown) => workSessions.readRunRef(projectId, runId),
+    listRunWorkSessions: (visibility: unknown, projectId: unknown, runId: unknown, request: ExecutionListRequest) =>
+      workSessions.listRunWorkSessions(visibility, projectId, runId, request),
+    listTaskWorkSessions: (visibility: unknown, projectId: unknown, taskId: unknown, request: ExecutionListRequest) =>
+      workSessions.listTaskWorkSessions(visibility, projectId, taskId, request),
+    readWorkSessionDetail: (projectId: unknown, attemptId: unknown): WorkSessionDetailView | undefined =>
+      workSessions.readWorkSessionDetail(projectId, attemptId),
   };
 }

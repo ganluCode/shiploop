@@ -162,6 +162,30 @@ import {
   type WorkspaceOperationListResult,
   type WorkspaceQueryReadStore,
 } from '../ports/workspace-query.js';
+import {
+  EXECUTION_WORK_SESSION_EVIDENCE_OPERATION,
+  EXECUTION_WORK_SESSION_GET_OPERATION,
+  EXECUTION_WORK_SESSIONS_LIST_OPERATION,
+  WORK_SESSION_EVIDENCE_MAX_READ_BYTES,
+  WORK_SESSION_SETTLEMENT_MAX_READ_BYTES,
+  deriveWorkSessionQueryState,
+  isWorkSessionEvidenceLocator,
+  toPublicWorkSessionAttempt,
+  toPublicWorkSessionEvidenceRef,
+  toPublicWorkSessionRecord,
+  toPublicWorkSessionResultEvidence,
+  toPublicWorkSessionSummary,
+  validateWorkSessionListSelector,
+  validateWorkSessionResultEvidence,
+  type PublicWorkSessionResultEvidence,
+  type WorkSessionDetailResult,
+  type WorkSessionEvidenceContent,
+  type WorkSessionListResult,
+  type WorkSessionQueryReadStore,
+} from '../ports/work-session-query.js';
+import type { ArtifactStore } from '../ports/artifact-store.js';
+import type { ArtifactFileStore } from '../ports/artifact-files.js';
+import { createArtifactVerifier } from './artifact-verify.js';
 import type { AttemptRecord } from '../ports/attempt-store.js';
 import { evaluateTaskDag } from './task-dag.js';
 
@@ -329,6 +353,27 @@ export interface QueryService {
   listWorkspaceOperations(principal: unknown, input: unknown): Promise<WorkspaceOperationListResult>;
   /** P03-5 / F-011 workspace.operations.get：按 operationId 的操作详情（含回执引用）。 */
   getWorkspaceOperation(principal: unknown, input: unknown): Promise<WorkspaceOperationDetailResult>;
+  /**
+   * P03-6 / F-011 execution.sessions.list：按 Run 或 Task 的顶层 Work Session
+   * 分页（kind='work'，Chat 不混入；实际 runtime/executionStage/最后活动/结果
+   * 引用/停止时间来自持久一致读视图；复用计划分页的有界 limit/受控游标规则，
+   * 游标绑定数据根 + 项目 + 父级，跨项目/跨父级重放 invalid_cursor）。
+   */
+  listWorkSessions(principal: unknown, input: unknown): Promise<WorkSessionListResult>;
+  /**
+   * P03-6 / F-011 execution.session.get：按 Attempt 的 Session 详情（Session
+   * 记录、executionStage、输入身份、最后活动、占用及证据引用索引 + 经完整性
+   * 核验的结果证据投影；usage.basis 原样保留——synthetic 显式标记；执行完成
+   * 等待验证与执行不确定分别展示；启动前拒绝场景 Session 为 null）。
+   */
+  getWorkSession(principal: unknown, input: unknown): Promise<WorkSessionDetailResult>;
+  /**
+   * P03-6 / F-011 execution.session.evidence.get：Session/Attempt 受控 locator
+   * 前缀内 ready 诊断制品的授权正文读取（复用既有 ArtifactVerifier 的
+   * hash/size 核验与错误映射；未知/跨项目/非成员/非 ready 统一 not_found
+   * 防枚举；绝不接受任意文件路径；查询零写入、零续租）。
+   */
+  readWorkSessionEvidence(principal: unknown, input: unknown): Promise<WorkSessionEvidenceContent>;
 }
 
 export interface QueryServiceOptions {
@@ -353,6 +398,12 @@ export interface QueryServiceOptions {
   readonly scheduleReads: ExecutionScheduleQueryReadStore;
   /** P03-5 / F-011 工作区状态查询一致读取窄端口（只读；脱敏投影在端口层）。 */
   readonly workspaceReads: WorkspaceQueryReadStore;
+  /** P03-6 / F-011 Work Session/证据查询一致读取窄端口（只读）。 */
+  readonly workSessionReads: WorkSessionQueryReadStore;
+  /** P03-6 / F-011 证据制品索引（正文经完整性核验读取；只读用法）。 */
+  readonly artifacts: ArtifactStore;
+  /** P03-6 / F-011 证据制品文件（只读用法；不推导任意路径）。 */
+  readonly artifactFiles: ArtifactFileStore;
   /** 数据根身份（64hex；可信装配由 realpath 数据根派生，绝不来自请求数据）。 */
   readonly dataRootIdentity: string;
   /** UTC 毫秒时钟（默认 Date.now）；测试注入以获得确定性 readAt。 */
@@ -416,6 +467,20 @@ function executionScheduleTargetNotFound(
 }
 
 /**
+ * P03-6 / F-011 Session/证据目标「不可见/不存在/跨项目/非成员」统一
+ * not_found（同一形状纪律：不区分存在性，不回显归属或实体身份，逐字段
+ * 一致；防枚举）；能力缺失仍先行 forbidden。
+ */
+function workSessionTargetNotFound(
+  operation: string,
+  entityType: 'session' | 'attempt' | 'artifact',
+): never {
+  throw new PublicError('not_found', operation, '执行实体不存在或不可见', {
+    details: { reason: 'execution_entity_not_found', entityType },
+  });
+}
+
+/**
  * P03-5 / F-011 工作区目标「不可见/不存在/跨项目」统一 not_found（同一形状
  * 纪律：不区分存在性，不回显归属或实体身份，逐字段一致）；能力缺失仍先行
  * forbidden。
@@ -446,12 +511,53 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
     executionBudgetReads,
     scheduleReads,
     workspaceReads,
+    workSessionReads,
+    artifacts,
+    artifactFiles,
     dataRootIdentity,
   } = options;
   if (typeof dataRootIdentity !== 'string' || !/^[0-9a-f]{64}$/.test(dataRootIdentity)) {
     throw new TypeError('createQueryService: dataRootIdentity 必须是 64 位小写十六进制（可信装配派生）');
   }
   const nowUtcMs = options.nowUtcMs ?? Date.now;
+
+  // P03-6 / F-011：结果证据（小 JSON）与诊断制品正文的完整性核验读取器
+  // （复用既有 ArtifactVerifier；缓冲上限显式有限，hash/size 核验失败即拒绝）。
+  const settlementVerifier = createArtifactVerifier({
+    artifacts,
+    files: artifactFiles,
+    limits: { maxReadBytes: WORK_SESSION_SETTLEMENT_MAX_READ_BYTES },
+  });
+  const evidenceVerifier = createArtifactVerifier({
+    artifacts,
+    files: artifactFiles,
+    limits: { maxReadBytes: WORK_SESSION_EVIDENCE_MAX_READ_BYTES },
+  });
+
+  /** 结果证据正文读取：完整性核验 + JSON + 形状校验任一失败均为 corrupt_state。 */
+  async function readSettlementEvidenceBody(projectId: string, artifactId: string, operation: string) {
+    const corrupt = (): PublicError =>
+      new PublicError('corrupt_state', operation, '证据完整性核验失败', {
+        details: { reason: 'evidence_incomplete' },
+      });
+    let verified;
+    try {
+      verified = await settlementVerifier.readVerifiedContent(projectId, artifactId);
+    } catch {
+      throw corrupt();
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(Buffer.from(verified.content).toString('utf8'));
+    } catch {
+      throw corrupt();
+    }
+    try {
+      return validateWorkSessionResultEvidence(parsed);
+    } catch {
+      throw corrupt();
+    }
+  }
 
   /** 游标绑定：数据根身份 + scope（每次构造；createEventCursorBinding 复核形状）。 */
   function cursorBinding(scope: PublicEventScope, operation: string): EventCursorBinding {
@@ -1497,6 +1603,203 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
           workspaceTargetNotFound(operation, 'workspace_operation');
         }
         return { operation: toPublicWorkspaceOperationRecord(view) };
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    // P03-6 / F-011：Work Session 只读查询（能力核验 → 身份/过滤器校验 →
+    // 项目可见 → 一致读；跨项目/不存在折叠 not_found；脱敏投影在端口层；
+    // 查询零写入、零事件、零续租、不触发取消或执行）。
+    async listWorkSessions(principal: unknown, input: unknown): Promise<WorkSessionListResult> {
+      assertTrustedPrincipal(principal);
+      const operation = EXECUTION_WORK_SESSIONS_LIST_OPERATION;
+      try {
+        requireCapability(principal, 'project.read', operation);
+        const object = requirePlainObject(input, { operation }, 'input');
+        const projectId = requireProjectId(object.projectId, operation);
+        const selector = validateWorkSessionListSelector(object, operation);
+        requireProjectVisible(principal, projectId, operation);
+        const filter = validatedPlanFilter(object, operation);
+        const binding = planCursorBinding(
+          selector.parent.kind === 'run'
+            ? { kind: 'run-work-sessions', projectId, runId: selector.parent.runId }
+            : { kind: 'task-work-sessions', projectId, taskId: selector.parent.taskId },
+          operation,
+        );
+        // 游标解析先于任何读取：跨父级/跨项目/跨根重放或篡改载荷一律
+        // invalid_cursor，绝不当作从零读取，也不先泄漏目标存在性。
+        const after = planListRequest(filter, binding, operation);
+        const request = {
+          after: after.afterId === null ? null : decodeExecutionListKey(after.afterId, operation),
+          limit: filter.limit,
+        };
+        let page;
+        if (selector.parent.kind === 'run') {
+          if (workSessionReads.readRunRef(projectId, selector.parent.runId) === undefined) {
+            executionScheduleTargetNotFound(operation, 'run');
+          }
+          page = workSessionReads.listRunWorkSessions(
+            principalProjectVisibility(principal),
+            projectId,
+            selector.parent.runId,
+            request,
+          );
+        } else {
+          const task = planReads.readTaskRecord(selector.parent.taskId);
+          if (task === undefined || task.projectId !== projectId) {
+            executionScheduleTargetNotFound(operation, 'task');
+          }
+          page = workSessionReads.listTaskWorkSessions(
+            principalProjectVisibility(principal),
+            projectId,
+            selector.parent.taskId,
+            request,
+          );
+        }
+        return {
+          schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION,
+          scope: 'work-session-list',
+          records: page.records.map(toPublicWorkSessionSummary),
+          nextCursor:
+            page.nextKey === null
+              ? null
+              : encodePlanListCursor(encodeExecutionListKey(page.nextKey), binding),
+          limit: filter.limit,
+        };
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    async getWorkSession(principal: unknown, input: unknown): Promise<WorkSessionDetailResult> {
+      assertTrustedPrincipal(principal);
+      const operation = EXECUTION_WORK_SESSION_GET_OPERATION;
+      try {
+        requireCapability(principal, 'project.read', operation);
+        const object = requirePlainObject(input, { operation }, 'input');
+        rejectUnknownKeys(object, ['projectId', 'attemptId'], { operation }, 'input');
+        const projectId = requireProjectId(object.projectId, operation);
+        const attemptId = validateStableId(
+          object.attemptId,
+          { operation, entity: { type: 'attempt' } },
+          'attemptId',
+        );
+        requireProjectVisible(principal, projectId, operation);
+        const view = workSessionReads.readWorkSessionDetail(projectId, attemptId);
+        if (view === undefined) {
+          workSessionTargetNotFound(operation, 'attempt');
+        }
+        // 结果证据：Session 已结算时读 resultRef；启动前拒绝场景回退到受控
+        // locator 的未启动拒绝证据。正文经完整性核验读取并严格校验；缺失/
+        // 损坏为 corrupt_state（fail-closed），绝不降级为「无证据」。
+        const settlementRef =
+          view.session?.resultRef ??
+          view.evidence.find(
+            (artifact) =>
+              artifact.kind === 'runtime-settlement' &&
+              artifact.status === 'ready' &&
+              artifact.locator === `attempts/${view.attempt.id}/launch-rejection.json`,
+          )?.id ??
+          null;
+        let resultEvidence: PublicWorkSessionResultEvidence | null = null;
+        if (settlementRef !== null) {
+          resultEvidence = toPublicWorkSessionResultEvidence(
+            await readSettlementEvidenceBody(projectId, settlementRef, operation),
+          );
+        }
+        return {
+          schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION,
+          scope: 'work-session',
+          attempt: toPublicWorkSessionAttempt(view.attempt),
+          executionState: deriveWorkSessionQueryState(view.attempt, view.session),
+          session: view.session === null ? null : toPublicWorkSessionRecord(view.session),
+          resultEvidence,
+          occupancy: view.occupancy.map((lease) => ({
+            id: lease.id,
+            attemptId: lease.owner,
+            runId: view.attempt.runId,
+            resourceKind: lease.resourceKind,
+            resourceKey: lease.resourceKey,
+            state: lease.state,
+            leaseUntil: new Date(lease.leaseUntilUtcMs).toISOString(),
+            processIdentity: lease.processIdentity !== null,
+          })),
+          evidence: view.evidence.map(toPublicWorkSessionEvidenceRef),
+          evidenceTruncated: view.evidenceTruncated,
+          diagnostics: view.diagnostics.map(toPublicAttemptDiagnosticRecord),
+          diagnosticsTruncated: view.diagnosticsTruncated,
+        };
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    async readWorkSessionEvidence(
+      principal: unknown,
+      input: unknown,
+    ): Promise<WorkSessionEvidenceContent> {
+      assertTrustedPrincipal(principal);
+      const operation = EXECUTION_WORK_SESSION_EVIDENCE_OPERATION;
+      try {
+        requireCapability(principal, 'project.read', operation);
+        const object = requirePlainObject(input, { operation }, 'input');
+        rejectUnknownKeys(object, ['projectId', 'attemptId', 'artifactId'], { operation }, 'input');
+        const projectId = requireProjectId(object.projectId, operation);
+        const attemptId = validateStableId(
+          object.attemptId,
+          { operation, entity: { type: 'attempt' } },
+          'attemptId',
+        );
+        const artifactId = validateStableId(
+          object.artifactId,
+          { operation, entity: { type: 'artifact' } },
+          'artifactId',
+        );
+        requireProjectVisible(principal, projectId, operation);
+        const view = workSessionReads.readWorkSessionDetail(projectId, attemptId);
+        if (view === undefined) {
+          workSessionTargetNotFound(operation, 'attempt');
+        }
+        // 成员资格：同项目 ready 制品 + 受控 locator 前缀（sessions/<id>/ 或
+        // attempts/<id>/）；未知/跨项目/非成员/非 ready 统一 not_found 防枚举，
+        // 绝不接受任意文件路径。
+        let artifact;
+        try {
+          artifact = await artifacts.getArtifact(projectId, artifactId);
+        } catch (error) {
+          if (isStorageError(error, 'not_found') || isStorageError(error, 'ownership')) {
+            workSessionTargetNotFound(operation, 'artifact');
+          }
+          throw error;
+        }
+        if (
+          artifact.status !== 'ready' ||
+          !isWorkSessionEvidenceLocator(artifact.locator, view.session?.id ?? null, attemptId)
+        ) {
+          workSessionTargetNotFound(operation, 'artifact');
+        }
+        let verified;
+        try {
+          verified = await evidenceVerifier.readVerifiedContent(projectId, artifactId);
+        } catch {
+          throw new PublicError('corrupt_state', operation, '证据完整性核验失败', {
+            details: { reason: 'evidence_incomplete' },
+          });
+        }
+        return {
+          schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION,
+          scope: 'work-session-evidence',
+          artifact: {
+            artifactId: verified.artifactId,
+            kind: artifact.kind,
+            mediaType: artifact.mediaType,
+            contentHash: verified.contentHash,
+            sizeBytes: verified.sizeBytes,
+            version: artifact.version,
+          },
+          content: verified.content,
+        };
       } catch (error) {
         throw mapToPublicError(error, { operation });
       }

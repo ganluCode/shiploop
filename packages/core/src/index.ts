@@ -47,6 +47,7 @@ export * from './ports/runtime-registry.js';
 export * from './application/runtime-execution.js';
 export * from './ports/task-claim.js';
 export * from './ports/work-session.js';
+export * from './ports/work-session-query.js';
 export * from './application/runtime-settlement.js';
 export * from './ports/runtime-settlement.js';
 export * from './application/execution-service.js';

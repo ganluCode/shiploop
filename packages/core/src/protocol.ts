@@ -175,6 +175,27 @@ export type {
   WorkspaceOperationListResult,
   WorkspaceOperationReceiptView,
 } from './ports/workspace-query.js';
+// P03-6 / F-011 Work Session/Runtime 结果/停止证据/诊断制品只读查询面：
+// 公开形状与操作身份冻结词汇（服务端负责授权；Host 接线属 F-012）。
+export {
+  EXECUTION_WORK_SESSION_EVIDENCE_OPERATION,
+  EXECUTION_WORK_SESSION_GET_OPERATION,
+  EXECUTION_WORK_SESSIONS_LIST_OPERATION,
+  WORK_SESSION_QUERY_OPERATIONS,
+  WORK_SESSION_QUERY_STATES,
+} from './ports/work-session-query.js';
+export type {
+  PublicWorkSessionAttempt,
+  PublicWorkSessionEvidenceRef,
+  PublicWorkSessionRecord,
+  PublicWorkSessionResultEvidence,
+  PublicWorkSessionSummary,
+  WorkSessionDetailResult,
+  WorkSessionEvidenceContent,
+  WorkSessionListResult,
+  WorkSessionQueryOperation,
+  WorkSessionQueryState,
+} from './ports/work-session-query.js';
 export {
   WORKSPACE_DISCARD_BLOCKERS,
   WORKSPACE_DISCARD_OPERATION,
