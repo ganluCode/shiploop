@@ -58,6 +58,7 @@ const SCHEMA_TABLES = [
   ['phases', schema.phases],
   ['features', schema.features],
   ['tasks', schema.tasks],
+  ['task_approval_items', schema.taskApprovalItems],
   ['task_dependencies', schema.taskDependencies],
   // P03-2 / F-002：计划决策记录（docs/p03-2-plan-approval-contract.md 与设计 11 §7，迁移 v7）。
   ['approvals', schema.approvals],
@@ -563,7 +564,11 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
         'tasks:(project_id)->projects.(id)',
         'tasks:(feature_id)->features.(id)',
         'tasks:(project_id,feature_id)->features.(project_id,id)',
+        'task_approval_items:(project_id)->projects.(id)',
+        'task_approval_items:(project_id,feature_id)->features.(project_id,id)',
+        'task_approval_items:(feature_id,task_id)->tasks.(feature_id,id)',
         'task_dependencies:(project_id)->projects.(id)',
+
         'task_dependencies:(feature_id)->features.(id)',
         'task_dependencies:(project_id,feature_id)->features.(project_id,id)',
         'task_dependencies:(task_id)->tasks.(id)',

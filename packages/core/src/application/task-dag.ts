@@ -116,7 +116,8 @@ export function evaluateTaskDag(view: TaskDagView, nowMs: number): TaskDagResult
     return result('invalid_graph', error instanceof StorageError ? 'invalid_plan' : error instanceof Error ? error.message : 'invalid_snapshot');
   }
   if (!['queued', 'running', 'pausing', 'paused', 'cancelling', 'interrupted'].includes(run.status)) return result('run_not_active');
-  if (!['queued', 'running'].includes(run.status)) return result('run_control_blocked');
+  if (!['queued', 'running'].includes(run.status)
+    && !(run.status === 'paused' && run.reason === 'approval')) return result('run_control_blocked');
   if (!['queued', 'running', 'pausing', 'paused', 'cancelling', 'interrupted'].includes(batch.status)) return result('batch_not_active');
   if (!['queued', 'running'].includes(batch.status)) return result('batch_control_blocked');
   if (view.projectStatus !== 'active') return result('project_not_active');

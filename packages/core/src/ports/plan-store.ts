@@ -161,6 +161,94 @@ export interface FeatureRecord {
   readonly updatedAtUtcMs: number;
 }
 
+export interface TaskApprovalArtifactRef {
+  readonly artifactId: string;
+  readonly contentHash: string | null;
+}
+
+export type TaskApprovalItemKind = 'block' | 'approval';
+export type TaskApprovalItemStatus = 'pending';
+
+export interface TaskApprovalItemRecord {
+  readonly id: string;
+  readonly projectId: string;
+  readonly featureId: string;
+  readonly taskId: string;
+  readonly revision: number;
+  readonly kind: TaskApprovalItemKind;
+  readonly description: string;
+  readonly responsibleParty: string;
+  readonly planDigest: string;
+  readonly codeDigest: string | null;
+  readonly artifactRefs: readonly TaskApprovalArtifactRef[];
+  readonly status: TaskApprovalItemStatus;
+  readonly createdBy: string;
+  readonly createdAtUtcMs: number;
+  readonly updatedAtUtcMs: number;
+}
+
+export interface TaskApprovalItemInput {
+  readonly projectId: string;
+  readonly featureId: string;
+  readonly taskId: string;
+  readonly kind: TaskApprovalItemKind;
+  readonly description: string;
+  readonly responsibleParty: string;
+  readonly planDigest: string;
+  readonly codeDigest: string | null;
+  readonly artifactRefs: readonly TaskApprovalArtifactRef[];
+  readonly createdBy: string;
+}
+
+export interface TaskApprovalItemInsertResult {
+  readonly record: TaskApprovalItemRecord;
+  readonly created: boolean;
+}
+
+export function validateTaskApprovalItemInput(value: unknown, operation: string): TaskApprovalItemInput {
+  const context: ValidationContext = { operation };
+  const object = requirePlainObject(value, context, 'input');
+  rejectUnknownKeys(object, [
+    'projectId', 'featureId', 'taskId', 'kind', 'description', 'responsibleParty',
+    'planDigest', 'codeDigest', 'artifactRefs', 'createdBy',
+  ], context, 'input');
+  const kind = object.kind;
+  if (kind !== 'block' && kind !== 'approval') {
+    throw validationError(context, 'input.kind', '必须是 block 或 approval', kind);
+  }
+  if (!Array.isArray(object.artifactRefs) || object.artifactRefs.length > 64) {
+    throw validationError(context, 'input.artifactRefs', '必须是最多 64 项的数组', object.artifactRefs);
+  }
+  const artifactRefs = object.artifactRefs.map((raw, index) => {
+    const ref = requirePlainObject(raw, context, `input.artifactRefs[${index}]`);
+    rejectUnknownKeys(ref, ['artifactId', 'contentHash'], context, `input.artifactRefs[${index}]`);
+    return {
+      artifactId: validateStableId(ref.artifactId, context, `input.artifactRefs[${index}].artifactId`),
+      contentHash: ref.contentHash === null || ref.contentHash === undefined
+        ? null : validateSha256Digest(ref.contentHash, context, `input.artifactRefs[${index}].contentHash`),
+    };
+  });
+  const description = requireNonEmptyString(object.description, context, 'input.description');
+  if (description.length > 4096) throw validationError(context, 'input.description', '长度不能超过 4096', object.description);
+  const responsibleParty = requireNonEmptyString(object.responsibleParty, context, 'input.responsibleParty');
+  if (responsibleParty.length > 256) throw validationError(context, 'input.responsibleParty', '长度不能超过 256', object.responsibleParty);
+  const createdBy = requireNonEmptyString(object.createdBy, context, 'input.createdBy');
+  if (createdBy.length > 256) throw validationError(context, 'input.createdBy', '长度不能超过 256', object.createdBy);
+  return {
+    projectId: validateStableId(object.projectId, context, 'input.projectId'),
+    featureId: validateStableId(object.featureId, context, 'input.featureId'),
+    taskId: validateStableId(object.taskId, context, 'input.taskId'),
+    kind,
+    description,
+    responsibleParty,
+    planDigest: validateSha256Digest(object.planDigest, context, 'input.planDigest'),
+    codeDigest: object.codeDigest === null || object.codeDigest === undefined
+      ? null : validateSha256Digest(object.codeDigest, context, 'input.codeDigest'),
+    artifactRefs,
+    createdBy,
+  };
+}
+
 export interface TaskRecord {
   /** 计划作者指定的稳定 ID（不是适配器生成的 UUID）。 */
   readonly id: string;

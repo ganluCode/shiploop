@@ -19,11 +19,24 @@ export function submitTaskApprovalBlock(identity: {
   if (approval.planDigest !== envelope.payload.planDigest) {
     throw new PublicError('conflict', identity.operation, undefined, { details: { reason: 'plan_digest_mismatch' } });
   }
-  const revision = transaction.blockTaskApproval({ projectId, taskId: task.id, expectedRevision: envelope.expectedRevision });
-  transaction.appendExecutionEvent({ projectId, eventType: TASK_APPROVAL_BLOCKED_EVENT_TYPE,
-    aggregateType: 'task', aggregateId: task.id, aggregateRevision: revision, payload: { blocked: true } });
+  const item = transaction.insertTaskApprovalItem({
+    projectId, featureId: task.featureId, taskId: task.id, kind: envelope.payload.kind ?? 'block',
+    description: envelope.payload.description ?? 'Manual approval required', responsibleParty: envelope.payload.responsibleParty ?? 'project-owner',
+    planDigest: approval.planDigest, codeDigest: envelope.payload.codeDigest ?? null,
+    artifactRefs: envelope.payload.artifactRefs ?? [], createdBy: identity.principalId,
+  });
+  if (!item.created && envelope.expectedRevision !== task.revision) {
+    throw new PublicError('conflict', identity.operation, undefined, { details: { reason: 'task_revision_conflict', expectedRevision: envelope.expectedRevision, actualRevision: task.revision } });
+  }
+  const revision = item.created
+    ? transaction.blockTaskApproval({ projectId, taskId: task.id, expectedRevision: envelope.expectedRevision })
+    : task.revision;
+  if (item.created) transaction.appendExecutionEvent({ projectId, eventType: TASK_APPROVAL_BLOCKED_EVENT_TYPE,
+    aggregateType: 'task', aggregateId: task.id, aggregateRevision: revision,
+    payload: { blocked: true, itemId: item.record.id, kind: item.record.kind } });
   const receipt = createCompletedReceipt({ ...identity, resultRef: createResultRef(randomBytes(32)),
-    result: { taskId: task.id, manualBlock: true, revision, planDigest: approval.planDigest, checkPolicyDigest: approval.checkPolicyDigest } });
+    result: { taskId: task.id, manualBlock: true, revision, item: item.record,
+      planDigest: approval.planDigest, checkPolicyDigest: approval.checkPolicyDigest } });
   transaction.saveReceipt(receipt);
   return receipt;
 }

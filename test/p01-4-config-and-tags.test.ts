@@ -717,6 +717,7 @@ describe('F-006 当前配置检查组（P01-FR2-CONFIG）', () => {
           // P03-7 / F-002：验证批次与逐项结果表（迁移 v21；空表，无验证记录行）。
           'verification_batches',
           'check_results',
+          'task_approval_items',
         ].sort(),
       );
       for (const forbidden of [

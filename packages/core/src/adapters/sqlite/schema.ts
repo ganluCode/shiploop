@@ -746,6 +746,36 @@ export const tasks = sqliteTable('tasks', {
   index('tasks_feature_id_status_index').on(table.featureId, table.status),
 ]);
 
+export const taskApprovalItems = sqliteTable('task_approval_items', {
+  id: text('id').primaryKey(),
+  createdAt: integer('created_at').notNull(),
+  projectId: text('project_id').notNull().references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  featureId: text('feature_id').notNull(),
+  taskId: text('task_id').notNull(),
+  revision: integer('revision').notNull().default(1),
+  updatedAt: integer('updated_at').notNull(),
+  kind: text('kind').notNull(),
+  description: text('description').notNull(),
+  responsibleParty: text('responsible_party').notNull(),
+  planDigest: text('plan_digest').notNull(),
+  codeDigest: text('code_digest'),
+  artifactRefs: text('artifact_refs').notNull().default('[]'),
+  status: text('status').notNull().default('pending'),
+  createdBy: text('created_by').notNull(),
+}, (table) => [
+  check('task_approval_items_revision_check', sql`${table.revision} >= 1`),
+  check('task_approval_items_kind_check', sql`${table.kind} IN ('block', 'approval')`),
+  check('task_approval_items_status_check', sql`${table.status} = 'pending'`),
+  check('task_approval_items_plan_digest_check', sql`length(${table.planDigest}) = 64 AND ${table.planDigest} NOT GLOB '*[^0-9a-f]*'`),
+  check('task_approval_items_code_digest_check', sql`${table.codeDigest} IS NULL OR (length(${table.codeDigest}) = 64 AND ${table.codeDigest} NOT GLOB '*[^0-9a-f]*')`),
+  check('task_approval_items_artifacts_check', sql`json_valid(${table.artifactRefs}) AND json_type(${table.artifactRefs}) = 'array'`),
+  foreignKey({ name: 'task_approval_items_feature_fk', columns: [table.projectId, table.featureId], foreignColumns: [features.projectId, features.id] }).onDelete('restrict'),
+  foreignKey({ name: 'task_approval_items_task_fk', columns: [table.featureId, table.taskId], foreignColumns: [tasks.featureId, tasks.id] }).onDelete('restrict'),
+  uniqueIndex('task_approval_items_project_id_id_unique').on(table.projectId, table.id),
+  uniqueIndex('task_approval_items_task_identity_unique').on(table.projectId, table.featureId, table.taskId, table.kind, table.description, table.responsibleParty, table.planDigest, table.codeDigest, table.artifactRefs),
+  index('task_approval_items_task_status_index').on(table.projectId, table.taskId, table.status),
+]);
+
 export const taskDependencies = sqliteTable('task_dependencies', {
   id: text('id').primaryKey(),
   createdAt: integer('created_at').notNull(),

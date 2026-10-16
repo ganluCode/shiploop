@@ -99,12 +99,19 @@ export function createSqliteAtomicCommandStore(
             if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 1) {
               throw new StorageError('validation', operation, 'Invalid Task revision');
             }
+            const timestamp = (options.nowUtcMs ?? Date.now)();
             const changed = session.database.prepare(`UPDATE tasks SET manual_block = 1, revision = revision + 1, updated_at = ?
-              WHERE project_id = ? AND id = ? AND revision = ?`).run((options.nowUtcMs ?? Date.now)(), input.projectId, input.taskId, input.expectedRevision);
+              WHERE project_id = ? AND id = ? AND revision = ?`).run(timestamp, input.projectId, input.taskId, input.expectedRevision);
             if (changed.changes !== 1) throw new StorageError('conflict', operation, 'Task revision conflict', {
               details: { expectedRevision: input.expectedRevision, actualRevision: task.revision } });
+            session.database.prepare(`UPDATE features SET status = 'awaiting_approval', revision = revision + 1, updated_at = ?
+              WHERE project_id = ? AND id = ? AND status NOT IN ('completed', 'failed')`).run(timestamp, input.projectId, task.featureId);
+            session.database.prepare(`UPDATE runs SET status = 'paused', reason = 'approval', revision = revision + 1, updated_at = ?
+              WHERE project_id = ? AND feature_id = ? AND status IN ('queued', 'running', 'pausing')`).run(timestamp, input.projectId, task.featureId);
             return task.revision + 1;
           }),
+          insertTaskApprovalItem: guarded(plan.insertTaskApprovalItemInTransaction),
+          listTaskApprovalItems: guarded(plan.listTaskApprovalItemsInTransaction),
           updateTaskStrategy: guarded(plan.updateTaskStrategyInTransaction),
           // P03-2 / F-002：计划批准/拒绝决策事务内原语（重复决策重核、决策
           // 记录插入与 Feature plan_status CAS 更新），同一 BEGIN IMMEDIATE 内

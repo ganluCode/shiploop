@@ -29,6 +29,8 @@ import type {
   PhaseRecord,
   PlanApprovalRecord,
   TaskDependencyRecord,
+  TaskApprovalItemInsertResult,
+  TaskApprovalItemRecord,
   TaskRecord,
 } from './plan-store.js';
 import type {
@@ -169,6 +171,10 @@ export interface CommandTransaction {
    */
   getTask(projectId: string, taskId: string): TaskRecord;
   blockTaskApproval(input: { readonly projectId: string; readonly taskId: string; readonly expectedRevision: number }): number;
+  /** F-007：运行期人审事项与 Task/Feature/Run 状态在同一事务内追加。 */
+  insertTaskApprovalItem(input: unknown): TaskApprovalItemInsertResult;
+  /** F-007：完成事务重新读取同 Task 的运行期事项。 */
+  listTaskApprovalItems(projectId: string, taskId: string): readonly TaskApprovalItemRecord[];
   /**
    * P03-2 / F-001：Task 策略副本 CAS 编辑。单语句条件 UPDATE 只触达目标
    * Task 的 execution_config/config_source/config_source_key/revision/

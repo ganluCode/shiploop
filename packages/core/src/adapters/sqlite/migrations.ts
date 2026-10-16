@@ -1634,6 +1634,28 @@ CREATE TRIGGER check_results_immutable_update BEFORE UPDATE ON check_results
 BEGIN SELECT RAISE(ABORT, 'check results are immutable'); END;
 `;
 
+const MIGRATION_022_SQL = `
+CREATE TABLE task_approval_items (
+  id TEXT PRIMARY KEY NOT NULL, created_at INTEGER NOT NULL, project_id TEXT NOT NULL,
+  feature_id TEXT NOT NULL, task_id TEXT NOT NULL, revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL, kind TEXT NOT NULL, description TEXT NOT NULL,
+  responsible_party TEXT NOT NULL, plan_digest TEXT NOT NULL, code_digest TEXT,
+  artifact_refs TEXT NOT NULL DEFAULT '[]', status TEXT NOT NULL DEFAULT 'pending', created_by TEXT NOT NULL,
+  CONSTRAINT task_approval_items_revision_check CHECK (revision >= 1),
+  CONSTRAINT task_approval_items_kind_check CHECK (kind IN ('block', 'approval')),
+  CONSTRAINT task_approval_items_status_check CHECK (status = 'pending'),
+  CONSTRAINT task_approval_items_plan_digest_check CHECK (length(plan_digest) = 64 AND plan_digest NOT GLOB '*[^0-9a-f]*'),
+  CONSTRAINT task_approval_items_code_digest_check CHECK (code_digest IS NULL OR (length(code_digest) = 64 AND code_digest NOT GLOB '*[^0-9a-f]*')),
+  CONSTRAINT task_approval_items_artifacts_check CHECK (json_valid(artifact_refs) AND json_type(artifact_refs) = 'array'),
+  CONSTRAINT task_approval_items_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT task_approval_items_feature_fk FOREIGN KEY (project_id, feature_id) REFERENCES features (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT task_approval_items_task_fk FOREIGN KEY (feature_id, task_id) REFERENCES tasks (feature_id, id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX task_approval_items_project_id_id_unique ON task_approval_items (project_id, id);
+CREATE UNIQUE INDEX task_approval_items_task_identity_unique ON task_approval_items (project_id, feature_id, task_id, kind, description, responsible_party, plan_digest, code_digest, artifact_refs);
+CREATE INDEX task_approval_items_task_status_index ON task_approval_items (project_id, task_id, status);
+`;
+
 /** 已声明的全部 SQLite 迁移，按版本升序；F-005 的执行器按此顺序应用并核对摘要。 */
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
@@ -1721,4 +1743,5 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 19, sql: MIGRATION_019_SQL, checksum: sha256Hex(MIGRATION_019_SQL) },
   { version: 20, sql: MIGRATION_020_SQL, checksum: sha256Hex(MIGRATION_020_SQL) },
   { version: 21, sql: MIGRATION_021_SQL, checksum: sha256Hex(MIGRATION_021_SQL) },
+  { version: 22, sql: MIGRATION_022_SQL, checksum: sha256Hex(MIGRATION_022_SQL) },
 ];

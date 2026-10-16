@@ -640,6 +640,16 @@ export interface ValidatedTaskStrategyUpdatePayload {
   readonly executionConfig: Record<string, unknown>;
 }
 
+export interface ValidatedTaskApprovalBlockPayload {
+  readonly taskId: string;
+  readonly planDigest: string;
+  readonly kind?: 'block' | 'approval';
+  readonly description?: string;
+  readonly responsibleParty?: string;
+  readonly codeDigest?: string | null;
+  readonly artifactRefs?: readonly { readonly artifactId: string; readonly contentHash: string | null }[];
+}
+
 /**
  * P03-2 / F-002 计划批准/拒绝决策 payload：featureId 为目标 Feature 稳定 ID；
  * planDigest 为提交时绑定的当前计划摘要（失效即 fail-closed）；decision 为
@@ -836,7 +846,7 @@ export type ValidatedCommandEnvelope =
       readonly operation: 'task.approval.block';
       readonly scope: { readonly kind: 'project'; readonly projectId: string };
       readonly expectedRevision: number;
-      readonly payload: { readonly taskId: string; readonly planDigest: string };
+      readonly payload: ValidatedTaskApprovalBlockPayload;
     })
   // P03-2 / F-002：计划批准/拒绝决策命令信封（expectedRevision=目标 Feature）。
   | (EnvelopeCommon & {
@@ -915,6 +925,7 @@ const FEATURE_PLAN_IMPORT_PAYLOAD_KEYS = ['phaseId', 'plan'] as const;
 const PLAN_LABELS_UPDATE_PAYLOAD_KEYS = ['entityType', 'id', 'labels'] as const;
 const FEATURE_PLAN_REVISE_PAYLOAD_KEYS = ['featureId', 'plan'] as const;
 const TASK_STRATEGY_UPDATE_PAYLOAD_KEYS = ['taskId', 'executionConfig'] as const;
+const TASK_APPROVAL_BLOCK_PAYLOAD_KEYS = ['taskId', 'planDigest', 'kind', 'description', 'responsibleParty', 'codeDigest', 'artifactRefs'] as const;
 const FEATURE_PLAN_DECIDE_PAYLOAD_KEYS = ['featureId', 'planDigest', 'decision', 'reason'] as const;
 const EXECUTION_INPUT_PREPARE_PAYLOAD_KEYS = ['featureId', 'taskId', 'items'] as const;
 const EXECUTION_PREVIEW_PAYLOAD_KEYS = ['featureIds', 'budget'] as const;
@@ -1160,6 +1171,41 @@ function validateFeaturePlanRevisePayload(
     }
     throw error;
   }
+}
+
+function validateTaskApprovalBlockPayload(operation: AppOperation, raw: unknown): ValidatedTaskApprovalBlockPayload {
+  const object = requireObject(operation, raw, 'payload');
+  exactKeys(operation, object, TASK_APPROVAL_BLOCK_PAYLOAD_KEYS, 'payload.');
+  if (object.kind !== undefined && object.kind !== 'block' && object.kind !== 'approval') {
+    fail(operation, 'invalid_input', 'payload.kind', '必须是 block 或 approval');
+  }
+  if (typeof object.planDigest !== 'string' || !/^[0-9a-f]{64}$/.test(object.planDigest)) {
+    fail(operation, 'invalid_input', 'payload.planDigest', '必须是 64 位小写 SHA-256 摘要');
+  }
+  const description = object.description === undefined ? 'Manual approval required' : object.description;
+  const responsibleParty = object.responsibleParty === undefined ? 'project-owner' : object.responsibleParty;
+  if (typeof description !== 'string' || description.trim().length === 0 || description.length > 4096) {
+    fail(operation, 'invalid_input', 'payload.description', '必须是 1-4096 个字符的非空字符串');
+  }
+  if (typeof responsibleParty !== 'string' || responsibleParty.trim().length === 0 || responsibleParty.length > 256) {
+    fail(operation, 'invalid_input', 'payload.responsibleParty', '必须是 1-256 个字符的非空字符串');
+  }
+  if (object.codeDigest !== undefined && object.codeDigest !== null && (typeof object.codeDigest !== 'string' || !/^[0-9a-f]{64}$/.test(object.codeDigest))) {
+    fail(operation, 'invalid_input', 'payload.codeDigest', '必须是 64 位小写 SHA-256 摘要或 null');
+  }
+  const rawRefs = object.artifactRefs === undefined ? [] : object.artifactRefs;
+  if (!Array.isArray(rawRefs) || rawRefs.length > 64) fail(operation, 'invalid_input', 'payload.artifactRefs', '必须是最多 64 项的数组');
+  const artifactRefs = (rawRefs as unknown[]).map((rawRef, index) => {
+    const ref = requireObject(operation, rawRef, `payload.artifactRefs[${index}]`);
+    exactKeys(operation, ref, ['artifactId', 'contentHash'], `payload.artifactRefs[${index}].`);
+    if (ref.contentHash !== undefined && ref.contentHash !== null && (typeof ref.contentHash !== 'string' || !/^[0-9a-f]{64}$/.test(ref.contentHash))) {
+      fail(operation, 'invalid_input', `payload.artifactRefs[${index}].contentHash`, '必须是 64 位小写 SHA-256 摘要或 null');
+    }
+    return { artifactId: validateStableId(ref.artifactId, { operation }, `payload.artifactRefs[${index}].artifactId`), contentHash: (ref.contentHash ?? null) as string | null };
+  });
+  return { taskId: validateStableId(object.taskId, { operation }, 'payload.taskId'), planDigest: object.planDigest as string,
+    kind: (object.kind ?? 'block') as 'block' | 'approval', description, responsibleParty,
+    codeDigest: (object.codeDigest ?? null) as string | null, artifactRefs };
 }
 
 function validateTaskStrategyUpdatePayload(
@@ -1578,14 +1624,8 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
   }
   if (operation === 'task.approval.block') {
     if (scope.kind !== 'project') fail(operation, 'invalid_input', 'scope.kind', 'scope mismatch');
-    if (!isPlainObject(object.payload)) fail(operation, 'invalid_input', 'payload', 'expected object');
-    const payload = object.payload as Record<string, unknown>;
-    if (Object.keys(payload).some(k => !['taskId', 'planDigest'].includes(k))
-      || typeof payload.planDigest !== 'string' || !/^[0-9a-f]{64}$/.test(payload.planDigest)) {
-      fail(operation, 'invalid_input', 'payload', 'invalid approval identity');
-    }
     return { ...base, operation, scope: scope as { kind: 'project'; projectId: string }, expectedRevision: expectedRevision as number,
-      payload: { taskId: validateStableId(payload.taskId, { operation }, 'taskId'), planDigest: payload.planDigest as string } };
+      payload: validateTaskApprovalBlockPayload(operation, object.payload) };
   }
   if (operation === 'feature.plan.decide') {
     if (scope.kind !== 'project') {
