@@ -58,6 +58,7 @@ import {
   type SanitizeReplacements,
 } from './clean-snapshot-replay.ts';
 import { verifyP02ReportDirectory } from './p02-report.ts';
+import { loadP02AcceptanceConfig } from './p02-config.ts';
 
 /* ------------------------------------------------------------------ *
  * 冻结契约（test/p02-4-clean-replay.test.ts 逐项守护）
@@ -373,7 +374,17 @@ const FORBIDDEN_RUNTIME_DEPENDENCIES = [
   'koa',
   'hono',
 ] as const;
-const EXPECTED_MIGRATION_VERSIONS = [1, 2, 3, 4, 5];
+export function replayMigrationVersions(snapshotRoot: string): readonly number[] {
+  return loadP02AcceptanceConfig(join(snapshotRoot, 'acceptance/p02.config.json')).schemaVersions.sqliteMigrations;
+}
+
+export function replayAcceptanceEnv(source: NodeJS.ProcessEnv, isolated: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return replayChildEnv({
+    ...isolated,
+    SHIPLOOP_VERIFY_STEP_TIMEOUT_MS: source.SHIPLOOP_VERIFY_STEP_TIMEOUT_MS ?? '1200000',
+    SHIPLOOP_TEST_RUN_TIMEOUT_MS: source.SHIPLOOP_TEST_RUN_TIMEOUT_MS ?? '1200000',
+  }, 1);
+}
 
 /* ------------------------------------------------------------------ *
  * 通用小工具
@@ -389,7 +400,13 @@ function listFilesUnder(directory: string, skip?: (absolute: string) => boolean)
   }
   const out: string[] = [];
   const walk = (current: string): void => {
-    for (const entry of readdirSync(current, { withFileTypes: true })) {
+    let entries;
+    try { entries = readdirSync(current, { withFileTypes: true }); }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+      throw error;
+    }
+    for (const entry of entries) {
       const child = join(current, entry.name);
       if (skip?.(child) === true) {
         continue;
@@ -406,12 +423,16 @@ function listFilesUnder(directory: string, skip?: (absolute: string) => boolean)
 }
 
 /** 树索引：相对路径 → 大小/修改时间指纹（用于写入差异观察）。 */
-function treeIndex(roots: readonly string[]): Map<string, string> {
+export function treeIndex(roots: readonly string[], statFile: (path: string) => { size: number; mtimeMs: number } = statSync): Map<string, string> {
   const index = new Map<string, string>();
   for (const root of roots) {
     for (const file of listFilesUnder(root)) {
-      const stat = statSync(file);
-      index.set(toPosix(file), `${stat.size}:${stat.mtimeMs}`);
+      try {
+        const stat = statFile(file);
+        index.set(toPosix(file), `${stat.size}:${stat.mtimeMs}`);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      }
     }
   }
   return index;
@@ -999,14 +1020,13 @@ async function phaseAccept(ctx: ReplayContext, index: 1 | 2): Promise<void> {
   mkdirSync(tmpDir, { recursive: true });
   // 每次运行独立的 HOME/TMPDIR + 复跑深度护栏（嵌套同名场景不递归复跑）。
   // 拼写契约同冒烟：HOME=realpath，TMPDIR=创建时自然拼写（与真实用户环境一致）。
-  const env = replayChildEnv(
+  const env = replayAcceptanceEnv(process.env,
     {
       PATH: process.env.PATH ?? '/usr/bin:/bin',
       HOME: realpathSync(homeDir),
       TMPDIR: tmpDir,
       NODE_NO_WARNINGS: '1',
     },
-    1,
   );
   log(`p02-clean-replay: RUN ${step.label}`);
   const result = await runNpm(resolveNpm(), step.npmArgs, snapshotRoot, step.timeoutMs, env);
@@ -1240,7 +1260,7 @@ async function phaseFinalize(ctx: ReplayContext): Promise<P02CleanReplayOutcome>
       expectedMigrations: [
         {
           path: join(packageDir('core'), 'dist/adapters/sqlite/migrations.js'),
-          versions: EXPECTED_MIGRATION_VERSIONS,
+          versions: replayMigrationVersions(snapshotRoot),
         },
       ],
       homeDir: homedir(),

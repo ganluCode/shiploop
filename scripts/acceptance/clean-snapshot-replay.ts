@@ -19,6 +19,7 @@
  * 仅使用可擦除 TypeScript 语法，由 Node 22 原生类型擦除直接运行，无需先构建。
  */
 import { spawn } from 'node:child_process';
+import { OwnedProcessTree } from './owned-process-tree.ts';
 import { createHash } from 'node:crypto';
 import {
   existsSync,
@@ -192,6 +193,7 @@ export function runBounded(
   return new Promise((resolveResult) => {
     const started = Date.now();
     const child = spawn(command, [...args], { cwd, env, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+    const processTree = new OwnedProcessTree(child.pid);
     if (child.pid !== undefined) {
       activeChildPids.add(child.pid);
     }
@@ -211,11 +213,14 @@ export function runBounded(
       if (graceTimer !== null) {
         clearTimeout(graceTimer);
       }
-      resolveResult(result);
+      void processTree.finish(timedOut || result.code !== 0).then((stopped) => {
+        resolveResult(stopped ? result : { ...result, kind: 'spawn-error', code: null, message: 'Owned descendants did not stop or ownership scan failed' });
+      });
     };
 
     const timeoutTimer = setTimeout(() => {
       timedOut = true;
+      processTree.kill();
       if (child.pid !== undefined) {
         try {
           process.kill(-child.pid, 'SIGKILL');

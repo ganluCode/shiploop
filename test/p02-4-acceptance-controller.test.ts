@@ -274,6 +274,25 @@ describe('F-011 验收控制器（真实有界子进程 + 隔离夹具）', () =
     expect(verifyP02ReportDirectory(result.runDir as string).ok).toBe(true);
   });
 
+  it('失败输出含多行凭据形状时省略受影响的输出流，仍写出可核验的失败报告', async () => {
+    const sandbox = newSandbox();
+    const result = await runController({
+      sandbox,
+      steps: fakeSteps({ verify: { script: 'console.log("safe diagnostic"); console.error(JSON.stringify({token:"synthetic-sensitive-value"},null,2)); console.error("Bearer synthetic-sensitive-header"); process.exit(1)' } }),
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.reportWritten).toBe(true);
+    expect(result.evidenceOk).toBe(true);
+    const report = readReport(result.runDir as string);
+    expect(findCheck(report, 'P02-ENG-VERIFY').status).toBe('fail');
+    const log = readFileSync(join(result.runDir as string, 'evidence/commands/01-verify.log'), 'utf8');
+    expect(log).toContain('safe diagnostic');
+    expect(log).toContain('credential-shaped output redacted');
+    expect(log).not.toContain('synthetic-sensitive-value');
+    expect(log).not.toContain('synthetic-sensitive-header');
+    expect(verifyP02ReportDirectory(result.runDir as string).ok).toBe(true);
+  });
+
   it('中间场景步骤断言失败 → 映射检查 fail 不带断言、后续未启动 not_run', async () => {
     const sandbox = newSandbox();
     const result = await runController({
@@ -558,6 +577,8 @@ describe('F-011 生产接线守护（不运行完整 verify/accept:p02）', () =
     expect(verifyStep?.checkIds).toEqual(['P02-ENG-VERIFY']);
     expect(verifyStep?.args.slice(-2)).toEqual(['run', 'verify']);
     expect(verifyStep?.timeoutMs).toBe(config.timeouts.verifyMs);
+    expect(verifyStep?.env?.SHIPLOOP_TEST_RUN_TIMEOUT_MS).toBe(String(config.timeouts.verifyMs));
+    expect(verifyStep?.env?.SHIPLOOP_VERIFY_STEP_TIMEOUT_MS).toBe(String(config.timeouts.verifyMs));
     for (const [index, step] of steps.slice(1).entries()) {
       const scenario = config.scenarios[index + 1] as { kind: string; entry: string };
       expect(scenario.kind).toBe('test');

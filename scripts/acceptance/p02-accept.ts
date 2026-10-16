@@ -40,6 +40,7 @@
  * 不调用模型，不联网，除写报告目录外不修改受检仓库中的任何文件。
  */
 import { spawn } from 'node:child_process';
+import { OwnedProcessTree } from './owned-process-tree.ts';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -63,6 +64,7 @@ import {
   computeP02PhaseExitCode,
   generateP02RunId,
   redactSensitiveText,
+  scanTextForCredentialShapes,
   verifyP02ReportDirectory,
   writeP02AcceptanceReport,
 } from './p02-report.ts';
@@ -215,6 +217,7 @@ export function runBoundedProcess(
     let spawnError: Error | null = null;
     let graceTimer: NodeJS.Timeout | null = null;
     let timeoutTimer: NodeJS.Timeout | null = null;
+    let processTree: OwnedProcessTree | undefined;
 
     const settle = (outcome: P02BoundedRunOutcome): void => {
       if (settled) {
@@ -227,7 +230,9 @@ export function runBoundedProcess(
       if (graceTimer !== null) {
         clearTimeout(graceTimer);
       }
-      resolveOutcome(outcome);
+      void (processTree?.finish(timedOut || outcome.exitCode !== 0) ?? Promise.resolve(true)).then((stopped) => {
+        resolveOutcome({ ...outcome, stoppedVerified: outcome.stoppedVerified && stopped });
+      });
     };
 
     const buildOutcome = (
@@ -267,6 +272,7 @@ export function runBoundedProcess(
 
     timeoutTimer = setTimeout(() => {
       timedOut = true;
+      processTree?.kill();
       if (child.pid !== undefined) {
         try {
           // 负 pid 只杀本控制器启动的进程组（含孙进程），随后等待 close 核验停止。
@@ -284,6 +290,7 @@ export function runBoundedProcess(
       }, KILL_GRACE_MS);
       graceTimer.unref();
     }, options.timeoutMs);
+    processTree = new OwnedProcessTree(child.pid);
 
     child.stdout?.on('data', (chunk: Buffer) => stdout.push(chunk));
     child.stderr?.on('data', (chunk: Buffer) => stderr.push(chunk));
@@ -370,9 +377,10 @@ export function buildP02ProductionSteps(
         args: [...npm.argsPrefix, 'run', 'verify'],
         checkIds: [...scenario.checkIds],
         timeoutMs: verifyTimeoutMs,
-        ...(options.verifyTimeoutMs !== undefined
-          ? { env: { [P02_ACCEPT_ENV_VERIFY_TIMEOUT_MS]: String(options.verifyTimeoutMs) } }
-          : {}),
+        env: {
+          [P02_ACCEPT_ENV_VERIFY_TIMEOUT_MS]: String(verifyTimeoutMs),
+          SHIPLOOP_TEST_RUN_TIMEOUT_MS: String(verifyTimeoutMs),
+        },
       });
     } else {
       steps.push({
@@ -772,6 +780,9 @@ const P02_KNOWN_LIMITATIONS: readonly string[] = [
 
 /** 逻辑 argv/cwd 映射：报告与证据不写入个人绝对路径。 */
 function logicalArg(value: string, repoRoot: string): string {
+  if (scanTextForCredentialShapes(value).length > 0) {
+    return `[credential-shaped argument redacted; sha256=${createHash('sha256').update(value).digest('hex')}]`;
+  }
   if (value === process.execPath) {
     return '<node>';
   }
@@ -817,16 +828,23 @@ function renderStepLog(
     `stderr_bytes: ${outcome.stderrBytes}${outcome.stderrTruncated ? `（超出上限 ${maxOutputBytes}，已截断，仅保留前段）` : ''}`,
   );
   lines.push('--- stdout ---');
-  lines.push(outcome.stdout);
+  lines.push(redactCommandOutput(outcome.stdout));
   if (outcome.stdoutTruncated) {
     lines.push(`[output truncated: kept first ${maxOutputBytes} of ${outcome.stdoutBytes} bytes]`);
   }
   lines.push('--- stderr ---');
-  lines.push(outcome.stderr);
+  lines.push(redactCommandOutput(outcome.stderr));
   if (outcome.stderrTruncated) {
     lines.push(`[output truncated: kept first ${maxOutputBytes} of ${outcome.stderrBytes} bytes]`);
   }
   return `${lines.join('\n')}\n`;
+}
+
+// Omit the whole affected stream: a credential value can span multiple lines.
+// The report still records outcome, byte counts and a digest, and keeps its fail-closed scanner.
+function redactCommandOutput(text: string): string {
+  return scanTextForCredentialShapes(text).length === 0 ? text
+    : `[credential-shaped output redacted; sha256=${createHash('sha256').update(text).digest('hex')}]`;
 }
 
 /* ---------------- 控制检查求值（P02-PHASE-*） ---------------- */
