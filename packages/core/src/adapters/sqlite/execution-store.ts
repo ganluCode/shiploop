@@ -31,6 +31,7 @@
  * 不存在目标统一 undefined（存在性折叠由应用层承担）。
  */
 import { randomUUID } from 'node:crypto';
+import { CODE_ATTEMPT_SETTLEMENT_PREFIX, validateCodeAttemptSettlement } from '../../ports/code-attempt-budget.js';
 import { StorageError } from '../../ports/errors.js';
 import type { StorageEntityRef } from '../../ports/errors.js';
 import {
@@ -278,6 +279,7 @@ export interface SqliteExecutionAccess {
    * runtime_starts 与绝对时间不退还；重复分类幂等不重复调账。
    */
   reclassifyTaskAttemptAsInfrastructureInTransaction(input: unknown): TaskAttemptReservationRecord;
+  settleTaskAttemptBudgetInTransaction(input: unknown): TaskAttemptReservationRecord;
   /** 同项目同 Task 同预占身份的账本行（无则 null）。 */
   getTaskAttemptReservationInTransaction(
     projectId: string,
@@ -1293,6 +1295,10 @@ export function createSqliteExecutionAccess(
     if (existing.classification === 'infrastructure') {
       return reservationFromRow(existing, operation);
     }
+    if (existing.reason?.startsWith(CODE_ATTEMPT_SETTLEMENT_PREFIX)) {
+      throw new StorageError('conflict', operation, 'Verification budget already settled',
+        { entity, details: { reason: 'attempt_budget_already_settled' } });
+    }
     const timestamp = nowUtcMs();
     // 受信单向重分类（code→infrastructure）：账本行分类/理由持久 + 仅退还代码
     // 额度；总 Attempt（attempt_counter）、Batch/Run 累计计数、runtime_starts 与
@@ -1329,6 +1335,39 @@ export function createSqliteExecutionAccess(
       .prepare<[string], TaskAttemptReservationSqlRow>(`${SELECT_RESERVATION} WHERE id = ?`)
       .get(existing.id) as TaskAttemptReservationSqlRow;
     return reservationFromRow(updated, operation);
+  }
+
+  function settleTaskAttemptBudgetInTransaction(input: unknown): TaskAttemptReservationRecord {
+    const operation = 'ExecutionStore.settleTaskAttemptBudget';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const valid = validateCodeAttemptSettlement(input, operation);
+    const existing = getTaskAttemptReservationInTransaction(valid.projectId, valid.taskId, valid.attemptKey);
+    const entity: StorageEntityRef = { type: 'task_attempt_reservation', projectId: valid.projectId, id: valid.attemptKey };
+    if (existing === null) throw notFound(operation, entity, 'Attempt reservation not found');
+    if (existing.batchId !== valid.batchId || existing.runId !== valid.runId) {
+      throw ownership(operation, entity, 'Settlement does not match reserved Run/Batch');
+    }
+    // Reuse the bounded audit reason field rather than a second budget ledger.
+    // The prefix is reserved for final, immutable verification settlements.
+    const reason = CODE_ATTEMPT_SETTLEMENT_PREFIX + JSON.stringify({
+      outcome: valid.outcome, observationDigest: valid.observationDigest,
+    });
+    if (existing.reason?.startsWith(CODE_ATTEMPT_SETTLEMENT_PREFIX)) {
+      if (existing.reason === reason) return existing;
+      throw new StorageError('conflict', operation, 'Conflicting attempt budget settlement',
+        { entity, details: { reason: 'attempt_budget_already_settled' } });
+    }
+    if (valid.outcome !== 'non_code_failure' && existing.classification === 'infrastructure') {
+      throw new StorageError('conflict', operation, 'Infrastructure classification cannot become code', { entity });
+    }
+    if (valid.outcome === 'non_code_failure') {
+      reclassifyTaskAttemptAsInfrastructureInTransaction({ projectId: valid.projectId,
+        taskId: valid.taskId, attemptKey: valid.attemptKey, reason: 'verification non-code failure' });
+    }
+    session.database.prepare('UPDATE task_attempt_reservations SET reason = ?, revision = revision + 1, updated_at = ? WHERE id = ?')
+      .run(reason, nowUtcMs(), existing.id);
+    return getTaskAttemptReservationInTransaction(valid.projectId, valid.taskId, valid.attemptKey)!;
   }
 
   function getTaskAttemptReservationInTransaction(
@@ -2073,6 +2112,7 @@ export function createSqliteExecutionAccess(
     recordExecutionRunDispatchInTransaction,
     appendExecutionEventInTransaction,
     reserveTaskAttemptInTransaction,
+    settleTaskAttemptBudgetInTransaction,
     reclassifyTaskAttemptAsInfrastructureInTransaction,
     getTaskAttemptReservationInTransaction,
     getTaskExecutionCountersInTransaction,

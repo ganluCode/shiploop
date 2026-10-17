@@ -25,6 +25,7 @@ void runBarrierChild({
             const record = services.atomic.transact('test.budgetRace', tx => {
               if (mode === 'attempt') return tx.reserveTaskAttempt(config.input);
               if (mode === 'runtime') return tx.reserveRuntimeStart(config.input);
+              if (mode === 'attempt-budget-settlement') return tx.settleTaskAttemptBudget(config.input);
               if (mode === 'settlement') return tx.settleExecutionRunOutcome(config.input);
               throw new Error(`Unsupported race mode: ${String(mode)}`);
             });

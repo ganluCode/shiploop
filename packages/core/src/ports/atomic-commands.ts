@@ -274,6 +274,8 @@ export interface CommandTransaction {
   reclassifyTaskAttemptAsInfrastructure(
     input: unknown,
   ): import('./execution-store.js').TaskAttemptReservationRecord;
+  /** Finalize one trusted verification assessment; same observation is idempotent, contradictory replay conflicts. */
+  settleTaskAttemptBudget(input: unknown): import('./execution-store.js').TaskAttemptReservationRecord;
   /** 同项目同 Task 同预占身份的账本行（无则 null）。 */
   getTaskAttemptReservation(
     projectId: string,

@@ -139,6 +139,7 @@ export function createSqliteAtomicCommandStore(
           reclassifyTaskAttemptAsInfrastructure: guarded(
             executions.reclassifyTaskAttemptAsInfrastructureInTransaction,
           ),
+          settleTaskAttemptBudget: guarded(executions.settleTaskAttemptBudgetInTransaction),
           getTaskAttemptReservation: guarded(executions.getTaskAttemptReservationInTransaction),
           getTaskExecutionCounters: guarded(executions.getTaskExecutionCountersInTransaction),
           getExecutionRun: guarded(executions.getExecutionRunInTransaction),
