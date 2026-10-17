@@ -188,6 +188,26 @@ import type { ArtifactFileStore } from '../ports/artifact-files.js';
 import { createArtifactVerifier } from './artifact-verify.js';
 import type { AttemptRecord } from '../ports/attempt-store.js';
 import { evaluateTaskDag } from './task-dag.js';
+import {
+  TASK_APPROVAL_ITEMS_LIST_OPERATION,
+  TASK_REWORK_CHAIN_LIST_OPERATION,
+  TASK_VERIFICATION_GET_OPERATION,
+  buildReworkAttemptTotals,
+  buildReworkCodeEligibility,
+  deriveTaskMachineConclusion,
+  toPublicReworkAttemptRecord,
+  toPublicReworkRunView,
+  toPublicTaskApprovalItemRecord,
+  toPublicTaskEvidenceState,
+  toPublicVerificationBatchRecord,
+} from '../ports/task-evidence-query.js';
+import type {
+  PublicReworkSuccessorView,
+  TaskApprovalItemListResult,
+  TaskEvidenceQueryReadStore,
+  TaskReworkChainListResult,
+  TaskVerificationDetailResult,
+} from '../ports/task-evidence-query.js';
 
 /** 分页事件读取结果（Core 内部面；F-012 SSE 补读复用）。 */
 export interface StateEventPage {
@@ -374,6 +394,23 @@ export interface QueryService {
    * 防枚举；绝不接受任意文件路径；查询零写入、零续租）。
    */
   readWorkSessionEvidence(principal: unknown, input: unknown): Promise<WorkSessionEvidenceContent>;
+  /**
+   * P03-7 / F-013 execution.task.verification.get：Task 当前机器结论 +
+   * 有界 VerificationBatch/CheckResult（选择/回退理由、代码身份、输出
+   * Artifact/tail 引用）；机器 passed 不展示为有效 Task passed。
+   */
+  getTaskVerification(principal: unknown, input: unknown): Promise<TaskVerificationDetailResult>;
+  /**
+   * P03-7 / F-013 execution.task.approvals.list：独立人审事项分页（事项、
+   * 责任主体、绑定摘要与决定；与机器证据分开，不混为一谈）。
+   */
+  listTaskApprovalItems(principal: unknown, input: unknown): Promise<TaskApprovalItemListResult>;
+  /**
+   * P03-7 / F-013 execution.task.rework-chain.list：有限返工链分页（历次
+   * Attempt 与失败引用、代码资格已用/剩余、总预算阻止原因、Run 暂停原因与
+   * 后继 blocked 原因；未知退出/耗时保持 null）。
+   */
+  listTaskReworkChain(principal: unknown, input: unknown): Promise<TaskReworkChainListResult>;
 }
 
 export interface QueryServiceOptions {
@@ -400,6 +437,8 @@ export interface QueryServiceOptions {
   readonly workspaceReads: WorkspaceQueryReadStore;
   /** P03-6 / F-011 Work Session/证据查询一致读取窄端口（只读）。 */
   readonly workSessionReads: WorkSessionQueryReadStore;
+  /** P03-7 / F-013 Task 证据/人审/返工链一致读取窄端口（只读）。 */
+  readonly taskEvidenceReads: TaskEvidenceQueryReadStore;
   /** P03-6 / F-011 证据制品索引（正文经完整性核验读取；只读用法）。 */
   readonly artifacts: ArtifactStore;
   /** P03-6 / F-011 证据制品文件（只读用法；不推导任意路径）。 */
@@ -512,6 +551,7 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
     scheduleReads,
     workspaceReads,
     workSessionReads,
+    taskEvidenceReads,
     artifacts,
     artifactFiles,
     dataRootIdentity,
@@ -1799,6 +1839,186 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
             version: artifact.version,
           },
           content: verified.content,
+        };
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    // P03-7 / F-013：Task 机器证据/人审事项/有限返工链只读查询（能力核验 →
+    // 身份/分页校验 → 项目可见 → 一致读；跨项目/不存在折叠 not_found；脱敏
+    // 投影在端口层；查询零写入、零事件、不触发 Runtime、不扣预算）。
+    async getTaskVerification(
+      principal: unknown,
+      input: unknown,
+    ): Promise<TaskVerificationDetailResult> {
+      assertTrustedPrincipal(principal);
+      const operation = TASK_VERIFICATION_GET_OPERATION;
+      try {
+        requireCapability(principal, 'project.read', operation);
+        const object = requirePlainObject(input, { operation }, 'input');
+        rejectUnknownKeys(object, ['projectId', 'taskId'], { operation }, 'input');
+        const projectId = requireProjectId(object.projectId, operation);
+        const taskId = validateStableId(
+          object.taskId,
+          { operation, entity: { type: 'task' } },
+          'taskId',
+        );
+        requireProjectVisible(principal, projectId, operation);
+        const view = taskEvidenceReads.readTaskVerificationView(projectId, taskId);
+        if (view === undefined) {
+          executionScheduleTargetNotFound(operation, 'task');
+        }
+        return {
+          schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION,
+          scope: 'task-verification',
+          task: toPublicTaskEvidenceState(view.task),
+          // 机器结论只反映机器事实；有效 Task passed 恒以 task.status 为准，
+          // 机器 passed 绝不展示为有效 Task passed。
+          machine: deriveTaskMachineConclusion(view),
+          batches: view.batches.map(toPublicVerificationBatchRecord),
+          batchesTruncated: view.batchesTruncated,
+        };
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    async listTaskApprovalItems(
+      principal: unknown,
+      input: unknown,
+    ): Promise<TaskApprovalItemListResult> {
+      assertTrustedPrincipal(principal);
+      const operation = TASK_APPROVAL_ITEMS_LIST_OPERATION;
+      try {
+        requireCapability(principal, 'project.read', operation);
+        const object = requirePlainObject(input, { operation }, 'input');
+        rejectUnknownKeys(object, ['projectId', 'taskId', 'limit', 'cursor'], { operation }, 'input');
+        const projectId = requireProjectId(object.projectId, operation);
+        const taskId = validateStableId(
+          object.taskId,
+          { operation, entity: { type: 'task' } },
+          'taskId',
+        );
+        requireProjectVisible(principal, projectId, operation);
+        const filter = validatedPlanFilter(object, operation);
+        const binding = planCursorBinding({ kind: 'task-approvals', projectId, taskId }, operation);
+        // 游标解析先于任何读取：跨 Task/跨项目/跨根重放或篡改载荷一律
+        // invalid_cursor，绝不当作从零读取，也不先泄漏目标存在性。
+        const after = planListRequest(filter, binding, operation);
+        const request = {
+          after: after.afterId === null ? null : decodeExecutionListKey(after.afterId, operation),
+          limit: filter.limit,
+        };
+        const task = planReads.readTaskRecord(taskId);
+        if (task === undefined || task.projectId !== projectId) {
+          executionScheduleTargetNotFound(operation, 'task');
+        }
+        const page = taskEvidenceReads.listTaskApprovalItemRows(
+          principalProjectVisibility(principal),
+          projectId,
+          taskId,
+          request,
+        );
+        return {
+          schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION,
+          scope: 'task-approval-item-list',
+          records: page.records.map(toPublicTaskApprovalItemRecord),
+          nextCursor:
+            page.nextKey === null
+              ? null
+              : encodePlanListCursor(encodeExecutionListKey(page.nextKey), binding),
+          limit: filter.limit,
+        };
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    async listTaskReworkChain(
+      principal: unknown,
+      input: unknown,
+    ): Promise<TaskReworkChainListResult> {
+      assertTrustedPrincipal(principal);
+      const operation = TASK_REWORK_CHAIN_LIST_OPERATION;
+      try {
+        requireCapability(principal, 'project.read', operation);
+        const object = requirePlainObject(input, { operation }, 'input');
+        rejectUnknownKeys(object, ['projectId', 'taskId', 'limit', 'cursor'], { operation }, 'input');
+        const projectId = requireProjectId(object.projectId, operation);
+        const taskId = validateStableId(
+          object.taskId,
+          { operation, entity: { type: 'task' } },
+          'taskId',
+        );
+        requireProjectVisible(principal, projectId, operation);
+        const filter = validatedPlanFilter(object, operation);
+        const binding = planCursorBinding({ kind: 'task-rework-chain', projectId, taskId }, operation);
+        const after = planListRequest(filter, binding, operation);
+        const request = {
+          after: after.afterId === null ? null : decodeExecutionListKey(after.afterId, operation),
+          limit: filter.limit,
+        };
+        const view = taskEvidenceReads.readTaskReworkView(projectId, taskId);
+        if (view === undefined) {
+          executionScheduleTargetNotFound(operation, 'task');
+        }
+        const page = taskEvidenceReads.listTaskReworkAttemptRows(
+          principalProjectVisibility(principal),
+          projectId,
+          taskId,
+          request,
+        );
+        // 总预算阻止原因与后继 blocked 原因从既有纯派生同一规则取得：预算判定
+        // 复用 buildExecutionBudgetStatus（含 Task 代码资格上限），后继阻断复用
+        // evaluateTaskDag；均是只读派生，不落第二套可写状态。
+        let budgetBlockReasons: TaskReworkChainListResult['summary']['budgetBlockReasons'] = [];
+        let blockedSuccessors: readonly PublicReworkSuccessorView[] = [];
+        if (view.run !== null) {
+          const budgetView = executionBudgetReads.readExecutionBudgetView(projectId, view.run.batchId);
+          if (budgetView !== undefined) {
+            const effective = mergeEffectiveSettings({
+              global: budgetView.settings.global,
+              project: budgetView.settings.project,
+            });
+            budgetBlockReasons = buildExecutionBudgetStatus(budgetView, {
+              nowUtcMs: nowUtcMs(),
+              maxAttemptsPerTask: effective.policies.executionLimits?.value.maxAttemptsPerTask ?? null,
+            }).blockingReasons;
+          }
+          const scheduleView = scheduleReads.readRunScheduleView(projectId, view.run.id);
+          if (scheduleView !== undefined && scheduleView.dag !== null) {
+            const evaluation = evaluateTaskDag(scheduleView.dag, nowUtcMs());
+            const planTasks = new Map(scheduleView.dag.plan.tasks.map((task) => [task.id, task]));
+            blockedSuccessors = evaluation.tasks
+              .filter((entry) => entry.dependencyIds.includes(taskId))
+              .map((entry) => {
+                const planTask = planTasks.get(entry.taskId);
+                if (planTask === undefined) {
+                  throw new TypeError('DAG 评估结果与一致读视图不一致（适配器实现缺陷）');
+                }
+                return { taskId: entry.taskId, status: planTask.status, reason: entry.reason };
+              });
+          }
+        }
+        return {
+          schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION,
+          scope: 'task-rework-chain',
+          records: page.records.map(toPublicReworkAttemptRecord),
+          nextCursor:
+            page.nextKey === null
+              ? null
+              : encodePlanListCursor(encodeExecutionListKey(page.nextKey), binding),
+          limit: filter.limit,
+          summary: {
+            // 代码资格已用/剩余只取持久计数与策略副本上限；基础设施错误与
+            // 等待人审不显示为代码额度消耗。
+            codeEligibility: buildReworkCodeEligibility(view.task),
+            attempts: buildReworkAttemptTotals(view.task),
+            run: view.run === null ? null : toPublicReworkRunView(view.run),
+            budgetBlockReasons,
+            blockedSuccessors,
+          },
         };
       } catch (error) {
         throw mapToPublicError(error, { operation });

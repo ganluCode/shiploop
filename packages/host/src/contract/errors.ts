@@ -67,6 +67,11 @@ export const APP_OPERATIONS = [
   'execution.session.evidence.get',
   'execution.attempts.list',
   'execution.attempt.diagnostics',
+  // P03-7 / F-013：Task 机器证据/人审事项/有限返工链授权只读查询（能力位复用
+  // project.read；与 Core TASK_EVIDENCE_QUERY_OPERATIONS 同步，不漂移）。
+  'execution.task.verification.get',
+  'execution.task.approvals.list',
+  'execution.task.rework-chain.list',
   // P03-5 / F-011/F-012：工作区状态只读查询（服务端路由 F-011 已接线；
   // HostClient 入口属 F-012）。
   'workspaces.list',

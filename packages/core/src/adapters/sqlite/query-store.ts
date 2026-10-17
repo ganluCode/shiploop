@@ -49,6 +49,14 @@ import type {
   WorkSessionDetailView,
   WorkSessionQueryReadStore,
 } from '../../ports/work-session-query.js';
+import { createSqliteTaskEvidenceQueryStore } from './task-evidence-query-store.js';
+import type {
+  TaskApprovalItemRow,
+  TaskEvidenceQueryReadStore,
+  TaskReworkAttemptRow,
+  TaskReworkView,
+  TaskVerificationView,
+} from '../../ports/task-evidence-query.js';
 import type {
   FeatureRecord,
   PhaseRecord,
@@ -66,7 +74,8 @@ import type { SqliteStateStoreOptions } from './state-store.js';
  * P03-3 / F-010 起追加执行预算查询窄读取（ExecutionBudgetQueryReadStore）；
  * P03-4 / F-007 起追加调度/审计查询窄读取（ExecutionScheduleQueryReadStore）；
  * P03-5 / F-011 起追加工作区状态查询窄读取（WorkspaceQueryReadStore）；
- * P03-6 / F-011 起追加 Work Session/证据查询窄读取（WorkSessionQueryReadStore）。 */
+ * P03-6 / F-011 起追加 Work Session/证据查询窄读取（WorkSessionQueryReadStore）；
+ * P03-7 / F-013 起追加 Task 证据/人审/返工链窄读取（TaskEvidenceQueryReadStore）。 */
 export interface SqliteQueryStore
   extends AuthorizedProjectReadStore,
     ConsistentSnapshotStore,
@@ -76,7 +85,8 @@ export interface SqliteQueryStore
     ExecutionBudgetQueryReadStore,
     ExecutionScheduleQueryReadStore,
     WorkspaceQueryReadStore,
-    WorkSessionQueryReadStore {}
+    WorkSessionQueryReadStore,
+    TaskEvidenceQueryReadStore {}
 
 export function createSqliteQueryStore(
   session: SqliteStorageSession,
@@ -97,6 +107,7 @@ export function createSqliteQueryStore(
   const schedule = createSqliteExecutionScheduleQueryStore(session);
   const workspace = createSqliteWorkspaceQueryStore(session);
   const workSessions = createSqliteWorkSessionQueryStore(session);
+  const taskEvidence = createSqliteTaskEvidenceQueryStore(session);
   return {
     listVisibleProjects(visibility: unknown, filter: unknown): ProjectPage {
       return access.listVisibleProjects(visibility, filter);
@@ -205,5 +216,23 @@ export function createSqliteQueryStore(
       workSessions.listTaskWorkSessions(visibility, projectId, taskId, request),
     readWorkSessionDetail: (projectId: unknown, attemptId: unknown): WorkSessionDetailView | undefined =>
       workSessions.readWorkSessionDetail(projectId, attemptId),
+    readTaskVerificationView: (projectId: unknown, taskId: unknown): TaskVerificationView | undefined =>
+      taskEvidence.readTaskVerificationView(projectId, taskId),
+    listTaskApprovalItemRows: (
+      visibility: unknown,
+      projectId: unknown,
+      taskId: unknown,
+      request: ExecutionListRequest,
+    ): ExecutionRecordPage<TaskApprovalItemRow> =>
+      taskEvidence.listTaskApprovalItemRows(visibility, projectId, taskId, request),
+    readTaskReworkView: (projectId: unknown, taskId: unknown): TaskReworkView | undefined =>
+      taskEvidence.readTaskReworkView(projectId, taskId),
+    listTaskReworkAttemptRows: (
+      visibility: unknown,
+      projectId: unknown,
+      taskId: unknown,
+      request: ExecutionListRequest,
+    ): ExecutionRecordPage<TaskReworkAttemptRow> =>
+      taskEvidence.listTaskReworkAttemptRows(visibility, projectId, taskId, request),
   };
 }

@@ -197,6 +197,45 @@ export type {
   WorkSessionQueryOperation,
   WorkSessionQueryState,
 } from './ports/work-session-query.js';
+// P03-7 / F-013 Task 机器证据/人审事项/有限返工链只读查询面：公开形状与
+// 操作身份冻结词汇（服务端负责授权；Host 接线同源同步）。
+export {
+  TASK_APPROVAL_ITEMS_LIST_OPERATION,
+  TASK_CODE_ACCOUNTING_CLASSIFICATIONS,
+  TASK_EVIDENCE_QUERY_OPERATIONS,
+  TASK_MACHINE_REASONS,
+  TASK_MACHINE_STATUSES,
+  TASK_REWORK_CHAIN_LIST_OPERATION,
+  TASK_VERIFICATION_GET_OPERATION,
+  TASK_VERIFICATION_SELECTION_MODES,
+} from './ports/task-evidence-query.js';
+export { CODE_ATTEMPT_OUTCOMES } from './ports/code-attempt-budget.js';
+export {
+  CHECK_RESULT_STATUSES,
+  VERIFICATION_BATCH_STATUSES,
+} from './ports/verification-store.js';
+export type {
+  PublicReworkAttemptRecord,
+  PublicReworkChainSummary,
+  PublicReworkCodeAccounting,
+  PublicReworkCodeEligibility,
+  PublicReworkRunView,
+  PublicReworkSuccessorView,
+  PublicTaskApprovalArtifactRef,
+  PublicTaskApprovalItemRecord,
+  PublicTaskEvidenceState,
+  PublicTaskMachineConclusion,
+  PublicVerificationBatchRecord,
+  PublicVerificationCheckResult,
+  PublicVerificationSelection,
+  TaskApprovalItemListResult,
+  TaskEvidenceQueryOperation,
+  TaskMachineReason,
+  TaskMachineStatus,
+  TaskReworkChainListResult,
+  TaskVerificationDetailResult,
+  TaskVerificationSelectionMode,
+} from './ports/task-evidence-query.js';
 export {
   WORKSPACE_DISCARD_BLOCKERS,
   WORKSPACE_DISCARD_OPERATION,

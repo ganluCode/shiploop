@@ -84,6 +84,9 @@ import {
   SNAPSHOT_ROUTE,
   TASKS_ROUTE,
   TASKS_ROUTE_PREFIX,
+  TASK_APPROVALS_ROUTE_SUFFIX,
+  TASK_REWORK_CHAIN_ROUTE_SUFFIX,
+  TASK_VERIFICATION_ROUTE_SUFFIX,
 } from '../contract/index.js';
 import type { LifecycleState } from '../contract/index.js';
 import {
@@ -137,6 +140,11 @@ export type ApplicationOperation =
   | 'execution.run.schedule'
   | 'execution.attempts.list'
   | 'execution.attempt.diagnostics'
+  // P03-7 / F-013：Task 机器证据/人审事项/有限返工链查询（与 Core
+  // TASK_EVIDENCE_QUERY_OPERATIONS 同源）。
+  | 'execution.task.verification.get'
+  | 'execution.task.approvals.list'
+  | 'execution.task.rework-chain.list'
   // P03-5 / F-011：工作区状态只读查询（与 Core WORKSPACE_QUERY_OPERATIONS 同源）。
   | 'workspaces.list'
   | 'workspaces.get'
@@ -384,13 +392,35 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
     return { operation: 'tasks.list', method: 'GET' };
   }
   if (path.startsWith(TASKS_ROUTE_PREFIX)) {
-    const segment = path.slice(TASKS_ROUTE_PREFIX.length);
-    if (segment.length > 0 && !segment.includes('/')) {
+    const segments = path.slice(TASKS_ROUTE_PREFIX.length).split('/');
+    if (segments.some((segment) => segment.length === 0)) {
+      return undefined;
+    }
+    if (segments.length === 1) {
       return {
         operation: 'tasks.get',
         method: 'GET',
-        pathParam: { name: 'taskId', value: segment },
+        pathParam: { name: 'taskId', value: segments[0] as string },
       };
+    }
+    // P03-7 / F-013：唯一冻结的 Task 子资源形态（其余多段一律未匹配）。
+    if (segments.length === 2) {
+      const suffix = segments[1] as string;
+      const operation =
+        suffix === TASK_VERIFICATION_ROUTE_SUFFIX
+          ? 'execution.task.verification.get'
+          : suffix === TASK_APPROVALS_ROUTE_SUFFIX
+            ? 'execution.task.approvals.list'
+            : suffix === TASK_REWORK_CHAIN_ROUTE_SUFFIX
+              ? 'execution.task.rework-chain.list'
+              : undefined;
+      if (operation !== undefined) {
+        return {
+          operation,
+          method: 'GET',
+          pathParam: { name: 'taskId', value: segments[0] as string },
+        };
+      }
     }
     return undefined;
   }
@@ -574,6 +604,17 @@ const QUERY_SPECS: Readonly<Partial<Record<ApplicationOperation, QuerySpec>>> = 
     repeatable: [],
   }),
   'execution.attempt.diagnostics': Object.freeze({
+    allowed: ['projectId', 'limit', 'cursor'],
+    repeatable: [],
+  }),
+  // P03-7 / F-013：Task 证据/人审/返工链查询参数白名单（取值规则由 Core 单一
+  // 权威复核；taskId 只来自冻结路径参数，不接受查询参数重复指定）。
+  'execution.task.verification.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
+  'execution.task.approvals.list': Object.freeze({
+    allowed: ['projectId', 'limit', 'cursor'],
+    repeatable: [],
+  }),
+  'execution.task.rework-chain.list': Object.freeze({
     allowed: ['projectId', 'limit', 'cursor'],
     repeatable: [],
   }),
@@ -1040,6 +1081,27 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
       const query = buildPlanListQuery(params, operation, 'projectId');
       query.attemptId = pathParam?.value;
       result = await app.queryService.listAttemptDiagnostics(app.principal, query);
+      break;
+    }
+    // P03-7 / F-013：Task 机器证据/人审/返工链查询分发（本层只做形态转换；
+    // 授权/可见性折叠/分页范围/游标绑定全部由 Core 单一权威复核；跨项目与
+    // 不存在目标统一 not_found，不区分存在性）。
+    case 'execution.task.verification.get':
+      result = await app.queryService.getTaskVerification(app.principal, {
+        projectId: params.get('projectId'),
+        taskId: pathParam?.value,
+      });
+      break;
+    case 'execution.task.approvals.list': {
+      const query = buildPlanListQuery(params, operation, 'projectId');
+      query.taskId = pathParam?.value;
+      result = await app.queryService.listTaskApprovalItems(app.principal, query);
+      break;
+    }
+    case 'execution.task.rework-chain.list': {
+      const query = buildPlanListQuery(params, operation, 'projectId');
+      query.taskId = pathParam?.value;
+      result = await app.queryService.listTaskReworkChain(app.principal, query);
       break;
     }
     case 'features.approvals':

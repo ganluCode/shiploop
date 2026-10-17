@@ -71,6 +71,9 @@ import type {
   SnapshotResult,
   TaskDetailResult,
   TaskListResult,
+  TaskApprovalItemListResult,
+  TaskReworkChainListResult,
+  TaskVerificationDetailResult,
   WorkSessionListResult,
   WorkSessionDetailResult,
   WorkSessionEvidenceContent,
@@ -106,6 +109,9 @@ import {
   RECEIPTS_ROUTE_PREFIX,
   RESULTS_ROUTE_PREFIX,
   RUNS_ROUTE_PREFIX,
+  TASK_APPROVALS_ROUTE_SUFFIX,
+  TASK_REWORK_CHAIN_ROUTE_SUFFIX,
+  TASK_VERIFICATION_ROUTE_SUFFIX,
   RUN_SCHEDULE_ROUTE_SUFFIX,
   SETTINGS_GLOBAL_EXPORT_ROUTE,
   SETTINGS_GLOBAL_ROUTE,
@@ -571,6 +577,30 @@ export interface HostClientApplication {
     attemptId: string,
     input?: PlanListPageInput,
   ): Promise<AttemptDiagnosticsResult>;
+  /* ------------------------------------------------------------ *
+   * P03-7 / F-013 Task 机器证据/人审事项/有限返工链只读查询
+   * ------------------------------------------------------------ */
+  /**
+   * execution.task.verification.get：Task 当前机器结论 + 有界 VerificationBatch/
+   * CheckResult（选择/回退理由、代码身份、输出 Artifact/tail 引用）；机器 passed
+   * 不展示为有效 Task passed（effectivePassed 只绑定持久 Task 状态）。
+   */
+  getTaskVerification(projectId: string, taskId: string): Promise<TaskVerificationDetailResult>;
+  /** execution.task.approvals.list：独立人审事项分页（受控 plcur_v1_ 游标）。 */
+  listTaskApprovalItems(
+    projectId: string,
+    taskId: string,
+    input?: PlanListPageInput,
+  ): Promise<TaskApprovalItemListResult>;
+  /**
+   * execution.task.rework-chain.list：有限返工链分页 + 代码资格已用/剩余、
+   * 总预算阻止原因、Run 暂停原因与后继 blocked 原因汇总；未知退出/耗时保持 null。
+   */
+  listTaskReworkChain(
+    projectId: string,
+    taskId: string,
+    input?: PlanListPageInput,
+  ): Promise<TaskReworkChainListResult>;
   /* ------------------------------------------------------------ *
    * P03-5 / F-012 工作区状态只读查询与人工丢弃预览/确认
    * ------------------------------------------------------------ */
@@ -2647,6 +2677,59 @@ export function createHostClientApplication(context: AppClientContext): HostClie
       ) {
         throw new HostProtocolError('response_malformed', 'execution.attempt.diagnostics', '诊断响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
       }
+      return result;
+    },
+
+    /* ------------------------------------------------------------ *
+     * P03-7 / F-013 Task 机器证据/人审事项/有限返工链只读查询
+     * ------------------------------------------------------------ */
+
+    async getTaskVerification(projectId, taskId) {
+      const op = 'execution.task.verification.get';
+      context.assertOpen(op);
+      const project = requireProjectId(op, projectId);
+      const task = requireStableIdInput(op, taskId, 'taskId');
+      const json = await getJson(
+        op,
+        `${TASKS_ROUTE_PREFIX}${task}/${TASK_VERIFICATION_ROUTE_SUFFIX}?projectId=${encodeURIComponent(project)}`,
+      );
+      const result = validateAppQueryResponse(op, json);
+      if (result.task.taskId !== task) {
+        throw new HostProtocolError('response_malformed', op, 'Task 证据响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
+      }
+      return result;
+    },
+
+    async listTaskApprovalItems(projectId, taskId, input) {
+      const op = 'execution.task.approvals.list';
+      context.assertOpen(op);
+      const project = requireProjectId(op, projectId);
+      const task = requireStableIdInput(op, taskId, 'taskId');
+      const paging = buildPlanListQuery(input, op);
+      const query = `projectId=${encodeURIComponent(project)}${paging.length === 0 ? '' : `&${paging}`}`;
+      const json = await getJson(
+        op,
+        `${TASKS_ROUTE_PREFIX}${task}/${TASK_APPROVALS_ROUTE_SUFFIX}?${query}`,
+      );
+      const result = validateAppQueryResponse(op, json);
+      if (result.records.some((record) => record.projectId !== project || record.taskId !== task)) {
+        throw new HostProtocolError('response_malformed', op, '人审事项响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
+      }
+      return result;
+    },
+
+    async listTaskReworkChain(projectId, taskId, input) {
+      const op = 'execution.task.rework-chain.list';
+      context.assertOpen(op);
+      const project = requireProjectId(op, projectId);
+      const task = requireStableIdInput(op, taskId, 'taskId');
+      const paging = buildPlanListQuery(input, op);
+      const query = `projectId=${encodeURIComponent(project)}${paging.length === 0 ? '' : `&${paging}`}`;
+      const json = await getJson(
+        op,
+        `${TASKS_ROUTE_PREFIX}${task}/${TASK_REWORK_CHAIN_ROUTE_SUFFIX}?${query}`,
+      );
+      const result = validateAppQueryResponse(op, json);
       return result;
     },
 

@@ -57,7 +57,7 @@ import {
   validateStopResultView,
   verifyStopRequestDigest,
 } from '../packages/host/src/index.ts';
-import { COMMAND_OPERATIONS, EXECUTION_SCHEDULE_QUERY_OPERATIONS, PLAN_APPROVAL_QUERY_OPERATION, PLAN_QUERY_OPERATIONS, QUERY_OPERATIONS } from '../packages/core/src/index.ts';
+import { COMMAND_OPERATIONS, EXECUTION_SCHEDULE_QUERY_OPERATIONS, PLAN_APPROVAL_QUERY_OPERATION, PLAN_QUERY_OPERATIONS, QUERY_OPERATIONS, TASK_EVIDENCE_QUERY_OPERATIONS } from '../packages/core/src/index.ts';
 import type {
   HostDiscoveryRecord,
   HostErrorCode,
@@ -254,6 +254,10 @@ describe('F-002 冻结常量与能力声明', () => {
           'execution.run.schedule',
           'execution.attempts.list',
           'execution.attempt.diagnostics',
+          // P03-7 / F-013：Task 机器证据/人审/返工链查询真实接线。
+          'execution.task.verification.get',
+          'execution.task.approvals.list',
+          'execution.task.rework-chain.list',
           'workspaces.list',
           'workspaces.get',
           'workspace.operations.list',
@@ -268,7 +272,8 @@ describe('F-002 冻结常量与能力声明', () => {
     // + 已接线的基线分页/详情/证据三项（F-014，与 BASELINE_QUERY_OPERATIONS 同步）
     // + P03-1 / F-009 计划域六项（与 PLAN_QUERY_OPERATIONS 同步，能力位复用 project.read）
     // + P03-2 / F-007 审批决策查询（与 PLAN_APPROVAL_QUERY_OPERATION 同步）
-    // + P03-4 / F-008 调度诊断/Attempt 审计三项（与 EXECUTION_SCHEDULE_QUERY_OPERATIONS 同步）。
+    // + P03-4 / F-008 调度诊断/Attempt 审计三项（与 EXECUTION_SCHEDULE_QUERY_OPERATIONS 同步）
+    // + P03-7 / F-013 Task 证据/人审/返工链三项（与 TASK_EVIDENCE_QUERY_OPERATIONS 同步）。
     expect([...CURRENT_HOST_CAPABILITIES.application.queries]).toEqual([
       'execution.sessions.list',
       'execution.session.get',
@@ -285,6 +290,7 @@ describe('F-002 冻结常量与能力声明', () => {
       'execution.budget.get',
       'execution.budget.revisions',
       ...EXECUTION_SCHEDULE_QUERY_OPERATIONS,
+      ...TASK_EVIDENCE_QUERY_OPERATIONS,
       'workspaces.list',
       'workspaces.get',
       'workspace.operations.list',

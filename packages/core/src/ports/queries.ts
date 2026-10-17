@@ -592,7 +592,9 @@ export const PLAN_LIST_CURSOR_VERSION = 1 as const;
  *  P03-4 / F-007 起含 'task-attempts'（Attempt 审计分页，父级为 Task）与
  *  'attempt-diagnostics'（迟到/越权通知诊断分页，父级为 Attempt）；
  *  P03-6 / F-011 起含 'run-work-sessions' 与 'task-work-sessions'（Work
- *  Session 列表分页，父级为 Run / Task）。 */
+ *  Session 列表分页，父级为 Run / Task）；P03-7 / F-013 起含
+ *  'task-approvals'（Task 人审事项分页，父级为 Task）与 'task-rework-chain'
+ *  （有限返工链分页，父级为 Task）。 */
 export type PlanListScope =
   | { readonly kind: 'phases'; readonly projectId: string }
   | { readonly kind: 'features'; readonly projectId: string; readonly phaseId: string }
@@ -601,7 +603,9 @@ export type PlanListScope =
   | { readonly kind: 'task-attempts'; readonly projectId: string; readonly taskId: string }
   | { readonly kind: 'attempt-diagnostics'; readonly projectId: string; readonly attemptId: string }
   | { readonly kind: 'run-work-sessions'; readonly projectId: string; readonly runId: string }
-  | { readonly kind: 'task-work-sessions'; readonly projectId: string; readonly taskId: string };
+  | { readonly kind: 'task-work-sessions'; readonly projectId: string; readonly taskId: string }
+  | { readonly kind: 'task-approvals'; readonly projectId: string; readonly taskId: string }
+  | { readonly kind: 'task-rework-chain'; readonly projectId: string; readonly taskId: string };
 
 /** 游标签发/解析绑定：数据根身份 + 列表 scope（只允许可信装配构造）。 */
 export interface PlanListCursorBinding {
@@ -732,10 +736,32 @@ export function createPlanListCursorBinding(
       },
     };
   }
+  if (scope.kind === 'task-approvals') {
+    rejectUnknownKeys(scope, ['kind', 'projectId', 'taskId'], { operation }, 'scope');
+    return {
+      rootIdentity: input.rootIdentity,
+      scope: {
+        kind: 'task-approvals',
+        projectId: validateStableId(scope.projectId, { operation, entity: { type: 'project' } }, 'scope.projectId'),
+        taskId: validateStableId(scope.taskId, { operation, entity: { type: 'task' } }, 'scope.taskId'),
+      },
+    };
+  }
+  if (scope.kind === 'task-rework-chain') {
+    rejectUnknownKeys(scope, ['kind', 'projectId', 'taskId'], { operation }, 'scope');
+    return {
+      rootIdentity: input.rootIdentity,
+      scope: {
+        kind: 'task-rework-chain',
+        projectId: validateStableId(scope.projectId, { operation, entity: { type: 'project' } }, 'scope.projectId'),
+        taskId: validateStableId(scope.taskId, { operation, entity: { type: 'task' } }, 'scope.taskId'),
+      },
+    };
+  }
   planInvalidInput(
     operation,
     'scope.kind',
-    "必须是 'phases' / 'features' / 'tasks' / 'budget-revisions' / 'task-attempts' / 'attempt-diagnostics' / 'run-work-sessions' / 'task-work-sessions'",
+    "必须是 'phases' / 'features' / 'tasks' / 'budget-revisions' / 'task-attempts' / 'attempt-diagnostics' / 'run-work-sessions' / 'task-work-sessions' / 'task-approvals' / 'task-rework-chain'",
     (scope as { kind?: unknown }).kind,
   );
 }
@@ -753,7 +779,9 @@ function planBindingAsTrusted(binding: PlanListCursorBinding): PlanListCursorBin
       binding.scope.kind !== 'task-attempts' &&
       binding.scope.kind !== 'attempt-diagnostics' &&
       binding.scope.kind !== 'run-work-sessions' &&
-      binding.scope.kind !== 'task-work-sessions')
+      binding.scope.kind !== 'task-work-sessions' &&
+      binding.scope.kind !== 'task-approvals' &&
+      binding.scope.kind !== 'task-rework-chain')
   ) {
     planScopeShapeError('必须由 createPlanListCursorBinding 构造');
   }

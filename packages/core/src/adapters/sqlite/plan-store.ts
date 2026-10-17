@@ -120,7 +120,7 @@ interface TaskSqlRow {
   readonly config_source_key: string | null;
 }
 
-interface TaskApprovalItemSqlRow {
+export interface TaskApprovalItemSqlRow {
   readonly id: string; readonly created_at: number; readonly project_id: string;
   readonly feature_id: string; readonly task_id: string; readonly revision: number;
   readonly updated_at: number; readonly kind: string; readonly description: string;
@@ -305,6 +305,56 @@ export interface SqlitePlanAccess {
   ): PlanRecordPage<TaskRecord>;
 }
 
+function parseJsonColumn(text: string, operation: string, reason: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch (cause) {
+    throw new StorageError('corrupt', operation, `${operation}: 计划结构持久 JSON 列损坏`, {
+      details: { reason },
+      cause,
+    });
+  }
+}
+
+/**
+ * P03-7 / F-013：人审事项行 → TaskApprovalItemRecord（fail-closed：损坏行抛
+ * corrupt，不泄漏原始内容）；导出供只读查询窄端口复用，不建第二套映射规则。
+ */
+export function taskApprovalItemFromRow(row: TaskApprovalItemSqlRow): TaskApprovalItemRecord {
+  const operation = 'PlanStore.readTaskApprovalItem';
+  const refs = parseJsonColumn(row.artifact_refs, operation, 'invalid_artifact_refs_json');
+  if (!Array.isArray(refs) || refs.some((ref) => typeof ref !== 'object' || ref === null)) {
+    throw new StorageError('corrupt', operation, '人审事项 Artifact 引用损坏');
+  }
+  if (row.kind !== 'block' && row.kind !== 'approval' || !['pending', 'approved', 'rejected', 'unblocked'].includes(row.status)) {
+    throw new StorageError('corrupt', operation, '人审事项状态损坏');
+  }
+  const decisionRefs = parseJsonColumn(row.decision_artifact_refs, operation, 'invalid_decision_artifact_refs_json');
+  if (!Array.isArray(decisionRefs) || decisionRefs.some((ref) => typeof ref !== 'object' || ref === null)) {
+    throw new StorageError('corrupt', operation, '人审事项决定制品引用损坏');
+  }
+  const decision = row.decision === null ? null : row.decision as TaskApprovalItemRecord['decision'];
+  if (decision !== null && decision !== 'approve' && decision !== 'reject' && decision !== 'unblock') {
+    throw new StorageError('corrupt', operation, '人审事项决定损坏');
+  }
+  const expectedDecision = row.status === 'pending' ? null : row.status === 'approved' ? 'approve' : row.status === 'rejected' ? 'reject' : 'unblock';
+  if (decision !== expectedDecision || (decision === null && (row.decision_actor !== null || row.decided_at !== null))
+    || (decision !== null && (row.decision_actor === null || row.decided_at === null))) {
+    throw new StorageError('corrupt', operation, '人审事项决定绑定损坏');
+  }
+  return {
+    id: row.id, projectId: row.project_id, featureId: row.feature_id, taskId: row.task_id,
+    revision: row.revision, kind: row.kind as TaskApprovalItemRecord['kind'], description: row.description,
+    responsibleParty: row.responsible_party, planDigest: row.plan_digest,
+    codeDigest: row.code_digest,
+    artifactRefs: refs as TaskApprovalItemRecord['artifactRefs'], status: row.status as TaskApprovalItemRecord['status'],
+    createdBy: row.created_by, decision, decisionActor: row.decision_actor, decisionReason: row.decision_reason,
+    decisionCodeDigest: row.decision_code_digest,
+    decisionArtifactRefs: decisionRefs as TaskApprovalItemRecord['decisionArtifactRefs'], decidedAtUtcMs: row.decided_at,
+    createdAtUtcMs: row.created_at, updatedAtUtcMs: row.updated_at,
+  };
+}
+
 export function createSqlitePlanAccess(
   session: SqliteStorageSession,
   options: SqlitePlanStoreOptions = {},
@@ -338,17 +388,6 @@ export function createSqlitePlanAccess(
     details: Record<string, unknown>,
   ): StorageError {
     return new StorageError('conflict', operation, `${operation}: ${message}`, { entity, details });
-  }
-
-  function parseJsonColumn(text: string, operation: string, reason: string): unknown {
-    try {
-      return JSON.parse(text);
-    } catch (cause) {
-      throw new StorageError('corrupt', operation, `${operation}: 计划结构持久 JSON 列损坏`, {
-        details: { reason },
-        cause,
-      });
-    }
   }
 
   function parseLabels(text: string, operation: string): string[] {
@@ -1006,41 +1045,6 @@ export function createSqlitePlanAccess(
       throw ownership(operation, entity, 'Task 不属于声明的项目（跨项目目标被拒绝）');
     }
     return taskFromRow(row);
-  }
-
-  function taskApprovalItemFromRow(row: TaskApprovalItemSqlRow): TaskApprovalItemRecord {
-    const operation = 'PlanStore.readTaskApprovalItem';
-    const refs = parseJsonColumn(row.artifact_refs, operation, 'invalid_artifact_refs_json');
-    if (!Array.isArray(refs) || refs.some((ref) => typeof ref !== 'object' || ref === null)) {
-      throw new StorageError('corrupt', operation, '人审事项 Artifact 引用损坏');
-    }
-    if (row.kind !== 'block' && row.kind !== 'approval' || !['pending', 'approved', 'rejected', 'unblocked'].includes(row.status)) {
-      throw new StorageError('corrupt', operation, '人审事项状态损坏');
-    }
-    const decisionRefs = parseJsonColumn(row.decision_artifact_refs, operation, 'invalid_decision_artifact_refs_json');
-    if (!Array.isArray(decisionRefs) || decisionRefs.some((ref) => typeof ref !== 'object' || ref === null)) {
-      throw new StorageError('corrupt', operation, '人审事项决定制品引用损坏');
-    }
-    const decision = row.decision === null ? null : row.decision as TaskApprovalItemRecord['decision'];
-    if (decision !== null && decision !== 'approve' && decision !== 'reject' && decision !== 'unblock') {
-      throw new StorageError('corrupt', operation, '人审事项决定损坏');
-    }
-    const expectedDecision = row.status === 'pending' ? null : row.status === 'approved' ? 'approve' : row.status === 'rejected' ? 'reject' : 'unblock';
-    if (decision !== expectedDecision || (decision === null && (row.decision_actor !== null || row.decided_at !== null))
-      || (decision !== null && (row.decision_actor === null || row.decided_at === null))) {
-      throw new StorageError('corrupt', operation, '人审事项决定绑定损坏');
-    }
-    return {
-      id: row.id, projectId: row.project_id, featureId: row.feature_id, taskId: row.task_id,
-      revision: row.revision, kind: row.kind as TaskApprovalItemRecord['kind'], description: row.description,
-      responsibleParty: row.responsible_party, planDigest: row.plan_digest,
-      codeDigest: row.code_digest,
-      artifactRefs: refs as TaskApprovalItemRecord['artifactRefs'], status: row.status as TaskApprovalItemRecord['status'],
-      createdBy: row.created_by, decision, decisionActor: row.decision_actor, decisionReason: row.decision_reason,
-      decisionCodeDigest: row.decision_code_digest,
-      decisionArtifactRefs: decisionRefs as TaskApprovalItemRecord['decisionArtifactRefs'], decidedAtUtcMs: row.decided_at,
-      createdAtUtcMs: row.created_at, updatedAtUtcMs: row.updated_at,
-    };
   }
 
   function listTaskApprovalItemsInTransaction(projectId: string, taskId: string): readonly TaskApprovalItemRecord[] {

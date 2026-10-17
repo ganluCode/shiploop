@@ -65,12 +65,23 @@ import {
   EXECUTION_BATCH_STATUSES,
   TASK_STATUSES,
   EXECUTION_BUDGET_BLOCK_REASONS,
+  // P03-7 / F-013：Task 证据/人审/返工链线校验用冻结词汇。
+  TASK_MACHINE_STATUSES,
+  TASK_MACHINE_REASONS,
+  TASK_CODE_ACCOUNTING_CLASSIFICATIONS,
+  TASK_VERIFICATION_SELECTION_MODES,
+  CODE_ATTEMPT_OUTCOMES,
+  VERIFICATION_BATCH_STATUSES,
+  CHECK_RESULT_STATUSES,
   validateSettingsPayload,
   validateWireCommandReceipt,
 } from 'shiploop-core/protocol';
 import type {
   AttemptDiagnosticsResult,
   AttemptListResult,
+  TaskApprovalItemListResult,
+  TaskReworkChainListResult,
+  TaskVerificationDetailResult,
   BaselineAuthorizationSummary,
   BaselineCheckCounts,
   BaselineCheckOutputRef,
@@ -139,6 +150,26 @@ export type {
   AttemptDiagnosticsResult,
 } from 'shiploop-core/protocol';
 
+/** P03-7 / F-013：Task 证据/人审/返工链查询结果形状经公共面再导出。 */
+export type {
+  PublicReworkAttemptRecord,
+  PublicReworkChainSummary,
+  PublicReworkCodeAccounting,
+  PublicReworkCodeEligibility,
+  PublicReworkRunView,
+  PublicReworkSuccessorView,
+  PublicTaskApprovalArtifactRef,
+  PublicTaskApprovalItemRecord,
+  PublicTaskEvidenceState,
+  PublicTaskMachineConclusion,
+  PublicVerificationBatchRecord,
+  PublicVerificationCheckResult,
+  PublicVerificationSelection,
+  TaskApprovalItemListResult,
+  TaskReworkChainListResult,
+  TaskVerificationDetailResult,
+} from 'shiploop-core/protocol';
+
 /** P03-5 / F-012：工作区状态查询与人工丢弃预览/确认结果形状经公共面再导出。 */
 export type {
   PublicWorkspaceOperationRecord,
@@ -189,6 +220,11 @@ export type AppQueryOperation =
   | 'execution.run.schedule'
   | 'execution.attempts.list'
   | 'execution.attempt.diagnostics'
+  // P03-7 / F-013：Task 机器证据/人审/返工链查询（与 Core
+  // TASK_EVIDENCE_QUERY_OPERATIONS 同源）。
+  | 'execution.task.verification.get'
+  | 'execution.task.approvals.list'
+  | 'execution.task.rework-chain.list'
   // P03-5 / F-011/F-012：工作区状态只读查询（与 Core WORKSPACE_QUERY_OPERATIONS 同源）。
   | 'workspaces.list'
   | 'workspaces.get'
@@ -3189,6 +3225,488 @@ export function validateAttemptDiagnosticsResultWire(
 }
 
 /* ------------------------------------------------------------------ *
+ * P03-7 / F-013 Task 机器证据/人审事项/有限返工链查询线校验
+ *（冻结字段集精确键校验；机器 passed 不折算为有效 Task passed；未知退出/
+ *  耗时保持 null；代码资格记账不把基础设施错误折算为代码额度消耗）
+ * ------------------------------------------------------------------ */
+
+function requireIntegerOrNull(operation: HostOperation, value: unknown): number | null {
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== 'number' || !Number.isSafeInteger(value)) {
+    malformed(operation, 'task_evidence_integer_invalid');
+  }
+  return value;
+}
+
+function requireStringArray(
+  operation: HostOperation,
+  value: unknown,
+  reason: string,
+): string[] {
+  if (!Array.isArray(value)) {
+    malformed(operation, reason);
+  }
+  for (const entry of value as unknown[]) {
+    if (typeof entry !== 'string') {
+      malformed(operation, reason);
+    }
+  }
+  return value as string[];
+}
+
+function validateTaskEvidenceStateWire(operation: HostOperation, value: unknown): void {
+  const record = requirePlain(operation, value);
+  exactKeys(operation, record, [
+    'taskId',
+    'featureId',
+    'status',
+    'executionVersion',
+    'manualBlock',
+    'firstPassedAt',
+    'effectivePassed',
+  ]);
+  requireStableId(operation, record.taskId);
+  requireStableId(operation, record.featureId);
+  if (!(TASK_STATUSES as readonly unknown[]).includes(record.status)) {
+    malformed(operation, 'task_evidence_status_invalid');
+  }
+  requireNonNegativeInteger(operation, record.executionVersion);
+  if (typeof record.manualBlock !== 'boolean') {
+    malformed(operation, 'task_evidence_state_invalid');
+  }
+  if (record.firstPassedAt !== null && !isIsoUtcDateTime(record.firstPassedAt)) {
+    malformed(operation, 'task_evidence_date_invalid');
+  }
+  if (typeof record.effectivePassed !== 'boolean') {
+    malformed(operation, 'task_evidence_state_invalid');
+  }
+  // 机器 passed 不展示为有效 Task passed：有效通过只绑定持久 Task 状态。
+  if (record.effectivePassed !== (record.status === 'passed')) {
+    malformed(operation, 'task_evidence_effective_passed_invalid');
+  }
+}
+
+function validateTaskMachineConclusionWire(operation: HostOperation, value: unknown): void {
+  const record = requirePlain(operation, value);
+  exactKeys(operation, record, [
+    'status',
+    'outcome',
+    'reason',
+    'attemptId',
+    'batchId',
+    'codeDigest',
+    'policyDigest',
+    'codeRef',
+    'observationDigest',
+  ]);
+  if (!(TASK_MACHINE_STATUSES as readonly unknown[]).includes(record.status)) {
+    malformed(operation, 'task_machine_status_invalid');
+  }
+  if (record.outcome !== null && !(CODE_ATTEMPT_OUTCOMES as readonly unknown[]).includes(record.outcome)) {
+    malformed(operation, 'task_machine_outcome_invalid');
+  }
+  if (!(TASK_MACHINE_REASONS as readonly unknown[]).includes(record.reason)) {
+    malformed(operation, 'task_machine_reason_invalid');
+  }
+  requireStableIdOrNull(operation, record.attemptId);
+  requireStableIdOrNull(operation, record.batchId);
+  requireSha256HexOrNull(operation, record.codeDigest, 'task_evidence_digest_invalid');
+  requireSha256HexOrNull(operation, record.policyDigest, 'task_evidence_digest_invalid');
+  requireStableIdOrNull(operation, record.codeRef);
+  requireSha256HexOrNull(operation, record.observationDigest, 'task_evidence_digest_invalid');
+}
+
+function validateVerificationSelectionWire(operation: HostOperation, value: unknown): void {
+  const record = requirePlain(operation, value);
+  exactKeys(operation, record, ['mode', 'reason', 'selectedCheckKeys']);
+  if (!(TASK_VERIFICATION_SELECTION_MODES as readonly unknown[]).includes(record.mode)) {
+    malformed(operation, 'task_evidence_selection_invalid');
+  }
+  requireNonEmptyString(operation, record.reason, 'task_evidence_selection_invalid');
+  requireStringArray(operation, record.selectedCheckKeys, 'task_evidence_selection_invalid');
+}
+
+function validateVerificationCheckResultWire(operation: HostOperation, value: unknown): void {
+  const record = requirePlain(operation, value);
+  exactKeys(operation, record, [
+    'id',
+    'checkKey',
+    'argv',
+    'cwdRef',
+    'environmentRef',
+    'timeoutMs',
+    'required',
+    'status',
+    'exitCode',
+    'signal',
+    'timedOut',
+    'outputArtifactId',
+    'outputDigest',
+    'outputTail',
+    'startedAt',
+    'endedAt',
+  ]);
+  requireStableId(operation, record.id);
+  requireNonEmptyString(operation, record.checkKey, 'task_evidence_check_invalid');
+  requireStringArray(operation, record.argv, 'task_evidence_check_argv_invalid');
+  if (record.cwdRef !== null) requireNonEmptyString(operation, record.cwdRef, 'task_evidence_check_invalid');
+  if (record.environmentRef !== null) {
+    requireNonEmptyString(operation, record.environmentRef, 'task_evidence_check_invalid');
+  }
+  requirePositiveInteger(operation, record.timeoutMs);
+  if (typeof record.required !== 'boolean' || typeof record.timedOut !== 'boolean') {
+    malformed(operation, 'task_evidence_check_invalid');
+  }
+  if (!(CHECK_RESULT_STATUSES as readonly unknown[]).includes(record.status)) {
+    malformed(operation, 'task_evidence_check_status_invalid');
+  }
+  requireIntegerOrNull(operation, record.exitCode);
+  if (record.signal !== null) requireNonEmptyString(operation, record.signal, 'task_evidence_check_invalid');
+  requireStableIdOrNull(operation, record.outputArtifactId);
+  requireSha256HexOrNull(operation, record.outputDigest, 'task_evidence_digest_invalid');
+  if ((record.outputArtifactId === null) !== (record.outputDigest === null)) {
+    malformed(operation, 'task_evidence_check_evidence_invalid');
+  }
+  if (record.outputTail !== null && typeof record.outputTail !== 'string') {
+    malformed(operation, 'task_evidence_check_tail_invalid');
+  }
+  if (record.startedAt !== null && !isIsoUtcDateTime(record.startedAt)) {
+    malformed(operation, 'task_evidence_date_invalid');
+  }
+  if (record.endedAt !== null && !isIsoUtcDateTime(record.endedAt)) {
+    malformed(operation, 'task_evidence_date_invalid');
+  }
+}
+
+function validateVerificationBatchWire(operation: HostOperation, value: unknown): void {
+  const record = requirePlain(operation, value);
+  exactKeys(operation, record, [
+    'id',
+    'projectId',
+    'featureId',
+    'runId',
+    'taskId',
+    'attemptId',
+    'executionVersion',
+    'operation',
+    'codeDigest',
+    'policyDigest',
+    'environmentSummary',
+    'selection',
+    'status',
+    'startedAt',
+    'endedAt',
+    'checks',
+  ]);
+  requireStableId(operation, record.id);
+  requireStableId(operation, record.projectId);
+  requireStableId(operation, record.featureId);
+  requireStableId(operation, record.runId);
+  requireStableId(operation, record.taskId);
+  requireStableId(operation, record.attemptId);
+  requireNonNegativeInteger(operation, record.executionVersion);
+  requireNonEmptyString(operation, record.operation, 'task_evidence_batch_invalid');
+  requireSha256Hex(operation, record.codeDigest, 'task_evidence_digest_invalid');
+  requireSha256Hex(operation, record.policyDigest, 'task_evidence_digest_invalid');
+  requirePlain(operation, record.environmentSummary);
+  validateVerificationSelectionWire(operation, record.selection);
+  if (!(VERIFICATION_BATCH_STATUSES as readonly unknown[]).includes(record.status)) {
+    malformed(operation, 'task_evidence_batch_status_invalid');
+  }
+  if (record.startedAt !== null && !isIsoUtcDateTime(record.startedAt)) {
+    malformed(operation, 'task_evidence_date_invalid');
+  }
+  if (record.endedAt !== null && !isIsoUtcDateTime(record.endedAt)) {
+    malformed(operation, 'task_evidence_date_invalid');
+  }
+  if (!Array.isArray(record.checks)) {
+    malformed(operation, 'task_evidence_checks_invalid');
+  }
+  for (const check of record.checks as unknown[]) {
+    validateVerificationCheckResultWire(operation, check);
+  }
+}
+
+/** execution.task.verification.get：Task 机器证据（冻结字段集）。 */
+export function validateTaskVerificationResultWire(
+  value: unknown,
+  operation: HostOperation = 'execution.task.verification.get',
+): TaskVerificationDetailResult {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, ['schemaVersion', 'scope', 'task', 'machine', 'batches', 'batchesTruncated']);
+  if (object.schemaVersion !== WIRE_MESSAGE_SCHEMA_VERSION) {
+    if (typeof object.schemaVersion === 'number') {
+      unsupportedVersion(operation, 'schemaVersion');
+    }
+    malformed(operation, 'task_evidence_schema_version_invalid');
+  }
+  if (object.scope !== 'task-verification') {
+    malformed(operation, 'task_evidence_scope_invalid');
+  }
+  validateTaskEvidenceStateWire(operation, object.task);
+  validateTaskMachineConclusionWire(operation, object.machine);
+  if (!Array.isArray(object.batches) || typeof object.batchesTruncated !== 'boolean') {
+    malformed(operation, 'task_evidence_batches_invalid');
+  }
+  for (const batch of object.batches as unknown[]) {
+    validateVerificationBatchWire(operation, batch);
+  }
+  return object as unknown as TaskVerificationDetailResult;
+}
+
+function validateTaskApprovalArtifactRefWire(operation: HostOperation, value: unknown): void {
+  const record = requirePlain(operation, value);
+  exactKeys(operation, record, ['artifactId', 'contentHash']);
+  requireStableId(operation, record.artifactId);
+  requireSha256HexOrNull(operation, record.contentHash, 'task_evidence_digest_invalid');
+}
+
+function validateTaskApprovalItemWire(operation: HostOperation, value: unknown): void {
+  const record = requirePlain(operation, value);
+  exactKeys(operation, record, [
+    'id',
+    'projectId',
+    'featureId',
+    'taskId',
+    'kind',
+    'description',
+    'responsibleParty',
+    'status',
+    'planDigest',
+    'codeDigest',
+    'artifactRefs',
+    'createdBy',
+    'decision',
+    'decisionActor',
+    'decisionReason',
+    'decisionCodeDigest',
+    'decisionArtifactRefs',
+    'decidedAt',
+    'revision',
+    'createdAt',
+    'updatedAt',
+  ]);
+  requireStableId(operation, record.id);
+  requireStableId(operation, record.projectId);
+  requireStableId(operation, record.featureId);
+  requireStableId(operation, record.taskId);
+  if (record.kind !== 'block' && record.kind !== 'approval') {
+    malformed(operation, 'task_approval_kind_invalid');
+  }
+  requireNonEmptyString(operation, record.description, 'task_approval_invalid');
+  requireNonEmptyString(operation, record.responsibleParty, 'task_approval_invalid');
+  if (!['pending', 'approved', 'rejected', 'unblocked'].includes(record.status as string)) {
+    malformed(operation, 'task_approval_status_invalid');
+  }
+  requireSha256Hex(operation, record.planDigest, 'task_evidence_digest_invalid');
+  requireSha256HexOrNull(operation, record.codeDigest, 'task_evidence_digest_invalid');
+  if (!Array.isArray(record.artifactRefs) || !Array.isArray(record.decisionArtifactRefs)) {
+    malformed(operation, 'task_approval_refs_invalid');
+  }
+  for (const ref of record.artifactRefs as unknown[]) validateTaskApprovalArtifactRefWire(operation, ref);
+  for (const ref of record.decisionArtifactRefs as unknown[]) validateTaskApprovalArtifactRefWire(operation, ref);
+  requireNonEmptyString(operation, record.createdBy, 'task_approval_invalid');
+  if (record.decision !== null && !['approve', 'reject', 'unblock'].includes(record.decision as string)) {
+    malformed(operation, 'task_approval_decision_invalid');
+  }
+  if (record.decisionActor !== null) requireNonEmptyString(operation, record.decisionActor, 'task_approval_invalid');
+  if (record.decisionReason !== null && typeof record.decisionReason !== 'string') {
+    malformed(operation, 'task_approval_invalid');
+  }
+  requireSha256HexOrNull(operation, record.decisionCodeDigest, 'task_evidence_digest_invalid');
+  if (record.decidedAt !== null && !isIsoUtcDateTime(record.decidedAt)) {
+    malformed(operation, 'task_evidence_date_invalid');
+  }
+  requirePositiveInteger(operation, record.revision);
+  if (!isIsoUtcDateTime(record.createdAt) || !isIsoUtcDateTime(record.updatedAt)) {
+    malformed(operation, 'task_evidence_date_invalid');
+  }
+  // 决定绑定：pending 无决定；已决定必须同时有决定主体与时间（与持久 CHECK 同源）。
+  const hasDecision = record.decision !== null;
+  if (hasDecision !== (record.status !== 'pending') || hasDecision !== (record.decisionActor !== null) || hasDecision !== (record.decidedAt !== null)) {
+    malformed(operation, 'task_approval_decision_binding_invalid');
+  }
+}
+
+/** execution.task.approvals.list：独立人审事项分页（冻结字段集）。 */
+export function validateTaskApprovalItemListResultWire(
+  value: unknown,
+  operation: HostOperation = 'execution.task.approvals.list',
+): TaskApprovalItemListResult {
+  const object = validateScheduleResultCommon(operation, value, 'task-approval-item-list');
+  for (const record of object.records as unknown[]) {
+    validateTaskApprovalItemWire(operation, record);
+  }
+  return object as unknown as TaskApprovalItemListResult;
+}
+
+function validateReworkCodeAccountingWire(operation: HostOperation, value: unknown): void {
+  const record = requirePlain(operation, value);
+  exactKeys(operation, record, ['classification', 'outcome', 'observationDigest', 'countsAsCodeAttempt']);
+  if (record.classification !== null && !(TASK_CODE_ACCOUNTING_CLASSIFICATIONS as readonly unknown[]).includes(record.classification)) {
+    malformed(operation, 'rework_accounting_invalid');
+  }
+  if (record.outcome !== null && !(CODE_ATTEMPT_OUTCOMES as readonly unknown[]).includes(record.outcome)) {
+    malformed(operation, 'rework_accounting_invalid');
+  }
+  requireSha256HexOrNull(operation, record.observationDigest, 'task_evidence_digest_invalid');
+  if (typeof record.countsAsCodeAttempt !== 'boolean') {
+    malformed(operation, 'rework_accounting_invalid');
+  }
+  // 基础设施错误不消耗代码资格；只有 code 分类才折算为代码额度消耗。
+  if (record.countsAsCodeAttempt !== (record.classification === 'code')) {
+    malformed(operation, 'rework_accounting_mismatch');
+  }
+}
+
+function validatePublicReworkAttemptWire(operation: HostOperation, value: unknown): void {
+  const record = requirePlain(operation, value);
+  exactKeys(operation, record, [
+    'id',
+    'number',
+    'runId',
+    'status',
+    'executionStage',
+    'executionVersion',
+    'inputRef',
+    'codeRef',
+    'diagnosticRef',
+    'errorKind',
+    'startedAt',
+    'endedAt',
+    'durationMs',
+    'exitCode',
+    'codeAccounting',
+  ]);
+  requireStableId(operation, record.id);
+  requirePositiveInteger(operation, record.number);
+  requireStableId(operation, record.runId);
+  if (!(ATTEMPT_STATUSES as readonly unknown[]).includes(record.status)) {
+    malformed(operation, 'rework_attempt_status_invalid');
+  }
+  if (!(ATTEMPT_EXECUTION_STAGES as readonly unknown[]).includes(record.executionStage)) {
+    malformed(operation, 'rework_attempt_stage_invalid');
+  }
+  requireNonNegativeInteger(operation, record.executionVersion);
+  requireStableId(operation, record.inputRef);
+  requireStableIdOrNull(operation, record.codeRef);
+  requireStableIdOrNull(operation, record.diagnosticRef);
+  if (record.errorKind !== null) requireNonEmptyString(operation, record.errorKind, 'rework_attempt_invalid');
+  if (record.startedAt !== null && !isIsoUtcDateTime(record.startedAt)) {
+    malformed(operation, 'task_evidence_date_invalid');
+  }
+  if (record.endedAt !== null && !isIsoUtcDateTime(record.endedAt)) {
+    malformed(operation, 'task_evidence_date_invalid');
+  }
+  // 未知退出码/耗时保持 null，绝不以 0 冒充。
+  requireNonNegativeIntegerOrNull(operation, record.durationMs);
+  requireIntegerOrNull(operation, record.exitCode);
+  validateReworkCodeAccountingWire(operation, record.codeAccounting);
+}
+
+function validatePublicReworkRunWire(operation: HostOperation, value: unknown): void {
+  const record = requirePlain(operation, value);
+  exactKeys(operation, record, ['id', 'batchId', 'status', 'reason', 'startedAt', 'endedAt']);
+  requireStableId(operation, record.id);
+  requireStableId(operation, record.batchId);
+  if (!(EXECUTION_BATCH_STATUSES as readonly unknown[]).includes(record.status)) {
+    malformed(operation, 'rework_run_status_invalid');
+  }
+  if (record.reason !== null && typeof record.reason !== 'string') {
+    malformed(operation, 'rework_run_reason_invalid');
+  }
+  if (record.startedAt !== null && !isIsoUtcDateTime(record.startedAt)) {
+    malformed(operation, 'task_evidence_date_invalid');
+  }
+  if (record.endedAt !== null && !isIsoUtcDateTime(record.endedAt)) {
+    malformed(operation, 'task_evidence_date_invalid');
+  }
+}
+
+function validateReworkBlockReasonWire(operation: HostOperation, value: unknown): void {
+  const record = requirePlain(operation, value);
+  exactKeys(operation, record, ['layer', 'layerId', 'reason', 'dimension', 'limit', 'used']);
+  if (!['batch', 'run', 'task'].includes(record.layer as string)) {
+    malformed(operation, 'rework_block_layer_invalid');
+  }
+  requireStableId(operation, record.layerId);
+  if (!(EXECUTION_BUDGET_BLOCK_REASONS as readonly unknown[]).includes(record.reason)) {
+    malformed(operation, 'rework_block_reason_invalid');
+  }
+  if (record.dimension !== undefined && typeof record.dimension !== 'string') {
+    malformed(operation, 'rework_block_dimension_invalid');
+  }
+  if (record.limit !== undefined) requireNonNegativeInteger(operation, record.limit);
+  if (record.used !== undefined && record.used !== null) {
+    requireNonNegativeInteger(operation, record.used);
+  }
+}
+
+function validateReworkChainSummaryWire(operation: HostOperation, value: unknown): void {
+  const summary = requirePlain(operation, value);
+  exactKeys(operation, summary, ['codeEligibility', 'attempts', 'run', 'budgetBlockReasons', 'blockedSuccessors']);
+  const eligibility = requirePlain(operation, summary.codeEligibility);
+  exactKeys(operation, eligibility, ['used', 'limit', 'remaining', 'rule']);
+  requireNonNegativeInteger(operation, eligibility.used);
+  requireNonNegativeInteger(operation, eligibility.limit);
+  requireNonNegativeInteger(operation, eligibility.remaining);
+  requireNonEmptyString(operation, eligibility.rule, 'rework_eligibility_rule_invalid');
+  const attempts = requirePlain(operation, summary.attempts);
+  exactKeys(operation, attempts, ['used', 'limit', 'remaining']);
+  requireNonNegativeInteger(operation, attempts.used);
+  if (attempts.limit !== null) requireNonNegativeInteger(operation, attempts.limit);
+  if (attempts.remaining !== null) requireNonNegativeInteger(operation, attempts.remaining);
+  if (summary.run !== null) validatePublicReworkRunWire(operation, summary.run);
+  if (!Array.isArray(summary.budgetBlockReasons) || !Array.isArray(summary.blockedSuccessors)) {
+    malformed(operation, 'rework_summary_invalid');
+  }
+  for (const reason of summary.budgetBlockReasons as unknown[]) {
+    validateReworkBlockReasonWire(operation, reason);
+  }
+  for (const successor of summary.blockedSuccessors as unknown[]) {
+    const record = requirePlain(operation, successor);
+    exactKeys(operation, record, ['taskId', 'status', 'reason']);
+    requireStableId(operation, record.taskId);
+    if (!(TASK_STATUSES as readonly unknown[]).includes(record.status)) {
+      malformed(operation, 'rework_successor_status_invalid');
+    }
+    if (!(TASK_DAG_REASONS as readonly unknown[]).includes(record.reason)) {
+      malformed(operation, 'rework_successor_reason_invalid');
+    }
+  }
+}
+
+/** execution.task.rework-chain.list：有限返工链分页 + 汇总（冻结字段集）。 */
+export function validateTaskReworkChainResultWire(
+  value: unknown,
+  operation: HostOperation = 'execution.task.rework-chain.list',
+): TaskReworkChainListResult {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, ['schemaVersion', 'scope', 'records', 'nextCursor', 'limit', 'summary']);
+  if (object.schemaVersion !== WIRE_MESSAGE_SCHEMA_VERSION) {
+    if (typeof object.schemaVersion === 'number') {
+      unsupportedVersion(operation, 'schemaVersion');
+    }
+    malformed(operation, 'rework_schema_version_invalid');
+  }
+  if (object.scope !== 'task-rework-chain') {
+    malformed(operation, 'rework_scope_invalid');
+  }
+  if (!Array.isArray(object.records)) {
+    malformed(operation, 'rework_records_invalid');
+  }
+  requirePlanCursorOrNull(operation, object.nextCursor);
+  requirePositiveInteger(operation, object.limit);
+  for (const record of object.records as unknown[]) {
+    validatePublicReworkAttemptWire(operation, record);
+  }
+  validateReworkChainSummaryWire(operation, object.summary);
+  return object as unknown as TaskReworkChainListResult;
+}
+
+/* ------------------------------------------------------------------ *
  * P03-5 / F-012 工作区状态查询与人工丢弃预览/确认线校验
  *（冻结字段集精确键校验；公开投影不含绝对路径与内部身份哈希）
  * ------------------------------------------------------------------ */
@@ -3679,6 +4197,22 @@ export function validateAppQueryResponse(
   body: unknown,
   expectation?: SnapshotExpectation,
 ): AttemptDiagnosticsResult;
+// P03-7 / F-013：Task 证据/人审/返工链查询响应重载。
+export function validateAppQueryResponse(
+  operation: 'execution.task.verification.get',
+  body: unknown,
+  expectation?: SnapshotExpectation,
+): TaskVerificationDetailResult;
+export function validateAppQueryResponse(
+  operation: 'execution.task.approvals.list',
+  body: unknown,
+  expectation?: SnapshotExpectation,
+): TaskApprovalItemListResult;
+export function validateAppQueryResponse(
+  operation: 'execution.task.rework-chain.list',
+  body: unknown,
+  expectation?: SnapshotExpectation,
+): TaskReworkChainListResult;
 // P03-5 / F-012：工作区状态只读查询响应重载。
 export function validateAppQueryResponse(
   operation: 'workspaces.list',
@@ -3856,6 +4390,13 @@ export function validateAppQueryResponse(
       return validateAttemptListResultWire(body, operation);
     case 'execution.attempt.diagnostics':
       return validateAttemptDiagnosticsResultWire(body, operation);
+    // P03-7 / F-013：Task 证据/人审/返工链查询响应分发（同一冻结字段集纪律）。
+    case 'execution.task.verification.get':
+      return validateTaskVerificationResultWire(body, operation);
+    case 'execution.task.approvals.list':
+      return validateTaskApprovalItemListResultWire(body, operation);
+    case 'execution.task.rework-chain.list':
+      return validateTaskReworkChainResultWire(body, operation);
     // P03-5 / F-012：工作区状态查询响应分发（同一冻结字段集纪律）。
     case 'workspaces.list':
       return validateWorkspaceListResultWire(body, operation);

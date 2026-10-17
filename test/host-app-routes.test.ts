@@ -1030,6 +1030,10 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         'execution.run.schedule',
         'execution.attempts.list',
         'execution.attempt.diagnostics',
+        // P03-7 / F-013：Task 机器证据/人审/返工链查询真实接线。
+        'execution.task.verification.get',
+        'execution.task.approvals.list',
+        'execution.task.rework-chain.list',
         'workspaces.list',
         'workspaces.get',
         'workspace.operations.list',

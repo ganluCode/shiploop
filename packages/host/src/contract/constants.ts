@@ -93,6 +93,14 @@ export const FEATURES_ROUTE_PREFIX = '/v1/features/';
 export const FEATURE_APPROVALS_ROUTE_SUFFIX = '/approvals';
 export const TASKS_ROUTE = '/v1/tasks';
 export const TASKS_ROUTE_PREFIX = '/v1/tasks/';
+/**
+ * P03-7 / F-013：Task 机器证据/人审事项/有限返工链唯一冻结子资源形态
+ * （GET /v1/tasks/:taskId/verification|approvals|rework-chain）；其他嵌套/
+ * 多段形态一律未匹配 → 404 unknown_operation。
+ */
+export const TASK_VERIFICATION_ROUTE_SUFFIX = 'verification';
+export const TASK_APPROVALS_ROUTE_SUFFIX = 'approvals';
+export const TASK_REWORK_CHAIN_ROUTE_SUFFIX = 'rework-chain';
 /** F-011: GET :batchId/budget and :batchId/budget/revisions; projectId is required. */
 export const BATCHES_ROUTE_PREFIX = '/v1/batches/';
 /**

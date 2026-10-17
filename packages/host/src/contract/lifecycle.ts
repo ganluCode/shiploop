@@ -142,6 +142,11 @@ export const APPLICATION_QUERY_CAPABILITIES = [
   'execution.run.schedule',
   'execution.attempts.list',
   'execution.attempt.diagnostics',
+  // P03-7 / F-013：Task 机器证据/人审事项/有限返工链只读查询真实接线（能力位
+  // 复用 project.read；与 Core TASK_EVIDENCE_QUERY_OPERATIONS 同步，不漂移）。
+  'execution.task.verification.get',
+  'execution.task.approvals.list',
+  'execution.task.rework-chain.list',
   // P03-5 / F-011：工作区状态只读查询真实接线（能力位复用 project.read；
   // 与 Core WORKSPACE_QUERY_OPERATIONS 同步，不漂移）。
   'workspaces.list',
