@@ -58,6 +58,23 @@ describe('F-004 Feature verification coordinator', () => {
     expect(calls).toEqual(['stop', 'execute']);
   });
 
+  it('re-reads the Feature human gate after machine evidence and blocks a stale approval', async () => {
+    const approvalReads: unknown[] = [];
+    const result = await createFeatureVerificationCoordinator(options({
+      readFinalApproval: async (gate) => {
+        approvalReads.push(gate);
+        return false;
+      },
+    })).run(input);
+    expect(result).toMatchObject({ status: 'blocked', reason: 'approval_waiting', batchId: 'feature-batch-1' });
+    expect(approvalReads).toHaveLength(1);
+    expect(approvalReads[0]).toMatchObject({
+      projectId: 'project-1', featureId: 'feature-1', runId: 'run-1', batchId: 'feature-batch-1',
+      executionVersion: 1, policyDigest: 'a'.repeat(64),
+    });
+    expect((approvalReads[0] as { codeDigest: string }).codeDigest).toMatch(/^[0-9a-f]{64}$/);
+  });
+
   it('does not start a feature batch when a required Task is not currently passed', async () => {
     let executed = false;
     const result = await createFeatureVerificationCoordinator(options({

@@ -18,6 +18,8 @@ export interface GitCommitAuthorization {
   readonly verificationPassed: boolean;
   readonly approvalCurrent: boolean;
   readonly commitAuthorized: boolean;
+  /** Trusted Feature-level final human gate. Omitted only for legacy non-delivery callers. */
+  readonly finalApprovalCurrent?: boolean;
 }
 export interface GitCommitRequest { readonly projectId: string; readonly operationId: string }
 export interface ControlledGitCommitService {

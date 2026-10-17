@@ -99,6 +99,7 @@ export function createControlledGitCommitService(deps: {
     function current() {
       if (authorization.verificationPassed !== true || intent.verificationRefs.length === 0) fail('verification_not_passed');
       if (authorization.approvalCurrent !== true) fail('approval_not_current');
+      if (authorization.finalApprovalCurrent === false) fail('approval_not_current');
       if (authorization.commitAuthorized !== true) fail('commit_not_authorized');
       if (!isDeepStrictEqual(deps.readAuthorization(request), authorization)) fail('authorization_changed');
       const snapshot = held();

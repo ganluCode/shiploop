@@ -127,6 +127,7 @@ export * from './application/plan-labels-update.js';
 export * from './application/feature-plan-revise.js';
 export * from './application/task-strategy-update.js';
 export * from './application/feature-plan-decide.js';
+export * from './application/feature-final-approval.js';
 export * from './application/plan-approval-verification.js';
 export * from './application/execution-input.js';
 export * from './application/context-build.js';

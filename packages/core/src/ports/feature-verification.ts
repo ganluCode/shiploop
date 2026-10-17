@@ -77,6 +77,7 @@ export interface FeatureVerificationResult {
     | 'source_changed'
     | 'execution_failed'
     | 'evidence_incomplete'
+    | 'approval_waiting'
     | 'verified';
   readonly invalidated: boolean;
   readonly codeIdentity: VerificationCodeIdentity | null;

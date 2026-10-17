@@ -3,6 +3,7 @@ import type { WorkResourceAccess, WorkResourceSnapshot, WorkResourceStopVerifier
 import type {
   FeatureTaskGate,
   FeatureVerificationExecutionInput,
+  FeatureVerificationExecutionResult,
   FeatureVerificationExecutor,
   FeatureVerificationInput,
   FeatureVerificationResult,
@@ -22,6 +23,19 @@ export interface FeatureVerificationOptions {
   readonly withResource: <T>(identity: unknown, callback: () => Promise<T>) => Promise<T>;
   readonly buildPlan?: (input: unknown) => VerificationPlan;
   readonly readExecutionIdentity?: () => Promise<{ readonly policyDigest: string; readonly environmentDigest?: string }>;
+  /** Re-reads the Feature-level human gate after the final machine evidence is assembled. */
+  readonly readFinalApproval?: (input: {
+    readonly projectId: string;
+    readonly featureId: string;
+    readonly runId: string;
+    readonly batchId: string;
+    readonly executionVersion: number;
+    readonly codeDigest: string;
+    readonly policyDigest: string;
+    readonly environmentDigest?: string;
+    readonly codeIdentity: VerificationCodeIdentity;
+    readonly execution: FeatureVerificationExecutionResult;
+  }) => Promise<boolean>;
 }
 
 function sameIdentity(left: VerificationCodeIdentity, right: VerificationCodeIdentity): boolean {
@@ -157,6 +171,26 @@ export function createFeatureVerificationCoordinator(options: FeatureVerificatio
       }
       if (execution.status !== 'passed') {
         return result(execution.status, 'execution_failed', codeIdentity, execution);
+      }
+      if (options.readFinalApproval) {
+        let finalApprovalCurrent: boolean;
+        try {
+          finalApprovalCurrent = await options.readFinalApproval({
+            projectId: input.projectId,
+            featureId: input.featureId,
+            runId: input.runId,
+            batchId: input.batchId,
+            executionVersion: input.executionVersion,
+            codeDigest: codeIdentity.codeDigest,
+            policyDigest: input.policyDigest,
+            environmentDigest: input.environmentDigest,
+            codeIdentity,
+            execution,
+          });
+        } catch {
+          return result('blocked', 'approval_waiting', codeIdentity, execution);
+        }
+        if (!finalApprovalCurrent) return result('blocked', 'approval_waiting', codeIdentity, execution);
       }
       return result('passed', 'verified', codeIdentity, execution);
     });
