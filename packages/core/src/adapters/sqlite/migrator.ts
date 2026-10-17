@@ -317,17 +317,37 @@ export async function migrateSqliteStorage(
   }
 
   // 3. apply：逐迁移在短同步写事务内执行 DDL + 写入迁移记录；失败整组回滚。
+  //    标记 foreignKeysOff 的表重建迁移：事务外先关闭外键（事务内 PRAGMA
+  //    foreign_keys 无效），事务内 DDL 完成后全库 foreign_key_check 核验，
+  //    违规即整组回滚；finally 恢复 foreign_keys=ON。
   const appliedNow: number[] = [];
   for (const migration of pending) {
     const appliedAt = nowUtcMs();
     try {
-      session.transactWrite(MIGRATE_OPERATION, (db) => {
-        db.exec(migration.sql);
-        db.prepare(
-          'INSERT INTO schema_migrations (id, created_at, version, checksum, applied_at) ' +
-            'VALUES (?, ?, ?, ?, ?)',
-        ).run(`migration-v${migration.version}`, appliedAt, migration.version, migration.checksum, appliedAt);
-      });
+      if (migration.foreignKeysOff === true) {
+        session.database.pragma('foreign_keys = OFF');
+      }
+      try {
+        session.transactWrite(MIGRATE_OPERATION, (db) => {
+          db.exec(migration.sql);
+          if (migration.foreignKeysOff === true) {
+            const violations = db.pragma('foreign_key_check') as unknown[];
+            if (violations.length > 0) {
+              throw new Error(
+                `foreignKeysOff 迁移提交前 foreign_key_check 发现 ${violations.length} 处违规（version=${migration.version}）`,
+              );
+            }
+          }
+          db.prepare(
+            'INSERT INTO schema_migrations (id, created_at, version, checksum, applied_at) ' +
+              'VALUES (?, ?, ?, ?, ?)',
+          ).run(`migration-v${migration.version}`, appliedAt, migration.version, migration.checksum, appliedAt);
+        });
+      } finally {
+        if (migration.foreignKeysOff === true) {
+          session.database.pragma('foreign_keys = ON');
+        }
+      }
     } catch (error) {
       throw new SqliteMigrationError(
         `迁移应用失败已整组回滚（step=apply, version=${migration.version}）`,

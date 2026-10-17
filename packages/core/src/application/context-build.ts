@@ -41,6 +41,7 @@ import {
   CONTEXT_INPUT_SCHEMA_VERSION,
   CONTEXT_MANIFEST_DIGEST_DOMAIN,
   CONTEXT_PROMPT_DIGEST_DOMAIN,
+  CONTEXT_REWORK_GUIDANCE,
   CONTEXT_SNAPSHOT_DIGEST_DOMAIN,
   ContextBuildError,
   validateContextBuildInput,
@@ -262,7 +263,10 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
       }
     }
 
-    /* 3) 必需正文预算：snapshot 业务投影（不含 labels 与历史索引）规范化字节。 */
+    const rework = validated.rework ?? null;
+
+    /* 3) 必需正文预算：snapshot 业务投影（不含 labels 与历史索引）规范化字节。
+          返工身份/证据引用属必需内容，同一预算约束（超限整体失败，不截断）。 */
     const requiredSnapshot = {
       schemaVersion: CONTEXT_INPUT_SCHEMA_VERSION,
       projectId: validated.projectId,
@@ -281,6 +285,7 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
       checkPolicy: validated.checkPolicy,
       permissions: validated.permissions,
       requiredInputs: validated.requiredInputs,
+      ...(rework === null ? {} : { rework }),
     };
     const requiredBytes = utf8Bytes(stableStringify(requiredSnapshot));
     if (requiredBytes > budget.maxRequiredSnapshotBytes) {
@@ -358,6 +363,39 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
     parts.push('');
     parts.push(CONTEXT_FIXED_GUIDANCE);
     parts.push('');
+    const rework = validated.rework ?? null;
+    if (rework !== null) {
+      parts.push(CONTEXT_REWORK_GUIDANCE);
+      parts.push('');
+      parts.push('## Rework handoff (incremental fix; same worktree; verified scene)');
+      parts.push(`- attemptId: ${rework.attemptId}`);
+      parts.push(
+        `- previousAttemptId: ${rework.previousAttemptId} (direct previous attempt, same task ${rework.previousTaskId})`,
+      );
+      parts.push(`- worktreeId: ${rework.scene.worktreeId}`);
+      parts.push(`- headCommit: ${rework.scene.headCommit}`);
+      parts.push(`- codeDigest: sha256:${rework.scene.codeDigest}`);
+      parts.push('');
+      parts.push('## Failure evidence (required; read each via reference and verify hash; bodies not inlined)');
+      for (const ref of rework.failureEvidenceRefs) {
+        parts.push(
+          `- ${ref.purpose}: artifact ${ref.artifactId} v${ref.version} sha256:${ref.contentHash} size ${ref.sizeBytes}B media ${ref.mediaType} locator ${ref.locator} ${renderOrigin(ref.origin)}`,
+        );
+      }
+      parts.push('');
+      parts.push('## Recovery record (source & mode record only; no native continuation implemented)');
+      const selection = rework.recovery.selection;
+      parts.push(
+        `- selection: mode ${selection.mode}${selection.mode === 'new' ? '' : ` kind ${selection.kind}`}`,
+      );
+      const decision = rework.recovery.decision;
+      parts.push(
+        `- decision: mode ${decision.mode}${decision.mode === 'resume' ? ` kind ${decision.kind}` : ''} reasons: ${
+          decision.reasons.length === 0 ? '(none)' : decision.reasons.join(', ')
+        }`,
+      );
+      parts.push('');
+    }
     parts.push('## Task');
     parts.push(`- taskId: ${validated.taskId}`);
     parts.push(`- projectId: ${validated.projectId}`);
@@ -443,6 +481,7 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
     omissions: readonly ContextOmission[],
     prompt: string,
   ): ContextBuildResult {
+    const rework = validated.rework ?? null;
     const snapshotBusiness = {
       schemaVersion: CONTEXT_INPUT_SCHEMA_VERSION,
       projectId: validated.projectId,
@@ -462,6 +501,7 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
       permissions: validated.permissions,
       requiredInputs: validated.requiredInputs,
       ...(historyIndex === null ? {} : { historyIndex }),
+      ...(rework === null ? {} : { rework }),
     };
     const inputSnapshot: ContextInputSnapshot = {
       schemaVersion: CONTEXT_INPUT_SCHEMA_VERSION,
@@ -483,6 +523,7 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
       permissions: validated.permissions,
       requiredInputs: validated.requiredInputs,
       historyIndex,
+      rework,
     };
 
     const promptDigest = digestOf(CONTEXT_PROMPT_DIGEST_DOMAIN, prompt);
@@ -638,6 +679,66 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
         selection: 'full-artifact',
         required: true,
         reason: `必需输入（用途 ${ref.purpose}；必须读取并核对 hash）`,
+        truncated: false,
+      });
+    }
+    const rework = validated.rework ?? null;
+    if (rework !== null) {
+      sources.push({
+        sourceId: 'rework-guidance',
+        kind: 'rework-guidance',
+        identity: null,
+        version: CONTEXT_INPUT_SCHEMA_VERSION,
+        hash: digestOf(CONTEXT_SNAPSHOT_DIGEST_DOMAIN, CONTEXT_REWORK_GUIDANCE),
+        purpose: 'core-rework-guidance',
+        selection: 'full',
+        required: true,
+        reason: 'Core 固定返工交接指导（先核对现有文件与 Git 再增量修复；禁止删除/reset/重建 worktree）',
+        truncated: false,
+      });
+      sources.push({
+        sourceId: `rework-scene:${rework.scene.worktreeId}`,
+        kind: 'rework-scene',
+        identity: {
+          worktreeId: rework.scene.worktreeId,
+          attemptId: rework.attemptId,
+          previousAttemptId: rework.previousAttemptId,
+        },
+        version: null,
+        hash: digestOf(CONTEXT_SNAPSHOT_DIGEST_DOMAIN, stableStringify(rework.scene)),
+        purpose: 'rework-scene-identity',
+        selection: 'full',
+        required: true,
+        reason: '同一 worktree 与已核对 Git/文件现场身份（增量修复基准）',
+        truncated: false,
+      });
+      for (const ref of rework.failureEvidenceRefs) {
+        sources.push({
+          sourceId: `failure-evidence:${ref.artifactId}`,
+          kind: 'failure-evidence',
+          identity: { artifactId: ref.artifactId, projectId: ref.projectId },
+          version: ref.version,
+          hash: ref.contentHash,
+          purpose: `failure-evidence:${ref.purpose}`,
+          selection: 'full-artifact',
+          required: true,
+          reason: `必需失败证据引用（用途 ${ref.purpose}；按引用读取并核对 hash，不内联正文）`,
+          truncated: false,
+        });
+      }
+      sources.push({
+        sourceId: 'recovery-record',
+        kind: 'recovery-record',
+        identity: {
+          selectionMode: rework.recovery.selection.mode,
+          decisionMode: rework.recovery.decision.mode,
+        },
+        version: null,
+        hash: digestOf(CONTEXT_SNAPSHOT_DIGEST_DOMAIN, stableStringify(rework.recovery)),
+        purpose: 'recovery-source-and-mode',
+        selection: 'full',
+        required: true,
+        reason: '本次恢复来源与模式记录（复用 P03-3A 决策；只记录，不重新决策、不实现原生续接）',
         truncated: false,
       });
     }

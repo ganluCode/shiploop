@@ -46,6 +46,7 @@ import { createArtifactVerifier } from '../packages/core/src/application/artifac
 import { createExecutionInputService } from '../packages/core/src/application/execution-input.ts';
 import { createContextBuilder } from '../packages/core/src/application/context-build.ts';
 import type { ContextBudget } from '../packages/core/src/application/context-build.ts';
+import { CONTEXT_INPUT_SCHEMA_VERSION } from '../packages/core/src/ports/context-build.ts';
 import {
   DEFAULT_EXECUTION_INPUT_CONTEXT_BUDGET,
   EXECUTION_INPUT_PREPARE_OPERATION,
@@ -441,7 +442,7 @@ describe('F-006 正常制品组（视图捕获 → 组装发布 → 最终重核
       scope: { kind: 'project', projectId: s.projectId },
     });
     const result = groupResultOf(receipt);
-    expect(result.schemaVersion).toBe(1);
+    expect(result.schemaVersion).toBe(CONTEXT_INPUT_SCHEMA_VERSION);
     expect(result.bindable).toBe(true);
     expect(result.group.snapshot).toMatchObject({
       mediaType: EXECUTION_GROUP_JSON_MEDIA_TYPE,
@@ -508,7 +509,7 @@ describe('F-006 正常制品组（视图捕获 → 组装发布 → 最终重核
     expect(sha256(snapshotBytes)).toBe(result.group.snapshot.contentHash);
     const snapshot = JSON.parse(snapshotBytes.toString('utf8')) as Record<string, unknown>;
     expect(snapshot).toMatchObject({
-      schemaVersion: 1,
+      schemaVersion: CONTEXT_INPUT_SCHEMA_VERSION,
       projectId: s.projectId,
       featureId: s.featureId,
       taskId: 't-2',

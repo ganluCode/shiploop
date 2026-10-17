@@ -82,7 +82,7 @@ describe('P03-2 / F-006 执行输入准备契约文档', () => {
     expect(EXECUTION_INPUT_GROUP_LOCATOR_PREFIX).toBe('execution-input-groups');
     expect(EXECUTION_GROUP_JSON_MEDIA_TYPE).toBe('application/json');
     expect(EXECUTION_GROUP_PROMPT_MEDIA_TYPE).toBe('text/plain');
-    expect(CONTEXT_INPUT_SCHEMA_VERSION).toBe(1);
+    expect(CONTEXT_INPUT_SCHEMA_VERSION).toBe(2);
     for (const keyword of [
       EXECUTION_SNAPSHOT_ARTIFACT_KIND,
       EXECUTION_MANIFEST_ARTIFACT_KIND,

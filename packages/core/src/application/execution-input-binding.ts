@@ -544,6 +544,11 @@ export function createExecutionInputBindingService(
     if (snapshotBusiness['historyIndex'] === null) {
       delete snapshotBusiness['historyIndex'];
     }
+    // F-011：普通构建 snapshot 正文携带 rework:null，业务摘要投影不含该键（与
+    // ContextBuilder 条件展开一致）；返工构建 rework 为对象，原样参与重算。
+    if (snapshotBusiness['rework'] === null) {
+      delete snapshotBusiness['rework'];
+    }
     if (domainDigest(CONTEXT_SNAPSHOT_DIGEST_DOMAIN, stableStringify(snapshotBusiness)) !== snapshot.digests.snapshotDigest) {
       return reject('input', 'snapshot_digest_mismatch', 'snapshot 正文与冻结摘要重算不一致');
     }

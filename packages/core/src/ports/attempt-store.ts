@@ -128,8 +128,10 @@ function bodyRef(value: unknown, field: string): ExecutionInputGroupBodyRef {
 export function validateAttemptInputSnapshot(value: unknown): PreparedExecutionInputGroup {
   const raw = object(value, ['schemaVersion', 'projectId', 'featureId', 'taskId', 'group', 'requiredInputs',
     'digests', 'approval', 'taskRevision', 'promptBytes', 'tokenEstimate', 'preparedAtUtcMs'], 'inputSnapshot');
-  version(raw.schemaVersion, 'inputSnapshot.schemaVersion');
-  if (raw.schemaVersion !== CONTEXT_INPUT_SCHEMA_VERSION) throw validationError(context, 'inputSnapshot', 'unsupported_context_version');
+  // 历史快照不随 ContextBuilder 升版失效：v1 历史快照与当前版本均可读回，未知版本拒绝。
+  if (raw.schemaVersion !== 1 && raw.schemaVersion !== CONTEXT_INPUT_SCHEMA_VERSION) {
+    throw validationError(context, 'inputSnapshot.schemaVersion', 'unsupported_context_version');
+  }
   const projectId = id(raw.projectId, 'inputSnapshot.projectId');
   const group = object(raw.group, ['snapshot', 'manifest', 'prompt'], 'inputSnapshot.group');
   const digests = object(raw.digests, ['snapshotDigest', 'manifestDigest', 'promptDigest', 'strategyCopyDigest', 'permissionsDigest'], 'inputSnapshot.digests');
@@ -144,7 +146,7 @@ export function validateAttemptInputSnapshot(value: unknown): PreparedExecutionI
   });
   if (requiredInputs.some(ref => ref.projectId !== projectId)) throw validationError(context, 'inputSnapshot.requiredInputs', 'project_mismatch');
   const result: PreparedExecutionInputGroup = {
-    schemaVersion: 1, projectId, featureId: id(raw.featureId, 'inputSnapshot.featureId'), taskId: id(raw.taskId, 'inputSnapshot.taskId'),
+    schemaVersion: raw.schemaVersion as number, projectId, featureId: id(raw.featureId, 'inputSnapshot.featureId'), taskId: id(raw.taskId, 'inputSnapshot.taskId'),
     group: { snapshot: bodyRef(group.snapshot, 'inputSnapshot.group.snapshot'),
       manifest: bodyRef(group.manifest, 'inputSnapshot.group.manifest'), prompt: bodyRef(group.prompt, 'inputSnapshot.group.prompt') },
     requiredInputs, digests: { snapshotDigest: digest(digests.snapshotDigest, 'inputSnapshot.digests.snapshotDigest'),

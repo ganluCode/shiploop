@@ -43,7 +43,7 @@ const BUDGET: ContextBudget = {
 describe('P03-2 / F-005 ContextBuilder 契约文档', () => {
   it('实现入口、常量与错误形态与文档一致（公共导出可核对）', () => {
     const doc = readContractDoc();
-    expect(CONTEXT_INPUT_SCHEMA_VERSION).toBe(1);
+    expect(CONTEXT_INPUT_SCHEMA_VERSION).toBe(2);
     expect(CONTEXT_SNAPSHOT_DIGEST_DOMAIN).toBe('shiploop:context-input-snapshot:v1');
     expect(CONTEXT_MANIFEST_DIGEST_DOMAIN).toBe('shiploop:context-input-manifest:v1');
     expect(CONTEXT_PROMPT_DIGEST_DOMAIN).toBe('shiploop:context-input-prompt:v1');
@@ -142,6 +142,10 @@ describe('P03-2 / F-005 ContextBuilder 契约文档', () => {
       'permissions',
       'required-input',
       'history-index',
+      'rework-guidance',
+      'rework-scene',
+      'failure-evidence',
+      'recovery-record',
     ]);
     for (const kind of CONTEXT_MANIFEST_SOURCE_KINDS) {
       expect(doc.includes(kind)).toBe(true);

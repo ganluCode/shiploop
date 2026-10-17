@@ -98,7 +98,7 @@ describe('P03-4 F-001 persistent execution model', () => {
       for (const bad of [{ project_id: 'other-project' }, { feature_id: 'other-feature' },
         { number: 0 }, { number: 1.5 }, { execution_version: -1 }, { status: 'passed' },
         { execution_stage: 'unknown' }, { duration_ms: -1 }, { input_snapshot: '{' },
-        { input_snapshot: '{}' }, { input_snapshot: JSON.stringify({ ...f.inputSnapshot, schemaVersion: 2 }) },
+        { input_snapshot: '{}' }, { input_snapshot: JSON.stringify({ ...f.inputSnapshot, schemaVersion: 3 }) },
         { input_digest: 'bad' }]) expect(() => f.insert(bad)).toThrow();
       f.insert();
       for (const bad of [{ project_id: 'other-project' }, { state: 'released' },
@@ -275,7 +275,7 @@ describe('P03-4 F-001 persistent execution model', () => {
         db.prepare('UPDATE projects SET repository_binding_id = ? WHERE id = ?').run(binding.repository_binding_id, f.box.projectId);
       });
       const before = Object.fromEntries(tables.map(table => [table, predecessor.database.prepare(`SELECT * FROM ${table} ORDER BY id`).all()]));
-      expect((await migrateSqliteStorage(predecessor)).appliedVersions).toEqual([14, 15, 16, 17, 18, 19, 20, 21, 22, 23]);
+      expect((await migrateSqliteStorage(predecessor)).appliedVersions).toEqual([14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]);
       for (const table of tables) {
         const after = predecessor.database.prepare(`SELECT * FROM ${table} ORDER BY id`).all() as Record<string, unknown>[];
         if (table === 'tasks') {
@@ -297,6 +297,64 @@ describe('P03-4 F-001 persistent execution model', () => {
       expect(predecessor.database.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
       expect(predecessor.database.prepare('SELECT attempts_created, runtime_starts FROM execution_batches').get()).toEqual({ attempts_created: 1, runtime_starts: 1 });
       expect(predecessor.database.prepare('SELECT attempt_counter, code_attempts_used FROM tasks').get()).toEqual({ attempt_counter: 1, code_attempts_used: 1 });
+    } finally { predecessor.close(); sandbox.cleanup(); f.box.close(); }
+  });
+
+  it('v24 widens the snapshot version gate while preserving populated attempts and child rows', async () => {
+    const f = await fixture();
+    const sandbox = createTempSandbox('shiploop-p034-v24-');
+    const predecessor = openSqliteStorageSession({ path: join(sandbox.path, 'state.db') });
+    try {
+      // 最新库上造出真实 attempt + 子表行（workspace_leases 引用 attempts）。
+      f.insert();
+      f.lease();
+      // 复制全部业务表到 v23 前序库（v23→v24 仅重建 attempts，列完全一致）。
+      await migrateSqliteStorage(predecessor, { migrations: SQLITE_MIGRATIONS.slice(0, 23) });
+      const tableNames = (f.db.prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name != 'schema_migrations' ORDER BY name",
+      ).all() as { name: string }[]).map((row) => row.name);
+      predecessor.transactWrite('test.seed-v23', (db) => {
+        // 表按名字序复制，父子外键在提交时统一核验（本事务内延迟外键）。
+        db.exec('PRAGMA defer_foreign_keys = ON');
+        for (const table of tableNames) {
+          for (const original of f.db.prepare(`SELECT * FROM ${table}`).all() as Record<string, string | number | null>[]) {
+            const row = { ...original };
+            const columns = db.prepare(`PRAGMA table_xinfo(${table})`).all() as { name: string; hidden: number }[];
+            const writable = new Set(columns.filter((column) => column.hidden === 0).map((column) => column.name));
+            for (const key of Object.keys(row)) if (!writable.has(key)) delete row[key];
+            const keys = Object.keys(row);
+            db.prepare(`INSERT INTO ${table} (${keys.join(',')}) VALUES (${keys.map(() => '?').join(',')})`).run(...Object.values(row));
+          }
+        }
+      });
+      const before = Object.fromEntries(
+        tableNames.map((table) => [table, predecessor.database.prepare(`SELECT * FROM ${table}`).all()]),
+      );
+      // v24 重建 attempts：历史行逐行保留，子表外键在提交时核验通过。
+      expect((await migrateSqliteStorage(predecessor)).appliedVersions).toEqual([24]);
+      for (const table of tableNames) {
+        expect(predecessor.database.prepare(`SELECT * FROM ${table}`).all(), table).toEqual(before[table]);
+      }
+      expect(predecessor.database.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
+      // 触发器与索引随重建恢复。
+      const triggers = predecessor.database.prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'attempts' ORDER BY name",
+      ).all() as { name: string }[];
+      expect(triggers.map((row) => row.name)).toEqual(['attempts_group_artifacts_check', 'attempts_input_immutable']);
+      // v1 历史快照仍可插入，v2 新快照（F-011 升版）现在合法，未知 v3 仍被 CHECK 拒绝。
+      const v2Snapshot = JSON.stringify({ ...f.inputSnapshot, schemaVersion: 2 });
+      predecessor.database.prepare(
+        `INSERT INTO attempts (id, created_at, updated_at, project_id, feature_id, run_id, task_id, number, owner_id, host_instance_id, execution_version, lease_until, input_snapshot, input_digest, input_ref, status) VALUES ('attempt-2', ?, ?, ?, ?, ?, '${f.ids.taskId}', 2, 'owner-1', 'host-1', 1, ?, ?, ?, 'snapshot-1', 'interrupted')`,
+      ).run(NOW, NOW, f.box.projectId, f.box.featureId, f.ids.runId, NOW + 1000, v2Snapshot, HASH);
+      expect(() =>
+        predecessor.database.prepare(
+          `INSERT INTO attempts (id, created_at, updated_at, project_id, feature_id, run_id, task_id, number, owner_id, host_instance_id, execution_version, lease_until, input_snapshot, input_digest, input_ref) VALUES ('attempt-3', ?, ?, ?, ?, ?, '${f.ids.taskId}', 3, 'owner-1', 'host-1', 1, ?, ?, ?, 'snapshot-1')`,
+        ).run(NOW, NOW, f.box.projectId, f.box.featureId, f.ids.runId, NOW + 1000, JSON.stringify({ ...f.inputSnapshot, schemaVersion: 3 }), HASH),
+      ).toThrow(/attempts_snapshot_check/);
+      // 不可变触发器仍阻止改写历史快照。
+      expect(() =>
+        predecessor.database.prepare('UPDATE attempts SET input_snapshot = ? WHERE id = ?').run(v2Snapshot, 'attempt-1'),
+      ).toThrow(/immutable/);
     } finally { predecessor.close(); sandbox.cleanup(); f.box.close(); }
   });
 

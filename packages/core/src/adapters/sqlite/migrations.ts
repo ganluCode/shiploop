@@ -23,6 +23,13 @@ export interface SqliteMigration {
   readonly sql: string;
   /** sql 内容的 SHA-256 小写 hex 校验摘要（稳定、可重算核对）。 */
   readonly checksum: string;
+  /**
+   * 重建被其他表外键引用的既有表时置 true（缺省 false）：迁移器在事务外先
+   * PRAGMA foreign_keys=OFF（事务内切换无效），执行后于同一事务内做全库
+   * foreign_key_check，发现违规整组回滚；finally 恢复 foreign_keys=ON。
+   * 仅限表重建类迁移使用；常规增量迁移保持默认的 foreign_keys=ON 执行。
+   */
+  readonly foreignKeysOff?: boolean;
 }
 
 /** 首个基础迁移：仅建立 P01-2 存储闭环的六张表，不生成后续执行/Chat 等表。 */
@@ -1689,6 +1696,134 @@ CREATE INDEX task_approval_items_task_status_index ON task_approval_items (proje
 `;
 
 /** 已声明的全部 SQLite 迁移，按版本升序；F-005 的执行器按此顺序应用并核对摘要。 */
+/**
+ * v24: P03-7 / F-011 ContextBuilder 契约升版（schemaVersion 2，可选同 Task 返工
+ * 输入）。attempts_snapshot_check 原钉住 input_snapshot.schemaVersion = 1，升版后
+ * v1 历史快照与 v2 新快照都必须可持久化；SQLite 不能 ALTER CHECK，重建
+ * attempts（除 attempts_snapshot_check 放宽为 IN (1, 2) 外逐列/约束/外键一致）
+ * → 整表复制 → DROP → 重建 6 个索引 → RENAME → 重建 2 个不变量触发器。
+ * attempts 被 workspace_leases / sessions / task_claim_receipts /
+ * verification_batches / workspace_operations / managed_workspaces 等表外键引用；
+ * DROP 的隐式 DELETE 无法在 foreign_keys=ON 下安全完成（即时违反或
+ * defer_foreign_keys 的挂起违规计数无法经异名表 INSERT 抵消），因此描述符标记
+ * foreignKeysOff，由迁移器在事务外关闭外键执行、提交前全库 foreign_key_check
+ * 核验一致性后恢复。legacy_alter_table 在事务内启用并在末尾复位，避免 RENAME
+ * 重新校验其他表上引用 attempts 的触发器（rename 窗口内 attempts 尚未重建）。
+ * 历史行、迁移记录与 checksum 不变。
+ */
+const MIGRATION_024_SQL = `
+PRAGMA legacy_alter_table = ON;
+
+CREATE TABLE attempts_v24 (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  feature_id TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  number INTEGER NOT NULL,
+  owner_id TEXT NOT NULL,
+  host_instance_id TEXT NOT NULL,
+  execution_version INTEGER NOT NULL,
+  lease_until INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'preparing',
+  execution_stage TEXT NOT NULL DEFAULT 'preflight',
+  input_snapshot TEXT NOT NULL,
+  input_digest TEXT NOT NULL,
+  input_ref TEXT NOT NULL,
+  session_id TEXT,
+  invocation_id TEXT,
+  code_ref TEXT,
+  error_kind TEXT,
+  diagnostic_ref TEXT,
+  started_at INTEGER,
+  ended_at INTEGER,
+  duration_ms INTEGER,
+  exit_code INTEGER,
+  usage_summary TEXT,
+  CONSTRAINT attempts_revision_check CHECK (revision >= 1),
+  CONSTRAINT attempts_number_check CHECK (typeof(number) = 'integer' AND number >= 1),
+  CONSTRAINT attempts_version_check CHECK (typeof(execution_version) = 'integer' AND execution_version >= 1),
+  CONSTRAINT attempts_owner_check CHECK (length(owner_id) > 0 AND length(host_instance_id) > 0),
+  CONSTRAINT attempts_lease_check CHECK (typeof(lease_until) = 'integer' AND lease_until >= 0),
+  CONSTRAINT attempts_status_check CHECK (status IN ('preparing', 'executing', 'verifying', 'succeeded', 'failed', 'cancelled', 'interrupted')),
+  CONSTRAINT attempts_stage_check CHECK (execution_stage IN ('preflight', 'runtime', 'verification', 'commit', 'cleanup')),
+  CONSTRAINT attempts_snapshot_check CHECK (CASE WHEN json_valid(input_snapshot) THEN
+    json_type(input_snapshot) = 'object' AND json_type(input_snapshot, '$.schemaVersion') IS 'integer'
+    AND json_extract(input_snapshot, '$.schemaVersion') IN (1, 2)
+    AND json_extract(input_snapshot, '$.projectId') IS project_id
+    AND json_extract(input_snapshot, '$.featureId') IS feature_id
+    AND json_extract(input_snapshot, '$.taskId') IS task_id
+    AND json_extract(input_snapshot, '$.digests.snapshotDigest') IS input_digest
+    AND json_extract(input_snapshot, '$.group.snapshot.artifactId') IS input_ref
+    ELSE 0 END),
+  CONSTRAINT attempts_digest_check CHECK (length(input_digest) = 64 AND input_digest NOT GLOB '*[^0-9a-f]*'),
+  CONSTRAINT attempts_duration_check CHECK (duration_ms IS NULL OR (typeof(duration_ms) = 'integer' AND duration_ms >= 0)),
+  CONSTRAINT attempts_exit_check CHECK (exit_code IS NULL OR typeof(exit_code) = 'integer'),
+  CONSTRAINT attempts_times_check CHECK ((started_at IS NULL OR (typeof(started_at) = 'integer' AND started_at >= 0))
+    AND (ended_at IS NULL OR (typeof(ended_at) = 'integer' AND ended_at >= 0))
+    AND (started_at IS NULL OR ended_at IS NULL OR ended_at >= started_at)),
+  CONSTRAINT attempts_usage_check CHECK (usage_summary IS NULL OR CASE WHEN json_valid(usage_summary) THEN
+    json_type(usage_summary) = 'object' AND json_type(usage_summary, '$.schemaVersion') IS 'integer'
+    AND json_extract(usage_summary, '$.schemaVersion') = 1 ELSE 0 END),
+  CONSTRAINT attempts_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT attempts_feature_fk FOREIGN KEY (project_id, feature_id) REFERENCES features (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT attempts_run_fk FOREIGN KEY (feature_id, run_id) REFERENCES runs (feature_id, id) ON DELETE RESTRICT,
+  CONSTRAINT attempts_task_fk FOREIGN KEY (feature_id, task_id) REFERENCES tasks (feature_id, id) ON DELETE RESTRICT,
+  CONSTRAINT attempts_input_fk FOREIGN KEY (project_id, input_ref) REFERENCES artifacts (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT attempts_code_fk FOREIGN KEY (project_id, code_ref) REFERENCES artifacts (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT attempts_diagnostic_fk FOREIGN KEY (project_id, diagnostic_ref) REFERENCES artifacts (project_id, id) ON DELETE RESTRICT
+);
+INSERT INTO attempts_v24 (id, created_at, project_id, revision, updated_at, feature_id, run_id, task_id, number, owner_id, host_instance_id, execution_version, lease_until, status, execution_stage, input_snapshot, input_digest, input_ref, session_id, invocation_id, code_ref, error_kind, diagnostic_ref, started_at, ended_at, duration_ms, exit_code, usage_summary)
+SELECT id, created_at, project_id, revision, updated_at, feature_id, run_id, task_id, number, owner_id, host_instance_id, execution_version, lease_until, status, execution_stage, input_snapshot, input_digest, input_ref, session_id, invocation_id, code_ref, error_kind, diagnostic_ref, started_at, ended_at, duration_ms, exit_code, usage_summary FROM attempts;
+DROP TABLE attempts;
+CREATE UNIQUE INDEX attempts_project_id_id_unique ON attempts_v24 (project_id, id);
+CREATE UNIQUE INDEX attempts_task_number_unique ON attempts_v24 (task_id, number);
+CREATE UNIQUE INDEX attempts_active_task_unique ON attempts_v24 (task_id) WHERE status IN ('preparing', 'executing', 'verifying');
+CREATE UNIQUE INDEX attempts_session_unique ON attempts_v24 (session_id) WHERE session_id IS NOT NULL;
+CREATE UNIQUE INDEX attempts_invocation_unique ON attempts_v24 (invocation_id) WHERE invocation_id IS NOT NULL;
+CREATE INDEX attempts_run_id_index ON attempts_v24 (run_id);
+ALTER TABLE attempts_v24 RENAME TO attempts;
+
+CREATE TRIGGER attempts_group_artifacts_check BEFORE INSERT ON attempts
+WHEN EXISTS (
+  SELECT 1 FROM json_each(NEW.input_snapshot, '$.group') AS ref
+  WHERE NOT EXISTS (SELECT 1 FROM artifacts AS a WHERE a.project_id = NEW.project_id
+    AND a.id = json_extract(ref.value, '$.artifactId') AND a.status = 'ready'
+    AND a.version = json_extract(ref.value, '$.version')
+    AND a.content_hash = json_extract(ref.value, '$.contentHash')
+    AND a.size_bytes = json_extract(ref.value, '$.sizeBytes')
+    AND a.storage_locator = json_extract(ref.value, '$.locator')
+    AND a.media_type = json_extract(ref.value, '$.mediaType'))
+) OR EXISTS (
+  SELECT 1 FROM json_each(NEW.input_snapshot, '$.requiredInputs') AS ref
+  WHERE NOT EXISTS (SELECT 1 FROM artifacts AS a WHERE a.project_id = NEW.project_id
+    AND json_extract(ref.value, '$.projectId') = NEW.project_id
+    AND a.id = json_extract(ref.value, '$.artifactId') AND a.status = 'ready'
+    AND a.version = json_extract(ref.value, '$.version')
+    AND a.content_hash = json_extract(ref.value, '$.contentHash')
+    AND a.size_bytes = json_extract(ref.value, '$.sizeBytes')
+    AND a.storage_locator = json_extract(ref.value, '$.locator')
+    AND a.media_type = json_extract(ref.value, '$.mediaType'))
+)
+BEGIN SELECT RAISE(ABORT, 'attempt input artifact identity mismatch'); END;
+
+CREATE TRIGGER attempts_input_immutable BEFORE UPDATE ON attempts
+WHEN NEW.input_snapshot IS NOT OLD.input_snapshot OR NEW.input_digest IS NOT OLD.input_digest
+  OR NEW.input_ref IS NOT OLD.input_ref OR NEW.project_id IS NOT OLD.project_id
+  OR NEW.feature_id IS NOT OLD.feature_id OR NEW.task_id IS NOT OLD.task_id
+  OR NEW.run_id IS NOT OLD.run_id OR NEW.number IS NOT OLD.number
+  OR NEW.id IS NOT OLD.id OR NEW.owner_id IS NOT OLD.owner_id
+  OR NEW.host_instance_id IS NOT OLD.host_instance_id OR NEW.execution_version IS NOT OLD.execution_version
+  OR (OLD.session_id IS NOT NULL AND NEW.session_id IS NOT OLD.session_id)
+  OR (OLD.invocation_id IS NOT NULL AND NEW.invocation_id IS NOT OLD.invocation_id)
+BEGIN SELECT RAISE(ABORT, 'attempt input and business identity are immutable'); END;
+
+PRAGMA legacy_alter_table = OFF;
+`;
+
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     version: 1,
@@ -1777,4 +1912,5 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 21, sql: MIGRATION_021_SQL, checksum: sha256Hex(MIGRATION_021_SQL) },
   { version: 22, sql: MIGRATION_022_SQL, checksum: sha256Hex(MIGRATION_022_SQL) },
   { version: 23, sql: MIGRATION_023_SQL, checksum: sha256Hex(MIGRATION_023_SQL) },
+  { version: 24, sql: MIGRATION_024_SQL, checksum: sha256Hex(MIGRATION_024_SQL), foreignKeysOff: true },
 ];

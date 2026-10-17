@@ -1,9 +1,10 @@
-# P03-2 有版本的 ContextBuilder 契约（F-005）
+# P03-2 有版本的 ContextBuilder 契约（F-005；F-011 扩展）
 
 - 文档状态：P03-2 / F-005 交付的版本化 ContextBuilder 契约（Core 层）。上游：
   `docs/p03-2-execution-input-contract.md`（F-004 必需输入引用形态与校验读取）。
   执行输入准备编排与 snapshot/manifest/prompt 制品组属 F-006，Host/CLI 接线属
-  F-007/F-008（本项不实现）。
+  F-007/F-008（本项不实现）。P03-7 / F-011 扩展可选同 Task 返工输入（见 §7），
+  schemaVersion 升至 2。
 - 实现入口：`packages/core/src/ports/context-build.ts`（输入/输出契约、
   `CONTEXT_FIXED_GUIDANCE` 固定指导常量、`validateContextBuildInput` 纯校验与
   `ContextBuildError`）、`packages/core/src/application/context-build.ts`
@@ -25,7 +26,8 @@
   `purpose`/`selection`（选取范围）/`required`（必需性）/`reason`（选择理由）/
   `truncated`，来源类别词汇冻结为 fixed-guidance / task / acceptance /
   strategy / requirements / dependencies / check-policy / permissions /
-  required-input / history-index（新增类别须升 schemaVersion）；
+  required-input / history-index（v2 起追加 rework-guidance / rework-scene /
+  failure-evidence / recovery-record；新增类别须升 schemaVersion）；
   `promptDigest` 把 manifest 与最终 prompt 绑定，`omissions`
   标注可选内容省略/截断；
 - `prompt`：有界文本（头部携带 `schemaVersion`），固定指导原样置于开头，
@@ -100,3 +102,38 @@
 Host/CLI 接线（F-007/F-008）、ProjectProfile、知识检索、LLM 蒸馏、SDK 自动
 资源加载（AGENTS.md 等）与原生会话续接；不宣称强 OS 沙箱（可信项目模式，
 见 `docs/p03-2-execution-input-contract.md` §3 边界）。
+
+## 7. 同 Task 返工输入扩展（P03-7 / F-011，schemaVersion 2）
+
+可选 `rework` 字段存在时，构建输出同 Task 返工输入快照（普通首次构建该字段为
+`null`，业务投影不含返工键、摘要与 v1 纪律一致）：
+
+- **关联身份**：当前返工 `attemptId`、直接上一 `previousAttemptId`（不得与当前
+  相同）、`previousTaskId`（必须等于当前 taskId，跨 Task 来源拒绝）、同一受管
+  worktree 与**已核对 Git/文件现场**身份（`scene.worktreeId` + `headCommit`
+  40/64 位小写十六进制 + `codeDigest` 64hex——由受信准备路径核验后以身份形式
+  提供，本端口不做文件 I/O 与字节级完整性核验）；
+- **必需失败证据引用**：`failureEvidenceRefs` 至少一条（缺篇/空集 →
+  missing_required_input），逐条为同项目 `ExecutionInputRef`（损坏摘要/未知键
+  → validation，跨项目 → validation，上限
+  `CONTEXT_REWORK_FAILURE_EVIDENCE_MAX_COUNT` 条）；按引用读取并核对 hash，
+  失败正文与历史报告不内联进 prompt；
+- **恢复来源与模式记录**：`recovery.selection` + `recovery.decision` 复用
+  P03-3A `RuntimeRecoverySelection` / `RuntimeRecoveryDecision`（Fake 能力声明
+  经 `decideRuntimeRecovery` 得出的决策原样记录），只记录本次来源与模式——
+  不重新决策、不实现 Pi 原生续接、不宣称缓存或 Token 节省、不引入额外模型
+  总结步骤。decision=rejected、required 降级 new、new 选择携带 resume 决策、
+  resume 缺来源、kind 不一致、恢复来源 Attempt/项目/Task 与返工身份不符或
+  Chat 来源一律 validation 拒绝；
+- **固定返工交接指导**：`CONTEXT_REWORK_GUIDANCE` 是 Core 拥有的稳定常量
+  （先核对现有文件与 Git 再增量修复；明确禁止删除、reset 或重建 worktree；
+  原生会话历史不代替当前需求/权限），仅返工构建置于 `CONTEXT_FIXED_GUIDANCE`
+  之后、`## Task` 之前，不随历史增长膨胀；prompt 增加 Rework handoff、
+  Failure evidence 与 Recovery record 必需段落（受 `maxPromptBytes` 同一预算
+  约束，超限整体失败，不截断）；
+- **manifest 新增来源类别**：rework-guidance（固定指导）、rework-scene（现场
+  身份）、failure-evidence（逐条证据引用，hash 取权威 contentHash）、
+  recovery-record（来源与模式），全部 required=true、永不截断；
+- **版本兼容**：snapshot/manifest/prompt 携带 schemaVersion 2；Attempt 持久
+  快照读取接受 v1 历史快照与当前版本，未知版本明确拒绝，历史快照不被覆盖
+  或改写（新返工输入经既有不可变制品组路径另行发布）。

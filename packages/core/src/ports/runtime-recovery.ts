@@ -128,26 +128,27 @@ export function validateRuntimeRecoveryReference(value: unknown): RuntimeRecover
     sourceDigest: validateSha256Digest(raw.sourceDigest, context, `${field}.sourceDigest`),
   };
 }
-function selection(value: unknown): RuntimeRecoverySelection {
-  const raw = requirePlainObject(value, context, 'request.recovery');
+/** Pure structural validation of an explicit auto/new/required selection (no adapter dispatch). */
+export function validateRuntimeRecoverySelection(value: unknown, field = 'request.recovery'): RuntimeRecoverySelection {
+  const raw = requirePlainObject(value, context, field);
   if (raw.mode === 'new') {
-    rejectUnknownKeys(raw, ['mode'], context, 'request.recovery');
+    rejectUnknownKeys(raw, ['mode'], context, field);
     return { mode: 'new' };
   }
   if (raw.mode !== 'auto' && raw.mode !== 'required') {
-    throw validationError(context, 'request.recovery.mode', 'invalid_recovery_mode');
+    throw validationError(context, `${field}.mode`, 'invalid_recovery_mode');
   }
-  rejectUnknownKeys(raw, ['mode', 'kind', 'source'], context, 'request.recovery');
-  const requestedKind = kind(raw.kind, 'request.recovery.kind');
+  rejectUnknownKeys(raw, ['mode', 'kind', 'source'], context, field);
+  const requestedKind = kind(raw.kind, `${field}.kind`);
   if (raw.source === undefined) {
     if (raw.mode === 'required') {
-      throw validationError(context, 'request.recovery.source', 'required_source_missing');
+      throw validationError(context, `${field}.source`, 'required_source_missing');
     }
     return { mode: 'auto', kind: requestedKind };
   }
   const source = validateRuntimeRecoveryReference(raw.source);
   if (source.kind !== requestedKind) {
-    throw validationError(context, 'request.recovery.source.kind', 'source_kind_mismatch');
+    throw validationError(context, `${field}.source.kind`, 'source_kind_mismatch');
   }
   return { mode: raw.mode, kind: requestedKind, source };
 }
@@ -165,7 +166,8 @@ export function validateRuntimeRecoveryRequest(value: unknown): RuntimeRecoveryR
     projectId: id(raw.projectId, 'request.projectId'), sessionId: id(raw.sessionId, 'request.sessionId'),
     executionVersion: raw.executionVersion as number, identity: identity(raw.identity),
     invocationId: id(raw.invocationId, 'request.invocationId'),
-    strategy: validateRuntimeStrategy(raw.strategy, context, 'request.strategy'), recovery: selection(raw.recovery),
+    strategy: validateRuntimeStrategy(raw.strategy, context, 'request.strategy'),
+    recovery: validateRuntimeRecoverySelection(raw.recovery),
   };
   if (result.identity.purpose === 'chat' && result.identity.sessionId !== result.sessionId) {
     throw validationError(context, 'request.sessionId', 'chat_session_mismatch');
@@ -262,6 +264,35 @@ export function validateRuntimeRecoveryCapabilities(value: unknown): RuntimeReco
 export type RuntimeRecoveryDecision =
   | { readonly mode: 'resume'; readonly kind: RuntimeRecoveryKind; readonly reasons: readonly string[] }
   | { readonly mode: 'new' | 'rejected'; readonly reasons: readonly string[] };
+
+const RECOVERY_REASON_MAX_COUNT = 16;
+const RECOVERY_REASON_PATTERN = /^[A-Za-z][A-Za-z0-9:._-]{0,63}$/;
+
+function recoveryReasons(value: unknown, field: string): string[] {
+  if (!Array.isArray(value) || value.length > RECOVERY_REASON_MAX_COUNT) {
+    throw validationError(context, field, 'invalid_reasons');
+  }
+  return value.map((entry, index) => {
+    if (typeof entry !== 'string' || !RECOVERY_REASON_PATTERN.test(entry)) {
+      throw validationError(context, `${field}[${index}]`, 'invalid_reason');
+    }
+    return entry;
+  });
+}
+
+/** Pure structural validation of a recorded capability decision (record only; not a new decision). */
+export function validateRuntimeRecoveryDecision(value: unknown, field = 'recovery.decision'): RuntimeRecoveryDecision {
+  const raw = requirePlainObject(value, context, field);
+  if (raw.mode === 'resume') {
+    rejectUnknownKeys(raw, ['mode', 'kind', 'reasons'], context, field);
+    return { mode: 'resume', kind: kind(raw.kind, `${field}.kind`), reasons: recoveryReasons(raw.reasons, `${field}.reasons`) };
+  }
+  if (raw.mode === 'new' || raw.mode === 'rejected') {
+    rejectUnknownKeys(raw, ['mode', 'reasons'], context, field);
+    return { mode: raw.mode, reasons: recoveryReasons(raw.reasons, `${field}.reasons`) };
+  }
+  throw validationError(context, `${field}.mode`, 'invalid_decision_mode');
+}
 
 /** Capability-only decision, never proof of authorization, safe side effects or successful recovery. */
 export function decideRuntimeRecovery(request: unknown, descriptor: unknown): RuntimeRecoveryDecision {
