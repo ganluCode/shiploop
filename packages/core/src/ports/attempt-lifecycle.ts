@@ -17,6 +17,14 @@ export type AttemptNotification = WorkResourceIdentity & {
   | { readonly kind: 'runtime_completed'; readonly exitCode: number; readonly evidenceRef: string }
   | { readonly kind: 'runtime_settled'; readonly runtime: RuntimeSettlementFacts; readonly evidenceRef: string }
 );
+export type VerificationSubmission = WorkResourceIdentity & {
+  readonly taskId: string;
+  readonly runId: string;
+  readonly verificationBatchId: string;
+  readonly codeDigest: string;
+  readonly observationDigest: string;
+  readonly outcome: 'passed' | 'code_failure' | 'non_code_failure';
+};
 export interface AttemptApplicationResult {
   readonly disposition: 'applied' | 'replayed' | 'ignored';
   readonly attemptId: string;
@@ -31,7 +39,31 @@ export interface AttemptApplicationResult {
 /** Trusted Core/Runner ingress, not a model-writable command or acceptance API. */
 export interface AttemptLifecycleStore {
   apply(notification: unknown, stopEvidence?: unknown): AttemptApplicationResult;
+  /** Trusted verification result ingress. Evidence was produced outside the write transaction. */
+  submitVerification(input: unknown): AttemptApplicationResult;
 }
+export function validateVerificationSubmission(value: unknown): VerificationSubmission {
+  const context = { operation: 'AttemptLifecycle.submitVerification' };
+  const raw = requirePlainObject(value, context, 'submission');
+  rejectUnknownKeys(raw, ['projectId', 'attemptId', 'taskId', 'runId', 'owner', 'hostInstanceId', 'executionVersion',
+    'verificationBatchId', 'codeDigest', 'observationDigest', 'outcome'], context, 'submission');
+  const identity = validateWorkResourceIdentity({ projectId: raw.projectId, attemptId: raw.attemptId,
+    owner: raw.owner, hostInstanceId: raw.hostInstanceId, executionVersion: raw.executionVersion });
+  const taskId = validateStableId(raw.taskId, context, 'taskId');
+  const runId = validateStableId(raw.runId, context, 'runId');
+  const verificationBatchId = validateStableId(raw.verificationBatchId, context, 'verificationBatchId');
+  const digest = (name: 'codeDigest' | 'observationDigest'): string => {
+    const candidate = raw[name];
+    if (typeof candidate !== 'string' || !/^[0-9a-f]{64}$/.test(candidate)) throw validationError(context, name, 'invalid_sha256');
+    return candidate;
+  };
+  if (raw.outcome !== 'passed' && raw.outcome !== 'code_failure' && raw.outcome !== 'non_code_failure') {
+    throw validationError(context, 'outcome', 'invalid_verification_outcome');
+  }
+  return { ...identity, taskId, runId, verificationBatchId, codeDigest: digest('codeDigest'),
+    observationDigest: digest('observationDigest'), outcome: raw.outcome };
+}
+
 export function validateAttemptNotification(value: unknown): AttemptNotification {
   const context = { operation: 'AttemptLifecycle.apply' };
   const raw = requirePlainObject(value, context, 'notification');

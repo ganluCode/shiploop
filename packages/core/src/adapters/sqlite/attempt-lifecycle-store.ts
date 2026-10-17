@@ -5,8 +5,8 @@ import { createSqliteWorkSessionStore } from './work-session-store.js';
 import { ACTIVE_ATTEMPT_STATUSES } from '../../ports/attempt-store.js';
 import { rejectUnknownKeys, requirePlainObject, validateStableId } from '../../ports/validation.js';
 import {
-  ATTEMPT_UPDATED_EVENT_TYPE, validateAttemptNotification,
-  type AttemptApplicationResult, type AttemptLifecycleStore,
+  ATTEMPT_UPDATED_EVENT_TYPE, validateAttemptNotification, validateVerificationSubmission,
+  type AttemptApplicationResult, type AttemptLifecycleStore, type VerificationSubmission,
 } from '../../ports/attempt-lifecycle.js';
 import { StorageError } from '../../ports/errors.js';
 import { stableStringify } from '../../ports/feature-plan.js';
@@ -196,10 +196,130 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
           VALUES (?, ?, ?, ?, ?, ?)`).run(randomUUID(), valid.projectId, attempt.id, valid.notificationId, digest, JSON.stringify(receipt));
         return receipt;
   }
+  function submitVerificationInTransaction(transaction: CommandTransaction, input: unknown): AttemptApplicationResult {
+    if (!db.inTransaction) throw new TypeError('Verification submission requires a write transaction');
+    const valid: VerificationSubmission = validateVerificationSubmission(input);
+    const now = (options.nowUtcMs ?? Date.now)();
+    if (!Number.isSafeInteger(now) || now < 1) throw new StorageError('validation', operation, 'Invalid lifecycle clock');
+    const ignored = (reason: 'stale_execution_identity' | 'invalid_transition' | 'verification_not_ready'): AttemptApplicationResult =>
+      ({ disposition: 'ignored', attemptId: valid.attemptId, status: null, reason, waitingFor: null,
+        runtimeCompleted: false, resultSaved: false, stopConfirmed: false, eventId: null });
+    const attempt = db.prepare<[string], {
+      project_id: string; feature_id: string; run_id: string; task_id: string; owner_id: string; host_instance_id: string;
+      execution_version: number; revision: number; status: string; execution_stage: string; code_ref: string | null;
+      diagnostic_ref: string | null; exit_code: number | null; input_snapshot: string;
+    }>(`SELECT project_id, feature_id, run_id, task_id, owner_id, host_instance_id, execution_version, revision,
+      status, execution_stage, code_ref, diagnostic_ref, exit_code, input_snapshot FROM attempts WHERE id = ?`).get(valid.attemptId);
+    if (attempt === undefined || attempt.project_id !== valid.projectId || attempt.owner_id !== valid.owner
+      || attempt.host_instance_id !== valid.hostInstanceId || attempt.execution_version !== valid.executionVersion
+      || attempt.task_id !== valid.taskId || attempt.run_id !== valid.runId) return ignored('stale_execution_identity');
+    const task = db.prepare<[string], { project_id: string; feature_id: string; execution_version: number; status: string; manual_block: number }>(
+      'SELECT project_id, feature_id, execution_version, status, manual_block FROM tasks WHERE id = ?').get(valid.taskId);
+    const run = db.prepare<[string], { project_id: string; feature_id: string; batch_id: string; status: string; reason: string | null }>(
+      'SELECT project_id, feature_id, batch_id, status, reason FROM runs WHERE id = ?').get(valid.runId);
+    if (task === undefined || run === undefined || task.project_id !== valid.projectId || run.project_id !== valid.projectId
+      || task.feature_id !== attempt.feature_id || run.feature_id !== attempt.feature_id || task.execution_version !== valid.executionVersion) {
+      return ignored('stale_execution_identity');
+    }
+    if (attempt.status !== 'verifying' || attempt.execution_stage !== 'verification' || task.status !== 'running'
+      || !['queued', 'running', 'pausing', 'paused'].includes(run.status)
+      || (run.status === 'paused' && run.reason !== 'approval')) return ignored('invalid_transition');
+    let snapshot: { approval?: { planDigest?: string; checkPolicyDigest?: string; decisionId?: string } };
+    try { snapshot = JSON.parse(attempt.input_snapshot) as typeof snapshot; } catch { return ignored('stale_execution_identity'); }
+    const batch = db.prepare<[string], {
+      project_id: string; feature_id: string; run_id: string; task_id: string; attempt_id: string; execution_version: number;
+      code_digest: string; policy_digest: string; status: string;
+    }>(`SELECT project_id, feature_id, run_id, task_id, attempt_id, execution_version, code_digest, policy_digest, status
+      FROM verification_batches WHERE id = ?`).get(valid.verificationBatchId);
+    if (batch === undefined || batch.project_id !== valid.projectId || batch.feature_id !== attempt.feature_id
+      || batch.run_id !== valid.runId || batch.task_id !== valid.taskId || batch.attempt_id !== valid.attemptId
+      || batch.execution_version !== valid.executionVersion || batch.code_digest !== valid.codeDigest
+      || batch.policy_digest !== snapshot.approval?.checkPolicyDigest
+      || (valid.outcome === 'passed' ? batch.status !== 'passed' : !['failed', 'error', 'inconclusive'].includes(batch.status))) return ignored('verification_not_ready');
+    const checks = db.prepare<[string], { count: number; passed: number }>(
+      "SELECT COUNT(*) AS count, COALESCE(SUM(CASE WHEN status = 'passed' THEN 1 ELSE 0 END), 0) AS passed FROM check_results WHERE batch_id = ?").get(valid.verificationBatchId)!;
+    if (valid.outcome === 'passed' && (checks.count < 1 || checks.passed !== checks.count || attempt.exit_code !== 0 || attempt.diagnostic_ref === null)) {
+      return ignored('verification_not_ready');
+    }
+    if (attempt.code_ref === null) return ignored('verification_not_ready');
+    const code = db.prepare<[string, string], { content_hash: string }>(
+      'SELECT content_hash FROM artifacts WHERE project_id = ? AND id = ?').get(valid.projectId, attempt.code_ref);
+    if (code?.content_hash !== valid.codeDigest) return ignored('stale_execution_identity');
+    const approval = verifyFeaturePlanApprovalInTransaction(transaction, valid.projectId, attempt.feature_id);
+    const taskApprovalItems = transaction.listTaskApprovalItems(valid.projectId, valid.taskId);
+    const humanApprovalWaiting = taskApprovalItems.some(item =>
+      item.planDigest !== approval.planDigest
+      || (item.codeDigest !== null && item.codeDigest !== valid.codeDigest)
+      || (item.kind === 'approval' && (item.status !== 'approved' || item.decisionCodeDigest !== valid.codeDigest))
+      || (item.kind === 'block' && item.status !== 'unblocked'));
+    const approvalWaiting = task.manual_block === 1 || humanApprovalWaiting || !approval.validity.valid
+      || approval.planDigest !== snapshot.approval?.planDigest
+      || approval.checkPolicyDigest !== snapshot.approval?.checkPolicyDigest
+      || approval.currentDecision?.id !== snapshot.approval?.decisionId;
+    const budgetReservation = transaction.getTaskAttemptReservation(valid.projectId, valid.taskId, valid.attemptId);
+    const alreadyObserved = budgetReservation?.reason?.includes(valid.observationDigest) === true;
+    const budgetOutcome = valid.outcome === 'passed' ? 'passed' : valid.outcome;
+    transaction.settleTaskAttemptBudget({ projectId: valid.projectId, batchId: run.batch_id, runId: valid.runId,
+      taskId: valid.taskId, attemptKey: valid.attemptId, outcome: budgetOutcome, observationDigest: valid.observationDigest });
+    if (valid.outcome !== 'passed') {
+      const changed = db.prepare(`UPDATE attempts SET status = 'failed', execution_stage = 'verification', error_kind = ?, ended_at = ?,
+        updated_at = ?, revision = revision + 1 WHERE id = ? AND revision = ? AND status = 'verifying'`).run(valid.outcome, now, now, valid.attemptId, attempt.revision);
+      if (changed.changes !== 1) throw new StorageError('conflict', operation, 'Verification Attempt CAS failed');
+      const taskChanged = db.prepare(`UPDATE tasks SET status = 'failed', revision = revision + 1, updated_at = ?
+        WHERE id = ? AND execution_version = ? AND status = 'running'`).run(now, valid.taskId, valid.executionVersion);
+      if (taskChanged.changes !== 1) throw new StorageError('conflict', operation, 'Verification Task CAS failed');
+      const counters = transaction.getTaskExecutionCounters(valid.projectId, valid.taskId);
+      const eventId = executions.appendExecutionEventInTransaction({ projectId: valid.projectId, eventType: ATTEMPT_UPDATED_EVENT_TYPE,
+        aggregateType: 'task', aggregateId: valid.taskId, aggregateRevision: counters.revision, payload: { updated: true } });
+      return { disposition: 'applied', attemptId: valid.attemptId, status: 'failed', reason: null, waitingFor: null,
+        runtimeCompleted: true, resultSaved: true, stopConfirmed: true, eventId };
+    }
+    if (approvalWaiting) {
+      if (alreadyObserved) return { disposition: 'replayed', attemptId: valid.attemptId, status: 'verifying', reason: null,
+        waitingFor: 'approval', runtimeCompleted: true, resultSaved: true, stopConfirmed: true, eventId: null };
+      const runChanged = db.prepare(`UPDATE runs SET status = 'paused', reason = 'approval', revision = revision + 1, updated_at = ?
+        WHERE id = ? AND project_id = ? AND status IN ('queued', 'running', 'pausing', 'paused') AND (reason IS NULL OR reason = 'approval')`)
+        .run(now, valid.runId, valid.projectId);
+      const featureChanged = db.prepare(`UPDATE features SET status = 'awaiting_approval', revision = revision + 1, updated_at = ?
+        WHERE id = ? AND project_id = ? AND status <> 'awaiting_approval'`).run(now, attempt.feature_id, valid.projectId);
+      const counters = transaction.getTaskExecutionCounters(valid.projectId, valid.taskId);
+      const eventId = executions.appendExecutionEventInTransaction({ projectId: valid.projectId, eventType: ATTEMPT_UPDATED_EVENT_TYPE,
+        aggregateType: 'task', aggregateId: valid.taskId, aggregateRevision: counters.revision, payload: { updated: true } });
+      return { disposition: 'applied', attemptId: valid.attemptId, status: 'verifying', reason: null, waitingFor: 'approval',
+        runtimeCompleted: true, resultSaved: true, stopConfirmed: true, eventId };
+    }
+    const changed = db.prepare(`UPDATE attempts SET status = 'succeeded', execution_stage = 'commit', ended_at = COALESCE(ended_at, ?),
+      updated_at = ?, revision = revision + 1 WHERE id = ? AND owner_id = ? AND host_instance_id = ? AND execution_version = ?
+      AND revision = ? AND status = 'verifying'`).run(now, now, valid.attemptId, valid.owner, valid.hostInstanceId, valid.executionVersion, attempt.revision);
+    if (changed.changes !== 1) throw new StorageError('conflict', operation, 'Verification Attempt CAS failed');
+    const taskChanged = db.prepare(`UPDATE tasks SET status = 'passed', revision = revision + 1, updated_at = ?
+      WHERE id = ? AND execution_version = ? AND status = 'running'`).run(now, valid.taskId, valid.executionVersion);
+    if (taskChanged.changes !== 1) throw new StorageError('conflict', operation, 'Verification Task CAS failed');
+    const pendingApprovals = db.prepare<[string, string], { count: number }>(
+      `SELECT COUNT(*) AS count FROM task_approval_items WHERE project_id = ? AND feature_id = ? AND status = 'pending'`)
+      .get(valid.projectId, attempt.feature_id)!.count;
+    db.prepare(`UPDATE features SET status = ?, revision = revision + 1, updated_at = ?
+      WHERE id = ? AND project_id = ? AND status = 'awaiting_approval'`)
+      .run(pendingApprovals > 0 ? 'awaiting_approval' : 'running', now, attempt.feature_id, valid.projectId);
+    db.prepare(`UPDATE runs SET status = 'running', reason = NULL, revision = revision + 1, updated_at = ?
+      WHERE id = ? AND project_id = ? AND status IN ('queued', 'pausing', 'paused')`).run(now, valid.runId, valid.projectId);
+    const view = dag.readTaskDagView(valid.projectId, valid.runId);
+    evaluateTaskDag(view, now);
+    const counters = transaction.getTaskExecutionCounters(valid.projectId, valid.taskId);
+    const eventId = executions.appendExecutionEventInTransaction({ projectId: valid.projectId, eventType: ATTEMPT_UPDATED_EVENT_TYPE,
+      aggregateType: 'task', aggregateId: valid.taskId, aggregateRevision: counters.revision, payload: { updated: true } });
+    return { disposition: 'applied', attemptId: valid.attemptId, status: 'succeeded', reason: null, waitingFor: null,
+      runtimeCompleted: true, resultSaved: true, stopConfirmed: true, eventId };
+  }
+
   return {
     apply(input, stopEvidence) {
       validateAttemptNotification(input);
       return atomic.transact(operation, transaction => applyInTransaction(transaction, input, stopEvidence));
+    },
+    submitVerification(input) {
+      validateVerificationSubmission(input);
+      return atomic.transact('AttemptLifecycle.submitVerification', transaction => submitVerificationInTransaction(transaction, input));
     },
     recordWorkspaceRetentionInTransaction(transaction, identity, expectedRevision, evidenceRef) {
       if (!db.inTransaction) throw new TypeError('Attempt retention requires a write transaction');

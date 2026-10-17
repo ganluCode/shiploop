@@ -34,6 +34,88 @@ async function fixture(stopVerifier?: WorkResourceStopVerifier) {
 }
 
 describe('F-005 fenced Attempt lifecycle', () => {
+  it('atomically releases a passed verification and is idempotent across two lifecycle writers', async () => {
+    const stopVerifier = createWorkResourceStopVerifier({ process: { recoverStop: async () => ({ confirmed: true }) }, finalize: async () => true });
+    const f = await fixture(stopVerifier);
+    const other = openSqliteStorageSession({ path: f.box.box.dbPath });
+    try {
+      f.box.session.database.prepare('UPDATE attempts SET code_ref = ? WHERE id = ?').run(f.attempt.inputRef, f.attempt.id);
+      f.launch(); f.executing();
+      const runtimeNotification = { ...f.identity, notificationId: 'complete-for-release', kind: 'runtime_completed' as const,
+        exitCode: 0, evidenceRef: f.attempt.inputRef };
+      const token = await stopVerifier.verify(f.resources().read(f.resourceIdentity));
+      expect(token).not.toBeNull();
+      expect(f.lifecycle().apply(runtimeNotification, token)).toMatchObject({ status: 'verifying', stopConfirmed: true });
+      const code = f.box.session.database.prepare('SELECT content_hash FROM artifacts WHERE id = ?').get(f.attempt.inputRef) as { content_hash: string };
+      const batchId = '00000000-0000-4000-8000-000000000071';
+      f.box.session.transactWrite('seed-verification', database => {
+        database.prepare(`INSERT INTO verification_batches
+          (id, created_at, project_id, updated_at, feature_id, run_id, task_id, attempt_id, execution_version,
+           operation, code_digest, policy_digest, environment_summary, check_snapshot, selection, status, started_at, ended_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'tests', ?, ?, '{}', '[{"key":"tests"}]', '{}', 'passed', ?, ?)`)
+          .run(batchId, NOW, f.attempt.projectId, NOW, f.attempt.featureId, f.attempt.runId, f.attempt.taskId, f.attempt.id,
+            f.attempt.executionVersion, code.content_hash, f.attempt.inputSnapshot.approval.checkPolicyDigest, NOW, NOW + 1);
+        database.prepare(`INSERT INTO check_results
+          (id, created_at, project_id, updated_at, batch_id, check_key, argv_json, timeout_ms, required, status,
+           exit_code, signal, timed_out, started_at, ended_at)
+          VALUES (?, ?, ?, ?, ?, 'tests', '["tests"]', 1000, 1, 'passed', 0, NULL, 0, ?, ?)`)
+          .run('00000000-0000-4000-8000-000000000072', NOW, f.attempt.projectId, NOW, batchId, NOW, NOW + 1);
+      });
+      const input = { ...f.identity, verificationBatchId: batchId, codeDigest: code.content_hash,
+        observationDigest: 'a'.repeat(64), outcome: 'passed' as const };
+      const first = (f.lifecycle() as any).submitVerification(input);
+      expect(first).toMatchObject({ disposition: 'applied', status: 'succeeded', waitingFor: null });
+      expect(f.box.session.database.prepare('SELECT status FROM attempts WHERE id = ?').get(f.attempt.id)).toEqual({ status: 'succeeded' });
+      expect(f.box.session.database.prepare('SELECT status FROM tasks WHERE id = ?').get(f.attempt.taskId)).toEqual({ status: 'passed' });
+      expect(f.box.session.database.prepare('SELECT status FROM runs WHERE id = ?').get(f.attempt.runId)).toEqual({ status: 'running' });
+      expect(f.box.session.database.prepare('SELECT status FROM features WHERE id = ?').get(f.attempt.featureId)).toEqual({ status: 'draft' });
+      const events = f.box.session.database.prepare("SELECT COUNT(*) AS count FROM state_events WHERE event_type = 'task.attempt.updated'").get() as { count: number };
+      const second = (createSqliteAttemptLifecycleStore(other, { workspaceAuthority: f.authority, nowUtcMs: () => NOW + 1 }) as any).submitVerification(input);
+      expect(second.disposition).toBe('ignored');
+      expect((f.box.session.database.prepare("SELECT COUNT(*) AS count FROM state_events WHERE event_type = 'task.attempt.updated'").get() as { count: number }).count).toBe(events.count);
+    } finally { other.close(); f.box.close(); }
+  });
+
+  it('keeps a machine pass pending when the current Task approval is absent, then releases after approval', async () => {
+    const stopVerifier = createWorkResourceStopVerifier({ process: { recoverStop: async () => ({ confirmed: true }) }, finalize: async () => true });
+    const f = await fixture(stopVerifier);
+    try {
+      f.box.session.database.prepare('UPDATE attempts SET code_ref = ? WHERE id = ?').run(f.attempt.inputRef, f.attempt.id);
+      f.launch(); f.executing();
+      const runtimeNotification = { ...f.identity, notificationId: 'complete-for-approval', kind: 'runtime_completed' as const,
+        exitCode: 0, evidenceRef: f.attempt.inputRef };
+      const token = await stopVerifier.verify(f.resources().read(f.resourceIdentity));
+      f.lifecycle().apply(runtimeNotification, token);
+      const code = f.box.session.database.prepare('SELECT content_hash FROM artifacts WHERE id = ?').get(f.attempt.inputRef) as { content_hash: string };
+      const batchId = '00000000-0000-4000-8000-000000000073';
+      f.box.session.transactWrite('seed-verification-approval', database => {
+        database.prepare(`INSERT INTO verification_batches
+          (id, created_at, project_id, updated_at, feature_id, run_id, task_id, attempt_id, execution_version,
+           operation, code_digest, policy_digest, environment_summary, check_snapshot, selection, status, started_at, ended_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'tests', ?, ?, '{}', '[{"key":"tests"}]', '{}', 'passed', ?, ?)`)
+          .run(batchId, NOW, f.attempt.projectId, NOW, f.attempt.featureId, f.attempt.runId, f.attempt.taskId, f.attempt.id,
+            f.attempt.executionVersion, code.content_hash, f.attempt.inputSnapshot.approval.checkPolicyDigest, NOW, NOW + 1);
+        database.prepare(`INSERT INTO check_results
+          (id, created_at, project_id, updated_at, batch_id, check_key, argv_json, timeout_ms, required, status,
+           exit_code, signal, timed_out, started_at, ended_at)
+          VALUES (?, ?, ?, ?, ?, 'tests', '["tests"]', 1000, 1, 'passed', 0, NULL, 0, ?, ?)`)
+          .run('00000000-0000-4000-8000-000000000074', NOW, f.attempt.projectId, NOW, batchId, NOW, NOW + 1);
+        database.prepare('UPDATE tasks SET manual_block = 1 WHERE id = ?').run(f.attempt.taskId);
+      });
+      const input = { ...f.identity, verificationBatchId: batchId, codeDigest: code.content_hash,
+        observationDigest: 'b'.repeat(64), outcome: 'passed' as const };
+      const blocked = (f.lifecycle() as any).submitVerification(input);
+      expect(blocked).toMatchObject({ disposition: 'applied', status: 'verifying', waitingFor: 'approval' });
+      const blockedEvents = (f.box.session.database.prepare("SELECT COUNT(*) AS count FROM state_events WHERE event_type = 'task.attempt.updated'").get() as { count: number }).count;
+      expect((f.lifecycle() as any).submitVerification(input)).toMatchObject({ disposition: 'replayed', status: 'verifying', waitingFor: 'approval' });
+      expect((f.box.session.database.prepare("SELECT COUNT(*) AS count FROM state_events WHERE event_type = 'task.attempt.updated'").get() as { count: number }).count).toBe(blockedEvents);
+      expect(f.box.session.database.prepare('SELECT status, reason FROM runs WHERE id = ?').get(f.attempt.runId)).toEqual({ status: 'paused', reason: 'approval' });
+      expect(f.box.session.database.prepare('SELECT status FROM features WHERE id = ?').get(f.attempt.featureId)).toEqual({ status: 'awaiting_approval' });
+      f.box.session.database.prepare('UPDATE tasks SET manual_block = 0 WHERE id = ?').run(f.attempt.taskId);
+      expect((f.lifecycle() as any).submitVerification(input)).toMatchObject({ disposition: 'applied', status: 'succeeded' });
+    } finally { f.box.close(); }
+  });
+
   it('records execution completion without granting acceptance or assuming process stop, and replays after reopen', async () => {
     const f = await fixture();
     try {
