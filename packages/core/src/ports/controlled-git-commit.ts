@@ -52,9 +52,16 @@ export interface GitCommitDriver {
   open(baseline: WorkspaceBaseline, admit: () => void): GitCommitDriverSession;
 }
 export class GitCommitProcessError extends Error {
-  constructor(readonly reason: string, readonly stopConfirmed: boolean,
-    readonly exitCode: number | null = null) {
-    super(`GitCommit.process: ${reason}`); this.name = 'GitCommitProcessError';
+  readonly reason: string;
+  readonly stopConfirmed: boolean;
+  readonly exitCode: number | null;
+
+  constructor(reason: string, stopConfirmed: boolean, exitCode: number | null = null) {
+    super(`GitCommit.process: ${reason}`);
+    this.name = 'GitCommitProcessError';
+    this.reason = reason;
+    this.stopConfirmed = stopConfirmed;
+    this.exitCode = exitCode;
   }
 }
 /** Exact message, including a durable operation association for subsequent reconciliation. */
