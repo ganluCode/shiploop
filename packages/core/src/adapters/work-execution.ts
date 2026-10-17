@@ -5,6 +5,7 @@ import type { SqliteStorageSession } from './sqlite/session.js';
 import { createSqliteSchedulerStore } from './sqlite/scheduler-store.js';
 import { createSqliteTaskDagStore } from './sqlite/task-dag-store.js';
 import { createSqliteAttemptAccess } from './sqlite/attempt-store.js';
+import { createSqliteVerificationStore } from './sqlite/verification-store.js';
 import { createSqliteWorkSessionStore } from './sqlite/work-session-store.js';
 import { createSqliteAttemptLifecycleStore } from './sqlite/attempt-lifecycle-store.js';
 import { createSqliteWorkResourceAccess } from './sqlite/work-resources.js';
@@ -29,6 +30,7 @@ import { observeWithin } from '../application/execution-supervision.js';
 import { StorageError } from '../ports/errors.js';
 import type { BoundExecutionInputReader } from '../ports/execution-input-binding.js';
 import { TRUSTED_PROJECT_PERMISSIONS_READER } from '../ports/execution-input-prepare.js';
+import { validateRuntimeRecoveryDecision } from '../ports/runtime-recovery.js';
 import type { CommandProcessIdentity } from '../ports/command-process.js';
 import type { WorkResourceIdentity } from '../ports/work-resources.js';
 import { PublicError } from '../ports/commands.js';
@@ -51,11 +53,17 @@ export function assembleWorkExecution(options: {
   readonly capabilityCatalog: import('../ports/runtime-capabilities.js').RuntimeCapabilityCatalog;
   readonly runtimeFactory?: WorkRuntimeFactory;
   readonly nowUtcMs?: () => number;
+  /** F-012：受信返工现场读取（同 Feature 受管 worktree 的当前身份；无工作区时
+   * 返回 null）。由 composition 用受界检查器实现；缺省时不接返工认领。 */
+  readonly readReworkScene?: (projectId: string, featureId: string) => Promise<{
+    readonly worktreeId: string; readonly headCommit: string; readonly codeDigest: string;
+  } | null>;
 }) {
   const { session, application: app } = options;
   const now = options.nowUtcMs ?? Date.now;
   const owner = randomUUID(), hostInstanceId = randomUUID();
   const attempts = createSqliteAttemptAccess(session);
+  const verification = createSqliteVerificationStore(session, options.nowUtcMs === undefined ? {} : { nowUtcMs: options.nowUtcMs });
   const dag = createSqliteTaskDagStore(session);
   const store = createSqliteSchedulerStore(session, { nowUtcMs: now });
   const sessions = createSqliteWorkSessionStore(session, { nowUtcMs: now });
@@ -124,14 +132,56 @@ export function assembleWorkExecution(options: {
       // Check adapter availability before any claim, workspace process or debit.
       if (!registry.resolve(config.runtime)) throw new StorageError('conflict', 'WorkRuntime.prepare', 'Runtime adapter is not installed', { details: { reason: 'runtime_not_found' } });
       const refs = [...view.plan.feature.sourceRefs, ...task.requirementsRefs];
+      // F-012：同 Task 已有历史 Attempt 时构造返工输入（F-011 契约）：关联当前
+      // 预生成的新 Attempt、直接上一终态 Attempt、同一 worktree 已核对现场身份
+      // 与必需失败证据引用；仍按受预算的获准新代码 Attempt 记账，人工阻塞仍由
+      // DAG/认领拒绝，不伪造恢复能力。
+      const prior = [...attempts.listTaskAttempts(projectId, taskId)].sort((left, right) => left.number - right.number);
+      let attemptId: string | undefined;
+      let rework: import('../ports/context-build.js').ContextReworkInput | undefined;
+      if (prior.length > 0) {
+        const previous = prior[prior.length - 1]!;
+        if (['preparing', 'executing', 'verifying'].includes(previous.status)) {
+          throw new StorageError('conflict', 'WorkRuntime.prepare', 'Previous Attempt is not terminal', { details: { reason: 'previous_attempt_active' } });
+        }
+        if (options.readReworkScene === undefined) {
+          throw new StorageError('conflict', 'WorkRuntime.prepare', 'Rework scene reader is not assembled', { details: { reason: 'rework_scene_not_assembled' } });
+        }
+        const scene = await options.readReworkScene(projectId, task.featureId);
+        if (scene === null) throw new StorageError('conflict', 'WorkRuntime.prepare', 'Rework workspace is missing', { details: { reason: 'rework_workspace_missing' } });
+        attemptId = randomUUID();
+        const evidenceIds = new Set<string>();
+        if (previous.diagnosticRef !== null) evidenceIds.add(previous.diagnosticRef);
+        for (const batch of verification.listAttemptVerificationBatches(projectId, previous.id)) {
+          for (const check of verification.listCheckResults(projectId, batch.id)) {
+            if (check.outputArtifactId !== null) evidenceIds.add(check.outputArtifactId);
+          }
+        }
+        if (evidenceIds.size > 16) throw new StorageError('conflict', 'WorkRuntime.prepare', 'Failure evidence exceeds the rework limit', { details: { reason: 'failure_evidence_limit' } });
+        if (evidenceIds.size === 0) throw new StorageError('conflict', 'WorkRuntime.prepare', 'Previous Attempt has no failure evidence', { details: { reason: 'failure_evidence_missing' } });
+        const failureEvidenceRefs = await Promise.all([...evidenceIds].map(async artifactId => {
+          const record = await app.artifactStore.getArtifact(projectId, artifactId);
+          if (record.status !== 'ready' || record.contentHash === null || record.sizeBytes === null) {
+            throw new StorageError('conflict', 'WorkRuntime.prepare', 'Failure evidence is not a ready artifact', { details: { reason: 'failure_evidence_not_ready' } });
+          }
+          return { projectId, artifactId: record.id, kind: record.kind, purpose: 'failure-evidence',
+            version: record.version, contentHash: record.contentHash, sizeBytes: record.sizeBytes,
+            locator: record.locator, mediaType: record.mediaType, origin: { kind: 'artifact' as const } };
+        }));
+        rework = { attemptId, previousAttemptId: previous.id, previousTaskId: taskId, scene,
+          failureEvidenceRefs,
+          recovery: { selection: { mode: 'new' }, decision: validateRuntimeRecoveryDecision({ mode: 'new', reasons: ['explicit_new'] }) } };
+      }
       const inputSnapshot = await app.executionInputPrepare.prepareExecutionInput(projectId, { featureId: task.featureId, taskId,
-        items: [...new Set(refs.map(ref => ref.artifactId))].map(artifactId => ({ purpose: 'requirements', source: { kind: 'artifact' as const, artifactId } })) });
+        items: [...new Set(refs.map(ref => ref.artifactId))].map(artifactId => ({ purpose: 'requirements', source: { kind: 'artifact' as const, artifactId } })),
+        ...(rework === undefined ? {} : { rework }) });
       const binding = await app.stateStore.getRepositoryBinding(projectId);
       const workspace = await app.workWorkspaceAuthority.verifyPreparation(binding, task.featureId);
       const fact = view.facts.find(fact => fact.taskId === taskId)!;
       return { claimKey: randomUUID(), projectId, runId: candidate.run.id, taskId, owner, hostInstanceId,
         expectedRevision: task.revision, executionVersion: fact.executionVersion,
-        workspace, leaseUntilUtcMs: Math.min(now() + 60_000, view.batch.deadlineAtUtcMs), inputSnapshot };
+        workspace, leaseUntilUtcMs: Math.min(now() + 60_000, view.batch.deadlineAtUtcMs), inputSnapshot,
+        ...(attemptId === undefined ? {} : { attemptId }) };
     },
     async consumeClaim(claim) {
       const attempt = claim.attempt;
@@ -139,8 +189,14 @@ export function assembleWorkExecution(options: {
         hostInstanceId: attempt.hostInstanceId, executionVersion: attempt.executionVersion };
       active.add(attempt.id);
       try {
+        // F-012：同一 Feature 已存在受管 worktree 时复用其工作区身份（新准备操作
+        // 仍用随机 operationId；journal 现场检查点按工作区的 preparationOperationId
+        // 读取，Preparer 据此走复用分支并核对 directoryIdentity/expectedHead）。
+        // 不凭路径或分支推断复用许可，全部经 begin/Preparer 的既有把关。
+        const managed = createSqliteWorkspaceAccess(session, { resources, nowUtcMs: now })
+          .readWorkspace(attempt.projectId, attempt.featureId);
         const prepared = await app.workspacePreparation.prepare({ identity, runId: attempt.runId, taskId: attempt.taskId,
-          claimKey: claim.claimKey, operationId: randomUUID(), workspaceId: randomUUID() });
+          claimKey: claim.claimKey, operationId: randomUUID(), workspaceId: managed?.id ?? randomUUID() });
         if (prepared.operation.status !== 'succeeded' || prepared.workspace.status !== 'ready') throw new Error('workspace_not_ready');
         const binding = await app.stateStore.getRepositoryBinding(attempt.projectId);
         const workspace = await app.workWorkspaceAuthority.verify(binding, prepared.workspace.canonicalPath);

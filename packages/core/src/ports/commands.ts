@@ -164,6 +164,10 @@ export const COMMAND_OPERATIONS = [
   'task.approval.approve',
   'task.approval.reject',
   'task.approval.unblock',
+  // F-012：人工批准后的显式验证继续：只推进当前验证收尾（复用已保存机器
+  // 证据，不两调用 Runtime）；expectedRevision 为目标 Task 自身 revision，
+  // payload 携带批次/代码/观察摘要做过期拒绝。
+  'task.verification.continue',
   // P03-2 / F-006：执行输入制品组准备（project scope + execution.input.prepare；
   // 创建类命令不携带 expectedRevision；采集/组装/发布为事务外 I/O，最终重核、
   // 事件与回执同一短写事务）。
@@ -297,6 +301,9 @@ export const COMMAND_OPERATION_SPECS: Readonly<Record<AppOperation, CommandOpera
     'task.approval.approve': { scopeKind: 'project', mutation: 'update', capability: 'feature.plan.decide' },
     'task.approval.reject': { scopeKind: 'project', mutation: 'update', capability: 'feature.plan.decide' },
     'task.approval.unblock': { scopeKind: 'project', mutation: 'update', capability: 'feature.plan.decide' },
+    // F-012：显式验证继续是执行控制面决定（不启动 Runtime、不创建实体），
+    // 沿用 execution.start 能力位；真实主体与能力仍由可信装配绑定。
+    'task.verification.continue': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
     // P03-2 / F-006：执行输入制品组准备（创建类：不携带 expectedRevision，
     // 不 CAS 任何实体）。采集/组装/发布为事务外 I/O；最终同一写事务内重核
     // 批准/要求/检查政策/Task 策略/权限/制品身份并原子提交事件与回执。
@@ -684,6 +691,21 @@ export interface ValidatedTaskApprovalDecisionPayload {
 }
 
 /**
+ * F-012：显式验证继续 payload。只携带目标与已保存机器证据身份（批次/代码/
+ * 观察摘要）：全部与服务端从持久事实重建的当前身份逐项比对，任何漂移
+ *（代码、定义、环境或证据变化）都以 conflict 拒绝并要求重验/重新批准；
+ * 重复 commandId 或重复观察走回执/观察幂等，不产生重复副作用，也不
+ * 再次调用 Runtime。
+ */
+export interface ValidatedTaskVerificationContinuePayload {
+  readonly taskId: string;
+  readonly attemptId: string;
+  readonly verificationBatchId: string;
+  readonly codeDigest: string;
+  readonly observationDigest: string;
+}
+
+/**
  * P03-2 / F-006 执行输入准备 payload：featureId/taskId 为目标稳定 ID；items
  * 为必需输入采集清单（purpose + source；深校验在应用层复用
  * ports/execution-input 契约，携带用途身份的错误定位）。严格未知键拒绝：
@@ -880,6 +902,14 @@ export type ValidatedCommandEnvelope =
       readonly expectedRevision: number;
       readonly payload: ValidatedTaskApprovalDecisionPayload;
     })
+  // F-012：显式验证继续命令信封（expectedRevision=目标 Task revision；
+  // payload 只携带目标与已保存机器证据身份）。
+  | (EnvelopeCommon & {
+      readonly operation: 'task.verification.continue';
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: number;
+      readonly payload: ValidatedTaskVerificationContinuePayload;
+    })
 
   // P03-2 / F-006：执行输入制品组准备命令信封（创建类禁止携带 expectedRevision；
   // payload 只含 featureId/taskId/items，items 深校验在应用层）。
@@ -953,6 +983,7 @@ const FEATURE_PLAN_REVISE_PAYLOAD_KEYS = ['featureId', 'plan'] as const;
 const TASK_STRATEGY_UPDATE_PAYLOAD_KEYS = ['taskId', 'executionConfig'] as const;
 const TASK_APPROVAL_BLOCK_PAYLOAD_KEYS = ['taskId', 'planDigest', 'kind', 'description', 'responsibleParty', 'codeDigest', 'artifactRefs'] as const;
 const TASK_APPROVAL_DECISION_PAYLOAD_KEYS = ['taskId', 'itemId', 'planDigest', 'codeDigest', 'artifactRefs', 'reason'] as const;
+const TASK_VERIFICATION_CONTINUE_PAYLOAD_KEYS = ['taskId', 'attemptId', 'verificationBatchId', 'codeDigest', 'observationDigest'] as const;
 
 const FEATURE_PLAN_DECIDE_PAYLOAD_KEYS = ['featureId', 'planDigest', 'decision', 'reason'] as const;
 const EXECUTION_INPUT_PREPARE_PAYLOAD_KEYS = ['featureId', 'taskId', 'items'] as const;
@@ -1254,6 +1285,23 @@ function validateTaskApprovalDecisionPayload(operation: AppOperation, raw: unkno
   });
   if (object.reason !== null && (typeof object.reason !== 'string' || object.reason.trim().length === 0 || object.reason.length > 2000)) fail(operation, 'invalid_input', 'payload.reason', '必须是 null 或 1-2000 个字符的理由');
   return { taskId: validateStableId(object.taskId, { operation }, 'payload.taskId'), itemId: validateStableId(object.itemId, { operation }, 'payload.itemId'), planDigest: object.planDigest, codeDigest: object.codeDigest, artifactRefs, reason: object.reason as string | null };
+}
+function validateTaskVerificationContinuePayload(operation: AppOperation, raw: unknown): ValidatedTaskVerificationContinuePayload {
+  const object = requireObject(operation, raw, 'payload');
+  exactKeys(operation, object, TASK_VERIFICATION_CONTINUE_PAYLOAD_KEYS, 'payload.');
+  const digest = (field: string): string => {
+    if (typeof (object as Record<string, unknown>)[field] !== 'string' || !/^[0-9a-f]{64}$/.test(String((object as Record<string, unknown>)[field]))) {
+      fail(operation, 'invalid_input', `payload.${field}`, '必须是 64 位小写 SHA-256 摘要');
+    }
+    return String((object as Record<string, unknown>)[field]);
+  };
+  return {
+    taskId: validateStableId(object.taskId, { operation }, 'payload.taskId'),
+    attemptId: validateStableId(object.attemptId, { operation }, 'payload.attemptId'),
+    verificationBatchId: validateStableId(object.verificationBatchId, { operation }, 'payload.verificationBatchId'),
+    codeDigest: digest('codeDigest'),
+    observationDigest: digest('observationDigest'),
+  };
 }
 function validateTaskStrategyUpdatePayload(
   operation: AppOperation,
@@ -1678,6 +1726,11 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
     if (scope.kind !== 'project') fail(operation, 'invalid_input', 'scope.kind', 'scope mismatch');
     return { ...base, operation, scope: scope as { kind: 'project'; projectId: string }, expectedRevision: expectedRevision as number,
       payload: validateTaskApprovalDecisionPayload(operation, object.payload) };
+  }
+  if (operation === 'task.verification.continue') {
+    if (scope.kind !== 'project') fail(operation, 'invalid_input', 'scope.kind', 'scope mismatch');
+    return { ...base, operation, scope: scope as { kind: 'project'; projectId: string }, expectedRevision: expectedRevision as number,
+      payload: validateTaskVerificationContinuePayload(operation, object.payload) };
   }
   if (operation === 'feature.plan.decide') {
     if (scope.kind !== 'project') {

@@ -40,7 +40,7 @@
  * 本层不实现任何存储、文件系统或组装行为。Host/CLI 接线属 F-007/F-008。
  */
 import { createHash } from 'node:crypto';
-import type { ContextTokenEstimate } from './context-build.js';
+import type { ContextReworkInput, ContextTokenEstimate } from './context-build.js';
 import { CONTEXT_SNAPSHOT_DIGEST_DOMAIN } from './context-build.js';
 import type { ExecutionInputRef } from './execution-input.js';
 import type { PlanApprovalRecord, TaskDependencyRecord, TaskRecord } from './plan-store.js';
@@ -221,9 +221,25 @@ export interface ExecutionInputApprovalIdentity {
 }
 
 /**
+ * F-012：受信返工准备 payload（仅由受信 Runner 路径构造；命令信封校验不接受
+ * rework 键，用户命令不能伪造返工身份）。rework 形态复用 ContextBuild 契约，
+ * 在应用层再校验一次（fail-closed）。
+ */
+export interface TrustedExecutionInputPreparePayload {
+  readonly featureId: string;
+  readonly taskId: string;
+  /** 必需输入采集清单（可为空数组；逐项深校验在应用层）。 */
+  readonly items: readonly Record<string, unknown>[];
+  /** 可选同 Task 返工输入（F-011 契约；存在即生成返工快照）。 */
+  readonly rework?: ContextReworkInput | null;
+}
+
+/**
  * 已准备执行输入制品组（可绑定输入的完整身份）：同项目三正文引用、必需
  * 输入引用、schemaVersion、各正文摘要、批准/策略/权限身份。供 P03-3/4 绑定
  * 到新 Run/Attempt；不创建任何执行实体，也不声称已启动执行。
+ * F-012：可选 rework 携带同 Task 返工身份（仅 schemaVersion 2 且返工构建存在；
+ * 普通首次构建不携带该键，与 ContextBuilder 条件展开一致）。
  */
 export interface PreparedExecutionInputGroup {
   readonly projectId: string;
@@ -244,6 +260,8 @@ export interface PreparedExecutionInputGroup {
   readonly promptBytes: number;
   readonly tokenEstimate: ContextTokenEstimate;
   readonly preparedAtUtcMs: number;
+  /** F-012：同 Task 返工身份（仅返工构建携带；普通首次构建不包含该键）。 */
+  readonly rework?: ContextReworkInput;
 }
 
 /* ------------------------------------------------------------------ *

@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { evaluateTaskDag } from '../../application/task-dag.js';
 import { verifyFeaturePlanApprovalInTransaction } from '../../application/plan-approval-verification.js';
+import { validateTaskExecutionConfig } from '../../application/task-strategy-selection.js';
+import { DEFAULT_TASK_MAX_CODE_ATTEMPTS } from '../../ports/execution-budget.js';
 import { createSqliteWorkSessionStore } from './work-session-store.js';
 import { ACTIVE_ATTEMPT_STATUSES } from '../../ports/attempt-store.js';
 import { rejectUnknownKeys, requirePlainObject, validateStableId } from '../../ports/validation.js';
@@ -11,6 +13,7 @@ import {
 import { StorageError } from '../../ports/errors.js';
 import { stableStringify } from '../../ports/feature-plan.js';
 import type { WorkResourceIdentity, WorkResourceStopVerifier, WorkWorkspaceAuthority } from '../../ports/work-resources.js';
+import { validateWorkResourceIdentity } from '../../ports/work-resources.js';
 import { createSqliteAtomicCommandStore } from './atomic-commands.js';
 import { createSqliteExecutionAccess } from './execution-store.js';
 import { createSqliteAttemptAccess } from './attempt-store.js';
@@ -25,6 +28,10 @@ export interface SqliteAttemptLifecycleStore extends AttemptLifecycleStore {
     expectedRevision: number, evidenceRef: string): void;
   applyPreparationFailureInTransaction(transaction: CommandTransaction, input: unknown,
     isolation: 'unstarted' | 'uncertain'): AttemptApplicationResult;
+  /** F-012：同库短写事务内提交验证结论（供授权显式继续命令复用，不开嵌套事务）。 */
+  submitVerificationInTransaction(transaction: CommandTransaction, input: unknown, verifierStopEvidence?: unknown): AttemptApplicationResult;
+  /** F-012：验证汇总前记录 Attempt 代码现场制品引用（verifying CAS；不改变状态）。 */
+  recordAttemptCode(input: unknown): { readonly attemptId: string; readonly revision: number; readonly codeRef: string };
 }
 
 /** Owns a short committing transaction; no Runtime, Git, filesystem or process I/O. */
@@ -40,6 +47,11 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
   const atomic = createSqliteAtomicCommandStore(session, options);
   const resources = createSqliteWorkResourceAccess(session, options);
   const dag = createSqliteTaskDagStore(session);
+  // F-012：占用感知隔离——占用可能已在 apply(runtime_completed) 按停止证据
+  // 释放（0 租约）；仅当仍有租约行时才转为隔离，避免对空占用误抛 not_occupied。
+  const quarantineIfOccupied = (identity: WorkResourceIdentity) => {
+    if (resources.read(identity).leases.length > 0) resources.quarantineInTransaction(identity);
+  };
   const sessions = createSqliteWorkSessionStore(session, options);
   function applyInTransaction(transaction: CommandTransaction, input: unknown, stopEvidence?: unknown,
     preparationIsolated = false): AttemptApplicationResult {
@@ -196,7 +208,7 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
           VALUES (?, ?, ?, ?, ?, ?)`).run(randomUUID(), valid.projectId, attempt.id, valid.notificationId, digest, JSON.stringify(receipt));
         return receipt;
   }
-  function submitVerificationInTransaction(transaction: CommandTransaction, input: unknown): AttemptApplicationResult {
+  function submitVerificationInTransaction(transaction: CommandTransaction, input: unknown, verifierStopEvidence?: unknown): AttemptApplicationResult {
     if (!db.inTransaction) throw new TypeError('Verification submission requires a write transaction');
     const valid: VerificationSubmission = validateVerificationSubmission(input);
     const now = (options.nowUtcMs ?? Date.now)();
@@ -204,6 +216,8 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
     const ignored = (reason: 'stale_execution_identity' | 'invalid_transition' | 'verification_not_ready'): AttemptApplicationResult =>
       ({ disposition: 'ignored', attemptId: valid.attemptId, status: null, reason, waitingFor: null,
         runtimeCompleted: false, resultSaved: false, stopConfirmed: false, eventId: null });
+    const identity: WorkResourceIdentity = { projectId: valid.projectId, attemptId: valid.attemptId,
+      owner: valid.owner, hostInstanceId: valid.hostInstanceId, executionVersion: valid.executionVersion };
     const attempt = db.prepare<[string], {
       project_id: string; feature_id: string; run_id: string; task_id: string; owner_id: string; host_instance_id: string;
       execution_version: number; revision: number; status: string; execution_stage: string; code_ref: string | null;
@@ -213,17 +227,20 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
     if (attempt === undefined || attempt.project_id !== valid.projectId || attempt.owner_id !== valid.owner
       || attempt.host_instance_id !== valid.hostInstanceId || attempt.execution_version !== valid.executionVersion
       || attempt.task_id !== valid.taskId || attempt.run_id !== valid.runId) return ignored('stale_execution_identity');
-    const task = db.prepare<[string], { project_id: string; feature_id: string; execution_version: number; status: string; manual_block: number }>(
-      'SELECT project_id, feature_id, execution_version, status, manual_block FROM tasks WHERE id = ?').get(valid.taskId);
+    const task = db.prepare<[string], { project_id: string; feature_id: string; execution_version: number; status: string; manual_block: number; execution_config: string }>(
+      'SELECT project_id, feature_id, execution_version, status, manual_block, execution_config FROM tasks WHERE id = ?').get(valid.taskId);
     const run = db.prepare<[string], { project_id: string; feature_id: string; batch_id: string; status: string; reason: string | null }>(
       'SELECT project_id, feature_id, batch_id, status, reason FROM runs WHERE id = ?').get(valid.runId);
     if (task === undefined || run === undefined || task.project_id !== valid.projectId || run.project_id !== valid.projectId
       || task.feature_id !== attempt.feature_id || run.feature_id !== attempt.feature_id || task.execution_version !== valid.executionVersion) {
       return ignored('stale_execution_identity');
     }
+    // F-012：Runtime 正常结束后 Run 处于 verification_not_assembled 暂停是常态
+    //（apply 的 runtime_settled 分支写入）；验证汇总提交必须被接受。其余暂停
+    // 原因仍拒绝，不额外放行。
     if (attempt.status !== 'verifying' || attempt.execution_stage !== 'verification' || task.status !== 'running'
       || !['queued', 'running', 'pausing', 'paused'].includes(run.status)
-      || (run.status === 'paused' && run.reason !== 'approval')) return ignored('invalid_transition');
+      || (run.status === 'paused' && !['approval', 'verification_not_assembled'].includes(run.reason ?? ''))) return ignored('invalid_transition');
     let snapshot: { approval?: { planDigest?: string; checkPolicyDigest?: string; decisionId?: string } };
     try { snapshot = JSON.parse(attempt.input_snapshot) as typeof snapshot; } catch { return ignored('stale_execution_identity'); }
     const batch = db.prepare<[string], {
@@ -242,9 +259,13 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
       return ignored('verification_not_ready');
     }
     if (attempt.code_ref === null) return ignored('verification_not_ready');
-    const code = db.prepare<[string, string], { content_hash: string }>(
-      'SELECT content_hash FROM artifacts WHERE project_id = ? AND id = ?').get(valid.projectId, attempt.code_ref);
-    if (code?.content_hash !== valid.codeDigest) return ignored('stale_execution_identity');
+    // F-012：代码身份锚点是已定版批次的 code_digest（上方已核对）；code_ref
+    // 只要求指向同项目仍 ready 的不可变制品（关联现场证据），不要求其字节
+    // 摘要等于业务 codeDigest——两者属于不同摘要域，受信准备路径已在批次定版
+    // 前核验现场身份一致。
+    const code = db.prepare<[string, string], { id: string }>(
+      "SELECT id FROM artifacts WHERE project_id = ? AND id = ? AND status = 'ready'").get(valid.projectId, attempt.code_ref);
+    if (code === undefined) return ignored('stale_execution_identity');
     const approval = verifyFeaturePlanApprovalInTransaction(transaction, valid.projectId, attempt.feature_id);
     const taskApprovalItems = transaction.listTaskApprovalItems(valid.projectId, valid.taskId);
     const humanApprovalWaiting = taskApprovalItems.some(item =>
@@ -256,6 +277,20 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
       || approval.planDigest !== snapshot.approval?.planDigest
       || approval.checkPolicyDigest !== snapshot.approval?.checkPolicyDigest
       || approval.currentDecision?.id !== snapshot.approval?.decisionId;
+    // 机器绿色不等于停止已确认；仍有占用时必须提交与当前现场绑定的停止证据。
+    if (valid.outcome === 'passed' && resources.read(identity).leases.length > 0) {
+      if (verifierStopEvidence === undefined) {
+        quarantineIfOccupied(identity);
+        return ignored('verification_not_ready');
+      }
+      try {
+        resources.releaseStoppedInTransaction(identity, verifierStopEvidence);
+      } catch (error) {
+        if (!(error instanceof StorageError)) throw error;
+        quarantineIfOccupied(identity);
+        return ignored('verification_not_ready');
+      }
+    }
     const budgetReservation = transaction.getTaskAttemptReservation(valid.projectId, valid.taskId, valid.attemptId);
     const alreadyObserved = budgetReservation?.reason?.includes(valid.observationDigest) === true;
     const budgetOutcome = valid.outcome === 'passed' ? 'passed' : valid.outcome;
@@ -265,14 +300,65 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
       const changed = db.prepare(`UPDATE attempts SET status = 'failed', execution_stage = 'verification', error_kind = ?, ended_at = ?,
         updated_at = ?, revision = revision + 1 WHERE id = ? AND revision = ? AND status = 'verifying'`).run(valid.outcome, now, now, valid.attemptId, attempt.revision);
       if (changed.changes !== 1) throw new StorageError('conflict', operation, 'Verification Attempt CAS failed');
-      const taskChanged = db.prepare(`UPDATE tasks SET status = 'failed', revision = revision + 1, updated_at = ?
-        WHERE id = ? AND execution_version = ? AND status = 'running'`).run(now, valid.taskId, valid.executionVersion);
-      if (taskChanged.changes !== 1) throw new StorageError('conflict', operation, 'Verification Task CAS failed');
       const counters = transaction.getTaskExecutionCounters(valid.projectId, valid.taskId);
       const eventId = executions.appendExecutionEventInTransaction({ projectId: valid.projectId, eventType: ATTEMPT_UPDATED_EVENT_TYPE,
         aggregateType: 'task', aggregateId: valid.taskId, aggregateRevision: counters.revision, payload: { updated: true } });
-      return { disposition: 'applied', attemptId: valid.attemptId, status: 'failed', reason: null, waitingFor: null,
-        runtimeCompleted: true, resultSaved: true, stopConfirmed: true, eventId };
+      if (valid.outcome === 'non_code_failure') {
+        // F-012 / FR-3：基础设施（认证/配置/协议/超时/环境/证据）失败进入独立
+        // 暂停分支：Task 回到 pending 但 Run 暂停（reason=infrastructure_error），
+        // 不会自动进入代码返工循环；现场保留隔离占用，交由显式处理分支决策。
+        const taskPending = db.prepare(`UPDATE tasks SET status = 'pending', revision = revision + 1, updated_at = ?
+          WHERE id = ? AND execution_version = ? AND status = 'running'`).run(now, valid.taskId, valid.executionVersion);
+        if (taskPending.changes !== 1) throw new StorageError('conflict', operation, 'Verification Task CAS failed');
+        db.prepare(`UPDATE runs SET status = 'paused', reason = 'infrastructure_error', revision = revision + 1, updated_at = ?
+          WHERE id = ? AND project_id = ? AND status IN ('queued', 'running', 'pausing', 'paused')
+          AND (reason IS NULL OR reason <> 'approval')`).run(now, valid.runId, valid.projectId);
+        quarantineIfOccupied(identity);
+        return { disposition: 'applied', attemptId: valid.attemptId, status: 'failed', reason: null, waitingFor: null,
+          runtimeCompleted: true, resultSaved: true, stopConfirmed: false, eventId };
+      }
+      // 确定性代码检查失败：第三次含首次（code_attempts_used >= maxCodeAttempts）
+      // 后 Task failed，依赖后继由 DAG blocked；仍有代码资格时 Task 回到 pending、
+      // Run 回到 running，由既有调度重新认领并接返工快照。
+      const config = validateTaskExecutionConfig(JSON.parse(task.execution_config), 'AttemptLifecycle.submitVerification');
+      const exhausted = counters.codeAttemptsUsed >= (config.maxCodeAttempts ?? DEFAULT_TASK_MAX_CODE_ATTEMPTS);
+      if (exhausted) {
+        const taskFailed = db.prepare(`UPDATE tasks SET status = 'failed', revision = revision + 1, updated_at = ?
+          WHERE id = ? AND execution_version = ? AND status = 'running'`).run(now, valid.taskId, valid.executionVersion);
+        if (taskFailed.changes !== 1) throw new StorageError('conflict', operation, 'Verification Task CAS failed');
+        db.prepare(`UPDATE runs SET status = 'paused', reason = 'code_attempts_exhausted', revision = revision + 1, updated_at = ?
+          WHERE id = ? AND project_id = ? AND status IN ('queued', 'running', 'pausing', 'paused')
+          AND (reason IS NULL OR reason <> 'approval')`).run(now, valid.runId, valid.projectId);
+      } else {
+        const taskPending = db.prepare(`UPDATE tasks SET status = 'pending', revision = revision + 1, updated_at = ?
+          WHERE id = ? AND execution_version = ? AND status = 'running'`).run(now, valid.taskId, valid.executionVersion);
+        if (taskPending.changes !== 1) throw new StorageError('conflict', operation, 'Verification Task CAS failed');
+        db.prepare(`UPDATE runs SET status = 'running', reason = NULL, revision = revision + 1, updated_at = ?
+          WHERE id = ? AND project_id = ? AND (status IN ('queued', 'running')
+          OR (status = 'paused' AND reason = 'verification_not_assembled'))`).run(now, valid.runId, valid.projectId);
+      }
+      // 新认领与启动前必须再次核对旧 Runtime/Verifier 停止证据：停止已确认才
+      // 释放占用供同 worktree 返工复用；未知则保留隔离占用并拒绝重跑。
+      // 占用释放/隔离决策通常已在 apply(runtime_completed) 按停止证据作出
+      // （确认→删除、未知→隔离）；此处仅对仍存占用补刀：
+      // · 已释放（0 租约）视为停止已确认；
+      // · 仍持有时凭受信 Verifier 停止证据再核对释放（含先隔离后补证场景）；
+      // · 其余保持隔离，DAG resource_busy 拒绝重跑。
+      let stopConfirmed = false;
+      const occupancy = resources.read(identity);
+      if (occupancy.leases.length === 0) {
+        stopConfirmed = true;
+      } else if (verifierStopEvidence !== undefined) {
+        try {
+          resources.releaseStoppedInTransaction(identity, verifierStopEvidence);
+          stopConfirmed = true;
+        } catch (error) {
+          if (!(error instanceof StorageError)) throw error;
+        }
+      }
+      if (!stopConfirmed) quarantineIfOccupied(identity);
+      return { disposition: 'applied', attemptId: valid.attemptId, status: 'failed', reason: null,
+        waitingFor: null, runtimeCompleted: true, resultSaved: true, stopConfirmed, eventId };
     }
     if (approvalWaiting) {
       if (alreadyObserved) return { disposition: 'replayed', attemptId: valid.attemptId, status: 'verifying', reason: null,
@@ -302,7 +388,9 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
       WHERE id = ? AND project_id = ? AND status = 'awaiting_approval'`)
       .run(pendingApprovals > 0 ? 'awaiting_approval' : 'running', now, attempt.feature_id, valid.projectId);
     db.prepare(`UPDATE runs SET status = 'running', reason = NULL, revision = revision + 1, updated_at = ?
-      WHERE id = ? AND project_id = ? AND status IN ('queued', 'pausing', 'paused')`).run(now, valid.runId, valid.projectId);
+      WHERE id = ? AND project_id = ? AND (status = 'queued'
+      OR (status = 'paused' AND reason IN ('approval', 'verification_not_assembled')))`)
+      .run(now, valid.runId, valid.projectId);
     const view = dag.readTaskDagView(valid.projectId, valid.runId);
     evaluateTaskDag(view, now);
     const counters = transaction.getTaskExecutionCounters(valid.projectId, valid.taskId);
@@ -317,9 +405,12 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
       validateAttemptNotification(input);
       return atomic.transact(operation, transaction => applyInTransaction(transaction, input, stopEvidence));
     },
-    submitVerification(input) {
+    submitVerification(input, verifierStopEvidence) {
       validateVerificationSubmission(input);
-      return atomic.transact('AttemptLifecycle.submitVerification', transaction => submitVerificationInTransaction(transaction, input));
+      return atomic.transact('AttemptLifecycle.submitVerification', transaction => submitVerificationInTransaction(transaction, input, verifierStopEvidence));
+    },
+    submitVerificationInTransaction(transaction, input, verifierStopEvidence) {
+      return submitVerificationInTransaction(transaction, input, verifierStopEvidence);
     },
     recordWorkspaceRetentionInTransaction(transaction, identity, expectedRevision, evidenceRef) {
       if (!db.inTransaction) throw new TypeError('Attempt retention requires a write transaction');
@@ -331,6 +422,30 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
         .run(evidenceRef, (options.nowUtcMs ?? Date.now)(), identity.projectId, identity.attemptId, identity.owner,
           identity.hostInstanceId, identity.executionVersion, expectedRevision, identity.executionVersion);
       if (changed.changes !== 1) throw new StorageError('conflict', operation, 'Attempt retention CAS failed');
+    },
+    recordAttemptCode(input) {
+      const context = { operation: `${operation}.recordCode` };
+      const raw = requirePlainObject(input, context, 'input');
+      rejectUnknownKeys(raw, ['identity', 'expectedRevision', 'codeRef'], context, 'input');
+      const identity = validateWorkResourceIdentity(raw.identity);
+      if (!Number.isSafeInteger(raw.expectedRevision) || (raw.expectedRevision as number) < 1) {
+        throw new StorageError('validation', `${operation}.recordCode`, 'Invalid expected revision');
+      }
+      const codeRef = validateStableId(raw.codeRef, context, 'codeRef');
+      return atomic.transact('AttemptLifecycle.recordCode', transaction => {
+        resources.read(identity);
+        transaction.getArtifactInputRef(identity.projectId, codeRef);
+        const changed = db.prepare(`UPDATE attempts SET code_ref = ?, revision = revision + 1, updated_at = ?
+          WHERE project_id = ? AND id = ? AND owner_id = ? AND host_instance_id = ? AND execution_version = ? AND revision = ?
+            AND status = 'verifying' AND execution_stage = 'verification'
+            AND code_ref IS NULL
+            AND EXISTS (SELECT 1 FROM tasks WHERE id = attempts.task_id AND execution_version = ? AND status = 'running')`)
+          .run(codeRef, (options.nowUtcMs ?? Date.now)(), identity.projectId, identity.attemptId, identity.owner,
+            identity.hostInstanceId, identity.executionVersion, raw.expectedRevision as number, identity.executionVersion);
+        if (changed.changes !== 1) throw new StorageError('conflict', operation, 'Attempt code record CAS failed');
+        const updated = attempts.getAttempt(identity.projectId, identity.attemptId);
+        return { attemptId: updated.id, revision: updated.revision, codeRef: updated.codeRef! };
+      });
     },
     applyPreparationFailureInTransaction(transaction, input, isolation) {
       if (validateAttemptNotification(input).kind !== 'preparation_failed'

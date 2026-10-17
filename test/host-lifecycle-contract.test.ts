@@ -201,6 +201,7 @@ describe('F-002 冻结常量与能力声明', () => {
           'task.approval.approve',
           'task.approval.reject',
           'task.approval.unblock',
+          'task.verification.continue',
           // P03-2 / F-006：执行输入制品组准备经既有 /v1/commands 通用路由接线
           //（HostClient/CLI 入口属后续任务）。
           'execution.input.prepare',

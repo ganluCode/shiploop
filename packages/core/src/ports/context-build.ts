@@ -931,6 +931,17 @@ function validateRework(
 }
 
 /**
+ * F-012：独立校验同 Task 返工输入（供执行输入准备/Task 认领快照等受信路径复用；
+ * 规则与 ContextBuildInput.rework 完全一致，跨 Task/跨项目/矛盾恢复记录一律拒绝）。
+ */
+export function validateContextReworkInput(
+  value: unknown,
+  owner: { readonly projectId: string; readonly taskId: string },
+): ContextReworkInput {
+  return validateRework(value, 'rework', owner);
+}
+
+/**
  * 校验 ContextBuilder 构建输入（unknown → 已校验形态）。
  * fail-closed：未知键（含内联正文、凭据、路由/配置字段）一律拒绝；
  * 必需成分缺席或语义为空 → missing_required_input；形态非法 → validation。

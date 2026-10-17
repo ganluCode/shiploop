@@ -71,8 +71,7 @@ export function settleCodeAttemptInTransaction(
 }
 
 /** F-002 integration: bind classification to a finalized immutable verification batch. */
-export function settleStoredCodeAttemptInTransaction(
-  tx: CommandTransaction,
+export function classifyStoredCodeAttempt(
   verification: VerificationStore,
   identity: Omit<CodeAttemptSettlementInput, 'outcome' | 'observationDigest'>,
   input: StoredVerificationAggregationInput,
@@ -81,7 +80,7 @@ export function settleStoredCodeAttemptInTransaction(
   const batch = verification.getVerificationBatch(identity.projectId, input.batchId);
   if (input.projectId !== identity.projectId || batch.taskId !== identity.taskId || batch.runId !== identity.runId
     || batch.attemptId !== identity.attemptKey || batch.status === 'running') {
-    throw new StorageError('conflict', 'CodeAttemptBudget.settle', 'Verification batch does not match a finalized Attempt observation');
+    throw new StorageError('conflict', 'CodeAttemptBudget.classify', 'Verification batch does not match a finalized Attempt observation');
   }
   const results = verification.listCheckResults(identity.projectId, batch.id);
   const evidence: NonNullable<MachineVerificationInput['evidence']> = Object.fromEntries(results.map(check => {
@@ -95,12 +94,38 @@ export function settleStoredCodeAttemptInTransaction(
   const consistentStatus = batch.status === 'passed'
     ? results.every(check => check.status === 'passed')
     : batch.status === 'failed' && results.some(check => check.status === 'failed');
-  return settleCodeAttemptInTransaction(tx, identity, {
+  const machine = {
     ...input, results, evidence, expectedCodeDigest: batch.codeDigest, expectedExecutionDigest: batch.policyDigest,
     plan: {
-      status: consistentStatus ? 'ready' : 'inconclusive',
+      status: consistentStatus ? ('ready' as const) : ('inconclusive' as const),
       selectedChecks: batch.checkSnapshot.filter(check => batch.selection.selectedCheckKeys.includes(check.checkKey)),
       requiredCheckKeys: batch.checkSnapshot.filter(check => check.required).map(check => check.checkKey),
     },
-  }, failures);
+  } satisfies MachineVerificationInput;
+  const assessment = classifyCodeAttempt(machine, failures);
+  const { humanReview: _humanReview, ...observation } = machine;
+  const observationDigest = createHash('sha256').update(stableStringify({
+    ...observation, results: [...results].sort((a, b) => a.checkKey.localeCompare(b.checkKey)), failures,
+  })).digest('hex');
+  return { assessment, observationDigest, batch };
+}
+
+/** Settle inside the caller's existing short write transaction. No new Attempt,
+ * retry, or Task state transition occurs here. codeRetryEligible describes only
+ * the code quota; the next claim must still pass ALL parent budgets and fencing. */
+export function settleStoredCodeAttemptInTransaction(
+  tx: CommandTransaction,
+  verification: VerificationStore,
+  identity: Omit<CodeAttemptSettlementInput, 'outcome' | 'observationDigest'>,
+  input: StoredVerificationAggregationInput,
+  failures: Readonly<Record<string, CheckFailureKind>>,
+) {
+  const classified = classifyStoredCodeAttempt(verification, identity, input, failures);
+  const reservation = tx.settleTaskAttemptBudget({ ...identity, outcome: classified.assessment.outcome, observationDigest: classified.observationDigest });
+  const counters = tx.getTaskExecutionCounters(identity.projectId, identity.taskId);
+  const task = tx.getTask(identity.projectId, identity.taskId);
+  const config = validateTaskExecutionConfig(task.executionConfig, 'CodeAttemptBudget.settle');
+  const caps = resolveTaskAttemptCaps({ maxCodeAttempts: config.maxCodeAttempts }, { operation: 'CodeAttemptBudget.settle' });
+  return { ...classified.assessment, reservation, counters,
+    codeRetryEligible: classified.assessment.outcome === 'code_failure' && counters.codeAttemptsUsed < caps.maxCodeAttempts };
 }

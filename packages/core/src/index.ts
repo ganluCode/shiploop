@@ -94,6 +94,8 @@ export * from './application/verification-plan.js';
 export * from './application/node-task-verification.js';
 export * from './application/verification-aggregate.js';
 export * from './application/code-attempt-budget.js';
+export * from './application/task-verification-completion.js';
+export * from './application/task-verification-continue.js';
 export * from './application/verification-aggregate-service.js';
 export * from './application/artifact-verify.js';
 export * from './application/project-service.js';

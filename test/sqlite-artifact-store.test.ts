@@ -23,6 +23,7 @@ import type { ArtifactStore, StateStore } from '../packages/core/src/index.ts';
 import { createSqliteArtifactStore } from '../packages/core/src/adapters/sqlite/artifact-store.ts';
 import { createSqliteStateStore } from '../packages/core/src/adapters/sqlite/state-store.ts';
 import { migrateSqliteStorage } from '../packages/core/src/adapters/sqlite/migrator.ts';
+import { SQLITE_MIGRATIONS } from '../packages/core/src/adapters/sqlite/migrations.ts';
 import { openSqliteStorageSession } from '../packages/core/src/adapters/sqlite/session.ts';
 import type { SqliteStorageSession } from '../packages/core/src/adapters/sqlite/session.ts';
 import { createTempSandbox } from './helpers/temp-sandbox.ts';
@@ -620,7 +621,7 @@ describe('F-009 durability across close and reopen', () => {
         // 绑定 + P03-3/F-002 v9 单 Feature 执行域三表 + P03-3/F-006 v11 Task 尝试
         // 预占账本 + P03-3/F-007 v12 Runtime 启动预占账本），库未被重建。
         const row = second.session.database.prepare('SELECT COUNT(*) AS n FROM schema_migrations').get() as { n: number };
-        expect(row.n).toBe(23);
+        expect(row.n).toBe(SQLITE_MIGRATIONS.length);
       } finally {
         second.close();
       }

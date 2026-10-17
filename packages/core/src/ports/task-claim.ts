@@ -17,6 +17,9 @@ export interface TaskClaimInput {
   readonly workspace: VerifiedWorkWorkspace;
   readonly leaseUntilUtcMs: number;
   readonly inputSnapshot: PreparedExecutionInputGroup;
+  /** F-012：返工认领时受信 Runner 预生成的新 Attempt 稳定 ID（快照返工身份
+   * 必须与其一致；普通首次认领缺省，由认领事务自行生成）。 */
+  readonly attemptId?: string;
 }
 export interface TaskClaimReceipt {
   readonly schemaVersion: 1;
@@ -44,7 +47,7 @@ export function validateTaskClaimInput(value: unknown, inspectWorkspace: (token:
   const context = { operation: 'TaskClaim.validate' };
   const raw = requirePlainObject(value, context, 'input');
   rejectUnknownKeys(raw, ['claimKey', 'projectId', 'runId', 'taskId', 'owner', 'hostInstanceId',
-    'expectedRevision', 'executionVersion', 'workspace', 'leaseUntilUtcMs', 'inputSnapshot'], context, 'input');
+    'expectedRevision', 'executionVersion', 'workspace', 'leaseUntilUtcMs', 'inputSnapshot', 'attemptId'], context, 'input');
   const id = (key: string) => validateStableId(raw[key], context, key);
   const integer = (key: string, minimum: number) => {
     const n = raw[key];
@@ -56,5 +59,6 @@ export function validateTaskClaimInput(value: unknown, inspectWorkspace: (token:
   return { claimKey: id('claimKey'), projectId: id('projectId'), runId: id('runId'), taskId: id('taskId'),
     owner: id('owner'), hostInstanceId: id('hostInstanceId'), expectedRevision: integer('expectedRevision', 1),
     executionVersion: integer('executionVersion', 0), leaseUntilUtcMs: integer('leaseUntilUtcMs', 1),
-    workspace: inspectWorkspace(raw.workspace), inputSnapshot: validateAttemptInputSnapshot(raw.inputSnapshot) };
+    workspace: inspectWorkspace(raw.workspace), inputSnapshot: validateAttemptInputSnapshot(raw.inputSnapshot),
+    ...(raw.attemptId === undefined || raw.attemptId === null ? {} : { attemptId: id('attemptId') }) };
 }

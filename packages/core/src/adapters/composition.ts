@@ -34,6 +34,7 @@ import type { ConfigurationService } from '../application/configuration-service.
 import { createCommandReceiptsService } from '../application/command-receipts-service.js';
 import type { CommandReceiptsService } from '../application/command-receipts-service.js';
 import { createCommandService } from '../application/command-service.js';
+import { assertVerificationReuseIdentity } from '../application/task-verification-continue.js';
 import type { CommandService } from '../application/command-service.js';
 import { createBaselineExecutionService } from '../application/baseline-execution.js';
 import type { BaselineExecutionService } from '../application/baseline-execution.js';
@@ -58,13 +59,18 @@ import { createFeatureWorktreePreparer } from './fs/feature-worktree-preparer.js
 import { createFeatureWorktreeCleaner } from './fs/feature-worktree-cleaner.js';
 import { createFeatureWorktreeDiscarder } from './fs/feature-worktree-discarder.js';
 import { createSqliteWorkResourceAccess } from './sqlite/work-resources.js';
+import { createSqliteAttemptAccess } from './sqlite/attempt-store.js';
+import { createSqliteAttemptLifecycleStore } from './sqlite/attempt-lifecycle-store.js';
 import { createSqliteTaskClaimStore } from './sqlite/task-claim-store.js';
 import { createSqliteWorkspacePreparationStore } from './sqlite/workspace-preparation.js';
 import { createSqliteWorkspaceRetentionStore } from './sqlite/workspace-retention.js';
 import { createSqliteWorkspaceCleanerStore } from './sqlite/workspace-cleaner.js';
 import { createSqliteWorkspaceDiscardStore } from './sqlite/workspace-discard.js';
 import { createSqliteWorkspaceDiscardPreviewStore } from './sqlite/workspace-discard.js';
+import { createSqliteWorkspaceAccess } from './sqlite/workspace.js';
 import { createWorkResourceStopVerifier } from '../application/work-resource-stop.js';
+import { createTaskVerificationCompletionService } from '../application/task-verification-completion.js';
+import type { TaskVerificationCompletionService } from '../application/task-verification-completion.js';
 import { createWorkspacePreparationService } from '../application/workspace-preparation.js';
 import { createWorkspaceRetentionService } from '../application/workspace-retention.js';
 import { createWorkspaceCleanerService } from '../application/workspace-cleaner.js';
@@ -232,6 +238,9 @@ export interface CoreApplication {
   readonly baselineStore: BaselineStore;
   /** P03-7 / F-005：Task Node 检查批次与逐项结果窄存储。 */
   readonly verificationStore: VerificationStore;
+  /** P03-7 / F-012：受信 Task 验证收尾入口（只读重建机器观察、代码现场引用与
+   * 预算结算的既有放行/返工状态机；不运行检查、不启动 Runtime）。 */
+  readonly taskVerificationCompletion: TaskVerificationCompletionService;
   /** P02-3 / F-008：基线预览与明确授权用例（§6；经 commandService 提交）。 */
   readonly baselineService: BaselineService;
   /** F-012: explicit execution entry; Host routing is wired in F-014. */
@@ -711,10 +720,44 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
         }).confirm(input);
       },
     };
+    // F-012：受信返工现场读取——同 Feature 受管 worktree 的当前身份经既有受界
+    // 检查器核对（Git 现场/文件内容）；无工作区返回 null（首次认领路径）。
+    const readReworkScene = async (projectId: string, featureId: string) => {
+      const managed = createSqliteWorkspaceAccess(session, { resources: workResources,
+        ...(nowUtcMs === undefined ? {} : { nowUtcMs }) })
+        .readWorkspace(projectId, featureId);
+      if (managed === null || managed.gitCommonDir === null) return null;
+      const inspector = await workspaceInspectorForCall(projectId);
+      const inspection = await inspector.inspect({
+        repositoryBindingId: managed.repositoryBindingId,
+        repositoryBindingRevision: managed.repositoryBindingRevision,
+        repoIdentity: managed.repoIdentity,
+        canonicalPath: managed.canonicalPath,
+        gitCommonDir: managed.gitCommonDir,
+        branch: managed.branch,
+        baseCommit: managed.baseCommit,
+      });
+      return { worktreeId: managed.id, headCommit: inspection.repository.headCommit, codeDigest: inspection.codeDigest };
+    };
     const workExecution = assembleWorkExecution({ session,
       application: { dataRoot: basePathService.dataRoot(), artifactStore, artifactFileStore, stateStore,
         configurationService, workWorkspaceAuthority, taskClaims, workspacePreparation, executionInputPrepare },
-      capabilityCatalog, runtimeFactory: object.workRuntimeFactory as WorkRuntimeFactory | undefined, nowUtcMs });
+      capabilityCatalog, runtimeFactory: object.workRuntimeFactory as WorkRuntimeFactory | undefined, nowUtcMs, readReworkScene });
+    // F-012：验证收尾/显式继续共用的生命周期窄存取（同一受信身份与事务面）。
+    const attemptLifecycle = createSqliteAttemptLifecycleStore(session, {
+      workspaceAuthority: workWorkspaceAuthority,
+      stopVerifier: workspaceStopVerifier,
+      ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
+    });
+    const taskVerificationCompletion = createTaskVerificationCompletionService({
+      attempts: createSqliteAttemptAccess(session),
+      resources: workResources,
+      stopVerifier: workspaceStopVerifier,
+      verification: verificationStore,
+      lifecycle: attemptLifecycle,
+      publisher: workspacePublisher,
+      ...(nowUtcMs === undefined ? {} : { nowMs: nowUtcMs }),
+    });
     const commandService = createCommandService({
       atomicStore,
       repositoryInspector,
@@ -727,6 +770,43 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       executionDispatchSignal: workExecution,
       executionCancel: workExecution,
       workspaceDiscard,
+      taskVerificationContinue: {
+        async verifyCurrentEvidence(envelope) {
+          const projectId = envelope.scope.projectId;
+          const payload = envelope.payload;
+          const attempt = createSqliteAttemptAccess(session).getAttempt(projectId, payload.attemptId);
+          const batch = verificationStore.getVerificationBatch(projectId, payload.verificationBatchId);
+          const stale = () => new StorageError('conflict', 'task.verification.continue',
+            'Verification evidence requires a fresh check', { details: { reason: 'verification_evidence_stale' } });
+          if (attempt.taskId !== payload.taskId || batch.taskId !== payload.taskId
+            || batch.attemptId !== attempt.id || batch.featureId !== attempt.featureId
+            || batch.codeDigest !== payload.codeDigest || batch.status !== 'passed'
+            || batch.checkSnapshot.some(check => check.environmentRef !== null)) throw stale();
+          const scene = await readReworkScene(projectId, attempt.featureId);
+          assertVerificationReuseIdentity(batch, scene?.codeDigest ?? null);
+          const verifier = createArtifactVerifier({ artifacts: artifactStore, files: artifactFileStore,
+            limits: { maxReadBytes: 16_000_000 } });
+          const checks = verificationStore.listCheckResults(projectId, batch.id);
+          if (checks.length === 0 || checks.some(check => check.status !== 'passed')) throw stale();
+          const ids = new Set<string>();
+          for (const check of checks) {
+            const evidence = verificationStore.readCheckResultEvidence(projectId, check.id);
+            if (evidence.status !== 'complete') throw stale();
+            ids.add(evidence.artifactId);
+          }
+          if (attempt.codeRef === null || attempt.diagnosticRef === null) throw stale();
+          ids.add(attempt.codeRef);
+          ids.add(attempt.diagnosticRef);
+          for (const id of ids) {
+            const record = await artifactStore.getArtifact(projectId, id);
+            if (record.status !== 'ready') throw stale();
+            if ((await verifier.verifyArtifact(projectId, id)).kind !== 'verified_ready') throw stale();
+          }
+        },
+        attempts: createSqliteAttemptAccess(session),
+        verification: verificationStore,
+        lifecycle: attemptLifecycle,
+      },
       baselineCancel: {
         cancel: (principal, projectId, operationId) => {
           if (baselineExecutionServiceRef === undefined) {
@@ -817,6 +897,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       onboardingService,
       baselineStore,
       verificationStore,
+      taskVerificationCompletion,
       baselineService,
       baselineExecutionService,
       baselineQueryService,

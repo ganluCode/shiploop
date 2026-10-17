@@ -50,6 +50,7 @@ import {
   mapStorageError,
 } from '../ports/commands.js';
 import type { CommandReceipt, ValidatedExecutionInputPreparePayload } from '../ports/commands.js';
+import type { TrustedExecutionInputPreparePayload } from '../ports/execution-input-prepare.js';
 import { createResultRef } from '../ports/command-receipts.js';
 import { isStorageError, StorageError } from '../ports/errors.js';
 import {
@@ -82,7 +83,7 @@ import {
 import type { ValidationContext } from '../ports/validation.js';
 import { isExecutionInputError } from './execution-input.js';
 import type { ExecutionInputService } from './execution-input.js';
-import { isContextBuildError } from '../ports/context-build.js';
+import { isContextBuildError, validateContextReworkInput } from '../ports/context-build.js';
 import type { ContextBuilder } from './context-build.js';
 import {
   resolveCurrentCheckPolicyDigest,
@@ -164,7 +165,7 @@ export interface ExecutionInputPreparePort {
   /** 事务外准备（视图捕获 + 采集 + 组装 + 发布 + 正文复验）；失败抛 PublicError。 */
   prepareExecutionInput(
     projectId: string,
-    payload: ValidatedExecutionInputPreparePayload,
+    payload: ValidatedExecutionInputPreparePayload | TrustedExecutionInputPreparePayload,
   ): Promise<PreparedExecutionInputGroup>;
   /** 同步权限面读取（同一装配在捕获与最终重核各调用一次）。 */
   readExecutionPermissions(input: {
@@ -360,6 +361,24 @@ export function createExecutionInputPrepareService(
     },
 
     async prepareExecutionInput(projectId, payload) {
+      /* F-012：受信返工输入先行 fail-closed 校验（命令信封不接受 rework 键；
+       * 只有受信 Runner 能构造，但仍在入口重验，不信任调用方形态）。 */
+      let reworkInput: import('../ports/context-build.js').ContextReworkInput | undefined;
+      const rawRework = (payload as TrustedExecutionInputPreparePayload).rework;
+      if (rawRework !== undefined && rawRework !== null) {
+        try {
+          reworkInput = validateContextReworkInput(rawRework, { projectId, taskId: payload.taskId });
+        } catch (cause) {
+          if (isContextBuildError(cause)) {
+            throw publicError('invalid_input', 'rework_validation', {
+              field: cause.field,
+              reason: cause.code,
+            }, cause);
+          }
+          throw cause;
+        }
+      }
+
       /* 阶段 1：一致读视图捕获（单一 DEFERRED 读事务）。 */
       let view;
       try {
@@ -483,6 +502,7 @@ export function createExecutionInputPrepareService(
           },
           permissions: { grants: [...permissionsFace.grants] },
           requiredInputs: captured.refs,
+          ...(reworkInput !== undefined ? { rework: reworkInput } : {}),
         });
       } catch (cause) {
         throw mapContextBuildFailure(cause);
@@ -529,6 +549,9 @@ export function createExecutionInputPrepareService(
         promptBytes: built.promptBytes,
         tokenEstimate: built.tokenEstimate,
         preparedAtUtcMs: nowMs(),
+        ...(built.inputSnapshot.rework !== null && built.inputSnapshot.rework !== undefined
+          ? { rework: built.inputSnapshot.rework }
+          : {}),
       };
     },
   };

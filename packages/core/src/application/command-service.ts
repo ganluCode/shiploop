@@ -61,6 +61,7 @@ import type {
 import { validateMergedProjectSettingsWrite } from './configuration-service.js';
 import { submitTaskApprovalBlock, TASK_APPROVAL_BLOCK_OPERATION } from './task-approval-block.js';
 import { submitTaskApprovalDecision, TASK_APPROVAL_DECISION_OPERATIONS } from './task-approval-decision.js';
+import { submitTaskVerificationContinue, TASK_VERIFICATION_CONTINUE_OPERATION, type TaskVerificationContinueDeps } from './task-verification-continue.js';
 import { FEATURE_PLAN_DECIDE_OPERATION, submitFeaturePlanDecide } from './feature-plan-decide.js';
 import { FEATURE_PLAN_IMPORT_OPERATION, submitFeaturePlanImport } from './feature-plan-import.js';
 import {
@@ -178,6 +179,12 @@ export interface CommandServiceOptions {
    * computeWorkspaceDiscardRequestDigest），命令层重放预检同源比对。
    */
   readonly workspaceDiscard?: WorkspaceDiscardService;
+  /**
+   * F-012：人工批准后的授权显式验证继续依赖（同库只读 Attempt/批次访问 +
+   * 生命周期内事务提交；不传则命令 unsupported，不冒充能力）。装配者：
+   * composition 根；受控测试可直接注入窄端口实现。
+   */
+  readonly taskVerificationContinue?: TaskVerificationContinueDeps;
   readonly nowUtcMs?: () => number;
 }
 
@@ -246,6 +253,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
   const executionStart = options.executionStart;
   const executionDispatchSignal = options.executionDispatchSignal;
   const workspaceDiscard = options.workspaceDiscard;
+  const taskVerificationContinue = options.taskVerificationContinue;
   const nowUtcMs = options.nowUtcMs ?? Date.now;
 
   /** 既有项目元数据 CAS：业务 + metadata_updated 事件 + 回执同一事务（F-007）。 */
@@ -621,6 +629,10 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
         ) {
           throw new PublicError('unsupported', operation);
         }
+        // F-012：显式验证继续依赖缺席时 unsupported（不冒充继续能力）。
+        if (envelope.operation === TASK_VERIFICATION_CONTINUE_OPERATION && taskVerificationContinue === undefined) {
+          throw new PublicError('unsupported', operation);
+        }
         if (
           envelope.operation !== 'project.metadata.update' &&
           envelope.operation !== 'project.register' &&
@@ -642,6 +654,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           envelope.operation !== EXECUTION_BUDGET_REVISE_OPERATION &&
           envelope.operation !== WORKSPACE_DISCARD_OPERATION &&
           envelope.operation !== WORKSPACE_DISCARD_PREVIEW_OPERATION &&
+          envelope.operation !== TASK_VERIFICATION_CONTINUE_OPERATION &&
           !isSettingsEnvelope(envelope)
         ) {
           throw new PublicError('unsupported', operation);
@@ -655,6 +668,13 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           // P03-5 / F-011：丢弃确认的用户回执由 F-010 存储以丢弃请求摘要锚定，
           // 不经通用回执事务；其重放预检走专属通道（见下方 confirm 分支）。
           replay(principal, existing, digest, operation);
+        }
+
+        if (envelope.operation === TASK_VERIFICATION_CONTINUE_OPERATION && existing === undefined) {
+          if (typeof taskVerificationContinue?.verifyCurrentEvidence !== 'function') {
+            throw new PublicError('unsupported', operation);
+          }
+          await taskVerificationContinue.verifyCurrentEvidence(envelope);
         }
 
         // F-008：只读仓库检查（Git/文件系统）在写事务之外，仅对新命令执行；
@@ -965,6 +985,13 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
             return submitTaskApprovalDecision({ principalId: principal.principalId, capabilities: principal.capabilities, commandId: envelope.commandId,
               operation: envelope.operation, scope: envelope.scope, requestDigest: digest, issuedAt: envelope.issuedAt,
               completedAt: new Date(now).toISOString() }, envelope, transaction);
+          }
+          if (envelope.operation === TASK_VERIFICATION_CONTINUE_OPERATION) {
+            // 现场和证据 I/O 已在事务外完成；此处重核身份、批准与 CAS。
+            return submitTaskVerificationContinue({ principalId: principal.principalId, capabilities: principal.capabilities,
+              commandId: envelope.commandId, operation: envelope.operation, scope: envelope.scope,
+              requestDigest: digest, issuedAt: envelope.issuedAt, completedAt: new Date(now).toISOString() },
+              envelope, transaction, taskVerificationContinue!);
           }
           if (envelope.operation === FEATURE_PLAN_DECIDE_OPERATION) {
             // P03-2 / F-002：计划批准/拒绝决策无事务外 I/O（无 Runtime/Git/检查

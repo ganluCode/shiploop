@@ -544,6 +544,7 @@ describe('F-006 Host inspect/overview 路由与握手能力（真实 Host + SQLi
       'task.approval.approve',
       'task.approval.reject',
       'task.approval.unblock',
+      'task.verification.continue',
       // P03-2 / F-006：执行输入制品组准备经既有 /v1/commands 通用路由接线
       //（v4 内增量宣告；HostClient 入口 F-007、CLI 入口 F-008）。
       'execution.input.prepare',

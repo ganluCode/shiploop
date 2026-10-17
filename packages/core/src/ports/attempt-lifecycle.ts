@@ -39,8 +39,13 @@ export interface AttemptApplicationResult {
 /** Trusted Core/Runner ingress, not a model-writable command or acceptance API. */
 export interface AttemptLifecycleStore {
   apply(notification: unknown, stopEvidence?: unknown): AttemptApplicationResult;
-  /** Trusted verification result ingress. Evidence was produced outside the write transaction. */
-  submitVerification(input: unknown): AttemptApplicationResult;
+  /** Trusted verification result ingress. Evidence was produced outside the write transaction.
+   * F-012：可选 Verifier 停止证据（受信 stop verifier 令牌）；确定性代码失败
+   * 只有在停止确认后才释放占用供同 worktree 返工，否则保留隔离拒绝重跑。 */
+  submitVerification(input: unknown, verifierStopEvidence?: unknown): AttemptApplicationResult;
+  /** F-012：验证汇总前记录 Attempt 代码现场制品引用（verifying CAS；不改变状态）。
+   * 仅验证中的 Attempt 可首次记录；不可变制品引用只追加，不覆盖。 */
+  recordAttemptCode?(input: unknown): { readonly attemptId: string; readonly revision: number; readonly codeRef: string };
 }
 export function validateVerificationSubmission(value: unknown): VerificationSubmission {
   const context = { operation: 'AttemptLifecycle.submitVerification' };

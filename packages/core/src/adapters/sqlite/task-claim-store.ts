@@ -30,7 +30,7 @@ export function createSqliteTaskClaimStore(session: SqliteStorageSession, option
   const dag = createSqliteTaskDagStore(session);
   const clock = options.nowUtcMs ?? Date.now;
   const fail = (reason: string, extra: Record<string, unknown> = {}): never => {
-    throw new StorageError('conflict', operation, 'Task claim rejected', { details: { reason, ...extra } });
+    throw new StorageError('conflict', operation, `Task claim rejected: ${reason}`, { details: { reason, ...extra } });
   };
   function readReceipt(json: string): TaskClaimReceipt {
     try {
@@ -138,9 +138,41 @@ export function createSqliteTaskClaimStore(session: SqliteStorageSession, option
               fail('not_ready', { eligibility: 'input_artifact_changed' });
             }
           }
-          const attemptId = randomUUID();
+          const attemptId = valid.attemptId ?? randomUUID();
           const executionVersion = fact.executionVersion + 1;
           const number = fact.attemptCounter + 1;
+          // F-012：返工纪律在同 worktree 有限增量返工上的落实——
+          // · 有历史（最近终态 Attempt 为已计费代码尝试）的认领必须携带返工快照；
+          // · 返工快照必须绑定预生成的新 Attempt（attemptId 一致）；
+          // · previousAttemptId 必须等于同 Task 直接上一 Attempt 且其已终态；
+          // · 无历史/最近为未启动基础设施替换（重分类 infrastructure）时携带返工
+          //   快照一律拒绝（不能伪造返工身份绕过首次纪律，也不能把基础设施
+          //   替换伪装成代码返工）；基础设施替换沿用原快照、不算代码返工。
+          const history = [...attempts.listTaskAttempts(valid.projectId, valid.taskId)]
+            .sort((left, right) => left.number - right.number);
+          const latest = history[history.length - 1];
+          const latestReservation = latest === undefined ? null
+            : (db.prepare<[string, string, string], { classification: string }>(
+                'SELECT classification FROM task_attempt_reservations WHERE project_id = ? AND task_id = ? AND attempt_key = ?')
+              .get(valid.projectId, valid.taskId, latest.id) ?? null);
+          /* 缺失记账行不默认可替换：fail-closed 视为代码尝试（必须返工快照）。 */
+          const latestIsCode = latest !== undefined
+            && (latestReservation === null || latestReservation.classification === 'code');
+          const rework = snapshot.rework;
+          if (rework === undefined) {
+            if (latestIsCode) fail('not_ready', { eligibility: 'rework_input_required' });
+          } else {
+            if (!latestIsCode) fail('not_ready', { eligibility: 'rework_without_history' });
+            if (valid.attemptId === undefined || rework.attemptId !== valid.attemptId) {
+              fail('not_ready', { eligibility: 'rework_attempt_identity_mismatch' });
+            }
+            const previous = latest!;
+            if (rework.previousAttemptId !== previous.id || rework.previousTaskId !== valid.taskId
+              || ['preparing', 'executing', 'verifying'].includes(previous.status)) {
+              fail('not_ready', { eligibility: 'rework_previous_attempt_mismatch' });
+            }
+            if (previous.executionVersion >= executionVersion) fail('not_ready', { eligibility: 'stale_task' });
+          }
           const changed = db.prepare("UPDATE tasks SET status = 'running', execution_version = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND project_id = ? AND revision = ? AND execution_version = ? AND status = 'pending' AND manual_block = 0")
             .run(executionVersion, now, task.id, valid.projectId, valid.expectedRevision, valid.executionVersion);
           if (changed.changes !== 1) fail('stale_task');
