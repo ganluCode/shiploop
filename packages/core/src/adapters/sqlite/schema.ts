@@ -1368,7 +1368,7 @@ export const attempts = sqliteTable('attempts', {
   check('attempts_stage_check', sql`${table.executionStage} IN ('preflight', 'runtime', 'verification', 'commit', 'cleanup')`),
   check('attempts_snapshot_check', sql`CASE WHEN json_valid(${table.inputSnapshot}) THEN
     json_type(${table.inputSnapshot}) = 'object' AND json_type(${table.inputSnapshot}, '$.schemaVersion') IS 'integer'
-    AND json_extract(${table.inputSnapshot}, '$.schemaVersion') IN (1, 2)
+    AND json_extract(${table.inputSnapshot}, '$.schemaVersion') IN (1, 2, 3)
     AND json_extract(${table.inputSnapshot}, '$.projectId') IS ${table.projectId}
     AND json_extract(${table.inputSnapshot}, '$.featureId') IS ${table.featureId}
     AND json_extract(${table.inputSnapshot}, '$.taskId') IS ${table.taskId}

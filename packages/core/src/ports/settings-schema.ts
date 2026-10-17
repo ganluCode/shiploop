@@ -15,8 +15,9 @@
  *   任意 JSON 不能冒充可执行配置；
  * - 完整策略条目（RuntimeStrategy）必须同时具备 runtime/provider/model，
  *   缺字段即报错，不从其他条目补全（设计 06 §3）；
- * - 政策子集只含 executionLimits/verification/securityPolicy；
- *   memoryPolicy/deliveryPolicy/Agent 职责模式等未定义段一律拒绝，不静默忽略；
+ * - 政策子集含 executionLimits/verification/securityPolicy/deliveryPolicy
+ *   （P03-8 / F-001 起定义交付政策段）；memoryPolicy/Agent 职责模式等未定义段
+ *   一律拒绝，不静默忽略；
  * - credentialRef/endpointRef 只按**引用字符串**校验（拒绝带凭据 URL、
  *   空白/控制字符与超长引用），不解析内容、不读环境/Keychain；
  * - 本模块只做结构与政策校验；runtime/provider 兼容性检查见
@@ -39,6 +40,13 @@ import type { ValidationContext } from './validation.js';
 import {
   validateConfirmedTaskVerificationPolicy,
 } from './task-verification-policy.js';
+import {
+  validateDeliveryPolicySection,
+} from './delivery-policy.js';
+import type {
+  ConfirmedGitIdentity,
+  DeliveryActionKind,
+} from './delivery-policy.js';
 import type {
   CheckDefinition,
   VerificationFullFallback,
@@ -142,11 +150,32 @@ export interface SecurityPolicyV2 {
   readonly isolation?: typeof TRUSTED_PROJECT_ISOLATION;
 }
 
-/** 本阶段确认的政策子集；未列出的政策段（memoryPolicy/deliveryPolicy 等）未定义即非法。 */
+/**
+ * P03-8 / F-001 交付政策段（获准的 Feature 最终提交政策与用户 Git 身份）。
+ *
+ * 语义与兼容：字段全部可选——空段 `{}` 与其他政策段一样表示不覆盖/继承全局；
+ * 存在的字段全部经 ports/delivery-policy fail-closed 校验（唯一支持
+ * commitMode=feature_final_only；姓名/邮箱必须用户明确配置并确认；push/PR/
+ * 自动合并请求结构化拒绝）。段不完整时使用边界（提交意图固定）fail-closed
+ * 拒绝，不存在默认提交政策。schemaVersion 维持 2：可选新增段，旧 v2 payload
+ * （无该段）语义不变；未知/未来版本仍一律拒绝。
+ */
+export interface DeliveryPolicyV2 {
+  /** 首版唯一支持：feature_final_only（Task 保存验证成果但不自行提交）。 */
+  readonly commitMode?: 'feature_final_only';
+  /** 用户明确配置并确认的提交身份（不回落到开发机全局身份或官方邮箱）。 */
+  readonly gitIdentity?: ConfirmedGitIdentity;
+  /** 显式声明的交付动作；首版仅支持 commit。 */
+  readonly deliveryActions?: readonly DeliveryActionKind[];
+}
+
+/** 本阶段确认的政策子集；未列出的政策段（memoryPolicy/agentModes 等）未定义即非法。 */
 export interface SettingsPoliciesV2 {
   readonly executionLimits?: ExecutionLimitsPolicyV2;
   readonly verification?: VerificationPolicyV2;
   readonly securityPolicy?: SecurityPolicyV2;
+  /** P03-8 / F-001 交付政策段（可选新增；详见 DeliveryPolicyV2）。 */
+  readonly deliveryPolicy?: DeliveryPolicyV2;
 }
 
 export interface SettingsPayloadV2 {
@@ -171,7 +200,7 @@ const STRATEGIES_KEYS = ['defaultStrategy', 'modelMap', 'purposeStrategies', 'ag
 const STRATEGY_ENTRY_KEYS = ['runtime', 'provider', 'model', 'credentialRef', 'endpointRef'] as const;
 const MODEL_MAP_KEYS = ['low', 'medium', 'high'] as const;
 const PURPOSE_KEYS = ['planner', 'judge', 'review'] as const;
-const POLICIES_KEYS = ['executionLimits', 'verification', 'securityPolicy'] as const;
+const POLICIES_KEYS = ['executionLimits', 'verification', 'securityPolicy', 'deliveryPolicy'] as const;
 const EXECUTION_LIMITS_KEYS = ['maxConcurrentWorks', 'workTimeoutMs', 'maxAttemptsPerTask', 'maxCodeAttempts', 'envAllowlist'] as const;
 const SECURITY_POLICY_KEYS = ['isolation'] as const;
 
@@ -488,6 +517,7 @@ function validateSettingsPolicies(
     executionLimits?: ExecutionLimitsPolicyV2;
     verification?: VerificationPolicyV2;
     securityPolicy?: SecurityPolicyV2;
+    deliveryPolicy?: DeliveryPolicyV2;
   } = {};
   if (object.executionLimits !== undefined) {
     result.executionLimits = validateExecutionLimitsPolicy(object.executionLimits, context, `${field}.executionLimits`);
@@ -497,6 +527,13 @@ function validateSettingsPolicies(
   }
   if (object.securityPolicy !== undefined) {
     result.securityPolicy = validateSecurityPolicy(object.securityPolicy, context, `${field}.securityPolicy`);
+  }
+  if (object.deliveryPolicy !== undefined) {
+    result.deliveryPolicy = validateDeliveryPolicySection(
+      object.deliveryPolicy,
+      context,
+      `${field}.deliveryPolicy`,
+    );
   }
   return result;
 }

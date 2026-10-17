@@ -283,6 +283,7 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
         configSourceKey: validated.task.configSourceKey,
       },
       checkPolicy: validated.checkPolicy,
+      ...(validated.deliveryPolicy === undefined ? {} : { deliveryPolicy: validated.deliveryPolicy }),
       permissions: validated.permissions,
       requiredInputs: validated.requiredInputs,
       ...(rework === null ? {} : { rework }),
@@ -450,6 +451,19 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
           : stableStringify(validated.checkPolicy.copy)
       }`,
     );
+    if (validated.deliveryPolicy !== undefined) {
+      parts.push('');
+      parts.push('## Feature delivery policy (feature final commit only)');
+      parts.push(`- digest: sha256:${validated.deliveryPolicy.digest}`);
+      parts.push(
+        `- copy: ${
+          validated.deliveryPolicy.copy === undefined
+            ? '(copy not provided; digest is identity)'
+            : stableStringify(validated.deliveryPolicy.copy)
+        }`,
+      );
+      parts.push('- boundary: tasks save verification evidence and do NOT commit; the feature final commit happens only after final full checks and required approval');
+    }
     parts.push('');
     parts.push('## Permissions');
     if (validated.permissions.grants.length === 0) {
@@ -498,6 +512,7 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
         configSourceKey: validated.task.configSourceKey,
       },
       checkPolicy: validated.checkPolicy,
+      ...(validated.deliveryPolicy === undefined ? {} : { deliveryPolicy: validated.deliveryPolicy }),
       permissions: validated.permissions,
       requiredInputs: validated.requiredInputs,
       ...(historyIndex === null ? {} : { historyIndex }),
@@ -520,6 +535,7 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
       },
       meta: { labels: validated.task.labels ?? [] },
       checkPolicy: validated.checkPolicy,
+      ...(validated.deliveryPolicy === undefined ? {} : { deliveryPolicy: validated.deliveryPolicy }),
       permissions: validated.permissions,
       requiredInputs: validated.requiredInputs,
       historyIndex,
@@ -655,6 +671,25 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
         reason: '适用检查政策身份（批准复合身份成分）',
         truncated: false,
       },
+      ...(validated.deliveryPolicy === undefined
+        ? []
+        : ([
+            {
+              sourceId: 'delivery-policy',
+              kind: 'delivery-policy',
+              identity: { digest: validated.deliveryPolicy.digest },
+              version: null,
+              hash: digestOf(
+                CONTEXT_SNAPSHOT_DIGEST_DOMAIN,
+                stableStringify(validated.deliveryPolicy),
+              ),
+              purpose: 'feature-delivery-policy',
+              selection: validated.deliveryPolicy.copy === undefined ? 'digest' : 'digest+copy',
+              required: true,
+              reason: '适用交付政策身份（仅 Feature 最终提交；Task 保存验证成果不自行提交）',
+              truncated: false,
+            },
+          ] as ContextManifestSource[])),
       {
         sourceId: 'permissions',
         kind: 'permissions',

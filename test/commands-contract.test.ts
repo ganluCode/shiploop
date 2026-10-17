@@ -603,10 +603,15 @@ describe('F-002 复用 P01 注册/元数据/配置校验器', () => {
     expectPublicError(
       () =>
         validateCommandEnvelope(
-          envelope(settingsCreate({ schemaVersion: 2, policies: { deliveryPolicy: {} } })),
+          envelope(
+            settingsCreate({
+              schemaVersion: 2,
+              policies: { deliveryPolicy: { commitMode: 'per_task' } },
+            }),
+          ),
         ),
       'invalid_input',
-      'payload.policies',
+      'payload.policies.deliveryPolicy.commitMode',
     );
   });
 

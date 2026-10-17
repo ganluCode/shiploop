@@ -1,7 +1,7 @@
 import { validateWorkProcessIdentity } from './work-resources.js';
 import type { CommandProcessIdentity } from './command-process.js';
 import type { PreparedExecutionInputGroup, ExecutionInputGroupBodyRef } from './execution-input-prepare.js';
-import { CONTEXT_INPUT_SCHEMA_VERSION, isContextBuildError, validateContextReworkInput, type ContextReworkInput } from './context-build.js';
+import { CONTEXT_INPUT_SUPPORTED_SCHEMA_VERSIONS, isContextBuildError, validateContextReworkInput, type ContextReworkInput } from './context-build.js';
 import { validateExecutionInputRef } from './execution-input.js';
 import { EXECUTION_SNAPSHOT_MAX_BYTES } from './execution-store.js';
 import {
@@ -128,8 +128,9 @@ function bodyRef(value: unknown, field: string): ExecutionInputGroupBodyRef {
 export function validateAttemptInputSnapshot(value: unknown): PreparedExecutionInputGroup {
   const raw = object(value, ['schemaVersion', 'projectId', 'featureId', 'taskId', 'group', 'requiredInputs',
     'digests', 'approval', 'taskRevision', 'promptBytes', 'tokenEstimate', 'preparedAtUtcMs', 'rework'], 'inputSnapshot');
-  // 历史快照不随 ContextBuilder 升版失效：v1 历史快照与当前版本均可读回，未知版本拒绝。
-  if (raw.schemaVersion !== 1 && raw.schemaVersion !== CONTEXT_INPUT_SCHEMA_VERSION) {
+  // 历史快照不随 ContextBuilder 升版失效：v1/v2 历史快照与当前版本均可读回，未知版本拒绝。
+  const snapshotSchemaVersion = raw.schemaVersion as number;
+  if (!(CONTEXT_INPUT_SUPPORTED_SCHEMA_VERSIONS as readonly number[]).includes(snapshotSchemaVersion)) {
     throw validationError(context, 'inputSnapshot.schemaVersion', 'unsupported_context_version');
   }
   const projectId = id(raw.projectId, 'inputSnapshot.projectId');
@@ -163,12 +164,12 @@ export function validateAttemptInputSnapshot(value: unknown): PreparedExecutionI
       kind: member(estimate.kind, ['estimation'], 'inputSnapshot.tokenEstimate.kind'), method: text(estimate.method, 'inputSnapshot.tokenEstimate.method') },
     preparedAtUtcMs: nonnegative(raw.preparedAtUtcMs, 'inputSnapshot.preparedAtUtcMs'),
   };
-  // F-012：可选同 Task 返工身份（仅 schemaVersion 2 返工构建；v1 历史快照
+  // F-012：可选同 Task 返工身份（仅 schemaVersion ≥ 2 返工构建；v1 历史快照
   // 不携带该键，携带即拒绝）。形态复用 ContextBuild 返工契约，跨 Task/跨项目/
   // 矛盾恢复记录与非法证据引用一律 validation 拒绝。
   let rework: ContextReworkInput | undefined;
   if (raw.rework !== undefined && raw.rework !== null) {
-    if (raw.schemaVersion !== CONTEXT_INPUT_SCHEMA_VERSION) {
+    if (snapshotSchemaVersion < 2) {
       throw validationError(context, 'inputSnapshot.rework', 'rework_requires_context_v2');
     }
     try {

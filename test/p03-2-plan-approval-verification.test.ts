@@ -1028,8 +1028,8 @@ describe('F-003 迁移 v8（approvals.check_policy_digest）', () => {
       const result = await migrateSqliteStorage(session, { nowUtcMs: () => NOW + 1_000 });
       expect(result.fromVersion).toBe(7);
       // P03-3 / F-002 起接续 v9（执行域三表；v8 仍为检查政策身份绑定迁移）。
-      expect(result.toVersion).toBe(24);
-      expect(result.appliedVersions).toEqual([8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]);
+      expect(result.toVersion).toBe(25);
+      expect(result.appliedVersions).toEqual([8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25]);
 
       // 既有决策行逐字段保留；check_policy_digest 为 NULL（不等于任何当前身份）。
       const row = session.database

@@ -328,7 +328,8 @@ describe('F-005 迁移执行与记录', () => {
         expect(rows[17]!.checksum).toBe(SQLITE_MIGRATIONS[17]!.checksum);
         // P03-6 / F-006：v20 为最小 Work Session 表迁移；P03-7 / F-002：v21 为验证记录
         // 两表迁移；F-007 v22 为运行期人审事项；F-008 v23 为决定事实；P03-7 / F-011
-        // v24 为 Attempt 输入快照版本放宽重建；探针迁移紧随其后。
+        // v24 为 Attempt 输入快照版本放宽重建；P03-8 / F-001 v25 再放宽至
+        // schemaVersion IN (1, 2, 3)；探针迁移紧随其后。
         expect(rows[20]!.version).toBe(21);
         expect(rows[20]!.checksum).toBe(SQLITE_MIGRATIONS[20]!.checksum);
         expect(rows[21]!.version).toBe(22);
@@ -337,9 +338,11 @@ describe('F-005 迁移执行与记录', () => {
         expect(rows[22]!.checksum).toBe(SQLITE_MIGRATIONS[22]!.checksum);
         expect(rows[23]!.version).toBe(24);
         expect(rows[23]!.checksum).toBe(SQLITE_MIGRATIONS[23]!.checksum);
-        expect(rows[24]!.version).toBe(PROBE_MIGRATION.version);
-        expect(rows[24]!.checksum).toBe(PROBE_MIGRATION.checksum);
-        expect(rows[24]!.applied_at).toBe(FIXED_NOW_MS + 1_000);
+        expect(rows[24]!.version).toBe(25);
+        expect(rows[24]!.checksum).toBe(SQLITE_MIGRATIONS[24]!.checksum);
+        expect(rows[25]!.version).toBe(PROBE_MIGRATION.version);
+        expect(rows[25]!.checksum).toBe(PROBE_MIGRATION.checksum);
+        expect(rows[25]!.applied_at).toBe(FIXED_NOW_MS + 1_000);
       } finally {
         session.close();
       }

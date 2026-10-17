@@ -161,7 +161,7 @@ describe('F-012 同一 worktree 有界增量返工（全真实组装）', () => 
         failureEvidenceRefs: readonly unknown[]; recovery: { selection: { mode: string }; decision: { mode: string } } };
     };
     /* F-011 返工快照：绑定直接上一 Attempt、现场身份、失败证据与真实恢复记录。 */
-    expect(snapshot.schemaVersion).toBe(2);
+    expect(snapshot.schemaVersion).toBe(3);
     expect(snapshot.rework.attemptId).toBe(reworkAttempt.id);
     expect(snapshot.rework.previousAttemptId).toBe(attempt.id);
     expect(snapshot.rework.previousTaskId).toBe('t-1');

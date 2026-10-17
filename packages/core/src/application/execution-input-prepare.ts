@@ -74,6 +74,7 @@ import type {
   PreparedExecutionInputGroup,
 } from '../ports/execution-input-prepare.js';
 import { stableStringify } from '../ports/feature-plan.js';
+import { computeDeliveryPolicyDigest } from '../ports/delivery-policy.js';
 import {
   rejectUnknownKeys,
   requirePlainObject,
@@ -499,6 +500,15 @@ export function createExecutionInputPrepareService(
             ...(effective.policies.verification === undefined
               ? {}
               : { copy: effective.policies.verification.value as Record<string, unknown> }),
+          },
+          /* P03-8 / F-001：交付政策固定进执行依据——当前有效 deliveryPolicy 段
+             （或未配置时的 null 形态摘要）随快照发布；后续配置漂移不改变
+             已发布快照字节。Task 执行不要求交付政策已配置（Task 不自行提交）。 */
+          deliveryPolicy: {
+            digest: computeDeliveryPolicyDigest(effective.policies.deliveryPolicy?.value),
+            ...(effective.policies.deliveryPolicy === undefined
+              ? {}
+              : { copy: effective.policies.deliveryPolicy.value as Record<string, unknown> }),
           },
           permissions: { grants: [...permissionsFace.grants] },
           requiredInputs: captured.refs,

@@ -1,10 +1,11 @@
-# P03-2 有版本的 ContextBuilder 契约（F-005；F-011 扩展）
+# P03-2 有版本的 ContextBuilder 契约（F-005；F-011/P03-8-F-001 扩展）
 
 - 文档状态：P03-2 / F-005 交付的版本化 ContextBuilder 契约（Core 层）。上游：
   `docs/p03-2-execution-input-contract.md`（F-004 必需输入引用形态与校验读取）。
   执行输入准备编排与 snapshot/manifest/prompt 制品组属 F-006，Host/CLI 接线属
   F-007/F-008（本项不实现）。P03-7 / F-011 扩展可选同 Task 返工输入（见 §7），
-  schemaVersion 升至 2。
+  schemaVersion 升至 2；P03-8 / F-001 扩展可选交付政策固定（见 §8），
+  schemaVersion 升至 3。
 - 实现入口：`packages/core/src/ports/context-build.ts`（输入/输出契约、
   `CONTEXT_FIXED_GUIDANCE` 固定指导常量、`validateContextBuildInput` 纯校验与
   `ContextBuildError`）、`packages/core/src/application/context-build.ts`
@@ -27,7 +28,8 @@
   `truncated`，来源类别词汇冻结为 fixed-guidance / task / acceptance /
   strategy / requirements / dependencies / check-policy / permissions /
   required-input / history-index（v2 起追加 rework-guidance / rework-scene /
-  failure-evidence / recovery-record；新增类别须升 schemaVersion）；
+  failure-evidence / recovery-record；v3 起追加 delivery-policy；新增类别须升
+  schemaVersion）；
   `promptDigest` 把 manifest 与最终 prompt 绑定，`omissions`
   标注可选内容省略/截断；
 - `prompt`：有界文本（头部携带 `schemaVersion`），固定指导原样置于开头，
@@ -137,3 +139,25 @@ Host/CLI 接线（F-007/F-008）、ProjectProfile、知识检索、LLM 蒸馏、
 - **版本兼容**：snapshot/manifest/prompt 携带 schemaVersion 2；Attempt 持久
   快照读取接受 v1 历史快照与当前版本，未知版本明确拒绝，历史快照不被覆盖
   或改写（新返工输入经既有不可变制品组路径另行发布）。
+
+## 8. 交付政策固定扩展（P03-8 / F-001，schemaVersion 3）
+
+可选 `deliveryPolicy` 输入字段（`ContextDeliveryPolicyInput`：`digest` 必填
+sha256、`copy` 可选有界普通 JSON 对象，上限
+`CONTEXT_DELIVERY_POLICY_COPY_MAX_BYTES` 字节；null 与缺省同义——按缺省处理，
+与 rework 约定一致；未知键 fail-closed）：
+
+- **固定执行依据**：执行输入准备把当前有效 `policies.deliveryPolicy` 段
+  （或未配置时的显式 null 形态摘要，见 ports/delivery-policy 的
+  `computeDeliveryPolicyDigest`）随快照发布；此后全局/项目默认配置漂移不改
+  变已发布快照字节，新准备按新政策生成；
+- **Task/Feature 提交边界**：首版仅支持 `feature_final_only`——Task 保存
+  验证成果但不自行提交，最终全量检查和必要人审有效后才提交（政策校验见
+  ports/delivery-policy 与 settings-schema `policies.deliveryPolicy` 段）；
+- **manifest 新增来源类别**：delivery-policy（digest+copy 形态与检查政策同
+  一纪律），required=true、永不截断；prompt 携带 delivery policy 段落与
+  Task/Feature 提交边界说明；
+- **版本兼容**：snapshot/manifest/prompt 携带 schemaVersion 3；未提供
+  `deliveryPolicy` 键的输入构建产物不携带该字段（v2 历史形态兼容）；
+  Attempt 持久快照读取接受 v1/v2 历史快照与当前版本（rework 要求
+  schemaVersion ≥ 2），未知版本明确拒绝。

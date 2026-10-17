@@ -76,8 +76,16 @@ import type {
 /**
  * 输入快照 / manifest / prompt 共同携带的 schema 版本（整数递增）。
  * v2：新增可选 rework 同 Task 返工输入与返工 manifest 来源类别（F-011）。
+ * v3：新增可选 deliveryPolicy（P03-8 / F-001 交付政策固定）与对应 manifest
+ *     来源类别；未提供该键的旧输入仍按原形态构建（不携带该字段）。
  */
-export const CONTEXT_INPUT_SCHEMA_VERSION = 2;
+export const CONTEXT_INPUT_SCHEMA_VERSION = 3;
+
+/**
+ * 可读回的历史输入快照 schema 版本（含当前版本）：历史快照不随
+ * ContextBuilder 升版失效，未知版本拒绝（attempt-store 读回校验使用）。
+ */
+export const CONTEXT_INPUT_SUPPORTED_SCHEMA_VERSIONS = [1, 2, CONTEXT_INPUT_SCHEMA_VERSION] as const;
 
 /** snapshot 业务内容摘要域（与其他摘要域分隔，防跨域拼接碰撞）。 */
 export const CONTEXT_SNAPSHOT_DIGEST_DOMAIN = 'shiploop:context-input-snapshot:v1';
@@ -197,6 +205,20 @@ export interface ContextCheckPolicyInput {
   readonly copy?: Readonly<Record<string, unknown>>;
 }
 
+/** 交付政策副本序列化字节上限（政策段本身远小于检查定义清单）。 */
+export const CONTEXT_DELIVERY_POLICY_COPY_MAX_BYTES = 4_096;
+
+/**
+ * 适用交付政策（P03-8 / F-001）：身份摘要必填；政策内容副本可选（有界）。
+ * 与检查政策同一形态纪律：摘要锚定 ports/delivery-policy 的独立摘要域，
+ * 副本来自当前有效配置段（未配置时只有 null 形态摘要、无副本）。固定进
+ * 快照后，后续配置漂移不改变已固定执行依据。
+ */
+export interface ContextDeliveryPolicyInput {
+  readonly digest: string;
+  readonly copy?: Readonly<Record<string, unknown>>;
+}
+
 /** 权限清单：有界授予条目（数据，不是提权指令）。 */
 export interface ContextPermissionsInput {
   readonly grants: readonly string[];
@@ -260,6 +282,8 @@ export interface ContextBuildInput {
   readonly taskId: string;
   readonly task: ContextTaskInput;
   readonly checkPolicy: ContextCheckPolicyInput;
+  /** 可选适用交付政策（P03-8 / F-001；缺省即不固定进本次快照）。 */
+  readonly deliveryPolicy?: ContextDeliveryPolicyInput;
   readonly permissions: ContextPermissionsInput;
   /** 必需输入引用（F-004 ExecutionInputRef；每条都必须读取并核对 hash）。 */
   readonly requiredInputs: readonly ExecutionInputRef[];
@@ -325,6 +349,7 @@ export const CONTEXT_MANIFEST_SOURCE_KINDS = [
   'requirements',
   'dependencies',
   'check-policy',
+  'delivery-policy',
   'permissions',
   'required-input',
   'history-index',
@@ -410,6 +435,8 @@ export interface ContextInputSnapshot {
   /** 非业务元数据（labels 等；不参与任何确定性摘要）。 */
   readonly meta: { readonly labels: readonly string[] };
   readonly checkPolicy: ContextCheckPolicyInput;
+  /** 适用交付政策（P03-8 / F-001；未提供即缺省，旧输入形态不携带该键）。 */
+  readonly deliveryPolicy?: ContextDeliveryPolicyInput;
   readonly permissions: ContextPermissionsInput;
   readonly requiredInputs: readonly ExecutionInputRef[];
   readonly historyIndex: ContextSelectedHistoryIndex | null;
@@ -450,6 +477,7 @@ const DEPENDENCY_KEYS = ['taskId', 'evidenceRefs'] as const;
 const HISTORY_ENTRY_KEYS = ['id', 'summary'] as const;
 const HISTORY_INDEX_KEYS = ['entries', 'totalAvailable'] as const;
 const CHECK_POLICY_KEYS = ['digest', 'copy'] as const;
+const DELIVERY_POLICY_KEYS = ['digest', 'copy'] as const;
 const PERMISSIONS_KEYS = ['grants'] as const;
 const TASK_KEYS = [
   'title',
@@ -468,6 +496,7 @@ const BUILD_INPUT_KEYS = [
   'taskId',
   'task',
   'checkPolicy',
+  'deliveryPolicy',
   'permissions',
   'requiredInputs',
   'historyIndex',
@@ -650,6 +679,35 @@ function validateCheckPolicy(value: unknown, field: string): ContextCheckPolicyI
       throw contextError('validation', `${field}.copy`, `序列化字节数不得超过 ${CONTEXT_CHECK_POLICY_COPY_MAX_BYTES}`, {
         measuredBytes: bytes,
         limitBytes: CONTEXT_CHECK_POLICY_COPY_MAX_BYTES,
+      });
+    }
+    copy = copyObject;
+  }
+  return copy === undefined ? { digest } : { digest, copy };
+}
+
+/** 适用交付政策校验：与检查政策同形态纪律（digest 必填 sha256；copy 可选有界普通对象）。 */
+function validateDeliveryPolicy(value: unknown, field: string): ContextDeliveryPolicyInput {
+  if (value === null) {
+    throw contextError('validation', field, '适用交付政策存在时必须是非空对象（缺省即不携带该键）');
+  }
+  if (value === undefined) {
+    throw contextError('missing_required_input', field, '适用交付政策键存在时必须有值（缺省即不携带该键）');
+  }
+  const object = requirePlainObject(value, { operation: CONTEXT_OPERATION }, field);
+  rejectUnknownKeys(object, DELIVERY_POLICY_KEYS, { operation: CONTEXT_OPERATION }, field);
+  const digest = validateSha256Digest(object.digest, { operation: CONTEXT_OPERATION }, `${field}.digest`);
+  let copy: Record<string, unknown> | undefined;
+  if (object.copy !== undefined) {
+    if (object.copy === null) {
+      throw contextError('validation', `${field}.copy`, '政策副本存在时必须是普通 JSON 对象（缺省即无副本）');
+    }
+    const copyObject = requirePlainObject(object.copy, { operation: CONTEXT_OPERATION }, `${field}.copy`);
+    const bytes = Buffer.byteLength(JSON.stringify(copyObject), 'utf8');
+    if (bytes > CONTEXT_DELIVERY_POLICY_COPY_MAX_BYTES) {
+      throw contextError('validation', `${field}.copy`, `序列化字节数不得超过 ${CONTEXT_DELIVERY_POLICY_COPY_MAX_BYTES}`, {
+        measuredBytes: bytes,
+        limitBytes: CONTEXT_DELIVERY_POLICY_COPY_MAX_BYTES,
       });
     }
     copy = copyObject;
@@ -972,6 +1030,10 @@ function validateContextBuildInputInner(value: unknown): ContextBuildInput {
   const taskId = validateStableId(object.taskId, { operation: CONTEXT_OPERATION }, 'input.taskId');
   const task = validateTask(object.task, 'input.task');
   const checkPolicy = validateCheckPolicy(object.checkPolicy, 'input.checkPolicy');
+  const deliveryPolicy =
+    object.deliveryPolicy === undefined || object.deliveryPolicy === null
+      ? undefined
+      : validateDeliveryPolicy(object.deliveryPolicy, 'input.deliveryPolicy');
   const permissions = validatePermissions(object.permissions, 'input.permissions');
   if (object.requiredInputs === undefined || object.requiredInputs === null) {
     throw contextError('missing_required_input', 'input.requiredInputs', '必需输入引用清单是必需字段（可为空数组）');
@@ -1007,6 +1069,7 @@ function validateContextBuildInputInner(value: unknown): ContextBuildInput {
     taskId,
     task,
     checkPolicy,
+    ...(deliveryPolicy === undefined ? {} : { deliveryPolicy }),
     permissions,
     requiredInputs,
     ...(historyIndex.entries.length > 0 || object.historyIndex !== undefined

@@ -37,6 +37,7 @@ import {
   validateSettingsPayload,
 } from '../ports/settings-schema.js';
 import type {
+  DeliveryPolicyV2,
   ExecutionLimitsPolicyV2,
   ModelComplexity,
   RuntimeStrategyV1,
@@ -96,6 +97,8 @@ export interface EffectivePolicies {
   readonly executionLimits?: EffectivePolicySection<ExecutionLimitsPolicyV2>;
   readonly verification?: EffectivePolicySection<VerificationPolicyV2>;
   readonly securityPolicy?: EffectivePolicySection<SecurityPolicyV2>;
+  /** P03-8 / F-001 交付政策段（项目非空段整体覆盖全局段；空段继承全局）。 */
+  readonly deliveryPolicy?: EffectivePolicySection<DeliveryPolicyV2>;
 }
 
 /**
@@ -294,6 +297,7 @@ export function mergeEffectiveSettings(input: unknown): EffectiveSettings {
     executionLimits?: EffectivePolicySection<ExecutionLimitsPolicyV2>;
     verification?: EffectivePolicySection<VerificationPolicyV2>;
     securityPolicy?: EffectivePolicySection<SecurityPolicyV2>;
+    deliveryPolicy?: EffectivePolicySection<DeliveryPolicyV2>;
   } = {};
   const executionLimits = pickPolicySection(
     'policies.executionLimits',
@@ -324,6 +328,16 @@ export function mergeEffectiveSettings(input: unknown): EffectiveSettings {
   );
   if (securityPolicy !== undefined) {
     policies.securityPolicy = securityPolicy;
+  }
+  const deliveryPolicy = pickPolicySection(
+    'policies.deliveryPolicy',
+    projectPolicies?.deliveryPolicy,
+    projectScope,
+    globalPolicies?.deliveryPolicy,
+    globalScope,
+  );
+  if (deliveryPolicy !== undefined) {
+    policies.deliveryPolicy = deliveryPolicy;
   }
 
   const configured =

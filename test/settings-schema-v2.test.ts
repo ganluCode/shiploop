@@ -7,7 +7,9 @@
  *   （显式升级，旧版本不被静默误读）；
  * - 政策子集（本阶段确认）：executionLimits（有界数值 + 非敏感环境变量名允许列表）、
  *   verification（requireChecksBeforeDone 布尔）、securityPolicy（isolation 仅
- *   trusted_project）；未知政策段（memoryPolicy/deliveryPolicy 等）拒绝而非静默忽略；
+ *   trusted_project）、deliveryPolicy（P03-8/F-001：仅 feature_final_only +
+ *   用户确认身份 + 仅 commit 动作）；未知政策段（memoryPolicy/agentModes 等）
+ *   拒绝而非静默忽略；
  * - 无效政策数值（0/负数/小数/字符串/超界）返回带字段定位的错误；
  * - 要求强隔离（strong_sandbox 等）明确拒绝，不静默降级为可信项目执行；
  * - 凭据引用卫生：credentialRef/endpointRef 只接受引用字符串；带凭据 URL、
@@ -125,7 +127,7 @@ describe('F-008 policies subset (non-sensitive policies)', () => {
     });
   });
 
-  it.each([['memoryPolicy'], ['deliveryPolicy'], ['agentModes'], ['unknownPolicy']])(
+  it.each([['memoryPolicy'], ['agentModes'], ['unknownPolicy']])(
     'rejects undefined policy segment %s instead of silently ignoring it',
     (segment) => {
       expectValidationError(

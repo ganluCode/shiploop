@@ -303,7 +303,7 @@ describe('F-008 迁移 v13：run_outcome_settlements 结算账本与时间依据
   it('v13 DDL 底线：表/两唯一索引/生效证据部分唯一索引/不可变触发器/外键链', async () => {
     const h = await openHarness();
     try {
-      expect(SQLITE_MIGRATIONS.length).toBe(24);
+      expect(SQLITE_MIGRATIONS.length).toBe(25);
       const indexes = (
         h.db.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'run_outcome_settlements'").all() as {
           name: string;

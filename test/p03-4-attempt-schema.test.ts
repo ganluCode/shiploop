@@ -98,7 +98,7 @@ describe('P03-4 F-001 persistent execution model', () => {
       for (const bad of [{ project_id: 'other-project' }, { feature_id: 'other-feature' },
         { number: 0 }, { number: 1.5 }, { execution_version: -1 }, { status: 'passed' },
         { execution_stage: 'unknown' }, { duration_ms: -1 }, { input_snapshot: '{' },
-        { input_snapshot: '{}' }, { input_snapshot: JSON.stringify({ ...f.inputSnapshot, schemaVersion: 3 }) },
+        { input_snapshot: '{}' }, { input_snapshot: JSON.stringify({ ...f.inputSnapshot, schemaVersion: 9 }) },
         { input_digest: 'bad' }]) expect(() => f.insert(bad)).toThrow();
       f.insert();
       for (const bad of [{ project_id: 'other-project' }, { state: 'released' },
@@ -275,7 +275,7 @@ describe('P03-4 F-001 persistent execution model', () => {
         db.prepare('UPDATE projects SET repository_binding_id = ? WHERE id = ?').run(binding.repository_binding_id, f.box.projectId);
       });
       const before = Object.fromEntries(tables.map(table => [table, predecessor.database.prepare(`SELECT * FROM ${table} ORDER BY id`).all()]));
-      expect((await migrateSqliteStorage(predecessor)).appliedVersions).toEqual([14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24]);
+      expect((await migrateSqliteStorage(predecessor)).appliedVersions).toEqual([14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25]);
       for (const table of tables) {
         const after = predecessor.database.prepare(`SELECT * FROM ${table} ORDER BY id`).all() as Record<string, unknown>[];
         if (table === 'tasks') {
@@ -330,8 +330,8 @@ describe('P03-4 F-001 persistent execution model', () => {
       const before = Object.fromEntries(
         tableNames.map((table) => [table, predecessor.database.prepare(`SELECT * FROM ${table}`).all()]),
       );
-      // v24 重建 attempts：历史行逐行保留，子表外键在提交时核验通过。
-      expect((await migrateSqliteStorage(predecessor)).appliedVersions).toEqual([24]);
+      // v24/v25 重建 attempts：历史行逐行保留，子表外键在提交时核验通过。
+      expect((await migrateSqliteStorage(predecessor)).appliedVersions).toEqual([24, 25]);
       for (const table of tableNames) {
         expect(predecessor.database.prepare(`SELECT * FROM ${table}`).all(), table).toEqual(before[table]);
       }
@@ -341,15 +341,18 @@ describe('P03-4 F-001 persistent execution model', () => {
         "SELECT name FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'attempts' ORDER BY name",
       ).all() as { name: string }[];
       expect(triggers.map((row) => row.name)).toEqual(['attempts_group_artifacts_check', 'attempts_input_immutable']);
-      // v1 历史快照仍可插入，v2 新快照（F-011 升版）现在合法，未知 v3 仍被 CHECK 拒绝。
+      // v1 历史快照仍可插入，v2/v3 新快照（F-011/F-001 升版）现在合法，未知 v9 仍被 CHECK 拒绝。
       const v2Snapshot = JSON.stringify({ ...f.inputSnapshot, schemaVersion: 2 });
       predecessor.database.prepare(
         `INSERT INTO attempts (id, created_at, updated_at, project_id, feature_id, run_id, task_id, number, owner_id, host_instance_id, execution_version, lease_until, input_snapshot, input_digest, input_ref, status) VALUES ('attempt-2', ?, ?, ?, ?, ?, '${f.ids.taskId}', 2, 'owner-1', 'host-1', 1, ?, ?, ?, 'snapshot-1', 'interrupted')`,
       ).run(NOW, NOW, f.box.projectId, f.box.featureId, f.ids.runId, NOW + 1000, v2Snapshot, HASH);
+      predecessor.database.prepare(
+        `INSERT INTO attempts (id, created_at, updated_at, project_id, feature_id, run_id, task_id, number, owner_id, host_instance_id, execution_version, lease_until, input_snapshot, input_digest, input_ref, status) VALUES ('attempt-3', ?, ?, ?, ?, ?, '${f.ids.taskId}', 3, 'owner-1', 'host-1', 1, ?, ?, ?, 'snapshot-1', 'interrupted')`,
+      ).run(NOW, NOW, f.box.projectId, f.box.featureId, f.ids.runId, NOW + 1000, JSON.stringify({ ...f.inputSnapshot, schemaVersion: 3 }), HASH);
       expect(() =>
         predecessor.database.prepare(
-          `INSERT INTO attempts (id, created_at, updated_at, project_id, feature_id, run_id, task_id, number, owner_id, host_instance_id, execution_version, lease_until, input_snapshot, input_digest, input_ref) VALUES ('attempt-3', ?, ?, ?, ?, ?, '${f.ids.taskId}', 3, 'owner-1', 'host-1', 1, ?, ?, ?, 'snapshot-1')`,
-        ).run(NOW, NOW, f.box.projectId, f.box.featureId, f.ids.runId, NOW + 1000, JSON.stringify({ ...f.inputSnapshot, schemaVersion: 3 }), HASH),
+          `INSERT INTO attempts (id, created_at, updated_at, project_id, feature_id, run_id, task_id, number, owner_id, host_instance_id, execution_version, lease_until, input_snapshot, input_digest, input_ref) VALUES ('attempt-4', ?, ?, ?, ?, ?, '${f.ids.taskId}', 4, 'owner-1', 'host-1', 1, ?, ?, ?, 'snapshot-1')`,
+        ).run(NOW, NOW, f.box.projectId, f.box.featureId, f.ids.runId, NOW + 1000, JSON.stringify({ ...f.inputSnapshot, schemaVersion: 9 }), HASH),
       ).toThrow(/attempts_snapshot_check/);
       // 不可变触发器仍阻止改写历史快照。
       expect(() =>
