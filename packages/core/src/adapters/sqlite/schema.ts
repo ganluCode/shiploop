@@ -621,6 +621,8 @@ export const features = sqliteTable('features', {
   sourceRefs: text('source_refs').notNull().default('[]'),
   /** 当前计划业务摘要（F-001 规范化 SHA-256；不是 CAS 依据）。 */
   planDigest: text('plan_digest'),
+  /** P03-8 / F-002：交付状态（设计 02 四态；提交回执同事务更新，不改变计划 revision）。 */
+  deliveryStatus: text('delivery_status').notNull().default('not_requested'),
 }, (table) => [
   check('features_revision_positive_check', sql`${table.revision} >= 1`),
   check('features_title_not_empty_check', sql`length(${table.title}) > 0`),
@@ -643,6 +645,10 @@ export const features = sqliteTable('features', {
   check(
     'features_plan_digest_sha256_check',
     sql`${table.planDigest} IS NULL OR (length(${table.planDigest}) = 64 AND ${table.planDigest} NOT GLOB '*[^0-9a-f]*')`,
+  ),
+  check(
+    'features_delivery_status_enum_check',
+    sql`${table.deliveryStatus} IN ('not_requested', 'pending', 'succeeded', 'failed')`,
   ),
   // 同项目复合外键：跨项目 Phase 引用在 DDL 级被拒绝。
   foreignKey({
@@ -1686,4 +1692,98 @@ export const checkResults = sqliteTable('check_results', {
   foreignKey({ name: 'check_results_output_artifact_fk', columns: [table.projectId, table.outputArtifactId], foreignColumns: [artifacts.projectId, artifacts.id] }).onDelete('restrict'),
   uniqueIndex('check_results_project_id_id_unique').on(table.projectId, table.id),
   uniqueIndex('check_results_batch_check_unique').on(table.batchId, table.checkKey),
+]);
+
+/**
+ * P03-8 / F-002：受控 Git 提交意图与操作回执（迁移 v26）。
+ *
+ * 意图列在注册时固定；终态写回只触达 status、actual commit/tree、exit/duration、
+ * reason、receipt、delivery_status、settled_at、revision/updated_at。数据库触发器
+ * （迁移 v26）提供不可变与终态防御纵深；应用层在同一事务内先 CAS 再写回。
+ */
+export const gitOperations = sqliteTable('git_operations', {
+  id: text('id').primaryKey(),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+  revision: integer('revision').notNull().default(1),
+  projectId: text('project_id').notNull().references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  featureId: text('feature_id').notNull(),
+  runId: text('run_id').notNull(),
+  attemptId: text('attempt_id'),
+  executionVersion: integer('execution_version').notNull(),
+  operationType: text('operation_type').notNull(),
+  repositoryBindingId: text('repository_binding_id').notNull(),
+  repoIdentity: text('repo_identity').notNull(),
+  worktreePath: text('worktree_path').notNull(),
+  expectedHead: text('expected_head').notNull(),
+  candidateTree: text('candidate_tree').notNull(),
+  codeDigest: text('code_digest').notNull(),
+  verificationRefs: text('verification_refs').notNull(),
+  approvalRefs: text('approval_refs').notNull(),
+  message: text('message').notNull(),
+  identityName: text('identity_name').notNull(),
+  identityEmail: text('identity_email').notNull(),
+  deliveryPolicyDigest: text('delivery_policy_digest').notNull(),
+  runtimeSource: text('runtime_source'),
+  ownerId: text('owner_id').notNull(),
+  hostInstanceId: text('host_instance_id').notNull(),
+  intentDigest: text('intent_digest').notNull(),
+  status: text('status').notNull().default('pending'),
+  actualCommit: text('actual_commit'),
+  actualTree: text('actual_tree'),
+  exitCode: integer('exit_code'),
+  durationMs: integer('duration_ms'),
+  reasonCode: text('reason_code'),
+  receipt: text('receipt'),
+  deliveryStatus: text('delivery_status'),
+  settledAt: integer('settled_at'),
+}, (table) => [
+  check('git_operations_revision_check', sql`${table.revision} >= 1`),
+  check('git_operations_version_check', sql`typeof(${table.executionVersion}) = 'integer' AND ${table.executionVersion} >= 1`),
+  check('git_operations_type_check', sql`${table.operationType} = 'feature_final_commit'`),
+  check('git_operations_oid_check', sql`
+    (length(${table.expectedHead}) IN (40, 64) AND ${table.expectedHead} NOT GLOB '*[^0-9a-f]*')
+    AND (length(${table.candidateTree}) IN (40, 64) AND ${table.candidateTree} NOT GLOB '*[^0-9a-f]*')
+    AND (${table.actualCommit} IS NULL OR (length(${table.actualCommit}) IN (40, 64) AND ${table.actualCommit} NOT GLOB '*[^0-9a-f]*'))
+    AND (${table.actualTree} IS NULL OR (length(${table.actualTree}) IN (40, 64) AND ${table.actualTree} NOT GLOB '*[^0-9a-f]*'))`),
+  check('git_operations_digest_check', sql`
+    length(${table.codeDigest}) = 64 AND ${table.codeDigest} NOT GLOB '*[^0-9a-f]*'
+    AND length(${table.deliveryPolicyDigest}) = 64 AND ${table.deliveryPolicyDigest} NOT GLOB '*[^0-9a-f]*'
+    AND length(${table.intentDigest}) = 64 AND ${table.intentDigest} NOT GLOB '*[^0-9a-f]*'`),
+  check('git_operations_refs_check', sql`
+    json_valid(${table.verificationRefs}) AND json_type(${table.verificationRefs}) = 'array'
+    AND json_valid(${table.approvalRefs}) AND json_type(${table.approvalRefs}) = 'array'`),
+  check('git_operations_message_check', sql`length(trim(${table.message})) > 0 AND length(${table.message}) <= 16384`),
+  check('git_operations_identity_check', sql`length(trim(${table.identityName})) > 0 AND length(trim(${table.identityEmail})) > 0`),
+  check('git_operations_runtime_check', sql`${table.runtimeSource} IS NULL OR (json_valid(${table.runtimeSource}) AND json_type(${table.runtimeSource}) = 'object')`),
+  check('git_operations_status_check', sql`${table.status} IN ('pending', 'succeeded', 'no_change', 'failed', 'unknown')`),
+  check('git_operations_delivery_status_check', sql`${table.deliveryStatus} IS NULL OR ${table.deliveryStatus} IN ('not_requested', 'pending', 'succeeded', 'failed')`),
+  check('git_operations_exit_check', sql`${table.exitCode} IS NULL OR (typeof(${table.exitCode}) = 'integer' AND ${table.exitCode} >= 0)`),
+  check('git_operations_duration_check', sql`${table.durationMs} IS NULL OR (typeof(${table.durationMs}) = 'integer' AND ${table.durationMs} >= 0)`),
+  check('git_operations_reason_check', sql`${table.reasonCode} IS NULL OR ${table.reasonCode} GLOB '[a-z]*' AND length(${table.reasonCode}) <= 64 AND ${table.reasonCode} NOT GLOB '*[^a-z0-9_]*'`),
+  check('git_operations_receipt_check', sql`${table.receipt} IS NULL OR (json_valid(${table.receipt}) AND json_type(${table.receipt}) = 'object')`),
+  check('git_operations_times_check', sql`
+    typeof(${table.createdAt}) = 'integer' AND ${table.createdAt} >= 0
+    AND typeof(${table.updatedAt}) = 'integer' AND ${table.updatedAt} >= 0
+    AND (${table.settledAt} IS NULL OR (typeof(${table.settledAt}) = 'integer' AND ${table.settledAt} >= 0))`),
+  check('git_operations_terminal_shape_check', sql`
+    (${table.status} = 'pending' AND ${table.actualCommit} IS NULL AND ${table.actualTree} IS NULL AND ${table.exitCode} IS NULL
+      AND ${table.durationMs} IS NULL AND ${table.reasonCode} IS NULL AND ${table.receipt} IS NULL
+      AND ${table.deliveryStatus} IS NULL AND ${table.settledAt} IS NULL)
+    OR (${table.status} = 'succeeded' AND ${table.actualCommit} IS NOT NULL AND ${table.actualTree} = ${table.candidateTree}
+      AND ${table.receipt} IS NOT NULL AND ${table.deliveryStatus} = 'succeeded' AND ${table.settledAt} IS NOT NULL)
+    OR (${table.status} = 'no_change' AND ${table.actualCommit} = ${table.expectedHead} AND ${table.actualTree} IS NOT NULL
+      AND ${table.receipt} IS NOT NULL AND ${table.deliveryStatus} = 'succeeded' AND ${table.settledAt} IS NOT NULL)
+    OR (${table.status} = 'failed' AND ${table.receipt} IS NOT NULL AND ${table.deliveryStatus} = 'failed' AND ${table.settledAt} IS NOT NULL)
+    OR (${table.status} = 'unknown' AND ${table.actualCommit} IS NULL AND ${table.actualTree} IS NULL
+      AND ${table.receipt} IS NOT NULL AND ${table.deliveryStatus} = 'pending' AND ${table.settledAt} IS NOT NULL)`),
+  foreignKey({ name: 'git_operations_binding_fk', columns: [table.repositoryBindingId], foreignColumns: [repositoryBindings.id] }).onDelete('restrict'),
+  foreignKey({ name: 'git_operations_feature_fk', columns: [table.projectId, table.featureId], foreignColumns: [features.projectId, features.id] }).onDelete('restrict'),
+  foreignKey({ name: 'git_operations_run_fk', columns: [table.featureId, table.runId], foreignColumns: [runs.featureId, runs.id] }).onDelete('restrict'),
+  foreignKey({ name: 'git_operations_attempt_fk', columns: [table.projectId, table.attemptId], foreignColumns: [attempts.projectId, attempts.id] }).onDelete('restrict'),
+  foreignKey({ name: 'git_operations_binding_same_project_fk', columns: [table.projectId, table.repositoryBindingId], foreignColumns: [repositoryBindings.projectId, repositoryBindings.id] }).onDelete('restrict'),
+  uniqueIndex('git_operations_project_id_id_unique').on(table.projectId, table.id),
+  index('git_operations_project_feature_status_index').on(table.projectId, table.featureId, table.status),
+  index('git_operations_project_run_index').on(table.projectId, table.runId),
+  index('git_operations_project_intent_index').on(table.projectId, table.intentDigest),
 ]);

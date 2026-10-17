@@ -201,6 +201,7 @@ describe('F-005 迁移执行与记录', () => {
           'command_receipts',
           'execution_batches',
           'features',
+          'git_operations',
           'global_settings',
           'managed_workspaces',
           'phases',
@@ -340,9 +341,13 @@ describe('F-005 迁移执行与记录', () => {
         expect(rows[23]!.checksum).toBe(SQLITE_MIGRATIONS[23]!.checksum);
         expect(rows[24]!.version).toBe(25);
         expect(rows[24]!.checksum).toBe(SQLITE_MIGRATIONS[24]!.checksum);
-        expect(rows[25]!.version).toBe(PROBE_MIGRATION.version);
-        expect(rows[25]!.checksum).toBe(PROBE_MIGRATION.checksum);
-        expect(rows[25]!.applied_at).toBe(FIXED_NOW_MS + 1_000);
+        // P03-8 / F-002：v26 为受控 Git 操作意图/回执表与 features.delivery_status；
+        // 探针迁移紧随其后。
+        expect(rows[25]!.version).toBe(26);
+        expect(rows[25]!.checksum).toBe(SQLITE_MIGRATIONS[25]!.checksum);
+        expect(rows[26]!.version).toBe(PROBE_MIGRATION.version);
+        expect(rows[26]!.checksum).toBe(PROBE_MIGRATION.checksum);
+        expect(rows[26]!.applied_at).toBe(FIXED_NOW_MS + 1_000);
       } finally {
         session.close();
       }

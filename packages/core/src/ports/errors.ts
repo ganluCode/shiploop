@@ -58,7 +58,9 @@ export type StorageEntityType =
   /** P03-7 / F-002：验证批次（verification_batches，迁移 v21）。 */
   | 'verification_batch'
   /** P03-7 / F-002：逐项检查结果（check_results，迁移 v21）。 */
-  | 'check_result';
+  | 'check_result'
+  /** P03-8 / F-002：受控 Git 提交意图与操作回执（git_operations，迁移 v26）。 */
+  | 'git_operation';
 
 export type StorageErrorKind =
   /** 外部输入未通过运行时校验（缺字段/类型错误/未知 schemaVersion/非法摘要等）。 */

@@ -63,6 +63,7 @@ import {
 import type { StateEventAggregateType } from './state-store.js';
 import { ATTEMPT_EXECUTION_STAGES } from './attempt-store.js';
 import { WORKSPACE_EVENT_TYPE, WORKSPACE_OPERATION_STATUSES } from './workspace.js';
+import { GIT_OPERATION_TERMINAL_STATUSES } from './git-operations.js';
 import { validateStableId } from './validation.js';
 
 /** 事件读取面的默认操作身份（快照/SSE/补读映射共用；具体路由可传自己的 operation）。 */
@@ -107,6 +108,10 @@ export const BASELINE_STARTED_EVENT_TYPE = 'baseline.started';
 export const BASELINE_CHECK_COMPLETED_EVENT_TYPE = 'baseline.check_completed';
 export const BASELINE_COMPLETED_EVENT_TYPE = 'baseline.completed';
 export const BASELINE_CANCELLED_EVENT_TYPE = 'baseline.cancelled';
+
+/** P03-8 / F-002：Git 操作意图登记/终态回执事件（聚合为 Git operation 自身）。 */
+export const GIT_OPERATION_REGISTERED_EVENT_TYPE = 'git.operation.registered';
+export const GIT_OPERATION_SETTLED_EVENT_TYPE = 'git.operation.settled';
 
 /** §9.2 P02-2 事件类型白名单（顺序即冻结顺序；白名单外不得出现在公开流中）。 */
 export const PUBLIC_STATE_EVENT_TYPES = [
@@ -153,6 +158,9 @@ export const PUBLIC_STATE_EVENT_TYPES = [
   TASK_APPROVAL_BLOCKED_EVENT_TYPE,
   TASK_APPROVAL_DECIDED_EVENT_TYPE,
   WORKSPACE_EVENT_TYPE,
+  // P03-8 / F-002：受控 Git 操作意图与终态回执（payload 仅 operationId/status）。
+  GIT_OPERATION_REGISTERED_EVENT_TYPE,
+  GIT_OPERATION_SETTLED_EVENT_TYPE,
 ] as const;
 
 export type PublicStateEventType = (typeof PUBLIC_STATE_EVENT_TYPES)[number];
@@ -180,7 +188,9 @@ type EventPayloadKind =
   | 'attemptUpdated'
   | 'taskApprovalBlocked'
   | 'taskApprovalDecided'
-  | 'workspaceOperationUpdated';
+  | 'workspaceOperationUpdated'
+  | 'gitOperationRegistered'
+  | 'gitOperationSettled';
 
 /** 每类事件冻结的 aggregate_type、scope 种类与 payload 形状。 */
 export interface StateEventTypeSpec {
@@ -330,6 +340,12 @@ export const STATE_EVENT_TYPE_SPECS: Readonly<
   [ATTEMPT_UPDATED_EVENT_TYPE]: Object.freeze({ aggregateType: 'task', scopeKind: 'project', payloadKind: 'attemptUpdated' }),
   [TASK_APPROVAL_BLOCKED_EVENT_TYPE]: Object.freeze({ aggregateType: 'task', scopeKind: 'project', payloadKind: 'taskApprovalBlocked' }),
   [TASK_APPROVAL_DECIDED_EVENT_TYPE]: Object.freeze({ aggregateType: 'task', scopeKind: 'project', payloadKind: 'taskApprovalDecided' }),
+  [GIT_OPERATION_REGISTERED_EVENT_TYPE]: Object.freeze({
+    aggregateType: 'git_operation', scopeKind: 'project', payloadKind: 'gitOperationRegistered',
+  }),
+  [GIT_OPERATION_SETTLED_EVENT_TYPE]: Object.freeze({
+    aggregateType: 'git_operation', scopeKind: 'project', payloadKind: 'gitOperationSettled',
+  }),
   // P03-3 / F-009：批次预算修订事件（聚合为目标 Batch 自身；payload 恒为
   // {revised:true}，不携带预算数值/理由/批准主体/启动或恢复语义）。
   [EXECUTION_BUDGET_REVISED_EVENT_TYPE]: Object.freeze({
@@ -617,6 +633,35 @@ function validateExecutionBudgetRevisedPayload(
   return { revised: true };
 }
 
+/** P03-8 / F-002：Git 意图登记事件脱敏 payload（仅 operationId，无路径/消息/身份）。 */
+function validateGitOperationRegisteredPayload(
+  payload: Record<string, unknown>,
+  operation: string,
+): Record<string, unknown> {
+  exactPayloadKeys(operation, payload, ['operationId']);
+  if (typeof payload.operationId !== 'string' || !isUuidV4(payload.operationId)) {
+    corrupt(operation, 'event_payload_violation');
+  }
+  return { operationId: payload.operationId };
+}
+
+/** P03-8 / F-002：Git 终态事件脱敏 payload（仅 operationId + 受控终态）。 */
+function validateGitOperationSettledPayload(
+  payload: Record<string, unknown>,
+  operation: string,
+): Record<string, unknown> {
+  exactPayloadKeys(operation, payload, ['operationId', 'status']);
+  if (
+    typeof payload.operationId !== 'string' ||
+    !isUuidV4(payload.operationId) ||
+    typeof payload.status !== 'string' ||
+    !(GIT_OPERATION_TERMINAL_STATUSES as readonly string[]).includes(payload.status)
+  ) {
+    corrupt(operation, 'event_payload_violation');
+  }
+  return { operationId: payload.operationId, status: payload.status };
+}
+
 function validateSummaryNameList(value: unknown): value is string[] {
   if (!Array.isArray(value) || value.length > SUMMARY_LIST_MAX_ENTRIES) {
     return false;
@@ -881,6 +926,10 @@ export function mapStateEvent(row: unknown, operation: string = EVENT_READ_OPERA
     payload = { claimed: true };
   } else if (spec.payloadKind === 'executionBudgetRevised') {
     payload = validateExecutionBudgetRevisedPayload(row.payload, operation);
+  } else if (spec.payloadKind === 'gitOperationRegistered') {
+    payload = validateGitOperationRegisteredPayload(row.payload, operation);
+  } else if (spec.payloadKind === 'gitOperationSettled') {
+    payload = validateGitOperationSettledPayload(row.payload, operation);
   } else if (spec.payloadKind === 'changedFields') {
     payload = validateChangedFieldsPayload(row.payload, operation);
   } else if (spec.payloadKind === 'baselineAuthorized') {

@@ -315,6 +315,22 @@ export interface CommandTransaction {
     runId: string,
     resultKey: string,
   ): import('./execution-store.js').RunOutcomeSettlementRecord | null;
+  /* ---------------------------------------------------------------- *
+   * P03-8 / F-002 受控 Git 操作意图/回执（迁移 v26；同一 BEGIN IMMEDIATE 内）
+   * ---------------------------------------------------------------- */
+  /** 读取目标 Git 操作（同项目；缺失 not_found、跨项目 ownership）。 */
+  getGitOperation(
+    projectId: string,
+    operationId: string,
+  ): import('./git-operations.js').GitOperationRecord;
+  /** 固定不可变提交意图；同 operationId 同意图幂等，不同意图 conflict。 */
+  registerGitOperation(
+    input: unknown,
+  ): import('./git-operations.js').GitOperationMutation;
+  /** pending 意图一次性 CAS 写回终态 + 回执 + Feature deliveryStatus + 事件。 */
+  finalizeGitOperation(
+    input: unknown,
+  ): import('./git-operations.js').GitOperationFinalization;
   saveReceipt(receipt: unknown): void;
 }
 

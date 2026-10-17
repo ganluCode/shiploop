@@ -1946,6 +1946,167 @@ BEGIN SELECT RAISE(ABORT, 'attempt input and business identity are immutable'); 
 PRAGMA legacy_alter_table = OFF;
 `;
 
+/**
+ * 第二十六个迁移（P03-8 / F-002）：受控 Git 提交意图与操作回执。
+ *
+ * 契约依据：docs/p03-8-f002-git-operation-contract.md 与设计 07 §4（提交作为
+ * operation：保存预期 HEAD、代码摘要、消息和策略→执行 git→核对新 HEAD/tree→
+ * 回执落库）、设计 11 §9（operations 的恢复意图/回执语义）。本迁移只建立
+ * 提交意图与回执的持久化边界，不执行 Git；F-003 在事务外执行受控提交，
+ * F-004 依据本表意图核对不确定副作用。
+ *
+ * 结构决策：
+ * - 复用既有 Project/Feature/Run/Attempt/RepositoryBinding 身份与复合外键，
+ *   不新建第二套项目/仓库表；不建立设计 11 中面向未来的通用 operations 表
+ *   （本表即 Git 外部副作用的专用 intent/step/receipt 记录，F-002 范围更窄）；
+ * - features 追加 delivery_status 列（设计 02 §交付状态四态），历史 features
+ *   行取默认 not_requested；仅以 ADD COLUMN 追加，不重建历史表、不改历史
+ *   checksum；
+ * - 意图列不可变（触发器 + 应用侧 CAS）；终态后任何 UPDATE 拒绝（迟到结果/
+ *   重复收尾不能覆盖权威事实）；INSERT 只允许 pending（未固定意图不能先有终态）；
+ * - 未知退出码/耗时保持 NULL；succeeded 的 actual_tree 必须等于固定候选 tree，
+ *   no_change 的 actual_commit 必须等于固定 expected_head（行级 CHECK + 应用侧
+ *   双重校验）；unknown 不得携带 actual commit/tree；
+ * - 大正文/路径不进事件 payload；本表只保存身份级事实与用户明确身份，不保存
+ *   凭据、原始 diff 或 Git 输出正文。
+ */
+const MIGRATION_026_SQL = `
+ALTER TABLE features ADD COLUMN delivery_status TEXT NOT NULL DEFAULT 'not_requested'
+  CONSTRAINT features_delivery_status_enum_check
+  CHECK (delivery_status IN ('not_requested', 'pending', 'succeeded', 'failed'));
+
+CREATE TABLE git_operations (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  project_id TEXT NOT NULL,
+  feature_id TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  attempt_id TEXT,
+  execution_version INTEGER NOT NULL,
+  operation_type TEXT NOT NULL,
+  repository_binding_id TEXT NOT NULL,
+  repo_identity TEXT NOT NULL,
+  worktree_path TEXT NOT NULL,
+  expected_head TEXT NOT NULL,
+  candidate_tree TEXT NOT NULL,
+  code_digest TEXT NOT NULL,
+  verification_refs TEXT NOT NULL,
+  approval_refs TEXT NOT NULL,
+  message TEXT NOT NULL,
+  identity_name TEXT NOT NULL,
+  identity_email TEXT NOT NULL,
+  delivery_policy_digest TEXT NOT NULL,
+  runtime_source TEXT,
+  owner_id TEXT NOT NULL,
+  host_instance_id TEXT NOT NULL,
+  intent_digest TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  actual_commit TEXT,
+  actual_tree TEXT,
+  exit_code INTEGER,
+  duration_ms INTEGER,
+  reason_code TEXT,
+  receipt TEXT,
+  delivery_status TEXT,
+  settled_at INTEGER,
+  CONSTRAINT git_operations_revision_check CHECK (revision >= 1),
+  CONSTRAINT git_operations_version_check CHECK (typeof(execution_version) = 'integer' AND execution_version >= 1),
+  CONSTRAINT git_operations_type_check CHECK (operation_type = 'feature_final_commit'),
+  CONSTRAINT git_operations_oid_check CHECK (
+    (length(expected_head) IN (40, 64) AND expected_head NOT GLOB '*[^0-9a-f]*')
+    AND (length(candidate_tree) IN (40, 64) AND candidate_tree NOT GLOB '*[^0-9a-f]*')
+    AND (actual_commit IS NULL OR (length(actual_commit) IN (40, 64) AND actual_commit NOT GLOB '*[^0-9a-f]*'))
+    AND (actual_tree IS NULL OR (length(actual_tree) IN (40, 64) AND actual_tree NOT GLOB '*[^0-9a-f]*'))
+  ),
+  CONSTRAINT git_operations_digest_check CHECK (
+    length(code_digest) = 64 AND code_digest NOT GLOB '*[^0-9a-f]*'
+    AND length(delivery_policy_digest) = 64 AND delivery_policy_digest NOT GLOB '*[^0-9a-f]*'
+    AND length(intent_digest) = 64 AND intent_digest NOT GLOB '*[^0-9a-f]*'
+  ),
+  CONSTRAINT git_operations_refs_check CHECK (
+    json_valid(verification_refs) AND json_type(verification_refs) = 'array'
+    AND json_valid(approval_refs) AND json_type(approval_refs) = 'array'
+  ),
+  CONSTRAINT git_operations_message_check CHECK (length(trim(message)) > 0 AND length(message) <= 16384),
+  CONSTRAINT git_operations_identity_check CHECK (length(trim(identity_name)) > 0 AND length(trim(identity_email)) > 0),
+  CONSTRAINT git_operations_runtime_check CHECK (runtime_source IS NULL OR (json_valid(runtime_source) AND json_type(runtime_source) = 'object')),
+  CONSTRAINT git_operations_status_check CHECK (status IN ('pending', 'succeeded', 'no_change', 'failed', 'unknown')),
+  CONSTRAINT git_operations_delivery_status_check CHECK (delivery_status IS NULL OR delivery_status IN ('not_requested', 'pending', 'succeeded', 'failed')),
+  CONSTRAINT git_operations_exit_check CHECK (exit_code IS NULL OR (typeof(exit_code) = 'integer' AND exit_code >= 0)),
+  CONSTRAINT git_operations_duration_check CHECK (duration_ms IS NULL OR (typeof(duration_ms) = 'integer' AND duration_ms >= 0)),
+  CONSTRAINT git_operations_reason_check CHECK (reason_code IS NULL OR reason_code GLOB '[a-z]*' AND length(reason_code) <= 64 AND reason_code NOT GLOB '*[^a-z0-9_]*'),
+  CONSTRAINT git_operations_receipt_check CHECK (receipt IS NULL OR (json_valid(receipt) AND json_type(receipt) = 'object')),
+  CONSTRAINT git_operations_times_check CHECK (
+    typeof(created_at) = 'integer' AND created_at >= 0
+    AND typeof(updated_at) = 'integer' AND updated_at >= 0
+    AND (settled_at IS NULL OR (typeof(settled_at) = 'integer' AND settled_at >= 0))
+  ),
+  CONSTRAINT git_operations_terminal_shape_check CHECK (
+    (status = 'pending' AND actual_commit IS NULL AND actual_tree IS NULL AND exit_code IS NULL
+      AND duration_ms IS NULL AND reason_code IS NULL AND receipt IS NULL
+      AND delivery_status IS NULL AND settled_at IS NULL)
+    OR (status = 'succeeded' AND actual_commit IS NOT NULL AND actual_tree = candidate_tree
+      AND receipt IS NOT NULL AND delivery_status = 'succeeded' AND settled_at IS NOT NULL)
+    OR (status = 'no_change' AND actual_commit = expected_head AND actual_tree IS NOT NULL
+      AND receipt IS NOT NULL AND delivery_status = 'succeeded' AND settled_at IS NOT NULL)
+    OR (status = 'failed' AND receipt IS NOT NULL AND delivery_status = 'failed' AND settled_at IS NOT NULL)
+    OR (status = 'unknown' AND actual_commit IS NULL AND actual_tree IS NULL
+      AND receipt IS NOT NULL AND delivery_status = 'pending' AND settled_at IS NOT NULL)
+  ),
+  CONSTRAINT git_operations_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT git_operations_binding_fk FOREIGN KEY (repository_binding_id) REFERENCES repository_bindings (id) ON DELETE RESTRICT,
+  CONSTRAINT git_operations_feature_fk FOREIGN KEY (project_id, feature_id) REFERENCES features (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT git_operations_run_fk FOREIGN KEY (feature_id, run_id) REFERENCES runs (feature_id, id) ON DELETE RESTRICT,
+  CONSTRAINT git_operations_attempt_fk FOREIGN KEY (project_id, attempt_id) REFERENCES attempts (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT git_operations_binding_same_project_fk FOREIGN KEY (project_id, repository_binding_id) REFERENCES repository_bindings (project_id, id) ON DELETE RESTRICT
+);
+
+CREATE UNIQUE INDEX git_operations_project_id_id_unique ON git_operations (project_id, id);
+CREATE INDEX git_operations_project_feature_status_index ON git_operations (project_id, feature_id, status);
+CREATE INDEX git_operations_project_run_index ON git_operations (project_id, run_id);
+CREATE INDEX git_operations_project_intent_index ON git_operations (project_id, intent_digest);
+
+CREATE TRIGGER git_operations_insert_pending BEFORE INSERT ON git_operations
+WHEN NEW.status <> 'pending'
+BEGIN SELECT RAISE(ABORT, 'git operation must start pending'); END;
+
+CREATE TRIGGER git_operations_attempt_identity_check BEFORE INSERT ON git_operations
+WHEN NEW.attempt_id IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM attempts
+  WHERE attempts.id = NEW.attempt_id AND attempts.project_id = NEW.project_id
+    AND attempts.feature_id = NEW.feature_id AND attempts.run_id = NEW.run_id
+    AND attempts.execution_version = NEW.execution_version
+)
+BEGIN SELECT RAISE(ABORT, 'git operation attempt identity mismatch'); END;
+
+CREATE TRIGGER git_operations_intent_immutable BEFORE UPDATE ON git_operations
+WHEN NEW.id IS NOT OLD.id OR NEW.project_id IS NOT OLD.project_id
+  OR NEW.feature_id IS NOT OLD.feature_id OR NEW.run_id IS NOT OLD.run_id
+  OR NEW.attempt_id IS NOT OLD.attempt_id
+  OR NEW.execution_version IS NOT OLD.execution_version
+  OR NEW.operation_type IS NOT OLD.operation_type
+  OR NEW.repository_binding_id IS NOT OLD.repository_binding_id
+  OR NEW.repo_identity IS NOT OLD.repo_identity OR NEW.worktree_path IS NOT OLD.worktree_path
+  OR NEW.expected_head IS NOT OLD.expected_head OR NEW.candidate_tree IS NOT OLD.candidate_tree
+  OR NEW.code_digest IS NOT OLD.code_digest
+  OR NEW.verification_refs IS NOT OLD.verification_refs
+  OR NEW.approval_refs IS NOT OLD.approval_refs
+  OR NEW.message IS NOT OLD.message
+  OR NEW.identity_name IS NOT OLD.identity_name OR NEW.identity_email IS NOT OLD.identity_email
+  OR NEW.delivery_policy_digest IS NOT OLD.delivery_policy_digest
+  OR NEW.runtime_source IS NOT OLD.runtime_source
+  OR NEW.owner_id IS NOT OLD.owner_id OR NEW.host_instance_id IS NOT OLD.host_instance_id
+  OR NEW.intent_digest IS NOT OLD.intent_digest
+  OR NEW.created_at IS NOT OLD.created_at
+BEGIN SELECT RAISE(ABORT, 'git operation intent is immutable'); END;
+
+CREATE TRIGGER git_operations_terminal_immutable BEFORE UPDATE ON git_operations
+WHEN OLD.status <> 'pending'
+BEGIN SELECT RAISE(ABORT, 'git operation is terminal'); END;
+`;
+
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     version: 1,
@@ -2036,4 +2197,5 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 23, sql: MIGRATION_023_SQL, checksum: sha256Hex(MIGRATION_023_SQL) },
   { version: 24, sql: MIGRATION_024_SQL, checksum: sha256Hex(MIGRATION_024_SQL), foreignKeysOff: true },
   { version: 25, sql: MIGRATION_025_SQL, checksum: sha256Hex(MIGRATION_025_SQL), foreignKeysOff: true },
+  { version: 26, sql: MIGRATION_026_SQL, checksum: sha256Hex(MIGRATION_026_SQL) },
 ];

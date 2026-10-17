@@ -52,6 +52,8 @@ import {
   EXECUTION_INPUT_PREPARED_EVENT_TYPE,
   EXECUTION_RUN_DISPATCHED_EVENT_TYPE,
   EXECUTION_BUDGET_REVISED_EVENT_TYPE,
+  GIT_OPERATION_REGISTERED_EVENT_TYPE,
+  GIT_OPERATION_SETTLED_EVENT_TYPE,
   createEventCursorBinding,
   createEventWatermark,
   decodeEventCursor,
@@ -169,6 +171,9 @@ describe('F-003 冻结事件封套版本与 §9.2 事件白名单（P02-2 六类
       'task.approval.blocked',
       'task.approval.decided',
       'workspace.operation_updated',
+      // P03-8 / F-002：受控 Git 操作意图登记与终态回执（聚合为 Git operation）。
+      GIT_OPERATION_REGISTERED_EVENT_TYPE,
+      GIT_OPERATION_SETTLED_EVENT_TYPE,
     ]);
     expect(PROJECT_METADATA_UPDATED_EVENT_TYPE).toBe('project.metadata_updated');
     expect(SETTINGS_GLOBAL_CREATED_EVENT_TYPE).toBe('settings.global_created');

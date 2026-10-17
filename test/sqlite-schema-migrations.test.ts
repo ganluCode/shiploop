@@ -83,6 +83,8 @@ const SCHEMA_TABLES = [
   // P03-7 / F-002：VerificationBatch / CheckResult 与不可变验证证据身份（迁移 v21）。
   ['verification_batches', schema.verificationBatches],
   ['check_results', schema.checkResults],
+  // P03-8 / F-002：受控 Git 操作意图与回执（迁移 v26）。
+  ['git_operations', schema.gitOperations],
   ['schema_migrations', schema.schemaMigrations],
 ] as const;
 
@@ -619,6 +621,13 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
         'check_results:(project_id)->projects.(id)',
         'check_results:(project_id,batch_id)->verification_batches.(project_id,id)',
         'check_results:(project_id,output_artifact_id)->artifacts.(project_id,id)',
+        // P03-8 / F-002 Git 操作意图/回执（迁移 v26）：同项目 Feature/Run/Attempt/绑定关联。
+        'git_operations:(project_id)->projects.(id)',
+        'git_operations:(repository_binding_id)->repository_bindings.(id)',
+        'git_operations:(project_id,feature_id)->features.(project_id,id)',
+        'git_operations:(feature_id,run_id)->runs.(feature_id,id)',
+        'git_operations:(project_id,attempt_id)->attempts.(project_id,id)',
+        'git_operations:(project_id,repository_binding_id)->repository_bindings.(project_id,id)',
       ]);
       type FkPragmaRow = { id: number; seq: number; table: string; from: string; to: string; on_update: string; on_delete: string };
       const actualFks = new Set<string>();

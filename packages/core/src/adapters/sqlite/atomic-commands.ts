@@ -8,6 +8,7 @@ import type { AtomicCommandStore, CommandTransaction } from '../../ports/atomic-
 import { createSqliteBaselineAccess } from './baseline-store.js';
 import { createSqliteCommandReceiptAccess } from './command-receipts.js';
 import { createSqliteExecutionAccess } from './execution-store.js';
+import { createSqliteGitOperationStore } from './git-operations.js';
 import { createSqlitePlanAccess } from './plan-store.js';
 import type { SqliteStorageSession } from './session.js';
 import { createSqliteStateAccess } from './state-store.js';
@@ -22,6 +23,7 @@ export function createSqliteAtomicCommandStore(
   const baseline = createSqliteBaselineAccess(session, options);
   const plan = createSqlitePlanAccess(session, options);
   const executions = createSqliteExecutionAccess(session, options);
+  const gitOperations = createSqliteGitOperationStore(session, options);
   return {
     findReceipt: receipts.findReceiptByCommandId,
     // F-009：配置命令一致性视图的事务外只读来源；写事务内调用是编程错误。
@@ -150,6 +152,13 @@ export function createSqliteAtomicCommandStore(
           // F-008：受信结果结算与账本读取，仅在此短写事务上下文内有效。
           settleExecutionRunOutcome: guarded(executions.settleExecutionRunOutcomeInTransaction),
           getRunOutcomeSettlement: guarded(executions.getRunOutcomeSettlementInTransaction),
+          // P03-8 / F-002：Git 意图/回执（迁移 v26；同一 BEGIN IMMEDIATE 内）。
+          getGitOperation: guarded((projectId: string, operationId: string) =>
+            gitOperations.getGitOperationInTransaction(transaction, projectId, operationId)),
+          registerGitOperation: guarded((input: unknown) =>
+            gitOperations.registerGitOperationInTransaction(transaction, input)),
+          finalizeGitOperation: guarded((input: unknown) =>
+            gitOperations.finalizeGitOperationInTransaction(transaction, input)),
           saveReceipt: guarded(receipts.saveReceiptInTransaction),
         });
         try {

@@ -17,6 +17,7 @@ export * from './ports/validation.js';
 export * from './ports/settings-schema.js';
 export * from './ports/task-verification-policy.js';
 export * from './ports/delivery-policy.js';
+export * from './ports/git-operations.js';
 export * from './ports/verification-store.js';
 export * from './ports/code-attempt-budget.js';
 export * from './ports/verification-aggregate.js';
