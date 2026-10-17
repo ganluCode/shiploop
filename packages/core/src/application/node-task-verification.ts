@@ -271,10 +271,12 @@ export function createNodeTaskVerificationExecutor(options: NodeTaskVerification
         return confirmed;
       }, input.signal);
       const observed = await observeProtocol(handle, input.targets);
-      testCount = observed.report?.testCount ?? null;
       captured = await evidence.collect({ projectId: input.projectId, operationId: input.operation, checkKey: check.checkKey,
         request, handle: observed.handle, environmentRef: check.environmentRef,
         codeIdentity: input.codeIdentity ?? codeIdentity(input.codeDigest) });
+      // 报告解析在输出流排空后完成（observeProtocol 的 report 是惰性 getter）：
+      // 覆盖计数必须在采集后读取，否则收集到的 testCount 永远丢失。
+      testCount = observed.report?.testCount ?? null;
       const resultReason: CommandProcessReason | null = captured.processReason;
       if (!captured.stopConfirmed) reason = 'stop_unconfirmed';
       else if (resultReason === 'missing_command' || resultReason === 'permission_denied' || resultReason === 'spawn_failed') { status = 'error'; reason = resultReason; }
