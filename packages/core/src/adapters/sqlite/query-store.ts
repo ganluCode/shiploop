@@ -53,6 +53,11 @@ import { createSqliteTaskEvidenceQueryStore } from './task-evidence-query-store.
 import { createSqliteGitOperationQueryStore } from './git-operation-query-store.js';
 import type { GitOperationQueryReadStore } from '../../ports/git-operation-query.js';
 import type { GitOperationRecord } from '../../ports/git-operations.js';
+import { createSqliteFeatureDeliveryQueryStore } from './feature-delivery-query-store.js';
+import type {
+  FeatureDeliveryQueryReadStore,
+  FeatureDeliveryView,
+} from '../../ports/feature-delivery-query.js';
 import type {
   TaskApprovalItemRow,
   TaskEvidenceQueryReadStore,
@@ -79,7 +84,8 @@ import type { SqliteStateStoreOptions } from './state-store.js';
  * P03-5 / F-011 起追加工作区状态查询窄读取（WorkspaceQueryReadStore）；
  * P03-6 / F-011 起追加 Work Session/证据查询窄读取（WorkSessionQueryReadStore）；
  * P03-7 / F-013 起追加 Task 证据/人审/返工链窄读取（TaskEvidenceQueryReadStore）；
- * P03-8 / F-009 起追加 Git 操作查询窄读取（GitOperationQueryReadStore）。 */
+ * P03-8 / F-009 起追加 Git 操作查询窄读取（GitOperationQueryReadStore）；
+ * P03-8 / F-010 起追加 Feature 分轴结果查询窄读取（FeatureDeliveryQueryReadStore）。 */
 export interface SqliteQueryStore
   extends AuthorizedProjectReadStore,
     ConsistentSnapshotStore,
@@ -91,7 +97,8 @@ export interface SqliteQueryStore
     WorkspaceQueryReadStore,
     WorkSessionQueryReadStore,
     TaskEvidenceQueryReadStore,
-    GitOperationQueryReadStore {}
+    GitOperationQueryReadStore,
+    FeatureDeliveryQueryReadStore {}
 
 export function createSqliteQueryStore(
   session: SqliteStorageSession,
@@ -114,6 +121,7 @@ export function createSqliteQueryStore(
   const workSessions = createSqliteWorkSessionQueryStore(session);
   const taskEvidence = createSqliteTaskEvidenceQueryStore(session);
   const gitOperations = createSqliteGitOperationQueryStore(session);
+  const featureDelivery = createSqliteFeatureDeliveryQueryStore(session);
   return {
     listVisibleProjects(visibility: unknown, filter: unknown): ProjectPage {
       return access.listVisibleProjects(visibility, filter);
@@ -256,5 +264,7 @@ export function createSqliteQueryStore(
       request: PlanListRequest,
     ): PlanRecordPage<GitOperationRecord> =>
       gitOperations.listGitOperationRecordsByRun(visibility, projectId, runId, request),
+    readFeatureDeliveryView: (projectId: unknown, featureId: unknown): FeatureDeliveryView | undefined =>
+      featureDelivery.readFeatureDeliveryView(projectId, featureId),
   };
 }

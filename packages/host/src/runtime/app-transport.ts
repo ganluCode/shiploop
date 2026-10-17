@@ -59,6 +59,7 @@ import {
   COMMANDS_ROUTE,
   EVENTS_ROUTE,
   FEATURE_APPROVALS_ROUTE_SUFFIX,
+  FEATURE_DELIVERY_ROUTE_SUFFIX,
   FEATURES_ROUTE,
   FEATURES_ROUTE_PREFIX,
   GIT_OPERATIONS_ROUTE,
@@ -155,7 +156,10 @@ export type ApplicationOperation =
   // P03-8 / F-009：Git 意图/实际提交/操作回执只读查询（与 Core
   // GIT_OPERATION_QUERY_OPERATIONS 同源）。
   | 'git.operations.list'
-  | 'git.operations.get';
+  | 'git.operations.get'
+  // P03-8 / F-010：Feature 分轴结果只读查询（与 Core
+  // FEATURE_DELIVERY_QUERY_OPERATIONS 同源）。
+  | 'features.delivery.get';
 
 /** 已解析的应用路由（path 形态匹配；路径参数为未解码原始片段）。 */
 export interface ResolvedAppRoute {
@@ -405,6 +409,15 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
     if (segments.length === 2 && segments[1] === FEATURE_APPROVALS_ROUTE_SUFFIX.slice(1)) {
       return {
         operation: 'features.approvals',
+        method: 'GET',
+        pathParam: { name: 'featureId', value: segments[0] as string },
+      };
+    }
+    // P03-8 / F-010：GET /v1/features/:featureId/delivery（Feature 分轴结果
+    // 子资源）；其余多段形态一律未匹配 → 404 unknown_operation。
+    if (segments.length === 2 && segments[1] === FEATURE_DELIVERY_ROUTE_SUFFIX.slice(1)) {
+      return {
+        operation: 'features.delivery.get',
         method: 'GET',
         pathParam: { name: 'featureId', value: segments[0] as string },
       };
@@ -678,6 +691,8 @@ const QUERY_SPECS: Readonly<Partial<Record<ApplicationOperation, QuerySpec>>> = 
     repeatable: [],
   }),
   'git.operations.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
+  // P03-8 / F-010：Feature 分轴结果查询参数白名单（取值规则由 Core 单一权威复核）。
+  'features.delivery.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
 });
 
 /** 查询参数白名单校验（未知/重复 → 400，定位 query.<字段>）；空查询串恒合法。 */
@@ -1136,6 +1151,15 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
     case 'features.approvals':
       result = await app.queryService.getFeatureApprovals(app.principal, pathParam?.value);
       break;
+    // P03-8 / F-010：Feature 分轴结果查询分发（本层只做形态转换；授权/
+    // 可见性折叠/身份校验全部由 Core 单一权威复核；跨项目与不存在目标
+    // 统一 not_found，不区分存在性）。
+    case 'features.delivery.get': {
+      const query = buildPlanListQuery(params, operation, 'projectId');
+      query.featureId = pathParam?.value;
+      result = await app.queryService.getFeatureDelivery(app.principal, query);
+      break;
+    }
     // P03-5 / F-011：工作区状态查询分发（本层只做形态转换；授权/可见性折叠/
     // 分页范围/游标绑定全部由 Core 单一权威复核；项目可见性失败 forbidden，
     // 项目内实体跨项目/不存在统一 not_found）。

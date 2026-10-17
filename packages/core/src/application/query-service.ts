@@ -192,6 +192,12 @@ import {
   type GitOperationListResult,
   type GitOperationQueryReadStore,
 } from '../ports/git-operation-query.js';
+import {
+  FEATURE_DELIVERY_GET_OPERATION,
+  buildFeatureDeliveryDetailResult,
+  type FeatureDeliveryDetailResult,
+  type FeatureDeliveryQueryReadStore,
+} from '../ports/feature-delivery-query.js';
 import type { ArtifactStore } from '../ports/artifact-store.js';
 import type { ArtifactFileStore } from '../ports/artifact-files.js';
 import { createArtifactVerifier } from './artifact-verify.js';
@@ -431,6 +437,16 @@ export interface QueryService {
    * 回执投影；跨项目/不存在统一 not_found；待核对/回执缺失不显示为成功。
    */
   getGitOperation(principal: unknown, input: unknown): Promise<GitOperationDetailResult>;
+  /**
+   * P03-8 / F-010 features.delivery.get：Feature 分轴结果查询——全部必需
+   * Task 当前有效结果与历史引用、独立 Feature VerificationBatch 及逐检查
+   * 状态、最终审批/阻塞、Git operation 与 deliveryStatus；completed 不掩盖
+   * 缺失证据或其他轴失败；五类关键场景为可区分结构化 outcome（失败阶段
+   * 使用 executionStage，附身份/原因码/显式下一步，不暗示自动重跑编码）。
+   * 能力位 project.read；跨项目/不存在统一 not_found；结果从持久一致读
+   * 视图重建，查询零写入、零事件，重复读取不增加计数。
+   */
+  getFeatureDelivery(principal: unknown, input: unknown): Promise<FeatureDeliveryDetailResult>;
 }
 
 export interface QueryServiceOptions {
@@ -461,6 +477,8 @@ export interface QueryServiceOptions {
   readonly taskEvidenceReads: TaskEvidenceQueryReadStore;
   /** P03-8 / F-009 Git 操作查询一致读取窄端口（只读）。 */
   readonly gitOperationReads: GitOperationQueryReadStore;
+  /** P03-8 / F-010 Feature 分轴结果查询一致读取窄端口（只读）。 */
+  readonly featureDeliveryReads: FeatureDeliveryQueryReadStore;
   /** P03-6 / F-011 证据制品索引（正文经完整性核验读取；只读用法）。 */
   readonly artifacts: ArtifactStore;
   /** P03-6 / F-011 证据制品文件（只读用法；不推导任意路径）。 */
@@ -570,6 +588,17 @@ function gitOperationTargetNotFound(
 }
 
 /**
+ * P03-8 / F-010 Feature 分轴查询目标「不可见/不存在/跨项目」统一 not_found
+ *（同一形状纪律：不区分存在性，不回显归属或实体身份）；能力缺失仍先行
+ * forbidden。
+ */
+function featureDeliveryTargetNotFound(operation: string): never {
+  throw new PublicError('not_found', operation, '执行实体不存在或不可见', {
+    details: { reason: 'execution_entity_not_found', entityType: 'feature' },
+  });
+}
+
+/**
  * 装配 QueryService。只校验依赖形态，不执行任何 I/O；import 本模块无副作用。
  */
 export function createQueryService(options: QueryServiceOptions): QueryService {
@@ -589,6 +618,7 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
     workSessionReads,
     taskEvidenceReads,
     gitOperationReads,
+    featureDeliveryReads,
     artifacts,
     artifactFiles,
     dataRootIdentity,
@@ -2148,6 +2178,36 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
           gitOperationTargetNotFound(operation, 'git_operation');
         }
         return { operation: toPublicGitOperationRecord(record) };
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    // P03-8 / F-010：Feature 分轴结果只读查询（能力核验 → 身份校验 → 项目
+    // 可见 → 一致读视图重建；跨项目/不存在折叠 not_found；脱敏投影复用
+    // F-013/F-009 公共形状；查询零写入、零事件、不触发 Git 或执行）。
+    async getFeatureDelivery(
+      principal: unknown,
+      input: unknown,
+    ): Promise<FeatureDeliveryDetailResult> {
+      assertTrustedPrincipal(principal);
+      const operation = FEATURE_DELIVERY_GET_OPERATION;
+      try {
+        requireCapability(principal, 'project.read', operation);
+        const object = requirePlainObject(input, { operation }, 'input');
+        rejectUnknownKeys(object, ['projectId', 'featureId'], { operation }, 'input');
+        const projectId = requireProjectId(object.projectId, operation);
+        const featureId = validateStableId(
+          object.featureId,
+          { operation, entity: { type: 'feature' } },
+          'featureId',
+        );
+        requireProjectVisible(principal, projectId, operation);
+        const view = featureDeliveryReads.readFeatureDeliveryView(projectId, featureId);
+        if (view === undefined) {
+          featureDeliveryTargetNotFound(operation);
+        }
+        return buildFeatureDeliveryDetailResult(view);
       } catch (error) {
         throw mapToPublicError(error, { operation });
       }

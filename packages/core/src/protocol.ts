@@ -132,7 +132,7 @@ export { validateExecutionBudgetProposal } from './ports/execution-budget.js';
 export type { ExecutionBudgetProposal } from './ports/execution-budget.js';
 export type { ExecutionPreviewResult } from './ports/execution-preview.js';
 export { EXECUTION_BATCH_STATUSES } from './ports/execution-store.js';
-export { TASK_STATUSES } from './ports/plan-store.js';
+export { FEATURE_PLAN_STATUSES, FEATURE_STATUSES, TASK_STATUSES } from './ports/plan-store.js';
 export type { ExecutionInputOrigin, ExecutionInputRef } from './ports/execution-input.js';
 export {
   EXECUTION_INPUT_GROUP_LOCATOR_PREFIX,
@@ -263,6 +263,28 @@ export type {
   GitOperationQueryOperation,
   PublicGitOperationRecord,
 } from './ports/git-operation-query.js';
+// P03-8 / F-010 Feature 分轴结果只读查询面：公开形状、操作身份与冻结词汇
+//（Task/最终检查/人工审批/交付四轴 + 可区分总体 outcome；服务端负责授权）。
+export {
+  FEATURE_APPROVAL_AXIS_STATUSES,
+  FEATURE_DELIVERY_GET_OPERATION,
+  FEATURE_DELIVERY_NEXT_STEPS,
+  FEATURE_DELIVERY_OUTCOMES,
+  FEATURE_DELIVERY_QUERY_OPERATIONS,
+  FEATURE_DELIVERY_STAGES,
+  FEATURE_VERIFICATION_AXIS_STATUSES,
+} from './ports/feature-delivery-query.js';
+export type {
+  FeatureApprovalAxisStatus,
+  FeatureDeliveryDetailResult,
+  FeatureDeliveryNextStep,
+  FeatureDeliveryOutcome,
+  FeatureDeliveryQueryOperation,
+  FeatureDeliveryStage,
+  FeatureVerificationAxisStatus,
+  PublicFeatureDeliveryOutcome,
+  PublicFeatureDeliveryTaskResult,
+} from './ports/feature-delivery-query.js';
 export {
   FEATURE_DELIVERY_STATUSES,
   GIT_OPERATION_EVIDENCE_KINDS,

@@ -76,6 +76,7 @@ import type {
   TaskVerificationDetailResult,
   GitOperationDetailResult,
   GitOperationListResult,
+  FeatureDeliveryDetailResult,
   WorkSessionListResult,
   WorkSessionDetailResult,
   WorkSessionEvidenceContent,
@@ -97,6 +98,7 @@ import {
   COMMANDS_ROUTE,
   EVENTS_ROUTE,
   FEATURE_APPROVALS_ROUTE_SUFFIX,
+  FEATURE_DELIVERY_ROUTE_SUFFIX,
   FEATURES_ROUTE,
   FEATURES_ROUTE_PREFIX,
   GIT_OPERATIONS_ROUTE,
@@ -702,6 +704,14 @@ export interface HostClientApplication {
   ): Promise<GitOperationListResult>;
   /** git.operations.get：按 operationId 的完整意图 + 实际事实 + 回执投影。 */
   getGitOperation(projectId: string, operationId: string): Promise<GitOperationDetailResult>;
+  /* ------------------------------------------------------------ *
+   * P03-8 / F-010 Feature 分轴结果只读查询
+   * ------------------------------------------------------------ */
+  /**
+   * features.delivery.get：Feature Task/最终检查/人工审批/交付分轴结果与
+   * 可区分总体 outcome；completed 不掩盖缺失证据或其他轴失败。
+   */
+  getFeatureDelivery(projectId: string, featureId: string): Promise<FeatureDeliveryDetailResult>;
   /* ------------------------------------------------------------ *
    * P03-5 / F-012 工作区状态只读查询与人工丢弃预览/确认
    * ------------------------------------------------------------ */
@@ -3183,6 +3193,26 @@ export function createHostClientApplication(context: AppClientContext): HostClie
       const result = validateAppQueryResponse(op, json);
       if (result.operation.operationId !== id || result.operation.projectId !== project) {
         throw new HostProtocolError('response_malformed', op, 'Git 操作响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
+      }
+      return result;
+    },
+
+    /* ------------------------------------------------------------ *
+     * P03-8 / F-010 Feature 分轴结果只读查询
+     * ------------------------------------------------------------ */
+
+    async getFeatureDelivery(projectId: string, featureId: string): Promise<FeatureDeliveryDetailResult> {
+      const op = 'features.delivery.get';
+      context.assertOpen(op);
+      const project = requireProjectId(op, projectId);
+      const id = requireStableIdInput(op, featureId, 'featureId');
+      const json = await getJson(
+        op,
+        `${FEATURES_ROUTE_PREFIX}${encodeURIComponent(id)}${FEATURE_DELIVERY_ROUTE_SUFFIX}?projectId=${encodeURIComponent(project)}`,
+      );
+      const result = validateAppQueryResponse(op, json);
+      if (result.feature.featureId !== id || result.outcome.identities.featureId !== id) {
+        throw new HostProtocolError('response_malformed', op, 'Feature 分轴结果响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
       }
       return result;
     },

@@ -159,6 +159,9 @@ export const APPLICATION_QUERY_CAPABILITIES = [
   // project.read；与 Core GIT_OPERATION_QUERY_OPERATIONS 同步，不漂移）。
   'git.operations.list',
   'git.operations.get',
+  // P03-8 / F-010：Feature 分轴结果只读查询真实接线（能力位复用
+  // project.read；与 Core FEATURE_DELIVERY_QUERY_OPERATIONS 同步，不漂移）。
+  'features.delivery.get',
 ] as const;
 
 /**

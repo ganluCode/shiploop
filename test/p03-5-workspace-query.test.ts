@@ -153,6 +153,7 @@ async function preparedFixture() {
     workSessionReads: queryStore,
     taskEvidenceReads: queryStore,
     gitOperationReads: queryStore,
+    featureDeliveryReads: queryStore,
     artifacts: createSqliteArtifactStore(session),
     artifactFiles: createArtifactFileStore({ dataRoot }),
     dataRootIdentity: computeDataRootIdentity(dataRoot),

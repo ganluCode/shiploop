@@ -19,6 +19,7 @@ export * from './ports/task-verification-policy.js';
 export * from './ports/delivery-policy.js';
 export * from './ports/git-operations.js';
 export * from './ports/git-operation-query.js';
+export * from './ports/feature-delivery-query.js';
 export * from './ports/controlled-git-commit.js';
 export * from './application/controlled-git-commit.js';
 export * from './ports/git-commit-reconciliation.js';

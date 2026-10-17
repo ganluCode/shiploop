@@ -79,6 +79,14 @@ import {
   GIT_OPERATION_RECEIPT_SCHEMA_VERSION,
   GIT_OPERATION_STATUSES,
   GIT_OPERATION_TERMINAL_STATUSES,
+  // P03-8 / F-010：Feature 分轴结果线校验用冻结词汇（同一来源，不复制第二份枚举）。
+  FEATURE_APPROVAL_AXIS_STATUSES,
+  FEATURE_DELIVERY_NEXT_STEPS,
+  FEATURE_DELIVERY_OUTCOMES,
+  FEATURE_DELIVERY_STAGES,
+  FEATURE_PLAN_STATUSES,
+  FEATURE_STATUSES,
+  FEATURE_VERIFICATION_AXIS_STATUSES,
   validateSettingsPayload,
   validateWireCommandReceipt,
 } from 'shiploop-core/protocol';
@@ -136,6 +144,7 @@ import type {
   TaskListResult,
   GitOperationDetailResult,
   GitOperationListResult,
+  FeatureDeliveryDetailResult,
   WorkspaceDetailResult,
   WorkspaceDiscardPreview,
   WorkspaceListResult,
@@ -249,7 +258,10 @@ export type AppQueryOperation =
   // P03-8 / F-009：Git 意图/实际提交/操作回执查询（与 Core
   // GIT_OPERATION_QUERY_OPERATIONS 同源）。
   | 'git.operations.list'
-  | 'git.operations.get';
+  | 'git.operations.get'
+  // P03-8 / F-010：Feature 分轴结果查询（与 Core
+  // FEATURE_DELIVERY_QUERY_OPERATIONS 同源）。
+  | 'features.delivery.get';
 
 function malformed(operation: HostOperation, reason: string): never {
   throw new HostProtocolError('response_malformed', operation, 'Host 响应不符合线协议', {
@@ -4015,6 +4027,189 @@ export function validateGitOperationDetailResultWire(
 }
 
 /* ------------------------------------------------------------------ *
+ * P03-8 / F-010 Feature 分轴结果查询响应线校验（冻结字段集精确键校验；
+ * completed outcome 不掩盖其他轴失败：completed 恒 executionStage null）
+ * ------------------------------------------------------------------ */
+
+function validateFeatureDeliveryTaskResultWire(operation: HostOperation, value: unknown): void {
+  const record = requirePlain(operation, value);
+  exactKeys(operation, record, [
+    'taskId',
+    'status',
+    'effectivePassed',
+    'manualBlock',
+    'firstPassedAt',
+    'latestAttemptId',
+  ]);
+  requireStableId(operation, record.taskId);
+  if (!(TASK_STATUSES as readonly unknown[]).includes(record.status)) {
+    malformed(operation, 'feature_delivery_task_status_invalid');
+  }
+  if (typeof record.effectivePassed !== 'boolean' || typeof record.manualBlock !== 'boolean') {
+    malformed(operation, 'feature_delivery_task_invalid');
+  }
+  // 有效通过恒等于持久 status==='passed'（机器绿色不折算的线协议同源约束）。
+  if (record.effectivePassed !== (record.status === 'passed')) {
+    malformed(operation, 'feature_delivery_task_effective_invalid');
+  }
+  if (record.firstPassedAt !== null && !isIsoUtcDateTime(record.firstPassedAt)) {
+    malformed(operation, 'feature_delivery_date_invalid');
+  }
+  requireStableIdOrNull(operation, record.latestAttemptId);
+}
+
+/** features.delivery.get：Feature 分轴结果（冻结字段集）。 */
+export function validateFeatureDeliveryDetailResultWire(
+  value: unknown,
+  operation: HostOperation = 'features.delivery.get',
+): FeatureDeliveryDetailResult {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, ['schemaVersion', 'scope', 'feature', 'run', 'axes', 'outcome']);
+  if (object.schemaVersion !== WIRE_MESSAGE_SCHEMA_VERSION) {
+    if (typeof object.schemaVersion === 'number') {
+      unsupportedVersion(operation, 'schemaVersion');
+    }
+    malformed(operation, 'feature_delivery_schema_version_invalid');
+  }
+  if (object.scope !== 'feature-delivery') {
+    malformed(operation, 'feature_delivery_scope_invalid');
+  }
+  const feature = requirePlain(operation, object.feature);
+  exactKeys(operation, feature, [
+    'featureId',
+    'status',
+    'deliveryStatus',
+    'planStatus',
+    'planDigest',
+    'revision',
+    'updatedAt',
+  ]);
+  requireStableId(operation, feature.featureId);
+  if (!(FEATURE_STATUSES as readonly unknown[]).includes(feature.status)) {
+    malformed(operation, 'feature_delivery_feature_status_invalid');
+  }
+  if (!(FEATURE_DELIVERY_STATUSES as readonly unknown[]).includes(feature.deliveryStatus)) {
+    malformed(operation, 'feature_delivery_status_invalid');
+  }
+  if (!(FEATURE_PLAN_STATUSES as readonly unknown[]).includes(feature.planStatus)) {
+    malformed(operation, 'feature_delivery_plan_status_invalid');
+  }
+  requireSha256HexOrNull(operation, feature.planDigest, 'feature_delivery_digest_invalid');
+  requirePositiveInteger(operation, feature.revision);
+  if (!isIsoUtcDateTime(feature.updatedAt)) {
+    malformed(operation, 'feature_delivery_date_invalid');
+  }
+  if (object.run !== null) {
+    const run = requirePlain(operation, object.run);
+    exactKeys(operation, run, ['id', 'batchId', 'status', 'reason', 'startedAt', 'endedAt']);
+    requireStableId(operation, run.id);
+    requireStableId(operation, run.batchId);
+    if (!(EXECUTION_BATCH_STATUSES as readonly unknown[]).includes(run.status)) {
+      malformed(operation, 'feature_delivery_run_status_invalid');
+    }
+    if (run.reason !== null && typeof run.reason !== 'string') {
+      malformed(operation, 'feature_delivery_reason_invalid');
+    }
+    if (run.startedAt !== null && !isIsoUtcDateTime(run.startedAt)) {
+      malformed(operation, 'feature_delivery_date_invalid');
+    }
+    if (run.endedAt !== null && !isIsoUtcDateTime(run.endedAt)) {
+      malformed(operation, 'feature_delivery_date_invalid');
+    }
+  }
+  const axes = requirePlain(operation, object.axes);
+  exactKeys(operation, axes, ['tasks', 'verification', 'approval', 'delivery']);
+  const tasks = requirePlain(operation, axes.tasks);
+  exactKeys(operation, tasks, ['total', 'passed', 'allPassed', 'records']);
+  const tasksTotal = requireNonNegativeInteger(operation, tasks.total);
+  const tasksPassed = requireNonNegativeInteger(operation, tasks.passed);
+  if (typeof tasks.allPassed !== 'boolean' || !Array.isArray(tasks.records)) {
+    malformed(operation, 'feature_delivery_tasks_invalid');
+  }
+  if (
+    (tasks.records as unknown[]).length !== tasksTotal ||
+    tasksPassed > tasksTotal ||
+    tasks.allPassed !== (tasksTotal > 0 && tasksPassed === tasksTotal)
+  ) {
+    malformed(operation, 'feature_delivery_tasks_invalid');
+  }
+  for (const record of tasks.records as unknown[]) {
+    validateFeatureDeliveryTaskResultWire(operation, record);
+  }
+  const verification = requirePlain(operation, axes.verification);
+  exactKeys(operation, verification, ['status', 'batch']);
+  if (!(FEATURE_VERIFICATION_AXIS_STATUSES as readonly unknown[]).includes(verification.status)) {
+    malformed(operation, 'feature_delivery_verification_status_invalid');
+  }
+  if (verification.batch === null) {
+    if (verification.status !== 'none') {
+      malformed(operation, 'feature_delivery_verification_invalid');
+    }
+  } else {
+    validateVerificationBatchWire(operation, verification.batch);
+    const batch = verification.batch as { status: string };
+    if (verification.status !== batch.status) {
+      malformed(operation, 'feature_delivery_verification_invalid');
+    }
+  }
+  const approval = requirePlain(operation, axes.approval);
+  exactKeys(operation, approval, ['status', 'reason', 'items', 'itemsTruncated']);
+  if (!(FEATURE_APPROVAL_AXIS_STATUSES as readonly unknown[]).includes(approval.status)) {
+    malformed(operation, 'feature_delivery_approval_status_invalid');
+  }
+  if (approval.reason !== null && typeof approval.reason !== 'string') {
+    malformed(operation, 'feature_delivery_reason_invalid');
+  }
+  if (typeof approval.itemsTruncated !== 'boolean' || !Array.isArray(approval.items)) {
+    malformed(operation, 'feature_delivery_approval_invalid');
+  }
+  for (const item of approval.items as unknown[]) {
+    validateTaskApprovalItemWire(operation, item);
+  }
+  const delivery = requirePlain(operation, axes.delivery);
+  exactKeys(operation, delivery, ['status', 'operation']);
+  if (!(FEATURE_DELIVERY_STATUSES as readonly unknown[]).includes(delivery.status)) {
+    malformed(operation, 'feature_delivery_status_invalid');
+  }
+  if (delivery.operation !== null) {
+    validatePublicGitOperationWire(operation, delivery.operation);
+  }
+  const outcomeRecord = requirePlain(operation, object.outcome);
+  exactKeys(operation, outcomeRecord, ['status', 'executionStage', 'reason', 'nextStep', 'identities']);
+  if (!(FEATURE_DELIVERY_OUTCOMES as readonly unknown[]).includes(outcomeRecord.status)) {
+    malformed(operation, 'feature_delivery_outcome_invalid');
+  }
+  if (
+    outcomeRecord.executionStage !== null &&
+    !(FEATURE_DELIVERY_STAGES as readonly unknown[]).includes(outcomeRecord.executionStage)
+  ) {
+    malformed(operation, 'feature_delivery_stage_invalid');
+  }
+  // completed 不携带失败阶段；completed 之外必须定位失败阶段。
+  if ((outcomeRecord.status === 'completed') !== (outcomeRecord.executionStage === null)) {
+    malformed(operation, 'feature_delivery_stage_invalid');
+  }
+  requireNonEmptyString(operation, outcomeRecord.reason, 'feature_delivery_reason_invalid');
+  if (!(FEATURE_DELIVERY_NEXT_STEPS as readonly unknown[]).includes(outcomeRecord.nextStep)) {
+    malformed(operation, 'feature_delivery_next_step_invalid');
+  }
+  const identities = requirePlain(operation, outcomeRecord.identities);
+  exactKeys(operation, identities, [
+    'featureId',
+    'runId',
+    'batchId',
+    'verificationBatchId',
+    'gitOperationId',
+  ]);
+  requireStableId(operation, identities.featureId);
+  requireStableIdOrNull(operation, identities.runId);
+  requireStableIdOrNull(operation, identities.batchId);
+  requireStableIdOrNull(operation, identities.verificationBatchId);
+  requireStableIdOrNull(operation, identities.gitOperationId);
+  return object as unknown as FeatureDeliveryDetailResult;
+}
+
+/* ------------------------------------------------------------------ *
  * P03-7 / F-014 人审事项决定/阻塞与显式验证继续命令回执结果线校验
  *（冻结字段集精确键校验；命令结果的 item 是持久事项记录（毫秒时间戳形态），
  * 与查询面的公开投影（ISO 时间）分开冻结，不互相折算）
@@ -4751,6 +4946,12 @@ export function validateAppQueryResponse(
   body: unknown,
   expectation?: SnapshotExpectation,
 ): GitOperationDetailResult;
+// P03-8 / F-010：Feature 分轴结果查询响应重载。
+export function validateAppQueryResponse(
+  operation: 'features.delivery.get',
+  body: unknown,
+  expectation?: SnapshotExpectation,
+): FeatureDeliveryDetailResult;
 export function validateAppQueryResponse(
   operation: 'workspaces.get',
   body: unknown,
@@ -4943,6 +5144,9 @@ export function validateAppQueryResponse(
       return validateGitOperationListResultWire(body, operation);
     case 'git.operations.get':
       return validateGitOperationDetailResultWire(body, operation);
+    // P03-8 / F-010：Feature 分轴结果查询响应分发（同一冻结字段集纪律）。
+    case 'features.delivery.get':
+      return validateFeatureDeliveryDetailResultWire(body, operation);
     default: {
       const exhaustive: never = operation;
       throw new TypeError(`未覆盖的查询操作：${String(exhaustive)}`);

@@ -91,6 +91,8 @@ export const FEATURES_ROUTE = '/v1/features';
 export const FEATURES_ROUTE_PREFIX = '/v1/features/';
 /** P03-2 / F-007：Feature 审批决策子资源（GET /v1/features/:featureId/approvals）。 */
 export const FEATURE_APPROVALS_ROUTE_SUFFIX = '/approvals';
+/** P03-8 / F-010：Feature 分轴结果子资源（GET /v1/features/:featureId/delivery）。 */
+export const FEATURE_DELIVERY_ROUTE_SUFFIX = '/delivery';
 export const TASKS_ROUTE = '/v1/tasks';
 export const TASKS_ROUTE_PREFIX = '/v1/tasks/';
 /**
