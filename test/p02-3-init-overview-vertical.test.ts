@@ -513,7 +513,11 @@ describe('F-006 Host inspect/overview 路由与握手能力（真实 Host + SQLi
     expect(body.capabilities.application.queries).toContain('execution.sessions.list');
     expect(body.capabilities.application.queries).toContain('execution.session.get');
     expect(body.capabilities.application.queries).toContain('execution.session.evidence.get');
-    expect(body.capabilities.application.queries).toHaveLength(36);
+    // P03-7 / F-013: Task evidence, approvals and bounded rework-chain queries.
+    expect(body.capabilities.application.queries).toContain('execution.task.verification.get');
+    expect(body.capabilities.application.queries).toContain('execution.task.approvals.list');
+    expect(body.capabilities.application.queries).toContain('execution.task.rework-chain.list');
+    expect(body.capabilities.application.queries).toHaveLength(39);
     expect(body.capabilities.application.commands).toEqual([
       'execution.attempt.cancel',
       'project.register',
