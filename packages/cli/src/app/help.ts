@@ -23,6 +23,22 @@ const EXIT_CODE_BLOCK = [
   'JSON 模式（--json）下 stdout 只输出结构化结果或错误；人类诊断输出到 stderr；错误保留 commandId 便于查回执。',
 ].join('\n');
 
+/** P03-7 / F-014 验证/人审边界：可信项目 vs 强沙箱、Task 局部验证 vs P03-8 全量交付、执行器装配。 */
+const TASK_APPROVAL_VERIFICATION_BLOCK = [
+  '验证/人审边界（P03-7 / F-014）：',
+  '- 可信项目模式（用户明确授权）不提供强 OS 沙箱；强沙箱不在本版本范围，',
+  '  权限检查、资源选择与进程停止核验仍需落实；',
+  '- Task 检查是 Task 局部验证（task-local），不代表 P03-8 Feature 全量交付验收；',
+  '  机器绿色、事项决定或验证继续都不折算为 Feature 交付；',
+  '- 检查执行器只装配 Node（shiploop.node-check）；未装配语言执行器明确 unsupported，',
+  '  不伪造支持、不把 not_run/unsupported 折算为通过；',
+  '- 批准/拒绝/解除只记录事项事实，不启动执行、不调用 Runtime；解除不自动恢复执行；',
+  '- 显式验证继续只复用已保存机器证据（零新增编码调用）；证据/代码/环境漂移要求重验；',
+  '- 参数不接受客户端伪造主体（principalId/decisionActor 等）与明文凭据字段；',
+  '  责任主体名是业务字段，认证身份由 Host 可信装配固定绑定；',
+  '- 开发机路径与 Fake 配置不属于默认生产依赖；Fake 能力仅限显式测试装配。',
+].join('\n');
+
 const PROJECT_HELP = [
   'usage: shiploop project <init|overview|register|list|get|edit|labels> [options]',
   '',
@@ -718,7 +734,7 @@ const FEATURE_LABELS_HELP = [
 ].join('\n');
 
 const TASK_HELP = [
-  'usage: shiploop task <list|get|labels|strategy|prepare|inputs> [options]',
+  'usage: shiploop task <list|get|labels|strategy|prepare|inputs|status|block|approve|reject|unblock|continue> [options]',
   '',
   'Task 命令（同 Feature 内 Task）：',
   '  task list --project <id> --feature <id> [--limit <int>] [--cursor <c>]   层级分页',
@@ -727,10 +743,17 @@ const TASK_HELP = [
   '  task strategy <taskId> --project <id> --revision <int> --input <file>   完整策略副本 CAS 编辑',
   '  task prepare <taskId> --project <id> --feature <id> --input <file>      准备固定输入制品组（未启动执行）',
   '  task inputs <commandId>                 查看已准备的固定输入（经既有回执查询）',
+  '  task status <taskId> --project <id>     机器结论/人审待处理/有效 Task 状态三分区',
+  '  task block <taskId> --project <id> --digest <hex> --revision <int> [options]   添加阻塞/审批事项',
+  '  task approve|reject|unblock <taskId> <itemId> --project <id> --digest <hex> --code-digest <hex>',
+  '                                          事项决定（绑定当前代码/产物摘要）',
+  '  task continue <taskId> --project <id> --attempt <id> --batch <id> --code-digest <hex>',
+  '                                          显式验证继续（复用已保存机器证据）',
   '',
   '查看各子命令参数：shiploop task get --help',
   '',
   PLAN_SEMANTICS_BLOCK,
+  TASK_APPROVAL_VERIFICATION_BLOCK,
   BOUNDARY_BLOCK,
   EXIT_CODE_BLOCK,
   '',
@@ -906,6 +929,121 @@ const TASK_INPUTS_HELP = [
   '  --json  stdout 只输出结果 JSON；诊断到 stderr',
   '',
   EXECUTION_BOUNDARY_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const TASK_STATUS_HELP = [
+  'usage: shiploop task status <taskId> --project <id> [--data-root <abs>] [--json]',
+  '',
+  'Task 状态只读查询：机器结论、人审待处理、有效 Task 状态三分区展示。',
+  '- 机器结论只反映持久机器事实（批次状态 + 结算）；机器 passed 不折算为有效 Task passed；',
+  '- 人审待处理独立展示（pending 事项与责任主体）；有效 Task 通过恒等于 status=passed；',
+  '- display=passed 仅在机器 passed 且有效 Task passed 时成立；错误（error）、等待批准',
+  '  （waiting_approval）、not_run 与额度耗尽（exhausted）均不打印为通过；',
+  '- 查询零写入、不触发 Runtime、不扣预算、不续租。',
+  '',
+  '选项：',
+  '  --project <id>  项目 ID（必填，UUID v4）',
+  '  --json          stdout 只输出结果 JSON；诊断到 stderr',
+  '',
+  TASK_APPROVAL_VERIFICATION_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const TASK_BLOCK_HELP = [
+  'usage: shiploop task block <taskId> --project <id> --digest <hex> --revision <int>',
+  '                           [--kind block|approval] [--description <text>]',
+  '                           [--party <name>] [--code-digest <hex>]',
+  '                           [--artifact <artifactId[:sha256]>] ...',
+  '                           [--command-id <uuid>] [--data-root <abs>] [--json]',
+  '',
+  '添加 Task 执行阻塞或必需审批事项（task.approval.block）：',
+  '- `--digest` 绑定当前计划摘要（64 位小写 hex）；`--revision` 是 Task 自身 revision（CAS）；',
+  '- `--party` 是业务责任主体名（不是认证身份）；不接受 principalId/decisionActor 等参数；',
+  '- 仅登记事项并设置 manualBlock：不创建执行实体、不启动执行、不调用 Runtime；',
+  '- 同 --command-id 重放返回原回执（replayed）；异参复用同一命令 ID 得到 conflict。',
+  '',
+  '选项：',
+  '  --project <id>       项目 ID（必填，UUID v4）',
+  '  --digest <hex>       当前计划摘要（必填，64 位小写 hex）',
+  '  --revision <int>     期望的 Task revision（必填，≥ 1）',
+  '  --kind <block|approval>  事项种类（默认 block）',
+  '  --description <text> 事项描述（默认 Manual approval required）',
+  '  --party <name>       责任主体名（默认 project-owner）',
+  '  --code-digest <hex>  绑定的当前代码摘要（可选）',
+  '  --artifact <ref>     产物引用 <artifactId[:sha256]>，可重复',
+  '  --command-id <uuid>  显式命令 ID（UUID v4）；幂等重放用同一信封',
+  '  --json               stdout 只输出结果 JSON；诊断到 stderr',
+  '',
+  TASK_APPROVAL_VERIFICATION_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+function taskDecisionHelp(decision: 'approve' | 'reject' | 'unblock'): string {
+  const semantics =
+    decision === 'unblock'
+      ? '解除 block 事项并清除 Task manualBlock；解除不启动执行、不自动恢复执行'
+      : decision === 'approve'
+        ? '批准 approval 事项；批准不是启动授权，不启动执行、不调用 Runtime'
+        : '拒绝 approval 事项；拒绝不删除计划/证据，不启动执行';
+  return [
+    `usage: shiploop task ${decision} <taskId> <itemId> --project <id> --digest <hex>`,
+    '                              --code-digest <hex> --revision <int>',
+    '                              [--reason <text>] [--artifact <artifactId[:sha256]>] ...',
+    '                              [--command-id <uuid>] [--data-root <abs>] [--json]',
+    '',
+    `事项决定（task.approval.${decision}）：${semantics}。`,
+    '- 决定绑定当前 planDigest/codeDigest 与产物摘要；任一身份漂移即 conflict（要求重新确认）；',
+    '- 决定人由 Host 可信装配绑定：不接受 principalId/decisionActor 等伪造主体参数，',
+    '  也不接受明文凭据字段；越权责任主体得到 forbidden；',
+    '- 同 --command-id 重放返回原回执（replayed）；重复继续/重复决定由状态栅栏拒绝。',
+    '',
+    '选项：',
+    '  --project <id>       项目 ID（必填，UUID v4）',
+    '  --digest <hex>       当前计划摘要（必填，64 位小写 hex）',
+    '  --code-digest <hex>  当前代码摘要（必填，64 位小写 hex）',
+    '  --revision <int>     期望的 Task revision（必填，≥ 1）',
+    '  --reason <text>      决定理由（可选）',
+    '  --artifact <ref>     决定绑定的产物引用 <artifactId[:sha256]>，可重复',
+    '  --command-id <uuid>  显式命令 ID（UUID v4）；幂等重放用同一信封',
+    '  --json               stdout 只输出结果 JSON；诊断到 stderr',
+    '',
+    TASK_APPROVAL_VERIFICATION_BLOCK,
+    EXIT_CODE_BLOCK,
+    '',
+  ].join('\n');
+}
+
+const TASK_APPROVE_HELP = taskDecisionHelp('approve');
+const TASK_REJECT_HELP = taskDecisionHelp('reject');
+const TASK_UNBLOCK_HELP = taskDecisionHelp('unblock');
+
+const TASK_CONTINUE_HELP = [
+  'usage: shiploop task continue <taskId> --project <id> --attempt <id> --batch <id>',
+  '                              --code-digest <hex> --observation <hex> --revision <int>',
+  '                              [--command-id <uuid>] [--data-root <abs>] [--json]',
+  '',
+  '人工批准后的显式验证继续（task.verification.continue）：',
+  '- 只复用第一次提交已保存的机器证据（批次/代码/观察摘要逐项比对），',
+  '  零新增编码调用：不调用 Runtime、不创建 Attempt、不扣新额度；',
+  '- 证据/代码/环境/批准漂移一律 conflict（要求重验/重新批准），不伪造复用；',
+  '- 未装配检查/语言执行器时结果明确 display=unsupported，不折算为通过；',
+  '- 同 --command-id 重放返回原回执；重复继续由状态栅栏拒绝，不产生重复副作用。',
+  '',
+  '选项：',
+  '  --project <id>       项目 ID（必填，UUID v4）',
+  '  --attempt <id>       Attempt ID（必填，UUID v4）',
+  '  --batch <id>         验证批次 ID（必填，稳定 ID）',
+  '  --code-digest <hex>  已保存代码摘要（必填，64 位小写 hex）',
+  '  --observation <hex>  已保存观察摘要（必填，64 位小写 hex）',
+  '  --revision <int>     期望的 Task revision（必填，≥ 1）',
+  '  --command-id <uuid>  显式命令 ID（UUID v4）；幂等重放用同一信封',
+  '  --json               stdout 只输出结果 JSON；诊断到 stderr',
+  '',
+  TASK_APPROVAL_VERIFICATION_BLOCK,
   EXIT_CODE_BLOCK,
   '',
 ].join('\n');
@@ -1443,6 +1581,12 @@ const HELP_BY_SCOPE: Readonly<Record<AppHelpScope, string>> = Object.freeze({
   'task.strategy': TASK_STRATEGY_HELP,
   'task.prepare': TASK_PREPARE_HELP,
   'task.inputs': TASK_INPUTS_HELP,
+  'task.status': TASK_STATUS_HELP,
+  'task.block': TASK_BLOCK_HELP,
+  'task.approve': TASK_APPROVE_HELP,
+  'task.reject': TASK_REJECT_HELP,
+  'task.unblock': TASK_UNBLOCK_HELP,
+  'task.continue': TASK_CONTINUE_HELP,
   execution: EXECUTION_HELP,
   'execution.preview': EXECUTION_PREVIEW_HELP,
   'execution.start': EXECUTION_START_HELP,

@@ -79,6 +79,7 @@ import {
 import type {
   AttemptDiagnosticsResult,
   AttemptListResult,
+  PublicTaskApprovalArtifactRef,
   TaskApprovalItemListResult,
   TaskReworkChainListResult,
   TaskVerificationDetailResult,
@@ -3704,6 +3705,219 @@ export function validateTaskReworkChainResultWire(
   }
   validateReworkChainSummaryWire(operation, object.summary);
   return object as unknown as TaskReworkChainListResult;
+}
+
+/* ------------------------------------------------------------------ *
+ * P03-7 / F-014 人审事项决定/阻塞与显式验证继续命令回执结果线校验
+ *（冻结字段集精确键校验；命令结果的 item 是持久事项记录（毫秒时间戳形态），
+ * 与查询面的公开投影（ISO 时间）分开冻结，不互相折算）
+ * ------------------------------------------------------------------ */
+
+/** 命令回执 result.item：持久 Task approval item 记录（冻结字段集）。 */
+export interface TaskApprovalItemRecordWire {
+  readonly id: string;
+  readonly projectId: string;
+  readonly featureId: string;
+  readonly taskId: string;
+  readonly revision: number;
+  readonly kind: 'block' | 'approval';
+  readonly description: string;
+  readonly responsibleParty: string;
+  readonly planDigest: string;
+  readonly codeDigest: string | null;
+  readonly artifactRefs: readonly PublicTaskApprovalArtifactRef[];
+  readonly status: 'pending' | 'approved' | 'rejected' | 'unblocked';
+  readonly createdBy: string;
+  readonly decision: 'approve' | 'reject' | 'unblock' | null;
+  readonly decisionActor: string | null;
+  readonly decisionReason: string | null;
+  readonly decisionCodeDigest: string | null;
+  readonly decisionArtifactRefs: readonly PublicTaskApprovalArtifactRef[];
+  readonly decidedAtUtcMs: number | null;
+  readonly createdAtUtcMs: number;
+  readonly updatedAtUtcMs: number;
+}
+
+function validateTaskApprovalItemRecordWire(
+  operation: HostOperation,
+  value: unknown,
+): TaskApprovalItemRecordWire {
+  const record = requirePlain(operation, value);
+  exactKeys(operation, record, [
+    'id',
+    'projectId',
+    'featureId',
+    'taskId',
+    'revision',
+    'kind',
+    'description',
+    'responsibleParty',
+    'planDigest',
+    'codeDigest',
+    'artifactRefs',
+    'status',
+    'createdBy',
+    'decision',
+    'decisionActor',
+    'decisionReason',
+    'decisionCodeDigest',
+    'decisionArtifactRefs',
+    'decidedAtUtcMs',
+    'createdAtUtcMs',
+    'updatedAtUtcMs',
+  ]);
+  requireStableId(operation, record.id);
+  requireStableId(operation, record.projectId);
+  requireStableId(operation, record.featureId);
+  requireStableId(operation, record.taskId);
+  requirePositiveInteger(operation, record.revision);
+  if (record.kind !== 'block' && record.kind !== 'approval') {
+    malformed(operation, 'task_approval_kind_invalid');
+  }
+  requireNonEmptyString(operation, record.description, 'task_approval_invalid');
+  requireNonEmptyString(operation, record.responsibleParty, 'task_approval_invalid');
+  requireSha256Hex(operation, record.planDigest, 'task_evidence_digest_invalid');
+  requireSha256HexOrNull(operation, record.codeDigest, 'task_evidence_digest_invalid');
+  if (!Array.isArray(record.artifactRefs) || !Array.isArray(record.decisionArtifactRefs)) {
+    malformed(operation, 'task_approval_refs_invalid');
+  }
+  for (const ref of record.artifactRefs as unknown[]) validateTaskApprovalArtifactRefWire(operation, ref);
+  for (const ref of record.decisionArtifactRefs as unknown[]) validateTaskApprovalArtifactRefWire(operation, ref);
+  if (!['pending', 'approved', 'rejected', 'unblocked'].includes(record.status as string)) {
+    malformed(operation, 'task_approval_status_invalid');
+  }
+  requireNonEmptyString(operation, record.createdBy, 'task_approval_invalid');
+  if (record.decision !== null && !['approve', 'reject', 'unblock'].includes(record.decision as string)) {
+    malformed(operation, 'task_approval_decision_invalid');
+  }
+  if (record.decisionActor !== null) requireNonEmptyString(operation, record.decisionActor, 'task_approval_invalid');
+  if (record.decisionReason !== null && typeof record.decisionReason !== 'string') {
+    malformed(operation, 'task_approval_invalid');
+  }
+  requireSha256HexOrNull(operation, record.decisionCodeDigest, 'task_evidence_digest_invalid');
+  if (record.decidedAtUtcMs !== null) requireNonNegativeInteger(operation, record.decidedAtUtcMs);
+  requireNonNegativeInteger(operation, record.createdAtUtcMs);
+  requireNonNegativeInteger(operation, record.updatedAtUtcMs);
+  // 决定绑定：pending 无决定；已决定必须同时有决定主体与时间（与持久 CHECK 同源）。
+  const hasDecision = record.decision !== null;
+  if (
+    hasDecision !== (record.status !== 'pending') ||
+    hasDecision !== (record.decisionActor !== null) ||
+    hasDecision !== (record.decidedAtUtcMs !== null)
+  ) {
+    malformed(operation, 'task_approval_decision_binding_invalid');
+  }
+  return record as unknown as TaskApprovalItemRecordWire;
+}
+
+/** task.approval.block completed 结果（添加阻塞/必需审批事项）。 */
+export interface TaskApprovalBlockResult {
+  readonly taskId: string;
+  readonly manualBlock: true;
+  readonly revision: number;
+  readonly item: TaskApprovalItemRecordWire;
+  readonly planDigest: string;
+  readonly checkPolicyDigest: string;
+}
+
+export function validateTaskApprovalBlockResultWire(
+  value: unknown,
+  operation: HostOperation = 'commands.submit',
+): TaskApprovalBlockResult {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, ['taskId', 'manualBlock', 'revision', 'item', 'planDigest', 'checkPolicyDigest']);
+  requireStableId(operation, object.taskId);
+  if (object.manualBlock !== true) {
+    malformed(operation, 'task_approval_block_result_invalid');
+  }
+  requirePositiveInteger(operation, object.revision);
+  validateTaskApprovalItemRecordWire(operation, object.item);
+  requireSha256Hex(operation, object.planDigest, 'task_evidence_digest_invalid');
+  requireSha256Hex(operation, object.checkPolicyDigest, 'task_evidence_digest_invalid');
+  return object as unknown as TaskApprovalBlockResult;
+}
+
+/** task.approval.approve/reject/unblock completed 结果（只写事项决定事实）。 */
+export interface TaskApprovalDecisionResult {
+  readonly taskId: string;
+  readonly item: TaskApprovalItemRecordWire;
+  readonly decision: 'approve' | 'reject' | 'unblock';
+  readonly executionStarted: false;
+  readonly runtimeCalled: false;
+}
+
+export function validateTaskApprovalDecisionResultWire(
+  value: unknown,
+  operation: HostOperation = 'commands.submit',
+): TaskApprovalDecisionResult {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, ['taskId', 'item', 'decision', 'executionStarted', 'runtimeCalled']);
+  requireStableId(operation, object.taskId);
+  validateTaskApprovalItemRecordWire(operation, object.item);
+  if (!['approve', 'reject', 'unblock'].includes(object.decision as string)) {
+    malformed(operation, 'task_approval_decision_invalid');
+  }
+  // 决定命令绝不启动执行/调用 Runtime：回执必须明确携带两个 false。
+  if (object.executionStarted !== false || object.runtimeCalled !== false) {
+    malformed(operation, 'task_approval_execution_boundary_invalid');
+  }
+  return object as unknown as TaskApprovalDecisionResult;
+}
+
+/** task.verification.continue completed 结果（显式验证继续；零新增编码调用）。 */
+export interface TaskVerificationContinueResult {
+  readonly taskId: string;
+  readonly attemptId: string;
+  readonly verificationBatchId: string;
+  readonly disposition: 'applied' | 'replayed' | 'ignored';
+  readonly status: string | null;
+  readonly waitingFor: 'approval' | 'verification_not_assembled' | 'recording_required' | 'execution_uncertain' | null;
+  readonly reason: string | null;
+  readonly runtimeCalled: false;
+  readonly executionStarted: false;
+}
+
+export function validateTaskVerificationContinueResultWire(
+  value: unknown,
+  operation: HostOperation = 'commands.submit',
+): TaskVerificationContinueResult {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, [
+    'taskId',
+    'attemptId',
+    'verificationBatchId',
+    'disposition',
+    'status',
+    'waitingFor',
+    'reason',
+    'runtimeCalled',
+    'executionStarted',
+  ]);
+  requireStableId(operation, object.taskId);
+  requireStableId(operation, object.attemptId);
+  requireStableId(operation, object.verificationBatchId);
+  if (!['applied', 'replayed', 'ignored'].includes(object.disposition as string)) {
+    malformed(operation, 'verification_continue_disposition_invalid');
+  }
+  if (object.status !== null && !(ATTEMPT_STATUSES as readonly unknown[]).includes(object.status)) {
+    malformed(operation, 'verification_continue_status_invalid');
+  }
+  if (
+    object.waitingFor !== null &&
+    !['approval', 'verification_not_assembled', 'recording_required', 'execution_uncertain'].includes(
+      object.waitingFor as string,
+    )
+  ) {
+    malformed(operation, 'verification_continue_waiting_invalid');
+  }
+  if (object.reason !== null && typeof object.reason !== 'string') {
+    malformed(operation, 'verification_continue_reason_invalid');
+  }
+  // 显式继续只复用已保存机器证据：绝不调用 Runtime、绝不启动新执行。
+  if (object.runtimeCalled !== false || object.executionStarted !== false) {
+    malformed(operation, 'verification_continue_execution_boundary_invalid');
+  }
+  return object as unknown as TaskVerificationContinueResult;
 }
 
 /* ------------------------------------------------------------------ *

@@ -143,7 +143,10 @@ import {
   validatePhaseCreateResultWire,
   validatePlanLabelsUpdateResultWire,
   validateStateEventWire,
+  validateTaskApprovalBlockResultWire,
+  validateTaskApprovalDecisionResultWire,
   validateTaskStrategyUpdateResultWire,
+  validateTaskVerificationContinueResultWire,
   validateWorkspaceDiscardConfirmResultWire,
   validateWorkspaceDiscardPreviewWire,
 } from './app-wire.js';
@@ -308,6 +311,57 @@ export interface UpdateTaskStrategyInput {
   readonly projectId: string;
   readonly taskId: string;
   readonly executionConfig: Record<string, unknown>;
+  readonly expectedRevision: number;
+  readonly commandId?: string;
+}
+
+/**
+ * task.approval.block 输入（F-007/F-014：添加阻塞/必需审批事项）。
+ * expectedRevision 为 Task 自身 revision；responsibleParty 是业务责任主体
+ * 名（不是认证身份），认证主体由可信装配固定绑定，不接受请求声明。
+ */
+export interface TaskApprovalBlockInput {
+  readonly projectId: string;
+  readonly taskId: string;
+  readonly planDigest: string;
+  readonly expectedRevision: number;
+  readonly kind?: 'block' | 'approval';
+  readonly description?: string;
+  readonly responsibleParty?: string;
+  readonly codeDigest?: string | null;
+  readonly artifactRefs?: readonly { readonly artifactId: string; readonly contentHash: string | null }[];
+  readonly commandId?: string;
+}
+
+/**
+ * task.approval.approve/reject/unblock 输入（F-008/F-014）：决定由 decision
+ * 给定并绑定当前 planDigest/codeDigest/产物摘要；decisionActor/principalId
+ * 一律不能经请求输入。expectedRevision 为 Task 自身 revision。
+ */
+export interface TaskApprovalDecisionInput {
+  readonly projectId: string;
+  readonly taskId: string;
+  readonly itemId: string;
+  readonly planDigest: string;
+  readonly codeDigest: string;
+  readonly decision: 'approve' | 'reject' | 'unblock';
+  readonly expectedRevision: number;
+  readonly artifactRefs?: readonly { readonly artifactId: string; readonly contentHash: string | null }[];
+  readonly reason?: string | null;
+  readonly commandId?: string;
+}
+
+/**
+ * task.verification.continue 输入（F-012/F-014）：只携带目标与已保存机器证据
+ * 身份（批次/代码/观察摘要）；任何身份漂移由服务端 fail-closed 拒绝。
+ */
+export interface TaskVerificationContinueInput {
+  readonly projectId: string;
+  readonly taskId: string;
+  readonly attemptId: string;
+  readonly verificationBatchId: string;
+  readonly codeDigest: string;
+  readonly observationDigest: string;
   readonly expectedRevision: number;
   readonly commandId?: string;
 }
@@ -537,6 +591,30 @@ export interface HostClientApplication {
   /** task.strategy.update：Task 策略副本 CAS 编辑（来源服务端定值 task_edit）。 */
   updateTaskStrategy(
     input: UpdateTaskStrategyInput,
+    options?: SubmitCommandOptions,
+  ): Promise<CommandReceipt>;
+  /**
+   * task.approval.block：添加阻塞/必需审批事项（F-007/F-014）。只写事项事实，
+   * 不创建执行实体、不调用 Runtime；completed 回执 result 经线校验器复核。
+   */
+  submitTaskApprovalBlock(
+    input: TaskApprovalBlockInput,
+    options?: SubmitCommandOptions,
+  ): Promise<CommandReceipt>;
+  /**
+   * task.approval.approve/reject/unblock：事项决定（F-008/F-014）。决定绑定
+   * 当前摘要，绝不启动执行；completed 回执 result 经线校验器复核。
+   */
+  submitTaskApprovalDecision(
+    input: TaskApprovalDecisionInput,
+    options?: SubmitCommandOptions,
+  ): Promise<CommandReceipt>;
+  /**
+   * task.verification.continue：人工批准后的显式验证继续（F-012/F-014）。
+   * 只复用已保存机器证据，不调用 Runtime、不创建 Attempt。
+   */
+  continueTaskVerification(
+    input: TaskVerificationContinueInput,
     options?: SubmitCommandOptions,
   ): Promise<CommandReceipt>;
   /**
@@ -1021,6 +1099,42 @@ const PREPARE_EXECUTION_INPUT_KEYS = [
   'items',
   'commandId',
 ] as const;
+// P03-7 / F-014：人审事项阻塞/决定与显式验证继续输入键（严格未知键拒绝：
+// principalId/decisionActor/credentials 等身份与凭据字段不能经请求输入）。
+const TASK_APPROVAL_BLOCK_INPUT_KEYS = [
+  'projectId',
+  'taskId',
+  'planDigest',
+  'expectedRevision',
+  'kind',
+  'description',
+  'responsibleParty',
+  'codeDigest',
+  'artifactRefs',
+  'commandId',
+] as const;
+const TASK_APPROVAL_DECISION_INPUT_KEYS = [
+  'projectId',
+  'taskId',
+  'itemId',
+  'planDigest',
+  'codeDigest',
+  'decision',
+  'expectedRevision',
+  'artifactRefs',
+  'reason',
+  'commandId',
+] as const;
+const TASK_VERIFICATION_CONTINUE_INPUT_KEYS = [
+  'projectId',
+  'taskId',
+  'attemptId',
+  'verificationBatchId',
+  'codeDigest',
+  'observationDigest',
+  'expectedRevision',
+  'commandId',
+] as const;
 const EXECUTION_PREVIEW_INPUT_KEYS = ['projectId', 'featureIds', 'budget', 'commandId'] as const;
 const EXECUTION_START_INPUT_KEYS = ['projectId', 'featureIds', 'budget', 'previewDigest', 'retryBatchId', 'commandId'] as const;
 const EXECUTION_BUDGET_REVISE_INPUT_KEYS = ['projectId', 'batchId', 'expectedRevision', 'budget', 'reason', 'commandId'] as const;
@@ -1333,6 +1447,41 @@ function readErrorBody(response: IncomingMessage): Promise<unknown> {
     });
     response.on('error', () => finish(undefined));
     response.on('close', () => finish(undefined));
+  });
+}
+
+const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/;
+
+/** 产物摘要引用清单（artifactId 稳定 ID + contentHash 64 位 hex 或 null；不重复）。 */
+function requireArtifactRefsInput(
+  operation: HostOperation,
+  value: unknown,
+): { readonly artifactId: string; readonly contentHash: string | null }[] {
+  if (value === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value) || value.length > 64) {
+    throw invalidInput(operation, 'invalid_artifact_refs', 'artifactRefs');
+  }
+  const seen = new Set<string>();
+  return value.map((raw) => {
+    if (!isPlainObject(raw)) {
+      throw invalidInput(operation, 'invalid_artifact_refs', 'artifactRefs');
+    }
+    const keys = Object.keys(raw);
+    if (keys.some((key) => key !== 'artifactId' && key !== 'contentHash')) {
+      throw invalidInput(operation, 'invalid_artifact_refs', 'artifactRefs');
+    }
+    const artifactId = requireStableIdInput(operation, raw.artifactId, 'artifactRefs.artifactId');
+    if (seen.has(artifactId)) {
+      throw invalidInput(operation, 'invalid_artifact_refs', 'artifactRefs');
+    }
+    seen.add(artifactId);
+    const contentHash = raw.contentHash ?? null;
+    if (contentHash !== null && (typeof contentHash !== 'string' || !SHA256_HEX_PATTERN.test(contentHash))) {
+      throw invalidInput(operation, 'invalid_artifact_refs', 'artifactRefs.contentHash');
+    }
+    return { artifactId, contentHash: contentHash as string | null };
   });
 }
 
@@ -2396,6 +2545,146 @@ export function createHostClientApplication(context: AppClientContext): HostClie
       );
       if (receipt.status === 'completed') {
         validateFeaturePlanDecideResultWire(receipt.result, 'commands.submit');
+      }
+      return receipt;
+    },
+
+    async submitTaskApprovalBlock(
+      input: TaskApprovalBlockInput,
+      options?: SubmitCommandOptions,
+    ): Promise<CommandReceipt> {
+      const object = rejectUnknownInputKeys('commands.submit', input, TASK_APPROVAL_BLOCK_INPUT_KEYS);
+      const projectId = requireProjectId('commands.submit', object.projectId as string);
+      const taskId = requireStableIdInput('commands.submit', object.taskId, 'taskId');
+      if (typeof object.planDigest !== 'string' || !SHA256_HEX_PATTERN.test(object.planDigest)) {
+        throw invalidInput('commands.submit', 'invalid_plan_digest', 'planDigest');
+      }
+      if (object.kind !== undefined && object.kind !== 'block' && object.kind !== 'approval') {
+        throw invalidInput('commands.submit', 'invalid_approval_kind', 'kind');
+      }
+      if (object.description !== undefined && typeof object.description !== 'string') {
+        throw invalidInput('commands.submit', 'invalid_description', 'description');
+      }
+      if (object.responsibleParty !== undefined && typeof object.responsibleParty !== 'string') {
+        throw invalidInput('commands.submit', 'invalid_responsible_party', 'responsibleParty');
+      }
+      const codeDigest = object.codeDigest ?? null;
+      if (
+        codeDigest !== null &&
+        (typeof codeDigest !== 'string' || !SHA256_HEX_PATTERN.test(codeDigest))
+      ) {
+        throw invalidInput('commands.submit', 'invalid_code_digest', 'codeDigest');
+      }
+      const artifactRefs = requireArtifactRefsInput('commands.submit', object.artifactRefs);
+      const expectedRevision = requireExpectedRevisionInput('commands.submit', object.expectedRevision);
+      const receipt = await submitCommand(
+        {
+          ...optionalCommandIdInput('commands.submit', object.commandId),
+          operation: 'task.approval.block',
+          scope: { kind: 'project', projectId },
+          expectedRevision,
+          payload: {
+            taskId,
+            planDigest: object.planDigest,
+            ...(object.kind !== undefined ? { kind: object.kind } : {}),
+            ...(object.description !== undefined ? { description: object.description } : {}),
+            ...(object.responsibleParty !== undefined ? { responsibleParty: object.responsibleParty } : {}),
+            codeDigest,
+            artifactRefs,
+          },
+        },
+        options,
+      );
+      if (receipt.status === 'completed') {
+        validateTaskApprovalBlockResultWire(receipt.result, 'commands.submit');
+      }
+      return receipt;
+    },
+
+    async submitTaskApprovalDecision(
+      input: TaskApprovalDecisionInput,
+      options?: SubmitCommandOptions,
+    ): Promise<CommandReceipt> {
+      const object = rejectUnknownInputKeys('commands.submit', input, TASK_APPROVAL_DECISION_INPUT_KEYS);
+      const projectId = requireProjectId('commands.submit', object.projectId as string);
+      const taskId = requireStableIdInput('commands.submit', object.taskId, 'taskId');
+      const itemId = requireStableIdInput('commands.submit', object.itemId, 'itemId');
+      if (typeof object.planDigest !== 'string' || !SHA256_HEX_PATTERN.test(object.planDigest)) {
+        throw invalidInput('commands.submit', 'invalid_plan_digest', 'planDigest');
+      }
+      if (typeof object.codeDigest !== 'string' || !SHA256_HEX_PATTERN.test(object.codeDigest)) {
+        throw invalidInput('commands.submit', 'invalid_code_digest', 'codeDigest');
+      }
+      if (
+        object.decision !== 'approve' &&
+        object.decision !== 'reject' &&
+        object.decision !== 'unblock'
+      ) {
+        throw invalidInput('commands.submit', 'invalid_decision', 'decision');
+      }
+      const reason = object.reason ?? null;
+      if (reason !== null && typeof reason !== 'string') {
+        throw invalidInput('commands.submit', 'invalid_reason', 'reason');
+      }
+      const artifactRefs = requireArtifactRefsInput('commands.submit', object.artifactRefs);
+      const expectedRevision = requireExpectedRevisionInput('commands.submit', object.expectedRevision);
+      const receipt = await submitCommand(
+        {
+          ...optionalCommandIdInput('commands.submit', object.commandId),
+          operation: `task.approval.${object.decision}`,
+          scope: { kind: 'project', projectId },
+          expectedRevision,
+          payload: { taskId, itemId, planDigest: object.planDigest, codeDigest: object.codeDigest, artifactRefs, reason },
+        },
+        options,
+      );
+      if (receipt.status === 'completed') {
+        validateTaskApprovalDecisionResultWire(receipt.result, 'commands.submit');
+      }
+      return receipt;
+    },
+
+    async continueTaskVerification(
+      input: TaskVerificationContinueInput,
+      options?: SubmitCommandOptions,
+    ): Promise<CommandReceipt> {
+      const object = rejectUnknownInputKeys('commands.submit', input, TASK_VERIFICATION_CONTINUE_INPUT_KEYS);
+      const projectId = requireProjectId('commands.submit', object.projectId as string);
+      const taskId = requireStableIdInput('commands.submit', object.taskId, 'taskId');
+      const attemptId = requireStableIdInput('commands.submit', object.attemptId, 'attemptId');
+      const verificationBatchId = requireStableIdInput(
+        'commands.submit',
+        object.verificationBatchId,
+        'verificationBatchId',
+      );
+      if (typeof object.codeDigest !== 'string' || !SHA256_HEX_PATTERN.test(object.codeDigest)) {
+        throw invalidInput('commands.submit', 'invalid_code_digest', 'codeDigest');
+      }
+      if (
+        typeof object.observationDigest !== 'string' ||
+        !SHA256_HEX_PATTERN.test(object.observationDigest)
+      ) {
+        throw invalidInput('commands.submit', 'invalid_observation_digest', 'observationDigest');
+      }
+      const expectedRevision = requireExpectedRevisionInput('commands.submit', object.expectedRevision);
+      const receipt = await submitCommand(
+        {
+          ...optionalCommandIdInput('commands.submit', object.commandId),
+          operation: 'task.verification.continue',
+          scope: { kind: 'project', projectId },
+          expectedRevision,
+          payload: {
+            taskId,
+            attemptId,
+            verificationBatchId,
+            codeDigest: object.codeDigest,
+            observationDigest: object.observationDigest,
+          },
+        },
+        options,
+      );
+      if (receipt.status === 'completed') {
+        validateTaskVerificationContinueResultWire(receipt.result, 'commands.submit');
       }
       return receipt;
     },

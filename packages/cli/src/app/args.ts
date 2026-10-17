@@ -85,6 +85,12 @@ export type AppCliCommandId =
   | 'task.strategy'
   | 'task.prepare'
   | 'task.inputs'
+  | 'task.status'
+  | 'task.block'
+  | 'task.approve'
+  | 'task.reject'
+  | 'task.unblock'
+  | 'task.continue'
   | 'execution.preview'
   | 'execution.start'
   | 'execution.budget'
@@ -141,6 +147,12 @@ export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'task.strategy',
   'task.prepare',
   'task.inputs',
+  'task.status',
+  'task.block',
+  'task.approve',
+  'task.reject',
+  'task.unblock',
+  'task.continue',
   'execution.preview',
   'execution.start',
   'execution.budget',
@@ -263,7 +275,10 @@ export type AppCliParseReason =
   | 'concurrency_not_supported'
   | 'confirmation_required'
   | 'invalid_preview_file'
-  | 'preview_feature_mismatch';
+  | 'preview_feature_mismatch'
+  | 'invalid_digest'
+  | 'invalid_artifact_ref'
+  | 'duplicate_artifact_ref';
 
 const REASON_MESSAGE: Readonly<Record<AppCliParseReason, string>> = Object.freeze({
   invalid_argv_type: 'argv 必须是字符串数组',
@@ -341,6 +356,9 @@ const REASON_MESSAGE: Readonly<Record<AppCliParseReason, string>> = Object.freez
   confirmation_required: '破坏性操作必须明确确认（--confirm）',
   invalid_preview_file: '丢弃预览文件不是合法的工作区丢弃预览（形状或绑定字段不合法）',
   preview_feature_mismatch: '丢弃预览文件的 Feature 与命令目标 Feature 不一致',
+  invalid_digest: '摘要必须是 64 位小写十六进制',
+  invalid_artifact_ref: '产物引用必须是 <artifactId> 或 <artifactId>:<sha256>',
+  duplicate_artifact_ref: '不得重复引用同一产物',
 });
 
 interface ParseState {
@@ -763,6 +781,86 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
     maxPositionals: 1,
     positionalFields: ['commandId'],
   },
+  /* P03-7 / F-014：人审事项/显式验证继续命令与 Task 状态查询（身份与凭据
+   * 不接受客户端参数；产物引用可重复）。 */
+  'task.status': {
+    command: 'task',
+    commandId: 'task.status',
+    valueFlags: ['--project'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['taskId'],
+  },
+  'task.block': {
+    command: 'task',
+    commandId: 'task.block',
+    valueFlags: [
+      '--project',
+      '--digest',
+      '--revision',
+      '--kind',
+      '--description',
+      '--party',
+      '--code-digest',
+      '--artifact',
+      '--command-id',
+    ],
+    boolFlags: [],
+    repeatableFlags: ['--artifact'],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['taskId'],
+  },
+  'task.approve': {
+    command: 'task',
+    commandId: 'task.approve',
+    valueFlags: ['--project', '--digest', '--code-digest', '--revision', '--reason', '--artifact', '--command-id'],
+    boolFlags: [],
+    repeatableFlags: ['--artifact'],
+    minPositionals: 2,
+    maxPositionals: 2,
+    positionalFields: ['taskId', 'itemId'],
+  },
+  'task.reject': {
+    command: 'task',
+    commandId: 'task.reject',
+    valueFlags: ['--project', '--digest', '--code-digest', '--revision', '--reason', '--artifact', '--command-id'],
+    boolFlags: [],
+    repeatableFlags: ['--artifact'],
+    minPositionals: 2,
+    maxPositionals: 2,
+    positionalFields: ['taskId', 'itemId'],
+  },
+  'task.unblock': {
+    command: 'task',
+    commandId: 'task.unblock',
+    valueFlags: ['--project', '--digest', '--code-digest', '--revision', '--reason', '--artifact', '--command-id'],
+    boolFlags: [],
+    repeatableFlags: ['--artifact'],
+    minPositionals: 2,
+    maxPositionals: 2,
+    positionalFields: ['taskId', 'itemId'],
+  },
+  'task.continue': {
+    command: 'task',
+    commandId: 'task.continue',
+    valueFlags: [
+      '--project',
+      '--attempt',
+      '--batch',
+      '--code-digest',
+      '--observation',
+      '--revision',
+      '--command-id',
+    ],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['taskId'],
+  },
   'execution.preview': {
     command: 'execution',
     commandId: 'execution.preview',
@@ -989,6 +1087,12 @@ const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, A
       strategy: 'task.strategy',
       prepare: 'task.prepare',
       inputs: 'task.inputs',
+      status: 'task.status',
+      block: 'task.block',
+      approve: 'task.approve',
+      reject: 'task.reject',
+      unblock: 'task.unblock',
+      continue: 'task.continue',
     },
     execution: {
       preview: 'execution.preview',
@@ -1331,6 +1435,27 @@ function requirePlanDigest(scan: ScanResult, state: ParseState): string {
   const raw = requireOption(scan, '--digest', state, 'digest');
   if (!/^[0-9a-f]{64}$/.test(raw)) {
     fail(state, 'invalid_plan_digest', 'digest');
+  }
+  return raw;
+}
+
+/** 通用 SHA-256 摘要选项（64 位小写 hex；用于代码/观察摘要身份）。 */
+function requireSha256Option(scan: ScanResult, name: string, state: ParseState, field: string): string {
+  const raw = requireOption(scan, name, state, field);
+  if (!/^[0-9a-f]{64}$/.test(raw)) {
+    fail(state, 'invalid_digest', field);
+  }
+  return raw;
+}
+
+/** 可选 SHA-256 摘要选项（省略即不携带；存在则必须合法）。 */
+function optionalSha256Option(scan: ScanResult, name: string, state: ParseState, field: string): string | undefined {
+  const raw = takeOption(scan, name);
+  if (raw === undefined) {
+    return undefined;
+  }
+  if (!/^[0-9a-f]{64}$/.test(raw)) {
+    fail(state, 'invalid_digest', field);
   }
   return raw;
 }
@@ -2043,6 +2168,92 @@ export interface ParsedTaskInputs {
   readonly targetCommandId: string;
 }
 
+/** `task status <taskId> --project <id>`：机器结论/人审待处理/有效 Task 状态三分区只读展示。 */
+export interface ParsedTaskStatus {
+  readonly kind: 'command';
+  readonly command: 'task';
+  readonly commandId: 'task.status';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly taskId: string;
+}
+
+/**
+ * P03-7 / F-014 添加阻塞/必需审批事项（task.approval.block）：`--digest` 绑定
+ * 当前计划摘要，`--revision` 为 Task 自身 expectedRevision；`--party` 是业务
+ * 责任主体名（不是认证身份）；`--artifact` 可重复（<artifactId[:sha256]>）。
+ * 不接受任何主体/凭据参数（伪造主体/明文凭据在解析层就是未知参数）。
+ */
+export interface ParsedTaskApprovalBlock {
+  readonly kind: 'command';
+  readonly command: 'task';
+  readonly commandId: 'task.block';
+  readonly operation: 'task.approval.block';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly taskId: string;
+  readonly planDigest: string;
+  readonly revision: number;
+  readonly kindOption?: 'block' | 'approval';
+  readonly description?: string;
+  readonly responsibleParty?: string;
+  readonly codeDigest?: string;
+  readonly artifactRefs: readonly string[];
+  readonly explicitCommandId?: string;
+}
+
+/**
+ * P03-7 / F-014 事项决定（task.approval.approve/reject/unblock）：决定由子命令
+ * 给定并绑定 planDigest/codeDigest/产物摘要；decisionActor 等身份不接受参数。
+ */
+export interface ParsedTaskApprovalDecision {
+  readonly kind: 'command';
+  readonly command: 'task';
+  readonly commandId: 'task.approve' | 'task.reject' | 'task.unblock';
+  readonly operation:
+    | 'task.approval.approve'
+    | 'task.approval.reject'
+    | 'task.approval.unblock';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly taskId: string;
+  readonly itemId: string;
+  readonly planDigest: string;
+  readonly codeDigest: string;
+  readonly revision: number;
+  readonly reason?: string;
+  readonly artifactRefs: readonly string[];
+  readonly explicitCommandId?: string;
+}
+
+/**
+ * P03-7 / F-014 显式验证继续（task.verification.continue）：只携带目标与已
+ * 保存机器证据身份（批次/代码/观察摘要）；漂移由服务端 fail-closed 拒绝。
+ */
+export interface ParsedTaskVerificationContinue {
+  readonly kind: 'command';
+  readonly command: 'task';
+  readonly commandId: 'task.continue';
+  readonly operation: 'task.verification.continue';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly taskId: string;
+  readonly attemptId: string;
+  readonly verificationBatchId: string;
+  readonly codeDigest: string;
+  readonly observationDigest: string;
+  readonly revision: number;
+  readonly explicitCommandId?: string;
+}
+
 /**
  * P03-3 / F-012 执行预览（execution.preview；只读授权预览）：固定单 Feature +
  * 完整有限预算（`--input` 预算文档，参数映射见 app/execution.ts）；预览不是
@@ -2355,6 +2566,10 @@ export type ParsedAppCliCommand =
   | ParsedTaskStrategy
   | ParsedTaskPrepare
   | ParsedTaskInputs
+  | ParsedTaskStatus
+  | ParsedTaskApprovalBlock
+  | ParsedTaskApprovalDecision
+  | ParsedTaskVerificationContinue
   | ParsedExecutionPreview
   | ParsedExecutionStart
   | ParsedExecutionBudget
@@ -3248,6 +3463,88 @@ function buildPlanEntity(
         fail(state, 'invalid_command_id', 'commandId');
       }
       return { ...base, command: 'task', commandId: 'task.inputs', targetCommandId };
+    }
+    case 'task.status': {
+      return {
+        ...base,
+        command: 'task',
+        commandId: 'task.status',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        taskId: requirePlanId(scan.positionals[0] as string, state, 'taskId'),
+      };
+    }
+    case 'task.block': {
+      const explicitCommandId = optionalCommandId(scan, state);
+      const kindOption = takeOption(scan, '--kind');
+      if (kindOption !== undefined && kindOption !== 'block' && kindOption !== 'approval') {
+        fail(state, 'unknown_input_field', 'kind');
+      }
+      const description = takeOption(scan, '--description');
+      if (description !== undefined && (description.trim().length === 0 || description.includes('\0') || codePointLength(description) > 4096)) {
+        fail(state, 'invalid_description', 'description');
+      }
+      const responsibleParty = takeOption(scan, '--party');
+      if (responsibleParty !== undefined && (responsibleParty.trim().length === 0 || responsibleParty.includes('\0') || codePointLength(responsibleParty) > 256)) {
+        fail(state, 'invalid_name', 'party');
+      }
+      const blockCodeDigest = optionalSha256Option(scan, '--code-digest', state, 'code-digest');
+      return {
+        ...base,
+        command: 'task',
+        commandId: 'task.block',
+        operation: 'task.approval.block',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        taskId: requirePlanId(scan.positionals[0] as string, state, 'taskId'),
+        planDigest: requirePlanDigest(scan, state),
+        revision: requireRevision(scan, state),
+        ...(kindOption !== undefined ? { kindOption: kindOption as 'block' | 'approval' } : {}),
+        ...(description !== undefined ? { description } : {}),
+        ...(responsibleParty !== undefined ? { responsibleParty } : {}),
+        ...(blockCodeDigest !== undefined ? { codeDigest: blockCodeDigest } : {}),
+        artifactRefs: [...(scan.options.get('--artifact') ?? [])],
+        ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
+      };
+    }
+    case 'task.approve':
+    case 'task.reject':
+    case 'task.unblock': {
+      const explicitCommandId = optionalCommandId(scan, state);
+      const reason = optionalReason(scan, state);
+      return {
+        ...base,
+        command: 'task',
+        commandId: spec.commandId,
+        operation: `task.approval.${spec.commandId.slice('task.'.length)}` as
+          | 'task.approval.approve'
+          | 'task.approval.reject'
+          | 'task.approval.unblock',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        taskId: requirePlanId(scan.positionals[0] as string, state, 'taskId'),
+        itemId: requirePlanId(scan.positionals[1] as string, state, 'itemId'),
+        planDigest: requirePlanDigest(scan, state),
+        codeDigest: requireSha256Option(scan, '--code-digest', state, 'code-digest'),
+        revision: requireRevision(scan, state),
+        ...(reason !== undefined ? { reason } : {}),
+        artifactRefs: [...(scan.options.get('--artifact') ?? [])],
+        ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
+      };
+    }
+    case 'task.continue': {
+      const explicitCommandId = optionalCommandId(scan, state);
+      return {
+        ...base,
+        command: 'task',
+        commandId: 'task.continue',
+        operation: 'task.verification.continue',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        taskId: requirePlanId(scan.positionals[0] as string, state, 'taskId'),
+        attemptId: requireAttemptId(requireOption(scan, '--attempt', state, 'attempt'), state),
+        verificationBatchId: requirePlanId(requireOption(scan, '--batch', state, 'batch'), state, 'batch'),
+        codeDigest: requireSha256Option(scan, '--code-digest', state, 'code-digest'),
+        observationDigest: requireSha256Option(scan, '--observation', state, 'observation'),
+        revision: requireRevision(scan, state),
+        ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
+      };
     }
     default:
       fail(state, 'unknown_subcommand');

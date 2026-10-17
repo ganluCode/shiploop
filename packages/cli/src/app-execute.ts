@@ -35,7 +35,10 @@ import {
   type HostEventSubscription,
   type SubmitCommandInput,
   type SubscribeEventsInput,
+  type TaskApprovalBlockResult,
+  type TaskApprovalDecisionResult,
   type TaskStrategyUpdateResult,
+  type TaskVerificationContinueResult,
 } from 'shiploop-host';
 import { AppCliParseError, parseAppCliArgs, parseAppInputJson } from './app/args.js';
 import {
@@ -98,6 +101,24 @@ import {
   parsePrepareItemsPayload,
   scanStrategyInputFields,
 } from './app/decisions.js';
+import {
+  buildTaskApprovalBlockView,
+  buildTaskApprovalDecisionView,
+  buildTaskStatusView,
+  buildTaskVerificationContinueView,
+  formatTaskApprovalBlockView,
+  formatTaskApprovalDecisionView,
+  formatTaskStatusView,
+  formatTaskVerificationContinueView,
+  parseArtifactRefValues,
+  scanConfigPolicyInputFields,
+} from './app/approvals.js';
+import type {
+  ParsedTaskApprovalBlock,
+  ParsedTaskApprovalDecision,
+  ParsedTaskStatus,
+  ParsedTaskVerificationContinue,
+} from './app/args.js';
 import {
   BASELINE_INPUT_TIMEOUT_MAX_MS,
   baselineCliExitCode,
@@ -1312,6 +1333,118 @@ async function executePlanCommand(
       const prepared = validateExecutionInputPrepareResultWire(receipt.result);
       const view = buildExecutionInputView(receipt.commandId, receipt.replayed, prepared);
       return emitSuccess(io, command, view, formatExecutionInputView(view, 'task.inputs'));
+    }
+    /* P03-7 / F-014：人审事项/显式验证继续命令与 Task 状态查询（全部经
+     * HostClient 公共面；决定/继续的回执结果经冻结字段集线校验器复核后投影）。 */
+    case 'task.status': {
+      const verification = await client.getTaskVerification(command.projectId, command.taskId);
+      const approvals = await client.listTaskApprovalItems(command.projectId, command.taskId, {
+        limit: 200,
+      });
+      const rework = await client.listTaskReworkChain(command.projectId, command.taskId, {
+        limit: 1,
+      });
+      const view = buildTaskStatusView(command.commandId, {
+        verification,
+        approvals,
+        rework,
+      });
+      return emitSuccess(io, command, view, formatTaskStatusView(view));
+    }
+    case 'task.block': {
+      const block: ParsedTaskApprovalBlock = command;
+      const issuedAt = await replayIssuedAt(client, block.explicitCommandId);
+      const receipt = await client.submitTaskApprovalBlock(
+        {
+          projectId: block.projectId,
+          taskId: block.taskId,
+          planDigest: block.planDigest,
+          expectedRevision: block.revision,
+          ...(block.kindOption !== undefined ? { kind: block.kindOption } : {}),
+          ...(block.description !== undefined ? { description: block.description } : {}),
+          ...(block.responsibleParty !== undefined
+            ? { responsibleParty: block.responsibleParty }
+            : {}),
+          ...(block.codeDigest !== undefined ? { codeDigest: block.codeDigest } : {}),
+          artifactRefs: parseArtifactRefValues(block.artifactRefs, {
+            command: block.command,
+            commandId: block.commandId,
+            json: block.json,
+          }),
+        },
+        envelopeIdentityOptions(block.explicitCommandId, issuedAt),
+      );
+      return emitDomainReceipt(
+        io,
+        command,
+        receipt,
+        (commandId, replayed, result) =>
+          buildTaskApprovalBlockView(commandId, replayed, result as TaskApprovalBlockResult),
+        formatTaskApprovalBlockView,
+      );
+    }
+    case 'task.approve':
+    case 'task.reject':
+    case 'task.unblock': {
+      const decision: ParsedTaskApprovalDecision = command;
+      const issuedAt = await replayIssuedAt(client, decision.explicitCommandId);
+      const receipt = await client.submitTaskApprovalDecision(
+        {
+          projectId: decision.projectId,
+          taskId: decision.taskId,
+          itemId: decision.itemId,
+          planDigest: decision.planDigest,
+          codeDigest: decision.codeDigest,
+          decision: decision.operation.slice('task.approval.'.length) as
+            | 'approve'
+            | 'reject'
+            | 'unblock',
+          expectedRevision: decision.revision,
+          artifactRefs: parseArtifactRefValues(decision.artifactRefs, {
+            command: decision.command,
+            commandId: decision.commandId,
+            json: decision.json,
+          }),
+          reason: decision.reason ?? null,
+        },
+        envelopeIdentityOptions(decision.explicitCommandId, issuedAt),
+      );
+      return emitDomainReceipt(
+        io,
+        command,
+        receipt,
+        (commandId, replayed, result) =>
+          buildTaskApprovalDecisionView(commandId, replayed, result as TaskApprovalDecisionResult),
+        formatTaskApprovalDecisionView,
+      );
+    }
+    case 'task.continue': {
+      const continuation: ParsedTaskVerificationContinue = command;
+      const issuedAt = await replayIssuedAt(client, continuation.explicitCommandId);
+      const receipt = await client.continueTaskVerification(
+        {
+          projectId: continuation.projectId,
+          taskId: continuation.taskId,
+          attemptId: continuation.attemptId,
+          verificationBatchId: continuation.verificationBatchId,
+          codeDigest: continuation.codeDigest,
+          observationDigest: continuation.observationDigest,
+          expectedRevision: continuation.revision,
+        },
+        envelopeIdentityOptions(continuation.explicitCommandId, issuedAt),
+      );
+      return emitDomainReceipt(
+        io,
+        command,
+        receipt,
+        (commandId, replayed, result) =>
+          buildTaskVerificationContinueView(
+            commandId,
+            replayed,
+            result as TaskVerificationContinueResult,
+          ),
+        formatTaskVerificationContinueView,
+      );
     }
   }
 }
@@ -2682,6 +2815,15 @@ export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunRes
   if (command.commandId === 'config.create' || command.commandId === 'config.update') {
     try {
       configPayload = readConfigInputPayload(command);
+      // P03-7 / F-014：检查定义/模块策略确认的参数守护——policies 段拒绝客户端
+      // 伪造主体与明文凭据字段（不进入请求体；服务端 Schema 仍是唯一权威）。
+      if (configPayload.policies !== undefined) {
+        scanConfigPolicyInputFields(configPayload.policies, {
+          command: command.command,
+          commandId: command.commandId,
+          json: command.json,
+        });
+      }
     } catch (error) {
       if (error instanceof AppCliParseError) {
         return emitParseFailure(io, error, jsonFlag);

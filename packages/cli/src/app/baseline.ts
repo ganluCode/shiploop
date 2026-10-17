@@ -112,6 +112,7 @@ const SECRET_FIELD_TOKENS: ReadonlySet<string> = new Set([
   'passphrase',
   'pin',
   'apikey',
+  'apitoken',
   'accesskey',
   'secretkey',
   'accesstoken',
@@ -134,6 +135,8 @@ const SECRET_FIELD_TOKENS: ReadonlySet<string> = new Set([
 const CLIENT_IDENTITY_FIELDS: ReadonlySet<string> = new Set([
   'actorid',
   'actor',
+  'decisionactor',
+  'decisionactorid',
   'principal',
   'principalid',
   'capabilities',
@@ -148,12 +151,47 @@ function normalizeKeyToken(key: string): string {
   return key.toLowerCase().replaceAll(/[_-]/g, '');
 }
 
+/** 明文秘密/环境值字段判定（规范化 token 精确匹配）。 */
+function isSecretFieldToken(token: string): boolean {
+  return SECRET_FIELD_TOKENS.has(token);
+}
+
+/** 客户端伪造主体/权限字段判定（可信身份只由 Host 装配注入）。 */
+export function isClientIdentityFieldToken(token: string): boolean {
+  return CLIENT_IDENTITY_FIELDS.has(token);
+}
+
+/** 递归扫描键名：明文秘密/环境值字段一律定位拒绝（只看键名，不读值）。 */
+export function rejectSecretInputFields(
+  value: unknown,
+  field: string,
+  context: BaselineInputContext,
+): void {
+  if (Array.isArray(value)) {
+    value.forEach((item, index) => {
+      rejectSecretInputFields(item, `${field}[${index}]`, context);
+    });
+    return;
+  }
+  if (!isPlainObject(value)) {
+    return;
+  }
+  for (const key of Object.keys(value)) {
+    const childField = field.length > 0 ? `${field}.${key}` : key;
+    if (isSecretFieldToken(normalizeKeyToken(key))) {
+      failInput('input_secret_field_rejected', childField, context);
+    }
+    rejectSecretInputFields(value[key], childField, context);
+  }
+}
+
 /** 递归扫描键名：秘密/环境值字段与身份字段一律定位拒绝（只看键名，不读值）。 */
 export function rejectForbiddenFields(
   value: unknown,
   field: string,
   context: BaselineInputContext,
 ): void {
+  rejectSecretInputFields(value, field, context);
   if (Array.isArray(value)) {
     value.forEach((item, index) => {
       rejectForbiddenFields(item, `${field}[${index}]`, context);
@@ -165,11 +203,7 @@ export function rejectForbiddenFields(
   }
   for (const key of Object.keys(value)) {
     const childField = field.length > 0 ? `${field}.${key}` : key;
-    const token = normalizeKeyToken(key);
-    if (SECRET_FIELD_TOKENS.has(token)) {
-      failInput('input_secret_field_rejected', childField, context);
-    }
-    if (CLIENT_IDENTITY_FIELDS.has(token)) {
+    if (isClientIdentityFieldToken(normalizeKeyToken(key))) {
       failInput('input_identity_field_rejected', childField, context);
     }
     rejectForbiddenFields(value[key], childField, context);
