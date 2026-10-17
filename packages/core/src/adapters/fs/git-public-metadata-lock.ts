@@ -176,6 +176,18 @@ export function createGitPublicMetadataLock(): GitPublicMetadataLock {
         released = true;
       } };
     },
+    async inspectRecovered(input): Promise<boolean> {
+      try {
+        const expected = canonicalize(input);
+        if (hasNativeLock(expected)) return false;
+        const path = claimPath(expected), fd = openSync(path, READ_FLAGS);
+        try {
+          const opened = fstatSync(fd), current = lstatSync(path);
+          return opened.dev === current.dev && opened.ino === current.ino
+            && current.isFile() && current.nlink === 1 && owns(readClaim(fd), expected);
+        } finally { closeSync(fd); }
+      } catch { return false; }
+    },
     async releaseRecovered(input): Promise<boolean> {
       try {
         const expected = canonicalize(input);

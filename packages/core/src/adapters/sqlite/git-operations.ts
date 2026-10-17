@@ -453,6 +453,16 @@ export function createSqliteGitOperationStore(
       });
     }
     assertFinalizationMatchesIntent(existing.intent, input, operation);
+    // A delayed receipt must never overwrite a newer operation's delivery axis.
+    // rowid orders durable registration even when clock timestamps are identical.
+    const newer = db.prepare<[string, string, string], { id: string }>(
+      `SELECT id FROM git_operations WHERE project_id = ? AND feature_id = ?
+        AND rowid > (SELECT rowid FROM git_operations WHERE id = ?) LIMIT 1`,
+    ).get(existing.intent.projectId, existing.intent.featureId, input.operationId);
+    if (newer) {
+      fail('conflict', operation, 'A newer Git operation owns the delivery projection', entity,
+        'superseded_operation');
+    }
     const receipt = buildGitOperationReceipt(existing.intent, existing.intentDigest, input);
     const timestamp = now();
     const changed = db

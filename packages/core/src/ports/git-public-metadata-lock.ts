@@ -19,6 +19,11 @@ export interface GitPublicMetadataLock {
   acquire(input: GitPublicMetadataLockInput): Promise<GitPublicMetadataLease>;
   /** Removes a claim only after the caller has independently confirmed its owner stopped. */
   releaseRecovered(input: GitPublicMetadataLockInput): Promise<boolean>;
+  /** Read-only check of a retained exact-owner claim, including native Git locks.
+   * Caller must independently confirm all previous writers stopped before using it.
+   * Concurrent reconciliation readers are allowed; receipt writes remain CAS guarded.
+   */
+  inspectRecovered?(input: GitPublicMetadataLockInput): Promise<boolean>;
 }
 
 /** The historical filename is retained so existing baseline recovery evidence remains valid. */
