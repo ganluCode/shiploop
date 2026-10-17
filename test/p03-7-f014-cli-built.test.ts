@@ -182,9 +182,9 @@ describe('F-014 正式构建入口：回执重放/过期摘要/越权主体/重�
     /* 同 commandId 重放：先提交、后以同一信封重放返回原回执（replayed）。 */
     const approveCommandId = randomUUID();
     const approveArgs = [
-      'task', 'approve', 't-1', seeded.approvalItemId, '--project', fixture!.projectId,
+      'task', 'approve', 't-1', seeded.approvalItemId!, '--project', fixture!.projectId,
       '--digest', seeded.planDigest, '--code-digest', seeded.codeDigest,
-      '--revision', String(seeded.approvalItemRevision), '--command-id', approveCommandId, '--json',
+      '--revision', String(seeded.approvalItemRevision!), '--command-id', approveCommandId, '--json',
     ];
     const approved = okResult(await runBuiltCli(approveArgs), 'task.approve') as {
       replayed: boolean;

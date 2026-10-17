@@ -72,6 +72,9 @@ export interface BindingFixtureOptions {
   readonly secondTask?: boolean;
   /** F-014：第二 Task 声明 dependsOn: ['t-1']（须与 secondTask 同用），用于后继未解锁断言。 */
   readonly secondTaskDependsOnFirst?: boolean;
+  /** F-016：第三 Task（t-3，dependsOn: ['t-2']，独立 spec 输入）；须与 secondTask +
+   * secondTaskDependsOnFirst 同用，构成 t-1→t-2→t-3 三 Task 链。 */
+  readonly thirdTaskChained?: boolean;
 }
 
 export interface BoundAttempt {
@@ -125,6 +128,10 @@ export interface BindingFixture {
 export async function openBindingFixture(options: BindingFixtureOptions = {}): Promise<BindingFixture> {
   if (options.secondTaskDependsOnFirst === true && options.secondTask !== true) {
     throw new TypeError('openBindingFixture: secondTaskDependsOnFirst 须与 secondTask 同用');
+  }
+  if (options.thirdTaskChained === true &&
+      (options.secondTask !== true || options.secondTaskDependsOnFirst !== true)) {
+    throw new TypeError('openBindingFixture: thirdTaskChained 须与 secondTask + secondTaskDependsOnFirst 同用');
   }
   const box = createCommandsTestFixture({ prefix: 'shiploop-p036-f002-' });
   let session: SqliteStorageSession | undefined;
@@ -241,6 +248,18 @@ export async function openBindingFixture(options: BindingFixtureOptions = {}): P
       });
       secondRequirementArtifactId = second.artifact.id;
     }
+    let thirdRequirementArtifactId: string | undefined;
+    if (options.thirdTaskChained === true) {
+      const third = await publisher.publishArtifact({
+        projectId,
+        kind: 'requirement',
+        mediaType: 'text/markdown',
+        expectedHash: sha256('任务三规格正文（三 Task 链尾端证据）。'),
+        locator: 'requirements/task-3.md',
+        content: [Buffer.from('任务三规格正文（三 Task 链尾端证据）。', 'utf8')],
+      });
+      thirdRequirementArtifactId = third.artifact.id;
+    }
 
     const tasks: Record<string, unknown>[] = [
       {
@@ -253,6 +272,13 @@ export async function openBindingFixture(options: BindingFixtureOptions = {}): P
         id: 't-2', title: '绑定任务二', acceptance: { criteria: ['任务二验收'] },
         requirementsRefs: [{ artifactId: secondRequirementArtifactId }],
         ...(options.secondTaskDependsOnFirst === true ? { dependsOn: ['t-1'] } : {}),
+      });
+    }
+    if (options.thirdTaskChained === true) {
+      tasks.push({
+        id: 't-3', title: '绑定任务三', acceptance: { criteria: ['任务三验收'] },
+        requirementsRefs: [{ artifactId: thirdRequirementArtifactId }],
+        dependsOn: ['t-2'],
       });
     }
     const imported = requireCompleted(
@@ -283,7 +309,9 @@ export async function openBindingFixture(options: BindingFixtureOptions = {}): P
         featureId, taskId,
         items: taskId === 't-1'
           ? [{ purpose: 'requirements', source: { kind: 'artifact', artifactId: requirementArtifactId } }]
-          : [{ purpose: 'spec', source: { kind: 'artifact', artifactId: secondRequirementArtifactId } }],
+          : taskId === 't-2'
+            ? [{ purpose: 'spec', source: { kind: 'artifact', artifactId: secondRequirementArtifactId } }]
+            : [{ purpose: 'spec', source: { kind: 'artifact', artifactId: thirdRequirementArtifactId } }],
       }, { scope });
       const result = requireCompleted(receipt, 'execution.input.prepare');
       const group = result['group'] as PreparedExecutionInputGroup['group'];
@@ -312,6 +340,9 @@ export async function openBindingFixture(options: BindingFixtureOptions = {}): P
     prepared.set('t-1', await prepareFor('t-1'));
     if (options.secondTask === true) {
       prepared.set('t-2', await prepareFor('t-2'));
+    }
+    if (options.thirdTaskChained === true) {
+      prepared.set('t-3', await prepareFor('t-3'));
     }
 
     /* 显式执行启动（真实 Batch/Run）。 */

@@ -314,8 +314,8 @@ describe('F-014 显式验证继续（复用有效机器证据，零新增编码�
     const approveCommandId = randomUUID();
     const approved = okResult(
       await runApp([
-        'task', 'approve', 't-1', seeded.approvalItemId, '--project', projectId, '--digest', seeded.planDigest,
-        '--code-digest', seeded.codeDigest, '--revision', String(seeded.approvalItemRevision),
+        'task', 'approve', 't-1', seeded.approvalItemId!, '--project', projectId, '--digest', seeded.planDigest,
+        '--code-digest', seeded.codeDigest, '--revision', String(seeded.approvalItemRevision!),
         '--command-id', approveCommandId, '--json',
       ]),
       'task.approve',
@@ -327,8 +327,8 @@ describe('F-014 显式验证继续（复用有效机器证据，零新增编码�
     /* 同 commandId 重放：同一回执（replayed），不重复副作用。 */
     const replayed = okResult(
       await runApp([
-        'task', 'approve', 't-1', seeded.approvalItemId, '--project', projectId, '--digest', seeded.planDigest,
-        '--code-digest', seeded.codeDigest, '--revision', String(seeded.approvalItemRevision),
+        'task', 'approve', 't-1', seeded.approvalItemId!, '--project', projectId, '--digest', seeded.planDigest,
+        '--code-digest', seeded.codeDigest, '--revision', String(seeded.approvalItemRevision!),
         '--command-id', approveCommandId, '--json',
       ]),
       'task.approve',

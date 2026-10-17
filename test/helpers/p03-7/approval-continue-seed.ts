@@ -39,10 +39,11 @@ export interface SeededApprovalWaitingState {
   readonly observationDigest: string;
   readonly planDigest: string;
   readonly taskRevision: number;
-  readonly approvalItemId: string;
-  readonly approvalItemRevision: number;
-  readonly approvalItemKind: 'block' | 'approval';
-  readonly responsibleParty: string;
+  /** 无审批事项时为 null（F-016：机器通过直接放行路径）。 */
+  readonly approvalItemId: string | null;
+  readonly approvalItemRevision: number | null;
+  readonly approvalItemKind: 'block' | 'approval' | null;
+  readonly responsibleParty: string | null;
   readonly owner: string;
   readonly hostInstanceId: string;
   readonly executionVersion: number;
@@ -50,23 +51,32 @@ export interface SeededApprovalWaitingState {
   readonly headCommit: string;
   readonly codeAttemptsUsed: number;
   readonly runtimeStarts: number;
+  readonly taskId: string;
 }
 
 const sha256 = (value: string | Buffer): string => createHash('sha256').update(value).digest('hex');
 
-/** 在真实执行完成（attempt=verifying）后播种验证证据与等待人审状态。 */
+/** 在真实执行完成（attempt=verifying）后播种验证证据与等待人审状态。
+ *
+ * F-016 通用化：taskId 可选（默认 't-1'，对应绑定夹具中的指定 Task）；
+ * approvalItem=false 时不播种 pending 事项，机器通过直接完成验证收尾
+ * （期望 outcome='passed'、Attempt succeeded、Task passed）。 */
 export async function seedApprovalWaitingVerification(options: {
   readonly fixture: BindingFixture;
   readonly completion: VerificationCompletionLike;
   readonly itemId?: string;
   readonly itemKind?: 'block' | 'approval';
   readonly responsibleParty?: string;
+  readonly taskId?: string;
+  readonly approvalItem?: boolean;
 }): Promise<SeededApprovalWaitingState> {
   const fixture = options.fixture;
+  const taskId = options.taskId ?? 't-1';
+  const withApprovalItem = options.approvalItem !== false;
   const db = fixture.session.database;
   const attempt = db.prepare(
-    "SELECT id, owner_id, host_instance_id, execution_version, input_snapshot FROM attempts WHERE task_id = 't-1'",
-  ).get() as {
+    "SELECT id, owner_id, host_instance_id, execution_version, input_snapshot FROM attempts WHERE task_id = ? AND status = 'verifying'",
+  ).get(taskId) as {
     id: string;
     owner_id: string;
     host_instance_id: string;
@@ -137,7 +147,7 @@ export async function seedApprovalWaitingVerification(options: {
       projectId: fixture.projectId,
       featureId: fixture.featureId,
       runId: fixture.runId,
-      taskId: 't-1',
+      taskId,
       attemptId: attempt.id,
       executionVersion: attempt.execution_version,
       operation: 'task.verify.checks',
@@ -195,7 +205,8 @@ export async function seedApprovalWaitingVerification(options: {
     ).run(diagnostic.artifact.id, attempt.id);
   });
 
-  /* pending 人审事项：approve/reject 用 approval、解除用 block。 */
+  /* pending 人审事项：approve/reject 用 approval、解除用 block；F-016 免审批
+   * 路径（approvalItem=false）不播种事项，机器通过直接放行。 */
   const itemId = options.itemId ?? `item-${attempt.id}`;
   const itemKind = options.itemKind ?? 'approval';
   const responsibleParty = options.responsibleParty ?? 'owner';
@@ -205,22 +216,25 @@ export async function seedApprovalWaitingVerification(options: {
     `UPDATE runs SET status = 'paused', reason = 'approval'
       WHERE id = ? AND status = 'paused'`,
   ).run(fixture.runId);
-  db.prepare(
-    `INSERT INTO task_approval_items
-      (id, created_at, project_id, feature_id, task_id, revision, updated_at, kind, description,
-       responsible_party, plan_digest, code_digest, artifact_refs, status, created_by, decision_artifact_refs)
-     VALUES (?, ?, ?, ?, 't-1', 1, ?, ?, 'F-014 人工复核', ?, ?, ?, '[]', 'pending', 'local-owner', '[]')`,
-  ).run(
-    itemId,
-    BINDING_NOW,
-    fixture.projectId,
-    fixture.featureId,
-    BINDING_NOW,
-    itemKind,
-    responsibleParty,
-    planDigest,
-    codeDigest,
-  );
+  if (withApprovalItem) {
+    db.prepare(
+      `INSERT INTO task_approval_items
+        (id, created_at, project_id, feature_id, task_id, revision, updated_at, kind, description,
+         responsible_party, plan_digest, code_digest, artifact_refs, status, created_by, decision_artifact_refs)
+       VALUES (?, ?, ?, ?, ?, 1, ?, ?, 'F-014 人工复核', ?, ?, ?, '[]', 'pending', 'local-owner', '[]')`,
+    ).run(
+      itemId,
+      BINDING_NOW,
+      fixture.projectId,
+      fixture.featureId,
+      taskId,
+      BINDING_NOW,
+      itemKind,
+      responsibleParty,
+      planDigest,
+      codeDigest,
+    );
+  }
 
   const completion = await options.completion.complete({    identity: {
       projectId: fixture.projectId,
@@ -229,7 +243,7 @@ export async function seedApprovalWaitingVerification(options: {
       hostInstanceId: attempt.host_instance_id,
       executionVersion: attempt.execution_version,
     },
-    taskId: 't-1',
+    taskId,
     runId: fixture.runId,
     verificationBatchId: batchId,
     observation: {
@@ -258,28 +272,40 @@ export async function seedApprovalWaitingVerification(options: {
     },
     failures: {},
   });
-  if (
+  if (withApprovalItem) {
+    if (
+      completion.outcome !== 'passed' ||
+      completion.receipt.waitingFor !== 'approval' ||
+      completion.receipt.disposition !== 'applied'
+    ) {
+      const state = db.prepare(
+        `SELECT a.status AS attempt_status, a.execution_stage AS stage, a.exit_code, a.diagnostic_ref, a.code_ref,
+                t.status AS task_status, t.execution_version AS task_ev, r.status AS run_status, r.reason AS run_reason
+           FROM attempts a JOIN tasks t ON t.id = a.task_id JOIN runs r ON r.id = a.run_id WHERE a.id = ?`,
+      ).get(attempt.id);
+      throw new Error(
+        `种子未进入等待人审状态：outcome=${completion.outcome} receipt=${JSON.stringify(completion.receipt)} state=${JSON.stringify(state)}`,
+      );
+    }
+  } else if (
     completion.outcome !== 'passed' ||
-    completion.receipt.waitingFor !== 'approval' ||
-    completion.receipt.disposition !== 'applied'
+    completion.receipt.disposition !== 'applied' ||
+    completion.receipt.waitingFor !== null
   ) {
-    const state = db.prepare(
-      `SELECT a.status AS attempt_status, a.execution_stage AS stage, a.exit_code, a.diagnostic_ref, a.code_ref,
-              t.status AS task_status, t.execution_version AS task_ev, r.status AS run_status, r.reason AS run_reason
-         FROM attempts a JOIN tasks t ON t.id = a.task_id JOIN runs r ON r.id = a.run_id WHERE a.id = ?`,
-    ).get(attempt.id);
     throw new Error(
-      `种子未进入等待人审状态：outcome=${completion.outcome} receipt=${JSON.stringify(completion.receipt)} state=${JSON.stringify(state)}`,
+      `免审批种子未直接放行：outcome=${completion.outcome} receipt=${JSON.stringify(completion.receipt)}`,
     );
   }
 
-  const task = db.prepare('SELECT revision, code_attempts_used FROM tasks WHERE id = ?').get('t-1') as {
+  const task = db.prepare('SELECT revision, code_attempts_used FROM tasks WHERE id = ?').get(taskId) as {
     revision: number;
     code_attempts_used: number;
   };
-  const item = db
-    .prepare('SELECT revision FROM task_approval_items WHERE id = ?')
-    .get(itemId) as { revision: number };
+  const item = withApprovalItem
+    ? (db
+        .prepare('SELECT revision FROM task_approval_items WHERE id = ?')
+        .get(itemId) as { revision: number })
+    : null;
   const run = db
     .prepare('SELECT runtime_starts FROM execution_batches WHERE id = (SELECT batch_id FROM runs WHERE id = ?)')
     .get(fixture.runId) as { runtime_starts: number };
@@ -291,10 +317,10 @@ export async function seedApprovalWaitingVerification(options: {
     observationDigest: completion.observationDigest,
     planDigest,
     taskRevision: task.revision,
-    approvalItemId: itemId,
-    approvalItemRevision: item.revision,
-    approvalItemKind: itemKind,
-    responsibleParty,
+    approvalItemId: withApprovalItem ? itemId : null,
+    approvalItemRevision: item?.revision ?? null,
+    approvalItemKind: withApprovalItem ? itemKind : null,
+    responsibleParty: withApprovalItem ? responsibleParty : null,
     owner: attempt.owner_id,
     hostInstanceId: attempt.host_instance_id,
     executionVersion: attempt.execution_version,
@@ -302,5 +328,6 @@ export async function seedApprovalWaitingVerification(options: {
     headCommit,
     codeAttemptsUsed: task.code_attempts_used,
     runtimeStarts: run.runtime_starts,
+    taskId,
   };
 }
