@@ -74,6 +74,7 @@ function assembleQueries(session: SqliteStorageSession, dataRoot: string): Query
     workspaceReads: queryStore,
     workSessionReads: queryStore,
     taskEvidenceReads: queryStore,
+    gitOperationReads: queryStore,
     artifacts: createSqliteArtifactStore(session),
     artifactFiles: createArtifactFileStore({ dataRoot }),
     dataRootIdentity: computeDataRootIdentity(dataRoot),

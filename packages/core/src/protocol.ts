@@ -249,6 +249,34 @@ export type {
   WorkspaceDiscardPreviewBinding,
   WorkspaceDiscardPreviewEntry,
 } from './ports/workspace-discard.js';
+// P03-8 / F-009 Git 意图/实际提交/操作回执只读查询面：公开形状、操作身份与
+// 状态/原因冻结词汇（服务端负责授权；Host 接线与 HostClient 线校验同源同步）。
+export {
+  GIT_OPERATION_QUERY_OPERATIONS,
+  GIT_OPERATIONS_LIST_OPERATION,
+  GIT_OPERATION_GET_OPERATION,
+} from './ports/git-operation-query.js';
+export type {
+  GitOperationDetailResult,
+  GitOperationListParent,
+  GitOperationListResult,
+  GitOperationQueryOperation,
+  PublicGitOperationRecord,
+} from './ports/git-operation-query.js';
+export {
+  FEATURE_DELIVERY_STATUSES,
+  GIT_OPERATION_EVIDENCE_KINDS,
+  GIT_OPERATION_RECEIPT_SCHEMA_VERSION,
+  GIT_OPERATION_STATUSES,
+  GIT_OPERATION_TERMINAL_STATUSES,
+} from './ports/git-operations.js';
+export type {
+  FeatureDeliveryStatus,
+  GitOperationEvidenceKind,
+  GitOperationEvidenceRef,
+  GitOperationReceipt,
+  GitOperationStatus,
+} from './ports/git-operations.js';
 // type-only 导出擦除后不加载业务服务。
 export type { EffectiveSettings } from './application/effective-settings.js';
 export type { ExportedSettings } from './application/configuration-service.js';

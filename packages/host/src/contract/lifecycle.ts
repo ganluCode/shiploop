@@ -155,6 +155,10 @@ export const APPLICATION_QUERY_CAPABILITIES = [
   'workspaces.get',
   'workspace.operations.list',
   'workspace.operations.get',
+  // P03-8 / F-009：Git 意图/实际提交/操作回执只读查询真实接线（能力位复用
+  // project.read；与 Core GIT_OPERATION_QUERY_OPERATIONS 同步，不漂移）。
+  'git.operations.list',
+  'git.operations.get',
 ] as const;
 
 /**

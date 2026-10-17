@@ -74,6 +74,8 @@ import type {
   TaskApprovalItemListResult,
   TaskReworkChainListResult,
   TaskVerificationDetailResult,
+  GitOperationDetailResult,
+  GitOperationListResult,
   WorkSessionListResult,
   WorkSessionDetailResult,
   WorkSessionEvidenceContent,
@@ -97,6 +99,8 @@ import {
   FEATURE_APPROVALS_ROUTE_SUFFIX,
   FEATURES_ROUTE,
   FEATURES_ROUTE_PREFIX,
+  GIT_OPERATIONS_ROUTE,
+  GIT_OPERATIONS_ROUTE_PREFIX,
   HostProtocolError,
   MAX_APP_BODY_BYTES,
   MAX_ARTIFACT_CONTENT_BYTES,
@@ -283,6 +287,11 @@ export interface PlanListPageInput {
   readonly limit?: number;
   readonly cursor?: string;
 }
+
+/** P03-8 / F-009 git.operations.list 父级选择（Feature 或 Run 二选一）。 */
+export type GitOperationListParentInput =
+  | { readonly featureId: string }
+  | { readonly runId: string };
 
 /* ------------------------------------------------------------------ *
  * P03-2 / F-007 决策/策略/输入准备输入类型
@@ -679,6 +688,20 @@ export interface HostClientApplication {
     taskId: string,
     input?: PlanListPageInput,
   ): Promise<TaskReworkChainListResult>;
+  /* ------------------------------------------------------------ *
+   * P03-8 / F-009 Git 意图/实际提交/操作回执只读查询
+   * ------------------------------------------------------------ */
+  /**
+   * git.operations.list：同项目 Feature 或 Run 的 Git 意图/实际提交/操作回执
+   * 分页（父级二选一；受控 plcur_v1_ 游标；pending/unknown 待核对不显示成功）。
+   */
+  listGitOperations(
+    projectId: string,
+    parent: GitOperationListParentInput,
+    input?: PlanListPageInput,
+  ): Promise<GitOperationListResult>;
+  /** git.operations.get：按 operationId 的完整意图 + 实际事实 + 回执投影。 */
+  getGitOperation(projectId: string, operationId: string): Promise<GitOperationDetailResult>;
   /* ------------------------------------------------------------ *
    * P03-5 / F-012 工作区状态只读查询与人工丢弃预览/确认
    * ------------------------------------------------------------ */
@@ -3103,6 +3126,63 @@ export function createHostClientApplication(context: AppClientContext): HostClie
       const result = validateAppQueryResponse('workspace.operations.get', json);
       if (result.operation.projectId !== project || result.operation.id !== id) {
         throw new HostProtocolError('response_malformed', 'workspace.operations.get', '工作区操作响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
+      }
+      return result;
+    },
+
+    /* ------------------------------------------------------------ *
+     * P03-8 / F-009 Git 意图/实际提交/操作回执只读查询
+     * ------------------------------------------------------------ */
+
+    async listGitOperations(
+      projectId: string,
+      parent: GitOperationListParentInput,
+      input?: PlanListPageInput,
+    ): Promise<GitOperationListResult> {
+      const op = 'git.operations.list';
+      context.assertOpen(op);
+      const project = requireProjectId(op, projectId);
+      const selector = rejectUnknownInputKeys(op, parent, ['featureId', 'runId']);
+      const hasFeature = selector.featureId !== undefined;
+      const hasRun = selector.runId !== undefined;
+      if (hasFeature === hasRun) {
+        throw invalidInput(op, 'exactly_one_parent_required', hasFeature ? 'runId' : 'featureId');
+      }
+      const parentQuery = hasFeature
+        ? `&featureId=${encodeURIComponent(requireStableIdInput(op, selector.featureId, 'featureId'))}`
+        : `&runId=${encodeURIComponent(requireStableIdInput(op, selector.runId, 'runId'))}`;
+      const paging = buildPlanListQuery(input, op);
+      const query =
+        `projectId=${encodeURIComponent(project)}${parentQuery}` +
+        `${paging.length === 0 ? '' : `&${paging}`}`;
+      const json = await getJson(op, `${GIT_OPERATIONS_ROUTE}?${query}`);
+      const result = validateAppQueryResponse(op, json);
+      if (
+        result.records.some(
+          (record) =>
+            record.projectId !== project ||
+            (hasFeature
+              ? record.featureId !== selector.featureId
+              : record.runId !== selector.runId),
+        )
+      ) {
+        throw new HostProtocolError('response_malformed', op, 'Git 操作响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
+      }
+      return result;
+    },
+
+    async getGitOperation(projectId: string, operationId: string): Promise<GitOperationDetailResult> {
+      const op = 'git.operations.get';
+      context.assertOpen(op);
+      const project = requireProjectId(op, projectId);
+      const id = requireStableIdInput(op, operationId, 'operationId');
+      const json = await getJson(
+        op,
+        `${GIT_OPERATIONS_ROUTE_PREFIX}${encodeURIComponent(id)}?projectId=${encodeURIComponent(project)}`,
+      );
+      const result = validateAppQueryResponse(op, json);
+      if (result.operation.operationId !== id || result.operation.projectId !== project) {
+        throw new HostProtocolError('response_malformed', op, 'Git 操作响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
       }
       return result;
     },

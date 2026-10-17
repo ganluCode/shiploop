@@ -73,6 +73,12 @@ import {
   CODE_ATTEMPT_OUTCOMES,
   VERIFICATION_BATCH_STATUSES,
   CHECK_RESULT_STATUSES,
+  // P03-8 / F-009：Git 操作查询线校验用冻结词汇（同一来源，不复制第二份枚举）。
+  FEATURE_DELIVERY_STATUSES,
+  GIT_OPERATION_EVIDENCE_KINDS,
+  GIT_OPERATION_RECEIPT_SCHEMA_VERSION,
+  GIT_OPERATION_STATUSES,
+  GIT_OPERATION_TERMINAL_STATUSES,
   validateSettingsPayload,
   validateWireCommandReceipt,
 } from 'shiploop-core/protocol';
@@ -128,6 +134,8 @@ import type {
   SnapshotResult,
   TaskDetailResult,
   TaskListResult,
+  GitOperationDetailResult,
+  GitOperationListResult,
   WorkspaceDetailResult,
   WorkspaceDiscardPreview,
   WorkspaceListResult,
@@ -186,6 +194,13 @@ export type {
   WorkspaceOperationReceiptView,
 } from 'shiploop-core/protocol';
 
+/** P03-8 / F-009：Git 意图/实际提交/操作回执查询结果形状经公共面再导出。 */
+export type {
+  GitOperationDetailResult,
+  GitOperationListResult,
+  PublicGitOperationRecord,
+} from 'shiploop-core/protocol';
+
 /** §11.3 查询能力清单（回执/结果读取经 validateCommandReceiptWire，不在本类型内）。 */
 export type AppQueryOperation =
   | 'execution.sessions.list'
@@ -230,7 +245,11 @@ export type AppQueryOperation =
   | 'workspaces.list'
   | 'workspaces.get'
   | 'workspace.operations.list'
-  | 'workspace.operations.get';
+  | 'workspace.operations.get'
+  // P03-8 / F-009：Git 意图/实际提交/操作回执查询（与 Core
+  // GIT_OPERATION_QUERY_OPERATIONS 同源）。
+  | 'git.operations.list'
+  | 'git.operations.get';
 
 function malformed(operation: HostOperation, reason: string): never {
   throw new HostProtocolError('response_malformed', operation, 'Host 响应不符合线协议', {
@@ -3708,6 +3727,294 @@ export function validateTaskReworkChainResultWire(
 }
 
 /* ------------------------------------------------------------------ *
+ * P03-8 / F-009 Git 意图/实际提交/操作回执查询响应线校验（冻结字段集）
+ * ------------------------------------------------------------------ */
+
+const GIT_OID_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+const GIT_REASON_CODE_PATTERN = /^[a-z][a-z0-9_]{0,63}$/;
+
+function requireGitOid(operation: HostOperation, value: unknown): string {
+  if (typeof value !== 'string' || !GIT_OID_PATTERN.test(value)) {
+    malformed(operation, 'git_operation_oid_invalid');
+  }
+  return value;
+}
+
+function requireGitOidOrNull(operation: HostOperation, value: unknown): string | null {
+  if (value === null) {
+    return null;
+  }
+  return requireGitOid(operation, value);
+}
+
+function validateGitEvidenceRefsWire(operation: HostOperation, value: unknown): void {
+  if (!Array.isArray(value)) {
+    malformed(operation, 'git_operation_refs_invalid');
+  }
+  for (const entry of value as unknown[]) {
+    const record = requirePlain(operation, entry);
+    exactKeys(operation, record, ['kind', 'id', 'digest']);
+    if (!(GIT_OPERATION_EVIDENCE_KINDS as readonly unknown[]).includes(record.kind)) {
+      malformed(operation, 'git_operation_ref_kind_invalid');
+    }
+    requireStableId(operation, record.id);
+    requireSha256Hex(operation, record.digest, 'git_operation_digest_invalid');
+  }
+}
+
+function validateGitIdentityWire(operation: HostOperation, value: unknown): void {
+  const record = requirePlain(operation, value);
+  exactKeys(operation, record, ['name', 'email', 'confirmed']);
+  requireNonEmptyString(operation, record.name, 'git_identity_invalid');
+  requireNonEmptyString(operation, record.email, 'git_identity_invalid');
+  // 用户身份来源：恒为用户明确配置并确认的提交身份（绝不回落全局身份）。
+  if (record.confirmed !== true) {
+    malformed(operation, 'git_identity_unconfirmed');
+  }
+}
+
+function validateGitRuntimeSourceWire(operation: HostOperation, value: unknown): void {
+  const record = requirePlain(operation, value);
+  exactKeys(operation, record, ['runtime', 'provider', 'model', 'source']);
+  requireNonEmptyString(operation, record.runtime, 'git_runtime_source_invalid');
+  requireNonEmptyString(operation, record.provider, 'git_runtime_source_invalid');
+  requireNonEmptyString(operation, record.model, 'git_runtime_source_invalid');
+  const source = requirePlain(operation, record.source);
+  exactKeys(operation, source, ['kind', 'sourceKey']);
+  if (source.kind !== 'global_default' && source.kind !== 'project_default') {
+    malformed(operation, 'git_runtime_source_invalid');
+  }
+  requireNonEmptyString(operation, source.sourceKey, 'git_runtime_source_invalid');
+}
+
+function validateGitOperationReceiptWire(
+  operation: HostOperation,
+  value: unknown,
+): Record<string, unknown> {
+  const record = requirePlain(operation, value);
+  exactKeys(operation, record, [
+    'schemaVersion',
+    'operationId',
+    'status',
+    'intentDigest',
+    'expectedHead',
+    'candidateTree',
+    'actualCommit',
+    'actualTree',
+    'exitCode',
+    'durationMs',
+    'reasonCode',
+    'deliveryStatus',
+    'recordedAtUtcMs',
+  ]);
+  if (record.schemaVersion !== GIT_OPERATION_RECEIPT_SCHEMA_VERSION) {
+    malformed(operation, 'git_receipt_schema_version_invalid');
+  }
+  if (!(GIT_OPERATION_TERMINAL_STATUSES as readonly unknown[]).includes(record.status)) {
+    malformed(operation, 'git_receipt_status_invalid');
+  }
+  requireStableId(operation, record.operationId);
+  requireSha256Hex(operation, record.intentDigest, 'git_operation_digest_invalid');
+  requireGitOid(operation, record.expectedHead);
+  requireGitOid(operation, record.candidateTree);
+  requireGitOidOrNull(operation, record.actualCommit);
+  requireGitOidOrNull(operation, record.actualTree);
+  requireNonNegativeIntegerOrNull(operation, record.exitCode);
+  requireNonNegativeIntegerOrNull(operation, record.durationMs);
+  if (
+    record.reasonCode !== null &&
+    (typeof record.reasonCode !== 'string' || !GIT_REASON_CODE_PATTERN.test(record.reasonCode))
+  ) {
+    malformed(operation, 'git_operation_reason_invalid');
+  }
+  if (!(FEATURE_DELIVERY_STATUSES as readonly unknown[]).includes(record.deliveryStatus)) {
+    malformed(operation, 'git_delivery_status_invalid');
+  }
+  requireNonNegativeInteger(operation, record.recordedAtUtcMs);
+  return record;
+}
+
+/** 公开 Git 操作记录（冻结字段集 + 与持久 CHECK 同源的生命周期不变量）。 */
+function validatePublicGitOperationWire(operation: HostOperation, value: unknown): void {
+  const record = requirePlain(operation, value);
+  exactKeys(operation, record, [
+    'operationId',
+    'projectId',
+    'featureId',
+    'runId',
+    'attemptId',
+    'executionVersion',
+    'operationType',
+    'intentDigest',
+    'repositoryBindingId',
+    'repoIdentity',
+    'expectedHead',
+    'candidateTree',
+    'codeDigest',
+    'actualCommit',
+    'actualTree',
+    'actualParent',
+    'verificationRefs',
+    'approvalRefs',
+    'message',
+    'gitIdentity',
+    'deliveryPolicyDigest',
+    'runtimeSource',
+    'status',
+    'exitCode',
+    'durationMs',
+    'reasonCode',
+    'deliveryStatus',
+    'receipt',
+    'settledAt',
+    'revision',
+    'createdAt',
+    'updatedAt',
+  ]);
+  requireStableId(operation, record.operationId);
+  requireStableId(operation, record.projectId);
+  requireStableId(operation, record.featureId);
+  requireStableId(operation, record.runId);
+  requireStableIdOrNull(operation, record.attemptId);
+  requirePositiveInteger(operation, record.executionVersion);
+  if (record.operationType !== 'feature_final_commit') {
+    malformed(operation, 'git_operation_type_invalid');
+  }
+  requireSha256Hex(operation, record.intentDigest, 'git_operation_digest_invalid');
+  requireStableId(operation, record.repositoryBindingId);
+  requireNonEmptyString(operation, record.repoIdentity, 'git_operation_repo_invalid');
+  requireGitOid(operation, record.expectedHead);
+  requireGitOid(operation, record.candidateTree);
+  requireSha256Hex(operation, record.codeDigest, 'git_operation_digest_invalid');
+  requireGitOidOrNull(operation, record.actualCommit);
+  requireGitOidOrNull(operation, record.actualTree);
+  requireGitOidOrNull(operation, record.actualParent);
+  validateGitEvidenceRefsWire(operation, record.verificationRefs);
+  validateGitEvidenceRefsWire(operation, record.approvalRefs);
+  requireNonEmptyString(operation, record.message, 'git_operation_message_invalid');
+  validateGitIdentityWire(operation, record.gitIdentity);
+  requireSha256Hex(operation, record.deliveryPolicyDigest, 'git_operation_digest_invalid');
+  if (record.runtimeSource !== null) {
+    validateGitRuntimeSourceWire(operation, record.runtimeSource);
+  }
+  if (!(GIT_OPERATION_STATUSES as readonly unknown[]).includes(record.status)) {
+    malformed(operation, 'git_operation_status_invalid');
+  }
+  requireNonNegativeIntegerOrNull(operation, record.exitCode);
+  requireNonNegativeIntegerOrNull(operation, record.durationMs);
+  if (
+    record.reasonCode !== null &&
+    (typeof record.reasonCode !== 'string' || !GIT_REASON_CODE_PATTERN.test(record.reasonCode))
+  ) {
+    malformed(operation, 'git_operation_reason_invalid');
+  }
+  if (
+    record.deliveryStatus !== null &&
+    !(FEATURE_DELIVERY_STATUSES as readonly unknown[]).includes(record.deliveryStatus)
+  ) {
+    malformed(operation, 'git_delivery_status_invalid');
+  }
+  if (record.settledAt !== null && !isIsoUtcDateTime(record.settledAt)) {
+    malformed(operation, 'git_operation_date_invalid');
+  }
+  if (!isIsoUtcDateTime(record.createdAt) || !isIsoUtcDateTime(record.updatedAt)) {
+    malformed(operation, 'git_operation_date_invalid');
+  }
+  requirePositiveInteger(operation, record.revision);
+  // 生命周期不变量（与持久 CHECK 同源）：pending 回执缺失且无终态事实；
+  // 终态必须携带回执/deliveryStatus/settledAt；待核对绝不显示为成功。
+  if (record.status === 'pending') {
+    if (
+      record.receipt !== null ||
+      record.deliveryStatus !== null ||
+      record.settledAt !== null ||
+      record.actualCommit !== null ||
+      record.actualTree !== null ||
+      record.actualParent !== null ||
+      record.exitCode !== null ||
+      record.durationMs !== null ||
+      record.reasonCode !== null
+    ) {
+      malformed(operation, 'git_operation_pending_facts_invalid');
+    }
+    return;
+  }
+  if (record.receipt === null || record.deliveryStatus === null || record.settledAt === null) {
+    malformed(operation, 'git_operation_terminal_facts_invalid');
+  }
+  if (record.status === 'unknown') {
+    if (
+      record.actualCommit !== null ||
+      record.actualTree !== null ||
+      record.actualParent !== null ||
+      record.deliveryStatus !== 'pending'
+    ) {
+      malformed(operation, 'git_operation_unknown_facts_invalid');
+    }
+  } else if (record.status === 'succeeded') {
+    if (
+      record.actualCommit === null ||
+      record.actualTree === null ||
+      record.actualTree !== record.candidateTree ||
+      record.actualParent !== record.expectedHead ||
+      record.deliveryStatus !== 'succeeded'
+    ) {
+      malformed(operation, 'git_operation_succeeded_facts_invalid');
+    }
+  } else if (record.status === 'no_change') {
+    if (
+      record.actualCommit !== record.expectedHead ||
+      record.actualTree === null ||
+      record.actualParent !== null ||
+      record.deliveryStatus !== 'succeeded'
+    ) {
+      malformed(operation, 'git_operation_no_change_facts_invalid');
+    }
+  } else if (record.deliveryStatus !== 'failed' || record.actualParent !== null) {
+    malformed(operation, 'git_operation_failed_facts_invalid');
+  }
+  const receipt = validateGitOperationReceiptWire(operation, record.receipt);
+  if (
+    receipt.operationId !== record.operationId ||
+    receipt.status !== record.status ||
+    receipt.intentDigest !== record.intentDigest ||
+    receipt.expectedHead !== record.expectedHead ||
+    receipt.candidateTree !== record.candidateTree ||
+    receipt.actualCommit !== record.actualCommit ||
+    receipt.actualTree !== record.actualTree ||
+    receipt.exitCode !== record.exitCode ||
+    receipt.durationMs !== record.durationMs ||
+    receipt.reasonCode !== record.reasonCode ||
+    receipt.deliveryStatus !== record.deliveryStatus
+  ) {
+    malformed(operation, 'git_operation_receipt_mismatch');
+  }
+}
+
+/** git.operations.list：Git 意图/实际提交/回执分页（冻结字段集）。 */
+export function validateGitOperationListResultWire(
+  value: unknown,
+  operation: HostOperation = 'git.operations.list',
+): GitOperationListResult {
+  const object = validateScheduleResultCommon(operation, value, 'git-operation-list');
+  for (const record of object.records as unknown[]) {
+    validatePublicGitOperationWire(operation, record);
+  }
+  return object as unknown as GitOperationListResult;
+}
+
+/** git.operations.get：单次操作完整意图 + 实际事实 + 回执（冻结字段集）。 */
+export function validateGitOperationDetailResultWire(
+  value: unknown,
+  operation: HostOperation = 'git.operations.get',
+): GitOperationDetailResult {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, ['operation']);
+  validatePublicGitOperationWire(operation, object.operation);
+  return object as unknown as GitOperationDetailResult;
+}
+
+/* ------------------------------------------------------------------ *
  * P03-7 / F-014 人审事项决定/阻塞与显式验证继续命令回执结果线校验
  *（冻结字段集精确键校验；命令结果的 item 是持久事项记录（毫秒时间戳形态），
  * 与查询面的公开投影（ISO 时间）分开冻结，不互相折算）
@@ -4433,6 +4740,17 @@ export function validateAppQueryResponse(
   body: unknown,
   expectation?: SnapshotExpectation,
 ): WorkspaceListResult;
+// P03-8 / F-009：Git 意图/实际提交/操作回执查询响应重载。
+export function validateAppQueryResponse(
+  operation: 'git.operations.list',
+  body: unknown,
+  expectation?: SnapshotExpectation,
+): GitOperationListResult;
+export function validateAppQueryResponse(
+  operation: 'git.operations.get',
+  body: unknown,
+  expectation?: SnapshotExpectation,
+): GitOperationDetailResult;
 export function validateAppQueryResponse(
   operation: 'workspaces.get',
   body: unknown,
@@ -4620,6 +4938,11 @@ export function validateAppQueryResponse(
       return validateWorkspaceOperationListResultWire(body, operation);
     case 'workspace.operations.get':
       return validateWorkspaceOperationDetailResultWire(body, operation);
+    // P03-8 / F-009：Git 操作查询响应分发（同一冻结字段集纪律）。
+    case 'git.operations.list':
+      return validateGitOperationListResultWire(body, operation);
+    case 'git.operations.get':
+      return validateGitOperationDetailResultWire(body, operation);
     default: {
       const exhaustive: never = operation;
       throw new TypeError(`未覆盖的查询操作：${String(exhaustive)}`);

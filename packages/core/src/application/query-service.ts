@@ -183,6 +183,15 @@ import {
   type WorkSessionListResult,
   type WorkSessionQueryReadStore,
 } from '../ports/work-session-query.js';
+import {
+  GIT_OPERATIONS_LIST_OPERATION,
+  GIT_OPERATION_GET_OPERATION,
+  toPublicGitOperationRecord,
+  validateGitOperationListSelector,
+  type GitOperationDetailResult,
+  type GitOperationListResult,
+  type GitOperationQueryReadStore,
+} from '../ports/git-operation-query.js';
 import type { ArtifactStore } from '../ports/artifact-store.js';
 import type { ArtifactFileStore } from '../ports/artifact-files.js';
 import { createArtifactVerifier } from './artifact-verify.js';
@@ -411,6 +420,17 @@ export interface QueryService {
    * 后继 blocked 原因；未知退出/耗时保持 null）。
    */
   listTaskReworkChain(principal: unknown, input: unknown): Promise<TaskReworkChainListResult>;
+  /**
+   * P03-8 / F-009 git.operations.list：同项目 Feature 或 Run 的 Git 意图/实际
+   * 提交/操作回执分页（父级二选一；稳定 id 排序、有界分页、plcur_v1_ 游标
+   * 绑定数据根 + 项目 + 父级，跨父级/跨项目重放 invalid_cursor）。
+   */
+  listGitOperations(principal: unknown, input: unknown): Promise<GitOperationListResult>;
+  /**
+   * P03-8 / F-009 git.operations.get：按 operationId 的完整意图 + 实际事实 +
+   * 回执投影；跨项目/不存在统一 not_found；待核对/回执缺失不显示为成功。
+   */
+  getGitOperation(principal: unknown, input: unknown): Promise<GitOperationDetailResult>;
 }
 
 export interface QueryServiceOptions {
@@ -439,6 +459,8 @@ export interface QueryServiceOptions {
   readonly workSessionReads: WorkSessionQueryReadStore;
   /** P03-7 / F-013 Task 证据/人审/返工链一致读取窄端口（只读）。 */
   readonly taskEvidenceReads: TaskEvidenceQueryReadStore;
+  /** P03-8 / F-009 Git 操作查询一致读取窄端口（只读）。 */
+  readonly gitOperationReads: GitOperationQueryReadStore;
   /** P03-6 / F-011 证据制品索引（正文经完整性核验读取；只读用法）。 */
   readonly artifacts: ArtifactStore;
   /** P03-6 / F-011 证据制品文件（只读用法；不推导任意路径）。 */
@@ -534,6 +556,20 @@ function workspaceTargetNotFound(
 }
 
 /**
+ * P03-8 / F-009 Git 操作查询目标「不可见/不存在/跨项目」统一 not_found（同一
+ * 形状纪律：不区分存在性，不回显归属或实体身份，逐字段一致）；能力缺失仍
+ * 先行 forbidden。
+ */
+function gitOperationTargetNotFound(
+  operation: string,
+  entityType: 'feature' | 'run' | 'git_operation',
+): never {
+  throw new PublicError('not_found', operation, '执行实体不存在或不可见', {
+    details: { reason: 'execution_entity_not_found', entityType },
+  });
+}
+
+/**
  * 装配 QueryService。只校验依赖形态，不执行任何 I/O；import 本模块无副作用。
  */
 export function createQueryService(options: QueryServiceOptions): QueryService {
@@ -552,6 +588,7 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
     workspaceReads,
     workSessionReads,
     taskEvidenceReads,
+    gitOperationReads,
     artifacts,
     artifactFiles,
     dataRootIdentity,
@@ -2020,6 +2057,97 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
             blockedSuccessors,
           },
         };
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    // P03-8 / F-009：Git 意图/实际提交/操作回执只读查询（能力核验 → 身份/
+    // 分页校验 → 项目可见 → 一致读；跨项目/不存在折叠 not_found；脱敏投影
+    // 在端口层——不含 worktree 路径/执行归属/凭据；查询零写入、零事件、
+    // 不触发 Git 或执行）。
+    async listGitOperations(principal: unknown, input: unknown): Promise<GitOperationListResult> {
+      assertTrustedPrincipal(principal);
+      const operation = GIT_OPERATIONS_LIST_OPERATION;
+      try {
+        requireCapability(principal, 'project.read', operation);
+        const object = requirePlainObject(input, { operation }, 'input');
+        rejectUnknownKeys(
+          object,
+          ['projectId', 'featureId', 'runId', 'limit', 'cursor'],
+          { operation },
+          'input',
+        );
+        const projectId = requireProjectId(object.projectId, operation);
+        const parent = validateGitOperationListSelector(object, operation);
+        requireProjectVisible(principal, projectId, operation);
+        const filter = validatedPlanFilter(object, operation);
+        const binding = planCursorBinding(
+          parent.kind === 'feature'
+            ? { kind: 'feature-git-operations', projectId, featureId: parent.featureId }
+            : { kind: 'run-git-operations', projectId, runId: parent.runId },
+          operation,
+        );
+        // 游标解析先于任何读取：跨父级/跨项目/跨根重放或篡改载荷一律
+        // invalid_cursor，绝不当作从零读取，也不先泄漏目标存在性。
+        const request = planListRequest(filter, binding, operation);
+        const page =
+          parent.kind === 'feature'
+            ? (() => {
+                const view = planReads.readFeaturePlanView(parent.featureId);
+                if (view === undefined || view.feature.projectId !== projectId) {
+                  gitOperationTargetNotFound(operation, 'feature');
+                }
+                return gitOperationReads.listGitOperationRecordsByFeature(
+                  principalProjectVisibility(principal),
+                  projectId,
+                  parent.featureId,
+                  request,
+                );
+              })()
+            : (() => {
+                if (workSessionReads.readRunRef(projectId, parent.runId) === undefined) {
+                  gitOperationTargetNotFound(operation, 'run');
+                }
+                return gitOperationReads.listGitOperationRecordsByRun(
+                  principalProjectVisibility(principal),
+                  projectId,
+                  parent.runId,
+                  request,
+                );
+              })();
+        return {
+          schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION,
+          scope: 'git-operation-list',
+          records: page.records.map(toPublicGitOperationRecord),
+          nextCursor:
+            page.nextId === null ? null : encodePlanListCursor(page.nextId, binding),
+          limit: filter.limit,
+        };
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    async getGitOperation(principal: unknown, input: unknown): Promise<GitOperationDetailResult> {
+      assertTrustedPrincipal(principal);
+      const operation = GIT_OPERATION_GET_OPERATION;
+      try {
+        requireCapability(principal, 'project.read', operation);
+        const object = requirePlainObject(input, { operation }, 'input');
+        rejectUnknownKeys(object, ['projectId', 'operationId'], { operation }, 'input');
+        const projectId = requireProjectId(object.projectId, operation);
+        const operationId = validateStableId(
+          object.operationId,
+          { operation, entity: { type: 'git_operation' } },
+          'operationId',
+        );
+        requireProjectVisible(principal, projectId, operation);
+        const record = gitOperationReads.readGitOperationRecord(projectId, operationId);
+        if (record === undefined) {
+          gitOperationTargetNotFound(operation, 'git_operation');
+        }
+        return { operation: toPublicGitOperationRecord(record) };
       } catch (error) {
         throw mapToPublicError(error, { operation });
       }

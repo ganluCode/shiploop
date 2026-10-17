@@ -59,7 +59,7 @@ import {
   validateStopResultView,
   verifyStopRequestDigest,
 } from '../packages/host/src/index.ts';
-import { COMMAND_OPERATIONS, EXECUTION_SCHEDULE_QUERY_OPERATIONS, PLAN_APPROVAL_QUERY_OPERATION, PLAN_QUERY_OPERATIONS, QUERY_OPERATIONS, TASK_EVIDENCE_QUERY_OPERATIONS } from '../packages/core/src/index.ts';
+import { COMMAND_OPERATIONS, EXECUTION_SCHEDULE_QUERY_OPERATIONS, GIT_OPERATION_QUERY_OPERATIONS, PLAN_APPROVAL_QUERY_OPERATION, PLAN_QUERY_OPERATIONS, QUERY_OPERATIONS, TASK_EVIDENCE_QUERY_OPERATIONS } from '../packages/core/src/index.ts';
 import type {
   HostDiscoveryRecord,
   HostErrorCode,
@@ -264,6 +264,9 @@ describe('F-002 冻结常量与能力声明', () => {
           'workspaces.get',
           'workspace.operations.list',
           'workspace.operations.get',
+          // P03-8 / F-009：Git 意图/实际提交/操作回执查询真实接线。
+          'git.operations.list',
+          'git.operations.get',
         ],
         events: { transport: 'sse', route: '/v1/events', scopes: ['project', 'global'] },
       },
@@ -277,7 +280,8 @@ describe('F-002 冻结常量与能力声明', () => {
     // + P03-1 / F-009 计划域六项（与 PLAN_QUERY_OPERATIONS 同步，能力位复用 project.read）
     // + P03-2 / F-007 审批决策查询（与 PLAN_APPROVAL_QUERY_OPERATION 同步）
     // + P03-4 / F-008 调度诊断/Attempt 审计三项（与 EXECUTION_SCHEDULE_QUERY_OPERATIONS 同步）
-    // + P03-7 / F-013 Task 证据/人审/返工链三项（与 TASK_EVIDENCE_QUERY_OPERATIONS 同步）。
+    // + P03-7 / F-013 Task 证据/人审/返工链三项（与 TASK_EVIDENCE_QUERY_OPERATIONS 同步）
+    // + P03-8 / F-009 Git 意图/实际提交/操作回执两项（与 GIT_OPERATION_QUERY_OPERATIONS 同步）。
     expect([...CURRENT_HOST_CAPABILITIES.application.queries]).toEqual([
       'execution.sessions.list',
       'execution.session.get',
@@ -299,6 +303,7 @@ describe('F-002 冻结常量与能力声明', () => {
       'workspaces.get',
       'workspace.operations.list',
       'workspace.operations.get',
+      ...GIT_OPERATION_QUERY_OPERATIONS,
     ]);
     expect(CURRENT_HOST_CAPABILITIES.application.commands).toContain('baseline.cancel');
     expect(CURRENT_HOST_CAPABILITIES.application.queries).toContain('baselines.list');

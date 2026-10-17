@@ -594,7 +594,9 @@ export const PLAN_LIST_CURSOR_VERSION = 1 as const;
  *  P03-6 / F-011 起含 'run-work-sessions' 与 'task-work-sessions'（Work
  *  Session 列表分页，父级为 Run / Task）；P03-7 / F-013 起含
  *  'task-approvals'（Task 人审事项分页，父级为 Task）与 'task-rework-chain'
- *  （有限返工链分页，父级为 Task）。 */
+ *  （有限返工链分页，父级为 Task）。P03-8 / F-009 起含
+ *  'feature-git-operations' 与 'run-git-operations'（Git 操作列表分页，
+ *  父级为 Feature / Run）。 */
 export type PlanListScope =
   | { readonly kind: 'phases'; readonly projectId: string }
   | { readonly kind: 'features'; readonly projectId: string; readonly phaseId: string }
@@ -605,7 +607,9 @@ export type PlanListScope =
   | { readonly kind: 'run-work-sessions'; readonly projectId: string; readonly runId: string }
   | { readonly kind: 'task-work-sessions'; readonly projectId: string; readonly taskId: string }
   | { readonly kind: 'task-approvals'; readonly projectId: string; readonly taskId: string }
-  | { readonly kind: 'task-rework-chain'; readonly projectId: string; readonly taskId: string };
+  | { readonly kind: 'task-rework-chain'; readonly projectId: string; readonly taskId: string }
+  | { readonly kind: 'feature-git-operations'; readonly projectId: string; readonly featureId: string }
+  | { readonly kind: 'run-git-operations'; readonly projectId: string; readonly runId: string };
 
 /** 游标签发/解析绑定：数据根身份 + 列表 scope（只允许可信装配构造）。 */
 export interface PlanListCursorBinding {
@@ -758,10 +762,32 @@ export function createPlanListCursorBinding(
       },
     };
   }
+  if (scope.kind === 'feature-git-operations') {
+    rejectUnknownKeys(scope, ['kind', 'projectId', 'featureId'], { operation }, 'scope');
+    return {
+      rootIdentity: input.rootIdentity,
+      scope: {
+        kind: 'feature-git-operations',
+        projectId: validateStableId(scope.projectId, { operation, entity: { type: 'project' } }, 'scope.projectId'),
+        featureId: validateStableId(scope.featureId, { operation, entity: { type: 'feature' } }, 'scope.featureId'),
+      },
+    };
+  }
+  if (scope.kind === 'run-git-operations') {
+    rejectUnknownKeys(scope, ['kind', 'projectId', 'runId'], { operation }, 'scope');
+    return {
+      rootIdentity: input.rootIdentity,
+      scope: {
+        kind: 'run-git-operations',
+        projectId: validateStableId(scope.projectId, { operation, entity: { type: 'project' } }, 'scope.projectId'),
+        runId: validateStableId(scope.runId, { operation, entity: { type: 'run' } }, 'scope.runId'),
+      },
+    };
+  }
   planInvalidInput(
     operation,
     'scope.kind',
-    "必须是 'phases' / 'features' / 'tasks' / 'budget-revisions' / 'task-attempts' / 'attempt-diagnostics' / 'run-work-sessions' / 'task-work-sessions' / 'task-approvals' / 'task-rework-chain'",
+    "必须是 'phases' / 'features' / 'tasks' / 'budget-revisions' / 'task-attempts' / 'attempt-diagnostics' / 'run-work-sessions' / 'task-work-sessions' / 'task-approvals' / 'task-rework-chain' / 'feature-git-operations' / 'run-git-operations'",
     (scope as { kind?: unknown }).kind,
   );
 }
@@ -781,7 +807,9 @@ function planBindingAsTrusted(binding: PlanListCursorBinding): PlanListCursorBin
       binding.scope.kind !== 'run-work-sessions' &&
       binding.scope.kind !== 'task-work-sessions' &&
       binding.scope.kind !== 'task-approvals' &&
-      binding.scope.kind !== 'task-rework-chain')
+      binding.scope.kind !== 'task-rework-chain' &&
+      binding.scope.kind !== 'feature-git-operations' &&
+      binding.scope.kind !== 'run-git-operations')
   ) {
     planScopeShapeError('必须由 createPlanListCursorBinding 构造');
   }
@@ -795,22 +823,32 @@ function planRootFingerprint(binding: PlanListCursorBinding): string {
 
 /** scope 指纹：层级 + 项目 + 父级（缺省父级用固定域值），跨项目/跨父级必然不匹配。 */
 function planScopeFingerprint(scope: PlanListScope): string {
-  const parent =
-    scope.kind === 'phases'
-      ? '-'
-      : scope.kind === 'features'
-        ? scope.phaseId
-        : scope.kind === 'tasks'
-          ? scope.featureId
-          : scope.kind === 'budget-revisions'
-            ? scope.batchId
-            : scope.kind === 'task-attempts'
-              ? scope.taskId
-              : scope.kind === 'attempt-diagnostics'
-                ? scope.attemptId
-                : scope.kind === 'run-work-sessions'
-                  ? scope.runId
-                  : scope.taskId;
+  let parent: string;
+  switch (scope.kind) {
+    case 'phases':
+      parent = '-';
+      break;
+    case 'features':
+      parent = scope.phaseId;
+      break;
+    case 'tasks':
+    case 'feature-git-operations':
+      parent = scope.featureId;
+      break;
+    case 'budget-revisions':
+      parent = scope.batchId;
+      break;
+    case 'attempt-diagnostics':
+      parent = scope.attemptId;
+      break;
+    case 'run-work-sessions':
+    case 'run-git-operations':
+      parent = scope.runId;
+      break;
+    default:
+      parent = scope.taskId;
+      break;
+  }
   return createHash('sha256')
     .update(`shiploop:plan-list-scope:v1:${scope.kind}:${scope.projectId}:${parent}`, 'utf8')
     .digest('hex');

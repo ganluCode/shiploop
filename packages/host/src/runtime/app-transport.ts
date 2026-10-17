@@ -61,6 +61,8 @@ import {
   FEATURE_APPROVALS_ROUTE_SUFFIX,
   FEATURES_ROUTE,
   FEATURES_ROUTE_PREFIX,
+  GIT_OPERATIONS_ROUTE,
+  GIT_OPERATIONS_ROUTE_PREFIX,
   MAX_APP_BODY_BYTES,
   MAX_ARTIFACT_CONTENT_BYTES,
   MAX_WORK_SESSION_EVIDENCE_RESPONSE_BYTES,
@@ -149,7 +151,11 @@ export type ApplicationOperation =
   | 'workspaces.list'
   | 'workspaces.get'
   | 'workspace.operations.list'
-  | 'workspace.operations.get';
+  | 'workspace.operations.get'
+  // P03-8 / F-009：Git 意图/实际提交/操作回执只读查询（与 Core
+  // GIT_OPERATION_QUERY_OPERATIONS 同源）。
+  | 'git.operations.list'
+  | 'git.operations.get';
 
 /** 已解析的应用路由（path 形态匹配；路径参数为未解码原始片段）。 */
 export interface ResolvedAppRoute {
@@ -255,6 +261,23 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
         operation: 'workspace.operations.get',
         method: 'GET',
         pathParam: { name: 'operationId', value: segments[0] as string },
+      };
+    }
+    return undefined;
+  }
+  // P03-8 / F-009：GET /v1/git-operations（集合根 + projectId + 父级二选一/
+  // 分页查询参数）与单段路径参数 GET /v1/git-operations/:operationId；其他
+  // 嵌套/多段形态一律未匹配 → 404 unknown_operation。
+  if (path === GIT_OPERATIONS_ROUTE) {
+    return { operation: 'git.operations.list', method: 'GET' };
+  }
+  if (path.startsWith(GIT_OPERATIONS_ROUTE_PREFIX)) {
+    const segment = path.slice(GIT_OPERATIONS_ROUTE_PREFIX.length);
+    if (segment.length > 0 && !segment.includes('/')) {
+      return {
+        operation: 'git.operations.get',
+        method: 'GET',
+        pathParam: { name: 'operationId', value: segment },
       };
     }
     return undefined;
@@ -649,6 +672,12 @@ const QUERY_SPECS: Readonly<Partial<Record<ApplicationOperation, QuerySpec>>> = 
     repeatable: [],
   }),
   'workspace.operations.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
+  // P03-8 / F-009：Git 操作查询参数白名单（父级二选一由 Core 单一权威复核）。
+  'git.operations.list': Object.freeze({
+    allowed: ['projectId', 'featureId', 'runId', 'limit', 'cursor'],
+    repeatable: [],
+  }),
+  'git.operations.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
 });
 
 /** 查询参数白名单校验（未知/重复 → 400，定位 query.<字段>）；空查询串恒合法。 */
@@ -1138,6 +1167,28 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
       const query = buildPlanListQuery(params, operation, 'projectId');
       query.operationId = pathParam?.value;
       result = await app.queryService.getWorkspaceOperation(app.principal, query);
+      break;
+    }
+    // P03-8 / F-009：Git 操作查询分发（本层只做形态转换；授权/可见性折叠/
+    // 父级二选一/分页范围/游标绑定全部由 Core 单一权威复核；跨项目与不存在
+    // 目标统一 not_found，不区分存在性）。
+    case 'git.operations.list': {
+      const query = buildPlanListQuery(params, operation, 'projectId');
+      const featureId = params.get('featureId');
+      if (featureId !== null) {
+        query.featureId = featureId;
+      }
+      const runId = params.get('runId');
+      if (runId !== null) {
+        query.runId = runId;
+      }
+      result = await app.queryService.listGitOperations(app.principal, query);
+      break;
+    }
+    case 'git.operations.get': {
+      const query = buildPlanListQuery(params, operation, 'projectId');
+      query.operationId = pathParam?.value;
+      result = await app.queryService.getGitOperation(app.principal, query);
       break;
     }
     default:

@@ -843,6 +843,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       workspaceReads: queryStore,
       workSessionReads: queryStore,
       taskEvidenceReads: queryStore,
+      gitOperationReads: queryStore,
       artifacts: artifactStore,
       artifactFiles: artifactFileStore,
       stateStore,

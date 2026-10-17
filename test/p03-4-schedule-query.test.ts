@@ -62,6 +62,7 @@ function assembleQueries(box: BudgetFixture): QueryService {
     workspaceReads: queryStore,
     workSessionReads: queryStore,
     taskEvidenceReads: queryStore,
+    gitOperationReads: queryStore,
     artifacts: createSqliteArtifactStore(box.session),
     artifactFiles: createArtifactFileStore({ dataRoot: box.box.dataRoot }),
     dataRootIdentity: computeDataRootIdentity(box.box.dataRoot),

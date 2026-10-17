@@ -132,6 +132,16 @@ export const WORKSPACES_ROUTE = '/v1/workspaces';
 export const WORKSPACES_ROUTE_PREFIX = '/v1/workspaces/';
 export const WORKSPACE_OPERATIONS_ROUTE = '/v1/workspace-operations';
 export const WORKSPACE_OPERATIONS_ROUTE_PREFIX = '/v1/workspace-operations/';
+/**
+ * P03-8 / F-009：Git 意图/实际提交/操作回执只读查询路由（全部 GET + Bearer；
+ * 与 Core GIT_OPERATION_QUERY_OPERATIONS 一一对应）。
+ * - GET /v1/git-operations?projectId=&featureId=|runId=&limit?=&cursor?=（集合根 +
+ *   父级身份查询参数；父级二选一，分页 limit/cursor 复用计划规范）；
+ * - GET /v1/git-operations/:operationId?projectId=（单段路径参数 + 必填
+ *   projectId）；其他嵌套/多段形态一律未匹配 → 404 unknown_operation。
+ */
+export const GIT_OPERATIONS_ROUTE = '/v1/git-operations';
+export const GIT_OPERATIONS_ROUTE_PREFIX = '/v1/git-operations/';
 
 /** §7.2 客户端有限预算（毫秒）。 */
 export const TCP_CONNECT_TIMEOUT_MS = 2_000;

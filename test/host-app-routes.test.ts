@@ -1040,6 +1040,9 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         'workspaces.get',
         'workspace.operations.list',
         'workspace.operations.get',
+        // P03-8 / F-009：Git 意图/实际提交/操作回执查询真实接线。
+        'git.operations.list',
+        'git.operations.get',
       ],
       events: { transport: 'sse', route: '/v1/events', scopes: ['project', 'global'] },
     });
