@@ -8,8 +8,9 @@
  * 操作生命周期 CAS、检查种子与一次性 CAS 收尾、全局占用与 §9.2 事件追加；
  * Git/进程/文件输出/人审都在事务外，事务内不执行文件流/SDK/Git/网络/长检查。
  */
-import type { CommandReceipt } from './commands.js';
+import type { FeatureFinalizationRecord } from './feature-finalization.js';
 import type { ArtifactInputRef } from './artifact-store.js';
+import type { CommandReceipt } from './commands.js';
 import type {
   BaselineAuthorizationRecord,
   BaselineCheckResultRecord,
@@ -221,6 +222,8 @@ export interface CommandTransaction {
    * 标题/Task，与决策记录/事件/回执同一事务提交。
    */
   updateFeaturePlanStatus(input: unknown): FeatureRecord;
+  /** F-007：最终验证/审批/交付结果已在事务外定版后，原子完成 Feature、Run 与单 Feature Batch。 */
+  finalizeFeatureDelivery(input: unknown): FeatureFinalizationRecord;
   /* ---------------------------------------------------------------- *
    * P03-3 / F-005 执行域原语（迁移 v9 三表；同一 BEGIN IMMEDIATE 内原子生效）
    *

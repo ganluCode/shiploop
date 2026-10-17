@@ -95,6 +95,7 @@ interface FeatureSqlRow {
   readonly title: string;
   readonly status: string;
   readonly plan_status: string;
+  readonly delivery_status: string;
   readonly description: string | null;
   readonly labels: string;
   readonly source_refs: string;
@@ -160,7 +161,7 @@ const SELECT_PHASE =
   'SELECT id, created_at, project_id, revision, updated_at, title, status, description, labels FROM phases';
 const SELECT_FEATURE =
   'SELECT id, created_at, project_id, revision, updated_at, phase_id, title, status, plan_status, ' +
-  'description, labels, source_refs, plan_digest FROM features';
+  'description, labels, source_refs, plan_digest, delivery_status FROM features';
 const SELECT_TASK =
   'SELECT id, created_at, project_id, revision, updated_at, feature_id, title, status, complexity, ' +
   'description, labels, acceptance, requirements_refs, execution_config, config_source, config_source_key FROM tasks';
@@ -498,6 +499,12 @@ export function createSqlitePlanAccess(
         details: { reason: 'invalid_plan_status' },
       });
     }
+    if (!['not_requested', 'pending', 'succeeded', 'failed'].includes(row.delivery_status)) {
+      throw new StorageError('corrupt', operation, 'features.delivery_status 列不是合法枚举值', {
+        entity: { type: 'feature', id: row.id },
+        details: { reason: 'invalid_delivery_status' },
+      });
+    }
     return {
       id: row.id,
       projectId: row.project_id,
@@ -506,6 +513,7 @@ export function createSqlitePlanAccess(
       description: row.description,
       labels: parseLabels(row.labels, operation),
       status: row.status as (typeof featureStatuses)[number],
+      deliveryStatus: row.delivery_status as FeatureRecord['deliveryStatus'],
       planStatus: row.plan_status as (typeof planStatuses)[number],
       planDigest: row.plan_digest,
       sourceRefs: parseArtifactRefs(row.source_refs, operation, 'invalid_source_refs_json'),

@@ -37,7 +37,7 @@ import {
   BASELINE_REASON_CODES,
 } from './baseline.js';
 import { isStorageError } from './errors.js';
-import { ATTEMPT_UPDATED_EVENT_TYPE, TASK_APPROVAL_BLOCKED_EVENT_TYPE, TASK_APPROVAL_DECIDED_EVENT_TYPE, EXECUTION_BUDGET_REVISED_EVENT_TYPE, EXECUTION_RUN_DISPATCHED_EVENT_TYPE, TASK_CLAIMED_EVENT_TYPE } from './execution-store.js';
+import { ATTEMPT_UPDATED_EVENT_TYPE, TASK_APPROVAL_BLOCKED_EVENT_TYPE, TASK_APPROVAL_DECIDED_EVENT_TYPE, EXECUTION_BUDGET_REVISED_EVENT_TYPE, EXECUTION_RUN_DISPATCHED_EVENT_TYPE, TASK_CLAIMED_EVENT_TYPE, FEATURE_FINALIZED_EVENT_TYPE, FEATURE_FINALIZATION_BLOCKED_EVENT_TYPE } from './execution-store.js';
 import {
   EXECUTION_INPUT_PREPARED_EVENT_TYPE,
   FEATURE_LABELS_UPDATED_EVENT_TYPE,
@@ -157,6 +157,8 @@ export const PUBLIC_STATE_EVENT_TYPES = [
   ATTEMPT_UPDATED_EVENT_TYPE,
   TASK_APPROVAL_BLOCKED_EVENT_TYPE,
   TASK_APPROVAL_DECIDED_EVENT_TYPE,
+  FEATURE_FINALIZED_EVENT_TYPE,
+  FEATURE_FINALIZATION_BLOCKED_EVENT_TYPE,
   WORKSPACE_EVENT_TYPE,
   // P03-8 / F-002：受控 Git 操作意图与终态回执（payload 仅 operationId/status）。
   GIT_OPERATION_REGISTERED_EVENT_TYPE,
@@ -188,6 +190,8 @@ type EventPayloadKind =
   | 'attemptUpdated'
   | 'taskApprovalBlocked'
   | 'taskApprovalDecided'
+  | 'featureFinalized'
+  | 'featureFinalizationBlocked'
   | 'workspaceOperationUpdated'
   | 'gitOperationRegistered'
   | 'gitOperationSettled';
@@ -340,6 +344,8 @@ export const STATE_EVENT_TYPE_SPECS: Readonly<
   [ATTEMPT_UPDATED_EVENT_TYPE]: Object.freeze({ aggregateType: 'task', scopeKind: 'project', payloadKind: 'attemptUpdated' }),
   [TASK_APPROVAL_BLOCKED_EVENT_TYPE]: Object.freeze({ aggregateType: 'task', scopeKind: 'project', payloadKind: 'taskApprovalBlocked' }),
   [TASK_APPROVAL_DECIDED_EVENT_TYPE]: Object.freeze({ aggregateType: 'task', scopeKind: 'project', payloadKind: 'taskApprovalDecided' }),
+  [FEATURE_FINALIZED_EVENT_TYPE]: Object.freeze({ aggregateType: 'feature', scopeKind: 'project', payloadKind: 'featureFinalized' }),
+  [FEATURE_FINALIZATION_BLOCKED_EVENT_TYPE]: Object.freeze({ aggregateType: 'feature', scopeKind: 'project', payloadKind: 'featureFinalizationBlocked' }),
   [GIT_OPERATION_REGISTERED_EVENT_TYPE]: Object.freeze({
     aggregateType: 'git_operation', scopeKind: 'project', payloadKind: 'gitOperationRegistered',
   }),
@@ -910,6 +916,10 @@ export function mapStateEvent(row: unknown, operation: string = EVENT_READ_OPERA
     payload = validateExecutionInputPreparedPayload(row.payload, operation);
   } else if (spec.payloadKind === 'executionRunDispatched') {
     payload = validateExecutionRunDispatchedPayload(row.payload, operation);
+  } else if (spec.payloadKind === 'featureFinalized' || spec.payloadKind === 'featureFinalizationBlocked') {
+    const key = spec.payloadKind === 'featureFinalized' ? 'finalized' : 'blocked';
+    if (Object.keys(row.payload).length !== 1 || row.payload[key] !== true) corrupt(operation, 'event_payload_violation');
+    payload = { [key]: true };
   } else if (spec.payloadKind === 'workspaceOperationUpdated') {
     exactPayloadKeys(operation, row.payload, ['schemaVersion', 'operationId', 'status', 'executionStage']);
     if (row.payload.schemaVersion !== 1 || !requireEventEnum(row.payload.status, WORKSPACE_OPERATION_STATUSES)

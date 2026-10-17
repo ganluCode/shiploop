@@ -101,6 +101,8 @@ export * from './application/verification-candidates.js';
 export * from './application/verification-plan.js';
 export * from './application/node-task-verification.js';
 export * from './application/feature-verification.js';
+export * from './ports/feature-finalization.js';
+export * from './application/feature-finalization.js';
 export * from './application/verification-aggregate.js';
 export * from './application/code-attempt-budget.js';
 export * from './application/task-verification-completion.js';

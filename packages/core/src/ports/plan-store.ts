@@ -150,6 +150,8 @@ export interface FeatureRecord {
   readonly labels: readonly string[];
   /** 业务状态（创建恒为 draft）。 */
   readonly status: FeatureStatus;
+  /** 独立交付轴状态（迁移 v26；不等同于 Feature 业务完成状态）。 */
+  readonly deliveryStatus: 'not_requested' | 'pending' | 'succeeded' | 'failed';
   /** 计划审批状态（创建恒为 draft）。 */
   readonly planStatus: FeaturePlanStatus;
   /** 当前计划业务摘要（F-001 规范化 SHA-256；可空；不是 CAS 依据）。 */

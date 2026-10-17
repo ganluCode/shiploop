@@ -64,6 +64,9 @@ export const TASK_APPROVAL_BLOCKED_EVENT_TYPE = 'task.approval.blocked';
 export const TASK_APPROVAL_DECIDED_EVENT_TYPE = 'task.approval.decided';
 
 /** 执行域事件白名单（与 ports/events.ts 公开白名单同源）。 */
+export const FEATURE_FINALIZED_EVENT_TYPE = 'feature.finalized';
+export const FEATURE_FINALIZATION_BLOCKED_EVENT_TYPE = 'feature.finalization_blocked';
+
 export const EXECUTION_EVENT_TYPES = [
   EXECUTION_RUN_DISPATCHED_EVENT_TYPE,
   EXECUTION_BUDGET_REVISED_EVENT_TYPE,
@@ -71,12 +74,14 @@ export const EXECUTION_EVENT_TYPES = [
   ATTEMPT_UPDATED_EVENT_TYPE,
   TASK_APPROVAL_BLOCKED_EVENT_TYPE,
   TASK_APPROVAL_DECIDED_EVENT_TYPE,
+  FEATURE_FINALIZED_EVENT_TYPE,
+  FEATURE_FINALIZATION_BLOCKED_EVENT_TYPE,
 ] as const;
 export type ExecutionEventType = (typeof EXECUTION_EVENT_TYPES)[number];
 
 interface ExecutionEventSpec {
-  readonly aggregateType: 'run' | 'execution_batch' | 'task';
-  readonly payloadKey: 'dispatched' | 'revised' | 'claimed' | 'updated' | 'blocked' | 'decided';
+  readonly aggregateType: 'run' | 'execution_batch' | 'task' | 'feature';
+  readonly payloadKey: 'dispatched' | 'revised' | 'claimed' | 'updated' | 'blocked' | 'decided' | 'finalized' | 'blocked';
 }
 
 const EXECUTION_EVENT_SPECS: Readonly<Record<ExecutionEventType, ExecutionEventSpec>> = Object.freeze({
@@ -85,6 +90,8 @@ const EXECUTION_EVENT_SPECS: Readonly<Record<ExecutionEventType, ExecutionEventS
   [ATTEMPT_UPDATED_EVENT_TYPE]: Object.freeze({ aggregateType: 'task', payloadKey: 'updated' }),
   [TASK_APPROVAL_BLOCKED_EVENT_TYPE]: Object.freeze({ aggregateType: 'task', payloadKey: 'blocked' }),
   [TASK_APPROVAL_DECIDED_EVENT_TYPE]: Object.freeze({ aggregateType: 'task', payloadKey: 'decided' }),
+  [FEATURE_FINALIZED_EVENT_TYPE]: Object.freeze({ aggregateType: 'feature', payloadKey: 'finalized' }),
+  [FEATURE_FINALIZATION_BLOCKED_EVENT_TYPE]: Object.freeze({ aggregateType: 'feature', payloadKey: 'blocked' }),
   [EXECUTION_BUDGET_REVISED_EVENT_TYPE]: Object.freeze({ aggregateType: 'execution_batch', payloadKey: 'revised' }),
 });
 
@@ -548,7 +555,7 @@ export function validateExecutionRunInsertInput(
 export interface ValidatedExecutionEventAppendInput {
   readonly projectId: string;
   readonly eventType: ExecutionEventType;
-  readonly aggregateType: 'run' | 'execution_batch' | 'task';
+  readonly aggregateType: 'run' | 'execution_batch' | 'task' | 'feature';
   readonly aggregateId: string;
   readonly aggregateRevision: number;
   readonly payload: Readonly<Record<string, unknown>>;

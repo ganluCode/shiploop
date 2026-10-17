@@ -4,6 +4,7 @@
  * P02-3 / F-007 起组合基线窄存储原语（ports/baseline-store.ts 的事务面）。
  */
 import { StorageError } from '../../ports/errors.js';
+import type { FeatureFinalizationRecord } from '../../ports/feature-finalization.js';
 import type { AtomicCommandStore, CommandTransaction } from '../../ports/atomic-commands.js';
 import { createSqliteBaselineAccess } from './baseline-store.js';
 import { createSqliteCommandReceiptAccess } from './command-receipts.js';
@@ -41,6 +42,56 @@ export function createSqliteAtomicCommandStore(
         const guarded = <A extends unknown[], R>(fn: (...args: A) => R) => (...args: A): R => {
           if (!active) throw new TypeError('命令事务上下文已失效');
           return fn(...args);
+        };
+        const finalizeFeatureDeliveryInTransaction = (input: unknown, transaction: CommandTransaction): FeatureFinalizationRecord => {
+          if (input === null || typeof input !== 'object' || Array.isArray(input)) throw new StorageError('validation', operation, '最终收尾输入必须是对象');
+          const value = input as Record<string, unknown>;
+          const required = ['projectId', 'featureId', 'batchId', 'runId', 'expectedFeatureRevision', 'expectedRunRevision', 'expectedBatchRevision', 'outcome', 'reason', 'deliveryStatus', 'operationId'];
+          if (Object.keys(value).some(key => !required.includes(key))) throw new StorageError('validation', operation, '最终收尾输入包含未知字段');
+          const projectId = value.projectId as string;
+          const featureId = value.featureId as string;
+          const batchId = value.batchId as string;
+          const runId = value.runId as string;
+          const outcome = value.outcome as FeatureFinalizationRecord['outcome'];
+          const deliveryStatus = value.deliveryStatus as FeatureFinalizationRecord['deliveryStatus'];
+          if (typeof projectId !== 'string' || typeof featureId !== 'string' || typeof batchId !== 'string' || typeof runId !== 'string' ||
+            !Number.isSafeInteger(value.expectedFeatureRevision) || !Number.isSafeInteger(value.expectedRunRevision) || !Number.isSafeInteger(value.expectedBatchRevision) ||
+            typeof value.reason !== 'string' || value.reason.trim().length === 0 || (value.operationId !== null && typeof value.operationId !== 'string')) {
+            throw new StorageError('validation', operation, '最终收尾身份、revision 或 reason 非法');
+          }
+          if (!['completed', 'partial', 'failed', 'awaiting_approval'].includes(outcome) || !['not_requested', 'pending', 'succeeded', 'failed'].includes(deliveryStatus)) {
+            throw new StorageError('validation', operation, '最终收尾结果非法');
+          }
+          if (outcome === 'completed' && deliveryStatus !== 'succeeded') throw new StorageError('validation', operation, 'completed 必须具有 succeeded deliveryStatus');
+          if (outcome === 'awaiting_approval' && deliveryStatus !== 'not_requested') throw new StorageError('validation', operation, 'awaiting_approval 不得具有交付结果');
+          const snapshot = plan.getFeaturePlanInTransaction(projectId, featureId);
+          if (outcome === 'completed' && snapshot.tasks.some(task => task.status !== 'passed')) throw new StorageError('conflict', operation, '必需 Task 尚未全部有效通过');
+          const currentRun = executions.getExecutionRunInTransaction(projectId, runId);
+          const currentBatch = executions.getExecutionBatchInTransaction(projectId, batchId);
+          if (currentRun.batchId !== batchId || currentRun.featureId !== featureId || currentBatch.featureId !== featureId) {
+            throw new StorageError('ownership', operation, 'Feature、Run、Batch 归属不一致');
+          }
+          const alreadySettled = ['completed', 'partial', 'failed'].includes(snapshot.feature.status) &&
+            ['succeeded', 'failed', 'cancelled'].includes(currentRun.status) &&
+            ['succeeded', 'failed', 'cancelled'].includes(currentBatch.status);
+          if (!alreadySettled) {
+            if (snapshot.feature.revision !== value.expectedFeatureRevision || currentRun.revision !== value.expectedRunRevision || currentBatch.revision !== value.expectedBatchRevision) {
+              throw new StorageError('conflict', operation, 'Feature 收尾期间身份或 revision 已变化');
+            }
+            const timestamp = (options.nowUtcMs ?? Date.now)();
+            const runStatus = outcome === 'completed' ? 'succeeded' : outcome === 'awaiting_approval' ? 'paused' : 'failed';
+            const batchStatus = runStatus;
+            const featureUpdate = session.database.prepare('UPDATE features SET status = ?, delivery_status = ?, revision = revision + 1, updated_at = ? WHERE project_id = ? AND id = ? AND revision = ?').run(outcome, deliveryStatus, timestamp, projectId, featureId, value.expectedFeatureRevision);
+            const runUpdate = session.database.prepare('UPDATE runs SET status = ?, reason = ?, ended_at = ?, revision = revision + 1, updated_at = ? WHERE project_id = ? AND id = ? AND revision = ? AND status IN (\'queued\', \'running\', \'pausing\', \'paused\', \'cancelling\', \'interrupted\')').run(runStatus, value.reason, outcome === 'awaiting_approval' ? null : timestamp, timestamp, projectId, runId, value.expectedRunRevision);
+            const batchUpdate = session.database.prepare('UPDATE execution_batches SET status = ?, reason = ?, revision = revision + 1, updated_at = ? WHERE project_id = ? AND id = ? AND revision = ? AND status IN (\'queued\', \'running\', \'pausing\', \'paused\', \'cancelling\', \'interrupted\')').run(batchStatus, value.reason, timestamp, projectId, batchId, value.expectedBatchRevision);
+            if (featureUpdate.changes !== 1 || runUpdate.changes !== 1 || batchUpdate.changes !== 1) throw new StorageError('conflict', operation, '最终收尾 CAS 未命中');
+            executions.appendExecutionEventInTransaction({ projectId, eventType: outcome === 'completed' ? 'feature.finalized' : 'feature.finalization_blocked', aggregateType: 'feature', aggregateId: featureId, aggregateRevision: snapshot.feature.revision + 1, payload: outcome === 'completed' ? { finalized: true } : { blocked: true } });
+          }
+          const resultFeature = plan.getFeaturePlanInTransaction(projectId, featureId).feature;
+          const resultRun = executions.getExecutionRunInTransaction(projectId, runId);
+          const resultBatch = executions.getExecutionBatchInTransaction(projectId, batchId);
+          const settled = ['completed', 'partial', 'failed'].includes(resultFeature.status) && ['succeeded', 'failed', 'cancelled'].includes(resultRun.status) && ['succeeded', 'failed', 'cancelled'].includes(resultBatch.status);
+          return { feature: resultFeature, run: resultRun, batch: resultBatch, deliveryStatus: settled ? resultFeature.deliveryStatus : deliveryStatus, outcome: settled ? resultFeature.status as FeatureFinalizationRecord['outcome'] : outcome, reason: settled ? (resultRun.reason ?? value.reason as string) : value.reason as string, operationId: (value.operationId as string | null) ?? null };
         };
         const transaction: CommandTransaction = Object.freeze({
           findReceipt: guarded(receipts.findReceiptByCommandId),
@@ -122,6 +173,7 @@ export function createSqliteAtomicCommandStore(
           findPlanApproval: guarded(plan.findPlanApprovalInTransaction),
           insertPlanApproval: guarded(plan.insertPlanApprovalInTransaction),
           updateFeaturePlanStatus: guarded(plan.updateFeaturePlanStatusInTransaction),
+          finalizeFeatureDelivery: guarded((input: unknown) => finalizeFeatureDeliveryInTransaction(input, transaction)),
           // P03-2 / F-003：有效批准核验的事务内决策记录读取（同一权威视图）。
           listPlanApprovals: guarded(plan.listPlanApprovalsInTransaction),
           // P03-3 / F-005：执行域原语（迁移 v9 三表；同事务原子生效）。
