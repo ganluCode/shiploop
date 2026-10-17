@@ -36,7 +36,7 @@ import { homedir } from 'node:os';
 import { createLocalOwnerPrincipal, deriveDefaultDataRoot } from 'shiploop-core';
 import type { RuntimeCapabilityCatalog } from 'shiploop-core';
 import { openCoreApplication } from 'shiploop-core/assembly';
-import type { CoreApplication, WorkRuntimeFactory } from 'shiploop-core/assembly';
+import type { CoreApplication, WorkRuntimeFactory, FeatureDeliveryFactory } from 'shiploop-core/assembly';
 import {
   HostProtocolError,
   LOOPBACK_LISTEN_ADDRESS,
@@ -85,6 +85,7 @@ export const BIND_OVERRIDE_ENV_KEYS = [
 
 const ALLOWED_OPTION_KEYS = [
   'workRuntimeFactory',
+  'featureDeliveryFactory',
   'dataRoot',
   'userHomeDir',
   'capabilityCatalog',
@@ -101,6 +102,8 @@ const ALLOWED_OPTION_KEYS = [
 export interface HostStartOptions {
   /** Trusted code injection only; not accepted from CLI, environment or discovery. */
   readonly workRuntimeFactory?: WorkRuntimeFactory;
+  /** Static trusted adapters only; never read from argv, env or request fields. */
+  readonly featureDeliveryFactory?: FeatureDeliveryFactory;
   /** 显式数据根（POSIX 绝对路径）；与 userHomeDir 二选一。 */
   readonly dataRoot?: string;
   /** 注入的用户目录（推导 P01 默认根）；与 dataRoot 二选一，缺省取 os.homedir()。 */
@@ -193,6 +196,9 @@ function validateStartOptions(options: HostStartOptions): void {
     typeof catalog.resolve !== 'function'
   ) {
     throw invalidInput('invalid_capability_catalog', { field: 'capabilityCatalog' });
+  }
+  if (options.featureDeliveryFactory !== undefined && typeof options.featureDeliveryFactory !== 'function') {
+    throw invalidInput('trusted_factory_required', { field: 'featureDeliveryFactory' });
   }
   if (options.dataRoot !== undefined && options.userHomeDir !== undefined) {
     throw invalidInput('root_source_ambiguous', { field: 'dataRoot' });
@@ -309,6 +315,7 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
       dataRoot: canonicalRoot,
       capabilityCatalog: options.capabilityCatalog,
       workRuntimeFactory: options.workRuntimeFactory,
+      featureDeliveryFactory: options.featureDeliveryFactory,
     }),
   );
 
@@ -325,17 +332,19 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
       enterQuiesce() {
         const local = baseline.enterQuiesce(options.baselineStopPolicy ?? 'wait');
         const runtime = work.enterQuiesce();
+        const delivery = locked.writer.commandService.deliveryActivity?.enterQuiesce();
         const additional = options.activityGate?.enterQuiesce();
-        return { accepted: local.accepted + runtime.accepted + (additional?.accepted ?? 0) };
+        return { accepted: local.accepted + runtime.accepted + (delivery?.accepted ?? 0) + (additional?.accepted ?? 0) };
       },
       async awaitQuiesce(budgetMs) {
-        const [local, runtime, additional] = await Promise.all([
+        const [local, runtime, delivery, additional] = await Promise.all([
           baseline.awaitQuiesce(budgetMs),
           work.awaitQuiesce(budgetMs),
+          locked.writer.commandService.deliveryActivity?.awaitQuiesce(budgetMs),
           options.activityGate?.awaitQuiesce(budgetMs),
         ]);
-        return { confirmed: local.confirmed && runtime.confirmed && (additional?.confirmed ?? true),
-          pending: [...local.pending, ...runtime.pending, ...(additional?.pending ?? [])] };
+        return { confirmed: local.confirmed && runtime.confirmed && (delivery?.confirmed ?? true) && (additional?.confirmed ?? true),
+          pending: [...local.pending, ...runtime.pending, ...(delivery?.pending ?? []), ...(additional?.pending ?? [])] };
       },
     };
     const store = createHostFileStore({ canonicalRoot });
@@ -404,6 +413,7 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
       startedAt,
       pid: process.pid,
       authToken,
+      featureDeliveryAvailable: options.featureDeliveryFactory !== undefined,
       getLifecycleState: () => lifecycle,
       getActivities: () => stopController.getActivities(),
       stop: stopController,

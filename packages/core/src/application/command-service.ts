@@ -12,6 +12,7 @@
  * 更新复用 P01 既有 *_updated 写入，不重复。
  */
 import { randomBytes } from 'node:crypto';
+import { createFeatureDeliveryCommandHandler, type FeatureDeliveryDependencies } from './feature-delivery-commands.js';
 import {
   assertTrustedPrincipal,
   authorizeCommand,
@@ -107,7 +108,13 @@ import {
 } from './task-strategy-update.js';
 import type { TaskStrategyEditGuards } from './task-strategy-update.js';
 
+export interface DeliveryActivity {
+  enterQuiesce(): { readonly accepted: number };
+  awaitQuiesce(budgetMs: number): Promise<{ readonly confirmed: boolean; readonly pending: readonly string[] }>;
+}
+
 export interface CommandService {
+  readonly deliveryActivity?: DeliveryActivity;
   submit(principal: unknown, envelope: unknown): Promise<CommandReceipt>;
 }
 /**
@@ -185,6 +192,7 @@ export interface CommandServiceOptions {
    * composition 根；受控测试可直接注入窄端口实现。
    */
   readonly taskVerificationContinue?: TaskVerificationContinueDeps;
+  readonly featureDelivery?: FeatureDeliveryDependencies;
   readonly nowUtcMs?: () => number;
 }
 
@@ -255,6 +263,9 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
   const workspaceDiscard = options.workspaceDiscard;
   const taskVerificationContinue = options.taskVerificationContinue;
   const nowUtcMs = options.nowUtcMs ?? Date.now;
+  const delivery = options.featureDelivery === undefined ? undefined : createFeatureDeliveryCommandHandler({
+    atomicStore: store, dependencies: options.featureDelivery, nowUtcMs,
+  });
 
   /** 既有项目元数据 CAS：业务 + metadata_updated 事件 + 回执同一事务（F-007）。 */
   function submitMetadataUpdate(
@@ -572,6 +583,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
   }
 
   return {
+    deliveryActivity: delivery?.activity,
     async submit(principal: unknown, input: unknown): Promise<CommandReceipt> {
       // 非法可信装配为编程错误，不折算客户端错误。
       assertTrustedPrincipal(principal);
@@ -580,6 +592,17 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
         const envelope = validateCommandEnvelope(input);
         operation = envelope.operation;
         authorizeCommand(principal, envelope);
+        if (envelope.operation === 'feature.verification.continue' || envelope.operation === 'git.operation.reconcile') {
+          const digest = computeCommandRequestDigest(envelope);
+          if (delivery === undefined) {
+            const receipt = store.transact(operation, transaction =>
+              replay(principal, transaction.findReceipt(principal.principalId, envelope.commandId), digest, operation));
+            if (receipt) return receipt;
+            checkTiming(envelope, nowUtcMs());
+            throw new PublicError('unsupported', operation);
+          }
+          return await delivery.submit(principal, envelope, digest);
+        }
         if (envelope.operation === 'project.register' && repositoryInspector === undefined) {
           throw new PublicError('unsupported', operation);
         }

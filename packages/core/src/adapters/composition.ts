@@ -34,6 +34,8 @@ import type { ConfigurationService } from '../application/configuration-service.
 import { createCommandReceiptsService } from '../application/command-receipts-service.js';
 import type { CommandReceiptsService } from '../application/command-receipts-service.js';
 import { createCommandService } from '../application/command-service.js';
+import type { FeatureDeliveryFactory } from '../application/feature-delivery-commands.js';
+export type { FeatureDeliveryFactory, FeatureDeliveryDependencies } from '../application/feature-delivery-commands.js';
 import { assertVerificationReuseIdentity } from '../application/task-verification-continue.js';
 import type { CommandService } from '../application/command-service.js';
 import { createBaselineExecutionService } from '../application/baseline-execution.js';
@@ -155,6 +157,8 @@ const OPERATION = 'CoreApplication.open';
 export interface CoreApplicationOptions {
   /** Trusted static adapter assembly; never a settings/argv/env field. */
   readonly workRuntimeFactory?: WorkRuntimeFactory;
+  /** Trusted delivery adapters; absent until explicitly assembled. */
+  readonly featureDeliveryFactory?: FeatureDeliveryFactory;
   /** 显式授权数据根（绝对路径）；与 userHomeDir 二选一。 */
   readonly dataRoot?: string;
   /** 注入的 macOS 用户目录；用于解析默认根，与 dataRoot 二选一。 */
@@ -273,6 +277,7 @@ export interface CoreApplication {
 
 const ALLOWED_OPTION_KEYS = [
   'workRuntimeFactory',
+  'featureDeliveryFactory',
   'dataRoot',
   'userHomeDir',
   'capabilityCatalog',
@@ -363,6 +368,9 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
   const capabilityCatalog = requireCapabilityCatalog(object.capabilityCatalog, context);
   if (object.workRuntimeFactory !== undefined && typeof object.workRuntimeFactory !== 'function') {
     throw validationError(context, 'workRuntimeFactory', 'trusted_factory_required');
+  }
+  if (object.featureDeliveryFactory !== undefined && typeof object.featureDeliveryFactory !== 'function') {
+    throw validationError(context, 'featureDeliveryFactory', 'trusted_factory_required');
   }
   const recoveryCatalog = createStaticRuntimeRecoveryCatalog(object.runtimeRecoveryDescriptors ?? [], capabilityCatalog);
   if (object.runtimeRecoverySources !== undefined && (
@@ -758,8 +766,13 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       publisher: workspacePublisher,
       ...(nowUtcMs === undefined ? {} : { nowMs: nowUtcMs }),
     });
+    const featureDelivery = (object.featureDeliveryFactory as FeatureDeliveryFactory | undefined)?.({ atomicStore });
+    if (object.featureDeliveryFactory !== undefined && featureDelivery === undefined) {
+      throw validationError(context, 'featureDeliveryFactory', 'delivery_adapters_required');
+    }
     const commandService = createCommandService({
       atomicStore,
+      featureDelivery,
       repositoryInspector,
       // F-009：配置命令的能力目录复检复用同一可信装配目录。
       capabilityCatalog,

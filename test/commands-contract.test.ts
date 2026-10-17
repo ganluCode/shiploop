@@ -170,6 +170,8 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       // P03-7 / F-012：人工批准后的显式验证继续（project scope + execution.start；
       // 更新类 expectedRevision=Task 当前 revision；只推进当前验证收尾，不再调用 Runtime）。
       'task.verification.continue',
+      'feature.verification.continue',
+      'git.operation.reconcile',
       // P03-2 / F-006：执行输入制品组准备（project scope + execution.input.prepare；
       // 创建类不携带 expectedRevision；采集/组装/发布为事务外 I/O）。
       'execution.input.prepare',
@@ -210,6 +212,8 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       'task.approval.reject': { scopeKind: 'project', mutation: 'update', capability: 'feature.plan.decide' },
       'task.approval.unblock': { scopeKind: 'project', mutation: 'update', capability: 'feature.plan.decide' },
       'task.verification.continue': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
+      'feature.verification.continue': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
+      'git.operation.reconcile': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
       'feature.plan.decide': { scopeKind: 'project', mutation: 'update', capability: 'feature.plan.decide' },
       'execution.input.prepare': { scopeKind: 'project', mutation: 'create', capability: 'execution.input.prepare' },
       'execution.preview': { scopeKind: 'project', mutation: 'create', capability: 'execution.start' },

@@ -730,6 +730,8 @@ describe('F-011 传输纪律与版本门禁', () => {
         'task.approval.reject',
         'task.approval.unblock',
         'task.verification.continue',
+        'feature.verification.continue',
+        'git.operation.reconcile',
         // P03-2 / F-006：执行输入制品组准备随 Core 白名单进入接线宣告
         //（HostClient/CLI 入口属 F-007/F-008）。
         'execution.input.prepare',

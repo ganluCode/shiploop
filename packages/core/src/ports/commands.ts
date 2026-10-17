@@ -168,6 +168,9 @@ export const COMMAND_OPERATIONS = [
   // 证据，不两调用 Runtime）；expectedRevision 为目标 Task 自身 revision，
   // payload 携带批次/代码/观察摘要做过期拒绝。
   'task.verification.continue',
+  // P03-8 F-008: explicit delivery control, sharing the existing execution authority.
+  'feature.verification.continue',
+  'git.operation.reconcile',
   // P03-2 / F-006：执行输入制品组准备（project scope + execution.input.prepare；
   // 创建类命令不携带 expectedRevision；采集/组装/发布为事务外 I/O，最终重核、
   // 事件与回执同一短写事务）。
@@ -303,6 +306,8 @@ export const COMMAND_OPERATION_SPECS: Readonly<Record<AppOperation, CommandOpera
     'task.approval.unblock': { scopeKind: 'project', mutation: 'update', capability: 'feature.plan.decide' },
     // F-012：显式验证继续是执行控制面决定（不启动 Runtime、不创建实体），
     // 沿用 execution.start 能力位；真实主体与能力仍由可信装配绑定。
+    'feature.verification.continue': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
+    'git.operation.reconcile': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
     'task.verification.continue': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
     // P03-2 / F-006：执行输入制品组准备（创建类：不携带 expectedRevision，
     // 不 CAS 任何实体）。采集/组装/发布为事务外 I/O；最终同一写事务内重核
@@ -690,6 +695,14 @@ export interface ValidatedTaskApprovalDecisionPayload {
   readonly reason: string | null;
 }
 
+/** P03-8 F-008: delivery targets only; identity and evidence come from Core. */
+export interface ValidatedFeatureDeliveryPayload {
+  readonly featureId: string;
+  readonly runId: string;
+  readonly batchId: string;
+  readonly operationId: string;
+}
+
 /**
  * F-012：显式验证继续 payload。只携带目标与已保存机器证据身份（批次/代码/
  * 观察摘要）：全部与服务端从持久事实重建的当前身份逐项比对，任何漂移
@@ -901,6 +914,12 @@ export type ValidatedCommandEnvelope =
       readonly scope: { readonly kind: 'project'; readonly projectId: string };
       readonly expectedRevision: number;
       readonly payload: ValidatedTaskApprovalDecisionPayload;
+    })
+  | (EnvelopeCommon & {
+      readonly operation: 'feature.verification.continue' | 'git.operation.reconcile';
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: number;
+      readonly payload: ValidatedFeatureDeliveryPayload;
     })
   // F-012：显式验证继续命令信封（expectedRevision=目标 Task revision；
   // payload 只携带目标与已保存机器证据身份）。
@@ -1726,6 +1745,19 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
     if (scope.kind !== 'project') fail(operation, 'invalid_input', 'scope.kind', 'scope mismatch');
     return { ...base, operation, scope: scope as { kind: 'project'; projectId: string }, expectedRevision: expectedRevision as number,
       payload: validateTaskApprovalDecisionPayload(operation, object.payload) };
+  }
+  if (operation === 'feature.verification.continue' || operation === 'git.operation.reconcile') {
+    const payload = requireObject(operation, object.payload, 'payload');
+    exactKeys(operation, payload, ['featureId', 'runId', 'batchId', 'operationId'], 'payload.');
+    if (!isUuidV4(payload.operationId)) fail(operation, 'invalid_input', 'payload.operationId', '必须是 UUID v4');
+    return { ...base, operation, scope: scope as { kind: 'project'; projectId: string },
+      expectedRevision: expectedRevision as number,
+      payload: {
+        featureId: validateStableId(payload.featureId, { operation }, 'payload.featureId'),
+        runId: validateStableId(payload.runId, { operation }, 'payload.runId'),
+        batchId: validateStableId(payload.batchId, { operation }, 'payload.batchId'),
+        operationId: payload.operationId,
+      } };
   }
   if (operation === 'task.verification.continue') {
     if (scope.kind !== 'project') fail(operation, 'invalid_input', 'scope.kind', 'scope mismatch');

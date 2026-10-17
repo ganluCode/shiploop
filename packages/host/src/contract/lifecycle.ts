@@ -78,6 +78,8 @@ export const APPLICATION_COMMAND_CAPABILITIES = [
   'task.approval.reject',
   'task.approval.unblock',
   'task.verification.continue',
+  'feature.verification.continue',
+  'git.operation.reconcile',
   // P03-2 / F-006：执行输入制品组准备经既有 POST /v1/commands 通用路由
   // 接线（同一命令面；HostClient 入口 F-007，CLI 入口 F-008）。
   'execution.input.prepare',
@@ -191,10 +193,17 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
-/**
- * 真实支持的唯一能力集（P02-2 / F-011 接线后的 §11.3 视图）。任何假服务宣称
- * 更多能力都会被响应校验拒绝（客户端以此而非名称猜测判断能力）。
- */
+/** Optional delivery capabilities must be assembled and advertised as a pair. */
+export const FEATURE_DELIVERY_COMMAND_CAPABILITIES = ['feature.verification.continue', 'git.operation.reconcile'] as const;
+
+/** Additive v5 capability pair: production defaults stay honest without adapters. */
+export function hostCapabilitiesForDelivery(available: boolean): HostCapabilities {
+  if (!available) return CURRENT_HOST_CAPABILITIES;
+  return deepFreeze({ ...CURRENT_HOST_CAPABILITIES, application: {
+    ...CURRENT_HOST_CAPABILITIES.application, commands: [...APPLICATION_COMMAND_CAPABILITIES],
+  } });
+}
+
 export const CURRENT_HOST_CAPABILITIES: HostCapabilities = deepFreeze({
   lifecycleRoutes: [...LIFECYCLE_ROUTE_NAMES],
   stop: {
@@ -203,7 +212,8 @@ export const CURRENT_HOST_CAPABILITIES: HostCapabilities = deepFreeze({
     activityScope: ACTIVITY_SCOPE_IDLE_ONLY,
   },
   application: {
-    commands: [...APPLICATION_COMMAND_CAPABILITIES],
+    commands: APPLICATION_COMMAND_CAPABILITIES.filter(command =>
+      command !== 'feature.verification.continue' && command !== 'git.operation.reconcile'),
     queries: [...APPLICATION_QUERY_CAPABILITIES],
     events: { transport: 'sse', route: EVENTS_ROUTE, scopes: ['project', 'global'] },
   },

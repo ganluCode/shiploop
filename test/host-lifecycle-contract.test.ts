@@ -20,6 +20,8 @@ import {
   assertStopTargetsCurrentInstance,
   ACTIVITY_SCOPE_IDLE_ONLY,
   CURRENT_HOST_CAPABILITIES,
+  hostCapabilitiesForDelivery,
+  FEATURE_DELIVERY_COMMAND_CAPABILITIES,
   CURRENT_PROTOCOL_VERSION,
   CURRENT_SCHEMA_VERSION,
   DISCOVERY_SCHEMA_VERSION,
@@ -267,7 +269,9 @@ describe('F-002 冻结常量与能力声明', () => {
       },
     });
     // 接线宣告与 Core 支持面交叉核对（不漂移：Core 增删操作必须同步接线与宣告）。
-    expect([...CURRENT_HOST_CAPABILITIES.application.commands]).toEqual([...COMMAND_OPERATIONS]);
+    expect([...CURRENT_HOST_CAPABILITIES.application.commands]).toEqual(
+      COMMAND_OPERATIONS.filter(operation => !(FEATURE_DELIVERY_COMMAND_CAPABILITIES as readonly string[]).includes(operation)));
+    expect([...hostCapabilitiesForDelivery(true).application.commands]).toEqual([...COMMAND_OPERATIONS]);
     // P02-3：queries = P02-2 的 QUERY_OPERATIONS + 已接线的静态接入两项（F-006）
     // + 已接线的基线分页/详情/证据三项（F-014，与 BASELINE_QUERY_OPERATIONS 同步）
     // + P03-1 / F-009 计划域六项（与 PLAN_QUERY_OPERATIONS 同步，能力位复用 project.read）

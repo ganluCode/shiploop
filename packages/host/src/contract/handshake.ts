@@ -20,6 +20,8 @@ import { HostProtocolError } from './errors.js';
 import { isIsoUtcDateTime, isSha256Hex, isUuidV4 } from './identifiers.js';
 import {
   CURRENT_HOST_CAPABILITIES,
+  FEATURE_DELIVERY_COMMAND_CAPABILITIES,
+  hostCapabilitiesForDelivery,
   LIFECYCLE_ROUTE_NAMES,
   isLifecycleState,
   type HostCapabilities,
@@ -247,7 +249,8 @@ function validateCapabilities(input: unknown): HostCapabilities {
     surface,
     'capabilities.application.commands',
     application.commands,
-    CURRENT_HOST_CAPABILITIES.application.commands,
+    hostCapabilitiesForDelivery(Array.isArray(application.commands) &&
+      FEATURE_DELIVERY_COMMAND_CAPABILITIES.some(command => (application.commands as unknown[]).includes(command))).application.commands,
   );
   requireStringSetEqual(
     surface,

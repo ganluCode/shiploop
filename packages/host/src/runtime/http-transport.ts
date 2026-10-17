@@ -34,7 +34,7 @@
 import { createServer } from 'node:http';
 import type { IncomingMessage, Server, ServerResponse } from 'node:http';
 import {
-  CURRENT_HOST_CAPABILITIES,
+  hostCapabilitiesForDelivery,
   CURRENT_PROTOCOL_VERSION,
   CURRENT_SCHEMA_VERSION,
   HANDSHAKE_ROUTE,
@@ -98,6 +98,7 @@ export interface HostLifecycleContext {
    * unknown_operation（P02-1 现状）；装配后由 Core 应用服务承担全部授权。
    */
   readonly application?: HostApplicationContext;
+  readonly featureDeliveryAvailable?: boolean;
 }
 
 interface ResolvedRoute {
@@ -143,7 +144,7 @@ function buildHandshakeResponse(context: HostLifecycleContext): HandshakeRespons
     dataRootIdentity: context.dataRootIdentity,
     lifecycleState: context.getLifecycleState(),
     startedAt: context.startedAt,
-    capabilities: CURRENT_HOST_CAPABILITIES,
+    capabilities: hostCapabilitiesForDelivery(context.featureDeliveryAvailable === true),
   };
 }
 

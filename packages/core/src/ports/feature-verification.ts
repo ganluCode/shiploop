@@ -1,4 +1,4 @@
-import type { VerificationPlan } from '../application/verification-plan.js';
+import type { VerificationPlan } from './verification-plan.js';
 import type { VerificationCodeIdentity } from './verification-aggregate.js';
 import type { WorkResourceIdentity } from './work-resources.js';
 
