@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import type { ArtifactFileStore } from '../ports/artifact-files.js';
 import type { ArtifactStore } from '../ports/artifact-store.js';
 import type { AtomicCommandStore } from '../ports/atomic-commands.js';
+import type { FeatureVerificationExecutionInput, FeatureVerificationExecutor } from '../ports/feature-verification.js';
 import type { BaselineCodeIdentity } from '../ports/baseline.js';
 import type {
   CommandProcessHandle,
@@ -80,6 +81,10 @@ export interface NodeTaskVerificationInput {
   readonly targets: readonly string[];
   readonly startedAtUtcMs?: number;
   readonly signal?: AbortSignal;
+  /** Feature final verification uses the full fallback snapshot instead of candidate mode. */
+  readonly selectionMode?: 'candidates' | 'full_fallback';
+  /** Called after all checks and before the immutable batch is finalized. */
+  readonly assertCurrentIdentity?: () => Promise<boolean>;
 }
 
 export interface NodeTaskVerificationResult {
@@ -198,7 +203,8 @@ export function createNodeTaskVerificationExecutor(options: NodeTaskVerification
       batchId: input.batchId, projectId: input.projectId, featureId: input.featureId, runId: input.runId,
       taskId: input.taskId, attemptId: input.attemptId, executionVersion: input.executionVersion, operation: input.operation,
       codeDigest: input.codeDigest, policyDigest: input.policyDigest, environmentSummary: input.environmentSummary,
-      checkSnapshot: checks.map(snapshot), selection: { schemaVersion: 1 as const, mode: 'candidates' as const,
+      checkSnapshot: checks.map(snapshot), selection: { schemaVersion: 1 as const,
+        mode: input.selectionMode ?? 'candidates',
         reason: input.plan.status === 'ready' ? 'confirmed verification plan' : 'plan rejected', selectedCheckKeys: checks.map(check => check.checkKey) },
       startedAtUtcMs: input.startedAtUtcMs ?? now(),
     };
@@ -228,7 +234,9 @@ export function createNodeTaskVerificationExecutor(options: NodeTaskVerification
     const status: NodeTaskVerificationResult['status'] = records.some(item => item.status === 'error') ? 'error'
       : records.some(item => item.status === 'failed') ? 'failed'
       : records.some(item => item.status !== 'passed') ? 'inconclusive' : 'passed';
-    const final = finalize(input, batch.revision, status as VerificationBatchTerminalStatus);
+    const identityStillCurrent = input.assertCurrentIdentity === undefined || await input.assertCurrentIdentity();
+    const finalStatus = identityStillCurrent ? status : 'inconclusive';
+    const final = finalize(input, batch.revision, finalStatus as VerificationBatchTerminalStatus);
     return { batchId: input.batchId, status: final.status as NodeTaskVerificationResult['status'], results: records };
   }
 
@@ -313,4 +321,40 @@ export function createNodeTaskVerificationExecutor(options: NodeTaskVerification
     };
   }
   return { start };
+}
+
+/**
+ * Adapter for Feature final verification. The durable verifier remains the same
+ * trusted process/Artifact implementation; the feature coordinator supplies a
+ * full_fallback plan and a provenance anchor required by the legacy Task-shaped
+ * storage schema. The anchor is never used as the Feature subject or as Task
+ * completion evidence.
+ */
+export function createFeatureNodeVerificationExecutor(options: NodeTaskVerificationOptions & {
+  readonly resolveFeatureAttempt: (input: FeatureVerificationExecutionInput) => { readonly taskId: string; readonly attemptId: string };
+}): FeatureVerificationExecutor {
+  const taskExecutor = createNodeTaskVerificationExecutor(options);
+  return {
+    async start(input) {
+      const anchor = options.resolveFeatureAttempt(input);
+      const result = await taskExecutor.start({
+        projectId: input.projectId, featureId: input.featureId, runId: input.runId,
+        taskId: anchor.taskId, attemptId: anchor.attemptId, executionVersion: input.executionVersion,
+        batchId: input.batchId, operation: input.operation, codeDigest: input.codeIdentity.codeDigest,
+        codeIdentity: {
+          headCommit: input.codeIdentity.headCommit,
+          workingTreeDigest: input.codeIdentity.codeDigest,
+          hasUncommittedChanges: true,
+        } satisfies BaselineCodeIdentity,
+        policyDigest: input.policyDigest, environmentSummary: input.environmentSummary,
+        plan: { status: input.plan.status, selectedChecks: input.plan.selectedChecks }, targets: input.targets,
+        selectionMode: 'full_fallback', assertCurrentIdentity: input.assertCurrentIdentity,
+      });
+      return {
+        batchId: result.batchId, status: result.status,
+        results: result.results.map(item => ({ checkKey: item.checkKey, status: item.status, resultId: item.resultId,
+          outputArtifactId: item.evidence?.output?.artifactId ?? null })),
+      };
+    },
+  };
 }
