@@ -277,6 +277,14 @@ export interface CommandTransaction {
     input: import('./execution-store.js').ExecutionCancelInput,
   ): import('./execution-store.js').ExecutionCancelResult;
   /**
+   * P03-9 / F-008：显式工作流 resume（同项目 Run/Batch CAS）。仅暂停中的
+   * Run/Batch 可解除暂停；事务内重核 revision/占用/工作区身份后原子写
+   * queued/running、事件与回执。不创建 Attempt、不启动 Runtime、不改预算。
+   */
+  resumeExecution(
+    input: import('./execution-store.js').ExecutionResumeInput,
+  ): import('./execution-store.js').ExecutionResumeResult;
+  /**
    * P03-9 / F-003：停止核验结果写入同一 operation（stopping → stopped/uncertain）；
    * stopped 且无活动 Attempt/租约时才把目标收尾为 cancelled。
    */

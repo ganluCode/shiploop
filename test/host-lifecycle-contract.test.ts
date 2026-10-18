@@ -181,6 +181,8 @@ describe('F-002 冻结常量与能力声明', () => {
           'execution.pause',
           // P03-9 / F-002：Run/Batch 取消经同一命令路由接线。
           'execution.cancel',
+          // P03-9 / F-008：显式工作流 resume 经同一命令路由接线。
+          'execution.resume',
           'project.register',
           'project.metadata.update',
           'settings.global.create',

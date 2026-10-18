@@ -50,6 +50,9 @@ export const APPLICATION_COMMAND_CAPABILITIES = [
   // P03-9 / F-002：Run/Batch 取消经同一通用命令路由接线（停止端口接线在
   // F-003；本命令只提交持久控制意图与停止 operation）。
   'execution.cancel',
+  // P03-9 / F-008：显式工作流 resume 经同一通用命令路由接线（重新授权与
+  // 原现场复用；HostClient/CLI 专用入口仍由 F-014/F-015 接入）。
+  'execution.resume',
   'project.register',
   'project.metadata.update',
   'settings.global.create',

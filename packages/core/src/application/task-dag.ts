@@ -184,6 +184,20 @@ export function evaluateTaskDag(view: TaskDagView, nowMs: number): TaskDagResult
   return result('invalid_graph', 'no_classifiable_work', reasons);
 }
 
+/**
+ * P03-9 / F-008：显式 resume 的只读 DAG 预演。解除暂停意图、把可继续的
+ * paused Run/Batch 视为 queued/running 后复用同一 DAG 规则；不写数据库，
+ * 不创建 Attempt，也不把 paused 的 `approval`/`verification_not_assembled`
+ * 特例变成绕过预算或依赖的通道。
+ */
+export function evaluateTaskDagAfterResume(view: TaskDagView, nowMs: number): TaskDagResult {
+  return evaluateTaskDag({
+    ...view,
+    run: { ...view.run, status: 'queued', reason: null, pauseRequestedAtUtcMs: null },
+    batch: { ...view.batch, status: 'running', reason: null, pauseRequestedAtUtcMs: null },
+  }, nowMs);
+}
+
 export function createTaskDagService(options: { readonly store: TaskDagStore; readonly nowMs?: () => number }) {
   return { evaluate(projectId: unknown, runId: unknown): TaskDagResult {
     const now = (options.nowMs ?? Date.now)();

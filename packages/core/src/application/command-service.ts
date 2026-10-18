@@ -62,6 +62,8 @@ import type {
 import { validateMergedProjectSettingsWrite } from './configuration-service.js';
 import { submitExecutionPause } from './execution-pause.js';
 import { submitExecutionCancel } from './execution-cancel.js';
+import { signalExecutionResumeAfterCommit } from './execution-resume.js';
+import type { ExecutionResumePort } from '../ports/execution-resume.js';
 import { submitTaskApprovalBlock, TASK_APPROVAL_BLOCK_OPERATION } from './task-approval-block.js';
 import { submitTaskApprovalDecision, TASK_APPROVAL_DECISION_OPERATIONS } from './task-approval-decision.js';
 import { submitTaskVerificationContinue, TASK_VERIFICATION_CONTINUE_OPERATION, type TaskVerificationContinueDeps } from './task-verification-continue.js';
@@ -180,6 +182,11 @@ export interface CommandServiceOptions {
    */
   readonly executionStart?: ExecutionStartPort;
   /**
+   * P03-9 / F-008：显式工作流 resume 端口（事务外重新授权/现场核验 + 短写事务内
+   * 重核解除暂停；不传则命令 unsupported，不冒充能力）。
+   */
+  readonly executionResume?: ExecutionResumePort;
+  /**
    * P03-3 / F-005：派发唤醒窄端口（仅写事务成功提交且非重放的新 Work accepted
    * 后 best-effort 调用；失败吞掉，持久 queued Run 是权威；不传则 Run 保留
    * queued + scheduler_not_assembled 可查询原因）。
@@ -266,6 +273,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
   const executionInputPrepare = options.executionInputPrepare;
   const executionPreview = options.executionPreview;
   const executionStart = options.executionStart;
+  const executionResume = options.executionResume;
   const executionDispatchSignal = options.executionDispatchSignal;
   const executionStopControl = options.executionStopControl;
   const workspaceDiscard = options.workspaceDiscard;
@@ -651,6 +659,9 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
         if (envelope.operation === EXECUTION_START_OPERATION && executionStart === undefined) {
           throw new PublicError('unsupported', operation);
         }
+        if (envelope.operation === 'execution.resume' && executionResume === undefined) {
+          throw new PublicError('unsupported', operation);
+        }
         // P03-5 / F-011：人工丢弃预览/确认服务端口缺席时 unsupported（不冒充
         // 能力；命令面能力位与预览/确认共享授权面，端口装配是真实支持边界）。
         if (
@@ -672,6 +683,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           envelope.operation !== 'execution.attempt.cancel' &&
           envelope.operation !== 'execution.pause' &&
           envelope.operation !== 'execution.cancel' &&
+          envelope.operation !== 'execution.resume' &&
           envelope.operation !== 'baseline.cancel' &&
           envelope.operation !== 'phase.create' &&
           envelope.operation !== FEATURE_PLAN_IMPORT_OPERATION &&
@@ -797,6 +809,16 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           );
         }
 
+        // P03-9 / F-008：显式 resume 的事务外重新授权/现场核验（全部只读 I/O 在
+        // 写事务之外），事务内只重核身份并解除暂停。
+        let executionResumePrepared: import('../ports/execution-resume.js').PreparedExecutionResume | undefined;
+        if (envelope.operation === 'execution.resume' && existing === undefined) {
+          executionResumePrepared = await executionResume!.prepareExecutionResume(
+            envelope.scope.projectId,
+            envelope.payload,
+          );
+        }
+
         // P03-5 / F-011：人工丢弃预览为只读检查 + 不可变证据发布（事务外、
         // 仅对新命令执行）；命令短写事务内只持久化 completed 回执（与
         // execution.preview 同一纪律）。payload 深校验（featureId）在服务内。
@@ -884,6 +906,21 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
               },
               envelope,
               transaction,
+            );
+          }
+          if (envelope.operation === 'execution.resume') {
+            if (executionResumePrepared === undefined) throw new TypeError('resume 缺少事务外准备结果');
+            return executionResume!.submitExecutionResume(
+              {
+                principalId: principal.principalId,
+                commandId: envelope.commandId,
+                scope: envelope.scope,
+                requestDigest: digest,
+                issuedAt: envelope.issuedAt,
+              },
+              envelope,
+              transaction,
+              executionResumePrepared,
             );
           }
           if (envelope.operation === 'execution.cancel') {
@@ -1207,6 +1244,11 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
             receipt,
             envelope.payload.featureIds[0] ?? '',
           );
+        }
+        // P03-9 / F-008：显式 resume 提交后只对新回执发出调度唤醒；approval 缺失
+        // 步骤不唤醒调度器，replay 也不重复唤醒。
+        if (envelope.operation === 'execution.resume') {
+          signalExecutionResumeAfterCommit(executionDispatchSignal, receipt);
         }
         // Persist the authorization/receipt before touching the Runtime. Replays never
         // resubmit cancellation, even if the HTTP response was lost.

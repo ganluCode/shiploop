@@ -51,6 +51,8 @@ import {
   EXECUTION_RUN_CANCELLED_EVENT_TYPE,
   EXECUTION_RUN_CANCELLING_EVENT_TYPE,
   EXECUTION_RUN_PAUSED_EVENT_TYPE,
+  EXECUTION_RUN_RESUMED_EVENT_TYPE,
+  EXECUTION_BATCH_RESUMED_EVENT_TYPE,
   executionCorruptError,
   isExecutionActiveStatus,
   isExecutionTerminalStatus,
@@ -76,6 +78,8 @@ import type {
   ExecutionCancelTargetKind,
   ExecutionPauseInput,
   ExecutionPauseResult,
+  ExecutionResumeInput,
+  ExecutionResumeResult,
   ExecutionRunStatus,
   ExecutionStopOperationRecord,
   ExecutionStopOperationStatus,
@@ -315,6 +319,8 @@ export interface SqliteExecutionAccess {
    * 不修改预算、deadline、累计计数或代码；CAS 于 expectedRevision。
    */
   requestExecutionPauseInTransaction(input: ExecutionPauseInput): ExecutionPauseResult;
+  /** P03-9 / F-008：显式工作流 resume（同一短写事务内解除暂停意图并写事件）。 */
+  resumeExecutionInTransaction(input: ExecutionResumeInput): ExecutionResumeResult;
   /** P03-9 / F-002：Run/Batch 取消意图与持久停止 operation（同一短写事务）。 */
   requestExecutionCancelInTransaction(input: ExecutionCancelInput): ExecutionCancelResult;
   /** P03-9 / F-003：停止核验结果写入同一 operation，必要时保守隔离活动 Attempt。 */
@@ -1620,6 +1626,148 @@ export function createSqliteExecutionAccess(
 
 
   /* ------------------------------------------------------------ *
+   * P03-9 / F-008 显式工作流 resume（持久暂停意图解除；同一短写事务）
+   * ------------------------------------------------------------ */
+
+  function resumeExecutionInTransaction(input: ExecutionResumeInput): ExecutionResumeResult {
+    const operation = 'ExecutionStore.resumeExecution';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const raw = requirePlainObject(input, { operation }, 'input');
+    rejectUnknownKeys(raw, ['projectId', 'targetKind', 'targetId', 'expectedRevision', 'workspace'], { operation }, 'input');
+    const projectId = validateStableId(raw.projectId, { operation }, 'projectId');
+    const targetId = validateStableId(raw.targetId, { operation }, 'targetId');
+    if (raw.targetKind !== 'run' && raw.targetKind !== 'batch') {
+      throw new StorageError('validation', operation, 'targetKind 必须是 run 或 batch');
+    }
+    const targetKind = raw.targetKind;
+    if (!Number.isSafeInteger(raw.expectedRevision) || (raw.expectedRevision as number) < 1) {
+      throw new StorageError('validation', operation, 'expectedRevision 必须是 ≥1 的安全整数');
+    }
+    const expectedRevision = raw.expectedRevision as number;
+    const workspace = raw.workspace;
+    let expectedWorkspace: { workspaceId: string; revision: number } | null = null;
+    if (workspace !== null) {
+      const value = requirePlainObject(workspace, { operation }, 'workspace');
+      rejectUnknownKeys(value, ['workspaceId', 'revision'], { operation }, 'workspace');
+      const workspaceId = validateStableId(value.workspaceId, { operation }, 'workspace.workspaceId');
+      if (!Number.isSafeInteger(value.revision) || (value.revision as number) < 1) {
+        throw new StorageError('validation', operation, 'workspace.revision 必须是 ≥1 的安全整数');
+      }
+      expectedWorkspace = { workspaceId, revision: value.revision as number };
+    }
+    const timestamp = nowUtcMs();
+    if (!Number.isSafeInteger(timestamp) || timestamp < 1) throw new StorageError('validation', operation, 'Invalid resume clock');
+    const conflict = (reason: string, extra: Record<string, unknown> = {}): never => {
+      throw new StorageError('conflict', operation, `Execution resume rejected: ${reason}`, {
+        entity: { type: targetKind === 'run' ? 'run' : 'execution_batch', projectId, id: targetId },
+        details: { reason, ...extra },
+      });
+    };
+    const verifyWorkspace = (featureId: string): void => {
+      const row = session.database.prepare<[string, string], { id: string; revision: number; status: string }>(
+        'SELECT id, revision, status FROM managed_workspaces WHERE project_id = ? AND feature_id = ?',
+      ).get(projectId, featureId);
+      if (expectedWorkspace === null) {
+        if (row !== undefined) conflict('resume_workspace_changed', { workspaceId: row.id });
+        return;
+      }
+      if (row === undefined || row.id !== expectedWorkspace.workspaceId
+        || row.revision !== expectedWorkspace.revision
+        || ['preparing', 'quarantined', 'cleanup_pending', 'cleaned'].includes(row.status)) {
+        conflict('resume_workspace_changed');
+      }
+    };
+    const verifyNoOccupancy = (runIds: readonly string[]): void => {
+      if (runIds.length === 0) return;
+      const placeholders = runIds.map(() => '?').join(', ');
+      const active = session.database.prepare<unknown[], { count: number }>(
+        `SELECT COUNT(*) AS count FROM attempts WHERE project_id = ? AND run_id IN (${placeholders})
+          AND status IN (${ACTIVE_ATTEMPT_STATUSES.map(() => '?').join(', ')})`,
+      ).get(projectId, ...runIds, ...ACTIVE_ATTEMPT_STATUSES)!.count;
+      const leases = session.database.prepare<unknown[], { count: number }>(
+        `SELECT COUNT(*) AS count FROM workspace_leases WHERE project_id = ? AND owner_id IN
+          (SELECT id FROM attempts WHERE project_id = ? AND run_id IN (${placeholders}))`,
+      ).get(projectId, projectId, ...runIds)!.count;
+      if (active > 0 || leases > 0) conflict('occupancy_unresolved', { activeAttempts: active, leases });
+    };
+
+    if (targetKind === 'run') {
+      const run = getExecutionRunInTransaction(projectId, targetId);
+      const batch = getExecutionBatchInTransaction(projectId, run.batchId);
+      if (isExecutionTerminalStatus(run.status)) {
+        return { outcome: 'already_terminal', targetKind, targetId, batchId: batch.id, featureId: run.featureId,
+          status: run.status, revision: run.revision, runIds: [], eventId: null };
+      }
+      if (run.status !== 'paused' || !['queued', 'running', 'paused'].includes(batch.status)) {
+        conflict('not_resumable', { runStatus: run.status, batchStatus: batch.status });
+      }
+      if (run.revision !== expectedRevision) {
+        conflict('stale_revision', { expectedRevision, actualRevision: run.revision });
+      }
+      verifyNoOccupancy([run.id]);
+      verifyWorkspace(run.featureId);
+      const changed = session.database.prepare(`UPDATE runs SET status = 'queued', reason = NULL,
+        pause_requested_at = NULL, revision = revision + 1, updated_at = ?
+        WHERE project_id = ? AND id = ? AND revision = ? AND status = 'paused'`)
+        .run(timestamp, projectId, run.id, expectedRevision);
+      if (changed.changes !== 1) conflict('stale_revision', { expectedRevision, actualRevision: run.revision });
+      const eventId = appendExecutionEventInTransaction({ projectId, eventType: EXECUTION_RUN_RESUMED_EVENT_TYPE,
+        aggregateType: 'run', aggregateId: run.id, aggregateRevision: expectedRevision + 1, payload: { resumed: true } });
+      if (batch.status === 'paused' || batch.status === 'queued') {
+        const batchChanged = session.database.prepare(`UPDATE execution_batches SET status = 'running', reason = NULL,
+          pause_requested_at = NULL, revision = revision + 1, updated_at = ?
+          WHERE project_id = ? AND id = ? AND status = ?`)
+          .run(timestamp, projectId, batch.id, batch.status);
+        if (batchChanged.changes !== 1) conflict('not_resumable', { batchStatus: batch.status });
+        appendExecutionEventInTransaction({ projectId, eventType: EXECUTION_BATCH_RESUMED_EVENT_TYPE,
+          aggregateType: 'execution_batch', aggregateId: batch.id, aggregateRevision: batch.revision + 1, payload: { resumed: true } });
+      }
+      return { outcome: 'resumed', targetKind, targetId, batchId: batch.id, featureId: run.featureId,
+        status: 'queued', revision: expectedRevision + 1, runIds: [run.id], eventId };
+    }
+
+    const batch = getExecutionBatchInTransaction(projectId, targetId);
+    if (isExecutionTerminalStatus(batch.status)) {
+      return { outcome: 'already_terminal', targetKind, targetId, batchId: batch.id, featureId: batch.featureId,
+        status: batch.status, revision: batch.revision, runIds: [], eventId: null };
+    }
+    if (batch.status !== 'paused') conflict('not_resumable', { batchStatus: batch.status });
+    if (batch.revision !== expectedRevision) {
+      conflict('stale_revision', { expectedRevision, actualRevision: batch.revision });
+    }
+    const runRows = session.database.prepare<[string, string], { id: string; status: string; revision: number }>(
+      'SELECT id, status, revision FROM runs WHERE project_id = ? AND batch_id = ? ORDER BY id',
+    ).all(projectId, batch.id);
+    const pausedRuns = runRows.filter(row => row.status === 'paused');
+    if (pausedRuns.length === 0) conflict('not_resumable', { reasonDetail: 'no_paused_run' });
+    if (runRows.some(row => ['pausing', 'cancelling', 'interrupted', 'queued', 'running'].includes(row.status))) {
+      conflict('not_resumable', { reasonDetail: 'non_paused_run' });
+    }
+    const runIds = pausedRuns.map(row => row.id);
+    verifyNoOccupancy(runIds);
+    verifyWorkspace(batch.featureId);
+    for (const row of pausedRuns) {
+      const changed = session.database.prepare(`UPDATE runs SET status = 'queued', reason = NULL,
+        pause_requested_at = NULL, revision = revision + 1, updated_at = ?
+        WHERE project_id = ? AND id = ? AND revision = ? AND status = 'paused'`)
+        .run(timestamp, projectId, row.id, row.revision);
+      if (changed.changes !== 1) conflict('stale_revision', { runId: row.id });
+      appendExecutionEventInTransaction({ projectId, eventType: EXECUTION_RUN_RESUMED_EVENT_TYPE,
+        aggregateType: 'run', aggregateId: row.id, aggregateRevision: row.revision + 1, payload: { resumed: true } });
+    }
+    const changed = session.database.prepare(`UPDATE execution_batches SET status = 'running', reason = NULL,
+      pause_requested_at = NULL, revision = revision + 1, updated_at = ?
+      WHERE project_id = ? AND id = ? AND revision = ? AND status = 'paused'`)
+      .run(timestamp, projectId, batch.id, expectedRevision);
+    if (changed.changes !== 1) conflict('stale_revision', { expectedRevision, actualRevision: batch.revision });
+    const eventId = appendExecutionEventInTransaction({ projectId, eventType: EXECUTION_BATCH_RESUMED_EVENT_TYPE,
+      aggregateType: 'execution_batch', aggregateId: batch.id, aggregateRevision: expectedRevision + 1, payload: { resumed: true } });
+    return { outcome: 'resumed', targetKind, targetId, batchId: batch.id, featureId: batch.featureId,
+      status: 'running', revision: expectedRevision + 1, runIds, eventId };
+  }
+
+  /* ------------------------------------------------------------ *
    * P03-9 / F-002 Run/Batch 取消意图与持久停止 operation（迁移 v28）
    * ------------------------------------------------------------ */
 
@@ -2771,6 +2919,7 @@ export function createSqliteExecutionAccess(
     recordExecutionRunDispatchInTransaction,
     appendExecutionEventInTransaction,
     requestExecutionPauseInTransaction,
+    resumeExecutionInTransaction,
     requestExecutionCancelInTransaction,
     settleExecutionStopInTransaction,
     interruptAttemptForStopInTransaction,

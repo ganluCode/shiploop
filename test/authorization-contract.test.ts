@@ -141,6 +141,7 @@ function envelope(
         expectedRevision: null, payload: { attemptId: 'attempt-1' } };
     case 'execution.pause':
     case 'execution.cancel':
+    case 'execution.resume':
       return { ...base, operation, scope: { kind: 'project', projectId: '0f0d9c36-765a-4b62-a6b9-38a5ff4f4bf1' },
         expectedRevision: expectedRevision ?? 1, payload: { runId: '0f0d9c36-765a-4b62-a6b9-38a5ff4f4bf2', batchId: null } };
     case 'task.approval.block':

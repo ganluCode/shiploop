@@ -3,11 +3,16 @@ import { randomUUID } from 'node:crypto';
 import { createCommandService } from '../../../packages/core/src/application/command-service.ts';
 import { createExecutionPreviewService } from '../../../packages/core/src/application/execution-preview.ts';
 import { createExecutionStartService } from '../../../packages/core/src/application/execution-start.ts';
+import { createExecutionResumeService } from '../../../packages/core/src/application/execution-resume.ts';
 import { createSqliteAtomicCommandStore } from '../../../packages/core/src/adapters/sqlite/atomic-commands.ts';
+import { createSqliteAttemptAccess } from '../../../packages/core/src/adapters/sqlite/attempt-store.ts';
+import { createSqliteTaskDagStore } from '../../../packages/core/src/adapters/sqlite/task-dag-store.ts';
+import { createSqliteExecutionResumeFactsReader } from '../../../packages/core/src/adapters/sqlite/execution-resume.ts';
 import { createSqlitePlanAccess } from '../../../packages/core/src/adapters/sqlite/plan-store.ts';
 import { openSqliteStorageSession, type SqliteStorageSession } from '../../../packages/core/src/adapters/sqlite/session.ts';
 import { createBaselineWorkspaceReader } from '../../../packages/core/src/adapters/fs/baseline-workspace.ts';
 import { createRepositoryInspector } from '../../../packages/core/src/adapters/fs/repository-inspector.ts';
+import { createWorkspaceInspector } from '../../../packages/core/src/adapters/fs/workspace-inspector.ts';
 import { createLocalOwnerPrincipal } from '../../../packages/core/src/ports/authorization.ts';
 import { createStaticRuntimeCapabilityCatalog } from '../../../packages/core/src/ports/runtime-capabilities.ts';
 import { TRUSTED_PROJECT_PERMISSIONS_READER } from '../../../packages/core/src/ports/execution-input-prepare.ts';
@@ -22,7 +27,7 @@ export const BUDGET = {
   run: { maxAttemptsPerRun: 2, runTimeLimitMs: 3_600_000 },
 };
 
-export function budgetServices(session: SqliteStorageSession) {
+export function budgetServices(session: SqliteStorageSession, options: { readonly workspaceRoots?: readonly string[] } = {}) {
   const nowUtcMs = () => NOW;
   const atomic = createSqliteAtomicCommandStore(session, { nowUtcMs });
   const inspector = createRepositoryInspector();
@@ -32,6 +37,20 @@ export function budgetServices(session: SqliteStorageSession) {
     nowMs: nowUtcMs,
   });
   const signals: unknown[] = [];
+  const workspaceRoots = options.workspaceRoots ?? [];
+  const executionResume = createExecutionResumeService({
+    facts: createSqliteExecutionResumeFactsReader(session, { nowUtcMs }),
+    dag: createSqliteTaskDagStore(session),
+    attempts: createSqliteAttemptAccess(session),
+    permissions: TRUSTED_PROJECT_PERMISSIONS_READER,
+    ...(workspaceRoots.length === 0 ? {} : {
+      inspectorFor: async () => createWorkspaceInspector({
+        authorizedRoots: workspaceRoots,
+        confirmProcessIdentity: async (identity: import('../../../packages/core/src/ports/command-process.ts').CommandProcessIdentity) => identity,
+      }),
+    }),
+    nowMs: nowUtcMs,
+  });
   const commands = createCommandService({
     atomicStore: atomic, repositoryInspector: inspector,
     capabilityCatalog: createStaticRuntimeCapabilityCatalog([
@@ -39,10 +58,11 @@ export function budgetServices(session: SqliteStorageSession) {
     ]),
     executionPreview: preview,
     executionStart: createExecutionStartService({ preview, permissions: TRUSTED_PROJECT_PERMISSIONS_READER, nowMs: nowUtcMs }),
+    executionResume,
     executionDispatchSignal: { signalRunDispatched: input => { signals.push(input); } },
     nowUtcMs,
   });
-  return { atomic, commands, preview, signals };
+  return { atomic, commands, preview, signals, executionResume };
 }
 
 export async function openBudgetFixture(budget: ExecutionBudgetProposal = BUDGET, tasks = [{ id: 't-1', title: 'Task', acceptance: { criteria: ['budget consistency'] }, dependsOn: [] as string[] }]) {
@@ -50,7 +70,8 @@ export async function openBudgetFixture(budget: ExecutionBudgetProposal = BUDGET
   try {
     const harness = await box.openTransactionalHarness();
     let session = harness.session;
-    let services = budgetServices(session);
+    const fixtureOptions = { workspaceRoots: [box.root, box.repoDirA] };
+    let services = budgetServices(session, fixtureOptions);
     const owner = createLocalOwnerPrincipal();
     const envelope = (operation: string, payload: unknown, extra: Record<string, unknown> = {}) => ({
       schemaVersion: 5, commandId: randomUUID(), issuedAt: new Date(NOW).toISOString(),
@@ -106,7 +127,7 @@ export async function openBudgetFixture(budget: ExecutionBudgetProposal = BUDGET
       reopen() {
         session.close();
         session = openSqliteStorageSession({ path: box.dbPath });
-        services = budgetServices(session);
+        services = budgetServices(session, fixtureOptions);
       },
       close() { session.close(); box.cleanup(); },
     };
