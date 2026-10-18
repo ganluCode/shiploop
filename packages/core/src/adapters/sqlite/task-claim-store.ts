@@ -21,6 +21,8 @@ const operation = 'TaskClaim.claimTask';
 /** No workspace preparation, Git, process or Runtime I/O belongs in this adapter. */
 export function createSqliteTaskClaimStore(session: SqliteStorageSession, options: {
   readonly workspaceAuthority: WorkWorkspaceAuthority;
+  /** Trusted startup gate, checked inside the committing claim transaction. */
+  readonly assertCanClaim?: () => void;
   /** Trusted synchronous in-memory policy reader; must not perform external I/O. */
   readonly permissions?: ExecutionPermissionsReader;
   readonly nowUtcMs?: () => number;
@@ -88,6 +90,7 @@ export function createSqliteTaskClaimStore(session: SqliteStorageSession, option
             }
             return { replayed: true, receipt };
           }
+          options.assertCanClaim?.();
           const now = clock();
           if (!Number.isSafeInteger(now) || now < 1) throw new StorageError('validation', operation, 'Invalid claim clock');
           if (valid.leaseUntilUtcMs <= now) throw new StorageError('validation', operation, 'Expired new claim lease');

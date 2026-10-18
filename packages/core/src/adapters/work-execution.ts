@@ -36,6 +36,7 @@ import { validateRuntimeRecoveryDecision } from '../ports/runtime-recovery.js';
 import type { CommandProcessIdentity } from '../ports/command-process.js';
 import type { WorkResourceIdentity } from '../ports/work-resources.js';
 import { PublicError } from '../ports/commands.js';
+import type { createWorkStartupRecovery } from '../application/work-startup-recovery.js';
 
 export interface WorkRuntimeContext {
   readonly workspaceRoots: Readonly<Record<string, string>>;
@@ -55,6 +56,7 @@ export function assembleWorkExecution(options: {
   readonly capabilityCatalog: import('../ports/runtime-capabilities.js').RuntimeCapabilityCatalog;
   readonly runtimeFactory?: WorkRuntimeFactory;
   readonly nowUtcMs?: () => number;
+  readonly startupRecovery: ReturnType<typeof createWorkStartupRecovery>;
   /** F-012：受信返工现场读取（同 Feature 受管 worktree 的当前身份；无工作区时
    * 返回 null）。由 composition 用受界检查器实现；缺省时不接返工认领。 */
   readonly readReworkScene?: (projectId: string, featureId: string) => Promise<{
@@ -126,7 +128,7 @@ export function assembleWorkExecution(options: {
   const scheduler = createWorkScheduler({ store, dag: { evaluate: (projectId, runId) => evaluateTaskDag(dag.readTaskDagView(projectId, runId), now()) },
     claims: app.taskClaims,
     async prepareClaim({ candidate, taskId }) {
-      if (quiescing) throw new PublicError('resource_busy', 'execution.start');
+      if (quiescing || options.startupRecovery.blocked()) throw new PublicError('resource_busy', 'execution.start');
       const projectId = candidate.run.projectId;
       const view = dag.readTaskDagView(projectId, candidate.run.id);
       const task = view.plan.tasks.find(task => task.id === taskId)!;
@@ -255,12 +257,16 @@ export function assembleWorkExecution(options: {
       }
     },
   });
-  const scan = () => scheduler.scan();
+  const scan = () => options.startupRecovery.blocked()
+    ? Promise.resolve({ closed: false, pages: 0, bounded: true, runs: [] }) : scheduler.scan();
   return {
     scan,
-    start() { if (options.runtimeFactory) scheduler.start(); },
+    enterRecovery: () => options.startupRecovery.enter(),
+    recover: () => options.startupRecovery.recover(),
+    recoveryState: () => options.startupRecovery.state(),
+    start() { if (options.runtimeFactory && !options.startupRecovery.blocked()) scheduler.start(); },
     signalRunDispatched(input: { projectId: string; runId: string }) {
-      if (quiescing) return;
+      if (quiescing || options.startupRecovery.blocked()) return;
       if (!options.runtimeFactory) { store.recordRunReason(input.projectId, input.runId, 'runtime_not_found'); return; }
       scheduler.wake(input.projectId, input.runId);
     },

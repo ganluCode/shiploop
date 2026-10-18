@@ -24,9 +24,12 @@
  *   使用 Runtime 时须先 await workExecution.close() 核验停止，再 close() 状态库。
  */
 import { assembleWorkExecution, type WorkRuntimeFactory, type WorkExecution } from './work-execution.js';
+import { createWorkStartupRecovery } from '../application/work-startup-recovery.js';
+import { PublicError } from '../ports/commands.js';
+import { createSqliteWorkStartupRecoveryStore } from './sqlite/work-startup-recovery.js';
 export type { WorkRuntimeFactory, WorkRuntimeContext } from './work-execution.js';
 import { existsSync, mkdirSync } from 'node:fs';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { isAbsolute } from 'node:path';
 import { createConfigurationService } from '../application/configuration-service.js';
@@ -159,6 +162,8 @@ const OPERATION = 'CoreApplication.open';
 
 /** 装配选项（边界为 unknown，经运行时校验；非法选项在任何 I/O 之前拒绝）。 */
 export interface CoreApplicationOptions {
+  /** Host sets this under the writer lock, before any trusted adapter factory runs. */
+  readonly workStartupRecoveryRequired?: boolean;
   /** Trusted static adapter assembly; never a settings/argv/env field. */
   readonly workRuntimeFactory?: WorkRuntimeFactory;
   /** Trusted delivery adapters; absent until explicitly assembled. */
@@ -284,6 +289,7 @@ export interface CoreApplication {
 }
 
 const ALLOWED_OPTION_KEYS = [
+  'workStartupRecoveryRequired',
   'workRuntimeFactory',
   'featureDeliveryFactory',
   'dataRoot',
@@ -373,6 +379,9 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
   const context: ValidationContext = { operation: OPERATION };
   const object = requirePlainObject(options, context, 'options');
   rejectUnknownKeys(object, ALLOWED_OPTION_KEYS, context, 'options');
+  if (object.workStartupRecoveryRequired !== undefined && typeof object.workStartupRecoveryRequired !== 'boolean') {
+    throw validationError(context, 'workStartupRecoveryRequired', 'Expected boolean');
+  }
   const capabilityCatalog = requireCapabilityCatalog(object.capabilityCatalog, context);
   if (object.workRuntimeFactory !== undefined && typeof object.workRuntimeFactory !== 'function') {
     throw validationError(context, 'workRuntimeFactory', 'trusted_factory_required');
@@ -556,6 +565,10 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     // Scheduler/Runtime 装配属后续任务——不装配唤醒端口，Run 保留 queued +
     // scheduler_not_assembled 可查询原因，不伪造已启动）。
     const executionStart: ExecutionStartPort = createExecutionStartService({
+      assertCanDispatch() {
+        if (startupRecovery.blocked()) throw new PublicError('resource_busy', 'execution.start', undefined,
+          { details: { reason: 'startup_recovery' } });
+      },
       preview: executionPreview,
       permissions: TRUSTED_PROJECT_PERMISSIONS_READER,
       ...(nowUtcMs === undefined ? {} : { nowMs: nowUtcMs }),
@@ -619,7 +632,18 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
         return identity;
       };
     const workspaceGitLock = createGitPublicMetadataLock();
+    const startupRecovery = createWorkStartupRecovery({
+      store: createSqliteWorkStartupRecoveryStore(session, { nowUtcMs }),
+      process: workspaceCommandProcess,
+      nowUtcMs,
+      publishEvidence: (projectId, evidence) => publishWorkspaceEvidence(projectId, randomUUID(), { ...evidence }),
+    });
+    if (object.workStartupRecoveryRequired === true) startupRecovery.enter();
     const taskClaims = createSqliteTaskClaimStore(session, {
+      assertCanClaim() {
+        if (startupRecovery.blocked()) throw new StorageError('conflict', 'TaskClaim.claimTask',
+          'Work startup recovery is incomplete', { details: { reason: 'startup_recovery' } });
+      },
       workspaceAuthority: workWorkspaceAuthority,
       ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
     });
@@ -758,7 +782,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     const workExecution = assembleWorkExecution({ session,
       application: { dataRoot: basePathService.dataRoot(), artifactStore, artifactFileStore, stateStore,
         configurationService, workWorkspaceAuthority, taskClaims, workspacePreparation, executionInputPrepare },
-      capabilityCatalog, runtimeFactory: object.workRuntimeFactory as WorkRuntimeFactory | undefined, nowUtcMs, readReworkScene });
+      capabilityCatalog, runtimeFactory: object.workRuntimeFactory as WorkRuntimeFactory | undefined, nowUtcMs, readReworkScene, startupRecovery });
     // P03-9 / F-003：Verifier 停止登记与取消提交后的停止控制。Runtime 停止复用
     // WorkExecution.cancel 的既有受监督命令路径；Verifier 使用同一 CommandProcess
     // AbortSignal 停止路径。证据经既有 Artifact 发布，不写供应商私有存储。

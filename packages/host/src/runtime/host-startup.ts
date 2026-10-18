@@ -313,6 +313,7 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
   const locked = await openLockedWriter<CoreApplication>(lockOptions, () =>
     openCoreApplication({
       dataRoot: canonicalRoot,
+      workStartupRecoveryRequired: true,
       capabilityCatalog: options.capabilityCatalog,
       workRuntimeFactory: options.workRuntimeFactory,
       featureDeliveryFactory: options.featureDeliveryFactory,
@@ -325,9 +326,11 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
   try {
     // Writer lock is already held. No listener/discovery or new execution is exposed
     // until durable old identities have been reconciled. Unconfirmed resources remain occupied.
-    await locked.writer.baselineExecutionService.recover();
-    const baseline = locked.writer.baselineExecutionService;
     const work = locked.writer.workExecution;
+    work.enterRecovery();
+    await locked.writer.baselineExecutionService.recover();
+    await work.recover();
+    const baseline = locked.writer.baselineExecutionService;
     const activityGate: HostActivityGate = {
       enterQuiesce() {
         const local = baseline.enterQuiesce(options.baselineStopPolicy ?? 'wait');

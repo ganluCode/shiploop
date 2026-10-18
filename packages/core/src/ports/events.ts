@@ -65,6 +65,7 @@ import { ATTEMPT_EXECUTION_STAGES } from './attempt-store.js';
 import { WORKSPACE_EVENT_TYPE, WORKSPACE_OPERATION_STATUSES } from './workspace.js';
 import { GIT_OPERATION_TERMINAL_STATUSES } from './git-operations.js';
 import { validateStableId } from './validation.js';
+import { validateWorkProcessIdentity } from './work-resources.js';
 
 /** 事件读取面的默认操作身份（快照/SSE/补读映射共用；具体路由可传自己的 operation）。 */
 export const EVENT_READ_OPERATION = 'events.read';
@@ -173,6 +174,8 @@ export const PUBLIC_STATE_EVENT_TYPES = [
   // P03-8 / F-002：受控 Git 操作意图与终态回执（payload 仅 operationId/status）。
   GIT_OPERATION_REGISTERED_EVENT_TYPE,
   GIT_OPERATION_SETTLED_EVENT_TYPE,
+  'work.recovery.updated',
+  'work.recovery.blocked',
 ] as const;
 
 export type PublicStateEventType = (typeof PUBLIC_STATE_EVENT_TYPES)[number];
@@ -207,7 +210,51 @@ type EventPayloadKind =
   | 'featureFinalizationBlocked'
   | 'workspaceOperationUpdated'
   | 'gitOperationRegistered'
-  | 'gitOperationSettled';
+  | 'gitOperationSettled'
+  | 'workRecovery';
+
+/** Validate rich durable recovery evidence before projecting the public notification. */
+function validateWorkRecoveryPayload(payload: Record<string, unknown>, operation: string, global: boolean): void {
+  if (payload.schemaVersion !== 1) corrupt(operation, 'event_payload_violation');
+  if (global) {
+    if (payload.phase === 'failed') {
+      exactPayloadKeys(operation, payload, ['schemaVersion', 'phase', 'reason']);
+      if (payload.reason !== 'recovery_failed') corrupt(operation, 'event_payload_violation');
+    } else if (payload.phase === 'scan_limited') {
+      exactPayloadKeys(operation, payload, ['schemaVersion', 'phase', 'limit']);
+      if (!isSafeInteger(payload.limit, 1, 1_000)) corrupt(operation, 'event_payload_violation');
+    } else corrupt(operation, 'event_payload_violation');
+    return;
+  }
+  if (payload.phase === 'run_interrupted') {
+    exactPayloadKeys(operation, payload, ['schemaVersion', 'phase', 'reason']);
+    if (payload.reason !== 'restart_recovery') corrupt(operation, 'event_payload_violation');
+    return;
+  }
+  const observation = payload.phase === 'observed' || payload.phase === 'recorded';
+  if (!observation && payload.phase !== 'fenced') corrupt(operation, 'event_payload_violation');
+  exactPayloadKeys(operation, payload, ['schemaVersion', 'phase', 'projectId', 'runId', 'attemptId',
+    'owner', 'hostInstanceId', 'executionVersion', 'executionStage', 'processIdentity', 'gaps', 'stopConfirmed', 'workspaceReconciled',
+    ...(observation ? ['kind', 'observedAtUtcMs', 'evidenceRef'] : [])]);
+  try {
+    for (const key of ['projectId', 'runId', 'attemptId', 'owner', 'hostInstanceId']) validateStableId(payload[key], { operation }, key);
+    if (payload.processIdentity !== null) validateWorkProcessIdentity(payload.processIdentity);
+  } catch { corrupt(operation, 'event_payload_violation'); }
+  if (!isSafeInteger(payload.executionVersion, 1, Number.MAX_SAFE_INTEGER)
+    || !requireEventEnum(payload.executionStage, ATTEMPT_EXECUTION_STAGES)
+    || typeof payload.stopConfirmed !== 'boolean' || payload.workspaceReconciled !== false
+    || !Array.isArray(payload.gaps) || payload.gaps.length > 32
+    || payload.gaps.some(gap => typeof gap !== 'string' || !/^[a-z_]{1,64}$/.test(gap))) corrupt(operation, 'event_payload_violation');
+  if ((payload.phase === 'fenced' && payload.stopConfirmed !== false)
+    || (payload.stopConfirmed === true && payload.processIdentity === null)
+    || (observation && (payload.phase === 'observed') !== (payload.evidenceRef === null))) corrupt(operation, 'event_payload_violation');
+  if (observation && (payload.kind !== 'work-startup-recovery'
+    || !isSafeInteger(payload.observedAtUtcMs, 0, Number.MAX_SAFE_INTEGER))) corrupt(operation, 'event_payload_violation');
+  if (observation && payload.evidenceRef !== null) {
+    try { validateStableId(payload.evidenceRef, { operation }, 'evidenceRef'); }
+    catch { corrupt(operation, 'event_payload_violation'); }
+  }
+}
 
 /** 每类事件冻结的 aggregate_type、scope 种类与 payload 形状。 */
 export interface StateEventTypeSpec {
@@ -359,6 +406,8 @@ export const STATE_EVENT_TYPE_SPECS: Readonly<
   [TASK_APPROVAL_DECIDED_EVENT_TYPE]: Object.freeze({ aggregateType: 'task', scopeKind: 'project', payloadKind: 'taskApprovalDecided' }),
   [FEATURE_FINALIZED_EVENT_TYPE]: Object.freeze({ aggregateType: 'feature', scopeKind: 'project', payloadKind: 'featureFinalized' }),
   [FEATURE_FINALIZATION_BLOCKED_EVENT_TYPE]: Object.freeze({ aggregateType: 'feature', scopeKind: 'project', payloadKind: 'featureFinalizationBlocked' }),
+  'work.recovery.updated': Object.freeze({ aggregateType: 'run', scopeKind: 'project', payloadKind: 'workRecovery' }),
+  'work.recovery.blocked': Object.freeze({ aggregateType: 'global_settings', scopeKind: 'global', payloadKind: 'workRecovery' }),
   [GIT_OPERATION_REGISTERED_EVENT_TYPE]: Object.freeze({
     aggregateType: 'git_operation', scopeKind: 'project', payloadKind: 'gitOperationRegistered',
   }),
@@ -990,6 +1039,14 @@ export function mapStateEvent(row: unknown, operation: string = EVENT_READ_OPERA
     const key = spec.payloadKind === 'executionCancelling' ? 'cancelling' : 'cancelled';
     if (Object.keys(row.payload).length !== 1 || row.payload[key] !== true) corrupt(operation, 'event_payload_violation');
     payload = { [key]: true };
+  } else if (spec.payloadKind === 'workRecovery') {
+    validateWorkRecoveryPayload(row.payload, operation, row.projectId === null);
+    if (row.projectId !== null && row.payload.phase !== 'run_interrupted'
+      && (row.payload.projectId !== row.projectId || row.payload.runId !== row.aggregateId)) {
+      corrupt(operation, 'event_scope_mismatch');
+    }
+    // Process identity, owner, evidence contents and workspace facts remain in Core.
+    payload = { recoveryUpdated: true };
   } else if (spec.payloadKind === 'gitOperationRegistered') {
     payload = validateGitOperationRegisteredPayload(row.payload, operation);
   } else if (spec.payloadKind === 'gitOperationSettled') {

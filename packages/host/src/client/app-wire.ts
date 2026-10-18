@@ -458,6 +458,11 @@ function validateEventPayload(
   if (kind.startsWith('baseline')) {
     return validateBaselineEventPayload(operation, kind, object);
   }
+  if (kind === 'workRecovery') {
+    exactKeys(operation, object, ['recoveryUpdated']);
+    if (object.recoveryUpdated !== true) malformed(operation, 'event_payload_violation');
+    return { recoveryUpdated: true };
+  }
   // settingsSummary
   exactKeys(operation, object, ['schemaVersion', 'strategies', 'policies']);
   if (object.schemaVersion !== SETTINGS_SCHEMA_VERSION) {

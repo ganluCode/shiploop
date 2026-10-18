@@ -124,6 +124,8 @@ export interface ExecutionStartServiceDeps {
   readonly preview: ExecutionStartPreviewPort;
   /** 权限面同步读取器（事务内重核同一装配权威）。 */
   readonly permissions: ExecutionPermissionsReader;
+  /** Trusted startup gate, invoked in the dispatch transaction before creating authorization. */
+  readonly assertCanDispatch?: () => void;
   /** 时间源（默认 Date.now；测试注入以获得确定性）。 */
   readonly nowMs?: () => number;
 }
@@ -288,6 +290,7 @@ export function createExecutionStartService(deps: ExecutionStartServiceDeps): Ex
       prepared: PreparedExecutionStart,
       context: ExecutionStartSubmitContext,
     ): CommandReceipt {
+      deps.assertCanDispatch?.();
       const projectId = envelope.scope.projectId;
       const completedAt = new Date(nowMs()).toISOString();
       const receiptIdentity = {
