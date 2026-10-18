@@ -2186,6 +2186,31 @@ WHEN NEW.id IS NOT OLD.id OR NEW.project_id IS NOT OLD.project_id OR NEW.created
 BEGIN SELECT RAISE(ABORT, 'execution stop operation identity is immutable'); END;
 `;
 
+/**
+ * P03-9 / F-003 停止证据关联（迁移 v29）。
+ *
+ * 取消意图/停止 operation 已在 v28 持久化；本迁移只追加证据引用与核验结果列，
+ * 供停止控制在同一 operation 上 CAS 写入 stopped/uncertain、证据 Artifact、
+ * 实际强制停止情况与核验时刻。既有表/索引/触发器/CHECK 与历史 checksum 不变。
+ */
+const MIGRATION_029_SQL = `
+ALTER TABLE execution_stop_operations ADD COLUMN evidence_ref TEXT
+  CONSTRAINT execution_stop_operations_evidence_ref_check
+  CHECK (evidence_ref IS NULL OR (length(evidence_ref) > 0 AND length(evidence_ref) <= 128));
+
+ALTER TABLE execution_stop_operations ADD COLUMN stop_confirmed INTEGER
+  CONSTRAINT execution_stop_operations_stop_confirmed_check
+  CHECK (stop_confirmed IS NULL OR stop_confirmed IN (0, 1));
+
+ALTER TABLE execution_stop_operations ADD COLUMN forced INTEGER
+  CONSTRAINT execution_stop_operations_forced_check
+  CHECK (forced IS NULL OR forced IN (0, 1));
+
+ALTER TABLE execution_stop_operations ADD COLUMN checked_at INTEGER
+  CONSTRAINT execution_stop_operations_checked_at_check
+  CHECK (checked_at IS NULL OR (typeof(checked_at) = 'integer' AND checked_at >= 1));
+`;
+
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     version: 1,
@@ -2279,4 +2304,5 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 26, sql: MIGRATION_026_SQL, checksum: sha256Hex(MIGRATION_026_SQL) },
   { version: 27, sql: MIGRATION_027_SQL, checksum: sha256Hex(MIGRATION_027_SQL) },
   { version: 28, sql: MIGRATION_028_SQL, checksum: sha256Hex(MIGRATION_028_SQL) },
+  { version: 29, sql: MIGRATION_029_SQL, checksum: sha256Hex(MIGRATION_029_SQL) },
 ];

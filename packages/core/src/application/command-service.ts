@@ -135,8 +135,13 @@ export interface CommandServiceOptions {
   /** Validation is synchronous in the receipt transaction; stop runs after commit. */
   readonly executionCancel?: {
     assertCancel(projectId: string, attemptId: string): import('../ports/work-resources.js').WorkResourceIdentity;
-    cancel(identity: import('../ports/work-resources.js').WorkResourceIdentity): Promise<void>;
+    cancel(identity: import('../ports/work-resources.js').WorkResourceIdentity): Promise<unknown>;
   };
+  /**
+   * P03-9 / F-003：Run/Batch 取消提交后的停止控制（事务外、best-effort）。
+   * 不传时保持 F-002 的意图/持久 operation 语义，不冒充已停止。
+   */
+  readonly executionStopControl?: import('../ports/execution-stop.js').ExecutionStopControlPort;
   readonly atomicStore: AtomicCommandStore;
   /** F-008：project.register 的只读仓库检查（写事务之外调用；不传则注册命令 unsupported）。 */
   readonly repositoryInspector?: RepositoryInspector;
@@ -262,6 +267,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
   const executionPreview = options.executionPreview;
   const executionStart = options.executionStart;
   const executionDispatchSignal = options.executionDispatchSignal;
+  const executionStopControl = options.executionStopControl;
   const workspaceDiscard = options.workspaceDiscard;
   const taskVerificationContinue = options.taskVerificationContinue;
   const nowUtcMs = options.nowUtcMs ?? Date.now;
@@ -838,6 +844,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
         }
 
         let cancelIdentity: import('../ports/work-resources.js').WorkResourceIdentity | undefined;
+        let stopRequest: import('../ports/execution-stop.js').ExecutionStopRequest | undefined;
         const receipt = store.transact(operation, transaction => {
           authorizeCommand(principal, envelope);
           const original = replay(
@@ -881,7 +888,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           }
           if (envelope.operation === 'execution.cancel') {
             // P03-9 / F-002：取消意图/持久停止 operation/状态/事件/回执同一短事务。
-            return submitExecutionCancel(
+            const receipt = submitExecutionCancel(
               {
                 principalId: principal.principalId,
                 commandId: envelope.commandId,
@@ -894,6 +901,15 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
               envelope,
               transaction,
             );
+            // P03-9 / F-003：仅新的 stopping operation 进入事务外停止控制；已终态
+            // 或已 uncertain 的 operation 不重放停止/不冒充停止。
+            if (receipt.status === 'completed' && 'result' in receipt && executionStopControl !== undefined) {
+              const result = receipt.result as Record<string, unknown>;
+              if (result.stopStatus === 'stopping' && typeof result.stopOperationId === 'string') {
+                stopRequest = { projectId: envelope.scope.projectId, stopOperationId: result.stopOperationId };
+              }
+            }
+            return receipt;
           }
           if (envelope.operation === 'baseline.preview') {
             // 只读预览：事务外已完成全部 I/O；事务内只持久化 completed 回执。
@@ -1195,6 +1211,8 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
         // Persist the authorization/receipt before touching the Runtime. Replays never
         // resubmit cancellation, even if the HTTP response was lost.
         if (cancelIdentity) void options.executionCancel!.cancel(cancelIdentity).catch(() => undefined);
+        // P03-9 / F-003：停止控制在回执提交后运行；失败不回滚已持久化的取消意图。
+        if (stopRequest) void executionStopControl!.stop(stopRequest).catch(() => undefined);
         return receipt;
       } catch (error) {
         throw mapToPublicError(error, { operation });

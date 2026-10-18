@@ -276,6 +276,22 @@ export interface CommandTransaction {
   requestExecutionCancel(
     input: import('./execution-store.js').ExecutionCancelInput,
   ): import('./execution-store.js').ExecutionCancelResult;
+  /**
+   * P03-9 / F-003：停止核验结果写入同一 operation（stopping → stopped/uncertain）；
+   * stopped 且无活动 Attempt/租约时才把目标收尾为 cancelled。
+   */
+  settleExecutionStop(
+    input: import('./execution-store.js').ExecutionStopSettlementInput,
+  ): import('./execution-store.js').ExecutionStopOperationRecord;
+  /** P03-9 / F-003：停止未确认时标记活动 Attempt interrupted（不释放占用）。 */
+  interruptAttemptForStop(
+    input: import('./execution-store.js').InterruptAttemptForStopInput,
+  ): boolean;
+  /** P03-9 / F-003：同项目停止 operation 事务内读取。 */
+  getExecutionStopOperation(
+    projectId: string,
+    stopOperationId: string,
+  ): import('./execution-store.js').ExecutionStopOperationRecord | undefined;
   /* ---------------------------------------------------------------- *
    * P03-3 / F-006 Task 尝试预算预占与分类记账（迁移 v11；受信 Core 内部原语，
    * 不经命令面暴露；P03-4 在同一事务内接入真实 Attempt 创建）
@@ -356,6 +372,11 @@ export interface CommandTransaction {
 export interface AtomicCommandStore {
   /** 仅预检时效使用；不能替代事务内的权威重读。 */
   findReceipt(principalId: string, commandId: string): CommandReceipt | undefined;
+  /** P03-9 / F-003：停止 operation 只读查询（持久状态与证据引用）。 */
+  getExecutionStopOperation(
+    projectId: string,
+    stopOperationId: string,
+  ): import('./execution-store.js').ExecutionStopOperationRecord | undefined;
   /**
    * F-009：配置命令一致性视图的事务外只读来源（全局当前配置快照；未配置返回
    * null）。读取到的 revision 作为 consistency.globalRevision 前置条件随写入

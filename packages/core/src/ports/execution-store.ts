@@ -338,6 +338,32 @@ export interface ExecutionStopOperationRecord {
   readonly settledAtUtcMs: number | null;
   readonly createdAtUtcMs: number;
   readonly updatedAtUtcMs: number;
+  /** P03-9 / F-003：停止证据 Artifact 引用（核验前为 null）。 */
+  readonly evidenceRef: string | null;
+  readonly stopConfirmed: boolean | null;
+  /** true＝观察到强制终止；null＝无法判定；绝不填 false 冒充未升级。 */
+  readonly forced: boolean | null;
+  readonly checkedAtUtcMs: number | null;
+}
+
+/** P03-9 / F-003：停止控制对持久 operation 的唯一结算入参（短事务内）。 */
+export interface ExecutionStopSettlementInput {
+  readonly projectId: string;
+  readonly stopOperationId: string;
+  readonly status: 'stopped' | 'uncertain';
+  readonly evidenceRef: string;
+  readonly stopConfirmed: boolean;
+  readonly forced: boolean | null;
+  readonly checkedAtUtcMs: number;
+}
+
+/** P03-9 / F-003：停止未确认时的保守隔离（仅活动 Attempt 才更新）。 */
+export interface InterruptAttemptForStopInput {
+  readonly projectId: string;
+  readonly attemptId: string;
+  /** 停止证据 Artifact 引用，仅作诊断引用，不冒充 Runtime 结算。 */
+  readonly diagnosticRef: string;
+  readonly timestamp: number;
 }
 
 export interface ValidatedExecutionBatchInsertInput {

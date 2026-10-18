@@ -12,6 +12,11 @@ export interface ExecutionCompletion {
   readonly persisted: boolean;
   readonly retained: boolean;
   readonly error: string | null;
+  /** P03-9 / F-003：停止证据关联的实际退出码/信号；未知保持 null。 */
+  readonly exitCode?: number | null;
+  readonly signal?: string | null;
+  /** true＝观察到强制终止；null＝无法判定；绝不填 false 冒充未升级。 */
+  readonly forced?: boolean | null;
 }
 export interface ExecutionRetentionInput {
   readonly identity: WorkResourceIdentity;
@@ -97,10 +102,15 @@ export function superviseExecution(input: {
       const recording = observations?.[1] ?? await observeWithin(input.recording, 1) ?? null;
       // The controller's reason augments raw observations, preserving known usage and unknown fields.
       const control: RuntimeControlFacts | undefined = reason === null ? undefined : { reason, cancel };
+      const runtimeResult = observations?.[0]?.status === 'fulfilled' ? observations[0].value : undefined;
+      const observedExit = runtimeResult?.exitCode ?? null;
+      const observedSignal = runtimeResult?.signal ?? null;
+      const observedForced = observedSignal === 'SIGKILL' ? true : null;
       const receipt = await input.settlement.settle({ request: input.request, result, recording,
         stopped: stopped ?? null, ...(control ? { control } : {}) });
       if (receipt.disposition !== 'applied' && receipt.disposition !== 'replayed') {
-        return { stopConfirmed: confirmed, persisted: false, retained: false, error: 'stale_execution_identity' };
+        return { stopConfirmed: confirmed, persisted: false, retained: false, error: 'stale_execution_identity',
+          exitCode: observedExit, signal: observedSignal, forced: observedForced };
       }
       if (!receipt.resultSaved) throw new Error('result_not_saved');
       persisted = true;
@@ -118,10 +128,12 @@ export function superviseExecution(input: {
           featureId: input.request.featureId, reason: retentionReason, evidenceRef });
         retained = true;
       }
-      return { stopConfirmed: confirmed, persisted: true, retained, error: null };
+      return { stopConfirmed: confirmed, persisted: true, retained, error: null,
+        exitCode: observedExit, signal: observedSignal, forced: observedForced };
     } catch {
       input.quarantine();
-      return { stopConfirmed: confirmed, persisted, retained: false, error: 'execution_finalization_failed' };
+      return { stopConfirmed: confirmed, persisted, retained: false, error: 'execution_finalization_failed',
+        exitCode: null, signal: null, forced: null };
     } finally { finished = true; clearTimeout(timer); }
   })();
   return { stop, completion };

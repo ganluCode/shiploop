@@ -352,9 +352,12 @@ describe('F-005 迁移执行与记录', () => {
         expect(rows[26]!.checksum).toBe(SQLITE_MIGRATIONS[26]!.checksum);
         expect(rows[27]!.version).toBe(28);
         expect(rows[27]!.checksum).toBe(SQLITE_MIGRATIONS[27]!.checksum);
-        expect(rows[28]!.version).toBe(PROBE_MIGRATION.version);
-        expect(rows[28]!.checksum).toBe(PROBE_MIGRATION.checksum);
-        expect(rows[28]!.applied_at).toBe(FIXED_NOW_MS + 1_000);
+        // P03-9 / F-003：v29 追加停止证据引用/核验结果列；探针迁移紧随其后。
+        expect(rows[28]!.version).toBe(29);
+        expect(rows[28]!.checksum).toBe(SQLITE_MIGRATIONS[28]!.checksum);
+        expect(rows[29]!.version).toBe(PROBE_MIGRATION.version);
+        expect(rows[29]!.checksum).toBe(PROBE_MIGRATION.checksum);
+        expect(rows[29]!.applied_at).toBe(FIXED_NOW_MS + 1_000);
       } finally {
         session.close();
       }

@@ -79,6 +79,8 @@ import type {
   ExecutionRunStatus,
   ExecutionStopOperationRecord,
   ExecutionStopOperationStatus,
+  ExecutionStopSettlementInput,
+  InterruptAttemptForStopInput,
   RunOutcomeSettlementOutcome,
   RunOutcomeSettlementRecord,
   RunRecord,
@@ -210,6 +212,10 @@ interface ExecutionStopOperationSqlRow {
   readonly status: string;
   readonly requested_at: number;
   readonly settled_at: number | null;
+  readonly evidence_ref: string | null;
+  readonly stop_confirmed: number | null;
+  readonly forced: number | null;
+  readonly checked_at: number | null;
 }
 
 const SELECT_BATCH_SQL =
@@ -232,7 +238,8 @@ const SELECT_SETTLEMENT =
   'progress_type, progress_task_id, run_ended_at, no_progress_runs_after, reason FROM run_outcome_settlements';
 const SELECT_STOP_OPERATION =
   'SELECT id, created_at, updated_at, project_id, revision, command_id, target_kind, target_id, ' +
-  'batch_id, run_id, reason, status, requested_at, settled_at FROM execution_stop_operations';
+  'batch_id, run_id, reason, status, requested_at, settled_at, evidence_ref, stop_confirmed, forced, checked_at ' +
+  'FROM execution_stop_operations';
 const SELECT_REVISION =
   'SELECT id, created_at, project_id, revision, updated_at, batch_id, version, budget_snapshot, ' +
   'deadline_at, approved_by, reason FROM batch_budget_revisions';
@@ -310,6 +317,12 @@ export interface SqliteExecutionAccess {
   requestExecutionPauseInTransaction(input: ExecutionPauseInput): ExecutionPauseResult;
   /** P03-9 / F-002：Run/Batch 取消意图与持久停止 operation（同一短写事务）。 */
   requestExecutionCancelInTransaction(input: ExecutionCancelInput): ExecutionCancelResult;
+  /** P03-9 / F-003：停止核验结果写入同一 operation，必要时保守隔离活动 Attempt。 */
+  settleExecutionStopInTransaction(input: ExecutionStopSettlementInput): ExecutionStopOperationRecord;
+  /** P03-9 / F-003：停止未确认时把仍活动的 Attempt 标记 interrupted（不释放占用）。 */
+  interruptAttemptForStopInTransaction(input: InterruptAttemptForStopInput): boolean;
+  /** P03-9 / F-003：同项目停止 operation 读取（不存在返回 undefined）。 */
+  getExecutionStopOperationInTransaction(projectId: string, stopOperationId: string): ExecutionStopOperationRecord | undefined;
   /* ---------------------------------------------------------------- *
    * P03-3 / F-006 Task 尝试预算预占与分类记账（迁移 v11；受信 Core 内部原语）
    * ---------------------------------------------------------------- */
@@ -1618,6 +1631,8 @@ export function createSqliteExecutionAccess(
       status: row.status as ExecutionStopOperationStatus,
       requestedAtUtcMs: row.requested_at, settledAtUtcMs: row.settled_at,
       createdAtUtcMs: row.created_at, updatedAtUtcMs: row.updated_at,
+      evidenceRef: row.evidence_ref, stopConfirmed: row.stop_confirmed === null ? null : row.stop_confirmed === 1,
+      forced: row.forced === null ? null : row.forced === 1, checkedAtUtcMs: row.checked_at,
     };
   }
 
@@ -1939,6 +1954,131 @@ export function createSqliteExecutionAccess(
       outcome: 'cancelled', targetKind, targetId, status: 'cancelled', revision: currentRevision,
       changed, stopOperationId: stop.id, stopStatus: stop.status, eventId,
     };
+  }
+
+  /* ------------------------------------------------------------ *
+   * P03-9 / F-003 停止核验结算与保守隔离（迁移 v29）
+   * ------------------------------------------------------------ */
+
+  /**
+   * 停止核验结果写入既有 operation（stopping → stopped/uncertain）。
+   * - 已 settled 的 operation 原样返回，不退写/不覆盖证据；
+   * - 只有 stopped 且目标已无活动 Attempt/租约时才把 Run/Batch 转为 cancelled；
+   * - uncertain 绝不被当作无活动，目标保持 cancelling，由调用方保留占用。
+   */
+  function settleExecutionStopInTransaction(input: ExecutionStopSettlementInput): ExecutionStopOperationRecord {
+    const operation = 'ExecutionStore.settleExecutionStop';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const context = { operation };
+    const raw = requirePlainObject(input, context, 'input');
+    rejectUnknownKeys(raw, ['projectId', 'stopOperationId', 'status', 'evidenceRef', 'stopConfirmed', 'forced', 'checkedAtUtcMs'], context, 'input');
+    const projectId = validateStableId(raw.projectId, context, 'projectId');
+    const stopOperationId = validateStableId(raw.stopOperationId, context, 'stopOperationId');
+    const evidenceRef = validateStableId(raw.evidenceRef, context, 'evidenceRef');
+    if (raw.status !== 'stopped' && raw.status !== 'uncertain') {
+      throw new StorageError('validation', operation, 'status 必须是 stopped 或 uncertain');
+    }
+    if (typeof raw.stopConfirmed !== 'boolean') {
+      throw new StorageError('validation', operation, 'stopConfirmed 必须是布尔值');
+    }
+    if (raw.forced !== null && typeof raw.forced !== 'boolean') {
+      throw new StorageError('validation', operation, 'forced 必须是布尔值或 null');
+    }
+    if (!Number.isSafeInteger(raw.checkedAtUtcMs) || (raw.checkedAtUtcMs as number) < 1) {
+      throw new StorageError('validation', operation, 'checkedAtUtcMs 必须是正安全整数');
+    }
+    const status = raw.status;
+    const timestamp = raw.checkedAtUtcMs as number;
+    const existing = readStopOperationById(projectId, stopOperationId);
+    if (existing === undefined) {
+      throw new StorageError('not_found', operation, 'Stop operation not found');
+    }
+    if (existing.status !== 'stopping') return existing;
+    const changed = session.database.prepare(`UPDATE execution_stop_operations
+      SET status = ?, evidence_ref = ?, stop_confirmed = ?, forced = ?, checked_at = ?,
+        settled_at = ?, revision = revision + 1, updated_at = ?
+      WHERE project_id = ? AND id = ? AND revision = ? AND status = 'stopping'`)
+      .run(status, evidenceRef, raw.stopConfirmed ? 1 : 0, raw.forced === null ? null : raw.forced ? 1 : 0,
+        timestamp, status === 'stopped' ? timestamp : null, timestamp,
+        projectId, stopOperationId, existing.revision);
+    if (changed.changes !== 1) {
+      throw new StorageError('conflict', operation, 'Stop operation CAS failed', {
+        details: { reason: 'stale_stop_operation' },
+      });
+    }
+    const next = readStopOperationById(projectId, stopOperationId);
+    if (next === undefined) throw new StorageError('corrupt', operation, 'Stop operation disappeared');
+    if (status === 'stopped') finalizeTargetCancelledAfterStop(next, timestamp);
+    return next;
+  }
+
+  /** 停止已确认且无活动 Attempt/租约时，把仍处控制中的目标收尾为 cancelled。 */
+  function finalizeTargetCancelledAfterStop(stop: ExecutionStopOperationRecord, timestamp: number): void {
+    const runRows = stop.targetKind === 'run'
+      ? session.database.prepare<[string, string], CancelRunRow>(
+        'SELECT id, status, revision FROM runs WHERE project_id = ? AND id = ?',
+      ).all(stop.projectId, stop.targetId)
+      : session.database.prepare<[string, string], CancelRunRow>(
+        `SELECT id, status, revision FROM runs WHERE project_id = ? AND batch_id = ?
+          AND status IN ('queued', 'running', 'pausing', 'paused', 'cancelling', 'interrupted')
+          ORDER BY dispatch_ordinal, id`,
+      ).all(stop.projectId, stop.targetId);
+    const allRunIds = stop.targetKind === 'run'
+      ? [stop.targetId]
+      : session.database.prepare<[string, string], { id: string }>(
+        'SELECT id FROM runs WHERE project_id = ? AND batch_id = ?',
+      ).all(stop.projectId, stop.targetId).map(row => row.id);
+    const facts = executionCancelFacts(stop.projectId, allRunIds);
+    if (facts.activeAttempts > 0 || facts.leases > 0) return;
+    if (stop.targetKind === 'run') {
+      const row = runRows[0];
+      if (row === undefined || row.status === 'interrupted') return;
+      const result = applyRunCancelStatus(stop.projectId, row, 'cancelled', timestamp);
+      if (result.changed) appendRunCancelEvent(stop.projectId, row.id, result.revision, true);
+      return;
+    }
+    for (const row of runRows) {
+      if (row.status === 'interrupted') continue;
+      const result = applyRunCancelStatus(stop.projectId, row, 'cancelled', timestamp);
+      if (result.changed) appendRunCancelEvent(stop.projectId, row.id, result.revision, true);
+    }
+    const batch = getExecutionBatchInTransaction(stop.projectId, stop.targetId);
+    const result = applyBatchCancelStatus(stop.projectId,
+      { id: batch.id, status: batch.status, revision: batch.revision }, 'cancelled', timestamp);
+    if (result.changed) {
+      appendExecutionEventInTransaction({
+        projectId: stop.projectId, eventType: EXECUTION_BATCH_CANCELLED_EVENT_TYPE,
+        aggregateType: 'execution_batch', aggregateId: stop.targetId,
+        aggregateRevision: result.revision, payload: { cancelled: true },
+      });
+    }
+  }
+
+  /** 停止未确认：只把仍活动的 Attempt 标记 interrupted，绝不删除历史或释放租约。 */
+  function interruptAttemptForStopInTransaction(input: InterruptAttemptForStopInput): boolean {
+    const operation = 'ExecutionStore.interruptAttemptForStop';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const context = { operation };
+    const raw = requirePlainObject(input, context, 'input');
+    rejectUnknownKeys(raw, ['projectId', 'attemptId', 'diagnosticRef', 'timestamp'], context, 'input');
+    const projectId = validateStableId(raw.projectId, context, 'projectId');
+    const attemptId = validateStableId(raw.attemptId, context, 'attemptId');
+    const diagnosticRef = validateStableId(raw.diagnosticRef, context, 'diagnosticRef');
+    if (!Number.isSafeInteger(raw.timestamp) || (raw.timestamp as number) < 1) {
+      throw new StorageError('validation', operation, 'timestamp 必须是正安全整数');
+    }
+    const changed = session.database.prepare(`UPDATE attempts
+      SET status = 'interrupted', error_kind = COALESCE(error_kind, 'runtime'),
+        diagnostic_ref = ?, ended_at = ?, revision = revision + 1, updated_at = ?
+      WHERE project_id = ? AND id = ? AND status IN ('preparing', 'executing', 'verifying')`)
+      .run(diagnosticRef, raw.timestamp as number, raw.timestamp as number, projectId, attemptId);
+    return changed.changes === 1;
+  }
+
+  function getExecutionStopOperationInTransaction(projectId: string, stopOperationId: string): ExecutionStopOperationRecord | undefined {
+    return readStopOperationById(projectId, stopOperationId);
   }
 
   /* ------------------------------------------------------------ *
@@ -2632,6 +2772,9 @@ export function createSqliteExecutionAccess(
     appendExecutionEventInTransaction,
     requestExecutionPauseInTransaction,
     requestExecutionCancelInTransaction,
+    settleExecutionStopInTransaction,
+    interruptAttemptForStopInTransaction,
+    getExecutionStopOperationInTransaction,
     reserveTaskAttemptInTransaction,
     settleTaskAttemptBudgetInTransaction,
     reclassifyTaskAttemptAsInfrastructureInTransaction,

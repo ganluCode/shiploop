@@ -239,8 +239,8 @@ export function assembleWorkExecution(options: {
       return { projectId, attemptId, owner: attempt.owner, hostInstanceId: attempt.hostInstanceId, executionVersion: attempt.executionVersion };
     },
     async cancel(identity: WorkResourceIdentity) {
-      if (!execution.get(identity.projectId, identity.attemptId)) cancelRequested.add(identity.attemptId);
-      else await execution.cancel(identity);
+      if (!execution.get(identity.projectId, identity.attemptId)) { cancelRequested.add(identity.attemptId); return null; }
+      return execution.cancel(identity);
     },
     activeAttemptIds() { return pending(); },
     enterQuiesce() { quiescing = true; return { accepted: pending().length }; },

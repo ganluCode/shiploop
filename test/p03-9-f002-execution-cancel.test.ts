@@ -503,7 +503,7 @@ describe('P03-9 / F-002 Run/Batch 取消意图与终态竞争', () => {
 
   it('迁移 v28：仅追加停止 operation 表，历史 checksum 稳定，空库与 v27 库可升级', async () => {
     expect(SQLITE_MIGRATIONS.map(migration => migration.version)).toEqual(
-      Array.from({ length: 28 }, (_, index) => index + 1),
+      Array.from({ length: 29 }, (_, index) => index + 1),
     );
     expect(SQLITE_MIGRATIONS[27]?.sql).toContain('CREATE TABLE execution_stop_operations');
     for (const migration of SQLITE_MIGRATIONS.slice(0, 27)) {
@@ -515,7 +515,7 @@ describe('P03-9 / F-002 Run/Batch 取消意图与终态竞争', () => {
       const session = openSqliteStorageSession({ path: join(empty.path, 'state.db') });
       try {
         const result = await migrateSqliteStorage(session, { nowUtcMs: () => NOW });
-        expect(result).toMatchObject({ fromVersion: 0, toVersion: 28 });
+        expect(result).toMatchObject({ fromVersion: 0, toVersion: 29 });
         expect(session.database.prepare(
           "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'execution_stop_operations'",
         ).get()).toEqual({ name: 'execution_stop_operations' });
@@ -533,11 +533,11 @@ describe('P03-9 / F-002 Run/Batch 取消意图与终态竞争', () => {
           "INSERT INTO projects (id, created_at, revision, updated_at, display_name, status, labels) VALUES ('p-keep', ?, 1, ?, '保留项目', 'active', '[]')",
         ).run(NOW, NOW);
         const upgraded = await migrateSqliteStorage(session, { nowUtcMs: () => NOW });
-        expect(upgraded).toMatchObject({ fromVersion: 27, toVersion: 28, appliedVersions: [28] });
+        expect(upgraded).toMatchObject({ fromVersion: 27, toVersion: 29, appliedVersions: [28, 29] });
         expect(session.database.prepare("SELECT display_name FROM projects WHERE id = 'p-keep'").get())
           .toEqual({ display_name: '保留项目' });
         expect(session.database.prepare('SELECT MAX(version) AS version FROM schema_migrations').get())
-          .toEqual({ version: 28 });
+          .toEqual({ version: 29 });
       } finally { session.close(); }
     } finally { upgrade.cleanup(); }
   });

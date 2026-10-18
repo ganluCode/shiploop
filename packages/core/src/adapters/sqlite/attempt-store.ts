@@ -1,4 +1,5 @@
 import {
+  ACTIVE_ATTEMPT_STATUSES,
   validateAttemptRecord, validateWorkspaceLeaseRecord,
   type AttemptStore, type AttemptRecord, type WorkspaceLeaseRecord,
 } from '../../ports/attempt-store.js';
@@ -77,10 +78,47 @@ export function createSqliteAttemptAccess(session: SqliteStorageSession): Attemp
           .all(projectId, taskId).map(attemptFromRow);
       });
     },
+    listActiveAttempts(project: unknown, targetKind: 'run' | 'batch', target: unknown) {
+      const projectId = stable(project, 'projectId'), targetId = stable(target, 'targetId');
+      if (targetKind !== 'run' && targetKind !== 'batch') {
+        throw new StorageError('validation', operation, 'targetKind 必须是 run 或 batch');
+      }
+      return read(() => {
+        const active = ACTIVE_ATTEMPT_STATUSES.map(() => '?').join(', ');
+        const rows = targetKind === 'run'
+          ? session.database.prepare<unknown[], AttemptRow>(
+            `SELECT * FROM attempts WHERE project_id = ? AND run_id = ? AND status IN (${active}) ORDER BY number, id`,
+          ).all(projectId, targetId, ...ACTIVE_ATTEMPT_STATUSES)
+          : session.database.prepare<unknown[], AttemptRow>(
+            `SELECT a.* FROM attempts a JOIN runs r ON r.project_id = a.project_id AND r.id = a.run_id
+              WHERE a.project_id = ? AND r.batch_id = ? AND a.status IN (${active}) ORDER BY a.run_id, a.number, a.id`,
+          ).all(projectId, targetId, ...ACTIVE_ATTEMPT_STATUSES);
+        return rows.map(attemptFromRow);
+      });
+    },
     listWorkspaceLeases(project: unknown) {
       const projectId = stable(project, 'projectId');
       return read(() => session.database.prepare<[string], LeaseRow>('SELECT * FROM workspace_leases WHERE project_id = ? ORDER BY resource_key, id')
         .all(projectId).map(leaseFromRow));
+    },
+    listAttemptsWithLeases(project: unknown, targetKind: 'run' | 'batch', target: unknown) {
+      const projectId = stable(project, 'projectId'), targetId = stable(target, 'targetId');
+      if (targetKind !== 'run' && targetKind !== 'batch') {
+        throw new StorageError('validation', operation, 'targetKind 必须是 run 或 batch');
+      }
+      return read(() => {
+        const rows = targetKind === 'run'
+          ? session.database.prepare<[string, string], AttemptRow>(
+            `SELECT DISTINCT a.* FROM attempts a JOIN workspace_leases l ON l.project_id = a.project_id AND l.owner_id = a.id
+              WHERE a.project_id = ? AND a.run_id = ? ORDER BY a.number, a.id`,
+          ).all(projectId, targetId)
+          : session.database.prepare<[string, string], AttemptRow>(
+            `SELECT DISTINCT a.* FROM attempts a JOIN runs r ON r.project_id = a.project_id AND r.id = a.run_id
+              JOIN workspace_leases l ON l.project_id = a.project_id AND l.owner_id = a.id
+              WHERE a.project_id = ? AND r.batch_id = ? ORDER BY a.run_id, a.number, a.id`,
+          ).all(projectId, targetId);
+        return rows.map(attemptFromRow);
+      });
     },
   };
 }

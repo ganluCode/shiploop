@@ -27,6 +27,10 @@ export function createSqliteAtomicCommandStore(
   const gitOperations = createSqliteGitOperationStore(session, options);
   return {
     findReceipt: receipts.findReceiptByCommandId,
+    // P03-9 / F-003：停止 operation 的持久状态/证据引用读取（不进入写事务）。
+    getExecutionStopOperation(projectId, stopOperationId) {
+      return executions.getExecutionStopOperationInTransaction(projectId, stopOperationId);
+    },
     // F-009：配置命令一致性视图的事务外只读来源；写事务内调用是编程错误。
     getGlobalSettingsOrNull() {
       if (session.database.inTransaction) {
@@ -189,6 +193,9 @@ export function createSqliteAtomicCommandStore(
           appendExecutionEvent: guarded(executions.appendExecutionEventInTransaction),
           requestExecutionPause: guarded(executions.requestExecutionPauseInTransaction),
           requestExecutionCancel: guarded(executions.requestExecutionCancelInTransaction),
+          settleExecutionStop: guarded(executions.settleExecutionStopInTransaction),
+          interruptAttemptForStop: guarded(executions.interruptAttemptForStopInTransaction),
+          getExecutionStopOperation: guarded(executions.getExecutionStopOperationInTransaction),
           // P03-3 / F-006：Task 尝试预算预占与分类记账原语（迁移 v11；同一
           // BEGIN IMMEDIATE 内原子生效；受信 Core 内部面，不经命令路由暴露）。
           reserveTaskAttempt: guarded(executions.reserveTaskAttemptInTransaction),

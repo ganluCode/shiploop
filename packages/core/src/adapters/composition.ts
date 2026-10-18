@@ -34,6 +34,10 @@ import type { ConfigurationService } from '../application/configuration-service.
 import { createCommandReceiptsService } from '../application/command-receipts-service.js';
 import type { CommandReceiptsService } from '../application/command-receipts-service.js';
 import { createCommandService } from '../application/command-service.js';
+import { createExecutionStopControl } from '../application/execution-stop-control.js';
+import { createVerificationStopControl } from '../application/verification-stop-control.js';
+import type { VerificationStopControl } from '../ports/verification-stop.js';
+import type { ExecutionStopControlPort } from '../ports/execution-stop.js';
 import type { FeatureDeliveryFactory } from '../application/feature-delivery-commands.js';
 export type { FeatureDeliveryFactory, FeatureDeliveryDependencies } from '../application/feature-delivery-commands.js';
 import { assertVerificationReuseIdentity } from '../application/task-verification-continue.js';
@@ -242,6 +246,10 @@ export interface CoreApplication {
   readonly baselineStore: BaselineStore;
   /** P03-7 / F-005：Task Node 检查批次与逐项结果窄存储。 */
   readonly verificationStore: VerificationStore;
+  /** P03-9 / F-003：Verifier 停止登记（可信验证装配按 Run/Batch/Attempt/operation 使用）。 */
+  readonly verificationStops: VerificationStopControl;
+  /** P03-9 / F-003：取消提交后的停止控制（Runtime/Verifier 共用同一有界停止端口）。 */
+  readonly executionStopControl: ExecutionStopControlPort;
   /** P03-7 / F-012：受信 Task 验证收尾入口（只读重建机器观察、代码现场引用与
    * 预算结算的既有放行/返工状态机；不运行检查、不启动 Runtime）。 */
   readonly taskVerificationCompletion: TaskVerificationCompletionService;
@@ -751,6 +759,27 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       application: { dataRoot: basePathService.dataRoot(), artifactStore, artifactFileStore, stateStore,
         configurationService, workWorkspaceAuthority, taskClaims, workspacePreparation, executionInputPrepare },
       capabilityCatalog, runtimeFactory: object.workRuntimeFactory as WorkRuntimeFactory | undefined, nowUtcMs, readReworkScene });
+    // P03-9 / F-003：Verifier 停止登记与取消提交后的停止控制。Runtime 停止复用
+    // WorkExecution.cancel 的既有受监督命令路径；Verifier 使用同一 CommandProcess
+    // AbortSignal 停止路径。证据经既有 Artifact 发布，不写供应商私有存储。
+    const verificationStops = createVerificationStopControl();
+    const executionStopControl = createExecutionStopControl({
+      atomic: atomicStore,
+      attempts: createSqliteAttemptAccess(session),
+      resources: workResources,
+      stopRuntime: identity => workExecution.cancel(identity),
+      verifiers: verificationStops,
+      ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
+      async publishEvidence(projectId, operationId, evidence) {
+        const body = Buffer.from(JSON.stringify(evidence));
+        const published = await workspacePublisher.publishArtifact({
+          projectId, kind: 'execution_stop_evidence', mediaType: 'application/json',
+          expectedHash: createHash('sha256').update(body).digest('hex'),
+          locator: `stops/${operationId}.json`, content: [body],
+        });
+        return published.artifact.id;
+      },
+    });
     // F-012：验证收尾/显式继续共用的生命周期窄存取（同一受信身份与事务面）。
     const attemptLifecycle = createSqliteAttemptLifecycleStore(session, {
       workspaceAuthority: workWorkspaceAuthority,
@@ -782,6 +811,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       executionStart,
       executionDispatchSignal: workExecution,
       executionCancel: workExecution,
+      executionStopControl,
       workspaceDiscard,
       taskVerificationContinue: {
         async verifyCurrentEvidence(envelope) {
@@ -913,6 +943,8 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       onboardingService,
       baselineStore,
       verificationStore,
+      verificationStops,
+      executionStopControl,
       taskVerificationCompletion,
       baselineService,
       baselineExecutionService,

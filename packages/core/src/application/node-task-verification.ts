@@ -19,6 +19,8 @@ import type { VerificationPlan, VerificationPlanCheck } from './verification-pla
 import type { BaselineEvidence } from './baseline-evidence.js';
 import { BASELINE_OUTPUT_MAX_BYTES, createBaselineEvidenceCollector } from './baseline-evidence.js';
 
+import type { VerificationStopControl } from '../ports/verification-stop.js';
+
 const RESULT_LINE = 'SHIPLOOP_NODE_CHECK_RESULT=';
 const RESULT_MAX_BYTES = 65_536;
 const CHECK_TIMEOUT_MAX_MS = 3_600_000;
@@ -125,6 +127,8 @@ export interface NodeTaskVerificationOptions {
   };
   /** Optional trusted durable identity hook for adapters which own Work fencing. */
   readonly confirmProcessIdentity?: (identity: CommandProcessIdentity) => Promise<void>;
+  /** P03-9 / F-003：按 Run/Batch/Attempt/operation 中止受控检查并收集停止证据。 */
+  readonly stopControl?: VerificationStopControl;
 }
 
 function snapshot(check: VerificationPlanCheck): VerificationCheckSnapshotEntry {
@@ -222,24 +226,52 @@ export function createNodeTaskVerificationExecutor(options: NodeTaskVerification
     if (!mutation.created && options.verification.listCheckResults(input.projectId, input.batchId).length > 0) {
       throw new Error('Verification batch already has an in-flight result');
     }
-    if (input.plan.status !== 'ready' || checks.length === 0) {
-      for (const check of checks) records.push(await saveNotRun(input, check, 'plan_not_ready'));
-      const final = finalize(input, batch.revision, 'inconclusive');
+    const registration = options.stopControl?.begin({
+      projectId: input.projectId, runId: input.runId, batchId: input.batchId,
+      attemptId: input.attemptId, executionVersion: input.executionVersion, operation: input.operation,
+    });
+    const signal = registration === undefined ? input.signal
+      : input.signal === undefined ? registration.signal : AbortSignal.any([input.signal, registration.signal]);
+    try {
+      if (input.plan.status !== 'ready' || checks.length === 0) {
+        for (const check of checks) {
+          const notRun = await saveNotRun(input, check, 'plan_not_ready');
+          records.push(notRun);
+          registration?.record({ checkKey: check.checkKey, launched: false, stopConfirmed: true,
+            exitCode: null, signal: null, forced: null, reason: 'plan_not_ready', gaps: [] });
+        }
+        const final = finalize(input, batch.revision, 'inconclusive');
+        return { batchId: input.batchId, status: final.status as NodeTaskVerificationResult['status'], results: records };
+      }
+      for (const check of checks) {
+        if (signal?.aborted) {
+          const notRun = await saveNotRun(input, check, 'cancelled');
+          records.push(notRun);
+          registration?.record({ checkKey: check.checkKey, launched: false, stopConfirmed: true,
+            exitCode: null, signal: null, forced: null, reason: 'cancelled', gaps: [] });
+          continue;
+        }
+        const result = await runCheck(input, check, signal);
+        records.push(result);
+        const evidence = result.evidence;
+        registration?.record({ checkKey: check.checkKey, launched: evidence !== null,
+          stopConfirmed: evidence?.stopConfirmed === true,
+          exitCode: evidence?.exitCode ?? null, signal: evidence?.signal ?? null,
+          forced: evidence?.signal === 'SIGKILL' ? true : null, reason: result.reason,
+          gaps: evidence !== null && !evidence.stopConfirmed ? ['verifier_stop_unconfirmed'] : [] });
+        batch = options.verification.getVerificationBatch(input.projectId, input.batchId);
+        if (result.evidence === null || result.evidence.stopConfirmed !== true) break;
+      }
+      const status: NodeTaskVerificationResult['status'] = records.some(item => item.status === 'error') ? 'error'
+        : records.some(item => item.status === 'failed') ? 'failed'
+        : records.some(item => item.status !== 'passed') ? 'inconclusive' : 'passed';
+      const identityStillCurrent = input.assertCurrentIdentity === undefined || await input.assertCurrentIdentity();
+      const finalStatus = identityStillCurrent ? status : 'inconclusive';
+      const final = finalize(input, batch.revision, finalStatus as VerificationBatchTerminalStatus);
       return { batchId: input.batchId, status: final.status as NodeTaskVerificationResult['status'], results: records };
+    } finally {
+      registration?.complete();
     }
-    for (const check of checks) {
-      const result = await runCheck(input, check);
-      records.push(result);
-      batch = options.verification.getVerificationBatch(input.projectId, input.batchId);
-      if (result.evidence === null || result.evidence.stopConfirmed !== true) break;
-    }
-    const status: NodeTaskVerificationResult['status'] = records.some(item => item.status === 'error') ? 'error'
-      : records.some(item => item.status === 'failed') ? 'failed'
-      : records.some(item => item.status !== 'passed') ? 'inconclusive' : 'passed';
-    const identityStillCurrent = input.assertCurrentIdentity === undefined || await input.assertCurrentIdentity();
-    const finalStatus = identityStillCurrent ? status : 'inconclusive';
-    const final = finalize(input, batch.revision, finalStatus as VerificationBatchTerminalStatus);
-    return { batchId: input.batchId, status: final.status as NodeTaskVerificationResult['status'], results: records };
   }
 
   function finalize(input: NodeTaskVerificationInput, revision: number, status: VerificationBatchTerminalStatus) {
@@ -255,7 +287,7 @@ export function createNodeTaskVerificationExecutor(options: NodeTaskVerification
     }));
     return { checkKey: check.checkKey, status: saved.result.status, reason, resultId: saved.result.id, testCount: null, evidence: null };
   }
-  async function runCheck(input: NodeTaskVerificationInput, check: VerificationPlanCheck) {
+  async function runCheck(input: NodeTaskVerificationInput, check: VerificationPlanCheck, signal?: AbortSignal) {
     const started = now();
     let request: CommandProcessRequest | undefined;
     let captured: BaselineEvidence | null = null;
@@ -279,7 +311,7 @@ export function createNodeTaskVerificationExecutor(options: NodeTaskVerification
         const confirmed = await confirm(identity);
         identityConfirmed = true;
         return confirmed;
-      }, input.signal);
+      }, signal);
       const observed = await observeProtocol(handle, input.targets);
       captured = await evidence.collect({ projectId: input.projectId, operationId: input.evidenceOperationId ?? input.operation, checkKey: check.checkKey,
         request, handle: observed.handle, environmentRef: check.environmentRef,
