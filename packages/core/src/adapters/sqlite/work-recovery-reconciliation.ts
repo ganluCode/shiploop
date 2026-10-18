@@ -179,6 +179,15 @@ export function createSqliteWorkRecoveryReconciliationStore(session: SqliteStora
           if (changed.changes !== 1) fail('run_changed');
         }
         updateWorkspace(workspace!, 'retained', evidence, timestamp);
+        // F-016：恢复核对成功后，遗留 Attempt 已确认停止且无其他活动 Attempt；
+        // Task 不能继续停留在 running，否则显式 resume 的 DAG 预演会把历史执行
+        // 误判为 resource_busy。这里只回退未通过、无活动占用的 Task，不触碰已
+        // passed/failed 记录，也不恢复旧 executionVersion 的写资格。
+        db.prepare(`UPDATE tasks SET status = 'pending', revision = revision + 1, updated_at = ?
+          WHERE project_id = ? AND id = ? AND status = 'running'
+            AND NOT EXISTS (SELECT 1 FROM attempts WHERE attempts.project_id = tasks.project_id
+              AND attempts.task_id = tasks.id AND attempts.status IN ('preparing', 'executing', 'verifying'))`)
+          .run(timestamp, source.projectId, attempt.taskId);
         const resourceIdentity = identity({ attempt });
         if (release.mode === 'stopped') options.resources.releaseRecoveredStoppedInTransaction(resourceIdentity, release.token);
         else if (release.mode === 'unstarted') options.resources.releaseRecoveredUnstartedInTransaction(resourceIdentity);

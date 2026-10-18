@@ -7,6 +7,7 @@
 - Core 仍是业务事实源；本任务不读取 SDK 私有表、不开启原生档案写入、不创建新 Attempt、不把 Runtime 退出 0 或最后文本当作 Task passed。
 - F-006 不新增迁移、表或事件类型。诊断正文保存为 `workspace_evidence` JSON Artifact，稳定引用写入 `attempts.diagnostic_ref`；F-005 的 `work.recovery.updated` 历史事件及 Artifact 保留。
 - 成功时只更新原 `interrupted` Attempt 的诊断引用、`runs.status = paused`（reason `restart_recovery`）、`managed_workspaces.status = retained` 及已核验 HEAD/codeDigest，并按既有跨介质顺序最后释放匹配 holder 的 lease。
+- 同一成功事务把该 Attempt 对应、仍为 `running` 且不存在其他活动 Attempt 的 Task 回退为 `pending`（revision +1）；否则显式 resume 的 DAG 预演会把已确认停止的历史执行误判为 `resource_busy`，从而无法创建新 Attempt。已 `passed`/`failed` 等终态 Task 不受影响，旧 executionVersion 的写资格也不恢复。
 - 不可核验时保留 Run `interrupted`、workspace 与 lease `quarantined`；任何中途异常/重启都保留可恢复的持久占用。
 
 ## 2. Worktree 与 Git 核对
