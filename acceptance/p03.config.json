@@ -1,0 +1,79 @@
+{
+  "configVersion": 1,
+  "checklist": "acceptance/p03.checklist.json",
+  "reportRoot": "artifacts/acceptance/p03",
+  "requiredChecks": [
+    "P03-FR1-CLOSED-LOOP",
+    "P03-FR1-NEG-INTEGRITY",
+    "P03-FR2-MATRIX",
+    "P03-FR2-NEG-GUARDRAILS",
+    "P03-FR3-REPORT",
+    "P03-FR3-NEG-REPORT-INTEGRITY",
+    "P03-T02",
+    "P03-T03",
+    "P03-T04",
+    "P03-T06",
+    "P03-T07",
+    "P03-T08",
+    "P03-T13",
+    "P03-T21",
+    "P03-T24",
+    "P03-T25",
+    "P03-T26",
+    "P03-T29",
+    "P03-T31",
+    "P03-T35",
+    "P03-T36",
+    "P03-T37",
+    "P03-T38",
+    "P03-T39",
+    "P03-T40",
+    "P03-VERT-COMPLETE",
+    "P03-VERT-BUDGET-EXHAUSTED",
+    "P03-VERT-MANUAL-BLOCK",
+    "P03-VERT-FINAL-FAIL",
+    "P03-VERT-RETRY-FINAL"
+  ],
+  "toolchain": {
+    "packageManager": "npm@10.9.3",
+    "node": "22.19.0",
+    "npm": "10.9.3",
+    "lockfile": "package-lock.json"
+  },
+  "timeouts": {
+    "stepMs": 1200000,
+    "overallMs": 7200000
+  },
+  "maxCommandOutputBytes": 262144,
+  "fakeIdentity": {
+    "provider": "fake-provider",
+    "model": "fake-model",
+    "realModel": false,
+    "network": "denied"
+  },
+  "tempResources": {
+    "git": "temp",
+    "sqlite": "temp",
+    "dataRoot": "temp",
+    "home": "temp",
+    "reusePrevious": false
+  },
+  "reportScope": {
+    "statuses": [
+      "pass",
+      "fail",
+      "not_run"
+    ],
+    "includeEvidenceHash": true,
+    "includeManualChecklist": true,
+    "deferredCountsAsPassed": false
+  },
+  "plan": {
+    "phaseId": "2026-10-11-17-45-49_shiploop-p03-feature",
+    "stepId": "p03-acceptance",
+    "title": "P03-10 P03 确定性执行闭环与故障验收",
+    "scope": "FR-1/FR-2/FR-3 确定性闭环、实战负例与可审阅报告（Fake 仅替代模型；live/Pi、强沙箱及后序能力 deferred）",
+    "version": "0.3",
+    "contractDoc": "docs/p03-10-f002-checklist.md"
+  }
+}

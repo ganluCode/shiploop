@@ -9,6 +9,11 @@
       "task_id": "F-001",
       "index": "test/index/phases/P03/features/P03-10/tasks/F-001.json",
       "description": "独立 P03 真实资源夹具：构建 CLI/Host、只读取证、进程树及组停止、失败保留与重试。"
+    },
+    {
+      "task_id": "F-002",
+      "index": "test/index/phases/P03/features/P03-10/tasks/F-002.json",
+      "description": "P03 阶段验收机器可读检查清单与受校验配置：FR/T 映射、必需纵向演示、deferred 不计数与 fail-closed 校验。"
     }
   ]
 }

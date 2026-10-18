@@ -15,3 +15,15 @@
 - 使用、P03-1～9 接口映射、实际版本、六项证据目录、清理语义与限制见 [F-001 交接](docs/p03-10-f001-fixture.md)。
 
 本地通过只表示资源夹具满足本任务验证范围。真实 Pi/LLM、完整 P03 故障矩阵、Verifier/最终交付场景、跨平台及全阶段验收均未在本轮运行；Fake completed 不折算 Task passed 或 Feature completed。
+
+## F-002 — P03 阶段验收机器可读检查清单与受校验配置
+
+实现与局部验证完成；提交与任务报告以 Git/Nezha 记录为准。仅处理 F-002，未修改 feature.yaml、task_list 或其他任务状态。
+
+- 新增 `acceptance/p03.checklist.json`（33 项 = 30 必需 + 3 deferred）与 `acceptance/p03.config.json`，固定 FR-1～FR-3 正常/关键负例、T02～T40 验收编号（T38 仅报告结构、T40 仅通用恢复决策）与证据要求映射；完成、预算耗尽、人工阻塞、最终检查失败、仅收尾重试五个纵向演示独立成项，unit/feature-integration/phase-acceptance 分层标注。
+- 新增 `scripts/acceptance/p03-config.ts`：冻结基线 + fail-closed 校验，拒绝无效配置、重复/未知/deferred 检查 ID、删减断言、改写 FR/T 映射、降级层次、业务版本表/凭据字段；配置沿用 npm 与 P01/P02 版本约束，含有限步骤/总时间与输出上限、显式 Fake 身份、临时资源与报告范围；live/Pi、强沙箱、后序能力 deferred（not_run/postponed），不计入已通过数。
+- 测试：`test/modules/acceptance/p03-10-checklist-config.test.ts` 9 个 `[case:...]`；索引 `test/index/phases/P03/features/P03-10/tasks/F-002.json`，Harness selection 仅引用该索引。
+- 验证：`test-yex50_3h.log` exit 0（9 passed / 0 failed / 0 skipped）；`test-64bt5d0y.log` typecheck exit 0。日志在 Feature workspace `verifications/F-002/runtime-logs/`。
+- 交接与映射表见 `docs/p03-10-f002-checklist.md`。
+
+本地通过只覆盖本任务清单/配置校验范围。`accept:p03` 控制器与阶段报告聚合由后续任务交付；真实 Pi/live、强沙箱、真实用量/缓存收益未运行且不折算通过。

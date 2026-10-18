@@ -1,0 +1,685 @@
+{
+  "checklistVersion": 1,
+  "phase": "P03",
+  "layers": [
+    "unit",
+    "feature-integration",
+    "phase-acceptance"
+  ],
+  "evidenceCategories": [
+    "command-exit",
+    "sqlite",
+    "git",
+    "process",
+    "artifact",
+    "report",
+    "manifest"
+  ],
+  "countRule": "必需项全部 pass 才算通过；deferred 项显示 not_run 或 postponed，不参与 P03 已通过计数；覆盖按必需断言判定，不按测试数量判断",
+  "items": [
+    {
+      "id": "P03-FR1-CLOSED-LOOP",
+      "group": "fr",
+      "title": "FR-1 正常：确定性执行闭环纵向验收",
+      "layer": "phase-acceptance",
+      "fr": [
+        "FR-1"
+      ],
+      "acceptanceRefs": [
+        "T02",
+        "T04",
+        "T08"
+      ],
+      "assertions": [
+        "经正式构建 CLI/Host/Core 完成计划导入、审批、执行授权、调度、实现、验收、返工与提交闭环，逐项有真实状态断言",
+        "单元测试、Feature 集成与阶段验收分层记录，不以测试数量充当需求满足"
+      ],
+      "evidence": [
+        "command-exit",
+        "sqlite",
+        "git",
+        "report"
+      ]
+    },
+    {
+      "id": "P03-FR1-NEG-INTEGRITY",
+      "group": "fr",
+      "title": "FR-1 关键负例：失败/未运行/真假执行混淆不冒充通过",
+      "layer": "phase-acceptance",
+      "fr": [
+        "FR-1"
+      ],
+      "acceptanceRefs": [
+        "T07"
+      ],
+      "assertions": [
+        "准备失败、未运行、缺输出或真假执行混淆记 fail 或 not_run",
+        "不手改 SQLite、不删负例、不借后序功能过关；重复执行不依赖上次资源"
+      ],
+      "evidence": [
+        "command-exit",
+        "report"
+      ]
+    },
+    {
+      "id": "P03-FR2-MATRIX",
+      "group": "fr",
+      "title": "FR-2 正常：实战负例场景覆盖矩阵与清理",
+      "layer": "phase-acceptance",
+      "fr": [
+        "FR-2"
+      ],
+      "acceptanceRefs": [
+        "T03",
+        "T06",
+        "T13",
+        "T39"
+      ],
+      "assertions": [
+        "预算竞争、过期批准/人工阻塞、Runtime 异常、大输入、局部测试选择、最终失败、提交/停止/恢复故障注入均有场景矩阵与实际失败原因",
+        "cleanup manifest 与支持限制明确；清理前确认受管进程组消失，生产失败保留 worktree 与临时测试夹具最终清理区分"
+      ],
+      "evidence": [
+        "sqlite",
+        "process",
+        "manifest"
+      ]
+    },
+    {
+      "id": "P03-FR2-NEG-GUARDRAILS",
+      "group": "fr",
+      "title": "FR-2 关键负例：机器全绿不越过人工与终态门槛",
+      "layer": "phase-acceptance",
+      "fr": [
+        "FR-2"
+      ],
+      "acceptanceRefs": [
+        "T36",
+        "T39"
+      ],
+      "assertions": [
+        "人工未批即使全绿也不能 passed；全部 Task 通过但最终失败时不能 completed",
+        "停止不确定仍隔离；服务端/限流/认证异常不误扣代码返工次数或丢失现场"
+      ],
+      "evidence": [
+        "sqlite",
+        "git"
+      ]
+    },
+    {
+      "id": "P03-FR3-REPORT",
+      "group": "fr",
+      "title": "FR-3 正常：可审阅完整执行报告",
+      "layer": "phase-acceptance",
+      "fr": [
+        "FR-3"
+      ],
+      "acceptanceRefs": [
+        "T38"
+      ],
+      "assertions": [
+        "报告含幂等完整 Task 表、Attempt 历史、最终检查/审批/交付状态、下一步操作与人工验收清单",
+        "同一 Task 最近状态与累计尝试分开，失败和取消不丢失；报告从状态/证据生成而非拼接历次报告"
+      ],
+      "evidence": [
+        "report"
+      ]
+    },
+    {
+      "id": "P03-FR3-NEG-REPORT-INTEGRITY",
+      "group": "fr",
+      "title": "FR-3 关键负例：报告不虚构历史与收益",
+      "layer": "phase-acceptance",
+      "fr": [
+        "FR-3"
+      ],
+      "acceptanceRefs": [
+        "T38"
+      ],
+      "assertions": [
+        "缺历史字段保留并标 partial，重复生成不重复计数",
+        "报告不自动解除人审或反写通过；Fake 用量不当真实用量，未知 token/cache/cost 记 unknown"
+      ],
+      "evidence": [
+        "report"
+      ]
+    },
+    {
+      "id": "P03-T02",
+      "group": "acceptance",
+      "title": "T02 DAG 依赖门禁",
+      "layer": "feature-integration",
+      "fr": [
+        "FR-1"
+      ],
+      "acceptanceRefs": [
+        "T02"
+      ],
+      "assertions": [
+        "DAG 缺失依赖/环拒绝，依赖未 passed 不解锁后继",
+        "任务选择轨迹与状态测试证据可核对"
+      ],
+      "evidence": [
+        "sqlite",
+        "manifest"
+      ]
+    },
+    {
+      "id": "P03-T03",
+      "group": "acceptance",
+      "title": "T03 认领原子性与重复请求",
+      "layer": "feature-integration",
+      "fr": [
+        "FR-2"
+      ],
+      "acceptanceRefs": [
+        "T03"
+      ],
+      "assertions": [
+        "原子认领、并发冲突、重复请求与状态事件在同一事务内一致",
+        "真实 SQLite 竞争与回滚证据可核对"
+      ],
+      "evidence": [
+        "sqlite"
+      ]
+    },
+    {
+      "id": "P03-T04",
+      "group": "acceptance",
+      "title": "T04 增量返工与次数上限",
+      "layer": "feature-integration",
+      "fr": [
+        "FR-1"
+      ],
+      "acceptanceRefs": [
+        "T04"
+      ],
+      "assertions": [
+        "失败增量返工并受最多次数限制，skipped 不算全部成功",
+        "Attempt 链、失败证据与 blocked 后继可核对"
+      ],
+      "evidence": [
+        "sqlite",
+        "artifact"
+      ]
+    },
+    {
+      "id": "P03-T06",
+      "group": "acceptance",
+      "title": "T06 超时/取消/崩溃后旧进程核对",
+      "layer": "feature-integration",
+      "fr": [
+        "FR-2"
+      ],
+      "acceptanceRefs": [
+        "T06"
+      ],
+      "assertions": [
+        "超时/取消/Host 崩溃后先核对旧进程再重试，不确认停止不释放占用",
+        "真实子进程树与 workspace 占用证据可核对"
+      ],
+      "evidence": [
+        "process",
+        "sqlite"
+      ]
+    },
+    {
+      "id": "P03-T07",
+      "group": "acceptance",
+      "title": "T07 Runtime 完成不等于通过",
+      "layer": "feature-integration",
+      "fr": [
+        "FR-2"
+      ],
+      "acceptanceRefs": [
+        "T07"
+      ],
+      "assertions": [
+        "Runtime 完成不等于 Task passed；空检查/篡改门槛不自动成功",
+        "Verifier 命令与代码摘要证据可核对"
+      ],
+      "evidence": [
+        "command-exit",
+        "artifact"
+      ]
+    },
+    {
+      "id": "P03-T08",
+      "group": "acceptance",
+      "title": "T08 worktree 现场保护与幂等",
+      "layer": "feature-integration",
+      "fr": [
+        "FR-2"
+      ],
+      "acceptanceRefs": [
+        "T08"
+      ],
+      "assertions": [
+        "worktree 基线、失败/部分完成现场保留、幂等复用；错误目录/分支拒绝、脏目录不清理",
+        "真实临时 Git 仓库 HEAD 与 operation 回执可核对"
+      ],
+      "evidence": [
+        "git",
+        "command-exit"
+      ]
+    },
+    {
+      "id": "P03-T13",
+      "group": "acceptance",
+      "title": "T13 预算与停止原因区分",
+      "layer": "feature-integration",
+      "fr": [
+        "FR-2"
+      ],
+      "acceptanceRefs": [
+        "T13"
+      ],
+      "assertions": [
+        "时间/次数预算、未知费用与限流告警分开记录并区分错误类别",
+        "停止原因与预算快照证据可核对"
+      ],
+      "evidence": [
+        "sqlite",
+        "artifact"
+      ]
+    },
+    {
+      "id": "P03-T21",
+      "group": "acceptance",
+      "title": "T21 累计额度与幂等重入",
+      "layer": "feature-integration",
+      "fr": [
+        "FR-2"
+      ],
+      "acceptanceRefs": [
+        "T21"
+      ],
+      "assertions": [
+        "成功 Run 占用累计额度，重复进入/重启/增额不清父预算",
+        "事务计数、workKey 去重与授权预算版本证据可核对"
+      ],
+      "evidence": [
+        "sqlite"
+      ]
+    },
+    {
+      "id": "P03-T24",
+      "group": "acceptance",
+      "title": "T24 Task 策略复制与来源",
+      "layer": "unit",
+      "fr": [
+        "FR-2"
+      ],
+      "acceptanceRefs": [
+        "T24"
+      ],
+      "assertions": [
+        "Task 策略完整复制，默认更新不追溯已有 Task，用户覆盖产生独立来源",
+        "重新应用默认需预览；策略与来源记录可核对"
+      ],
+      "evidence": [
+        "sqlite",
+        "artifact"
+      ]
+    },
+    {
+      "id": "P03-T25",
+      "group": "acceptance",
+      "title": "T25 活动 Attempt 策略快照保护",
+      "layer": "feature-integration",
+      "fr": [
+        "FR-2"
+      ],
+      "acceptanceRefs": [
+        "T25"
+      ],
+      "assertions": [
+        "活动 Attempt 禁止改策略，返工换模型不清预算",
+        "前后 Attempt 独立快照脱敏且不可变，累计计数可核对"
+      ],
+      "evidence": [
+        "sqlite",
+        "artifact"
+      ]
+    },
+    {
+      "id": "P03-T26",
+      "group": "acceptance",
+      "title": "T26 CAS 冲突与过期审批",
+      "layer": "feature-integration",
+      "fr": [
+        "FR-2"
+      ],
+      "acceptanceRefs": [
+        "T26"
+      ],
+      "assertions": [
+        "当前配置 CAS 冲突拒绝，计划修改不得越过活动执行，过期审批失效",
+        "并发事务与恢复测试证据可核对"
+      ],
+      "evidence": [
+        "sqlite"
+      ]
+    },
+    {
+      "id": "P03-T29",
+      "group": "acceptance",
+      "title": "T29 单并发竞争与资源串行",
+      "layer": "feature-integration",
+      "fr": [
+        "FR-2"
+      ],
+      "acceptanceRefs": [
+        "T29"
+      ],
+      "assertions": [
+        "默认单并发下竞争认领只有一个有效 owner/version，独立取消与事件归属不跨任务污染",
+        "Git 资源串行，未验收并发值拒绝"
+      ],
+      "evidence": [
+        "sqlite",
+        "process"
+      ]
+    },
+    {
+      "id": "P03-T31",
+      "group": "acceptance",
+      "title": "T31 预览失效与无待办",
+      "layer": "feature-integration",
+      "fr": [
+        "FR-2"
+      ],
+      "acceptanceRefs": [
+        "T31"
+      ],
+      "assertions": [
+        "执行预览后输入变化返回 preview_stale，范围外依赖未满足或无待办返回 no_work",
+        "不静默扩大范围，输入快照证据可核对"
+      ],
+      "evidence": [
+        "sqlite",
+        "artifact"
+      ]
+    },
+    {
+      "id": "P03-T35",
+      "group": "acceptance",
+      "title": "T35 局部测试选择与安全回退",
+      "layer": "feature-integration",
+      "fr": [
+        "FR-2"
+      ],
+      "acceptanceRefs": [
+        "T35"
+      ],
+      "assertions": [
+        "局部测试选择走已授权检查定义，记录选择理由、argv/cwd、timeout、退出码与结果制品",
+        "候选缺失/过期、越界、符号链接、参数注入、零测试、多模块漏选与共享配置修改按策略回退或拒绝，无可信回退不得通过"
+      ],
+      "evidence": [
+        "artifact",
+        "command-exit"
+      ]
+    },
+    {
+      "id": "P03-T36",
+      "group": "acceptance",
+      "title": "T36 最终验收失败与仅收尾重试",
+      "layer": "feature-integration",
+      "fr": [
+        "FR-1",
+        "FR-2"
+      ],
+      "acceptanceRefs": [
+        "T36"
+      ],
+      "assertions": [
+        "Task 通过与最终验收失败分离，显式新 Run 仅重试最终阶段",
+        "不再次调用编码 Runtime；代码变化使旧证据失效；最终检查仍受预算限制"
+      ],
+      "evidence": [
+        "sqlite",
+        "git",
+        "command-exit"
+      ]
+    },
+    {
+      "id": "P03-T37",
+      "group": "acceptance",
+      "title": "T37 稳定指导与动态输入分离",
+      "layer": "feature-integration",
+      "fr": [
+        "FR-2"
+      ],
+      "acceptanceRefs": [
+        "T37"
+      ],
+      "assertions": [
+        "稳定指导与动态文件输入分离，历史增长不膨胀提示词",
+        "必需 acceptance 始终可读，引用摘要固定；缓存收益不以静态测试宣称"
+      ],
+      "evidence": [
+        "artifact",
+        "manifest"
+      ]
+    },
+    {
+      "id": "P03-T38",
+      "group": "acceptance",
+      "title": "T38 报告结构（仅结构）",
+      "layer": "unit",
+      "fr": [
+        "FR-3"
+      ],
+      "acceptanceRefs": [
+        "T38"
+      ],
+      "assertions": [
+        "报告结构含完整 Task 视图、尝试去重与汇总字段，重复生成不重复计数",
+        "缺失值标 unknown/partial，不生成真实模型收益或加权缓存率结论（仅报告结构）"
+      ],
+      "evidence": [
+        "report"
+      ],
+      "coverage": "partial",
+      "coverageNote": "仅报告结构：完整 Task 视图、尝试去重与汇总字段结构；真实模型汇总/加权缓存率由 P04/P07 兑现，不在 P03 通过范围"
+    },
+    {
+      "id": "P03-T39",
+      "group": "acceptance",
+      "title": "T39 人工阻塞优先于机器成功",
+      "layer": "feature-integration",
+      "fr": [
+        "FR-2"
+      ],
+      "acceptanceRefs": [
+        "T39"
+      ],
+      "assertions": [
+        "人工阻塞优先于机器成功，脚本 passed/Agent 自报不能放行",
+        "迟到成功与新增阻塞竞争按事务重新核验；不增返工计数，批准绑定代码摘要，解除不重复编码"
+      ],
+      "evidence": [
+        "sqlite",
+        "artifact"
+      ]
+    },
+    {
+      "id": "P03-T40",
+      "group": "acceptance",
+      "title": "T40 通用恢复决策（仅通用）",
+      "layer": "feature-integration",
+      "fr": [
+        "FR-2"
+      ],
+      "acceptanceRefs": [
+        "T40"
+      ],
+      "assertions": [
+        "同 Task 续接/新 Attempt/拒绝复用的通用恢复决策与活跃旧进程拒绝重叠可核对（仅通用恢复决策）",
+        "历史与流/快照不重复计量，来源档案不变；不冒充 Pi SDK 原生续接通过"
+      ],
+      "evidence": [
+        "sqlite",
+        "process"
+      ],
+      "coverage": "partial",
+      "coverageNote": "仅通用恢复决策：同 Task 续接/新 Attempt/拒绝复用的 Core 决策与活跃旧进程拒绝重叠；Pi SDK 原生续接、换模型与原生检查点在 P04 验证，不在 P03 通过范围"
+    },
+    {
+      "id": "P03-VERT-COMPLETE",
+      "group": "vertical",
+      "title": "纵向演示：完成闭环",
+      "layer": "phase-acceptance",
+      "fr": [
+        "FR-1"
+      ],
+      "acceptanceRefs": [
+        "T04",
+        "T07",
+        "T08"
+      ],
+      "assertions": [
+        "三 Task 链首项通过、第二项首次真实检查失败后增量返工、第三项在前项有效通过后启动，最终执行 Feature 全量门禁与收尾提交",
+        "Task/Feature/Run/Git 事实一致；Fake completed 不直接放行"
+      ],
+      "evidence": [
+        "sqlite",
+        "git",
+        "command-exit"
+      ]
+    },
+    {
+      "id": "P03-VERT-BUDGET-EXHAUSTED",
+      "group": "vertical",
+      "title": "纵向演示：预算耗尽",
+      "layer": "phase-acceptance",
+      "fr": [
+        "FR-2"
+      ],
+      "acceptanceRefs": [
+        "T13",
+        "T21"
+      ],
+      "assertions": [
+        "次数/时间预算耗尽后拒绝新增工作，停止原因与预算快照可核对",
+        "累计预算不因重开数据库、新 Run 或换策略清零"
+      ],
+      "evidence": [
+        "sqlite"
+      ]
+    },
+    {
+      "id": "P03-VERT-MANUAL-BLOCK",
+      "group": "vertical",
+      "title": "纵向演示：人工阻塞",
+      "layer": "phase-acceptance",
+      "fr": [
+        "FR-2"
+      ],
+      "acceptanceRefs": [
+        "T39"
+      ],
+      "assertions": [
+        "必需人审未批或显式阻塞时，即使检查全绿也不 passed、不放行后继、不 completed",
+        "等待不扣代码返工次数；解除需授权并绑定代码摘要"
+      ],
+      "evidence": [
+        "sqlite",
+        "artifact"
+      ]
+    },
+    {
+      "id": "P03-VERT-FINAL-FAIL",
+      "group": "vertical",
+      "title": "纵向演示：最终检查失败",
+      "layer": "phase-acceptance",
+      "fr": [
+        "FR-1",
+        "FR-2"
+      ],
+      "acceptanceRefs": [
+        "T36",
+        "T07"
+      ],
+      "assertions": [
+        "全部 Task 有效通过后真实 Feature 全量检查失败，Feature 非 completed，Run 保存最终阶段失败",
+        "Task 历史与有效证据保留，Git/SQLite/报告事实一致"
+      ],
+      "evidence": [
+        "command-exit",
+        "sqlite",
+        "git"
+      ]
+    },
+    {
+      "id": "P03-VERT-RETRY-FINAL",
+      "group": "vertical",
+      "title": "纵向演示：仅收尾重试",
+      "layer": "phase-acceptance",
+      "fr": [
+        "FR-1"
+      ],
+      "acceptanceRefs": [
+        "T36"
+      ],
+      "assertions": [
+        "显式 retryFinal 在父授权 Batch 内创建受限新 Run，旧终态 Run 不复活，FakeRuntime 启动数增量为零",
+        "收尾提交失败仅重试该步骤并核对已有 operation，不重复编码或提交"
+      ],
+      "evidence": [
+        "sqlite",
+        "command-exit"
+      ]
+    },
+    {
+      "id": "P03-OOS-LIVE-PI",
+      "group": "deferred",
+      "title": "范围外：真实 Pi/live 验收",
+      "layer": "phase-acceptance",
+      "fr": [],
+      "acceptanceRefs": [
+        "T40"
+      ],
+      "assertions": [
+        "真实 Pi/live、真实凭据与真实模型用量验收不在本期通过范围，未运行显示 not_run，不折算已通过"
+      ],
+      "evidence": [
+        "report"
+      ],
+      "deferredStatus": "not_run"
+    },
+    {
+      "id": "P03-OOS-STRONG-SANDBOX",
+      "group": "deferred",
+      "title": "范围外：强 OS 沙箱",
+      "layer": "phase-acceptance",
+      "fr": [],
+      "acceptanceRefs": [],
+      "assertions": [
+        "强 OS 沙箱与任意凭据隔离不在本期支持范围，可信项目模式边界如实呈现并明确后置"
+      ],
+      "evidence": [
+        "report"
+      ],
+      "deferredStatus": "postponed"
+    },
+    {
+      "id": "P03-OOS-LATER-CAPABILITIES",
+      "group": "deferred",
+      "title": "范围外：后序能力（用量/缓存/Chat/桌面/通知/发布）",
+      "layer": "phase-acceptance",
+      "fr": [],
+      "acceptanceRefs": [
+        "T38"
+      ],
+      "assertions": [
+        "真实模型汇总、加权缓存率、Token/费用收益及 Chat/桌面/通知/发布等后序能力明确后置，不以 Fake 或测试数量宣称通过"
+      ],
+      "evidence": [
+        "report"
+      ],
+      "deferredStatus": "postponed"
+    }
+  ]
+}

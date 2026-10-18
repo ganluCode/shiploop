@@ -1,0 +1,25 @@
+{
+  "schema_version": 2,
+  "task_id": "F-002",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/acceptance/p03-10-checklist-config.test.ts",
+          "cases": [
+            "fr-coverage",
+            "acceptance-mapping",
+            "vertical-demos",
+            "config-valid",
+            "reject-invalid-config",
+            "reject-check-ids",
+            "reject-reduced-checklist",
+            "deferred-not-counted",
+            "load-guard"
+          ]
+        }
+      ]
+    }
+  ]
+}
