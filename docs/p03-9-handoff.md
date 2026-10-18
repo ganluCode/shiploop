@@ -24,7 +24,7 @@
 | F-015 | CLI Run/Batch 控制、retryFinal 与恢复诊断入口 | `3e74f62` | `test/p03-9-f015-cli-control.test.ts`（18）、`test/p03-9-f015-cli-control-vertical.test.ts`（4） |
 | F-016 | 真实 Host 强杀与恢复集成；产品修复对账成功后 Task 回退 pending | `4c177e7` | `test/p03-9-f016-host-kill-recovery.test.ts`（4） |
 | F-017 | Host/CLI finalization-only 端到端回归；scheduler/Verifier/completion 产品修复 | `e4e12fa` | `test/p03-9-f017-finalization-host-vertical.test.ts`（10） |
-| F-018 | 本交付与接口交接记录及守护测试（`f6e12d4`）；attempt-2 修复 `test/p03-3-runtime-start-reservation.test.ts` 迁移期望至 v29（仅测试期望，不改迁移 SQL/checksum/生产逻辑） | `f6e12d4` | `test/docs-p03-9-handoff.test.ts`（6）、`test/p03-3-runtime-start-reservation.test.ts`（18） |
+| F-018 | 本交付与接口交接记录及守护测试（`f6e12d4`）；attempt-2 修复 `test/p03-3-runtime-start-reservation.test.ts` 迁移期望至 v29（仅测试期望）；attempt-3 将 F-017 并发 retryFinal 断言去时序化（不同 commandId 竞争 + 同 commandId 确定性幂等重放）并提高 F-012 提交重试用例超时预算至 180s（不改断言） | `f6e12d4` | `test/docs-p03-9-handoff.test.ts`（6）、`test/p03-3-runtime-start-reservation.test.ts`（18） |
 
 输入版本：源 PRD `input/p03-run-control.md`（v0.3，2026-10-11，含 2026-10-13 恢复补充与 2026-10-14 实现选择）；共同约束 `input/execution-contract.md`；P02 基线 `0e76ad8`（main）。
 
@@ -104,7 +104,7 @@
 
 ## 5. F-018 质量门禁交接
 
-- 本 Task 新增交接文档与守护测试；attempt-1 独立验收唯一失败为 `test/p03-3-runtime-start-reservation.test.ts` 迁移期望仍冻结 v28（F-003 已引入 v29 的前序既有失败，位于本清单内），attempt-2 将该文件两处期望（`appliedVersions` 与 `SQLITE_MIGRATIONS` 版本连续性）补齐 29，未改迁移 SQL/checksum/生产逻辑。验证：`node scripts/run-tests.ts test/docs-p03-9-handoff.test.ts` 6/6、`node scripts/run-tests.ts test/p03-3-runtime-start-reservation.test.ts` 18/18，均退出码 0，完整日志：Harness workspace `verifications/F-018/runtime-logs/`（`test-65i5n75y.log`、`test-msihqrnt.log`）。
+- 本 Task 新增交接文档与守护测试；attempt-1 独立验收唯一失败为 `test/p03-3-runtime-start-reservation.test.ts` 迁移期望仍冻结 v28（F-003 已引入 v29 的前序既有失败，位于本清单内），attempt-2 将该文件两处期望（`appliedVersions` 与 `SQLITE_MIGRATIONS` 版本连续性）补齐 29，未改迁移 SQL/checksum/生产逻辑。attempt-2 独立验收另暴露两个负载相关时序失败（attempt-1 同清单下通过，本地单独运行均通过）：`test/p03-9-f017-finalization-host-vertical.test.ts` 并发重复 retryFinal 用例对双进程启动时序敏感（同 commandId 晚到时幂等重放返回原成功结果属产品正确行为，非缺陷），attempt-3 改为不同 commandId 并发竞争（碰撞与晚到均被 conflict 拒绝）并追加同 commandId 确定性幂等重放断言（返回原 Run、不重复创建），不断言强度；`test/p03-9-f012-finalization-completion.test.ts` 提交重试端到端用例在验证器全量负载下超默认 60s，attempt-3 将该用例超时预算提为 180s（不改断言）。验证：`node scripts/run-tests.ts test/docs-p03-9-handoff.test.ts` 6/6、`test/p03-3-runtime-start-reservation.test.ts` 18/18、`test/p03-9-f017-finalization-host-vertical.test.ts` 10/10（294s）、`test/p03-9-f012-finalization-completion.test.ts` 8/8（262s），均退出码 0，完整日志：Harness workspace `verifications/F-018/runtime-logs/`（`test-65i5n75y.log`、`test-msihqrnt.log`、`test-vg0tjzab.log`、`test-_n4c_jr_.log` 等）。
 - 受影响回归选择清单：`verifications/F-018/test-selection.json`（本 Feature 全部 `test/p03-9-*.test.ts` 及直接相关契约/装配回归），交由 Nezha 独立 affected 回归；未在本地运行的文件不声明通过。
 - Feature 完整门禁即项目 `npm run verify`（全量测试、类型检查、边界检查与构建，`scripts/verify.ts` 编排）由 Nezha 执行；全量必需通过，失败不得宣布 Feature 完成。保留全部既有负例与门槛，本 Task 未删测试、未降权限与验收要求。
 
@@ -113,4 +113,4 @@
 - Pi 原生续接/跨模型历史互通、真实认证与用量：P04（T40 原生部分、T41）；本项 Fake 能力边界如实。
 - 扩展故障矩阵与多机：P07。
 - 阶段验收脚本：P03-10；本记录不提供 `accept:p03`。
-- 前序遗留：attempt-1 独立验收唯一失败（上述迁移期望冻结）已在 attempt-2 修复；无未解决阻塞。F-005 rework_count=3 与 F-006/F-010/F-018 rework_count=1 的历史失败会话/日志按原样保留于各自 `verifications/`，修复提交均已合入本分支。
+- 前序遗留：attempt-1 迁移期望冻结与 attempt-2 两个负载相关时序失败均已在后续 attempt 修复；无未解决阻塞。F-005 rework_count=3 与 F-006/F-010/F-018 rework_count=1 的历史失败会话/日志按原样保留于各自 `verifications/`，修复提交均已合入本分支。

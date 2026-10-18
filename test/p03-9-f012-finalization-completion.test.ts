@@ -334,7 +334,7 @@ describe('P03-9 / F-012 finalization completion', () => {
       expect(counts(f).commits).toBe(before.commits + 1);
       expect(counts(f).attempts).toBe(before.attempts);
     } finally { f.box.close(); }
-  }, 60_000);
+  }, 180_000);
 
   it('提交成功但回执丢失：不重复提交，只按真实 Git 事实核对并复用', async () => {
     const f = await prepareEligibleFixture({ taskCount: 1, budget: retryBudget() });

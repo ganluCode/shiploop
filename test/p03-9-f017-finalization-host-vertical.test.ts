@@ -601,10 +601,11 @@ describe('P03-9 / F-017 Host/CLI finalization-only end-to-end', () => {
     const startsBefore = runtimeStarts(f);
     const commitsBefore = commitCount(f);
     const runsBefore = runCount(f);
-    const commandId = randomUUID();
+    const leftId = randomUUID();
+    const rightId = randomUUID();
     const [left, right] = await Promise.all([
-      runApp(retryArgs(f, oldRunId, commandId), dataRoot),
-      runApp(retryArgs(f, oldRunId, commandId), dataRoot),
+      runApp(retryArgs(f, oldRunId, leftId), dataRoot),
+      runApp(retryArgs(f, oldRunId, rightId), dataRoot),
     ]);
     const outcomes = [left, right];
     const successful = outcomes.filter(outcome => outcome.exitCode === 0);
@@ -614,6 +615,11 @@ describe('P03-9 / F-017 Host/CLI finalization-only end-to-end', () => {
     expect(failureOf(rejected[0]!).code).toBe('conflict');
     const success = okResult(successful[0]!, 'execution.retry-final');
     const runId = String(success.newRunId);
+    expect(runCount(f)).toBe(runsBefore + 1);
+    // 同 commandId 幂等重放：返回原 Run，不重复创建（与并发时序无关的确定性断言）。
+    const replay = await runApp(retryArgs(f, oldRunId, left.exitCode === 0 ? leftId : rightId), dataRoot);
+    expect(replay.exitCode, `${replay.stdout}\n${replay.stderr}`).toBe(0);
+    expect(String(okResult(replay, 'execution.retry-final').newRunId)).toBe(runId);
     expect(runCount(f)).toBe(runsBefore + 1);
     expect(row(f, 'SELECT work_key, dispatch_ordinal FROM runs WHERE id = ?', runId))
       .toMatchObject({ work_key: workKey, dispatch_ordinal: 2 });
