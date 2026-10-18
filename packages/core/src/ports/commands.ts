@@ -135,6 +135,11 @@ export const COMMAND_OPERATIONS = [
   // expectedRevision 为目标 Run/Batch 自身 revision；只解除可继续目标的暂停，
   // 不启动 Runtime、不创建 Attempt、不重置预算）。
   'execution.resume',
+  // P03-9 / F-010：显式 finalization-only 重试（project scope + execution.start；
+  // 创建类不携带 expectedRevision；复用 F-009 资格/scope 与既有命令回执通道，
+  // 在同一短写事务内重开可继续父 Batch、扣减 Run 名额并创建 queued Run，
+  // 不启动 Runtime/Attempt，不增额或新建授权 Batch）。
+  'execution.retryFinal',
   'project.register',
   'project.metadata.update',
   'settings.global.create',
@@ -344,6 +349,9 @@ export const COMMAND_OPERATION_SPECS: Readonly<Record<AppOperation, CommandOpera
     // P03-9 / F-008：显式 resume 同属控制更新，复用 execution.start 授权面；
     // 真正的认领/预算/Runtime 启动仍走既有执行链路。
     'execution.resume': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
+    // P03-9 / F-010：retryFinal 创建 finalization-only Run，复用同一启动授权面；
+    // 创建类命令不携带 envelope expectedRevision（父 Batch revision 在事务内重核）。
+    'execution.retryFinal': { scopeKind: 'project', mutation: 'create', capability: 'execution.start' },
     'execution.start': { scopeKind: 'project', mutation: 'create', capability: 'execution.start' },
     // P03-3 / F-009：批次预算显式修订（更新类：expectedRevision=目标 Batch
     // 当前 budget_revision；增额/延期是新的明确授权，与启动能力分离）。
@@ -819,6 +827,17 @@ export type ValidatedExecutionCancelPayload = ValidatedExecutionPausePayload;
 /** P03-9 / F-008 显式 resume payload：与暂停/取消相同的单目标身份形态。 */
 export type ValidatedExecutionResumePayload = ValidatedExecutionPausePayload;
 
+/**
+ * P03-9 / F-010 显式 retryFinal payload：只含历史终态 Run 身份、同 Feature 与
+ * 其 workKey；projectId 由项目 scope 携带。预算/最终状态/批次/scope 全部由
+ * 服务端根据历史记录与当前证据计算，不能经请求输入。
+ */
+export interface ValidatedExecutionRetryFinalPayload {
+  readonly featureId: string;
+  readonly historicalRunId: string;
+  readonly workKey: string;
+}
+
 interface EnvelopeCommon {
   readonly schemaVersion: typeof WIRE_MESSAGE_SCHEMA_VERSION;
   readonly commandId: string;
@@ -900,6 +919,12 @@ export type ValidatedCommandEnvelope =
       readonly scope: { readonly kind: 'project'; readonly projectId: string };
       readonly expectedRevision: number;
       readonly payload: ValidatedExecutionResumePayload;
+    })
+  | (EnvelopeCommon & {
+      readonly operation: 'execution.retryFinal';
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: null;
+      readonly payload: ValidatedExecutionRetryFinalPayload;
     })
   | (EnvelopeCommon & {
       readonly operation: 'baseline.cancel';
@@ -1448,6 +1473,33 @@ function validateExecutionPausePayload(
   return { runId: null, batchId: object.batchId };
 }
 
+/** P03-9 / F-010：显式 retryFinal 的严格 payload（只接受历史身份，不接受预算/状态）。 */
+function validateExecutionRetryFinalPayload(
+  operation: AppOperation,
+  raw: unknown,
+): ValidatedExecutionRetryFinalPayload {
+  const object = requireObject(operation, raw, 'payload');
+  exactKeys(operation, object, ['featureId', 'historicalRunId', 'workKey'], 'payload.');
+  if (typeof object.workKey !== 'string' || object.workKey.length === 0 || object.workKey.length > 256) {
+    fail(operation, 'invalid_input', 'payload.workKey', '必须是非空有界 workKey 字符串', object.workKey);
+  }
+  try {
+    return {
+      featureId: validateStableId(object.featureId, { operation }, 'payload.featureId'),
+      historicalRunId: validateStableId(object.historicalRunId, { operation }, 'payload.historicalRunId'),
+      workKey: object.workKey,
+    };
+  } catch (error) {
+    if (isStorageError(error, 'validation')) {
+      throw new PublicError('invalid_input', operation, undefined, {
+        details: storageValidationDetails(error.details),
+        cause: error,
+      });
+    }
+    throw error;
+  }
+}
+
 function validateExecutionInputPreparePayload(
   operation: AppOperation,
   raw: unknown,
@@ -1890,6 +1942,18 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
       scope,
       expectedRevision: null,
       payload: validateExecutionStartPayload(operation, object.payload),
+    };
+  }
+  if (operation === 'execution.retryFinal') {
+    if (scope.kind !== 'project') {
+      fail(operation, 'invalid_input', 'scope.kind', 'scope 种类与操作不匹配');
+    }
+    return {
+      ...base,
+      operation,
+      scope,
+      expectedRevision: null,
+      payload: validateExecutionRetryFinalPayload(operation, object.payload),
     };
   }
   if (operation === 'execution.pause' || operation === 'execution.cancel' || operation === 'execution.resume') {

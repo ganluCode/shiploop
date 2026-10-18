@@ -101,6 +101,7 @@ export * from './ports/execution-resume.js';
 export * from './ports/execution-resume-facts.js';
 export * from './ports/finalization-retry.js';
 export * from './application/finalization-retry.js';
+export * from './application/finalization-retry-execution.js';
 export * from './ports/execution-budget.js';
 export * from './ports/execution-budget-query.js';
 export * from './ports/execution-schedule-query.js';

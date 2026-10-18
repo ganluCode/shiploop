@@ -285,6 +285,14 @@ export interface CommandTransaction {
     input: import('./execution-store.js').ExecutionResumeInput,
   ): import('./execution-store.js').ExecutionResumeResult;
   /**
+   * P03-9 / F-010：把 finalization 失败后的终态父 Batch 重新打开（failed →
+   * queued），只 CAS revision 与当前状态原因；累计计数、预算快照、deadline、
+   * scope/config 快照均不重置。仅用于同事务创建 finalization-only 新 Run。
+   */
+  reopenExecutionBatchForFinalizationRetry(
+    input: import('./execution-store.js').FinalizationRetryBatchOpenInput,
+  ): import('./execution-store.js').FinalizationRetryBatchOpenResult;
+  /**
    * P03-9 / F-003：停止核验结果写入同一 operation（stopping → stopped/uncertain）；
    * stopped 且无活动 Attempt/租约时才把目标收尾为 cancelled。
    */

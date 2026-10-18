@@ -332,6 +332,18 @@ function envelope(
           retryBatchId: null,
         },
       } as ValidatedCommandEnvelope;
+    case 'execution.retryFinal':
+      return {
+        ...base,
+        operation,
+        scope,
+        expectedRevision: null,
+        payload: {
+          featureId: '0f0d9c36-765a-4b62-a6b9-38a5ff4f4bf3',
+          historicalRunId: '0f0d9c36-765a-4b62-a6b9-38a5ff4f4bf4',
+          workKey: 'ab'.repeat(32),
+        },
+      } as ValidatedCommandEnvelope;
     case 'execution.budget.revise':
       return {
         ...base,
@@ -399,6 +411,9 @@ const COMMANDS_MATRIX = [
   // P03-3 / F-005：显式执行启动（project scope + execution.start；创建类不携带
   // expectedRevision；与预览共享授权面）。
   { operation: 'execution.start', scope: { kind: 'project', projectId: PROJECT_A }, revision: null, capability: 'execution.start' },
+  // P03-9 / F-010：finalization-only retryFinal（project scope + execution.start；
+  // 创建类不携带 expectedRevision；父 Batch revision 在事务内重核）。
+  { operation: 'execution.retryFinal', scope: { kind: 'project', projectId: PROJECT_A }, revision: null, capability: 'execution.start' },
   // P03-3 / F-009：批次预算显式修订（project scope + execution.budget.revise；
   // 更新类 expectedRevision=目标 Batch 当前 budget_revision；增额/延期授权面
   // 与启动能力分离）。

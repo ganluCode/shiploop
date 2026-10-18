@@ -53,6 +53,7 @@ import {
   EXECUTION_RUN_PAUSED_EVENT_TYPE,
   EXECUTION_RUN_RESUMED_EVENT_TYPE,
   EXECUTION_BATCH_RESUMED_EVENT_TYPE,
+  FINALIZATION_RETRY_BATCH_OPEN_REASON,
   executionCorruptError,
   isExecutionActiveStatus,
   isExecutionTerminalStatus,
@@ -84,6 +85,8 @@ import type {
   ExecutionStopOperationRecord,
   ExecutionStopOperationStatus,
   ExecutionStopSettlementInput,
+  FinalizationRetryBatchOpenInput,
+  FinalizationRetryBatchOpenResult,
   InterruptAttemptForStopInput,
   RunOutcomeSettlementOutcome,
   RunOutcomeSettlementRecord,
@@ -321,6 +324,13 @@ export interface SqliteExecutionAccess {
   requestExecutionPauseInTransaction(input: ExecutionPauseInput): ExecutionPauseResult;
   /** P03-9 / F-008：显式工作流 resume（同一短写事务内解除暂停意图并写事件）。 */
   resumeExecutionInTransaction(input: ExecutionResumeInput): ExecutionResumeResult;
+  /**
+   * P03-9 / F-010：finalization-only 新 Run 的父 Batch 重开（failed → queued）。
+   * 仅 CAS revision/status/reason；累计计数、预算、deadline 与全部快照不变。
+   */
+  reopenExecutionBatchForFinalizationRetryInTransaction(
+    input: FinalizationRetryBatchOpenInput,
+  ): FinalizationRetryBatchOpenResult;
   /** P03-9 / F-002：Run/Batch 取消意图与持久停止 operation（同一短写事务）。 */
   requestExecutionCancelInTransaction(input: ExecutionCancelInput): ExecutionCancelResult;
   /** P03-9 / F-003：停止核验结果写入同一 operation，必要时保守隔离活动 Attempt。 */
@@ -1768,6 +1778,46 @@ export function createSqliteExecutionAccess(
   }
 
   /* ------------------------------------------------------------ *
+   * P03-9 / F-010 finalization 失败批次重开 + 额度语义（迁移 v9 行）
+   * ------------------------------------------------------------ */
+
+  function reopenExecutionBatchForFinalizationRetryInTransaction(
+    input: FinalizationRetryBatchOpenInput,
+  ): FinalizationRetryBatchOpenResult {
+    const operation = 'ExecutionStore.reopenExecutionBatchForFinalizationRetry';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const raw = requirePlainObject(input, { operation }, 'input');
+    rejectUnknownKeys(raw, ['projectId', 'batchId', 'expectedRevision'], { operation }, 'input');
+    const projectId = validateStableId(raw.projectId, { operation }, 'projectId');
+    const batchId = validateStableId(raw.batchId, { operation }, 'batchId');
+    if (!Number.isSafeInteger(raw.expectedRevision) || (raw.expectedRevision as number) < 1) {
+      throw new StorageError('validation', operation, 'expectedRevision 必须是 ≥1 的安全整数');
+    }
+    const expectedRevision = raw.expectedRevision as number;
+    const current = getExecutionBatchInTransaction(projectId, batchId);
+    if (current.revision !== expectedRevision) {
+      return { outcome: 'stale_revision', batch: current };
+    }
+    if (current.status !== 'failed' || current.pauseRequestedAtUtcMs !== null) {
+      return { outcome: 'not_continuable', batch: current };
+    }
+    const timestamp = nowUtcMs();
+    const changed = session.database.prepare(
+      `UPDATE execution_batches SET status = 'queued', reason = ?, revision = revision + 1, updated_at = ?
+       WHERE project_id = ? AND id = ? AND revision = ? AND status = 'failed' AND pause_requested_at IS NULL`,
+    ).run(FINALIZATION_RETRY_BATCH_OPEN_REASON, timestamp, projectId, batchId, expectedRevision);
+    if (changed.changes !== 1) {
+      const latest = getExecutionBatchInTransaction(projectId, batchId);
+      return {
+        outcome: latest.revision !== expectedRevision ? 'stale_revision' : 'not_continuable',
+        batch: latest,
+      };
+    }
+    return { outcome: 'reopened', batch: getExecutionBatchInTransaction(projectId, batchId) };
+  }
+
+  /* ------------------------------------------------------------ *
    * P03-9 / F-002 Run/Batch 取消意图与持久停止 operation（迁移 v28）
    * ------------------------------------------------------------ */
 
@@ -2920,6 +2970,7 @@ export function createSqliteExecutionAccess(
     appendExecutionEventInTransaction,
     requestExecutionPauseInTransaction,
     resumeExecutionInTransaction,
+    reopenExecutionBatchForFinalizationRetryInTransaction,
     requestExecutionCancelInTransaction,
     settleExecutionStopInTransaction,
     interruptAttemptForStopInTransaction,

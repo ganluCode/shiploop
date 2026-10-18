@@ -323,6 +323,30 @@ export interface ExecutionResumeResult {
   readonly eventId: string | null;
 }
 
+/**
+ * P03-9 / F-010 retryFinal 重开父 Batch 的当前状态原因（不是新授权，也不
+ * 重置累计计数；仅把 finalization 失败后的终态 Batch 重新打开以承载新 Run）。
+ */
+export const FINALIZATION_RETRY_BATCH_OPEN_REASON = 'finalization_retry' as const;
+
+/** P03-9 / F-010 finalization-only 新 Run 的父 Batch 重开输入/结果。 */
+export interface FinalizationRetryBatchOpenInput {
+  readonly projectId: string;
+  readonly batchId: string;
+  readonly expectedRevision: number;
+}
+
+export type FinalizationRetryBatchOpenOutcome =
+  | 'reopened'
+  | 'stale_revision'
+  | 'not_continuable';
+
+export interface FinalizationRetryBatchOpenResult {
+  readonly outcome: FinalizationRetryBatchOpenOutcome;
+  /** 当前权威行（reopened 时为更新后的行；其它结果为未改动的现有行）。 */
+  readonly batch: ExecutionBatchRecord;
+}
+
 /** P03-9 / F-002 持久停止 operation 阶段；与 Run/Batch 生命周期分离。 */export const EXECUTION_STOP_OPERATION_STATUSES = ['stopping', 'stopped', 'uncertain'] as const;
 export type ExecutionStopOperationStatus = (typeof EXECUTION_STOP_OPERATION_STATUSES)[number];
 

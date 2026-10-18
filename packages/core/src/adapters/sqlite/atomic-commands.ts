@@ -194,6 +194,9 @@ export function createSqliteAtomicCommandStore(
           requestExecutionPause: guarded(executions.requestExecutionPauseInTransaction),
           requestExecutionCancel: guarded(executions.requestExecutionCancelInTransaction),
           resumeExecution: guarded(executions.resumeExecutionInTransaction),
+          reopenExecutionBatchForFinalizationRetry: guarded(
+            executions.reopenExecutionBatchForFinalizationRetryInTransaction,
+          ),
           settleExecutionStop: guarded(executions.settleExecutionStopInTransaction),
           interruptAttemptForStop: guarded(executions.interruptAttemptForStopInTransaction),
           getExecutionStopOperation: guarded(executions.getExecutionStopOperationInTransaction),

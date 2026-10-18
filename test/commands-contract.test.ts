@@ -145,6 +145,10 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       'execution.pause',
       // P03-9 / F-002：Run/Batch 取消（更新类；目标自身 revision CAS + 停止 operation）。
       'execution.cancel',
+      // P03-9 / F-008：显式工作流 resume（更新类；目标自身 revision CAS）。
+      'execution.resume',
+      // P03-9 / F-010：finalization-only retryFinal（创建类；父 Batch revision 在事务内重核）。
+      'execution.retryFinal',
       'project.register',
       'project.metadata.update',
       'settings.global.create',
@@ -199,6 +203,8 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       'execution.attempt.cancel': { scopeKind: 'project', mutation: 'create', capability: 'execution.start' },
       'execution.pause': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
       'execution.cancel': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
+      'execution.resume': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
+      'execution.retryFinal': { scopeKind: 'project', mutation: 'create', capability: 'execution.start' },
       'project.register': { scopeKind: 'registration', mutation: 'create', capability: 'project.register' },
       'project.metadata.update': { scopeKind: 'project', mutation: 'update', capability: 'project.metadata.write' },
       'settings.global.create': { scopeKind: 'global', mutation: 'create', capability: 'settings.global.write' },

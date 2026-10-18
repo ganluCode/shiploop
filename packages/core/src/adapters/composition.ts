@@ -114,6 +114,9 @@ import { createExecutionStartService } from '../application/execution-start.js';
 import type { ExecutionStartPort } from '../ports/execution-start.js';
 import { createExecutionResumeService } from '../application/execution-resume.js';
 import type { ExecutionResumePort } from '../ports/execution-resume.js';
+import { createFinalizationRetryPlanner } from '../application/finalization-retry.js';
+import { createFinalizationRetryExecutionService } from '../application/finalization-retry-execution.js';
+import type { FinalizationRetryExecutionPort } from '../ports/finalization-retry.js';
 import { createSqliteExecutionResumeFactsReader } from './sqlite/execution-resume.js';
 import { createSqliteTaskDagStore } from './sqlite/task-dag-store.js';
 import type { ArtifactFileStore } from '../ports/artifact-files.js';
@@ -255,6 +258,8 @@ export interface CoreApplication {
   readonly executionStart: ExecutionStartPort;
   /** P03-9 / F-008：显式工作流 resume（重新授权/现场核验/解除暂停；不启动 Runtime）。 */
   readonly executionResume: ExecutionResumePort;
+  /** P03-9 / F-010：finalization-only retryFinal（新建受限 Run，不启动 Runtime）。 */
+  readonly finalizationRetry: FinalizationRetryExecutionPort;
   readonly commandReceiptsService: CommandReceiptsService;
   /** F-010：授权查询/一致读视图快照水位/分页事件读取（§7/§8/§9.3）。 */
   readonly queryService: QueryService;
@@ -730,6 +735,32 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       },
       ...(nowUtcMs === undefined ? {} : { nowMs: nowUtcMs }),
     });
+    // P03-9 / F-010：retryFinal 先复用 F-009 只读资格/范围（真实证据按文件
+    // 完整性核验），再在命令短事务内重开可继续父 Batch、扣减 Run 名额并
+    // 创建 finalization-only Run。生产装配不在事务外启动 Runtime/Attempt。
+    const finalizationRetryPlanner = createFinalizationRetryPlanner({
+      facts: createSqliteExecutionResumeFactsReader(session, {
+        ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
+      }),
+      dag: createSqliteTaskDagStore(session),
+      taskEvidence: queryStore,
+      featureDelivery: queryStore,
+      artifacts: createArtifactVerifier({
+        artifacts: artifactStore,
+        files: artifactFileStore,
+        limits: { maxReadBytes: 16_000_000 },
+      }),
+      async inspectorFor(projectId: string) {
+        return workspaceInspectorForCall(projectId);
+      },
+    });
+    const finalizationRetry: FinalizationRetryExecutionPort = createFinalizationRetryExecutionService({
+      planner: finalizationRetryPlanner,
+      facts: createSqliteExecutionResumeFactsReader(session, {
+        ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
+      }),
+      ...(nowUtcMs === undefined ? {} : { nowMs: nowUtcMs }),
+    });
     const workspacePreparation = {
       async prepare(raw: unknown): Promise<WorkspaceOperationCommit> {
         // 服务入口立即复核完整输入；此处只最小提取 projectId 以装配受界检查器。
@@ -892,6 +923,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       executionPreview,
       executionStart,
       executionResume,
+      finalizationRetry,
       executionDispatchSignal: workExecution,
       executionCancel: workExecution,
       executionStopControl,
@@ -1022,6 +1054,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       executionPreview,
       executionStart,
       executionResume,
+      finalizationRetry,
       runtimeRecovery,
       runtimeRecoveryCatalog: recoveryCatalog,
       queryService,

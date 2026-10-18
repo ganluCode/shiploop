@@ -64,6 +64,12 @@ import { submitExecutionPause } from './execution-pause.js';
 import { submitExecutionCancel } from './execution-cancel.js';
 import { signalExecutionResumeAfterCommit } from './execution-resume.js';
 import type { ExecutionResumePort } from '../ports/execution-resume.js';
+import { FINALIZATION_RETRY_OPERATION } from '../ports/finalization-retry.js';
+import type {
+  FinalizationRetryExecutionPort,
+  PreparedFinalizationRetry,
+} from '../ports/finalization-retry.js';
+import { signalFinalizationRetryAfterCommit } from './finalization-retry-execution.js';
 import { submitTaskApprovalBlock, TASK_APPROVAL_BLOCK_OPERATION } from './task-approval-block.js';
 import { submitTaskApprovalDecision, TASK_APPROVAL_DECISION_OPERATIONS } from './task-approval-decision.js';
 import { submitTaskVerificationContinue, TASK_VERIFICATION_CONTINUE_OPERATION, type TaskVerificationContinueDeps } from './task-verification-continue.js';
@@ -187,6 +193,11 @@ export interface CommandServiceOptions {
    */
   readonly executionResume?: ExecutionResumePort;
   /**
+   * P03-9 / F-010：finalization-only 重试端口（F-009 资格/范围 + 父 Batch 重开
+   * 与 Run 名额扣减；事务外准备、短写事务内原子提交；不传则命令 unsupported）。
+   */
+  readonly finalizationRetry?: FinalizationRetryExecutionPort;
+  /**
    * P03-3 / F-005：派发唤醒窄端口（仅写事务成功提交且非重放的新 Work accepted
    * 后 best-effort 调用；失败吞掉，持久 queued Run 是权威；不传则 Run 保留
    * queued + scheduler_not_assembled 可查询原因）。
@@ -274,6 +285,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
   const executionPreview = options.executionPreview;
   const executionStart = options.executionStart;
   const executionResume = options.executionResume;
+  const finalizationRetry = options.finalizationRetry;
   const executionDispatchSignal = options.executionDispatchSignal;
   const executionStopControl = options.executionStopControl;
   const workspaceDiscard = options.workspaceDiscard;
@@ -662,6 +674,9 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
         if (envelope.operation === 'execution.resume' && executionResume === undefined) {
           throw new PublicError('unsupported', operation);
         }
+        if (envelope.operation === FINALIZATION_RETRY_OPERATION && finalizationRetry === undefined) {
+          throw new PublicError('unsupported', operation);
+        }
         // P03-5 / F-011：人工丢弃预览/确认服务端口缺席时 unsupported（不冒充
         // 能力；命令面能力位与预览/确认共享授权面，端口装配是真实支持边界）。
         if (
@@ -684,6 +699,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           envelope.operation !== 'execution.pause' &&
           envelope.operation !== 'execution.cancel' &&
           envelope.operation !== 'execution.resume' &&
+          envelope.operation !== FINALIZATION_RETRY_OPERATION &&
           envelope.operation !== 'baseline.cancel' &&
           envelope.operation !== 'phase.create' &&
           envelope.operation !== FEATURE_PLAN_IMPORT_OPERATION &&
@@ -818,6 +834,15 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
             envelope.payload,
           );
         }
+        // P03-9 / F-010：retryFinal 先复用 F-009 只读资格/scope，再核验父 Batch
+        // 可继续性与预算；全部证据判定失败都只返回 rejected，不创建 Run。
+        let finalizationRetryPrepared: PreparedFinalizationRetry | undefined;
+        if (envelope.operation === FINALIZATION_RETRY_OPERATION && existing === undefined) {
+          finalizationRetryPrepared = await finalizationRetry!.prepareExecutionRetryFinal(
+            envelope.scope.projectId,
+            envelope.payload,
+          );
+        }
 
         // P03-5 / F-011：人工丢弃预览为只读检查 + 不可变证据发布（事务外、
         // 仅对新命令执行）；命令短写事务内只持久化 completed 回执（与
@@ -921,6 +946,23 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
               envelope,
               transaction,
               executionResumePrepared,
+            );
+          }
+          if (envelope.operation === FINALIZATION_RETRY_OPERATION) {
+            if (finalizationRetryPrepared === undefined) {
+              throw new TypeError('retryFinal 缺少事务外准备结果');
+            }
+            return finalizationRetry!.submitExecutionRetryFinal(
+              {
+                principalId: principal.principalId,
+                commandId: envelope.commandId,
+                scope: envelope.scope,
+                requestDigest: digest,
+                issuedAt: envelope.issuedAt,
+              },
+              envelope,
+              transaction,
+              finalizationRetryPrepared,
             );
           }
           if (envelope.operation === 'execution.cancel') {
@@ -1249,6 +1291,11 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
         // 步骤不唤醒调度器，replay 也不重复唤醒。
         if (envelope.operation === 'execution.resume') {
           signalExecutionResumeAfterCommit(executionDispatchSignal, receipt);
+        }
+        // P03-9 / F-010：新 finalization Run 提交后 best-effort 唤醒调度；replay
+        // 不重复通知，持久 queued Run 仍是权威。
+        if (envelope.operation === FINALIZATION_RETRY_OPERATION) {
+          signalFinalizationRetryAfterCommit(executionDispatchSignal, receipt);
         }
         // Persist the authorization/receipt before touching the Runtime. Replays never
         // resubmit cancellation, even if the HTTP response was lost.

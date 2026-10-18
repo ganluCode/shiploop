@@ -22,6 +22,15 @@
 /** 显式收尾重试操作名（后续 Host/CLI 接线沿用）。 */
 export const FINALIZATION_RETRY_OPERATION = 'execution.retryFinal' as const;
 
+/**
+ * P03-9 / F-010：finalization-only Run 的用途标记（写入 Run.input_snapshot，
+ * 不是新的 Run purpose 枚举值——Core 的 Run 仍属于既有 execute 用途）。
+ */
+export const FINALIZATION_RETRY_RUN_KIND = 'finalization-only' as const;
+
+/** finalization scope 快照版本（受限步骤集合；编码 Task/Runtime 启动恒为零）。 */
+export const FINALIZATION_RETRY_SCOPE_SCHEMA_VERSION = 1 as const;
+
 /** 资格拒绝原因（冻结；终态旧 Run 不复活）。 */
 export const FINALIZATION_RETRY_REJECTED_REASONS = [
   /** 历史 Run 不存在或不属于请求项目。 */
@@ -46,6 +55,23 @@ export const FINALIZATION_RETRY_REJECTED_REASONS = [
   'workspace_invalid',
   /** Feature 已完成且所有轴证据当前有效：成功成果不自动重跑。 */
   'already_finalized',
+  /**
+   * P03-9 / F-010：父 Batch 当前不允许继续（取消/停止不确定/暂停意图/
+   * 已成功/同 Phase 已有其它活动 Batch）。不自动新建授权 Batch。
+   */
+  'batch_not_continuable',
+  /**
+   * P03-9 / F-010：父 Batch 剩余额度、无进展上限或绝对 deadline 已耗尽。
+   * 拒绝不增额、不延期；显式增额（execution.budget.revise）或新建授权批次
+   * （execution.start）仍由用户另行决定。
+   */
+  'budget_exhausted',
+  /** 同 Feature 仍有其它活动 Run（竞争 retryFinal 已先提交）。 */
+  'active_run_conflict',
+  /** P03-9 / F-010：准备与提交之间 Batch revision/状态发生漂移。 */
+  'stale_revision',
+  /** P03-9 / F-010：准备后计划/输入/检查政策身份变化，受限 scope 已过期。 */
+  'authorization_stale',
 ] as const;
 export type FinalizationRetryRejectedReason =
   (typeof FINALIZATION_RETRY_REJECTED_REASONS)[number];
@@ -188,3 +214,126 @@ export type FinalizationRetryResult =
       /** 受控附加身份/原因；不含绝对路径、正文或凭据。 */
       readonly detail: string | null;
     };
+
+/* ------------------------------------------------------------------ *
+ * P03-9 / F-010：finalization-only 新 Run 的授权命令契约
+ * ------------------------------------------------------------------ */
+
+/** 显式 retryFinal 命令 payload（projectId 来自命令 scope，不接受自报路径）。 */
+export interface FinalizationRetryCommandPayload {
+  readonly featureId: string;
+  readonly historicalRunId: string;
+  readonly workKey: string;
+}
+
+/**
+ * 写入 Run.input_snapshot.finalization 的受限 finalization scope。
+ *
+ * `planDigest` 是完整 F-009 输出的稳定摘要；明细字段供后续编排/认领边界
+ * 直接判断且不依赖重新计算历史证据。编码 Task、Runtime 启动与新 Attempt 恒为零。
+ */
+export interface FinalizationRetryScope {
+  readonly schemaVersion: typeof FINALIZATION_RETRY_SCOPE_SCHEMA_VERSION;
+  readonly kind: typeof FINALIZATION_RETRY_RUN_KIND;
+  readonly retryPlanDigest: string;
+  readonly historicalRunId: string;
+  readonly historicalBatchId: string;
+  readonly historicalRunStatus: string;
+  readonly historicalRunDispatchOrdinal: number;
+  readonly planDigest: string;
+  readonly checkPolicyDigest: string;
+  readonly headCommit: string;
+  readonly codeDigest: string;
+  readonly workspaceId: string;
+  readonly workspaceRevision: number;
+  readonly retainedTaskIds: readonly string[];
+  readonly revalidateTasks: readonly {
+    readonly taskId: string;
+    readonly checkKeys: readonly string[];
+    readonly reasons: readonly FinalizationEvidenceReason[];
+  }[];
+  readonly finalVerification: {
+    readonly required: boolean;
+    readonly checkKeys: readonly string[];
+  };
+  readonly approval: {
+    readonly required: true;
+    readonly valid: boolean;
+    readonly approvalItemId: string | null;
+    readonly reason: string | null;
+  };
+  readonly commit: {
+    readonly required: boolean;
+    readonly reconcileRequired: boolean;
+    readonly deliveryStatus: FinalizationRetryPlan['commit']['deliveryStatus'];
+    readonly operationId: string | null;
+    readonly reason: string | null;
+  };
+  readonly missingSteps: readonly FinalizationPendingStep[];
+  readonly codingTaskIds: readonly [];
+  readonly runtimeStarts: 0;
+  readonly newAttempts: 0;
+}
+
+/** 事务外准备成功后的可提交事实（不含正文/绝对路径/凭据）。 */
+export interface PreparedFinalizationRetryReady {
+  readonly kind: 'ready';
+  readonly projectId: string;
+  readonly featureId: string;
+  readonly historicalRunId: string;
+  readonly historicalBatchId: string;
+  readonly expectedBatchRevision: number;
+  readonly expectedBatchStatus: string;
+  readonly plan: FinalizationRetryPlan;
+  readonly scope: FinalizationRetryScope;
+  /** 父 Batch 授权时冻结的预览摘要（Run.scopeDigest 授权锚点）。 */
+  readonly scopeDigest: string;
+  readonly runLimits: { readonly maxAttemptsPerRun: number; readonly runTimeLimitMs: number };
+  /** 已构造的 Run 输入/配置快照（同事务内直接落库）。 */
+  readonly inputSnapshot: Readonly<Record<string, unknown>>;
+  readonly configSnapshot: Readonly<Record<string, unknown>>;
+}
+
+export interface PreparedFinalizationRetryRejected {
+  readonly kind: 'rejected';
+  readonly reason: FinalizationRetryRejectedReason;
+  readonly detail: string | null;
+}
+
+export type PreparedFinalizationRetry =
+  | PreparedFinalizationRetryReady
+  | PreparedFinalizationRetryRejected;
+
+/** 命令身份（回执字段的服务端可信来源）。 */
+export interface FinalizationRetryCommandIdentity {
+  readonly principalId: string;
+  readonly commandId: string;
+  readonly scope: { readonly kind: 'project'; readonly projectId: string };
+  readonly requestDigest: string;
+  readonly issuedAt: string;
+}
+
+/** 事务内提交使用的命令信封最小面（操作固定 execution.retryFinal）。 */
+export interface FinalizationRetryEnvelopeFace {
+  readonly scope: { readonly kind: 'project'; readonly projectId: string };
+  readonly payload: FinalizationRetryCommandPayload;
+}
+
+/**
+ * P03-9 / F-010 finalization-only 新 Run 编排端口：prepare 只读复算 F-009
+ * 资格/范围并在事务外检查父 Batch 可继续性、占用与预算；submit 在调用方同一
+ * BEGIN IMMEDIATE 短写事务内重核身份/状态/额度并原子创建 Run、递增
+ * runsCreated、写派发事件与 completed 回执。
+ */
+export interface FinalizationRetryExecutionPort {
+  prepareExecutionRetryFinal(
+    projectId: string,
+    payload: unknown,
+  ): Promise<PreparedFinalizationRetry>;
+  submitExecutionRetryFinal(
+    identity: FinalizationRetryCommandIdentity,
+    envelope: FinalizationRetryEnvelopeFace,
+    transaction: import('./atomic-commands.js').CommandTransaction,
+    prepared: PreparedFinalizationRetry,
+  ): import('./commands.js').CommandReceipt;
+}
