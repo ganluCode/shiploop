@@ -33,6 +33,7 @@ import { createNodeTaskVerificationExecutor, type NodeTaskVerificationResult } f
 export interface FinalizationFeatureAnchor {
   readonly taskId: string;
   readonly attemptId: string;
+  readonly runId: string;
   readonly executionVersion: number;
 }
 
@@ -140,7 +141,7 @@ export function createNodeFinalizationVerifier(options: NodeFinalizationVerifier
     const result = await executor.start({
       projectId: input.projectId,
       featureId: input.featureId,
-      runId: input.historicalRunId,
+      runId: attempt.runId,
       controlRunId: input.finalizationRunId,
       taskId: input.taskId,
       attemptId: attempt.id,
@@ -192,7 +193,7 @@ export function createNodeFinalizationVerifier(options: NodeFinalizationVerifier
       const result = await executor.start({
         projectId: input.projectId,
         featureId: input.featureId,
-        runId: input.historicalRunId,
+        runId: anchor.runId,
         controlRunId: input.finalizationRunId,
         taskId: anchor.taskId,
         attemptId: anchor.attemptId,

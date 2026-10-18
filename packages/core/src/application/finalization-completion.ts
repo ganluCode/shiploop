@@ -347,8 +347,9 @@ export function createFinalizationCompletionService(deps: FinalizationCompletion
       featureId: run.featureId,
       // Git operation identity belongs to the historical Attempt/Run that owns the
       // verified evidence; the finalization Run is the control envelope, not the
-      // Git operation's attempt owner.
-      runId: plan.historicalRunId,
+      // Git operation's attempt owner. Chained retryFinal may point historicalRunId
+      // at a previous finalization Run that has no Attempt, so anchor on the attempt.
+      runId: attempt.runId,
       operationId,
       expectedHead: plan.current.headCommit,
       codeDigest: plan.current.codeDigest,

@@ -251,6 +251,7 @@ export function createFinalizationExecutionService(deps: FinalizationExecutionDe
     projectId: string,
     featureId: string,
     scope: FinalizationScopeSnapshot,
+    evidenceRunId: string,
     kind: 'task' | 'feature',
     expectedKeys: readonly string[],
     evidence: FinalizationVerificationEvidence,
@@ -266,7 +267,7 @@ export function createFinalizationExecutionService(deps: FinalizationExecutionDe
       throw error;
     }
     if (batch.projectId !== projectId || batch.featureId !== featureId
-      || batch.runId !== scope.historicalRunId || batch.operation !== evidence.operation) {
+      || batch.runId !== evidenceRunId || batch.operation !== evidence.operation) {
       return failed(`${kind}_verification_identity_mismatch`);
     }
     if (kind === 'feature' ? batch.operation !== FEATURE_VERIFICATION_OPERATION
@@ -306,6 +307,30 @@ export function createFinalizationExecutionService(deps: FinalizationExecutionDe
     return passed();
   }
 
+  /**
+   * VerificationBatch 必须绑定真实 Attempt 所属 Run。链式 retryFinal 的直接
+   * 历史 Run 可能本身也是无 Attempt 的 finalization Run；沿 scope 回溯到最初
+   * 的代码 Run，既满足存储身份约束，又不改写历史证据。
+   */
+  function resolveEvidenceRunId(projectId: string, historicalRunId: string): string | null {
+    let current = historicalRunId;
+    for (let depth = 0; depth < 8; depth += 1) {
+      let facts;
+      try {
+        facts = deps.facts.readFacts({ projectId, targetKind: 'run', targetId: current });
+      } catch (error) {
+        if (isStorageError(error, 'not_found') || isStorageError(error, 'ownership')) return null;
+        throw error;
+      }
+      const historical = facts.target as RunRecord;
+      const historicalScope = readScope(historical);
+      if (historicalScope === null) return current;
+      if (historicalScope.historicalRunId === current) return null;
+      current = historicalScope.historicalRunId;
+    }
+    return null;
+  }
+
   return {
     async execute(raw: unknown): Promise<FinalizationExecutionResult> {
       if (!isObject(raw)) throw new TypeError('FinalizationExecution.execute input is invalid');
@@ -334,6 +359,10 @@ export function createFinalizationExecutionService(deps: FinalizationExecutionDe
       }
       if (scope.codingTaskIds.length !== 0 || scope.runtimeStarts !== 0 || scope.newAttempts !== 0) {
         return markRunFailed(run, 'scope_invalid', 'finalization_scope_coding_forbidden');
+      }
+      const evidenceRunId = resolveEvidenceRunId(projectId, scope.historicalRunId);
+      if (evidenceRunId === null) {
+        return markRunFailed(run, 'scope_invalid', 'finalization_evidence_run_unresolved');
       }
       if (signal?.aborted) return result('control_interrupted', run, scope, 'cancelled');
       const control = controlReason(run, fresh.batch);
@@ -377,7 +406,7 @@ export function createFinalizationExecutionService(deps: FinalizationExecutionDe
           projectId,
           featureId: run.featureId,
           finalizationRunId: run.id,
-          historicalRunId: scope.historicalRunId,
+          historicalRunId: evidenceRunId,
           planDigest: scope.planDigest,
           checkPolicyDigest: scope.checkPolicyDigest,
           codeDigest: scope.codeDigest,
@@ -395,7 +424,7 @@ export function createFinalizationExecutionService(deps: FinalizationExecutionDe
         } catch {
           return markRunFailed(run, 'task_verifier_error', 'finalization_task_verifier_error');
         }
-        const evaluation = await evaluateEvidence(projectId, run.featureId, scope, 'task', task.checkKeys, evidence);
+        const evaluation = await evaluateEvidence(projectId, run.featureId, scope, evidenceRunId, 'task', task.checkKeys, evidence);
         if (!evaluation.ok) {
           return evaluation.invalidated
             ? markRunFailed(run, 'task_invalidated', evaluation.reason, 'invalidated')
@@ -416,7 +445,7 @@ export function createFinalizationExecutionService(deps: FinalizationExecutionDe
           projectId,
           featureId: run.featureId,
           finalizationRunId: run.id,
-          historicalRunId: scope.historicalRunId,
+          historicalRunId: evidenceRunId,
           planDigest: scope.planDigest,
           checkPolicyDigest: scope.checkPolicyDigest,
           codeDigest: scope.codeDigest,
@@ -433,7 +462,7 @@ export function createFinalizationExecutionService(deps: FinalizationExecutionDe
           return markRunFailed(run, 'feature_verifier_error', 'finalization_feature_verifier_error');
         }
         const evaluation = await evaluateEvidence(
-          projectId, run.featureId, scope, 'feature', plan.finalVerification.checkKeys, featureEvidence,
+          projectId, run.featureId, scope, evidenceRunId, 'feature', plan.finalVerification.checkKeys, featureEvidence,
         );
         if (!evaluation.ok) {
           return evaluation.invalidated

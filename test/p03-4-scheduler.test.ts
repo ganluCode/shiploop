@@ -91,6 +91,38 @@ describe('F-006 bounded Work Scheduler', () => {
       expect(f.box.session.database.prepare('SELECT count(*) AS n FROM attempts').get()).toEqual({ n: 1 });
     } finally { await scheduler.close(); f.box.close(); }
   });
+  it('re-scans after a synchronously empty scan instead of reusing the settled promise', async () => {
+    const run = { projectId: 'p-1', runId: 'r-1', status: 'queued', featureId: 'f-1',
+      inputSnapshot: { schemaVersion: 1 }, revision: 1 };
+    let active = false;
+    const listActiveRuns = vi.fn(() => ({
+      runs: active ? [{ projectId: run.projectId, runId: run.runId }] : [],
+      hasMore: false,
+    }));
+    const recordRunReason = vi.fn();
+    const store = {
+      listActiveRuns,
+      readRun: () => run,
+      recordRunReason,
+      isFinalVerificationHandoffClaimed: () => false,
+      recordFinalVerificationHandoff: () => false,
+    } as never;
+    const scheduler = createWorkScheduler({
+      store,
+      dag: { evaluate: () => ({ reason: 'all_passed', readyTaskIds: [] }) } as never,
+    });
+    try {
+      expect((await scheduler.scan()).runs).toEqual([]);
+      active = true;
+      const second = await scheduler.scan();
+      expect(listActiveRuns).toHaveBeenCalledTimes(2);
+      expect(second.runs).toHaveLength(1);
+      expect(recordRunReason).toHaveBeenCalledWith('p-1', 'r-1', 'scheduler_capability_missing');
+    } finally {
+      await scheduler.close();
+    }
+  });
+
   it('uses explicit compensation ticks and clears timers and queued wakes on close', async () => {
     const f = await openClaimFixture();
     const timers = manualTimers();

@@ -329,7 +329,7 @@ describe('P03-9 / F-011 finalization execution', () => {
           fullFallback: { checkRefs: definitions.map(definition => definition.checkKey) } }),
         resolveCwd: async () => f.box.box.repoDirA,
         resolveEnvironment: () => ({}),
-        resolveFeatureAnchor: () => ({ taskId: anchor.taskId, attemptId: anchor.id, executionVersion: anchor.executionVersion }),
+        resolveFeatureAnchor: () => ({ taskId: anchor.taskId, attemptId: anchor.id, runId: anchor.runId, executionVersion: anchor.executionVersion }),
         stopControl: createVerificationStopControl({ waitMs: 2_000 }),
         nowUtcMs: () => NOW + 20_000,
       });

@@ -37,6 +37,7 @@ import { createLocalOwnerPrincipal, deriveDefaultDataRoot } from 'shiploop-core'
 import type { RuntimeCapabilityCatalog } from 'shiploop-core';
 import { openCoreApplication } from 'shiploop-core/assembly';
 import type { CoreApplication, WorkRuntimeFactory, FeatureDeliveryFactory } from 'shiploop-core/assembly';
+import type { FinalizationCompletionPort, FinalizationExecutionPort } from 'shiploop-core';
 import {
   HostProtocolError,
   LOOPBACK_LISTEN_ADDRESS,
@@ -86,6 +87,8 @@ export const BIND_OVERRIDE_ENV_KEYS = [
 const ALLOWED_OPTION_KEYS = [
   'workRuntimeFactory',
   'featureDeliveryFactory',
+  'finalizationExecution',
+  'finalizationCompletion',
   'dataRoot',
   'userHomeDir',
   'capabilityCatalog',
@@ -104,6 +107,10 @@ export interface HostStartOptions {
   readonly workRuntimeFactory?: WorkRuntimeFactory;
   /** Static trusted adapters only; never read from argv, env or request fields. */
   readonly featureDeliveryFactory?: FeatureDeliveryFactory;
+  /** Trusted finalization-only execution consumer; absent keeps the scheduler capability gap. */
+  readonly finalizationExecution?: FinalizationExecutionPort;
+  /** Trusted finalization approval/commit/completion consumer; absent keeps the capability gap. */
+  readonly finalizationCompletion?: FinalizationCompletionPort;
   /** 显式数据根（POSIX 绝对路径）；与 userHomeDir 二选一。 */
   readonly dataRoot?: string;
   /** 注入的用户目录（推导 P01 默认根）；与 dataRoot 二选一，缺省取 os.homedir()。 */
@@ -199,6 +206,18 @@ function validateStartOptions(options: HostStartOptions): void {
   }
   if (options.featureDeliveryFactory !== undefined && typeof options.featureDeliveryFactory !== 'function') {
     throw invalidInput('trusted_factory_required', { field: 'featureDeliveryFactory' });
+  }
+  if (options.finalizationExecution !== undefined && (
+    options.finalizationExecution === null || typeof options.finalizationExecution !== 'object'
+    || typeof options.finalizationExecution.execute !== 'function'
+  )) {
+    throw invalidInput('trusted_execution_port_required', { field: 'finalizationExecution' });
+  }
+  if (options.finalizationCompletion !== undefined && (
+    options.finalizationCompletion === null || typeof options.finalizationCompletion !== 'object'
+    || typeof options.finalizationCompletion.execute !== 'function'
+  )) {
+    throw invalidInput('trusted_execution_port_required', { field: 'finalizationCompletion' });
   }
   if (options.dataRoot !== undefined && options.userHomeDir !== undefined) {
     throw invalidInput('root_source_ambiguous', { field: 'dataRoot' });
@@ -317,6 +336,12 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
       capabilityCatalog: options.capabilityCatalog,
       workRuntimeFactory: options.workRuntimeFactory,
       featureDeliveryFactory: options.featureDeliveryFactory,
+      ...(options.finalizationExecution === undefined
+        ? {}
+        : { finalizationExecution: options.finalizationExecution }),
+      ...(options.finalizationCompletion === undefined
+        ? {}
+        : { finalizationCompletion: options.finalizationCompletion }),
     }),
   );
 

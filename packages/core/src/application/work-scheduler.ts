@@ -222,29 +222,33 @@ export function createWorkScheduler(options: WorkSchedulerOptions) {
     let pages = 0;
     let hasMore = true;
     pendingWakes.clear();
-    try {
-      while (hasMore && pages < maxPages) {
-        const page = options.store.listActiveRuns({ after: cursor, limit: pageSize });
-        pages += 1;
-        for (const ref of page.runs) runs.push(await processRun(ref.projectId, ref.runId));
-        hasMore = page.hasMore;
-        const last = page.runs[page.runs.length - 1];
-        cursor = last === undefined ? cursor : last;
-        compensationCursor = hasMore ? cursor : null;
-        if (last === undefined) break;
-      }
-      if (closed) return { closed: true, pages, bounded: false, runs };
-      return { closed: false, pages, bounded: hasMore, runs };
-    } finally {
-      scanPromise = null;
-      if (!closed && pendingWakes.size > 0) queueMicrotask(() => { void scan().catch(error => { lastError = error; }); });
+    while (hasMore && pages < maxPages) {
+      const page = options.store.listActiveRuns({ after: cursor, limit: pageSize });
+      pages += 1;
+      for (const ref of page.runs) runs.push(await processRun(ref.projectId, ref.runId));
+      hasMore = page.hasMore;
+      const last = page.runs[page.runs.length - 1];
+      cursor = last === undefined ? cursor : last;
+      compensationCursor = hasMore ? cursor : null;
+      if (last === undefined) break;
     }
+    if (closed) return { closed: true, pages, bounded: false, runs };
+    return { closed: false, pages, bounded: hasMore, runs };
   }
 
   function scan(): Promise<SchedulerScanResult> {
     if (scanPromise !== null) return scanPromise;
     if (closed) return Promise.resolve({ closed: true, pages: 0, bounded: false, runs: [] });
-    scanPromise = runScan();
+    const run = runScan();
+    // scanPromise 与待处理唤醒统一在结算后清理：runScan 对空页面可能同步
+    // 完成，若在扫描内先清空会被外层赋值覆盖，导致后续扫描永久复用已结算
+    // Promise，或让扫描期间到达的唤醒丢失。
+    scanPromise = run.finally(() => {
+      scanPromise = null;
+      if (!closed && pendingWakes.size > 0) {
+        queueMicrotask(() => { void scan().catch(error => { lastError = error; }); });
+      }
+    });
     return scanPromise;
   }
 
