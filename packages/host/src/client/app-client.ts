@@ -67,6 +67,9 @@ import type {
   PublicSettingsState,
   PublicStateEvent,
   RunScheduleStatusResult,
+  RunControlDetailResult,
+  BatchControlDetailResult,
+  RunRecoveryDetailResult,
   SettingsScope,
   SnapshotResult,
   TaskDetailResult,
@@ -115,6 +118,9 @@ import {
   RECEIPTS_ROUTE_PREFIX,
   RESULTS_ROUTE_PREFIX,
   RUNS_ROUTE_PREFIX,
+  RUN_CONTROL_ROUTE_SUFFIX,
+  RUN_RECOVERY_ROUTE_SUFFIX,
+  BATCH_CONTROL_ROUTE_SUFFIX,
   TASK_APPROVALS_ROUTE_SUFFIX,
   TASK_REWORK_CHAIN_ROUTE_SUFFIX,
   TASK_VERIFICATION_ROUTE_SUFFIX,
@@ -432,6 +438,31 @@ export interface ReviseExecutionBudgetInput {
   readonly commandId?: string;
 }
 
+/**
+ * P03-9 / F-014 Run/Batch 控制输入（pause/cancel/resume 同一目标形态）：
+ * 必须恰指定同项目的 runId 或 batchId 之一；expectedRevision 是目标自身
+ * revision CAS 入口；actor/权限/状态/停止结果一律不能经请求输入。
+ */
+export interface ControlExecutionInput {
+  readonly projectId: string;
+  readonly runId?: string;
+  readonly batchId?: string;
+  readonly expectedRevision: number;
+  readonly commandId?: string;
+}
+
+/**
+ * execution.retryFinal 输入：只指定历史终态 Run 身份、同 Feature 与其 workKey；
+ * 预算/新 Run 身份/scope/最终状态全部由服务端根据持久证据计算，不能经请求携带。
+ */
+export interface RetryFinalExecutionInput {
+  readonly projectId: string;
+  readonly featureId: string;
+  readonly historicalRunId: string;
+  readonly workKey: string;
+  readonly commandId?: string;
+}
+
 export interface BudgetRevisionListInput {
   readonly limit?: number;
   readonly cursor?: string;
@@ -518,6 +549,23 @@ export interface HostClientApplication {
   getWorkSession(projectId: string, attemptId: string): Promise<WorkSessionDetailResult>;
   readWorkSessionEvidence(projectId: string, attemptId: string, artifactId: string): Promise<WorkSessionEvidenceContent>;
   cancelAttempt(input: { readonly projectId: string; readonly attemptId: string; readonly commandId?: string }, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  /* ------------------------------------------------------------ *
+   * P03-9 / F-014 Run/Batch 授权控制与诊断查询（经既有命令/查询通道）
+   * ------------------------------------------------------------ */
+  /** execution.pause：Run/Batch Task 边界暂停（目标 revision CAS；不取消活动 Attempt）。 */
+  pauseExecution(input: ControlExecutionInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  /** execution.cancel：Run/Batch 取消意图（活动执行先进入 cancelling 并登记停止检查）。 */
+  cancelExecution(input: ControlExecutionInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  /** execution.resume：显式工作流 resume（重新授权后解除暂停；不重置预算/不启动 Runtime）。 */
+  resumeExecution(input: ControlExecutionInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  /** execution.retryFinal：finalization-only 新 Run（历史 Run 保持终态，受限收尾 scope）。 */
+  retryFinalExecution(input: RetryFinalExecutionInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  /** execution.run.control.get：持久控制状态/原因/关联证据与显式后续动作。 */
+  getRunControl(projectId: string, runId: string): Promise<RunControlDetailResult>;
+  /** execution.batch.control.get：Batch 控制进度（子 Run/Attempt 有界扫描）。 */
+  getBatchControl(projectId: string, batchId: string): Promise<BatchControlDetailResult>;
+  /** execution.run.recovery.get：恢复诊断、finalization scope 与分轴结果。 */
+  getRunRecovery(projectId: string, runId: string): Promise<RunRecoveryDetailResult>;
   submitCommand(input: SubmitCommandInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
   getReceipt(commandId: string): Promise<CommandReceipt>;
   resolveResult(resultRef: string): Promise<CommandReceipt>;
@@ -1207,6 +1255,8 @@ const FEATURE_VERIFICATION_CONTINUE_INPUT_KEYS = [
 const EXECUTION_PREVIEW_INPUT_KEYS = ['projectId', 'featureIds', 'budget', 'commandId'] as const;
 const EXECUTION_START_INPUT_KEYS = ['projectId', 'featureIds', 'budget', 'previewDigest', 'retryBatchId', 'commandId'] as const;
 const EXECUTION_BUDGET_REVISE_INPUT_KEYS = ['projectId', 'batchId', 'expectedRevision', 'budget', 'reason', 'commandId'] as const;
+const CONTROL_EXECUTION_INPUT_KEYS = ['projectId', 'runId', 'batchId', 'expectedRevision', 'commandId'] as const;
+const RETRY_FINAL_EXECUTION_INPUT_KEYS = ['projectId', 'featureId', 'historicalRunId', 'workKey', 'commandId'] as const;
 const BUDGET_REVISION_LIST_INPUT_KEYS = ['limit', 'cursor'] as const;
 
 function requireFeatureIds(operation: HostOperation, value: unknown): string[] {
@@ -1255,6 +1305,43 @@ function requireStableIdInput(operation: HostOperation, value: unknown, field: s
     throw invalidInput(operation, 'invalid_stable_id', field);
   }
   return value;
+}
+
+/** Run/Batch 控制目标身份（Core 要求 UUID v4；客户端在任何请求前拒绝任意字符串）。 */
+function requireUuidInput(operation: HostOperation, value: unknown, field: string): string {
+  if (typeof value !== 'string' || !isUuidV4(value)) {
+    throw invalidInput(operation, 'invalid_uuid', field);
+  }
+  return value;
+}
+
+function controlExecutionPayload(
+  operation: HostOperation,
+  input: unknown,
+): {
+  readonly projectId: string;
+  readonly expectedRevision: number;
+  readonly commandId?: string;
+  readonly payload: { readonly runId: string | null; readonly batchId: string | null };
+} {
+  const object = rejectUnknownInputKeys(operation, input, CONTROL_EXECUTION_INPUT_KEYS);
+  const projectId = requireProjectId(operation, object.projectId as string);
+  const expectedRevision = requireExpectedRevisionInput(operation, object.expectedRevision);
+  const hasRun = object.runId !== undefined && object.runId !== null;
+  const hasBatch = object.batchId !== undefined && object.batchId !== null;
+  if (hasRun === hasBatch) {
+    throw invalidInput(operation, 'invalid_control_target', 'runId' );
+  }
+  const commandIdInput = optionalCommandIdInput(operation, object.commandId);
+  return {
+    projectId,
+    expectedRevision,
+    ...commandIdInput,
+    payload: {
+      runId: hasRun ? requireUuidInput(operation, object.runId, 'runId') : null,
+      batchId: hasBatch ? requireUuidInput(operation, object.batchId, 'batchId') : null,
+    },
+  };
 }
 
 function requireExpectedRevisionInput(operation: HostOperation, value: unknown): number {
@@ -3007,6 +3094,127 @@ export function createHostClientApplication(context: AppClientContext): HostClie
       return submitCommand({ ...optionalCommandIdInput('commands.submit', object.commandId), operation: 'execution.attempt.cancel',
         scope: { kind: 'project', projectId: requireProjectId('commands.submit', object.projectId as string) },
         payload: { attemptId: requireStableIdInput('commands.submit', object.attemptId, 'attemptId') } }, options);
+    },
+
+    /* ------------------------------------------------------------ *
+     * P03-9 / F-014 Run/Batch 控制命令（经既有信封/回执/幂等命令面）
+     * ------------------------------------------------------------ */
+
+    async pauseExecution(input: ControlExecutionInput, options?: SubmitCommandOptions): Promise<CommandReceipt> {
+      const target = controlExecutionPayload('commands.submit', input);
+      return submitCommand(
+        {
+          ...(target.commandId === undefined ? {} : { commandId: target.commandId }),
+          operation: 'execution.pause',
+          scope: { kind: 'project', projectId: target.projectId },
+          expectedRevision: target.expectedRevision,
+          payload: target.payload,
+        },
+        options,
+      );
+    },
+
+    async cancelExecution(input: ControlExecutionInput, options?: SubmitCommandOptions): Promise<CommandReceipt> {
+      const target = controlExecutionPayload('commands.submit', input);
+      return submitCommand(
+        {
+          ...(target.commandId === undefined ? {} : { commandId: target.commandId }),
+          operation: 'execution.cancel',
+          scope: { kind: 'project', projectId: target.projectId },
+          expectedRevision: target.expectedRevision,
+          payload: target.payload,
+        },
+        options,
+      );
+    },
+
+    async resumeExecution(input: ControlExecutionInput, options?: SubmitCommandOptions): Promise<CommandReceipt> {
+      const target = controlExecutionPayload('commands.submit', input);
+      return submitCommand(
+        {
+          ...(target.commandId === undefined ? {} : { commandId: target.commandId }),
+          operation: 'execution.resume',
+          scope: { kind: 'project', projectId: target.projectId },
+          expectedRevision: target.expectedRevision,
+          payload: target.payload,
+        },
+        options,
+      );
+    },
+
+    async retryFinalExecution(
+      input: RetryFinalExecutionInput,
+      options?: SubmitCommandOptions,
+    ): Promise<CommandReceipt> {
+      const object = rejectUnknownInputKeys('commands.submit', input, RETRY_FINAL_EXECUTION_INPUT_KEYS);
+      const projectId = requireProjectId('commands.submit', object.projectId as string);
+      const featureId = requireStableIdInput('commands.submit', object.featureId, 'featureId');
+      const historicalRunId = requireStableIdInput(
+        'commands.submit',
+        object.historicalRunId,
+        'historicalRunId',
+      );
+      if (
+        typeof object.workKey !== 'string' ||
+        object.workKey.length === 0 ||
+        object.workKey.length > 256
+      ) {
+        throw invalidInput('commands.submit', 'invalid_work_key', 'workKey');
+      }
+      return submitCommand(
+        {
+          ...optionalCommandIdInput('commands.submit', object.commandId),
+          operation: 'execution.retryFinal',
+          scope: { kind: 'project', projectId },
+          payload: { featureId, historicalRunId, workKey: object.workKey },
+        },
+        options,
+      );
+    },
+
+    async getRunControl(projectId: string, runId: string): Promise<RunControlDetailResult> {
+      context.assertOpen('execution.run.control.get');
+      const project = requireProjectId('execution.run.control.get', projectId);
+      const run = requireStableIdInput('execution.run.control.get', runId, 'runId');
+      const json = await getJson(
+        'execution.run.control.get',
+        `${RUNS_ROUTE_PREFIX}${run}/${RUN_CONTROL_ROUTE_SUFFIX}?projectId=${encodeURIComponent(project)}`,
+      );
+      const result = validateAppQueryResponse('execution.run.control.get', json);
+      if (result.run.runId !== run || result.run.batchId !== result.batch.batchId) {
+        throw new HostProtocolError('response_malformed', 'execution.run.control.get', '控制响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
+      }
+      return result;
+    },
+
+    async getBatchControl(projectId: string, batchId: string): Promise<BatchControlDetailResult> {
+      context.assertOpen('execution.batch.control.get');
+      const project = requireProjectId('execution.batch.control.get', projectId);
+      const batch = requireStableIdInput('execution.batch.control.get', batchId, 'batchId');
+      const json = await getJson(
+        'execution.batch.control.get',
+        `${BATCHES_ROUTE_PREFIX}${batch}/${BATCH_CONTROL_ROUTE_SUFFIX}?projectId=${encodeURIComponent(project)}`,
+      );
+      const result = validateAppQueryResponse('execution.batch.control.get', json);
+      if (result.batch.batchId !== batch || result.runs.records.some(run => run.batchId !== batch)) {
+        throw new HostProtocolError('response_malformed', 'execution.batch.control.get', '控制响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
+      }
+      return result;
+    },
+
+    async getRunRecovery(projectId: string, runId: string): Promise<RunRecoveryDetailResult> {
+      context.assertOpen('execution.run.recovery.get');
+      const project = requireProjectId('execution.run.recovery.get', projectId);
+      const run = requireStableIdInput('execution.run.recovery.get', runId, 'runId');
+      const json = await getJson(
+        'execution.run.recovery.get',
+        `${RUNS_ROUTE_PREFIX}${run}/${RUN_RECOVERY_ROUTE_SUFFIX}?projectId=${encodeURIComponent(project)}`,
+      );
+      const result = validateAppQueryResponse('execution.run.recovery.get', json);
+      if (result.run.runId !== run || result.budget.batchId !== result.run.batchId) {
+        throw new HostProtocolError('response_malformed', 'execution.run.recovery.get', '恢复响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
+      }
+      return result;
     },
 
     async getRunScheduleStatus(projectId: string, runId: string): Promise<RunScheduleStatusResult> {

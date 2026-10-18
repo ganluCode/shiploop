@@ -131,7 +131,11 @@ export type { ContextTokenEstimate } from './ports/context-build.js';
 export { validateExecutionBudgetProposal } from './ports/execution-budget.js';
 export type { ExecutionBudgetProposal } from './ports/execution-budget.js';
 export type { ExecutionPreviewResult } from './ports/execution-preview.js';
-export { EXECUTION_BATCH_STATUSES } from './ports/execution-store.js';
+export {
+  EXECUTION_BATCH_STATUSES,
+  EXECUTION_RUN_STATUSES,
+  EXECUTION_STOP_OPERATION_STATUSES,
+} from './ports/execution-store.js';
 export { FEATURE_PLAN_STATUSES, FEATURE_STATUSES, TASK_STATUSES } from './ports/plan-store.js';
 export type { ExecutionInputOrigin, ExecutionInputRef } from './ports/execution-input.js';
 export {
@@ -289,10 +293,15 @@ export type {
 // 面：操作身份、显式后续动作冻结词汇与公开形状（服务端负责授权）。
 export {
   EXECUTION_BATCH_CONTROL_GET_OPERATION,
+  EXECUTION_CONTROL_ATTEMPTS_MAX,
   EXECUTION_CONTROL_NEXT_ACTIONS,
   EXECUTION_CONTROL_QUERY_OPERATIONS,
+  EXECUTION_CONTROL_RUNS_MAX,
+  EXECUTION_CONTROL_STOP_OPERATIONS_MAX,
+  EXECUTION_RECOVERY_CONTINUATIONS_MAX,
   EXECUTION_RUN_CONTROL_GET_OPERATION,
   EXECUTION_RUN_RECOVERY_GET_OPERATION,
+  validateRunFinalizationScope,
 } from './ports/execution-control-query.js';
 export type {
   BatchControlDetailResult,

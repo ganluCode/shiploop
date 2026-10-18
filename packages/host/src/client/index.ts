@@ -61,6 +61,8 @@ export type {
   ListWorkspaceOperationsInput,
   PreviewWorkspaceDiscardInput,
   ConfirmWorkspaceDiscardInput,
+  ControlExecutionInput,
+  RetryFinalExecutionInput,
 } from './app-client.js';
 export {
   validateAppQueryResponse,
@@ -90,6 +92,9 @@ export {
   validateWorkspaceDiscardPreviewWire,
   validateWorkspaceDiscardConfirmResultWire,
   validateFeatureDeliveryCommandResultWire,
+  validateRunControlDetailResultWire,
+  validateBatchControlDetailResultWire,
+  validateRunRecoveryDetailResultWire,
 } from './app-wire.js';
 export type {
   AppQueryOperation,
@@ -131,4 +136,7 @@ export type {
   PublicGitOperationRecord,
   FeatureDeliveryDetailResult,
   FeatureDeliveryCommandResult,
+  RunControlDetailResult,
+  BatchControlDetailResult,
+  RunRecoveryDetailResult,
 } from './app-wire.js';
