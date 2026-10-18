@@ -124,6 +124,7 @@ import type { GitPublicMetadataLock } from '../ports/git-public-metadata-lock.js
 import { createRuntimeRecoveryService } from '../application/runtime-recovery.js';
 import type { RuntimeRecoveryService } from '../application/runtime-recovery.js';
 import { createStaticRuntimeRecoveryCatalog } from '../ports/runtime-recovery-catalog.js';
+import type { RuntimeRecoveryCatalog } from '../ports/runtime-recovery-catalog.js';
 import type { RuntimeRecoveryCapabilities } from '../ports/runtime-recovery.js';
 import type { RuntimeRecoverySourceReader } from '../ports/runtime-recovery-source.js';
 import type { RuntimeCapabilityCatalog } from '../ports/runtime-capabilities.js';
@@ -245,6 +246,8 @@ export interface CoreApplication {
    * scheduler_not_assembled 可查询原因，runtime_starts 恒为 0）。
    */
   readonly runtimeRecovery: RuntimeRecoveryService;
+  /** Trusted capability evidence catalog used by Work input binding decisions. */
+  readonly runtimeRecoveryCatalog: RuntimeRecoveryCatalog;
   readonly executionStart: ExecutionStartPort;
   readonly commandReceiptsService: CommandReceiptsService;
   /** F-010：授权查询/一致读视图快照水位/分页事件读取（§7/§8/§9.3）。 */
@@ -810,7 +813,8 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     };
     const workExecution = assembleWorkExecution({ session,
       application: { dataRoot: basePathService.dataRoot(), artifactStore, artifactFileStore, stateStore,
-        configurationService, workWorkspaceAuthority, taskClaims, workspacePreparation, executionInputPrepare },
+        configurationService, workWorkspaceAuthority, taskClaims, workspacePreparation, executionInputPrepare,
+        runtimeRecovery, runtimeRecoveryCatalog: recoveryCatalog },
       capabilityCatalog, runtimeFactory: object.workRuntimeFactory as WorkRuntimeFactory | undefined, nowUtcMs, readReworkScene, startupRecovery });
     // P03-9 / F-003：Verifier 停止登记与取消提交后的停止控制。Runtime 停止复用
     // WorkExecution.cancel 的既有受监督命令路径；Verifier 使用同一 CommandProcess
@@ -992,6 +996,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       executionPreview,
       executionStart,
       runtimeRecovery,
+      runtimeRecoveryCatalog: recoveryCatalog,
       queryService,
       onboardingService,
       baselineStore,

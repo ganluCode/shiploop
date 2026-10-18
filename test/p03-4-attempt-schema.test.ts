@@ -275,7 +275,7 @@ describe('P03-4 F-001 persistent execution model', () => {
         db.prepare('UPDATE projects SET repository_binding_id = ? WHERE id = ?').run(binding.repository_binding_id, f.box.projectId);
       });
       const before = Object.fromEntries(tables.map(table => [table, predecessor.database.prepare(`SELECT * FROM ${table} ORDER BY id`).all()]));
-      expect((await migrateSqliteStorage(predecessor)).appliedVersions).toEqual([14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28]);
+      expect((await migrateSqliteStorage(predecessor)).appliedVersions).toEqual([14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29]);
       for (const table of tables) {
         const after = predecessor.database.prepare(`SELECT * FROM ${table} ORDER BY id`).all() as Record<string, unknown>[];
         if (table === 'features') {
@@ -343,7 +343,7 @@ describe('P03-4 F-001 persistent execution model', () => {
         tableNames.map((table) => [table, predecessor.database.prepare(`SELECT * FROM ${table}`).all()]),
       );
       // v24/v25 重建 attempts：历史行逐行保留，子表外键在提交时核验通过。
-      expect((await migrateSqliteStorage(predecessor)).appliedVersions).toEqual([24, 25, 26, 27, 28]);
+      expect((await migrateSqliteStorage(predecessor)).appliedVersions).toEqual([24, 25, 26, 27, 28, 29]);
       for (const table of tableNames) {
         const after = predecessor.database.prepare(`SELECT * FROM ${table}`).all() as Record<string, unknown>[];
         if (table === 'features') {

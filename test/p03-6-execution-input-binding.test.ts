@@ -80,15 +80,16 @@ function insertOldSucceededAttempt(
   fixture: BindingFixture,
   bound: BoundAttempt,
   attemptId: string,
+  number = 90,
 ): void {
   fixture.session.database.prepare(
     `INSERT INTO attempts (id, created_at, updated_at, project_id, feature_id, run_id, task_id,
       number, owner_id, host_instance_id, execution_version, lease_until, input_snapshot, input_digest,
       input_ref, status, execution_stage, started_at, ended_at, duration_ms, exit_code)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 90, 'owner-1', 'host-1', 1, ?, ?, ?, ?, 'succeeded', 'commit', ?, ?, 5, 0)`,
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'owner-1', 'host-1', 1, ?, ?, ?, ?, 'succeeded', 'commit', ?, ?, 5, 0)`,
   ).run(
     attemptId, 1_900_000_000_000, 1_900_000_000_000, fixture.projectId, fixture.featureId,
-    fixture.runId, bound.taskId, 1_900_000_000_000,
+    fixture.runId, bound.taskId, number, 1_900_000_000_000,
     JSON.stringify(bound.inputSnapshot), bound.inputSnapshot.digests.snapshotDigest,
     bound.inputSnapshot.group.snapshot.artifactId, 1_900_000_000_000, 1_900_000_000_001,
   );
@@ -605,6 +606,38 @@ describe('P03-6 / F-002 不可变执行输入绑定', () => {
       decision: 'new',
       reasons: ['capabilities:unverified'],
     });
+  });
+
+  it('new 不能绕过旧 Attempt 仍持有的工作区占用', async () => {
+    const fixture = await setup();
+    const bound = fixture.claimAndLaunch('t-1');
+    insertOldSucceededAttempt(fixture, bound, 'attempt-old-1');
+    fixture.session.database.prepare(
+      `INSERT INTO workspace_leases (id, created_at, project_id, revision, updated_at, resource_key,
+        resource_kind, owner_kind, owner_id, host_instance_id, execution_version, state, lease_until, process_identity)
+       VALUES ('lease-old-1', ?, ?, 1, ?, 'legacy-workspace', 'workspace', 'attempt', 'attempt-old-1',
+         'host-1', 1, 'quarantined', ?, NULL)`,
+    ).run(1_900_000_000_000, fixture.projectId, 1_900_000_000_000, 1_900_000_000_100);
+    await expectRejection(fixture, fixture.bindingInput(bound),
+      { kind: 'recovery', reason: 'source_occupancy_unresolved' });
+  });
+
+  it('恢复来源必须是同 Task 的直接上一 Attempt', async () => {
+    const fixture = await setup();
+    const bound = fixture.claimAndLaunch('t-1');
+    insertOldSucceededAttempt(fixture, bound, 'attempt-old-1', 89);
+    insertOldSucceededAttempt(fixture, bound, 'attempt-old-2', 90);
+    const archive = await publishReadyArtifact(fixture, {
+      kind: 'native-archive', locator: 'native/old-session.json', content: '{"session":"old"}',
+    });
+    await expectRejection(
+      fixture,
+      fixture.bindingInput(bound, {
+        recovery: { mode: 'auto', kind: 'conversation',
+          source: recoverySource(fixture, bound, archive, { sourceAttemptId: 'attempt-old-1' }) },
+      }),
+      { kind: 'recovery', reason: 'recovery_source_invalid' },
+    );
   });
 
   it('Fake 声明不支持原生续接时 auto 降级记录能力原因、required 明确拒绝', async () => {

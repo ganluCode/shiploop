@@ -72,12 +72,16 @@ import type {
   RuntimeRecoveryDecision,
   RuntimeRecoverySelection,
 } from './runtime-recovery.js';
+import { validateWorkRecoveryContinuationRecord } from './work-recovery-continuation.js';
+import type { WorkRecoveryContinuationRecord } from './work-recovery-continuation.js';
 
 /**
  * 输入快照 / manifest / prompt 共同携带的 schema 版本（整数递增）。
  * v2：新增可选 rework 同 Task 返工输入与返工 manifest 来源类别（F-011）。
  * v3：新增可选 deliveryPolicy（P03-8 / F-001 交付政策固定）与对应 manifest
  *     来源类别；未提供该键的旧输入仍按原形态构建（不携带该字段）。
+ * P03-9 / F-007 以 v3 兼容的可选 `recovery` 字段追加同 Task 续接记录
+ * （auto/new/required 决策与来源快照）；未提供该键的旧输入逐字节不变。
  */
 export const CONTEXT_INPUT_SCHEMA_VERSION = 3;
 
@@ -291,6 +295,8 @@ export interface ContextBuildInput {
   readonly historyIndex?: ContextHistoryIndexInput | null;
   /** 可选同 Task 返工输入（F-011；缺省即普通首次构建）。 */
   readonly rework?: ContextReworkInput | null;
+  /** P03-9 / F-007：可选同 Task 续接记录（auto/new/required 决策和来源快照）。 */
+  readonly recovery?: WorkRecoveryContinuationRecord | null;
 }
 
 /* ------------------------------------------------------------------ *
@@ -442,6 +448,8 @@ export interface ContextInputSnapshot {
   readonly historyIndex: ContextSelectedHistoryIndex | null;
   /** 同 Task 返工输入（普通构建为 null；返工构建为已校验的完整返工身份）。 */
   readonly rework: ContextReworkInput | null;
+  /** P03-9 / F-007：同 Task 续接决策与来源快照（普通构建不携带该键）。 */
+  readonly recovery?: WorkRecoveryContinuationRecord;
 }
 
 /** 确定性摘要组（SHA-256 64hex；业务投影规范化，labels 不参与）。 */
@@ -501,6 +509,7 @@ const BUILD_INPUT_KEYS = [
   'requiredInputs',
   'historyIndex',
   'rework',
+  'recovery',
 ] as const;
 
 const REWORK_KEYS = [
@@ -1063,6 +1072,21 @@ function validateContextBuildInputInner(value: unknown): ContextBuildInput {
     object.rework === undefined || object.rework === null
       ? undefined
       : validateRework(object.rework, 'input.rework', { projectId, taskId });
+  const recovery =
+    object.recovery === undefined || object.recovery === null
+      ? undefined
+      : validateWorkRecoveryContinuationRecord(object.recovery, { projectId, taskId });
+  if (recovery !== undefined) {
+    for (const required of recovery.requiredInputs) {
+      const present = requiredInputs.some((ref) => ref.artifactId === required.artifactId &&
+        ref.version === required.version && ref.contentHash === required.contentHash &&
+        ref.sizeBytes === required.sizeBytes && ref.locator === required.locator);
+      if (!present) {
+        throw contextError('missing_required_input', 'input.requiredInputs',
+          `续接记录引用 ${required.artifactId} 必须同时列入本次必需输入`);
+      }
+    }
+  }
   return {
     projectId,
     featureId,
@@ -1076,6 +1100,7 @@ function validateContextBuildInputInner(value: unknown): ContextBuildInput {
       ? { historyIndex }
       : {}),
     ...(rework !== undefined ? { rework } : {}),
+    ...(recovery !== undefined ? { recovery } : {}),
   };
 }
 

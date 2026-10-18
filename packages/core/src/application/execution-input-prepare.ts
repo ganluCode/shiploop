@@ -85,6 +85,8 @@ import type { ValidationContext } from '../ports/validation.js';
 import { isExecutionInputError } from './execution-input.js';
 import type { ExecutionInputService } from './execution-input.js';
 import { isContextBuildError, validateContextReworkInput } from '../ports/context-build.js';
+import { validateWorkRecoveryContinuationRecord } from '../ports/work-recovery-continuation.js';
+import type { WorkRecoveryContinuationRecord } from '../ports/work-recovery-continuation.js';
 import type { ContextBuilder } from './context-build.js';
 import {
   resolveCurrentCheckPolicyDigest,
@@ -380,6 +382,24 @@ export function createExecutionInputPrepareService(
         }
       }
 
+      /* P03-9 / F-007：同 Task 续接记录同样只由受信路径构造，入口重验。 */
+      let recoveryInput: WorkRecoveryContinuationRecord | undefined;
+      const rawRecovery = (payload as TrustedExecutionInputPreparePayload).recovery;
+      if (rawRecovery !== undefined && rawRecovery !== null) {
+        try {
+          recoveryInput = validateWorkRecoveryContinuationRecord(rawRecovery, {
+            projectId,
+            taskId: payload.taskId,
+          });
+        } catch (cause) {
+          throw publicError('invalid_input', 'recovery_validation', {
+            field: cause instanceof Error && 'details' in cause
+              ? (cause.details as { field?: string }).field
+              : undefined,
+          }, cause);
+        }
+      }
+
       /* 阶段 1：一致读视图捕获（单一 DEFERRED 读事务）。 */
       let view;
       try {
@@ -513,6 +533,7 @@ export function createExecutionInputPrepareService(
           permissions: { grants: [...permissionsFace.grants] },
           requiredInputs: captured.refs,
           ...(reworkInput !== undefined ? { rework: reworkInput } : {}),
+          ...(recoveryInput !== undefined ? { recovery: recoveryInput } : {}),
         });
       } catch (cause) {
         throw mapContextBuildFailure(cause);
@@ -562,6 +583,7 @@ export function createExecutionInputPrepareService(
         ...(built.inputSnapshot.rework !== null && built.inputSnapshot.rework !== undefined
           ? { rework: built.inputSnapshot.rework }
           : {}),
+        ...(built.inputSnapshot.recovery !== undefined ? { recovery: built.inputSnapshot.recovery } : {}),
       };
     },
   };

@@ -5,7 +5,8 @@
   执行输入准备编排与 snapshot/manifest/prompt 制品组属 F-006，Host/CLI 接线属
   F-007/F-008（本项不实现）。P03-7 / F-011 扩展可选同 Task 返工输入（见 §7），
   schemaVersion 升至 2；P03-8 / F-001 扩展可选交付政策固定（见 §8），
-  schemaVersion 升至 3。
+  schemaVersion 升至 3；P03-9 / F-007 以 v3 兼容的可选同 Task 续接记录
+  扩展（见 §9，未提供该键的旧输入逐字节不变）。
 - 实现入口：`packages/core/src/ports/context-build.ts`（输入/输出契约、
   `CONTEXT_FIXED_GUIDANCE` 固定指导常量、`validateContextBuildInput` 纯校验与
   `ContextBuildError`）、`packages/core/src/application/context-build.ts`
@@ -161,3 +162,27 @@ sha256、`copy` 可选有界普通 JSON 对象，上限
   `deliveryPolicy` 键的输入构建产物不携带该字段（v2 历史形态兼容）；
   Attempt 持久快照读取接受 v1/v2 历史快照与当前版本（rework 要求
   schemaVersion ≥ 2），未知版本明确拒绝。
+
+
+## 9. 同 Task 续接记录扩展（P03-9 / F-007，schemaVersion 3 兼容追加）
+
+可选 `recovery` 输入字段（`WorkRecoveryContinuationRecord`，由
+`application/work-recovery-continuation.ts` 在核对直接上一 Attempt、停止/占用、
+恢复现场、当前输入/策略与 P03-3A 能力后发布）：
+
+- **固定内容**：请求模式（auto/new/required × conversation/checkpoint）、实际
+  决策与原因、来源 Attempt/Session、来源 Artifact/检查点身份、当前完整策略副本
+  （executionConfig/configSource/configSourceKey、权限与检查政策摘要）、工作区
+  身份、恢复现场证据引用与必需输入引用；
+- **安全新 Session 交接**：`handoff` 只携带上一 Attempt 状态/阶段/结束时间/
+  诊断引用与必需输入引用；不内联完整原生历史，不重置预算，不启动 Runtime；
+- **能力语义**：沿用 P03-3A conversation/checkpoint 与 nativeHistory/
+  conversationResume/executionRecovery/modelSwitchOnResume/nativeFork；auto 降级
+  显式记录原因，required 未支持明确拒绝，不伪造支持；
+- **manifest**：新增 `recovery-continuation:<nextAttemptId>` 来源（kind
+  `recovery-record`），required=true、永不截断；prompt 增加精简恢复交接与
+  必需输入段落；
+- **版本兼容**：snapshot/manifest/prompt 保持 schemaVersion 3；未提供
+  `recovery` 的输入不携带该字段且摘要/字节不变（v1/v2/v3 历史形态兼容）；
+  Attempt 持久快照读取接受 v1/v2/v3 历史快照与当前版本。该字段是 v3 内的
+  可选追加，复用既有 `recovery-record` manifest 类别，不新增强制类别。

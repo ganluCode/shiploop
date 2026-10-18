@@ -264,6 +264,7 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
     }
 
     const rework = validated.rework ?? null;
+    const recovery = validated.recovery ?? null;
 
     /* 3) 必需正文预算：snapshot 业务投影（不含 labels 与历史索引）规范化字节。
           返工身份/证据引用属必需内容，同一预算约束（超限整体失败，不截断）。 */
@@ -287,6 +288,7 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
       permissions: validated.permissions,
       requiredInputs: validated.requiredInputs,
       ...(rework === null ? {} : { rework }),
+      ...(recovery === null ? {} : { recovery }),
     };
     const requiredBytes = utf8Bytes(stableStringify(requiredSnapshot));
     if (requiredBytes > budget.maxRequiredSnapshotBytes) {
@@ -397,6 +399,28 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
       );
       parts.push('');
     }
+    const recovery = validated.recovery ?? null;
+    if (recovery !== null) {
+      parts.push('## Recovery continuation (same Task; compact handoff; native history not inlined)');
+      parts.push(`- nextAttemptId: ${recovery.nextAttemptId}`);
+      parts.push(`- requested: mode ${recovery.selection.mode}${recovery.selection.mode === 'new' ? '' : ` kind ${recovery.selection.kind}`}`);
+      parts.push(`- decision: mode ${recovery.decision.mode}${recovery.decision.mode === 'resume' ? ` kind ${recovery.decision.kind}` : ''} reasons: ${recovery.decision.reasons.length === 0 ? '(none)' : recovery.decision.reasons.join(', ')}`);
+      parts.push(`- sourceAttemptId: ${recovery.sourceAttemptId ?? '(none)'}`);
+      parts.push(`- sourceSessionId: ${recovery.sourceSessionId ?? '(none)'}`);
+      parts.push(`- workspace: ${recovery.workspace.workspaceId} ${recovery.workspace.repositoryIdentity} branch ${recovery.workspace.branch}`);
+      parts.push(`- codeDigest: sha256:${recovery.workspace.codeDigest}`);
+      parts.push(`- policy: ${stableStringify(recovery.policy.executionConfig)} (source ${recovery.policy.configSource}${recovery.policy.configSourceKey === null ? '' : `; key ${recovery.policy.configSourceKey}`})`);
+      if (recovery.handoff !== null) {
+        parts.push(`- previous: ${recovery.handoff.previousAttemptId} status ${recovery.handoff.previousStatus} stage ${recovery.handoff.previousExecutionStage}`);
+        parts.push(`- previous endedAtUtcMs: ${recovery.handoff.previousEndedAtUtcMs ?? '(unknown)'}; diagnostic: ${recovery.handoff.previousDiagnosticRef ?? '(none)'}`);
+        parts.push(`- handoff: ${recovery.handoff.note}`);
+      }
+      parts.push('## Recovery required inputs (must read each via reference and verify hash; bodies not inlined)');
+      for (const ref of recovery.requiredInputs) {
+        parts.push(`- ${ref.purpose}: artifact ${ref.artifactId} v${ref.version} sha256:${ref.contentHash} size ${ref.sizeBytes}B media ${ref.mediaType} locator ${ref.locator} ${renderOrigin(ref.origin)}`);
+      }
+      parts.push('');
+    }
     parts.push('## Task');
     parts.push(`- taskId: ${validated.taskId}`);
     parts.push(`- projectId: ${validated.projectId}`);
@@ -496,6 +520,7 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
     prompt: string,
   ): ContextBuildResult {
     const rework = validated.rework ?? null;
+    const recovery = validated.recovery ?? null;
     const snapshotBusiness = {
       schemaVersion: CONTEXT_INPUT_SCHEMA_VERSION,
       projectId: validated.projectId,
@@ -517,6 +542,7 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
       requiredInputs: validated.requiredInputs,
       ...(historyIndex === null ? {} : { historyIndex }),
       ...(rework === null ? {} : { rework }),
+      ...(recovery === null ? {} : { recovery }),
     };
     const inputSnapshot: ContextInputSnapshot = {
       schemaVersion: CONTEXT_INPUT_SCHEMA_VERSION,
@@ -540,6 +566,7 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
       requiredInputs: validated.requiredInputs,
       historyIndex,
       rework,
+      ...(recovery === null ? {} : { recovery }),
     };
 
     const promptDigest = digestOf(CONTEXT_PROMPT_DIGEST_DOMAIN, prompt);
@@ -774,6 +801,26 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
         selection: 'full',
         required: true,
         reason: '本次恢复来源与模式记录（复用 P03-3A 决策；只记录，不重新决策、不实现原生续接）',
+        truncated: false,
+      });
+    }
+    if (validated.recovery !== undefined && validated.recovery !== null) {
+      const recovery = validated.recovery;
+      sources.push({
+        sourceId: `recovery-continuation:${recovery.nextAttemptId}`,
+        kind: 'recovery-record',
+        identity: {
+          nextAttemptId: recovery.nextAttemptId,
+          sourceAttemptId: recovery.sourceAttemptId ?? 'none',
+          selectionMode: recovery.selection.mode,
+          decisionMode: recovery.decision.mode,
+        },
+        version: recovery.schemaVersion,
+        hash: digestOf(CONTEXT_SNAPSHOT_DIGEST_DOMAIN, stableStringify(recovery)),
+        purpose: 'same-task-recovery-continuation',
+        selection: 'full-record',
+        required: true,
+        reason: '同 Task 续接请求模式、实际决策、来源 Attempt/Session 与当前完整策略（只记录，不实现原生续接）',
         truncated: false,
       });
     }

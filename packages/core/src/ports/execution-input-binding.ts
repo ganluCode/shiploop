@@ -132,6 +132,10 @@ export const EXECUTION_INPUT_BINDING_REASONS = [
   'attempt_not_current',
   /** 同 Task 另有未停止（活动状态）Attempt，一律拒绝重叠。 */
   'overlap_active_attempt',
+  /** 同 Task 旧 Attempt 仍持有/隔离工作区占用；new 不得绕过。 */
+  'source_occupancy_unresolved',
+  /** 输入快照记录的续接决策与当前请求/能力不一致（禁止静默沿用旧模型或旧决定）。 */
+  'recovery_decision_changed',
   /** Attempt 已绑定的 Session 与请求 sessionId 冲突。 */
   'session_conflict',
   /** 工作区令牌/占用归属/realpath 复核失败（含目录替换与符号链接越界）。 */

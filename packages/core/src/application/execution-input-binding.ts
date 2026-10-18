@@ -313,6 +313,42 @@ export function createExecutionInputBindingService(
         details: { activeAttemptId: overlapping.id },
       });
     }
+    /* P03-9 / F-007：旧 Attempt 的隔离/未释放占用不能被 new 绕过。 */
+    const priorAttemptIds = new Set(taskAttempts.filter((candidate) => candidate.id !== attempt.id)
+      .map((candidate) => candidate.id));
+    const lingeringLeases = deps.attempts.listWorkspaceLeases(projectId)
+      .filter((lease) => priorAttemptIds.has(lease.owner) &&
+        (lease.state === 'held' || lease.state === 'quarantined'));
+    if (lingeringLeases.length > 0) {
+      return reject('recovery', 'source_occupancy_unresolved', '同 Task 旧 Attempt 仍持有或隔离工作区占用（new 不能绕过）', {
+        details: { owners: lingeringLeases.map((lease) => lease.owner) },
+      });
+    }
+    const requestedRecovery = validated.recovery;
+    if (requestedRecovery.mode !== 'new' && requestedRecovery.source !== undefined) {
+      const source = requestedRecovery.source;
+      if (source.purpose !== 'work') {
+        return reject('recovery', 'recovery_source_invalid', 'Work 续接不接受 Chat 恢复来源');
+      }
+      const prior = taskAttempts.filter((candidate) => candidate.id !== attempt.id)
+        .sort((left, right) => left.number - right.number);
+      const latest = prior[prior.length - 1];
+      if (latest === undefined || latest.id !== source.sourceAttemptId) {
+        return reject('recovery', 'recovery_source_invalid', '恢复来源不是同 Task 的直接上一 Attempt', {
+          details: { sourceAttemptId: source.sourceAttemptId },
+        });
+      }
+      if (latest.sessionId !== null && latest.sessionId !== source.sourceSessionId) {
+        return reject('recovery', 'recovery_source_invalid', '恢复来源 Session 与来源 Attempt 不一致');
+      }
+    }
+    const recordedRecovery = attempt.inputSnapshot.recovery;
+    if (recordedRecovery !== undefined) {
+      if (recordedRecovery.nextAttemptId !== attempt.id ||
+          stableStringify(recordedRecovery.selection) !== stableStringify(requestedRecovery)) {
+        return reject('recovery', 'recovery_decision_changed', '输入快照记录的续接选择与当前请求不一致');
+      }
+    }
 
     /* ---- 4. 占用归属 + 工作区 realpath 复核 + cwd 推导 ---- */
     const identity = {
@@ -714,6 +750,18 @@ export function createExecutionInputBindingService(
           });
         }
         const purpose = label === '原生归档' ? 'recovery-archive' : 'recovery-checkpoint';
+        /* F-007：续接记录已把来源归档/检查点列入必需输入并实际读取时，不重复
+         * 绑定同一 artifactId；仍复核摘要并要求已读取证据。 */
+        const existing = boundInputs.find((candidate) => candidate.artifactId === artifactId);
+        if (existing !== undefined) {
+          if (expectedDigest !== null && existing.contentHash !== expectedDigest) {
+            return reject('recovery', 'recovery_source_invalid', `恢复来源${label}摘要与必需输入不一致`);
+          }
+          if (!reads.some((read) => read.artifactId === artifactId && read.outcome === 'read')) {
+            return reject('recovery', 'recovery_source_invalid', `恢复来源${label}缺少实际读取证据`);
+          }
+          return;
+        }
         if (purposes.has(purpose)) {
           return reject('recovery', 'recovery_source_invalid', '恢复来源用途与必需输入冲突');
         }
@@ -791,6 +839,12 @@ export function createExecutionInputBindingService(
         recoveryRecord = { ...recoveryRecord, decision: 'rejected', reasons: ['source_authorization_failed'] };
         return reject('recovery', 'recovery_source_invalid', '恢复来源授权预检未通过', { cause });
       }
+    }
+    if (recordedRecovery !== undefined &&
+        (recordedRecovery.decision.mode !== decision.mode ||
+         (decision.mode === 'resume' && recordedRecovery.decision.mode === 'resume' &&
+          recordedRecovery.decision.kind !== decision.kind))) {
+      return reject('recovery', 'recovery_decision_changed', '输入快照记录的实际续接决策与当前能力/授权不一致');
     }
     recoveryRecord = {
       ...recoveryRecord,

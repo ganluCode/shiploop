@@ -2,6 +2,8 @@ import { validateWorkProcessIdentity } from './work-resources.js';
 import type { CommandProcessIdentity } from './command-process.js';
 import type { PreparedExecutionInputGroup, ExecutionInputGroupBodyRef } from './execution-input-prepare.js';
 import { CONTEXT_INPUT_SUPPORTED_SCHEMA_VERSIONS, isContextBuildError, validateContextReworkInput, type ContextReworkInput } from './context-build.js';
+import { validateWorkRecoveryContinuationRecord } from './work-recovery-continuation.js';
+import type { WorkRecoveryContinuationRecord } from './work-recovery-continuation.js';
 import { validateExecutionInputRef } from './execution-input.js';
 import { EXECUTION_SNAPSHOT_MAX_BYTES } from './execution-store.js';
 import {
@@ -131,7 +133,7 @@ function bodyRef(value: unknown, field: string): ExecutionInputGroupBodyRef {
 /** Reuses the prepared input contract; no inline content, credential or arbitrary JSON fields. */
 export function validateAttemptInputSnapshot(value: unknown): PreparedExecutionInputGroup {
   const raw = object(value, ['schemaVersion', 'projectId', 'featureId', 'taskId', 'group', 'requiredInputs',
-    'digests', 'approval', 'taskRevision', 'promptBytes', 'tokenEstimate', 'preparedAtUtcMs', 'rework'], 'inputSnapshot');
+    'digests', 'approval', 'taskRevision', 'promptBytes', 'tokenEstimate', 'preparedAtUtcMs', 'rework', 'recovery'], 'inputSnapshot');
   // 历史快照不随 ContextBuilder 升版失效：v1/v2 历史快照与当前版本均可读回，未知版本拒绝。
   const snapshotSchemaVersion = raw.schemaVersion as number;
   if (!(CONTEXT_INPUT_SUPPORTED_SCHEMA_VERSIONS as readonly number[]).includes(snapshotSchemaVersion)) {
@@ -186,8 +188,26 @@ export function validateAttemptInputSnapshot(value: unknown): PreparedExecutionI
     }
   }
   const snapshot: PreparedExecutionInputGroup = rework === undefined ? result : { ...result, rework };
-  if (Buffer.byteLength(JSON.stringify(snapshot), 'utf8') > EXECUTION_SNAPSHOT_MAX_BYTES) throw validationError(context, 'inputSnapshot', 'limit_exceeded');
-  return snapshot;
+  let recovery: WorkRecoveryContinuationRecord | undefined;
+  if (raw.recovery !== undefined && raw.recovery !== null) {
+    if (snapshotSchemaVersion < 3) {
+      throw validationError(context, 'inputSnapshot.recovery', 'recovery_requires_context_v3');
+    }
+    try {
+      recovery = validateWorkRecoveryContinuationRecord(raw.recovery, { projectId, taskId: result.taskId });
+    } catch (error) {
+      throw validationError(context, 'inputSnapshot.recovery', 'invalid_recovery', (error as Error).message);
+    }
+    for (const required of recovery.requiredInputs) {
+      if (!requiredInputs.some((ref) => ref.artifactId === required.artifactId &&
+          ref.contentHash === required.contentHash && ref.version === required.version)) {
+        throw validationError(context, 'inputSnapshot.recovery.requiredInputs', 'required_reference_missing');
+      }
+    }
+  }
+  const complete = recovery === undefined ? snapshot : { ...snapshot, recovery };
+  if (Buffer.byteLength(JSON.stringify(complete), 'utf8') > EXECUTION_SNAPSHOT_MAX_BYTES) throw validationError(context, 'inputSnapshot', 'limit_exceeded');
+  return complete;
 }
 
 export function validateAttemptUsageSummary(value: unknown): AttemptUsageSummary | null {

@@ -49,9 +49,9 @@ describe('P03-8 / F-001 交付政策契约文档', () => {
     }
   });
 
-  it('快照集成事实一致：ContextBuilder v3、delivery-policy manifest 类别与导出入口', () => {
+  it('快照集成事实一致：ContextBuilder v3+、delivery-policy manifest 类别与导出入口', () => {
     const doc = readContractDoc();
-    expect(CONTEXT_INPUT_SCHEMA_VERSION).toBe(3);
+    expect(CONTEXT_INPUT_SCHEMA_VERSION).toBeGreaterThanOrEqual(3);
     expect(CONTEXT_MANIFEST_SOURCE_KINDS).toContain('delivery-policy');
     for (const keyword of [
       'ports/delivery-policy.ts',

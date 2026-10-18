@@ -232,6 +232,8 @@ export interface TrustedExecutionInputPreparePayload {
   readonly items: readonly Record<string, unknown>[];
   /** 可选同 Task 返工输入（F-011 契约；存在即生成返工快照）。 */
   readonly rework?: ContextReworkInput | null;
+  /** P03-9 / F-007：可选同 Task 续接决策与来源快照。 */
+  readonly recovery?: import('../ports/work-recovery-continuation.js').WorkRecoveryContinuationRecord | null;
 }
 
 /**
@@ -262,6 +264,8 @@ export interface PreparedExecutionInputGroup {
   readonly preparedAtUtcMs: number;
   /** F-012：同 Task 返工身份（仅返工构建携带；普通首次构建不包含该键）。 */
   readonly rework?: ContextReworkInput;
+  /** P03-9 / F-007：同 Task 续接记录（仅续接构建携带）。 */
+  readonly recovery?: import('../ports/work-recovery-continuation.js').WorkRecoveryContinuationRecord;
 }
 
 /* ------------------------------------------------------------------ *

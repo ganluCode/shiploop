@@ -52,7 +52,10 @@ export type WorkRuntimeFactory = (context: WorkRuntimeContext) => {
 export function assembleWorkExecution(options: {
   readonly session: SqliteStorageSession;
   readonly application: Pick<CoreApplication, 'dataRoot' | 'artifactStore' | 'artifactFileStore' | 'stateStore' |
-    'configurationService' | 'workWorkspaceAuthority' | 'taskClaims' | 'workspacePreparation' | 'executionInputPrepare'>;
+    'configurationService' | 'workWorkspaceAuthority' | 'taskClaims' | 'workspacePreparation' | 'executionInputPrepare'> & {
+      readonly runtimeRecovery?: CoreApplication['runtimeRecovery'];
+      readonly runtimeRecoveryCatalog?: CoreApplication['runtimeRecoveryCatalog'];
+    };
   readonly capabilityCatalog: import('../ports/runtime-capabilities.js').RuntimeCapabilityCatalog;
   readonly runtimeFactory?: WorkRuntimeFactory;
   readonly nowUtcMs?: () => number;
@@ -93,7 +96,9 @@ export function assembleWorkExecution(options: {
     } });
   const registry = createStaticRuntimeRegistry(runtimeAssembly?.entries ?? [], options.capabilityCatalog);
   const inputBinding = createExecutionInputBindingService({ artifacts: app.artifactStore, verifier, attempts, resources,
-    workspaceAuthority: app.workWorkspaceAuthority, workspaceRoots, publisher, nowMs: now });
+    workspaceAuthority: app.workWorkspaceAuthority, workspaceRoots, publisher, nowMs: now,
+    ...(app.runtimeRecoveryCatalog === undefined ? {} : { recoveryCatalog: app.runtimeRecoveryCatalog }),
+    ...(app.runtimeRecovery === undefined ? {} : { recovery: app.runtimeRecovery }) });
   const retention = createWorkspaceRetentionService({
     stopVerifier: resourcesStopVerifier(),
     store: createSqliteWorkspaceRetentionStore(session, { resources, workspaceAuthority: app.workWorkspaceAuthority, nowUtcMs: now }),
