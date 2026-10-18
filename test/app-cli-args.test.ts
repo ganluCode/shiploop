@@ -76,8 +76,9 @@ const OTHER_PROJECT_ID = randomUUID();
 const RECEIPT_ID = randomUUID();
 
 describe('F-014 应用命令面（§12.1）', () => {
-  it('只暴露 project/config/receipt/events/baseline/phase/feature/task/execution/workspace 十个命令，不新增 run/work', () => {
-    // P03-5 / F-012 追加 workspace（工作区状态展示与人工丢弃预览/确认）。
+  it('只暴露 project/config/receipt/events/baseline/phase/feature/task/execution/workspace/git 十一个命令，不新增 run/work', () => {
+    // P03-5 / F-012 追加 workspace（工作区状态展示与人工丢弃预览/确认）；
+    // P03-8 / F-011 追加 git（Git 意图/实际提交/操作回执只读查询）。
     expect([...APP_CLI_COMMANDS]).toEqual([
       'project',
       'config',
@@ -89,13 +90,14 @@ describe('F-014 应用命令面（§12.1）', () => {
       'task',
       'execution',
       'workspace',
+      'git',
     ]);
   });
 
   it('命令身份集合唯一且为点分 CLI 路径', () => {
     expect(new Set(APP_CLI_COMMAND_IDS).size).toBe(APP_CLI_COMMAND_IDS.length);
     for (const id of APP_CLI_COMMAND_IDS) {
-      expect(id).toMatch(/^(project|config|receipt|events|baseline|phase|feature|task|execution|workspace)\.[a-z-]+$/);
+      expect(id).toMatch(/^(project|config|receipt|events|baseline|phase|feature|task|execution|workspace|git)\.[a-z-]+$/);
     }
   });
 

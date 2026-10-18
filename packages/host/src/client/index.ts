@@ -49,6 +49,7 @@ export type {
   TaskApprovalBlockInput,
   TaskApprovalDecisionInput,
   TaskVerificationContinueInput,
+  FeatureVerificationContinueInput,
   PrepareExecutionInputInput,
   PreviewExecutionInput,
   StartExecutionInput,
@@ -88,6 +89,7 @@ export {
   validateWorkspaceOperationDetailResultWire,
   validateWorkspaceDiscardPreviewWire,
   validateWorkspaceDiscardConfirmResultWire,
+  validateFeatureDeliveryCommandResultWire,
 } from './app-wire.js';
 export type {
   AppQueryOperation,
@@ -124,4 +126,9 @@ export type {
   WorkspaceDiscardPreview,
   WorkspaceDiscardPreviewBinding,
   WorkspaceDiscardPreviewEntry,
+  GitOperationDetailResult,
+  GitOperationListResult,
+  PublicGitOperationRecord,
+  FeatureDeliveryDetailResult,
+  FeatureDeliveryCommandResult,
 } from './app-wire.js';

@@ -210,6 +210,9 @@ export type {
   PublicGitOperationRecord,
 } from 'shiploop-core/protocol';
 
+/** P03-8 / F-010：Feature 分轴结果查询形状经公共面再导出。 */
+export type { FeatureDeliveryDetailResult } from 'shiploop-core/protocol';
+
 /** §11.3 查询能力清单（回执/结果读取经 validateCommandReceiptWire，不在本类型内）。 */
 export type AppQueryOperation =
   | 'execution.sessions.list'
@@ -4207,6 +4210,62 @@ export function validateFeatureDeliveryDetailResultWire(
   requireStableIdOrNull(operation, identities.verificationBatchId);
   requireStableIdOrNull(operation, identities.gitOperationId);
   return object as unknown as FeatureDeliveryDetailResult;
+}
+
+/* ------------------------------------------------------------------ *
+ * P03-8 / F-011 feature.verification.continue 命令回执 result 线校验
+ *（冻结字段集精确键校验；命令回执与 Git 操作回执分开，outcome 非
+ * completed 不是交付成功；绝不携带原生路径、Git 身份或 Runtime 调用）
+ * ------------------------------------------------------------------ */
+
+/** feature.verification.continue completed 回执 result（冻结字段集）。 */
+export interface FeatureDeliveryCommandResult {
+  readonly featureId: string;
+  readonly runId: string;
+  readonly batchId: string;
+  readonly gitOperationId: string;
+  /** 收尾总体结果：completed 之外（含 awaiting_approval）都不是交付成功。 */
+  readonly outcome: 'completed' | 'partial' | 'failed' | 'awaiting_approval';
+  readonly reason: string;
+  readonly deliveryStatus: (typeof FEATURE_DELIVERY_STATUSES)[number];
+  readonly runtimeCalled: false;
+  readonly executionStarted: false;
+}
+
+export function validateFeatureDeliveryCommandResultWire(
+  value: unknown,
+  operation: HostOperation = 'commands.submit',
+): FeatureDeliveryCommandResult {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, [
+    'featureId',
+    'runId',
+    'batchId',
+    'gitOperationId',
+    'outcome',
+    'reason',
+    'deliveryStatus',
+    'runtimeCalled',
+    'executionStarted',
+  ]);
+  requireStableId(operation, object.featureId);
+  requireStableId(operation, object.runId);
+  requireStableId(operation, object.batchId);
+  requireStableId(operation, object.gitOperationId);
+  if (
+    !['completed', 'partial', 'failed', 'awaiting_approval'].includes(object.outcome as string)
+  ) {
+    malformed(operation, 'delivery_outcome_invalid');
+  }
+  requireNonEmptyString(operation, object.reason, 'delivery_reason_invalid');
+  if (!(FEATURE_DELIVERY_STATUSES as readonly unknown[]).includes(object.deliveryStatus)) {
+    malformed(operation, 'git_delivery_status_invalid');
+  }
+  // 显式收尾不调用 Runtime、不启动新执行。
+  if (object.runtimeCalled !== false || object.executionStarted !== false) {
+    malformed(operation, 'delivery_execution_boundary_invalid');
+  }
+  return object as unknown as FeatureDeliveryCommandResult;
 }
 
 /* ------------------------------------------------------------------ *

@@ -43,6 +43,7 @@ export const APP_CLI_COMMANDS = [
   'task',
   'execution',
   'workspace',
+  'git',
 ] as const;
 export type AppCliCommand = (typeof APP_CLI_COMMANDS)[number];
 
@@ -79,6 +80,9 @@ export type AppCliCommandId =
   | 'feature.labels'
   | 'feature.approve'
   | 'feature.reject'
+  | 'feature.delivery'
+  | 'feature.final-approve'
+  | 'feature.finalize'
   | 'task.list'
   | 'task.get'
   | 'task.labels'
@@ -107,7 +111,9 @@ export type AppCliCommandId =
   | 'workspace.operations'
   | 'workspace.operation'
   | 'workspace.discard-preview'
-  | 'workspace.discard';
+  | 'workspace.discard'
+  | 'git.operations'
+  | 'git.operation';
 
 export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'project.init',
@@ -141,6 +147,9 @@ export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'feature.labels',
   'feature.approve',
   'feature.reject',
+  'feature.delivery',
+  'feature.final-approve',
+  'feature.finalize',
   'task.list',
   'task.get',
   'task.labels',
@@ -170,6 +179,8 @@ export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'workspace.operation',
   'workspace.discard-preview',
   'workspace.discard',
+  'git.operations',
+  'git.operation',
 ]);
 
 /** 命令对应的 Core 操作身份（F-015/F-016 组装命令信封时使用）。 */
@@ -751,6 +762,49 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
     maxPositionals: 1,
     positionalFields: ['featureId'],
   },
+  /* P03-8 / F-011：Feature 分轴结果查询与最终审批/显式收尾命令（审批绑定
+   * 当前摘要；final-approve/finalize 缺 --confirm 在解析层拒绝；身份与
+   * 凭据不接受客户端参数；产物引用可重复）。 */
+  'feature.delivery': {
+    command: 'feature',
+    commandId: 'feature.delivery',
+    valueFlags: ['--project'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['featureId'],
+  },
+  'feature.final-approve': {
+    command: 'feature',
+    commandId: 'feature.final-approve',
+    valueFlags: [
+      '--project',
+      '--task',
+      '--item',
+      '--digest',
+      '--code-digest',
+      '--revision',
+      '--reason',
+      '--artifact',
+      '--command-id',
+    ],
+    boolFlags: ['--confirm'],
+    repeatableFlags: ['--artifact'],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['featureId'],
+  },
+  'feature.finalize': {
+    command: 'feature',
+    commandId: 'feature.finalize',
+    valueFlags: ['--project', '--run', '--batch', '--operation', '--revision', '--command-id'],
+    boolFlags: ['--confirm'],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['featureId'],
+  },
   'task.strategy': {
     command: 'task',
     commandId: 'task.strategy',
@@ -1035,6 +1089,28 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
     maxPositionals: 1,
     positionalFields: ['featureId'],
   },
+  /* P03-8 / F-011：Git 意图/实际提交/操作回执只读查询（父级 Feature/Run
+   * 二选一；分页同计划列表；不执行任何 Git）。 */
+  'git.operations': {
+    command: 'git',
+    commandId: 'git.operations',
+    valueFlags: ['--project', '--feature', '--run', '--limit', '--cursor'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 0,
+    maxPositionals: 0,
+    positionalFields: [],
+  },
+  'git.operation': {
+    command: 'git',
+    commandId: 'git.operation',
+    valueFlags: ['--project'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['operationId'],
+  },
 });
 
 const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, AppCliCommandId>>>> =
@@ -1079,6 +1155,9 @@ const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, A
       labels: 'feature.labels',
       approve: 'feature.approve',
       reject: 'feature.reject',
+      delivery: 'feature.delivery',
+      'final-approve': 'feature.final-approve',
+      finalize: 'feature.finalize',
     },
     task: {
       list: 'task.list',
@@ -1114,6 +1193,10 @@ const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, A
       operation: 'workspace.operation',
       'discard-preview': 'workspace.discard-preview',
       discard: 'workspace.discard',
+    },
+    git: {
+      operations: 'git.operations',
+      operation: 'git.operation',
     },
   });
 
@@ -2531,6 +2614,102 @@ export interface ParsedExecutionRevise {
   readonly explicitCommandId?: string;
 }
 
+/**
+ * P03-8 / F-011 Feature 分轴结果只读查询（features.delivery.get）：Task/最终
+ * 检查/人工审批/交付分轴与总体 outcome；纯查询，不推进任何收尾。
+ */
+export interface ParsedFeatureDelivery {
+  readonly kind: 'command';
+  readonly command: 'feature';
+  readonly commandId: 'feature.delivery';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly featureId: string;
+}
+
+/**
+ * P03-8 / F-011 Feature 最终审批（task.approval.approve 既有授权命令）：决定
+ * 绑定当前计划/代码摘要（`--digest`/`--code-digest` 必填），`--revision` 是
+ * 事项 expectedRevision；必须 `--confirm` 明确确认，缺确认在任何 I/O 之前
+ * 拒绝。批准不自动运行最终检查或提交。
+ */
+export interface ParsedFeatureFinalApprove {
+  readonly kind: 'command';
+  readonly command: 'feature';
+  readonly commandId: 'feature.final-approve';
+  readonly operation: 'task.approval.approve';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly featureId: string;
+  readonly taskId: string;
+  readonly itemId: string;
+  readonly planDigest: string;
+  readonly codeDigest: string;
+  readonly revision: number;
+  readonly confirm: true;
+  readonly reason?: string;
+  readonly artifactRefs: readonly string[];
+  readonly explicitCommandId?: string;
+}
+
+/**
+ * P03-8 / F-011 显式收尾请求（feature.verification.continue 既有授权命令）：
+ * `--revision` 是 Feature 聚合 expectedRevision；`--operation` 是 UUID v4 的
+ * Git 操作身份；必须 `--confirm` 明确确认。命令 completed 只表示收尾请求已
+ * 处理，是否交付以 outcome/deliveryStatus 与 feature delivery 查询为准。
+ */
+export interface ParsedFeatureFinalize {
+  readonly kind: 'command';
+  readonly command: 'feature';
+  readonly commandId: 'feature.finalize';
+  readonly operation: 'feature.verification.continue';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly featureId: string;
+  readonly runId: string;
+  readonly batchId: string;
+  readonly operationId: string;
+  readonly revision: number;
+  readonly confirm: true;
+  readonly explicitCommandId?: string;
+}
+
+/**
+ * P03-8 / F-011 Git 操作分页查询（git.operations.list）：父级 Feature/Run
+ * 二选一（同现或缺失均本地拒绝）；有界分页同计划列表。只读，不执行 Git。
+ */
+export interface ParsedGitOperations {
+  readonly kind: 'command';
+  readonly command: 'git';
+  readonly commandId: 'git.operations';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly featureId?: string;
+  readonly runId?: string;
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+
+/** P03-8 / F-011 单条 Git 操作详情（git.operations.get；意图 + 实际事实 + 回执投影）。 */
+export interface ParsedGitOperationGet {
+  readonly kind: 'command';
+  readonly command: 'git';
+  readonly commandId: 'git.operation';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly operationId: string;
+}
+
 export type ParsedAppCliCommand =
   | ParsedProjectInit
   | ParsedProjectOverview
@@ -2586,7 +2765,12 @@ export type ParsedAppCliCommand =
   | ParsedWorkspaceOperations
   | ParsedWorkspaceOperationGet
   | ParsedWorkspaceDiscardPreview
-  | ParsedWorkspaceDiscard;
+  | ParsedWorkspaceDiscard
+  | ParsedFeatureDelivery
+  | ParsedFeatureFinalApprove
+  | ParsedFeatureFinalize
+  | ParsedGitOperations
+  | ParsedGitOperationGet;
 
 export interface ParsedAppCliHelp {
   readonly kind: 'help';
@@ -3394,6 +3578,61 @@ function buildPlanEntity(
         ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
       };
     }
+    case 'feature.delivery': {
+      return {
+        ...base,
+        command: 'feature',
+        commandId: 'feature.delivery',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        featureId: requirePlanId(scan.positionals[0] as string, state, 'featureId'),
+      };
+    }
+    case 'feature.final-approve': {
+      // 明确确认先于一切：缺 --confirm 即输入错误（不推进收尾）。
+      if (!scan.bools.has('--confirm')) {
+        fail(state, 'confirmation_required', 'confirm');
+      }
+      const explicitCommandId = optionalCommandId(scan, state);
+      const reason = optionalReason(scan, state);
+      return {
+        ...base,
+        command: 'feature',
+        commandId: 'feature.final-approve',
+        operation: 'task.approval.approve',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        featureId: requirePlanId(scan.positionals[0] as string, state, 'featureId'),
+        taskId: requirePlanId(requireOption(scan, '--task', state, 'task'), state, 'task'),
+        itemId: requirePlanId(requireOption(scan, '--item', state, 'item'), state, 'item'),
+        planDigest: requirePlanDigest(scan, state),
+        codeDigest: requireSha256Option(scan, '--code-digest', state, 'code-digest'),
+        revision: requireRevision(scan, state),
+        confirm: true,
+        ...(reason !== undefined ? { reason } : {}),
+        artifactRefs: [...(scan.options.get('--artifact') ?? [])],
+        ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
+      };
+    }
+    case 'feature.finalize': {
+      // 明确确认先于一切：缺 --confirm 即输入错误（不推进收尾）。
+      if (!scan.bools.has('--confirm')) {
+        fail(state, 'confirmation_required', 'confirm');
+      }
+      const explicitCommandId = optionalCommandId(scan, state);
+      return {
+        ...base,
+        command: 'feature',
+        commandId: 'feature.finalize',
+        operation: 'feature.verification.continue',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        featureId: requirePlanId(scan.positionals[0] as string, state, 'featureId'),
+        runId: requireRunId(requireOption(scan, '--run', state, 'run'), state),
+        batchId: requireBatchId(requireOption(scan, '--batch', state, 'batch'), state),
+        operationId: requireOperationId(requireOption(scan, '--operation', state, 'operation'), state),
+        revision: requireRevision(scan, state),
+        confirm: true,
+        ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
+      };
+    }
     case 'task.list': {
       return {
         ...base,
@@ -3552,6 +3791,54 @@ function buildPlanEntity(
 }
 
 /**
+ * Git 操作查询命令（P03-8 / F-011）：意图/实际提交/操作回执只读查询。
+ * 解析层零 I/O；CLI 不打开状态库、不直接执行 Git。
+ */
+function buildGit(
+  scan: ScanResult,
+  state: ParseState,
+  spec: AppCommandSpec,
+): ParsedAppCliCommand {
+  assertPositionals(scan, spec, state);
+  const base = baseResult(state, scan);
+  const projectId = requireProjectId(requireOption(scan, '--project', state, 'project'), state);
+  switch (spec.commandId) {
+    case 'git.operations': {
+      // 父级 Feature/Run 二选一（实际 Host 契约的 xor 选择器；缺失/同现均本地拒绝）。
+      const featureRaw = takeOption(scan, '--feature');
+      const runRaw = takeOption(scan, '--run');
+      if (featureRaw === undefined && runRaw === undefined) {
+        fail(state, 'missing_required_option', 'parent');
+      }
+      if (featureRaw !== undefined && runRaw !== undefined) {
+        fail(state, 'conflicting_options');
+      }
+      return {
+        ...base,
+        command: 'git',
+        commandId: 'git.operations',
+        projectId,
+        ...(featureRaw !== undefined
+          ? { featureId: requirePlanId(featureRaw, state, 'feature') }
+          : { runId: requireRunId(runRaw as string, state) }),
+        ...optionalPlanListPage(scan, state),
+      };
+    }
+    case 'git.operation': {
+      return {
+        ...base,
+        command: 'git',
+        commandId: 'git.operation',
+        projectId,
+        operationId: requireOperationId(scan.positionals[0] as string, state),
+      };
+    }
+    default:
+      fail(state, 'unknown_subcommand');
+  }
+}
+
+/**
  * 纯解析受控 argv（process.argv.slice(2) 形态）、显式注入的 env 与可选 cwd
  * （相对仓库路径 → 绝对输入的解析基准）。
  * 返回命令意图或帮助意图；非法输入抛 AppCliParseError（退出码 2），全程无 I/O。
@@ -3637,6 +3924,8 @@ export function parseAppCliArgs(
       return buildExecution(scan, state, spec);
     case 'workspace':
       return buildWorkspace(scan, state, spec);
+    case 'git':
+      return buildGit(scan, state, spec);
     default:
       fail(state, 'unknown_subcommand');
   }

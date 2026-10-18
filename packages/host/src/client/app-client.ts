@@ -145,6 +145,7 @@ import {
   validateBudgetRevisionListResultWire,
   validateFeaturePlanDecideResultWire,
   validateFeaturePlanImportResultWire,
+  validateFeatureDeliveryCommandResultWire,
   validateFeaturePlanReviseResultWire,
   validatePhaseCreateResultWire,
   validatePlanLabelsUpdateResultWire,
@@ -373,6 +374,22 @@ export interface TaskVerificationContinueInput {
   readonly verificationBatchId: string;
   readonly codeDigest: string;
   readonly observationDigest: string;
+  readonly expectedRevision: number;
+  readonly commandId?: string;
+}
+
+/**
+ * feature.verification.continue 输入（P03-8 / F-008/F-011）：显式 Feature 收尾
+ * 请求。expectedRevision 为 Feature 聚合 revision；payload 恰好是 featureId/
+ * runId/batchId/operationId（operationId 是 UUID v4 的 Git 操作身份）；Git
+ * 身份、证据、主体与授权标志一律不能经请求输入。
+ */
+export interface FeatureVerificationContinueInput {
+  readonly projectId: string;
+  readonly featureId: string;
+  readonly runId: string;
+  readonly batchId: string;
+  readonly operationId: string;
   readonly expectedRevision: number;
   readonly commandId?: string;
 }
@@ -626,6 +643,16 @@ export interface HostClientApplication {
    */
   continueTaskVerification(
     input: TaskVerificationContinueInput,
+    options?: SubmitCommandOptions,
+  ): Promise<CommandReceipt>;
+  /**
+   * feature.verification.continue：显式 Feature 收尾（P03-8 / F-008/F-011）。
+   * 运行既有最终检查、读取当前审批并经受控提交完成交付；completed 回执
+   * result 经线校验器复核（runtimeCalled=false；outcome 非 completed 不是
+   * 交付成功）。需要 Host 已可信装配 delivery 能力，否则 unsupported。
+   */
+  continueFeatureVerification(
+    input: FeatureVerificationContinueInput,
     options?: SubmitCommandOptions,
   ): Promise<CommandReceipt>;
   /**
@@ -1165,6 +1192,15 @@ const TASK_VERIFICATION_CONTINUE_INPUT_KEYS = [
   'verificationBatchId',
   'codeDigest',
   'observationDigest',
+  'expectedRevision',
+  'commandId',
+] as const;
+const FEATURE_VERIFICATION_CONTINUE_INPUT_KEYS = [
+  'projectId',
+  'featureId',
+  'runId',
+  'batchId',
+  'operationId',
   'expectedRevision',
   'commandId',
 ] as const;
@@ -2718,6 +2754,39 @@ export function createHostClientApplication(context: AppClientContext): HostClie
       );
       if (receipt.status === 'completed') {
         validateTaskVerificationContinueResultWire(receipt.result, 'commands.submit');
+      }
+      return receipt;
+    },
+
+    async continueFeatureVerification(
+      input: FeatureVerificationContinueInput,
+      options?: SubmitCommandOptions,
+    ): Promise<CommandReceipt> {
+      const object = rejectUnknownInputKeys(
+        'commands.submit',
+        input,
+        FEATURE_VERIFICATION_CONTINUE_INPUT_KEYS,
+      );
+      const projectId = requireProjectId('commands.submit', object.projectId as string);
+      const featureId = requireStableIdInput('commands.submit', object.featureId, 'featureId');
+      const runId = requireStableIdInput('commands.submit', object.runId, 'runId');
+      const batchId = requireStableIdInput('commands.submit', object.batchId, 'batchId');
+      if (typeof object.operationId !== 'string' || !isUuidV4(object.operationId)) {
+        throw invalidInput('commands.submit', 'invalid_operation_id', 'operationId');
+      }
+      const expectedRevision = requireExpectedRevisionInput('commands.submit', object.expectedRevision);
+      const receipt = await submitCommand(
+        {
+          ...optionalCommandIdInput('commands.submit', object.commandId),
+          operation: 'feature.verification.continue',
+          scope: { kind: 'project', projectId },
+          expectedRevision,
+          payload: { featureId, runId, batchId, operationId: object.operationId },
+        },
+        options,
+      );
+      if (receipt.status === 'completed') {
+        validateFeatureDeliveryCommandResultWire(receipt.result, 'commands.submit');
       }
       return receipt;
     },

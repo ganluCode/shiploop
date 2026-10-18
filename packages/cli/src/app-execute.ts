@@ -29,6 +29,7 @@ import {
   validateExecutionInputPrepareResultWire,
   type ExecutionInputPrepareResult,
   type ExecutionPreviewResult,
+  type FeatureDeliveryCommandResult,
   type FeaturePlanDecideResult,
   type HostClient,
   type HostClientTimeouts,
@@ -101,6 +102,18 @@ import {
   parsePrepareItemsPayload,
   scanStrategyInputFields,
 } from './app/decisions.js';
+import {
+  buildFeatureDeliveryView,
+  buildFeatureFinalApprovalView,
+  buildFeatureFinalizeView,
+  buildGitOperationDetailView,
+  buildGitOperationListView,
+  formatFeatureDeliveryView,
+  formatFeatureFinalApprovalView,
+  formatFeatureFinalizeView,
+  formatGitOperationDetailView,
+  formatGitOperationListView,
+} from './app/delivery.js';
 import {
   buildTaskApprovalBlockView,
   buildTaskApprovalDecisionView,
@@ -1264,6 +1277,67 @@ async function executePlanCommand(
         formatFeaturePlanDecisionView,
       );
     }
+    /* P03-8 / F-011：Feature 分轴结果查询与最终审批/显式收尾命令（全部经
+     * HostClient 公共面；completed 回执结果经冻结字段集线校验器复核后投影）。 */
+    case 'feature.delivery': {
+      const result = await client.getFeatureDelivery(command.projectId, command.featureId);
+      const view = buildFeatureDeliveryView(result);
+      return emitSuccess(io, command, view, formatFeatureDeliveryView(view));
+    }
+    case 'feature.final-approve': {
+      const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+      const receipt = await client.submitTaskApprovalDecision(
+        {
+          projectId: command.projectId,
+          taskId: command.taskId,
+          itemId: command.itemId,
+          planDigest: command.planDigest,
+          codeDigest: command.codeDigest,
+          decision: 'approve',
+          expectedRevision: command.revision,
+          artifactRefs: parseArtifactRefValues(command.artifactRefs, {
+            command: command.command,
+            commandId: command.commandId,
+            json: command.json,
+          }),
+          reason: command.reason ?? null,
+        },
+        envelopeIdentityOptions(command.explicitCommandId, issuedAt),
+      );
+      return emitDomainReceipt(
+        io,
+        command,
+        receipt,
+        (commandId, replayed, result) =>
+          buildFeatureFinalApprovalView(commandId, replayed, result as TaskApprovalDecisionResult),
+        formatFeatureFinalApprovalView,
+      );
+    }
+    case 'feature.finalize': {
+      const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+      const receipt = await client.continueFeatureVerification(
+        {
+          projectId: command.projectId,
+          featureId: command.featureId,
+          runId: command.runId,
+          batchId: command.batchId,
+          operationId: command.operationId,
+          expectedRevision: command.revision,
+          ...(command.explicitCommandId !== undefined
+            ? { commandId: command.explicitCommandId }
+            : {}),
+        },
+        envelopeIdentityOptions(command.explicitCommandId, issuedAt),
+      );
+      return emitDomainReceipt(
+        io,
+        command,
+        receipt,
+        (commandId, replayed, result) =>
+          buildFeatureFinalizeView(commandId, replayed, result as FeatureDeliveryCommandResult),
+        formatFeatureFinalizeView,
+      );
+    }
     case 'task.strategy': {
       const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
       const receipt = await client.updateTaskStrategy(
@@ -1669,6 +1743,43 @@ async function executeExecutionCommand(
  * 显式命令身份与「超时先查回执」纪律（响应丢失不更换 commandId、不产生重复
  * 副作用）；CLI 不打开 SQLite、不读写代码工作目录、不直接调用 Git。
  * ------------------------------------------------------------------ */
+
+/* ------------------------------------------------------------------ *
+ * P03-8 / F-011 Git 意图/实际提交/操作回执只读查询
+ *
+ * 全部经既有 HostClient 公共面：CLI 不打开状态库、不直接执行 Git；
+ * pending（回执缺失）与 unknown（待核对）不显示为成功。
+ * ------------------------------------------------------------------ */
+
+type ParsedGitCommand = Extract<ParsedAppCliCommand, { command: 'git' }>;
+
+async function executeGitCommand(
+  io: AppCliIo,
+  command: ParsedGitCommand,
+  client: HostClient,
+): Promise<AppCliRunResult> {
+  switch (command.commandId) {
+    case 'git.operations': {
+      const result = await client.listGitOperations(
+        command.projectId,
+        command.featureId !== undefined
+          ? { featureId: command.featureId }
+          : { runId: command.runId as string },
+        {
+          ...(command.limit !== undefined ? { limit: command.limit } : {}),
+          ...(command.cursor !== undefined ? { cursor: command.cursor } : {}),
+        },
+      );
+      const view = buildGitOperationListView(result);
+      return emitSuccess(io, command, view, formatGitOperationListView(view));
+    }
+    case 'git.operation': {
+      const result = await client.getGitOperation(command.projectId, command.operationId);
+      const view = buildGitOperationDetailView(result);
+      return emitSuccess(io, command, view, formatGitOperationDetailView(view));
+    }
+  }
+}
 
 type ParsedWorkspaceCommand = Extract<ParsedAppCliCommand, { command: 'workspace' }>;
 
@@ -3081,6 +3192,9 @@ export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunRes
       return await executeWorkspaceCommand(io, command, client, {
         ...(workspaceDiscardPayload !== undefined ? { discardPayload: workspaceDiscardPayload } : {}),
       });
+    }
+    if (command.command === 'git') {
+      return await executeGitCommand(io, command, client);
     }
     return await executeProjectCommand(io, command, client);
   } catch (error) {

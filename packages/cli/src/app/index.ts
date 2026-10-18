@@ -68,8 +68,36 @@ export type {
   ParsedWorkspaceList,
   ParsedWorkspaceOperationGet,
   ParsedWorkspaceOperations,
+  ParsedFeatureDelivery,
+  ParsedFeatureFinalApprove,
+  ParsedFeatureFinalize,
+  ParsedGitOperations,
+  ParsedGitOperationGet,
 } from './args.js';
 export { getAppCliHelp } from './help.js';
+export {
+  FEATURE_FINAL_APPROVAL_NOTE,
+  buildFeatureDeliveryView,
+  buildFeatureFinalApprovalView,
+  buildFeatureFinalizeView,
+  buildGitOperationDetailView,
+  buildGitOperationListView,
+  buildGitOperationRecordView,
+  formatFeatureDeliveryView,
+  formatFeatureFinalApprovalView,
+  formatFeatureFinalizeView,
+  formatGitOperationDetailView,
+  formatGitOperationListView,
+  gitOperationCommitted,
+} from './delivery.js';
+export type {
+  FeatureDeliveryCliView,
+  FeatureFinalApprovalCliView,
+  FeatureFinalizeCliView,
+  GitOperationDetailCliView,
+  GitOperationListCliView,
+  GitOperationRecordView,
+} from './delivery.js';
 export {
   APPROVAL_EXECUTION_BOUNDARY_VIEW,
   buildTaskApprovalBlockView,
