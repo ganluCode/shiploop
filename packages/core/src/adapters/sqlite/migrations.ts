@@ -2107,6 +2107,25 @@ WHEN OLD.status <> 'pending'
 BEGIN SELECT RAISE(ABORT, 'git operation is terminal'); END;
 `;
 
+/**
+ * P03-9 / F-001 Task 边界暂停意图（迁移 v27）。
+ *
+ * 仅追加两列，复用既有 status/reason/revision：
+ * - pause_requested_at 记录用户显式暂停意图的持久时刻（NULL 表示未请求）；
+ *   意图在活动 Attempt 收尾后仍保留，避免验证/审批路径把 Run 自动恢复 running；
+ * - 不改写既有 CHECK/索引/触发器，不清预算、不改 deadline、不删除代码；
+ * - 历史迁移 checksum 不变；空库与前序 v26 库均按顺序应用本迁移。
+ */
+const MIGRATION_027_SQL = `
+ALTER TABLE execution_batches ADD COLUMN pause_requested_at INTEGER
+  CONSTRAINT execution_batches_pause_requested_at_non_negative_check
+  CHECK (pause_requested_at IS NULL OR (typeof(pause_requested_at) = 'integer' AND pause_requested_at >= 1));
+
+ALTER TABLE runs ADD COLUMN pause_requested_at INTEGER
+  CONSTRAINT runs_pause_requested_at_non_negative_check
+  CHECK (pause_requested_at IS NULL OR (typeof(pause_requested_at) = 'integer' AND pause_requested_at >= 1));
+`;
+
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     version: 1,
@@ -2198,4 +2217,5 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 24, sql: MIGRATION_024_SQL, checksum: sha256Hex(MIGRATION_024_SQL), foreignKeysOff: true },
   { version: 25, sql: MIGRATION_025_SQL, checksum: sha256Hex(MIGRATION_025_SQL), foreignKeysOff: true },
   { version: 26, sql: MIGRATION_026_SQL, checksum: sha256Hex(MIGRATION_026_SQL) },
+  { version: 27, sql: MIGRATION_027_SQL, checksum: sha256Hex(MIGRATION_027_SQL) },
 ];

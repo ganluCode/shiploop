@@ -60,6 +60,7 @@ import type {
   SettingsWriteConsistency,
 } from '../ports/state-store.js';
 import { validateMergedProjectSettingsWrite } from './configuration-service.js';
+import { submitExecutionPause } from './execution-pause.js';
 import { submitTaskApprovalBlock, TASK_APPROVAL_BLOCK_OPERATION } from './task-approval-block.js';
 import { submitTaskApprovalDecision, TASK_APPROVAL_DECISION_OPERATIONS } from './task-approval-decision.js';
 import { submitTaskVerificationContinue, TASK_VERIFICATION_CONTINUE_OPERATION, type TaskVerificationContinueDeps } from './task-verification-continue.js';
@@ -662,6 +663,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           envelope.operation !== 'baseline.preview' &&
           envelope.operation !== 'baseline.run' &&
           envelope.operation !== 'execution.attempt.cancel' &&
+          envelope.operation !== 'execution.pause' &&
           envelope.operation !== 'baseline.cancel' &&
           envelope.operation !== 'phase.create' &&
           envelope.operation !== FEATURE_PLAN_IMPORT_OPERATION &&
@@ -858,6 +860,22 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
               result: { attemptId: envelope.payload.attemptId, cancellationRequested: true } });
             transaction.saveReceipt(receipt);
             return receipt;
+          }
+          if (envelope.operation === 'execution.pause') {
+            // P03-9 / F-001：目标归属/revision CAS/暂停意图/状态/事件/回执同一短事务。
+            return submitExecutionPause(
+              {
+                principalId: principal.principalId,
+                commandId: envelope.commandId,
+                operation: envelope.operation,
+                scope: envelope.scope,
+                requestDigest: digest,
+                issuedAt: envelope.issuedAt,
+                completedAt: new Date(now).toISOString(),
+              },
+              envelope,
+              transaction,
+            );
           }
           if (envelope.operation === 'baseline.preview') {
             // 只读预览：事务外已完成全部 I/O；事务内只持久化 completed 回执。

@@ -581,6 +581,11 @@ export function createExecutionStartService(deps: ExecutionStartServiceDeps): Ex
         if (isExecutionTerminalStatus(parent.status)) {
           return rejected('batch_not_active');
         }
+        // P03-9 / F-001：暂停意图已生效的 Batch 不接受新 Run（重试也被阻止）；
+        // 恢复必须走后续显式 resume 控制，不能借 retryBatchId 绕过暂停。
+        if (parent.pauseRequestedAtUtcMs !== null) {
+          return rejected('batch_not_active');
+        }
         const activePhaseBatch = transaction.getActivePhaseExecutionBatch(projectId, feature.phaseId);
         if (activePhaseBatch !== null && activePhaseBatch.id !== parent.id) {
           throw publicError('conflict', EXECUTION_IN_PROGRESS_REASON, {

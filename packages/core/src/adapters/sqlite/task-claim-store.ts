@@ -92,6 +92,8 @@ export function createSqliteTaskClaimStore(session: SqliteStorageSession, option
           if (!Number.isSafeInteger(now) || now < 1) throw new StorageError('validation', operation, 'Invalid claim clock');
           if (valid.leaseUntilUtcMs <= now) throw new StorageError('validation', operation, 'Expired new claim lease');
           const view = dag.readTaskDagView(valid.projectId, valid.runId);
+          if (view.run.pauseRequestedAtUtcMs !== null) fail('not_ready', { eligibility: 'run_control_blocked' });
+          if (view.batch.pauseRequestedAtUtcMs !== null) fail('not_ready', { eligibility: 'batch_control_blocked' });
           const task = view.plan.tasks.find(t => t.id === valid.taskId);
           const fact = view.facts.find(t => t.taskId === valid.taskId);
           if (!task || !fact || fact.kind !== 'coding') return fail('not_ready', { eligibility: 'task_outside_scope' });

@@ -58,6 +58,10 @@ export const EXECUTION_RUN_DISPATCHED_EVENT_TYPE = 'execution.run.dispatched';
  */
 export const EXECUTION_BUDGET_REVISED_EVENT_TYPE = 'execution.budget.revised';
 
+/** P03-9 / F-001 用户暂停意图事件（Run/Batch 各自聚合；payload 恒 {paused:true}）。 */
+export const EXECUTION_RUN_PAUSED_EVENT_TYPE = 'execution.run.paused';
+export const EXECUTION_BATCH_PAUSED_EVENT_TYPE = 'execution.batch.paused';
+
 export const TASK_CLAIMED_EVENT_TYPE = 'task.claimed';
 export const ATTEMPT_UPDATED_EVENT_TYPE = 'task.attempt.updated';
 export const TASK_APPROVAL_BLOCKED_EVENT_TYPE = 'task.approval.blocked';
@@ -70,6 +74,8 @@ export const FEATURE_FINALIZATION_BLOCKED_EVENT_TYPE = 'feature.finalization_blo
 export const EXECUTION_EVENT_TYPES = [
   EXECUTION_RUN_DISPATCHED_EVENT_TYPE,
   EXECUTION_BUDGET_REVISED_EVENT_TYPE,
+  EXECUTION_RUN_PAUSED_EVENT_TYPE,
+  EXECUTION_BATCH_PAUSED_EVENT_TYPE,
   TASK_CLAIMED_EVENT_TYPE,
   ATTEMPT_UPDATED_EVENT_TYPE,
   TASK_APPROVAL_BLOCKED_EVENT_TYPE,
@@ -81,7 +87,7 @@ export type ExecutionEventType = (typeof EXECUTION_EVENT_TYPES)[number];
 
 interface ExecutionEventSpec {
   readonly aggregateType: 'run' | 'execution_batch' | 'task' | 'feature';
-  readonly payloadKey: 'dispatched' | 'revised' | 'claimed' | 'updated' | 'blocked' | 'decided' | 'finalized' | 'blocked';
+  readonly payloadKey: 'dispatched' | 'revised' | 'paused' | 'claimed' | 'updated' | 'blocked' | 'decided' | 'finalized';
 }
 
 const EXECUTION_EVENT_SPECS: Readonly<Record<ExecutionEventType, ExecutionEventSpec>> = Object.freeze({
@@ -93,6 +99,8 @@ const EXECUTION_EVENT_SPECS: Readonly<Record<ExecutionEventType, ExecutionEventS
   [FEATURE_FINALIZED_EVENT_TYPE]: Object.freeze({ aggregateType: 'feature', payloadKey: 'finalized' }),
   [FEATURE_FINALIZATION_BLOCKED_EVENT_TYPE]: Object.freeze({ aggregateType: 'feature', payloadKey: 'blocked' }),
   [EXECUTION_BUDGET_REVISED_EVENT_TYPE]: Object.freeze({ aggregateType: 'execution_batch', payloadKey: 'revised' }),
+  [EXECUTION_RUN_PAUSED_EVENT_TYPE]: Object.freeze({ aggregateType: 'run', payloadKey: 'paused' }),
+  [EXECUTION_BATCH_PAUSED_EVENT_TYPE]: Object.freeze({ aggregateType: 'execution_batch', payloadKey: 'paused' }),
 });
 
 /** 快照 JSON 列（scope/config/input）序列化字节上限（有界，拒绝无界快照）。 */
@@ -157,6 +165,8 @@ export interface ExecutionBatchRecord {
   readonly noProgressRuns: number;
   readonly deadlineAtUtcMs: number;
   readonly reason: string | null;
+  /** P03-9 / F-001：持久暂停意图时刻；NULL 表示未请求（不因 Attempt 收尾清除）。 */
+  readonly pauseRequestedAtUtcMs: number | null;
 }
 
 /** 执行 Run 记录（迁移 v9 runs 行的应用侧形态）。 */
@@ -181,6 +191,8 @@ export interface RunRecord {
   readonly reason: string | null;
   readonly startedAtUtcMs: number | null;
   readonly endedAtUtcMs: number | null;
+  /** P03-9 / F-001：持久暂停意图时刻；NULL 表示未请求（不因 Attempt 收尾清除）。 */
+  readonly pauseRequestedAtUtcMs: number | null;
 }
 
 /** 批次预算修订记录（迁移 v9 batch_budget_revisions 行；插后不可变证据行）。 */
@@ -243,6 +255,28 @@ function requireBoundedSnapshot(
     throw validationError(context, field, `序列化不得超过 ${EXECUTION_SNAPSHOT_MAX_BYTES} 字节（limit_exceeded）`, undefined);
   }
   return object;
+}
+
+/** P03-9 / F-001 暂停目标与结果（同一短写事务内原子持久化）。 */
+export type ExecutionPauseTargetKind = 'run' | 'batch';
+export type ExecutionPauseOutcome = 'paused' | 'pausing' | 'already_terminal' | 'interrupted';
+
+export interface ExecutionPauseInput {
+  readonly projectId: string;
+  readonly targetKind: ExecutionPauseTargetKind;
+  readonly targetId: string;
+  readonly expectedRevision: number;
+}
+
+export interface ExecutionPauseResult {
+  readonly outcome: ExecutionPauseOutcome;
+  readonly targetKind: ExecutionPauseTargetKind;
+  readonly targetId: string;
+  readonly status: ExecutionRunStatus;
+  readonly revision: number;
+  /** true 表示本次事务改变了目标控制状态；terminal/interrupted 不写业务状态。 */
+  readonly changed: boolean;
+  readonly eventId: string | null;
 }
 
 export interface ValidatedExecutionBatchInsertInput {

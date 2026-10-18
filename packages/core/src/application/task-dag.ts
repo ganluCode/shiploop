@@ -116,9 +116,13 @@ export function evaluateTaskDag(view: TaskDagView, nowMs: number): TaskDagResult
     return result('invalid_graph', error instanceof StorageError ? 'invalid_plan' : error instanceof Error ? error.message : 'invalid_snapshot');
   }
   if (!['queued', 'running', 'pausing', 'paused', 'cancelling', 'interrupted'].includes(run.status)) return result('run_not_active');
+  // P03-9 / F-001：持久暂停意图独立于当前 status/reason；意图存在即停止新认领，
+  // 不因某次状态收尾（如 approval）被绕过。
+  if (run.pauseRequestedAtUtcMs !== null) return result('run_control_blocked');
   if (!['queued', 'running'].includes(run.status)
     && !(run.status === 'paused' && run.reason === 'approval')) return result('run_control_blocked');
   if (!['queued', 'running', 'pausing', 'paused', 'cancelling', 'interrupted'].includes(batch.status)) return result('batch_not_active');
+  if (batch.pauseRequestedAtUtcMs !== null) return result('batch_control_blocked');
   if (!['queued', 'running'].includes(batch.status)) return result('batch_control_blocked');
   if (view.projectStatus !== 'active') return result('project_not_active');
   if (view.phase.status !== 'open') return result('phase_not_executable');

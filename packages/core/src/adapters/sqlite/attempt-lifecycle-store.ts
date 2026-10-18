@@ -53,6 +53,54 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
     if (resources.read(identity).leases.length > 0) resources.quarantineInTransaction(identity);
   };
   const sessions = createSqliteWorkSessionStore(session, options);
+  /**
+   * P03-9 / F-001：在 Attempt 收尾后落实已持久化的暂停意图。
+   * 有活动 Attempt 时保持 pausing（当前 Attempt 可继续验证/必要收尾），全部
+   * 活动 Attempt 消失后才转为 paused；只触及控制状态/reason/意图时刻，不改
+   * 预算、deadline、累计计数或代码。无暂停意图时完全 no-op。
+   */
+  function finalizePauseIntentInTransaction(projectId: string, runId: string, now: number): void {
+    const row = db.prepare<[string, string], {
+      run_status: string; run_revision: number; run_pause: number | null;
+      batch_id: string; batch_status: string; batch_revision: number; batch_pause: number | null;
+    }>(`SELECT runs.status AS run_status, runs.revision AS run_revision,
+        runs.pause_requested_at AS run_pause, execution_batches.id AS batch_id,
+        execution_batches.status AS batch_status, execution_batches.revision AS batch_revision,
+        execution_batches.pause_requested_at AS batch_pause
+      FROM runs JOIN execution_batches ON execution_batches.id = runs.batch_id
+      WHERE runs.project_id = ? AND runs.id = ?`).get(projectId, runId);
+    if (row === undefined || (row.run_pause === null && row.batch_pause === null)) return;
+    const pauseAt = row.run_pause ?? row.batch_pause!;
+    if (['succeeded', 'failed', 'cancelled', 'cancelling', 'interrupted'].includes(row.run_status)) {
+      // Terminal/uncertain Run remains authoritative; never rewrite it from a pause intent.
+    } else {
+      const active = db.prepare<unknown[], { count: number }>(
+        `SELECT COUNT(*) AS count FROM attempts WHERE project_id = ? AND run_id = ?
+          AND status IN ('preparing', 'executing', 'verifying')`,
+      ).get(projectId, runId)!.count;
+      const status = active > 0 ? 'pausing' : 'paused';
+      db.prepare(`UPDATE runs SET status = ?, reason = 'user_pause',
+        pause_requested_at = COALESCE(pause_requested_at, ?), revision = revision + 1, updated_at = ?
+        WHERE project_id = ? AND id = ? AND revision = ?
+          AND status IN ('queued', 'running', 'pausing', 'paused')
+          AND (status <> ? OR reason IS NULL OR reason <> 'user_pause' OR pause_requested_at IS NULL)`)
+        .run(status, pauseAt, now, projectId, runId, row.run_revision, status);
+    }
+    if (row.batch_pause === null) return;
+    if (['succeeded', 'failed', 'cancelled', 'cancelling', 'interrupted'].includes(row.batch_status)) return;
+    const activeBatch = db.prepare<unknown[], { count: number }>(
+      `SELECT COUNT(*) AS count FROM attempts WHERE project_id = ? AND run_id IN
+        (SELECT id FROM runs WHERE project_id = ? AND batch_id = ?)
+        AND status IN ('preparing', 'executing', 'verifying')`,
+    ).get(projectId, projectId, row.batch_id)!.count;
+    const batchStatus = activeBatch > 0 ? 'pausing' : 'paused';
+    db.prepare(`UPDATE execution_batches SET status = ?, reason = 'user_pause',
+      pause_requested_at = COALESCE(pause_requested_at, ?), revision = revision + 1, updated_at = ?
+      WHERE project_id = ? AND id = ? AND revision = ?
+        AND status IN ('queued', 'running', 'pausing', 'paused')
+        AND (status <> ? OR reason IS NULL OR reason <> 'user_pause' OR pause_requested_at IS NULL)`)
+      .run(batchStatus, row.batch_pause, now, projectId, row.batch_id, row.batch_revision, batchStatus);
+  }
   function applyInTransaction(transaction: CommandTransaction, input: unknown, stopEvidence?: unknown,
     preparationIsolated = false): AttemptApplicationResult {
       if (!db.inTransaction) throw new TypeError('Attempt lifecycle primitive requires a write transaction');
@@ -201,6 +249,7 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
             WHERE id = ? AND project_id = ? AND status IN ('queued', 'running', 'pausing')`)
             .run(waitingFor ?? runtime.control?.reason ?? runtime.failure?.reason ?? runtime.result?.reason ?? 'runtime_failed', now, valid.runId, valid.projectId);
         }
+        finalizePauseIntentInTransaction(valid.projectId, valid.runId, now);
         const receipt: AttemptApplicationResult = { disposition: 'applied', attemptId: attempt.id, status, reason: null,
           waitingFor, runtimeCompleted: runtime !== null ? runtime.result?.terminal === 'completed' : valid.kind === 'runtime_completed',
           resultSaved: valid.kind !== 'executing', stopConfirmed, eventId };
@@ -240,7 +289,7 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
     // 原因仍拒绝，不额外放行。
     if (attempt.status !== 'verifying' || attempt.execution_stage !== 'verification' || task.status !== 'running'
       || !['queued', 'running', 'pausing', 'paused'].includes(run.status)
-      || (run.status === 'paused' && !['approval', 'verification_not_assembled'].includes(run.reason ?? ''))) return ignored('invalid_transition');
+      || (run.status === 'paused' && !['approval', 'verification_not_assembled', 'user_pause'].includes(run.reason ?? ''))) return ignored('invalid_transition');
     let snapshot: { approval?: { planDigest?: string; checkPolicyDigest?: string; decisionId?: string } };
     try { snapshot = JSON.parse(attempt.input_snapshot) as typeof snapshot; } catch { return ignored('stale_execution_identity'); }
     const batch = db.prepare<[string], {
@@ -313,6 +362,7 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
         db.prepare(`UPDATE runs SET status = 'paused', reason = 'infrastructure_error', revision = revision + 1, updated_at = ?
           WHERE id = ? AND project_id = ? AND status IN ('queued', 'running', 'pausing', 'paused')
           AND (reason IS NULL OR reason <> 'approval')`).run(now, valid.runId, valid.projectId);
+        finalizePauseIntentInTransaction(valid.projectId, valid.runId, now);
         quarantineIfOccupied(identity);
         return { disposition: 'applied', attemptId: valid.attemptId, status: 'failed', reason: null, waitingFor: null,
           runtimeCompleted: true, resultSaved: true, stopConfirmed: false, eventId };
@@ -337,6 +387,7 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
           WHERE id = ? AND project_id = ? AND (status IN ('queued', 'running')
           OR (status = 'paused' AND reason = 'verification_not_assembled'))`).run(now, valid.runId, valid.projectId);
       }
+      finalizePauseIntentInTransaction(valid.projectId, valid.runId, now);
       // 新认领与启动前必须再次核对旧 Runtime/Verifier 停止证据：停止已确认才
       // 释放占用供同 worktree 返工复用；未知则保留隔离占用并拒绝重跑。
       // 占用释放/隔离决策通常已在 apply(runtime_completed) 按停止证据作出
@@ -368,6 +419,7 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
         .run(now, valid.runId, valid.projectId);
       const featureChanged = db.prepare(`UPDATE features SET status = 'awaiting_approval', revision = revision + 1, updated_at = ?
         WHERE id = ? AND project_id = ? AND status <> 'awaiting_approval'`).run(now, attempt.feature_id, valid.projectId);
+      finalizePauseIntentInTransaction(valid.projectId, valid.runId, now);
       const counters = transaction.getTaskExecutionCounters(valid.projectId, valid.taskId);
       const eventId = executions.appendExecutionEventInTransaction({ projectId: valid.projectId, eventType: ATTEMPT_UPDATED_EVENT_TYPE,
         aggregateType: 'task', aggregateId: valid.taskId, aggregateRevision: counters.revision, payload: { updated: true } });
@@ -391,6 +443,7 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
       WHERE id = ? AND project_id = ? AND (status = 'queued'
       OR (status = 'paused' AND reason IN ('approval', 'verification_not_assembled')))`)
       .run(now, valid.runId, valid.projectId);
+    finalizePauseIntentInTransaction(valid.projectId, valid.runId, now);
     const view = dag.readTaskDagView(valid.projectId, valid.runId);
     evaluateTaskDag(view, now);
     const counters = transaction.getTaskExecutionCounters(valid.projectId, valid.taskId);

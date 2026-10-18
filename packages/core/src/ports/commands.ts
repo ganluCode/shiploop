@@ -124,6 +124,10 @@ export const LOCAL_OWNER_CAPABILITIES: ReadonlySet<AppCapability> = Object.freez
 
 export const COMMAND_OPERATIONS = [
   'execution.attempt.cancel',
+  // P03-9 / F-001：Run/Batch 的 Task 边界暂停（project scope + execution.start；
+  // 更新类信封 expectedRevision 为目标 Run/Batch 自身 revision；payload 只含
+  // 目标身份 runId 或 batchId）。
+  'execution.pause',
   'project.register',
   'project.metadata.update',
   'settings.global.create',
@@ -325,6 +329,8 @@ export const COMMAND_OPERATION_SPECS: Readonly<Record<AppOperation, CommandOpera
       capability: 'execution.start',
     },
     'execution.attempt.cancel': { scopeKind: 'project', mutation: 'create', capability: 'execution.start' },
+    // P03-9 / F-001：暂停是控制更新，复用既有 execution.start 授权面。
+    'execution.pause': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
     'execution.start': { scopeKind: 'project', mutation: 'create', capability: 'execution.start' },
     // P03-3 / F-009：批次预算显式修订（更新类：expectedRevision=目标 Batch
     // 当前 budget_revision；增额/延期是新的明确授权，与启动能力分离）。
@@ -784,6 +790,16 @@ export interface ValidatedExecutionBudgetRevisePayload {
   readonly reason: string;
 }
 
+/**
+ * P03-9 / F-001 Run/Batch Task 边界暂停 payload：恰好一个目标身份（runId 或
+ * batchId）；两者同时出现/同时缺席均结构化拒绝。expectedRevision 在信封顶层，
+ * 是目标行自身 revision 的 CAS。服务端决定字段（status/reason/changed）不能经
+ * 请求输入。
+ */
+export type ValidatedExecutionPausePayload =
+  | { readonly runId: string; readonly batchId: null }
+  | { readonly runId: null; readonly batchId: string };
+
 interface EnvelopeCommon {
   readonly schemaVersion: typeof WIRE_MESSAGE_SCHEMA_VERSION;
   readonly commandId: string;
@@ -847,6 +863,12 @@ export type ValidatedCommandEnvelope =
       readonly scope: { readonly kind: 'project'; readonly projectId: string };
       readonly expectedRevision: null;
       readonly payload: { readonly attemptId: string };
+    })
+  | (EnvelopeCommon & {
+      readonly operation: 'execution.pause';
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: number;
+      readonly payload: ValidatedExecutionPausePayload;
     })
   | (EnvelopeCommon & {
       readonly operation: 'baseline.cancel';
@@ -1368,6 +1390,33 @@ function validateFeaturePlanDecidePayload(
   }
 }
 
+function validateExecutionPausePayload(
+  operation: AppOperation,
+  raw: unknown,
+): ValidatedExecutionPausePayload {
+  const object = requireObject(operation, raw, 'payload');
+  const hasRun = Object.prototype.hasOwnProperty.call(object, 'runId')
+    && object.runId !== undefined && object.runId !== null;
+  const hasBatch = Object.prototype.hasOwnProperty.call(object, 'batchId')
+    && object.batchId !== undefined && object.batchId !== null;
+  if (hasRun === hasBatch) {
+    fail(operation, 'invalid_input', 'payload', '必须恰好提供 runId 或 batchId 之一', undefined);
+  }
+  // 允许同时出现目标键但其中恰一个为非空（null/缺省表示未选择），便于调用方
+  // 使用稳定的两键形态；两个非空或都为空已在上面拒绝。
+  exactKeys(operation, object, ['runId', 'batchId'], 'payload.');
+  if (hasRun) {
+    if (!isUuidV4(object.runId)) {
+      fail(operation, 'invalid_input', 'payload.runId', '必须是 UUID v4（目标 Run）', object.runId);
+    }
+    return { runId: object.runId, batchId: null };
+  }
+  if (!isUuidV4(object.batchId)) {
+    fail(operation, 'invalid_input', 'payload.batchId', '必须是 UUID v4（目标 Batch）', object.batchId);
+  }
+  return { runId: null, batchId: object.batchId };
+}
+
 function validateExecutionInputPreparePayload(
   operation: AppOperation,
   raw: unknown,
@@ -1810,6 +1859,18 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
       scope,
       expectedRevision: null,
       payload: validateExecutionStartPayload(operation, object.payload),
+    };
+  }
+  if (operation === 'execution.pause') {
+    if (scope.kind !== 'project') {
+      fail(operation, 'invalid_input', 'scope.kind', 'scope 种类与操作不匹配');
+    }
+    return {
+      ...base,
+      operation,
+      scope,
+      expectedRevision: expectedRevision as number,
+      payload: validateExecutionPausePayload(operation, object.payload),
     };
   }
   if (operation === 'execution.budget.revise') {

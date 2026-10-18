@@ -44,6 +44,9 @@ export interface StopCapabilityView {
  */
 export const APPLICATION_COMMAND_CAPABILITIES = [
   'execution.attempt.cancel',
+  // P03-9 / F-001：Run/Batch Task 边界暂停经既有 POST /v1/commands 通用路由
+  // 接线（同一命令面；HostClient/CLI 专用入口仍由 F-014/F-015 接入）。
+  'execution.pause',
   'project.register',
   'project.metadata.update',
   'settings.global.create',

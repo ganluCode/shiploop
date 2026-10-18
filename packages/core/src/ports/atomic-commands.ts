@@ -260,6 +260,14 @@ export interface CommandTransaction {
   insertExecutionRun(input: unknown): RunRecord;
   /** 执行域脱敏事件追加（execution.run.dispatched/execution.budget.revised；与公开白名单同形）。 */
   appendExecutionEvent(input: unknown): void;
+  /**
+   * P03-9 / F-001：Task 边界暂停意图（同项目 Run/Batch CAS）。终态只读返回
+   * already_terminal；无活动 Attempt 直接 paused，有活动 Attempt 进入 pausing；
+   * 不修改预算/deadline/累计计数/代码，状态/事件由本事务原子写入。
+   */
+  requestExecutionPause(
+    input: import('./execution-store.js').ExecutionPauseInput,
+  ): import('./execution-store.js').ExecutionPauseResult;
   /* ---------------------------------------------------------------- *
    * P03-3 / F-006 Task 尝试预算预占与分类记账（迁移 v11；受信 Core 内部原语，
    * 不经命令面暴露；P03-4 在同一事务内接入真实 Attempt 创建）

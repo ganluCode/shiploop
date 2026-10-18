@@ -54,9 +54,11 @@ describe('F-005 notification persistence migration', () => {
       expect(snapshot()).toEqual(before);
       expect(session.database.prepare('SELECT * FROM schema_migrations ORDER BY version').all()).toEqual(migrationsBefore);
       expect(session.database.prepare("SELECT name FROM sqlite_master WHERE name IN ('attempt_notifications', 'attempt_notification_diagnostics')").all()).toEqual([]);
-      expect((await migrateSqliteStorage(session)).appliedVersions).toEqual([17, 18, 19, 20, 21, 22, 23, 24, 25, 26]);
+      expect((await migrateSqliteStorage(session)).appliedVersions).toEqual([17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27]);
       before.state_events = before.state_events!.map(row => ({ ...row as Record<string, unknown>, operation_id: null, run_id: null, attempt_id: null, execution_stage: null }));
       before.features = before.features!.map(row => ({ ...row as Record<string, unknown>, delivery_status: 'not_requested' }));
+      before.runs = before.runs!.map(row => ({ ...row as Record<string, unknown>, pause_requested_at: null }));
+      before.execution_batches = before.execution_batches!.map(row => ({ ...row as Record<string, unknown>, pause_requested_at: null }));
       expect(snapshot()).toEqual(before);
       expect(session.database.prepare('SELECT * FROM schema_migrations WHERE version <= 16 ORDER BY version').all()).toEqual(migrationsBefore);
       expect(createHash('sha256').update(SQLITE_MIGRATIONS.slice(0, 16).map(m => m.checksum).join('\n')).digest('hex')).toBe(checksum);

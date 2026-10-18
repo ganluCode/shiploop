@@ -983,6 +983,8 @@ export const executionBatches = sqliteTable('execution_batches', {
   deadlineAt: integer('deadline_at').notNull(),
   /** 原因说明（可空）。 */
   reason: text('reason'),
+  /** P03-9 / F-001：用户显式暂停意图的持久时刻（NULL=未请求；迁移 v27）。 */
+  pauseRequestedAt: integer('pause_requested_at'),
 }, (table) => [
   check('execution_batches_revision_positive_check', sql`${table.revision} >= 1`),
   check(
@@ -1013,6 +1015,8 @@ export const executionBatches = sqliteTable('execution_batches', {
   check('execution_batches_runtime_starts_non_negative_check', sql`${table.runtimeStarts} >= 0`),
   check('execution_batches_no_progress_runs_non_negative_check', sql`${table.noProgressRuns} >= 0`),
   check('execution_batches_deadline_at_positive_check', sql`${table.deadlineAt} >= 1`),
+  check('execution_batches_pause_requested_at_non_negative_check',
+    sql`${table.pauseRequestedAt} IS NULL OR (typeof(${table.pauseRequestedAt}) = 'integer' AND ${table.pauseRequestedAt} >= 1)`),
   // 同项目复合外键 + Phase/Feature 归属一致：伪造归属的直接 SQL 被拒绝。
   foreignKey({
     name: 'execution_batches_feature_phase_same_project_fk',
@@ -1085,6 +1089,8 @@ export const runs = sqliteTable('runs', {
   startedAt: integer('started_at'),
   /** 收尾时间（UTC 毫秒；可空）。 */
   endedAt: integer('ended_at'),
+  /** P03-9 / F-001：用户显式暂停意图的持久时刻（NULL=未请求；迁移 v27）。 */
+  pauseRequestedAt: integer('pause_requested_at'),
 }, (table) => [
   check('runs_revision_positive_check', sql`${table.revision} >= 1`),
   check('runs_purpose_not_empty_check', sql`length(${table.purpose}) > 0`),
@@ -1111,6 +1117,8 @@ export const runs = sqliteTable('runs', {
   check('runs_attempts_created_non_negative_check', sql`${table.attemptsCreated} >= 0`),
   check('runs_started_at_non_negative_check', sql`${table.startedAt} IS NULL OR ${table.startedAt} >= 0`),
   check('runs_ended_at_non_negative_check', sql`${table.endedAt} IS NULL OR ${table.endedAt} >= 0`),
+  check('runs_pause_requested_at_non_negative_check',
+    sql`${table.pauseRequestedAt} IS NULL OR (typeof(${table.pauseRequestedAt}) = 'integer' AND ${table.pauseRequestedAt} >= 1)`),
   foreignKey({
     name: 'runs_batch_same_project_fk',
     columns: [table.projectId, table.batchId],

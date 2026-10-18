@@ -216,8 +216,8 @@ async function fixture() {
 
 describe('P03-8 F-002 migration v26 git operations', () => {
   it('appends v26 without changing delivered v1-v25 checksums', () => {
-    expect(SQLITE_MIGRATIONS.at(-1)?.version).toBe(26);
-    expect(SQLITE_MIGRATIONS).toHaveLength(26);
+    expect(SQLITE_MIGRATIONS.at(-1)?.version).toBe(27);
+    expect(SQLITE_MIGRATIONS).toHaveLength(27);
     const frozen = createHash('sha256')
       .update(SQLITE_MIGRATIONS.slice(0, 25).map((migration) => migration.checksum).join('\n'))
       .digest('hex');
@@ -269,11 +269,11 @@ describe('P03-8 F-002 migration v26 git operations', () => {
                 .all(version)
             : [];
         const result = await migrateSqliteStorage(session);
-        expect(result.toVersion).toBe(26);
+        expect(result.toVersion).toBe(27);
         expect(result.appliedVersions).toEqual(
           version === 0
-            ? Array.from({ length: 26 }, (_, index) => index + 1)
-            : Array.from({ length: 26 - version }, (_, index) => version + 1 + index),
+            ? Array.from({ length: 27 }, (_, index) => index + 1)
+            : Array.from({ length: 27 - version }, (_, index) => version + 1 + index),
         );
         expect(
           session.database
@@ -302,7 +302,7 @@ describe('P03-8 F-002 migration v26 git operations', () => {
         expect((await migrateSqliteStorage(session)).appliedVersions).toEqual([]);
         expect(
           session.database.prepare('SELECT count(*) AS n FROM schema_migrations').get(),
-        ).toEqual({ n: 26 });
+        ).toEqual({ n: 27 });
         session.close();
         const reopened = openSqliteStorageSession({ path: join(sandbox.path, 'state.db') });
         try {

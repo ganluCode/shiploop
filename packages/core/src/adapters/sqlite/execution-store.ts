@@ -31,6 +31,7 @@
  * 不存在目标统一 undefined（存在性折叠由应用层承担）。
  */
 import { randomUUID } from 'node:crypto';
+import { ACTIVE_ATTEMPT_STATUSES } from '../../ports/attempt-store.js';
 import { CODE_ATTEMPT_SETTLEMENT_PREFIX, validateCodeAttemptSettlement } from '../../ports/code-attempt-budget.js';
 import { StorageError } from '../../ports/errors.js';
 import type { StorageEntityRef } from '../../ports/errors.js';
@@ -44,6 +45,8 @@ import {
 import type { ExecutionBudgetSnapshot } from '../../ports/execution-budget.js';
 import {
   EXECUTION_ACTIVE_STATUSES,
+  EXECUTION_BATCH_PAUSED_EVENT_TYPE,
+  EXECUTION_RUN_PAUSED_EVENT_TYPE,
   executionCorruptError,
   isExecutionActiveStatus,
   isExecutionTerminalStatus,
@@ -64,6 +67,8 @@ import type {
   BatchBudgetRevisionResult,
   ExecutionBatchRecord,
   ExecutionBatchStatus,
+  ExecutionPauseInput,
+  ExecutionPauseResult,
   RunOutcomeSettlementOutcome,
   RunOutcomeSettlementRecord,
   RunRecord,
@@ -82,7 +87,7 @@ import type { TaskStatus } from '../../ports/plan-store.js';
 import { assertPrincipalVisibility } from '../../ports/queries.js';
 import type { PlanListRequest, PlanRecordPage, SettingsScopeSnapshot } from '../../ports/queries.js';
 import { parseStoredSettingsPayload } from '../../ports/settings-schema.js';
-import { validateStableId } from '../../ports/validation.js';
+import { rejectUnknownKeys, requirePlainObject, validateStableId } from '../../ports/validation.js';
 import type { SqliteStorageSession } from './session.js';
 import { transactSqliteConsistentRead, visibilityCondition } from './state-store.js';
 
@@ -110,6 +115,7 @@ interface ExecutionBatchSqlRow {
   readonly no_progress_runs: number;
   readonly deadline_at: number;
   readonly reason: string | null;
+  readonly pause_requested_at: number | null;
 }
 
 interface RunSqlRow {
@@ -133,6 +139,7 @@ interface RunSqlRow {
   readonly reason: string | null;
   readonly started_at: number | null;
   readonly ended_at: number | null;
+  readonly pause_requested_at: number | null;
 }
 
 interface TaskAttemptReservationSqlRow {
@@ -178,14 +185,15 @@ interface RunOutcomeSettlementSqlRow {
   readonly reason: string | null;
 }
 
-const SELECT_BATCH =
+const SELECT_BATCH_SQL =
   'SELECT id, created_at, project_id, revision, updated_at, phase_id, feature_id, scope_snapshot, ' +
   'config_snapshot, status, budget_revision, budget_snapshot, runs_created, attempts_created, ' +
-  'runtime_starts, no_progress_runs, deadline_at, reason FROM execution_batches';
-const SELECT_RUN =
+  'runtime_starts, no_progress_runs, deadline_at, reason, pause_requested_at FROM execution_batches';
+const SELECT_RUN_SQL =
   'SELECT id, created_at, project_id, revision, updated_at, batch_id, feature_id, purpose, ' +
   'input_snapshot, config_snapshot, status, scope_digest, work_key, dispatch_ordinal, ' +
-  'max_attempts_per_run, run_time_limit_ms, attempts_created, reason, started_at, ended_at FROM runs';
+  'max_attempts_per_run, run_time_limit_ms, attempts_created, reason, started_at, ended_at, ' +
+  'pause_requested_at FROM runs';
 const SELECT_RESERVATION =
   'SELECT id, created_at, project_id, revision, updated_at, batch_id, run_id, task_id, attempt_key, ' +
   'classification, classified_by, reason FROM task_attempt_reservations';
@@ -262,6 +270,14 @@ export interface SqliteExecutionAccess {
   recordExecutionRunDispatchInTransaction(projectId: string, batchId: string): ExecutionBatchRecord;
   /** 执行域脱敏事件追加（state_events；与公开白名单同形）。 */
   appendExecutionEventInTransaction(input: unknown): string;
+  /**
+   * P03-9 / F-001：Task 边界暂停意图（同一短写事务内原子持久化）。
+   * 目标为 Run 或 Batch；无活动 Attempt 时直接 paused，有活动 Attempt 时
+   * pausing（当前 Attempt 仍可完成验证/必要收尾，后续由生命周期收尾为 paused）。
+   * 终态只返回 already_terminal，绝不倒写；interrupted 保留既有隔离状态。
+   * 不修改预算、deadline、累计计数或代码；CAS 于 expectedRevision。
+   */
+  requestExecutionPauseInTransaction(input: ExecutionPauseInput): ExecutionPauseResult;
   /* ---------------------------------------------------------------- *
    * P03-3 / F-006 Task 尝试预算预占与分类记账（迁移 v11；受信 Core 内部原语）
    * ---------------------------------------------------------------- */
@@ -356,6 +372,18 @@ export function createSqliteExecutionAccess(
   options: SqliteExecutionStoreOptions = {},
 ): SqliteExecutionAccess {
   const nowUtcMs = options.nowUtcMs ?? Date.now;
+  // 迁移 v27 之前的库仍可被升级/种子测试读取：缺失暂停意图列时以 NULL 兼容，
+  // 不为读取修改 schema；v27 之后正常读取持久值。
+  const pauseColumnsPresent = (() => {
+    const count = (table: string) => (session.database
+      .prepare<[string], { n: number }>(`SELECT COUNT(*) AS n FROM pragma_table_info(?) WHERE name = 'pause_requested_at'`)
+      .get(table) ?? { n: 0 }).n;
+    return count('runs') === 1 && count('execution_batches') === 1;
+  })();
+  const SELECT_BATCH = pauseColumnsPresent ? SELECT_BATCH_SQL
+    : SELECT_BATCH_SQL.replace('reason, pause_requested_at FROM execution_batches', 'reason, NULL AS pause_requested_at FROM execution_batches');
+  const SELECT_RUN = pauseColumnsPresent ? SELECT_RUN_SQL
+    : SELECT_RUN_SQL.replace('pause_requested_at FROM runs', 'NULL AS pause_requested_at FROM runs');
 
   function assertOpen(operation: string): void {
     if (!session.isOpen()) {
@@ -438,6 +466,7 @@ export function createSqliteExecutionAccess(
       noProgressRuns: row.no_progress_runs,
       deadlineAtUtcMs: row.deadline_at,
       reason: row.reason,
+      pauseRequestedAtUtcMs: row.pause_requested_at,
     };
   }
 
@@ -463,6 +492,7 @@ export function createSqliteExecutionAccess(
       reason: row.reason,
       startedAtUtcMs: row.started_at,
       endedAtUtcMs: row.ended_at,
+      pauseRequestedAtUtcMs: row.pause_requested_at,
     };
   }
 
@@ -1433,6 +1463,117 @@ export function createSqliteExecutionAccess(
   }
 
   /* ------------------------------------------------------------ *
+   * P03-9 / F-001 Task 边界暂停意图（迁移 v27）
+   * ------------------------------------------------------------ */
+
+  function activeAttemptCountForRun(projectId: string, runId: string): number {
+    return session.database.prepare<unknown[], { count: number }>(
+      `SELECT COUNT(*) AS count FROM attempts WHERE project_id = ? AND run_id = ?
+        AND status IN (${ACTIVE_ATTEMPT_STATUSES.map(() => '?').join(', ')})`,
+    ).get(projectId, runId, ...ACTIVE_ATTEMPT_STATUSES)!.count;
+  }
+
+  function activeAttemptCountForBatch(projectId: string, batchId: string): number {
+    return session.database.prepare<unknown[], { count: number }>(
+      `SELECT COUNT(*) AS count FROM attempts WHERE project_id = ? AND run_id IN
+        (SELECT id FROM runs WHERE project_id = ? AND batch_id = ?)
+        AND status IN (${ACTIVE_ATTEMPT_STATUSES.map(() => '?').join(', ')})`,
+    ).get(projectId, projectId, batchId, ...ACTIVE_ATTEMPT_STATUSES)!.count;
+  }
+
+  function requestExecutionPauseInTransaction(input: ExecutionPauseInput): ExecutionPauseResult {
+    const operation = 'ExecutionStore.requestExecutionPause';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const raw = requirePlainObject(input, { operation }, 'input');
+    rejectUnknownKeys(raw, ['projectId', 'targetKind', 'targetId', 'expectedRevision'], { operation }, 'input');
+    const projectId = validateStableId(raw.projectId, { operation }, 'projectId');
+    const targetId = validateStableId(raw.targetId, { operation }, 'targetId');
+    if (raw.targetKind !== 'run' && raw.targetKind !== 'batch') {
+      throw new StorageError('validation', operation, 'targetKind 必须是 run 或 batch');
+    }
+    const targetKind = raw.targetKind;
+    if (!Number.isSafeInteger(raw.expectedRevision) || (raw.expectedRevision as number) < 1) {
+      throw new StorageError('validation', operation, 'expectedRevision 必须是 ≥1 的安全整数');
+    }
+    const expectedRevision = raw.expectedRevision as number;
+    const timestamp = nowUtcMs();
+    if (!Number.isSafeInteger(timestamp) || timestamp < 1) throw new StorageError('validation', operation, 'Invalid pause clock');
+    const conflict = (reason: string, extra: Record<string, unknown> = {}): never => {
+      throw new StorageError('conflict', operation, `Execution pause rejected: ${reason}`, {
+        entity: { type: targetKind === 'run' ? 'run' : 'execution_batch', projectId, id: targetId },
+        details: { reason, ...extra },
+      });
+    };
+
+    if (targetKind === 'run') {
+      const run = getExecutionRunInTransaction(projectId, targetId);
+      if (isExecutionTerminalStatus(run.status)) {
+        return { outcome: 'already_terminal', targetKind, targetId, status: run.status, revision: run.revision,
+          changed: false, eventId: null };
+      }
+      if (run.status === 'cancelling') conflict('control_in_progress', { actualStatus: run.status });
+      if (run.status === 'interrupted') {
+        return { outcome: 'interrupted', targetKind, targetId, status: run.status, revision: run.revision,
+          changed: false, eventId: null };
+      }
+      if (run.revision !== expectedRevision) {
+        conflict('stale_revision', { expectedRevision, actualRevision: run.revision });
+      }
+      const status = activeAttemptCountForRun(projectId, targetId) > 0 ? 'pausing' : 'paused';
+      const changed = session.database.prepare(`UPDATE runs SET status = ?, reason = 'user_pause',
+        pause_requested_at = COALESCE(pause_requested_at, ?), revision = revision + 1, updated_at = ?
+        WHERE project_id = ? AND id = ? AND revision = ?
+          AND status IN ('queued', 'running', 'pausing', 'paused')`)
+        .run(status, timestamp, timestamp, projectId, targetId, expectedRevision);
+      if (changed.changes !== 1) conflict('stale_revision', { expectedRevision, actualRevision: run.revision });
+      const eventId = appendExecutionEventInTransaction({ projectId, eventType: EXECUTION_RUN_PAUSED_EVENT_TYPE,
+        aggregateType: 'run', aggregateId: targetId, aggregateRevision: expectedRevision + 1, payload: { paused: true } });
+      return { outcome: status, targetKind, targetId, status, revision: expectedRevision + 1, changed: true, eventId };
+    }
+
+    const batch = getExecutionBatchInTransaction(projectId, targetId);
+    if (isExecutionTerminalStatus(batch.status)) {
+      return { outcome: 'already_terminal', targetKind, targetId, status: batch.status, revision: batch.revision,
+        changed: false, eventId: null };
+    }
+    if (batch.status === 'cancelling') conflict('control_in_progress', { actualStatus: batch.status });
+    if (batch.status === 'interrupted') {
+      return { outcome: 'interrupted', targetKind, targetId, status: batch.status, revision: batch.revision,
+        changed: false, eventId: null };
+    }
+    if (batch.revision !== expectedRevision) {
+      conflict('stale_revision', { expectedRevision, actualRevision: batch.revision });
+    }
+    const status = activeAttemptCountForBatch(projectId, targetId) > 0 ? 'pausing' : 'paused';
+    const changed = session.database.prepare(`UPDATE execution_batches SET status = ?, reason = 'user_pause',
+      pause_requested_at = COALESCE(pause_requested_at, ?), revision = revision + 1, updated_at = ?
+      WHERE project_id = ? AND id = ? AND revision = ?
+        AND status IN ('queued', 'running', 'pausing', 'paused')`)
+      .run(status, timestamp, timestamp, projectId, targetId, expectedRevision);
+    if (changed.changes !== 1) conflict('stale_revision', { expectedRevision, actualRevision: batch.revision });
+    const rows = session.database.prepare<[string, string], { id: string; revision: number }>(
+      `SELECT id, revision FROM runs WHERE project_id = ? AND batch_id = ?
+        AND status IN ('queued', 'running', 'pausing', 'paused')`,
+    ).all(projectId, targetId);
+    for (const row of rows) {
+      const runStatus = activeAttemptCountForRun(projectId, row.id) > 0 ? 'pausing' : 'paused';
+      const runChanged = session.database.prepare(`UPDATE runs SET status = ?, reason = 'user_pause',
+        pause_requested_at = COALESCE(pause_requested_at, ?), revision = revision + 1, updated_at = ?
+        WHERE project_id = ? AND id = ? AND revision = ?
+          AND status IN ('queued', 'running', 'pausing', 'paused')`)
+        .run(runStatus, timestamp, timestamp, projectId, row.id, row.revision);
+      if (runChanged.changes === 1) {
+        appendExecutionEventInTransaction({ projectId, eventType: EXECUTION_RUN_PAUSED_EVENT_TYPE,
+          aggregateType: 'run', aggregateId: row.id, aggregateRevision: row.revision + 1, payload: { paused: true } });
+      }
+    }
+    const eventId = appendExecutionEventInTransaction({ projectId, eventType: EXECUTION_BATCH_PAUSED_EVENT_TYPE,
+      aggregateType: 'execution_batch', aggregateId: targetId, aggregateRevision: expectedRevision + 1, payload: { paused: true } });
+    return { outcome: status, targetKind, targetId, status, revision: expectedRevision + 1, changed: true, eventId };
+  }
+
+  /* ------------------------------------------------------------ *
    * P03-3 / F-007 Runtime 启动额度预占（迁移 v12）
    * ------------------------------------------------------------ */
 
@@ -2111,6 +2252,7 @@ export function createSqliteExecutionAccess(
     getActivePhaseExecutionBatchInTransaction,
     recordExecutionRunDispatchInTransaction,
     appendExecutionEventInTransaction,
+    requestExecutionPauseInTransaction,
     reserveTaskAttemptInTransaction,
     settleTaskAttemptBudgetInTransaction,
     reclassifyTaskAttemptAsInfrastructureInTransaction,

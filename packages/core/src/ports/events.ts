@@ -37,7 +37,7 @@ import {
   BASELINE_REASON_CODES,
 } from './baseline.js';
 import { isStorageError } from './errors.js';
-import { ATTEMPT_UPDATED_EVENT_TYPE, TASK_APPROVAL_BLOCKED_EVENT_TYPE, TASK_APPROVAL_DECIDED_EVENT_TYPE, EXECUTION_BUDGET_REVISED_EVENT_TYPE, EXECUTION_RUN_DISPATCHED_EVENT_TYPE, TASK_CLAIMED_EVENT_TYPE, FEATURE_FINALIZED_EVENT_TYPE, FEATURE_FINALIZATION_BLOCKED_EVENT_TYPE } from './execution-store.js';
+import { ATTEMPT_UPDATED_EVENT_TYPE, TASK_APPROVAL_BLOCKED_EVENT_TYPE, TASK_APPROVAL_DECIDED_EVENT_TYPE, EXECUTION_BUDGET_REVISED_EVENT_TYPE, EXECUTION_RUN_DISPATCHED_EVENT_TYPE, EXECUTION_RUN_PAUSED_EVENT_TYPE, EXECUTION_BATCH_PAUSED_EVENT_TYPE, TASK_CLAIMED_EVENT_TYPE, FEATURE_FINALIZED_EVENT_TYPE, FEATURE_FINALIZATION_BLOCKED_EVENT_TYPE } from './execution-store.js';
 import {
   EXECUTION_INPUT_PREPARED_EVENT_TYPE,
   FEATURE_LABELS_UPDATED_EVENT_TYPE,
@@ -97,6 +97,8 @@ export { EXECUTION_INPUT_PREPARED_EVENT_TYPE };
 export { EXECUTION_RUN_DISPATCHED_EVENT_TYPE };
 /** P03-3 / F-009：仅命令路径预算修订成功后写入（脱敏 payload 恒 {revised:true}）。 */
 export { EXECUTION_BUDGET_REVISED_EVENT_TYPE };
+/** P03-9 / F-001：仅暂停命令成功写入（Run/Batch 各自聚合；payload 恒 {paused:true}）。 */
+export { EXECUTION_RUN_PAUSED_EVENT_TYPE, EXECUTION_BATCH_PAUSED_EVENT_TYPE };
 /** 仅命令路径全局配置首建成功写入（F-009 已实施；P01 直接服务首建不写事件）。 */
 export { SETTINGS_GLOBAL_CREATED_EVENT_TYPE };
 /** 仅命令路径项目配置首建成功写入（F-009 已实施；P01 直接服务首建不写事件）。 */
@@ -153,6 +155,8 @@ export const PUBLIC_STATE_EVENT_TYPES = [
   // {revised:true}，不携带预算数值/理由正文/批准主体——审计细节在不可变修订行
   // 与回执；修订不自动启动或恢复 Run）。
   EXECUTION_BUDGET_REVISED_EVENT_TYPE,
+  EXECUTION_RUN_PAUSED_EVENT_TYPE,
+  EXECUTION_BATCH_PAUSED_EVENT_TYPE,
   TASK_CLAIMED_EVENT_TYPE,
   ATTEMPT_UPDATED_EVENT_TYPE,
   TASK_APPROVAL_BLOCKED_EVENT_TYPE,
@@ -186,6 +190,7 @@ type EventPayloadKind =
   | 'executionInputPrepared'
   | 'executionRunDispatched'
   | 'executionBudgetRevised'
+  | 'executionPaused'
   | 'taskClaimed'
   | 'attemptUpdated'
   | 'taskApprovalBlocked'
@@ -358,6 +363,18 @@ export const STATE_EVENT_TYPE_SPECS: Readonly<
     aggregateType: 'execution_batch',
     scopeKind: 'project',
     payloadKind: 'executionBudgetRevised',
+  }),
+  // P03-9 / F-001：用户暂停意图事件（Run/Batch 各自聚合；payload 恒
+  // {paused:true}，不携带预算/deadline/目标正文；暂停不是终态）。
+  [EXECUTION_RUN_PAUSED_EVENT_TYPE]: Object.freeze({
+    aggregateType: 'run',
+    scopeKind: 'project',
+    payloadKind: 'executionPaused',
+  }),
+  [EXECUTION_BATCH_PAUSED_EVENT_TYPE]: Object.freeze({
+    aggregateType: 'execution_batch',
+    scopeKind: 'project',
+    payloadKind: 'executionPaused',
   }),
 });
 
@@ -936,6 +953,9 @@ export function mapStateEvent(row: unknown, operation: string = EVENT_READ_OPERA
     payload = { claimed: true };
   } else if (spec.payloadKind === 'executionBudgetRevised') {
     payload = validateExecutionBudgetRevisedPayload(row.payload, operation);
+  } else if (spec.payloadKind === 'executionPaused') {
+    if (Object.keys(row.payload).length !== 1 || row.payload.paused !== true) corrupt(operation, 'event_payload_violation');
+    payload = { paused: true };
   } else if (spec.payloadKind === 'gitOperationRegistered') {
     payload = validateGitOperationRegisteredPayload(row.payload, operation);
   } else if (spec.payloadKind === 'gitOperationSettled') {

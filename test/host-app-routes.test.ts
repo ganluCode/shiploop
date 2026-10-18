@@ -704,6 +704,8 @@ describe('F-011 传输纪律与版本门禁', () => {
       expect(error.code).toBe('unsupported');
       expect(error.details?.supportedOperations).toEqual([
         'execution.attempt.cancel',
+        // P03-9 / F-001：Run/Batch Task 边界暂停随 Core 白名单进入接线宣告。
+        'execution.pause',
         'project.register',
         'project.metadata.update',
         'settings.global.create',
@@ -956,6 +958,7 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
     expect(validated.capabilities.application).toEqual({
       commands: [
         'execution.attempt.cancel',
+        'execution.pause',
         'project.register',
         'project.metadata.update',
         'settings.global.create',

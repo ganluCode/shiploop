@@ -52,6 +52,8 @@ import {
   EXECUTION_INPUT_PREPARED_EVENT_TYPE,
   EXECUTION_RUN_DISPATCHED_EVENT_TYPE,
   EXECUTION_BUDGET_REVISED_EVENT_TYPE,
+  EXECUTION_RUN_PAUSED_EVENT_TYPE,
+  EXECUTION_BATCH_PAUSED_EVENT_TYPE,
   GIT_OPERATION_REGISTERED_EVENT_TYPE,
   GIT_OPERATION_SETTLED_EVENT_TYPE,
   createEventCursorBinding,
@@ -166,6 +168,9 @@ describe('F-003 冻结事件封套版本与 §9.2 事件白名单（P02-2 六类
       // P03-3 / F-009：批次预算修订事件（聚合为目标 Batch；payload 恒
       // {revised:true}，不携带预算数值/理由/批准主体——修订不自动启动或恢复 Run）。
       EXECUTION_BUDGET_REVISED_EVENT_TYPE,
+      // P03-9 / F-001：用户暂停意图事件（Run/Batch 各自聚合；payload 恒 {paused:true}）。
+      EXECUTION_RUN_PAUSED_EVENT_TYPE,
+      EXECUTION_BATCH_PAUSED_EVENT_TYPE,
       'task.claimed',
       'task.attempt.updated',
       'task.approval.blocked',

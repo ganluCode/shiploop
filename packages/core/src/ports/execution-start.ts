@@ -89,7 +89,8 @@ export const EXECUTION_RUN_NOT_READY_REASON = 'scheduler_not_assembled' as const
  * 拒绝回执 reason 词汇（冻结）：
  * - preview_stale：预览身份/前置条件漂移（含 no_work/blocked 当前状态与批准失效）；
  * - budget_exhausted：父预算（计数/deadline）不再允许新派发；
- * - batch_not_active：重试目标 Batch 已终态（授权关闭，新工作需新授权）；
+ * - batch_not_active：重试目标 Batch 已终态或已持久化暂停意图（授权关闭，
+ *   新 Run 需显式恢复/新授权）；
  * - retry_scope_mismatch：重试目标 Batch 范围与命令范围不一致；
  * - retry_work_key_absent：重试目标 Batch 中不存在该工作身份的 Run（计划/输入
  *   已实质变化，属新工作，需新的明确授权）；

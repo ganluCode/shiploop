@@ -345,9 +345,12 @@ describe('F-005 迁移执行与记录', () => {
         // 探针迁移紧随其后。
         expect(rows[25]!.version).toBe(26);
         expect(rows[25]!.checksum).toBe(SQLITE_MIGRATIONS[25]!.checksum);
-        expect(rows[26]!.version).toBe(PROBE_MIGRATION.version);
-        expect(rows[26]!.checksum).toBe(PROBE_MIGRATION.checksum);
-        expect(rows[26]!.applied_at).toBe(FIXED_NOW_MS + 1_000);
+        // P03-9 / F-001：v27 追加暂停意图列；探针迁移紧随其后。
+        expect(rows[26]!.version).toBe(27);
+        expect(rows[26]!.checksum).toBe(SQLITE_MIGRATIONS[26]!.checksum);
+        expect(rows[27]!.version).toBe(PROBE_MIGRATION.version);
+        expect(rows[27]!.checksum).toBe(PROBE_MIGRATION.checksum);
+        expect(rows[27]!.applied_at).toBe(FIXED_NOW_MS + 1_000);
       } finally {
         session.close();
       }
