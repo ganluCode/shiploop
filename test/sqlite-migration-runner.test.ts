@@ -200,6 +200,7 @@ describe('F-005 迁移执行与记录', () => {
           'check_results',
           'command_receipts',
           'execution_batches',
+          'execution_stop_operations',
           'features',
           'git_operations',
           'global_settings',
@@ -345,12 +346,15 @@ describe('F-005 迁移执行与记录', () => {
         // 探针迁移紧随其后。
         expect(rows[25]!.version).toBe(26);
         expect(rows[25]!.checksum).toBe(SQLITE_MIGRATIONS[25]!.checksum);
-        // P03-9 / F-001：v27 追加暂停意图列；探针迁移紧随其后。
+        // P03-9 / F-001：v27 追加暂停意图列；P03-9 / F-002：v28 追加停止
+        // operation 表；探针迁移紧随其后。
         expect(rows[26]!.version).toBe(27);
         expect(rows[26]!.checksum).toBe(SQLITE_MIGRATIONS[26]!.checksum);
-        expect(rows[27]!.version).toBe(PROBE_MIGRATION.version);
-        expect(rows[27]!.checksum).toBe(PROBE_MIGRATION.checksum);
-        expect(rows[27]!.applied_at).toBe(FIXED_NOW_MS + 1_000);
+        expect(rows[27]!.version).toBe(28);
+        expect(rows[27]!.checksum).toBe(SQLITE_MIGRATIONS[27]!.checksum);
+        expect(rows[28]!.version).toBe(PROBE_MIGRATION.version);
+        expect(rows[28]!.checksum).toBe(PROBE_MIGRATION.checksum);
+        expect(rows[28]!.applied_at).toBe(FIXED_NOW_MS + 1_000);
       } finally {
         session.close();
       }

@@ -1150,6 +1150,55 @@ export const runs = sqliteTable('runs', {
 ]);
 
 /**
+ * P03-9 / F-002 Run/Batch 取消意图的持久停止 operation（迁移 v28）。
+ *
+ * 身份列不可变；status 只表示停止请求的持久阶段（stopping/stopped/uncertain）。
+ * 同一目标至多一条活动 operation（partial unique index），重复取消复用该身份；
+ * 取消不修改预算、deadline、累计计数或历史 Attempt。
+ */
+export const executionStopOperations = sqliteTable('execution_stop_operations', {
+  id: text('id').primaryKey(),
+  createdAt: integer('created_at').notNull(),
+  projectId: text('project_id').notNull().references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  revision: integer('revision').notNull().default(1),
+  updatedAt: integer('updated_at').notNull(),
+  commandId: text('command_id').notNull(),
+  targetKind: text('target_kind').notNull(),
+  targetId: text('target_id').notNull(),
+  batchId: text('batch_id').notNull(),
+  runId: text('run_id'),
+  reason: text('reason').notNull(),
+  status: text('status').notNull(),
+  requestedAt: integer('requested_at').notNull(),
+  settledAt: integer('settled_at'),
+}, (table) => [
+  check('execution_stop_operations_revision_check', sql`${table.revision} >= 1`),
+  check('execution_stop_operations_target_kind_check', sql`${table.targetKind} IN ('run', 'batch')`),
+  check('execution_stop_operations_status_check', sql`${table.status} IN ('stopping', 'stopped', 'uncertain')`),
+  check('execution_stop_operations_reason_check', sql`${table.reason} = 'user_cancel'`),
+  check('execution_stop_operations_target_shape_check', sql`
+    (${table.targetKind} = 'run' AND ${table.runId} = ${table.targetId})
+    OR (${table.targetKind} = 'batch' AND ${table.runId} IS NULL)`),
+  check('execution_stop_operations_times_check', sql`
+    typeof(${table.createdAt}) = 'integer' AND ${table.createdAt} >= 1
+    AND typeof(${table.updatedAt}) = 'integer' AND ${table.updatedAt} >= 1
+    AND typeof(${table.requestedAt}) = 'integer' AND ${table.requestedAt} >= 1
+    AND (${table.settledAt} IS NULL OR (typeof(${table.settledAt}) = 'integer' AND ${table.settledAt} >= ${table.requestedAt}))`),
+  check('execution_stop_operations_command_check', sql`length(${table.commandId}) > 0 AND length(${table.commandId}) <= 128`),
+  foreignKey({ name: 'execution_stop_operations_batch_fk', columns: [table.projectId, table.batchId],
+    foreignColumns: [executionBatches.projectId, executionBatches.id] }).onDelete('restrict'),
+  foreignKey({ name: 'execution_stop_operations_run_fk', columns: [table.projectId, table.runId],
+    foreignColumns: [runs.projectId, runs.id] }).onDelete('restrict'),
+  uniqueIndex('execution_stop_operations_project_id_id_unique').on(table.projectId, table.id),
+  uniqueIndex('execution_stop_operations_project_command_unique').on(table.projectId, table.commandId),
+  uniqueIndex('execution_stop_operations_active_target_unique')
+    .on(table.projectId, table.targetKind, table.targetId)
+    .where(sql`${table.status} IN ('stopping', 'uncertain')`),
+  index('execution_stop_operations_target_index')
+    .on(table.projectId, table.targetKind, table.targetId, table.requestedAt),
+]);
+
+/**
  * P03-3 / F-002 批次预算修订记录（迁移 v9；core-design/11 §5 batch_budget_revisions）。
  *
  * - 关联同项目 Batch（复合外键）；修订身份 UNIQUE(batch_id,version)；保存操作者

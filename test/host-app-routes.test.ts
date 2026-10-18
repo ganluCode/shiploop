@@ -706,6 +706,8 @@ describe('F-011 传输纪律与版本门禁', () => {
         'execution.attempt.cancel',
         // P03-9 / F-001：Run/Batch Task 边界暂停随 Core 白名单进入接线宣告。
         'execution.pause',
+        // P03-9 / F-002：Run/Batch 取消经同一命令路由接线。
+        'execution.cancel',
         'project.register',
         'project.metadata.update',
         'settings.global.create',
@@ -959,6 +961,7 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
       commands: [
         'execution.attempt.cancel',
         'execution.pause',
+        'execution.cancel',
         'project.register',
         'project.metadata.update',
         'settings.global.create',

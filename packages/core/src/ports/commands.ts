@@ -128,6 +128,9 @@ export const COMMAND_OPERATIONS = [
   // 更新类信封 expectedRevision 为目标 Run/Batch 自身 revision；payload 只含
   // 目标身份 runId 或 batchId）。
   'execution.pause',
+  // P03-9 / F-002：Run/Batch 取消意图（project scope + execution.start；更新类
+  // expectedRevision 为目标自身 revision；持久关联停止 operation，不等待进程停止）。
+  'execution.cancel',
   'project.register',
   'project.metadata.update',
   'settings.global.create',
@@ -331,6 +334,9 @@ export const COMMAND_OPERATION_SPECS: Readonly<Record<AppOperation, CommandOpera
     'execution.attempt.cancel': { scopeKind: 'project', mutation: 'create', capability: 'execution.start' },
     // P03-9 / F-001：暂停是控制更新，复用既有 execution.start 授权面。
     'execution.pause': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
+    // P03-9 / F-002：取消同属控制更新，复用 execution.start 授权面；停止核验
+    // 与 Runtime/Verifier 端口接线由后续任务承担。
+    'execution.cancel': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
     'execution.start': { scopeKind: 'project', mutation: 'create', capability: 'execution.start' },
     // P03-3 / F-009：批次预算显式修订（更新类：expectedRevision=目标 Batch
     // 当前 budget_revision；增额/延期是新的明确授权，与启动能力分离）。
@@ -800,6 +806,9 @@ export type ValidatedExecutionPausePayload =
   | { readonly runId: string; readonly batchId: null }
   | { readonly runId: null; readonly batchId: string };
 
+/** P03-9 / F-002 Run/Batch 取消 payload：与暂停相同的单目标身份形态。 */
+export type ValidatedExecutionCancelPayload = ValidatedExecutionPausePayload;
+
 interface EnvelopeCommon {
   readonly schemaVersion: typeof WIRE_MESSAGE_SCHEMA_VERSION;
   readonly commandId: string;
@@ -869,6 +878,12 @@ export type ValidatedCommandEnvelope =
       readonly scope: { readonly kind: 'project'; readonly projectId: string };
       readonly expectedRevision: number;
       readonly payload: ValidatedExecutionPausePayload;
+    })
+  | (EnvelopeCommon & {
+      readonly operation: 'execution.cancel';
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: number;
+      readonly payload: ValidatedExecutionCancelPayload;
     })
   | (EnvelopeCommon & {
       readonly operation: 'baseline.cancel';
@@ -1861,7 +1876,7 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
       payload: validateExecutionStartPayload(operation, object.payload),
     };
   }
-  if (operation === 'execution.pause') {
+  if (operation === 'execution.pause' || operation === 'execution.cancel') {
     if (scope.kind !== 'project') {
       fail(operation, 'invalid_input', 'scope.kind', 'scope 种类与操作不匹配');
     }
@@ -1871,7 +1886,7 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
       scope,
       expectedRevision: expectedRevision as number,
       payload: validateExecutionPausePayload(operation, object.payload),
-    };
+    } as ValidatedCommandEnvelope;
   }
   if (operation === 'execution.budget.revise') {
     if (scope.kind !== 'project') {

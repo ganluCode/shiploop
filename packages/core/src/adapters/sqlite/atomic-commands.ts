@@ -82,8 +82,8 @@ export function createSqliteAtomicCommandStore(
             const runStatus = outcome === 'completed' ? 'succeeded' : outcome === 'awaiting_approval' ? 'paused' : 'failed';
             const batchStatus = runStatus;
             const featureUpdate = session.database.prepare('UPDATE features SET status = ?, delivery_status = ?, revision = revision + 1, updated_at = ? WHERE project_id = ? AND id = ? AND revision = ?').run(outcome, deliveryStatus, timestamp, projectId, featureId, value.expectedFeatureRevision);
-            const runUpdate = session.database.prepare('UPDATE runs SET status = ?, reason = ?, ended_at = ?, revision = revision + 1, updated_at = ? WHERE project_id = ? AND id = ? AND revision = ? AND status IN (\'queued\', \'running\', \'pausing\', \'paused\', \'cancelling\', \'interrupted\')').run(runStatus, value.reason, outcome === 'awaiting_approval' ? null : timestamp, timestamp, projectId, runId, value.expectedRunRevision);
-            const batchUpdate = session.database.prepare('UPDATE execution_batches SET status = ?, reason = ?, revision = revision + 1, updated_at = ? WHERE project_id = ? AND id = ? AND revision = ? AND status IN (\'queued\', \'running\', \'pausing\', \'paused\', \'cancelling\', \'interrupted\')').run(batchStatus, value.reason, timestamp, projectId, batchId, value.expectedBatchRevision);
+            const runUpdate = session.database.prepare('UPDATE runs SET status = ?, reason = ?, ended_at = ?, revision = revision + 1, updated_at = ? WHERE project_id = ? AND id = ? AND revision = ? AND status IN (\'queued\', \'running\', \'pausing\', \'paused\')').run(runStatus, value.reason, outcome === 'awaiting_approval' ? null : timestamp, timestamp, projectId, runId, value.expectedRunRevision);
+            const batchUpdate = session.database.prepare('UPDATE execution_batches SET status = ?, reason = ?, revision = revision + 1, updated_at = ? WHERE project_id = ? AND id = ? AND revision = ? AND status IN (\'queued\', \'running\', \'pausing\', \'paused\')').run(batchStatus, value.reason, timestamp, projectId, batchId, value.expectedBatchRevision);
             if (featureUpdate.changes !== 1 || runUpdate.changes !== 1 || batchUpdate.changes !== 1) throw new StorageError('conflict', operation, '最终收尾 CAS 未命中');
             executions.appendExecutionEventInTransaction({ projectId, eventType: outcome === 'completed' ? 'feature.finalized' : 'feature.finalization_blocked', aggregateType: 'feature', aggregateId: featureId, aggregateRevision: snapshot.feature.revision + 1, payload: outcome === 'completed' ? { finalized: true } : { blocked: true } });
           }
@@ -188,6 +188,7 @@ export function createSqliteAtomicCommandStore(
           insertExecutionRun: guarded(executions.insertExecutionRunInTransaction),
           appendExecutionEvent: guarded(executions.appendExecutionEventInTransaction),
           requestExecutionPause: guarded(executions.requestExecutionPauseInTransaction),
+          requestExecutionCancel: guarded(executions.requestExecutionCancelInTransaction),
           // P03-3 / F-006：Task 尝试预算预占与分类记账原语（迁移 v11；同一
           // BEGIN IMMEDIATE 内原子生效；受信 Core 内部面，不经命令路由暴露）。
           reserveTaskAttempt: guarded(executions.reserveTaskAttemptInTransaction),

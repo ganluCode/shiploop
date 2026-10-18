@@ -47,6 +47,9 @@ export const APPLICATION_COMMAND_CAPABILITIES = [
   // P03-9 / F-001：Run/Batch Task 边界暂停经既有 POST /v1/commands 通用路由
   // 接线（同一命令面；HostClient/CLI 专用入口仍由 F-014/F-015 接入）。
   'execution.pause',
+  // P03-9 / F-002：Run/Batch 取消经同一通用命令路由接线（停止端口接线在
+  // F-003；本命令只提交持久控制意图与停止 operation）。
+  'execution.cancel',
   'project.register',
   'project.metadata.update',
   'settings.global.create',

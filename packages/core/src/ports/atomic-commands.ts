@@ -268,6 +268,14 @@ export interface CommandTransaction {
   requestExecutionPause(
     input: import('./execution-store.js').ExecutionPauseInput,
   ): import('./execution-store.js').ExecutionPauseResult;
+  /**
+   * P03-9 / F-002：Run/Batch 取消意图（同项目 CAS）。活动执行/占用存在时只进入
+   * cancelling 并复用/创建持久停止 operation；无活动且占用安全时完成 cancelled。
+   * interrupted 不被当作无活动而释放占用，返回 stop_uncertain。
+   */
+  requestExecutionCancel(
+    input: import('./execution-store.js').ExecutionCancelInput,
+  ): import('./execution-store.js').ExecutionCancelResult;
   /* ---------------------------------------------------------------- *
    * P03-3 / F-006 Task 尝试预算预占与分类记账（迁移 v11；受信 Core 内部原语，
    * 不经命令面暴露；P03-4 在同一事务内接入真实 Attempt 创建）

@@ -143,6 +143,8 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       'execution.attempt.cancel',
       // P03-9 / F-001：Run/Batch Task 边界暂停（更新类；目标自身 revision CAS）。
       'execution.pause',
+      // P03-9 / F-002：Run/Batch 取消（更新类；目标自身 revision CAS + 停止 operation）。
+      'execution.cancel',
       'project.register',
       'project.metadata.update',
       'settings.global.create',
@@ -196,6 +198,7 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
     expect(COMMAND_OPERATION_SPECS).toEqual({
       'execution.attempt.cancel': { scopeKind: 'project', mutation: 'create', capability: 'execution.start' },
       'execution.pause': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
+      'execution.cancel': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
       'project.register': { scopeKind: 'registration', mutation: 'create', capability: 'project.register' },
       'project.metadata.update': { scopeKind: 'project', mutation: 'update', capability: 'project.metadata.write' },
       'settings.global.create': { scopeKind: 'global', mutation: 'create', capability: 'settings.global.write' },

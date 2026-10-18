@@ -179,6 +179,8 @@ describe('F-002 冻结常量与能力声明', () => {
           'execution.attempt.cancel',
           // P03-9 / F-001：Run/Batch Task 边界暂停经既有 /v1/commands 通用路由接线。
           'execution.pause',
+          // P03-9 / F-002：Run/Batch 取消经同一命令路由接线。
+          'execution.cancel',
           'project.register',
           'project.metadata.update',
           'settings.global.create',

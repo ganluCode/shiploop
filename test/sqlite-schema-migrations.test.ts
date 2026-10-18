@@ -67,6 +67,8 @@ const SCHEMA_TABLES = [
   // P03-3 / F-007：Runtime 启动预占账本（迁移 v12）。
   ['execution_batches', schema.executionBatches],
   ['runs', schema.runs],
+  // P03-9 / F-002：Run/Batch 取消的持久停止 operation（迁移 v28）。
+  ['execution_stop_operations', schema.executionStopOperations],
   ['batch_budget_revisions', schema.batchBudgetRevisions],
   ['task_attempt_reservations', schema.taskAttemptReservations],
   ['runtime_start_reservations', schema.runtimeStartReservations],
@@ -628,6 +630,10 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
         'git_operations:(feature_id,run_id)->runs.(feature_id,id)',
         'git_operations:(project_id,attempt_id)->attempts.(project_id,id)',
         'git_operations:(project_id,repository_binding_id)->repository_bindings.(project_id,id)',
+        // P03-9 / F-002 取消停止 operation（迁移 v28）：同项目 Batch/Run 关联。
+        'execution_stop_operations:(project_id)->projects.(id)',
+        'execution_stop_operations:(project_id,batch_id)->execution_batches.(project_id,id)',
+        'execution_stop_operations:(project_id,run_id)->runs.(project_id,id)',
       ]);
       type FkPragmaRow = { id: number; seq: number; table: string; from: string; to: string; on_update: string; on_delete: string };
       const actualFks = new Set<string>();

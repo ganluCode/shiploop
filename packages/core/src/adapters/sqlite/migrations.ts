@@ -2126,6 +2126,66 @@ ALTER TABLE runs ADD COLUMN pause_requested_at INTEGER
   CHECK (pause_requested_at IS NULL OR (typeof(pause_requested_at) = 'integer' AND pause_requested_at >= 1));
 `;
 
+
+/**
+ * P03-9 / F-002 Run/Batch 取消意图的持久停止 operation（迁移 v28）。
+ *
+ * 取消命令在短事务内把目标置为 cancelling（有活动执行/占用）或 cancelled
+ * （无活动且占用确认安全），并关联一条本表 operation。operation 的身份
+ * （project/command/target/run/batch/reason/created_at）不可变；status 只允许
+ * stopping → stopped/uncertain。partial unique index 保证同一目标至多一条活动
+ * operation，避免重复取消创建第二个停止身份。
+ *
+ * 不新增业务表或改写既有表/索引/CHECK；历史迁移 checksum 不变。
+ */
+const MIGRATION_028_SQL = `
+CREATE TABLE execution_stop_operations (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  command_id TEXT NOT NULL,
+  target_kind TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  batch_id TEXT NOT NULL,
+  run_id TEXT,
+  reason TEXT NOT NULL,
+  status TEXT NOT NULL,
+  requested_at INTEGER NOT NULL,
+  settled_at INTEGER,
+  CONSTRAINT execution_stop_operations_revision_check CHECK (revision >= 1),
+  CONSTRAINT execution_stop_operations_target_kind_check CHECK (target_kind IN ('run','batch')),
+  CONSTRAINT execution_stop_operations_status_check CHECK (status IN ('stopping','stopped','uncertain')),
+  CONSTRAINT execution_stop_operations_reason_check CHECK (reason = 'user_cancel'),
+  CONSTRAINT execution_stop_operations_target_shape_check CHECK (
+    (target_kind = 'run' AND run_id = target_id) OR (target_kind = 'batch' AND run_id IS NULL)
+  ),
+  CONSTRAINT execution_stop_operations_times_check CHECK (
+    typeof(created_at) = 'integer' AND created_at >= 1
+    AND typeof(updated_at) = 'integer' AND updated_at >= 1
+    AND typeof(requested_at) = 'integer' AND requested_at >= 1
+    AND (settled_at IS NULL OR (typeof(settled_at) = 'integer' AND settled_at >= requested_at))
+  ),
+  CONSTRAINT execution_stop_operations_command_check CHECK (length(command_id) > 0 AND length(command_id) <= 128),
+  CONSTRAINT execution_stop_operations_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT execution_stop_operations_batch_fk FOREIGN KEY (project_id, batch_id) REFERENCES execution_batches (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT execution_stop_operations_run_fk FOREIGN KEY (project_id, run_id) REFERENCES runs (project_id, id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX execution_stop_operations_project_id_id_unique ON execution_stop_operations (project_id, id);
+CREATE UNIQUE INDEX execution_stop_operations_project_command_unique ON execution_stop_operations (project_id, command_id);
+CREATE UNIQUE INDEX execution_stop_operations_active_target_unique ON execution_stop_operations (project_id, target_kind, target_id)
+  WHERE status IN ('stopping', 'uncertain');
+CREATE INDEX execution_stop_operations_target_index ON execution_stop_operations (project_id, target_kind, target_id, requested_at);
+CREATE TRIGGER execution_stop_operations_identity_immutable BEFORE UPDATE ON execution_stop_operations
+WHEN NEW.id IS NOT OLD.id OR NEW.project_id IS NOT OLD.project_id OR NEW.created_at IS NOT OLD.created_at
+  OR NEW.command_id IS NOT OLD.command_id OR NEW.target_kind IS NOT OLD.target_kind
+  OR NEW.target_id IS NOT OLD.target_id OR NEW.batch_id IS NOT OLD.batch_id
+  OR NEW.run_id IS NOT OLD.run_id OR NEW.reason IS NOT OLD.reason
+  OR NEW.requested_at IS NOT OLD.requested_at
+BEGIN SELECT RAISE(ABORT, 'execution stop operation identity is immutable'); END;
+`;
+
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     version: 1,
@@ -2218,4 +2278,5 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 25, sql: MIGRATION_025_SQL, checksum: sha256Hex(MIGRATION_025_SQL), foreignKeysOff: true },
   { version: 26, sql: MIGRATION_026_SQL, checksum: sha256Hex(MIGRATION_026_SQL) },
   { version: 27, sql: MIGRATION_027_SQL, checksum: sha256Hex(MIGRATION_027_SQL) },
+  { version: 28, sql: MIGRATION_028_SQL, checksum: sha256Hex(MIGRATION_028_SQL) },
 ];

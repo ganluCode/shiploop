@@ -45,7 +45,11 @@ import {
 import type { ExecutionBudgetSnapshot } from '../../ports/execution-budget.js';
 import {
   EXECUTION_ACTIVE_STATUSES,
+  EXECUTION_BATCH_CANCELLED_EVENT_TYPE,
+  EXECUTION_BATCH_CANCELLING_EVENT_TYPE,
   EXECUTION_BATCH_PAUSED_EVENT_TYPE,
+  EXECUTION_RUN_CANCELLED_EVENT_TYPE,
+  EXECUTION_RUN_CANCELLING_EVENT_TYPE,
   EXECUTION_RUN_PAUSED_EVENT_TYPE,
   executionCorruptError,
   isExecutionActiveStatus,
@@ -67,8 +71,14 @@ import type {
   BatchBudgetRevisionResult,
   ExecutionBatchRecord,
   ExecutionBatchStatus,
+  ExecutionCancelInput,
+  ExecutionCancelResult,
+  ExecutionCancelTargetKind,
   ExecutionPauseInput,
   ExecutionPauseResult,
+  ExecutionRunStatus,
+  ExecutionStopOperationRecord,
+  ExecutionStopOperationStatus,
   RunOutcomeSettlementOutcome,
   RunOutcomeSettlementRecord,
   RunRecord,
@@ -185,6 +195,23 @@ interface RunOutcomeSettlementSqlRow {
   readonly reason: string | null;
 }
 
+interface ExecutionStopOperationSqlRow {
+  readonly id: string;
+  readonly created_at: number;
+  readonly updated_at: number;
+  readonly project_id: string;
+  readonly revision: number;
+  readonly command_id: string;
+  readonly target_kind: string;
+  readonly target_id: string;
+  readonly batch_id: string;
+  readonly run_id: string | null;
+  readonly reason: string;
+  readonly status: string;
+  readonly requested_at: number;
+  readonly settled_at: number | null;
+}
+
 const SELECT_BATCH_SQL =
   'SELECT id, created_at, project_id, revision, updated_at, phase_id, feature_id, scope_snapshot, ' +
   'config_snapshot, status, budget_revision, budget_snapshot, runs_created, attempts_created, ' +
@@ -203,6 +230,9 @@ const SELECT_RUNTIME_START_RESERVATION =
 const SELECT_SETTLEMENT =
   'SELECT id, created_at, project_id, revision, updated_at, batch_id, run_id, result_key, outcome, ' +
   'progress_type, progress_task_id, run_ended_at, no_progress_runs_after, reason FROM run_outcome_settlements';
+const SELECT_STOP_OPERATION =
+  'SELECT id, created_at, updated_at, project_id, revision, command_id, target_kind, target_id, ' +
+  'batch_id, run_id, reason, status, requested_at, settled_at FROM execution_stop_operations';
 const SELECT_REVISION =
   'SELECT id, created_at, project_id, revision, updated_at, batch_id, version, budget_snapshot, ' +
   'deadline_at, approved_by, reason FROM batch_budget_revisions';
@@ -278,6 +308,8 @@ export interface SqliteExecutionAccess {
    * 不修改预算、deadline、累计计数或代码；CAS 于 expectedRevision。
    */
   requestExecutionPauseInTransaction(input: ExecutionPauseInput): ExecutionPauseResult;
+  /** P03-9 / F-002：Run/Batch 取消意图与持久停止 operation（同一短写事务）。 */
+  requestExecutionCancelInTransaction(input: ExecutionCancelInput): ExecutionCancelResult;
   /* ---------------------------------------------------------------- *
    * P03-3 / F-006 Task 尝试预算预占与分类记账（迁移 v11；受信 Core 内部原语）
    * ---------------------------------------------------------------- */
@@ -1573,6 +1605,342 @@ export function createSqliteExecutionAccess(
     return { outcome: status, targetKind, targetId, status, revision: expectedRevision + 1, changed: true, eventId };
   }
 
+
+  /* ------------------------------------------------------------ *
+   * P03-9 / F-002 Run/Batch 取消意图与持久停止 operation（迁移 v28）
+   * ------------------------------------------------------------ */
+
+  function stopOperationFromRow(row: ExecutionStopOperationSqlRow): ExecutionStopOperationRecord {
+    return {
+      id: row.id, projectId: row.project_id, revision: row.revision, commandId: row.command_id,
+      targetKind: row.target_kind as ExecutionCancelTargetKind, targetId: row.target_id,
+      batchId: row.batch_id, runId: row.run_id, reason: row.reason,
+      status: row.status as ExecutionStopOperationStatus,
+      requestedAtUtcMs: row.requested_at, settledAtUtcMs: row.settled_at,
+      createdAtUtcMs: row.created_at, updatedAtUtcMs: row.updated_at,
+    };
+  }
+
+  function readStopOperationById(projectId: string, operationId: string): ExecutionStopOperationRecord | undefined {
+    const row = session.database.prepare<[string, string], ExecutionStopOperationSqlRow>(
+      `${SELECT_STOP_OPERATION} WHERE project_id = ? AND id = ?`,
+    ).get(projectId, operationId);
+    return row === undefined ? undefined : stopOperationFromRow(row);
+  }
+
+  function findActiveStopOperation(projectId: string, targetKind: ExecutionCancelTargetKind,
+    targetId: string): ExecutionStopOperationRecord | undefined {
+    const row = session.database.prepare<[string, string, string], ExecutionStopOperationSqlRow>(
+      `${SELECT_STOP_OPERATION} WHERE project_id = ? AND target_kind = ? AND target_id = ?
+        AND status IN ('stopping', 'uncertain') ORDER BY created_at DESC, id DESC LIMIT 1`,
+    ).get(projectId, targetKind, targetId);
+    return row === undefined ? undefined : stopOperationFromRow(row);
+  }
+
+  function findStopOperationByCommand(projectId: string, commandId: string): ExecutionStopOperationRecord | undefined {
+    const row = session.database.prepare<[string, string], ExecutionStopOperationSqlRow>(
+      `${SELECT_STOP_OPERATION} WHERE project_id = ? AND command_id = ?`,
+    ).get(projectId, commandId);
+    return row === undefined ? undefined : stopOperationFromRow(row);
+  }
+
+  function writeStopOperation(input: {
+    readonly projectId: string; readonly commandId: string; readonly targetKind: ExecutionCancelTargetKind;
+    readonly targetId: string; readonly batchId: string; readonly runId: string | null;
+    readonly status: ExecutionStopOperationStatus; readonly timestamp: number;
+    readonly existing: ExecutionStopOperationRecord | undefined;
+  }): ExecutionStopOperationRecord {
+    const operation = 'ExecutionStore.requestExecutionCancel';
+    if (input.existing !== undefined) {
+      if (input.existing.targetKind !== input.targetKind || input.existing.targetId !== input.targetId
+        || input.existing.batchId !== input.batchId || input.existing.runId !== input.runId) {
+        throw new StorageError('conflict', operation, 'Stop operation identity mismatch', {
+          details: { reason: 'stop_operation_reused' },
+        });
+      }
+      if (input.existing.status === input.status) return input.existing;
+      const settledAt = input.status === 'stopped' ? input.timestamp : null;
+      const changed = session.database.prepare(`UPDATE execution_stop_operations
+        SET status = ?, settled_at = ?, revision = revision + 1, updated_at = ?
+        WHERE project_id = ? AND id = ? AND revision = ? AND status IN ('stopping', 'uncertain')`)
+        .run(input.status, settledAt, input.timestamp, input.projectId, input.existing.id,
+          input.existing.revision);
+      if (changed.changes !== 1) {
+        throw new StorageError('conflict', operation, 'Stop operation CAS failed', {
+          details: { reason: 'stale_stop_operation' },
+        });
+      }
+      const next = readStopOperationById(input.projectId, input.existing.id);
+      if (next === undefined) throw new StorageError('corrupt', operation, 'Stop operation disappeared');
+      return next;
+    }
+    const id = randomUUID();
+    session.database.prepare(`INSERT INTO execution_stop_operations
+      (id, created_at, project_id, revision, updated_at, command_id, target_kind, target_id,
+       batch_id, run_id, reason, status, requested_at, settled_at)
+      VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, 'user_cancel', ?, ?, ?)`)
+      .run(id, input.timestamp, input.projectId, input.timestamp, input.commandId, input.targetKind,
+        input.targetId, input.batchId, input.runId, input.status, input.timestamp,
+        input.status === 'stopped' ? input.timestamp : null);
+    const created = readStopOperationById(input.projectId, id);
+    if (created === undefined) throw new StorageError('corrupt', operation, 'Stop operation insert not readable');
+    return created;
+  }
+
+  interface CancelRunRow { readonly id: string; readonly status: string; readonly revision: number }
+
+  function executionCancelFacts(projectId: string, runIds: readonly string[]): {
+    readonly activeAttempts: number; readonly interruptedAttempts: number; readonly leases: number;
+  } {
+    if (runIds.length === 0) return { activeAttempts: 0, interruptedAttempts: 0, leases: 0 };
+    const placeholders = runIds.map(() => '?').join(', ');
+    const activeAttempts = session.database.prepare<unknown[], { count: number }>(
+      `SELECT COUNT(*) AS count FROM attempts WHERE project_id = ? AND run_id IN (${placeholders})
+        AND status IN (${ACTIVE_ATTEMPT_STATUSES.map(() => '?').join(', ')})`,
+    ).get(projectId, ...runIds, ...ACTIVE_ATTEMPT_STATUSES)!.count;
+    const interruptedAttempts = session.database.prepare<unknown[], { count: number }>(
+      `SELECT COUNT(*) AS count FROM attempts WHERE project_id = ? AND run_id IN (${placeholders})
+        AND status = 'interrupted'`,
+    ).get(projectId, ...runIds)!.count;
+    const leases = session.database.prepare<unknown[], { count: number }>(
+      `SELECT COUNT(*) AS count FROM workspace_leases WHERE project_id = ? AND owner_id IN
+        (SELECT id FROM attempts WHERE project_id = ? AND run_id IN (${placeholders}))`,
+    ).get(projectId, projectId, ...runIds)!.count;
+    return { activeAttempts, interruptedAttempts, leases };
+  }
+
+  function applyRunCancelStatus(projectId: string, row: CancelRunRow,
+    status: 'cancelling' | 'cancelled', timestamp: number): { readonly changed: boolean; readonly revision: number } {
+    const operation = 'ExecutionStore.requestExecutionCancel';
+    if (row.status === status) return { changed: false, revision: row.revision };
+    if (!['queued', 'running', 'pausing', 'paused', 'cancelling'].includes(row.status)) {
+      return { changed: false, revision: row.revision };
+    }
+    const changed = status === 'cancelled'
+      ? session.database.prepare(`UPDATE runs SET status = 'cancelled', reason = 'user_cancel',
+          ended_at = ?, revision = revision + 1, updated_at = ?
+          WHERE project_id = ? AND id = ? AND revision = ? AND status = ?`)
+        .run(timestamp, timestamp, projectId, row.id, row.revision, row.status)
+      : session.database.prepare(`UPDATE runs SET status = 'cancelling', reason = 'user_cancel',
+          revision = revision + 1, updated_at = ?
+          WHERE project_id = ? AND id = ? AND revision = ? AND status = ?`)
+        .run(timestamp, projectId, row.id, row.revision, row.status);
+    if (changed.changes !== 1) {
+      throw new StorageError('conflict', operation, 'Run cancel CAS failed', {
+        details: { reason: 'stale_revision' },
+      });
+    }
+    return { changed: true, revision: row.revision + 1 };
+  }
+
+  function applyBatchCancelStatus(projectId: string, row: CancelRunRow,
+    status: 'cancelling' | 'cancelled', timestamp: number): { readonly changed: boolean; readonly revision: number } {
+    const operation = 'ExecutionStore.requestExecutionCancel';
+    if (row.status === status) return { changed: false, revision: row.revision };
+    if (!['queued', 'running', 'pausing', 'paused', 'cancelling'].includes(row.status)) {
+      return { changed: false, revision: row.revision };
+    }
+    const changed = session.database.prepare(`UPDATE execution_batches SET status = ?, reason = 'user_cancel',
+      revision = revision + 1, updated_at = ?
+      WHERE project_id = ? AND id = ? AND revision = ? AND status = ?`)
+      .run(status, timestamp, projectId, row.id, row.revision, row.status);
+    if (changed.changes !== 1) {
+      throw new StorageError('conflict', operation, 'Batch cancel CAS failed', {
+        details: { reason: 'stale_revision' },
+      });
+    }
+    return { changed: true, revision: row.revision + 1 };
+  }
+
+  function appendRunCancelEvent(projectId: string, runId: string, revision: number,
+    cancelled: boolean): string {
+    return appendExecutionEventInTransaction({
+      projectId,
+      eventType: cancelled ? EXECUTION_RUN_CANCELLED_EVENT_TYPE : EXECUTION_RUN_CANCELLING_EVENT_TYPE,
+      aggregateType: 'run', aggregateId: runId, aggregateRevision: revision,
+      payload: cancelled ? { cancelled: true } : { cancelling: true },
+    });
+  }
+
+  function requestExecutionCancelInTransaction(input: ExecutionCancelInput): ExecutionCancelResult {
+    const operation = 'ExecutionStore.requestExecutionCancel';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const raw = requirePlainObject(input, { operation }, 'input');
+    rejectUnknownKeys(raw, ['projectId', 'targetKind', 'targetId', 'expectedRevision', 'commandId'],
+      { operation }, 'input');
+    const projectId = validateStableId(raw.projectId, { operation }, 'projectId');
+    const targetId = validateStableId(raw.targetId, { operation }, 'targetId');
+    const commandId = validateStableId(raw.commandId, { operation }, 'commandId');
+    if (raw.targetKind !== 'run' && raw.targetKind !== 'batch') {
+      throw new StorageError('validation', operation, 'targetKind 必须是 run 或 batch');
+    }
+    const targetKind = raw.targetKind;
+    if (!Number.isSafeInteger(raw.expectedRevision) || (raw.expectedRevision as number) < 1) {
+      throw new StorageError('validation', operation, 'expectedRevision 必须是 ≥1 的安全整数');
+    }
+    const expectedRevision = raw.expectedRevision as number;
+    const timestamp = nowUtcMs();
+    if (!Number.isSafeInteger(timestamp) || timestamp < 1) {
+      throw new StorageError('validation', operation, 'Invalid cancel clock');
+    }
+    const conflict = (reason: string, extra: Record<string, unknown> = {}): never => {
+      throw new StorageError('conflict', operation, `Execution cancel rejected: ${reason}`, {
+        entity: { type: targetKind === 'run' ? 'run' : 'execution_batch', projectId, id: targetId },
+        details: { reason, ...extra },
+      });
+    };
+
+    let targetStatus: string;
+    let targetRevision: number;
+    let batchId: string;
+    let runRows: readonly CancelRunRow[];
+    if (targetKind === 'run') {
+      const run = getExecutionRunInTransaction(projectId, targetId);
+      targetStatus = run.status;
+      targetRevision = run.revision;
+      batchId = run.batchId;
+      runRows = [{ id: run.id, status: run.status, revision: run.revision }];
+    } else {
+      const batch = getExecutionBatchInTransaction(projectId, targetId);
+      targetStatus = batch.status;
+      targetRevision = batch.revision;
+      batchId = batch.id;
+      runRows = session.database.prepare<[string, string], CancelRunRow>(
+        `SELECT id, status, revision FROM runs WHERE project_id = ? AND batch_id = ?
+          AND status IN ('queued', 'running', 'pausing', 'paused', 'cancelling', 'interrupted')
+          ORDER BY dispatch_ordinal, id`,
+      ).all(projectId, targetId);
+    }
+
+    if (isExecutionTerminalStatus(targetStatus)) {
+      return {
+        outcome: 'already_terminal', targetKind, targetId, status: targetStatus as ExecutionRunStatus,
+        revision: targetRevision, changed: false, stopOperationId: null, stopStatus: null, eventId: null,
+      };
+    }
+    if (targetRevision !== expectedRevision) {
+      conflict('stale_revision', { expectedRevision, actualRevision: targetRevision });
+    }
+
+    const facts = executionCancelFacts(projectId, runRows.map(row => row.id));
+    const hasInterrupted = targetStatus === 'interrupted'
+      || runRows.some(row => row.status === 'interrupted') || facts.interruptedAttempts > 0;
+    const hasActivity = facts.activeAttempts > 0 || facts.leases > 0;
+    let existing = findActiveStopOperation(projectId, targetKind, targetId)
+      ?? findStopOperationByCommand(projectId, commandId);
+    if (existing !== undefined
+      && (existing.targetKind !== targetKind || existing.targetId !== targetId)) {
+      conflict('stop_operation_reused');
+    }
+
+    let changed = false;
+    let eventId: string | null = null;
+    let currentRevision = targetRevision;
+    let nextStatus = targetStatus;
+
+    const markRuns = (status: 'cancelling' | 'cancelled') => {
+      for (const row of runRows) {
+        if (row.status === 'interrupted') continue;
+        const result = applyRunCancelStatus(projectId, row, status, timestamp);
+        if (result.changed) {
+          changed = true;
+          appendRunCancelEvent(projectId, row.id, result.revision, status === 'cancelled');
+        }
+      }
+    };
+
+    if (hasInterrupted) {
+      // Interrupted is not proof of a stopped process: keep the target/occupancy and
+      // only record an uncertain stop operation. Non-interrupted targets still enter
+      // cancelling so no new work is dispatched.
+      if (targetStatus !== 'interrupted') {
+        if (targetKind === 'run') {
+          const result = applyRunCancelStatus(projectId, runRows[0]!, 'cancelling', timestamp);
+          if (result.changed) {
+            changed = true; currentRevision = result.revision; nextStatus = 'cancelling';
+            eventId = appendRunCancelEvent(projectId, targetId, result.revision, false);
+          }
+        } else {
+          markRuns('cancelling');
+          const result = applyBatchCancelStatus(projectId,
+            { id: targetId, status: targetStatus, revision: targetRevision }, 'cancelling', timestamp);
+          if (result.changed) {
+            changed = true; currentRevision = result.revision; nextStatus = 'cancelling';
+            eventId = appendExecutionEventInTransaction({
+              projectId, eventType: EXECUTION_BATCH_CANCELLING_EVENT_TYPE,
+              aggregateType: 'execution_batch', aggregateId: targetId,
+              aggregateRevision: result.revision, payload: { cancelling: true },
+            });
+          }
+        }
+      }
+      const stop = writeStopOperation({ projectId, commandId, targetKind, targetId, batchId,
+        runId: targetKind === 'run' ? targetId : null, status: 'uncertain', timestamp, existing });
+      return {
+        outcome: 'stop_uncertain', targetKind, targetId, status: nextStatus as ExecutionRunStatus,
+        revision: currentRevision, changed, stopOperationId: stop.id, stopStatus: stop.status, eventId,
+      };
+    }
+
+    if (hasActivity) {
+      if (targetKind === 'run') {
+        const result = applyRunCancelStatus(projectId, runRows[0]!, 'cancelling', timestamp);
+        if (result.changed) {
+          changed = true; currentRevision = result.revision;
+          eventId = appendRunCancelEvent(projectId, targetId, result.revision, false);
+        }
+      } else {
+        markRuns('cancelling');
+        const result = applyBatchCancelStatus(projectId,
+          { id: targetId, status: targetStatus, revision: targetRevision }, 'cancelling', timestamp);
+        if (result.changed) {
+          changed = true; currentRevision = result.revision;
+          eventId = appendExecutionEventInTransaction({
+            projectId, eventType: EXECUTION_BATCH_CANCELLING_EVENT_TYPE,
+            aggregateType: 'execution_batch', aggregateId: targetId,
+            aggregateRevision: result.revision, payload: { cancelling: true },
+          });
+        }
+      }
+      nextStatus = 'cancelling';
+      const stop = writeStopOperation({ projectId, commandId, targetKind, targetId, batchId,
+        runId: targetKind === 'run' ? targetId : null, status: 'stopping', timestamp, existing });
+      return {
+        outcome: 'cancelling', targetKind, targetId, status: nextStatus as ExecutionRunStatus,
+        revision: currentRevision, changed, stopOperationId: stop.id, stopStatus: stop.status, eventId,
+      };
+    }
+
+    // No active Attempt and no lease remains: safe to complete cancellation. A prior
+    // stop operation is reused (never duplicated); history Attempts are untouched.
+    if (targetKind === 'run') {
+      const result = applyRunCancelStatus(projectId, runRows[0]!, 'cancelled', timestamp);
+      if (result.changed) {
+        changed = true; currentRevision = result.revision;
+        eventId = appendRunCancelEvent(projectId, targetId, result.revision, true);
+      }
+    } else {
+      markRuns('cancelled');
+      const result = applyBatchCancelStatus(projectId,
+        { id: targetId, status: targetStatus, revision: targetRevision }, 'cancelled', timestamp);
+      if (result.changed) {
+        changed = true; currentRevision = result.revision;
+        eventId = appendExecutionEventInTransaction({
+          projectId, eventType: EXECUTION_BATCH_CANCELLED_EVENT_TYPE,
+          aggregateType: 'execution_batch', aggregateId: targetId,
+          aggregateRevision: result.revision, payload: { cancelled: true },
+        });
+      }
+    }
+    const stop = writeStopOperation({ projectId, commandId, targetKind, targetId, batchId,
+      runId: targetKind === 'run' ? targetId : null, status: 'stopped', timestamp, existing });
+    return {
+      outcome: 'cancelled', targetKind, targetId, status: 'cancelled', revision: currentRevision,
+      changed, stopOperationId: stop.id, stopStatus: stop.status, eventId,
+    };
+  }
+
   /* ------------------------------------------------------------ *
    * P03-3 / F-007 Runtime 启动额度预占（迁移 v12）
    * ------------------------------------------------------------ */
@@ -1862,6 +2230,16 @@ export function createSqliteExecutionAccess(
         operation,
         `${operation}: Run ${valid.runId} 已终态（${runRow.status}），不倒写终态`,
         { entity, details: { reason: 'run_already_settled', status: runRow.status } },
+      );
+    }
+    // P03-9 / F-002：取消意图（cancelling）或停止不确定（interrupted）已提交后，
+    // 迟到成功/失败结果不能覆盖控制状态；由取消/停止核验与显式恢复路径收尾。
+    if (runRow.status === 'cancelling' || runRow.status === 'interrupted') {
+      throw new StorageError(
+        'conflict',
+        operation,
+        `${operation}: Run ${valid.runId} 处于 ${runRow.status} 控制状态，迟到结果不覆盖`,
+        { entity, details: { reason: 'control_in_progress', status: runRow.status } },
       );
     }
 
@@ -2253,6 +2631,7 @@ export function createSqliteExecutionAccess(
     recordExecutionRunDispatchInTransaction,
     appendExecutionEventInTransaction,
     requestExecutionPauseInTransaction,
+    requestExecutionCancelInTransaction,
     reserveTaskAttemptInTransaction,
     settleTaskAttemptBudgetInTransaction,
     reclassifyTaskAttemptAsInfrastructureInTransaction,

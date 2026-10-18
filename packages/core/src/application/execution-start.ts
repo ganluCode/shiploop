@@ -581,6 +581,11 @@ export function createExecutionStartService(deps: ExecutionStartServiceDeps): Ex
         if (isExecutionTerminalStatus(parent.status)) {
           return rejected('batch_not_active');
         }
+        // P03-9 / F-002：取消意图（cancelling）或未确认停止（interrupted）的
+        // Batch 不接受新 Run；重试不能绕过取消/隔离现场。
+        if (parent.status === 'cancelling' || parent.status === 'interrupted') {
+          return rejected('batch_not_active');
+        }
         // P03-9 / F-001：暂停意图已生效的 Batch 不接受新 Run（重试也被阻止）；
         // 恢复必须走后续显式 resume 控制，不能借 retryBatchId 绕过暂停。
         if (parent.pauseRequestedAtUtcMs !== null) {

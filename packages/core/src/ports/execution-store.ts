@@ -61,6 +61,11 @@ export const EXECUTION_BUDGET_REVISED_EVENT_TYPE = 'execution.budget.revised';
 /** P03-9 / F-001 用户暂停意图事件（Run/Batch 各自聚合；payload 恒 {paused:true}）。 */
 export const EXECUTION_RUN_PAUSED_EVENT_TYPE = 'execution.run.paused';
 export const EXECUTION_BATCH_PAUSED_EVENT_TYPE = 'execution.batch.paused';
+/** P03-9 / F-002 取消意图/终态事件（payload 恒 {cancelling:true}/{cancelled:true}）。 */
+export const EXECUTION_RUN_CANCELLING_EVENT_TYPE = 'execution.run.cancelling';
+export const EXECUTION_RUN_CANCELLED_EVENT_TYPE = 'execution.run.cancelled';
+export const EXECUTION_BATCH_CANCELLING_EVENT_TYPE = 'execution.batch.cancelling';
+export const EXECUTION_BATCH_CANCELLED_EVENT_TYPE = 'execution.batch.cancelled';
 
 export const TASK_CLAIMED_EVENT_TYPE = 'task.claimed';
 export const ATTEMPT_UPDATED_EVENT_TYPE = 'task.attempt.updated';
@@ -76,6 +81,10 @@ export const EXECUTION_EVENT_TYPES = [
   EXECUTION_BUDGET_REVISED_EVENT_TYPE,
   EXECUTION_RUN_PAUSED_EVENT_TYPE,
   EXECUTION_BATCH_PAUSED_EVENT_TYPE,
+  EXECUTION_RUN_CANCELLING_EVENT_TYPE,
+  EXECUTION_RUN_CANCELLED_EVENT_TYPE,
+  EXECUTION_BATCH_CANCELLING_EVENT_TYPE,
+  EXECUTION_BATCH_CANCELLED_EVENT_TYPE,
   TASK_CLAIMED_EVENT_TYPE,
   ATTEMPT_UPDATED_EVENT_TYPE,
   TASK_APPROVAL_BLOCKED_EVENT_TYPE,
@@ -87,7 +96,9 @@ export type ExecutionEventType = (typeof EXECUTION_EVENT_TYPES)[number];
 
 interface ExecutionEventSpec {
   readonly aggregateType: 'run' | 'execution_batch' | 'task' | 'feature';
-  readonly payloadKey: 'dispatched' | 'revised' | 'paused' | 'claimed' | 'updated' | 'blocked' | 'decided' | 'finalized';
+  readonly payloadKey:
+    | 'dispatched' | 'revised' | 'paused' | 'cancelling' | 'cancelled'
+    | 'claimed' | 'updated' | 'blocked' | 'decided' | 'finalized';
 }
 
 const EXECUTION_EVENT_SPECS: Readonly<Record<ExecutionEventType, ExecutionEventSpec>> = Object.freeze({
@@ -101,6 +112,10 @@ const EXECUTION_EVENT_SPECS: Readonly<Record<ExecutionEventType, ExecutionEventS
   [EXECUTION_BUDGET_REVISED_EVENT_TYPE]: Object.freeze({ aggregateType: 'execution_batch', payloadKey: 'revised' }),
   [EXECUTION_RUN_PAUSED_EVENT_TYPE]: Object.freeze({ aggregateType: 'run', payloadKey: 'paused' }),
   [EXECUTION_BATCH_PAUSED_EVENT_TYPE]: Object.freeze({ aggregateType: 'execution_batch', payloadKey: 'paused' }),
+  [EXECUTION_RUN_CANCELLING_EVENT_TYPE]: Object.freeze({ aggregateType: 'run', payloadKey: 'cancelling' }),
+  [EXECUTION_RUN_CANCELLED_EVENT_TYPE]: Object.freeze({ aggregateType: 'run', payloadKey: 'cancelled' }),
+  [EXECUTION_BATCH_CANCELLING_EVENT_TYPE]: Object.freeze({ aggregateType: 'execution_batch', payloadKey: 'cancelling' }),
+  [EXECUTION_BATCH_CANCELLED_EVENT_TYPE]: Object.freeze({ aggregateType: 'execution_batch', payloadKey: 'cancelled' }),
 });
 
 /** 快照 JSON 列（scope/config/input）序列化字节上限（有界，拒绝无界快照）。 */
@@ -277,6 +292,52 @@ export interface ExecutionPauseResult {
   /** true 表示本次事务改变了目标控制状态；terminal/interrupted 不写业务状态。 */
   readonly changed: boolean;
   readonly eventId: string | null;
+}
+
+/** P03-9 / F-002 持久停止 operation 阶段；与 Run/Batch 生命周期分离。 */
+export const EXECUTION_STOP_OPERATION_STATUSES = ['stopping', 'stopped', 'uncertain'] as const;
+export type ExecutionStopOperationStatus = (typeof EXECUTION_STOP_OPERATION_STATUSES)[number];
+
+export type ExecutionCancelTargetKind = 'run' | 'batch';
+export type ExecutionCancelOutcome = 'cancelled' | 'cancelling' | 'stop_uncertain' | 'already_terminal';
+
+export interface ExecutionCancelInput {
+  readonly projectId: string;
+  readonly targetKind: ExecutionCancelTargetKind;
+  readonly targetId: string;
+  readonly expectedRevision: number;
+  /** 命令身份：同一 commandId 重放不得创建第二个停止 operation（回执层已拦截，DDL 兜底）。 */
+  readonly commandId: string;
+}
+
+export interface ExecutionCancelResult {
+  readonly outcome: ExecutionCancelOutcome;
+  readonly targetKind: ExecutionCancelTargetKind;
+  readonly targetId: string;
+  readonly status: ExecutionRunStatus;
+  readonly revision: number;
+  readonly changed: boolean;
+  /** 本次取消关联的持久停止 operation；already_terminal 为 null。 */
+  readonly stopOperationId: string | null;
+  readonly stopStatus: ExecutionStopOperationStatus | null;
+  readonly eventId: string | null;
+}
+
+export interface ExecutionStopOperationRecord {
+  readonly id: string;
+  readonly projectId: string;
+  readonly revision: number;
+  readonly commandId: string;
+  readonly targetKind: ExecutionCancelTargetKind;
+  readonly targetId: string;
+  readonly batchId: string;
+  readonly runId: string | null;
+  readonly reason: string;
+  readonly status: ExecutionStopOperationStatus;
+  readonly requestedAtUtcMs: number;
+  readonly settledAtUtcMs: number | null;
+  readonly createdAtUtcMs: number;
+  readonly updatedAtUtcMs: number;
 }
 
 export interface ValidatedExecutionBatchInsertInput {

@@ -61,6 +61,7 @@ import type {
 } from '../ports/state-store.js';
 import { validateMergedProjectSettingsWrite } from './configuration-service.js';
 import { submitExecutionPause } from './execution-pause.js';
+import { submitExecutionCancel } from './execution-cancel.js';
 import { submitTaskApprovalBlock, TASK_APPROVAL_BLOCK_OPERATION } from './task-approval-block.js';
 import { submitTaskApprovalDecision, TASK_APPROVAL_DECISION_OPERATIONS } from './task-approval-decision.js';
 import { submitTaskVerificationContinue, TASK_VERIFICATION_CONTINUE_OPERATION, type TaskVerificationContinueDeps } from './task-verification-continue.js';
@@ -664,6 +665,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           envelope.operation !== 'baseline.run' &&
           envelope.operation !== 'execution.attempt.cancel' &&
           envelope.operation !== 'execution.pause' &&
+          envelope.operation !== 'execution.cancel' &&
           envelope.operation !== 'baseline.cancel' &&
           envelope.operation !== 'phase.create' &&
           envelope.operation !== FEATURE_PLAN_IMPORT_OPERATION &&
@@ -864,6 +866,22 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           if (envelope.operation === 'execution.pause') {
             // P03-9 / F-001：目标归属/revision CAS/暂停意图/状态/事件/回执同一短事务。
             return submitExecutionPause(
+              {
+                principalId: principal.principalId,
+                commandId: envelope.commandId,
+                operation: envelope.operation,
+                scope: envelope.scope,
+                requestDigest: digest,
+                issuedAt: envelope.issuedAt,
+                completedAt: new Date(now).toISOString(),
+              },
+              envelope,
+              transaction,
+            );
+          }
+          if (envelope.operation === 'execution.cancel') {
+            // P03-9 / F-002：取消意图/持久停止 operation/状态/事件/回执同一短事务。
+            return submitExecutionCancel(
               {
                 principalId: principal.principalId,
                 commandId: envelope.commandId,

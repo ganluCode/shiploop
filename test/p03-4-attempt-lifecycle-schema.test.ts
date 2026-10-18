@@ -54,7 +54,7 @@ describe('F-005 notification persistence migration', () => {
       expect(snapshot()).toEqual(before);
       expect(session.database.prepare('SELECT * FROM schema_migrations ORDER BY version').all()).toEqual(migrationsBefore);
       expect(session.database.prepare("SELECT name FROM sqlite_master WHERE name IN ('attempt_notifications', 'attempt_notification_diagnostics')").all()).toEqual([]);
-      expect((await migrateSqliteStorage(session)).appliedVersions).toEqual([17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27]);
+      expect((await migrateSqliteStorage(session)).appliedVersions).toEqual([17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28]);
       before.state_events = before.state_events!.map(row => ({ ...row as Record<string, unknown>, operation_id: null, run_id: null, attempt_id: null, execution_stage: null }));
       before.features = before.features!.map(row => ({ ...row as Record<string, unknown>, delivery_status: 'not_requested' }));
       before.runs = before.runs!.map(row => ({ ...row as Record<string, unknown>, pause_requested_at: null }));

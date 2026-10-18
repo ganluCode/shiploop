@@ -37,7 +37,7 @@ import {
   BASELINE_REASON_CODES,
 } from './baseline.js';
 import { isStorageError } from './errors.js';
-import { ATTEMPT_UPDATED_EVENT_TYPE, TASK_APPROVAL_BLOCKED_EVENT_TYPE, TASK_APPROVAL_DECIDED_EVENT_TYPE, EXECUTION_BUDGET_REVISED_EVENT_TYPE, EXECUTION_RUN_DISPATCHED_EVENT_TYPE, EXECUTION_RUN_PAUSED_EVENT_TYPE, EXECUTION_BATCH_PAUSED_EVENT_TYPE, TASK_CLAIMED_EVENT_TYPE, FEATURE_FINALIZED_EVENT_TYPE, FEATURE_FINALIZATION_BLOCKED_EVENT_TYPE } from './execution-store.js';
+import { ATTEMPT_UPDATED_EVENT_TYPE, TASK_APPROVAL_BLOCKED_EVENT_TYPE, TASK_APPROVAL_DECIDED_EVENT_TYPE, EXECUTION_BUDGET_REVISED_EVENT_TYPE, EXECUTION_RUN_DISPATCHED_EVENT_TYPE, EXECUTION_RUN_PAUSED_EVENT_TYPE, EXECUTION_BATCH_PAUSED_EVENT_TYPE, EXECUTION_RUN_CANCELLING_EVENT_TYPE, EXECUTION_RUN_CANCELLED_EVENT_TYPE, EXECUTION_BATCH_CANCELLING_EVENT_TYPE, EXECUTION_BATCH_CANCELLED_EVENT_TYPE, TASK_CLAIMED_EVENT_TYPE, FEATURE_FINALIZED_EVENT_TYPE, FEATURE_FINALIZATION_BLOCKED_EVENT_TYPE } from './execution-store.js';
 import {
   EXECUTION_INPUT_PREPARED_EVENT_TYPE,
   FEATURE_LABELS_UPDATED_EVENT_TYPE,
@@ -99,6 +99,8 @@ export { EXECUTION_RUN_DISPATCHED_EVENT_TYPE };
 export { EXECUTION_BUDGET_REVISED_EVENT_TYPE };
 /** P03-9 / F-001：仅暂停命令成功写入（Run/Batch 各自聚合；payload 恒 {paused:true}）。 */
 export { EXECUTION_RUN_PAUSED_EVENT_TYPE, EXECUTION_BATCH_PAUSED_EVENT_TYPE };
+/** P03-9 / F-002：仅取消命令成功写入（cancelling 意图与 cancelled 终态可区分）。 */
+export { EXECUTION_RUN_CANCELLING_EVENT_TYPE, EXECUTION_RUN_CANCELLED_EVENT_TYPE, EXECUTION_BATCH_CANCELLING_EVENT_TYPE, EXECUTION_BATCH_CANCELLED_EVENT_TYPE };
 /** 仅命令路径全局配置首建成功写入（F-009 已实施；P01 直接服务首建不写事件）。 */
 export { SETTINGS_GLOBAL_CREATED_EVENT_TYPE };
 /** 仅命令路径项目配置首建成功写入（F-009 已实施；P01 直接服务首建不写事件）。 */
@@ -157,6 +159,10 @@ export const PUBLIC_STATE_EVENT_TYPES = [
   EXECUTION_BUDGET_REVISED_EVENT_TYPE,
   EXECUTION_RUN_PAUSED_EVENT_TYPE,
   EXECUTION_BATCH_PAUSED_EVENT_TYPE,
+  EXECUTION_RUN_CANCELLING_EVENT_TYPE,
+  EXECUTION_RUN_CANCELLED_EVENT_TYPE,
+  EXECUTION_BATCH_CANCELLING_EVENT_TYPE,
+  EXECUTION_BATCH_CANCELLED_EVENT_TYPE,
   TASK_CLAIMED_EVENT_TYPE,
   ATTEMPT_UPDATED_EVENT_TYPE,
   TASK_APPROVAL_BLOCKED_EVENT_TYPE,
@@ -191,6 +197,8 @@ type EventPayloadKind =
   | 'executionRunDispatched'
   | 'executionBudgetRevised'
   | 'executionPaused'
+  | 'executionCancelling'
+  | 'executionCancelled'
   | 'taskClaimed'
   | 'attemptUpdated'
   | 'taskApprovalBlocked'
@@ -375,6 +383,28 @@ export const STATE_EVENT_TYPE_SPECS: Readonly<
     aggregateType: 'execution_batch',
     scopeKind: 'project',
     payloadKind: 'executionPaused',
+  }),
+  // P03-9 / F-002：取消意图/终态事件（payload 恒 {cancelling:true}/{cancelled:true}；
+  // cancelling 不是终态，cancelled 只由确认停止/无活动安全路径写入）。
+  [EXECUTION_RUN_CANCELLING_EVENT_TYPE]: Object.freeze({
+    aggregateType: 'run',
+    scopeKind: 'project',
+    payloadKind: 'executionCancelling',
+  }),
+  [EXECUTION_RUN_CANCELLED_EVENT_TYPE]: Object.freeze({
+    aggregateType: 'run',
+    scopeKind: 'project',
+    payloadKind: 'executionCancelled',
+  }),
+  [EXECUTION_BATCH_CANCELLING_EVENT_TYPE]: Object.freeze({
+    aggregateType: 'execution_batch',
+    scopeKind: 'project',
+    payloadKind: 'executionCancelling',
+  }),
+  [EXECUTION_BATCH_CANCELLED_EVENT_TYPE]: Object.freeze({
+    aggregateType: 'execution_batch',
+    scopeKind: 'project',
+    payloadKind: 'executionCancelled',
   }),
 });
 
@@ -956,6 +986,10 @@ export function mapStateEvent(row: unknown, operation: string = EVENT_READ_OPERA
   } else if (spec.payloadKind === 'executionPaused') {
     if (Object.keys(row.payload).length !== 1 || row.payload.paused !== true) corrupt(operation, 'event_payload_violation');
     payload = { paused: true };
+  } else if (spec.payloadKind === 'executionCancelling' || spec.payloadKind === 'executionCancelled') {
+    const key = spec.payloadKind === 'executionCancelling' ? 'cancelling' : 'cancelled';
+    if (Object.keys(row.payload).length !== 1 || row.payload[key] !== true) corrupt(operation, 'event_payload_violation');
+    payload = { [key]: true };
   } else if (spec.payloadKind === 'gitOperationRegistered') {
     payload = validateGitOperationRegisteredPayload(row.payload, operation);
   } else if (spec.payloadKind === 'gitOperationSettled') {
