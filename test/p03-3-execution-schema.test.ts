@@ -30,13 +30,11 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { isStorageError } from '../packages/core/src/ports/errors.ts';
 import type { SettingsPayload } from '../packages/core/src/ports/settings-schema.ts';
-import type { AtomicCommandStore } from '../packages/core/src/ports/atomic-commands.ts';
 import { SQLITE_MIGRATIONS } from '../packages/core/src/adapters/sqlite/migrations.ts';
 import { migrateSqliteStorage as migrateDeclaredSqliteStorage, SqliteMigrationError } from '../packages/core/src/adapters/sqlite/migrator.ts';
 import { openSqliteStorageSession } from '../packages/core/src/adapters/sqlite/session.ts';
 import type { SqliteStorageSession } from '../packages/core/src/adapters/sqlite/session.ts';
 import { createSqliteStateStore } from '../packages/core/src/adapters/sqlite/state-store.ts';
-import { createSqliteAtomicCommandStore } from '../packages/core/src/adapters/sqlite/atomic-commands.ts';
 import { createTempSandbox } from './helpers/temp-sandbox.ts';
 
 const NOW_MS = 1_700_800_000_000;
@@ -225,45 +223,31 @@ async function seedP02V5DataAsync(
   return { projectId: project.project.id };
 }
 
-/** 经原子命令存储建立计划结构（Phase + Feature + 三个 Task + 依赖边）；idPrefix 区分多次调用。 */
+/** 历史 v9 夹具仅使用当时的列，不依赖要求最新 schema 的生产适配器。 */
 function seedPlanStructure(
-  atomic: AtomicCommandStore,
+  session: SqliteStorageSession,
   projectId: string,
   title = 'P03 执行阶段',
   idPrefix = 't',
 ): { phaseId: string; featureId: string } {
-  return atomic.transact('test.seed.execution.structure', (tx) => {
-    const phase = tx.insertPhase({ projectId, title, labels: [] });
-    const feature = tx.insertFeature({
-      projectId,
-      phaseId: phase.id,
-      title: 'Feature 执行',
-      planDigest: VALID_SHA256,
-      sourceRefs: [{ artifactId: 'art-p033-1' }],
-    });
+  return session.transactWrite('test.seed.execution.structure.v9', (db) => {
+    const phaseId = randomUUID();
+    const featureId = randomUUID();
+    db.prepare('INSERT INTO phases (id, created_at, project_id, updated_at, title) VALUES (?, ?, ?, ?, ?)')
+      .run(phaseId, NOW_MS, projectId, NOW_MS, title);
+    db.prepare('INSERT INTO features (id, created_at, project_id, updated_at, phase_id, title, plan_digest, source_refs) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(featureId, NOW_MS, projectId, NOW_MS, phaseId, 'Feature 执行', VALID_SHA256, JSON.stringify([{ artifactId: 'art-p033-1' }]));
     for (const suffix of ['a', 'b', 'c']) {
-      tx.insertTask({
-        projectId,
-        featureId: feature.id,
-        id: `${idPrefix}-${suffix}`,
-        title: `任务 ${idPrefix}-${suffix}`,
-        acceptance: { criteria: ['验收一'] },
-        complexity: 'low',
-        executionConfig: {
+      db.prepare('INSERT INTO tasks (id, created_at, project_id, updated_at, feature_id, title, acceptance, complexity, execution_config, config_source, config_source_key) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(`${idPrefix}-${suffix}`, NOW_MS, projectId, NOW_MS, featureId, `任务 ${idPrefix}-${suffix}`,
+          JSON.stringify({ criteria: ['验收一'] }), 'low', JSON.stringify({
           schemaVersion: 2,
           strategy: { runtime: 'pi', provider: 'anthropic', model: 'claude-sonnet' },
-        },
-        configSource: 'project_default',
-        configSourceKey: 'defaultStrategy',
-      });
+          }), 'project_default', 'defaultStrategy');
     }
-    tx.insertTaskDependency({
-      projectId,
-      featureId: feature.id,
-      taskId: `${idPrefix}-b`,
-      dependsOnId: `${idPrefix}-a`,
-    });
-    return { phaseId: phase.id, featureId: feature.id };
+    db.prepare('INSERT INTO task_dependencies (id, created_at, updated_at, project_id, feature_id, task_id, depends_on_id) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(randomUUID(), NOW_MS, NOW_MS, projectId, featureId, `${idPrefix}-b`, `${idPrefix}-a`);
+    return { phaseId, featureId };
   });
 }
 
@@ -434,10 +418,9 @@ async function withExecutionHarness(
     try {
       await migrateSqliteStorage(session, { nowUtcMs: tick });
       const state = createSqliteStateStore(session, { nowUtcMs: tick });
-      const atomic = createSqliteAtomicCommandStore(session, { nowUtcMs: tick });
       const projectA = await state.createProject({ displayName: '项目 A', labels: ['alpha'] });
       const projectB = await state.createProject({ displayName: '项目 B', labels: ['beta'] });
-      const { phaseId, featureId } = seedPlanStructure(atomic, projectA.id);
+      const { phaseId, featureId } = seedPlanStructure(session, projectA.id);
       const batchId = insertBatch(session.database, {
         projectId: projectA.id,
         phaseId,
@@ -546,7 +529,7 @@ describe('F-002 迁移 v9：单 Feature 执行三表', () => {
         try {
           expectTablesPreserved(snapshotTables(reopened.database), before);
           const plan = seedPlanStructure(
-            createSqliteAtomicCommandStore(reopened, { nowUtcMs: () => NOW_MS }),
+            reopened,
             projectId,
           );
           const batchId = insertBatch(reopened.database, {
@@ -581,9 +564,8 @@ describe('F-002 迁移 v9：单 Feature 执行三表', () => {
       try {
         await migrateSqliteStorage(session, { migrations: SQLITE_MIGRATIONS.slice(0, 8), nowUtcMs: tick });
         const state = createSqliteStateStore(session, { nowUtcMs: tick });
-        const atomic = createSqliteAtomicCommandStore(session, { nowUtcMs: tick });
         const project = await state.createProject({ displayName: '前序项目', labels: [] });
-        const { phaseId, featureId } = seedPlanStructure(atomic, project.id);
+        const { phaseId, featureId } = seedPlanStructure(session, project.id);
         session.database
           .prepare(
             'INSERT INTO approvals (id, created_at, project_id, revision, updated_at, subject_type, subject_id, ' +
@@ -734,7 +716,7 @@ describe('F-002 执行域 DDL 约束负例（真实 SQLite）', () => {
       );
       // 第二个 Phase/Feature（无活动 Batch/Run 占用，隔离唯一索引干扰）。
       const second = seedPlanStructure(
-        createSqliteAtomicCommandStore(session, { nowUtcMs: () => NOW_MS }),
+        session,
         projectA,
         '第二阶段',
         's2',
@@ -770,7 +752,7 @@ describe('F-002 执行域 DDL 约束负例（真实 SQLite）', () => {
       const CHECK_FAILED = /CHECK constraint failed/;
       // 探针 Phase/Feature（无活动 Batch 占用，隔离唯一索引干扰，命中确定约束）。
       const probe = seedPlanStructure(
-        createSqliteAtomicCommandStore(session, { nowUtcMs: () => NOW_MS }),
+        session,
         projectA,
         '探针阶段',
         'p1',
@@ -940,7 +922,7 @@ describe('F-002 执行域 DDL 约束负例（真实 SQLite）', () => {
       db.prepare('UPDATE execution_batches SET status = ? WHERE id = ?').run('succeeded', batchId);
       insertBatch(db, { projectId: projectA, phaseId, featureId, id: 'batch-after-terminal' });
       const third = seedPlanStructure(
-        createSqliteAtomicCommandStore(session, { nowUtcMs: () => NOW_MS }),
+        session,
         projectA,
         '第三阶段',
         's3',

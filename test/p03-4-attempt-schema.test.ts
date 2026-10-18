@@ -275,9 +275,15 @@ describe('P03-4 F-001 persistent execution model', () => {
         db.prepare('UPDATE projects SET repository_binding_id = ? WHERE id = ?').run(binding.repository_binding_id, f.box.projectId);
       });
       const before = Object.fromEntries(tables.map(table => [table, predecessor.database.prepare(`SELECT * FROM ${table} ORDER BY id`).all()]));
-      expect((await migrateSqliteStorage(predecessor)).appliedVersions).toEqual([14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25]);
+      expect((await migrateSqliteStorage(predecessor)).appliedVersions).toEqual([14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26]);
       for (const table of tables) {
         const after = predecessor.database.prepare(`SELECT * FROM ${table} ORDER BY id`).all() as Record<string, unknown>[];
+        if (table === 'features') {
+          for (const row of after) {
+            expect(row.delivery_status).toBe('not_requested');
+            delete row.delivery_status;
+          }
+        }
         if (table === 'tasks') {
           expect(after[0]?.execution_version).toBe(0);
           expect(after[0]?.kind).toBe('coding');
@@ -310,7 +316,7 @@ describe('P03-4 F-001 persistent execution model', () => {
       f.lease();
       // 复制全部业务表到 v23 前序库（v23→v24 仅重建 attempts，列完全一致）。
       await migrateSqliteStorage(predecessor, { migrations: SQLITE_MIGRATIONS.slice(0, 23) });
-      const tableNames = (f.db.prepare(
+      const tableNames = (predecessor.database.prepare(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name != 'schema_migrations' ORDER BY name",
       ).all() as { name: string }[]).map((row) => row.name);
       predecessor.transactWrite('test.seed-v23', (db) => {
@@ -331,10 +337,18 @@ describe('P03-4 F-001 persistent execution model', () => {
         tableNames.map((table) => [table, predecessor.database.prepare(`SELECT * FROM ${table}`).all()]),
       );
       // v24/v25 重建 attempts：历史行逐行保留，子表外键在提交时核验通过。
-      expect((await migrateSqliteStorage(predecessor)).appliedVersions).toEqual([24, 25]);
+      expect((await migrateSqliteStorage(predecessor)).appliedVersions).toEqual([24, 25, 26]);
       for (const table of tableNames) {
-        expect(predecessor.database.prepare(`SELECT * FROM ${table}`).all(), table).toEqual(before[table]);
+        const after = predecessor.database.prepare(`SELECT * FROM ${table}`).all() as Record<string, unknown>[];
+        if (table === 'features') {
+          for (const row of after) {
+            expect(row.delivery_status).toBe('not_requested');
+            delete row.delivery_status;
+          }
+        }
+        expect(after, table).toEqual(before[table]);
       }
+      expect(predecessor.database.prepare('SELECT COUNT(*) AS n FROM git_operations').get()).toEqual({ n: 0 });
       expect(predecessor.database.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
       // 触发器与索引随重建恢复。
       const triggers = predecessor.database.prepare(

@@ -37,7 +37,7 @@ import type {
   GitOperationDetailResult,
   GitOperationListResult,
   PublicGitOperationRecord,
-} from 'shiploop-host';
+} from '../packages/host/src/index.ts';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const PROJECT_ID = '00000000-0000-4000-8000-000000000001';

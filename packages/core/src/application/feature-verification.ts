@@ -164,7 +164,9 @@ export function createFeatureVerificationCoordinator(options: FeatureVerificatio
       if (execution.results.length !== plan.selectedChecks.length
         || plan.selectedChecks.some(check => {
           const matching = execution.results.filter(item => item.checkKey === check.checkKey);
-          return matching.length !== 1 || matching[0].status !== 'passed'
+          return matching.length !== 1
+            || !['passed', 'failed', 'error', 'inconclusive'].includes(matching[0].status)
+            || (execution.status === 'passed' && matching[0].status !== 'passed')
             || matching[0].resultId.length === 0 || matching[0].outputArtifactId == null;
         })) {
         return result('error', 'evidence_incomplete', codeIdentity, execution);

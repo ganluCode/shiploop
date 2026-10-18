@@ -517,7 +517,11 @@ describe('F-006 Host inspect/overview 路由与握手能力（真实 Host + SQLi
     expect(body.capabilities.application.queries).toContain('execution.task.verification.get');
     expect(body.capabilities.application.queries).toContain('execution.task.approvals.list');
     expect(body.capabilities.application.queries).toContain('execution.task.rework-chain.list');
-    expect(body.capabilities.application.queries).toHaveLength(39);
+    // P03-8: Git operation queries and the Feature delivery projection.
+    expect(body.capabilities.application.queries).toContain('git.operations.list');
+    expect(body.capabilities.application.queries).toContain('git.operations.get');
+    expect(body.capabilities.application.queries).toContain('features.delivery.get');
+    expect(body.capabilities.application.queries).toHaveLength(42);
     expect(body.capabilities.application.commands).toEqual([
       'execution.attempt.cancel',
       'project.register',
@@ -565,6 +569,9 @@ describe('F-006 Host inspect/overview 路由与握手能力（真实 Host + SQLi
       'workspace.discard',
       'workspace.discard.preview',
     ]);
+    // No delivery factory is installed in this fixture: do not advertise write capabilities.
+    expect(body.capabilities.application.commands).not.toContain('feature.verification.continue');
+    expect(body.capabilities.application.commands).not.toContain('git.operation.reconcile');
     for (const legacyVersion of [4, 3, 2, 1]) {
       const legacy = await loopbackRequest({
         port,

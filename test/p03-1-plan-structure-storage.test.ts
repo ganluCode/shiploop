@@ -134,7 +134,8 @@ async function withPlanHarness(
   try {
     const { session, tick } = openSession(join(sandbox.path, 'state.db'));
     try {
-      await migrateSqliteStorage(session, { nowUtcMs: tick });
+      // Current storage primitives require the latest schema; historical DDL cases below remain pinned.
+      await migrateDeclaredSqliteStorage(session, { nowUtcMs: tick });
       const state = createSqliteStateStore(session, { nowUtcMs: tick });
       const atomic = createSqliteAtomicCommandStore(session, { nowUtcMs: tick });
       const projectA = await state.createProject({ displayName: '项目 A', labels: ['alpha'] });
@@ -574,7 +575,7 @@ describe('F-002 CommandTransaction 计划结构原语', () => {
       const { session, tick } = openSession(dbPath);
       const saved: { phaseId: string; featureId: string } = { phaseId: '', featureId: '' };
       try {
-        await migrateSqliteStorage(session, { nowUtcMs: tick });
+        await migrateDeclaredSqliteStorage(session, { nowUtcMs: tick });
         const state = createSqliteStateStore(session, { nowUtcMs: tick });
         const atomic = createSqliteAtomicCommandStore(session, { nowUtcMs: tick });
         const project = await state.createProject({ displayName: '原语项目', labels: ['proj-label'] });

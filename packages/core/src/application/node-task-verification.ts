@@ -72,6 +72,8 @@ export interface NodeTaskVerificationInput {
   readonly executionVersion: number;
   readonly batchId: string;
   readonly operation: string;
+  /** Evidence publication uses a UUID, independently of the business operation label. */
+  readonly evidenceOperationId?: string;
   readonly codeDigest: string;
   /** Actual pre-runtime identity when the caller captured it; digest is only a compatibility fallback. */
   readonly codeIdentity?: BaselineCodeIdentity;
@@ -279,7 +281,7 @@ export function createNodeTaskVerificationExecutor(options: NodeTaskVerification
         return confirmed;
       }, input.signal);
       const observed = await observeProtocol(handle, input.targets);
-      captured = await evidence.collect({ projectId: input.projectId, operationId: input.operation, checkKey: check.checkKey,
+      captured = await evidence.collect({ projectId: input.projectId, operationId: input.evidenceOperationId ?? input.operation, checkKey: check.checkKey,
         request, handle: observed.handle, environmentRef: check.environmentRef,
         codeIdentity: input.codeIdentity ?? codeIdentity(input.codeDigest) });
       // 报告解析在输出流排空后完成（observeProtocol 的 report 是惰性 getter）：
@@ -340,7 +342,7 @@ export function createFeatureNodeVerificationExecutor(options: NodeTaskVerificat
       const result = await taskExecutor.start({
         projectId: input.projectId, featureId: input.featureId, runId: input.runId,
         taskId: anchor.taskId, attemptId: anchor.attemptId, executionVersion: input.executionVersion,
-        batchId: input.batchId, operation: input.operation, codeDigest: input.codeIdentity.codeDigest,
+        batchId: input.batchId, operation: input.operation, evidenceOperationId: randomUUID(), codeDigest: input.codeIdentity.codeDigest,
         codeIdentity: {
           headCommit: input.codeIdentity.headCommit,
           workingTreeDigest: input.codeIdentity.codeDigest,

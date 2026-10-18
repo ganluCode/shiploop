@@ -98,6 +98,16 @@ describe('F-004 Feature verification coordinator', () => {
     expect(result).toMatchObject({ status: 'invalid', invalidated: true, reason: 'source_changed' });
   });
 
+  it('preserves a failed full check with complete evidence as failed, not missing evidence', async () => {
+    const result = await createFeatureVerificationCoordinator(options({
+      execute: { start: async executionInput => ({
+        batchId: executionInput.batchId, status: 'failed',
+        results: passedResults().map((item, index) => index === 0 ? { ...item, status: 'failed' } : item),
+      }) },
+    })).run(input);
+    expect(result).toMatchObject({ status: 'failed', reason: 'execution_failed', batchId: 'feature-batch-1' });
+  });
+
   it('fails closed when a required check has no Artifact evidence', async () => {
     const result = await createFeatureVerificationCoordinator(options({
       execute: { start: async (executionInput) => ({

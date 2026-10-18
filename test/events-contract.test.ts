@@ -170,6 +170,8 @@ describe('F-003 冻结事件封套版本与 §9.2 事件白名单（P02-2 六类
       'task.attempt.updated',
       'task.approval.blocked',
       'task.approval.decided',
+      'feature.finalized',
+      'feature.finalization_blocked',
       'workspace.operation_updated',
       // P03-8 / F-002：受控 Git 操作意图登记与终态回执（聚合为 Git operation）。
       GIT_OPERATION_REGISTERED_EVENT_TYPE,

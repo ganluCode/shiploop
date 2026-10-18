@@ -67,6 +67,8 @@ describe('F-009 budget revision contract', () => {
       'task.attempt.updated',
       'task.approval.blocked',
       'task.approval.decided',
+      'feature.finalized',
+      'feature.finalization_blocked',
     ]);
   });
 
