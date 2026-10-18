@@ -39,6 +39,7 @@ import type { ExecutionBatchRecord, RunRecord } from '../ports/execution-store.j
 import type { FeatureDeliveryQueryReadStore, FeatureDeliveryView } from '../ports/feature-delivery-query.js';
 import { FEATURE_VERIFICATION_OPERATION } from '../ports/feature-verification.js';
 import { evaluatePlanApprovalValidity } from '../ports/plan-approval-verification.js';
+import { verificationCodeIdentity } from '../ports/verification-aggregate.js';
 import type { TaskApprovalItemRecord } from '../ports/plan-store.js';
 import type { TaskDagStore, TaskDagView } from '../ports/task-dag.js';
 import type { TaskEvidenceQueryReadStore, TaskVerificationBatchView } from '../ports/task-evidence-query.js';
@@ -131,16 +132,20 @@ function sameCheckDefinition(
 function environmentMatches(
   summary: Readonly<Record<string, unknown>>,
   inspection: WorkspaceInspection,
+  allowedHeadCommit: string | null = null,
+  allowCodeDigestChange = false,
 ): boolean {
   const workspace = summary['workspace'];
   if (workspace === null || workspace === undefined || typeof workspace !== 'object' || Array.isArray(workspace)) {
     return true;
   }
   const record = workspace as Record<string, unknown>;
-  if (typeof record['headCommit'] === 'string' && record['headCommit'] !== inspection.repository.headCommit) {
+  if (typeof record['headCommit'] === 'string' && record['headCommit'] !== inspection.repository.headCommit
+    && record['headCommit'] !== allowedHeadCommit) {
     return false;
   }
-  if (typeof record['codeDigest'] === 'string' && record['codeDigest'] !== inspection.codeDigest) {
+  if (typeof record['codeDigest'] === 'string' && record['codeDigest'] !== inspection.codeDigest
+    && !allowCodeDigestChange) {
     return false;
   }
   return true;
@@ -318,6 +323,24 @@ export function createFinalizationRetryPlanner(deps: FinalizationRetryPlannerDep
       }
       if (delivery === undefined) return rejected('identity_mismatch');
 
+      // F-012：已成功/待核对的交付提交会推进 HEAD，但已验证的代码摘要未变。
+      // 旧检查批次的 environmentSummary 仍绑定提交前 HEAD；只有该旧 HEAD 与
+      // 当前 operation 的 expectedHead 一致时才允许这条受控推进。
+      const deliveryHead = delivery.gitOperation;
+      const currentContentDigest = verificationCodeIdentity(inspection).codeDigest;
+      const explainedHeadCommit = deliveryHead !== null && (
+        (deliveryHead.status === 'succeeded' && deliveryHead.actualCommit === currentHeadCommit)
+        || (deliveryHead.status === 'no_change' && deliveryHead.intent.expectedHead === currentHeadCommit)
+        || (deliveryHead.status === 'pending' && deliveryHead.intent.expectedHead !== currentHeadCommit)
+      ) ? deliveryHead.intent.expectedHead : null;
+      // A real final commit changes Git status/HEAD but not the delivered bytes.
+      // When the operation's immutable content identity still matches the current
+      // workspace, pre-commit evidence and approvals remain recoverable.
+      const sourceExplainedByDelivery = deliveryHead !== null
+        && deliveryHead.intent.codeDigest === currentContentDigest
+        && (explainedHeadCommit !== null
+          || (deliveryHead.status === 'failed' && deliveryHead.intent.expectedHead === currentHeadCommit));
+
       const effective = mergeEffectiveSettings({
         global: view.settings.global,
         project: view.settings.project,
@@ -363,8 +386,8 @@ export function createFinalizationRetryPlanner(deps: FinalizationRetryPlannerDep
           addReason(globalReasons, 'verification_missing');
         } else {
           if (latestBatch.batch.status !== 'passed') addReason(globalReasons, 'verification_not_passed');
-          if (latestBatch.batch.codeDigest !== currentCodeDigest) addReason(globalReasons, 'source_changed');
-          if (!environmentMatches(latestBatch.batch.environmentSummary, inspection)) {
+          if (latestBatch.batch.codeDigest !== currentCodeDigest && !sourceExplainedByDelivery) addReason(globalReasons, 'source_changed');
+          if (!environmentMatches(latestBatch.batch.environmentSummary, inspection, explainedHeadCommit, sourceExplainedByDelivery)) {
             addReason(globalReasons, 'environment_changed');
           }
         }
@@ -466,8 +489,8 @@ export function createFinalizationRetryPlanner(deps: FinalizationRetryPlannerDep
       } else {
         finalCheckKeys = finalBatch.batch.checkSnapshot.map(entry => entry.checkKey);
         if (finalBatch.batch.status !== 'passed') addReason(finalReasons, 'verification_not_passed');
-        if (finalBatch.batch.codeDigest !== currentCodeDigest) addReason(finalReasons, 'source_changed');
-        if (!environmentMatches(finalBatch.batch.environmentSummary, inspection)) {
+        if (finalBatch.batch.codeDigest !== currentCodeDigest && !sourceExplainedByDelivery) addReason(finalReasons, 'source_changed');
+        if (!environmentMatches(finalBatch.batch.environmentSummary, inspection, explainedHeadCommit, sourceExplainedByDelivery)) {
           addReason(finalReasons, 'environment_changed');
         }
         for (const snapshot of finalBatch.batch.checkSnapshot) {
@@ -499,7 +522,8 @@ export function createFinalizationRetryPlanner(deps: FinalizationRetryPlannerDep
       let stale = false;
       for (const item of delivery.approvalItems) {
         const planCurrent = item.planDigest === view.plan.feature.planDigest;
-        const codeCurrent = item.codeDigest === null || item.codeDigest === currentCodeDigest;
+        const codeCurrent = item.codeDigest === null || item.codeDigest === currentCodeDigest
+          || (sourceExplainedByDelivery && item.decisionCodeDigest === item.codeDigest);
         if (!planCurrent || !codeCurrent) {
           if (item.kind === 'approval' || item.status === 'pending') stale = true;
           continue;
@@ -517,7 +541,9 @@ export function createFinalizationRetryPlanner(deps: FinalizationRetryPlannerDep
           rejectedApproval = true;
           continue;
         }
-        if (item.status !== 'approved' || item.decisionCodeDigest !== currentCodeDigest) {
+        if (item.status !== 'approved'
+          || (item.decisionCodeDigest !== currentCodeDigest
+            && !(sourceExplainedByDelivery && item.decisionCodeDigest === item.codeDigest))) {
           stale = true;
           continue;
         }

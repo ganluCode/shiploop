@@ -46,6 +46,11 @@ export interface SchedulerFinalization {
   execute(handoff: SchedulerHandoff): Promise<{ readonly recordHandoff: boolean }>;
 }
 
+/** P03-9 / F-012：handoff 后的审批/提交/完成消费者；不得触发编码或 Runtime。 */
+export interface SchedulerFinalizationCompletion {
+  execute(handoff: SchedulerHandoff): Promise<unknown>;
+}
+
 export interface SchedulerRunResult {
   readonly projectId: string;
   readonly runId: string;
@@ -78,6 +83,8 @@ export interface WorkSchedulerOptions {
   readonly onHandoff?: (handoff: SchedulerHandoff) => Promise<void>;
   /** finalization-only Run 在编码认领前分流；未装配时保持既有 capability gap。 */
   readonly finalization?: SchedulerFinalization;
+  /** handoff 已记录后继续审批/提交；仅在 Run 仍可调度时调用。 */
+  readonly finalizationCompletion?: SchedulerFinalizationCompletion;
   readonly intervalMs?: number;
   readonly pageSize?: number;
   readonly maxPages?: number;

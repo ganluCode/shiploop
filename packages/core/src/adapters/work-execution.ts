@@ -37,6 +37,7 @@ import type { CommandProcessIdentity } from '../ports/command-process.js';
 import type { WorkResourceIdentity } from '../ports/work-resources.js';
 import { PublicError } from '../ports/commands.js';
 import { isFinalizationOnlyRun, type FinalizationExecutionPort } from '../ports/finalization-execution.js';
+import type { FinalizationCompletionPort } from '../ports/finalization-completion.js';
 import type { createWorkStartupRecovery } from '../application/work-startup-recovery.js';
 
 export interface WorkRuntimeContext {
@@ -63,6 +64,8 @@ export function assembleWorkExecution(options: {
   readonly startupRecovery: ReturnType<typeof createWorkStartupRecovery>;
   /** P03-9 / F-011：finalization-only Run 在编码认领前分流到受信重验执行。 */
   readonly finalizationExecution?: FinalizationExecutionPort;
+  /** P03-9 / F-012：重验 handoff 后继续最终审批/提交/完成（不启动 Runtime）。 */
+  readonly finalizationCompletion?: FinalizationCompletionPort;
   /** F-012：受信返工现场读取（同 Feature 受管 worktree 的当前身份；无工作区时
    * 返回 null）。由 composition 用受界检查器实现；缺省时不接返工认领。 */
   readonly readReworkScene?: (projectId: string, featureId: string) => Promise<{
@@ -144,6 +147,13 @@ export function assembleWorkExecution(options: {
               || result.status === 'verification_failed'
               || result.status === 'invalidated',
           };
+        },
+      },
+    }),
+    ...(options.finalizationCompletion === undefined ? {} : {
+      finalizationCompletion: {
+        async execute(handoff: { readonly projectId: string; readonly runId: string }) {
+          return options.finalizationCompletion!.execute({ projectId: handoff.projectId, runId: handoff.runId });
         },
       },
     }),

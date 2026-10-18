@@ -86,6 +86,22 @@ export function createWorkScheduler(options: WorkSchedulerOptions) {
         handoffKey: `${runId}:feature_final_verification`, projectId, runId, featureId: run.featureId,
       };
       if (options.store.isFinalVerificationHandoffClaimed(projectId, runId)) {
+        if (options.finalizationCompletion !== undefined
+          && (run.status === 'queued' || run.status === 'running')) {
+          try {
+            await options.finalizationCompletion.execute(handoff);
+            const result: SchedulerRunResult = { projectId, runId, reason: 'all_passed',
+              capabilityGaps: [], claimed: false, handoff: null };
+            diagnostics.set(key(projectId, runId), result);
+            return result;
+          } catch {
+            options.store.recordRunReason(projectId, runId, 'finalization_completion_failed');
+            const result: SchedulerRunResult = { projectId, runId, reason: 'handoff_delivery_failed',
+              capabilityGaps: [], claimed: false, handoff: null };
+            diagnostics.set(key(projectId, runId), result);
+            return result;
+          }
+        }
         const result: SchedulerRunResult = { projectId, runId, reason: 'all_passed',
           capabilityGaps: [], claimed: false, handoff: null };
         diagnostics.set(key(projectId, runId), result);

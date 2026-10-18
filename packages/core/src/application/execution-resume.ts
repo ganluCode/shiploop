@@ -62,6 +62,7 @@ import type { TaskDagResult, TaskDagStore, TaskDagView } from '../ports/task-dag
 import type { WorkspaceInspector } from '../ports/workspace-inspector.js';
 import { resolveCurrentCheckPolicyDigest } from './plan-approval-verification.js';
 import { evaluateTaskDagAfterResume } from './task-dag.js';
+import { isFinalizationOnlyRun } from '../ports/finalization-execution.js';
 
 const OPERATION = EXECUTION_RESUME_OPERATION;
 
@@ -300,9 +301,19 @@ export function createExecutionResumeService(deps: ExecutionResumeServiceDeps): 
       currentCheckPolicyDigest: checkPolicyDigest,
     });
     if (!validity.valid || view.phase.status !== 'open') return notResumable('authorization_invalid');
-    const dag = evaluateTaskDagAfterResume(view, nowMs);
-    const rejected = rejectReasonForDag(dag, view);
-    if (rejected !== null) return notResumable(rejected);
+    // P03-9 / F-012：finalization-only Run 的 input/config scope 刻意不含编码
+    // Task，不能走编码 DAG 预演。它只重新核对全 Task passed、计划授权、检查
+    // 政策、工作区与预算；审批/代码/Git operation 仍由 F-012 完成编排重核。
+    const finalizationOnly = isFinalizationOnlyRun(run);
+    if (finalizationOnly
+      && (view.plan.tasks.length === 0 || view.plan.tasks.some(task => task.status !== 'passed'))) {
+      return notResumable('evidence_invalid');
+    }
+    const dag = finalizationOnly ? null : evaluateTaskDagAfterResume(view, nowMs);
+    if (dag !== null) {
+      const rejected = rejectReasonForDag(dag, view);
+      if (rejected !== null) return notResumable(rejected);
+    }
 
     const strategies = sortedTaskDigests(view);
     const permissions = permissionDigests(deps.permissions, projectId, view);
@@ -340,7 +351,7 @@ export function createExecutionResumeService(deps: ExecutionResumeServiceDeps): 
     }
 
     const digest = resumeDigest(view, view.approvals, checkPolicyDigest, strategies, permissions, inputs);
-    const scope = scopeForDag(dag);
+    const scope = dag === null ? { scope: 'approval' as const, nextTaskIds: [] } : scopeForDag(dag);
     return {
       kind: 'ready',
       projectId,

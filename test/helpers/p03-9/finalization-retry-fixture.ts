@@ -56,6 +56,8 @@ export interface FinalizationFixtureOptions {
   readonly terminalStatus?: 'failed' | 'cancelled' | null;
   /** Optional real check definitions; default deterministic placeholders. */
   readonly checkDefinitions?: readonly CheckDefinition[];
+  /** F-012: seed the final human approval item in a specific state. */
+  readonly approvalStatus?: 'approved' | 'pending' | 'rejected';
 }
 
 export interface FinalizationFixture {
@@ -466,7 +468,8 @@ export async function prepareEligibleFixture(
     outputArtifactId: featureOutput.id,
     outputDigest: featureOutput.contentHash!,
   });
-  const approvalId = insertApprovalItem(withWorkspace, attempts[0]!.taskId, inspection.codeDigest, 'approved');
+  const approvalId = insertApprovalItem(withWorkspace, attempts[0]!.taskId, inspection.codeDigest,
+    options.approvalStatus ?? 'approved');
   if (options.terminalStatus !== null) {
     const status = options.terminalStatus ?? 'failed';
     f.box.session.database.prepare('UPDATE runs SET status = ?, ended_at = ? WHERE id = ?')
