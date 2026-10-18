@@ -17,7 +17,11 @@
     {
       "feature": "P03-9",
       "index": "test/index/phases/P03/features/P03-9/feature.json"
+    },
+    {
+      "feature": "P03-10",
+      "index": "test/index/phases/P03/features/P03-10/feature.json"
     }
   ],
-  "coverage": "Only P03-9 task indexes have been registered; earlier Feature evidence stays in Harness history."
+  "coverage": "P03-9 task indexes and P03-10 F-001 fixture tests are registered; earlier Feature evidence stays in Harness history."
 }

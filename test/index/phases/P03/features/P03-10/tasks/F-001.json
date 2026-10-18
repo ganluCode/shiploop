@@ -1,0 +1,22 @@
+{
+  "schema_version": 2,
+  "task_id": "F-001",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/acceptance/p03-10-fixture.test.ts",
+          "cases": [
+            "prepare-interrupted",
+            "built-resources",
+            "host-interrupted",
+            "cleanup-unconfirmed",
+            "owned-tool-tree",
+            "export-failure"
+          ]
+        }
+      ]
+    }
+  ]
+}

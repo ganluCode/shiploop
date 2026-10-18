@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "kind": "feature",
+  "phase": "P03",
+  "feature": "P03-10",
+  "scope": "registered task-local fixtures; not full/Phase acceptance",
+  "tasks": [
+    {
+      "task_id": "F-001",
+      "index": "test/index/phases/P03/features/P03-10/tasks/F-001.json",
+      "description": "独立 P03 真实资源夹具：构建 CLI/Host、只读取证、进程树及组停止、失败保留与重试。"
+    }
+  ]
+}
