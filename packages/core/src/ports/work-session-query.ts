@@ -306,7 +306,7 @@ const CONTROL_CANCEL_STATES = ['accepted', 'rejected', 'failed', 'unobserved'] a
 function validateControl(value: unknown, field: string): RuntimeControlFacts | null {
   if (value === undefined || value === null) return null;
   const raw = requirePlainObject(value, EVIDENCE_CONTEXT, field);
-  rejectUnknownKeys(raw, ['reason', 'cancel'], EVIDENCE_CONTEXT, field);
+  rejectUnknownKeys(raw, ['reason', 'cancel', 'timeout'], EVIDENCE_CONTEXT, field);
   if (
     typeof raw.reason !== 'string' ||
     !(CONTROL_REASONS as readonly string[]).includes(raw.reason) ||
@@ -315,7 +315,33 @@ function validateControl(value: unknown, field: string): RuntimeControlFacts | n
   ) {
     throw validationError(EVIDENCE_CONTEXT, field, 'invalid_control_facts');
   }
-  return { reason: raw.reason as RuntimeControlFacts['reason'], cancel: raw.cancel as RuntimeControlFacts['cancel'] };
+  let timeout: RuntimeControlFacts['timeout'];
+  if (raw.timeout !== undefined) {
+    const t = requirePlainObject(raw.timeout, EVIDENCE_CONTEXT, `${field}.timeout`);
+    rejectUnknownKeys(t, ['layer', 'stage', 'limitMs', 'elapsedMs'], EVIDENCE_CONTEXT, `${field}.timeout`);
+    if (!['session', 'tool', 'check', 'run', 'batch'].includes(String(t.layer))
+      || !['runtime', 'verification'].includes(String(t.stage))) {
+      throw validationError(EVIDENCE_CONTEXT, `${field}.timeout`, 'invalid_timeout_facts');
+    }
+    const nullable = (candidate: unknown, name: string): number | null => {
+      if (candidate === null) return null;
+      if (typeof candidate !== 'number' || !Number.isSafeInteger(candidate) || candidate < 0) {
+        throw validationError(EVIDENCE_CONTEXT, `${field}.timeout.${name}`, 'invalid_duration');
+      }
+      return candidate;
+    };
+    timeout = {
+      layer: t.layer as NonNullable<RuntimeControlFacts['timeout']>['layer'],
+      stage: t.stage as NonNullable<RuntimeControlFacts['timeout']>['stage'],
+      limitMs: nullable(t.limitMs, 'limitMs'),
+      elapsedMs: nullable(t.elapsedMs, 'elapsedMs'),
+    };
+  }
+  return {
+    reason: raw.reason as RuntimeControlFacts['reason'],
+    cancel: raw.cancel as RuntimeControlFacts['cancel'],
+    ...(timeout === undefined ? {} : { timeout }),
+  };
 }
 
 /**

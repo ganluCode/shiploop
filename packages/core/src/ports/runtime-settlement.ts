@@ -3,10 +3,23 @@ import type { RuntimeErrorKind, RuntimeExecutionResult, RuntimeStopEvidence } fr
 import { RUNTIME_ERROR_KINDS, validateRuntimeExecutionResult, validateRuntimeStopEvidence } from './runtime-execution.js';
 import { rejectUnknownKeys, requirePlainObject, validateStableId, validationError } from './validation.js';
 
+export interface RuntimeTimeoutFact {
+  /** 触发层；Session/tool/check 是执行层，run/batch 是持久父额度。 */
+  readonly layer: 'session' | 'tool' | 'check' | 'run' | 'batch';
+  /** 超时发生时执行阶段（已知值；不在未知时猜造）。 */
+  readonly stage: 'runtime' | 'verification';
+  /** 该层授权上限（毫秒）；适配器未暴露已知上限时保持 null。 */
+  readonly limitMs: number | null;
+  /** 已知耗时（毫秒）；无法观测时保持 null，绝不写 0。 */
+  readonly elapsedMs: number | null;
+}
+
 export interface RuntimeControlFacts {
   readonly reason: 'user_cancelled' | 'service_close' | 'runtime_timeout' | 'tool_timeout' | 'parent_deadline' | 'recording_failed'
     | 'runtime_failed' | 'runtime_cancelled' | 'stop_unconfirmed';
   readonly cancel: 'accepted' | 'rejected' | 'failed' | 'unobserved';
+  /** P03-9 / F-004：仅 timeout 类控制事实携带触发层/阶段/已知耗时。 */
+  readonly timeout?: RuntimeTimeoutFact;
 }
 
 export interface RuntimeSettlementFacts {
@@ -42,10 +55,36 @@ export function validateRuntimeSettlementFacts(value: unknown): RuntimeSettlemen
   let control: RuntimeControlFacts | undefined;
   if (raw.control !== undefined) {
     const c = requirePlainObject(raw.control, context, 'control');
-    rejectUnknownKeys(c, ['reason', 'cancel'], context, 'control');
+    rejectUnknownKeys(c, ['reason', 'cancel', 'timeout'], context, 'control');
     if (!['user_cancelled', 'service_close', 'runtime_timeout', 'tool_timeout', 'parent_deadline', 'recording_failed', 'runtime_failed', 'runtime_cancelled', 'stop_unconfirmed'].includes(String(c.reason))
       || !['accepted', 'rejected', 'failed', 'unobserved'].includes(String(c.cancel))) throw validationError(context, 'control', 'invalid_control_facts');
-    control = { reason: c.reason as RuntimeControlFacts['reason'], cancel: c.cancel as RuntimeControlFacts['cancel'] };
+    let timeout: RuntimeTimeoutFact | undefined;
+    if (c.timeout !== undefined) {
+      const t = requirePlainObject(c.timeout, context, 'control.timeout');
+      rejectUnknownKeys(t, ['layer', 'stage', 'limitMs', 'elapsedMs'], context, 'control.timeout');
+      if (!['session', 'tool', 'check', 'run', 'batch'].includes(String(t.layer))
+        || !['runtime', 'verification'].includes(String(t.stage))) {
+        throw validationError(context, 'control.timeout', 'invalid_timeout_facts');
+      }
+      const optionalNonNegative = (value: unknown, field: string): number | null => {
+        if (value === null) return null;
+        if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+          throw validationError(context, field, 'invalid_duration');
+        }
+        return value;
+      };
+      timeout = {
+        layer: t.layer as RuntimeTimeoutFact['layer'],
+        stage: t.stage as RuntimeTimeoutFact['stage'],
+        limitMs: optionalNonNegative(t.limitMs, 'control.timeout.limitMs'),
+        elapsedMs: optionalNonNegative(t.elapsedMs, 'control.timeout.elapsedMs'),
+      };
+    }
+    control = {
+      reason: c.reason as RuntimeControlFacts['reason'],
+      cancel: c.cancel as RuntimeControlFacts['cancel'],
+      ...(timeout === undefined ? {} : { timeout }),
+    };
   }
   return { sessionId: validateStableId(raw.sessionId, context, 'sessionId'),
     invocationId: validateStableId(raw.invocationId, context, 'invocationId'), result, failure,

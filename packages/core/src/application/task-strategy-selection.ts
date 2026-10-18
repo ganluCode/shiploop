@@ -36,6 +36,10 @@ import { mergeEffectiveSettings } from './effective-settings.js';
 import type { EffectiveStrategyEntry } from './effective-settings.js';
 import {
   SETTINGS_SCHEMA_VERSION,
+  TOOL_TIMEOUT_MS_MAX,
+  TOOL_TIMEOUT_MS_MIN,
+  WORK_TIMEOUT_MS_MAX,
+  WORK_TIMEOUT_MS_MIN,
   validateRuntimeStrategy,
 } from '../ports/settings-schema.js';
 import type { ModelComplexity, RuntimeStrategyV1 } from '../ports/settings-schema.js';
@@ -80,6 +84,10 @@ export interface TaskExecutionConfigV1 {
   readonly credentialRef?: string;
   readonly endpointRef?: string;
   readonly maxCodeAttempts?: number;
+  /** P03-9 / F-004：Session/单次 Work 总时长上限（创建时从政策副本冻结）。 */
+  readonly workTimeoutMs?: number;
+  /** P03-9 / F-004：单工具调用上限（创建时从政策副本冻结）。 */
+  readonly toolTimeoutMs?: number;
 }
 
 /** 一次纯选择的结果：完整策略独立副本 + 来源说明（仅解释用途）。 */
@@ -98,10 +106,22 @@ const TASK_EXECUTION_CONFIG_KEYS = [
   'credentialRef',
   'endpointRef',
   'maxCodeAttempts',
+  'workTimeoutMs',
+  'toolTimeoutMs',
 ] as const;
 
-/** 由完整策略条目构造全新独立副本（不与任何输入共享引用；可选携带代码尝试上限）。 */
-function copyExecutionConfig(strategy: RuntimeStrategyV1, maxCodeAttempts?: number): TaskExecutionConfigV1 {
+/** P03-9 / F-004：从有效政策捕获的冻结时间上限（未配置不注入字段）。 */
+interface CapturedTimeLimits {
+  readonly workTimeoutMs?: number;
+  readonly toolTimeoutMs?: number;
+}
+
+/** 由完整策略条目构造全新独立副本（不与任何输入共享引用；可选携带政策副本）。 */
+function copyExecutionConfig(
+  strategy: RuntimeStrategyV1,
+  maxCodeAttempts?: number,
+  timeLimits: CapturedTimeLimits = {},
+): TaskExecutionConfigV1 {
   const copy: {
     schemaVersion: typeof SETTINGS_SCHEMA_VERSION;
     runtime: string;
@@ -110,6 +130,8 @@ function copyExecutionConfig(strategy: RuntimeStrategyV1, maxCodeAttempts?: numb
     credentialRef?: string;
     endpointRef?: string;
     maxCodeAttempts?: number;
+    workTimeoutMs?: number;
+    toolTimeoutMs?: number;
   } = {
     schemaVersion: SETTINGS_SCHEMA_VERSION,
     runtime: strategy.runtime,
@@ -125,13 +147,23 @@ function copyExecutionConfig(strategy: RuntimeStrategyV1, maxCodeAttempts?: numb
   if (maxCodeAttempts !== undefined) {
     copy.maxCodeAttempts = maxCodeAttempts;
   }
+  if (timeLimits.workTimeoutMs !== undefined) {
+    copy.workTimeoutMs = timeLimits.workTimeoutMs;
+  }
+  if (timeLimits.toolTimeoutMs !== undefined) {
+    copy.toolTimeoutMs = timeLimits.toolTimeoutMs;
+  }
   return copy;
 }
 
 /** 把有效配置中的整体条目转为选择结果（副本 + 既有来源说明；可选携带政策）。 */
-function selectionFromEntry(entry: EffectiveStrategyEntry, maxCodeAttempts?: number): TaskStrategySelection {
+function selectionFromEntry(
+  entry: EffectiveStrategyEntry,
+  maxCodeAttempts?: number,
+  timeLimits: CapturedTimeLimits = {},
+): TaskStrategySelection {
   return {
-    executionConfig: copyExecutionConfig(entry.strategy, maxCodeAttempts),
+    executionConfig: copyExecutionConfig(entry.strategy, maxCodeAttempts, timeLimits),
     configSource: entry.source.kind,
     configSourceKey: entry.source.sourceKey,
   };
@@ -184,13 +216,21 @@ export function selectTaskStrategy(input: unknown): TaskStrategySelection {
   //    userOverride 路径同样解析（来源非法仍 fail-closed 拒绝，不因覆盖而忽略）。
   const effective = mergeEffectiveSettings({ global: object.global, project: object.project });
   const maxCodeAttempts = effective.policies.executionLimits?.value.maxCodeAttempts;
+  const timeLimits: CapturedTimeLimits = {
+    ...(effective.policies.executionLimits?.value.workTimeoutMs === undefined
+      ? {}
+      : { workTimeoutMs: effective.policies.executionLimits.value.workTimeoutMs }),
+    ...(effective.policies.executionLimits?.value.toolTimeoutMs === undefined
+      ? {}
+      : { toolTimeoutMs: effective.policies.executionLimits.value.toolTimeoutMs }),
+  };
 
   // 1) 明确完整用户覆盖：优先于全部默认解析；不完整/未知键/秘密正文/非法引用在
   //    条目校验阶段明确拒绝，不回退、不从默认条目拼补。
   if (object.userOverride !== undefined) {
     const strategy = validateRuntimeStrategy(object.userOverride, context, 'userOverride');
     return {
-      executionConfig: copyExecutionConfig(strategy, maxCodeAttempts),
+      executionConfig: copyExecutionConfig(strategy, maxCodeAttempts, timeLimits),
       configSource: 'user_override',
       configSourceKey: TASK_STRATEGY_USER_OVERRIDE_SOURCE_KEY,
     };
@@ -201,12 +241,12 @@ export function selectTaskStrategy(input: unknown): TaskStrategySelection {
   if (complexity !== null) {
     const complexityEntry = effective.strategies.modelMap[complexity];
     if (complexityEntry !== undefined) {
-      return selectionFromEntry(complexityEntry, maxCodeAttempts);
+      return selectionFromEntry(complexityEntry, maxCodeAttempts, timeLimits);
     }
   }
   const fallback = effective.strategies.defaultStrategy;
   if (fallback !== undefined) {
-    return selectionFromEntry(fallback, maxCodeAttempts);
+    return selectionFromEntry(fallback, maxCodeAttempts, timeLimits);
   }
 
   // 4) 无匹配的已确认默认：明确的配置错误，不猜复杂度、不猜模型。
@@ -270,5 +310,41 @@ export function validateTaskExecutionConfig(value: unknown, operation: string): 
     }
     maxCodeAttempts = object.maxCodeAttempts;
   }
-  return copyExecutionConfig(validateRuntimeStrategy(entry, context, 'executionConfig'), maxCodeAttempts);
+  const timeLimits: {
+    workTimeoutMs?: number;
+    toolTimeoutMs?: number;
+  } = {};
+  if (object.workTimeoutMs !== undefined) {
+    if (
+      typeof object.workTimeoutMs !== 'number' ||
+      !Number.isInteger(object.workTimeoutMs) ||
+      object.workTimeoutMs < WORK_TIMEOUT_MS_MIN ||
+      object.workTimeoutMs > WORK_TIMEOUT_MS_MAX
+    ) {
+      throw validationError(
+        context,
+        'executionConfig.workTimeoutMs',
+        `必须是 ${WORK_TIMEOUT_MS_MIN}..${WORK_TIMEOUT_MS_MAX} 的整数（Session 总时长上限）`,
+        object.workTimeoutMs,
+      );
+    }
+    timeLimits.workTimeoutMs = object.workTimeoutMs;
+  }
+  if (object.toolTimeoutMs !== undefined) {
+    if (
+      typeof object.toolTimeoutMs !== 'number' ||
+      !Number.isInteger(object.toolTimeoutMs) ||
+      object.toolTimeoutMs < TOOL_TIMEOUT_MS_MIN ||
+      object.toolTimeoutMs > TOOL_TIMEOUT_MS_MAX
+    ) {
+      throw validationError(
+        context,
+        'executionConfig.toolTimeoutMs',
+        `必须是 ${TOOL_TIMEOUT_MS_MIN}..${TOOL_TIMEOUT_MS_MAX} 的整数（单工具上限）`,
+        object.toolTimeoutMs,
+      );
+    }
+    timeLimits.toolTimeoutMs = object.toolTimeoutMs;
+  }
+  return copyExecutionConfig(validateRuntimeStrategy(entry, context, 'executionConfig'), maxCodeAttempts, timeLimits);
 }

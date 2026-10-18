@@ -30,6 +30,7 @@ import type { RuntimeStrategyV1 } from '../ports/settings-schema.js';
 import { createHash } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { superviseExecution, observeWithin, type ExecutionCompletion, type ExecutionSupervisionOptions, type ExecutionStopReason } from './execution-supervision.js';
+import { resolveExecutionDeadlines } from '../ports/execution-time-limits.js';
 import type { WorkResourceStopVerifier, WorkResourceSnapshot } from '../ports/work-resources.js';
 export type { ExecutionCompletion, ExecutionSupervisionOptions, ExecutionRetentionInput } from './execution-supervision.js';
 
@@ -277,8 +278,15 @@ export function createExecutionService(deps: ExecutionServiceDeps): ExecutionSer
 
     const launchedAt = (deps.nowUtcMs ?? Date.now)();
     const view = deps.dag.readTaskDagView(workIdentity.projectId, input.claim.attempt.runId);
-    const parentDeadline = Math.min(view.batch.deadlineAtUtcMs, view.batch.budgetSnapshot.batch.deadlineUtcMs,
-      (view.run.startedAtUtcMs ?? launchedAt) + view.run.runTimeLimitMs);
+    const batchDeadline = Math.min(view.batch.deadlineAtUtcMs, view.batch.budgetSnapshot.batch.deadlineUtcMs);
+    const deadlines = resolveExecutionDeadlines({
+      nowUtcMs: launchedAt,
+      sessionTimeLimitMs: bound.request.limits.timeoutMs,
+      toolTimeLimitMs: bound.request.limits.toolTimeoutMs ?? null,
+      runStartedAtUtcMs: view.run.startedAtUtcMs,
+      runTimeLimitMs: view.run.runTimeLimitMs,
+      batchDeadlineUtcMs: batchDeadline,
+    });
     let runtime: RuntimeSession;
     try {
       unstarted.delete(key(workIdentity.projectId, workIdentity.attemptId));
@@ -352,13 +360,17 @@ export function createExecutionService(deps: ExecutionServiceDeps): ExecutionSer
       const entry: { context: ExecutionContext; settled: boolean; safe: boolean; stop?: (reason: ExecutionStopReason) => void } = { context, settled: false, safe: false };
       contexts.set(key(workIdentity.projectId, workIdentity.attemptId), entry);
       if (deps.supervision && deps.settlement) {
-        const runtimeDeadline = launchedAt + bound.request.limits.timeoutMs;
+        const now = (deps.nowUtcMs ?? Date.now)();
         const supervision = superviseExecution({ request: bound.request, runtime, controller, result, stopped, recording,
           options: deps.supervision, settlement: deps.settlement,
           quarantine: () => quarantineUnstarted(workIdentity),
           evidenceRef: () => deps.sessions.getWorkSession(workIdentity.projectId, bound.request.sessionId)?.resultRef ?? null,
-          timeoutMs: Math.min(runtimeDeadline, parentDeadline) - (deps.nowUtcMs ?? Date.now)(),
-          timeoutReason: parentDeadline <= runtimeDeadline ? 'parent_deadline' : 'runtime_timeout' });
+          timeoutMs: Math.max(1, deadlines.effectiveDeadlineUtcMs - now),
+          timeoutReason: deadlines.effectiveLayer === 'session' ? 'runtime_timeout' : 'parent_deadline',
+          timeoutLayer: deadlines.effectiveLayer,
+          timeoutLimitMs: deadlines.effectiveLayer === 'session'
+            ? bound.request.limits.timeoutMs
+            : Math.max(1, deadlines.effectiveDeadlineUtcMs - launchedAt) });
         Object.assign(context, { completion: supervision.completion });
         entry.stop = supervision.stop;
         recordingStop = () => supervision.stop('recording_failed');
@@ -429,6 +441,9 @@ export function createExecutionService(deps: ExecutionServiceDeps): ExecutionSer
     if (view.run.startedAtUtcMs !== null && now - view.run.startedAtUtcMs >= view.run.runTimeLimitMs) deny('run_time_exhausted');
     const limits = view.batch.budgetSnapshot.batch;
     if (now >= view.batch.deadlineAtUtcMs || now >= limits.deadlineUtcMs) deny('deadline_exhausted');
+    if (input.limits.toolTimeoutMs !== undefined && input.limits.toolTimeoutMs > input.limits.timeoutMs) {
+      deny('tool_limit_exceeds_session');
+    }
     if (view.batch.noProgressRuns >= limits.maxNoProgressRuns || limits.maxCostTotal !== undefined || limits.maxTokenTotal !== undefined) deny('budget_exhausted');
   }
 }

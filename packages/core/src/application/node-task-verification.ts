@@ -89,6 +89,9 @@ export interface NodeTaskVerificationInput {
   readonly selectionMode?: 'candidates' | 'full_fallback';
   /** Called after all checks and before the immutable batch is finalized. */
   readonly assertCurrentIdentity?: () => Promise<boolean>;
+  /** P03-9 / F-004：父 Run/Batch 的持久绝对截止时间；已到期不再启动检查。 */
+  readonly deadlineUtcMs?: number;
+  readonly deadlineLayer?: 'run' | 'batch';
 }
 
 export interface NodeTaskVerificationResult {
@@ -251,6 +254,18 @@ export function createNodeTaskVerificationExecutor(options: NodeTaskVerification
             exitCode: null, signal: null, forced: null, reason: 'cancelled', gaps: [] });
           continue;
         }
+        // P03-9 / F-004：父 Run/Batch 已到期时不再启动新检查；已启动的检查
+        // 由其自身 timeout 与父 deadline 取较小者，按实际触发的层归因。
+        const deadlineReason = input.deadlineUtcMs === undefined
+          ? null
+          : `${input.deadlineLayer ?? 'run'}_deadline_reached`;
+        if (deadlineReason !== null && now() >= input.deadlineUtcMs!) {
+          const notRun = await saveNotRun(input, check, deadlineReason);
+          records.push(notRun);
+          registration?.record({ checkKey: check.checkKey, launched: false, stopConfirmed: true,
+            exitCode: null, signal: null, forced: null, reason: deadlineReason, gaps: [] });
+          continue;
+        }
         const result = await runCheck(input, check, signal);
         records.push(result);
         const evidence = result.evidence;
@@ -289,6 +304,14 @@ export function createNodeTaskVerificationExecutor(options: NodeTaskVerification
   }
   async function runCheck(input: NodeTaskVerificationInput, check: VerificationPlanCheck, signal?: AbortSignal) {
     const started = now();
+    const deadlineRemaining = input.deadlineUtcMs === undefined
+      ? null
+      : Math.max(0, input.deadlineUtcMs - now());
+    const checkLimitMs = Math.min(check.timeout, CHECK_TIMEOUT_MAX_MS);
+    const effectiveTimeoutMs = deadlineRemaining === null
+      ? checkLimitMs
+      : Math.max(1, Math.min(checkLimitMs, deadlineRemaining));
+    const boundedByParentDeadline = deadlineRemaining !== null && deadlineRemaining < checkLimitMs;
     let request: CommandProcessRequest | undefined;
     let captured: BaselineEvidence | null = null;
     let reason: string | null = null;
@@ -299,7 +322,7 @@ export function createNodeTaskVerificationExecutor(options: NodeTaskVerification
     try {
       request = {
         argv: [...check.argv], cwd: await options.resolveCwd(check.cwdRef),
-        environment: { ...options.resolveEnvironment(check.environmentRef) }, timeoutMs: Math.min(check.timeout, CHECK_TIMEOUT_MAX_MS),
+        environment: { ...options.resolveEnvironment(check.environmentRef) }, timeoutMs: effectiveTimeoutMs,
         maxInputBytes: 65_536, maxOutputBytes: maxOutput,
       };
       if (options.workResources?.beginLaunchInTransaction) {
@@ -322,7 +345,10 @@ export function createNodeTaskVerificationExecutor(options: NodeTaskVerification
       const resultReason: CommandProcessReason | null = captured.processReason;
       if (!captured.stopConfirmed) reason = 'stop_unconfirmed';
       else if (resultReason === 'missing_command' || resultReason === 'permission_denied' || resultReason === 'spawn_failed') { status = 'error'; reason = resultReason; }
-      else if (resultReason === 'timed_out' || resultReason === 'cancelled' || resultReason === 'output_overflow') reason = resultReason;
+      else if (resultReason === 'timed_out') reason = boundedByParentDeadline
+        ? `${input.deadlineLayer ?? 'run'}_deadline_reached`
+        : resultReason;
+      else if (resultReason === 'cancelled' || resultReason === 'output_overflow') reason = resultReason;
       else if (!captured.integrity.complete || !captured.output || captured.report === null) reason = 'evidence_incomplete';
       else if (observed.report === null) reason = 'invalid_result_protocol';
       else if (captured.exitCode === 0 && captured.signal === null) status = 'passed';

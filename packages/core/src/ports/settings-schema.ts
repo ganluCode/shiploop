@@ -88,9 +88,12 @@ export interface ProjectStrategiesV1 {
 /** maxConcurrentWorks 取值范围（P01 运行时为全局单并发，配置是上限政策）。 */
 export const MAX_CONCURRENT_WORKS_MIN = 1;
 export const MAX_CONCURRENT_WORKS_MAX = 16;
-/** workTimeoutMs 取值范围：1 秒 .. 24 小时。 */
+/** workTimeoutMs（Session/单次 Work 总时长上限）取值范围：1 秒 .. 24 小时。 */
 export const WORK_TIMEOUT_MS_MIN = 1_000;
 export const WORK_TIMEOUT_MS_MAX = 86_400_000;
+/** toolTimeoutMs（单工具调用上限）取值范围：1 秒 .. 1 小时（与受控工具上限一致）。 */
+export const TOOL_TIMEOUT_MS_MIN = 1_000;
+export const TOOL_TIMEOUT_MS_MAX = 3_600_000;
 /** maxAttemptsPerTask 取值范围。 */
 export const MAX_ATTEMPTS_PER_TASK_MIN = 1;
 export const MAX_ATTEMPTS_PER_TASK_MAX = 100;
@@ -105,8 +108,16 @@ export const TRUSTED_PROJECT_ISOLATION = 'trusted_project';
 export interface ExecutionLimitsPolicyV2 {
   /** 并发 Work 上限政策（有界整数）。 */
   readonly maxConcurrentWorks?: number;
-  /** 单次 Work 超时上限（毫秒，有界整数）。 */
+  /**
+   * Session/单次 Work 总时长上限（毫秒，有界整数；旧字段语义保持不变）。
+   * 该值是授权上限：实际 Session 仍会被 Run/Batch 持久截止时间收窄。
+   */
   readonly workTimeoutMs?: number;
+  /**
+   * 单工具调用上限（毫秒，有界整数）。缺省时由装配使用有限缺省值；
+   * 实际值不得超过所属 Session 的剩余额度，否则在启动前拒绝。
+   */
+  readonly toolTimeoutMs?: number;
   /** 每 Task 最大 Attempt 数（有界整数）。 */
   readonly maxAttemptsPerTask?: number;
   /**
@@ -201,7 +212,7 @@ const STRATEGY_ENTRY_KEYS = ['runtime', 'provider', 'model', 'credentialRef', 'e
 const MODEL_MAP_KEYS = ['low', 'medium', 'high'] as const;
 const PURPOSE_KEYS = ['planner', 'judge', 'review'] as const;
 const POLICIES_KEYS = ['executionLimits', 'verification', 'securityPolicy', 'deliveryPolicy'] as const;
-const EXECUTION_LIMITS_KEYS = ['maxConcurrentWorks', 'workTimeoutMs', 'maxAttemptsPerTask', 'maxCodeAttempts', 'envAllowlist'] as const;
+const EXECUTION_LIMITS_KEYS = ['maxConcurrentWorks', 'workTimeoutMs', 'toolTimeoutMs', 'maxAttemptsPerTask', 'maxCodeAttempts', 'envAllowlist'] as const;
 const SECURITY_POLICY_KEYS = ['isolation'] as const;
 
 /** 以 Unicode 码点计数（String.length 会把 emoji 记为 2）。 */
@@ -422,6 +433,7 @@ function validateExecutionLimitsPolicy(
   const result: {
     maxConcurrentWorks?: number;
     workTimeoutMs?: number;
+    toolTimeoutMs?: number;
     maxAttemptsPerTask?: number;
     maxCodeAttempts?: number;
     envAllowlist?: readonly string[];
@@ -442,6 +454,17 @@ function validateExecutionLimitsPolicy(
       `${field}.workTimeoutMs`,
       WORK_TIMEOUT_MS_MIN,
       WORK_TIMEOUT_MS_MAX,
+    );
+  }
+  if (object.toolTimeoutMs !== undefined) {
+    // P03-9 / F-004：单工具上限是与 Session 独立的层；旧 v2 payload 无该键
+    // 仍有效，配置后由任务策略副本冻结。
+    result.toolTimeoutMs = validateBoundedInteger(
+      object.toolTimeoutMs,
+      context,
+      `${field}.toolTimeoutMs`,
+      TOOL_TIMEOUT_MS_MIN,
+      TOOL_TIMEOUT_MS_MAX,
     );
   }
   if (object.maxAttemptsPerTask !== undefined) {

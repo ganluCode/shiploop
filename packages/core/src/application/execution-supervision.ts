@@ -2,7 +2,7 @@ import type { WorkResourceIdentity } from '../ports/work-resources.js';
 import type { RuntimeSession } from './runtime-execution.js';
 import type { RuntimeExecutionRequest, RuntimeExecutionResult, RuntimeStopEvidence } from '../ports/runtime-execution.js';
 import { RuntimeError } from '../ports/runtime-execution.js';
-import type { RuntimeControlFacts } from '../ports/runtime-settlement.js';
+import type { RuntimeControlFacts, RuntimeTimeoutFact } from '../ports/runtime-settlement.js';
 import type { RuntimeSettlementService } from './runtime-settlement.js';
 import type { WorkEvidenceRecordingOutcome } from './work-evidence-recorder.js';
 import type { WorkspaceRetentionReason } from '../ports/workspace-retention.js';
@@ -56,15 +56,23 @@ export function superviseExecution(input: {
   readonly evidenceRef: () => string | null;
   readonly timeoutMs: number;
   readonly timeoutReason: 'runtime_timeout' | 'parent_deadline';
+  /** P03-9 / F-004：触发层（Session/Run/Batch）与观察起点（已知耗时基准）。 */
+  readonly timeoutLayer: 'session' | 'run' | 'batch';
+  readonly timeoutLimitMs: number;
 }) {
   let reason: ExecutionStopReason | null = null;
   let cancel: RuntimeControlFacts['cancel'] = 'unobserved';
+  let timeout: RuntimeTimeoutFact | undefined;
   let resolveStop!: () => void;
   const stopRequested = new Promise<void>(resolve => { resolveStop = resolve; });
   let finished = false;
-  const stop = (value: ExecutionStopReason) => {
+  // Monotonic elapsed base: epoch clocks (including test-injected clocks) do not
+  // have to be real-time; elapsed is still a known observed duration.
+  const observedFromMs = performance.now();
+  const stop = (value: ExecutionStopReason, fact?: RuntimeTimeoutFact) => {
     if (finished || reason !== null) return;
     reason = value;
+    if (fact !== undefined) timeout = fact;
     // Abort only this Attempt's collection; cancellation remains independent of stop evidence.
     input.controller.abort(value);
     void Promise.resolve().then(() => input.runtime.cancel()).then(
@@ -73,13 +81,27 @@ export function superviseExecution(input: {
     );
     resolveStop();
   };
-  const timer = setTimeout(() => stop(input.timeoutReason), Math.max(1, input.timeoutMs));
+  const elapsed = (): number => Math.max(0, Math.round(performance.now() - observedFromMs));
+  const timer = setTimeout(() => stop(input.timeoutReason, {
+    layer: input.timeoutLayer,
+    stage: 'runtime',
+    limitMs: input.timeoutLimitMs,
+    elapsedMs: elapsed(),
+  }), Math.max(1, input.timeoutMs));
   void input.recording.then(outcome => {
     if (outcome.status === 'rejected' || outcome.value.status !== 'complete') stop('recording_failed');
   });
   void input.result.then(outcome => {
     if (outcome.status === 'rejected' || outcome.value.terminal === 'failed') stop('runtime_failed');
-    else if (outcome.value.terminal === 'timed_out') stop(outcome.value.reason === 'tool_timeout' ? 'tool_timeout' : 'runtime_timeout');
+    else if (outcome.value.terminal === 'timed_out') {
+      const toolTimedOut = outcome.value.reason === 'tool_timeout';
+      stop(toolTimedOut ? 'tool_timeout' : 'runtime_timeout', {
+        layer: toolTimedOut ? 'tool' : 'session',
+        stage: 'runtime',
+        limitMs: toolTimedOut ? input.request.limits.toolTimeoutMs ?? null : input.request.limits.timeoutMs,
+        elapsedMs: outcome.value.durationMs ?? elapsed(),
+      });
+    }
     else if (outcome.value.terminal === 'cancelled') stop('runtime_cancelled');
   });
   void input.stopped.then(outcome => {
@@ -101,7 +123,11 @@ export function superviseExecution(input: {
         ?? { status: 'rejected' as const, reason: new RuntimeError('process', 'runtime_result_unobserved') };
       const recording = observations?.[1] ?? await observeWithin(input.recording, 1) ?? null;
       // The controller's reason augments raw observations, preserving known usage and unknown fields.
-      const control: RuntimeControlFacts | undefined = reason === null ? undefined : { reason, cancel };
+      const control: RuntimeControlFacts | undefined = reason === null ? undefined : {
+        reason,
+        cancel,
+        ...(timeout === undefined ? {} : { timeout }),
+      };
       const runtimeResult = observations?.[0]?.status === 'fulfilled' ? observations[0].value : undefined;
       const observedExit = runtimeResult?.exitCode ?? null;
       const observedSignal = runtimeResult?.signal ?? null;

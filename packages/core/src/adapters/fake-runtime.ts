@@ -885,6 +885,12 @@ export function createFakeRuntime(options: FakeRuntimeOptions): FakeRuntimeAssem
             const definition = toolCommandDefinitions.get(step.name) as ValidatedToolCommandDefinition;
             const port = commandProcess as CommandProcessPort;
             const commit = commitCommandIdentity as FakeRuntimeCommitCommandIdentity;
+            /* P03-9 / F-004：单工具上限是独立层，同时不得超出 Session 剩余额度。 */
+            const toolTimeoutMs = Math.max(1, Math.min(
+              definition.timeoutMs,
+              request.limits.toolTimeoutMs ?? definition.timeoutMs,
+              request.limits.timeoutMs,
+            ));
             let tool: CommandProcessHandle;
             try {
               /* launchId/PID/PGID/OS 启动身份经 Core 回调提交到当前 Attempt/占用
@@ -894,7 +900,7 @@ export function createFakeRuntime(options: FakeRuntimeOptions): FakeRuntimeAssem
                 cwd: base,
                 environment: definition.environment,
                 stdin: definition.stdin,
-                timeoutMs: definition.timeoutMs,
+                timeoutMs: toolTimeoutMs,
                 maxInputBytes: definition.maxInputBytes,
                 maxOutputBytes: definition.maxOutputBytes,
               }, (identity) => commit(identity, {

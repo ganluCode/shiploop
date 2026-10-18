@@ -56,6 +56,8 @@ import {
   RUNTIME_EXECUTION_MAX_OUTPUT_BYTES_LIMIT,
 } from './runtime-execution.js';
 import {
+  TOOL_TIMEOUT_MS_MAX,
+  TOOL_TIMEOUT_MS_MIN,
   WORK_TIMEOUT_MS_MAX,
   WORK_TIMEOUT_MS_MIN,
   validateRuntimeStrategy,
@@ -312,10 +314,18 @@ function bindingPermissions(
 function bindingLimits(value: unknown): RuntimeExecutionLimits {
   const field = 'input.limits';
   const raw = requirePlainObject(value, bindingContext, field);
-  rejectUnknownKeys(raw, ['timeoutMs', 'maxEvents', 'maxOutputBytes'], bindingContext, field);
+  rejectUnknownKeys(raw, ['timeoutMs', 'toolTimeoutMs', 'maxEvents', 'maxOutputBytes'], bindingContext, field);
   const timeoutMs = validatePositiveInteger(raw.timeoutMs, bindingContext, `${field}.timeoutMs`);
   if (timeoutMs < WORK_TIMEOUT_MS_MIN || timeoutMs > WORK_TIMEOUT_MS_MAX) {
     throw validationError(bindingContext, `${field}.timeoutMs`, '超出允许范围（有限超时政策）');
+  }
+  let toolTimeoutMs: number | undefined;
+  if (raw.toolTimeoutMs !== undefined) {
+    const toolLimit = validatePositiveInteger(raw.toolTimeoutMs, bindingContext, `${field}.toolTimeoutMs`);
+    if (toolLimit < TOOL_TIMEOUT_MS_MIN || toolLimit > TOOL_TIMEOUT_MS_MAX || toolLimit > timeoutMs) {
+      throw validationError(bindingContext, `${field}.toolTimeoutMs`, '必须是有限单工具上限且不大于 Session 上限');
+    }
+    toolTimeoutMs = toolLimit;
   }
   const maxEvents = validatePositiveInteger(raw.maxEvents, bindingContext, `${field}.maxEvents`);
   if (maxEvents > RUNTIME_EXECUTION_MAX_EVENTS_LIMIT) {
@@ -325,7 +335,12 @@ function bindingLimits(value: unknown): RuntimeExecutionLimits {
   if (maxOutputBytes > RUNTIME_EXECUTION_MAX_OUTPUT_BYTES_LIMIT) {
     throw validationError(bindingContext, `${field}.maxOutputBytes`, '超出输出字节上限');
   }
-  return { timeoutMs, maxEvents, maxOutputBytes };
+  return {
+    timeoutMs,
+    ...(toolTimeoutMs === undefined ? {} : { toolTimeoutMs }),
+    maxEvents,
+    maxOutputBytes,
+  };
 }
 
 /**

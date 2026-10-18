@@ -48,7 +48,7 @@ import type {
 } from './runtime-recovery.js';
 import { validateRuntimeRecoveryRequest } from './runtime-recovery.js';
 import type { RuntimeStrategyV1 } from './settings-schema.js';
-import { WORK_TIMEOUT_MS_MAX, WORK_TIMEOUT_MS_MIN } from './settings-schema.js';
+import { TOOL_TIMEOUT_MS_MAX, TOOL_TIMEOUT_MS_MIN, WORK_TIMEOUT_MS_MAX, WORK_TIMEOUT_MS_MIN } from './settings-schema.js';
 import {
   rejectUnknownKeys, requireNonEmptyString, requirePlainObject,
   validateArtifactLocator, validatePositiveInteger,
@@ -159,7 +159,13 @@ export interface RuntimeExecutionPermissions {
 
 /** 有限超时/输出政策：全部有上下界，不设无限值。 */
 export interface RuntimeExecutionLimits {
+  /** Session/单次 Work 总时长上限（旧字段语义保持不变）。 */
   readonly timeoutMs: number;
+  /**
+   * P03-9 / F-004：单工具调用上限（可选兼容扩展）。缺省时适配器仍以自身
+   * 有限工具上限执行，但 Work 装配会显式提供；提供时不得超过 timeoutMs。
+   */
+  readonly toolTimeoutMs?: number;
   readonly maxEvents: number;
   readonly maxOutputBytes: number;
 }
@@ -227,10 +233,21 @@ function permissions(value: unknown): RuntimeExecutionPermissions {
 function limits(value: unknown): RuntimeExecutionLimits {
   const field = 'request.limits';
   const raw = requirePlainObject(value, requestContext, field);
-  rejectUnknownKeys(raw, ['timeoutMs', 'maxEvents', 'maxOutputBytes'], requestContext, field);
+  rejectUnknownKeys(raw, ['timeoutMs', 'toolTimeoutMs', 'maxEvents', 'maxOutputBytes'], requestContext, field);
   const timeoutMs = validatePositiveInteger(raw.timeoutMs, requestContext, `${field}.timeoutMs`);
   if (timeoutMs < WORK_TIMEOUT_MS_MIN || timeoutMs > WORK_TIMEOUT_MS_MAX) {
     throw validationError(requestContext, `${field}.timeoutMs`, '超出允许范围（有限超时政策）');
+  }
+  let toolTimeoutMs: number | undefined;
+  if (raw.toolTimeoutMs !== undefined) {
+    const toolLimit = validatePositiveInteger(raw.toolTimeoutMs, requestContext, `${field}.toolTimeoutMs`);
+    if (toolLimit < TOOL_TIMEOUT_MS_MIN || toolLimit > TOOL_TIMEOUT_MS_MAX) {
+      throw validationError(requestContext, `${field}.toolTimeoutMs`, '超出允许范围（有限工具超时政策）');
+    }
+    if (toolLimit > timeoutMs) {
+      throw validationError(requestContext, `${field}.toolTimeoutMs`, '不得大于 Session 总时长上限');
+    }
+    toolTimeoutMs = toolLimit;
   }
   const maxEvents = validatePositiveInteger(raw.maxEvents, requestContext, `${field}.maxEvents`);
   if (maxEvents > RUNTIME_EXECUTION_MAX_EVENTS_LIMIT) {
@@ -240,7 +257,12 @@ function limits(value: unknown): RuntimeExecutionLimits {
   if (maxOutputBytes > RUNTIME_EXECUTION_MAX_OUTPUT_BYTES_LIMIT) {
     throw validationError(requestContext, `${field}.maxOutputBytes`, '超出输出字节上限');
   }
-  return { timeoutMs, maxEvents, maxOutputBytes };
+  return {
+    timeoutMs,
+    ...(toolTimeoutMs === undefined ? {} : { toolTimeoutMs }),
+    maxEvents,
+    maxOutputBytes,
+  };
 }
 
 /**

@@ -15,6 +15,8 @@ import { createSqliteAtomicCommandStore } from './sqlite/atomic-commands.js';
 import { createWorkScheduler } from '../application/work-scheduler.js';
 import { evaluateTaskDag } from '../application/task-dag.js';
 import { validateTaskExecutionConfig } from '../application/task-strategy-selection.js';
+import { DEFAULT_TOOL_TIME_LIMIT_MS, DEFAULT_WORK_TIME_LIMIT_MS, resolveExecutionDeadlines } from '../ports/execution-time-limits.js';
+import { WORK_TIMEOUT_MS_MIN } from '../ports/settings-schema.js';
 import { createRuntimeExecutionService } from '../application/runtime-execution.js';
 import { createExecutionService, type ExecutionService } from '../application/execution-service.js';
 import { createExecutionInputBindingService } from '../application/execution-input-binding.js';
@@ -202,10 +204,43 @@ export function assembleWorkExecution(options: {
         const workspace = await app.workWorkspaceAuthority.verify(binding, prepared.workspace.canonicalPath);
         const view = dag.readTaskDagView(attempt.projectId, attempt.runId);
         const task = view.plan.tasks.find(task => task.id === attempt.taskId)!;
-        const { schemaVersion: _, maxCodeAttempts: __, ...strategy } = validateTaskExecutionConfig(task.executionConfig, 'WorkRuntime.start');
+        const config = validateTaskExecutionConfig(task.executionConfig, 'WorkRuntime.start');
+        const {
+          schemaVersion: _,
+          maxCodeAttempts: __,
+          workTimeoutMs: configuredSessionLimit,
+          toolTimeoutMs: configuredToolLimit,
+          ...strategy
+        } = config;
+        const nowMs = now();
+        const batchDeadline = Math.min(view.batch.deadlineAtUtcMs, view.batch.budgetSnapshot.batch.deadlineUtcMs);
+        const sessionLimit = Math.min(
+          configuredSessionLimit ?? DEFAULT_WORK_TIME_LIMIT_MS,
+          Math.max(0, attempt.leaseUntilUtcMs - nowMs),
+        );
+        const deadlines = resolveExecutionDeadlines({
+          nowUtcMs: nowMs,
+          sessionTimeLimitMs: Math.max(1, sessionLimit),
+          toolTimeLimitMs: configuredToolLimit ?? DEFAULT_TOOL_TIME_LIMIT_MS,
+          runStartedAtUtcMs: view.run.startedAtUtcMs,
+          runTimeLimitMs: view.run.runTimeLimitMs,
+          batchDeadlineUtcMs: batchDeadline,
+        });
+        // 已到期不启动新的 Runtime/工具/检查；保持既有 Run/Batch 状态供恢复诊断。
+        if (deadlines.expired || deadlines.remainingMs < WORK_TIMEOUT_MS_MIN) {
+          throw new StorageError('conflict', 'WorkRuntime.start', 'Execution deadline has already been reached', {
+            details: { reason: deadlines.expiredLayers.includes('run') || deadlines.remainingMs <= 0
+              ? 'run_time_exhausted' : 'deadline_exhausted' },
+          });
+        }
         const started = await execution.start({ claim, workspace, sessionId: randomUUID(), strategy,
           permissions: { ...TRUSTED_PROJECT_PERMISSIONS_READER({ projectId: attempt.projectId, featureId: attempt.featureId, taskId: attempt.taskId }), isolation: 'trusted_project' },
-          limits: { timeoutMs: Math.max(1, Math.min(60_000, view.run.runTimeLimitMs, attempt.leaseUntilUtcMs - now())), maxEvents: 10_000, maxOutputBytes: 8_000_000 },
+          limits: {
+            timeoutMs: Math.max(1, deadlines.remainingMs),
+            toolTimeoutMs: Math.max(1, Math.min(deadlines.toolTimeoutMs ?? DEFAULT_TOOL_TIME_LIMIT_MS, deadlines.remainingMs)),
+            maxEvents: 10_000,
+            maxOutputBytes: 8_000_000,
+          },
           recovery: { mode: 'new' }, cwdRoot: 'managed-work' });
         if (cancelRequested.delete(attempt.id)) void execution.cancel(identity).catch(() => undefined);
         void started.context.completion!.then(result => {
