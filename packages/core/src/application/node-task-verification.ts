@@ -69,6 +69,8 @@ export interface NodeTaskVerificationInput {
   readonly projectId: string;
   readonly featureId: string;
   readonly runId: string;
+  /** P03-9 / F-011：持久批次仍绑定历史 Run，停止控制可按 finalization Run 登记。 */
+  readonly controlRunId?: string;
   readonly taskId: string;
   readonly attemptId: string;
   readonly executionVersion: number;
@@ -230,7 +232,7 @@ export function createNodeTaskVerificationExecutor(options: NodeTaskVerification
       throw new Error('Verification batch already has an in-flight result');
     }
     const registration = options.stopControl?.begin({
-      projectId: input.projectId, runId: input.runId, batchId: input.batchId,
+      projectId: input.projectId, runId: input.controlRunId ?? input.runId, batchId: input.batchId,
       attemptId: input.attemptId, executionVersion: input.executionVersion, operation: input.operation,
     });
     const signal = registration === undefined ? input.signal

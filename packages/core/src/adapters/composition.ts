@@ -117,6 +117,7 @@ import type { ExecutionResumePort } from '../ports/execution-resume.js';
 import { createFinalizationRetryPlanner } from '../application/finalization-retry.js';
 import { createFinalizationRetryExecutionService } from '../application/finalization-retry-execution.js';
 import type { FinalizationRetryExecutionPort } from '../ports/finalization-retry.js';
+import type { FinalizationExecutionPort } from '../ports/finalization-execution.js';
 import { createSqliteExecutionResumeFactsReader } from './sqlite/execution-resume.js';
 import { createSqliteTaskDagStore } from './sqlite/task-dag-store.js';
 import type { ArtifactFileStore } from '../ports/artifact-files.js';
@@ -180,6 +181,8 @@ export interface CoreApplicationOptions {
   readonly workRuntimeFactory?: WorkRuntimeFactory;
   /** Trusted delivery adapters; absent until explicitly assembled. */
   readonly featureDeliveryFactory?: FeatureDeliveryFactory;
+  /** P03-9 / F-011：受信 finalization-only Run 重验执行（未装配时调度保留 capability gap）。 */
+  readonly finalizationExecution?: FinalizationExecutionPort;
   /** 显式授权数据根（绝对路径）；与 userHomeDir 二选一。 */
   readonly dataRoot?: string;
   /** 注入的 macOS 用户目录；用于解析默认根，与 dataRoot 二选一。 */
@@ -310,6 +313,7 @@ const ALLOWED_OPTION_KEYS = [
   'workStartupRecoveryRequired',
   'workRuntimeFactory',
   'featureDeliveryFactory',
+  'finalizationExecution',
   'dataRoot',
   'userHomeDir',
   'capabilityCatalog',
@@ -406,6 +410,12 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
   }
   if (object.featureDeliveryFactory !== undefined && typeof object.featureDeliveryFactory !== 'function') {
     throw validationError(context, 'featureDeliveryFactory', 'trusted_factory_required');
+  }
+  if (object.finalizationExecution !== undefined && (
+    object.finalizationExecution === null || typeof object.finalizationExecution !== 'object'
+    || typeof (object.finalizationExecution as FinalizationExecutionPort).execute !== 'function'
+  )) {
+    throw validationError(context, 'finalizationExecution', 'trusted_execution_port_required');
   }
   const recoveryCatalog = createStaticRuntimeRecoveryCatalog(object.runtimeRecoveryDescriptors ?? [], capabilityCatalog);
   if (object.runtimeRecoverySources !== undefined && (
@@ -871,7 +881,10 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       application: { dataRoot: basePathService.dataRoot(), artifactStore, artifactFileStore, stateStore,
         configurationService, workWorkspaceAuthority, taskClaims, workspacePreparation, executionInputPrepare,
         runtimeRecovery, runtimeRecoveryCatalog: recoveryCatalog },
-      capabilityCatalog, runtimeFactory: object.workRuntimeFactory as WorkRuntimeFactory | undefined, nowUtcMs, readReworkScene, startupRecovery });
+      capabilityCatalog, runtimeFactory: object.workRuntimeFactory as WorkRuntimeFactory | undefined, nowUtcMs, readReworkScene, startupRecovery,
+      ...(object.finalizationExecution === undefined ? {} : {
+        finalizationExecution: object.finalizationExecution as FinalizationExecutionPort,
+      }) });
     // P03-9 / F-003：Verifier 停止登记与取消提交后的停止控制。Runtime 停止复用
     // WorkExecution.cancel 的既有受监督命令路径；Verifier 使用同一 CommandProcess
     // AbortSignal 停止路径。证据经既有 Artifact 发布，不写供应商私有存储。

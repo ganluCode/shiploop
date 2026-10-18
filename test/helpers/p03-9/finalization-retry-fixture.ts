@@ -54,6 +54,8 @@ export interface FinalizationFixtureOptions {
   readonly taskCount?: number;
   readonly budget?: ExecutionBudgetProposal;
   readonly terminalStatus?: 'failed' | 'cancelled' | null;
+  /** Optional real check definitions; default deterministic placeholders. */
+  readonly checkDefinitions?: readonly CheckDefinition[];
 }
 
 export interface FinalizationFixture {
@@ -424,9 +426,9 @@ export async function prepareEligibleFixture(
     confirmProcessIdentity: async identity => identity,
   });
   const inspection = await inspector.inspect(workspaceBaseline(f));
-  const definitions = taskCount === 2
+  const definitions = options.checkDefinitions ?? (taskCount === 2
     ? [decisionDefinition('tests', ['node', '--test', 'a']), decisionDefinition('lint', ['node', 'lint'])]
-    : [decisionDefinition('tests')];
+    : [decisionDefinition('tests')]);
   const attempts: AttemptRecord[] = [];
   for (let index = 0; index < taskCount; index += 1) {
     const checkKey = taskCount === 2 ? (index === 0 ? 'tests' : 'lint') : 'tests';

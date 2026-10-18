@@ -41,6 +41,11 @@ export interface SchedulerHandoff {
   readonly featureId: string;
 }
 
+/** 受限 finalization Run 的调度消费者；返回是否可记录一次性 handoff。 */
+export interface SchedulerFinalization {
+  execute(handoff: SchedulerHandoff): Promise<{ readonly recordHandoff: boolean }>;
+}
+
 export interface SchedulerRunResult {
   readonly projectId: string;
   readonly runId: string;
@@ -71,6 +76,8 @@ export interface WorkSchedulerOptions {
   /** Called only after claimTask has returned a committed receipt. */
   readonly consumeClaim?: (receipt: TaskClaimReceipt, context: SchedulerClaimContext) => Promise<void>;
   readonly onHandoff?: (handoff: SchedulerHandoff) => Promise<void>;
+  /** finalization-only Run 在编码认领前分流；未装配时保持既有 capability gap。 */
+  readonly finalization?: SchedulerFinalization;
   readonly intervalMs?: number;
   readonly pageSize?: number;
   readonly maxPages?: number;

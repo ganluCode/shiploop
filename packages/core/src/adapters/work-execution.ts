@@ -36,6 +36,7 @@ import { validateRuntimeRecoveryDecision } from '../ports/runtime-recovery.js';
 import type { CommandProcessIdentity } from '../ports/command-process.js';
 import type { WorkResourceIdentity } from '../ports/work-resources.js';
 import { PublicError } from '../ports/commands.js';
+import { isFinalizationOnlyRun, type FinalizationExecutionPort } from '../ports/finalization-execution.js';
 import type { createWorkStartupRecovery } from '../application/work-startup-recovery.js';
 
 export interface WorkRuntimeContext {
@@ -60,6 +61,8 @@ export function assembleWorkExecution(options: {
   readonly runtimeFactory?: WorkRuntimeFactory;
   readonly nowUtcMs?: () => number;
   readonly startupRecovery: ReturnType<typeof createWorkStartupRecovery>;
+  /** P03-9 / F-011：finalization-only Run 在编码认领前分流到受信重验执行。 */
+  readonly finalizationExecution?: FinalizationExecutionPort;
   /** F-012：受信返工现场读取（同 Feature 受管 worktree 的当前身份；无工作区时
    * 返回 null）。由 composition 用受界检查器实现；缺省时不接返工认领。 */
   readonly readReworkScene?: (projectId: string, featureId: string) => Promise<{
@@ -132,7 +135,22 @@ export function assembleWorkExecution(options: {
   let quiescing = false, closed = false;
   const scheduler = createWorkScheduler({ store, dag: { evaluate: (projectId, runId) => evaluateTaskDag(dag.readTaskDagView(projectId, runId), now()) },
     claims: app.taskClaims,
+    ...(options.finalizationExecution === undefined ? {} : {
+      finalization: {
+        async execute(handoff: { readonly projectId: string; readonly runId: string }) {
+          const result = await options.finalizationExecution!.execute({ projectId: handoff.projectId, runId: handoff.runId });
+          return {
+            recordHandoff: result.status === 'verification_passed'
+              || result.status === 'verification_failed'
+              || result.status === 'invalidated',
+          };
+        },
+      },
+    }),
     async prepareClaim({ candidate, taskId }) {
+      if (isFinalizationOnlyRun(candidate.run)) {
+        throw new PublicError('conflict', 'execution.start', undefined, { details: { reason: 'finalization_only_run' } });
+      }
       if (quiescing || options.startupRecovery.blocked()) throw new PublicError('resource_busy', 'execution.start');
       const projectId = candidate.run.projectId;
       const view = dag.readTaskDagView(projectId, candidate.run.id);

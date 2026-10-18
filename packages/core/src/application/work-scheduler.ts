@@ -11,6 +11,7 @@ import type {
   WorkSchedulerOptions,
 } from '../ports/work-scheduler.js';
 import type { TaskClaimResult } from '../ports/task-claim.js';
+import { isFinalizationOnlyRun } from '../ports/finalization-execution.js';
 
 const DEFAULT_INTERVAL_MS = 1_000;
 const DEFAULT_PAGE_SIZE = 32;
@@ -78,6 +79,40 @@ export function createWorkScheduler(options: WorkSchedulerOptions) {
 
   async function processRun(projectId: string, runId: string): Promise<SchedulerRunResult> {
     const run = options.store.readRun(projectId, runId);
+    // finalization-only Run 必须在任何 DAG/认领路径之前分流：不得创建编码
+    // Attempt、准备 worktree 或启动 Runtime。
+    if (isFinalizationOnlyRun(run)) {
+      const handoff: SchedulerHandoff = {
+        handoffKey: `${runId}:feature_final_verification`, projectId, runId, featureId: run.featureId,
+      };
+      if (options.store.isFinalVerificationHandoffClaimed(projectId, runId)) {
+        const result: SchedulerRunResult = { projectId, runId, reason: 'all_passed',
+          capabilityGaps: [], claimed: false, handoff: null };
+        diagnostics.set(key(projectId, runId), result);
+        return result;
+      }
+      if (options.finalization === undefined) {
+        const result: SchedulerRunResult = { projectId, runId, reason: 'scheduler_capability_missing',
+          capabilityGaps: ['feature_finalization_consumer'], claimed: false, handoff: null };
+        options.store.recordRunReason(projectId, runId, result.reason);
+        diagnostics.set(key(projectId, runId), result);
+        return result;
+      }
+      try {
+        const outcome = await options.finalization.execute(handoff);
+        const recorded = outcome.recordHandoff ? options.store.recordFinalVerificationHandoff(projectId, runId) : false;
+        const result: SchedulerRunResult = { projectId, runId, reason: 'all_passed',
+          capabilityGaps: [], claimed: false, handoff: recorded ? handoff : null };
+        diagnostics.set(key(projectId, runId), result);
+        return result;
+      } catch {
+        options.store.recordRunReason(projectId, runId, 'handoff_delivery_failed');
+        const result: SchedulerRunResult = { projectId, runId, reason: 'handoff_delivery_failed',
+          capabilityGaps: [], claimed: false, handoff: null };
+        diagnostics.set(key(projectId, runId), result);
+        return result;
+      }
+    }
     const dag = options.dag.evaluate(projectId, runId);
     const candidate: SchedulerCandidate = { run, dag };
     if (dag.reason === 'all_passed') {
