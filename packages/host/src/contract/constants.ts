@@ -117,6 +117,20 @@ export const BATCHES_ROUTE_PREFIX = '/v1/batches/';
  */
 export const RUNS_ROUTE_PREFIX = '/v1/runs/';
 export const RUN_SCHEDULE_ROUTE_SUFFIX = 'schedule';
+/**
+ * P03-9 / F-013：Run/Batch 控制进度、恢复诊断与 finalization 收尾结果只读
+ * 查询路由（全部 GET + Bearer；与 Core EXECUTION_CONTROL_QUERY_OPERATIONS
+ * 一一对应）。
+ * - GET /v1/runs/:runId/control?projectId=（Run 控制进度；与 schedule 同一
+ *   冻结形态）;
+ * - GET /v1/batches/:batchId/control?projectId=（Batch 控制进度；与 budget
+ *   同一冻结形态）；
+ * - GET /v1/runs/:runId/recovery?projectId=（恢复诊断与 finalization 收尾
+ *   结果）；其他嵌套/多段形态一律未匹配 → 404 unknown_operation。
+ */
+export const RUN_CONTROL_ROUTE_SUFFIX = 'control';
+export const RUN_RECOVERY_ROUTE_SUFFIX = 'recovery';
+export const BATCH_CONTROL_ROUTE_SUFFIX = 'control';
 export const ATTEMPTS_ROUTE = '/v1/attempts';
 export const ATTEMPTS_ROUTE_PREFIX = '/v1/attempts/';
 export const ATTEMPT_DIAGNOSTICS_ROUTE_SUFFIX = 'diagnostics';

@@ -198,6 +198,18 @@ import {
   type FeatureDeliveryDetailResult,
   type FeatureDeliveryQueryReadStore,
 } from '../ports/feature-delivery-query.js';
+import {
+  EXECUTION_BATCH_CONTROL_GET_OPERATION,
+  EXECUTION_RUN_CONTROL_GET_OPERATION,
+  EXECUTION_RUN_RECOVERY_GET_OPERATION,
+  buildBatchControlDetailResult,
+  buildRunControlDetailResult,
+  buildRunRecoveryDetailResult,
+  type BatchControlDetailResult,
+  type ExecutionControlQueryReadStore,
+  type RunControlDetailResult,
+  type RunRecoveryDetailResult,
+} from '../ports/execution-control-query.js';
 import type { ArtifactStore } from '../ports/artifact-store.js';
 import type { ArtifactFileStore } from '../ports/artifact-files.js';
 import { createArtifactVerifier } from './artifact-verify.js';
@@ -447,6 +459,30 @@ export interface QueryService {
    * 视图重建，查询零写入、零事件，重复读取不增加计数。
    */
   getFeatureDelivery(principal: unknown, input: unknown): Promise<FeatureDeliveryDetailResult>;
+  /**
+   * P03-9 / F-013 execution.run.control.get：Run 控制进度查询——持久状态与
+   * 原因（pausing/cancelling/paused/interrupted 原样）、父 Batch 简报、关联
+   * Attempt（未知退出/耗时/用量保持 null）、停止 operation 与停止/隔离证据
+   * 引用、从持久事实派生的显式后续动作；不以日志推断完成。能力位
+   * project.read；跨项目/不存在统一 not_found；查询零写入、零事件，重复
+   * 读取不增加计数。
+   */
+  getRunControl(principal: unknown, input: unknown): Promise<RunControlDetailResult>;
+  /**
+   * P03-9 / F-013 execution.batch.control.get：Batch 控制进度查询（子 Run/
+   * Attempt 有界扫描；runs/attempts 超限置 truncated；其余语义与
+   * execution.run.control.get 相同）。
+   */
+  getBatchControl(principal: unknown, input: unknown): Promise<BatchControlDetailResult>;
+  /**
+   * P03-9 / F-013 execution.run.recovery.get：恢复与 retryFinal 诊断查询——
+   * finalization-only Run 的受限 scope（来源/缺失步骤/零编码承诺）、Attempt
+   * F-007 续接记录（请求模式 vs 实际决策、来源 Attempt/Session 引用）、父
+   * Batch 累计预算与计数（用量未知恒 null），以及复用 P03-8 F-010 公共形状
+   * 的 Task/最终检查/审批/提交分轴事实。能力位 project.read；跨项目/不存在
+   * 统一 not_found；查询零写入、零事件，重复读取不增加计数。
+   */
+  getRunRecovery(principal: unknown, input: unknown): Promise<RunRecoveryDetailResult>;
 }
 
 export interface QueryServiceOptions {
@@ -479,6 +515,8 @@ export interface QueryServiceOptions {
   readonly gitOperationReads: GitOperationQueryReadStore;
   /** P03-8 / F-010 Feature 分轴结果查询一致读取窄端口（只读）。 */
   readonly featureDeliveryReads: FeatureDeliveryQueryReadStore;
+  /** P03-9 / F-013 Run/Batch 控制进度与恢复诊断一致读取窄端口（只读）。 */
+  readonly executionControlReads: ExecutionControlQueryReadStore;
   /** P03-6 / F-011 证据制品索引（正文经完整性核验读取；只读用法）。 */
   readonly artifacts: ArtifactStore;
   /** P03-6 / F-011 证据制品文件（只读用法；不推导任意路径）。 */
@@ -619,6 +657,7 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
     taskEvidenceReads,
     gitOperationReads,
     featureDeliveryReads,
+    executionControlReads,
     artifacts,
     artifactFiles,
     dataRootIdentity,
@@ -2208,6 +2247,86 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
           featureDeliveryTargetNotFound(operation);
         }
         return buildFeatureDeliveryDetailResult(view);
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    // P03-9 / F-013：Run 控制进度只读查询（能力核验 → 身份校验 → 项目可见
+    // → 一致读视图重建；跨项目/不存在折叠 not_found；持久状态与原因原样，
+    // 不以日志推断完成；查询零写入、零事件、零唤醒，重复读取不增加计数）。
+    async getRunControl(principal: unknown, input: unknown): Promise<RunControlDetailResult> {
+      assertTrustedPrincipal(principal);
+      const operation = EXECUTION_RUN_CONTROL_GET_OPERATION;
+      try {
+        requireCapability(principal, 'project.read', operation);
+        const object = requirePlainObject(input, { operation }, 'input');
+        rejectUnknownKeys(object, ['projectId', 'runId'], { operation }, 'input');
+        const projectId = requireProjectId(object.projectId, operation);
+        const runId = validateStableId(
+          object.runId,
+          { operation, entity: { type: 'run' } },
+          'runId',
+        );
+        requireProjectVisible(principal, projectId, operation);
+        const view = executionControlReads.readRunControlView(projectId, runId);
+        if (view === undefined) {
+          executionScheduleTargetNotFound(operation, 'run');
+        }
+        return buildRunControlDetailResult(view);
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    // P03-9 / F-013：Batch 控制进度只读查询（子 Run/Attempt 有界扫描；超限
+    // 置 truncated；其余纪律与 execution.run.control.get 相同）。
+    async getBatchControl(principal: unknown, input: unknown): Promise<BatchControlDetailResult> {
+      assertTrustedPrincipal(principal);
+      const operation = EXECUTION_BATCH_CONTROL_GET_OPERATION;
+      try {
+        requireCapability(principal, 'project.read', operation);
+        const object = requirePlainObject(input, { operation }, 'input');
+        rejectUnknownKeys(object, ['projectId', 'batchId'], { operation }, 'input');
+        const projectId = requireProjectId(object.projectId, operation);
+        const batchId = validateStableId(
+          object.batchId,
+          { operation, entity: { type: 'execution_batch' } },
+          'batchId',
+        );
+        requireProjectVisible(principal, projectId, operation);
+        const view = executionControlReads.readBatchControlView(projectId, batchId);
+        if (view === undefined) {
+          executionEntityNotFound(operation);
+        }
+        return buildBatchControlDetailResult(view);
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    // P03-9 / F-013：恢复与 retryFinal 诊断只读查询（finalization scope 来自
+    // 持久 input_snapshot；续接记录来自已校验 Attempt 输入；累计预算与分轴
+    // 事实复用同一持久事实源；用量未知恒 null 不以 0 冒充；重复查询零副作用）。
+    async getRunRecovery(principal: unknown, input: unknown): Promise<RunRecoveryDetailResult> {
+      assertTrustedPrincipal(principal);
+      const operation = EXECUTION_RUN_RECOVERY_GET_OPERATION;
+      try {
+        requireCapability(principal, 'project.read', operation);
+        const object = requirePlainObject(input, { operation }, 'input');
+        rejectUnknownKeys(object, ['projectId', 'runId'], { operation }, 'input');
+        const projectId = requireProjectId(object.projectId, operation);
+        const runId = validateStableId(
+          object.runId,
+          { operation, entity: { type: 'run' } },
+          'runId',
+        );
+        requireProjectVisible(principal, projectId, operation);
+        const view = executionControlReads.readRunRecoveryView(projectId, runId);
+        if (view === undefined) {
+          executionScheduleTargetNotFound(operation, 'run');
+        }
+        return buildRunRecoveryDetailResult(view);
       } catch (error) {
         throw mapToPublicError(error, { operation });
       }

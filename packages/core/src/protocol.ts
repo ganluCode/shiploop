@@ -285,6 +285,25 @@ export type {
   PublicFeatureDeliveryOutcome,
   PublicFeatureDeliveryTaskResult,
 } from './ports/feature-delivery-query.js';
+// P03-9 / F-013 Run/Batch 控制进度、恢复诊断与 finalization 收尾结果只读查询
+// 面：操作身份、显式后续动作冻结词汇与公开形状（服务端负责授权）。
+export {
+  EXECUTION_BATCH_CONTROL_GET_OPERATION,
+  EXECUTION_CONTROL_NEXT_ACTIONS,
+  EXECUTION_CONTROL_QUERY_OPERATIONS,
+  EXECUTION_RUN_CONTROL_GET_OPERATION,
+  EXECUTION_RUN_RECOVERY_GET_OPERATION,
+} from './ports/execution-control-query.js';
+export type {
+  BatchControlDetailResult,
+  ExecutionControlNextAction,
+  ExecutionControlQueryOperation,
+  PublicExecutionControlAttempt,
+  PublicExecutionControlStopOperation,
+  PublicExecutionRecoveryContinuation,
+  RunControlDetailResult,
+  RunRecoveryDetailResult,
+} from './ports/execution-control-query.js';
 export {
   FEATURE_DELIVERY_STATUSES,
   GIT_OPERATION_EVIDENCE_KINDS,

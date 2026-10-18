@@ -58,6 +58,13 @@ import type {
   FeatureDeliveryQueryReadStore,
   FeatureDeliveryView,
 } from '../../ports/feature-delivery-query.js';
+import { createSqliteExecutionControlQueryStore } from './execution-control-query-store.js';
+import type {
+  ExecutionBatchControlView,
+  ExecutionControlQueryReadStore,
+  ExecutionRunControlView,
+  ExecutionRunRecoveryView,
+} from '../../ports/execution-control-query.js';
 import type {
   TaskApprovalItemRow,
   TaskEvidenceQueryReadStore,
@@ -85,7 +92,8 @@ import type { SqliteStateStoreOptions } from './state-store.js';
  * P03-6 / F-011 起追加 Work Session/证据查询窄读取（WorkSessionQueryReadStore）；
  * P03-7 / F-013 起追加 Task 证据/人审/返工链窄读取（TaskEvidenceQueryReadStore）；
  * P03-8 / F-009 起追加 Git 操作查询窄读取（GitOperationQueryReadStore）；
- * P03-8 / F-010 起追加 Feature 分轴结果查询窄读取（FeatureDeliveryQueryReadStore）。 */
+ * P03-8 / F-010 起追加 Feature 分轴结果查询窄读取（FeatureDeliveryQueryReadStore）；
+ * P03-9 / F-013 起追加 Run/Batch 控制进度与恢复诊断窄读取（ExecutionControlQueryReadStore）。 */
 export interface SqliteQueryStore
   extends AuthorizedProjectReadStore,
     ConsistentSnapshotStore,
@@ -98,7 +106,8 @@ export interface SqliteQueryStore
     WorkSessionQueryReadStore,
     TaskEvidenceQueryReadStore,
     GitOperationQueryReadStore,
-    FeatureDeliveryQueryReadStore {}
+    FeatureDeliveryQueryReadStore,
+    ExecutionControlQueryReadStore {}
 
 export function createSqliteQueryStore(
   session: SqliteStorageSession,
@@ -122,6 +131,7 @@ export function createSqliteQueryStore(
   const taskEvidence = createSqliteTaskEvidenceQueryStore(session);
   const gitOperations = createSqliteGitOperationQueryStore(session);
   const featureDelivery = createSqliteFeatureDeliveryQueryStore(session);
+  const executionControl = createSqliteExecutionControlQueryStore(session, featureDelivery);
   return {
     listVisibleProjects(visibility: unknown, filter: unknown): ProjectPage {
       return access.listVisibleProjects(visibility, filter);
@@ -266,5 +276,11 @@ export function createSqliteQueryStore(
       gitOperations.listGitOperationRecordsByRun(visibility, projectId, runId, request),
     readFeatureDeliveryView: (projectId: unknown, featureId: unknown): FeatureDeliveryView | undefined =>
       featureDelivery.readFeatureDeliveryView(projectId, featureId),
+    readRunControlView: (projectId: unknown, runId: unknown): ExecutionRunControlView | undefined =>
+      executionControl.readRunControlView(projectId, runId),
+    readBatchControlView: (projectId: unknown, batchId: unknown): ExecutionBatchControlView | undefined =>
+      executionControl.readBatchControlView(projectId, batchId),
+    readRunRecoveryView: (projectId: unknown, runId: unknown): ExecutionRunRecoveryView | undefined =>
+      executionControl.readRunRecoveryView(projectId, runId),
   };
 }

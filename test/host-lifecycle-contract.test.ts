@@ -59,7 +59,7 @@ import {
   validateStopResultView,
   verifyStopRequestDigest,
 } from '../packages/host/src/index.ts';
-import { COMMAND_OPERATIONS, EXECUTION_SCHEDULE_QUERY_OPERATIONS, FEATURE_DELIVERY_QUERY_OPERATIONS, GIT_OPERATION_QUERY_OPERATIONS, PLAN_APPROVAL_QUERY_OPERATION, PLAN_QUERY_OPERATIONS, QUERY_OPERATIONS, TASK_EVIDENCE_QUERY_OPERATIONS } from '../packages/core/src/index.ts';
+import { COMMAND_OPERATIONS, EXECUTION_CONTROL_QUERY_OPERATIONS, EXECUTION_SCHEDULE_QUERY_OPERATIONS, FEATURE_DELIVERY_QUERY_OPERATIONS, GIT_OPERATION_QUERY_OPERATIONS, PLAN_APPROVAL_QUERY_OPERATION, PLAN_QUERY_OPERATIONS, QUERY_OPERATIONS, TASK_EVIDENCE_QUERY_OPERATIONS } from '../packages/core/src/index.ts';
 import type {
   HostDiscoveryRecord,
   HostErrorCode,
@@ -277,6 +277,10 @@ describe('F-002 冻结常量与能力声明', () => {
           'git.operations.get',
           // P03-8 / F-010：Feature 分轴结果查询真实接线。
           'features.delivery.get',
+          // P03-9 / F-013：Run/Batch 控制进度、恢复诊断与 finalization 收尾结果查询真实接线。
+          'execution.run.control.get',
+          'execution.batch.control.get',
+          'execution.run.recovery.get',
         ],
         events: { transport: 'sse', route: '/v1/events', scopes: ['project', 'global'] },
       },
@@ -293,6 +297,7 @@ describe('F-002 冻结常量与能力声明', () => {
     // + P03-7 / F-013 Task 证据/人审/返工链三项（与 TASK_EVIDENCE_QUERY_OPERATIONS 同步）
     // + P03-8 / F-009 Git 意图/实际提交/操作回执两项（与 GIT_OPERATION_QUERY_OPERATIONS 同步）
     // + P03-8 / F-010 Feature 分轴结果查询（与 FEATURE_DELIVERY_QUERY_OPERATIONS 同步）。
+    // + P03-9 / F-013 控制进度/恢复诊断三项（与 EXECUTION_CONTROL_QUERY_OPERATIONS 同步）。
     expect([...CURRENT_HOST_CAPABILITIES.application.queries]).toEqual([
       'execution.sessions.list',
       'execution.session.get',
@@ -316,6 +321,7 @@ describe('F-002 冻结常量与能力声明', () => {
       'workspace.operations.get',
       ...GIT_OPERATION_QUERY_OPERATIONS,
       ...FEATURE_DELIVERY_QUERY_OPERATIONS,
+      ...EXECUTION_CONTROL_QUERY_OPERATIONS,
     ]);
     expect(CURRENT_HOST_CAPABILITIES.application.commands).toContain('baseline.cancel');
     expect(CURRENT_HOST_CAPABILITIES.application.queries).toContain('baselines.list');

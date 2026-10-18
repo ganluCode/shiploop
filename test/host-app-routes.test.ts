@@ -708,6 +708,10 @@ describe('F-011 传输纪律与版本门禁', () => {
         'execution.pause',
         // P03-9 / F-002：Run/Batch 取消经同一命令路由接线。
         'execution.cancel',
+        // P03-9 / F-008：显式工作流 resume 经同一命令路由接线。
+        'execution.resume',
+        // P03-9 / F-010：finalization-only retryFinal 经同一命令路由接线。
+        'execution.retryFinal',
         'project.register',
         'project.metadata.update',
         'settings.global.create',
@@ -962,6 +966,10 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         'execution.attempt.cancel',
         'execution.pause',
         'execution.cancel',
+        // P03-9 / F-008：显式工作流 resume 经同一命令路由接线。
+        'execution.resume',
+        // P03-9 / F-010：finalization-only retryFinal 经同一命令路由接线。
+        'execution.retryFinal',
         'project.register',
         'project.metadata.update',
         'settings.global.create',
@@ -1051,6 +1059,10 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         'git.operations.get',
         // P03-8 / F-010：Feature 分轴结果查询真实接线。
         'features.delivery.get',
+        // P03-9 / F-013：Run/Batch 控制进度、恢复诊断与 finalization 收尾结果查询真实接线。
+        'execution.run.control.get',
+        'execution.batch.control.get',
+        'execution.run.recovery.get',
       ],
       events: { transport: 'sse', route: '/v1/events', scopes: ['project', 'global'] },
     });

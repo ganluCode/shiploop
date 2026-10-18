@@ -78,6 +78,8 @@ import {
   RESULTS_ROUTE_PREFIX,
   RUNS_ROUTE_PREFIX,
   RUN_SCHEDULE_ROUTE_SUFFIX,
+  RUN_CONTROL_ROUTE_SUFFIX,
+  RUN_RECOVERY_ROUTE_SUFFIX,
   WORKSPACES_ROUTE,
   WORKSPACES_ROUTE_PREFIX,
   WORKSPACE_OPERATIONS_ROUTE,
@@ -159,7 +161,12 @@ export type ApplicationOperation =
   | 'git.operations.get'
   // P03-8 / F-010：Feature 分轴结果只读查询（与 Core
   // FEATURE_DELIVERY_QUERY_OPERATIONS 同源）。
-  | 'features.delivery.get';
+  | 'features.delivery.get'
+  // P03-9 / F-013：Run/Batch 控制进度、恢复诊断与 finalization 收尾结果只读
+  // 查询（与 Core EXECUTION_CONTROL_QUERY_OPERATIONS 同源）。
+  | 'execution.run.control.get'
+  | 'execution.batch.control.get'
+  | 'execution.run.recovery.get';
 
 /** 已解析的应用路由（path 形态匹配；路径参数为未解码原始片段）。 */
 export interface ResolvedAppRoute {
@@ -287,7 +294,9 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
     return undefined;
   }
   // P03-4 / F-008：GET /v1/runs/:runId/schedule（恰两段；与 batches 同一
-  // 冻结形态）。其他 /v1/runs/* 形态一律未匹配 → 404 unknown_operation。
+  // 冻结形态）。P03-9 / F-013：GET /v1/runs/:runId/control 与
+  // /v1/runs/:runId/recovery 同一形态。其他 /v1/runs/* 形态一律未匹配 →
+  // 404 unknown_operation。
   if (path.startsWith(RUNS_ROUTE_PREFIX)) {
     const segments = path.slice(RUNS_ROUTE_PREFIX.length).split('/');
     if (segments.some((segment) => segment.length === 0)) {
@@ -296,6 +305,20 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
     if (segments.length === 2 && segments[1] === RUN_SCHEDULE_ROUTE_SUFFIX) {
       return {
         operation: 'execution.run.schedule',
+        method: 'GET',
+        pathParam: { name: 'runId', value: segments[0] as string },
+      };
+    }
+    if (segments.length === 2 && segments[1] === RUN_CONTROL_ROUTE_SUFFIX) {
+      return {
+        operation: 'execution.run.control.get',
+        method: 'GET',
+        pathParam: { name: 'runId', value: segments[0] as string },
+      };
+    }
+    if (segments.length === 2 && segments[1] === RUN_RECOVERY_ROUTE_SUFFIX) {
+      return {
+        operation: 'execution.run.recovery.get',
         method: 'GET',
         pathParam: { name: 'runId', value: segments[0] as string },
       };
@@ -333,6 +356,11 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
       if (operation !== undefined) {
         return { operation, method: 'GET', pathParam: { name: 'batchId', value: segments[0]! } };
       }
+    }
+    // P03-9 / F-013：GET /v1/batches/:batchId/control（Batch 控制进度；与
+    // budget 同一冻结形态）；其他形态一律未匹配 → 404 unknown_operation。
+    if (segments.length === 2 && segments[0] !== '' && segments[1] === 'control') {
+      return { operation: 'execution.batch.control.get', method: 'GET', pathParam: { name: 'batchId', value: segments[0]! } };
     }
     return undefined;
   }
@@ -693,6 +721,9 @@ const QUERY_SPECS: Readonly<Partial<Record<ApplicationOperation, QuerySpec>>> = 
   'git.operations.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
   // P03-8 / F-010：Feature 分轴结果查询参数白名单（取值规则由 Core 单一权威复核）。
   'features.delivery.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
+  'execution.run.control.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
+  'execution.batch.control.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
+  'execution.run.recovery.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
 });
 
 /** 查询参数白名单校验（未知/重复 → 400，定位 query.<字段>）；空查询串恒合法。 */
@@ -1158,6 +1189,27 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
       const query = buildPlanListQuery(params, operation, 'projectId');
       query.featureId = pathParam?.value;
       result = await app.queryService.getFeatureDelivery(app.principal, query);
+      break;
+    }
+    // P03-9 / F-013：控制进度/恢复诊断查询分发（本层只做形态转换；授权/
+    // 可见性折叠/身份校验全部由 Core 单一权威复核；跨项目与不存在目标
+    // 统一 not_found，不区分存在性）。
+    case 'execution.run.control.get': {
+      const query = buildPlanListQuery(params, operation, 'projectId');
+      query.runId = pathParam?.value;
+      result = await app.queryService.getRunControl(app.principal, query);
+      break;
+    }
+    case 'execution.batch.control.get': {
+      const query = buildPlanListQuery(params, operation, 'projectId');
+      query.batchId = pathParam?.value;
+      result = await app.queryService.getBatchControl(app.principal, query);
+      break;
+    }
+    case 'execution.run.recovery.get': {
+      const query = buildPlanListQuery(params, operation, 'projectId');
+      query.runId = pathParam?.value;
+      result = await app.queryService.getRunRecovery(app.principal, query);
       break;
     }
     // P03-5 / F-011：工作区状态查询分发（本层只做形态转换；授权/可见性折叠/
