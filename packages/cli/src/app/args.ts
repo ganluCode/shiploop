@@ -106,6 +106,12 @@ export type AppCliCommandId =
   | 'execution.session'
   | 'execution.session-evidence'
   | 'execution.cancel'
+  | 'execution.pause'
+  | 'execution.resume'
+  | 'execution.retry-final'
+  | 'execution.control'
+  | 'execution.batch-control'
+  | 'execution.recovery'
   | 'workspace.list'
   | 'workspace.get'
   | 'workspace.operations'
@@ -203,6 +209,10 @@ export type AppCommandOperation =
   | 'execution.input.prepare'
   | 'execution.preview'
   | 'execution.start'
+  | 'execution.pause'
+  | 'execution.cancel'
+  | 'execution.resume'
+  | 'execution.retryFinal'
   | 'execution.budget.revise'
   | 'workspace.discard'
   | 'workspace.discard.preview';
@@ -289,7 +299,9 @@ export type AppCliParseReason =
   | 'preview_feature_mismatch'
   | 'invalid_digest'
   | 'invalid_artifact_ref'
-  | 'duplicate_artifact_ref';
+  | 'duplicate_artifact_ref'
+  | 'missing_control_target'
+  | 'invalid_work_key';
 
 const REASON_MESSAGE: Readonly<Record<AppCliParseReason, string>> = Object.freeze({
   invalid_argv_type: 'argv 必须是字符串数组',
@@ -370,6 +382,8 @@ const REASON_MESSAGE: Readonly<Record<AppCliParseReason, string>> = Object.freez
   invalid_digest: '摘要必须是 64 位小写十六进制',
   invalid_artifact_ref: '产物引用必须是 <artifactId> 或 <artifactId>:<sha256>',
   duplicate_artifact_ref: '不得重复引用同一产物',
+  missing_control_target: '必须恰指定 --run 或 --batch 之一',
+  invalid_work_key: 'workKey 必须是非空且不超过 256 字符的字符串',
 });
 
 interface ParseState {
@@ -1020,12 +1034,76 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
   'execution.cancel': {
     command: 'execution',
     commandId: 'execution.cancel',
-    valueFlags: ['--project', '--command-id'],
+    valueFlags: ['--project', '--command-id', '--run', '--batch', '--revision'],
     boolFlags: ['--confirm'],
+    repeatableFlags: [],
+    minPositionals: 0,
+    maxPositionals: 1,
+    positionalFields: ['attemptId'],
+  },
+  /* P03-9 / F-015 Run/Batch 控制与 retryFinal/恢复诊断（实际 Host 公共契约
+   * execution.pause/execution.resume/execution.retryFinal 与
+   * execution.run|batch.control.get、execution.run.recovery.get 的参数映射；
+   * 恢复模式 auto/new/required 由 Task 策略/输入快照决定，不设注入参数）。 */
+  'execution.pause': {
+    command: 'execution',
+    commandId: 'execution.pause',
+    valueFlags: ['--project', '--run', '--batch', '--revision', '--command-id'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 0,
+    maxPositionals: 0,
+    positionalFields: [],
+  },
+  'execution.resume': {
+    command: 'execution',
+    commandId: 'execution.resume',
+    valueFlags: ['--project', '--run', '--batch', '--revision', '--command-id'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 0,
+    maxPositionals: 0,
+    positionalFields: [],
+  },
+  'execution.retry-final': {
+    command: 'execution',
+    commandId: 'execution.retry-final',
+    valueFlags: ['--project', '--historical-run', '--work-key', '--command-id'],
+    boolFlags: [],
     repeatableFlags: [],
     minPositionals: 1,
     maxPositionals: 1,
-    positionalFields: ['attemptId'],
+    positionalFields: ['featureId'],
+  },
+  'execution.control': {
+    command: 'execution',
+    commandId: 'execution.control',
+    valueFlags: ['--project'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['runId'],
+  },
+  'execution.batch-control': {
+    command: 'execution',
+    commandId: 'execution.batch-control',
+    valueFlags: ['--project'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['batchId'],
+  },
+  'execution.recovery': {
+    command: 'execution',
+    commandId: 'execution.recovery',
+    valueFlags: ['--project'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['runId'],
   },
   /* P03-5 / F-012 工作区状态展示与人工丢弃预览/确认（沿用既有参数解析与
    * 命令身份纪律；不新增草案命令）。 */
@@ -1185,6 +1263,12 @@ const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, A
       session: 'execution.session',
       'session-evidence': 'execution.session-evidence',
       cancel: 'execution.cancel',
+      pause: 'execution.pause',
+      resume: 'execution.resume',
+      'retry-final': 'execution.retry-final',
+      control: 'execution.control',
+      'batch-control': 'execution.batch-control',
+      recovery: 'execution.recovery',
     },
     workspace: {
       list: 'workspace.list',
@@ -2499,6 +2583,116 @@ export interface ParsedExecutionCancel {
   readonly explicitCommandId?: string;
 }
 
+/** P03-9 / F-015 Run/Batch 级控制目标（pause/cancel/resume 同一目标形态）。 */
+export interface ParsedExecutionControlTarget {
+  readonly targetKind: 'run' | 'batch';
+  readonly targetId: string;
+  readonly expectedRevision: number;
+}
+
+/**
+ * P03-9 / F-015 Run/Batch 级取消（Host 操作 execution.cancel）：创建持久停止
+ * operation；与 Attempt 取消共用 `execution cancel` 子命令路径，以目标形态区分：
+ * 无 positional + --run/--batch + --revision + --confirm。
+ */
+export interface ParsedExecutionTargetCancel extends ParsedExecutionControlTarget {
+  readonly kind: 'command';
+  readonly command: 'execution';
+  readonly commandId: 'execution.cancel';
+  readonly operation: 'execution.cancel';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly confirm: true;
+  readonly explicitCommandId?: string;
+}
+
+/** P03-9 / F-015 Run/Batch 级暂停（execution.pause）：登记暂停意图，非终态。 */
+export interface ParsedExecutionPause extends ParsedExecutionControlTarget {
+  readonly kind: 'command';
+  readonly command: 'execution';
+  readonly commandId: 'execution.pause';
+  readonly operation: 'execution.pause';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly explicitCommandId?: string;
+}
+
+/**
+ * P03-9 / F-015 工作流显式继续（execution.resume）：payload 只携带目标与
+ * revision CAS；恢复模式 auto/new/required 由 Task 策略/输入快照决定，不经
+ * 命令注入（工作流 resume ≠ Runtime/SDK 原生续接）。
+ */
+export interface ParsedExecutionResume extends ParsedExecutionControlTarget {
+  readonly kind: 'command';
+  readonly command: 'execution';
+  readonly commandId: 'execution.resume';
+  readonly operation: 'execution.resume';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly explicitCommandId?: string;
+}
+
+/**
+ * P03-9 / F-015 仅收尾重试（execution.retryFinal）：显式指定历史终态 Run、
+ * 同 Feature 与其 workKey；预算/新 Run 身份/scope 由服务端根据持久证据计算。
+ */
+export interface ParsedExecutionRetryFinal {
+  readonly kind: 'command';
+  readonly command: 'execution';
+  readonly commandId: 'execution.retry-final';
+  readonly operation: 'execution.retryFinal';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly featureId: string;
+  readonly historicalRunId: string;
+  readonly workKey: string;
+  readonly explicitCommandId?: string;
+}
+
+/** P03-9 / F-015 Run 控制诊断（execution.run.control.get；只读）。 */
+export interface ParsedExecutionControl {
+  readonly kind: 'command';
+  readonly command: 'execution';
+  readonly commandId: 'execution.control';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly runId: string;
+}
+
+/** P03-9 / F-015 Batch 控制诊断（execution.batch.control.get；只读）。 */
+export interface ParsedExecutionBatchControl {
+  readonly kind: 'command';
+  readonly command: 'execution';
+  readonly commandId: 'execution.batch-control';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly batchId: string;
+}
+
+/** P03-9 / F-015 Run 恢复诊断（execution.run.recovery.get；只读）。 */
+export interface ParsedExecutionRecovery {
+  readonly kind: 'command';
+  readonly command: 'execution';
+  readonly commandId: 'execution.recovery';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly runId: string;
+}
+
 /**
  * P03-5 / F-012 工作区列表（workspaces.list）：项目内受管工作区键集分页
  *（只读；`--feature` 可选过滤；limit 默认 100、上限 500，cursor 为 wscur_v1_
@@ -2760,6 +2954,13 @@ export type ParsedAppCliCommand =
   | ParsedExecutionSession
   | ParsedExecutionSessionEvidence
   | ParsedExecutionCancel
+  | ParsedExecutionTargetCancel
+  | ParsedExecutionPause
+  | ParsedExecutionResume
+  | ParsedExecutionRetryFinal
+  | ParsedExecutionControl
+  | ParsedExecutionBatchControl
+  | ParsedExecutionRecovery
   | ParsedWorkspaceList
   | ParsedWorkspaceGet
   | ParsedWorkspaceOperations
@@ -3353,6 +3554,37 @@ function buildExecution(
         fail(state, 'confirmation_required', 'confirm');
       }
       const explicitCommandId = optionalCommandId(scan, state);
+      /* P03-9 / F-015：无 positional + --run/--batch 形态映射 Run/Batch 级
+       * execution.cancel（持久停止 operation）；既有 positional 形态不变。 */
+      const cancelRunId = takeOption(scan, '--run');
+      const cancelBatchId = takeOption(scan, '--batch');
+      if (cancelRunId !== undefined || cancelBatchId !== undefined) {
+        if (scan.positionals.length > 0 || scan.options.has('--revision') === false) {
+          fail(state, scan.positionals.length > 0 ? 'conflicting_options' : 'missing_required_option',
+            scan.positionals.length > 0 ? 'attemptId' : 'revision');
+        }
+        if (cancelRunId !== undefined && cancelBatchId !== undefined) {
+          fail(state, 'conflicting_options');
+        }
+        return {
+          ...base,
+          command: 'execution',
+          commandId: 'execution.cancel',
+          operation: 'execution.cancel',
+          projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+          ...(cancelRunId !== undefined
+            ? { targetKind: 'run' as const, targetId: requireRunId(cancelRunId, state) }
+            : { targetKind: 'batch' as const, targetId: requireBatchId(cancelBatchId as string, state) }),
+          expectedRevision: requireRevision(scan, state),
+          confirm: true,
+          ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
+        };
+      }
+      if (scan.options.has('--revision') || scan.positionals.length === 0) {
+        // Attempt 形态不接受 Run/Batch 控制参数；缺失目标同样在此拒绝。
+        fail(state, scan.options.has('--revision') ? 'conflicting_options' : 'missing_positional',
+          scan.options.has('--revision') ? 'revision' : 'attemptId');
+      }
       return {
         ...base,
         command: 'execution',
@@ -3362,6 +3594,76 @@ function buildExecution(
         attemptId: requireAttemptId(scan.positionals[0] as string, state),
         confirm: true,
         ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
+      };
+    }
+    case 'execution.pause':
+    case 'execution.resume': {
+      const runId = takeOption(scan, '--run');
+      const batchId = takeOption(scan, '--batch');
+      if (runId !== undefined && batchId !== undefined) {
+        fail(state, 'conflicting_options');
+      }
+      if (runId === undefined && batchId === undefined) {
+        fail(state, 'missing_control_target');
+      }
+      const explicitCommandId = optionalCommandId(scan, state);
+      const shared = {
+        ...base,
+        command: 'execution' as const,
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        ...(runId !== undefined
+          ? { targetKind: 'run' as const, targetId: requireRunId(runId, state) }
+          : { targetKind: 'batch' as const, targetId: requireBatchId(batchId as string, state) }),
+        expectedRevision: requireRevision(scan, state),
+        ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
+      };
+      return spec.commandId === 'execution.pause'
+        ? { ...shared, commandId: 'execution.pause', operation: 'execution.pause' }
+        : { ...shared, commandId: 'execution.resume', operation: 'execution.resume' };
+    }
+    case 'execution.retry-final': {
+      const explicitCommandId = optionalCommandId(scan, state);
+      const workKey = requireOption(scan, '--work-key', state, 'workKey');
+      if (workKey.length === 0 || workKey.length > 256) {
+        fail(state, 'invalid_work_key', 'workKey');
+      }
+      return {
+        ...base,
+        command: 'execution',
+        commandId: 'execution.retry-final',
+        operation: 'execution.retryFinal',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        featureId: requirePlanId(scan.positionals[0] as string, state, 'featureId'),
+        historicalRunId: requireRunId(requireOption(scan, '--historical-run', state, 'historicalRunId'), state),
+        workKey,
+        ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
+      };
+    }
+    case 'execution.control': {
+      return {
+        ...base,
+        command: 'execution',
+        commandId: 'execution.control',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        runId: requireRunId(scan.positionals[0] as string, state),
+      };
+    }
+    case 'execution.batch-control': {
+      return {
+        ...base,
+        command: 'execution',
+        commandId: 'execution.batch-control',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        batchId: requireBatchId(scan.positionals[0] as string, state),
+      };
+    }
+    case 'execution.recovery': {
+      return {
+        ...base,
+        command: 'execution',
+        commandId: 'execution.recovery',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        runId: requireRunId(scan.positionals[0] as string, state),
       };
     }
     default:

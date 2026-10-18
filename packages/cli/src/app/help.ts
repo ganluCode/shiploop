@@ -1246,6 +1246,23 @@ const EXECUTION_WORK_SESSION_BLOCK = [
   '- CLI 只经 Host 访问：不打开 SQLite、不直接操作进程；取消响应丢失沿用回执查询与原信封重放。',
 ].join('\n');
 
+/** P03-9 / F-015 Run/Batch 控制、retryFinal 与恢复诊断边界。 */
+const EXECUTION_RUN_CONTROL_BLOCK = [
+  'Run/Batch 控制与恢复诊断边界（P03-9 / F-015）：',
+  '- 工作流 resume ≠ Runtime/SDK 原生续接：execution resume 只登记继续意图，恢复模式',
+  '  auto/new/required 由 Task 策略/输入快照决定，不经命令注入；',
+  '- Fake 新 Session 降级：请求了原生续接（auto/required）但实际新建会话时，恢复诊断',
+  '  显式标注降级与原因；新 Session 不是绕过占用/锁的方式；',
+  '- 停止不确定（stop_uncertain）不是已停止：先用 execution control 核对停止 operation',
+  '  的 evidenceRef 证据，再决定恢复或返工；不释放占用、不自动开新执行；',
+  '- 仅收尾重试：execution retry-final 显式指定历史终态 Run，新 Run 只执行缺失收尾',
+  '  （检查/审批/提交），零 Runtime 启动、不重复编码；旧 Run 保持终态，预算不重置；',
+  '- pausing/cancelling/completed 都不是终态承诺：最终状态与原因经 execution control /',
+  '  batch-control / recovery 查询读取；accepted 输出不宣称已暂停/停止/完成；',
+  '- 全部经 HostClient：CLI 不打开 SQLite、不直接操作进程；events 观察退出（follow）',
+  '  只结束观察，不发送 stop/cancel、不改变后台执行。',
+].join('\n');
+
 /** P03-4 / F-009 诊断只读边界：本 Feature 尚无完整执行/验证闭环。 */
 const EXECUTION_DIAGNOSTICS_BLOCK = [
   '调度诊断边界（P03-4 / F-009）：',
@@ -1258,7 +1275,7 @@ const EXECUTION_DIAGNOSTICS_BLOCK = [
 ].join('\n');
 
 const EXECUTION_HELP = [
-  'usage: shiploop execution <preview|start|budget|revise|schedule|attempts|diagnostics|sessions|session|session-evidence|cancel> [options]',
+  'usage: shiploop execution <preview|start|budget|revise|schedule|attempts|diagnostics|sessions|session|session-evidence|cancel|pause|resume|retry-final|control|batch-control|recovery> [options]',
   '',
   '执行授权命令（单 Feature 显式授权与持久预算）：',
   '  execution preview <featureId> --project <id> --input <file>             执行预览（只读，不是授权）',
@@ -1269,7 +1286,7 @@ const EXECUTION_HELP = [
   '  execution revise <batchId> --project <id> --revision <int> --reason <text> --input <file>',
   '                                                                          预算显式修订（CAS + 理由）',
   '  execution schedule <runId> --project <id>                              Run 调度原因/就绪视图/占用审计（只读）',
-  '  execution attempts <taskId> --project <id> [--limit <int>] [--cursor <c>]',
+  '  execution attempts <taskId> --project <id> [--limit <int>] [--cursor <c>]  ',
   '                                                                          Task 的 Attempt 归属与审计（只读）',
   '  execution diagnostics <attemptId> --project <id> [--limit <int>] [--cursor <c>]',
   '                                                                          Attempt 迟到/越权通知诊断（只读）',
@@ -1280,6 +1297,19 @@ const EXECUTION_HELP = [
   '  execution cancel <attemptId> --project <id> --confirm [--command-id <uuid>]',
   '                                                                          单 Attempt 显式取消（cancel accepted 不是停止确认）',
   '',
+  'Run/Batch 控制与恢复诊断（P03-9 / F-015）：',
+  '  execution pause --project <id> (--run <runId> | --batch <batchId>) --revision <int> [--command-id <uuid>]',
+  '                                                                          登记暂停意图（pausing 不是已暂停）',
+  '  execution resume --project <id> (--run <runId> | --batch <batchId>) --revision <int> [--command-id <uuid>]',
+  '                                                                          工作流显式继续（≠ Runtime 原生续接）',
+  '  execution cancel --project <id> (--run <runId> | --batch <batchId>) --revision <int> --confirm',
+  '                                                                          Run/Batch 级取消（创建停止 operation）',
+  '  execution retry-final <featureId> --project <id> --historical-run <runId> --work-key <key>',
+  '                                                                          仅收尾重试（零 Runtime 启动）',
+  '  execution control <runId> --project <id>                                Run 控制诊断：状态/停止/占用/下一步（只读）',
+  '  execution batch-control <batchId> --project <id>                        Batch 控制诊断（只读）',
+  '  execution recovery <runId> --project <id>                               恢复诊断：续接记录/降级/预算（只读）',
+  '',
   '查看各子命令参数：shiploop execution preview --help',
   '',
   EXECUTION_AUTHORIZATION_BLOCK,
@@ -1287,6 +1317,8 @@ const EXECUTION_HELP = [
   EXECUTION_DIAGNOSTICS_BLOCK,
   '',
   EXECUTION_WORK_SESSION_BLOCK,
+  '',
+  EXECUTION_RUN_CONTROL_BLOCK,
   EXIT_CODE_BLOCK,
   '',
 ].join('\n');
@@ -1547,6 +1579,130 @@ const EXECUTION_CANCEL_HELP = [
   '',
 ].join('\n');
 
+/** P03-9 / F-015 Run/Batch 控制命令共同选项说明。 */
+const CONTROL_OPTIONS_BLOCK = [
+  '选项：',
+  '  --project <id>       项目 ID（必填，UUID v4）',
+  '  --run <runId>        Run 目标（与 --batch 互斥，恰一必填；UUID v4）',
+  '  --batch <batchId>    Batch 目标（与 --run 互斥；UUID v4）',
+  '  --revision <int>     目标当前 revision（≥1；CAS 冲突按业务拒绝退出码 1）',
+  '  --command-id <uuid>  显式命令 ID（UUID v4）；幂等重放用同一信封',
+  '  --json               stdout 只输出结果 JSON；诊断到 stderr',
+].join('\n');
+
+const EXECUTION_PAUSE_HELP = [
+  'usage: shiploop execution pause --project <id> (--run <runId> | --batch <batchId>) --revision <int>',
+  '                                [--command-id <uuid>] [--data-root <abs>] [--json]',
+  '',
+  '登记 Run/Batch 暂停意图（execution.pause）：暂停停止新认领，当前 Attempt 验证与必要',
+  '收尾完成后才转 paused。',
+  '- outcome=pausing 表示暂停进行中：尚未暂停，不中止正在运行的 Attempt；',
+  '- outcome=paused 是工作流状态：不等于验收通过，也不代表 Feature 完成；',
+  '- revision 冲突（stale_revision）按业务拒绝退出码 1；终态 already_terminal 零写入；',
+  '- 最终状态与剩余占用经 execution control / batch-control 查询。',
+  '',
+  CONTROL_OPTIONS_BLOCK,
+  '',
+  EXECUTION_RUN_CONTROL_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const EXECUTION_RESUME_HELP = [
+  'usage: shiploop execution resume --project <id> (--run <runId> | --batch <batchId>) --revision <int>',
+  '                                 [--command-id <uuid>] [--data-root <abs>] [--json]',
+  '',
+  '工作流显式继续（execution.resume）：只登记继续意图，目标重新进入调度。',
+  '- 工作流 resume ≠ Runtime/SDK 原生续接：同 Task 恢复模式 auto/new/required 由',
+  '  Task 策略/输入快照决定，不经命令注入；Fake 不支持原生续接时 auto 新建会话',
+  '  （新 Session 降级，恢复诊断显式标注），required 无法落实则明确拒绝；',
+  '- resumed 不等于验收通过；当前策略重新核验，预算不重置；',
+  '- 恢复诊断与续接记录经 execution recovery 查询。',
+  '',
+  CONTROL_OPTIONS_BLOCK,
+  '',
+  EXECUTION_RUN_CONTROL_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const EXECUTION_RETRY_FINAL_HELP = [
+  'usage: shiploop execution retry-final <featureId> --project <id> --historical-run <runId>',
+  '                                      --work-key <key> [--command-id <uuid>] [--data-root <abs>] [--json]',
+  '',
+  '仅收尾重试（execution.retryFinal）：历史终态 Run 的最终检查/审批/提交失败后，显式创建',
+  '受限 finalization scope 新 Run，只执行缺失收尾步骤。',
+  '- 必须显式指定历史 Run 与其 workKey；不指定则新 Run 不创建；',
+  '- 零 Runtime 启动（runtimeStarts=0）、不重复编码：已通过 Task 不重跑；',
+  '- 旧 Run 保持终态不复活；新 Run 仍属有额度的授权 Batch，无额度先由用户增额/新建授权；',
+  '- 修改代码或检查定义后相关检查必须重验；不能用它绕过 maxRuns/deadline；',
+  '- 新 Run 进度经 execution control / recovery 查询。',
+  '',
+  '选项：',
+  '  --project <id>            项目 ID（必填，UUID v4）',
+  '  --historical-run <runId>  历史终态 Run ID（必填，UUID v4）',
+  '  --work-key <key>          目标 Feature 的非空 workKey（≤256 字符）',
+  '  --command-id <uuid>       显式命令 ID（UUID v4）；幂等重放用同一信封',
+  '  --json                    stdout 只输出结果 JSON；诊断到 stderr',
+  '',
+  EXECUTION_RUN_CONTROL_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const EXECUTION_CONTROL_HELP = [
+  'usage: shiploop execution control <runId> --project <id> [--data-root <abs>] [--json]',
+  '',
+  'Run 控制诊断（execution.run.control.get；只读）：持久状态/原因、关联 Attempt、停止',
+  'operation（stopConfirmed/forced 未知保持 unknown）、占用租约与显式下一步动作。',
+  '- nextActions 附带可理解说明：resume/resume_blocked_occupancy/await_attempt_settlement/',
+  '  await_stop_settlement/stop_reconcile/retry_final/none；',
+  '- 停止不确定（uncertain）必须先核对 evidenceRef 停止证据，不冒充已停止；',
+  '- 查询零写入：不认领、不扣预算、不启动 Runtime、不接管旧执行。',
+  '',
+  '选项：',
+  '  --project <id>       项目 ID（必填，UUID v4）',
+  '  --json               stdout 只输出结果 JSON；诊断到 stderr',
+  '',
+  EXECUTION_RUN_CONTROL_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const EXECUTION_BATCH_CONTROL_HELP = [
+  'usage: shiploop execution batch-control <batchId> --project <id> [--data-root <abs>] [--json]',
+  '',
+  'Batch 控制诊断（execution.batch.control.get；只读）：Batch 状态/原因、Run 列表、',
+  'Attempt、停止 operation、占用租约与显式下一步动作（语义同 execution control）。',
+  '',
+  '选项：',
+  '  --project <id>       项目 ID（必填，UUID v4）',
+  '  --json               stdout 只输出结果 JSON；诊断到 stderr',
+  '',
+  EXECUTION_RUN_CONTROL_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const EXECUTION_RECOVERY_HELP = [
+  'usage: shiploop execution recovery <runId> --project <id> [--data-root <abs>] [--json]',
+  '',
+  'Run 恢复诊断（execution.run.recovery.get；只读）：finalization scope（来源/缺失步骤/',
+  '零编码承诺）、同 Task 续接记录（请求模式 auto/new/required vs 实际 resume/new）、',
+  '父 Batch 累计预算（用量未知恒 unknown，不以 0 冒充）。',
+  '- 请求续接（auto/required）但实际新建会话即 Fake 新 Session 降级，显式标注与原因；',
+  '- 恢复模式由 Task 策略/输入快照决定；本查询不接管旧执行、不创建 Attempt；',
+  '- 工作流 resume 经 execution resume 显式发起，与本查询分离。',
+  '',
+  '选项：',
+  '  --project <id>       项目 ID（必填，UUID v4）',
+  '  --json               stdout 只输出结果 JSON；诊断到 stderr',
+  '',
+  EXECUTION_RUN_CONTROL_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
 const WORKSPACE_BOUNDARY_BLOCK = [
   '边界：',
   '- 可信项目模式不提供强 OS 隔离；工作区操作（准备/保留/清理/丢弃）均不是 Feature 交付；',
@@ -1773,6 +1929,12 @@ const HELP_BY_SCOPE: Readonly<Record<AppHelpScope, string>> = Object.freeze({
   'execution.session': EXECUTION_SESSION_HELP,
   'execution.session-evidence': EXECUTION_SESSION_EVIDENCE_HELP,
   'execution.cancel': EXECUTION_CANCEL_HELP,
+  'execution.pause': EXECUTION_PAUSE_HELP,
+  'execution.resume': EXECUTION_RESUME_HELP,
+  'execution.retry-final': EXECUTION_RETRY_FINAL_HELP,
+  'execution.control': EXECUTION_CONTROL_HELP,
+  'execution.batch-control': EXECUTION_BATCH_CONTROL_HELP,
+  'execution.recovery': EXECUTION_RECOVERY_HELP,
   workspace: WORKSPACE_HELP,
   'workspace.list': WORKSPACE_LIST_HELP,
   'workspace.get': WORKSPACE_GET_HELP,

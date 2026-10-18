@@ -73,6 +73,17 @@ import {
   formatWorkSessionListView,
 } from './app/work-session.js';
 import {
+  buildExecutionControlCommandView,
+  buildExecutionControlQueryView,
+  buildExecutionRecoveryCliView,
+  buildExecutionRetryFinalView,
+  formatExecutionControlCommandView,
+  formatExecutionControlQueryView,
+  formatExecutionRecoveryCliView,
+  formatExecutionRetryFinalView,
+} from './app/run-control.js';
+import type { ExecutionControlOperation } from './app/run-control.js';
+import {
   buildWorkspaceDiscardConfirmPayload,
   buildWorkspaceDiscardPreviewView,
   buildWorkspaceDiscardSubmitView,
@@ -1710,6 +1721,23 @@ async function executeExecutionCommand(
       return emitSuccess(io, command, view, formatWorkSessionEvidenceView(view));
     }
     case 'execution.cancel': {
+      /* P03-9 / F-015：无 positional + --run/--batch 形态映射 Run/Batch 级
+       * execution.cancel（持久停止 operation）；既有 Attempt 形态不变。 */
+      if (command.operation === 'execution.cancel') {
+        const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+        const receipt = await client.cancelExecution(
+          {
+            projectId: command.projectId,
+            ...(command.targetKind === 'run'
+              ? { runId: command.targetId }
+              : { batchId: command.targetId }),
+            expectedRevision: command.expectedRevision,
+            ...(command.explicitCommandId !== undefined ? { commandId: command.explicitCommandId } : {}),
+          },
+          envelopeIdentityOptions(command.explicitCommandId, issuedAt),
+        );
+        return emitControlCommandReceipt(io, command, 'execution.cancel', receipt);
+      }
       // 取消响应丢失沿用回执查询与原信封（同一 --command-id 重放命中服务端摘要
       // 重放返回原回执），不额外启动工作、不更换命令身份。
       const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
@@ -1733,7 +1761,131 @@ async function executeExecutionCommand(
         formatAttemptCancelView,
       );
     }
+    /* ------------------------------------------------------------ *
+     * P03-9 / F-015 Run/Batch 控制、retryFinal 与恢复诊断入口
+     * （只经 HostClient 公共面：不打开 SQLite、不读取业务文件；
+     * completed 只代表控制事务落地，输出不宣称已暂停/停止/完成）
+     * ------------------------------------------------------------ */
+    case 'execution.pause': {
+      const receipt = await controlCommand(
+        client,
+        command,
+        (input, options) => client.pauseExecution(input, options),
+      );
+      return emitControlCommandReceipt(io, command, 'execution.pause', receipt);
+    }
+    case 'execution.resume': {
+      const receipt = await controlCommand(
+        client,
+        command,
+        (input, options) => client.resumeExecution(input, options),
+      );
+      return emitControlCommandReceipt(io, command, 'execution.resume', receipt);
+    }
+    case 'execution.retry-final': {
+      const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+      const receipt = await client.retryFinalExecution(
+        {
+          projectId: command.projectId,
+          featureId: command.featureId,
+          historicalRunId: command.historicalRunId,
+          workKey: command.workKey,
+          ...(command.explicitCommandId !== undefined ? { commandId: command.explicitCommandId } : {}),
+        },
+        envelopeIdentityOptions(command.explicitCommandId, issuedAt),
+      );
+      if (receipt.status === 'completed') {
+        const view = buildExecutionRetryFinalView(
+          receipt.commandId,
+          receipt.replayed,
+          receipt.result as never,
+        );
+        return emitSuccess(io, command, view, formatExecutionRetryFinalView(view));
+      }
+      return emitControlFailure(io, command, receipt);
+    }
+    case 'execution.control': {
+      const result = await client.getRunControl(command.projectId, command.runId);
+      const view = buildExecutionControlQueryView(result);
+      return emitSuccess(io, command, view, formatExecutionControlQueryView(view));
+    }
+    case 'execution.batch-control': {
+      const result = await client.getBatchControl(command.projectId, command.batchId);
+      const view = buildExecutionControlQueryView(result);
+      return emitSuccess(io, command, view, formatExecutionControlQueryView(view));
+    }
+    case 'execution.recovery': {
+      const result = await client.getRunRecovery(command.projectId, command.runId);
+      const view = buildExecutionRecoveryCliView(result);
+      return emitSuccess(io, command, view, formatExecutionRecoveryCliView(view));
+    }
   }
+}
+
+/** Run/Batch 控制命令（pause/cancel/resume）的 HostClient 输入组装与提交。 */
+async function controlCommand(
+  client: HostClient,
+  command: Extract<ParsedExecutionCommand, { targetKind: 'run' | 'batch' }>,
+  submit: (
+    input: Parameters<HostClient['pauseExecution']>[0],
+    options: ReturnType<typeof envelopeIdentityOptions>,
+  ) => Promise<CommandReceipt>,
+): Promise<CommandReceipt> {
+  const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+  return submit(
+    {
+      projectId: command.projectId,
+      ...(command.targetKind === 'run'
+        ? { runId: command.targetId }
+        : { batchId: command.targetId }),
+      expectedRevision: command.expectedRevision,
+      ...(command.explicitCommandId !== undefined ? { commandId: command.explicitCommandId } : {}),
+    },
+    envelopeIdentityOptions(command.explicitCommandId, issuedAt),
+  );
+}
+
+/**
+ * 控制命令 completed 回执输出（P03-9 / F-015）：rejected 是业务拒绝（退出码 1，
+ * 保留 commandId 可查回执）；completed 投影为结构化视图，输出不宣称已暂停/
+ * 已停止/已验收。
+ */
+function emitControlCommandReceipt(
+  io: AppCliIo,
+  command: ParsedAppCliCommand,
+  operation: ExecutionControlOperation,
+  receipt: CommandReceipt,
+): AppCliRunResult {
+  if (receipt.status !== 'completed') {
+    return emitControlFailure(io, command, receipt);
+  }
+  const view = buildExecutionControlCommandView(
+    receipt.commandId,
+    receipt.replayed,
+    operation,
+    receipt.result as unknown as Parameters<typeof buildExecutionControlCommandView>[3],
+  );
+  return emitSuccess(io, command, view, formatExecutionControlCommandView(view));
+}
+
+/** 控制命令 rejected 回执输出（与 emitDomainReceipt 同一失败语义）。 */
+function emitControlFailure(
+  io: AppCliIo,
+  command: ParsedAppCliCommand,
+  receipt: CommandReceipt,
+): AppCliRunResult {
+  if (receipt.status !== 'rejected') {
+    // 控制命令均为同步 completed；accepted 属协议异常（fail-closed）。
+    throw new Error('unexpected_accepted_receipt');
+  }
+  return emitFailure(io, command.json, {
+    exitCode: exitCodeForReceiptStatus('rejected'),
+    command: command.commandId,
+    code: receipt.error.code,
+    message: receipt.error.message,
+    commandId: receipt.commandId,
+    ...(receipt.error.details !== undefined ? { details: receipt.error.details } : {}),
+  });
 }
 
 /* ------------------------------------------------------------------ *
