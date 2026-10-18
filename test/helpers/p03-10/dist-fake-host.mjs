@@ -1,15 +1,20 @@
 // Explicit acceptance assembly over the built Host. Only model behavior is Fake.
 import { homedir, tmpdir } from 'node:os';
 import { startFakeHost } from '../../../packages/host/dist/testing.js';
+import { startHost } from '../../../packages/host/dist/index.js';
+import { attachThreeTaskProbe, threeTaskRuntime } from './three-task-probe.mjs';
 import { createStaticRuntimeCapabilityCatalog } from '../../../packages/core/dist/index.js';
 import { createCommandProcessAdapter } from '../../../packages/core/dist/adapters/process/command-process.js';
 
 const config = JSON.parse(process.argv[2]);
 const providers = [{ providerId: 'fake-provider', models: ['fake-model'] }];
-const host = await startFakeHost({
+const options = {
   dataRoot: config.dataRoot,
   env: process.env,
   capabilityCatalog: createStaticRuntimeCapabilityCatalog([{ runtimeId: 'fake', providers }]),
+};
+const host = config.chain ? await startHost({ ...options, workRuntimeFactory: threeTaskRuntime(config) }) : await startFakeHost({
+  ...options,
   fake: {
     providers,
     script: config.script,
@@ -17,9 +22,10 @@ const host = await startFakeHost({
     ...(config.toolCommands ? { toolCommands: config.toolCommands } : {}),
   },
 });
+const closeProbe = config.chain ? attachThreeTaskProbe(host, config) : async () => {};
 let closing;
 function close() {
-  closing ??= host.close().then(() => { if (process.connected) process.disconnect(); });
+  closing ??= closeProbe().then(() => host.close()).then(() => { if (process.connected) process.disconnect(); });
   return closing;
 }
 process.on('message', message => { if (message?.kind === 'close') void close(); });

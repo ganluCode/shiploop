@@ -175,7 +175,9 @@ export function createWorkScheduler(options: WorkSchedulerOptions) {
     if (dag.reason !== 'ready' || dag.readyTaskIds.length === 0) {
       const result: SchedulerRunResult = { projectId, runId, reason: dag.reason,
         capabilityGaps: [], claimed: false, handoff: null };
-      options.store.recordRunReason(projectId, runId, dag.reason);
+      // Control diagnostics must not replace the persisted pause reason: verifier
+      // completion uses that reason to authorize the pending transition.
+      if (dag.reason !== 'run_control_blocked') options.store.recordRunReason(projectId, runId, dag.reason);
       diagnostics.set(key(projectId, runId), result);
       return result;
     }

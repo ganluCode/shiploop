@@ -27,3 +27,17 @@
 - 交接与映射表见 `docs/p03-10-f002-checklist.md`。
 
 本地通过只覆盖本任务清单/配置校验范围。`accept:p03` 控制器与阶段报告聚合由后续任务交付；真实 Pi/live、强沙箱、真实用量/缓存收益未运行且不折算通过。
+
+## F-003 — 三 Task 链诊断与受控提交阻塞
+
+F-003 尚未满足验收，收尾应报告 `blocked`；正式 feature.yaml、task_list 及其状态未修改。负责人需协调逐 Task 受控提交契约与实现，不能用 Feature 最终提交补认 Task 放行证据。
+
+- 新增正式构建 CLI/Host 三 Task 场景：项目内真实检查配置、导入/摘要审批/显式执行授权；Fake 实际写文件，真实 Node 检查及 Git 身份检查，生产 VerificationStore/制品/Task 完成服务负责结算，无业务表 SQL seed。
+- 真实顺序为 1 → 2 首次 → 2 返工 → 3，检查退出码 0/1/0/0、testCount 1/2/2/3。第二项新 Attempt 保留同 worktree 的 tracked README 和 untracked marker，先核对原内容再 append 增量修复；新输入含现场与失败证据；第二项通过前第三项零启动。Task Attempt/代码次数分别 1/2/1。
+- 修复实际 RED：补偿扫描用 run_control_blocked 覆盖验证暂停原因，导致真实检查通过后 completion ignored/invalid_transition。现在保留持久暂停原因，控制诊断留在内存；新增重复扫描的 SQLite 回归。
+- 动态确认关键缺口：三个 Task 最终均 passed，但 git_operations 为零、HEAD 未改变。诊断报告 `status: failed / task_passed_without_controlled_commit`；端口与数据库约束均仅支持 feature_final_commit。Feature 全量检查与收尾为 not_run，未宣称 Feature/阶段通过。
+- 同 commandId 原请求经 CLI 重放后，starts/Attempt/Session=4，Run/Batch=1，事件=50，回执=24，Git operation=0，全部不增加；最终 Git HEAD/tree 不变，修改仍未提交。检查前阶段轨迹、两次输入、真实输出、Git 事实及回执完整导出；cleanup passed，进程树/组停止、资源删除。
+- TDD 与诊断日志均在 Feature workspace `verifications/F-003/runtime-logs/`：初始缺三 Task RED `test-xc4kk71y.log`；事务装配 RED `test-232ar8hv.log`；验证暂停 RED `test-dimzs0a5.log`；最终 `test-paeuc6he.log` exit 0，2 passed / 0 failed / 0 skipped；`test-wqdu81jm.log` typecheck exit 0。两项测试 GREEN 仅证明诊断与修复有效，不表示 F-003 验收成功。
+- 最终证据目录：`evidence/three-task-chain-38487165-20bb-4707-944c-43db748a63b1/`，含 three-task-chain.json、stage-*.json、evidence.json、cleanup.json。受测 HEAD 为 `9c81be306ba4a8de462f777fdc4972dad93a524d`，dirty=true 记录本次待提交代码；最终实现以 Git 提交为准。
+- 索引 `test/index/phases/P03/features/P03-10/tasks/F-003.json`，Harness selection 已落盘并引用它。新增两文件已本地执行；F-001 六项及旧 scheduler 五项为已选未运行回归，交 Nezha。未运行全仓/组合 verify/阶段验收。
+- 具体装配、阻塞接口、证据与后续门禁见 [F-003 交接](docs/p03-10-f003-three-task-chain.md)。

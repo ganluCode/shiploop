@@ -14,6 +14,11 @@
       "task_id": "F-002",
       "index": "test/index/phases/P03/features/P03-10/tasks/F-002.json",
       "description": "P03 阶段验收机器可读检查清单与受校验配置：FR/T 映射、必需纵向演示、deferred 不计数与 fail-closed 校验。"
+    },
+    {
+      "task_id": "F-003",
+      "index": "test/index/phases/P03/features/P03-10/tasks/F-003.json",
+      "description": "三 Task 链真实检查/同 worktree 增量返工诊断；检测到 Task 无受控提交即 passed，演示为 failed，F-003 blocked。"
     }
   ]
 }

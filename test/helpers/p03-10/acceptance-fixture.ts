@@ -1,5 +1,6 @@
 /** Real P03 resources; all business writes go through the built CLI and Host. */
 import { execFileSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -27,7 +28,28 @@ const DEFAULT_SCRIPT = { schemaVersion: 1, steps: [{ op: 'message', role: 'assis
   result: { terminal: 'completed', reason: null, exitCode: 0, signal: null, durationMs: 1, usage: null } };
 
 export type P03Stage = 'allocated' | 'host-ready' | 'registered' | 'configured' | 'imported' | 'authorized';
+const CHAIN_CHECK = {
+  checkKey: 'chain', scope: 'task', kind: 'command', required: true,
+  argv: [process.execPath, '-e', `
+    const fs = require('node:fs');
+    let count = 1;
+    try {
+      if (!fs.readFileSync('README.md', 'utf8').startsWith('chain-1\\n')) throw Error('missing chain-1');
+      if (fs.existsSync('chain-2.txt')) {
+        count++;
+        if (fs.readFileSync('chain-2.txt', 'utf8') !== 'retained marker\\nrepaired\\n') throw Error('expected repaired chain-2');
+        if (!fs.readFileSync('README.md', 'utf8').includes('chain-2-first\\nchain-2-repaired\\n')) throw Error('lost tracked rework');
+      }
+      if (fs.existsSync('chain-3.txt')) { count++; if (fs.readFileSync('chain-3.txt', 'utf8') !== 'chain-3\\n') throw Error('missing chain-3'); }
+      console.log('PASS chain checks');
+    } catch (error) { console.error(error.message); process.exitCode = 1; }
+    console.log('SHIPLOOP_NODE_CHECK_RESULT=' + JSON.stringify({schemaVersion:1,protocol:'shiploop.node-check',collected:true,testCount:count,targets:['chain']}));
+  `], cwdRef: null, environmentRef: null, timeout: 5000, requirementRefs: ['F-003'],
+};
+
 export interface P03FixtureOptions {
+  /** F-003 diagnostic scenario; does not weaken the Task commit acceptance gate. */
+  readonly threeTaskChain?: boolean;
   /** Caller-owned evidence directory, outside the disposable resources. */
   readonly evidenceDir: string;
   readonly onStage?: (stage: P03Stage, fixture: P03Fixture) => void | Promise<void>;
@@ -42,8 +64,10 @@ export interface P03Fixture {
   readonly repoDir: string;
   readonly ids: { projectId?: string; phaseId?: string; featureId?: string; batchId?: string; runId?: string };
   input(name: string, value: unknown): string;
+  saveEvidence(name: string, value: unknown): void;
   cli<T = Record<string, unknown>>(args: readonly string[]): Promise<T>;
   startExecution(): Promise<void>;
+  replayExecutionStart(): Promise<void>;
   rows(table: EvidenceTable): Record<string, unknown>[];
   storageProbe: AcceptanceFixture['storageProbe'];
   spawnSample: AcceptanceFixture['spawnSample'];
@@ -80,6 +104,7 @@ export async function withP03AcceptanceFixture<T>(options: P03FixtureOptions, bo
     env: { PATH: process.env.PATH, HOME: resources.homeDir, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' } }).trim();
   let metadata: unknown = { status: 'not_run' };
   let budgetPath = '';
+  let startArgs: readonly string[] | undefined;
   const stage = async (name: P03Stage) => { records.push({ kind: 'stage', stage: name }); await options.onStage?.(name, fixture); };
 
   function rows(table: EvidenceTable): Record<string, unknown>[] {
@@ -124,6 +149,11 @@ export async function withP03AcceptanceFixture<T>(options: P03FixtureOptions, bo
   }
   const fixture: P03Fixture = {
     root, repoDir, ids,
+    saveEvidence(name, value) {
+      if (!/^[a-zA-Z0-9_-]+\.json$/.test(name)) throw new TypeError('evidence path must be a local JSON filename');
+      assertNoCredentialShapesInText(sanitize(value), 'scenario evidence');
+      save(name, value);
+    },
     input(name, value) {
       if (!/^[a-zA-Z0-9_-]+\.json$/.test(name)) throw new TypeError('input path must be a local JSON filename');
       const path = join(root, name);
@@ -147,12 +177,18 @@ export async function withP03AcceptanceFixture<T>(options: P03FixtureOptions, bo
       const projectArgs = ['--project', ids.projectId!];
       const preview = await fixture.cli<{ status: string; previewDigest: string }>(['execution', 'preview', ids.featureId!, ...projectArgs, '--input', budgetPath]);
       if (preview.status !== 'ready') throw new Error(`prerequisite preview blocked: ${sanitize(preview)}`);
-      const started = await fixture.cli<{ status: string; batchId: string; runId: string }>(['execution', 'start', ids.featureId!, ...projectArgs,
-        '--input', budgetPath, '--preview-digest', preview.previewDigest, '--confirm']);
+      startArgs = ['execution', 'start', ids.featureId!, ...projectArgs,
+        '--input', budgetPath, '--preview-digest', preview.previewDigest, '--confirm', '--command-id', randomUUID()];
+      const started = await fixture.cli<{ status: string; batchId: string; runId: string }>(startArgs);
       if (started.status !== 'accepted') throw new Error('execution authorization not accepted');
       ids.batchId = started.batchId;
       ids.runId = started.runId;
       await stage('authorized');
+    },
+    async replayExecutionStart() {
+      if (!startArgs) throw new Error('execution has not been started');
+      const replay = await fixture.cli<{ batchId: string; runId: string }>(startArgs);
+      if (replay.batchId !== ids.batchId || replay.runId !== ids.runId) throw new Error('execution replay identity changed');
     },
     rows,
     storageProbe: () => resources.storageProbe(),
@@ -228,6 +264,7 @@ export async function withP03AcceptanceFixture<T>(options: P03FixtureOptions, bo
         git: git(['--version']), ...Object.fromEntries(['typescript', 'vitest', 'better-sqlite3', 'drizzle-orm'].map(name =>
           [name, lock.packages[`node_modules/${name}`]?.version ?? 'unknown'])) } };
     const host = supervisor.spawn({ scriptPath: HOST_ENTRY, config: { dataRoot, script: options.script ?? DEFAULT_SCRIPT,
+      ...(options.threeTaskChain ? { chain: { root, check: CHAIN_CHECK } } : {}),
       ...(options.toolCommands ? { toolCommands: options.toolCommands } : {}) }, cwd: root, env: resources.childEnv(),
       requireInside: root, label: 'p03-dist-fake-host', stderrLimitBytes: 8192 });
     tree = new OwnedProcessTree(host.pid);
@@ -243,6 +280,10 @@ export async function withP03AcceptanceFixture<T>(options: P03FixtureOptions, bo
       schemaVersion: 2, strategies: { defaultStrategy: strategy, modelMap: { low: strategy } },
       policies: { executionLimits: { maxConcurrentWorks: 1, workTimeoutMs: 60_000 }, verification: { requireChecksBeforeDone: true } },
     })]);
+    if (options.threeTaskChain) await fixture.cli(['config', 'create', '--scope', 'project', ...project,
+      '--input', fixture.input('project-config.json', { schemaVersion: 2, policies: { verification: {
+        requireChecksBeforeDone: true, checkDefinitions: [CHAIN_CHECK], fullFallback: { checkRefs: ['chain'] },
+      } } })]);
     await stage('configured');
     const baseline = await fixture.cli<{ state: string; checks: { output: { artifactId: string } }[] }>(['baseline', 'run', ...project,
       '--input', fixture.input('checks.json', { checks: [{ checkKey: 'requirements', kind: 'command',
@@ -253,17 +294,25 @@ export async function withP03AcceptanceFixture<T>(options: P03FixtureOptions, bo
     const imported = await fixture.cli<{ result: { feature: { id: string; planDigest: string } } }>(['feature', 'import', ...project,
       '--phase', ids.phaseId, '--revision', '1', '--input', fixture.input('plan.json', { schemaVersion: 1,
         feature: { title: 'P03 fixture', description: 'Independent real resources', sourceRefs: [], labels: [] },
-        tasks: [{ id: 'p03-task', title: 'Fixture task', complexity: 'low',
+        tasks: (options.threeTaskChain ? ['chain-1', 'chain-2', 'chain-3'] : ['p03-task']).map((id, index, taskIds) => ({
+          id, title: options.threeTaskChain ? `Fixture task ${index + 1}` : 'Fixture task', complexity: 'low',
+          ...(index > 0 ? { dependsOn: [taskIds[index - 1]] } : {}),
           requirementsRefs: [{ artifactId: baseline.checks[0]!.output.artifactId }],
-          acceptance: { criteria: ['Deterministic verification required'] } }] })]);
+          acceptance: { criteria: [options.threeTaskChain
+            ? 'Deterministic verification and controlled commit required' : 'Deterministic verification required'] },
+        })) })]);
     ids.featureId = imported.result.feature.id;
     await fixture.cli(['feature', 'approve', ids.featureId, ...project, '--digest', imported.result.feature.planDigest, '--revision', '1']);
-    const prepared = await fixture.cli<{ bindable: boolean }>(['task', 'prepare', 'p03-task', ...project, '--feature', ids.featureId,
-      '--input', fixture.input('inputs.json', { items: [{ purpose: 'requirements', source: { kind: 'artifact', artifactId: baseline.checks[0]!.output.artifactId } }] })]);
-    if (!prepared.bindable) throw new Error('required input not bindable');
-    budgetPath = fixture.input('budget.json', { batch: { maxRuns: 2, maxTotalAttempts: 2, maxRuntimeStarts: 2,
-      maxNoProgressRuns: 2, deadlineUtcMs: Date.now() + 60_000 },
-      run: { maxAttemptsPerRun: 2, runTimeLimitMs: 60_000 } });
+    for (const taskId of options.threeTaskChain ? ['chain-1', 'chain-2', 'chain-3'] : ['p03-task']) {
+      const prepared = await fixture.cli<{ bindable: boolean }>(['task', 'prepare', taskId, ...project, '--feature', ids.featureId,
+        '--input', fixture.input(`inputs-${taskId}.json`, { items: [{ purpose: 'requirements', source: { kind: 'artifact', artifactId: baseline.checks[0]!.output.artifactId } }] })]);
+      if (!prepared.bindable) throw new Error('required input not bindable');
+    }
+    const maxAttempts = options.threeTaskChain ? 4 : 2;
+    const runTimeLimitMs = options.threeTaskChain ? 120_000 : 60_000;
+    budgetPath = fixture.input('budget.json', { batch: { maxRuns: 2, maxTotalAttempts: maxAttempts, maxRuntimeStarts: maxAttempts,
+      maxNoProgressRuns: 2, deadlineUtcMs: Date.now() + runTimeLimitMs },
+      run: { maxAttemptsPerRun: maxAttempts, runTimeLimitMs } });
     await stage('imported');
     result = await body(fixture);
   } catch (error) { failure = error; failed = true; records.push({ kind: 'failure', message: String(error) }); }

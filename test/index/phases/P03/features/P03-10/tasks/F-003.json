@@ -1,0 +1,31 @@
+{
+  "schema_version": 2,
+  "task_id": "F-003",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/acceptance/p03-10-three-task-chain.test.ts",
+          "cases": [
+            "task-commit-boundary"
+          ]
+        },
+        {
+          "file": "test/modules/scheduling/p03-10-verification-pause.test.ts",
+          "cases": [
+            "verification-pause-preserved"
+          ]
+        },
+        {
+          "file": "test/modules/acceptance/p03-10-fixture.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/scheduling/p03-4-scheduler.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}
