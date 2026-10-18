@@ -66,6 +66,6 @@ Runtime/Verifier 的真实停止端口、进程组核验与停止证据由 F-003
 ## 5. 迁移与验证
 
 迁移 v28 只在 v27 之后追加停止 operation 表/索引/触发器，既有迁移 SQL 与
-checksum 不变。聚焦测试见 `test/p03-9-f002-execution-cancel.test.ts`：真实临时
+checksum 不变。聚焦测试见 `test/modules/execution/control/p03-9-f002-execution-cancel.test.ts`：真实临时
 SQLite 覆盖安全完成、活动/父进程退出、interrupted 占用保留、Batch 传播、重复
 commandId/不同 ID、终态与迟到成功竞争、预算/历史不变及 v27→v28 升级。

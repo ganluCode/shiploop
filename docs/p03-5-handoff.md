@@ -36,11 +36,11 @@
 | F-010 | 独立人工丢弃 preview/confirm（破坏性范围绑定当前工作区与代码证据；迁移 v19 kind+`discard`） | `ports/workspace-discard.ts`、`application/workspace-discard.ts`、`adapters/sqlite/workspace-discard.ts`、`adapters/fs/feature-worktree-discarder.ts` |
 | F-011 | 生产组合根装配 workspace 栈 + Host 授权/幂等通道（discard.preview 通用事务、discard 专属幂等通道） | `adapters/composition.ts`、`packages/host` |
 | F-012 | CLI workspace list/get/operations/operation/discard-preview/discard + 结构化状态视图 | `packages/cli/src/app/*` |
-| F-013 | 真实资源集成回归与本文交接（不新增产品行为/依赖/迁移） | `test/p03-5-feature-integration.test.ts`、`test/docs-p03-5-handoff.test.ts` |
+| F-013 | 真实资源集成回归与本文交接（不新增产品行为/依赖/迁移） | `test/modules/workspace/p03-5-feature-integration.test.ts`、`test/modules/workspace/docs-p03-5-handoff.test.ts` |
 
 ## 2. 集成回归组合（F-013 验收 1/4/7；真实临时 SQLite/Git，无 Mock Git/进程）
 
-`test/p03-5-feature-integration.test.ts`（2 用例，生产组合根 `openCoreApplication`）：
+`test/modules/workspace/p03-5-feature-integration.test.ts`（2 用例，生产组合根 `openCoreApplication`）：
 
 1. **全链路组合**：经实际前序入口（`project.register` → `settings.global.create` →
    `phase.create` → `feature.plan.import` → `feature.plan.decide` 批准 → `execution.preview` →
@@ -60,9 +60,9 @@
    拒绝（禁止未知停止后重跑、无双重写入者）；现场字节、原生档案与登记不变。
 
 既有 Host/CLI 构建入口链路（F-011/F-012 交付，本轮复跑）：
-`test/p03-5-workspace-host-integration.test.ts`（真实 Host + loopback HTTP + 生产组合根：
+`test/modules/workspace/p03-5-workspace-host-integration.test.ts`（真实 Host + loopback HTTP + 生产组合根：
 认领→准备→保留→预览→确认丢弃纵向、pending 意图恢复、授权/幂等/版本纪律）与
-`test/p03-5-cli-workspace-built.test.ts`（`npm run build` 产物 `dist/bin.js` + 临时 Host：
+`test/modules/workspace/p03-5-cli-workspace-built.test.ts`（`npm run build` 产物 `dist/bin.js` + 临时 Host：
 状态读取、缺确认本地拒绝、伪造摘要服务端 conflict 拒绝、帮助边界声明）。普通测试无网络模型；
 测试资源在证据落盘后由夹具有界清理，产品失败现场默认保留（retained/quarantined 均不删除）。
 
@@ -109,8 +109,8 @@
 
 ## 6. 完整门禁与验证记录（真实命令/退出码）
 
-- F-013 新增测试定向运行：`node scripts/run-tests.ts test/p03-5-feature-integration.test.ts
-  test/docs-p03-5-handoff.test.ts` → exit 0（首轮集成断言真实失败后修正，失败日志保留在
+- F-013 新增测试定向运行：`node scripts/run-tests.ts test/modules/workspace/p03-5-feature-integration.test.ts
+  test/modules/workspace/docs-p03-5-handoff.test.ts` → exit 0（首轮集成断言真实失败后修正，失败日志保留在
   `tool-logs/f013-integration-first.log`，成功日志 `f013-integration-green.log`）。
 - 完整 verify 门禁：`npm run verify`（预检 + `npm test` + `npm run typecheck` + `npm run build`
   含三包入口冒烟）→ exit 0；`npm test` 覆盖 **219 files / 4528 passed / 1 skipped（既有）**，
@@ -173,5 +173,5 @@
   Host 命令/查询通道（线消息版本纪律沿用）。
 - 不得弱化：默认保留、unknown 不释放、非强制删除不降级、源仓库逐项保护、字节级证据、
   「不冒充 Runtime 通过」边界。
-- 本文档事实与守护测试 `test/docs-p03-5-handoff.test.ts` 同源；后续 Feature 改变这些事实时
+- 本文档事实与守护测试 `test/modules/workspace/docs-p03-5-handoff.test.ts` 同源；后续 Feature 改变这些事实时
   必须同步更新本文与守护。

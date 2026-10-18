@@ -119,12 +119,12 @@ Scheduler/Runner 装配仍属后续任务（查询如实呈现 queued/
 
 ## 8. 验证记录（F-010）
 
-- 新增：`test/p03-3-execution-budget-query.test.ts`（10 用例：一致读视图全字段
+- 新增：`test/modules/execution/budget/p03-3-execution-budget-query.test.ts`（10 用例：一致读视图全字段
   与重开一致、未知字段 null 不填零/启动预占与实际用量分开/queued 不冒充成功、
   预算耗尽与 deadline 恰好到达结构化阻塞、正常剩余、修订后剩余与旧 Run 冻结
   快照、修订分页与游标续读、非法分页/跨批次游标/跨项目折叠 not_found 不泄漏
   存在性、查询零写入零事件、授权与非法输入矩阵、输出脱敏断言）、
-  `test/docs-p03-3-execution-budget-query-contract.test.ts`（本文档守护）。
+  `test/modules/execution/budget/docs-p03-3-execution-budget-query-contract.test.ts`（本文档守护）。
 - 受影响回归：计划查询/分页游标（p03-1-plan-queries、authorized-queries）、
   执行域存储与预占/结算/修订（p03-3-*）、查询装配（core-assembly）等由
   verification 清单选中执行。

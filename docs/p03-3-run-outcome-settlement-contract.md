@@ -88,13 +88,13 @@ Run 唯一，生效 Task 证据部分唯一；账本 UPDATE/DELETE 均拒绝。
 
 ## 5. 验证入口
 
-- `test/p03-3-run-outcome-settlement.test.ts`：真实临时 SQLite、注入时钟、可信领域
+- `test/modules/execution/budget/p03-3-run-outcome-settlement.test.ts`：真实临时 SQLite、注入时钟、可信领域
   夹具；幂等/CAS、三终态不退款、进展及旧事实/元数据重放、上限、归属、回滚、
   事务上下文、v12 数据升级保留、重开逐字段一致、deadline/Run 时间恰好到达。
-- `test/p03-3-execution-start.test.ts`：经受信事务结算后的真实命令重试，连续无进展
+- `test/modules/execution/budget/p03-3-execution-start.test.ts`：经受信事务结算后的真实命令重试，连续无进展
   累计、耗尽后停止、成功 workKey 拒绝再派发，保持既有命令协议。
-- `test/sqlite-schema-migrations.test.ts`：Drizzle 与真实 DDL 列、CHECK、索引及外键一致。
-- `test/docs-p03-3-run-outcome-settlement-contract.test.ts`：契约和受信命令边界守护。
+- `test/modules/storage/sqlite/sqlite-schema-migrations.test.ts`：Drizzle 与真实 DDL 列、CHECK、索引及外键一致。
+- `test/modules/execution/budget/docs-p03-3-run-outcome-settlement-contract.test.ts`：契约和受信命令边界守护。
 
 受影响测试选择记录于 Harness `verifications/F-008/test-selection.json`；
 工程门禁仍为 `npm run verify` 与 `npm run check:boundaries`。

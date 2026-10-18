@@ -84,9 +84,9 @@ cwd 或开发机路径。证据已脱敏（`<SNAPSHOT-ROOT>` / `<HOME>` / `<TMPD
 ### 4.2 F-014 文档示例核验与工作区回归
 
 - 文档示例（[storage-operations.md §3](../storage-operations.md)）与
-  [`test/sqlite-storage-integration.test.ts`](../../test/sqlite-storage-integration.test.ts)
+  [`test/modules/storage/sqlite/sqlite-storage-integration.test.ts`](../../test/modules/storage/sqlite/sqlite-storage-integration.test.ts)
   的全链路闭环同构；
-- 新增 [`test/docs-storage-operations.test.ts`](../../test/docs-storage-operations.test.ts)
+- 新增 [`test/modules/storage/docs-storage-operations.test.ts`](../../test/modules/storage/docs-storage-operations.test.ts)
   以真实适配器编译并运行该最小示例，断言文档所述状态机、busy 预算与受控 locator；
 - F-014 工作区回归：`npm test` → 0（443 passed，20 文件，含文档示例核验 2 用例）；
   `npm run verify` → 0（`PASS 3/3`）。证据
@@ -99,7 +99,7 @@ cwd 或开发机路径。证据已脱敏（`<SNAPSHOT-ROOT>` / `<HOME>` / `<TMPD
 迁移定义：`packages/core/src/adapters/sqlite/migrations.ts`（`SQLITE_MIGRATIONS`，当前唯一
 `version=1`，随构建产物分发为 `dist/adapters/sqlite/migrations.js`）。执行记录写入
 `schema_migrations`（`version` 唯一递增、`checksum` 为 SQL 内容 SHA-256、`applied_at` UTC 毫秒）。
-Drizzle Schema 交叉核对见 [`test/sqlite-schema-migrations.test.ts`](../../test/sqlite-schema-migrations.test.ts)。
+Drizzle Schema 交叉核对见 [`test/modules/storage/sqlite/sqlite-schema-migrations.test.ts`](../../test/modules/storage/sqlite/sqlite-schema-migrations.test.ts)。
 
 | 表 | 关键字段 | 关键约束 |
 |---|---|---|
@@ -122,7 +122,7 @@ Drizzle Schema 交叉核对见 [`test/sqlite-schema-migrations.test.ts`](../../t
 - **备份只覆盖 SQLite 状态库，不包含受控文件根中的制品正文。** 数据库备份 ≠ 含制品正文的全量备份；
   正文证据需另行核对（`ArtifactVerifier`），当前**未声明全量恢复能力**。
 - 恢复演练（复制备份到独立库并读到升级前一致数据）见
-  [`test/sqlite-migration-runner.test.ts`](../../test/sqlite-migration-runner.test.ts)。
+  [`test/modules/storage/sqlite/sqlite-migration-runner.test.ts`](../../test/modules/storage/sqlite/sqlite-migration-runner.test.ts)。
 
 ## 6. 已建能力之外的明确边界
 

@@ -84,19 +84,19 @@
 | 检查 ID | FR / 阶段分支 | 说明 | 承担任务 | 测试 / 命令入口 | 关键证据字段 |
 |---|---|---|---|---|---|
 | `P01-ENG-VERIFY` | 工程 | `npm run verify`（test/typecheck/build）退出 0 | F-008 | `npm run verify`（盘 `scripts/verify.ts`，步骤见 `packages` 根 `package.json`） | `exit_code`、`duration_ms`、`steps[].label`/`exit_code`、测试文件/用例计数 |
-| `P01-FR1-NORMAL` | FR-1 **正常** | 经应用服务在临时数据根注册真实 Git 仓库、写全局/项目配置、发布固定正文制品 | F-003 | `test/p01-4-persistence-closed-loop.test.ts`（复用 `openCoreApplication`/`ProjectService`/`ConfigurationService`/`ArtifactStore`） | `project_id`、`repository_binding`、配置 `schema_version`/`revision`/`payload_digest`/`source`、`artifact.id`/`content_hash`/`size_bytes`/`locator`、源仓库指纹 |
+| `P01-FR1-NORMAL` | FR-1 **正常** | 经应用服务在临时数据根注册真实 Git 仓库、写全局/项目配置、发布固定正文制品 | F-003 | `test/modules/acceptance/p01-4-persistence-closed-loop.test.ts`（复用 `openCoreApplication`/`ProjectService`/`ConfigurationService`/`ArtifactStore`） | `project_id`、`repository_binding`、配置 `schema_version`/`revision`/`payload_digest`/`source`、`artifact.id`/`content_hash`/`size_bytes`/`locator`、源仓库指纹 |
 | `P01-FR1-REOPEN` | FR-1 **重开** | 关闭全部连接后以新装配实例打开同一数据根，逐字段一致 | F-003 | 同上（重开阶段；不得只读原实例内存缓存） | 重开前后 `project_id`/绑定/元数据、配置 `schema_version`/`payload`/`revision`/有效来源、制品 `hash`/`size`/正文摘要、相对 `locator` |
-| `P01-FR1-ROLLBACK` | FR-1 **回滚** | 组合创建首个写入后注入确定性异常，项目及绑定/初始配置全部不存在 | F-004 | `test/p01-4-sqlite-rollback-and-cas.test.ts`（复用 TEMP TRIGGER 故障注入；不得手工改库） | `injected_error`、前后行数、参与表全部为零、重开后仍无残留、既有正常项目/配置未受影响 |
-| `P01-FR2-CONFIG` | FR-2 正常/拒绝 | 完整策略整体覆盖、当前值与来源重开读取、未知版本/未知 runtime/不完整策略拒绝、凭据仅保存引用 | F-006 | `test/p01-4-config-and-tags.test.ts`（复用 `settings-schema-v2`/`configuration-service`/`effective-settings-merge`/`settings-query-service`） | `scope`、`schema_version`、`revision`、精确值、`source.kind`/`sourceKey`/`scopeRevision`、结构化错误 `kind`/`reason` |
+| `P01-FR1-ROLLBACK` | FR-1 **回滚** | 组合创建首个写入后注入确定性异常，项目及绑定/初始配置全部不存在 | F-004 | `test/modules/acceptance/p01-4-sqlite-rollback-and-cas.test.ts`（复用 TEMP TRIGGER 故障注入；不得手工改库） | `injected_error`、前后行数、参与表全部为零、重开后仍无残留、既有正常项目/配置未受影响 |
+| `P01-FR2-CONFIG` | FR-2 正常/拒绝 | 完整策略整体覆盖、当前值与来源重开读取、未知版本/未知 runtime/不完整策略拒绝、凭据仅保存引用 | F-006 | `test/modules/acceptance/p01-4-config-and-tags.test.ts`（复用 `settings-schema-v2`/`configuration-service`/`effective-settings-merge`/`settings-query-service`） | `scope`、`schema_version`、`revision`、精确值、`source.kind`/`sourceKey`/`scopeRevision`、结构化错误 `kind`/`reason` |
 | `P01-FR2-ROLLBACK` | FR-2 **回滚** | 在当前配置更新与脱敏变更记录提交之间注入失败，`payload`/`revision`/记录全部回滚 | F-004 | 同上 | `injected_error`、预期错误、前后 `payload`/`revision`、`state_events` 行数、操作身份、副作用断言 |
 | `P01-FR2-CAS` | FR-2 CAS | 真实独立进程 + 同步屏障，同一旧 `revision` 竞争更新恰一成功一 `conflict`，`revision` 仅增一次 | F-004 | 同上 + `test/helpers/settings-race-child.ts`、`test/helpers/cas-race-child.ts` | `expected_revision`、胜者值、`success_count=1`、`conflict_count=1`、`revision_delta=1`、子进程退出码 |
-| `P01-FR2-TAGS` | T32 项目标签 | 标签规范化、非法数组拒绝、任一/全部筛选及去重计数 | F-006 | `test/p01-4-config-and-tags.test.ts`（复用 `project-tag-filter`） | 规范化标签、命中 `project_id` 集合与计数、`match_mode`、非法输入错误、非法更新后元数据/`revision` 不变 |
-| `P01-FR2-ARTIFACT-MISSING` | FR-2 **制品缺失** | 删除本次正文后读取/核对报告 `missing`/`corrupt`，不返回有效引用或空正文 | F-005 | `test/p01-4-artifact-negative.test.ts`（复用 `createArtifactVerifier`） | `artifact_id`、原 `hash`/`size`、逻辑 `locator`、文件缺失事实、索引诊断、其他制品/项目/配置仍可读 |
+| `P01-FR2-TAGS` | T32 项目标签 | 标签规范化、非法数组拒绝、任一/全部筛选及去重计数 | F-006 | `test/modules/acceptance/p01-4-config-and-tags.test.ts`（复用 `project-tag-filter`） | 规范化标签、命中 `project_id` 集合与计数、`match_mode`、非法输入错误、非法更新后元数据/`revision` 不变 |
+| `P01-FR2-ARTIFACT-MISSING` | FR-2 **制品缺失** | 删除本次正文后读取/核对报告 `missing`/`corrupt`，不返回有效引用或空正文 | F-005 | `test/modules/acceptance/p01-4-artifact-negative.test.ts`（复用 `createArtifactVerifier`） | `artifact_id`、原 `hash`/`size`、逻辑 `locator`、文件缺失事实、索引诊断、其他制品/项目/配置仍可读 |
 | `P01-FR2-ARTIFACT-RECOVERY` | FR-2 制品恢复 | 发布中断后重开核对；`pending` 仅 hash/size 匹配补 `ready`；孤儿保留/安全隔离 | F-005 | 同上 + `test/helpers/interrupt-publish-child.ts` | 子进程退出、`pending` 状态、`ready` 迁移、`hash`/`size` 核验、孤儿处置、路径穿越/符号链接拒绝 |
-| `P01-PHASE-FIXTURE` | **夹具失败** | 夹具准备失败明确 `fail`/`not_run`，阶段非零，且保留已取得证据 | F-007 / F-008 | `test/p01-4-acceptance-controller.test.ts`（注入准备错误） | `fixture_status`、失败原因、依赖检查状态、阶段退出码、证据保留 |
-| `P01-PHASE-NOT-RUN` | **必需检查未运行** | 未提交结果/启动失败/超时/被跳过的必需项标 `not_run`，不得聚合为通过 | F-007 / F-008 | `test/p01-4-report-aggregation.test.ts` | 必需检查清单、`status`、缺失结果、聚合结论、退出码 |
-| `P01-ENG-BUILD-SMOKE` | 构建产物 | 非源码 cwd 从 dist 装载公共入口与迁移执行闭环，路径检查无个人绝对路径/Nezha 依赖 | F-009 | `test/p01-4-build-smoke.test.ts` + `scripts/core-assembly-smoke.mjs` | `dist_entry`、`cwd_relative`、已加载模块、迁移资源在位、路径扫描结果、文件清单摘要 |
-| `P01-PHASE-REPORT` | 报告完整性 | 版本化报告 Schema、逐项结果、证据 `path`/`hash`/`size`、总体结论可验证 | F-007 | `test/p01-4-report-aggregation.test.ts` | `report_schema_version`、输入计划摘要、受测 commit、工具版本、`checks[]`、`evidence[]`、总体结论、已知限制 |
+| `P01-PHASE-FIXTURE` | **夹具失败** | 夹具准备失败明确 `fail`/`not_run`，阶段非零，且保留已取得证据 | F-007 / F-008 | `test/modules/acceptance/p01-4-acceptance-controller.test.ts`（注入准备错误） | `fixture_status`、失败原因、依赖检查状态、阶段退出码、证据保留 |
+| `P01-PHASE-NOT-RUN` | **必需检查未运行** | 未提交结果/启动失败/超时/被跳过的必需项标 `not_run`，不得聚合为通过 | F-007 / F-008 | `test/modules/acceptance/p01-4-report-aggregation.test.ts` | 必需检查清单、`status`、缺失结果、聚合结论、退出码 |
+| `P01-ENG-BUILD-SMOKE` | 构建产物 | 非源码 cwd 从 dist 装载公共入口与迁移执行闭环，路径检查无个人绝对路径/Nezha 依赖 | F-009 | `test/modules/acceptance/p01-4-build-smoke.test.ts` + `scripts/core-assembly-smoke.mjs` | `dist_entry`、`cwd_relative`、已加载模块、迁移资源在位、路径扫描结果、文件清单摘要 |
+| `P01-PHASE-REPORT` | 报告完整性 | 版本化报告 Schema、逐项结果、证据 `path`/`hash`/`size`、总体结论可验证 | F-007 | `test/modules/acceptance/p01-4-report-aggregation.test.ts` | `report_schema_version`、输入计划摘要、受测 commit、工具版本、`checks[]`、`evidence[]`、总体结论、已知限制 |
 
 > 上表「测试入口」对尚未实现的后继任务（F-003 ~ F-009）为**约定文件/入口**；F-001 只冻结
 > 检查 ID、分支语义与证据字段，实际测试由对应任务按 TDD 落地。`P01-ENG-VERIFY` 与所有
@@ -126,7 +126,7 @@ PRD §3.2 要求的每个 FR 分支都有稳定检查 ID 承接，且每项都�
 ### 2.3 前序必需回归由 `verify` 覆盖（不只核对测试数量）
 
 `npm run verify` 的 `npm test` 步骤默认收集 `test/**/*.test.ts`（`passWithNoTests:false`，
-不跳过），并由 [p01-3-fr-acceptance-closed-loop.test.ts](../test/p01-3-fr-acceptance-closed-loop.test.ts)
+不跳过），并由 [p01-3-fr-acceptance-closed-loop.test.ts](../test/modules/acceptance/p01-3-fr-acceptance-closed-loop.test.ts)
 第 3 个用例作为 **fail-closed 守护**：列出的 FR 关键失败分支测试文件缺失、被移入 helpers、
 或被 `.skip`/`.only`/`.todo` 静默跳过时守护失败。下列前序回归**实际入口**必须在阶段检查中
 保持可运行（F-008 的 `P01-ENG-VERIFY` 退出 0 即覆盖；不得用删测试、`passWithNoTests` 或跳过
@@ -191,11 +191,11 @@ PRD §3.2 要求的每个 FR 分支都有稳定检查 ID 承接，且每项都�
 
 | 失败分支 | 入口 | 断言要点 |
 |---|---|---|
-| 项目+绑定统一回滚 | `test/project-registration.test.ts`（TEMP TRIGGER 注入绑定写失败） | 项目与绑定均不存在，零残留 |
-| 元数据/配置审计注入回滚 | `test/project-metadata-service.test.ts`、`test/configuration-service.test.ts`、`test/p01-3-fr-acceptance-closed-loop.test.ts`（同一连接 `CREATE TEMP TRIGGER` on `state_events`） | 实体写入与 `revision` 一并回滚，修复后可继续 |
+| 项目+绑定统一回滚 | `test/modules/projects/project-registration.test.ts`（TEMP TRIGGER 注入绑定写失败） | 项目与绑定均不存在，零残留 |
+| 元数据/配置审计注入回滚 | `test/modules/projects/project-metadata-service.test.ts`、`test/modules/configuration/configuration-service.test.ts`、`test/modules/acceptance/p01-3-fr-acceptance-closed-loop.test.ts`（同一连接 `CREATE TEMP TRIGGER` on `state_events`） | 实体写入与 `revision` 一并回滚，修复后可继续 |
 | 跨进程注册竞争 | `test/helpers/register-race-child.ts`（同步屏障 + 有限外层超时 + 退出核验） | 恰一 `registered`、一 `already_exists` |
 | 跨进程配置 CAS 竞争 | `test/helpers/settings-race-child.ts`、`test/helpers/cas-race-child.ts` | 同旧 revision 恰一胜者，`revision` 只增一次 |
-| 制品发布中断 | `test/helpers/interrupt-publish-child.ts`、`test/artifact-verify.test.ts` | 重开后 `pending` 仅 hash/size 匹配才补 `ready`；孤儿保留原位 |
+| 制品发布中断 | `test/helpers/interrupt-publish-child.ts`、`test/modules/storage/artifacts/artifact-verify.test.ts` | 重开后 `pending` 仅 hash/size 匹配才补 `ready`；孤儿保留原位 |
 | 阶段夹具准备失败 | F-007/F-008 验收控制器（注入准备错误） | 依赖检查 `not_run`，报告保留已取得证据，阶段非零 |
 
 故障注入使用真实 SQLite / 真实 Git / 真实文件，不以 mock 次数或成功日志替代副作用断言。
@@ -336,7 +336,7 @@ P01-4 只**记录并携带**前序已登记的核对请求，不在本阶段静�
 
 - 基线：§1.3（`npm ci` 退出 0；`npm run verify` 退出 0，`PASS 3/3`；35 files / 700 tests）。
 - 本文引用的真实常量/端口/迁移/前序测试入口由
-  [docs-p01-4-acceptance-contract.test.ts](../test/docs-p01-4-acceptance-contract.test.ts)
+  [docs-p01-4-acceptance-contract.test.ts](../test/modules/acceptance/docs-p01-4-acceptance-contract.test.ts)
   交叉核对，防止文档与实现漂移。
 - 本 Feature 只交付验收约定与检查清单（文档 + 守护测试）；`accept:p01`、夹具、报告与阶段
   最终报告由 F-002 ~ F-010 交付。本轮不自动修改任何 Harness 配置；未验收平台、强 OS 沙箱与

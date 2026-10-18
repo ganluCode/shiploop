@@ -6,7 +6,7 @@
  *   绑定发生在 Host 可信装配/传输层；
  * - 受限主体 `test-restricted:<uuid-v4>` **只能由可信测试装配显式构造**，
  *   产品代码不存在经网络/argv/env/请求体创建或提权主体的入口（该不变量由
- *   test/p02-2-fixture-kit.test.ts 的源码扫描固定）；
+ *   test/modules/commands/p02-2-fixture-kit.test.ts 的源码扫描固定）；
  * - 请求信封/查询中的 actorId/principal/principalId/capabilities/scope
  *   提权字段在 F-002 已按未知键拒绝；本模块只产出结构，绝不读取任何请求数据。
  *

@@ -1,7 +1,7 @@
 /**
  * P03-1 / F-006 计划修订竞争子进程（仅测试使用，不是产品实现，不进 packages/）。
  *
- * 父进程（test/p03-1-plan-queries-consistency.test.ts）以
+ * 父进程（test/modules/planning/p03-1-plan-queries-consistency.test.ts）以
  * `node --import test/helpers/node-ts-loader/register.mjs <本文件> <configJson>`
  * 启动本进程，连接同一真实临时 SQLite 并在统一起跑哨兵放行后反复重写一个
  * Feature 的计划成员（模拟 F-008 计划实质修订的「单写事务整体替换」语义：

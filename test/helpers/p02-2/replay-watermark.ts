@@ -8,7 +8,7 @@
  *
  * 本控制器只是内存中的测试缝值：F-012 的可信测试装配在判断游标是否低于
  * 「现存最小可读 sequence」时查询它；生产装配没有任何代码路径引用本文件
- * （由 test/p02-2-fixture-kit.test.ts 源码扫描固定 packages/ 无 test-only 入口）。
+ * （由 test/modules/commands/p02-2-fixture-kit.test.ts 源码扫描固定 packages/ 无 test-only 入口）。
  */
 import { isUuidV4 } from '../../../packages/core/src/ports/commands.ts';
 

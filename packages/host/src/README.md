@@ -65,6 +65,6 @@ Host 未来承担：生命周期、单例认证、传输（本地 HTTP+SSE）、
     15 000 ms；连接关闭只清理本连接定时器/登记，客户端断开不回滚命令、
     不停止 Host；closeAll 接入 §10.5 收尾与装配拆卸，重启后原持久游标可
     续读；建连后解除 requestTimeout，响应仍 no-store/connection: close，
-    不发 CORS/3xx。真实回环 HTTP/SSE 回归见 test/host-sse-events.test.ts。
+    不发 CORS/3xx。真实回环 HTTP/SSE 回归见 test/modules/host/host-sse-events.test.ts。
 
 单向依赖规则见仓库根 `README.md`。

@@ -168,7 +168,7 @@ export interface ArtifactInputRef {
 /**
  * 最小 ArtifactStore 端口：制品索引的登记、状态转换与有效引用查询。
  * 文件级 staging/发布由 F-010/F-011 的制品文件适配器承担，不属于本端口。
- * 实现者：F-009 起的 SQLite 适配器；语义基线见 test/storage-contracts.test.ts。
+ * 实现者：F-009 起的 SQLite 适配器；语义基线见 test/modules/storage/storage-contracts.test.ts。
  */
 export interface ArtifactStore {
   /** 登记 pending 索引；缺失项目返回 not_found，非法元数据返回 validation。 */

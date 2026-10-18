@@ -63,10 +63,10 @@
 - **F-017**（`eff0c26`）：CLI 快照 + SSE 观察、恢复游标、`snapshot_required` 重载、Ctrl+C
   仅退出观察（退出码 4）。
 - **F-018**（`9d92977`）：整 Feature 真实 SQLite/HTTP/SSE/CLI 集成回归与脱敏证据映射
-  （新增 `test/p02-2-integration-regression.test.ts` 6 项 + 契约 §14 注记 + 证据文档 + 守护）。
+  （新增 `test/modules/commands/p02-2-integration-regression.test.ts` 6 项 + 契约 §14 注记 + 证据文档 + 守护）。
 - **F-019**（`98cf080`）：[p02-2-operations.md](../p02-2-operations.md)、
   [p02-2-handoff.md](../p02-2-handoff.md)、README 索引与文档守护
-  `test/docs-p02-2-operations.test.ts`（3 项）。
+  `test/modules/commands/docs-p02-2-operations.test.ts`（3 项）。
 - **F-020**（本报告）：交付报告、FR 覆盖索引与脱敏证据核对。
 
 ## 3. 环境与版本
@@ -168,8 +168,8 @@
 - 证据文档 [evidence-p02-2/f018-regression-evidence.md](evidence-p02-2/f018-regression-evidence.md)
   只含非秘密的计数、状态、事件 sequence、进程退出与命令退出码；复核确认**不含**真实凭据、
   `Authorization` 头、64 位十六进制 token 形状、开发机绝对路径或用户文件正文。
-- 文档守护测试 `test/docs-p02-2-operations.test.ts` 与
-  `test/docs-p02-2-commands-events-contract.test.ts` 在 `npm test` 内断言操作说明/交接/证据
+- 文档守护测试 `test/modules/commands/docs-p02-2-operations.test.ts` 与
+  `test/modules/commands/docs-p02-2-commands-events-contract.test.ts` 在 `npm test` 内断言操作说明/交接/证据
   文档不含开发机绝对路径、Bearer 样例、64hex 凭据样例，并核验命令、参数、路由、事件白名单
   与套件文件存在。
 - 构建产物 public import 无副作用，descriptor 扫描 `path_scan_findings=0`、`user_data_writes=0`；

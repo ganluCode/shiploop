@@ -67,8 +67,8 @@ SQLite 写事务使用 `BEGIN IMMEDIATE`，争用写锁时在**有限预算**内
 
 ## 3. 最小端口使用示例
 
-以下示例**与 [`test/sqlite-storage-integration.test.ts`](../test/sqlite-storage-integration.test.ts)
-的全链路闭环同构**，并由 [`test/docs-storage-operations.test.ts`](../test/docs-storage-operations.test.ts)
+以下示例**与 [`test/modules/storage/sqlite/sqlite-storage-integration.test.ts`](../test/modules/storage/sqlite/sqlite-storage-integration.test.ts)
+的全链路闭环同构**，并由 [`test/modules/storage/docs-storage-operations.test.ts`](../test/modules/storage/docs-storage-operations.test.ts)
 编译并执行（编译检查 + 运行断言）。示例仅使用真实导出接口，未编造命令。
 
 ```ts
@@ -262,7 +262,7 @@ pending ──(CAS, 实测 hash 匹配 + 实际 size)──▶ ready
 - 从备份恢复（人工演练）：备份是**数据库级**一致性备份；恢复时复制该备份文件到独立位置后用
   `openSqliteStorageSession` 打开，并用 `integrity_check` 核验。**不要**复制正在使用的单个 `.db` 文件
   冒充 WAL 备份。恢复演练与 `integrity_check=ok` 由
-  [`test/sqlite-migration-runner.test.ts`](../test/sqlite-migration-runner.test.ts) 覆盖。
+  [`test/modules/storage/sqlite/sqlite-migration-runner.test.ts`](../test/modules/storage/sqlite/sqlite-migration-runner.test.ts) 覆盖。
 - **备份边界**：备份只覆盖 SQLite 状态库，**不包含受控文件根中的制品正文**。数据库备份 ≠ 含制品正文的
   全量备份；正文证据需另行核对（见 §6），当前**未声明全量恢复能力**。
 

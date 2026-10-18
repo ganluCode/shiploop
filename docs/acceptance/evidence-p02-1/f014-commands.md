@@ -17,9 +17,9 @@
 | 3 | `npm run check:boundaries` | 62 个生产 TS 文件、0 诊断（core 27 / host 28 / cli 7） | 0 |
 | 4 | `npm run build` | 原生锁 + 三包 `tsc -b` + `prepare-cli-bin` + dist 冒烟全 0 | 0 |
 | 5 | `npm run verify` | test/typecheck/build `PASS 3/3` | 0 |
-| 6 | `npm test -- test/docs-p02-1-operations.test.ts` | 3/3 通过（真实临时数据根 + 真实 Host 子进程纵向闭环） | 0 |
+| 6 | `npm test -- test/modules/host/docs-p02-1-operations.test.ts` | 3/3 通过（真实临时数据根 + 真实 Host 子进程纵向闭环） | 0 |
 
-## 文档守护覆盖（`test/docs-p02-1-operations.test.ts`）
+## 文档守护覆盖（`test/modules/host/docs-p02-1-operations.test.ts`）
 
 - 操作说明 [p02-1-operations.md](../p02-1-operations.md) 的纵向命令在真实临时数据根上可复跑：
   `host start`（`started`）→ 二次 `host start`（`already_running`，同一 `hostInstanceId`）→

@@ -60,7 +60,7 @@ FakeRuntime 支持本契约可核验的 Session/工具上限：Session 由 Core 
 
 ## 5. 验收证据
 
-- `test/p03-9-f004-time-limits.test.ts`：纯受控时钟解析、旧/新配置兼容、非法
+- `test/modules/execution/control/p03-9-f004-time-limits.test.ts`：纯受控时钟解析、旧/新配置兼容、非法
   输入拒绝、Run/Batch 已过 deadline 不启动、Session/工具真实受控进程停止、
   Verifier 检查独立超时与父 deadline 不启动、停止未确认隔离、超时后迟到取消
   不覆盖已落库证据。

@@ -10,7 +10,7 @@
  * - 固定 forks 池、不随机序、有限超时，保证可重复。
  *
  * 负向夹具（临时副本删除测试、注入失败断言、工具缺失）在
- * test/deterministic-test-harness.test.ts 中以真实子进程验证。
+ * test/modules/engineering/deterministic-test-harness.test.ts 中以真实子进程验证。
  */
 import { fileURLToPath } from 'node:url';
 import { defineConfig } from 'vitest/config';

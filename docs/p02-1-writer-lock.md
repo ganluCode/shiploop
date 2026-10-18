@@ -31,7 +31,7 @@
 ```sh
 npm ci
 npm run build
-npm test -- test/host-writer-lock.test.ts
+npm test -- test/modules/host/host-writer-lock.test.ts
 npm run typecheck
 npm run check:boundaries
 npm run verify
@@ -88,7 +88,7 @@ reason 为 `lock_busy_owner_unverified` 等受控枚举，错误中无路径/凭
 
 ## 真实测试证据边界
 
-`test/host-writer-lock.test.ts` 经默认 npm test 收集，使用临时沙箱与真实 Node/SQLite：
+`test/modules/host/host-writer-lock.test.ts` 经默认 npm test 收集，使用临时沙箱与真实 Node/SQLite：
 
 - IPC ready/go 同步竞争：同根别名两个候选只有一个获锁并打开 Core/迁移，失败者没有 opening
   事件；正常 close 后竞争者可获原 inode；不同根两个真实 Core 可同时持锁。

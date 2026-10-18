@@ -1,7 +1,7 @@
 /**
  * P03-1 / F-005 跨进程计划导入/配置更新竞争子进程（仅测试使用，不是产品实现）。
  *
- * 父进程（test/p03-1-plan-import-race.test.ts）以
+ * 父进程（test/modules/planning/p03-1-plan-import-race.test.ts）以
  * `node --import test/helpers/node-ts-loader/register.mjs <本文件> <configJson>`
  * 启动三个本进程实例，连接同一真实临时 SQLite 并竞争提交：
  *

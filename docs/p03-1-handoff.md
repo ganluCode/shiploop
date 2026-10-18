@@ -31,12 +31,12 @@
 | F-008 | `feature.plan.revise` 草稿实质修订 + 活动执行输入保护契约 + 批准失效纯规则 | `application/feature-plan-revise.ts` |
 | F-009 | 计划命令/查询接入 Host 传输与 HostClient（线消息 v3→v4 显式升版） | `packages/host/src/runtime/app-transport.ts`、`client/app-client.ts` |
 | F-010 | CLI `phase|feature|task` 三命令组（12 子命令，`--input` 有界 UTF-8 计划文件） | `packages/cli/src/app/*`、`app-execute.ts` |
-| F-011 | 正式构建产物局部集成回归（本文 §5/§6/§8 证据来源）与交接 | `test/p03-1-integration-regression.test.ts`、`test/helpers/host/dist-host-entry-catalog.mjs` |
+| F-011 | 正式构建产物局部集成回归（本文 §5/§6/§8 证据来源）与交接 | `test/modules/planning/p03-1-integration-regression.test.ts`、`test/helpers/host/dist-host-entry-catalog.mjs` |
 
 ## 2. SQLite Schema（迁移 v6，冻结事实）
 
 - 迁移 v6 追加 `phases`、`features`、`tasks`、`task_dependencies` 四表；v1–v5 SQL/checksum 未改动
-  （`test/p03-1-plan-structure-storage.test.ts`「历史 v1–v5 SQL/checksum 与开工冻结摘要一致」）。
+  （`test/modules/planning/p03-1-plan-structure-storage.test.ts`「历史 v1–v5 SQL/checksum 与开工冻结摘要一致」）。
 - 关键约束：同项目/同 Feature 复合外键、`UNIQUE(feature_id, task_id, depends_on_id)` 依赖边、
   自依赖 CHECK、状态/JSON CHECK、`plan_digest` 形态 CHECK；`tasks(feature_id,id)` 唯一索引作复合
   外键目标。标签默认空数组且不继承。
@@ -59,8 +59,8 @@
   `/v1/phases|features|tasks` 平坦形态；HostClient 公共方法 `createPhase`/`importFeaturePlan`/
   `updatePlanLabels`/`reviseFeaturePlan` + 六查询；CLI `phase create|list|get|labels`、
   `feature import|list|get|revise|labels`、`task list|get|labels`（`--revision` 唯一 CAS 入口）。
-  真实纵向：`test/p03-1-plan-host-wiring.test.ts`（真实 Host+HostClient+SQLite 12 用例）、
-  `test/p03-1-plan-cli-vertical.test.ts`（真实 CLI 纵向）与 F-011 集成回归（正式构建产物链路）。
+  真实纵向：`test/modules/planning/p03-1-plan-host-wiring.test.ts`（真实 Host+HostClient+SQLite 12 用例）、
+  `test/modules/planning/p03-1-plan-cli-vertical.test.ts`（真实 CLI 纵向）与 F-011 集成回归（正式构建产物链路）。
 - **摘要字段与批准失效规则**：`planDigest` 是规范化业务 JSON 的 SHA-256（顺序无关；纯标签/
   revision/时间戳/策略来源不参与）；批准绑定 planDigest 的**纯规则**
   `decidePlanApprovalValidity`（实质变化回 draft、摘要不变不失效）——完整 Approval 记录/决策
@@ -80,8 +80,8 @@
 - 生产当前**无 Run 表**：边界以 `NO_ACTIVE_EXECUTION_INPUTS_PROBE` 显式宣告（能力边界声明，
   不是"已验证无活动"）；未来 start/claim 必须在同一事务与聚合 CAS 契约内写入活动依据，
   不能只在事务外查一次或用进程内布尔锁。
-- **证据边界（必须如实区分）**：上述保护在 P03-1 由纯规则（`test/p03-1-plan-revise-rules.test.ts`）
-  与**隔离测试装配**（`test/p03-1-plan-revise-command.test.ts` 注入 guards/预置状态）验证；
+- **证据边界（必须如实区分）**：上述保护在 P03-1 由纯规则（`test/modules/planning/p03-1-plan-revise-rules.test.ts`）
+  与**隔离测试装配**（`test/modules/planning/p03-1-plan-revise-command.test.ts` 注入 guards/预置状态）验证；
   真实 Work/Run 竞争**未验证**（Work 尚未实现，不宣称已验证）。
 
 ## 5. 负例矩阵复核（F-011 验收 2；均为真实 SQLite 测试）
@@ -119,7 +119,7 @@ P03-1 范围，不得折算通过：
 
 - `npm run verify`（预检 + `npm test` + `npm run typecheck` + `npm run build` 含三包入口冒烟）：
   exit 0；`npm test` 覆盖 **137 files / 3242 tests**（含 F-011 新增
-  `test/p03-1-integration-regression.test.ts` 3 用例与 `test/docs-p03-1-handoff.test.ts` 8 守护）。
+  `test/modules/planning/p03-1-integration-regression.test.ts` 3 用例与 `test/modules/planning/docs-p03-1-handoff.test.ts` 8 守护）。
 - `npm run check:boundaries`：exit 0（112 production source files / 0 diagnostics）。
 - F-011 集成回归（正式构建产物 + 隔离真实 SQLite）：端到端主线（进程重开查询 + 库重开审计）、
   负例与幂等/CAS、生产构建边界（dist/start.js 空能力目录对 strategies fail-closed）3 用例 passed。
@@ -147,5 +147,5 @@ P03-1 范围，不得折算通过：
   历史表述当现状。
 - 不得重建：命令信封/回执/事件体系、授权查询模式、配置体系、SQLite 迁移（只能从 v6 追加）。
 - 不得弱化：fail-closed 探测、防枚举 not_found、脱敏事件、幂等/CAS 纪律、「不宣称执行」边界。
-- 本文档事实与守护测试 `test/docs-p03-1-handoff.test.ts` 同源；后续 Feature 改变这些事实时必须
+- 本文档事实与守护测试 `test/modules/planning/docs-p03-1-handoff.test.ts` 同源；后续 Feature 改变这些事实时必须
   同步更新本文与守护。

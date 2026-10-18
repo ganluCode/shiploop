@@ -1,6 +1,6 @@
 /**
  * F-003 Drizzle SQLite Schema（adapters 层；drizzle-orm 只允许在本层被引用，
- * 见 scripts/check-boundaries.ts 与 test/typescript-build.test.ts）。
+ * 见 scripts/check-boundaries.ts 与 test/modules/engineering/typescript-build.test.ts）。
  *
  * 设计依据：core-design/03 §1-2、core-design/11 §3（projects/repository_bindings/
  * global_settings/project_settings）、§8（artifacts，本 Feature 子集）、§9（schema_migrations）。
@@ -12,7 +12,7 @@
  * 四表（迁移 v4，见下方表注释）；P03-3 / F-002 起加入单 Feature 执行域三表
  * execution_batches/runs/batch_budget_revisions（迁移 v9，见下方表注释）。
  *
- * 与手写迁移 DDL（./migrations.ts）的一致性由 test/sqlite-schema-migrations.test.ts
+ * 与手写迁移 DDL（./migrations.ts）的一致性由 test/modules/storage/sqlite/sqlite-schema-migrations.test.ts
  * 经真实 SQLite pragma 与 getTableConfig 交叉核对；两处必须同步演进。
  *
  * 字段说明（本 Feature 范围内的边界决策）：
@@ -552,7 +552,7 @@ export const baselineOccupancy = sqliteTable('baseline_occupancy', {
 /**
  * P03-1 / F-002 计划结构四表（迁移 v6，docs/p03-1-plan-import-contract.md 与设计 11 §4）。
  *
- * 边界与先例（与迁移 v6 同源，一致性由 test/sqlite-schema-migrations.test.ts 交叉核对）：
+ * 边界与先例（与迁移 v6 同源，一致性由 test/modules/storage/sqlite/sqlite-schema-migrations.test.ts 交叉核对）：
  * - phases/features/tasks 均有同项目复合唯一键 (project_id,id)：既是复合外键目标，
  *   也供跨项目引用在 DDL 级拒绝（features→phases、tasks→features 与
  *   task_dependencies→tasks 的同 Feature 复合外键）；
@@ -941,8 +941,8 @@ export const approvals = sqliteTable('approvals', {
  *   paused/interrupted，终态不参与）；
  * - 不可变列（id/created_at/project_id/phase_id/feature_id/scope_snapshot/
  *   config_snapshot）由迁移 v9 触发器禁止 UPDATE 覆盖（Drizzle 无法表达触发器，
- *   一致性由 test/sqlite-schema-migrations.test.ts 交叉核对列/索引/外键，
- *   触发器行为由 test/p03-3-execution-schema.test.ts 失败用例覆盖）。
+ *   一致性由 test/modules/storage/sqlite/sqlite-schema-migrations.test.ts 交叉核对列/索引/外键，
+ *   触发器行为由 test/modules/execution/budget/p03-3-execution-schema.test.ts 失败用例覆盖）。
  */
 export const executionBatches = sqliteTable('execution_batches', {
   id: text('id').primaryKey(),

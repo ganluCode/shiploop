@@ -50,7 +50,7 @@ proof-based release belong to F-003/F-004/F-005, not this read-only adapter.
 
 ## Evidence
 
-`test/p03-4-attempt-schema.test.ts` exercises real temporary SQLite databases,
+`test/modules/scheduling/p03-4-attempt-schema.test.ts` exercises real temporary SQLite databases,
 complete field mapping/reopening, corrupt and external JSON rejection,
 independent Core identities, uniqueness and cross-project/cross-feature
 constraints, upgrades from v0/v5/v13, cumulative predecessor budget preservation,

@@ -145,11 +145,11 @@ HostClient 方法与 `shiploop execution revise/budget` CLI 子命令，见
 
 ## 7. 验证记录（F-009）
 
-- 新增：`test/p03-3-budget-revision.test.ts`（19 用例：授权/归属/输入面矩阵、
+- 新增：`test/modules/execution/budget/p03-3-budget-revision.test.ts`（19 用例：授权/归属/输入面矩阵、
   短事务原子提交与组合回滚、运行中增额不启动恢复、单调/降额/limit_below_used
   拒绝、终态批次拒绝、幂等重放与 commandId 冲突、真实 SQLite CAS 竞争、修订
   历史不可变、审计前后值、Task 上限唯一通道与不可静默增额）、
-  `test/p03-3-execution-budget.test.ts` 追加 `evaluateBatchBudgetRevision` 纯
+  `test/modules/execution/budget/p03-3-execution-budget.test.ts` 追加 `evaluateBatchBudgetRevision` 纯
   判定 6 用例。
 - 受影响冻结面同步：commands-contract（第 21 项操作与第 20 项能力）、
   events-contract（`execution.budget.revised` 白名单）、host-lifecycle 与

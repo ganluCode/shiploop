@@ -17,9 +17,9 @@ accepted 仅代表提交成功），见 `docs/p03-3-cli-execution-operations.md`
 `application/command-service.ts`（`execution.start` 命令面接线与提交后唤醒）、
 `packages/core/src/adapters/composition.ts`（组合根装配与 `CoreApplication.executionStart`）、
 `packages/host/src/contract/lifecycle.ts`（Host 通用命令路由接线宣告，v5 内增量）。
-守护测试：`test/p03-3-execution-start.test.ts`、`test/commands-contract.test.ts`、
-`test/authorization-contract.test.ts`、`test/p03-3-work-command-receipts.test.ts`、
-`test/docs-p03-3-execution-start-contract.test.ts`。
+守护测试：`test/modules/execution/budget/p03-3-execution-start.test.ts`、`test/modules/commands/commands-contract.test.ts`、
+`test/modules/authorization/authorization-contract.test.ts`、`test/modules/execution/budget/p03-3-work-command-receipts.test.ts`、
+`test/modules/execution/budget/docs-p03-3-execution-start-contract.test.ts`。
 
 ## 1. 命令面与授权
 
@@ -141,7 +141,7 @@ accepted 仅代表提交成功），见 `docs/p03-3-cli-execution-operations.md`
 
 ## 8. 验证记录（F-005，attempt 1）
 
-- `test/p03-3-execution-start.test.ts`（20 用例，真实临时 Git/SQLite/制品）：
+- `test/modules/execution/budget/p03-3-execution-start.test.ts`（20 用例，真实临时 Git/SQLite/制品）：
   首次授权原子提交（runsCreated=1/runtime_starts=0/queued+可查询原因/初始修订行/
   脱敏事件/白名单与公开映射/Task-Feature 不变）、注入失败整组回滚、preview_stale
   矩阵（摘要不一致/代码漂移/实质修订重批/预算调整/活动 Run 阻塞/端口未装配）、

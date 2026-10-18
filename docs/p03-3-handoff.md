@@ -15,12 +15,12 @@ Run 保持 queued、reason=`scheduler_not_assembled`，runtimeStartsReserved=0�
 ## 2. 可复现入口与证据
 
 ```text
-node scripts/run-tests.ts test/p03-3-cli-built.test.ts test/docs-p03-3-handoff.test.ts
+node scripts/run-tests.ts test/modules/execution/budget/p03-3-cli-built.test.ts test/modules/execution/budget/docs-p03-3-handoff.test.ts
 npm run verify
 npm run check:boundaries
 ```
 
-`test/p03-3-cli-built.test.ts` 在 beforeAll 真实构建；所有产品命令均由 dist CLI 子进程执行。
+`test/modules/execution/budget/p03-3-cli-built.test.ts` 在 beforeAll 真实构建；所有产品命令均由 dist CLI 子进程执行。
 隔离 HOME/TMPDIR/数据根，环境只继承 PATH，不读取用户配置、不传递 API key、不联网或调用模型。
 用真实 Git 临时项目和前序 `baseline run --confirm --wait` 发布一份需求文本制品，再走
 project register/config create/phase create/feature import/feature approve/task prepare/

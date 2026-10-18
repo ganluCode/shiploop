@@ -92,13 +92,13 @@ their successors non-ready regardless of the two SQLite commit orders. Lifecycle
 
 ## Evidence
 
-`test/p03-4-attempt-lifecycle.test.ts` covers identity fencing, crossed and terminal
+`test/modules/scheduling/p03-4-attempt-lifecycle.test.ts` covers identity fencing, crossed and terminal
 notifications, bounded sanitized diagnostics, persisted replay, preparation
 failure, uncertain launch, independent stopped/result/runtime facts, forged stop
 proof, result/evidence validation, rollback and both manual-block/result commit
 orders using independent SQLite connections. It also exercises the authorized
 block command, stale digest/revision, denied capability, receipt rollback/replay
-and current check-policy changes. `test/p03-4-attempt-lifecycle-schema.test.ts`
+and current check-policy changes. `test/modules/scheduling/p03-4-attempt-lifecycle-schema.test.ts`
 covers v16 upgrade, checksum preservation, failed-v17 rollback/retry, reopen and
 idempotent migration. Existing claim/resource/DAG/budget/protocol suites remain
 regression coverage.

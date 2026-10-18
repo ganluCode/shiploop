@@ -26,7 +26,7 @@ Durable 的 SQLite 检查点和请求去重确实工作，但不能提供业务�
 npm ci --prefix experiments/pi-durable --ignore-scripts --no-audit --no-fund
 npm test --prefix experiments/pi-durable
 node experiments/pi-durable/probe.mjs > experiments/pi-durable/evidence.json
-SHIPLOOP_PI_DURABLE_SPIKE=1 node scripts/run-tests.ts test/p03-3a-pi-durable-spike.test.ts
+SHIPLOOP_PI_DURABLE_SPIKE=1 node scripts/run-tests.ts test/modules/runtime/recovery/p03-3a-pi-durable-spike.test.ts
 ```
 
 安装需要访问 npm registry；实验执行本身不需要网络、模型凭据或订阅。使用官方 `fauxProvider` 和真实 `Harness`/SQLite，而非自写恢复状态机。`createModels()` 默认仅内存凭据，唯一注册 provider 是 faux；不调用标准 SDK 默认资源发现，不打开本机 `auth.json`/MCP 配置，不读取或复制真实密钥。子进程使用环境白名单。受控工具只修改临时目录；遗留进程用 PID 显式清理，全部有超时，非协作测试在有界观察后主动释放。

@@ -115,7 +115,7 @@
     启动入口（F-006）、HTTP 认证探测与 CLI 仍未实现；owner_active 仅由可信探测端口
     的认证成功响应 + 共享双向校验得出，不从 PID/发现推断。
   - **F-005 增量（2026-10-05，仅测试夹具，产品入口零变化）**：新增
-    `test/helpers/host/` 夹具公共面并由 `test/host-fixture-kit.test.ts` 自测：
+    `test/helpers/host/` 夹具公共面并由 `test/modules/host/host-fixture-kit.test.ts` 自测：
     `isolated-environment`（复用 temp-sandbox、白名单 env、规范数据根与统一回收）、
     `managed-child`（真实 Node 子进程 ready/go 屏障、有界等待、IPC close→SIGTERM→
     SIGKILL 升级与退出核验，`exit_unconfirmed` 不冒充停止）、`fixture-child` 标准
@@ -257,7 +257,7 @@
     Core、不直接使用 HTTP/child_process/fs（能力留在 Host 包）。无新增
     第三方依赖；本任务没有 project/run 等命令。
   - **F-013 增量（2026-10-07）**：新增整 Feature 真实多进程集成回归
-    `test/p02-1-integration-regression.test.ts`（29 项；产品源码/依赖/
+    `test/modules/host/p02-1-integration-regression.test.ts`（29 项；产品源码/依赖/
     构建脚本零改动）。CLI 驱动子进程夹具 `test/helpers/host/
     cli-driver-child.ts` 以 ready/go 同步屏障在独立真实子进程中运行生产
     CLI 执行层 runHostCli；测试子进程加载器增加第三处精确公共入口映射

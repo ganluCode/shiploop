@@ -82,7 +82,7 @@
 
 ## 7. 聚焦验证
 
-`test/p03-9-f009-finalization-retry.test.ts` 使用真实临时 Git/SQLite/Artifact：
+`test/modules/delivery/retry/p03-9-f009-finalization-retry.test.ts` 使用真实临时 Git/SQLite/Artifact：
 
 - 相同输入重复计算不改变任何历史行；
 - 源码变更只使当前 Task/最终检查证据待重验；

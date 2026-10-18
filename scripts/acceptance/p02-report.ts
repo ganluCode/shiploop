@@ -134,7 +134,7 @@ export const P02_REQUIRED_CHECKS: readonly P02RequiredCheckDefinition[] = [
     frBranch: 'FR-1 唯一 Host',
     summary:
       '双真实 dist CLI 同步竞争同一临时数据根：恰一持锁 Host/写入者、同一 hostInstanceId 与数据根身份、127.0.0.1 随机端口、发现目录权限合规',
-    testEntry: 'test/p02-4-dual-cli-acceptance.test.ts',
+    testEntry: 'test/modules/acceptance/p02-4-dual-cli-acceptance.test.ts',
     expectedNegative: false,
     requiredAssertions: [],
   },
@@ -144,7 +144,7 @@ export const P02_REQUIRED_CHECKS: readonly P02RequiredCheckDefinition[] = [
     frBranch: 'FR-1 共享项目/配置',
     summary:
       'CLI A 确认注册 + 配置写入后，CLI B 经列表/详情/overview/配置查询读到同一 projectId、绑定、描述、标签、当前值、revision 与有效来源',
-    testEntry: 'test/p02-4-dual-cli-acceptance.test.ts',
+    testEntry: 'test/modules/acceptance/p02-4-dual-cli-acceptance.test.ts',
     expectedNegative: false,
     requiredAssertions: [],
   },
@@ -154,7 +154,7 @@ export const P02_REQUIRED_CHECKS: readonly P02RequiredCheckDefinition[] = [
     frBranch: 'FR-1 授权基线',
     summary:
       '用户明确确认的确定性成功命令：双客户端查询同一 operationId、逐项检查结果、退出码 0、代码身份与可校验输出制品；accepted 不作 passed 依据',
-    testEntry: 'test/p02-4-dual-cli-acceptance.test.ts',
+    testEntry: 'test/modules/acceptance/p02-4-dual-cli-acceptance.test.ts',
     expectedNegative: false,
     requiredAssertions: [],
   },
@@ -164,7 +164,7 @@ export const P02_REQUIRED_CHECKS: readonly P02RequiredCheckDefinition[] = [
     frBranch: 'FR-2 重复初始化',
     summary:
       '同规范路径及其真实路径别名重复 init 得同一 projectId；项目/绑定各一份，原名称/描述/标签/配置未被重复初始化覆盖',
-    testEntry: 'test/p02-4-idempotency-acceptance.test.ts',
+    testEntry: 'test/modules/acceptance/p02-4-idempotency-acceptance.test.ts',
     expectedNegative: true,
     requiredAssertions: ['error', 'persistentState'],
   },
@@ -174,7 +174,7 @@ export const P02_REQUIRED_CHECKS: readonly P02RequiredCheckDefinition[] = [
     frBranch: 'FR-2 命令重放/冲突',
     summary:
       '显式同一 commandId 重放返回原持久回执与结果身份、零重复副作用；同 principal/commandId 异参数得 conflict 且无额外变更，原回执仍可查',
-    testEntry: 'test/p02-4-idempotency-acceptance.test.ts',
+    testEntry: 'test/modules/acceptance/p02-4-idempotency-acceptance.test.ts',
     expectedNegative: true,
     requiredAssertions: ['error', 'zeroStart', 'persistentState'],
   },
@@ -184,7 +184,7 @@ export const P02_REQUIRED_CHECKS: readonly P02RequiredCheckDefinition[] = [
     frBranch: 'FR-2 源文件保留',
     summary:
       '干净/脏仓库接入前后 HEAD、索引、Git 状态与文件摘要一致；恶意脚本哨兵零执行、无意外产物；取消确认按契约返回 not_run 且零启动',
-    testEntry: 'test/p02-4-repo-preservation-acceptance.test.ts',
+    testEntry: 'test/modules/acceptance/p02-4-repo-preservation-acceptance.test.ts',
     expectedNegative: true,
     requiredAssertions: ['error', 'zeroStart', 'persistentState'],
   },
@@ -194,7 +194,7 @@ export const P02_REQUIRED_CHECKS: readonly P02RequiredCheckDefinition[] = [
     frBranch: 'FR-2 认证拒绝',
     summary:
       '缺失/错误 token、旧实例身份、数据根不匹配、未知协议/Schema、非法输入、越权与监听覆盖明确拒绝；零副作用、实际绑定 127.0.0.1 且不泄漏凭据',
-    testEntry: 'test/p02-4-negative-acceptance.test.ts',
+    testEntry: 'test/modules/acceptance/p02-4-negative-acceptance.test.ts',
     expectedNegative: true,
     requiredAssertions: ['error', 'zeroStart', 'persistentState'],
   },
@@ -204,7 +204,7 @@ export const P02_REQUIRED_CHECKS: readonly P02RequiredCheckDefinition[] = [
     frBranch: 'FR-2 客户端退出',
     summary:
       '运行基线时退出/中断 CLI 的 wait/follow（observation_interrupted）：不发 stop/cancel、Host 存活、另一 CLI 仍可认证查询同一 Host',
-    testEntry: 'test/p02-4-restart-acceptance.test.ts',
+    testEntry: 'test/modules/acceptance/p02-4-restart-acceptance.test.ts',
     expectedNegative: true,
     requiredAssertions: ['error', 'persistentState'],
   },
@@ -214,7 +214,7 @@ export const P02_REQUIRED_CHECKS: readonly P02RequiredCheckDefinition[] = [
     frBranch: 'FR-1 重启查询',
     summary:
       '正式显式 host stop 核验后重启取新 hostInstanceId；新 CLI 读到原 projectId、配置值/revision、基线结果、代码身份与输出制品 hash/size 一致；旧凭据被拒、原基线不重跑',
-    testEntry: 'test/p02-4-restart-acceptance.test.ts',
+    testEntry: 'test/modules/acceptance/p02-4-restart-acceptance.test.ts',
     expectedNegative: false,
     requiredAssertions: [],
   },
@@ -224,7 +224,7 @@ export const P02_REQUIRED_CHECKS: readonly P02RequiredCheckDefinition[] = [
     frBranch: 'FR-2 基线失败',
     summary:
       '固定非零退出、拒绝授权 not_run（零启动）、缺命令/未知脚本、超时/取消/停止未确认；失败不撤销注册、不删证据、不冒充通过',
-    testEntry: 'test/p02-4-baseline-failure-acceptance.test.ts',
+    testEntry: 'test/modules/acceptance/p02-4-baseline-failure-acceptance.test.ts',
     expectedNegative: true,
     requiredAssertions: ['error', 'zeroStart', 'persistentState'],
   },
@@ -233,7 +233,7 @@ export const P02_REQUIRED_CHECKS: readonly P02RequiredCheckDefinition[] = [
     group: 'PHASE',
     frBranch: '夹具失败',
     summary: '夹具准备失败明确 fail/not_run，阶段非零，保留已取得证据并回收自有进程/临时资源',
-    testEntry: 'test/p02-4-acceptance-controller.test.ts',
+    testEntry: 'test/modules/acceptance/p02-4-acceptance-controller.test.ts',
     expectedNegative: false,
     requiredAssertions: [],
   },
@@ -242,7 +242,7 @@ export const P02_REQUIRED_CHECKS: readonly P02RequiredCheckDefinition[] = [
     group: 'PHASE',
     frBranch: '必需检查未运行',
     summary: '未提交结果/启动失败/超时/被跳过的必需项标 not_run，不得聚合为通过',
-    testEntry: 'test/p02-4-report-aggregation.test.ts',
+    testEntry: 'test/modules/acceptance/p02-4-report-aggregation.test.ts',
     expectedNegative: false,
     requiredAssertions: [],
   },
@@ -251,7 +251,7 @@ export const P02_REQUIRED_CHECKS: readonly P02RequiredCheckDefinition[] = [
     group: 'PHASE',
     frBranch: '报告完整性',
     summary: '版本化报告 Schema、逐项结果、证据 path/hash/size、脱敏与总体结论可验证',
-    testEntry: 'test/p02-4-acceptance-report.test.ts',
+    testEntry: 'test/modules/acceptance/p02-4-acceptance-report.test.ts',
     expectedNegative: false,
     requiredAssertions: [],
   },
@@ -261,7 +261,7 @@ export const P02_REQUIRED_CHECKS: readonly P02RequiredCheckDefinition[] = [
     frBranch: '重复运行不依赖残留',
     summary:
       '干净源码快照 npm ci/build 后从非源码 cwd 连续两次 accept:p02 均退出 0；run-id/报告/临时资源独立、互不覆盖',
-    testEntry: 'test/p02-4-clean-replay.test.ts',
+    testEntry: 'test/modules/acceptance/p02-4-clean-replay.test.ts',
     expectedNegative: false,
     requiredAssertions: [],
   },

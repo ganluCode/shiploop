@@ -55,10 +55,10 @@
 
 | 验收要求 | 证据入口 |
 |---|---|
-| 检查确认 + 伪造字段拒绝 + 决定/解除 + 状态三分区 + Runtime 计数不变 | `test/p03-7-f014-cli-vertical.test.ts` |
+| 检查确认 + 伪造字段拒绝 + 决定/解除 + 状态三分区 + Runtime 计数不变 | `test/modules/verification/p03-7-f014-cli-vertical.test.ts` |
 | 批准→继续→重放/重复继续/过期观察；机器绿等待批准不折算通过 | 同上（显式验证继续用例） |
-| 同 commandId 重放、过期摘要、越权主体、重复继续回执；批准/继续零 Runtime/编码调用 | `test/p03-7-f014-cli-built.test.ts`（dist/bin.js） |
-| 参数映射/输入守护/折算不变量/帮助边界/生产源码无开发机路径 | `test/p03-7-f014-cli-args.test.ts` |
+| 同 commandId 重放、过期摘要、越权主体、重复继续回执；批准/继续零 Runtime/编码调用 | `test/modules/verification/p03-7-f014-cli-built.test.ts`（dist/bin.js） |
+| 参数映射/输入守护/折算不变量/帮助边界/生产源码无开发机路径 | `test/modules/verification/p03-7-f014-cli-args.test.ts` |
 
 ## 6. 边界
 

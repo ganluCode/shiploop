@@ -62,7 +62,7 @@ Unrecoverable storage unavailability is surfaced, never interpreted as release.
 
 ## Verification
 
-`test/p03-5-workspace-retention.test.ts` covers all reasons with byte-for-byte
+`test/modules/workspace/p03-5-workspace-retention.test.ts` covers all reasons with byte-for-byte
 tracked/untracked/ignored preservation and unchanged Git refs; SQLite reopen,
 missing preparation checkpoints, lifecycle release evidence, opaque stop tokens,
 publication/result-transaction/supervisor faults, stale owner/host/version,

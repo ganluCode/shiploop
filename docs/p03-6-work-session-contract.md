@@ -69,7 +69,7 @@ monotonic watermark/activity).
 
 ## Evidence
 
-`test/p03-6-work-session.test.ts` exercises real temporary SQLite databases:
+`test/modules/runtime/p03-6-work-session.test.ts` exercises real temporary SQLite databases:
 v20 appended with frozen v1-v19 checksums; the sessions table without any
 ChatTurn/session_messages/recording_manifests table group; port validators;
 creation/progress happy paths with attempt linkage, stage advance, events and

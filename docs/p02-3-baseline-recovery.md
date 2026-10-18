@@ -46,12 +46,12 @@ claim 核对释放后才释放 DB。没有文件/SQLite 跨介质原子性假设
 
 ## 验证入口
 
-- `test/baseline-host-recovery.test.ts`：真实 Host 锁、wait/cancel 策略、idle 注入不能绕过活动，
+- `test/modules/onboarding/baseline-host-recovery.test.ts`：真实 Host 锁、wait/cancel 策略、idle 注入不能绕过活动，
   quiesce 新提交拒绝、意图收尾、原命令幂等及完成/失败/拒绝基线重启查询。
-- `test/baseline-host-faults.test.ts` 与私有 IPC child：真实自有 Host SIGKILL、运行中证据残留、
+- `test/modules/onboarding/baseline-host-faults.test.ts` 与私有 IPC child：真实自有 Host SIGKILL、运行中证据残留、
   已保存授权无启动、持久进程身份未放行、退出结果未提交、监督退出且子进程仍活跃、冻结监督
   与持久身份不匹配。断言实际组停止/保留、claim/DB/Host 锁、实际启动计数及 tracked/untracked
   用户改动保留。夹具有有限屏障与收尾预算，不访问模型、网络、真实凭据或用户仓库。
-- `test/baseline-execution.test.ts` 追加授权在途与 quiesce 竞争，证明显式 cancel 零进程启动。
+- `test/modules/onboarding/baseline-execution.test.ts` 追加授权在途与 quiesce 竞争，证明显式 cancel 零进程启动。
 
 全量门槛：`npm run verify`（npm test、typecheck、build），另 `npm run check:boundaries`。

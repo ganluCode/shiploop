@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "task_id": "F-006",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/recovery/p03-9-f006-recovery-reconciliation.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

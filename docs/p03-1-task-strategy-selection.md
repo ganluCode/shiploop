@@ -110,15 +110,15 @@ Task 副本，不重新读取 modelMap。
 
 ## 7. 测试与守护
 
-- `test/p03-1-task-strategy-selection.test.ts`：各复杂度整体副本、三来源与 sourceKey、
+- `test/modules/planning/p03-1-task-strategy-selection.test.ts`：各复杂度整体副本、三来源与 sourceKey、
   覆盖优先级与回退、无策略/无匹配、完整性与拒绝矩阵（缺字段/不完整覆盖/秘密正文/
   非法引用/未知字段/非法复杂度）、副本独立性、不硬编码模型（源码无厂商/模型字面量
   + 输出严格来自配置条目）、合法 ≠ 可执行、`validateTaskExecutionConfig` round-trip
   与拒绝矩阵、公共入口导出。
-- `test/docs-p03-1-task-strategy-contract.test.ts`：本文档守护（常量与实现一致、
+- `test/modules/planning/docs-p03-1-task-strategy-contract.test.ts`：本文档守护（常量与实现一致、
   优先级/来源/拒绝矩阵/范围边界逐项可核对）。
-- 合并层（整体替换、来源解释）回归见 `test/effective-settings-merge.test.ts`；
-  条目校验回归见 `test/settings-schema-v2.test.ts`。
+- 合并层（整体替换、来源解释）回归见 `test/modules/configuration/effective-settings-merge.test.ts`；
+  条目校验回归见 `test/modules/configuration/settings-schema-v2.test.ts`。
 
 ## 8. 范围边界（本任务不做）
 

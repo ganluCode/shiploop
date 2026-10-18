@@ -115,7 +115,7 @@ export const P01_REQUIRED_CHECKS: readonly P01RequiredCheckDefinition[] = [
     group: 'FR1',
     frBranch: 'FR-1 正常',
     summary: '临时数据根注册真实 Git 仓库、写全局/项目配置、发布固定正文制品',
-    testEntry: 'test/p01-4-persistence-closed-loop.test.ts',
+    testEntry: 'test/modules/acceptance/p01-4-persistence-closed-loop.test.ts',
     expectedNegative: false,
   },
   {
@@ -123,7 +123,7 @@ export const P01_REQUIRED_CHECKS: readonly P01RequiredCheckDefinition[] = [
     group: 'FR1',
     frBranch: 'FR-1 重开',
     summary: '关闭全部连接后以新装配实例打开同一数据根，逐字段一致',
-    testEntry: 'test/p01-4-persistence-closed-loop.test.ts',
+    testEntry: 'test/modules/acceptance/p01-4-persistence-closed-loop.test.ts',
     expectedNegative: false,
   },
   {
@@ -131,7 +131,7 @@ export const P01_REQUIRED_CHECKS: readonly P01RequiredCheckDefinition[] = [
     group: 'FR1',
     frBranch: 'FR-1 回滚',
     summary: '组合创建首个写入后注入确定性异常，项目及绑定/初始配置全部不存在',
-    testEntry: 'test/p01-4-sqlite-rollback-and-cas.test.ts',
+    testEntry: 'test/modules/acceptance/p01-4-sqlite-rollback-and-cas.test.ts',
     expectedNegative: true,
   },
   {
@@ -139,7 +139,7 @@ export const P01_REQUIRED_CHECKS: readonly P01RequiredCheckDefinition[] = [
     group: 'FR2',
     frBranch: 'FR-2 正常/拒绝',
     summary: '完整策略整体覆盖、当前值与来源重开读取、未知版本/runtime/不完整策略拒绝、凭据仅存引用',
-    testEntry: 'test/p01-4-config-and-tags.test.ts',
+    testEntry: 'test/modules/acceptance/p01-4-config-and-tags.test.ts',
     expectedNegative: true,
   },
   {
@@ -147,7 +147,7 @@ export const P01_REQUIRED_CHECKS: readonly P01RequiredCheckDefinition[] = [
     group: 'FR2',
     frBranch: 'FR-2 回滚',
     summary: '配置更新与脱敏变更记录提交之间注入失败，payload/revision/记录全部回滚',
-    testEntry: 'test/p01-4-sqlite-rollback-and-cas.test.ts',
+    testEntry: 'test/modules/acceptance/p01-4-sqlite-rollback-and-cas.test.ts',
     expectedNegative: true,
   },
   {
@@ -155,7 +155,7 @@ export const P01_REQUIRED_CHECKS: readonly P01RequiredCheckDefinition[] = [
     group: 'FR2',
     frBranch: 'FR-2 CAS',
     summary: '真实独立进程同一旧 revision 竞争更新恰一成功一 conflict，revision 仅增一次',
-    testEntry: 'test/p01-4-sqlite-rollback-and-cas.test.ts',
+    testEntry: 'test/modules/acceptance/p01-4-sqlite-rollback-and-cas.test.ts',
     expectedNegative: false,
   },
   {
@@ -163,7 +163,7 @@ export const P01_REQUIRED_CHECKS: readonly P01RequiredCheckDefinition[] = [
     group: 'FR2',
     frBranch: 'T32 项目标签',
     summary: '标签规范化、非法数组拒绝、任一/全部筛选及去重计数',
-    testEntry: 'test/p01-4-config-and-tags.test.ts',
+    testEntry: 'test/modules/acceptance/p01-4-config-and-tags.test.ts',
     expectedNegative: false,
   },
   {
@@ -171,7 +171,7 @@ export const P01_REQUIRED_CHECKS: readonly P01RequiredCheckDefinition[] = [
     group: 'FR2',
     frBranch: 'FR-2 制品缺失',
     summary: '删除正文后读取/核对报告 missing/corrupt，不返回有效引用或空正文',
-    testEntry: 'test/p01-4-artifact-negative.test.ts',
+    testEntry: 'test/modules/acceptance/p01-4-artifact-negative.test.ts',
     expectedNegative: true,
   },
   {
@@ -179,7 +179,7 @@ export const P01_REQUIRED_CHECKS: readonly P01RequiredCheckDefinition[] = [
     group: 'FR2',
     frBranch: 'FR-2 制品恢复',
     summary: '发布中断后重开核对；pending 仅 hash/size 匹配补 ready；孤儿保留/安全隔离',
-    testEntry: 'test/p01-4-artifact-negative.test.ts',
+    testEntry: 'test/modules/acceptance/p01-4-artifact-negative.test.ts',
     expectedNegative: false,
   },
   {
@@ -187,7 +187,7 @@ export const P01_REQUIRED_CHECKS: readonly P01RequiredCheckDefinition[] = [
     group: 'PHASE',
     frBranch: '夹具失败',
     summary: '夹具准备失败明确 fail/not_run，阶段非零，且保留已取得证据',
-    testEntry: 'test/p01-4-acceptance-controller.test.ts',
+    testEntry: 'test/modules/acceptance/p01-4-acceptance-controller.test.ts',
     expectedNegative: false,
   },
   {
@@ -195,7 +195,7 @@ export const P01_REQUIRED_CHECKS: readonly P01RequiredCheckDefinition[] = [
     group: 'PHASE',
     frBranch: '必需检查未运行',
     summary: '未提交结果/启动失败/超时/被跳过的必需项标 not_run，不得聚合为通过',
-    testEntry: 'test/p01-4-report-aggregation.test.ts',
+    testEntry: 'test/modules/acceptance/p01-4-report-aggregation.test.ts',
     expectedNegative: false,
   },
   {
@@ -203,7 +203,7 @@ export const P01_REQUIRED_CHECKS: readonly P01RequiredCheckDefinition[] = [
     group: 'ENG',
     frBranch: '构建产物',
     summary: '非源码 cwd 从 dist 装载公共入口与迁移执行闭环，无个人绝对路径/Nezha 依赖',
-    testEntry: 'test/p01-4-build-smoke.test.ts',
+    testEntry: 'test/modules/acceptance/p01-4-build-smoke.test.ts',
     expectedNegative: false,
   },
   {
@@ -211,7 +211,7 @@ export const P01_REQUIRED_CHECKS: readonly P01RequiredCheckDefinition[] = [
     group: 'PHASE',
     frBranch: '报告完整性',
     summary: '版本化报告 Schema、逐项结果、证据 path/hash/size、总体结论可验证',
-    testEntry: 'test/p01-4-report-aggregation.test.ts',
+    testEntry: 'test/modules/acceptance/p01-4-report-aggregation.test.ts',
     expectedNegative: false,
   },
 ];

@@ -66,7 +66,7 @@ F-013 已验收本机进程崩溃恢复、旧启动身份和 claim 归属核对�
 
 ## 验证
 
-`test/baseline-execution.test.ts`：真实 Git/SQLite/Node 进程与制品，覆盖顺序/幂等、真实
+`test/modules/onboarding/baseline-execution.test.ts`：真实 Git/SQLite/Node 进程与制品，覆盖顺序/幂等、真实
 失败/缺命令/相对未知脚本/npm 缺脚本/权限、空输出/零测试、代码修改及 summary、真实挂起
 取消/超时、取消与迟到成功、启动前取消、放行前代码变化、停止不确定、发布/逐项事件/最终
 事件故障和两个数据根共享公共 Git 资源。受控 fake 仅用于确定性竞争/停止未确认，不冒充真实

@@ -101,7 +101,7 @@ $ shiploop task inputs <prepare 命令 ID> --json
 
 ## F-009 集成回归登记
 
-- `test/p03-2-integration-regression.test.ts` 以正式构建 `dist/bin.js` + dist Host
+- `test/modules/planning/p03-2-integration-regression.test.ts` 以正式构建 `dist/bin.js` + dist Host
   复核本文档操作主线：三 Task 导入 → `task get` 查看策略副本 → 批准前可选覆盖
  （`task strategy`，来源 task_edit）→ `feature approve --digest` 指定摘要批准 →
   `task prepare`/`task inputs` 固定输入准备与读取复验 → `host stop`（三证据 +

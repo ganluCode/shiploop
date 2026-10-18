@@ -19,4 +19,4 @@ In-flight duplicates share one result; different command IDs for the same Featur
 
 Delivery activities join Host quiesce. New delivery requests stop entering, accepted work must settle before Core closes, and a timeout preserves the existing unconfirmed-stop behavior. This does not cancel or claim to stop an external process.
 
-Task-local verification is in `test/p03-8-f008-delivery-commands.test.ts`, using real SQLite and Host HTTP plus explicitly injected adapter doubles. Real Git driver and reconciliation regressions are selected for Nezha; this task's HTTP tests do not claim to validate those drivers again.
+Task-local verification is in `test/modules/delivery/p03-8-f008-delivery-commands.test.ts`, using real SQLite and Host HTTP plus explicitly injected adapter doubles. Real Git driver and reconciliation regressions are selected for Nezha; this task's HTTP tests do not claim to validate those drivers again.

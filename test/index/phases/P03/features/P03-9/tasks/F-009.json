@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "task_id": "F-009",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/delivery/retry/p03-9-f009-finalization-retry.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

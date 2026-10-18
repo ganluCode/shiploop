@@ -124,9 +124,9 @@ node packages/cli/dist/bin.js host stop --data-root "$ROOT" --json
 `config update` 成功后 `result.revision` 递增；相同 `--command-id` + 相同参数的再次提交返回
 同一回执（`replayed: true`，`resultRef` 不变），不同参数复用同一 `--command-id` 得到
 `conflict`（`details.reason='idempotency_key_reuse'`，零副作用）。该纵切由
-[test/app-cli-execute.test.ts](../test/app-cli-execute.test.ts)、
-[test/app-cli-config-execute.test.ts](../test/app-cli-config-execute.test.ts) 与文档守护
-[test/docs-p02-2-operations.test.ts](../test/docs-p02-2-operations.test.ts) 在真实 Host 子进程上运行。
+[test/modules/cli/app-cli-execute.test.ts](../test/modules/cli/app-cli-execute.test.ts)、
+[test/modules/cli/app-cli-config-execute.test.ts](../test/modules/cli/app-cli-config-execute.test.ts) 与文档守护
+[test/modules/commands/docs-p02-2-operations.test.ts](../test/modules/commands/docs-p02-2-operations.test.ts) 在真实 Host 子进程上运行。
 
 ## 5. 命令回执、幂等与超时语义
 
@@ -246,6 +246,6 @@ node packages/cli/dist/bin.js host stop --data-root "$ROOT" --json
 仓库级验证：`npm test`（开发内循环）；`npm run typecheck`；`npm run check:boundaries`；
 `npm run build`（含 dist 冒烟）；`npm run verify`（锁文件预检 + `npm test` / `typecheck` / `build`
 串联，fail-closed）。文档示例与实现的一致性由
-[test/docs-p02-2-operations.test.ts](../test/docs-p02-2-operations.test.ts) 守护（真实临时仓库/
+[test/modules/commands/docs-p02-2-operations.test.ts](../test/modules/commands/docs-p02-2-operations.test.ts) 守护（真实临时仓库/
 数据根与真实 Host 子进程纵向闭环 + 解析面/常量交叉核对 + 无开发机路径/凭据断言）；FR 分支与
 脱敏证据见 [acceptance/evidence-p02-2/f018-regression-evidence.md](acceptance/evidence-p02-2/f018-regression-evidence.md)。

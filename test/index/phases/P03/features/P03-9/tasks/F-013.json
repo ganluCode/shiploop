@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "task_id": "F-013",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/recovery/p03-9-f013-control-recovery-query.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

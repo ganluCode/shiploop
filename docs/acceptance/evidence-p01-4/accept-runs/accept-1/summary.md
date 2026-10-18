@@ -38,11 +38,11 @@
 | 命令 | argv | cwd（逻辑） | 退出码 | 耗时（ms） |
 |---|---|---|---|---|
 | npm run verify（test/typecheck/build） | `<node> <npm-cli> run verify` | `<repo>` | 0 | 7378 |
-| 持久化闭环场景（P01-FR1-NORMAL / P01-FR1-REOPEN） | `<node> scripts/run-tests.ts test/p01-4-persistence-closed-loop.test.ts` | `<repo>` | 0 | 1233 |
-| SQLite 回滚与配置 CAS 场景（P01-FR1-ROLLBACK / P01-FR2-ROLLBACK / P01-FR2-CAS） | `<node> scripts/run-tests.ts test/p01-4-sqlite-rollback-and-cas.test.ts` | `<repo>` | 0 | 1410 |
-| 制品缺失/恢复负例场景（P01-FR2-ARTIFACT-MISSING / P01-FR2-ARTIFACT-RECOVERY） | `<node> scripts/run-tests.ts test/p01-4-artifact-negative.test.ts` | `<repo>` | 0 | 1725 |
-| 当前配置与项目标签场景（P01-FR2-CONFIG / P01-FR2-TAGS） | `<node> scripts/run-tests.ts test/p01-4-config-and-tags.test.ts` | `<repo>` | 0 | 1595 |
-| 构建产物冒烟与路径扫描（非源码 cwd 装配 + 制品关闭重开） | `<node> scripts/run-tests.ts test/p01-4-build-smoke.test.ts` | `<repo>` | 0 | 715 |
+| 持久化闭环场景（P01-FR1-NORMAL / P01-FR1-REOPEN） | `<node> scripts/run-tests.ts test/modules/acceptance/p01-4-persistence-closed-loop.test.ts` | `<repo>` | 0 | 1233 |
+| SQLite 回滚与配置 CAS 场景（P01-FR1-ROLLBACK / P01-FR2-ROLLBACK / P01-FR2-CAS） | `<node> scripts/run-tests.ts test/modules/acceptance/p01-4-sqlite-rollback-and-cas.test.ts` | `<repo>` | 0 | 1410 |
+| 制品缺失/恢复负例场景（P01-FR2-ARTIFACT-MISSING / P01-FR2-ARTIFACT-RECOVERY） | `<node> scripts/run-tests.ts test/modules/acceptance/p01-4-artifact-negative.test.ts` | `<repo>` | 0 | 1725 |
+| 当前配置与项目标签场景（P01-FR2-CONFIG / P01-FR2-TAGS） | `<node> scripts/run-tests.ts test/modules/acceptance/p01-4-config-and-tags.test.ts` | `<repo>` | 0 | 1595 |
+| 构建产物冒烟与路径扫描（非源码 cwd 装配 + 制品关闭重开） | `<node> scripts/run-tests.ts test/modules/acceptance/p01-4-build-smoke.test.ts` | `<repo>` | 0 | 715 |
 
 ## 阶段外能力（不计入必需项通过数）
 
@@ -81,5 +81,5 @@
 - 正式验收平台限 macOS；Windows/WSL/Linux 未验收。
 - 可信项目模式不等于强 OS 沙箱；Pi 默认工具无强 OS 沙箱。
 - T03/T24/T26/T32 仅覆盖 P01 已实现子集（验收契约 §4）；完整 Task 策略复制属 P03，本阶段不建执行表。
-- P01-ENG-BUILD-SMOKE 由 test/p01-4-build-smoke.test.ts 承接：临时编译 dist 在非源码 cwd 装配并发布/重开制品，同时扫描个人绝对路径/被禁运行依赖/缺失迁移资源；verify 的 build 在它之前完成。
+- P01-ENG-BUILD-SMOKE 由 test/modules/acceptance/p01-4-build-smoke.test.ts 承接：临时编译 dist 在非源码 cwd 装配并发布/重开制品，同时扫描个人绝对路径/被禁运行依赖/缺失迁移资源；verify 的 build 在它之前完成。
 

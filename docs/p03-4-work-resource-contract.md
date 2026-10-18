@@ -95,7 +95,7 @@ repository as part of release.
 
 ## Verification
 
-`test/p03-4-work-resources.test.ts` covers transactional rollback, canonical
+`test/modules/scheduling/p03-4-work-resources.test.ts` covers transactional rollback, canonical
 aliases and identity attacks, binding revision drift, baseline competition in
 both orders, true cross-process races between Tasks/Features/Projects and
 baseline/Work, every fencing field, expiry/reopen, corrupt groups, launch

@@ -44,11 +44,11 @@
 | F-011 | 只读查询面：sessions.list/session.get/session.evidence.get + 公开投影与 fail-closed 证据校验 | `ports/work-session-query.ts`、`adapters/sqlite/work-session-query-store.ts`、`docs/p03-6-session-query-contract.md` |
 | F-012 | 组合根/Host 接线：Runtime 未装配 runtime_not_found 不认领；取消命令/回执/重放、Host 关闭停止核验 | `adapters/work-execution.ts`、`adapters/composition.ts`、`packages/host` |
 | F-013 | CLI execution sessions/session/session-evidence/cancel 结构化输出（五类表达互不折算） | `packages/cli/src/app/work-session.ts`、`packages/cli/src/app/args.ts` |
-| F-014 | 真实资源纵向集成、完整门禁与本文交接（不新增产品行为/依赖/迁移） | `test/p03-6-vertical-integration.test.ts`、`test/docs-p03-6-handoff.test.ts` |
+| F-014 | 真实资源纵向集成、完整门禁与本文交接（不新增产品行为/依赖/迁移） | `test/modules/runtime/p03-6-vertical-integration.test.ts`、`test/modules/runtime/docs-p03-6-handoff.test.ts` |
 
 ## 2. F-014 真实资源纵向集成（验收 1/3；真实 SQLite/Git/文件/受控进程，仅模型决策为 Fake）
 
-`test/p03-6-vertical-integration.test.ts` 两个用例：
+`test/modules/runtime/p03-6-vertical-integration.test.ts` 两个用例：
 
 1. **全链路纵向**：前序正式入口（project.register → settings → phase/plan 导入 → 批准 →
    execution.input.prepare → execution.start，均为真实命令事务）→ Host 扫描认领 + 真实
@@ -125,7 +125,7 @@ Verifier、完整恢复与 P03 阶段验收均不在本 Feature 范围内。
 
 | 检查 | 命令 | 结果 |
 |---|---|---|
-| 全量测试（238 文件分批，并集为 `npm test` 同一文件集） | `node scripts/run-tests.ts <批次文件>` ×3 + 干净树单文件复跑 `test/p02-4-clean-replay.test.ts` | 批 1：80 文件 1404 通过 exit 0；批 2：78 文件通过、clean-replay 因未提交脏树按设计失败（非代码回归，提交后复跑）；批 3：79 文件 1561 通过 exit 0；clean-replay 复跑结果以 `verifications/F-014/verification-result.json` 为准（单文件成功运行约 560–790 秒，可能超出 600 秒工具预算，超出则记 not_run 并保留日志） |
+| 全量测试（238 文件分批，并集为 `npm test` 同一文件集） | `node scripts/run-tests.ts <批次文件>` ×3 + 干净树单文件复跑 `test/modules/acceptance/p02-4-clean-replay.test.ts` | 批 1：80 文件 1404 通过 exit 0；批 2：78 文件通过、clean-replay 因未提交脏树按设计失败（非代码回归，提交后复跑）；批 3：79 文件 1561 通过 exit 0；clean-replay 复跑结果以 `verifications/F-014/verification-result.json` 为准（单文件成功运行约 560–790 秒，可能超出 600 秒工具预算，超出则记 not_run 并保留日志） |
 | 类型检查 | `npm run typecheck` | exit 0 |
 | 正式构建 | `npm run build` | exit 0（含 dist 冒烟） |
 | 工程边界 | `npm run check:boundaries` | exit 0（208 生产文件 0 diagnostics） |
@@ -175,7 +175,7 @@ Verifier、完整恢复与 P03 阶段验收均不在本 Feature 范围内。
 ### 验收工具修补（2026-10-16）
 
 - 完整快照复跑必须在已提交且干净的基线上显式运行：
-  `SHIPLOOP_TEST_RUN_TIMEOUT_MS=4800000 SHIPLOOP_VERIFY_STEP_TIMEOUT_MS=1200000 npm test -- test/p02-4-clean-replay.test.ts`。
+  `SHIPLOOP_TEST_RUN_TIMEOUT_MS=4800000 SHIPLOOP_VERIFY_STEP_TIMEOUT_MS=1200000 npm test -- test/modules/acceptance/p02-4-clean-replay.test.ts`。
   默认 `npm test` 不等价于该完整复跑；两次 accept:p02 均成功才能放行。
 - 隔离环境只额外传递上述两项有限预算，不导入用户认证、MCP、模型或测试过滤器；
   内层 verify 同时把批准预算传到测试启动器，避免默认 600 秒提前截断。

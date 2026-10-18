@@ -99,7 +99,7 @@ I/O、等待审批不进入该事务。
 
 ## 5. 验证覆盖
 
-`test/p03-8-f002-git-operation-store.test.ts`（18 用例）：
+`test/modules/delivery/p03-8-f002-git-operation-store.test.ts`（18 用例）：
 
 - 迁移 v26：版本/长度、v1–v25 checksum 冻结、空库与 P02 v5/v25 前序库升级、
   features.delivery_status 列、表/索引/触发器结构；

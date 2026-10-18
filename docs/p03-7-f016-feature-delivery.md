@@ -35,7 +35,7 @@ P03-7 整体（F-001–F-015，此前已交付并通过各自聚焦验收）：
 
 F-016（本次交付）：
 
-- `test/p03-7-f016-e2e-three-task-chain.test.ts`：正式装配入口
+- `test/modules/verification/p03-7-f016-e2e-three-task-chain.test.ts`：正式装配入口
   （openCoreApplication 组合 + workExecution 调度 + 显式 FakeRuntime + 真实
   临时 SQLite/Git/worktree/受监督进程）驱动 t-1→t-2→t-3 链：首次检查失败
   （真实定版失败批次 + 受信收尾）→ 同 worktree 第二次增量修复成功（首跑文件
@@ -43,13 +43,13 @@ F-016（本次交付）：
   dependency_pending）→ t-2/t-3 依次通过；全部通过后调度给出
   feature_final_verification 交接缺口，Run/Feature 不被冒称完成（P03-8 边界）；
   关闭核验 closed=true、无未决 Attempt。
-- `test/p03-7-f016-verification-wiring.test.ts`：分组集成验证局部选择与安全
+- `test/modules/verification/p03-7-f016-verification-wiring.test.ts`：分组集成验证局部选择与安全
   回退（候选缺失/解析拒绝/共享高风险变更/无回退政策 error 空计划）、参数与
   路径攻击（payload 级 8 类 + 解析级 5 类，候选内容不进入 argv）、零测试
   （真实执行器 inconclusive）、输出/证据缺口（聚合层 + 预算分类层双层闭环：
   无输出制品 → non_code_failure/evidence_incomplete，不误扣代码额度）、检查
   前后源码变化（source_changed/execution_identity_changed 失效旧证据）。
-- `test/p03-7-f016-approval-budget-integration.test.ts`：机器绿仍等人审
+- `test/modules/verification/p03-7-f016-approval-budget-integration.test.ts`：机器绿仍等人审
   （Task 不 passed、Run paused(approval)、后继不解锁）；新阻塞与完成竞争
   （批准后新增 block → 继续保持等待）；越权（forbidden）与过期摘要（conflict）
   批准拒绝；解除不启动编码（runtime_starts/Attempt 计数不变）；显式继续复用
@@ -76,11 +76,11 @@ F-016（本次交付）：
 
 | 命令 | 退出码 | 结果 |
 | --- | --- | --- |
-| `node scripts/run-tests.ts test/p03-7-f016-e2e-three-task-chain.test.ts` | 0（attempt2） | 1 passed（attempt1 为 RED 阶段，1 failed，保留） |
-| `node scripts/run-tests.ts test/p03-7-f016-verification-wiring.test.ts` | 0（attempt2） | 7 passed（attempt1 1 failed，保留） |
-| `node scripts/run-tests.ts test/p03-7-f016-approval-budget-integration.test.ts` | 0（attempt2） | 3 passed（attempt1 3 failed，保留） |
-| `node scripts/run-tests.ts test/p03-7-f012-work-loop-rework.test.ts test/p03-7-f014-cli-vertical.test.ts test/p03-7-f014-cli-built.test.ts` | 0 | 6 passed（回归批次 1） |
-| `node scripts/run-tests.ts test/p03-7-f013-host-query-wiring.test.ts test/p03-7-f013-verification-approval-query.test.ts test/p03-6-execution-input-binding.test.ts` | 0 | 39 passed（回归批次 2） |
+| `node scripts/run-tests.ts test/modules/verification/p03-7-f016-e2e-three-task-chain.test.ts` | 0（attempt2） | 1 passed（attempt1 为 RED 阶段，1 failed，保留） |
+| `node scripts/run-tests.ts test/modules/verification/p03-7-f016-verification-wiring.test.ts` | 0（attempt2） | 7 passed（attempt1 1 failed，保留） |
+| `node scripts/run-tests.ts test/modules/verification/p03-7-f016-approval-budget-integration.test.ts` | 0（attempt2） | 3 passed（attempt1 3 failed，保留） |
+| `node scripts/run-tests.ts test/modules/verification/p03-7-f012-work-loop-rework.test.ts test/modules/verification/p03-7-f014-cli-vertical.test.ts test/modules/verification/p03-7-f014-cli-built.test.ts` | 0 | 6 passed（回归批次 1） |
+| `node scripts/run-tests.ts test/modules/verification/p03-7-f013-host-query-wiring.test.ts test/modules/verification/p03-7-f013-verification-approval-query.test.ts test/modules/runtime/p03-6-execution-input-binding.test.ts` | 0 | 39 passed（回归批次 2） |
 | `npx tsc -p tsconfig.json` | 0（attempt2） | 0 diagnostics（attempt1 修复类型问题，保留） |
 | `node scripts/run-tests.ts`（四个 F-016/受影响文件收尾复跑） | 0 | 13 passed |
 

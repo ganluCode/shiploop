@@ -134,8 +134,8 @@ $ shiploop execution revise <batchId> --project aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeee
 
 ## F-012 验证记录
 
-- `test/p03-3-cli-execution-args.test.ts`（纯面层：命令面/参数映射/预算文档校验/
-  四态结构化输出/帮助与人类行脱敏）、`test/p03-3-cli-execution-vertical.test.ts`
+- `test/modules/execution/budget/p03-3-cli-execution-args.test.ts`（纯面层：命令面/参数映射/预算文档校验/
+  四态结构化输出/帮助与人类行脱敏）、`test/modules/execution/budget/p03-3-cli-execution-vertical.test.ts`
   （真实临时 Host + SQLite + Git：预览后确认、同命令重放、状态查询、显式修订、
   过期预览与参数错误不发启动请求、跨项目授权拒绝）与本文档守护测试；
 - 纵向只经 Host 命令面：不改全局用户配置、不调用真实模型、无 wait/cancel/resume。

@@ -54,7 +54,7 @@
 - **F-013**：整 Feature 真实多进程集成回归（29 项）与脱敏证据映射。
 - **F-014**（本报告）：[p02-1-operations.md](../p02-1-operations.md) 操作说明、
   [p02-1-handoff.md](../p02-1-handoff.md) 接口交接与本文，含文档示例运行核验守护
-  [test/docs-p02-1-operations.test.ts](../../test/docs-p02-1-operations.test.ts)。
+  [test/modules/host/docs-p02-1-operations.test.ts](../../test/modules/host/docs-p02-1-operations.test.ts)。
 
 ## 3. 环境与版本
 
@@ -93,7 +93,7 @@ F-013 在受测 commit 上完成整 Feature 真实多进程回归，主要命令
   `packages/cli/dist/bin.js` 与真实参数（`--data-root`/`--json`/`--start-timeout-ms`/
   `--stop-command-id`/`--confirm-timeout-ms`）与默认值/范围（`15000` / `1000..60000` /
   `10000` / `0..30000`）。
-- 新增 [test/docs-p02-1-operations.test.ts](../../test/docs-p02-1-operations.test.ts)（3 用例）：
+- 新增 [test/modules/host/docs-p02-1-operations.test.ts](../../test/modules/host/docs-p02-1-operations.test.ts)（3 用例）：
   在真实临时数据根与真实 Host 子进程上用生产执行层 `runHostCli` 跑通 start → 二次 start 同实例
   → status → stop（三证据 `stopped`）→ 无实例 status（`host_not_found`，退出码 3），并交叉核对
   文档记录的命令、参数、默认值、退出码、诊断码，断言文档不含开发机绝对路径或凭据样例。

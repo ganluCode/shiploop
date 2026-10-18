@@ -136,7 +136,7 @@
 
 ## 6. 验证
 
-- `test/p03-5-workspace-host-integration.test.ts`：真实临时 Git/SQLite/
+- `test/modules/workspace/p03-5-workspace-host-integration.test.ts`：真实临时 Git/SQLite/
   Host（startHost + 真实 HTTP）。组合根纵向：命令面真实链路
   （register→phase→import→decide→input.prepare→preview→start）→ 认领
   （CoreApplication.taskClaims + authority）→ 准备（workspacePreparation，

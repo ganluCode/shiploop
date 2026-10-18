@@ -11,7 +11,7 @@ Use Node 22.19.0 and npm 10.9.3 from the repository root:
 npm ci --prefix experiments/pi-durable --ignore-scripts --no-audit --no-fund
 npm test --prefix experiments/pi-durable
 node experiments/pi-durable/probe.mjs > experiments/pi-durable/evidence.json
-SHIPLOOP_PI_DURABLE_SPIKE=1 node scripts/run-tests.ts test/p03-3a-pi-durable-spike.test.ts
+SHIPLOOP_PI_DURABLE_SPIKE=1 node scripts/run-tests.ts test/modules/runtime/recovery/p03-3a-pi-durable-spike.test.ts
 ```
 
 The installation needs registry access; probes need no network or credentials.

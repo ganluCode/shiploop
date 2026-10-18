@@ -4,7 +4,7 @@
  *
  * 契约依据：docs/p02-3-onboarding-contract.md §6.2/§8/§9.2/§10/§13；
  * 端口语义基线见 ports/baseline-store.ts（本模块实现同组行为断言的
- * 真实 SQLite 版本，测试见 test/sqlite-baseline-store.test.ts）。
+ * 真实 SQLite 版本，测试见 test/modules/storage/sqlite/sqlite-baseline-store.test.ts）。
  *
  * 不变量：
  * - 输入一律为 unknown，先经 ports 校验器再持久化：校验失败发生在任何 SQL

@@ -61,11 +61,11 @@ import { verifyP02ReportDirectory } from './p02-report.ts';
 import { loadP02AcceptanceConfig } from './p02-config.ts';
 
 /* ------------------------------------------------------------------ *
- * 冻结契约（test/p02-4-clean-replay.test.ts 逐项守护）
+ * 冻结契约（test/modules/acceptance/p02-4-clean-replay.test.ts 逐项守护）
  * ------------------------------------------------------------------ */
 
 /** P02-ENG-CLEAN-REPLAY 的承接测试入口（与 p02-report.ts/acceptance/p02.config.json 一致）。 */
-export const P02_CLEAN_REPLAY_ENTRY = 'test/p02-4-clean-replay.test.ts';
+export const P02_CLEAN_REPLAY_ENTRY = 'test/modules/acceptance/p02-4-clean-replay.test.ts';
 
 /** 证据输出目录（相对受测仓库根；P01 evidence-p01-4 同约定）。 */
 export const P02_CLEAN_REPLAY_OUT_DIR = 'docs/acceptance/evidence-p02-4-clean-replay';

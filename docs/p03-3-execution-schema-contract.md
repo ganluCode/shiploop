@@ -3,8 +3,8 @@
 状态：已实现（F-002 范围：迁移 v9 与 Drizzle Schema；存储原语/命令/预占/结算随 F-003..F-010 落地）。
 权威实现：`packages/core/src/adapters/sqlite/migrations.ts`（迁移 v9 DDL 与不可变内容触发器）、
 `packages/core/src/adapters/sqlite/schema.ts`（Drizzle Schema）。
-守护测试：`test/p03-3-execution-schema.test.ts`、`test/sqlite-schema-migrations.test.ts`、
-`test/sqlite-migration-runner.test.ts`、`test/docs-p03-3-execution-schema-contract.test.ts`。
+守护测试：`test/modules/execution/budget/p03-3-execution-schema.test.ts`、`test/modules/storage/sqlite/sqlite-schema-migrations.test.ts`、
+`test/modules/storage/sqlite/sqlite-migration-runner.test.ts`、`test/modules/execution/budget/docs-p03-3-execution-schema-contract.test.ts`。
 
 F-003 接续登记：追加迁移 v10 扩展既有命令回执关联；历史 v1..v9 checksum 不变。
 Work 回执不虚建基线实体，使用真实 Batch/Run 外键；v9 历史升级测试继续固定到 v9。
@@ -13,7 +13,7 @@ Work 回执不虚建基线实体，使用真实 Batch/Run 外键；v9 历史升�
 ## 1. 迁移接续（acceptance 1）
 
 - 从前序真实最新迁移 **v8** 继续追加 **v9**；历史 v1..v8（含 v1..v5 与已合入前序 v6/v7/v8）
-  SQL 与 checksum 逐字节不变（冻结摘要断言于 `test/p03-3-execution-schema.test.ts`）。
+  SQL 与 checksum 逐字节不变（冻结摘要断言于 `test/modules/execution/budget/p03-3-execution-schema.test.ts`）。
 - 升级路径（全部真实 SQLite 验证既有数据逐字段保留）：
   - 空库 → v9：三表建立且为空；
   - 真实 P02 v5 数据库（项目/绑定/全局与项目配置/元数据事件/Artifact/completed 与
@@ -67,7 +67,7 @@ Work 回执不虚建基线实体，使用真实 Batch/Run 外键；v9 历史升�
 ## 4. 不可变内容（acceptance 2/4；触发器 + 失败用例）
 
 Drizzle 无法表达触发器；不可变内容由迁移 v9 触发器承载（列/索引/外键一致性仍由
-`test/sqlite-schema-migrations.test.ts` 经 pragma 与 `getTableConfig` 交叉核对）：
+`test/modules/storage/sqlite/sqlite-schema-migrations.test.ts` 经 pragma 与 `getTableConfig` 交叉核对）：
 
 - `execution_batches_immutable_columns_update`：id/created_at/project_id/phase_id/
   feature_id/scope_snapshot/config_snapshot UPDATE 覆盖拒绝（当前预算、状态、累计
@@ -124,14 +124,14 @@ Drizzle 无法表达触发器；不可变内容由迁移 v9 触发器承载（�
 
 ## 7. 验证记录（F-002）
 
-- 新增：`test/p03-3-execution-schema.test.ts`（10 用例：迁移接续/冻结 checksum/空库/
+- 新增：`test/modules/execution/budget/p03-3-execution-schema.test.ts`（10 用例：迁移接续/冻结 checksum/空库/
   真实 P02 v5 数据升级/前序 v8 库升级/失败整组回滚/高版本与漂移拒写、外键与跨项目/
   单范围负例、负计数/非法状态/非法 JSON/单成员范围/重复派发与修订身份负例、活动 Run
   与活动 Batch 条件唯一（含 paused/interrupted 不可绕过）、不可变内容失败矩阵）。
-- 受影响回归：`test/sqlite-schema-migrations.test.ts`（Drizzle↔DDL 列/索引（含部分
-  索引）/CHECK/外键交叉核对 + 三表往返）、`test/sqlite-migration-runner.test.ts`、
-  `test/p03-1-plan-structure-storage.test.ts`、`test/sqlite-baseline-store.test.ts`、
-  `test/sqlite-artifact-store.test.ts`、p03-1/p03-2 命令与输入边界守护（执行域表为
+- 受影响回归：`test/modules/storage/sqlite/sqlite-schema-migrations.test.ts`（Drizzle↔DDL 列/索引（含部分
+  索引）/CHECK/外键交叉核对 + 三表往返）、`test/modules/storage/sqlite/sqlite-migration-runner.test.ts`、
+  `test/modules/planning/p03-1-plan-structure-storage.test.ts`、`test/modules/storage/sqlite/sqlite-baseline-store.test.ts`、
+  `test/modules/storage/sqlite/sqlite-artifact-store.test.ts`、p03-1/p03-2 命令与输入边界守护（执行域表为
   空表、无执行实体行）、`docs/p02-4-acceptance-contract.md` 与
   `docs/p03-3-execution-budget-contract.md` 迁移登记同步。
 - 完整门禁（scope=full）：`npm run verify`（test + typecheck + build）与

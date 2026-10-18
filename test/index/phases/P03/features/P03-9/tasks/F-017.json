@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "task_id": "F-017",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/delivery/retry/p03-9-f017-finalization-host-vertical.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

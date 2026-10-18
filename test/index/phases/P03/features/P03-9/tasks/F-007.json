@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "task_id": "F-007",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/recovery/p03-9-f007-recovery-continuation.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

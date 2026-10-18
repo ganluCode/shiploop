@@ -62,10 +62,10 @@ CLI 只经 HostClient 公共面：不打开 SQLite、不读取业务文件、不
 
 ## 5. 聚焦验证
 
-- `test/p03-9-f015-cli-control.test.ts`（18 项，纯面层）：参数映射、提交前
+- `test/modules/cli/control/p03-9-f015-cli-control.test.ts`（18 项，纯面层）：参数映射、提交前
   拒绝矩阵、四种场景（工作流 resume / Fake 新 Session 降级 / 停止不确定 /
   仅收尾重试）的结构化输出与帮助边界；
-- `test/p03-9-f015-cli-control-vertical.test.ts`（4 项，真实 Host + SQLite +
+- `test/modules/cli/control/p03-9-f015-cli-control-vertical.test.ts`（4 项，真实 Host + SQLite +
   Git + FakeRuntime 测试装配，零模型）：pause/control/幂等重放/Run 级 cancel/
   follow Abort 不取消/retry-final 创建受限新 Run（runtimeStarts=0、旧 Run
   保持终态）/recovery 查询展示零用量与 finalization scope；

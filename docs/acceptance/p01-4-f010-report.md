@@ -117,19 +117,19 @@ PRD 为 `p01-acceptance.md`（版本 0.2，2026-10-01）。本阶段实际依据
 | 检查 ID | 分支 | 结果 | 承接测试 / 命令入口 |
 |---|---|---|---|
 | `P01-ENG-VERIFY` | 工程 | pass | `npm run verify`（test / typecheck / build） |
-| `P01-FR1-NORMAL` | FR-1 正常 | pass | `test/p01-4-persistence-closed-loop.test.ts` |
+| `P01-FR1-NORMAL` | FR-1 正常 | pass | `test/modules/acceptance/p01-4-persistence-closed-loop.test.ts` |
 | `P01-FR1-REOPEN` | FR-1 重开 | pass | 同上 |
-| `P01-FR1-ROLLBACK` | FR-1 回滚（负例） | pass | `test/p01-4-sqlite-rollback-and-cas.test.ts` |
-| `P01-FR2-CONFIG` | FR-2 正常/拒绝（负例） | pass | `test/p01-4-config-and-tags.test.ts` |
-| `P01-FR2-ROLLBACK` | FR-2 回滚（负例） | pass | `test/p01-4-sqlite-rollback-and-cas.test.ts` |
+| `P01-FR1-ROLLBACK` | FR-1 回滚（负例） | pass | `test/modules/acceptance/p01-4-sqlite-rollback-and-cas.test.ts` |
+| `P01-FR2-CONFIG` | FR-2 正常/拒绝（负例） | pass | `test/modules/acceptance/p01-4-config-and-tags.test.ts` |
+| `P01-FR2-ROLLBACK` | FR-2 回滚（负例） | pass | `test/modules/acceptance/p01-4-sqlite-rollback-and-cas.test.ts` |
 | `P01-FR2-CAS` | FR-2 CAS 竞争 | pass | 同上 |
-| `P01-FR2-TAGS` | T32 项目标签 | pass | `test/p01-4-config-and-tags.test.ts` |
-| `P01-FR2-ARTIFACT-MISSING` | FR-2 制品缺失（负例） | pass | `test/p01-4-artifact-negative.test.ts` |
+| `P01-FR2-TAGS` | T32 项目标签 | pass | `test/modules/acceptance/p01-4-config-and-tags.test.ts` |
+| `P01-FR2-ARTIFACT-MISSING` | FR-2 制品缺失（负例） | pass | `test/modules/acceptance/p01-4-artifact-negative.test.ts` |
 | `P01-FR2-ARTIFACT-RECOVERY` | FR-2 制品恢复 | pass | 同上 |
-| `P01-PHASE-FIXTURE` | 夹具失败 | pass | `test/p01-4-acceptance-controller.test.ts` |
-| `P01-PHASE-NOT-RUN` | 必需检查未运行 | pass | `test/p01-4-report-aggregation.test.ts` |
-| `P01-ENG-BUILD-SMOKE` | 构建产物 | pass | `test/p01-4-build-smoke.test.ts` |
-| `P01-PHASE-REPORT` | 报告完整性 | pass | `test/p01-4-report-aggregation.test.ts` |
+| `P01-PHASE-FIXTURE` | 夹具失败 | pass | `test/modules/acceptance/p01-4-acceptance-controller.test.ts` |
+| `P01-PHASE-NOT-RUN` | 必需检查未运行 | pass | `test/modules/acceptance/p01-4-report-aggregation.test.ts` |
+| `P01-ENG-BUILD-SMOKE` | 构建产物 | pass | `test/modules/acceptance/p01-4-build-smoke.test.ts` |
+| `P01-PHASE-REPORT` | 报告完整性 | pass | `test/modules/acceptance/p01-4-report-aggregation.test.ts` |
 
 ## 6. P01 覆盖子集（T03 / T24 / T26 / T32）
 
@@ -144,7 +144,7 @@ P01 只覆盖下列**子集**，不冒充完整验收，也不提前建执行表
 
 ## 7. 干净快照发现并修复的前序集成回归
 
-首次干净复跑（受测 commit `2a3c33b`）在 `test/p01-4-fixture.test.ts` 暴露 2 个**环境相关**失败：
+首次干净复跑（受测 commit `2a3c33b`）在 `test/modules/acceptance/p01-4-fixture.test.ts` 暴露 2 个**环境相关**失败：
 F-002 安全清理用例假设受测仓库根位于系统临时目录**之外**，而干净快照本身位于临时目录内，导致
 
 - 「未知根」用例先经授权检查（目标落入 `realpath(tmpdir())` 之内）再命中受保护路径，得到

@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "kind": "phase",
+  "phase": "P03",
+  "acceptance": {
+    "trigger": "manual",
+    "scope": "full-unit-and-integration",
+    "command": [
+      "npm",
+      "run",
+      "verify"
+    ],
+    "status": "not_accepted",
+    "known_failure_evidence": "docs/testing/known-full-regressions.md"
+  },
+  "features": [
+    {
+      "feature": "P03-9",
+      "index": "test/index/phases/P03/features/P03-9/feature.json"
+    }
+  ],
+  "coverage": "Only P03-9 task indexes have been registered; earlier Feature evidence stays in Harness history."
+}

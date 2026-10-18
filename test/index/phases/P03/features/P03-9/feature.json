@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "kind": "feature",
+  "phase": "P03",
+  "feature": "P03-9",
+  "scope": "feature-local; not full/Phase acceptance",
+  "tasks": [
+    {
+      "task_id": "F-001",
+      "index": "test/index/phases/P03/features/P03-9/tasks/F-001.json",
+      "description": "在既有 Work 控制服务与调度器中实现 Run/Batch 的 Task 边界暂停，原子持久化暂停意图并阻止后续认领。"
+    },
+    {
+      "task_id": "F-002",
+      "index": "test/index/phases/P03/features/P03-9/tasks/F-002.json",
+      "description": "实现 Run/Batch 取消意图与终态竞争的持久控制逻辑，异步回执不冒充停止完成。"
+    },
+    {
+      "task_id": "F-003",
+      "index": "test/index/phases/P03/features/P03-9/tasks/F-003.json",
+      "description": "将取消接入当前 Runtime/Verifier 的既有停止端口，复用 CommandProcess 身份与组终止核验并持久保存停止或隔离证据。"
+    },
+    {
+      "task_id": "F-004",
+      "index": "test/index/phases/P03/features/P03-9/tasks/F-004.json",
+      "description": "接线 Session、单工具、Verifier 检查、Run 与 Batch 的独立时间上限，超时复用受控停止而不混同用户取消。"
+    },
+    {
+      "task_id": "F-005",
+      "index": "test/index/phases/P03/features/P03-9/tasks/F-005.json",
+      "description": "在既有 Host 启动生命周期建立 Work 恢复门控，扫描遗留执行、撤销旧写回资格并先核对旧进程。"
+    },
+    {
+      "task_id": "F-006",
+      "index": "test/index/phases/P03/features/P03-9/tasks/F-006.json",
+      "description": "恢复时核对原 worktree、Git 副作用及记录水位，完成保守诊断和可恢复占用收尾。"
+    },
+    {
+      "task_id": "F-007",
+      "index": "test/index/phases/P03/features/P03-9/tasks/F-007.json",
+      "description": "实现同 Task 的 auto/new/required 通用续接决策与来源快照，明确 Fake 的新 Session 降级和拒绝语义。"
+    },
+    {
+      "task_id": "F-008",
+      "index": "test/index/phases/P03/features/P03-9/tasks/F-008.json",
+      "description": "实现显式工作流 resume 的重新授权、原现场复用与幂等继续编排。"
+    },
+    {
+      "task_id": "F-009",
+      "index": "test/index/phases/P03/features/P03-9/tasks/F-009.json",
+      "description": "为 retryFinal 实现历史结果及证据复用资格判定，计算仅收尾范围和需要重验的检查。"
+    },
+    {
+      "task_id": "F-010",
+      "index": "test/index/phases/P03/features/P03-9/tasks/F-010.json",
+      "description": "通过既有授权与幂等通道创建 finalization-only 新 Run，持久扣减父 Batch 预算并保护历史终态。"
+    },
+    {
+      "task_id": "F-011",
+      "index": "test/index/phases/P03/features/P03-9/tasks/F-011.json",
+      "description": "执行 finalization-only Run 的确定性重验和 Feature 全量门禁，禁止进入编码调度。"
+    },
+    {
+      "task_id": "F-012",
+      "index": "test/index/phases/P03/features/P03-9/tasks/F-012.json",
+      "description": "在仅收尾 Run 中复用最终审批和 Git operation 核对，只继续缺失的获准提交步骤。"
+    },
+    {
+      "task_id": "F-013",
+      "index": "test/index/phases/P03/features/P03-9/tasks/F-013.json",
+      "description": "按既有查询与 Artifact 读取模式暴露控制进度、恢复诊断和最终收尾结果。"
+    },
+    {
+      "task_id": "F-014",
+      "index": "test/index/phases/P03/features/P03-9/tasks/F-014.json",
+      "description": "把 pause、cancel、resume、retryFinal 及诊断查询接入现有 Host/HostClient 的授权命令与事件通道。"
+    },
+    {
+      "task_id": "F-015",
+      "index": "test/index/phases/P03/features/P03-9/tasks/F-015.json",
+      "description": "复用既有 CLI 参数与结构化输出模式提供 Run/Batch 控制、retryFinal 和恢复诊断入口。"
+    },
+    {
+      "task_id": "F-016",
+      "index": "test/index/phases/P03/features/P03-9/tasks/F-016.json",
+      "description": "补充通过真实 Host 强杀与故障屏障的控制/恢复集成场景，验证完整边界而非仅应用单元结果。"
+    },
+    {
+      "task_id": "F-017",
+      "index": "test/index/phases/P03/features/P03-9/tasks/F-017.json",
+      "description": "通过 Host/CLI 组合验证仅最终检查或提交失败的显式重试，建立零重复编码的端到端回归。"
+    },
+    {
+      "task_id": "F-018",
+      "index": "test/index/phases/P03/features/P03-9/tasks/F-018.json",
+      "description": "准备本 Feature 全量质量门禁交接并形成可核对的 P03-9 交付与前序接口交接记录。"
+    }
+  ]
+}

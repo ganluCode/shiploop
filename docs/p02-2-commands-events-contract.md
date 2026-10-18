@@ -417,9 +417,9 @@ not_found 抛出（不积回执）。P01 直接服务首建仍不写创建事件
 过期新命令先在事务外拒绝；权威回执/摘要、授权、时效、项目与 CAS 在 BEGIN IMMEDIATE 内重核。
 CAS rejected 在任何业务写入前决定；写后异常必须回滚，不折算为持久 rejected。
 回调结束上下文失效，Promise 回调回滚并阻止 await 后写入；busy 仍使用既有有限预算。
-真实竞争/故障/重开回归见 `test/atomic-commands.test.ts`、`test/command-register.test.ts` 与
-`test/command-settings.test.ts`；Host /v1 路由接线由 F-011 完成（真实 HTTP 回归见
-`test/host-app-routes.test.ts`），CLI 接线仍后序任务（F-014~F-017）。
+真实竞争/故障/重开回归见 `test/modules/commands/atomic-commands.test.ts`、`test/modules/commands/command-register.test.ts` 与
+`test/modules/commands/command-settings.test.ts`；Host /v1 路由接线由 F-011 完成（真实 HTTP 回归见
+`test/modules/host/host-app-routes.test.ts`），CLI 接线仍后序任务（F-014~F-017）。
 
 ### 5.6 resultRef 与结果读取
 
@@ -770,9 +770,9 @@ CREATE INDEX command_receipts_principal_project_index
 > NDJSON 记录并重取快照恢复，连续重载预算有界；stream_overflow 与 Ctrl+C（SIGINT
 > 经 bin.ts 接入 AbortSignal）/Abort 以退出码 4 结束，终态记录含最后游标与
 > lastEventId，不停止 Host、不取消已提交命令。真实 Host/CLI 纵向回归见
-> `test/app-cli-events-observe.test.ts`；真实 Host 生产装配不可达的
+> `test/modules/cli/app-cli-events-observe.test.ts`；真实 Host 生产装配不可达的
 > snapshot_required/溢出/断线分支经真实 HTTP 可编排对端覆盖
-> （`test/app-cli-events-scripted.test.ts`，与 F-013 同一夹具形态）；dist 冒烟含
+> （`test/modules/cli/app-cli-events-scripted.test.ts`，与 F-013 同一夹具形态）；dist 冒烟含
 > 快照/游标恢复/SIGINT 纵切（`scripts/smoke-built-entries.ts`）。
 
 ### 12.1 命令面
@@ -862,7 +862,7 @@ shiploop events (--project <id> | --global) [--cursor <cursor>] [--snapshot-only
 ## 14. 需求与测试编号映射
 
 > 实施状态：F-018 已将 §14.1/§14.2 的正常与关键失败分支映射到真实集成回归
-> （新增套件 `test/p02-2-integration-regression.test.ts` + 既有能力套件）；脱敏
+> （新增套件 `test/modules/commands/p02-2-integration-regression.test.ts` + 既有能力套件）；脱敏
 > 证据、编号子集声明与 not_run 见
 > `docs/acceptance/evidence-p02-2/f018-regression-evidence.md`。
 
@@ -930,9 +930,9 @@ shiploop events (--project <id> | --global) [--cursor <cursor>] [--snapshot-only
   （`createProjectWithRepositoryBinding`、`createGlobalSettings`、`createProjectSettings` 等）保持
   P01 语义不变，以保留前序业务语义回归（P01-3/P01-4 测试不改）。更新类事件双方共用同一
   `*_updated` 写入，命令路径不重复写。两条路径的边界由 F-008/F-009 的测试固定
-  （F-008 已固定项目注册边界：`test/command-register.test.ts` 断言 P01 直接服务注册零事件、
+  （F-008 已固定项目注册边界：`test/modules/commands/command-register.test.ts` 断言 P01 直接服务注册零事件、
   命令路径恰一条 `project.registered`；F-009 已固定配置边界：
-  `test/command-settings.test.ts` 断言 P01 直接服务首建零事件、命令路径恰一条
+  `test/modules/commands/command-settings.test.ts` 断言 P01 直接服务首建零事件、命令路径恰一条
   `settings.global_created`/`settings.project_created`，且更新事件双方不重复写）。
 - **请求核对**：若要求直接服务路径也补创建事件，应作为对 P01 契约的显式变更（同步 P01 测试与
   文档），不在本 Feature 静默修改。
@@ -1002,7 +1002,7 @@ Feature 输入在 Harness（非本仓库内容、非运行时依赖），以 SHA
 
 - 基线：§1.3（`npm ci` 退出 0；`npm run verify` 退出 0，PASS 3/3；59 files / 1332 tests）。
 - 本文引用的冻结事实（基线 hash、版本、路由、能力、错误码、scope/事件白名单、非目标）由
-  `test/docs-p02-2-commands-events-contract.test.ts` 交叉核对；实现任务改变「当前事实」（如
+  `test/modules/commands/docs-p02-2-commands-events-contract.test.ts` 交叉核对；实现任务改变「当前事实」（如
   F-006 加迁移 v3、F-011 接路由）时必须同步更新该守护与本文，不得让文档另立一套。
 - 本文是实施前置契约，不声明任何 P02-2 能力已实现；未运行项与未验收平台在 F-020 报告记 not_run。
 

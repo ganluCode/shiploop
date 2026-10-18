@@ -5,7 +5,7 @@
  * 设计依据：core-design/03 §1-3（端口先校验后持久化、短同步写事务、revision CAS）、
  * core-design/11 §1/§3（projects / global_settings 单例 id=global / project_settings
  * UNIQUE(project_id)；更新走 revision CAS，不建配置历史版本表）与 F-002 端口契约
- * （ports/state-store.ts；语义基线见 test/storage-contracts.test.ts 与
+ * （ports/state-store.ts；语义基线见 test/modules/storage/storage-contracts.test.ts 与
  * test/helpers/in-memory-store.ts——本适配器实现同组行为断言的真实 SQLite 版本）。
  *
  * 不变量：
@@ -19,7 +19,7 @@
  *   先读后无条件覆盖；createProjectWithInitialSettings（F-007）把项目与初始项目配置
  *   封装为同一业务原子操作——两个输入都在任何 SQL 之前完成校验，第二步失败时
  *   整组回滚，无残留项目或配置；跨进程竞争、失败注入与组合写入的深度验证见
- *   test/sqlite-cas-and-atomicity.test.ts；
+ *   test/modules/storage/sqlite/sqlite-cas-and-atomicity.test.ts；
  * - 稳定 ID（UUID）与应用侧 UTC 毫秒时间由注入时钟提供；displayName/description
  *   与标签不参与 ID 或物理路径推导；payload 只保存经校验的结构化 JSON，
  *   不存明文凭据（F-002 Schema 限定 credentialRef 为引用形态）；

@@ -82,7 +82,7 @@ node packages/cli/dist/bin.js host status --data-root "$ROOT" --json; echo "exit
 ```
 
 `outcome` 为 `already_running`（已连接既有实例）或 `started`（本次启动并握手成功）。
-该纵向闭环由 [test/docs-p02-1-operations.test.ts](../test/docs-p02-1-operations.test.ts)
+该纵向闭环由 [test/modules/host/docs-p02-1-operations.test.ts](../test/modules/host/docs-p02-1-operations.test.ts)
 在真实临时数据根与真实 Host 子进程上运行守护；构建冒烟
 (`scripts/smoke-built-entries.ts`) 另从 `dist`、非源码 cwd 跑通同样命令。
 
@@ -177,5 +177,5 @@ stdout 只含该单个 JSON，人类诊断走 stderr，错误不含 token、`Aut
 仓库级验证：`npm test`（开发内循环）；`npm run typecheck`；`npm run check:boundaries`；
 `npm run build`（含 dist 冒烟）；`npm run verify`（锁文件预检 + `npm test` / `typecheck` / `build`
 串联，fail-closed）。文档示例与实现的一致性由
-[test/docs-p02-1-operations.test.ts](../test/docs-p02-1-operations.test.ts) 守护（真实 Host
+[test/modules/host/docs-p02-1-operations.test.ts](../test/modules/host/docs-p02-1-operations.test.ts) 守护（真实 Host
 子进程纵向闭环 + 解析面/常量交叉核对 + 无开发机路径/凭据断言）。

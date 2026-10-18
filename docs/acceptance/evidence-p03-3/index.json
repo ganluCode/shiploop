@@ -35,7 +35,7 @@
         "command": [
           "node",
           "scripts/run-tests.ts",
-          "test/docs-p03-3-handoff.test.ts"
+          "test/modules/execution/budget/docs-p03-3-handoff.test.ts"
         ],
         "exitCode": 1,
         "signal": null
@@ -51,7 +51,7 @@
         "command": [
           "node",
           "scripts/run-tests.ts",
-          "test/p03-3-cli-built.test.ts"
+          "test/modules/execution/budget/p03-3-cli-built.test.ts"
         ],
         "exitCode": 1,
         "signal": null
@@ -67,7 +67,7 @@
         "command": [
           "node",
           "scripts/run-tests.ts",
-          "test/p03-3-cli-built.test.ts"
+          "test/modules/execution/budget/p03-3-cli-built.test.ts"
         ],
         "exitCode": 1,
         "signal": null
@@ -83,8 +83,8 @@
         "command": [
           "node",
           "scripts/run-tests.ts",
-          "test/p03-3-cli-built.test.ts",
-          "test/docs-p03-3-handoff.test.ts"
+          "test/modules/execution/budget/p03-3-cli-built.test.ts",
+          "test/modules/execution/budget/docs-p03-3-handoff.test.ts"
         ],
         "exitCode": 0,
         "signal": null

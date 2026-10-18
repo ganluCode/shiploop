@@ -23,26 +23,26 @@
 
 | FR-1 分支 | 检查 ID | 实际测试入口 | 证据 | 人工核对 |
 |---|---|---|---|---|
-| FR-1 双 CLI 同数据根、唯一 Host | `P02-FR1-UNIQUE-HOST` | `test/p02-4-dual-cli-acceptance.test.ts` | 报告 `checks[]`、`evidence/`（`hostInstanceId`/锁/监听） | ☐ |
-| FR-1 共享持久项目/配置状态 | `P02-FR1-SHARED-STATE` | `test/p02-4-dual-cli-acceptance.test.ts` | 双客户端返回值逐字段一致（`projectId`/`revision`/来源） | ☐ |
-| FR-1 获准基线执行与双端查询 | `P02-FR1-BASELINE-OK` | `test/p02-4-dual-cli-acceptance.test.ts` | `operationId`、逐项检查、制品 `hash`/`size` | ☐ |
-| FR-1 重启后仍能查询项目和检查结果 | `P02-FR1-RESTART-QUERY` | `test/p02-4-restart-acceptance.test.ts` | 前后 `hostInstanceId`、持久身份、旧凭据拒绝、启动次数不变 | ☐ |
-| FR-1 边界：夹具准备失败不伪装通过 | `P02-PHASE-FIXTURE` | `test/p02-4-acceptance-controller.test.ts` | `fixture_status`、依赖项 `not_run`、证据保留、进程回收 | ☐ |
-| FR-1 边界：必需检查未运行 → `not_run` | `P02-PHASE-NOT-RUN` | `test/p02-4-report-aggregation.test.ts` | 必需清单、缺失结果、聚合结论、退出码 | ☐ |
-| FR-1 边界：重复运行不依赖上次残留 | `P02-ENG-CLEAN-REPLAY` | `test/p02-4-clean-replay.test.ts` | 两次退出 0、run-id/报告独立、`docs/acceptance/evidence-p02-4-clean-replay/` | ☐ |
+| FR-1 双 CLI 同数据根、唯一 Host | `P02-FR1-UNIQUE-HOST` | `test/modules/acceptance/p02-4-dual-cli-acceptance.test.ts` | 报告 `checks[]`、`evidence/`（`hostInstanceId`/锁/监听） | ☐ |
+| FR-1 共享持久项目/配置状态 | `P02-FR1-SHARED-STATE` | `test/modules/acceptance/p02-4-dual-cli-acceptance.test.ts` | 双客户端返回值逐字段一致（`projectId`/`revision`/来源） | ☐ |
+| FR-1 获准基线执行与双端查询 | `P02-FR1-BASELINE-OK` | `test/modules/acceptance/p02-4-dual-cli-acceptance.test.ts` | `operationId`、逐项检查、制品 `hash`/`size` | ☐ |
+| FR-1 重启后仍能查询项目和检查结果 | `P02-FR1-RESTART-QUERY` | `test/modules/acceptance/p02-4-restart-acceptance.test.ts` | 前后 `hostInstanceId`、持久身份、旧凭据拒绝、启动次数不变 | ☐ |
+| FR-1 边界：夹具准备失败不伪装通过 | `P02-PHASE-FIXTURE` | `test/modules/acceptance/p02-4-acceptance-controller.test.ts` | `fixture_status`、依赖项 `not_run`、证据保留、进程回收 | ☐ |
+| FR-1 边界：必需检查未运行 → `not_run` | `P02-PHASE-NOT-RUN` | `test/modules/acceptance/p02-4-report-aggregation.test.ts` | 必需清单、缺失结果、聚合结论、退出码 | ☐ |
+| FR-1 边界：重复运行不依赖上次残留 | `P02-ENG-CLEAN-REPLAY` | `test/modules/acceptance/p02-4-clean-replay.test.ts` | 两次退出 0、run-id/报告独立、`docs/acceptance/evidence-p02-4-clean-replay/` | ☐ |
 | FR-1 工程门禁（verify 退出码） | `P02-ENG-VERIFY` | `npm run verify` | `report.json` 的 `steps[]`/测试计数 | ☐ |
 
 ## 3. FR-2 逐项核对（负例与证据；PRD `p02-acceptance.md` §3.2 FR-2）
 
 | FR-2 分支 | 检查 ID | 实际测试入口 | 证据 | 人工核对 |
 |---|---|---|---|---|
-| FR-2 重复初始化/路径别名幂等 | `P02-FR2-DUPLICATE-INIT` | `test/p02-4-idempotency-acceptance.test.ts` | 两次 `projectId`、行数、元数据前后快照 | ☐ |
-| FR-2 命令重放/参数冲突零副作用 | `P02-FR2-COMMAND-CONFLICT` | `test/p02-4-idempotency-acceptance.test.ts` | `replayed:true`、`idempotency_key_reuse`、副作用零断言 | ☐ |
-| FR-2 源文件保留、未知脚本零执行 | `P02-FR2-SOURCE-PRESERVED` | `test/p02-4-repo-preservation-acceptance.test.ts` | HEAD/`git status`/文件摘要、哨兵零执行、产物清单 | ☐ |
-| FR-2 认证/协议/范围/监听拒绝 | `P02-FR2-AUTH-REJECT` | `test/p02-4-negative-acceptance.test.ts` | 错误码、零副作用、`127.0.0.1` 绑定、脱敏扫描 | ☐ |
-| FR-2 客户端退出/观察中断 | `P02-FR2-CLIENT-EXIT` | `test/p02-4-restart-acceptance.test.ts` | 退出码 4、`observation_interrupted`、Host 存活、零 stop/cancel | ☐ |
-| FR-2 基线失败/未授权/执行异常 | `P02-FR2-BASELINE-FAILURE` | `test/p02-4-baseline-failure-acceptance.test.ts` | 检查状态/`reasonCode`、注册保留、失败证据不删 | ☐ |
-| FR-2 证据与报告可验证、失败如实记录 | `P02-PHASE-REPORT` | `test/p02-4-acceptance-report.test.ts` | 报告 Schema、`evidence[]` 的 `hash`/`size`、脱敏、结论 | ☐ |
+| FR-2 重复初始化/路径别名幂等 | `P02-FR2-DUPLICATE-INIT` | `test/modules/acceptance/p02-4-idempotency-acceptance.test.ts` | 两次 `projectId`、行数、元数据前后快照 | ☐ |
+| FR-2 命令重放/参数冲突零副作用 | `P02-FR2-COMMAND-CONFLICT` | `test/modules/acceptance/p02-4-idempotency-acceptance.test.ts` | `replayed:true`、`idempotency_key_reuse`、副作用零断言 | ☐ |
+| FR-2 源文件保留、未知脚本零执行 | `P02-FR2-SOURCE-PRESERVED` | `test/modules/acceptance/p02-4-repo-preservation-acceptance.test.ts` | HEAD/`git status`/文件摘要、哨兵零执行、产物清单 | ☐ |
+| FR-2 认证/协议/范围/监听拒绝 | `P02-FR2-AUTH-REJECT` | `test/modules/acceptance/p02-4-negative-acceptance.test.ts` | 错误码、零副作用、`127.0.0.1` 绑定、脱敏扫描 | ☐ |
+| FR-2 客户端退出/观察中断 | `P02-FR2-CLIENT-EXIT` | `test/modules/acceptance/p02-4-restart-acceptance.test.ts` | 退出码 4、`observation_interrupted`、Host 存活、零 stop/cancel | ☐ |
+| FR-2 基线失败/未授权/执行异常 | `P02-FR2-BASELINE-FAILURE` | `test/modules/acceptance/p02-4-baseline-failure-acceptance.test.ts` | 检查状态/`reasonCode`、注册保留、失败证据不删 | ☐ |
+| FR-2 证据与报告可验证、失败如实记录 | `P02-PHASE-REPORT` | `test/modules/acceptance/p02-4-acceptance-report.test.ts` | 报告 Schema、`evidence[]` 的 `hash`/`size`、脱敏、结论 | ☐ |
 
 - 负例只有在**错误断言与副作用断言同时成立**时才计 pass；逐项核对时两类断言都要看。
 - 每项核对以 `artifacts/acceptance/p02/<run-id>/` 的 `report.json`/`summary.md`/`evidence/`
@@ -93,7 +93,7 @@
 | 阶段验收报告（每次运行独立） | `artifacts/acceptance/p02/<run-id>/report.json`、`summary.md`、`evidence/` |
 | 干净快照连续复跑证据 | `docs/acceptance/evidence-p02-4-clean-replay/`（`outcome.json`、`independence.json`、`build-scan.json`、`accept-runs/`、`logs/`） |
 | 必需检查清单（机器可读） | `acceptance/p02.config.json` |
-| 文档守护 | `test/docs-p02-4-operations.test.ts`（本清单引用的测试/证据存在性一并守护） |
+| 文档守护 | `test/modules/acceptance/docs-p02-4-operations.test.ts`（本清单引用的测试/证据存在性一并守护） |
 
 ## 8. 缺陷记录与放行（人工填写）
 

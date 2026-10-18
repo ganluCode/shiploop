@@ -101,10 +101,10 @@ OS 启动时间有秒级精度，UUID/活跃监督句柄/PGID 一起用于本次
 
 ## 验证
 
-`test/supervised-command-process.test.ts` 使用真实 Node 命令、临时 SQLite 和既有测试 TS loader，
+`test/modules/runtime/supervised-command-process.test.ts` 使用真实 Node 命令、临时 SQLite 和既有测试 TS loader，
 覆盖提交前无哨兵、确认失败/握手中断/Host 崩溃、授权输入快照、环境/argv/stdin、
 0/非零/缺命令/权限/信号结果、有界输出、挂起查询/取消、父进程先退出后代存活和无消费者超时。
-`test/supervised-process-stopping.test.ts`（F-010）覆盖升级终止决策核心的正反例
+`test/modules/runtime/supervised-process-stopping.test.ts`（F-010）覆盖升级终止决策核心的正反例
 （身份匹配/复用/探测失败/预算耗尽）、真实忽略 SIGTERM、父进程先退出后代持续写入、
 监督者被 SIGSTOP 冻结后的 Host 侧升级、探测谁报下的不确定终态与占用保留/竞争拒绝、
 重复取消幂等、自然完成后迟到取消、旧句柄不影响新执行、源文件与已收输出保留、

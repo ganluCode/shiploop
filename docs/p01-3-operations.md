@@ -258,7 +258,7 @@ const exportJson = await app.configurationService.exportSettings(projectId); // 
 
 以下示例使用**公开装配入口** `openCoreApplication`（跨包时经 `shiploop-core/assembly`），
 与 [`examples/p01-3-standalone.ts`](../examples/p01-3-standalone.ts) 同构，并由
-[`test/docs-p01-3-operations.test.ts`](../test/docs-p01-3-operations.test.ts) 编译并执行
+[`test/modules/engineering/docs-p01-3-operations.test.ts`](../test/modules/engineering/docs-p01-3-operations.test.ts) 编译并执行
 （编译检查 + 运行断言）。示例仅使用真实导出接口，不编造 CLI 命令。
 
 ```ts
@@ -349,4 +349,4 @@ try {
 
 仓库级验证：`npm test`（开发内循环）；`npm run verify`（锁文件预检 + `npm test` /
 `typecheck` / `build` 串联，fail-closed）。文档示例与实现的一致性由
-`test/docs-p01-3-operations.test.ts` 守护（真实装配 + 运行断言 + 常量交叉核对）。
+`test/modules/engineering/docs-p01-3-operations.test.ts` 守护（真实装配 + 运行断言 + 常量交叉核对）。

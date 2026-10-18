@@ -72,7 +72,7 @@ open native SQLite database. Worktree reuse is not native-session resumability.
 
 ## Verification
 
-`test/p03-5-workspace-preparation.test.ts` uses real Git, temporary filesystems
+`test/modules/workspace/p03-5-workspace-preparation.test.ts` uses real Git, temporary filesystems
 and SQLite, including close/reopen, receipt-transaction rollback, interruptions
 after Git/inspection/before result, legal recorded commits/new Attempt bindings,
 tracked/untracked/ignored byte retention, wrong branch/detached/unexpected HEAD,

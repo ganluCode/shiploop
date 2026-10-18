@@ -5,8 +5,8 @@
 `packages/core/src/ports/settings-schema.ts`（配置 Schema 新政策键）、
 `packages/core/src/application/task-strategy-selection.ts`（Task 策略快照捕获路径）、
 `packages/core/src/application/execution-authorization-policy.ts`（执行授权并发政策）。
-守护测试：`test/p03-3-execution-budget.test.ts`、`test/p03-3-budget-policy-config.test.ts`、
-`test/docs-p03-3-execution-budget-contract.test.ts`。
+守护测试：`test/modules/execution/budget/p03-3-execution-budget.test.ts`、`test/modules/execution/budget/p03-3-budget-policy-config.test.ts`、
+`test/modules/execution/budget/docs-p03-3-execution-budget-contract.test.ts`。
 
 ## 1. 前序核对记录（开工核验，acceptance 1）
 
@@ -23,7 +23,7 @@
     `plan-approval-verification` / `task-strategy-update` / `execution-input-prepare` 均在
     `application/` 落地，命令面经 `command-service` 接线；
   - 实际测试：`test/p03-1-plan-*.test.ts`、`test/p03-2-plan-approval-*.test.ts`、
-    `test/p03-2-task-strategy-edit-command.test.ts`、`test/p03-2-execution-input-prepare.test.ts`
+    `test/modules/planning/p03-2-task-strategy-edit-command.test.ts`、`test/modules/planning/p03-2-execution-input-prepare.test.ts`
     等在本任务回归中全部通过（见 §8 验证记录）。
 - 上游 `main` 的 `0e76ad8` 仅为 P02 基线：本工作分支
   `feat/2026-10-11-17-45-49_p03-3-feature`（基线 `feat/2026-10-11-17-45-49_p03-2-task`）
@@ -128,10 +128,10 @@ preview/start/budget/revise`，见 `docs/p03-3-cli-execution-operations.md`）�
 
 ## 10. 验证记录（F-001）
 
-- 新增：`test/p03-3-execution-budget.test.ts`（91 用例：校验矩阵/一致性/快照版本/解析
-  兼容/临界值/deadline 恰好到达/未知资源用量）、`test/p03-3-budget-policy-config.test.ts`
+- 新增：`test/modules/execution/budget/p03-3-execution-budget.test.ts`（91 用例：校验矩阵/一致性/快照版本/解析
+  兼容/临界值/deadline 恰好到达/未知资源用量）、`test/modules/execution/budget/p03-3-budget-policy-config.test.ts`
   （25 用例：旧配置/显式新政策/非法字段/版本不兼容/合并/快照捕获与不追溯（真实
-  SQLite）/并发授权拒绝）、`test/docs-p03-3-execution-budget-contract.test.ts`（本文档守护）。
+  SQLite）/并发授权拒绝）、`test/modules/execution/budget/docs-p03-3-execution-budget-contract.test.ts`（本文档守护）。
 - 受影响回归：settings-schema-v2、effective-settings-merge、p03-1-task-strategy-selection、
   p03-1-plan-import-command、p03-1-plan-revise-command、p03-2-task-strategy-edit-command、
   p03-2-context-build、p03-2-execution-input(-prepare)、p03-2-host-wiring、

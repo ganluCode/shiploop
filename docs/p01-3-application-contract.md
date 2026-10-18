@@ -463,7 +463,7 @@ F-012 定案：受控装配入口实现于 `packages/core/src/adapters/compositi
 - **合法 ≠ 可执行**：本入口不装配 Runner/认证/模型执行能力，配置结构合法不代表可运行
   （`assessSettingsConfiguration().executable` 恒为 false）。
 - **示例与构建冒烟**：可编译独立示例见 `examples/p01-3-standalone.ts`（由
-  `test/core-assembly.test.ts` 在真实临时仓库/数据根上执行）；构建产物冒烟由
+  `test/modules/engineering/core-assembly.test.ts` 在真实临时仓库/数据根上执行）；构建产物冒烟由
   `scripts/core-assembly-smoke.mjs` 在非源码 cwd 下从 dist 加载 `./assembly` 执行
   「打开→注册→配置→受权定位→关闭重开」，经 `scripts/smoke-built-entries.ts` 在
   `npm run build` 中编排。
@@ -596,7 +596,7 @@ P01-3 确认沿用前序「创建 / 更新」分离的约定，不引入 `expect
   并加 CHECK `(project_id IS NOT NULL) OR (aggregate_type = 'global_settings')`，使全局范围的
   业务事件可表达且项目 FK 在有值时仍受保护。此为对设计字典的**显式偏离**，按 F-001 要求记录
   依据并请求核对（§9-1），不静默改变语义。
-- 现有 `test/sqlite-schema-migrations.test.ts` 的 `FORBIDDEN_TABLE_NAMES` 曾含 `state_events`；
+- 现有 `test/modules/storage/sqlite/sqlite-schema-migrations.test.ts` 的 `FORBIDDEN_TABLE_NAMES` 曾含 `state_events`；
   F-006 引入该表时已同步更新该守卫（从禁止列表移除、加入 `SCHEMA_TABLES` 期望集合、补 FK 与
   约束矩阵），并同步更新迁移执行器测试的版本期望（v2 为真实迁移）。
 
@@ -668,7 +668,7 @@ F-013 需以真实资源覆盖（不止检查成功日志）：
 - 稳定 namespace / 路径逃逸 / 跨项目拒绝（A 不能定位 B 的制品）。
 - 关闭重开逐字段一致（项目 ID/绑定/元数据、配置 revision/来源、制品 hash/size）。
 
-F-013 定案（实施落点）：新增 `test/p01-3-fr-acceptance-closed-loop.test.ts`，三个真实资源用例——
+F-013 定案（实施落点）：新增 `test/modules/acceptance/p01-3-fr-acceptance-closed-loop.test.ts`，三个真实资源用例——
 
 1. **集成闭环**（`openCoreApplication` 组合根 + 真实临时 Git 仓库/数据根）：注册（稳定
    projectId/绑定/规范标签）→ 全局/项目配置创建与 CAS 更新 → 前序 ArtifactStore 制品发布 →
@@ -767,6 +767,6 @@ T03（当前配置原子性）、T26（当前配置基础）、T32（项目标�
 ## 10. 复核
 
 - 基线：§1（`npm ci` 退出 0；`npm run verify` 退出 0；20 files / 443 tests）。
-- 文档示例与常量一致性由 `test/docs-p01-3-application-contract.test.ts` 守护（交叉核对本文
+- 文档示例与常量一致性由 `test/modules/engineering/docs-p01-3-application-contract.test.ts` 守护（交叉核对本文
   引用的真实常量与表/错误枚举，防止文档与实现漂移）。
 - 本轮不自动修改任何 Harness 配置；未验收平台、强 OS 沙箱与模型 Live 明确为 `not_run`/未支持。

@@ -40,7 +40,7 @@
  *
  * 本模块不实现：制品删除/保留策略与安全隔离迁移、Host 停机升级编排、
  * Host/CLI 命令；断电/真实磁盘满演练与其他平台验收不在本阶段（竞争场景经
- * 确定性注入与真实子进程测试覆盖，见 test/artifact-verify.test.ts）。
+ * 确定性注入与真实子进程测试覆盖，见 test/modules/storage/artifacts/artifact-verify.test.ts）。
  */
 import { createHash } from 'node:crypto';
 import { ARTIFACT_STAGING_FILE_SUFFIX, ArtifactFileError, isArtifactFileError } from '../ports/artifact-files.js';

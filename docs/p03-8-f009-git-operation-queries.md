@@ -58,6 +58,6 @@ schemaVersion 5，握手在 v5 能力视图内追加两个查询宣告（接线�
   `contract/lifecycle.ts`（能力宣告）、`runtime/app-transport.ts`（路由/白名单/
   分发）；HostClient：`client/app-wire.ts`（线校验）、`client/app-client.ts`。
 
-Task-local 验证在 `test/p03-8-f009-git-operation-queries.test.ts`（真实
+Task-local 验证在 `test/modules/delivery/p03-8-f009-git-operation-queries.test.ts`（真实
 SQLite + 真实 Host 纵向）：正常/no_change/failed/unknown（核对后记录）/
 pending（回执缺失）均有查询断言，含授权/分页/游标/脱敏/重开一致性。

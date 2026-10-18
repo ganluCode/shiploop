@@ -114,7 +114,7 @@
 
 ## 10. F-009 集成回归写回登记
 
-- `test/p03-2-integration-regression.test.ts`（正式构建 dist CLI + dist Host + 隔离
+- `test/modules/planning/p03-2-integration-regression.test.ts`（正式构建 dist CLI + dist Host + 隔离
   真实 SQLite）以真实命令复核本契约的失效语义：检查政策内容变化 → HTTP
   `features.approvals` 查询 `validity.reason=check_policy_changed` 且新
   `execution.input.prepare` fail-closed；恢复同内容政策后按内容身份自动恢复有效

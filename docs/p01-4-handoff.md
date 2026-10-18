@@ -48,9 +48,9 @@ P01-4 需运行真实持久化闭环并保存失败前后状态。以下入口�
 
 | 入口 | 用途 | 证据/断言 |
 |---|---|---|
-| `test/p01-3-fr-acceptance-closed-loop.test.ts`「闭环」用例 | 组合根集成闭环：注册（稳定 projectId/绑定/规范标签）→ 全局/项目配置创建与 CAS 更新 → `ArtifactStore` 制品发布 → 元数据编辑 → 有效配置来源 → 脱敏导出 → 受权定位 → 关闭重开逐字段一致 | 真实行级证据（`projects`/`repository_bindings`/`global_settings`/`project_settings`/`artifacts` 各一条、恰三条脱敏 `state_events`）；源仓库指纹（全部文件内容 + HEAD + status）闭环前后逐字节不变 |
-| `examples/p01-3-standalone.ts` | 可编译独立示例：`打开 → 注册 → 查询 → CAS 编辑 → 全局/项目配置 → 有效配置来源 → 脱敏导出 → 受权定位 → 关闭重开` | 由 `test/core-assembly.test.ts` 在真实临时仓库/数据根上执行，返回可断言摘要 |
-| `scripts/core-assembly-smoke.mjs` | 构建产物冒烟：非源码 cwd 下从 dist 加载 `shiploop-core/assembly` 执行装配/注册/配置/受权定位/制品发布/关闭重开 | 由 `scripts/smoke-built-entries.ts` 在 `npm run build` 中编排；P01-4 F-009 另由 `test/p01-4-build-smoke.test.ts` 在临时编译产物上运行同一冒烟并做路径/依赖/迁移扫描，断言不写用户目录 |
+| `test/modules/acceptance/p01-3-fr-acceptance-closed-loop.test.ts`「闭环」用例 | 组合根集成闭环：注册（稳定 projectId/绑定/规范标签）→ 全局/项目配置创建与 CAS 更新 → `ArtifactStore` 制品发布 → 元数据编辑 → 有效配置来源 → 脱敏导出 → 受权定位 → 关闭重开逐字段一致 | 真实行级证据（`projects`/`repository_bindings`/`global_settings`/`project_settings`/`artifacts` 各一条、恰三条脱敏 `state_events`）；源仓库指纹（全部文件内容 + HEAD + status）闭环前后逐字节不变 |
+| `examples/p01-3-standalone.ts` | 可编译独立示例：`打开 → 注册 → 查询 → CAS 编辑 → 全局/项目配置 → 有效配置来源 → 脱敏导出 → 受权定位 → 关闭重开` | 由 `test/modules/engineering/core-assembly.test.ts` 在真实临时仓库/数据根上执行，返回可断言摘要 |
+| `scripts/core-assembly-smoke.mjs` | 构建产物冒烟：非源码 cwd 下从 dist 加载 `shiploop-core/assembly` 执行装配/注册/配置/受权定位/制品发布/关闭重开 | 由 `scripts/smoke-built-entries.ts` 在 `npm run build` 中编排；P01-4 F-009 另由 `test/modules/acceptance/p01-4-build-smoke.test.ts` 在临时编译产物上运行同一冒烟并做路径/依赖/迁移扫描，断言不写用户目录 |
 | `test/helpers/git-repo.ts` + `test/helpers/temp-sandbox.ts` | 真实临时 Git 仓库/数据根夹具；缺失工具即失败不 skip；清理前可导出证据 | 幂等清理，拒绝用户仓库/HOME/符号链接逃逸 |
 
 `openCoreApplication` 的 `nowUtcMs` 可注入以获得确定性时间；`dataRoot` 与 `repositoryPath` 由
@@ -60,11 +60,11 @@ P01-4 需运行真实持久化闭环并保存失败前后状态。以下入口�
 
 | 失败分支 | 入口 | 断言 |
 |---|---|---|
-| 项目+绑定统一回滚 | `test/project-registration.test.ts`（注入绑定写失败的 TEMP TRIGGER） | 项目与绑定均不存在，零残留 |
-| 元数据/配置审计注入回滚 | `test/project-metadata-service.test.ts`、`test/configuration-service.test.ts`、`test/p01-3-fr-acceptance-closed-loop.test.ts`（同一连接 `CREATE TEMP TRIGGER` on `state_events`） | 实体写入与 `revision` 一并回滚；修复后可继续 |
+| 项目+绑定统一回滚 | `test/modules/projects/project-registration.test.ts`（注入绑定写失败的 TEMP TRIGGER） | 项目与绑定均不存在，零残留 |
+| 元数据/配置审计注入回滚 | `test/modules/projects/project-metadata-service.test.ts`、`test/modules/configuration/configuration-service.test.ts`、`test/modules/acceptance/p01-3-fr-acceptance-closed-loop.test.ts`（同一连接 `CREATE TEMP TRIGGER` on `state_events`） | 实体写入与 `revision` 一并回滚；修复后可继续 |
 | 跨进程注册竞争 | `test/helpers/register-race-child.ts`（同步屏障、有限超时、退出核验） | 恰一 `registered`、一 `already_exists`，仅一项目一绑定 |
 | 跨进程配置 CAS 竞争 | `test/helpers/settings-race-child.ts`、`test/helpers/cas-race-child.ts` | 同旧 revision 恰一胜者，revision 仅增一次，值等于胜者 |
-| 制品发布中断 | `test/helpers/interrupt-publish-child.ts`、`test/artifact-verify.test.ts` | 重开后 pending 只有 hash/size 匹配才补 ready；孤儿保留原位 |
+| 制品发布中断 | `test/helpers/interrupt-publish-child.ts`、`test/modules/storage/artifacts/artifact-verify.test.ts` | 重开后 pending 只有 hash/size 匹配才补 ready；孤儿保留原位 |
 
 失败注入使用真实 SQLite / 真实 Git / 真实文件，不以 mock 次数或成功日志替代副作用断言；
 子进程竞争均带同步屏障、有限外层超时与退出核验。

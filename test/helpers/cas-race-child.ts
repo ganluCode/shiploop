@@ -1,7 +1,7 @@
 /**
  * F-007 跨进程 CAS 竞争子进程（仅测试使用，不是产品实现，不进 packages/）。
  *
- * 父进程（test/sqlite-cas-and-atomicity.test.ts）以
+ * 父进程（test/modules/storage/sqlite/sqlite-cas-and-atomicity.test.ts）以
  * `node --import test/helpers/node-ts-loader/register.mjs <本文件> <configJson>`
  * 启动两个本进程实例，连接同一真实临时 SQLite 并以同一旧 revision 竞争更新
  * 同一项目当前配置：

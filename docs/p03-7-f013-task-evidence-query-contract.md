@@ -82,11 +82,11 @@
 
 | 验收要求 | 证据入口 |
 |---|---|
-| 机器证据/人审查询、机器 passed ≠ 有效 Task passed、零写入 | `test/p03-7-f013-verification-approval-query.test.ts` |
-| 返工链/失败引用/代码资格/预算与后继原因/基础设施与人审不占额度 | `test/p03-7-f013-rework-chain-pagination.test.ts` |
+| 机器证据/人审查询、机器 passed ≠ 有效 Task passed、零写入 | `test/modules/verification/p03-7-f013-verification-approval-query.test.ts` |
+| 返工链/失败引用/代码资格/预算与后继原因/基础设施与人审不占额度 | `test/modules/verification/p03-7-f013-rework-chain-pagination.test.ts` |
 | 失败链分页、跨 Task/非法游标、越权/跨项目不泄漏 | 同上（分页用例） |
-| Host 路由/白名单/公共 Schema 与应用服务一致、HostClient 纵向 | `test/p03-7-f013-host-query-wiring.test.ts` |
-| 既有严格契约回归同步（能力清单不漂移） | `test/host-lifecycle-contract.test.ts`、`test/host-app-routes.test.ts` |
+| Host 路由/白名单/公共 Schema 与应用服务一致、HostClient 纵向 | `test/modules/verification/p03-7-f013-host-query-wiring.test.ts` |
+| 既有严格契约回归同步（能力清单不漂移） | `test/modules/host/host-lifecycle-contract.test.ts`、`test/modules/host/host-app-routes.test.ts` |
 
 ## 7. 边界
 

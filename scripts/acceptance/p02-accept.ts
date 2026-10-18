@@ -98,7 +98,7 @@ const HEX_64 = /^[0-9a-f]{64}$/;
  * （映射检查 not_run/startup_failure，阶段非零）；其余场景入口缺失一律按启动失败
  * 处理，绝不静默跳过。
  */
-export const P02_PENDING_CLEAN_REPLAY_ENTRY = 'test/p02-4-clean-replay.test.ts';
+export const P02_PENDING_CLEAN_REPLAY_ENTRY = 'test/modules/acceptance/p02-4-clean-replay.test.ts';
 
 export type P02AcceptErrorKind = 'invalid_config' | 'invalid_usage' | 'preparation_failed' | 'report_write_failed';
 

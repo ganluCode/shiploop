@@ -26,10 +26,10 @@
 
 | 验收要求 | 证据入口 |
 |---|---|
-| 同 worktree 增量返工、保留首轮文件 | `test/p03-7-f012-work-loop-rework.test.ts`：真实 Git/SQLite/worktree 与显式 FakeRuntime 接线 |
-| 三次含首次耗尽、后继阻断、累计预算 | `test/p03-7-f012-rework-continuation.test.ts` 与既有代码预算回归 |
+| 同 worktree 增量返工、保留首轮文件 | `test/modules/verification/p03-7-f012-work-loop-rework.test.ts`：真实 Git/SQLite/worktree 与显式 FakeRuntime 接线 |
+| 三次含首次耗尽、后继阻断、累计预算 | `test/modules/verification/p03-7-f012-rework-continuation.test.ts` 与既有代码预算回归 |
 | 停止未知不得重跑/放行 | 返工测试中的隔离、受信停止凭证与机器通过但停止未知用例 |
-| 批准后显式继续、幂等、无新增 Runtime | `test/p03-7-f012-verification-continue.test.ts` |
+| 批准后显式继续、幂等、无新增 Runtime | `test/modules/verification/p03-7-f012-verification-continue.test.ts` |
 | 当前代码/环境/证据必须重核 | 继续测试中的事务外检查与代码/环境漂移拒绝用例；生产组装核验实际制品 hash/size |
 | 基础设施错误独立暂停、暂停不被覆盖 | 返工测试的 non_code_failure 与成功/失败收尾暂停回归 |
 | 恢复新建获准 Attempt、人工阻塞不绕过 | 返工快照一致性、预算与人工阻塞回归 |

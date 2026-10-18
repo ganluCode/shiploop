@@ -92,7 +92,7 @@
 
 ## 7. 聚焦验证
 
-`test/p03-9-f010-finalization-run.test.ts`（真实临时 Git/SQLite/Artifact，零模型）：
+`test/modules/delivery/retry/p03-9-f010-finalization-run.test.ts`（真实临时 Git/SQLite/Artifact，零模型）：
 
 - finalization 失败后创建受限新 Run，旧终态/证据保持不变，Batch 重开且计数/预算不被重置；
 - 相同 commandId 重放不重复创建；两个竞争 commandId 只有一个成功；

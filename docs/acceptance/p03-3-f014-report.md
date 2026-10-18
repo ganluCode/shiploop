@@ -19,7 +19,7 @@
 - 前序实现基线：`72b13f6a0f0df3dcec1dc99de63585f65589f42c`（F-013）。
 - F-014 验收实现 commit：`2bdcff145e1870fe30ab9cbae476c1970cb8f335`。
 - 分支：`feat/2026-10-11-17-45-49_p03-3-feature`；未切换、reset 或重写历史。
-- 新增 `test/p03-3-cli-built.test.ts`、`test/docs-p03-3-handoff.test.ts`；
+- 新增 `test/modules/execution/budget/p03-3-cli-built.test.ts`、`test/modules/execution/budget/docs-p03-3-handoff.test.ts`；
   [交接与覆盖索引](../p03-3-handoff.md) 登记于 README。
 
 ## 实际验证
@@ -30,10 +30,10 @@
 
 | 命令/轮次 | 退出码 | 结果及发布日志 |
 |---|---|---|
-| `node scripts/run-tests.ts test/docs-p03-3-handoff.test.ts` | 1 | 预期 RED，交接文档尚不存在；`F-014-red.log` |
-| `node scripts/run-tests.ts test/p03-3-cli-built.test.ts`，首轮 | 1 | prepare 返回完整 capability/runnable 事实，修正新增精确断言；`F-014-built-initial.log` |
+| `node scripts/run-tests.ts test/modules/execution/budget/docs-p03-3-handoff.test.ts` | 1 | 预期 RED，交接文档尚不存在；`F-014-red.log` |
+| `node scripts/run-tests.ts test/modules/execution/budget/p03-3-cli-built.test.ts`，首轮 | 1 | prepare 返回完整 capability/runnable 事实，修正新增精确断言；`F-014-built-initial.log` |
 | 同上，第二轮 | 1 | deadline 查询时间自然前进；改为时间投影单调性 + 其余持久字段严格相等；`F-014-built-second.log` |
-| `node scripts/run-tests.ts test/p03-3-cli-built.test.ts test/docs-p03-3-handoff.test.ts` | 0 | 2 文件/2 用例通过；`F-014-focused.log` |
+| `node scripts/run-tests.ts test/modules/execution/budget/p03-3-cli-built.test.ts test/modules/execution/budget/docs-p03-3-handoff.test.ts` | 0 | 2 文件/2 用例通过；`F-014-focused.log` |
 | `npm run verify`，首轮 | 1 | test 183 文件/3944 用例通过；typecheck 发现新测试脱敏函数缺参数；build=`not_run`；`F-014-verify.log` |
 | `npm run check:boundaries` | 0 | 135 生产源文件，0 诊断；`F-014-boundaries.log` |
 | `node scripts/run-tests.ts p03-3` | 0 | 缩小到同职责：27 文件/436 用例通过；`F-014-feature-tests.log` |

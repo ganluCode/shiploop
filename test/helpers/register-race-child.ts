@@ -1,7 +1,7 @@
 /**
  * P01-3 / F-005 跨进程注册竞争子进程（仅测试使用，不是产品实现，不进 packages/）。
  *
- * 父进程（test/project-registration.test.ts）以
+ * 父进程（test/modules/projects/project-registration.test.ts）以
  * `node --import test/helpers/node-ts-loader/register.mjs <本文件> <configJson>`
  * 启动两个本进程实例，连接同一真实临时 SQLite 并竞争注册同一真实 Git 仓库路径：
  *

@@ -106,9 +106,9 @@ PRD：`p01-project-config.md`（版本 0.2，2026-10-01）。实施前置契约�
 
 - 操作说明 [p01-3-operations.md](../p01-3-operations.md) §6 的最小示例与
   [`examples/p01-3-standalone.ts`](../../examples/p01-3-standalone.ts)、
-  [`test/p01-3-fr-acceptance-closed-loop.test.ts`](../../test/p01-3-fr-acceptance-closed-loop.test.ts)
+  [`test/modules/acceptance/p01-3-fr-acceptance-closed-loop.test.ts`](../../test/modules/acceptance/p01-3-fr-acceptance-closed-loop.test.ts)
   同构；
-- 新增 [`test/docs-p01-3-operations.test.ts`](../../test/docs-p01-3-operations.test.ts)（5 用例）：
+- 新增 [`test/modules/engineering/docs-p01-3-operations.test.ts`](../../test/modules/engineering/docs-p01-3-operations.test.ts)（5 用例）：
   在真实临时 Git 仓库与数据根上用公开装配入口跑通操作说明示例（注册/重复结果、CAS 编辑、
   全局+项目配置、有效配置来源、脱敏导出、受权定位、关闭重开一致），并交叉核对文档引用的真实
   常量（namespace、`core.sqlite`、`schemaVersion=2`、导出格式版本、标签/分页上限、资源类型）；

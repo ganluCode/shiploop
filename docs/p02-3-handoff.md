@@ -115,17 +115,17 @@ P02-3 新增路由（全部 Bearer 认证、`/v1` 前缀；P02-1/P02-2 路由不
 
 ## 7. 测试与证据入口（p02-acceptance 组合双客户端演示可复用）
 
-- **双客户端纵向参照**：`test/p02-3-baseline-cli-vertical.test.ts` 验收 3（一客户端
+- **双客户端纵向参照**：`test/modules/onboarding/p02-3-baseline-cli-vertical.test.ts` 验收 3（一客户端
   `baseline run --follow` 观察、另一客户端 `baseline status`/`baseline cancel`；观察中断退出码 4
-  后操作仍可查）、`test/p02-3-init-overview-vertical.test.ts`（两客户端同数据根唯一 Host、
-  重启后注册可查）、`test/p02-3-integration-regression.test.ts`（两客户端同数据根唯一 Host、
+  后操作仍可查）、`test/modules/onboarding/p02-3-init-overview-vertical.test.ts`（两客户端同数据根唯一 Host、
+  重启后注册可查）、`test/modules/onboarding/p02-3-integration-regression.test.ts`（两客户端同数据根唯一 Host、
   竞争基线单次启动、重放/冲突、取消与完成竞争、过期授权、stop/崩溃恢复）。
 - **夹具**：`test/helpers/p02-3/`（组合夹具 `createBaselineFixture`、仓库变体、命令样例、
   进程工具、证据故障注入）、`test/helpers/host/`（隔离环境/受管子进程/伪 Host/脱敏证据日志）、
   `test/helpers/p02-2/storage-probe.ts`（独立只读 SQLite 探针）。
 - **证据入口**：检查输出与报告经 `baseline status` 的 `checks[].output.artifactId` →
   `baseline evidence <artifactId>`（或 HostClient `readArtifactContent`）读取；证据完整性
-  （hash/size/覆盖缺口）在报告与 `test/artifact-verify.test.ts`/`test/baseline-evidence.test.ts`
+  （hash/size/覆盖缺口）在报告与 `test/modules/storage/artifacts/artifact-verify.test.ts`/`test/modules/onboarding/baseline-evidence.test.ts`
   守护。历史阶段证据在 `docs/acceptance/evidence-p0*/`（已脱敏）。
 - 仓库级验证入口：`npm test`（确定性一次性全量）、`npm run verify`（锁文件预检 +
   test/typecheck/build fail-closed）、`npm run check:boundaries`。建议 Harness 将 Feature

@@ -25,7 +25,7 @@
 - 序 1 逐项：`npm test` 116 files / 2961 tests 全过（0 skip/0 fail）、`npm run typecheck`
   退出 0、`npm run build`（含 dist 冒烟）退出 0；`verify: PASS 3/3 checks exited 0`。
 - 序 2 说明（资源限制，如实记录、不冒充通过）：步骤 1-10 全部 EXIT 0（verify 93.3s、
-  9 个场景步骤约 155s），步骤 11（`test/p02-4-clean-replay.test.ts` 完整复跑形态）进行中
+  9 个场景步骤约 155s），步骤 11（`test/modules/acceptance/p02-4-clean-replay.test.ts` 完整复跑形态）进行中
   被本执行环境 600s 单命令预算截断；该控制器运行未产生最终报告，**不计入通过**。
   完整 `npm run accept:p02` exit 0 证据由序 4/5（操作指南 §4.4 分阶段复跑入口）提供。
 - 序 4/5 的逐项计数均为 **pass 15 / fail 0 / not_run 0**（实测确认），run-id/报告目录互相独立；
@@ -56,7 +56,7 @@
   两次 run-id 独立、报告目录互不覆盖。**零不一致**。
 - 本文件与两份报告的脱敏扫描（无 64hex 秘密/完整摘要、无 token/认证头取值、无环境
   秘密名、无开发机绝对路径、无用户文件正文）：**零命中**（文档守护
-  `test/docs-p02-4-f014-report.test.ts` 复跑通过，`tool-logs/F-014-final-guard.log`）。
+  `test/modules/acceptance/docs-p02-4-f014-report.test.ts` 复跑通过，`tool-logs/F-014-final-guard.log`）。
 
 ## 4. 临时进程与资源清理
 

@@ -5,7 +5,7 @@
 - 受测入口：生产 CLI 执行层 `runHostCli`（`packages/cli/src/host/execute.ts`）、
   Host 启动入口（`packages/host/src/runtime/`，经测试加载器 hooks 以 TS 源码
   或 dist 产物运行）、`shiploop-core` 装配入口（`openCoreApplication`）。
-- 回归套件：`test/p02-1-integration-regression.test.ts`（29 项）；CLI 驱动
+- 回归套件：`test/modules/host/p02-1-integration-regression.test.ts`（29 项）；CLI 驱动
   子进程夹具：`test/helpers/host/cli-driver-child.ts`（ready/go 同步屏障，
   在独立真实子进程中运行生产执行层）。
 - 运行边界：macOS（flock）、真实临时数据根（沙箱内独立 home/tmp/data，
@@ -17,10 +17,10 @@
 
 ### FR-1 启动与发现
 
-| 分支 | 覆盖用例（`test/p02-1-integration-regression.test.ts`） |
+| 分支 | 覆盖用例（`test/modules/host/p02-1-integration-regression.test.ts`） |
 |---|---|
 | 正常：获锁→开 Core→Schema→回环端口→原子发现；重复 start 接同一实例 | 「两个 CLI 子进程同时 host start」「两个独立数据根并发 start」「合法 stop → … 重启新实例」 |
-| 多候选竞争唯一持锁者 | 「三个 CLI 多候选竞争」（+ 两 CLI 用例；失败候选进程被 OS 核验退出，根下恰有一个 core.sqlite/writer.lock，胜者 pid==发现 pid；获锁先于 openCoreApplication 的直接锁顺序测试见 `test/host-writer-lock.test.ts`/`test/host-startup.test.ts`） |
+| 多候选竞争唯一持锁者 | 「三个 CLI 多候选竞争」（+ 两 CLI 用例；失败候选进程被 OS 核验退出，根下恰有一个 core.sqlite/writer.lock，胜者 pid==发现 pid；获锁先于 openCoreApplication 的直接锁顺序测试见 `test/modules/host/host-writer-lock.test.ts`/`test/modules/host/host-startup.test.ts`） |
 | 路径别名同锁 | 「规范路径别名与真实路径两个 CLI 同时 start」（同一 dataRootIdentity、同一实例；锁/存储 API 拒绝非 realpath 输入） |
 | 独立数据根 | 「两个独立数据根并发 start」（两 Host 并存、身份不同、各自持锁，停 A 不影响 B） |
 | 错误/陈旧发现 | 「陈旧 PID 指向无关活进程」「崩溃后重新发现」（死端口 + 无关活 PID 获锁替换，无关进程存活；旧凭据 unauthorized） |
@@ -79,14 +79,14 @@
 
 | 命令 | 结果 | 退出码 |
 |---|---|---|
-| `npm test -- test/p02-1-integration-regression.test.ts`（连跑 4 次） | 29/29 通过 ×4，ps 核验零夹具/Host 残留 | 0 |
+| `npm test -- test/modules/host/p02-1-integration-regression.test.ts`（连跑 4 次） | 29/29 通过 ×4，ps 核验零夹具/Host 残留 | 0 |
 | `npm run typecheck` | 无诊断 | 0 |
 | `npm run check:boundaries` | 62 个生产 TS 文件、0 诊断 | 0 |
-| `npm test`（全量） | 58 files / **1329 tests** 全绿（新增 29；F-012 时 1300 保持全绿；含 `test/boundary-check.test.ts` 真实子进程边界检查） | 0 |
+| `npm test`（全量） | 58 files / **1329 tests** 全绿（新增 29；F-012 时 1300 保持全绿；含 `test/modules/engineering/boundary-check.test.ts` 真实子进程边界检查） | 0 |
 | `npm run build` | 原生锁 + 三包 tsc -b + prepare-cli-bin + 冒烟（core assembly、host start、cli bin 纵向、三包入口无副作用）全 0 | 0 |
 | `npm run verify` | test/typecheck/build 3/3 EXIT 0，PASS | 0 |
 | 干净树实测（移除三包 dist）：`npm run typecheck` + 本套件/`host-cli-execute`/`host-launcher` | 全部退出 0（CLI 驱动子进程经加载器第三处精确映射 `shiploop-host` → host src 运行源码）；随后重建 `npm run build` | 0 |
 
 > `npm run verify` 内含 test/typecheck/build 三步（边界检查经 `npm test` 中的
-> `test/boundary-check.test.ts` 真实子进程执行），任何一步非 0 即整体非 0；
+> `test/modules/engineering/boundary-check.test.ts` 真实子进程执行），任何一步非 0 即整体非 0；
 > 失败先补失败回归再修复，不删测试/降门槛。

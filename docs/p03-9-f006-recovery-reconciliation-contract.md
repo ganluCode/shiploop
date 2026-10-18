@@ -38,6 +38,6 @@
 ## 5. 集成与验证
 
 - `createWorkStartupRecovery` 在 F-005 停止/证据之后，对本次 target 与已 recorded 但未成功收尾的 Attempt 调用 `reconcile`；全部 reconciled 才开放门控。
-- `test/p03-9-f006-recovery-reconciliation.test.ts` 使用真实临时 Git/SQLite/Artifact 文件覆盖：tracked/untracked 保留、已提交进展、错误分支/路径、外部 HEAD 漂移、记录水位缺失、原生档案只读事实、已发生但回执缺失的提交、pending Artifact、重复恢复及历史 passed/证据保留。
+- `test/modules/recovery/p03-9-f006-recovery-reconciliation.test.ts` 使用真实临时 Git/SQLite/Artifact 文件覆盖：tracked/untracked 保留、已提交进展、错误分支/路径、外部 HEAD 漂移、记录水位缺失、原生档案只读事实、已发生但回执缺失的提交、pending Artifact、重复恢复及历史 passed/证据保留。
 - F-005 测试改为从不可变 recorded 事件读取其启动 Artifact；较新的恢复诊断可更新 `attempts.diagnostic_ref`，但不删除历史事件或 Artifact。
 - `workspace.discard.preview` 读取历史 fenced Attempt 时只检查该 owner 的剩余 lease，不通过已撤销的 task executionVersion 门槛误报 ownership。

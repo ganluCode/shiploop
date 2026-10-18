@@ -76,7 +76,7 @@ finalization Run 只是控制信封；不启动该 Attempt。
 
 ## 5. 聚焦验证
 
-`test/p03-9-f012-finalization-completion.test.ts`（真实临时 Git/SQLite/Artifact，
+`test/modules/delivery/retry/p03-9-f012-finalization-completion.test.ts`（真实临时 Git/SQLite/Artifact，
 零模型）：
 
 - 无差异记录 `no_change` 并完成，不新增提交/Runtime/Attempt；

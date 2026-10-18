@@ -132,7 +132,7 @@ planDigest 的批准或拒绝决策**（`feature.plan.decide`，能力位
 
 - 迁移版本接续 P03-1 实际最新迁移（v6）+1 = **v7**；不改历史 checksum；空库、
   P02 v5 库与前序库升级均保留既有数据、事件水位（MAX(state_events.sequence)）
-  与历史 checksum（F-005 执行器既有核验，见 `test/sqlite-migration-runner.test.ts`）；
+  与历史 checksum（F-005 执行器既有核验，见 `test/modules/storage/sqlite/sqlite-migration-runner.test.ts`）；
 - 公共命令白名单变化：`APP_CAPABILITIES`/`COMMAND_OPERATIONS`/
   `COMMAND_OPERATION_SPECS` 追加 `feature.plan.decide`（能力位与操作同名）；
   事件白名单追加 `feature.plan.approved`/`feature.plan.rejected`；Host

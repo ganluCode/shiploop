@@ -1,7 +1,7 @@
 /**
  * F-012 中断发布子进程（仅测试使用，不是产品实现，不进 packages/）。
  *
- * 父进程（test/artifact-verify.test.ts）以
+ * 父进程（test/modules/storage/artifacts/artifact-verify.test.ts）以
  * `node --import test/helpers/node-ts-loader/register.mjs <本文件> <configJson>`
  * 启动本进程，模拟 Host 在发布流程的三个确定性检查点被中断：
  *

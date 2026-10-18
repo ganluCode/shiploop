@@ -679,7 +679,7 @@ interface BaselineCheck {
 - 必须从**空库**与 **P02-2 最新库（v3）**两条路径迁移成功；迁移与 Drizzle Schema 一致性进真实
   pragma 交叉核对测试。
 - **F-007 补充（写回登记，2026-10-10）**：实施时在冻结 DDL 之上补齐三类加强约束，
-  均不改变冻结列集与领域语义，依据与测试见 `test/sqlite-baseline-store.test.ts`：
+  均不改变冻结列集与领域语义，依据与测试见 `test/modules/storage/sqlite/sqlite-baseline-store.test.ts`：
   1. `baseline_occupancy.process_identity`（JSON 对象可空）：记录可恢复的进程身份
      （pid/启动信息），供 F-013 重启后核对旧进程；语义与设计 11
      `workspace_leases.process_identity` 对齐（§15.8 字段对齐要求）；另加单例 CHECK
@@ -1183,6 +1183,6 @@ Feature 输入在 Harness（非本仓库内容、非运行时依赖），以 SHA
 
 - 基线：§1.3（`npm run verify` 退出 0，PASS 3/3；81 files / 2174 tests）。
 - 本文引用的冻结事实（基线 hash、版本、路由、能力、错误码、scope/事件白名单、非目标、三轴状态）
-  由 `test/docs-p02-3-onboarding-contract.test.ts` 交叉核对；实现任务改变「当前事实」（如 F-007 加
+  由 `test/modules/onboarding/docs-p02-3-onboarding-contract.test.ts` 交叉核对；实现任务改变「当前事实」（如 F-007 加
   迁移 v4、F-014 接路由、F-002 加能力位）时必须同步更新该守护与本文，不得让文档另立一套。
 - 本文是实施前置契约，不声明任何 P02-3 能力已实现；未运行项与未验收平台在 F-020 报告记 `not_run`。

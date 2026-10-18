@@ -36,7 +36,7 @@ Task 总上限、期限、控制状态和 fencing；这不是新 Attempt 的启�
 `budget_exhausted` 及 layer/dimension 明确原因。本任务不创建重试、不结束 Attempt、
 不更新 Task 状态；后续 F-010/F-011 在相应生命周期事务组合此结算入口。
 
-验证覆盖：`test/p03-7-f009-code-attempt-budget.test.ts` 检查可信失败分类、
+验证覆盖：`test/modules/verification/p03-7-f009-code-attempt-budget.test.ts` 检查可信失败分类、
 完整 F-002/真实 Attempt 接线、三次上限、重放、SQLite 重开、父计数不退、事务回滚、
 两个真实进程的重复/冲突结算。配置默认值、整数边界、旧配置兼容和冻结输入沿用
 `p03-3-budget-policy-config`、`p03-3-attempt-budget-reservation`、

@@ -70,7 +70,7 @@ await_stop_settlement / stop_reconcile / retry_final`：
 
 ## 5. 聚焦验证
 
-`test/p03-9-f013-control-recovery-query.test.ts`（真实临时 SQLite + 真实
+`test/modules/recovery/p03-9-f013-control-recovery-query.test.ts`（真实临时 SQLite + 真实
 Host 纵向，零模型）：
 
 - paused/pausing/cancelling（uncertain 停止 + interrupted Attempt +

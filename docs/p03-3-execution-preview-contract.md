@@ -11,8 +11,8 @@ previewDigest 纯函数）、`packages/core/src/application/execution-preview.ts
 `packages/core/src/ports/commands.ts` + `application/command-service.ts`（`execution.preview`
 命令面）、`packages/core/src/adapters/composition.ts`（组合根装配）、
 `packages/host/src/contract/lifecycle.ts`（Host 通用命令路由接线宣告，v5 内增量）。
-守护测试：`test/p03-3-execution-preview.test.ts`、`test/commands-contract.test.ts`、
-`test/docs-p03-3-execution-preview-contract.test.ts`。
+守护测试：`test/modules/execution/budget/p03-3-execution-preview.test.ts`、`test/modules/commands/commands-contract.test.ts`、
+`test/modules/execution/budget/docs-p03-3-execution-preview-contract.test.ts`。
 
 ## 1. 命令面与授权
 
@@ -138,7 +138,7 @@ JSON，键排序；任务/权限/输入按身份键稳定排序）。成分：
 
 ## 8. 验证记录（F-004，attempt 1）
 
-- `test/p03-3-execution-preview.test.ts`（38 用例，真实临时 Git/SQLite/制品资源）：
+- `test/modules/execution/budget/p03-3-execution-preview.test.ts`（38 用例，真实临时 Git/SQLite/制品资源）：
   ready 预览与固定范围、no_work（空范围/无待执行工作/failed 属待执行）、阻塞原因
   逐项与多原因并列、结构化拒绝矩阵（跨项目/多成员/非法预算五类/并发>1/绑定漂移/
   绑定缺失/端口未装配）、授权先于仓库 I/O（inspector 零调用观测）、身份变化矩阵

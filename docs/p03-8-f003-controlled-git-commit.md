@@ -80,10 +80,10 @@ GIT_INDEX_FILE/凭据；关闭系统/全局配置与签名交互，但不禁用 
 沿用 WorkspaceInspector 自身的文件/字节/扫描上限。允许路径最多 512 项/32 KiB；
 大项目超过界限需明确调整可信实现，不能截断证据声称通过。
 
-- `test/p03-8-f003-controlled-git-commit.test.ts`：31 个用例，真实临时 Git、真实
+- `test/modules/delivery/p03-8-f003-controlled-git-commit.test.ts`：31 个用例，真实临时 Git、真实
   SQLite 操作存储和受监督进程；动态测试 authority/Work snapshot 为确定性替身，
   不冒充尚未交付的 Feature 门禁/人审生产装配。
-- `test/p03-8-f003-git-commit-driver.test.ts`：6 个端口边界用例，覆盖 argv/环境、
+- `test/modules/delivery/p03-8-f003-git-commit-driver.test.ts`：6 个端口边界用例，覆盖 argv/环境、
   身份确认后权限变化、停止未知、超时、缺输出、错误 OID 与参数分批。
 
 本任务仅局部测试；受影响回归清单交 Nezha，Feature 全量/类型检查/构建仍须独立执行。

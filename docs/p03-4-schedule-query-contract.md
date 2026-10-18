@@ -111,7 +111,7 @@ scheme, claim/runtime-result entrypoint or direct SQLite access:
   fold to the same `not_found` body, and error bodies carry no other-project
   identity, artifact body or absolute path.
 
-Evidence: `test/p03-4-schedule-host-wiring.test.ts` (real `startHost` +
+Evidence: `test/modules/scheduling/p03-4-schedule-host-wiring.test.ts` (real `startHost` +
 `connectToHost` + temporary seeded SQLite: legal queries with cursor-chain
 replay, 401 indistinguishability, 400 parameter negatives, cross-project fold,
 read-only table snapshot equality, receipt/event identity association) plus
@@ -148,17 +148,17 @@ access, no second state source:
 - Help text for `execution` and the three subcommands states that this
   Feature (P03-4) has no complete execution/verification loop yet.
 
-Evidence: `test/p03-4-cli-schedule-args.test.ts` (pure parse/view/help),
-`test/p03-4-cli-schedule-vertical.test.ts` (real temporary Host + seeded
+Evidence: `test/modules/scheduling/p03-4-cli-schedule-args.test.ts` (pure parse/view/help),
+`test/modules/scheduling/p03-4-cli-schedule-vertical.test.ts` (real temporary Host + seeded
 SQLite via `runAppCli`: normal queries, cursor chains, invalid input/paging,
 cross-project fold, unreachable exit 3, repeated queries leave persisted
 tables byte-identical — no claim, no budget charge, no runtime start) and
-`test/p03-4-cli-schedule-built.test.ts` (the same checks through the
+`test/modules/scheduling/p03-4-cli-schedule-built.test.ts` (the same checks through the
 officially built CLI entry `packages/cli/dist/bin.js`).
 
 ## Evidence
 
-`test/p03-4-schedule-query.test.ts` (9 cases): stable candidate order with
+`test/modules/scheduling/p03-4-schedule-query.test.ts` (9 cases): stable candidate order with
 read-only and reopen-consistency assertions; retained preparation failure with
 stage/errorKind and null unknowns; bounded stable diagnostic pagination with a
 replayed cursor chain; manual-block/dependency-failure/budget-exhaustion

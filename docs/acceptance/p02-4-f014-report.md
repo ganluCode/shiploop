@@ -16,7 +16,7 @@
     回归修复提交；产品代码自 `948bbdf9610e641adde84a04df87ee5aace37dc1`（F-013）后的唯一
     变更）。
   - **文档/守护受测状态**：本报告、P02 阶段报告、脱敏验证记录与文档守护
-    `test/docs-p02-4-f014-report.test.ts` 一并纳入最终验证（`npm run verify` 的
+    `test/modules/acceptance/docs-p02-4-f014-report.test.ts` 一并纳入最终验证（`npm run verify` 的
     npm test/typecheck/build 与 `npm run accept:p02` 复跑均在其后于该交付树执行，
     工作树状态逐次记录于 [verification-record](evidence-p02-4-final/verification-record.md)）。
   - **报告提交**：本文件与配套文档/证据作为 F-014 文档提交在其后进入版本库，
@@ -71,7 +71,7 @@
   `unreachable(aborted)` 拒绝，`executeEventsCommand` 未把中止形态错误归入观察中断，
   被顶层误归类为连接失败（退出码 3），违反契约 §12.3 第五档（Ctrl+C 只结束本次观察）。
 - 处置（严格 TDD）：先补确定性失败回归
-  （`test/app-cli-events-scripted.test.ts`「建连等待事件流响应头期间 Abort」，可编排对端
+  （`test/modules/cli/app-cli-events-scripted.test.ts`「建连等待事件流响应头期间 Abort」，可编排对端
   挂起建连 + AbortController，RED 复现 exit 3），再修复
   （`packages/cli/src/app-execute.ts` 增加中止形态错误识别，命中即返回
   `observation_interrupted`/退出码 4，含最后游标），复跑 GREEN（11/11）。
@@ -107,7 +107,7 @@
 - 受测产品代码：`24b8377872f25c30e3a1efcc25504c9653c2b663`；前序文档基线
   `948bbdf9610e641adde84a04df87ee5aace37dc1`（F-013）；分支
   `feat/2026-10-04-23-19-52_p02-4-p02`。产品代码变更仅 `packages/cli/src/app-execute.ts`
-  （观察中断归类修复）与回归测试 `test/app-cli-events-scripted.test.ts`。
+  （观察中断归类修复）与回归测试 `test/modules/cli/app-cli-events-scripted.test.ts`。
 - 工作树状态：每次验证运行前 `git status --porcelain` 原文记录于
   [verification-record](evidence-p02-4-final/verification-record.md)（最终验证在文档交付树
   上执行且状态为 clean；记录回填提交后仅增加运行记录文本）。

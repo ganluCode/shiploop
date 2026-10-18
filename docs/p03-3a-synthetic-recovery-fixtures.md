@@ -16,18 +16,18 @@ No dependencies, migrations, authorization rules or budgets are changed.
   explicit counters, history baselines and disjoint usage scopes.
 - `test/helpers/runtime-recovery/writer-child.ts`: a bounded, credential-free
   child process attempts the same real filesystem writer lock.
-- `test/p03-3a-recovery-driver.test.ts` and
-  `test/p03-3a-recovery-recording.test.ts`: executable acceptance examples.
+- `test/modules/runtime/recovery/p03-3a-recovery-driver.test.ts` and
+  `test/modules/runtime/recovery/p03-3a-recovery-recording.test.ts`: executable acceptance examples.
 
 Run focused coverage with:
 
 ```sh
-npm test -- test/p03-3a-recovery-driver.test.ts test/p03-3a-recovery-recording.test.ts
+npm test -- test/modules/runtime/recovery/p03-3a-recovery-driver.test.ts test/modules/runtime/recovery/p03-3a-recovery-recording.test.ts
 ```
 
 Existing source/permission checks remain covered by
-`test/p03-3a-runtime-recovery-assembly.test.ts`; request/capability semantics by
-`test/p03-3a-runtime-recovery.test.ts`. These remain separate from the synthetic
+`test/modules/runtime/recovery/p03-3a-runtime-recovery-assembly.test.ts`; request/capability semantics by
+`test/modules/runtime/recovery/p03-3a-runtime-recovery.test.ts`. These remain separate from the synthetic
 executor so its files are not mistaken for trusted Core Artifact storage.
 
 ## Recovery And Effects

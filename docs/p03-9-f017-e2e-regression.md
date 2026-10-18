@@ -4,7 +4,7 @@
 
 ## 1. 覆盖范围
 
-新测试 `test/p03-9-f017-finalization-host-vertical.test.ts` 使用真实临时 Git/SQLite/Artifact、真实 Host 和 `runAppCli → HostClient → Host → Core` 路径，检查执行使用确定性受信 Verifier（零模型、零真实凭据）。覆盖：
+新测试 `test/modules/delivery/retry/p03-9-f017-finalization-host-vertical.test.ts` 使用真实临时 Git/SQLite/Artifact、真实 Host 和 `runAppCli → HostClient → Host → Core` 路径，检查执行使用确定性受信 Verifier（零模型、零真实凭据）。覆盖：
 
 1. 最终检查失败后显式 `retryFinal`：新 Run 只执行最终检查，旧 Run 终态/Revision 不变，`workKey` 关联与 `dispatchOrdinal` 正确，Task/Attempt 历史保留，FakeRuntime 启动数不增加；第二次重试前会重新执行所需最终检查。
 2. 仅提交失败、提交已发生但回执丢失：只继续缺失提交或先核对真实 Git 事实；不重复提交、不启动编码；最后核对 Feature/Run/Batch 完成状态与真实 commit 数。
@@ -23,7 +23,7 @@
 
 ## 3. 验证证据
 
-- 聚焦回归：`test/p03-9-f017-finalization-host-vertical.test.ts`（10 项）、`test/p03-4-scheduler.test.ts`、`test/p03-9-f011-finalization-execution.test.ts`、`test/p03-9-f012-finalization-completion.test.ts`、`test/p03-9-f015-cli-control-vertical.test.ts` 共 36 项通过。
+- 聚焦回归：`test/modules/delivery/retry/p03-9-f017-finalization-host-vertical.test.ts`（10 项）、`test/modules/scheduling/p03-4-scheduler.test.ts`、`test/modules/delivery/retry/p03-9-f011-finalization-execution.test.ts`、`test/modules/delivery/retry/p03-9-f012-finalization-completion.test.ts`、`test/modules/cli/control/p03-9-f015-cli-control-vertical.test.ts` 共 36 项通过。
 - 类型检查：`npm run typecheck` 退出码 0。
 - 完整 stdout/stderr 与退出码保存在 Feature workspace 的 `verifications/F-017/runtime-logs/` 与 `tool-logs/f017-typecheck.log`。
 - 脱敏回归证据摘要：`verifications/F-017/f017-e2e-evidence.json`。

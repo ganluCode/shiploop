@@ -58,7 +58,7 @@ query path; it does not implement execution preview, start, scheduling or Runtim
 
 ## Verification
 
-`test/p03-3-work-command-receipts.test.ts` covers real SQLite persistence and
+`test/modules/execution/budget/p03-3-work-command-receipts.test.ts` covers real SQLite persistence and
 receipt queries, legacy upgrades/replay, raw FK/CHECK/uniqueness failures,
 transaction and migration rollback/retry, public error mapping, factory
 boundaries, persisted corruption and HostClient compatibility. The schema

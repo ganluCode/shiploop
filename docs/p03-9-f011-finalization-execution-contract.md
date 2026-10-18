@@ -88,7 +88,7 @@ Run 必须满足：
 
 ## 7. 聚焦验证
 
-`test/p03-9-f011-finalization-execution.test.ts`（真实临时 Git/SQLite/Artifact）：
+`test/modules/delivery/retry/p03-9-f011-finalization-execution.test.ts`（真实临时 Git/SQLite/Artifact）：
 
 - scope 中 Task 重验 + Feature 双检查真实落库，成功不增 Runtime/Attempt；
 - 受信 Node Verifier 适配器以真实命令执行两项 Task 重验与 Feature 全量检查；

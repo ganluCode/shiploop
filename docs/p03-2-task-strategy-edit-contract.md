@@ -87,7 +87,7 @@ mutation=update）：
   存储无 Run/Attempt 表，迁移版本不变，本任务不建调度器或 Attempt 表模拟后序
   能力）；执行实体表引入时必须替换为同事务真实查询（fail-closed）；
 - 证据边界（如实区分）：本保护由受控测试装配注入探测验证
-  （`test/p03-2-task-strategy-edit-command.test.ts`），真实 Work/Run 竞争
+  （`test/modules/planning/p03-2-task-strategy-edit-command.test.ts`），真实 Work/Run 竞争
   **not_run**（Work 调度与 Runtime 执行属后续阶段）。
 
 ## 6. 原子性、幂等与事件

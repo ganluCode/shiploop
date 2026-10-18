@@ -102,7 +102,7 @@ docs/p03-5-handoff.md  P03-5 → P03-6/8/9 及 P03-10 接口交接（F-013 真�
 
 临时资源统一经 `test/helpers/temp-sandbox.ts` 创建：每次在系统临时目录 `mkdtemp` 全新目录（拒绝落在受测仓库或用户 HOME 之内），`cleanup()` 递归删除并核验消失；`withTempSandbox()` 以 try/finally 保证回调抛错时同样清理。夹具包含中文多字节内容的 UTF-8 逐字节往返断言（无 BOM、无换行转换）。
 
-`test/deterministic-test-harness.test.ts` 以**真实子进程**（非 mock）回归：空测试集非零、注入失败断言非零、临时项目正向对照为零、`--version` 报出 `vitest/5.0.3`、工具缺失启动器非零且报出身份；子进程带有限超时并在结束后回收，不留下常驻进程。测试不依赖预存 `dist`（任何用例都不得导入三个工作区包名），干净 `npm ci` 后无需先构建即可 `npm test`；F-004 锁测试会显式编译原生锁适配器，需下述 macOS 构建工具。
+`test/modules/engineering/deterministic-test-harness.test.ts` 以**真实子进程**（非 mock）回归：空测试集非零、注入失败断言非零、临时项目正向对照为零、`--version` 报出 `vitest/5.0.3`、工具缺失启动器非零且报出身份；子进程带有限超时并在结束后回收，不留下常驻进程。测试不依赖预存 `dist`（任何用例都不得导入三个工作区包名），干净 `npm ci` 后无需先构建即可 `npm test`；F-004 锁测试会显式编译原生锁适配器，需下述 macOS 构建工具。
 
 Core 源码按设计 `core-design/01-system-structure.md` 分层，目录边界由各目录下的 `README.md` 明确（拥有、允许、禁止），F-002 阶段只有无副作用的公共入口 `src/index.ts`：
 
@@ -126,7 +126,7 @@ packages/cli/src/host/        F-011 纯面层 args.ts/help.ts/output.ts（参数
 packages/cli/src/bin.ts       F-012 唯一显式可执行入口（shebang → dist/bin.js，package.json bin: shiploop）；唯一读 process.argv/env 与退出进程的文件
 ```
 
-各包 `package.json` 的 `main` / `types` / `exports['.']` 均指向 `dist` 构建产物；`npm run build` 通过 `tsc -b` 为三个包各自生成 `dist/index.js` 与 `dist/index.d.ts`（含 sourcemap 与增量构建信息）。tsc 之后 `scripts/prepare-cli-bin.ts` 校验 `packages/cli/dist/bin.js` 的 shebang 与 package.json `bin` 字段并置可执行位 0755。构建结束后执行 `scripts/smoke-built-entries.ts`：在独立 Node 子进程中加载三个入口（5 秒超时），并将 `HOME` / XDG 目录 / cwd 重定向到系统临时目录沙箱，断言退出码 0、非常驻、不写用户数据、产物与声明文件存在；其中 Core 的 `./assembly` 入口还会在非源码 cwd 下执行「注册项目 → 全局/项目配置 → 发布固定正文制品 → 关闭重开逐字段核验正文」闭环（`scripts/core-assembly-smoke.mjs`），CLI 的 `dist/bin.js` 会在临时数据根真实跑通 start/第二次 start/status/stop/重启纵向命令（断言回环地址、实例身份、退出码、CLI 退出后 Host 存活、§10.6 停止证据与输出不泄密）。P01 阶段验收检查 `P01-ENG-BUILD-SMOKE` 由 `test/p01-4-build-smoke.test.ts` 承接：把 Core 真实编译到临时目录（不写受测仓库），运行上述冒烟并扫描可发布构建文件/入口/依赖清单/配置，拒绝固定个人绝对路径、Nezha/供应商 SDK 运行依赖与缺失的已编译迁移资源；运行时合法的临时仓库 canonicalPath 不会被误判。
+各包 `package.json` 的 `main` / `types` / `exports['.']` 均指向 `dist` 构建产物；`npm run build` 通过 `tsc -b` 为三个包各自生成 `dist/index.js` 与 `dist/index.d.ts`（含 sourcemap 与增量构建信息）。tsc 之后 `scripts/prepare-cli-bin.ts` 校验 `packages/cli/dist/bin.js` 的 shebang 与 package.json `bin` 字段并置可执行位 0755。构建结束后执行 `scripts/smoke-built-entries.ts`：在独立 Node 子进程中加载三个入口（5 秒超时），并将 `HOME` / XDG 目录 / cwd 重定向到系统临时目录沙箱，断言退出码 0、非常驻、不写用户数据、产物与声明文件存在；其中 Core 的 `./assembly` 入口还会在非源码 cwd 下执行「注册项目 → 全局/项目配置 → 发布固定正文制品 → 关闭重开逐字段核验正文」闭环（`scripts/core-assembly-smoke.mjs`），CLI 的 `dist/bin.js` 会在临时数据根真实跑通 start/第二次 start/status/stop/重启纵向命令（断言回环地址、实例身份、退出码、CLI 退出后 Host 存活、§10.6 停止证据与输出不泄密）。P01 阶段验收检查 `P01-ENG-BUILD-SMOKE` 由 `test/modules/acceptance/p01-4-build-smoke.test.ts` 承接：把 Core 真实编译到临时目录（不写受测仓库），运行上述冒烟并扫描可发布构建文件/入口/依赖清单/配置，拒绝固定个人绝对路径、Nezha/供应商 SDK 运行依赖与缺失的已编译迁移资源；运行时合法的临时仓库 canonicalPath 不会被误判。
 
 命名决定（2026-10-02）：
 
@@ -143,7 +143,7 @@ packages/cli/src/bin.ts       F-012 唯一显式可执行入口（shebang → di
 - **有限超时与进程收尾**：单步默认 600s 超时（可用 `--step-timeout-ms` 或 `SHIPLOOP_VERIFY_STEP_TIMEOUT_MS` 覆盖，供隔离夹具验收）；子命令以独立进程组运行，超时对整个进程组 SIGKILL；退出码非 0、信号退出、超时或无法启动一律算失败。
 - **NOT RUN 语义**：任一步失败即停止，后续未执行步骤明确标记 NOT RUN，绝不把未运行项标为通过。
 
-负向验收见 `test/verify.test.ts`：在系统临时目录构建独立夹具工作区（真实锁文件、真实断言的有限测试集合、真实 tsc 与构建脚本），以真实子进程运行同一个生产 `verify.ts`，分别验证缺锁文件、无测试文件、注入失败断言、注入类型错误、构建非零、必需工具被删、步骤超时与信号死亡等场景均非零退出；夹具测试子命令不回跳本仓库 `npm test`，不产生递归验收。
+负向验收见 `test/modules/engineering/verify.test.ts`：在系统临时目录构建独立夹具工作区（真实锁文件、真实断言的有限测试集合、真实 tsc 与构建脚本），以真实子进程运行同一个生产 `verify.ts`，分别验证缺锁文件、无测试文件、注入失败断言、注入类型错误、构建非零、必需工具被删、步骤超时与信号死亡等场景均非零退出；夹具测试子命令不回跳本仓库 `npm test`，不产生递归验收。
 
 ### 集成验收报告（F-006）
 
@@ -185,7 +185,7 @@ P01-4 在 macOS 干净源码快照中交付 P01 阶段验收：`npm ci` 后真�
 P01 已由项目负责人于 2026-10-05 阶段放行（依据见 [docs/acceptance/p01-review-results.md](docs/acceptance/p01-review-results.md)，放行基线 `5a43a04`，受测产品 commit `0e96535`）。P02-1 开工首项只交付**生命周期接口契约**，不含实现：
 
 - [docs/p02-1-host-lifecycle-contract.md](docs/p02-1-host-lifecycle-contract.md)：P01 基线与放行依据核对、规范数据根与 `dataRootIdentity` 算法、受保护发现/凭据/锁布局、发现 Schema、`/v1/host/handshake|status|stop` 协议、版本化 stop 幂等矩阵、Host 生命周期状态机、HostClient/启动器规则、CLI `host start/status/stop` 参数与四档退出码、错误码总表、FR/T 编号映射（含 T26 编号不一致核对请求）与明确非目标。F-002 ~ F-014 共用此契约，不各自定义协议。
-- 文档守护测试：`test/docs-p02-1-host-lifecycle-contract.test.ts`（冻结事实与仓库基线一致性）。
+- 文档守护测试：`test/modules/host/docs-p02-1-host-lifecycle-contract.test.ts`（冻结事实与仓库基线一致性）。
 - F-004 已交付 [macOS 写入锁决定与装配交接](docs/p02-1-writer-lock.md)：实际 Node
   写入者直接持 flock fd，无辅助者；有界获取、获锁后打开 Core 的工厂端口、关闭失败保锁。
   `npm run build` 先显式编译极小 N-API 模块；要求 `/usr/bin/clang`、macOS SDK
@@ -193,45 +193,45 @@ P01 已由项目负责人于 2026-10-05 阶段放行（依据见 [docs/acceptanc
   依赖，不运行时编译；缺失原生模块/未知平台明确拒绝。真实测试覆盖同步 Core 竞争、
   别名/独立根、实际写入者 SIGKILL/SIGABRT、锁文件安全、有限 owner 探测和关闭/清理失败。
   Host 启动、HTTP 认证/CLI/Work 仍未实现，不声明 P02 通过。
-- F-005 交付 Host/CLI **测试夹具套件**（`test/helpers/host/`，自测 `test/host-fixture-kit.test.ts`，26 项；不进 packages/、不被 vitest 收集为用例）：
+- F-005 交付 Host/CLI **测试夹具套件**（`test/helpers/host/`，自测 `test/modules/host/host-fixture-kit.test.ts`，26 项；不进 packages/、不被 vitest 收集为用例）：
   - `isolated-environment`：复用 temp-sandbox，沙箱内独立 home/tmp/data 与经 `resolveCanonicalDataRoot` 固定的数据根；子进程 env 为显式白名单（只透传 PATH，HOME/TMPDIR 重定向）；dispose 按「伪服务 → 受管进程 → 沙箱目录」顺序回收并核验。
-- F-006 交付 **Host 启动装配与显式入口**（`packages/host/src/runtime/` + `src/start.ts`，回归 `test/host-startup.test.ts`，45 项）：
+- F-006 交付 **Host 启动装配与显式入口**（`packages/host/src/runtime/` + `src/start.ts`，回归 `test/modules/host/host-startup.test.ts`，45 项）：
   - 顺序：选项/env/argv 监听覆盖零容忍（`bind_address_override_rejected`）→ 平台检查 → 规范根 → OS 锁 → openCoreApplication（含 Schema 检查，未知高版本拒写并释锁）→ 127.0.0.1:0 监听并核验套接字地址 → 新 hostInstanceId + 新凭据 → 原子发现发布 → ready；失败按逆序关闭并释锁，不发布 ready。
   - host 包按契约 §13.4 声明 `"shiploop-core": "0.0.0"`（经包名与 `./assembly` 公共入口）；干净树（无 dist）下 `npm test`/`npm run typecheck` 由根 tsconfig paths、vitest alias 与测试子进程加载器的精确映射保障；边界检查放行 exports 声明的公共子路径入口，未声明内部子路径仍违规。
   - 生产入口注入空能力目录，不装配 Pi/模型执行。构建冒烟 `scripts/smoke-built-entries.ts` 从 dist、非源码 cwd 真实启动 Host：断言回环监听/发现一致/凭据不外泄、SIGKILL 后释锁且重启换新实例与凭据、`--bind` 覆盖以退出码 2 拒绝且零副作用。
   - `managed-child` + `fixture-child`：真实 Node 子进程 ready/go IPC 屏障、有界等待、真实 127.0.0.1 监听地址采集；标准场景 ready-listen / never-ready / early-exit(7) / wrong-pid-ready / crash-after-go(SIGKILL) / ignore-sigterm；回收只针对 spawn 句柄的真实 pid，IPC close→SIGTERM→SIGKILL 升级后仍无法核验退出即 `exit_unconfirmed`，绝不把无法探测当停止。
   - `fake-host-server` + `http-probe`：真实回环伪 Host，可编排错误/缺失 token、旧实例、错误协议/schema/数据根、非法生命周期状态、能力撒谎、畸形 JSON、3xx 重定向（探针绝不跟随）、stop 重放；`discovery-fixture` 经生产 `createHostFileStore` 发行 0700/0600 伪凭据与发现。
   - `evidence`：证据仅记录 PID/实例/状态/退出码/路由等非秘密字段；Authorization 头只保留 `bearer/absent/other-scheme` 分类，登记秘密与真实 HOME/仓库路径做深度扫描，违例即 fail-closed，认证头与 token 正文不进证据。
-- F-007 交付 **Host 认证握手与状态查询传输面**（`packages/host/src/runtime/http-transport.ts`，回归 `test/host-http-transport.test.ts`，29 项）：
+- F-007 交付 **Host 认证握手与状态查询传输面**（`packages/host/src/runtime/http-transport.ts`，回归 `test/modules/host/host-http-transport.test.ts`，29 项）：
   - 真实生命周期路由替换 F-006 的 404 占位监听器：握手按契约 §8 冻结顺序（传输层 → 结构 → 凭据 → schema/协议版本 → 实例 → 数据根）返回真实实例/生命周期/冻结能力；status 只读零副作用（不写库、不改文件、不触发 quiesce），确认同一实例存活。
   - Bearer timingSafeEqual 认证（缺失/错误/陈旧 token 不可区分 401）；Host 头恰为 `127.0.0.1:<实际端口>`、任何 Origin 拒绝、无 Origin 的合法 CLI 请求可通过；凭据只经受保护文件与认证头传递，不进 URL/响应/日志。
   - 畸形 JSON（400 不回显原文）、16 KiB 超限（413）、GET 带体（400）、未知路由（404）、方法不允许（405 + 允许方法）、POST content-type 核验；服务端 `headersTimeout` 5 s / `requestTimeout` 15 s 有界常量、每响应 `connection: close`、无 CORS 头、永不含 3xx。
   - stop 路由在 F-008 接线前经完整传输与认证校验后返回 501 unsupported，绝不触发停止/文件删除/数据库写入；负例矩阵执行后发现/凭据/数据库/锁文件逐字节不变。
-- F-008 交付 **显式 stop 的 quiesce/幂等/收尾与信号安全收尾**（`packages/host/src/runtime/host-stop.ts`，回归 `test/host-stop-lifecycle.test.ts`，18 项）：
+- F-008 交付 **显式 stop 的 quiesce/幂等/收尾与信号安全收尾**（`packages/host/src/runtime/host-stop.ts`，回归 `test/modules/host/host-stop-lifecycle.test.ts`，18 项）：
   - §10.2 窄活动门控端口（仅 enterQuiesce/awaitQuiesce 两方法）与生产恒空闲门控；停止控制器编排 §10.4 幂等矩阵与 §10.5 关闭顺序：ready → quiescing →（恒空闲立即确认）→ stopping（关 listener）→ 关 Core → 持锁按实例清理发现/凭据 → 200 最终视图（completed/stopping，不等于进程已退出）→ 释锁 → 退出码 0。
   - 同 commandId 同摘要重放返回同一结果/进度（replayed:true，不重复 enterQuiesce/关闭）；同 ID 不同摘要 409 conflict（控制器级；v1 选项空间下经传输层不可达，传输层先以 400 重算核对拒绝）；quiescing 中另一 commandId 409 stop_in_progress；starting 503 not_ready；错误实例 409、摘要篡改 400、未实现停止能力 501（supportedModes 明示），全部零副作用。
   - quiesce 未确认（真实受管子进程充当活动 + 注入 300ms 预算）→ 409 quiesce_not_confirmed：Host 保持 quiescing、发现/凭据不变、竞争者真实获锁尝试 owner_unknown（无第二写入者）；活动收尾后同命令重提续跑成功（replayed:true）。收尾/清理失败按未确认处理并保锁。
   - 客户端断开/退出不触发 stop；stop 途中断开不阻断收尾（响应送达失败不改变语义），完成判据只看进程退出+锁释放+发现清理；SIGTERM 真实子进程安全收尾（exit 0 + 按实例清理 + 释锁，`dist/start.js` 与测试子进程经 `wireHostSignalShutdown` 装配）；HTTP stop 与信号并发只跑一次收尾。
   - `startHost` 新增受信注入 `activityGate`/`quiesceBudgetMs`（有界，绝非 argv/env/发现字段）；生产默认恒空闲门控，不新增执行表、不虚构取消能力。
-- F-009 交付 **CLI 可复用 HostClient**（`packages/host/src/client/`，回归 `test/host-client.test.ts`，26 项）：
+- F-009 交付 **CLI 可复用 HostClient**（`packages/host/src/client/`，回归 `test/modules/host/host-client.test.ts`，26 项）：
   - `connectToHost`：选项纯校验（零 I/O）→ F-003 受保护存储 fail-closed 读取发现/凭据 → 只连接发现指向的 127.0.0.1 固定端口 → 握手双向核验（§12.2）通过后才允许 status/stop；握手失败不另起写入者、不绕过锁。
   - 错误按 §14 精确分类且互不折算：host_not_found / unsafe_discovery / invalid_discovery / unreachable（连接失败/连接超时/请求超时/断连子原因）/ unauthorized / protocol_incompatible / instance_mismatch / data_root_mismatch / redirect_rejected（绝不跟随 3xx，不向新地址重发凭据）/ response_malformed（含响应超 16 KiB 上限）。服务端错误响应只信任白名单错误码与受控 details 键，不透传服务端文案。
   - §7.2 有限预算：TCP 连接 2s、握手/status 10s、stop 15s（覆盖仅允许区间内有限值）；`close()` 幂等、只释放本地观察资源、绝不调用 stop，Host 存活由另一客户端认证 status 证明（有真实用例）。
   - `probeDiscoveredHost` 为只做一次握手核验的窄探测，供 F-010 启动器 owner 诊断与 F-004 ownerProbe 真实实现复用；真实 Host 端到端用例覆盖「发现→握手→status→stop→外部三证据」。
-- F-010 交付 **CLI 的连接或启动流程与独立后台 Host 启动器**（`packages/host/src/launcher/`，回归 `test/host-launcher.test.ts`，34 项）：
+- F-010 交付 **CLI 的连接或启动流程与独立后台 Host 启动器**（`packages/host/src/launcher/`，回归 `test/modules/host/host-launcher.test.ts`，34 项）：
   - `ensureHostRunning`（契约 §12.4）：先「发现→握手」——有效既有实例直接返回同一 hostInstanceId（already_running，不启动进程）；仅 host_not_found/unreachable/invalid_discovery 允许继续启动，认证/协议/假服务/不安全发现一律返回对应诊断（不另起写入者）。
   - 启动只经正式 Host 入口：独立 argv 数组 spawn（nodeExecutable + entryArgv + `--data-root` 规范根；不经 shell、不拼接），候选 detached + stdio ignore + unref，子进程 env 默认白名单 PATH/HOME/TMPDIR（注入 env 含 SHIPLOOP_HOST_* 覆盖即 bind_address_override_rejected）；启动器自身不打开 SQLite。
   - 预算内轮询重新发现胜者（默认 15 000 ms 预算 / 100 ms 间隔）；成功路径核对「候选即所连实例」（发现 hostInstanceId 与 pid 同时匹配），落选候选由启动器 SIGTERM→SIGKILL 有界回收并核验退出；失败路径先回收候选再做锁所有者诊断（probeDiscoveredHost 经 F-004 ownerProbe，获锁即释、不开 Core）→ owner_active/owner_unknown/start_candidate_failed(internal)/start_timeout，任何失败路径不留未管理进程。
   - 真实多进程用例：两启动器竞争同一胜者实例、陈旧发现（死端口 + 陈旧 PID 指向无关活进程，原子替换且无关进程存活）、锁被占+发现损坏 owner_unknown（不绕过锁/不覆盖损坏文件/原 Host 仍可认证）、客户端正常退出与启动中途被 SIGKILL 后 Host 仍存活并可被另一客户端认证停止。
-- F-011 交付 **Host 生命周期 CLI 纯面层**（`packages/cli/src/host/`，回归 `test/host-cli-args.test.ts`，127 项；解析与执行分离，127 项表驱动正反例）：
+- F-011 交付 **Host 生命周期 CLI 纯面层**（`packages/cli/src/host/`，回归 `test/modules/host/host-cli-args.test.ts`，127 项；解析与执行分离，127 项表驱动正反例）：
   - `parseHostCliArgs`（§13.1/§13.2）：仅识别 `host start/status/stop`；同步纯函数，env 必须显式注入（不读 process.argv/env、不读发现、不联网、不启动 Host、不生成 stop commandId）。相对/空/NUL/`/` 数据根、未知参数、缺值、非整数/越界预算、错误命令参数、重复参数、位置参数、非 UUID v4 commandId、`--bind/--host/--address/--port/--listen*` 参数与非空 `SHIPLOOP_HOST_*` env 覆盖全部在任何 I/O 之前拒绝（退出码 2，覆盖值不回显）。默认 start 15 000（1 000..60 000）、confirm 10 000（0..30 000）。
   - `getHostCliHelp`：top/host/start/status/stop 五个作用域，准确说明退出客户端不停止 Host、显式 `host stop` 语义、stop 回执不等于已退出、status 不启动 Host、首版仅 macOS 与可信本机边界、token 不防同一操作系统用户恶意进程；不含 token 样例与开发机路径。
   - §13.3 JSON 成功/失败信封与 `exitCodeForHostErrorCode`：错误码穷尽映射 1/2/3（2＝输入/本地不安全发现/监听覆盖；3＝连接/协议；其余与未知码 fail-closed →1）。CLI 包声明且仅声明 `"shiploop-host": "0.0.0"`（只经包名公共面复用 isUuidV4/错误码表/env 覆盖键表/启动预算常量）。
-- F-012 交付 **可运行的 start/status/stop 纵向命令**（执行层 `packages/cli/src/host/execute.ts` 的 `runHostCli`，回归 `test/host-cli-execute.test.ts`，17 项；显式入口 `src/bin.ts` → `dist/bin.js`，package.json `bin: { "shiploop": "./dist/bin.js" }`，构建经 `scripts/prepare-cli-bin.ts` 校验 shebang 并置 0755）：
+- F-012 交付 **可运行的 start/status/stop 纵向命令**（执行层 `packages/cli/src/host/execute.ts` 的 `runHostCli`，回归 `test/modules/host/host-cli-execute.test.ts`，17 项；显式入口 `src/bin.ts` → `dist/bin.js`，package.json `bin: { "shiploop": "./dist/bin.js" }`，构建经 `scripts/prepare-cli-bin.ts` 校验 shebang 并置 0755）：
   - `host start` 只经 `ensureHostRunning` 连接或启动（成功结果含 outcome `already_running`/`started` 与握手核验的实例/回环端口/状态；两次 start 同一实例，CLI 退出后 Host 存活）；`host status`/`host stop` 经 launcher 新增的 `resolveConnectDataRoot`（`createIfMissing=false`）与 `connectToHost` 只读连接，**永不**启动 Host（无实例 host_not_found 退出码 3，不创建数据根）。
   - `host stop` 省略 commandId 时由 HostClient 生成 UUID v4；HTTP accepted/completed 回执不当已退出——在 `--confirm-timeout-ms`（默认 10 000，0..30 000）预算内轮询 §10.6 三证据（进程 ESRCH、非阻塞 flock 获锁即释、发现删除或实例替换），齐备才输出 `stopped`（退出码 0），否则 `stop_not_confirmed`（退出码 1，details 只含受控枚举）。
   - 公共 barrel（`src/index.ts`、`src/host/index.ts`）不 re-export 执行层，加载仍无副作用；执行层只导入 `shiploop-host` 包名公共面与 `node:os`/`node:timers`，不直连 Core、不直接使用 HTTP/child_process/fs。构建冒烟在非源码 cwd 用临时数据根真实跑通 start/start/status/stop/重启，断言监听地址、实例身份、退出码、Host 存活与停止后锁可获，且全部输出不含 token。
-- F-013 交付 **整 Feature 真实多进程集成回归**（`test/p02-1-integration-regression.test.ts`，29 项；CLI 驱动子进程夹具 `test/helpers/host/cli-driver-child.ts` 以 ready/go 同步屏障在独立真实子进程中运行生产 `runHostCli`；产品源码/依赖/构建脚本零改动）：
+- F-013 交付 **整 Feature 真实多进程集成回归**（`test/modules/host/p02-1-integration-regression.test.ts`，29 项；CLI 驱动子进程夹具 `test/helpers/host/cli-driver-child.ts` 以 ready/go 同步屏障在独立真实子进程中运行生产 `runHostCli`；产品源码/依赖/构建脚本零改动）：
   - FR-1：两/三 CLI 同步屏障竞争唯一持锁 Host（各成功连接同一实例、失败候选进程 OS 核验退出、CLI 退出后 Host 存活）、规范路径别名同锁、独立数据根双 Host 并存、陈旧 PID 指向无关活进程、持锁但发现缺失/损坏（owner_unknown 不产生第二写入者）、崩溃后重新发现、旧清理迟到不删新实例文件、公开监听覆盖（argv/env × 0.0.0.0/::/非回环 IP/域名）退出码 2。
   - FR-2：token 第三方篡改 unauthorized、假服务与真 Host HTTP 负例矩阵（协议 426/实例与数据根 409/Origin 与伪造 Host 401/302）零文件副作用、不安全发现权限 unsafe_discovery、同 commandId 停止进行中重放（enterQuiesce 恰一次）、quiesce 未确认保留锁且 CLI 竞争者不产生第二写入者、合法 stop 三证据→重启新实例→重开 Core 前序持久数据未损坏且旧身份/token 被拒绝。
   - 脱敏证据映射与 not_run 记录：[docs/acceptance/evidence-p02-1/f013-regression-evidence.md](docs/acceptance/evidence-p02-1/f013-regression-evidence.md)（文档守护核对；不声称项目接入、执行取消或整个 P02 已验收）。
@@ -246,7 +246,7 @@ P01 已由项目负责人于 2026-10-05 阶段放行（依据见 [docs/acceptanc
   - [docs/acceptance/p02-1-f014-report.md](docs/acceptance/p02-1-f014-report.md)：受测 commit
     `8473f30…`、命令与退出码、FR/T 子集、安全说明、已知缺口与 `not_run`、结论（证据
     [docs/acceptance/evidence-p02-1/](docs/acceptance/evidence-p02-1/)，已脱敏）。
-  - 文档守护 [test/docs-p02-1-operations.test.ts](test/docs-p02-1-operations.test.ts)：在真实临时
+  - 文档守护 [test/modules/host/docs-p02-1-operations.test.ts](test/modules/host/docs-p02-1-operations.test.ts)：在真实临时
     数据根与真实 Host 子进程上跑通操作说明纵向命令，并交叉核对命令/参数/默认值/退出码；
     `npm run verify`（test/typecheck/build）仍 `PASS 3/3`。不提供 `accept:p02`。
 
@@ -271,7 +271,7 @@ CAS 更新）、`(principal, commandId)` + 请求摘要幂等、迁移 v3 `comma
   受测入口、FR-1/FR-2 分支映射、T10/T15/T17/T23/T26 子集声明与 `not_run`（脱敏）。
 - [docs/acceptance/p02-2-f020-report.md](docs/acceptance/p02-2-f020-report.md)：Feature 交付报告
   （受测 commit、环境/工具版本、命令/退出码/计数、FR 覆盖索引、脱敏证据核对与 `not_run`）。
-- 文档守护 [test/docs-p02-2-operations.test.ts](test/docs-p02-2-operations.test.ts)：在真实临时
+- 文档守护 [test/modules/commands/docs-p02-2-operations.test.ts](test/modules/commands/docs-p02-2-operations.test.ts)：在真实临时
   仓库/数据根与真实 Host 子进程上跑通操作说明纵向命令（注册 → 配置 CAS → 重放/查回执 → 快照 →
   游标恢复），并用独立只读探针核对持久状态；交叉核对命令/参数/退出码/事件与安全边界。
 
@@ -299,14 +299,14 @@ HostClient/CLI 纵向接线。F-018 已完成真实 Git/SQLite/进程/Host/CLI �
 - 受监督进程/证据/执行编排/恢复细节见 `docs/p02-3-command-process.md`、
   `docs/p02-3-baseline-evidence.md`、`docs/p02-3-baseline-execution.md`、
   `docs/p02-3-baseline-recovery.md`；最小操作 Skill 见 `docs/skills/`。
-- 文档守护 [test/docs-p02-3-operations.test.ts](test/docs-p02-3-operations.test.ts)：真实纵向跑通
+- 文档守护 [test/modules/onboarding/docs-p02-3-operations.test.ts](test/modules/onboarding/docs-p02-3-operations.test.ts)：真实纵向跑通
   操作说明示例（init 预览/确认 → overview → 基线预览/授权/查询/证据/拒绝/取消 → stop/重启后
   查询），并与命令契约面（解析、退出码、检查计划校验）交叉核对。
 - [docs/acceptance/evidence-p02-3/f020-verification-evidence.md](docs/acceptance/evidence-p02-3/f020-verification-evidence.md)：
   验收运行记录、FR-1/FR-2 分支映射与六项关键证据、新增测试收集/前序回归核对、脱敏与清理记录（脱敏）。
 - [docs/acceptance/p02-3-f020-report.md](docs/acceptance/p02-3-f020-report.md)：Feature 交付报告
   （受测 commit、环境/工具版本、命令/退出码/计数、FR 验收索引、契约核对请求与 `not_run`；
-  文档守护 [test/docs-p02-3-f020-report.test.ts](test/docs-p02-3-f020-report.test.ts)）。
+  文档守护 [test/modules/onboarding/docs-p02-3-f020-report.test.ts](test/modules/onboarding/docs-p02-3-f020-report.test.ts)）。
 
 P02-3 交付仅限静态接入与获准基线检查子集；Work/Pi、调度、强 OS 沙箱、非 macOS 平台与整个
 P02 阶段验收在该 Feature 内未包含（`accept:p02` 由阶段末项定义）。首版仅正式支持 macOS，
@@ -325,7 +325,7 @@ P02 阶段验收在该 Feature 内未包含（`accept:p02` 由阶段末项定义
 - [docs/acceptance/p02-4-review-checklist.md](docs/acceptance/p02-4-review-checklist.md)：人工审阅
   清单——FR-1/FR-2 逐项引用稳定检查 ID、真实测试与证据，列出 T 索引（T10/T15/T17/T23/T26）
   覆盖子集与已知限制；人工未审阅明确未完成，不自动签字，Nezha 的 completed 不等于放行。
-- 文档守护 [test/docs-p02-4-operations.test.ts](test/docs-p02-4-operations.test.ts)：示例命令经真实
+- 文档守护 [test/modules/acceptance/docs-p02-4-operations.test.ts](test/modules/acceptance/docs-p02-4-operations.test.ts)：示例命令经真实
   CLI 解析面核对，复跑说明与 `accept:p02` 控制器/配置一致，清单引用的测试/证据真实存在。
 - F-014 阶段最终集成核验与交付：
   - [docs/acceptance/p02-4-f014-report.md](docs/acceptance/p02-4-f014-report.md)：P02-4 Feature
@@ -337,8 +337,8 @@ P02 阶段验收在该 Feature 内未包含（`accept:p02` 由阶段末项定义
     脱敏验证记录（命令/退出码、受测身份分层、证据 hash/size 复验、临时进程/资源清理）。
   - 最终集成核验修复必需行为缺陷：事件订阅建连窗口 Abort 误报 `unreachable`（应为
     `observation_interrupted`/退出码 4），含确定性失败回归
-    （`test/app-cli-events-scripted.test.ts`）。
-  - 文档守护 [test/docs-p02-4-f014-report.test.ts](test/docs-p02-4-f014-report.test.ts)。
+    （`test/modules/cli/app-cli-events-scripted.test.ts`）。
+  - 文档守护 [test/modules/acceptance/docs-p02-4-f014-report.test.ts](test/modules/acceptance/docs-p02-4-f014-report.test.ts)。
 - 阶段边界：正式支持仅 macOS，可信项目模式不具备强 OS 沙箱；Pi/Work、Web、rebind 等未实现
   能力不冒充完成（`not_run`/未支持）。
 
@@ -357,7 +357,7 @@ P02 阶段验收在该 Feature 内未包含（`accept:p02` 由阶段末项定义
 - **禁止跨包内部导入**：另一工作区包的子路径（如 `shiploop-core/src/...`）、逃逸出本包 `src` 根的相对路径，以及逃逸的已声明路径别名（`package.json` 的 `imports`、`tsconfig.json` 的 `paths`）一律拒绝；自包名引用同样拒绝。无法解析的生产导入（缺目标文件、未声明别名、未声明且不可解析的包名）明确报错，不默认为合法。
 - **禁止反向依赖与循环依赖**：清单依赖与源码导入共同构成依赖图，Core→Host/CLI、Host→CLI、CLI→Core 及任何环形引用均被拒绝（如 Host↔CLI 循环会同时报出方向违规与 `dependency-cycle`）。
 - **Core 分层方向**：`domain` 仅可自引用；`ports` 可导入 `domain`；`application` 可导入 `domain`/`ports`；`adapters` 可导入 `domain`/`application`/`ports`；公共入口与契约区（domain/application/ports）禁止导入 `adapters` 实现，也禁止绑定 Pi SDK、Electron、HTTP 框架、`better-sqlite3`、Drizzle 与 `node:http`/`node:https`/`node:net`/`node:dgram`；`adapters` 层对 `ports`/`domain` 类型、已声明第三方依赖与 Node 内置模块的合法引用不被误拒。
-- 正反夹具回归见 `test/boundary-check.test.ts`：合法单向依赖返回 0；注入 Core→Host/CLI 反向引用、Host↔CLI 循环、跨包内部导入、别名逃逸、契约区基础设施导入、分层方向违规等夹具均断言拒绝结果，且检查器在真实子进程中对本仓库返回 0。
+- 正反夹具回归见 `test/modules/engineering/boundary-check.test.ts`：合法单向依赖返回 0；注入 Core→Host/CLI 反向引用、Host↔CLI 循环、跨包内部导入、别名逃逸、契约区基础设施导入、分层方向违规等夹具均断言拒绝结果，且检查器在真实子进程中对本仓库返回 0。
 
 类型系统上，根 `tsconfig.json` 以 `noEmit` 统一覆盖 `test/**/*.ts`、`scripts/**/*.ts` 与三个包的 `src/**/*.ts`；各包自己的 `tsconfig.json`（`composite`、`rootDir: src`、`outDir: dist`）只负责产物构建。
 

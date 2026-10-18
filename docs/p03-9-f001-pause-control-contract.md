@@ -56,5 +56,5 @@
 
 迁移 v27 只在最新迁移之后追加两列，既有迁移 SQL/checksum 不变。空库与前序
 v26 库升级均保留既有数据。聚焦测试见
-`test/p03-9-f001-execution-pause.test.ts`（真实临时 SQLite、认领/验证生命周期、
+`test/modules/execution/control/p03-9-f001-execution-pause.test.ts`（真实临时 SQLite、认领/验证生命周期、
 重复/异摘要/过期 revision/终态/跨项目/权限负例、预算与 deadline 不变）。

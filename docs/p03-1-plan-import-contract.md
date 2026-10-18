@@ -143,7 +143,7 @@ P03-1 之后每次收尾仍须跑完整门禁（`npm run verify` 或等价的 te
 
 边界语义：**边界值通过、越界拒绝**（如任务数 100 通过/101 拒绝、边数 200 通过/201 拒绝、
 标题 200/201、验收条目 32/33、验收正文 2000/2001、Task 引用 8/9、来源引用 16/17、描述
-10000/10001），均有测试（`test/p03-1-plan-validation.test.ts`）。
+10000/10001），均有测试（`test/modules/planning/p03-1-plan-validation.test.ts`）。
 
 ### 2.3 引用支持的形态与缺失判断
 
@@ -475,36 +475,36 @@ v3 内扩张先例，升版评估仍归 F-009）。
 
 ## 7. 测试与守护
 
-- `test/p03-1-plan-validation.test.ts`：合法三 Task 链、空草稿不可执行、结构/DAG 负例全清单
+- `test/modules/planning/p03-1-plan-validation.test.ts`：合法三 Task 链、空草稿不可执行、结构/DAG 负例全清单
   （重复 ID、缺名称、缺完整 acceptance、非法 complexity/标签、缺依赖、自依赖、重复依赖、环、
   跨 Feature 依赖）、全部边界值与越界值、错误脱敏。
-- `test/p03-1-plan-digest.test.ts`：顺序无关、业务敏感性、纯标签/缺省归一不改变摘要、
+- `test/modules/planning/p03-1-plan-digest.test.ts`：顺序无关、业务敏感性、纯标签/缺省归一不改变摘要、
   信封字段无法进入 payload、摘要构造（领域前缀 + 规范化 JSON 的 SHA-256）、规范化 JSON 字段
   白名单与排序。
-- `test/docs-p03-1-plan-import-contract.test.ts`：本文档守护（基线事实、常量与实现一致、
+- `test/modules/planning/docs-p03-1-plan-import-contract.test.ts`：本文档守护（基线事实、常量与实现一致、
   版本兼容、错误清单、CAS 契约、摘要规范逐项可核对）。
-- `test/p03-1-phase-create-command.test.ts`（F-004）：真实 SQLite 应用测试覆盖 Phase 创建
+- `test/modules/planning/p03-1-phase-create-command.test.ts`（F-004）：真实 SQLite 应用测试覆盖 Phase 创建
   同事务持久化（Phase/脱敏事件/回执）与重开可读、幂等重放/参数冲突、重复业务 ID、
   非法元数据与提权字段、归属越权与不存在项目、三个写入边界故障整组回滚、无执行实体。
-- `test/p03-1-plan-import-command.test.ts`（F-005）：真实 SQLite 应用测试覆盖三 Task 链
+- `test/modules/planning/p03-1-plan-import-command.test.ts`（F-005）：真实 SQLite 应用测试覆盖三 Task 链
   导入闭环（同事务 Feature/Tasks/边/策略副本/摘要/事件/回执与重开一致）、Phase CAS 与
   closed/archived 拒绝、重复既有任务 ID、引用重核（缺失/跨项目/非可用/哈希不匹配）、策略
   副本来源与配置不追溯、结构/DAG 负例零写入、五个写入边界故障整组回滚、空草稿不可执行、
   授权矩阵。
-- `test/p03-1-plan-import-race.test.ts`（F-005）：三路跨进程真实竞争（导入×2 + 配置 CAS
+- `test/modules/planning/p03-1-plan-import-race.test.ts`（F-005）：三路跨进程真实竞争（导入×2 + 配置 CAS
   更新）——只提交满足重核条件的完整组、无半成功、每 Feature 策略副本内部一致、配置变化
   不追溯既有 Task。
-- `test/p03-1-label-edit-command.test.ts`（F-007）：真实 SQLite 应用测试覆盖三实体标签
+- `test/modules/planning/p03-1-label-edit-command.test.ts`（F-007）：真实 SQLite 应用测试覆盖三实体标签
   编辑闭环（只改 labels/revision、不传播、摘要保持不变、同事务脱敏事件与重开一致）、
   approved 语义与活动输入不失效（隔离装配）、元数据 CAS（旧 revision 拒绝/同 revision
   竞争仅一个生效/跨进程真实竞争/重放不重复递增）、拒绝矩阵（非法标签/混入字段/跨项目/
   缺能力零写入）与三个写入边界故障整组回滚。
-- `test/p03-1-label-edit-rules.test.ts`（F-007）：纯规则契约（标签编辑影响面、标签规范化
+- `test/modules/planning/p03-1-label-edit-rules.test.ts`（F-007）：纯规则契约（标签编辑影响面、标签规范化
   上限复用、严格未知键、事务输入面、事件白名单与公开映射同源）。
-- `test/p03-1-plan-revise-rules.test.ts`（F-008）：纯规则契约（修订影响面冻结面、批准有效
+- `test/modules/planning/p03-1-plan-revise-rules.test.ts`（F-008）：纯规则契约（修订影响面冻结面、批准有效
   性纯规则矩阵、生产无 Run 装配边界宣告、命令/能力/事件白名单同源、信封与替换原语输入
   严格未知键与结构/边界/依赖语义）。
-- `test/p03-1-plan-revise-command.test.ts`（F-008）：真实 SQLite 应用测试覆盖保留/新建/移除
+- `test/modules/planning/p03-1-plan-revise-command.test.ts`（F-008）：真实 SQLite 应用测试覆盖保留/新建/移除
   成员整体替换闭环（既有身份与策略副本保留、新 Task 按当前配置、摘要/事件/回执同事务提交
   与重开一致）、活动执行输入保护（四类活动依据拒绝 + 探测失败 fail-closed + 保护与 CAS
   竞争受控装配）、非 draft 拒绝、批准摘要失效与纯标签不失效（隔离装配预置 plan_status）、
@@ -512,7 +512,7 @@ v3 内扩张先例，升版评估仍归 F-009）。
   引用重核、新成员 ID 冲突、归属越权与缺能力零写入、六个写入边界故障整组回滚、幂等重放/
   参数冲突与空草稿修订。
 - F-002 的真实 SQLite 迁移/存储原语按其任务验收，不以本任务的纯函数通过冒充。
-- `test/p03-1-integration-regression.test.ts`（F-011）：正式构建产物局部集成回归——
+- `test/modules/planning/p03-1-integration-regression.test.ts`（F-011）：正式构建产物局部集成回归——
   beforeAll 真实 `npm run build`，全部命令经真实 `packages/cli/dist/bin.js` 子进程，Host
   用 dist 产物（`test/helpers/host/dist-host-entry-catalog.mjs` 装配 dist/runtime + 受信
   测试能力目录，与 F-016 目录夹具同一纪律）；覆盖端到端主线（创建 Phase → 三 Task 导入 →

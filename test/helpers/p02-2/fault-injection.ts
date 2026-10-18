@@ -2,7 +2,7 @@
  * F-004 事务故障注入（仅测试使用，不是产品实现，不进 packages/）。
  *
  * 注入面沿用 P01-4 既有端口：真实 SQLite `CREATE TEMP TRIGGER … RAISE(ABORT)`
- * （见 test/p01-4-sqlite-rollback-and-cas.test.ts 头部「与 F-005/F-007/F-010
+ * （见 test/modules/acceptance/p01-4-sqlite-rollback-and-cas.test.ts 头部「与 F-005/F-007/F-010
  * 同一注入面」），不是 mock、不是方法调用计数。触发器是**连接级 TEMP 对象**：
  * 必须安装在执行业务事务的同一条 better-sqlite3 连接上，连接关闭即消亡。
  *

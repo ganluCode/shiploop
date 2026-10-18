@@ -37,7 +37,7 @@ Runner/SessionRecorder；现有 P03-3 预占/结算账本语义保持。
   startKey 与 invocationId 互相独立，不得混用。
 - 纯校验零 I/O，未知字段/非法版本（`unsupported_schema_version`）在适配器调度前
   拒绝。详见 `docs/p03-3a-runtime-recovery-contract.md`，可执行示例
-  `test/p03-3a-runtime-recovery.test.ts`。
+  `test/modules/runtime/recovery/p03-3a-runtime-recovery.test.ts`。
 
 ### 2.2 运行期能力与决策
 
@@ -57,7 +57,7 @@ Runner/SessionRecorder；现有 P03-3 预占/结算账本语义保持。
 - `validateRuntimeRecoveryStrategy`：先走既有配置兼容性校验，再核恢复描述符；
   `descriptor_runtime_mismatch` 拒绝。未注入目录时返回 undefined，由
   `decideRuntimeRecovery` 报 `capabilities:unverified`。
-- 可执行示例：`test/p03-3a-runtime-recovery-assembly.test.ts`。
+- 可执行示例：`test/modules/runtime/recovery/p03-3a-runtime-recovery-assembly.test.ts`。
 
 ### 2.4 原生存储所有权与来源核验 — `ports/runtime-recovery-source.ts`、`application/runtime-recovery.ts`
 
@@ -91,7 +91,7 @@ Runner/SessionRecorder；现有 P03-3 预占/结算账本语义保持。
 
 ## 3. 公共入口兼容（F-005 新增冻结断言）
 
-`test/p03-3a-runtime-entry-compat.test.ts`：
+`test/modules/runtime/recovery/p03-3a-runtime-entry-compat.test.ts`：
 
 - 干净 Node 子进程（仅 PATH、沙箱 HOME/cwd，无 vitest、无 dist 构建）加载
   `packages/core/src/index.ts`，恢复契约全部导出可用；加载守卫禁止
@@ -131,7 +131,7 @@ Runner/SessionRecorder；现有 P03-3 预占/结算账本语义保持。
   tag/commit、spec SHA-256、命令与退出码）、`experiments/pi-durable/evidence.json`
   （原生检查点、工具结果、进程退出信号、副作用次数）；Node 22.19.0/npm 10.9.3。
 - 复跑：`SHIPLOOP_PI_DURABLE_SPIKE=1 node scripts/run-tests.ts
-  test/p03-3a-pi-durable-spike.test.ts`（14 项真实 SDK 断言；未设置该变量时项目
+  test/modules/runtime/recovery/p03-3a-pi-durable-spike.test.ts`（14 项真实 SDK 断言；未设置该变量时项目
   测试只做版本隔离，不算 SDK 通过）。
 - P04 门槛（矩阵文档 §P04 门槛与 Core 边界）：真实认证/模型、标准 1.0.4 与
   Durable 1.2.0 桥接、真实 Skills/MCP/插件、跨 provider 恢复、原生 fork、JSONL

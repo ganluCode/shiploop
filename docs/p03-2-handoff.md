@@ -29,14 +29,14 @@
 | Feature | 交付 | 主要落点 |
 |---|---|---|
 | F-001 | `task.strategy.update` 完整 executionConfig 副本授权 CAS 编辑与来源追踪（不重读默认路由、活动执行输入保护同事务重核） | `packages/core/src/application/task-strategy-update.ts` |
-| F-002 | 绑定当前 planDigest 的批准/拒绝决策记录（迁移 v7 approvals 表；批准不是启动授权；回归 `test/p03-2-plan-approval-command.test.ts`） | `application/feature-plan-decide.ts`、`adapters/sqlite/migrations.ts` |
+| F-002 | 绑定当前 planDigest 的批准/拒绝决策记录（迁移 v7 approvals 表；批准不是启动授权；回归 `test/modules/planning/p03-2-plan-approval-command.test.ts`） | `application/feature-plan-decide.ts`、`adapters/sqlite/migrations.ts` |
 | F-003 | 复合决策身份（planDigest + 适用检查政策内容摘要，迁移 v8 `approvals.check_policy_digest`）、`evaluatePlanApprovalValidity` 纯规则与 `verifyFeaturePlanApprovalInTransaction` 同事务复用入口、`features.approvals` 查询 | `application/plan-approval-verification.ts`、`application/query-service.ts` |
 | F-004 | 执行必需输入受控采集与校验读取（文件源捕获实际字节发布不可变制品；制品源归属/ready/身份核验；获准根白名单 + realpath/no-follow） | `application/execution-input.ts`、`adapters/fs/input-source-files.ts` |
 | F-005 | 有版本 ContextBuilder：固定指导与动态输入分离，有界 prompt/inputManifest/完整 Task 输入内容与确定性摘要（labels 只入 meta 不参与摘要） | `application/context-build.ts`、`ports/context-build.ts` |
 | F-006 | 输入准备三阶段编排（DEFERRED 一致视图捕获 + fail-fast 批准核验 → 事务外采集/组装/发布/逐字节复验 → 最终写事务身份重核 + `execution.input.prepared` 事件 + completed 回执原子提交）；snapshot/manifest/prompt 不可变制品组 | `application/execution-input-prepare.ts`、`ports/execution-input-prepare.ts` |
-| F-007 | Host/HostClient 接线（线消息显式升 v5；`decideFeaturePlan`/`updateTaskStrategy`/`prepareExecutionInput` + `GET /v1/features/:id/approvals` 授权查询 + 四个线校验器；受控制品组读取边界；回归 `test/p03-2-host-wiring.test.ts`） | `packages/host/src/runtime/app-transport.ts`、`client/app-client.ts` |
-| F-008 | CLI `feature approve|reject`、`task strategy`、`task prepare`、`task inputs`（沿用既有参数/输出/退出码约定；秘密与身份字段连接前拒绝；回归 `test/p03-2-cli-args.test.ts`/`test/p03-2-cli-vertical.test.ts`/`test/p03-2-cli-built.test.ts`） | `packages/cli/src/app/*` |
-| F-009 | 正式构建产物跨模块集成回归（本文 §5/§7 证据来源）与交付门禁 | `test/p03-2-integration-regression.test.ts`、本文 |
+| F-007 | Host/HostClient 接线（线消息显式升 v5；`decideFeaturePlan`/`updateTaskStrategy`/`prepareExecutionInput` + `GET /v1/features/:id/approvals` 授权查询 + 四个线校验器；受控制品组读取边界；回归 `test/modules/planning/p03-2-host-wiring.test.ts`） | `packages/host/src/runtime/app-transport.ts`、`client/app-client.ts` |
+| F-008 | CLI `feature approve|reject`、`task strategy`、`task prepare`、`task inputs`（沿用既有参数/输出/退出码约定；秘密与身份字段连接前拒绝；回归 `test/modules/planning/p03-2-cli-args.test.ts`/`test/modules/planning/p03-2-cli-vertical.test.ts`/`test/modules/planning/p03-2-cli-built.test.ts`） | `packages/cli/src/app/*` |
+| F-009 | 正式构建产物跨模块集成回归（本文 §5/§7 证据来源）与交付门禁 | `test/modules/planning/p03-2-integration-regression.test.ts`、本文 |
 
 ## 2. SQLite Schema（迁移 v8，冻结事实）
 
@@ -101,7 +101,7 @@
 - `openCoreApplication` 装配：`inputSourceRoots` 获准源文件根白名单由可信装配注入，
   **缺省空名单**（生产 Host 当前未注入——任何 file 来源 fail-closed `unknown_root`，
   F-009 集成回归复核；正向文件采集证据在 Core 测试装配
-  `test/p03-2-execution-input.test.ts`/`test/p03-2-execution-input-prepare.test.ts`）；
+  `test/modules/planning/p03-2-execution-input.test.ts`/`test/modules/planning/p03-2-execution-input-prepare.test.ts`）；
   权限读取器缺省 `TRUSTED_PROJECT_PERMISSIONS_READER`（显式空集边界宣告）。
 
 ## 4. Host/CLI 线面（冻结事实）
@@ -120,7 +120,7 @@
 
 ## 5. F-009 集成回归覆盖（正式构建产物链路）
 
-`test/p03-2-integration-regression.test.ts`（3 用例，真实 `dist/bin.js` 子进程 + dist
+`test/modules/planning/p03-2-integration-regression.test.ts`（3 用例，真实 `dist/bin.js` 子进程 + dist
 产物 Host + 隔离真实 SQLite + 只读探针审计）：
 
 1. **主线**：三 Task 导入 → 查看策略（modelMap/default 副本）→ 批准前可选覆盖
@@ -149,10 +149,10 @@
 
 | 编号 | 必测行为 | P03-2 交付子集 | 范围外（not_run） |
 |---|---|---|---|
-| T24 | Task 策略复制、默认更新不追溯、用户覆盖及重新应用默认预览 | 副本/不追溯/用户覆盖：`test/p03-2-task-strategy-edit-command.test.ts`、F-009 集成回归主线+漂移矩阵（modelMap 更新不追溯、task_edit 覆盖、modelMap.low 选择 `test/p03-1-task-strategy-selection.test.ts`） | 「重新应用默认预览」命令面未实现（无该入口，不伪装支持） |
-| T25（输入子集） | 活动 Attempt 禁止改策略、返工换模型不清预算、快照脱敏与不可变 | 快照脱敏与不可变：F-009 集成回归（旧正文逐字节不变、凭据只有引用、篡改证据保留）+ `test/p03-2-execution-input-prepare.test.ts`（策略编辑后新快照旧正文不变、逐字节复验） | 活动 Attempt 禁止改策略的真实竞争（无 Run/Attempt；沿用 F-001 测试装配探测端口证据）；返工换模型不清预算（无预算记账，P03-3/4） |
-| T26（审批子集） | 当前配置 CAS 冲突、计划修改禁止越过活动执行、过期审批失效 | 过期审批失效：F-009 集成回归漂移矩阵（`check_policy_changed`/`plan_changed`/纯标签不失效/重批恢复）+ `test/p03-2-plan-approval-verification.test.ts` 全矩阵；配置 CAS：`test/app-cli-config-execute.test.ts` + 集成回归顺带 | 计划修改越过**真实**活动执行的竞争（无 Run/Attempt；测试装配证据 `test/p03-1-plan-revise-command.test.ts`） |
-| T37 | 稳定指导与动态文件输入分离，不因历史增长膨胀提示词 | F-009 集成回归增长用例（历史正文零内联：报告标记不进入任何正文、三摘要逐字节不变、acceptance 全量可读、必需输入缺失拒绝）+ `test/p03-2-context-build.test.ts`（历史索引有界/省略标注/预算超限结构化失败） | 缓存收益不以静态测试宣称；真实执行期历史（无 Run 历史，生产 prepare 的 historyIndex 恒为空——有界性经确定性不变断言与 Core 预算测试覆盖） |
+| T24 | Task 策略复制、默认更新不追溯、用户覆盖及重新应用默认预览 | 副本/不追溯/用户覆盖：`test/modules/planning/p03-2-task-strategy-edit-command.test.ts`、F-009 集成回归主线+漂移矩阵（modelMap 更新不追溯、task_edit 覆盖、modelMap.low 选择 `test/modules/planning/p03-1-task-strategy-selection.test.ts`） | 「重新应用默认预览」命令面未实现（无该入口，不伪装支持） |
+| T25（输入子集） | 活动 Attempt 禁止改策略、返工换模型不清预算、快照脱敏与不可变 | 快照脱敏与不可变：F-009 集成回归（旧正文逐字节不变、凭据只有引用、篡改证据保留）+ `test/modules/planning/p03-2-execution-input-prepare.test.ts`（策略编辑后新快照旧正文不变、逐字节复验） | 活动 Attempt 禁止改策略的真实竞争（无 Run/Attempt；沿用 F-001 测试装配探测端口证据）；返工换模型不清预算（无预算记账，P03-3/4） |
+| T26（审批子集） | 当前配置 CAS 冲突、计划修改禁止越过活动执行、过期审批失效 | 过期审批失效：F-009 集成回归漂移矩阵（`check_policy_changed`/`plan_changed`/纯标签不失效/重批恢复）+ `test/modules/planning/p03-2-plan-approval-verification.test.ts` 全矩阵；配置 CAS：`test/modules/cli/app-cli-config-execute.test.ts` + 集成回归顺带 | 计划修改越过**真实**活动执行的竞争（无 Run/Attempt；测试装配证据 `test/modules/planning/p03-1-plan-revise-command.test.ts`） |
+| T37 | 稳定指导与动态文件输入分离，不因历史增长膨胀提示词 | F-009 集成回归增长用例（历史正文零内联：报告标记不进入任何正文、三摘要逐字节不变、acceptance 全量可读、必需输入缺失拒绝）+ `test/modules/planning/p03-2-context-build.test.ts`（历史索引有界/省略标注/预算超限结构化失败） | 缓存收益不以静态测试宣称；真实执行期历史（无 Run 历史，生产 prepare 的 historyIndex 恒为空——有界性经确定性不变断言与 Core 预算测试覆盖） |
 
 ## 7. 完整门禁与验证记录（真实命令/退出码）
 
@@ -172,12 +172,12 @@
    若需文件源输入，由可信装配显式注入白名单，不得在请求侧接受任意路径。
 2. **执行输入正文无 Host 通用读取面**：`artifacts.get` 仅限 P02-3 基线输出成员（防
    枚举）；篡改 → `corrupt` 的运行时核验失败语义在 Core `readVerifiedContent` 层覆盖
-  （`test/p03-2-execution-input-prepare.test.ts`「重开真实库后…正文篡改明确 corrupt」）。
+  （`test/modules/planning/p03-2-execution-input-prepare.test.ts`「重开真实库后…正文篡改明确 corrupt」）。
    绑定前逐字节复验属 P03-3/4 startRun 同事务职责。
 3. **ContextBuilder 级 `limit_exceeded`（必需内容 > 300 000B）无法经 Host/CLI 触达**：
    请求面有界（`MAX_APP_BODY_BYTES`=65 536），集成层超预算以制品索引声明超
-   `maxItemBytes` 复核；Core 层预算失败由 `test/p03-2-context-build.test.ts`/
-   `test/p03-2-execution-input-prepare.test.ts` 覆盖。
+   `maxItemBytes` 复核；Core 层预算失败由 `test/modules/planning/p03-2-context-build.test.ts`/
+   `test/modules/planning/p03-2-execution-input-prepare.test.ts` 覆盖。
 4. **Run/Attempt/Work/Runtime 未实现**：本项所有「未启动执行」断言基于表/事件/命令面
    三方核验；真实活动竞争、预算记账、停止核验属后续阶段。
 5. **能力目录装配**：生产 Host 入口目录为空（fail-closed，纯生产构建无法装配策略配置
@@ -192,5 +192,5 @@
   与制品组发布、ContextBuilder 预算契约、线消息 v5 语义。
 - 不得弱化：fail-closed 探测、防枚举 not_found/forbidden、脱敏事件与错误、幂等/CAS
   纪律、「批准不是启动授权」「历史回执重放不代表满足当前前置条件」边界。
-- 本文档事实与守护测试 `test/docs-p03-2-handoff.test.ts` 同源；后续 Feature 改变这些
+- 本文档事实与守护测试 `test/modules/planning/docs-p03-2-handoff.test.ts` 同源；后续 Feature 改变这些
   事实时必须同步更新本文与守护。

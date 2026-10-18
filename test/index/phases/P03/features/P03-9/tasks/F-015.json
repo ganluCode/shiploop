@@ -1,0 +1,19 @@
+{
+  "schema_version": 2,
+  "task_id": "F-015",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/cli/control/p03-9-f015-cli-control-vertical.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/cli/control/p03-9-f015-cli-control.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

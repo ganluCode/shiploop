@@ -286,14 +286,14 @@ node packages/cli/dist/bin.js baseline status "$OPERATION_ID" --data-root "$ROOT
 
 ## 8. 测试与文档守护入口
 
-- 纵向回归：`test/p02-3-init-overview-vertical.test.ts`（接入纵向）、
-  `test/p02-3-baseline-cli-vertical.test.ts`（基线 CLI 纵向：预览/授权/查询/取消/重启后查询）、
-  `test/p02-3-integration-regression.test.ts`（真实 Git/SQLite/进程/Host/CLI 端到端回归）。
-- 语义与故障分支：`test/p02-3-baseline-preview-authorize.test.ts`（预览/授权）、
-  `test/p02-3-baseline-host-routes.test.ts`（路由）、`test/p02-3-baseline-host-faults.test.ts`/
-  `test/p02-3-baseline-host-recovery.test.ts`（故障与恢复）、`test/baseline-evidence.test.ts`
-  （证据缺口）、`test/supervised-process-stopping.test.ts`（停止核验）。
-- 文档守护：`test/docs-p02-3-operations.test.ts`（本说明示例与命令契约一致）、
-  `test/docs-p02-3-onboarding-contract.test.ts`（契约冻结事实）。
+- 纵向回归：`test/modules/onboarding/p02-3-init-overview-vertical.test.ts`（接入纵向）、
+  `test/modules/onboarding/p02-3-baseline-cli-vertical.test.ts`（基线 CLI 纵向：预览/授权/查询/取消/重启后查询）、
+  `test/modules/onboarding/p02-3-integration-regression.test.ts`（真实 Git/SQLite/进程/Host/CLI 端到端回归）。
+- 语义与故障分支：`test/modules/onboarding/p02-3-baseline-preview-authorize.test.ts`（预览/授权）、
+  `test/modules/onboarding/p02-3-baseline-host-routes.test.ts`（路由）、`test/p02-3-baseline-host-faults.test.ts`/
+  `test/p02-3-baseline-host-recovery.test.ts`（故障与恢复）、`test/modules/onboarding/baseline-evidence.test.ts`
+  （证据缺口）、`test/modules/runtime/supervised-process-stopping.test.ts`（停止核验）。
+- 文档守护：`test/modules/onboarding/docs-p02-3-operations.test.ts`（本说明示例与命令契约一致）、
+  `test/modules/onboarding/docs-p02-3-onboarding-contract.test.ts`（契约冻结事实）。
 - 示例运行证据留在临时数据根的制品存储（`baseline evidence` 可读）与测试断言中；
   证据不收集真实凭据/用户文件正文。

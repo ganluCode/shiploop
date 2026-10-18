@@ -132,7 +132,7 @@ Host/CLI 接线（F-007/F-008）、Run/Attempt 绑定与 startRun（P03-3/4）�
 
 ## 9. F-009 集成回归写回登记
 
-- `test/p03-2-integration-regression.test.ts`（正式构建 dist CLI + dist Host + 隔离
+- `test/modules/planning/p03-2-integration-regression.test.ts`（正式构建 dist CLI + dist Host + 隔离
   真实 SQLite）以真实命令复核本契约的漂移与不可变纪律：非活动 Task 副本编辑后新
   制品组摘要改变、旧 snapshot/manifest/prompt 逐字节不变且历史回执保留原身份；
   modelMap 更新不进入捕获身份（新准备照常可绑定）；纯标签编辑不误报。

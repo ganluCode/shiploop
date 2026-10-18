@@ -4,7 +4,7 @@
  *
  * 设计依据：core-design/03 §4（pending 登记 → staging → 校验 → ready；SQLite 只
  * 保存索引，大正文永不进库）与 core-design/11 §8（artifacts 字段字典）；端口契约
- * 见 ports/artifact-store.ts，语义基线为 test/storage-contracts.test.ts 的制品组
+ * 见 ports/artifact-store.ts，语义基线为 test/modules/storage/storage-contracts.test.ts 的制品组
  * 断言与 test/helpers/in-memory-store.ts——本适配器实现同组行为断言的真实 SQLite 版本。
  *
  * 不变量：

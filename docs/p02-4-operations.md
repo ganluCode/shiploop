@@ -240,8 +240,8 @@ npm run accept:p02 -- --help
 
 ### 4.4 干净快照连续复跑（P02-ENG-CLEAN-REPLAY）
 
-- 承接入口 `test/p02-4-clean-replay.test.ts`（完整复跑形态由显式入口启动：
-  `node scripts/run-tests.ts test/p02-4-clean-replay.test.ts`；默认 `npm test` 只收集
+- 承接入口 `test/modules/acceptance/p02-4-clean-replay.test.ts`（完整复跑形态由显式入口启动：
+  `node scripts/run-tests.ts test/modules/acceptance/p02-4-clean-replay.test.ts`；默认 `npm test` 只收集
   契约断言，不递归复跑，与 P01 先例一致）。
 - 复跑工具 `scripts/acceptance/p02-clean-replay.ts` 支持分阶段续跑：
   `--phase prepare | accept-1 | accept-2 | finalize | all`（阶段状态持久化在证据目录
@@ -308,14 +308,14 @@ npm run accept:p02 -- --help
 
 ## 9. 测试与文档守护入口
 
-- 阶段场景（人工清单逐项引用）：`test/p02-4-dual-cli-acceptance.test.ts`、
-  `test/p02-4-idempotency-acceptance.test.ts`、`test/p02-4-repo-preservation-acceptance.test.ts`、
-  `test/p02-4-negative-acceptance.test.ts`、`test/p02-4-restart-acceptance.test.ts`、
-  `test/p02-4-baseline-failure-acceptance.test.ts`；阶段控制
-  `test/p02-4-acceptance-controller.test.ts`、`test/p02-4-report-aggregation.test.ts`、
-  `test/p02-4-acceptance-report.test.ts`；干净复跑 `test/p02-4-clean-replay.test.ts`。
-- 文档守护：`test/docs-p02-4-operations.test.ts`（本文示例命令契约、复跑说明与真实
+- 阶段场景（人工清单逐项引用）：`test/modules/acceptance/p02-4-dual-cli-acceptance.test.ts`、
+  `test/modules/acceptance/p02-4-idempotency-acceptance.test.ts`、`test/modules/acceptance/p02-4-repo-preservation-acceptance.test.ts`、
+  `test/modules/acceptance/p02-4-negative-acceptance.test.ts`、`test/modules/acceptance/p02-4-restart-acceptance.test.ts`、
+  `test/modules/acceptance/p02-4-baseline-failure-acceptance.test.ts`；阶段控制
+  `test/modules/acceptance/p02-4-acceptance-controller.test.ts`、`test/modules/acceptance/p02-4-report-aggregation.test.ts`、
+  `test/modules/acceptance/p02-4-acceptance-report.test.ts`；干净复跑 `test/modules/acceptance/p02-4-clean-replay.test.ts`。
+- 文档守护：`test/modules/acceptance/docs-p02-4-operations.test.ts`（本文示例命令契约、复跑说明与真实
   `accept:p02`/配置一致，人工清单引用的测试/证据真实存在）、
-  `test/docs-p02-4-acceptance-contract.test.ts`（契约冻结事实）。
+  `test/modules/acceptance/docs-p02-4-acceptance-contract.test.ts`（契约冻结事实）。
 - 示例运行产物留在临时数据根（`baseline evidence` 可读）与各测试断言中；不收集真实
   凭据或用户文件正文。

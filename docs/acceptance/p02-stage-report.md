@@ -67,7 +67,7 @@
 
 - 构建冒烟 `events follow SIGINT must exit 4` 偶发失败（exit 3 `unreachable`）：SIGINT
   落在事件订阅建连窗口时，中止形态错误被误归类为连接失败。按 TDD 先补确定性失败回归
-  （`test/app-cli-events-scripted.test.ts`），再修复 `packages/cli/src/app-execute.ts`
+  （`test/modules/cli/app-cli-events-scripted.test.ts`），再修复 `packages/cli/src/app-execute.ts`
   的观察中断归类（exit 4 + `observation_interrupted`，含最后游标），回归组 250 tests
   与构建冒烟复跑全过。修复提交 `24b8377872f25c30e3a1efcc25504c9653c2b663`。
   属 `P02-FR2-CLIENT-EXIT` 必需行为，先补失败回归再修复并复跑，未留待下一阶段、
@@ -78,20 +78,20 @@
 | 检查 ID | 承接分支 | 实际测试/命令入口 | 结果 | 证据要点 |
 |---|---|---|---|---|
 | `P02-ENG-VERIFY` | 工程 | `npm run verify` | pass | 3/3 步骤 exit 0；116 files / 2961 tests |
-| `P02-FR1-UNIQUE-HOST` | FR-1 唯一 Host | `test/p02-4-dual-cli-acceptance.test.ts` | pass | 双 dist CLI 竞争同数据根、唯一 hostInstanceId、127.0.0.1 |
-| `P02-FR1-SHARED-STATE` | FR-1 共享项目/配置 | `test/p02-4-dual-cli-acceptance.test.ts` | pass | 双客户端 projectId/revision/来源逐字段一致 |
-| `P02-FR1-BASELINE-OK` | FR-1 授权基线 | `test/p02-4-dual-cli-acceptance.test.ts` | pass | 同 operationId、逐项检查、制品 hash/size |
-| `P02-FR2-DUPLICATE-INIT` | FR-2 重复初始化 | `test/p02-4-idempotency-acceptance.test.ts` | pass | 见 §5 负例矩阵 |
-| `P02-FR2-COMMAND-CONFLICT` | FR-2 命令重放/冲突 | `test/p02-4-idempotency-acceptance.test.ts` | pass | 见 §5 负例矩阵 |
-| `P02-FR2-SOURCE-PRESERVED` | FR-2 源文件保留 | `test/p02-4-repo-preservation-acceptance.test.ts` | pass | 见 §5 负例矩阵 |
-| `P02-FR2-AUTH-REJECT` | FR-2 认证拒绝 | `test/p02-4-negative-acceptance.test.ts` | pass | 见 §5 负例矩阵 |
-| `P02-FR2-CLIENT-EXIT` | FR-2 客户端退出 | `test/p02-4-restart-acceptance.test.ts` | pass | 见 §5 负例矩阵 |
-| `P02-FR1-RESTART-QUERY` | FR-1 重启查询 | `test/p02-4-restart-acceptance.test.ts` | pass | 重启后 projectId/配置/结果/制品 hash/size 一致、旧凭据被拒 |
-| `P02-FR2-BASELINE-FAILURE` | FR-2 基线失败 | `test/p02-4-baseline-failure-acceptance.test.ts` | pass | 见 §5 负例矩阵 |
-| `P02-PHASE-FIXTURE` | 夹具失败 | `test/p02-4-acceptance-controller.test.ts` | pass | 夹具失败明确 fail/not_run、证据保留、进程回收 |
-| `P02-PHASE-NOT-RUN` | 必需检查未运行 | `test/p02-4-report-aggregation.test.ts` | pass | 未提交/超时/跳过 → not_run，不聚合为通过 |
-| `P02-PHASE-REPORT` | 报告完整性 | `test/p02-4-acceptance-report.test.ts` | pass | Schema v1、逐项结果、证据 hash/size、脱敏、结论重算 |
-| `P02-ENG-CLEAN-REPLAY` | 重复运行不依赖残留 | `test/p02-4-clean-replay.test.ts` | pass | 干净快照连续两次 `npm run accept:p02` exit 0、运行独立、无残留 |
+| `P02-FR1-UNIQUE-HOST` | FR-1 唯一 Host | `test/modules/acceptance/p02-4-dual-cli-acceptance.test.ts` | pass | 双 dist CLI 竞争同数据根、唯一 hostInstanceId、127.0.0.1 |
+| `P02-FR1-SHARED-STATE` | FR-1 共享项目/配置 | `test/modules/acceptance/p02-4-dual-cli-acceptance.test.ts` | pass | 双客户端 projectId/revision/来源逐字段一致 |
+| `P02-FR1-BASELINE-OK` | FR-1 授权基线 | `test/modules/acceptance/p02-4-dual-cli-acceptance.test.ts` | pass | 同 operationId、逐项检查、制品 hash/size |
+| `P02-FR2-DUPLICATE-INIT` | FR-2 重复初始化 | `test/modules/acceptance/p02-4-idempotency-acceptance.test.ts` | pass | 见 §5 负例矩阵 |
+| `P02-FR2-COMMAND-CONFLICT` | FR-2 命令重放/冲突 | `test/modules/acceptance/p02-4-idempotency-acceptance.test.ts` | pass | 见 §5 负例矩阵 |
+| `P02-FR2-SOURCE-PRESERVED` | FR-2 源文件保留 | `test/modules/acceptance/p02-4-repo-preservation-acceptance.test.ts` | pass | 见 §5 负例矩阵 |
+| `P02-FR2-AUTH-REJECT` | FR-2 认证拒绝 | `test/modules/acceptance/p02-4-negative-acceptance.test.ts` | pass | 见 §5 负例矩阵 |
+| `P02-FR2-CLIENT-EXIT` | FR-2 客户端退出 | `test/modules/acceptance/p02-4-restart-acceptance.test.ts` | pass | 见 §5 负例矩阵 |
+| `P02-FR1-RESTART-QUERY` | FR-1 重启查询 | `test/modules/acceptance/p02-4-restart-acceptance.test.ts` | pass | 重启后 projectId/配置/结果/制品 hash/size 一致、旧凭据被拒 |
+| `P02-FR2-BASELINE-FAILURE` | FR-2 基线失败 | `test/modules/acceptance/p02-4-baseline-failure-acceptance.test.ts` | pass | 见 §5 负例矩阵 |
+| `P02-PHASE-FIXTURE` | 夹具失败 | `test/modules/acceptance/p02-4-acceptance-controller.test.ts` | pass | 夹具失败明确 fail/not_run、证据保留、进程回收 |
+| `P02-PHASE-NOT-RUN` | 必需检查未运行 | `test/modules/acceptance/p02-4-report-aggregation.test.ts` | pass | 未提交/超时/跳过 → not_run，不聚合为通过 |
+| `P02-PHASE-REPORT` | 报告完整性 | `test/modules/acceptance/p02-4-acceptance-report.test.ts` | pass | Schema v1、逐项结果、证据 hash/size、脱敏、结论重算 |
+| `P02-ENG-CLEAN-REPLAY` | 重复运行不依赖残留 | `test/modules/acceptance/p02-4-clean-replay.test.ts` | pass | 干净快照连续两次 `npm run accept:p02` exit 0、运行独立、无残留 |
 
 逐项计数：**pass 15 / fail 0 / not_run 0**（两次运行一致；`artifacts/acceptance/p02/<run-id>/report.json` 为机器可读同源记录）。
 

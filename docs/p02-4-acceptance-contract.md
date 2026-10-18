@@ -93,20 +93,20 @@
 | 检查 ID | FR / 阶段分支 | 说明 | 承担任务 | 测试 / 命令入口 | 关键证据字段 |
 |---|---|---|---|---|---|
 | `P02-ENG-VERIFY` | 工程 | `npm run verify`（锁文件预检 + test/typecheck/build）退出 0 | F-011 | `npm run verify`（盘 `scripts/verify.ts`） | `exit_code`、`steps[].label`/`exit_code`、测试文件/用例计数 |
-| `P02-FR1-UNIQUE-HOST` | FR-1 **唯一 Host** | 同一临时数据根同步启动两个真实 dist CLI：恰一持锁 Host/写入者、同一 `hostInstanceId` 与 `dataRootIdentity`、`127.0.0.1` 随机端口、发现目录权限合规 | F-003 | `test/p02-4-dual-cli-acceptance.test.ts`（复用 `test/helpers/host/` 与 p02-3 双客户端夹具） | 两 CLI 启动记录、`hostInstanceId`/`dataRootIdentity`、锁持有/落选回收、监听地址、文件权限 |
+| `P02-FR1-UNIQUE-HOST` | FR-1 **唯一 Host** | 同一临时数据根同步启动两个真实 dist CLI：恰一持锁 Host/写入者、同一 `hostInstanceId` 与 `dataRootIdentity`、`127.0.0.1` 随机端口、发现目录权限合规 | F-003 | `test/modules/acceptance/p02-4-dual-cli-acceptance.test.ts`（复用 `test/helpers/host/` 与 p02-3 双客户端夹具） | 两 CLI 启动记录、`hostInstanceId`/`dataRootIdentity`、锁持有/落选回收、监听地址、文件权限 |
 | `P02-FR1-SHARED-STATE` | FR-1 **共享项目/配置** | CLI A 确认注册 + 配置写入后，CLI B 经列表/详情/overview/配置查询读到同一 `projectId`、绑定、描述、标签、当前值、`revision` 与有效来源 | F-003 | 同上 | `projectId`、绑定身份、配置 `revision`/`source`、双客户端返回值逐字段一致 |
-| `P02-FR1-BASELINE-OK` | FR-1 **授权基线** | 用户明确确认的确定性成功命令：双客户端查询同一 `operationId`、逐项检查结果、退出码 0、代码身份与可校验输出制品；`accepted` 不作 `passed` 依据 | F-003 | `test/p02-4-dual-cli-acceptance.test.ts`（复用 `test/helpers/p02-3/` 命令样例） | `operationId`、`checkKey`/状态/`exitCode`、代码身份、`artifactId`/`hash`/`size`、双客户端一致 |
-| `P02-FR2-DUPLICATE-INIT` | FR-2 **重复初始化** | 同规范路径及其真实路径别名重复 init 得同一 `projectId`；项目/绑定各一份，原名称/描述/标签/配置未被覆盖 | F-004 | `test/p02-4-idempotency-acceptance.test.ts` | 两次返回 `projectId`、项目/绑定行数、元数据前后快照、别名 realpath |
+| `P02-FR1-BASELINE-OK` | FR-1 **授权基线** | 用户明确确认的确定性成功命令：双客户端查询同一 `operationId`、逐项检查结果、退出码 0、代码身份与可校验输出制品；`accepted` 不作 `passed` 依据 | F-003 | `test/modules/acceptance/p02-4-dual-cli-acceptance.test.ts`（复用 `test/helpers/p02-3/` 命令样例） | `operationId`、`checkKey`/状态/`exitCode`、代码身份、`artifactId`/`hash`/`size`、双客户端一致 |
+| `P02-FR2-DUPLICATE-INIT` | FR-2 **重复初始化** | 同规范路径及其真实路径别名重复 init 得同一 `projectId`；项目/绑定各一份，原名称/描述/标签/配置未被覆盖 | F-004 | `test/modules/acceptance/p02-4-idempotency-acceptance.test.ts` | 两次返回 `projectId`、项目/绑定行数、元数据前后快照、别名 realpath |
 | `P02-FR2-COMMAND-CONFLICT` | FR-2 **命令重放/冲突** | 显式同一 `commandId` 重放返回原持久回执与结果身份、零重复副作用；同 `principal`/`commandId` 异参数得 `conflict`（`idempotency_key_reuse`）且无额外变更，原回执仍可查 | F-004 | 同上（`receipt get` 与 `POST /v1/commands` 重放） | `commandId`/`requestDigest`、`replayed:true`、`conflict` 错误码、启动次数/项目行数/检查记录/事件计数、源文件摘要不变 |
-| `P02-FR2-SOURCE-PRESERVED` | FR-2 **源文件保留** | 干净仓库与含 staged/unstaged/untracked 的仓库接入前后 HEAD、索引、Git 状态、文件字节摘要一致；恶意初始化/安装脚本哨兵零执行、无 `node_modules` 等意外产物、AGENTS.md 不被覆盖 | F-005 | `test/p02-4-repo-preservation-acceptance.test.ts`（复用 p02-3 仓库变体与哨兵夹具） | HEAD、`git status` 原文、tracked/untracked 摘要、哨兵不存在、产物清单 |
-| `P02-FR2-AUTH-REJECT` | FR-2 **认证拒绝** | 缺失/错误 token、旧实例身份、数据根不匹配、未知协议/Schema、非法 JSON/分页、任意路径读取、根外/符号链接 cwd、受限 principal 跨项目、监听覆盖与 Host/Origin 拒绝；零副作用且不泄密 | F-006 | `test/p02-4-negative-acceptance.test.ts`（复用受限 principal 装配与 T23 负例） | 错误码（`unauthorized`/`protocol_incompatible`/`unsupported_schema_version`/`invalid_input`…）、副作用零断言、实际绑定 `127.0.0.1`、脱敏扫描（无 token/认证头形状） |
-| `P02-FR2-CLIENT-EXIT` | FR-2 **客户端退出** | 运行基线时退出/中断 CLI 的 wait/follow（退出码 4 `observation_interrupted`）：不发 stop/cancel、Host 存活、另一 CLI 仍可认证查询同一 Host | F-007 | `test/p02-4-restart-acceptance.test.ts` | 子进程退出码、观察中断错误体、Host 存活探测、操作继续/收尾状态、零 stop/cancel 请求 |
+| `P02-FR2-SOURCE-PRESERVED` | FR-2 **源文件保留** | 干净仓库与含 staged/unstaged/untracked 的仓库接入前后 HEAD、索引、Git 状态、文件字节摘要一致；恶意初始化/安装脚本哨兵零执行、无 `node_modules` 等意外产物、AGENTS.md 不被覆盖 | F-005 | `test/modules/acceptance/p02-4-repo-preservation-acceptance.test.ts`（复用 p02-3 仓库变体与哨兵夹具） | HEAD、`git status` 原文、tracked/untracked 摘要、哨兵不存在、产物清单 |
+| `P02-FR2-AUTH-REJECT` | FR-2 **认证拒绝** | 缺失/错误 token、旧实例身份、数据根不匹配、未知协议/Schema、非法 JSON/分页、任意路径读取、根外/符号链接 cwd、受限 principal 跨项目、监听覆盖与 Host/Origin 拒绝；零副作用且不泄密 | F-006 | `test/modules/acceptance/p02-4-negative-acceptance.test.ts`（复用受限 principal 装配与 T23 负例） | 错误码（`unauthorized`/`protocol_incompatible`/`unsupported_schema_version`/`invalid_input`…）、副作用零断言、实际绑定 `127.0.0.1`、脱敏扫描（无 token/认证头形状） |
+| `P02-FR2-CLIENT-EXIT` | FR-2 **客户端退出** | 运行基线时退出/中断 CLI 的 wait/follow（退出码 4 `observation_interrupted`）：不发 stop/cancel、Host 存活、另一 CLI 仍可认证查询同一 Host | F-007 | `test/modules/acceptance/p02-4-restart-acceptance.test.ts` | 子进程退出码、观察中断错误体、Host 存活探测、操作继续/收尾状态、零 stop/cancel 请求 |
 | `P02-FR1-RESTART-QUERY` | FR-1 **重启查询** | 正式显式 `host stop`（三证据）后重启取新 `hostInstanceId`；新 CLI 读到原 `projectId`、配置值/`revision`、基线结果、代码身份、输出制品 `hash`/`size` 一致；旧 token/旧实例请求被拒、原基线不自动重跑 | F-007 | 同上（+ P02-3 重启恢复回归） | 前后 `hostInstanceId`、锁释放/发现移除证据、持久身份逐字段、旧凭据拒绝码、基线启动次数不变 |
-| `P02-FR2-BASELINE-FAILURE` | FR-2 **基线失败** | 固定非零退出、拒绝授权 `not_run`、缺命令/未知脚本、超时 `timed_out`、显式取消 `cancelled`、停止未确认 `stop_unconfirmed` 保留占用、`preview_stale`；失败不撤销注册、不删证据、不冒充通过 | F-008 | `test/p02-4-baseline-failure-acceptance.test.ts`（复用挂起/超时/取消/停止核验用例） | 检查状态/`reasonCode`/子命令退出码、argv/cwd/`environmentRef`/`timeoutMs`/耗时/代码身份、输出制品、overview 注册+失败健康、零启动断言、占用保留 |
-| `P02-PHASE-FIXTURE` | **夹具失败** | 夹具准备失败明确 `fail`/`not_run`，阶段非零，保留已取得证据并回收自有进程/临时资源 | F-009 / F-011 | `test/p02-4-acceptance-controller.test.ts`（注入准备错误） | `fixture_status`、失败原因、依赖检查状态、阶段退出码、证据保留、进程回收核验 |
-| `P02-PHASE-NOT-RUN` | **必需检查未运行** | 未提交结果/启动失败/超时/被跳过的必需项标 `not_run`，不得聚合为通过 | F-009 / F-011 | `test/p02-4-report-aggregation.test.ts` | 必需检查清单、`status`、缺失结果、聚合结论、退出码 |
-| `P02-PHASE-REPORT` | 报告完整性 | 版本化报告 Schema、逐项结果、证据 `path`/`hash`/`size`、脱敏与总体结论可验证 | F-009 | 同上 + `test/p02-4-acceptance-report.test.ts` | `report_schema_version`、输入计划摘要、受测 commit、工具版本、`checks[]`、`evidence[]`、结论、已知限制 |
-| `P02-ENG-CLEAN-REPLAY` | 重复运行不依赖残留 | 干净源码快照 `npm ci`/build 后从非源码 cwd 连续两次 `accept:p02` 均退出 0；run-id/报告/临时资源独立、互不覆盖；结束后无自有 Host/基线进程残留 | F-012 | `test/p02-4-clean-replay.test.ts`（复用 `scripts/clean-snapshot-replay.ts`） | 两次退出码、run-id/报告目录、证据 `hash`/`size` 复验、进程/锁清理断言、路径扫描 |
+| `P02-FR2-BASELINE-FAILURE` | FR-2 **基线失败** | 固定非零退出、拒绝授权 `not_run`、缺命令/未知脚本、超时 `timed_out`、显式取消 `cancelled`、停止未确认 `stop_unconfirmed` 保留占用、`preview_stale`；失败不撤销注册、不删证据、不冒充通过 | F-008 | `test/modules/acceptance/p02-4-baseline-failure-acceptance.test.ts`（复用挂起/超时/取消/停止核验用例） | 检查状态/`reasonCode`/子命令退出码、argv/cwd/`environmentRef`/`timeoutMs`/耗时/代码身份、输出制品、overview 注册+失败健康、零启动断言、占用保留 |
+| `P02-PHASE-FIXTURE` | **夹具失败** | 夹具准备失败明确 `fail`/`not_run`，阶段非零，保留已取得证据并回收自有进程/临时资源 | F-009 / F-011 | `test/modules/acceptance/p02-4-acceptance-controller.test.ts`（注入准备错误） | `fixture_status`、失败原因、依赖检查状态、阶段退出码、证据保留、进程回收核验 |
+| `P02-PHASE-NOT-RUN` | **必需检查未运行** | 未提交结果/启动失败/超时/被跳过的必需项标 `not_run`，不得聚合为通过 | F-009 / F-011 | `test/modules/acceptance/p02-4-report-aggregation.test.ts` | 必需检查清单、`status`、缺失结果、聚合结论、退出码 |
+| `P02-PHASE-REPORT` | 报告完整性 | 版本化报告 Schema、逐项结果、证据 `path`/`hash`/`size`、脱敏与总体结论可验证 | F-009 | 同上 + `test/modules/acceptance/p02-4-acceptance-report.test.ts` | `report_schema_version`、输入计划摘要、受测 commit、工具版本、`checks[]`、`evidence[]`、结论、已知限制 |
+| `P02-ENG-CLEAN-REPLAY` | 重复运行不依赖残留 | 干净源码快照 `npm ci`/build 后从非源码 cwd 连续两次 `accept:p02` 均退出 0；run-id/报告/临时资源独立、互不覆盖；结束后无自有 Host/基线进程残留 | F-012 | `test/modules/acceptance/p02-4-clean-replay.test.ts`（复用 `scripts/clean-snapshot-replay.ts`） | 两次退出码、run-id/报告目录、证据 `hash`/`size` 复验、进程/锁清理断言、路径扫描 |
 
 > 上表「测试入口」对尚未实现的后继任务（F-002 ~ F-012）为**约定文件/入口**（实现任务若调整
 > 命名须同步本文与守护测试）；F-001 只冻结检查 ID、分支语义与证据字段，实际测试由对应任务按
@@ -442,7 +442,7 @@ P02-4 只**记录并携带**前序已登记的核对请求，不在本阶段静�
 - 基线：§1.3（`npm ci` 退出 0；`npm run verify` 退出 0，`PASS 3/3`；102 test files / 2713
   tests）。祖先链与分支/报告存在性由 §1.1 表格记录的 `git merge-base --is-ancestor` 实测。
 - 本文引用的真实入口、常量、检查 ID 集合与测试文件由
-  [docs-p02-4-acceptance-contract.test.ts](../test/docs-p02-4-acceptance-contract.test.ts)
+  [docs-p02-4-acceptance-contract.test.ts](../test/modules/acceptance/docs-p02-4-acceptance-contract.test.ts)
   交叉核对，防止文档与实现漂移。
 - 本 Feature 只交付验收约定与检查清单（文档 + 守护测试）；夹具、场景、报告、配置、
   `accept:p02` 与阶段最终报告由 F-002 ~ F-014 交付。本轮不自动修改任何 Harness 配置；

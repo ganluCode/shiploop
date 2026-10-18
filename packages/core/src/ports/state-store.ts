@@ -555,7 +555,7 @@ export type ProjectWithRepositoryBindingResult =
 /**
  * 最小 StateStore 端口：项目与当前配置的创建/读取/CAS 更新。
  * 所有方法在持久化前完成输入运行时校验；校验失败不得产生任何持久化副作用。
- * 实现者：F-006 起的 SQLite 适配器；语义基线见 test/storage-contracts.test.ts。
+ * 实现者：F-006 起的 SQLite 适配器；语义基线见 test/modules/storage/storage-contracts.test.ts。
  */
 export interface StateStore {
   createProject(input: unknown): Promise<ProjectRecord>;

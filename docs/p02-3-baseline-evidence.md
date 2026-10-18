@@ -49,6 +49,6 @@ Core 执行入口、取消与跨根协调待核对项见 [基线执行编排](p0
 经 SHA-256/size 核验。不可见返回 `not_found`；缺失/损坏返回既有公开错误
 `corrupt_state`，details.reason=`evidence_incomplete`。未来传输层负责有界流式响应。
 
-真实文件/SQLite/进程测试见 `test/baseline-evidence.test.ts`；队列、溢出与停止回归见
-`test/supervised-command-process.test.ts`、`test/supervised-process-stopping.test.ts`。
+真实文件/SQLite/进程测试见 `test/modules/onboarding/baseline-evidence.test.ts`；队列、溢出与停止回归见
+`test/modules/runtime/supervised-command-process.test.ts`、`test/modules/runtime/supervised-process-stopping.test.ts`。
 ENOSPC/提交故障为确定性注入，不宣称执行过真实磁盘耗尽或断电演练。

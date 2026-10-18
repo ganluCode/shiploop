@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "task_id": "F-018",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/execution/control/docs-p03-9-handoff.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

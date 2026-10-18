@@ -63,5 +63,5 @@ schemaVersion 5，握手在 v5 能力视图内追加一个查询宣告（接线�
 - 脱敏纪律：不投影 worktree 路径（开发机固定绝对路径）、`ownerId`/
   `hostInstanceId`（内部执行归属），不携带凭据、敏感环境值或原始堆栈。
 
-局部验证在 `test/p03-8-f010-feature-delivery-query.test.ts`（真实 SQLite +
+局部验证在 `test/modules/delivery/p03-8-f010-feature-delivery-query.test.ts`（真实 SQLite +
 真实 Host 纵向）；Feature 全量验收由 Nezha 独立执行。

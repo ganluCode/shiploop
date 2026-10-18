@@ -8,7 +8,7 @@
  * - 迁移 SQL 为自包含 DDL，作为模块常量内嵌（不读取外部文件、不引用源码 cwd 或
  *   开发机绝对路径），因此随构建产物 packages/core/dist/adapters/sqlite/migrations.js
  *   分发并可定位；表结构以 ./schema.ts 的 Drizzle Schema 为准，一致性由
- *   test/sqlite-schema-migrations.test.ts 经真实 pragma 交叉核对；
+ *   test/modules/storage/sqlite/sqlite-schema-migrations.test.ts 经真实 pragma 交叉核对；
  * - 每个迁移携带唯一递增版本（自 1 起）与稳定校验摘要：checksum 为迁移 SQL 内容
  *   的 SHA-256 小写 hex（内容函数，跨机器/构建稳定，可用于篡改与漂移检测）；
  * - 迁移执行、schema_migrations 记录写入、高版本拒写与失败恢复由 F-005 实现；
@@ -149,7 +149,7 @@ CREATE UNIQUE INDEX schema_migrations_version_unique ON schema_migrations (versi
  *
  * 只为已确认的业务状态变化（项目元数据更新等）提供持久、脱敏、可与实体写入同事务的
  * 审计记录；不建执行域表、不建通知投递表。列与约束同 ./schema.ts 的 stateEvents，
- * 一致性由 test/sqlite-schema-migrations.test.ts 经真实 pragma 交叉核对。
+ * 一致性由 test/modules/storage/sqlite/sqlite-schema-migrations.test.ts 经真实 pragma 交叉核对。
  */
 const MIGRATION_002_SQL = `
 CREATE TABLE state_events (
@@ -184,7 +184,7 @@ CREATE UNIQUE INDEX state_events_sequence_unique ON state_events (sequence);
  * 契约依据：docs/p02-2-commands-events-contract.md §10（表设计冻结）与 §15.1
  * （project_id 可空 + scope CHECK 的显式偏离登记，与 v2 state_events 同一先例）。
  * 列与约束同 ./schema.ts 的 commandReceipts，一致性由
- * test/sqlite-schema-migrations.test.ts 经真实 pragma 交叉核对。
+ * test/modules/storage/sqlite/sqlite-schema-migrations.test.ts 经真实 pragma 交叉核对。
  *
  * 边界：不建 operations 表、不加 operation_id 列；本版本不持久化 accepted
  * （status CHECK 只允许 completed/rejected）；唯一约束以 CREATE UNIQUE INDEX
@@ -246,7 +246,7 @@ CREATE INDEX command_receipts_principal_project_index ON command_receipts (princ
  *   artifacts(id)（制品引用存在性）。直接 SQL 的跨项目引用在 DDL 级被拒绝。
  *
  * 列与约束同 ./schema.ts 的同名 Drizzle 表，一致性由
- * test/sqlite-schema-migrations.test.ts 经真实 pragma 交叉核对。
+ * test/modules/storage/sqlite/sqlite-schema-migrations.test.ts 经真实 pragma 交叉核对。
  * 不建 Work/Task/Attempt/Chat 或通用验证表（§2.2/§15.8）。
  */
 const MIGRATION_004_SQL = `

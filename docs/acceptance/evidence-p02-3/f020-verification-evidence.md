@@ -22,7 +22,7 @@
 | 2 | `npm run check:boundaries` | 0 | 105 个生产源文件，0 diagnostics | `tool-logs/f020-boundaries.log` |
 | 3 | `git diff --check` | 0 | 无空白错误/冲突标记 | 会话命令输出 |
 | 4 | `npm run verify`（F-020 文档 + 文档守护提交前复核） | 0 | `PASS 3/3`：`npm test` **102 files / 2713 tests 全部通过**、typecheck、build 全 0 | `tool-logs/f020-final-verify.log` |
-| 5 | `node scripts/run-tests.ts test/docs-p02-3-f020-report.test.ts`（守护套件定向） | 0 | 1 文件 / 4 用例全过（RED→GREEN：文档缺失时 4 项失败，见 `tool-logs/f020-guard-red.log`） | `tool-logs/f020-guard-green.log` |
+| 5 | `node scripts/run-tests.ts test/modules/onboarding/docs-p02-3-f020-report.test.ts`（守护套件定向） | 0 | 1 文件 / 4 用例全过（RED→GREEN：文档缺失时 4 项失败，见 `tool-logs/f020-guard-red.log`） | `tool-logs/f020-guard-green.log` |
 
 计数汇总（受测基线运行）：通过 101 文件 / 2709 用例；失败 0；`not_run` 0
 （verify 三步均真实执行，无跳过）；边界扫描 105 文件 / 0 诊断。F-020 复核运行
@@ -95,10 +95,10 @@
 - 本证据与 [p02-3-f020-report.md](../p02-3-f020-report.md) 逐项复核：**不含**真实凭据、
   认证头取值、64 位十六进制秘密形状、开发机绝对路径或用户文件正文；输入文档
   SHA-256 以缩写形式（`4faabeb7…3bed`）呈现。
-- 自动守护：`test/docs-p02-3-f020-report.test.ts` 在 `npm test` 内断言报告/证据不含
+- 自动守护：`test/modules/onboarding/docs-p02-3-f020-report.test.ts` 在 `npm test` 内断言报告/证据不含
   macOS 用户主目录绝对路径（`/Users` 一级目录形态）、`[0-9a-f]{64}`、Bearer 值与认证头
   取值，并核验报告引用的每个 `test/*.test.ts` 真实存在；既有
-  `test/docs-p02-3-operations.test.ts` 继续守护操作/
+  `test/modules/onboarding/docs-p02-3-operations.test.ts` 继续守护操作/
   交接/README 无开发机路径与凭据样例。
 - 人工 grep 复核（开发机绝对路径、64hex 秘密、Bearer 值三类模式，同时指向两份文档）
   0 命中。

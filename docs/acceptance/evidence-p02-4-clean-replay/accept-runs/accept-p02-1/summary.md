@@ -39,16 +39,16 @@
 | 命令 | argv | cwd（逻辑） | 退出码 | 耗时（ms） |
 |---|---|---|---|---|
 | npm run verify（锁文件预检 + test/typecheck/build 实际执行） | `<node> <npm-cli> run verify` | `<repo>` | 0 | 111017 |
-| test/p02-4-dual-cli-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） | `<node> scripts/run-tests.ts test/p02-4-dual-cli-acceptance.test.ts` | `<repo>` | 0 | 14495 |
-| test/p02-4-idempotency-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） | `<node> scripts/run-tests.ts test/p02-4-idempotency-acceptance.test.ts` | `<repo>` | 0 | 14267 |
-| test/p02-4-repo-preservation-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） | `<node> scripts/run-tests.ts test/p02-4-repo-preservation-acceptance.test.ts` | `<repo>` | 0 | 15845 |
-| test/p02-4-negative-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） | `<node> scripts/run-tests.ts test/p02-4-negative-acceptance.test.ts` | `<repo>` | 0 | 19777 |
-| test/p02-4-restart-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） | `<node> scripts/run-tests.ts test/p02-4-restart-acceptance.test.ts` | `<repo>` | 0 | 44611 |
-| test/p02-4-baseline-failure-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） | `<node> scripts/run-tests.ts test/p02-4-baseline-failure-acceptance.test.ts` | `<repo>` | 0 | 39137 |
-| test/p02-4-acceptance-controller.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） | `<node> scripts/run-tests.ts test/p02-4-acceptance-controller.test.ts` | `<repo>` | 0 | 4280 |
-| test/p02-4-report-aggregation.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） | `<node> scripts/run-tests.ts test/p02-4-report-aggregation.test.ts` | `<repo>` | 0 | 343 |
-| test/p02-4-acceptance-report.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） | `<node> scripts/run-tests.ts test/p02-4-acceptance-report.test.ts` | `<repo>` | 0 | 372 |
-| test/p02-4-clean-replay.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） | `<node> scripts/run-tests.ts test/p02-4-clean-replay.test.ts` | `<repo>` | 0 | 352 |
+| test/modules/acceptance/p02-4-dual-cli-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） | `<node> scripts/run-tests.ts test/modules/acceptance/p02-4-dual-cli-acceptance.test.ts` | `<repo>` | 0 | 14495 |
+| test/modules/acceptance/p02-4-idempotency-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） | `<node> scripts/run-tests.ts test/modules/acceptance/p02-4-idempotency-acceptance.test.ts` | `<repo>` | 0 | 14267 |
+| test/modules/acceptance/p02-4-repo-preservation-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） | `<node> scripts/run-tests.ts test/modules/acceptance/p02-4-repo-preservation-acceptance.test.ts` | `<repo>` | 0 | 15845 |
+| test/modules/acceptance/p02-4-negative-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） | `<node> scripts/run-tests.ts test/modules/acceptance/p02-4-negative-acceptance.test.ts` | `<repo>` | 0 | 19777 |
+| test/modules/acceptance/p02-4-restart-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） | `<node> scripts/run-tests.ts test/modules/acceptance/p02-4-restart-acceptance.test.ts` | `<repo>` | 0 | 44611 |
+| test/modules/acceptance/p02-4-baseline-failure-acceptance.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） | `<node> scripts/run-tests.ts test/modules/acceptance/p02-4-baseline-failure-acceptance.test.ts` | `<repo>` | 0 | 39137 |
+| test/modules/acceptance/p02-4-acceptance-controller.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） | `<node> scripts/run-tests.ts test/modules/acceptance/p02-4-acceptance-controller.test.ts` | `<repo>` | 0 | 4280 |
+| test/modules/acceptance/p02-4-report-aggregation.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） | `<node> scripts/run-tests.ts test/modules/acceptance/p02-4-report-aggregation.test.ts` | `<repo>` | 0 | 343 |
+| test/modules/acceptance/p02-4-acceptance-report.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） | `<node> scripts/run-tests.ts test/modules/acceptance/p02-4-acceptance-report.test.ts` | `<repo>` | 0 | 372 |
+| test/modules/acceptance/p02-4-clean-replay.test.ts（真实临时 Git/SQLite/进程，经公共 CLI/Host） | `<node> scripts/run-tests.ts test/modules/acceptance/p02-4-clean-replay.test.ts` | `<repo>` | 0 | 352 |
 
 ## 阶段外能力（不计入必需项通过数）
 
@@ -95,6 +95,6 @@
 
 - 正式验收平台限 macOS；Windows/WSL/Linux 未验收。
 - 可信项目模式不等于强 OS 沙箱；Pi 默认工具无强 OS 沙箱。
-- P02-ENG-CLEAN-REPLAY 由 test/p02-4-clean-replay.test.ts 承接（F-012 交付）：入口未交付时该检查 not_run/startup_failure，阶段退出码非零。
+- P02-ENG-CLEAN-REPLAY 由 test/modules/acceptance/p02-4-clean-replay.test.ts 承接（F-012 交付）：入口未交付时该检查 not_run/startup_failure，阶段退出码非零。
 - 场景步骤经 scripts/run-tests.ts 以本地锁定 vitest 运行真实测试入口；verify 步骤先行完成锁文件预检/test/typecheck/build。
 

@@ -1,7 +1,7 @@
 /**
  * P01-3 / F-010 跨进程配置 CAS 竞争子进程（仅测试使用，不是产品实现，不进 packages/）。
  *
- * 父进程（test/configuration-service.test.ts）以
+ * 父进程（test/modules/configuration/configuration-service.test.ts）以
  * `node --import test/helpers/node-ts-loader/register.mjs <本文件> <configJson>`
  * 启动两个本进程实例，连接同一真实临时 SQLite 并**经应用服务**
  * ConfigurationService 以同一旧 revision 竞争更新全局或项目当前配置：

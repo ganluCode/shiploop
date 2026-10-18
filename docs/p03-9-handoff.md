@@ -7,24 +7,24 @@
 
 | Task | 交付 | 主提交 | 聚焦测试（通过数） |
 | --- | --- | --- | --- |
-| F-001 | Run/Batch Task 边界暂停：`execution.pause`、迁移 v27、`execution.run.paused`/`execution.batch.paused` | `40f9888` | `test/p03-9-f001-execution-pause.test.ts`（7） |
-| F-002 | Run/Batch 取消意图与终态竞争：`execution.cancel`、迁移 v28 `execution_stop_operations`、4 类取消事件 | `874ea0e` | `test/p03-9-f002-execution-cancel.test.ts`（13） |
-| F-003 | 取消接入 Runtime/Verifier 停止端口：迁移 v29 停止证据列、`execution-stop` Artifact | `ad4ba27` | `test/p03-9-f003-execution-stop.test.ts`（6） |
-| F-004 | Session/工具/检查/Run/Batch 分层时间上限，超时复用受控停止 | `7556d01` | `test/p03-9-f004-time-limits.test.ts`（10） |
-| F-005 | Host 启动 Work 恢复门控：有界扫描、fencing、recoverStop、停止证据；人工修复补齐 v29 迁移回归期望 | `222bfa9`、`3ffcabf` | `test/p03-9-f005-startup-recovery.test.ts`（15） |
-| F-006 | 恢复现场核对与占用收尾：worktree/Git/记录水位/原生档案元数据对账，Run→paused、workspace→retained；attempt-2 补齐 v29 期望 | `d28e643`、`5c682ac` | `test/p03-9-f006-recovery-reconciliation.test.ts`（8） |
-| F-007 | 同 Task auto/new/required 续接决策与不可变来源快照 | `cd13915` | `test/p03-9-f007-recovery-continuation.test.ts`（10） |
-| F-008 | 显式工作流 `execution.resume`：重新授权、原 worktree 增量继续、幂等编排 | `3a2261c` | `test/p03-9-f008-workflow-resume.test.ts`（8） |
-| F-009 | retryFinal 只读资格判定与受限 finalization scope | `82bda79` | `test/p03-9-f009-finalization-retry.test.ts`（7） |
-| F-010 | `execution.retryFinal` 创建 finalization-only 新 Run、父 Batch 预算扣减；attempt-2 同步 Host 命令宣告 | `04eaa92`、`d84d1f6` | `test/p03-9-f010-finalization-run.test.ts`（8） |
-| F-011 | finalization-only Run 确定性重验与 Feature 全量门禁，禁止进入编码调度 | `06add86` | `test/p03-9-f011-finalization-execution.test.ts`（9） |
-| F-012 | finalization 审批继续、Git operation 幂等核对与完成 CAS | `98db678` | `test/p03-9-f012-finalization-completion.test.ts`（8） |
-| F-013 | 控制进度、恢复诊断与 finalization 收尾结果查询 | `1be6f52` | `test/p03-9-f013-control-recovery-query.test.ts`（11） |
-| F-014 | Host/HostClient 控制、retryFinal 与恢复诊断接线 | `9cef2ac` | `test/p03-9-f014-host-control-wiring.test.ts`（7） |
-| F-015 | CLI Run/Batch 控制、retryFinal 与恢复诊断入口 | `3e74f62` | `test/p03-9-f015-cli-control.test.ts`（18）、`test/p03-9-f015-cli-control-vertical.test.ts`（4） |
-| F-016 | 真实 Host 强杀与恢复集成；产品修复对账成功后 Task 回退 pending | `4c177e7` | `test/p03-9-f016-host-kill-recovery.test.ts`（4） |
-| F-017 | Host/CLI finalization-only 端到端回归；scheduler/Verifier/completion 产品修复 | `e4e12fa` | `test/p03-9-f017-finalization-host-vertical.test.ts`（10） |
-| F-018 | 本交付与接口交接记录及守护测试（`f6e12d4`）；attempt-2 修复 `test/p03-3-runtime-start-reservation.test.ts` 迁移期望至 v29（仅测试期望）；attempt-3 将 F-017 并发 retryFinal 断言去时序化（不同 commandId 竞争 + 同 commandId 确定性幂等重放）并提高 F-012 提交重试用例超时预算至 180s（不改断言） | `f6e12d4` | `test/docs-p03-9-handoff.test.ts`（6）、`test/p03-3-runtime-start-reservation.test.ts`（18） |
+| F-001 | Run/Batch Task 边界暂停：`execution.pause`、迁移 v27、`execution.run.paused`/`execution.batch.paused` | `40f9888` | `test/modules/execution/control/p03-9-f001-execution-pause.test.ts`（7） |
+| F-002 | Run/Batch 取消意图与终态竞争：`execution.cancel`、迁移 v28 `execution_stop_operations`、4 类取消事件 | `874ea0e` | `test/modules/execution/control/p03-9-f002-execution-cancel.test.ts`（13） |
+| F-003 | 取消接入 Runtime/Verifier 停止端口：迁移 v29 停止证据列、`execution-stop` Artifact | `ad4ba27` | `test/modules/execution/control/p03-9-f003-execution-stop.test.ts`（6） |
+| F-004 | Session/工具/检查/Run/Batch 分层时间上限，超时复用受控停止 | `7556d01` | `test/modules/execution/control/p03-9-f004-time-limits.test.ts`（10） |
+| F-005 | Host 启动 Work 恢复门控：有界扫描、fencing、recoverStop、停止证据；人工修复补齐 v29 迁移回归期望 | `222bfa9`、`3ffcabf` | `test/modules/recovery/p03-9-f005-startup-recovery.test.ts`（15） |
+| F-006 | 恢复现场核对与占用收尾：worktree/Git/记录水位/原生档案元数据对账，Run→paused、workspace→retained；attempt-2 补齐 v29 期望 | `d28e643`、`5c682ac` | `test/modules/recovery/p03-9-f006-recovery-reconciliation.test.ts`（8） |
+| F-007 | 同 Task auto/new/required 续接决策与不可变来源快照 | `cd13915` | `test/modules/recovery/p03-9-f007-recovery-continuation.test.ts`（10） |
+| F-008 | 显式工作流 `execution.resume`：重新授权、原 worktree 增量继续、幂等编排 | `3a2261c` | `test/modules/recovery/p03-9-f008-workflow-resume.test.ts`（8） |
+| F-009 | retryFinal 只读资格判定与受限 finalization scope | `82bda79` | `test/modules/delivery/retry/p03-9-f009-finalization-retry.test.ts`（7） |
+| F-010 | `execution.retryFinal` 创建 finalization-only 新 Run、父 Batch 预算扣减；attempt-2 同步 Host 命令宣告 | `04eaa92`、`d84d1f6` | `test/modules/delivery/retry/p03-9-f010-finalization-run.test.ts`（8） |
+| F-011 | finalization-only Run 确定性重验与 Feature 全量门禁，禁止进入编码调度 | `06add86` | `test/modules/delivery/retry/p03-9-f011-finalization-execution.test.ts`（9） |
+| F-012 | finalization 审批继续、Git operation 幂等核对与完成 CAS | `98db678` | `test/modules/delivery/retry/p03-9-f012-finalization-completion.test.ts`（8） |
+| F-013 | 控制进度、恢复诊断与 finalization 收尾结果查询 | `1be6f52` | `test/modules/recovery/p03-9-f013-control-recovery-query.test.ts`（11） |
+| F-014 | Host/HostClient 控制、retryFinal 与恢复诊断接线 | `9cef2ac` | `test/modules/host/control/p03-9-f014-host-control-wiring.test.ts`（7） |
+| F-015 | CLI Run/Batch 控制、retryFinal 与恢复诊断入口 | `3e74f62` | `test/modules/cli/control/p03-9-f015-cli-control.test.ts`（18）、`test/modules/cli/control/p03-9-f015-cli-control-vertical.test.ts`（4） |
+| F-016 | 真实 Host 强杀与恢复集成；产品修复对账成功后 Task 回退 pending | `4c177e7` | `test/modules/recovery/p03-9-f016-host-kill-recovery.test.ts`（4） |
+| F-017 | Host/CLI finalization-only 端到端回归；scheduler/Verifier/completion 产品修复 | `e4e12fa` | `test/modules/delivery/retry/p03-9-f017-finalization-host-vertical.test.ts`（10） |
+| F-018 | 本交付与接口交接记录及守护测试（`f6e12d4`）；attempt-2 修复 `test/modules/execution/budget/p03-3-runtime-start-reservation.test.ts` 迁移期望至 v29（仅测试期望）；attempt-3 将 F-017 并发 retryFinal 断言去时序化（不同 commandId 竞争 + 同 commandId 确定性幂等重放）并提高 F-012 提交重试用例超时预算至 180s（不改断言） | `f6e12d4` | `test/modules/execution/control/docs-p03-9-handoff.test.ts`（6）、`test/modules/execution/budget/p03-3-runtime-start-reservation.test.ts`（18） |
 
 输入版本：源 PRD `input/p03-run-control.md`（v0.3，2026-10-11，含 2026-10-13 恢复补充与 2026-10-14 实现选择）；共同约束 `input/execution-contract.md`；P02 基线 `0e76ad8`（main）。
 
@@ -80,7 +80,7 @@
 - **查询**（`packages/core/src/ports/execution-control-query.ts`）：`execution.run.control.get`、`execution.batch.control.get`、`execution.run.recovery.get`；Host 路由 `GET /v1/runs/:runId/control`、`GET /v1/batches/:batchId/control`、`GET /v1/runs/:runId/recovery`（`packages/host/src/contract/constants.ts`）。`EXECUTION_CONTROL_NEXT_ACTIONS` 冻结词汇：`none`/`resume`/`resume_blocked_occupancy`/`await_attempt_settlement`/`await_stop_settlement`/`stop_reconcile`/`retry_final`；`validateRunFinalizationScope` 对损坏 scope fail-closed。
 - **HostClient**（`packages/host/src/client/app-client.ts`）：`pauseExecution`/`cancelExecution`/`resumeExecution`/`retryFinalExecution`/`getRunControl`/`getBatchControl`/`getRunRecovery`；线校验在 `packages/host/src/client/app-wire.ts`（未知键/版本/动作、伪造 finalization、零用量冒充均 `response_malformed`）。能力宣告同源：`packages/host/src/contract/lifecycle.ts` 的 `APPLICATION_COMMAND_CAPABILITIES`/`APPLICATION_QUERY_CAPABILITIES`。
 - **CLI**（`packages/cli/src/app/args.ts`、`packages/cli/src/app/run-control.ts`）：`execution pause|cancel|resume|retry-final|control|batch-control|recovery`；只经 HostClient，不打开 SQLite。
-- 测试入口：`test/p03-9-f013-control-recovery-query.test.ts`、`test/p03-9-f014-host-control-wiring.test.ts`、`test/p03-9-f015-cli-control.test.ts`、`test/p03-9-f015-cli-control-vertical.test.ts`。
+- 测试入口：`test/modules/recovery/p03-9-f013-control-recovery-query.test.ts`、`test/modules/host/control/p03-9-f014-host-control-wiring.test.ts`、`test/modules/cli/control/p03-9-f015-cli-control.test.ts`、`test/modules/cli/control/p03-9-f015-cli-control-vertical.test.ts`。
 
 ### 4.2 恢复顺序（Host 重启 → 可继续）
 
@@ -89,22 +89,22 @@
 3. 现场对账（`packages/core/src/ports/work-recovery-reconciliation.ts`、`adapters/fs/recovery-git-reader.ts`）：worktree 归属/分支/HEAD/代码摘要、Git 意图与实际父/tree/HEAD、记录水位与缺口、原生档案元数据只读（不打开原生库）；全部通过才开放门控，Run→`paused`、workspace→`retained`，仅释放匹配 holder lease（`readForRecovery`/`releaseRecovered*`）；对账成功后仍为 running 的 Task 回退 `pending`。
 4. 显式 `execution.resume`（`packages/core/src/application/execution-resume.ts`）：重核授权/策略/预算/deadline/占用后按 DAG 预演进入缺失步骤；不创建 Attempt/worktree、不启动 Runtime。
 5. 认领时续接决策（`packages/core/src/ports/work-recovery-continuation.ts`）：auto/new/required，核对 F-006 reconciled 现场、旧占用与停止、来源 Attempt/Session/归档/检查点、当前完整策略；生成不可变续接记录 Artifact（`WORK_RECOVERY_CONTINUATION_SCHEMA_VERSION=1`，kind `work-recovery-continuation`）接入 `ContextBuildInput.recovery`/`PreparedExecutionInputGroup.recovery` 与 Attempt 快照读回。
-- 测试入口：`test/p03-9-f005-startup-recovery.test.ts`、`test/p03-9-f006-recovery-reconciliation.test.ts`、`test/p03-9-f007-recovery-continuation.test.ts`、`test/p03-9-f008-workflow-resume.test.ts`、`test/p03-9-f016-host-kill-recovery.test.ts`。
+- 测试入口：`test/modules/recovery/p03-9-f005-startup-recovery.test.ts`、`test/modules/recovery/p03-9-f006-recovery-reconciliation.test.ts`、`test/modules/recovery/p03-9-f007-recovery-continuation.test.ts`、`test/modules/recovery/p03-9-f008-workflow-resume.test.ts`、`test/modules/recovery/p03-9-f016-host-kill-recovery.test.ts`。
 
 ### 4.3 统一占用
 
 - workspace lease（owner/host/version）+ Task `executionVersion` fencing + Run/Batch revision CAS 共同构成占用；`interrupted`/`quarantined` 及停止不确定不释放占用；恢复释放仅匹配 holder；同一原生档案单写入者，不因恢复开启并发续写。
-- 测试入口：`test/p03-9-f002-execution-cancel.test.ts`（interrupted 占用保留）、`test/p03-9-f003-execution-stop.test.ts`（隔离）、`test/p03-9-f005-startup-recovery.test.ts`、`test/p03-9-f016-host-kill-recovery.test.ts`（换 Session 不避开隔离）。
+- 测试入口：`test/modules/execution/control/p03-9-f002-execution-cancel.test.ts`（interrupted 占用保留）、`test/modules/execution/control/p03-9-f003-execution-stop.test.ts`（隔离）、`test/modules/recovery/p03-9-f005-startup-recovery.test.ts`、`test/modules/recovery/p03-9-f016-host-kill-recovery.test.ts`（换 Session 不避开隔离）。
 
 ### 4.4 当前策略快照与 finalization scope
 
 - **策略快照**：F-007 续接记录为不可变输入，携带当前完整获准策略与来源身份；策略不兼容不静默沿用旧模型；快照脱敏、Attempt 间独立（T25）。
 - **finalization scope**：`packages/core/src/ports/finalization-retry.ts` 的 `FINALIZATION_RETRY_SCOPE_SCHEMA_VERSION=1`、`FINALIZATION_PENDING_STEPS`（`task_revalidation`/`feature_verification`/`approval`/`reconcile_commit`/`commit`/`finalize`）、`FINALIZATION_RETRY_REJECTED_REASONS`；Run `inputSnapshot.finalization` 保存受限步骤与历史 Run/Batch 身份；`FINALIZATION_RETRY_RUN_KIND='finalization-only'`，零编码承诺（`coding.taskIds=[]`、`runtimeStarts=0`、`newAttempts=0`）。
-- 测试入口：`test/p03-9-f009-finalization-retry.test.ts`、`test/p03-9-f010-finalization-run.test.ts`、`test/p03-9-f011-finalization-execution.test.ts`、`test/p03-9-f012-finalization-completion.test.ts`、`test/p03-9-f017-finalization-host-vertical.test.ts`。
+- 测试入口：`test/modules/delivery/retry/p03-9-f009-finalization-retry.test.ts`、`test/modules/delivery/retry/p03-9-f010-finalization-run.test.ts`、`test/modules/delivery/retry/p03-9-f011-finalization-execution.test.ts`、`test/modules/delivery/retry/p03-9-f012-finalization-completion.test.ts`、`test/modules/delivery/retry/p03-9-f017-finalization-host-vertical.test.ts`。
 
 ## 5. F-018 质量门禁交接
 
-- 本 Task 新增交接文档与守护测试；attempt-1 独立验收唯一失败为 `test/p03-3-runtime-start-reservation.test.ts` 迁移期望仍冻结 v28（F-003 已引入 v29 的前序既有失败，位于本清单内），attempt-2 将该文件两处期望（`appliedVersions` 与 `SQLITE_MIGRATIONS` 版本连续性）补齐 29，未改迁移 SQL/checksum/生产逻辑。attempt-2 独立验收另暴露两个负载相关时序失败（attempt-1 同清单下通过，本地单独运行均通过）：`test/p03-9-f017-finalization-host-vertical.test.ts` 并发重复 retryFinal 用例对双进程启动时序敏感（同 commandId 晚到时幂等重放返回原成功结果属产品正确行为，非缺陷），attempt-3 改为不同 commandId 并发竞争（碰撞与晚到均被 conflict 拒绝）并追加同 commandId 确定性幂等重放断言（返回原 Run、不重复创建），不断言强度；`test/p03-9-f012-finalization-completion.test.ts` 提交重试端到端用例在验证器全量负载下超默认 60s，attempt-3 将该用例超时预算提为 180s（不改断言）。验证：`node scripts/run-tests.ts test/docs-p03-9-handoff.test.ts` 6/6、`test/p03-3-runtime-start-reservation.test.ts` 18/18、`test/p03-9-f017-finalization-host-vertical.test.ts` 10/10（294s）、`test/p03-9-f012-finalization-completion.test.ts` 8/8（262s），均退出码 0，完整日志：Harness workspace `verifications/F-018/runtime-logs/`（`test-65i5n75y.log`、`test-msihqrnt.log`、`test-vg0tjzab.log`、`test-_n4c_jr_.log` 等）。
+- 本 Task 新增交接文档与守护测试；attempt-1 独立验收唯一失败为 `test/modules/execution/budget/p03-3-runtime-start-reservation.test.ts` 迁移期望仍冻结 v28（F-003 已引入 v29 的前序既有失败，位于本清单内），attempt-2 将该文件两处期望（`appliedVersions` 与 `SQLITE_MIGRATIONS` 版本连续性）补齐 29，未改迁移 SQL/checksum/生产逻辑。attempt-2 独立验收另暴露两个负载相关时序失败（attempt-1 同清单下通过，本地单独运行均通过）：`test/modules/delivery/retry/p03-9-f017-finalization-host-vertical.test.ts` 并发重复 retryFinal 用例对双进程启动时序敏感（同 commandId 晚到时幂等重放返回原成功结果属产品正确行为，非缺陷），attempt-3 改为不同 commandId 并发竞争（碰撞与晚到均被 conflict 拒绝）并追加同 commandId 确定性幂等重放断言（返回原 Run、不重复创建），不断言强度；`test/modules/delivery/retry/p03-9-f012-finalization-completion.test.ts` 提交重试端到端用例在验证器全量负载下超默认 60s，attempt-3 将该用例超时预算提为 180s（不改断言）。验证：`node scripts/run-tests.ts test/modules/execution/control/docs-p03-9-handoff.test.ts` 6/6、`test/modules/execution/budget/p03-3-runtime-start-reservation.test.ts` 18/18、`test/modules/delivery/retry/p03-9-f017-finalization-host-vertical.test.ts` 10/10（294s）、`test/modules/delivery/retry/p03-9-f012-finalization-completion.test.ts` 8/8（262s），均退出码 0，完整日志：Harness workspace `verifications/F-018/runtime-logs/`（`test-65i5n75y.log`、`test-msihqrnt.log`、`test-vg0tjzab.log`、`test-_n4c_jr_.log` 等）。
 - 受影响回归选择清单：`verifications/F-018/test-selection.json`（本 Feature 全部 `test/p03-9-*.test.ts` 及直接相关契约/装配回归），交由 Nezha 独立 affected 回归；未在本地运行的文件不声明通过。
 - Feature 完整门禁即项目 `npm run verify`（全量测试、类型检查、边界检查与构建，`scripts/verify.ts` 编排）由 Nezha 执行；全量必需通过，失败不得宣布 Feature 完成。保留全部既有负例与门槛，本 Task 未删测试、未降权限与验收要求。
 

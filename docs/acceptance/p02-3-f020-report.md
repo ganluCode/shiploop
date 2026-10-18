@@ -6,7 +6,7 @@
   `feat/2026-10-04-23-19-52_p02-3`，F-019 操作文档/交接 + 文档守护提交；产品代码最后
   变更为 F-018 的 `6c140f8204fada2e6e7ab9e388cad6ecd02dea80`，即真实
   Git/SQLite/进程/Host/CLI 端到端集成回归 + `output_overflow` 终态修复）。
-  本报告、脱敏证据与文档守护 `test/docs-p02-3-f020-report.test.ts` 作为 F-020 提交在其后，
+  本报告、脱敏证据与文档守护 `test/modules/onboarding/docs-p02-3-f020-report.test.ts` 作为 F-020 提交在其后，
   只增加文档与守护测试，不改变产品代码。
   - P02-2 交付基线（本 Feature 起点）：`3caca4892423fb33c2ea423edfd426c146314793`
     （P02-2 F-020 交付报告提交）。
@@ -79,12 +79,12 @@
   显式取消、overview 健康查询）。
 - **F-017**（`ce700cc`）：最小 project init/overview 操作 Skill（只经正式 CLI）。
 - **F-018**（`6c140f8`）：整 Feature 真实 Git/SQLite/进程/Host/CLI 端到端集成回归
-  （`test/p02-3-integration-regression.test.ts` 10 项）+ `output_overflow` 终态修复。
+  （`test/modules/onboarding/p02-3-integration-regression.test.ts` 10 项）+ `output_overflow` 终态修复。
 - **F-019**（`fdacf25`）：`docs/p02-3-operations.md`、`docs/p02-3-handoff.md`、README
-  索引与文档守护 `test/docs-p02-3-operations.test.ts`。
+  索引与文档守护 `test/modules/onboarding/docs-p02-3-operations.test.ts`。
 - **F-020**（本报告）：交付报告、FR 验收索引、脱敏证据核对与清理记录
   （[evidence-p02-3/f020-verification-evidence.md](evidence-p02-3/f020-verification-evidence.md)、
-  文档守护 `test/docs-p02-3-f020-report.test.ts`）。
+  文档守护 `test/modules/onboarding/docs-p02-3-f020-report.test.ts`）。
 
 ## 3. 环境与版本
 
@@ -192,10 +192,10 @@
   （同目录相对链接 [evidence-p02-3/f020-verification-evidence.md](evidence-p02-3/f020-verification-evidence.md)）
   只含非秘密的计数、状态、退出码、进程与命令行形状；复核确认**不含**真实凭据、
   认证头取值、64 位十六进制秘密形状、开发机绝对路径或用户文件正文（证据 §6）。
-- 文档守护 `test/docs-p02-3-f020-report.test.ts` 在 `npm test` 内断言本报告与证据文档
+- 文档守护 `test/modules/onboarding/docs-p02-3-f020-report.test.ts` 在 `npm test` 内断言本报告与证据文档
   不含 macOS 用户主目录绝对路径（`/Users` 一级目录形态）、`[0-9a-f]{64}`、Bearer 值与
   认证头取值，并核验引用的每个 `test/*.test.ts` 真实存在；既有
-  `test/docs-p02-3-operations.test.ts` 继续守护操作/
+  `test/modules/onboarding/docs-p02-3-operations.test.ts` 继续守护操作/
   交接/README。
 - 测试仅操作临时沙箱内独立 HOME/tmp/数据根，不读真实凭据、不联网；完整原始日志保存
   在 Harness Feature 工作区 `tool-logs/`（`f020-verify.log`、`f020-boundaries.log`、

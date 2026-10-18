@@ -95,19 +95,19 @@ npm run accept:p01 -- --run-id <id> --report-dir <dir> \
 | 检查 ID | 分支 | 承接测试 / 命令入口 |
 |---|---|---|
 | `P01-ENG-VERIFY` | 工程 | `npm run verify`（test / typecheck / build） |
-| `P01-FR1-NORMAL` | FR-1 正常 | `test/p01-4-persistence-closed-loop.test.ts` |
+| `P01-FR1-NORMAL` | FR-1 正常 | `test/modules/acceptance/p01-4-persistence-closed-loop.test.ts` |
 | `P01-FR1-REOPEN` | FR-1 重开 | 同上 |
-| `P01-FR1-ROLLBACK` | FR-1 回滚（预期负例） | `test/p01-4-sqlite-rollback-and-cas.test.ts` |
-| `P01-FR2-CONFIG` | FR-2 正常/拒绝（预期负例） | `test/p01-4-config-and-tags.test.ts` |
-| `P01-FR2-ROLLBACK` | FR-2 回滚（预期负例） | `test/p01-4-sqlite-rollback-and-cas.test.ts` |
+| `P01-FR1-ROLLBACK` | FR-1 回滚（预期负例） | `test/modules/acceptance/p01-4-sqlite-rollback-and-cas.test.ts` |
+| `P01-FR2-CONFIG` | FR-2 正常/拒绝（预期负例） | `test/modules/acceptance/p01-4-config-and-tags.test.ts` |
+| `P01-FR2-ROLLBACK` | FR-2 回滚（预期负例） | `test/modules/acceptance/p01-4-sqlite-rollback-and-cas.test.ts` |
 | `P01-FR2-CAS` | FR-2 CAS 竞争 | 同上 |
-| `P01-FR2-TAGS` | T32 项目标签 | `test/p01-4-config-and-tags.test.ts` |
-| `P01-FR2-ARTIFACT-MISSING` | FR-2 制品缺失（预期负例） | `test/p01-4-artifact-negative.test.ts` |
+| `P01-FR2-TAGS` | T32 项目标签 | `test/modules/acceptance/p01-4-config-and-tags.test.ts` |
+| `P01-FR2-ARTIFACT-MISSING` | FR-2 制品缺失（预期负例） | `test/modules/acceptance/p01-4-artifact-negative.test.ts` |
 | `P01-FR2-ARTIFACT-RECOVERY` | FR-2 制品恢复 | 同上 |
-| `P01-PHASE-FIXTURE` | 夹具失败 | `test/p01-4-acceptance-controller.test.ts` |
-| `P01-PHASE-NOT-RUN` | 必需检查未运行 | `test/p01-4-report-aggregation.test.ts` |
-| `P01-ENG-BUILD-SMOKE` | 构建产物 | `test/p01-4-build-smoke.test.ts` |
-| `P01-PHASE-REPORT` | 报告完整性 | `test/p01-4-report-aggregation.test.ts` |
+| `P01-PHASE-FIXTURE` | 夹具失败 | `test/modules/acceptance/p01-4-acceptance-controller.test.ts` |
+| `P01-PHASE-NOT-RUN` | 必需检查未运行 | `test/modules/acceptance/p01-4-report-aggregation.test.ts` |
+| `P01-ENG-BUILD-SMOKE` | 构建产物 | `test/modules/acceptance/p01-4-build-smoke.test.ts` |
+| `P01-PHASE-REPORT` | 报告完整性 | `test/modules/acceptance/p01-4-report-aggregation.test.ts` |
 
 结果状态只有三种：
 
@@ -200,4 +200,4 @@ P01 只覆盖下列**子集**，不冒充完整验收，也不提前建执行表
 
 仓库级验证：`npm test`（开发内循环）；`npm run verify`（锁文件预检 + test / typecheck / build
 串联，fail-closed）；阶段验收：`npm run accept:p01`。本文引用的命令、检查 ID、配置字段与
-证据形态由 `test/p01-4-delivery.test.ts` 交叉核对，防止文档与实现漂移。
+证据形态由 `test/modules/acceptance/p01-4-delivery.test.ts` 交叉核对，防止文档与实现漂移。

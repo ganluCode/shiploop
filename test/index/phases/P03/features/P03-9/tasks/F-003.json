@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "task_id": "F-003",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/execution/control/p03-9-f003-execution-stop.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

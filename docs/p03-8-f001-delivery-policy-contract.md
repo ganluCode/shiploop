@@ -118,7 +118,7 @@
 
 ## 6. 验证覆盖
 
-`test/p03-8-f001-delivery-policy.test.ts`（56 用例）：身份正/负例（空值/
+`test/modules/delivery/p03-8-f001-delivery-policy.test.ts`（56 用例）：身份正/负例（空值/
 控制字符/尖括号/超长/无 @/多 @/无域点/未确认/旁路键）、提交政策拒绝词汇、
 交付动作拒绝词汇、resolveForUse 全部拒绝原因与 ready 形态、审计记录校验、
 摘要确定性/null 形态区分、配置 Schema 新旧兼容与版本拒绝、段整体替换/继承、

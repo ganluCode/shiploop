@@ -107,7 +107,7 @@ artifacts, diagnostics) before and after every query.
 
 ## Evidence
 
-`test/p03-6-work-session-query.test.ts` (14 cases): completed+stopped
+`test/modules/runtime/p03-6-work-session-query.test.ts` (14 cases): completed+stopped
 list/detail/evidence reads with reopen-consistency and read-only snapshot
 equality; launch rejection without a session; ended pending verification with
 unconfirmed stop and quarantined occupancy; recording gaps from dropped

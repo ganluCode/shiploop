@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "task_id": "F-014",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/host/control/p03-9-f014-host-control-wiring.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

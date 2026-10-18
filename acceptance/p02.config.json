@@ -28,61 +28,61 @@
     {
       "id": "dual-cli",
       "kind": "test",
-      "entry": "test/p02-4-dual-cli-acceptance.test.ts",
+      "entry": "test/modules/acceptance/p02-4-dual-cli-acceptance.test.ts",
       "checkIds": ["P02-FR1-UNIQUE-HOST", "P02-FR1-SHARED-STATE", "P02-FR1-BASELINE-OK"]
     },
     {
       "id": "idempotency",
       "kind": "test",
-      "entry": "test/p02-4-idempotency-acceptance.test.ts",
+      "entry": "test/modules/acceptance/p02-4-idempotency-acceptance.test.ts",
       "checkIds": ["P02-FR2-DUPLICATE-INIT", "P02-FR2-COMMAND-CONFLICT"]
     },
     {
       "id": "repo-preservation",
       "kind": "test",
-      "entry": "test/p02-4-repo-preservation-acceptance.test.ts",
+      "entry": "test/modules/acceptance/p02-4-repo-preservation-acceptance.test.ts",
       "checkIds": ["P02-FR2-SOURCE-PRESERVED"]
     },
     {
       "id": "auth-reject",
       "kind": "test",
-      "entry": "test/p02-4-negative-acceptance.test.ts",
+      "entry": "test/modules/acceptance/p02-4-negative-acceptance.test.ts",
       "checkIds": ["P02-FR2-AUTH-REJECT"]
     },
     {
       "id": "restart",
       "kind": "test",
-      "entry": "test/p02-4-restart-acceptance.test.ts",
+      "entry": "test/modules/acceptance/p02-4-restart-acceptance.test.ts",
       "checkIds": ["P02-FR2-CLIENT-EXIT", "P02-FR1-RESTART-QUERY"]
     },
     {
       "id": "baseline-failure",
       "kind": "test",
-      "entry": "test/p02-4-baseline-failure-acceptance.test.ts",
+      "entry": "test/modules/acceptance/p02-4-baseline-failure-acceptance.test.ts",
       "checkIds": ["P02-FR2-BASELINE-FAILURE"]
     },
     {
       "id": "controller",
       "kind": "test",
-      "entry": "test/p02-4-acceptance-controller.test.ts",
+      "entry": "test/modules/acceptance/p02-4-acceptance-controller.test.ts",
       "checkIds": ["P02-PHASE-FIXTURE"]
     },
     {
       "id": "report-aggregation",
       "kind": "test",
-      "entry": "test/p02-4-report-aggregation.test.ts",
+      "entry": "test/modules/acceptance/p02-4-report-aggregation.test.ts",
       "checkIds": ["P02-PHASE-NOT-RUN"]
     },
     {
       "id": "acceptance-report",
       "kind": "test",
-      "entry": "test/p02-4-acceptance-report.test.ts",
+      "entry": "test/modules/acceptance/p02-4-acceptance-report.test.ts",
       "checkIds": ["P02-PHASE-REPORT"]
     },
     {
       "id": "clean-replay",
       "kind": "test",
-      "entry": "test/p02-4-clean-replay.test.ts",
+      "entry": "test/modules/acceptance/p02-4-clean-replay.test.ts",
       "checkIds": ["P02-ENG-CLEAN-REPLAY"]
     }
   ],

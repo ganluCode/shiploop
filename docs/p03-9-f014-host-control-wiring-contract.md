@@ -63,7 +63,7 @@ actor/principal/permissions/status/budget/stop 结果等提权或服务端决定
 
 ## 5. 聚焦验证
 
-`test/p03-9-f014-host-control-wiring.test.ts`（真实 Host + SQLite + 真实传输，
+`test/modules/host/control/p03-9-f014-host-control-wiring.test.ts`（真实 Host + SQLite + 真实传输，
 零模型）：能力/握手/旧版本拒绝；pause→query→event、重复 commandId、revision
 冲突、resume、cancel、Batch 目标；跨项目 forbidden、未认证 401、过期
 `command_expired`、未知操作 501、受限主体无能力拒绝、客户端互斥目标/非法 UUID/
