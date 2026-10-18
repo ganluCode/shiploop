@@ -139,6 +139,12 @@ export function createGitCommitDriver(options: {
         }
         return { head, tree, parents, message: raw.slice(split + 2), author: person('author'), committer: person('committer') };
       },
+      async isAncestor(ancestor, descendant) {
+        if (!oid(ancestor) || !oid(descendant)) invalid();
+        const result = await run(['merge-base', '--is-ancestor', ancestor, descendant], undefined, undefined, true);
+        if (result.reason !== null || (result.exitCode !== 0 && result.exitCode !== 1)) invalid();
+        return result.exitCode === 0;
+      },
       async commit(message, identity) {
         const result = await run(['commit', '--no-gpg-sign', '--cleanup=verbatim', '--file=-'], Buffer.from(message), identity, true);
         return { exitCode: result.exitCode, durationMs: result.durationMs, reason: result.reason };

@@ -27,6 +27,10 @@ import { assembleWorkExecution, type WorkRuntimeFactory, type WorkExecution } fr
 import { createWorkStartupRecovery } from '../application/work-startup-recovery.js';
 import { PublicError } from '../ports/commands.js';
 import { createSqliteWorkStartupRecoveryStore } from './sqlite/work-startup-recovery.js';
+import { createSqliteWorkRecoveryReconciliationStore } from './sqlite/work-recovery-reconciliation.js';
+import { createWorkRecoveryReconciler } from '../application/work-recovery-reconciliation.js';
+import { createRecoveryGitReader } from './fs/recovery-git-reader.js';
+import { createGitCommitDriver } from './fs/git-commit-driver.js';
 export type { WorkRuntimeFactory, WorkRuntimeContext } from './work-execution.js';
 import { existsSync, mkdirSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
@@ -632,11 +636,36 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
         return identity;
       };
     const workspaceGitLock = createGitPublicMetadataLock();
+    const recoveryInspectorForCall = async (projectId: string) => {
+      const binding = await stateStore.getRepositoryBinding(projectId);
+      return createWorkspaceInspector({
+        authorizedRoots: [basePathService.dataRoot(), binding.canonicalPath],
+        confirmProcessIdentity: confirmWorkspaceProcessIdentity(projectId),
+      });
+    };
+    const startupReconciler = createWorkRecoveryReconciler({
+      store: createSqliteWorkRecoveryReconciliationStore(session, { resources: workResources, nowUtcMs }),
+      inspect: async (projectId, baseline) => (await recoveryInspectorForCall(projectId)).inspect(baseline),
+      git: createRecoveryGitReader({
+        driverFor: projectId => createGitCommitDriver({
+          confirmProcessIdentity: confirmWorkspaceProcessIdentity(projectId),
+        }),
+      }),
+      artifacts: createArtifactVerifier({
+        artifacts: artifactStore,
+        files: artifactFileStore,
+        limits: { maxReadBytes: 4 * 1024 * 1024 },
+      }),
+      stopVerifier: workspaceStopVerifier,
+      publishEvidence: (projectId, evidence) => publishWorkspaceEvidence(projectId, randomUUID(), { ...evidence }),
+      nowUtcMs,
+    });
     const startupRecovery = createWorkStartupRecovery({
       store: createSqliteWorkStartupRecoveryStore(session, { nowUtcMs }),
       process: workspaceCommandProcess,
       nowUtcMs,
       publishEvidence: (projectId, evidence) => publishWorkspaceEvidence(projectId, randomUUID(), { ...evidence }),
+      reconcile: evidence => startupReconciler.reconcile(evidence),
     });
     if (object.workStartupRecoveryRequired === true) startupRecovery.enter();
     const taskClaims = createSqliteTaskClaimStore(session, {

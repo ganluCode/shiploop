@@ -25,3 +25,7 @@ F-005 始终保留遗留占用，`workspaceReconciled` 为 `false`。即使停�
 只扩展既有 `state_events` 白名单：项目事件 `work.recovery.updated` 聚合到实际 Run revision，全局阻塞事件为 `work.recovery.blocked`。内部 payload 严格校验字段、身份与 scope 关联；Host 公开投影仅为 `{ "recoveryUpdated": true }`。未知持久事件或损坏 payload 显式失败。
 
 任务测试 `test/p03-9-f005-startup-recovery.test.ts` 使用真实 Host、SQLite 与受控进程，覆盖清洁启动、三个遗留执行阶段、旧身份拒写、fencing 后重启、存活子进程、过期/失配身份、workspace 失配、提交门控、扫描回滚、停止与 Artifact 失败、有界扫描及事件读取。当前受控进程 adapter 仅支持 macOS，因此该任务文件显式按平台跳过；本次验证在 macOS 执行。
+
+## F-006 增量
+
+F-006 在停止观察之后接入 Git/worktree/记录水位核对：只有全部必要事实可核验时才把 Run 置为 paused、workspace 置为 retained 并释放匹配 holder；否则保留 interrupted/quarantined。实现与测试边界见 [F-006 恢复现场核对契约](p03-9-f006-recovery-reconciliation-contract.md)。F-005 的 recorded 事件与 Artifact 保持不可变，`attempts.diagnostic_ref` 可指向较新的恢复诊断。

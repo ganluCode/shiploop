@@ -42,6 +42,10 @@ export function createSqliteWorkResourceAccess(session: SqliteStorageSession, op
   }
   function snapshot(identity: WorkResourceIdentity): WorkResourceSnapshot {
     const attempt = current(identity);
+    return readSnapshot(identity, attempt);
+  }
+  function readSnapshot(identity: WorkResourceIdentity,
+    attempt: ReturnType<typeof current>): WorkResourceSnapshot {
     const leases = attempts.listWorkspaceLeases(identity.projectId).filter(lease => lease.owner === identity.attemptId);
     if (leases.some(lease => lease.hostInstanceId !== identity.hostInstanceId || lease.executionVersion !== identity.executionVersion)) {
       return fail('ownership', 'stale_lease_identity');
@@ -58,6 +62,13 @@ export function createSqliteWorkResourceAccess(session: SqliteStorageSession, op
     return { identity, invocationId: attempt.invocationId, leases,
       processIdentity: process?.schemaVersion === 2 ? validateWorkProcessIdentity({ launchId: process.launchId,
         pid: process.pid, processGroupId: process.processGroupId, startTime: process.startTime }) : null };
+  }
+  /** F-006: fencing already advanced the Task version; only the immutable Attempt/lease identity is required. */
+  function recoverySnapshot(identity: WorkResourceIdentity): WorkResourceSnapshot {
+    const attempt = attempts.getAttempt(identity.projectId, identity.attemptId);
+    if (attempt.owner !== identity.owner || attempt.hostInstanceId !== identity.hostInstanceId
+      || attempt.executionVersion !== identity.executionVersion) return fail('ownership', 'stale_execution_identity');
+    return readSnapshot(identity, attempt);
   }
   function occupied(identity: WorkResourceIdentity): WorkResourceSnapshot {
     const result = snapshot(identity);
@@ -85,6 +96,36 @@ export function createSqliteWorkResourceAccess(session: SqliteStorageSession, op
       const identity = validateWorkResourceIdentity(input);
       if (!session.isOpen()) return fail('corrupt', 'closed_storage');
       return db.inTransaction ? snapshot(identity) : transactSqliteConsistentRead(session, operation, () => snapshot(identity));
+    },
+    readForRecovery(input) {
+      const identity = validateWorkResourceIdentity(input);
+      if (!session.isOpen()) return fail('corrupt', 'closed_storage');
+      return db.inTransaction ? recoverySnapshot(identity) : transactSqliteConsistentRead(session, operation, () => recoverySnapshot(identity));
+    },
+    releaseRecoveredStoppedInTransaction(input, evidence) {
+      write();
+      const identity = validateWorkResourceIdentity(input), result = recoverySnapshot(identity), attempt = attempts.getAttempt(identity.projectId, identity.attemptId);
+      if (attempt.status !== 'interrupted' || result.leases.length !== 3) return fail('conflict', 'not_recoverable_occupancy');
+      if (!options.stopVerifier) return fail('validation', 'stop_verifier_not_assembled');
+      if (!isDeepStrictEqual(options.stopVerifier.inspect(evidence), result)) return fail('conflict', 'stale_stop_evidence');
+      remove(identity);
+    },
+    releaseRecoveredUnstartedInTransaction(input) {
+      write();
+      const identity = validateWorkResourceIdentity(input), result = recoverySnapshot(identity), attempt = attempts.getAttempt(identity.projectId, identity.attemptId);
+      if (attempt.status !== 'interrupted' || result.leases.length !== 3) return fail('conflict', 'not_recoverable_occupancy');
+      if (result.invocationId !== null || result.processIdentity !== null || result.leases.some(lease => lease.processIdentity !== null)
+        || attempt.startedAtUtcMs !== null || attempt.executionStage !== 'preflight') return fail('conflict', 'launch_may_have_started');
+      remove(identity);
+    },
+    quarantineRecoveredInTransaction(input) {
+      write();
+      const identity = validateWorkResourceIdentity(input), result = recoverySnapshot(identity);
+      if (result.leases.length === 0) return result;
+      if (result.leases.length !== 3) return fail('corrupt', 'incomplete_resource_group');
+      db.prepare("UPDATE workspace_leases SET state = 'quarantined', revision = revision + 1, updated_at = ? WHERE owner_id = ? AND host_instance_id = ? AND execution_version = ?")
+        .run(now(), identity.attemptId, identity.hostInstanceId, identity.executionVersion);
+      return recoverySnapshot(identity);
     },
     acquireInTransaction(input, token, until) {
       write();

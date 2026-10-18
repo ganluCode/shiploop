@@ -126,7 +126,19 @@ export function createSqliteWorkStartupRecoveryStore(session: SqliteStorageSessi
         if (limited && !findEvent('scan_limited', 'work-startup-recovery')) {
           event('scan_limited', null, null, { schemaVersion: 1, limit: LIMIT });
         }
-        return { targets, limited, retained: rows.length > 0 };
+        // F-006: recorded stop evidence still needs Git/worktree/recording reconciliation
+        // after a Host restart. Exclude the durable success shape (paused + retained + no leases).
+        const recordedRows = db.prepare<[], { payload: string }>(`SELECT e.payload FROM state_events e
+          JOIN attempts a ON a.id = e.attempt_id
+          JOIN runs r ON r.project_id = a.project_id AND r.id = a.run_id
+          LEFT JOIN managed_workspaces w ON w.project_id = a.project_id AND w.feature_id = a.feature_id
+          WHERE e.event_type = 'work.recovery.updated' AND json_extract(e.payload, '$.phase') = 'recorded'
+            AND a.status = 'interrupted'
+            AND NOT (r.status = 'paused' AND w.status = 'retained'
+              AND NOT EXISTS (SELECT 1 FROM workspace_leases l WHERE l.owner_id = a.id))
+          ORDER BY e.sequence LIMIT ${LIMIT}`).all();
+        const reconcilable = recordedRows.map(row => JSON.parse(row.payload) as WorkStartupRecoveryEvidence);
+        return { targets, limited, retained: rows.length > 0, reconcilable };
       });
     },
     readObservation(target) {

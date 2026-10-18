@@ -337,11 +337,11 @@ export function createSqliteWorkspaceDiscardPreviewStore(session: SqliteStorageS
           AND event_type = 'workspace.operation_updated' ORDER BY sequence DESC LIMIT 1`)
           .get(projectId, featureId) as { attempt_id: string } | undefined;
         const attempt = attempts.getAttempt(projectId, writer?.attempt_id ?? workspace.attemptId);
-        const identity: WorkResourceIdentity = { projectId, attemptId: attempt.id, owner: attempt.owner,
-          hostInstanceId: attempt.hostInstanceId, executionVersion: attempt.executionVersion };
         const blockers: WorkspaceDiscardBlocker[] = [];
         if (!['ready', 'retained'].includes(workspace.status)) blockers.push('workspace_status_not_discardable');
-        if (options.resources.read(identity).leases.length !== 0
+        // Historical fenced Attempts intentionally fail the live task-version gate;
+        // preview only needs the exact owner's remaining leases, never a takeover.
+        if (db.prepare('SELECT id FROM workspace_leases WHERE owner_id = ? LIMIT 1').get(attempt.id)
           || db.prepare('SELECT id FROM workspace_leases WHERE owner_id <> ? LIMIT 1').get(attempt.id)) blockers.push('occupancy_active');
         const released = previouslyReleased(attempt.id)
           || db.prepare("SELECT id FROM workspace_operations WHERE workspace_id = ? AND kind = 'retain' AND status = 'succeeded' LIMIT 1").get(workspace.id) !== undefined

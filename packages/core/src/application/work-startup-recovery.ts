@@ -20,6 +20,7 @@ export function createWorkStartupRecovery(options: WorkStartupRecoveryOptions) {
   async function run(): Promise<WorkStartupRecoveryState> {
     try {
       const scan = options.store.fence();
+      const pending = new Map<string, WorkStartupRecoveryEvidence>();
       for (const target of scan.targets) {
         let evidence = options.store.readObservation(target);
         if (evidence === null) {
@@ -40,10 +41,22 @@ export function createWorkStartupRecovery(options: WorkStartupRecoveryOptions) {
         }
         const evidenceRef = await options.publishEvidence(target.projectId, evidence);
         options.store.observed(evidence, evidenceRef);
+        pending.set(evidence.attemptId, evidence);
+      }
+      for (const evidence of scan.reconcilable) pending.set(evidence.attemptId, evidence);
+
+      let reconciled = true;
+      for (const evidence of pending.values()) {
+        if (options.reconcile === undefined) { reconciled = false; continue; }
+        const result = await options.reconcile(evidence);
+        if (result.status !== 'reconciled') reconciled = false;
       }
       state = scan.limited ? { status: 'blocked', reason: 'scan_limit' }
-        : scan.retained ? { status: 'blocked', reason: 'workspace_reconciliation_required' }
-          : { status: 'complete', reason: null };
+        : options.reconcile === undefined
+          ? (scan.retained ? { status: 'blocked', reason: 'workspace_reconciliation_required' }
+            : { status: 'complete', reason: null })
+          : (reconciled ? { status: 'complete', reason: null }
+            : { status: 'blocked', reason: 'workspace_reconciliation_required' });
     } catch {
       state = { status: 'blocked', reason: 'recovery_failed' };
       // If SQLite itself cannot accept evidence, propagate and refuse Host startup.

@@ -116,9 +116,12 @@ describe.skipIf(process.platform !== 'darwin')('P03-9 / F-005 startup recovery',
         kind: 'runtime_completed', exitCode: 0, evidenceRef: f.requirementArtifactId,
       });
       expect(late).toMatchObject({ disposition: 'ignored', reason: 'stale_execution_identity' });
-      const ref = f.query('SELECT diagnostic_ref FROM attempts') as { diagnostic_ref: string };
-      const artifact = await f.verifier.readVerifiedContent(f.projectId, ref.diagnostic_ref);
+      // F-006 may supersede attempt.diagnostic_ref with a newer reconciliation diagnosis;
+      // the immutable F-005 startup Artifact remains referenced by its recorded event.
+      const startupRef = recorded(f, 'recorded').evidenceRef as string;
+      const artifact = await f.verifier.readVerifiedContent(f.projectId, startupRef);
       expect(JSON.parse(Buffer.from(artifact.content).toString())).toMatchObject({ kind: 'work-startup-recovery', attemptId: a.id });
+      expect((f.query('SELECT diagnostic_ref FROM attempts') as { diagnostic_ref: string }).diagnostic_ref).toEqual(expect.any(String));
       const events = await host.core.queryService.readEventBatch(owner, { scope: { kind: 'project', projectId: f.projectId }, afterSequence: 0, limit: 500 });
       const recoveryEvents = events.events.filter(event => event.type === 'work.recovery.updated');
       expect(recoveryEvents).toHaveLength(4);

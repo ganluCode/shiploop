@@ -40,6 +40,8 @@ export interface GitCommitCommandResult {
 }
 export interface GitCommitDriverSession {
   facts(): Promise<GitCommitFacts>;
+  /** P03-9 / F-006 read-only ancestry check; no ref, index or working-tree mutation. */
+  isAncestor(ancestor: string, descendant: string): Promise<boolean>;
   stagedPaths(): Promise<readonly string[]>;
   unstagedPaths(): Promise<readonly string[]>;
   stage(paths: readonly string[]): Promise<void>;

@@ -31,6 +31,13 @@ export interface WorkResourceSnapshot {
 }
 export interface WorkResourceAccess {
   read(identity: unknown): WorkResourceSnapshot;
+  /** P03-9 / F-006: read a fenced historical Attempt without reviving its task write version. */
+  readForRecovery(identity: unknown): WorkResourceSnapshot;
+  /** Trusted recovery release; requires the same exact snapshot verified by the stop verifier. */
+  releaseRecoveredStoppedInTransaction(identity: unknown, evidence: unknown): void;
+  /** Only for an Attempt whose launch was never authorized or confirmed. */
+  releaseRecoveredUnstartedInTransaction(identity: unknown): void;
+  quarantineRecoveredInTransaction(identity: unknown): WorkResourceSnapshot;
   acquireInTransaction(identity: unknown, workspace: unknown, leaseUntilUtcMs: unknown): WorkResourceSnapshot;
   renewInTransaction(identity: unknown, leaseUntilUtcMs: unknown): WorkResourceSnapshot;
   quarantineInTransaction(identity: unknown): WorkResourceSnapshot;
