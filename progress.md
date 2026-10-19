@@ -108,3 +108,18 @@ F-003 尚未满足验收，收尾应报告 `blocked`；正式 feature.yaml、tas
 - 交接见 [F-006 交接](docs/p03-10-f006-report-text.md)。
 
 本地通过只覆盖文本视图与直接影响的报告契约回归；较广回归与最终门禁由 Nezha 独立执行。真实 Pi/live、强沙箱与完整用量/缓存平台未运行且不折算通过。
+
+## F-017 — P03 阶段入口与严格报告编排（2026-10-19）
+
+- 新增 `scripts/acceptance/p03-accept.ts` 并在根 `package.json` 注册 `accept:p03`。控制器在启动任何 Host/场景前校验冻结配置与清单，按 `verify` → `build` → P03 索引确定性测试顺序执行，使用显式 argv/cwd、受控 Fake 环境、输出上限、步骤/整体时间预算和受管进程停止确认。
+- 每项必需检查均生成独立状态、真实断言、执行身份、副作用标记和清单声明的证据类别；失败、超时、入口缺失或前序失败保留 `fail`/`not_run` 语义，不提升为通过。报告写入后重验整目录 hash/引用/cleanup/product report，临时环境在报告写入前清理。
+- `npm run typecheck -- --pretty false` exit 0；控制器用注入全通过执行器完成报告装配、写入和整目录复核，exit 0，临时验证报告已删除。F-016 聚焦报告测试 `artifacts/acceptance/p03/validation/f016-phase-report.log` exit 0（6 passed）。
+- F-017 垂直测试通过 Nezha task-local runner 重新执行：`verifications/F-017/runtime-logs/test-dwzexeyv.log` exit 0，1 个文件、10/10 passed、0 failed、0 skipped；JSON sidecar 记录真实退出码、耗时 284256ms 和 runner invocation。此前缺失的 `verifications/F-017/test-selection.json` 已按 P03-9 F-017 索引补齐为 schema v2，独立验证拒绝原因已消除。
+- 未修改正式 `feature.yaml`、`task_list.json` 或任务索引；当前工作树保留实现、脚本注册、验证日志和任务选择证据，待按本次 attempt-2 结果提交任务报告。
+
+## F-018 — 累计接口缺口修复与双次干净快照复跑（进行中）
+
+- 修复 P03 阶段控制器的累计接口缺口：`npm run verify` 已包含正式构建时不再重复追加 `build`；控制器内部临时根改为继承每轮隔离的 `TMPDIR`，报告仍通过显式 `--report-dir` 和固定 `--run-id` 写入独立目录。
+- 新增 `scripts/acceptance/p03-clean-replay.ts` 与 `accept:p03:clean-replay`：只从已提交 commit 创建无 `node_modules/dist` 的干净 clone，执行锁文件安装、构建及两轮公共 `npm run accept:p03`；各轮隔离 HOME/TMP/XDG/npm cache/报告根，报告复制后逐目录重验，保存命令日志、退出码、报告 hash、证据目录摘要和 cleanup manifest。
+- 已验证类型检查 exit 0；P03 报告契约测试 exit 0（1 文件、6/6 passed），完整日志和真实退出码在 Feature workspace `verifications/F-018/runtime-logs/`。
+- 尚未在固定提交快照上运行双次阶段验收；本段完成后补充两轮结果、受测 commit、证据目录和剩余问题。

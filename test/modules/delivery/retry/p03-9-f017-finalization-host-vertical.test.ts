@@ -258,7 +258,7 @@ function runCount(f: EligibleFinalizationFixture): number {
 }
 
 function gitOperationStatuses(f: EligibleFinalizationFixture): string[] {
-  return tableRows<{ status: string }>(f, 'SELECT status FROM git_operations ORDER BY rowid')
+  return tableRows<{ status: string }>(f, "SELECT status FROM git_operations WHERE operation_type = 'feature_final_commit' ORDER BY rowid")
     .map(item => item.status);
 }
 
