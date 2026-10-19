@@ -192,6 +192,8 @@ import {
   type GitOperationListResult,
   type GitOperationQueryReadStore,
 } from '../ports/git-operation-query.js';
+import { buildFeatureExecutionReport, type FeatureExecutionReport } from './feature-execution-report.js';
+import { FEATURE_REPORT_GET_OPERATION, type FeatureExecutionReportReadStore, type FeatureReportResultEvidence } from '../ports/feature-execution-report.js';
 import {
   FEATURE_DELIVERY_GET_OPERATION,
   buildFeatureDeliveryDetailResult,
@@ -449,6 +451,10 @@ export interface QueryService {
    * 回执投影；跨项目/不存在统一 not_found；待核对/回执缺失不显示为成功。
    */
   getGitOperation(principal: unknown, input: unknown): Promise<GitOperationDetailResult>;
+  /** P03-10 / F-004 features.report.get: complete cross-Run history with
+   * independent delivery axes, verified evidence, unknown measurements and
+   * snapshot identity. Requires project.read; never changes persistent facts. */
+  getFeatureReport(principal: unknown, input: unknown): Promise<FeatureExecutionReport>;
   /**
    * P03-8 / F-010 features.delivery.get：Feature 分轴结果查询——全部必需
    * Task 当前有效结果与历史引用、独立 Feature VerificationBatch 及逐检查
@@ -513,6 +519,8 @@ export interface QueryServiceOptions {
   readonly taskEvidenceReads: TaskEvidenceQueryReadStore;
   /** P03-8 / F-009 Git 操作查询一致读取窄端口（只读）。 */
   readonly gitOperationReads: GitOperationQueryReadStore;
+  /** P03-10 / F-004 complete report read port; optional for older assemblies. */
+  readonly featureReportReads?: FeatureExecutionReportReadStore;
   /** P03-8 / F-010 Feature 分轴结果查询一致读取窄端口（只读）。 */
   readonly featureDeliveryReads: FeatureDeliveryQueryReadStore;
   /** P03-9 / F-013 Run/Batch 控制进度与恢复诊断一致读取窄端口（只读）。 */
@@ -656,6 +664,7 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
     workSessionReads,
     taskEvidenceReads,
     gitOperationReads,
+    featureReportReads,
     featureDeliveryReads,
     executionControlReads,
     artifacts,
@@ -2217,6 +2226,56 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
           gitOperationTargetNotFound(operation, 'git_operation');
         }
         return { operation: toPublicGitOperationRecord(record) };
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    async getFeatureReport(principal: unknown, input: unknown): Promise<FeatureExecutionReport> {
+      assertTrustedPrincipal(principal);
+      const operation = FEATURE_REPORT_GET_OPERATION;
+      try {
+        requireCapability(principal, 'project.read', operation);
+        const object = requirePlainObject(input, { operation }, 'input');
+        rejectUnknownKeys(object, ['projectId', 'featureId'], { operation }, 'input');
+        const projectId = requireProjectId(object.projectId, operation);
+        const featureId = validateStableId(object.featureId, { operation, entity: { type: 'feature' } }, 'featureId');
+        requireProjectVisible(principal, projectId, operation);
+        if (featureReportReads === undefined) throw new PublicError('unsupported', operation);
+        const view = featureReportReads.readFeatureExecutionReportView(projectId, featureId);
+        if (view === undefined) featureDeliveryTargetNotFound(operation);
+        const artifactsById = new Map(view.artifacts.map(a => [a.id, a]));
+        const results = new Map<string, FeatureReportResultEvidence>();
+        // Ready Artifact bodies are verified against the captured snapshot.
+        // No mutable domain facts are reread after the read transaction ends.
+        for (const detail of view.attempts) {
+          if (results.has(detail.attempt.id)) continue;
+          const ref = detail.session?.resultRef ?? detail.evidence.find(a =>
+            a.kind === 'runtime-settlement' && a.locator === `attempts/${detail.attempt.id}/launch-rejection.json`)?.id;
+          const artifact = ref == null ? undefined : artifactsById.get(ref);
+          if (artifact?.status !== 'ready') {
+            results.set(detail.attempt.id, { evidence: null, issue: 'result_evidence_missing' });
+            continue;
+          }
+          try {
+            const verified = await settlementVerifier.readVerifiedContent(projectId, artifact.id);
+            if (verified.contentHash !== artifact.contentHash || verified.sizeBytes !== artifact.sizeBytes) throw new Error('snapshot_artifact_mismatch');
+            const body = JSON.parse(Buffer.from(verified.content).toString('utf8'));
+            const { attempt, session } = detail;
+            const identity = body.identity;
+            if (identity?.projectId !== projectId || identity?.attemptId !== attempt.id
+              || identity?.executionVersion !== attempt.executionVersion
+              || identity?.owner !== attempt.owner || identity?.hostInstanceId !== attempt.hostInstanceId
+              || (body.kind === 'runtime-settlement'
+                ? identity.taskId !== attempt.taskId || identity.runId !== attempt.runId || identity.sessionId !== session?.id
+                : body.taskId !== attempt.taskId || body.runId !== attempt.runId)
+              || artifact.kind !== 'runtime-settlement') throw new Error('evidence_ownership_mismatch');
+            results.set(detail.attempt.id, { evidence: toPublicWorkSessionResultEvidence(validateWorkSessionResultEvidence(body)), issue: null });
+          } catch {
+            results.set(detail.attempt.id, { evidence: null, issue: 'result_evidence_invalid' });
+          }
+        }
+        return buildFeatureExecutionReport(view, results);
       } catch (error) {
         throw mapToPublicError(error, { operation });
       }

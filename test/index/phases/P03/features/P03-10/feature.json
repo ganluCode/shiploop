@@ -19,6 +19,11 @@
       "task_id": "F-003",
       "index": "test/index/phases/P03/features/P03-10/tasks/F-003.json",
       "description": "三 Task 链真实检查/同 worktree 增量返工诊断；检测到 Task 无受控提交即 passed，演示为 failed，F-003 blocked。"
+    },
+    {
+      "task_id": "F-004",
+      "index": "test/index/phases/P03/features/P03-10/tasks/F-004.json",
+      "description": "Core 完整 Feature 执行报告：跨 Run 历史、独立交付轴、一致读取、部分证据与用量；本地六项 SQLite 用例及待 Nezha 执行的既有查询回归。"
     }
   ]
 }

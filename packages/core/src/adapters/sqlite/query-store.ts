@@ -53,6 +53,8 @@ import { createSqliteTaskEvidenceQueryStore } from './task-evidence-query-store.
 import { createSqliteGitOperationQueryStore } from './git-operation-query-store.js';
 import type { GitOperationQueryReadStore } from '../../ports/git-operation-query.js';
 import type { GitOperationRecord } from '../../ports/git-operations.js';
+import { createSqliteFeatureExecutionReportStore } from './feature-execution-report-store.js';
+import type { FeatureExecutionReportReadStore } from '../../ports/feature-execution-report.js';
 import { createSqliteFeatureDeliveryQueryStore } from './feature-delivery-query-store.js';
 import type {
   FeatureDeliveryQueryReadStore,
@@ -107,6 +109,7 @@ export interface SqliteQueryStore
     TaskEvidenceQueryReadStore,
     GitOperationQueryReadStore,
     FeatureDeliveryQueryReadStore,
+    FeatureExecutionReportReadStore,
     ExecutionControlQueryReadStore {}
 
 export function createSqliteQueryStore(
@@ -131,6 +134,7 @@ export function createSqliteQueryStore(
   const taskEvidence = createSqliteTaskEvidenceQueryStore(session);
   const gitOperations = createSqliteGitOperationQueryStore(session);
   const featureDelivery = createSqliteFeatureDeliveryQueryStore(session);
+  const featureReport = createSqliteFeatureExecutionReportStore(session, featureDelivery, workSessions);
   const executionControl = createSqliteExecutionControlQueryStore(session, featureDelivery);
   return {
     listVisibleProjects(visibility: unknown, filter: unknown): ProjectPage {
@@ -274,6 +278,7 @@ export function createSqliteQueryStore(
       request: PlanListRequest,
     ): PlanRecordPage<GitOperationRecord> =>
       gitOperations.listGitOperationRecordsByRun(visibility, projectId, runId, request),
+    readFeatureExecutionReportView: (projectId, featureId) => featureReport.readFeatureExecutionReportView(projectId, featureId),
     readFeatureDeliveryView: (projectId: unknown, featureId: unknown): FeatureDeliveryView | undefined =>
       featureDelivery.readFeatureDeliveryView(projectId, featureId),
     readRunControlView: (projectId: unknown, runId: unknown): ExecutionRunControlView | undefined =>

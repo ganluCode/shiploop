@@ -1,5 +1,14 @@
 # P03-10 工作进度
 
+## F-004 — Core 完整 Feature 执行报告（2026-10-19）
+
+- 新增 `QueryService.getFeatureReport` 和只读 report 端口/SQLite 适配器，默认 Core 装配已接入。复用既有分轴判断；全部 Task、跨 Run Attempt、返工/取消/interrupted、子 Session、检查、审批、operation、诊断与证据按稳定身份重建。
+- ID keyset 分页在单一一致读事务内排空，附项目事件水位；正文按快照 hash/size 与执行归属校验。缺字段、缺/坏证据保留并标 partial；未知 token/cache/cost 为 null，Fake 标 synthetic；Session 累计时间与墙钟跨度分列。
+- 聚焦真实 SQLite 六项测试全部通过：三 Task、两 Run、130 Attempt/130 审批、重叠 Session、WAL 第二连接中途写入隔离、重复关联、缺历史字段/证据、正文损坏/缺文件/归属错误、授权与查询前后全库快照不变。`verifications/F-004/runtime-logs/test-xvpyhlc9.log` exit 0，6 passed / 0 failed / 0 skipped。
+- `test-157mv3ds.log` typecheck exit 0；`test-gw93ei8l.log` 边界检查 exit 0（284 文件，0 diagnostics）。早期 RED/失败日志均保留，后续重跑均基于相关实现或用例修正。
+- 交接：`docs/p03-10-f004-feature-report.md`；索引 `test/index/phases/P03/features/P03-10/tasks/F-004.json`；Harness selection 已引用索引。既有 Feature delivery / Work Session 查询回归只登记，交 Nezha 独立运行；未跑全量/组合门禁/Phase 验收。
+- 无未解决阻塞。Host/CLI 报告暴露由 F-005 继续；未修改正式 feature.yaml/task_list 状态，收尾只经 Nezha CLI 报告。
+
 ## F-001 — 独立真实资源验收夹具
 
 实现与局部验证完成；提交与任务报告以 Git/Nezha 记录为准。仅处理 F-001，没有修改 feature.yaml、task_list 或其他任务状态。

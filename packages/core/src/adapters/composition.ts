@@ -1043,6 +1043,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       workSessionReads: queryStore,
       taskEvidenceReads: queryStore,
       gitOperationReads: queryStore,
+      featureReportReads: queryStore,
       featureDeliveryReads: queryStore,
       executionControlReads: queryStore,
       artifacts: artifactStore,

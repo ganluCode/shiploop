@@ -1,0 +1,30 @@
+{
+  "schema_version": 2,
+  "task_id": "F-004",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/delivery/p03-10-feature-execution-report.test.ts",
+          "cases": [
+            "all-tasks-read-only",
+            "history-evidence-timing",
+            "pages-and-missing",
+            "snapshot-and-dedup",
+            "report-authorization",
+            "artifact-integrity"
+          ]
+        },
+        {
+          "file": "test/modules/delivery/p03-8-f010-feature-delivery-query.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p03-6-work-session-query.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}
