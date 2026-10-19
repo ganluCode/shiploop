@@ -1,0 +1,20 @@
+{
+  "schema_version": 2,
+  "task_id": "F-014",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/execution/control/p03-10-process-controls.test.ts",
+          "cases": [
+            "case:runtime-pause-drains",
+            "case:verifier-pause-drains",
+            "case:real-cancel-cas",
+            "case:stop-uncertain-isolates"
+          ]
+        }
+      ]
+    }
+  ]
+}

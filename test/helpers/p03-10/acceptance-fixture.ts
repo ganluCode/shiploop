@@ -59,6 +59,7 @@ export interface P03FixtureOptions {
   readonly confirmStopped?: () => boolean;
   readonly script?: unknown;
   readonly toolCommands?: Readonly<Record<string, unknown>>;
+  readonly verificationCommand?: { readonly argv: readonly string[]; readonly timeout: number };
   readonly secrets?: readonly string[];
 }
 export interface P03Fixture {
@@ -86,7 +87,9 @@ export async function withP03AcceptanceFixture<T>(options: P03FixtureOptions, bo
       console.log('SHIPLOOP_NODE_CHECK_RESULT=' + JSON.stringify({schemaVersion:1,protocol:'shiploop.node-check',collected:true,testCount:1,targets:['chain']}));
       process.exitCode = 1;
     `], requirementRefs: ['F-007'],
-  } : CHAIN_CHECK;
+  } : options.verificationCommand === undefined ? CHAIN_CHECK : {
+    ...CHAIN_CHECK, argv: [...options.verificationCommand.argv], timeout: options.verificationCommand.timeout,
+  };
   const resources = createAcceptanceFixture({ prefix: 'shiploop-p03-10-', dataRootName: 'p03', stepMs: 500,
     ...(options.secrets ? { extraSecrets: options.secrets } : {}) });
   const root = resources.root;

@@ -54,6 +54,7 @@ export function threeTaskRuntime(config) {
           fs.appendFileSync('chain-2.txt', 'repaired\\n');
           fs.appendFileSync('README.md', 'chain-2-repaired\\n');
         `], timeoutMs: 5000 },
+        ...config.toolCommands,
       },
       script: { schemaVersion: 1, steps },
     })(context));
