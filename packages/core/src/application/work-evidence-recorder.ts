@@ -571,15 +571,18 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
       const resultWatch = Promise.resolve(handle.result).then(
         (raw) => {
           try {
-            resultValue = validateRuntimeExecutionResult(raw);
+            const parsed = validateRuntimeExecutionResult(raw);
+            // Keep the manifest's token vocabulary valid after replacing secrets.
+            resultValue = { ...parsed, reason: parsed.reason === null ? null
+              : redactOutputText(parsed.reason, secrets).replaceAll('[REDACTED]', 'redacted').slice(0, 128) };
           } catch (error) {
-            resultFailure = isRuntimeError(error) ? error.reason : 'invalid_result';
+            resultFailure = isRuntimeError(error) ? redactOutputText(error.reason, secrets) : 'invalid_result';
           }
           resultSettled = true;
           notifyResultSettled();
         },
         (error: unknown) => {
-          resultFailure = isRuntimeError(error) ? error.reason : 'adapter_result_failed';
+          resultFailure = isRuntimeError(error) ? redactOutputText(error.reason, secrets) : 'adapter_result_failed';
           resultSettled = true;
           notifyResultSettled();
         },

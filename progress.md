@@ -1,5 +1,13 @@
 # P03-10 工作进度
 
+## F-009 — FakeRuntime 异常、输出与恢复负例（2026-10-19）
+
+- 新增三个 Runtime 测试文件、23 项局部用例：结构化异常及信息型 rate limit、基础设施代码预算退款与累计父级限制、三路证据独立观察、required 证据缺失、大消息/UTF-8/背压/输出溢出、脱敏与恢复能力边界。监督超时用例经真实取消、停止确认和 retention 留存；失败后暂停，不进入自动重试。
+- 修复 Runtime 异常结算误扣代码预算，保留 Attempt/RuntimeStarts；Recorder 在持久化前脱敏结果/错误原因，并保持清单原因 token 合法。保留认证预算 RED、脱敏 schema RED、中间失败及阻塞运行清理日志。
+- 最终本地验证：`test-cenp9epa.log` exit 0（3 文件、23 passed、0 failed、0 skipped）；`test-ruzh4vt6.log` typecheck exit 0；`test-fb0xnsey.log` boundaries exit 0（286 生产文件、0 diagnostics）。日志及 sidecar 位于 Feature workspace `verifications/F-009/runtime-logs/`。
+- 交接见 [F-009 Runtime 负例组](docs/p03-10-f009-runtime-negatives.md)。仓库任务索引登记三个新增文件及八个本轮未运行的受影响回归，Harness selection 引用该索引，独立回归交 Nezha。未运行全量、组合门禁或 Phase 验收；没有声称当前不存在的自动指数退避定时器已验证。
+- 保留 F-007/F-008 原有未提交内容，共享文件仅提交 F-009 增量。官方元数据保持只读，收尾按协议仅报告一次 F-009 completed。
+
 ## F-005 — 授权 Host 与正式构建 CLI 完整执行报告（2026-10-19）
 
 - 已复用现有授权查询通道接入 GET /v1/features/:featureId/report、HostClient.getFeatureReport 和 feature report CLI；报告 JSON 原样保留 Core schemaVersion=1，逐字段输出完整跨 Run 历史、检查/审批/operation 及证据引用，CLI 不打开 SQLite。

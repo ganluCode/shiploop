@@ -1,0 +1,55 @@
+{
+  "schema_version": 2,
+  "task_id": "F-009",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/runtime/p03-10-runtime-negatives.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p03-10-runtime-output-negatives.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p03-10-runtime-recovery-negatives.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p03-6-fake-runtime.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p03-6-fake-runtime-lifecycle.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p03-6-runtime-settlement.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p03-6-work-evidence-recorder.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p03-6-execution-input-binding.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/recovery/p03-3a-runtime-recovery.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/verification/p03-7-f009-code-attempt-budget.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/execution/control/p03-9-f004-time-limits.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

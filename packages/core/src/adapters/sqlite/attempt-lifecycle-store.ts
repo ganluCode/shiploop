@@ -192,6 +192,12 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
           stopConfirmed = runtime.stopped?.confirmed === true;
           // Runtime stop is an observation, not authorization to release a workspace before verification/retention.
           if (!stopConfirmed || targetStatus !== 'verifying') resources.quarantineInTransaction(identity);
+          // Runtime failures are infrastructure observations, not deterministic code-check
+          // failures. Refund only the provisional code slot; total Attempt/start debits remain.
+          if (runtime.failure !== null) transaction.reclassifyTaskAttemptAsInfrastructure({
+            projectId: valid.projectId, taskId: valid.taskId, attemptKey: valid.attemptId,
+            reason: `runtime_failed:${runtime.failure.kind}`,
+          });
         } else if (valid.kind === 'preparation_failed') {
           const unstarted = !preparationIsolated && attempt.invocationId === null && attempt.startedAtUtcMs === null
             && attempt.executionStage === 'preflight' && occupied.leases.every(l => l.processIdentity === null);

@@ -34,6 +34,11 @@
       "task_id": "F-006",
       "index": "test/index/phases/P03/features/P03-10/tasks/F-006.json",
       "description": "执行报告可审阅文本视图与人工提示：稳定 Task 表/Attempt 历史、等待/人审分段、unknown/partial 与 Fake 合成指标标识；含报告投影/Host 契约与构建 CLI 回归。"
+    },
+    {
+      "task_id": "F-009",
+      "index": "test/index/phases/P03/features/P03-10/tasks/F-009.json",
+      "description": "FakeRuntime 异常分类、基础设施预算退款、三路证据、大消息/背压/脱敏与恢复边界；23 项局部用例及待独立执行的受影响回归。"
     }
   ]
 }

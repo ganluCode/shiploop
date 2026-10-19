@@ -98,3 +98,5 @@ npm test -- test/modules/execution/control/p03-9-f001-execution-pause.test.ts
 旧路径映射见 `index/path-mapping.json`。历史 Harness 会话和验收日志未重写。
 此前全量门禁的失败继续记录在 [已知全量回归](../docs/testing/known-full-regressions.md)，
 Feature 局部通过不将这些失败清零，不自动把 Phase 标为验收通过。
+
+F-009 的 FakeRuntime 异常、输出、证据与恢复边界见 `index/phases/P03/features/P03-10/tasks/F-009.json` 和 [交接文档](../docs/p03-10-f009-runtime-negatives.md)：本地三个新增文件 23 项通过；八个既有回归文件仅登记，交 Nezha 独立执行。
