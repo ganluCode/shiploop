@@ -1,0 +1,23 @@
+{
+  "schema_version": 2,
+  "task_id": "F-019",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/acceptance/docs-p03-10-f019-delivery.test.ts",
+          "cases": [
+            "delivery-report-evidence",
+            "layer-distinction",
+            "manual-checklist-coverage",
+            "signoff-placeholders",
+            "scope-boundaries",
+            "full-acceptance-execution",
+            "index-registration"
+          ]
+        }
+      ]
+    }
+  ]
+}

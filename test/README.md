@@ -100,3 +100,7 @@ npm test -- test/modules/execution/control/p03-9-f001-execution-pause.test.ts
 Feature 局部通过不将这些失败清零，不自动把 Phase 标为验收通过。
 
 F-009 的 FakeRuntime 异常、输出、证据与恢复边界见 `index/phases/P03/features/P03-10/tasks/F-009.json` 和 [交接文档](../docs/p03-10-f009-runtime-negatives.md)：本地三个新增文件 23 项通过；八个既有回归文件仅登记，交 Nezha 独立执行。
+
+F-019 的交付报告、P03 人工验收清单与 P04 进入门槛记录文档守护见
+`index/phases/P03/features/P03-10/tasks/F-019.json`：仅文档/索引守护用例（候选索引），
+不代表全量测试、递归重跑或任何阶段验收；双次全量阶段复跑仍为 pending/not_run。

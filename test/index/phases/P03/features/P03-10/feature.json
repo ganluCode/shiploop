@@ -79,6 +79,11 @@
       "task_id": "F-018",
       "index": "test/index/phases/P03/features/P03-10/tasks/F-018.json",
       "description": "复跑工具控制器定向验证；两次完整阶段复跑由人工独立发起，不在 Task 或 Feature 索引内执行。"
+    },
+    {
+      "task_id": "F-019",
+      "index": "test/index/phases/P03/features/P03-10/tasks/F-019.json",
+      "description": "交付报告、P03 人工验收清单与 P04 进入门槛记录的文档守护；仅文档/索引用例，不代表全量测试或阶段验收。"
     }
   ]
 }
