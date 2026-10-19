@@ -1806,7 +1806,8 @@ export const gitOperations = sqliteTable('git_operations', {
 }, (table) => [
   check('git_operations_revision_check', sql`${table.revision} >= 1`),
   check('git_operations_version_check', sql`typeof(${table.executionVersion}) = 'integer' AND ${table.executionVersion} >= 1`),
-  check('git_operations_type_check', sql`${table.operationType} = 'feature_final_commit'`),
+  check('git_operations_type_check', sql`${table.operationType} IN ('feature_final_commit', 'task_commit')`),
+  check('git_operations_task_attempt_check', sql`${table.operationType} <> 'task_commit' OR ${table.attemptId} IS NOT NULL`),
   check('git_operations_oid_check', sql`
     (length(${table.expectedHead}) IN (40, 64) AND ${table.expectedHead} NOT GLOB '*[^0-9a-f]*')
     AND (length(${table.candidateTree}) IN (40, 64) AND ${table.candidateTree} NOT GLOB '*[^0-9a-f]*')
@@ -1837,12 +1838,12 @@ export const gitOperations = sqliteTable('git_operations', {
       AND ${table.durationMs} IS NULL AND ${table.reasonCode} IS NULL AND ${table.receipt} IS NULL
       AND ${table.deliveryStatus} IS NULL AND ${table.settledAt} IS NULL)
     OR (${table.status} = 'succeeded' AND ${table.actualCommit} IS NOT NULL AND ${table.actualTree} = ${table.candidateTree}
-      AND ${table.receipt} IS NOT NULL AND ${table.deliveryStatus} = 'succeeded' AND ${table.settledAt} IS NOT NULL)
+      AND ${table.receipt} IS NOT NULL AND ${table.deliveryStatus} = CASE WHEN ${table.operationType} = 'task_commit' THEN 'not_requested' ELSE 'succeeded' END AND ${table.settledAt} IS NOT NULL)
     OR (${table.status} = 'no_change' AND ${table.actualCommit} = ${table.expectedHead} AND ${table.actualTree} IS NOT NULL
-      AND ${table.receipt} IS NOT NULL AND ${table.deliveryStatus} = 'succeeded' AND ${table.settledAt} IS NOT NULL)
-    OR (${table.status} = 'failed' AND ${table.receipt} IS NOT NULL AND ${table.deliveryStatus} = 'failed' AND ${table.settledAt} IS NOT NULL)
+      AND ${table.receipt} IS NOT NULL AND ${table.deliveryStatus} = CASE WHEN ${table.operationType} = 'task_commit' THEN 'not_requested' ELSE 'succeeded' END AND ${table.settledAt} IS NOT NULL)
+    OR (${table.status} = 'failed' AND ${table.receipt} IS NOT NULL AND ${table.deliveryStatus} = CASE WHEN ${table.operationType} = 'task_commit' THEN 'not_requested' ELSE 'failed' END AND ${table.settledAt} IS NOT NULL)
     OR (${table.status} = 'unknown' AND ${table.actualCommit} IS NULL AND ${table.actualTree} IS NULL
-      AND ${table.receipt} IS NOT NULL AND ${table.deliveryStatus} = 'pending' AND ${table.settledAt} IS NOT NULL)`),
+      AND ${table.receipt} IS NOT NULL AND ${table.deliveryStatus} = CASE WHEN ${table.operationType} = 'task_commit' THEN 'not_requested' ELSE 'pending' END AND ${table.settledAt} IS NOT NULL)`),
   foreignKey({ name: 'git_operations_binding_fk', columns: [table.repositoryBindingId], foreignColumns: [repositoryBindings.id] }).onDelete('restrict'),
   foreignKey({ name: 'git_operations_feature_fk', columns: [table.projectId, table.featureId], foreignColumns: [features.projectId, features.id] }).onDelete('restrict'),
   foreignKey({ name: 'git_operations_run_fk', columns: [table.featureId, table.runId], foreignColumns: [runs.featureId, runs.id] }).onDelete('restrict'),

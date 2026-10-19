@@ -59,6 +59,8 @@ export function createTaskVerificationCompletionService(deps: {
   readonly verification: VerificationStore;
   readonly lifecycle: AttemptLifecycleStore;
   readonly publisher: ArtifactPublisher;
+  /** Trusted local Git delivery; missing adapter can never grant Task passed. */
+  readonly commitTask?: (input: TaskVerificationCompletionInput) => Promise<void>;
   readonly nowMs?: () => number;
 }): TaskVerificationCompletionService {
   if (deps.lifecycle.recordAttemptCode === undefined) {
@@ -103,6 +105,9 @@ export function createTaskVerificationCompletionService(deps: {
       const recorded = recordAttemptCode({ identity, expectedRevision: attempt.revision, codeRef: published.artifact.id });
       codeRef = recorded.codeRef;
       attempt = deps.attempts.getAttempt(identity.projectId, identity.attemptId);
+    }
+    if (classified.assessment.outcome === 'passed' && deps.commitTask) {
+      await deps.commitTask(input);
     }
     // 3) 提交前再次核对旧 Runtime/Verifier 停止证据：受信 stop verifier 对
     //    当前占用快照复核；未确认（null）即不携带释放证据提交。

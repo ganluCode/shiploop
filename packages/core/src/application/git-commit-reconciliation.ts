@@ -137,7 +137,7 @@ export function createGitCommitReconciliationService(deps: Parameters<typeof cre
           expectedRevision: original.revision, status: unknownReason ? 'unknown' : reason ? 'failed' : noChange ? 'no_change' : 'succeeded',
           actualCommit: unknownReason ? null : actual.head, actualTree: unknownReason ? null : actual.tree,
           exitCode: null, durationMs: null, reasonCode: reason,
-          deliveryStatus: unknownReason ? 'pending' : reason ? 'failed' : 'succeeded', settledAtUtcMs: now() }).operation;
+          deliveryStatus: intent.operationType === 'task_commit' ? 'not_requested' : unknownReason ? 'pending' : reason ? 'failed' : 'succeeded', settledAtUtcMs: now() }).operation;
       });
       releaseClaim = operation.status !== 'unknown';
       return recorded(operation);

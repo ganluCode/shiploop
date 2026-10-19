@@ -47,7 +47,7 @@ import type { VerificationStopControl } from '../ports/verification-stop.js';
 import type { ExecutionStopControlPort } from '../ports/execution-stop.js';
 import type { FeatureDeliveryFactory } from '../application/feature-delivery-commands.js';
 export type { FeatureDeliveryFactory, FeatureDeliveryDependencies } from '../application/feature-delivery-commands.js';
-import { assertVerificationReuseIdentity } from '../application/task-verification-continue.js';
+import { assertVerificationReuseIdentity, validateTaskVerificationContinue } from '../application/task-verification-continue.js';
 import type { CommandService } from '../application/command-service.js';
 import { createBaselineExecutionService } from '../application/baseline-execution.js';
 import type { BaselineExecutionService } from '../application/baseline-execution.js';
@@ -74,6 +74,7 @@ import { createFeatureWorktreeDiscarder } from './fs/feature-worktree-discarder.
 import { createSqliteWorkResourceAccess } from './sqlite/work-resources.js';
 import { createSqliteAttemptAccess } from './sqlite/attempt-store.js';
 import { createSqliteAttemptLifecycleStore } from './sqlite/attempt-lifecycle-store.js';
+import { createSqliteTaskCommitter } from './sqlite/task-commit.js';
 import { createSqliteTaskClaimStore } from './sqlite/task-claim-store.js';
 import { createSqliteWorkspacePreparationStore } from './sqlite/workspace-preparation.js';
 import { createSqliteWorkspaceRetentionStore } from './sqlite/workspace-retention.js';
@@ -925,6 +926,12 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       stopVerifier: workspaceStopVerifier,
       ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
     });
+    const commitTask = createSqliteTaskCommitter({ session, resources: workResources, stopVerifier: workspaceStopVerifier,
+      publisher: workspacePublisher, files: artifactFileStore, stopControl: verificationStops,
+      inspectorFor: workspaceInspectorForCall,
+      driverFor: (projectId, signal, observeStop) => createGitCommitDriver({ signal, observeStop,
+        confirmProcessIdentity: confirmWorkspaceProcessIdentity(projectId) }),
+      lock: workspaceGitLock, ...(nowUtcMs === undefined ? {} : { nowMs: nowUtcMs }) });
     const taskVerificationCompletion = createTaskVerificationCompletionService({
       attempts: createSqliteAttemptAccess(session),
       resources: workResources,
@@ -932,6 +939,8 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       verification: verificationStore,
       lifecycle: attemptLifecycle,
       publisher: workspacePublisher,
+      commitTask: input => commitTask({ ...input, codeDigest: input.observation.afterIdentity.codeDigest,
+        expectedHead: input.observation.afterIdentity.headCommit }),
       ...(nowUtcMs === undefined ? {} : { nowMs: nowUtcMs }),
     });
     const featureDelivery = (object.featureDeliveryFactory as FeatureDeliveryFactory | undefined)?.({ atomicStore });
@@ -966,8 +975,9 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
             || batch.attemptId !== attempt.id || batch.featureId !== attempt.featureId
             || batch.codeDigest !== payload.codeDigest || batch.status !== 'passed'
             || batch.checkSnapshot.some(check => check.environmentRef !== null)) throw stale();
-          const scene = await readReworkScene(projectId, attempt.featureId);
-          assertVerificationReuseIdentity(batch, scene?.codeDigest ?? null);
+          // Environment identity is checked here; the Task committer verifies the
+          // original code/HEAD artifact and current bytes (also after a lost receipt).
+          assertVerificationReuseIdentity(batch, batch.codeDigest);
           const verifier = createArtifactVerifier({ artifacts: artifactStore, files: artifactFileStore,
             limits: { maxReadBytes: 16_000_000 } });
           const checks = verificationStore.listCheckResults(projectId, batch.id);
@@ -986,6 +996,24 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
             if (record.status !== 'ready') throw stale();
             if ((await verifier.verifyArtifact(projectId, id)).kind !== 'verified_ready') throw stale();
           }
+          const codeFile = await artifactFileStore.openFinalRead({ projectId, artifactId: attempt.codeRef });
+          const chunks: Buffer[] = [];
+          let codeSize = 0;
+          for await (const chunk of codeFile.stream) {
+            codeSize += chunk.length;
+            if (codeSize > 65_536) throw stale();
+            chunks.push(Buffer.from(chunk));
+          }
+          const codeIdentity = JSON.parse(Buffer.concat(chunks).toString('utf8')) as { headCommit: string; codeDigest: string };
+          if (codeIdentity.codeDigest !== batch.codeDigest) throw stale();
+          await commitTask({ identity: { projectId, attemptId: attempt.id, owner: attempt.owner,
+            hostInstanceId: attempt.hostInstanceId, executionVersion: attempt.executionVersion },
+            taskId: attempt.taskId, runId: attempt.runId, verificationBatchId: batch.id, codeDigest: batch.codeDigest,
+            expectedHead: codeIdentity.headCommit, retryFailed: true,
+            assertCurrent: tx => { validateTaskVerificationContinue(envelope, tx, {
+              attempts: createSqliteAttemptAccess(session), verification: verificationStore }); } });
+          return workspaceStopVerifier.verify(workResources.read({ projectId, attemptId: attempt.id,
+            owner: attempt.owner, hostInstanceId: attempt.hostInstanceId, executionVersion: attempt.executionVersion }));
         },
         attempts: createSqliteAttemptAccess(session),
         verification: verificationStore,

@@ -9,9 +9,9 @@
  * 来源保存在审计，可选署名不改变真实身份）。
  *
  * 契约要点（F-001 定案）：
- * - 首版唯一支持的提交政策是 `feature_final_only`：Task 保存验证成果但不自行
- *   提交，最终全量检查和必要人审有效后才提交。其他提交政策（per_task/
- *   task_each/task_and_feature/manual_only/…）在写入与解析边界一律结构化拒绝
+ * - Task 本地提交是放行前提；新配置使用 `task_and_feature`。历史
+ *   `feature_final_only` 保留解析兼容，但不能绕过 Task 提交门禁。
+ *   其他提交政策（per_task/task_each/manual_only/…）在边界结构化拒绝
  *   （reason='unsupported_commit_mode'），没有默认政策可回落；
  * - 交付动作唯一支持 `commit`（Feature 最终提交本身）。push、PR
  *   （pull_request/merge_request/pr）与自动合并（auto_merge/force_push/deploy
@@ -42,8 +42,11 @@ import {
 } from './validation.js';
 import type { ValidationContext } from './validation.js';
 
-/** 首版唯一支持的提交政策：仅 Feature 最终提交（Task 不自行提交成果）。 */
+/** Historical policy spelling, retained for stored snapshot compatibility only. */
 export const FEATURE_FINAL_COMMIT_MODE = 'feature_final_only';
+/** New executions commit each verified Task locally; final delivery remains separate. */
+export const TASK_AND_FEATURE_COMMIT_MODE = 'task_and_feature';
+type CommitMode = typeof FEATURE_FINAL_COMMIT_MODE | typeof TASK_AND_FEATURE_COMMIT_MODE;
 
 /** 首版唯一支持的交付动作：Feature 最终 commit 本身。 */
 export const SUPPORTED_DELIVERY_ACTIONS = ['commit'] as const;
@@ -72,8 +75,8 @@ export interface ConfirmedGitIdentity {
 
 /** 完整获准的 Feature 最终提交政策（可执行形态；缺任一必需成分即不可用）。 */
 export interface ConfirmedDeliveryPolicy {
-  /** 唯一支持值：feature_final_only（Task 保存验证成果但不自行提交）。 */
-  readonly commitMode: typeof FEATURE_FINAL_COMMIT_MODE;
+  /** 新配置使用 task_and_feature；旧名称不豁免 Task 本地提交。 */
+  readonly commitMode: CommitMode;
   /** 用户明确配置并确认的提交身份。 */
   readonly gitIdentity: ConfirmedGitIdentity;
   /** 显式声明的交付动作；缺省即仅 Feature 最终 commit。 */
@@ -87,7 +90,7 @@ export interface ConfirmedDeliveryPolicy {
  * fail-closed 拒绝，不存在默认提交政策。
  */
 export interface DeliveryPolicySection {
-  readonly commitMode?: typeof FEATURE_FINAL_COMMIT_MODE;
+  readonly commitMode?: CommitMode;
   readonly gitIdentity?: ConfirmedGitIdentity;
   readonly deliveryActions?: readonly DeliveryActionKind[];
 }
@@ -277,23 +280,23 @@ export function validateDeliveryPolicySection(
   const object = requirePlainObject(value, context, field);
   rejectUnknownKeys(object, CONFIRMED_POLICY_KEYS, context, field);
   const result: {
-    commitMode?: typeof FEATURE_FINAL_COMMIT_MODE;
+    commitMode?: CommitMode;
     gitIdentity?: ConfirmedGitIdentity;
     deliveryActions?: readonly DeliveryActionKind[];
   } = {};
   if (object.commitMode !== undefined) {
-    if (object.commitMode !== FEATURE_FINAL_COMMIT_MODE) {
+    if (object.commitMode !== FEATURE_FINAL_COMMIT_MODE && object.commitMode !== TASK_AND_FEATURE_COMMIT_MODE) {
       throw new StorageError(
         'validation',
         context.operation,
-        `${context.operation}: ${field}.commitMode 是未经支持的提交政策「${String(object.commitMode)}」（首版仅支持 ${FEATURE_FINAL_COMMIT_MODE}：Task 保存验证成果但不自行提交，最终全量检查和必要人审有效后才提交）`,
+        `${context.operation}: ${field}.commitMode 是未经支持的提交政策「${String(object.commitMode)}」（使用 task_and_feature；历史 feature_final_only 仅保留兼容）`,
         {
           entity: context.entity,
           details: { field: `${field}.commitMode`, reason: 'unsupported_commit_mode' },
         },
       );
     }
-    result.commitMode = FEATURE_FINAL_COMMIT_MODE;
+    result.commitMode = object.commitMode;
   }
   if (object.gitIdentity !== undefined) {
     result.gitIdentity = validateConfirmedGitIdentity(object.gitIdentity, context, `${field}.gitIdentity`);
@@ -324,7 +327,7 @@ export function validateConfirmedDeliveryPolicy(
   }
   const section = validateDeliveryPolicySection(object, context, field);
   return {
-    commitMode: section.commitMode as typeof FEATURE_FINAL_COMMIT_MODE,
+    commitMode: section.commitMode as CommitMode,
     gitIdentity: section.gitIdentity as ConfirmedGitIdentity,
     ...(section.deliveryActions === undefined ? {} : { deliveryActions: section.deliveryActions }),
   };
@@ -347,7 +350,7 @@ export function resolveDeliveryPolicyForUse(section: DeliveryPolicySection | und
     }
     return { status: 'rejected', reason: 'commit_mode_missing' };
   }
-  if (section.commitMode !== FEATURE_FINAL_COMMIT_MODE) {
+  if (section.commitMode !== FEATURE_FINAL_COMMIT_MODE && section.commitMode !== TASK_AND_FEATURE_COMMIT_MODE) {
     return { status: 'rejected', reason: 'commit_mode_unsupported' };
   }
   if (section.gitIdentity === undefined) {
@@ -364,7 +367,7 @@ export function resolveDeliveryPolicyForUse(section: DeliveryPolicySection | und
     return {
       status: 'ready',
       policy: {
-        commitMode: FEATURE_FINAL_COMMIT_MODE,
+        commitMode: section.commitMode,
         gitIdentity,
         ...(actions === undefined ? {} : { deliveryActions: actions }),
       },

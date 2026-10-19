@@ -172,8 +172,8 @@ export interface SecurityPolicyV2 {
  * （无该段）语义不变；未知/未来版本仍一律拒绝。
  */
 export interface DeliveryPolicyV2 {
-  /** 首版唯一支持：feature_final_only（Task 保存验证成果但不自行提交）。 */
-  readonly commitMode?: 'feature_final_only';
+  /** 新策略 task_and_feature；历史名称不豁免逐 Task 本地提交。 */
+  readonly commitMode?: 'feature_final_only' | 'task_and_feature';
   /** 用户明确配置并确认的提交身份（不回落到开发机全局身份或官方邮箱）。 */
   readonly gitIdentity?: ConfirmedGitIdentity;
   /** 显式声明的交付动作；首版仅支持 commit。 */

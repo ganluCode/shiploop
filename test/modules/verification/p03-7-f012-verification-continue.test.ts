@@ -22,6 +22,7 @@ import { createSqlitePlanAccess } from '../../../packages/core/src/adapters/sqli
 import { createSqliteAttemptAccess } from '../../../packages/core/src/adapters/sqlite/attempt-store.ts';
 import { createSqliteAttemptLifecycleStore } from '../../../packages/core/src/adapters/sqlite/attempt-lifecycle-store.ts';
 import { createSqliteVerificationStore } from '../../../packages/core/src/adapters/sqlite/verification-store.ts';
+import { createSqliteGitOperationStore } from '../../../packages/core/src/adapters/sqlite/git-operations.ts';
 import { createRepositoryInspector } from '../../../packages/core/src/adapters/fs/repository-inspector.ts';
 import { createBaselineWorkspaceReader } from '../../../packages/core/src/adapters/fs/baseline-workspace.ts';
 import { createWorkWorkspaceAuthority } from '../../../packages/core/src/adapters/fs/work-workspace.ts';
@@ -45,7 +46,7 @@ interface Seeded {
 }
 
 /** 种子：verifying Attempt（真实批准一致）+ passed 批次 + 预算结算 + Run 等待批准。 */
-function seedApprovalWaiting(fixture: BudgetFixture): Seeded {
+function seedApprovalWaiting(fixture: BudgetFixture, committed = true): Seeded {
   const db = fixture.session.database;
   const ids = { runId: (db.prepare('SELECT id FROM runs').get() as { id: string }).id };
   const batch = db.prepare('SELECT id, config_snapshot FROM execution_batches').get() as
@@ -87,6 +88,26 @@ function seedApprovalWaiting(fixture: BudgetFixture): Seeded {
     .run(NOW, fixture.projectId, NOW, batch.id, ids.runId, attemptId,
       CODE_ATTEMPT_SETTLEMENT_PREFIX + JSON.stringify({ outcome: 'passed', observationDigest: OBSERVATION_DIGEST }));
   db.prepare(`UPDATE runs SET status = 'paused', reason = 'approval' WHERE id = ?`).run(ids.runId);
+  // Store-level fixture only: production Git execution is covered by the real
+  // three-Task acceptance. A saved commit is now a mandatory release condition.
+  if (committed) {
+    const binding = db.prepare('SELECT id, repo_identity FROM repository_bindings WHERE project_id = ?')
+      .get(fixture.projectId) as { id: string; repo_identity: string };
+    const feature = db.prepare('SELECT revision FROM features WHERE id = ?').get(fixture.featureId) as { revision: number };
+    const store = createSqliteGitOperationStore(fixture.session, { nowUtcMs: () => NOW });
+    const operationId = randomUUID();
+    store.registerGitOperation({ operationId, projectId: fixture.projectId, featureId: fixture.featureId,
+      runId: ids.runId, attemptId, executionVersion: 1, operationType: 'task_commit',
+      repositoryBindingId: binding.id, repoIdentity: binding.repo_identity, worktreePath: fixture.box.repoDirA,
+      expectedHead: 'a'.repeat(40), candidateTree: 'b'.repeat(40), codeDigest: CODE_DIGEST,
+      verificationRefs: [{ kind: 'verification_batch', id: batchId, digest: CODE_DIGEST }], approvalRefs: [],
+      message: 'verified task fixture', gitIdentity: { name: 'Test', email: 'test@example.com', confirmed: true },
+      deliveryPolicyDigest: CODE_DIGEST, runtimeSource: null, ownerId: 'owner-1', hostInstanceId: 'host-1',
+      expectedFeatureRevision: feature.revision });
+    store.finalizeGitOperation({ operationId, projectId: fixture.projectId, expectedRevision: 1,
+      status: 'succeeded', actualCommit: 'c'.repeat(40), actualTree: 'b'.repeat(40), exitCode: 0,
+      durationMs: 1, reasonCode: null, deliveryStatus: 'not_requested', settledAtUtcMs: NOW });
+  }
   const task = db.prepare('SELECT revision FROM tasks WHERE id = ?').get('t-1') as { revision: number };
   return { attemptId, batchId, runId: ids.runId, executionBatchId: batch.id, taskRevision: task.revision };
 }
@@ -155,6 +176,39 @@ const currentTaskRevision = (fixture: BudgetFixture) =>
   (fixture.session.database.prepare('SELECT revision FROM tasks WHERE id = ?').get('t-1') as { revision: number }).revision;
 
 describe('F-012 task.verification.continue 授权显式继续', () => {
+  it('过期修订或伪造观察在任何外部提交副作用前拒绝', async () => {
+    const fixture = await openBudgetFixture();
+    try {
+      await fixture.start();
+      const seeded = seedApprovalWaiting(fixture);
+      let calls = 0;
+      const commands = continueCommands(fixture, async () => { calls++; });
+      await expectConflict(commands.submit(fixture.owner,
+        continueEnvelope(fixture, seeded, {}, { expectedRevision: seeded.taskRevision + 1 }) as never),
+      'task_revision_conflict', 'revision');
+      await expectConflict(commands.submit(fixture.owner,
+        continueEnvelope(fixture, seeded, { observationDigest: 'ab'.repeat(32) }) as never),
+      'observation_digest_mismatch', 'observation');
+      await expectConflict(commands.submit(fixture.owner,
+        continueEnvelope(fixture, seeded, { codeDigest: 'ab'.repeat(32) }) as never),
+      'verification_batch_identity_mismatch', 'code');
+      expect(calls).toBe(0);
+    } finally { fixture.close(); }
+  });
+  it('没有 Task 本地提交时，即使机器通过和人审批准也不能放行', async () => {
+    const fixture = await openBudgetFixture();
+    try {
+      await fixture.start();
+      const seeded = seedApprovalWaiting(fixture, false);
+      const receipt = await continueCommands(fixture).submit(fixture.owner, continueEnvelope(fixture, seeded) as never);
+      expect(receipt.status).toBe('completed');
+      expect((receipt as { result: unknown }).result).toMatchObject({ disposition: 'ignored', reason: 'verification_not_ready' });
+      expect(fixture.session.database.prepare('SELECT status FROM tasks WHERE id = ?').get('t-1'))
+        .toEqual({ status: 'running' });
+      expect(fixture.session.database.prepare('SELECT status FROM attempts WHERE id = ?').get(seeded.attemptId))
+        .toEqual({ status: 'verifying' });
+    } finally { fixture.close(); }
+  });
   it('当前代码/环境必须可证：漂移、缺失和未知环境均拒绝复用', () => {
     const saved = { codeDigest: CODE_DIGEST,
       environmentSummary: { runner: 'node', nodeVersion: process.version, platform: process.platform } };

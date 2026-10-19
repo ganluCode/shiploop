@@ -26,12 +26,16 @@ function decode(bytes: Buffer): string {
 export function createGitCommitDriver(options: {
   readonly processes?: CommandProcessPort;
   readonly confirmProcessIdentity: ConfirmCommandProcessIdentity;
+  readonly signal?: AbortSignal;
+  readonly observeStop?: (value: { stopConfirmed: boolean; exitCode: number | null;
+    signal: string | null; reason: string | null }) => void;
 }): GitCommitDriver {
   const processes = options.processes ?? createCommandProcessAdapter();
   return { open(baseline, admit) {
     const deadline = performance.now() + 120_000;
     let calls = 0, outputBytes = 0;
-    async function run(args: readonly string[], stdin?: Uint8Array, identity?: { name: string; email: string }, allowFailure = false) {
+    async function run(args: readonly string[], stdin?: Uint8Array, identity?: { name: string; email: string }, allowFailure = false,
+      maxOutputBytes = 1024 * 1024) {
       admit();
       if (++calls > 1100 || performance.now() >= deadline) throw new GitCommitProcessError('git_budget_exhausted', true);
       if (realpathSync(baseline.canonicalPath) !== baseline.canonicalPath
@@ -43,13 +47,16 @@ export function createGitCommitDriver(options: {
           environment: { ...ENV, ...(identity ? { GIT_AUTHOR_NAME: identity.name, GIT_AUTHOR_EMAIL: identity.email,
             GIT_COMMITTER_NAME: identity.name, GIT_COMMITTER_EMAIL: identity.email } : {}) },
           stdin, timeoutMs: Math.max(1, Math.min(30_000, Math.ceil(deadline - performance.now()))),
-          maxInputBytes: 65_536, maxOutputBytes: 1024 * 1024 }, async identity => {
+          maxInputBytes: 65_536, maxOutputBytes }, async identity => {
           const receipt = await options.confirmProcessIdentity(identity);
           // Confirmation can yield; recheck authority before the supervised process is released.
           admit();
           return receipt;
-        });
+        }, options.signal);
       } catch (error) {
+        if (error instanceof CommandProcessError && error.reason === 'stop_unconfirmed') {
+          options.observeStop?.({ stopConfirmed: false, exitCode: null, signal: null, reason: 'stop_unconfirmed' });
+        }
         if (error instanceof CommandProcessError) throw new GitCommitProcessError(error.reason, error.reason !== 'stop_unconfirmed');
         throw error;
       }
@@ -57,17 +64,21 @@ export function createGitCommitDriver(options: {
       try {
         for await (const event of handle.output) {
           outputBytes += event.bytes.length;
-          if (outputBytes > 4 * 1024 * 1024) await handle.cancel();
+          if (outputBytes > 32 * 1024 * 1024) await handle.cancel();
           else if (event.stream === 'stdout') chunks.push(Buffer.from(event.bytes));
         }
       } catch {
         await handle.cancel();
-        throw new GitCommitProcessError('git_output_failed', (await handle.stopped).confirmed);
+        const confirmed = (await handle.stopped).confirmed;
+        options.observeStop?.({ stopConfirmed: confirmed, exitCode: null, signal: null, reason: 'git_output_failed' });
+        throw new GitCommitProcessError('git_output_failed', confirmed);
       }
       const result = await handle.result;
-      if (!result.stop.confirmed || !(await handle.stopped).confirmed) throw new GitCommitProcessError('stop_unconfirmed', false, result.exitCode);
+      const confirmed = result.stop.confirmed && (await handle.stopped).confirmed;
+      options.observeStop?.({ stopConfirmed: confirmed, exitCode: result.exitCode, signal: result.signal, reason: result.reason });
+      if (!confirmed) throw new GitCommitProcessError('stop_unconfirmed', false, result.exitCode);
       const reason = result.reason ?? (result.signal !== null ? 'git_signal' : null);
-      if (outputBytes > 4 * 1024 * 1024 || result.droppedOutputBytes) throw new GitCommitProcessError('output_limit', true, result.exitCode);
+      if (outputBytes > 32 * 1024 * 1024 || result.droppedOutputBytes) throw new GitCommitProcessError('output_limit', true, result.exitCode);
       if (!allowFailure && (reason !== null || result.exitCode !== 0)) throw new GitCommitProcessError(reason ?? 'git_failed', true, result.exitCode);
       return { output: Buffer.concat(chunks), exitCode: result.exitCode,
         durationMs: Math.ceil(performance.now() - started), reason };
@@ -107,6 +118,7 @@ export function createGitCommitDriver(options: {
           if (!match || !oid(match[2]) || index.has(match[3])) invalid();
           index.set(match[3], { mode: match[1], object: match[2] });
         }
+        const objects = new Map<string, number>();
         for (const entry of entries) {
           const staged = index.get(entry.path);
           if (entry.state === 'deleted') {
@@ -115,10 +127,47 @@ export function createGitCommitDriver(options: {
             if (!staged || staged.mode !== (entry.mode !== null && (entry.mode & 0o111) ? '100755' : '100644')) {
               throw new GitCommitProcessError('index_source_mismatch', true);
             }
-            const blob = (await run(['cat-file', 'blob', staged.object])).output;
-            if (createHash('sha256').update(blob).digest('hex') !== entry.digest) {
-              throw new GitCommitProcessError('index_source_mismatch', true);
+            if (entry.sizeBytes === null || !Number.isSafeInteger(entry.sizeBytes)
+              || entry.sizeBytes < 0 || entry.sizeBytes > 1024 * 1024) {
+              throw new GitCommitProcessError('output_limit', true);
             }
+            objects.set(staged.object, entry.sizeBytes);
+          }
+        }
+        // Full-source verification is independent of the staging write set.
+        // Bounded batch protocol avoids one process per unchanged repository file.
+        const hashes = new Map<string, string>();
+        const ids = [...objects.keys()];
+        for (let offset = 0; offset < ids.length;) {
+          const batch: string[] = [];
+          let budget = 0;
+          while (offset < ids.length && batch.length < 16) {
+            const id = ids[offset]!;
+            const size = objects.get(id)! + 128;
+            if (batch.length > 0 && budget + size > 1024 * 1024) break;
+            batch.push(id); offset++; budget += size;
+          }
+          const bytes = (await run(['cat-file', '--batch'], Buffer.from(`${batch.join('\n')}\n`), undefined, false,
+            Math.max(1024 * 1024, budget))).output;
+          let cursor = 0;
+          for (const id of batch) {
+            const end = bytes.indexOf(10, cursor);
+            if (end < 0) invalid();
+            const header = decode(bytes.subarray(cursor, end)).match(/^([a-f0-9]{40}|[a-f0-9]{64}) blob (0|[1-9][0-9]*)$/);
+            if (!header || header[1] !== id) invalid();
+            const size = Number(header[2]);
+            cursor = end + 1;
+            if (!Number.isSafeInteger(size) || cursor + size >= bytes.length
+              || bytes[cursor + size] !== 10) invalid();
+            if (size !== objects.get(id)) throw new GitCommitProcessError('index_source_mismatch', true);
+            hashes.set(id, createHash('sha256').update(bytes.subarray(cursor, cursor + size)).digest('hex'));
+            cursor += size + 1;
+          }
+          if (cursor !== bytes.length) invalid();
+        }
+        for (const entry of entries) {
+          if (entry.state === 'present' && hashes.get(index.get(entry.path)!.object) !== entry.digest) {
+            throw new GitCommitProcessError('index_source_mismatch', true);
           }
         }
       },

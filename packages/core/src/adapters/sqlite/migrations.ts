@@ -2211,6 +2211,161 @@ ALTER TABLE execution_stop_operations ADD COLUMN checked_at INTEGER
   CHECK (checked_at IS NULL OR (typeof(checked_at) = 'integer' AND checked_at >= 1));
 `;
 
+/** v30: 重建 CHECK，原样复制历史行及 rowid，再恢复全部既有索引/触发器/外键。
+ * 必须事务外关闭外键：DROP 的隐式 DELETE 不能靠 defer_foreign_keys 抵消。
+ * migrator 在提交前执行全库 foreign_key_check，失败回滚并恢复 foreign_keys。
+ */
+const MIGRATION_030_SQL = `
+CREATE TABLE git_operations_v30 (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  project_id TEXT NOT NULL,
+  feature_id TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  attempt_id TEXT,
+  execution_version INTEGER NOT NULL,
+  operation_type TEXT NOT NULL,
+  repository_binding_id TEXT NOT NULL,
+  repo_identity TEXT NOT NULL,
+  worktree_path TEXT NOT NULL,
+  expected_head TEXT NOT NULL,
+  candidate_tree TEXT NOT NULL,
+  code_digest TEXT NOT NULL,
+  verification_refs TEXT NOT NULL,
+  approval_refs TEXT NOT NULL,
+  message TEXT NOT NULL,
+  identity_name TEXT NOT NULL,
+  identity_email TEXT NOT NULL,
+  delivery_policy_digest TEXT NOT NULL,
+  runtime_source TEXT,
+  owner_id TEXT NOT NULL,
+  host_instance_id TEXT NOT NULL,
+  intent_digest TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  actual_commit TEXT,
+  actual_tree TEXT,
+  exit_code INTEGER,
+  duration_ms INTEGER,
+  reason_code TEXT,
+  receipt TEXT,
+  delivery_status TEXT,
+  settled_at INTEGER,
+  CONSTRAINT git_operations_revision_check CHECK (revision >= 1),
+  CONSTRAINT git_operations_version_check CHECK (typeof(execution_version) = 'integer' AND execution_version >= 1),
+  CONSTRAINT git_operations_type_check CHECK (operation_type IN ('feature_final_commit', 'task_commit')),
+  CONSTRAINT git_operations_task_attempt_check CHECK (operation_type <> 'task_commit' OR attempt_id IS NOT NULL),
+  CONSTRAINT git_operations_oid_check CHECK (
+    (length(expected_head) IN (40, 64) AND expected_head NOT GLOB '*[^0-9a-f]*')
+    AND (length(candidate_tree) IN (40, 64) AND candidate_tree NOT GLOB '*[^0-9a-f]*')
+    AND (actual_commit IS NULL OR (length(actual_commit) IN (40, 64) AND actual_commit NOT GLOB '*[^0-9a-f]*'))
+    AND (actual_tree IS NULL OR (length(actual_tree) IN (40, 64) AND actual_tree NOT GLOB '*[^0-9a-f]*'))
+  ),
+  CONSTRAINT git_operations_digest_check CHECK (
+    length(code_digest) = 64 AND code_digest NOT GLOB '*[^0-9a-f]*'
+    AND length(delivery_policy_digest) = 64 AND delivery_policy_digest NOT GLOB '*[^0-9a-f]*'
+    AND length(intent_digest) = 64 AND intent_digest NOT GLOB '*[^0-9a-f]*'
+  ),
+  CONSTRAINT git_operations_refs_check CHECK (
+    json_valid(verification_refs) AND json_type(verification_refs) = 'array'
+    AND json_valid(approval_refs) AND json_type(approval_refs) = 'array'
+  ),
+  CONSTRAINT git_operations_message_check CHECK (length(trim(message)) > 0 AND length(message) <= 16384),
+  CONSTRAINT git_operations_identity_check CHECK (length(trim(identity_name)) > 0 AND length(trim(identity_email)) > 0),
+  CONSTRAINT git_operations_runtime_check CHECK (runtime_source IS NULL OR (json_valid(runtime_source) AND json_type(runtime_source) = 'object')),
+  CONSTRAINT git_operations_status_check CHECK (status IN ('pending', 'succeeded', 'no_change', 'failed', 'unknown')),
+  CONSTRAINT git_operations_delivery_status_check CHECK (delivery_status IS NULL OR delivery_status IN ('not_requested', 'pending', 'succeeded', 'failed')),
+  CONSTRAINT git_operations_exit_check CHECK (exit_code IS NULL OR (typeof(exit_code) = 'integer' AND exit_code >= 0)),
+  CONSTRAINT git_operations_duration_check CHECK (duration_ms IS NULL OR (typeof(duration_ms) = 'integer' AND duration_ms >= 0)),
+  CONSTRAINT git_operations_reason_check CHECK (reason_code IS NULL OR reason_code GLOB '[a-z]*' AND length(reason_code) <= 64 AND reason_code NOT GLOB '*[^a-z0-9_]*'),
+  CONSTRAINT git_operations_receipt_check CHECK (receipt IS NULL OR (json_valid(receipt) AND json_type(receipt) = 'object')),
+  CONSTRAINT git_operations_times_check CHECK (
+    typeof(created_at) = 'integer' AND created_at >= 0
+    AND typeof(updated_at) = 'integer' AND updated_at >= 0
+    AND (settled_at IS NULL OR (typeof(settled_at) = 'integer' AND settled_at >= 0))
+  ),
+  CONSTRAINT git_operations_terminal_shape_check CHECK (
+    (status = 'pending' AND actual_commit IS NULL AND actual_tree IS NULL AND exit_code IS NULL
+      AND duration_ms IS NULL AND reason_code IS NULL AND receipt IS NULL
+      AND delivery_status IS NULL AND settled_at IS NULL)
+    OR (status = 'succeeded' AND actual_commit IS NOT NULL AND actual_tree = candidate_tree
+      AND receipt IS NOT NULL AND delivery_status = CASE WHEN operation_type = 'task_commit' THEN 'not_requested' ELSE 'succeeded' END AND settled_at IS NOT NULL)
+    OR (status = 'no_change' AND actual_commit = expected_head AND actual_tree IS NOT NULL
+      AND receipt IS NOT NULL AND delivery_status = CASE WHEN operation_type = 'task_commit' THEN 'not_requested' ELSE 'succeeded' END AND settled_at IS NOT NULL)
+    OR (status = 'failed' AND receipt IS NOT NULL AND delivery_status = CASE WHEN operation_type = 'task_commit' THEN 'not_requested' ELSE 'failed' END AND settled_at IS NOT NULL)
+    OR (status = 'unknown' AND actual_commit IS NULL AND actual_tree IS NULL
+      AND receipt IS NOT NULL AND delivery_status = CASE WHEN operation_type = 'task_commit' THEN 'not_requested' ELSE 'pending' END AND settled_at IS NOT NULL)
+  ),
+  CONSTRAINT git_operations_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT git_operations_binding_fk FOREIGN KEY (repository_binding_id) REFERENCES repository_bindings (id) ON DELETE RESTRICT,
+  CONSTRAINT git_operations_feature_fk FOREIGN KEY (project_id, feature_id) REFERENCES features (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT git_operations_run_fk FOREIGN KEY (feature_id, run_id) REFERENCES runs (feature_id, id) ON DELETE RESTRICT,
+  CONSTRAINT git_operations_attempt_fk FOREIGN KEY (project_id, attempt_id) REFERENCES attempts (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT git_operations_binding_same_project_fk FOREIGN KEY (project_id, repository_binding_id) REFERENCES repository_bindings (project_id, id) ON DELETE RESTRICT
+);
+
+INSERT INTO git_operations_v30 (rowid, id, created_at, updated_at, revision, project_id, feature_id, run_id, attempt_id, execution_version, operation_type, repository_binding_id, repo_identity, worktree_path, expected_head, candidate_tree, code_digest, verification_refs, approval_refs, message, identity_name, identity_email, delivery_policy_digest, runtime_source, owner_id, host_instance_id, intent_digest, status, actual_commit, actual_tree, exit_code, duration_ms, reason_code, receipt, delivery_status, settled_at)
+SELECT rowid, id, created_at, updated_at, revision, project_id, feature_id, run_id, attempt_id, execution_version, operation_type, repository_binding_id, repo_identity, worktree_path, expected_head, candidate_tree, code_digest, verification_refs, approval_refs, message, identity_name, identity_email, delivery_policy_digest, runtime_source, owner_id, host_instance_id, intent_digest, status, actual_commit, actual_tree, exit_code, duration_ms, reason_code, receipt, delivery_status, settled_at FROM git_operations;
+DROP TABLE git_operations;
+ALTER TABLE git_operations_v30 RENAME TO git_operations;
+
+CREATE UNIQUE INDEX git_operations_project_id_id_unique ON git_operations (project_id, id);
+CREATE INDEX git_operations_project_feature_status_index ON git_operations (project_id, feature_id, status);
+CREATE INDEX git_operations_project_run_index ON git_operations (project_id, run_id);
+CREATE INDEX git_operations_project_intent_index ON git_operations (project_id, intent_digest);
+
+CREATE TRIGGER git_operations_insert_pending BEFORE INSERT ON git_operations
+WHEN NEW.status <> 'pending'
+BEGIN SELECT RAISE(ABORT, 'git operation must start pending'); END;
+
+CREATE TRIGGER git_operations_attempt_identity_check BEFORE INSERT ON git_operations
+WHEN NEW.attempt_id IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM attempts
+  WHERE attempts.id = NEW.attempt_id AND attempts.project_id = NEW.project_id
+    AND attempts.feature_id = NEW.feature_id AND attempts.run_id = NEW.run_id
+    AND attempts.execution_version = NEW.execution_version
+)
+BEGIN SELECT RAISE(ABORT, 'git operation attempt identity mismatch'); END;
+
+CREATE TRIGGER git_operations_intent_immutable BEFORE UPDATE ON git_operations
+WHEN NEW.id IS NOT OLD.id OR NEW.project_id IS NOT OLD.project_id
+  OR NEW.feature_id IS NOT OLD.feature_id OR NEW.run_id IS NOT OLD.run_id
+  OR NEW.attempt_id IS NOT OLD.attempt_id
+  OR NEW.execution_version IS NOT OLD.execution_version
+  OR NEW.operation_type IS NOT OLD.operation_type
+  OR NEW.repository_binding_id IS NOT OLD.repository_binding_id
+  OR NEW.repo_identity IS NOT OLD.repo_identity OR NEW.worktree_path IS NOT OLD.worktree_path
+  OR NEW.expected_head IS NOT OLD.expected_head OR NEW.candidate_tree IS NOT OLD.candidate_tree
+  OR NEW.code_digest IS NOT OLD.code_digest
+  OR NEW.verification_refs IS NOT OLD.verification_refs
+  OR NEW.approval_refs IS NOT OLD.approval_refs
+  OR NEW.message IS NOT OLD.message
+  OR NEW.identity_name IS NOT OLD.identity_name OR NEW.identity_email IS NOT OLD.identity_email
+  OR NEW.delivery_policy_digest IS NOT OLD.delivery_policy_digest
+  OR NEW.runtime_source IS NOT OLD.runtime_source
+  OR NEW.owner_id IS NOT OLD.owner_id OR NEW.host_instance_id IS NOT OLD.host_instance_id
+  OR NEW.intent_digest IS NOT OLD.intent_digest
+  OR NEW.created_at IS NOT OLD.created_at
+BEGIN SELECT RAISE(ABORT, 'git operation intent is immutable'); END;
+
+CREATE TRIGGER git_operations_terminal_immutable BEFORE UPDATE ON git_operations
+WHEN OLD.status <> 'pending'
+BEGIN SELECT RAISE(ABORT, 'git operation is terminal'); END;
+
+CREATE TRIGGER git_operations_task_identity_check BEFORE INSERT ON git_operations
+WHEN NEW.operation_type = 'task_commit' AND NOT EXISTS (
+  SELECT 1 FROM attempts a
+  JOIN tasks t ON t.id = a.task_id AND t.project_id = a.project_id
+    AND t.feature_id = a.feature_id AND t.execution_version = a.execution_version
+  WHERE a.id = NEW.attempt_id AND a.project_id = NEW.project_id
+    AND a.feature_id = NEW.feature_id AND a.run_id = NEW.run_id
+    AND a.execution_version = NEW.execution_version
+    AND a.owner_id = NEW.owner_id AND a.host_instance_id = NEW.host_instance_id
+)
+BEGIN SELECT RAISE(ABORT, 'task commit current identity mismatch'); END;
+`;
+
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     version: 1,
@@ -2305,4 +2460,5 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 27, sql: MIGRATION_027_SQL, checksum: sha256Hex(MIGRATION_027_SQL) },
   { version: 28, sql: MIGRATION_028_SQL, checksum: sha256Hex(MIGRATION_028_SQL) },
   { version: 29, sql: MIGRATION_029_SQL, checksum: sha256Hex(MIGRATION_029_SQL) },
+  { version: 30, sql: MIGRATION_030_SQL, checksum: sha256Hex(MIGRATION_030_SQL), foreignKeysOff: true },
 ];

@@ -45,6 +45,8 @@ export function createControlledGitCommitService(deps: {
   readonly transact: <T>(callback: () => T) => T;
   /** Trusted assembly must include every Core artifact/data directory inside the worktree. */
   readonly excludedPaths: readonly string[];
+  /** Trusted original evidence for a Task whose staging survived a failed commit. */
+  readonly originalVerificationInspection?: () => WorkspaceInspection;
   readonly nowMs?: () => number;
 }): ControlledGitCommitService {
   const now = deps.nowMs ?? Date.now;
@@ -126,7 +128,12 @@ export function createControlledGitCommitService(deps: {
       const before = await deps.inspector.inspect(baseline);
       current();
       if (before.repository.headCommit !== intent.expectedHead) fail('head_drift');
-      if (verificationCodeIdentity(before).codeDigest !== intent.codeDigest) fail('source_changed');
+      if (verificationCodeIdentity(before).codeDigest !== intent.codeDigest) {
+        const verified = intent.operationType === 'task_commit' ? deps.originalVerificationInspection?.() : undefined;
+        if (!verified || verified.repository.headCommit !== intent.expectedHead
+          || verificationCodeIdentity(verified).codeDigest !== intent.codeDigest
+          || gitCommitSourceDigest(verified) !== gitCommitSourceDigest(before)) fail('source_changed');
+      }
       const evidencePaths = new Set([...before.contents.tracked, ...before.contents.untracked].map(entry => entry.path));
       if (allowedPaths.some(path => !evidencePaths.has(path))) fail('path_not_in_evidence');
       const sourceDigest = gitCommitSourceDigest(before);
@@ -139,6 +146,8 @@ export function createControlledGitCommitService(deps: {
       if ((await driver.stagedPaths()).some(path => !allowedPaths.includes(path))) fail('unapproved_staged_files');
       await stopped();
       const verifiedEntries = [...before.contents.tracked, ...before.contents.untracked].filter(entry => allowedPaths.includes(entry.path));
+      const deliveredEntries = [...before.contents.tracked, ...before.contents.untracked]
+        .filter(entry => !exclusions.some(path => entry.path === path || entry.path.startsWith(`${path}/`)));
       // Already-staged deletion has no remaining path for `git add` to match.
       await driver.stage(verifiedEntries.filter(entry => entry.state === 'present' || entry.indexObject !== null).map(entry => entry.path));
       if ((await driver.stagedPaths()).some(path => !allowedPaths.includes(path))) fail('unapproved_staged_files');
@@ -148,7 +157,7 @@ export function createControlledGitCommitService(deps: {
         fail('undelivered_source');
       }
       const candidateTree = await driver.tree();
-      await driver.verifyIndex(verifiedEntries);
+      await driver.verifyIndex(deliveredEntries);
       const staged = await deps.inspector.inspect(baseline);
       if (staged.repository.headCommit !== intent.expectedHead) fail('head_drift');
       if (gitCommitSourceDigest(staged) !== sourceDigest) fail('source_changed');
@@ -167,7 +176,7 @@ export function createControlledGitCommitService(deps: {
       if (finalSource.repository.headCommit !== intent.expectedHead) fail('head_drift');
       if (gitCommitSourceDigest(finalSource) !== sourceDigest) fail('source_changed');
       if (await driver.tree() !== candidateTree) fail('index_changed');
-      await driver.verifyIndex(verifiedEntries);
+      await driver.verifyIndex(deliveredEntries);
       const finalPreflight = await driver.facts();
       if (finalPreflight.head !== intent.expectedHead) fail('head_drift');
       const noChange = candidateTree === initial.tree;
@@ -194,7 +203,8 @@ export function createControlledGitCommitService(deps: {
         return deps.operations.finalizeGitOperation({ operationId: intent.operationId, projectId: intent.projectId,
           expectedRevision: registered!.revision, status: reason ? 'failed' : noChange ? 'no_change' : 'succeeded',
           actualCommit: actual.head, actualTree: actual.tree, exitCode: command.exitCode,
-          durationMs: command.durationMs, reasonCode: reason, deliveryStatus: reason ? 'failed' : 'succeeded', settledAtUtcMs: now() }).operation;
+          durationMs: command.durationMs, reasonCode: reason,
+          deliveryStatus: intent.operationType === 'task_commit' ? 'not_requested' : reason ? 'failed' : 'succeeded', settledAtUtcMs: now() }).operation;
       });
       retainClaim = false;
       return operation;

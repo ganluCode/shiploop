@@ -96,6 +96,61 @@ async function fixture() {
 }
 
 describe('F-003 controlled Git commit', () => {
+  it('[case:task-commit-batch-boundary] batches by bytes and retains the single 1 MiB blob boundary', async () => {
+    const f = await fixture();
+    const paths = ['source.ts'];
+    for (let i = 0; i < 16; i++) {
+      const name = `blob-${i}.bin`;
+      paths.push(name);
+      writeFileSync(join(f.root, name), Buffer.alloc(80 * 1024, i));
+    }
+    paths.push('boundary.bin');
+    writeFileSync(join(f.root, 'boundary.bin'), Buffer.alloc(1024 * 1024, 127));
+    await f.recapture(paths);
+    expect((await f.execute()).status).toBe('succeeded');
+  }, 120_000);
+  it('[case:task-commit-cancel] aborts a live Git hook through the supervised process group and reports stopped evidence', async () => {
+    const f = await fixture();
+    const marker = join(f.root, 'hook-started');
+    f.hook(`printf started > '${marker}'\ntrap '' TERM\nwhile :; do sleep 1; done`);
+    const controller = new AbortController();
+    const observations: { stopConfirmed: boolean }[] = [];
+    const driver = createGitCommitDriver({ confirmProcessIdentity: confirm, signal: controller.signal,
+      observeStop: value => observations.push(value) }).open(f.baseline, () => {});
+    await driver.stage(['source.ts']);
+    const pending = driver.commit('cancelled hook', f.authorization.intent.gitIdentity);
+    await expect.poll(() => existsSync(marker), { timeout: 5000 }).toBe(true);
+    controller.abort();
+    const result = await pending;
+    expect(result.reason).not.toBeNull();
+    expect(observations.at(-1)?.stopConfirmed).toBe(true);
+    expect(git(['rev-parse', 'HEAD'], f.root).trim()).toBe(f.baseline.baseCommit);
+  }, 15_000);
+  it.each(['assume-unchanged', 'filemode'])('[case:task-commit-hidden-%s] rejects source hidden from the staging diff', async kind => {
+    const f = await fixture();
+    const readme = join(f.root, 'README.md');
+    if (kind === 'assume-unchanged') {
+      git(['update-index', '--assume-unchanged', 'README.md'], f.root);
+      writeFileSync(readme, `${readFileSync(readme, 'utf8')}\nhidden source\n`);
+    } else {
+      git(['config', 'core.filemode', 'false'], f.root);
+      chmodSync(readme, 0o755);
+    }
+    await f.recapture(['source.ts']);
+    await expect(f.execute()).rejects.toMatchObject({ reason: 'index_source_mismatch' });
+    expect(git(['rev-parse', 'HEAD'], f.root).trim()).toBe(f.baseline.baseCommit);
+    expect(f.box.session.database.prepare('SELECT COUNT(*) AS n FROM git_operations').get()).toEqual({ n: 0 });
+  });
+
+  it('[case:task-commit-binary-source] verifies binary blob bytes through the bounded Git batch protocol', async () => {
+    const f = await fixture();
+    const body = Buffer.from([0, 10, 255, 13, 10, 65, 0, 66]);
+    writeFileSync(join(f.root, 'source.ts'), body);
+    await f.recapture();
+    const result = await f.execute();
+    expect(result.status).toBe('succeeded');
+    expect(readFileSync(join(f.root, 'source.ts'))).toEqual(body);
+  });
   it('commits the verified tree using confirmed identity, persists actual facts, and leaves a clean source', async () => {
     const f = await fixture();
     const result = await f.execute();

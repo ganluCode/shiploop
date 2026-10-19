@@ -23,7 +23,7 @@ const TABLES = ['projects', 'phases', 'features', 'tasks', 'approvals', 'executi
   'sessions', 'workspace_leases', 'managed_workspaces', 'workspace_operations', 'git_operations',
   'verification_batches', 'check_results', 'artifacts', 'state_events', 'command_receipts', 'baseline_operations', 'baseline_occupancy', 'execution_stop_operations'] as const;
 export type EvidenceTable = typeof TABLES[number];
-const COLUMN = /^(id|.*_id|status|state|operation|execution_stage|event_type|runtime|kind|result_ref|diagnostic_ref|input_ref|execution_version|number|revision|process_identity|plan_digest|.*_commit|.*_digest|.*_at|reason|first_passed_at)$/;
+const COLUMN = /^(id|.*_id|status|state|operation|operation_type|delivery_status|expected_head|execution_stage|event_type|runtime|kind|result_ref|diagnostic_ref|input_ref|execution_version|number|revision|process_identity|plan_digest|.*_commit|.*_tree|.*_digest|.*_at|lease_until|reason|first_passed_at)$/;
 const DEFAULT_SCRIPT = { schemaVersion: 1, steps: [{ op: 'message', role: 'assistant', text: 'P03 isolated Fake model' }],
   result: { terminal: 'completed', reason: null, exitCode: 0, signal: null, durationMs: 1, usage: null } };
 
@@ -48,7 +48,7 @@ const CHAIN_CHECK = {
 };
 
 export interface P03FixtureOptions {
-  /** F-003 diagnostic scenario; does not weaken the Task commit acceptance gate. */
+  /** F-003 real verification, controlled Task commits and Feature delivery. */
   readonly threeTaskChain?: boolean;
   /** Caller-owned evidence directory, outside the disposable resources. */
   readonly evidenceDir: string;
@@ -168,7 +168,11 @@ export async function withP03AcceptanceFixture<T>(options: P03FixtureOptions, bo
         resultTimeoutMs: 30_000, stdoutLimitBytes: 65_536, stderrLimitBytes: 8192,
       });
       records.push({ kind: 'cli', args, ...result });
-      if (result.outputOverflow || result.exitCode !== 0 || result.signal !== null) throw new Error(`built CLI failed: ${sanitize({ args, result })}`);
+      if (result.outputOverflow || result.exitCode !== 0 || result.signal !== null) {
+        const diagnosticPath = join(root, 'chain-delivery-error.json');
+        if (existsSync(diagnosticPath)) fixture.saveEvidence('host-delivery-error.json', JSON.parse(readFileSync(diagnosticPath, 'utf8')));
+        throw new Error(`built CLI failed: ${sanitize({ args, result })}`);
+      }
       const envelope = singleEnvelope(result);
       if (!envelope.ok) throw new Error(`built CLI rejected: ${sanitize(envelope)}`);
       return envelope.result as R;
@@ -281,9 +285,13 @@ export async function withP03AcceptanceFixture<T>(options: P03FixtureOptions, bo
       policies: { executionLimits: { maxConcurrentWorks: 1, workTimeoutMs: 60_000 }, verification: { requireChecksBeforeDone: true } },
     })]);
     if (options.threeTaskChain) await fixture.cli(['config', 'create', '--scope', 'project', ...project,
-      '--input', fixture.input('project-config.json', { schemaVersion: 2, policies: { verification: {
-        requireChecksBeforeDone: true, checkDefinitions: [CHAIN_CHECK], fullFallback: { checkRefs: ['chain'] },
-      } } })]);
+      '--input', fixture.input('project-config.json', { schemaVersion: 2, policies: {
+        deliveryPolicy: { commitMode: 'task_and_feature',
+          gitIdentity: { name: 'Confirmed User', email: 'confirmed@example.test', confirmed: true },
+          deliveryActions: ['commit'] },
+        verification: {
+          requireChecksBeforeDone: true, checkDefinitions: [CHAIN_CHECK], fullFallback: { checkRefs: ['chain'] },
+        } } })]);
     await stage('configured');
     const baseline = await fixture.cli<{ state: string; checks: { output: { artifactId: string } }[] }>(['baseline', 'run', ...project,
       '--input', fixture.input('checks.json', { checks: [{ checkKey: 'requirements', kind: 'command',
@@ -309,7 +317,7 @@ export async function withP03AcceptanceFixture<T>(options: P03FixtureOptions, bo
       if (!prepared.bindable) throw new Error('required input not bindable');
     }
     const maxAttempts = options.threeTaskChain ? 4 : 2;
-    const runTimeLimitMs = options.threeTaskChain ? 120_000 : 60_000;
+    const runTimeLimitMs = options.threeTaskChain ? 240_000 : 60_000;
     budgetPath = fixture.input('budget.json', { batch: { maxRuns: 2, maxTotalAttempts: maxAttempts, maxRuntimeStarts: maxAttempts,
       maxNoProgressRuns: 2, deadlineUtcMs: Date.now() + runTimeLimitMs },
       run: { maxAttemptsPerRun: maxAttempts, runTimeLimitMs } });

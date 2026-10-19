@@ -5,6 +5,13 @@
     {
       "id": "shiploop",
       "tests": [
+        { "file": "test/modules/acceptance/p03-10-task-commit-failure.test.ts", "all": true },
+        { "file": "test/modules/delivery/p03-10-task-commit-store.test.ts", "all": true },
+        { "file": "test/modules/delivery/p03-8-f001-delivery-policy.test.ts", "all": true },
+        { "file": "test/modules/delivery/p03-8-f003-controlled-git-commit.test.ts", "cases": ["task-commit-batch-boundary", "task-commit-cancel", "task-commit-hidden-assume-unchanged", "task-commit-hidden-filemode", "task-commit-binary-source"] },
+        { "file": "test/modules/delivery/p03-8-f003-git-commit-driver.test.ts", "all": true },
+        { "file": "test/modules/verification/p03-7-f012-verification-continue.test.ts", "all": true },
+        { "file": "test/modules/verification/p03-10-verification-code-mode.test.ts", "all": true },
         {
           "file": "test/modules/acceptance/p03-10-three-task-chain.test.ts",
           "cases": [

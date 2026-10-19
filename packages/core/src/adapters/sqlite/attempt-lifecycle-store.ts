@@ -326,8 +326,23 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
       || approval.planDigest !== snapshot.approval?.planDigest
       || approval.checkPolicyDigest !== snapshot.approval?.checkPolicyDigest
       || approval.currentDecision?.id !== snapshot.approval?.decisionId;
+    // A green verifier is not local delivery. Require an immutable, matching Git
+    // receipt before releasing the workspace or making dependencies runnable.
+    if (valid.outcome === 'passed' && !approvalWaiting) {
+      const commit = db.prepare<unknown[], { id: string }>(`SELECT id FROM git_operations
+        WHERE project_id = ? AND attempt_id = ? AND run_id = ? AND operation_type = 'task_commit'
+          AND execution_version = ? AND owner_id = ? AND host_instance_id = ?
+          AND code_digest = ? AND status IN ('succeeded', 'no_change')
+          AND actual_commit IS NOT NULL AND actual_tree = candidate_tree
+          AND EXISTS (SELECT 1 FROM json_each(verification_refs) ref
+            WHERE json_extract(ref.value, '$.kind') = 'verification_batch'
+              AND json_extract(ref.value, '$.id') = ? AND json_extract(ref.value, '$.digest') = ?)
+        LIMIT 1`).get(valid.projectId, valid.attemptId, valid.runId, valid.executionVersion,
+          valid.owner, valid.hostInstanceId, valid.codeDigest, valid.verificationBatchId, valid.codeDigest);
+      if (!commit) return ignored('verification_not_ready');
+    }
     // 机器绿色不等于停止已确认；仍有占用时必须提交与当前现场绑定的停止证据。
-    if (valid.outcome === 'passed' && resources.read(identity).leases.length > 0) {
+    if (valid.outcome === 'passed' && !approvalWaiting && resources.read(identity).leases.length > 0) {
       if (verifierStopEvidence === undefined) {
         quarantineIfOccupied(identity);
         return ignored('verification_not_ready');

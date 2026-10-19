@@ -317,6 +317,7 @@ export function createSqliteFeatureDeliveryQueryStore(
       .prepare<[string, string], GitOperationRow>(
         `SELECT ${GIT_OPERATION_COLUMNS} FROM git_operations
          WHERE project_id = ? AND feature_id = ?
+           AND operation_type = 'feature_final_commit'
          ORDER BY created_at DESC, rowid DESC LIMIT 1`,
       )
       .get(projectId, featureId);

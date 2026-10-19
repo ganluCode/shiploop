@@ -1,4 +1,4 @@
-// F-003 trusted diagnostic assembly. Every imported implementation is built.
+// F-003 trusted acceptance assembly. Every imported implementation is built.
 // SQL below is SELECT only; production adapters own all business writes.
 import { execFileSync } from 'node:child_process';
 import { readFileSync, existsSync, writeFileSync, renameSync } from 'node:fs';
@@ -12,6 +12,7 @@ import { createWorkspaceInspector } from '../../../packages/core/dist/adapters/f
 import { createNodeTaskVerificationExecutor } from '../../../packages/core/dist/application/node-task-verification.js';
 import { verificationCodeIdentity } from '../../../packages/core/dist/ports/verification-aggregate.js';
 import { createCommandProcessAdapter } from '../../../packages/core/dist/adapters/process/command-process.js';
+import { createThreeTaskDelivery } from './three-task-delivery.mjs';
 
 const providers = [{ providerId: 'fake-provider', models: ['fake-model'] }];
 const finish = { op: 'tool_command', name: 'probe' };
@@ -57,7 +58,7 @@ export function threeTaskRuntime(config) {
   };
 }
 
-export function attachThreeTaskProbe(host, config) {
+export function attachThreeTaskProbe(host, config, registerDelivery) {
   const core = host.core;
   const session = openSqliteStorageSession({ path: join(config.dataRoot, 'core.sqlite') });
   const db = session.database;
@@ -66,6 +67,8 @@ export function attachThreeTaskProbe(host, config) {
   const processes = createCommandProcessAdapter();
   const inspector = createWorkspaceInspector({ authorizedRoots: [config.chain.root],
     confirmProcessIdentity: async identity => identity });
+  const delivery = createThreeTaskDelivery({ core, session, atomic, verificationStore, inspector, processes });
+  registerDelivery(delivery.dependencies);
   let active = Promise.resolve();
   let busy = false;
   let closed = false;
@@ -78,7 +81,8 @@ export function attachThreeTaskProbe(host, config) {
     return Buffer.concat(chunks).toString('utf8');
   };
   async function verify(control) {
-    const attempt = db.prepare("SELECT * FROM attempts WHERE task_id = ? AND status = 'verifying'").get(control.taskId);
+    const attempt = db.prepare('SELECT * FROM attempts WHERE task_id = ? AND status = ? ORDER BY number DESC LIMIT 1')
+      .get(control.taskId, control.action === 'state' ? 'succeeded' : 'verifying');
     if (!attempt) throw Error('missing verifying attempt');
     const workspace = db.prepare('SELECT * FROM managed_workspaces WHERE feature_id = ?').get(attempt.feature_id);
     const baseline = {
@@ -86,6 +90,7 @@ export function attachThreeTaskProbe(host, config) {
       repoIdentity: workspace.repo_identity, canonicalPath: workspace.canonical_path,
       gitCommonDir: workspace.git_common_dir, branch: workspace.branch, baseCommit: workspace.base_commit,
     };
+    if (control.action === 'state') return { finalization: delivery.readState() };
     const resourceIdentity = { projectId: attempt.project_id, attemptId: attempt.id, owner: attempt.owner_id,
       hostInstanceId: attempt.host_instance_id, executionVersion: attempt.execution_version };
     const policyDigest = JSON.parse(attempt.input_snapshot).approval.checkPolicyDigest;
@@ -129,8 +134,13 @@ export function attachThreeTaskProbe(host, config) {
       if (!stored?.outputArtifactId) throw Error('missing checker output');
       outputs.push(await artifactText(attempt.project_id, stored.outputArtifactId));
     }
-    return { attemptId: attempt.id, workspaceId: workspace.id, beforeGit, beforeFiles, beforeIdentity, afterIdentity,
-      inputManifest: attempt.input_ref, inputText, verification, completion, outputs };
+    const afterGit = { head: git(baseline.canonicalPath, ['rev-parse', 'HEAD']),
+      tree: git(baseline.canonicalPath, ['rev-parse', 'HEAD^{tree}']),
+      status: git(baseline.canonicalPath, ['status', '--porcelain=v1']) };
+    const finalization = attempt.task_id === 'chain-3' && completion.receipt.status === 'succeeded'
+      ? await delivery.finish(attempt, baseline) : null;
+    return { attemptId: attempt.id, workspaceId: workspace.id, beforeGit, afterGit, beforeFiles, beforeIdentity, afterIdentity,
+      inputManifest: attempt.input_ref, inputText, verification, completion, outputs, finalization };
   }
   const timer = setInterval(() => {
     if (busy || closed) return;
@@ -141,11 +151,11 @@ export function attachThreeTaskProbe(host, config) {
     if (!/^[a-f0-9-]{36}$/.test(control.id) || !['chain-1', 'chain-2', 'chain-3'].includes(control.taskId) || seen.has(control.id)) return;
     seen.add(control.id);
     busy = true;
-    active = verify(control).catch(error => ({ error: String(error), stack: error.stack })).then(result => {
+    active = verify(control).catch(error => ({ error: String(error), stack: error.stack, details: error.details })).then(result => {
       const path = join(config.chain.root, `chain-result-${control.id}.json`);
       writeFileSync(`${path}.tmp`, JSON.stringify(result));
       renameSync(`${path}.tmp`, path);
     }).finally(() => { busy = false; });
   }, 20);
-  return async () => { closed = true; clearInterval(timer); await active; session.close(); };
+  return async () => { closed = true; clearInterval(timer); await active; await delivery.close(); session.close(); };
 }

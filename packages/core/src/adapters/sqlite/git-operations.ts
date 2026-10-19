@@ -27,6 +27,8 @@ import {
   GIT_OPERATION_SETTLED_EVENT_TYPE,
 } from '../../ports/events.js';
 import {
+  GIT_OPERATION_TYPE_FEATURE_FINAL_COMMIT,
+  GIT_OPERATION_TYPE_TASK_COMMIT,
   assertFinalizationMatchesIntent,
   buildGitOperationReceipt,
   computeGitOperationIntentDigest,
@@ -160,6 +162,9 @@ interface AttemptIdentityRow {
   feature_id: string;
   run_id: string;
   execution_version: number;
+  task_id: string;
+  owner_id: string;
+  host_instance_id: string;
 }
 
 interface BindingIdentityRow {
@@ -335,7 +340,7 @@ export function createSqliteGitOperationStore(
     if (input.attemptId !== null) {
       const attempt = db
         .prepare<[string], AttemptIdentityRow>(
-          'SELECT project_id, feature_id, run_id, execution_version FROM attempts WHERE id = ?',
+          'SELECT project_id, feature_id, run_id, execution_version, task_id, owner_id, host_instance_id FROM attempts WHERE id = ?',
         )
         .get(input.attemptId);
       if (!attempt) {
@@ -355,6 +360,33 @@ export function createSqliteGitOperationStore(
             actualRevision: attempt!.execution_version,
           });
       }
+      if (input.operationType === GIT_OPERATION_TYPE_TASK_COMMIT) {
+        assertTaskIdentity(input, operation, entity);
+      }
+    }
+  }
+
+  function assertTaskIdentity(
+    intent: GitOperationIntent,
+    operation: string,
+    entity: StorageEntityRef,
+  ): void {
+    const current = db.prepare<[string | null, string, string, string, number], { owner_id: string; host_instance_id: string }>(
+      `SELECT a.owner_id, a.host_instance_id FROM attempts a
+       JOIN tasks t ON t.id = a.task_id AND t.project_id = a.project_id
+         AND t.feature_id = a.feature_id AND t.execution_version = a.execution_version
+       WHERE a.id = ? AND a.project_id = ? AND a.feature_id = ? AND a.run_id = ?
+         AND a.execution_version = ?`,
+    );
+    const identity = current.get(intent.attemptId, intent.projectId, intent.featureId,
+      intent.runId, intent.executionVersion);
+    if (!identity) {
+      fail('conflict', operation, 'Task/Attempt execution identity is stale', entity,
+        'stale_task_identity');
+    }
+    if (identity!.owner_id !== intent.ownerId || identity!.host_instance_id !== intent.hostInstanceId) {
+      fail('ownership', operation, 'Task commit owner/host does not match Attempt', entity,
+        'attempt_owner_mismatch');
     }
   }
 
@@ -453,12 +485,18 @@ export function createSqliteGitOperationStore(
       });
     }
     assertFinalizationMatchesIntent(existing.intent, input, operation);
+    if (existing.intent.operationType === GIT_OPERATION_TYPE_TASK_COMMIT) {
+      assertTaskIdentity(existing.intent, operation, entity);
+    }
     // A delayed receipt must never overwrite a newer operation's delivery axis.
     // rowid orders durable registration even when clock timestamps are identical.
-    const newer = db.prepare<[string, string, string], { id: string }>(
-      `SELECT id FROM git_operations WHERE project_id = ? AND feature_id = ?
-        AND rowid > (SELECT rowid FROM git_operations WHERE id = ?) LIMIT 1`,
-    ).get(existing.intent.projectId, existing.intent.featureId, input.operationId);
+    const newer = existing.intent.operationType === GIT_OPERATION_TYPE_FEATURE_FINAL_COMMIT
+      ? db.prepare<[string, string, string], { id: string }>(
+          `SELECT id FROM git_operations WHERE project_id = ? AND feature_id = ?
+            AND operation_type = 'feature_final_commit'
+            AND rowid > (SELECT rowid FROM git_operations WHERE id = ?) LIMIT 1`,
+        ).get(existing.intent.projectId, existing.intent.featureId, input.operationId)
+      : undefined;
     if (newer) {
       fail('conflict', operation, 'A newer Git operation owns the delivery projection', entity,
         'superseded_operation');
@@ -492,13 +530,15 @@ export function createSqliteGitOperationStore(
         'stale_revision');
     }
     // deliveryStatus 是独立结果轴：不改 Feature revision/计划审批身份，只更新投影。
-    const featureChanged = db
-      .prepare(
-        'UPDATE features SET delivery_status = ?, updated_at = ? WHERE project_id = ? AND id = ?',
-      )
-      .run(input.deliveryStatus, timestamp, existing.intent.projectId, existing.intent.featureId);
-    if (featureChanged.changes !== 1) {
-      fail('corrupt', operation, 'Feature missing while finalizing git operation', entity);
+    if (existing.intent.operationType === GIT_OPERATION_TYPE_FEATURE_FINAL_COMMIT) {
+      const featureChanged = db
+        .prepare(
+          'UPDATE features SET delivery_status = ?, updated_at = ? WHERE project_id = ? AND id = ?',
+        )
+        .run(input.deliveryStatus, timestamp, existing.intent.projectId, existing.intent.featureId);
+      if (featureChanged.changes !== 1) {
+        fail('corrupt', operation, 'Feature missing while finalizing git operation', entity);
+      }
     }
     appendEvent(
       GIT_OPERATION_SETTLED_EVENT_TYPE,

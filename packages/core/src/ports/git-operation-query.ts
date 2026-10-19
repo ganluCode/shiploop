@@ -16,7 +16,8 @@
  *   预期 HEAD（F-003/F-004 同一核对），公开面按该持久事实展示为
  *   actualParent = expectedHead；其余状态无已核对 parent（null，不冒充事实）；
  * - pending（回执缺失）与 unknown（核对后仍不确定）绝不展示为成功：
- *   status/deliveryStatus 原样保留（unknown 恒 deliveryStatus='pending'，
+ *   status/deliveryStatus 原样保留（Feature unknown 的 deliveryStatus='pending'，
+ *   Task 终态恒 not_requested，不投影 Feature 交付，
  *   pending 无回执/无 deliveryStatus），actual 事实未知保持 null；
  * - 列表复用计划分页的同一纪律（有界 limit、稳定 id 升序键集、plcur_v1_
  *   受控游标绑定数据根 + 项目 + 父级）；父级必须且只能为 Feature 或 Run 之一；
@@ -30,6 +31,7 @@ import type {
   GitOperationReceipt,
   GitOperationRecord,
   GitOperationStatus,
+  GitOperationType,
 } from './git-operations.js';
 import { WIRE_MESSAGE_SCHEMA_VERSION } from './commands.js';
 import type { PlanListRequest, PlanListResultBase, PlanRecordPage } from './queries.js';
@@ -57,7 +59,7 @@ export interface PublicGitOperationRecord {
   readonly runId: string;
   readonly attemptId: string | null;
   readonly executionVersion: number;
-  readonly operationType: 'feature_final_commit';
+  readonly operationType: GitOperationType;
   /** 不可变意图身份摘要（与回执 intentDigest 一致）。 */
   readonly intentDigest: string;
   readonly repositoryBindingId: string;
@@ -88,7 +90,7 @@ export interface PublicGitOperationRecord {
   readonly durationMs: number | null;
   /** 失败或待核对原因（受控原因码；未知为 null）。 */
   readonly reasonCode: string | null;
-  /** Feature 交付投影（pending 为 null；unknown 恒 'pending'，不显示成功）。 */
+  /** pending 为 null；Task 终态为 not_requested；Feature unknown 为 pending。 */
   readonly deliveryStatus: FeatureDeliveryStatus | null;
   /** 权威操作回执（pending 回执缺失为 null——明确的待核对展示，不是成功）。 */
   readonly receipt: GitOperationReceipt | null;

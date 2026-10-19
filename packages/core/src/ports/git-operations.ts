@@ -51,8 +51,12 @@ import {
   type ValidationContext,
 } from './validation.js';
 
-/** 本版本唯一支持的操作类型：Feature 最终提交（Task 不自行提交，F-001 政策）。 */
+/** Feature 交付与 Task 本地提交是独立操作。 */
 export const GIT_OPERATION_TYPE_FEATURE_FINAL_COMMIT = 'feature_final_commit';
+export const GIT_OPERATION_TYPE_TASK_COMMIT = 'task_commit';
+export type GitOperationType =
+  | typeof GIT_OPERATION_TYPE_FEATURE_FINAL_COMMIT
+  | typeof GIT_OPERATION_TYPE_TASK_COMMIT;
 
 /** 意图身份摘要的领域前缀（与计划/检查/交付政策摘要域隔离）。 */
 export const GIT_OPERATION_INTENT_DIGEST_DOMAIN = 'shiploop:git-operation-intent:v1';
@@ -130,11 +134,11 @@ export interface GitOperationIntent {
   readonly projectId: string;
   readonly featureId: string;
   readonly runId: string;
-  /** 适用 Attempt（Feature 最终提交通常为空；按 Task 提交策略时提供）。 */
+  /** Feature 最终提交可为空；task_commit 必须绑定当前 Attempt。 */
   readonly attemptId: string | null;
   /** 执行代次（Attempt 存在时必须等于 attempts.execution_version）。 */
   readonly executionVersion: number;
-  readonly operationType: typeof GIT_OPERATION_TYPE_FEATURE_FINAL_COMMIT;
+  readonly operationType: GitOperationType;
   readonly repositoryBindingId: string;
   /** 稳定本地仓库身份（repoIdentity；remote 不参与）。 */
   readonly repoIdentity: string;
@@ -180,6 +184,7 @@ export interface GitOperationReceipt {
   readonly exitCode: number | null;
   readonly durationMs: number | null;
   readonly reasonCode: string | null;
+  /** Task 终态恒 not_requested，不代表 Feature 交付成功。 */
   readonly deliveryStatus: FeatureDeliveryStatus;
   readonly recordedAtUtcMs: number;
 }
@@ -491,13 +496,17 @@ export function validateGitOperationRegisterInput(
       ? null
       : validateStableId(object.attemptId, context, 'attemptId');
   const executionVersion = validatePositiveInteger(object.executionVersion, context, 'executionVersion');
-  if (object.operationType !== GIT_OPERATION_TYPE_FEATURE_FINAL_COMMIT) {
+  if (object.operationType !== GIT_OPERATION_TYPE_FEATURE_FINAL_COMMIT &&
+      object.operationType !== GIT_OPERATION_TYPE_TASK_COMMIT) {
     throw validationError(
       context,
       'operationType',
-      `本版本仅支持 ${GIT_OPERATION_TYPE_FEATURE_FINAL_COMMIT}`,
+      '必须是 feature_final_commit 或 task_commit',
       object.operationType,
     );
+  }
+  if (object.operationType === GIT_OPERATION_TYPE_TASK_COMMIT && attemptId === null) {
+    throw validationError(context, 'attemptId', 'task_commit 必须关联 Attempt');
   }
   const repositoryBindingId = validateStableId(
     object.repositoryBindingId,
@@ -544,7 +553,7 @@ export function validateGitOperationRegisterInput(
     runId,
     attemptId,
     executionVersion,
-    operationType: GIT_OPERATION_TYPE_FEATURE_FINAL_COMMIT,
+    operationType: object.operationType,
     repositoryBindingId,
     repoIdentity,
     worktreePath,
@@ -570,7 +579,8 @@ export function validateGitOperationRegisterInput(
  * - unknown：actualCommit/actualTree 必须为 null（未知不能冒充事实）；
  * - failed：actual 字段可空（可能已提交但 hook 失败/核对未完成）；
  * - succeeded/no_change → deliveryStatus='succeeded'；failed → 'failed'；
- *   unknown → 'pending'（待核对，不显示成功）。
+ *   unknown → 'pending'（待核对，不显示成功）。Task 所有终态用 not_requested，
+ *   与意图的类型关系在 assertFinalizationMatchesIntent 中复核。
  */
 export function validateGitOperationFinalizeInput(
   value: unknown,
@@ -630,15 +640,15 @@ export function validateGitOperationFinalizeInput(
     if (actualCommit === null || actualTree === null) {
       throw validationError(context, 'actualCommit', 'succeeded 必须携带 actualCommit 与 actualTree');
     }
-    if (deliveryStatus !== 'succeeded') {
-      throw validationError(context, 'deliveryStatus', "succeeded 的 deliveryStatus 必须是 'succeeded'");
+    if (deliveryStatus !== 'succeeded' && deliveryStatus !== 'not_requested') {
+      throw validationError(context, 'deliveryStatus', "succeeded 的 deliveryStatus 必须是 succeeded 或 Task 的 not_requested");
     }
   } else if (status === 'no_change') {
     if (actualCommit === null || actualTree === null) {
       throw validationError(context, 'actualCommit', 'no_change 必须携带实际 HEAD 与 tree');
     }
-    if (deliveryStatus !== 'succeeded') {
-      throw validationError(context, 'deliveryStatus', "no_change 的 deliveryStatus 必须是 'succeeded'");
+    if (deliveryStatus !== 'succeeded' && deliveryStatus !== 'not_requested') {
+      throw validationError(context, 'deliveryStatus', "no_change 的 deliveryStatus 必须是 succeeded 或 Task 的 not_requested");
     }
   } else if (status === 'unknown') {
     if (actualCommit !== null || actualTree !== null) {
@@ -648,11 +658,11 @@ export function validateGitOperationFinalizeInput(
         'unknown 终态不得携带 actualCommit/actualTree（未知结果不能冒充事实）',
       );
     }
-    if (deliveryStatus !== 'pending') {
-      throw validationError(context, 'deliveryStatus', "unknown 的 deliveryStatus 必须是 'pending'（待核对）");
+    if (deliveryStatus !== 'pending' && deliveryStatus !== 'not_requested') {
+      throw validationError(context, 'deliveryStatus', "unknown 的 deliveryStatus 必须是 pending 或 Task 的 not_requested");
     }
-  } else if (deliveryStatus !== 'failed') {
-    throw validationError(context, 'deliveryStatus', "failed 的 deliveryStatus 必须是 'failed'");
+  } else if (deliveryStatus !== 'failed' && deliveryStatus !== 'not_requested') {
+    throw validationError(context, 'deliveryStatus', "failed 的 deliveryStatus 必须是 failed 或 Task 的 not_requested");
   }
 
   return {
@@ -676,6 +686,14 @@ function assertTerminalMatchesIntent(
   input: GitOperationFinalizeInput,
   operation: string,
 ): void {
+  const expectedDeliveryStatus = intent.operationType === GIT_OPERATION_TYPE_TASK_COMMIT
+    ? 'not_requested'
+    : input.status === 'unknown' ? 'pending'
+      : input.status === 'failed' ? 'failed' : 'succeeded';
+  if (input.deliveryStatus !== expectedDeliveryStatus) {
+    throw validationError({ operation }, 'deliveryStatus',
+      `操作 ${intent.operationType} 的 deliveryStatus 必须是 ${expectedDeliveryStatus}`);
+  }
   if (input.status === 'succeeded' && input.actualTree !== intent.candidateTree) {
     throw new StorageError('conflict', operation, 'succeeded actualTree must equal the fixed candidateTree', {
       entity: { type: 'git_operation', id: intent.operationId, projectId: intent.projectId },

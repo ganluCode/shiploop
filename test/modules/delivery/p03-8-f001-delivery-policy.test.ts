@@ -3,7 +3,7 @@
  * （纯契约 + 配置体系集成 + 有效配置合并 + 执行快照固定 + 真实资源纵向）。
  *
  * 覆盖（F-001 验收点）：
- * - 首版仅支持 feature_final_only：Task 保存验证成果但不自行提交；其他提交
+ * - task_and_feature 要求 Task 本地提交；feature_final_only 仅读取兼容；其他提交
  *   政策（per_task/task_each/manual/feature_final_and_push 等）一律结构化拒绝；
  * - push、PR（pull_request/merge_request）、自动合并（auto_merge）等交付动作
  *   请求被结构化拒绝，唯一支持动作是 commit（Feature 最终提交本身）；
@@ -171,8 +171,16 @@ describe('F-001 用户 Git 身份校验', () => {
  * Feature 最终提交政策（纯契约）
  * ------------------------------------------------------------------ */
 
-describe('F-001 仅 Feature 最终提交政策', () => {
-  it('接受唯一支持的 feature_final_only 完整政策', () => {
+describe('F-001 提交政策与历史兼容', () => {
+  it('接受 task_and_feature 并保留有效配置与持久化语义', () => {
+    const value = { commitMode: 'task_and_feature' as const, gitIdentity: { ...VALID_IDENTITY } };
+    expect(validateConfirmedDeliveryPolicy(value, CONTEXT, 'deliveryPolicy')).toEqual(value);
+    expect(resolveDeliveryPolicyForUse(value)).toMatchObject({ status: 'ready', policy: value });
+    expect(parseStoredSettingsPayload(JSON.stringify({ schemaVersion: 2,
+      policies: { deliveryPolicy: value } }), CONTEXT)).toMatchObject({ policies: { deliveryPolicy: value } });
+  });
+
+  it('接受历史 feature_final_only 完整政策', () => {
     const policy = validateConfirmedDeliveryPolicy(
       { commitMode: FEATURE_FINAL_COMMIT_MODE, gitIdentity: { ...VALID_IDENTITY } },
       CONTEXT,
@@ -187,11 +195,10 @@ describe('F-001 仅 Feature 最终提交政策', () => {
   it.each([
     'per_task',
     'task_each',
-    'task_and_feature',
     'manual_only',
     'feature_final_and_push',
     'feature_final_only_v2',
-  ])('拒绝未经支持的提交政策 %s（Task 不得自行提交成果）', (mode) => {
+  ])('拒绝未经支持的提交政策 %s', (mode) => {
     expectRejection(
       () =>
         validateConfirmedDeliveryPolicy(

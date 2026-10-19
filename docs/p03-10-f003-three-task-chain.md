@@ -1,4 +1,33 @@
-# F-003 三 Task 链诊断与阻塞交接
+# F-003 三 Task 链验收与历史诊断
+
+## 2026-10-19 手工修复后验收
+
+原 Task 提交缺口已修复。用户确认每个 Task 必须本地提交，push 独立；具体契约及异常边界见 `p03-10-task-local-commit.md`。新增 v30 迁移、Task 提交适配器及放行门禁，不直接修改演示数据库来补认通过。
+
+Node 22.19.0 下真实三 Task 链已通过：四次 Attempt（第二项失败后增量返工），三个成功 Task 对应三个受控提交，失败 Attempt 无提交；最终 Feature 检查通过，正式 CLI 人工批准后显式最终交付为 `no_change`。最终工作区干净、占用清空、进程均停止。
+
+重放前后均为：4 Attempts、4 Sessions、64 Events、4 Git operations（3 Task + 1 Feature）、29 Receipts、5 Verification batches、5 Checks、797 Artifacts、4 Runtime starts。事件、回执、制品用精确 COUNT 而非限行证据视图统计。
+
+| 验证 | 结果 |
+| --- | --- |
+| 真实三 Task 成功链、返工、最终批准/交付与重放 | 1 passed |
+| 真 Git hook 拒绝、经 CLI 撤掉提交身份 | 2 passed；Task 未通过、后继零启动、现场/leases 保留 |
+| 提交/进程驱动/人工继续/代码模式身份 | 52 passed |
+| 最新批量 blob 字节边界与取消 hook 补测 | 2 passed |
+| 政策、操作存储/查询、夹具与调度受影响回归 | 107 passed |
+| 分层边界 | 281 production files，0 diagnostics |
+
+证据位于 Feature workspace 的 `verifications/F-003/manual-task-commit/`：
+
+- `run-10-node22-positive.log` 与 `three-task-chain-d7b55f01-8357-4398-bdc3-ec5a0c07d49b/three-task-chain.json`：成功链、Git facts、精确重放计数。
+- `run-08-node22-negative.log` 与 `task-commit-hook-rejected-2826f3ca-e33b-49a5-991d-d50a69bbba57/`、`task-commit-identity-missing-31d101e4-c654-41af-8bf4-02c72ae5917b/`：失败门禁。
+- 各目录 `cleanup.json` 均通过。中间失败日志保留，不算最终通过证据。
+
+范围仅为 F-003 与受影响回归，不代表整个 P03-10 或 Phase 通过；普通 Run 最终收尾消费者在演示中显式装配，默认 Host 完整生产接线及真实 Pi 验收仍有后续门槛。
+
+## 以下为修复前的历史阻塞记录
+
+保留原始诊断与当时未运行项，便于审计；其中“尚未完成”“未扩展能力”等结论描述修复前现场，不覆盖上面的新验收结果。
 
 F-003 **尚未完成验收，须报告 blocked**。当前新增的两项测试通过，表示诊断能稳定复现缺口以及调度修复有效；不表示三 Task 纵向交付成功。独立输出 `three-task-chain.json` 的 `status` 为 `failed`，原因为 `task_passed_without_controlled_commit`。
 

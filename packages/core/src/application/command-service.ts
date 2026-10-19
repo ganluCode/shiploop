@@ -72,7 +72,7 @@ import type {
 import { signalFinalizationRetryAfterCommit } from './finalization-retry-execution.js';
 import { submitTaskApprovalBlock, TASK_APPROVAL_BLOCK_OPERATION } from './task-approval-block.js';
 import { submitTaskApprovalDecision, TASK_APPROVAL_DECISION_OPERATIONS } from './task-approval-decision.js';
-import { submitTaskVerificationContinue, TASK_VERIFICATION_CONTINUE_OPERATION, type TaskVerificationContinueDeps } from './task-verification-continue.js';
+import { submitTaskVerificationContinue, validateTaskVerificationContinue, TASK_VERIFICATION_CONTINUE_OPERATION, type TaskVerificationContinueDeps } from './task-verification-continue.js';
 import { FEATURE_PLAN_DECIDE_OPERATION, submitFeaturePlanDecide } from './feature-plan-decide.js';
 import { FEATURE_PLAN_IMPORT_OPERATION, submitFeaturePlanImport } from './feature-plan-import.js';
 import {
@@ -731,11 +731,14 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           replay(principal, existing, digest, operation);
         }
 
+        let continuationStopEvidence: unknown;
         if (envelope.operation === TASK_VERIFICATION_CONTINUE_OPERATION && existing === undefined) {
           if (typeof taskVerificationContinue?.verifyCurrentEvidence !== 'function') {
             throw new PublicError('unsupported', operation);
           }
-          await taskVerificationContinue.verifyCurrentEvidence(envelope);
+          options.atomicStore.transact('task.verification.continue.preflight', tx =>
+            validateTaskVerificationContinue(envelope, tx, taskVerificationContinue!));
+          continuationStopEvidence = await taskVerificationContinue.verifyCurrentEvidence(envelope);
         }
 
         // F-008：只读仓库检查（Git/文件系统）在写事务之外，仅对新命令执行；
@@ -1145,7 +1148,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
             return submitTaskVerificationContinue({ principalId: principal.principalId, capabilities: principal.capabilities,
               commandId: envelope.commandId, operation: envelope.operation, scope: envelope.scope,
               requestDigest: digest, issuedAt: envelope.issuedAt, completedAt: new Date(now).toISOString() },
-              envelope, transaction, taskVerificationContinue!);
+              envelope, transaction, taskVerificationContinue!, continuationStopEvidence ?? undefined);
           }
           if (envelope.operation === FEATURE_PLAN_DECIDE_OPERATION) {
             // P03-2 / F-002：计划批准/拒绝决策无事务外 I/O（无 Runtime/Git/检查

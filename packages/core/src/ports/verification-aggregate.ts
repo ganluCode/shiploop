@@ -88,11 +88,11 @@ export function verificationCodeIdentity(
   const excluded = options.reproducibleOutputPaths ?? [];
   const isExcluded = (path: string) => excluded.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
   const digest = (
-    entries: readonly { readonly path: string; readonly digest: string | null; readonly state: string }[],
+    entries: readonly { readonly path: string; readonly digest: string | null; readonly state: string; readonly mode?: number | null }[],
     allowOutputExclusion = true,
   ) => createHash('sha256').update(entries
     .filter((entry) => !allowOutputExclusion || !isExcluded(entry.path))
-    .map((entry) => `${entry.state}\0${entry.path}\0${entry.digest ?? ''}`)
+    .map((entry) => `${entry.state}\0${entry.path}\0${entry.digest ?? ''}\0${entry.mode ?? ''}`)
     .join('\n')).digest('hex');
   // Tracked paths are always part of the source identity. An output rule can
   // cover only untracked/ignored generated files; it cannot hide a tracked edit.

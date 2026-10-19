@@ -4423,7 +4423,10 @@ function validatePublicGitOperationWire(operation: HostOperation, value: unknown
   requireStableId(operation, record.runId);
   requireStableIdOrNull(operation, record.attemptId);
   requirePositiveInteger(operation, record.executionVersion);
-  if (record.operationType !== 'feature_final_commit') {
+  if (record.operationType !== 'feature_final_commit' && record.operationType !== 'task_commit') {
+    malformed(operation, 'git_operation_type_invalid');
+  }
+  if (record.operationType === 'task_commit' && record.attemptId === null) {
     malformed(operation, 'git_operation_type_invalid');
   }
   requireSha256Hex(operation, record.intentDigest, 'git_operation_digest_invalid');
@@ -4488,12 +4491,13 @@ function validatePublicGitOperationWire(operation: HostOperation, value: unknown
   if (record.receipt === null || record.deliveryStatus === null || record.settledAt === null) {
     malformed(operation, 'git_operation_terminal_facts_invalid');
   }
+  const taskCommit = record.operationType === 'task_commit';
   if (record.status === 'unknown') {
     if (
       record.actualCommit !== null ||
       record.actualTree !== null ||
       record.actualParent !== null ||
-      record.deliveryStatus !== 'pending'
+      record.deliveryStatus !== (taskCommit ? 'not_requested' : 'pending')
     ) {
       malformed(operation, 'git_operation_unknown_facts_invalid');
     }
@@ -4503,7 +4507,7 @@ function validatePublicGitOperationWire(operation: HostOperation, value: unknown
       record.actualTree === null ||
       record.actualTree !== record.candidateTree ||
       record.actualParent !== record.expectedHead ||
-      record.deliveryStatus !== 'succeeded'
+      record.deliveryStatus !== (taskCommit ? 'not_requested' : 'succeeded')
     ) {
       malformed(operation, 'git_operation_succeeded_facts_invalid');
     }
@@ -4512,11 +4516,11 @@ function validatePublicGitOperationWire(operation: HostOperation, value: unknown
       record.actualCommit !== record.expectedHead ||
       record.actualTree === null ||
       record.actualParent !== null ||
-      record.deliveryStatus !== 'succeeded'
+      record.deliveryStatus !== (taskCommit ? 'not_requested' : 'succeeded')
     ) {
       malformed(operation, 'git_operation_no_change_facts_invalid');
     }
-  } else if (record.deliveryStatus !== 'failed' || record.actualParent !== null) {
+  } else if (record.deliveryStatus !== (taskCommit ? 'not_requested' : 'failed') || record.actualParent !== null) {
     malformed(operation, 'git_operation_failed_facts_invalid');
   }
   const receipt = validateGitOperationReceiptWire(operation, record.receipt);

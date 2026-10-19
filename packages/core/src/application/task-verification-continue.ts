@@ -23,7 +23,7 @@ export type TaskVerificationContinueEnvelope = Extract<ValidatedCommandEnvelope,
 
 export interface TaskVerificationContinueDeps {
   /** 在短写事务外核对当前代码、环境及证据正文；无法证明有效时必须拒绝。 */
-  verifyCurrentEvidence(envelope: TaskVerificationContinueEnvelope): Promise<void>;
+  verifyCurrentEvidence(envelope: TaskVerificationContinueEnvelope): Promise<unknown>;
   readonly attempts: Pick<AttemptStore, 'getAttempt'>;
   readonly verification: Pick<VerificationStore, 'getVerificationBatch'>;
   /** 同库短写事务内复用 F-010 放行逻辑（不开嵌套事务）。 */
@@ -46,16 +46,10 @@ export function assertVerificationReuseIdentity(
   }
 }
 
-export function submitTaskVerificationContinue(identity: {
-  readonly principalId: string;
-  readonly capabilities: ReadonlySet<AppCapability>;
-  readonly commandId: string;
-  readonly operation: typeof TASK_VERIFICATION_CONTINUE_OPERATION;
-  readonly scope: TaskVerificationContinueEnvelope['scope'];
-  readonly requestDigest: string;
-  readonly issuedAt: string;
-  readonly completedAt: string;
-}, envelope: TaskVerificationContinueEnvelope, transaction: CommandTransaction, deps: TaskVerificationContinueDeps): CommandReceipt {
+/** Used before external Git I/O and again in its authorization transaction. */
+export function validateTaskVerificationContinue(envelope: TaskVerificationContinueEnvelope,
+  transaction: CommandTransaction, deps: Pick<TaskVerificationContinueDeps, 'attempts' | 'verification'>) {
+  const identity = { operation: TASK_VERIFICATION_CONTINUE_OPERATION };
   const projectId = envelope.scope.projectId;
   const payload = envelope.payload;
   transaction.getProject(projectId);
@@ -96,6 +90,23 @@ export function submitTaskVerificationContinue(identity: {
     || batch.status !== 'passed') {
     throw new PublicError('conflict', identity.operation, undefined, { details: { reason: 'verification_batch_identity_mismatch' } });
   }
+  return { attempt, batch };
+}
+
+export function submitTaskVerificationContinue(identity: {
+  readonly principalId: string;
+  readonly capabilities: ReadonlySet<AppCapability>;
+  readonly commandId: string;
+  readonly operation: typeof TASK_VERIFICATION_CONTINUE_OPERATION;
+  readonly scope: TaskVerificationContinueEnvelope['scope'];
+  readonly requestDigest: string;
+  readonly issuedAt: string;
+  readonly completedAt: string;
+}, envelope: TaskVerificationContinueEnvelope, transaction: CommandTransaction, deps: TaskVerificationContinueDeps,
+  stopEvidence?: unknown): CommandReceipt {
+  const projectId = envelope.scope.projectId;
+  const payload = envelope.payload;
+  const { attempt } = validateTaskVerificationContinue(envelope, transaction, deps);
   // 复用既有放行：批准仍缺失/新增阻塞时保持等待（不重复扣预算/写事件）；
   // 批准有效时 CAS 完成 Attempt/Task；迟到/过期身份由 submitVerification 拒绝。
   const submission = deps.lifecycle.submitVerificationInTransaction(transaction, {
@@ -103,7 +114,7 @@ export function submitTaskVerificationContinue(identity: {
     owner: attempt.owner, hostInstanceId: attempt.hostInstanceId, executionVersion: attempt.executionVersion,
     verificationBatchId: payload.verificationBatchId, codeDigest: payload.codeDigest,
     observationDigest: payload.observationDigest, outcome: 'passed',
-  });
+  }, stopEvidence);
   const receipt = createCompletedReceipt({ ...identity, resultRef: createResultRef(randomBytes(32)),
     result: { taskId: payload.taskId, attemptId: payload.attemptId, verificationBatchId: payload.verificationBatchId,
       disposition: submission.disposition, status: submission.status, waitingFor: submission.waitingFor,
