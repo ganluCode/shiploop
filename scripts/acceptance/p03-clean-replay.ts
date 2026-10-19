@@ -6,7 +6,7 @@
  * 然后从非开发 cwd 连续两次调用公共 `npm run accept:p03`。两轮使用独立的
  * HOME/TMP/XDG/报告根，报告在快照清理前复制到证据目录并逐目录重验。
  */
-import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
@@ -63,7 +63,22 @@ interface ReplayRunRecord {
 
 function writeJson(path: string, value: unknown): void {
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+  const temporary = `${path}.${process.pid}.tmp`;
+  try {
+    writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+    renameSync(temporary, path);
+  } finally {
+    rmSync(temporary, { force: true });
+  }
+}
+
+function isolatedBaseEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env };
+  // npm lifecycle/prefix variables belong to the launching checkout, not the clone.
+  for (const key of Object.keys(env)) {
+    if (/^npm_(?:config_|package_|lifecycle_)/i.test(key) || ['INIT_CWD', 'PWD', 'OLDPWD'].includes(key)) delete env[key];
+  }
+  return env;
 }
 
 function recordLog(
@@ -79,7 +94,7 @@ function recordLog(
   );
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, text, 'utf8');
-  writeFileSync(`${path}.exitcode`, `${result.code ?? 1}\n`, 'utf8');
+  writeFileSync(`${path}.exitcode`, `${result.code === null ? 'unknown' : result.code}\n`, 'utf8');
   writeJson(`${path}.json`, {
     step,
     kind: result.kind,
@@ -122,10 +137,10 @@ function runSucceeded(result: BoundedResult): boolean {
   return result.kind === 'exit' && result.code === 0;
 }
 
-async function runPrepare(snapshot: CleanSnapshot, outDir: string): Promise<StepRecord[]> {
+async function runPrepare(snapshot: CleanSnapshot, outDir: string, records: StepRecord[]): Promise<StepRecord[]> {
   const npm = resolveNpm();
   const env: NodeJS.ProcessEnv = {
-    ...process.env,
+    ...isolatedBaseEnv(),
     HOME: join(snapshot.tempRoot, 'prepare-home'),
     TMPDIR: join(snapshot.tempRoot, 'prepare-tmp'),
     npm_config_cache: join(snapshot.tempRoot, 'prepare-npm-cache'),
@@ -138,7 +153,6 @@ async function runPrepare(snapshot: CleanSnapshot, outDir: string): Promise<Step
   for (const directory of [env.HOME, env.TMPDIR, env.npm_config_cache, env.XDG_CONFIG_HOME, env.XDG_CACHE_HOME, env.XDG_DATA_HOME, env.XDG_STATE_HOME]) {
     if (directory !== undefined) mkdirSync(directory, { recursive: true });
   }
-  const records: StepRecord[] = [];
   for (const [id, args] of [['npm-ci', ['ci']] as const, ['build', ['run', 'build']] as const]) {
     const result = await runNpm(npm, args, snapshot.snapshotRoot, PREPARE_TIMEOUT_MS, env);
     records.push({
@@ -152,6 +166,7 @@ async function runPrepare(snapshot: CleanSnapshot, outDir: string): Promise<Step
       timedOut: result.kind === 'timeout',
       logPath: recordLog(outDir, id, result, snapshot.replacements),
     });
+    writeJson(join(outDir, 'prepare.json'), { commit: snapshot.commit, steps: records });
     if (!runSucceeded(result)) break;
   }
   return records;
@@ -165,7 +180,7 @@ async function runAccept(
   const runRoot = join(snapshot.tempRoot, `accept-${index}`);
   const reportRoot = join(runRoot, 'reports');
   const env: NodeJS.ProcessEnv = {
-    ...process.env,
+    ...isolatedBaseEnv(),
     HOME: join(runRoot, 'home'),
     TMPDIR: join(runRoot, 'tmp'),
     npm_config_cache: join(runRoot, 'npm-cache'),
@@ -223,16 +238,21 @@ async function runAccept(
 }
 
 export async function runP03CleanReplay(options: P03CleanReplayOptions = {}): Promise<{ readonly ok: boolean; readonly commit: string | null; readonly problems: readonly string[] }> {
+  if (options.round !== undefined && options.round !== 1 && options.round !== 2) throw new Error('round must be 1 or 2');
   const scriptDir = dirname(fileURLToPath(import.meta.url));
   const root = resolve(options.root ?? join(scriptDir, '..', '..'));
   const outDir = resolve(options.outDir ?? join(root, DEFAULT_OUT_DIR));
   const log = options.log ?? ((message: string): void => {
     process.stdout.write(`${message}\n`);
   });
+  if (existsSync(outDir) && readdirSync(outDir).length > 0) throw new Error('Evidence directory must be empty; choose a new output directory');
   mkdirSync(outDir, { recursive: true });
   const problems: string[] = [];
   let snapshot: CleanSnapshot | null = null;
   let prepared = false;
+  let stopConfirmed = true;
+  const prepare: StepRecord[] = [];
+  const runs: ReplayRunRecord[] = [];
   try {
     snapshot = await createCleanSnapshot({
       root,
@@ -241,12 +261,12 @@ export async function runP03CleanReplay(options: P03CleanReplayOptions = {}): Pr
       ignorePorcelainPrefixes: ['artifacts'],
     });
     log(`p03-clean-replay: commit ${snapshot.commit}`);
-    const prepare = await runPrepare(snapshot, outDir);
+    await runPrepare(snapshot, outDir, prepare);
+    if (prepare.some(step => step.kind === 'spawn-error')) stopConfirmed = false;
     prepared = prepare.length === 2 && prepare.every((entry) => entry.exitCode === 0 && entry.kind === 'exit');
     writeJson(join(outDir, 'prepare.json'), { commit: snapshot.commit, steps: prepare });
     if (!prepared) problems.push('npm ci/build 未全部成功，后续 accept:p03 未具备可运行前提');
 
-    const runs: ReplayRunRecord[] = [];
     const indices: readonly (1 | 2)[] = options.round === undefined ? [1, 2] : [options.round];
     for (const index of indices) {
       if (!prepared) break;
@@ -256,6 +276,9 @@ export async function runP03CleanReplay(options: P03CleanReplayOptions = {}): Pr
       if (run.step.exitCode !== 0) problems.push(`第 ${index} 次 accept:p03 退出码为 ${String(run.step.exitCode)}`);
       if (!run.reportVerification.ok) problems.push(...run.reportVerification.problems.map((problem) => `第 ${index} 次报告：${problem}`));
       if (run.reportSha256 === '') problems.push(`第 ${index} 次缺少完整报告`);
+      if (run.step.kind === 'spawn-error') stopConfirmed = false;
+      writeJson(join(outDir, 'replay.json'), { schemaVersion: 1, commit: snapshot.commit, steps: [...prepare, ...runs.map(item => item.step)], runs, problems });
+      if (run.step.exitCode !== 0 || run.step.kind !== 'exit' || !run.reportVerification.ok || run.reportSha256 === '') break;
     }
     if (runs.length !== indices.length) problems.push(`实际完成 ${runs.length}/${indices.length} 次 accept:p03`);
     writeJson(join(outDir, 'replay.json'), {
@@ -264,15 +287,16 @@ export async function runP03CleanReplay(options: P03CleanReplayOptions = {}): Pr
       branch: snapshot.branch,
       steps: [...prepare, ...runs.map((run) => run.step)],
       runs,
-      independentResources: [1, 2].map((index) => ({ index, home: `<TMPDIR>/accept-${index}/home`, tmp: `<TMPDIR>/accept-${index}/tmp`, reportRoot: `<SNAPSHOT-ROOT>/reports-${index}` })),
+      independentResources: indices.map((index) => ({ index, home: `<TMPDIR>/accept-${index}/home`, tmp: `<TMPDIR>/accept-${index}/tmp`, reportRoot: `<TMPDIR>/accept-${index}/reports` })),
       problems,
     });
   } catch (error) {
+    if (snapshot !== null) stopConfirmed = false;
     problems.push(error instanceof Error ? error.message : String(error));
-    writeJson(join(outDir, 'replay.json'), { schemaVersion: 1, commit: snapshot?.commit ?? null, steps: [], runs: [], problems });
+    writeJson(join(outDir, 'replay.json'), { schemaVersion: 1, commit: snapshot?.commit ?? null, steps: [...prepare, ...runs.map(run => run.step)], runs, problems });
   } finally {
     killTrackedProcessGroups();
-    if (snapshot !== null) {
+    if (snapshot !== null && stopConfirmed) {
       try {
         assertSafeTempRoot(snapshot.tempRoot, TEMP_PREFIX);
         rmSync(snapshot.tempRoot, { recursive: true, force: true });
@@ -283,10 +307,11 @@ export async function runP03CleanReplay(options: P03CleanReplayOptions = {}): Pr
   }
   const replayPath = join(outDir, 'replay.json');
   const cleanup = {
-    confirmed: snapshot === null || !existsSync(snapshot.tempRoot),
-    processesGone: true,
+    confirmed: stopConfirmed && (snapshot === null || !existsSync(snapshot.tempRoot)),
+    processesGone: stopConfirmed,
     ownedTempRoot: '<TMPDIR>',
   };
+  if (!stopConfirmed) problems.push('进程停止未确认，保留临时快照；需要核验后再处置');
   writeJson(join(outDir, 'cleanup-manifest.json'), cleanup);
   if (!cleanup.confirmed) problems.push('cleanup manifest 未确认临时快照删除');
   const replay = existsSync(replayPath) ? JSON.parse(readFileSync(replayPath, 'utf8')) as Record<string, unknown> : {};

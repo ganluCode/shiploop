@@ -1,0 +1,9 @@
+{
+  "schema_version": 2,
+  "task_id": "F-018",
+  "projects": [{"id": "shiploop", "tests": [
+    {"file": "test/modules/acceptance/p03-10-clean-replay-control.test.ts", "all": true},
+    {"file": "test/modules/acceptance/p03-10-checklist-config.test.ts", "all": true},
+    {"file": "test/modules/acceptance/p03-10-phase-report.test.ts", "all": true}
+  ]}]
+}

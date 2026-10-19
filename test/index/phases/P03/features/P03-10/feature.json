@@ -74,6 +74,11 @@
       "task_id": "F-016",
       "index": "test/index/phases/P03/features/P03-10/tasks/F-016.json",
       "description": "P03 阶段报告聚合、证据索引与严格退出结论：清单 FR/T 映射与分层、真实断言/副作用门禁、not_run 分类、cleanup/产品报告引用、证据 hash 重验与凭据/开发机路径脱敏。"
+    },
+    {
+      "task_id": "F-018",
+      "index": "test/index/phases/P03/features/P03-10/tasks/F-018.json",
+      "description": "复跑工具控制器定向验证；两次完整阶段复跑由人工独立发起，不在 Task 或 Feature 索引内执行。"
     }
   ]
 }
