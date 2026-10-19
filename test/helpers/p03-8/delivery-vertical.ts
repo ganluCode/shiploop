@@ -80,8 +80,8 @@ export interface DeliveryVertical {
 
 export async function openDeliveryVertical(options: { brokenDownstream?: boolean; noChange?: boolean; taskCommits?: boolean; finalChanges?: boolean } = {}): Promise<DeliveryVertical> {
   const fixture = await openBindingFixture({ secondTask: true, secondTaskDependsOnFirst: true,
-    ...(options.taskCommits ? { deliveryPolicy: { commitMode: 'task_and_feature' as const,
-      gitIdentity: { name: 'Confirmed User', email: 'confirmed@example.test', confirmed: true as const }, deliveryActions: ['commit'] as const } } : {}) });
+    deliveryPolicy: { commitMode: 'task_and_feature',
+      gitIdentity: { name: 'Confirmed User', email: 'confirmed@example.test', confirmed: true }, deliveryActions: ['commit'] } });
   const db: Database.Database = fixture.session.database;
   const owner = createLocalOwnerPrincipal();
   const atomic = createSqliteAtomicCommandStore(fixture.session, { nowUtcMs });

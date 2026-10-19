@@ -4,7 +4,7 @@ import { SQLITE_MIGRATIONS } from '../../../../packages/core/src/adapters/sqlite
 import { APP_CAPABILITIES, COMMAND_OPERATIONS } from '../../../../packages/core/src/ports/commands.ts';
 import { RUN_OUTCOME_SETTLEMENT_OUTCOMES, RUN_PROGRESS_EVIDENCE_TYPES } from '../../../../packages/core/src/ports/execution-store.ts';
 
-const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
+const read = (path: string) => readFileSync(new URL(`../../../../${path}`, import.meta.url), 'utf8');
 const doc = read('docs/p03-3-run-outcome-settlement-contract.md');
 
 describe('F-008 Run outcome settlement contract', () => {

@@ -132,42 +132,42 @@
 
 | 分支 | 用例（`test/`） | 证据 |
 |---|---|---|
-| 正常：inspect 只读预览 HEAD/脏状态；init `--confirm` 经命令路径注册；overview 注册/健康分开 | `p02-3-inspect-overview.test.ts`、`p02-3-init-overview-vertical.test.ts`、`p02-3-integration-regression.test.ts`（FR-1）、`app-cli-execute.test.ts` | 证据 §2；f020-verify.log |
-| 失败：非 Git/不存在/非法路径拒绝、不新建目录/不 git init | `p02-3-inspect-overview.test.ts`、`p02-3-init-overview-vertical.test.ts` | 证据 §2 |
-| 失败：已注册别名复用 / 不可见项目 forbidden | `p02-3-inspect-overview.test.ts`、`p02-3-init-overview-vertical.test.ts` | 证据 §2 |
-| 失败：脏工作区原样保留（**源文件不变**） | `p02-3-inspect-overview.test.ts`、`p02-3-init-overview-vertical.test.ts`、`p02-3-integration-regression.test.ts`、`app-cli-execute.test.ts` | 证据 §4「源文件不变」 |
-| 失败：无 HEAD 明确确认（不猜 main/不建 commit）；取消确认 → `not_run` 零副作用 | `p02-3-inspect-overview.test.ts`、`p02-3-init-overview-vertical.test.ts` | 证据 §2 |
-| 失败：恶意初始化脚本绝不执行（哨兵缺失、摘要不变） | `p02-3-inspect-overview.test.ts`、`p02-3-init-overview-vertical.test.ts`、`p02-3-fixture-kit.test.ts` | 证据 §2 |
+| 正常：inspect 只读预览 HEAD/脏状态；init `--confirm` 经命令路径注册；overview 注册/健康分开 | `test/modules/onboarding/p02-3-inspect-overview.test.ts`、`test/modules/onboarding/p02-3-init-overview-vertical.test.ts`、`test/modules/onboarding/p02-3-integration-regression.test.ts`（FR-1）、`test/modules/cli/app-cli-execute.test.ts` | 证据 §2；f020-verify.log |
+| 失败：非 Git/不存在/非法路径拒绝、不新建目录/不 git init | `test/modules/onboarding/p02-3-inspect-overview.test.ts`、`test/modules/onboarding/p02-3-init-overview-vertical.test.ts` | 证据 §2 |
+| 失败：已注册别名复用 / 不可见项目 forbidden | `test/modules/onboarding/p02-3-inspect-overview.test.ts`、`test/modules/onboarding/p02-3-init-overview-vertical.test.ts` | 证据 §2 |
+| 失败：脏工作区原样保留（**源文件不变**） | `test/modules/onboarding/p02-3-inspect-overview.test.ts`、`test/modules/onboarding/p02-3-init-overview-vertical.test.ts`、`test/modules/onboarding/p02-3-integration-regression.test.ts`、`test/modules/cli/app-cli-execute.test.ts` | 证据 §4「源文件不变」 |
+| 失败：无 HEAD 明确确认（不猜 main/不建 commit）；取消确认 → `not_run` 零副作用 | `test/modules/onboarding/p02-3-inspect-overview.test.ts`、`test/modules/onboarding/p02-3-init-overview-vertical.test.ts` | 证据 §2 |
+| 失败：恶意初始化脚本绝不执行（哨兵缺失、摘要不变） | `test/modules/onboarding/p02-3-inspect-overview.test.ts`、`test/modules/onboarding/p02-3-init-overview-vertical.test.ts`、`test/modules/onboarding/p02-3-fixture-kit.test.ts` | 证据 §2 |
 
 ### 5.2 FR-2 基线检查（证据 §3）
 
 | 分支 | 用例（`test/`） | 证据 |
 |---|---|---|
-| 正常：授权 → 受监督进程 → 逐项结果/输出制品/代码身份 | `p02-3-baseline-preview-authorize.test.ts`、`baseline-execution.test.ts`、`p02-3-baseline-cli-vertical.test.ts`、`p02-3-integration-regression.test.ts`（FR-2） | 证据 §3、§4「授权内容」 |
-| 正常：取消/超时确认停止后收尾（**进程树已停止**） | `supervised-process-stopping.test.ts`、`supervised-command-process.test.ts`、`p02-3-integration-regression.test.ts`、`baseline-host-recovery.test.ts` | 证据 §4「进程树已停止」 |
-| 失败：缺命令/未知脚本/权限拒绝（`error`） | `p02-3-baseline-preview-authorize.test.ts`、`baseline-execution.test.ts`、`p02-3-integration-regression.test.ts` | 证据 §3 |
-| 失败：超时/取消/停止未确认/源变化/证据缺口/输出溢出（`inconclusive`） | `supervised-process-stopping.test.ts`、`baseline-evidence.test.ts`、`baseline-execution.test.ts`、`p02-3-integration-regression.test.ts` | 证据 §3 |
-| 失败：被拒授权（`not_run`，**拒绝零启动**） | `p02-3-baseline-preview-authorize.test.ts`、`p02-3-baseline-cli-vertical.test.ts` | 证据 §4「拒绝零启动」 |
-| 失败：检查失败不撤销项目注册 | `p02-3-integration-regression.test.ts`、`p02-3-baseline-cli-vertical.test.ts`、`p02-3-inspect-overview.test.ts` | 证据 §3 |
-| 失败：单并发占用冲突（`resource_busy`） | `p02-3-integration-regression.test.ts`、`sqlite-baseline-store.test.ts`、`baseline-execution.test.ts` | 证据 §3 |
+| 正常：授权 → 受监督进程 → 逐项结果/输出制品/代码身份 | `test/modules/onboarding/p02-3-baseline-preview-authorize.test.ts`、`test/modules/onboarding/baseline-execution.test.ts`、`test/modules/onboarding/p02-3-baseline-cli-vertical.test.ts`、`test/modules/onboarding/p02-3-integration-regression.test.ts`（FR-2） | 证据 §3、§4「授权内容」 |
+| 正常：取消/超时确认停止后收尾（**进程树已停止**） | `test/modules/runtime/supervised-process-stopping.test.ts`、`test/modules/runtime/supervised-command-process.test.ts`、`test/modules/onboarding/p02-3-integration-regression.test.ts`、`test/modules/onboarding/baseline-host-recovery.test.ts` | 证据 §4「进程树已停止」 |
+| 失败：缺命令/未知脚本/权限拒绝（`error`） | `test/modules/onboarding/p02-3-baseline-preview-authorize.test.ts`、`test/modules/onboarding/baseline-execution.test.ts`、`test/modules/onboarding/p02-3-integration-regression.test.ts` | 证据 §3 |
+| 失败：超时/取消/停止未确认/源变化/证据缺口/输出溢出（`inconclusive`） | `test/modules/runtime/supervised-process-stopping.test.ts`、`test/modules/onboarding/baseline-evidence.test.ts`、`test/modules/onboarding/baseline-execution.test.ts`、`test/modules/onboarding/p02-3-integration-regression.test.ts` | 证据 §3 |
+| 失败：被拒授权（`not_run`，**拒绝零启动**） | `test/modules/onboarding/p02-3-baseline-preview-authorize.test.ts`、`test/modules/onboarding/p02-3-baseline-cli-vertical.test.ts` | 证据 §4「拒绝零启动」 |
+| 失败：检查失败不撤销项目注册 | `test/modules/onboarding/p02-3-integration-regression.test.ts`、`test/modules/onboarding/p02-3-baseline-cli-vertical.test.ts`、`test/modules/onboarding/p02-3-inspect-overview.test.ts` | 证据 §3 |
+| 失败：单并发占用冲突（`resource_busy`） | `test/modules/onboarding/p02-3-integration-regression.test.ts`、`test/modules/storage/sqlite/sqlite-baseline-store.test.ts`、`test/modules/onboarding/baseline-execution.test.ts` | 证据 §3 |
 
 ### 5.3 F-020 六项关键证据 → 实际用例（证据 §4 逐项展开）
 
 | 证据项 | 用例（`test/`） |
 |---|---|
-| 源文件不变 | `p02-3-inspect-overview.test.ts`、`p02-3-init-overview-vertical.test.ts`、`supervised-process-stopping.test.ts`、`p02-3-integration-regression.test.ts`、`app-cli-execute.test.ts` |
-| 授权内容 | `p02-3-baseline-preview-authorize.test.ts`、`sqlite-baseline-store.test.ts`、`p02-3-baseline-host-routes.test.ts` |
-| 进程树已停止 | `supervised-process-stopping.test.ts`、`p02-3-fixture-kit.test.ts`、`p02-3-integration-regression.test.ts`、`p02-3-baseline-cli-vertical.test.ts` |
-| 拒绝零启动 | `p02-3-baseline-preview-authorize.test.ts`、`p02-3-baseline-cli-vertical.test.ts`、`p02-3-init-overview-vertical.test.ts` |
-| 重启可查询 | `baseline-host-recovery.test.ts`、`p02-3-baseline-host-routes.test.ts`、`p02-3-baseline-cli-vertical.test.ts`、`p02-3-integration-regression.test.ts`、`docs-p02-3-operations.test.ts` |
-| 重复请求无副作用 | `p02-3-baseline-preview-authorize.test.ts`、`p02-3-integration-regression.test.ts`、`atomic-commands.test.ts`、`p02-3-baseline-host-routes.test.ts`、`p02-3-init-overview-vertical.test.ts` |
+| 源文件不变 | `test/modules/onboarding/p02-3-inspect-overview.test.ts`、`test/modules/onboarding/p02-3-init-overview-vertical.test.ts`、`test/modules/runtime/supervised-process-stopping.test.ts`、`test/modules/onboarding/p02-3-integration-regression.test.ts`、`test/modules/cli/app-cli-execute.test.ts` |
+| 授权内容 | `test/modules/onboarding/p02-3-baseline-preview-authorize.test.ts`、`test/modules/storage/sqlite/sqlite-baseline-store.test.ts`、`test/modules/onboarding/p02-3-baseline-host-routes.test.ts` |
+| 进程树已停止 | `test/modules/runtime/supervised-process-stopping.test.ts`、`test/modules/onboarding/p02-3-fixture-kit.test.ts`、`test/modules/onboarding/p02-3-integration-regression.test.ts`、`test/modules/onboarding/p02-3-baseline-cli-vertical.test.ts` |
+| 拒绝零启动 | `test/modules/onboarding/p02-3-baseline-preview-authorize.test.ts`、`test/modules/onboarding/p02-3-baseline-cli-vertical.test.ts`、`test/modules/onboarding/p02-3-init-overview-vertical.test.ts` |
+| 重启可查询 | `test/modules/onboarding/baseline-host-recovery.test.ts`、`test/modules/onboarding/p02-3-baseline-host-routes.test.ts`、`test/modules/onboarding/p02-3-baseline-cli-vertical.test.ts`、`test/modules/onboarding/p02-3-integration-regression.test.ts`、`test/modules/onboarding/docs-p02-3-operations.test.ts` |
+| 重复请求无副作用 | `test/modules/onboarding/p02-3-baseline-preview-authorize.test.ts`、`test/modules/onboarding/p02-3-integration-regression.test.ts`、`test/modules/commands/atomic-commands.test.ts`、`test/modules/onboarding/p02-3-baseline-host-routes.test.ts`、`test/modules/onboarding/p02-3-init-overview-vertical.test.ts` |
 
 ### 5.4 验收要求类别 → 证据（PRD §3.3 / F-020 验收）
 
 | 类别 | 覆盖用例与证据 |
 |---|---|
-| 不执行未知脚本/不改源文件/不自动安装依赖 | `p02-3-inspect-overview.test.ts`、`p02-3-init-overview-vertical.test.ts`、`p02-3-integration-regression.test.ts`（哨兵缺失、源文件字节/摘要不变）；`docs/skills/` Skill 明确不自动安装；证据 §4 |
-| 拒绝授权 `not_run`；失败/超时独立结果；挂起可取消且进程已停止 | `p02-3-baseline-preview-authorize.test.ts`、`supervised-process-stopping.test.ts`、`p02-3-integration-regression.test.ts`、`p02-3-baseline-cli-vertical.test.ts`；证据 §3/§4 |
+| 不执行未知脚本/不改源文件/不自动安装依赖 | `test/modules/onboarding/p02-3-inspect-overview.test.ts`、`test/modules/onboarding/p02-3-init-overview-vertical.test.ts`、`test/modules/onboarding/p02-3-integration-regression.test.ts`（哨兵缺失、源文件字节/摘要不变）；`docs/skills/` Skill 明确不自动安装；证据 §4 |
+| 拒绝授权 `not_run`；失败/超时独立结果；挂起可取消且进程已停止 | `test/modules/onboarding/p02-3-baseline-preview-authorize.test.ts`、`test/modules/runtime/supervised-process-stopping.test.ts`、`test/modules/onboarding/p02-3-integration-regression.test.ts`、`test/modules/onboarding/p02-3-baseline-cli-vertical.test.ts`；证据 §3/§4 |
 | 正常路径 + 关键失败分支逐项、以实际状态/文件/返回断言 | 证据 §2/§3 映射表；全部经真实 SQLite/Git/进程/HTTP 断言，非日志文字检查 |
 | `npm run verify` 测试/类型/构建通过；`not_run` 不折算 | §4 命令 1~7 真实退出码；§7 `not_run` 显式记录 |
 | 记录受测 commit、命令/退出码、证据位置与已知缺口 | 本报告头部、§4、§5、§7 |

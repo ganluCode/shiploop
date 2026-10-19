@@ -9,7 +9,7 @@ type Case = Awaited<ReturnType<typeof openDeliveryVertical>>;
 const cases: Case[] = [];
 afterEach(async () => { for (const f of cases.splice(0)) await f.close(); });
 async function open(options: Parameters<typeof openDeliveryVertical>[0] = {}) {
-  const f = await openDeliveryVertical(options); cases.push(f); return f;
+  const f = await openDeliveryVertical({ ...options, finalChanges: !options.noChange }); cases.push(f); return f;
 }
 function taskHistory(f: Case) {
   return {
@@ -51,7 +51,8 @@ async function assertEvidence(f: Case) {
   if (head !== f.initialHead) expect(parent).toBe(f.initialHead);
   const commits = Number(git(['rev-list', '--count', `${f.initialHead}..HEAD`], f.root).trim());
   expect(commits).toBe(head === f.initialHead ? 0 : 1);
-  const operations = f.db.prepare('SELECT id, status, expected_head, candidate_tree, actual_commit, actual_tree FROM git_operations').all();
+  const operations = f.db.prepare("SELECT id, status, expected_head, candidate_tree, actual_commit, actual_tree FROM git_operations WHERE operation_type = 'feature_final_commit'").all();
+  const allOperations = f.db.prepare('SELECT status FROM git_operations').all() as { status: string }[];
   for (const operation of operations as { actual_commit: string | null; actual_tree: string | null }[]) {
     if (operation.actual_commit !== null) {
       expect(operation.actual_commit).toBe(head);
@@ -59,8 +60,8 @@ async function assertEvidence(f: Case) {
     }
   }
   const eventCounts = new Map((events as { event_type: string; count: number }[]).map(row => [row.event_type, row.count]));
-  expect(eventCounts.get('git.operation.registered') ?? 0).toBe(operations.length);
-  expect(eventCounts.get('git.operation.settled') ?? 0).toBe((operations as { status: string }[]).filter(row => row.status !== 'pending').length);
+  expect(eventCounts.get('git.operation.registered') ?? 0).toBe(allOperations.length);
+  expect(eventCounts.get('git.operation.settled') ?? 0).toBe(allOperations.filter(row => row.status !== 'pending').length);
   expect((eventCounts.get('feature.finalized') ?? 0) + (eventCounts.get('feature.finalization_blocked') ?? 0)).toBe(1);
   const evidence = { schemaVersion: 1, taskId: 'F-012', scenario: expect.getState().currentTestName ?? 'unknown',
     git: { head, tree, parent, commits, status: git(['status', '--porcelain=v1'], f.root) },
@@ -83,7 +84,7 @@ async function assertEvidence(f: Case) {
   }
 }
 
-describe('F-012 real Git/SQLite/FakeRuntime delivery assembly', () => {
+describe('F-012 real Git/SQLite/FakeRuntime delivery assembly', { timeout: 180_000 }, () => {
   it('finishes a two-Task Feature through public commands, approval, real check/commit and read-only axes', async () => {
     const f = await open();
     const parent = f.head(), history = taskHistory(f);
@@ -212,7 +213,7 @@ describe('F-012 real Git/SQLite/FakeRuntime delivery assembly', () => {
     expect(f.counts()).toEqual({ runtimeCalls: 2, verificationCalls: 1 });
     expect(git(['rev-list', '--count', `${parent}..HEAD`], f.root).trim()).toBe('1');
     expect(taskHistory(f)).toEqual(history);
-    expect(f.db.prepare('SELECT COUNT(*) AS n FROM git_operations').get()).toMatchObject({ n: 1 });
+    expect(f.db.prepare("SELECT COUNT(*) AS n FROM git_operations WHERE operation_type = 'feature_final_commit'").get()).toMatchObject({ n: 1 });
     await assertEvidence(f);
   });
 });

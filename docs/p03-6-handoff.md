@@ -75,16 +75,16 @@
 
 | 场景 | 测试文件 |
 |---|---|
-| 缺 Runtime/能力/输入 | `p03-6-runtime-host-wiring.test.ts`（runtime_not_found 不认领）、`p03-6-runtime-execution-contract.test.ts`、`p03-6-execution-input-binding.test.ts` |
-| 身份或权限错误 | `p03-6-runtime-host-wiring.test.ts`（401/400/409/跨项目 forbidden/越权）、`p03-6-execution-service.test.ts`（owner/host/version/lease/权限重核） |
-| 大事件背压 | `p03-6-fake-runtime.test.ts`、`p03-6-runtime-host-wiring.test.ts`（96 事件）、`p03-6-work-evidence-recorder.test.ts` |
-| 重复/乱序/丢失事件 | `p03-6-fake-runtime-lifecycle.test.ts`、`p03-6-work-evidence-recorder.test.ts`（去重/乱序窗口/缺口） |
-| 未知终态 | `p03-6-runtime-execution-contract.test.ts`、`p03-6-fake-runtime-lifecycle.test.ts`、`p03-6-runtime-settlement.test.ts` |
-| 启动/运行/磁盘失败 | `p03-6-execution-service.test.ts`（start 抛错/外键延迟 COMMIT）、`p03-6-work-evidence-recorder.test.ts`（ENOSPC/短写）、`p03-6-execution-uncertainty.test.ts` |
-| 挂起超时 | `p03-6-execution-stopping.test.ts`（取消挂起执行）、`p03-6-fake-runtime-lifecycle.test.ts`（await_gate） |
-| 取消/完成竞争 | `p03-6-execution-process-stopping.test.ts`、`p03-6-runtime-host-wiring.test.ts`（仅结算一次不重复扣额） |
-| 旧 Attempt 迟到 | `p03-6-runtime-settlement.test.ts`（stale owner/host/version/terminal 隔离）、`p03-6-execution-uncertainty.test.ts`（迟到令牌不释放新占用） |
-| result completed 但子进程仍活跃 | `p03-6-fake-tool-command.test.ts`（父退子活不结算，升级终止才 confirmed）、`p03-6-fake-runtime-lifecycle.test.ts` |
+| 缺 Runtime/能力/输入 | `test/modules/runtime/p03-6-runtime-host-wiring.test.ts`（runtime_not_found 不认领）、`test/modules/runtime/p03-6-runtime-execution-contract.test.ts`、`test/modules/runtime/p03-6-execution-input-binding.test.ts` |
+| 身份或权限错误 | `test/modules/runtime/p03-6-runtime-host-wiring.test.ts`（401/400/409/跨项目 forbidden/越权）、`test/modules/runtime/p03-6-execution-service.test.ts`（owner/host/version/lease/权限重核） |
+| 大事件背压 | `test/modules/runtime/p03-6-fake-runtime.test.ts`、`test/modules/runtime/p03-6-runtime-host-wiring.test.ts`（96 事件）、`test/modules/runtime/p03-6-work-evidence-recorder.test.ts` |
+| 重复/乱序/丢失事件 | `test/modules/runtime/p03-6-fake-runtime-lifecycle.test.ts`、`test/modules/runtime/p03-6-work-evidence-recorder.test.ts`（去重/乱序窗口/缺口） |
+| 未知终态 | `test/modules/runtime/p03-6-runtime-execution-contract.test.ts`、`test/modules/runtime/p03-6-fake-runtime-lifecycle.test.ts`、`test/modules/runtime/p03-6-runtime-settlement.test.ts` |
+| 启动/运行/磁盘失败 | `test/modules/runtime/p03-6-execution-service.test.ts`（start 抛错/外键延迟 COMMIT）、`test/modules/runtime/p03-6-work-evidence-recorder.test.ts`（ENOSPC/短写）、`test/modules/runtime/p03-6-execution-uncertainty.test.ts` |
+| 挂起超时 | `test/modules/runtime/p03-6-execution-stopping.test.ts`（取消挂起执行）、`test/modules/runtime/p03-6-fake-runtime-lifecycle.test.ts`（await_gate） |
+| 取消/完成竞争 | `test/modules/runtime/p03-6-execution-process-stopping.test.ts`、`test/modules/runtime/p03-6-runtime-host-wiring.test.ts`（仅结算一次不重复扣额） |
+| 旧 Attempt 迟到 | `test/modules/runtime/p03-6-runtime-settlement.test.ts`（stale owner/host/version/terminal 隔离）、`test/modules/runtime/p03-6-execution-uncertainty.test.ts`（迟到令牌不释放新占用） |
+| result completed 但子进程仍活跃 | `test/modules/runtime/p03-6-fake-tool-command.test.ts`（父退子活不结算，升级终止才 confirmed）、`test/modules/runtime/p03-6-fake-runtime-lifecycle.test.ts` |
 
 隔离说明：Git、SQLite、文件与受控进程全部使用隔离真实临时资源；只有模型决策由
 FakeRuntime 脚本替代。FR-1（端口与生命周期）正常/负例见 F-001/F-008/F-009/F-010 测试；
@@ -94,10 +94,10 @@ FR-2（确定性脚本与输入核验）正常/负例见 F-002/F-003/F-004/F-005
 
 | 索引 | 本项适用子集 | 证据 |
 |---|---|---|
-| T05 Runtime 契约子集 | 自定义契约（非 Pi RPC 照搬）、异步 handle/有界消费/一次结算/未知终态拒绝 | `p03-6-runtime-execution-contract.test.ts`（35 用例） |
-| T06 受控进程子集 | 批准命令定义快照、argv 不拼 shell、身份提交放行、进程组停止核验、父退子活不冒充停止 | `p03-6-fake-tool-command.test.ts`（19 用例）、`p03-6-execution-process-stopping.test.ts` |
-| T37 输入接线子集 | 不可变输入快照核验、受限读取器、读取证据、必需输入/权限/恢复来源预检 | `p03-6-execution-input-binding.test.ts`（31 用例） |
-| T40 恢复决定子集（仅记录） | Fake 以可信目录数据覆盖 conversationResume/executionRecovery 能力差异；required 不降级、auto 记录原因；非 new 恢复如实声明全新执行 | `p03-6-fake-runtime-lifecycle.test.ts`；决定记录于本文 §5 |
+| T05 Runtime 契约子集 | 自定义契约（非 Pi RPC 照搬）、异步 handle/有界消费/一次结算/未知终态拒绝 | `test/modules/runtime/p03-6-runtime-execution-contract.test.ts`（35 用例） |
+| T06 受控进程子集 | 批准命令定义快照、argv 不拼 shell、身份提交放行、进程组停止核验、父退子活不冒充停止 | `test/modules/runtime/p03-6-fake-tool-command.test.ts`（19 用例）、`test/modules/runtime/p03-6-execution-process-stopping.test.ts` |
+| T37 输入接线子集 | 不可变输入快照核验、受限读取器、读取证据、必需输入/权限/恢复来源预检 | `test/modules/runtime/p03-6-execution-input-binding.test.ts`（31 用例） |
+| T40 恢复决定子集（仅记录） | Fake 以可信目录数据覆盖 conversationResume/executionRecovery 能力差异；required 不降级、auto 记录原因；非 new 恢复如实声明全新执行 | `test/modules/runtime/p03-6-fake-runtime-lifecycle.test.ts`；决定记录于本文 §5 |
 
 **不冒称**：Pi SDK 供应商部分（T30/T38/T40–T42）、完整 Recorder、真实 Token 汇总、
 Verifier、完整恢复与 P03 阶段验收均不在本 Feature 范围内。
@@ -108,13 +108,13 @@ Verifier、完整恢复与 P03 阶段验收均不在本 Feature 范围内。
   `RuntimeRecoveryService.evaluate`（来源、停止、输入、代码与权限授权预检）；本 Feature
   不重建恢复 Schema，不要求接入 Pi Durable，不提前建设 Chat 服务。
 - T43（恢复能力分离、来源与 required 拒绝、无 SDK 公共入口）Core/Fake 部分：
-  `p03-6-fake-runtime-lifecycle.test.ts` 覆盖 conversationResume 与 executionRecovery 能力
+  `test/modules/runtime/p03-6-fake-runtime-lifecycle.test.ts` 覆盖 conversationResume 与 executionRecovery 能力
   差异、required 不降级拒绝；组合根不装配 Fake 的结构断言保持（Fake 仅测试显式装配）。
 - T44（稳定身份、重复请求、工具前后崩溃、停止不确定、单原生写入者、重复事件/用量、
   预算不清零）Core/Fake 部分：事件身份由 SHA-256 关联 token 派生；重复请求稳定身份全等；
   stopped 门闩/未确认与工具进程组核验覆盖停止不确定；单写入者由 `sessions_attempt_unique`
   + owner/host/version fence 落实；重复/迟到事件与用量按稳定身份去重；默认更新不重置预算
-  （`p03-6-execution-service.test.ts`）。
+  （`test/modules/runtime/p03-6-execution-service.test.ts`）。
 - **P03-3A 版本与实验矩阵保留**：`docs/p03-3a-handoff.md`（最终证据提交
   `d9dd2c31620f52cef098a1ab320f3ee38ec0a67e`，分支
   `feat/2026-10-13-20-23-23_p03-3a-runtimepi-durable`）与

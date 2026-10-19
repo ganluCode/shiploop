@@ -132,7 +132,10 @@ function okResult(outcome: CliOutcome, command: string): Record<string, unknown>
 }
 
 async function openSeededCase(): Promise<SeededApprovalWaitingState> {
-  fixture = await openBindingFixture();
+  fixture = await openBindingFixture({ deliveryPolicy: {
+    commitMode: 'task_and_feature',
+    gitIdentity: { name: 'Test Owner', email: 'owner@example.test', confirmed: true },
+  } });
   host = await startFakeHost({
     dataRoot: fixture.box.dataRoot,
     capabilityCatalog: catalog(),
@@ -209,11 +212,12 @@ describe('F-014 正式构建入口：回执重放/过期摘要/越权主体/重�
 
     /* 显式验证继续：复用有效证据（零新增编码调用）。 */
     const continueCommandId = randomUUID();
+    const continueRevision = (db.prepare('SELECT revision FROM tasks WHERE id = ?').get('t-1') as { revision: number }).revision;
     const continueArgs = [
       'task', 'continue', 't-1', '--project', fixture!.projectId,
       '--attempt', seeded.attemptId, '--batch', seeded.batchId,
       '--code-digest', seeded.codeDigest, '--observation', seeded.observationDigest,
-      '--revision', String(seeded.taskRevision), '--command-id', continueCommandId, '--json',
+      '--revision', String(continueRevision), '--command-id', continueCommandId, '--json',
     ];
     const continued = okResult(await runBuiltCli(continueArgs), 'task.continue') as {
       display: string;

@@ -21,7 +21,6 @@ import { startHost } from '../../../packages/host/src/index.ts';
 import type { RunningHost } from '../../../packages/host/src/runtime/index.ts';
 import { openClaimFixture } from '../../helpers/p03-4/task-claim-fixture.ts';
 import { createLocalOwnerPrincipal } from '../../helpers/p02-2/principals.ts';
-import { openCoreApplication } from 'shiploop-core/assembly';
 import { createTempSandbox } from '../../helpers/temp-sandbox.ts';
 
 const OWNER = createLocalOwnerPrincipal();
@@ -46,11 +45,13 @@ beforeAll(async () => {
   expect(existsSync(CLI_BIN)).toBe(true);
 
   fixture = await openClaimFixture([[], ['t-1']]);
-  const app = await openCoreApplication({
+  host = await startHost({
     dataRoot: fixture.box.box.dataRoot,
     capabilityCatalog: fixture.box.box.capabilityCatalog,
+    env: {},
   });
-  try {
+  const app = host.core;
+  {
     const projectId = fixture.box.projectId;
     const featureId = fixture.box.featureId;
     const binding = await app.stateStore.getRepositoryBinding(projectId);
@@ -86,14 +87,7 @@ beforeAll(async () => {
     expect(retained.workspace.status).toBe('retained');
     workspaceId = preparation.workspace.id;
     worktreePath = preparation.workspace.canonicalPath;
-  } finally {
-    app.close();
   }
-  host = await startHost({
-    dataRoot: fixture.box.box.dataRoot,
-    capabilityCatalog: fixture.box.box.capabilityCatalog,
-    env: {},
-  });
 }, 570_000);
 
 afterAll(async () => {
@@ -180,7 +174,7 @@ function failedEnvelope(outcome: CliOutcome, exitCode: number, code: string): En
   expect(outcome.status, `${outcome.stdout}\n${outcome.stderr}`).toBe(exitCode);
   const envelope = JSON.parse(outcome.stdout) as EnvelopeShape;
   expect(envelope.ok).toBe(false);
-  expect(envelope.error?.code).toBe(code);
+  expect(envelope.error?.code, `${outcome.stdout}\n${outcome.stderr}`).toBe(code);
   return envelope.error;
 }
 

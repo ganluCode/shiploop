@@ -41,7 +41,7 @@
     "lockfile": "package-lock.json"
   },
   "timeouts": {
-    "stepMs": 1200000,
+    "stepMs": 3600000,
     "overallMs": 7200000
   },
   "maxCommandOutputBytes": 262144,

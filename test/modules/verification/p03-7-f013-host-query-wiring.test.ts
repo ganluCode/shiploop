@@ -77,6 +77,7 @@ afterEach(async () => {
 async function seedEvidence(): Promise<{ attempt: ClaimedAttempt['receipt']['attempt']; batchId: string }> {
   const f = await openBindingFixture({ secondTask: true, secondTaskDependsOnFirst: true });
   fixture = f;
+  host = await startHost({ dataRoot: f.box.dataRoot, capabilityCatalog: f.box.capabilityCatalog, env: {} });
   const claim = f.claimTask('t-1');
   const attempt = claim.receipt.attempt;
   claimIdentity = {
@@ -204,11 +205,6 @@ describe('F-013 HostClient 查询接线（真实 Host 纵向）', () => {
   it('经既有 HostClient 取得机器证据/人审事项/返工链，内容与真实持久状态相符', async () => {
     const { attempt, batchId } = await seedEvidence();
     const f = fixture!;
-    host = await startHost({
-      dataRoot: f.box.dataRoot,
-      capabilityCatalog: f.box.capabilityCatalog,
-      env: {},
-    });
     client = await connectToHost({ canonicalRoot: f.box.dataRoot });
 
     /* Task 机器证据：机器 passed 不展示为有效 Task passed。 */
@@ -275,7 +271,7 @@ describe('F-013 HostClient 查询接线（真实 Host 纵向）', () => {
 
     /* 稳定错误协议：未认证请求统一 401；跨项目目标 not_found（不泄漏内容）。 */
     const unauthenticated = await loopbackRequest({
-      port: host.port,
+      port: host!.port,
       method: 'GET',
       path: '/v1/tasks/t-1/verification?projectId=' + encodeURIComponent(f.projectId),
     });

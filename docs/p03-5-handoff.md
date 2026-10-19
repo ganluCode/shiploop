@@ -70,27 +70,27 @@
 
 | 矩阵项 | 证据（测试文件 / 用例） |
 |---|---|
-| 错误目录/分支/HEAD | `p03-5-feature-worktree-paths.test.ts`（归属/越界/穿越）、`p03-5-workspace-preparation.test.ts`「refuses wrong_branch/detached/replaced reuse…」、「rechecks…unrecorded descendant HEAD without resetting files」 |
-| 链接越界 | `p03-5-feature-worktree-paths.test.ts`（lstat+realpath 祖先链、悬空/环路 escape）、`p03-5-workspace-preparation.test.ts`「refuses symlink/foreign_repository reuse…」 |
-| 旧进程仍写文件 | `p03-5-workspace-retention.test.ts`（macOS 真实父进程退出后子进程持续写入 → 不释放、隔离） |
-| 遗留锁 | `p03-5-git-operation-lock.test.ts`（原生 .lock 现场、损坏/未知 claim fail-closed、不按 PID/TTL 接管） |
-| baseline 双向占用 | `p03-5-git-operation-lock.test.ts`（共享 `shiploop-baseline.claim`、baseline guard 同锁注入）+ 前序 baseline 占用回归 |
-| 竞争准备/CAS | `p03-5-workspace-preparation.test.ts`「serializes competing recovery and fences late results/quarantine…」、`p03-5-workspace-persistence.test.ts`、`p03-5-workspace-cleaner.test.ts`「清理与新认领互斥/旧身份 fencing」 |
-| 创建后回执故障 | `p03-5-workspace-preparation.test.ts`「reconciles Git creation after a receipt transaction failure and database reopen without repeating Git add」、「recovers after_git/after_inspection/before_receipt interruption…」 |
-| 删除后回执故障 | `p03-5-workspace-cleaner.test.ts`（pending 恢复补写不重复删除）、`p03-5-workspace-discard.test.ts`（崩溃恢复对账 recovered 不重复删除） |
-| 未知停止后重跑/双重写入者 | `p03-5-workspace-retention.test.ts`（unknown → quarantined 持久化、重开拒绝）、`p03-5-feature-integration.test.ts` 用例 2 |
+| 错误目录/分支/HEAD | `test/modules/workspace/p03-5-feature-worktree-paths.test.ts`（归属/越界/穿越）、`test/modules/workspace/p03-5-workspace-preparation.test.ts`「refuses wrong_branch/detached/replaced reuse…」、「rechecks…unrecorded descendant HEAD without resetting files」 |
+| 链接越界 | `test/modules/workspace/p03-5-feature-worktree-paths.test.ts`（lstat+realpath 祖先链、悬空/环路 escape）、`test/modules/workspace/p03-5-workspace-preparation.test.ts`「refuses symlink/foreign_repository reuse…」 |
+| 旧进程仍写文件 | `test/modules/workspace/p03-5-workspace-retention.test.ts`（macOS 真实父进程退出后子进程持续写入 → 不释放、隔离） |
+| 遗留锁 | `test/modules/workspace/p03-5-git-operation-lock.test.ts`（原生 .lock 现场、损坏/未知 claim fail-closed、不按 PID/TTL 接管） |
+| baseline 双向占用 | `test/modules/workspace/p03-5-git-operation-lock.test.ts`（共享 `shiploop-baseline.claim`、baseline guard 同锁注入）+ 前序 baseline 占用回归 |
+| 竞争准备/CAS | `test/modules/workspace/p03-5-workspace-preparation.test.ts`「serializes competing recovery and fences late results/quarantine…」、`test/modules/workspace/p03-5-workspace-persistence.test.ts`、`test/modules/workspace/p03-5-workspace-cleaner.test.ts`「清理与新认领互斥/旧身份 fencing」 |
+| 创建后回执故障 | `test/modules/workspace/p03-5-workspace-preparation.test.ts`「reconciles Git creation after a receipt transaction failure and database reopen without repeating Git add」、「recovers after_git/after_inspection/before_receipt interruption…」 |
+| 删除后回执故障 | `test/modules/workspace/p03-5-workspace-cleaner.test.ts`（pending 恢复补写不重复删除）、`test/modules/workspace/p03-5-workspace-discard.test.ts`（崩溃恢复对账 recovered 不重复删除） |
+| 未知停止后重跑/双重写入者 | `test/modules/workspace/p03-5-workspace-retention.test.ts`（unknown → quarantined 持久化、重开拒绝）、`test/modules/workspace/p03-5-feature-integration.test.ts` 用例 2 |
 
 以上负例在完整门禁中复跑（§6），不重建 P03-9 完整控制恢复（Run 级 resume 不在本 Feature）。
 
 ## 4. 清理/丢弃真实 Git 证据（F-013 验收 3）
 
-- **非强制删除成功**：`p03-5-workspace-cleaner.test.ts`——cleanable 决策 + 决策时授权摘要 +
+- **非强制删除成功**：`test/modules/workspace/p03-5-workspace-cleaner.test.ts`——cleanable 决策 + 决策时授权摘要 +
   锁内复核后单次 `git worktree remove`（无 --force）；分支与审计/operation 行保留；源仓库
   HEAD/refs/index/脏内容逐项不变。
-- **拒绝矩阵**：`p03-5-workspace-cleanup.test.ts`（36 表驱动用例）覆盖失败/partial/人审等待/
+- **拒绝矩阵**：`test/modules/workspace/p03-5-workspace-cleanup.test.ts`（36 表驱动用例）覆盖失败/partial/人审等待/
   提交失败/脏内容/tracked/untracked/未知或受保护 ignored/证据缺失过期逐项拒绝；
-  `p03-5-workspace-cleaner.test.ts` 断言 Git 拒绝不降级为强制删除、停止不确定 → blocked+隔离。
-- **人工丢弃**：`p03-5-workspace-discard.test.ts`（21 用例）——预览只读/确定性/有界截断；
+  `test/modules/workspace/p03-5-workspace-cleaner.test.ts` 断言 Git 拒绝不降级为强制删除、停止不确定 → blocked+隔离。
+- **人工丢弃**：`test/modules/workspace/p03-5-workspace-discard.test.ts`（21 用例）——预览只读/确定性/有界截断；
   伪造摘要/过期预览/异主体重放拒绝；内容变化四类拒绝零删除；唯一单次 `--force` 由真实
   Git 执行且锁住 worktree 由 Git 拒绝。
 - 成功证据使用明确受信夹具（真实临时 Git/SQLite + 可信内部回执）；**不依赖**后序 P03-8

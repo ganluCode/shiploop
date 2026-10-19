@@ -11,7 +11,7 @@ import { STATE_EVENT_TYPE_SPECS } from '../../../../packages/core/src/ports/even
 import { evaluateBatchBudgetRevision } from '../../../../packages/core/src/ports/execution-budget.ts';
 import { APPLICATION_COMMAND_CAPABILITIES } from '../../../../packages/host/src/contract/lifecycle.ts';
 
-const read = (path: string) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
+const read = (path: string) => readFileSync(new URL(`../../../../${path}`, import.meta.url), 'utf8');
 const doc = read('docs/p03-3-budget-revision-contract.md');
 
 describe('F-009 budget revision contract', () => {

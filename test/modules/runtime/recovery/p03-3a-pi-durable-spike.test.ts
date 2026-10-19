@@ -4,14 +4,14 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-const experiment = new URL('../experiments/pi-durable/', import.meta.url);
+const experiment = new URL('../../../../experiments/pi-durable/', import.meta.url);
 const json = (name: string) => JSON.parse(readFileSync(new URL(name, experiment), 'utf8'));
 
 describe('F-004 independent Pi Durable spike, not production capability evidence', () => {
   it('pins the candidate outside root workspaces and production dependencies', () => {
     const manifest = json('package.json');
     const lock = json('package-lock.json');
-    const root = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+    const root = JSON.parse(readFileSync(new URL('../../../../package.json', import.meta.url), 'utf8'));
     expect(manifest.engines).toEqual({ node: '22.19.0', npm: '10.9.3' });
     for (const name of ['pi-durable', 'pi-ai', 'chord']) {
       const dependency = `@earendil-works/${name}`;

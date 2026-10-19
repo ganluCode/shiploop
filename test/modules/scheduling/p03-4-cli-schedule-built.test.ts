@@ -47,6 +47,7 @@ beforeAll(async () => {
 
   fixture = await openClaimFixture([[], ['t-1']]);
   const box = fixture.box;
+  host = await startHost({ dataRoot: box.box.dataRoot, capabilityCatalog: box.box.capabilityCatalog, env: {} });
   attempt = fixture.store().claimTask(fixture.input()).receipt.attempt;
   const resourceIdentity = {
     projectId: attempt.projectId,
@@ -91,11 +92,6 @@ beforeAll(async () => {
   })).toMatchObject({ disposition: 'ignored', reason: 'stale_execution_identity' });
 
   tablesBefore = fixture.snapshot();
-  host = await startHost({
-    dataRoot: box.box.dataRoot,
-    capabilityCatalog: box.box.capabilityCatalog,
-    env: {},
-  });
 }, 570_000);
 
 afterAll(async () => {

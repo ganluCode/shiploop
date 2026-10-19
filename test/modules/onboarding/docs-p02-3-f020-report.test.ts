@@ -94,7 +94,7 @@ describe('F-020 文档守护：P02-3 交付报告、FR 验收索引与脱敏证�
 
     // 报告引用的每个 *.test.ts 都真实存在（防止虚构用例；兼容带/不带 test/ 前缀）。
     const referenced = new Set(
-      (report.match(/(?:test\/)?[a-z0-9-]+\.test\.ts/g) ?? []).map((name) =>
+      (report.match(/(?:test\/)?(?:modules\/[a-z0-9/-]+\/)?[a-z0-9-]+\.test\.ts/g) ?? []).map((name) =>
         name.replace(/^test\//, ''),
       ),
     );

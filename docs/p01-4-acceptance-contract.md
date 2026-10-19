@@ -126,7 +126,7 @@ PRD §3.2 要求的每个 FR 分支都有稳定检查 ID 承接，且每项都�
 ### 2.3 前序必需回归由 `verify` 覆盖（不只核对测试数量）
 
 `npm run verify` 的 `npm test` 步骤默认收集 `test/**/*.test.ts`（`passWithNoTests:false`，
-不跳过），并由 [p01-3-fr-acceptance-closed-loop.test.ts](../test/modules/acceptance/p01-3-fr-acceptance-closed-loop.test.ts)
+不跳过），并由 [test/modules/acceptance/p01-3-fr-acceptance-closed-loop.test.ts](../test/modules/acceptance/p01-3-fr-acceptance-closed-loop.test.ts)
 第 3 个用例作为 **fail-closed 守护**：列出的 FR 关键失败分支测试文件缺失、被移入 helpers、
 或被 `.skip`/`.only`/`.todo` 静默跳过时守护失败。下列前序回归**实际入口**必须在阶段检查中
 保持可运行（F-008 的 `P01-ENG-VERIFY` 退出 0 即覆盖；不得用删测试、`passWithNoTests` 或跳过
@@ -134,17 +134,17 @@ PRD §3.2 要求的每个 FR 分支都有稳定检查 ID 承接，且每项都�
 
 | FR / T 分支 | 前序实际测试入口（`test/`） |
 |---|---|
-| FR-1 重复路径/符号链接、同 remote 多 clone、跨进程竞争注册、绑定回滚 | `project-registration.test.ts`（+ `helpers/register-race-child.ts`） |
-| FR-1 仓库检查拒绝分支与只读性 | `repository-inspector.test.ts` |
-| FR-1 非法标签/名称/描述、元数据 CAS 与审计回滚 | `project-metadata-validation.test.ts`、`project-metadata-service.test.ts` |
-| T32 子集：标签筛选/分页/计数、防注入 | `project-tag-filter.test.ts` |
-| FR-2 配置结构/版本/秘密/政策拒绝 | `settings-schema-v2.test.ts` |
-| FR-2 能力兼容性 fail-closed、合法≠可执行 | `runtime-capabilities.test.ts` |
-| FR-2 / T03/T26 子集：insert-only、CAS、跨进程竞争、`stale_dependency`、审计回滚 | `configuration-service.test.ts`（+ `helpers/settings-race-child.ts`）、`sqlite-cas-and-atomicity.test.ts`（+ `helpers/cas-race-child.ts`） |
-| FR-2 / T24 子集：合并与来源 | `effective-settings-merge.test.ts`、`settings-query-service.test.ts` |
-| FR-3 namespace/逃逸/跨项目 | `path-service.test.ts` |
-| 装配闭环与导出面 | `core-assembly.test.ts` |
-| 工具/驱动缺失失败而非 skip | `deterministic-test-harness.test.ts`、`sqlite-storage-fixture.test.ts` |
+| FR-1 重复路径/符号链接、同 remote 多 clone、跨进程竞争注册、绑定回滚 | `test/modules/projects/project-registration.test.ts`（+ `helpers/register-race-child.ts`） |
+| FR-1 仓库检查拒绝分支与只读性 | `test/modules/projects/repository-inspector.test.ts` |
+| FR-1 非法标签/名称/描述、元数据 CAS 与审计回滚 | `test/modules/projects/project-metadata-validation.test.ts`、`test/modules/projects/project-metadata-service.test.ts` |
+| T32 子集：标签筛选/分页/计数、防注入 | `test/modules/projects/project-tag-filter.test.ts` |
+| FR-2 配置结构/版本/秘密/政策拒绝 | `test/modules/configuration/settings-schema-v2.test.ts` |
+| FR-2 能力兼容性 fail-closed、合法≠可执行 | `test/modules/runtime/runtime-capabilities.test.ts` |
+| FR-2 / T03/T26 子集：insert-only、CAS、跨进程竞争、`stale_dependency`、审计回滚 | `test/modules/configuration/configuration-service.test.ts`（+ `helpers/settings-race-child.ts`）、`test/modules/storage/sqlite/sqlite-cas-and-atomicity.test.ts`（+ `helpers/cas-race-child.ts`） |
+| FR-2 / T24 子集：合并与来源 | `test/modules/configuration/effective-settings-merge.test.ts`、`test/modules/configuration/settings-query-service.test.ts` |
+| FR-3 namespace/逃逸/跨项目 | `test/modules/projects/path-service.test.ts` |
+| 装配闭环与导出面 | `test/modules/engineering/core-assembly.test.ts` |
+| 工具/驱动缺失失败而非 skip | `test/modules/engineering/deterministic-test-harness.test.ts`、`test/modules/storage/sqlite/sqlite-storage-fixture.test.ts` |
 
 ### 2.4 结果状态与聚合规则
 
@@ -336,7 +336,7 @@ P01-4 只**记录并携带**前序已登记的核对请求，不在本阶段静�
 
 - 基线：§1.3（`npm ci` 退出 0；`npm run verify` 退出 0，`PASS 3/3`；35 files / 700 tests）。
 - 本文引用的真实常量/端口/迁移/前序测试入口由
-  [docs-p01-4-acceptance-contract.test.ts](../test/modules/acceptance/docs-p01-4-acceptance-contract.test.ts)
+  [test/modules/acceptance/docs-p01-4-acceptance-contract.test.ts](../test/modules/acceptance/docs-p01-4-acceptance-contract.test.ts)
   交叉核对，防止文档与实现漂移。
 - 本 Feature 只交付验收约定与检查清单（文档 + 守护测试）；`accept:p01`、夹具、报告与阶段
   最终报告由 F-002 ~ F-010 交付。本轮不自动修改任何 Harness 配置；未验收平台、强 OS 沙箱与
