@@ -103,6 +103,35 @@ function seedVerification(f: Fixture, attempt: AttemptRecord, taskId: string, co
      required, status, exit_code, timed_out, started_at, ended_at)
     VALUES (?, ?, ?, ?, ?, 'tests', '["tests"]', 1000, 1, 'passed', 0, 0, ?, ?)`)
     .run(`${attempt.id}-check`, NOW, NOW, attempt.projectId, batchId, NOW, NOW + 1);
+  // F-012 的验证提交需要已有的 ready code artifact 和不可变 task_commit receipt。
+  // 这里仍是零模型的本地夹具，只补齐受信提交链路所需的身份事实。
+  const binding = createSqliteStateAccess(f.box.session).getRepositoryBinding(f.box.projectId);
+  const head = git(['rev-parse', 'HEAD'], f.box.box.repoDirA, { home: f.box.box.homeDir }).trim();
+  const tree = git(['rev-parse', 'HEAD^{tree}'], f.box.box.repoDirA, { home: f.box.box.homeDir }).trim();
+  f.box.session.database.prepare(
+    `INSERT INTO artifacts
+      (id, created_at, project_id, updated_at, kind, status, media_type, expected_hash, content_hash, size_bytes, storage_locator)
+     VALUES (?, ?, ?, ?, 'code', 'ready', 'text/plain', ?, ?, 0, ?)
+     ON CONFLICT(project_id, id) DO UPDATE SET status = 'ready', content_hash = excluded.content_hash,
+       size_bytes = excluded.size_bytes, updated_at = excluded.updated_at`)
+    .run(`${taskId}-code`, NOW, attempt.projectId, NOW, 'a'.repeat(64), 'a'.repeat(64), `code/${taskId}`);
+  const operationId = `${attempt.id}-task-commit`;
+  const verificationRefs = JSON.stringify([{ kind: 'verification_batch', id: batchId, digest: codeDigest }]);
+  f.box.session.database.prepare(
+    `INSERT INTO git_operations
+      (id, created_at, updated_at, project_id, feature_id, run_id, attempt_id, execution_version,
+       operation_type, repository_binding_id, repo_identity, worktree_path, expected_head, candidate_tree,
+       code_digest, verification_refs, approval_refs, message, identity_name, identity_email,
+       delivery_policy_digest, runtime_source, owner_id, host_instance_id, intent_digest)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'task_commit', ?, ?, ?, ?, ?, ?, ?, '[]', 'Fixture task commit',
+       'Fixture', 'fixture@example.com', ?, NULL, ?, ?, ?)`)
+    .run(operationId, NOW, NOW, attempt.projectId, attempt.featureId, attempt.runId, attempt.id,
+      attempt.executionVersion, binding.id, binding.repoIdentity, f.box.box.repoDirA, head, tree, codeDigest,
+      verificationRefs, 'd'.repeat(64), attempt.owner, attempt.hostInstanceId, 'e'.repeat(64));
+  f.box.session.database.prepare(
+    `UPDATE git_operations SET status = 'succeeded', actual_commit = ?, actual_tree = ?, exit_code = 0,
+       duration_ms = 1, receipt = ?, delivery_status = 'not_requested', settled_at = ?, updated_at = ? WHERE id = ?`)
+    .run(head, tree, JSON.stringify({ status: 'succeeded', actualCommit: head, actualTree: tree }), NOW + 1, NOW + 1, operationId);
   return batchId;
 }
 

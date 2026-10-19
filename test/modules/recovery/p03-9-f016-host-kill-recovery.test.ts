@@ -412,8 +412,10 @@ describe.skipIf(process.platform !== 'darwin')('P03-9 / F-016 real Host kill rec
     // Host 命令并发 resume：仅一个事务成功；之后只创建一个新 Attempt、复用同一 worktree。
     const client = await connectToHost({ canonicalRoot: fixture.box.dataRoot });
     entry.clients.push(client);
-    await waitFor(() => (q(probe, 'SELECT reason FROM runs') as { reason: string }).reason === 'run_control_blocked',
-      '暂停 Run 的后台扫描收尾');
+    // 恢复核对已将 Run 置于 paused/restart_recovery；调度器对该状态只报告
+    // run_control_blocked，不改写权威恢复原因。显式 resume 直接以当前 revision 竞争。
+    expect(q(probe, 'SELECT status, reason FROM runs')).toMatchObject({ status: 'paused',
+      reason: expect.stringMatching(/^(restart_recovery|verification_not_assembled)$/) });
     const run = q(probe, 'SELECT revision FROM runs') as { revision: number };
     const resumed = await client.resumeExecution({
       projectId: fixture.projectId, runId: fixture.runId, expectedRevision: run.revision,
