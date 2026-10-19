@@ -29,6 +29,11 @@
       "task_id": "F-005",
       "index": "test/index/phases/P03/features/P03-10/tasks/F-005.json",
       "description": "授权 HostClient 与构建 CLI 完整报告：原子有界历史、协议校验、partial/拒绝、只读一致快照与待 Nezha 执行的 P01/P02 回归。"
+    },
+    {
+      "task_id": "F-006",
+      "index": "test/index/phases/P03/features/P03-10/tasks/F-006.json",
+      "description": "执行报告可审阅文本视图与人工提示：稳定 Task 表/Attempt 历史、等待/人审分段、unknown/partial 与 Fake 合成指标标识；含报告投影/Host 契约与构建 CLI 回归。"
     }
   ]
 }

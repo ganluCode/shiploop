@@ -7,6 +7,29 @@ import { deriveArtifactFinalRelativePath } from '../../../packages/core/src/port
 import type { AttemptStatus } from '../../../packages/core/src/ports/attempt-store.ts';
 import { createSqliteVerificationStore } from '../../../packages/core/src/adapters/sqlite/verification-store.ts';
 import { createSqliteGitOperationStore } from '../../../packages/core/src/adapters/sqlite/git-operations.ts';
+import { createSqliteQueryStore } from '../../../packages/core/src/adapters/sqlite/query-store.ts';
+import { createSqliteStateStore } from '../../../packages/core/src/adapters/sqlite/state-store.ts';
+import { createSqliteArtifactStore } from '../../../packages/core/src/adapters/sqlite/artifact-store.ts';
+import { createArtifactFileStore } from '../../../packages/core/src/adapters/fs/artifact-files.ts';
+import { createStaticRuntimeCapabilityCatalog } from '../../../packages/core/src/ports/runtime-capabilities.ts';
+import { computeDataRootIdentity } from '../../../packages/core/src/ports/path-service.ts';
+import { createConfigurationService } from '../../../packages/core/src/application/configuration-service.ts';
+import { createQueryService } from '../../../packages/core/src/application/query-service.ts';
+
+/** F-004/F-005/F-006 共用的只读 QueryService 装配（零写入查询面）。 */
+export function reportQueries(f: BudgetFixture) {
+  const store = createSqliteQueryStore(f.session);
+  const stateStore = createSqliteStateStore(f.session);
+  return createQueryService({
+    projectReads: store, snapshots: store, eventReads: store, stateStore,
+    configurationService: createConfigurationService({ stateStore, capabilityCatalog: createStaticRuntimeCapabilityCatalog([]) }),
+    planReads: store, executionBudgetReads: store, scheduleReads: store, workspaceReads: store,
+    workSessionReads: store, taskEvidenceReads: store, gitOperationReads: store,
+    featureDeliveryReads: store, featureReportReads: store, executionControlReads: store,
+    artifacts: createSqliteArtifactStore(f.session), artifactFiles: createArtifactFileStore({ dataRoot: f.box.dataRoot }),
+    dataRootIdentity: computeDataRootIdentity(f.box.dataRoot), nowUtcMs: () => NOW,
+  });
+}
 
 export const HASH = 'ab'.repeat(32);
 export function reportDatabaseSnapshot(f: BudgetFixture) {
@@ -79,7 +102,8 @@ export function reportSettlement(f: BudgetFixture, attempt: ReturnType<typeof re
   f.session.database.prepare('UPDATE sessions SET result_ref = ? WHERE id = ?').run(ref.artifactId, attempt.sessionId);
   return ref;
 }
-export function reportVerification(f: BudgetFixture, attempt: ReturnType<typeof reportAttempt>, id: string, operation = 'FeatureVerification.full') {
+export function reportVerification(f: BudgetFixture, attempt: ReturnType<typeof reportAttempt>, id: string,
+  operation = 'FeatureVerification.full', status: 'failed' | 'passed' = 'failed') {
   f.session.database.prepare('UPDATE tasks SET execution_version = 1 WHERE id = ?').run(attempt.taskId);
   const store = createSqliteVerificationStore(f.session, { nowUtcMs: () => NOW });
   store.createVerificationBatch({ batchId: id, projectId: f.projectId, featureId: f.featureId,
@@ -88,9 +112,10 @@ export function reportVerification(f: BudgetFixture, attempt: ReturnType<typeof 
     checkSnapshot: [{ checkKey: 'tests', scope: 'project', kind: 'command', argv: ['node', 'check.mjs'], cwdRef: null,
       environmentRef: null, timeout: 1000, required: true, requirementRefs: ['T38'] }],
     selection: { schemaVersion: 1, mode: 'full_fallback', reason: 'report fixture', selectedCheckKeys: ['tests'] }, startedAtUtcMs: NOW });
-  store.saveCheckResult({ resultId: `${id}-check`, projectId: f.projectId, batchId: id, checkKey: 'tests', status: 'failed',
-    exitCode: null, signal: 'SIGTERM', timedOut: false, outputArtifactId: null, outputTail: null, startedAtUtcMs: NOW, endedAtUtcMs: NOW + 20 });
-  store.finalizeVerificationBatch({ projectId: f.projectId, batchId: id, expectedRevision: 1, status: 'failed', endedAtUtcMs: NOW + 20 });
+  store.saveCheckResult({ resultId: `${id}-check`, projectId: f.projectId, batchId: id, checkKey: 'tests', status,
+    exitCode: status === 'passed' ? 0 : null, signal: status === 'passed' ? null : 'SIGTERM', timedOut: false,
+    outputArtifactId: null, outputTail: null, startedAtUtcMs: NOW, endedAtUtcMs: NOW + 20 });
+  store.finalizeVerificationBatch({ projectId: f.projectId, batchId: id, expectedRevision: 1, status, endedAtUtcMs: NOW + 20 });
 }
 export function reportOperation(f: BudgetFixture, runId: string) {
   const db = f.session.database;

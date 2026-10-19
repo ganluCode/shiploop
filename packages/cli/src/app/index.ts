@@ -105,6 +105,18 @@ export type {
   GitOperationListCliView,
   GitOperationRecordView,
 } from './delivery.js';
+export { FEATURE_REPORT_METRIC_NOTES, buildFeatureReportTextView, formatFeatureReportTextView } from './report.js';
+export type {
+  FeatureReportApprovalView,
+  FeatureReportAttemptRowView,
+  FeatureReportDeliveryView,
+  FeatureReportNextActionView,
+  FeatureReportRunRowView,
+  FeatureReportSessionRowView,
+  FeatureReportTaskRowView,
+  FeatureReportTextView,
+  FeatureReportVerificationView,
+} from './report.js';
 export {
   APPROVAL_EXECUTION_BOUNDARY_VIEW,
   buildTaskApprovalBlockView,

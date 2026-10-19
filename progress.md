@@ -61,3 +61,18 @@ F-003 尚未满足验收，收尾应报告 `blocked`；正式 feature.yaml、tas
 - 最终证据目录：`evidence/three-task-chain-38487165-20bb-4707-944c-43db748a63b1/`，含 three-task-chain.json、stage-*.json、evidence.json、cleanup.json。受测 HEAD 为 `9c81be306ba4a8de462f777fdc4972dad93a524d`，dirty=true 记录本次待提交代码；最终实现以 Git 提交为准。
 - 索引 `test/index/phases/P03/features/P03-10/tasks/F-003.json`，Harness selection 已落盘并引用它。新增两文件已本地执行；F-001 六项及旧 scheduler 五项为已选未运行回归，交 Nezha。未运行全仓/组合 verify/阶段验收。
 - 具体装配、阻塞接口、证据与后续门禁见 [F-003 交接](docs/p03-10-f003-three-task-chain.md)。
+
+## F-006 — 执行报告可审阅文本视图与人工操作提示
+
+仅处理 F-006；未修改 feature.yaml、task_list 或其他任务状态。
+
+- 新增 `packages/cli/src/app/report.ts` 纯视图层：`buildFeatureReportTextView` / `formatFeatureReportTextView` 从同一 `feature-execution-report` 投影重新生成文本，不倾倒 JSON、不追加历史报告内容；纯函数零写入、重复生成语义稳定。
+- Task 表稳定排序并区分 latest/cumulative；Attempt 历史按 Task 分组稳定排序并标注各 Run 归属；Run/Session 记录独立列示。
+- 最终检查、人工批准/阻塞原因、要求的交付状态、证据引用与下一步显式操作单独成段；未批准但机器全绿时 `waiting=true` 显示保持等待，不显示已通过、不建议跳过人审；下一步全部 `automatic=false`。
+- unknown/partial、Fake 合成指标（basis=fake-synthetic）、累计 Session 时间与墙钟时间清晰标识；null 保持 unknown 不填 0；声明不计算加权缓存率、不生成真实模型分组收益、余额或节省额度结论。
+- `shiploop feature report`（非 --json）文本输出改用该视图；`--json` 信封与 Core 投影逐字段一致（不变）。
+- 测试：`test/modules/cli/p03-10-feature-report-text.test.ts` 4 个 `[case:...]`；索引 `test/index/phases/P03/features/P03-10/tasks/F-006.json`，Harness selection 仅引用该索引。
+- 验证：`test-2tpux2gn.log` RED（模块未实现）→ `test-fkk1ci_8.log` exit 0（4 passed）；受影响回归 `test-wfsmcilu.log` exit 0（14 passed：构建 CLI 文本契约 2、报告投影 6、Host 契约 6）；typecheck `test-4hbicdoh.log` exit 0；索引约束 `test-5ogqoqe3.log` exit 0；`check-boundaries-f006.log` PASS。日志在 Feature workspace `verifications/F-006/runtime-logs/`。
+- 交接见 [F-006 交接](docs/p03-10-f006-report-text.md)。
+
+本地通过只覆盖文本视图与直接影响的报告契约回归；较广回归与最终门禁由 Nezha 独立执行。真实 Pi/live、强沙箱与完整用量/缓存平台未运行且不折算通过。

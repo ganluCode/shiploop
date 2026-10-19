@@ -125,6 +125,7 @@ import {
   formatGitOperationDetailView,
   formatGitOperationListView,
 } from './app/delivery.js';
+import { buildFeatureReportTextView, formatFeatureReportTextView } from './app/report.js';
 import {
   buildTaskApprovalBlockView,
   buildTaskApprovalDecisionView,
@@ -1292,10 +1293,8 @@ async function executePlanCommand(
      * HostClient 公共面；completed 回执结果经冻结字段集线校验器复核后投影）。 */
     case 'feature.report': {
       const result = await client.getFeatureReport(command.projectId, command.featureId);
-      return emitSuccess(io, command, result,
-        `shiploop feature report: ${result.feature.featureId} outcome=${result.outcome.status} completeness=${result.completeness}\n` +
-        `  tasks=${result.counts.tasks} runs=${result.counts.runs} attempts=${result.counts.attempts} sessions=${result.counts.sessions}\n` +
-        `  issues=${result.issues.join(',') || 'none'}\n` + JSON.stringify(result, null, 2));
+      // F-006：文本输出为可审阅文本视图（同一报告投影重新生成，不倾倒 JSON）。
+      return emitSuccess(io, command, result, formatFeatureReportTextView(buildFeatureReportTextView(result)));
     }
     case 'feature.delivery': {
       const result = await client.getFeatureDelivery(command.projectId, command.featureId);

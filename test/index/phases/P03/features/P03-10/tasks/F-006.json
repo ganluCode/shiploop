@@ -1,0 +1,46 @@
+{
+  "schema_version": 2,
+  "task_id": "F-006",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/cli/p03-10-feature-report-text.test.ts",
+          "cases": [
+            "text-task-attempt-table",
+            "text-approval-waiting",
+            "text-metrics-timing",
+            "text-repeat-read-only"
+          ]
+        },
+        {
+          "file": "test/modules/cli/p03-10-feature-report-built.test.ts",
+          "cases": ["built-report-parity", "built-report-errors"]
+        },
+        {
+          "file": "test/modules/delivery/p03-10-feature-execution-report.test.ts",
+          "cases": [
+            "all-tasks-read-only",
+            "history-evidence-timing",
+            "pages-and-missing",
+            "snapshot-and-dedup",
+            "report-authorization",
+            "artifact-integrity"
+          ]
+        },
+        {
+          "file": "test/modules/host/p03-10-feature-report-contract.test.ts",
+          "cases": [
+            "report-query-entry",
+            "complete-history-wire",
+            "report-auth-boundaries",
+            "report-snapshot-http",
+            "report-missing-history",
+            "report-protocol-refusal"
+          ]
+        }
+      ]
+    }
+  ]
+}
