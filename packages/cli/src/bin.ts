@@ -65,11 +65,12 @@ const run = isAppCommand
 
 run.then(
   (result) => {
-    process.exit(result.exitCode);
+    // Allow stdout/stderr to drain: complete reports can exceed the pipe buffer.
+    process.exitCode = result.exitCode;
   },
   () => {
     // 执行层自身已兜底所有错误；到这里说明入口装配失败，输出脱敏通用诊断。
     process.stderr.write('shiploop: internal: CLI 发生未预期错误（错误不含秘密）\n');
-    process.exit(1);
+    process.exitCode = 1;
   },
 );

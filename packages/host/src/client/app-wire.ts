@@ -16,6 +16,7 @@
  * - 本模块只做结构校验：无 I/O、不读时钟、不导入 node:http/net/fs；错误为
  *   HostProtocolError，details 只含受控 reason，不回显响应原文或秘密。
  */
+import { validateFeatureReportWire } from './feature-report-wire.js';
 import { validateWorkSessionListWire, validateWorkSessionDetailWire, validateWorkSessionEvidenceWire } from './work-session-wire.js';
 import type { WorkSessionListResult, WorkSessionDetailResult, WorkSessionEvidenceContent } from 'shiploop-core/protocol';
 export type { WorkSessionListResult, WorkSessionDetailResult, WorkSessionEvidenceContent } from 'shiploop-core/protocol';
@@ -222,7 +223,8 @@ export type {
 } from 'shiploop-core/protocol';
 
 /** P03-8 / F-010：Feature 分轴结果查询形状经公共面再导出。 */
-export type { FeatureDeliveryDetailResult } from 'shiploop-core/protocol';
+export type { FeatureDeliveryDetailResult, FeatureExecutionReport } from 'shiploop-core/protocol';
+import type { FeatureExecutionReport } from 'shiploop-core/protocol';
 
 /** P03-9 / F-014：控制进度与恢复诊断查询形状经公共面再导出。 */
 export type {
@@ -283,6 +285,7 @@ export type AppQueryOperation =
   // P03-8 / F-010：Feature 分轴结果查询（与 Core
   // FEATURE_DELIVERY_QUERY_OPERATIONS 同源）。
   | 'features.delivery.get'
+  | 'features.report.get'
   // P03-9 / F-013/F-014：Run/Batch 控制进度、恢复诊断与 finalization 收尾
   // 结果查询（与 Core EXECUTION_CONTROL_QUERY_OPERATIONS 同源）。
   | 'execution.run.control.get'
@@ -5545,6 +5548,7 @@ export function validateAppQueryResponse(
   body: unknown,
   expectation?: SnapshotExpectation,
 ): GitOperationDetailResult;
+export function validateAppQueryResponse(operation: 'features.report.get', body: unknown, expectation?: SnapshotExpectation): FeatureExecutionReport;
 // P03-8 / F-010：Feature 分轴结果查询响应重载。
 export function validateAppQueryResponse(
   operation: 'features.delivery.get',
@@ -5762,6 +5766,12 @@ export function validateAppQueryResponse(
     // P03-8 / F-010：Feature 分轴结果查询响应分发（同一冻结字段集纪律）。
     case 'features.delivery.get':
       return validateFeatureDeliveryDetailResultWire(body, operation);
+    case 'features.report.get':
+      return validateFeatureReportWire(body, {
+        delivery: value => validateFeatureDeliveryDetailResultWire(value, operation),
+        verification: value => validateVerificationBatchWire(operation, value),
+        operation: value => validatePublicGitOperationWire(operation, value),
+      });
     // P03-9 / F-014：控制进度与恢复诊断查询响应分发（同一冻结字段集纪律）。
     case 'execution.run.control.get':
       return validateRunControlDetailResultWire(body, operation);

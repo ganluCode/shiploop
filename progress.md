@@ -1,5 +1,16 @@
 # P03-10 工作进度
 
+## F-005 — 授权 Host 与正式构建 CLI 完整执行报告（2026-10-19）
+
+- 已复用现有授权查询通道接入 GET /v1/features/:featureId/report、HostClient.getFeatureReport 和 feature report CLI；报告 JSON 原样保留 Core schemaVersion=1，逐字段输出完整跨 Run 历史、检查/审批/operation 及证据引用，CLI 不打开 SQLite。
+- Host 与客户端统一使用 16 MiB 原子响应上限；超限返回 internal/response_budget_exceeded，不截断为最近历史。响应校验复用已有协议，核验嵌套字段/版本、项目归属、身份、历史计数、时间与 partial；缺历史 Session/Artifact 保持 partial。可信身份、读取能力、Feature 归属与证据成员检查仍由 Core 复核。
+- 正式构建测试发现并修复 dist/bin.js 立即 process.exit 导致管道 JSON 在 65,536 字节处截断；改用 process.exitCode 等待输出排空。保留初始路由 RED、构建截断 RED（test-p6uwkcvj.log）及所有中间失败日志；后续重跑均有相关代码或用例修正。
+- 最终新增 Host/CLI 八项真实临时资源测试通过：130 Attempt、130 审批、失败/取消/interrupted、人工等待、历史正文、逐字段 Core 比对、无越权/路径/凭据泄露、读取中状态变化不混合、缺历史、版本/归属/格式/大小拒绝与全库快照无写入。verifications/F-005/runtime-logs/test-lt64xmaw.log：exit 0，8 passed / 0 failed / 0 skipped；内含正式 npm run build 与构建入口烟测通过。
+- 原 Host 握手能力清单同步增加 features.report.get；只运行该受影响用例：test-31bza_dm.log exit 0，1 passed / 0 failed / 18 skipped，未宣称整个 Host routes 文件通过。
+- 最终静态检查：test-0zj45do9.log typecheck exit 0；test-hmcxnn6x.log boundaries exit 0（285 production files，0 diagnostics）；git diff --check 无错误。
+- 交接文档 docs/p03-10-f005-host-cli-report.md；任务索引 test/index/phases/P03/features/P03-10/tasks/F-005.json，Harness verifications/F-005/test-selection.json 引用该索引；已核对 15 个现有测试路径及 14 个唯一显式 case ID，并登记 Feature 索引。P01/P02 授权、分页、握手/协议拒绝、CLI 及既有报告查询回归按清单交 Nezha 独立运行；除上述聚焦范围外未在本轮执行，未跑全量、组合 verify 或 Phase 验收。
+- 无未解决阻塞。仅处理 F-005；正式 feature.yaml/task_list 保持只读，任务收尾仅经 Nezha CLI 提交一次 completed 报告；独立验收结论由 Nezha 负责。
+
 ## F-004 — Core 完整 Feature 执行报告（2026-10-19）
 
 - 新增 `QueryService.getFeatureReport` 和只读 report 端口/SQLite 适配器，默认 Core 装配已接入。复用既有分轴判断；全部 Task、跨 Run Attempt、返工/取消/interrupted、子 Session、检查、审批、operation、诊断与证据按稳定身份重建。

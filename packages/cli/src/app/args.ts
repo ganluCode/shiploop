@@ -81,6 +81,7 @@ export type AppCliCommandId =
   | 'feature.approve'
   | 'feature.reject'
   | 'feature.delivery'
+  | 'feature.report'
   | 'feature.final-approve'
   | 'feature.finalize'
   | 'task.list'
@@ -154,6 +155,7 @@ export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'feature.approve',
   'feature.reject',
   'feature.delivery',
+  'feature.report',
   'feature.final-approve',
   'feature.finalize',
   'task.list',
@@ -779,6 +781,10 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
   /* P03-8 / F-011：Feature 分轴结果查询与最终审批/显式收尾命令（审批绑定
    * 当前摘要；final-approve/finalize 缺 --confirm 在解析层拒绝；身份与
    * 凭据不接受客户端参数；产物引用可重复）。 */
+  'feature.report': {
+    command: 'feature', commandId: 'feature.report', valueFlags: ['--project'],
+    boolFlags: [], repeatableFlags: [], minPositionals: 1, maxPositionals: 1, positionalFields: ['featureId'],
+  },
   'feature.delivery': {
     command: 'feature',
     commandId: 'feature.delivery',
@@ -1234,6 +1240,7 @@ const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, A
       approve: 'feature.approve',
       reject: 'feature.reject',
       delivery: 'feature.delivery',
+      report: 'feature.report',
       'final-approve': 'feature.final-approve',
       finalize: 'feature.finalize',
     },
@@ -2815,7 +2822,7 @@ export interface ParsedExecutionRevise {
 export interface ParsedFeatureDelivery {
   readonly kind: 'command';
   readonly command: 'feature';
-  readonly commandId: 'feature.delivery';
+  readonly commandId: 'feature.delivery' | 'feature.report';
   readonly json: boolean;
   readonly startTimeoutMs: number;
   readonly dataRoot?: string;
@@ -3880,11 +3887,12 @@ function buildPlanEntity(
         ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
       };
     }
+    case 'feature.report':
     case 'feature.delivery': {
       return {
         ...base,
         command: 'feature',
-        commandId: 'feature.delivery',
+        commandId: spec.commandId as 'feature.delivery' | 'feature.report',
         projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
         featureId: requirePlanId(scan.positionals[0] as string, state, 'featureId'),
       };

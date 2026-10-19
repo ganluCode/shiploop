@@ -1290,6 +1290,13 @@ async function executePlanCommand(
     }
     /* P03-8 / F-011：Feature 分轴结果查询与最终审批/显式收尾命令（全部经
      * HostClient 公共面；completed 回执结果经冻结字段集线校验器复核后投影）。 */
+    case 'feature.report': {
+      const result = await client.getFeatureReport(command.projectId, command.featureId);
+      return emitSuccess(io, command, result,
+        `shiploop feature report: ${result.feature.featureId} outcome=${result.outcome.status} completeness=${result.completeness}\n` +
+        `  tasks=${result.counts.tasks} runs=${result.counts.runs} attempts=${result.counts.attempts} sessions=${result.counts.sessions}\n` +
+        `  issues=${result.issues.join(',') || 'none'}\n` + JSON.stringify(result, null, 2));
+    }
     case 'feature.delivery': {
       const result = await client.getFeatureDelivery(command.projectId, command.featureId);
       const view = buildFeatureDeliveryView(result);

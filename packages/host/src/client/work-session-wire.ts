@@ -48,6 +48,8 @@ const resultEvidence: Check = v => {
   if (v === null) return true;
   try { validatePublicWorkSessionResultEvidence(v); return true; } catch { return false; }
 };
+// Reused by the complete report's extended Attempt/Session records.
+export const workSessionWireChecks = { attempt, session, evidence, diagnostic, resultEvidence };
 function malformed(operation: HostOperation): never {
   throw new HostProtocolError('response_malformed', operation, 'Work Session 响应不符合线协议', { details: { reason: 'work_session_malformed' } });
 }

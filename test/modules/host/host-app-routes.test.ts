@@ -1059,6 +1059,7 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         'git.operations.get',
         // P03-8 / F-010：Feature 分轴结果查询真实接线。
         'features.delivery.get',
+        'features.report.get',
         // P03-9 / F-013：Run/Batch 控制进度、恢复诊断与 finalization 收尾结果查询真实接线。
         'execution.run.control.get',
         'execution.batch.control.get',

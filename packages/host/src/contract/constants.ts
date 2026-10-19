@@ -93,6 +93,9 @@ export const FEATURES_ROUTE_PREFIX = '/v1/features/';
 export const FEATURE_APPROVALS_ROUTE_SUFFIX = '/approvals';
 /** P03-8 / F-010：Feature 分轴结果子资源（GET /v1/features/:featureId/delivery）。 */
 export const FEATURE_DELIVERY_ROUTE_SUFFIX = '/delivery';
+export const FEATURE_REPORT_ROUTE_SUFFIX = '/report';
+/** Complete report is delivered atomically; oversized reports fail explicitly. */
+export const MAX_FEATURE_REPORT_RESPONSE_BYTES = 16 * 1024 * 1024;
 export const TASKS_ROUTE = '/v1/tasks';
 export const TASKS_ROUTE_PREFIX = '/v1/tasks/';
 /**

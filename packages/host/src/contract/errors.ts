@@ -85,6 +85,7 @@ export const APP_OPERATIONS = [
   // P03-8 / F-010：Feature 分轴结果授权只读查询（能力位复用 project.read；
   // 与 Core FEATURE_DELIVERY_QUERY_OPERATIONS 同步，不漂移）。
   'features.delivery.get',
+  'features.report.get',
   // P03-9 / F-013：Run/Batch 控制进度、恢复诊断与 finalization 收尾结果授权
   // 只读查询（能力位复用 project.read；与 Core
   // EXECUTION_CONTROL_QUERY_OPERATIONS 同步，不漂移）。

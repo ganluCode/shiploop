@@ -80,6 +80,7 @@ import type {
   GitOperationDetailResult,
   GitOperationListResult,
   FeatureDeliveryDetailResult,
+  FeatureExecutionReport,
   WorkSessionListResult,
   WorkSessionDetailResult,
   WorkSessionEvidenceContent,
@@ -102,6 +103,8 @@ import {
   EVENTS_ROUTE,
   FEATURE_APPROVALS_ROUTE_SUFFIX,
   FEATURE_DELIVERY_ROUTE_SUFFIX,
+  FEATURE_REPORT_ROUTE_SUFFIX,
+  MAX_FEATURE_REPORT_RESPONSE_BYTES,
   FEATURES_ROUTE,
   FEATURES_ROUTE_PREFIX,
   GIT_OPERATIONS_ROUTE,
@@ -787,6 +790,7 @@ export interface HostClientApplication {
    * 可区分总体 outcome；completed 不掩盖缺失证据或其他轴失败。
    */
   getFeatureDelivery(projectId: string, featureId: string): Promise<FeatureDeliveryDetailResult>;
+  getFeatureReport(projectId: string, featureId: string): Promise<FeatureExecutionReport>;
   /* ------------------------------------------------------------ *
    * P03-5 / F-012 工作区状态只读查询与人工丢弃预览/确认
    * ------------------------------------------------------------ */
@@ -1663,7 +1667,8 @@ export function createHostClientApplication(context: AppClientContext): HostClie
       token,
       connectTimeoutMs: context.connectMs,
       overallTimeoutMs: requestBudget(),
-      maxResponseBytes: operation === 'execution.session.evidence.get' ? MAX_WORK_SESSION_EVIDENCE_RESPONSE_BYTES : MAX_APP_BODY_BYTES,
+      maxResponseBytes: operation === 'execution.session.evidence.get' ? MAX_WORK_SESSION_EVIDENCE_RESPONSE_BYTES
+        : operation === 'features.report.get' ? MAX_FEATURE_REPORT_RESPONSE_BYTES : MAX_APP_BODY_BYTES,
     });
     if (response.statusCode !== 200) {
       throw mapErrorResponse(response.statusCode, response.json, operation);
@@ -3477,6 +3482,25 @@ export function createHostClientApplication(context: AppClientContext): HostClie
     /* ------------------------------------------------------------ *
      * P03-8 / F-010 Feature 分轴结果只读查询
      * ------------------------------------------------------------ */
+
+    async getFeatureReport(projectId: string, featureId: string): Promise<FeatureExecutionReport> {
+      const op = 'features.report.get';
+      context.assertOpen(op);
+      const project = requireProjectId(op, projectId);
+      const id = requireStableIdInput(op, featureId, 'featureId');
+      const result = validateAppQueryResponse(op, await getJson(op,
+        `${FEATURES_ROUTE_PREFIX}${encodeURIComponent(id)}${FEATURE_REPORT_ROUTE_SUFFIX}?projectId=${encodeURIComponent(project)}`));
+      if (result.feature.featureId !== id || result.outcome.identities.featureId !== id ||
+          result.tasks.some(t => t.attempts.some(a => a.projectId !== project || a.featureId !== id)) ||
+          result.operations.some(o => o.projectId !== project || o.featureId !== id) ||
+          result.verifications.some(v => v.projectId !== project || v.featureId !== id) ||
+          result.axes.approval.items.some(a => a.projectId !== project || a.featureId !== id) ||
+          (result.axes.verification.batch !== null && (result.axes.verification.batch.projectId !== project || result.axes.verification.batch.featureId !== id)) ||
+          (result.axes.delivery.operation !== null && (result.axes.delivery.operation.projectId !== project || result.axes.delivery.operation.featureId !== id))) {
+        throw new HostProtocolError('response_malformed', op, 'Feature 报告响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
+      }
+      return result;
+    },
 
     async getFeatureDelivery(projectId: string, featureId: string): Promise<FeatureDeliveryDetailResult> {
       const op = 'features.delivery.get';

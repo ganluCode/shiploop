@@ -24,6 +24,11 @@
       "task_id": "F-004",
       "index": "test/index/phases/P03/features/P03-10/tasks/F-004.json",
       "description": "Core 完整 Feature 执行报告：跨 Run 历史、独立交付轴、一致读取、部分证据与用量；本地六项 SQLite 用例及待 Nezha 执行的既有查询回归。"
+    },
+    {
+      "task_id": "F-005",
+      "index": "test/index/phases/P03/features/P03-10/tasks/F-005.json",
+      "description": "授权 HostClient 与构建 CLI 完整报告：原子有界历史、协议校验、partial/拒绝、只读一致快照与待 Nezha 执行的 P01/P02 回归。"
     }
   ]
 }

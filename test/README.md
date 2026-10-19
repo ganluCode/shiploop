@@ -37,7 +37,7 @@ test/
 - `index/phases/P03/phase.json`：人工阶段验收声明；**不是已通过证明**。
 - `index/phases/P03/features/P03-9/feature.json`：18 个 Task 的索引目录。
 - `index/phases/P03/features/P03-9/tasks/F-001.json`：单个 Task 的实际测试范围。
-- `index/phases/P03/features/P03-10/feature.json`：已登记的 P03-10 Task；包括 F-001 夹具、F-002 检查清单/配置，以及 F-003 三 Task 链诊断和受影响回归。F-003 当前检测到受控提交缺口，诊断测试通过不代表纵向交付验收或阶段通过。F-004 登记完整 Feature 报告的 SQLite 用例与既有查询回归；本地通过范围见任务交接。
+- `index/phases/P03/features/P03-10/feature.json`：已登记的 P03-10 Task；包括 F-001 夹具、F-002 检查清单/配置，以及 F-003 三 Task 链诊断和受影响回归。F-003 当前检测到受控提交缺口，诊断测试通过不代表纵向交付验收或阶段通过。F-004 登记完整 Feature 报告的 SQLite 用例与既有查询回归；F-005 登记授权 Host/HostClient、正式构建 CLI 完整报告及 P01/P02 授权、分页、协议拒绝回归。本地通过范围见各任务交接。
 
 Task JSON 使用 Nezha v2 schema。当前存量用例首轮按文件显式 `all: true`，
 对应 19 个本 Feature 文件，不包含此前大批历史模块回归。

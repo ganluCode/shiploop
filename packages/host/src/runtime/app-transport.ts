@@ -60,6 +60,8 @@ import {
   EVENTS_ROUTE,
   FEATURE_APPROVALS_ROUTE_SUFFIX,
   FEATURE_DELIVERY_ROUTE_SUFFIX,
+  FEATURE_REPORT_ROUTE_SUFFIX,
+  MAX_FEATURE_REPORT_RESPONSE_BYTES,
   FEATURES_ROUTE,
   FEATURES_ROUTE_PREFIX,
   GIT_OPERATIONS_ROUTE,
@@ -162,6 +164,7 @@ export type ApplicationOperation =
   // P03-8 / F-010：Feature 分轴结果只读查询（与 Core
   // FEATURE_DELIVERY_QUERY_OPERATIONS 同源）。
   | 'features.delivery.get'
+  | 'features.report.get'
   // P03-9 / F-013：Run/Batch 控制进度、恢复诊断与 finalization 收尾结果只读
   // 查询（与 Core EXECUTION_CONTROL_QUERY_OPERATIONS 同源）。
   | 'execution.run.control.get'
@@ -440,6 +443,10 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
         method: 'GET',
         pathParam: { name: 'featureId', value: segments[0] as string },
       };
+    }
+    if (segments.length === 2 && segments[1] === FEATURE_REPORT_ROUTE_SUFFIX.slice(1)) {
+      return { operation: 'features.report.get', method: 'GET',
+        pathParam: { name: 'featureId', value: segments[0] as string } };
     }
     // P03-8 / F-010：GET /v1/features/:featureId/delivery（Feature 分轴结果
     // 子资源）；其余多段形态一律未匹配 → 404 unknown_operation。
@@ -721,6 +728,7 @@ const QUERY_SPECS: Readonly<Partial<Record<ApplicationOperation, QuerySpec>>> = 
   'git.operations.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
   // P03-8 / F-010：Feature 分轴结果查询参数白名单（取值规则由 Core 单一权威复核）。
   'features.delivery.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
+  'features.report.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
   'execution.run.control.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
   'execution.batch.control.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
   'execution.run.recovery.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
@@ -1185,6 +1193,12 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
     // P03-8 / F-010：Feature 分轴结果查询分发（本层只做形态转换；授权/
     // 可见性折叠/身份校验全部由 Core 单一权威复核；跨项目与不存在目标
     // 统一 not_found，不区分存在性）。
+    case 'features.report.get': {
+      const query = buildPlanListQuery(params, operation, 'projectId');
+      query.featureId = pathParam?.value;
+      result = await app.queryService.getFeatureReport(app.principal, query);
+      break;
+    }
     case 'features.delivery.get': {
       const query = buildPlanListQuery(params, operation, 'projectId');
       query.featureId = pathParam?.value;
@@ -1271,7 +1285,8 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
       // 路由表与本分发必须一一对应；缺失是装配编程错误。
       throw new TypeError(`应用路由未接线：${operation}`);
   }
-  sendBoundedJson(response, 200, result, operation === 'execution.session.evidence.get' ? MAX_WORK_SESSION_EVIDENCE_RESPONSE_BYTES : MAX_APP_BODY_BYTES, operation);
+  sendBoundedJson(response, 200, result, operation === 'execution.session.evidence.get' ? MAX_WORK_SESSION_EVIDENCE_RESPONSE_BYTES
+    : operation === 'features.report.get' ? MAX_FEATURE_REPORT_RESPONSE_BYTES : MAX_APP_BODY_BYTES, operation);
 }
 
 /**

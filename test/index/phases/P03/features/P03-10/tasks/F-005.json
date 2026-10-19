@@ -1,0 +1,88 @@
+{
+  "schema_version": 2,
+  "task_id": "F-005",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/host/p03-10-feature-report-contract.test.ts",
+          "cases": [
+            "report-query-entry",
+            "complete-history-wire",
+            "report-auth-boundaries",
+            "report-snapshot-http",
+            "report-missing-history",
+            "report-protocol-refusal"
+          ]
+        },
+        {
+          "file": "test/modules/cli/p03-10-feature-report-built.test.ts",
+          "cases": [
+            "built-report-parity",
+            "built-report-errors"
+          ]
+        },
+        {
+          "file": "test/modules/delivery/p03-10-feature-execution-report.test.ts",
+          "cases": [
+            "all-tasks-read-only",
+            "history-evidence-timing",
+            "pages-and-missing",
+            "snapshot-and-dedup",
+            "report-authorization",
+            "artifact-integrity"
+          ]
+        },
+        {
+          "file": "test/modules/host/host-app-routes.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/host/host-client-application.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/host/host-client.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/authorization/authorization-contract.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/authorization/authorized-queries.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/engineering/client-protocol-boundary.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/cli/app-cli-args.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/cli/app-cli-execute.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/cli/app-cli-events-scripted.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/cli/app-cli-events-observe.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/delivery/p03-8-f010-feature-delivery-query.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p03-6-work-session-query.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

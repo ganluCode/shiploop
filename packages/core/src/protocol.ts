@@ -278,6 +278,9 @@ export {
   FEATURE_DELIVERY_STAGES,
   FEATURE_VERIFICATION_AXIS_STATUSES,
 } from './ports/feature-delivery-query.js';
+export type { FeatureExecutionReport } from './application/feature-execution-report.js';
+export { FEATURE_REPORT_GET_OPERATION } from './ports/feature-execution-report.js';
+export { validateRuntimeRecoverySelection, validateRuntimeRecoveryDecision } from './ports/runtime-recovery.js';
 export type {
   FeatureApprovalAxisStatus,
   FeatureDeliveryDetailResult,
