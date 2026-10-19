@@ -28,7 +28,7 @@ import { getAppCliHelp } from '../../../../packages/cli/src/app/help.ts';
 import type {
   RunControlDetailResult,
   RunRecoveryDetailResult,
-} from 'shiploop-host';
+} from '../../../../packages/host/src/index.ts';
 
 const PROJECT_ID = '00000000-0000-4000-8000-000000000001';
 const RUN_ID = '11111111-1111-4111-8111-111111111111';

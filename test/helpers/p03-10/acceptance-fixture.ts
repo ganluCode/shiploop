@@ -18,6 +18,8 @@ import { isInsideDirectory } from '../safe-cleanup.ts';
 const REPO = fileURLToPath(new URL('../../../', import.meta.url));
 const HOST_ENTRY = fileURLToPath(new URL('./dist-fake-host.mjs', import.meta.url));
 const BRANCH = 'feat/2026-10-11-17-45-49_p03-9';
+// Immutable ancestor survives clean clones that intentionally omit local branch refs.
+const CUMULATIVE_COMMIT = '14386921209e98f6bfc49f2c93373aeacc0473a5';
 const BASELINE = '0e76ad8d9ae7a9e03949c8af4bae8e7e236acd56';
 const TABLES = ['projects', 'phases', 'features', 'tasks', 'approvals', 'execution_batches', 'runs', 'attempts',
   'sessions', 'workspace_leases', 'managed_workspaces', 'workspace_operations', 'git_operations',
@@ -268,7 +270,7 @@ export async function withP03AcceptanceFixture<T>(options: P03FixtureOptions, bo
     if (isInsideDirectory(evidenceDir, root)) throw new Error('evidence must survive disposable resources');
     await stage('allocated');
     const head = git(['rev-parse', 'HEAD']);
-    const cumulative = git(['rev-parse', BRANCH]);
+    const cumulative = git(['rev-parse', CUMULATIVE_COMMIT]);
     git(['merge-base', '--is-ancestor', cumulative, head]);
     git(['merge-base', '--is-ancestor', BASELINE, head]);
     const lock = JSON.parse(readFileSync(join(REPO, 'package-lock.json'), 'utf8'));

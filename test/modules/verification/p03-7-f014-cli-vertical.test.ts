@@ -71,6 +71,10 @@ async function runApp(args: readonly string[]): Promise<CliOutcome> {
     io,
     userHomeDir: fixture!.box.homeDir,
   });
+  if (result.exitCode !== 0 && args[1] === 'continue') {
+    stderr += JSON.stringify({ args, receipts: fixture!.session.database.prepare('SELECT command_id, operation FROM command_receipts').all(), tasks: fixture!.session.database.prepare('SELECT id, revision, status FROM tasks').all(),
+      events: fixture!.session.database.prepare('SELECT event_type, payload FROM state_events ORDER BY sequence DESC LIMIT 8').all() });
+  }
   return {
     exitCode: result.exitCode,
     stdout,
@@ -87,7 +91,10 @@ function okResult(outcome: CliOutcome, command: string): Record<string, unknown>
 }
 
 async function openCase(): Promise<{ projectId: string; runId: string }> {
-  fixture = await openBindingFixture();
+  fixture = await openBindingFixture({ deliveryPolicy: {
+    commitMode: 'task_and_feature',
+    gitIdentity: { name: 'Test Owner', email: 'owner@example.test', confirmed: true },
+  } });
   host = await startFakeHost({
     dataRoot: fixture.box.dataRoot,
     capabilityCatalog: catalog(),
@@ -344,11 +351,12 @@ describe('F-014 显式验证继续（复用有效机器证据，零新增编码�
       seeded.attemptId,
     );
     const continueCommandId = randomUUID();
+    const continueRevision = (db.prepare('SELECT revision FROM tasks WHERE id = ?').get('t-1') as { revision: number }).revision;
     const continued = okResult(
       await runApp([
         'task', 'continue', 't-1', '--project', projectId, '--attempt', seeded.attemptId,
         '--batch', seeded.batchId, '--code-digest', seeded.codeDigest,
-        '--observation', seeded.observationDigest, '--revision', String(seeded.taskRevision),
+        '--observation', seeded.observationDigest, '--revision', String(continueRevision),
         '--command-id', continueCommandId, '--json',
       ]),
       'task.continue',
@@ -376,7 +384,7 @@ describe('F-014 显式验证继续（复用有效机器证据，零新增编码�
       await runApp([
         'task', 'continue', 't-1', '--project', projectId, '--attempt', seeded.attemptId,
         '--batch', seeded.batchId, '--code-digest', seeded.codeDigest,
-        '--observation', seeded.observationDigest, '--revision', String(seeded.taskRevision),
+        '--observation', seeded.observationDigest, '--revision', String(continueRevision),
         '--command-id', continueCommandId, '--json',
       ]),
       'task.continue',

@@ -42,7 +42,9 @@ describe('F-018 bounded controller (no real npm/test/phase invocation)', () => {
     const result = await run();
     expect(result.ok).toBe(false);
     expect(result.problems.some(p => p.includes('report') || p.includes('报告'))).toBe(true);
-    expect(existsSync(temp)).toBe(false);
+    expect(existsSync(temp)).toBe(true);
+    const cleanup = JSON.parse(readFileSync(join(out, 'cleanup-manifest.json'), 'utf8'));
+    expect(cleanup.processesGone).toBe(false);
   });
 
   it('[case:failed-round-stops] first failed round does not launch a second phase run', async () => {

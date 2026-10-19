@@ -34,6 +34,7 @@ import type { CheckDefinition } from '../../../../packages/core/src/ports/task-v
 import { git } from '../../../helpers/git-repo.ts';
 import { NOW } from '../../../helpers/p03-3/budget-fixture.ts';
 import { openClaimFixture } from '../../../helpers/p03-4/task-claim-fixture.ts';
+import { recordTaskCommitFixture } from '../../../helpers/task-commit-receipt.ts';
 
 type Fixture = Awaited<ReturnType<typeof openClaimFixture>>;
 type ClaimedFixture = Fixture & {
@@ -279,6 +280,7 @@ async function claimAndPass(
     outputArtifactId: output.id,
     outputDigest: output.contentHash!,
   });
+  recordTaskCommitFixture(f, attempt, batchId, codeDigest);
   const verification = lifecycle(f).submitVerification({
     projectId: attempt.projectId,
     attemptId: attempt.id,

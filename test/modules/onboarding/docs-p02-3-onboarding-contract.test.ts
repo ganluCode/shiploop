@@ -224,7 +224,7 @@ describe('F-001 契约文档与仓库基线一致（开工现状事实）', () =
     expect(root.engines).toEqual({ node: '22.19.0', npm: '10.9.3' });
     expect(root.packageManager).toBe('npm@10.9.3');
     expect(Object.keys(root.scripts as Record<string, string>).sort()).toEqual(
-      ['accept:p01', 'accept:p02', 'build', 'check:boundaries', 'test', 'typecheck', 'verify'].sort(),
+      ['accept:p01', 'accept:p02', 'accept:p03', 'accept:p03:clean-replay', 'build', 'check:boundaries', 'test', 'typecheck', 'verify'].sort(),
     );
     // P02-4/F-011 起正式交付：必须是本地控制器脚本，不得经由 npx/全局工具。
     expect(root.scripts).toHaveProperty('accept:p02', 'node scripts/acceptance/p02-accept.ts');

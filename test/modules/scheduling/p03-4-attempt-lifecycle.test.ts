@@ -9,6 +9,7 @@ import { createSqliteAttemptLifecycleStore } from '../../../packages/core/src/ad
 import { createSqliteWorkResourceAccess } from '../../../packages/core/src/adapters/sqlite/work-resources.ts';
 import { createSqliteExecutionAccess } from '../../../packages/core/src/adapters/sqlite/execution-store.ts';
 import { ATTEMPT_DIAGNOSTICS_LIMIT } from '../../../packages/core/src/ports/attempt-lifecycle.ts';
+import { recordTaskCommitFixture } from '../../helpers/task-commit-receipt.ts';
 
 async function fixture(stopVerifier?: WorkResourceStopVerifier) {
   const f = await openClaimFixture([[], ['t-1']]);
@@ -63,6 +64,7 @@ describe('F-005 fenced Attempt lifecycle', () => {
       });
       const input = { ...f.identity, verificationBatchId: batchId, codeDigest: code.content_hash,
         observationDigest: 'a'.repeat(64), outcome: 'passed' as const };
+      recordTaskCommitFixture(f, f.attempt, batchId, code.content_hash);
       const first = (f.lifecycle() as any).submitVerification(input);
       expect(first).toMatchObject({ disposition: 'applied', status: 'succeeded', waitingFor: null });
       expect(f.box.session.database.prepare('SELECT status FROM attempts WHERE id = ?').get(f.attempt.id)).toEqual({ status: 'succeeded' });
@@ -112,6 +114,7 @@ describe('F-005 fenced Attempt lifecycle', () => {
       expect(f.box.session.database.prepare('SELECT status, reason FROM runs WHERE id = ?').get(f.attempt.runId)).toEqual({ status: 'paused', reason: 'approval' });
       expect(f.box.session.database.prepare('SELECT status FROM features WHERE id = ?').get(f.attempt.featureId)).toEqual({ status: 'awaiting_approval' });
       f.box.session.database.prepare('UPDATE tasks SET manual_block = 0 WHERE id = ?').run(f.attempt.taskId);
+      recordTaskCommitFixture(f, f.attempt, batchId, code.content_hash);
       expect((f.lifecycle() as any).submitVerification(input)).toMatchObject({ disposition: 'applied', status: 'succeeded' });
     } finally { f.box.close(); }
   });

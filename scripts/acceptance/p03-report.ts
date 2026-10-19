@@ -250,7 +250,7 @@ export function assertNoSensitiveText(
  * 未登记敏感值的真实凭据值仍拒绝写出。
  */
 const CREDENTIAL_KEY_TEXT_PATTERN =
-  /"(?:authorization|auth|token|password|secret|credential|cookie|api[_-]?key)s?"\s*:\s*(?!(?:"\[REDACTED:|\[REDACTED:))/gi;
+  /"(?:authorization|auth|token|password|secret|credential|cookie|api[_-]?key)s?"\s*:(?!\s*(?:"\[REDACTED:|\[REDACTED:))\s*/gi;
 /** Bearer 认证头形态（值域不含 [REDACTED 占位符，脱敏后不再命中）。 */
 const BEARER_TEXT_PATTERN = /\bBearer\s+[A-Za-z0-9._~+/=-]+/gi;
 /** 开发机主目录绝对路径（macOS/Linux/Windows）。 */

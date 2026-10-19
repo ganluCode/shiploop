@@ -283,13 +283,13 @@ describe('P03-9 / F-012 finalization completion', () => {
         runtimeStarts: 0,
         newAttempts: 0,
       });
-      expect(row(f, 'SELECT COUNT(*) AS n FROM git_operations')!.n).toBe(0);
+      expect(row(f, "SELECT COUNT(*) AS n FROM git_operations WHERE operation_type = 'feature_final_commit'")!.n).toBe(0);
       expect(counts(f).commits).toBe(before.commits);
 
       const approved = await approvePendingItem(f);
       expect(approved.status).toBe('completed');
       expect(row(f, 'SELECT status FROM runs WHERE id = ?', runId)).toMatchObject({ status: 'paused' });
-      expect(row(f, 'SELECT COUNT(*) AS n FROM git_operations')!.n).toBe(0);
+      expect(row(f, "SELECT COUNT(*) AS n FROM git_operations WHERE operation_type = 'feature_final_commit'")!.n).toBe(0);
       expect(counts(f).commits).toBe(before.commits);
 
       await resumeRun(f, runId);
@@ -329,7 +329,7 @@ describe('P03-9 / F-012 finalization completion', () => {
         status: 'completed', runStatus: 'succeeded', featureStatus: 'completed', deliveryStatus: 'succeeded',
         runtimeStarts: 0, newAttempts: 0,
       });
-      expect(tableRows<{ status: string }>(f, 'SELECT status FROM git_operations ORDER BY rowid'))
+      expect(tableRows<{ status: string }>(f, "SELECT status FROM git_operations WHERE operation_type = 'feature_final_commit' ORDER BY rowid"))
         .toEqual([{ status: 'failed' }, { status: 'succeeded' }]);
       expect(counts(f).commits).toBe(before.commits + 1);
       expect(counts(f).attempts).toBe(before.attempts);

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runP03Acceptance } from '../../../scripts/acceptance/p03-accept.ts';
@@ -43,6 +43,17 @@ describe('P03 controller never fabricates assertion evidence', () => {
     const result = await runP03Acceptance({ ...options(), runProcess: async () => ({ ...outcome,
       exitCode: 1, stderr: 'npm via npm_execpath (/Users/tool-owner/.nvm/bin/npm.js)' }) });
     expect(result.reportWritten, result.problems.join('\n')).toBe(true);
+  });
+  it('[case:raw-credential-redaction] exports fixture JSON without leaking credential-shaped fields', async () => {
+    const result = await runP03Acceptance({ ...options(), runProcess: async (_cmd, _args, options) => {
+      writeFileSync(join(options.env!.P03_EVIDENCE_DIR!, 'fixture.json'), JSON.stringify({
+        auth: 'bearer', token: 'synthetic-secret', detail: 'Bearer synthetic-secret', status: 'failed' }));
+      return { ...outcome, exitCode: 1 };
+    } });
+    expect(result.reportWritten, result.problems.join('\n')).toBe(true);
+    const content = readFileSync(join(result.runDir!, 'evidence/scenarios/fixture.json'), 'utf8');
+    expect(content).not.toContain('synthetic-secret');
+    expect(JSON.parse(content).status).toBe('failed');
   });
   it('[case:runner-rejection] preserves diagnostic resources when the runner throws without stop evidence', async () => {
     let tempRoot = '';

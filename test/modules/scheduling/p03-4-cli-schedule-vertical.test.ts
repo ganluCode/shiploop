@@ -145,7 +145,6 @@ async function openWiredCli(): Promise<WiredCli> {
   const fixture = await openClaimFixture([[], ['t-1']]);
   activeFixture = fixture;
   const box = fixture.box;
-  const attempt = seedAttemptWithDiagnostics(fixture);
 
   const registeredB = await box.submit('project.register', {
     repositoryPath: box.box.repoDirB,
@@ -158,13 +157,14 @@ async function openWiredCli(): Promise<WiredCli> {
   }
   const projectIdB = (registeredB.result as { project: { id: string } }).project.id;
 
-  const tablesBefore = fixture.snapshot();
   const host = await startHost({
     dataRoot: box.box.dataRoot,
     capabilityCatalog: box.box.capabilityCatalog,
     env: {},
   });
   activeHost = host;
+  const attempt = seedAttemptWithDiagnostics(fixture);
+  const tablesBefore = fixture.snapshot();
   return {
     fixture,
     host,

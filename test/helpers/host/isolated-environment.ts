@@ -91,7 +91,7 @@ export function createIsolatedHostEnvironment(
   mkdirSync(tmpDir, { mode: 0o700 });
   mkdirSync(dataDir, { mode: 0o700 });
 
-  const protectedStrings = [REPO_ROOT];
+  const protectedStrings = [REPO_ROOT, homedir()];
   const realHome = realPathOrUndefined(homedir());
   if (realHome && realHome !== sandboxRoot) {
     protectedStrings.push(realHome);

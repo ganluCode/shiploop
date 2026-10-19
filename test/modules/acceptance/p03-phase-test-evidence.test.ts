@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { resolve } from 'node:path';
 import { requiredP03TestBindings, evaluateP03TestEvidence } from '../../../scripts/acceptance/p03-test-evidence.ts';
 import { P03_REQUIRED_CHECK_IDS } from '../../../scripts/acceptance/p03-config.ts';
+import { scanTextForCredentialShapes } from '../../../scripts/acceptance/p03-report.ts';
 
 const root = process.cwd();
 function report() {
@@ -18,6 +19,12 @@ function report() {
 }
 
 describe('P03 phase results require actual indexed assertions', () => {
+  it('[case:redacted-whitespace] recognizes redacted values without whitespace backtracking bypasses', () => {
+    for (const space of ['', ' ', '  ', '\n  ']) {
+      expect(scanTextForCredentialShapes(`{"token":${space}"[REDACTED:fixture]"}`)).toEqual([]);
+      expect(scanTextForCredentialShapes(`{"token":${space}"unredacted-value"}`).length).toBeGreaterThan(0);
+    }
+  });
   it('[case:exact-mapping] maps all required checks to executed nonempty assertions', () => {
     const result = evaluateP03TestEvidence(root, report());
     expect(result.map(item => item.checkId)).toEqual([...P03_REQUIRED_CHECK_IDS]);

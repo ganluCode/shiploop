@@ -33,6 +33,7 @@ import { publishPreparedInputFixture } from '../../helpers/p03-4/task-dag-state-
 import { CODE_ATTEMPT_SETTLEMENT_PREFIX } from '../../../packages/core/src/ports/code-attempt-budget.ts';
 import { assertVerificationReuseIdentity } from '../../../packages/core/src/application/task-verification-continue.ts';
 import type { CommandReceipt } from '../../../packages/core/src/ports/commands.ts';
+import { PublicError } from '../../../packages/core/src/ports/commands.ts';
 
 const CODE_DIGEST = 'cd'.repeat(32);
 const OBSERVATION_DIGEST = 'ef'.repeat(32);
@@ -176,6 +177,37 @@ const currentTaskRevision = (fixture: BudgetFixture) =>
   (fixture.session.database.prepare('SELECT revision FROM tasks WHERE id = ?').get('t-1') as { revision: number }).revision;
 
 describe('F-012 task.verification.continue 授权显式继续', () => {
+  it('并发重发在原命令完成后遇到旧修订时，返回已持久化回执', async () => {
+    const fixture = await openBudgetFixture();
+    try {
+      await fixture.start();
+      const seeded = seedApprovalWaiting(fixture);
+      let release!: () => void;
+      const gate = new Promise<void>(resolve => { release = resolve; });
+      let first!: Promise<CommandReceipt>;
+      let calls = 0;
+      const commands = continueCommands(fixture, async () => {
+        if (++calls === 1) await gate;
+        else {
+          await first;
+          throw new PublicError('conflict', 'task.verification.continue', undefined,
+            { details: { reason: 'task_revision_conflict' } });
+        }
+      });
+      const envelope = continueEnvelope(fixture, seeded);
+      first = commands.submit(fixture.owner, envelope);
+      const resent = commands.submit(fixture.owner, envelope);
+      release();
+      const original = await first;
+      expect(await resent).toMatchObject({ commandId: original.commandId, status: 'completed', replayed: true });
+      await expectConflict(commands.submit(fixture.owner, { ...envelope,
+        payload: { ...(envelope.payload as Record<string, unknown>), codeDigest: 'ab'.repeat(32) } }),
+      'idempotency_key_reuse', 'same commandId with a different request');
+      expect(fixture.session.database.prepare("SELECT COUNT(*) AS n FROM command_receipts WHERE operation = 'task.verification.continue'").get())
+        .toMatchObject({ n: 1 });
+    } finally { fixture.close(); }
+  });
+
   it('过期修订或伪造观察在任何外部提交副作用前拒绝', async () => {
     const fixture = await openBudgetFixture();
     try {

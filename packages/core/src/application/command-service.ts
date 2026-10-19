@@ -616,6 +616,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
       // 非法可信装配为编程错误，不折算客户端错误。
       assertTrustedPrincipal(principal);
       let operation = 'commands.submit';
+      let continuationReplay: { commandId: string; digest: string } | undefined;
       try {
         const envelope = validateCommandEnvelope(input);
         operation = envelope.operation;
@@ -721,6 +722,9 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           throw new PublicError('unsupported', operation);
         }
         const digest = computeCommandRequestDigest(envelope);
+        if (envelope.operation === TASK_VERIFICATION_CONTINUE_OPERATION) {
+          continuationReplay = { commandId: envelope.commandId, digest };
+        }
         const existing = store.findReceipt(principal.principalId, envelope.commandId);
         // 预读只决定新命令的事务外时效拒绝；重放仍必须进入权威写事务重读。
         if (existing === undefined) {
@@ -1307,6 +1311,13 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
         if (stopRequest) void executionStopControl!.stop(stopRequest).catch(() => undefined);
         return receipt;
       } catch (error) {
+        // A transport retry can finish its Git preflight after the original
+        // request commits. The durable receipt wins over that stale CAS error.
+        if (continuationReplay !== undefined) {
+          const original = replay(principal, store.findReceipt(principal.principalId, continuationReplay.commandId),
+            continuationReplay.digest, operation);
+          if (original !== undefined) return original;
+        }
         throw mapToPublicError(error, { operation });
       }
     },

@@ -341,7 +341,20 @@ export async function runP03Acceptance(options: P03AcceptanceRunOptions): Promis
   const problems: string[] = [];
   const sanitize = (value: string): string => value.replaceAll(options.repoRoot, '<repo>')
     .replaceAll(tempRoot, '<temp>').replaceAll(homedir(), '<home>')
-    .replace(/\/(?:Users|home)\/[^/\s"'`,;:|)\\]+/g, '<home>');
+    .replace(/\/(?:Users|home)\/[^/\s"'`,;:|)\\]+/g, '<home>')
+    .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]+/g, '[REDACTED:bearer]');
+  const sanitizeEvidence = (text: string): string => {
+    const visit = (value: unknown): unknown => {
+      if (typeof value === 'string') return sanitize(value);
+      if (Array.isArray(value)) return value.map(visit);
+      if (value !== null && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, child]) => [key,
+        /^(?:authorization|auth|token|password|secret|credential|cookie|api[_-]?key)s?$/i.test(key)
+          ? '[REDACTED:credential]' : visit(child)]));
+      return value;
+    };
+    try { return JSON.stringify(visit(JSON.parse(text)), null, 2) + '\n'; }
+    catch { return sanitize(text); }
+  };
   const proofs = new Map<string, P03TestProof>();
   let stopsConfirmed = true;
   let facts: P03PhaseReportInput['git'];
@@ -372,7 +385,7 @@ export async function runP03Acceptance(options: P03AcceptanceRunOptions): Promis
       });
       stopsConfirmed = priorStopsConfirmed && outcome.stoppedVerified;
       commands.push({ label: step.label, argv: [step.command, ...step.args].map((arg) => logicalArg(arg, options.repoRoot)), cwd: '<repo>', exitCode: outcome.exitCode, durationMs: outcome.durationMs, ...(outcome.timedOut ? { timedOut: true } : {}) });
-      const diagnostic = sanitize(stepEvidence(step, outcome, commandPath));
+      const diagnostic = sanitizeEvidence(stepEvidence(step, outcome, commandPath));
       evidenceFiles.push({ path: commandPath, category: 'command-exit', checkId: null, content: diagnostic });
       log(diagnostic);
       const passed = outcome.kind === 'exit' && outcome.exitCode === 0 && outcome.stoppedVerified;
@@ -423,7 +436,7 @@ export async function runP03Acceptance(options: P03AcceptanceRunOptions): Promis
         if (entry.isDirectory()) exportRaw(file);
         else if (entry.isFile()) {
           if (evidenceFiles.length > 2000 || statSync(file).size > 2 * 1024 * 1024) throw new Error('Scenario evidence limit exceeded');
-          const content = sanitize(readFileSync(file, 'utf8'));
+          const content = sanitizeEvidence(readFileSync(file, 'utf8'));
           evidenceFiles.push({ path: `evidence/scenarios/${relative(rawEvidence, file).replaceAll('\\', '/')}`, category: 'artifact', checkId: null, content });
         }
       }

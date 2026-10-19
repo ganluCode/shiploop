@@ -32,6 +32,7 @@ import {
   type AppCliRunResult,
 } from '../../../packages/cli/src/app-execute.ts';
 import type { RunningHost } from '../../../packages/host/src/runtime/index.ts';
+import { startHost } from '../../../packages/host/src/index.ts';
 import { openClaimFixture } from '../../helpers/p03-4/task-claim-fixture.ts';
 import { createLocalOwnerPrincipal } from '../../helpers/p02-2/principals.ts';
 import { git } from '../../helpers/git-repo.ts';
@@ -83,6 +84,9 @@ afterEach(async () => {
   const host = activeHost;
   activeHost = undefined;
   if (host !== undefined) {
+    activeFixture!.box.session.transactWrite('fixture.retireSyntheticOccupancy', () => {
+      activeFixture!.box.session.database.prepare('DELETE FROM workspace_leases').run();
+    });
     await host.close();
   }
   const fixture = activeFixture;
@@ -95,6 +99,9 @@ afterEach(async () => {
 async function seedRetainedWorkspace(): Promise<WiredWorkspace> {
   const fixture = await openClaimFixture([[], ['t-1']]);
   activeFixture = fixture;
+  // Startup recovery precedes this synthetic retained workspace; cleanup owns the Host.
+  activeHost = await startHost({ dataRoot: fixture.box.box.dataRoot,
+    capabilityCatalog: fixture.box.box.capabilityCatalog, env: {} });
   const app = await openCoreApplication({
     dataRoot: fixture.box.box.dataRoot,
     capabilityCatalog: fixture.box.box.capabilityCatalog,

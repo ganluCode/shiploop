@@ -275,7 +275,7 @@ describe('F-013 SQLite/制品全链路集成闭环（独立临时数据根）', 
         // v2 状态事件 + P02-2 / F-006 v3 幂等命令回执 + P02-3 v4/v5 + P03-1/F-002 v6
         // + P03-2 v7/v8 + P03-3/F-002 v9 单 Feature 执行域三表 + P03-3/F-006 v11 +
         // P03-3/F-007 v12 启动预占账本表）。
-        expect(migrationRows(reopened.session)).toEqual([{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 }, { version: 9 }, { version: 10 }, { version: 11 }, { version: 12 }, { version: 13 }, { version: 14 }, { version: 15 }, { version: 16 }, { version: 17 }, { version: 18 }, { version: 19 }, { version: 20 }, { version: 21 }, { version: 22 }, { version: 23 }, { version: 24 }, { version: 25 }, { version: 26 }]);
+        expect(migrationRows(reopened.session)).toEqual([{ version: 1 }, { version: 2 }, { version: 3 }, { version: 4 }, { version: 5 }, { version: 6 }, { version: 7 }, { version: 8 }, { version: 9 }, { version: 10 }, { version: 11 }, { version: 12 }, { version: 13 }, { version: 14 }, { version: 15 }, { version: 16 }, { version: 17 }, { version: 18 }, { version: 19 }, { version: 20 }, { version: 21 }, { version: 22 }, { version: 23 }, { version: 24 }, { version: 25 }, { version: 26 }, { version: 27 }, { version: 28 }, { version: 29 }, { version: 30 }]);
 
         // FR-2：项目级批量核对——两制品均 verified_ready，无孤儿，未截断。
         const report = await reopened.verifier.verifyProject(projectBefore.id);
@@ -362,6 +362,10 @@ describe('F-013 SQLite/制品全链路集成闭环（独立临时数据根）', 
             { version: 24 },
             { version: 25 },
             { version: 26 },
+            { version: 27 },
+            { version: 28 },
+            { version: 29 },
+            { version: 30 },
           ]);
         } finally {
           reopened.close();

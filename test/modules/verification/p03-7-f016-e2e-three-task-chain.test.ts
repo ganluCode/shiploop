@@ -116,7 +116,10 @@ const failedObservation = (policyDigest: string) => ({
 
 describe('F-016 三 Task 链端到端（正式装配入口）', () => {
   it('首次检查失败 → 同 worktree 增量修复成功 → 依赖仅在有效通过后解锁', async () => {
-    fixture = await openBindingFixture({ secondTask: true, secondTaskDependsOnFirst: true, thirdTaskChained: true });
+    fixture = await openBindingFixture({ secondTask: true, secondTaskDependsOnFirst: true, thirdTaskChained: true,
+      deliveryPolicy: { commitMode: 'task_and_feature',
+        gitIdentity: { name: 'Test Owner', email: 'owner@example.test', confirmed: true } },
+    });
     core = await openFakeCoreApplication({
       dataRoot: fixture.box.dataRoot,
       capabilityCatalog: createStaticRuntimeCapabilityCatalog([
@@ -236,5 +239,6 @@ describe('F-016 三 Task 链端到端（正式装配入口）', () => {
     /* 受管进程停止核验：关闭后无未决 Attempt，关闭确认。 */
     const closed = await core.workExecution.close();
     expect(closed).toMatchObject({ closed: true, pendingAttemptIds: [] });
-  }, 60_000);
+  // 三次真实受控 Git 提交及四个进程生命周期，预算不能沿用无提交的旧夹具。
+  }, 180_000);
 });

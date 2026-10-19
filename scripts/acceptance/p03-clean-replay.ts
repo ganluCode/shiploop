@@ -58,6 +58,7 @@ interface ReplayRunRecord {
   readonly reportSha256: string;
   readonly reportSizeBytes: number;
   readonly reportVerification: { readonly ok: boolean; readonly problems: readonly string[] };
+  readonly cleanupConfirmed: boolean;
   readonly step: StepRecord;
 }
 
@@ -219,11 +220,13 @@ async function runAccept(
       reportSha256: '',
       reportSizeBytes: 0,
       reportVerification: { ok: false, problems: ['accept:p03 未写出 report.json'] },
+      cleanupConfirmed: false,
       step,
     };
   }
   const verification = verifyP03ReportDirectory(reportDir, loadP03Checklist(join(snapshot.snapshotRoot, 'acceptance/p03.checklist.json')));
   const reportBytes = readFileSync(reportPath);
+  const phase = JSON.parse(reportBytes.toString('utf8')) as { cleanup?: { confirmed?: unknown; processesGone?: unknown } };
   const copiedDir = join(outDir, `reports/run-${index}`);
   cpSync(reportDir, copiedDir, { recursive: true, force: false });
   return {
@@ -233,6 +236,7 @@ async function runAccept(
     reportSha256: sha256Hex(reportBytes),
     reportSizeBytes: reportBytes.byteLength,
     reportVerification: verification,
+    cleanupConfirmed: phase.cleanup?.confirmed === true && phase.cleanup?.processesGone === true,
     step,
   };
 }
@@ -277,6 +281,7 @@ export async function runP03CleanReplay(options: P03CleanReplayOptions = {}): Pr
       if (!run.reportVerification.ok) problems.push(...run.reportVerification.problems.map((problem) => `第 ${index} 次报告：${problem}`));
       if (run.reportSha256 === '') problems.push(`第 ${index} 次缺少完整报告`);
       if (run.step.kind === 'spawn-error') stopConfirmed = false;
+      if (!run.cleanupConfirmed) stopConfirmed = false;
       writeJson(join(outDir, 'replay.json'), { schemaVersion: 1, commit: snapshot.commit, steps: [...prepare, ...runs.map(item => item.step)], runs, problems });
       if (run.step.exitCode !== 0 || run.step.kind !== 'exit' || !run.reportVerification.ok || run.reportSha256 === '') break;
     }

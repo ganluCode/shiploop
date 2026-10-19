@@ -56,8 +56,6 @@ async function openCase(options: { readonly registerIntent?: boolean } = {}): Pr
   const db = box.session.database;
   db.prepare("UPDATE tasks SET status = 'passed', revision = revision + 1 WHERE id = ?").run(ids.taskId);
   db.prepare("UPDATE features SET status = 'running', revision = revision + 1 WHERE id = ?").run(box.featureId);
-  db.prepare("UPDATE runs SET status = 'running', revision = revision + 1 WHERE id = ?").run(ids.runId);
-  db.prepare("UPDATE execution_batches SET status = 'running', revision = revision + 1 WHERE id = ?").run(ids.batchId);
   const operationId = randomUUID();
   const featureRevision = () =>
     (db.prepare('SELECT revision FROM features WHERE id = ?').get(box.featureId) as { revision: number }).revision;
@@ -136,6 +134,9 @@ async function startDeliveryHost(c: DeliveryCase, withFactory = true): Promise<R
     ...(withFactory ? { featureDeliveryFactory: () => c.dependencies } : {}),
   });
   hosts.push(host);
+  // Host 启动恢复完成后才设置本用例的运行态，避免将夹具误判为遗留运行。
+  c.box.session.database.prepare("UPDATE runs SET status = 'running', revision = revision + 1 WHERE id = ?").run(c.ids.runId);
+  c.box.session.database.prepare("UPDATE execution_batches SET status = 'running', revision = revision + 1 WHERE id = ?").run(c.ids.batchId);
   return host;
 }
 
