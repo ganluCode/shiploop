@@ -404,7 +404,7 @@ describe('F-001 task.strategy.update 编辑闭环', () => {
     expect(s.counts()).toEqual({ ...before, state_events: before.state_events + 1, command_receipts: before.command_receipts + 1 });
   });
 
-  it('不动态重读默认路由：modelMap 更新与 complexity 更新均不追溯替换已创建策略；显式编辑只影响目标 Task', async () => {
+  it('[case:f008-default-strategy-snapshot] 不动态重读默认路由：modelMap 更新与 complexity 更新均不追溯替换已创建策略；显式编辑只影响目标 Task', async () => {
     const s = await setup();
     const beforeTasks = [s.taskRow('t-1'), s.taskRow('t-2'), s.taskRow('t-3')];
     // 导入后 modelMap.low 已更新为 claude-sonnet（夹具）：三 Task 副本仍是导入时值。
@@ -690,7 +690,7 @@ describe('F-001 拒绝矩阵（零业务写入）', () => {
 });
 
 describe('F-001 活动执行输入保护（同事务重核）', () => {
-  it('queued/running/paused/停止未知等活动依据固化 rejected 且零业务写入；暂停不视为安全停止', async () => {
+  it('[case:f008-active-strategy-fence] queued/running/paused/停止未知等活动依据固化 rejected 且零业务写入；暂停不视为安全停止', async () => {
     const s = await setup();
     for (const kind of ['queued', 'running', 'paused', 'stop_unknown'] as const) {
       const before = s.counts();

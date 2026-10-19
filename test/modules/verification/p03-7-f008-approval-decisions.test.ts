@@ -13,7 +13,7 @@ const base = {
 
 describe('F-008 task approval item decisions', () => {
   for (const operation of ['task.approval.approve', 'task.approval.reject', 'task.approval.unblock'] as const) {
-    it(`${operation} accepts a bound decision payload`, () => {
+    it(`[case:f008-decision-envelope-${operation}] ${operation} accepts a bound decision payload`, () => {
       expect(() => validateCommandEnvelope({
         ...base,
         operation,
@@ -29,7 +29,7 @@ describe('F-008 task approval item decisions', () => {
     });
   }
 
-  it('does not accept client supplied decision identity', () => {
+  it('[case:f008-client-identity] does not accept client supplied decision identity', () => {
     expect(() => validateCommandEnvelope({
       ...base,
       operation: 'task.approval.approve',
@@ -44,7 +44,7 @@ describe('F-008 task approval item decisions', () => {
 
 describe('F-008 real command path', () => {
   it.each(['task.approval.approve', 'task.approval.reject', 'task.approval.unblock'] as const)(
-    '%s commits one item decision without execution side effects', async operation => {
+    '[case:f008-decision-side-effect-%s] commits one item decision without execution side effects', async operation => {
       const fixture = await openBudgetFixture();
       try {
         const feature = fixture.session.database.prepare<[string], { plan_digest: string }>(
@@ -89,7 +89,7 @@ describe('F-008 real command path', () => {
     },
   );
 
-  it('does not let a capable but unassigned principal decide an item', async () => {
+  it('[case:f008-unassigned-principal] does not let a capable but unassigned principal decide an item', async () => {
     const fixture = await openBudgetFixture();
     try {
       const feature = fixture.session.database.prepare<[string], { plan_digest: string }>(

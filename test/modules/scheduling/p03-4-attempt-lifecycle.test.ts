@@ -155,7 +155,7 @@ describe('F-005 fenced Attempt lifecycle', () => {
     } finally { f.box.close(); }
   });
 
-  it.each(['owner', 'hostInstanceId', 'executionVersion', 'taskId', 'runId'] as const)('ignores stale or crossed %s without touching business facts', async field => {
+  it.each(['owner', 'hostInstanceId', 'executionVersion', 'taskId', 'runId'] as const)('[case:late-%s] ignores stale or crossed scenario without touching business facts', async field => {
     const f = await fixture();
     try {
       f.launch(); f.executing();
@@ -248,7 +248,7 @@ describe('F-005 fenced Attempt lifecycle', () => {
     } finally { f.box.close(); }
   });
 
-  it('does not overwrite a current Task fence, terminal Attempt or reused notification identity', async () => {
+  it('[case:task-fence] does not overwrite a current Task fence, terminal Attempt or reused notification identity', async () => {
     const f = await fixture();
     try {
       expect(f.executing()).toMatchObject({ disposition: 'ignored' });

@@ -313,7 +313,7 @@ describe('F-012 task.verification.continue 授权显式继续', () => {
     } finally { fixture.close(); }
   });
 
-  it('陈旧观察与身份漂移拒绝：observationDigest/codeDigest/批次身份不一致均 conflict', async () => {
+  it('[case:f008-stale-evidence] 陈旧观察与身份漂移拒绝：observationDigest/codeDigest/批次身份不一致均 conflict', async () => {
     const fixture = await openBudgetFixture();
     try {
       await fixture.start();
@@ -345,7 +345,7 @@ describe('F-012 task.verification.continue 授权显式继续', () => {
     } finally { fixture.close(); }
   });
 
-  it('人工阻塞未解除时继续被忽略（不解除阻塞、不放行）', async () => {
+  it('[case:f008-blocked-continue] 人工阻塞未解除时继续被忽略（不解除阻塞、不放行）', async () => {
     const fixture = await openBudgetFixture();
     try {
       await fixture.start();

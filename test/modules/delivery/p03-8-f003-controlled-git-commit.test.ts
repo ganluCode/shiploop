@@ -255,7 +255,7 @@ describe('F-003 controlled Git commit', () => {
     expect(git(['diff', '--cached', '--name-only'], f.root)).toBe('');
   });
 
-  it('a settled replay cannot bypass a new human block or erase the original Git receipt', async () => {
+  it('[case:f008-blocked-replay] a settled replay cannot bypass a new human block or erase the original Git receipt', async () => {
     const f = await fixture(); const original = await f.execute();
     f.authorization = { ...f.authorization, approvalCurrent: false };
     await expect(f.execute()).rejects.toMatchObject({ details: { reason: 'recorded_operation_not_current' } });
@@ -291,7 +291,7 @@ describe('F-003 controlled Git commit', () => {
     expect(existsSync(join(f.baseline.gitCommonDir, 'shiploop-baseline.claim'))).toBe(false);
   });
 
-  it.each(['approval', 'version', 'owner'] as const)('preserves a legitimate commit but does not deliver after late %s change', async kind => {
+  it.each(['approval', 'version', 'owner'] as const)('[case:f008-late-commit-%s] preserves a legitimate commit but does not deliver after late %s change', async kind => {
     const f = await fixture();
     f.afterCommit(() => {
       if (kind === 'approval') f.authorization = { ...f.authorization, approvalCurrent: false };

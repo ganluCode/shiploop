@@ -82,7 +82,14 @@ function openCore(): Promise<CoreApplication> {
 }
 
 async function openCase(): Promise<void> {
-  fixture = await openBindingFixture({ secondTask: true, secondTaskDependsOnFirst: true });
+  fixture = await openBindingFixture({
+    secondTask: true, secondTaskDependsOnFirst: true,
+    deliveryPolicy: {
+      commitMode: 'task_and_feature',
+      gitIdentity: { name: 'Confirmed User', email: 'confirmed@example.test', confirmed: true },
+      deliveryActions: ['commit'],
+    },
+  });
   core = await openCore();
 }
 
@@ -168,7 +175,7 @@ async function runAndSettle(failures: Record<string, string>, ordinal: number) {
 }
 
 describe('F-016 人审与放行集成（正式装配入口）', () => {
-  it('机器绿仍等人审；新阻塞竞争保持等待；解除不启动编码；显式继续复用证据', async () => {
+  it('[case:f008-human-gate-competition] 机器绿仍等人审；新阻塞竞争保持等待；解除不启动编码；显式继续复用证据', async () => {
     await openCase();
     const first = await core!.workExecution.scan();
     expect(first.runs).toMatchObject([{ claimed: true }]);

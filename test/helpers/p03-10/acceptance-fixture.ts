@@ -50,6 +50,8 @@ const CHAIN_CHECK = {
 export interface P03FixtureOptions {
   /** F-003 real verification, controlled Task commits and Feature delivery. */
   readonly threeTaskChain?: boolean;
+  /** F-007: deterministic failure across the first attempt and both repairs. */
+  readonly persistentCheckFailure?: boolean;
   /** Caller-owned evidence directory, outside the disposable resources. */
   readonly evidenceDir: string;
   readonly onStage?: (stage: P03Stage, fixture: P03Fixture) => void | Promise<void>;
@@ -78,6 +80,13 @@ export interface P03Fixture {
 export async function withP03AcceptanceFixture<T>(options: P03FixtureOptions, body: (fixture: P03Fixture) => Promise<T>): Promise<T> {
   mkdirSync(options.evidenceDir, { recursive: true });
   const evidenceDir = realpathSync(options.evidenceDir);
+  const check = options.persistentCheckFailure ? { ...CHAIN_CHECK,
+    argv: [process.execPath, '-e', `
+      console.error('P03_PERSISTENT_CHECK_FAILURE');
+      console.log('SHIPLOOP_NODE_CHECK_RESULT=' + JSON.stringify({schemaVersion:1,protocol:'shiploop.node-check',collected:true,testCount:1,targets:['chain']}));
+      process.exitCode = 1;
+    `], requirementRefs: ['F-007'],
+  } : CHAIN_CHECK;
   const resources = createAcceptanceFixture({ prefix: 'shiploop-p03-10-', dataRootName: 'p03', stepMs: 500,
     ...(options.secrets ? { extraSecrets: options.secrets } : {}) });
   const root = resources.root;
@@ -268,7 +277,7 @@ export async function withP03AcceptanceFixture<T>(options: P03FixtureOptions, bo
         git: git(['--version']), ...Object.fromEntries(['typescript', 'vitest', 'better-sqlite3', 'drizzle-orm'].map(name =>
           [name, lock.packages[`node_modules/${name}`]?.version ?? 'unknown'])) } };
     const host = supervisor.spawn({ scriptPath: HOST_ENTRY, config: { dataRoot, script: options.script ?? DEFAULT_SCRIPT,
-      ...(options.threeTaskChain ? { chain: { root, check: CHAIN_CHECK } } : {}),
+      ...(options.threeTaskChain ? { chain: { root, check, persistentCheckFailure: options.persistentCheckFailure === true } } : {}),
       ...(options.toolCommands ? { toolCommands: options.toolCommands } : {}) }, cwd: root, env: resources.childEnv(),
       requireInside: root, label: 'p03-dist-fake-host', stderrLimitBytes: 8192 });
     tree = new OwnedProcessTree(host.pid);
@@ -290,7 +299,7 @@ export async function withP03AcceptanceFixture<T>(options: P03FixtureOptions, bo
           gitIdentity: { name: 'Confirmed User', email: 'confirmed@example.test', confirmed: true },
           deliveryActions: ['commit'] },
         verification: {
-          requireChecksBeforeDone: true, checkDefinitions: [CHAIN_CHECK], fullFallback: { checkRefs: ['chain'] },
+          requireChecksBeforeDone: true, checkDefinitions: [check], fullFallback: { checkRefs: ['chain'] },
         } } })]);
     await stage('configured');
     const baseline = await fixture.cli<{ state: string; checks: { output: { artifactId: string } }[] }>(['baseline', 'run', ...project,

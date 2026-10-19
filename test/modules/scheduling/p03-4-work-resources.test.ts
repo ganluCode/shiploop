@@ -126,7 +126,7 @@ describe('F-003 persistent Work resource gates', () => {
     } finally { f.box.close(); }
   });
 
-  it('coordinates baseline and Work in both orders across SQLite connections, including stop-uncertain baseline', async () => {
+  it('[case:baseline-work-both-orders] coordinates baseline and Work in both orders across SQLite connections, including stop-uncertain baseline', async () => {
     const f = await fixture();
     const other = openSqliteStorageSession({ path: f.box.box.dbPath });
     try {
@@ -188,7 +188,7 @@ describe('F-003 persistent Work resource gates', () => {
     } finally { await environment.dispose(); f.box.close(); }
   });
 
-  it('admits exactly one baseline or Work winner in a real cross-process race', async () => {
+  it('[case:baseline-work-race] admits exactly one baseline or Work winner in a real cross-process race', async () => {
     const f = await fixture();
     const environment = createIsolatedHostEnvironment();
     try {

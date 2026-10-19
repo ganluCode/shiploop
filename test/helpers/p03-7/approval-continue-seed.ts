@@ -13,6 +13,7 @@ import { createHash } from 'node:crypto';
 import { createSqliteVerificationStore } from '../../../packages/core/src/adapters/sqlite/verification-store.ts';
 import { createSqliteAtomicCommandStore } from '../../../packages/core/src/adapters/sqlite/atomic-commands.ts';
 import { createWorkspaceInspector } from '../../../packages/core/src/adapters/fs/workspace-inspector.ts';
+import { verificationCodeIdentity } from '../../../packages/core/src/ports/verification-aggregate.ts';
 import {
   RUNTIME_RESULT_SCHEMA_VERSION,
   RUNTIME_STOP_EVIDENCE_SCHEMA_VERSION,
@@ -109,7 +110,7 @@ export async function seedApprovalWaitingVerification(options: {
     branch: managed.branch,
     baseCommit: managed.base_commit,
   });
-  const codeDigest = inspection.codeDigest;
+  const codeDigest = verificationCodeIdentity(inspection).codeDigest;
   const headCommit = inspection.repository.headCommit;
   const policyDigest = snapshot.approval.checkPolicyDigest;
   const planDigest = (

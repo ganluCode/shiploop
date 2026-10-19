@@ -62,7 +62,7 @@ function count(h: BudgetFixture, table: string) {
 }
 
 describe('F-013 创建：真实跨进程 Run 竞争', () => {
-  it('同时授权同 Feature：恰一个 accepted，Batch/Run/回执/事件/唤醒一致，重开不变', async () => {
+  it('[case:batch-race] 同时授权同 Feature：恰一个 accepted，Batch/Run/回执/事件/唤醒一致，重开不变', async () => {
     const h = await openBudgetFixture();
     try {
       const before = h.snapshot();
@@ -93,7 +93,7 @@ describe('F-013 创建：真实跨进程 Run 竞争', () => {
     } finally { h.close(); }
   }, 30_000);
 
-  it('两个进程争抢父 Batch 最后一份 Run：一个 completed，另一活动冲突，只有一次派发', async () => {
+  it('[case:run-race] 两个进程争抢父 Batch 最后一份 Run：一个 completed，另一活动冲突，只有一次派发', async () => {
     const h = await openBudgetFixture();
     try {
       const seed = await h.start();
@@ -197,7 +197,7 @@ describe('F-013 总 Attempt：竞争与回滚', () => {
     } finally { h.close(); }
   }, 30_000);
 
-  it('独立进程争抢最后一次总 Attempt：一个预占，Batch/Run/Task/账本同时且仅增加一次', async () => {
+  it('[case:attempt-race] 独立进程争抢最后一次总 Attempt：一个预占，Batch/Run/Task/账本同时且仅增加一次', async () => {
     const h = await openBudgetFixture();
     try {
       const seed = await h.start();
@@ -258,7 +258,7 @@ describe('F-013 启动：预占而非真实 Runtime', () => {
     } finally { h.close(); }
   }, 30_000);
 
-  it('争抢最后一份启动额度：一个成功，重放及启动后失败均不退还、不伪造实际用量', async () => {
+  it('[case:start-race] 争抢最后一份启动额度：一个成功，重放及启动后失败均不退还、不伪造实际用量', async () => {
     const h = await openBudgetFixture();
     try {
       const seed = await h.start();
@@ -322,7 +322,7 @@ describe('F-013 结算：重放、成功重入与共享预算', () => {
     } finally { h.close(); }
   }, 30_000);
 
-  it.each(['same', 'cas'] as const)('跨进程重复结果 %s：只有一条结算且 no_progress_runs 仅递增一次', async mode => {
+  it.each(['same', 'cas'] as const)('[case:settlement-%s] 跨进程重复结果 scenario：只有一条结算且 no_progress_runs 仅递增一次', async mode => {
     const h = await openBudgetFixture();
     try {
       const seed = await h.start();
@@ -370,7 +370,7 @@ describe('F-013 结算：重放、成功重入与共享预算', () => {
     }, 15_000,
   );
 
-  it('成功 workKey 重入不派发；历史计数与结算在数据库重开后保留', async () => {
+  it('[case:success-work-key] 成功 workKey 重入不派发；历史计数与结算在数据库重开后保留', async () => {
     const h = await openBudgetFixture();
     try {
       const seed = await h.start();
@@ -392,7 +392,7 @@ describe('F-013 结算：重放、成功重入与共享预算', () => {
     } finally { h.close(); }
   }, 30_000);
 
-  it('新 Run 共享父预算：换模型/提高 Task 策略不清计数、不改旧 Run 输入或期限', async () => {
+  it('[case:shared-parent-budget] 新 Run 共享父预算：换模型/提高 Task 策略不清计数、不改旧 Run 输入或期限', async () => {
     const h = await openBudgetFixture();
     try {
       const seed = await h.start();

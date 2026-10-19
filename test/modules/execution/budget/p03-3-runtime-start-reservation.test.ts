@@ -874,7 +874,7 @@ describe('F-007 验收 3：budget_exhausted 判定与竞争预占', () => {
     }
   });
 
-  it('deadline：now == deadline 恰好拒绝（受控停止原因）、now == deadline-1 放行；不清占用、不假称进程停止', async () => {
+  it('[case:deadline-limit] deadline：now == deadline 恰好拒绝（受控停止原因）、now == deadline-1 放行；不清占用、不假称进程停止', async () => {
     const budget = {
       ...DEFAULT_BUDGET,
       batch: { ...DEFAULT_BUDGET.batch, maxRuntimeStarts: 5, deadlineUtcMs: NOW + 1_000 },

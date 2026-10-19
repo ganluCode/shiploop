@@ -68,6 +68,12 @@ export interface BindingFixtureOptions {
   readonly recoverySources?: RuntimeRecoverySourceReader;
   readonly bindingLimits?: ExecutionInputBindingLimits;
   readonly bindingNowMs?: () => number;
+  /** 可选完整交付政策；提交类集成测试显式开启，缺省保持历史夹具形态。 */
+  readonly deliveryPolicy?: {
+    readonly commitMode: 'task_and_feature';
+    readonly gitIdentity: { readonly name: string; readonly email: string; readonly confirmed: true };
+    readonly deliveryActions?: readonly ['commit'];
+  };
   /** 第二 Task（独立 spec 输入、无依赖；用于 Task 上下文隔离）。 */
   readonly secondTask?: boolean;
   /** F-014：第二 Task 声明 dependsOn: ['t-1']（须与 secondTask 同用），用于后继未解锁断言。 */
@@ -217,6 +223,7 @@ export async function openBindingFixture(options: BindingFixtureOptions = {}): P
     requireCompleted(
       await submit('settings.global.create', {
         schemaVersion: 2, strategies: { defaultStrategy: { ...FAKE_STRATEGY } },
+        ...(options.deliveryPolicy === undefined ? {} : { policies: { deliveryPolicy: options.deliveryPolicy } }),
       }, { scope: { kind: 'global' } }),
       'settings.global.create',
     );

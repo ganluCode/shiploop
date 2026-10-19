@@ -550,7 +550,7 @@ describe('F-004 ready 预览（固定范围 + 完整摘要 + previewDigest）', 
  * ------------------------------------------------------------------ */
 
 describe('F-004 no_work（不创建 Batch/Run、不扣预算、不调用 Runtime）', () => {
-  it('空范围返回 no_work（empty_scope）：零仓库 I/O、零执行实体', async () => {
+  it('[case:empty-scope] 空范围返回 no_work（empty_scope）：零仓库 I/O、零执行实体', async () => {
     const s = await setup();
     const receipt = await s.previewSubmit({
       payload: { featureIds: [], budget: VALID_BUDGET },
@@ -566,7 +566,7 @@ describe('F-004 no_work（不创建 Batch/Run、不扣预算、不调用 Runtime
     expect(s.inspector.calls).toHaveLength(0);
   });
 
-  it('无待执行工作（全部 Task 已通过）返回 no_work（no_pending_tasks）', async () => {
+  it('[case:no-pending-work] 无待执行工作（全部 Task 已通过）返回 no_work（no_pending_tasks）', async () => {
     const s = await setup();
     s.session.database.prepare("UPDATE tasks SET status = 'passed'").run();
     const result = resultOf(await s.previewSubmit());

@@ -537,7 +537,7 @@ describe('F-003 事件关联与 Task 上下文隔离', () => {
     }
   });
 
-  it('不同 Task 并发执行不共享 op log、输出缓冲或取消信号', async () => {
+  it('[case:task-event-isolation] 不同 Task 并发执行不共享 op log、输出缓冲或取消信号', async () => {
     const env = openSandbox();
     try {
       const { adapter } = assembly({

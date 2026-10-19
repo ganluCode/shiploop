@@ -641,7 +641,7 @@ describe('F-008 feature.plan.revise 修订闭环', () => {
     expect(rejectedError(staleTaskLabels).code).toBe('conflict');
   });
 
-  it('活动执行输入保护：queued/running/paused/停止未知等活动依据固化 rejected 且零业务写入', async () => {
+  it('[case:f008-active-plan-fence] 活动执行输入保护：queued/running/paused/停止未知等活动依据固化 rejected 且零业务写入', async () => {
     const s = await setup();
     for (const kind of ['queued', 'running', 'paused', 'stop_unknown'] as const) {
       const before = { ...s.probe.counts(), ...s.planCounts() };
@@ -724,7 +724,7 @@ describe('F-008 feature.plan.revise 修订闭环', () => {
 });
 
 describe('F-008 批准摘要有效性（隔离装配预置 plan_status）', () => {
-  it('实质变化使旧摘要批准不可继续生效：planStatus 回 draft、摘要更新', async () => {
+  it('[case:f008-old-plan-approval] 实质变化使旧摘要批准不可继续生效：planStatus 回 draft、摘要更新', async () => {
     const s = await setup();
     s.harness.session.database
       .prepare("UPDATE features SET plan_status = 'approved' WHERE id = ?")

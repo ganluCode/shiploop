@@ -29,7 +29,7 @@ function claimPath(lockInput: ReturnType<typeof input>) {
 }
 
 describe('F-003 Git public metadata lock', () => {
-  it('shares the common-dir claim between Work and baseline in both orders; release is idempotent', async () => {
+  it('[case:baseline-work-lock] shares the common-dir claim between Work and baseline in both orders; release is idempotent', async () => {
     const box = fixture(), first = input(box), work = createGitPublicMetadataLock();
     const baseline = createBaselineRepositoryGuard();
     const lease = await work.acquire(first);
@@ -105,7 +105,7 @@ describe('F-003 Git public metadata lock', () => {
     await lease.release();
   });
 
-  it('serializes linked worktrees and preserves native per-worktree, ref and symlink locks', async () => {
+  it('[case:linked-worktree-lock] serializes linked worktrees and preserves native per-worktree, ref and symlink locks', async () => {
     const box = fixture(), lock = createGitPublicMetadataLock(), owner = input(box);
     const linked = join(box.root, 'linked');
     git(['worktree', 'add', '--detach', linked, 'HEAD'], box.repos.withHead, { home: box.homeDir });
@@ -128,7 +128,7 @@ describe('F-003 Git public metadata lock', () => {
     } finally { unlinkSync(join(owner.gitCommonDir, 'config.lock')); }
   });
 
-  it('allows at most one production-adapter holder in a real cross-process race', async () => {
+  it('[case:git-lock-race] allows at most one production-adapter holder in a real cross-process race', async () => {
     const box = fixture(), environment = createIsolatedHostEnvironment();
     held.push(() => environment.dispose());
     const results = await runBarrierChildren(environment, {

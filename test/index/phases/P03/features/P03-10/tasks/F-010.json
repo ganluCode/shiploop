@@ -1,0 +1,27 @@
+{
+  "schema_version": 2,
+  "task_id": "F-010",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/planning/p03-2-context-build.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p03-6-execution-input-binding.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/planning/p03-2-execution-input.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/planning/p03-2-execution-input-prepare.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

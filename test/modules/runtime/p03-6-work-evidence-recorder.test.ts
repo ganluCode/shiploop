@@ -390,7 +390,7 @@ describe('P03-6 F-007 bounded evidence recorder (real SQLite + files + Fake)', (
     }
   });
 
-  it('keeps foreign (old attempt/session) events out of the current watermark', async () => {
+  it('[case:foreign-recording] keeps foreign (old attempt/session) events out of the current watermark', async () => {
     const f = await openEvidenceFixture({ script: messageScript() });
     const foreign = {
       schemaVersion: 1, eventId: 'evt.0000oldsession0000old0.1', kind: 'message', sequence: 1,

@@ -525,7 +525,7 @@ function rejectedReasonOf(receipt: CommandReceipt): { code: string; reason: stri
 }
 
 describe('F-008 受信结算后的真实命令重试边界', () => {
-  it('失败结算后重试累计无进展；达到上限后拒绝同 Batch 新 Run，不退款或延期', async () => {
+  it('[case:no-progress-limit] 失败结算后重试累计无进展；达到上限后拒绝同 Batch 新 Run，不退款或延期', async () => {
     const s = await setup();
     const budget = { batch: { ...VALID_BUDGET.batch, maxRuns: 4, maxNoProgressRuns: 2 }, run: VALID_BUDGET.run };
     const digest = await freshPreviewWithBudget(s, budget);
@@ -719,7 +719,7 @@ describe('F-005 首次明确授权：原子创建 Batch/Run/回执/事件（验�
 });
 
 describe('F-005 漂移与前置条件重核（验收 1）', () => {
-  it('摘要不一致：preview_stale 拒绝回执，零创建零扣额', async () => {
+  it('[case:preview-stale] 摘要不一致：preview_stale 拒绝回执，零创建零扣额', async () => {
     const s = await setup();
     const receipt = await s.service.submit(s.owner, s.startEnvelope());
     expect(receipt.status).toBe('rejected');

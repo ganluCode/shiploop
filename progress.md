@@ -1,5 +1,15 @@
 # P03-10 工作进度
 
+## F-010 — 输入装配历史增长与必需输入完整性确定性回归（2026-10-19）
+
+- 在既有输入装配测试中增加 7 个 `[case:f010-*]` 确定性回归用例（T37 子集），全部沿用前序夹具（p03-2-context-build 的 makeInput/makeBuilder 形态与 p03-6 input-binding-fixture），不调用模型、不新增知识平台、不改生产代码，不宣称缓存命中或 Token 节省。
+- 历史增长对照（`f010-history-small-vs-grown-readable`）：同一 Task 小历史 vs 60×2000 字 progress/报告增长，固定指导原样位于历史段之前、历史全文零内联、prompt 有界不随正文总量膨胀；省略/截断在 snapshot 与 manifest 如实标注；描述/全部 acceptance/依赖结果两个规模下逐项可读；必需输入走 sha256 不可变引用；必需区逐字节一致、9 类固定来源摘要不变。
+- 输入完整性（`f010-input-manifest-evidence-digest-artifacts`、`f010-progress-report-growth-keeps-fixed-input`）：manifest/读取证据/attempts.input_digest 逐项关联真实制品与可复算哈希（manifest.promptDigest 按 prompt 字节域分离摘要绑定）；t-2 依赖结果与 acceptance 在准备制品组可读；增长 progress/报告 + 源路径内容改变后三正文逐字节不变、增长标记零内联，受限读取返回固定正文。
+- 启动拒绝（`f010-required-input-missing-or-corrupt-rejected`、`f010-path-escape-and-permission-expansion-rejected`、`f010-required-input-budget-rejected`、`f010-required-budget-structured-failure`）：缺失/损坏/越界/权限扩大/超预算均以受控原因（input_missing/input_corrupt/cwd_root_unknown/workspace_untrusted/permission_expansion/limit_exceeded/missing_required_input）拒绝并保留证据，不静默截断 acceptance、不扩大读取权限。
+- 本地验证（Nezha wrapper 日志在 `verifications/F-010/runtime-logs/`）：`test-kvbewphj.log` exit 0（p03-2-context-build 全量 58 passed）；`test-kcdmlu8r.log` exit 0（p03-6-execution-input-binding 全量 38 passed）；`test-n4rcd7_t.log` typecheck exit 0。中间两轮失败日志（`test-719tr8ww.log` 依赖认领 DAG 门控、`test-dojx9jf3.log` promptDigest 域分离假设）保留未重跑读取。
+- 索引 `test/index/phases/P03/features/P03-10/tasks/F-010.json` 登记 4 文件（all:true）；Harness selection 只引用仓库索引。p03-2-execution-input/p03-2-execution-input-prepare 两份回归文件仅登记交 Nezha；未运行全仓、组合门禁或 Phase 验收。
+- 交接见 [F-010 输入装配回归](docs/p03-10-f010-input-assembly-regression.md)。未改生产代码或官方元数据；无未解决阻塞，收尾按合同仅提交一次 `nezha task report F-010`。
+
 ## F-009 — FakeRuntime 异常、输出与恢复负例（2026-10-19）
 
 - 新增三个 Runtime 测试文件、23 项局部用例：结构化异常及信息型 rate limit、基础设施代码预算退款与累计父级限制、三路证据独立观察、required 证据缺失、大消息/UTF-8/背压/输出溢出、脱敏与恢复能力边界。监督超时用例经真实取消、停止确认和 retention 留存；失败后暂停，不进入自动重试。
@@ -7,6 +17,20 @@
 - 最终本地验证：`test-cenp9epa.log` exit 0（3 文件、23 passed、0 failed、0 skipped）；`test-ruzh4vt6.log` typecheck exit 0；`test-fb0xnsey.log` boundaries exit 0（286 生产文件、0 diagnostics）。日志及 sidecar 位于 Feature workspace `verifications/F-009/runtime-logs/`。
 - 交接见 [F-009 Runtime 负例组](docs/p03-10-f009-runtime-negatives.md)。仓库任务索引登记三个新增文件及八个本轮未运行的受影响回归，Harness selection 引用该索引，独立回归交 Nezha。未运行全量、组合门禁或 Phase 验收；没有声称当前不存在的自动指数退避定时器已验证。
 - 保留 F-007/F-008 原有未提交内容，共享文件仅提交 F-009 增量。官方元数据保持只读，收尾按协议仅报告一次 F-009 completed。
+
+## F-007 — 预算、竞争认领与执行范围负例（2026-10-19）
+
+- 增加 `test/modules/acceptance/p03-10-execution-negatives.test.ts`，复用真实构建 CLI/Host、SQLite、Git 和制品夹具。持续检查真实 Node 进程三次失败，由生产 Verification/Task completion 结算；首次加两次修复后 Task failed、Feature 非 completed，后继无 Attempt，Run paused/code_attempts_exhausted。调度公开契约为 run_control_blocked、readiness blocked、零 readyTaskIds。
+- 两次修复先核对前次 tracked/untracked 内容再 append，最终同 worktree 保留两次增量修复。独立核对三份失败 CheckResult 的退出码/超时/输出制品、三次已停止 Session、Run/Attempt/Runtime 启动累计 1/3/3、资源 lease 释放；重放原授权请求不增加执行、预算、事件、回执或启动记录。失败现场和检查输出导出后，夹具确认进程树/组停止并清理。
+- 补强三个真实 SQLite 跨进程认领竞争场景：唯一有效 owner/version、Task fence 和三项 lease 一致、零 Runtime 启动、数据库重开后持久事实不变。其余既有负例增加精确稳定 ID，未删减行为断言。
+- 最终本地验证：`test-8trgi67z.log` exit 0（纵向 1 passed）；`test-yzuigm86.log` exit 0（认领竞争 3 passed / 32 skipped，未声称整文件通过）；`test-jfq6snmu.log` typecheck exit 0。均在 Feature workspace `verifications/F-007/runtime-logs/`，完整 stdout/stderr、真实退出码及 sidecar 保留。早期 RED、中间调度契约断言失败和首次 GREEN 日志均保留；最终重跑基于新增持久副作用与认领身份断言。
+- 最终场景证据 `verifications/F-007/scenarios/persistent-check-failure-29071521-f093-497e-aac6-8686d1b77b08/` 含三个失败现场、summary、完整 evidence 和 cleanup；cleanup passed，树/组停止、资源删除，耗时 291ms。
+- 索引 `test/index/phases/P03/features/P03-10/tasks/F-007.json` 已登记 Feature 目录；Harness selection 只引用仓库索引。经 Nezha 路径/schema 规则和 Vitest 仅收集核对，11 文件、35 个展开后唯一 case。`selection-validation.json` 保存结果；其中本地已执行 4 项，其余 31 项交 Nezha 独立运行，未运行全仓、组合门禁或 Phase 验收。
+- 交接见 [F-007 执行负例组](docs/p03-10-f007-execution-negatives.md)。未修改生产代码、feature.yaml 或 task_list；无未解决阻塞，收尾按合同仅通过 Nezha CLI 提交一次 completed 报告。局部通过不代表完整 Feature 交付或阶段验收。
+
+## F-008 — 过期审批、人工阻塞竞争与 Task 策略快照负例（2026-10-19）
+
+F-008 的交接文档和测试索引分别见 [F-008 审批、阻塞与策略快照负例组](docs/p03-10-f008-approval-blocking-snapshot-negatives.md) 与 `test/index/phases/P03/features/P03-10/tasks/F-008.json`。最终 Runtime 聚焦命令的完整 Nezha 日志为 `test-wfndf7k6.log`，exit 0：7 个文件、20 passed、0 failed、83 skipped；类型检查的完整日志为 `test-e4gua1fj.log`，exit 0。两次日志均在 Feature workspace `verifications/F-008/runtime-logs/`，保留完整输出、原始退出码和 sidecar。为使正式继续路径复用规范验证身份，测试种子改用 `verificationCodeIdentity`；F-016 正式装配夹具显式配置完整交付政策，默认夹具保持原形态。F-008 只完成 task-local 聚焦验证，广泛 affected 回归与 Feature/阶段结论交由 Nezha；收尾仍需按 DAG 只提交一次 `nezha task report F-008`。
 
 ## F-005 — 授权 Host 与正式构建 CLI 完整执行报告（2026-10-19）
 

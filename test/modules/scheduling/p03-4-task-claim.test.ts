@@ -40,7 +40,7 @@ describe('F-004 atomic Task claim', () => {
     } finally { f.box.close(); }
   });
 
-  it('replays the immutable receipt after reopen without renewing or debiting, and rejects reused identity', async () => {
+  it('[case:claim-replay] replays the immutable receipt after reopen without renewing or debiting, and rejects reused identity', async () => {
     const f = await openClaimFixture();
     try {
       const first = f.store().claimTask(f.input());
@@ -117,7 +117,7 @@ describe('F-004 atomic Task claim', () => {
     } finally { f.box.close(); }
   });
 
-  it.each(['failed', 'skipped', 'cancelled', 'missing_evidence'])('rechecks a formerly valid dependency (%s)', async status => {
+  it.each(['failed', 'skipped', 'cancelled', 'missing_evidence'])('[case:dependency-%s] rechecks a formerly valid dependency (scenario)', async status => {
     const f = await openClaimFixture([[], ['t-1']]);
     try {
       persistVerifiedPassFixture(f.box, f.ids, 't-1', f.input().inputSnapshot);
@@ -269,7 +269,7 @@ describe('F-004 atomic Task claim', () => {
     } finally { predecessor.close(); f.box.close(); }
   });
 
-  it.each(['same_task', 'different_tasks', 'idempotent'])('real cross-process competition: %s', async scenario => {
+  it.each(['same_task', 'different_tasks', 'idempotent'])('[case:claim-%s] real cross-process competition: scenario', async scenario => {
     const different = scenario === 'different_tasks';
     const replay = scenario === 'idempotent';
     const f = await openClaimFixture(different ? [[], []] : [[]]);
@@ -290,6 +290,20 @@ describe('F-004 atomic Task claim', () => {
       expect(f.box.session.database.prepare("SELECT count(*) AS n FROM state_events WHERE event_type = 'task.claimed'").get()).toEqual({ n: 1 });
       expect(f.box.session.database.prepare('SELECT attempts_created FROM execution_batches').get()).toEqual({ attempts_created: 1 });
       expect(f.box.session.database.prepare('SELECT attempts_created FROM runs').get()).toEqual({ attempts_created: 1 });
+      const winner = results.findIndex(result => result.result.ok && !result.result.replayed);
+      const attempt = f.box.session.database.prepare('SELECT id, task_id, owner_id, host_instance_id, execution_version FROM attempts')
+        .get() as { id: string; task_id: string; owner_id: string; host_instance_id: string; execution_version: number };
+      expect(attempt).toMatchObject({ task_id: different ? `t-${winner + 1}` : 't-1',
+        owner_id: replay ? 'shared-owner' : `owner-${winner}`, host_instance_id: 'host-1', execution_version: 1 });
+      expect(f.box.session.database.prepare("SELECT id, execution_version FROM tasks WHERE status = 'running'").all())
+        .toEqual([{ id: attempt.task_id, execution_version: 1 }]);
+      expect(f.box.session.database.prepare('SELECT owner_id, host_instance_id, execution_version FROM workspace_leases').all())
+        .toEqual(Array(3).fill({ owner_id: attempt.id, host_instance_id: 'host-1', execution_version: 1 }));
+      expect(f.box.session.database.prepare('SELECT runtime_starts FROM execution_batches').get()).toEqual({ runtime_starts: 0 });
+      expect(f.box.session.database.prepare('SELECT * FROM runtime_start_reservations').all()).toEqual([]);
+      const durable = f.snapshot();
+      f.box.reopen();
+      expect(f.snapshot()).toEqual(durable);
     } finally { await environment.dispose(); f.box.close(); }
   });
 });

@@ -27,10 +27,26 @@ const scripts = [
 export function threeTaskRuntime(config) {
   return context => {
     const processes = createCommandProcessAdapter();
-    const factories = scripts.map(steps => createFakeWorkRuntimeFactory({
+    const failureSteps = [
+      { op: 'write_file', path: 'README.md', content: 'chain-1\n' },
+      { op: 'write_file', path: 'chain-2.txt', content: 'retained marker\n' }, finish,
+    ];
+    const factories = (config.chain.persistentCheckFailure
+      ? [failureSteps, [{ op: 'tool_command', name: 'failedRepair' }]] : scripts).map(steps => createFakeWorkRuntimeFactory({
       providers, commandProcess: processes,
       toolCommands: {
         probe: { argv: [process.execPath, '-e', 'process.stdout.write("real tool stopped")'], timeoutMs: 5000 },
+        failedRepair: { argv: [process.execPath, '-e', `
+          const fs = require('node:fs');
+          const tracked = fs.readFileSync('README.md', 'utf8');
+          const untracked = fs.readFileSync('chain-2.txt', 'utf8');
+          if (!tracked.startsWith('chain-1\\n') || !untracked.startsWith('retained marker\\n')
+            || tracked.slice('chain-1\\n'.length) !== untracked.slice('retained marker\\n'.length)) {
+            throw Error('failed attempt scene lost');
+          }
+          fs.appendFileSync('README.md', 'repair\\n');
+          fs.appendFileSync('chain-2.txt', 'repair\\n');
+        `], timeoutMs: 5000 },
         repair: { argv: [process.execPath, '-e', `
           const fs = require('node:fs');
           if (fs.readFileSync('chain-2.txt', 'utf8') !== 'retained marker\\n') throw Error('untracked first attempt lost');
@@ -48,7 +64,8 @@ export function threeTaskRuntime(config) {
         async start(request) {
           const { taskId } = request.identity;
           const secondStarts = starts.filter(start => start.taskId === 'chain-2').length;
-          const index = taskId === 'chain-1' ? 0 : taskId === 'chain-2' ? (secondStarts === 0 ? 1 : 2) : 3;
+          const index = config.chain.persistentCheckFailure ? (starts.length === 0 ? 0 : 1)
+            : taskId === 'chain-1' ? 0 : taskId === 'chain-2' ? (secondStarts === 0 ? 1 : 2) : 3;
           starts.push({ taskId, attemptId: request.identity.attemptId, inputManifest: request.inputManifest });
           writeFileSync(join(config.chain.root, 'chain-starts.json'), JSON.stringify(starts));
           return factories[index].entries[0].adapter.start(request);

@@ -23,7 +23,7 @@
  */
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { readFileSync, renameSync, symlinkSync, writeFileSync, appendFileSync, rmSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, symlinkSync, writeFileSync, appendFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -47,6 +47,7 @@ import {
   openBindingFixture,
   publishReadyArtifact,
 } from '../../helpers/p03-6/input-binding-fixture.ts';
+import { CONTEXT_PROMPT_DIGEST_DOMAIN } from '../../../packages/core/src/ports/context-build.ts';
 import type {
   BindingFixture,
   BoundAttempt,
@@ -793,5 +794,303 @@ describe('P03-6 / F-002 不可变执行输入绑定', () => {
       .toThrowError(expect.objectContaining({ kind: 'validation' }));
     expect(() => validateExecutionInputReadEvidence({ ...valid, extra: true }))
       .toThrowError(expect.objectContaining({ kind: 'validation' }));
+  });
+});
+
+/**
+ * P03-10 / F-010 输入装配历史增长与必需输入完整性确定性回归（T37 子集）。
+ * 沿用本文件前序输入装配夹具（openBindingFixture/expectRejection/
+ * publishReadyArtifact），不调用模型、不新增知识平台；只证明输入完整性与
+ * 有界装配，不宣称缓存命中或 Token 节省。
+ */
+describe('P03-10 / F-010 输入完整性与历史增长阶段回归', () => {
+  function artifactBody(fixture: BindingFixture, artifactId: string, locator: string): Buffer {
+    return readFileSync(join(
+      fixture.box.dataRoot,
+      deriveArtifactFinalRelativePath({ projectId: fixture.projectId, artifactId, locator }),
+    ));
+  }
+
+  it('[case:f010-input-manifest-evidence-digest-artifacts] Attempt InputManifest、读取证据与输入摘要关联真实制品；依赖结果与 acceptance 始终可读', async () => {
+    const fixture = await setup({ secondTask: true, secondTaskDependsOnFirst: true });
+    const bound = fixture.claimAndLaunch('t-1');
+    const result = await fixture.bindingService.bind(fixture.bindingInput(bound));
+    const attemptId = bound.receipt.attempt.id;
+
+    /* InputManifest 是同项目 ready 制品，正文摘要可从实际文件复算，并绑定 prompt 摘要。 */
+    const manifestRef = result.request.inputManifest;
+    const manifestRow = fixture.query(
+      'SELECT project_id AS projectId, kind, status, content_hash AS contentHash FROM artifacts WHERE id = ?',
+      manifestRef.artifactId,
+    ) as Record<string, string>;
+    expect(manifestRow).toEqual({
+      projectId: fixture.projectId,
+      kind: 'execution-manifest',
+      status: 'ready',
+      contentHash: manifestRef.contentHash,
+    });
+    expect(artifactFileHash(fixture, manifestRef.artifactId, manifestRef.locator))
+      .toBe(manifestRef.contentHash);
+    const manifestBody = JSON.parse(
+      Buffer.from((await fixture.verifier.readVerifiedContent(fixture.projectId, manifestRef.artifactId)).content)
+        .toString('utf8'),
+    ) as {
+      promptDigest: string;
+      sources: Array<{ sourceId: string; kind: string; hash: string; required: boolean }>;
+    };
+    /* manifest 的 promptDigest 与实际 prompt 制品字节的域分离摘要逐字节绑定。 */
+    const promptFileText = artifactBody(
+      fixture, result.request.prompt.artifactId, result.request.prompt.locator,
+    ).toString('utf8');
+    expect(manifestBody.promptDigest)
+      .toBe(sha256(`${CONTEXT_PROMPT_DIGEST_DOMAIN}\n${promptFileText}`));
+    expect(manifestBody.promptDigest).toBe(bound.inputSnapshot.digests.promptDigest);
+    const requiredSources = manifestBody.sources.filter((source) => source.kind === 'required-input');
+    expect(requiredSources.length).toBeGreaterThan(0);
+    for (const source of requiredSources) {
+      const artifactId = source.sourceId.slice('required-input:'.length);
+      const row = fixture.query(
+        'SELECT content_hash AS contentHash FROM artifacts WHERE id = ?', artifactId,
+      ) as { contentHash: string };
+      expect(source.hash).toBe(row.contentHash);
+      expect(source.required).toBe(true);
+    }
+
+    /* 读取证据已发布为按 Attempt 关联的不可变制品，逐项摘要可从真实文件复算。 */
+    const evidenceContent = await fixture.verifier.readVerifiedContent(
+      fixture.projectId, result.evidenceRef.artifactId,
+    );
+    const published = validateExecutionInputReadEvidence(
+      JSON.parse(Buffer.from(evidenceContent.content).toString('utf8')),
+    );
+    expect(published.attemptId).toBe(attemptId);
+    expect(published.taskId).toBe('t-1');
+    expect(published.outcome).toBe('bound');
+    expect(published.reads.map((entry) => entry.purpose)).toEqual([
+      'snapshot', 'manifest', 'prompt', 'requirements',
+    ]);
+    for (const entry of published.reads) {
+      const ref = published.boundInputs.find((input) => input.purpose === entry.purpose);
+      expect(ref).toBeDefined();
+      expect(entry.outcome).toBe('read');
+      expect(entry.contentHash).toBe(sha256(artifactBody(fixture, ref!.artifactId, ref!.locator)));
+      expect(entry.sizeBytes).toBe(ref!.sizeBytes);
+    }
+
+    /* 输入摘要关联真实快照制品：attempts.input_digest/input_ref 与冻结身份一致。 */
+    const attemptRow = fixture.query(
+      'SELECT input_digest AS inputDigest, input_ref AS inputRef FROM attempts WHERE id = ?',
+      attemptId,
+    ) as { inputDigest: string; inputRef: string };
+    expect(attemptRow.inputDigest).toBe(bound.inputSnapshot.digests.snapshotDigest);
+    expect(attemptRow.inputRef).toBe(bound.inputSnapshot.group.snapshot.artifactId);
+    expect(artifactFileHash(
+      fixture,
+      bound.inputSnapshot.group.snapshot.artifactId,
+      bound.inputSnapshot.group.snapshot.locator,
+    )).toBe(bound.inputSnapshot.group.snapshot.contentHash);
+
+    /* 当前描述与全部 acceptance 在绑定后的 prompt/快照中始终可读。 */
+    const snapshotBody = JSON.parse(
+      Buffer.from((await fixture.verifier.readVerifiedContent(
+        fixture.projectId, bound.inputSnapshot.group.snapshot.artifactId,
+      )).content).toString('utf8'),
+    ) as {
+      task: {
+        description: string | null;
+        acceptance: { criteria: string[] };
+        dependencies: Array<{ taskId: string; evidenceRefs: Array<{ artifactId: string }> }>;
+      };
+    };
+    expect(snapshotBody.task.acceptance.criteria)
+      .toEqual(['验收条目甲：必须完整可读', '验收条目乙：不得删项']);
+    expect(snapshotBody.task.dependencies).toEqual([]);
+    const promptText = Buffer.from((await result.reader.read('prompt')).content).toString('utf8');
+    expect(promptText).toContain('- title: 绑定任务一');
+    expect(promptText).toContain('- description: (none)');
+    expect(promptText).toContain('[1] 验收条目甲：必须完整可读');
+    expect(promptText).toContain('[2] 验收条目乙：不得删项');
+
+    /* 依赖后继 Task（t-2，dependsOn t-1）的准备制品组：依赖结果与 acceptance
+       始终可读，三正文均为关联真实文件的 ready 制品。 */
+    const groupRow = (part: string): {
+      artifactId: string; status: string; contentHash: string; locator: string;
+    } => fixture.query(
+      'SELECT id AS artifactId, status, content_hash AS contentHash, storage_locator AS locator ' +
+        'FROM artifacts WHERE storage_locator = ?',
+      `execution-input-groups/t-2/${part}`,
+    ) as { artifactId: string; status: string; contentHash: string; locator: string };
+    const dependentParts = [groupRow('snapshot'), groupRow('manifest'), groupRow('prompt')];
+    for (const part of dependentParts) {
+      expect(part.status).toBe('ready');
+      expect(artifactFileHash(fixture, part.artifactId, part.locator)).toBe(part.contentHash);
+    }
+    const dependentSnapshot = JSON.parse(
+      artifactBody(fixture, dependentParts[0].artifactId, dependentParts[0].locator).toString('utf8'),
+    ) as {
+      task: {
+        acceptance: { criteria: string[] };
+        dependencies: Array<{ taskId: string; evidenceRefs: Array<{ artifactId: string }> }>;
+      };
+    };
+    expect(dependentSnapshot.task.acceptance.criteria).toEqual(['任务二验收']);
+    expect(dependentSnapshot.task.dependencies).toEqual([
+      { taskId: 't-1', evidenceRefs: [{ artifactId: fixture.requirementArtifactId }] },
+    ]);
+    const dependentPrompt = artifactBody(
+      fixture, dependentParts[2].artifactId, dependentParts[2].locator,
+    ).toString('utf8');
+    expect(dependentPrompt).toContain('[1] 任务二验收');
+    expect(dependentPrompt).toContain(`- task t-1: artifact ${fixture.requirementArtifactId}`);
+    const dependentManifest = JSON.parse(
+      artifactBody(fixture, dependentParts[1].artifactId, dependentParts[1].locator).toString('utf8'),
+    ) as { promptDigest: string; sources: Array<{ kind: string; hash: string }> };
+    expect(dependentManifest.promptDigest)
+      .toBe(sha256(`${CONTEXT_PROMPT_DIGEST_DOMAIN}\n${dependentPrompt}`));
+    expect(dependentManifest.sources.find((source) => source.kind === 'dependencies')?.hash)
+      .toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('[case:f010-progress-report-growth-keeps-fixed-input] 显著增长 progress/报告与源路径内容变化不改变既有快照；可变路径不是固定执行输入', async () => {
+    const fixture = await setup();
+    const bound = fixture.claimAndLaunch('t-1');
+    await fixture.bindingService.bind(fixture.bindingInput(bound));
+    const group = bound.inputSnapshot.group;
+    const bodyBefore = {
+      snapshot: artifactBody(fixture, group.snapshot.artifactId, group.snapshot.locator),
+      manifest: artifactBody(fixture, group.manifest.artifactId, group.manifest.locator),
+      prompt: artifactBody(fixture, group.prompt.artifactId, group.prompt.locator),
+    };
+
+    /* 小历史状态 → 显著增长的 progress/报告夹具 + 源路径内容改变。 */
+    mkdirSync(join(fixture.box.repoDirA, 'requirements'), { recursive: true });
+    writeFileSync(
+      join(fixture.box.repoDirA, 'progress.md'),
+      'PROGRESS_GROWTH_MARK 历史进度全文不得内联\n'.repeat(300),
+    );
+    appendFileSync(join(fixture.box.repoDirA, 'README.md'), '\nREPORT_GROWTH_MARK 可变来源增长\n');
+    writeFileSync(
+      join(fixture.box.repoDirA, 'requirements', 'task-1.md'),
+      'SOURCE_PATH_CHANGED 源路径内容已改变',
+    );
+    for (let index = 0; index < 20; index += 1) {
+      await publishReadyArtifact(fixture, {
+        kind: 'execution-report',
+        locator: `reports/report-${index}.json`,
+        content: JSON.stringify({ mark: `REPORT_GROWTH_MARK_${index}`, body: 'x'.repeat(20_000) }),
+      });
+    }
+
+    const again = await fixture.bindingService.bind(fixture.bindingInput(bound));
+    expect(again.evidence.outcome).toBe('bound');
+    /* 既有 snapshot/manifest/prompt 逐字节不变，冻结摘要与读取证据一致。 */
+    for (const key of ['snapshot', 'manifest', 'prompt'] as const) {
+      expect(artifactBody(fixture, group[key].artifactId, group[key].locator).equals(bodyBefore[key]))
+        .toBe(true);
+    }
+    expect(again.evidence.reads.find((entry) => entry.purpose === 'prompt')?.contentHash)
+      .toBe(group.prompt.contentHash);
+    /* 增长的 progress/报告正文零内联（动态内容只经不可变引用/摘要提供）。 */
+    for (const key of ['snapshot', 'manifest', 'prompt'] as const) {
+      const text = bodyBefore[key].toString('utf8');
+      expect(text).not.toContain('PROGRESS_GROWTH_MARK');
+      expect(text).not.toContain('REPORT_GROWTH_MARK');
+      expect(text).not.toContain('SOURCE_PATH_CHANGED');
+    }
+    /* 可变路径不是固定执行输入：受限读取返回固定正文，而非源路径新内容。 */
+    const requirement = await again.reader.read('requirements');
+    expect(Buffer.from(requirement.content).toString('utf8')).toBe(fixture.requirementContent);
+    expect(Buffer.from(requirement.content).toString('utf8')).not.toContain('SOURCE_PATH_CHANGED');
+    const requirementRow = fixture.query(
+      'SELECT content_hash AS contentHash FROM artifacts WHERE id = ?', fixture.requirementArtifactId,
+    ) as { contentHash: string };
+    expect(sha256(Buffer.from(requirement.content))).toBe(requirementRow.contentHash);
+    /* acceptance 完整未截断。 */
+    expect(bodyBefore.prompt.toString('utf8')).toContain('## Acceptance (required; complete; 不得删项)');
+    expect(bodyBefore.prompt.toString('utf8')).toContain('[1] 验收条目甲：必须完整可读');
+    expect(bodyBefore.prompt.toString('utf8')).toContain('[2] 验收条目乙：不得删项');
+  });
+
+  it('[case:f010-required-input-missing-or-corrupt-rejected] 必需输入损坏/缺失启动被拒绝并给出明确原因；不静默截断 acceptance', async () => {
+    const fixture = await setup();
+    const bound = fixture.claimAndLaunch('t-1');
+    const group = bound.inputSnapshot.group;
+    const record = fixture.query(
+      'SELECT storage_locator AS locator, size_bytes AS sizeBytes FROM artifacts WHERE id = ?',
+      fixture.requirementArtifactId,
+    ) as { locator: string; sizeBytes: number };
+    const path = join(
+      fixture.box.dataRoot,
+      deriveArtifactFinalRelativePath({
+        projectId: fixture.projectId, artifactId: fixture.requirementArtifactId, locator: record.locator,
+      }),
+    );
+    const original = readFileSync(path);
+    const snapshotBefore = artifactBody(fixture, group.snapshot.artifactId, group.snapshot.locator);
+
+    /* 同长度篡改 → input_corrupt（拒绝证据按 Attempt 保留，原因明确）。 */
+    writeFileSync(path, Buffer.alloc(record.sizeBytes, 0x21));
+    const corruptEvidence = await expectRejection(
+      fixture, fixture.bindingInput(bound), { kind: 'input', reason: 'input_corrupt' },
+    );
+    expect(corruptEvidence.reads.find((entry) => entry.purpose === 'requirements')?.outcome)
+      .toBe('failed');
+
+    /* 恢复正文后删除制品行 → input_missing（缺失不被静默省略）。 */
+    writeFileSync(path, original);
+    fixture.session.database.prepare('DELETE FROM artifacts WHERE id = ?').run(fixture.requirementArtifactId);
+    await expectRejection(fixture, fixture.bindingInput(bound), { kind: 'input', reason: 'input_missing' });
+
+    /* 拒绝不改写固定输入：既有快照逐字节不变、acceptance 仍完整。 */
+    expect(artifactBody(fixture, group.snapshot.artifactId, group.snapshot.locator).equals(snapshotBefore))
+      .toBe(true);
+    expect(snapshotBefore.toString('utf8')).toContain('验收条目甲：必须完整可读');
+    expect(snapshotBefore.toString('utf8')).toContain('验收条目乙：不得删项');
+  });
+
+  it('[case:f010-path-escape-and-permission-expansion-rejected] 受控路径越界与读取权限扩大启动被拒绝：明确原因、零副作用', async () => {
+    const fixture = await setup();
+    const bound = fixture.claimAndLaunch('t-1');
+    /* cwd 根不在获准白名单 → cwd_root_unknown。 */
+    await expectRejection(
+      fixture, fixture.bindingInput(bound, { cwdRoot: 'unknown-root' }),
+      { kind: 'workspace', reason: 'cwd_root_unknown' },
+    );
+    /* 读取/执行权限扩大 → permission_expansion（不扩大读取权限）。 */
+    await expectRejection(
+      fixture,
+      fixture.bindingInput(bound, { permissions: { grants: ['fs.write'], isolation: 'trusted-project' } }),
+      { kind: 'input', reason: 'permission_expansion' },
+    );
+    /* 工作区符号链接越界（realpath 复核）→ workspace_untrusted。 */
+    const moved = `${fixture.box.repoDirA}-moved`;
+    renameSync(fixture.box.repoDirA, moved);
+    symlinkSync(fixture.box.homeDir, fixture.box.repoDirA);
+    let thrown: unknown;
+    try {
+      await fixture.bindingService.bind(fixture.bindingInput(bound));
+    } catch (error) {
+      thrown = error;
+    } finally {
+      /* 恢复现场以便夹具清理。 */
+      rmSync(fixture.box.repoDirA);
+      renameSync(moved, fixture.box.repoDirA);
+    }
+    expect(isExecutionInputBindingError(thrown)).toBe(true);
+    expect(thrown).toMatchObject({ kind: 'workspace', reason: 'workspace_untrusted' });
+    expect((thrown as { evidenceRef: string | null }).evidenceRef).not.toBeNull();
+  });
+
+  it('[case:f010-required-input-budget-rejected] 超出必需输入读取预算启动被拒绝（有界 limit_exceeded）', async () => {
+    const fixture = await setup({
+      bindingLimits: {
+        maxItemBytes: 1_048_576, maxTotalBytes: 100, maxRefCount: 260,
+        maxReads: 512, maxReadDurationMs: 60_000,
+      },
+    });
+    const bound = fixture.claimAndLaunch('t-1');
+    await expectRejection(
+      fixture, fixture.bindingInput(bound), { kind: 'input', reason: 'limit_exceeded' },
+    );
   });
 });

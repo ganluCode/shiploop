@@ -664,3 +664,147 @@ describe('P03-2 / F-005 固定指导与权限边界', () => {
     expect(validated.historyIndex).toBeUndefined();
   });
 });
+
+/**
+ * P03-10 / F-010 输入装配历史增长与必需输入完整性确定性回归（T37 子集）。
+ * 沿用本文件前序输入装配夹具（makeInput/makeBuilder/同输入形态），不新增知识
+ * 平台、不调用模型；此处只证明有界装配与输入完整性，不宣称缓存命中或 Token
+ * 节省（token 估算恒为 estimation）。历史增长对照使用同一 Task 的小历史与
+ * 显著增长的 progress/报告摘要夹具。
+ */
+describe('P03-10 / F-010 输入装配历史增长与必需输入完整性回归', () => {
+  it('[case:f010-history-small-vs-grown-readable] 同一 Task 小历史与显著增长 progress/报告对照：固定指导不复制历史全文，动态内容走不可变引用/摘要，描述/acceptance/依赖结果始终可读', () => {
+    const builder = makeBuilder();
+    const small = builder.build(makeInput({
+      historyIndex: {
+        entries: [
+          { id: 'progress-1', summary: 'progress 摘要：首次执行记录' },
+          { id: 'report-1', summary: 'report 摘要：旧报告要点' },
+        ],
+        totalAvailable: 2,
+      },
+    }));
+    const grownEntries = Array.from({ length: 60 }, (_, index) => ({
+      id: `report-${index + 1}`,
+      summary: `progress/报告 ${index + 1} 正文开头：${'R'.repeat(2_000)} FULL_BODY_MARK_${index + 1}`,
+    }));
+    const grownInput = () => makeInput({
+      historyIndex: { entries: grownEntries, totalAvailable: 4_000 },
+    });
+    const grown = builder.build(grownInput());
+
+    /* 固定指导是 Core 常量、原样位于历史段之前；完整历史正文零内联。 */
+    for (const result of [small, grown]) {
+      expect(result.prompt).toContain(CONTEXT_FIXED_GUIDANCE);
+      expect(result.prompt.indexOf(CONTEXT_FIXED_GUIDANCE))
+        .toBeLessThan(result.prompt.indexOf('## History index'));
+    }
+    expect(grown.prompt).not.toContain('FULL_BODY_MARK');
+    expect(grown.prompt).not.toContain('R'.repeat(200));
+
+    /* prompt 规模有界：远小于历史正文总量，不随 progress/报告增长线性膨胀。 */
+    const grownHistoryChars = grownEntries.reduce((sum, entry) => sum + entry.summary.length, 0);
+    expect(grown.promptBytes).toBeLessThanOrEqual(DEFAULT_BUDGET.maxPromptBytes);
+    expect(grown.promptBytes * 4).toBeLessThan(grownHistoryChars);
+    expect(grown.promptBytes - small.promptBytes).toBeLessThan(10_000);
+
+    /* 可选历史只以有界索引进入，省略/截断在 snapshot 与 manifest 如实标注。 */
+    expect(small.inputSnapshot.historyIndex?.omittedCount).toBe(0);
+    expect(small.inputSnapshot.historyIndex?.truncated).toBe(false);
+    expect(grown.inputSnapshot.historyIndex?.entries)
+      .toHaveLength(DEFAULT_BUDGET.maxHistoryEntries);
+    expect(grown.inputSnapshot.historyIndex?.omittedCount)
+      .toBe(4_000 - DEFAULT_BUDGET.maxHistoryEntries);
+    expect(grown.inputSnapshot.historyIndex?.truncated).toBe(true);
+    const omissionKinds = grown.inputManifest.omissions.map((item) => item.kind);
+    expect(omissionKinds).toContain('history-entry-truncated');
+    expect(omissionKinds).toContain('history-entry-omitted');
+    expect(grown.inputManifest.sources.find((source) => source.kind === 'history-index'))
+      .toMatchObject({
+        required: false,
+        truncated: true,
+        selection: `entries[1..${DEFAULT_BUDGET.maxHistoryEntries}] of 4000`,
+      });
+
+    /* 当前描述、全部 acceptance 与依赖结果在两个历史规模下始终逐项可读。 */
+    for (const result of [small, grown]) {
+      expect(result.prompt).toContain('- description: 在网络抖动时按策略重试支付请求。');
+      expect(result.prompt).toContain('[1] 重试不超过 3 次');
+      expect(result.prompt).toContain('[2] 失败记录审计日志');
+      expect(result.prompt).toContain('- task task-0: artifact art-dep-1');
+    }
+
+    /* 动态必需内容经不可变引用/摘要提供：正文不内联，引用带 sha256。 */
+    expect(grown.prompt).toContain('## Required inputs (must read each before work; verify hash)');
+    expect(grown.prompt).toContain(`sha256:${sha256Hex('content:art-in-1')}`);
+    expect(grown.prompt).toContain(`sha256:${sha256Hex('content:art-in-2')}`);
+    expect(grown.prompt).not.toContain('content:art-in-1');
+
+    /* 历史增长不改变固定输入身份：必需区逐字节一致、各固定来源摘要不变。 */
+    expect(grown.prompt.split('## History index')[0])
+      .toBe(small.prompt.split('## History index')[0]);
+    const hashesOfKind = (result: typeof small, kind: string): string[] =>
+      result.inputManifest.sources
+        .filter((source) => source.kind === kind)
+        .map((source) => source.hash);
+    for (const kind of [
+      'fixed-guidance', 'task', 'acceptance', 'strategy', 'requirements',
+      'dependencies', 'check-policy', 'permissions', 'required-input',
+    ]) {
+      const grownHashes = hashesOfKind(grown, kind);
+      expect(grownHashes.length).toBeGreaterThan(0);
+      expect(grownHashes).toEqual(hashesOfKind(small, kind));
+    }
+
+    /* 纯确定性：重复构建逐字节一致；估算只标 estimation，不宣称缓存/Token 收益。 */
+    const rebuilt = builder.build(grownInput());
+    expect(rebuilt.prompt).toBe(grown.prompt);
+    expect(rebuilt.digests).toEqual(grown.digests);
+    expect(rebuilt.inputManifest).toEqual(grown.inputManifest);
+    expect(rebuilt.tokenEstimate.kind).toBe('estimation');
+  });
+
+  it('[case:f010-required-budget-structured-failure] 必需输入缺失/超预算整体结构化失败：不静默截断 acceptance、不静默生成空输入', () => {
+    /* 必需输入清单缺席 → missing_required_input（fail-closed，不静默按空输入放行）。 */
+    let missingError: unknown;
+    try {
+      makeBuilder().build(makeInput({ requiredInputs: undefined }));
+    } catch (thrown) {
+      missingError = thrown;
+    }
+    expectContextError(missingError, 'missing_required_input', 'input.requiredInputs');
+
+    /* acceptance 条目为空 → missing_required_input（不以删减/空验收生成可执行输入）。 */
+    let acceptanceError: unknown;
+    try {
+      makeBuilder().build(
+        makeInput({ task: { ...(makeInput().task as object), acceptance: { criteria: [] } } as object }),
+      );
+    } catch (thrown) {
+      acceptanceError = thrown;
+    }
+    expectContextError(acceptanceError, 'missing_required_input', 'acceptance.criteria');
+
+    /* 超出必需输入预算（引用数量）→ limit_exceeded，携带限制名与实测值。 */
+    let refError: unknown;
+    try {
+      makeBuilder({ maxRequiredInputRefs: 1 }).build(makeInput());
+    } catch (thrown) {
+      refError = thrown;
+    }
+    expectContextError(refError, 'limit_exceeded', 'maxRequiredInputRefs');
+    if (isContextBuildError(refError)) {
+      expect(refError.details).toMatchObject({ limitName: 'maxRequiredInputRefs', limit: 1, measured: 2 });
+    }
+
+    /* prompt 预算无法容纳必需内容 → limit_exceeded，消息明确「不删减验收条目」。 */
+    let promptError: unknown;
+    try {
+      makeBuilder({ maxPromptBytes: 200 }).build(makeInput());
+    } catch (thrown) {
+      promptError = thrown;
+    }
+    expectContextError(promptError, 'limit_exceeded', 'maxPromptBytes');
+    expect((promptError as Error).message).toContain('不删减验收条目');
+  });
+});

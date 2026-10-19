@@ -1,0 +1,101 @@
+{
+  "schema_version": 2,
+  "task_id": "F-007",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/acceptance/p03-10-execution-negatives.test.ts",
+          "cases": [
+            "persistent-check-failure"
+          ]
+        },
+        {
+          "file": "test/modules/execution/budget/p03-3-budget-integration.test.ts",
+          "cases": [
+            "batch-race",
+            "run-race",
+            "attempt-race",
+            "start-race",
+            "settlement-same",
+            "settlement-cas",
+            "success-work-key",
+            "shared-parent-budget"
+          ]
+        },
+        {
+          "file": "test/modules/scheduling/p03-4-task-claim.test.ts",
+          "cases": [
+            "claim-replay",
+            "dependency-failed",
+            "dependency-skipped",
+            "dependency-cancelled",
+            "dependency-missing_evidence",
+            "claim-same_task",
+            "claim-different_tasks",
+            "claim-idempotent"
+          ]
+        },
+        {
+          "file": "test/modules/scheduling/p03-4-attempt-lifecycle.test.ts",
+          "cases": [
+            "late-owner",
+            "late-hostInstanceId",
+            "late-executionVersion",
+            "late-taskId",
+            "late-runId",
+            "task-fence"
+          ]
+        },
+        {
+          "file": "test/modules/execution/budget/p03-3-execution-start.test.ts",
+          "cases": [
+            "no-progress-limit",
+            "preview-stale"
+          ]
+        },
+        {
+          "file": "test/modules/execution/budget/p03-3-execution-preview.test.ts",
+          "cases": [
+            "empty-scope",
+            "no-pending-work"
+          ]
+        },
+        {
+          "file": "test/modules/execution/budget/p03-3-runtime-start-reservation.test.ts",
+          "cases": [
+            "deadline-limit"
+          ]
+        },
+        {
+          "file": "test/modules/scheduling/p03-4-work-resources.test.ts",
+          "cases": [
+            "baseline-work-both-orders",
+            "baseline-work-race"
+          ]
+        },
+        {
+          "file": "test/modules/workspace/p03-5-git-operation-lock.test.ts",
+          "cases": [
+            "baseline-work-lock",
+            "linked-worktree-lock",
+            "git-lock-race"
+          ]
+        },
+        {
+          "file": "test/modules/runtime/p03-6-fake-runtime.test.ts",
+          "cases": [
+            "task-event-isolation"
+          ]
+        },
+        {
+          "file": "test/modules/runtime/p03-6-work-evidence-recorder.test.ts",
+          "cases": [
+            "foreign-recording"
+          ]
+        }
+      ]
+    }
+  ]
+}

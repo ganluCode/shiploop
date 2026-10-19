@@ -1,0 +1,62 @@
+{
+  "schema_version": 2,
+  "task_id": "F-008",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/planning/p03-2-task-strategy-edit-command.test.ts",
+          "cases": [
+            "f008-default-strategy-snapshot",
+            "f008-active-strategy-fence"
+          ]
+        },
+        {
+          "file": "test/modules/planning/p03-1-plan-revise-command.test.ts",
+          "cases": [
+            "f008-active-plan-fence",
+            "f008-old-plan-approval"
+          ]
+        },
+        {
+          "file": "test/modules/verification/p03-7-f008-approval-decisions.test.ts",
+          "cases": [
+            "f008-decision-envelope-task.approval.approve",
+            "f008-decision-envelope-task.approval.reject",
+            "f008-decision-envelope-task.approval.unblock",
+            "f008-client-identity",
+            "f008-decision-side-effect-task.approval.approve",
+            "f008-decision-side-effect-task.approval.reject",
+            "f008-decision-side-effect-task.approval.unblock",
+            "f008-unassigned-principal"
+          ]
+        },
+        {
+          "file": "test/modules/verification/p03-7-f016-approval-budget-integration.test.ts",
+          "cases": ["f008-human-gate-competition"]
+        },
+        {
+          "file": "test/modules/verification/p03-7-f012-verification-continue.test.ts",
+          "cases": [
+            "f008-stale-evidence",
+            "f008-blocked-continue"
+          ]
+        },
+        {
+          "file": "test/modules/delivery/p03-8-f003-controlled-git-commit.test.ts",
+          "cases": [
+            "f008-blocked-replay",
+            "f008-late-commit-approval",
+            "f008-late-commit-version",
+            "f008-late-commit-owner"
+          ]
+        },
+        {
+          "file": "test/modules/cli/p03-10-feature-report-text.test.ts",
+          "cases": ["text-approval-waiting"]
+        }
+      ]
+    }
+  ]
+}
