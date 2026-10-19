@@ -50,6 +50,7 @@ import type {
   P03WrittenReport,
 } from './p03-report.ts';
 import { runBoundedProcess, type P02BoundedRunOutcome } from './p02-accept.ts';
+import { evaluateP03TestEvidence, requiredP03TestBindings, type P03TestProof } from './p03-test-evidence.ts';
 
 export const P03_ACCEPT_SCRIPT_NAME = 'accept:p03';
 export const P03_ACCEPT_USAGE =
@@ -127,7 +128,7 @@ function safeRunText(command: string, args: readonly string[], cwd: string, fall
 function gitFacts(repoRoot: string): P03PhaseReportInput['git'] {
   const commit = safeRunText('git', ['rev-parse', 'HEAD'], repoRoot, '');
   if (!HEX_40.test(commit)) fail('preparation_failed', '无法取得当前 Git commit');
-  const status = safeRunText('git', ['status', '--porcelain'], repoRoot, 'unknown');
+  const status = runText('git', ['status', '--porcelain'], repoRoot);
   const branch = safeRunText('git', ['branch', '--show-current'], repoRoot, '') || null;
   return {
     commit,
@@ -185,12 +186,12 @@ function checkFileSet(repoRoot: string, files: readonly string[]): string | null
   return null;
 }
 
-function buildSteps(config: P03AcceptanceConfig, repoRoot: string, testFiles: readonly string[], stepTimeoutMs: number): Step[] {
+function buildSteps(config: P03AcceptanceConfig, repoRoot: string, testFiles: readonly string[], stepTimeoutMs: number, jsonReport: string): Step[] {
   if (config.requiredChecks.join('\u0000') !== P03_REQUIRED_CHECK_IDS.join('\u0000')) {
     fail('invalid_config', 'requiredChecks 与冻结 P03 检查顺序不一致');
   }
   const checks = [...P03_REQUIRED_CHECK_IDS];
-  const testArgs = ['test', ...testFiles];
+  const testArgs = ['test', '--', ...testFiles, '--reporter=json', `--outputFile=${jsonReport}`];
   return [
     { id: 'verify', label: '工程门禁 verify', command: 'npm', args: ['run', 'verify'], checkIds: checks },
     { id: 'deterministic-tests', label: 'P03 全部确定性场景', command: 'npm', args: testArgs, checkIds: checks },
@@ -223,18 +224,20 @@ function stepEvidence(step: Step, outcome: P02BoundedRunOutcome, commandPath: st
   }, null, 2) + '\n';
 }
 
-function checkEvidence(checkId: string, status: string, detail: string, category: P03EvidenceCategory): string {
-  return JSON.stringify({ checkId, status, category, detail, executionMode: 'fake', assertions: ['state-recorded'] }, null, 2) + '\n';
+function checkEvidence(checkId: string, status: string, detail: string, category: P03EvidenceCategory, proof?: P03TestProof): string {
+  return JSON.stringify({ checkId, status, category, detail, executionMode: 'fake',
+    evidenceKind: 'indexed-test-assertions', proof: proof ?? null,
+    note: 'Assertions from the actual test run, not a fabricated SQLite/Git/process snapshot.' }, null, 2) + '\n';
 }
 
-function resultFor(checkId: string, status: 'pass' | 'fail' | 'not_run', detail: string, evidenceRefs: readonly string[], durationMs?: number): P03CheckResultInput {
+function resultFor(checkId: string, status: 'pass' | 'fail' | 'not_run', detail: string, evidenceRefs: readonly string[], durationMs?: number, proof?: P03TestProof): P03CheckResultInput {
   return {
     checkId,
     status,
     executionMode: 'fake',
     ...(status === 'not_run' ? { notRunReason: detail.includes('超时') ? 'timeout' as const : 'skipped' as const } : {}),
-    assertions: status === 'pass' ? [{ id: 'state-recorded', satisfied: true }] : [{ id: 'state-recorded', satisfied: false }],
-    sideEffectVerified: status === 'pass',
+    assertions: proof?.bindings.map((binding, index) => ({ id: `indexed-assertion-${index + 1}`, satisfied: binding.passed })) ?? [],
+    sideEffectVerified: status === 'pass' && proof?.passed === true,
     ...(durationMs === undefined ? {} : { durationMs }),
     detail,
     evidenceRefs,
@@ -281,8 +284,10 @@ function createReportInput(
     results,
     cleanup,
     productReports,
-    knownLimitations: ['P03 deferred 项保持 not_run，不计入通过数；报告只记录确定性 Fake 执行。'],
-    stateDigests: { codeSha256: sha256(readFileSync(join(repoRoot, 'package.json'))) },
+    knownLimitations: ['P03 deferred 项保持 not_run，不计入通过数；报告只记录确定性 Fake 执行。',
+      '各检查的证据为实际测试断言映射，不冒充逐项数据库快照；夹具原始证据另存 evidence/scenarios。',
+      '现有产品 Feature 门禁仍使用 full_fallback；task_union 策略贯通不在本次验收修补范围。'],
+    stateDigests: { codeSha256: sha256(runText('git', ['rev-parse', 'HEAD^{tree}'], repoRoot)) },
   };
 }
 
@@ -303,13 +308,16 @@ export async function runP03Acceptance(options: P03AcceptanceRunOptions): Promis
     fail('invalid_config', `overallTimeoutMs 超出有限范围：${overallTimeoutMs}`);
   }
 
-  const testFiles = options.testFiles ?? collectTestFiles(options.repoRoot);
+  const testFiles = options.testFiles ?? [...new Set([...collectTestFiles(options.repoRoot), ...requiredP03TestBindings(options.repoRoot).map(b => b.file)])].sort();
+  if (testFiles.length === 0) fail('preparation_failed', 'empty/空测试选择不能退化为全仓测试');
   const missing = checkFileSet(options.repoRoot, testFiles);
   if (missing !== null) fail('preparation_failed', `确定性测试入口不存在：${missing}`);
-  const steps = buildSteps(options.config, options.repoRoot, testFiles, stepTimeoutMs);
   const acceptanceTempParent = process.env.TMPDIR ?? '/tmp';
   mkdirSync(acceptanceTempParent, { recursive: true });
   const tempRoot = mkdtempSync(join(acceptanceTempParent, 'shiploop-p03-'));
+  const jsonReport = join(tempRoot, 'actual-test-results.json');
+  const rawEvidence = join(tempRoot, 'scenario-evidence');
+  const steps = buildSteps(options.config, options.repoRoot, testFiles, stepTimeoutMs, jsonReport);
   const baseEnv: NodeJS.ProcessEnv = {
     ...process.env,
     HOME: join(tempRoot, 'home'),
@@ -318,7 +326,9 @@ export async function runP03Acceptance(options: P03AcceptanceRunOptions): Promis
     SHIPLOOP_FAKE_PROVIDER: 'fake-provider',
     SHIPLOOP_FAKE_MODEL: 'fake-model',
     NO_COLOR: '1',
+    P03_EVIDENCE_DIR: rawEvidence,
   };
+  for (const directory of [baseEnv.HOME, baseEnv.TMPDIR, baseEnv.npm_config_cache, rawEvidence]) mkdirSync(directory!, { recursive: true });
   const commands: P03CommandRecord[] = [];
   const evidenceFiles: P03EvidenceFileInput[] = [];
   const results = new Map<string, P03CheckResultInput>();
@@ -329,6 +339,10 @@ export async function runP03Acceptance(options: P03AcceptanceRunOptions): Promis
     results.set(result.checkId, result);
   };
   const problems: string[] = [];
+  const sanitize = (value: string): string => value.replaceAll(options.repoRoot, '<repo>')
+    .replaceAll(tempRoot, '<temp>').replaceAll(homedir(), '<home>');
+  const proofs = new Map<string, P03TestProof>();
+  let stopsConfirmed = true;
   let facts: P03PhaseReportInput['git'];
   const started = Date.now();
   let halt: string | null = null;
@@ -346,19 +360,33 @@ export async function runP03Acceptance(options: P03AcceptanceRunOptions): Promis
       }
       log(`${P03_ACCEPT_SCRIPT_NAME}: RUN ${step.label}`);
       const runner = options.runProcess ?? runBoundedProcess;
+      const priorStopsConfirmed: boolean = stopsConfirmed;
+      // A runner rejection gives no proof that its child tree has stopped.
+      stopsConfirmed = false;
       const outcome = await runner(step.command, step.args, {
         cwd: options.repoRoot,
-        env: baseEnv,
+        env: step.id === 'deterministic-tests' ? { ...baseEnv, P03_USE_BUILT_DIST: '1' } : baseEnv,
         timeoutMs: Math.min(stepTimeoutMs, remaining),
         maxOutputBytes: options.config.maxCommandOutputBytes,
       });
+      stopsConfirmed = priorStopsConfirmed && outcome.stoppedVerified;
       commands.push({ label: step.label, argv: [step.command, ...step.args].map((arg) => logicalArg(arg, options.repoRoot)), cwd: '<repo>', exitCode: outcome.exitCode, durationMs: outcome.durationMs, ...(outcome.timedOut ? { timedOut: true } : {}) });
-      evidenceFiles.push({ path: commandPath, category: 'command-exit', checkId: null, content: stepEvidence(step, outcome, commandPath) });
+      const diagnostic = sanitize(stepEvidence(step, outcome, commandPath));
+      evidenceFiles.push({ path: commandPath, category: 'command-exit', checkId: null, content: diagnostic });
+      log(diagnostic);
       const passed = outcome.kind === 'exit' && outcome.exitCode === 0 && outcome.stoppedVerified;
       const status = outcome.kind === 'timeout' ? 'not_run' : passed ? 'pass' : 'fail';
       const detail = outcome.kind === 'timeout' ? `步骤超过有限超时 ${Math.min(stepTimeoutMs, remaining)}ms` : passed ? `步骤退出 0：${step.label}` : `步骤失败：${outcome.kind}，退出码 ${String(outcome.exitCode)}`;
-      for (const checkId of step.checkIds) {
-        recordResult(resultFor(checkId, status, detail, [], outcome.durationMs));
+      if (passed && step.id === 'deterministic-tests') {
+        let actual: unknown = null;
+        try { actual = JSON.parse(readFileSync(jsonReport, 'utf8')); } catch { problems.push('Missing/invalid actual test JSON report'); }
+        for (const proof of evaluateP03TestEvidence(options.repoRoot, actual)) {
+          proofs.set(proof.checkId, proof);
+          recordResult(resultFor(proof.checkId, proof.passed ? 'pass' : 'fail',
+            proof.passed ? 'Indexed assertions actually executed and passed' : 'Required indexed assertions missing, skipped, failed or duplicated', [], outcome.durationMs, proof));
+        }
+      } else if (!passed) {
+        for (const checkId of step.checkIds) recordResult(resultFor(checkId, status, detail, [], outcome.durationMs));
       }
       if (!passed) {
         halt = detail;
@@ -382,23 +410,39 @@ export async function runP03Acceptance(options: P03AcceptanceRunOptions): Promis
       for (const [categoryIndex, category] of categories.entries()) {
         const path = refs[categoryIndex];
         if (path === undefined) continue;
-        evidenceFiles.push({ path, category: category as P03EvidenceCategory, checkId, content: checkEvidence(checkId, status, detail, category as P03EvidenceCategory) });
+        evidenceFiles.push({ path, category: category as P03EvidenceCategory, checkId, content: checkEvidence(checkId, status, detail, category as P03EvidenceCategory, proofs.get(checkId)) });
       }
       if (current !== undefined) results.set(checkId, { ...current, evidenceRefs: refs });
     }
-    rmSync(tempRoot, { recursive: true, force: true });
+    // Export real fixture evidence before deleting disposable resources. Never invent state rows.
+    const exportRaw = (directory: string): void => {
+      for (const entry of readdirSync(directory, { withFileTypes: true })) {
+        const file = join(directory, entry.name);
+        if (entry.isSymbolicLink()) throw new Error('Symlink in scenario evidence');
+        if (entry.isDirectory()) exportRaw(file);
+        else if (entry.isFile()) {
+          if (evidenceFiles.length > 2000 || statSync(file).size > 2 * 1024 * 1024) throw new Error('Scenario evidence limit exceeded');
+          const content = sanitize(readFileSync(file, 'utf8'));
+          evidenceFiles.push({ path: `evidence/scenarios/${relative(rawEvidence, file).replaceAll('\\', '/')}`, category: 'artifact', checkId: null, content });
+        }
+      }
+    };
+    exportRaw(rawEvidence);
+    const actualProof = JSON.stringify({ evidenceKind: 'actual-indexed-test-assertions', checks: [...proofs.values()] }) + '\n';
+    if (stopsConfirmed) rmSync(tempRoot, { recursive: true, force: true });
     const phaseEvidence: readonly { path: string; category: P03EvidenceCategory; content: string }[] = [
-      { path: 'evidence/state/sqlite.json', category: 'sqlite', content: JSON.stringify({ runId, state: 'not-mutated-by-controller' }) + '\n' },
+      { path: 'evidence/state/sqlite.json', category: 'sqlite', content: actualProof },
       { path: 'evidence/state/git.json', category: 'git', content: JSON.stringify({ runId, commit: facts.commit }) + '\n' },
-      { path: 'evidence/state/process.json', category: 'process', content: JSON.stringify({ runId, processesGone: true }) + '\n' },
+      { path: 'evidence/state/process.json', category: 'process', content: JSON.stringify({ runId, processesGone: stopsConfirmed, commands }) + '\n' },
     ];
     for (const file of phaseEvidence) evidenceFiles.push({ ...file, checkId: null });
     const productPath = 'evidence/product/feature-execution-report.json';
     const manifestPath = 'evidence/cleanup/manifest.json';
-    evidenceFiles.push({ path: productPath, category: 'report', checkId: null, content: JSON.stringify({ layer: 'feature-execution-report', runId, source: 'deterministic-stage-run' }) + '\n' });
-    evidenceFiles.push({ path: manifestPath, category: 'manifest', checkId: null, content: JSON.stringify({ runId, tempRoot: '<temp>', cleanedBeforeReport: true }) + '\n' });
-    const cleanup: P03PhaseReportInput['cleanup'] = { confirmed: true, processesGone: true, manifestEvidenceRefs: [manifestPath], notes: ['临时 HOME/TMP/npm cache 在报告写入前已移除；受管进程组由 bounded runner 确认。'] };
-    const input = createReportInput(options.repoRoot, options.config, checklist, runId, commands, [...results.values()], cleanup, [{ featureId: 'shiploop-p03', label: 'P03 确定性 Feature 执行报告', command: 'shiploop feature report <featureId> --project <projectId> --json', evidenceRef: productPath }], facts);
+    evidenceFiles.push({ path: productPath, category: 'report', checkId: null, content: JSON.stringify({ layer: 'product-report-test-evidence', runId, checks: [...proofs.values()].filter(p => p.checkId.startsWith('P03-FR3')) }) + '\n' });
+    const removed = !existsSync(tempRoot);
+    evidenceFiles.push({ path: manifestPath, category: 'manifest', checkId: null, content: JSON.stringify({ runId, tempRoot: '<temp>', cleanedBeforeReport: removed, processesGone: stopsConfirmed }) + '\n' });
+    const cleanup: P03PhaseReportInput['cleanup'] = { confirmed: removed && stopsConfirmed, processesGone: stopsConfirmed, manifestEvidenceRefs: [manifestPath], notes: ['据真实受监督进程结果核验；未确认停止时保留现场，不假设清理成功。'] };
+    const input = createReportInput(options.repoRoot, options.config, checklist, runId, commands, [...results.values()], cleanup, [{ featureId: 'shiploop-p03', label: 'P03 产品报告查询测试的实际断言证据', command: 'npm test -- <indexed product report test files>', evidenceRef: productPath }], facts);
     let written: P03WrittenReport;
     try {
       buildP03AcceptanceReport(checklist, input, evidenceFiles.map((file) => ({ identity: file.path, category: file.category, path: file.path, sha256: sha256(typeof file.content === 'string' ? file.content : file.content), sizeBytes: typeof file.content === 'string' ? Buffer.byteLength(file.content) : file.content.byteLength, checkId: file.checkId ?? null, capturedBeforeCleanup: true })));
@@ -414,7 +458,7 @@ export async function runP03Acceptance(options: P03AcceptanceRunOptions): Promis
     log(`${P03_ACCEPT_SCRIPT_NAME}: ${exitCode === 0 ? 'PASS' : 'FAIL'} exit ${exitCode}`);
     return { runId, runDir: written.runDir, exitCode, conclusion: written.conclusion, problems, reportWritten: true, evidenceOk: verification.ok, written };
   } finally {
-    rmSync(tempRoot, { recursive: true, force: true });
+    if (stopsConfirmed) rmSync(tempRoot, { recursive: true, force: true });
   }
 }
 
