@@ -39,6 +39,11 @@ describe('P03 controller never fabricates assertion evidence', () => {
     expect(result.exitCode).not.toBe(0);
     expect(result.reportWritten, result.problems.join('\n')).toBe(true);
   });
+  it('[case:isolated-home-redaction] also redacts a tool installation outside the isolated HOME', async () => {
+    const result = await runP03Acceptance({ ...options(), runProcess: async () => ({ ...outcome,
+      exitCode: 1, stderr: 'npm via npm_execpath (/Users/tool-owner/.nvm/bin/npm.js)' }) });
+    expect(result.reportWritten, result.problems.join('\n')).toBe(true);
+  });
   it('[case:runner-rejection] preserves diagnostic resources when the runner throws without stop evidence', async () => {
     let tempRoot = '';
     try {

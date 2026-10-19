@@ -840,8 +840,8 @@ function waitForExit(
 }
 
 const testDir = dirname(fileURLToPath(import.meta.url));
-const SETTINGS_CHILD_SCRIPT = join(testDir, 'helpers', 'settings-race-child.ts');
-const CHILD_REGISTER = join(testDir, 'helpers', 'node-ts-loader', 'register.mjs');
+const SETTINGS_CHILD_SCRIPT = join(testDir, '../../helpers', 'settings-race-child.ts');
+const CHILD_REGISTER = join(testDir, '../../helpers', 'node-ts-loader', 'register.mjs');
 
 type ChildResult =
   | { readonly outcome: 'success'; readonly revision: number; readonly model: string }

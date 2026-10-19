@@ -289,7 +289,7 @@ function listPublicEvents(harness: Harness) {
 
 describe('F-007 迁移 v4：基线作用域四表', () => {
   it('迁移版本接 v3 之后为 v4/v5（P03-1 / F-002 起继认 v6 计划结构四表；P03-2 / F-002 起继认 v7 approvals 决策记录表、F-003 起继认 v8 检查政策身份绑定；P03-3 / F-002 起继认 v9 单 Feature 执行域三表），checksum 与 SQL 内容一致', () => {
-    expect(SQLITE_MIGRATIONS.map((migration) => migration.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28]);
+    expect(SQLITE_MIGRATIONS.map((migration) => migration.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]);
     const v4 = SQLITE_MIGRATIONS[3]!;
     expect(v4.sql).toContain('CREATE TABLE baseline_authorizations');
     expect(v4.sql).toContain('CREATE TABLE baseline_operations');
@@ -323,7 +323,7 @@ describe('F-007 迁移 v4：基线作用域四表', () => {
     const session = openSqliteStorageSession({ path: join(sandbox.path, 'state.db') });
     try {
       const result = await migrateSqliteStorage(session, { nowUtcMs: () => NOW_MS });
-      expect(result.appliedVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28]);
+      expect(result.appliedVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]);
       const tables = session.database
         .prepare<[], { name: string }>(
           "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
@@ -399,7 +399,7 @@ describe('F-007 迁移 v4：基线作用域四表', () => {
     try {
       const result = await migrateSqliteStorage(session, { nowUtcMs: () => NOW_MS + 1 });
       expect(result.fromVersion).toBe(3);
-      expect(result.appliedVersions).toEqual([4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28]);
+      expect(result.appliedVersions).toEqual([4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]);
       // 前序数据逐字段保留（项目 A + 其绑定；回执；事件 sequence）。
       expect(session.database.prepare('SELECT COUNT(*) AS c FROM projects').get()).toMatchObject({ c: 1 });
       expect(session.database.prepare('SELECT COUNT(*) AS c FROM command_receipts').get()).toMatchObject({

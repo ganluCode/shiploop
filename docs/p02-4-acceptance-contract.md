@@ -146,17 +146,17 @@ PRD §3.2 的每个 FR 分支都有稳定检查 ID 承接，且每项都断言**
 
 | 分支 | 前序实际测试入口（`test/`） |
 |---|---|
-| T17 Host 单例/竞争/锁/发现 | `host-lifecycle-contract.test.ts`、`host-launcher.test.ts`、`host-fixture-kit.test.ts`、`writer-lock-child.ts`（helpers） |
-| T17 认证/协议/传输 | `host-http-transport.test.ts`、`host-cli-execute.test.ts`、`client-protocol-boundary.test.ts` |
-| 命令幂等/回执 | `atomic-commands.test.ts`、`command-receipts-store.test.ts`、`commands-contract.test.ts`、`app-cli-execute.test.ts` |
-| 查询/事件/SSE | `host-app-routes.test.ts`、`host-sse-events.test.ts`、`snapshot-and-events.test.ts`、`app-cli-events-observe.test.ts` |
-| T10 授权/脱敏 | `authorization-contract.test.ts`、`authorized-queries.test.ts`、`host-protected-storage.test.ts` |
-| T15 注册/接入子集 | `project-registration.test.ts`、`repository-inspector.test.ts`、`p02-3-init-overview-vertical.test.ts`、`p02-3-inspect-overview.test.ts` |
-| 基线授权/执行/证据/恢复 | `baseline-contract.test.ts`、`baseline-execution.test.ts`、`baseline-evidence.test.ts`、`baseline-host-faults.test.ts`、`baseline-host-recovery.test.ts`、`p02-3-baseline-preview-authorize.test.ts` |
-| 受监督进程/停止核验 | `supervised-command-process.test.ts`、`supervised-process-stopping.test.ts` |
-| 端到端集成回归 | `p02-1-integration-regression.test.ts`、`p02-2-integration-regression.test.ts`、`p02-3-integration-regression.test.ts` |
-| SQLite/存储底座 | `sqlite-migration-runner.test.ts`、`sqlite-schema-migrations.test.ts`、`sqlite-cas-and-atomicity.test.ts`、`sqlite-baseline-store.test.ts` |
-| 工程门禁 | `verify.test.ts`、`typescript-build.test.ts`、`boundary-check.test.ts`、`deterministic-test-harness.test.ts` |
+| T17 Host 单例/竞争/锁/发现 | `modules/host/host-lifecycle-contract.test.ts`、`modules/host/host-launcher.test.ts`、`modules/host/host-fixture-kit.test.ts`、`writer-lock-child.ts`（helpers） |
+| T17 认证/协议/传输 | `modules/host/host-http-transport.test.ts`、`modules/host/host-cli-execute.test.ts`、`modules/engineering/client-protocol-boundary.test.ts` |
+| 命令幂等/回执 | `modules/commands/atomic-commands.test.ts`、`modules/commands/command-receipts-store.test.ts`、`modules/commands/commands-contract.test.ts`、`modules/cli/app-cli-execute.test.ts` |
+| 查询/事件/SSE | `modules/host/host-app-routes.test.ts`、`modules/host/host-sse-events.test.ts`、`modules/events/snapshot-and-events.test.ts`、`modules/cli/app-cli-events-observe.test.ts` |
+| T10 授权/脱敏 | `modules/authorization/authorization-contract.test.ts`、`modules/authorization/authorized-queries.test.ts`、`modules/host/host-protected-storage.test.ts` |
+| T15 注册/接入子集 | `modules/projects/project-registration.test.ts`、`modules/projects/repository-inspector.test.ts`、`modules/onboarding/p02-3-init-overview-vertical.test.ts`、`modules/onboarding/p02-3-inspect-overview.test.ts` |
+| 基线授权/执行/证据/恢复 | `modules/onboarding/baseline-contract.test.ts`、`modules/onboarding/baseline-execution.test.ts`、`modules/onboarding/baseline-evidence.test.ts`、`modules/onboarding/baseline-host-faults.test.ts`、`modules/onboarding/baseline-host-recovery.test.ts`、`modules/onboarding/p02-3-baseline-preview-authorize.test.ts` |
+| 受监督进程/停止核验 | `modules/runtime/supervised-command-process.test.ts`、`modules/runtime/supervised-process-stopping.test.ts` |
+| 端到端集成回归 | `modules/host/p02-1-integration-regression.test.ts`、`modules/commands/p02-2-integration-regression.test.ts`、`modules/onboarding/p02-3-integration-regression.test.ts` |
+| SQLite/存储底座 | `modules/storage/sqlite/sqlite-migration-runner.test.ts`、`modules/storage/sqlite/sqlite-schema-migrations.test.ts`、`modules/storage/sqlite/sqlite-cas-and-atomicity.test.ts`、`modules/storage/sqlite/sqlite-baseline-store.test.ts` |
+| 工程门禁 | `modules/engineering/verify.test.ts`、`modules/engineering/typescript-build.test.ts`、`modules/engineering/boundary-check.test.ts`、`modules/engineering/deterministic-test-harness.test.ts` |
 
 ### 2.4 复用夹具与故障注入（不新建第二套）
 

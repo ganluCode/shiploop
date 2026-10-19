@@ -17,6 +17,7 @@ import { describe, expect, it } from 'vitest';
 import { createSqliteAttemptLifecycleStore } from '../../../../packages/core/src/adapters/sqlite/attempt-lifecycle-store.ts';
 import { createSqliteExecutionAccess } from '../../../../packages/core/src/adapters/sqlite/execution-store.ts';
 import { createSqliteWorkResourceAccess } from '../../../../packages/core/src/adapters/sqlite/work-resources.ts';
+import { createSqliteGitOperationStore } from '../../../../packages/core/src/adapters/sqlite/git-operations.ts';
 import { migrateSqliteStorage } from '../../../../packages/core/src/adapters/sqlite/migrator.ts';
 import { SQLITE_MIGRATIONS } from '../../../../packages/core/src/adapters/sqlite/migrations.ts';
 import { openSqliteStorageSession } from '../../../../packages/core/src/adapters/sqlite/session.ts';
@@ -29,6 +30,7 @@ import type { AttemptRecord } from '../../../../packages/core/src/ports/attempt-
 import { NOW } from '../../../helpers/p03-3/budget-fixture.ts';
 import { openClaimFixture } from '../../../helpers/p03-4/task-claim-fixture.ts';
 import { createTempSandbox } from '../../../helpers/temp-sandbox.ts';
+import { git } from '../../../helpers/git-repo.ts';
 
 type Fixture = Awaited<ReturnType<typeof openClaimFixture>>;
 type PausePayload = { readonly runId: string; readonly batchId: null } | { readonly runId: null; readonly batchId: string };
@@ -141,6 +143,30 @@ function seedVerification(f: Fixture, attempt: AttemptRecord, codeDigest: string
   return batchId;
 }
 
+/** Persist a no-change receipt through the real store; this is a state-machine fixture, not a Git execution test. */
+function recordTaskCommitFixture(f: Fixture, attempt: AttemptRecord, batchId: string, codeDigest: string): void {
+  const db = f.box.session.database;
+  const binding = db.prepare('SELECT id, repo_identity, canonical_path FROM repository_bindings WHERE project_id = ?')
+    .get(attempt.projectId) as { id: string; repo_identity: string; canonical_path: string };
+  const feature = db.prepare('SELECT revision FROM features WHERE id = ?').get(attempt.featureId) as { revision: number };
+  const head = f.box.box.gitHead('A');
+  const tree = git(['rev-parse', 'HEAD^{tree}'], binding.canonical_path, { home: f.box.box.homeDir }).trim();
+  const operationId = randomUUID();
+  const store = createSqliteGitOperationStore(f.box.session, { nowUtcMs: () => NOW + 2 });
+  const registered = store.registerGitOperation({ operationId, projectId: attempt.projectId,
+    featureId: attempt.featureId, runId: attempt.runId, attemptId: attempt.id,
+    executionVersion: attempt.executionVersion, operationType: 'task_commit',
+    repositoryBindingId: binding.id, repoIdentity: binding.repo_identity, worktreePath: binding.canonical_path,
+    expectedHead: head, candidateTree: tree, codeDigest,
+    verificationRefs: [{ kind: 'verification_batch', id: batchId, digest: codeDigest }], approvalRefs: [],
+    message: 'fixture unchanged Task delivery', gitIdentity: { name: 'fixture', email: 'fixture@example.test', confirmed: true },
+    deliveryPolicyDigest: 'ab'.repeat(32), runtimeSource: null, ownerId: attempt.owner,
+    hostInstanceId: attempt.hostInstanceId, expectedFeatureRevision: feature.revision });
+  store.finalizeGitOperation({ operationId, projectId: attempt.projectId, expectedRevision: registered.operation.revision,
+    status: 'no_change', actualCommit: head, actualTree: tree, exitCode: 0, durationMs: 1,
+    reasonCode: null, deliveryStatus: 'not_requested', settledAtUtcMs: NOW + 2 });
+}
+
 describe('P03-9 / F-001 Run/Batch Task 边界暂停', () => {
   it('无活动 Attempt：Run 原子进入 paused、事件/回执同事务，认领被拒绝且预算/deadline 不变', async () => {
     const f = await openClaimFixture();
@@ -242,6 +268,7 @@ describe('P03-9 / F-001 Run/Batch Task 边界暂停', () => {
 
       const codeDigest = 'cd'.repeat(32);
       const batchId = seedVerification(f, attempt, codeDigest);
+      recordTaskCommitFixture(f, attempt, batchId, codeDigest);
       const verification = lifecycle(f).submitVerification({
         projectId: attempt.projectId, attemptId: attempt.id, taskId: attempt.taskId, runId: attempt.runId,
         owner: attempt.owner, hostInstanceId: attempt.hostInstanceId, executionVersion: attempt.executionVersion,
@@ -307,7 +334,7 @@ describe('P03-9 / F-001 Run/Batch Task 边界暂停', () => {
 
   it('迁移 v27：仅追加暂停意图列，历史 checksum 稳定，空库与 v26 库均可升级', async () => {
     expect(SQLITE_MIGRATIONS.map(migration => migration.version)).toEqual(
-      Array.from({ length: 29 }, (_, index) => index + 1),
+      Array.from({ length: 30 }, (_, index) => index + 1),
     );
     expect(SQLITE_MIGRATIONS[26]?.sql).toContain('ADD COLUMN pause_requested_at');
     // 既有 v1-v26 的 SQL 只在文件末尾追加 v27（后续 v28 再追加停止 operation
@@ -322,7 +349,7 @@ describe('P03-9 / F-001 Run/Batch Task 边界暂停', () => {
       const session = openSqliteStorageSession({ path: join(empty.path, 'state.db') });
       try {
         const result = await migrateSqliteStorage(session, { nowUtcMs: () => NOW });
-        expect(result).toMatchObject({ fromVersion: 0, toVersion: 29 });
+        expect(result).toMatchObject({ fromVersion: 0, toVersion: 30 });
         for (const table of ['runs', 'execution_batches']) {
           const columns = session.database.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
           expect(columns.map(column => column.name)).toContain('pause_requested_at');
@@ -341,11 +368,11 @@ describe('P03-9 / F-001 Run/Batch Task 边界暂停', () => {
           "INSERT INTO projects (id, created_at, revision, updated_at, display_name, status, labels) VALUES ('p-keep', ?, 1, ?, '保留项目', 'active', '[]')",
         ).run(NOW, NOW);
         const upgraded = await migrateSqliteStorage(session, { nowUtcMs: () => NOW });
-        expect(upgraded).toMatchObject({ fromVersion: 26, toVersion: 29, appliedVersions: [27, 28, 29] });
+        expect(upgraded).toMatchObject({ fromVersion: 26, toVersion: 30, appliedVersions: [27, 28, 29, 30] });
         expect(session.database.prepare("SELECT display_name FROM projects WHERE id = 'p-keep'").get())
           .toEqual({ display_name: '保留项目' });
         expect(session.database.prepare('SELECT MAX(version) AS version FROM schema_migrations').get())
-          .toEqual({ version: 29 });
+          .toEqual({ version: 30 });
       } finally { session.close(); }
     } finally { upgrade.cleanup(); }
   });

@@ -251,7 +251,7 @@ describe('F-004 atomic Task claim', () => {
         .rejects.toMatchObject({ step: 'apply', version: 16 });
       expect(snapshot()).toEqual(before);
       expect(predecessor.database.prepare("SELECT name FROM sqlite_master WHERE name = 'task_claim_receipts'").all()).toEqual([]);
-      expect((await migrateSqliteStorage(predecessor)).appliedVersions).toEqual([16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29]);
+      expect((await migrateSqliteStorage(predecessor)).appliedVersions).toEqual([16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]);
       before.state_events = before.state_events!.map(row => ({ ...row as Record<string, unknown>, operation_id: null, run_id: null, attempt_id: null, execution_stage: null }));
       before.features = before.features!.map(row => ({ ...row as Record<string, unknown>, delivery_status: 'not_requested' }));
       before.runs = before.runs!.map(row => ({ ...row as Record<string, unknown>, pause_requested_at: null }));

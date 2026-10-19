@@ -720,6 +720,7 @@ describe('F-006 当前配置检查组（P01-FR2-CONFIG）', () => {
           'task_approval_items',
           // P03-8 / F-002: controlled Git operation intents and receipts (v26).
           'git_operations',
+          'execution_stop_operations',
         ].sort(),
       );
       for (const forbidden of [

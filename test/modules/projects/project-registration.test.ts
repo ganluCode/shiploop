@@ -356,8 +356,8 @@ describe('F-005 same remote, different clones register separately', () => {
 
 describe('F-005 cross-process registration race on the same real path', () => {
   const testDir = dirname(fileURLToPath(import.meta.url));
-  const CHILD_SCRIPT = join(testDir, 'helpers', 'register-race-child.ts');
-  const CHILD_REGISTER = join(testDir, 'helpers', 'node-ts-loader', 'register.mjs');
+  const CHILD_SCRIPT = join(testDir, '../../helpers', 'register-race-child.ts');
+  const CHILD_REGISTER = join(testDir, '../../helpers', 'node-ts-loader', 'register.mjs');
 
   type ChildResult =
     | {

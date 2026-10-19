@@ -521,13 +521,16 @@ describe('F-006 Host inspect/overview 路由与握手能力（真实 Host + SQLi
     expect(body.capabilities.application.queries).toContain('git.operations.list');
     expect(body.capabilities.application.queries).toContain('git.operations.get');
     expect(body.capabilities.application.queries).toContain('features.delivery.get');
-    expect(body.capabilities.application.queries).toHaveLength(42);
+    expect(body.capabilities.application.queries).toContain('features.report.get');
+    expect(body.capabilities.application.queries).toHaveLength(46);
     expect(body.capabilities.application.commands).toEqual([
       'execution.attempt.cancel',
       // P03-9 / F-001：Run/Batch Task 边界暂停经既有 /v1/commands 通用路由接线。
       'execution.pause',
       // P03-9 / F-002：Run/Batch 取消经同一命令路由接线。
       'execution.cancel',
+      'execution.resume',
+      'execution.retryFinal',
       'project.register',
       'project.metadata.update',
       'settings.global.create',

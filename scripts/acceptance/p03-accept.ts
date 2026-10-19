@@ -340,7 +340,8 @@ export async function runP03Acceptance(options: P03AcceptanceRunOptions): Promis
   };
   const problems: string[] = [];
   const sanitize = (value: string): string => value.replaceAll(options.repoRoot, '<repo>')
-    .replaceAll(tempRoot, '<temp>').replaceAll(homedir(), '<home>');
+    .replaceAll(tempRoot, '<temp>').replaceAll(homedir(), '<home>')
+    .replace(/\/(?:Users|home)\/[^/\s"'`,;:|)\\]+/g, '<home>');
   const proofs = new Map<string, P03TestProof>();
   let stopsConfirmed = true;
   let facts: P03PhaseReportInput['git'];

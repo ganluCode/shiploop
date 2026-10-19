@@ -277,6 +277,7 @@ describe('F-002 冻结常量与能力声明', () => {
           'git.operations.get',
           // P03-8 / F-010：Feature 分轴结果查询真实接线。
           'features.delivery.get',
+          'features.report.get',
           // P03-9 / F-013：Run/Batch 控制进度、恢复诊断与 finalization 收尾结果查询真实接线。
           'execution.run.control.get',
           'execution.batch.control.get',
@@ -321,6 +322,7 @@ describe('F-002 冻结常量与能力声明', () => {
       'workspace.operations.get',
       ...GIT_OPERATION_QUERY_OPERATIONS,
       ...FEATURE_DELIVERY_QUERY_OPERATIONS,
+      'features.report.get',
       ...EXECUTION_CONTROL_QUERY_OPERATIONS,
     ]);
     expect(CURRENT_HOST_CAPABILITIES.application.commands).toContain('baseline.cancel');

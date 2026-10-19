@@ -301,8 +301,8 @@ function waitForExit(
 }
 
 const testDir = dirname(fileURLToPath(import.meta.url));
-const CHILD_SCRIPT = join(testDir, 'helpers', 'interrupt-publish-child.ts');
-const CHILD_REGISTER = join(testDir, 'helpers', 'node-ts-loader', 'register.mjs');
+const CHILD_SCRIPT = join(testDir, '../../../helpers', 'interrupt-publish-child.ts');
+const CHILD_REGISTER = join(testDir, '../../../helpers', 'node-ts-loader', 'register.mjs');
 
 type InterruptCheckpoint = 'registered' | 'staged' | 'published';
 

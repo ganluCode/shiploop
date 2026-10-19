@@ -114,8 +114,8 @@ async function fixture() {
 
 describe('P03-7 F-002 migration v21 verification schema', () => {
   it('appends v21 without changing the delivered v1-v20 checksums', () => {
-    expect(SQLITE_MIGRATIONS.at(-1)?.version).toBe(28);
-    expect(SQLITE_MIGRATIONS).toHaveLength(28);
+    expect(SQLITE_MIGRATIONS.at(-1)?.version).toBe(30);
+    expect(SQLITE_MIGRATIONS).toHaveLength(30);
     // Frozen from the predecessor source, not recomputed from the new descriptors.
     const oldChecksums = SQLITE_MIGRATIONS.slice(0, 20).map((m) => m.checksum).join('\n');
     expect(createHash('sha256').update(oldChecksums).digest('hex'))
@@ -702,10 +702,10 @@ describe('P03-7 F-002 verification store on real SQLite', () => {
       }
       const before = version > 0 ? session.database.prepare('SELECT * FROM schema_migrations').all() : [];
       const result = await migrateSqliteStorage(session);
-      expect(result.toVersion).toBe(28);
+      expect(result.toVersion).toBe(30);
       expect(result.appliedVersions).toEqual(version === 0
-        ? Array.from({ length: 28 }, (_, i) => i + 1)
-        : Array.from({ length: 28 - version }, (_, i) => version + 1 + i));
+        ? Array.from({ length: 30 }, (_, i) => i + 1)
+        : Array.from({ length: 30 - version }, (_, i) => version + 1 + i));
       expect(session.database.prepare('SELECT * FROM schema_migrations WHERE version <= ?').all(version)).toEqual(before);
       if (version > 0) {
         expect(session.database.prepare('SELECT display_name FROM projects').get()).toEqual({ display_name: 'Preserved' });
@@ -716,7 +716,7 @@ describe('P03-7 F-002 verification store on real SQLite', () => {
       expect(tables).toContain('check_results');
       expect(tables).not.toContain('check_definitions');
       expect((await migrateSqliteStorage(session)).appliedVersions).toEqual([]);
-      expect(session.database.prepare('SELECT count(*) AS n FROM schema_migrations').get()).toEqual({ n: 28 });
+      expect(session.database.prepare('SELECT count(*) AS n FROM schema_migrations').get()).toEqual({ n: 30 });
       // 关闭重开后关联结构仍在。
       session.close();
       const reopened = openSqliteStorageSession({ path: join(sandbox.path, 'state.db') });
@@ -738,7 +738,7 @@ describe('P03-7 F-002 verification store on real SQLite', () => {
         .rejects.toMatchObject({ step: 'apply', version: 21 });
       expect(session.database.prepare("SELECT name FROM sqlite_master WHERE name = 'check_results'").all()).toEqual([]);
       expect(session.database.prepare('SELECT max(version) AS v FROM schema_migrations').get()).toEqual({ v: 20 });
-      expect((await migrateSqliteStorage(session, { backupPath: join(sandbox.path, 'retry.db') })).toVersion).toBe(28);
+      expect((await migrateSqliteStorage(session, { backupPath: join(sandbox.path, 'retry.db') })).toVersion).toBe(30);
     } finally { session.close(); sandbox.cleanup(); }
   });
 });

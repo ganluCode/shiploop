@@ -60,8 +60,8 @@ import type { P01AcceptanceFixture, P01EvidenceRef } from '../../helpers/p01-4-f
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const testDir = dirname(fileURLToPath(import.meta.url));
-const CHILD_SCRIPT = join(testDir, 'helpers', 'interrupt-publish-child.ts');
-const CHILD_REGISTER = join(testDir, 'helpers', 'node-ts-loader', 'register.mjs');
+const CHILD_SCRIPT = join(testDir, '../../helpers', 'interrupt-publish-child.ts');
+const CHILD_REGISTER = join(testDir, '../../helpers', 'node-ts-loader', 'register.mjs');
 
 const PUBLISH_LIMITS = { maxSizeBytes: 1_048_576, timeoutMs: 30_000 } as const;
 const VERIFY_LIMITS = { maxReadBytes: 1_048_576 } as const;

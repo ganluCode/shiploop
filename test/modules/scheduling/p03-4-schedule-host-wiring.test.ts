@@ -141,7 +141,6 @@ async function openWiredSchedule(): Promise<WiredSchedule> {
   const fixture = await openClaimFixture([[], ['t-1']]);
   activeFixture = fixture;
   const box = fixture.box;
-  const attempt = seedAttemptWithDiagnostics(fixture);
 
   // 第二个项目：跨项目目标折叠（不泄漏存在性）的对照。
   const registeredB = await box.submit('project.register', {
@@ -162,8 +161,6 @@ async function openWiredSchedule(): Promise<WiredSchedule> {
     throw new Error('夹具缺少 execution.start 回执');
   }
 
-  const tablesBefore = fixture.snapshot();
-
   const host = await startHost({
     dataRoot: box.box.dataRoot,
     capabilityCatalog: box.box.capabilityCatalog,
@@ -172,6 +169,9 @@ async function openWiredSchedule(): Promise<WiredSchedule> {
   activeHost = host;
   const token = readFileSync(join(box.box.dataRoot, 'host', 'auth.token'), 'utf8');
   const client = await connectToHost({ canonicalRoot: box.box.dataRoot });
+  // Seed a query fixture only after startup recovery; it is not a crashed old owner.
+  const attempt = seedAttemptWithDiagnostics(fixture);
+  const tablesBefore = fixture.snapshot();
   return {
     fixture,
     box,

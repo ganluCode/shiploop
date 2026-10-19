@@ -52,8 +52,8 @@ import type { P01EvidenceRef } from '../../helpers/p01-4-fixture.ts';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const testDir = dirname(fileURLToPath(import.meta.url));
-const SETTINGS_CHILD_SCRIPT = join(testDir, 'helpers', 'settings-race-child.ts');
-const CHILD_REGISTER = join(testDir, 'helpers', 'node-ts-loader', 'register.mjs');
+const SETTINGS_CHILD_SCRIPT = join(testDir, '../../helpers', 'settings-race-child.ts');
+const CHILD_REGISTER = join(testDir, '../../helpers', 'node-ts-loader', 'register.mjs');
 
 /** 合成凭据哨兵：只以引用形式出现，任何错误/审计/证据文本都不得回显。 */
 const SECRET_REF = 'keychain://shiploop/P01-4-TOP-SECRET-SENTINEL';
