@@ -1,0 +1,22 @@
+{
+  "schema_version": 2,
+  "task_id": "F-011",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/acceptance/p03-10-selection-gates.test.ts",
+          "cases": [
+            "authorized-multimodule-evidence",
+            "unsafe-candidate-fallback",
+            "no-trusted-fallback",
+            "negative-evidence-gates",
+            "gate-definition-integrity",
+            "non-node-protocol"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+{
+  "schema_version": 2,
+  "task_id": "F-012",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/workspace/p03-10-git-worktree-negatives.test.ts",
+          "cases": [
+            "worktree-baseline-reuse",
+            "worktree-reject-branch",
+            "worktree-reject-directory",
+            "worktree-reject-head",
+            "worktree-reject-occupied"
+          ]
+        },
+        {
+          "file": "test/modules/delivery/p03-10-git-faults.test.ts",
+          "cases": [
+            "source-after-check",
+            "unapproved-final-source",
+            "block-after-real-commit",
+            "recover-before-commit",
+            "recover-receipt-write"
+          ]
+        },
+        {
+          "file": "test/modules/acceptance/p03-10-task-commit-failure.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

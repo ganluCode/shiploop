@@ -54,6 +54,21 @@
       "task_id": "F-010",
       "index": "test/index/phases/P03/features/P03-10/tasks/F-010.json",
       "description": "输入装配历史增长与必需输入完整性确定性回归（T37）：小历史/增长对照、InputManifest/读取证据/摘要关联真实制品、缺失/损坏/越界/超预算启动拒绝；两个修改文件本地全量通过，采集/准备回归交独立执行。"
+    },
+    {
+      "task_id": "F-011",
+      "index": "test/index/phases/P03/features/P03-10/tasks/F-011.json",
+      "description": "可信局部测试选择、安全回退、执行证据负例与 Feature 全量测试/类型检查/构建/集成门禁真实夹具。"
+    },
+    {
+      "task_id": "F-012",
+      "index": "test/index/phases/P03/features/P03-10/tasks/F-012.json",
+      "description": "真实 Git 提交故障、operation 恢复、代码证据失效与 worktree 现场保护的阶段负例组。"
+    },
+    {
+      "task_id": "F-013",
+      "index": "test/index/phases/P03/features/P03-10/tasks/F-013.json",
+      "description": "三 Task 通过后的 Feature 全量失败、retryFinal 受限收尾重试与真实跨 Run 报告历史。"
     }
   ]
 }

@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "task_id": "F-013",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/acceptance/p03-10-f013-finalization-retry.test.ts",
+          "cases": ["case:f013-three-task-finalization-retry"]
+        }
+      ]
+    }
+  ]
+}

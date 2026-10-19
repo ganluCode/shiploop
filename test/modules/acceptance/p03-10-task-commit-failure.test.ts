@@ -1,10 +1,10 @@
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { expect, test } from 'vitest';
-import { createTempSandbox } from '../../helpers/temp-sandbox.ts';
 import { withP03AcceptanceFixture, type P03Fixture } from '../../helpers/p03-10/acceptance-fixture.ts';
 
 // Reuse the explicitly built Node 22 artifacts; this file never builds or seeds state.
@@ -25,20 +25,30 @@ function snapshot(f: P03Fixture) {
 
 async function withNegativeFixture(name: string, body: (f: P03Fixture) => Promise<void>) {
   expect(process.versions.node, 'Run with the pinned Node 22.19.0 PATH').toBe('22.19.0');
-  const temporary = createTempSandbox('shiploop-f003-negative-evidence-');
   const evidenceDir = process.env.P03_EVIDENCE_DIR
-    ? resolve(process.env.P03_EVIDENCE_DIR, `task-commit-${name}-${randomUUID()}`) : temporary.path;
+    ? resolve(process.env.P03_EVIDENCE_DIR, `task-commit-${name}-${randomUUID()}`)
+    : mkdtempSync(join(tmpdir(), `shiploop-task-commit-${name}-evidence-`));
   mkdirSync(evidenceDir, { recursive: true });
   let root = '';
-  try {
-    await withP03AcceptanceFixture({ evidenceDir, threeTaskChain: true }, async f => {
+  await withP03AcceptanceFixture({ evidenceDir, threeTaskChain: true }, async f => {
       root = f.root;
       try { await body(f); }
       finally {
         let hostDiagnostics: unknown;
         try { hostDiagnostics = await f.cli(['execution', 'schedule', f.ids.runId!, '--project', f.ids.projectId!]); }
         catch (error) { hostDiagnostics = { error: String(error) }; }
-        f.saveEvidence('negative-final-state.json', { node: process.version, name, ...snapshot(f), hostDiagnostics });
+        const managed = select<{ canonical_path: string }>(f, 'SELECT canonical_path FROM managed_workspaces')[0];
+        let gitFacts: unknown = null;
+        try {
+          if (managed && existsSync(managed.canonical_path)) {
+            const observe = (args: string[]) => execFileSync('git', args, { cwd: managed.canonical_path, encoding: 'utf8', timeout: 5000 }).trimEnd();
+            gitFacts = { head: observe(['rev-parse', 'HEAD']), tree: observe(['rev-parse', 'HEAD^{tree}']),
+              status: observe(['status', '--porcelain=v1']), source: readFileSync(join(managed.canonical_path, 'README.md'), 'utf8'),
+              retained: existsSync(join(managed.canonical_path, 'negative-retained.txt'))
+                ? readFileSync(join(managed.canonical_path, 'negative-retained.txt'), 'utf8') : null };
+          }
+        } catch (error) { gitFacts = { captureError: String(error) }; }
+        f.saveEvidence('negative-final-state.json', { node: process.version, name, ...snapshot(f), hostDiagnostics, gitFacts });
       }
     });
     expect(existsSync(root)).toBe(false);
@@ -46,8 +56,7 @@ async function withNegativeFixture(name: string, body: (f: P03Fixture) => Promis
     expect(cleanup).toMatchObject({ status: 'passed', resourcesRemoved: true,
       processTreeStopped: true, processGroupsStopped: true });
     process.stdout.write(`${JSON.stringify({ case: `P03-10 F003 ${name}`, status: 'passed', node: process.version,
-      evidenceDir: process.env.P03_EVIDENCE_DIR ? evidenceDir : '<temporary>', cleanup })}\n`);
-  } finally { temporary.cleanup(); }
+      evidenceDir, cleanup })}\n`);
 }
 
 async function prepareFirst(f: P03Fixture) {
@@ -144,4 +153,44 @@ test('验证前经 CLI 撤掉确认 Git 身份：拒绝提交，不使用本机�
     expect((await assertRetained(f, scene)).operations).toEqual([]);
   });
 }, 110_000);
+
+for (const mode of ['working', 'staged'] as const) {
+  test(`[case:f012-task-hook-${mode}] hook changes invalidate checked Task code and preserve the real commit plus worktree`, async () => {
+    await withNegativeFixture(`hook-changed-${mode}`, async f => {
+      const scene = await prepareFirst(f);
+      const hooks = join(scene.workspace.git_common_dir, 'hooks');
+      mkdirSync(hooks, { recursive: true });
+      const hook = join(hooks, 'pre-commit');
+      writeFileSync(hook, `#!/bin/sh\nprintf 'hook changed task source\\n' > README.md\n${mode === 'staged' ? 'git add -- README.md\n' : ''}`);
+      chmodSync(hook, 0o755);
+      const result = await completeFirst(f);
+      expect(result.error).toContain('task_commit_failed');
+      const after = snapshot(f);
+      expect(after.tasks.find(t => t.id === 'chain-1')?.status).toBe('running');
+      expect(after.tasks.filter(t => t.id !== 'chain-1').map(t => t.status)).toEqual(['pending', 'pending']);
+      expect(after.attempts).toMatchObject([{ task_id: 'chain-1', status: 'verifying' }]);
+      expect(after.starts.map((s: { taskId: string }) => s.taskId)).toEqual(['chain-1']);
+      expect(after.sessions).toMatchObject([{ status: 'stopped' }]);
+      expect(after.leases.map(l => l.id).sort()).toEqual(scene.initial.state.leases.map(l => l.id).sort());
+      expect(after.leases.every(l => l.state === 'held')).toBe(true);
+      const head = scene.git(['rev-parse', 'HEAD']), tree = scene.git(['rev-parse', 'HEAD^{tree}']);
+      expect(head).not.toBe(scene.initial.head);
+      expect(scene.git(['rev-parse', 'HEAD^'])).toBe(scene.initial.head);
+      expect(scene.git(['rev-list', '--count', `${scene.initial.head}..HEAD`])).toBe('1');
+      expect(after.operations).toMatchObject([{ operation_type: 'task_commit', status: 'failed',
+        actual_commit: head, actual_tree: tree }]);
+      const row = select<{ code_digest: string; candidate_tree: string; reason_code: string }>(f,
+        'SELECT code_digest, candidate_tree, reason_code FROM git_operations')[0]!;
+      expect(row.code_digest).toBe(after.verification[0]!.code_digest);
+      expect(row.reason_code).toBe(mode === 'staged' ? 'candidate_tree_mismatch' : 'source_changed');
+      if (mode === 'staged') expect(tree).not.toBe(row.candidate_tree);
+      else expect(tree).toBe(row.candidate_tree);
+      expect(readFileSync(join(scene.workspace.canonical_path, 'README.md'), 'utf8')).toBe('hook changed task source\n');
+      expect(readFileSync(scene.retained, 'utf8')).toBe(scene.initial.untracked);
+      expect(scene.git(['stash', 'list'])).toBe('');
+      expect(f.rows('features')[0]!.status).not.toBe('completed');
+      f.saveEvidence('hook-code-invalidated.json', { initial: scene.initial, after, row, actualHead: head, actualTree: tree });
+    });
+  }, 150_000);
+}
 

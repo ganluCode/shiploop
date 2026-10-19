@@ -73,12 +73,15 @@ export interface DeliveryVertical {
   diagnostics(): unknown[];
   counts(): { runtimeCalls: number; verificationCalls: number };
   afterVerify(callback: () => void): void;
+  afterCommit(callback: () => void): void;
   hook(body: string): void;
   close(): Promise<void>;
 }
 
-export async function openDeliveryVertical(options: { brokenDownstream?: boolean; noChange?: boolean } = {}): Promise<DeliveryVertical> {
-  const fixture = await openBindingFixture({ secondTask: true, secondTaskDependsOnFirst: true });
+export async function openDeliveryVertical(options: { brokenDownstream?: boolean; noChange?: boolean; taskCommits?: boolean; finalChanges?: boolean } = {}): Promise<DeliveryVertical> {
+  const fixture = await openBindingFixture({ secondTask: true, secondTaskDependsOnFirst: true,
+    ...(options.taskCommits ? { deliveryPolicy: { commitMode: 'task_and_feature' as const,
+      gitIdentity: { name: 'Confirmed User', email: 'confirmed@example.test', confirmed: true as const }, deliveryActions: ['commit'] as const } } : {}) });
   const db: Database.Database = fixture.session.database;
   const owner = createLocalOwnerPrincipal();
   const atomic = createSqliteAtomicCommandStore(fixture.session, { nowUtcMs });
@@ -156,11 +159,13 @@ export async function openDeliveryVertical(options: { brokenDownstream?: boolean
     const inspector = createWorkspaceInspector({ authorizedRoots: [fixture.box.root], confirmProcessIdentity: confirm });
     const operations = createSqliteGitOperationStore(fixture.session, { nowUtcMs });
     const stopped = createWorkResourceStopVerifier({ process: processes, finalize: async () => true });
+    if (options.finalChanges) writeFileSync(join(root, 'src/final.ts'), 'export const final = true;\n');
     const initialInspection = await inspector.inspect(baseline);
     let verifiedInspection: WorkspaceInspection | null = null;
     let latestBatch: string | null = null;
     let verificationCalls = 0;
     let afterVerify: (() => void) | undefined;
+    let afterCommit: (() => void) | undefined;
     const featureRevision = () => (db.prepare('SELECT revision FROM features WHERE id = ?').get(featureId) as { revision: number }).revision;
     const codeDigest = verificationCodeIdentity(initialInspection).codeDigest;
     let gitTransaction: CommandTransaction | undefined;
@@ -178,12 +183,20 @@ export async function openDeliveryVertical(options: { brokenDownstream?: boolean
       hostInstanceId: resourceIdentity.hostInstanceId, expectedFeatureRevision: featureRevision(),
     });
     const readAuthorization = (): GitCommitAuthorization => ({
-      intent: intent(), baseline, resourceIdentity, allowedPaths: options.noChange ? [] : ['README.md', 'src/upstream.ts'],
+      intent: intent(), baseline, resourceIdentity, allowedPaths: options.noChange ? [] : ['README.md', 'src/upstream.ts', ...(options.finalChanges ? ['src/final.ts'] : [])],
       verificationPassed: latestBatch !== null && core.verificationStore.getVerificationBatch(projectId, latestBatch).status === 'passed',
       approvalCurrent: gate().valid, finalApprovalCurrent: gate().valid, commitAuthorized: true,
     });
+    const realGitDriver = createGitCommitDriver({ confirmProcessIdentity: confirm });
     const gitDeps = { operations, inspector, resources: core.workResources, stopVerifier: stopped,
-      lock: createGitPublicMetadataLock(), driver: createGitCommitDriver({ confirmProcessIdentity: confirm }), readAuthorization,
+      lock: createGitPublicMetadataLock(), driver: { open: (...args: Parameters<typeof realGitDriver.open>) => {
+        const session = realGitDriver.open(...args);
+        return { ...session, async commit(...commitArgs: Parameters<typeof session.commit>) {
+          const result = await session.commit(...commitArgs);
+          afterCommit?.();
+          return result;
+        } };
+      } }, readAuthorization,
       transact: <T>(callback: () => T) => atomic.transact('F012.git', transaction => {
         gitTransaction = transaction;
         try { return callback(); } finally { gitTransaction = undefined; }
@@ -253,6 +266,7 @@ export async function openDeliveryVertical(options: { brokenDownstream?: boolean
       diagnostics: () => db.prepare("SELECT b.status AS batch_status, r.* FROM verification_batches b LEFT JOIN check_results r ON r.batch_id = b.id WHERE b.operation = 'FeatureVerification.full'").all(),
       counts: () => ({ runtimeCalls, verificationCalls }),
       afterVerify(callback: () => void) { afterVerify = callback; },
+      afterCommit(callback: () => void) { afterCommit = callback; },
       hook(body: string) {
         const hooks = join(baseline.gitCommonDir, 'hooks'); mkdirSync(hooks, { recursive: true });
         const path = join(hooks, 'pre-commit'); writeFileSync(path, `#!/bin/sh\n${body}\n`); chmodSync(path, 0o755);

@@ -20,6 +20,7 @@ import { createSqliteTaskClaimStore } from '../../../packages/core/src/adapters/
 import { createSqliteTaskDagStore } from '../../../packages/core/src/adapters/sqlite/task-dag-store.ts';
 import { createSqliteTaskEvidenceQueryStore } from '../../../packages/core/src/adapters/sqlite/task-evidence-query-store.ts';
 import { createSqliteWorkResourceAccess } from '../../../packages/core/src/adapters/sqlite/work-resources.ts';
+import { createSqliteWorkSessionStore } from '../../../packages/core/src/adapters/sqlite/work-session-store.ts';
 import { createArtifactPublisher } from '../../../packages/core/src/application/artifact-publish.ts';
 import { createArtifactVerifier } from '../../../packages/core/src/application/artifact-verify.ts';
 import { createCommandService } from '../../../packages/core/src/application/command-service.ts';
@@ -36,6 +37,7 @@ import type {
   FinalizationRetryCommandPayload,
   FinalizationRetryExecutionPort,
 } from '../../../packages/core/src/ports/finalization-retry.ts';
+import { computeGitOperationIntentDigest } from '../../../packages/core/src/ports/git-operations.ts';
 import type { CheckDefinition } from '../../../packages/core/src/ports/task-verification-policy.ts';
 import type { TaskClaimInput, TaskClaimStore } from '../../../packages/core/src/ports/task-claim.ts';
 import type { TaskDagResult } from '../../../packages/core/src/ports/task-dag.ts';
@@ -232,7 +234,18 @@ async function claimAndPass(
   codeDigest: string,
 ): Promise<AttemptRecord> {
   const taskId = `t-${index + 1}`;
-  const attempt = f.store().claimTask({ ...f.input(index), claimKey: randomUUID() }).receipt.attempt;
+  let attempt: AttemptRecord;
+  try {
+    attempt = f.store().claimTask({ ...f.input(index), claimKey: randomUUID() }).receipt.attempt;
+  } catch (error) {
+    const state = f.box.session.database.prepare(
+      'SELECT id, status, revision, manual_block FROM tasks ORDER BY id',
+    ).all();
+    const run = f.box.session.database.prepare('SELECT status, reason FROM runs WHERE id = ?').get(f.ids.runId);
+    const batch = f.box.session.database.prepare('SELECT * FROM execution_batches WHERE id = ?').get(f.ids.batchId);
+    const ready = f.evaluate();
+    throw new Error(`fixture claim failed for ${taskId}: ${JSON.stringify({ error: String(error), state, run, batch, ready })}`);
+  }
   const identity = {
     projectId: attempt.projectId,
     attemptId: attempt.id,
@@ -256,14 +269,40 @@ async function claimAndPass(
       startTime: `f010-start-${index}`,
     });
   });
+  const sessionId = `session-${attempt.id}`;
+  const sessionStore = createSqliteWorkSessionStore(f.box.session, { nowUtcMs: () => NOW });
+  sessionStore.createWorkSession({
+    ...identity,
+    sessionId,
+    purpose: 'work',
+    runtime: 'fake-runtime',
+    adapterVersion: 'fixture-1',
+  });
+  sessionStore.applyWorkSessionProgress({
+    ...identity,
+    sessionId,
+    expectedRevision: 1,
+    kind: 'started',
+    executionStage: 'runtime',
+  });
   f.lifecycle.apply({ ...notification, notificationId: 'started', kind: 'executing' });
   const token = await stopVerifier.verify(f.resources.read(identity));
+  const invocationId = f.resources.read(identity).invocationId;
+  if (invocationId === null) throw new Error(`fixture launch has no invocation for ${taskId}`);
   const completed = f.lifecycle.apply({
     ...notification,
     notificationId: 'complete',
-    kind: 'runtime_completed',
-    exitCode: 0,
+    kind: 'runtime_settled',
     evidenceRef: attempt.inputRef,
+    runtime: {
+      sessionId,
+      invocationId,
+      result: { schemaVersion: 1, terminal: 'completed', reason: null, exitCode: 0,
+        signal: null, durationMs: 1, usage: null, lastEventSequence: null },
+      failure: null,
+      recording: { complete: true, manifestRef: attempt.inputRef },
+      stopped: { schemaVersion: 1, confirmed: true, checkedAtUtc: '2026-01-01T00:00:00.000Z', detail: 'fixture-stop-confirmed' },
+    },
   }, token);
   if (completed.status !== 'verifying') {
     throw new Error(`fixture verification advance failed: ${JSON.stringify(completed)}`);
@@ -285,6 +324,7 @@ async function claimAndPass(
     codeDigest,
     status: 'passed',
   });
+  f.box.session.database.prepare('UPDATE attempts SET diagnostic_ref = ? WHERE id = ?').run(output.id, attempt.id);
   const batchId = `${attempt.id}-${checkKey}-batch`;
   seedVerificationBatch(f, {
     attempt,
@@ -297,6 +337,53 @@ async function claimAndPass(
     outputArtifactId: output.id,
     outputDigest: output.contentHash!,
   });
+  const binding = createSqliteStateAccess(f.box.session).getRepositoryBinding(f.box.projectId);
+  const head = f.box.box.gitHead('A');
+  const tree = git(['rev-parse', 'HEAD^{tree}'], f.box.box.repoDirA, { home: f.box.box.homeDir }).trim();
+  const taskCommitId = randomUUID();
+  const intentDigest = computeGitOperationIntentDigest({
+    operationId: taskCommitId,
+    projectId: f.box.projectId,
+    featureId: attempt.featureId,
+    runId: attempt.runId,
+    attemptId: attempt.id,
+    executionVersion: attempt.executionVersion,
+    operationType: 'task_commit',
+    repositoryBindingId: binding.id,
+    repoIdentity: binding.repoIdentity,
+    worktreePath: binding.canonicalPath,
+    expectedHead: head,
+    candidateTree: tree,
+    codeDigest,
+    verificationRefs: [{ kind: 'verification_batch', id: batchId, digest: codeDigest }],
+    approvalRefs: [],
+    message: `fixture task commit ${taskId}`,
+    gitIdentity: { name: 'fixture', email: 'fixture@example.test', confirmed: true },
+    deliveryPolicyDigest: 'ab'.repeat(32),
+    runtimeSource: null,
+    ownerId: attempt.owner,
+    hostInstanceId: attempt.hostInstanceId,
+  });
+  const now = NOW + 2;
+  f.box.session.database.prepare(
+    `INSERT INTO git_operations
+      (id, created_at, updated_at, project_id, feature_id, run_id, attempt_id, execution_version,
+       operation_type, repository_binding_id, repo_identity, worktree_path, expected_head, candidate_tree,
+       code_digest, verification_refs, approval_refs, message, identity_name, identity_email,
+       delivery_policy_digest, runtime_source, owner_id, host_instance_id, intent_digest, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'task_commit', ?, ?, ?, ?, ?, ?, ?, '[]', ?, ?, ?, ?, NULL, ?, ?, ?, 'pending')`,
+  ).run(taskCommitId, now, now, f.box.projectId, attempt.featureId, attempt.runId, attempt.id,
+    attempt.executionVersion, binding.id, binding.repoIdentity, binding.canonicalPath, head, tree, codeDigest,
+    JSON.stringify([{ kind: 'verification_batch', id: batchId, digest: codeDigest }]),
+    `fixture task commit ${taskId}`, 'fixture', 'fixture@example.test', 'ab'.repeat(32), attempt.owner,
+    attempt.hostInstanceId, intentDigest);
+  f.box.session.database.prepare(
+    `UPDATE git_operations SET status = 'no_change', actual_commit = ?, actual_tree = ?, exit_code = 0,
+       duration_ms = 1, receipt = ?, delivery_status = 'not_requested', settled_at = ?, updated_at = ?
+     WHERE id = ?`,
+  ).run(head, tree, JSON.stringify({ schemaVersion: 1, operationId: taskCommitId, status: 'no_change',
+    intentDigest, expectedHead: head, candidateTree: tree, actualCommit: head, actualTree: tree,
+    exitCode: 0, durationMs: 1, reasonCode: null, deliveryStatus: 'not_requested', recordedAtUtcMs: now }), now, now, taskCommitId);
   const verification = f.lifecycle.submitVerification({
     projectId: attempt.projectId,
     attemptId: attempt.id,
@@ -311,7 +398,10 @@ async function claimAndPass(
     outcome: 'passed',
   }, token);
   if (verification.status !== 'succeeded') {
-    throw new Error(`fixture task pass failed: ${JSON.stringify(verification)}`);
+    const diagnostics = f.box.session.database.prepare(
+      'SELECT status, execution_stage, session_id, started_at, ended_at FROM attempts WHERE id = ?',
+    ).get(attempt.id);
+    throw new Error(`fixture task pass failed for ${taskId}: ${JSON.stringify({ verification, diagnostics })}`);
   }
   return attempt;
 }
@@ -434,7 +524,7 @@ export async function prepareEligibleFixture(
   const attempts: AttemptRecord[] = [];
   for (let index = 0; index < taskCount; index += 1) {
     const checkKey = taskCount === 2 ? (index === 0 ? 'tests' : 'lint') : 'tests';
-    const definition = definitions[index]!;
+    const definition = definitions[index] ?? definitions[0]!;
     attempts.push(await claimAndPass(f, publisher, index, checkKey, definition.argv, inspection.codeDigest));
   }
   const workspaceId = insertManagedWorkspace(f, attempts[0]!);
