@@ -66,6 +66,10 @@ import { createContextBuilder } from '../application/context-build.js';
 import type { ContextBudget } from '../application/context-build.js';
 import { createArtifactPublisher } from '../application/artifact-publish.js';
 import { createArtifactVerifier } from '../application/artifact-verify.js';
+import { createWorkToolChannel } from '../application/work-tool-channel.js';
+import type { WorkToolChannelDeps } from '../application/work-tool-channel.js';
+import { createVerificationCandidateValidator } from '../application/verification-candidates.js';
+import { createTestTargetResolver } from './fs/verification-target-resolver.js';
 import { createWorkWorkspaceAuthority } from './fs/work-workspace.js';
 import { createWorkspaceInspector } from './fs/workspace-inspector.js';
 import { createFeatureWorktreePreparer } from './fs/feature-worktree-preparer.js';
@@ -226,6 +230,8 @@ export interface CoreApplicationOptions {
  * 生命周期由 close() 管理，重复调用安全。
  */
 export interface CoreApplication {
+  /** Trusted live authority only; same SQLite session for authorization, fences and receipts. */
+  createWorkToolChannel(authority: Pick<WorkToolChannelDeps, 'currentBinding' | 'candidateContext'>): ReturnType<typeof createWorkToolChannel>;
   readonly workExecution: WorkExecution;
   /** 已 realpath 固定的授权数据根。 */
   readonly dataRoot: string;
@@ -1093,6 +1099,13 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     });
 
     const application: CoreApplication = {
+      createWorkToolChannel(authority) {
+        const attempts = createSqliteAttemptAccess(session);
+        const verifier = createArtifactVerifier({ artifacts: artifactStore, files: artifactFileStore,
+          limits: { maxReadBytes: 16_000_000 } });
+        return createWorkToolChannel({ ...authority, atomicStore, attempts, dag: createSqliteTaskDagStore(session), verifier,
+          candidates: createVerificationCandidateValidator({ attempts, verifier, resolver: createTestTargetResolver() }) });
+      },
       workExecution,
       dataRoot: basePathService.dataRoot(),
       pathService,

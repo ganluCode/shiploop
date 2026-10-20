@@ -141,3 +141,5 @@ export type {
   BatchControlDetailResult,
   RunRecoveryDetailResult,
 } from './app-wire.js';
+
+export { createWorkToolClient } from './work-tool-client.js';

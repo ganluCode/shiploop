@@ -29,6 +29,7 @@ export const HOST_LIFECYCLE_OPERATIONS = [
  * 的客户端侧错误也使用这些身份；P02-3 / F-006 新增静态接入两项）。
  */
 export const APP_OPERATIONS = [
+  'work.tools.invoke',
   'commands.submit',
   'receipts.get',
   'results.resolve',

@@ -10,7 +10,7 @@ import type { TaskClaimStore, TaskClaimInput } from '../../../packages/core/src/
 import type { TaskDagResult } from '../../../packages/core/src/ports/task-dag.ts';
 import type { WorkWorkspaceAuthority, VerifiedWorkWorkspace } from '../../../packages/core/src/ports/work-resources.ts';
 
-interface ClaimFixture {
+export interface ClaimFixture {
   box: BudgetFixture;
   ids: { projectId: string; batchId: string; runId: string; taskId: string };
   authority: WorkWorkspaceAuthority;

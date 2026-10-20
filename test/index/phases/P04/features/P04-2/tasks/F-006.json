@@ -1,0 +1,21 @@
+{
+  "schema_version": 2,
+  "task_id": "F-006",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        { "file": "test/modules/host/p04-2-work-tools.test.ts", "all": true },
+        { "file": "test/modules/authorization/p04-2-work-tool-channel.test.ts", "all": true },
+        { "file": "test/modules/host/host-app-routes.test.ts", "all": true },
+        { "file": "test/modules/host/host-client-application.test.ts", "all": true },
+        { "file": "test/modules/host/host-startup.test.ts", "all": true },
+        { "file": "test/modules/host/host-stop-lifecycle.test.ts", "all": true },
+        { "file": "test/modules/host/host-http-transport.test.ts", "all": true },
+        { "file": "test/modules/host/host-lifecycle-contract.test.ts", "all": true },
+        { "file": "test/modules/commands/command-receipts-store.test.ts", "all": true },
+        { "file": "test/modules/commands/p02-2-integration-regression.test.ts", "all": true }
+      ]
+    }
+  ]
+}

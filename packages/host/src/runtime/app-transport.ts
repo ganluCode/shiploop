@@ -35,6 +35,9 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import {
   isPublicError,
+  PublicError as CorePublicError,
+  WorkAccessError,
+  isStorageError,
   publicErrorHttpStatus,
   validateCommandEnvelope,
 } from 'shiploop-core';
@@ -106,9 +109,11 @@ import {
   sendTextContent,
 } from './http-primitives.js';
 import type { EventStreamHub } from './sse-transport.js';
+import type { HostWorkToolAuthentication } from './work-tool-access.js';
 
 /** 应用操作身份字面量（与 §3.2 路由总表一一对应；错误体 operation）。 */
 export type ApplicationOperation =
+  | 'work.tools.invoke'
   | 'execution.sessions.list'
   | 'execution.session.get'
   | 'execution.session.evidence.get'
@@ -187,6 +192,8 @@ export interface ResolvedAppRoute {
  * 本层不从请求数据取身份，不直接访问 SQLite。
  */
 export interface HostApplicationContext {
+  /** Instance-local restricted credentials; never authenticate against the owner token. */
+  readonly workTools?: HostWorkToolAuthentication;
   readonly principal: TrustedPrincipal;
   readonly commandService: CommandService;
   readonly queryService: QueryService;
@@ -220,6 +227,8 @@ export interface HostApplicationContext {
  */
 export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
   switch (path) {
+    case '/v1/work/tools':
+      return { operation: 'work.tools.invoke', method: 'POST' };
     case COMMANDS_ROUTE:
       return { operation: 'commands.submit', method: 'POST' };
     case PROJECTS_ROUTE:
@@ -1346,6 +1355,31 @@ export async function handleApplicationRequest(input: ApplicationRequestInput): 
       }
     }
 
+    if (operation === 'work.tools.invoke') {
+      const bridge = input.app.workTools?.authenticate(request);
+      if (bridge === undefined || bridge === null) rejectUnauthorized(operation);
+      if (input.rawQuery !== '') reject(400, 'invalid_input', operation, '受限入口不接受查询参数');
+      if (input.app.getLifecycleState() !== 'ready') reject(503, 'not_ready', operation, 'Host 未就绪');
+      try {
+        const result = await bridge.invoke(parsedBody);
+        const status = 'status' in result && result.status === 'rejected' ? publicErrorHttpStatus(result.error.code) : 200;
+        sendBoundedJson(response, status, result, MAX_APP_BODY_BYTES, operation);
+      } catch (error) {
+        // Core validation errors can contain field names supplied by the caller. The restricted
+        // boundary returns controlled categories only, including authority/artifact failures.
+        if (error instanceof WorkAccessError) {
+          throw new CorePublicError('forbidden', operation, undefined, { details: { reason: error.reason } });
+        }
+        if (isStorageError(error)) {
+          throw new CorePublicError(error.kind === 'validation' ? 'invalid_input'
+            : error.kind === 'not_found' || error.kind === 'ownership' ? 'forbidden'
+            : error.kind === 'conflict' ? 'conflict' : 'internal', operation);
+        }
+        if (isPublicError(error)) throw new CorePublicError(error.code, operation);
+        throw error;
+      }
+      return;
+    }
     if (operation === 'commands.submit') {
       await handleCommandSubmit(input, parsedBody);
       return;

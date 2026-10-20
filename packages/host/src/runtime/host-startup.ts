@@ -34,7 +34,7 @@ import { randomUUID } from 'node:crypto';
 import type { Server } from 'node:http';
 import { homedir } from 'node:os';
 import { createLocalOwnerPrincipal, deriveDefaultDataRoot } from 'shiploop-core';
-import type { RuntimeCapabilityCatalog } from 'shiploop-core';
+import type { RuntimeCapabilityCatalog, WorkToolChannelDeps } from 'shiploop-core';
 import { openCoreApplication } from 'shiploop-core/assembly';
 import type { CoreApplication, WorkRuntimeFactory, FeatureDeliveryFactory } from 'shiploop-core/assembly';
 import type { FinalizationCompletionPort, FinalizationExecutionPort } from 'shiploop-core';
@@ -51,6 +51,8 @@ import { createHostLifecycleServer } from './http-transport.js';
 import { createHostStopController } from './host-stop.js';
 import type { HostActivityGate, SignalShutdownOutcome } from './host-stop.js';
 import { createEventStreamHub } from './sse-transport.js';
+import { createHostWorkToolAccess } from './work-tool-access.js';
+import type { HostWorkToolAccess } from './work-tool-access.js';
 
 /** 启动阶段错误的操作身份（与锁/存储模块一致：本地启动/发现关注点）。 */
 const OPERATION = 'host.discovery';
@@ -85,6 +87,7 @@ export const BIND_OVERRIDE_ENV_KEYS = [
 ] as const;
 
 const ALLOWED_OPTION_KEYS = [
+  'workToolAuthority',
   'workRuntimeFactory',
   'featureDeliveryFactory',
   'finalizationExecution',
@@ -103,6 +106,8 @@ const ALLOWED_OPTION_KEYS = [
 ] as const;
 
 export interface HostStartOptions {
+  /** Trusted live Work/policy lookup; never populated from CLI, HTTP, env or native session data. */
+  readonly workToolAuthority?: Pick<WorkToolChannelDeps, 'currentBinding' | 'candidateContext'>;
   /** Trusted code injection only; not accepted from CLI, environment or discovery. */
   readonly workRuntimeFactory?: WorkRuntimeFactory;
   /** Static trusted adapters only; never read from argv, env or request fields. */
@@ -139,6 +144,8 @@ export interface HostStartOptions {
 }
 
 export interface RunningHost {
+  /** Trusted controller only. Pass just an issued restricted token through a controlled tool channel. */
+  readonly workTools: HostWorkToolAccess;
   readonly hostInstanceId: string;
   readonly canonicalRoot: string;
   readonly dataRootIdentity: string;
@@ -194,6 +201,10 @@ function validateStartOptions(options: HostStartOptions): void {
     if (!(ALLOWED_OPTION_KEYS as readonly string[]).includes(key)) {
       throw invalidInput('unknown_option_key', { field: key });
     }
+  }
+  if (options.workToolAuthority !== undefined && (options.workToolAuthority === null
+    || typeof options.workToolAuthority.currentBinding !== 'function' || typeof options.workToolAuthority.candidateContext !== 'function')) {
+    throw invalidInput('trusted_authority_required', { field: 'workToolAuthority' });
   }
   const catalog = options.capabilityCatalog as RuntimeCapabilityCatalog | undefined;
   if (
@@ -348,6 +359,15 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
   let server: Server | undefined;
   let lifecycle: LifecycleState = 'starting';
   let stopTeardownCompleted = false;
+  const authority = options.workToolAuthority;
+  const hostInstanceId = randomUUID();
+  const workTools = createHostWorkToolAccess(authority === undefined ? undefined : locked.writer.createWorkToolChannel({
+    currentBinding(context) {
+      const current = authority.currentBinding(context);
+      return current?.hostInstanceId === hostInstanceId ? current : null;
+    },
+    candidateContext: context => authority.candidateContext(context),
+  }));
   try {
     // Writer lock is already held. No listener/discovery or new execution is exposed
     // until durable old identities have been reconciled. Unconfirmed resources remain occupied.
@@ -376,7 +396,6 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
       },
     };
     const store = createHostFileStore({ canonicalRoot });
-    const hostInstanceId = randomUUID();
     const startedAt = new Date().toISOString();
     // 凭据先于监听与发现发布：传输面从第一个请求起即可做 timingSafeEqual
     // 比较；仅存 0600 凭据不构成可连接面（§5.2），失败由下次启动原子替换。
@@ -388,6 +407,7 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
       getLifecycleState: () => lifecycle,
       setLifecycleState: (next) => {
         lifecycle = next;
+        workTools.close();
       },
       prepareTeardown: () => {
         // §10.5 第 3–5 步：stopping → 关 listener（在途 stop 响应仍可送达，
@@ -396,6 +416,7 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
         // F-012：在途 SSE 流先由 Hub 在预算内结束（新订阅已 503）；定时器与
         // 登记随连接清理，不回滚/取消任何已提交命令。
         lifecycle = 'stopping';
+        workTools.close();
         const activeServer = server;
         return Promise.resolve()
           .then(() => eventStreams.closeAll())
@@ -446,9 +467,10 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
       getActivities: () => stopController.getActivities(),
       stop: stopController,
       // P02-2 / F-011（§3.2/§11.1）：应用命令/查询/回执/快照路由接线。生产
-      // 装配固定绑定 local-owner 主体（Bearer 认证通过即本机用户）；Host 不
-      // 直接写库，全部授权在 Core 应用层；受限主体仅出现在测试装配。
+      // 通用应用面固定 local-owner；Work 面使用独立凭据与可信绑定主体。
+      // Host 不直接写库，全部业务授权由 Core 再核验。
       application: {
+        workTools,
         principal: createLocalOwnerPrincipal(),
         commandService: locked.writer.commandService,
         queryService: locked.writer.queryService,
@@ -498,6 +520,7 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
     let closed = false;
     let inFlight: Promise<void> | undefined;
     const host: RunningHost = {
+      workTools,
       hostInstanceId,
       canonicalRoot,
       dataRootIdentity,
@@ -521,6 +544,7 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
             // Assembly-level close is not an escape hatch around an unconfirmed stop.
             activityGate.enterQuiesce();
             lifecycle = 'quiescing';
+            workTools.close();
             const result = await activityGate.awaitQuiesce(options.quiesceBudgetMs ?? QUIESCE_BUDGET_MS);
             if (!result.confirmed) throw new HostProtocolError('resource_busy', 'host.stop', '基线停止尚未确认', {
               details: { reasonCode: 'quiesce_not_confirmed' },
@@ -538,6 +562,7 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
     };
     return host;
   } catch (error) {
+    workTools.close();
     // 失败拆卸：监听（若已建立）→ Core → 释锁；不发布 ready。
     if (server !== undefined) {
       await closeServer(server).catch(() => {

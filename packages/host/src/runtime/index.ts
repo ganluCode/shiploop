@@ -90,3 +90,6 @@ export type {
   PiTrustedAssembly,
   PiTrustedInputReader,
 } from './pi-adapter.js';
+
+export { createHostWorkToolAccess } from './work-tool-access.js';
+export type { HostWorkToolAccess, HostWorkToolAuthentication } from './work-tool-access.js';
