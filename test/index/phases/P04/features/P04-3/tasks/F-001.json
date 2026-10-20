@@ -1,0 +1,27 @@
+{
+  "schema_version": 2,
+  "task_id": "F-001",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/runtime/p04-3-runtime-failure-classification.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p03-6-runtime-execution-contract.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p03-10-runtime-negatives.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p03-10-runtime-output-negatives.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}
