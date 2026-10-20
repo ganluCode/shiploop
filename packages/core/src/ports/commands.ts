@@ -1708,7 +1708,11 @@ export type ReceiptOperation = AppOperation | keyof typeof WORK_TOOL_OPERATION_S
 export const RECEIPT_OPERATION_SPECS = Object.freeze({ ...COMMAND_OPERATION_SPECS, ...WORK_TOOL_OPERATION_SPECS });
 
 /** Shared structural/timing envelope rules; payload rules stay with each channel. */
-export function validateCommandEnvelopeFields(input: unknown, specs: Readonly<Record<string, CommandOperationSpec>>) {
+export function validateCommandEnvelopeFields(
+  input: unknown,
+  specs: Readonly<Record<string, CommandOperationSpec>>,
+  supportedOperations: readonly string[] = Object.keys(specs),
+) {
   // 结构/版本/操作名在定位到具体命令前，使用路由级操作身份。
   const submit = COMMANDS_SUBMIT_OPERATION;
   const object = requireObject(submit, input, 'envelope');
@@ -1753,7 +1757,7 @@ export function validateCommandEnvelopeFields(input: unknown, specs: Readonly<Re
   const spec = Object.hasOwn(specs, operationName) ? specs[operationName] : undefined;
   if (spec === undefined) {
     fail(submit, 'unsupported', 'operation', '未知操作（Work/Chat 等能力本版本不提供）', operationName, {
-      supportedOperations: Object.keys(specs),
+      supportedOperations: [...supportedOperations],
     });
   }
   const operation = operationName;
@@ -1794,7 +1798,8 @@ export function validateCommandEnvelopeFields(input: unknown, specs: Readonly<Re
 
 /** Validate a Host command against its existing operation and payload whitelist; no I/O or clock reads. */
 export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelope {
-  const header = validateCommandEnvelopeFields(input, COMMAND_OPERATION_SPECS);
+  // Preserve the published Host command order, which differs from the spec object's key order.
+  const header = validateCommandEnvelopeFields(input, COMMAND_OPERATION_SPECS, COMMAND_OPERATIONS);
   const { operation: operationName, scope, expectedRevision, ...base } = header;
   const operation = operationName as AppOperation;
   const object = { payload: header.payload };

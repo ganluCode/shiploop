@@ -1,5 +1,12 @@
 # P04-2 工作进度
 
+## F-005 — attempt 2 验收返工（2026-10-20）
+
+- 从 recovery 核对 HEAD 71e885b 和干净工作树后续做；独立验收 6d1f74dc13a54301a023e8a59e701c91 记录 382/383，通过状态为 false，human_blocked=false。唯一失败是 commands-contract 对未知操作 supportedOperations 顺序的兼容性断言，不能把上次 completed 报告当作验收通过。
+- 修复共享信封校验：允许可信调用方指定错误响应的操作顺序，Host 显式传入既有 COMMAND_OPERATIONS；Work 默认仍列本通道 spec。实际白名单判断仍使用原 spec，不增加 Host/Work 操作，不修改或放宽原失败断言。
+- 本轮仅复测已知失败文件 commands-contract（110 项）与 task-local work-tool-channel（13 项）：123/123，exit=0，日志 verifications/F-005/runtime-logs/test-1de2bcqy.log。Core 定向类型检查 exit=0，日志 test-dkd7m0jr.log；完整输出、真实退出码和本次 invocation 均由 wrapper 保存。此前全仓 F-007 TS18046 记录保留，本轮未重复全仓检查。
+- 审阅并保留 F-005 v2 索引及 selection 的 8 个有效文件；其余 6 个回归本轮未本地重跑，由 Nezha 独立复验。未运行全仓或阶段验收，未改官方任务元数据或解除人工阻塞。本次结果须由继承 invocation 重新单次提交。
+
 ## F-005 — Work 受限业务工具通道（2026-10-20）
 
 - 新增 Core createWorkToolChannel：可信 Host/Core 绑定 F-001 授权，仅开放 task.read/candidate.submit/evidence.submit；每次调用、重放和异步校验后核对当前可信主体、project.read/项目可见性、Run/Task/Attempt、Host/invocation/执行 fence、lease、有效期和撤销。请求身份仅作范围断言，伪造主体/管理操作/SQL/文件字段拒绝。
