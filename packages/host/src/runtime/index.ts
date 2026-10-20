@@ -97,9 +97,12 @@ export type {
   PiRuntimeRegistration,
   PiSession,
   PiSessionFactory,
+  PiSessionFactoryOptions,
   PiTrustedAssembly,
   PiTrustedInputReader,
 } from './pi-adapter.js';
+
+export type { PiPreparedRecovery } from './pi-native-session.js';
 
 export { createHostWorkToolAccess } from './work-tool-access.js';
 export type { HostWorkToolAccess, HostWorkToolAuthentication } from './work-tool-access.js';

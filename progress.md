@@ -1,3 +1,13 @@
+# P04-4 工作进度
+
+## F-002 — 标准 Pi 原生 Session 新建与安全加载（2026-10-21）
+
+- 从恢复基线 `3eb47c8` 及当前 `feat/p04/p04-session-recovery` 分支增量续做。核实锁定标准 SDK 1.0.4 的 `SessionManager.forkFrom` 和 JSONL v3，修正旧格式常量。新 Session 通过原子目录认领隔离；恢复只从不可变 Artifact 字节生成只读快照，再 fork 独立原生身份/文件，不重置已有代码。
+- 加载前拒绝跨项目/用途/Task、非直接上一 Attempt/Session、已完成 Task、SDK/格式不兼容、损坏 Artifact/JSONL、停止未确认、过期 owner/fence 或非独占 writer。异步读取与 SDK 启动前后重核资格；当前获准 provider/model 和推理配置显式覆盖来源。返回实际身份/格式/版本和恢复事实；只提供 adapter 权限释放，不直接写 Core SQLite、预算、资源锁或 Task 验收。
+- 生产默认恢复能力保持 unsupported，checkpoint 和复杂/未核实原生条目明确拒绝。可信装配可注入环境证据；离线 SDK fork 和受控装配不冒称真实模型续聊或跨供应商恢复已验证。后续 Core 来源选择、持久化与纵向接线见 [F-002 交接](docs/p04-4-f002-managed-pi-session.md)。
+- 本地 TDD：初始 RED `test-dqjk1j6y.log`；三文件 `test-l69q_y31.log` 53 passed。增加停止不确定用例后发现测试结果字段误写为 status，改为契约 terminal，仅重跑受影响 managed-session 文件：`test-ye8o65y0.log` 37 passed/0 failed/0 skipped；加上已通过的相邻两文件 17 项，共覆盖 54 项。类型检查 `test-uylhgsiq.log` exit 0；边界检查 `test-jpbdacb8.log` exit 0（313 源码/0 diagnostics）。全部完整日志、真实退出码及中间诊断保存在本 Feature workspace `verifications/F-002/runtime-logs/`。
+- 仓库 F-002 v2 索引与 Harness 引用 selection 登记 10 个文件；七个较广关联回归仅选择，交 Nezha 独立执行。本轮未跑全量/组合门禁/阶段验收/live 模型；正式 feature.yaml/task_list 只读。提交与任务报告结果以 Git/Nezha 为准。
+
 # P04-3 工作进度
 
 ## F-007 — 故障路由组合接线与确定性矩阵（2026-10-21）

@@ -164,7 +164,7 @@ describe('P04-1 standard Pi SDK contract', () => {
     });
   });
 
-  it('[case:pi-startup-preflight] refuses unknown provider/model, permission and recovery before SDK creation', () => {
+  it('[case:pi-startup-preflight] refuses unknown provider/model and permission before SDK creation, and permits explicit auto without a source', () => {
     const piDescriptor = descriptor();
     expect(() => assertPiStartupCompatible(request({ strategy: { runtime: 'pi', provider: 'ghost', model: 'm' } }), piDescriptor))
       .toThrowError(expect.objectContaining({ kind: 'configuration', reason: 'unknown_provider' }));
@@ -172,8 +172,8 @@ describe('P04-1 standard Pi SDK contract', () => {
       .toThrowError(expect.objectContaining({ kind: 'configuration', reason: 'unsupported_model' }));
     expect(() => assertPiStartupCompatible(request({ permissions: { grants: [], isolation: 'trusted_project' } }), piDescriptor))
       .toThrowError(expect.objectContaining({ kind: 'permission', reason: 'required_permission_not_granted' }));
-    expect(() => assertPiStartupCompatible(request({ recovery: { mode: 'auto', kind: 'conversation' } as RuntimeExecutionRequest['recovery'] }), piDescriptor))
-      .toThrowError(expect.objectContaining({ kind: 'configuration', reason: 'execution_recovery_unsupported' }));
+    expect(() => assertPiStartupCompatible(request({ recovery: { mode: 'auto', kind: 'conversation' } }), piDescriptor))
+      .not.toThrow();
   });
 
   it('[case:pi-runtime-event-usage] converts verified SDK events and reported usage to the Core handle', async () => {

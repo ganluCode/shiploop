@@ -780,6 +780,20 @@ export interface RuntimeNativeSessionReference {
   readonly runtimeId: string;
   readonly providerSessionId: string | null;
   readonly sessionFile: string | null;
+  readonly nativeFormat?: string;
+  readonly nativeFormatVersion?: string;
+  readonly adapterVersion?: string;
+  readonly sdkVersion?: string;
+  /** Adapter facts only; these do not change authorization, budget or Task state. */
+  readonly recovery?: {
+    readonly decision: import('./runtime-recovery.js').RuntimeRecoveryDecision;
+    readonly source?: import('./runtime-recovery.js').RuntimeRecoveryReference;
+    readonly evidenceRef: string;
+    readonly nativeForkEvidenceRef?: string;
+    readonly thinkingLevel?: string;
+    readonly provider: string;
+    readonly model: string;
+  };
 }
 
 export interface RuntimeHandle {

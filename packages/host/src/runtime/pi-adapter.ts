@@ -10,6 +10,10 @@ import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 import { setTimeout as waitForRetry } from 'node:timers/promises';
 import type { Agent } from '@earendil-works/pi-agent-core';
+import { createPiManagedSessionManager, preparePiRecovery } from './pi-native-session.js';
+import { PI_SDK_VERSION, PI_NATIVE_SESSION_FORMAT, PI_NATIVE_SESSION_FORMAT_VERSION } from './pi-sdk-contract.js';
+export { PI_SDK_VERSION, PI_NATIVE_SESSION_FORMAT, PI_NATIVE_SESSION_FORMAT_VERSION } from './pi-sdk-contract.js';
+import type { PiPreparedRecovery } from './pi-native-session.js';
 import { observePiWithin, PI_ABORT_WAIT_MS, PI_STOP_WAIT_MS } from './pi-lifecycle.js';
 import type {
   CreateAgentSessionOptions,
@@ -30,22 +34,20 @@ import type {
   RuntimeFailureClassification,
   RuntimeRecoveryCapabilities,
   RuntimeRecoveryReference,
+  RuntimeRecoveryDecision,
 } from 'shiploop-core';
 import {
   RUNTIME_ADAPTER_CONTRACT_VERSION,
   RuntimeError,
   createRuntimeRequestRetryController,
   DEFAULT_RUNTIME_REQUEST_RETRY_POLICY,
+  decideRuntimeRecovery,
+  validateRuntimeRecoveryCapabilities,
 } from 'shiploop-core';
 
 export const PI_RUNTIME_ID = 'pi';
 export const PI_ADAPTER_VERSION = '0.1.0';
 export const PI_SDK_LICENSE = 'MIT';
-/** Locked SDK version; loading the SDK is reserved for an authorized Runner start. */
-export const PI_SDK_VERSION = '1.0.4';
-/** The managed session archive observed by the standard Pi session manager. */
-export const PI_NATIVE_SESSION_FORMAT = 'pi-session-jsonl';
-export const PI_NATIVE_SESSION_FORMAT_VERSION = '1';
 export const PI_RECOVERY_EVIDENCE_REF = 'p04-4-pi-recovery-boundary';
 
 export type PiCapabilityStatus = 'supported' | 'unsupported' | 'unknown' | 'not_ready';
@@ -60,11 +62,10 @@ export interface PiRuntimeCapabilities {
 }
 
 /**
- * Core recovery evidence for standard Pi Work. The installed SDK exposes a
- * managed JSONL session file, but this adapter has no verified reader, safe
- * fork, checkpoint replay, or model switch operation for it. Keeping every
- * recovery capability explicit lets Core reject required recovery and record
- * an authorized auto downgrade without treating a native file as recovery.
+ * Default production evidence remains unsupported pending authorized live
+ * validation. The managed factory can load verified Artifact bytes and fork
+ * JSONL v3; a trusted composition must supply environment-specific evidence
+ * before Core can authorize continuation. No checkpoint replay is provided.
  */
 export const PI_RUNTIME_RECOVERY_CAPABILITIES: RuntimeRecoveryCapabilities = Object.freeze({
   schemaVersion: 1,
@@ -76,8 +77,8 @@ export const PI_RUNTIME_RECOVERY_CAPABILITIES: RuntimeRecoveryCapabilities = Obj
     versions: Object.freeze([PI_NATIVE_SESSION_FORMAT_VERSION]),
   })]),
   limits: Object.freeze([
-    'standard Pi Work starts a fresh managed session for each Attempt',
-    'native session archives are not loaded, forked, or copied by this adapter',
+    'production continuation requires explicit environment-specific capability evidence',
+    'only immutable Artifact JSONL v3 with verified stopped writer authority can be forked',
     'SDK persistence does not provide Core execution recovery or side effect idempotency',
   ]),
   capabilities: Object.freeze({
@@ -130,12 +131,10 @@ export interface PiTrustedAssembly {
   readonly resolveSessionDirectory?: (request: RuntimeExecutionRequest, cwd: string) => string;
   /** F-004：按请求执行认证预检和显式资源装配；返回值只含受限快照和可信引用。 */
   readonly prepareAccess?: (request: RuntimeExecutionRequest) => Promise<PiTrustedWorkAccess>;
-  /**
-   * Trusted recovery seam. It accepts an already Core-validated reference and
-   * immutable Artifact identities only; the current standard adapter leaves it
-   * unused because all five native recovery capabilities are unsupported.
-   */
+  /** Core-approved immutable Artifact access and exclusive writer authority. */
   readonly recoverySourceManager?: PiRecoverySourceManager;
+  /** Current authorized reasoning configuration; omission resets inherited reasoning to off. */
+  readonly resolveThinkingLevel?: (request: RuntimeExecutionRequest) => NonNullable<CreateAgentSessionOptions['thinkingLevel']>;
 }
 
 export interface PiTrustedWorkAccess {
@@ -152,6 +151,7 @@ export interface PiTrustedWorkAccess {
 export interface PiManagedRecoverySource {
   readonly reference: RuntimeRecoveryReference;
   readonly archive: ExecutionInputRef;
+  readonly sdkVersion: string;
   readonly checkpoint?: ExecutionInputRef;
   readonly previousWriter: {
     readonly status: 'confirmed';
@@ -166,16 +166,32 @@ export interface PiManagedRecoverySource {
 export interface PiRecoveryWriterLease {
   readonly source: PiManagedRecoverySource;
   readonly sourceReadOnly: true;
+  readonly authority: {
+    readonly projectId: string;
+    readonly featureId: string;
+    readonly taskId: string;
+    readonly taskStatus: 'unfinished';
+    readonly previousAttemptId: string;
+    readonly previousSessionId: string;
+  };
   readonly writer: {
     readonly purpose: 'work';
     readonly attemptId: string;
     readonly invocationId: string;
+    readonly sessionId: string;
+    readonly executionVersion: number;
+    readonly owner: RuntimeExecutionRequest['owner'];
     readonly exclusive: true;
   };
+  /** Must verify current Core ownership/continuation eligibility, without mutating business facts. */
+  assertCurrent(): Promise<void>;
+  /** Trusted Artifact verifier, never an arbitrary native path reader. */
+  readVerifiedArtifact(ref: ExecutionInputRef): Promise<Uint8Array>;
+  /** Releases adapter ownership only, never Core locks or budget. */
   release(): Promise<void>;
 }
 
-/** Trusted Host/Core seam reserved for a future verified Pi recovery operation. */
+/** Trusted Host/Core seam; acquisition must atomically exclude another writer and bind current eligibility. */
 export interface PiRecoverySourceManager {
   acquire(request: RuntimeExecutionRequest, source: RuntimeRecoveryReference): Promise<PiRecoveryWriterLease>;
 }
@@ -184,6 +200,8 @@ export interface PiSession {
   /** Standard SDK request boundary; absent on older/custom sessions means no safe retry. */
   readonly agent?: Pick<Agent, 'streamFunction'>;
   setAutoRetryEnabled?(enabled: boolean): void;
+  readonly model?: { readonly provider: string; readonly id: string };
+  readonly thinkingLevel?: string;
   readonly sessionId?: string;
   readonly sessionFile?: string;
   subscribe(listener: (event: unknown) => void): () => void;
@@ -202,28 +220,45 @@ export interface PiSessionFactoryOptions {
   readonly model: string;
   readonly credentialRef: { readonly kind: 'trusted-resolution'; readonly id: string };
   readonly resourceLoader: NonNullable<CreateAgentSessionOptions['resourceLoader']>;
+  readonly thinkingLevel?: NonNullable<CreateAgentSessionOptions['thinkingLevel']>;
+  readonly recovery?: PiPreparedRecovery;
 }
 
 export type PiSessionFactory = (options: PiSessionFactoryOptions) => Promise<PiSession>;
 
 /** 标准 SDK 的实际初始化入口：受管 SessionManager + 受控 resourceLoader。 */
 export function createPiSdkSessionFactory(assembly: PiTrustedAssembly): PiSessionFactory {
-  return async ({ cwd, agentDir, sessionDir, provider, model, resourceLoader }) => {
+  return async ({ cwd, agentDir, sessionDir, provider, model, resourceLoader, thinkingLevel, recovery }) => {
     const resolvedModel = assembly.resolveModel?.(provider, model);
     if (resolvedModel === undefined) {
       throw new RuntimeError('configuration', 'model_resolution_unavailable', { field: 'strategy.model' });
     }
-    const { createAgentSession, SessionManager, VERSION } = await import('@earendil-works/pi-coding-agent');
-    if (VERSION !== PI_SDK_VERSION) throw new RuntimeError('configuration', 'sdk_version_incompatible');
+    if (resolvedModel.provider !== provider || resolvedModel.id !== model) {
+      throw new RuntimeError('configuration', 'resolved_model_mismatch');
+    }
+    const sdk = await import('@earendil-works/pi-coding-agent');
+    const { createAgentSession, VERSION, CURRENT_SESSION_VERSION } = sdk;
+    if (VERSION !== PI_SDK_VERSION || String(CURRENT_SESSION_VERSION) !== PI_NATIVE_SESSION_FORMAT_VERSION) {
+      throw new RuntimeError('configuration', 'sdk_version_incompatible');
+    }
+    const sessionManager = await createPiManagedSessionManager(sdk, cwd, sessionDir, recovery);
     const result = await createAgentSession({
       cwd,
       agentDir,
       model: resolvedModel,
       resourceLoader,
-      sessionManager: SessionManager.create(cwd, sessionDir),
+      sessionManager,
+      thinkingLevel: thinkingLevel ?? 'off',
       noTools: 'all',
     });
-    return result.session;
+    try {
+      if (result.session.model?.provider !== provider || result.session.model.id !== model ||
+          result.session.thinkingLevel !== (thinkingLevel ?? 'off')) {
+        throw new RuntimeError('configuration', 'actual_model_configuration_mismatch');
+      }
+      await recovery?.assertCurrent();
+      return result.session;
+    } catch (error) { result.session.dispose(); throw error; }
   };
 }
 
@@ -233,6 +268,8 @@ export interface PiRuntimeAdapterOptions {
   readonly isolationModes: readonly string[];
   readonly assembly: PiTrustedAssembly;
   readonly sessionFactory?: PiSessionFactory;
+  /** Explicit environment-specific evidence. Defaults remain unsupported pending authorized live validation. */
+  readonly recoveryCapabilities?: RuntimeRecoveryCapabilities;
   /** Trusted Host policy, bounded again by Core; never read from prompt or SDK output. */
   readonly requestRetryPolicy?: RuntimeRetryPolicy;
 }
@@ -331,10 +368,18 @@ function failureReason(error: RuntimeError): string {
   return error.reason;
 }
 
+/** Reuse Core's capability decision with its narrow request shape. */
+function piRecoveryDecision(request: RuntimeExecutionRequest, capabilities: RuntimeRecoveryCapabilities): RuntimeRecoveryDecision {
+  return decideRuntimeRecovery({ schemaVersion: request.schemaVersion, projectId: request.projectId,
+    sessionId: request.sessionId, executionVersion: request.executionVersion, identity: request.identity,
+    invocationId: request.invocationId, strategy: request.strategy, recovery: request.recovery }, capabilities);
+}
+
 /** 启动 SDK 前复核 provider/model、权限、隔离和恢复边界。 */
 export function assertPiStartupCompatible(
   request: RuntimeExecutionRequest,
   descriptor: PiRuntimeDescriptor,
+  capabilities: RuntimeRecoveryCapabilities = PI_RUNTIME_RECOVERY_CAPABILITIES,
 ): void {
   const provider = descriptor.providers.find((candidate) => candidate.providerId === request.strategy.provider);
   if (provider === undefined) throw startupError('unknown_provider', 'strategy.provider');
@@ -347,7 +392,7 @@ export function assertPiStartupCompatible(
   if (!descriptor.isolationModes.includes(request.permissions.isolation)) {
     throw new RuntimeError('permission', 'unsupported_isolation', { field: 'permissions.isolation' });
   }
-  if (request.recovery.mode !== 'new') {
+  if (piRecoveryDecision(request, capabilities).mode === 'rejected') {
     throw startupError('execution_recovery_unsupported', 'recovery.mode');
   }
 }
@@ -456,9 +501,16 @@ function runtimeEvent(request: RuntimeExecutionRequest, sequence: number, kind: 
 export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRuntimeRegistration {
   const descriptor = createPiRuntimeDescriptor(options);
   const sessionFactory = options.sessionFactory ?? createPiSdkSessionFactory(options.assembly);
+  const recoveryCapabilities = options.recoveryCapabilities === undefined ? PI_RUNTIME_RECOVERY_CAPABILITIES
+    : validateRuntimeRecoveryCapabilities(options.recoveryCapabilities);
+  if (recoveryCapabilities.runtimeId !== PI_RUNTIME_ID || recoveryCapabilities.sdkVersion !== PI_SDK_VERSION ||
+      recoveryCapabilities.adapterVersion !== PI_ADAPTER_VERSION ||
+      recoveryCapabilities.capabilities.executionRecovery.status === 'verified') {
+    throw startupError('recovery_evidence_incompatible', 'recoveryCapabilities');
+  }
   const adapter: RuntimeAdapter = {
     async start(request): Promise<RuntimeHandle> {
-      assertPiStartupCompatible(request, descriptor);
+      assertPiStartupCompatible(request, descriptor, recoveryCapabilities);
       const access = await resolveTrustedAccess(options.assembly, request);
       const credentialRef = preflightCredential(access?.credentialRef ?? options.assembly.credentialRef);
       const resourceLoader = access?.resourceLoader ?? options.assembly.resourceLoader;
@@ -474,8 +526,19 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
       }
       const cwd = options.assembly.resolveWorkingDirectory(request.cwd);
       const sessionDir = managedSessionDirectory(options.assembly, request, cwd);
+      const thinkingLevel = options.assembly.resolveThinkingLevel?.(request) ?? 'off';
+      let lease: PiRecoveryWriterLease | undefined;
+      let prepared: PiPreparedRecovery | undefined;
+      let decision: RuntimeRecoveryDecision;
       let session: PiSession;
       try {
+        if (request.recovery.mode !== 'new' && request.recovery.source !== undefined) {
+          if (options.assembly.recoverySourceManager === undefined) throw startupError('recovery_source_manager_unavailable', 'recovery');
+          lease = await options.assembly.recoverySourceManager.acquire(request, request.recovery.source);
+          prepared = await preparePiRecovery(request, request.recovery.source, lease);
+        }
+        decision = piRecoveryDecision(request, recoveryCapabilities);
+        if (decision.mode === 'rejected') throw startupError('execution_recovery_unsupported', 'recovery');
         session = await sessionFactory({
           cwd,
           agentDir: options.assembly.agentDir,
@@ -484,8 +547,21 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
           model: request.strategy.model,
           credentialRef,
           resourceLoader,
+          thinkingLevel,
+          ...(decision.mode === 'resume' ? { recovery: prepared } : {}),
         });
+        if (decision.mode === 'resume') {
+          try {
+            if (session.model?.provider !== request.strategy.provider || session.model.id !== request.strategy.model ||
+                session.thinkingLevel !== thinkingLevel ||
+                session.sessionId === undefined || session.sessionId === prepared?.reference.providerSessionId) {
+              throw startupError('actual_model_configuration_mismatch', 'strategy');
+            }
+            await lease!.assertCurrent();
+          } catch (error) { session.dispose(); throw error; }
+        }
       } catch (error) {
+        await lease?.release();
         throw classifyPiFailure(error, 'sdk_initialization_failed', 'configuration');
       }
       const events = new EventChannel();
@@ -679,6 +755,7 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
         try {
           restoreRequestStream();
           session.dispose();
+          await lease?.release();
         } catch {
           // 保持初始化失败诊断，不让清理异常覆盖它。
         }
@@ -687,6 +764,7 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
 
       const executionTimer = setTimeout(() => { void cancel('timed_out'); }, request.limits.timeoutMs);
       const work = (async () => {
+        await lease?.assertCurrent();
         await session.prompt(prompt);
         if (session.waitForIdle !== undefined) {
           await session.waitForIdle();
@@ -733,6 +811,10 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
           try { unsubscribe(); } catch { cleanupSucceeded = false; }
           events.close();
           try { session.dispose(); } catch { cleanupSucceeded = false; }
+          // Unknown SDK stop retains adapter ownership; Core occupancy remains Core-owned.
+          if (idleObserved && cleanupSucceeded) {
+            try { await lease?.release(); } catch { cleanupSucceeded = false; }
+          }
         }
         return {
           schemaVersion: 1,
@@ -762,11 +844,24 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
           runtimeId: PI_RUNTIME_ID,
           providerSessionId: session.sessionId === undefined ? null : identityToken(session.sessionId, `${request.invocationId}-provider-session`),
           sessionFile: session.sessionFile ?? null,
+          nativeFormat: PI_NATIVE_SESSION_FORMAT,
+          nativeFormatVersion: PI_NATIVE_SESSION_FORMAT_VERSION,
+          adapterVersion: PI_ADAPTER_VERSION,
+          sdkVersion: PI_SDK_VERSION,
+          recovery: {
+            decision,
+            ...(prepared === undefined || request.recovery.mode === 'new' ? {} : { source: request.recovery.source }),
+            evidenceRef: (decision.mode === 'resume' ? recoveryCapabilities.capabilities.conversationResume.evidenceRef : undefined) ?? PI_RECOVERY_EVIDENCE_REF,
+            nativeForkEvidenceRef: recoveryCapabilities.capabilities.nativeFork.evidenceRef,
+            thinkingLevel: session.thinkingLevel ?? thinkingLevel,
+            provider: request.strategy.provider,
+            model: request.strategy.model,
+          },
         },
         cancel: () => cancel(),
       };
     },
   };
   return { descriptor, capabilities: PI_RUNTIME_CAPABILITIES,
-    recoveryCapabilities: PI_RUNTIME_RECOVERY_CAPABILITIES, adapter };
+    recoveryCapabilities, adapter };
 }
