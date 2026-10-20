@@ -1,0 +1,17 @@
+{
+  "schema_version": 2,
+  "task_id": "F-002",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        { "file": "test/modules/runtime/p04-1-pi-runner.test.ts", "all": true },
+        { "file": "test/modules/runtime/p04-1-pi-adapter.test.ts", "all": true },
+        { "file": "test/modules/runtime/p03-6-runtime-execution-contract.test.ts", "all": true },
+        { "file": "test/modules/runtime/supervised-command-process.test.ts", "all": true },
+        { "file": "test/modules/runtime/p03-6-runtime-session.test.ts", "all": true },
+        { "file": "test/modules/runtime/p03-6-execution-uncertainty.test.ts", "all": true }
+      ]
+    }
+  ]
+}
