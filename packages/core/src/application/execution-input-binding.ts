@@ -891,6 +891,7 @@ export function createExecutionInputBindingService(
       permissions: { grants: [...validated.permissions.grants], isolation: validated.permissions.isolation },
       limits: validated.limits,
       recovery: requestRecovery,
+      ...(validated.workAccess === undefined ? {} : { workAccess: validated.workAccess }),
     });
 
     await checkDeadline();

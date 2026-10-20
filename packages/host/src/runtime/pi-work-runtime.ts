@@ -4,12 +4,13 @@ import type { WorkRuntimeFactory } from 'shiploop-core/assembly';
 import {
   assertPiStartupCompatible, createPiRuntimeDescriptor, piRuntimeEventPrefix, PI_RUNTIME_ID,
 } from './pi-adapter.js';
-import type { PiRuntimeAdapterOptions } from './pi-adapter.js';
+import type { PiRuntimeAdapterOptions, PiTrustedAssembly } from './pi-adapter.js';
 import { createPiRunnerAdapter } from './pi-runner-adapter.js';
 import type { PiRunnerAdapterOptions } from './pi-runner-adapter.js';
 
 export type PiWorkRuntimeOptions = Pick<PiRuntimeAdapterOptions, 'providers' | 'permissionGrants' | 'isolationModes'>
-  & Omit<PiRunnerAdapterOptions, 'confirm'>;
+  & Omit<PiRunnerAdapterOptions, 'confirm'>
+  & { readonly prepareAccess?: PiTrustedAssembly['prepareAccess'] };
 
 /** Only trusted startup code calls this factory. No discovery, SDK loading or automatic fallback. */
 export function createPiWorkRuntimeFactory(options: PiWorkRuntimeOptions): WorkRuntimeFactory {
@@ -33,6 +34,15 @@ export function createPiWorkRuntimeFactory(options: PiWorkRuntimeOptions): WorkR
     } } }];
     // Same registry contract as Core, including unknown IDs and complete catalog agreement.
     createStaticRuntimeRegistry(entries, context.capabilityCatalog);
-    return { entries, eventIdentityPrefix: piRuntimeEventPrefix };
+    return {
+      entries,
+      eventIdentityPrefix: piRuntimeEventPrefix,
+      ...(options.prepareAccess === undefined ? {} : {
+        prepareRequest: async (request: Parameters<typeof runner.start>[0]) => {
+          const prepared = await options.prepareAccess!(request);
+          return { ...request, workAccess: prepared.snapshot };
+        },
+      }),
+    };
   };
 }

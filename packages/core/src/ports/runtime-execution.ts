@@ -51,7 +51,7 @@ import type { RuntimeStrategyV1 } from './settings-schema.js';
 import { TOOL_TIMEOUT_MS_MAX, TOOL_TIMEOUT_MS_MIN, WORK_TIMEOUT_MS_MAX, WORK_TIMEOUT_MS_MIN } from './settings-schema.js';
 import {
   rejectUnknownKeys, requireNonEmptyString, requirePlainObject,
-  validateArtifactLocator, validatePositiveInteger,
+  validateArtifactLocator, validatePositiveInteger, validateSha256Digest,
   validateStableId, validationError,
 } from './validation.js';
 import type { ValidationContext } from './validation.js';
@@ -157,6 +157,44 @@ export interface RuntimeExecutionPermissions {
   readonly isolation: string;
 }
 
+/**
+ * 脱敏 Work 访问快照：只携带同一 Attempt 的授权身份、策略摘要、认证状态
+ * 和资源摘要。认证正文、owner token、Core 连接与环境值永远不进入请求。
+ */
+export interface RuntimeWorkAccessSnapshot {
+  readonly schemaVersion: 1;
+  readonly projectId: string;
+  readonly runId: string;
+  readonly taskId: string;
+  readonly attemptId: string;
+  readonly invocationId: string;
+  readonly executionVersion: number;
+  readonly owner: RuntimeExecutionOwner;
+  readonly strategy: { readonly runtime: 'pi'; readonly provider: string; readonly model: string };
+  readonly permissions: RuntimeExecutionPermissions;
+  readonly grantId: string;
+  readonly policyDigest: string;
+  readonly authentication: {
+    readonly status: 'ready' | 'missing' | 'expired' | 'revoked' | 'invalid' | 'unknown';
+    readonly digest: string;
+    readonly sourceRef: string;
+    readonly kind: 'environment' | 'local_login' | 'plugin';
+  };
+  readonly resources: {
+    readonly digest: string;
+    readonly entries: readonly {
+      readonly id: string;
+      readonly kind: 'auth_plugin' | 'skill' | 'mcp' | 'extension' | 'tool';
+      readonly sourceRef: string;
+      readonly version: string | null;
+      readonly contentDigest: string | null;
+      readonly status: 'available' | 'omitted';
+      readonly capabilities: readonly string[];
+      readonly transport: 'stdio' | 'streamable_http' | null;
+    }[];
+  };
+}
+
 /** 有限超时/输出政策：全部有上下界，不设无限值。 */
 export interface RuntimeExecutionLimits {
   /** Session/单次 Work 总时长上限（旧字段语义保持不变）。 */
@@ -187,6 +225,99 @@ export interface RuntimeExecutionRequest {
   readonly permissions: RuntimeExecutionPermissions;
   readonly limits: RuntimeExecutionLimits;
   readonly recovery: RuntimeRecoverySelection;
+  readonly workAccess?: RuntimeWorkAccessSnapshot;
+}
+
+export function validateRuntimeWorkAccessSnapshot(value: unknown, expected: {
+  readonly projectId: string;
+  readonly sessionId: string;
+  readonly executionVersion: number;
+  readonly identity: ExecutionIdentity;
+  readonly invocationId: string;
+  readonly strategy: RuntimeStrategyV1;
+  readonly owner: RuntimeExecutionOwner;
+  readonly permissions: RuntimeExecutionPermissions;
+}): RuntimeWorkAccessSnapshot {
+  const field = 'request.workAccess';
+  const raw = requirePlainObject(value, requestContext, field);
+  rejectUnknownKeys(raw, ['schemaVersion', 'projectId', 'runId', 'taskId', 'attemptId', 'invocationId', 'executionVersion',
+    'owner', 'strategy', 'permissions', 'grantId', 'policyDigest', 'authentication', 'resources'], requestContext, field);
+  if (raw.schemaVersion !== 1) throw validationError(requestContext, `${field}.schemaVersion`, '版本不受支持');
+  const identity = expected.identity;
+  if (identity.purpose !== 'work') throw validationError(requestContext, `${field}.identity`, 'work_identity_required');
+  const projectId = validateStableId(raw.projectId, requestContext, `${field}.projectId`);
+  const runId = validateStableId(raw.runId, requestContext, `${field}.runId`);
+  const taskId = validateStableId(raw.taskId, requestContext, `${field}.taskId`);
+  const attemptId = validateStableId(raw.attemptId, requestContext, `${field}.attemptId`);
+  const invocationId = validateStableId(raw.invocationId, requestContext, `${field}.invocationId`);
+  const executionVersion = validatePositiveInteger(raw.executionVersion, requestContext, `${field}.executionVersion`);
+  const snapshotOwner = owner(raw.owner);
+  const snapshotPermissions = permissions(raw.permissions);
+  const strategyRaw = requirePlainObject(raw.strategy, requestContext, `${field}.strategy`);
+  rejectUnknownKeys(strategyRaw, ['runtime', 'provider', 'model'], requestContext, `${field}.strategy`);
+  if (strategyRaw.runtime !== 'pi') throw validationError(requestContext, `${field}.strategy.runtime`, 'pi_runtime_required');
+  const strategy: RuntimeWorkAccessSnapshot['strategy'] = {
+    runtime: 'pi',
+    provider: requireNonEmptyString(strategyRaw.provider, requestContext, `${field}.strategy.provider`),
+    model: requireNonEmptyString(strategyRaw.model, requestContext, `${field}.strategy.model`),
+  };
+
+  const digest = (entry: unknown, name: string) => validateSha256Digest(entry, requestContext, `${field}.${name}`);
+  const grantId = validateStableId(raw.grantId, requestContext, `${field}.grantId`);
+  const policyDigest = digest(raw.policyDigest, 'policyDigest');
+  const authRaw = requirePlainObject(raw.authentication, requestContext, `${field}.authentication`);
+  rejectUnknownKeys(authRaw, ['status', 'digest', 'sourceRef', 'kind'], requestContext, `${field}.authentication`);
+  const authStatus = authRaw.status;
+  if (!['ready', 'missing', 'expired', 'revoked', 'invalid', 'unknown'].includes(authStatus as string)) {
+    throw validationError(requestContext, `${field}.authentication.status`, 'invalid_authentication_status');
+  }
+  const authentication = {
+    status: authStatus as RuntimeWorkAccessSnapshot['authentication']['status'],
+    digest: digest(authRaw.digest, 'authentication.digest'),
+    sourceRef: validateStableId(authRaw.sourceRef, requestContext, `${field}.authentication.sourceRef`),
+    kind: authRaw.kind,
+  } as RuntimeWorkAccessSnapshot['authentication'];
+  if (!['environment', 'local_login', 'plugin'].includes(authentication.kind)) {
+    throw validationError(requestContext, `${field}.authentication.kind`, 'invalid_authentication_kind');
+  }
+  const resourcesRaw = requirePlainObject(raw.resources, requestContext, `${field}.resources`);
+  rejectUnknownKeys(resourcesRaw, ['digest', 'entries'], requestContext, `${field}.resources`);
+  if (!Array.isArray(resourcesRaw.entries) || resourcesRaw.entries.length > 64) {
+    throw validationError(requestContext, `${field}.resources.entries`, 'invalid_resource_entries');
+  }
+  const entries = resourcesRaw.entries.map((entry, index) => {
+    const item = requirePlainObject(entry, requestContext, `${field}.resources.entries[${index}]`);
+    rejectUnknownKeys(item, ['id', 'kind', 'sourceRef', 'version', 'contentDigest', 'status', 'capabilities', 'transport'], requestContext, `${field}.resources.entries[${index}]`);
+    const kind = item.kind;
+    if (!['auth_plugin', 'skill', 'mcp', 'extension', 'tool'].includes(kind as string)) throw validationError(requestContext, `${field}.resources.entries[${index}].kind`, 'invalid_resource_kind');
+    const transport = item.transport;
+    if (transport !== null && transport !== 'stdio' && transport !== 'streamable_http') throw validationError(requestContext, `${field}.resources.entries[${index}].transport`, 'invalid_resource_transport');
+    if ((kind === 'mcp') !== (transport !== null)) throw validationError(requestContext, `${field}.resources.entries[${index}].transport`, 'resource_transport_mismatch');
+    if (typeof item.version !== 'string' && item.version !== null) throw validationError(requestContext, `${field}.resources.entries[${index}].version`, 'invalid_resource_version');
+    if (item.contentDigest !== null) digest(item.contentDigest, `resources.entries[${index}].contentDigest`);
+    if (item.version === null && item.contentDigest === null) throw validationError(requestContext, `${field}.resources.entries[${index}]`, 'resource_identity_missing');
+    if (item.status !== 'available' && item.status !== 'omitted') throw validationError(requestContext, `${field}.resources.entries[${index}].status`, 'invalid_resource_status');
+    if (!Array.isArray(item.capabilities) || item.capabilities.some(capability => typeof capability !== 'string')) throw validationError(requestContext, `${field}.resources.entries[${index}].capabilities`, 'invalid_resource_capabilities');
+    return {
+      id: validateStableId(item.id, requestContext, `${field}.resources.entries[${index}].id`),
+      kind: kind as RuntimeWorkAccessSnapshot['resources']['entries'][number]['kind'],
+      sourceRef: validateStableId(item.sourceRef, requestContext, `${field}.resources.entries[${index}].sourceRef`),
+      version: item.version as string | null, contentDigest: item.contentDigest as string | null,
+      status: item.status as 'available' | 'omitted', capabilities: [...item.capabilities] as string[],
+      transport: transport as 'stdio' | 'streamable_http' | null,
+    };
+  });
+  if (new Set(entries.map(entry => entry.id)).size !== entries.length) throw validationError(requestContext, `${field}.resources.entries`, 'duplicate_resource');
+  const resources = { digest: digest(resourcesRaw.digest, 'resources.digest'), entries };
+  const same = (left: unknown, right: unknown) => JSON.stringify(left) === JSON.stringify(right);
+  if (projectId !== expected.projectId || runId !== identity.runId || taskId !== identity.taskId || attemptId !== identity.attemptId
+    || invocationId !== expected.invocationId || executionVersion !== expected.executionVersion || !same(snapshotOwner, expected.owner)
+    || !same(strategy, { runtime: expected.strategy.runtime, provider: expected.strategy.provider, model: expected.strategy.model })
+    || !same(snapshotPermissions, expected.permissions)) {
+    throw validationError(requestContext, field, 'attempt_access_identity_mismatch');
+  }
+  return { schemaVersion: 1, projectId, runId, taskId, attemptId, invocationId, executionVersion,
+    owner: snapshotOwner, strategy, permissions: snapshotPermissions, grantId, policyDigest, authentication, resources };
 }
 
 function owner(value: unknown): RuntimeExecutionOwner {
@@ -275,7 +406,7 @@ export function validateRuntimeExecutionRequest(value: unknown): RuntimeExecutio
   rejectUnknownKeys(raw, [
     'schemaVersion', 'projectId', 'featureId', 'sessionId', 'executionVersion', 'owner',
     'identity', 'invocationId', 'strategy', 'prompt', 'inputManifest', 'cwd',
-    'permissions', 'limits', 'recovery',
+    'permissions', 'limits', 'recovery', 'workAccess',
   ], requestContext, 'request');
   const recoveryPortion = validateRuntimeRecoveryRequest({
     schemaVersion: raw.schemaVersion, projectId: raw.projectId, sessionId: raw.sessionId,
@@ -301,6 +432,14 @@ export function validateRuntimeExecutionRequest(value: unknown): RuntimeExecutio
     permissions: permissions(raw.permissions),
     limits: limits(raw.limits),
     recovery: recoveryPortion.recovery,
+    ...(raw.workAccess === undefined ? {} : {
+      workAccess: validateRuntimeWorkAccessSnapshot(raw.workAccess, {
+        projectId: recoveryPortion.projectId, sessionId: recoveryPortion.sessionId,
+        executionVersion: recoveryPortion.executionVersion, identity: recoveryPortion.identity,
+        invocationId: recoveryPortion.invocationId, strategy: recoveryPortion.strategy,
+        owner: owner(raw.owner), permissions: permissions(raw.permissions),
+      }),
+    }),
   };
 }
 

@@ -50,6 +50,7 @@ export interface WorkRuntimeContext {
 export type WorkRuntimeFactory = (context: WorkRuntimeContext) => {
   readonly entries: readonly RuntimeRegistryEntry[];
   readonly eventIdentityPrefix: (request: RuntimeExecutionRequest) => string;
+  readonly prepareRequest?: (request: RuntimeExecutionRequest) => Promise<RuntimeExecutionRequest>;
 };
 
 export function assembleWorkExecution(options: {
@@ -124,7 +125,9 @@ export function assembleWorkExecution(options: {
       maxEventBodyBytes: 8_192, chunkMaxEvents: 32, chunkMaxBytes: 262_144, maxTotalEvents: 10_000,
       maxTotalBytes: 8_000_000, reorderWindow: 8, tailWaitMs: 2_000,
     } }),
-    eventIdentityPrefix: runtimeAssembly?.eventIdentityPrefix ?? (() => 'unregistered.'), nowUtcMs: now,
+    eventIdentityPrefix: runtimeAssembly?.eventIdentityPrefix ?? (() => 'unregistered.'),
+    ...(runtimeAssembly?.prepareRequest === undefined ? {} : { prepareRuntimeRequest: runtimeAssembly.prepareRequest }),
+    nowUtcMs: now,
     supervision: { stopWaitMs: 2_000, drainWaitMs: 2_000, closeWaitMs: 5_000,
       retain: createExecutionWorkspaceRetainer({ workspaces: createSqliteWorkspaceAccess(session, { resources, nowUtcMs: now }), retention }) },
   });

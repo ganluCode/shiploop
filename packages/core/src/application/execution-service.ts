@@ -17,7 +17,7 @@ import type { WorkResourceAccess, WorkResourceIdentity } from '../ports/work-res
 import type { AtomicCommandStore } from '../ports/atomic-commands.js';
 import type { WorkSessionRecord, WorkSessionStore } from '../ports/work-session.js';
 import type { RuntimeExecutionLimits, RuntimeExecutionRequest, RuntimeStopEvidence, RuntimeExecutionResult } from '../ports/runtime-execution.js';
-import { RuntimeError, isRuntimeError } from '../ports/runtime-execution.js';
+import { RuntimeError, isRuntimeError, validateRuntimeExecutionRequest } from '../ports/runtime-execution.js';
 import { StorageError } from '../ports/errors.js';
 import type { TaskDagStore } from '../ports/task-dag.js';
 import type { AttemptStore } from '../ports/attempt-store.js';
@@ -42,6 +42,7 @@ export interface ExecutionServiceInput {
   readonly permissions: { readonly grants: readonly string[]; readonly isolation: string };
   readonly limits: RuntimeExecutionLimits;
   readonly recovery: RuntimeRecoverySelection;
+  readonly workAccess?: import('../ports/runtime-execution.js').RuntimeWorkAccessSnapshot;
   readonly cwdRoot: string;
 }
 
@@ -78,6 +79,8 @@ export interface ExecutionServiceDeps {
   readonly supervision?: ExecutionSupervisionOptions;
   /** Trusted event identity rule supplied by the adapter assembly. */
   readonly eventIdentityPrefix: (request: RuntimeExecutionRequest) => string;
+  /** Trusted Host access assembly runs after Core input binding and before runtime admission. */
+  readonly prepareRuntimeRequest?: (request: RuntimeExecutionRequest) => Promise<RuntimeExecutionRequest>;
   readonly permissions?: ExecutionPermissionsReader;
   readonly nowUtcMs?: () => number;
 }
@@ -121,6 +124,7 @@ function bindingInput(input: ExecutionServiceInput, invocationId: string): Execu
     permissions: input.permissions,
     limits: input.limits,
     recovery: input.recovery,
+    ...(input.workAccess === undefined ? {} : { workAccess: input.workAccess }),
     cwdRoot: input.cwdRoot,
   };
 }
@@ -229,6 +233,9 @@ export function createExecutionService(deps: ExecutionServiceDeps): ExecutionSer
       // Binding may inspect workspace, artifacts and the filesystem. It is deliberately
       // after beginLaunch but outside the write transaction.
       bound = await deps.inputBinding.bind(bindingInput(input, invocationId));
+      if (deps.prepareRuntimeRequest !== undefined) {
+        bound = { ...bound, request: validateRuntimeExecutionRequest(await deps.prepareRuntimeRequest(bound.request)) };
+      }
       adapterVersion = deps.runtime.prepare(bound.request).adapterVersion;
       eventIdentityPrefix = deps.eventIdentityPrefix(bound.request);
       if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/.test(eventIdentityPrefix)) {

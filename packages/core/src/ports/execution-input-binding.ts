@@ -50,6 +50,7 @@ import type {
 import type {
   RuntimeExecutionLimits,
   RuntimeExecutionRequest,
+  RuntimeWorkAccessSnapshot,
 } from './runtime-execution.js';
 import {
   RUNTIME_EXECUTION_MAX_EVENTS_LIMIT,
@@ -248,6 +249,8 @@ export interface ExecutionInputBindingInput {
   readonly limits: RuntimeExecutionLimits;
   /** 恢复选择（沿用 P03-3A 契约；来源引用须解析为同项目 ready Artifact）。 */
   readonly recovery: RuntimeRecoverySelection;
+  /** 已完成认证预检和显式资源选集的脱敏 Attempt 访问快照。 */
+  readonly workAccess?: RuntimeWorkAccessSnapshot;
   /** 可信装配的获准 cwd 根 ID（rootId → 规范授权根由装配侧解析核对）。 */
   readonly cwdRoot: string;
 }
@@ -359,7 +362,7 @@ export function validateExecutionInputBindingInput(value: unknown): ExecutionInp
     raw,
     [
       'schemaVersion', 'claim', 'workspace', 'sessionId', 'invocationId', 'strategy',
-      'permissions', 'limits', 'recovery', 'cwdRoot',
+      'permissions', 'limits', 'recovery', 'workAccess', 'cwdRoot',
     ],
     bindingContext,
     'input',
@@ -398,6 +401,7 @@ export function validateExecutionInputBindingInput(value: unknown): ExecutionInp
     permissions,
     limits,
     recovery: recoveryPortion.recovery,
+    ...(raw.workAccess === undefined ? {} : { workAccess: raw.workAccess as RuntimeWorkAccessSnapshot }),
     cwdRoot,
   };
 }

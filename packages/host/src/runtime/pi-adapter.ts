@@ -7,6 +7,7 @@
  */
 import { createHash } from 'node:crypto';
 import path from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { observePiWithin, PI_ABORT_WAIT_MS, PI_STOP_WAIT_MS } from './pi-lifecycle.js';
 import type {
   CreateAgentSessionOptions,
@@ -21,6 +22,7 @@ import type {
   RuntimeExecutionRequest,
   RuntimeHandle,
   RuntimeUsageReport,
+  RuntimeWorkAccessSnapshot,
 } from 'shiploop-core';
 import {
   RUNTIME_ADAPTER_CONTRACT_VERSION,
@@ -75,6 +77,14 @@ export interface PiTrustedAssembly {
   readonly resolveModel?: (provider: string, model: string) => NonNullable<CreateAgentSessionOptions['model']>;
   /** 由可信装配选择受管项目数据根下的 Attempt session 目录。 */
   readonly resolveSessionDirectory?: (request: RuntimeExecutionRequest, cwd: string) => string;
+  /** F-004：按请求执行认证预检和显式资源装配；返回值只含受限快照和可信引用。 */
+  readonly prepareAccess?: (request: RuntimeExecutionRequest) => Promise<PiTrustedWorkAccess>;
+}
+
+export interface PiTrustedWorkAccess {
+  readonly snapshot: RuntimeWorkAccessSnapshot;
+  readonly credentialRef: { readonly kind: 'trusted-resolution'; readonly id: string };
+  readonly resourceLoader: NonNullable<CreateAgentSessionOptions['resourceLoader']>;
 }
 
 export interface PiSession {
@@ -165,8 +175,7 @@ function managedSessionDirectory(assembly: PiTrustedAssembly, request: RuntimeEx
   return path.join(assembly.agentDir, 'sessions', scope);
 }
 
-function preflightCredential(assembly: PiTrustedAssembly): { readonly kind: 'trusted-resolution'; readonly id: string } {
-  const credential = assembly.credentialRef;
+function preflightCredential(credential: { readonly kind: 'trusted-resolution'; readonly id: string } | undefined): { readonly kind: 'trusted-resolution'; readonly id: string } {
   if (credential === undefined) {
     throw new RuntimeError('authentication', 'credential_reference_missing', { field: 'assembly.credentialRef' });
   }
@@ -174,6 +183,33 @@ function preflightCredential(assembly: PiTrustedAssembly): { readonly kind: 'tru
     throw new RuntimeError('authentication', 'credential_reference_invalid', { field: 'assembly.credentialRef.id' });
   }
   return credential;
+}
+
+function resolveTrustedAccess(assembly: PiTrustedAssembly, request: RuntimeExecutionRequest): Promise<PiTrustedWorkAccess | undefined> {
+  if (request.workAccess === undefined) {
+    if (assembly.prepareAccess !== undefined) {
+      return Promise.reject(new RuntimeError('authentication', 'work_access_snapshot_missing', { field: 'request.workAccess' }));
+    }
+    return Promise.resolve(undefined);
+  }
+  if (assembly.prepareAccess === undefined) {
+    return Promise.reject(new RuntimeError('authentication', 'work_access_preflight_missing', { field: 'assembly.prepareAccess' }));
+  }
+  return assembly.prepareAccess(request).then((actual) => {
+    if (actual.snapshot.authentication.status !== 'ready') {
+      throw new RuntimeError('authentication', 'work_authentication_not_ready');
+    }
+    if (actual.snapshot.resources.entries.some(entry => entry.status !== 'available')) {
+      throw new RuntimeError('permission', 'resource_not_authorized');
+    }
+    if (!isDeepStrictEqual(actual.snapshot, request.workAccess)) {
+      throw new RuntimeError('authentication', 'work_access_snapshot_mismatch');
+    }
+    return actual;
+  }).catch(error => {
+    if (error instanceof RuntimeError) throw error;
+    throw new RuntimeError('authentication', 'work_access_preflight_failed', { cause: error });
+  });
 }
 
 function classifyPiFailure(value: unknown, fallback: string, fallbackKind: RuntimeErrorKind = 'provider'): RuntimeError {
@@ -323,7 +359,12 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
   const adapter: RuntimeAdapter = {
     async start(request): Promise<RuntimeHandle> {
       assertPiStartupCompatible(request, descriptor);
-      const credentialRef = preflightCredential(options.assembly);
+      const access = await resolveTrustedAccess(options.assembly, request);
+      const credentialRef = preflightCredential(access?.credentialRef ?? options.assembly.credentialRef);
+      const resourceLoader = access?.resourceLoader ?? options.assembly.resourceLoader;
+      if (request.workAccess !== undefined && request.workAccess.authentication.status !== 'ready') {
+        throw new RuntimeError('authentication', 'work_authentication_not_ready');
+      }
       let prompt: string;
       try {
         prompt = await options.assembly.inputReader.read(request.prompt);
@@ -342,7 +383,7 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
           provider: request.strategy.provider,
           model: request.strategy.model,
           credentialRef,
-          resourceLoader: options.assembly.resourceLoader,
+          resourceLoader,
         });
       } catch (error) {
         throw classifyPiFailure(error, 'sdk_initialization_failed', 'configuration');
