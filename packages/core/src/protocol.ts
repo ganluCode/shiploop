@@ -5,6 +5,7 @@
  */
 export {
   isIsoUtcDateTime, isUuidV4, isValidResultRef, validateCommandEnvelope,
+  isPublicError, publicErrorHttpStatus, validateCommandEnvelopeFields, WORK_TOOL_OPERATION_SPECS,
   WIRE_MESSAGE_SCHEMA_VERSION,
   WORK_ACCEPTED_SCHEMA_VERSION,
 } from './ports/commands.js';
@@ -330,6 +331,8 @@ export type {
   GitOperationReceipt,
   GitOperationStatus,
 } from './ports/git-operations.js';
+// Work 客户端只消费纯信封校验和查询结果形状，不加载业务通道。
+export type { WorkTaskResult } from './application/work-tool-channel.js';
 // type-only 导出擦除后不加载业务服务。
 export type { EffectiveSettings } from './application/effective-settings.js';
 export type { ExportedSettings } from './application/configuration-service.js';

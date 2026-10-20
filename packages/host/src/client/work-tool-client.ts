@@ -1,6 +1,6 @@
 /** Explicit restricted endpoint only. No discovery, owner credential reader, launcher or retries. */
-import { isPublicError, publicErrorHttpStatus, validateCommandEnvelopeFields, WORK_TOOL_OPERATION_SPECS, validateWireCommandReceipt } from 'shiploop-core';
-import type { CommandReceipt, WorkTaskResult } from 'shiploop-core';
+import { isPublicError, publicErrorHttpStatus, validateCommandEnvelopeFields, WORK_TOOL_OPERATION_SPECS, validateWireCommandReceipt } from 'shiploop-core/protocol';
+import type { CommandReceipt, WorkTaskResult } from 'shiploop-core/protocol';
 import { HostProtocolError, MAX_APP_BODY_BYTES } from '../contract/index.js';
 import { mapErrorResponse, requestLoopbackJson } from './http-json.js';
 

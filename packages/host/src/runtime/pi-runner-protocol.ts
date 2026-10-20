@@ -151,7 +151,8 @@ export class PiRunnerEventChannel implements AsyncIterable<RuntimeEvent> {
   private closed = false;
   private taken = false;
   private waiter: ((value: IteratorResult<RuntimeEvent>) => void) | undefined;
-  constructor(private readonly onAbandon: () => void) {}
+  private readonly onAbandon: () => void;
+  constructor(onAbandon: () => void) { this.onAbandon = onAbandon; }
   push(event: RuntimeEvent): boolean {
     if (this.closed) return false;
     if (this.waiter) {

@@ -1077,19 +1077,24 @@ describe('F-002 契约模块纯度（import 无端口/目录/进程副作用）'
     }
   });
 
-  it('F-006 runtime 面只允许 node:http 与 shiploop-core 公共入口，不触其他网络/进程/ORM/argv', () => {
-    // runtime/ 承担启动装配（允许 node:http 监听与 shiploop-core/. /assembly
-    // 公共入口），但不得直接绑定 ORM/厂商 SDK、其他网络/进程/线程内置模块；
-    // argv 只属于显式入口 start.ts。
+  it('F-006 runtime 面隔离网络/进程/ORM，SDK 仅在 Pi 适配器和认证目录内延迟加载', () => {
+    // runtime/ 允许 node:http 与 Core 公共入口。P04-1 Pi 适配器和 P04-2
+    // 认证目录可延迟加载 SDK；其他模块不得加载，argv 只属于 start.ts。
     const runtimeSrcDir = join(hostSrcDir, 'runtime');
     const forbiddenImport = /\bfrom\s+['"]node:(?:net|https|dgram|tls|child_process|cluster|worker_threads|readline)['"]/;
-    const forbiddenPackage = /\bfrom\s+['"](?:better-sqlite3|drizzle-orm|@earendil-works\/pi-coding-agent|electron|express|fastify|koa|hono)['"]/;
+    const forbiddenPackage = /\bfrom\s+['"](?:better-sqlite3|drizzle-orm|electron|express|fastify|koa|hono)['"]/;
     const files = listTsFiles(runtimeSrcDir);
     expect(files.length).toBeGreaterThanOrEqual(3);
     for (const file of files) {
       const source = readFileSync(file, 'utf-8');
       expect(source, file).not.toMatch(forbiddenImport);
       expect(source, file).not.toMatch(forbiddenPackage);
+      // type-only 引用擦除后不加载 SDK；禁止所有静态值导入（包括 side-effect）。
+      const valueImports = source.replaceAll(/\bimport\s+type\b[^;]*;/g, '');
+      expect(valueImports, file).not.toMatch(/(?:\bfrom\s+|\bimport\s*)['"]@earendil-works\/pi-coding-agent['"]/);
+      const sdkLoads = [...source.matchAll(/\bimport\s*\(\s*['"]@earendil-works\/pi-coding-agent['"]\s*\)/g)];
+      const sdkBoundary = file === join(runtimeSrcDir, 'pi-adapter.ts') || file === join(runtimeSrcDir, 'pi-authentication.ts');
+      expect(sdkLoads, file).toHaveLength(sdkBoundary ? 1 : 0);
       // argv 只属于显式入口 start.ts；剔除注释后 runtime 模块不得直接读 process.argv。
       const codeOnly = source
         .replaceAll(/\/\*[\s\S]*?\*\//g, '')

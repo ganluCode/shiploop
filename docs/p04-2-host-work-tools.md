@@ -30,4 +30,15 @@ grant.revoke();
 
 幂等键沿用 principalId + commandId。相同摘要重放返回原回执并置 replayed=true，不再提交；不同摘要返回 conflict。已失效的授权不能借历史回执绕过重新核验。新的可信授权可以在相同主体及仍有效的业务身份下读取原稳定回执。
 
-任务索引：`test/index/phases/P04/features/P04-2/tasks/F-006.json`。本地运行 Host 新增 11 项和 F-005 通道 13 项，24/24 通过；覆盖真实 SQLite/Artifact/候选验证、并发重放、冲突、脱敏、身份伪造、跨范围、授权撤销与过期、lease/fence/终态、在途停止、注册表重建及实际 startHost。索引中的其他既有回归交 Nezha 独立执行。Core/Host 定向 TypeScript 构建通过；全仓类型检查仍受既有 `test/modules/runtime/p04-1-pi-f007-contract.test.ts:77` TS18046 影响。没有运行全仓测试、组合 verify、Phase 验收或真实模型。
+客户端通过 `shiploop-core/protocol` 复用纯信封/错误/回执校验，查询结果类型仅作 type-only 导出，不加载业务通道。Host 源码公共入口可由 Node 22 原生类型擦除加载；Pi Runner 事件通道使用显式字段赋值，避免构造器参数属性导致子进程在 ready 前退出。runtime 边界检查允许现有 Pi 适配器和认证目录两处延迟加载 SDK，禁止静态值加载及其他 runtime 模块加载 SDK；网络/进程/ORM/argv 禁用规则继续保留。
+
+任务索引：`test/index/phases/P04/features/P04-2/tasks/F-006.json`。初轮本地 Host 新增 11 项和 F-005 通道 13 项，24/24 通过；覆盖真实 SQLite/Artifact/候选验证、并发重放、冲突、脱敏、身份伪造、跨范围、授权撤销与过期、lease/fence/终态、在途停止、注册表重建及实际 startHost。初轮独立验收 362 项有 7 项失败，本轮修复上述入口兼容性与边界检查。
+
+返工验证完整日志位于 Feature workspace 的 `verifications/F-006/runtime-logs/`：
+
+- `test-9d5c60fe.log`：单点源码加载诊断 exit=1，确认 `ERR_UNSUPPORTED_TYPESCRIPT_SYNTAX`。
+- `test-ffxtjpgv.log`：6 文件 176 passed / 1 failed / 0 skipped；Work Host/Core 及启动/停止/CLI 回归全部通过，仅边界检查尚未纳入 F-002 认证目录的现有延迟加载。
+- `test-3faefah9.log`：修正边界检查后仅复测相关契约与 Pi Runner，89 passed / 0 failed / 0 skipped，exit=0。结合上条已通过且未再修改的 5 文件，本轮共 7 文件、182 个不同用例均取得通过证据。
+- `test-z5i9rpwq.log`：Core/Host 定向 TypeScript 构建 exit=0。本轮没有重复全仓类型检查；此前既有 `test/modules/runtime/p04-1-pi-f007-contract.test.ts:77` TS18046 记录保留。
+
+v2 索引增加直接受影响的 Pi Runner 回归，保留原有全部选择，共 11 个文件。剩余 4 个既有 Host/命令回归本轮未本地执行，交 Nezha 独立验证。没有运行全仓测试、组合 verify、Phase 验收或真实模型；本地结果与 CLI completed 声明均不代表独立验收通过。
