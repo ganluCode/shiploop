@@ -15,7 +15,7 @@ import {
   createPiRuntimeDescriptor,
 } from '../../../packages/host/src/runtime/pi-adapter.ts';
 import type { PiSession, PiTrustedAssembly } from '../../../packages/host/src/runtime/pi-adapter.ts';
-import type { RuntimeExecutionRequest } from '../../../packages/core/src/ports/runtime-execution.ts';
+import type { RuntimeExecutionRequest, RuntimeExecutionResult, RuntimeEvent } from '../../../packages/core/src/ports/runtime-execution.ts';
 import type { ExecutionInputRef } from '../../../packages/core/src/ports/execution-input.ts';
 import {
   createStaticRuntimeCapabilityCatalog,
@@ -193,7 +193,7 @@ describe('P04-1 standard Pi SDK contract', () => {
       expect.objectContaining({ kind: 'usage' }),
       expect.objectContaining({ kind: 'message' }),
     ]));
-    await expect(handle.stopped).resolves.toMatchObject({ confirmed: true });
+    await expect(handle.stopped).resolves.toMatchObject({ confirmed: false, detail: 'pi_sdk_idle' });
   });
 
   it('[case:pi-event-normalization] coalesces message updates, deduplicates tool and usage facts, and retains unknown diagnostics', async () => {
@@ -270,7 +270,7 @@ describe('P04-1 standard Pi SDK contract', () => {
     const first = await registration.adapter.start(request());
     await first.result;
     const second = await registration.adapter.start(request({
-      attemptId: 'attempt-2',
+      identity: { purpose: 'work', runId: 'run-1', taskId: 'task-1', attemptId: 'attempt-2' },
       invocationId: 'invocation-2',
       sessionId: 'session-2',
     }));
@@ -286,7 +286,7 @@ describe('P04-1 standard Pi SDK contract', () => {
       providerSessionId: expect.stringMatching(/^provider-session-/),
       sessionFile: expect.stringContaining('/managed/session/'),
     });
-    expect(first.nativeSession?.providerSessionId).not.toBe(request().identity.attemptId);
+    expect(first.nativeSession?.providerSessionId).not.toBe('attempt-1');
   });
 
   it('[case:pi-credential-preflight] rejects a missing trusted credential reference before SDK initialization', async () => {
@@ -313,7 +313,7 @@ describe('P04-1 standard Pi SDK contract', () => {
 
     const handle = await registration.adapter.start(request());
     await expect(handle.result).resolves.toMatchObject({ terminal: 'failed', reason: 'context_error' });
-    await expect(handle.stopped).resolves.toMatchObject({ confirmed: true });
+    await expect(handle.stopped).resolves.toMatchObject({ confirmed: false, detail: 'pi_sdk_stop_unknown' });
     expect(session.wasDisposed()).toBe(true);
   });
 
@@ -338,7 +338,7 @@ describe('P04-1 standard Pi SDK contract', () => {
     const handle = await registration.adapter.start(request());
     await expect(handle.cancel()).resolves.toEqual({ accepted: true, reason: null });
     await expect(handle.result).resolves.toMatchObject({ terminal: 'cancelled', reason: 'cancelled' });
-    await expect(handle.stopped).resolves.toMatchObject({ confirmed: true });
+    await expect(handle.stopped).resolves.toMatchObject({ confirmed: false, detail: 'pi_sdk_idle' });
     expect(session.wasAborted()).toBe(true);
   });
 

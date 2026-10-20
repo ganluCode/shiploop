@@ -1,9 +1,10 @@
 /** Single-invocation Runner endpoint; SDK/resource construction is supplied by trusted assembly. */
 import { createHash } from 'node:crypto';
 import {
-  RuntimeError, validateRuntimeExecutionResult, validateRuntimeStopEvidence,
+  RuntimeError, validateRuntimeCancelReceipt, validateRuntimeExecutionResult, validateRuntimeStopEvidence,
 } from 'shiploop-core';
-import type { RuntimeAdapter, RuntimeExecutionRequest, RuntimeHandle } from 'shiploop-core';
+import type { RuntimeAdapter, RuntimeCancelReceipt, RuntimeExecutionRequest, RuntimeHandle } from 'shiploop-core';
+import { observePiWithin, PI_ABORT_WAIT_MS, PI_STOP_WAIT_MS } from './pi-lifecycle.js';
 import {
   PI_RUNNER_MAX_REQUEST_BYTES, encodePiRunnerMessage, normalizePiRunnerEvent, piRunnerMessage, runnerProtocolError,
   validatePiRunnerRequest,
@@ -14,6 +15,8 @@ export interface PiWorkRunnerOptions {
   readonly adapter: RuntimeAdapter;
   /** Dedicated protocol sink, never console/stdout logging. Completion means the bounded write drained. */
   readonly write: (bytes: Uint8Array) => Promise<void>;
+  /** Trusted control input; OS signals are attached only by the standalone entry. */
+  readonly signal?: AbortSignal;
 }
 
 export function createPiWorkRunner(options: PiWorkRunnerOptions): {
@@ -43,12 +46,32 @@ async function execute(request: RuntimeExecutionRequest, options: PiWorkRunnerOp
   const result = handle.result.then(value => ({ value, failed: false as const }), () => ({ failed: true as const }));
   const stopped = handle.stopped.then(value => ({ value, failed: false as const }), () => ({ failed: true as const }));
   let sequence = 0, outputBytes = 0, eventSequence: number | null = null, events = 0;
-  const publish = async (body: PiRunnerBody) => {
-    const bytes = encodePiRunnerMessage(piRunnerMessage(request, ++sequence, body));
-    outputBytes += bytes.byteLength;
-    if (outputBytes > request.limits.maxOutputBytes) throw runnerProtocolError('runner_output_overflow');
-    await options.write(bytes);
+  let writes = Promise.resolve();
+  const publish = (body: PiRunnerBody): Promise<void> => {
+    // Serialize control receipts with data frames, including under backpressure.
+    const write = writes.then(async () => {
+      const bytes = encodePiRunnerMessage(piRunnerMessage(request, ++sequence, body));
+      outputBytes += bytes.byteLength;
+      if (outputBytes > request.limits.maxOutputBytes) throw runnerProtocolError('runner_output_overflow');
+      await options.write(bytes);
+    });
+    writes = write;
+    return write;
   };
+  let cancelPromise: Promise<void> | undefined;
+  const cancel = () => {
+    cancelPromise ??= (async () => {
+      const observed = await observePiWithin(Promise.resolve().then(() => handle.cancel()), PI_ABORT_WAIT_MS);
+      const receipt: RuntimeCancelReceipt = observed.status === 'fulfilled' ? validateRuntimeCancelReceipt(observed.value)
+        : { accepted: false, reason: observed.status === 'timeout' ? 'runner_sdk_cancel_timeout' : 'runner_sdk_cancel_failed' };
+      await publish({ kind: 'cancel_receipt', body: receipt });
+    })();
+    // A disconnected sink is handled by the main execute path; never an unhandled rejection.
+    void cancelPromise.catch(() => {});
+  };
+  options.signal?.addEventListener('abort', cancel, { once: true });
+  if (options.signal?.aborted) cancel();
+  const timer = setTimeout(cancel, request.limits.timeoutMs);
   try {
     for await (const raw of handle.events) {
       const event = normalizePiRunnerEvent(raw);
@@ -61,15 +84,22 @@ async function execute(request: RuntimeExecutionRequest, options: PiWorkRunnerOp
     if (observed.failed) throw runnerProtocolError('runner_runtime_result_failed');
     const terminal = validateRuntimeExecutionResult(observed.value);
     if (terminal.lastEventSequence !== eventSequence) throw runnerProtocolError('runner_result_watermark');
+    clearTimeout(timer);
+    options.signal?.removeEventListener('abort', cancel);
+    await cancelPromise;
     await publish({ kind: 'result', body: terminal });
-    const stop = await stopped;
-    if (stop.failed) throw runnerProtocolError('runner_runtime_stop_failed');
-    await publish({ kind: 'stopped', body: validateRuntimeStopEvidence(stop.value) });
+    const stop = await observePiWithin(stopped, PI_STOP_WAIT_MS);
+    const evidence = stop.status === 'fulfilled' && !stop.value.failed ? validateRuntimeStopEvidence(stop.value.value)
+      : { schemaVersion: 1 as const, confirmed: false, checkedAtUtc: new Date().toISOString(), detail: 'runner_runtime_stop_unknown' };
+    await publish({ kind: 'stopped', body: evidence });
   } catch (error) {
     // Do not print arbitrary SDK exceptions or raw input. Host retains typed protocol/process evidence.
-    void handle.cancel().catch(() => {});
+    cancel();
     if (error instanceof RuntimeError) throw error;
     throw new RuntimeError('process', 'runner_channel_failed');
+  } finally {
+    clearTimeout(timer);
+    options.signal?.removeEventListener('abort', cancel);
   }
 }
 
@@ -87,5 +117,13 @@ export async function runPiWorkRunner(options: PiWorkRunnerOptions & {
   let value: unknown;
   try { value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks))); }
   catch { throw runnerProtocolError('runner_invalid_request_json'); }
-  await createPiWorkRunner(options).start(value);
+  const controller = new AbortController();
+  const cancel = () => controller.abort();
+  process.on('SIGTERM', cancel);
+  process.on('SIGINT', cancel);
+  try { await createPiWorkRunner({ ...options, signal: options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal }).start(value); }
+  finally {
+    process.removeListener('SIGTERM', cancel);
+    process.removeListener('SIGINT', cancel);
+  }
 }

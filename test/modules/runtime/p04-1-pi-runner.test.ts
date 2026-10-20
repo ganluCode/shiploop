@@ -97,10 +97,12 @@ it('[case:runner-sequenced-success] handles fragmented UTF-8 frames, usage and i
   const handle = await fixture.adapter.start(request());
   const events: unknown[] = [];
   for await (const item of handle.events) events.push(item);
-  expect(events).toEqual([{ ...event(), payload: event().payload.kind === 'usage' ? event().payload.usage : event().payload }]);
-  await expect(handle.result).resolves.toMatchObject({ terminal: 'completed', usage: event().payload.kind === 'usage' ? event().payload.usage : null,
+  const expectedEvent = event();
+  const expectedUsage = expectedEvent.payload.kind === 'usage' ? expectedEvent.payload.usage : null;
+  expect(events).toEqual([{ ...expectedEvent, payload: expectedUsage }]);
+  await expect(handle.result).resolves.toMatchObject({ terminal: 'completed', usage: expectedUsage,
     lastEventSequence: 1, exitCode: 0, signal: null });
-  await expect(handle.stopped).resolves.toMatchObject({ confirmed: true });
+  await expect(handle.stopped).resolves.toMatchObject({ confirmed: false, detail: 'runner_resources_stop_unknown' });
   expect(handle.inspect()).toMatchObject({ failure: null, lastMessageSequence: 3, bufferedBytes: 0 });
   expect(fixture.cancel).not.toHaveBeenCalled();
 });

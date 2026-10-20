@@ -7,6 +7,7 @@
  */
 import { createHash } from 'node:crypto';
 import path from 'node:path';
+import { observePiWithin, PI_ABORT_WAIT_MS, PI_STOP_WAIT_MS } from './pi-lifecycle.js';
 import {
   createAgentSession,
   SessionManager,
@@ -18,6 +19,7 @@ import type {
 import type {
   ProviderCapabilityDescriptor,
   RuntimeAdapter,
+  RuntimeCancelReceipt,
   RuntimeAdapterDescriptor,
   RuntimeErrorKind,
   RuntimeEvent,
@@ -351,6 +353,26 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
       let terminalReason: string | null = null;
       let terminalObserved = false;
       let cancelRequested = false;
+      let finalized = false, idleObserved = false, cleanupSucceeded = true;
+      let stopReason: 'cancelled' | 'timed_out' | null = null;
+      let cancelPromise: Promise<RuntimeCancelReceipt> | undefined;
+      let resolveStop!: () => void;
+      const stopBoundary = new Promise<void>(resolve => { resolveStop = resolve; });
+      let stopTimer: NodeJS.Timeout | undefined;
+      const cancel = (reason: 'cancelled' | 'timed_out' = 'cancelled'): Promise<RuntimeCancelReceipt> => {
+        if (cancelPromise) return cancelPromise;
+        if (finalized) return Promise.resolve({ accepted: false, reason: 'already_settled' });
+        cancelRequested = true;
+        stopReason = reason;
+        stopTimer = setTimeout(resolveStop, PI_ABORT_WAIT_MS + PI_STOP_WAIT_MS);
+        cancelPromise = observePiWithin(Promise.resolve().then(() => session.abort()), PI_ABORT_WAIT_MS).then(outcome => {
+          if (outcome.status === 'fulfilled') return { accepted: true, reason: null };
+          const code = outcome.status === 'timeout' ? 'sdk_abort_timeout' : 'sdk_abort_failed';
+          if (!finalized) diagnostic(code, code);
+          return { accepted: false, reason: code };
+        });
+        return cancelPromise;
+      };
       let messageOrdinal = 0;
       let activeMessageKey: string | undefined;
       const pendingMessages = new Map<string, { message: unknown; usage: RuntimeUsageReport | null }>();
@@ -415,6 +437,7 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
       let unsubscribe: () => void = () => undefined;
       try {
         unsubscribe = session.subscribe((raw) => {
+          if (finalized) return;
           if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
             diagnostic('pi_unknown_event', 'unknown SDK event');
             return;
@@ -486,23 +509,34 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
         throw classifyPiFailure(error, 'sdk_initialization_failed', 'configuration');
       }
 
+      const executionTimer = setTimeout(() => { void cancel('timed_out'); }, request.limits.timeoutMs);
+      const work = (async () => {
+        await session.prompt(prompt);
+        if (session.waitForIdle !== undefined) {
+          await session.waitForIdle();
+          idleObserved = true;
+        }
+      })();
       const result = (async () => {
         try {
-          await session.prompt(prompt);
-          if (session.waitForIdle !== undefined) {
-            await session.waitForIdle();
-          }
-          if (cancelRequested) terminal = 'cancelled';
-          if (!terminalObserved) {
+          const observed = await Promise.race([
+            work.then(() => 'finished' as const), stopBoundary.then(() => 'stop_timeout' as const),
+          ]);
+          if (observed === 'stop_timeout') diagnostic('sdk_stop_timeout', 'SDK idle was not confirmed before the stop deadline');
+          if (cancelRequested) {
+            await cancelPromise;
+            terminal = stopReason === 'timed_out' ? 'timed_out' : 'cancelled';
+            terminalReason = stopReason;
+          } else if (!terminalObserved) {
             terminal = 'failed';
             terminalReason = 'missing_terminal';
             diagnostic('pi.missing_terminal', 'Pi prompt ended without agent_settled');
           }
         } catch (error) {
           if (cancelRequested) {
-            terminal = 'cancelled';
-            terminalReason = 'cancelled';
-            terminalObserved = true;
+            await cancelPromise;
+            terminal = stopReason === 'timed_out' ? 'timed_out' : 'cancelled';
+            terminalReason = stopReason;
           } else {
             const failure = classifyPiFailure(error, 'model_error');
             terminal = 'failed';
@@ -511,16 +545,14 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
             diagnostic(`pi.${failure.reason}`, failure.reason);
           }
         } finally {
-          try {
-            unsubscribe();
-          } finally {
-            events.close();
-            try {
-              session.dispose();
-            } catch {
-              // 保留已有运行事实；资源释放失败不覆盖原始终态。
-            }
-          }
+          clearTimeout(executionTimer);
+          clearTimeout(stopTimer);
+          // Preserve the last partial response and reported usage before closing the stream.
+          for (const key of pendingMessages.keys()) flushMessage(key);
+          finalized = true;
+          try { unsubscribe(); } catch { cleanupSucceeded = false; }
+          events.close();
+          try { session.dispose(); } catch { cleanupSucceeded = false; }
         }
         return {
           schemaVersion: 1,
@@ -537,9 +569,10 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
       })();
       const stopped = result.then(() => ({
         schemaVersion: 1,
-        confirmed: true,
+        // SDK idle/dispose is one observation, never OS tool/resource stop proof.
+        confirmed: false,
         checkedAtUtc: new Date().toISOString(),
-        detail: null,
+        detail: idleObserved && cleanupSucceeded ? 'pi_sdk_idle' : 'pi_sdk_stop_unknown',
       }));
       return {
         events,
@@ -550,16 +583,7 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
           providerSessionId: session.sessionId === undefined ? null : identityToken(session.sessionId, `${request.invocationId}-provider-session`),
           sessionFile: session.sessionFile ?? null,
         },
-        async cancel() {
-          if (cancelRequested) return { accepted: true, reason: 'already_requested' };
-          cancelRequested = true;
-          try {
-            await session.abort();
-            return { accepted: true, reason: null };
-          } catch {
-            return { accepted: false, reason: 'cancel_failed' };
-          }
-        },
+        cancel: () => cancel(),
       };
     },
   };

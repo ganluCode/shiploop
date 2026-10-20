@@ -1,9 +1,12 @@
 /** Supervised Pi transport. Trusted composition owns executable, environment and identity commit. */
 import { createHash } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
+import { observePiWithin, PI_ABORT_WAIT_MS, PI_STOP_WAIT_MS } from './pi-lifecycle.js';
 import { RuntimeError } from 'shiploop-core';
 import type {
   CommandProcessHandle, CommandProcessPort, CommandProcessResult, CommandProcessIdentity,
   RuntimeExecutionRequest, RuntimeExecutionResult, RuntimeEvent, RuntimeHandle, RuntimeStopEvidence, RuntimeUsageReport,
+  RuntimeCancelReceipt, WorkResourceSnapshot, WorkResourceStopVerifier,
 } from 'shiploop-core';
 import {
   PiRunnerDecoder, PiRunnerEventChannel, validatePiRunnerMessage, validatePiRunnerRequest,
@@ -11,13 +14,19 @@ import {
 
 export interface PiRunnerSnapshot {
   readonly failure: { readonly kind: 'protocol' | 'process' | 'timeout'; readonly reason: string; readonly sequence: number } | null;
-  readonly diagnostics: readonly { readonly code: string; readonly sequence: number }[];
+  readonly diagnostics: readonly { readonly code: string; readonly sequence: number; readonly kind: 'process' | 'timeout' | 'unknown' | 'protocol' }[];
   readonly lastMessageSequence: number;
   readonly lastEventSequence: number | null;
   readonly bufferedEvents: number;
   readonly bufferedBytes: number;
   readonly exitCode: number | null;
   readonly signal: string | null;
+  readonly cancelReceipt: RuntimeCancelReceipt | null;
+  readonly processCancelAccepted: boolean | null;
+  readonly eventsEnded: boolean;
+  readonly terminalResult: RuntimeExecutionResult | null;
+  readonly processExited: boolean;
+  readonly resourceStop: 'confirmed' | 'unconfirmed' | 'unknown';
 }
 export interface PiRunnerHandle extends RuntimeHandle {
   readonly result: Promise<RuntimeExecutionResult>;
@@ -30,6 +39,11 @@ export interface PiRunnerAdapterOptions {
   readonly cwd: string;
   readonly environment: Readonly<Record<string, string>>;
   readonly confirm: (identity: CommandProcessIdentity, request: RuntimeExecutionRequest) => Promise<{ readonly launchId: string }>;
+  /** Existing tool/resource authority, bound to this launch. Must not wait on this handle's stopped. */
+  readonly resourceStop?: {
+    readonly snapshot: (request: RuntimeExecutionRequest) => WorkResourceSnapshot;
+    readonly verifier: WorkResourceStopVerifier;
+  };
 }
 
 /** No eviction: forgetting an invocation would permit replay. Create a new scope only with Core authorization. */
@@ -64,7 +78,7 @@ export function createPiRunnerAdapter(options: PiRunnerAdapterOptions): {
             maxInputBytes: 65_536, maxOutputBytes: request.limits.maxOutputBytes,
           }, identity => options.confirm(identity, request));
         } catch { throw new RuntimeError('process', 'runner_start_failed'); }
-        return manageRunner(request, processHandle);
+        return manageRunner(request, processHandle, options.resourceStop);
       });
       invocations.set(request.invocationId, { digest, handle });
       return handle;
@@ -79,7 +93,8 @@ function wireEvent(event: RuntimeEvent): RuntimeEvent {
   return { ...event, payload: wirePayload as RuntimeEvent['payload'] };
 }
 
-function manageRunner(request: RuntimeExecutionRequest, process: CommandProcessHandle): PiRunnerHandle {
+function manageRunner(request: RuntimeExecutionRequest, process: CommandProcessHandle,
+  resourceProof: PiRunnerAdapterOptions['resourceStop']): PiRunnerHandle {
   let failure: PiRunnerSnapshot['failure'] = null;
   let lastMessageSequence = 0, lastEventSequence: number | null = null;
   let usage: RuntimeUsageReport | null = null;
@@ -87,20 +102,33 @@ function manageRunner(request: RuntimeExecutionRequest, process: CommandProcessH
   let runnerStop: RuntimeStopEvidence | null = null;
   let outcome: CommandProcessResult | null = null;
   let outputBytes = 0, eventCount = 0;
-  let settled = false, cancelPromise: Promise<{ accepted: boolean; reason: string | null }> | undefined;
-  const diagnostics: Array<{ code: string; sequence: number }> = [];
-  const diagnose = (code: string) => {
-    if (diagnostics.length < 32) diagnostics.push({ code, sequence: lastMessageSequence });
+  let settled = false, eventsEnded = false;
+  let cancelPromise: Promise<RuntimeCancelReceipt> | undefined;
+  let cancelReceipt: RuntimeCancelReceipt | null = null, processCancelAccepted: boolean | null = null;
+  let resourceStop: PiRunnerSnapshot['resourceStop'] = 'unknown';
+  let resolveReceipt!: (receipt: RuntimeCancelReceipt) => void;
+  const receiptObserved = new Promise<RuntimeCancelReceipt>(resolve => { resolveReceipt = resolve; });
+  const diagnostics: Array<PiRunnerSnapshot['diagnostics'][number]> = [];
+  const diagnose = (code: string, kind: PiRunnerSnapshot['diagnostics'][number]['kind'] =
+    /timeout|timed_out/.test(code) ? 'timeout' : /unknown|unconfirmed|missing/.test(code) ? 'unknown' : 'process') => {
+    if (diagnostics.length < 32) diagnostics.push({ code, sequence: lastMessageSequence, kind });
   };
   const cancel = () => {
-    cancelPromise ??= process.cancel().then(receipt => ({ accepted: receipt.accepted, reason: null }),
-      () => ({ accepted: false, reason: 'runner_cancel_failed' }));
+    cancelPromise ??= (async () => {
+      const observation = await observePiWithin(Promise.resolve().then(() => process.cancel()), PI_ABORT_WAIT_MS);
+      processCancelAccepted = observation.status === 'fulfilled' ? observation.value.accepted : null;
+      if (observation.status !== 'fulfilled') diagnose(observation.status === 'timeout' ? 'runner_process_cancel_timeout' : 'runner_process_cancel_failed');
+      const receipt = await observePiWithin(receiptObserved, PI_ABORT_WAIT_MS);
+      if (receipt.status === 'fulfilled') return receipt.value;
+      diagnose('runner_cancel_receipt_unknown');
+      return { accepted: false, reason: 'runner_cancel_receipt_unknown' };
+    })();
     return cancelPromise;
   };
   const fail = (kind: 'protocol' | 'process' | 'timeout', reason: string) => {
     if (failure || settled) return;
     failure = { kind, reason, sequence: lastMessageSequence };
-    diagnose(reason);
+    diagnose(reason, kind);
     void cancel();
   };
   const channel = new PiRunnerEventChannel(() => fail('protocol', 'runner_consumer_closed'));
@@ -110,7 +138,7 @@ function manageRunner(request: RuntimeExecutionRequest, process: CommandProcessH
       for await (const output of process.output) {
         outputBytes += output.bytes.byteLength;
         if (outputBytes > request.limits.maxOutputBytes) fail('protocol', 'runner_output_overflow');
-        if (failure) continue; // Keep draining supervised pipes after a controlled failure.
+        if (failure || settled) continue; // Keep draining supervised pipes after a controlled failure or settlement.
         if (output.stream === 'stderr') {
           // Never retain arbitrary SDK stderr: it can contain prompt text, paths or secrets.
           diagnose('runner_stderr_omitted');
@@ -141,6 +169,11 @@ function manageRunner(request: RuntimeExecutionRequest, process: CommandProcessH
               if (!candidate) throw new RuntimeError('protocol', 'runner_stop_before_result');
               runnerStop = message.body;
               break;
+            case 'cancel_receipt':
+              if (cancelReceipt) throw new RuntimeError('protocol', 'runner_duplicate_cancel_receipt');
+              cancelReceipt = message.body;
+              resolveReceipt(message.body);
+              break;
             case 'diagnostic':
               if (diagnostics.length >= 32) throw new RuntimeError('protocol', 'runner_diagnostics_overflow');
               diagnose(message.body.code);
@@ -154,22 +187,50 @@ function manageRunner(request: RuntimeExecutionRequest, process: CommandProcessH
         error instanceof RuntimeError ? error.reason : 'runner_disconnected');
       // A broken decoder must not stop draining the bounded process output.
       // Generator exceptions close its consumer; CommandProcess also requests controlled stop.
-    } finally { channel.close(); }
+    } finally { eventsEnded = true; channel.close(); }
   })();
-  const processResult = process.result.then(value => { outcome = value; return value; }, () => {
+  const processResult = process.result.then(value => {
+    outcome = value;
+    if (value.reason === null && value.signal === null && value.exitCode === 0) diagnose('runner_exited');
+    return value;
+  }, () => {
     fail('process', 'runner_process_lost');
     return null;
   });
-  const stopped = process.stopped.then(async stop => {
-    await drain;
-    return {
-      schemaVersion: 1 as const, confirmed: stop.confirmed && runnerStop?.confirmed === true,
-      checkedAtUtc: new Date().toISOString(),
-      detail: !stop.confirmed ? 'runner_process_stop_unconfirmed' : runnerStop?.confirmed !== true ? 'runner_stop_evidence_missing' : null,
-    };
-  }, () => ({ schemaVersion: 1 as const, confirmed: false, checkedAtUtc: new Date().toISOString(), detail: 'runner_process_stop_unknown' }));
+  const stopped = (async (): Promise<RuntimeStopEvidence> => {
+    const stop = await observePiWithin(process.stopped, request.limits.timeoutMs + PI_STOP_WAIT_MS + 15_000);
+    const drained = await observePiWithin(drain, PI_STOP_WAIT_MS);
+    const observedProcess = outcome as CommandProcessResult | null;
+    const observedStop = runnerStop as RuntimeStopEvidence | null;
+    let detail: string | null = null;
+    if (stop.status !== 'fulfilled') detail = stop.status === 'timeout' ? 'runner_process_stop_timeout' : 'runner_process_stop_unknown';
+    else if (!stop.value.confirmed) detail = 'runner_process_stop_unconfirmed';
+    else if (drained.status !== 'fulfilled') detail = 'runner_channel_stop_timeout';
+    else if (!observedProcess || (observedProcess.exitCode === null && observedProcess.signal === null)) detail = 'runner_exit_unknown';
+    else if (!observedStop || (!observedStop.confirmed && observedStop.detail !== 'pi_sdk_idle')) detail = 'runner_stop_evidence_missing';
+    else if (!resourceProof) detail = 'runner_resources_stop_unknown';
+    else {
+      const proof = await observePiWithin(Promise.resolve().then(async () => {
+        const snapshot = structuredClone(resourceProof.snapshot(request));
+        const work = request.identity;
+        if (work.purpose !== 'work' || snapshot.invocationId !== request.invocationId
+          || snapshot.identity.projectId !== request.projectId || snapshot.identity.attemptId !== work.attemptId
+          || snapshot.identity.owner !== request.owner.principalId || snapshot.identity.hostInstanceId !== request.owner.hostInstanceId
+          || snapshot.identity.executionVersion !== request.executionVersion
+          || !isDeepStrictEqual(snapshot.processIdentity, process.identity)) return false;
+        const token = await resourceProof.verifier.verify(snapshot);
+        return token !== null && isDeepStrictEqual(resourceProof.verifier.inspect(token), snapshot);
+      }), PI_STOP_WAIT_MS);
+      resourceStop = proof.status === 'fulfilled' ? (proof.value ? 'confirmed' : 'unconfirmed') : 'unknown';
+      if (resourceStop !== 'confirmed') detail = proof.status === 'timeout' ? 'runner_resources_stop_timeout' : 'runner_resources_stop_unconfirmed';
+    }
+    if (detail) diagnose(detail);
+    return { schemaVersion: 1, confirmed: detail === null, checkedAtUtc: new Date().toISOString(), detail };
+  })();
   const result = (async (): Promise<RuntimeExecutionResult> => {
-    await Promise.all([drain, processResult]);
+    await processResult;
+    const drained = await observePiWithin(drain, PI_STOP_WAIT_MS);
+    if (drained.status !== 'fulfilled') { fail('process', 'runner_channel_timeout'); channel.close(); }
     const observed = outcome as CommandProcessResult | null;
     if (!failure) {
       if (observed?.reason === 'timed_out') fail('timeout', 'runner_timed_out');
@@ -188,14 +249,17 @@ function manageRunner(request: RuntimeExecutionRequest, process: CommandProcessH
       terminal: error?.kind === 'timeout' ? 'timed_out' : error?.reason === 'runner_cancelled' ? 'cancelled' : error ? 'failed' : final!.terminal,
       reason: error?.reason ?? final?.reason ?? null,
       exitCode: observed?.exitCode ?? null, signal: observed?.signal ?? null,
+      providerSessionId: final?.providerSessionId ?? null, diagnosticRefs: final?.diagnosticRefs ?? [],
       durationMs: final?.durationMs ?? null, usage, lastEventSequence,
     };
   })();
   return {
     events: channel, result, stopped,
-    cancel: () => settled ? Promise.resolve({ accepted: false, reason: 'runner_already_settled' }) : cancel(),
+    cancel: () => cancelPromise ? cancelPromise : settled ? Promise.resolve({ accepted: false, reason: 'runner_already_settled' }) : cancel(),
     inspect: () => ({ failure: failure && { ...failure }, diagnostics: diagnostics.map(item => ({ ...item })),
       lastMessageSequence, lastEventSequence, bufferedEvents: channel.snapshot().events, bufferedBytes: channel.snapshot().bytes,
-      exitCode: outcome?.exitCode ?? null, signal: outcome?.signal ?? null }),
+      exitCode: outcome?.exitCode ?? null, signal: outcome?.signal ?? null,
+      cancelReceipt: cancelReceipt && { ...cancelReceipt }, processCancelAccepted, eventsEnded,
+      terminalResult: candidate && structuredClone(candidate), processExited: outcome !== null && (outcome.exitCode !== null || outcome.signal !== null), resourceStop }),
   };
 }

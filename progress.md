@@ -1,3 +1,13 @@
+# P04-1 工作进度
+
+## F-005 — Pi Runner 最小取消、有限时限与停止证据（2026-10-20）
+
+- 在 F-002/F-004 基础上连接 Core cancel → CommandProcess 受控信号 → Runner AbortSignal → SDK abort；取消幂等且有限观察，cancel_receipt、terminal result、stopped evidence 独立输出。执行 timeoutMs 到期走同一 abort 路径，保留部分消息、usage、水位、退出信号与原生结果。
+- Host inspect 分别记录进程请求接受、SDK 回执、事件流结束、原生终态、进程退出及资源核验；SDK idle/Runner exit 不足以 confirmed=true。注入既有 WorkResourceStopVerifier 时按完整执行和 OS 进程身份核对 token；证据缺失、拒绝或超时返回 false，Core 保留/quarantine 占用并阻止重跑。
+- 新增 31 项停止测试，包含真实受监督 Node Runner 的 SIGTERM/SDK abort/进程组核验，以及真实 Core SQLite/Git 的并发取消、一次结算、三个 lease 隔离与重跑拒绝。修复真实 Runner 暴露的 Core usage 外层白名单遗漏 completeness/accounting。
+- 最终本地聚焦：3 文件、49 passed/0 failed/0 skipped；test-7axqxts6.log。typecheck：test-escx3giw.log，exit 0；boundaries：test-kfqwk97q.log，291 文件/0 diagnostics。完整日志和退出码 sidecar 位于本 Feature workspace verifications/F-005/runtime-logs/；中间 RED 与夹具诊断保留。
+- 交接见 [F-005 停止证据](docs/p04-1-f005-pi-stopping.md)。仓库 F-005 测试索引及 Harness 引用选择已落盘；另五个 Core 受影响回归仅登记交 Nezha。未运行全量、组合门禁、阶段验收或真实模型；未改正式 feature.yaml/task_list，提交与报告以 Git/Nezha 为准。
+
 # P03-10 工作进度
 
 ## F-010 — 输入装配历史增长与必需输入完整性确定性回归（2026-10-19）

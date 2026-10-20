@@ -1,10 +1,10 @@
 /** Private Host/Runner wire format. No SDK, storage, prompt text or credentials. */
 import {
   RuntimeError, validateRuntimeEvent, validateRuntimeExecutionRequest,
-  validateRuntimeExecutionResult, validateRuntimeStopEvidence,
+  validateRuntimeExecutionResult, validateRuntimeStopEvidence, validateRuntimeCancelReceipt,
 } from 'shiploop-core';
 import type {
-  RuntimeEvent, RuntimeExecutionRequest, RuntimeExecutionResult, RuntimeStopEvidence,
+  RuntimeEvent, RuntimeExecutionRequest, RuntimeExecutionResult, RuntimeStopEvidence, RuntimeCancelReceipt,
 } from 'shiploop-core';
 
 export const PI_RUNNER_PROTOCOL_VERSION = 1;
@@ -29,6 +29,7 @@ export type PiRunnerBody =
   | { readonly kind: 'event'; readonly body: RuntimeEvent }
   | { readonly kind: 'result'; readonly body: RuntimeExecutionResult }
   | { readonly kind: 'stopped'; readonly body: RuntimeStopEvidence }
+  | { readonly kind: 'cancel_receipt'; readonly body: RuntimeCancelReceipt }
   | { readonly kind: 'diagnostic'; readonly body: { readonly code: string } };
 
 export type PiRunnerMessage = PiRunnerBody & {
@@ -89,6 +90,7 @@ export function validatePiRunnerMessage(value: unknown, request: RuntimeExecutio
     case 'event': payload = { kind: 'event', body: validateRuntimeEvent(raw.body) }; break;
     case 'result': payload = { kind: 'result', body: validateRuntimeExecutionResult(raw.body) }; break;
     case 'stopped': payload = { kind: 'stopped', body: validateRuntimeStopEvidence(raw.body) }; break;
+    case 'cancel_receipt': payload = { kind: 'cancel_receipt', body: validateRuntimeCancelReceipt(raw.body) }; break;
     case 'diagnostic': {
       const body = raw.body as Record<string, unknown> | null;
       if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some(key => key !== 'code')

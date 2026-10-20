@@ -465,7 +465,7 @@ function payloadKeys(kind: RuntimeEventKind): readonly string[] {
     case 'message': return ['messageId', 'role', 'preview'];
     case 'tool_started': return ['toolCallId', 'toolName'];
     case 'tool_finished': return ['toolCallId', 'exitCode', 'signal', 'reason', 'outputBytes', 'lastActivityAtUtc'];
-    case 'usage': return ['basis', 'inputTokens', 'outputTokens', 'costUsdMicros'];
+    case 'usage': return ['basis', 'inputTokens', 'outputTokens', 'costUsdMicros', 'completeness', 'accounting'];
     case 'warning': return ['code', 'message'];
     case 'diagnostic': return ['code', 'message'];
   }
