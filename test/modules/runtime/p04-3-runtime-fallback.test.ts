@@ -8,6 +8,12 @@ import {
   type RuntimeFallbackSwitchDecision,
 } from '../../../packages/core/src/application/runtime-fallback.ts';
 import { createStaticRuntimeCapabilityCatalog } from '../../../packages/core/src/ports/runtime-capabilities.ts';
+import { createSqliteRuntimeFallbackSwitchService } from '../../../packages/core/src/adapters/sqlite/runtime-fallback-switch.ts';
+import { createWorkResourceStopVerifier } from '../../../packages/core/src/application/work-resource-stop.ts';
+import { createSqliteWorkResourceAccess } from '../../../packages/core/src/adapters/sqlite/work-resources.ts';
+import { createSqliteExecutionAccess } from '../../../packages/core/src/adapters/sqlite/execution-store.ts';
+import { NOW } from '../../helpers/p03-3/budget-fixture.ts';
+import { openClaimFixture } from '../../helpers/p03-4/task-claim-fixture.ts';
 
 const preferred = { runtime: 'runtime-a', provider: 'provider-a', model: 'model-a' };
 const backup = { runtime: 'runtime-b', provider: 'provider-b', model: 'model-b' };
@@ -166,5 +172,83 @@ describe('P04-3 F-004 冻结备用链纯决策', () => {
   it('未知故障类别保持未知并停止，不进入备用链', () => {
     const result = decideRuntimeFallback(input({ failure: { category: 'unknown', reason: 'unknown' } }));
     expect(result).toMatchObject({ mode: 'stop', stopReason: 'category_not_switchable', triggerCategory: 'unknown' });
+  });
+});
+
+describe('P04-3 F-005 Core 备用 Runtime 切换', () => {
+  it('确认旧执行停止后创建新 Attempt、启动预占并保护重复命令', async () => {
+    const f = await openClaimFixture();
+    const stopVerifier = createWorkResourceStopVerifier({
+      process: { recoverStop: async () => ({ confirmed: true }) },
+      finalize: async () => true,
+    });
+    try {
+      const old = f.store().claimTask(f.input()).receipt.attempt;
+      const resources = createSqliteWorkResourceAccess(f.box.session, {
+        workspaceAuthority: f.authority, stopVerifier, nowUtcMs: () => NOW,
+      });
+      const execution = createSqliteExecutionAccess(f.box.session, { nowUtcMs: () => NOW });
+      const identity = { projectId: old.projectId, attemptId: old.id, owner: old.owner,
+        hostInstanceId: old.hostInstanceId, executionVersion: old.executionVersion };
+      f.box.session.transactWrite('prepare-old-runtime', () => {
+        execution.reserveRuntimeStartInTransaction({ projectId: old.projectId, batchId: f.ids.batchId,
+          runId: old.runId, startKey: old.id });
+        resources.beginLaunchInTransaction(identity);
+        resources.confirmLaunchInTransaction(identity, {
+          launchId: '10000000-0000-4000-8000-000000000101', pid: 101, processGroupId: 101, startTime: 'start-101',
+        });
+      });
+      const stopEvidence = await stopVerifier.verify(resources.read(identity));
+      expect(stopEvidence).not.toBeNull();
+      f.box.session.database.prepare("UPDATE attempts SET status = 'failed', ended_at = ? WHERE id = ?").run(NOW + 1, old.id);
+      f.box.session.database.prepare("UPDATE tasks SET status = 'failed' WHERE id = ?").run(old.taskId);
+      const service = createSqliteRuntimeFallbackSwitchService(f.box.session, {
+        workspaceAuthority: f.authority, stopVerifier, nowUtcMs: () => NOW + 2,
+      });
+      const base = {
+        switchKey: '10000000-0000-4000-8000-000000000102', projectId: old.projectId, runId: old.runId, taskId: old.taskId,
+        oldAttempt: { attemptId: old.id, owner: old.owner, hostInstanceId: old.hostInstanceId, executionVersion: old.executionVersion },
+        newOwner: 'owner-2', newHostInstanceId: 'host-2', workspace: f.workspace, leaseUntilUtcMs: NOW + 1000,
+        stopEvidence, authorized: true,
+        decision: { mode: 'switch' as const, triggerCategory: 'quota_blocked' as const,
+          previousFailures: [{ category: 'quota_blocked' as const, reason: 'rate_limit_exhausted' }],
+          strategySource: 'task.fallbacks[0]', strategySnapshot: backup },
+        policyVersion: 'policy-v1', capabilityEvidence: {
+          catalogDigest: 'a'.repeat(64), registryDigest: 'b'.repeat(64), authorizationDigest: 'c'.repeat(64),
+        },
+        inputSnapshot: f.input().inputSnapshot,
+      };
+      expect(() => service.switch({ ...base, authorized: false })).toThrow(/fallback_not_authorized/);
+      const result = service.switch(base);
+      expect(result.disposition).toBe('applied');
+      expect(result.receipt.attempt.executionVersion).toBe(old.executionVersion + 1);
+      expect(f.box.session.database.prepare('SELECT attempts_created, runtime_starts FROM execution_batches').get())
+        .toEqual({ attempts_created: 2, runtime_starts: 2 });
+      expect(f.box.session.database.prepare('SELECT COUNT(*) AS count FROM attempts').get()).toEqual({ count: 2 });
+      expect(service.switch(base).disposition).toBe('replayed');
+      expect(f.box.session.database.prepare('SELECT COUNT(*) AS count FROM attempts').get()).toEqual({ count: 2 });
+    } finally {
+      f.box.close();
+    }
+  });
+
+  it('全链不可用时通过 Core 原子暂停保留运行现场', async () => {
+    const f = await openClaimFixture();
+    try {
+      const service = createSqliteRuntimeFallbackSwitchService(f.box.session, {
+        workspaceAuthority: f.authority,
+        stopVerifier: { inspect: () => { throw new Error('stop is not a switch'); } },
+        nowUtcMs: () => NOW,
+      });
+      const result = service.stop({
+        pause: { projectId: f.ids.projectId, targetKind: 'run', targetId: f.ids.runId, expectedRevision: 1 },
+        reason: 'all_candidates_unavailable',
+      });
+      expect(result).toEqual({ disposition: 'stopped', paused: true, reason: 'all_candidates_unavailable' });
+      expect(f.box.session.database.prepare('SELECT status FROM runs WHERE id = ?').get(f.ids.runId)).toEqual({ status: 'paused' });
+      expect(f.box.session.database.prepare('SELECT COUNT(*) AS count FROM attempts').get()).toEqual({ count: 0 });
+    } finally {
+      f.box.close();
+    }
   });
 });

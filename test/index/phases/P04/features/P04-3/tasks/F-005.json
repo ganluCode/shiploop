@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "task_id": "F-005",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/runtime/p04-3-runtime-fallback.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

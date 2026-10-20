@@ -46,6 +46,7 @@ import type { ExecutionInputRef } from './execution-input.js';
 import type { PlanApprovalRecord, TaskDependencyRecord, TaskRecord } from './plan-store.js';
 import type { FeatureRecord } from './plan-store.js';
 import type { SettingsPayload } from './settings-schema.js';
+import type { RuntimeFallbackAttemptMetadata } from './runtime-fallback-switch.js';
 import { stableStringify } from './feature-plan.js';
 
 /* ------------------------------------------------------------------ *
@@ -266,6 +267,8 @@ export interface PreparedExecutionInputGroup {
   readonly rework?: ContextReworkInput;
   /** P03-9 / F-007：同 Task 续接记录（仅续接构建携带）。 */
   readonly recovery?: import('../ports/work-recovery-continuation.js').WorkRecoveryContinuationRecord;
+  /** P04-3：备用执行的受管策略与失败证据，随 Attempt 快照复制。 */
+  readonly runtimeFallback?: RuntimeFallbackAttemptMetadata;
 }
 
 /* ------------------------------------------------------------------ *

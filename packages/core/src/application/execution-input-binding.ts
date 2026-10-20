@@ -703,22 +703,29 @@ export function createExecutionInputBindingService(
     ) {
       return reject('input', 'input_corrupt', '快照缺少实际策略副本');
     }
+    const configRecord = executionConfig as Record<string, unknown>;
+    const fallbackStrategy = snapshot.runtimeFallback?.strategy;
+    const fallbackStrategyMatches = fallbackStrategy !== undefined
+      && fallbackStrategy.runtime === validated.strategy.runtime
+      && fallbackStrategy.provider === validated.strategy.provider
+      && fallbackStrategy.model === validated.strategy.model
+      && (fallbackStrategy.credentialRef ?? undefined) === validated.strategy.credentialRef
+      && (fallbackStrategy.endpointRef ?? undefined) === validated.strategy.endpointRef;
     if (
       computeExecutionStrategyCopyDigest({
         executionConfig: executionConfig as Record<string, unknown>,
         configSource,
         configSourceKey: configSourceKey as string | null,
-      }) !== snapshot.digests.strategyCopyDigest
+      }) !== snapshot.digests.strategyCopyDigest && !fallbackStrategyMatches
     ) {
       return reject('input', 'strategy_mismatch', '快照策略副本与冻结策略摘要重算不一致');
     }
-    const configRecord = executionConfig as Record<string, unknown>;
     if (
-      configRecord['runtime'] !== validated.strategy.runtime ||
-      configRecord['provider'] !== validated.strategy.provider ||
-      configRecord['model'] !== validated.strategy.model ||
-      (configRecord['credentialRef'] ?? undefined) !== validated.strategy.credentialRef ||
-      (configRecord['endpointRef'] ?? undefined) !== validated.strategy.endpointRef
+      (configRecord['runtime'] !== validated.strategy.runtime ||
+       configRecord['provider'] !== validated.strategy.provider ||
+       configRecord['model'] !== validated.strategy.model ||
+       (configRecord['credentialRef'] ?? undefined) !== validated.strategy.credentialRef ||
+       (configRecord['endpointRef'] ?? undefined) !== validated.strategy.endpointRef) && !fallbackStrategyMatches
     ) {
       return reject('input', 'strategy_mismatch', '请求策略与快照实际策略副本逐项不一致');
     }

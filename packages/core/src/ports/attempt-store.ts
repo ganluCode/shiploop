@@ -1,5 +1,6 @@
 import { validateWorkProcessIdentity } from './work-resources.js';
 import type { CommandProcessIdentity } from './command-process.js';
+import { validateRuntimeFallbackAttemptMetadata, type RuntimeFallbackAttemptMetadata } from './runtime-fallback-switch.js';
 import type { PreparedExecutionInputGroup, ExecutionInputGroupBodyRef } from './execution-input-prepare.js';
 import { CONTEXT_INPUT_SUPPORTED_SCHEMA_VERSIONS, isContextBuildError, validateContextReworkInput, type ContextReworkInput } from './context-build.js';
 import { validateWorkRecoveryContinuationRecord } from './work-recovery-continuation.js';
@@ -133,7 +134,7 @@ function bodyRef(value: unknown, field: string): ExecutionInputGroupBodyRef {
 /** Reuses the prepared input contract; no inline content, credential or arbitrary JSON fields. */
 export function validateAttemptInputSnapshot(value: unknown): PreparedExecutionInputGroup {
   const raw = object(value, ['schemaVersion', 'projectId', 'featureId', 'taskId', 'group', 'requiredInputs',
-    'digests', 'approval', 'taskRevision', 'promptBytes', 'tokenEstimate', 'preparedAtUtcMs', 'rework', 'recovery'], 'inputSnapshot');
+    'digests', 'approval', 'taskRevision', 'promptBytes', 'tokenEstimate', 'preparedAtUtcMs', 'rework', 'recovery', 'runtimeFallback'], 'inputSnapshot');
   // 历史快照不随 ContextBuilder 升版失效：v1/v2 历史快照与当前版本均可读回，未知版本拒绝。
   const snapshotSchemaVersion = raw.schemaVersion as number;
   if (!(CONTEXT_INPUT_SUPPORTED_SCHEMA_VERSIONS as readonly number[]).includes(snapshotSchemaVersion)) {
@@ -206,8 +207,10 @@ export function validateAttemptInputSnapshot(value: unknown): PreparedExecutionI
     }
   }
   const complete = recovery === undefined ? snapshot : { ...snapshot, recovery };
-  if (Buffer.byteLength(JSON.stringify(complete), 'utf8') > EXECUTION_SNAPSHOT_MAX_BYTES) throw validationError(context, 'inputSnapshot', 'limit_exceeded');
-  return complete;
+  const withFallback = raw.runtimeFallback === undefined || raw.runtimeFallback === null
+    ? complete : { ...complete, runtimeFallback: validateRuntimeFallbackAttemptMetadata(raw.runtimeFallback) };
+  if (Buffer.byteLength(JSON.stringify(withFallback), 'utf8') > EXECUTION_SNAPSHOT_MAX_BYTES) throw validationError(context, 'inputSnapshot', 'limit_exceeded');
+  return withFallback;
 }
 
 export function validateAttemptUsageSummary(value: unknown): AttemptUsageSummary | null {

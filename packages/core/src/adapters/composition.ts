@@ -45,6 +45,7 @@ import { createExecutionStopControl } from '../application/execution-stop-contro
 import { createVerificationStopControl } from '../application/verification-stop-control.js';
 import type { VerificationStopControl } from '../ports/verification-stop.js';
 import type { ExecutionStopControlPort } from '../ports/execution-stop.js';
+import type { RuntimeFallbackSwitchService } from '../ports/runtime-fallback-switch.js';
 import type { FeatureDeliveryFactory } from '../application/feature-delivery-commands.js';
 export type { FeatureDeliveryFactory, FeatureDeliveryDependencies } from '../application/feature-delivery-commands.js';
 import { assertVerificationReuseIdentity, validateTaskVerificationContinue } from '../application/task-verification-continue.js';
@@ -76,6 +77,7 @@ import { createFeatureWorktreePreparer } from './fs/feature-worktree-preparer.js
 import { createFeatureWorktreeCleaner } from './fs/feature-worktree-cleaner.js';
 import { createFeatureWorktreeDiscarder } from './fs/feature-worktree-discarder.js';
 import { createSqliteWorkResourceAccess } from './sqlite/work-resources.js';
+import { createSqliteRuntimeFallbackSwitchService } from './sqlite/runtime-fallback-switch.js';
 import { createSqliteAttemptAccess } from './sqlite/attempt-store.js';
 import { createSqliteAttemptLifecycleStore } from './sqlite/attempt-lifecycle-store.js';
 import { createSqliteTaskCommitter } from './sqlite/task-commit.js';
@@ -301,6 +303,8 @@ export interface CoreApplication {
   readonly workWorkspaceAuthority: PreparationWorkspaceAuthority;
   /** P03-5 / F-011：Task 认领窄端口（P03-4 认领契约；调度消费者装配属后续任务）。 */
   readonly taskClaims: TaskClaimStore;
+  /** P04-3：停止核验后的备用 Runtime 原子切换（创建新 Attempt，不伪装代码返工）。 */
+  readonly runtimeFallbackSwitch: RuntimeFallbackSwitchService;
   /** P03-5 / F-011：workspace 准备服务（F-005/F-006；按调用构造受界检查器/预备器）。 */
   readonly workspacePreparation: {
     prepare(raw: unknown): Promise<WorkspaceOperationCommit>;
@@ -638,6 +642,11 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       finalize: async () => true,
     });
     const workResources = createSqliteWorkResourceAccess(session, {
+      workspaceAuthority: workWorkspaceAuthority,
+      stopVerifier: workspaceStopVerifier,
+      ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
+    });
+    const runtimeFallbackSwitch = createSqliteRuntimeFallbackSwitchService(session, {
       workspaceAuthority: workWorkspaceAuthority,
       stopVerifier: workspaceStopVerifier,
       ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
@@ -1137,6 +1146,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       baselineExecutionService,
       baselineQueryService,
       workResources,
+      runtimeFallbackSwitch,
       workWorkspaceAuthority,
       taskClaims,
       workspacePreparation,
