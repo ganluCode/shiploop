@@ -60,6 +60,13 @@ export type {
   ParsedHostStartArgv,
 } from './start-entry.js';
 export { createPiWorkRuntimeFactory } from './pi-work-runtime.js';
+export {
+  createPiAuthenticationCatalog,
+  createPiEnvironmentAuthenticationSource,
+  createPiLocalLoginAuthenticationSource,
+  PI_AUTHENTICATION_MAX_FILE_BYTES,
+  PI_AUTHENTICATION_MAX_KEY_BYTES,
+} from './pi-authentication.js';
 export type { PiWorkRuntimeOptions } from './pi-work-runtime.js';
 export {
   PI_ADAPTER_VERSION,
