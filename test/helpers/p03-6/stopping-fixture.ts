@@ -10,7 +10,7 @@ import { createCompletedReceipt } from '../../../packages/core/src/ports/command
 import { createResultRef } from '../../../packages/core/src/ports/command-receipts.ts';
 import { git } from '../git-repo.ts';
 import { expect, vi, type Mock } from 'vitest';
-import type { BindingFixture } from './input-binding-fixture.ts';
+import type { BindingFixture, BindingFixtureOptions } from './input-binding-fixture.ts';
 import type { ExecutionService, ExecutionServiceResult, ExecutionRetentionInput } from '../../../packages/core/src/application/execution-service.ts';
 import type { WorkResourceAccess, WorkResourceIdentity } from '../../../packages/core/src/ports/work-resources.ts';
 import type { WorkspaceOperationAccess } from '../../../packages/core/src/ports/workspace.ts';
@@ -49,8 +49,9 @@ export interface StoppingFixture extends BindingFixture {
 }
 
 export async function fixture(options: Partial<FakeRuntimeOptions> = {}, override: Partial<ExecutionServiceDeps> = {},
-  setup?: (f: BindingFixture, deps: ExecutionServiceDeps) => void, taskId: 't-1' | 't-2' = 't-1'): Promise<StoppingFixture> {
-  const f = await openBindingFixture({ secondTask: taskId === 't-2' });
+  setup?: (f: BindingFixture, deps: ExecutionServiceDeps) => void, taskId: 't-1' | 't-2' = 't-1',
+  bindingOptions: BindingFixtureOptions = {}): Promise<StoppingFixture> {
+  const f = await openBindingFixture({ ...bindingOptions, secondTask: taskId === 't-2' });
   const sessions = createSqliteWorkSessionStore(f.session, { nowUtcMs: () => BINDING_NOW });
   const attempts = createSqliteAttemptAccess(f.session), dag = createSqliteTaskDagStore(f.session);
   const settlement = createRuntimeSettlementService({ publisher: f.publisher, attempts, dag,

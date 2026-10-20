@@ -153,6 +153,14 @@ export function createStaticRuntimeRegistry(
     if (normalizedProviders(catalog.providers) !== normalizedProviders(descriptor.providers)) {
       descriptorError(`${field}.descriptor.providers`, 'provider_mismatch');
     }
+    if (catalog.contractVersion !== undefined && catalog.contractVersion !== descriptor.contractVersion) {
+      descriptorError(`${field}.descriptor.contractVersion`, 'contract_version_mismatch');
+    }
+    for (const [key, reason] of [['permissionGrants', 'permission_grants_mismatch'], ['isolationModes', 'isolation_modes_mismatch']] as const) {
+      if (catalog[key] !== undefined && stableStringify([...catalog[key]].sort()) !== stableStringify([...descriptor[key]].sort())) {
+        descriptorError(`${field}.descriptor.${key}`, reason);
+      }
+    }
     registered.set(descriptor.runtimeId, { descriptor, adapter: adapter as RuntimeAdapter });
   }
   return {

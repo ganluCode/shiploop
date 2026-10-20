@@ -36,6 +36,10 @@ export interface ProviderCapabilityDescriptor {
 export interface RuntimeCapabilityDescriptor {
   readonly runtimeId: string;
   readonly providers: readonly ProviderCapabilityDescriptor[];
+  /** Optional for legacy catalogs; Pi Work assembly requires these execution declarations. */
+  readonly contractVersion?: number;
+  readonly permissionGrants?: readonly string[];
+  readonly isolationModes?: readonly string[];
 }
 
 /**
@@ -116,7 +120,23 @@ export function createStaticRuntimeCapabilityCatalog(descriptors: unknown): Runt
         providers.push({ providerId, models: [...providerItem.models] });
       }
     }
-    runtimes.set(runtimeId, { runtimeId, providers });
+    const execution: { contractVersion?: number; permissionGrants?: string[]; isolationModes?: string[] } = {};
+    if (item.contractVersion !== undefined) {
+      if (!Number.isSafeInteger(item.contractVersion) || (item.contractVersion as number) < 1) {
+        throw validationError(context, `${field}.contractVersion`, 'invalid_contract_version');
+      }
+      execution.contractVersion = item.contractVersion as number;
+    }
+    for (const key of ['permissionGrants', 'isolationModes'] as const) {
+      const values = item[key];
+      if (values === undefined) continue;
+      if (!Array.isArray(values) || values.some(value => typeof value !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value))
+        || new Set(values).size !== values.length) {
+        throw validationError(context, `${field}.${key}`, 'invalid_capability_tokens');
+      }
+      execution[key] = [...values];
+    }
+    runtimes.set(runtimeId, { runtimeId, providers, ...execution });
   }
   return {
     resolve(runtimeId: string): RuntimeCapabilityDescriptor | undefined {

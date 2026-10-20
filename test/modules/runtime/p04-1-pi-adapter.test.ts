@@ -135,6 +135,7 @@ class ScriptedPiSession implements PiSession {
 describe('P04-1 standard Pi SDK contract', () => {
   it('[case:pi-sdk-actual-contract] locks the installed SDK version, license, import and lifecycle API', () => {
     expect(PI_SDK_VERSION).toBe('1.0.4');
+    expect(piSdk.VERSION).toBe(PI_SDK_VERSION);
     expect(PI_SDK_LICENSE).toBe('MIT');
     expect(typeof piSdk.createAgentSession).toBe('function');
     expect(typeof piSdk.AgentSession.prototype.subscribe).toBe('function');

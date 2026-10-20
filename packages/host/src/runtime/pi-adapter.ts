@@ -8,11 +8,6 @@
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { observePiWithin, PI_ABORT_WAIT_MS, PI_STOP_WAIT_MS } from './pi-lifecycle.js';
-import {
-  createAgentSession,
-  SessionManager,
-  VERSION as PI_SDK_VERSION,
-} from '@earendil-works/pi-coding-agent';
 import type {
   CreateAgentSessionOptions,
 } from '@earendil-works/pi-coding-agent';
@@ -35,7 +30,8 @@ import {
 export const PI_RUNTIME_ID = 'pi';
 export const PI_ADAPTER_VERSION = '0.1.0';
 export const PI_SDK_LICENSE = 'MIT';
-export { PI_SDK_VERSION };
+/** Locked SDK version; loading the SDK is reserved for an authorized Runner start. */
+export const PI_SDK_VERSION = '1.0.4';
 
 export type PiCapabilityStatus = 'supported' | 'unsupported' | 'unknown' | 'not_ready';
 
@@ -111,6 +107,8 @@ export function createPiSdkSessionFactory(assembly: PiTrustedAssembly): PiSessio
     if (resolvedModel === undefined) {
       throw new RuntimeError('configuration', 'model_resolution_unavailable', { field: 'strategy.model' });
     }
+    const { createAgentSession, SessionManager, VERSION } = await import('@earendil-works/pi-coding-agent');
+    if (VERSION !== PI_SDK_VERSION) throw new RuntimeError('configuration', 'sdk_version_incompatible');
     const result = await createAgentSession({
       cwd,
       agentDir,
@@ -227,11 +225,14 @@ function identityToken(value: unknown, fallback: string): string {
   return token(typeof value === 'string' && value.length > 0 ? value : fallback);
 }
 
+export function piRuntimeEventPrefix(request: RuntimeExecutionRequest): string {
+  return `pi.${createHash('sha256')
+    .update(`${request.sessionId}\0${request.invocationId}\0${request.executionVersion}`)
+    .digest('hex').slice(0, 24)}.`;
+}
+
 function eventId(request: RuntimeExecutionRequest, sequence: number): string {
-  return createHash('sha256')
-    .update(`${request.sessionId}\0${request.invocationId}\0${request.executionVersion}\0${sequence}`)
-    .digest('hex')
-    .slice(0, 24);
+  return `${piRuntimeEventPrefix(request)}${sequence}`;
 }
 
 function textOf(value: unknown): string {

@@ -41,6 +41,7 @@ import type { FinalizationCompletionPort } from '../ports/finalization-completio
 import type { createWorkStartupRecovery } from '../application/work-startup-recovery.js';
 
 export interface WorkRuntimeContext {
+  readonly capabilityCatalog: import('../ports/runtime-capabilities.js').RuntimeCapabilityCatalog;
   readonly workspaceRoots: Readonly<Record<string, string>>;
   readonly reader: (request: RuntimeExecutionRequest) => BoundExecutionInputReader | undefined;
   readonly commitCommandIdentity: (identity: CommandProcessIdentity, request: RuntimeExecutionRequest) => Promise<{ launchId: string }>;
@@ -89,7 +90,7 @@ export function assembleWorkExecution(options: {
   let execution: ExecutionService;
   const resources = createSqliteWorkResourceAccess(session, { workspaceAuthority: app.workWorkspaceAuthority,
     stopVerifier: { inspect: token => execution.stopVerifier.inspect(token) }, nowUtcMs: now });
-  const runtimeAssembly = options.runtimeFactory?.({ workspaceRoots, reader: request => readers.get(request.invocationId),
+  const runtimeAssembly = options.runtimeFactory?.({ capabilityCatalog: options.capabilityCatalog, workspaceRoots, reader: request => readers.get(request.invocationId),
     async commitCommandIdentity(processIdentity, request) {
       if (request.identity.purpose !== 'work') throw new TypeError('Work identity required');
       const work = request.identity;

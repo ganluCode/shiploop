@@ -63,6 +63,8 @@ export const FAKE_STRATEGY = { runtime: 'fake', provider: 'test-provider', model
 const sha256 = (value: string | Buffer): string => createHash('sha256').update(value).digest('hex');
 
 export interface BindingFixtureOptions {
+  /** Trusted Runtime strategy for adapter composition tests; default retains Fake fixtures. */
+  readonly strategy?: { readonly runtime: string; readonly provider: string; readonly model: string };
   /** P03-3A 可信恢复能力描述符数组（缺省即无目录、全部 unverified）。 */
   readonly recoveryDescriptors?: unknown[];
   readonly recoverySources?: RuntimeRecoverySourceReader;
@@ -139,6 +141,7 @@ export async function openBindingFixture(options: BindingFixtureOptions = {}): P
       (options.secondTask !== true || options.secondTaskDependsOnFirst !== true)) {
     throw new TypeError('openBindingFixture: thirdTaskChained 须与 secondTask + secondTaskDependsOnFirst 同用');
   }
+  const strategy = options.strategy ?? FAKE_STRATEGY;
   const box = createCommandsTestFixture({ prefix: 'shiploop-p036-f002-' });
   let session: SqliteStorageSession | undefined;
   try {
@@ -159,7 +162,7 @@ export async function openBindingFixture(options: BindingFixtureOptions = {}): P
       artifacts, files, limits: { maxReadBytes: 4_000_000 }, nowMs: nowUtcMs,
     });
     const capabilityCatalog = createStaticRuntimeCapabilityCatalog([
-      { runtimeId: 'fake', providers: [{ providerId: 'test-provider', models: ['fake-model'] }] },
+      { runtimeId: strategy.runtime, providers: [{ providerId: strategy.provider, models: [strategy.model] }] },
     ]);
     const views = createSqlitePlanAccess(session, { nowUtcMs });
     const preview = createExecutionPreviewService({
@@ -222,7 +225,7 @@ export async function openBindingFixture(options: BindingFixtureOptions = {}): P
     const scope = { kind: 'project', projectId };
     requireCompleted(
       await submit('settings.global.create', {
-        schemaVersion: 2, strategies: { defaultStrategy: { ...FAKE_STRATEGY } },
+        schemaVersion: 2, strategies: { defaultStrategy: { ...strategy } },
         ...(options.deliveryPolicy === undefined ? {} : { policies: { deliveryPolicy: options.deliveryPolicy } }),
       }, { scope: { kind: 'global' } }),
       'settings.global.create',
@@ -407,7 +410,7 @@ export async function openBindingFixture(options: BindingFixtureOptions = {}): P
       workspace,
       sessionId: `session-${bound.taskId}-1`,
       invocationId: 'invocationId' in bound ? bound.invocationId : 'invocation-not-launched',
-      strategy: { ...FAKE_STRATEGY },
+      strategy: { ...strategy },
       permissions: { grants: [], isolation: 'trusted_project' },
       limits: { timeoutMs: 60_000, maxEvents: 1_000, maxOutputBytes: 1_048_576 },
       recovery: { mode: 'new' },

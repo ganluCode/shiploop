@@ -59,6 +59,8 @@ export type {
   HostStartEntrySuccessResult,
   ParsedHostStartArgv,
 } from './start-entry.js';
+export { createPiWorkRuntimeFactory } from './pi-work-runtime.js';
+export type { PiWorkRuntimeOptions } from './pi-work-runtime.js';
 export {
   PI_ADAPTER_VERSION,
   PI_RUNTIME_CAPABILITIES,
