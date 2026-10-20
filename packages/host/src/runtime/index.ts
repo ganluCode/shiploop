@@ -71,6 +71,11 @@ export {
 } from './pi-authentication.js';
 export type { PiWorkRuntimeOptions } from './pi-work-runtime.js';
 export {
+  PI_NATIVE_SESSION_FORMAT,
+  PI_NATIVE_SESSION_FORMAT_VERSION,
+  PI_RECOVERY_EVIDENCE_REF,
+  PI_RUNTIME_RECOVERY_CAPABILITIES,
+  PI_RUNTIME_RECOVERY_DESCRIPTOR,
   PI_ADAPTER_VERSION,
   PI_RUNTIME_CAPABILITIES,
   PI_RUNTIME_ID,
@@ -83,6 +88,9 @@ export {
 } from './pi-adapter.js';
 export type {
   PiCapabilityStatus,
+  PiManagedRecoverySource,
+  PiRecoverySourceManager,
+  PiRecoveryWriterLease,
   PiRuntimeAdapterOptions,
   PiRuntimeCapabilities,
   PiRuntimeDescriptor,

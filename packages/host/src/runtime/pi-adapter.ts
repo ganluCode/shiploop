@@ -15,6 +15,7 @@ import type {
   CreateAgentSessionOptions,
 } from '@earendil-works/pi-coding-agent';
 import type {
+  ExecutionInputRef,
   ProviderCapabilityDescriptor,
   RuntimeAdapter,
   RuntimeCancelReceipt,
@@ -27,6 +28,8 @@ import type {
   RuntimeWorkAccessSnapshot,
   RuntimeRetryPolicy,
   RuntimeFailureClassification,
+  RuntimeRecoveryCapabilities,
+  RuntimeRecoveryReference,
 } from 'shiploop-core';
 import {
   RUNTIME_ADAPTER_CONTRACT_VERSION,
@@ -40,6 +43,10 @@ export const PI_ADAPTER_VERSION = '0.1.0';
 export const PI_SDK_LICENSE = 'MIT';
 /** Locked SDK version; loading the SDK is reserved for an authorized Runner start. */
 export const PI_SDK_VERSION = '1.0.4';
+/** The managed session archive observed by the standard Pi session manager. */
+export const PI_NATIVE_SESSION_FORMAT = 'pi-session-jsonl';
+export const PI_NATIVE_SESSION_FORMAT_VERSION = '1';
+export const PI_RECOVERY_EVIDENCE_REF = 'p04-4-pi-recovery-boundary';
 
 export type PiCapabilityStatus = 'supported' | 'unsupported' | 'unknown' | 'not_ready';
 
@@ -51,6 +58,44 @@ export interface PiRuntimeCapabilities {
   readonly conversationResume: PiCapabilityStatus;
   readonly executionRecovery: PiCapabilityStatus;
 }
+
+/**
+ * Core recovery evidence for standard Pi Work. The installed SDK exposes a
+ * managed JSONL session file, but this adapter has no verified reader, safe
+ * fork, checkpoint replay, or model switch operation for it. Keeping every
+ * recovery capability explicit lets Core reject required recovery and record
+ * an authorized auto downgrade without treating a native file as recovery.
+ */
+export const PI_RUNTIME_RECOVERY_CAPABILITIES: RuntimeRecoveryCapabilities = Object.freeze({
+  schemaVersion: 1,
+  runtimeId: PI_RUNTIME_ID,
+  adapterVersion: PI_ADAPTER_VERSION,
+  sdkVersion: PI_SDK_VERSION,
+  nativeFormats: Object.freeze([Object.freeze({
+    format: PI_NATIVE_SESSION_FORMAT,
+    versions: Object.freeze([PI_NATIVE_SESSION_FORMAT_VERSION]),
+  })]),
+  limits: Object.freeze([
+    'standard Pi Work starts a fresh managed session for each Attempt',
+    'native session archives are not loaded, forked, or copied by this adapter',
+    'SDK persistence does not provide Core execution recovery or side effect idempotency',
+  ]),
+  capabilities: Object.freeze({
+    nativeHistory: Object.freeze({ status: 'unsupported', evidenceRef: PI_RECOVERY_EVIDENCE_REF,
+      limits: Object.freeze(['no verified native history reader is exposed']) }),
+    conversationResume: Object.freeze({ status: 'unsupported', evidenceRef: PI_RECOVERY_EVIDENCE_REF,
+      limits: Object.freeze(['no verified same Task conversation load and continue operation is exposed']) }),
+    executionRecovery: Object.freeze({ status: 'unsupported', evidenceRef: PI_RECOVERY_EVIDENCE_REF,
+      limits: Object.freeze(['Pi session persistence is not a checkpoint or tool execution recovery contract']) }),
+    modelSwitchOnResume: Object.freeze({ status: 'unsupported', evidenceRef: PI_RECOVERY_EVIDENCE_REF,
+      limits: Object.freeze(['no verified resume-time provider/model switch operation is exposed']) }),
+    nativeFork: Object.freeze({ status: 'unsupported', evidenceRef: PI_RECOVERY_EVIDENCE_REF,
+      limits: Object.freeze(['no verified immutable source fork or single-writer handoff operation is exposed']) }),
+  }),
+});
+
+/** Alias used by composition roots that call the catalog entry a descriptor. */
+export const PI_RUNTIME_RECOVERY_DESCRIPTOR = PI_RUNTIME_RECOVERY_CAPABILITIES;
 
 /** 只声明本适配器实际验证过的边界；SDK 的原生 session 文件不等于 Core 恢复。 */
 export const PI_RUNTIME_CAPABILITIES: PiRuntimeCapabilities = Object.freeze({
@@ -85,12 +130,54 @@ export interface PiTrustedAssembly {
   readonly resolveSessionDirectory?: (request: RuntimeExecutionRequest, cwd: string) => string;
   /** F-004：按请求执行认证预检和显式资源装配；返回值只含受限快照和可信引用。 */
   readonly prepareAccess?: (request: RuntimeExecutionRequest) => Promise<PiTrustedWorkAccess>;
+  /**
+   * Trusted recovery seam. It accepts an already Core-validated reference and
+   * immutable Artifact identities only; the current standard adapter leaves it
+   * unused because all five native recovery capabilities are unsupported.
+   */
+  readonly recoverySourceManager?: PiRecoverySourceManager;
 }
 
 export interface PiTrustedWorkAccess {
   readonly snapshot: RuntimeWorkAccessSnapshot;
   readonly credentialRef: { readonly kind: 'trusted-resolution'; readonly id: string };
   readonly resourceLoader: NonNullable<CreateAgentSessionOptions['resourceLoader']>;
+}
+
+/**
+ * A Core-approved immutable source. It deliberately contains Artifact
+ * identities and recovery references only; native paths, SQLite handles and
+ * credential contents cannot cross this boundary.
+ */
+export interface PiManagedRecoverySource {
+  readonly reference: RuntimeRecoveryReference;
+  readonly archive: ExecutionInputRef;
+  readonly checkpoint?: ExecutionInputRef;
+  readonly previousWriter: {
+    readonly status: 'confirmed';
+    readonly stopEvidence: ExecutionInputRef;
+  };
+}
+
+/**
+ * Exclusive ownership for the new managed writer. The source remains read
+ * only, and the lease is the only adapter-level continuation authority.
+ */
+export interface PiRecoveryWriterLease {
+  readonly source: PiManagedRecoverySource;
+  readonly sourceReadOnly: true;
+  readonly writer: {
+    readonly purpose: 'work';
+    readonly attemptId: string;
+    readonly invocationId: string;
+    readonly exclusive: true;
+  };
+  release(): Promise<void>;
+}
+
+/** Trusted Host/Core seam reserved for a future verified Pi recovery operation. */
+export interface PiRecoverySourceManager {
+  acquire(request: RuntimeExecutionRequest, source: RuntimeRecoveryReference): Promise<PiRecoveryWriterLease>;
 }
 
 export interface PiSession {
@@ -153,6 +240,7 @@ export interface PiRuntimeAdapterOptions {
 export interface PiRuntimeRegistration {
   readonly descriptor: PiRuntimeDescriptor;
   readonly capabilities: PiRuntimeCapabilities;
+  readonly recoveryCapabilities: RuntimeRecoveryCapabilities;
   readonly adapter: RuntimeAdapter;
 }
 
@@ -679,5 +767,6 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
       };
     },
   };
-  return { descriptor, capabilities: PI_RUNTIME_CAPABILITIES, adapter };
+  return { descriptor, capabilities: PI_RUNTIME_CAPABILITIES,
+    recoveryCapabilities: PI_RUNTIME_RECOVERY_CAPABILITIES, adapter };
 }
