@@ -609,10 +609,17 @@ export function validateRuntimeCancelReceipt(value: unknown): RuntimeCancelRecei
  * 会话层逐项运行时校验。不要求也不解释 PID——受控进程身份属于
  * CommandProcess 端口的 launch/identity 通道。
  */
+export interface RuntimeNativeSessionReference {
+  readonly runtimeId: string;
+  readonly providerSessionId: string | null;
+  readonly sessionFile: string | null;
+}
+
 export interface RuntimeHandle {
   readonly events: AsyncIterable<unknown>;
   readonly result: Promise<unknown>;
   readonly stopped: Promise<unknown>;
+  readonly nativeSession?: RuntimeNativeSessionReference;
   cancel(): Promise<unknown>;
 }
 

@@ -6,8 +6,10 @@
  * 路径、不发现全局插件，也不把凭据传入 prompt、argv 或事件正文。
  */
 import { createHash } from 'node:crypto';
+import path from 'node:path';
 import {
   createAgentSession,
+  SessionManager,
   VERSION as PI_SDK_VERSION,
 } from '@earendil-works/pi-coding-agent';
 import type {
@@ -17,6 +19,7 @@ import type {
   ProviderCapabilityDescriptor,
   RuntimeAdapter,
   RuntimeAdapterDescriptor,
+  RuntimeErrorKind,
   RuntimeEvent,
   RuntimeExecutionRequest,
   RuntimeHandle,
@@ -70,28 +73,46 @@ export interface PiTrustedAssembly {
   /** 仅接受可信装配提供的凭据解析结果引用，不接受 secret 字符串。 */
   readonly credentialRef?: { readonly kind: 'trusted-resolution'; readonly id: string };
   readonly resourceLoader: NonNullable<CreateAgentSessionOptions['resourceLoader']>;
+  /** 将 provider/model 解析为 SDK 原生模型；未提供时自定义 sessionFactory 仍可自行验证。 */
+  readonly resolveModel?: (provider: string, model: string) => NonNullable<CreateAgentSessionOptions['model']>;
+  /** 由可信装配选择受管项目数据根下的 Attempt session 目录。 */
+  readonly resolveSessionDirectory?: (request: RuntimeExecutionRequest, cwd: string) => string;
 }
 
 export interface PiSession {
+  readonly sessionId?: string;
+  readonly sessionFile?: string;
   subscribe(listener: (event: unknown) => void): () => void;
   prompt(text: string): Promise<void>;
   abort(): Promise<void>;
   dispose(): void;
 }
 
-export type PiSessionFactory = (options: {
+export interface PiSessionFactoryOptions {
   readonly cwd: string;
   readonly agentDir: string;
+  readonly sessionDir: string;
+  readonly provider: string;
+  readonly model: string;
+  readonly credentialRef: { readonly kind: 'trusted-resolution'; readonly id: string };
   readonly resourceLoader: NonNullable<CreateAgentSessionOptions['resourceLoader']>;
-}) => Promise<PiSession>;
+}
 
-/** 标准 SDK 的实际初始化入口：createAgentSession(cwd, agentDir, resourceLoader)。 */
+export type PiSessionFactory = (options: PiSessionFactoryOptions) => Promise<PiSession>;
+
+/** 标准 SDK 的实际初始化入口：受管 SessionManager + 受控 resourceLoader。 */
 export function createPiSdkSessionFactory(assembly: PiTrustedAssembly): PiSessionFactory {
-  return async ({ cwd, agentDir, resourceLoader }) => {
+  return async ({ cwd, agentDir, sessionDir, provider, model, resourceLoader }) => {
+    const resolvedModel = assembly.resolveModel?.(provider, model);
+    if (resolvedModel === undefined) {
+      throw new RuntimeError('configuration', 'model_resolution_unavailable', { field: 'strategy.model' });
+    }
     const result = await createAgentSession({
       cwd,
       agentDir,
+      model: resolvedModel,
       resourceLoader,
+      sessionManager: SessionManager.create(cwd, sessionDir),
       noTools: 'all',
     });
     return result.session;
@@ -130,6 +151,47 @@ export function createPiRuntimeDescriptor(options: Pick<PiRuntimeAdapterOptions,
 
 function startupError(reason: string, field: string): RuntimeError {
   return new RuntimeError('configuration', reason, { field });
+}
+
+function managedSessionDirectory(assembly: PiTrustedAssembly, request: RuntimeExecutionRequest, cwd: string): string {
+  if (assembly.resolveSessionDirectory !== undefined) return assembly.resolveSessionDirectory(request, cwd);
+  const attemptId = request.identity.purpose === 'work' ? request.identity.attemptId : 'chat';
+  const scope = createHash('sha256')
+    .update(`${request.projectId}\0${request.featureId}\0${attemptId}\0${request.invocationId}`)
+    .digest('hex')
+    .slice(0, 32);
+  return path.join(assembly.agentDir, 'sessions', scope);
+}
+
+function preflightCredential(assembly: PiTrustedAssembly): { readonly kind: 'trusted-resolution'; readonly id: string } {
+  const credential = assembly.credentialRef;
+  if (credential === undefined) {
+    throw new RuntimeError('authentication', 'credential_reference_missing', { field: 'assembly.credentialRef' });
+  }
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(credential.id)) {
+    throw new RuntimeError('authentication', 'credential_reference_invalid', { field: 'assembly.credentialRef.id' });
+  }
+  return credential;
+}
+
+function classifyPiFailure(value: unknown, fallback: string, fallbackKind: RuntimeErrorKind = 'provider'): RuntimeError {
+  if (value instanceof RuntimeError) return value;
+  const message = value instanceof Error ? value.message : '';
+  const normalized = message.toLowerCase();
+  if (/credential|api key|unauthoriz|forbidden|authentication|permission/.test(normalized)) {
+    return new RuntimeError('authentication', 'authentication_error');
+  }
+  if (/context|token limit|too many tokens|maximum.*token|prompt.*long/.test(normalized)) {
+    return new RuntimeError('configuration', 'context_error');
+  }
+  if (/model|provider|network|timeout|overloaded|unavailable/.test(normalized)) {
+    return new RuntimeError('provider', 'provider_error');
+  }
+  return new RuntimeError(fallbackKind, fallback);
+}
+
+function failureReason(error: RuntimeError): string {
+  return error.reason;
 }
 
 /** 启动 SDK 前复核 provider/model、权限、隔离和恢复边界。 */
@@ -251,17 +313,35 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
   const adapter: RuntimeAdapter = {
     async start(request): Promise<RuntimeHandle> {
       assertPiStartupCompatible(request, descriptor);
-      const prompt = await options.assembly.inputReader.read(request.prompt);
+      const credentialRef = preflightCredential(options.assembly);
+      let prompt: string;
+      try {
+        prompt = await options.assembly.inputReader.read(request.prompt);
+        await options.assembly.inputReader.read(request.inputManifest);
+      } catch (error) {
+        throw classifyPiFailure(error, 'input_binding_failed', 'configuration');
+      }
       const cwd = options.assembly.resolveWorkingDirectory(request.cwd);
-      const session = await sessionFactory({
-        cwd,
-        agentDir: options.assembly.agentDir,
-        resourceLoader: options.assembly.resourceLoader,
-      });
+      const sessionDir = managedSessionDirectory(options.assembly, request, cwd);
+      let session: PiSession;
+      try {
+        session = await sessionFactory({
+          cwd,
+          agentDir: options.assembly.agentDir,
+          sessionDir,
+          provider: request.strategy.provider,
+          model: request.strategy.model,
+          credentialRef,
+          resourceLoader: options.assembly.resourceLoader,
+        });
+      } catch (error) {
+        throw classifyPiFailure(error, 'sdk_initialization_failed', 'configuration');
+      }
       const events = new EventChannel();
       let sequence = 0;
       let lastUsage: RuntimeUsageReport | null = null;
       let terminal: 'completed' | 'failed' | 'cancelled' = 'completed';
+      let terminalReason: string | null = null;
       let cancelRequested = false;
       const startedAt = Date.now();
       const publish = (kind: RuntimeEvent['kind'], payload: RuntimeEvent['payload']): void => {
@@ -271,7 +351,9 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
         }
         events.push(runtimeEvent(request, sequence, kind, payload));
       };
-      const unsubscribe = session.subscribe((raw) => {
+      let unsubscribe: () => void = () => undefined;
+      try {
+        unsubscribe = session.subscribe((raw) => {
         if (raw === null || typeof raw !== 'object') {
           publish('diagnostic', { kind: 'diagnostic', code: 'pi_unknown_event', message: 'unknown event' });
           return;
@@ -297,28 +379,59 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
             }
           }
           const stopReason = messageStopReason(message);
-          if (stopReason === 'aborted') terminal = 'cancelled';
-          else if (stopReason === 'error') terminal = 'failed';
+          if (stopReason === 'aborted') {
+            terminal = 'cancelled';
+            terminalReason = 'cancelled';
+          } else if (stopReason === 'error') {
+            terminal = 'failed';
+            terminalReason = classifyPiFailure(
+              message !== null && typeof message === 'object' ? (message as { errorMessage?: unknown }).errorMessage : undefined,
+              'model_error',
+            ).reason;
+          }
         } else if (type !== 'agent_start' && type !== 'turn_start' && type !== 'turn_end' && type !== 'agent_end' && type !== 'message_start' && type !== 'message_update' && type !== 'tool_execution_update') {
           publish('diagnostic', { kind: 'diagnostic', code: 'pi_unknown_event', message: 'unknown event' });
         }
-      });
+        });
+      } catch (error) {
+        try {
+          session.dispose();
+        } catch {
+          // 保持初始化失败诊断，不让清理异常覆盖它。
+        }
+        throw classifyPiFailure(error, 'sdk_initialization_failed', 'configuration');
+      }
 
       const result = (async () => {
         try {
           await session.prompt(prompt);
           if (cancelRequested) terminal = 'cancelled';
-        } catch {
-          terminal = cancelRequested ? 'cancelled' : 'failed';
+        } catch (error) {
+          if (cancelRequested) {
+            terminal = 'cancelled';
+            terminalReason = 'cancelled';
+          } else {
+            const failure = classifyPiFailure(error, 'model_error');
+            terminal = 'failed';
+            terminalReason = failureReason(failure);
+            publish('diagnostic', { kind: 'diagnostic', code: `pi_${failure.reason}`, message: failure.reason });
+          }
         } finally {
-          unsubscribe();
-          events.close();
-          session.dispose();
+          try {
+            unsubscribe();
+          } finally {
+            events.close();
+            try {
+              session.dispose();
+            } catch {
+              // 保留已有运行事实；资源释放失败不覆盖原始终态。
+            }
+          }
         }
         return {
           schemaVersion: 1,
           terminal,
-          reason: terminal === 'completed' ? null : terminal === 'cancelled' ? 'cancelled' : 'sdk_prompt_failed',
+          reason: terminal === 'completed' ? null : terminalReason ?? (terminal === 'cancelled' ? 'cancelled' : 'model_error'),
           exitCode: null,
           signal: null,
           durationMs: Date.now() - startedAt,
@@ -336,6 +449,11 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
         events,
         result,
         stopped,
+        nativeSession: {
+          runtimeId: PI_RUNTIME_ID,
+          providerSessionId: session.sessionId ?? null,
+          sessionFile: session.sessionFile ?? null,
+        },
         async cancel() {
           if (cancelRequested) return { accepted: true, reason: 'already_requested' };
           cancelRequested = true;

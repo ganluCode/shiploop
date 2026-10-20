@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import * as piSdk from '@earendil-works/pi-coding-agent';
 import type { CreateAgentSessionOptions } from '@earendil-works/pi-coding-agent';
 import {
@@ -73,18 +73,24 @@ function assembly(): PiTrustedAssembly {
 }
 
 class FakePiSession implements PiSession {
+  readonly sessionId = `provider-session-${Math.random().toString(36).slice(2)}`;
+  readonly sessionFile = `/managed/session/${this.sessionId}.jsonl`;
   private listener: ((event: unknown) => void) | undefined;
   private aborted = false;
   private readonly holdForCancel: boolean;
+  private readonly promptFailure: Error | undefined;
   private releasePrompt: (() => void) | undefined;
-  constructor(holdForCancel = false) {
+  private disposed = false;
+  constructor(holdForCancel = false, promptFailure?: Error) {
     this.holdForCancel = holdForCancel;
+    this.promptFailure = promptFailure;
   }
   subscribe(listener: (event: unknown) => void): () => void {
     this.listener = listener;
     return () => { this.listener = undefined; };
   }
   async prompt(): Promise<void> {
+    if (this.promptFailure !== undefined) throw this.promptFailure;
     if (this.holdForCancel) {
       await new Promise<void>((resolve) => { this.releasePrompt = resolve; });
       return;
@@ -106,8 +112,9 @@ class FakePiSession implements PiSession {
     this.listener?.({ type: 'message_end', message: { role: 'assistant', content: [], stopReason: 'aborted' } });
     this.releasePrompt?.();
   }
-  dispose(): void {}
+  dispose(): void { this.disposed = true; }
   wasAborted(): boolean { return this.aborted; }
+  wasDisposed(): boolean { return this.disposed; }
 }
 
 describe('P04-1 standard Pi SDK contract', () => {
@@ -174,6 +181,83 @@ describe('P04-1 standard Pi SDK contract', () => {
     await expect(handle.stopped).resolves.toMatchObject({ confirmed: true });
   });
 
+  it('[case:pi-managed-session-scope] binds both immutable inputs, creates a distinct native scope per attempt, and returns native identity', async () => {
+    const reads: string[] = [];
+    const sessionOptions: Array<{ sessionDir: string; provider: string; model: string }> = [];
+    const registration = createPiRuntimeAdapter({
+      providers: [{ providerId: 'anthropic', models: ['claude-sonnet'] }],
+      permissionGrants: ['fs.read'], isolationModes: ['trusted_project'],
+      assembly: {
+        ...assembly(),
+        inputReader: { read: async ref => { reads.push(ref.purpose); return `bound-${ref.purpose}`; } },
+      },
+      sessionFactory: async options => {
+        sessionOptions.push(options);
+        return new FakePiSession();
+      },
+    });
+
+    const first = await registration.adapter.start(request());
+    await first.result;
+    const second = await registration.adapter.start(request({
+      attemptId: 'attempt-2',
+      invocationId: 'invocation-2',
+      sessionId: 'session-2',
+    }));
+    await second.result;
+
+    expect(reads).toEqual(['prompt', 'manifest', 'prompt', 'manifest']);
+    expect(sessionOptions[0]?.sessionDir).toBeTruthy();
+    expect(sessionOptions[0]?.sessionDir).not.toBe(sessionOptions[1]?.sessionDir);
+    expect(sessionOptions.map(item => [item.provider, item.model])).toEqual([
+      ['anthropic', 'claude-sonnet'], ['anthropic', 'claude-sonnet'],
+    ]);
+    expect(first.nativeSession).toMatchObject({
+      providerSessionId: expect.stringMatching(/^provider-session-/),
+      sessionFile: expect.stringContaining('/managed/session/'),
+    });
+    expect(first.nativeSession?.providerSessionId).not.toBe(request().identity.attemptId);
+  });
+
+  it('[case:pi-credential-preflight] rejects a missing trusted credential reference before SDK initialization', async () => {
+    const sessionFactory = vi.fn(async () => new FakePiSession());
+    const registration = createPiRuntimeAdapter({
+      providers: [{ providerId: 'anthropic', models: ['claude-sonnet'] }],
+      permissionGrants: ['fs.read'], isolationModes: ['trusted_project'],
+      assembly: { ...assembly(), credentialRef: undefined }, sessionFactory,
+    });
+
+    await expect(registration.adapter.start(request())).rejects.toMatchObject({
+      kind: 'authentication', reason: 'credential_reference_missing',
+    });
+    expect(sessionFactory).not.toHaveBeenCalled();
+  });
+
+  it('[case:pi-failure-classification] preserves context/model diagnostics and disposes a failed SDK session', async () => {
+    const session = new FakePiSession(false, new Error('context window exceeded'));
+    const registration = createPiRuntimeAdapter({
+      providers: [{ providerId: 'anthropic', models: ['claude-sonnet'] }],
+      permissionGrants: ['fs.read'], isolationModes: ['trusted_project'], assembly: assembly(),
+      sessionFactory: async () => session,
+    });
+
+    const handle = await registration.adapter.start(request());
+    await expect(handle.result).resolves.toMatchObject({ terminal: 'failed', reason: 'context_error' });
+    await expect(handle.stopped).resolves.toMatchObject({ confirmed: true });
+    expect(session.wasDisposed()).toBe(true);
+  });
+
+  it('[case:pi-sdk-init-failure] exposes SDK initialization failure as configuration', async () => {
+    const registration = createPiRuntimeAdapter({
+      providers: [{ providerId: 'anthropic', models: ['claude-sonnet'] }],
+      permissionGrants: ['fs.read'], isolationModes: ['trusted_project'], assembly: assembly(),
+      sessionFactory: async () => { throw new Error('SDK bootstrap failed'); },
+    });
+
+    await expect(registration.adapter.start(request())).rejects.toMatchObject({
+      kind: 'configuration', reason: 'sdk_initialization_failed',
+    });
+  });
   it('[case:pi-cancel-stopped] exposes cancel acceptance separately from confirmed stopped evidence', async () => {
     const session = new FakePiSession(true);
     const registration = createPiRuntimeAdapter({
