@@ -1,7 +1,7 @@
 /** Trusted static Work assembly. Executable/environment are code dependencies, never project settings. */
 import { createStaticRuntimeRegistry, RuntimeError } from 'shiploop-core';
 import type { WorkInferencePreflightAssembly } from 'shiploop-core';
-import type { WorkRuntimeFactory } from 'shiploop-core/assembly';
+import type { WorkRuntimeFactory, WorkFailureRoutingAssembly } from 'shiploop-core/assembly';
 import {
   assertPiStartupCompatible, createPiRuntimeDescriptor, piRuntimeEventPrefix, PI_RUNTIME_ID,
 } from './pi-adapter.js';
@@ -12,9 +12,10 @@ import type { PiRunnerAdapterOptions } from './pi-runner-adapter.js';
 export type PiWorkRuntimeOptions = Pick<PiRuntimeAdapterOptions, 'providers' | 'permissionGrants' | 'isolationModes'>
   & Omit<PiRunnerAdapterOptions, 'confirm'>
   & { readonly prepareAccess?: PiTrustedAssembly['prepareAccess'];
-    readonly inferencePreflight?: WorkInferencePreflightAssembly };
+    readonly inferencePreflight?: WorkInferencePreflightAssembly;
+    readonly failureRouting?: WorkFailureRoutingAssembly };
 
-/** Only trusted startup code calls this factory. No discovery, SDK loading or automatic fallback. */
+/** Trusted static startup only; optional approved failure routing is delegated to Core. */
 export function createPiWorkRuntimeFactory(options: PiWorkRuntimeOptions): WorkRuntimeFactory {
   // Snapshot mutable caller arrays before the application becomes active.
   const descriptor = createPiRuntimeDescriptor(options);
@@ -40,6 +41,7 @@ export function createPiWorkRuntimeFactory(options: PiWorkRuntimeOptions): WorkR
       entries,
       eventIdentityPrefix: piRuntimeEventPrefix,
       inferencePreflight: options.inferencePreflight,
+      failureRouting: options.failureRouting,
       ...(options.prepareAccess === undefined ? {} : {
         prepareRequest: async (request: Parameters<typeof runner.start>[0]) => {
           const prepared = await options.prepareAccess!(request);

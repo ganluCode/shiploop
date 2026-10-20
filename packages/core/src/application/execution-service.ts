@@ -27,7 +27,7 @@ import type { WorkEvidenceRecorder, WorkEvidenceRecordingOutcome } from './work-
 import type { RuntimeSettlementService } from './runtime-settlement.js';
 import type { RuntimeRecoverySelection } from '../ports/runtime-recovery.js';
 import type { RuntimeStrategyV1 } from '../ports/settings-schema.js';
-import { createHash } from 'node:crypto';
+import { runtimeStartReservationKey } from './runtime-start-reservation.js';
 import { isDeepStrictEqual } from 'node:util';
 import { superviseExecution, observeWithin, type ExecutionCompletion, type ExecutionSupervisionOptions, type ExecutionStopReason } from './execution-supervision.js';
 import { resolveExecutionDeadlines } from '../ports/execution-time-limits.js';
@@ -94,12 +94,6 @@ export interface ExecutionService {
   close(): Promise<{ readonly closed: boolean; readonly pendingAttemptIds: readonly string[] }>;
   /** In-memory evidence authority: never accepts serialized confirmed booleans. */
   readonly stopVerifier: WorkResourceStopVerifier;
-}
-
-function startKey(attemptId: string, executionVersion: number): string {
-  return createHash('sha256')
-    .update(`shiploop:runtime-start\n${attemptId}\n${executionVersion}`)
-    .digest('hex');
 }
 
 function identity(claim: TaskClaimReceipt): WorkResourceIdentity {
@@ -266,7 +260,7 @@ export function createExecutionService(deps: ExecutionServiceDeps): ExecutionSer
           projectId: input.claim.attempt.projectId,
           batchId: input.claim.batchId,
           runId: input.claim.attempt.runId,
-          startKey: startKey(input.claim.attempt.id, input.claim.attempt.executionVersion),
+          startKey: runtimeStartReservationKey(input.claim.attempt.id, input.claim.attempt.executionVersion),
         });
         const created = deps.sessions.createWorkSessionInTransaction(transaction, {
           ...workIdentity,

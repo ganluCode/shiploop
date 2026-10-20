@@ -102,6 +102,7 @@ describe('F-003 real Pi Session, recording and fenced settlement', () => {
       expect(recording.status).toBe('fulfilled');
       expect(f.calls()).toBe(3);
       expect(f.factories()).toBe(1);
+      expect(f.sdk()?.autoRetryEnabled).toBe(false);
       expect(f.query('SELECT runtime_starts, attempts_created FROM execution_batches')).toEqual({ runtime_starts: 1, attempts_created: 1 });
       expect(f.query('SELECT COUNT(*) AS count FROM attempts')).toEqual({ count: 1 });
       expect(f.query('SELECT COUNT(*) AS count FROM sessions')).toEqual({ count: 1 });

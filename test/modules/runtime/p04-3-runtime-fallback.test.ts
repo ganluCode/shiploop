@@ -219,7 +219,18 @@ describe('P04-3 F-005 Core 备用 Runtime 切换', () => {
         inputSnapshot: f.input().inputSnapshot,
       };
       expect(() => service.switch({ ...base, authorized: false })).toThrow(/fallback_not_authorized/);
+      for (const status of ['paused', 'pausing', 'cancelling', 'interrupted']) {
+        f.box.session.database.prepare("UPDATE runs SET status = ?, reason = 'user_pause'").run(status);
+        expect(() => service.switch(base)).toThrow(/run_not_active/);
+        expect(f.box.session.database.prepare('SELECT COUNT(*) AS count FROM attempts').get()).toEqual({ count: 1 });
+      }
+      f.box.session.database.prepare("UPDATE runs SET status = 'paused', reason = 'runtime_failed'").run();
+      expect(() => service.switch({ ...base, leaseUntilUtcMs: NOW + 1 })).toThrow(/Invalid fallback lease/);
+      expect(f.box.session.database.prepare('SELECT status, reason FROM runs').get())
+        .toEqual({ status: 'paused', reason: 'runtime_failed' });
       const result = service.switch(base);
+      expect(f.box.session.database.prepare('SELECT status, reason FROM runs').get())
+        .toEqual({ status: 'running', reason: null });
       expect(result.disposition).toBe('applied');
       expect(result.receipt.attempt.executionVersion).toBe(old.executionVersion + 1);
       expect(f.box.session.database.prepare('SELECT attempts_created, runtime_starts FROM execution_batches').get())

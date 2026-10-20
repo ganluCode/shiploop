@@ -14,6 +14,12 @@ import { createSqliteWorkspaceRetentionStore } from './sqlite/workspace-retentio
 import { createSqliteAtomicCommandStore } from './sqlite/atomic-commands.js';
 import { createRuntimeInferencePreflight, resolveRuntimeInferencePreflightPolicy } from '../application/runtime-inference-preflight.js';
 import type { WorkInferencePreflightAssembly } from '../ports/runtime-inference-preflight.js';
+import { decideRuntimeFallback, validateRuntimeFallbackPlan, type RuntimeFallbackPlanV1 } from '../application/runtime-fallback.js';
+import { classifyRuntimeExecutionResult } from '../ports/runtime-failure.js';
+import type { RuntimeFallbackCapabilityEvidence } from '../ports/runtime-fallback-switch.js';
+import type { RuntimeStrategyV1 } from '../ports/settings-schema.js';
+import type { TaskClaimReceipt } from '../ports/task-claim.js';
+import { createSqliteRuntimeFallbackSwitchService } from './sqlite/runtime-fallback-switch.js';
 import { stableStringify } from '../ports/feature-plan.js';
 import { validateRuntimeStrategy } from '../ports/settings-schema.js';
 import { createWorkScheduler } from '../application/work-scheduler.js';
@@ -50,12 +56,23 @@ export interface WorkRuntimeContext {
   readonly reader: (request: RuntimeExecutionRequest) => BoundExecutionInputReader | undefined;
   readonly commitCommandIdentity: (identity: CommandProcessIdentity, request: RuntimeExecutionRequest) => Promise<{ launchId: string }>;
 }
+/** Approved Task-local routing, supplied by trusted assembly; authorization is checked on every switch. */
+export interface WorkFailureRoutingAssembly {
+  select(context: { projectId: string; runId: string; taskId: string; strategy: RuntimeStrategyV1 }): {
+    readonly plan: RuntimeFallbackPlanV1;
+    readonly policyVersion: string;
+    readonly capabilityEvidence: RuntimeFallbackCapabilityEvidence;
+  } | undefined;
+  authorize(context: { projectId: string; runId: string; taskId: string; source: string; strategy: RuntimeStrategyV1 }): Promise<boolean>;
+}
+
 /** A function supplied by trusted code only; never serialized in settings or commands. */
 export type WorkRuntimeFactory = (context: WorkRuntimeContext) => {
   readonly entries: readonly RuntimeRegistryEntry[];
   readonly eventIdentityPrefix: (request: RuntimeExecutionRequest) => string;
   readonly prepareRequest?: (request: RuntimeExecutionRequest) => Promise<RuntimeExecutionRequest>;
   readonly inferencePreflight?: WorkInferencePreflightAssembly;
+  readonly failureRouting?: WorkFailureRoutingAssembly;
 };
 
 export function assembleWorkExecution(options: {
@@ -108,6 +125,13 @@ export function assembleWorkExecution(options: {
       return { launchId: processIdentity.launchId };
     } });
   const registry = createStaticRuntimeRegistry(runtimeAssembly?.entries ?? [], options.capabilityCatalog);
+  type Route = NonNullable<ReturnType<WorkFailureRoutingAssembly['select']>>;
+  const preparedRoutes = new Map<string, Route>();
+  const routes = new Map<string, Route>();
+  let consumeFallbackClaim: (claim: TaskClaimReceipt) => Promise<void>;
+  const fallbackSwitch = createSqliteRuntimeFallbackSwitchService(session, {
+    workspaceAuthority: app.workWorkspaceAuthority, stopVerifier: resourcesStopVerifier(), nowUtcMs: now,
+  });
   const probeAssembly = runtimeAssembly?.inferencePreflight;
   const probePolicy = resolveRuntimeInferencePreflightPolicy(probeAssembly?.policy);
   const probeCancellation = new AbortController();
@@ -165,7 +189,74 @@ export function assembleWorkExecution(options: {
     ...(runtimeAssembly?.prepareRequest === undefined ? {} : { prepareRuntimeRequest: runtimeAssembly.prepareRequest }),
     nowUtcMs: now,
     supervision: { stopWaitMs: 2_000, drainWaitMs: 2_000, closeWaitMs: 5_000,
-      retain: createExecutionWorkspaceRetainer({ workspaces: createSqliteWorkspaceAccess(session, { resources, nowUtcMs: now }), retention }) },
+      retain: createExecutionWorkspaceRetainer({ workspaces: createSqliteWorkspaceAccess(session, { resources, nowUtcMs: now }), retention }),
+      async routeFailure(input) {
+        const work = input.request.identity;
+        if (work.purpose !== 'work') return false;
+        const route = routes.get(work.attemptId);
+        routes.delete(work.attemptId);
+        if (!route || quiescing || input.control && input.control.reason !== 'runtime_failed'
+          || input.result.status !== 'fulfilled' || input.result.value.terminal !== 'failed'
+          || input.recording?.status !== 'fulfilled' || input.recording.value.status !== 'complete') return false;
+        const identity = { projectId: input.request.projectId, attemptId: work.attemptId,
+          owner: input.request.owner.principalId, hostInstanceId: input.request.owner.hostInstanceId,
+          executionVersion: input.request.executionVersion };
+        const previous = attempts.getAttempt(identity.projectId, work.attemptId);
+        const failure = classifyRuntimeExecutionResult(input.result.value, {
+          errorChain: [{ source: 'sdk', code: input.result.value.reason === 'temporary_server_failure' ? 'server_error' : input.result.value.reason ?? 'unknown',
+            message: (input.result.value.reason ?? 'unknown').replace(/_/g, ' ') }],
+        });
+        if (failure.category === null) return false;
+        const pause = (reason = 'all_candidates_unavailable') => {
+          const view = dag.readTaskDagView(identity.projectId, work.runId);
+          if (view.facts.find(fact => fact.taskId === work.taskId)?.executionVersion !== identity.executionVersion
+            || view.run.pauseRequestedAtUtcMs !== null || view.batch.pauseRequestedAtUtcMs !== null) return;
+          if (view.run.status === 'running') {
+            fallbackSwitch.stop({ pause: { projectId: identity.projectId, targetKind: 'run', targetId: work.runId,
+              expectedRevision: view.run.revision }, reason: 'all_candidates_unavailable' });
+          } else if (view.run.status !== 'paused' || view.run.reason !== 'runtime_failed') return;
+          store.recordRunReason(identity.projectId, work.runId, reason);
+        };
+        try {
+          const authorization: Record<string, 'authorized' | 'denied'> = {};
+          for (const candidate of route.plan.fallbacks) {
+            authorization[candidate.source] = await observeWithin(runtimeAssembly!.failureRouting!.authorize({
+              projectId: identity.projectId, runId: work.runId, taskId: work.taskId,
+              source: candidate.source, strategy: candidate.strategy }), 2_000) === true ? 'authorized' : 'denied';
+          }
+          const decision = decideRuntimeFallback({ plan: route.plan, failure: { category: failure.category, reason: failure.reason },
+            previousFailures: previous.inputSnapshot.runtimeFallback?.previousFailures ?? [], sameAttemptRetryExhausted: true,
+            nowUtcMs: now(), capabilities: options.capabilityCatalog, registry, authorization });
+          if (decision.mode === 'stop') { pause(decision.stopReason); return false; }
+          await checkInference(identity.projectId, work.runId, work.taskId, decision.strategySnapshot);
+          if (quiescing || await observeWithin(runtimeAssembly!.failureRouting!.authorize({ projectId: identity.projectId, runId: work.runId,
+            taskId: work.taskId, source: decision.strategySource, strategy: decision.strategySnapshot }), 2_000) !== true) { pause('fallback_not_authorized'); return false; }
+          const stopEvidence = await execution.stopVerifier.verify(resources.read(identity));
+          if (stopEvidence === null) { pause(); return false; }
+          const binding = await app.stateStore.getRepositoryBinding(identity.projectId);
+          const workspace = await app.workWorkspaceAuthority.verifyPreparation(binding, input.request.featureId);
+          const view = dag.readTaskDagView(identity.projectId, work.runId);
+          if (quiescing) { pause(); return false; }
+          const switched = fallbackSwitch.switch({ switchKey: randomUUID(), projectId: identity.projectId,
+            runId: work.runId, taskId: work.taskId, oldAttempt: { attemptId: work.attemptId, owner: identity.owner,
+              hostInstanceId: identity.hostInstanceId, executionVersion: identity.executionVersion },
+            newOwner: owner, newHostInstanceId: hostInstanceId, workspace, stopEvidence, authorized: true, decision: { mode: 'switch', triggerCategory: decision.triggerCategory,
+              previousFailures: decision.previousFailures, strategySource: decision.strategySource, strategySnapshot: decision.strategySnapshot },
+            leaseUntilUtcMs: Math.min(now() + 60_000, previous.leaseUntilUtcMs, view.batch.deadlineAtUtcMs),
+            policyVersion: route.policyVersion, capabilityEvidence: route.capabilityEvidence, inputSnapshot: previous.inputSnapshot });
+          const index = route.plan.fallbacks.findIndex(candidate => candidate.source === decision.strategySource);
+          routes.set(switched.receipt.attempt.id, { ...route, plan: { ...route.plan,
+            preferred: route.plan.fallbacks[index]!, fallbacks: route.plan.fallbacks.slice(index + 1) } });
+          // The transaction has transferred ownership. Startup failure belongs to the new Attempt.
+          void consumeFallbackClaim(switched.receipt).catch(() => undefined);
+          return true;
+        } catch (error) {
+          const candidate = error instanceof StorageError && typeof error.details?.reason === 'string' ? error.details.reason : '';
+          const reason = /^[a-z][a-z0-9_]{0,95}$/.test(candidate) ? candidate : 'fallback_routing_failed';
+          pause(reason);
+          return false;
+        }
+      } },
   });
   const active = new Set<string>();
   const cancelRequested = new Set<string>();
@@ -209,6 +300,13 @@ export function assembleWorkExecution(options: {
       // Check adapter availability before any claim, workspace process or debit.
       if (!registry.resolve(config.runtime)) throw new StorageError('conflict', 'WorkRuntime.prepare', 'Runtime adapter is not installed', { details: { reason: 'runtime_not_found' } });
       const { schemaVersion: _schema, maxCodeAttempts: _attempts, workTimeoutMs: _work, toolTimeoutMs: _tool, ...probeStrategy } = config;
+      const selectedRoute = runtimeAssembly?.failureRouting?.select({ projectId, runId: candidate.run.id, taskId, strategy: probeStrategy });
+      const frozenRoute = selectedRoute === undefined ? undefined : { ...structuredClone(selectedRoute),
+        plan: validateRuntimeFallbackPlan(selectedRoute.plan) };
+      if (frozenRoute && (frozenRoute.plan.fallbacks.length > 32
+        || stableStringify(frozenRoute.plan.preferred.strategy) !== stableStringify(probeStrategy))) {
+        throw new StorageError('conflict', 'WorkRuntime.prepare', 'Fallback plan differs from frozen Task strategy');
+      }
       await checkInference(projectId, candidate.run.id, taskId, probeStrategy);
       const refs = [...view.plan.feature.sourceRefs, ...task.requirementsRefs];
       // F-012：同 Task 已有历史 Attempt 时构造返工输入（F-011 契约）：关联当前
@@ -257,13 +355,18 @@ export function assembleWorkExecution(options: {
       const binding = await app.stateStore.getRepositoryBinding(projectId);
       const workspace = await app.workWorkspaceAuthority.verifyPreparation(binding, task.featureId);
       const fact = view.facts.find(fact => fact.taskId === taskId)!;
-      return { claimKey: randomUUID(), projectId, runId: candidate.run.id, taskId, owner, hostInstanceId,
+      const claimKey = randomUUID();
+      if (frozenRoute) preparedRoutes.set(claimKey, frozenRoute);
+      return { claimKey, projectId, runId: candidate.run.id, taskId, owner, hostInstanceId,
         expectedRevision: task.revision, executionVersion: fact.executionVersion,
         workspace, leaseUntilUtcMs: Math.min(now() + 60_000, view.batch.deadlineAtUtcMs), inputSnapshot,
         ...(attemptId === undefined ? {} : { attemptId }) };
     },
-    async consumeClaim(claim) {
+    consumeClaim: consumeFallbackClaim = async claim => {
       const attempt = claim.attempt;
+      const route = preparedRoutes.get(claim.claimKey);
+      preparedRoutes.delete(claim.claimKey);
+      if (route) routes.set(attempt.id, route);
       const identity = { projectId: attempt.projectId, attemptId: attempt.id, owner: attempt.owner,
         hostInstanceId: attempt.hostInstanceId, executionVersion: attempt.executionVersion };
       active.add(attempt.id);
@@ -287,8 +390,9 @@ export function assembleWorkExecution(options: {
           maxCodeAttempts: __,
           workTimeoutMs: configuredSessionLimit,
           toolTimeoutMs: configuredToolLimit,
-          ...strategy
+          ...preferredStrategy
         } = config;
+        const strategy = attempt.inputSnapshot.runtimeFallback?.strategy ?? preferredStrategy;
         const nowMs = now();
         const batchDeadline = Math.min(view.batch.deadlineAtUtcMs, view.batch.budgetSnapshot.batch.deadlineUtcMs);
         const sessionLimit = Math.min(
@@ -323,6 +427,7 @@ export function assembleWorkExecution(options: {
         void started.context.completion!.then(result => {
           if (result.stopConfirmed && result.persisted && result.error === null) active.delete(attempt.id);
           readers.delete(started.context.request.invocationId);
+          routes.delete(attempt.id);
         }, () => undefined);
       } catch (error) {
         cancelRequested.delete(attempt.id);

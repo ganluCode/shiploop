@@ -41,6 +41,8 @@ test/
 
 - `index/phases/P04/features/P04-2/tasks/F-007.json`：真实临时 Host/Core 的允许、越权、幂等与重启验证，以及真实 SDK 显式资源加载、认证/推理区分和合成凭据脱敏。四个文件已本地聚焦验证，另五个回归仅登记交 Nezha；实际 manifest、权限矩阵、日志与 live `not_run` 见 [交接文档](../docs/p04-2-f007-access-integration.md)。
 
+- `index/phases/P04/features/P04-3/tasks/F-007.json`：故障路由组合矩阵、受管查询脱敏/兼容、安装 SDK 重试边界，以及分类/累计重试/备用/预检/停止与架构关联回归。实际本地日志、SDK API 边界和独立验收范围见 [故障路由交接](../docs/p04-3-f007-failure-routing-integration.md)。
+
 Task JSON 使用 Nezha v2 schema。当前存量用例首轮按文件显式 `all: true`，
 对应 19 个本 Feature 文件，不包含此前大批历史模块回归。
 部分文件有多个测试类型，暂不凭猜测拆掉其中断言或谎称函数级选择。

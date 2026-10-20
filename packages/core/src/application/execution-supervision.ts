@@ -3,7 +3,8 @@ import type { RuntimeSession } from './runtime-execution.js';
 import type { RuntimeExecutionRequest, RuntimeExecutionResult, RuntimeStopEvidence } from '../ports/runtime-execution.js';
 import { RuntimeError } from '../ports/runtime-execution.js';
 import type { RuntimeControlFacts, RuntimeTimeoutFact } from '../ports/runtime-settlement.js';
-import type { RuntimeSettlementService } from './runtime-settlement.js';
+import type { RuntimeSettlementInput, RuntimeSettlementService } from './runtime-settlement.js';
+import type { AttemptApplicationResult } from '../ports/attempt-lifecycle.js';
 import type { WorkEvidenceRecordingOutcome } from './work-evidence-recorder.js';
 import type { WorkspaceRetentionReason } from '../ports/workspace-retention.js';
 
@@ -32,6 +33,8 @@ export interface ExecutionSupervisionOptions {
   readonly drainWaitMs: number;
   readonly closeWaitMs: number;
   readonly retain: (input: ExecutionRetentionInput) => Promise<void>;
+  /** Trusted routing after fenced persistence and before releasing the old workspace. */
+  readonly routeFailure?: (input: RuntimeSettlementInput & { readonly receipt: AttemptApplicationResult }) => Promise<boolean>;
 }
 export type ExecutionStopReason = RuntimeControlFacts['reason'];
 
@@ -74,7 +77,9 @@ export function superviseExecution(input: {
     reason = value;
     if (fact !== undefined) timeout = fact;
     // Abort only this Attempt's collection; cancellation remains independent of stop evidence.
-    input.controller.abort(value);
+    // A failed result still has a final event watermark to drain and persist.
+    // Other control paths interrupt collection immediately; failure uses the same finite drain deadline.
+    if (value !== 'runtime_failed') input.controller.abort(value);
     void Promise.resolve().then(() => input.runtime.cancel()).then(
       receipt => { cancel = receipt.accepted ? 'accepted' : 'rejected'; },
       () => { cancel = 'failed'; },
@@ -119,6 +124,7 @@ export function superviseExecution(input: {
       }
       confirmed = stopped?.status === 'fulfilled' && stopped.value.confirmed;
       const observations = await observeWithin(Promise.all([input.result, input.recording]), input.options.drainWaitMs);
+      if (observations === undefined) input.controller.abort('drain_timeout');
       const result = observations?.[0] ?? await observeWithin(input.result, 1)
         ?? { status: 'rejected' as const, reason: new RuntimeError('process', 'runtime_result_unobserved') };
       const recording = observations?.[1] ?? await observeWithin(input.recording, 1) ?? null;
@@ -141,7 +147,10 @@ export function superviseExecution(input: {
       if (!receipt.resultSaved) throw new Error('result_not_saved');
       persisted = true;
       let retained = false;
-      if (confirmed && receipt.status !== 'verifying') {
+      const routed = confirmed && receipt.status === 'failed' && receipt.disposition === 'applied'
+        && await input.options.routeFailure?.({ request: input.request, result, recording,
+          stopped: stopped ?? null, receipt, ...(control ? { control } : {}) }) === true;
+      if (confirmed && receipt.status !== 'verifying' && !routed) {
         const evidenceRef = input.evidenceRef();
         if (evidenceRef === null) throw new Error('missing_settlement_evidence');
         const retentionReason: WorkspaceRetentionReason = receipt.status === 'cancelled' ? 'cancelled'

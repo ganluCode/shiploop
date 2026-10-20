@@ -31,7 +31,7 @@ import { createSqliteWorkRecoveryReconciliationStore } from './sqlite/work-recov
 import { createWorkRecoveryReconciler } from '../application/work-recovery-reconciliation.js';
 import { createRecoveryGitReader } from './fs/recovery-git-reader.js';
 import { createGitCommitDriver } from './fs/git-commit-driver.js';
-export type { WorkRuntimeFactory, WorkRuntimeContext } from './work-execution.js';
+export type { WorkRuntimeFactory, WorkRuntimeContext, WorkFailureRoutingAssembly } from './work-execution.js';
 import { existsSync, mkdirSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';

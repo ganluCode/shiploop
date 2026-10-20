@@ -1,0 +1,87 @@
+{
+  "schema_version": 2,
+  "task_id": "F-007",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/runtime/p04-3-failure-routing-integration.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p04-3-failure-routing-query.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p04-3-sdk-retry-boundary.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p04-3-runtime-fallback.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p04-3-runtime-request-retry.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p04-3-runtime-retry-settlement.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p04-3-runtime-failure-classification.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p04-3-runtime-retry.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p04-3-runtime-inference-preflight.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p04-3-pi-inference-preflight.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p03-6-execution-uncertainty.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p03-6-runtime-settlement.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p03-6-work-session-query.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p03-6-work-evidence-recorder.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p03-6-execution-service.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p04-1-pi-composition.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p04-1-pi-stopping.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/engineering/boundary-check.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/engineering/core-assembly.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

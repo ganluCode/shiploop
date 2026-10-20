@@ -224,7 +224,14 @@ export function deriveWorkSessionQueryState(
  * ------------------------------------------------------------------ */
 
 /** 结算证据的持久正文（sessions/<id>/runtime-settlement.json；schemaVersion 1）。 */
+export interface RuntimeRoutingSummary {
+  readonly category: import('./runtime-failure.js').RuntimeFailureCategory | null;
+  readonly previousFailures: readonly { readonly category: import('./runtime-failure.js').RuntimeFailureCategory; readonly reason: string }[];
+  readonly selected: { readonly runtime: string; readonly provider: string; readonly model: string; readonly source: string } | null;
+}
+
 export interface WorkSessionSettlementEvidence {
+  readonly routing?: RuntimeRoutingSummary;
   readonly kind: 'runtime-settlement';
   readonly result: RuntimeExecutionResult | null;
   readonly failure: { readonly kind: RuntimeErrorKind; readonly reason: string } | null;
@@ -296,6 +303,33 @@ function validateFailure(
     throw validationError(EVIDENCE_CONTEXT, `${field}.kind`, 'invalid_kind', raw.kind);
   }
   return { kind: raw.kind as RuntimeErrorKind, reason: boundedToken(raw.reason, `${field}.reason`) };
+}
+
+function validateRoutingSummary(value: unknown): RuntimeRoutingSummary {
+  const raw = requirePlainObject(value, EVIDENCE_CONTEXT, 'evidence.routing');
+  rejectUnknownKeys(raw, ['category', 'previousFailures', 'selected'], EVIDENCE_CONTEXT, 'evidence.routing');
+  const category = (value: unknown) => {
+    if (typeof value !== 'string' || !(RUNTIME_FAILURE_CATEGORIES as readonly string[]).includes(value)) {
+      throw validationError(EVIDENCE_CONTEXT, 'evidence.routing.category', 'invalid_category');
+    }
+    return value as RuntimeRoutingSummary['previousFailures'][number]['category'];
+  };
+  if (!Array.isArray(raw.previousFailures) || raw.previousFailures.length > 32) {
+    throw validationError(EVIDENCE_CONTEXT, 'evidence.routing.previousFailures', 'invalid_bounded_array');
+  }
+  const previousFailures = raw.previousFailures.map(value => {
+    const item = requirePlainObject(value, EVIDENCE_CONTEXT, 'evidence.routing.previousFailures');
+    rejectUnknownKeys(item, ['category', 'reason'], EVIDENCE_CONTEXT, 'evidence.routing.previousFailures');
+    return { category: category(item.category), reason: boundedToken(item.reason, 'evidence.routing.reason') };
+  });
+  let selected: RuntimeRoutingSummary['selected'] = null;
+  if (raw.selected !== null) {
+    const item = requirePlainObject(raw.selected, EVIDENCE_CONTEXT, 'evidence.routing.selected');
+    rejectUnknownKeys(item, ['runtime', 'provider', 'model', 'source'], EVIDENCE_CONTEXT, 'evidence.routing.selected');
+    selected = { runtime: boundedToken(item.runtime, 'routing.runtime'), provider: boundedToken(item.provider, 'routing.provider'),
+      model: boundedToken(item.model, 'routing.model'), source: boundedToken(item.source, 'routing.source') };
+  }
+  return { category: raw.category === null ? null : category(raw.category), previousFailures, selected };
 }
 
 function validateClassificationEnvelope(value: unknown): void {
@@ -401,7 +435,7 @@ export function validateWorkSessionResultEvidence(value: unknown): WorkSessionRe
   if (raw.kind === 'runtime-settlement') {
     rejectUnknownKeys(
       raw,
-      ['schemaVersion', 'kind', 'identity', 'execution', 'recording', 'stop', 'control'],
+      ['schemaVersion', 'kind', 'identity', 'execution', 'recording', 'stop', 'control', 'routing'],
       EVIDENCE_CONTEXT,
       'evidence',
     );
@@ -428,6 +462,7 @@ export function validateWorkSessionResultEvidence(value: unknown): WorkSessionRe
     }
     return {
       kind: 'runtime-settlement',
+      ...(raw.routing === undefined ? {} : { routing: validateRoutingSummary(raw.routing) }),
       result: execution.result === null ? null : validateRuntimeExecutionResult(execution.result),
       failure: validateFailure(execution.failure, 'evidence.execution.failure'),
       recording: {
@@ -640,6 +675,7 @@ export function toPublicWorkSessionEvidenceRef(record: ArtifactRecord): PublicWo
 
 /** 结果证据公开投影（usage.basis 原样保留——synthetic 显式标记）。 */
 export interface PublicWorkSessionResultEvidence {
+  readonly routing?: RuntimeRoutingSummary;
   readonly kind: WorkSessionResultEvidence['kind'];
   readonly result: RuntimeExecutionResult | null;
   readonly failure: { readonly kind: RuntimeErrorKind; readonly reason: string } | null;
@@ -677,6 +713,7 @@ export function toPublicWorkSessionResultEvidence(
     recording: { ...evidence.recording, gaps: [...evidence.recording.gaps] },
     stop: evidence.stop,
     control: evidence.control,
+    ...(evidence.routing === undefined ? {} : { routing: evidence.routing }),
   };
 }
 
@@ -684,14 +721,14 @@ export function toPublicWorkSessionResultEvidence(
 export function validatePublicWorkSessionResultEvidence(value: unknown): PublicWorkSessionResultEvidence {
   const raw = requirePlainObject(value, EVIDENCE_CONTEXT, 'evidence');
   const keys = ['kind', 'result', 'failure', 'recording', 'stop', 'control'];
-  rejectUnknownKeys(raw, keys, EVIDENCE_CONTEXT, 'evidence');
+  rejectUnknownKeys(raw, [...keys, 'routing'], EVIDENCE_CONTEXT, 'evidence');
   if (keys.some(key => !Object.hasOwn(raw, key))) throw validationError(EVIDENCE_CONTEXT, 'evidence', 'missing_field');
   const recording = requirePlainObject(raw.recording, EVIDENCE_CONTEXT, 'evidence.recording');
   const stop = requirePlainObject(raw.stop, EVIDENCE_CONTEXT, 'evidence.stop');
   rejectUnknownKeys(recording, ['complete', 'manifestRef', 'failure', 'gaps', 'watermark'], EVIDENCE_CONTEXT, 'evidence.recording');
   rejectUnknownKeys(stop, ['evidence', 'failure'], EVIDENCE_CONTEXT, 'evidence.stop');
   if (raw.kind === 'runtime-not-started') {
-    if (raw.result !== null || raw.control !== null || recording.complete !== false || recording.manifestRef !== null ||
+    if (raw.routing !== undefined || raw.result !== null || raw.control !== null || recording.complete !== false || recording.manifestRef !== null ||
         recording.failure !== null || recording.watermark !== null || stop.evidence !== null || stop.failure !== null) {
       throw validationError(EVIDENCE_CONTEXT, 'evidence', 'invalid_unstarted_projection');
     }
@@ -700,7 +737,8 @@ export function validatePublicWorkSessionResultEvidence(value: unknown): PublicW
       recording: { complete: false, gaps: recording.gaps } }));
   }
   return toPublicWorkSessionResultEvidence(validateWorkSessionResultEvidence({ schemaVersion: 1, kind: raw.kind,
-    identity: {}, execution: { result: raw.result, failure: raw.failure }, recording, stop, control: raw.control }));
+    identity: {}, execution: { result: raw.result, failure: raw.failure }, recording, stop, control: raw.control,
+    ...(raw.routing === undefined ? {} : { routing: raw.routing }) }));
 }
 
 /* ------------------------------------------------------------------ *

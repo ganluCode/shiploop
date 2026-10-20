@@ -1,3 +1,13 @@
+# P04-3 工作进度
+
+## F-007 — 故障路由组合接线与确定性矩阵（2026-10-21）
+
+- 从 b15b50a、当前 feat/p04/p04-failure-routing 分支续做。可信 Core/Host assembly 贯通冻结备用计划和逐次授权；只在当前 fence 的失败结算持久化、记录完整且停止确认后创建备用 Attempt，沿用预算/deadline/占用转移事务。仅自动恢复 runtime_failed 暂停，拒绝用户暂停/关闭/取消等控制状态；统一启动预占 key，修复备用一次启动被重复计数。
+- 失败结果采用有限 drain，避免终端事件未落盘；全链失败停止并保留原因。查询增加按 Attempt 的有界 routing 分类、前序失败和策略摘要，保持旧 wire 兼容并排除 credential/endpoint。新增 19 项组合矩阵、6 项查询边界和 3 项 SDK 边界测试；已有 fallback 事务测试补充控制拒绝与恢复回滚。
+- 实测安装 Pi 1.0.4 的 Anthropic stream：内部 maxRetries=2 时 fetch=3；外层控制器包装后仍 fetch=3/requestCount=3/retryCount=2/runtimeStarts=1，Session 自动重试关闭。发现 Bedrock 不读取 maxRetries；未核实的 API 限为一次外层调用，避免内部与外层相乘。OpenAI 依据锁定源码确认配置边界，未声称真实网络测量。详见 [SDK 边界与交接](docs/p04-3-f007-failure-routing-integration.md)。
+- 最终本地证据：组合矩阵 19 passed（test-mz2rliax.log）；查询 6 passed（test-wmlcekx3.log）；SDK/request/settlement 26 passed（test-2dz3l_4r.log）；停止、结算、fallback 及架构相关 117 passed（test-yxz7fle5.log）。最后加严控制守卫后只复测相关 5 项，26 skipped（test-6x__d3qa.log），未冒称重跑整矩阵。typecheck exit 0（test-fe0cekqw.log）。所有完整日志及真实退出码 sidecar 在本 Feature workspace verifications/F-007/runtime-logs/，中间失败保留。
+- F-007 v2 仓库索引与 Harness selection 已写入，19 个现有文件的路径、模式和唯一性已检查。表外关联回归交 Nezha 独立执行；未运行全仓/组合门禁/Feature 或 Phase 验收/live 模型。没有直接修改正式 task_list.json/feature.yaml；提交与单次 task report 的结果以 Git/Nezha 记录为准。
+
 # P04-2 工作进度
 
 ## F-007 — 访问边界集成验证与交接（2026-10-20）

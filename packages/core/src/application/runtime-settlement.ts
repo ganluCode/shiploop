@@ -132,6 +132,15 @@ export function createRuntimeSettlementService(deps: RuntimeSettlementDeps): Run
     const body = Buffer.from(JSON.stringify({ schemaVersion: 1, kind: 'runtime-settlement',
       identity: { ...identity, sessionId: request.sessionId, invocationId: request.invocationId },
       execution: { result, failure: executionFailure, classification },
+      routing: { category: classification?.category ?? null,
+        previousFailures: (attempt.inputSnapshot.runtimeFallback?.previousFailures ?? []).slice(0, 32)
+          .map(item => ({ category: item.category, reason: token(item.reason) })),
+        selected: attempt.inputSnapshot.runtimeFallback ? {
+          runtime: token(attempt.inputSnapshot.runtimeFallback.strategy.runtime),
+          provider: token(attempt.inputSnapshot.runtimeFallback.strategy.provider),
+          model: token(attempt.inputSnapshot.runtimeFallback.strategy.model),
+          source: token(attempt.inputSnapshot.runtimeFallback.strategySource),
+        } : null },
       recording: { complete: runtime.recording.complete, manifestRef, failure: recordingFailure,
         gaps: (recording?.gaps ?? (recordingError instanceof WorkEvidenceRecordingError ? recordingError.gaps : ['recording_unobserved'])).slice(0, 32).map(token),
         watermark: recording?.watermark ?? (recordingError instanceof WorkEvidenceRecordingError ? recordingError.watermark : null) },

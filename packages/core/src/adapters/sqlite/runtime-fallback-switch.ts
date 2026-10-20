@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { mergeEffectiveSettings } from '../../application/effective-settings.js';
+import { runtimeStartReservationKey } from '../../application/runtime-start-reservation.js';
 import { StorageError } from '../../ports/errors.js';
 import { validateAttemptInputSnapshot } from '../../ports/attempt-store.js';
 import { ATTEMPT_UPDATED_EVENT_TYPE } from '../../ports/execution-store.js';
@@ -88,6 +89,18 @@ export function createSqliteRuntimeFallbackSwitchService(session: SqliteStorageS
           || old.executionVersion !== valid.oldAttempt.executionVersion
           || old.status !== 'failed') throw conflict('old_attempt_not_stopped');
 
+        // Failed settlement pauses the Run before routing. Only that automatic pause
+        // may be resumed here, in the same transaction as budget/fence/lease transfer.
+        const automaticFailurePause = view.run.status === 'paused' && view.run.reason === 'runtime_failed';
+        if (view.run.pauseRequestedAtUtcMs !== null || view.batch.pauseRequestedAtUtcMs !== null
+          || !['queued', 'running'].includes(view.batch.status)
+          || !automaticFailurePause && !['queued', 'running'].includes(view.run.status)) throw conflict('run_not_active');
+        if (automaticFailurePause) {
+          const resumed = db.prepare("UPDATE runs SET status = 'running', reason = NULL, revision = revision + 1, updated_at = ? WHERE id = ? AND project_id = ? AND revision = ? AND status = 'paused' AND reason = 'runtime_failed' AND pause_requested_at IS NULL")
+            .run(clock(), valid.runId, valid.projectId, view.run.revision);
+          if (resumed.changes !== 1) throw conflict('run_not_active');
+        }
+
         const prior = [...attempts.listTaskAttempts(valid.projectId, valid.taskId)]
           .find(candidate => candidate.inputSnapshot.runtimeFallback?.switchKey === valid.switchKey);
         if (prior !== undefined) {
@@ -129,7 +142,7 @@ export function createSqliteRuntimeFallbackSwitchService(session: SqliteStorageS
         const reservation = execution.reserveTaskAttemptInTransaction({ projectId: valid.projectId, batchId: view.batch.id,
           runId: valid.runId, taskId: task.id, attemptKey: nextAttemptId, maxAttemptsPerTask });
         execution.reserveRuntimeStartInTransaction({ projectId: valid.projectId, batchId: view.batch.id,
-          runId: valid.runId, startKey: nextAttemptId });
+          runId: valid.runId, startKey: runtimeStartReservationKey(nextAttemptId, nextExecutionVersion) });
         const occupied = resources.acquireInTransaction({ projectId: valid.projectId, attemptId: nextAttemptId,
           owner: valid.newOwner, hostInstanceId: valid.newHostInstanceId, executionVersion: nextExecutionVersion },
           valid.workspace, valid.leaseUntilUtcMs);

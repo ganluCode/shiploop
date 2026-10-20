@@ -30,6 +30,9 @@ export function wrapPiRequestStream(
   onFailure?: (failure: RuntimeFailureClassification | null) => void,
 ): StreamFn {
   return (model, context, options) => {
+    // Pi 1.0.4 explicitly disables native SDK retries and honors maxRetries for
+    // these APIs. Bedrock ignores maxRetries; other APIs need separate evidence.
+    const controlsProviderRetries = ['anthropic-messages', 'openai-completions', 'openai-responses'].includes(model.api);
     const output = createAssistantMessageEventStream();
     const empty = (): AssistantMessage => {
       // SDK requires numeric usage on its internal terminal. Mark this synthetic
@@ -54,8 +57,8 @@ export function wrapPiRequestStream(
         let thrown: unknown;
         const startedAt = Date.now();
         try {
-          // Suppress both provider SDK retries and AgentSession auto-retry. Only
-          // Core's single controller may spend this Attempt's outer retry budget.
+          // Disable Pi's provider retry loop where supported. AgentSession retry
+          // is disabled by the adapter; unverified APIs get no outer replay.
           const source = await original(model, context, { ...options, maxRetries: 0 });
           for await (const event of source) {
             if (event.type === 'done' || event.type === 'error') { ended = event; break; }
@@ -97,7 +100,7 @@ export function wrapPiRequestStream(
         previousError = message;
         return { value: { type: 'error' as const, reason: message.stopReason === 'aborted' ? 'aborted' as const : 'error' as const, error: message },
           failure: { category: classification.category ?? 'unknown',
-            sideEffect: classification.category === 'transient_connection' || classification.category === 'transient_server'
+            sideEffect: controlsProviderRetries && (classification.category === 'transient_connection' || classification.category === 'transient_server')
               ? 'none' as const : 'uncertain' as const,
             responseHeadersReceived: partial !== undefined,
             deltaReceived, partialResult: message.content.length > 0, durationMs: Date.now() - startedAt } };
