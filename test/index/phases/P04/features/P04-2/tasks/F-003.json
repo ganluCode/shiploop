@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "task_id": "F-003",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/authorization/p04-2-work-resource-selection.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}
