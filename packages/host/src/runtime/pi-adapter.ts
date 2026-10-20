@@ -84,6 +84,8 @@ export interface PiSession {
   readonly sessionFile?: string;
   subscribe(listener: (event: unknown) => void): () => void;
   prompt(text: string): Promise<void>;
+  /** Standard AgentSession exposes this idle barrier; older test doubles may omit it. */
+  waitForIdle?(): Promise<void>;
   abort(): Promise<void>;
   dispose(): void;
 }
@@ -216,7 +218,11 @@ export function assertPiStartupCompatible(
 }
 
 function token(value: string): string {
-  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value) ? value : 'pi-event';
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value) ? value : `pi-${createHash('sha256').update(value).digest('hex').slice(0, 20)}`;
+}
+
+function identityToken(value: unknown, fallback: string): string {
+  return token(typeof value === 'string' && value.length > 0 ? value : fallback);
 }
 
 function eventId(request: RuntimeExecutionRequest, sequence: number): string {
@@ -243,16 +249,17 @@ function usageOf(message: unknown): RuntimeUsageReport | null {
   const usage = (message as { usage?: unknown }).usage;
   if (usage === null || typeof usage !== 'object') return null;
   const raw = usage as Record<string, unknown>;
-  const inputTokens = typeof raw.input === 'number' && Number.isSafeInteger(raw.input) ? raw.input : null;
-  const outputTokens = typeof raw.output === 'number' && Number.isSafeInteger(raw.output) ? raw.output : null;
-  const total = raw.cost !== null && typeof raw.cost === 'object'
-    ? (raw.cost as { total?: unknown }).total
-    : undefined;
+  const inputTokens = typeof raw.input === 'number' && Number.isSafeInteger(raw.input) && raw.input >= 0 ? raw.input : null;
+  const outputTokens = typeof raw.output === 'number' && Number.isSafeInteger(raw.output) && raw.output >= 0 ? raw.output : null;
+  const cost = raw.cost !== null && typeof raw.cost === 'object' ? raw.cost as Record<string, unknown> : undefined;
+  const total = cost?.total;
   const costUsdMicros = typeof total === 'number' && Number.isFinite(total) && total >= 0
     ? Math.round(total * 1_000_000)
     : null;
   if (inputTokens === null && outputTokens === null && costUsdMicros === null) return null;
-  return { basis: 'reported', inputTokens, outputTokens, costUsdMicros };
+  // Pi exposes message usage but does not identify whether it is a delta or a
+  // session cumulative total. Keep the fact usable while preserving that gap.
+  return { basis: 'reported', inputTokens, outputTokens, costUsdMicros, completeness: 'unknown', accounting: 'unknown' };
 }
 
 function messageRole(message: unknown): string {
@@ -340,58 +347,135 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
       const events = new EventChannel();
       let sequence = 0;
       let lastUsage: RuntimeUsageReport | null = null;
-      let terminal: 'completed' | 'failed' | 'cancelled' = 'completed';
+      let terminal: 'completed' | 'failed' | 'cancelled' | 'timed_out' = 'completed';
       let terminalReason: string | null = null;
+      let terminalObserved = false;
       let cancelRequested = false;
+      let messageOrdinal = 0;
+      let activeMessageKey: string | undefined;
+      const pendingMessages = new Map<string, { message: unknown; usage: RuntimeUsageReport | null }>();
+      const emittedMessages = new Set<string>();
+      const emittedUsage = new Set<string>();
+      const emittedToolStarts = new Set<string>();
+      const emittedToolEnds = new Set<string>();
+      const diagnosticRefs: string[] = [];
       const startedAt = Date.now();
-      const publish = (kind: RuntimeEvent['kind'], payload: RuntimeEvent['payload']): void => {
+      const publish = (kind: RuntimeEvent['kind'], payload: RuntimeEvent['payload']): RuntimeEvent => {
         sequence += 1;
         if (kind === 'usage') {
           lastUsage = (payload as Extract<RuntimeEvent['payload'], { readonly kind: 'usage' }>).usage;
         }
-        events.push(runtimeEvent(request, sequence, kind, payload));
+        const emitted = runtimeEvent(request, sequence, kind, payload);
+        if (kind === 'diagnostic' && diagnosticRefs.length < 32) diagnosticRefs.push(emitted.eventId);
+        events.push(emitted);
+        return emitted;
+      };
+      const objectId = (value: unknown): string | undefined => {
+        if (value === null || typeof value !== 'object') return undefined;
+        const raw = value as Record<string, unknown>;
+        for (const key of ['id', 'messageId', 'toolCallId']) {
+          if (typeof raw[key] === 'string' && raw[key].length > 0) return raw[key];
+        }
+        return undefined;
+      };
+      const messageKeyFor = (type: string, message: unknown): string => {
+        const id = objectId(message);
+        if (id !== undefined) return identityToken(id, `${request.invocationId}-message`);
+        if (type === 'message_start' || activeMessageKey === undefined) {
+          messageOrdinal += 1;
+          activeMessageKey = identityToken(undefined, `${request.invocationId}-message-${messageOrdinal}`);
+        }
+        return activeMessageKey;
+      };
+      const rememberMessage = (type: string, message: unknown): string => {
+        const key = messageKeyFor(type, message);
+        const previous = pendingMessages.get(key);
+        pendingMessages.set(key, { message, usage: usageOf(message) ?? previous?.usage ?? null });
+        return key;
+      };
+      const flushMessage = (key: string): void => {
+        const pending = pendingMessages.get(key);
+        if (pending === undefined || emittedMessages.has(key)) return;
+        emittedMessages.add(key);
+        const message = pending.message;
+        const role = messageRole(message);
+        const content = message !== null && typeof message === 'object' ? (message as { content?: unknown }).content : undefined;
+        const preview = textOf(content).slice(0, 200);
+        if (preview.length > 0 && (role === 'assistant' || role === 'user' || role === 'tool' || role === 'system')) {
+          publish('message', { kind: 'message', messageId: key, role: role as 'assistant' | 'user' | 'tool' | 'system', preview });
+        }
+        if (pending.usage !== null && !emittedUsage.has(key)) {
+          emittedUsage.add(key);
+          publish('usage', { kind: 'usage', usage: pending.usage });
+        }
+      };
+      const diagnostic = (code: string, message: string): void => {
+        publish('diagnostic', { kind: 'diagnostic', code: token(code), message: message.slice(0, 200) || 'diagnostic' });
       };
       let unsubscribe: () => void = () => undefined;
       try {
         unsubscribe = session.subscribe((raw) => {
-        if (raw === null || typeof raw !== 'object') {
-          publish('diagnostic', { kind: 'diagnostic', code: 'pi_unknown_event', message: 'unknown event' });
-          return;
-        }
-        const event = raw as Record<string, unknown>;
-        const type = typeof event.type === 'string' ? event.type : 'unknown';
-        if (type === 'tool_execution_start' && typeof event.toolCallId === 'string' && typeof event.toolName === 'string') {
-          publish('tool_started', { kind: 'tool_started', toolCallId: token(event.toolCallId), toolName: token(event.toolName) });
-        } else if (type === 'tool_execution_end' && typeof event.toolCallId === 'string') {
-          const isError = event.isError === true;
-          publish('tool_finished', {
-            kind: 'tool_finished', toolCallId: token(event.toolCallId), exitCode: null, signal: null,
-            reason: isError ? 'tool_error' : null,
-          });
-        } else if (type === 'message_end') {
-          const message = event.message;
-          const usage = usageOf(message);
-          if (usage !== null) publish('usage', { kind: 'usage', usage });
-          if (messageRole(message) === 'assistant') {
-            const preview = textOf(message !== null && typeof message === 'object' ? (message as { content?: unknown }).content : undefined).slice(0, 200);
-            if (preview.length > 0) {
-              publish('message', { kind: 'message', messageId: token(eventId(request, sequence + 1)), role: 'assistant', preview });
+          if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+            diagnostic('pi_unknown_event', 'unknown SDK event');
+            return;
+          }
+          const event = raw as Record<string, unknown>;
+          const type = typeof event.type === 'string' ? event.type : 'unknown';
+          if (type === 'message_start' && event.message !== undefined) {
+            rememberMessage(type, event.message);
+          } else if (type === 'message_update' && event.message !== undefined) {
+            // Updates are coalesced with message_end so a stream is counted once.
+            rememberMessage(type, event.message);
+          } else if (type === 'message_end' && event.message !== undefined) {
+            const key = rememberMessage(type, event.message);
+            flushMessage(key);
+            const stopReason = messageStopReason(event.message);
+            if (stopReason === 'aborted') {
+              terminal = 'cancelled';
+              terminalReason = 'cancelled';
+            } else if (stopReason === 'error') {
+              terminal = 'failed';
+              terminalReason = classifyPiFailure(
+                event.message !== null && typeof event.message === 'object' ? (event.message as { errorMessage?: unknown }).errorMessage : undefined,
+                'model_error',
+              ).reason;
             }
+          } else if (type === 'agent_end' && Array.isArray(event.messages)) {
+            for (const message of event.messages) {
+              if (messageRole(message) === 'assistant') flushMessage(rememberMessage(type, message));
+            }
+          } else if (type === 'tool_execution_start' && typeof event.toolCallId === 'string' && typeof event.toolName === 'string') {
+            const toolCallId = identityToken(event.toolCallId, `${request.invocationId}-tool`);
+            if (!emittedToolStarts.has(toolCallId)) {
+              emittedToolStarts.add(toolCallId);
+              publish('tool_started', { kind: 'tool_started', toolCallId, toolName: identityToken(event.toolName, 'pi-tool') });
+            }
+          } else if (type === 'tool_execution_end' && typeof event.toolCallId === 'string') {
+            const toolCallId = identityToken(event.toolCallId, `${request.invocationId}-tool`);
+            if (!emittedToolEnds.has(toolCallId)) {
+              emittedToolEnds.add(toolCallId);
+              const result = event.result !== null && typeof event.result === 'object' ? event.result as Record<string, unknown> : {};
+              const details = result.details !== null && typeof result.details === 'object' ? result.details as Record<string, unknown> : result;
+              const exitCode = typeof details.exitCode === 'number' && Number.isInteger(details.exitCode) && details.exitCode >= 0 && details.exitCode <= 255 ? details.exitCode : null;
+              const signal = typeof details.signal === 'string' ? token(details.signal) : null;
+              const outputBytes = typeof details.outputBytes === 'number' && Number.isSafeInteger(details.outputBytes) && details.outputBytes >= 0 ? details.outputBytes : null;
+              publish('tool_finished', {
+                kind: 'tool_finished', toolCallId, exitCode, signal,
+                reason: event.isError === true ? 'tool_error' : null,
+                outputBytes, lastActivityAtUtc: new Date().toISOString(),
+              });
+            }
+          } else if (type === 'agent_settled') {
+            terminalObserved = true;
+            if (cancelRequested) terminal = 'cancelled';
+          } else if (type === 'ui_prompt_start' || type === 'permission_request' || type === 'permission_requested') {
+            diagnostic('pi.permission.requested', 'Pi requested permission or user approval');
+          } else if (type === 'auto_retry_start' || type === 'auto_retry_end' || type === 'compaction_end') {
+            diagnostic(`pi.${type}`, 'Pi emitted a lifecycle diagnostic');
+          } else if (type !== 'agent_start' && type !== 'turn_start' && type !== 'turn_end' && type !== 'agent_before_settle'
+            && type !== 'message_start' && type !== 'tool_execution_update' && type !== 'ui_prompt_end' && type !== 'queue_update') {
+            diagnostic('pi_unknown_event', `SDK event type: ${type.slice(0, 120)}`);
           }
-          const stopReason = messageStopReason(message);
-          if (stopReason === 'aborted') {
-            terminal = 'cancelled';
-            terminalReason = 'cancelled';
-          } else if (stopReason === 'error') {
-            terminal = 'failed';
-            terminalReason = classifyPiFailure(
-              message !== null && typeof message === 'object' ? (message as { errorMessage?: unknown }).errorMessage : undefined,
-              'model_error',
-            ).reason;
-          }
-        } else if (type !== 'agent_start' && type !== 'turn_start' && type !== 'turn_end' && type !== 'agent_end' && type !== 'message_start' && type !== 'message_update' && type !== 'tool_execution_update') {
-          publish('diagnostic', { kind: 'diagnostic', code: 'pi_unknown_event', message: 'unknown event' });
-        }
         });
       } catch (error) {
         try {
@@ -405,16 +489,26 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
       const result = (async () => {
         try {
           await session.prompt(prompt);
+          if (session.waitForIdle !== undefined) {
+            await session.waitForIdle();
+          }
           if (cancelRequested) terminal = 'cancelled';
+          if (!terminalObserved) {
+            terminal = 'failed';
+            terminalReason = 'missing_terminal';
+            diagnostic('pi.missing_terminal', 'Pi prompt ended without agent_settled');
+          }
         } catch (error) {
           if (cancelRequested) {
             terminal = 'cancelled';
             terminalReason = 'cancelled';
+            terminalObserved = true;
           } else {
             const failure = classifyPiFailure(error, 'model_error');
             terminal = 'failed';
             terminalReason = failureReason(failure);
-            publish('diagnostic', { kind: 'diagnostic', code: `pi_${failure.reason}`, message: failure.reason });
+            terminalObserved = true;
+            diagnostic(`pi.${failure.reason}`, failure.reason);
           }
         } finally {
           try {
@@ -437,6 +531,8 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
           durationMs: Date.now() - startedAt,
           usage: lastUsage,
           lastEventSequence: sequence === 0 ? null : sequence,
+          providerSessionId: session.sessionId === undefined ? null : identityToken(session.sessionId, `${request.invocationId}-provider-session`),
+          diagnosticRefs,
         };
       })();
       const stopped = result.then(() => ({
@@ -451,7 +547,7 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
         stopped,
         nativeSession: {
           runtimeId: PI_RUNTIME_ID,
-          providerSessionId: session.sessionId ?? null,
+          providerSessionId: session.sessionId === undefined ? null : identityToken(session.sessionId, `${request.invocationId}-provider-session`),
           sessionFile: session.sessionFile ?? null,
         },
         async cancel() {

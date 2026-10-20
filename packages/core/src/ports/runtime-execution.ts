@@ -326,6 +326,9 @@ export interface RuntimeUsageReport {
   readonly inputTokens: number | null;
   readonly outputTokens: number | null;
   readonly costUsdMicros: number | null;
+  /** SDK 统计范围不确定或只覆盖部分观察事实时显式保留缺口。 */
+  readonly completeness?: 'complete' | 'partial' | 'unknown';
+  readonly accounting?: 'incremental' | 'cumulative' | 'unknown';
 }
 
 export type RuntimeEventPayload =
@@ -389,15 +392,23 @@ function nullableCount(value: unknown, field: string): number | null {
 }
 
 export function validateRuntimeUsageReport(value: unknown, field = 'usage'): RuntimeUsageReport {
-  const raw = adapterObject(value, ['basis', 'inputTokens', 'outputTokens', 'costUsdMicros'], field);
+  const raw = adapterObject(value, ['basis', 'inputTokens', 'outputTokens', 'costUsdMicros', 'completeness', 'accounting'], field);
   if (raw.basis !== 'synthetic' && raw.basis !== 'reported') {
     throw protocolError('invalid_usage_basis', `${field}.basis`);
+  }
+  if (raw.completeness !== undefined && raw.completeness !== 'complete' && raw.completeness !== 'partial' && raw.completeness !== 'unknown') {
+    throw protocolError('invalid_usage_completeness', `${field}.completeness`);
+  }
+  if (raw.accounting !== undefined && raw.accounting !== 'incremental' && raw.accounting !== 'cumulative' && raw.accounting !== 'unknown') {
+    throw protocolError('invalid_usage_accounting', `${field}.accounting`);
   }
   return {
     basis: raw.basis,
     inputTokens: nullableCount(raw.inputTokens, `${field}.inputTokens`),
     outputTokens: nullableCount(raw.outputTokens, `${field}.outputTokens`),
     costUsdMicros: nullableCount(raw.costUsdMicros, `${field}.costUsdMicros`),
+    ...(raw.completeness === undefined ? {} : { completeness: raw.completeness as RuntimeUsageReport['completeness'] }),
+    ...(raw.accounting === undefined ? {} : { accounting: raw.accounting as RuntimeUsageReport['accounting'] }),
   };
 }
 
@@ -530,12 +541,17 @@ export interface RuntimeExecutionResult {
   readonly durationMs: number | null;
   readonly usage: RuntimeUsageReport | null;
   readonly lastEventSequence: number | null;
+  /** Provider-native identity is evidence, never the Core Attempt identity. */
+  readonly providerSessionId?: string | null;
+  /** Event IDs for bounded diagnostics emitted during this invocation. */
+  readonly diagnosticRefs?: readonly string[];
 }
 
 export function validateRuntimeExecutionResult(value: unknown): RuntimeExecutionResult {
   const field = 'result';
   const raw = adapterObject(value, [
     'schemaVersion', 'terminal', 'reason', 'exitCode', 'signal', 'durationMs', 'usage', 'lastEventSequence',
+    'providerSessionId', 'diagnosticRefs',
   ], field);
   if (raw.schemaVersion !== RUNTIME_RESULT_SCHEMA_VERSION) {
     throw protocolError('unsupported_schema_version', `${field}.schemaVersion`);
@@ -544,6 +560,16 @@ export function validateRuntimeExecutionResult(value: unknown): RuntimeExecution
     throw protocolError('unknown_terminal', `${field}.terminal`);
   }
   const usage = raw.usage === null ? null : validateRuntimeUsageReport(raw.usage, `${field}.usage`);
+  const providerSessionId = raw.providerSessionId === undefined || raw.providerSessionId === null
+    ? raw.providerSessionId
+    : eventToken(raw.providerSessionId, `${field}.providerSessionId`);
+  let diagnosticRefs: string[] | undefined;
+  if (raw.diagnosticRefs !== undefined) {
+    if (!Array.isArray(raw.diagnosticRefs) || raw.diagnosticRefs.length > RUNTIME_SESSION_DIAGNOSTICS_MAX_COUNT) {
+      throw protocolError('invalid_diagnostic_refs', `${field}.diagnosticRefs`);
+    }
+    diagnosticRefs = raw.diagnosticRefs.map((ref, index) => eventToken(ref, `${field}.diagnosticRefs[${index}]`));
+  }
   return {
     schemaVersion: RUNTIME_RESULT_SCHEMA_VERSION,
     terminal: raw.terminal as RuntimeTerminalState,
@@ -555,6 +581,8 @@ export function validateRuntimeExecutionResult(value: unknown): RuntimeExecution
     lastEventSequence: raw.lastEventSequence === null
       ? null
       : adapterNonNegativeInteger(raw.lastEventSequence, `${field}.lastEventSequence`),
+    ...(raw.providerSessionId === undefined ? {} : { providerSessionId }),
+    ...(diagnosticRefs === undefined ? {} : { diagnosticRefs }),
   };
 }
 

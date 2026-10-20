@@ -107,6 +107,7 @@ class FakePiSession implements PiSession {
       },
     });
   }
+  async waitForIdle(): Promise<void> { this.listener?.({ type: 'agent_settled' }); }
   async abort(): Promise<void> {
     this.aborted = true;
     this.listener?.({ type: 'message_end', message: { role: 'assistant', content: [], stopReason: 'aborted' } });
@@ -115,6 +116,20 @@ class FakePiSession implements PiSession {
   dispose(): void { this.disposed = true; }
   wasAborted(): boolean { return this.aborted; }
   wasDisposed(): boolean { return this.disposed; }
+}
+
+class ScriptedPiSession implements PiSession {
+  readonly sessionId = 'provider-session-scripted';
+  readonly sessionFile = '/managed/session/scripted.jsonl';
+  private listener: ((event: unknown) => void) | undefined;
+  constructor(private readonly script: readonly unknown[], private readonly settle = true) {}
+  subscribe(listener: (event: unknown) => void): () => void { this.listener = listener; return () => { this.listener = undefined; }; }
+  async prompt(): Promise<void> { for (const event of this.script) this.listener?.(event); }
+  async waitForIdle(): Promise<void> {
+    if (this.settle) this.listener?.({ type: 'agent_settled' });
+  }
+  async abort(): Promise<void> { this.listener?.({ type: 'agent_settled' }); }
+  dispose(): void {}
 }
 
 describe('P04-1 standard Pi SDK contract', () => {
@@ -179,6 +194,61 @@ describe('P04-1 standard Pi SDK contract', () => {
       expect.objectContaining({ kind: 'message' }),
     ]));
     await expect(handle.stopped).resolves.toMatchObject({ confirmed: true });
+  });
+
+  it('[case:pi-event-normalization] coalesces message updates, deduplicates tool and usage facts, and retains unknown diagnostics', async () => {
+    const message = (content: string, usage = true) => ({
+      id: 'assistant-1', role: 'assistant', content: [{ type: 'text', text: content }],
+      ...(usage ? { usage: { input: 11, output: 7, cost: { total: 0.00002 } } } : {}), stopReason: 'stop',
+    });
+    const session = new ScriptedPiSession([
+      { type: 'message_start', message: message('hello') },
+      { type: 'message_update', message: message('hel') },
+      { type: 'message_update', message: message('hello') },
+      { type: 'tool_execution_start', toolCallId: 'call-1', toolName: 'read' },
+      { type: 'tool_execution_start', toolCallId: 'call-1', toolName: 'read' },
+      { type: 'tool_execution_end', toolCallId: 'call-1', toolName: 'read', isError: false },
+      { type: 'tool_execution_end', toolCallId: 'call-1', toolName: 'read', isError: false },
+      { type: 'message_end', message: message('hello') },
+      { type: 'future_sdk_event', privatePayload: 'must not cross the boundary' },
+    ]);
+    const registration = createPiRuntimeAdapter({
+      providers: [{ providerId: 'anthropic', models: ['claude-sonnet'] }],
+      permissionGrants: ['fs.read'], isolationModes: ['trusted_project'], assembly: assembly(),
+      sessionFactory: async () => session,
+    });
+    const handle = await registration.adapter.start(request());
+    const events: RuntimeEvent[] = [];
+    for await (const event of handle.events) events.push(event as RuntimeEvent);
+    const result = await handle.result as RuntimeExecutionResult;
+    expect(events.filter(event => event.kind === 'message')).toHaveLength(1);
+    expect(events.filter(event => event.kind === 'usage')).toHaveLength(1);
+    expect(events.filter(event => event.kind === 'tool_started')).toHaveLength(1);
+    expect(events.filter(event => event.kind === 'tool_finished')).toHaveLength(1);
+    expect(events.filter(event => event.kind === 'diagnostic')).toHaveLength(1);
+    expect(events.find(event => event.kind === 'message')?.payload).toMatchObject({ messageId: 'assistant-1', preview: 'hello' });
+    expect(result).toMatchObject({
+      terminal: 'completed', providerSessionId: 'provider-session-scripted', lastEventSequence: events.length,
+      diagnosticRefs: [expect.any(String)], usage: { inputTokens: 11, outputTokens: 7, completeness: 'unknown', accounting: 'unknown' },
+      exitCode: null, signal: null,
+    });
+    expect(new Set(events.map(event => event.eventId)).size).toBe(events.length);
+  });
+
+  it('[case:pi-terminal-and-null-semantics] waits for agent settled and keeps unavailable usage fields null', async () => {
+    const session = new ScriptedPiSession([
+      { type: 'message_end', message: { id: 'assistant-2', role: 'assistant', content: [{ type: 'text', text: 'done' }], stopReason: 'stop' } },
+    ]);
+    const registration = createPiRuntimeAdapter({
+      providers: [{ providerId: 'anthropic', models: ['claude-sonnet'] }],
+      permissionGrants: ['fs.read'], isolationModes: ['trusted_project'], assembly: assembly(),
+      sessionFactory: async () => session,
+    });
+    const handle = await registration.adapter.start(request({ invocationId: 'invocation-2', executionVersion: 2 }));
+    await expect(handle.result).resolves.toMatchObject({
+      terminal: 'completed', usage: null, providerSessionId: 'provider-session-scripted',
+      exitCode: null, signal: null,
+    });
   });
 
   it('[case:pi-managed-session-scope] binds both immutable inputs, creates a distinct native scope per attempt, and returns native identity', async () => {
