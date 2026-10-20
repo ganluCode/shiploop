@@ -1698,14 +1698,17 @@ function validateSettingsCommandPayload(
   }
 }
 
-/**
- * 运行时校验外部命令信封（unknown → 判别联合）。纯函数：不做 I/O、不读时钟
- * （时效相对服务端时钟的判定见 evaluateCommandTiming）、不修改输入。
- *
- * 失败抛 PublicError：结构/类型 → invalid_input（定位到字段）；schemaVersion≠2
- * → unsupported_schema_version；未知操作 → unsupported（details 只列六个实现者）。
- */
-export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelope {
+/** Work operations are receipt identities only, never generic Host commands/capabilities. */
+export const WORK_TOOL_OPERATION_SPECS = Object.freeze({
+  'candidate.submit': { scopeKind: 'project', mutation: 'create', capability: 'project.read' },
+  'evidence.submit': { scopeKind: 'project', mutation: 'create', capability: 'project.read' },
+  'task.read': { scopeKind: 'project', mutation: 'create', capability: 'project.read' },
+} as const);
+export type ReceiptOperation = AppOperation | keyof typeof WORK_TOOL_OPERATION_SPECS;
+export const RECEIPT_OPERATION_SPECS = Object.freeze({ ...COMMAND_OPERATION_SPECS, ...WORK_TOOL_OPERATION_SPECS });
+
+/** Shared structural/timing envelope rules; payload rules stay with each channel. */
+export function validateCommandEnvelopeFields(input: unknown, specs: Readonly<Record<string, CommandOperationSpec>>) {
   // 结构/版本/操作名在定位到具体命令前，使用路由级操作身份。
   const submit = COMMANDS_SUBMIT_OPERATION;
   const object = requireObject(submit, input, 'envelope');
@@ -1747,13 +1750,13 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
   if (typeof operationName !== 'string') {
     fail(submit, 'invalid_input', 'operation', '必须是命令名字符串', operationName);
   }
-  const spec = COMMAND_OPERATION_SPECS[operationName as AppOperation];
+  const spec = Object.hasOwn(specs, operationName) ? specs[operationName] : undefined;
   if (spec === undefined) {
     fail(submit, 'unsupported', 'operation', '未知操作（Work/Chat 等能力本版本不提供）', operationName, {
-      supportedOperations: [...COMMAND_OPERATIONS],
+      supportedOperations: Object.keys(specs),
     });
   }
-  const operation = operationName as AppOperation;
+  const operation = operationName;
 
   const scope = validateScope(operation, object.scope, spec.scopeKind);
 
@@ -1785,6 +1788,16 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
     issuedAt: timing.issuedAt,
     expiresAt: timing.expiresAt,
   };
+
+  return { ...base, operation, scope, expectedRevision, payload: object.payload };
+}
+
+/** Validate a Host command against its existing operation and payload whitelist; no I/O or clock reads. */
+export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelope {
+  const header = validateCommandEnvelopeFields(input, COMMAND_OPERATION_SPECS);
+  const { operation: operationName, scope, expectedRevision, ...base } = header;
+  const operation = operationName as AppOperation;
+  const object = { payload: header.payload };
 
   if (operation === 'project.register') {
     return {
@@ -2127,7 +2140,7 @@ interface ReceiptCommon {
   readonly schemaVersion: typeof WIRE_MESSAGE_SCHEMA_VERSION;
   readonly commandId: string;
   readonly principalId: string;
-  readonly operation: AppOperation;
+  readonly operation: ReceiptOperation;
   readonly scope: CommandScope;
   readonly requestDigest: string;
   readonly issuedAt: string;
@@ -2175,7 +2188,7 @@ export type CommandReceipt = CompletedCommandReceipt | RejectedCommandReceipt | 
 interface ReceiptInputBase {
   readonly commandId: string;
   readonly principalId: string;
-  readonly operation: AppOperation;
+  readonly operation: ReceiptOperation;
   readonly scope: CommandScope;
   readonly requestDigest: string;
   readonly issuedAt: string;
@@ -2184,7 +2197,7 @@ interface ReceiptInputBase {
 }
 
 function assertReceiptIdentity(input: Omit<ReceiptInputBase, 'operation'> & {
-  readonly operation: AppOperation | typeof WORK_ACCEPTED_OPERATION;
+  readonly operation: ReceiptOperation;
 }, allowWork = false): void {
   if (!isUuidV4(input.commandId)) {
     throw new TypeError('回执身份字段不合法：commandId 必须是 UUID v4');
@@ -2202,7 +2215,7 @@ function assertReceiptIdentity(input: Omit<ReceiptInputBase, 'operation'> & {
   // 判定统一从操作描述推导（Work accepted 专属 allowWork 分支退役；
   // completed/rejected 的 execution.start 与其他 v5 回执同一 project scope 纪律）。
   void allowWork;
-  const scopeKind = COMMAND_OPERATION_SPECS[input.operation]?.scopeKind;
+  const scopeKind = RECEIPT_OPERATION_SPECS[input.operation]?.scopeKind;
   if (scopeKind === undefined || scopeKind !== input.scope.kind) {
     throw new TypeError(`scope 与操作 ${input.operation} 不匹配`);
   }

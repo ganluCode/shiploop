@@ -1,3 +1,13 @@
+# P04-2 工作进度
+
+## F-005 — Work 受限业务工具通道（2026-10-20）
+
+- 新增 Core createWorkToolChannel：可信 Host/Core 绑定 F-001 授权，仅开放 task.read/candidate.submit/evidence.submit；每次调用、重放和异步校验后核对当前可信主体、project.read/项目可见性、Run/Task/Attempt、Host/invocation/执行 fence、lease、有效期和撤销。请求身份仅作范围断言，伪造主体/管理操作/SQL/文件字段拒绝。
+- 候选沿用 verification-candidates 和真实受管 Artifact verifier；证据/候选提交事实存于现有原子 completed/rejected 回执，复用 commandId/requestDigest/resultRef/重放冲突；ReceiptOperation 扩展不增加 Host 操作。提交只记事实，verificationPassed=false，Task/审批/预算/批次/锁/工作区均不变。
+- 新增真实 SQLite/Artifact/文件系统聚焦 13 项测试。本地最终 test-7s_ai55o.log：exit 0，13 passed/0 failed/0 skipped（约 7 秒）。首轮缺模块 RED test-gp5qed6z.log 及中间夹具修正失败全部保留；修正依据真实 claim.receipt 和 SQLite 不可变身份约束，未放宽产品规则。
+- 全仓类型检查 test-abfv3532.log：exit 1，仅既有 test/modules/runtime/p04-1-pi-f007-contract.test.ts:77 TS18046；此前 F-001/F-004 已记录同一问题，本任务生产代码和测试无新类型错误。日志及真实退出码 sidecar 均在本 Feature workspace verifications/F-005/runtime-logs/。
+- 交接文档 docs/p04-2-work-tool-channel.md；索引 test/index/phases/P04/features/P04-2/tasks/F-005.json 和 Harness selection 引用已核对 8 个实际路径。本地只执行新增文件；其余 7 个相关回归未运行，交 Nezha 独立验证。未运行全仓/组合门禁/Phase 验收或真实模型；正式 feature.yaml/task_list 只读。Runtime 接线和纵向验证仍由后续任务处理。
+
 # P04-1 工作进度
 
 ## F-005 — Pi Runner 最小取消、有限时限与停止证据（2026-10-20）

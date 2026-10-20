@@ -95,6 +95,7 @@ export * from './ports/events.js';
 export * from './ports/queries.js';
 export * from './ports/authorization.js';
 export * from './ports/work-access.js';
+export * from './application/work-tool-channel.js';
 export * from './ports/work-authentication.js';
 export { createWorkAuthenticationPreflight } from './application/work-authentication-preflight.js';
 export * from './ports/migrations.js';

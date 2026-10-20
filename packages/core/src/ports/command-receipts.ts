@@ -31,7 +31,7 @@
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import {
-  COMMAND_OPERATION_SPECS,
+  RECEIPT_OPERATION_SPECS,
   PUBLIC_ERROR_CODES,
   RECEIPT_RESULT_MAX_BYTES,
   RESULT_REF_PREFIX,
@@ -44,7 +44,7 @@ import {
   isValidResultRef,
 } from './commands.js';
 import type {
-  AppOperation,
+  ReceiptOperation,
   AcceptedCommandReceipt,
   CommandReceipt,
   CommandScope,
@@ -123,7 +123,7 @@ function sha256Hex(text: string): string {
  * 键顺序不同的等价 JSON 摘要相同；任一业务参数、revision、时间字段不同则摘要
  * 不同。信封含非 JSON 安全数据是调用方编程错误（TypeError），不折算公开错误。
  */
-export function computeCommandRequestDigest(envelope: ValidatedCommandEnvelope): string {
+export function computeCommandRequestDigest(envelope: Pick<ValidatedCommandEnvelope, 'schemaVersion' | 'scope' | 'expectedRevision' | 'issuedAt' | 'expiresAt' | 'payload'> & { readonly operation: string }): string {
   return sha256Hex(
     stableCanonicalJson({
       schemaVersion: envelope.schemaVersion,
@@ -364,7 +364,7 @@ export function mapPersistedCommandReceipt(
       row.batchId != null || row.runId != null) {
     corrupt(operation, 'association');
   }
-  const spec = COMMAND_OPERATION_SPECS[row.operation as AppOperation];
+  const spec = Object.hasOwn(RECEIPT_OPERATION_SPECS, row.operation) ? RECEIPT_OPERATION_SPECS[row.operation as ReceiptOperation] : undefined;
   if (spec === undefined) {
     corrupt(operation, 'operation');
   }
@@ -388,7 +388,7 @@ export function mapPersistedCommandReceipt(
     schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION,
     commandId: row.commandId,
     principalId: row.principalId as string,
-    operation: row.operation as AppOperation,
+    operation: row.operation as ReceiptOperation,
     scope,
     requestDigest: row.requestDigest,
     issuedAt: new Date(row.issuedAtUtcMs).toISOString(),
@@ -537,12 +537,12 @@ function validateReceiptShape(
   if (typeof object.operation !== 'string') {
     throw validationError(context, 'receipt.operation', '必须是命令名字符串');
   }
-  const spec = COMMAND_OPERATION_SPECS[object.operation as AppOperation];
+  const spec = Object.hasOwn(RECEIPT_OPERATION_SPECS, object.operation) ? RECEIPT_OPERATION_SPECS[object.operation as ReceiptOperation] : undefined;
   const scopeKind = isWork && object.operation === WORK_ACCEPTED_OPERATION ? 'project' : (!isWork ? spec?.scopeKind : undefined);
   if (scopeKind === undefined) {
     throw validationError(context, 'receipt.operation', '未知操作或版本不匹配');
   }
-  const operation_ = object.operation as AppOperation;
+  const operation_ = object.operation as ReceiptOperation;
   const scope = validateReceiptScope(object.scope, scopeKind, context);
   if (!isSha256Hex(object.requestDigest)) {
     throw validationError(context, 'receipt.requestDigest', '必须是 64 位小写十六进制 SHA-256');

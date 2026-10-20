@@ -34,7 +34,8 @@ import {
   PublicError,
   isUuidV4,
   type AppCapability,
-  type AppOperation,
+  type ReceiptOperation,
+  RECEIPT_OPERATION_SPECS,
   type CommandScope,
   type ValidatedCommandEnvelope,
 } from './commands.js';
@@ -520,7 +521,7 @@ export function authorizeReceiptScopeVisibility(
 /** 回执授权目标（持久回执行的应用侧最小形态；F-006 读取端口映射）。 */
 export interface ReceiptAuthorizationTarget {
   readonly principalId: string;
-  readonly operation: AppOperation | 'execution.start';
+  readonly operation: ReceiptOperation;
   readonly scope: CommandScope;
 }
 
@@ -553,7 +554,7 @@ export function authorizeCommandReplay(
   // P03-3 / F-005 起 execution.start 已接线命令能力：重放重新核验当前能力
   // （execution.start 与预览共享授权面）；未接线时期保留的
   // work_command_not_wired 拒绝已随启动命令接线退役。
-  requireCapability(principal, COMMAND_OPERATION_SPECS[receipt.operation].capability, operation);
+  requireCapability(principal, RECEIPT_OPERATION_SPECS[receipt.operation].capability, operation);
   if (receipt.principalId !== principal.principalId) {
     receiptNotFound(operation);
   }

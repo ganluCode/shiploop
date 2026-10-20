@@ -1,0 +1,19 @@
+{
+  "schema_version": 2,
+  "task_id": "F-005",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        { "file": "test/modules/authorization/p04-2-work-tool-channel.test.ts", "all": true },
+        { "file": "test/modules/authorization/p04-2-work-access.test.ts", "all": true },
+        { "file": "test/modules/authorization/authorization-contract.test.ts", "all": true },
+        { "file": "test/modules/commands/commands-contract.test.ts", "all": true },
+        { "file": "test/modules/commands/command-receipts-store.test.ts", "all": true },
+        { "file": "test/modules/commands/atomic-commands.test.ts", "all": true },
+        { "file": "test/modules/verification/p03-7-f003-candidate-validation.test.ts", "all": true },
+        { "file": "test/modules/storage/artifacts/artifact-verify.test.ts", "all": true }
+      ]
+    }
+  ]
+}
