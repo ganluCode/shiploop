@@ -1,5 +1,6 @@
 /** Trusted static Work assembly. Executable/environment are code dependencies, never project settings. */
 import { createStaticRuntimeRegistry, RuntimeError } from 'shiploop-core';
+import type { WorkInferencePreflightAssembly } from 'shiploop-core';
 import type { WorkRuntimeFactory } from 'shiploop-core/assembly';
 import {
   assertPiStartupCompatible, createPiRuntimeDescriptor, piRuntimeEventPrefix, PI_RUNTIME_ID,
@@ -10,7 +11,8 @@ import type { PiRunnerAdapterOptions } from './pi-runner-adapter.js';
 
 export type PiWorkRuntimeOptions = Pick<PiRuntimeAdapterOptions, 'providers' | 'permissionGrants' | 'isolationModes'>
   & Omit<PiRunnerAdapterOptions, 'confirm'>
-  & { readonly prepareAccess?: PiTrustedAssembly['prepareAccess'] };
+  & { readonly prepareAccess?: PiTrustedAssembly['prepareAccess'];
+    readonly inferencePreflight?: WorkInferencePreflightAssembly };
 
 /** Only trusted startup code calls this factory. No discovery, SDK loading or automatic fallback. */
 export function createPiWorkRuntimeFactory(options: PiWorkRuntimeOptions): WorkRuntimeFactory {
@@ -37,6 +39,7 @@ export function createPiWorkRuntimeFactory(options: PiWorkRuntimeOptions): WorkR
     return {
       entries,
       eventIdentityPrefix: piRuntimeEventPrefix,
+      inferencePreflight: options.inferencePreflight,
       ...(options.prepareAccess === undefined ? {} : {
         prepareRequest: async (request: Parameters<typeof runner.start>[0]) => {
           const prepared = await options.prepareAccess!(request);

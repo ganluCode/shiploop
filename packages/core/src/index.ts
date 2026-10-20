@@ -64,6 +64,8 @@ export * from './ports/work-recovery-continuation.js';
 export * from './application/work-recovery-continuation.js';
 export * from './ports/runtime-execution.js';
 export * from './ports/runtime-failure.js';
+export * from './ports/runtime-inference-preflight.js';
+export * from './application/runtime-inference-preflight.js';
 export * from './ports/runtime-fallback-switch.js';
 export * from './application/runtime-fallback.js';
 export * from './application/runtime-request-retry.js';

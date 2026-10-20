@@ -12,6 +12,10 @@ import { createSqliteWorkResourceAccess } from './sqlite/work-resources.js';
 import { createSqliteWorkspaceAccess } from './sqlite/workspace.js';
 import { createSqliteWorkspaceRetentionStore } from './sqlite/workspace-retention.js';
 import { createSqliteAtomicCommandStore } from './sqlite/atomic-commands.js';
+import { createRuntimeInferencePreflight, resolveRuntimeInferencePreflightPolicy } from '../application/runtime-inference-preflight.js';
+import type { WorkInferencePreflightAssembly } from '../ports/runtime-inference-preflight.js';
+import { stableStringify } from '../ports/feature-plan.js';
+import { validateRuntimeStrategy } from '../ports/settings-schema.js';
 import { createWorkScheduler } from '../application/work-scheduler.js';
 import { evaluateTaskDag } from '../application/task-dag.js';
 import { validateTaskExecutionConfig } from '../application/task-strategy-selection.js';
@@ -51,6 +55,7 @@ export type WorkRuntimeFactory = (context: WorkRuntimeContext) => {
   readonly entries: readonly RuntimeRegistryEntry[];
   readonly eventIdentityPrefix: (request: RuntimeExecutionRequest) => string;
   readonly prepareRequest?: (request: RuntimeExecutionRequest) => Promise<RuntimeExecutionRequest>;
+  readonly inferencePreflight?: WorkInferencePreflightAssembly;
 };
 
 export function assembleWorkExecution(options: {
@@ -103,6 +108,37 @@ export function assembleWorkExecution(options: {
       return { launchId: processIdentity.launchId };
     } });
   const registry = createStaticRuntimeRegistry(runtimeAssembly?.entries ?? [], options.capabilityCatalog);
+  const probeAssembly = runtimeAssembly?.inferencePreflight;
+  const probePolicy = resolveRuntimeInferencePreflightPolicy(probeAssembly?.policy);
+  const probeCancellation = new AbortController();
+  const probes = new Map<string, ReturnType<typeof createRuntimeInferencePreflight>>();
+  async function checkInference(projectId: string, runId: string, taskId: string, config: unknown) {
+    if (!probePolicy.enabled) return;
+    const strategy = validateRuntimeStrategy(config, { operation: 'WorkRuntime.inferencePreflight' }, 'strategy');
+    const selection = probeAssembly!.select({ projectId, runId, taskId, strategy });
+    if (stableStringify(selection.strategy) !== stableStringify(strategy)) {
+      throw new StorageError('conflict', 'WorkRuntime.prepare', 'Probe strategy differs from frozen Task strategy', {
+        details: { reason: 'inference_preflight_strategy_mismatch' },
+      });
+    }
+    let probe = probes.get(projectId);
+    if (!probe) {
+      probe = createRuntimeInferencePreflight({ ...probeAssembly!, policy: probePolicy, nowUtcMs: now,
+        async audit(record) {
+          const body = Buffer.from(JSON.stringify(record));
+          await publisher.publishArtifact({ projectId, kind: 'inference_preflight', mediaType: 'application/json',
+            expectedHash: createHash('sha256').update(body).digest('hex'),
+            locator: `inference-preflight/${record.probeId}/${randomUUID()}.json`, content: [body] });
+        },
+      });
+      if (probes.size >= 256) probes.delete(probes.keys().next().value!);
+      probes.set(projectId, probe);
+    }
+    const decision = await probe.check(selection, probeCancellation.signal);
+    if (!decision.dispatchAllowed) throw new StorageError('conflict', 'WorkRuntime.prepare', 'Inference preflight blocked dispatch', {
+      details: { reason: `inference_preflight_${decision.reason}` },
+    });
+  }
   const inputBinding = createExecutionInputBindingService({ artifacts: app.artifactStore, verifier, attempts, resources,
     workspaceAuthority: app.workWorkspaceAuthority, workspaceRoots, publisher, nowMs: now,
     ...(app.runtimeRecoveryCatalog === undefined ? {} : { recoveryCatalog: app.runtimeRecoveryCatalog }),
@@ -172,6 +208,8 @@ export function assembleWorkExecution(options: {
       const config = validateTaskExecutionConfig(task.executionConfig, 'WorkRuntime.prepare');
       // Check adapter availability before any claim, workspace process or debit.
       if (!registry.resolve(config.runtime)) throw new StorageError('conflict', 'WorkRuntime.prepare', 'Runtime adapter is not installed', { details: { reason: 'runtime_not_found' } });
+      const { schemaVersion: _schema, maxCodeAttempts: _attempts, workTimeoutMs: _work, toolTimeoutMs: _tool, ...probeStrategy } = config;
+      await checkInference(projectId, candidate.run.id, taskId, probeStrategy);
       const refs = [...view.plan.feature.sourceRefs, ...task.requirementsRefs];
       // F-012：同 Task 已有历史 Attempt 时构造返工输入（F-011 契约）：关联当前
       // 预生成的新 Attempt、直接上一终态 Attempt、同一 worktree 已核对现场身份
@@ -328,6 +366,7 @@ export function assembleWorkExecution(options: {
     },
     async close() {
       quiescing = true;
+      probeCancellation.abort();
       await scheduler.close();
       const result = await execution.close();
       const pendingAttemptIds = [...new Set([...pending(), ...result.pendingAttemptIds])];

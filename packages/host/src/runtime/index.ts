@@ -59,6 +59,8 @@ export type {
   HostStartEntrySuccessResult,
   ParsedHostStartArgv,
 } from './start-entry.js';
+export { createPiInferencePreflightAdapter } from './pi-inference-preflight.js';
+export type { PiInferenceSource } from './pi-inference-preflight.js';
 export { createPiWorkRuntimeFactory } from './pi-work-runtime.js';
 export {
   createPiAuthenticationCatalog,
