@@ -26,8 +26,22 @@
     "accept:p03:clean-replay": "node scripts/acceptance/p03-clean-replay.ts"
   },
   "devDependencies": {
+    "@earendil-works/chord": "1.0.4",
+    "@earendil-works/pi-agent-core": "1.0.4",
+    "@earendil-works/pi-ai": "1.0.4",
+    "@earendil-works/pi-codemode": "1.0.4",
+    "@earendil-works/pi-mcp": "1.0.4",
+    "@earendil-works/pi-tui": "1.0.4",
     "@types/node": "22.20.4",
     "typescript": "7.0.2",
     "vitest": "5.0.3"
+  },
+  "overrides": {
+    "@earendil-works/chord": "1.0.4",
+    "@earendil-works/pi-agent-core": "1.0.4",
+    "@earendil-works/pi-ai": "1.0.4",
+    "@earendil-works/pi-codemode": "1.0.4",
+    "@earendil-works/pi-mcp": "1.0.4",
+    "@earendil-works/pi-tui": "1.0.4"
   }
 }

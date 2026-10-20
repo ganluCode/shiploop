@@ -35,6 +35,8 @@ export interface RuntimeAdapterDescriptor {
   readonly runtimeId: string;
   readonly contractVersion: typeof RUNTIME_ADAPTER_CONTRACT_VERSION;
   readonly adapterVersion: string;
+  /** 适配器所绑定的外部 SDK 版本；无外部 SDK 时省略。 */
+  readonly sdkVersion?: string;
   readonly providers: readonly ProviderCapabilityDescriptor[];
   readonly permissionGrants: readonly string[];
   readonly isolationModes: readonly string[];
@@ -86,7 +88,7 @@ export function validateRuntimeAdapterDescriptor(value: unknown): RuntimeAdapter
   const field = 'descriptor';
   const raw = requirePlainObject(value, context, field);
   rejectUnknownKeys(raw, [
-    'schemaVersion', 'runtimeId', 'contractVersion', 'adapterVersion',
+    'schemaVersion', 'runtimeId', 'contractVersion', 'adapterVersion', 'sdkVersion',
     'providers', 'permissionGrants', 'isolationModes',
   ], context, field);
   if (raw.schemaVersion !== 1) {
@@ -100,6 +102,9 @@ export function validateRuntimeAdapterDescriptor(value: unknown): RuntimeAdapter
     runtimeId: validateStableId(raw.runtimeId, context, `${field}.runtimeId`),
     contractVersion: RUNTIME_ADAPTER_CONTRACT_VERSION,
     adapterVersion: requireNonEmptyString(raw.adapterVersion, context, `${field}.adapterVersion`),
+    ...(raw.sdkVersion === undefined
+      ? {}
+      : { sdkVersion: requireNonEmptyString(raw.sdkVersion, context, `${field}.sdkVersion`) }),
     providers: providerDescriptors(raw.providers, `${field}.providers`),
     permissionGrants: tokenArray(raw.permissionGrants, `${field}.permissionGrants`, 'duplicate_permission_grant'),
     isolationModes: tokenArray(raw.isolationModes, `${field}.isolationModes`, 'duplicate_isolation_mode'),

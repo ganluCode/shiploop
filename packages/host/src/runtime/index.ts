@@ -59,3 +59,25 @@ export type {
   HostStartEntrySuccessResult,
   ParsedHostStartArgv,
 } from './start-entry.js';
+export {
+  PI_ADAPTER_VERSION,
+  PI_RUNTIME_CAPABILITIES,
+  PI_RUNTIME_ID,
+  PI_SDK_LICENSE,
+  PI_SDK_VERSION,
+  assertPiStartupCompatible,
+  createPiRuntimeAdapter,
+  createPiRuntimeDescriptor,
+  createPiSdkSessionFactory,
+} from './pi-adapter.js';
+export type {
+  PiCapabilityStatus,
+  PiRuntimeAdapterOptions,
+  PiRuntimeCapabilities,
+  PiRuntimeDescriptor,
+  PiRuntimeRegistration,
+  PiSession,
+  PiSessionFactory,
+  PiTrustedAssembly,
+  PiTrustedInputReader,
+} from './pi-adapter.js';
