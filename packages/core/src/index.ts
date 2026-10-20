@@ -64,6 +64,7 @@ export * from './ports/work-recovery-continuation.js';
 export * from './application/work-recovery-continuation.js';
 export * from './ports/runtime-execution.js';
 export * from './ports/runtime-failure.js';
+export * from './ports/runtime-retry.js';
 export * from './ports/runtime-registry.js';
 export * from './application/runtime-execution.js';
 export * from './ports/task-claim.js';
