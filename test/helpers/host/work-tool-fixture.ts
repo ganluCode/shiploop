@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { createWorkToolChannel } from '../../../packages/core/src/application/work-tool-channel.ts';
 import { createSqliteTaskDagStore } from '../../../packages/core/src/adapters/sqlite/task-dag-store.ts';
 import { createSqliteAttemptAccess } from '../../../packages/core/src/adapters/sqlite/attempt-store.ts';
-import { openClaimFixture } from '../p03-4/task-claim-fixture.ts';
+import { openClaimFixture, type ClaimFixture } from '../p03-4/task-claim-fixture.ts';
 import { NOW } from '../p03-3/budget-fixture.ts';
 import { createLocalOwnerPrincipal } from '../../../packages/core/src/ports/authorization.ts';
 import { createSqliteArtifactStore } from '../../../packages/core/src/adapters/sqlite/artifact-store.ts';
@@ -29,17 +29,19 @@ export async function openWorkToolFixture(options: {
   operations?: WorkAccessOperation[];
   composed?: boolean;
   restrictedPrincipal?: boolean;
+  beforeClaim?: (fixture: ClaimFixture) => Promise<string>;
   afterRead?: (content: VerifiedArtifactContent) => Promise<void>;
 } = {}) {
   const f = await openClaimFixture();
   try {
-    const claim = f.store().claimTask(f.input());
+    const hostInstanceId = await options.beforeClaim?.(f) ?? 'host-1';
+    const claim = f.store().claimTask({ ...f.input(), hostInstanceId });
     const attempt = claim.receipt.attempt;
     const binding = {
       principal: options.restrictedPrincipal ? {
         principalId: 'work-agent', capabilities: new Set<'project.read'>(['project.read']),
         projectScope: { kind: 'allowlist' as const, projectIds: [f.ids.projectId] },
-      } : createLocalOwnerPrincipal(), projectId: f.ids.projectId, hostInstanceId: 'host-1',
+      } : createLocalOwnerPrincipal(), projectId: f.ids.projectId, hostInstanceId,
       identity: { purpose: 'work' as const, runId: f.ids.runId, taskId: f.ids.taskId, attemptId: attempt.id },
       invocationId: 'invocation-1', executionVersion: attempt.executionVersion, nowUtcMs: NOW,
       strategy: { runtime: 'pi', provider: 'anthropic', model: 'claude-sonnet' },
@@ -95,8 +97,11 @@ export async function openWorkToolFixture(options: {
     const candidate = (overrides: Record<string, unknown> = {}) => ({ schemaVersion: 1, projectId: binding.projectId,
       attemptId: binding.identity.attemptId, executionVersion: binding.executionVersion, codeDigest: CODE_DIGEST,
       modules: [{ moduleKey: 'core', targets: ['packages/core/test.ts'], reason: 'core changed' }], ...overrides });
-    const snapshot = () => ({ ...f.snapshot(), ...f.box.snapshot() });
+    const snapshot = () => ({ ...f.snapshot(), ...f.box.snapshot(), ...Object.fromEntries([
+      'features', 'approvals', 'managed_workspaces', 'sessions', 'verification_batches', 'check_results',
+    ].map(table => [table, f.box.session.database.prepare(`SELECT * FROM ${table} ORDER BY id`).all()])) });
     return { f, channel, bridge, binding, access, request, publish, candidate, artifacts, files,
-      snapshot, setCurrent: (value: typeof binding | null) => { current = value; }, close: () => f.box.close() };
+      snapshot, currentBinding: authority.currentBinding, candidateContext: authority.candidateContext,
+      setCurrent: (value: typeof binding | null) => { current = value; }, close: () => f.box.close() };
   } catch (error) { f.box.close(); throw error; }
 }

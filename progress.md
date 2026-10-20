@@ -1,5 +1,12 @@
 # P04-2 工作进度
 
+## F-007 — 访问边界集成验证与交接（2026-10-20）
+
+- 恢复基线 19e01fa，沿用当前分支。仅新增测试/证据索引和夹具窄钩子；真实 startHost 启动恢复后认领当前实例 Attempt，同临时数据根验证查询、候选/证据提交、并发幂等、摘要冲突、越权/伪造/过期/撤销及恢复不匹配，拒绝请求保持完整业务快照不变；同根重启拒绝旧 token、旧授权签发和 owner 路由回退。
+- 真实 SDK 显式加载获准 skill、计算实际文件摘要生成 manifest，未选全局/项目 skill 零加载；必需能力未核实拒绝、可选能力记录降级、未知枚举拒绝。真实认证文件预检 ready/inference unknown，受控 provider 仍失败；检查 prompt、磁盘输入/Runtime 快照、Runner argv/stdin/environment、普通日志、事件、回执错误及报告不含合成秘密。
+- 本地四文件 29 passed/0 failed/0 skipped，exit 0，8269 ms，日志 `verifications/F-007/runtime-logs/test-ygriuwf6.log`；补强 Runtime 磁盘输入/实际 manifest 后仅复测该文件 2 passed，exit 0，1084 ms，`test-h0134pc2.log`。RED/中间诊断及真实退出码 sidecar 全保留。
+- typecheck `test-kvx1gnvl.log` exit 1，仅前序已记录 `p04-1-pi-f007-contract.test.ts:77` TS18046，本次文件无新类型错误，不修改其他任务。Task v2 索引共 9 文件，另五个仅选未跑回归交 Nezha。交接 [访问边界验证](docs/p04-2-f007-access-integration.md)，实际证据在 Feature workspace `verifications/F-007/evidence/`。live/全仓测试/Feature 与 Phase 验收为 not_run；正式任务元数据只读，提交和单次报告以 Git/Nezha 记录为准。
+
 ## F-005 — attempt 2 验收返工（2026-10-20）
 
 - 从 recovery 核对 HEAD 71e885b 和干净工作树后续做；独立验收 6d1f74dc13a54301a023e8a59e701c91 记录 382/383，通过状态为 false，human_blocked=false。唯一失败是 commands-contract 对未知操作 supportedOperations 顺序的兼容性断言，不能把上次 completed 报告当作验收通过。

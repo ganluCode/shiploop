@@ -1,0 +1,47 @@
+{
+  "schema_version": 2,
+  "task_id": "F-007",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/host/p04-2-access-integration.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p04-2-access-integration.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/host/p04-2-work-tools.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/authorization/p04-2-work-tool-channel.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p04-2-pi-authentication.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p04-2-runtime-access.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/authorization/p04-2-work-resource-selection.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/authorization/p04-2-authentication-preflight.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/authorization/p04-2-work-access.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}
