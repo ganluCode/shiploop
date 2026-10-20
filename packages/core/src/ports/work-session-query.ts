@@ -57,6 +57,7 @@ import type {
   RuntimeExecutionResult,
   RuntimeStopEvidence,
 } from './runtime-execution.js';
+import { RUNTIME_FAILURE_CATEGORIES } from './runtime-failure.js';
 import type { RuntimeControlFacts } from './runtime-settlement.js';
 import type { WorkSessionNativeRef, WorkSessionRecord, WorkSessionStatus } from './work-session.js';
 import {
@@ -297,6 +298,23 @@ function validateFailure(
   return { kind: raw.kind as RuntimeErrorKind, reason: boundedToken(raw.reason, `${field}.reason`) };
 }
 
+function validateClassificationEnvelope(value: unknown): void {
+  if (value === undefined || value === null) return; // Older settlement bodies omit this audit metadata.
+  const field = 'evidence.execution.classification';
+  const raw = requirePlainObject(value, EVIDENCE_CONTEXT, field);
+  rejectUnknownKeys(raw, ['outcome', 'category', 'reason', 'settlementKind', 'evidence'], EVIDENCE_CONTEXT, field);
+  if ((raw.outcome !== 'success' && raw.outcome !== 'failure')
+    || (raw.category !== null && (typeof raw.category !== 'string' || !(RUNTIME_FAILURE_CATEGORIES as readonly string[]).includes(raw.category)))
+    || (raw.outcome === 'success' ? raw.category !== null : raw.category === null)
+    || (raw.settlementKind !== null && (typeof raw.settlementKind !== 'string' || !(RUNTIME_ERROR_KINDS as readonly string[]).includes(raw.settlementKind)))) {
+    throw validationError(EVIDENCE_CONTEXT, field, 'invalid_classification');
+  }
+  boundedToken(raw.reason, `${field}.reason`);
+  // Detailed diagnostics remain opaque in the verified Artifact, like identity metadata.
+  // Never project them publicly or use them to override the validated result/control facts.
+  requirePlainObject(raw.evidence, EVIDENCE_CONTEXT, `${field}.evidence`);
+}
+
 const CONTROL_REASONS = [
   'user_cancelled', 'service_close', 'runtime_timeout', 'tool_timeout', 'parent_deadline',
   'recording_failed', 'runtime_failed', 'runtime_cancelled', 'stop_unconfirmed',
@@ -389,7 +407,8 @@ export function validateWorkSessionResultEvidence(value: unknown): WorkSessionRe
     );
     requirePlainObject(raw.identity, EVIDENCE_CONTEXT, 'evidence.identity');
     const execution = requirePlainObject(raw.execution, EVIDENCE_CONTEXT, 'evidence.execution');
-    rejectUnknownKeys(execution, ['result', 'failure'], EVIDENCE_CONTEXT, 'evidence.execution');
+    rejectUnknownKeys(execution, ['result', 'failure', 'classification'], EVIDENCE_CONTEXT, 'evidence.execution');
+    validateClassificationEnvelope(execution.classification);
     const recording = requirePlainObject(raw.recording, EVIDENCE_CONTEXT, 'evidence.recording');
     rejectUnknownKeys(
       recording,

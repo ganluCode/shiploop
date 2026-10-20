@@ -40,6 +40,7 @@ import { createFakeRuntime, fakeRuntimeCorrelationToken } from '../../../package
 import type { FakeRuntimeOptions } from '../../../packages/core/src/adapters/fake-runtime.ts';
 import { createStaticRuntimeRegistry } from '../../../packages/core/src/ports/runtime-registry.ts';
 import { createStaticRuntimeCapabilityCatalog } from '../../../packages/core/src/ports/runtime-capabilities.ts';
+import { classifyRuntimeFailure } from '../../../packages/core/src/ports/runtime-failure.ts';
 import { RuntimeError } from '../../../packages/core/src/ports/runtime-execution.ts';
 import { computeDataRootIdentity } from '../../../packages/core/src/ports/path-service.ts';
 import { isPublicError } from '../../../packages/core/src/ports/commands.ts';
@@ -687,6 +688,29 @@ describe('P03-6 / F-011 Work Session query surface', () => {
     } finally {
       f.close();
     }
+  });
+
+  it('[case:p04-3-classified-settlement] reads classified settlement without leaking private diagnostics or allowing unknown fields', () => {
+    const base = {
+      schemaVersion: 1, kind: 'runtime-settlement', identity: { projectId: 'p' },
+      execution: { result: null, failure: null },
+      recording: { complete: false, manifestRef: null, failure: null, gaps: [], watermark: null },
+      stop: { evidence: null, failure: null },
+    };
+    const legacy = validateWorkSessionResultEvidence(base);
+    for (const classification of [null,
+      classifyRuntimeFailure({ terminal: 'completed', terminalObserved: true }),
+      classifyRuntimeFailure({ terminal: 'cancelled', terminalObserved: true }),
+    ]) {
+      const execution = { ...base.execution, classification };
+      expect(validateWorkSessionResultEvidence({ ...base, execution })).toEqual(legacy);
+      expect(() => validateWorkSessionResultEvidence({ ...base, execution: { ...execution, unknown: true } })).toThrow();
+    }
+    const valid = classifyRuntimeFailure({ terminal: 'completed', terminalObserved: true });
+    for (const classification of ['corrupt', [], { ...valid, outcome: 'invented' },
+      { ...valid, category: 'invented' }, { ...valid, settlementKind: 'invented' },
+      { ...valid, reason: 'unsafe reason' }, { ...valid, evidence: [] }, { ...valid, unknown: true },
+    ]) expect(() => validateWorkSessionResultEvidence({ ...base, execution: { ...base.execution, classification } })).toThrow();
   });
 
   it('纯契约：选择器校验、展示分类派生、证据校验与 locator 成员资格', () => {

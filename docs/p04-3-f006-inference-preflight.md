@@ -44,4 +44,8 @@ timeout 覆盖认证、模型请求及退避，Host 关闭会取消预检。只�
 
 新测试在 `p04-3-runtime-inference-preflight.test.ts` 和 `p04-3-pi-inference-preflight.test.ts`，覆盖缺省关闭、终态、隔离/认证拒绝、独立预算、退避取消、TTL/键失配、失败不缓存、脱敏、部分用量、审计故障及真实 SQLite/Core 的认领前接线。Core 接线测试在业务输入准备入口主动中止，核对预检制品已落盘且 Attempt/Runtime 计数保持为零。
 
+受影响回归中的真实 Host 用例需要 macOS 原生写锁产物。干净工作区若缺少 `packages/host/dist/native/writer-lock.node`，先显式执行 `node scripts/build-host-lock.ts`（需要仓库规定的 Node 头文件、clang 和 macOS SDK），再执行测试；不通过移除用例、模拟锁或运行时编译规避此前提。该产物位于忽略的 `dist` 中，不提交。
+
+P04-3 的结算写入方已保存 `execution.classification`。Work Session 读取方兼容这一可选审计信封，校验类别、原因和结构后仍按既有 result/control 展示；详细诊断留在经完整性核验的制品中。旧证据仍可读，未知字段和无效分类信封仍拒绝。
+
 本地不发送真实外部模型请求（live: not_run）。Task 索引同时登记受影响的调度、Pi 装配/认证及边界回归，后者由 Nezha 独立执行；局部测试通过不代表全仓或阶段验收通过。

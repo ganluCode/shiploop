@@ -32,6 +32,10 @@
         {
           "file": "test/modules/engineering/boundary-check.test.ts",
           "all": true
+        },
+        {
+          "file": "test/modules/runtime/p03-6-work-session-query.test.ts",
+          "all": true
         }
       ]
     }
