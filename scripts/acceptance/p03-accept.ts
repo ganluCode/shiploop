@@ -394,6 +394,8 @@ export async function runP03Acceptance(options: P03AcceptanceRunOptions): Promis
       if (passed && step.id === 'deterministic-tests') {
         let actual: unknown = null;
         try { actual = JSON.parse(readFileSync(jsonReport, 'utf8')); } catch { problems.push('Missing/invalid actual test JSON report'); }
+        if (actual !== null) evidenceFiles.push({ path: 'evidence/commands/actual-test-results.json',
+          category: 'command-exit', checkId: null, content: sanitizeEvidence(JSON.stringify(actual)) });
         for (const proof of evaluateP03TestEvidence(options.repoRoot, actual)) {
           proofs.set(proof.checkId, proof);
           recordResult(resultFor(proof.checkId, proof.passed ? 'pass' : 'fail',

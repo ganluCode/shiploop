@@ -19,6 +19,12 @@ function report() {
 }
 
 describe('P03 phase results require actual indexed assertions', () => {
+  it('[case:literal-final-retry-id] matches the real final retry case name, not a name invented from the index', () => {
+    const input = report();
+    const file = input.testResults.find(file => file.name.endsWith('/p03-10-f013-finalization-retry.test.ts'))!;
+    file.assertionResults = [{ fullName: '[case:f013-three-task-finalization-retry] actual finalization retry', status: 'passed' }];
+    expect(evaluateP03TestEvidence(root, input).find(check => check.checkId === 'P03-VERT-RETRY-FINAL')!.passed).toBe(true);
+  });
   it('[case:redacted-whitespace] recognizes redacted values without whitespace backtracking bypasses', () => {
     for (const space of ['', ' ', '  ', '\n  ']) {
       expect(scanTextForCredentialShapes(`{"token":${space}"[REDACTED:fixture]"}`)).toEqual([]);

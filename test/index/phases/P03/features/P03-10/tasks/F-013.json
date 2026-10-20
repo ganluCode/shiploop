@@ -7,7 +7,7 @@
       "tests": [
         {
           "file": "test/modules/acceptance/p03-10-f013-finalization-retry.test.ts",
-          "cases": ["case:f013-three-task-finalization-retry"]
+          "cases": ["f013-three-task-finalization-retry"]
         }
       ]
     }

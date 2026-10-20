@@ -8,10 +8,10 @@
         {
           "file": "test/modules/execution/control/p03-10-process-controls.test.ts",
           "cases": [
-            "case:runtime-pause-drains",
-            "case:verifier-pause-drains",
-            "case:real-cancel-cas",
-            "case:stop-uncertain-isolates"
+            "runtime-pause-drains",
+            "verifier-pause-drains",
+            "real-cancel-cas",
+            "stop-uncertain-isolates"
           ]
         }
       ]
