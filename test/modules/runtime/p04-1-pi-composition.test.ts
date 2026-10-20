@@ -186,6 +186,8 @@ afterEach(async () => {
   fixture?.close(); fixture = undefined;
 });
 
+// Full Host composition includes real workspace preparation and supervised Git commands.
+// Use the repository's integration-test budget; Runner and settlement waits stay independently bounded.
 it.each(['complete', 'cancel'] as const)('[case:host-pi-%s] Host exposes Attempt, Session, events and fenced Core settlement', async mode => {
   fixture = await openBindingFixture({ strategy: { runtime: 'pi', provider: 'provider', model: 'model' } });
   const f = realAssembly(mode);
@@ -228,7 +230,7 @@ it.each(['complete', 'cancel'] as const)('[case:host-pi-%s] Host exposes Attempt
     await host.core.workExecution.scan();
     expect(f.starts()).toBe(1);
   } finally { await f.dispose(); }
-}, 25_000);
+});
 
 it.each(['stale', 'crash', 'start-failed'] as const)('[case:core-pi-%s] Core fences late Pi facts and retains unknown-stop occupancy', async mode => {
   const runner = realAssembly(mode === 'stale' ? 'cancel' : mode);

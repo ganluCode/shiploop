@@ -70,3 +70,15 @@ Host 的公共入口不再立即加载 Pi SDK。标准 Session factory 只在授
 中间整合失败也完整保留：Host 原生锁前置未构建、公开字段/用量来源断言、测试回调身份层级和 Core 保守状态/租约断言的修正均没有删除日志。最终通过的 31 项包含正常执行、启动失败、重复身份、旧版本、取消、Runner 崩溃、目录漂移及无 SDK 的独立 Fake 路径。
 
 唯一执行范围索引为 `test/index/phases/P04/features/P04-1/tasks/F-006.json`，Harness 的 `test-selection.json` 仅引用此索引。前两个文件已在本地执行；其余十个文件是交给 Nezha 的受影响回归选择，涵盖 Runtime 能力/注册契约、Runner、停止、Core/Host 装配、执行服务和结算。未在本地运行这些较广回归、全仓测试、组合 verify 或阶段验收；任务局部通过不代表独立验收通过。
+
+## Attempt 2：Host 集成用例总预算修正
+
+上次提交 `116f6972` 的独立验收记录为 12 文件、184 passed、1 failed：`host-pi-complete` 达到用例自设的 25 秒总时限，随后 Host 清理报 `quiesce_not_confirmed`。失败证据保留在 Feature workspace 的 `verifications/F-006/478b18ad80004c2d92522056fa294fb2/`，不能将上次本地通过视为独立验收通过。
+
+本次仅针对失败用例做阶段计时诊断：夹具与 Host 连接约 0.7 秒就绪，首次 `workExecution.scan()` 返回时约 12.7 秒，约 13.2 秒已结算并可读全部证据，约 13.3 秒完成清理。主要耗时位于包含真实工作区准备和受监督 Git 命令的扫描；单例诊断没有观察到 Pi 结算或 Host 关闭挂起。诊断日志为 `test-p5aczirm.log`（exit 0，1 passed、17 filtered/skipped），临时计时代码已移除。
+
+正常完成与取消的 Host 集成用例改为继承仓库 `vitest.config.ts` 既有的 60 秒集成测试预算，不再单独压缩到 25 秒。没有调整全局配置、Runner 时限、Core 监督时限、结算轮询或清理断言；其余测试预算与断言不变。
+
+本次本地复验为 composition + adapter 两文件、31 passed、0 failed、0 skipped，耗时约 46 秒，完整日志 `test-2b34a76c.log`，原始退出码 sidecar 为 0；记录中的 invocation 为 `ca2d61b2081a4997abc2ff57081e28b1`。本次生产代码未改动，上表类型与包边界检查属于上次提交的证据，没有声称本次重跑。
+
+已重新校验原 12 文件索引和 Harness 引用：路径存在、符合允许范围、无重复，选择范围保持不变。其余十个回归文件本次未在本地重跑，交由 Nezha 独立验证；本次任务局部通过仍不代表独立验收或阶段通过。
