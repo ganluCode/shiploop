@@ -1,0 +1,27 @@
+{
+  "schema_version": 2,
+  "task_id": "F-003",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        { "file": "test/modules/runtime/p04-3-runtime-request-retry.test.ts", "all": true },
+        { "file": "test/modules/runtime/p04-3-runtime-retry-settlement.test.ts", "all": true },
+        { "file": "test/modules/runtime/p04-3-runtime-failure-classification.test.ts", "all": true },
+        { "file": "test/modules/runtime/p04-3-runtime-retry.test.ts", "all": true },
+        { "file": "test/modules/runtime/p04-1-pi-adapter.test.ts", "all": true },
+        { "file": "test/modules/runtime/p04-1-pi-runner.test.ts", "all": true },
+        { "file": "test/modules/runtime/p04-1-pi-stopping.test.ts", "all": true },
+        { "file": "test/modules/runtime/p04-1-pi-f007-contract.test.ts", "all": true },
+        { "file": "test/modules/runtime/p04-2-access-integration.test.ts", "all": true },
+        { "file": "test/modules/runtime/p03-6-execution-service.test.ts", "all": true },
+        { "file": "test/modules/runtime/p03-6-runtime-execution-contract.test.ts", "all": true },
+        { "file": "test/modules/runtime/p03-6-runtime-session.test.ts", "all": true },
+        { "file": "test/modules/runtime/p03-6-runtime-settlement.test.ts", "all": true },
+        { "file": "test/modules/runtime/p03-6-execution-uncertainty.test.ts", "all": true },
+        { "file": "test/modules/runtime/p03-6-work-evidence-recorder.test.ts", "all": true },
+        { "file": "test/modules/runtime/p03-10-runtime-recovery-negatives.test.ts", "all": true }
+      ]
+    }
+  ]
+}

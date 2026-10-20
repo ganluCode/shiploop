@@ -8,6 +8,8 @@
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
+import { setTimeout as waitForRetry } from 'node:timers/promises';
+import type { Agent } from '@earendil-works/pi-agent-core';
 import { observePiWithin, PI_ABORT_WAIT_MS, PI_STOP_WAIT_MS } from './pi-lifecycle.js';
 import type {
   CreateAgentSessionOptions,
@@ -23,10 +25,14 @@ import type {
   RuntimeHandle,
   RuntimeUsageReport,
   RuntimeWorkAccessSnapshot,
+  RuntimeRetryPolicy,
+  RuntimeFailureClassification,
 } from 'shiploop-core';
 import {
   RUNTIME_ADAPTER_CONTRACT_VERSION,
   RuntimeError,
+  createRuntimeRequestRetryController,
+  DEFAULT_RUNTIME_REQUEST_RETRY_POLICY,
 } from 'shiploop-core';
 
 export const PI_RUNTIME_ID = 'pi';
@@ -88,6 +94,9 @@ export interface PiTrustedWorkAccess {
 }
 
 export interface PiSession {
+  /** Standard SDK request boundary; absent on older/custom sessions means no safe retry. */
+  readonly agent?: Pick<Agent, 'streamFunction'>;
+  setAutoRetryEnabled?(enabled: boolean): void;
   readonly sessionId?: string;
   readonly sessionFile?: string;
   subscribe(listener: (event: unknown) => void): () => void;
@@ -137,6 +146,8 @@ export interface PiRuntimeAdapterOptions {
   readonly isolationModes: readonly string[];
   readonly assembly: PiTrustedAssembly;
   readonly sessionFactory?: PiSessionFactory;
+  /** Trusted Host policy, bounded again by Core; never read from prompt or SDK output. */
+  readonly requestRetryPolicy?: RuntimeRetryPolicy;
 }
 
 export interface PiRuntimeRegistration {
@@ -285,6 +296,7 @@ function textOf(value: unknown): string {
 
 function usageOf(message: unknown): RuntimeUsageReport | null {
   if (message === null || typeof message !== 'object') return null;
+  if ((message as Record<symbol, unknown>)[Symbol.for('shiploop.pi.usageUnavailable')] === true) return null;
   const usage = (message as { usage?: unknown }).usage;
   if (usage === null || typeof usage !== 'object') return null;
   const raw = usage as Record<string, unknown>;
@@ -401,10 +413,13 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
       let resolveStop!: () => void;
       const stopBoundary = new Promise<void>(resolve => { resolveStop = resolve; });
       let stopTimer: NodeJS.Timeout | undefined;
+      const retryAbort = new AbortController();
+      let lastRequestFailure: RuntimeFailureClassification | null = null;
       const cancel = (reason: 'cancelled' | 'timed_out' = 'cancelled'): Promise<RuntimeCancelReceipt> => {
         if (cancelPromise) return cancelPromise;
         if (finalized) return Promise.resolve({ accepted: false, reason: 'already_settled' });
         cancelRequested = true;
+        retryAbort.abort();
         stopReason = reason;
         stopTimer = setTimeout(resolveStop, PI_ABORT_WAIT_MS + PI_STOP_WAIT_MS);
         cancelPromise = observePiWithin(Promise.resolve().then(() => session.abort()), PI_ABORT_WAIT_MS).then(outcome => {
@@ -477,7 +492,37 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
         publish('diagnostic', { kind: 'diagnostic', code: token(code), message: message.slice(0, 200) || 'diagnostic' });
       };
       let unsubscribe: () => void = () => undefined;
+      let restoreRequestStream = () => {};
       try {
+        if (request.identity.purpose === 'work' && session.agent !== undefined && session.setAutoRetryEnabled !== undefined) {
+          const { wrapPiRequestStream } = await import('./pi-request-retry.js');
+          const agent = session.agent;
+          const original = agent.streamFunction;
+          session.setAutoRetryEnabled(false);
+          const retry = createRuntimeRequestRetryController({
+            policy: options.requestRetryPolicy ?? DEFAULT_RUNTIME_REQUEST_RETRY_POLICY,
+            deadlineUtcMs: startedAt + request.limits.timeoutMs,
+            nowUtcMs: Date.now, runnerAlive: () => !finalized && !cancelRequested,
+            signal: retryAbort.signal,
+            wait: (delayMs, signal) => waitForRetry(delayMs, undefined, { signal }),
+            observe: ({ kind, counters, decision, stopReason }) => {
+              if (finalized) return;
+              // Small numeric facts and controlled enum values only. Each diagnostic
+              // keeps the existing event identity/watermark and redaction boundary.
+              diagnostic(`pi.retry.${kind}`, JSON.stringify({ n: counters.requestCount, r: counters.retryCount,
+                f: counters.cumulativeFailures, peak: counters.peakConsecutiveFailures,
+                fm: counters.failureElapsedMs, bm: counters.backoffElapsedMs,
+                ...(decision ? { category: decision.triggerCategory, action: decision.action } : {}),
+                ...(stopReason ? { stop: stopReason } : {}) }));
+            },
+          });
+          agent.streamFunction = wrapPiRequestStream(original.bind(agent), retry, message => {
+            if (finalized) return;
+            const usage = usageOf(message);
+            if (usage !== null) publish('usage', { kind: 'usage', usage });
+          }, failure => { if (!finalized) lastRequestFailure = failure; });
+          restoreRequestStream = () => { agent.streamFunction = original; };
+        }
         unsubscribe = session.subscribe((raw) => {
           if (finalized) return;
           if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
@@ -499,8 +544,8 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
               terminal = 'cancelled';
               terminalReason = 'cancelled';
             } else if (stopReason === 'error') {
-              terminal = 'failed';
-              terminalReason = classifyPiFailure(
+              terminal = lastRequestFailure?.category === 'timeout' ? 'timed_out' : 'failed';
+              terminalReason = lastRequestFailure?.reason ?? classifyPiFailure(
                 event.message !== null && typeof event.message === 'object' ? (event.message as { errorMessage?: unknown }).errorMessage : undefined,
                 'model_error',
               ).reason;
@@ -544,6 +589,7 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
         });
       } catch (error) {
         try {
+          restoreRequestStream();
           session.dispose();
         } catch {
           // 保持初始化失败诊断，不让清理异常覆盖它。
@@ -592,6 +638,10 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
           // Preserve the last partial response and reported usage before closing the stream.
           for (const key of pendingMessages.keys()) flushMessage(key);
           finalized = true;
+          retryAbort.abort();
+          // An unconfirmed Runner must keep the aborted gate on any late SDK
+          // request; restoring the raw transport would bypass its retry budget.
+          if (idleObserved) restoreRequestStream();
           try { unsubscribe(); } catch { cleanupSucceeded = false; }
           events.close();
           try { session.dispose(); } catch { cleanupSucceeded = false; }

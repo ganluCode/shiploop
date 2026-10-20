@@ -10,6 +10,7 @@ import type { AttemptStore } from '../ports/attempt-store.js';
 import type { TaskDagStore } from '../ports/task-dag.js';
 import { isRuntimeError, validateRuntimeExecutionRequest, validateRuntimeExecutionResult, validateRuntimeStopEvidence,
   type RuntimeExecutionRequest, type RuntimeExecutionResult, type RuntimeStopEvidence } from '../ports/runtime-execution.js';
+import { classifyRuntimeExecutionResult, classifyRuntimeFailure, type RuntimeFailureClassification } from '../ports/runtime-failure.js';
 import type { WorkResourceIdentity } from '../ports/work-resources.js';
 import type { RuntimeSettlementFacts, RuntimeControlFacts } from '../ports/runtime-settlement.js';
 import type { WorkEvidenceRecordingOutcome } from './work-evidence-recorder.js';
@@ -64,17 +65,29 @@ export function createRuntimeSettlementService(deps: RuntimeSettlementDeps): Run
       taskId: request.identity.taskId, runId: request.identity.runId, owner: request.owner.principalId,
       hostInstanceId: request.owner.hostInstanceId, executionVersion: request.executionVersion };
     let result: RuntimeExecutionResult | null = null;
+    let classification: RuntimeFailureClassification | null = null;
     let executionFailure: RuntimeSettlementFacts['failure'] = null;
     if (input.result.status === 'fulfilled') {
       try {
         const parsed = validateRuntimeExecutionResult(input.result.value);
         result = { ...parsed, reason: parsed.reason === null ? null : token(parsed.reason) };
+        classification = classifyRuntimeExecutionResult(result, { secrets: deps.secrets,
+          errorChain: result.reason === null ? [] : [{ source: 'sdk',
+            code: result.reason === 'temporary_server_failure' ? 'server_error' : result.reason,
+            message: result.reason.replace(/_/g, ' ') }],
+          ...(result.reason === 'tool_failed' ? { lastStage: 'tool' } : {}),
+          ...(parsed.terminal === 'completed' ? {} : { partialResult: {
+            usage: parsed.usage, durationMs: parsed.durationMs, lastEventSequence: parsed.lastEventSequence } }),
+        });
         if (parsed.terminal !== 'completed' || (parsed.exitCode !== null && parsed.exitCode !== 0)) {
-          executionFailure = { kind: parsed.terminal === 'timed_out' ? 'timeout' : 'process',
+          executionFailure = { kind: classification.settlementKind ?? (parsed.terminal === 'timed_out' ? 'timeout' : 'process'),
             reason: token(parsed.reason ?? `runtime_${parsed.terminal}`) };
         }
       } catch (error) { executionFailure = failure(error, 'invalid_runtime_result'); }
     } else executionFailure = failure(input.result.reason, 'runtime_result_rejected');
+    if (classification === null && executionFailure !== null) {
+      classification = classifyRuntimeFailure({ existingRuntimeError: executionFailure, terminalObserved: false, secrets: deps.secrets });
+    }
     let stopped: RuntimeStopEvidence | null = null;
     let stopFailure: string | null = null;
     if (input.stopped?.status === 'fulfilled') {
@@ -92,6 +105,8 @@ export function createRuntimeSettlementService(deps: RuntimeSettlementDeps): Run
       ? token(recordingError.reason) : 'recording_rejected';
     if (executionFailure === null && recordingError instanceof WorkEvidenceRecordingError && recordingError.reason === 'event_stream_failed') {
       executionFailure = { kind: 'protocol', reason: 'runtime_events_failed' };
+      classification = classifyRuntimeFailure({ terminal: result?.terminal, terminalObserved: result !== null,
+        protocolIssue: 'runtime_events_failed', usage: result?.usage, durationMs: result?.durationMs, secrets: deps.secrets });
     }
     if (input.control?.reason === 'user_cancelled' || input.control?.reason === 'service_close') executionFailure = null;
     else if (input.control?.reason === 'runtime_timeout' || input.control?.reason === 'tool_timeout' || input.control?.reason === 'parent_deadline') {
@@ -116,7 +131,7 @@ export function createRuntimeSettlementService(deps: RuntimeSettlementDeps): Run
     }
     const body = Buffer.from(JSON.stringify({ schemaVersion: 1, kind: 'runtime-settlement',
       identity: { ...identity, sessionId: request.sessionId, invocationId: request.invocationId },
-      execution: { result, failure: executionFailure },
+      execution: { result, failure: executionFailure, classification },
       recording: { complete: runtime.recording.complete, manifestRef, failure: recordingFailure,
         gaps: (recording?.gaps ?? (recordingError instanceof WorkEvidenceRecordingError ? recordingError.gaps : ['recording_unobserved'])).slice(0, 32).map(token),
         watermark: recording?.watermark ?? (recordingError instanceof WorkEvidenceRecordingError ? recordingError.watermark : null) },

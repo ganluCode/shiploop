@@ -904,6 +904,17 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
             /* 取消本身失败不覆盖原始失败；停止核验由外层（F-010）承担。 */
           }
         }
+        // A broken iterator can leave already accepted events in the bounded
+        // chunk buffer. Persist that partial evidence before publishing a failed
+        // manifest; never reattempt a failed artifact write or claim completeness.
+        if (failure.failureReason === 'event_stream_failed') {
+          try {
+            if (held.size > 0) await declareMissingUpTo(Math.max(...held.keys()));
+            await flushChunk();
+          } catch {
+            gaps.add('partial_evidence_flush_failed');
+          }
+        }
         /* 尽力标缺口（recording_failed:<reason>，中止为 recording_failed:aborted），
          * 已保存证据与已发布分块原样保留。 */
         gaps.add(`recording_failed:${failure.failureReason}`);

@@ -74,7 +74,7 @@ it('[case:f007-adapter-missing-terminal] fails a prompt that ends without SDK se
   expect(result).toMatchObject({ terminal: 'failed', reason: 'missing_terminal',
     usage: { inputTokens: 9, outputTokens: null, costUsdMicros: null }, lastEventSequence: events.length,
   });
-  expect(result.diagnosticRefs).toHaveLength(1);
+  expect(result).toHaveProperty('diagnosticRefs.length', 1);
   expect(events).toEqual(expect.arrayContaining([
     expect.objectContaining({ kind: 'message', payload: expect.objectContaining({ preview: 'partial' }) }),
     expect.objectContaining({ kind: 'diagnostic', payload: expect.objectContaining({ code: 'pi.missing_terminal' }) }),
