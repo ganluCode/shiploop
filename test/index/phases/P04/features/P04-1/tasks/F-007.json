@@ -1,0 +1,21 @@
+{
+  "schema_version": 2,
+  "task_id": "F-007",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/runtime/p04-1-pi-f007-contract.test.ts", "cases": [
+        "f007-adapter-isolated-scope",
+        "f007-adapter-missing-terminal",
+        "f007-adapter-start-error-authentication",
+        "f007-adapter-start-error-configuration",
+        "f007-adapter-start-error-provider",
+        "f007-runner-protocol-evidence"
+      ] },
+      { "file": "test/modules/runtime/p04-1-pi-adapter.test.ts", "all": true },
+      { "file": "test/modules/runtime/p04-1-pi-runner.test.ts", "all": true },
+      { "file": "test/modules/runtime/p04-1-pi-stopping.test.ts", "all": true },
+      { "file": "test/modules/runtime/p04-1-pi-composition.test.ts", "all": true }
+    ]
+  }]
+}
