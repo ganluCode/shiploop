@@ -1,0 +1,23 @@
+{
+  "schema_version": 2,
+  "task_id": "F-001",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/authorization/p04-2-work-access.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/authorization/authorization-contract.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/recovery/p03-3a-runtime-entry-compat.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}
