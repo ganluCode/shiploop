@@ -124,7 +124,14 @@ export async function forceStopControlledGroup(
   }
   let escalated = false;
   if (row !== null) {
-    escalated = probe.signalGroup(identity.processGroupId, 'SIGKILL');
+    try {
+      escalated = probe.signalGroup(identity.processGroupId, 'SIGKILL');
+    } catch {
+      // A failed delivery is still uncertain. The follow-up census may prove
+      // that the group disappeared, but it must never turn the signal failure
+      // itself into a successful escalation.
+      escalated = false;
+    }
   }
   const confirmed = await confirmGroupAbsence(identity, probe, budgets);
   return { confirmed, escalated, identity: row === null ? 'absent' : 'matched' };

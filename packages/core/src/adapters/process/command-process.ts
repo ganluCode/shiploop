@@ -156,25 +156,51 @@ export function createCommandProcessAdapter(options: CommandProcessAdapterOption
   const stopGraceMs = options.stopGraceMs ?? DEFAULT_STOP_GRACE_MS;
   const stopBudgets: StopEscalationBudgets = { confirmMs: options.stopConfirmMs ?? DEFAULT_STOP_CONFIRM_MS, pollMs: GROUP_POLL_MS };
   const probe: StopEscalationProbe = stopProbe ?? realStopProbe;
+  const escalationResults = new Map<string, Promise<Awaited<ReturnType<typeof forceStopControlledGroup>>>>();
+  const escalationKey = (identity: CommandProcessIdentity) => JSON.stringify([
+    identity.launchId, identity.pid, identity.processGroupId, identity.startTime,
+  ]);
+  const escalateOnce = (identity: CommandProcessIdentity) => {
+    const key = escalationKey(identity);
+    const existing = escalationResults.get(key);
+    if (existing) return existing;
+    const pending = (async () => {
+      const deadline = Date.now() + stopBudgets.confirmMs;
+      let outcome = await forceStopControlledGroup(identity, probe, {
+        ...stopBudgets, confirmMs: Math.max(0, deadline - Date.now()),
+      });
+      // A failed identity probe may be retried inside this one bounded operation;
+      // once identity is absent/mismatched/matched, never repeat the escalation.
+      while (outcome.identity === 'probe_failed' && !outcome.confirmed && Date.now() < deadline) {
+        await probe.delay(stopBudgets.pollMs);
+        outcome = await forceStopControlledGroup(identity, probe, {
+          ...stopBudgets, confirmMs: Math.max(0, deadline - Date.now()),
+        });
+      }
+      return outcome;
+    })().catch(() => ({ confirmed: false, escalated: false, identity: 'probe_failed' as const }));
+    escalationResults.set(key, pending);
+    void pending.then((outcome) => {
+      // A failed probe sent no signal and may be safely retried by a later
+      // recovery pass. All other outcomes remain the idempotent identity fact.
+      if (outcome.identity === 'probe_failed' && !outcome.escalated && escalationResults.get(key) === pending) {
+        escalationResults.delete(key);
+      }
+    });
+    return pending;
+  };
   return {
     async recoverStop(input) {
       if (process.platform !== 'darwin' || !input || typeof input !== 'object') return { confirmed: false };
       const id = input as CommandProcessIdentity;
-      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id.launchId) ||
+      if (typeof id.launchId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id.launchId) ||
           !Number.isSafeInteger(id.pid) || id.pid <= 1 || id.processGroupId !== id.pid ||
           typeof id.startTime !== 'string' || !id.startTime.length) return { confirmed: false };
-      const deadline = Date.now() + stopBudgets.confirmMs;
-      for (;;) {
-        const outcome = await forceStopControlledGroup(id, probe, {
-          ...stopBudgets, confirmMs: Math.max(0, deadline - Date.now()),
-        });
-        if (outcome.confirmed) return { confirmed: true };
-        // IPC loss may race ps with the supervisor's final exit (command becomes
-        // '(node)'). Never signal that mismatched row; wait for a successful absence
-        // census instead. A reused/live unrelated PID remains unconfirmed.
-        if (Date.now() >= deadline) return { confirmed: false };
-        await probe.delay(GROUP_POLL_MS);
-      }
+      // One durable identity has one escalation attempt. Concurrent or repeated
+      // recovery calls share the same bounded probe/signalling promise and can
+      // never turn a retry into repeated SIGKILL delivery.
+      const outcome = await escalateOnce(id);
+      return { confirmed: outcome.confirmed };
     },
     async start(input, confirm, signal) {
       if ((options.platform ?? process.platform) !== 'darwin' || process.platform !== 'darwin') {
@@ -262,7 +288,7 @@ export function createCommandProcessAdapter(options: CommandProcessAdapterOption
           // 受控组，再在确认预算内核验缺席；身份探测失败/PID 复用 → 不发信号且
           // confirmed=false。escalate=false（监督者已退出）：仅核验组成员缺席。
           const outcome = escalate
-            ? await forceStopControlledGroup(identity, probe, stopBudgets)
+            ? await escalateOnce(identity)
             : await confirmGroupAbsence(identity, probe, stopBudgets).then((confirmed) => (
                 { confirmed, escalated: false, identity: 'absent' as const }));
           finished = true;
