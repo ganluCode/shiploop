@@ -1,0 +1,16 @@
+{
+  "schema_version": 2,
+  "task_id": "F-003",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/storage/sqlite/p04-5-work-recording-store.test.ts", "all": true },
+      { "file": "test/modules/storage/sqlite/p04-5-work-recording.test.ts", "all": true },
+      { "file": "test/modules/runtime/p04-5-work-recording.test.ts", "all": true },
+      { "file": "test/modules/runtime/p03-6-work-session.test.ts", "all": true },
+      { "file": "test/modules/runtime/p03-6-work-evidence-recorder.test.ts", "all": true },
+      { "file": "test/modules/storage/sqlite/sqlite-cas-and-atomicity.test.ts", "all": true },
+      { "file": "test/modules/storage/sqlite/sqlite-ownership-constraint-matrix.test.ts", "all": true }
+    ]
+  }]
+}
