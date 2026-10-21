@@ -11,6 +11,7 @@
         { "file": "test/modules/runtime/p03-6-execution-service.test.ts", "all": true },
         { "file": "test/modules/runtime/p03-6-execution-uncertainty.test.ts", "all": true },
         { "file": "test/modules/runtime/p04-4-pi-recovery-boundary.test.ts", "all": true },
+        { "file": "test/modules/runtime/p03-6-work-session.test.ts", "all": true },
         { "file": "test/modules/storage/sqlite/sqlite-schema-migrations.test.ts", "all": true }
       ]
     }

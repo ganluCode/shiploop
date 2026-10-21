@@ -93,9 +93,9 @@ async function fixture() {
 
 describe('P03-6 F-006 migration v20 work session schema', () => {
   it('appends v20 without changing the delivered v1-v19 checksums', () => {
-    // P03-9 / F-003 起最新迁移为 v29；本用例仍冻结 v20 交付时的历史摘要。
-    expect(SQLITE_MIGRATIONS.at(-1)?.version).toBe(30);
-    expect(SQLITE_MIGRATIONS).toHaveLength(30);
+    // P04-4 新增 v31，重建 sessions 约束以允许 Work 同时关联 Attempt 与父 Session。
+    expect(SQLITE_MIGRATIONS.at(-1)?.version).toBe(31);
+    expect(SQLITE_MIGRATIONS).toHaveLength(31);
     // Frozen from the predecessor source, not recomputed from the new descriptors.
     const oldSql = SQLITE_MIGRATIONS.slice(0, 19).map(m => m.checksum).join('\n');
     expect(createHash('sha256').update(oldSql).digest('hex')).toBe('42c01408a11c7dbddecea600bb1cd41f3e4899a3f5dab475262779ef0995bca1');
@@ -155,7 +155,7 @@ describe('P03-6 F-006 work session port validators', () => {
       { ...validRecord, status: 'stopped', startedAtUtcMs: NOW, endedAtUtcMs: NOW, stoppedAtUtcMs: NOW - 1 },
       { ...validRecord, kind: 'chat', attemptId: 'attempt-1' },
       { ...validRecord, kind: 'work', attemptId: null },
-      { ...validRecord, kind: 'work', parentSessionId: 'parent-1' },
+      { ...validRecord, kind: 'work', attemptId: null, parentSessionId: null },
       { ...validRecord, nativeRef: { schemaVersion: 2, storageKind: 'sqlite', formatVersion: '1.0' } },
       { ...validRecord, nativeRef: { schemaVersion: 1, storageKind: 'sqlite' } },
       { ...validRecord, nativeRef: { schemaVersion: 1, storageKind: 'sqlite', formatVersion: '1.0', path: '/tmp/native.db' } },
@@ -504,10 +504,10 @@ describe('P03-6 F-006 work session store on real SQLite', () => {
       }
       const before = version > 0 ? session.database.prepare('SELECT * FROM schema_migrations').all() : [];
       const result = await migrateSqliteStorage(session);
-      expect(result.toVersion).toBe(30);
+      expect(result.toVersion).toBe(31);
       expect(result.appliedVersions).toEqual(version === 0
-        ? Array.from({ length: 30 }, (_, i) => i + 1)
-        : Array.from({ length: 30 - version }, (_, i) => version + 1 + i));
+        ? Array.from({ length: 31 }, (_, i) => i + 1)
+        : Array.from({ length: 31 - version }, (_, i) => version + 1 + i));
       expect(session.database.prepare('SELECT * FROM schema_migrations WHERE version <= ?').all(version)).toEqual(before);
       if (version > 0) {
         expect(session.database.prepare('SELECT display_name FROM projects').get()).toEqual({ display_name: 'Preserved' });
@@ -517,7 +517,7 @@ describe('P03-6 F-006 work session store on real SQLite', () => {
       expect(tables).toContain('sessions');
       expect(tables).not.toContain('session_messages');
       expect((await migrateSqliteStorage(session)).appliedVersions).toEqual([]);
-      expect(session.database.prepare('SELECT count(*) AS n FROM schema_migrations').get()).toEqual({ n: 30 });
+      expect(session.database.prepare('SELECT count(*) AS n FROM schema_migrations').get()).toEqual({ n: 31 });
       // 关闭重开后关联结构仍在。
       session.close();
       const reopened = openSqliteStorageSession({ path: join(sandbox.path, 'state.db') });
@@ -539,7 +539,7 @@ describe('P03-6 F-006 work session store on real SQLite', () => {
         .rejects.toMatchObject({ step: 'apply', version: 20 });
       expect(session.database.prepare("SELECT name FROM sqlite_master WHERE name = 'sessions'").all()).toEqual([]);
       expect(session.database.prepare('SELECT max(version) AS v FROM schema_migrations').get()).toEqual({ v: 19 });
-      expect((await migrateSqliteStorage(session, { backupPath: join(sandbox.path, 'retry.db') })).toVersion).toBe(30);
+      expect((await migrateSqliteStorage(session, { backupPath: join(sandbox.path, 'retry.db') })).toVersion).toBe(31);
     } finally { session.close(); sandbox.cleanup(); }
   });
 
