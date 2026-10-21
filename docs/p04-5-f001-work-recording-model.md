@@ -44,3 +44,11 @@ v32 只新增两张表、索引和约束 trigger，v1–v31 SQL/checksum 未改�
 前次中断保存的安装和类型检查日志已按原字节复制为 `recovered-*.log`，保留早期失败与成功证据；没有重复安装依赖。新增 SQLite 测试首轮的资源占用夹具失败和测试类型错误保留在 `test-u82nstq5.log` / `test-bg0wxken.log`，后续修复已由上述通过日志覆盖。
 
 索引中的 ownership matrix、旧 WorkEvidence、旧 Session query 和未选执行的 Session store 回归交由 Nezha 独立验证。本地未运行全仓测试、阶段验收或真实模型。
+
+## 第二次执行：独立验收失败修复
+
+上轮完成报告仅记录了完成声明。随后 Nezha 按七文件索引执行 215 个用例，结果为 214 passed / 1 failed，审计目录为 Feature workspace 的 `verifications/F-001/6755fc9ab6764ba28e8f422beed8db48/`，`human_blocked=false`。失败位于旧 Session 测试的 v20 DDL 回滚后重试升级断言：仍期望版本 31，而实际迁移已到 v32。
+
+本轮只将该断言改为现有的 `LATEST_VERSION`，保留故障注入、DDL/迁移记录回滚与升级成功检查。上次定向筛选没有选中这个用例，不能以其通过结果推断整个 Session 测试文件通过。
+
+本轮按原策略只定向执行该已知失败用例，`test-z7pygwaa.log` 和 JSON sidecar 记录 exit 0、1 passed、20 未选执行，绑定本轮继承的 invocation `ed19afd825ff40b095f43e107506815c`。七文件索引保持完整并再次核对，交 Nezha 独立重验；本地通过不替代独立验收。

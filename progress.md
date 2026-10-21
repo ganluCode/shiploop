@@ -207,3 +207,4 @@ F-003 尚未满足验收，收尾应报告 `blocked`；正式 feature.yaml、tas
 - 本地定向验证：`test-hjx4mj1v.log` exit 0（3 文件，123 passed）；旧 Session 受影响迁移断言 `test-5ubwhrmj.log` exit 0（5 passed，16 未选执行）；Artifact trigger 优化后 `test-v6756xnm.log` exit 0（SQLite 11 passed），最终 typecheck `test-n735a0kd.log` exit 0，依赖边界 `test-63az2rjt.log` exit 0。完整日志及真实退出码在本 Feature workspace `verifications/F-001/runtime-logs/`。
 - 索引为 `test/index/phases/P04/features/P04-5/tasks/F-001.json`，Harness selection 引用它，已用 Nezha resolver 核实七个选中文件均存在且符合项目配置。其余受影响回归交 Nezha；未运行全仓、阶段验收或真实模型。
 - 本任务仅交付持久模型；队列、Runtime 事件归一化及对外查询由后继任务接入。字段映射、完整度约束与证据见 [F-001 交接](docs/p04-5-f001-work-recording-model.md)。
+- attempt-2：已核实独立验收为 214 passed / 1 failed（审计 `6755fc9ab6764ba28e8f422beed8db48`，无人工阻塞）；唯一失败是 v20 DDL 回滚后升级断言残留版本 31。本轮改用 `LATEST_VERSION`，保留全部回滚检查；定向复核 `test-z7pygwaa.log` exit 0（1 passed，20 未选执行），invocation 为 `ed19afd825ff40b095f43e107506815c`。原七文件索引保留，交 Nezha 独立重验。

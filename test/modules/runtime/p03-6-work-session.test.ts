@@ -562,7 +562,7 @@ describe('P03-6 F-006 work session store on real SQLite', () => {
         .rejects.toMatchObject({ step: 'apply', version: 20 });
       expect(session.database.prepare("SELECT name FROM sqlite_master WHERE name = 'sessions'").all()).toEqual([]);
       expect(session.database.prepare('SELECT max(version) AS v FROM schema_migrations').get()).toEqual({ v: 19 });
-      expect((await migrateSqliteStorage(session, { backupPath: join(sandbox.path, 'retry.db') })).toVersion).toBe(31);
+      expect((await migrateSqliteStorage(session, { backupPath: join(sandbox.path, 'retry.db') })).toVersion).toBe(LATEST_VERSION);
     } finally { session.close(); sandbox.cleanup(); }
   });
 
