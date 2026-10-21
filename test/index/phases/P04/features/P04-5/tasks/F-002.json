@@ -1,0 +1,11 @@
+{
+  "schema_version": 2,
+  "task_id": "F-002",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [{
+      "file": "test/modules/runtime/p04-5-work-recording-publisher.test.ts",
+      "cases": ["managed-public-bodies", "bounded-truncation", "failure-evidence"]
+    }]
+  }]
+}

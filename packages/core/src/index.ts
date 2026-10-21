@@ -128,6 +128,7 @@ export * from './application/finalization-git-delivery.js';
 export * from './ports/execution-budget.js';
 export * from './ports/execution-budget-query.js';
 export * from './ports/execution-schedule-query.js';
+export * from './application/work-recording-publish.js';
 export * from './application/artifact-publish.js';
 export * from './application/verification-candidates.js';
 export * from './application/verification-plan.js';
