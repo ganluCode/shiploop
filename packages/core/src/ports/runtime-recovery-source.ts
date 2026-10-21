@@ -1,5 +1,8 @@
 import type { ExecutionInputRef } from './execution-input.js';
 import type { RuntimeRecoveryReference, RuntimeRecoveryRequest } from './runtime-recovery.js';
+import type { RuntimeWorkAccessSnapshot } from './runtime-execution.js';
+
+export type RuntimeRecoveryAccessSnapshot = Pick<RuntimeWorkAccessSnapshot, 'strategy' | 'authentication' | 'resources'>;
 
 export const RUNTIME_RECOVERY_EVIDENCE_KIND = 'runtime-recovery-evidence';
 
@@ -12,11 +15,14 @@ export interface RuntimeRecoverySourceEvidence {
   readonly checkpoint?: ExecutionInputRef;
   readonly codeDigest: string;
   readonly permissionsDigest: string;
+  /** 脱敏访问状态投影；不含 Attempt 身份，供恢复前后比较认证、资源和路由。 */
+  readonly workAccess?: RuntimeRecoveryAccessSnapshot;
 }
 export interface RuntimeRecoveryCurrentContext {
   readonly inputSnapshot: ExecutionInputRef;
   readonly codeDigest: string;
   readonly permissions: { readonly grants: readonly string[] };
+  readonly workAccess?: RuntimeRecoveryAccessSnapshot;
 }
 export interface RuntimeRecoverySourceState {
   readonly evidence: ExecutionInputRef;

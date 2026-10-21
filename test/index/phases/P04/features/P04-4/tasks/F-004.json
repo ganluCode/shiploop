@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "task_id": "F-004",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        { "file": "test/modules/runtime/recovery/p04-4-runtime-recovery-access.test.ts", "all": true },
+        { "file": "test/modules/runtime/recovery/p03-3a-runtime-recovery.test.ts", "all": true },
+        { "file": "test/modules/runtime/p03-10-runtime-recovery-negatives.test.ts", "all": true },
+        { "file": "test/modules/runtime/p04-4-pi-recovery-boundary.test.ts", "all": true }
+      ]
+    }
+  ]
+}
