@@ -27,7 +27,7 @@ export interface RuntimeSettlementFacts {
   readonly invocationId: string;
   readonly result: RuntimeExecutionResult | null;
   readonly failure: { readonly kind: RuntimeErrorKind; readonly reason: string } | null;
-  readonly recording: { readonly complete: boolean; readonly manifestRef: string | null; readonly gaps?: readonly string[] };
+  readonly recording: { readonly mode?: 'required' | 'best_effort'; readonly complete: boolean; readonly manifestRef: string | null; readonly gaps?: readonly string[] };
   /** null means no stop observation, never confirmed by inference. */
   readonly stopped: RuntimeStopEvidence | null;
   readonly control?: RuntimeControlFacts;
@@ -38,7 +38,10 @@ export function validateRuntimeSettlementFacts(value: unknown): RuntimeSettlemen
   const raw = requirePlainObject(value, context, 'runtime');
   rejectUnknownKeys(raw, ['sessionId', 'invocationId', 'result', 'failure', 'recording', 'stopped', 'control'], context, 'runtime');
   const recording = requirePlainObject(raw.recording, context, 'recording');
-  rejectUnknownKeys(recording, ['complete', 'manifestRef', 'gaps'], context, 'recording');
+  rejectUnknownKeys(recording, ['complete', 'manifestRef', 'gaps', 'mode'], context, 'recording');
+  if (recording.mode !== undefined && recording.mode !== 'required' && recording.mode !== 'best_effort') {
+    throw validationError(context, 'recording.mode', 'required_or_best_effort');
+  }
   let gaps: string[] | undefined;
   if (recording.gaps !== undefined) {
     if (!Array.isArray(recording.gaps) || recording.gaps.length > 32 || recording.gaps.some(gap =>
@@ -96,6 +99,7 @@ export function validateRuntimeSettlementFacts(value: unknown): RuntimeSettlemen
   }
   return { sessionId: validateStableId(raw.sessionId, context, 'sessionId'),
     invocationId: validateStableId(raw.invocationId, context, 'invocationId'), result, failure,
-    recording: { complete: recording.complete, manifestRef, ...(gaps === undefined ? {} : { gaps }) },
+    recording: { ...(recording.mode === undefined ? {} : { mode: recording.mode as 'required' | 'best_effort' }),
+      complete: recording.complete, manifestRef, ...(gaps === undefined ? {} : { gaps }) },
     stopped: raw.stopped === null ? null : validateRuntimeStopEvidence(raw.stopped), ...(control ? { control } : {}) };
 }

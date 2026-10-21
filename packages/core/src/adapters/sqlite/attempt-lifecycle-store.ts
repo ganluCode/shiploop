@@ -173,7 +173,7 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
             || !['reserved', 'started'].includes(workSession.status) || attempt.invocationId !== runtime.invocationId) return ignored('stale_execution_identity');
           if (runtime.recording.manifestRef !== null) transaction.getArtifactInputRef(valid.projectId, runtime.recording.manifestRef);
           const recordingGaps = [...new Set([
-            ...(!runtime.recording.complete ? ['recording_required'] : []),
+            ...(!runtime.recording.complete ? [runtime.recording.mode === 'best_effort' ? 'best_effort_partial' : 'recording_required'] : []),
             ...(!runtime.stopped?.confirmed ? ['stop_unconfirmed'] : []),
             ...(workSession.recordingGaps ?? []), ...(runtime.recording.gaps ?? []),
           ])];
@@ -252,7 +252,7 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
           aggregateType: 'task', aggregateId: valid.taskId, aggregateRevision: counters.revision, payload: { updated: true } });
         const waitingFor: AttemptApplicationResult['waitingFor'] = runtime !== null && targetStatus === 'verifying'
           ? approvalWaiting ? 'approval' : !stopConfirmed ? 'execution_uncertain'
-            : !runtime.recording.complete ? 'recording_required' : 'verification_not_assembled'
+            : !runtime.recording.complete && runtime.recording.mode !== 'best_effort' ? 'recording_required' : 'verification_not_assembled'
           : valid.kind === 'runtime_completed' && valid.exitCode === 0
             ? approvalWaiting ? 'approval' : 'verification_not_assembled' : null;
         if (runtime !== null) {

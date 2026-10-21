@@ -1,3 +1,12 @@
+# P04-5 工作进度
+
+## F-004 — Runtime 公开记录与有界 SessionRecorder（2026-10-21）
+
+- 从 F-003 的 35ca4ab 及已有未提交实现续做，仅处理 F-004，保留已有成功结果和日志。增加独立公开正文/索引 projection，正文先发布、脱敏和核验，再短事务提交索引/manifest/Session 水位；队列、批次、总量与尾部等待均有上限。
+- 消息全文（公开可选字段）、工具输入/输出与父子工具关系、错误、事件来源和序列持久化；result/stopped 并行且独立观察。required 失败请求停止并阻断记录门禁；best_effort 显式 partial，有限 drain，监督不因该记录失败单独取消。Task/Feature 验收及停止确认继续独立。
+- 本地三文件共 73 个不同用例有通过证据：新 Recorder 最终 13/13（test-5_j_qkdx.log）；旧 Recorder 33/33（test-800ko4nj.log，组合共 46）；settlement 27/27（test-v22449ak.log，同次新文件有 1 项父工具边界失败，整体 exit 1；修正后只重跑新文件 13/13）。最终 typecheck test-5854wpj0.log exit 0；boundaries test-s1k43fh1.log exit 0，321 文件/0 diagnostics。完整输出、真实退出码、RED 和中间失败均保留在 Feature workspace verifications/F-004/runtime-logs/。
+- [交接文档](docs/p04-5-f004-session-recorder.md) 说明端口注入、策略、停止事实和证据限制。仓库任务 v2 索引与 Harness selection 登记 19 文件，另外 16 份回归仅选择、交 Nezha 独立执行。生产装配归 F-008；恢复/查询后续任务范围保持清晰。本轮未跑全仓/组合门禁/阶段验收/live 模型，正式 feature.yaml/task_list*.json 只读。提交及单次 completed 报告以 Git/Nezha 回执为准。
+
 # P04-4 工作进度
 
 ## F-005 — attempt 3 恢复授权夹具返工（2026-10-21）

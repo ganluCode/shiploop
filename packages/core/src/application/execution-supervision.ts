@@ -5,7 +5,7 @@ import { RuntimeError } from '../ports/runtime-execution.js';
 import type { RuntimeControlFacts, RuntimeTimeoutFact } from '../ports/runtime-settlement.js';
 import type { RuntimeSettlementInput, RuntimeSettlementService } from './runtime-settlement.js';
 import type { AttemptApplicationResult } from '../ports/attempt-lifecycle.js';
-import type { WorkEvidenceRecordingOutcome } from './work-evidence-recorder.js';
+import { WorkEvidenceRecordingError, type WorkEvidenceRecordingOutcome } from './work-evidence-recorder.js';
 import type { WorkspaceRetentionReason } from '../ports/workspace-retention.js';
 
 export interface ExecutionCompletion {
@@ -94,7 +94,9 @@ export function superviseExecution(input: {
     elapsedMs: elapsed(),
   }), Math.max(1, input.timeoutMs));
   void input.recording.then(outcome => {
-    if (outcome.status === 'rejected' || outcome.value.status !== 'complete') stop('recording_failed');
+    const bestEffort = outcome.status === 'fulfilled' ? outcome.value.recordingMode === 'best_effort'
+      : outcome.reason instanceof WorkEvidenceRecordingError && outcome.reason.recordingMode === 'best_effort';
+    if (!bestEffort && (outcome.status === 'rejected' || outcome.value.status !== 'complete')) stop('recording_failed');
   });
   void input.result.then(outcome => {
     if (outcome.status === 'rejected' || outcome.value.terminal === 'failed') stop('runtime_failed');

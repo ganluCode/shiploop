@@ -236,6 +236,7 @@ export interface WorkSessionSettlementEvidence {
   readonly result: RuntimeExecutionResult | null;
   readonly failure: { readonly kind: RuntimeErrorKind; readonly reason: string } | null;
   readonly recording: {
+    readonly mode?: 'required' | 'best_effort';
     readonly complete: boolean;
     readonly manifestRef: string | null;
     readonly failure: string | null;
@@ -446,12 +447,15 @@ export function validateWorkSessionResultEvidence(value: unknown): WorkSessionRe
     const recording = requirePlainObject(raw.recording, EVIDENCE_CONTEXT, 'evidence.recording');
     rejectUnknownKeys(
       recording,
-      ['complete', 'manifestRef', 'failure', 'gaps', 'watermark'],
+      ['complete', 'manifestRef', 'failure', 'gaps', 'watermark', 'mode'],
       EVIDENCE_CONTEXT,
       'evidence.recording',
     );
     if (typeof recording.complete !== 'boolean') {
       throw validationError(EVIDENCE_CONTEXT, 'evidence.recording.complete', 'invalid_boolean');
+    }
+    if (recording.mode !== undefined && recording.mode !== 'required' && recording.mode !== 'best_effort') {
+      throw validationError(EVIDENCE_CONTEXT, 'evidence.recording.mode', 'required_or_best_effort');
     }
     const stop = requirePlainObject(raw.stop, EVIDENCE_CONTEXT, 'evidence.stop');
     rejectUnknownKeys(stop, ['evidence', 'failure'], EVIDENCE_CONTEXT, 'evidence.stop');
@@ -466,6 +470,7 @@ export function validateWorkSessionResultEvidence(value: unknown): WorkSessionRe
       result: execution.result === null ? null : validateRuntimeExecutionResult(execution.result),
       failure: validateFailure(execution.failure, 'evidence.execution.failure'),
       recording: {
+        ...(recording.mode === undefined ? {} : { mode: recording.mode as 'required' | 'best_effort' }),
         complete: recording.complete,
         manifestRef,
         failure: nullableToken(recording.failure, 'evidence.recording.failure'),
@@ -680,6 +685,7 @@ export interface PublicWorkSessionResultEvidence {
   readonly result: RuntimeExecutionResult | null;
   readonly failure: { readonly kind: RuntimeErrorKind; readonly reason: string } | null;
   readonly recording: {
+    readonly mode?: 'required' | 'best_effort';
     readonly complete: boolean;
     readonly manifestRef: string | null;
     readonly failure: string | null;
@@ -725,7 +731,7 @@ export function validatePublicWorkSessionResultEvidence(value: unknown): PublicW
   if (keys.some(key => !Object.hasOwn(raw, key))) throw validationError(EVIDENCE_CONTEXT, 'evidence', 'missing_field');
   const recording = requirePlainObject(raw.recording, EVIDENCE_CONTEXT, 'evidence.recording');
   const stop = requirePlainObject(raw.stop, EVIDENCE_CONTEXT, 'evidence.stop');
-  rejectUnknownKeys(recording, ['complete', 'manifestRef', 'failure', 'gaps', 'watermark'], EVIDENCE_CONTEXT, 'evidence.recording');
+  rejectUnknownKeys(recording, ['complete', 'manifestRef', 'failure', 'gaps', 'watermark', 'mode'], EVIDENCE_CONTEXT, 'evidence.recording');
   rejectUnknownKeys(stop, ['evidence', 'failure'], EVIDENCE_CONTEXT, 'evidence.stop');
   if (raw.kind === 'runtime-not-started') {
     if (raw.routing !== undefined || raw.result !== null || raw.control !== null || recording.complete !== false || recording.manifestRef !== null ||

@@ -44,6 +44,7 @@
 import {
   validateRuntimeEvent,
   validateRuntimeUsageReport,
+  validateRuntimeStopEvidence,
   RUNTIME_TERMINAL_STATES,
 } from './runtime-execution.js';
 import type {
@@ -292,7 +293,14 @@ export interface WorkEvidenceResultSummary {
   readonly lastEventSequence: number | null;
 }
 
+export interface WorkEvidenceStopObservation {
+  readonly status: 'observed' | 'invalid' | 'tail_timeout';
+  readonly evidence: import('./runtime-execution.js').RuntimeStopEvidence | null;
+}
+
 export interface WorkEvidenceManifest {
+  readonly stop?: WorkEvidenceStopObservation;
+  readonly recordingMode?: 'required' | 'best_effort';
   readonly recovery?: import('./runtime-recovery-recording.js').RuntimeRecoveryRecording;
   readonly schemaVersion: typeof WORK_EVIDENCE_SCHEMA_VERSION;
   readonly kind: typeof WORK_EVIDENCE_MANIFEST_KIND;
@@ -532,7 +540,7 @@ export function validateWorkEvidenceManifest(
   rejectUnknownKeys(object, [
     'schemaVersion', 'kind', 'identity', 'runtime', 'adapterVersion', 'scope', 'redaction',
     'chunks', 'watermark', 'finalEventSequence', 'sequenceReconciliation', 'gaps', 'stats',
-    'usage', 'result', 'resultStatus', 'diagnostics', 'coverage', 'recovery',
+    'usage', 'result', 'resultStatus', 'diagnostics', 'coverage', 'recovery', 'stop', 'recordingMode',
   ], context, field);
   if (object.schemaVersion !== WORK_EVIDENCE_SCHEMA_VERSION) {
     throw validationError(context, `${field}.schemaVersion`, `仅支持版本 ${WORK_EVIDENCE_SCHEMA_VERSION}`, object.schemaVersion);
@@ -572,9 +580,27 @@ export function validateWorkEvidenceManifest(
   if (coverage === 'complete' && (gaps.length > 0 || resultStatus !== 'settled' || reconciliation === 'mismatch')) {
     throw validationError(context, `${field}.coverage`, 'complete 只对无缺口的已声明范围成立', coverage);
   }
+  if (object.recordingMode !== undefined && object.recordingMode !== 'required' && object.recordingMode !== 'best_effort') {
+    throw validationError(context, `${field}.recordingMode`, 'required_or_best_effort');
+  }
+  let stop: WorkEvidenceStopObservation | undefined;
+  if (object.stop !== undefined) {
+    const rawStop = requirePlainObject(object.stop, context, `${field}.stop`);
+    rejectUnknownKeys(rawStop, ['status', 'evidence'], context, `${field}.stop`);
+    if (!['observed', 'invalid', 'tail_timeout'].includes(String(rawStop.status))) {
+      throw validationError(context, `${field}.stop.status`, 'invalid_stop_observation');
+    }
+    const evidence = rawStop.evidence === null ? null : validateRuntimeStopEvidence(rawStop.evidence);
+    if ((rawStop.status === 'observed') !== (evidence !== null)) {
+      throw validationError(context, `${field}.stop`, 'stop_evidence_status_mismatch');
+    }
+    stop = { status: rawStop.status as WorkEvidenceStopObservation['status'], evidence };
+  }
   return {
     schemaVersion: WORK_EVIDENCE_SCHEMA_VERSION,
     kind: WORK_EVIDENCE_MANIFEST_KIND,
+    ...(stop === undefined ? {} : { stop }),
+    ...(object.recordingMode === undefined ? {} : { recordingMode: object.recordingMode as 'required' | 'best_effort' }),
     identity: validateIdentity(object.identity, context, `${field}.identity`),
     ...(object.recovery === undefined ? {} : { recovery: validateRuntimeRecoveryRecording(object.recovery) }),
     runtime: boundedManifestText(object.runtime, 128, context, `${field}.runtime`),

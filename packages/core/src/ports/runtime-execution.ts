@@ -471,8 +471,8 @@ export interface RuntimeUsageReport {
 }
 
 export type RuntimeEventPayload =
-  | { readonly kind: 'message'; readonly messageId: string; readonly role: RuntimeEventRole; readonly preview: string }
-  | { readonly kind: 'tool_started'; readonly toolCallId: string; readonly toolName: string }
+  | { readonly kind: 'message'; readonly messageId: string; readonly role: RuntimeEventRole; readonly preview: string; readonly text?: string }
+  | { readonly kind: 'tool_started'; readonly toolCallId: string; readonly toolName: string; readonly parentToolCallId?: string | null; readonly input?: string }
   /**
    * tool_finished：F-001 三键（toolCallId/exitCode/signal）必填；F-004 起可
    * 选附加 reason（实际原因 token，正常退出为 null）、outputBytes（已知保留
@@ -480,7 +480,8 @@ export type RuntimeEventPayload =
    * 出现时必须为显式值或 null，不填 0/不伪造。
    */
   | { readonly kind: 'tool_finished'; readonly toolCallId: string; readonly exitCode: number | null; readonly signal: string | null;
-      readonly reason?: string | null; readonly outputBytes?: number | null; readonly lastActivityAtUtc?: string | null }
+      readonly reason?: string | null; readonly outputBytes?: number | null; readonly lastActivityAtUtc?: string | null;
+      readonly parentToolCallId?: string | null; readonly output?: string }
   | { readonly kind: 'usage'; readonly usage: RuntimeUsageReport }
   | { readonly kind: 'warning'; readonly code: RuntimeWarningCode; readonly message: string }
   | { readonly kind: 'diagnostic'; readonly code: string; readonly message: string };
@@ -551,6 +552,15 @@ export function validateRuntimeUsageReport(value: unknown, field = 'usage'): Run
   };
 }
 
+/** Optional publicly exposed bodies have their own bound; previews remain small. */
+export const RUNTIME_PUBLIC_BODY_MAX_BYTES = 65_536;
+function publicBody(value: unknown, field: string): string {
+  if (typeof value !== 'string' || Buffer.byteLength(value, 'utf8') > RUNTIME_PUBLIC_BODY_MAX_BYTES) {
+    throw protocolError('invalid_public_body', field);
+  }
+  return value;
+}
+
 function eventPayload(kind: RuntimeEventKind, value: unknown): RuntimeEventPayload {
   const field = 'event.payload';
   const raw = adapterObject(value, payloadKeys(kind), field);
@@ -561,11 +571,14 @@ function eventPayload(kind: RuntimeEventKind, value: unknown): RuntimeEventPaylo
         throw protocolError('invalid_role', `${field}.role`);
       }
       return { kind, messageId: eventToken(raw.messageId, `${field}.messageId`),
-        role: role as RuntimeEventRole, preview: boundedText(raw.preview, `${field}.preview`) };
+        role: role as RuntimeEventRole, preview: boundedText(raw.preview, `${field}.preview`),
+        ...(raw.text === undefined ? {} : { text: publicBody(raw.text, `${field}.text`) }) };
     }
     case 'tool_started':
       return { kind, toolCallId: eventToken(raw.toolCallId, `${field}.toolCallId`),
-        toolName: eventToken(raw.toolName, `${field}.toolName`) };
+        toolName: eventToken(raw.toolName, `${field}.toolName`),
+        ...(raw.input === undefined ? {} : { input: publicBody(raw.input, `${field}.input`) }),
+        ...(raw.parentToolCallId === undefined ? {} : { parentToolCallId: nullableToken(raw.parentToolCallId, `${field}.parentToolCallId`) }) };
     case 'tool_finished': {
       const finished: {
         kind: RuntimeEventKind; toolCallId: string; exitCode: number | null; signal: string | null;
@@ -584,7 +597,10 @@ function eventPayload(kind: RuntimeEventKind, value: unknown): RuntimeEventPaylo
         else if (isIsoUtcDateTime(raw.lastActivityAtUtc)) finished.lastActivityAtUtc = raw.lastActivityAtUtc;
         else throw protocolError('invalid_timestamp', `${field}.lastActivityAtUtc`);
       }
-      return finished as RuntimeEventPayload;
+      return { ...finished,
+        ...(raw.output === undefined ? {} : { output: publicBody(raw.output, `${field}.output`) }),
+        ...(raw.parentToolCallId === undefined ? {} : { parentToolCallId: nullableToken(raw.parentToolCallId, `${field}.parentToolCallId`) }),
+      } as RuntimeEventPayload;
     }
     case 'usage':
       return { kind, usage: validateRuntimeUsageReport(raw, field) };
@@ -601,9 +617,9 @@ function eventPayload(kind: RuntimeEventKind, value: unknown): RuntimeEventPaylo
 
 function payloadKeys(kind: RuntimeEventKind): readonly string[] {
   switch (kind) {
-    case 'message': return ['messageId', 'role', 'preview'];
-    case 'tool_started': return ['toolCallId', 'toolName'];
-    case 'tool_finished': return ['toolCallId', 'exitCode', 'signal', 'reason', 'outputBytes', 'lastActivityAtUtc'];
+    case 'message': return ['messageId', 'role', 'preview', 'text'];
+    case 'tool_started': return ['toolCallId', 'toolName', 'parentToolCallId', 'input'];
+    case 'tool_finished': return ['toolCallId', 'exitCode', 'signal', 'reason', 'outputBytes', 'lastActivityAtUtc', 'parentToolCallId', 'output'];
     case 'usage': return ['basis', 'inputTokens', 'outputTokens', 'costUsdMicros', 'completeness', 'accounting'];
     case 'warning': return ['code', 'message'];
     case 'diagnostic': return ['code', 'message'];

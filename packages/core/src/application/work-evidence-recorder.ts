@@ -47,6 +47,9 @@
  * （F-009/F-010）、清单读取 UI（F-011）、组合根接线（F-012）、完整供应商
  * SessionRecorder 与原生档案读取。
  */
+import { createWorkRecordingProjection, type WorkRecordingProjectionDeps } from './work-recording-projection.js';
+import type { WorkRecordingArtifactRef } from '../ports/work-recording.js';
+import { WORK_RECORDING_MAX_BATCH_MESSAGES } from '../ports/work-recording-store.js';
 import { recoveryRecordingForRequest } from './runtime-recovery-recording.js';
 import { createHash } from 'node:crypto';
 import type {
@@ -60,12 +63,14 @@ import {
   classifyRuntimeEvent,
   isRuntimeError,
   validateRuntimeExecutionRequest,
+  validateRuntimeStopEvidence,
   validateRuntimeExecutionResult,
 } from '../ports/runtime-execution.js';
 import type { ArtifactPublisher } from './artifact-publish.js';
 import type { ArtifactVerifier } from './artifact-verify.js';
 import { createOutputRedactor, redactOutputText } from './output-redaction.js';
 import {
+  validateWorkEvidenceManifest,
   validateWorkEvidenceRecorderLimits,
   WORK_EVIDENCE_DIAGNOSTICS_MAX_COUNT,
   WORK_EVIDENCE_DIAGNOSTIC_MAX_LENGTH,
@@ -78,6 +83,7 @@ import {
   WORK_EVIDENCE_SCOPE_EXCLUDES,
 } from '../ports/work-evidence-recorder.js';
 import type {
+  WorkEvidenceStopObservation,
   WorkEvidenceChunkRef,
   WorkEvidenceManifest,
   WorkEvidenceRecorderLimits,
@@ -122,6 +128,7 @@ export type WorkEvidenceRecordingFailureReason =
   | 'aborted';
 
 export interface WorkEvidenceRecordingErrorOptions {
+  readonly recordingMode?: RecordingMode;
   readonly recovery?: import('../ports/runtime-recovery-recording.js').RuntimeRecoveryRecording;
   readonly watermark: number | null;
   readonly gaps: readonly string[];
@@ -136,6 +143,7 @@ export interface WorkEvidenceRecordingErrorOptions {
  * required 模式下必须安全停止并阻止后继执行（F-010 停止路径消费）。
  */
 export class WorkEvidenceRecordingError extends Error {
+  readonly recordingMode: RecordingMode;
   readonly reason: WorkEvidenceRecordingFailureReason;
   readonly safeStopRequired: boolean;
   readonly watermark: number | null;
@@ -151,6 +159,7 @@ export class WorkEvidenceRecordingError extends Error {
     super(message, options.cause === undefined ? undefined : { cause: options.cause });
     this.name = 'WorkEvidenceRecordingError';
     this.reason = reason;
+    this.recordingMode = options.recordingMode ?? 'required';
     this.safeStopRequired = options.safeStopRequired;
     this.watermark = options.watermark;
     this.gaps = [...options.gaps];
@@ -167,7 +176,10 @@ export function isWorkEvidenceRecordingError(
     (reason === undefined || value.reason === reason);
 }
 
+export type RecordingMode = 'required' | 'best_effort';
+
 export interface WorkEvidenceRecordingOutcome {
+  readonly recordingMode?: RecordingMode;
   readonly recovery?: import('../ports/runtime-recovery-recording.js').RuntimeRecoveryRecording;
   /** complete：已声明范围无缺口且结果 settled；否则 partial（缺口见清单）。 */
   readonly status: 'complete' | 'partial';
@@ -187,6 +199,10 @@ export interface WorkEvidenceRecorder {
 }
 
 export interface WorkEvidenceRecorderDeps {
+  /** F-008 production assembly supplies the public body/index ports; omitted by legacy evidence callers. */
+  readonly recording?: WorkRecordingProjectionDeps;
+  /** Trusted, explicit Core policy. Runtime events cannot downgrade required recording. */
+  readonly recordingMode?: RecordingMode;
   readonly publisher: ArtifactPublisher;
   readonly verifier: Pick<ArtifactVerifier, 'verifyArtifact'>;
   readonly sessions: WorkSessionStore;
@@ -273,6 +289,9 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
       typeof (deps.sessions as WorkSessionStore).getWorkSession !== 'function') {
     throw validationError(context, 'deps.sessions', '必须提供 WorkSessionStore 端口实现');
   }
+  if (deps.recordingMode !== undefined && deps.recordingMode !== 'required' && deps.recordingMode !== 'best_effort') {
+    throw validationError(context, 'deps.recordingMode', 'required_or_best_effort');
+  }
   const limits: WorkEvidenceRecorderLimits = validateWorkEvidenceRecorderLimits(deps.limits);
   const secrets = deps.secrets === undefined ? [] : deps.secrets.map((value, index) => {
     if (typeof value !== 'string') {
@@ -295,6 +314,14 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
     async record(value: unknown): Promise<WorkEvidenceRecordingOutcome> {
       const input = validateRecordingInput(value);
       const { request, handle, eventIdentityPrefix, signal } = input;
+      const mode = deps.recordingMode ?? 'required';
+      const projection = deps.recording === undefined ? null : createWorkRecordingProjection(deps.recording, request, deps.verifier);
+      const maxBatchEvents = projection === null ? limits.chunkMaxEvents : Math.min(limits.chunkMaxEvents, WORK_RECORDING_MAX_BATCH_MESSAGES);
+      let stopObservation: WorkEvidenceStopObservation = { status: 'tail_timeout', evidence: null };
+      const stopWatch = Promise.resolve(handle.stopped).then(raw => {
+        try { stopObservation = { status: 'observed', evidence: validateRuntimeStopEvidence(redactValue(raw)) }; }
+        catch { stopObservation = { status: 'invalid', evidence: null }; }
+      }, () => { stopObservation = { status: 'invalid', evidence: null }; });
       void Promise.resolve(handle.result).catch(() => undefined);
       void Promise.resolve(handle.stopped).catch(() => undefined);
       const attemptId = request.identity.purpose === 'work' ? request.identity.attemptId : null;
@@ -399,9 +426,25 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
       };
 
       /** 推进 Session 水位（activity）：只指向已持久内容，缺口同步。 */
-      const advanceWatermark = async (): Promise<void> => {
+      const advanceWatermark = async (manifest?: WorkEvidenceManifest, manifestRef?: WorkRecordingArtifactRef): Promise<void> => {
         assertCurrent();
         try {
+          if (projection !== null) {
+            sessionRevision = projection.commit({ sessionRevision, watermark: persistedWatermark, gaps: gaps.list,
+              ...(manifest === undefined ? {} : { manifest }), ...(manifestRef === undefined ? {} : { manifestRef }) });
+            // Preserve the existing native handoff metadata without replacing the
+            // index transaction's canonical gaps or independently advancing watermarks.
+            if (recovery?.providerSessionId != null || (recovery?.sdkVersion != null && recovery.nativeFormat != null && recovery.nativeFormatVersion != null)) {
+              sessionRevision = deps.sessions.applyWorkSessionProgress({ ...identity, sessionId: request.sessionId,
+                expectedRevision: sessionRevision, kind: 'activity',
+                ...(recovery?.providerSessionId == null ? {} : { providerSessionId: recovery.providerSessionId }),
+                ...(recovery?.sdkVersion == null || recovery.nativeFormat == null || recovery.nativeFormatVersion == null ? {} : {
+                  nativeRef: { schemaVersion: 1, storageKind: recovery.nativeFormat, formatVersion: recovery.nativeFormatVersion },
+                }),
+              }).session.revision;
+            }
+            return;
+          }
           const mutation = deps.sessions.applyWorkSessionProgress({
             ...identity,
             sessionId: request.sessionId,
@@ -424,6 +467,14 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
       const flushChunk = async (): Promise<void> => {
         if (chunkEventCount === 0) return;
         assertCurrent();
+        try {
+          await projection?.prepare(chunkEvents.map(event => {
+            const payload = redactValue(event.payload) as RuntimeEvent['payload'];
+            return { event: { ...event, payload }, redacted: JSON.stringify(payload) !== JSON.stringify(event.payload) };
+          }));
+        } catch (error) {
+          throw new RecordingFailure('event_publish_failed', '公开正文发布失败', error);
+        }
         const content = Buffer.concat(chunkLines);
         const locator = `sessions/${request.sessionId}/event-log/${String(chunkIndex).padStart(6, '0')}.ndjson`;
         let published;
@@ -513,7 +564,7 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
           held.delete(nextExpected);
           await persistEvent(event);
           nextExpected += 1;
-          if (chunkEventCount >= limits.chunkMaxEvents || chunkBytes >= limits.chunkMaxBytes) {
+          if (chunkEventCount >= maxBatchEvents || chunkBytes >= limits.chunkMaxBytes) {
             await flushChunk();
           }
         }
@@ -529,7 +580,7 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
           held.delete(seq);
           await persistEvent(event);
           nextExpected = seq + 1;
-          if (chunkEventCount >= limits.chunkMaxEvents || chunkBytes >= limits.chunkMaxBytes) await flushChunk();
+          if (chunkEventCount >= maxBatchEvents || chunkBytes >= limits.chunkMaxBytes) await flushChunk();
         }
         if (nextExpected <= toInclusive) gaps.add(nextExpected === toInclusive
           ? `missing_sequences:${nextExpected}` : `missing_sequences:${nextExpected}-${toInclusive}`);
@@ -563,7 +614,7 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
         if (event.sequence === nextExpected) {
           await persistEvent(event);
           nextExpected += 1;
-          if (chunkEventCount >= limits.chunkMaxEvents || chunkBytes >= limits.chunkMaxBytes) {
+          if (chunkEventCount >= maxBatchEvents || chunkBytes >= limits.chunkMaxBytes) {
             await flushChunk();
           }
           await drainHeld();
@@ -582,7 +633,7 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
         await declareMissingUpTo(event.sequence - 1);
         await persistEvent(event);
         nextExpected = event.sequence + 1;
-        if (chunkEventCount >= limits.chunkMaxEvents || chunkBytes >= limits.chunkMaxBytes) {
+        if (chunkEventCount >= maxBatchEvents || chunkBytes >= limits.chunkMaxBytes) {
           await flushChunk();
         }
         await drainHeld();
@@ -595,6 +646,11 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
       /* 结果/失败在 Promise 回调内赋值：读取一律经函数，避免控制流收窄。 */
       const settledResult = (): RuntimeExecutionResult | null => resultValue;
       const settledResultFailure = (): string | null => resultFailure;
+      const resultSummary = (result: RuntimeExecutionResult | null): WorkEvidenceManifest['result'] => {
+        if (result === null) return null;
+        const { schemaVersion: _schema, providerSessionId: _provider, diagnosticRefs: _diagnostics, ...summary } = result;
+        return summary;
+      };
       let notifyResultSettled!: () => void;
       const resultSettledSignal = new Promise<void>((resolve) => { notifyResultSettled = resolve; });
       const resultWatch = Promise.resolve(handle.result).then(
@@ -778,7 +834,6 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
         }
         if (isAborted()) throw abortError();
       } catch (error) {
-        abandonIterator();
         return await failRecording(error);
       } finally {
         clearTimeout(activeTailTimer);
@@ -799,6 +854,7 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
       let sequenceReconciliation: WorkEvidenceSequenceReconciliation;
       if (finalEventSequence === null) {
         sequenceReconciliation = 'not_available';
+        if (projection !== null) gaps.add('terminal_watermark_unknown');
       } else if (finalEventSequence === (persistedWatermark ?? 0)) {
         sequenceReconciliation = 'match';
       } else {
@@ -807,6 +863,15 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
       }
       if (stats.unknownEvents > 0) gaps.add(`unknown_events:${stats.unknownEvents}`);
       if (stats.foreignEvents > 0) gaps.add(`foreign_events:${stats.foreignEvents}`);
+
+      /* Stop is observed separately, with a finite deadline even after result. */
+      if (projection !== null) {
+        let stopTimer: ReturnType<typeof setTimeout> | undefined;
+        try { await Promise.race([stopWatch, new Promise<void>(resolve => { stopTimer = setTimeout(resolve, limits.tailWaitMs); })]); }
+        finally { clearTimeout(stopTimer); }
+        if (stopObservation.status !== 'observed') gaps.add('stop_evidence_unavailable');
+        if (persistedWatermark === null && finalEventSequence === 0) persistedWatermark = 0;
+      }
 
       /* 水位/缺口最终同步（持久内容不变，仅元数据收尾）。 */
       syncRecoveryGaps();
@@ -828,6 +893,8 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
       const manifest: WorkEvidenceManifest = {
         schemaVersion: WORK_EVIDENCE_SCHEMA_VERSION,
         kind: WORK_EVIDENCE_MANIFEST_KIND,
+        stop: stopObservation,
+        recordingMode: mode,
         ...(recovery === undefined ? {} : { recovery: redactValue(recovery) as typeof recovery }),
         identity: {
           projectId: request.projectId,
@@ -887,10 +954,13 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
           sequenceReconciliation !== 'mismatch') ? 'complete' : 'partial',
       };
 
+      if (projection !== null && manifest.coverage !== 'complete' && mode === 'required') {
+        return await failRecording(new RecordingFailure('watermark_progress_failed', 'required 记录范围不完整'), manifest);
+      }
       let manifestArtifactId: string;
       try {
         assertCurrent();
-        const body = Buffer.from(JSON.stringify(manifest), 'utf8');
+        const body = Buffer.from(JSON.stringify(validateWorkEvidenceManifest(manifest)), 'utf8');
         const published = await deps.publisher.publishArtifact({
           projectId: request.projectId,
           kind: WORK_EVIDENCE_MANIFEST_KIND,
@@ -902,11 +972,16 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
         const integrity = await deps.verifier.verifyArtifact(request.projectId, published.artifact.id);
         if (integrity.kind !== 'verified_ready') throw new Error('覆盖清单完整性核验失败');
         manifestArtifactId = published.artifact.id;
+        if (projection !== null) await advanceWatermark(manifest, {
+          artifactId: published.artifact.id, contentHash: published.artifact.contentHash!,
+          sizeBytes: published.artifact.sizeBytes!, locator: published.artifact.locator,
+        });
       } catch (error) {
         return await failRecording(new RecordingFailure('manifest_publish_failed', '覆盖清单发布失败', error), manifest);
       }
 
       return {
+        recordingMode: mode,
         status: manifest.coverage === 'complete' ? 'complete' : 'partial',
         manifestArtifactId,
         ...(manifest.recovery === undefined ? {} : { recovery: manifest.recovery }),
@@ -919,14 +994,19 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
       };
 
       /* ---------------- required 失败统一出口 ---------------- */
-      async function failRecording(error: unknown, manifestDraft?: WorkEvidenceManifest): Promise<never> {
+      async function failRecording(error: unknown, manifestDraft?: WorkEvidenceManifest): Promise<WorkEvidenceRecordingOutcome> {
         // Fencing loss is not a recording repair: leave the new owner's evidence untouched.
         assertCurrent();
         const failure = error instanceof RecordingFailure
           ? error
           : new RecordingFailure('event_stream_failed', 'Runtime 事件流异常', error);
         const aborted = failure.failureReason === 'aborted';
-        {
+        if (projection !== null) {
+          projection.discardPending();
+          persistedWatermark = projection.watermark;
+          for (const gap of projection.gaps) gaps.add(gap);
+        }
+        if (mode === 'required') {
           /* 取消接受不代表停止；等待有界，安全停止由调用方核验。 */
           try {
             await new Promise<void>((resolve) => {
@@ -940,6 +1020,25 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
             /* 取消本身失败不覆盖原始失败；停止核验由外层（F-010）承担。 */
           }
         }
+        if (mode === 'best_effort' && !aborted) {
+          gaps.add('best_effort_partial');
+          // Discard only within the same finite event and tail budgets. A failed
+          // persistence path must not deadlock a producer with a bounded channel.
+          const drainDeadline = performance.now() + limits.tailWaitMs;
+          let discarded = 0;
+          while (!resultSettled && discarded < limits.maxTotalEvents && performance.now() < drainDeadline) {
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            try {
+              const next = await Promise.race([nextEvent(), resultSettledSignal.then(() => RESULT_SETTLED),
+                new Promise<symbol>(resolve => { timer = setTimeout(() => resolve(TAIL_TIMEOUT), Math.max(1, drainDeadline - performance.now())); })]);
+              if (typeof next === 'symbol' || next.done) break;
+              consumeNext();
+              discarded++;
+            } catch { break; }
+            finally { clearTimeout(timer); }
+          }
+        }
+        abandonIterator();
         // A broken iterator can leave already accepted events in the bounded
         // chunk buffer. Persist that partial evidence before publishing a failed
         // manifest; never reattempt a failed artifact write or claim completeness.
@@ -966,10 +1065,11 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
         }
         /* 尽力发布诚实清单（coverage='failed'），不生成虚假 ready/complete。 */
         let failedManifestId: string | null = null;
+        const failureManifest = buildFailedManifest(manifestDraft);
         if (!aborted) {
           try {
-            const draft = buildFailedManifest(manifestDraft);
-            const body = Buffer.from(JSON.stringify(draft), 'utf8');
+            const draft = failureManifest;
+            const body = Buffer.from(JSON.stringify(validateWorkEvidenceManifest(draft)), 'utf8');
             const published = await deps.publisher.publishArtifact({
               projectId: request.projectId,
               kind: WORK_EVIDENCE_MANIFEST_KIND,
@@ -981,17 +1081,29 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
             const integrity = await deps.verifier.verifyArtifact(request.projectId, published.artifact.id);
             if (integrity.kind !== 'verified_ready') throw new Error('失败清单完整性核验失败');
             failedManifestId = published.artifact.id;
+            if (projection !== null) await advanceWatermark(draft, {
+              artifactId: published.artifact.id, contentHash: published.artifact.contentHash!,
+              sizeBytes: published.artifact.sizeBytes!, locator: published.artifact.locator,
+            });
           } catch {
-            /* 清单发布同样失败（如 ENOSPC）：只传播原始记录失败。 */
+            // Metadata can still close honestly when body storage is unavailable.
+            try { await advanceWatermark(failureManifest); } catch { /* preserve the last durable index */ }
           }
         }
+        if (mode === 'best_effort' && !aborted && failedManifestId !== null) return {
+          recordingMode: mode, status: 'partial', manifestArtifactId: failedManifestId,
+          ...(recovery === undefined ? {} : { recovery: redactValue(recovery) as typeof recovery }),
+          watermark: persistedWatermark, gaps: [...gaps.list], stats: { ...stats }, result: settledResult(),
+          resultStatus: failureManifest.resultStatus, sequenceReconciliation: failureManifest.sequenceReconciliation,
+        };
         throw new WorkEvidenceRecordingError(
           failure.failureReason,
           `${OPERATION}: ${failure.message}`,
           {
             watermark: persistedWatermark,
             gaps: [...gaps.list],
-            safeStopRequired: !aborted,
+            recordingMode: mode,
+            safeStopRequired: mode === 'required' && !aborted,
             manifestArtifactId: failedManifestId,
             ...(recovery === undefined ? {} : { recovery: redactValue(recovery) as typeof recovery }),
             cause: failure.causeValue,
@@ -1060,12 +1172,17 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
         };
         return {
           ...base,
+          stop: stopObservation,
+          recordingMode: mode,
+          result: resultSummary(settledResult()),
+          finalEventSequence: settledResult()?.lastEventSequence ?? null,
+          sequenceReconciliation: settledResult()?.lastEventSequence === (persistedWatermark ?? 0) ? 'match' : 'not_available',
           chunks: [...chunks],
           watermark: persistedWatermark,
           gaps: [...gaps.list],
           stats: { ...stats },
           diagnostics: [...diagnostics.list],
-          coverage: 'failed',
+          coverage: mode === 'best_effort' ? 'partial' : 'failed',
         };
       }
     },

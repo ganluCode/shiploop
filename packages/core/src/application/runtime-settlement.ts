@@ -103,6 +103,8 @@ export function createRuntimeSettlementService(deps: RuntimeSettlementDeps): Run
     } else if (input.stopped?.status === 'rejected') stopFailure = 'runtime_stop_rejected';
     const recording = input.recording?.status === 'fulfilled' ? input.recording.value : null;
     const recordingError = input.recording?.status === 'rejected' ? input.recording.reason : null;
+    const recordingMode = recording?.recordingMode
+      ?? (recordingError instanceof WorkEvidenceRecordingError ? recordingError.recordingMode : 'required');
     const manifestRef = recording?.manifestArtifactId
       ?? (recordingError instanceof WorkEvidenceRecordingError ? recordingError.manifestArtifactId : null);
     // Keep the original Runtime failure authoritative even if evidence cleanup also fails.
@@ -123,8 +125,9 @@ export function createRuntimeSettlementService(deps: RuntimeSettlementDeps): Run
       ?? (recordingError instanceof WorkEvidenceRecordingError ? recordingError.recovery : undefined)
       ?? recoveryRecordingForRequest(request, undefined, deps.sessions);
     const runtime: RuntimeSettlementFacts = { sessionId: request.sessionId, invocationId: request.invocationId,
-      result, failure: executionFailure, recording: { complete: recording?.status === 'complete', manifestRef,
-        ...(recovery === undefined ? {} : { gaps: recovery.gaps.map(gap => token(`recovery:${gap}`)) }) }, stopped,
+      result, failure: executionFailure, recording: { mode: recordingMode, complete: recording?.status === 'complete', manifestRef,
+        gaps: [...new Set([...(recording?.gaps ?? (recordingError instanceof WorkEvidenceRecordingError ? recordingError.gaps : [])),
+          ...(recovery?.gaps ?? []).map(gap => token(`recovery:${gap}`))])].slice(0, 32).map(token) }, stopped,
       ...(input.control ? { control: input.control } : {}) };
     const attempt = deps.attempts.getAttempt(identity.projectId, identity.attemptId);
     const task = deps.dag.readTaskDagView(identity.projectId, identity.runId).facts.find(f => f.taskId === identity.taskId);
@@ -151,7 +154,8 @@ export function createRuntimeSettlementService(deps: RuntimeSettlementDeps): Run
           model: token(attempt.inputSnapshot.runtimeFallback.strategy.model),
           source: token(attempt.inputSnapshot.runtimeFallback.strategySource),
         } : null },
-      recording: { complete: runtime.recording.complete, manifestRef, failure: recordingFailure,
+      recording: { ...(recordingMode === 'best_effort' ? { mode: recordingMode } : {}),
+        complete: runtime.recording.complete, manifestRef, failure: recordingFailure,
         gaps: (recording?.gaps ?? (recordingError instanceof WorkEvidenceRecordingError ? recordingError.gaps : ['recording_unobserved'])).slice(0, 32).map(token),
         watermark: recording?.watermark ?? (recordingError instanceof WorkEvidenceRecordingError ? recordingError.watermark : null) },
       stop: { evidence: stopped, failure: stopFailure }, ...(input.control ? { control: input.control } : {}) }, redact), 'utf8');
