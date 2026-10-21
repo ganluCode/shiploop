@@ -40,6 +40,8 @@ export interface StopEscalationProbe {
   signalGroup(processGroupId: number, signal: 'SIGKILL'): boolean;
   /** 有界等待（注入以保持纯度与可测性）。 */
   delay(ms: number): Promise<void>;
+  /** Monotonic test/adapter clock; production defaults to Date.now. */
+  readonly nowUtcMs?: () => number;
 }
 
 /** 有界停止预算（§13：升级后确认停止预算 5 000 ms 默认）。 */
@@ -85,7 +87,9 @@ export async function confirmGroupAbsence(
   probe: StopEscalationProbe,
   budgets: StopEscalationBudgets,
 ): Promise<boolean> {
-  const deadline = Date.now() + budgets.confirmMs;
+  const now = probe.nowUtcMs ?? Date.now;
+  const deadline = now() + budgets.confirmMs;
+
   for (;;) {
     let members: readonly number[] | undefined;
     try {
@@ -94,7 +98,8 @@ export async function confirmGroupAbsence(
       members = undefined; // 探测失败＝未知，绝不当作空组。
     }
     if (members !== undefined && members.length === 0) return true;
-    if (Date.now() >= deadline) return false;
+    if (now() >= deadline) return false;
+
     await probe.delay(budgets.pollMs);
   }
 }
@@ -134,5 +139,5 @@ export async function forceStopControlledGroup(
     }
   }
   const confirmed = await confirmGroupAbsence(identity, probe, budgets);
-  return { confirmed, escalated, identity: row === null ? 'absent' : 'matched' };
+  return { confirmed: row === null ? confirmed : escalated && confirmed, escalated, identity: row === null ? 'absent' : 'matched' };
 }

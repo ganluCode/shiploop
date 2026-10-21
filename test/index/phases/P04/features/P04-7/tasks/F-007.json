@@ -1,0 +1,21 @@
+{
+  "schema_version": 2,
+  "task_id": "F-007",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        { "file": "test/modules/execution/control/p04-7-f007-stop-control-regression.test.ts", "all": true },
+        { "file": "test/modules/execution/control/p04-7-f001-stop-diagnostics.test.ts", "all": true },
+        { "file": "test/modules/execution/control/p04-7-f002-process-controls.test.ts", "all": true },
+        { "file": "test/modules/execution/control/p04-7-f003-deadline-control.test.ts", "all": true },
+        { "file": "test/modules/execution/control/p04-7-f004-settlement-gate.test.ts", "all": true },
+        { "file": "test/modules/execution/control/p03-9-f003-execution-stop.test.ts", "all": true },
+        { "file": "test/modules/execution/control/p03-9-f001-execution-pause.test.ts", "all": true },
+        { "file": "test/modules/execution/control/p03-9-f002-execution-cancel.test.ts", "all": true },
+        { "file": "test/modules/execution/control/p03-9-f004-time-limits.test.ts", "all": true },
+        { "file": "test/modules/execution/control/p03-10-process-controls.test.ts", "all": true }
+      ]
+    }
+  ]
+}
