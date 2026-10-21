@@ -174,6 +174,66 @@ async function adapterFixture() {
 }
 
 describe('F-002 recovery source admission', () => {
+  it('[case:recovery-recording-boundary] exports archive/version/model facts and excludes historical final snapshots and duplicate usage', async () => {
+    const f = await adapterFixture();
+    const create = f.factory.getMockImplementation()!;
+    f.factory.mockImplementation(async options => {
+      const base = await create(options);
+      let listener: ((event: unknown) => void) | undefined;
+      return { ...base,
+        subscribe(callback: (event: unknown) => void) { listener = callback; return () => {}; },
+        async prompt() {
+          const fresh = { id: 'fresh-message', role: 'assistant', content: [{ type: 'text', text: 'new answer' }],
+            usage: { input: 7, output: 3, cost: { total: 0.01 } } };
+          listener?.({ type: 'message_start', message: fresh });
+          listener?.({ type: 'message_end', message: fresh });
+          listener?.({ type: 'message_end', message: fresh });
+          listener?.({ type: 'agent_end', messages: [
+            { ...fresh, id: 'old-message', content: [{ type: 'text', text: 'previous answer' }], usage: { input: 1000, output: 999 } }, fresh,
+          ] });
+          listener?.({ type: 'agent_settled' });
+        } };
+    });
+    const handle = await f.registration().adapter.start(f.req);
+    const events = [];
+    for await (const event of handle.events) events.push(event);
+    await handle.result;
+    const recording = await handle.recoveryRecording;
+    const entries = f.archive.toString('utf8').trim().split('\n').map(line => JSON.parse(line));
+    expect(recording).toMatchObject({ source: f.source, requestedMode: 'required', decision: { mode: 'resume' },
+      actualProvider: f.req.strategy.provider, actualModel: f.req.strategy.model, providerSessionId: 'native-new',
+      sourceSdkVersion: PI_SDK_VERSION, sdkVersion: PI_SDK_VERSION, nativeFormatVersion: '3',
+      nativeSourceWatermark: { entryCount: entries.length - 1, lastEntryId: entries.at(-1).id },
+      historicalUsage: 'excluded_unknown_scope', newEvents: { firstSequence: 1, scope: 'current_invocation' }, coverage: 'partial' });
+    expect(events.filter(event => (event as { kind: string }).kind === 'message')).toHaveLength(1);
+    expect(events.filter(event => (event as { kind: string }).kind === 'usage')).toHaveLength(1);
+    expect(JSON.stringify(events)).not.toContain('previous answer');
+    expect(JSON.stringify(recording)).not.toContain(f.sourceFile);
+    expect(JSON.stringify(recording)).not.toContain('current-credential');
+    expect(events).toContainEqual(expect.objectContaining({ payload: expect.objectContaining({ code: 'pi.recovery.snapshot_scope_unknown' }) }));
+  });
+
+  it('[case:recovery-missing-message-id] marks invocation-local SDK identities as unknown while retaining new partial output', async () => {
+    const f = await adapterFixture();
+    const create = f.factory.getMockImplementation()!;
+    f.factory.mockImplementation(async options => {
+      const base = await create(options);
+      let listener: ((event: unknown) => void) | undefined;
+      return { ...base, subscribe(callback: (event: unknown) => void) { listener = callback; return () => {}; },
+        async prompt() {
+          listener?.({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: 'partial response' }] } });
+          listener?.({ type: 'agent_settled' });
+        } };
+    });
+    const handle = await f.registration().adapter.start(f.req);
+    const events = [];
+    for await (const event of handle.events) events.push(event);
+    await handle.result;
+    expect(events).toContainEqual(expect.objectContaining({ payload: expect.objectContaining({ code: 'pi.recovery.event_identity_unknown' }) }));
+    expect(events).toContainEqual(expect.objectContaining({ kind: 'message', payload: expect.objectContaining({ preview: 'partial response' }) }));
+    await expect(handle.stopped).resolves.toMatchObject({ confirmed: false });
+  });
+
   it('[case:approved-source] verifies previous Attempt authority and immutable Artifacts, and returns native facts', async () => {
     const f = await adapterFixture();
     const handle = await f.registration().adapter.start(f.req);

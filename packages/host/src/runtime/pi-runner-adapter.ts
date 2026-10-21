@@ -99,6 +99,9 @@ function manageRunner(request: RuntimeExecutionRequest, process: CommandProcessH
   let lastMessageSequence = 0, lastEventSequence: number | null = null;
   let usage: RuntimeUsageReport | null = null;
   let candidate: RuntimeExecutionResult | null = null;
+  let recoveryObserved = false;
+  let resolveRecovery!: (value: Awaited<NonNullable<RuntimeHandle['recoveryRecording']>>) => void;
+  const recoveryRecording: NonNullable<RuntimeHandle['recoveryRecording']> = new Promise(resolve => { resolveRecovery = resolve; });
   let runnerStop: RuntimeStopEvidence | null = null;
   let outcome: CommandProcessResult | null = null;
   let outputBytes = 0, eventCount = 0;
@@ -148,6 +151,13 @@ function manageRunner(request: RuntimeExecutionRequest, process: CommandProcessH
           const message = validatePiRunnerMessage(value, request, lastMessageSequence);
           lastMessageSequence = message.sequence;
           switch (message.kind) {
+            case 'recovery':
+              if (recoveryObserved || lastEventSequence !== null || candidate !== null) throw new RuntimeError('protocol', 'runner_recovery_order');
+              if (request.recovery.mode === 'new' || message.body.requestedMode !== request.recovery.mode ||
+                  !isDeepStrictEqual(message.body.source, request.recovery.source ?? null)) throw new RuntimeError('protocol', 'runner_recovery_source_mismatch');
+              recoveryObserved = true;
+              resolveRecovery(message.body);
+              break;
             case 'event': {
               if (candidate) throw new RuntimeError('protocol', 'runner_event_after_result');
               if (message.body.sequence !== (lastEventSequence ?? 0) + 1) throw new RuntimeError('protocol', 'runner_event_sequence');
@@ -187,7 +197,7 @@ function manageRunner(request: RuntimeExecutionRequest, process: CommandProcessH
         error instanceof RuntimeError ? error.reason : 'runner_disconnected');
       // A broken decoder must not stop draining the bounded process output.
       // Generator exceptions close its consumer; CommandProcess also requests controlled stop.
-    } finally { eventsEnded = true; channel.close(); }
+    } finally { resolveRecovery(null); eventsEnded = true; channel.close(); }
   })();
   const processResult = process.result.then(value => {
     outcome = value;
@@ -254,7 +264,7 @@ function manageRunner(request: RuntimeExecutionRequest, process: CommandProcessH
     };
   })();
   return {
-    events: channel, result, stopped,
+    events: channel, result, stopped, recoveryRecording,
     cancel: () => cancelPromise ? cancelPromise : settled ? Promise.resolve({ accepted: false, reason: 'runner_already_settled' }) : cancel(),
     inspect: () => ({ failure: failure && { ...failure }, diagnostics: diagnostics.map(item => ({ ...item })),
       lastMessageSequence, lastEventSequence, bufferedEvents: channel.snapshot().events, bufferedBytes: channel.snapshot().bytes,

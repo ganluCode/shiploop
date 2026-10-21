@@ -1,10 +1,10 @@
 /** Private Host/Runner wire format. No SDK, storage, prompt text or credentials. */
 import {
-  RuntimeError, validateRuntimeEvent, validateRuntimeExecutionRequest,
+  RuntimeError, validateRuntimeEvent, validateRuntimeExecutionRequest, validateRuntimeRecoveryRecording,
   validateRuntimeExecutionResult, validateRuntimeStopEvidence, validateRuntimeCancelReceipt,
 } from 'shiploop-core';
 import type {
-  RuntimeEvent, RuntimeExecutionRequest, RuntimeExecutionResult, RuntimeStopEvidence, RuntimeCancelReceipt,
+  RuntimeEvent, RuntimeExecutionRequest, RuntimeExecutionResult, RuntimeStopEvidence, RuntimeCancelReceipt, RuntimeRecoveryRecording,
 } from 'shiploop-core';
 
 export const PI_RUNNER_PROTOCOL_VERSION = 1;
@@ -27,6 +27,7 @@ export function validatePiRunnerRequest(value: unknown): RuntimeExecutionRequest
 
 export type PiRunnerBody =
   | { readonly kind: 'event'; readonly body: RuntimeEvent }
+  | { readonly kind: 'recovery'; readonly body: RuntimeRecoveryRecording }
   | { readonly kind: 'result'; readonly body: RuntimeExecutionResult }
   | { readonly kind: 'stopped'; readonly body: RuntimeStopEvidence }
   | { readonly kind: 'cancel_receipt'; readonly body: RuntimeCancelReceipt }
@@ -88,6 +89,7 @@ export function validatePiRunnerMessage(value: unknown, request: RuntimeExecutio
   let payload: PiRunnerBody;
   switch (raw.kind) {
     case 'event': payload = { kind: 'event', body: validateRuntimeEvent(raw.body) }; break;
+    case 'recovery': payload = { kind: 'recovery', body: validateRuntimeRecoveryRecording(raw.body) }; break;
     case 'result': payload = { kind: 'result', body: validateRuntimeExecutionResult(raw.body) }; break;
     case 'stopped': payload = { kind: 'stopped', body: validateRuntimeStopEvidence(raw.body) }; break;
     case 'cancel_receipt': payload = { kind: 'cancel_receipt', body: validateRuntimeCancelReceipt(raw.body) }; break;

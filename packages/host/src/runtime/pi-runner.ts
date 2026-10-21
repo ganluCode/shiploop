@@ -73,6 +73,11 @@ async function execute(request: RuntimeExecutionRequest, options: PiWorkRunnerOp
   if (options.signal?.aborted) cancel();
   const timer = setTimeout(cancel, request.limits.timeoutMs);
   try {
+    if (handle.recoveryRecording !== undefined) {
+      const handoff = await observePiWithin(handle.recoveryRecording, PI_STOP_WAIT_MS);
+      if (handoff.status === 'fulfilled' && handoff.value !== null) await publish({ kind: 'recovery', body: handoff.value });
+      else if (handoff.status !== 'fulfilled') await publish({ kind: 'diagnostic', body: { code: 'runner_recovery_handoff_unknown' } });
+    }
     for await (const raw of handle.events) {
       const event = normalizePiRunnerEvent(raw);
       if (event.sequence !== (eventSequence ?? 0) + 1) throw runnerProtocolError('runner_event_sequence');

@@ -27,7 +27,7 @@ export interface RuntimeSettlementFacts {
   readonly invocationId: string;
   readonly result: RuntimeExecutionResult | null;
   readonly failure: { readonly kind: RuntimeErrorKind; readonly reason: string } | null;
-  readonly recording: { readonly complete: boolean; readonly manifestRef: string | null };
+  readonly recording: { readonly complete: boolean; readonly manifestRef: string | null; readonly gaps?: readonly string[] };
   /** null means no stop observation, never confirmed by inference. */
   readonly stopped: RuntimeStopEvidence | null;
   readonly control?: RuntimeControlFacts;
@@ -38,7 +38,15 @@ export function validateRuntimeSettlementFacts(value: unknown): RuntimeSettlemen
   const raw = requirePlainObject(value, context, 'runtime');
   rejectUnknownKeys(raw, ['sessionId', 'invocationId', 'result', 'failure', 'recording', 'stopped', 'control'], context, 'runtime');
   const recording = requirePlainObject(raw.recording, context, 'recording');
-  rejectUnknownKeys(recording, ['complete', 'manifestRef'], context, 'recording');
+  rejectUnknownKeys(recording, ['complete', 'manifestRef', 'gaps'], context, 'recording');
+  let gaps: string[] | undefined;
+  if (recording.gaps !== undefined) {
+    if (!Array.isArray(recording.gaps) || recording.gaps.length > 32 || recording.gaps.some(gap =>
+      typeof gap !== 'string' || gap.length === 0 || [...gap].length > 256 || /[\u0000-\u001F\u007F]/.test(gap))) {
+      throw validationError(context, 'recording.gaps', 'invalid_recording_gaps');
+    }
+    gaps = [...recording.gaps] as string[];
+  }
   if (typeof recording.complete !== 'boolean') throw validationError(context, 'recording.complete', 'invalid_boolean');
   const manifestRef = recording.manifestRef === null ? null : validateStableId(recording.manifestRef, context, 'manifestRef');
   if (recording.complete && manifestRef === null) throw validationError(context, 'manifestRef', 'required_recording_missing');
@@ -88,6 +96,6 @@ export function validateRuntimeSettlementFacts(value: unknown): RuntimeSettlemen
   }
   return { sessionId: validateStableId(raw.sessionId, context, 'sessionId'),
     invocationId: validateStableId(raw.invocationId, context, 'invocationId'), result, failure,
-    recording: { complete: recording.complete, manifestRef },
+    recording: { complete: recording.complete, manifestRef, ...(gaps === undefined ? {} : { gaps }) },
     stopped: raw.stopped === null ? null : validateRuntimeStopEvidence(raw.stopped), ...(control ? { control } : {}) };
 }

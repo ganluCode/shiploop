@@ -1,3 +1,4 @@
+import { recoveryRecordingForRequest } from '../../../packages/core/src/application/runtime-recovery-recording.ts';
 import { expect, it, vi } from 'vitest';
 import type { RuntimeExecutionRequest } from '../../../packages/core/src/ports/runtime-execution.ts';
 import type { CommandProcessPort } from '../../../packages/core/src/ports/command-process.ts';
@@ -90,6 +91,38 @@ function processFixture(chunks: Array<{ stream: 'stdout' | 'stderr'; bytes: Uint
     confirm: async identity => ({ launchId: identity.launchId }) });
   return { adapter, start, cancel };
 }
+
+it('[case:runner-recovery-handoff] delivers a validated recovery frame to Core without adding it to the new event watermark', async () => {
+  const req = { ...request(), recovery: { mode: 'auto' as const, kind: 'conversation' as const } };
+  const facts = { ...recoveryRecordingForRequest(req)!, actualProvider: 'provider', actualModel: 'model',
+    decision: { mode: 'new' as const, reasons: ['source:missing'] } };
+  const output = bytes(piRunnerMessage(req, 1, { kind: 'recovery', body: facts }),
+    ...wire(req).map(message => ({ ...message, sequence: message.sequence + 1 })));
+  const fixture = processFixture([{ stream: 'stdout', bytes: output }]);
+  const handle = await fixture.adapter.start(req);
+  const events = [];
+  for await (const item of handle.events) events.push(item);
+  await expect(handle.recoveryRecording).resolves.toEqual(facts);
+  await expect(handle.result).resolves.toMatchObject({ terminal: 'completed', lastEventSequence: 1 });
+  expect(events).toHaveLength(1);
+  expect(handle.inspect()).toMatchObject({ lastMessageSequence: 4, lastEventSequence: 1, failure: null });
+});
+
+it('[case:runner-recovery-invalid] rejects duplicate, late and mismatched recovery frames while preserving observed result boundaries', async () => {
+  const req = { ...request(), recovery: { mode: 'auto' as const, kind: 'conversation' as const } };
+  const facts = recoveryRecordingForRequest(req)!;
+  for (const messages of [
+    [piRunnerMessage(req, 1, { kind: 'recovery', body: facts }), piRunnerMessage(req, 2, { kind: 'recovery', body: facts })],
+    [piRunnerMessage(req, 1, { kind: 'event', body: event() }), piRunnerMessage(req, 2, { kind: 'recovery', body: facts })],
+    [piRunnerMessage(req, 1, { kind: 'recovery', body: { ...facts, requestedMode: 'required' } })],
+  ]) {
+    const fixture = processFixture([{ stream: 'stdout', bytes: bytes(...messages) }]);
+    const handle = await fixture.adapter.start(req);
+    for await (const _item of handle.events) { /* Drain the same stream after rejection. */ }
+    await expect(handle.result).resolves.toMatchObject({ terminal: 'failed' });
+    expect(handle.inspect().failure?.reason).toMatch(/^runner_recovery_(order|source_mismatch)$/);
+  }
+});
 
 it('[case:runner-sequenced-success] handles fragmented UTF-8 frames, usage and independent stop evidence', async () => {
   const output = bytes(...wire());

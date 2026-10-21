@@ -5,6 +5,7 @@
  * 读取器都由可信 Host/Runner 装配注入；本模块不访问 Core 存储、不解析模块
  * 路径、不发现全局插件，也不把凭据传入 prompt、argv 或事件正文。
  */
+import type { RuntimeRecoveryRecording } from 'shiploop-core';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
@@ -595,6 +596,8 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
         return cancelPromise;
       };
       let messageOrdinal = 0;
+      let identityGapReported = false;
+      let snapshotGapReported = false;
       let activeMessageKey: string | undefined;
       const pendingMessages = new Map<string, { message: unknown; usage: RuntimeUsageReport | null }>();
       const emittedMessages = new Set<string>();
@@ -624,6 +627,10 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
       const messageKeyFor = (type: string, message: unknown): string => {
         const id = objectId(message);
         if (id !== undefined) return identityToken(id, `${request.invocationId}-message`);
+        if (request.recovery.mode !== 'new' && !identityGapReported) {
+          identityGapReported = true;
+          diagnostic('pi.recovery.event_identity_unknown', 'SDK message identity is local to this invocation');
+        }
         if (type === 'message_start' || activeMessageKey === undefined) {
           messageOrdinal += 1;
           activeMessageKey = identityToken(undefined, `${request.invocationId}-message-${messageOrdinal}`);
@@ -716,7 +723,16 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
             }
           } else if (type === 'agent_end' && Array.isArray(event.messages)) {
             for (const message of event.messages) {
-              if (messageRole(message) === 'assistant') flushMessage(rememberMessage(type, message));
+              if (messageRole(message) === 'assistant') {
+                const id = objectId(message);
+                const key = id === undefined ? undefined : identityToken(id, `${request.invocationId}-message`);
+                if (request.recovery.mode === 'new' || (key !== undefined && pendingMessages.has(key))) {
+                  flushMessage(rememberMessage(type, message));
+                } else if (!snapshotGapReported) {
+                  snapshotGapReported = true;
+                  diagnostic('pi.recovery.snapshot_scope_unknown', 'Unmatched final messages excluded from current invocation');
+                }
+              }
             }
           } else if (type === 'tool_execution_start' && typeof event.toolCallId === 'string' && typeof event.toolName === 'string') {
             const toolCallId = identityToken(event.toolCallId, `${request.invocationId}-tool`);
@@ -836,10 +852,27 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
         checkedAtUtc: new Date().toISOString(),
         detail: idleObserved && cleanupSucceeded ? 'pi_sdk_idle' : 'pi_sdk_stop_unknown',
       }));
+      const recoveryRecording: RuntimeRecoveryRecording | null = request.recovery.mode === 'new' ? null : {
+        schemaVersion: 1, requestedMode: request.recovery.mode, source: request.recovery.source ?? null,
+        decision, sourceWatermark: null, sourceGaps: [],
+        nativeSourceWatermark: prepared?.nativeWatermark === undefined ? null : {
+          entryCount: prepared.nativeWatermark.entryCount, lastEntryId: prepared.nativeWatermark.lastEntryId === null
+            ? null : identityToken(prepared.nativeWatermark.lastEntryId, 'native-entry'),
+        },
+        sourceSdkVersion: lease?.source.sdkVersion ?? null,
+        sdkVersion: PI_SDK_VERSION, nativeFormat: PI_NATIVE_SESSION_FORMAT,
+        nativeFormatVersion: PI_NATIVE_SESSION_FORMAT_VERSION,
+        providerSessionId: session.sessionId === undefined ? null : identityToken(session.sessionId, `${request.invocationId}-provider-session`),
+        actualProvider: session.model?.provider ?? null, actualModel: session.model?.id ?? null,
+        historicalUsage: 'excluded_unknown_scope', newEvents: { firstSequence: 1, scope: 'current_invocation' },
+        coverage: 'partial', gaps: ['native_cumulative_scope_unknown',
+          ...(session.model === undefined ? ['actual_model_unknown'] : [])],
+      };
       return {
         events,
         result,
         stopped,
+        recoveryRecording: Promise.resolve(recoveryRecording),
         nativeSession: {
           runtimeId: PI_RUNTIME_ID,
           providerSessionId: session.sessionId === undefined ? null : identityToken(session.sessionId, `${request.invocationId}-provider-session`),

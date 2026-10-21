@@ -4,6 +4,8 @@
  * No verifier/commit capability is assembled here; completed is never passed.
  */
 import { createHash } from 'node:crypto';
+import { recoveryRecordingForRequest } from './runtime-recovery-recording.js';
+import type { WorkSessionStore } from '../ports/work-session.js';
 import type { ArtifactPublisher } from './artifact-publish.js';
 import type { AttemptLifecycleStore, AttemptApplicationResult, AttemptNotification } from '../ports/attempt-lifecycle.js';
 import type { AttemptStore } from '../ports/attempt-store.js';
@@ -35,6 +37,7 @@ export interface RuntimeSettlementDeps {
   readonly attempts: Pick<AttemptStore, 'getAttempt'>;
   readonly dag: TaskDagStore;
   readonly secrets?: readonly string[];
+  readonly sessions?: Pick<WorkSessionStore, 'getWorkSession'>;
 }
 
 export function createRuntimeSettlementService(deps: RuntimeSettlementDeps): RuntimeSettlementService {
@@ -44,6 +47,8 @@ export function createRuntimeSettlementService(deps: RuntimeSettlementDeps): Run
     for (const secret of deps.secrets ?? []) if (secret) redacted = redacted.split(secret).join('redacted');
     return redacted.replace(/[^A-Za-z0-9._:-]/g, '_').slice(0, 200) || 'unknown';
   };
+  const redact = (_key: string, value: unknown): unknown => typeof value === 'string'
+    ? (deps.secrets ?? []).filter(Boolean).reduce((text, secret) => text.split(secret).join('[REDACTED]'), value) : value;
   const failure = (error: unknown, fallback: string): NonNullable<RuntimeSettlementFacts['failure']> =>
     isRuntimeError(error) ? { kind: error.kind, reason: token(error.reason) } : { kind: 'protocol', reason: fallback };
 
@@ -114,8 +119,12 @@ export function createRuntimeSettlementService(deps: RuntimeSettlementDeps): Run
     } else if (input.control?.reason === 'recording_failed' && (executionFailure === null || result?.terminal === 'cancelled')) {
       executionFailure = { kind: 'protocol', reason: 'recording_failed' };
     }
+    const recovery = recording?.recovery
+      ?? (recordingError instanceof WorkEvidenceRecordingError ? recordingError.recovery : undefined)
+      ?? recoveryRecordingForRequest(request, undefined, deps.sessions);
     const runtime: RuntimeSettlementFacts = { sessionId: request.sessionId, invocationId: request.invocationId,
-      result, failure: executionFailure, recording: { complete: recording?.status === 'complete', manifestRef }, stopped,
+      result, failure: executionFailure, recording: { complete: recording?.status === 'complete', manifestRef,
+        ...(recovery === undefined ? {} : { gaps: recovery.gaps.map(gap => token(`recovery:${gap}`)) }) }, stopped,
       ...(input.control ? { control: input.control } : {}) };
     const attempt = deps.attempts.getAttempt(identity.projectId, identity.attemptId);
     const task = deps.dag.readTaskDagView(identity.projectId, identity.runId).facts.find(f => f.taskId === identity.taskId);
@@ -132,6 +141,7 @@ export function createRuntimeSettlementService(deps: RuntimeSettlementDeps): Run
     const body = Buffer.from(JSON.stringify({ schemaVersion: 1, kind: 'runtime-settlement',
       identity: { ...identity, sessionId: request.sessionId, invocationId: request.invocationId },
       execution: { result, failure: executionFailure, classification },
+      ...(recovery === undefined ? {} : { recovery }),
       routing: { category: classification?.category ?? null,
         previousFailures: (attempt.inputSnapshot.runtimeFallback?.previousFailures ?? []).slice(0, 32)
           .map(item => ({ category: item.category, reason: token(item.reason) })),
@@ -144,7 +154,7 @@ export function createRuntimeSettlementService(deps: RuntimeSettlementDeps): Run
       recording: { complete: runtime.recording.complete, manifestRef, failure: recordingFailure,
         gaps: (recording?.gaps ?? (recordingError instanceof WorkEvidenceRecordingError ? recordingError.gaps : ['recording_unobserved'])).slice(0, 32).map(token),
         watermark: recording?.watermark ?? (recordingError instanceof WorkEvidenceRecordingError ? recordingError.watermark : null) },
-      stop: { evidence: stopped, failure: stopFailure }, ...(input.control ? { control: input.control } : {}) }), 'utf8');
+      stop: { evidence: stopped, failure: stopFailure }, ...(input.control ? { control: input.control } : {}) }, redact), 'utf8');
     const published = await deps.publisher.publishArtifact({ projectId: request.projectId,
       kind: 'runtime-settlement', mediaType: 'application/json', expectedHash: createHash('sha256').update(body).digest('hex'),
       locator: `sessions/${request.sessionId}/runtime-settlement.json`, content: [body] });

@@ -47,6 +47,7 @@
  * （F-009/F-010）、清单读取 UI（F-011）、组合根接线（F-012）、完整供应商
  * SessionRecorder 与原生档案读取。
  */
+import { recoveryRecordingForRequest } from './runtime-recovery-recording.js';
 import { createHash } from 'node:crypto';
 import type {
   RuntimeEvent,
@@ -121,6 +122,7 @@ export type WorkEvidenceRecordingFailureReason =
   | 'aborted';
 
 export interface WorkEvidenceRecordingErrorOptions {
+  readonly recovery?: import('../ports/runtime-recovery-recording.js').RuntimeRecoveryRecording;
   readonly watermark: number | null;
   readonly gaps: readonly string[];
   readonly safeStopRequired: boolean;
@@ -139,6 +141,7 @@ export class WorkEvidenceRecordingError extends Error {
   readonly watermark: number | null;
   readonly gaps: readonly string[];
   readonly manifestArtifactId: string | null;
+  readonly recovery?: import('../ports/runtime-recovery-recording.js').RuntimeRecoveryRecording;
 
   constructor(
     reason: WorkEvidenceRecordingFailureReason,
@@ -152,6 +155,7 @@ export class WorkEvidenceRecordingError extends Error {
     this.watermark = options.watermark;
     this.gaps = [...options.gaps];
     this.manifestArtifactId = options.manifestArtifactId ?? null;
+    this.recovery = options.recovery;
   }
 }
 
@@ -164,6 +168,7 @@ export function isWorkEvidenceRecordingError(
 }
 
 export interface WorkEvidenceRecordingOutcome {
+  readonly recovery?: import('../ports/runtime-recovery-recording.js').RuntimeRecoveryRecording;
   /** complete：已声明范围无缺口且结果 settled；否则 partial（缺口见清单）。 */
   readonly status: 'complete' | 'partial';
   /** 覆盖清单 ready 制品 ID。 */
@@ -338,6 +343,15 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
       assertCurrent();
       const gaps = createGapSink();
       const diagnostics = createDiagnosticSink();
+      let recovery = recoveryRecordingForRequest(request, undefined, deps.sessions);
+      // A missing/broken adapter handoff cannot block recording or erase known Core evidence.
+      void handle.recoveryRecording?.then(facts => {
+        try { recovery = recoveryRecordingForRequest(request, facts, deps.sessions); }
+        catch { gaps.add('recovery:invalid_adapter_handoff'); }
+      }, () => { gaps.add('recovery:adapter_handoff_failed'); });
+      const syncRecoveryGaps = () => {
+        for (const gap of recovery?.gaps ?? []) gaps.add(`recovery:${gap}`);
+      };
       const stats = {
         eventsReceived: 0, eventsPersisted: 0, duplicatesDropped: 0, unknownEvents: 0,
         foreignEvents: 0, lateEvents: 0, eventsOmitted: 0, bytesPersisted: 0,
@@ -366,6 +380,14 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
       const recordUsage = (usage: RuntimeUsageReport): void => {
         usageCounted += 1;
         usageBases.add(usage.basis);
+        // Reported totals with unknown/cumulative scope may overlap history, parents,
+        // children or snapshots. Keep raw observations, never guess a delta.
+        if (usage.accounting === 'cumulative' || usage.accounting === 'unknown' ||
+            (request.recovery.mode !== 'new' && usage.basis === 'reported' && usage.accounting !== 'incremental')) {
+          gaps.add('usage_scope_unknown');
+          usageUnknown.inputTokens = usageUnknown.outputTokens = usageUnknown.costUsdMicros = true;
+          return;
+        }
         const accumulate = (field: 'inputTokens' | 'outputTokens' | 'costUsdMicros'): void => {
           const amount = usage[field];
           if (amount === null) usageUnknown[field] = true;
@@ -387,6 +409,10 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
             kind: 'activity',
             recordingWatermark: persistedWatermark,
             recordingGaps: [...gaps.list],
+            ...(recovery?.providerSessionId == null ? {} : { providerSessionId: recovery.providerSessionId }),
+            ...(recovery?.sdkVersion == null || recovery.nativeFormat == null || recovery.nativeFormatVersion == null ? {} : {
+              nativeRef: { schemaVersion: 1, storageKind: recovery.nativeFormat, formatVersion: recovery.nativeFormatVersion },
+            }),
           });
           sessionRevision = mutation.session.revision;
         } catch (error) {
@@ -424,6 +450,9 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
         stats.bytesPersisted += chunkBytes;
         for (const event of chunkEvents) {
           if (event.payload.kind === 'usage') recordUsage(event.payload.usage);
+          if (event.payload.kind === 'diagnostic' && event.payload.code.startsWith('pi.recovery.')) {
+            gaps.add(`recovery:${event.payload.code.slice('pi.recovery.'.length)}`);
+          }
         }
         persistedWatermark = chunkLastSequence;
         chunks.push({
@@ -780,6 +809,11 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
       if (stats.foreignEvents > 0) gaps.add(`foreign_events:${stats.foreignEvents}`);
 
       /* 水位/缺口最终同步（持久内容不变，仅元数据收尾）。 */
+      syncRecoveryGaps();
+      if (recovery !== undefined && usageCounted === 0) {
+        usageUnknown.inputTokens = usageUnknown.outputTokens = usageUnknown.costUsdMicros = true;
+        gaps.add('usage_scope_unknown');
+      }
       try {
         await advanceWatermark();
       } catch (error) {
@@ -794,6 +828,7 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
       const manifest: WorkEvidenceManifest = {
         schemaVersion: WORK_EVIDENCE_SCHEMA_VERSION,
         kind: WORK_EVIDENCE_MANIFEST_KIND,
+        ...(recovery === undefined ? {} : { recovery: redactValue(recovery) as typeof recovery }),
         identity: {
           projectId: request.projectId,
           featureId: request.featureId,
@@ -874,6 +909,7 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
       return {
         status: manifest.coverage === 'complete' ? 'complete' : 'partial',
         manifestArtifactId,
+        ...(manifest.recovery === undefined ? {} : { recovery: manifest.recovery }),
         watermark: persistedWatermark,
         gaps: [...gaps.list],
         stats: { ...stats },
@@ -918,6 +954,11 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
         /* 尽力标缺口（recording_failed:<reason>，中止为 recording_failed:aborted），
          * 已保存证据与已发布分块原样保留。 */
         gaps.add(`recording_failed:${failure.failureReason}`);
+        if (recovery !== undefined && usageCounted === 0) {
+          usageUnknown.inputTokens = usageUnknown.outputTokens = usageUnknown.costUsdMicros = true;
+          gaps.add('usage_scope_unknown');
+        }
+        syncRecoveryGaps();
         try {
           await advanceWatermark();
         } catch {
@@ -952,6 +993,7 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
             gaps: [...gaps.list],
             safeStopRequired: !aborted,
             manifestArtifactId: failedManifestId,
+            ...(recovery === undefined ? {} : { recovery: redactValue(recovery) as typeof recovery }),
             cause: failure.causeValue,
           },
         );
@@ -967,6 +1009,7 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
         const base: WorkEvidenceManifest = manifestDraft ?? {
           schemaVersion: WORK_EVIDENCE_SCHEMA_VERSION,
           kind: WORK_EVIDENCE_MANIFEST_KIND,
+          ...(recovery === undefined ? {} : { recovery: redactValue(recovery) as typeof recovery }),
           identity: {
             projectId: request.projectId,
             featureId: request.featureId,

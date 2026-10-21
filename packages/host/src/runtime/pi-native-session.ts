@@ -14,6 +14,7 @@ function reject(reason: string): never { throw new RuntimeError('configuration',
 /** Bytes come from immutable Core Artifacts, never from a still-open native file. */
 export interface PiPreparedRecovery {
   readonly archive: Uint8Array;
+  readonly nativeWatermark?: { readonly entryCount: number; readonly lastEntryId: string | null };
   readonly reference: Pick<RuntimeRecoveryReference, 'providerSessionId' | 'sourceDigest'>;
   readonly assertCurrent: () => Promise<void>;
 }
@@ -57,7 +58,7 @@ function validateMessage(value: unknown): void {
   }
 }
 
-export function validatePiNativeArchive(recovery: PiPreparedRecovery): void {
+export function validatePiNativeArchive(recovery: PiPreparedRecovery): { entryCount: number; lastEntryId: string | null } {
   const bytes = recovery.archive;
   if (bytes.byteLength === 0 || bytes.byteLength > MAX_ARCHIVE_BYTES) reject('native_archive_size_invalid');
   if (createHash('sha256').update(bytes).digest('hex') !== recovery.reference.sourceDigest) reject('native_archive_digest_mismatch');
@@ -90,6 +91,7 @@ export function validatePiNativeArchive(recovery: PiPreparedRecovery): void {
       if (!['off', 'minimal', 'low', 'medium', 'high', 'xhigh'].includes(String(entry.thinkingLevel))) reject('native_archive_corrupt');
     } else reject('native_entry_unverified');
   }
+  return { entryCount: entries.length - 1, lastEntryId: entries.length <= 1 ? null : entries.at(-1)!.id as string };
 }
 
 async function verifiedBytes(lease: PiRecoveryWriterLease, ref: ExecutionInputRef): Promise<Uint8Array> {
@@ -130,9 +132,9 @@ export async function preparePiRecovery(request: RuntimeExecutionRequest, source
   await verifiedBytes(lease, lease.source.previousWriter.stopEvidence);
   const bytes = await verifiedBytes(lease, archive);
   const prepared = { archive: bytes, reference: source, assertCurrent: () => lease.assertCurrent() };
-  validatePiNativeArchive(prepared);
+  const nativeWatermark = validatePiNativeArchive(prepared);
   await lease.assertCurrent();
-  return prepared;
+  return { ...prepared, nativeWatermark };
 }
 
 /** Claim a never-reused native directory atomically; a second Runner cannot open its files. */

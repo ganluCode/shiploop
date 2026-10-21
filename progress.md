@@ -1,5 +1,12 @@
 # P04-4 工作进度
 
+## F-005 — 恢复交接与新增记录边界（2026-10-21）
+
+- 续做 F-003/F-004 后的当前分支，保留前序提交。增加有界 RuntimeRecoveryRecording，并贯通 Pi Adapter、Runner 协议、Core 句柄、Recorder 与失败结算：来源 Attempt/Session、档案摘要、SDK/格式版本、实际模型/决策、Core 旧水位和独立原生条目水位可追溯，不复制历史正文。
+- 新调用序列从 1 开始；排除不匹配的历史最终快照，重复消息/事件只记一次。累计或范围不明 usage 不累加、不猜差值；无新 usage 或证据缺失保留 null/partial/unknown。Session 支持 started 后首次补齐异步原生绑定，拒绝身份替换/旧 fence/终态后补写；结算合并旧 gaps，保留取消、失败、模型拒绝和停止不确认事实，并脱敏已知凭据。
+- 本地六份定向范围共 18 个不同用例通过，未声称运行这六份文件的全部既有测试。最终日志依次为 test-v1fobwj0.log（Recorder 6）、test-vz9r_ev7.log（原生边界 6）、test-w6qpaoox.log（Runner 2）、test-cqzy2_6g.log（Core 句柄 1）、test-smkicx7o.log（Session 1）、test-g93r_kq2.log（结算 2），均 exit 0。末次类型检查 test-7jg4ts73.log exit 0；边界检查 test-4x5j53yw.log exit 0，315 文件/0 diagnostics。完整输出、真实退出码、RED 与中间诊断均保留在 Feature workspace verifications/F-005/runtime-logs/。
+- [恢复记录交接](docs/p04-4-f005-recovery-recording.md) 说明消费契约与验证限制。F-005 v2 索引及 Harness 引用 selection 登记 18 个受影响文件：六份本地文件的完整回归和另十二份仅选择文件交 Nezha 独立验证。未跑全量/组合门禁/阶段验收/live 模型，未修改正式 feature.yaml/task_list；本地提交与 task report 结果以 Git/Nezha 为准。
+
 ## F-002 — 标准 Pi 原生 Session 新建与安全加载（2026-10-21）
 
 - 从恢复基线 `3eb47c8` 及当前 `feat/p04/p04-session-recovery` 分支增量续做。核实锁定标准 SDK 1.0.4 的 `SessionManager.forkFrom` 和 JSONL v3，修正旧格式常量。新 Session 通过原子目录认领隔离；恢复只从不可变 Artifact 字节生成只读快照，再 fork 独立原生身份/文件，不重置已有代码。

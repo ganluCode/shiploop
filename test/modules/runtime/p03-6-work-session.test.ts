@@ -270,6 +270,29 @@ describe('P03-6 F-006 work session store on real SQLite', () => {
     } finally { f.box.close(); }
   });
 
+  it('[case:recovery-native-binding] enriches a started session once, rejecting replacement, stale fences and terminal enrichment', async () => {
+    const f = await fixture();
+    try {
+      f.insertAttempt();
+      const store = f.store();
+      store.createWorkSession(f.createInput());
+      const native = { providerSessionId: 'native-new', nativeRef: { schemaVersion: 1, storageKind: 'jsonl', formatVersion: '3' } };
+      expect(() => store.applyWorkSessionProgress(f.progressInput({ kind: 'activity', ...native }))).toThrow();
+      store.applyWorkSessionProgress(f.progressInput({ kind: 'started' }));
+      const bound = store.applyWorkSessionProgress(f.progressInput({ kind: 'activity', expectedRevision: 2, ...native, recordingWatermark: 5 }));
+      expect(bound.eventId).toBeNull();
+      expect(bound.session).toMatchObject({ ...native, recordingWatermark: 5, revision: 3, status: 'started' });
+      for (const override of [{ providerSessionId: 'old-native' }, { nativeRef: { ...native.nativeRef, formatVersion: '2' } },
+        { owner: 'old-owner' }, { executionVersion: 2 }, { expectedRevision: 2 }]) {
+        expect(() => store.applyWorkSessionProgress(f.progressInput({ kind: 'activity', expectedRevision: 3, ...native, ...override }))).toThrow();
+      }
+      expect(store.getWorkSession(f.box.projectId, 'session-1')).toEqual(bound.session);
+      expect(() => store.applyWorkSessionProgress(f.progressInput({ kind: 'ended', expectedRevision: 3, providerSessionId: 'old-native' }))).toThrow();
+      store.applyWorkSessionProgress(f.progressInput({ kind: 'ended', expectedRevision: 3, providerSessionId: 'native-new' }));
+      expect(() => store.applyWorkSessionProgress(f.progressInput({ kind: 'activity', expectedRevision: 4, ...native }))).toThrow();
+    } finally { f.box.close(); }
+  });
+
   it('drives reserved→started→ended→stopped with atomic attempt stage, events and bounded metadata', async () => {
     const f = await fixture();
     try {

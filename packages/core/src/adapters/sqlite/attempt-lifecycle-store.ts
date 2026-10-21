@@ -172,10 +172,16 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
           if (workSession === null || workSession.attemptId !== attempt.id
             || !['reserved', 'started'].includes(workSession.status) || attempt.invocationId !== runtime.invocationId) return ignored('stale_execution_identity');
           if (runtime.recording.manifestRef !== null) transaction.getArtifactInputRef(valid.projectId, runtime.recording.manifestRef);
+          const recordingGaps = [...new Set([
+            ...(!runtime.recording.complete ? ['recording_required'] : []),
+            ...(!runtime.stopped?.confirmed ? ['stop_unconfirmed'] : []),
+            ...(workSession.recordingGaps ?? []), ...(runtime.recording.gaps ?? []),
+          ])];
           const ended = sessions.applyWorkSessionProgressInTransaction(transaction, { ...identity, sessionId: runtime.sessionId,
             expectedRevision: workSession.revision, kind: 'ended', executionStage: targetStatus === 'verifying' ? 'verification' : 'runtime',
             resultRef: valid.kind === 'runtime_settled' ? valid.evidenceRef : null,
-            recordingGaps: [...(!runtime.recording.complete ? ['recording_required'] : []), ...(!runtime.stopped?.confirmed ? ['stop_unconfirmed'] : [])] });
+            ...(runtime.result?.providerSessionId == null ? {} : { providerSessionId: runtime.result.providerSessionId }),
+            recordingGaps: recordingGaps.length <= 32 ? recordingGaps : [...recordingGaps.slice(0, 31), 'gaps_overflow'] });
           if (runtime.stopped?.confirmed) sessions.applyWorkSessionProgressInTransaction(transaction, { ...identity,
             sessionId: runtime.sessionId, expectedRevision: ended.session.revision, kind: 'stopped' });
           settlementRevision = attempts.getAttempt(valid.projectId, valid.attemptId).revision;

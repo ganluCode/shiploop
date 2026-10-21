@@ -63,6 +63,7 @@ import {
   validationError,
 } from './validation.js';
 import type { ValidationContext } from './validation.js';
+import { validateRuntimeRecoveryRecording } from './runtime-recovery-recording.js';
 import { RECORDING_GAPS_MAX_COUNT, RECORDING_GAP_MAX_LENGTH } from './work-session.js';
 
 export const WORK_EVIDENCE_SCHEMA_VERSION = 1;
@@ -292,6 +293,7 @@ export interface WorkEvidenceResultSummary {
 }
 
 export interface WorkEvidenceManifest {
+  readonly recovery?: import('./runtime-recovery-recording.js').RuntimeRecoveryRecording;
   readonly schemaVersion: typeof WORK_EVIDENCE_SCHEMA_VERSION;
   readonly kind: typeof WORK_EVIDENCE_MANIFEST_KIND;
   readonly identity: WorkEvidenceIdentity;
@@ -530,7 +532,7 @@ export function validateWorkEvidenceManifest(
   rejectUnknownKeys(object, [
     'schemaVersion', 'kind', 'identity', 'runtime', 'adapterVersion', 'scope', 'redaction',
     'chunks', 'watermark', 'finalEventSequence', 'sequenceReconciliation', 'gaps', 'stats',
-    'usage', 'result', 'resultStatus', 'diagnostics', 'coverage',
+    'usage', 'result', 'resultStatus', 'diagnostics', 'coverage', 'recovery',
   ], context, field);
   if (object.schemaVersion !== WORK_EVIDENCE_SCHEMA_VERSION) {
     throw validationError(context, `${field}.schemaVersion`, `仅支持版本 ${WORK_EVIDENCE_SCHEMA_VERSION}`, object.schemaVersion);
@@ -574,6 +576,7 @@ export function validateWorkEvidenceManifest(
     schemaVersion: WORK_EVIDENCE_SCHEMA_VERSION,
     kind: WORK_EVIDENCE_MANIFEST_KIND,
     identity: validateIdentity(object.identity, context, `${field}.identity`),
+    ...(object.recovery === undefined ? {} : { recovery: validateRuntimeRecoveryRecording(object.recovery) }),
     runtime: boundedManifestText(object.runtime, 128, context, `${field}.runtime`),
     adapterVersion: boundedManifestText(object.adapterVersion, 128, context, `${field}.adapterVersion`),
     scope: validateScope(object.scope, context, `${field}.scope`),

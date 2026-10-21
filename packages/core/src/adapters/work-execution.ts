@@ -180,7 +180,7 @@ export function assembleWorkExecution(options: {
   execution = createExecutionService({ atomic: createSqliteAtomicCommandStore(session, { nowUtcMs: now }), resources, sessions, attempts, dag,
     inputBinding: { async bind(input) { const bound = await inputBinding.bind(input); readers.set(bound.request.invocationId, bound.reader); return bound; } },
     runtime: createRuntimeExecutionService({ configuration: options.capabilityCatalog, registry }),
-    settlement: createRuntimeSettlementService({ publisher, attempts, dag,
+    settlement: createRuntimeSettlementService({ publisher, attempts, dag, sessions,
       lifecycle: createSqliteAttemptLifecycleStore(session, { workspaceAuthority: app.workWorkspaceAuthority, nowUtcMs: now }) }),
     recorder: createWorkEvidenceRecorder({ publisher, verifier, sessions, limits: {
       maxEventBodyBytes: 8_192, chunkMaxEvents: 32, chunkMaxBytes: 262_144, maxTotalEvents: 10_000,

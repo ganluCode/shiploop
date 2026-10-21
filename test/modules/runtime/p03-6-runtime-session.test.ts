@@ -10,8 +10,10 @@
  *   不冒充其他类别；
  * - 全过程无厂商 SDK、网络或凭据。
  */
+import { recoveryRecordingForRequest } from '../../../packages/core/src/application/runtime-recovery-recording.ts';
 import { describe, expect, it, vi } from 'vitest';
 import {
+  validateRuntimeExecutionRequest,
   createRuntimeExecutionService,
   createStaticRuntimeCapabilityCatalog,
   createStaticRuntimeRegistry,
@@ -131,6 +133,20 @@ async function expectRuntimeError(promise: Promise<unknown>, kind: string, reaso
 }
 
 describe('F-001 start 返回句柄后可查询状态与请求取消', () => {
+  it('[case:recovery-handoff-independent] preserves and validates recovery handoff without settling result, events or stop', async () => {
+    const request = validateRuntimeExecutionRequest({ ...validRequest(), recovery: { mode: 'auto', kind: 'conversation' } });
+    const facts = recoveryRecordingForRequest(request)!;
+    for (const invalid of [false, true]) {
+      const fake = createControllableAdapter();
+      const { service } = harness({ start: async (request: unknown) => ({ ...await fake.adapter.start(request),
+        recoveryRecording: Promise.resolve(invalid ? { ...facts, credentials: 'never allowed' } : facts) }) });
+      const session = await service.start(request);
+      if (invalid) await expect(session.recoveryRecording).rejects.toThrow();
+      else await expect(session.recoveryRecording).resolves.toEqual(facts);
+      expect(session.query()).toMatchObject({ eventsEnded: false, resultSettled: false, stopConfirmed: null });
+    }
+  });
+
   it('返回会话句柄，初始四项事实均未成立；适配器收到的是分离的已校验请求', async () => {
     const fake = createControllableAdapter();
     const { service } = harness(fake.adapter);

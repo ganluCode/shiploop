@@ -801,6 +801,8 @@ export interface RuntimeHandle {
   readonly result: Promise<unknown>;
   readonly stopped: Promise<unknown>;
   readonly nativeSession?: RuntimeNativeSessionReference;
+  /** Bounded handoff delivered before current events; null when no native evidence is available. */
+  readonly recoveryRecording?: Promise<import('./runtime-recovery-recording.js').RuntimeRecoveryRecording | null>;
   cancel(): Promise<unknown>;
 }
 

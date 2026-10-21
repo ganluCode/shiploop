@@ -68,6 +68,56 @@ const assertOccupied = (f: Awaited<ReturnType<typeof fixture>>) => {
 };
 
 describe('P03-6 F-009 Runtime fenced settlement', () => {
+  it('[case:recovery-terminal-gaps] retains recovery source, watermark and gaps when stop is unobserved', async () => {
+    const f = await fixture();
+    try {
+      const input = await f.input();
+      const source = { schemaVersion: 1 as const, purpose: 'work' as const, kind: 'conversation' as const,
+        sourceProjectId: f.projectId, sourceTaskId: input.request.identity.purpose === 'work' ? input.request.identity.taskId : '',
+        sourceAttemptId: 'attempt-old', sourceSessionId: 'session-old', runtime: 'fake', provider: 'test-provider', model: 'fake-model',
+        providerSessionId: 'native-sensitive-test-value', nativeArchiveRef: 'archive-old', sourceDigest: 'a'.repeat(64), nativeFormat: 'jsonl', nativeFormatVersion: '3' };
+      const request = { ...input.request, recovery: { mode: 'required' as const, kind: 'conversation' as const, source } };
+      const current = f.sessions.getWorkSession(f.projectId, request.sessionId);
+      f.sessions.applyWorkSessionProgress({ projectId: f.projectId, sessionId: current.id, attemptId: f.claim.receipt.attempt.id,
+        owner: request.owner.principalId, hostInstanceId: request.owner.hostInstanceId, executionVersion: request.executionVersion,
+        expectedRevision: current.revision, kind: 'activity', recordingGaps: ['recovery:source_watermark_unknown'] });
+      const receipt = await f.settlement.settle({ ...input, request, stopped: null,
+        result: input.result.status === 'fulfilled' ? { status: 'fulfilled', value: { ...input.result.value, providerSessionId: 'native-current' } } : input.result,
+        recording: input.recording.status === 'fulfilled' ? { status: 'fulfilled', value: { ...input.recording.value, status: 'partial' } } : input.recording });
+      expect(receipt).toMatchObject({ waitingFor: 'execution_uncertain', stopConfirmed: false });
+      const session = f.sessions.getWorkSession(f.projectId, current.id);
+      expect(session).toMatchObject({ status: 'ended', recordingWatermark: current.recordingWatermark, providerSessionId: 'native-current' });
+      expect(session.recordingGaps).toEqual(expect.arrayContaining(['recovery:source_watermark_unknown', 'recording_required', 'stop_unconfirmed']));
+      const bytes = await f.verifier.readVerifiedContent(f.projectId, session.resultRef!);
+      expect(JSON.parse(Buffer.from(bytes.content).toString('utf8'))).toMatchObject({ recovery: {
+        source: { ...source, providerSessionId: 'native-[REDACTED]' }, sourceWatermark: null, decision: null, coverage: 'unknown', historicalUsage: 'excluded_unknown_scope' } });
+      expect(Buffer.from(bytes.content).toString('utf8')).not.toContain('sensitive-test-value');
+    } finally { f.close(); }
+  });
+
+  it('[case:recovery-start-rejected] records known source and model rejection without treating old success as a new result', async () => {
+    const f = await fixture();
+    try {
+      const started = await f.start();
+      await Promise.all([started.context.result, started.context.recording, started.context.stopped]);
+      const source = { schemaVersion: 1 as const, purpose: 'work' as const, kind: 'conversation' as const,
+        sourceProjectId: f.projectId, sourceTaskId: 't-1', sourceAttemptId: 'attempt-old', sourceSessionId: 'session-old',
+        runtime: 'fake', provider: 'test-provider', model: 'fake-model', providerSessionId: 'native-old', nativeArchiveRef: 'archive-old',
+        sourceDigest: 'a'.repeat(64), nativeFormat: 'jsonl', nativeFormatVersion: '3' };
+      const request = { ...started.context.request, recovery: { mode: 'required' as const, kind: 'conversation' as const, source } };
+      await f.settlement.settle({ request, result: { status: 'rejected', reason: new RuntimeError('configuration', 'actual_model_configuration_mismatch') },
+        recording: null, stopped: null });
+      const session = f.sessions.getWorkSession(f.projectId, request.sessionId);
+      expect(session.status).toBe('ended');
+      const bytes = await f.verifier.readVerifiedContent(f.projectId, session.resultRef!);
+      expect(JSON.parse(Buffer.from(bytes.content).toString('utf8'))).toMatchObject({
+        execution: { result: null, failure: { kind: 'configuration', reason: 'actual_model_configuration_mismatch' } },
+        recovery: { source, actualModel: null, sourceWatermark: null, coverage: 'unknown' },
+        recording: { complete: false }, stop: { evidence: null } });
+      expect(f.query('SELECT status FROM attempts WHERE id = ?', f.claim.receipt.attempt.id)).not.toEqual({ status: 'completed' });
+    } finally { f.close(); }
+  });
+
   it('persists separate execution/recording/stop facts, pauses for verification, and replays after SQLite reopen', async () => {
     const f = await fixture();
     try {

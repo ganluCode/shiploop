@@ -198,7 +198,21 @@ export function createSqliteWorkSessionStore(
         fail('conflict', operation, 'Late activity from terminal Attempt', input.sessionId, input.projectId);
       }
       if (record.status === 'stopped') fail('conflict', operation, 'Stopped work session is terminal', input.sessionId, input.projectId);
+      if ((input.providerSessionId != null || input.nativeRef != null) && record.status !== 'started') {
+        fail('conflict', operation, 'Native binding requires a started session', input.sessionId, input.projectId);
+      }
+      if (input.providerSessionId != null && record.providerSessionId !== null && input.providerSessionId !== record.providerSessionId) {
+        fail('conflict', operation, 'Provider session binding conflict', input.sessionId, input.projectId);
+      }
+      if (input.nativeRef != null && record.nativeRef !== null &&
+          (input.nativeRef.storageKind !== record.nativeRef.storageKind || input.nativeRef.formatVersion !== record.nativeRef.formatVersion)) {
+        fail('conflict', operation, 'Native format binding conflict', input.sessionId, input.projectId);
+      }
     } else {
+      if (input.kind === 'ended' && input.providerSessionId != null && record.providerSessionId !== null
+        && input.providerSessionId !== record.providerSessionId) {
+        fail('conflict', operation, 'Provider session binding conflict', input.sessionId, input.projectId);
+      }
       const allowed = WORK_SESSION_TRANSITIONS[record.status];
       if (!allowed.includes(input.kind)) {
         fail('conflict', operation, `Invalid work session transition ${record.status} -> ${input.kind}`, input.sessionId, input.projectId);

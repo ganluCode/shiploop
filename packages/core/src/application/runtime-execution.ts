@@ -24,6 +24,7 @@
  * - 本服务不做预算预占、不写业务库、不决定 Task 验收、不实现超时看门狗
  *   （超时政策是请求字段，执行与停止路径属 F-010）。
  */
+import { validateRuntimeRecoveryRecording } from '../ports/runtime-recovery-recording.js';
 import type { RuntimeCapabilityCatalog } from '../ports/runtime-capabilities.js';
 import { validateRuntimeStrategyCapabilities } from '../ports/runtime-capabilities.js';
 import { isStorageError } from '../ports/errors.js';
@@ -60,6 +61,7 @@ export interface RuntimeSessionStatus {
 /** Core 侧会话句柄：全部产出已校验；事件流只能消费一次。 */
 export interface RuntimeSession {
   readonly invocationId: string;
+  readonly recoveryRecording?: RuntimeHandle['recoveryRecording'];
   readonly events: AsyncIterable<RuntimeEvent>;
   readonly result: Promise<RuntimeExecutionResult>;
   readonly stopped: Promise<RuntimeStopEvidence>;
@@ -153,6 +155,8 @@ export function createRuntimeExecutionService(deps: RuntimeExecutionServiceDeps)
         }
       };
 
+      const recoveryRecording = handle.recoveryRecording?.then(value => value === null ? null : validateRuntimeRecoveryRecording(value));
+      void recoveryRecording?.catch(() => undefined);
       const result = new Promise<RuntimeExecutionResult>((resolve, reject) => {
         Promise.resolve(handle.result).then((raw) => {
           let validated: RuntimeExecutionResult;
@@ -229,6 +233,7 @@ export function createRuntimeExecutionService(deps: RuntimeExecutionServiceDeps)
 
       return {
         invocationId: request.invocationId,
+        recoveryRecording,
         events,
         result,
         stopped,

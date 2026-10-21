@@ -296,11 +296,11 @@ const PROGRESS_KEYS_BY_KIND: Readonly<Record<WorkSessionProgressKind, readonly s
   started: ['projectId', 'attemptId', 'owner', 'hostInstanceId', 'executionVersion', 'sessionId',
     'expectedRevision', 'kind', 'executionStage', 'providerSessionId', 'nativeRef'],
   ended: ['projectId', 'attemptId', 'owner', 'hostInstanceId', 'executionVersion', 'sessionId',
-    'expectedRevision', 'kind', 'executionStage', 'resultRef', 'recordingWatermark', 'recordingGaps'],
+    'expectedRevision', 'kind', 'executionStage', 'resultRef', 'recordingWatermark', 'recordingGaps', 'providerSessionId'],
   stopped: ['projectId', 'attemptId', 'owner', 'hostInstanceId', 'executionVersion', 'sessionId',
     'expectedRevision', 'kind', 'executionStage', 'recordingWatermark', 'recordingGaps'],
   activity: ['projectId', 'attemptId', 'owner', 'hostInstanceId', 'executionVersion', 'sessionId',
-    'expectedRevision', 'kind', 'executionStage', 'recordingWatermark', 'recordingGaps'],
+    'expectedRevision', 'kind', 'executionStage', 'recordingWatermark', 'recordingGaps', 'providerSessionId', 'nativeRef'],
 };
 
 export function validateWorkSessionProgressInput(
@@ -311,7 +311,7 @@ export function validateWorkSessionProgressInput(
   const object = requirePlainObject(value, context, field);
   rejectUnknownKeys(object, [...new Set(Object.values(PROGRESS_KEYS_BY_KIND).flat())], context, field);
   const kind = validateEnum(object.kind, WORK_SESSION_PROGRESS_KINDS, context, 'kind');
-  // 各类推进只允许各自字段：防止结果正文/原生绑定被写进错误的阶段。
+  // activity 可补齐异步 Runner 首次观察的原生绑定；存储层拒绝覆盖已有绑定。
   rejectUnknownKeys(object, PROGRESS_KEYS_BY_KIND[kind], context, field);
   const identity = validateWorkResourceIdentity({ projectId: object.projectId, attemptId: object.attemptId,
     owner: object.owner, hostInstanceId: object.hostInstanceId, executionVersion: object.executionVersion });
