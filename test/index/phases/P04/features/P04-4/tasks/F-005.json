@@ -74,6 +74,14 @@
           "all": true
         },
         {
+          "file": "test/modules/scheduling/p03-4-task-claim.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p03-6-execution-input-binding.test.ts",
+          "all": true
+        },
+        {
           "file": "test/modules/scheduling/p03-4-attempt-lifecycle-schema.test.ts",
           "all": true
         }

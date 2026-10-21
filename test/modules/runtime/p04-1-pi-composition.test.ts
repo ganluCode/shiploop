@@ -89,7 +89,7 @@ function request(): RuntimeExecutionRequest {
 }
 const workCapability = { ...capability, permissionGrants: [] };
 const workCatalog = () => createStaticRuntimeCapabilityCatalog([workCapability]);
-function realAssembly(mode: 'complete' | 'cancel' | 'crash' | 'start-failed' = 'complete') {
+function realAssembly(mode: 'complete' | 'no-usage' | 'cancel' | 'crash' | 'start-failed' = 'complete') {
   const port = createCommandProcessAdapter({ stopGraceMs: 3_000, stopConfirmMs: 2_000 });
   const handles = new Map<string, CommandProcessHandle>();
   const tokens = new WeakMap<object, WorkResourceSnapshot>();
@@ -188,7 +188,7 @@ afterEach(async () => {
 
 // Full Host composition includes real workspace preparation and supervised Git commands.
 // Use the repository's integration-test budget; Runner and settlement waits stay independently bounded.
-it.each(['complete', 'cancel'] as const)('[case:host-pi-%s] Host exposes Attempt, Session, events and fenced Core settlement', async mode => {
+it.each(['complete', 'no-usage', 'cancel'] as const)('[case:host-pi-%s] Host exposes Attempt, Session, events and fenced Core settlement', async mode => {
   fixture = await openBindingFixture({ strategy: { runtime: 'pi', provider: 'provider', model: 'model' } });
   const f = realAssembly(mode);
   try {
@@ -205,20 +205,32 @@ it.each(['complete', 'cancel'] as const)('[case:host-pi-%s] Host exposes Attempt
     }
     await expect.poll(() => host!.core.workExecution.activeAttemptIds(), { timeout: 15_000 }).toEqual([]);
     const detail = await client.getWorkSession(fixture.projectId, attemptId);
-    expect(detail.attempt.status).toBe(mode === 'complete' ? 'verifying' : 'cancelled');
+    // A completed SDK result cannot override required recording with unknown usage scope.
+    expect(detail.attempt.status).toBe(mode === 'complete' ? 'failed' : mode === 'no-usage' ? 'verifying' : 'cancelled');
     expect(detail.session?.status).toBe('stopped');
-    expect(detail.resultEvidence?.result?.terminal).toBe(mode === 'complete' ? 'completed' : 'cancelled');
+    expect(detail.resultEvidence?.result?.terminal).toBe(mode === 'cancel' ? 'cancelled' : 'completed');
     expect(detail.resultEvidence?.stop.evidence?.confirmed).toBe(true);
-    if (mode === 'complete') {
-      expect(detail.session?.recordingGaps).toEqual([]);
+    if (mode !== 'cancel') {
+      expect(detail.session?.recordingGaps).toEqual(mode === 'complete' ? ['recording_required', 'usage_scope_unknown'] : []);
+      expect(detail.resultEvidence?.recording).toMatchObject({ complete: mode === 'no-usage',
+        gaps: mode === 'complete' ? ['usage_scope_unknown'] : [] });
+      expect(detail.resultEvidence?.failure).toEqual(mode === 'complete' ? { kind: 'protocol', reason: 'recording_failed' } : null);
       const eventsRef = detail.evidence.find(ref => ref.kind === 'work-evidence-events')!;
       const events = await client.readWorkSessionEvidence(fixture.projectId, attemptId, eventsRef.artifactId);
       const lines = Buffer.from(events.content).toString().trim().split('\n').map(line => JSON.parse(line));
-      expect(lines).toMatchObject([{ kind: 'message', payload: { preview: 'Pi Work evidence' } }, { kind: 'usage' }]);
-      expect(detail.resultEvidence?.result?.usage).toMatchObject({ basis: 'reported', inputTokens: 5, outputTokens: 2 });
+      expect(lines).toMatchObject(mode === 'complete'
+        ? [{ kind: 'message', payload: { preview: 'Pi Work evidence' } }, { kind: 'usage' }]
+        : [{ kind: 'message', payload: { preview: 'Pi Work evidence' } }]);
+      if (mode === 'complete') {
+        expect(detail.resultEvidence?.result?.usage).toMatchObject({ basis: 'reported', inputTokens: 5, outputTokens: 2 });
+        const manifestRef = detail.evidence.find(ref => ref.kind === 'work-evidence-manifest')!;
+        const manifest = await client.readWorkSessionEvidence(fixture.projectId, attemptId, manifestRef.artifactId);
+        expect(JSON.parse(Buffer.from(manifest.content).toString())).toMatchObject({ coverage: 'partial',
+          usage: { observations: { totals: { inputTokens: null, outputTokens: null, costUsdMicros: null, complete: false } } } });
+      }
     } else {
       // Core intentionally aborts collection when cancellation is requested.
-      expect(detail.session?.recordingGaps).toEqual(['recording_required']);
+      expect(detail.session?.recordingGaps).toEqual(['recording_required', 'recording_failed:aborted']);
       expect(detail.resultEvidence?.recording.complete).toBe(false);
     }
     const session = (await client.listWorkSessions(fixture.projectId, { runId: fixture.runId })).records;

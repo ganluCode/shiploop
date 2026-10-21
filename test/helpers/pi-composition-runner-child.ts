@@ -18,7 +18,7 @@ const registration = createPiRuntimeAdapter({
     subscribe(callback) { listener = callback; return () => { listener = undefined; }; },
     async prompt() {
       listener?.({ type: 'message_end', message: { id: 'message-1', role: 'assistant', content: [{ text: 'Pi Work evidence' }],
-        usage: { input: 5, output: 2 } } });
+        ...(mode === 'no-usage' ? {} : { usage: { input: 5, output: 2 } }) } });
       if (mode === 'crash' || mode === 'cancel') await gate;
       listener?.({ type: 'agent_settled' });
     },

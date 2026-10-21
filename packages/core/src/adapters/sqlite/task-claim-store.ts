@@ -7,7 +7,7 @@ import { StorageError } from '../../ports/errors.js';
 import { stableStringify } from '../../ports/feature-plan.js';
 import { TASK_CLAIMED_EVENT_TYPE } from '../../ports/execution-store.js';
 import { computeExecutionPermissionsDigest, TRUSTED_PROJECT_PERMISSIONS_READER, type ExecutionPermissionsReader } from '../../ports/execution-input-prepare.js';
-import { validateTaskClaimInput, type TaskClaimStore, type TaskClaimReceipt } from '../../ports/task-claim.js';
+import { validateTaskClaimInput, validateTaskClaimLaunch, type TaskClaimStore, type TaskClaimReceipt } from '../../ports/task-claim.js';
 import { requirePlainObject, rejectUnknownKeys, validateStableId } from '../../ports/validation.js';
 import type { WorkWorkspaceAuthority } from '../../ports/work-resources.js';
 import { createSqliteAttemptAccess } from './attempt-store.js';
@@ -39,7 +39,7 @@ export function createSqliteTaskClaimStore(session: SqliteStorageSession, option
       const context = { operation };
       const value = requirePlainObject(JSON.parse(json), context, 'receipt');
       rejectUnknownKeys(value, ['schemaVersion', 'claimKey', 'batchId', 'attempt', 'taskRevision',
-        'reservationId', 'leases', 'counts', 'eventId'], context, 'receipt');
+        'reservationId', 'leases', 'counts', 'eventId', 'launch'], context, 'receipt');
       for (const field of ['claimKey', 'batchId', 'reservationId', 'eventId']) validateStableId(value[field], context, field);
       const raw = value as unknown as TaskClaimReceipt;
       requirePlainObject(raw.counts, context, 'counts');
@@ -59,7 +59,8 @@ export function createSqliteTaskClaimStore(session: SqliteStorageSession, option
         || leases.some(l => l.owner !== attempt.id || l.projectId !== attempt.projectId
           || l.hostInstanceId !== attempt.hostInstanceId || l.executionVersion !== attempt.executionVersion
           || l.leaseUntilUtcMs !== attempt.leaseUntilUtcMs || l.state !== 'held')) throw new Error('invalid_receipt');
-      return { ...raw, attempt, leases };
+      return { ...raw, attempt, leases,
+        ...(raw.launch === undefined ? {} : { launch: validateTaskClaimLaunch(raw.launch, context, 'receipt.launch') }) };
     } catch (cause) {
       throw new StorageError('corrupt', operation, 'Invalid persisted Task claim receipt', { cause });
     }
@@ -85,7 +86,8 @@ export function createSqliteTaskClaimStore(session: SqliteStorageSession, option
               || receipt.attempt.hostInstanceId !== valid.hostInstanceId
               || receipt.attempt.executionVersion !== valid.executionVersion + 1
               || receipt.attempt.leaseUntilUtcMs !== valid.leaseUntilUtcMs
-              || !isDeepStrictEqual(receipt.attempt.inputSnapshot, valid.inputSnapshot)) {
+              || !isDeepStrictEqual(receipt.attempt.inputSnapshot, valid.inputSnapshot)
+              || !isDeepStrictEqual(receipt.launch, valid.launch)) {
               throw new StorageError('corrupt', operation, 'Claim receipt identity mismatch');
             }
             return { replayed: true, receipt };

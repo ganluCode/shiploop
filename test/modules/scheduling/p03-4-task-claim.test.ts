@@ -58,6 +58,37 @@ describe('F-004 atomic Task claim', () => {
     } finally { f.box.close(); }
   });
 
+  it('[case:launch-receipt-replay] retains frozen launch identities after reopen and rejects malformed persisted launch facts', async () => {
+    const f = await openClaimFixture();
+    try {
+      const launch = { sessionId: 'new-session', invocationId: 'new-invocation', parentSessionId: 'source-session' };
+      const input = { ...f.input(), launch };
+      const first = f.store().claimTask(input);
+      expect(first.receipt.launch).toEqual(launch);
+      const before = f.snapshot();
+      f.box.reopen();
+      expect(f.store().claimTask(input)).toEqual({ replayed: true, receipt: first.receipt });
+      expect(f.snapshot()).toEqual(before);
+      expect(() => f.store().claimTask({ ...input, launch: { ...launch, invocationId: 'replacement' } }))
+        .toThrow(expect.objectContaining({ kind: 'conflict', details: { reason: 'claim_key_reused' } }));
+      expect(f.snapshot()).toEqual(before);
+      // Corruption injection is confined to this disposable database; normal writes remain immutable.
+      expect(() => f.box.session.database.prepare('UPDATE task_claim_receipts SET receipt = receipt').run())
+        .toThrow(/immutable/);
+      f.box.session.database.exec('DROP TRIGGER task_claim_receipts_immutable_update');
+      for (const invalid of [{ ...launch, credentials: 'forbidden' }, { ...launch, sessionId: '' },
+        { ...launch, invocationId: 1 }, { ...launch, parentSessionId: {} },
+        { ...launch, sessionId: 'forged-session' }, { ...launch, invocationId: 'forged-invocation' },
+        { ...launch, parentSessionId: 'forged-parent' }]) {
+        f.box.session.database.prepare('UPDATE task_claim_receipts SET receipt = ? WHERE id = ?')
+          .run(JSON.stringify({ ...first.receipt, launch: invalid }), input.claimKey);
+        const corrupt = f.snapshot();
+        expect(() => f.store().claimTask(input)).toThrow(expect.objectContaining({ kind: 'corrupt' }));
+        expect(f.snapshot()).toEqual(corrupt);
+      }
+    } finally { f.box.close(); }
+  });
+
   it.each([
     ['task', "AFTER UPDATE ON tasks WHEN NEW.status = 'running'"],
     ['attempt', 'AFTER INSERT ON attempts'],
@@ -251,7 +282,7 @@ describe('F-004 atomic Task claim', () => {
         .rejects.toMatchObject({ step: 'apply', version: 16 });
       expect(snapshot()).toEqual(before);
       expect(predecessor.database.prepare("SELECT name FROM sqlite_master WHERE name = 'task_claim_receipts'").all()).toEqual([]);
-      expect((await migrateSqliteStorage(predecessor)).appliedVersions).toEqual([16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]);
+      expect((await migrateSqliteStorage(predecessor)).appliedVersions).toEqual([16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31]);
       before.state_events = before.state_events!.map(row => ({ ...row as Record<string, unknown>, operation_id: null, run_id: null, attempt_id: null, execution_stage: null }));
       before.features = before.features!.map(row => ({ ...row as Record<string, unknown>, delivery_status: 'not_requested' }));
       before.runs = before.runs!.map(row => ({ ...row as Record<string, unknown>, pause_requested_at: null }));

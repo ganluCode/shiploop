@@ -2,6 +2,7 @@ import type { AttemptRecord, WorkspaceLeaseRecord } from './attempt-store.js';
 import { validateAttemptInputSnapshot } from './attempt-store.js';
 import type { PreparedExecutionInputGroup } from './execution-input-prepare.js';
 import type { VerifiedWorkWorkspace } from './work-resources.js';
+import type { ValidationContext } from './validation.js';
 import { requirePlainObject, rejectUnknownKeys, validateStableId, validationError } from './validation.js';
 
 export interface TaskClaimInput {
@@ -55,6 +56,17 @@ export interface TaskClaimStore {
   claimTask(input: unknown): TaskClaimResult;
 }
 
+export function validateTaskClaimLaunch(value: unknown, context: ValidationContext, field: string): NonNullable<TaskClaimReceipt['launch']> {
+  const raw = requirePlainObject(value, context, field);
+  rejectUnknownKeys(raw, ['sessionId', 'invocationId', 'parentSessionId'], context, field);
+  return {
+    sessionId: validateStableId(raw.sessionId, context, `${field}.sessionId`),
+    invocationId: validateStableId(raw.invocationId, context, `${field}.invocationId`),
+    parentSessionId: raw.parentSessionId === undefined || raw.parentSessionId === null
+      ? null : validateStableId(raw.parentSessionId, context, `${field}.parentSessionId`),
+  };
+}
+
 export function validateTaskClaimInput(value: unknown, inspectWorkspace: (token: unknown) => VerifiedWorkWorkspace): TaskClaimInput {
   const context = { operation: 'TaskClaim.validate' };
   const raw = requirePlainObject(value, context, 'input');
@@ -68,16 +80,8 @@ export function validateTaskClaimInput(value: unknown, inspectWorkspace: (token:
     }
     return n as number;
   };
-  const launch = raw.launch === undefined || raw.launch === null ? undefined : (() => {
-    const value = requirePlainObject(raw.launch, context, 'launch');
-    rejectUnknownKeys(value, ['sessionId', 'invocationId', 'parentSessionId'], context, 'launch');
-    return {
-      sessionId: validateStableId(value.sessionId, context, 'launch.sessionId'),
-      invocationId: validateStableId(value.invocationId, context, 'launch.invocationId'),
-      parentSessionId: value.parentSessionId === undefined || value.parentSessionId === null
-        ? null : validateStableId(value.parentSessionId, context, 'launch.parentSessionId'),
-    };
-  })();
+  const launch = raw.launch === undefined || raw.launch === null
+    ? undefined : validateTaskClaimLaunch(raw.launch, context, 'launch');
   return { claimKey: id('claimKey'), projectId: id('projectId'), runId: id('runId'), taskId: id('taskId'),
     owner: id('owner'), hostInstanceId: id('hostInstanceId'), expectedRevision: integer('expectedRevision', 1),
     executionVersion: integer('executionVersion', 0), leaseUntilUtcMs: integer('leaseUntilUtcMs', 1),

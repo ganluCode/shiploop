@@ -32,6 +32,7 @@ import {
   deriveArtifactFinalRelativePath,
   isExecutionInputBindingError,
   isStorageError,
+  validateExecutionInputBindingInput,
   validateExecutionInputReadEvidence,
   validateRuntimeExecutionRequest,
 } from '../../../packages/core/src/index.ts';
@@ -215,6 +216,22 @@ async function expectRejection(
 }
 
 describe('P03-6 / F-002 不可变执行输入绑定', () => {
+  it('[case:launch-receipt-binding] binds a frozen launch receipt and strictly validates its nested identity', async () => {
+    const fixture = await setup();
+    const bound = fixture.claimAndLaunch('t-1');
+    const launch = { sessionId: 'session-t-1-1', invocationId: bound.invocationId, parentSessionId: null };
+    const input = fixture.bindingInput(bound, { claim: { ...bound.receipt, launch } });
+    expect(validateExecutionInputBindingInput(input).claim.launch).toEqual(launch);
+    const result = await fixture.bindingService.bind(input);
+    expect(result.request).toMatchObject({ sessionId: launch.sessionId, invocationId: launch.invocationId });
+    for (const invalid of [{ ...launch, credentials: 'forbidden' }, { ...launch, sessionId: '' },
+      { ...launch, invocationId: 1 }, { ...launch, parentSessionId: {} },
+      { ...launch, sessionId: 'different-session' }, { ...launch, invocationId: 'different-invocation' }]) {
+      expect(() => validateExecutionInputBindingInput({ ...input, claim: { ...bound.receipt, launch: invalid } }))
+        .toThrow(expect.objectContaining({ kind: 'validation' }));
+    }
+  });
+
   it('绑定成功：逐项身份核验、实际读取必需正文、发布按 Attempt 关联的读取证据并产出受限读取能力', async () => {
     const fixture = await setup();
     const bound = fixture.claimAndLaunch('t-1');

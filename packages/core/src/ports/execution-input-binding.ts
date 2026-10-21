@@ -37,7 +37,7 @@
  * 本层不实现任何存储、文件系统或恢复来源行为。
  */
 import { validateAttemptRecord, validateWorkspaceLeaseRecord } from './attempt-store.js';
-import type { TaskClaimReceipt } from './task-claim.js';
+import { validateTaskClaimLaunch, type TaskClaimReceipt } from './task-claim.js';
 import { validateExecutionInputPurpose } from './execution-input.js';
 import {
   RUNTIME_RECOVERY_SCHEMA_VERSION,
@@ -260,7 +260,7 @@ function claimReceipt(value: unknown): TaskClaimReceipt {
   const raw = requirePlainObject(value, bindingContext, field);
   rejectUnknownKeys(
     raw,
-    ['schemaVersion', 'claimKey', 'batchId', 'attempt', 'taskRevision', 'reservationId', 'leases', 'counts', 'eventId'],
+    ['schemaVersion', 'claimKey', 'batchId', 'attempt', 'taskRevision', 'reservationId', 'leases', 'counts', 'eventId', 'launch'],
     bindingContext,
     field,
   );
@@ -295,6 +295,7 @@ function claimReceipt(value: unknown): TaskClaimReceipt {
       codeAttempts: validateNonNegativeInteger(counts.codeAttempts, bindingContext, `${field}.counts.codeAttempts`),
     },
     eventId: validateStableId(raw.eventId, bindingContext, `${field}.eventId`),
+    ...(raw.launch === undefined ? {} : { launch: validateTaskClaimLaunch(raw.launch, bindingContext, `${field}.launch`) }),
   };
 }
 
@@ -373,6 +374,9 @@ export function validateExecutionInputBindingInput(value: unknown): ExecutionInp
   const claim = claimReceipt(raw.claim);
   const sessionId = validateStableId(raw.sessionId, bindingContext, 'input.sessionId');
   const invocationId = validateStableId(raw.invocationId, bindingContext, 'input.invocationId');
+  if (claim.launch !== undefined && (claim.launch.sessionId !== sessionId || claim.launch.invocationId !== invocationId)) {
+    throw validationError(bindingContext, 'input.claim.launch', 'frozen_launch_identity_mismatch');
+  }
   const strategy = validateRuntimeStrategy(raw.strategy, bindingContext, 'input.strategy');
   const permissions = bindingPermissions(raw.permissions);
   const limits = bindingLimits(raw.limits);

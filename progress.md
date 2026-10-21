@@ -1,5 +1,13 @@
 # P04-4 工作进度
 
+## F-005 — attempt 2 独立验收返工（2026-10-21）
+
+- 核验 recovery、Git 与现有日志后从 `4eb61ca` 增量续做，保留已提交成果；当前 invocation `ac864a2e5344447195b5a4bbb57c56d1`。初次 completed claim 后独立验收失败，不能沿用旧报告证明本次完成。
+- TDD 修复冻结 launch 的回执消费/重放：输入、SQLite 持久读取和绑定共用严格校验；未知字段、无效 ID、与请求不同的 Session/invocation、损坏持久身份均拒绝。数据库重开重放幂等，同 key 换身份冲突，拒绝不产生额外业务写入。两份迁移测试补列 v31，保留历史、回滚、幂等与外键断言。已有原生锁构建成功，Host 实际执行验证加载通过。
+- Pi 装配保持 unknown usage 不累加的保守语义，明确断言成功 SDK 结果仍可能因 required 记录 partial 而失败；增加无 usage 的完整消息流成功对照。取消保留 `recording_failed:aborted`，未删除诊断或放宽产品规则。生产恢复记录实现无额外改动。
+- 本次定向五文件 13 个不同用例通过：test-6c36o__w.log（回执/绑定/迁移 4）、test-gc8drgel.log（Host 4）、test-5ad35qkk.log（Host race 1）、test-j0og2vp5.log（Pi 装配 4），均 exit 0；类型检查 test-gr8het49.log exit 0，架构边界 test-fb9l8nw0.log exit 0（315 文件/0 diagnostics）。RED test-oqoj2g23.log、test-zhd1u3hn.log 和中间诊断保留；中断且无完整退出码的运行不计成功。完整日志与真实退出码 sidecar 均在当前 Feature workspace verifications/F-005/runtime-logs/。
+- [交接文档](docs/p04-4-f005-recovery-recording.md) 已区分首次 18 项与本次 13 项证据。F-005 索引增加 claim/输入绑定两份受影响文件，共 20 文件，Harness selection 继续引用索引；较广 affected 回归由 Nezha 独立运行。本轮没有执行全仓测试、组合门禁、阶段验收或 live 模型，未修改正式 feature.yaml/task_list 或人工 hold。本次提交与单次 task report 结果以 Git/Nezha 为准。
+
 ## F-005 — 恢复交接与新增记录边界（2026-10-21）
 
 - 续做 F-003/F-004 后的当前分支，保留前序提交。增加有界 RuntimeRecoveryRecording，并贯通 Pi Adapter、Runner 协议、Core 句柄、Recorder 与失败结算：来源 Attempt/Session、档案摘要、SDK/格式版本、实际模型/决策、Core 旧水位和独立原生条目水位可追溯，不复制历史正文。
