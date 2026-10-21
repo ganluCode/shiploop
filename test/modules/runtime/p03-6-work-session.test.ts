@@ -4,8 +4,8 @@
  * 覆盖（F-006 验收标准）：
  * - 迁移 v20 从前序实际最新迁移（v19）追加 sessions 表；v1–v19 checksum 冻结不变；
  *   顶层 Work Session 唯一关联同项目 Attempt；可读取实际 runtime、适配版本、输入引用、
- *   executionStage、结果/诊断制品引用与最后活动；不建 ChatTurn/session_messages/
- *   recording_manifests 表组；
+ *   executionStage、结果/诊断制品引用与最后活动；v20 自身不建 ChatTurn 或录制表组
+ *   （P04-5 v32 后允许公开索引）；
  * - 真实 SQLite 拒绝跨项目/错误 Attempt 关联、重复顶层 Session、非法状态/JSON/版本
  *   与旧 owner/version 更新；Session、Attempt 阶段、状态事件及适用回执在短事务原子
  *   一致；未知指标（结果/水位/缺口/原生引用/停止时间）保持 null；
@@ -41,6 +41,7 @@ import { createTempSandbox } from '../../helpers/temp-sandbox.ts';
 import { openBudgetFixture, NOW } from '../../helpers/p03-3/budget-fixture.ts';
 
 const HASH = 'ab'.repeat(32);
+const LATEST_VERSION = SQLITE_MIGRATIONS.at(-1)!.version;
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 
 function preparedInput(projectId: string, featureId: string, taskId = 't-1') {
@@ -93,9 +94,8 @@ async function fixture() {
 
 describe('P03-6 F-006 migration v20 work session schema', () => {
   it('appends v20 without changing the delivered v1-v19 checksums', () => {
-    // P04-4 新增 v31，重建 sessions 约束以允许 Work 同时关联 Attempt 与父 Session。
-    expect(SQLITE_MIGRATIONS.at(-1)?.version).toBe(31);
-    expect(SQLITE_MIGRATIONS).toHaveLength(31);
+    expect(LATEST_VERSION).toBe(32);
+    expect(SQLITE_MIGRATIONS).toHaveLength(LATEST_VERSION);
     // Frozen from the predecessor source, not recomputed from the new descriptors.
     const oldSql = SQLITE_MIGRATIONS.slice(0, 19).map(m => m.checksum).join('\n');
     expect(createHash('sha256').update(oldSql).digest('hex')).toBe('42c01408a11c7dbddecea600bb1cd41f3e4899a3f5dab475262779ef0995bca1');
@@ -106,14 +106,14 @@ describe('P03-6 F-006 migration v20 work session schema', () => {
     expect(v20.sql).not.toMatch(/CREATE TABLE (chat_turns|session_messages|recording_manifests)/);
   });
 
-  it('creates sessions with lifecycle/status/check indexes and no recorder table group', async () => {
+  it('keeps sessions lifecycle/status/check indexes alongside later public recording indexes', async () => {
     const f = await fixture();
     try {
       const tables = f.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map(r => (r as { name: string }).name);
       expect(tables).toContain('sessions');
       expect(tables).not.toContain('chat_turns');
-      expect(tables).not.toContain('session_messages');
-      expect(tables).not.toContain('recording_manifests');
+      expect(tables).toContain('session_messages');
+      expect(tables).toContain('recording_manifests');
       const columns = f.db.prepare('PRAGMA table_xinfo(sessions)').all().map(r => (r as { name: string }).name);
       for (const column of ['id', 'created_at', 'updated_at', 'revision', 'project_id', 'attempt_id',
         'parent_session_id', 'kind', 'purpose', 'runtime', 'adapter_version', 'provider_session_id',
@@ -527,10 +527,10 @@ describe('P03-6 F-006 work session store on real SQLite', () => {
       }
       const before = version > 0 ? session.database.prepare('SELECT * FROM schema_migrations').all() : [];
       const result = await migrateSqliteStorage(session);
-      expect(result.toVersion).toBe(31);
+      expect(result.toVersion).toBe(LATEST_VERSION);
       expect(result.appliedVersions).toEqual(version === 0
-        ? Array.from({ length: 31 }, (_, i) => i + 1)
-        : Array.from({ length: 31 - version }, (_, i) => version + 1 + i));
+        ? Array.from({ length: LATEST_VERSION }, (_, i) => i + 1)
+        : Array.from({ length: LATEST_VERSION - version }, (_, i) => version + 1 + i));
       expect(session.database.prepare('SELECT * FROM schema_migrations WHERE version <= ?').all(version)).toEqual(before);
       if (version > 0) {
         expect(session.database.prepare('SELECT display_name FROM projects').get()).toEqual({ display_name: 'Preserved' });
@@ -538,9 +538,9 @@ describe('P03-6 F-006 work session store on real SQLite', () => {
       }
       const tables = session.database.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map(r => (r as { name: string }).name);
       expect(tables).toContain('sessions');
-      expect(tables).not.toContain('session_messages');
+      expect(tables).toContain('session_messages');
       expect((await migrateSqliteStorage(session)).appliedVersions).toEqual([]);
-      expect(session.database.prepare('SELECT count(*) AS n FROM schema_migrations').get()).toEqual({ n: 31 });
+      expect(session.database.prepare('SELECT count(*) AS n FROM schema_migrations').get()).toEqual({ n: LATEST_VERSION });
       // 关闭重开后关联结构仍在。
       session.close();
       const reopened = openSqliteStorageSession({ path: join(sandbox.path, 'state.db') });

@@ -82,6 +82,9 @@ const SCHEMA_TABLES = [
   ['attempt_notification_diagnostics', schema.attemptNotificationDiagnostics],
   // P03-6 / F-006：最小 Work Session 与 Attempt 执行诊断持久关联（迁移 v20）。
   ['sessions', schema.sessions],
+  // P04-5 / F-001：Work 公开消息索引与 recording manifest（迁移 v32）。
+  ['session_messages', schema.sessionMessages],
+  ['recording_manifests', schema.recordingManifests],
   // P03-7 / F-002：VerificationBatch / CheckResult 与不可变验证证据身份（迁移 v21）。
   ['verification_batches', schema.verificationBatches],
   ['check_results', schema.checkResults],
@@ -96,8 +99,6 @@ const EXPECTED_TABLE_NAMES = SCHEMA_TABLES.map(([name]) => name).sort();
 const FORBIDDEN_TABLE_NAMES = [
   'feature_dependencies',
   'chat_turns',
-  'session_messages',
-  'recording_manifests',
   'check_definitions',
   'operations',
   'notification_channels',
@@ -614,6 +615,17 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
         'sessions:(project_id,parent_session_id)->sessions.(project_id,id)',
         'sessions:(project_id,input_ref)->artifacts.(project_id,id)',
         'sessions:(project_id,result_ref)->artifacts.(project_id,id)',
+        // P04-5 / F-001 Work recording：索引只能引用同项目的 Session/Run/Attempt/Artifact。
+        'session_messages:(project_id)->projects.(id)',
+        'session_messages:(project_id,session_id)->sessions.(project_id,id)',
+        'session_messages:(project_id,run_id)->runs.(project_id,id)',
+        'session_messages:(project_id,attempt_id)->attempts.(project_id,id)',
+        'session_messages:(project_id,content_ref)->artifacts.(project_id,id)',
+        'recording_manifests:(project_id)->projects.(id)',
+        'recording_manifests:(project_id,session_id)->sessions.(project_id,id)',
+        'recording_manifests:(project_id,run_id)->runs.(project_id,id)',
+        'recording_manifests:(project_id,attempt_id)->attempts.(project_id,id)',
+        'recording_manifests:(project_id,manifest_ref)->artifacts.(project_id,id)',
         // P03-7 / F-002 验证记录两表（迁移 v21）：同项目 Feature/Run/Task/Attempt 关联与制品引用外键。
         'verification_batches:(project_id)->projects.(id)',
         'verification_batches:(project_id,feature_id)->features.(project_id,id)',

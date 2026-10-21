@@ -1673,6 +1673,129 @@ export const sessions = sqliteTable('sessions', {
 ]);
 
 /**
+ * P04-5 / F-001：Work 公开消息、工具操作和附件正文的有界索引。
+ * 正文只保存为同项目 ready Artifact；这些表只保留身份、顺序、来源和摘要引用，
+ * 不复制消息正文、工具参数/结果或 SDK 私有档案。
+ */
+export const sessionMessages = sqliteTable('session_messages', {
+  id: text('id').primaryKey(), createdAt: integer('created_at').notNull(),
+  projectId: text('project_id').notNull(), revision: integer('revision').notNull().default(1), updatedAt: integer('updated_at').notNull(),
+  sessionId: text('session_id').notNull(), runId: text('run_id').notNull(), attemptId: text('attempt_id').notNull(),
+  invocationId: text('invocation_id').notNull(), executionVersion: integer('execution_version').notNull(),
+  sequence: integer('sequence').notNull(), eventId: text('event_id').notNull(), messageKey: text('message_key').notNull(),
+  kind: text('kind').notNull(), role: text('role').notNull(),
+  contentRef: text('content_ref').notNull(), contentHash: text('content_hash').notNull(), contentSizeBytes: integer('content_size_bytes').notNull(),
+  contentLocator: text('content_locator').notNull(), providerMessageId: text('provider_message_id'), toolCallId: text('tool_call_id'),
+  parentToolCallId: text('parent_tool_call_id'), source: text('source').notNull(), sourceRefs: text('source_refs').notNull(),
+  attachmentRefs: text('attachment_refs').notNull(), occurredAt: integer('occurred_at').notNull(), recordedAt: integer('recorded_at').notNull(),
+  truncated: integer('truncated').notNull().default(0), redacted: integer('redacted').notNull().default(0),
+}, (table) => [
+  check('session_messages_numeric_check', sql`(typeof(${table.createdAt}) = 'integer' AND ${table.createdAt} BETWEEN 0 AND 9007199254740991)
+    AND (typeof(${table.updatedAt}) = 'integer' AND ${table.updatedAt} BETWEEN 0 AND 9007199254740991)
+    AND (typeof(${table.revision}) = 'integer' AND ${table.revision} BETWEEN 0 AND 9007199254740991)
+    AND (typeof(${table.executionVersion}) = 'integer' AND ${table.executionVersion} BETWEEN 0 AND 9007199254740991)
+    AND (typeof(${table.sequence}) = 'integer' AND ${table.sequence} BETWEEN 0 AND 9007199254740991)
+    AND (typeof(${table.contentSizeBytes}) = 'integer' AND ${table.contentSizeBytes} BETWEEN 0 AND 9007199254740991)
+    AND (typeof(${table.occurredAt}) = 'integer' AND ${table.occurredAt} BETWEEN 0 AND 9007199254740991)
+    AND (typeof(${table.recordedAt}) = 'integer' AND ${table.recordedAt} BETWEEN 0 AND 9007199254740991)`),
+  check('session_messages_revision_check', sql`${table.revision} >= 1`),
+  check('session_messages_bounds_check', sql`length(${table.eventId}) <= 256 AND length(${table.messageKey}) <= 256
+    AND length(${table.contentLocator}) BETWEEN 1 AND 1024
+    AND (${table.providerMessageId} IS NULL OR length(${table.providerMessageId}) BETWEEN 1 AND 256)
+    AND (${table.toolCallId} IS NULL OR length(${table.toolCallId}) BETWEEN 1 AND 256)
+    AND (${table.parentToolCallId} IS NULL OR length(${table.parentToolCallId}) BETWEEN 1 AND 256)
+    AND length(CAST(${table.sourceRefs} AS BLOB)) <= 65536 AND length(CAST(${table.attachmentRefs} AS BLOB)) <= 65536`),
+  check('session_messages_tool_check', sql`(${table.kind} NOT IN ('tool_started','tool_finished') OR ${table.toolCallId} IS NOT NULL)
+    AND (${table.parentToolCallId} IS NULL OR (${table.toolCallId} IS NOT NULL AND ${table.parentToolCallId} <> ${table.toolCallId}))`),
+  check('session_messages_execution_version_check', sql`${table.executionVersion} >= 1`),
+  check('session_messages_sequence_check', sql`${table.sequence} >= 1`),
+  check('session_messages_text_check', sql`length(${table.eventId}) > 0 AND length(${table.messageKey}) > 0
+    AND length(${table.invocationId}) > 0 AND length(${table.kind}) > 0 AND length(${table.role}) > 0`),
+  check('session_messages_kind_check', sql`${table.kind} IN ('message','tool_started','tool_finished','error','final_result','attachment')`),
+  check('session_messages_role_check', sql`${table.role} IN ('system','user','assistant','tool','error','result')`),
+  check('session_messages_source_check', sql`${table.source} IN ('live','native','recovered','mixed')`),
+  check('session_messages_content_size_check', sql`${table.contentSizeBytes} >= 0`),
+  check('session_messages_timestamp_check', sql`${table.createdAt} >= 0 AND ${table.updatedAt} >= 0
+    AND ${table.occurredAt} >= 0 AND ${table.recordedAt} >= ${table.occurredAt}`),
+  check('session_messages_boolean_check', sql`${table.truncated} IN (0,1) AND ${table.redacted} IN (0,1)`),
+  check('session_messages_source_refs_check', sql`json_valid(${table.sourceRefs}) AND json_type(${table.sourceRefs}) = 'array'
+    AND json_array_length(${table.sourceRefs}) <= 16`),
+  check('session_messages_attachment_refs_check', sql`json_valid(${table.attachmentRefs}) AND json_type(${table.attachmentRefs}) = 'array'
+    AND json_array_length(${table.attachmentRefs}) <= 32`),
+  foreignKey({ name: 'session_messages_project_fk', columns: [table.projectId], foreignColumns: [projects.id] }).onDelete('restrict'),
+  foreignKey({ name: 'session_messages_session_fk', columns: [table.projectId, table.sessionId], foreignColumns: [sessions.projectId, sessions.id] }).onDelete('restrict'),
+  foreignKey({ name: 'session_messages_run_fk', columns: [table.projectId, table.runId], foreignColumns: [runs.projectId, runs.id] }).onDelete('restrict'),
+  foreignKey({ name: 'session_messages_attempt_fk', columns: [table.projectId, table.attemptId], foreignColumns: [attempts.projectId, attempts.id] }).onDelete('restrict'),
+  foreignKey({ name: 'session_messages_content_artifact_fk', columns: [table.projectId, table.contentRef], foreignColumns: [artifacts.projectId, artifacts.id] }).onDelete('restrict'),
+  uniqueIndex('session_messages_project_id_id_unique').on(table.projectId, table.id),
+  uniqueIndex('session_messages_session_sequence_unique').on(table.sessionId, table.sequence),
+  uniqueIndex('session_messages_session_message_key_unique').on(table.sessionId, table.messageKey),
+  uniqueIndex('session_messages_project_event_unique').on(table.projectId, table.eventId),
+  index('session_messages_project_session_sequence_index').on(table.projectId, table.sessionId, table.sequence),
+]);
+
+/** P04-5 / F-001：Work 记录完整度索引；每个版本不可变，正文仍由 Artifact 承载。 */
+export const recordingManifests = sqliteTable('recording_manifests', {
+  id: text('id').primaryKey(), createdAt: integer('created_at').notNull(),
+  projectId: text('project_id').notNull(), revision: integer('revision').notNull().default(1), updatedAt: integer('updated_at').notNull(),
+  sessionId: text('session_id').notNull(), runId: text('run_id').notNull(), attemptId: text('attempt_id').notNull(),
+  invocationId: text('invocation_id').notNull(), executionVersion: integer('execution_version').notNull(), version: integer('version').notNull(),
+  manifestRef: text('manifest_ref'), manifestHash: text('manifest_hash'), manifestSizeBytes: integer('manifest_size_bytes'),
+  manifestLocator: text('manifest_locator'), watermark: integer('watermark'), finalSequence: integer('final_sequence'),
+  sequenceReconciliation: text('sequence_reconciliation').notNull(), coverage: text('coverage').notNull(), source: text('source').notNull(),
+  scope: text('scope').notNull(), missingReasons: text('missing_reasons').notNull(), diagnostics: text('diagnostics').notNull(),
+  truncation: text('truncation').notNull(), redaction: text('redaction').notNull(), sdkVersion: text('sdk_version'), formatVersion: text('format_version').notNull(),
+  nativeRef: text('native_ref'), unknownEventCount: integer('unknown_event_count'), finalized: integer('finalized').notNull().default(0),
+}, (table) => [
+  check('recording_manifests_numeric_check', sql`(typeof(${table.createdAt}) = 'integer' AND ${table.createdAt} BETWEEN 0 AND 9007199254740991)
+    AND (typeof(${table.updatedAt}) = 'integer' AND ${table.updatedAt} BETWEEN 0 AND 9007199254740991)
+    AND (typeof(${table.revision}) = 'integer' AND ${table.revision} BETWEEN 0 AND 9007199254740991)
+    AND (typeof(${table.executionVersion}) = 'integer' AND ${table.executionVersion} BETWEEN 0 AND 9007199254740991)
+    AND (typeof(${table.version}) = 'integer' AND ${table.version} BETWEEN 0 AND 9007199254740991)
+    AND (${table.watermark} IS NULL OR (typeof(${table.watermark}) = 'integer' AND ${table.watermark} BETWEEN 0 AND 9007199254740991))
+    AND (${table.finalSequence} IS NULL OR (typeof(${table.finalSequence}) = 'integer' AND ${table.finalSequence} BETWEEN 0 AND 9007199254740991))
+    AND (${table.unknownEventCount} IS NULL OR (typeof(${table.unknownEventCount}) = 'integer' AND ${table.unknownEventCount} BETWEEN 0 AND 9007199254740991))
+    AND (${table.manifestSizeBytes} IS NULL OR (typeof(${table.manifestSizeBytes}) = 'integer' AND ${table.manifestSizeBytes} BETWEEN 0 AND 9007199254740991))`),
+  check('recording_manifests_revision_check', sql`${table.revision} >= 1`),
+  check('recording_manifests_ref_shape_check', sql`(${table.manifestRef} IS NULL AND ${table.manifestHash} IS NULL AND ${table.manifestSizeBytes} IS NULL AND ${table.manifestLocator} IS NULL)
+    OR (${table.manifestRef} IS NOT NULL AND ${table.manifestHash} IS NOT NULL AND ${table.manifestSizeBytes} IS NOT NULL AND ${table.manifestLocator} IS NOT NULL)`),
+  check('recording_manifests_bounds_check', sql`length(${table.formatVersion}) BETWEEN 1 AND 128
+    AND (${table.sdkVersion} IS NULL OR length(${table.sdkVersion}) BETWEEN 1 AND 128)
+    AND length(CAST(${table.scope} AS BLOB)) <= 65536 AND length(CAST(${table.missingReasons} AS BLOB)) <= 65536
+    AND length(CAST(${table.diagnostics} AS BLOB)) <= 65536 AND length(CAST(${table.truncation} AS BLOB)) <= 65536
+    AND length(CAST(${table.redaction} AS BLOB)) <= 65536
+    AND (${table.nativeRef} IS NULL OR length(CAST(${table.nativeRef} AS BLOB)) <= 2048)`),
+  check('recording_manifests_honest_check', sql`(${table.coverage} = 'complete' OR json_array_length(${table.missingReasons}) > 0)
+    AND (${table.coverage} <> 'complete' OR (${table.unknownEventCount} IS 0 AND json_extract(${table.truncation}, '$.applied') IS 0
+      AND (${table.finalized} = 0 OR ${table.sequenceReconciliation} = 'match')))
+    AND (${table.sequenceReconciliation} <> 'match' OR (${table.watermark} IS NOT NULL AND ${table.finalSequence} IS NOT NULL AND ${table.watermark} = ${table.finalSequence}))`),
+  check('recording_manifests_version_check', sql`${table.version} >= 1 AND ${table.executionVersion} >= 1`),
+  check('recording_manifests_watermark_check', sql`${table.watermark} IS NULL OR ${table.watermark} >= 0`),
+  check('recording_manifests_final_sequence_check', sql`${table.finalSequence} IS NULL OR ${table.finalSequence} >= 0`),
+  check('recording_manifests_watermark_order_check', sql`${table.watermark} IS NULL OR ${table.finalSequence} IS NULL OR ${table.watermark} <= ${table.finalSequence}`),
+  check('recording_manifests_reconciliation_check', sql`${table.sequenceReconciliation} IN ('match','mismatch','not_available')`),
+  check('recording_manifests_coverage_check', sql`${table.coverage} IN ('complete','partial','failed')`),
+  check('recording_manifests_source_check', sql`${table.source} IN ('live','native','recovered','mixed')`),
+  check('recording_manifests_json_check', sql`json_valid(${table.scope}) AND json_type(${table.scope}) = 'object'
+    AND json_valid(${table.missingReasons}) AND json_type(${table.missingReasons}) = 'array' AND json_array_length(${table.missingReasons}) <= 32
+    AND json_valid(${table.diagnostics}) AND json_type(${table.diagnostics}) = 'array' AND json_array_length(${table.diagnostics}) <= 32
+    AND json_valid(${table.truncation}) AND json_type(${table.truncation}) = 'object'
+    AND json_valid(${table.redaction}) AND json_type(${table.redaction}) = 'object'`),
+  check('recording_manifests_complete_shape_check', sql`${table.coverage} <> 'complete' OR json_array_length(${table.missingReasons}) = 0`),
+  check('recording_manifests_boolean_check', sql`${table.finalized} IN (0,1)`),
+  check('recording_manifests_unknown_count_check', sql`${table.unknownEventCount} IS NULL OR ${table.unknownEventCount} >= 0`),
+  check('recording_manifests_time_check', sql`${table.createdAt} >= 0 AND ${table.updatedAt} >= 0`),
+  foreignKey({ name: 'recording_manifests_project_fk', columns: [table.projectId], foreignColumns: [projects.id] }).onDelete('restrict'),
+  foreignKey({ name: 'recording_manifests_session_fk', columns: [table.projectId, table.sessionId], foreignColumns: [sessions.projectId, sessions.id] }).onDelete('restrict'),
+  foreignKey({ name: 'recording_manifests_run_fk', columns: [table.projectId, table.runId], foreignColumns: [runs.projectId, runs.id] }).onDelete('restrict'),
+  foreignKey({ name: 'recording_manifests_attempt_fk', columns: [table.projectId, table.attemptId], foreignColumns: [attempts.projectId, attempts.id] }).onDelete('restrict'),
+  foreignKey({ name: 'recording_manifests_artifact_fk', columns: [table.projectId, table.manifestRef], foreignColumns: [artifacts.projectId, artifacts.id] }).onDelete('restrict'),
+  uniqueIndex('recording_manifests_project_id_id_unique').on(table.projectId, table.id),
+  uniqueIndex('recording_manifests_session_version_unique').on(table.sessionId, table.version),
+  index('recording_manifests_project_session_version_index').on(table.projectId, table.sessionId, table.version),
+]);
+
+/**
  * P03-7 / F-002：VerificationBatch / CheckResult 与不可变验证证据身份（迁移 v21）。
  * 批次把针对同一代码状态的一组可信检查归为权威边界（代码/策略/环境身份 + 检查定义
  * 快照 + 选择/回退理由）；逐项结果保存状态、argv/cwd/timeout 快照、时间、exit_code/

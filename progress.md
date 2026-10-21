@@ -199,3 +199,11 @@ F-003 尚未满足验收，收尾应报告 `blocked`；正式 feature.yaml、tas
 - 新增 `scripts/acceptance/p03-clean-replay.ts` 与 `accept:p03:clean-replay`：只从已提交 commit 创建无 `node_modules/dist` 的干净 clone，执行锁文件安装、构建及两轮公共 `npm run accept:p03`；各轮隔离 HOME/TMP/XDG/npm cache/报告根，报告复制后逐目录重验，保存命令日志、退出码、报告 hash、证据目录摘要和 cleanup manifest。
 - 已验证类型检查 exit 0；P03 报告契约测试 exit 0（1 文件、6/6 passed），完整日志和真实退出码在 Feature workspace `verifications/F-018/runtime-logs/`。
 - 尚未在固定提交快照上运行双次阶段验收；本段完成后补充两轮结果、受测 commit、证据目录和剩余问题。
+
+## P04-5 F-001 — Work 公开记录索引与 recording manifest
+
+- 新增严格的公开消息/工具/附件引用和 manifest 端口模型；公开覆盖范围明确排除隐藏推理、原生私有档案和统一审计。正文只通过 ready Artifact 引用，unknown 水位、事件数和 SDK 版本保持 null。
+- SQLite v32 新增 `session_messages` / `recording_manifests`：同项目外键与 Session/Attempt/run/invocation/version 核对、有界 JSON、序列/事件/消息去重、不可变更新、Artifact 摘要身份保护、追加版本与单调持久水位。v1–v31 checksum 保持不变。
+- 本地定向验证：`test-hjx4mj1v.log` exit 0（3 文件，123 passed）；旧 Session 受影响迁移断言 `test-5ubwhrmj.log` exit 0（5 passed，16 未选执行）；Artifact trigger 优化后 `test-v6756xnm.log` exit 0（SQLite 11 passed），最终 typecheck `test-n735a0kd.log` exit 0，依赖边界 `test-63az2rjt.log` exit 0。完整日志及真实退出码在本 Feature workspace `verifications/F-001/runtime-logs/`。
+- 索引为 `test/index/phases/P04/features/P04-5/tasks/F-001.json`，Harness selection 引用它，已用 Nezha resolver 核实七个选中文件均存在且符合项目配置。其余受影响回归交 Nezha；未运行全仓、阶段验收或真实模型。
+- 本任务仅交付持久模型；队列、Runtime 事件归一化及对外查询由后继任务接入。字段映射、完整度约束与证据见 [F-001 交接](docs/p04-5-f001-work-recording-model.md)。

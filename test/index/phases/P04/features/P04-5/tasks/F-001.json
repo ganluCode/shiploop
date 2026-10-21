@@ -1,0 +1,39 @@
+{
+  "schema_version": 2,
+  "task_id": "F-001",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/runtime/p04-5-work-recording.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/storage/sqlite/p04-5-work-recording.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/storage/sqlite/sqlite-schema-migrations.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/storage/sqlite/sqlite-ownership-constraint-matrix.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p03-6-work-evidence-recorder.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p03-6-work-session-query.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p03-6-work-session.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

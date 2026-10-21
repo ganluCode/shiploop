@@ -15,6 +15,7 @@
  *   本模块只声明内容与身份，不在 import 时打开数据库或产生任何副作用。
  */
 import { createHash } from 'node:crypto';
+import { WORK_RECORDING_V32_JSON_GUARDS_SQL } from './work-recording-constraints.js';
 
 export interface SqliteMigration {
   /** 唯一递增的迁移版本（≥1），与 schema_migrations.version 一致。 */
@@ -2487,6 +2488,193 @@ WHEN NEW.operation_type = 'task_commit' AND NOT EXISTS (
 BEGIN SELECT RAISE(ABORT, 'task commit current identity mismatch'); END;
 `;
 
+const MIGRATION_032_SQL = `
+-- v32 (P04-5 / F-001): bounded public Work recording indexes.
+-- Bodies remain in ready Artifacts; these tables retain only identity, ordering,
+-- provenance, bounded metadata and artifact references.
+CREATE TABLE session_messages (
+  id TEXT PRIMARY KEY NOT NULL, created_at INTEGER NOT NULL, project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1, updated_at INTEGER NOT NULL,
+  session_id TEXT NOT NULL, run_id TEXT NOT NULL, attempt_id TEXT NOT NULL,
+  invocation_id TEXT NOT NULL, execution_version INTEGER NOT NULL,
+  sequence INTEGER NOT NULL, event_id TEXT NOT NULL, message_key TEXT NOT NULL,
+  kind TEXT NOT NULL, role TEXT NOT NULL,
+  content_ref TEXT NOT NULL, content_hash TEXT NOT NULL, content_size_bytes INTEGER NOT NULL,
+  content_locator TEXT NOT NULL, provider_message_id TEXT, tool_call_id TEXT,
+  parent_tool_call_id TEXT, source TEXT NOT NULL, source_refs TEXT NOT NULL,
+  attachment_refs TEXT NOT NULL, occurred_at INTEGER NOT NULL, recorded_at INTEGER NOT NULL,
+  truncated INTEGER NOT NULL DEFAULT 0, redacted INTEGER NOT NULL DEFAULT 0,
+  CONSTRAINT session_messages_numeric_check CHECK ((typeof(created_at) = 'integer' AND created_at BETWEEN 0 AND 9007199254740991)
+    AND (typeof(updated_at) = 'integer' AND updated_at BETWEEN 0 AND 9007199254740991)
+    AND (typeof(revision) = 'integer' AND revision BETWEEN 0 AND 9007199254740991)
+    AND (typeof(execution_version) = 'integer' AND execution_version BETWEEN 0 AND 9007199254740991)
+    AND (typeof(sequence) = 'integer' AND sequence BETWEEN 0 AND 9007199254740991)
+    AND (typeof(content_size_bytes) = 'integer' AND content_size_bytes BETWEEN 0 AND 9007199254740991)
+    AND (typeof(occurred_at) = 'integer' AND occurred_at BETWEEN 0 AND 9007199254740991)
+    AND (typeof(recorded_at) = 'integer' AND recorded_at BETWEEN 0 AND 9007199254740991)),
+  CONSTRAINT session_messages_bounds_check CHECK (length(event_id) <= 256 AND length(message_key) <= 256
+    AND length(content_locator) BETWEEN 1 AND 1024
+    AND (provider_message_id IS NULL OR length(provider_message_id) BETWEEN 1 AND 256)
+    AND (tool_call_id IS NULL OR length(tool_call_id) BETWEEN 1 AND 256)
+    AND (parent_tool_call_id IS NULL OR length(parent_tool_call_id) BETWEEN 1 AND 256)
+    AND length(CAST(source_refs AS BLOB)) <= 65536 AND length(CAST(attachment_refs AS BLOB)) <= 65536),
+  CONSTRAINT session_messages_tool_check CHECK ((kind NOT IN ('tool_started','tool_finished') OR tool_call_id IS NOT NULL)
+    AND (parent_tool_call_id IS NULL OR (tool_call_id IS NOT NULL AND parent_tool_call_id <> tool_call_id))),
+  CONSTRAINT session_messages_revision_check CHECK (revision >= 1),
+  CONSTRAINT session_messages_execution_version_check CHECK (execution_version >= 1),
+  CONSTRAINT session_messages_sequence_check CHECK (sequence >= 1),
+  CONSTRAINT session_messages_text_check CHECK (length(event_id) > 0 AND length(message_key) > 0
+    AND length(invocation_id) > 0 AND length(kind) > 0 AND length(role) > 0),
+  CONSTRAINT session_messages_kind_check CHECK (kind IN ('message','tool_started','tool_finished','error','final_result','attachment')),
+  CONSTRAINT session_messages_role_check CHECK (role IN ('system','user','assistant','tool','error','result')),
+  CONSTRAINT session_messages_source_check CHECK (source IN ('live','native','recovered','mixed')),
+  CONSTRAINT session_messages_content_size_check CHECK (content_size_bytes >= 0),
+  CONSTRAINT session_messages_timestamp_check CHECK (created_at >= 0 AND updated_at >= 0
+    AND occurred_at >= 0 AND recorded_at >= occurred_at),
+  CONSTRAINT session_messages_boolean_check CHECK (truncated IN (0,1) AND redacted IN (0,1)),
+  CONSTRAINT session_messages_source_refs_check CHECK (json_valid(source_refs) AND json_type(source_refs) = 'array'
+    AND json_array_length(source_refs) <= 16),
+  CONSTRAINT session_messages_attachment_refs_check CHECK (json_valid(attachment_refs) AND json_type(attachment_refs) = 'array'
+    AND json_array_length(attachment_refs) <= 32),
+  CONSTRAINT session_messages_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT session_messages_session_fk FOREIGN KEY (project_id, session_id) REFERENCES sessions (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT session_messages_run_fk FOREIGN KEY (project_id, run_id) REFERENCES runs (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT session_messages_attempt_fk FOREIGN KEY (project_id, attempt_id) REFERENCES attempts (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT session_messages_content_artifact_fk FOREIGN KEY (project_id, content_ref) REFERENCES artifacts (project_id, id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX session_messages_project_id_id_unique ON session_messages (project_id, id);
+CREATE UNIQUE INDEX session_messages_session_sequence_unique ON session_messages (session_id, sequence);
+CREATE UNIQUE INDEX session_messages_session_message_key_unique ON session_messages (session_id, message_key);
+CREATE UNIQUE INDEX session_messages_project_event_unique ON session_messages (project_id, event_id);
+CREATE INDEX session_messages_project_session_sequence_index ON session_messages (project_id, session_id, sequence);
+
+CREATE TRIGGER session_messages_scope_check BEFORE INSERT ON session_messages
+WHEN NOT EXISTS (
+  WITH RECURSIVE ancestry(id, parent_session_id, attempt_id) AS (
+    SELECT id, parent_session_id, attempt_id FROM sessions
+      WHERE project_id = NEW.project_id AND id = NEW.session_id AND kind = 'work'
+    UNION
+    SELECT s.id, s.parent_session_id, s.attempt_id FROM sessions s JOIN ancestry c ON s.id = c.parent_session_id
+      WHERE s.project_id = NEW.project_id AND s.kind = 'work' AND c.attempt_id IS NULL
+  )
+  SELECT 1 FROM ancestry s JOIN attempts a ON a.id = s.attempt_id AND a.project_id = NEW.project_id
+    WHERE a.id = NEW.attempt_id AND a.execution_version = NEW.execution_version AND a.run_id = NEW.run_id
+      AND a.session_id = s.id AND a.invocation_id = NEW.invocation_id
+)
+BEGIN SELECT RAISE(ABORT, 'session message scope identity mismatch'); END;
+CREATE TRIGGER session_messages_immutable BEFORE UPDATE ON session_messages
+BEGIN SELECT RAISE(ABORT, 'session message index is immutable'); END;
+CREATE TRIGGER session_messages_content_ready_insert BEFORE INSERT ON session_messages
+WHEN NOT EXISTS (
+  SELECT 1 FROM artifacts a WHERE a.project_id = NEW.project_id AND a.id = NEW.content_ref
+    AND a.status = 'ready' AND a.content_hash = NEW.content_hash
+    AND a.size_bytes = NEW.content_size_bytes AND a.storage_locator = NEW.content_locator
+)
+OR EXISTS (
+  SELECT 1 FROM json_each(NEW.attachment_refs) r WHERE NOT EXISTS (
+    SELECT 1 FROM artifacts a WHERE a.project_id = NEW.project_id
+      AND a.id = json_extract(r.value, '$.artifactId') AND a.status = 'ready'
+      AND a.content_hash = json_extract(r.value, '$.contentHash')
+      AND a.size_bytes = json_extract(r.value, '$.sizeBytes')
+      AND a.storage_locator = json_extract(r.value, '$.locator'))
+)
+BEGIN SELECT RAISE(ABORT, 'session message artifact identity mismatch or artifact is not ready'); END;
+
+
+CREATE TABLE recording_manifests (
+  id TEXT PRIMARY KEY NOT NULL, created_at INTEGER NOT NULL, project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1, updated_at INTEGER NOT NULL,
+  session_id TEXT NOT NULL, run_id TEXT NOT NULL, attempt_id TEXT NOT NULL,
+  invocation_id TEXT NOT NULL, execution_version INTEGER NOT NULL, version INTEGER NOT NULL,
+  manifest_ref TEXT, manifest_hash TEXT, manifest_size_bytes INTEGER, manifest_locator TEXT,
+  watermark INTEGER, final_sequence INTEGER,
+  sequence_reconciliation TEXT NOT NULL, coverage TEXT NOT NULL, source TEXT NOT NULL,
+  scope TEXT NOT NULL, missing_reasons TEXT NOT NULL, diagnostics TEXT NOT NULL,
+  truncation TEXT NOT NULL, redaction TEXT NOT NULL, sdk_version TEXT, format_version TEXT NOT NULL,
+  native_ref TEXT, unknown_event_count INTEGER, finalized INTEGER NOT NULL DEFAULT 0,
+  CONSTRAINT recording_manifests_numeric_check CHECK ((typeof(created_at) = 'integer' AND created_at BETWEEN 0 AND 9007199254740991)
+    AND (typeof(updated_at) = 'integer' AND updated_at BETWEEN 0 AND 9007199254740991)
+    AND (typeof(revision) = 'integer' AND revision BETWEEN 0 AND 9007199254740991)
+    AND (typeof(execution_version) = 'integer' AND execution_version BETWEEN 0 AND 9007199254740991)
+    AND (typeof(version) = 'integer' AND version BETWEEN 0 AND 9007199254740991)
+    AND (watermark IS NULL OR (typeof(watermark) = 'integer' AND watermark BETWEEN 0 AND 9007199254740991))
+    AND (final_sequence IS NULL OR (typeof(final_sequence) = 'integer' AND final_sequence BETWEEN 0 AND 9007199254740991))
+    AND (unknown_event_count IS NULL OR (typeof(unknown_event_count) = 'integer' AND unknown_event_count BETWEEN 0 AND 9007199254740991))
+    AND (manifest_size_bytes IS NULL OR (typeof(manifest_size_bytes) = 'integer' AND manifest_size_bytes BETWEEN 0 AND 9007199254740991))),
+  CONSTRAINT recording_manifests_ref_shape_check CHECK ((manifest_ref IS NULL AND manifest_hash IS NULL AND manifest_size_bytes IS NULL AND manifest_locator IS NULL)
+    OR (manifest_ref IS NOT NULL AND manifest_hash IS NOT NULL AND manifest_size_bytes IS NOT NULL AND manifest_locator IS NOT NULL)),
+  CONSTRAINT recording_manifests_bounds_check CHECK (length(format_version) BETWEEN 1 AND 128
+    AND (sdk_version IS NULL OR length(sdk_version) BETWEEN 1 AND 128)
+    AND length(CAST(scope AS BLOB)) <= 65536 AND length(CAST(missing_reasons AS BLOB)) <= 65536
+    AND length(CAST(diagnostics AS BLOB)) <= 65536 AND length(CAST(truncation AS BLOB)) <= 65536
+    AND length(CAST(redaction AS BLOB)) <= 65536
+    AND (native_ref IS NULL OR length(CAST(native_ref AS BLOB)) <= 2048)),
+  CONSTRAINT recording_manifests_honest_check CHECK ((coverage = 'complete' OR json_array_length(missing_reasons) > 0)
+    AND (coverage <> 'complete' OR (unknown_event_count IS 0 AND json_extract(truncation, '$.applied') IS 0
+      AND (finalized = 0 OR sequence_reconciliation = 'match')))
+    AND (sequence_reconciliation <> 'match' OR (watermark IS NOT NULL AND final_sequence IS NOT NULL AND watermark = final_sequence))),
+  CONSTRAINT recording_manifests_revision_check CHECK (revision >= 1),
+  CONSTRAINT recording_manifests_version_check CHECK (version >= 1 AND execution_version >= 1),
+  CONSTRAINT recording_manifests_watermark_check CHECK (watermark IS NULL OR watermark >= 0),
+  CONSTRAINT recording_manifests_final_sequence_check CHECK (final_sequence IS NULL OR final_sequence >= 0),
+  CONSTRAINT recording_manifests_watermark_order_check CHECK (watermark IS NULL OR final_sequence IS NULL OR watermark <= final_sequence),
+  CONSTRAINT recording_manifests_reconciliation_check CHECK (sequence_reconciliation IN ('match','mismatch','not_available')),
+  CONSTRAINT recording_manifests_coverage_check CHECK (coverage IN ('complete','partial','failed')),
+  CONSTRAINT recording_manifests_source_check CHECK (source IN ('live','native','recovered','mixed')),
+  CONSTRAINT recording_manifests_json_check CHECK (json_valid(scope) AND json_type(scope) = 'object'
+    AND json_valid(missing_reasons) AND json_type(missing_reasons) = 'array' AND json_array_length(missing_reasons) <= 32
+    AND json_valid(diagnostics) AND json_type(diagnostics) = 'array' AND json_array_length(diagnostics) <= 32
+    AND json_valid(truncation) AND json_type(truncation) = 'object'
+    AND json_valid(redaction) AND json_type(redaction) = 'object'),
+  CONSTRAINT recording_manifests_complete_shape_check CHECK (coverage <> 'complete' OR json_array_length(missing_reasons) = 0),
+  CONSTRAINT recording_manifests_boolean_check CHECK (finalized IN (0,1)),
+  CONSTRAINT recording_manifests_unknown_count_check CHECK (unknown_event_count IS NULL OR unknown_event_count >= 0),
+  CONSTRAINT recording_manifests_time_check CHECK (created_at >= 0 AND updated_at >= 0),
+  CONSTRAINT recording_manifests_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT recording_manifests_session_fk FOREIGN KEY (project_id, session_id) REFERENCES sessions (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT recording_manifests_run_fk FOREIGN KEY (project_id, run_id) REFERENCES runs (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT recording_manifests_attempt_fk FOREIGN KEY (project_id, attempt_id) REFERENCES attempts (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT recording_manifests_artifact_fk FOREIGN KEY (project_id, manifest_ref) REFERENCES artifacts (project_id, id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX recording_manifests_project_id_id_unique ON recording_manifests (project_id, id);
+CREATE UNIQUE INDEX recording_manifests_session_version_unique ON recording_manifests (session_id, version);
+CREATE INDEX recording_manifests_project_session_version_index ON recording_manifests (project_id, session_id, version);
+
+CREATE TRIGGER recording_manifests_scope_check BEFORE INSERT ON recording_manifests
+WHEN NOT EXISTS (
+  WITH RECURSIVE ancestry(id, parent_session_id, attempt_id) AS (
+    SELECT id, parent_session_id, attempt_id FROM sessions
+      WHERE project_id = NEW.project_id AND id = NEW.session_id AND kind = 'work'
+    UNION
+    SELECT s.id, s.parent_session_id, s.attempt_id FROM sessions s JOIN ancestry c ON s.id = c.parent_session_id
+      WHERE s.project_id = NEW.project_id AND s.kind = 'work' AND c.attempt_id IS NULL
+  )
+  SELECT 1 FROM ancestry s JOIN attempts a ON a.id = s.attempt_id AND a.project_id = NEW.project_id
+    WHERE a.id = NEW.attempt_id AND a.execution_version = NEW.execution_version AND a.run_id = NEW.run_id
+      AND a.session_id = s.id AND a.invocation_id = NEW.invocation_id
+)
+BEGIN SELECT RAISE(ABORT, 'recording manifest scope identity mismatch'); END;
+CREATE TRIGGER recording_manifests_immutable BEFORE UPDATE ON recording_manifests
+BEGIN SELECT RAISE(ABORT, 'recording manifest index is immutable'); END;
+CREATE TRIGGER recording_manifests_artifact_ready_insert BEFORE INSERT ON recording_manifests
+WHEN NEW.manifest_ref IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM artifacts a WHERE a.project_id = NEW.project_id AND a.id = NEW.manifest_ref AND a.status = 'ready'
+    AND a.content_hash = NEW.manifest_hash AND a.size_bytes = NEW.manifest_size_bytes
+    AND a.storage_locator = NEW.manifest_locator
+)
+BEGIN SELECT RAISE(ABORT, 'recording manifest artifact identity mismatch or artifact is not ready'); END;
+CREATE TRIGGER recording_manifests_watermark_guard BEFORE INSERT ON recording_manifests
+WHEN (NEW.watermark > 0 AND NOT EXISTS (
+  SELECT 1 FROM session_messages m WHERE m.session_id = NEW.session_id AND m.sequence = NEW.watermark
+)) OR (NEW.coverage = 'complete' AND NEW.watermark IS NOT NULL AND NEW.watermark <> (
+  SELECT COUNT(*) FROM session_messages m WHERE m.session_id = NEW.session_id AND m.sequence <= NEW.watermark
+)) OR EXISTS (SELECT 1 FROM recording_manifests old WHERE old.session_id = NEW.session_id
+  AND (old.version >= NEW.version OR (old.watermark IS NOT NULL AND (NEW.watermark IS NULL OR old.watermark > NEW.watermark))))
+BEGIN SELECT RAISE(ABORT, 'recording manifest version or durable watermark mismatch'); END;
+
+${WORK_RECORDING_V32_JSON_GUARDS_SQL}
+`;
+
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     version: 1,
@@ -2583,4 +2771,5 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 29, sql: MIGRATION_029_SQL, checksum: sha256Hex(MIGRATION_029_SQL) },
   { version: 30, sql: MIGRATION_030_SQL, checksum: sha256Hex(MIGRATION_030_SQL), foreignKeysOff: true },
   { version: 31, sql: MIGRATION_031_SQL, checksum: sha256Hex(MIGRATION_031_SQL), foreignKeysOff: true },
+  { version: 32, sql: MIGRATION_032_SQL, checksum: sha256Hex(MIGRATION_032_SQL) },
 ];

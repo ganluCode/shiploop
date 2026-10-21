@@ -83,6 +83,7 @@ export * from './application/execution-service.js';
 export * from './application/execution-workspace-retention.js';
 export * from './ports/fake-runtime-script.js';
 export * from './ports/work-evidence-recorder.js';
+export * from './ports/work-recording.js';
 export * from './application/work-evidence-recorder.js';
 export * from './ports/execution-input-binding.js';
 export * from './application/execution-input-binding.js';
