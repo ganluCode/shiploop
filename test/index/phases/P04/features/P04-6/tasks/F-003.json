@@ -1,0 +1,16 @@
+{
+  "schema_version": 2,
+  "task_id": "F-003",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        { "file": "test/modules/runtime/p04-6-efficiency-projection.test.ts", "all": true },
+        { "file": "test/modules/runtime/p04-6-usage-diagnostics-contract.test.ts", "all": true },
+        { "file": "test/modules/runtime/p04-6-usage-normalization.test.ts", "all": true },
+        { "file": "test/modules/runtime/p03-6-work-evidence-recorder.test.ts", "all": true },
+        { "file": "test/modules/runtime/p03-6-execution-process-stopping.test.ts", "all": true }
+      ]
+    }
+  ]
+}

@@ -145,7 +145,26 @@ export interface EfficiencyFact {
   readonly exitCode: number | null;
   readonly signal: string | null;
   readonly sourceRefs: readonly UsageDiagnosticSource[];
+  /** Declared execution budget; absent on older recordings. */
+  readonly budgetMs?: number | null;
+  /** Missing exit/status/budget evidence, never a guessed outcome. */
+  readonly unknownReason?: string | null;
 }
+
+/** Independently sampled public metrics; no message bodies or SDK private data. */
+export type EfficiencyObservation = {
+  readonly observationId: string;
+  readonly identity: UsageDiagnosticIdentity;
+  readonly observedAtUtc: string;
+  readonly coverage: UsageCoverage;
+  readonly sourceRefs: readonly UsageDiagnosticSource[];
+} & (
+  | { readonly kind: 'reply'; readonly effective: boolean | null }
+  | { readonly kind: 'tool'; readonly toolCallId: string; readonly parentToolCallId: string | null;
+      readonly replyMessageId: string | null; readonly batch: boolean | null; readonly codemode: boolean | null;
+      readonly repeatedRead: boolean | null; readonly error: boolean | null; readonly largeOutput: boolean | null }
+  | { readonly kind: 'context'; readonly inputTokens: number | null }
+);
 
 function fail(field: string, reason: string): never {
   throw new TypeError(`UsageDiagnostics: ${field}: ${reason}`);
@@ -175,7 +194,10 @@ function nullableDate(value: unknown, field: string): string | null {
   if (!isIsoUtcDateTime(value)) fail(field, 'invalid_timestamp');
   return value as string;
 }
-function date(value: unknown, field: string): string { return nullableDate(value, field) as string; }
+function date(value: unknown, field: string): string {
+  if (value === null) fail(field, 'timestamp_required');
+  return nullableDate(value, field) as string;
+}
 function count(value: unknown, field: string): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) fail(field, 'invalid_count');
   return value;
@@ -252,7 +274,7 @@ export function validateUsageDiagnosticObservation(value: unknown): UsageDiagnos
 
 export function validateEfficiencyFact(value: unknown): EfficiencyFact {
   const raw = object(value, 'efficiencyFact');
-  keys(raw, ['schemaVersion', 'factId', 'kind', 'identity', 'outcome', 'observedAtUtc', 'startedAtUtc', 'endedAtUtc', 'durationMs', 'coverage', 'overlapGroupId', 'toolCallId', 'testRunId', 'exitCode', 'signal', 'sourceRefs'], 'efficiencyFact');
+  keys(raw, ['schemaVersion', 'factId', 'kind', 'identity', 'outcome', 'observedAtUtc', 'startedAtUtc', 'endedAtUtc', 'durationMs', 'coverage', 'overlapGroupId', 'toolCallId', 'testRunId', 'exitCode', 'signal', 'sourceRefs', 'budgetMs', 'unknownReason'], 'efficiencyFact');
   if (raw.schemaVersion !== USAGE_DIAGNOSTICS_SCHEMA_VERSION) fail('efficiencyFact.schemaVersion', 'unsupported_schema_version');
   const startedAtUtc = nullableDate(raw.startedAtUtc, 'efficiencyFact.startedAtUtc');
   const endedAtUtc = nullableDate(raw.endedAtUtc, 'efficiencyFact.endedAtUtc');
@@ -264,7 +286,32 @@ export function validateEfficiencyFact(value: unknown): EfficiencyFact {
     overlapGroupId: nullableId(raw.overlapGroupId, 'efficiencyFact.overlapGroupId'), toolCallId: nullableId(raw.toolCallId, 'efficiencyFact.toolCallId'), testRunId: nullableId(raw.testRunId, 'efficiencyFact.testRunId'),
     exitCode: nullableCount(raw.exitCode, 'efficiencyFact.exitCode'), signal: raw.signal === null ? null : text(raw.signal, 'efficiencyFact.signal'),
     sourceRefs: boundedList(raw.sourceRefs, 'efficiencyFact.sourceRefs', validateUsageDiagnosticSource),
+    ...(raw.budgetMs === undefined ? {} : { budgetMs: nullableCount(raw.budgetMs, 'efficiencyFact.budgetMs') }),
+    ...(raw.unknownReason === undefined ? {} : { unknownReason: raw.unknownReason === null ? null : text(raw.unknownReason, 'efficiencyFact.unknownReason') }),
   };
+}
+
+export function validateEfficiencyObservation(value: unknown): EfficiencyObservation {
+  const raw = object(value, 'efficiencyObservation');
+  const kind = member(raw.kind, ['reply', 'tool', 'context'] as const, 'efficiencyObservation.kind');
+  const fields = kind === 'reply' ? ['effective'] : kind === 'context' ? ['inputTokens']
+    : ['toolCallId', 'parentToolCallId', 'replyMessageId', 'batch', 'codemode', 'repeatedRead', 'error', 'largeOutput'];
+  keys(raw, ['observationId', 'identity', 'observedAtUtc', 'coverage', 'sourceRefs', 'kind', ...fields], 'efficiencyObservation');
+  const base = { observationId: id(raw.observationId, 'efficiencyObservation.observationId'),
+    identity: validateUsageDiagnosticIdentity(raw.identity), observedAtUtc: date(raw.observedAtUtc, 'efficiencyObservation.observedAtUtc'),
+    coverage: member(raw.coverage, USAGE_COVERAGE, 'efficiencyObservation.coverage'),
+    sourceRefs: boundedList(raw.sourceRefs, 'efficiencyObservation.sourceRefs', validateUsageDiagnosticSource) };
+  const boolean = (field: string): boolean | null => {
+    if (raw[field] !== null && typeof raw[field] !== 'boolean') fail(`efficiencyObservation.${field}`, 'nullable_boolean_required');
+    return raw[field] as boolean | null;
+  };
+  if (kind === 'reply') return { ...base, kind, effective: boolean('effective') };
+  if (kind === 'context') return { ...base, kind, inputTokens: nullableCount(raw.inputTokens, 'efficiencyObservation.inputTokens') };
+  const toolCallId = id(raw.toolCallId, 'efficiencyObservation.toolCallId');
+  const parentToolCallId = nullableId(raw.parentToolCallId, 'efficiencyObservation.parentToolCallId');
+  if (toolCallId === parentToolCallId) fail('efficiencyObservation.parentToolCallId', 'self_parent');
+  return { ...base, kind, toolCallId, parentToolCallId, replyMessageId: nullableId(raw.replyMessageId, 'efficiencyObservation.replyMessageId'),
+    batch: boolean('batch'), codemode: boolean('codemode'), repeatedRead: boolean('repeatedRead'), error: boolean('error'), largeOutput: boolean('largeOutput') };
 }
 
 /** A stable key for de-duplicating an observation without using provider session IDs. */
