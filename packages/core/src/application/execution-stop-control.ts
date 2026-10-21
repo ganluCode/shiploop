@@ -43,6 +43,11 @@ type RuntimeObservation = {
   readonly error: string | null;
 };
 
+type ResourceObservation = {
+  readonly leases: readonly unknown[];
+  readonly error: string | null;
+};
+
 function identityOf(attempt: AttemptRecord): WorkResourceIdentity {
   return {
     projectId: attempt.projectId,
@@ -70,6 +75,8 @@ export function createExecutionStopControl(deps: ExecutionStopControlDeps): Exec
   }
   const now = deps.nowUtcMs ?? Date.now;
 
+  const inFlight = new Map<string, Promise<ExecutionStopOutcome | null>>();
+
   return {
     async stop(input: ExecutionStopRequest): Promise<ExecutionStopOutcome | null> {
       if (input === null || typeof input !== 'object'
@@ -80,7 +87,16 @@ export function createExecutionStopControl(deps: ExecutionStopControlDeps): Exec
       if (operation === undefined || operation.projectId !== input.projectId) return null;
       // Terminal/idempotent operation: never proof-read or replay a stop.
       if (operation.status !== 'stopping') return null;
+      const key = `${input.projectId}:${input.stopOperationId}`;
+      const previous = inFlight.get(key);
+      if (previous !== undefined) return previous;
+      const pending = settle(input, operation);
+      inFlight.set(key, pending);
+      try { return await pending; } finally { if (inFlight.get(key) === pending) inFlight.delete(key); }
+    },
+  };
 
+  async function settle(input: ExecutionStopRequest, operation: NonNullable<ReturnType<AtomicCommandStore['getExecutionStopOperation']>>): Promise<ExecutionStopOutcome> {
       const active = deps.attempts.listActiveAttempts(input.projectId, operation.targetKind, operation.targetId);
       const leased = deps.attempts.listAttemptsWithLeases(input.projectId, operation.targetKind, operation.targetId);
       const byId = new Map(active.map(attempt => [attempt.id, attempt]));
@@ -90,7 +106,10 @@ export function createExecutionStopControl(deps: ExecutionStopControlDeps): Exec
         projectId: input.projectId,
         targetKind: operation.targetKind,
         targetId: operation.targetId,
-      });
+      }).then(evidence => ({ evidence, error: null as string | null }), error => ({
+        evidence: [] as VerificationStopEvidence[],
+        error: error instanceof Error ? error.name : 'verifier_stop_failed',
+      }));
       const runtimeStops = Promise.all(stopping.map(async (attempt): Promise<RuntimeObservation> => {
         try {
           const completion = await deps.stopRuntime(identityOf(attempt));
@@ -99,7 +118,9 @@ export function createExecutionStopControl(deps: ExecutionStopControlDeps): Exec
           return { attempt, completion: null, error: error instanceof Error ? error.name : 'stop_failed' };
         }
       }));
-      const [runtimeObservations, verifierEvidence] = await Promise.all([runtimeStops, verifierStop]);
+      const [runtimeObservations, verifierResult] = await Promise.all([runtimeStops, verifierStop]);
+      const verifierEvidence = verifierResult.evidence;
+      const verifierError = verifierResult.error;
       const checkedAt = now();
       if (!Number.isSafeInteger(checkedAt) || checkedAt < 1) throw new TypeError('Invalid execution stop clock');
 
@@ -110,13 +131,19 @@ export function createExecutionStopControl(deps: ExecutionStopControlDeps): Exec
       let confirmed = true;
 
       for (const observation of runtimeObservations) {
-        const current = safeAttempt(observation.attempt);
+        const currentObservation = safeAttempt(observation.attempt);
+        const current = currentObservation.attempt;
         const identity = identityOf(observation.attempt);
-        const leases = safeLeases(identity);
+        const resource = safeLeases(identity);
+        const leases = resource.leases;
         const completion = observation.completion;
         const verifier = verifierEvidence.filter(item => item.key.attemptId === observation.attempt.id);
         const verifierConfirmed = verifier.length > 0 && verifier.every(item => item.stopConfirmed);
         const verifierUnconfirmed = verifier.some(item => !item.stopConfirmed);
+        const runtimeReady = completion !== null && completion.stopConfirmed === true
+          && completion.persisted === true && completion.error === null
+          && completion.recordingFlushed !== false && resource.error === null
+          && currentObservation.error === null;
         const runtimeConfirmed = completion?.stopConfirmed === true;
         const attemptStillActive = current === null
           ? false
@@ -124,23 +151,29 @@ export function createExecutionStopControl(deps: ExecutionStopControlDeps): Exec
         let attemptConfirmed: boolean;
         let state: ExecutionStopAttemptEvidence['state'];
         const attemptGaps: string[] = [];
-        if (verifierUnconfirmed) {
+        if (verifierError !== null) {
+          attemptConfirmed = false;
+          state = 'unconfirmed';
+          attemptGaps.push('verifier_stop_failed');
+        } else if (verifierUnconfirmed) {
           // A verifier batch may still write; runtime stop alone cannot confirm the Attempt.
           attemptConfirmed = false;
           state = 'unconfirmed';
           attemptGaps.push('verifier_stop_unconfirmed');
-        } else if (completion !== null && runtimeConfirmed) {
+        } else if (runtimeReady) {
           attemptConfirmed = true;
           state = 'stopped';
-        } else if (completion !== null) {
+        } else if (completion !== null && runtimeConfirmed) {
           attemptConfirmed = false;
           state = 'unconfirmed';
-          attemptGaps.push('runtime_stop_unconfirmed');
-        } else if (verifierConfirmed && verifier.length > 0) {
+          attemptGaps.push('runtime_settlement_incomplete');
+          if (completion.recordingFlushed === false) attemptGaps.push('recording_flush_incomplete');
+          if (resource.error !== null) attemptGaps.push('work_resource_identity_unverified');
+        } else if (verifierConfirmed && verifier.length > 0 && resource.error === null) {
           attemptConfirmed = true;
           state = verifier.some(item => item.state === 'stopped') ? 'stopped' : 'not_started';
           for (const item of verifier) attemptGaps.push(...item.gaps);
-        } else if (!attemptStillActive && leases.length === 0) {
+        } else if (!attemptStillActive && leases.length === 0 && currentObservation.error === null) {
           // The Attempt ended and no lease remains: no controlled process is known to be live.
           attemptConfirmed = true;
           state = 'not_started';
@@ -150,6 +183,8 @@ export function createExecutionStopControl(deps: ExecutionStopControlDeps): Exec
           state = 'unconfirmed';
           attemptGaps.push(verifierUnconfirmed ? 'verifier_stop_unconfirmed' : 'stop_not_observed');
           if (observation.error !== null) attemptGaps.push('runtime_stop_failed');
+          if (resource.error !== null) attemptGaps.push('work_resource_identity_unverified');
+          if (currentObservation.error !== null) attemptGaps.push('attempt_state_unverified');
         }
         if (leases.length > 0 && !attemptConfirmed) attemptGaps.push('occupancy_retained');
         const forced = completion?.forced ?? null;
@@ -186,6 +221,10 @@ export function createExecutionStopControl(deps: ExecutionStopControlDeps): Exec
           confirmed = false;
           gaps.push(...evidence.gaps.map(gap => `verifier:${gap}`));
         }
+      }
+      if (verifierError !== null) {
+        confirmed = false;
+        gaps.push(`verifier:${verifierError}`);
       }
       if (verifierEvidence.some(item => !item.stopConfirmed)) confirmed = false;
 
@@ -265,14 +304,15 @@ export function createExecutionStopControl(deps: ExecutionStopControlDeps): Exec
         operationStatus: settled.status,
         interruptedAttemptIds: settled.interrupted,
       };
-    },
-  };
+    }
 
-  function safeAttempt(attempt: AttemptRecord): AttemptRecord | null {
-    try { return deps.attempts.getAttempt(attempt.projectId, attempt.id); } catch { return null; }
+  function safeAttempt(attempt: AttemptRecord): { attempt: AttemptRecord | null; error: string | null } {
+    try { return { attempt: deps.attempts.getAttempt(attempt.projectId, attempt.id), error: null }; }
+    catch (error) { return { attempt: null, error: error instanceof Error ? error.name : 'attempt_read_failed' }; }
   }
-  function safeLeases(identity: WorkResourceIdentity): readonly unknown[] {
-    try { return deps.resources.read(identity).leases; } catch { return []; }
+  function safeLeases(identity: WorkResourceIdentity): ResourceObservation {
+    try { return { leases: deps.resources.read(identity).leases, error: null }; }
+    catch (error) { return { leases: [], error: error instanceof Error ? error.name : 'work_resource_read_failed' }; }
   }
 }
 

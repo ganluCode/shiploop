@@ -13,6 +13,8 @@ export interface ExecutionCompletion {
   readonly persisted: boolean;
   readonly retained: boolean;
   readonly error: string | null;
+  /** F-004：公开 recording/事件尾部是否已完成有界 flush；缺失表示旧装配未提供该事实。 */
+  readonly recordingFlushed?: boolean;
   /** P03-9 / F-003：停止证据关联的实际退出码/信号；未知保持 null。 */
   readonly exitCode?: number | null;
   readonly signal?: string | null;
@@ -144,6 +146,7 @@ export function superviseExecution(input: {
       const result = observations?.[0] ?? await observeWithin(input.result, 1)
         ?? { status: 'rejected' as const, reason: new RuntimeError('process', 'runtime_result_unobserved') };
       const recording = observations?.[1] ?? await observeWithin(input.recording, 1) ?? null;
+      const recordingFlushed = recording?.status === 'fulfilled';
       // The controller's reason augments raw observations, preserving known usage and unknown fields.
       const control: RuntimeControlFacts | undefined = reason === null ? undefined : {
         reason,
@@ -158,6 +161,7 @@ export function superviseExecution(input: {
         stopped: stopped ?? null, ...(control ? { control } : {}) });
       if (receipt.disposition !== 'applied' && receipt.disposition !== 'replayed') {
         return { stopConfirmed: confirmed, persisted: false, retained: false, error: 'stale_execution_identity',
+          recordingFlushed,
           exitCode: observedExit, signal: observedSignal, forced: observedForced };
       }
       if (!receipt.resultSaved) throw new Error('result_not_saved');
@@ -180,10 +184,12 @@ export function superviseExecution(input: {
         retained = true;
       }
       return { stopConfirmed: confirmed, persisted: true, retained, error: null,
+        recordingFlushed: recordingFlushed || persisted,
         exitCode: observedExit, signal: observedSignal, forced: observedForced };
     } catch {
       input.quarantine();
       return { stopConfirmed: confirmed, persisted, retained: false, error: 'execution_finalization_failed',
+        recordingFlushed: false,
         exitCode: null, signal: null, forced: null };
     } finally { finished = true; clearTimeout(timer); }
   })();
