@@ -7,7 +7,7 @@ import { createTempSandbox } from '../../../helpers/temp-sandbox.ts';
 import type { CoreApplication } from '../../../../packages/core/src/adapters/composition.ts';
 import type { RuntimeRecoveryCapabilities } from '../../../../packages/core/src/ports/runtime-recovery.ts';
 
-import type { ExecutionInputRef, RuntimeRecoverySourceReader, RuntimeRecoveryCurrentContext, RuntimeRecoverySourceState, RuntimeRecoverySourceEvidence } from '../../../../packages/core/src/index.ts';
+import type { ExecutionInputRef, RuntimeRecoveryAccessSnapshot, RuntimeRecoverySourceReader, RuntimeRecoveryCurrentContext, RuntimeRecoverySourceState, RuntimeRecoverySourceEvidence } from '../../../../packages/core/src/index.ts';
 import {
   createStaticRuntimeCapabilityCatalog, createStaticRuntimeRecoveryCatalog,
   validateRuntimeRecoveryStrategy, createArtifactPublisher, createArtifactVerifier, computeExecutionPermissionsDigest,
@@ -97,9 +97,12 @@ async function sourceHarness() {
       invocationId: 'invocation-new', identity: { purpose: 'work', runId: 'run-1', taskId: 'task-1', attemptId: 'attempt-new' },
       strategy: { runtime: 'fake', provider: 'provider', model: 'model' },
       recovery: { mode: 'required', kind: 'conversation', source: structuredClone(source) } };
+    const workAccess = { strategy: { runtime: 'fake', provider: 'provider', model: 'model' },
+      authentication: { status: 'ready', digest: 'a'.repeat(64), sourceRef: 'auth-source', kind: 'environment' },
+      resources: { digest: 'b'.repeat(64), entries: [] } } as unknown as RuntimeRecoveryAccessSnapshot;
     const evidence = { schemaVersion: 1 as const, source, archive,
-      inputSnapshot: snapshot, codeDigest: 'b'.repeat(64), permissionsDigest: computeExecutionPermissionsDigest(['read']) } satisfies RuntimeRecoverySourceEvidence;
-    current = { inputSnapshot: snapshot, codeDigest: evidence.codeDigest, permissions: { grants: ['read'] } };
+      inputSnapshot: snapshot, codeDigest: 'b'.repeat(64), permissionsDigest: computeExecutionPermissionsDigest(['read']), workAccess } satisfies RuntimeRecoverySourceEvidence;
+    current = { inputSnapshot: snapshot, codeDigest: evidence.codeDigest, permissions: { grants: ['read'] }, workAccess };
     state = { evidence: await publish('runtime-recovery-evidence', JSON.stringify(evidence)),
       stopped: 'confirmed', stopEvidence: stop };
     return { app, sandbox, reader, request, evidence, archive, snapshot, publish,

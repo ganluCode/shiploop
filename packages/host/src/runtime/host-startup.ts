@@ -34,8 +34,9 @@ import { randomUUID } from 'node:crypto';
 import type { Server } from 'node:http';
 import { homedir } from 'node:os';
 import { createLocalOwnerPrincipal, deriveDefaultDataRoot } from 'shiploop-core';
-import type { RuntimeCapabilityCatalog, WorkToolChannelDeps } from 'shiploop-core';
+import type { RuntimeCapabilityCatalog, RuntimeRecoveryCapabilities, RuntimeRecoverySourceReader, WorkToolChannelDeps } from 'shiploop-core';
 import { openCoreApplication } from 'shiploop-core/assembly';
+import { PI_RUNTIME_RECOVERY_DESCRIPTOR } from './pi-adapter.js';
 import type { CoreApplication, WorkRuntimeFactory, FeatureDeliveryFactory } from 'shiploop-core/assembly';
 import type { FinalizationCompletionPort, FinalizationExecutionPort } from 'shiploop-core';
 import {
@@ -95,6 +96,8 @@ const ALLOWED_OPTION_KEYS = [
   'dataRoot',
   'userHomeDir',
   'capabilityCatalog',
+  'runtimeRecoveryDescriptors',
+  'runtimeRecoverySources',
   'platform',
   'env',
   'nativeAddonPath',
@@ -122,6 +125,10 @@ export interface HostStartOptions {
   readonly userHomeDir?: string;
   /** 可信装配注入的只读能力目录（空目录 = 不装配任何 runtime，fail-closed）。 */
   readonly capabilityCatalog: RuntimeCapabilityCatalog;
+  /** 可信恢复能力证据；仅静态装配，不能由 CLI、环境或请求提供。 */
+  readonly runtimeRecoveryDescriptors?: readonly RuntimeRecoveryCapabilities[];
+  /** Core 恢复来源权威；缺省时恢复来源请求保持拒绝。 */
+  readonly runtimeRecoverySources?: RuntimeRecoverySourceReader;
   /** 平台注入口（默认 process.platform）；仅 'darwin' 受支持。 */
   readonly platform?: string;
   /** 环境检查注入口（默认 process.env）；只读，不修改。 */
@@ -214,6 +221,16 @@ function validateStartOptions(options: HostStartOptions): void {
     typeof catalog.resolve !== 'function'
   ) {
     throw invalidInput('invalid_capability_catalog', { field: 'capabilityCatalog' });
+  }
+  if (options.runtimeRecoveryDescriptors !== undefined && !Array.isArray(options.runtimeRecoveryDescriptors)) {
+    throw invalidInput('invalid_recovery_descriptors', { field: 'runtimeRecoveryDescriptors' });
+  }
+  if (options.runtimeRecoverySources !== undefined && (
+    options.runtimeRecoverySources === null || typeof options.runtimeRecoverySources !== 'object'
+    || typeof options.runtimeRecoverySources.readCurrent !== 'function'
+    || typeof options.runtimeRecoverySources.readSource !== 'function'
+  )) {
+    throw invalidInput('trusted_recovery_source_required', { field: 'runtimeRecoverySources' });
   }
   if (options.featureDeliveryFactory !== undefined && typeof options.featureDeliveryFactory !== 'function') {
     throw invalidInput('trusted_factory_required', { field: 'featureDeliveryFactory' });
@@ -340,11 +357,17 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
     (lockOptions as { ownerProbe?: WriterLockOptions['ownerProbe'] }).ownerProbe =
       options.ownerProbe;
   }
+  const recoveryDescriptors = options.runtimeRecoveryDescriptors ?? (
+    options.capabilityCatalog.resolve('pi') === undefined ? [] : [PI_RUNTIME_RECOVERY_DESCRIPTOR]
+  );
   const locked = await openLockedWriter<CoreApplication>(lockOptions, () =>
     openCoreApplication({
       dataRoot: canonicalRoot,
       workStartupRecoveryRequired: true,
       capabilityCatalog: options.capabilityCatalog,
+      runtimeRecoveryDescriptors: recoveryDescriptors,
+      ...(options.runtimeRecoverySources === undefined ? {}
+        : { runtimeRecoverySources: options.runtimeRecoverySources }),
       workRuntimeFactory: options.workRuntimeFactory,
       featureDeliveryFactory: options.featureDeliveryFactory,
       ...(options.finalizationExecution === undefined

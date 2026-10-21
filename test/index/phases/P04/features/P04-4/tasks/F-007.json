@@ -1,0 +1,23 @@
+{
+  "schema_version": 2,
+  "task_id": "F-007",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        { "file": "test/modules/runtime/p04-4-f007-composition-root.test.ts", "all": true },
+        { "file": "test/modules/runtime/p04-4-f007-handoff.test.ts", "all": true },
+        { "file": "test/modules/runtime/p04-4-pi-recovery-boundary.test.ts", "all": true },
+        { "file": "test/modules/runtime/recovery/p03-3a-runtime-recovery-assembly.test.ts", "all": true },
+        { "file": "test/modules/runtime/recovery/docs-p03-3a-handoff.test.ts", "all": true },
+        { "file": "test/modules/runtime/p03-6-runtime-host-wiring.test.ts", "all": true },
+        { "file": "test/modules/runtime/p03-6-vertical-integration.test.ts", "all": true },
+        { "file": "test/modules/recovery/p03-9-f013-control-recovery-query.test.ts", "all": true },
+        { "file": "test/modules/runtime/p03-10-runtime-recovery-negatives.test.ts", "all": true },
+        { "file": "test/modules/runtime/p04-4-pi-managed-session.test.ts", "all": true },
+        { "file": "test/modules/recovery/p03-9-f007-recovery-continuation.test.ts", "all": true },
+        { "file": "test/modules/recovery/p03-9-f008-workflow-resume.test.ts", "all": true }
+      ]
+    }
+  ]
+}

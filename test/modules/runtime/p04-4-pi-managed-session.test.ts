@@ -212,8 +212,9 @@ describe('F-006 adapter recovery fault matrix', () => {
     const adapter = f.registration().adapter;
     const first = await adapter.start({ ...f.req, recovery: { mode: 'auto', kind: 'conversation' } });
     await first.result;
+    if (f.req.identity.purpose !== 'work') throw new Error('work fixture identity missing');
     const second = await adapter.start({ ...f.req, sessionId: 'session-task-2', invocationId: 'invocation-task-2',
-      identity: { ...f.req.identity, taskId: 'task-2', attemptId: 'attempt-task-2' },
+      identity: { purpose: 'work', runId: f.req.identity.runId, taskId: 'task-2', attemptId: 'attempt-task-2' },
       recovery: { mode: 'auto', kind: 'conversation' } });
     await second.result;
     expect(f.acquire).not.toHaveBeenCalled();
