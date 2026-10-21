@@ -35,6 +35,8 @@ import type { RepositoryInspectionErrorKind } from './repository-inspector.js';
 import { validateSettingsPayload } from './settings-schema.js';
 import type { SettingsPayload } from './settings-schema.js';
 import { validateCreateProjectInput, validateUpdateProjectInput } from './state-store.js';
+import { validateExecutionStopManualPayload } from './execution-stop-manual.js';
+import type { ValidatedExecutionStopManualPayload } from './execution-stop-manual.js';
 import { validateStableId } from './validation.js';
 
 /* ------------------------------------------------------------------ *
@@ -124,6 +126,8 @@ export const LOCAL_OWNER_CAPABILITIES: ReadonlySet<AppCapability> = Object.freez
 
 export const COMMAND_OPERATIONS = [
   'execution.attempt.cancel',
+  // P04-7 / F-006：受限人工处置；不提供 force/kill，仅记录审计事实。
+  'execution.stop.manual',
   // P03-9 / F-001：Run/Batch 的 Task 边界暂停（project scope + execution.start；
   // 更新类信封 expectedRevision 为目标 Run/Batch 自身 revision；payload 只含
   // 目标身份 runId 或 batchId）。
@@ -341,6 +345,8 @@ export const COMMAND_OPERATION_SPECS: Readonly<Record<AppOperation, CommandOpera
       capability: 'execution.start',
     },
     'execution.attempt.cancel': { scopeKind: 'project', mutation: 'create', capability: 'execution.start' },
+    // P04-7 / F-006：目标 operation revision 在 Core 写事务内 CAS。
+    'execution.stop.manual': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
     // P03-9 / F-001：暂停是控制更新，复用既有 execution.start 授权面。
     'execution.pause': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
     // P03-9 / F-002：取消同属控制更新，复用 execution.start 授权面；停止核验
@@ -901,6 +907,12 @@ export type ValidatedCommandEnvelope =
       readonly scope: { readonly kind: 'project'; readonly projectId: string };
       readonly expectedRevision: null;
       readonly payload: { readonly attemptId: string };
+    })
+  | (EnvelopeCommon & {
+      readonly operation: 'execution.stop.manual';
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: number;
+      readonly payload: ValidatedExecutionStopManualPayload;
     })
   | (EnvelopeCommon & {
       readonly operation: 'execution.pause';
@@ -1972,6 +1984,16 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
       scope,
       expectedRevision: null,
       payload: validateExecutionRetryFinalPayload(operation, object.payload),
+    };
+  }
+  if (operation === 'execution.stop.manual') {
+    if (scope.kind !== 'project') fail(operation, 'invalid_input', 'scope.kind', 'scope 种类与操作不匹配');
+    return {
+      ...base,
+      operation,
+      scope,
+      expectedRevision: expectedRevision as number,
+      payload: validateExecutionStopManualPayload(object.payload),
     };
   }
   if (operation === 'execution.pause' || operation === 'execution.cancel' || operation === 'execution.resume') {

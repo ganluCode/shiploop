@@ -62,6 +62,7 @@ import type {
 import { validateMergedProjectSettingsWrite } from './configuration-service.js';
 import { submitExecutionPause } from './execution-pause.js';
 import { submitExecutionCancel } from './execution-cancel.js';
+import { submitExecutionStopManual } from './execution-stop-manual.js';
 import { signalExecutionResumeAfterCommit } from './execution-resume.js';
 import type { ExecutionResumePort } from '../ports/execution-resume.js';
 import { FINALIZATION_RETRY_OPERATION } from '../ports/finalization-retry.js';
@@ -697,6 +698,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           envelope.operation !== 'baseline.preview' &&
           envelope.operation !== 'baseline.run' &&
           envelope.operation !== 'execution.attempt.cancel' &&
+          envelope.operation !== 'execution.stop.manual' &&
           envelope.operation !== 'execution.pause' &&
           envelope.operation !== 'execution.cancel' &&
           envelope.operation !== 'execution.resume' &&
@@ -899,6 +901,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
 
         let cancelIdentity: import('../ports/work-resources.js').WorkResourceIdentity | undefined;
         let stopRequest: import('../ports/execution-stop.js').ExecutionStopRequest | undefined;
+        let manualProbeRequest: import('../ports/execution-stop.js').ExecutionStopRequest | undefined;
         const receipt = store.transact(operation, transaction => {
           authorizeCommand(principal, envelope);
           const original = replay(
@@ -971,6 +974,32 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
               transaction,
               finalizationRetryPrepared,
             );
+          }
+          if (envelope.operation === 'execution.stop.manual') {
+            const receipt = submitExecutionStopManual(
+              {
+                principalId: principal.principalId,
+                commandId: envelope.commandId,
+                operation: envelope.operation,
+                scope: envelope.scope,
+                requestDigest: digest,
+                issuedAt: envelope.issuedAt,
+                completedAt: new Date(now).toISOString(),
+              },
+              envelope,
+              transaction,
+            );
+            if (envelope.payload.action === 'retry_probe' && receipt.status === 'completed' &&
+                'result' in receipt && executionStopControl !== undefined) {
+              const result = receipt.result as Record<string, unknown>;
+              if (typeof result.operationId === 'string') {
+                manualProbeRequest = {
+                  projectId: envelope.scope.projectId,
+                  stopOperationId: result.operationId,
+                };
+              }
+            }
+            return receipt;
           }
           if (envelope.operation === 'execution.cancel') {
             // P03-9 / F-002：取消意图/持久停止 operation/状态/事件/回执同一短事务。
@@ -1307,6 +1336,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
         // Persist the authorization/receipt before touching the Runtime. Replays never
         // resubmit cancellation, even if the HTTP response was lost.
         if (cancelIdentity) void options.executionCancel!.cancel(cancelIdentity).catch(() => undefined);
+        if (manualProbeRequest) void executionStopControl!.stop(manualProbeRequest).catch(() => undefined);
         // P03-9 / F-003：停止控制在回执提交后运行；失败不回滚已持久化的取消意图。
         if (stopRequest) void executionStopControl!.stop(stopRequest).catch(() => undefined);
         return receipt;

@@ -101,6 +101,11 @@ import type {
   ExecutionBudgetTaskRow,
   ExecutionBudgetView,
 } from '../../ports/execution-budget-query.js';
+import type {
+  ExecutionStopManualActionInput,
+  ExecutionStopManualActionResult,
+} from '../../ports/execution-stop-manual.js';
+
 import { TASK_STATUSES } from '../../ports/plan-store.js';
 import type { TaskStatus } from '../../ports/plan-store.js';
 import { assertPrincipalVisibility } from '../../ports/queries.js';
@@ -333,6 +338,8 @@ export interface SqliteExecutionAccess {
   ): FinalizationRetryBatchOpenResult;
   /** P03-9 / F-002：Run/Batch 取消意图与持久停止 operation（同一短写事务）。 */
   requestExecutionCancelInTransaction(input: ExecutionCancelInput): ExecutionCancelResult;
+  /** P04-7 / F-006：人工处置审计与 operation revision CAS。 */
+  recordExecutionStopManualActionInTransaction(input: ExecutionStopManualActionInput): ExecutionStopManualActionResult;
   /** P03-9 / F-003：停止核验结果写入同一 operation，必要时保守隔离活动 Attempt。 */
   settleExecutionStopInTransaction(input: ExecutionStopSettlementInput): ExecutionStopOperationRecord;
   /** P03-9 / F-003：停止未确认时把仍活动的 Attempt 标记 interrupted（不释放占用）。 */
@@ -2164,6 +2171,94 @@ export function createSqliteExecutionAccess(
    * - 只有 stopped 且目标已无活动 Attempt/租约时才把 Run/Batch 转为 cancelled；
    * - uncertain 绝不被当作无活动，目标保持 cancelling，由调用方保留占用。
    */
+  function recordExecutionStopManualActionInTransaction(
+    input: ExecutionStopManualActionInput,
+  ): ExecutionStopManualActionResult {
+    const operation = 'ExecutionStore.recordExecutionStopManualAction';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const raw = requirePlainObject(input, { operation }, 'input');
+    rejectUnknownKeys(raw, [
+      'projectId', 'stopOperationId', 'commandId', 'actorId', 'action', 'evidenceRef', 'expectedRevision',
+    ], { operation }, 'input');
+    const projectId = validateStableId(raw.projectId, { operation }, 'projectId');
+    const stopOperationId = validateStableId(raw.stopOperationId, { operation }, 'stopOperationId');
+    const commandId = validateStableId(raw.commandId, { operation }, 'commandId');
+    const actorId = validateStableId(raw.actorId, { operation }, 'actorId');
+    const action = raw.action;
+    const actions = ['acknowledge', 'quarantine', 'retry_probe', 'release_confirmed', 'mark_unresolved'];
+    if (typeof action !== 'string' || !actions.includes(action)) {
+      throw new StorageError('validation', operation, '人工处置动作无效');
+    }
+    const evidenceRef = raw.evidenceRef === null ? null : validateStableId(raw.evidenceRef, { operation }, 'evidenceRef');
+    if (!Number.isSafeInteger(raw.expectedRevision) || (raw.expectedRevision as number) < 1) {
+      throw new StorageError('validation', operation, 'expectedRevision 必须是正整数');
+    }
+    const expectedRevision = raw.expectedRevision as number;
+    const replay = session.database.prepare<[string, string], {
+      readonly audit_ref: string; readonly operation_id: string; readonly action: string;
+      readonly revision: number; readonly stop_confirmed: number | null; readonly status: string;
+    }>(`SELECT json_extract(payload, '$.auditRef') AS audit_ref,
+               aggregate_id AS operation_id,
+               json_extract(payload, '$.action') AS action,
+               aggregate_revision AS revision,
+               json_extract(payload, '$.stopConfirmed') AS stop_confirmed,
+               json_extract(payload, '$.status') AS status
+        FROM state_events
+        WHERE project_id = ? AND event_type = 'execution.stop.manual' AND json_extract(payload, '$.commandId') = ?`)
+      .get(projectId, commandId);
+    if (replay !== undefined) {
+      return {
+        disposition: 'replayed', operationId: replay.operation_id,
+        action: replay.action as ExecutionStopManualActionInput['action'], auditRef: replay.audit_ref,
+        revision: replay.revision, stopConfirmed: replay.stop_confirmed === null ? null : replay.stop_confirmed === 1,
+        status: replay.status as ExecutionStopManualActionResult['status'],
+        releaseEligible: replay.status === 'stopped' && replay.stop_confirmed === 1,
+      };
+    }
+    const current = readStopOperationById(projectId, stopOperationId);
+    if (current === undefined) throw new StorageError('not_found', operation, '停止 operation 不存在');
+    if (current.revision !== expectedRevision) {
+      throw new StorageError('conflict', operation, '停止 operation revision 已变化', {
+        details: { reason: 'stale_stop_operation', actualRevision: current.revision },
+      });
+    }
+    const releaseEligible = current.status === 'stopped' && current.stopConfirmed === true;
+    if (action === 'release_confirmed' && !releaseEligible) {
+      throw new StorageError('conflict', operation, '停止证据尚未确认，不能释放资源', {
+        details: { reason: 'stop_not_confirmed' },
+      });
+    }
+    const timestamp = nowUtcMs();
+    const auditRef = randomUUID();
+    const changed = session.database.prepare(`UPDATE execution_stop_operations
+      SET revision = revision + 1, updated_at = ?
+      WHERE project_id = ? AND id = ? AND revision = ?`)
+      .run(timestamp, projectId, stopOperationId, expectedRevision);
+    if (changed.changes !== 1) {
+      throw new StorageError('conflict', operation, '停止 operation CAS 失败', {
+        details: { reason: 'stale_stop_operation' },
+      });
+    }
+    const next = readStopOperationById(projectId, stopOperationId);
+    if (next === undefined) throw new StorageError('corrupt', operation, '停止 operation 消失');
+    const sequence = (session.database.prepare(
+      'SELECT COALESCE(MAX(sequence), 0) + 1 AS next_sequence FROM state_events',
+    ).get() as { readonly next_sequence: number } | undefined)?.next_sequence ?? 1;
+    session.database.prepare(`INSERT INTO state_events
+      (id, created_at, updated_at, project_id, sequence, event_type, aggregate_type,
+       aggregate_id, aggregate_revision, payload, occurred_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(randomUUID(), timestamp, timestamp, projectId, sequence, 'execution.stop.manual',
+        'execution_stop_operation', stopOperationId, next.revision,
+        JSON.stringify({ auditRef, commandId, actorId, action, evidenceRef,
+          expectedRevision, revision: next.revision, stopConfirmed: next.stopConfirmed, status: next.status }), timestamp);
+    return {
+      disposition: 'accepted', operationId: stopOperationId, action: action as ExecutionStopManualActionInput['action'],
+      auditRef, revision: next.revision, stopConfirmed: next.stopConfirmed, status: next.status, releaseEligible,
+    };
+  }
+
   function settleExecutionStopInTransaction(input: ExecutionStopSettlementInput): ExecutionStopOperationRecord {
     const operation = 'ExecutionStore.settleExecutionStop';
     assertOpen(operation);
@@ -2972,6 +3067,7 @@ export function createSqliteExecutionAccess(
     resumeExecutionInTransaction,
     reopenExecutionBatchForFinalizationRetryInTransaction,
     requestExecutionCancelInTransaction,
+    recordExecutionStopManualActionInTransaction,
     settleExecutionStopInTransaction,
     interruptAttemptForStopInTransaction,
     getExecutionStopOperationInTransaction,

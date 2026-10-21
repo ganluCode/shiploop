@@ -456,6 +456,15 @@ export interface ControlExecutionInput {
   readonly commandId?: string;
 }
 
+export interface ManualStopExecutionInput {
+  readonly projectId: string;
+  readonly stopOperationId: string;
+  readonly action: 'acknowledge' | 'quarantine' | 'retry_probe' | 'release_confirmed' | 'mark_unresolved';
+  readonly evidenceRef: string | null;
+  readonly expectedRevision: number;
+  readonly commandId?: string;
+}
+
 /**
  * execution.retryFinal 输入：只指定历史终态 Run 身份、同 Feature 与其 workKey；
  * 预算/新 Run 身份/scope/最终状态全部由服务端根据持久证据计算，不能经请求携带。
@@ -577,6 +586,8 @@ export interface HostClientApplication {
   pauseExecution(input: ControlExecutionInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
   /** execution.cancel：Run/Batch 取消意图（活动执行先进入 cancelling 并登记停止检查）。 */
   cancelExecution(input: ControlExecutionInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  /** execution.stop.manual：受限停止处置；动作只记录事实/审计，retry_probe 才触发既有核验。 */
+  manualStopExecution(input: ManualStopExecutionInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
   /** execution.resume：显式工作流 resume（重新授权后解除暂停；不重置预算/不启动 Runtime）。 */
   resumeExecution(input: ControlExecutionInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
   /** execution.retryFinal：finalization-only 新 Run（历史 Run 保持终态，受限收尾 scope）。 */
@@ -3188,6 +3199,29 @@ export function createHostClientApplication(context: AppClientContext): HostClie
         },
         options,
       );
+    },
+
+    async manualStopExecution(input: ManualStopExecutionInput, options?: SubmitCommandOptions): Promise<CommandReceipt> {
+      const object = rejectUnknownInputKeys('commands.submit', input, [
+        'projectId', 'stopOperationId', 'action', 'evidenceRef', 'expectedRevision', 'commandId',
+      ]);
+      const projectId = requireProjectId('commands.submit', object.projectId as string);
+      const stopOperationId = requireStableIdInput('commands.submit', object.stopOperationId, 'stopOperationId');
+      const action = object.action;
+      if (action !== 'acknowledge' && action !== 'quarantine' && action !== 'retry_probe' &&
+          action !== 'release_confirmed' && action !== 'mark_unresolved') {
+        throw invalidInput('commands.submit', 'invalid_manual_action', 'action');
+      }
+      if (object.evidenceRef !== null && typeof object.evidenceRef !== 'string') {
+        throw invalidInput('commands.submit', 'invalid_evidence_ref', 'evidenceRef');
+      }
+      return submitCommand({
+        ...optionalCommandIdInput('commands.submit', object.commandId),
+        operation: 'execution.stop.manual',
+        scope: { kind: 'project', projectId },
+        expectedRevision: object.expectedRevision as number,
+        payload: { stopOperationId, action, evidenceRef: object.evidenceRef as string | null },
+      }, options);
     },
 
     async resumeExecution(input: ControlExecutionInput, options?: SubmitCommandOptions): Promise<CommandReceipt> {

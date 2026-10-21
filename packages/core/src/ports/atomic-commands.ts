@@ -296,6 +296,10 @@ export interface CommandTransaction {
    * P03-9 / F-003：停止核验结果写入同一 operation（stopping → stopped/uncertain）；
    * stopped 且无活动 Attempt/租约时才把目标收尾为 cancelled。
    */
+  /** P04-7 / F-006：人工处置只做 operation revision CAS 与审计写入。 */
+  recordExecutionStopManualAction(
+    input: import('./execution-stop-manual.js').ExecutionStopManualActionInput,
+  ): import('./execution-stop-manual.js').ExecutionStopManualActionResult;
   settleExecutionStop(
     input: import('./execution-store.js').ExecutionStopSettlementInput,
   ): import('./execution-store.js').ExecutionStopOperationRecord;
