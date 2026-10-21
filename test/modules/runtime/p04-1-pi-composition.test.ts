@@ -211,9 +211,10 @@ it.each(['complete', 'no-usage', 'cancel'] as const)('[case:host-pi-%s] Host exp
     expect(detail.resultEvidence?.result?.terminal).toBe(mode === 'cancel' ? 'cancelled' : 'completed');
     expect(detail.resultEvidence?.stop.evidence?.confirmed).toBe(true);
     if (mode !== 'cancel') {
-      expect(detail.session?.recordingGaps).toEqual(mode === 'complete' ? ['recording_required', 'usage_scope_unknown'] : []);
+      expect(detail.session?.recordingGaps).toEqual(mode === 'complete'
+        ? ['recording_required', 'usage_scope_unknown', 'recording_failed:recording_scope_incomplete'] : []);
       expect(detail.resultEvidence?.recording).toMatchObject({ complete: mode === 'no-usage',
-        gaps: mode === 'complete' ? ['usage_scope_unknown'] : [] });
+        gaps: mode === 'complete' ? ['usage_scope_unknown', 'recording_failed:recording_scope_incomplete'] : [] });
       expect(detail.resultEvidence?.failure).toEqual(mode === 'complete' ? { kind: 'protocol', reason: 'recording_failed' } : null);
       const eventsRef = detail.evidence.find(ref => ref.kind === 'work-evidence-events')!;
       const events = await client.readWorkSessionEvidence(fixture.projectId, attemptId, eventsRef.artifactId);
@@ -225,12 +226,13 @@ it.each(['complete', 'no-usage', 'cancel'] as const)('[case:host-pi-%s] Host exp
         expect(detail.resultEvidence?.result?.usage).toMatchObject({ basis: 'reported', inputTokens: 5, outputTokens: 2 });
         const manifestRef = detail.evidence.find(ref => ref.kind === 'work-evidence-manifest')!;
         const manifest = await client.readWorkSessionEvidence(fixture.projectId, attemptId, manifestRef.artifactId);
-        expect(JSON.parse(Buffer.from(manifest.content).toString())).toMatchObject({ coverage: 'partial',
+        expect(JSON.parse(Buffer.from(manifest.content).toString())).toMatchObject({ coverage: 'failed',
           usage: { observations: { totals: { inputTokens: null, outputTokens: null, costUsdMicros: null, complete: false } } } });
       }
     } else {
       // Core intentionally aborts collection when cancellation is requested.
-      expect(detail.session?.recordingGaps).toEqual(['recording_required', 'recording_failed:aborted']);
+      expect(detail.session?.recordingGaps).toEqual(expect.arrayContaining(['recording_required', 'recording_failed:aborted']));
+      expect(detail.session?.recordingGaps).not.toContain('recording_in_progress');
       expect(detail.resultEvidence?.recording.complete).toBe(false);
     }
     const session = (await client.listWorkSessions(fixture.projectId, { runId: fixture.runId })).records;

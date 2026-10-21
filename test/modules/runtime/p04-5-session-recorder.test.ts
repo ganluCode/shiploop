@@ -173,6 +173,36 @@ it('[case:required-sequence-gap] stops on an unfilled sequence gap while preserv
   } finally { f.close(); }
 });
 
+it('[case:required-scope-diagnostic] distinguishes incomplete usage scope from a failed watermark write', async () => {
+  const f = await fixture();
+  try {
+    const usage = { basis: 'reported', accounting: 'unknown', inputTokens: 5, outputTokens: 2, costUsdMicros: null };
+    const handle = f.handle([f.event(1, 'usage', { usage })]);
+    await expect(f.recorder.record({ request: f.request, handle, eventIdentityPrefix: 'evt.test.' }))
+      .rejects.toMatchObject({ reason: 'recording_scope_incomplete', safeStopRequired: true });
+    const manifest = f.store.getLatestManifest(f.projectId, f.request.sessionId)!;
+    expect(manifest).toMatchObject({ finalized: true, coverage: 'failed', watermark: 1 });
+    expect(manifest.missingReasons).toContain('usage_scope_unknown');
+    expect(manifest.missingReasons).not.toContain('recording_failed:watermark_progress_failed');
+  } finally { f.close(); }
+});
+
+it('[case:cancel-finalizes-index] closes cancelled recording metadata without publishing a terminal body', async () => {
+  const f = await fixture();
+  try {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(f.recorder.record({ request: f.request, handle: f.handle([]),
+      eventIdentityPrefix: 'evt.test.', signal: controller.signal }))
+      .rejects.toMatchObject({ reason: 'aborted', safeStopRequired: false, manifestArtifactId: null });
+    const manifest = f.store.getLatestManifest(f.projectId, f.request.sessionId)!;
+    expect(manifest).toMatchObject({ finalized: true, coverage: 'failed', manifestRef: null });
+    expect(manifest.missingReasons).toContain('recording_failed:aborted');
+    expect(manifest.missingReasons).not.toContain('recording_in_progress');
+    expect(f.query("SELECT COUNT(*) AS n FROM artifacts WHERE kind = 'work-evidence-manifest'" )).toEqual({ n: 0 });
+  } finally { f.close(); }
+});
+
 it('[case:stop-observation-independent] keeps a completed result separate from an unconfirmed stop', async () => {
   const f = await fixture();
   try {

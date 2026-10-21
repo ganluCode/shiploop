@@ -120,6 +120,8 @@ export type WorkEvidenceRecordingFailureReason =
   | 'manifest_publish_failed'
   /** Session 水位/缺口推进失败（CAS 冲突等）。 */
   | 'watermark_progress_failed'
+  /** 已保存记录存在必需范围缺口，不是水位写入故障。 */
+  | 'recording_scope_incomplete'
   /** 接收事件总数超过 maxTotalEvents（受控停止）。 */
   | 'total_event_limit_exceeded'
   /** 持久化总字节超过 maxTotalBytes（受控停止）。 */
@@ -972,7 +974,7 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
       };
 
       if (projection !== null && manifest.coverage !== 'complete' && mode === 'required') {
-        return await failRecording(new RecordingFailure('watermark_progress_failed', 'required 记录范围不完整'), manifest);
+        return await failRecording(new RecordingFailure('recording_scope_incomplete', 'required 记录范围不完整'), manifest);
       }
       let manifestArtifactId: string;
       try {
@@ -1083,6 +1085,10 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
         /* 尽力发布诚实清单（coverage='failed'），不生成虚假 ready/complete。 */
         let failedManifestId: string | null = null;
         const failureManifest = buildFailedManifest(manifestDraft);
+        if (aborted && projection !== null) {
+          // Close only index metadata after abort; do not start new body writes.
+          try { await advanceWatermark(failureManifest); } catch { /* preserve the last durable index */ }
+        }
         if (!aborted) {
           try {
             const draft = failureManifest;
