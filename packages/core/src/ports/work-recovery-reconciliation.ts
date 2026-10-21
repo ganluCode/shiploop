@@ -70,6 +70,19 @@ export interface WorkRecoveryNativeArchiveFacts {
   readonly opened: false;
 }
 
+export interface WorkRecoveryRuntimeFacts {
+  /** Durable launch authorization is the Attempt invocation receipt. */
+  readonly launchReceipt: 'present' | 'missing';
+  /** A stopped Session is the durable stop receipt; started/ended remain occupied or incomplete. */
+  readonly stopReceipt: 'confirmed' | 'missing' | 'not_applicable';
+  readonly sessionId: string | null;
+  readonly sessionStatus: string | null;
+  readonly providerSessionId: string | null;
+  readonly nativeSessionOccupied: boolean;
+  readonly processIdentity: 'confirmed' | 'missing' | 'not_applicable';
+  readonly lastActivityAtUtcMs: number | null;
+}
+
 export type WorkRecoveryGitOperationOutcome = 'matched' | 'not_executed' | 'unknown';
 
 export interface WorkRecoveryGitOperationFacts {
@@ -97,11 +110,13 @@ export interface WorkRecoveryReconciliationEvidence {
   readonly startupGaps: readonly string[];
   readonly workspace: WorkRecoveryReconciliationWorkspaceFacts | null;
   readonly recording: WorkRecoveryReconciliationRecordingFacts;
+  readonly runtime: WorkRecoveryRuntimeFacts;
   readonly native: WorkRecoveryNativeArchiveFacts;
   readonly gitOperations: readonly WorkRecoveryGitOperationFacts[];
-  /** Runtime exit 0 or final text never becomes Task acceptance through recovery. */
   readonly taskPassed: false;
   readonly newAttemptCreated: false;
+  /** Manual operator actions are durable with the diagnosis when recovery is unsafe. */
+  readonly manualNextSteps: readonly string[];
   readonly observedAtUtcMs: number;
 }
 

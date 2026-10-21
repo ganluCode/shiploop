@@ -174,8 +174,30 @@ export function createWorkRecoveryReconciler(options: WorkRecoveryReconcilerOpti
       if (snapshot.pendingWorkspaceOperations.length > 0) addGap(gaps, 'unfinished_workspace_operation');
 
       const recordingGaps = [...(snapshot.session?.recordingGaps ?? [])];
-      if (snapshot.session?.status === 'started' && snapshot.session.recordingWatermark === null) {
-        addGap(gaps, 'recording_watermark_missing');
+      const session = snapshot.session;
+      const launched = snapshot.resources.invocationId !== null;
+      const processIdentity = snapshot.resources.processIdentity !== null
+        ? 'confirmed' as const : neverStarted ? 'not_applicable' as const : 'missing' as const;
+      if (!neverStarted && !launched) addGap(gaps, 'launch_receipt_missing');
+      if (!neverStarted && snapshot.resources.processIdentity === null) addGap(gaps, 'process_identity_missing');
+      if (launched && (session === null || session.status === 'reserved')) addGap(gaps, 'session_start_receipt_missing');
+      if (session !== null) {
+        if (session.projectId !== attempt.projectId || session.attemptId !== attempt.id) {
+          addGap(gaps, 'session_identity_mismatch');
+        }
+        if (neverStarted && session.status !== 'reserved') addGap(gaps, 'session_attempt_stage_mismatch');
+        if (session.status === 'started') addGap(gaps, 'native_session_occupancy');
+        if (session.status === 'started' || session.status === 'ended') addGap(gaps, 'session_stop_receipt_missing');
+        if (session.status !== 'reserved' && session.recordingWatermark === null) {
+          addGap(gaps, 'recording_watermark_missing');
+        }
+        if (session.startedAtUtcMs !== null && session.lastActivityAtUtcMs < session.startedAtUtcMs) {
+          addGap(gaps, 'last_activity_before_start');
+        }
+        if (session.lastActivityAtUtcMs > now()) addGap(gaps, 'last_activity_in_future');
+        if (session.stoppedAtUtcMs !== null && session.lastActivityAtUtcMs > session.stoppedAtUtcMs) {
+          addGap(gaps, 'last_activity_after_stop');
+        }
       }
       if (recordingGaps.length > 0) addGap(gaps, 'recording_gaps_present');
 
@@ -218,6 +240,18 @@ export function createWorkRecoveryReconciler(options: WorkRecoveryReconcilerOpti
       }
 
       const status = gaps.length === 0 ? 'reconciled' : 'quarantined';
+      const runtime = {
+        launchReceipt: launched ? 'present' as const : 'missing' as const,
+        stopReceipt: neverStarted ? 'not_applicable' as const
+          : session?.status === 'stopped' && source.stopConfirmed ? 'confirmed' as const : 'missing' as const,
+        sessionId: session?.id ?? null,
+        sessionStatus: session?.status ?? null,
+        providerSessionId: session?.providerSessionId ?? null,
+        nativeSessionOccupied: session?.status === 'started',
+        processIdentity,
+        lastActivityAtUtcMs: session?.lastActivityAtUtcMs ?? null,
+      };
+
       const native = {
         sessionStorageKind: snapshot.session?.nativeRef?.storageKind ?? null,
         sessionFormatVersion: snapshot.session?.nativeRef?.formatVersion ?? null,
@@ -269,10 +303,15 @@ export function createWorkRecoveryReconciler(options: WorkRecoveryReconcilerOpti
           gaps: recordingGaps.slice(0, GAP_MAX),
           artifactsChecked,
         },
+        runtime,
         native,
         gitOperations,
         taskPassed: false,
         newAttemptCreated: false,
+        manualNextSteps: status === 'quarantined' ? [
+          '保留并人工核对 Attempt、进程身份、原生 Session 和录制水印；确认无残留写入后再释放占用。',
+          '确认恢复证据完整前不得创建新 Attempt、复用工作区或继续原生会话。',
+        ] : [],
         observedAtUtcMs: now(),
       };
       const evidenceRef = await options.publishEvidence(source.projectId, evidence);

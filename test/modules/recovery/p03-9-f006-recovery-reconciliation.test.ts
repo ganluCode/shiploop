@@ -58,6 +58,20 @@ function markRunning(f: BindingFixture, claim: TaskClaimReceipt) {
   return identity;
 }
 
+function seedStoppedSession(f: BindingFixture, claim: TaskClaimReceipt, options: {
+  readonly providerSessionId?: string | null;
+  readonly nativeRef?: string | null;
+} = {}) {
+  const a = claim.attempt;
+  f.session.database.prepare(`INSERT INTO sessions (id, created_at, updated_at, revision, project_id, attempt_id,
+    parent_session_id, kind, title, purpose, runtime, adapter_version, provider_session_id, status,
+    execution_stage, input_ref, result_ref, last_activity_at, started_at, ended_at, stopped_at, native_ref,
+    recording_watermark, recording_gaps)
+    VALUES (?, ?, ?, 1, ?, ?, NULL, 'work', NULL, 'work', 'fake', '1', ?, 'stopped',
+      'runtime', ?, NULL, ?, ?, ?, ?, ?, 5, NULL)`)
+    .run(`session-${a.id}`, NOW, NOW, f.projectId, a.id, options.providerSessionId ?? null, a.inputRef,
+      NOW, NOW, NOW, NOW, options.nativeRef ?? null);
+}
 async function publishJson(f: BindingFixture, value: unknown): Promise<string> {
   const body = Buffer.from(JSON.stringify(value));
   return (await f.publisher.publishArtifact({ projectId: f.projectId, kind: 'workspace_evidence',
@@ -103,6 +117,7 @@ describe.skipIf(process.platform !== 'darwin')('P03-9 / F-006 recovery reconcili
     const claim = f.claimAndLaunch('t-1');
     seedWorkspace(f, claim.receipt);
     markRunning(f, claim.receipt);
+    seedStoppedSession(f, claim.receipt);
     const root = f.workspace.canonicalPath;
     writeFileSync(join(root, 'src/a.ts'), 'export const project = "A-progress";\n');
     writeFileSync(join(root, 'untracked-keep.txt'), 'must survive recovery\n');
@@ -226,11 +241,65 @@ describe.skipIf(process.platform !== 'darwin')('P03-9 / F-006 recovery reconcili
     expect(evidence.recording).toMatchObject({ status: 'started', watermark: null });
   }, 20_000);
 
+  it('quarantines a launched Attempt when the durable Session start receipt is missing', async () => {
+    const f = await openBindingFixture();
+    const claim = f.claimAndLaunch('t-1');
+    seedWorkspace(f, claim.receipt);
+    markRunning(f, claim.receipt);
+    const stack = recoveryStack(f);
+    await stack.startup.recover();
+    expect(stack.startup.state()).toEqual({ status: 'blocked', reason: 'workspace_reconciliation_required' });
+    expect(f.query("SELECT COUNT(*) AS n FROM workspace_leases WHERE state = 'quarantined'"))
+      .toEqual({ n: 3 });
+    const evidence = await recoveryEvidence(f, claim.receipt.attempt.id);
+    expect(evidence.gaps).toEqual(expect.arrayContaining(['session_start_receipt_missing']));
+    expect(evidence.manualNextSteps).toHaveLength(2);
+  }, 20_000);
+
+  it('keeps native Session occupancy and impossible activity timestamps fenced', async () => {
+    const f = await openBindingFixture();
+    const claim = f.claimAndLaunch('t-1');
+    seedWorkspace(f, claim.receipt);
+    markRunning(f, claim.receipt);
+    const a = claim.receipt.attempt;
+    f.session.database.prepare(`INSERT INTO sessions (id, created_at, updated_at, revision, project_id, attempt_id,
+      parent_session_id, kind, title, purpose, runtime, adapter_version, provider_session_id, status,
+      execution_stage, input_ref, result_ref, last_activity_at, started_at, ended_at, stopped_at, native_ref,
+      recording_watermark, recording_gaps)
+      VALUES (?, ?, ?, 1, ?, ?, NULL, 'work', NULL, 'work', 'fake', '1', 'native-session', 'started',
+        'runtime', ?, NULL, ?, ?, NULL, NULL, ?, 5, NULL)`)
+      .run(`session-${a.id}`, NOW, NOW, f.projectId, a.id, a.inputRef, NOW + 1, NOW, null);
+    const stack = recoveryStack(f);
+    await stack.startup.recover();
+    const evidence = await recoveryEvidence(f, a.id);
+    expect(evidence.gaps).toEqual(expect.arrayContaining([
+      'native_session_occupancy', 'session_stop_receipt_missing', 'last_activity_in_future',
+    ]));
+    expect(evidence.runtime).toMatchObject({ sessionStatus: 'started', nativeSessionOccupied: true,
+      stopReceipt: 'missing', lastActivityAtUtcMs: NOW + 1 });
+    expect(f.query("SELECT COUNT(*) AS n FROM workspace_leases WHERE state = 'quarantined'"))
+      .toEqual({ n: 3 });
+  }, 20_000);
+
+  it('quarantines an Attempt whose execution began without a durable launch receipt', async () => {
+    const f = await openBindingFixture();
+    const claim = f.claimTask('t-1');
+    seedWorkspace(f, claim.receipt);
+    f.session.database.prepare("UPDATE attempts SET status = 'executing', execution_stage = 'runtime', started_at = ? WHERE id = ?")
+      .run(NOW, claim.receipt.attempt.id);
+    const stack = recoveryStack(f);
+    await stack.startup.recover();
+    const evidence = await recoveryEvidence(f, claim.receipt.attempt.id);
+    expect(evidence.gaps).toEqual(expect.arrayContaining(['launch_receipt_missing']));
+    expect(f.query("SELECT COUNT(*) AS n FROM workspace_leases WHERE state = 'quarantined'"))
+      .toEqual({ n: 3 });
+  }, 20_000);
   it('records an already executed commit against its pending intent without committing again', async () => {
     const f = await openBindingFixture();
     const root = f.workspace.canonicalPath;
     const claim = f.claimAndLaunch('t-1');
     markRunning(f, claim.receipt);
+    seedStoppedSession(f, claim.receipt);
     const operationId = randomUUID();
     const message = `Feature delivery\n\nShipLoop-Operation: ${operationId}\n`;
     writeFileSync(join(root, 'src/a.ts'), 'export const project = "pending-commit";\n');
@@ -268,15 +337,11 @@ describe.skipIf(process.platform !== 'darwin')('P03-9 / F-006 recovery reconcili
     const claim = f.claimAndLaunch('t-1');
     seedWorkspace(f, claim.receipt);
     markRunning(f, claim.receipt);
+    seedStoppedSession(f, claim.receipt, {
+      providerSessionId: 'native-session',
+      nativeRef: JSON.stringify({ schemaVersion: 1, storageKind: 'sqlite', formatVersion: '1.2.0' }),
+    });
     const a = claim.receipt.attempt;
-    f.session.database.prepare(`INSERT INTO sessions (id, created_at, updated_at, revision, project_id, attempt_id,
-      parent_session_id, kind, title, purpose, runtime, adapter_version, provider_session_id, status,
-      execution_stage, input_ref, result_ref, last_activity_at, started_at, ended_at, stopped_at, native_ref,
-      recording_watermark, recording_gaps)
-      VALUES (?, ?, ?, 1, ?, ?, NULL, 'work', NULL, 'work', 'fake', '1', 'native-session', 'started',
-        'runtime', ?, NULL, ?, ?, NULL, NULL, ?, 5, NULL)`)
-      .run(`session-${a.id}`, NOW, NOW, f.projectId, a.id, a.inputRef, NOW, NOW,
-        JSON.stringify({ schemaVersion: 1, storageKind: 'sqlite', formatVersion: '1.2.0' }));
     const stack = recoveryStack(f);
     await stack.startup.recover();
     expect(stack.startup.state()).toEqual({ status: 'complete', reason: null });
@@ -285,7 +350,7 @@ describe.skipIf(process.platform !== 'darwin')('P03-9 / F-006 recovery reconcili
       sessionStorageKind: 'sqlite', sessionFormatVersion: '1.2.0', sourceArchiveRef: null,
       sourceDigest: null, sourceVerified: false, singleWriter: 'confirmed_stopped', opened: false,
     });
-    expect(evidence.recording).toMatchObject({ status: 'started', watermark: 5 });
+    expect(evidence.recording).toMatchObject({ status: 'stopped', watermark: 5 });
   }, 20_000);
 
   it('marks a pending Artifact reference as an unresolved gap during repeated reconciliation', async () => {
