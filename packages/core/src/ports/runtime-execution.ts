@@ -55,6 +55,7 @@ import {
   validateStableId, validationError,
 } from './validation.js';
 import type { ValidationContext } from './validation.js';
+import type { UsageCoverage, UsageNormalization } from './usage-diagnostics.js';
 
 /* ------------------------------------------------------------------ *
  * 版本与边界常量
@@ -465,6 +466,16 @@ export interface RuntimeUsageReport {
   readonly inputTokens: number | null;
   readonly outputTokens: number | null;
   readonly costUsdMicros: number | null;
+  /** P04-6 raw provider dimensions; each remains null when not reported. */
+  readonly cacheReadTokens?: number | null;
+  readonly cacheWriteTokens?: number | null;
+  readonly reasoningTokens?: number | null;
+  readonly providerTotalTokens?: number | null;
+  /** Coverage of the declared observation scope, separate from accounting basis. */
+  readonly coverage?: UsageCoverage;
+  /** How this raw report was made comparable, if Core can prove it. */
+  readonly normalization?: UsageNormalization;
+  readonly sourceRefs?: readonly string[];
   /** SDK 统计范围不确定或只覆盖部分观察事实时显式保留缺口。 */
   readonly completeness?: 'complete' | 'partial' | 'unknown';
   readonly accounting?: 'incremental' | 'cumulative' | 'unknown';
@@ -532,7 +543,8 @@ function nullableCount(value: unknown, field: string): number | null {
 }
 
 export function validateRuntimeUsageReport(value: unknown, field = 'usage'): RuntimeUsageReport {
-  const raw = adapterObject(value, ['basis', 'inputTokens', 'outputTokens', 'costUsdMicros', 'completeness', 'accounting'], field);
+  const raw = adapterObject(value, ['basis', 'inputTokens', 'outputTokens', 'costUsdMicros', 'cacheReadTokens', 'cacheWriteTokens',
+    'reasoningTokens', 'providerTotalTokens', 'coverage', 'normalization', 'sourceRefs', 'completeness', 'accounting'], field);
   if (raw.basis !== 'synthetic' && raw.basis !== 'reported') {
     throw protocolError('invalid_usage_basis', `${field}.basis`);
   }
@@ -542,11 +554,31 @@ export function validateRuntimeUsageReport(value: unknown, field = 'usage'): Run
   if (raw.accounting !== undefined && raw.accounting !== 'incremental' && raw.accounting !== 'cumulative' && raw.accounting !== 'unknown') {
     throw protocolError('invalid_usage_accounting', `${field}.accounting`);
   }
+  if (raw.coverage !== undefined && (raw.coverage !== 'reported' && raw.coverage !== 'partial' && raw.coverage !== 'unknown')) {
+    throw protocolError('invalid_usage_coverage', `${field}.coverage`);
+  }
+  if (raw.normalization !== undefined && !['raw', 'deduplicated', 'delta_from_history', 'excluded_parent_summary',
+    'excluded_child_detail', 'not_comparable', 'unknown'].includes(raw.normalization as string)) {
+    throw protocolError('invalid_usage_normalization', `${field}.normalization`);
+  }
+  let sourceRefs: string[] | undefined;
+  if (raw.sourceRefs !== undefined) {
+    if (!Array.isArray(raw.sourceRefs) || raw.sourceRefs.length > 128) throw protocolError('invalid_usage_source_refs', `${field}.sourceRefs`);
+    sourceRefs = raw.sourceRefs.map((ref, index) => eventToken(ref, `${field}.sourceRefs[${index}]`));
+  }
+
   return {
     basis: raw.basis,
     inputTokens: nullableCount(raw.inputTokens, `${field}.inputTokens`),
     outputTokens: nullableCount(raw.outputTokens, `${field}.outputTokens`),
     costUsdMicros: nullableCount(raw.costUsdMicros, `${field}.costUsdMicros`),
+    cacheReadTokens: raw.cacheReadTokens === undefined ? undefined : nullableCount(raw.cacheReadTokens, `${field}.cacheReadTokens`),
+    cacheWriteTokens: raw.cacheWriteTokens === undefined ? undefined : nullableCount(raw.cacheWriteTokens, `${field}.cacheWriteTokens`),
+    reasoningTokens: raw.reasoningTokens === undefined ? undefined : nullableCount(raw.reasoningTokens, `${field}.reasoningTokens`),
+    providerTotalTokens: raw.providerTotalTokens === undefined ? undefined : nullableCount(raw.providerTotalTokens, `${field}.providerTotalTokens`),
+    ...(raw.coverage === undefined ? {} : { coverage: raw.coverage as UsageCoverage }),
+    ...(raw.normalization === undefined ? {} : { normalization: raw.normalization as UsageNormalization }),
+    ...(sourceRefs === undefined ? {} : { sourceRefs }),
     ...(raw.completeness === undefined ? {} : { completeness: raw.completeness as RuntimeUsageReport['completeness'] }),
     ...(raw.accounting === undefined ? {} : { accounting: raw.accounting as RuntimeUsageReport['accounting'] }),
   };

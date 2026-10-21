@@ -1,4 +1,13 @@
-# P04-5 工作进度
+# P04-6 工作进度
+
+## F-001 — 用量与效率诊断公共契约（2026-10-21）
+
+- 新增 Core 公共 `usage-diagnostics` 端口，统一表达 runtime/provider/model、Attempt、Session、invocation、request/message/event 与恢复来源；provider session/request 只作为可追溯证据，不承担 Core Attempt 或命令幂等身份。
+- 定义 input、output、cache read/write、reasoning、provider total 六类独立原始用量维度，逐维记录 `incremental`/`cumulative`、`reported`/`partial`/`unknown`、归一化依据和来源引用；未知保持 `null`/`unknown`。
+- 定义重复事件、最终累计快照、父子汇总、resume 历史基线和模型切换的去重边界；定义模型请求/失败/退避、工具、Runtime 测试、验证、Git、收尾事实，保留观察时间、起止时间、未知边界和并发重叠组。
+- `RuntimeUsageReport` 以可选字段兼容接入缓存、推理、provider total、coverage、normalization 和 sourceRefs；Core 入口仅导出供应商无关类型和纯校验函数，不新增报表数据库或泄漏 SDK/凭据/原生私有格式。
+- 定向验证：`npm run typecheck` 通过；Harness task-local 测试 `test/modules/runtime/p04-6-usage-diagnostics-contract.test.ts` 通过 6/6，最终日志 `verifications/F-001/runtime-logs/test-3jvh0me8.log`；`npm run check:boundaries` 通过（326 个生产源码文件、0 diagnostics）。未运行全量测试、组合门禁或阶段验收。
+
 
 ## F-006 — 授权公开记录分页与核验正文（2026-10-21）
 
