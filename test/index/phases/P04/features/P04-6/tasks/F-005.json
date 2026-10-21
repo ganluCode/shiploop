@@ -1,0 +1,25 @@
+{
+  "schema_version": 2,
+  "task_id": "F-005",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        { "file": "test/modules/delivery/p03-10-feature-execution-report.test.ts", "cases": [
+          "all-tasks-read-only",
+          "pages-and-missing",
+          "snapshot-and-dedup",
+          "report-authorization"
+        ] },
+        { "file": "test/modules/host/p03-10-feature-report-contract.test.ts", "cases": [
+          "complete-history-wire",
+          "report-auth-boundaries",
+          "report-snapshot-http",
+          "report-missing-history",
+          "report-protocol-refusal",
+          "report-query-entry"
+        ] }
+      ]
+    }
+  ]
+}
