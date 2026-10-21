@@ -190,6 +190,70 @@ function expectRejected(receipt: CommandReceipt, reason: string): void {
   expect(receipt.error).toMatchObject({ code: 'conflict', details: { reason } });
 }
 
+describe('P04-4 / F-006 recovery command and fencing matrix', () => {
+  it('[case:continue-once-fenced-budget] replays continue and claim once, retains cumulative starts, and fences late results after replacement', async () => {
+    const f = await openClaimFixture();
+    try {
+      const first = f.store().claimTask(f.input()).receipt.attempt;
+      insertManagedWorkspace(f, first);
+      const oldIdentity = { projectId: first.projectId, attemptId: first.id, owner: first.owner,
+        hostInstanceId: first.hostInstanceId, executionVersion: first.executionVersion };
+      f.box.session.transactWrite('test.stopped-before-runtime', () => {
+        const execution = createSqliteExecutionAccess(f.box.session, { nowUtcMs: () => NOW });
+        execution.reserveRuntimeStartInTransaction({ projectId: first.projectId, batchId: f.ids.batchId,
+          runId: first.runId, startKey: first.id });
+        resources(f).releaseUnstartedInTransaction(oldIdentity);
+        execution.reclassifyTaskAttemptAsInfrastructureInTransaction({ projectId: first.projectId,
+          taskId: first.taskId, attemptKey: first.id, reason: 'workspace_prepare_failed' });
+        f.box.session.database.prepare("UPDATE attempts SET status = 'interrupted', ended_at = ? WHERE id = ?")
+          .run(NOW, first.id);
+        f.box.session.database.prepare("UPDATE tasks SET status = 'pending' WHERE id = ?").run(first.taskId);
+      });
+      const before = readBatch(f, f.ids.batchId);
+      expect(before).toMatchObject({ attempts_created: 1, runtime_starts: 1 });
+      const revision = await pauseRun(f);
+      const commandId = randomUUID();
+      const receipt = await submit(f, 'execution.resume', { runId: f.ids.runId, batchId: null }, revision, commandId);
+      expect(resultOf(receipt)).toMatchObject({ resumed: true, nextTaskIds: [first.taskId] });
+      const task = f.box.session.database.prepare('SELECT revision FROM tasks WHERE id = ?').get(first.taskId) as { revision: number };
+      const input = { ...f.input(), claimKey: 'continue-replacement', owner: 'owner-new', hostInstanceId: 'host-new',
+        expectedRevision: task.revision, executionVersion: first.executionVersion };
+      const replacement = f.store().claimTask(input);
+      const second = replacement.receipt.attempt;
+      expect(second).toMatchObject({ number: 2, executionVersion: 2, owner: 'owner-new' });
+      expect(second.id).not.toBe(first.id);
+      f.box.session.transactWrite('test.replacement-start', () => {
+        const execution = createSqliteExecutionAccess(f.box.session, { nowUtcMs: () => NOW });
+        const start = { projectId: first.projectId, batchId: f.ids.batchId, runId: first.runId, startKey: second.id };
+        execution.reserveRuntimeStartInTransaction(start);
+        execution.reserveRuntimeStartInTransaction(start);
+      });
+      const snapshot = f.snapshot();
+      const events = resumeEvents(f);
+      const signals = f.box.services.signals.length;
+      await expect(submit(f, 'execution.resume', { runId: f.ids.runId, batchId: null }, revision, commandId))
+        .resolves.toMatchObject({ status: 'completed', replayed: true, result: resultOf(receipt) });
+      expect(f.store().claimTask(input)).toEqual({ replayed: true, receipt: replacement.receipt });
+      for (const identity of [oldIdentity,
+        { ...oldIdentity, attemptId: second.id, executionVersion: second.executionVersion },
+        { ...oldIdentity, attemptId: second.id, owner: second.owner, hostInstanceId: second.hostInstanceId }]) {
+        expect(lifecycle(f).apply({ ...identity, taskId: first.taskId, runId: first.runId,
+          notificationId: randomUUID(), kind: 'runtime_completed', exitCode: 0, evidenceRef: first.inputRef }))
+          .toMatchObject({ disposition: 'ignored', reason: 'stale_execution_identity' });
+      }
+      expect(f.snapshot()).toEqual(snapshot);
+      expect(resumeEvents(f)).toEqual(events);
+      expect(f.box.services.signals.length).toBe(signals);
+      expect(readBatch(f, f.ids.batchId)).toMatchObject({ attempts_created: 2, runtime_starts: 2,
+        runs_created: before.runs_created, budget_revision: before.budget_revision,
+        budget_snapshot: before.budget_snapshot, deadline_at: before.deadline_at });
+      expect(readRun(f, f.ids.runId).attempts_created).toBe(2);
+      expect(f.box.session.database.prepare('SELECT COUNT(*) AS n FROM attempts').get()).toEqual({ n: 2 });
+      expect(f.box.session.database.prepare('SELECT COUNT(*) AS n FROM runtime_start_reservations').get()).toEqual({ n: 2 });
+    } finally { f.box.close(); }
+  });
+});
+
 describe('P03-9 / F-008 显式工作流 resume', () => {
   it('暂停中的 Run 重新授权后解除暂停、写事件/回执并唤醒；resume 本身不创建 Attempt/worktree', async () => {
     const f = await openClaimFixture();

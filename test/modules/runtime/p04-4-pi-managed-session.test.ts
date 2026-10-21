@@ -109,6 +109,39 @@ describe('F-002 managed standard Pi sessions', () => {
   });
 });
 
+describe('F-006 deterministic managed recovery matrix', () => {
+  it('[case:recovery-fork-race] admits one resumed writer, retains tracked and untracked progress, and leaves the source immutable', async () => {
+    const f = await fixture();
+    const tracked = join(f.root, 'existing-code.ts');
+    const untracked = join(f.root, 'pending-work.txt');
+    await writeFile(tracked, 'export const progress = 42;\n');
+    await writeFile(untracked, 'unfinished work\n');
+    const options = { ...f.options, recovery: {
+      archive: f.archive,
+      reference: { providerSessionId: f.source.getSessionId(), sourceDigest: hash(f.archive) },
+      assertCurrent: async () => {},
+    } };
+    const outcomes = await Promise.allSettled([f.factory(options), f.factory(options)]);
+    const winners = outcomes.filter(result => result.status === 'fulfilled');
+    try {
+      expect(winners).toHaveLength(1);
+      expect(outcomes.find(result => result.status === 'rejected')).toMatchObject({
+        reason: { reason: 'native_writer_scope_unavailable' },
+      });
+      const session = winners[0]!.value as AgentSession;
+      expect(session.sessionId).not.toBe(f.source.getSessionId());
+      expect(session.sessionFile).not.toBe(f.sourceFile);
+      expect(session.messages).toContainEqual(expect.objectContaining({ role: 'user', content: 'existing work' }));
+      expect(await readFile(tracked, 'utf8')).toBe('export const progress = 42;\n');
+      expect(await readFile(untracked, 'utf8')).toBe('unfinished work\n');
+      expect(await readFile(f.sourceFile)).toEqual(f.archive);
+      // A settled directory is never reused even after the winning SDK handle is disposed.
+      session.dispose();
+      await expect(f.factory(options)).rejects.toMatchObject({ reason: 'native_writer_scope_unavailable' });
+    } finally { for (const result of winners) result.value.dispose(); }
+  });
+});
+
 const hash = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
 function artifact(id: string, bytes: Uint8Array, mediaType = 'application/x-ndjson'): ExecutionInputRef {
   return { projectId: 'project-1', artifactId: id, kind: 'runtime-native-archive', purpose: 'recovery',
@@ -172,6 +205,99 @@ async function adapterFixture() {
   }
   return { ...f, req, source, lease, release, assertCurrent, readVerifiedArtifact, acquire, factory, registration };
 }
+
+describe('F-006 adapter recovery fault matrix', () => {
+  it('[case:fresh-tasks] starts fresh native sessions for distinct Tasks without reading a previous archive', async () => {
+    const f = await adapterFixture();
+    const adapter = f.registration().adapter;
+    const first = await adapter.start({ ...f.req, recovery: { mode: 'auto', kind: 'conversation' } });
+    await first.result;
+    const second = await adapter.start({ ...f.req, sessionId: 'session-task-2', invocationId: 'invocation-task-2',
+      identity: { ...f.req.identity, taskId: 'task-2', attemptId: 'attempt-task-2' },
+      recovery: { mode: 'auto', kind: 'conversation' } });
+    await second.result;
+    expect(f.acquire).not.toHaveBeenCalled();
+    expect(f.factory).toHaveBeenCalledTimes(2);
+    const [one, two] = f.factory.mock.calls.map(([options]) => options);
+    expect(one!.sessionDir).not.toBe(two!.sessionDir);
+    expect(one!.recovery).toBeUndefined();
+    expect(two!.recovery).toBeUndefined();
+    expect(first.nativeSession?.recovery?.decision).toEqual({ mode: 'new', reasons: ['source:missing'] });
+    expect(second.nativeSession?.recovery?.decision).toEqual({ mode: 'new', reasons: ['source:missing'] });
+  });
+
+  for (const route of ['model', 'provider'] as const) {
+    it(`[case:switch-${route}-unsupported] validates the source but refuses required switching and records auto downgrade`, async () => {
+      const f = await adapterFixture();
+      const source = { ...f.source, [route]: `previous-${route}` } as RuntimeRecoveryReference;
+      f.acquire.mockResolvedValue({ ...f.lease, source: { ...f.lease.source, reference: source } });
+      const request = { ...f.req, recovery: { mode: 'required' as const, kind: 'conversation' as const, source } };
+      const registration = f.registration();
+      await expect(registration.adapter.start(request)).rejects.toMatchObject({ reason: 'execution_recovery_unsupported' });
+      expect(f.factory).not.toHaveBeenCalled();
+      const handle = await registration.adapter.start({ ...request, recovery: { ...request.recovery, mode: 'auto' } });
+      await handle.result;
+      expect(f.factory).toHaveBeenCalledOnce();
+      expect(f.factory.mock.calls[0]![0]).toMatchObject({ provider: f.req.strategy.provider, model: f.req.strategy.model });
+      expect(f.factory.mock.calls[0]![0].recovery).toBeUndefined();
+      await expect(handle.recoveryRecording).resolves.toMatchObject({
+        source, actualProvider: f.req.strategy.provider, actualModel: f.req.strategy.model,
+        decision: { mode: 'new', reasons: ['modelSwitchOnResume:unsupported'] },
+      });
+      expect(await readFile(f.sourceFile)).toEqual(f.archive);
+    });
+  }
+
+  it('[case:checkpoint-not-replayed] never supplies a conversation archive as an executable checkpoint', async () => {
+    const f = await adapterFixture();
+    const source: RuntimeRecoveryReference = { ...f.source, kind: 'checkpoint', checkpointRef: 'checkpoint-old' };
+    f.acquire.mockResolvedValue({ ...f.lease, source: { ...f.lease.source, reference: source } });
+    const request = { ...f.req, recovery: { mode: 'required' as const, kind: 'checkpoint' as const, source } };
+    const adapter = f.registration().adapter;
+    await expect(adapter.start(request)).rejects.toMatchObject({ reason: 'execution_recovery_unsupported' });
+    expect(f.factory).not.toHaveBeenCalled();
+    const handle = await adapter.start({ ...request, recovery: { ...request.recovery, mode: 'auto' } });
+    await handle.result;
+    expect(f.factory.mock.calls[0]![0].recovery).toBeUndefined();
+    expect(handle.nativeSession?.recovery?.decision).toEqual({ mode: 'new', reasons: ['executionRecovery:unsupported'] });
+  });
+
+  it('[case:authority-after-load] disposes a loaded branch without prompting when the owner changes during SDK construction', async () => {
+    const f = await adapterFixture();
+    const create = f.factory.getMockImplementation()!;
+    const prompt = vi.fn(async () => {});
+    const dispose = vi.fn();
+    f.factory.mockImplementation(async options => {
+      const base = await create(options);
+      f.assertCurrent.mockRejectedValue(new Error('owner replaced during native load'));
+      return { ...base, prompt, dispose };
+    });
+    await expect(f.registration().adapter.start(f.req)).rejects.toThrow();
+    expect(prompt).not.toHaveBeenCalled();
+    expect(dispose).toHaveBeenCalledOnce();
+    expect(f.release).toHaveBeenCalledOnce();
+    expect(await readFile(f.sourceFile)).toEqual(f.archive);
+  });
+
+  for (const mode of ['auto', 'required'] as const) {
+    for (const mutation of ['format', 'sdk'] as const) {
+      it(`[case:${mode}-unsafe-${mutation}] rejects incompatible storage even when capability downgrade is allowed`, async () => {
+        const f = await adapterFixture();
+        const source = mutation === 'format' ? { ...f.source, nativeFormatVersion: '2' } : f.source;
+        f.acquire.mockResolvedValue({ ...f.lease, source: { ...f.lease.source, reference: source,
+          ...(mutation === 'sdk' ? { sdkVersion: '0.0.0' } : {}) } });
+        const expectedReason = mode === 'required' && mutation === 'format'
+          ? 'execution_recovery_unsupported' : 'native_format_incompatible';
+        await expect(f.registration().adapter.start({ ...f.req, recovery: { mode, kind: 'conversation', source } }))
+          .rejects.toMatchObject({ reason: expectedReason });
+        expect(f.factory).not.toHaveBeenCalled();
+        if (mode === 'required' && mutation === 'format') expect(f.release).not.toHaveBeenCalled();
+        else expect(f.release).toHaveBeenCalledOnce();
+        expect(await readFile(f.sourceFile)).toEqual(f.archive);
+      });
+    }
+  }
+});
 
 describe('F-002 recovery source admission', () => {
   it('[case:recovery-recording-boundary] exports archive/version/model facts and excludes historical final snapshots and duplicate usage', async () => {

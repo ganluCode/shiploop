@@ -301,6 +301,39 @@ function expectFailure(error: unknown, reason: string): void {
   expect(isWorkRecoveryContinuationError(error, reason as never), `应为 ${reason}: ${String(error)}`).toBe(true);
 }
 
+describe('P04-4 / F-006 continuation safety matrix', () => {
+  for (const mode of ['auto', 'new', 'required'] as const) {
+    for (const status of ['preparing', 'executing', 'verifying'] as const) {
+      it(`[case:${mode}-active-${status}] refuses a still-active previous Attempt without publishing continuation`, async () => {
+        const h = makeHarness();
+        h.setAttempts([{ ...h.candidate, status, endedAtUtcMs: null }]);
+        const archive = h.store.contents.get(h.source.nativeArchiveRef as string)!.slice();
+        const selection = mode === 'new' ? { mode } : { mode, kind: 'conversation', source: h.source };
+        await expect(h.service.plan(h.request({ selection }))).rejects.toSatisfy((error: unknown) =>
+          isWorkRecoveryContinuationError(error, 'previous_active'));
+        expect(h.publishCount()).toBe(0);
+        expect(h.store.contents.get(h.source.nativeArchiveRef as string)).toEqual(archive);
+      });
+    }
+
+    for (const fault of ['unknown-git-effect', 'unconfirmed-stop', 'passed-task', 'recording-active'] as const) {
+      it(`[case:${mode}-unsafe-${fault}] refuses unsafe evidence even for explicit new`, async () => {
+        const h = makeHarness();
+        const body = reconciliationBody({ artifactId: h.source.nativeArchiveRef, contentHash: archiveHash } as ExecutionInputRef);
+        const patch = fault === 'unknown-git-effect' ? { gitOperations: [{ operationId: 'shell-or-git-write', outcome: 'unknown' }] }
+          : fault === 'unconfirmed-stop' ? { native: { ...body.native, singleWriter: 'unknown' } }
+          : fault === 'passed-task' ? { taskPassed: true }
+          : { recording: { ...body.recording, status: 'active' } };
+        h.setReconciliationBody({ ...body, ...patch });
+        const selection = mode === 'new' ? { mode } : { mode, kind: 'conversation', source: h.source };
+        await expect(h.service.plan(h.request({ selection }))).rejects.toSatisfy((error: unknown) =>
+          isWorkRecoveryContinuationError(error, 'reconciliation_unsafe'));
+        expect(h.publishCount()).toBe(0);
+      });
+    }
+  }
+});
+
 describe('P03-9 / F-007 同 Task 续接决策与来源快照', () => {
   it('Fake 无原生续接能力时 auto 新建并持久记录降级原因，旧档案/输入不变', async () => {
     const h = makeHarness();
