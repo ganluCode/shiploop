@@ -162,4 +162,42 @@ describe('P04-6 效率与耗时投影', () => {
     expect(result.metrics.codemodeCalls).toMatchObject({ value: null, coverage: 'unknown' });
     expect(result.metrics.toolsPerReply.value).toBeNull();
   });
+
+  it('[case:cross-stage-lifecycle] 两次尝试的失败退避、并发工具测试与收尾按受控边界分解', () => {
+    const start = fact('background-start', 'runtime_test', 110, 112, {
+      testRunId: 'background-1', outcome: 'started', durationMs: 2, budgetMs: 5000, exitCode: 0,
+    });
+    const running = { ...start, factId: 'background-running', observedAtUtc: utc(150) };
+    const pending = projectEfficiency({ facts: [start, running], coverage: 'reported' });
+    expect(pending.facts).toHaveLength(1);
+    expect(pending.facts[0]).toMatchObject({ lifecycleStatus: 'running', durationMs: null, endedAtUtc: null,
+      reportedDurationMs: 2, exitCode: null, processLiveness: 'unknown', budgetMs: 5000 });
+    expect(pending.stages.runtime_test.cumulativeMs).toBeNull();
+    const completed = fact('background-completed', 'runtime_test', null, 210, {
+      testRunId: 'background-1', exitCode: 0, budgetMs: 5000,
+    });
+    const facts = [
+      fact('failed-request', 'model_request', 0, 20, { outcome: 'failed' }),
+      fact('backoff', 'backoff_wait', 20, 30), fact('success-request', 'model_request', 30, 100),
+      fact('tool', 'tool_execution', 100, 200, { toolCallId: 'tool-1' }),
+      start, completed, running, completed,
+      fact('verification', 'verification', 210, 240, { testRunId: 'verifier-1', exitCode: 0 }),
+      fact('git', 'git', 240, 250), fact('finalization', 'finalization', 250, 260),
+      fact('cancelled-request', 'model_request', 0, 50, {
+        identity: { ...identity, attemptId: 'attempt-2', sessionId: 'session-2' }, outcome: 'cancelled' }),
+    ];
+    const result = projectEfficiency({ facts, coverage: 'reported' });
+    expect(result.timing).toMatchObject({ cumulativeMs: 400, activeWallClockMs: 260, wallClockSpanMs: 260,
+      totalFacts: 9, measuredFacts: 9, coverage: 'reported' });
+    expect(Object.fromEntries(Object.entries(result.stages).map(([key, stage]) => [key, stage.cumulativeMs]))).toEqual({
+      model_request: 70, failed_model_request: 70, backoff_wait: 10, tool_execution: 100,
+      runtime_test: 100, verification: 30, git: 10, finalization: 10,
+    });
+    expect(result.facts.find(f => f.kind === 'runtime_test')).toMatchObject({ lifecycleStatus: 'completed',
+      startedAtUtc: utc(110), endedAtUtc: utc(210), durationMs: 100, exitCode: 0 });
+    expect(projectEfficiency({ facts: [...facts].reverse(), coverage: 'reported' })).toEqual(result);
+    const partial = projectEfficiency({ facts: [...facts, fact('missing-boundary', 'tool_execution', null, 270)], coverage: 'reported' });
+    expect(partial.timing).toMatchObject({ cumulativeMs: 400, activeWallClockMs: 260, wallClockSpanMs: null, coverage: 'partial' });
+    expect(partial.facts.find(f => f.factId === 'missing-boundary')).toMatchObject({ durationMs: null, unknownReason: 'time_boundary_missing' });
+  });
 });

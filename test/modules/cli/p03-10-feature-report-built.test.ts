@@ -8,6 +8,7 @@ import { HASH, reportAttempt, reportSettlement, reportSecondRun, reportDatabaseS
 import { openReportHost } from '../../helpers/p03-10/report-host.ts';
 import { createRestrictedPrincipal } from '../../helpers/p02-2/principals.ts';
 import type { FeatureExecutionReport } from '../../../packages/core/src/application/feature-execution-report.ts';
+import type { RuntimeUsageReport } from 'shiploop-core';
 
 const exec = promisify(execFile);
 const root = resolve(import.meta.dirname, '../../..');
@@ -117,6 +118,82 @@ test('[case:built-report-errors] built CLI emits structured authorization, versi
     expect(JSON.parse(output.stdout)).toMatchObject({ ok: false, command: 'feature.report', error: { code: variant.code } });
     expect(output.stdout + output.stderr).not.toContain(f.box.dataRoot);
     expect(output.stdout + output.stderr).not.toContain(h.token);
+  }
+  expect(reportDatabaseSnapshot(f)).toEqual(before);
+});
+
+test('[case:built-usage-diagnostics-history] 用量诊断跨失败取消返工、Host和构建CLI保留历史且查询只读', async () => {
+  const f = await fixture();
+  const run1 = (await f.start()).runId!;
+  const run2 = reportSecondRun(f, run1);
+  const failed = reportAttempt(f, { id: 'usage-failed', runId: run1 });
+  const cancelled = reportAttempt(f, { id: 'usage-cancelled', runId: run2, number: 2, status: 'cancelled', previousAttemptId: failed.id });
+  const rework = reportAttempt(f, { id: 'usage-rework', runId: run2, number: 3, status: 'succeeded', previousAttemptId: cancelled.id });
+  const entries = [
+    { attempt: failed, terminal: 'failed', input: 100, output: 10, cache: 80, model: 'model-a' },
+    { attempt: cancelled, terminal: 'cancelled', input: 900, output: 90, cache: 90, model: 'model-a' },
+    { attempt: rework, terminal: 'completed', input: 50, output: 5, cache: 10, model: 'model-b' },
+  ];
+  for (const [index, entry] of entries.entries()) {
+    const usage: RuntimeUsageReport = { basis: 'synthetic', inputTokens: entry.input, outputTokens: entry.output,
+      costUsdMicros: null, cacheReadTokens: entry.cache, cacheWriteTokens: 0, reasoningTokens: 2,
+      providerTotalTokens: entry.input + entry.output, cacheReadIncludedInInput: true,
+      cacheWriteIncludedInInput: true, reasoningIncludedInOutput: true, accounting: 'incremental', coverage: 'reported' };
+    reportSettlement(f, entry.attempt, {
+      identity: { projectId: f.projectId, featureId: f.featureId, taskId: entry.attempt.taskId,
+        runId: entry.attempt.runId, attemptId: entry.attempt.id, sessionId: entry.attempt.sessionId,
+        executionVersion: index + 1, owner: 'owner-report', hostInstanceId: 'host-report' },
+      execution: { result: { schemaVersion: 1, terminal: entry.terminal, reason: null,
+        exitCode: entry.terminal === 'completed' ? 0 : 1, signal: null, durationMs: 100, usage, lastEventSequence: 3 }, failure: null },
+      routing: { category: null, previousFailures: [], selected: { runtime: 'fake', provider: 'provider-a', model: entry.model, source: 'task.primary' } },
+    });
+  }
+  // Untrusted diagnostic payloads must not enter the public report.
+  const privateAttempt = reportAttempt(f, { id: 'private-result', taskId: 't-2', runId: run2 });
+  const secret = 'synthetic-private-token-F007';
+  reportSettlement(f, privateAttempt, { credential: secret, nativePath: f.box.dataRoot });
+  const restricted = createRestrictedPrincipal({ capabilities: ['project.read'], projectScope: { kind: 'allowlist', projectIds: [f.projectId] } });
+  const h = await host(f, { principal: restricted });
+  const before = reportDatabaseSnapshot(f);
+  const report = await h.client.getFeatureReport(f.projectId, f.featureId);
+  expect(report.tasks.map(t => t.current.taskId)).toEqual(['t-1', 't-2', 't-3']);
+  expect(report.tasks[0].cumulative).toMatchObject({ attempts: 3, reworks: 2,
+    byStatus: { failed: 1, cancelled: 1, succeeded: 1 } });
+  expect(report.tasks[0].latestAttempt?.id).toBe(rework.id);
+  expect(report.tasks[0].attempts.map(a => a.usage.inputTokens)).toEqual([100, 900, 50]);
+  expect(report.tasks[0].attempts[1].rework?.previousAttemptId).toBe(failed.id);
+  expect(report.tasks[0].attempts[2].rework?.previousAttemptId).toBe(cancelled.id);
+  expect(report.tasks[1].attempts[0].issues).toContain('result_evidence_invalid');
+  expect(report.tasks[2].attempts).toEqual([]);
+  expect(report.tasks[2].usage.aggregate).toMatchObject({ basis: 'none', coverage: 'unknown', totals: { inputTokens: null } });
+  expect(report.usage.feature.aggregate).toMatchObject({ basis: 'synthetic', countedObservations: 3,
+    totals: { inputTokens: 1050, outputTokens: 105, cacheReadTokens: 180, cacheWriteTokens: 0,
+      reasoningTokens: 6, providerTotalTokens: 1155, costUsdMicros: null },
+    cache: { rate: 180 / 1050, comparableInputTokens: 1050 } });
+  expect(report.usage.dimensions.map(d => [d.model, d.aggregate.totals.inputTokens])).toEqual([
+    ['model-a', 1000], ['model-b', 50],
+  ]);
+  expect(await h.client.getFeatureReport(f.projectId, f.featureId)).toEqual(report);
+  const args = ['feature', 'report', f.featureId, '--project', f.projectId];
+  const json = await cli(f, [...args, '--json']);
+  expect(json.exitCode, json.stderr).toBe(0);
+  expect(JSON.parse(json.stdout).result).toEqual(report);
+  const repeat = await cli(f, [...args, '--json']);
+  expect(repeat).toEqual(json);
+  const text = await cli(f, args);
+  expect(text.exitCode, text.stderr).toBe(0);
+  expect(text.stdout).toContain('inputTokens=1050');
+  expect(text.stdout).toContain('model=model-b');
+  expect(text.stdout).toContain('basis=synthetic');
+  for (const attempt of [failed, cancelled, rework]) expect(text.stdout).toContain(attempt.id);
+  const denied = await cli(f, ['feature', 'report', f.featureId, '--project', randomUUID(), '--json']);
+  expect(denied.exitCode).not.toBe(0);
+  expect(JSON.parse(denied.stdout)).toMatchObject({ ok: false, error: { code: 'forbidden' } });
+  await expect(h.client.getFeatureReport(randomUUID(), f.featureId)).rejects.toMatchObject({ code: 'forbidden' });
+  for (const output of [JSON.stringify(report), json.stdout, text.stdout, denied.stdout + denied.stderr]) {
+    expect(output).not.toContain(secret);
+    expect(output).not.toContain(f.box.dataRoot);
+    expect(output).not.toContain(h.token);
   }
   expect(reportDatabaseSnapshot(f)).toEqual(before);
 });

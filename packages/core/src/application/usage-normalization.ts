@@ -336,7 +336,8 @@ export function aggregateUsage(observations: readonly NormalizedUsageObservation
   const cacheSemanticsKnown = rowObservations.every(o => o.measurements.cacheRead.normalization !== 'unknown' && o.measurements.cacheRead.normalization !== 'not_comparable');
   const cache = calculateCacheRate(totals.inputTokens, totals.cacheReadTokens, totals.cacheWriteTokens, cacheSemanticsKnown);
   if (cache.reason !== 'computed') diagnostics.push(`cache_rate_${cache.reason}`);
-  const coverage: UsageCoverage = rows.length === 0 ? 'unknown' : rows.some(o => o.observation.coverage === 'unknown') ? 'unknown' : rows.some(o => o.observation.coverage === 'partial') ? 'partial' : 'reported';
+  const unresolved = normalized.some(item => item.observation.deduplication.action === 'unknown');
+  const coverage: UsageCoverage = rows.length === 0 ? 'unknown' : rows.some(o => o.observation.coverage === 'unknown') ? 'unknown' : unresolved || rows.some(o => o.observation.coverage === 'partial') ? 'partial' : 'reported';
   const accounting: UsageAccounting = rows.length === 0 ? 'unknown' : rows.some(o => o.observation.accounting === 'unknown') ? 'unknown' : rows.some(o => o.observation.accounting === 'cumulative') ? 'cumulative' : 'incremental';
   const normalization: UsageNormalization = rows.length === 0 ? 'unknown' : rows.some(o => o.observation.deduplication.action !== 'count_once') ? 'deduplicated' : rows.some(o => o.observation.deduplication.reason === 'resume_history') ? 'not_comparable' : 'deduplicated';
   return {
@@ -351,22 +352,22 @@ export function aggregateUsageObservations(observations: readonly NormalizedUsag
   return aggregateUsage(observations);
 }
 
-function groupAggregate(records: readonly UsageProjectionRecord[], filter: (record: UsageProjectionRecord) => boolean): UsageAggregate {
-  return aggregateUsage(normalizeUsageObservations(records.filter(filter)));
-}
-
-/** Build non-overlapping projections from raw observations. Parent nodes are
- * recomputed from the same deduplicated request set and never sum child nodes. */
+/** Build non-overlapping projections from one normalized observation set. */
 export function buildUsageProjection(records: readonly UsageProjectionRecord[]): UsageProjection {
-  const attempts = [...new Set(records.map(r => r.identity.attemptId))].sort().map(id => ({ scope: 'attempt' as const, id, aggregate: groupAggregate(records, r => r.identity.attemptId === id) }));
-  const tasks = [...new Set(records.map(r => r.taskId))].sort().map(id => ({ scope: 'task' as const, id, aggregate: groupAggregate(records, r => r.taskId === id) }));
-  const runs = [...new Set(records.map(r => r.runId))].sort().map(id => ({ scope: 'run' as const, id, aggregate: groupAggregate(records, r => r.runId === id) }));
+  // Resolve replay, parent/final boundaries and model attribution before filtering
+  // dimensions; a filtered subset cannot independently reconstruct those facts.
+  const normalized = normalizeUsageObservations(records);
+  const groupAggregate = (filter: (record: UsageProjectionRecord) => boolean) =>
+    aggregateUsage(normalized.filter((_, index) => filter(records[index])));
+  const attempts = [...new Set(records.map(r => r.identity.attemptId))].sort().map(id => ({ scope: 'attempt' as const, id, aggregate: groupAggregate(r => r.identity.attemptId === id) }));
+  const tasks = [...new Set(records.map(r => r.taskId))].sort().map(id => ({ scope: 'task' as const, id, aggregate: groupAggregate(r => r.taskId === id) }));
+  const runs = [...new Set(records.map(r => r.runId))].sort().map(id => ({ scope: 'run' as const, id, aggregate: groupAggregate(r => r.runId === id) }));
   const featureIds = [...new Set(records.map(r => r.featureId))].sort();
   const featureId = featureIds[0] ?? 'unknown-feature';
-  const feature = { scope: 'feature' as const, id: featureId, aggregate: groupAggregate(records, r => featureIds.length === 0 || r.featureId === featureId) };
+  const feature = { scope: 'feature' as const, id: featureId, aggregate: groupAggregate(r => featureIds.length === 0 || r.featureId === featureId) };
   const dimensionRecords = new Map<string, UsageProjectionNode>();
   const dimensions = [...new Set(records.flatMap(r => [`runtime:${r.identity.runtime}`, `provider:${r.identity.provider}`, `model:${r.identity.model ?? 'unknown'}`, `runtime:${r.identity.runtime}|provider:${r.identity.provider}`, `runtime:${r.identity.runtime}|provider:${r.identity.provider}|model:${r.identity.model ?? 'unknown'}`]))].sort();
-  for (const key of dimensions) dimensionRecords.set(key, { scope: 'feature', id: key, aggregate: groupAggregate(records, r => {
+  for (const key of dimensions) dimensionRecords.set(key, { scope: 'feature', id: key, aggregate: groupAggregate(r => {
     const parts = key.split('|');
     const runtimePart = parts.find(part => part.startsWith('runtime:'));
     const providerPart = parts.find(part => part.startsWith('provider:'));

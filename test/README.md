@@ -43,6 +43,8 @@ test/
 
 - `index/phases/P04/features/P04-3/tasks/F-007.json`：故障路由组合矩阵、受管查询脱敏/兼容、安装 SDK 重试边界，以及分类/累计重试/备用/预检/停止与架构关联回归。实际本地日志、SDK API 边界和独立验收范围见 [故障路由交接](../docs/p04-3-f007-failure-routing-integration.md)。
 
+- `index/phases/P04/features/P04-6/tasks/F-007.json`：跨 Attempt 恢复/累计/去重、缓存与模型归属、后台测试与并发阶段耗时，以及真实 SQLite/Host/构建 CLI 的只读、分页、授权和脱敏回归。本地通过与仅登记范围见 [P04-6 交接](../docs/p04-6-f007-cross-scenario-regressions.md)；live 保持 `not_run`。
+
 Task JSON 使用 Nezha v2 schema。当前存量用例首轮按文件显式 `all: true`，
 对应 19 个本 Feature 文件，不包含此前大批历史模块回归。
 部分文件有多个测试类型，暂不凭猜测拆掉其中断言或谎称函数级选择。

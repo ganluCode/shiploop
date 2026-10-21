@@ -1,0 +1,22 @@
+{
+  "schema_version": 2,
+  "task_id": "F-007",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        { "file": "test/modules/runtime/p04-6-usage-cross-scenarios.test.ts", "all": true },
+        { "file": "test/modules/runtime/p04-6-usage-normalization.test.ts", "all": true },
+        { "file": "test/modules/runtime/p04-6-efficiency-projection.test.ts", "all": true },
+        { "file": "test/modules/cli/p03-10-feature-report-built.test.ts", "all": true },
+        { "file": "test/modules/cli/p04-6-feature-report-diagnostics.test.ts", "all": true },
+        { "file": "test/modules/cli/p03-10-feature-report-text.test.ts", "all": true },
+        { "file": "test/modules/host/p03-10-feature-report-contract.test.ts", "all": true },
+        { "file": "test/modules/delivery/p03-10-feature-execution-report.test.ts", "cases": [
+          "all-tasks-read-only", "history-evidence-timing", "pages-and-missing", "snapshot-and-dedup",
+          "usage-efficiency-report", "report-authorization", "artifact-integrity"
+        ] }
+      ]
+    }
+  ]
+}
