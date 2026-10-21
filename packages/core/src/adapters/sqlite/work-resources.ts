@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { StorageError } from '../../ports/errors.js';
-import { validateNonNegativeInteger } from '../../ports/validation.js';
+import { validateNonNegativeInteger, requirePlainObject, rejectUnknownKeys, validateStableId } from '../../ports/validation.js';
 import {
   validateWorkProcessIdentity, validateWorkResourceIdentity,
   type WorkResourceAccess, type WorkResourceIdentity, type WorkResourceSnapshot, type WorkWorkspaceAuthority, type WorkResourceStopVerifier,
@@ -187,13 +187,20 @@ export function createSqliteWorkResourceAccess(session: SqliteStorageSession, op
     },
     beginLaunchInTransaction(input) {
       write();
-      const identity = validateWorkResourceIdentity(input), timestamp = now(), result = live(identity, timestamp);
+      const raw = requirePlainObject(input, { operation: 'WorkResources.beginLaunch' }, 'input');
+      rejectUnknownKeys(raw, ['projectId', 'attemptId', 'owner', 'hostInstanceId', 'executionVersion', 'invocationId'], { operation: 'WorkResources.beginLaunch' }, 'input');
+      const identity = validateWorkResourceIdentity({ projectId: raw.projectId, attemptId: raw.attemptId,
+        owner: raw.owner, hostInstanceId: raw.hostInstanceId, executionVersion: raw.executionVersion });
+      const requestedInvocationId = raw.invocationId === undefined || raw.invocationId === null
+        ? null : validateStableId(raw.invocationId, { operation: 'WorkResources.beginLaunch' }, 'invocationId');
+      const timestamp = now(), result = live(identity, timestamp);
       if (result.leases[0]!.state === 'quarantined') return { authorized: false, invocationId: null };
       const attempt = current(identity);
       if (attempt.status !== 'preparing' || attempt.executionStage !== 'preflight' || attempt.invocationId !== null) return fail('conflict', 'launch_already_authorized');
-      const invocationId = randomUUID();
-      db.prepare("UPDATE attempts SET invocation_id = ?, execution_stage = 'runtime', revision = revision + 1, updated_at = ? WHERE id = ?")
+      const invocationId = requestedInvocationId ?? randomUUID();
+      const changed = db.prepare("UPDATE attempts SET invocation_id = ?, execution_stage = 'runtime', revision = revision + 1, updated_at = ? WHERE id = ? AND invocation_id IS NULL")
         .run(invocationId, timestamp, identity.attemptId);
+      if (changed.changes !== 1) return fail('conflict', 'launch_already_authorized');
       return { authorized: true, invocationId };
     },
     confirmLaunchInTransaction(input, processInput) {

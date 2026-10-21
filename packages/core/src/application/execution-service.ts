@@ -19,6 +19,7 @@ import type { WorkSessionRecord, WorkSessionStore } from '../ports/work-session.
 import type { RuntimeExecutionLimits, RuntimeExecutionRequest, RuntimeStopEvidence, RuntimeExecutionResult } from '../ports/runtime-execution.js';
 import { RuntimeError, isRuntimeError, validateRuntimeExecutionRequest } from '../ports/runtime-execution.js';
 import { StorageError } from '../ports/errors.js';
+import { validateStableId } from '../ports/validation.js';
 import type { TaskDagStore } from '../ports/task-dag.js';
 import type { AttemptStore } from '../ports/attempt-store.js';
 import { evaluateTaskDag } from './task-dag.js';
@@ -38,6 +39,9 @@ export interface ExecutionServiceInput {
   readonly claim: TaskClaimReceipt;
   readonly workspace: unknown;
   readonly sessionId: string;
+  /** F-003：可选的准备阶段冻结身份；缺省保持历史调用方的 gate 生成语义。 */
+  readonly invocationId?: string;
+  readonly parentSessionId?: string | null;
   readonly strategy: RuntimeStrategyV1;
   readonly permissions: { readonly grants: readonly string[]; readonly isolation: string };
   readonly limits: RuntimeExecutionLimits;
@@ -212,7 +216,8 @@ export function createExecutionService(deps: ExecutionServiceDeps): ExecutionSer
     const input = validateServiceInput(value);
     const workIdentity = identity(input.claim);
     const invocationId = deps.atomic.transact('execution.begin-launch', () => {
-      const result = deps.resources.beginLaunchInTransaction(workIdentity);
+      const result = deps.resources.beginLaunchInTransaction({ ...workIdentity,
+        ...(input.invocationId === undefined ? {} : { invocationId: input.invocationId }) });
       if (!result.authorized || result.invocationId === null) {
         throw new StorageError('conflict', 'ExecutionService.start', 'Launch authorization denied');
       }
@@ -268,6 +273,7 @@ export function createExecutionService(deps: ExecutionServiceDeps): ExecutionSer
           purpose: 'work',
           runtime: input.strategy.runtime,
           adapterVersion,
+          ...(input.parentSessionId === undefined ? {} : { parentSessionId: input.parentSessionId }),
         });
         return created.session;
       });
@@ -469,7 +475,8 @@ function validateServiceInput(value: unknown): ExecutionServiceInput {
     claim: raw.claim,
     workspace: raw.workspace,
     sessionId: raw.sessionId,
-    invocationId: '00000000-0000-4000-8000-000000000000',
+    invocationId: raw.invocationId === undefined
+      ? '00000000-0000-4000-8000-000000000000' : raw.invocationId,
     strategy: raw.strategy,
     permissions: raw.permissions,
     limits: raw.limits,
@@ -483,6 +490,9 @@ function validateServiceInput(value: unknown): ExecutionServiceInput {
     claim: checked.claim,
     workspace: checked.workspace,
     sessionId: checked.sessionId,
+    invocationId: raw.invocationId === undefined ? undefined : checked.invocationId,
+    parentSessionId: raw.parentSessionId === undefined || raw.parentSessionId === null
+      ? null : validateStableId(raw.parentSessionId, { operation: 'ExecutionService.validate' }, 'parentSessionId'),
     strategy: checked.strategy,
     permissions: checked.permissions,
     limits: checked.limits,

@@ -151,8 +151,8 @@ export function createSqliteWorkSessionStore(
       parent_session_id, kind, title, purpose, runtime, adapter_version, provider_session_id, status,
       execution_stage, input_ref, result_ref, last_activity_at, started_at, ended_at, stopped_at,
       native_ref, recording_watermark, recording_gaps)
-      VALUES (?, ?, ?, 1, ?, ?, NULL, 'work', NULL, ?, ?, ?, ?, 'reserved', ?, ?, NULL, ?, NULL, NULL, NULL, ?, NULL, NULL)`)
-      .run(input.sessionId, timestamp, timestamp, input.projectId, input.attemptId, input.purpose,
+      VALUES (?, ?, ?, 1, ?, ?, ?, 'work', NULL, ?, ?, ?, ?, 'reserved', ?, ?, NULL, ?, NULL, NULL, NULL, ?, NULL, NULL)`)
+      .run(input.sessionId, timestamp, timestamp, input.projectId, input.attemptId, input.parentSessionId ?? null, input.purpose,
         input.runtime, input.adapterVersion, input.providerSessionId ?? null, attempt.execution_stage,
         attempt.input_ref, timestamp,
         input.nativeRef == null ? null : JSON.stringify(input.nativeRef));

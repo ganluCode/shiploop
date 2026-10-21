@@ -1654,7 +1654,7 @@ export const sessions = sqliteTable('sessions', {
     AND json_type(${table.recordingGaps}) = 'array' AND length(${table.recordingGaps}) <= 8192)`),
   check('sessions_lifecycle_shape_check', sql`
     (${table.kind} = 'chat' AND ${table.attemptId} IS NULL)
-    OR (${table.kind} = 'work' AND ${table.parentSessionId} IS NULL AND ${table.attemptId} IS NOT NULL)
+    OR (${table.kind} = 'work' AND ${table.attemptId} IS NOT NULL)
     OR (${table.kind} = 'work' AND ${table.parentSessionId} IS NOT NULL AND ${table.attemptId} IS NULL)`),
   check('sessions_status_shape_check', sql`
     (${table.status} = 'reserved' AND ${table.startedAt} IS NULL AND ${table.endedAt} IS NULL AND ${table.stoppedAt} IS NULL AND ${table.resultRef} IS NULL)

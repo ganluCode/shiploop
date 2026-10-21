@@ -42,7 +42,7 @@ export interface WorkResourceAccess {
   renewInTransaction(identity: unknown, leaseUntilUtcMs: unknown): WorkResourceSnapshot;
   quarantineInTransaction(identity: unknown): WorkResourceSnapshot;
   expireInTransaction(): number;
-  beginLaunchInTransaction(identity: unknown): { readonly authorized: boolean; readonly invocationId: string | null };
+  beginLaunchInTransaction(input: unknown): { readonly authorized: boolean; readonly invocationId: string | null };
   confirmLaunchInTransaction(identity: unknown, processIdentity: unknown): { readonly authorized: boolean };
   releaseUnstartedInTransaction(identity: unknown): void;
   releaseStoppedInTransaction(identity: unknown, evidence: unknown): void;

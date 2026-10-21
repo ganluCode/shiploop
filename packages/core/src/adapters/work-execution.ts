@@ -81,6 +81,7 @@ export function assembleWorkExecution(options: {
     'configurationService' | 'workWorkspaceAuthority' | 'taskClaims' | 'workspacePreparation' | 'executionInputPrepare'> & {
       readonly runtimeRecovery?: CoreApplication['runtimeRecovery'];
       readonly runtimeRecoveryCatalog?: CoreApplication['runtimeRecoveryCatalog'];
+      readonly workRecoveryContinuation?: CoreApplication['workRecoveryContinuation'];
     };
   readonly capabilityCatalog: import('../ports/runtime-capabilities.js').RuntimeCapabilityCatalog;
   readonly runtimeFactory?: WorkRuntimeFactory;
@@ -357,9 +358,13 @@ export function assembleWorkExecution(options: {
       const fact = view.facts.find(fact => fact.taskId === taskId)!;
       const claimKey = randomUUID();
       if (frozenRoute) preparedRoutes.set(claimKey, frozenRoute);
+      const launch = { sessionId: randomUUID(), invocationId: randomUUID(),
+        parentSessionId: prior.length > 0 && prior[prior.length - 1]!.sessionId !== null
+          ? prior[prior.length - 1]!.sessionId : null };
       return { claimKey, projectId, runId: candidate.run.id, taskId, owner, hostInstanceId,
         expectedRevision: task.revision, executionVersion: fact.executionVersion,
         workspace, leaseUntilUtcMs: Math.min(now() + 60_000, view.batch.deadlineAtUtcMs), inputSnapshot,
+        launch,
         ...(attemptId === undefined ? {} : { attemptId }) };
     },
     consumeClaim: consumeFallbackClaim = async claim => {
@@ -414,7 +419,8 @@ export function assembleWorkExecution(options: {
               ? 'run_time_exhausted' : 'deadline_exhausted' },
           });
         }
-        const started = await execution.start({ claim, workspace, sessionId: randomUUID(), strategy,
+        const started = await execution.start({ claim, workspace, sessionId: claim.launch?.sessionId ?? randomUUID(),
+          ...(claim.launch === undefined ? {} : { invocationId: claim.launch.invocationId, parentSessionId: claim.launch.parentSessionId }), strategy,
           permissions: { ...TRUSTED_PROJECT_PERMISSIONS_READER({ projectId: attempt.projectId, featureId: attempt.featureId, taskId: attempt.taskId }), isolation: 'trusted_project' },
           limits: {
             timeoutMs: Math.max(1, deadlines.remainingMs),

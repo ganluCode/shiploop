@@ -29,6 +29,8 @@ import { PublicError } from '../ports/commands.js';
 import { createSqliteWorkStartupRecoveryStore } from './sqlite/work-startup-recovery.js';
 import { createSqliteWorkRecoveryReconciliationStore } from './sqlite/work-recovery-reconciliation.js';
 import { createWorkRecoveryReconciler } from '../application/work-recovery-reconciliation.js';
+import { createWorkRecoveryContinuationService } from '../application/work-recovery-continuation.js';
+import type { WorkRecoveryContinuationService } from '../application/work-recovery-continuation.js';
 import { createRecoveryGitReader } from './fs/recovery-git-reader.js';
 import { createGitCommitDriver } from './fs/git-commit-driver.js';
 export type { WorkRuntimeFactory, WorkRuntimeContext, WorkFailureRoutingAssembly } from './work-execution.js';
@@ -270,6 +272,8 @@ export interface CoreApplication {
   readonly runtimeRecovery: RuntimeRecoveryService;
   /** Trusted capability evidence catalog used by Work input binding decisions. */
   readonly runtimeRecoveryCatalog: RuntimeRecoveryCatalog;
+  /** F-003：同 Task continuation 的不可变规划服务；只发布记录，不创建 Attempt/Runtime。 */
+  readonly workRecoveryContinuation: WorkRecoveryContinuationService;
   readonly executionStart: ExecutionStartPort;
   /** P03-9 / F-008：显式工作流 resume（重新授权/现场核验/解除暂停；不启动 Runtime）。 */
   readonly executionResume: ExecutionResumePort;
@@ -903,10 +907,17 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       });
       return { worktreeId: managed.id, headCommit: inspection.repository.headCommit, codeDigest: inspection.codeDigest };
     };
+    const workRecoveryContinuation = createWorkRecoveryContinuationService({
+      attempts: createSqliteAttemptAccess(session), artifacts: artifactStore,
+      verifier: createArtifactVerifier({ artifacts: artifactStore, files: artifactFileStore, limits: { maxReadBytes: 16_000_000 } }),
+      publisher: createArtifactPublisher({ artifacts: artifactStore, files: artifactFileStore,
+        limits: { maxSizeBytes: 2_000_000, timeoutMs: 60_000 } }),
+      recoveryCatalog: recoveryCatalog, ...(nowUtcMs === undefined ? {} : { nowMs: nowUtcMs }),
+    });
     const workExecution = assembleWorkExecution({ session,
       application: { dataRoot: basePathService.dataRoot(), artifactStore, artifactFileStore, stateStore,
         configurationService, workWorkspaceAuthority, taskClaims, workspacePreparation, executionInputPrepare,
-        runtimeRecovery, runtimeRecoveryCatalog: recoveryCatalog },
+        runtimeRecovery, runtimeRecoveryCatalog: recoveryCatalog, workRecoveryContinuation },
       capabilityCatalog, runtimeFactory: object.workRuntimeFactory as WorkRuntimeFactory | undefined, nowUtcMs, readReworkScene, startupRecovery,
       ...(object.finalizationExecution === undefined ? {} : {
         finalizationExecution: object.finalizationExecution as FinalizationExecutionPort,
@@ -1135,6 +1146,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       finalizationRetry,
       runtimeRecovery,
       runtimeRecoveryCatalog: recoveryCatalog,
+      workRecoveryContinuation,
       queryService,
       onboardingService,
       baselineStore,

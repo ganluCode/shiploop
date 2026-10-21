@@ -201,7 +201,8 @@ export function createSqliteTaskClaimStore(session: SqliteStorageSession, option
           const receipt: TaskClaimReceipt = { schemaVersion: 1, claimKey: valid.claimKey, batchId: view.batch.id,
             attempt: attempts.getAttempt(valid.projectId, attemptId), taskRevision: counters.revision,
             reservationId: reservation.id, leases: occupied.leases, counts: { batchAttempts: view.batch.attemptsCreated + 1,
-              runAttempts: view.run.attemptsCreated + 1, taskAttempts: counters.attemptCounter, codeAttempts: counters.codeAttemptsUsed }, eventId };
+              runAttempts: view.run.attemptsCreated + 1, taskAttempts: counters.attemptCounter, codeAttempts: counters.codeAttemptsUsed },
+            ...(valid.launch === undefined ? {} : { launch: { ...valid.launch, parentSessionId: valid.launch.parentSessionId ?? null } }), eventId };
           db.prepare('INSERT INTO task_claim_receipts (id, project_id, attempt_id, request_digest, receipt) VALUES (?, ?, ?, ?, ?)')
             .run(valid.claimKey, valid.projectId, attemptId, requestDigest, JSON.stringify(receipt));
           return { replayed: false, receipt };

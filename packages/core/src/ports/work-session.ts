@@ -219,8 +219,8 @@ export function validateWorkSessionRecord(
   const shapeError = (): never => {
     throw validationError(context, field, `非法 Session 生命周期形状（status=${status}）`, value);
   };
-  if (kind === 'chat' && attemptId !== null) shapeError();
-  if (kind === 'work' && ((parentSessionId === null) !== (attemptId !== null))) shapeError();
+  if (kind === 'chat' && (attemptId !== null || parentSessionId !== null)) shapeError();
+  if (kind === 'work' && attemptId === null && parentSessionId === null) shapeError();
   if (status === 'reserved') {
     if (startedAtUtcMs !== null || endedAtUtcMs !== null || stoppedAtUtcMs !== null || resultRef !== null) shapeError();
   } else if (status === 'started') {
@@ -248,6 +248,7 @@ export interface WorkSessionCreateInput extends WorkResourceIdentity {
   readonly runtime: string;
   readonly adapterVersion: string;
   readonly providerSessionId?: string | null;
+  readonly parentSessionId?: string | null;
   readonly nativeRef?: WorkSessionNativeRef | null;
 }
 
@@ -258,7 +259,7 @@ export function validateWorkSessionCreateInput(
 ): WorkSessionCreateInput {
   const object = requirePlainObject(value, context, field);
   rejectUnknownKeys(object, ['projectId', 'attemptId', 'owner', 'hostInstanceId', 'executionVersion',
-    'sessionId', 'purpose', 'runtime', 'adapterVersion', 'providerSessionId', 'nativeRef'], context, field);
+    'sessionId', 'purpose', 'runtime', 'adapterVersion', 'providerSessionId', 'parentSessionId', 'nativeRef'], context, field);
   const identity = validateWorkResourceIdentity({ projectId: object.projectId, attemptId: object.attemptId,
     owner: object.owner, hostInstanceId: object.hostInstanceId, executionVersion: object.executionVersion });
   const sessionId = validateStableId(object.sessionId, context, 'sessionId');
@@ -266,10 +267,13 @@ export function validateWorkSessionCreateInput(
   const runtime = boundedIdText(object.runtime, context, 'runtime');
   const adapterVersion = boundedIdText(object.adapterVersion, context, 'adapterVersion');
   const providerSessionId = validateOptionalBoundedText(object.providerSessionId ?? null, 256, context, 'providerSessionId');
+  const parentSessionId = object.parentSessionId === undefined || object.parentSessionId === null
+    ? null : validateStableId(object.parentSessionId, context, 'parentSessionId');
   const nativeRef = object.nativeRef === undefined || object.nativeRef === null
     ? null
     : validateWorkSessionNativeRef(object.nativeRef, context, 'nativeRef');
-  return { ...identity, sessionId, purpose, runtime, adapterVersion, providerSessionId, nativeRef };
+  return { ...identity, sessionId, purpose, runtime, adapterVersion, providerSessionId,
+    ...(object.parentSessionId === undefined ? {} : { parentSessionId }), nativeRef };
 }
 
 export const WORK_SESSION_PROGRESS_KINDS = ['started', 'ended', 'stopped', 'activity'] as const;
