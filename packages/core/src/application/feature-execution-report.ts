@@ -4,7 +4,9 @@ import { toPublicWorkSessionAttempt, toPublicWorkSessionRecord, toPublicWorkSess
 import { toPublicVerificationBatchRecord } from '../ports/task-evidence-query.js';
 import { toPublicGitOperationRecord } from '../ports/git-operation-query.js';
 import { toPublicAttemptDiagnosticRecord } from '../ports/execution-schedule-query.js';
+import { normalizeRuntimeUsage, aggregateUsage } from './usage-normalization.js';
 import type { AttemptStatus } from '../ports/attempt-store.js';
+import type { UsageDiagnosticIdentity } from '../ports/usage-diagnostics.js';
 
 const iso = (value: number | null) => value === null ? null : new Date(value).toISOString();
 function unique<T>(rows: readonly T[], id: (row: T) => string): T[] {
@@ -56,14 +58,25 @@ export function buildFeatureExecutionReport(
     const rework = attempt.inputSnapshot.rework;
     const evidence = [...ids].sort().map(reference);
     if (evidence.some(e => e.availability !== 'ready')) issues.push('evidence_unavailable');
+    const usageIdentity: UsageDiagnosticIdentity = {
+      runtime: session?.runtime ?? 'unknown', provider: resolved?.evidence?.routing?.selected?.provider ?? 'unknown',
+      model: resolved?.evidence?.routing?.selected?.model ?? null, attemptId: attempt.id,
+      sessionId: session?.id ?? attempt.id, invocationId: attempt.invocationId ?? attempt.id,
+      requestId: null, messageId: null, eventId: null, providerSessionId: null,
+      providerRequestId: null, recovery: attempt.inputSnapshot.recovery == null ? 'new' : 'resume',
+    };
+    const normalizedUsage = usage === undefined || usage === null ? null : aggregateUsage([normalizeRuntimeUsage({
+      identity: usageIdentity, usage, kind: 'attempt', final: true,
+      sourceRefs: (usage.sourceRefs ?? []).map(ref => ({ kind: 'runtime_result' as const, ref, observedAtUtc: null })),
+    })]);
     const usageSummary = {
       basis: session?.runtime === 'fake' ? 'synthetic' as const : usage?.basis ?? 'unknown' as const,
-      inputTokens: usage?.inputTokens ?? attempt.usageSummary?.inputTokens ?? null,
-      outputTokens: usage?.outputTokens ?? attempt.usageSummary?.outputTokens ?? null,
-      costMicros: usage?.costUsdMicros ?? attempt.usageSummary?.costMicros ?? null,
+      inputTokens: normalizedUsage === null ? usage?.inputTokens ?? attempt.usageSummary?.inputTokens ?? null : normalizedUsage.totals.inputTokens,
+      outputTokens: normalizedUsage === null ? usage?.outputTokens ?? attempt.usageSummary?.outputTokens ?? null : normalizedUsage.totals.outputTokens,
+      costMicros: normalizedUsage === null ? usage?.costUsdMicros ?? attempt.usageSummary?.costMicros ?? null : normalizedUsage.totals.costUsdMicros,
       currency: usage?.costUsdMicros != null ? 'USD' : attempt.usageSummary?.currency ?? null,
-      cacheReadTokens: null,
-      cacheWriteTokens: null,
+      cacheReadTokens: normalizedUsage?.totals.cacheReadTokens ?? null,
+      cacheWriteTokens: normalizedUsage?.totals.cacheWriteTokens ?? null,
     };
     if (usageSummary.inputTokens === null || usageSummary.outputTokens === null || usageSummary.costMicros === null) issues.push('usage_partial');
     // P03 has no normalized cache measurements. Do not fabricate cache rates or

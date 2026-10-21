@@ -90,6 +90,14 @@ describe('P04-6 用量与效率诊断公共契约', () => {
       cacheWriteTokens: 4, reasoningTokens: null, providerTotalTokens: 124, coverage: 'partial', normalization: 'not_comparable',
       sourceRefs: ['event-1'], accounting: 'incremental', completeness: 'partial',
     })).toMatchObject({ cacheReadTokens: null, cacheWriteTokens: 4, providerTotalTokens: 124, coverage: 'partial' });
+    expect(validateRuntimeUsageReport({
+      basis: 'reported', inputTokens: 100, outputTokens: 20, costUsdMicros: null,
+      cacheReadTokens: 20, cacheWriteTokens: 4, reasoningTokens: 3, providerTotalTokens: 124,
+      cacheReadIncludedInInput: true, cacheWriteIncludedInInput: false, reasoningIncludedInOutput: true,
+    })).toMatchObject({ cacheReadIncludedInInput: true, cacheWriteIncludedInInput: false, reasoningIncludedInOutput: true });
+    expect(() => validateRuntimeUsageReport({
+      basis: 'reported', inputTokens: 1, outputTokens: 1, costUsdMicros: null, cacheReadIncludedInInput: 'yes',
+    })).toThrow();
     expect(() => validateRuntimeUsageReport({ basis: 'reported', inputTokens: null, outputTokens: null, costUsdMicros: null, accounting: 'invalid' })).toThrow();
   });
 

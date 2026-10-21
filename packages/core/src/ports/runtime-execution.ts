@@ -471,6 +471,10 @@ export interface RuntimeUsageReport {
   readonly cacheWriteTokens?: number | null;
   readonly reasoningTokens?: number | null;
   readonly providerTotalTokens?: number | null;
+  /** 供应商确认缓存/推理与 input/output 的包含关系后才可加总。 */
+  readonly cacheReadIncludedInInput?: boolean;
+  readonly cacheWriteIncludedInInput?: boolean;
+  readonly reasoningIncludedInOutput?: boolean;
   /** Coverage of the declared observation scope, separate from accounting basis. */
   readonly coverage?: UsageCoverage;
   /** How this raw report was made comparable, if Core can prove it. */
@@ -542,9 +546,15 @@ function nullableCount(value: unknown, field: string): number | null {
   return value;
 }
 
+function optionalBoolean(value: unknown, field: string): boolean | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'boolean') throw protocolError('invalid_boolean', field);
+  return value;
+}
+
 export function validateRuntimeUsageReport(value: unknown, field = 'usage'): RuntimeUsageReport {
   const raw = adapterObject(value, ['basis', 'inputTokens', 'outputTokens', 'costUsdMicros', 'cacheReadTokens', 'cacheWriteTokens',
-    'reasoningTokens', 'providerTotalTokens', 'coverage', 'normalization', 'sourceRefs', 'completeness', 'accounting'], field);
+    'reasoningTokens', 'providerTotalTokens', 'cacheReadIncludedInInput', 'cacheWriteIncludedInInput', 'reasoningIncludedInOutput', 'coverage', 'normalization', 'sourceRefs', 'completeness', 'accounting'], field);
   if (raw.basis !== 'synthetic' && raw.basis !== 'reported') {
     throw protocolError('invalid_usage_basis', `${field}.basis`);
   }
@@ -576,6 +586,9 @@ export function validateRuntimeUsageReport(value: unknown, field = 'usage'): Run
     cacheWriteTokens: raw.cacheWriteTokens === undefined ? undefined : nullableCount(raw.cacheWriteTokens, `${field}.cacheWriteTokens`),
     reasoningTokens: raw.reasoningTokens === undefined ? undefined : nullableCount(raw.reasoningTokens, `${field}.reasoningTokens`),
     providerTotalTokens: raw.providerTotalTokens === undefined ? undefined : nullableCount(raw.providerTotalTokens, `${field}.providerTotalTokens`),
+    ...(raw.cacheReadIncludedInInput === undefined ? {} : { cacheReadIncludedInInput: optionalBoolean(raw.cacheReadIncludedInInput, `${field}.cacheReadIncludedInInput`) }),
+    ...(raw.cacheWriteIncludedInInput === undefined ? {} : { cacheWriteIncludedInInput: optionalBoolean(raw.cacheWriteIncludedInInput, `${field}.cacheWriteIncludedInInput`) }),
+    ...(raw.reasoningIncludedInOutput === undefined ? {} : { reasoningIncludedInOutput: optionalBoolean(raw.reasoningIncludedInOutput, `${field}.reasoningIncludedInOutput`) }),
     ...(raw.coverage === undefined ? {} : { coverage: raw.coverage as UsageCoverage }),
     ...(raw.normalization === undefined ? {} : { normalization: raw.normalization as UsageNormalization }),
     ...(sourceRefs === undefined ? {} : { sourceRefs }),

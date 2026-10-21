@@ -22,6 +22,7 @@ export * from './ports/git-operation-query.js';
 export * from './ports/feature-delivery-query.js';
 export * from './ports/feature-execution-report.js';
 export * from './application/feature-execution-report.js';
+export * from './application/usage-normalization.js';
 export * from './ports/execution-control-query.js';
 export * from './ports/controlled-git-commit.js';
 export * from './application/controlled-git-commit.js';

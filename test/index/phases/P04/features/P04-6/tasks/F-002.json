@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "task_id": "F-002",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        { "file": "test/modules/runtime/p04-6-usage-normalization.test.ts", "all": true },
+        { "file": "test/modules/runtime/p04-6-usage-diagnostics-contract.test.ts", "all": true },
+        { "file": "test/modules/cli/p03-10-feature-report-built.test.ts", "all": true },
+        { "file": "test/modules/cli/p03-10-feature-report-text.test.ts", "all": true }
+      ]
+    }
+  ]
+}

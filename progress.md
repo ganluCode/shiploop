@@ -1,5 +1,13 @@
 # P04-6 工作进度
 
+## F-002 — 调用级 Token 用量归一化与多层投影（2026-10-21）
+
+- 在 Core 增加纯函数 `usage-normalization`，消费 Runtime/Recorder 形状的原始 usage，按稳定 event/provider request/Runtime identity 去重，处理 incremental/cumulative、明确恢复基线、最终结果覆盖逐请求明细、父子汇总、模型切换和未知归属；保留 raw usage、来源、basis、coverage、accounting、normalization 与诊断原因。
+- 生成 Attempt、Task、Run、Feature 及 runtime/provider/model 维度投影；各父层从同一原始观察集合重新计算，避免把重叠层级再次相加。cache read/write 与 reasoning 仅在包含关系已声明时进入可比较 measurement；缓存率按可比较 input 加权，零分母、未知语义和未知 input 保持 null/unknown。
+- 扩展 `RuntimeUsageReport` 的三个可选包含关系字段，并对其执行严格布尔校验；Feature execution report 接入归一化 Attempt usage summary。新增确定性测试覆盖重复事件、累计/恢复、最终快照、缓存/reasoning 口径、模型切换、缺字段及多层维度。
+- F-002 selection 定向验证：`verifications/F-002/runtime-logs/test-k6d4v7uj.log` exit 0，4 文件/17 passed/0 failed/0 skipped；最终 `npm run build` 日志 `test-j49c20or.log` exit 0；完整 stdout/stderr、退出码与 JSON sidecar 均由 Nezha wrapper 保存。另一次 P03 Runtime 脱敏回归复现既有 `redacted-evidence` 失败，manifest usage 为 `basis=none`；该回归未纳入本任务 selection，原因是失败位于未改动的 Recorder 事件汇总路径，复现日志为 `verifications/F-002/runtime-logs/test-8m_8xiak.log`，exit 1。
+- 已登记 `test/index/phases/P04/features/P04-6/tasks/F-002.json` 与 Feature workspace 的 v2 selection；未运行全量测试、组合门禁或阶段验收，未修改正式 feature.yaml/task_list。
+
 ## F-001 — 用量与效率诊断公共契约（2026-10-21）
 
 - 新增 Core 公共 `usage-diagnostics` 端口，统一表达 runtime/provider/model、Attempt、Session、invocation、request/message/event 与恢复来源；provider session/request 只作为可追溯证据，不承担 Core Attempt 或命令幂等身份。
