@@ -296,6 +296,12 @@ export function createExecutionService(deps: ExecutionServiceDeps): ExecutionSer
     });
     let runtime: RuntimeSession;
     try {
+      const launchNow = (deps.nowUtcMs ?? Date.now)();
+      if (!Number.isSafeInteger(launchNow) || launchNow < 1) throw new TypeError('Invalid execution clock');
+      if (launchNow >= deadlines.effectiveDeadlineUtcMs) {
+        await finalizeUnstarted(input, new RuntimeError('timeout', 'deadline_exhausted'));
+        throw new RuntimeError('timeout', 'deadline_exhausted');
+      }
       unstarted.delete(key(workIdentity.projectId, workIdentity.attemptId));
       uncertainStarts.add(workIdentity.attemptId);
       runtime = await deps.runtime.start(bound.request);
@@ -306,6 +312,7 @@ export function createExecutionService(deps: ExecutionServiceDeps): ExecutionSer
         runtime = { ...handle, cancel: () => cancel ??= Promise.resolve().then(() => handle.cancel()) };
       }
     } catch (error) {
+      if (isRuntimeError(error) && error.kind === 'timeout' && error.reason === 'deadline_exhausted') throw error;
       if (deps.settlement) {
         try {
           await deps.settlement.settle({ request: bound.request, result: { status: 'rejected', reason: error }, recording: null, stopped: null,
@@ -377,7 +384,9 @@ export function createExecutionService(deps: ExecutionServiceDeps): ExecutionSer
           timeoutLayer: deadlines.effectiveLayer,
           timeoutLimitMs: deadlines.effectiveLayer === 'session'
             ? bound.request.limits.timeoutMs
-            : Math.max(1, deadlines.effectiveDeadlineUtcMs - launchedAt) });
+            : Math.max(1, deadlines.effectiveDeadlineUtcMs - launchedAt),
+          deadlineUtcMs: deadlines.effectiveDeadlineUtcMs,
+          nowUtcMs: deps.nowUtcMs ?? Date.now });
         Object.assign(context, { completion: supervision.completion });
         entry.stop = supervision.stop;
         recordingStop = () => supervision.stop('recording_failed');

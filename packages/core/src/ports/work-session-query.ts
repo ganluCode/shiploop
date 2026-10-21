@@ -372,7 +372,7 @@ function validateControl(value: unknown, field: string): RuntimeControlFacts | n
   let timeout: RuntimeControlFacts['timeout'];
   if (raw.timeout !== undefined) {
     const t = requirePlainObject(raw.timeout, EVIDENCE_CONTEXT, `${field}.timeout`);
-    rejectUnknownKeys(t, ['layer', 'stage', 'limitMs', 'elapsedMs'], EVIDENCE_CONTEXT, `${field}.timeout`);
+    rejectUnknownKeys(t, ['layer', 'stage', 'limitMs', 'elapsedMs', 'deadlineUtcMs'], EVIDENCE_CONTEXT, `${field}.timeout`);
     if (!['session', 'tool', 'check', 'run', 'batch'].includes(String(t.layer))
       || !['runtime', 'verification'].includes(String(t.stage))) {
       throw validationError(EVIDENCE_CONTEXT, `${field}.timeout`, 'invalid_timeout_facts');
@@ -389,6 +389,7 @@ function validateControl(value: unknown, field: string): RuntimeControlFacts | n
       stage: t.stage as NonNullable<RuntimeControlFacts['timeout']>['stage'],
       limitMs: nullable(t.limitMs, 'limitMs'),
       elapsedMs: nullable(t.elapsedMs, 'elapsedMs'),
+      deadlineUtcMs: nullable(t.deadlineUtcMs, 'deadlineUtcMs'),
     };
   }
   return {

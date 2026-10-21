@@ -10,6 +10,8 @@ export interface RuntimeTimeoutFact {
   readonly stage: 'runtime' | 'verification';
   /** 该层授权上限（毫秒）；适配器未暴露已知上限时保持 null。 */
   readonly limitMs: number | null;
+  /** 已解析的绝对截止时间；未知时保持 null。 */
+  readonly deadlineUtcMs?: number | null;
   /** 已知耗时（毫秒）；无法观测时保持 null，绝不写 0。 */
   readonly elapsedMs: number | null;
 }
@@ -72,7 +74,7 @@ export function validateRuntimeSettlementFacts(value: unknown): RuntimeSettlemen
     let timeout: RuntimeTimeoutFact | undefined;
     if (c.timeout !== undefined) {
       const t = requirePlainObject(c.timeout, context, 'control.timeout');
-      rejectUnknownKeys(t, ['layer', 'stage', 'limitMs', 'elapsedMs'], context, 'control.timeout');
+      rejectUnknownKeys(t, ['layer', 'stage', 'limitMs', 'elapsedMs', 'deadlineUtcMs'], context, 'control.timeout');
       if (!['session', 'tool', 'check', 'run', 'batch'].includes(String(t.layer))
         || !['runtime', 'verification'].includes(String(t.stage))) {
         throw validationError(context, 'control.timeout', 'invalid_timeout_facts');
@@ -89,6 +91,7 @@ export function validateRuntimeSettlementFacts(value: unknown): RuntimeSettlemen
         stage: t.stage as RuntimeTimeoutFact['stage'],
         limitMs: optionalNonNegative(t.limitMs, 'control.timeout.limitMs'),
         elapsedMs: optionalNonNegative(t.elapsedMs, 'control.timeout.elapsedMs'),
+        deadlineUtcMs: optionalNonNegative(t.deadlineUtcMs, 'control.timeout.deadlineUtcMs'),
       };
     }
     control = {

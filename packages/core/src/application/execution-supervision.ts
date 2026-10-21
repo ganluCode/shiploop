@@ -62,6 +62,9 @@ export function superviseExecution(input: {
   /** P03-9 / F-004：触发层（Session/Run/Batch）与观察起点（已知耗时基准）。 */
   readonly timeoutLayer: 'session' | 'run' | 'batch';
   readonly timeoutLimitMs: number;
+  /** Absolute deadline used to classify a result that was delivered after the timer boundary. */
+  readonly deadlineUtcMs?: number | null;
+  readonly nowUtcMs?: () => number;
 }) {
   let reason: ExecutionStopReason | null = null;
   let cancel: RuntimeControlFacts['cancel'] = 'unobserved';
@@ -87,12 +90,19 @@ export function superviseExecution(input: {
     resolveStop();
   };
   const elapsed = (): number => Math.max(0, Math.round(performance.now() - observedFromMs));
-  const timer = setTimeout(() => stop(input.timeoutReason, {
+  const deadlineReached = (): boolean => {
+    if (input.deadlineUtcMs === undefined || input.deadlineUtcMs === null || input.nowUtcMs === undefined) return false;
+    const now = input.nowUtcMs();
+    return Number.isSafeInteger(now) && now >= input.deadlineUtcMs;
+  };
+  const timeoutFact = (elapsedMs: number): RuntimeTimeoutFact => ({
     layer: input.timeoutLayer,
     stage: 'runtime',
     limitMs: input.timeoutLimitMs,
-    elapsedMs: elapsed(),
-  }), Math.max(1, input.timeoutMs));
+    elapsedMs,
+    deadlineUtcMs: input.deadlineUtcMs ?? null,
+  });
+  const timer = setTimeout(() => stop(input.timeoutReason, timeoutFact(elapsed())), Math.max(1, input.timeoutMs));
   void input.recording.then(outcome => {
     const bestEffort = outcome.status === 'fulfilled' ? outcome.value.recordingMode === 'best_effort'
       : outcome.reason instanceof WorkEvidenceRecordingError && outcome.reason.recordingMode === 'best_effort';
@@ -107,7 +117,11 @@ export function superviseExecution(input: {
         stage: 'runtime',
         limitMs: toolTimedOut ? input.request.limits.toolTimeoutMs ?? null : input.request.limits.timeoutMs,
         elapsedMs: outcome.value.durationMs ?? elapsed(),
+        deadlineUtcMs: toolTimedOut ? null : input.deadlineUtcMs ?? null,
       });
+    }
+    else if (outcome.value.terminal === 'completed' && deadlineReached()) {
+      stop(input.timeoutReason, timeoutFact(outcome.value.durationMs ?? elapsed()));
     }
     else if (outcome.value.terminal === 'cancelled') stop('runtime_cancelled');
   });
