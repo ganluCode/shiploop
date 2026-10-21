@@ -1,5 +1,13 @@
 # P04-5 工作进度
 
+## F-005 — 恢复回放与完整度诊断收尾（2026-10-21）
+
+- 在 F-003/F-004 已提交实现上补齐恢复 handoff 的有界收尾：事件、结果和原生恢复事实在同一有限尾部预算内完成；handoff 超时、拒绝或格式无效分别保留有界 `missingReasons`/`diagnostics`，晚到 handoff 不再改写已关闭清单。
+- 公开投影根据恢复来源将 manifest 标为 `mixed`，并从已核验的恢复格式/版本生成受控 `nativeRef`；原始来源档案、旧 Attempt 水位/缺口和当前 invocation 边界仍由 RuntimeRecoveryRecording 分层保留，不把私有正文写入索引。
+- 新增延迟 handoff 回归，确认恢复来源进入最终 public manifest；最终 F-005 选择集 7 个文件、124 个用例全部通过，日志为 `verifications/F-005/runtime-logs/test-f005-selection-final-rerun.log`，真实退出码 sidecar 同名 `.exit.json`。TypeScript 无输出检查退出码 0，日志为 `verifications/F-005/runtime-logs/typecheck-f005-final-rerun-2.log` 及 sidecar；聚焦恢复/投影复核日志和中间失败均保留在同一目录。
+- 本轮未运行全量测试、组合门禁、阶段验收或真实模型；未修改正式 `feature.yaml`、`task_list.json` 或官方索引。工作树差异仅包含 `work-evidence-recorder.ts`、`work-recording-projection.ts` 和对应 SessionRecorder 回归测试，提交与本次单次任务报告作为收尾证据。
+
+
 ## F-004 — Runtime 公开记录与有界 SessionRecorder 返工（2026-10-21）
 
 - 保留前次 `4fb990b` 实现。本次独立验收暴露 7 项 Host 原生锁构建前置缺失和 1 项过期 usage 累加断言；没有改变锁实现或放宽用量边界。Pi usage 的 accounting 为 unknown 时，保留 observation count 并将 totals 置 null/complete=false，避免猜测重试增量。

@@ -73,6 +73,12 @@ export function createWorkRecordingProjection(deps: WorkRecordingProjectionDeps,
       manifest?: WorkEvidenceManifest; manifestRef?: WorkRecordingArtifactRef | null }): number {
       const timestamp = nowUtcMs();
       const source = input.manifest;
+      const recoverySource = source?.recovery?.source;
+      const hasRecoveredSource = recoverySource !== undefined && recoverySource !== null;
+      const nativeRef = source?.recovery?.nativeFormat !== null && source?.recovery?.nativeFormat !== undefined
+        && source?.recovery?.nativeFormatVersion !== null && source?.recovery?.nativeFormatVersion !== undefined
+        ? { schemaVersion: 1 as const, storageKind: source.recovery.nativeFormat, formatVersion: source.recovery.nativeFormatVersion }
+        : null;
       const missing = [...new Set([...input.gaps, ...publicationGaps])];
       // Intermediate manifests must never claim a completed audit.
       if (source === undefined) missing.unshift('recording_in_progress');
@@ -95,14 +101,14 @@ export function createWorkRecordingProjection(deps: WorkRecordingProjectionDeps,
         manifestRef: input.manifestRef ?? null, watermark: nextWatermark,
         finalSequence: finalSequence !== null && finalSequence < (nextWatermark ?? 0) ? null : finalSequence,
         sequenceReconciliation: source?.sequenceReconciliation === 'match' && nextWatermark !== null ? 'match' : 'not_available',
-        coverage: source?.coverage === 'failed' ? 'failed' : partial ? 'partial' : 'complete', source: 'live',
+        coverage: source?.coverage === 'failed' ? 'failed' : partial ? 'partial' : 'complete', source: hasRecoveredSource ? 'mixed' : 'live',
         scope: { covers: ['public_events', 'public_messages', 'public_tools', 'final_result', 'minimal_diagnostics'],
           excludes: [...WORK_RECORDING_REQUIRED_EXCLUSIONS, 'unexposed_sdk_content'] },
         missingReasons: [...new Set(missing)].slice(0, 32), diagnostics: source?.diagnostics ?? [],
         truncation: { applied: truncation, reasons: truncation ? ['body_truncated'] : [] },
         redaction: { applied: redaction || (source?.redaction.secretValueCount ?? 0) > 0,
           reasons: redaction || (source?.redaction.secretValueCount ?? 0) > 0 ? ['configured_literal_redaction'] : [] },
-        sdkVersion: source?.recovery?.sdkVersion ?? null, formatVersion: 'work-recording/v1', nativeRef: null,
+        sdkVersion: source?.recovery?.sdkVersion ?? null, formatVersion: 'work-recording/v1', nativeRef,
         unknownEventCount: source?.stats.unknownEvents ?? 0, finalized: source !== undefined });
       const result = deps.store.commitRecording({ identity, expectedSessionRevision: input.sessionRevision,
         expectedManifestRevision: revision, messages: pending, manifest });

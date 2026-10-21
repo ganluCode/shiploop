@@ -10,6 +10,7 @@ import { createSqliteAttemptLifecycleStore } from '../../../packages/core/src/ad
 import { createSqliteAttemptAccess } from '../../../packages/core/src/adapters/sqlite/attempt-store.ts';
 import { createSqliteTaskDagStore } from '../../../packages/core/src/adapters/sqlite/task-dag-store.ts';
 import { superviseExecution } from '../../../packages/core/src/application/execution-supervision.ts';
+import { recoveryRecordingForRequest } from '../../../packages/core/src/application/runtime-recovery-recording.ts';
 import type { RuntimeSession } from '../../../packages/core/src/application/runtime-execution.ts';
 import { validateRuntimeExecutionResult, validateRuntimeStopEvidence } from '../../../packages/core/src/ports/runtime-execution.ts';
 import type { RuntimeHandle } from '../../../packages/core/src/ports/runtime-execution.ts';
@@ -255,6 +256,28 @@ it('[case:empty-terminal] reconciles a known empty stream without inventing an e
     expect(await f.recorder.record({ request: f.request, handle: f.handle([]), eventIdentityPrefix: 'evt.test.' })).toMatchObject({ status: 'complete', watermark: 0 });
     expect(f.store.getLatestManifest(f.projectId, f.request.sessionId)).toMatchObject({ coverage: 'complete', watermark: 0, finalSequence: 0, sequenceReconciliation: 'match', finalized: true });
     expect(f.query('SELECT COUNT(*) AS n FROM session_messages')).toEqual({ n: 0 });
+  } finally { f.close(); }
+});
+
+it('[case:delayed-recovery-handoff] waits for bounded adapter recovery facts before closing the public manifest', async () => {
+  const f = await fixture('best_effort');
+  try {
+    const request = { ...f.request, recovery: { mode: 'required' as const, kind: 'conversation' as const,
+      source: { schemaVersion: 1 as const, purpose: 'work' as const, kind: 'conversation' as const,
+        sourceProjectId: f.projectId, sourceTaskId: f.request.identity.purpose === 'work' ? f.request.identity.taskId : 't-1', sourceAttemptId: 'old-attempt', sourceSessionId: 'old-session',
+        runtime: 'fake', provider: 'old-provider', model: 'old-model', providerSessionId: 'old-provider-session',
+        nativeArchiveRef: 'old-archive', sourceDigest: 'a'.repeat(64), nativeFormat: 'jsonl', nativeFormatVersion: '3' } } };
+    let release!: (facts: unknown) => void;
+    const handoff = new Promise<unknown>(resolve => { release = resolve; });
+    const recording = f.recorder.record({ request, handle: { ...f.handle([]),
+      recoveryRecording: handoff,
+      events: (async function* () { yield f.event(1, 'message', { messageId: 'm-1', role: 'assistant', preview: 'recovered' }); })(),
+    }, eventIdentityPrefix: 'evt.test.' });
+    setTimeout(() => release(recoveryRecordingForRequest(request)!), 20);
+    const outcome = await recording;
+    expect(outcome.status).toBe('partial');
+    expect(f.store.getLatestManifest(f.projectId, request.sessionId)).toMatchObject({ source: 'mixed',
+      nativeRef: { schemaVersion: 1, storageKind: 'jsonl', formatVersion: '3' } });
   } finally { f.close(); }
 });
 

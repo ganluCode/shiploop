@@ -371,11 +371,19 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
       const gaps = createGapSink();
       const diagnostics = createDiagnosticSink();
       let recovery = recoveryRecordingForRequest(request, undefined, deps.sessions);
+      let recoveryHandoffClosed = false;
       // A missing/broken adapter handoff cannot block recording or erase known Core evidence.
-      void handle.recoveryRecording?.then(facts => {
-        try { recovery = recoveryRecordingForRequest(request, facts, deps.sessions); }
-        catch { gaps.add('recovery:invalid_adapter_handoff'); }
-      }, () => { gaps.add('recovery:adapter_handoff_failed'); });
+      // Keep the promise bounded, but wait for a handoff that is already in flight so
+      // the final manifest does not lose an otherwise available native source.
+      const recoveryHandoff = handle.recoveryRecording === undefined ? null
+        : Promise.resolve(handle.recoveryRecording).then(facts => {
+          if (recoveryHandoffClosed) return;
+          try { recovery = recoveryRecordingForRequest(request, facts, deps.sessions); }
+          catch { gaps.add('recovery:invalid_adapter_handoff'); }
+        }, () => {
+          if (!recoveryHandoffClosed) gaps.add('recovery:adapter_handoff_failed');
+        });
+      recoveryHandoff?.catch(() => undefined);
       const syncRecoveryGaps = () => {
         for (const gap of recovery?.gaps ?? []) gaps.add(`recovery:${gap}`);
       };
@@ -831,6 +839,15 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
             gaps.add('result_tail_timeout');
             diagnostics.add('result_tail_timeout');
           }
+        }
+        if (recoveryHandoff !== null) {
+          if (tailStartedAtMs === 0) tailStartedAtMs = nowMs();
+          const raced = await abortable(withTailDeadline(recoveryHandoff, TAIL_TIMEOUT));
+          if (raced === TAIL_TIMEOUT) {
+            gaps.add('recovery:adapter_handoff_timeout');
+            diagnostics.add('recovery:adapter_handoff_timeout');
+          }
+          recoveryHandoffClosed = true;
         }
         if (isAborted()) throw abortError();
       } catch (error) {
