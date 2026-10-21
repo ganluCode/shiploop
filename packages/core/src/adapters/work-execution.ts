@@ -428,7 +428,7 @@ export function assembleWorkExecution(options: {
             maxEvents: 10_000,
             maxOutputBytes: 8_000_000,
           },
-          recovery: { mode: 'new' }, cwdRoot: 'managed-work' });
+          recovery: attempt.inputSnapshot.recovery?.selection ?? { mode: 'new' }, cwdRoot: 'managed-work' });
         if (cancelRequested.delete(attempt.id)) void execution.cancel(identity).catch(() => undefined);
         void started.context.completion!.then(result => {
           if (result.stopConfirmed && result.persisted && result.error === null) active.delete(attempt.id);
