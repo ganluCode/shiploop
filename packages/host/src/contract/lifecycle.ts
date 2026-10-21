@@ -118,6 +118,9 @@ export const APPLICATION_QUERY_CAPABILITIES = [
   'execution.sessions.list',
   'execution.session.get',
   'execution.session.evidence.get',
+  // P04-5 / F-007：Work 公开记录索引/有界正文只读查询真实接线（只读）。
+  'execution.recording.list',
+  'execution.recording.body.get',
   'projects.list',
   'projects.get',
   'projects.binding.get',

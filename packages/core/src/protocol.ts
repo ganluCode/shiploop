@@ -205,6 +205,14 @@ export type {
 export { WORK_RECORDING_LIST_OPERATION, WORK_RECORDING_BODY_OPERATION } from './ports/work-recording-query.js';
 export type { WorkRecordingPage, WorkRecordingBody, WorkRecordingTarget, WorkRecordingRecordType,
   PublicWorkRecordingArtifactRef } from './ports/work-recording-query.js';
+// P04-5 / F-007 公开记录行的冻结词汇（wire 校验与 Core 同源，不漂移）。
+export {
+  WORK_RECORDING_SOURCES,
+  WORK_RECORDING_COVERAGES,
+  WORK_RECORDING_SEQUENCE_RECONCILIATIONS,
+  WORK_RECORDING_MESSAGE_KINDS,
+  WORK_RECORDING_MESSAGE_ROLES,
+} from './ports/work-recording.js';
 // P03-7 / F-013 Task 机器证据/人审事项/有限返工链只读查询面：公开形状与
 // 操作身份冻结词汇（服务端负责授权；Host 接线同源同步）。
 export {

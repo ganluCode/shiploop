@@ -73,6 +73,13 @@ import {
   formatWorkSessionListView,
 } from './app/work-session.js';
 import {
+  buildWorkRecordingBodyView,
+  buildWorkRecordingListView,
+  formatWorkRecordingBodyView,
+  formatWorkRecordingListView,
+} from './app/work-recording.js';
+import type { WorkRecordingParent } from './app/work-recording.js';
+import {
   buildExecutionControlCommandView,
   buildExecutionControlQueryView,
   buildExecutionRecoveryCliView,
@@ -1725,6 +1732,38 @@ async function executeExecutionCommand(
       );
       const view = buildWorkSessionEvidenceView(result);
       return emitSuccess(io, command, view, formatWorkSessionEvidenceView(view));
+    }
+    /* ------------------------------------------------------------ *
+     * P04-5 / F-007 Work 公开记录索引/正文结构化输出（只读；投影只消费
+     * wire 已脱敏的结构化结果，不被 logger 文本驱动；覆盖度不折算验收）
+     * ------------------------------------------------------------ */
+    case 'execution.recordings': {
+      const parent: WorkRecordingParent = command.runId !== undefined
+        ? { runId: command.runId }
+        : command.attemptId !== undefined
+          ? { attemptId: command.attemptId }
+          : { sessionId: command.sessionId as string };
+      const result = await client.listWorkRecordings(command.projectId, {
+        ...parent,
+        recordType: command.recordType,
+        ...(command.limit !== undefined ? { limit: command.limit } : {}),
+        ...(command.cursor !== undefined ? { cursor: command.cursor } : {}),
+      });
+      const view = buildWorkRecordingListView(result, parent);
+      return emitSuccess(io, command, view, formatWorkRecordingListView(view));
+    }
+    case 'execution.recording-body': {
+      const parent: WorkRecordingParent = command.runId !== undefined
+        ? { runId: command.runId }
+        : command.attemptId !== undefined
+          ? { attemptId: command.attemptId }
+          : { sessionId: command.sessionId as string };
+      const result = await client.readWorkRecordingBody(command.projectId, {
+        ...parent,
+        artifactId: command.artifactId,
+      });
+      const view = buildWorkRecordingBodyView(result);
+      return emitSuccess(io, command, view, formatWorkRecordingBodyView(view));
     }
     case 'execution.cancel': {
       /* P03-9 / F-015：无 positional + --run/--batch 形态映射 Run/Batch 级

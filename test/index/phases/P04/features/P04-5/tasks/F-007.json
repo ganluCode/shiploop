@@ -1,0 +1,43 @@
+{
+  "schema_version": 2,
+  "task_id": "F-007",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/cli/p04-5-recording-cli.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/host/p04-5-recording-wire.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p04-5-recording-host-query.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p03-6-cli-session-output.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/host/host-http-transport.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p04-5-work-recording-query.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p03-6-runtime-host-wiring.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/host/host-client-application.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

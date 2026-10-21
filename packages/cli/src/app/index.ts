@@ -308,6 +308,21 @@ export {
   formatWorkSessionEvidenceView,
   formatWorkSessionListView,
 } from './work-session.js';
+export {
+  WORK_RECORDING_VIEW_NOTE,
+  buildWorkRecordingBodyView,
+  buildWorkRecordingListView,
+  formatWorkRecordingBodyView,
+  formatWorkRecordingListView,
+} from './work-recording.js';
+export type {
+  WorkRecordingBodyDisplay,
+  WorkRecordingListDisplay,
+  WorkRecordingListRecord,
+  WorkRecordingManifestRow,
+  WorkRecordingMessageRow,
+  WorkRecordingParent,
+} from './work-recording.js';
 export type {
   AttemptCancelAcceptanceFacts,
   AttemptCancelDisplay,

@@ -18,8 +18,9 @@
  */
 import { validateFeatureReportWire } from './feature-report-wire.js';
 import { validateWorkSessionListWire, validateWorkSessionDetailWire, validateWorkSessionEvidenceWire } from './work-session-wire.js';
-import type { WorkSessionListResult, WorkSessionDetailResult, WorkSessionEvidenceContent } from 'shiploop-core/protocol';
-export type { WorkSessionListResult, WorkSessionDetailResult, WorkSessionEvidenceContent } from 'shiploop-core/protocol';
+import { validateWorkRecordingListWire, validateWorkRecordingBodyWire } from './work-recording-wire.js';
+import type { WorkSessionListResult, WorkSessionDetailResult, WorkSessionEvidenceContent, WorkRecordingPage, WorkRecordingBody } from 'shiploop-core/protocol';
+export type { WorkSessionListResult, WorkSessionDetailResult, WorkSessionEvidenceContent, WorkRecordingPage, WorkRecordingBody } from 'shiploop-core/protocol';
 import {
   ATTEMPT_EXECUTION_STAGES,
   ATTEMPT_NOTIFICATION_DIAGNOSTIC_REASONS,
@@ -238,6 +239,8 @@ export type AppQueryOperation =
   | 'execution.sessions.list'
   | 'execution.session.get'
   | 'execution.session.evidence.get'
+  | 'execution.recording.list'
+  | 'execution.recording.body.get'
   | 'projects.list'
   | 'projects.get'
   | 'projects.binding.get'
@@ -5584,6 +5587,8 @@ export function validateAppQueryResponse(
 export function validateAppQueryResponse(operation: 'execution.sessions.list', body: unknown, expectation?: SnapshotExpectation): WorkSessionListResult;
 export function validateAppQueryResponse(operation: 'execution.session.get', body: unknown, expectation?: SnapshotExpectation): WorkSessionDetailResult;
 export function validateAppQueryResponse(operation: 'execution.session.evidence.get', body: unknown, expectation?: SnapshotExpectation): WorkSessionEvidenceContent;
+export function validateAppQueryResponse(operation: 'execution.recording.list', body: unknown, expectation?: SnapshotExpectation): WorkRecordingPage;
+export function validateAppQueryResponse(operation: 'execution.recording.body.get', body: unknown, expectation?: SnapshotExpectation): WorkRecordingBody;
 export function validateAppQueryResponse(
   operation: 'workspace.operations.get',
   body: unknown,
@@ -5652,6 +5657,8 @@ export function validateAppQueryResponse(
     case 'execution.sessions.list': return validateWorkSessionListWire(body);
     case 'execution.session.get': return validateWorkSessionDetailWire(body);
     case 'execution.session.evidence.get': return validateWorkSessionEvidenceWire(body);
+    case 'execution.recording.list': return validateWorkRecordingListWire(body);
+    case 'execution.recording.body.get': return validateWorkRecordingBodyWire(body);
     case 'projects.list':
       return validateProjectListPage(operation, body);
     case 'projects.get': {

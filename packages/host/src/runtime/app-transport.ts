@@ -117,6 +117,10 @@ export type ApplicationOperation =
   | 'execution.sessions.list'
   | 'execution.session.get'
   | 'execution.session.evidence.get'
+  // P04-5 / F-007：Work 公开记录索引/有界正文只读查询（与 Core
+  // WORK_RECORDING_LIST_OPERATION / WORK_RECORDING_BODY_OPERATION 同源）。
+  | 'execution.recording.list'
+  | 'execution.recording.body.get'
   | 'commands.submit'
   | 'receipts.get'
   | 'results.resolve'
@@ -343,6 +347,11 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
   const sessionPath = /^\/v1\/attempts\/([^/]+)\/session(\/evidence)?$/.exec(path);
   if (sessionPath) return { operation: sessionPath[2] ? 'execution.session.evidence.get' : 'execution.session.get',
     method: 'GET', pathParam: { name: 'attemptId', value: sessionPath[1]! } };
+  // P04-5 / F-007：GET /v1/work-recordings（索引分页；父级 Run/Attempt/Session
+  // 三选一由 Core 单一权威复核）与 GET /v1/work-recordings/body（有界正文；
+  // 成员身份由 Core 校验，绝不接受任意文件路径）。
+  if (path === '/v1/work-recordings') return { operation: 'execution.recording.list', method: 'GET' };
+  if (path === '/v1/work-recordings/body') return { operation: 'execution.recording.body.get', method: 'GET' };
   if (path === ATTEMPTS_ROUTE) {
     return { operation: 'execution.attempts.list', method: 'GET' };
   }
@@ -679,6 +688,10 @@ const QUERY_SPECS: Readonly<Partial<Record<ApplicationOperation, QuerySpec>>> = 
   'execution.sessions.list': Object.freeze({ allowed: ['projectId', 'runId', 'taskId', 'limit', 'cursor'], repeatable: [] }),
   'execution.session.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
   'execution.session.evidence.get': Object.freeze({ allowed: ['projectId', 'artifactId'], repeatable: [] }),
+  // P04-5 / F-007：公开记录查询参数白名单（父级三选一/recordType/分页与
+  // artifactId 的取值规则由 Core 单一权威复核）。
+  'execution.recording.list': Object.freeze({ allowed: ['projectId', 'runId', 'attemptId', 'sessionId', 'recordType', 'limit', 'cursor'], repeatable: [] }),
+  'execution.recording.body.get': Object.freeze({ allowed: ['projectId', 'runId', 'attemptId', 'sessionId', 'artifactId'], repeatable: [] }),
   'execution.attempts.list': Object.freeze({
     allowed: ['projectId', 'taskId', 'limit', 'cursor'],
     repeatable: [],
@@ -1163,6 +1176,26 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
       result = { ...evidence, content: Buffer.from(evidence.content).toString('base64') };
       break;
     }
+    // P04-5 / F-007：Work 公开记录分发（本层只做形态转换；授权/可见性折叠/
+    // 父级三选一/分页/成员身份/正文完整性全部由 Core 单一权威复核；跨项目与
+    // 不存在目标统一 not_found，不区分存在性；正文转 base64 同证据读取）。
+    case 'execution.recording.list': {
+      const query = buildPlanListQuery(params, operation, 'projectId');
+      for (const key of ['runId', 'attemptId', 'sessionId', 'recordType']) {
+        if (params.has(key)) query[key] = params.get(key);
+      }
+      result = await app.queryService.listWorkRecording(app.principal, query);
+      break;
+    }
+    case 'execution.recording.body.get': {
+      const query: Record<string, unknown> = { projectId: params.get('projectId'), artifactId: params.get('artifactId') };
+      for (const key of ['runId', 'attemptId', 'sessionId']) {
+        if (params.has(key)) query[key] = params.get(key);
+      }
+      const body = await app.queryService.readWorkRecordingBody(app.principal, query);
+      result = { ...body, content: Buffer.from(body.content).toString('base64') };
+      break;
+    }
     case 'execution.attempts.list':
       result = await app.queryService.listExecutionAttempts(
         app.principal,
@@ -1294,8 +1327,9 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
       // 路由表与本分发必须一一对应；缺失是装配编程错误。
       throw new TypeError(`应用路由未接线：${operation}`);
   }
-  sendBoundedJson(response, 200, result, operation === 'execution.session.evidence.get' ? MAX_WORK_SESSION_EVIDENCE_RESPONSE_BYTES
-    : operation === 'features.report.get' ? MAX_FEATURE_REPORT_RESPONSE_BYTES : MAX_APP_BODY_BYTES, operation);
+  sendBoundedJson(response, 200, result,
+    operation === 'execution.session.evidence.get' || operation === 'execution.recording.body.get' ? MAX_WORK_SESSION_EVIDENCE_RESPONSE_BYTES
+      : operation === 'features.report.get' ? MAX_FEATURE_REPORT_RESPONSE_BYTES : MAX_APP_BODY_BYTES, operation);
 }
 
 /**

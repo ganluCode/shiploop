@@ -106,6 +106,8 @@ export type AppCliCommandId =
   | 'execution.sessions'
   | 'execution.session'
   | 'execution.session-evidence'
+  | 'execution.recordings'
+  | 'execution.recording-body'
   | 'execution.cancel'
   | 'execution.pause'
   | 'execution.resume'
@@ -180,6 +182,8 @@ export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'execution.sessions',
   'execution.session',
   'execution.session-evidence',
+  'execution.recordings',
+  'execution.recording-body',
   'execution.cancel',
   'workspace.list',
   'workspace.get',
@@ -295,6 +299,8 @@ export type AppCliParseReason =
   | 'invalid_batch_id'
   | 'invalid_run_id'
   | 'invalid_attempt_id'
+  | 'invalid_session_id'
+  | 'invalid_record_type'
   | 'concurrency_not_supported'
   | 'confirmation_required'
   | 'invalid_preview_file'
@@ -377,6 +383,8 @@ const REASON_MESSAGE: Readonly<Record<AppCliParseReason, string>> = Object.freez
   invalid_batch_id: 'batchId 必须是 UUID v4',
   invalid_run_id: 'runId 必须是 UUID v4',
   invalid_attempt_id: 'attemptId 必须是 UUID v4',
+  invalid_session_id: 'sessionId 必须是稳定 ID',
+  invalid_record_type: 'recordType 只能是 messages 或 manifests',
   concurrency_not_supported: '有效并发大于一：本版本只支持单并发执行',
   confirmation_required: '破坏性操作必须明确确认（--confirm）',
   invalid_preview_file: '丢弃预览文件不是合法的工作区丢弃预览（形状或绑定字段不合法）',
@@ -1037,6 +1045,29 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
     maxPositionals: 1,
     positionalFields: ['attemptId'],
   },
+  /* P04-5 / F-007 Work 公开记录索引/正文查询（实际 Host 公共契约
+   * execution.recording.list / execution.recording.body.get 的参数映射；
+   * 父级 Run/Attempt/Session 三选一，recordType 只接受 messages|manifests）。 */
+  'execution.recordings': {
+    command: 'execution',
+    commandId: 'execution.recordings',
+    valueFlags: ['--project', '--run', '--attempt', '--session', '--record-type', '--limit', '--cursor'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 0,
+    maxPositionals: 0,
+    positionalFields: [],
+  },
+  'execution.recording-body': {
+    command: 'execution',
+    commandId: 'execution.recording-body',
+    valueFlags: ['--project', '--run', '--attempt', '--session', '--artifact'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 0,
+    maxPositionals: 0,
+    positionalFields: [],
+  },
   'execution.cancel': {
     command: 'execution',
     commandId: 'execution.cancel',
@@ -1269,6 +1300,8 @@ const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, A
       sessions: 'execution.sessions',
       session: 'execution.session',
       'session-evidence': 'execution.session-evidence',
+      recordings: 'execution.recordings',
+      'recording-body': 'execution.recording-body',
       cancel: 'execution.cancel',
       pause: 'execution.pause',
       resume: 'execution.resume',
@@ -2572,6 +2605,42 @@ export interface ParsedExecutionSessionEvidence {
 }
 
 /**
+ * P04-5 / F-007 Work 公开记录索引（execution.recording.list）：父级
+ * Run/Attempt/Session 三选一；recordType 只接受 messages|manifests；
+ * 有界分页同计划列表。
+ */
+export interface ParsedExecutionRecordings {
+  readonly kind: 'command';
+  readonly command: 'execution';
+  readonly commandId: 'execution.recordings';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly runId?: string;
+  readonly attemptId?: string;
+  readonly sessionId?: string;
+  readonly recordType: 'messages' | 'manifests';
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+
+/** P04-5 / F-007 记录正文（execution.recording.body.get；成员身份由 Host/Core 核验）。 */
+export interface ParsedExecutionRecordingBody {
+  readonly kind: 'command';
+  readonly command: 'execution';
+  readonly commandId: 'execution.recording-body';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly runId?: string;
+  readonly attemptId?: string;
+  readonly sessionId?: string;
+  readonly artifactId: string;
+}
+
+/**
  * P03-6 / F-013 Attempt 显式取消（execution.attempt.cancel）：缺 --confirm 在
  * 任何 I/O 之前本地拒绝；`--command-id` 复用原信封幂等重放（响应丢失先查回执，
  * 不更换命令身份、不额外启动工作）。
@@ -2960,6 +3029,8 @@ export type ParsedAppCliCommand =
   | ParsedExecutionSessions
   | ParsedExecutionSession
   | ParsedExecutionSessionEvidence
+  | ParsedExecutionRecordings
+  | ParsedExecutionRecordingBody
   | ParsedExecutionCancel
   | ParsedExecutionTargetCancel
   | ParsedExecutionPause
@@ -3366,6 +3437,14 @@ function requireAttemptId(raw: string, state: ParseState): string {
   return raw;
 }
 
+/** Session 稳定身份（P04-5 / F-007 公开记录父级；稳定 ID 模式，不是任意路径）。 */
+function requireSessionId(raw: string, state: ParseState): string {
+  if (!ARTIFACT_ID_PATTERN.test(raw)) {
+    fail(state, 'invalid_session_id', 'sessionId');
+  }
+  return raw;
+}
+
 /** 执行预算文件（缺失即缺少预算；形态校验在 app/execution.ts 纯层）。 */
 function requireBudgetFile(scan: ScanResult, state: ParseState): string {
   const raw = takeOption(scan, '--input');
@@ -3552,6 +3631,61 @@ function buildExecution(
         commandId: 'execution.session-evidence',
         projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
         attemptId: requireAttemptId(scan.positionals[0] as string, state),
+        artifactId: requireArtifactId(requireOption(scan, '--artifact', state, 'artifactId'), state),
+      };
+    }
+    case 'execution.recordings': {
+      // 父级 Run/Attempt/Session 三选一（实际 Host 契约的 xor 选择器）。
+      const runRaw = takeOption(scan, '--run');
+      const attemptRaw = takeOption(scan, '--attempt');
+      const sessionRaw = takeOption(scan, '--session');
+      if (runRaw === undefined && attemptRaw === undefined && sessionRaw === undefined) {
+        fail(state, 'missing_required_option', 'parent');
+      }
+      if ([runRaw, attemptRaw, sessionRaw].filter(value => value !== undefined).length > 1) {
+        fail(state, 'conflicting_options');
+      }
+      const recordTypeRaw = takeOption(scan, '--record-type');
+      if (recordTypeRaw === undefined) {
+        fail(state, 'missing_required_option', 'recordType');
+      }
+      if (recordTypeRaw !== 'messages' && recordTypeRaw !== 'manifests') {
+        fail(state, 'invalid_record_type', 'recordType');
+      }
+      return {
+        ...base,
+        command: 'execution',
+        commandId: 'execution.recordings',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        ...(runRaw !== undefined
+          ? { runId: requireRunId(runRaw, state) }
+          : attemptRaw !== undefined
+            ? { attemptId: requireAttemptId(attemptRaw, state) }
+            : { sessionId: requireSessionId(sessionRaw as string, state) }),
+        recordType: recordTypeRaw,
+        ...optionalPlanListPage(scan, state),
+      };
+    }
+    case 'execution.recording-body': {
+      const runRaw = takeOption(scan, '--run');
+      const attemptRaw = takeOption(scan, '--attempt');
+      const sessionRaw = takeOption(scan, '--session');
+      if (runRaw === undefined && attemptRaw === undefined && sessionRaw === undefined) {
+        fail(state, 'missing_required_option', 'parent');
+      }
+      if ([runRaw, attemptRaw, sessionRaw].filter(value => value !== undefined).length > 1) {
+        fail(state, 'conflicting_options');
+      }
+      return {
+        ...base,
+        command: 'execution',
+        commandId: 'execution.recording-body',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        ...(runRaw !== undefined
+          ? { runId: requireRunId(runRaw, state) }
+          : attemptRaw !== undefined
+            ? { attemptId: requireAttemptId(attemptRaw, state) }
+            : { sessionId: requireSessionId(sessionRaw as string, state) }),
         artifactId: requireArtifactId(requireOption(scan, '--artifact', state, 'artifactId'), state),
       };
     }

@@ -84,6 +84,8 @@ import type {
   WorkSessionListResult,
   WorkSessionDetailResult,
   WorkSessionEvidenceContent,
+  WorkRecordingPage,
+  WorkRecordingBody,
   WorkspaceDetailResult,
   WorkspaceDiscardPreviewBinding,
   WorkspaceListResult,
@@ -551,6 +553,22 @@ export interface HostClientApplication {
   listWorkSessions(projectId: string, input: { readonly runId?: string; readonly taskId?: string; readonly limit?: number; readonly cursor?: string }): Promise<WorkSessionListResult>;
   getWorkSession(projectId: string, attemptId: string): Promise<WorkSessionDetailResult>;
   readWorkSessionEvidence(projectId: string, attemptId: string, artifactId: string): Promise<WorkSessionEvidenceContent>;
+  /** P04-5 / F-007 execution.recording.list：按 Run/Attempt/Session 的公开记录索引分页（父级三选一）。 */
+  listWorkRecordings(projectId: string, input: {
+    readonly runId?: string;
+    readonly attemptId?: string;
+    readonly sessionId?: string;
+    readonly recordType: 'messages' | 'manifests';
+    readonly limit?: number;
+    readonly cursor?: string;
+  }): Promise<WorkRecordingPage>;
+  /** P04-5 / F-007 execution.recording.body.get：成员身份核验后的有界记录正文（hash/size 复核）。 */
+  readWorkRecordingBody(projectId: string, input: {
+    readonly runId?: string;
+    readonly attemptId?: string;
+    readonly sessionId?: string;
+    readonly artifactId: string;
+  }): Promise<WorkRecordingBody>;
   cancelAttempt(input: { readonly projectId: string; readonly attemptId: string; readonly commandId?: string }, options?: SubmitCommandOptions): Promise<CommandReceipt>;
   /* ------------------------------------------------------------ *
    * P03-9 / F-014 Run/Batch 授权控制与诊断查询（经既有命令/查询通道）
@@ -1667,7 +1685,7 @@ export function createHostClientApplication(context: AppClientContext): HostClie
       token,
       connectTimeoutMs: context.connectMs,
       overallTimeoutMs: requestBudget(),
-      maxResponseBytes: operation === 'execution.session.evidence.get' ? MAX_WORK_SESSION_EVIDENCE_RESPONSE_BYTES
+      maxResponseBytes: operation === 'execution.session.evidence.get' || operation === 'execution.recording.body.get' ? MAX_WORK_SESSION_EVIDENCE_RESPONSE_BYTES
         : operation === 'features.report.get' ? MAX_FEATURE_REPORT_RESPONSE_BYTES : MAX_APP_BODY_BYTES,
     });
     if (response.statusCode !== 200) {
@@ -3092,6 +3110,45 @@ export function createHostClientApplication(context: AppClientContext): HostClie
       const artifact = requireStableIdInput(op, artifactId, 'artifactId');
       const result = validateAppQueryResponse(op, await getJson(op, `/v1/attempts/${target}/session/evidence?projectId=${encodeURIComponent(project)}&artifactId=${artifact}`));
       if (result.artifact.artifactId !== artifact) throw new HostProtocolError('response_malformed', op, '证据归属不匹配');
+      return result;
+    },
+    async listWorkRecordings(projectId, input) {
+      const op = 'execution.recording.list';
+      context.assertOpen(op);
+      const project = requireProjectId(op, projectId);
+      const object = rejectUnknownInputKeys(op, input, ['runId', 'attemptId', 'sessionId', 'recordType', 'limit', 'cursor']);
+      const parentKeys = (['runId', 'attemptId', 'sessionId'] as const).filter(key => object[key] !== undefined);
+      if (parentKeys.length !== 1) throw invalidInput(op, 'parent_required');
+      const key = parentKeys[0]!;
+      const parent = requireStableIdInput(op, object[key], key);
+      if (object.recordType !== 'messages' && object.recordType !== 'manifests') {
+        throw invalidInput(op, 'invalid_record_type', 'recordType');
+      }
+      const paging = buildPlanListQuery({ limit: input.limit, cursor: input.cursor }, op);
+      const query = `projectId=${encodeURIComponent(project)}&${key}=${encodeURIComponent(parent)}`
+        + `&recordType=${object.recordType}${paging.length === 0 ? '' : `&${paging}`}`;
+      const result = validateAppQueryResponse(op, await getJson(op, `/v1/work-recordings?${query}`));
+      if (result.recordType !== object.recordType
+        || result.records.some(row => row.projectId !== project || row[key] !== parent)) {
+        throw new HostProtocolError('response_malformed', op, '记录响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
+      }
+      return result;
+    },
+    async readWorkRecordingBody(projectId, input) {
+      const op = 'execution.recording.body.get';
+      context.assertOpen(op);
+      const project = requireProjectId(op, projectId);
+      const object = rejectUnknownInputKeys(op, input, ['runId', 'attemptId', 'sessionId', 'artifactId']);
+      const parentKeys = (['runId', 'attemptId', 'sessionId'] as const).filter(key => object[key] !== undefined);
+      if (parentKeys.length !== 1) throw invalidInput(op, 'parent_required');
+      const key = parentKeys[0]!;
+      const parent = requireStableIdInput(op, object[key], key);
+      const artifact = requireStableIdInput(op, object.artifactId, 'artifactId');
+      const result = validateAppQueryResponse(op, await getJson(op,
+        `/v1/work-recordings/body?projectId=${encodeURIComponent(project)}&${key}=${encodeURIComponent(parent)}&artifactId=${encodeURIComponent(artifact)}`));
+      if (result.artifact.artifactId !== artifact) {
+        throw new HostProtocolError('response_malformed', op, '记录正文归属与请求不一致', { details: { reason: 'scope_mismatch' } });
+      }
       return result;
     },
     async cancelAttempt(input, options) {

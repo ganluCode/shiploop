@@ -66,6 +66,10 @@ export const APP_OPERATIONS = [
   'execution.sessions.list',
   'execution.session.get',
   'execution.session.evidence.get',
+  // P04-5 / F-007：Work 公开记录索引/有界正文只读查询（能力位复用
+  // project.read；与 Core WORK_RECORDING_*_OPERATION 同步，不漂移）。
+  'execution.recording.list',
+  'execution.recording.body.get',
   'execution.attempts.list',
   'execution.attempt.diagnostics',
   // P03-7 / F-013：Task 机器证据/人审事项/有限返工链授权只读查询（能力位复用
