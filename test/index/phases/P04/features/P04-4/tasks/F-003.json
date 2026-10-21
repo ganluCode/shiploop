@@ -1,0 +1,18 @@
+{
+  "schema_version": 2,
+  "task_id": "F-003",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        { "file": "test/modules/recovery/p03-9-f007-recovery-continuation.test.ts", "all": true },
+        { "file": "test/modules/recovery/p03-9-f006-recovery-reconciliation.test.ts", "all": true },
+        { "file": "test/modules/runtime/p03-6-execution-input-binding.test.ts", "all": true },
+        { "file": "test/modules/runtime/p03-6-execution-service.test.ts", "all": true },
+        { "file": "test/modules/runtime/p03-6-execution-uncertainty.test.ts", "all": true },
+        { "file": "test/modules/runtime/p04-4-pi-recovery-boundary.test.ts", "all": true },
+        { "file": "test/modules/storage/sqlite/sqlite-schema-migrations.test.ts", "all": true }
+      ]
+    }
+  ]
+}
