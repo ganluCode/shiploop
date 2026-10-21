@@ -16,6 +16,7 @@
  * - import 本模块无副作用，会话生命周期由调用方管理。
  */
 import { StorageError } from '../../ports/errors.js';
+import { createSqliteWorkRecordingReads } from './work-recording-query-store.js';
 import { assertPrincipalVisibility } from '../../ports/queries.js';
 import { validateStableId } from '../../ports/validation.js';
 import type { ValidationContext } from '../../ports/validation.js';
@@ -195,6 +196,7 @@ export function createSqliteWorkSessionQueryStore(
   }
 
   return {
+    ...createSqliteWorkRecordingReads(session),
     readRunRef(project: unknown, run: unknown): { readonly id: string } | undefined {
       const operation = `${OPERATION}.readRunRef`;
       const projectId = stableId(operation, project, 'projectId');

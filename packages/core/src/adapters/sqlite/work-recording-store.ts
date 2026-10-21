@@ -47,11 +47,11 @@ function refFromRow(row: Row, prefix: 'content' | 'manifest'): unknown {
   return row[`${prefix}_ref`] === null ? null : { artifactId: row[`${prefix}_ref`], contentHash: row[`${prefix}_hash`],
     sizeBytes: row[`${prefix}_size_bytes`], locator: row[`${prefix}_locator`] };
 }
-function messageFromRow(row: Row): WorkRecordingMessageRecord {
+export function messageFromRow(row: Row): WorkRecordingMessageRecord {
   try { return validateWorkRecordingMessage({ ...decode(row, messageColumns), contentRef: refFromRow(row, 'content') }); }
   catch { throw new StorageError('corrupt', context.operation, 'Invalid stored recording message'); }
 }
-function manifestFromRow(row: Row): WorkRecordingManifestRecord {
+export function manifestFromRow(row: Row): WorkRecordingManifestRecord {
   try { return validateWorkRecordingManifest({ ...decode(row, manifestColumns), manifestRef: refFromRow(row, 'manifest') }); }
   catch { throw new StorageError('corrupt', context.operation, 'Invalid stored recording manifest'); }
 }

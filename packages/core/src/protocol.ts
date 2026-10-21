@@ -202,6 +202,9 @@ export type {
   WorkSessionQueryOperation,
   WorkSessionQueryState,
 } from './ports/work-session-query.js';
+export { WORK_RECORDING_LIST_OPERATION, WORK_RECORDING_BODY_OPERATION } from './ports/work-recording-query.js';
+export type { WorkRecordingPage, WorkRecordingBody, WorkRecordingTarget, WorkRecordingRecordType,
+  PublicWorkRecordingArtifactRef } from './ports/work-recording-query.js';
 // P03-7 / F-013 Task 机器证据/人审事项/有限返工链只读查询面：公开形状与
 // 操作身份冻结词汇（服务端负责授权；Host 接线同源同步）。
 export {

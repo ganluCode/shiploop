@@ -1,0 +1,43 @@
+{
+  "schema_version": 2,
+  "task_id": "F-006",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/runtime/p04-5-work-recording-query.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p03-6-work-session-query.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/storage/artifacts/artifact-verify.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/authorization/authorized-queries.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p03-6-cli-session-output.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/storage/sqlite/p04-5-work-recording-store.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/planning/p03-1-plan-queries.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/planning/p03-1-plan-queries-consistency.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

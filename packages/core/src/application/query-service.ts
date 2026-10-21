@@ -214,7 +214,10 @@ import {
 } from '../ports/execution-control-query.js';
 import type { ArtifactStore } from '../ports/artifact-store.js';
 import type { ArtifactFileStore } from '../ports/artifact-files.js';
-import { createArtifactVerifier } from './artifact-verify.js';
+import { createArtifactVerifier, isArtifactVerifyError } from './artifact-verify.js';
+import { WORK_RECORDING_LIST_OPERATION, WORK_RECORDING_BODY_OPERATION, validateWorkRecordingTarget,
+  publicWorkRecordingRow, publicWorkRecordingRef } from '../ports/work-recording-query.js';
+import type { WorkRecordingPage, WorkRecordingBody, WorkRecordingRecordType } from '../ports/work-recording-query.js';
 import type { AttemptRecord } from '../ports/attempt-store.js';
 import { evaluateTaskDag } from './task-dag.js';
 import {
@@ -402,6 +405,10 @@ export interface QueryService {
   listWorkspaceOperations(principal: unknown, input: unknown): Promise<WorkspaceOperationListResult>;
   /** P03-5 / F-011 workspace.operations.get：按 operationId 的操作详情（含回执引用）。 */
   getWorkspaceOperation(principal: unknown, input: unknown): Promise<WorkspaceOperationDetailResult>;
+  /** P04-5 public Work indexes; each bounded page uses one consistent read view. */
+  listWorkRecording(principal: unknown, input: unknown): Promise<WorkRecordingPage>;
+  /** Exact recording membership followed by bounded Artifact integrity verification. */
+  readWorkRecordingBody(principal: unknown, input: unknown): Promise<WorkRecordingBody>;
   /**
    * P03-6 / F-011 execution.sessions.list：按 Run 或 Task 的顶层 Work Session
    * 分页（kind='work'，Chat 不混入；实际 runtime/executionStage/最后活动/结果
@@ -1766,6 +1773,65 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
     // P03-6 / F-011：Work Session 只读查询（能力核验 → 身份/过滤器校验 →
     // 项目可见 → 一致读；跨项目/不存在折叠 not_found；脱敏投影在端口层；
     // 查询零写入、零事件、零续租、不触发取消或执行）。
+    async listWorkRecording(principal: unknown, input: unknown): Promise<WorkRecordingPage> {
+      assertTrustedPrincipal(principal);
+      const operation = WORK_RECORDING_LIST_OPERATION;
+      try {
+        requireCapability(principal, 'project.read', operation);
+        const { raw, target } = validateWorkRecordingTarget(input, operation);
+        const projectId = requireProjectId(raw.projectId, operation);
+        requireProjectVisible(principal, projectId, operation);
+        const recordType = raw.recordType as WorkRecordingRecordType;
+        const filter = validatedPlanFilter(raw, operation);
+        const binding = planCursorBinding({ kind: 'work-recording', projectId,
+          parentKind: target.kind, parentId: target.id, recordType }, operation);
+        const after = planListRequest(filter, binding, operation);
+        const page = workSessionReads.listWorkRecordingRows(projectId, target, recordType, {
+          after: after.afterId === null ? null : decodeExecutionListKey(after.afterId, operation), limit: filter.limit });
+        if (page === undefined) workSessionTargetNotFound(operation, target.kind === 'run' ? 'session' : target.kind);
+        return { schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION, scope: 'work-recording', recordType,
+          records: page.records.map(publicWorkRecordingRow), limit: filter.limit,
+          nextCursor: page.nextKey === null ? null : encodePlanListCursor(encodeExecutionListKey(page.nextKey), binding) };
+      } catch (error) { throw mapToPublicError(error, { operation }); }
+    },
+
+    async readWorkRecordingBody(principal: unknown, input: unknown): Promise<WorkRecordingBody> {
+      assertTrustedPrincipal(principal);
+      const operation = WORK_RECORDING_BODY_OPERATION;
+      try {
+        requireCapability(principal, 'project.read', operation);
+        const { raw, target } = validateWorkRecordingTarget(input, operation, true);
+        const projectId = requireProjectId(raw.projectId, operation);
+        const artifactId = validateStableId(raw.artifactId, { operation }, 'artifactId');
+        requireProjectVisible(principal, projectId, operation);
+        const ref = workSessionReads.readWorkRecordingArtifactRef(projectId, target, artifactId);
+        if (ref === undefined) workSessionTargetNotFound(operation, 'artifact');
+        let artifact;
+        try { artifact = await artifacts.getArtifact(projectId, artifactId); }
+        catch (error) {
+          if (isStorageError(error, 'not_found') || isStorageError(error, 'ownership')) workSessionTargetNotFound(operation, 'artifact');
+          throw error;
+        }
+        if (artifact.status !== 'ready') workSessionTargetNotFound(operation, 'artifact');
+        if (artifact.contentHash !== ref.contentHash || artifact.expectedHash !== ref.contentHash
+          || artifact.sizeBytes !== ref.sizeBytes || artifact.locator !== ref.locator) {
+          throw new PublicError('corrupt_state', operation, '记录制品索引不一致', { details: { reason: 'recording_reference_mismatch' } });
+        }
+        let verified;
+        try { verified = await evidenceVerifier.readVerifiedContent(projectId, artifactId); }
+        catch (error) {
+          const reason = isArtifactVerifyError(error, 'size_limit_exceeded') ? 'recording_body_size_limit'
+            : isArtifactVerifyError(error) && error.corruption?.kind === 'missing' ? 'recording_body_missing' : 'recording_body_corrupt';
+          throw new PublicError('corrupt_state', operation, '记录正文不可读取', { details: { reason } });
+        }
+        if (verified.contentHash !== ref.contentHash || verified.sizeBytes !== ref.sizeBytes || verified.locator !== ref.locator) {
+          throw new PublicError('corrupt_state', operation, '记录正文与引用不一致', { details: { reason: 'recording_reference_mismatch' } });
+        }
+        return { schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION, scope: 'work-recording-body',
+          artifact: publicWorkRecordingRef(ref), content: verified.content };
+      } catch (error) { throw mapToPublicError(error, { operation }); }
+    },
+
     async listWorkSessions(principal: unknown, input: unknown): Promise<WorkSessionListResult> {
       assertTrustedPrincipal(principal);
       const operation = EXECUTION_WORK_SESSIONS_LIST_OPERATION;

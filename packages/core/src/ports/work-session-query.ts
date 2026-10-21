@@ -33,6 +33,7 @@
  *   性）；visibility 非法形状为可信装配编程错误（TypeError）。
  */
 import { PublicError, WIRE_MESSAGE_SCHEMA_VERSION } from './commands.js';
+import type { WorkRecordingReadStore } from './work-recording-query.js';
 import type { ArtifactRecord } from './artifact-store.js';
 import type {
   AttemptExecutionStage,
@@ -160,7 +161,7 @@ export interface WorkSessionDetailView {
  * 列表沿用计划分页的可见范围谓词与键集分页形态（复合排序键由
  * ExecutionListRequest 承载，应用层已解码校验）。
  */
-export interface WorkSessionQueryReadStore {
+export interface WorkSessionQueryReadStore extends WorkRecordingReadStore {
   /** Run 存在性折叠辅助（不读内容，只核对同项目归属）。 */
   readRunRef(projectId: unknown, runId: unknown): { readonly id: string } | undefined;
   listRunWorkSessions(

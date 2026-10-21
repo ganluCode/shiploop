@@ -1,5 +1,12 @@
 # P04-5 工作进度
 
+## F-006 — 授权公开记录分页与核验正文（2026-10-21）
+
+- 从 F-005 `8a4326e` 及已保存 RED/契约增量继续，仅处理 F-006。沿用 QueryService、WorkSessionQueryReadStore、SQLite 一致读与 ArtifactVerifier，增加按 Run/Attempt/Session 的消息与 manifest 分页及按 Session/Attempt 的正文读取；默认 50、上限 200，游标绑定根/项目/父级/记录种类，公开引用不含 locator。
+- 按真实 Work 根与后代核对项目、Run、Attempt、invocation、executionVersion；Chat 不进入公开索引。正文限定持久消息/附件/manifest 的精确 ready Artifact 引用，核验索引与文件 hash/size，沿用 8 MiB 上限并区分缺失、损坏、超限；工具父子身份保持可关联，原生/provider 身份和自由诊断不公开。
+- 最终新增文件 `p04-5-work-recording-query.test.ts` 12 passed/0 failed/0 skipped，`test-7308al4c.log` exit 0；typecheck `test-yvwp6fjs.log` exit 0；boundaries `test-kete9ed3.log` exit 0（323 源码/0 diagnostics）。查询前后全库业务快照不变、重开数据库结果相同均有真实 SQLite/Artifact 测试。RED `test-49m8s6ft.log` 和中间夹具触发器失败均保留，完整输出及退出码 sidecar 在当前 Feature workspace `verifications/F-006/runtime-logs/`。
+- [查询交接](docs/p04-5-f006-recording-query.md) 记录接口、授权、错误和证据；F-006 v2 任务索引与 Harness selection 已核对 8 个文件。其余 7 个回归仅选择，交 Nezha 独立执行。本轮未运行全仓/组合门禁/阶段验收/live 模型，未修改正式 feature.yaml/task_list；当前分支保持不变，提交及本 invocation 的单次任务声明以 Git/Nezha 回执为准。
+
 ## F-005 — 恢复回放与完整度诊断收尾（2026-10-21）
 
 - 在 F-003/F-004 已提交实现上补齐恢复 handoff 的有界收尾：事件、结果和原生恢复事实在同一有限尾部预算内完成；handoff 超时、拒绝或格式无效分别保留有界 `missingReasons`/`diagnostics`，晚到 handoff 不再改写已关闭清单。

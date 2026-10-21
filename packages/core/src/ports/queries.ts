@@ -598,6 +598,7 @@ export const PLAN_LIST_CURSOR_VERSION = 1 as const;
  *  'feature-git-operations' 与 'run-git-operations'（Git 操作列表分页，
  *  父级为 Feature / Run）。 */
 export type PlanListScope =
+  | { readonly kind: 'work-recording'; readonly projectId: string; readonly parentKind: 'run' | 'attempt' | 'session'; readonly parentId: string; readonly recordType: 'messages' | 'manifests' }
   | { readonly kind: 'phases'; readonly projectId: string }
   | { readonly kind: 'features'; readonly projectId: string; readonly phaseId: string }
   | { readonly kind: 'tasks'; readonly projectId: string; readonly featureId: string }
@@ -652,6 +653,17 @@ export function createPlanListCursorBinding(
   const scope = input.scope;
   if (!isPlainObject(scope)) {
     planInvalidInput(operation, 'scope', '必须是对象', scope);
+  }
+  if (scope.kind === 'work-recording') {
+    rejectUnknownKeys(scope, ['kind', 'projectId', 'parentKind', 'parentId', 'recordType'], { operation }, 'scope');
+    if (!['run', 'attempt', 'session'].includes(String(scope.parentKind))
+      || !['messages', 'manifests'].includes(String(scope.recordType))) {
+      planInvalidInput(operation, 'scope', 'Invalid recording scope');
+    }
+    return { rootIdentity: input.rootIdentity, scope: { kind: 'work-recording',
+      projectId: validateStableId(scope.projectId, { operation }, 'scope.projectId'),
+      parentId: validateStableId(scope.parentId, { operation }, 'scope.parentId'),
+      parentKind: scope.parentKind as 'run' | 'attempt' | 'session', recordType: scope.recordType as 'messages' | 'manifests' } };
   }
   if (scope.kind === 'phases') {
     rejectUnknownKeys(scope, ['kind', 'projectId'], { operation }, 'scope');
@@ -798,7 +810,8 @@ function planBindingAsTrusted(binding: PlanListCursorBinding): PlanListCursorBin
     typeof binding.rootIdentity !== 'string' ||
     !PLAN_ROOT_IDENTITY_PATTERN.test(binding.rootIdentity) ||
     !isPlainObject(binding.scope) ||
-    (binding.scope.kind !== 'phases' &&
+    (binding.scope.kind !== 'work-recording' &&
+      binding.scope.kind !== 'phases' &&
       binding.scope.kind !== 'features' &&
       binding.scope.kind !== 'tasks' &&
       binding.scope.kind !== 'budget-revisions' &&
@@ -825,6 +838,9 @@ function planRootFingerprint(binding: PlanListCursorBinding): string {
 function planScopeFingerprint(scope: PlanListScope): string {
   let parent: string;
   switch (scope.kind) {
+    case 'work-recording':
+      parent = `${scope.parentKind}:${scope.parentId}:${scope.recordType}`;
+      break;
     case 'phases':
       parent = '-';
       break;

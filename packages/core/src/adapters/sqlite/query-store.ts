@@ -237,6 +237,8 @@ export function createSqliteQueryStore(
       workspace.listWorkspaceRecords(projectId, featureId, request),
     listWorkspaceOperationViews: (projectId: unknown, featureId: unknown, request: never) =>
       workspace.listWorkspaceOperationViews(projectId, featureId, request),
+    listWorkRecordingRows: (...args) => workSessions.listWorkRecordingRows(...args),
+    readWorkRecordingArtifactRef: (...args) => workSessions.readWorkRecordingArtifactRef(...args),
     readRunRef: (projectId: unknown, runId: unknown) => workSessions.readRunRef(projectId, runId),
     listRunWorkSessions: (visibility: unknown, projectId: unknown, runId: unknown, request: ExecutionListRequest) =>
       workSessions.listRunWorkSessions(visibility, projectId, runId, request),
