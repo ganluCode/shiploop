@@ -25,6 +25,8 @@ type ReportVerification = FeatureExecutionReport['verifications'][number];
 type ReportOperation = FeatureExecutionReport['operations'][number];
 type ReportEvidence = FeatureExecutionReport['evidence'][number];
 type ReportNextStep = FeatureExecutionReport['outcome']['nextStep'];
+type ReportUsageAggregate = FeatureExecutionReport['usage']['feature']['aggregate'];
+type ReportEfficiency = FeatureExecutionReport['efficiency'];
 
 /* ------------------------------------------------------------------ *
  * 视图形状（结构化展示投影；测试与格式化共用同一派生结果）
@@ -68,6 +70,8 @@ export interface FeatureReportTaskRowView {
   readonly firstPassedAt: string | null;
   readonly latest: { readonly id: string; readonly number: number; readonly status: ReportAttempt['status'] } | null;
   readonly cumulative: ReportTask['cumulative'];
+  readonly usage: ReportUsageAggregate | null;
+  readonly timing: ReportTask['timing'];
   readonly attemptIds: readonly string[];
 }
 
@@ -189,6 +193,9 @@ export interface FeatureReportTextView {
     readonly totalSessions: number;
     readonly completeness: 'complete' | 'partial';
   };
+  readonly usage: FeatureExecutionReport['usage'];
+  readonly usageDimensions: readonly FeatureExecutionReport['usage']['dimensions'][number][];
+  readonly efficiency: ReportEfficiency;
   readonly metricNotes: readonly string[];
   readonly nextActions: readonly FeatureReportNextActionView[];
 }
@@ -221,6 +228,7 @@ function usageBasis(basis: ReportAttempt['usage']['basis']): FeatureReportAttemp
 
 export function buildFeatureReportTextView(report: FeatureExecutionReport): FeatureReportTextView {
   const tasks = [...report.tasks].sort((a, b) => byText(a.current.taskId, b.current.taskId));
+  const usageByTask = new Map(report.usage.tasks.map((node) => [node.id, node.aggregate]));
   const attemptRows: FeatureReportAttemptRowView[] = [];
   const taskRows = tasks.map((task) => {
     const attempts = [...task.attempts].sort((a, b) => a.number - b.number || byText(a.id, b.id));
@@ -268,6 +276,8 @@ export function buildFeatureReportTextView(report: FeatureExecutionReport): Feat
         byStatus: { ...task.cumulative.byStatus },
         reworks: task.cumulative.reworks,
       },
+      usage: usageByTask.get(task.current.taskId) ?? null,
+      timing: { ...task.timing },
       attemptIds: attempts.map((attempt) => attempt.id),
     };
   });
@@ -348,7 +358,7 @@ export function buildFeatureReportTextView(report: FeatureExecutionReport): Feat
         responsibleParty: item.responsibleParty,
         decision: item.decision,
         decisionReason: item.decisionReason,
-        description: item.description,
+        description: boundedSummary(item.description),
       })),
     machineAllGreen,
     waiting: machineAllGreen && approvalAxis.status !== 'approved',
@@ -405,6 +415,9 @@ export function buildFeatureReportTextView(report: FeatureExecutionReport): Feat
       totalSessions: report.timing.totalSessions,
       completeness: report.timing.completeness,
     },
+    usage: report.usage,
+    usageDimensions: [...report.usage.dimensions].sort((a, b) => byText(a.key, b.key)),
+    efficiency: report.efficiency,
     metricNotes: FEATURE_REPORT_METRIC_NOTES,
     nextActions: [{
       action: report.outcome.nextStep,
@@ -420,6 +433,11 @@ export function buildFeatureReportTextView(report: FeatureExecutionReport): Feat
 
 function cell(value: string): string {
   return value.replace(/[\r\n]+/g, ' ').replace(/\|/g, '/').trim();
+}
+
+function boundedSummary(value: string, max = 240): string {
+  const clean = cell(value);
+  return clean.length <= max ? clean : `${clean.slice(0, max - 1)}…`;
 }
 
 function unknown(value: string | number | null): string {
@@ -495,6 +513,61 @@ export function formatFeatureReportTextView(view: FeatureReportTextView): string
       );
     }
   }
+
+  lines.push('');
+  lines.push('## 用量诊断（Core 归一化投影；文本层不重新计算）');
+  const usageLine = (scope: string, id: string, aggregate: ReportUsageAggregate): string =>
+    `- ${scope}=${id} basis=${aggregate.basis} coverage=${aggregate.coverage} accounting=${aggregate.accounting} ` +
+    `normalization=${aggregate.normalization} inputTokens=${unknown(aggregate.totals.inputTokens)} ` +
+    `outputTokens=${unknown(aggregate.totals.outputTokens)} cacheRead=${unknown(aggregate.totals.cacheReadTokens)} ` +
+    `cacheWrite=${unknown(aggregate.totals.cacheWriteTokens)} reasoning=${unknown(aggregate.totals.reasoningTokens)} ` +
+    `providerTotal=${unknown(aggregate.totals.providerTotalTokens)} costMicros=${unknown(aggregate.totals.costUsdMicros)} ` +
+    `cacheRate=${unknown(aggregate.cache.rate)} cacheReason=${aggregate.cache.reason} ` +
+    `observations=${aggregate.countedObservations} diagnostics=${list([...aggregate.diagnostics].sort(byText))} ` +
+    `sourceRefs=${list([...aggregate.sourceRefs].map((source) => source.ref).sort(byText))}`;
+  lines.push(usageLine('feature', summary.featureId, view.usage.feature.aggregate));
+  for (const task of view.taskRows) {
+    if (task.usage !== null) lines.push(usageLine('task', task.taskId, task.usage));
+    else lines.push(`- task=${task.taskId} usage=unknown coverage=unknown`);
+    lines.push(`  taskTiming cumulativeMs=${unknown(task.timing.cumulativeMs)} wallClockMs=${unknown(task.timing.wallClockMs)} completeness=${task.timing.completeness}`);
+  }
+  for (const attempt of [...view.usage.attempts].sort((a, b) => byText(a.id, b.id))) {
+    lines.push(usageLine('attempt', attempt.id, attempt.aggregate));
+  }
+  const attemptUsage = [...view.usageDimensions]
+    .filter((dimension) => dimension.key.split('|').length === 1)
+    .sort((a, b) => byText(a.key, b.key));
+  for (const dimension of attemptUsage) lines.push(usageLine('dimension', dimension.key, dimension.aggregate));
+  for (const dimension of view.usageDimensions.filter((item) => item.key.split('|').length === 3)) {
+    lines.push(`- model runtime=${cell(dimension.runtime)} provider=${cell(dimension.provider)} model=${cell(dimension.model)} ` +
+      `basis=${dimension.aggregate.basis} coverage=${dimension.aggregate.coverage} inputTokens=${unknown(dimension.aggregate.totals.inputTokens)} ` +
+      `outputTokens=${unknown(dimension.aggregate.totals.outputTokens)} cacheRate=${unknown(dimension.aggregate.cache.rate)} ` +
+      `calls=${dimension.calls} sessions=${dimension.sessions} cumulativeDurationMs=${unknown(dimension.cumulativeDurationMs)} ` +
+      `wallClockDurationMs=${unknown(dimension.wallClockDurationMs)} sourceRefs=${list([...dimension.aggregate.sourceRefs].map((source) => source.ref).sort(byText))}`);
+  }
+
+  lines.push('');
+  lines.push('## 效率与耗时分解（Core 事实投影；running 不是实时进程探测）');
+  lines.push(`- modelRequestTimingBasis=${view.efficiency.modelRequestTimingBasis} coverage=${view.efficiency.coverage} ` +
+    `issues=${list([...view.efficiency.issues].sort(byText))}`);
+  for (const kind of Object.keys(view.efficiency.stages).sort(byText) as Array<keyof ReportEfficiency['stages']>) {
+    const stage = view.efficiency.stages[kind];
+    lines.push(`- stage=${kind} cumulativeMs=${unknown(stage.cumulativeMs)} activeWallClockMs=${unknown(stage.activeWallClockMs)} ` +
+      `wallClockSpanMs=${unknown(stage.wallClockSpanMs)} measuredFacts=${stage.measuredFacts}/${stage.totalFacts} coverage=${stage.coverage}`);
+  }
+  for (const fact of [...view.efficiency.facts].sort((a, b) => byText(a.factId, b.factId))) {
+    lines.push(`- fact=${fact.factId} kind=${fact.kind} lifecycle=${fact.lifecycleStatus} outcome=${fact.outcome} ` +
+      `durationMs=${unknown(fact.durationMs)} reportedDurationMs=${unknown(fact.reportedDurationMs)} ` +
+      `processLiveness=${fact.processLiveness} exitCode=${unknown(fact.exitCode)} budgetMs=${unknown(fact.budgetMs)} ` +
+      `coverage=${fact.coverage} reason=${unknown(fact.unknownReason)} issues=${list([...fact.issues].sort(byText))} ` +
+      `sourceRefs=${list([...fact.sourceRefs].map((source) => source.ref).sort(byText))}`);
+  }
+  for (const [name, metric] of Object.entries(view.efficiency.metrics).sort(([a], [b]) => byText(a, b))) {
+    lines.push(`- metric=${name} value=${unknown(metric.value)} coverage=${metric.coverage} sourceRefs=${list([...metric.sourceRefs].sort(byText))}`);
+  }
+  lines.push(`- context basis=${view.efficiency.context.basis} first=${unknown(view.efficiency.context.first)} ` +
+    `peak=${unknown(view.efficiency.context.peak)} last=${unknown(view.efficiency.context.last)} coverage=${view.efficiency.context.coverage} ` +
+    `sourceRefs=${list([...view.efficiency.context.sourceRefs].sort(byText))}`);
 
   lines.push('');
   lines.push('## Run 记录（各 Run 独立列示，不合并历史计数）');
