@@ -24,18 +24,22 @@ result 完成与 stopped.confirmed 分别保留。停止已被观察但 confirme
 
 ## 本地验证证据
 
-完整 stdout/stderr、真实退出码和 sidecar 位于本 Feature workspace 的 `verifications/F-004/runtime-logs/`，invocation 为 `c5d3909138924b69959baffe84fe43b0`。
+完整 stdout/stderr、真实退出码和 sidecar 位于本 Feature workspace 的 `verifications/F-004/runtime-logs/`。首次实现证据绑定 invocation `c5d3909138924b69959baffe84fe43b0`；本次返工验证绑定 invocation `ae600a0d30d343f4a625758ad0f97c4c`。
 
 | 范围 | 日志 | 结果 |
 | --- | --- | --- |
-| 新增 SessionRecorder 最终文件 | `test-5_j_qkdx.log` | exit 0，13 passed、0 failed、0 skipped |
+| 首次实现的 SessionRecorder 聚焦文件 | `test-5_j_qkdx.log` | exit 0，13 passed、0 failed、0 skipped |
+| 本次返工 19 文件 affected 选择 | `test-x4igh80_.log` | exit 0，19 files、323 passed、0 failed、0 skipped |
+| 本次返工 Host 锁/组合定向复核 | `test-jnkmr064.log` | exit 0，25 passed、0 failed、0 skipped |
+| 本次返工 usage 定向复核 | `test-vpclef_m.log` | exit 0，1 passed、13 skipped |
 | 既有 WorkEvidenceRecorder + 当时新增文件 | `test-800ko4nj.log` | exit 0，46 passed（旧文件 33 + 新文件 13） |
 | 既有 Runtime settlement | `test-v22449ak.log` | settlement 27/27 通过；该条组合命令因新增文件中的父工具边界尝试失败而整体 exit 1，39 passed/1 failed |
-| 最终类型检查 | `test-5854wpj0.log` | exit 0 |
-| Core/Host/CLI 依赖边界 | `test-s1k43fh1.log` | exit 0，321 生产文件，0 diagnostics |
+| 首次实现类型检查 | `test-5854wpj0.log` | exit 0 |
+| 本次最终类型检查 | `test-k_adezti.log` | exit 0 |
+| 本次 Core/Host/CLI 依赖边界 | `test-41a7mkwh.log` | exit 0，321 生产文件，0 diagnostics |
 
 父工具边界失败说明存储要求 parentToolCallId 必须有不同的当前工具身份；已撤回消息行上的该扩展，保留既有工具父子关系且没有放宽存储约束。之后只复测受影响的新文件，13/13 通过；结算测试未为刷新日志重复执行。旧 Recorder 在后续改动中不走 projection 分支。本地三份测试文件合计覆盖 73 个不同用例，表格不把重复运行叠加计数。
 
 13 个新增用例覆盖公开消息/工具与终态、慢正文发布背压和水位顺序、required/best_effort 写失败、best_effort 有界 producer drain、序列缺口、结果完成但停止未确认、停止尾部超时、best_effort supervision 不单独取消/隔离、磁盘无法生成 manifest、终态落后水位、空事件流，以及正文/行级脱敏。初始缺少索引实现的 RED `test-jkah4qbn.log`、夹具修正与中间失败均保留。
 
-任务 v2 索引 `test/index/phases/P04/features/P04-5/tasks/F-004.json` 与 Harness selection 内容一致，共登记 19 份文件。除上述三份外的 16 份为仅选择、未在本地执行的受影响回归，交 Nezha 独立验证。本轮未运行全仓测试、组合门禁、阶段验收或 live 模型。F-005 负责恢复/重复补录等进一步完整度处理，F-006/F-007 负责查询与展示，F-008 负责生产装配与跨层闭环。本地通过不代替独立验收。
+任务 v2 索引 `test/index/phases/P04/features/P04-5/tasks/F-004.json` 与 Harness selection 内容一致，共登记 19 份文件。本次返工已用同一受影响选择实际运行 19 份文件并通过；首次实现阶段的局部日志仍保留用于区分证据。本轮未运行全仓测试、组合门禁、阶段验收或 live 模型。F-005 负责恢复/重复补录等进一步完整度处理，F-006/F-007 负责查询与展示，F-008 负责生产装配与跨层闭环。本地通过不代替独立验收。

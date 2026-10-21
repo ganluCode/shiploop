@@ -1,6 +1,10 @@
 # P04-5 工作进度
 
-## F-004 — Runtime 公开记录与有界 SessionRecorder（2026-10-21）
+## F-004 — Runtime 公开记录与有界 SessionRecorder 返工（2026-10-21）
+
+- 保留前次 `4fb990b` 实现。本次独立验收暴露 7 项 Host 原生锁构建前置缺失和 1 项过期 usage 累加断言；没有改变锁实现或放宽用量边界。Pi usage 的 accounting 为 unknown 时，保留 observation count 并将 totals 置 null/complete=false，避免猜测重试增量。
+- 当前 invocation `ae600a0d30d343f4a625758ad0f97c4c` 的 affected 选择 `test-x4igh80_.log` 通过 19 文件/323 用例；Host 定向复核 `test-jnkmr064.log` 通过 25 用例；usage 定向复核 `test-vpclef_m.log` 通过 1 用例。typecheck `test-k_adezti.log` exit 0；boundaries `test-41a7mkwh.log` exit 0，321 文件/0 diagnostics。
+- 交接文档和 v2 选择索引已核对；本轮未运行全仓、组合门禁、阶段验收或 live 模型，正式 feature.yaml/task_list*.json 只读。待提交本次断言修复并按当前 invocation 单次报告。
 
 - 从 F-003 的 35ca4ab 及已有未提交实现续做，仅处理 F-004，保留已有成功结果和日志。增加独立公开正文/索引 projection，正文先发布、脱敏和核验，再短事务提交索引/manifest/Session 水位；队列、批次、总量与尾部等待均有上限。
 - 消息全文（公开可选字段）、工具输入/输出与父子工具关系、错误、事件来源和序列持久化；result/stopped 并行且独立观察。required 失败请求停止并阻断记录门禁；best_effort 显式 partial，有限 drain，监督不因该记录失败单独取消。Task/Feature 验收及停止确认继续独立。

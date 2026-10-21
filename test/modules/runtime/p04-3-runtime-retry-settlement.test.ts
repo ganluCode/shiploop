@@ -108,7 +108,9 @@ describe('F-003 real Pi Session, recording and fenced settlement', () => {
       expect(f.query('SELECT COUNT(*) AS count FROM sessions')).toEqual({ count: 1 });
       if (recording.status !== 'fulfilled') throw recording.reason;
       const manifest = await f.json(recording.value.manifestArtifactId);
-      expect(manifest.usage.observations).toMatchObject({ counted: 3, totals: { inputTokens: 9, outputTokens: 2 } });
+      // Pi exposes per-message usage without a trusted incremental/cumulative scope.
+      // Preserve all observations, but keep totals unknown instead of inventing a retry delta.
+      expect(manifest.usage.observations).toMatchObject({ counted: 3, totals: { inputTokens: null, outputTokens: null, costUsdMicros: null, complete: false } });
       const chunks = await Promise.all(manifest.chunks.map(async (chunk: { artifactId: string }) =>
         (await f.content(chunk.artifactId)).trim().split('\n').map(line => JSON.parse(line))));
       const events = chunks.flat();
