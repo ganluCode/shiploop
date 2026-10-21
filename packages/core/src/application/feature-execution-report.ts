@@ -1,12 +1,16 @@
 import { buildFeatureDeliveryDetailResult } from '../ports/feature-delivery-query.js';
-import { featureReportAttemptArtifactIds, type FeatureExecutionReportView, type FeatureReportResultEvidence } from '../ports/feature-execution-report.js';
+import { featureReportAttemptArtifactIds } from '../ports/feature-execution-report.js';
+import type { FeatureExecutionReportView, FeatureReportResultEvidence } from '../ports/feature-execution-report.js';
 import { toPublicWorkSessionAttempt, toPublicWorkSessionRecord, toPublicWorkSessionEvidenceRef } from '../ports/work-session-query.js';
 import { toPublicVerificationBatchRecord } from '../ports/task-evidence-query.js';
 import { toPublicGitOperationRecord } from '../ports/git-operation-query.js';
 import { toPublicAttemptDiagnosticRecord } from '../ports/execution-schedule-query.js';
-import { normalizeRuntimeUsage, aggregateUsage } from './usage-normalization.js';
+import { normalizeRuntimeUsage, aggregateUsage, buildUsageProjection } from './usage-normalization.js';
+import type { UsageProjectionRecord } from './usage-normalization.js';
+import { projectEfficiency } from './efficiency-projection.js';
+import type { EfficiencyFact, UsageDiagnosticIdentity } from '../ports/usage-diagnostics.js';
+import type { RuntimeUsageReport } from '../ports/runtime-execution.js';
 import type { AttemptStatus } from '../ports/attempt-store.js';
-import type { UsageDiagnosticIdentity } from '../ports/usage-diagnostics.js';
 
 const iso = (value: number | null) => value === null ? null : new Date(value).toISOString();
 function unique<T>(rows: readonly T[], id: (row: T) => string): T[] {
@@ -21,6 +25,10 @@ export function buildFeatureExecutionReport(
   view: FeatureExecutionReportView,
   results: ReadonlyMap<string, FeatureReportResultEvidence> = new Map(),
 ) {
+  const diagnosticView = view as FeatureExecutionReportView & {
+    readonly usageObservations?: readonly UsageProjectionRecord[];
+    readonly efficiency?: Parameters<typeof projectEfficiency>[0];
+  };
   const delivery = buildFeatureDeliveryDetailResult({ ...view.delivery, tasks: unique(view.delivery.tasks, t => t.taskId),
     approvalItems: unique(view.delivery.approvalItems, a => a.id) });
   const artifacts = unique(view.artifacts, a => a.id);
@@ -38,6 +46,8 @@ export function buildFeatureExecutionReport(
     return { attemptId, parentSessionId: session.parentSessionId, ...toPublicWorkSessionRecord(session), durationMs,
       completeness: issues.length === 0 ? 'complete' as const : 'partial' as const, issues };
   });
+  const usageInputs: UsageProjectionRecord[] = [];
+  const efficiencyFacts: EfficiencyFact[] = [];
   const attempts = unique(view.attempts, a => a.attempt.id).map(detail => {
     const { attempt, session } = detail;
     const resolved = results.get(attempt.id);
@@ -78,10 +88,27 @@ export function buildFeatureExecutionReport(
       cacheReadTokens: normalizedUsage?.totals.cacheReadTokens ?? null,
       cacheWriteTokens: normalizedUsage?.totals.cacheWriteTokens ?? null,
     };
+    const reportUsage: RuntimeUsageReport | null = usage ?? (attempt.usageSummary === null ||
+      [attempt.usageSummary.inputTokens, attempt.usageSummary.outputTokens, attempt.usageSummary.costMicros].every(value => value === null)
+      ? null : { basis: session?.runtime === 'fake' ? 'synthetic' : 'reported', inputTokens: attempt.usageSummary.inputTokens,
+        outputTokens: attempt.usageSummary.outputTokens, costUsdMicros: attempt.usageSummary.costMicros,
+        completeness: 'partial', coverage: 'partial', accounting: 'unknown' });
     if (usageSummary.inputTokens === null || usageSummary.outputTokens === null || usageSummary.costMicros === null) issues.push('usage_partial');
-    // P03 has no normalized cache measurements. Do not fabricate cache rates or
-    // reinterpret Fake values as billing; P04/P07 own real aggregation.
-    issues.push('cache_unknown');
+    if (reportUsage !== null) {
+      usageInputs.push({ featureId: attempt.featureId, taskId: attempt.taskId, runId: attempt.runId, identity: usageIdentity,
+        usage: reportUsage,
+        kind: 'attempt', final: true,
+        sourceRefs: (reportUsage.sourceRefs ?? []).map(ref => ({ kind: 'runtime_result' as const, ref, observedAtUtc: null })) });
+    }
+    const outcome: EfficiencyFact['outcome'] = attempt.status === 'succeeded' ? 'completed' : attempt.status === 'failed' ? 'failed'
+      : attempt.status === 'cancelled' ? 'cancelled' : ['preparing', 'executing', 'verifying'].includes(attempt.status) ? 'started' : 'unknown';
+    efficiencyFacts.push({ schemaVersion: 1, factId: `attempt-${attempt.id}`, kind: 'model_request', identity: usageIdentity,
+      outcome, observedAtUtc: iso(attempt.updatedAtUtcMs)!, startedAtUtc: iso(attempt.startedAtUtcMs), endedAtUtc: outcome === 'started' ? null : iso(attempt.endedAtUtcMs),
+      durationMs: attempt.durationMs, coverage: 'unknown', overlapGroupId: null, toolCallId: null, testRunId: null,
+      exitCode: attempt.exitCode, signal: null, sourceRefs: [{ kind: 'runtime_result', ref: attempt.id, observedAtUtc: iso(attempt.updatedAtUtcMs) }] });
+
+    if (usage === undefined || usage === null || usage.cacheReadTokens === undefined || usage.cacheWriteTokens === undefined ||
+      usage.cacheReadIncludedInInput === undefined || usage.cacheWriteIncludedInInput === undefined) issues.push('cache_unknown');
     return {
       ...toPublicWorkSessionAttempt(attempt),
       exitCode: attempt.exitCode ?? result?.exitCode ?? null,
@@ -103,12 +130,52 @@ export function buildFeatureExecutionReport(
       issues,
     };
   });
+  const usageProjection = buildUsageProjection([...(diagnosticView.usageObservations ?? []), ...usageInputs]);
+  const efficiency = projectEfficiency(diagnosticView.efficiency ?? { facts: efficiencyFacts });
+  const modelDimensions = Object.entries(usageProjection.dimensions)
+    .filter(([key]) => key.split('|').length === 3)
+    .map(([key, node]) => {
+      const parts = Object.fromEntries(key.split('|').map(part => part.split(':', 2))) as { runtime: string; provider: string; model: string };
+      const records = [...(diagnosticView.usageObservations ?? []), ...usageInputs].filter(record =>
+        record.identity.runtime === parts.runtime && record.identity.provider === parts.provider && (record.identity.model ?? 'unknown') === parts.model);
+      const sessionIds = [...new Set(records.map(record => record.identity.sessionId))].sort();
+      const dimensionSessions = sessions.filter(session => sessionIds.includes(session.id));
+      const measuredDimensionSessions = dimensionSessions.filter(session => session.durationMs !== null);
+      const completeDimensionTimes = dimensionSessions.length > 0 && measuredDimensionSessions.length === dimensionSessions.length;
+      const starts = dimensionSessions.flatMap(session => session.startedAt === null ? [] : [Date.parse(session.startedAt)]);
+      const ends = dimensionSessions.flatMap(session => session.endedAt === null ? [] : [Date.parse(session.endedAt)]);
+      return { key, runtime: parts.runtime, provider: parts.provider, model: parts.model, aggregate: node.aggregate,
+        calls: node.aggregate.countedObservations, sessions: sessionIds.length,
+        cumulativeDurationMs: measuredDimensionSessions.length === 0 ? null : measuredDimensionSessions.reduce((sum, session) => sum + session.durationMs!, 0),
+        wallClockDurationMs: completeDimensionTimes ? Math.max(...ends) - Math.min(...starts) : null,
+        coverage: node.aggregate.coverage, accounting: node.aggregate.accounting, diagnostics: node.aggregate.diagnostics };
+    });
+  const usage = { attempts: usageProjection.attempts, tasks: usageProjection.tasks, runs: usageProjection.runs,
+    feature: usageProjection.feature, dimensions: modelDimensions, aggregate: usageProjection.feature.aggregate };
+  const taskUsage = new Map(usageProjection.tasks.map(node => [node.id, node.aggregate]));
+  const taskTiming = (history: readonly (typeof attempts[number])[]) => {
+    const taskSessions = sessions.filter(session => history.some(attempt => attempt.id === session.attemptId));
+    const measuredTaskSessions = taskSessions.filter(session => session.durationMs !== null);
+    const completeTaskTimes = taskSessions.length > 0 && measuredTaskSessions.length === taskSessions.length;
+    const starts = taskSessions.flatMap(session => session.startedAt === null ? [] : [Date.parse(session.startedAt)]);
+    const ends = taskSessions.flatMap(session => session.endedAt === null ? [] : [Date.parse(session.endedAt)]);
+    return { cumulativeMs: measuredTaskSessions.length === 0 ? null : measuredTaskSessions.reduce((sum, session) => sum + session.durationMs!, 0),
+      wallClockMs: completeTaskTimes ? Math.max(...ends) - Math.min(...starts) : null,
+      completeness: completeTaskTimes ? 'complete' as const : 'partial' as const };
+  };
   const tasks = unique(delivery.axes.tasks.records, t => t.taskId).map(current => {
     const history = attempts.filter(a => a.taskId === current.taskId).sort((a, b) => a.number - b.number || a.id.localeCompare(b.id, 'en'));
     const counts: Record<AttemptStatus, number> = { preparing: 0, executing: 0, verifying: 0, succeeded: 0, failed: 0, cancelled: 0, interrupted: 0 };
     for (const attempt of history) counts[attempt.status]++;
     return { current, latestAttempt: history.at(-1) ?? null,
-      cumulative: { attempts: history.length, byStatus: counts, reworks: history.filter(a => a.rework !== null).length }, attempts: history };
+      cumulative: { attempts: history.length, byStatus: counts, reworks: history.filter(a => a.rework !== null).length },
+      usage: { aggregate: taskUsage.get(current.taskId) ?? aggregateUsage([]) }, timing: taskTiming(history),
+      codeChangeRefs: [...new Set(history.flatMap(attempt => {
+        const codeRef = view.attempts.find(detail => detail.attempt.id === attempt.id)?.attempt.codeRef;
+        return codeRef === null || codeRef === undefined ? [] : [codeRef];
+      }))].sort(),
+      evidenceRefs: [...new Set(history.flatMap(attempt => attempt.evidence.map(ref => ref.artifactId)))].sort(), attempts: history };
+
   });
   const measured = sessions.filter(s => s.durationMs !== null);
   const starts = sessions.flatMap(s => s.startedAt === null ? [] : [Date.parse(s.startedAt)]);
@@ -123,7 +190,8 @@ export function buildFeatureExecutionReport(
     scope: 'feature-execution-report' as const,
     consistency: { mode: 'single-read-transaction' as const, eventWatermark: view.eventWatermark },
     feature: delivery.feature, axes: delivery.axes, outcome: delivery.outcome,
-    tasks, sessions,
+    tasks, usage, efficiency, sessions,
+
     runs: unique(view.runs, r => r.id).map(r => ({ id: r.id, batchId: r.batchId, status: r.status, reason: r.reason,
       startedAt: iso(r.startedAtUtcMs), endedAt: iso(r.endedAtUtcMs) })),
     verifications: unique(view.verifications, v => v.batch.id).map(toPublicVerificationBatchRecord),

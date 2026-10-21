@@ -6,7 +6,7 @@ import {
   type UsageObservationInput,
 } from 'shiploop-core';
 
-const identity = (eventId: string, requestId = 'request-1', model = 'model-a', recovery: 'new' | 'resume' = 'new') => ({
+const identity = (eventId: string, requestId = 'request-1', model = 'model-a', recovery: UsageObservationInput['identity']['recovery'] = 'new') => ({
   runtime: 'pi', provider: 'provider-a', model, attemptId: 'attempt-1', sessionId: 'session-1',
   invocationId: 'invocation-1', requestId, messageId: null, eventId, providerSessionId: null,
   providerRequestId: null, recovery,

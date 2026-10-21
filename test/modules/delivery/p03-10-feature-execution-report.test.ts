@@ -170,6 +170,38 @@ test('[case:snapshot-and-dedup] WAL writer cannot mix facts into a paged snapsho
   } finally { writer.close(); }
 });
 
+test('[case:usage-efficiency-report] Feature/Task 报告接入归一化用量、维度汇总与效率诊断', async () => {
+  const f = await fixture();
+  const runId = (await f.start()).runId!;
+  const failed = reportAttempt(f, { id: 'usage-failed', runId });
+  reportSettlement(f, failed, { execution: { result: { schemaVersion: 1, terminal: 'failed', reason: 'process', exitCode: 17, signal: 'SIGTERM', durationMs: 75,
+    usage: { basis: 'reported', inputTokens: 20, outputTokens: 5, costUsdMicros: null, cacheReadTokens: 10,
+      cacheWriteTokens: 0, cacheReadIncludedInInput: true, cacheWriteIncludedInInput: true,
+      coverage: 'reported', completeness: 'complete', accounting: 'incremental', sourceRefs: ['usage-failed'] }, lastEventSequence: 3 }, failure: null } });
+  const succeeded = reportAttempt(f, { id: 'usage-succeeded', runId, number: 2, status: 'failed', previousAttemptId: failed.id, start: NOW + 200, end: NOW + 350 });
+  reportSettlement(f, succeeded, { execution: { result: { schemaVersion: 1, terminal: 'failed', reason: 'process', exitCode: 0, signal: null, durationMs: 125,
+    usage: null, lastEventSequence: 4 }, failure: null } });
+  f.session.database.prepare('UPDATE attempts SET usage_summary = ? WHERE id = ?').run(JSON.stringify({ schemaVersion: 1, inputTokens: 30, outputTokens: 7, costMicros: null, currency: null }), succeeded.id);
+  const before = reportDatabaseSnapshot(f);
+  const report = await queries(f).getFeatureReport(f.owner, { projectId: f.projectId, featureId: f.featureId }) as any;
+  const repeated = await queries(f).getFeatureReport(f.owner, { projectId: f.projectId, featureId: f.featureId }) as any;
+  expect(repeated).toEqual(report);
+  expect(reportDatabaseSnapshot(f)).toEqual(before);
+  expect(report.usage.feature.aggregate.totals).toMatchObject({ inputTokens: 50, outputTokens: 12, costUsdMicros: null });
+  expect(report.usage.feature.aggregate.cache.reason).toBe('unknown_semantics');
+  expect(report.usage.dimensions).toEqual(expect.arrayContaining([
+    expect.objectContaining({ runtime: 'fake', provider: 'unknown', model: 'unknown', calls: 2, sessions: 2,
+      cumulativeDurationMs: 250, wallClockDurationMs: 350 }),
+  ]));
+  const task = report.tasks.find((row: any) => row.current.taskId === 't-1');
+  expect(task.usage.aggregate.totals.inputTokens).toBe(50);
+  expect(task.attempts.map((row: any) => row.id)).toEqual(['usage-failed', 'usage-succeeded']);
+  expect(task.attempts[0].usage.inputTokens).toBe(20);
+  expect(task.attempts[1].usage.inputTokens).toBe(30);
+  expect(report.efficiency.facts).toHaveLength(2);
+  expect(report.efficiency.timing.cumulativeMs).toBe(250);
+});
+
 test('[case:report-authorization] report requires project.read and folds missing/cross-project targets', async () => {
   const f = await fixture();
   const q = queries(f);

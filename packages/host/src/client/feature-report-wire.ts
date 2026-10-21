@@ -18,6 +18,13 @@ const issues = array(text);
 const reference = object({ artifactId: id, availability: oneOf('ready', 'missing', 'unavailable'), artifact: nullable(work.evidence) });
 const usage = object({ basis: oneOf('synthetic', 'reported', 'unknown'), inputTokens: nullable(natural), outputTokens: nullable(natural),
   costMicros: nullable(natural), currency: nullable(text), cacheReadTokens: nullable(natural), cacheWriteTokens: nullable(natural) });
+const taskUsage = object({ aggregate: isPlainObject });
+const taskTiming = object({ cumulativeMs: nullable(natural), wallClockMs: nullable(natural), completeness });
+const usageProjection = object({ attempts: array(isPlainObject), tasks: array(isPlainObject), runs: array(isPlainObject),
+  feature: isPlainObject, dimensions: array(isPlainObject), aggregate: isPlainObject });
+const efficiencyProjection = object({ facts: array(isPlainObject), stages: isPlainObject, timing: isPlainObject,
+  observations: array(isPlainObject), metrics: isPlainObject, replyTools: array(isPlainObject), context: isPlainObject,
+  schemaVersion: v => v === 1, modelRequestTimingBasis: text, coverage: oneOf('reported', 'partial', 'unknown'), issues: array(text) });
 const rework = nullable(object({ previousAttemptId: id, failureEvidenceRefs: array(id) }));
 const recovery = nullable(object({ sourceAttemptId: id, sourceSessionId: nullable(id),
   selection: v => { try { validateRuntimeRecoverySelection(v); return true; } catch { return false; } },
@@ -60,8 +67,9 @@ export function validateFeatureReportWire(value: unknown, validate: {
     consistency: object({ mode: v => v === 'single-read-transaction', eventWatermark: natural }),
     feature: isPlainObject, axes: isPlainObject, outcome: isPlainObject,
     tasks: array(object({ current: isPlainObject, latestAttempt: nullable(attempt),
-      cumulative: object({ attempts: natural, byStatus: counts, reworks: natural }), attempts: array(attempt) })),
-    sessions: array(session), runs: array(isPlainObject), verifications: array(isPlainObject), operations: array(isPlainObject), evidence: array(reference),
+      cumulative: object({ attempts: natural, byStatus: counts, reworks: natural }), usage: taskUsage, timing: taskTiming,
+      codeChangeRefs: array(id), evidenceRefs: array(id), attempts: array(attempt) })),
+    usage: usageProjection, efficiency: efficiencyProjection, sessions: array(session), runs: array(isPlainObject), verifications: array(isPlainObject), operations: array(isPlainObject), evidence: array(reference),
     timing: object({ cumulativeSessionMs: nullable(natural), wallClockMs: nullable(natural), measuredSessions: natural,
       totalSessions: natural, completeness }),
     counts: object({ tasks: natural, runs: natural, attempts: natural, sessions: natural, operations: natural }), completeness, issues,

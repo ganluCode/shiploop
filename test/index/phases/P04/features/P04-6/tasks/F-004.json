@@ -1,0 +1,17 @@
+{
+  "schema_version": 2,
+  "task_id": "F-004",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        { "file": "test/modules/delivery/p03-10-feature-execution-report.test.ts", "cases": ["usage-efficiency-report"] },
+        { "file": "test/modules/host/p03-10-feature-report-contract.test.ts", "all": true },
+        { "file": "test/modules/cli/p03-10-feature-report-built.test.ts", "all": true },
+        { "file": "test/modules/cli/p03-10-feature-report-text.test.ts", "all": true },
+        { "file": "test/modules/acceptance/p03-10-phase-report.test.ts", "all": true },
+        { "file": "test/modules/runtime/p04-6-usage-normalization.test.ts", "all": true }
+      ]
+    }
+  ]
+}
