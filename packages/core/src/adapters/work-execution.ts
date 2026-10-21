@@ -32,7 +32,9 @@ import { createExecutionService, type ExecutionService } from '../application/ex
 import { createExecutionInputBindingService } from '../application/execution-input-binding.js';
 import { createArtifactPublisher } from '../application/artifact-publish.js';
 import { createArtifactVerifier } from '../application/artifact-verify.js';
-import { createWorkEvidenceRecorder } from '../application/work-evidence-recorder.js';
+import { createWorkEvidenceRecorder, type RecordingMode } from '../application/work-evidence-recorder.js';
+import { createWorkRecordingPublisher } from '../application/work-recording-publish.js';
+import { createSqliteWorkRecordingStore } from './sqlite/work-recording-store.js';
 import { createRuntimeSettlementService } from '../application/runtime-settlement.js';
 import { createWorkspaceRetentionService } from '../application/workspace-retention.js';
 import { createExecutionWorkspaceRetainer } from '../application/execution-workspace-retention.js';
@@ -85,6 +87,7 @@ export function assembleWorkExecution(options: {
     };
   readonly capabilityCatalog: import('../ports/runtime-capabilities.js').RuntimeCapabilityCatalog;
   readonly runtimeFactory?: WorkRuntimeFactory;
+  readonly recordingMode?: RecordingMode;
   readonly nowUtcMs?: () => number;
   readonly startupRecovery: ReturnType<typeof createWorkStartupRecovery>;
   /** P03-9 / F-011：finalization-only Run 在编码认领前分流到受信重验执行。 */
@@ -182,7 +185,12 @@ export function assembleWorkExecution(options: {
     runtime: createRuntimeExecutionService({ configuration: options.capabilityCatalog, registry }),
     settlement: createRuntimeSettlementService({ publisher, attempts, dag, sessions,
       lifecycle: createSqliteAttemptLifecycleStore(session, { workspaceAuthority: app.workWorkspaceAuthority, nowUtcMs: now }) }),
-    recorder: createWorkEvidenceRecorder({ publisher, verifier, sessions, limits: {
+    recorder: createWorkEvidenceRecorder({ publisher, verifier, sessions, recordingMode: options.recordingMode,
+      recording: { store: createSqliteWorkRecordingStore(session, { nowUtcMs: now }), nowUtcMs: now,
+        publisher: createWorkRecordingPublisher({ artifacts: publisher, limits: {
+          maxBodyBytes: 131_072, maxAttachmentBytes: 65_536, maxTotalBytes: 262_144,
+          maxChunkBytes: 8192, maxQueueBytes: 8192,
+        } }) }, limits: {
       maxEventBodyBytes: 8_192, chunkMaxEvents: 32, chunkMaxBytes: 262_144, maxTotalEvents: 10_000,
       maxTotalBytes: 8_000_000, reorderWindow: 8, tailWaitMs: 2_000,
     } }),

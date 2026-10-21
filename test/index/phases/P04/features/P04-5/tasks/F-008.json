@@ -1,0 +1,20 @@
+{
+  "schema_version": 2,
+  "task_id": "F-008",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        { "file": "test/modules/runtime/p04-5-recording-integration.test.ts", "all": true },
+        { "file": "test/modules/runtime/p04-5-session-recorder.test.ts", "all": true },
+        { "file": "test/modules/runtime/recovery/p04-4-recovery-recording.test.ts", "all": true },
+        { "file": "test/modules/runtime/p04-5-recording-host-query.test.ts", "all": true },
+        { "file": "test/modules/runtime/p04-5-work-recording-query.test.ts", "all": true },
+        { "file": "test/modules/runtime/p04-5-work-recording-publisher.test.ts", "all": true },
+        { "file": "test/modules/runtime/p04-5-work-recording.test.ts", "all": true },
+        { "file": "test/modules/host/p04-5-recording-wire.test.ts", "all": true },
+        { "file": "test/modules/cli/p04-5-recording-cli.test.ts", "all": true }
+      ]
+    }
+  ]
+}
