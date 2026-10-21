@@ -1,5 +1,12 @@
 # P04-4 工作进度
 
+## F-005 — attempt 3 恢复授权夹具返工（2026-10-21）
+
+- 从干净的 `5f358a7` 增量续做，核验 recovery 和独立验收 `0d726d8076d940b18406188d8d399750`：20 文件/399 用例仅 required 恢复正例失败，原因 `work_access_missing`。本次 invocation `82fe917191734daf98ec68723e276af6`。
+- 只为旧测试夹具的当前状态和不可变恢复证据补齐相同的合成 Fake workAccess（策略、ready 认证摘要/引用、空资源列表）；reader 遵循 unknown 端口，经真实服务校验。生产校验和所有断言均保留，包含 unknown 停止状态拒绝授权。
+- RED `test-oblrziny.log` 复现验收失败；最终输入绑定/访问复核两文件 47 passed、0 failed、0 skipped，`test-g_pft89i.log` exit 0；类型检查 `test-z1aiuivf.log` exit 0。中间类型冲突与已通过运行保留但不重复计数，详见交接文档。全部日志和完成 sidecar 位于 Feature workspace 的 verifications/F-005/runtime-logs/。
+- 已复核原 20 文件 v2 索引和 Harness selection，两份本地执行文件均已登记；完整 affected 回归由 Nezha 独立执行。本轮未跑全仓/组合门禁/阶段验收/live 模型，未改官方元数据或人工 hold。提交及本 invocation 的单次 task report 以 Git/Nezha 回执为准。
+
 ## F-005 — attempt 2 独立验收返工（2026-10-21）
 
 - 核验 recovery、Git 与现有日志后从 `4eb61ca` 增量续做，保留已提交成果；当前 invocation `ac864a2e5344447195b5a4bbb57c56d1`。初次 completed claim 后独立验收失败，不能沿用旧报告证明本次完成。

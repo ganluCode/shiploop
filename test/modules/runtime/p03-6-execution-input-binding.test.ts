@@ -38,7 +38,7 @@ import {
 } from '../../../packages/core/src/index.ts';
 import type {
   AttemptStore, ExecutionInputReadEvidence, ExecutionInputRef,
-  RuntimeRecoverySourceState, RuntimeRecoveryCurrentContext,
+  RuntimeRecoverySourceState,
 } from '../../../packages/core/src/index.ts';
 import { createSqliteAttemptAccess } from '../../../packages/core/src/adapters/sqlite/attempt-store.ts';
 import { createExecutionInputBindingService } from '../../../packages/core/src/application/execution-input-binding.ts';
@@ -116,7 +116,8 @@ function recoverySource(
 
 /** 用真实不可变 Artifact 接通 P03-3A 可信来源授权，供恢复绑定集成测试使用。 */
 function recoveryAuthority() {
-  let current: RuntimeRecoveryCurrentContext | undefined;
+  // Reader 按端口返回 unknown，由真实恢复服务校验合成 Fake 状态。
+  let current: unknown;
   let state: RuntimeRecoverySourceState | undefined;
   return {
     reader: { readCurrent: () => current, readSource: () => state },
@@ -130,15 +131,22 @@ function recoveryAuthority() {
       const snapshot = await ref(bound.inputSnapshot.group.snapshot.artifactId, 'snapshot');
       const archive = await ref(source['nativeArchiveRef'] as string, 'native-archive');
       const codeDigest = sha256('synthetic-workspace-code');
+      // 合成 Fake 访问快照：仅保存摘要/引用，与来源不可变证据逐项比较。
+      const workAccess = {
+        strategy: FAKE_STRATEGY,
+        authentication: { status: 'ready', digest: sha256('synthetic-authentication'),
+          sourceRef: 'synthetic-credential-ref', kind: 'environment' },
+        resources: { digest: sha256('[]'), entries: [] },
+      } as const;
       const stop = await publishReadyArtifact(fixture, {
         kind: 'stop-evidence', locator: 'recovery/stop.json', content: '{"stopped":"synthetic-confirmed"}',
       });
       const evidence = await publishReadyArtifact(fixture, {
         kind: 'runtime-recovery-evidence', locator: 'recovery/evidence.json',
         content: JSON.stringify({ schemaVersion: 1, source, inputSnapshot: snapshot, archive,
-          codeDigest, permissionsDigest: computeExecutionPermissionsDigest([]) }),
+          codeDigest, permissionsDigest: computeExecutionPermissionsDigest([]), workAccess }),
       });
-      current = { inputSnapshot: snapshot, codeDigest, permissions: { grants: [] } };
+      current = { inputSnapshot: snapshot, codeDigest, permissions: { grants: [] }, workAccess };
       state = { evidence: await ref(evidence.artifactId, 'recovery-evidence'), stopped: 'confirmed',
         stopEvidence: await ref(stop.artifactId, 'stop-evidence') };
     },

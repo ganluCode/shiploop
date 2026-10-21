@@ -62,8 +62,25 @@ Pi 装配断言保持 F-005 的保守语义：SDK result=completed 但 usage 范
 
 本次五个文件共 13 个不同用例通过，均有当前 invocation 的 completed sidecar 和真实退出码。TDD RED `test-oqoj2g23.log`（launch 接收缺失）与 `test-zhd1u3hn.log`（冻结身份不一致未拒绝）保留，夹具修正、中间诊断及中断日志也保留；未取得完整退出码的运行不计入本表。首次提交的 18 项证据作为既有记录保留，不声称本次重跑。
 
+## attempt 3：补齐旧恢复授权夹具
+
+attempt 2 后的独立验收 `0d726d8076d940b18406188d8d399750` 为 20 文件中 19 通过、399 用例中 398 通过；唯一失败是输入绑定的 required 恢复正例，原因是旧夹具的当前状态和来源证据均未保存 `workAccess`，触发 `work_access_missing`。
+
+本次从 `5f358a7` 增量修改测试夹具：在真实不可变恢复证据 Artifact 与当前可信 reader 中提供相同的合成 Fake 访问快照，包含策略、ready 认证摘要/引用和空资源清单。reader 按端口返回 unknown，真实恢复服务继续校验；不把 Fake 状态冒充 Pi 专用访问类型。生产代码和全部原有断言保持原样，包括恢复后停止状态变成 unknown 时拒绝授权。
+
+本次 invocation `82fe917191734daf98ec68723e276af6` 的最终证据：
+
+| 实际执行范围 | 结果 | 完整日志 | 退出码 |
+| --- | --- | --- | ---: |
+| 输入绑定完整文件 + work access 恢复复核完整文件 | 47 passed，0 failed，0 skipped | test-g_pft89i.log | 0 |
+| TypeScript --noEmit | 通过 | test-z1aiuivf.log | 0 |
+
+RED `test-oblrziny.log` 精确复现同一缺口。中间 `test-p7o4y429.log` 的 47 项通过及 `test-6tc8b5y1.log` 的 Fake/Pi 类型冲突诊断均保留；调整测试 reader 类型后重跑上述最终检查，重复运行不重复计数。完整输出、invocation 和退出码 sidecar 位于原 runtime-logs 目录。
+
+重新核对原 20 文件 v2 索引及 Harness 引用，两个实际执行文件均已登记，保留全部 affected 范围。本次仅执行上表两文件和类型检查，完整 20 文件回归继续交 Nezha 独立验收；旧的独立验收结果不作为本次通过证明。
+
 ## 独立验证交接
 
-仓库索引 `test/index/phases/P04/features/P04-4/tasks/F-005.json` 按 Nezha v2 登记 20 个受影响文件；Harness `test-selection.json` 继续引用同一索引。返工新增 claim 和输入绑定两份完整文件选择，原有 18 份均保留。本次仅执行上述五文件的定向范围；20 文件的完整 affected 回归仍交独立验证。
+仓库索引 `test/index/phases/P04/features/P04-4/tasks/F-005.json` 按 Nezha v2 登记 20 个受影响文件；Harness `test-selection.json` 继续引用同一索引。attempt 2 新增 claim 和输入绑定两份完整文件选择，原有 18 份均保留。attempt 2 实际执行上述五文件定向范围，attempt 3 实际执行上述两文件完整范围和类型检查；最终代码的 20 文件完整 affected 回归仍交独立验证。
 
 较广 affected 回归与最终 task/feature 结论由 Nezha 独立执行。没有运行全仓测试、组合 verify、Phase 验收或真实模型调用。F-006/F-007 的完整恢复装配/纵向验证以及 P04-5/P04-6 的完整 Recorder/usage 查询仍按原任务边界交接。
