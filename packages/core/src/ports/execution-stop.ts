@@ -74,3 +74,5 @@ export interface ExecutionStopControlPort {
   /** 取消事务提交后调用；重复调用幂等，不对终态 operation 做写入。 */
   stop(input: ExecutionStopRequest): Promise<ExecutionStopOutcome | null>;
 }
+
+export * from './execution-stop-diagnostics.js';
