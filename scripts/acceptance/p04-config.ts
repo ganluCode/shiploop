@@ -13,6 +13,9 @@
  * - 本文件的冻结基线与 fail-closed 校验：无效配置、重复/未知检查 ID、试图减少
  *   或改写必需项（含删减断言、改写 T/FR 映射、降级层次、把 deferred 计入通过）
  *   一律拒绝（invalid_config）。
+ * - P04-9 补充项（`group=supplement`，验收编号 `P04-9-AC1`～`AC6`）追加在原有
+ *   十六项必需检查之后、deferred 之前：原有项与断言逐一保留，补充项计入必需通过数，
+ *   未执行或证据类别未覆盖时按 not_run/fail 处理，不能凭旧清单成功声称完整覆盖。
  *
  * 边界（PRD FR-3/约束）：
  * - 本配置是**验收工具输入**：不新增业务版本表，不构成第二套产品配置体系
@@ -62,7 +65,7 @@ export type P04EvidenceCategory = (typeof P04_EVIDENCE_CATEGORIES)[number];
 
 export const P04_FR_IDS = ['FR-1', 'FR-2', 'FR-3', 'FR-4'] as const;
 
-export type P04ItemGroup = 'fr' | 'acceptance' | 'vertical' | 'deferred';
+export type P04ItemGroup = 'fr' | 'acceptance' | 'vertical' | 'supplement' | 'deferred';
 export type P04DeferredStatus = 'not_run' | 'postponed';
 export type P04Coverage = 'partial';
 
@@ -158,7 +161,8 @@ const BUSINESS_CONFIG_KEY_PATTERN =
 const CREDENTIAL_KEY_PATTERN =
   /(?:authorization|auth|token|password|passwd|secret|credential|cookie|api[_-]?key)/i;
 const CHECK_ID_PATTERN = /^P04-[A-Z0-9]+(?:-[A-Z0-9]+)*$/;
-const T_REF_PATTERN = /^[A-Z]\d{2}$/;
+/** 验收编号：原有 P04-8 检查使用 T35～T44，P04-9 补充项使用 P04-9-AC1～AC6。 */
+const T_REF_PATTERN = /^(?:T\d{2}|P04-9-AC[1-6])$/;
 const FR_REF_PATTERN = /^FR-[1-4]$/;
 
 export type P04AcceptErrorKind = 'invalid_config';
@@ -407,6 +411,53 @@ const VERTICAL_ITEMS: readonly P04FrozenItem[] = [
   },
 ];
 
+/**
+ * P04-9 持久派发队列与执行槽位补充项（追加在原有八项 Feature 检查之后）。
+ * 断言逐条对应 `input/p04-dispatch-foundation.md` §3.5 的六项验收；证据类别要求真实
+ * SQLite/竞争/恢复记录，命令退出 0 不能替代。
+ */
+const SUPPLEMENT_ITEMS: readonly P04FrozenItem[] = [
+  {
+    id: 'P04-P9-AC1-SINGLE-DISPATCH', group: 'supplement', title: 'P04-9 AC1：重复入队/唤醒只产生一个有效 Attempt',
+    layer: 'feature-integration', execution: 'offline', fr: ['FR-1'], acceptanceRefs: ['P04-9-AC1'],
+    assertions: ['同一已授权 Run 重复入队、重复唤醒均只启动一个有效 Attempt；队列与现有 Task 认领不重复记账'],
+    evidence: ['sqlite', 'command-exit', 'artifact'],
+  },
+  {
+    id: 'P04-P9-AC2-SLOT-RACE', group: 'supplement', title: 'P04-9 AC2：容量 1 竞争恰好一个有效槽位',
+    layer: 'feature-integration', execution: 'offline', fr: ['FR-1'], acceptanceRefs: ['P04-9-AC2'],
+    assertions: ['两个独立消费者竞争额度 1 时恰好一个取得有效槽位；无槽位者不提前启动 Runner'],
+    evidence: ['sqlite', 'process', 'artifact'],
+  },
+  {
+    id: 'P04-P9-AC3-RESTART-RESCAN', group: 'supplement', title: 'P04-9 AC3：丢失唤醒/重启/认领后崩溃可补扫，旧进程未停止不重跑',
+    layer: 'feature-integration', execution: 'offline', fr: ['FR-1'], acceptanceRefs: ['P04-9-AC3'],
+    assertions: ['丢失内存唤醒、Host 重启、认领后崩溃可被补扫/恢复；旧进程未确认停止不重复执行'],
+    evidence: ['sqlite', 'process', 'artifact'],
+  },
+  {
+    id: 'P04-P9-AC4-LATE-RESULT-CONTROL', group: 'supplement', title: 'P04-9 AC4：迟到结果与暂停/取消围栏',
+    layer: 'feature-integration', execution: 'offline', fr: ['FR-1'], acceptanceRefs: ['P04-9-AC4'],
+    assertions: ['迟到结果不能覆盖新 owner 状态或释放其资源；取消和暂停不会被补扫自动复活'],
+    evidence: ['sqlite', 'process', 'artifact'],
+  },
+  {
+    id: 'P04-P9-AC5-QUOTA-REGRESSION', group: 'supplement', title: 'P04-9 AC5：额度硬限制与单 Feature 回归',
+    layer: 'feature-integration', execution: 'offline', fr: ['FR-1', 'FR-2'], acceptanceRefs: ['P04-9-AC5'],
+    assertions: ['额度大于 1 明确拒绝；原有单 Feature 正常、返工、失败保留、resume 及预算约束回归通过'],
+    evidence: ['command-exit', 'sqlite', 'artifact'],
+  },
+  {
+    id: 'P04-P9-AC6-QUERY-MIGRATION', group: 'supplement', title: 'P04-9 AC6：等待原因可解释与迁移保留历史',
+    layer: 'feature-integration', execution: 'offline', fr: ['FR-1'], acceptanceRefs: ['P04-9-AC6'],
+    assertions: ['查询能解释等待原因；迁移保留已有 Run/Attempt/Git 记录和通过证据'],
+    evidence: ['sqlite', 'artifact'],
+  },
+];
+
+/** P04-9 补充必需检查 ID（冻结顺序；报告必须逐项出现，缺失即 not_run）。 */
+export const P04_SUPPLEMENT_CHECK_IDS: readonly string[] = SUPPLEMENT_ITEMS.map((item) => item.id);
+
 const DEFERRED_ITEMS: readonly P04FrozenItem[] = [
   {
     id: 'P04-POST-DURABLE', group: 'deferred', title: '后置：Pi Durable 生产引擎',
@@ -420,11 +471,12 @@ const DEFERRED_ITEMS: readonly P04FrozenItem[] = [
   },
 ];
 
-/** 冻结清单全量（FR 组 → 验收编号组 → 纵向演示组 → deferred 组）。 */
+/** 冻结清单全量（FR 组 → 验收编号组 → 纵向演示组 → P04-9 补充组 → deferred 组）。 */
 export const P04_FROZEN_ITEMS: readonly P04FrozenItem[] = [
   ...FR_ITEMS,
   ...ACCEPTANCE_ITEMS,
   ...VERTICAL_ITEMS,
+  ...SUPPLEMENT_ITEMS,
   ...DEFERRED_ITEMS,
 ];
 
@@ -611,7 +663,7 @@ export function validateP04Checklist(raw: unknown): P04Checklist {
     }
     for (const ref of (entry.acceptanceRefs as unknown[]) ?? []) {
       if (typeof ref !== 'string' || !T_REF_PATTERN.test(ref)) {
-        fail('invalid_config', `${id} 验收编号非法（形如 T13）：${String(ref)}`);
+        fail('invalid_config', `${id} 验收编号非法（形如 T13 或 P04-9-AC1）：${String(ref)}`);
       }
     }
     for (const fr of (entry.fr as unknown[]) ?? []) {

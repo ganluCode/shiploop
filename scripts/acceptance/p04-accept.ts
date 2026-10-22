@@ -1,7 +1,7 @@
 /**
- * P04-8 F-008: 人工独立执行的阶段入口。普通 Task 测试只注入 runProcess，
- * 不执行本阶段门禁。复用 F-003 顺序步骤器和 F-007 报告聚合器。
- * 离线命令退出 0 也不签署 Phase 通过；live/manual 仍由独立证据放行。
+ * P04-8 F-008 / P04-9 F-011: 人工独立执行的阶段入口。普通 Task 测试只注入 runProcess，
+ * 不执行本阶段门禁。复用 F-003 顺序步骤器和 F-007 报告聚合器；F-011 增量把 P04-9
+ * 补充六项纳入清单、入口覆盖与报告映射。离线命令退出 0 也不签署 Phase 通过。
  */
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -12,23 +12,47 @@ import { fileURLToPath } from 'node:url';
 import {
   loadP04AcceptanceConfig, loadP04Checklist, validateP04AcceptanceConfig,
   P04_ACCEPT_CONFIG_PATH, P04_ACCEPT_MAX_TIMEOUT_MS, P04_ACCEPT_MIN_TIMEOUT_MS,
+  P04_SUPPLEMENT_CHECK_IDS,
   type P04AcceptanceConfig,
+  type P04Checklist,
 } from './p04-config.ts';
 import { assertValidRunId, generateP04RunId, verifyP04ReportDirectory } from './p04-report.ts';
 import { aggregateP04IntegrationReport, loadP04StepRunEvidence } from './p04-integration-report.ts';
+import type { P04IntegrationCheckBinding } from './p04-integration-report.ts';
 import { runP04StepSequence, type P04StepRecord, type P04StepSpec } from './p04-steps.ts';
 import { runBoundedProcess } from './p02-accept.ts';
 
 export const P04_ACCEPT_USAGE = 'usage: accept:p04 [--run-id <id>] [--report-dir <root>] ' +
   '[--expected-commit <sha>] [--step-timeout-ms <ms>] [--overall-timeout-ms <ms>] [--observe] [--help]';
 const ENTRY_PATH = 'acceptance/p04.entry.json';
+/** P04-9 补充检查 → Task 索引报告映射（冻结；范围声明，不是通过证据）。 */
+const SUPPLEMENT_MAPPING: Readonly<Record<string, readonly string[]>> = {
+  'P04-P9-AC1-SINGLE-DISPATCH': ['F-001', 'F-002', 'F-004'],
+  'P04-P9-AC2-SLOT-RACE': ['F-003', 'F-004'],
+  'P04-P9-AC3-RESTART-RESCAN': ['F-005', 'F-007'],
+  'P04-P9-AC4-LATE-RESULT-CONTROL': ['F-006', 'F-007'],
+  'P04-P9-AC5-QUOTA-REGRESSION': ['F-004', 'F-007', 'F-010'],
+  'P04-P9-AC6-QUERY-MIGRATION': ['F-008', 'F-009', 'F-010'],
+};
+/**
+ * 冻结入口声明（schemaVersion=2）：显式登记 P04-1～P04-9 九个 Feature 与 P04-9
+ * 六项补充检查的 Task 索引报告映射。缺 Feature、多 Feature、缺 Feature 索引或映射
+ * 不完整均在执行前 fail-closed，不能静默只跑原有八项。
+ */
 const ENTRY = {
-  schemaVersion: 1,
+  schemaVersion: 2,
+  requiredFeatures: ['P04-1', 'P04-2', 'P04-3', 'P04-4', 'P04-5', 'P04-6', 'P04-7', 'P04-8', 'P04-9'],
   stepOrder: ['engineering-gate', 'p04-integration'],
   testIndexRoot: 'test/index/phases/P04/features',
   engineeringGate: ['scripts/verify.ts', '--step-timeout-ms', '{stepMs}'],
   integrationRunner: 'scripts/run-tests.ts',
+  supplement: {
+    feature: 'P04-9',
+    checks: SUPPLEMENT_MAPPING,
+  },
 };
+const TASK_INDEX_PATTERN = /^F-\d{3}\.json$/;
+const TASK_ID_PATTERN = /^F-\d{3}$/;
 const HEX40 = /^[0-9a-f]{40}$/;
 const digest = (value: string | Uint8Array): string => createHash('sha256').update(value).digest('hex');
 const message = (error: unknown): string => error instanceof Error ? error.message : String(error);
@@ -64,6 +88,13 @@ function repoFile(repoRoot: string, path: string): string {
   if (!existsSync(full) || !lstatSync(full).isFile() || realpathSync(full) !== full) fail(`入口缺失或符号链接：${path}`);
   return full;
 }
+function repoDir(repoRoot: string, path: string): string {
+  const full = resolve(repoRoot, path);
+  if (relative(repoRoot, full).startsWith('..')) fail(`入口越界：${path}`);
+  if (!existsSync(full) || !lstatSync(full).isDirectory()) fail(`入口目录缺失：${path}`);
+  assertNoSymlink(full);
+  return full;
+}
 
 export interface P04AcceptanceOptions {
   readonly repoRoot: string;
@@ -90,18 +121,96 @@ export interface P04AcceptanceResult {
   readonly problems: readonly string[];
 }
 
-function collectTests(repoRoot: string): { files: string[]; inputs: string[] } {
+export interface P04FeatureTestSelection {
+  readonly feature: string;
+  /** Feature 合集声明（P04-9 必需；其他历史 Feature 可缺）。 */
+  readonly manifests: string[];
+  /** 该 Feature 的 Task 索引（仓库相对路径）。 */
+  readonly indexes: string[];
+  /** 该 Feature 实际引用的测试文件（已去重、排序）。 */
+  readonly files: string[];
+}
+
+export interface P04TrustedTestSelection {
+  /** 全部 Feature 去重后的测试文件（Phase 按完整文件执行）。 */
+  readonly files: string[];
+  /** 参与身份摘要的索引/声明文件。 */
+  readonly inputs: string[];
+  readonly features: P04FeatureTestSelection[];
+}
+
+function assertFeatureManifest(
+  repoRoot: string,
+  featureRoot: string,
+  feature: string,
+  indexIds: readonly string[],
+): string[] {
+  const manifestPath = join(featureRoot, 'feature.json');
+  if (!existsSync(manifestPath)) {
+    if (feature === ENTRY.supplement.feature) fail(`缺少 Feature 索引声明：${ENTRY.supplement.feature}/feature.json`);
+    return [];
+  }
+  const file = relative(repoRoot, manifestPath);
+  const raw = readJson(repoFile(repoRoot, file)) as {
+    schema_version?: unknown; kind?: unknown; phase?: unknown; feature?: unknown;
+    tasks?: { task_id?: unknown; index?: unknown }[];
+  };
+  if (raw.schema_version !== 1 || raw.kind !== 'feature' || raw.phase !== 'P04' || raw.feature !== feature) {
+    fail(`无效 Feature 索引声明：${file}`);
+  }
+  if (!Array.isArray(raw.tasks) || raw.tasks.length === 0) fail(`Feature 索引声明缺少 Task：${file}`);
+  const declared: string[] = [];
+  for (const task of raw.tasks) {
+    const taskId = task?.task_id;
+    if (typeof taskId !== 'string' || !TASK_ID_PATTERN.test(taskId)) fail(`Feature 索引 Task ID 非法：${file}`);
+    const expected = `${ENTRY.testIndexRoot}/${feature}/tasks/${taskId}.json`;
+    if (task.index !== expected) fail(`Feature 索引位置非法：${file} -> ${String(task.index)}`);
+    if (declared.includes(taskId)) fail(`Feature 索引含重复 Task：${file} -> ${taskId}`);
+    declared.push(taskId);
+  }
+  if (canonical([...declared].sort()) !== canonical([...indexIds].sort())) {
+    fail(`Feature 索引与 Task 索引不一致（缺失或多余）：${file}`);
+  }
+  return [file];
+}
+
+/**
+ * 发现并校验 Phase 可信测试索引合集：
+ * - Feature 集合必须与冻结入口声明完全一致（缺 P04-9 或多出未登记 Feature 即失败）；
+ * - 每个 Feature 的 Task 索引必须是 v2、项目 shiploop、显式 `all`/`cases`、路径在
+ *   `test/modules` 下的 `.test.(ts|js)` 且真实存在；
+ * - P04-9 必须有 feature.json 并逐项对应磁盘上的 Task 索引；
+ * - 补充检查的 Task 映射必须引用 P04-9 已登记 Task，报告映射不能指向不存在的工作；
+ * - 测试文件按路径去重后再交给 Phase 执行。
+ */
+export function collectP04TrustedTests(repoRoot: string): P04TrustedTestSelection {
+  const featureRoot = repoDir(repoRoot, ENTRY.testIndexRoot);
+  const discovered = readdirSync(featureRoot, { withFileTypes: true })
+    .filter(entry => entry.isDirectory() && /^P04-\d+$/.test(entry.name))
+    .map(entry => entry.name)
+    .sort();
+  if (canonical(discovered) !== canonical([...ENTRY.requiredFeatures].sort())) {
+    fail(`阶段入口 Feature 集合不匹配：期望 ${ENTRY.requiredFeatures.join(',')}，发现 ${discovered.join(',') || '<empty>'}`);
+  }
   const files = new Set<string>();
   const inputs: string[] = [];
-  for (let number = 1; number <= 8; number++) {
-    const directory = join(repoRoot, ENTRY.testIndexRoot, `P04-${number}`, 'tasks');
-    assertNoSymlink(directory);
-    const indexes = readdirSync(directory).filter(name => /^F-\d+\.json$/.test(name)).sort();
-    if (indexes.length === 0) fail(`空测试索引：P04-${number}`);
+  const features: P04FeatureTestSelection[] = [];
+  for (const feature of ENTRY.requiredFeatures) {
+    const directory = repoDir(repoRoot, `${ENTRY.testIndexRoot}/${feature}/tasks`);
+    const indexes = readdirSync(directory).filter(name => TASK_INDEX_PATTERN.test(name)).sort();
+    if (indexes.length === 0) fail(`空测试索引：${feature}`);
+    const manifests = assertFeatureManifest(repoRoot, join(featureRoot, feature), feature, indexes.map(name => name.replace(/\.json$/, '')));
+    inputs.push(...manifests);
+    const featureFiles = new Set<string>();
     for (const name of indexes) {
       const file = relative(repoRoot, join(directory, name));
-      const raw = readJson(repoFile(repoRoot, file)) as { schema_version?: unknown; projects?: { id?: unknown; tests?: { file?: unknown; all?: unknown; cases?: unknown }[] }[] };
+      const raw = readJson(repoFile(repoRoot, file)) as {
+        schema_version?: unknown; task_id?: unknown;
+        projects?: { id?: unknown; tests?: { file?: unknown; all?: unknown; cases?: unknown }[] }[];
+      };
       if (raw.schema_version !== 2 || !Array.isArray(raw.projects) || raw.projects.length === 0) fail(`无效 v2 索引：${file}`);
+      const expectedTaskId = name.replace(/\.json$/, '');
+      if (raw.task_id !== undefined && raw.task_id !== expectedTaskId) fail(`索引 task_id 与文件名不一致：${file}`);
       inputs.push(file);
       for (const project of raw.projects) {
         if (project.id !== 'shiploop' || !Array.isArray(project.tests) || project.tests.length === 0) fail(`无效项目或空测试索引：${file}`);
@@ -110,13 +219,67 @@ function collectTests(repoRoot: string): { files: string[]; inputs: string[] } {
           if (test.all !== true && (!Array.isArray(test.cases) || test.cases.length === 0 || !test.cases.every(id => typeof id === 'string' && id.length > 0))) fail(`缺少显式测试选择：${file}`);
           repoFile(repoRoot, test.file);
           // Phase 独立执行完整文件；Task 的 case 选择不削减阶段集成范围。
+          featureFiles.add(test.file);
           files.add(test.file);
         }
       }
     }
+    features.push({ feature, manifests,
+      indexes: indexes.map(name => `${ENTRY.testIndexRoot}/${feature}/tasks/${name}`),
+      files: [...featureFiles].sort() });
+  }
+  const supplement = features.find(entry => entry.feature === ENTRY.supplement.feature);
+  if (supplement === undefined) fail(`缺少 P04-9 补充 Feature 选择：${ENTRY.supplement.feature}`);
+  const mappedChecks = Object.keys(ENTRY.supplement.checks).sort();
+  if (canonical(mappedChecks) !== canonical([...P04_SUPPLEMENT_CHECK_IDS].sort())) {
+    fail('P04-9 报告映射必须恰好覆盖冻结补充检查（不得缺失或新增未知检查）');
+  }
+  for (const [checkId, taskIds] of Object.entries(ENTRY.supplement.checks)) {
+    if (!Array.isArray(taskIds) || taskIds.length === 0) fail(`补充检查缺少 Task 映射：${checkId}`);
+    for (const taskId of taskIds) {
+      if (!TASK_ID_PATTERN.test(taskId)) fail(`补充检查映射 Task ID 非法：${checkId} -> ${taskId}`);
+      if (!supplement.indexes.includes(`${ENTRY.testIndexRoot}/${supplement.feature}/tasks/${taskId}.json`)) {
+        fail(`补充检查映射未知 Task：${checkId} -> ${taskId}`);
+      }
+    }
   }
   if (files.size === 0) fail('空测试选择不得退化为全仓测试');
-  return { files: [...files].sort(), inputs };
+  return { files: [...files].sort(), inputs, features };
+}
+
+function taskTestFiles(repoRoot: string, feature: string, taskId: string): string[] {
+  const file = `${ENTRY.testIndexRoot}/${feature}/tasks/${taskId}.json`;
+  const raw = readJson(repoFile(repoRoot, file)) as { projects: { tests: { file: string }[] }[] };
+  return [...new Set(raw.projects.flatMap(project => project.tests.map(test => test.file)))].sort();
+}
+
+/**
+ * P04-9 六项补充检查的报告映射：只写入 Task 索引导航证据（artifact），不绑定命令退出
+ * 作为通过依据。SQLite/竞争/恢复证据未核对时这些检查保持 not_run，不能沿用旧八项成功。
+ */
+function supplementBindings(repoRoot: string, checklist: P04Checklist): P04IntegrationCheckBinding[] {
+  const feature = ENTRY.supplement.feature;
+  return P04_SUPPLEMENT_CHECK_IDS.map(checkId => {
+    const item = checklist.items.find(entry => entry.id === checkId);
+    if (item === undefined || item.group !== 'supplement') fail(`补充检查未进入冻结清单：${checkId}`);
+    const taskIds = ENTRY.supplement.checks[checkId] ?? [];
+    const mapping = {
+      component: 'p04-acceptance-supplement',
+      checkId,
+      feature,
+      acceptanceRefs: [...item.acceptanceRefs],
+      assertions: [...item.assertions],
+      evidenceCategories: [...item.evidence],
+      tasks: taskIds.map(taskId => ({ taskId, index: `${ENTRY.testIndexRoot}/${feature}/tasks/${taskId}.json`,
+        files: taskTestFiles(repoRoot, feature, taskId) })),
+      scope: 'Task 索引声明范围；阶段入口按完整文件执行。SQLite/竞争/恢复证据仍需独立核对，命令退出 0 不构成通过。',
+    };
+    return {
+      checkId,
+      extraEvidence: [{ name: 'test-index-mapping.json', category: 'artifact' as const,
+        content: `${JSON.stringify(mapping, null, 2)}\n` }],
+    };
+  });
 }
 
 function isolatedEnv(resources: string, repoRoot: string, timeoutMs: number): NodeJS.ProcessEnv {
@@ -178,7 +341,7 @@ export async function runP04Acceptance(options: P04AcceptanceOptions): Promise<P
   // commit 身份不能冒充未提交的代码；测试可注入只读探测，不改变真实仓库。
   if (exec('git', ['status', '--porcelain']) !== '') fail('阶段受测代码必须已提交，工作树非空');
   if (exec('node', ['--version']).replace(/^v/, '') !== config.toolchain.node || exec('npm', ['--version']) !== config.toolchain.npm) fail('Node/npm 工具版本不匹配');
-  const tests = collectTests(repoRoot);
+  const tests = collectP04TrustedTests(repoRoot);
   const contractFiles = [ENTRY_PATH, P04_ACCEPT_CONFIG_PATH, config.checklist, 'package.json', config.toolchain.lockfile,
     'scripts/acceptance/p04-accept.ts', 'scripts/acceptance/p04-steps.ts', 'scripts/acceptance/p04-integration-report.ts',
     'scripts/acceptance/p04-config.ts', 'scripts/acceptance/p04-report.ts', 'scripts/verify.ts', ENTRY.integrationRunner,
@@ -242,8 +405,10 @@ export async function runP04Acceptance(options: P04AcceptanceOptions): Promise<P
       { checkId: 'P04-FR1-FAILURE-MATRIX', stepIds: ['p04-integration'] },
       { checkId: 'P04-FR2-BOUNDED-ENTRY', stepIds: [...ENTRY.stepOrder], extraEvidence: [{ name: 'entry-steps.json', category: 'artifact',
         content: JSON.stringify({ identity, steps: sequence.steps, problems: sequence.problems }) + '\n' }] },
+      ...supplementBindings(repoRoot, checklist),
     ],
     knownLimitations: ['命令退出记录不替代逐项 SQLite/进程快照或产品 Feature 报告；缺少的证据保留缺口。',
+      'P04-9 六项补充检查只登记 Task 索引报告映射：SQLite/竞争/恢复证据未核对时保持 not_run，不能凭原有八项成功声称完整覆盖。',
       '本入口只编排离线执行；live not_run、人工 pending，不签署 P04 Phase 通过。'],
     openIssues: drift ? [{ id: 'P04-CODE-DRIFT', summary: '受测代码身份变化', blocking: true }] : [],
     sensitiveValues: [resources], log: options.log,

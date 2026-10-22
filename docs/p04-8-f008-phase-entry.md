@@ -4,9 +4,9 @@
 
 ## 执行契约
 
-- `acceptance/p04.entry.json` 固定步骤顺序及入口接口；`acceptance/p04.config.json` 沿用 F-001 的 Node/npm、单步/总预算、清单和报告配置。
+- `acceptance/p04.entry.json` 固定步骤顺序及入口接口（F-011 起 `schemaVersion=2`：另冻结必需 Feature 集合与 P04-9 补充检查 → Task 索引报告映射）；`acceptance/p04.config.json` 沿用 F-001 的 Node/npm、单步/总预算、清单和报告配置。
 - 第一步使用当前 Node 执行 `scripts/verify.ts --step-timeout-ms <单步预算>`，即 `npm run verify` 的同一个完整入口，保留全部测试、类型检查和构建门禁。
-- 第二步执行 `node scripts/run-tests.ts <显式文件列表>`。从 P04-1 至 P04-8 的 v2 Task 索引收集、校验、去重测试文件，Phase 按完整文件运行；缺失索引、空选择、越界路径或缺失入口直接失败。配置不能注入自定义命令、Shell 或改写步骤顺序。
+- 第二步执行 `node scripts/run-tests.ts <显式文件列表>`。按冻结必需 Feature 集合（P04-1 至 P04-9）的 v2 Task 索引收集、校验、去重测试文件，Phase 按完整文件运行；缺失/多余 Feature、缺 P04-9 `feature.json`、空选择或越界路径均失败。P04-9 六项补充检查只写入 Task 索引导航证据，SQLite/竞争/恢复证据未核对时保持 `not_run`（详见 [P04-9 补充项交接](p04-9-f011-acceptance-handoff.md)）。配置不能注入自定义命令、Shell 或改写步骤顺序。
 - 仓库 cwd 取自脚本位置，不使用调用者 cwd、npm prefix 或 `INIT_CWD`。受测代码须已提交；记录当前 HEAD，`--expected-commit` 可额外核对期望 SHA。步骤之间及报告前复核 HEAD/工作树，漂移不复用旧结论。
 - 仅保留 PATH、区域等必要环境，隔离 HOME、TMPDIR、Pi 与 XDG 目录、npm cache/config，剔除继承的 npm lifecycle/prefix、NODE_OPTIONS 和供应商凭据。离线测试使用 Fake；这不是操作系统网络沙箱。
 - F-003 步骤器顺序、有界执行，开始与完成分别落盘运行身份和步骤记录。单步预算还受剩余总预算限制，准备/报告耗时也纳入入口总时限判定。停止不确定保留 `resources`，不把删除目录当成进程停止证据。

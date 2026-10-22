@@ -226,7 +226,7 @@ it('aggregates offline matrices, step run and checklist into a replayable phase 
   expect(result.verification?.ok).toBe(true);
   expect(result.exitCode).toBe(1); // live/manual 未运行，阶段结论 fail
   expect(result.conclusion).toBe('fail');
-  expect(result.written?.counts).toEqual({ pass: 9, fail: 0, not_run: 7, total: 16 });
+  expect(result.written?.counts).toEqual({ pass: 15, fail: 0, not_run: 7, total: 22 });
 
   const report = result.written!.report;
   // 逐项状态：offline 全部 pass；live not_run；manual pending。
@@ -313,7 +313,7 @@ it('keeps manual gates pending unless owner-confirmed and rejects mock overrides
   expect(byId.get('P04-T39')?.manualStatus).toBe('pending');
   expect(byId.get('P04-VERT-MANUAL-BLOCK')?.manualStatus).toBe('pending');
   expect(byId.get('P04-VERT-LIVE-ZERO-CALL')?.status).toBe('not_run');
-  expect(result.written!.counts).toEqual({ pass: 10, fail: 0, not_run: 6, total: 16 });
+  expect(result.written!.counts).toEqual({ pass: 16, fail: 0, not_run: 6, total: 22 });
   expect(result.exitCode).toBe(1);
 });
 
@@ -451,5 +451,5 @@ it('records traceable commit, digests, toolchain and redacted inputs', async () 
   };
   expect(inputs.stepRun?.identity?.commit).toBe(IDENTITY.commit);
   expect(inputs.scenarioFiles?.length).toBe(3);
-  expect(inputs.bindings?.length).toBe(9);
+  expect(inputs.bindings?.length).toBe(15);
 });

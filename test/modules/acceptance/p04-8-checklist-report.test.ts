@@ -41,7 +41,7 @@ it('loads the frozen checklist and separates execution classes', () => {
   const config = loadP04AcceptanceConfig(join(ROOT, P04_ACCEPT_CONFIG_PATH));
   const summary = summarizeP04Checklist(checklist);
   expect(config.requiredChecks).toEqual([...P04_REQUIRED_CHECK_IDS]);
-  expect(summary.required).toBe(16);
+  expect(summary.required).toBe(22);
   expect(summary.deferred).toBe(2);
   expect(new Set(checklist.items.map((item) => item.execution))).toEqual(
     new Set(P04_EXECUTION_TYPES),
@@ -107,7 +107,7 @@ it('keeps not_run out of pass counts and enforces live/manual gates', () => {
 
   const offlinePass = aggregateP04CheckResults(checklist, [result(offline.id, 'fake')]);
   expect(offlinePass.counts.pass).toBe(1);
-  expect(offlinePass.counts.not_run).toBe(15);
+  expect(offlinePass.counts.not_run).toBe(21);
   expect(offlinePass.conclusion).toBe('fail');
 
   const liveFake = aggregateP04CheckResults(checklist, [result(live.id, 'fake')]);

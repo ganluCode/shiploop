@@ -385,6 +385,132 @@
       ]
     },
     {
+      "id": "P04-P9-AC1-SINGLE-DISPATCH",
+      "group": "supplement",
+      "title": "P04-9 AC1：重复入队/唤醒只产生一个有效 Attempt",
+      "layer": "feature-integration",
+      "execution": "offline",
+      "fr": [
+        "FR-1"
+      ],
+      "acceptanceRefs": [
+        "P04-9-AC1"
+      ],
+      "assertions": [
+        "同一已授权 Run 重复入队、重复唤醒均只启动一个有效 Attempt；队列与现有 Task 认领不重复记账"
+      ],
+      "evidence": [
+        "sqlite",
+        "command-exit",
+        "artifact"
+      ]
+    },
+    {
+      "id": "P04-P9-AC2-SLOT-RACE",
+      "group": "supplement",
+      "title": "P04-9 AC2：容量 1 竞争恰好一个有效槽位",
+      "layer": "feature-integration",
+      "execution": "offline",
+      "fr": [
+        "FR-1"
+      ],
+      "acceptanceRefs": [
+        "P04-9-AC2"
+      ],
+      "assertions": [
+        "两个独立消费者竞争额度 1 时恰好一个取得有效槽位；无槽位者不提前启动 Runner"
+      ],
+      "evidence": [
+        "sqlite",
+        "process",
+        "artifact"
+      ]
+    },
+    {
+      "id": "P04-P9-AC3-RESTART-RESCAN",
+      "group": "supplement",
+      "title": "P04-9 AC3：丢失唤醒/重启/认领后崩溃可补扫，旧进程未停止不重跑",
+      "layer": "feature-integration",
+      "execution": "offline",
+      "fr": [
+        "FR-1"
+      ],
+      "acceptanceRefs": [
+        "P04-9-AC3"
+      ],
+      "assertions": [
+        "丢失内存唤醒、Host 重启、认领后崩溃可被补扫/恢复；旧进程未确认停止不重复执行"
+      ],
+      "evidence": [
+        "sqlite",
+        "process",
+        "artifact"
+      ]
+    },
+    {
+      "id": "P04-P9-AC4-LATE-RESULT-CONTROL",
+      "group": "supplement",
+      "title": "P04-9 AC4：迟到结果与暂停/取消围栏",
+      "layer": "feature-integration",
+      "execution": "offline",
+      "fr": [
+        "FR-1"
+      ],
+      "acceptanceRefs": [
+        "P04-9-AC4"
+      ],
+      "assertions": [
+        "迟到结果不能覆盖新 owner 状态或释放其资源；取消和暂停不会被补扫自动复活"
+      ],
+      "evidence": [
+        "sqlite",
+        "process",
+        "artifact"
+      ]
+    },
+    {
+      "id": "P04-P9-AC5-QUOTA-REGRESSION",
+      "group": "supplement",
+      "title": "P04-9 AC5：额度硬限制与单 Feature 回归",
+      "layer": "feature-integration",
+      "execution": "offline",
+      "fr": [
+        "FR-1",
+        "FR-2"
+      ],
+      "acceptanceRefs": [
+        "P04-9-AC5"
+      ],
+      "assertions": [
+        "额度大于 1 明确拒绝；原有单 Feature 正常、返工、失败保留、resume 及预算约束回归通过"
+      ],
+      "evidence": [
+        "command-exit",
+        "sqlite",
+        "artifact"
+      ]
+    },
+    {
+      "id": "P04-P9-AC6-QUERY-MIGRATION",
+      "group": "supplement",
+      "title": "P04-9 AC6：等待原因可解释与迁移保留历史",
+      "layer": "feature-integration",
+      "execution": "offline",
+      "fr": [
+        "FR-1"
+      ],
+      "acceptanceRefs": [
+        "P04-9-AC6"
+      ],
+      "assertions": [
+        "查询能解释等待原因；迁移保留已有 Run/Attempt/Git 记录和通过证据"
+      ],
+      "evidence": [
+        "sqlite",
+        "artifact"
+      ]
+    },
+    {
       "id": "P04-POST-DURABLE",
       "group": "deferred",
       "title": "后置：Pi Durable 生产引擎",

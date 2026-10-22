@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "kind": "feature",
+  "phase": "P04",
+  "feature": "P04-9",
+  "scope": "registered task-local indexes; P04-9 feature union for Nezha task_union; not full/Phase/live acceptance",
+  "tasks": [
+    {
+      "task_id": "F-001",
+      "index": "test/index/phases/P04/features/P04-9/tasks/F-001.json"
+    },
+    {
+      "task_id": "F-002",
+      "index": "test/index/phases/P04/features/P04-9/tasks/F-002.json"
+    },
+    {
+      "task_id": "F-003",
+      "index": "test/index/phases/P04/features/P04-9/tasks/F-003.json"
+    },
+    {
+      "task_id": "F-004",
+      "index": "test/index/phases/P04/features/P04-9/tasks/F-004.json"
+    },
+    {
+      "task_id": "F-005",
+      "index": "test/index/phases/P04/features/P04-9/tasks/F-005.json"
+    },
+    {
+      "task_id": "F-006",
+      "index": "test/index/phases/P04/features/P04-9/tasks/F-006.json"
+    },
+    {
+      "task_id": "F-007",
+      "index": "test/index/phases/P04/features/P04-9/tasks/F-007.json"
+    },
+    {
+      "task_id": "F-008",
+      "index": "test/index/phases/P04/features/P04-9/tasks/F-008.json"
+    },
+    {
+      "task_id": "F-009",
+      "index": "test/index/phases/P04/features/P04-9/tasks/F-009.json"
+    },
+    {
+      "task_id": "F-010",
+      "index": "test/index/phases/P04/features/P04-9/tasks/F-010.json"
+    },
+    {
+      "task_id": "F-011",
+      "index": "test/index/phases/P04/features/P04-9/tasks/F-011.json"
+    }
+  ]
+}

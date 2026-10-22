@@ -1,7 +1,57 @@
 {
-  "schemaVersion": 1,
-  "stepOrder": ["engineering-gate", "p04-integration"],
+  "schemaVersion": 2,
+  "requiredFeatures": [
+    "P04-1",
+    "P04-2",
+    "P04-3",
+    "P04-4",
+    "P04-5",
+    "P04-6",
+    "P04-7",
+    "P04-8",
+    "P04-9"
+  ],
+  "stepOrder": [
+    "engineering-gate",
+    "p04-integration"
+  ],
   "testIndexRoot": "test/index/phases/P04/features",
-  "engineeringGate": ["scripts/verify.ts", "--step-timeout-ms", "{stepMs}"],
-  "integrationRunner": "scripts/run-tests.ts"
+  "engineeringGate": [
+    "scripts/verify.ts",
+    "--step-timeout-ms",
+    "{stepMs}"
+  ],
+  "integrationRunner": "scripts/run-tests.ts",
+  "supplement": {
+    "feature": "P04-9",
+    "checks": {
+      "P04-P9-AC1-SINGLE-DISPATCH": [
+        "F-001",
+        "F-002",
+        "F-004"
+      ],
+      "P04-P9-AC2-SLOT-RACE": [
+        "F-003",
+        "F-004"
+      ],
+      "P04-P9-AC3-RESTART-RESCAN": [
+        "F-005",
+        "F-007"
+      ],
+      "P04-P9-AC4-LATE-RESULT-CONTROL": [
+        "F-006",
+        "F-007"
+      ],
+      "P04-P9-AC5-QUOTA-REGRESSION": [
+        "F-004",
+        "F-007",
+        "F-010"
+      ],
+      "P04-P9-AC6-QUERY-MIGRATION": [
+        "F-008",
+        "F-009",
+        "F-010"
+      ]
+    }
+  }
 }

@@ -18,7 +18,13 @@
     "P04-T44",
     "P04-VERT-OFFLINE-FAIL-CLOSED",
     "P04-VERT-LIVE-ZERO-CALL",
-    "P04-VERT-MANUAL-BLOCK"
+    "P04-VERT-MANUAL-BLOCK",
+    "P04-P9-AC1-SINGLE-DISPATCH",
+    "P04-P9-AC2-SLOT-RACE",
+    "P04-P9-AC3-RESTART-RESCAN",
+    "P04-P9-AC4-LATE-RESULT-CONTROL",
+    "P04-P9-AC5-QUOTA-REGRESSION",
+    "P04-P9-AC6-QUERY-MIGRATION"
   ],
   "toolchain": {
     "packageManager": "npm@10.9.3",
@@ -58,8 +64,8 @@
     "phaseId": "2026-10-20-12-01-23_p04-8-pi",
     "stepId": "p04-acceptance",
     "title": "P04 阶段验收契约与执行报告",
-    "scope": "FR-1/FR-2/FR-3/FR-4 的离线、live、人工和后置能力清单；live 需显式授权，人工确认不得由工具代签",
-    "version": "0.4",
+    "scope": "FR-1/FR-2/FR-3/FR-4 及 P04-9 补充六项（持久派发、槽位竞争、恢复、控制围栏、额度、查询/迁移）的离线、live、人工和后置能力清单；live 需显式授权，人工确认不得由工具代签",
+    "version": "0.5",
     "contractDoc": "docs/p04-acceptance.md"
   }
 }

@@ -177,11 +177,19 @@ function isolatedRepo() {
   }
   const sample = 'test/modules/acceptance/sample.test.ts';
   mkdirSync(dirname(join(repo, sample)), { recursive: true }); writeFileSync(join(repo, sample), 'sample');
-  for (let number = 1; number <= 8; number++) {
+  for (let number = 1; number <= 9; number++) {
     const target = join(repo, `test/index/phases/P04/features/P04-${number}/tasks/F-001.json`);
     mkdirSync(dirname(target), { recursive: true });
-    writeFileSync(target, JSON.stringify({ schema_version: 2, projects: [{ id: 'shiploop', tests: [{ file: sample, all: true }] }] }));
+    writeFileSync(target, JSON.stringify({ schema_version: 2, task_id: 'F-001', projects: [{ id: 'shiploop', tests: [{ file: sample, all: true }] }] }));
   }
+  // P04-9 补充 Feature 的合集声明与 Task 索引必须一致，且入口冻结映射引用的 Task 都已登记。
+  const supplementTasks = ['F-001', 'F-002', 'F-003', 'F-004', 'F-005', 'F-006', 'F-007', 'F-008', 'F-009', 'F-010'];
+  for (const taskId of supplementTasks) {
+    const target = join(repo, `test/index/phases/P04/features/P04-9/tasks/${taskId}.json`);
+    mkdirSync(dirname(target), { recursive: true });
+    writeFileSync(target, JSON.stringify({ schema_version: 2, task_id: taskId, projects: [{ id: 'shiploop', tests: [{ file: sample, all: true }] }] }));
+  }
+  writeFileSync(join(repo, 'test/index/phases/P04/features/P04-9/feature.json'), JSON.stringify({ schema_version: 1, kind: 'feature', phase: 'P04', feature: 'P04-9', scope: 'entry fixture', tasks: supplementTasks.map(taskId => ({ task_id: taskId, index: `test/index/phases/P04/features/P04-9/tasks/${taskId}.json` })) }));
   return repo;
 }
 
