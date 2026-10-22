@@ -361,6 +361,20 @@ P02 阶段验收在该 Feature 内未包含（`accept:p02` 由阶段末项定义
 
 类型系统上，根 `tsconfig.json` 以 `noEmit` 统一覆盖 `test/**/*.ts`、`scripts/**/*.ts` 与三个包的 `src/**/*.ts`；各包自己的 `tsconfig.json`（`composite`、`rootDir: src`、`outDir: dist`）只负责产物构建。
 
+## P04 Pi 验收入口
+
+P04 的离线矩阵、版本/证据索引和人工门槛见 [最终交付报告](docs/p04-8-f010-delivery-report.md)、[故障矩阵](docs/p04-8-f010-fault-matrix.md)与[人工清单](docs/p04-8-f010-manual-checklist.md)。普通 Task 只运行定向测试；Feature 索引合集交 Nezha 独立验证。完整阶段与真实 live 须单独发起：
+
+```sh
+npm run accept:p04 -- --help
+# 完整离线阶段：人工明确发起后，在干净已提交快照运行
+npm run accept:p04 -- --run-id p04-owner-001 --expected-commit REPLACE_WITH_FULL_SHA
+# live：每个场景使用明确批准的资源、认证引用和预算
+npm run accept:p04:live -- --approval /absolute/private/owner-approved-live.json
+```
+
+离线命令全绿、SDK 探针完成或 Task completed 均不等于 P04 阶段通过。完整工程/集成、真实 Core Work/live 证据和负责人签署尚待独立核验；当前 P04 未放行。
+
 ## 常用命令
 
 ```bash
@@ -378,11 +392,13 @@ node scripts/acceptance/clean-snapshot-replay.ts --root . --out docs/acceptance/
 
 在没有 `dist` 与类型缓存的干净临时副本中，`typecheck` 与 `build` 均须返回 0；注入明确类型错误时 `typecheck` 返回非零。`npm run verify`（F-005）把锁文件预检与上述检查串成单一 fail-closed 入口，用于干净副本的集成验收。
 
-## Pi SDK 接入基线（本任务不接入）
+## Pi SDK 历史接入基线（P01 初始记录）
+
+以下为 P01 初始工程状态；当前标准 Pi SDK 已锁定为 1.0.4，适配器与验收工具范围见上述 P04 交付包。历史实验不作为当前生产验收结论。
 
 - 前期验证依据：设计文档 `core-design/05-runtime-and-session-recording.md` 与 `core-design/09-testing-and-implementation.md` 记录的 2026-09-30 / 2026-10-01 macOS 实验，使用 **Pi Node SDK 0.84.2**（S1–S5：事件、工具、取消、存档、资源清单、Token 口径、凭据与进程组清理边界）。
 - 结论基线：Pi 默认工具不具备强 OS 沙箱，首版按用户明确授权的可信项目模式推进；Runner 强杀后的进程组停止核验须在 Host 监督逻辑中实现。
-- 本任务**不安装、不调用 Pi SDK**；正式接入时需在 adapter 层重新核验当时的 SDK 能力、套餐与认证政策，并锁定精确版本。
+- P01 初始任务未安装、未调用 Pi SDK；P04 正式适配须按锁定版本重新验证，真实调用仍需独立授权。
 - SQLite / better-sqlite3 / Drizzle 自 P01-2 / F-001 起已按上述设计基线在 Core 适配层固定引入（仅驱动与 ORM 装配，不含业务持久化 Schema、迁移或 StateStore 实现）。
 
 ## 非目标

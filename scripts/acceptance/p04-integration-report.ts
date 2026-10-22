@@ -513,6 +513,7 @@ function makeSanitizer(
   scenarioRoot: string | null,
 ): (text: string) => string {
   const pairs: readonly (readonly [string, string])[] = [
+    [process.execPath, '<node>'],
     [repoRoot, '<repo>'],
     [stepRunDir, '<step-run>'],
     ...(scenarioRoot === null ? ([] as const) : ([[scenarioRoot, '<scenarios>']] as const)),
@@ -1046,7 +1047,8 @@ export function aggregateP04IntegrationReport(options: P04IntegrationReportOptio
   const toolchain = detectToolchain(options.repoRoot, exec);
   const safeGit = (args: readonly string[], fallback: string | null): string | null => {
     try {
-      return exec('git', args) || fallback;
+      // 空 porcelain 是“干净”的有效事实，不能按探测失败降级成 null。
+      return exec('git', args);
     } catch {
       return fallback;
     }
@@ -1232,6 +1234,8 @@ export function aggregateP04IntegrationReport(options: P04IntegrationReportOptio
 
   const reportRoot = resolve(options.reportRoot ?? join(options.repoRoot, config.reportRoot));
   const sensitiveValues = [
+    // HOME 可被调用方隔离，Node 安装仍可能位于另一用户目录。
+    process.execPath,
     options.repoRoot,
     options.stepRunDir,
     ...(scenarioRoot === null ? [] : [scenarioRoot]),

@@ -213,7 +213,7 @@ export async function runP04Acceptance(options: P04AcceptanceOptions): Promise<P
       ? ENTRY.engineeringGate.map(arg => arg === '{stepMs}' ? String(stepTimeoutMs) : arg)
       : [ENTRY.integrationRunner, ...tests.files],
   }));
-  const sanitize = (text: string): string => text.replaceAll(repoRoot, '<repo>').replaceAll(reportRoot, '<reports>')
+  const sanitize = (text: string): string => text.replaceAll(process.execPath, '<node>').replaceAll(repoRoot, '<repo>').replaceAll(reportRoot, '<reports>')
     .replaceAll(homedir(), '<home>').replace(/\bBearer\s+\S+/gi, '[REDACTED:bearer]');
   const sequence = await runP04StepSequence(steps, {
     evidenceDir: stepRunDir, identity, stepTimeoutMs, overallTimeoutMs,
