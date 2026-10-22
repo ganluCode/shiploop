@@ -464,11 +464,11 @@ describe('F-007 迁移 v12：Runtime 启动预占账本表', () => {
     }
     const graph = seeded!;
 
-    // 同一库用全量迁移重开：v12 追加应用，既有数据保留。
+    // 同一库应用当前迁移清单：v12 及后续迁移追加应用，既有数据保留。
     const session = openSqliteStorageSession({ path: dbPath });
     try {
       const result = await migrateSqliteStorage(session);
-      expect(result.appliedVersions).toEqual([12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]);
+      expect(result.appliedVersions).toEqual(SQLITE_MIGRATIONS.slice(v11Migrations.length).map(migration => migration.version));
       const batch = session.database
         .prepare('SELECT runtime_starts, attempts_created, budget_snapshot FROM execution_batches WHERE id = ?')
         .get(graph.batchId) as { runtime_starts: number; attempts_created: number; budget_snapshot: string };
@@ -502,10 +502,10 @@ describe('F-007 迁移 v12：Runtime 启动预占账本表', () => {
     } finally {
       session.close();
     }
-    // 历史迁移不被改写：版本连续且 v12 为唯一新增追加。
-    expect(SQLITE_MIGRATIONS.map((migration) => migration.version)).toEqual([
-      1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30,
-    ]);
+    // 迁移版本从 1 连续递增，后续追加不要求修改历史测试的版本上限。
+    expect(SQLITE_MIGRATIONS.map((migration) => migration.version)).toEqual(
+      Array.from({ length: SQLITE_MIGRATIONS.length }, (_, index) => index + 1),
+    );
   });
 
   it('DDL 底线：重复启动身份、空 start_key 与跨项目外键在 DDL 级拒绝', async () => {
