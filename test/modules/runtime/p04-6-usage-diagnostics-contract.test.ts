@@ -4,7 +4,7 @@ import {
   validateRuntimeUsageReport,
   validateUsageDiagnosticObservation,
   usageObservationKey,
-} from 'shiploop-core';
+} from '../../../packages/core/src/index.ts';
 
 const identity = {
   runtime: 'pi', provider: 'provider-a', model: 'model-a', attemptId: 'attempt-1', sessionId: 'session-1',

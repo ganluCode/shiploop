@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from 'vitest';
-import { projectEfficiency } from 'shiploop-core';
+import { projectEfficiency } from '../../../packages/core/src/index.ts';
 import { BUDGET, openBudgetFixture, type BudgetFixture } from '../../helpers/p03-3/budget-fixture.ts';
 import { reportAttempt, reportQueries } from '../../helpers/p03-10/report-fixture.ts';
 import { buildFeatureReportTextView, formatFeatureReportTextView } from '../../../packages/cli/src/app/report.ts';

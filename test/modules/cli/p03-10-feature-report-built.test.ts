@@ -8,7 +8,7 @@ import { HASH, reportAttempt, reportSettlement, reportSecondRun, reportDatabaseS
 import { openReportHost } from '../../helpers/p03-10/report-host.ts';
 import { createRestrictedPrincipal } from '../../helpers/p02-2/principals.ts';
 import type { FeatureExecutionReport } from '../../../packages/core/src/application/feature-execution-report.ts';
-import type { RuntimeUsageReport } from 'shiploop-core';
+import type { RuntimeUsageReport } from '../../../packages/core/src/ports/runtime-execution.ts';
 
 const exec = promisify(execFile);
 const root = resolve(import.meta.dirname, '../../..');

@@ -1,3 +1,4 @@
+import { currentSchemaVersion } from '../../../helpers/current-schema.ts';
 /**
  * P03-3 / F-006 Batch/Run/Task 预算预占与代码尝试分类记账（真实临时 SQLite）。
  *
@@ -374,7 +375,7 @@ describe('F-006 迁移 v11：Task 尝试计数列与预占账本表', () => {
       const applied = db.prepare('SELECT version FROM schema_migrations ORDER BY version').all() as { version: number }[];
       // v10 数据经 v11（双计数列/账本表）升级保留；全量迁移止于当前冻结版本
       // （P03-7 / F-011 引入 v24）。
-      expect(applied.at(-1)).toEqual({ version: 30 });
+      expect(applied.at(-1)).toEqual({ version: currentSchemaVersion });
     } finally {
       session.close();
     }

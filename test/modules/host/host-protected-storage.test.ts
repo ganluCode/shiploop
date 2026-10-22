@@ -89,14 +89,8 @@ describe('F-003 规范数据根解析（§3.1/§3.2）', () => {
       const candidate = join(root, 'data');
       mkdirSync(candidate);
       const real = realpathSync(candidate);
-      // macOS 上 /var→/private/var 等前缀符号链接使 mkdtemp 结果通常不是 realpath；
-      // 构造一个必然不同的别名（加上或去掉 /private 前缀）。
-      const alias =
-        real === candidate
-          ? real.startsWith('/private/')
-            ? real.slice('/private'.length)
-            : `/private${real}`
-          : candidate;
+      const alias = join(root, 'data-alias');
+      symlinkSync(real, alias);
 
       const a = resolveCanonicalDataRoot({ dataRoot: candidate });
       const b = resolveCanonicalDataRoot({ dataRoot: alias });
@@ -188,7 +182,9 @@ describe('F-003 Host 私有目录保护（§3.3 fail-closed 矩阵）', () => {
         createHostFileStore({ canonicalRoot: realpathSync(candidate), platform: 'linux' }),
       ).toThrowError(expect.objectContaining({ code: 'unsupported_platform' }));
       // 别名（未 realpath）不是规范根。
-      expect(() => createHostFileStore({ canonicalRoot: candidate })).toThrowError(
+      const alias = join(root, 'data-alias');
+      symlinkSync(realpathSync(candidate), alias);
+      expect(() => createHostFileStore({ canonicalRoot: alias })).toThrowError(
         expect.objectContaining({ code: 'invalid_input' }),
       );
     });
@@ -363,7 +359,7 @@ describe('F-003 本机凭据（§4.2）', () => {
         () => store.readTrustedDiscovery(),
         () => store.publishDiscovery(makeRecord(computeDataRootIdentity('/somewhere/else'))),
         () => resolveCanonicalDataRoot({ dataRoot: 'relative' }),
-        () => createHostFileStore({ canonicalRoot: root }),
+        () => createHostFileStore({ canonicalRoot: join(root, '..', 'not-a-canonical-root') }),
       ]) {
         try {
           action();

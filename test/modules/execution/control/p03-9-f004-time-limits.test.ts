@@ -74,7 +74,7 @@ async function waitFor(condition: () => boolean, label: string, timeoutMs = 5_00
 
 function childScript() {
   const writer = "const fs=require('node:fs');process.on('SIGTERM',()=>{});fs.appendFileSync('heartbeat','x');setInterval(()=>fs.appendFileSync('heartbeat','x'),15)";
-  return `const {spawn}=require('node:child_process');const fs=require('node:fs');const c=spawn(process.execPath,['--no-warnings','-e',${JSON.stringify(writer)}],{stdio:'ignore'});fs.writeFileSync('pids.json',JSON.stringify([process.pid,c.pid]));process.on('SIGTERM',()=>{});setInterval(()=>{},1000)`;
+  return `const {spawn}=require('node:child_process');const fs=require('node:fs');const c=spawn(process.execPath,['--no-warnings','-e',${JSON.stringify(writer)}],{stdio:'ignore'});fs.writeFileSync('pids.json.tmp',JSON.stringify([process.pid,c.pid]));fs.renameSync('pids.json.tmp','pids.json');process.on('SIGTERM',()=>{});setInterval(()=>{},1000)`;
 }
 
 function verifierHarness(nowUtcMs?: () => number) {

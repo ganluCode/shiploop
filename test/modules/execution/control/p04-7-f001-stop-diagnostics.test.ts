@@ -5,7 +5,7 @@ import {
   isExecutionStopDiagnostic,
   recordExecutionStopDiagnostic,
   validateExecutionStopDiagnostic,
-} from 'shiploop-core';
+} from '../../../../packages/core/src/index.ts';
 
 const observed = '2026-10-20T12:01:22.000Z';
 const gapless: ExecutionStopDiagnosticObservation = { state: 'confirmed', checkedAtUtc: observed, detail: null, gaps: [] };

@@ -2,7 +2,7 @@ import { expect, test } from 'vitest';
 import {
   aggregateUsage, buildUsageProjection, normalizeUsageObservations,
   type RuntimeUsageReport, type UsageDiagnosticIdentity, type UsageProjectionRecord,
-} from 'shiploop-core';
+} from '../../../packages/core/src/index.ts';
 
 function record(eventId: string, overrides: Partial<UsageProjectionRecord> = {}): UsageProjectionRecord {
   return {

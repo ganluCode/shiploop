@@ -19,7 +19,8 @@ describe('F-004 independent Pi Durable spike, not production capability evidence
       expect(lock.packages[`node_modules/${dependency}`].version).toBe('1.2.0');
       expect(lock.packages[`node_modules/${dependency}`].integrity).toMatch(/^sha512-/);
       expect(root.dependencies?.[dependency]).toBeUndefined();
-      expect(root.devDependencies?.[dependency]).toBeUndefined();
+      // Pi production support pins its shared SDK packages independently of this spike.
+      expect(root.devDependencies?.[dependency]).toBe(name === 'pi-durable' ? undefined : '1.0.4');
     }
     expect(root.workspaces).not.toContain('experiments/pi-durable');
     const sources = json('sources.json');

@@ -139,5 +139,13 @@ export async function forceStopControlledGroup(
     }
   }
   const confirmed = await confirmGroupAbsence(identity, probe, budgets);
-  return { confirmed: row === null ? confirmed : escalated && confirmed, escalated, identity: row === null ? 'absent' : 'matched' };
+  let exitedBeforeDelivery = false;
+  if (row !== null && !escalated && confirmed) {
+    // IPC disconnect may stop the supervisor between identity check and signal.
+    // A failed signal is not proof: require a fresh successful supervisor-absence probe too.
+    try { exitedBeforeDelivery = await probe.readSupervisorRow(identity.pid) === null; }
+    catch { /* failed probes remain uncertain */ }
+  }
+  return { confirmed: confirmed && (row === null || escalated || exitedBeforeDelivery), escalated,
+    identity: row === null ? 'absent' : 'matched' };
 }

@@ -1,3 +1,4 @@
+import { currentMigrationVersions } from '../../helpers/current-schema.ts';
 /**
  * F-004 P02-2 命令竞争 / 事务故障 / 受限 principal / SSE 重连夹具套件自测
  * （夹具能力的真实回归，不是产品实现）。
@@ -185,7 +186,7 @@ describe('F-004 临时沙箱与真实 A/B 资源', () => {
       const versions = probe.selectAll<{ version: number }>(
         'SELECT version FROM schema_migrations ORDER BY version',
       );
-      expect(versions.map((row) => row.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]);
+      expect(versions.map((row) => row.version)).toEqual(currentMigrationVersions);
       const counts = probe.counts();
       expect(counts.projects).toBe(0);
       expect(counts.state_events).toBe(0);

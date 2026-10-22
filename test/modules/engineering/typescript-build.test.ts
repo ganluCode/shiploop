@@ -1,7 +1,8 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { dirname, join, resolve, sep } from 'node:path';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { currentHostDependencies, piSdkRuntimeFiles } from '../../helpers/current-host-contract.ts';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const packageDirs = ['packages/core', 'packages/host', 'packages/cli'] as const;
@@ -163,8 +164,8 @@ describe.each(packageDirs)('package build contract: %s', (dir) => {
     } else if (dir === 'packages/host') {
       // F-006（契约 §13.4）：Host 启动装配经 Core 公共入口与 ./assembly 子路径
       // 使用 openCoreApplication/deriveDefaultDataRoot，版本随工作区固定；
-      // 不引入任何第三方依赖。
-      expect(pkg.dependencies).toEqual({ 'shiploop-core': '0.0.0' });
+      // P04 adds pinned Pi SDK dependencies only at the Host adapter boundary.
+      expect(pkg.dependencies).toEqual(currentHostDependencies);
       expect(pkg.devDependencies ?? {}).toEqual({});
       expect(pkg.peerDependencies ?? {}).toEqual({});
       expect(pkg.optionalDependencies ?? {}).toEqual({});
@@ -384,7 +385,7 @@ describe('Host and CLI entry behaviour boundaries', () => {
     }
   });
 
-  it('F-006 runtime 面只允许 node:http 与 shiploop-core 公共入口，禁 ORM/厂商 SDK/其他网络与子进程', () => {
+  it('Host runtime keeps SDK imports within explicit Pi adapters and bans ORM/uncontrolled network/process imports', () => {
     const runtimeDir = resolve(repoRoot, 'packages/host/src/runtime');
     const sources = readSourceTree('packages/host/src').filter(({ file }) =>
       file.startsWith(runtimeDir + sep),
@@ -410,7 +411,12 @@ describe('Host and CLI entry behaviour boundaries', () => {
     ];
     for (const { file, code } of sources) {
       const specifiers = extractModuleSpecifiers(code);
+      for (const specifier of specifiers.filter(value => value.startsWith('@earendil-works/'))) {
+        expect(piSdkRuntimeFiles.has(basename(file)), `${file}: SDK boundary`).toBe(true);
+        expect(Object.keys(currentHostDependencies)).toContain(specifier.split('/').slice(0, 2).join('/'));
+      }
       for (const banned of bannedInRuntime) {
+        if (banned === '@earendil-works/pi-coding-agent' && piSdkRuntimeFiles.has(basename(file))) continue;
         const offenders = specifiers.filter((specifier) => specifierMatches(specifier, banned));
         expect(offenders, `${file} must not import ${banned}`).toHaveLength(0);
       }

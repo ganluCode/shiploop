@@ -552,9 +552,12 @@ function optionalBoolean(value: unknown, field: string): boolean | undefined {
   return value;
 }
 
+const RUNTIME_USAGE_REPORT_KEYS = ['basis', 'inputTokens', 'outputTokens', 'costUsdMicros', 'cacheReadTokens', 'cacheWriteTokens',
+  'reasoningTokens', 'providerTotalTokens', 'cacheReadIncludedInInput', 'cacheWriteIncludedInInput', 'reasoningIncludedInOutput',
+  'coverage', 'normalization', 'sourceRefs', 'completeness', 'accounting'] as const;
+
 export function validateRuntimeUsageReport(value: unknown, field = 'usage'): RuntimeUsageReport {
-  const raw = adapterObject(value, ['basis', 'inputTokens', 'outputTokens', 'costUsdMicros', 'cacheReadTokens', 'cacheWriteTokens',
-    'reasoningTokens', 'providerTotalTokens', 'cacheReadIncludedInInput', 'cacheWriteIncludedInInput', 'reasoningIncludedInOutput', 'coverage', 'normalization', 'sourceRefs', 'completeness', 'accounting'], field);
+  const raw = adapterObject(value, RUNTIME_USAGE_REPORT_KEYS, field);
   if (raw.basis !== 'synthetic' && raw.basis !== 'reported') {
     throw protocolError('invalid_usage_basis', `${field}.basis`);
   }
@@ -665,7 +668,7 @@ function payloadKeys(kind: RuntimeEventKind): readonly string[] {
     case 'message': return ['messageId', 'role', 'preview', 'text'];
     case 'tool_started': return ['toolCallId', 'toolName', 'parentToolCallId', 'input'];
     case 'tool_finished': return ['toolCallId', 'exitCode', 'signal', 'reason', 'outputBytes', 'lastActivityAtUtc', 'parentToolCallId', 'output'];
-    case 'usage': return ['basis', 'inputTokens', 'outputTokens', 'costUsdMicros', 'completeness', 'accounting'];
+    case 'usage': return RUNTIME_USAGE_REPORT_KEYS;
     case 'warning': return ['code', 'message'];
     case 'diagnostic': return ['code', 'message'];
   }

@@ -35,6 +35,8 @@ import type { BuildScanFinding } from '../../../scripts/acceptance/build-artifac
 import { buildCoreToTemp } from '../../helpers/build-core-fixture.ts';
 import { createTempSandbox } from '../../helpers/temp-sandbox.ts';
 import type { TempSandbox } from '../../helpers/temp-sandbox.ts';
+import { currentMigrationVersions } from '../../helpers/current-schema.ts';
+import { currentHostDependencies } from '../../helpers/current-host-contract.ts';
 
 /** 把契约 §2.1 要求的关键证据字段以一行 JSON 打印，供 accept:p01 命令日志持久化。 */
 function emitEvidence(line: string, fields: Readonly<Record<string, unknown>>): void {
@@ -97,7 +99,7 @@ describe('F-009 可发布构建产物路径扫描', () => {
         },
       ],
       // P02-3 / F-007 起迁移清单为 v1..v4。
-      expectedMigrations: [{ path: built.migrationModule, versions: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30] }],
+      expectedMigrations: [{ path: built.migrationModule, versions: currentMigrationVersions }],
       homeDir: homedir(),
       forbiddenRuntimeDependencies: [...FORBIDDEN_RUNTIME_DEPS],
     });
@@ -109,7 +111,7 @@ describe('F-009 可发布构建产物路径扫描', () => {
     expect(result.files.every((entry) => /^[0-9a-f]{64}$/.test(entry.sha256))).toBe(true);
     expect(result.files.every((entry) => entry.sizeBytes > 0)).toBe(true);
     expect(result.migrationResources).toEqual([
-      { file: expect.stringContaining('adapters/sqlite/migrations.js'), versions: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30] },
+      { file: expect.stringContaining('adapters/sqlite/migrations.js'), versions: currentMigrationVersions },
     ]);
     expect(result.declaredEntries).toContain('shiploop-core:./dist/index.js');
     expect(result.declaredEntries).toContain('shiploop-core:./dist/index.d.ts');
@@ -262,8 +264,14 @@ describe('F-009 可发布构建产物路径扫描', () => {
       resolve(REPO_ROOT, 'packages/cli/package.json'),
     ];
     expect(
-      scanManifestDependencies(manifests, [...FORBIDDEN_RUNTIME_DEPS], REPO_ROOT),
+      scanManifestDependencies(manifests.filter(file => file !== resolve(REPO_ROOT, 'packages/host/package.json')),
+        [...FORBIDDEN_RUNTIME_DEPS], REPO_ROOT),
     ).toEqual([]);
+    // P04 permits the pinned SDK only in Host; Core/CLI retain the vendor-independent guard.
+    expect(JSON.parse(readFileSync(resolve(REPO_ROOT, 'packages/host/package.json'), 'utf8')).dependencies)
+      .toEqual(currentHostDependencies);
+    expect(scanManifestDependencies([resolve(REPO_ROOT, 'packages/host/package.json')],
+      ['nezha', '@nezhajs'], REPO_ROOT)).toEqual([]);
 
     const configs = [
       resolve(REPO_ROOT, 'acceptance/p01.config.json'),

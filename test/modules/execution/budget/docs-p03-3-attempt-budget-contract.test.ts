@@ -1,3 +1,4 @@
+import { currentSchemaVersion } from '../../../helpers/current-schema.ts';
 /**
  * P03-3 / F-006 文档核验：`docs/p03-3-attempt-budget-contract.md` 记录的 Task
  * 尝试预算预占与分类记账契约必须与仓库实现事实一致（迁移 v11 内容、原语面、
@@ -33,8 +34,8 @@ describe('P03-3 / F-006 Task 尝试预算预占契约文档', () => {
   it('迁移事实一致：v11 为追加版本且包含 tasks 双计数列与预占账本表', () => {
     const doc = readContractDoc();
     const migrations = SQLITE_MIGRATIONS;
-    expect(migrations.at(-1)?.version).toBe(30);
-    expect(migrations).toHaveLength(30);
+    expect(migrations.at(-1)?.version).toBe(currentSchemaVersion);
+    expect(migrations).toHaveLength(currentSchemaVersion);
     const v11 = migrations[10];
     expect(v11?.sql).toContain('ALTER TABLE tasks ADD COLUMN attempt_counter');
     expect(v11?.sql).toContain('ALTER TABLE tasks ADD COLUMN code_attempts_used');

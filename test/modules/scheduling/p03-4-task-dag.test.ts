@@ -1,3 +1,4 @@
+import { currentMigrationVersions } from '../../helpers/current-schema.ts';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import Database from 'better-sqlite3';
@@ -261,7 +262,7 @@ describe('P03-4 deterministic Task DAG', () => {
         VALUES ('task-1', 'project-1', 'feature-1', ?, ?, 'Old', '{"criteria":["test"]}', '{"schemaVersion":2}', 'user_override')`).run(NOW, NOW);
       const task = db.prepare<[], Record<string, unknown>>('SELECT * FROM tasks').get();
       const migrations = db.prepare('SELECT * FROM schema_migrations').all();
-      expect((await migrateSqliteStorage(session)).appliedVersions).toEqual([15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]);
+      expect((await migrateSqliteStorage(session)).appliedVersions).toEqual(currentMigrationVersions.filter(version => version >= 15));
       expect(db.prepare('SELECT * FROM tasks').get()).toEqual({ ...task, kind: 'coding', manual_block: 0 });
       expect(db.prepare('SELECT * FROM schema_migrations WHERE version <= 14').all()).toEqual(migrations);
       expect(() => db.prepare("UPDATE tasks SET kind = 'runtime'").run()).toThrow();

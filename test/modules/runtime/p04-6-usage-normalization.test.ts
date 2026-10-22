@@ -4,7 +4,7 @@ import {
   buildUsageProjection,
   normalizeUsageObservations,
   type UsageObservationInput,
-} from 'shiploop-core';
+} from '../../../packages/core/src/index.ts';
 
 const identity = (eventId: string, requestId = 'request-1', model = 'model-a', recovery: UsageObservationInput['identity']['recovery'] = 'new') => ({
   runtime: 'pi', provider: 'provider-a', model, attemptId: 'attempt-1', sessionId: 'session-1',

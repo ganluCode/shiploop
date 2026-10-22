@@ -1,3 +1,4 @@
+import { currentSchemaVersion } from '../../helpers/current-schema.ts';
 import { expect, it, describe } from 'vitest';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -580,7 +581,7 @@ describe('F-010 migration v19 workspace_operations kind rebuild', () => {
     await withTempSandboxAsync(async root => {
       const session = openSqliteStorageSession({ path: join(root, 'db.sqlite') });
       try {
-        expect(SQLITE_MIGRATIONS.at(-1)?.version).toBe(30);
+        expect(SQLITE_MIGRATIONS.at(-1)?.version).toBe(currentSchemaVersion);
         await migrateSqliteStorage(session, { migrations: SQLITE_MIGRATIONS.slice(0, 18) });
         const db = session.database;
         const digest = 'a'.repeat(64);

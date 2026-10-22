@@ -1,8 +1,8 @@
 import { once } from 'node:events';
 import { spawn } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
-import { projectEfficiency, validateEfficiencyFact, validateEfficiencyObservation } from 'shiploop-core';
-import type { EfficiencyFact, EfficiencyObservation, UsageDiagnosticIdentity } from 'shiploop-core';
+import { projectEfficiency, validateEfficiencyFact, validateEfficiencyObservation } from '../../../packages/core/src/index.ts';
+import type { EfficiencyFact, EfficiencyObservation, UsageDiagnosticIdentity } from '../../../packages/core/src/index.ts';
 
 const identity: UsageDiagnosticIdentity = {
   runtime: 'pi', provider: 'provider-a', model: 'model-a', attemptId: 'attempt-1', sessionId: 'session-1',

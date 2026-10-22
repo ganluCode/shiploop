@@ -1,3 +1,4 @@
+import { currentMigrationVersions, currentSchemaVersion } from '../../helpers/current-schema.ts';
 /**
  * P03-2 / F-003：扩展计划及检查政策的有效批准核验与失效处理纵向切片。
  *
@@ -1028,8 +1029,8 @@ describe('F-003 迁移 v8（approvals.check_policy_digest）', () => {
       const result = await migrateSqliteStorage(session, { nowUtcMs: () => NOW + 1_000 });
       expect(result.fromVersion).toBe(7);
       // P03-3 / F-002 起接续 v9（执行域三表；v8 仍为检查政策身份绑定迁移）。
-      expect(result.toVersion).toBe(30);
-      expect(result.appliedVersions).toEqual([8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]);
+      expect(result.toVersion).toBe(currentSchemaVersion);
+      expect(result.appliedVersions).toEqual(currentMigrationVersions.filter(version => version >= 8));
 
       // 既有决策行逐字段保留；check_policy_digest 为 NULL（不等于任何当前身份）。
       const row = session.database

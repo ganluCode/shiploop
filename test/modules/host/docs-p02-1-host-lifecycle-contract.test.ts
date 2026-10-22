@@ -8,9 +8,10 @@
  * 基线事实时（例如 F-006 把 Host 骨架换成真实入口），必须同步更新本守护与契约文档。
  */
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { currentHostDependencies, piSdkRuntimeFiles } from '../../helpers/current-host-contract.ts';
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const CONTRACT_DOC_PATH = 'docs/p02-1-host-lifecycle-contract.md';
@@ -135,7 +136,7 @@ describe('F-001 契约文档与仓库基线一致', () => {
     expect(root.engines).toEqual({ node: '22.19.0', npm: '10.9.3' });
     expect(root.packageManager).toBe('npm@10.9.3');
     expect(Object.keys(root.scripts as Record<string, string>).sort()).toEqual(
-      ['accept:p01', 'accept:p02', 'accept:p03', 'accept:p03:clean-replay', 'build', 'check:boundaries', 'test', 'typecheck', 'verify'].sort(),
+      ['accept:p01', 'accept:p02', 'accept:p03', 'accept:p03:clean-replay', 'accept:p04', 'accept:p04:live', 'build', 'check:boundaries', 'test', 'typecheck', 'verify'].sort(),
     );
     // P02-4/F-011 起正式交付：必须是本地控制器脚本，不得经由 npx/全局工具。
     expect(root.scripts).toHaveProperty('accept:p02', 'node scripts/acceptance/p02-accept.ts');
@@ -222,10 +223,9 @@ describe('F-001 契约文档与仓库基线一致', () => {
     const startEntry = readText('packages/host/src/start.ts');
     expect(startEntry).toContain('runHostStartEntry');
 
-    // F-006（契约 §13.4）：host 包声明且仅声明工作区依赖 shiploop-core；
-    // storage/ 面仍不得依赖 shiploop-core（默认根由调用方预推导）。
+    // P04 adds pinned SDK packages at the Host adapter boundary; storage remains independent.
     const hostPkg = readJson('packages/host/package.json');
-    expect(hostPkg.dependencies).toEqual({ 'shiploop-core': '0.0.0' });
+    expect(hostPkg.dependencies).toEqual(currentHostDependencies);
 
     // 契约面源码只允许相对导入与 node:crypto（确定性哈希），不允许网络/文件/进程/ORM/SDK。
     const contractDir = resolve(REPO_ROOT, 'packages/host/src/contract');
@@ -266,7 +266,7 @@ describe('F-001 契约文档与仓库基线一致', () => {
     }
 
     // F-006 runtime 面允许 node:http 与 shiploop-core 公共入口（含 ./assembly），
-    // 但禁止其他网络/进程/线程内置模块与 ORM/厂商 SDK 直接绑定。
+    // 但禁止其他网络/进程/线程内置模块与 ORM；SDK 仅允许显式 Pi 适配边界。
     const runtimeDir = resolve(REPO_ROOT, 'packages/host/src/runtime');
     expect(statSync(runtimeDir).isDirectory()).toBe(true);
     expect(listTs(runtimeDir).length).toBeGreaterThanOrEqual(3);
@@ -276,8 +276,11 @@ describe('F-001 契约文档与仓库基线一致', () => {
         /\b(?:import|export)[^;]*?\bfrom\s+['"]node:(?:net|https|dgram|tls|child_process|cluster|worker_threads)['"]|\bimport\s+['"]node:(?:net|https|dgram|tls|child_process|cluster|worker_threads)['"]/,
       );
       expect(source2, file).not.toMatch(
-        /from\s+['"](?:better-sqlite3|drizzle-orm|@earendil-works\/pi-coding-agent|electron|express|fastify|koa|hono)['"]/,
+        /from\s+['"](?:better-sqlite3|drizzle-orm|electron|express|fastify|koa|hono)['"]/,
       );
+      if (/(?:from\s*|import\s*\(\s*)['"]@earendil-works\//.test(source2)) {
+        expect(piSdkRuntimeFiles.has(basename(file)), `${file}: SDK boundary`).toBe(true);
+      }
       // argv 只属于显式入口 start.ts；剔除注释后 runtime 模块不得直接读 process.argv。
       const codeOnly = source2
         .replaceAll(/\/\*[\s\S]*?\*\//g, '')

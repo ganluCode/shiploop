@@ -285,6 +285,16 @@ async function claimAndPass(
     kind: 'started',
     executionStage: 'runtime',
   });
+  // This deterministic fixture emits no Runtime events; persist its empty recording watermark.
+  sessionStore.applyWorkSessionProgress({
+    ...identity,
+    sessionId,
+    expectedRevision: 2,
+    kind: 'activity',
+    executionStage: 'runtime',
+    recordingWatermark: 0,
+    recordingGaps: [],
+  });
   f.lifecycle.apply({ ...notification, notificationId: 'started', kind: 'executing' });
   const token = await stopVerifier.verify(f.resources.read(identity));
   const invocationId = f.resources.read(identity).invocationId;
@@ -527,7 +537,7 @@ export async function prepareEligibleFixture(
     const definition = definitions[index] ?? definitions[0]!;
     attempts.push(await claimAndPass(f, publisher, index, checkKey, definition.argv, inspection.codeDigest));
   }
-  const workspaceId = insertManagedWorkspace(f, attempts[0]!);
+  const workspaceId = insertManagedWorkspace(f, attempts.at(-1)!);
   const withWorkspace: EligibleFinalizationFixture = {
     ...f,
     artifacts,

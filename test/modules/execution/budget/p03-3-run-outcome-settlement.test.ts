@@ -1,3 +1,4 @@
+import { currentSchemaVersion } from '../../../helpers/current-schema.ts';
 /**
  * P03-3 / F-008 Run 结果幂等预算结算与连续无进展保护（真实临时 SQLite）。
  *
@@ -303,7 +304,7 @@ describe('F-008 迁移 v13：run_outcome_settlements 结算账本与时间依据
   it('v13 DDL 底线：表/两唯一索引/生效证据部分唯一索引/不可变触发器/外键链', async () => {
     const h = await openHarness();
     try {
-      expect(SQLITE_MIGRATIONS.length).toBe(30);
+      expect(SQLITE_MIGRATIONS.length).toBe(currentSchemaVersion);
       const indexes = (
         h.db.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'run_outcome_settlements'").all() as {
           name: string;

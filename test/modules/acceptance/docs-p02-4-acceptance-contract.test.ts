@@ -1,3 +1,4 @@
+import { currentMigrationVersions } from '../../helpers/current-schema.ts';
 /**
  * F-001 文档核验：`docs/p02-4-acceptance-contract.md` 声明的 P02-4 验收清单与接口映射
  * 必须与仓库中真实存在的 dist CLI 入口、Host 路由、回执/基线契约、夹具与前序回归入口一致，
@@ -244,7 +245,7 @@ describe('F-001 P02-4 验收契约文档', () => {
     // 记录表、P03-2 / F-003 起新增 v8 approvals.check_policy_digest 检查政策身份绑定、
     // P03-3 / F-002 起新增 v9 单 Feature 执行域三表
     // （P02-4 冻结时止于 v5；事实演进同步登记）。
-    expect(migrationVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]);
+    expect(migrationVersions).toEqual(currentMigrationVersions);
     expect(contractDoc).toContain('v1..v10');
     expect(contractDoc).toContain('state_events');
     expect(contractDoc).toContain('command_receipts');

@@ -1,3 +1,4 @@
+import { currentMigrationVersions } from '../../helpers/current-schema.ts';
 import { createHash, randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -177,7 +178,7 @@ describe('v30 Git operation rebuild', () => {
       // Copy valid fixture facts into a real v29 schema; foreign_key_check verifies the seed.
       db.pragma('foreign_keys = OFF');
       db.transaction(() => {
-        const tables = f.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT IN ('schema_migrations', 'git_operations')").all() as { name: string }[];
+        const tables = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' AND name NOT IN ('schema_migrations', 'git_operations')").all() as { name: string }[];
         for (const { name } of tables) {
           const rows = f.db.prepare(`SELECT * FROM "${name}"`).all() as Record<string, unknown>[];
           for (const row of rows) {
@@ -219,7 +220,7 @@ describe('v30 Git operation rebuild', () => {
       expect(db.prepare('SELECT * FROM schema_migrations ORDER BY version').all()).toEqual(history);
       expect(db.prepare("SELECT type, name, sql FROM sqlite_master WHERE tbl_name = 'git_operations' AND type IN ('index', 'trigger') ORDER BY name").all()).toEqual(objects);
       const result = await migrateSqliteStorage(session, { nowUtcMs: () => NOW });
-      expect(result.appliedVersions).toEqual([30]);
+      expect(result.appliedVersions).toEqual(currentMigrationVersions.filter(version => version >= 30));
       expect(db.prepare('SELECT rowid, * FROM git_operations ORDER BY rowid').all()).toEqual(rows);
       expect(db.prepare("SELECT type, name, sql FROM sqlite_master WHERE tbl_name = 'git_operations' AND type IN ('index', 'trigger') AND name <> 'git_operations_task_identity_check' ORDER BY name").all()).toEqual(objects);
       expect(db.pragma('foreign_key_list(git_operations)')).toEqual(fks);

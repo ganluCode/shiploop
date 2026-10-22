@@ -1,3 +1,4 @@
+import { currentMigrationVersions } from '../../../helpers/current-schema.ts';
 /**
  * P03-3 / F-002 文档核验：`docs/p03-3-execution-schema-contract.md` 记录的执行域
  * Schema 契约必须与仓库实现事实一致（迁移接续、表与约束词汇、条件唯一活动集、
@@ -22,7 +23,7 @@ describe('P03-3 / F-002 执行域 Schema 契约文档', () => {
   it('迁移接续与仓库事实一致：v1..v8 不变、v9 追加单 Feature 执行三表', () => {
     const doc = readContractDoc();
     const versions = SQLITE_MIGRATIONS.map((migration) => migration.version);
-    expect(versions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]);
+    expect(versions).toEqual(currentMigrationVersions);
     const v9 = SQLITE_MIGRATIONS[8]!;
     for (const table of ['execution_batches', 'runs', 'batch_budget_revisions']) {
       expect(v9.sql, `v9 必须建立 ${table}`).toContain(`CREATE TABLE ${table} (`);

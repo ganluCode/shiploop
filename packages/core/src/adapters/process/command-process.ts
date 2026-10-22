@@ -83,9 +83,19 @@ const realStopProbe: StopEscalationProbe = {
     try {
       // ps -p exits nonzero for an absent PID; a successful full census distinguishes
       // absence from a failed probe without treating either failure as an empty group.
-      const rows = await ps(['-axo', 'pid=,pgid=,lstart=,command=']);
+      const rows = await ps(['-axo', 'pid=,pgid=,stat=,lstart=,command=']);
       const line = rows.split('\n').find(line => Number(line.trim().split(/\s+/)[0]) === pid);
-      return line === undefined ? null : parseSupervisorRow(line, pid) ?? undefined;
+      if (line === undefined) return null;
+      const fields = line.trim().match(/^(\d+)\s+(\d+)\s+(\S+)\s+(.+)$/);
+      if (fields === null) return undefined;
+      // A zombie cannot execute or receive signals; group census must still prove
+      // that every descendant (including unreaped rows) has disappeared.
+      if (fields[3]!.startsWith('Z')) return null;
+      const row = parseSupervisorRow(`${fields[1]} ${fields[2]} ${fields[4]}`, pid);
+      // macOS can expose only a parenthesized comm while argv is unavailable.
+      // This is unknown, not stop proof: retry the read without signalling.
+      if (row !== null && /^\([^()]+\)$/.test(row.command)) return undefined;
+      return row ?? undefined;
     } catch {
       return undefined;
     }
@@ -182,7 +192,8 @@ export function createCommandProcessAdapter(options: CommandProcessAdapterOption
     escalationResults.set(key, pending);
     void pending.then((outcome) => {
       // A failed probe sent no signal and may be safely retried by a later
-      // recovery pass. All other outcomes remain the idempotent identity fact.
+      // recovery pass. Other outcomes retain the escalation identity fact;
+      // recoverStop may refresh absence proof without repeating its signal.
       if (outcome.identity === 'probe_failed' && !outcome.escalated && escalationResults.get(key) === pending) {
         escalationResults.delete(key);
       }
@@ -196,10 +207,14 @@ export function createCommandProcessAdapter(options: CommandProcessAdapterOption
       if (typeof id.launchId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(id.launchId) ||
           !Number.isSafeInteger(id.pid) || id.pid <= 1 || id.processGroupId !== id.pid ||
           typeof id.startTime !== 'string' || !id.startTime.length) return { confirmed: false };
-      // One durable identity has one escalation attempt. Concurrent or repeated
-      // recovery calls share the same bounded probe/signalling promise and can
-      // never turn a retry into repeated SIGKILL delivery.
+      // One durable identity has one escalation attempt. Later recovery may
+      // recheck absence, but never repeat a previously delivered signal.
+      const previous = escalationResults.get(escalationKey(id));
       const outcome = await escalateOnce(id);
+      if (previous !== undefined && !outcome.confirmed
+        && (outcome.identity === 'absent' || (outcome.identity === 'matched' && outcome.escalated))) {
+        return { confirmed: await confirmGroupAbsence(id, probe, stopBudgets) };
+      }
       return { confirmed: outcome.confirmed };
     },
     async start(input, confirm, signal) {
