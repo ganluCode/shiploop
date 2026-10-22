@@ -114,6 +114,13 @@ test/
   35 项本地通过；五个既有回归文件本地通过，另两个 Core 契约文件本地通过。范围与证据见
   [F-009 交接](../docs/p04-9-f009-dispatch-query-wiring.md)。
 
+- `index/phases/P04/features/P04-9/tasks/F-010.json`：生产组合根派发纵向与旧数据升级查询。
+  新增文件覆盖单 Feature 双 Task 串行派发/真实 Task 提交、同 Run 双消费者唯一 Attempt、
+  两个已授权 Run 竞争容量 1、丢失唤醒后的 Host 重建补扫，以及 P04-8（v32）升级后经生产
+  查询端口读取 Run/Attempt/Git/通过证据；其余 13 个文件复用 F-004/F-006/F-007、暂停/取消/
+  显式 resume、返工/失败保留、仅收尾、真实交付与旧库升级的既有用例，仅登记交 Nezha。
+  本地仅运行新增两文件（4+1 项），未运行全量、阶段验收、live 或真实模型。
+
 Task JSON 使用 Nezha v2 schema。当前存量用例首轮按文件显式 `all: true`，
 对应 19 个本 Feature 文件，不包含此前大批历史模块回归。
 部分文件有多个测试类型，暂不凭猜测拆掉其中断言或谎称函数级选择。

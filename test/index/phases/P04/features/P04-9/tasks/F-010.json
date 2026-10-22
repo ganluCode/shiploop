@@ -1,0 +1,24 @@
+{
+  "schema_version": 2,
+  "task_id": "F-010",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/execution/dispatch/p04-9-f010-dispatch-vertical.test.ts", "all": true },
+      { "file": "test/modules/execution/dispatch/p04-9-f010-upgrade-query.test.ts", "all": true },
+      { "file": "test/modules/scheduling/p04-9-f004-dispatch-task-claim.test.ts", "all": true },
+      { "file": "test/modules/scheduling/p04-9-f005-persistent-dispatch.test.ts", "all": true },
+      { "file": "test/modules/scheduling/p04-9-f006-dispatch-control-settlement.test.ts", "all": true },
+      { "file": "test/modules/recovery/p04-9-f007-dispatch-startup.test.ts", "all": true },
+      { "file": "test/modules/recovery/p04-9-f007-dispatch-crash-windows.test.ts", "all": true },
+      { "file": "test/modules/recovery/p04-9-f007-dispatch-resume.test.ts", "all": true },
+      { "file": "test/modules/recovery/p03-9-f008-workflow-resume.test.ts", "all": true },
+      { "file": "test/modules/recovery/p03-9-f016-host-kill-recovery.test.ts", "all": true },
+      { "file": "test/modules/verification/p03-7-f012-work-loop-rework.test.ts", "all": true },
+      { "file": "test/modules/execution/control/p03-9-f002-execution-cancel.test.ts", "all": true },
+      { "file": "test/modules/delivery/retry/p03-9-f010-finalization-run.test.ts", "all": true },
+      { "file": "test/modules/delivery/p03-8-f012-real-delivery.test.ts", "all": true },
+      { "file": "test/modules/storage/sqlite/p04-9-dispatch-slot-schema.test.ts", "all": true }
+    ]
+  }]
+}
