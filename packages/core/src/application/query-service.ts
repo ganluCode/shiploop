@@ -135,16 +135,21 @@ import type {
 import {
   EXECUTION_ATTEMPT_DIAGNOSTICS_OPERATION,
   EXECUTION_ATTEMPTS_LIST_OPERATION,
+  EXECUTION_DISPATCH_LIST_OPERATION,
   EXECUTION_RUN_SCHEDULE_OPERATION,
   decodeExecutionListKey,
   encodeExecutionListKey,
   toPublicAttemptDiagnosticRecord,
   toPublicAttemptRecord,
 } from '../ports/execution-schedule-query.js';
+import { deriveRunDispatchDisplay } from '../ports/execution-dispatch.js';
 import type {
   AttemptDiagnosticsResult,
   AttemptListResult,
+  DispatchQueueListResult,
+  DispatchQueueViewRow,
   ExecutionScheduleQueryReadStore,
+  PublicDispatchQueueRecord,
   PublicScheduleTaskView,
   RunScheduleEvaluation,
   RunScheduleStatusResult,
@@ -388,6 +393,16 @@ export interface QueryService {
    * 分页/游标规范，游标绑定数据根 + 项目 + Attempt）。
    */
   listAttemptDiagnostics(principal: unknown, input: unknown): Promise<AttemptDiagnosticsResult>;
+  /**
+   * P04-9 / F-008 execution.dispatch.list：项目派发队列与执行槽位只读投影
+   * （待派发/已认领/执行中/等待槽位/暂停/取消终态/恢复隔离等展示状态由
+   * Run + 认领 + 槽位 + 活动 Attempt 派生，不落库；稳定键集分页；槽位摘要
+   * 跨项目只给计数；查询零写入、零续租、零唤醒）。
+   */
+  listExecutionDispatchQueue(
+    principal: unknown,
+    input: unknown,
+  ): Promise<DispatchQueueListResult>;
   /** F-006 phases.list：项目内 Phase 层级列表（稳定排序、有限分页、受控游标）。 */
   listPhases(principal: unknown, input: unknown): Promise<PhaseListResult>;
   /** F-006 features.list：Phase 内 Feature 层级列表（游标绑定项目 + 父级）。 */
@@ -596,6 +611,31 @@ function executionScheduleTargetNotFound(
   throw new PublicError('not_found', operation, '执行实体不存在或不可见', {
     details: { reason: 'execution_entity_not_found', entityType },
   });
+}
+
+/**
+ * P04-9 / F-008 派发投影：Attempt → 公开摘要（未知时间/退出保持 null）。
+ */
+function dispatchAttemptView(attempt: AttemptRecord | null) {
+  if (attempt === null) return null;
+  return {
+    id: attempt.id,
+    taskId: attempt.taskId,
+    number: attempt.number,
+    status: attempt.status,
+    executionStage: attempt.executionStage,
+    ownerId: attempt.owner,
+    executionVersion: attempt.executionVersion,
+    startedAt:
+      attempt.startedAtUtcMs === null ? null : new Date(attempt.startedAtUtcMs).toISOString(),
+    endedAt: attempt.endedAtUtcMs === null ? null : new Date(attempt.endedAtUtcMs).toISOString(),
+    exitCode: attempt.exitCode,
+    durationMs: attempt.durationMs,
+  };
+}
+
+function isoOrNull(value: number | null): string | null {
+  return value === null ? null : new Date(value).toISOString();
 }
 
 /**
@@ -1536,6 +1576,121 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
           schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION,
           scope: 'attempt-diagnostic-list',
           records: page.records.map(toPublicAttemptDiagnosticRecord),
+          nextCursor:
+            page.nextKey === null
+              ? null
+              : encodePlanListCursor(encodeExecutionListKey(page.nextKey), binding),
+          limit: filter.limit,
+        };
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    async listExecutionDispatchQueue(
+      principal: unknown,
+      input: unknown,
+    ): Promise<DispatchQueueListResult> {
+      assertTrustedPrincipal(principal);
+      const operation = EXECUTION_DISPATCH_LIST_OPERATION;
+      try {
+        requireCapability(principal, 'project.read', operation);
+        const object = requirePlainObject(input, { operation }, 'input');
+        rejectUnknownKeys(object, ['projectId', 'limit', 'cursor'], { operation }, 'input');
+        const projectId = requireProjectId(object.projectId, operation);
+        requireProjectVisible(principal, projectId, operation);
+        const filter = validatedPlanFilter(object, operation);
+        const binding = planCursorBinding({ kind: 'dispatch-queue', projectId }, operation);
+        // 游标先于存储读取核验：跨项目/跨根/篡改载荷一律 invalid_cursor，
+        // 绝不当作从零读取。
+        const after = planListRequest(filter, binding, operation);
+        const request = {
+          after:
+            after.afterId === null ? null : decodeExecutionListKey(after.afterId, operation),
+          limit: filter.limit,
+        };
+        const page = scheduleReads.listDispatchQueueRecords(
+          principalProjectVisibility(principal),
+          projectId,
+          request,
+        );
+        const now = nowUtcMs();
+        const records: PublicDispatchQueueRecord[] = page.records.map(
+          (row: DispatchQueueViewRow) => {
+            // 展示状态与阻塞原因复用 F-001 同一派生规则；容量事实来自同一
+            // 一致读的全局槽位摘要（不由 Run 状态猜测）。
+            const display = deriveRunDispatchDisplay({
+              runStatus: row.run.status,
+              claim: row.claim,
+              slot: row.slot,
+              activeAttempt:
+                row.activeAttempt === null
+                  ? null
+                  : {
+                      executionVersion: row.activeAttempt.executionVersion,
+                      ownerId: row.activeAttempt.owner,
+                      hostInstanceId: row.activeAttempt.hostInstanceId,
+                    },
+              slotCapacityAvailable: page.slots.availableCount > 0,
+              nowUtcMs: now,
+            });
+            return {
+              runId: row.run.id,
+              projectId: row.run.projectId,
+              featureId: row.run.featureId,
+              runStatus: row.run.status,
+              runReason: row.run.reason,
+              dispatchOrdinal: row.run.dispatchOrdinal,
+              state: display.state,
+              blockingReason: display.blockingReason,
+              claim:
+                row.claim === null
+                  ? null
+                  : {
+                      claimId: row.claim.id,
+                      claimVersion: row.claim.claimVersion,
+                      origin: row.claim.origin,
+                      resumedFromClaimId: row.claim.resumedFromClaimId,
+                      resumedFromClaimVersion: row.claim.resumedFromClaimVersion,
+                      ownerId: row.claim.ownerId,
+                      hostInstanceId: row.claim.hostInstanceId,
+                      state: row.claim.state,
+                      acquiredAt: new Date(row.claim.acquiredAtUtcMs).toISOString(),
+                      leaseUntil: new Date(row.claim.leaseUntilUtcMs).toISOString(),
+                      settledAt: isoOrNull(row.claim.settledAtUtcMs),
+                      reason: row.claim.reason,
+                    },
+              slot:
+                row.slot === null
+                  ? null
+                  : {
+                      slotId: row.slot.id,
+                      slotIndex: row.slot.slotIndex,
+                      claimId: row.slot.claimId,
+                      claimVersion: row.slot.claimVersion,
+                      ownerId: row.slot.ownerId,
+                      hostInstanceId: row.slot.hostInstanceId,
+                      state: row.slot.state,
+                      acquiredAt: new Date(row.slot.acquiredAtUtcMs).toISOString(),
+                      leaseUntil: new Date(row.slot.leaseUntilUtcMs).toISOString(),
+                      releasedAt: isoOrNull(row.slot.releasedAtUtcMs),
+                      reason: row.slot.reason,
+                    },
+              activeAttempt: dispatchAttemptView(row.activeAttempt),
+              latestAttempt: dispatchAttemptView(row.latestAttempt),
+              attemptCount: row.attemptCount,
+              createdAt: new Date(row.run.createdAtUtcMs).toISOString(),
+              startedAt: isoOrNull(row.run.startedAtUtcMs),
+              endedAt: isoOrNull(row.run.endedAtUtcMs),
+              pauseRequestedAt: isoOrNull(row.run.pauseRequestedAtUtcMs),
+            };
+          },
+        );
+        return {
+          schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION,
+          scope: 'dispatch-queue',
+          slots: page.slots,
+          records,
           nextCursor:
             page.nextKey === null
               ? null

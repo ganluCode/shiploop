@@ -37,6 +37,12 @@ import type {
   WorkspaceLeaseRecord,
 } from './attempt-store.js';
 import type { RunRecord } from './execution-store.js';
+import type {
+  DispatchBlockingReason,
+  DispatchDisplayState,
+  ExecutionSlotClaimRecord,
+  RunDispatchClaimRecord,
+} from './execution-dispatch.js';
 import type { TaskDagReason, TaskDagView } from './task-dag.js';
 import type { TaskStatus } from './plan-store.js';
 import {
@@ -56,6 +62,12 @@ import type { ValidationContext } from './validation.js';
 export const EXECUTION_RUN_SCHEDULE_OPERATION = 'execution.run.schedule' as const;
 export const EXECUTION_ATTEMPTS_LIST_OPERATION = 'execution.attempts.list' as const;
 export const EXECUTION_ATTEMPT_DIAGNOSTICS_OPERATION = 'execution.attempt.diagnostics' as const;
+/**
+ * P04-9 / F-008 派发队列与执行槽位只读投影。故意不并入
+ * EXECUTION_SCHEDULE_QUERY_OPERATIONS：该常量与 Host 已接线查询一一对应，
+ * 本任务只交付 Core 投影，Host/CLI 接线属 F-009。
+ */
+export const EXECUTION_DISPATCH_LIST_OPERATION = 'execution.dispatch.list' as const;
 
 export const EXECUTION_SCHEDULE_QUERY_OPERATIONS = [
   EXECUTION_RUN_SCHEDULE_OPERATION,
@@ -64,6 +76,9 @@ export const EXECUTION_SCHEDULE_QUERY_OPERATIONS = [
 ] as const;
 
 export type ExecutionScheduleQueryOperation = (typeof EXECUTION_SCHEDULE_QUERY_OPERATIONS)[number];
+
+export const EXECUTION_DISPATCH_QUERY_OPERATIONS = [EXECUTION_DISPATCH_LIST_OPERATION] as const;
+export type ExecutionDispatchQueryOperation = (typeof EXECUTION_DISPATCH_QUERY_OPERATIONS)[number];
 
 /* ------------------------------------------------------------------ *
  * 迟到/越权通知诊断（与 attempt_notification_diagnostics 表同一冻结词汇）
@@ -398,6 +413,121 @@ export interface AttemptDiagnosticsResult {
 }
 
 /* ------------------------------------------------------------------ *
+ * P04-9 / F-008 execution.dispatch.list 公开形状
+ *
+ * 投影只派生自持久事实（runs / run_dispatch_claims / execution_slot_claims /
+ * attempts），不落库为第二套可编辑队列状态。展示状态与阻塞原因复用 F-001
+ * 的 `deriveRunDispatchDisplay`（同一冻结词汇）；容量限制
+ *（`execution_slot_unavailable`）与 Runtime 未装配（Run 持久原因
+ * `scheduler_not_assembled`）通过 blockingReason + runReason 两个字段同时可见，
+ * 不互相冒充。未知时间/停止证据保持 null，不伪造“已停止”或“已通过”。
+ * ------------------------------------------------------------------ */
+
+/**
+ * 执行槽位公开摘要：容量与全局占用只给计数。跨项目占用只折叠为
+ * otherProjectActive 布尔摘要（不返回其他项目的槽位/认领/Run/owner 身份）。
+ */
+export interface PublicDispatchSlotSummary {
+  /** 装配固定容量（首版恒为 1；大于 1 在装配期已拒绝）。 */
+  readonly capacity: number;
+  /** 全局活动槽位（held + quarantined）数量，跨项目合计。 */
+  readonly activeCount: number;
+  /** 仍可用的槽位额度（不为负）。 */
+  readonly availableCount: number;
+  /** 全局隔离槽位数量（需核对停止后才能释放，查询不自动回收）。 */
+  readonly quarantinedCount: number;
+  /** 当前查询项目持有的活动槽位数量。 */
+  readonly projectActiveCount: number;
+  /** 是否存在其他项目的活动槽位（只给布尔摘要，不泄漏项目身份）。 */
+  readonly otherProjectActive: boolean;
+}
+
+/** 当前 Run 级认领公开视图（有界原因；owner/host 是受信装配身份）。 */
+export interface PublicDispatchClaimView {
+  readonly claimId: string;
+  readonly claimVersion: number;
+  readonly origin: RunDispatchClaimRecord['origin'];
+  readonly resumedFromClaimId: string | null;
+  readonly resumedFromClaimVersion: number | null;
+  readonly ownerId: string;
+  readonly hostInstanceId: string;
+  readonly state: RunDispatchClaimRecord['state'];
+  readonly acquiredAt: string;
+  readonly leaseUntil: string;
+  /** 已结算时刻（held 为 null；租约到期不等于已停止）。 */
+  readonly settledAt: string | null;
+  /** 有界隔离/结算原因（不内联日志或输出正文）。 */
+  readonly reason: string | null;
+}
+
+/** 与当前 Run 相关的最近槽位公开视图（不内联任何路径或进程环境）。 */
+export interface PublicDispatchSlotView {
+  readonly slotId: string;
+  readonly slotIndex: number;
+  readonly claimId: string;
+  readonly claimVersion: number;
+  readonly ownerId: string;
+  readonly hostInstanceId: string;
+  readonly state: ExecutionSlotClaimRecord['state'];
+  readonly acquiredAt: string;
+  readonly leaseUntil: string;
+  /** 已核对停止后的释放时刻（未知保持 null，不伪造成已停止）。 */
+  readonly releasedAt: string | null;
+  readonly reason: string | null;
+}
+
+/** 关联 Attempt 摘要（executionStage 原样展示，不代表验收通过）。 */
+export interface PublicDispatchAttemptView {
+  readonly id: string;
+  readonly taskId: string;
+  readonly number: number;
+  readonly status: AttemptRecord['status'];
+  readonly executionStage: AttemptRecord['executionStage'];
+  readonly ownerId: string;
+  readonly executionVersion: number;
+  readonly startedAt: string | null;
+  readonly endedAt: string | null;
+  readonly exitCode: number | null;
+  readonly durationMs: number | null;
+}
+
+/** 单 Run 的派发/槽位只读投影（身份 + 派生状态 + 阻塞原因 + 持久事实）。 */
+export interface PublicDispatchQueueRecord {
+  readonly runId: string;
+  readonly projectId: string;
+  readonly featureId: string;
+  readonly runStatus: RunRecord['status'];
+  /** Run 持久控制原因（如 scheduler_not_assembled）；与派生 blockingReason 独立。 */
+  readonly runReason: string | null;
+  readonly dispatchOrdinal: number;
+  /** F-001 冻结展示状态：queued/waiting_slot/claimed/running/blocked/pausing/paused 等。 */
+  readonly state: DispatchDisplayState;
+  /** 有界阻塞原因（容量、隔离、租约待核对、控制中）；无阻塞为 null。 */
+  readonly blockingReason: DispatchBlockingReason | null;
+  readonly claim: PublicDispatchClaimView | null;
+  readonly slot: PublicDispatchSlotView | null;
+  /** 当前活动 Attempt（preparing/executing/verifying；无则 null）。 */
+  readonly activeAttempt: PublicDispatchAttemptView | null;
+  /** 最近一次 Attempt（任意终态；无则 null）。 */
+  readonly latestAttempt: PublicDispatchAttemptView | null;
+  readonly attemptCount: number;
+  readonly createdAt: string;
+  readonly startedAt: string | null;
+  readonly endedAt: string | null;
+  readonly pauseRequestedAt: string | null;
+}
+
+/** execution.dispatch.list 结果（复用计划分页的 limit/受控游标纪律）。 */
+export interface DispatchQueueListResult {
+  readonly schemaVersion: typeof WIRE_MESSAGE_SCHEMA_VERSION;
+  readonly scope: 'dispatch-queue';
+  readonly slots: PublicDispatchSlotSummary;
+  readonly records: readonly PublicDispatchQueueRecord[];
+  readonly nextCursor: string | null;
+  readonly limit: number;
+}
+
+/* ------------------------------------------------------------------ *
  * 一致读视图与窄读取端口（adapters 层实现；应用层授权完成后调用）
  * ------------------------------------------------------------------ */
 
@@ -422,6 +552,29 @@ export interface RunScheduleView {
 }
 
 /**
+ * 派发队列单 Run 一致读视图：Run + 最近认领 + 关联槽位 + 最近/活动 Attempt。
+ * 四个来源在同一 DEFERRED 读事务内组装；损坏的认领/槽位行或跨 Run 关联
+ * fail-closed（StorageError corrupt），不折算空结果。
+ */
+export interface DispatchQueueViewRow {
+  readonly run: RunRecord;
+  /** 最近一代认领（含已释放历史）；无派发记录为 null。 */
+  readonly claim: RunDispatchClaimRecord | null;
+  /** 该 Run 的最近槽位（含已释放/隔离）；无则 null。 */
+  readonly slot: ExecutionSlotClaimRecord | null;
+  readonly activeAttempt: AttemptRecord | null;
+  readonly latestAttempt: AttemptRecord | null;
+  readonly attemptCount: number;
+}
+
+/** 派发队列有界页（nextKey 用尽 limit 时非 null；槽位摘要为项目/全局聚合）。 */
+export interface DispatchQueuePage {
+  readonly records: readonly DispatchQueueViewRow[];
+  readonly nextKey: ExecutionListCursorKey | null;
+  readonly slots: PublicDispatchSlotSummary;
+}
+
+/**
  * 调度/审计查询窄读取端口：只读（无任何写原语）；跨项目/不存在目标统一
  * undefined（可见性与存在性折叠由应用层统一为 not_found，不泄漏存在性）；
  * 列表沿用计划分页的可见范围谓词与键集分页形态（复合排序键由
@@ -442,4 +595,14 @@ export interface ExecutionScheduleQueryReadStore {
     attemptId: unknown,
     request: ExecutionListRequest,
   ): ExecutionRecordPage<AttemptNotificationDiagnosticRecord>;
+  /**
+   * P04-9 / F-008 项目派发队列（runs.created_at,id 升序键集分页）+ 全局槽位
+   * 聚合摘要。只读：不写入 Run/认领/槽位/租约，不续租、不唤醒、不扣预算。
+   * 可见范围谓词下推 project_id；跨项目摘要仅返回计数，不返回其他项目身份。
+   */
+  listDispatchQueueRecords(
+    visibility: unknown,
+    projectId: unknown,
+    request: ExecutionListRequest,
+  ): DispatchQueuePage;
 }

@@ -100,6 +100,13 @@ test/
   既有恢复/显式恢复文件及真实 Host 强杀用例有定向证据；其余索引范围交 Nezha。
   实际日志、进程清理与边界见 [F-007 交接](../docs/p04-9-f007-dispatch-startup-recovery.md)。
 
+- `index/phases/P04/features/P04-9/tasks/F-008.json`：Core 派发队列与执行槽位只读投影。
+  覆盖展示状态派生、容量/隔离/租约阻塞原因、Runtime 未装配与容量限制区分、跨项目
+  槽位摘要、稳定分页与跨项目/跨根游标拒绝、授权/损坏行 fail-closed，以及真实 SQLite
+  查询前后事实不变和重开一致。新增 8 项本地通过；既有调度/控制恢复查询、派发契约、
+  单槽位与计划分页文件本地通过。范围与证据见
+  [F-008 交接](../docs/p04-9-f008-dispatch-slot-query.md)；Host/CLI 接线属 F-009。
+
 Task JSON 使用 Nezha v2 schema。当前存量用例首轮按文件显式 `all: true`，
 对应 19 个本 Feature 文件，不包含此前大批历史模块回归。
 部分文件有多个测试类型，暂不凭猜测拆掉其中断言或谎称函数级选择。

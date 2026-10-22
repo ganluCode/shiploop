@@ -19,18 +19,31 @@ import { StorageError } from '../../ports/errors.js';
 import { assertPrincipalVisibility } from '../../ports/queries.js';
 import { validateStableId } from '../../ports/validation.js';
 import type { ValidationContext } from '../../ports/validation.js';
+import { ACTIVE_ATTEMPT_STATUSES } from '../../ports/attempt-store.js';
 import type { AttemptRecord } from '../../ports/attempt-store.js';
 import {
   validateAttemptNotificationDiagnosticRecord,
 } from '../../ports/execution-schedule-query.js';
 import type {
   AttemptNotificationDiagnosticRecord,
+  DispatchQueuePage,
+  DispatchQueueViewRow,
   ExecutionListRequest,
   ExecutionRecordPage,
   ExecutionScheduleQueryReadStore,
+  PublicDispatchSlotSummary,
   RunScheduleOccupancyRow,
   RunScheduleView,
 } from '../../ports/execution-schedule-query.js';
+import {
+  EXECUTION_SLOT_CAPACITY_DEFAULT,
+  validateExecutionSlotClaimRecord,
+  validateRunDispatchClaimRecord,
+} from '../../ports/execution-dispatch.js';
+import type {
+  ExecutionSlotClaimRecord,
+  RunDispatchClaimRecord,
+} from '../../ports/execution-dispatch.js';
 import { attemptFromRow, leaseFromRow } from './attempt-store.js';
 import type { AttemptRow, LeaseRow } from './attempt-store.js';
 import { createSqliteExecutionAccess } from './execution-store.js';
@@ -69,6 +82,148 @@ function diagnosticFromRow(row: DiagnosticRow): AttemptNotificationDiagnosticRec
 function stableId(operation: string, value: unknown, field: string): string {
   const context: ValidationContext = { operation };
   return validateStableId(value, context, field);
+}
+
+/* ------------------------------------------------------------------ *
+ * P04-9 / F-008 派发认领/槽位行映射（严格校验；损坏 fail-closed）
+ * ------------------------------------------------------------------ */
+
+interface DispatchClaimRow {
+  id: string;
+  created_at: number;
+  project_id: string;
+  revision: number;
+  updated_at: number;
+  feature_id: string;
+  run_id: string;
+  claim_version: number;
+  origin: string;
+  resumed_from_claim_id: string | null;
+  resumed_from_claim_version: number | null;
+  owner_id: string;
+  host_instance_id: string;
+  acquired_at: number;
+  lease_until: number;
+  state: string;
+  reason: string | null;
+  settled_at: number | null;
+}
+
+interface DispatchSlotRow {
+  id: string;
+  created_at: number;
+  project_id: string;
+  revision: number;
+  updated_at: number;
+  slot_index: number;
+  feature_id: string;
+  run_id: string;
+  claim_id: string;
+  claim_version: number;
+  owner_id: string;
+  host_instance_id: string;
+  acquired_at: number;
+  lease_until: number;
+  state: string;
+  reason: string | null;
+  released_at: number | null;
+}
+
+function dispatchClaimFromRow(row: DispatchClaimRow, operation: string): RunDispatchClaimRecord {
+  try {
+    return validateRunDispatchClaimRecord({
+      id: row.id,
+      createdAtUtcMs: row.created_at,
+      projectId: row.project_id,
+      revision: row.revision,
+      updatedAtUtcMs: row.updated_at,
+      featureId: row.feature_id,
+      runId: row.run_id,
+      claimVersion: row.claim_version,
+      origin: row.origin,
+      resumedFromClaimId: row.resumed_from_claim_id,
+      resumedFromClaimVersion: row.resumed_from_claim_version,
+      ownerId: row.owner_id,
+      hostInstanceId: row.host_instance_id,
+      acquiredAtUtcMs: row.acquired_at,
+      leaseUntilUtcMs: row.lease_until,
+      state: row.state,
+      reason: row.reason,
+      settledAtUtcMs: row.settled_at,
+    });
+  } catch (error) {
+    throw new StorageError('corrupt', operation, 'Invalid stored Run dispatch claim', {
+      entity: { type: 'run_dispatch_claim', id: row.id, projectId: row.project_id },
+      cause: error,
+    });
+  }
+}
+
+function dispatchSlotFromRow(row: DispatchSlotRow, operation: string): ExecutionSlotClaimRecord {
+  try {
+    return validateExecutionSlotClaimRecord({
+      id: row.id,
+      createdAtUtcMs: row.created_at,
+      projectId: row.project_id,
+      revision: row.revision,
+      updatedAtUtcMs: row.updated_at,
+      slotIndex: row.slot_index,
+      featureId: row.feature_id,
+      runId: row.run_id,
+      claimId: row.claim_id,
+      claimVersion: row.claim_version,
+      ownerId: row.owner_id,
+      hostInstanceId: row.host_instance_id,
+      acquiredAtUtcMs: row.acquired_at,
+      leaseUntilUtcMs: row.lease_until,
+      state: row.state,
+      reason: row.reason,
+      releasedAtUtcMs: row.released_at,
+    });
+  } catch (error) {
+    throw new StorageError('corrupt', operation, 'Invalid stored execution slot claim', {
+      entity: { type: 'execution_slot_claim', id: row.id, projectId: row.project_id },
+      cause: error,
+    });
+  }
+}
+
+function corruptAssociation(operation: string, runId: string, projectId: string): never {
+  throw new StorageError('corrupt', operation, 'Dispatch claim/slot does not belong to the projected Run', {
+    entity: { type: 'run', id: runId, projectId },
+    details: { reason: 'invalid_dispatch_association' },
+  });
+}
+
+/** 全局（容量固定 1）活动槽位聚合；跨项目只给计数，无身份。 */
+function readSlotSummary(
+  db: SqliteStorageSession['database'],
+  projectId: string,
+): PublicDispatchSlotSummary {
+  const row = db
+    .prepare(
+      `SELECT
+         COALESCE(SUM(CASE WHEN state IN ('held', 'quarantined') THEN 1 ELSE 0 END), 0) AS active_count,
+         COALESCE(SUM(CASE WHEN state = 'quarantined' THEN 1 ELSE 0 END), 0) AS quarantined_count,
+         COALESCE(SUM(CASE WHEN state IN ('held', 'quarantined') AND project_id = ? THEN 1 ELSE 0 END), 0) AS project_active_count
+       FROM execution_slot_claims`,
+    )
+    .get(projectId) as {
+      active_count: number;
+      quarantined_count: number;
+      project_active_count: number;
+    };
+  const capacity = EXECUTION_SLOT_CAPACITY_DEFAULT;
+  const activeCount = row.active_count;
+  const projectActiveCount = row.project_active_count;
+  return {
+    capacity,
+    activeCount,
+    availableCount: Math.max(0, capacity - activeCount),
+    quarantinedCount: row.quarantined_count,
+    projectActiveCount,
+    otherProjectActive: activeCount > projectActiveCount,
+  };
 }
 
 /** 复合排序键排他下界（应用层已解码校验；此处复核为防御纵深）。 */
@@ -274,6 +429,140 @@ export function createSqliteExecutionScheduleQueryStore(
             rows.length > request.limit && last !== undefined
               ? { sort: last.occurredAtUtcMs, id: last.id }
               : null,
+        };
+      });
+    },
+
+    listDispatchQueueRecords(
+      visibility: unknown,
+      project: unknown,
+      request: ExecutionListRequest,
+    ): DispatchQueuePage {
+      const operation = `${OPERATION}.listDispatchQueue`;
+      assertRequest(operation, request);
+      assertPrincipalVisibility(visibility);
+      const projectId = stableId(operation, project, 'projectId');
+      return read(operation, () => {
+        // 稳定排序：runs.created_at,id 升序（最早入队先展示）；键集排他下界。
+        const conditions = [
+          'project_id = ?',
+          '(created_at > ? OR (created_at = ? AND id > ?))',
+        ];
+        const params: unknown[] = [
+          projectId,
+          request.after?.sort ?? -1,
+          request.after?.sort ?? -1,
+          request.after?.id ?? '',
+        ];
+        const visible = visibilityCondition(visibility, 'project_id');
+        if (visible.condition !== undefined) {
+          conditions.push(visible.condition);
+          params.push(...visible.params);
+        }
+        params.push(request.limit + 1);
+        const runRows = session.database
+          .prepare<unknown[], { id: string }>(
+            `SELECT id FROM runs WHERE ${conditions.join(' AND ')} ORDER BY created_at, id LIMIT ?`,
+          )
+          .all(...params);
+        const pageRunRows = runRows.length > request.limit ? runRows.slice(0, request.limit) : runRows;
+        const runs = pageRunRows.map((row) =>
+          execution.getExecutionRunInTransaction(projectId, row.id),
+        );
+        const runIds = runs.map((run) => run.id);
+
+        // 最近一代认领/槽位：按 run_id 分组取最高 claim_version（同一 Run 的
+        // 活动代次一定是最高代次；已释放历史仍可展示）。
+        const claims = new Map<string, RunDispatchClaimRecord>();
+        const claimsById = new Map<string, RunDispatchClaimRecord>();
+        const slots = new Map<string, ExecutionSlotClaimRecord>();
+        if (runIds.length > 0) {
+          const placeholders = runIds.map(() => '?').join(', ');
+          const claimRows = session.database
+            .prepare<unknown[], DispatchClaimRow>(
+              `SELECT * FROM run_dispatch_claims WHERE project_id = ? AND run_id IN (${placeholders})
+               ORDER BY run_id, claim_version DESC, id DESC`,
+            )
+            .all(projectId, ...runIds);
+          for (const row of claimRows) {
+            const claim = dispatchClaimFromRow(row, operation);
+            claimsById.set(claim.id, claim);
+            if (!claims.has(claim.runId)) claims.set(claim.runId, claim);
+          }
+          const slotRows = session.database
+            .prepare<unknown[], DispatchSlotRow>(
+              `SELECT * FROM execution_slot_claims WHERE project_id = ? AND run_id IN (${placeholders})
+               ORDER BY run_id, claim_version DESC, id DESC`,
+            )
+            .all(projectId, ...runIds);
+          for (const row of slotRows) {
+            if (slots.has(row.run_id)) continue;
+            const slot = dispatchSlotFromRow(row, operation);
+            // 槽位必须引用同一 Run 的认领（可引用该 Run 的旧代次，但不得跨 Run）。
+            const referenced = claimsById.get(slot.claimId);
+            if (referenced === undefined || referenced.runId !== slot.runId) {
+              corruptAssociation(operation, slot.runId, projectId);
+            }
+            slots.set(slot.runId, slot);
+          }
+        }
+
+        // 关联 Attempt：一次有界查询；同一 Run 的活动 Attempt 取最新一条用于
+        // fencing 展示，latestAttempt 取最大 (task_id, number, id)。
+        const attemptsByRun = new Map<string, AttemptRecord[]>();
+        if (runIds.length > 0) {
+          const placeholders = runIds.map(() => '?').join(', ');
+          const attemptRows = session.database
+            .prepare<unknown[], AttemptRow>(
+              `SELECT * FROM attempts WHERE project_id = ? AND run_id IN (${placeholders})
+               ORDER BY run_id, task_id, number, id`,
+            )
+            .all(projectId, ...runIds)
+            .map(attemptFromRow);
+          for (const attempt of attemptRows) {
+            const bucket = attemptsByRun.get(attempt.runId);
+            if (bucket === undefined) attemptsByRun.set(attempt.runId, [attempt]);
+            else bucket.push(attempt);
+          }
+        }
+
+        const records: DispatchQueueViewRow[] = runs.map((run) => {
+          const claim = claims.get(run.id) ?? null;
+          const slot = slots.get(run.id) ?? null;
+          if (
+            (claim !== null &&
+              (claim.projectId !== run.projectId ||
+                claim.runId !== run.id ||
+                claim.featureId !== run.featureId)) ||
+            (slot !== null &&
+              (slot.projectId !== run.projectId ||
+                slot.runId !== run.id ||
+                slot.featureId !== run.featureId))
+          ) {
+            corruptAssociation(operation, run.id, projectId);
+          }
+          const attempts = attemptsByRun.get(run.id) ?? [];
+          const activeAttempts = attempts.filter((attempt) =>
+            (ACTIVE_ATTEMPT_STATUSES as readonly string[]).includes(attempt.status),
+          );
+          return {
+            run,
+            claim,
+            slot,
+            activeAttempt: activeAttempts[activeAttempts.length - 1] ?? null,
+            latestAttempt: attempts[attempts.length - 1] ?? null,
+            attemptCount: attempts.length,
+          };
+        });
+
+        const last = runs[runs.length - 1];
+        return {
+          records,
+          nextKey:
+            runRows.length > request.limit && last !== undefined
+              ? { sort: last.createdAtUtcMs, id: last.id }
+              : null,
+          slots: readSlotSummary(session.database, projectId),
         };
       });
     },

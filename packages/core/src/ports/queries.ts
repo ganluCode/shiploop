@@ -610,7 +610,9 @@ export type PlanListScope =
   | { readonly kind: 'task-approvals'; readonly projectId: string; readonly taskId: string }
   | { readonly kind: 'task-rework-chain'; readonly projectId: string; readonly taskId: string }
   | { readonly kind: 'feature-git-operations'; readonly projectId: string; readonly featureId: string }
-  | { readonly kind: 'run-git-operations'; readonly projectId: string; readonly runId: string };
+  | { readonly kind: 'run-git-operations'; readonly projectId: string; readonly runId: string }
+  /** P04-9 / F-008 派发队列与槽位只读投影：项目范围分页（父级固定为项目）。 */
+  | { readonly kind: 'dispatch-queue'; readonly projectId: string };
 
 /** 游标签发/解析绑定：数据根身份 + 列表 scope（只允许可信装配构造）。 */
 export interface PlanListCursorBinding {
@@ -796,10 +798,20 @@ export function createPlanListCursorBinding(
       },
     };
   }
+  if (scope.kind === 'dispatch-queue') {
+    rejectUnknownKeys(scope, ['kind', 'projectId'], { operation }, 'scope');
+    return {
+      rootIdentity: input.rootIdentity,
+      scope: {
+        kind: 'dispatch-queue',
+        projectId: validateStableId(scope.projectId, { operation, entity: { type: 'project' } }, 'scope.projectId'),
+      },
+    };
+  }
   planInvalidInput(
     operation,
     'scope.kind',
-    "必须是 'phases' / 'features' / 'tasks' / 'budget-revisions' / 'task-attempts' / 'attempt-diagnostics' / 'run-work-sessions' / 'task-work-sessions' / 'task-approvals' / 'task-rework-chain' / 'feature-git-operations' / 'run-git-operations'",
+    "必须是 'phases' / 'features' / 'tasks' / 'budget-revisions' / 'task-attempts' / 'attempt-diagnostics' / 'run-work-sessions' / 'task-work-sessions' / 'task-approvals' / 'task-rework-chain' / 'feature-git-operations' / 'run-git-operations' / 'dispatch-queue'",
     (scope as { kind?: unknown }).kind,
   );
 }
@@ -822,7 +834,8 @@ function planBindingAsTrusted(binding: PlanListCursorBinding): PlanListCursorBin
       binding.scope.kind !== 'task-approvals' &&
       binding.scope.kind !== 'task-rework-chain' &&
       binding.scope.kind !== 'feature-git-operations' &&
-      binding.scope.kind !== 'run-git-operations')
+      binding.scope.kind !== 'run-git-operations' &&
+      binding.scope.kind !== 'dispatch-queue')
   ) {
     planScopeShapeError('必须由 createPlanListCursorBinding 构造');
   }
@@ -842,6 +855,7 @@ function planScopeFingerprint(scope: PlanListScope): string {
       parent = `${scope.parentKind}:${scope.parentId}:${scope.recordType}`;
       break;
     case 'phases':
+    case 'dispatch-queue':
       parent = '-';
       break;
     case 'features':

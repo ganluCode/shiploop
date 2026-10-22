@@ -35,6 +35,7 @@ import type {
 import type { ExecutionBudgetView } from '../../ports/execution-budget-query.js';
 import type {
   AttemptNotificationDiagnosticRecord,
+  DispatchQueuePage,
   ExecutionListRequest,
   ExecutionRecordPage,
   ExecutionScheduleQueryReadStore,
@@ -228,6 +229,13 @@ export function createSqliteQueryStore(
       request: ExecutionListRequest,
     ): ExecutionRecordPage<AttemptNotificationDiagnosticRecord> {
       return schedule.listAttemptDiagnosticRecords(visibility, projectId, attemptId, request);
+    },
+    listDispatchQueueRecords(
+      visibility: unknown,
+      projectId: unknown,
+      request: ExecutionListRequest,
+    ): DispatchQueuePage {
+      return schedule.listDispatchQueueRecords(visibility, projectId, request);
     },
     readWorkspaceDetail: (projectId: unknown, featureId: unknown) =>
       workspace.readWorkspaceDetail(projectId, featureId),

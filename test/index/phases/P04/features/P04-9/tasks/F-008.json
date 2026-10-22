@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "task_id": "F-008",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/scheduling/p04-9-f008-dispatch-slot-query.test.ts", "all": true },
+      { "file": "test/modules/scheduling/p03-4-schedule-query.test.ts", "all": true },
+      { "file": "test/modules/recovery/p03-9-f013-control-recovery-query.test.ts", "all": true },
+      { "file": "test/modules/scheduling/p04-9-dispatch-slot-contract.test.ts", "all": true },
+      { "file": "test/modules/scheduling/p04-9-f003-execution-slot.test.ts", "all": true },
+      { "file": "test/modules/planning/p03-1-plan-queries.test.ts", "all": true }
+    ]
+  }]
+}
