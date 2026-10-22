@@ -594,6 +594,7 @@ export interface CoreFaultObservation {
   readonly run: { status: string; reason: string | null };
   readonly taskStatus: string | null;
   readonly sessions: number;
+  readonly activeAttempts: number;
   readonly leases: readonly { state: string; count: number }[];
   readonly fallback: { triggerCategory: string; model: string; previousFailures: { category: string }[] } | null;
   readonly sideEffectFile: { relativePath: string; content: string } | null;
@@ -711,12 +712,15 @@ async function runCoreScenario(config: CoreScenarioConfig): Promise<CoreFaultObs
         return attempts.length === 2 && attempts[1]?.status === 'verifying' && held.n === 3;
       }, 15_000);
     } else {
-      await waitUntil(() => {
+      const settled = await waitUntil(() => {
         const settlements = f.query("SELECT COUNT(*) AS n FROM artifacts WHERE kind = 'runtime-settlement'") as { n: number };
-        const held = f.query("SELECT COUNT(*) AS n FROM workspace_leases WHERE state = 'held'") as { n: number };
+        const leases = f.query('SELECT COUNT(*) AS n FROM workspace_leases') as { n: number };
         const run = f.query('SELECT status FROM runs') as { status: string };
-        return settlements.n >= 1 && held.n === 0 && run.status === 'paused';
+        // Settlement quarantines leases before retention safely releases them.
+        return settlements.n >= 1 && leases.n === 0 && run.status === 'paused'
+          && core!.workExecution.activeAttemptIds().length === 0;
       }, 15_000);
+      if (!settled) throw new Error(`${config.id}: finalization_not_confirmed`);
     }
 
     const attemptRows = f.session.database.prepare(
@@ -774,6 +778,7 @@ async function runCoreScenario(config: CoreScenarioConfig): Promise<CoreFaultObs
       run: f.query('SELECT status, reason FROM runs') as { status: string; reason: string | null },
       taskStatus: (f.query("SELECT status AS status FROM tasks WHERE id = 't-1'") as { status: string } | undefined)?.status ?? null,
       sessions: (f.query('SELECT COUNT(*) AS n FROM sessions') as { n: number }).n,
+      activeAttempts: core.workExecution.activeAttemptIds().length,
       leases: Object.freeze((f.session.database.prepare(
         'SELECT state, COUNT(*) AS count FROM workspace_leases GROUP BY state ORDER BY state',
       ).all() as { state: string; count: number }[]).map(row => ({ state: row.state, count: row.count }))),

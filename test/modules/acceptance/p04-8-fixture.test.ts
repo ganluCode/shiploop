@@ -58,9 +58,11 @@ describe('P04-8 F-002 offline acceptance fixture', () => {
     expect(stop.escalated).toContain('SIGTERM');
 
     const ignoresTerm = fixture.spawnTool('ignoreSigterm');
-    expect(await ignoresTerm.waitExit(20)).toBeNull();
-    const escalated = await ignoresTerm.verifyStopped({ stepMs: 5 });
+    // The banner is emitted only after the SIGTERM handler has been installed.
+    await expect.poll(() => ignoresTerm.stdout, { timeout: 2_000 }).toContain('sample-ignore-sigterm\n');
+    const escalated = await ignoresTerm.verifyStopped({ stepMs: 100 });
     expect(escalated.escalated).toContain('SIGKILL');
+    expect(escalated.signal).toBe('SIGKILL');
   });
 
   it('拒绝未知目录和符号链接逃逸，并保留清理失败证据', () => {

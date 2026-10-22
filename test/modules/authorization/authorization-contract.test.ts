@@ -136,6 +136,10 @@ function envelope(
     expiresAt: null,
   };
   switch (operation) {
+    case 'execution.stop.manual':
+      return { ...base, operation, scope: { kind: 'project', projectId: PROJECT_A },
+        expectedRevision: expectedRevision ?? 1,
+        payload: { stopOperationId: 'stop-1', action: 'acknowledge', evidenceRef: null } };
     case 'execution.attempt.cancel':
       return { ...base, operation, scope: { kind: 'project', projectId: '0f0d9c36-765a-4b62-a6b9-38a5ff4f4bf1' },
         expectedRevision: null, payload: { attemptId: 'attempt-1' } };
@@ -385,6 +389,7 @@ function envelope(
 }
 
 const COMMANDS_MATRIX = [
+  { operation: 'execution.stop.manual', scope: { kind: 'project', projectId: PROJECT_A }, revision: 1, capability: 'execution.start' },
   { operation: 'project.register', scope: { kind: 'registration' }, revision: null, capability: 'project.register' },
   { operation: 'project.metadata.update', scope: { kind: 'project', projectId: PROJECT_A }, revision: 2, capability: 'project.metadata.write' },
   { operation: 'settings.global.create', scope: { kind: 'global' }, revision: null, capability: 'settings.global.write' },

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { ExecutionStopDiagnosticObservation } from '../../../../packages/core/src/ports/execution-stop-diagnostics.ts';
 import {
   createExecutionStopDiagnosticLedger,
   isExecutionStopDiagnostic,
@@ -7,7 +8,7 @@ import {
 } from 'shiploop-core';
 
 const observed = '2026-10-20T12:01:22.000Z';
-const gapless = { state: 'confirmed' as const, checkedAtUtc: observed, detail: null, gaps: [] as string[] };
+const gapless: ExecutionStopDiagnosticObservation = { state: 'confirmed', checkedAtUtc: observed, detail: null, gaps: [] };
 
 function diagnostic() {
   return {

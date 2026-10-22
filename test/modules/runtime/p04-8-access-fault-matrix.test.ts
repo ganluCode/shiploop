@@ -164,6 +164,7 @@ describe('P04-8 F-004 运行时访问故障矩阵', () => {
     expect(observation.run).toEqual({ status: 'paused', reason: 'category_not_switchable' });
     expect(observation.fallback).toBeNull();
     expect(observation.leases).toEqual([]);
+    expect(observation.activeAttempts).toBe(0);
     expect(observation.sessions).toBe(1);
     // 实际副作用：失败 Attempt 的工作区写入被保留，运行时成功不等于验收通过。
     expect(observation.sideEffectFile).toEqual({ relativePath: 'access-matrix-side-effect.txt', content: 'preferred-failed' });
