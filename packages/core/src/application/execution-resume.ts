@@ -63,6 +63,7 @@ import type { WorkspaceInspector } from '../ports/workspace-inspector.js';
 import { resolveCurrentCheckPolicyDigest } from './plan-approval-verification.js';
 import { evaluateTaskDagAfterResume } from './task-dag.js';
 import { isFinalizationOnlyRun } from '../ports/finalization-execution.js';
+import { enqueueAuthorizedRunInTransaction } from './execution-dispatch.js';
 
 const OPERATION = EXECUTION_RESUME_OPERATION;
 
@@ -550,6 +551,18 @@ export function createExecutionResumeService(deps: ExecutionResumeServiceDeps): 
       }
       if (result.outcome === 'already_terminal') return rejected('already_terminal');
 
+      /* P04-9 / F-002：解除暂停即恢复执行意图。同一短写事务内为每个被恢复的
+       * Run 登记/复用入队意图（已有意图复用原身份，不新增 Run/Attempt/预算/
+       * 事件）；入队本身不启动 Runtime，唤醒仍在提交后由窄端口 best-effort。 */
+      const dispatchIntents = result.runIds.map((runId) =>
+        enqueueAuthorizedRunInTransaction(transaction, {
+          projectId,
+          runId,
+          source: 'resume',
+          reason: null,
+        }),
+      );
+
       const receipt = createCompletedReceipt({
         ...receiptIdentity,
         resultRef: createResultRef(randomBytes(32)),
@@ -568,6 +581,7 @@ export function createExecutionResumeService(deps: ExecutionResumeServiceDeps): 
           observedHeadCommit: prepared.observedHeadCommit,
           runtimeStarts: 0,
           attemptsCreated: 0,
+          dispatchIntentIds: dispatchIntents.map((entry) => entry.intent.id),
         },
       });
       transaction.saveReceipt(receipt);

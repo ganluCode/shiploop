@@ -60,6 +60,13 @@ test/
   以及因新增迁移而维护的 P03-4/P03-6/P04-5 版本断言；七文件全部本地定向通过，模型、阶段全量与
   live 保持 `not_run`，范围见 [F-001 契约](../docs/p04-9-f001-dispatch-slot-contract.md)。
 
+- `index/phases/P04/features/P04-9/tasks/F-002.json`：Run 持久入队（迁移 v34）。
+  覆盖入队契约与命令路径原子性/幂等/守卫/回滚/唤醒、v34 约束与 v33→v34 升级，
+  以及受影响的启动/重试/resume/仅收尾与迁移版本断言。新增两文件本地 14 项通过，
+  其余登记回归见 [F-002 交接](../docs/p04-9-f002-persistent-enqueue.md)；Host 纵向
+  收尾回归因本 workspace 未构建 Host 原生写入锁而无法运行（与本 Task 无关），
+  模型、阶段全量与 live 保持 `not_run`。
+
 Task JSON 使用 Nezha v2 schema。当前存量用例首轮按文件显式 `all: true`，
 对应 19 个本 Feature 文件，不包含此前大批历史模块回归。
 部分文件有多个测试类型，暂不凭猜测拆掉其中断言或谎称函数级选择。

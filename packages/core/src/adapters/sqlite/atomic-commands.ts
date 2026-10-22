@@ -191,6 +191,10 @@ export function createSqliteAtomicCommandStore(
           recordExecutionRunDispatch: guarded(executions.recordExecutionRunDispatchInTransaction),
           insertExecutionRun: guarded(executions.insertExecutionRunInTransaction),
           appendExecutionEvent: guarded(executions.appendExecutionEventInTransaction),
+          // P04-9 / F-002：Run 持久入队意图（与 Run/回执/事件同一 BEGIN IMMEDIATE）。
+          registerRunDispatchIntent: guarded(executions.registerRunDispatchIntentInTransaction),
+          getRunDispatchIntent: guarded(executions.getRunDispatchIntentInTransaction),
+          listRunDispatchIntents: guarded(executions.listRunDispatchIntentsInTransaction),
           requestExecutionPause: guarded(executions.requestExecutionPauseInTransaction),
           requestExecutionCancel: guarded(executions.requestExecutionCancelInTransaction),
           recordExecutionStopManualAction: guarded(executions.recordExecutionStopManualActionInTransaction),

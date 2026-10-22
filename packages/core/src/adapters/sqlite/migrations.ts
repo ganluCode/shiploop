@@ -2838,6 +2838,66 @@ WHEN NEW.state = 'released' AND OLD.state <> 'released' AND EXISTS (
 BEGIN SELECT RAISE(ABORT, 'run dispatch claim release requires released slot'); END;
 `;
 
+/**
+ * P04-9 / F-002（迁移 v34）：Run 已授权即持久执行意图。
+ *
+ * 只新增既有列无法表达的三件入队事实：第几次以何种授权来源登记（source）、
+ * 授权身份摘要（authorization_digest）与可用于有界补扫的登记顺序
+ * （enqueued_at）。Run 的 queued/控制/终态与不可变授权快照仍是唯一业务事实；
+ * 本表不新建 Task/预算状态机，不按 Task 数量复制行，也不用 `work_key` 作唯一键
+ * （显式重试的新 Run 天然有独立意图）。
+ *
+ * 入口约束：insert trigger 在同一事务内重核项目 active、Run queued、Batch 未终态、
+ * 同项目/同 Feature/同 Batch 归属；身份列由 trigger 冻结（仅插入）。
+ * 迁移不自动入队、不认领、不唤醒、不启动 Runner，也不改动 v1–v33 任何 SQL。
+ */
+const MIGRATION_034_SQL = `
+CREATE TABLE run_dispatch_intents (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  updated_at INTEGER NOT NULL,
+  feature_id TEXT NOT NULL,
+  batch_id TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  source TEXT NOT NULL,
+  authorization_digest TEXT NOT NULL,
+  enqueued_at INTEGER NOT NULL,
+  reason TEXT,
+  CONSTRAINT run_dispatch_intents_times_check CHECK (typeof(created_at) = 'integer' AND created_at >= 0
+    AND typeof(updated_at) = 'integer' AND updated_at >= 0
+    AND typeof(enqueued_at) = 'integer' AND enqueued_at >= 1),
+  CONSTRAINT run_dispatch_intents_source_check CHECK (source IN ('start', 'retry', 'resume', 'finalization_retry')),
+  CONSTRAINT run_dispatch_intents_digest_check CHECK (length(authorization_digest) = 64
+    AND authorization_digest NOT GLOB '*[^0-9a-f]*'),
+  CONSTRAINT run_dispatch_intents_reason_check CHECK (reason IS NULL OR length(reason) BETWEEN 1 AND 512),
+  CONSTRAINT run_dispatch_intents_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT run_dispatch_intents_run_fk FOREIGN KEY (project_id, run_id) REFERENCES runs (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT run_dispatch_intents_feature_run_fk FOREIGN KEY (feature_id, run_id) REFERENCES runs (feature_id, id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX run_dispatch_intents_run_unique ON run_dispatch_intents (project_id, run_id);
+CREATE INDEX run_dispatch_intents_project_enqueued_index ON run_dispatch_intents (project_id, enqueued_at);
+
+CREATE TRIGGER run_dispatch_intents_insert_scope_check BEFORE INSERT ON run_dispatch_intents
+WHEN NOT EXISTS (
+  SELECT 1 FROM runs r
+    JOIN projects p ON p.id = r.project_id
+    JOIN execution_batches b ON b.project_id = r.project_id AND b.id = r.batch_id
+  WHERE r.project_id = NEW.project_id AND r.id = NEW.run_id
+    AND r.feature_id = NEW.feature_id AND r.batch_id = NEW.batch_id
+    AND r.status = 'queued' AND p.status = 'active'
+    AND b.status IN ('queued', 'running')
+)
+BEGIN SELECT RAISE(ABORT, 'run dispatch intent scope or state mismatch'); END;
+CREATE TRIGGER run_dispatch_intents_identity_immutable BEFORE UPDATE ON run_dispatch_intents
+WHEN NEW.created_at IS NOT OLD.created_at OR NEW.project_id IS NOT OLD.project_id
+  OR NEW.feature_id IS NOT OLD.feature_id OR NEW.batch_id IS NOT OLD.batch_id
+  OR NEW.run_id IS NOT OLD.run_id OR NEW.source IS NOT OLD.source
+  OR NEW.authorization_digest IS NOT OLD.authorization_digest
+  OR NEW.enqueued_at IS NOT OLD.enqueued_at OR NEW.reason IS NOT OLD.reason
+BEGIN SELECT RAISE(ABORT, 'run dispatch intent identity is immutable'); END;
+`;
+
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     version: 1,
@@ -2936,4 +2996,5 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 31, sql: MIGRATION_031_SQL, checksum: sha256Hex(MIGRATION_031_SQL), foreignKeysOff: true },
   { version: 32, sql: MIGRATION_032_SQL, checksum: sha256Hex(MIGRATION_032_SQL) },
   { version: 33, sql: MIGRATION_033_SQL, checksum: sha256Hex(MIGRATION_033_SQL) },
+  { version: 34, sql: MIGRATION_034_SQL, checksum: sha256Hex(MIGRATION_034_SQL) },
 ];

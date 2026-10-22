@@ -27,7 +27,16 @@ export const BUDGET = {
   run: { maxAttemptsPerRun: 2, runTimeLimitMs: 3_600_000 },
 };
 
-export function budgetServices(session: SqliteStorageSession, options: { readonly workspaceRoots?: readonly string[] } = {}) {
+export interface BudgetServiceOptions {
+  readonly workspaceRoots?: readonly string[];
+  /**
+   * P04-9 / F-002：派发唤醒端口行为。record=记录调用（默认）；throw=注入唤醒
+   * 异常，用于断言“唤醒丢失/抛错不回滚已提交的持久入队意图”。
+   */
+  readonly dispatchSignal?: 'record' | 'throw';
+}
+
+export function budgetServices(session: SqliteStorageSession, options: BudgetServiceOptions = {}) {
   const nowUtcMs = () => NOW;
   const atomic = createSqliteAtomicCommandStore(session, { nowUtcMs });
   const inspector = createRepositoryInspector();
@@ -59,18 +68,27 @@ export function budgetServices(session: SqliteStorageSession, options: { readonl
     executionPreview: preview,
     executionStart: createExecutionStartService({ preview, permissions: TRUSTED_PROJECT_PERMISSIONS_READER, nowMs: nowUtcMs }),
     executionResume,
-    executionDispatchSignal: { signalRunDispatched: input => { signals.push(input); } },
+    executionDispatchSignal: {
+      signalRunDispatched: input => {
+        if (options.dispatchSignal === 'throw') throw new Error('injected dispatch signal failure');
+        signals.push(input);
+      },
+    },
     nowUtcMs,
   });
   return { atomic, commands, preview, signals, executionResume };
 }
 
-export async function openBudgetFixture(budget: ExecutionBudgetProposal = BUDGET, tasks = [{ id: 't-1', title: 'Task', acceptance: { criteria: ['budget consistency'] }, dependsOn: [] as string[] }]) {
+export async function openBudgetFixture(
+  budget: ExecutionBudgetProposal = BUDGET,
+  tasks = [{ id: 't-1', title: 'Task', acceptance: { criteria: ['budget consistency'] }, dependsOn: [] as string[] }],
+  serviceOptions: BudgetServiceOptions = {},
+) {
   const box = createCommandsTestFixture({ prefix: 'shiploop-f013-budget-' });
   try {
     const harness = await box.openTransactionalHarness();
     let session = harness.session;
-    const fixtureOptions = { workspaceRoots: [box.root, box.repoDirA] };
+    const fixtureOptions: BudgetServiceOptions = { workspaceRoots: [box.root, box.repoDirA], ...serviceOptions };
     let services = budgetServices(session, fixtureOptions);
     const owner = createLocalOwnerPrincipal();
     const envelope = (operation: string, payload: unknown, extra: Record<string, unknown> = {}) => ({
@@ -118,6 +136,7 @@ export async function openBudgetFixture(budget: ExecutionBudgetProposal = BUDGET
     return {
       box, projectId, featureId, owner, scope, budget, envelope, startEnvelope, retryEnvelope, revisionEnvelope, snapshot,
       get session() { return session; }, get services() { return services; },
+      get atomic() { return services.atomic; },
       submit,
       async start() {
         const receipt = await services.commands.submit(owner, startEnvelope());

@@ -88,6 +88,8 @@ const SCHEMA_TABLES = [
   // P04-9 / F-001：Run 级持久派发认领与单执行槽位（迁移 v33）。
   ['run_dispatch_claims', schema.runDispatchClaims],
   ['execution_slot_claims', schema.executionSlotClaims],
+  // P04-9 / F-002：Run 持久入队意图（迁移 v34）。
+  ['run_dispatch_intents', schema.runDispatchIntents],
   // P03-7 / F-002：VerificationBatch / CheckResult 与不可变验证证据身份（迁移 v21）。
   ['verification_batches', schema.verificationBatches],
   ['check_results', schema.checkResults],
@@ -654,6 +656,10 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
         'execution_slot_claims:(project_id)->projects.(id)',
         'execution_slot_claims:(project_id,run_id)->runs.(project_id,id)',
         'execution_slot_claims:(project_id,claim_id)->run_dispatch_claims.(project_id,id)',
+        // P04-9 / F-002 入队意图（迁移 v34）：同项目/同 Feature Run 归属。
+        'run_dispatch_intents:(project_id)->projects.(id)',
+        'run_dispatch_intents:(project_id,run_id)->runs.(project_id,id)',
+        'run_dispatch_intents:(feature_id,run_id)->runs.(feature_id,id)',
         // P03-9 / F-002 取消停止 operation（迁移 v28）：同项目 Batch/Run 关联。
         'execution_stop_operations:(project_id)->projects.(id)',
         'execution_stop_operations:(project_id,batch_id)->execution_batches.(project_id,id)',

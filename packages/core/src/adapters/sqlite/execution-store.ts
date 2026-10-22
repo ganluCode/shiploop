@@ -70,6 +70,18 @@ import {
   validateTaskAttemptReservationInput,
 } from '../../ports/execution-store.js';
 import type {
+  RunDispatchIntentRecord,
+  RunDispatchIntentRegistration,
+  RunDispatchIntentScanRecord,
+} from '../../ports/execution-dispatch.js';
+import {
+  assertRunDispatchIntentEnqueueable,
+  computeRunDispatchAuthorizationDigest,
+  validateRunDispatchIntentInput,
+  validateRunDispatchIntentRecord,
+  validateRunDispatchIntentScanInput,
+} from '../../ports/execution-dispatch.js';
+import type {
   BatchBudgetRevisionRecord,
   BatchBudgetRevisionResult,
   ExecutionBatchRecord,
@@ -209,6 +221,25 @@ interface RunOutcomeSettlementSqlRow {
   readonly reason: string | null;
 }
 
+interface RunDispatchIntentSqlRow {
+  readonly id: string;
+  readonly created_at: number;
+  readonly project_id: string;
+  readonly updated_at: number;
+  readonly feature_id: string;
+  readonly batch_id: string;
+  readonly run_id: string;
+  readonly source: string;
+  readonly authorization_digest: string;
+  readonly enqueued_at: number;
+  readonly reason: string | null;
+}
+
+interface RunDispatchIntentScanSqlRow extends RunDispatchIntentSqlRow {
+  readonly run_status: string;
+  readonly active_claim_id: string | null;
+}
+
 interface ExecutionStopOperationSqlRow {
   readonly id: string;
   readonly created_at: number;
@@ -255,6 +286,15 @@ const SELECT_STOP_OPERATION =
 const SELECT_REVISION =
   'SELECT id, created_at, project_id, revision, updated_at, batch_id, version, budget_snapshot, ' +
   'deadline_at, approved_by, reason FROM batch_budget_revisions';
+const SELECT_INTENT =
+  'SELECT id, created_at, project_id, updated_at, feature_id, batch_id, run_id, source, ' +
+  'authorization_digest, enqueued_at, reason FROM run_dispatch_intents';
+const SELECT_INTENT_SCAN =
+  'SELECT i.id, i.created_at, i.project_id, i.updated_at, i.feature_id, i.batch_id, i.run_id, i.source, ' +
+  'i.authorization_digest, i.enqueued_at, i.reason, r.status AS run_status, ' +
+  '(SELECT c.id FROM run_dispatch_claims c WHERE c.project_id = i.project_id AND c.run_id = i.run_id ' +
+  "AND c.state IN ('held', 'quarantined') LIMIT 1) AS active_claim_id " +
+  'FROM run_dispatch_intents i JOIN runs r ON r.project_id = i.project_id AND r.id = i.run_id';
 
 /** 迁移 v9 batch_budget_revisions 行（F-010 修订历史分页读取）。 */
 interface BatchBudgetRevisionSqlRow {
@@ -319,6 +359,18 @@ export interface SqliteExecutionAccess {
   recordExecutionRunDispatchInTransaction(projectId: string, batchId: string): ExecutionBatchRecord;
   /** 执行域脱敏事件追加（state_events；与公开白名单同形）。 */
   appendExecutionEventInTransaction(input: unknown): string;
+  /**
+   * P04-9 / F-002：登记 Run 持久入队意图（同一短写事务内）。同 Run 重复入队
+   * 复用同一身份（零新增/零事件）；摘要不一致或归属/状态不符拒绝。
+   */
+  registerRunDispatchIntentInTransaction(input: unknown): RunDispatchIntentRegistration;
+  /** P04-9 / F-002：读取同项目 Run 的入队意图（无则 null；不跨项目）。 */
+  getRunDispatchIntentInTransaction(
+    projectId: string,
+    runId: string,
+  ): RunDispatchIntentRecord | null;
+  /** P04-9 / F-002：有界补扫同项目仍 queued 的入队意图（只读事实）。 */
+  listRunDispatchIntentsInTransaction(input: unknown): readonly RunDispatchIntentScanRecord[];
   /**
    * P03-9 / F-001：Task 边界暂停意图（同一短写事务内原子持久化）。
    * 目标为 Run 或 Batch；无活动 Attempt 时直接 paused，有活动 Attempt 时
@@ -1040,6 +1092,173 @@ export function createSqliteExecutionAccess(
       timestamp,
     );
     return eventId;
+  }
+
+  /* ------------------------------------------------------------ *
+   * P04-9 / F-002 Run 持久入队意图（迁移 v34）
+   * ------------------------------------------------------------ */
+
+  function intentFromRow(row: RunDispatchIntentSqlRow, operation: string): RunDispatchIntentRecord {
+    try {
+      return validateRunDispatchIntentRecord({
+        id: row.id,
+        createdAtUtcMs: row.created_at,
+        projectId: row.project_id,
+        updatedAtUtcMs: row.updated_at,
+        featureId: row.feature_id,
+        batchId: row.batch_id,
+        runId: row.run_id,
+        source: row.source,
+        authorizationDigest: row.authorization_digest,
+        enqueuedAtUtcMs: row.enqueued_at,
+        reason: row.reason,
+      });
+    } catch (error) {
+      throw executionCorruptError(
+        operation,
+        { type: 'run_dispatch_intent', projectId: row.project_id, id: row.id },
+        `派发意图行损坏（${error instanceof Error ? error.message : String(error)}）`,
+      );
+    }
+  }
+
+  function getRunDispatchIntentInTransaction(
+    projectId: string,
+    runId: string,
+  ): RunDispatchIntentRecord | null {
+    const operation = 'ExecutionStore.getRunDispatchIntent';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const row = session.database
+      .prepare<[string, string], RunDispatchIntentSqlRow>(`${SELECT_INTENT} WHERE project_id = ? AND run_id = ?`)
+      .get(projectId, runId) as RunDispatchIntentSqlRow | undefined;
+    return row === undefined ? null : intentFromRow(row, operation);
+  }
+
+  /**
+   * 登记 Run 入队意图（同一写事务内）：
+   * - 事务内重核归属（项目/Feature/Batch/Run）与授权身份摘要；换 scopeDigest/
+   *   workKey/dispatchOrdinal 或跨项目 Run 一律拒绝（不靠调用方自报可信）；
+   * - 已存在同身份意图 → 复用原行（零新增/零事件/零预算）；摘要不一致 → conflict；
+   * - 首次登记要求项目 active、Run queued、Batch 未终态；终态/取消/暂停中的工作
+   *   不因入队重开（暂停恢复仍需显式 resume 现场核验）；
+   * - 插入失败（含唯一索引竞争）不留下部分写入，由事务拥有者整组回滚。
+   */
+  function registerRunDispatchIntentInTransaction(input: unknown): RunDispatchIntentRegistration {
+    const operation = 'ExecutionStore.registerRunDispatchIntent';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const valid = validateRunDispatchIntentInput(input);
+    const entity: StorageEntityRef = {
+      type: 'run_dispatch_intent',
+      projectId: valid.projectId,
+      id: valid.runId,
+    };
+    const run = getExecutionRunInTransaction(valid.projectId, valid.runId);
+    if (run.featureId !== valid.featureId || run.batchId !== valid.batchId) {
+      throw ownership(operation, entity, '入队意图的 Feature/Batch 与 Run 归属不一致（跨范围写入被拒绝）');
+    }
+    const expectedDigest = computeRunDispatchAuthorizationDigest({
+      projectId: run.projectId,
+      featureId: run.featureId,
+      batchId: run.batchId,
+      runId: run.id,
+      purpose: run.purpose,
+      scopeDigest: run.scopeDigest,
+      workKey: run.workKey,
+      dispatchOrdinal: run.dispatchOrdinal,
+    });
+    if (expectedDigest !== valid.authorizationDigest) {
+      throw new StorageError('conflict', operation, '入队意图的授权身份摘要与当前 Run 不一致（过期授权）', {
+        entity,
+        details: { field: 'authorizationDigest', reason: 'authorization_digest_mismatch' },
+      });
+    }
+    const existing = getRunDispatchIntentInTransaction(valid.projectId, valid.runId);
+    if (existing !== null) {
+      if (existing.authorizationDigest !== valid.authorizationDigest) {
+        throw new StorageError('conflict', operation, '同 Run 入队意图的授权摘要不同（幂等身份异输入）', {
+          entity,
+          details: { field: 'authorizationDigest', reason: 'intent_digest_conflict' },
+        });
+      }
+      return { intent: existing, outcome: 'reused' };
+    }
+    const projectRow = session.database
+      .prepare<[string], { status: string }>('SELECT status FROM projects WHERE id = ?')
+      .get(valid.projectId) as { status: string } | undefined;
+    if (projectRow === undefined) {
+      throw notFound(operation, entity, `项目 ${valid.projectId} 不存在`);
+    }
+    const batch = getExecutionBatchInTransaction(valid.projectId, valid.batchId);
+    assertRunDispatchIntentEnqueueable({
+      runStatus: run.status,
+      batchStatus: batch.status,
+      projectStatus: projectRow.status,
+    });
+    const db = session.database;
+    const timestamp = nowUtcMs();
+    const intentId = randomUUID();
+    try {
+      db.prepare(
+        'INSERT INTO run_dispatch_intents (id, created_at, project_id, updated_at, feature_id, batch_id, ' +
+          'run_id, source, authorization_digest, enqueued_at, reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      ).run(
+        intentId,
+        timestamp,
+        valid.projectId,
+        timestamp,
+        valid.featureId,
+        valid.batchId,
+        valid.runId,
+        valid.source,
+        valid.authorizationDigest,
+        timestamp,
+        valid.reason ?? null,
+      );
+    } catch (error) {
+      if (isSqliteConstraintError(error)) {
+        // 并发同身份竞争：唯一索引兜底；同摘要视为重复入队复用，否则冲突。
+        const raced = getRunDispatchIntentInTransaction(valid.projectId, valid.runId);
+        if (raced !== null && raced.authorizationDigest === valid.authorizationDigest) {
+          return { intent: raced, outcome: 'reused' };
+        }
+        throw new StorageError('conflict', operation, '入队意图写入被 DDL 约束拒绝（身份/归属/状态）', {
+          entity,
+          cause: error,
+        });
+      }
+      throw error;
+    }
+    const created = getRunDispatchIntentInTransaction(valid.projectId, valid.runId);
+    if (created === null) {
+      throw executionCorruptError(operation, entity, '入队意图刚写入却无法读回');
+    }
+    return { intent: created, outcome: 'created' };
+  }
+
+  /**
+   * 有界补扫：同项目、Run 仍 queued 的入队意图（按登记顺序，limit 有上限）。
+   * 只读事实：附带当前 Run 状态与活动认领身份，不判定是否可执行，也不自动
+   * 恢复暂停/取消/终态工作。
+   */
+  function listRunDispatchIntentsInTransaction(
+    input: unknown,
+  ): readonly RunDispatchIntentScanRecord[] {
+    const operation = 'ExecutionStore.listRunDispatchIntents';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const valid = validateRunDispatchIntentScanInput(input);
+    const rows = session.database
+      .prepare<[string, number], RunDispatchIntentScanSqlRow>(
+        `${SELECT_INTENT_SCAN} WHERE i.project_id = ? AND r.status = 'queued' ORDER BY i.enqueued_at, i.rowid LIMIT ?`,
+      )
+      .all(valid.projectId, valid.limit) as RunDispatchIntentScanSqlRow[];
+    return rows.map((row) => ({
+      ...intentFromRow(row, operation),
+      runStatus: row.run_status as ExecutionRunStatus,
+      activeClaimId: row.active_claim_id,
+    }));
   }
 
   /* ------------------------------------------------------------ *
@@ -3063,6 +3282,9 @@ export function createSqliteExecutionAccess(
     getActivePhaseExecutionBatchInTransaction,
     recordExecutionRunDispatchInTransaction,
     appendExecutionEventInTransaction,
+    registerRunDispatchIntentInTransaction,
+    getRunDispatchIntentInTransaction,
+    listRunDispatchIntentsInTransaction,
     requestExecutionPauseInTransaction,
     resumeExecutionInTransaction,
     reopenExecutionBatchForFinalizationRetryInTransaction,

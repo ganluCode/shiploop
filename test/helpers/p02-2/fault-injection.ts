@@ -136,6 +136,13 @@ export const WRITE_FAULT_POINTS = Object.freeze({
   tasksBeforeUpdate: point('tasks', 'BEFORE', 'UPDATE', 'tasks_before_update'),
   /** P03-2 / F-002 迁移 v7：决策记录插入前（Feature plan_status 已写、整组回滚验证）。 */
   approvalsBeforeInsert: point('approvals', 'BEFORE', 'INSERT', 'approvals_before_insert'),
+  /** P04-9 / F-002 迁移 v34：Run 入队意图插入前（Run/派发事件已写，整组回滚）。 */
+  runDispatchIntentsBeforeInsert: point(
+    'run_dispatch_intents',
+    'BEFORE',
+    'INSERT',
+    'run_dispatch_intents_before_insert',
+  ),
 } satisfies Record<string, WriteFaultPoint>);
 
 /** 允许安装故障触发器的表白名单（与冻结点一致，拒绝任意标识符拼接）。 */

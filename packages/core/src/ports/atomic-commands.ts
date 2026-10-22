@@ -261,6 +261,24 @@ export interface CommandTransaction {
   /** 执行域脱敏事件追加（execution.run.dispatched/execution.budget.revised；与公开白名单同形）。 */
   appendExecutionEvent(input: unknown): void;
   /**
+   * P04-9 / F-002：Run 持久入队意图（与 Run/命令回执/事件同一短写事务）。
+   * 同 Run 重复入队复用原身份（零新增 Batch/Run/Attempt/预算/事件）；同身份
+   * 异授权摘要、跨项目/跨 Feature/跨 Batch 归属或终态/取消/暂停中工作拒绝。
+   * 仅受信 Core 事务上下文可用：不是模型可自由写队列的命令操作。
+   */
+  registerRunDispatchIntent(
+    input: unknown,
+  ): import('./execution-dispatch.js').RunDispatchIntentRegistration;
+  /** P04-9 / F-002：读取同项目 Run 的入队意图（无则 null；不跨项目）。 */
+  getRunDispatchIntent(
+    projectId: string,
+    runId: string,
+  ): import('./execution-dispatch.js').RunDispatchIntentRecord | null;
+  /** P04-9 / F-002：有界补扫同项目仍 queued 的入队意图（只读事实，不自动恢复）。 */
+  listRunDispatchIntents(
+    input: unknown,
+  ): readonly import('./execution-dispatch.js').RunDispatchIntentScanRecord[];
+  /**
    * P03-9 / F-001：Task 边界暂停意图（同项目 Run/Batch CAS）。终态只读返回
    * already_terminal；无活动 Attempt 直接 paused，有活动 Attempt 进入 pausing；
    * 不修改预算/deadline/累计计数/代码，状态/事件由本事务原子写入。

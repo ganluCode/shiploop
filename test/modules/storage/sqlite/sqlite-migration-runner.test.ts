@@ -212,6 +212,7 @@ describe('F-005 迁移执行与记录', () => {
           'recording_manifests',
           'repository_bindings',
           'run_dispatch_claims',
+          'run_dispatch_intents',
           'run_outcome_settlements',
           'runs',
           'runtime_start_reservations',

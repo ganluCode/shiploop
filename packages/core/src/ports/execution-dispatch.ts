@@ -25,14 +25,17 @@
  * 原语与容量装配（F-003）、与既有 Task 原子认领和 Runtime 启动前重核（F-004）。
  * 本模块不打开数据库、不读取时钟、不启动进程，也不提供任何队列状态编辑入口。
  */
-import type { ExecutionRunStatus } from './execution-store.js';
+import { createHash } from 'node:crypto';
+import type { ExecutionBatchStatus, ExecutionRunStatus } from './execution-store.js';
 import { StorageError } from './errors.js';
 import type { StorageEntityType } from './errors.js';
+import { stableStringify } from './feature-plan.js';
 import {
   rejectUnknownKeys,
   requirePlainObject,
   validateNonNegativeInteger,
   validatePositiveInteger,
+  validateSha256Digest,
   validateStableId,
   validationError,
 } from './validation.js';
@@ -688,4 +691,293 @@ export function deriveRunDispatchDisplay(facts: RunDispatchDisplayFacts): Dispat
     }
   }
   return { state: 'claimed', blockingReason: null };
+}
+
+/* ------------------------------------------------------------------ *
+ * P04-9 / F-002 持久入队意图（Run 已授权即持久执行意图）
+ *
+ * 复用与新增边界：
+ * - Run 行（queued + 不可变授权快照）仍是唯一业务事实，入队不创建第二套
+ *   Batch/Run/预算；本结构只补既有列无法表达的「入队事实」：第几次以何种
+ *   授权来源登记、授权身份摘要，以及可用于有界补扫的登记顺序；
+ * - 入队意图在启动/重试/resume/仅收尾同一短写事务内登记，与 Run、命令回执、
+ *   脱敏事件同生共死；不是「先 accepted 再靠内存回调补写」；
+ * - 意图按派发身份（projectId + runId）唯一：同 Run 重复入队稳定复用同一行，
+ *   不新增 Run/Attempt/预算或事件；显式重试产生新 Run，因此有独立意图，
+ *   `workKey` 不是唯一键；
+ * - 仅插入（身份与原因列由 trigger 冻结）：消费/认领交由 F-003/F-004 的槽位
+ *   与 Task 认领原语；本契约不预建消费状态机；
+ * - 入口只在受信 Core 事务上下文（CommandTransaction）内可用，不新增模型可
+ *   自由写队列的命令操作。
+ * ------------------------------------------------------------------ */
+
+/** 入队来源：首次授权、同父 Batch 显式重试、显式 resume、仅收尾重试。 */
+export const RUN_DISPATCH_INTENT_SOURCES = [
+  'start',
+  'retry',
+  'resume',
+  'finalization_retry',
+] as const;
+export type RunDispatchIntentSource = (typeof RUN_DISPATCH_INTENT_SOURCES)[number];
+
+/** 授权身份摘要领域前缀（把摘要锚定到 Run 级派发授权身份 v1）。 */
+export const RUN_DISPATCH_INTENT_DIGEST_DOMAIN = 'shiploop:run-dispatch-intent:v1';
+
+/** 有界原因长度（与既有派发/隔离原因上限一致；不含正文/凭据）。 */
+export const RUN_DISPATCH_INTENT_REASON_MAX_LENGTH = 512;
+
+/** 补扫上限（有界查询；不是全表扫描授权）。 */
+export const RUN_DISPATCH_INTENT_SCAN_MAX_LIMIT = 100;
+
+/** Run 入队意图记录（迁移 v34 run_dispatch_intents 行；插入后身份不可变）。 */
+export interface RunDispatchIntentRecord {
+  readonly id: string;
+  readonly createdAtUtcMs: number;
+  readonly projectId: string;
+  readonly updatedAtUtcMs: number;
+  readonly featureId: string;
+  readonly batchId: string;
+  readonly runId: string;
+  readonly source: RunDispatchIntentSource;
+  /** 授权身份摘要（见 computeRunDispatchAuthorizationDigest；同身份异摘要即冲突）。 */
+  readonly authorizationDigest: string;
+  readonly enqueuedAtUtcMs: number;
+  /** 有界排队原因（如未装配调度器；不含正文/凭据）。 */
+  readonly reason: string | null;
+}
+
+/** 入队意图写入输入（id/时间戳/摘要由存储原语在同一事务内定值）。 */
+export interface RunDispatchIntentInput {
+  readonly projectId: string;
+  readonly featureId: string;
+  readonly batchId: string;
+  readonly runId: string;
+  readonly source: RunDispatchIntentSource;
+  readonly authorizationDigest: string;
+  readonly reason?: string | null;
+}
+
+/** 入队结果：created=首次登记；reused=同身份重复入队（零新增/零事件）。 */
+export interface RunDispatchIntentRegistration {
+  readonly intent: RunDispatchIntentRecord;
+  readonly outcome: 'created' | 'reused';
+}
+
+/** 有界补扫输入（同项目；limit 必填且有上限）。 */
+export interface RunDispatchIntentScanInput {
+  readonly projectId: string;
+  readonly limit: number;
+}
+
+/**
+ * 补扫记录：意图 + 当前 Run 状态 + 活动认领身份（只读事实，不判定消费策略）。
+ * 补扫命中不代表可自动执行：暂停/取消/终态仍由后续消费方按原有授权核对。
+ */
+export interface RunDispatchIntentScanRecord extends RunDispatchIntentRecord {
+  readonly runStatus: ExecutionRunStatus;
+  readonly activeClaimId: string | null;
+}
+
+const INTENT_INPUT_KEYS = [
+  'projectId',
+  'featureId',
+  'batchId',
+  'runId',
+  'source',
+  'authorizationDigest',
+  'reason',
+] as const;
+
+const INTENT_RECORD_KEYS = [
+  'id',
+  'createdAtUtcMs',
+  'projectId',
+  'updatedAtUtcMs',
+  'featureId',
+  'batchId',
+  'runId',
+  'source',
+  'authorizationDigest',
+  'enqueuedAtUtcMs',
+  'reason',
+] as const;
+
+function requireIntentSource(
+  value: unknown,
+  ctx: ValidationContext,
+  field: string,
+): RunDispatchIntentSource {
+  if (typeof value !== 'string' || !(RUN_DISPATCH_INTENT_SOURCES as readonly string[]).includes(value)) {
+    throw validationError(ctx, field, `必须是 ${RUN_DISPATCH_INTENT_SOURCES.join('|')} 之一`, value);
+  }
+  return value as RunDispatchIntentSource;
+}
+
+function requireIntentReason(
+  value: unknown,
+  ctx: ValidationContext,
+  field: string,
+): string | null {
+  if (value === null || value === undefined) return null;
+  if (
+    typeof value !== 'string' ||
+    value.length === 0 ||
+    value.length > RUN_DISPATCH_INTENT_REASON_MAX_LENGTH
+  ) {
+    throw validationError(
+      ctx,
+      field,
+      `必须是 1..${RUN_DISPATCH_INTENT_REASON_MAX_LENGTH} 字符的有界原因（不含正文或凭据）`,
+      value,
+    );
+  }
+  return value;
+}
+
+/** 授权身份摘要输入：只取 Run 行的授权身份级字段（不含 revision/状态/时间）。 */
+export interface RunDispatchAuthorizationIdentity {
+  readonly projectId: string;
+  readonly featureId: string;
+  readonly batchId: string;
+  readonly runId: string;
+  readonly purpose: string;
+  readonly scopeDigest: string;
+  readonly workKey: string;
+  readonly dispatchOrdinal: number;
+}
+
+/**
+ * 授权身份摘要：SHA-256(`${DOMAIN}\n${canonical}`)。同 Run 的 resume 不改变
+ * 这些成分（只改状态/revision），因此重复入队稳定复用；伪造/过期身份
+ * （换 scopeDigest、workKey、dispatchOrdinal 或跨项目 Run）摘要不一致 →
+ * 存储原语在事务内重算并拒绝。
+ */
+export function computeRunDispatchAuthorizationDigest(
+  identity: RunDispatchAuthorizationIdentity,
+): string {
+  const ctx = context('computeAuthorizationDigest', 'run_dispatch_intent');
+  const raw = requirePlainObject(identity, ctx, 'identity');
+  rejectUnknownKeys(
+    raw,
+    ['projectId', 'featureId', 'batchId', 'runId', 'purpose', 'scopeDigest', 'workKey', 'dispatchOrdinal'],
+    ctx,
+    'identity',
+  );
+  const canonical = stableStringify({
+    schemaVersion: 1,
+    projectId: validateStableId(raw.projectId, ctx, 'projectId'),
+    featureId: validateStableId(raw.featureId, ctx, 'featureId'),
+    batchId: validateStableId(raw.batchId, ctx, 'batchId'),
+    runId: validateStableId(raw.runId, ctx, 'runId'),
+    purpose: validateStableId(raw.purpose, ctx, 'purpose'),
+    scopeDigest: validateSha256Digest(raw.scopeDigest, ctx, 'scopeDigest'),
+    workKey: validateStableId(raw.workKey, ctx, 'workKey'),
+    dispatchOrdinal: validatePositiveInteger(raw.dispatchOrdinal, ctx, 'dispatchOrdinal'),
+  });
+  return createHash('sha256').update(`${RUN_DISPATCH_INTENT_DIGEST_DOMAIN}\n${canonical}`, 'utf8').digest('hex');
+}
+
+/** 校验入队写入输入（拒绝 workKey 等额外字段：workKey 不是队列唯一键）。 */
+export function validateRunDispatchIntentInput(value: unknown): RunDispatchIntentInput {
+  const ctx = context('validateIntentInput', 'run_dispatch_intent');
+  const raw = requirePlainObject(value, ctx, 'input');
+  rejectUnknownKeys(raw, INTENT_INPUT_KEYS, ctx, 'input');
+  return {
+    projectId: validateStableId(raw.projectId, ctx, 'projectId'),
+    featureId: validateStableId(raw.featureId, ctx, 'featureId'),
+    batchId: validateStableId(raw.batchId, ctx, 'batchId'),
+    runId: validateStableId(raw.runId, ctx, 'runId'),
+    source: requireIntentSource(raw.source, ctx, 'source'),
+    authorizationDigest: validateSha256Digest(raw.authorizationDigest, ctx, 'authorizationDigest'),
+    reason: requireIntentReason(raw.reason, ctx, 'reason'),
+  };
+}
+
+/** 校验入队意图记录（读取/写入两侧共用；非法形状不进入任何 SQL）。 */
+export function validateRunDispatchIntentRecord(value: unknown): RunDispatchIntentRecord {
+  const raw = requirePlainObject(
+    value,
+    context('validateIntentRecord', 'run_dispatch_intent'),
+    'intent',
+  );
+  const ctx = context(
+    'validateIntentRecord',
+    'run_dispatch_intent',
+    typeof raw.id === 'string' ? raw.id : undefined,
+  );
+  rejectUnknownKeys(raw, INTENT_RECORD_KEYS, ctx, 'intent');
+  const enqueuedAtUtcMs = validatePositiveInteger(raw.enqueuedAtUtcMs, ctx, 'enqueuedAtUtcMs');
+  const createdAtUtcMs = validateNonNegativeInteger(raw.createdAtUtcMs, ctx, 'createdAtUtcMs');
+  const updatedAtUtcMs = validateNonNegativeInteger(raw.updatedAtUtcMs, ctx, 'updatedAtUtcMs');
+  if (updatedAtUtcMs < createdAtUtcMs) {
+    throw validationError(ctx, 'updatedAtUtcMs', '更新时间不得早于创建时间', updatedAtUtcMs);
+  }
+  return {
+    id: validateStableId(raw.id, ctx, 'id'),
+    createdAtUtcMs,
+    projectId: validateStableId(raw.projectId, ctx, 'projectId'),
+    updatedAtUtcMs,
+    featureId: validateStableId(raw.featureId, ctx, 'featureId'),
+    batchId: validateStableId(raw.batchId, ctx, 'batchId'),
+    runId: validateStableId(raw.runId, ctx, 'runId'),
+    source: requireIntentSource(raw.source, ctx, 'source'),
+    authorizationDigest: validateSha256Digest(raw.authorizationDigest, ctx, 'authorizationDigest'),
+    enqueuedAtUtcMs,
+    reason: requireIntentReason(raw.reason, ctx, 'reason'),
+  };
+}
+
+/** 校验补扫输入：项目身份 + 1..100 的有界每轮上限。 */
+export function validateRunDispatchIntentScanInput(value: unknown): RunDispatchIntentScanInput {
+  const ctx = context('validateIntentScan', 'run_dispatch_intent');
+  const raw = requirePlainObject(value, ctx, 'input');
+  rejectUnknownKeys(raw, ['projectId', 'limit'], ctx, 'input');
+  const limit = validatePositiveInteger(raw.limit, ctx, 'limit');
+  if (limit > RUN_DISPATCH_INTENT_SCAN_MAX_LIMIT) {
+    throw validationError(ctx, 'limit', `必须是 1..${RUN_DISPATCH_INTENT_SCAN_MAX_LIMIT} 的有界上限`, limit);
+  }
+  return { projectId: validateStableId(raw.projectId, ctx, 'projectId'), limit };
+}
+
+/**
+ * 入队可创建性：只对「已授权、尚未开始」的意图成立（Run queued、Batch 未终态
+ * 且未进入暂停/取消控制、项目 active）。已存在的意图走复用路径，不受本检查
+ * 影响——复用不重新授权、不产生新 Run。
+ */
+export function assertRunDispatchIntentEnqueueable(input: {
+  readonly runStatus: ExecutionRunStatus;
+  readonly batchStatus: ExecutionBatchStatus;
+  readonly projectStatus: string;
+}): void {
+  const ctx = context('assertIntentEnqueueable', 'run_dispatch_intent');
+  const raw = requirePlainObject(input, ctx, 'input');
+  rejectUnknownKeys(raw, ['runStatus', 'batchStatus', 'projectStatus'], ctx, 'input');
+  const runStatus = raw.runStatus;
+  const batchStatus = raw.batchStatus;
+  const projectStatus = raw.projectStatus;
+  if (typeof projectStatus !== 'string' || projectStatus.length === 0) {
+    throw validationError(ctx, 'projectStatus', '必须是项目状态字符串', projectStatus);
+  }
+  if (projectStatus !== 'active') {
+    throw new StorageError('conflict', ctx.operation, '项目非 active，不得登记新的派发意图', {
+      entity: ctx.entity,
+      details: { field: 'projectStatus', reason: 'project_not_active' },
+    });
+  }
+  if (runStatus !== 'queued') {
+    throw new StorageError(
+      'conflict',
+      ctx.operation,
+      `Run 状态 ${String(runStatus)} 不接受新的派发意图（已开始/暂停/取消/终态不重开）`,
+      { entity: ctx.entity, details: { field: 'runStatus', reason: 'run_not_enqueueable' } },
+    );
+  }
+  if (batchStatus !== 'queued' && batchStatus !== 'running') {
+    throw new StorageError(
+      'conflict',
+      ctx.operation,
+      `Batch 状态 ${String(batchStatus)} 不接受新的派发意图（终态/控制中不重开）`,
+      { entity: ctx.entity, details: { field: 'batchStatus', reason: 'batch_not_enqueueable' } },
+    );
+  }
 }

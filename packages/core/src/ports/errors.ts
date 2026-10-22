@@ -64,7 +64,9 @@ export type StorageEntityType =
   /** P04-9 / F-001：Run 级持久派发认领（run_dispatch_claims，迁移 v33）。 */
   | 'run_dispatch_claim'
   /** P04-9 / F-001：单执行槽位认领（execution_slot_claims，迁移 v33）。 */
-  | 'execution_slot_claim';
+  | 'execution_slot_claim'
+  /** P04-9 / F-002：Run 持久入队意图（run_dispatch_intents，迁移 v34）。 */
+  | 'run_dispatch_intent';
 
 export type StorageErrorKind =
   /** 外部输入未通过运行时校验（缺字段/类型错误/未知 schemaVersion/非法摘要等）。 */

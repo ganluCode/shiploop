@@ -55,6 +55,7 @@ import { evaluatePlanApprovalValidity } from '../ports/plan-approval-verificatio
 import { validateStableId } from '../ports/validation.js';
 import type { ValidationContext } from '../ports/validation.js';
 import { resolveCurrentCheckPolicyDigest } from './plan-approval-verification.js';
+import { enqueueAuthorizedRunInTransaction } from './execution-dispatch.js';
 
 const OPERATION = FINALIZATION_RETRY_OPERATION;
 /** 与 ports/execution-store 的 Run 快照上限保持一致；超界在 prepare 即拒绝。 */
@@ -553,6 +554,15 @@ export function createFinalizationRetryExecutionService(
       payload: { dispatched: true },
     });
 
+    /* P04-9 / F-002：仅收尾 Run 同样在创建事务内登记持久入队意图；入队不启动
+     * Runner、不预扣 Attempt/Runtime 额度，唤醒仍在提交后 best-effort。 */
+    const dispatchIntent = enqueueAuthorizedRunInTransaction(transaction, {
+      projectId,
+      runId: created.id,
+      source: 'finalization_retry',
+      reason: created.reason,
+    });
+
     const receipt = createCompletedReceipt({
       ...receiptIdentity,
       resultRef: createResultRef(randomBytes(32)),
@@ -574,6 +584,7 @@ export function createFinalizationRetryExecutionService(
         finalCheckKeys: [...prepared.scope.finalVerification.checkKeys],
         runtimeStarts: 0,
         attemptsCreated: 0,
+        dispatchIntentId: dispatchIntent.intent.id,
       },
     });
     transaction.saveReceipt(receipt);

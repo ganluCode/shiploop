@@ -83,6 +83,7 @@ import type {
 } from '../ports/execution-input-prepare.js';
 import { computeExecutionPermissionsDigest, computeExecutionStrategyCopyDigest } from '../ports/execution-input-prepare.js';
 import type { CommandTransaction } from '../ports/atomic-commands.js';
+import { enqueueAuthorizedRunInTransaction } from './execution-dispatch.js';
 import type { ExecutionPreviewInputRefSummary } from '../ports/execution-preview.js';
 import { computeExecutionPreviewDigest } from '../ports/execution-preview.js';
 import type { ExecutionStartPreviewPort } from '../ports/execution-start.js';
@@ -109,6 +110,7 @@ export const EXECUTION_START_IMPACT = Object.freeze({
   createsExecutionEntities: true,
   incrementsRunsCreated: true,
   writesReceiptAndEvent: true,
+  registersDispatchIntent: true,
   startsRuntimeGitOrChecks: false,
   keepsRuntimeStartsZero: true,
   changesPlanEntities: false,
@@ -673,6 +675,16 @@ export function createExecutionStartService(deps: ExecutionStartServiceDeps): Ex
         payload: { dispatched: true },
       });
 
+      /* 13b. P04-9 / F-002：Run 已授权即持久执行意图。派发元数据与 Run/回执/
+       * 事件在同一短写事务内登记；重复入队（同 Run）复用原身份，不新增
+       * Batch/Run/Attempt、不重复预算或事件；入队不启动 Runner、不预扣额度。 */
+      const dispatchIntent = enqueueAuthorizedRunInTransaction(transaction, {
+        projectId,
+        runId: run.id,
+        source: fresh !== null ? 'start' : 'retry',
+        reason: run.reason,
+      });
+
       /* 14. 回执：首次授权 → Work accepted v6（operationId=batchId，同 Batch 唯一
        * ——v10 迁移 operation_id 唯一索引承担）；同父 Batch 重试 → completed v5
        * （同事务同步完成的派发结果；结果只携带身份级事实，不重复关联身份）。
@@ -701,6 +713,7 @@ export function createExecutionStartService(deps: ExecutionStartServiceDeps): Ex
           runsCreated: batch.runsCreated,
           status: run.status,
           runtimeExecution: false,
+          dispatchIntentId: dispatchIntent.intent.id,
         },
       });
       transaction.saveReceipt(completed);

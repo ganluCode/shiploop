@@ -2139,3 +2139,59 @@ export const executionSlotClaims = sqliteTable('execution_slot_claims', {
     .where(sql`${table.state} IN ('held', 'quarantined')`),
   index('execution_slot_claims_project_state_index').on(table.projectId, table.state, table.acquiredAt),
 ]);
+
+/**
+ * P04-9 / F-002 Run 入队意图（迁移 v34；Run 已授权即持久执行意图）。
+ *
+ * 本表只补既有列无法表达的入队事实：授权来源（start/retry/resume/
+ * finalization_retry）、授权身份摘要与有界补扫顺序。Run 的 queued/控制/终态与
+ * 不可变授权快照仍是唯一业务事实；本表不保存第二套状态机，也不按 Task 数量
+ * 复制行。`(project_id, run_id)` 唯一：同 Run 重复入队复用同一意图，显式重试的
+ * 新 Run 有独立意图（`work_key` 不是队列唯一键）。插入由 trigger 重核项目
+ * active、Run queued、Batch 未终态与同项目/同 Feature/同 Batch 归属；身份列
+ * 冻结，只允许插入（消费/认领由 F-003/F-004 的槽位与 Task 认领原语承担）。
+ */
+export const runDispatchIntents = sqliteTable('run_dispatch_intents', {
+  id: text('id').primaryKey(),
+  createdAt: integer('created_at').notNull(),
+  projectId: text('project_id')
+    .notNull()
+    .references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  updatedAt: integer('updated_at').notNull(),
+  featureId: text('feature_id').notNull(),
+  batchId: text('batch_id').notNull(),
+  runId: text('run_id').notNull(),
+  /** 入队来源：首次授权/同父 Batch 重试/显式 resume/仅收尾重试。 */
+  source: text('source').notNull(),
+  /** 授权身份摘要（同身份异摘要即冲突；不是凭据）。 */
+  authorizationDigest: text('authorization_digest').notNull(),
+  /** 入队登记顺序（有界补扫键；不是 Run 创建时间的替代身份）。 */
+  enqueuedAt: integer('enqueued_at').notNull(),
+  /** 有界排队原因（不含正文/凭据）。 */
+  reason: text('reason'),
+}, (table) => [
+  check('run_dispatch_intents_times_check', sql`typeof(${table.createdAt}) = 'integer' AND ${table.createdAt} >= 0
+    AND typeof(${table.updatedAt}) = 'integer' AND ${table.updatedAt} >= 0
+    AND typeof(${table.enqueuedAt}) = 'integer' AND ${table.enqueuedAt} >= 1`),
+  check(
+    'run_dispatch_intents_source_check',
+    sql`${table.source} IN ('start', 'retry', 'resume', 'finalization_retry')`,
+  ),
+  check('run_dispatch_intents_digest_check', sql`length(${table.authorizationDigest}) = 64
+    AND ${table.authorizationDigest} NOT GLOB '*[^0-9a-f]*'`),
+  check('run_dispatch_intents_reason_check', sql`${table.reason} IS NULL OR length(${table.reason}) BETWEEN 1 AND 512`),
+  foreignKey({
+    name: 'run_dispatch_intents_run_fk',
+    columns: [table.projectId, table.runId],
+    foreignColumns: [runs.projectId, runs.id],
+  }).onDelete('restrict'),
+  // 同 Feature：Run 必须是该 Feature 的 Run（runs_feature_id_id_unique）。
+  foreignKey({
+    name: 'run_dispatch_intents_feature_run_fk',
+    columns: [table.featureId, table.runId],
+    foreignColumns: [runs.featureId, runs.id],
+  }).onDelete('restrict'),
+  // 一个 Run 只有一个入队意图（重复入队复用，不新增第二行）。
+  uniqueIndex('run_dispatch_intents_run_unique').on(table.projectId, table.runId),
+  index('run_dispatch_intents_project_enqueued_index').on(table.projectId, table.enqueuedAt),
+]);
