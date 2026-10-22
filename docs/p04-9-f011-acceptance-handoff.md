@@ -4,9 +4,9 @@
 报告映射；并交接已落地的单并发实现事实。本文是**工具与实施交接**，不是阶段验收通过、
 不是 live 证据，也不解除负责人确认。
 
-提交引用：本 Task 的提交标题为 `F-011: ...`；实际 SHA 用 `git log -1 --format='%H %s' --
-docs/p04-9-f011-acceptance-handoff.md` 在受测代码上核验，日志/退出码/耗时见
-Harness `verifications/F-011/runtime-logs/`。
+提交引用：`3bf8c228a30e811b8a3fe1ec50bbaec720ed61bb`（`F-011: 将 P04-9 纳入 P04 验收清单与入口报告映射`）。
+本文件随后的小幅补记只追加此引用，不改代码；日志/退出码/耗时见 Harness
+`verifications/F-011/runtime-logs/`。
 
 ## 1. 验收工具扩展
 
