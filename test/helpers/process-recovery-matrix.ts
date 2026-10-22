@@ -49,7 +49,8 @@ export async function openProcessRecoveryFixture(launch = true, sessionMode: 'st
     return (await f.publisher.publishArtifact({ projectId: f.projectId, kind: 'workspace_evidence', mediaType: 'application/json',
       expectedHash: createHash('sha256').update(content).digest('hex'), locator: `matrix/${randomUUID()}.json`, content: [content] })).artifact.id;
   }
-  async function recover(process: Pick<CommandProcessPort, 'recoverStop'> = createCommandProcessAdapter({ stopConfirmMs: 1_000 })):
+  async function recover(process: Pick<CommandProcessPort, 'recoverStop'> = createCommandProcessAdapter({ stopConfirmMs: 1_000 }),
+    beforeFinish?: (evidence: WorkRecoveryReconciliationEvidence) => Promise<void>):
     Promise<{ state: WorkStartupRecoveryState; evidence: WorkRecoveryReconciliationEvidence }> {
     // A fresh Host-side connection and service read the persisted identity, never a live handle.
     const restarted = openSqliteStorageSession({ path: f.box.dbPath });
@@ -61,7 +62,11 @@ export async function openProcessRecoveryFixture(launch = true, sessionMode: 'st
         store: createSqliteWorkRecoveryReconciliationStore(restarted, { resources, nowUtcMs: () => now }),
         inspect: (_projectId, baseline) => createWorkspaceInspector({ authorizedRoots: [f.box.root], confirmProcessIdentity: confirm }).inspect(baseline),
         git: createRecoveryGitReader({ driverFor: () => createGitCommitDriver({ confirmProcessIdentity: confirm }) }),
-        artifacts: f.verifier, stopVerifier, publishEvidence: (_projectId, evidence) => publish(evidence), nowUtcMs: () => now,
+        artifacts: f.verifier, stopVerifier, publishEvidence: async (_projectId, evidence) => {
+          const ref = await publish(evidence);
+          await beforeFinish?.(evidence);
+          return ref;
+        }, nowUtcMs: () => now,
       });
       const startup = createWorkStartupRecovery({ store: createSqliteWorkStartupRecoveryStore(restarted, { nowUtcMs: () => now }),
         process, reconcile: reconciler.reconcile, publishEvidence: (_projectId, evidence) => publish(evidence), nowUtcMs: () => now });

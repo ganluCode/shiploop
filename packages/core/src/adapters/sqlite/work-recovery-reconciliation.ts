@@ -1,3 +1,4 @@
+import { createSqliteDispatchRecovery, workRecoveryFingerprint } from './dispatch-recovery.js';
 import { createSqliteAttemptAccess } from './attempt-store.js';
 import { GIT_OPERATION_COLUMNS, gitOperationRecordFromRow } from './git-operations.js';
 import { SESSION_COLUMNS, workSessionRecordFromRow } from './work-session-store.js';
@@ -48,6 +49,7 @@ export function createSqliteWorkRecoveryReconciliationStore(session: SqliteStora
 }): WorkRecoveryReconciliationStore {
   const db = session.database;
   const now = options.nowUtcMs ?? Date.now;
+  const dispatch = createSqliteDispatchRecovery(session);
   const attempts = createSqliteAttemptAccess(session);
 
   function loadWorkspace(projectId: string, featureId: string): ManagedWorkspaceRecord | null {
@@ -91,6 +93,15 @@ export function createSqliteWorkRecoveryReconciliationStore(session: SqliteStora
     if (attempt.projectId !== source.projectId || attempt.runId !== source.runId
       || attempt.owner !== source.owner || attempt.hostInstanceId !== source.hostInstanceId
       || attempt.executionVersion !== source.executionVersion) fail('source_identity_changed');
+  }
+
+  function dispatchAttempt(attempt: ReturnType<typeof attempts.getAttempt>) {
+    return { id: attempt.id, project_id: attempt.projectId, feature_id: attempt.featureId, run_id: attempt.runId,
+      owner_id: attempt.owner, host_instance_id: attempt.hostInstanceId, execution_version: attempt.executionVersion };
+  }
+
+  function assertFingerprint(attemptId: string, expected: string | undefined) {
+    if (expected === undefined || expected !== workRecoveryFingerprint(session, attemptId)) fail('recovery_snapshot_changed');
   }
 
   function identity(snapshot: { attempt: ReturnType<typeof attempts.getAttempt> }) {
@@ -145,9 +156,12 @@ export function createSqliteWorkRecoveryReconciliationStore(session: SqliteStora
           refs.push(...operation.result?.evidenceRefs ?? []);
           if (operation.result?.errorRef !== null && operation.result?.errorRef !== undefined) refs.push(operation.result.errorRef);
         }
+        const dispatchLink = dispatch.link(dispatchAttempt(attempt));
         const alreadyReconciled = run.status === 'paused' && workspace?.status === 'retained'
-          && resources.leases.length === 0;
+          && resources.leases.length === 0 && dispatchLink.gaps.length === 0
+          && (dispatchLink.claim === null || dispatchLink.claim.state === 'released');
         return {
+          recoveryFingerprint: workRecoveryFingerprint(session, attempt.id), dispatchGaps: dispatchLink.gaps,
           attempt, runStatus: run.status, workspace, session: sessionRecord, resources,
           artifacts: loadArtifacts(source.projectId, refs),
           pendingGitOperations: loadPendingGitOperations(source.projectId, source.runId),
@@ -158,15 +172,22 @@ export function createSqliteWorkRecoveryReconciliationStore(session: SqliteStora
       }
     },
 
-    finish(source, evidence, evidenceRef, release: WorkRecoveryRelease) {
+    finish(source, evidence, evidenceRef, release: WorkRecoveryRelease, expectedFingerprint) {
       session.transactWrite('WorkRecovery.finish', () => {
+        assertFingerprint(source.attemptId, expectedFingerprint);
         const attempt = attempts.getAttempt(source.projectId, source.attemptId);
         assertSourceIdentity(source, attempt);
         if (attempt.status !== 'interrupted') fail('attempt_not_interrupted');
         const run = db.prepare<[string, string], { status: string; revision: number }>(
           'SELECT status, revision FROM runs WHERE project_id = ? AND id = ?').get(source.projectId, source.runId);
         if (run === undefined) fail('run_missing');
-        if (['succeeded', 'failed', 'cancelled'].includes(run!.status)) fail('run_terminal');
+        if (!['interrupted', 'paused'].includes(run!.status)) fail('run_not_recoverable');
+        const batch = db.prepare<[string], { status: string }>(
+          'SELECT b.status FROM execution_batches b JOIN runs r ON r.batch_id = b.id WHERE r.id = ?').get(source.runId);
+        if (!batch || !['queued', 'running', 'pausing', 'paused'].includes(batch.status)) fail('batch_not_recoverable');
+        const task = db.prepare<[string], { execution_version: number }>('SELECT execution_version FROM tasks WHERE id = ?').get(attempt.taskId);
+        if (task?.execution_version !== attempt.executionVersion + 1) fail('stale_recovery_identity');
+        if (evidence.status !== 'reconciled' || evidence.gaps.length !== 0) fail('reconciliation_incomplete');
         const workspace = loadWorkspace(source.projectId, attempt.featureId);
         if (workspace === null) fail('workspace_missing');
         if (workspace!.id !== evidence.workspace?.id) fail('workspace_identity_changed');
@@ -192,13 +213,18 @@ export function createSqliteWorkRecoveryReconciliationStore(session: SqliteStora
         if (release.mode === 'stopped') options.resources.releaseRecoveredStoppedInTransaction(resourceIdentity, release.token);
         else if (release.mode === 'unstarted') options.resources.releaseRecoveredUnstartedInTransaction(resourceIdentity);
         else if (options.resources.readForRecovery(resourceIdentity).leases.length > 0) fail('recovered_occupancy_still_held');
+        dispatch.releaseForAttempt(dispatchAttempt(attempt), timestamp);
       });
     },
 
-    quarantine(source, evidence, evidenceRef) {
+    quarantine(source, evidence, evidenceRef, expectedFingerprint) {
       session.transactWrite('WorkRecovery.quarantine', () => {
+        assertFingerprint(source.attemptId, expectedFingerprint);
         const attempt = attempts.getAttempt(source.projectId, source.attemptId);
         assertSourceIdentity(source, attempt);
+        const task = db.prepare<[string], { execution_version: number }>('SELECT execution_version FROM tasks WHERE id = ?').get(attempt.taskId);
+        if (task?.execution_version !== attempt.executionVersion + 1
+          || dispatch.link(dispatchAttempt(attempt)).gaps.includes('dispatch_generation_changed')) fail('stale_recovery_identity');
         if (attempt.status !== 'interrupted') fail('attempt_not_interrupted');
         const timestamp = now();
         updateAttemptDiagnostic(attempt.id, evidenceRef, timestamp);

@@ -117,9 +117,10 @@ export function createWorkRecoveryReconciler(options: WorkRecoveryReconcilerOpti
       const ignoredNeverStartedGaps = new Set(['process_identity_missing', 'process_identity_mismatch',
         'invalid_process_identity', 'stop_unconfirmed', 'stop_failed']);
       const startupGaps = source.gaps.filter(gap => gap !== 'workspace_not_reconciled'
-        && !(neverStarted && snapshot.resources.leases.length === 0)
+        && !(neverStarted && snapshot.resources.leases.length === 0 && gap === 'incomplete_resource_group')
         && !(neverStarted && ignoredNeverStartedGaps.has(gap)));
       for (const gap of startupGaps) addGap(gaps, `startup_${gap}`);
+      for (const gap of snapshot.dispatchGaps ?? []) addGap(gaps, gap);
       if (!source.stopConfirmed && !neverStarted) addGap(gaps, 'stop_unconfirmed');
 
       if (attempt.id !== source.attemptId || attempt.projectId !== source.projectId || attempt.runId !== source.runId
@@ -315,8 +316,8 @@ export function createWorkRecoveryReconciler(options: WorkRecoveryReconcilerOpti
         observedAtUtcMs: now(),
       };
       const evidenceRef = await options.publishEvidence(source.projectId, evidence);
-      if (status === 'quarantined') options.store.quarantine(source, evidence, evidenceRef);
-      else options.store.finish(source, evidence, evidenceRef, release);
+      if (status === 'quarantined') options.store.quarantine(source, evidence, evidenceRef, snapshot.recoveryFingerprint);
+      else options.store.finish(source, evidence, evidenceRef, release, snapshot.recoveryFingerprint);
       return { status, gaps, evidenceRef, alreadyReconciled: false };
     },
   };

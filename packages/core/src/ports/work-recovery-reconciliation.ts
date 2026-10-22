@@ -22,6 +22,9 @@ export interface WorkRecoveryReconciliationSnapshot {
   /** Original interrupted Attempt; recovery never creates another one. */
   readonly attempt: AttemptRecord;
   readonly runStatus: string;
+  /** Adapter snapshot seal across asynchronous inspection/publication. */
+  readonly recoveryFingerprint?: string;
+  readonly dispatchGaps?: readonly string[];
   readonly workspace: ManagedWorkspaceRecord | null;
   readonly session: WorkSessionRecord | null;
   /** Read without the task execution-version equality gate that fencing intentionally revoked. */
@@ -129,10 +132,10 @@ export interface WorkRecoveryReconciliationStore {
   load(source: WorkStartupRecoveryEvidence): WorkRecoveryReconciliationSnapshot;
   /** Artifact is already durable; this transaction persists the outcome and releases only the matching holder. */
   finish(source: WorkStartupRecoveryEvidence, evidence: WorkRecoveryReconciliationEvidence,
-    evidenceRef: string, release: WorkRecoveryRelease): void;
+    evidenceRef: string, release: WorkRecoveryRelease, expectedFingerprint?: string): void;
   /** Persist the diagnosis, keep Run interrupted and retain/quarantine the recovered occupancy. */
   quarantine(source: WorkStartupRecoveryEvidence, evidence: WorkRecoveryReconciliationEvidence,
-    evidenceRef: string): void;
+    evidenceRef: string, expectedFingerprint?: string): void;
 }
 
 export interface WorkRecoveryReconciliationResult {

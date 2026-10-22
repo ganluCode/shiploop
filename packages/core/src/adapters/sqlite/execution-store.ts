@@ -31,6 +31,7 @@
  * 不存在目标统一 undefined（存在性折叠由应用层承担）。
  */
 import { randomUUID } from 'node:crypto';
+import { createSqliteDispatchRecovery } from './dispatch-recovery.js';
 import { ACTIVE_ATTEMPT_STATUSES } from '../../ports/attempt-store.js';
 import { CODE_ATTEMPT_SETTLEMENT_PREFIX, validateCodeAttemptSettlement } from '../../ports/code-attempt-budget.js';
 import { StorageError } from '../../ports/errors.js';
@@ -1925,7 +1926,8 @@ export function createSqliteExecutionAccess(
         `SELECT COUNT(*) AS count FROM workspace_leases WHERE project_id = ? AND owner_id IN
           (SELECT id FROM attempts WHERE project_id = ? AND run_id IN (${placeholders}))`,
       ).get(projectId, projectId, ...runIds)!.count;
-      if (active > 0 || leases > 0) conflict('occupancy_unresolved', { activeAttempts: active, leases });
+      const dispatchOccupied = runIds.some(runId => createSqliteDispatchRecovery(session).resumeBlocked(runId, timestamp));
+      if (dispatchOccupied || active > 0 || leases > 0) conflict('occupancy_unresolved', { activeAttempts: active, leases });
     };
 
     if (targetKind === 'run') {

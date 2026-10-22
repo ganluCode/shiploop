@@ -4,6 +4,7 @@ import { validateWorkProcessIdentity } from '../../ports/work-resources.js';
 import { GLOBAL_SETTINGS_ID } from '../../ports/state-store.js';
 import { mapStateEvent, type PersistedStateEventRow } from '../../ports/events.js';
 import type { WorkStartupRecoveryEvidence, WorkStartupRecoveryStore, WorkStartupRecoveryTarget } from '../../ports/work-startup-recovery.js';
+import { createSqliteDispatchRecovery } from './dispatch-recovery.js';
 import type { SqliteStorageSession } from './session.js';
 
 const LIMIT = 128;
@@ -22,6 +23,7 @@ interface LeaseRow {
 export function createSqliteWorkStartupRecoveryStore(session: SqliteStorageSession,
   options: { readonly nowUtcMs?: () => number } = {}): WorkStartupRecoveryStore {
   const db = session.database;
+  const dispatch = createSqliteDispatchRecovery(session);
   const now = options.nowUtcMs ?? Date.now;
   function findEvent(phase: RecoveryPhase, id: string) {
     const row = db.prepare<[string, string], Omit<PersistedStateEventRow, 'payload'> & { payload: string }>(`SELECT
@@ -51,17 +53,19 @@ export function createSqliteWorkStartupRecoveryStore(session: SqliteStorageSessi
     fence() {
       return session.transactWrite('Work.startupRecovery.fence', () => {
         const timestamp = now();
-        const rows = db.prepare<[], AttemptRow>(`SELECT a.* FROM attempts a WHERE
+        const census = dispatch.fence(timestamp);
+        const rows = db.prepare<string[], AttemptRow>(`SELECT a.* FROM attempts a WHERE
           a.status IN ('preparing', 'executing', 'verifying') OR EXISTS
             (SELECT 1 FROM workspace_leases l WHERE l.owner_id = a.id)
-          ORDER BY a.id LIMIT ${LIMIT + 1}`).all();
+          ${census.attemptIds.length === 0 ? '' : `OR a.id IN (${census.attemptIds.map(() => '?').join(',')})`}
+          ORDER BY a.id LIMIT ${LIMIT + 1}`).all(...census.attemptIds);
         const runs = db.prepare<[], { id: string; project_id: string; revision: number; status: string }>(`SELECT id, project_id, revision, status
           FROM runs WHERE status IN ('queued', 'running', 'pausing', 'paused', 'cancelling', 'interrupted') ORDER BY id LIMIT ${LIMIT + 1}`).all();
-        const limited = rows.length > LIMIT || runs.length > LIMIT;
+        let limited = census.limited || rows.length > LIMIT || runs.length > LIMIT;
         const targets: WorkStartupRecoveryTarget[] = [];
         for (const row of rows.slice(0, LIMIT)) {
           const leases = db.prepare<[string], LeaseRow>('SELECT * FROM workspace_leases WHERE owner_id = ? ORDER BY resource_kind, resource_key LIMIT 4').all(row.id);
-          const gaps: string[] = [];
+          const gaps: string[] = [...(census.gaps.get(row.id) ?? dispatch.link(row).gaps)];
           if (leases.length !== 3 || leases[0]?.resource_key !== 'global:execution'
             || leases[1]?.resource_key !== `project:${row.project_id}:work` || leases[2]?.resource_kind !== 'workspace') gaps.push('incomplete_resource_group');
           if (leases.some(l => l.project_id !== row.project_id || l.owner_id !== row.id
@@ -94,10 +98,12 @@ export function createSqliteWorkStartupRecoveryStore(session: SqliteStorageSessi
             gaps.push(...previous.gaps);
           } else {
             // Advance the Task fence, never mutate the immutable historical Attempt identity.
-            const changed = db.prepare(`UPDATE tasks SET execution_version = execution_version + 1,
+            const terminal = !['preparing', 'executing', 'verifying', 'interrupted'].includes(row.status);
+            const changed = terminal ? { changes: 0 } : db.prepare(`UPDATE tasks SET execution_version = execution_version + 1,
               revision = revision + 1, updated_at = ? WHERE id = ? AND execution_version = ? AND execution_version < ${Number.MAX_SAFE_INTEGER}`)
               .run(timestamp, row.task_id, row.execution_version);
-            if (changed.changes === 0) gaps.push('task_version_mismatch');
+            if (terminal) gaps.push('terminal_attempt_reconciliation_required');
+            else if (changed.changes === 0) gaps.push('task_version_mismatch');
             if (['preparing', 'executing', 'verifying'].includes(row.status)) {
               db.prepare(`UPDATE attempts SET status = 'interrupted', error_kind = COALESCE(error_kind, 'runtime'),
                 ended_at = COALESCE(ended_at, ?), revision = revision + 1, updated_at = ? WHERE id = ?`)
@@ -117,28 +123,35 @@ export function createSqliteWorkStartupRecoveryStore(session: SqliteStorageSessi
           // A queued authorization with no claim has no old execution to resume. Keep it
           // available after the gate; scanning itself never dispatches it or starts Runtime.
           const hasAttempt = db.prepare('SELECT id FROM attempts WHERE run_id = ? LIMIT 1').get(run.id);
-          if ((run.status === 'queued' && !hasAttempt) || run.status === 'paused' || run.status === 'interrupted') continue;
+          if ((run.status === 'queued' && !hasAttempt) || run.status === 'paused' || run.status === 'interrupted' || run.status === 'cancelling') continue;
           db.prepare(`UPDATE runs SET status = 'interrupted', reason = 'restart_recovery',
             revision = revision + 1, updated_at = ? WHERE id = ?`).run(timestamp, run.id);
           event('run_interrupted', run.project_id, run.id,
             { schemaVersion: 1, reason: 'restart_recovery' });
         }
-        if (limited && !findEvent('scan_limited', 'work-startup-recovery')) {
-          event('scan_limited', null, null, { schemaVersion: 1, limit: LIMIT });
-        }
-        // F-006: recorded stop evidence still needs Git/worktree/recording reconciliation
-        // after a Host restart. Exclude the durable success shape (paused + retained + no leases).
+        // Reuse durable stop observations until Git/workspace/recording reconciliation has completed.
+        // Historical observations for a different current workspace or dispatch generation grant no authority.
         const recordedRows = db.prepare<[], { payload: string }>(`SELECT e.payload FROM state_events e
           JOIN attempts a ON a.id = e.attempt_id
           JOIN runs r ON r.project_id = a.project_id AND r.id = a.run_id
           LEFT JOIN managed_workspaces w ON w.project_id = a.project_id AND w.feature_id = a.feature_id
           WHERE e.event_type = 'work.recovery.updated' AND json_extract(e.payload, '$.phase') = 'recorded'
             AND a.status = 'interrupted'
-            AND NOT (r.status = 'paused' AND w.status = 'retained'
+            AND (w.attempt_id IS NULL OR w.attempt_id = a.id)
+            AND NOT EXISTS (SELECT 1 FROM run_dispatch_claims c WHERE c.run_id = a.run_id
+              AND c.state IN ('held', 'quarantined') AND c.id IS NOT json_extract(
+                (SELECT receipt FROM task_claim_receipts WHERE attempt_id = a.id), '$.dispatch.claimId'))
+            AND NOT (r.status = 'paused' AND COALESCE(w.status, '') = 'retained'
               AND NOT EXISTS (SELECT 1 FROM workspace_leases l WHERE l.owner_id = a.id))
-          ORDER BY e.sequence LIMIT ${LIMIT}`).all();
-        const reconcilable = recordedRows.map(row => JSON.parse(row.payload) as WorkStartupRecoveryEvidence);
-        return { targets, limited, retained: rows.length > 0, reconcilable };
+          ORDER BY e.sequence LIMIT ${LIMIT + 1}`).all();
+        limited ||= recordedRows.length > LIMIT;
+        if (limited && !findEvent('scan_limited', 'work-startup-recovery')) {
+          event('scan_limited', null, null, { schemaVersion: 1, limit: LIMIT });
+        }
+        const reconcilable = recordedRows.slice(0, LIMIT).map(row => JSON.parse(row.payload) as WorkStartupRecoveryEvidence);
+        const pendingIds = new Set([...targets, ...reconcilable].map(target => target.attemptId));
+        const missingEvidence = rows.slice(0, LIMIT).some(row => !pendingIds.has(row.id));
+        return { targets, limited, retained: rows.length > 0, dispatchBlocked: census.blocked || missingEvidence, reconcilable };
       });
     },
     readObservation(target) {

@@ -45,7 +45,7 @@ export function createWorkStartupRecovery(options: WorkStartupRecoveryOptions) {
       }
       for (const evidence of scan.reconcilable) pending.set(evidence.attemptId, evidence);
 
-      let reconciled = true;
+      let reconciled = scan.dispatchBlocked !== true;
       for (const evidence of pending.values()) {
         if (options.reconcile === undefined) { reconciled = false; continue; }
         const result = await options.reconcile(evidence);
@@ -53,7 +53,7 @@ export function createWorkStartupRecovery(options: WorkStartupRecoveryOptions) {
       }
       state = scan.limited ? { status: 'blocked', reason: 'scan_limit' }
         : options.reconcile === undefined
-          ? (scan.retained ? { status: 'blocked', reason: 'workspace_reconciliation_required' }
+          ? (scan.retained || scan.dispatchBlocked ? { status: 'blocked', reason: 'workspace_reconciliation_required' }
             : { status: 'complete', reason: null })
           : (reconciled ? { status: 'complete', reason: null }
             : { status: 'blocked', reason: 'workspace_reconciliation_required' });

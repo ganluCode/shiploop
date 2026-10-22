@@ -268,7 +268,7 @@ export function createExecutionResumeService(deps: ExecutionResumeServiceDeps): 
       run = paused[0]!;
     }
 
-    if (facts.activeAttempts.length > 0 || facts.attemptsWithLeases.length > 0 ||
+    if (facts.dispatchOccupied || facts.activeAttempts.length > 0 || facts.attemptsWithLeases.length > 0 ||
         facts.leases.some(lease => lease.state === 'held' || lease.state === 'quarantined')) {
       return notResumable('occupancy_unresolved');
     }

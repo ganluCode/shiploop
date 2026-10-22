@@ -23,7 +23,7 @@ export interface WorkStartupRecoveryEvidence extends WorkStartupRecoveryTarget {
 export interface WorkStartupRecoveryStore {
   /** Short transaction: scan, quarantine and revoke old write eligibility before process I/O. */
   fence(): { readonly targets: readonly WorkStartupRecoveryTarget[]; readonly limited: boolean;
-    readonly retained: boolean; readonly reconcilable: readonly WorkStartupRecoveryEvidence[] };
+    readonly retained: boolean; readonly dispatchBlocked?: boolean; readonly reconcilable: readonly WorkStartupRecoveryEvidence[] };
   /** Resume Artifact publication from the durable observation, without repeating stop I/O. */
   readObservation(target: WorkStartupRecoveryTarget): WorkStartupRecoveryEvidence | null;
   observed(evidence: WorkStartupRecoveryEvidence, evidenceRef: string | null): void;

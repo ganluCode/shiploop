@@ -41,6 +41,7 @@ export interface ExecutionResumeFacts {
   readonly activeAttempts: readonly AttemptRecord[];
   readonly attemptsWithLeases: readonly AttemptRecord[];
   readonly leases: readonly WorkspaceLeaseRecord[];
+  readonly dispatchOccupied?: boolean;
 }
 
 export interface ExecutionResumeFactsReader {

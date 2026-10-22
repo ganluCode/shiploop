@@ -94,6 +94,12 @@ test/
   通过；既有暂停/取消迁移版本断言按当前迁移清单派生后本地通过。范围与证据见
   [F-006 交接](../docs/p04-9-f006-dispatch-control-settlement.md)。
 
+- `index/phases/P04/features/P04-9/tasks/F-007.json`：启动恢复核对 Run 认领/槽位、
+  Attempt/回执/invocation 与旧资源组；覆盖四类崩溃窗口、快照漂移、恢复事务回滚、
+  旧 owner 围栏、显式恢复占用/原 deadline 和旧库兼容。新增三文件本地 19 项通过，
+  既有恢复/显式恢复文件及真实 Host 强杀用例有定向证据；其余索引范围交 Nezha。
+  实际日志、进程清理与边界见 [F-007 交接](../docs/p04-9-f007-dispatch-startup-recovery.md)。
+
 Task JSON 使用 Nezha v2 schema。当前存量用例首轮按文件显式 `all: true`，
 对应 19 个本 Feature 文件，不包含此前大批历史模块回归。
 部分文件有多个测试类型，暂不凭猜测拆掉其中断言或谎称函数级选择。

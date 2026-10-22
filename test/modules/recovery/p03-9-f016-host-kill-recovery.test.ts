@@ -274,6 +274,11 @@ describe.skipIf(process.platform !== 'darwin')('P03-9 / F-016 real Host kill rec
       { state: 'quarantined' }, { state: 'quarantined' }, { state: 'quarantined' },
     ]);
     expect(recoveryPayloads(probe).some(payload => payload.stopConfirmed === true)).toBe(true);
+    // P04-9 F-007: the restarted Host fences the persisted Run consumer as well as its three resource leases.
+    const dispatch = q(probe, 'SELECT id, claim_version, state FROM run_dispatch_claims');
+    expect(dispatch).toMatchObject({ claim_version: 1, state: 'quarantined' });
+    expect(q(probe, 'SELECT claim_id, claim_version, state FROM execution_slot_claims'))
+      .toEqual({ claim_id: dispatch.id, claim_version: dispatch.claim_version, state: 'quarantined' });
     const diagnostic = await diagnosticOf(fixture, probe, runningAttempt.id);
     expect(diagnostic).toMatchObject({ kind: 'work-recovery-reconciliation', status: 'quarantined' });
     expect(diagnostic.gaps).toEqual(expect.arrayContaining(['recording_watermark_missing']));

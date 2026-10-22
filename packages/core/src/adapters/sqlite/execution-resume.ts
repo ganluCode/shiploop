@@ -15,6 +15,7 @@ import type {
 import { StorageError } from '../../ports/errors.js';
 import type { ExecutionBatchRecord, RunRecord } from '../../ports/execution-store.js';
 import { createSqliteAttemptAccess } from './attempt-store.js';
+import { createSqliteDispatchRecovery } from './dispatch-recovery.js';
 import { createSqliteExecutionAccess } from './execution-store.js';
 import { createSqliteStateAccess } from './state-store.js';
 import { transactSqliteConsistentRead } from './state-store.js';
@@ -98,6 +99,7 @@ export function createSqliteExecutionResumeFactsReader(
           activeAttempts,
           attemptsWithLeases,
           leases,
+          dispatchOccupied: runs.some(run => createSqliteDispatchRecovery(session).resumeBlocked(run.id, now())),
         };
       });
     },
