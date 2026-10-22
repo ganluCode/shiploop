@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 
 type ProcessIdentity = { pid: number; ppid: number; identity: string; zombie: boolean };
 
@@ -8,7 +9,10 @@ function processTable(): ProcessIdentity[] {
   });
   return text.split('\n').flatMap((line) => {
     const match = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(\w{3}\s+\w{3}\s+\d+\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s+(.*)$/.exec(line);
-    return match === null ? [] : [{ pid: Number(match[1]), ppid: Number(match[2]), identity: `${match[4]} ${match[5]}`, zombie: match[3]!.startsWith('Z') }];
+    // Do not retain slices/ropes backed by the entire ps snapshot in long-lived maps.
+    return match === null ? [] : [{ pid: Number(match[1]), ppid: Number(match[2]),
+      identity: createHash('sha256').update(match[4]!).update('\0').update(match[5]!).digest('hex'),
+      zombie: match[3]!.startsWith('Z') }];
   });
 }
 
@@ -20,6 +24,7 @@ export class OwnedProcessTree {
   private lastScanError = 'none';
   private lastRemaining: number[] = [];
   private readonly rootPid: number | undefined;
+  private rootCaptured = false;
 
   constructor(rootPid: number | undefined) {
     this.rootPid = rootPid;
@@ -29,18 +34,33 @@ export class OwnedProcessTree {
   }
 
   private capture(): ProcessIdentity[] {
+    const initial = !this.rootCaptured;
+    this.rootCaptured = true;
     try {
       const rows = processTable();
-      const root = rows.find((row) => row.pid === this.rootPid);
-      if (root !== undefined && !this.owned.has(root.pid)) this.owned.set(root.pid, root.identity);
-      let added = true;
-      while (added) {
-        added = false;
-        for (const row of rows) {
-          const parent = rows.find((item) => item.pid === row.ppid);
-          if (parent !== undefined && this.owned.get(parent.pid) === parent.identity && !this.owned.has(row.pid)) {
-            this.owned.set(row.pid, row.identity);
-            added = true;
+      const byPid = new Map(rows.map(row => [row.pid, row]));
+      const children = new Map<number, ProcessIdentity[]>();
+      for (const row of rows) {
+        const siblings = children.get(row.ppid) ?? [];
+        siblings.push(row);
+        children.set(row.ppid, siblings);
+      }
+      // Prune only after a successful snapshot. Live proven orphans stay tracked.
+      for (const [pid, identity] of this.owned) {
+        const row = byPid.get(pid);
+        if (!row || row.zombie || row.identity !== identity) this.owned.delete(pid);
+      }
+      // Never reacquire the root after exit: the same PID may now belong to another app.
+      if (initial) {
+        const root = this.rootPid === undefined ? undefined : byPid.get(this.rootPid);
+        if (root && !root.zombie) this.owned.set(root.pid, root.identity);
+      }
+      const pending = [...this.owned.keys()];
+      for (let index = 0; index < pending.length; index++) {
+        for (const child of children.get(pending[index]!) ?? []) {
+          if (!child.zombie && !this.owned.has(child.pid)) {
+            this.owned.set(child.pid, child.identity);
+            pending.push(child.pid);
           }
         }
       }
