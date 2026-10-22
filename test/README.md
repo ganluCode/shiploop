@@ -47,6 +47,8 @@ test/
 
 - `index/phases/P04/features/P04-7/tasks/F-008.json`：真实三代写入进程、四层超时、Host SIGKILL 后恢复、身份/停止/flush/过期资源隔离及失败清理证据。本地新增四文件 22 项通过，原 Host-loss 兼容用例精确通过 1 项；其余回归交 Nezha。manifest、类型检查既有错误和 `not_run` 边界见 [F-008 交接](../docs/p04-7-f008-process-resource-matrix.md)。
 
+- `index/phases/P04/features/P04-8/tasks/F-005.json`：恢复来源/权限/副作用政策、标准 Pi 原生写入者与档案故障、恢复水位及用量去重，组合新增真实 SQLite 记录故障/迟到结果 9 项。新增文件本地通过，其余已存在用例交 Nezha 独立复验；数据库故障不代表 Pi 使用 SQLite，范围与证据见 [F-005 矩阵](../docs/p04-8-f005-recovery-recording-matrix.md)。
+
 Task JSON 使用 Nezha v2 schema。当前存量用例首轮按文件显式 `all: true`，
 对应 19 个本 Feature 文件，不包含此前大批历史模块回归。
 部分文件有多个测试类型，暂不凭猜测拆掉其中断言或谎称函数级选择。
