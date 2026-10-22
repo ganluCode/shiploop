@@ -45,6 +45,8 @@ test/
 
 - `index/phases/P04/features/P04-6/tasks/F-007.json`：跨 Attempt 恢复/累计/去重、缓存与模型归属、后台测试与并发阶段耗时，以及真实 SQLite/Host/构建 CLI 的只读、分页、授权和脱敏回归。本地通过与仅登记范围见 [P04-6 交接](../docs/p04-6-f007-cross-scenario-regressions.md)；live 保持 `not_run`。
 
+- `index/phases/P04/features/P04-7/tasks/F-008.json`：真实三代写入进程、四层超时、Host SIGKILL 后恢复、身份/停止/flush/过期资源隔离及失败清理证据。本地新增四文件 22 项通过，原 Host-loss 兼容用例精确通过 1 项；其余回归交 Nezha。manifest、类型检查既有错误和 `not_run` 边界见 [F-008 交接](../docs/p04-7-f008-process-resource-matrix.md)。
+
 Task JSON 使用 Nezha v2 schema。当前存量用例首轮按文件显式 `all: true`，
 对应 19 个本 Feature 文件，不包含此前大批历史模块回归。
 部分文件有多个测试类型，暂不凭猜测拆掉其中断言或谎称函数级选择。

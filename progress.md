@@ -1,3 +1,13 @@
+# P04-7 工作进度
+
+## F-008 — 真实进程/资源故障矩阵与清理证据（2026-10-22）
+
+- 从 `5bc3d84` 延续当前分支，增加三代持续写入进程、真实 SQLite/Git/Artifact 恢复夹具和四个模块测试文件，未改生产代码。覆盖 graceful/cancel、真实 SIGTERM → SIGKILL、父命令退出后仍写入、四层 deadline、Host 两处 SIGKILL 与新连接恢复，以及 PID/PGID/startTime/probe/停止 census/launch receipt/native occupancy/flush/expiry 九项保守隔离负例。所有负例阻止替代 Attempt，物理停止和业务解除隔离分别核对。
+- 最终本地 `test-j4ja3q2_.log` exit 0：四文件 22 passed/0 failed/0 skipped；原 Host-loss 兼容用例 `test-kz4xvrj9.log` exit 0：1 passed/14 skipped。两次完整日志及真实退出码 sidecar 位于当前 Feature workspace `verifications/F-008/runtime-logs/`；RED/中间失败不删除。
+- `test-h5qu8x94.log` 类型检查 exit 1，仅两个未修改文件的三条既有诊断：authorization-contract:131 TS2366，p04-7-f001-stop-diagnostics:57 两条 TS2322。新增代码无类型错误，未绕过检查或改动其他任务。
+- sandbox 外输出主 manifest、acceptance 兼容 cleanup.json、writer 内容/摘要、持久资源库存/表快照、停止/退出/未知证据。最终审计 22 份 manifest、87 个已观察身份和所有受控组均缺席；20 个成功 sandbox 删除，两个预期失败证据 sandbox 保留，符号链接不跟随。审计摘要 `verifications/F-008/manifest-audit.json`，业务 quarantine 不因测试所有权清理而解除。
+- [F-008 交接](docs/p04-7-f008-process-resource-matrix.md) 和 v2 索引登记 14 个真实文件，Harness selection 引用同一索引。除本地四文件及一个兼容用例，其余回归仅选择交 Nezha。未运行全量/组合门禁/Feature 或 Phase/live 验收，无真实模型或外部通知；正式 feature.yaml/task_list 只读。提交与单次 completed 报告以 Git/Nezha 回执为准。
+
 # P04-6 工作进度
 
 ## F-002 — 调用级 Token 用量归一化与多层投影（2026-10-21）
