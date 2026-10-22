@@ -33,6 +33,7 @@ import {
 } from '../../../helpers/p03-6/input-binding-fixture.ts';
 import { createLocalOwnerPrincipal } from '../../../../packages/core/src/ports/authorization.ts';
 import { seedApprovalWaitingVerification } from '../../../helpers/p03-7/approval-continue-seed.ts';
+import { openDeliveryVertical } from '../../../helpers/p03-8/delivery-vertical.ts';
 
 const fakeCatalog = () => createStaticRuntimeCapabilityCatalog([
   { runtimeId: 'fake', providers: [{ providerId: 'test-provider', models: ['fake-model'] }] },
@@ -419,5 +420,64 @@ describe('P04-9 F-010 Host 重建与丢失唤醒', () => {
     expect(await rebuilt.workExecution.close()).toEqual({ closed: true, pendingAttemptIds: [] });
     cores.splice(cores.indexOf(rebuilt), 1);
     rebuilt.close();
+  }, 180_000);
+});
+
+describe('P04-9 F-010 单 Feature 交付兼容', () => {
+  it('[case:single-feature-delivery] 双 Task 经真实提交与 Feature 最终交付结束，派发终态可解释', async () => {
+    const vertical = await openDeliveryVertical({ finalChanges: true });
+    try {
+      await vertical.approve();
+      const receipt = await vertical.finalize();
+      expect(receipt).toMatchObject({
+        status: 'completed',
+        result: { outcome: 'completed', deliveryStatus: 'succeeded' },
+      });
+      // 两个 Task 的验证/受控提交与 Feature 最终提交都只发生一次。
+      const operations = vertical.db.prepare(
+        'SELECT operation_type, status, attempt_id FROM git_operations ORDER BY rowid',
+      ).all() as { operation_type: string; status: string; attempt_id: string | null }[];
+      expect(operations.filter(operation => operation.operation_type === 'task_commit')).toHaveLength(2);
+      expect(operations.filter(operation => operation.operation_type === 'feature_final_commit')).toHaveLength(1);
+      expect(operations.every(operation => ['succeeded', 'no_change'].includes(operation.status))).toBe(true);
+      expect(new Set(operations.filter(operation => operation.operation_type === 'task_commit')
+        .map(operation => operation.attempt_id)).size).toBe(2);
+      expect(vertical.db.prepare('SELECT status, delivery_status FROM features').get())
+        .toMatchObject({ status: 'completed', delivery_status: 'succeeded' });
+      expect(vertical.db.prepare('SELECT status FROM runs').get()).toMatchObject({ status: 'succeeded' });
+      expect(vertical.db.prepare('SELECT status FROM attempts ORDER BY number').all())
+        .toEqual([{ status: 'succeeded' }, { status: 'succeeded' }]);
+      expect(vertical.counts()).toEqual({ runtimeCalls: 2, verificationCalls: 1 });
+      expect(vertical.head()).not.toBe(vertical.initialHead);
+
+      // 终态补扫只做受信结算：归属/槽位移交后无可解释的遗留占槽，不重跑 Task/提交。
+      await vertical.core.workExecution.scan();
+      const dispatch = vertical.core.workExecution.dispatchState(
+        vertical.fixture.projectId, vertical.fixture.runId);
+      // 夹具在最终验证前恢复的 3 份现场租约使归属/槽位按不安全占用隔离，
+      // 原因必须可解释、与槽位一致；不是无原因的遗留占槽。
+      expect(dispatch).toMatchObject({
+        state: 'succeeded', activeAttemptCount: 0, retainedLeaseCount: 3,
+        claimState: 'quarantined', slotState: 'quarantined',
+        claimReason: 'workspace_uncertain_after_terminal',
+        settlement: { decision: 'quarantined', reason: 'workspace_uncertain_after_terminal' },
+      });
+      const heldClaims = vertical.db.prepare(
+        "SELECT id, state, reason FROM run_dispatch_claims WHERE state IN ('held', 'quarantined')",
+      ).all() as { id: string; state: string; reason: string | null }[];
+      const heldSlots = vertical.db.prepare(
+        "SELECT id, state, reason FROM execution_slot_claims WHERE state IN ('held', 'quarantined')",
+      ).all() as { id: string; state: string; reason: string | null }[];
+      expect(heldClaims).toHaveLength(1);
+      expect(heldClaims[0]).toMatchObject({ state: 'quarantined', reason: 'workspace_uncertain_after_terminal' });
+      expect(heldSlots).toHaveLength(1);
+      expect(heldSlots[0]).toMatchObject({ state: 'quarantined', reason: 'workspace_uncertain_after_terminal' });
+      expect(vertical.counts()).toEqual({ runtimeCalls: 2, verificationCalls: 1 });
+      expect(operations).toEqual(vertical.db.prepare(
+        'SELECT operation_type, status, attempt_id FROM git_operations ORDER BY rowid',
+      ).all());
+    } finally {
+      await vertical.close();
+    }
   }, 180_000);
 });
