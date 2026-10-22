@@ -1276,7 +1276,7 @@ const EXECUTION_DIAGNOSTICS_BLOCK = [
 ].join('\n');
 
 const EXECUTION_HELP = [
-  'usage: shiploop execution <preview|start|budget|revise|schedule|attempts|diagnostics|sessions|session|session-evidence|cancel|pause|resume|retry-final|control|batch-control|recovery> [options]',
+  'usage: shiploop execution <preview|start|budget|revise|schedule|attempts|diagnostics|dispatch|sessions|session|session-evidence|cancel|pause|resume|retry-final|control|batch-control|recovery> [options]',
   '',
   '执行授权命令（单 Feature 显式授权与持久预算）：',
   '  execution preview <featureId> --project <id> --input <file>             执行预览（只读，不是授权）',
@@ -1291,6 +1291,8 @@ const EXECUTION_HELP = [
   '                                                                          Task 的 Attempt 归属与审计（只读）',
   '  execution diagnostics <attemptId> --project <id> [--limit <int>] [--cursor <c>]',
   '                                                                          Attempt 迟到/越权通知诊断（只读）',
+  '  execution dispatch --project <id> [--limit <int>] [--cursor <c>]        ',
+  '                                                                          派发队列/槽位占用与阻塞原因（只读）',
   '  execution sessions --project <id> (--run <runId> | --task <taskId>) [--limit <int>] [--cursor <c>]',
   '                                                                          Work Session 列表（只读）',
   '  execution session <attemptId> --project <id>                            Runtime 结果/停止证据/缺口/制品引用',
@@ -1492,6 +1494,32 @@ const EXECUTION_DIAGNOSTICS_HELP = [
   '  --json           stdout 只输出结果 JSON；诊断到 stderr',
   '',
   EXECUTION_DIAGNOSTICS_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const EXECUTION_DISPATCH_HELP = [
+  'usage: shiploop execution dispatch --project <id> [--limit <int>] [--cursor <c>]',
+  '                                       [--data-root <abs>] [--json]',
+  '',
+  '派发队列与执行槽位只读查询（execution.dispatch.list）：显示全局槽位摘要（容量、',
+  '活动/隔离计数、本项活动数、跨项目占用的布尔摘要）、每个 Run 的派发事实（派生状态、',
+  '是否有可用槽位）与当前认领/槽位/活动或最近 Attempt 身份，并给出可理解的等待/隔离',
+  '原因（等待槽位、认领/槽位隔离、缺少可核对归属、租约到期未核实、暂停/取消/中断）。',
+  '- 只读：不认领、不扣预算、不续租、不唤醒执行、不释放或改写槽位；没有 SQL、',
+  '  owner/version 直设或释放槽位的入口；',
+  '- 跨项目占用只返回布尔摘要，不返回其他项目/Run/认领/owner/host 身份；',
+  '- Runtime 正常返回、Attempt succeeded 或已占槽均不等于验证通过或交付成功：',
+  '  本查询只是持久事实的只读投影，不代表验收结论；',
+  '- 复用有界分页（默认 50、上限 200）与受控 plcur_v1_ 游标（跨项目/跨根重放',
+  '  一律 invalid_cursor）；重复查询零副作用。',
+  '',
+  '选项：',
+  '  --project <id>   项目 ID（必填，UUID v4）',
+  '  --limit <int>    每页条数 1..200（默认 50）',
+  '  --cursor <c>     上一页返回的 nextCursor（不透明）',
+  '  --json           stdout 只输出结果 JSON；诊断到 stderr',
+  '',
   EXIT_CODE_BLOCK,
   '',
 ].join('\n');
@@ -1987,6 +2015,7 @@ const HELP_BY_SCOPE: Readonly<Record<AppHelpScope, string>> = Object.freeze({
   'execution.schedule': EXECUTION_SCHEDULE_HELP,
   'execution.attempts': EXECUTION_ATTEMPTS_HELP,
   'execution.diagnostics': EXECUTION_DIAGNOSTICS_HELP,
+  'execution.dispatch': EXECUTION_DISPATCH_HELP,
   'execution.sessions': EXECUTION_SESSIONS_HELP,
   'execution.session': EXECUTION_SESSION_HELP,
   'execution.session-evidence': EXECUTION_SESSION_EVIDENCE_HELP,

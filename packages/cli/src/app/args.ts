@@ -103,6 +103,7 @@ export type AppCliCommandId =
   | 'execution.schedule'
   | 'execution.attempts'
   | 'execution.diagnostics'
+  | 'execution.dispatch'
   | 'execution.sessions'
   | 'execution.session'
   | 'execution.session-evidence'
@@ -179,6 +180,7 @@ export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'execution.schedule',
   'execution.attempts',
   'execution.diagnostics',
+  'execution.dispatch',
   'execution.sessions',
   'execution.session',
   'execution.session-evidence',
@@ -1013,6 +1015,18 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
     maxPositionals: 1,
     positionalFields: ['attemptId'],
   },
+  /* P04-9 / F-009 派发队列与执行槽位只读查询：只接受项目与既有分页；
+   * 无位置参数，也不接受 owner/version/capacity 或释放槽位等写意图。 */
+  'execution.dispatch': {
+    command: 'execution',
+    commandId: 'execution.dispatch',
+    valueFlags: ['--project', '--limit', '--cursor'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 0,
+    maxPositionals: 0,
+    positionalFields: [],
+  },
   /* P03-6 / F-013 Work Session 状态/证据查询与 Attempt 取消（实际 Host 公共
    * 契约的参数映射；sessions 的父级 Run/Task 二选一，取消必须 --confirm）。 */
   'execution.sessions': {
@@ -1297,6 +1311,7 @@ const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, A
       schedule: 'execution.schedule',
       attempts: 'execution.attempts',
       diagnostics: 'execution.diagnostics',
+      dispatch: 'execution.dispatch',
       sessions: 'execution.sessions',
       session: 'execution.session',
       'session-evidence': 'execution.session-evidence',
@@ -2562,6 +2577,23 @@ export interface ParsedExecutionDiagnostics {
 }
 
 /**
+ * P04-9 / F-009 派发队列与执行槽位只读查询（execution.dispatch；经 HostClient
+ * execution.dispatch.list）：项目有界分页 + 槽位摘要，不认领、不扣额、
+ * 不唤醒执行、不释放或改写槽位。
+ */
+export interface ParsedExecutionDispatch {
+  readonly kind: 'command';
+  readonly command: 'execution';
+  readonly commandId: 'execution.dispatch';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+
+/**
  * P03-6 / F-013 Work Session 列表（execution.sessions.list）：父级 Run/Task
  * 二选一（--run/--task，同现或缺失均本地拒绝）；有界分页同计划列表。
  */
@@ -3026,6 +3058,7 @@ export type ParsedAppCliCommand =
   | ParsedExecutionSchedule
   | ParsedExecutionAttempts
   | ParsedExecutionDiagnostics
+  | ParsedExecutionDispatch
   | ParsedExecutionSessions
   | ParsedExecutionSession
   | ParsedExecutionSessionEvidence
@@ -3591,6 +3624,15 @@ function buildExecution(
         commandId: 'execution.diagnostics',
         projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
         attemptId: requireAttemptId(scan.positionals[0] as string, state),
+        ...optionalPlanListPage(scan, state),
+      };
+    }
+    case 'execution.dispatch': {
+      return {
+        ...base,
+        command: 'execution',
+        commandId: 'execution.dispatch',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
         ...optionalPlanListPage(scan, state),
       };
     }

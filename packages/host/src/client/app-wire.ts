@@ -75,6 +75,11 @@ import {
   validateRunFinalizationScope,
   TASK_STATUSES,
   EXECUTION_BUDGET_BLOCK_REASONS,
+  // P04-9 / F-009：派发投影线校验用冻结词汇（同一来源，不复制第二份枚举）。
+  DISPATCH_BLOCKING_REASONS,
+  DISPATCH_DISPLAY_STATES,
+  RUN_DISPATCH_CLAIM_ORIGINS,
+  RUN_DISPATCH_CLAIM_STATES,
   // P03-7 / F-013：Task 证据/人审/返工链线校验用冻结词汇。
   TASK_MACHINE_STATUSES,
   TASK_MACHINE_REASONS,
@@ -103,6 +108,7 @@ import {
 import type {
   AttemptDiagnosticsResult,
   AttemptListResult,
+  DispatchQueueListResult,
   PublicTaskApprovalArtifactRef,
   TaskApprovalItemListResult,
   TaskReworkChainListResult,
@@ -179,6 +185,16 @@ export type {
   RunScheduleStatusResult,
   AttemptListResult,
   AttemptDiagnosticsResult,
+} from 'shiploop-core/protocol';
+
+/** P04-9 / F-009：派发队列与执行槽位只读投影形状经公共面再导出。 */
+export type {
+  DispatchQueueListResult,
+  PublicDispatchAttemptView,
+  PublicDispatchClaimView,
+  PublicDispatchQueueRecord,
+  PublicDispatchSlotSummary,
+  PublicDispatchSlotView,
 } from 'shiploop-core/protocol';
 
 /** P03-7 / F-013：Task 证据/人审/返工链查询结果形状经公共面再导出。 */
@@ -293,7 +309,10 @@ export type AppQueryOperation =
   // 结果查询（与 Core EXECUTION_CONTROL_QUERY_OPERATIONS 同源）。
   | 'execution.run.control.get'
   | 'execution.batch.control.get'
-  | 'execution.run.recovery.get';
+  | 'execution.run.recovery.get'
+  // P04-9 / F-009：派发队列与槽位只读投影（与 Core
+  // EXECUTION_DISPATCH_QUERY_OPERATIONS 同源）。
+  | 'execution.dispatch.list';
 
 function malformed(operation: HostOperation, reason: string): never {
   throw new HostProtocolError('response_malformed', operation, 'Host 响应不符合线协议', {
@@ -3797,6 +3816,227 @@ export function validateAttemptDiagnosticsResultWire(
 }
 
 /* ------------------------------------------------------------------ *
+ * P04-9 / F-009 派发队列与执行槽位投影线校验
+ *（冻结字段集精确键校验；跨项目只允许布尔摘要；无任何写字段）
+ * ------------------------------------------------------------------ */
+
+function validateDispatchSlotSummaryWire(operation: HostOperation, value: unknown): void {
+  const summary = requirePlain(operation, value);
+  exactKeys(operation, summary, [
+    'capacity',
+    'activeCount',
+    'availableCount',
+    'quarantinedCount',
+    'projectActiveCount',
+    'otherProjectActive',
+  ]);
+  requirePositiveInteger(operation, summary.capacity);
+  for (const key of [
+    'activeCount',
+    'availableCount',
+    'quarantinedCount',
+    'projectActiveCount',
+  ] as const) {
+    requireNonNegativeInteger(operation, summary[key]);
+  }
+  if (typeof summary.otherProjectActive !== 'boolean') {
+    malformed(operation, 'execution_dispatch_slots_invalid');
+  }
+}
+
+function validateDispatchClaimViewWire(operation: HostOperation, value: unknown): void {
+  const claim = requirePlain(operation, value);
+  exactKeys(operation, claim, [
+    'claimId',
+    'claimVersion',
+    'origin',
+    'resumedFromClaimId',
+    'resumedFromClaimVersion',
+    'ownerId',
+    'hostInstanceId',
+    'state',
+    'acquiredAt',
+    'leaseUntil',
+    'settledAt',
+    'reason',
+  ]);
+  requireStableId(operation, claim.claimId);
+  requirePositiveInteger(operation, claim.claimVersion);
+  if (!(RUN_DISPATCH_CLAIM_ORIGINS as readonly unknown[]).includes(claim.origin)) {
+    malformed(operation, 'execution_dispatch_claim_invalid');
+  }
+  requireStableIdOrNull(operation, claim.resumedFromClaimId);
+  if (claim.resumedFromClaimVersion !== null) {
+    requirePositiveInteger(operation, claim.resumedFromClaimVersion);
+  }
+  requireNonEmptyString(operation, claim.ownerId, 'execution_dispatch_claim_invalid');
+  requireNonEmptyString(operation, claim.hostInstanceId, 'execution_dispatch_claim_invalid');
+  if (!(RUN_DISPATCH_CLAIM_STATES as readonly unknown[]).includes(claim.state)) {
+    malformed(operation, 'execution_dispatch_claim_invalid');
+  }
+  if (!isIsoUtcDateTime(claim.acquiredAt) || !isIsoUtcDateTime(claim.leaseUntil)) {
+    malformed(operation, 'execution_schedule_date_invalid');
+  }
+  requireIsoUtcOrNull(operation, claim.settledAt);
+  if (claim.reason !== null && typeof claim.reason !== 'string') {
+    malformed(operation, 'execution_dispatch_claim_invalid');
+  }
+}
+
+function validateDispatchSlotViewWire(operation: HostOperation, value: unknown): void {
+  const slot = requirePlain(operation, value);
+  exactKeys(operation, slot, [
+    'slotId',
+    'slotIndex',
+    'claimId',
+    'claimVersion',
+    'ownerId',
+    'hostInstanceId',
+    'state',
+    'acquiredAt',
+    'leaseUntil',
+    'releasedAt',
+    'reason',
+  ]);
+  requireStableId(operation, slot.slotId);
+  requireNonNegativeInteger(operation, slot.slotIndex);
+  requireStableId(operation, slot.claimId);
+  requirePositiveInteger(operation, slot.claimVersion);
+  requireNonEmptyString(operation, slot.ownerId, 'execution_dispatch_slot_invalid');
+  requireNonEmptyString(operation, slot.hostInstanceId, 'execution_dispatch_slot_invalid');
+  if (!(RUN_DISPATCH_CLAIM_STATES as readonly unknown[]).includes(slot.state)) {
+    malformed(operation, 'execution_dispatch_slot_invalid');
+  }
+  if (!isIsoUtcDateTime(slot.acquiredAt) || !isIsoUtcDateTime(slot.leaseUntil)) {
+    malformed(operation, 'execution_schedule_date_invalid');
+  }
+  requireIsoUtcOrNull(operation, slot.releasedAt);
+  if (slot.reason !== null && typeof slot.reason !== 'string') {
+    malformed(operation, 'execution_dispatch_slot_invalid');
+  }
+}
+
+/** 关联 Attempt 摘要（executionStage 原样展示，不代表验收通过）。 */
+function validateDispatchAttemptViewWire(operation: HostOperation, value: unknown): void {
+  const attempt = requirePlain(operation, value);
+  exactKeys(operation, attempt, [
+    'id',
+    'taskId',
+    'number',
+    'status',
+    'executionStage',
+    'ownerId',
+    'executionVersion',
+    'startedAt',
+    'endedAt',
+    'exitCode',
+    'durationMs',
+  ]);
+  requireStableId(operation, attempt.id);
+  requireStableId(operation, attempt.taskId);
+  requirePositiveInteger(operation, attempt.number);
+  if (!(ATTEMPT_STATUSES as readonly unknown[]).includes(attempt.status)) {
+    malformed(operation, 'execution_attempt_status_invalid');
+  }
+  if (!(ATTEMPT_EXECUTION_STAGES as readonly unknown[]).includes(attempt.executionStage)) {
+    malformed(operation, 'execution_attempt_stage_invalid');
+  }
+  requireNonEmptyString(operation, attempt.ownerId, 'execution_dispatch_attempt_invalid');
+  requireNonNegativeInteger(operation, attempt.executionVersion);
+  requireIsoUtcOrNull(operation, attempt.startedAt);
+  requireIsoUtcOrNull(operation, attempt.endedAt);
+  if (attempt.exitCode !== null && !Number.isSafeInteger(attempt.exitCode)) {
+    malformed(operation, 'execution_dispatch_attempt_invalid');
+  }
+  requireNonNegativeIntegerOrNull(operation, attempt.durationMs);
+}
+
+/** execution.dispatch.list：派发队列 + 槽位摘要只读投影（无写字段）。 */
+export function validateDispatchQueueListResultWire(
+  value: unknown,
+  operation: HostOperation = 'execution.dispatch.list',
+): DispatchQueueListResult {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, ['schemaVersion', 'scope', 'slots', 'records', 'nextCursor', 'limit']);
+  if (object.schemaVersion !== WIRE_MESSAGE_SCHEMA_VERSION) {
+    if (typeof object.schemaVersion === 'number') {
+      unsupportedVersion(operation, 'schemaVersion');
+    }
+    malformed(operation, 'list_schema_version_invalid');
+  }
+  if (object.scope !== 'dispatch-queue') {
+    malformed(operation, 'list_scope_invalid');
+  }
+  validateDispatchSlotSummaryWire(operation, object.slots);
+  if (!Array.isArray(object.records)) {
+    malformed(operation, 'list_records_invalid');
+  }
+  for (const value of object.records as unknown[]) {
+    const record = requirePlain(operation, value);
+    exactKeys(operation, record, [
+      'runId',
+      'projectId',
+      'featureId',
+      'runStatus',
+      'runReason',
+      'dispatchOrdinal',
+      'state',
+      'blockingReason',
+      'claim',
+      'slot',
+      'activeAttempt',
+      'latestAttempt',
+      'attemptCount',
+      'createdAt',
+      'startedAt',
+      'endedAt',
+      'pauseRequestedAt',
+    ]);
+    requireStableId(operation, record.runId);
+    requireStableId(operation, record.projectId);
+    requireStableId(operation, record.featureId);
+    if (!(EXECUTION_RUN_STATUSES as readonly unknown[]).includes(record.runStatus)) {
+      malformed(operation, 'execution_schedule_status_invalid');
+    }
+    if (record.runReason !== null && typeof record.runReason !== 'string') {
+      malformed(operation, 'execution_dispatch_record_invalid');
+    }
+    requireNonNegativeInteger(operation, record.dispatchOrdinal);
+    if (!(DISPATCH_DISPLAY_STATES as readonly unknown[]).includes(record.state)) {
+      malformed(operation, 'execution_dispatch_state_invalid');
+    }
+    if (
+      record.blockingReason !== null &&
+      !(DISPATCH_BLOCKING_REASONS as readonly unknown[]).includes(record.blockingReason)
+    ) {
+      malformed(operation, 'execution_dispatch_reason_invalid');
+    }
+    if (record.claim !== null) {
+      validateDispatchClaimViewWire(operation, record.claim);
+    }
+    if (record.slot !== null) {
+      validateDispatchSlotViewWire(operation, record.slot);
+    }
+    if (record.activeAttempt !== null) {
+      validateDispatchAttemptViewWire(operation, record.activeAttempt);
+    }
+    if (record.latestAttempt !== null) {
+      validateDispatchAttemptViewWire(operation, record.latestAttempt);
+    }
+    requireNonNegativeInteger(operation, record.attemptCount);
+    if (!isIsoUtcDateTime(record.createdAt)) {
+      malformed(operation, 'execution_schedule_date_invalid');
+    }
+    requireIsoUtcOrNull(operation, record.startedAt);
+    requireIsoUtcOrNull(operation, record.endedAt);
+    requireIsoUtcOrNull(operation, record.pauseRequestedAt);
+  }
+  requirePlanCursorOrNull(operation, object.nextCursor);
+  requirePositiveInteger(operation, object.limit);
+  return object as unknown as DispatchQueueListResult;
+}
+
+/* ------------------------------------------------------------------ *
  * P03-7 / F-013 Task 机器证据/人审事项/有限返工链查询线校验
  *（冻结字段集精确键校验；机器 passed 不折算为有效 Task passed；未知退出/
  *  耗时保持 null；代码资格记账不把基础设施错误折算为代码额度消耗）
@@ -5518,6 +5758,12 @@ export function validateAppQueryResponse(
   body: unknown,
   expectation?: SnapshotExpectation,
 ): AttemptDiagnosticsResult;
+// P04-9 / F-009：派发队列与执行槽位只读投影响应重载。
+export function validateAppQueryResponse(
+  operation: 'execution.dispatch.list',
+  body: unknown,
+  expectation?: SnapshotExpectation,
+): DispatchQueueListResult;
 // P03-7 / F-013：Task 证据/人审/返工链查询响应重载。
 export function validateAppQueryResponse(
   operation: 'execution.task.verification.get',
@@ -5749,6 +5995,9 @@ export function validateAppQueryResponse(
       return validateAttemptListResultWire(body, operation);
     case 'execution.attempt.diagnostics':
       return validateAttemptDiagnosticsResultWire(body, operation);
+    // P04-9 / F-009：派发队列与槽位投影响应分发（同一冻结字段集纪律）。
+    case 'execution.dispatch.list':
+      return validateDispatchQueueListResultWire(body, operation);
     // P03-7 / F-013：Task 证据/人审/返工链查询响应分发（同一冻结字段集纪律）。
     case 'execution.task.verification.get':
       return validateTaskVerificationResultWire(body, operation);

@@ -114,33 +114,39 @@ export interface ExecutionSlotClaimRecord {
 /**
  * 展示状态：优先复用 Run 领域状态，只额外表达排队事实。
  * `waiting_slot`=已授权等待空槽；`blocked`=认领/占用需要人工核对（原因见下）。
+ *
+ * 独立导出冻结词汇（F-009）：Host 响应解码只复用该来源，不复制第二份枚举。
  */
-export type DispatchDisplayState =
-  | 'queued'
-  | 'waiting_slot'
-  | 'claimed'
-  | 'running'
-  | 'blocked'
-  | 'pausing'
-  | 'paused'
-  | 'cancelling'
-  | 'interrupted'
-  | 'succeeded'
-  | 'failed'
-  | 'cancelled';
+export const DISPATCH_DISPLAY_STATES = [
+  'queued',
+  'waiting_slot',
+  'claimed',
+  'running',
+  'blocked',
+  'pausing',
+  'paused',
+  'cancelling',
+  'interrupted',
+  'succeeded',
+  'failed',
+  'cancelled',
+] as const;
+export type DispatchDisplayState = (typeof DISPATCH_DISPLAY_STATES)[number];
 
 /** 可理解阻塞原因（有界枚举；不是可编辑的第二套状态）。 */
-export type DispatchBlockingReason =
-  | 'execution_slot_unavailable'
-  | 'claim_quarantined'
-  | 'claim_lease_expired_unverified'
-  | 'slot_quarantined'
-  | 'slot_ownership_missing'
-  | 'slot_identity_mismatch'
-  | 'claim_attempt_identity_mismatch'
-  | 'run_paused'
-  | 'run_cancelling'
-  | 'run_interrupted';
+export const DISPATCH_BLOCKING_REASONS = [
+  'execution_slot_unavailable',
+  'claim_quarantined',
+  'claim_lease_expired_unverified',
+  'slot_quarantined',
+  'slot_ownership_missing',
+  'slot_identity_mismatch',
+  'claim_attempt_identity_mismatch',
+  'run_paused',
+  'run_cancelling',
+  'run_interrupted',
+] as const;
+export type DispatchBlockingReason = (typeof DISPATCH_BLOCKING_REASONS)[number];
 
 /** 展示派生输入：Run 状态 + 当前认领/槽位 + 活动 Attempt 身份 + 空槽事实。 */
 export interface RunDispatchDisplayFacts {

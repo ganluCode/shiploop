@@ -184,6 +184,9 @@ export const APPLICATION_QUERY_CAPABILITIES = [
   'execution.run.control.get',
   'execution.batch.control.get',
   'execution.run.recovery.get',
+  // P04-9 / F-009：派发队列与执行槽位只读投影真实接线（能力位复用
+  // project.read；与 Core EXECUTION_DISPATCH_QUERY_OPERATIONS 同步，不漂移）。
+  'execution.dispatch.list',
 ] as const;
 
 /**

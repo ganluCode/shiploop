@@ -59,7 +59,7 @@ import {
   validateStopResultView,
   verifyStopRequestDigest,
 } from '../../../packages/host/src/index.ts';
-import { COMMAND_OPERATIONS, EXECUTION_CONTROL_QUERY_OPERATIONS, EXECUTION_SCHEDULE_QUERY_OPERATIONS, FEATURE_DELIVERY_QUERY_OPERATIONS, GIT_OPERATION_QUERY_OPERATIONS, PLAN_APPROVAL_QUERY_OPERATION, PLAN_QUERY_OPERATIONS, QUERY_OPERATIONS, TASK_EVIDENCE_QUERY_OPERATIONS } from '../../../packages/core/src/index.ts';
+import { COMMAND_OPERATIONS, EXECUTION_CONTROL_QUERY_OPERATIONS, EXECUTION_DISPATCH_QUERY_OPERATIONS, EXECUTION_SCHEDULE_QUERY_OPERATIONS, FEATURE_DELIVERY_QUERY_OPERATIONS, GIT_OPERATION_QUERY_OPERATIONS, PLAN_APPROVAL_QUERY_OPERATION, PLAN_QUERY_OPERATIONS, QUERY_OPERATIONS, TASK_EVIDENCE_QUERY_OPERATIONS } from '../../../packages/core/src/index.ts';
 import type {
   HostDiscoveryRecord,
   HostErrorCode,
@@ -231,6 +231,9 @@ describe('F-002 冻结常量与能力声明', () => {
           'execution.sessions.list',
           'execution.session.get',
           'execution.session.evidence.get',
+          // P04-5 / F-007：Work 公开记录索引/有界正文只读查询真实接线。
+          'execution.recording.list',
+          'execution.recording.body.get',
           'projects.list',
           'projects.get',
           'projects.binding.get',
@@ -282,6 +285,8 @@ describe('F-002 冻结常量与能力声明', () => {
           'execution.run.control.get',
           'execution.batch.control.get',
           'execution.run.recovery.get',
+          // P04-9 / F-009：派发队列/执行槽位只读投影真实接线（无写入口）。
+          'execution.dispatch.list',
         ],
         events: { transport: 'sse', route: '/v1/events', scopes: ['project', 'global'] },
       },
@@ -303,6 +308,9 @@ describe('F-002 冻结常量与能力声明', () => {
       'execution.sessions.list',
       'execution.session.get',
       'execution.session.evidence.get',
+      // P04-5 / F-007：Work 公开记录索引/有界正文只读查询真实接线。
+      'execution.recording.list',
+      'execution.recording.body.get',
       ...QUERY_OPERATIONS.slice(0, 4),
       'projects.inspect',
       'projects.overview',
@@ -324,6 +332,9 @@ describe('F-002 冻结常量与能力声明', () => {
       ...FEATURE_DELIVERY_QUERY_OPERATIONS,
       'features.report.get',
       ...EXECUTION_CONTROL_QUERY_OPERATIONS,
+      // P04-9 / F-009：派发队列/执行槽位只读投影（与 Core
+      // EXECUTION_DISPATCH_QUERY_OPERATIONS 同步，无写入口）。
+      ...EXECUTION_DISPATCH_QUERY_OPERATIONS,
     ]);
     expect(CURRENT_HOST_CAPABILITIES.application.commands).toContain('baseline.cancel');
     expect(CURRENT_HOST_CAPABILITIES.application.queries).toContain('baselines.list');

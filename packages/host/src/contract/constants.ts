@@ -138,6 +138,14 @@ export const ATTEMPTS_ROUTE = '/v1/attempts';
 export const ATTEMPTS_ROUTE_PREFIX = '/v1/attempts/';
 export const ATTEMPT_DIAGNOSTICS_ROUTE_SUFFIX = 'diagnostics';
 /**
+ * P04-9 / F-009：执行派发队列与槽位摘要只读查询路由（GET + Bearer；与 Core
+ * EXECUTION_DISPATCH_QUERY_OPERATIONS 一一对应）。
+ * - GET /v1/dispatch-queue?projectId=&limit?=&cursor?=（集合根 + 必填
+ *   projectId，与 /v1/attempts 同一冻结形态；分页 limit/cursor 复用计划规范）；
+ * 只读：不认领、不扣预算、不唤醒执行、不释放/改写槽位，没有任何写入口。
+ */
+export const DISPATCH_QUEUE_ROUTE = '/v1/dispatch-queue';
+/**
  * P03-5 / F-011：工作区状态只读查询路由（全部 GET + Bearer；与 Core
  * WORKSPACE_QUERY_OPERATIONS 一一对应，docs/p03-5-workspace-host-integration-contract.md §4）。
  * - GET /v1/workspaces?projectId=&featureId?=&limit?=&cursor?=（集合根 +

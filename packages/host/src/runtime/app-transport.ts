@@ -60,6 +60,7 @@ import {
   ARTIFACTS_ROUTE_PREFIX,
   BASELINES_ROUTE_PREFIX,
   COMMANDS_ROUTE,
+  DISPATCH_QUEUE_ROUTE,
   EVENTS_ROUTE,
   FEATURE_APPROVALS_ROUTE_SUFFIX,
   FEATURE_DELIVERY_ROUTE_SUFFIX,
@@ -178,7 +179,10 @@ export type ApplicationOperation =
   // 查询（与 Core EXECUTION_CONTROL_QUERY_OPERATIONS 同源）。
   | 'execution.run.control.get'
   | 'execution.batch.control.get'
-  | 'execution.run.recovery.get';
+  | 'execution.run.recovery.get'
+  // P04-9 / F-009：派发队列与执行槽位只读投影（与 Core
+  // EXECUTION_DISPATCH_QUERY_OPERATIONS 同源；无写入口）。
+  | 'execution.dispatch.list';
 
 /** 已解析的应用路由（path 形态匹配；路径参数为未解码原始片段）。 */
 export interface ResolvedAppRoute {
@@ -352,6 +356,9 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
   // 成员身份由 Core 校验，绝不接受任意文件路径）。
   if (path === '/v1/work-recordings') return { operation: 'execution.recording.list', method: 'GET' };
   if (path === '/v1/work-recordings/body') return { operation: 'execution.recording.body.get', method: 'GET' };
+  // P04-9 / F-009：GET /v1/dispatch-queue（集合根 + 必填 projectId + 分页）；
+  // 其他嵌套/多段形态一律未匹配 → 404 unknown_operation（无子资源/写入口）。
+  if (path === DISPATCH_QUEUE_ROUTE) return { operation: 'execution.dispatch.list', method: 'GET' };
   if (path === ATTEMPTS_ROUTE) {
     return { operation: 'execution.attempts.list', method: 'GET' };
   }
@@ -697,6 +704,12 @@ const QUERY_SPECS: Readonly<Partial<Record<ApplicationOperation, QuerySpec>>> = 
     repeatable: [],
   }),
   'execution.attempt.diagnostics': Object.freeze({
+    allowed: ['projectId', 'limit', 'cursor'],
+    repeatable: [],
+  }),
+  // P04-9 / F-009：派发队列查询参数白名单（只读；容量/owner/version/释放
+  // 等可写意图不在白名单内，一律 400；取值规则由 Core 单一权威复核）。
+  'execution.dispatch.list': Object.freeze({
     allowed: ['projectId', 'limit', 'cursor'],
     repeatable: [],
   }),
@@ -1208,6 +1221,15 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
       result = await app.queryService.listAttemptDiagnostics(app.principal, query);
       break;
     }
+    // P04-9 / F-009：派发队列与槽位只读投影分发（本层只做形态转换；授权/
+    // 可见性折叠/分页范围/游标绑定由 Core 单一权威复核；查询零写入，不认领、
+    // 不扣预算、不唤醒执行、不释放槽位）。
+    case 'execution.dispatch.list':
+      result = await app.queryService.listExecutionDispatchQueue(
+        app.principal,
+        buildPlanListQuery(params, operation, 'projectId'),
+      );
+      break;
     // P03-7 / F-013：Task 机器证据/人审/返工链查询分发（本层只做形态转换；
     // 授权/可见性折叠/分页范围/游标绑定全部由 Core 单一权威复核；跨项目与
     // 不存在目标统一 not_found，不区分存在性）。

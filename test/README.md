@@ -107,6 +107,13 @@ test/
   单槽位与计划分页文件本地通过。范围与证据见
   [F-008 交接](../docs/p04-9-f008-dispatch-slot-query.md)；Host/CLI 接线属 F-009。
 
+- `index/phases/P04/features/P04-9/tasks/F-009.json`：派发/槽位查询接入 Host、HostClient 与 CLI。
+  覆盖真实 Host/HostClient 读取 Core 投影（派生状态用同一规则复核）、槽位摘要与跨项目
+  布尔摘要、未认证/未知参数/可写意图拒绝、客户端解码冻结形状、CLI 参数与结构化/文本
+  输出（等待/隔离原因与不验收边界），以及有界构建 CLI 的临时 Host 场景。新增三个文件
+  35 项本地通过；五个既有回归文件本地通过，另两个 Core 契约文件本地通过。范围与证据见
+  [F-009 交接](../docs/p04-9-f009-dispatch-query-wiring.md)。
+
 Task JSON 使用 Nezha v2 schema。当前存量用例首轮按文件显式 `all: true`，
 对应 19 个本 Feature 文件，不包含此前大批历史模块回归。
 部分文件有多个测试类型，暂不凭猜测拆掉其中断言或谎称函数级选择。

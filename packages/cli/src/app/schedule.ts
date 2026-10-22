@@ -18,6 +18,9 @@
 import type {
   AttemptDiagnosticsResult,
   AttemptListResult,
+  DispatchQueueListResult,
+  PublicDispatchQueueRecord,
+  PublicDispatchSlotSummary,
   RunScheduleStatusResult,
 } from 'shiploop-host';
 
@@ -285,5 +288,157 @@ export function formatExecutionDiagnosticsView(view: ExecutionDiagnosticsView): 
     );
   }
   lines.push(`  （诊断只保留同项目 Attempt 链接、摘要、固定原因与时间；不保留原通知正文/身份/路径）`, '');
+  return lines.join('\n');
+}
+
+/* ------------------------------------------------------------------ *
+ * execution.dispatch（派发队列与执行槽位只读投影）视图
+ *
+ * 只展示 F-008 已派生的持久事实（Run/认领/槽位/Attempt）与槽位摘要：
+ * - 槽位摘要是全局计数 + 跨项目布尔，不展开其他项目/Run/owner 身份；
+ * - 等待/隔离原因复用 Core 冻结词汇，转成可理解中文说明（不新增状态）；
+ * - Runtime 正常返回、Attempt succeeded 或占槽一律不是验证通过或交付成功。
+ * ------------------------------------------------------------------ */
+
+type DispatchBlockingReason = NonNullable<PublicDispatchQueueRecord['blockingReason']>;
+
+/** 等待/隔离分类（只读投影；不落库、不是第二套状态）。 */
+export type DispatchWaitCategory = 'none' | 'slot' | 'isolation' | 'control';
+
+interface DispatchReasonExplanation {
+  readonly category: DispatchWaitCategory;
+  readonly text: string;
+}
+
+/** 有界阻塞原因 → 可理解说明（与 Core 冻结词汇一一对应）。 */
+const DISPATCH_REASON_EXPLANATIONS: Readonly<
+  Record<DispatchBlockingReason, DispatchReasonExplanation>
+> = {
+  execution_slot_unavailable: {
+    category: 'slot',
+    text: '等待执行槽位：容量已被占用，不会因为排队自动提升并发或插队',
+  },
+  claim_quarantined: {
+    category: 'isolation',
+    text: '派发认领已隔离：需先核对旧 Runner 已停止及副作用后人工处理，不会自动重新派发',
+  },
+  claim_lease_expired_unverified: {
+    category: 'isolation',
+    text: '认领租约到期但未确认停止：先核对进程与副作用，不把到期当已停止',
+  },
+  slot_quarantined: {
+    category: 'isolation',
+    text: '执行槽位已隔离：核对停止后才能释放，查询不会自动回收',
+  },
+  slot_ownership_missing: {
+    category: 'isolation',
+    text: '缺少可核对槽位归属：不会自动补建、释放或唤醒执行',
+  },
+  slot_identity_mismatch: {
+    category: 'isolation',
+    text: '槽位归属与当前认领不一致：需人工核对，旧身份不能释放新槽位',
+  },
+  claim_attempt_identity_mismatch: {
+    category: 'isolation',
+    text: '活动 Attempt 身份与认领不一致：需人工核对，迟到结果不能改写当前状态',
+  },
+  run_paused: {
+    category: 'control',
+    text: 'Run 已暂停：不派发新工作，查询不会自动恢复',
+  },
+  run_cancelling: {
+    category: 'control',
+    text: 'Run 正在取消：不派发新工作',
+  },
+  run_interrupted: {
+    category: 'control',
+    text: 'Run 已中断：需按恢复政策核对占用与停止证据后另行派发',
+  },
+};
+
+const DISPATCH_COMPLETION_NOTE =
+  '派发/槽位查询是只读投影：Runtime 正常返回、Attempt succeeded 或已占槽均不代表验证通过或交付成功；' +
+  '本查询不认领、不扣预算、不唤醒执行，也不释放隔离槽位';
+
+export interface ExecutionDispatchRecordView {
+  readonly record: PublicDispatchQueueRecord;
+  readonly waitCategory: DispatchWaitCategory;
+  /** 有界可理解原因；无阻塞为 null。 */
+  readonly blockingExplanation: string | null;
+}
+
+export interface ExecutionDispatchView {
+  readonly operation: 'execution.dispatch.list';
+  /** 槽位摘要：容量/全局活动与隔离计数/本项活动/跨项目布尔。 */
+  readonly slots: PublicDispatchSlotSummary;
+  readonly records: readonly ExecutionDispatchRecordView[];
+  readonly nextCursor: string | null;
+  readonly limit: number;
+  readonly completion: ScheduleCompletionBoundary;
+}
+
+export function buildExecutionDispatchView(
+  result: DispatchQueueListResult,
+): ExecutionDispatchView {
+  const records: ExecutionDispatchRecordView[] = result.records.map((record) => {
+    const explanation =
+      record.blockingReason === null
+        ? null
+        : DISPATCH_REASON_EXPLANATIONS[record.blockingReason];
+    return {
+      record,
+      waitCategory: explanation === null ? 'none' : explanation.category,
+      blockingExplanation: explanation === null ? null : explanation.text,
+    };
+  });
+  return {
+    operation: 'execution.dispatch.list',
+    slots: result.slots,
+    records,
+    nextCursor: result.nextCursor,
+    limit: result.limit,
+    completion: {
+      featureVerified: false,
+      delivered: false,
+      note: DISPATCH_COMPLETION_NOTE,
+    },
+  };
+}
+
+/** 人类行：只输出脱敏事实字段与受控原因；不打印正文、凭据或开发机路径。 */
+export function formatExecutionDispatchView(view: ExecutionDispatchView): string {
+  const { slots } = view;
+  const lines = [
+    `shiploop execution dispatch: slots capacity=${slots.capacity} active=${slots.activeCount} ` +
+      `available=${slots.availableCount} quarantined=${slots.quarantinedCount} ` +
+      `projectActive=${slots.projectActiveCount} otherProjectActive=${slots.otherProjectActive} ` +
+      `records=${view.records.length} nextCursor=${view.nextCursor ?? 'none'}`,
+  ];
+  for (const entry of view.records) {
+    const record = entry.record;
+    const claim = record.claim;
+    const slot = record.slot;
+    const attempt = record.activeAttempt ?? record.latestAttempt;
+    lines.push(
+      `  run=${record.runId} feature=${record.featureId} runStatus=${record.runStatus} ` +
+        `runReason=${record.runReason ?? 'none'} dispatchOrdinal=${record.dispatchOrdinal} ` +
+        `state=${record.state} blocking=${record.blockingReason ?? 'none'} wait=${entry.waitCategory}`,
+    );
+    lines.push(
+      `    claim=${claim === null ? 'none' : claim.claimId} ` +
+        `claimVersion=${claim === null ? 'none' : claim.claimVersion} ` +
+        `owner=${claim === null ? 'none' : claim.ownerId} ` +
+        `claimState=${claim === null ? 'none' : claim.state} ` +
+        `slot=${slot === null ? 'none' : slot.slotId} ` +
+        `slotIndex=${slot === null ? 'none' : slot.slotIndex} ` +
+        `slotState=${slot === null ? 'none' : slot.state} ` +
+        `attempt=${attempt === null ? 'none' : `${attempt.id}#${attempt.number}`} ` +
+        `stage=${attempt === null ? 'none' : attempt.executionStage} attempts=${record.attemptCount}`,
+    );
+    if (entry.blockingExplanation !== null) {
+      lines.push(`    reason: ${entry.blockingExplanation}`);
+    }
+  }
+  lines.push(`  （${DISPATCH_COMPLETION_NOTE}）`, '');
   return lines.join('\n');
 }

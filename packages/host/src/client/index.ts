@@ -85,6 +85,7 @@ export {
   validateRunScheduleStatusResultWire,
   validateAttemptListResultWire,
   validateAttemptDiagnosticsResultWire,
+  validateDispatchQueueListResultWire,
   validateWorkspaceListResultWire,
   validateWorkspaceDetailResultWire,
   validateWorkspaceOperationListResultWire,
@@ -140,6 +141,12 @@ export type {
   RunControlDetailResult,
   BatchControlDetailResult,
   RunRecoveryDetailResult,
+  DispatchQueueListResult,
+  PublicDispatchAttemptView,
+  PublicDispatchClaimView,
+  PublicDispatchQueueRecord,
+  PublicDispatchSlotSummary,
+  PublicDispatchSlotView,
 } from './app-wire.js';
 
 export { createWorkToolClient } from './work-tool-client.js';

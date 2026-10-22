@@ -1,0 +1,18 @@
+{
+  "schema_version": 2,
+  "task_id": "F-009",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/scheduling/p04-9-f009-dispatch-cli.test.ts", "all": true },
+      { "file": "test/modules/scheduling/p04-9-f009-dispatch-host-wiring.test.ts", "all": true },
+      { "file": "test/modules/scheduling/p04-9-f009-dispatch-built.test.ts", "all": true },
+      { "file": "test/modules/host/host-app-routes.test.ts", "all": true },
+      { "file": "test/modules/onboarding/p02-3-init-overview-vertical.test.ts", "all": true },
+      { "file": "test/modules/scheduling/p03-4-schedule-host-wiring.test.ts", "all": true },
+      { "file": "test/modules/scheduling/p03-4-cli-schedule-args.test.ts", "all": true },
+      { "file": "test/modules/scheduling/p04-9-f008-dispatch-slot-query.test.ts", "all": true },
+      { "file": "test/modules/scheduling/p04-9-dispatch-slot-contract.test.ts", "all": true }
+    ]
+  }]
+}

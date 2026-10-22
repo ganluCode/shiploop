@@ -43,6 +43,7 @@ import type {
   AppOperation,
   AttemptDiagnosticsResult,
   AttemptListResult,
+  DispatchQueueListResult,
   BaselineDetailResult,
   BaselineListResult,
   CommandReceipt,
@@ -98,6 +99,7 @@ import {
   ARTIFACTS_ROUTE_PREFIX,
   ATTEMPTS_ROUTE,
   ATTEMPTS_ROUTE_PREFIX,
+  DISPATCH_QUEUE_ROUTE,
   ATTEMPT_DIAGNOSTICS_ROUTE_SUFFIX,
   BATCHES_ROUTE_PREFIX,
   BASELINES_ROUTE_PREFIX,
@@ -773,6 +775,17 @@ export interface HostClientApplication {
     attemptId: string,
     input?: PlanListPageInput,
   ): Promise<AttemptDiagnosticsResult>;
+  /* ------------------------------------------------------------ *
+   * P04-9 / F-009 派发队列与执行槽位只读查询
+   * ------------------------------------------------------------ */
+  /**
+   * execution.dispatch.list：项目派发队列 + 槽位摘要只读投影（不认领、不扣
+   * 预算、不唤醒执行、不释放/改写槽位；Runtime 正常返回不代表验证通过）。
+   */
+  listExecutionDispatchQueue(
+    projectId: string,
+    input?: PlanListPageInput,
+  ): Promise<DispatchQueueListResult>;
   /* ------------------------------------------------------------ *
    * P03-7 / F-013 Task 机器证据/人审事项/有限返工链只读查询
    * ------------------------------------------------------------ */
@@ -3371,6 +3384,24 @@ export function createHostClientApplication(context: AppClientContext): HostClie
         result.records.some((record) => record.projectId !== project || record.attemptId !== attempt)
       ) {
         throw new HostProtocolError('response_malformed', 'execution.attempt.diagnostics', '诊断响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
+      }
+      return result;
+    },
+
+    async listExecutionDispatchQueue(
+      projectId: string,
+      input?: PlanListPageInput,
+    ): Promise<DispatchQueueListResult> {
+      context.assertOpen('execution.dispatch.list');
+      const project = requireProjectId('execution.dispatch.list', projectId);
+      const paging = buildPlanListQuery(input, 'execution.dispatch.list');
+      const query =
+        `projectId=${encodeURIComponent(project)}` +
+        `${paging.length === 0 ? '' : `&${paging}`}`;
+      const json = await getJson('execution.dispatch.list', `${DISPATCH_QUEUE_ROUTE}?${query}`);
+      const result = validateAppQueryResponse('execution.dispatch.list', json);
+      if (result.records.some((record) => record.projectId !== project)) {
+        throw new HostProtocolError('response_malformed', 'execution.dispatch.list', '派发队列响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
       }
       return result;
     },

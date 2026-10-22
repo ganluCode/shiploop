@@ -57,9 +57,11 @@ import type { ExecutionBudgetWire } from './app/execution.js';
 import {
   buildExecutionAttemptsView,
   buildExecutionDiagnosticsView,
+  buildExecutionDispatchView,
   buildExecutionScheduleView,
   formatExecutionAttemptsView,
   formatExecutionDiagnosticsView,
+  formatExecutionDispatchView,
   formatExecutionScheduleView,
 } from './app/schedule.js';
 import {
@@ -1702,6 +1704,18 @@ async function executeExecutionCommand(
       });
       const view = buildExecutionDiagnosticsView(result);
       return emitSuccess(io, command, view, formatExecutionDiagnosticsView(view));
+    }
+    /* ------------------------------------------------------------ *
+     * P04-9 / F-009 派发队列与执行槽位只读查询
+     *（只经 HostClient 授权只读查询：不认领、不扣额、不启动 Runtime）
+     * ------------------------------------------------------------ */
+    case 'execution.dispatch': {
+      const result = await client.listExecutionDispatchQueue(command.projectId, {
+        ...(command.limit !== undefined ? { limit: command.limit } : {}),
+        ...(command.cursor !== undefined ? { cursor: command.cursor } : {}),
+      });
+      const view = buildExecutionDispatchView(result);
+      return emitSuccess(io, command, view, formatExecutionDispatchView(view));
     }
     /* ------------------------------------------------------------ *
      * P03-6 / F-013 Work Session 状态/证据与取消接受结构化输出

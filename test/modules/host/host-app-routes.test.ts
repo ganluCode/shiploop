@@ -704,6 +704,8 @@ describe('F-011 传输纪律与版本门禁', () => {
       expect(error.code).toBe('unsupported');
       expect(error.details?.supportedOperations).toEqual([
         'execution.attempt.cancel',
+        // P04-5/P04-7：手动停止经同一命令白名单接线。
+        'execution.stop.manual',
         // P03-9 / F-001：Run/Batch Task 边界暂停随 Core 白名单进入接线宣告。
         'execution.pause',
         // P03-9 / F-002：Run/Batch 取消经同一命令路由接线。
@@ -1012,6 +1014,9 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         'execution.sessions.list',
         'execution.session.get',
         'execution.session.evidence.get',
+        // P04-5 / F-007：Work 公开记录索引/有界正文只读查询真实接线。
+        'execution.recording.list',
+        'execution.recording.body.get',
         'projects.list',
         'projects.get',
         'projects.binding.get',
@@ -1064,6 +1069,8 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         'execution.run.control.get',
         'execution.batch.control.get',
         'execution.run.recovery.get',
+        // P04-9 / F-009：派发队列与执行槽位只读投影真实接线（无写入口）。
+        'execution.dispatch.list',
       ],
       events: { transport: 'sse', route: '/v1/events', scopes: ['project', 'global'] },
     });

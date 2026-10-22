@@ -522,7 +522,12 @@ describe('F-006 Host inspect/overview 路由与握手能力（真实 Host + SQLi
     expect(body.capabilities.application.queries).toContain('git.operations.get');
     expect(body.capabilities.application.queries).toContain('features.delivery.get');
     expect(body.capabilities.application.queries).toContain('features.report.get');
-    expect(body.capabilities.application.queries).toHaveLength(46);
+    // P04-5 / F-007：Work 公开记录索引/有界正文只读查询已接线（46 → 48）。
+    expect(body.capabilities.application.queries).toContain('execution.recording.list');
+    expect(body.capabilities.application.queries).toContain('execution.recording.body.get');
+    // P04-9 / F-009：派发队列/执行槽位只读投影进入能力清单（48 → 49）；无写入口。
+    expect(body.capabilities.application.queries).toContain('execution.dispatch.list');
+    expect(body.capabilities.application.queries).toHaveLength(49);
     expect(body.capabilities.application.commands).toEqual([
       'execution.attempt.cancel',
       // P03-9 / F-001：Run/Batch Task 边界暂停经既有 /v1/commands 通用路由接线。
