@@ -1,0 +1,23 @@
+{
+  "schema_version": 2,
+  "task_id": "F-007",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/acceptance/p04-8-integration-report.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/acceptance/p04-8-step-runner.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/acceptance/p04-8-checklist-report.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}
