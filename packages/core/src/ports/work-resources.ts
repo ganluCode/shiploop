@@ -42,6 +42,8 @@ export interface WorkResourceAccess {
   renewInTransaction(identity: unknown, leaseUntilUtcMs: unknown): WorkResourceSnapshot;
   quarantineInTransaction(identity: unknown): WorkResourceSnapshot;
   expireInTransaction(): number;
+  /** Recheck durable Run generation and slot after preparation, before Runtime admission. */
+  assertLaunchInTransaction(identity: unknown): void;
   beginLaunchInTransaction(input: unknown): { readonly authorized: boolean; readonly invocationId: string | null };
   confirmLaunchInTransaction(identity: unknown, processIdentity: unknown): { readonly authorized: boolean };
   releaseUnstartedInTransaction(identity: unknown): void;

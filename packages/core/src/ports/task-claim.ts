@@ -3,9 +3,27 @@ import { validateAttemptInputSnapshot } from './attempt-store.js';
 import type { PreparedExecutionInputGroup } from './execution-input-prepare.js';
 import type { VerifiedWorkWorkspace } from './work-resources.js';
 import type { ValidationContext } from './validation.js';
-import { requirePlainObject, rejectUnknownKeys, validateStableId, validationError } from './validation.js';
+import { requirePlainObject, rejectUnknownKeys, validateStableId, validatePositiveInteger, validationError } from './validation.js';
+
+export interface TaskClaimDispatch {
+  readonly claimId: string;
+  /** Run consumer generation, independent of Attempt.executionVersion. */
+  readonly claimVersion: number;
+  readonly slotId: string;
+}
+
+export function validateTaskClaimDispatch(value: unknown): TaskClaimDispatch {
+  const context = { operation: 'TaskClaim.dispatch' };
+  const raw = requirePlainObject(value, context, 'dispatch');
+  rejectUnknownKeys(raw, ['claimId', 'claimVersion', 'slotId'], context, 'dispatch');
+  return { claimId: validateStableId(raw.claimId, context, 'claimId'),
+    claimVersion: validatePositiveInteger(raw.claimVersion, context, 'claimVersion'),
+    slotId: validateStableId(raw.slotId, context, 'slotId') };
+}
 
 export interface TaskClaimInput {
+  /** Optional prepared dispatch identity; when supplied it must still be current. */
+  readonly dispatch?: TaskClaimDispatch;
   readonly claimKey: string;
   readonly projectId: string;
   readonly runId: string;
@@ -29,6 +47,8 @@ export interface TaskClaimInput {
   };
 }
 export interface TaskClaimReceipt {
+  /** Absent only on historical receipts; absence never authorizes a new launch. */
+  readonly dispatch?: TaskClaimDispatch;
   readonly schemaVersion: 1;
   readonly claimKey: string;
   readonly batchId: string;
@@ -71,7 +91,7 @@ export function validateTaskClaimInput(value: unknown, inspectWorkspace: (token:
   const context = { operation: 'TaskClaim.validate' };
   const raw = requirePlainObject(value, context, 'input');
   rejectUnknownKeys(raw, ['claimKey', 'projectId', 'runId', 'taskId', 'owner', 'hostInstanceId',
-    'expectedRevision', 'executionVersion', 'workspace', 'leaseUntilUtcMs', 'inputSnapshot', 'attemptId', 'launch'], context, 'input');
+    'expectedRevision', 'executionVersion', 'workspace', 'leaseUntilUtcMs', 'inputSnapshot', 'attemptId', 'launch', 'dispatch'], context, 'input');
   const id = (key: string) => validateStableId(raw[key], context, key);
   const integer = (key: string, minimum: number) => {
     const n = raw[key];
@@ -87,5 +107,6 @@ export function validateTaskClaimInput(value: unknown, inspectWorkspace: (token:
     executionVersion: integer('executionVersion', 0), leaseUntilUtcMs: integer('leaseUntilUtcMs', 1),
     workspace: inspectWorkspace(raw.workspace), inputSnapshot: validateAttemptInputSnapshot(raw.inputSnapshot),
     ...(raw.attemptId === undefined || raw.attemptId === null ? {} : { attemptId: id('attemptId') }),
+    ...(raw.dispatch === undefined ? {} : { dispatch: validateTaskClaimDispatch(raw.dispatch) }),
     ...(launch === undefined ? {} : { launch }) };
 }

@@ -37,7 +37,7 @@
  * 本层不实现任何存储、文件系统或恢复来源行为。
  */
 import { validateAttemptRecord, validateWorkspaceLeaseRecord } from './attempt-store.js';
-import { validateTaskClaimLaunch, type TaskClaimReceipt } from './task-claim.js';
+import { validateTaskClaimLaunch, validateTaskClaimDispatch, type TaskClaimReceipt } from './task-claim.js';
 import { validateExecutionInputPurpose } from './execution-input.js';
 import {
   RUNTIME_RECOVERY_SCHEMA_VERSION,
@@ -260,7 +260,7 @@ function claimReceipt(value: unknown): TaskClaimReceipt {
   const raw = requirePlainObject(value, bindingContext, field);
   rejectUnknownKeys(
     raw,
-    ['schemaVersion', 'claimKey', 'batchId', 'attempt', 'taskRevision', 'reservationId', 'leases', 'counts', 'eventId', 'launch'],
+    ['schemaVersion', 'claimKey', 'batchId', 'attempt', 'taskRevision', 'reservationId', 'leases', 'counts', 'eventId', 'launch', 'dispatch'],
     bindingContext,
     field,
   );
@@ -295,6 +295,7 @@ function claimReceipt(value: unknown): TaskClaimReceipt {
       codeAttempts: validateNonNegativeInteger(counts.codeAttempts, bindingContext, `${field}.counts.codeAttempts`),
     },
     eventId: validateStableId(raw.eventId, bindingContext, `${field}.eventId`),
+    ...(raw.dispatch === undefined ? {} : { dispatch: validateTaskClaimDispatch(raw.dispatch) }),
     ...(raw.launch === undefined ? {} : { launch: validateTaskClaimLaunch(raw.launch, bindingContext, `${field}.launch`) }),
   };
 }

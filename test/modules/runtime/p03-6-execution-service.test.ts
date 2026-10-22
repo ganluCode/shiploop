@@ -184,6 +184,39 @@ describe('P03-6 F-008 ExecutionService', () => {
     } finally { fixture.close(); }
   });
 
+  it.each(['slot-quarantined', 'slot-released', 'claim-quarantined', 'claim-generation'])('[case:dispatch-after-binding-%s] rechecks durable dispatch after asynchronous binding before any Runtime start', async reason => {
+    const fixture = await openBindingFixture();
+    try {
+      const claimed = fixture.claimTask('t-1');
+      const assembly = assemble(fixture);
+      const db = fixture.session.database;
+      const service = createExecutionService({ ...assembly.deps, inputBinding: { async bind(input) {
+        const bound = await fixture.bindingService.bind(input);
+        expect(db.inTransaction).toBe(false);
+        if (reason === 'slot-quarantined') db.prepare("UPDATE execution_slot_claims SET state = 'quarantined', reason = 'uncertain'").run();
+        if (reason === 'slot-released' || reason === 'claim-generation') db.prepare("UPDATE execution_slot_claims SET state = 'released', released_at = ?").run(BINDING_NOW);
+        if (reason === 'claim-quarantined') db.prepare("UPDATE run_dispatch_claims SET state = 'quarantined', reason = 'uncertain', settled_at = ?").run(BINDING_NOW);
+        if (reason === 'claim-generation') {
+          db.prepare("UPDATE run_dispatch_claims SET state = 'released', settled_at = ?").run(BINDING_NOW);
+          db.prepare(`INSERT INTO run_dispatch_claims (id, created_at, project_id, updated_at, feature_id, run_id,
+            claim_version, origin, resumed_from_claim_id, resumed_from_claim_version, owner_id, host_instance_id,
+            acquired_at, lease_until, state) SELECT 'new-generation', created_at, project_id, updated_at,
+            feature_id, run_id, 2, 'resume', id, 1, owner_id, host_instance_id, acquired_at, lease_until, 'held'
+            FROM run_dispatch_claims WHERE id = ?`).run(claimed.receipt.dispatch!.claimId);
+        }
+        return bound;
+      } } });
+      await expect(service.start(fixture.bindingInput(claimed))).rejects.toThrow();
+      expect(assembly.adapterStart).not.toHaveBeenCalled();
+      starts(fixture, 0);
+      expect(fixture.query('SELECT count(*) AS n FROM runtime_start_reservations')).toEqual({ n: 0 });
+      expect(fixture.query('SELECT count(*) AS n FROM task_claim_receipts')).toEqual({ n: 1 });
+      expect(fixture.query('SELECT count(*) AS n FROM attempts')).toEqual({ n: 1 });
+      expect(fixture.query("SELECT count(*) AS n FROM sessions WHERE kind = 'work'")).toEqual({ n: 0 });
+      expect(existsSync(proof(fixture))).toBe(false);
+    } finally { fixture.close(); }
+  });
+
   it.each(['begin-launch', 'session-insert', 'commit'])('%s failure rolls back without Runtime file or process effects', async failure => {
     const fixture = await openBindingFixture();
     try {

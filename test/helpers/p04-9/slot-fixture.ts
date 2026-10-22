@@ -7,6 +7,7 @@
  */
 import { createSqliteExecutionSlotAccess } from '../../../packages/core/src/adapters/sqlite/execution-slots.ts';
 import { openSqliteStorageSession } from '../../../packages/core/src/adapters/sqlite/session.ts';
+import type { ExecutionBudgetProposal } from '../../../packages/core/src/ports/execution-budget.ts';
 import { BUDGET, NOW, openBudgetFixture } from '../p03-3/budget-fixture.ts';
 
 export const SLOT_NOW = NOW;
@@ -37,8 +38,8 @@ function ticket(id: string, dependsOn: string[] = []) {
   return { id, title: id, acceptance: { criteria: ['slot capacity'] }, dependsOn };
 }
 
-export async function openSlotFixture(): Promise<SlotFixture> {
-  const box = await openBudgetFixture(BUDGET, [ticket('t-1')]);
+export async function openSlotFixture(budget: ExecutionBudgetProposal = BUDGET): Promise<SlotFixture> {
+  const box = await openBudgetFixture(budget, [ticket('t-1')]);
   const runA = await box.start();
   const first: SlotRun = { runId: runA.runId, featureId: box.featureId };
 
@@ -69,12 +70,12 @@ export async function openSlotFixture(): Promise<SlotFixture> {
   }, { scope, expectedRevision: feature.revision });
   const preview = await box.services.preview.previewExecution(box.projectId, {
     featureIds: [peerFeatureId],
-    budget: BUDGET,
+    budget: { ...budget },
   });
   if (preview.status !== 'ready') throw new Error(`slot fixture preview not ready: ${JSON.stringify(preview)}`);
   const started = await box.submit('execution.start', {
     featureIds: [peerFeatureId],
-    budget: BUDGET,
+    budget,
     previewDigest: preview.previewDigest,
   }, { scope });
   if (started.status !== 'accepted' || !('runId' in started)) {

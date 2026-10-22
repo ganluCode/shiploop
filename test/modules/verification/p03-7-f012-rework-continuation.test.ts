@@ -175,7 +175,7 @@ describe('F-012 submitVerification 结果分支', () => {
     expect(f.evaluate()).toMatchObject({ reason: 'run_control_blocked' });
   });
 
-  it('code_failure 且预算剩余 + 停止已确认：Task 回 pending、Run 恢复 running、占用释放，可携带返工快照认领新 Attempt', async () => {
+  it.each(['normal', 'quarantined'])('[case:rework-slot-%s] code_failure 且预算剩余 + 停止已确认：Task 回 pending、Run 恢复 running、占用释放，可携带返工快照认领新 Attempt', async slotState => {
     const f = await openClaimFixture();
     const first = await advanceToVerifying(f);
     const snapshot = f.input(0).inputSnapshot;
@@ -203,11 +203,27 @@ describe('F-012 submitVerification 结果分支', () => {
 
     /* 同一工作区凭证 + 返工快照认领新 Attempt（既有调度入口）。 */
     const secondAttemptId = 'attempt-rw-1';
-    const second = f.store().claimTask({
+    const secondInput = {
       ...f.input(0), claimKey: 'claim-rw-1', attemptId: secondAttemptId,
       expectedRevision: readTask(f, 't-1')['revision'] as number, executionVersion: 1,
       inputSnapshot: reworkSnapshot(snapshot, makeRework(f, secondAttemptId, first.attempt.id)),
-    });
+    };
+    if (slotState === 'quarantined') {
+      f.box.session.database.prepare("UPDATE execution_slot_claims SET state = 'quarantined', reason = 'uncertain'").run();
+      const before = f.snapshot();
+      expect(() => f.store().claimTask(secondInput)).toThrow(expect.objectContaining({ kind: 'conflict' }));
+      expect(f.snapshot()).toEqual(before);
+      expect(f.box.session.database.prepare("SELECT count(*) AS n FROM execution_slot_claims WHERE state = 'quarantined'").get()).toEqual({ n: 1 });
+      f.box.close();
+      return;
+    }
+    const second = f.store().claimTask(secondInput);
+    expect(second.receipt.dispatch).toMatchObject({ claimVersion: 1 });
+    expect(f.box.session.database.prepare('SELECT count(*) AS n FROM run_dispatch_claims').get()).toEqual({ n: 1 });
+    expect(f.box.session.database.prepare('SELECT count(*) AS n FROM execution_slot_claims').get()).toEqual({ n: 1 });
+    expect(f.box.session.transactWrite('test.rework-launch', () => resources(f).beginLaunchInTransaction({
+      ...first.identity, attemptId: secondAttemptId, executionVersion: 2,
+    })).authorized).toBe(true);
     expect(second.receipt.attempt.id).toBe(secondAttemptId);
     expect(second.receipt.attempt.executionVersion).toBe(2);
     expect(readTask(f, 't-1')).toMatchObject({ status: 'running', attempt_counter: 2, code_attempts_used: 2 });

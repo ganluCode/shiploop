@@ -449,6 +449,7 @@ export function createExecutionService(deps: ExecutionServiceDeps): ExecutionSer
       || current.owner !== attempt.owner || current.hostInstanceId !== attempt.hostInstanceId
       || current.executionVersion !== attempt.executionVersion || fact?.executionVersion !== attempt.executionVersion
       || current.leaseUntilUtcMs <= now) deny('stale_execution_identity');
+    deps.resources.assertLaunchInTransaction(identity(input.claim));
     const resources = deps.resources.read(identity(input.claim));
     if (resources.invocationId !== invocationId || resources.leases.length !== 3
       || resources.leases.some(lease => lease.state !== 'held' || lease.leaseUntilUtcMs <= now)) deny('launch_not_held');

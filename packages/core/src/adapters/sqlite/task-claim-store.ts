@@ -7,10 +7,11 @@ import { StorageError } from '../../ports/errors.js';
 import { stableStringify } from '../../ports/feature-plan.js';
 import { TASK_CLAIMED_EVENT_TYPE } from '../../ports/execution-store.js';
 import { computeExecutionPermissionsDigest, TRUSTED_PROJECT_PERMISSIONS_READER, type ExecutionPermissionsReader } from '../../ports/execution-input-prepare.js';
-import { validateTaskClaimInput, validateTaskClaimLaunch, type TaskClaimStore, type TaskClaimReceipt } from '../../ports/task-claim.js';
+import { validateTaskClaimInput, validateTaskClaimLaunch, validateTaskClaimDispatch, type TaskClaimStore, type TaskClaimReceipt } from '../../ports/task-claim.js';
 import { requirePlainObject, rejectUnknownKeys, validateStableId } from '../../ports/validation.js';
 import type { WorkWorkspaceAuthority } from '../../ports/work-resources.js';
 import { createSqliteAttemptAccess } from './attempt-store.js';
+import { createSqliteAttemptDispatchAccess } from './attempt-dispatch.js';
 import { createSqliteExecutionAccess } from './execution-store.js';
 import { createSqliteTaskDagStore } from './task-dag-store.js';
 import { createSqliteWorkResourceAccess } from './work-resources.js';
@@ -39,7 +40,7 @@ export function createSqliteTaskClaimStore(session: SqliteStorageSession, option
       const context = { operation };
       const value = requirePlainObject(JSON.parse(json), context, 'receipt');
       rejectUnknownKeys(value, ['schemaVersion', 'claimKey', 'batchId', 'attempt', 'taskRevision',
-        'reservationId', 'leases', 'counts', 'eventId', 'launch'], context, 'receipt');
+        'reservationId', 'leases', 'counts', 'eventId', 'launch', 'dispatch'], context, 'receipt');
       for (const field of ['claimKey', 'batchId', 'reservationId', 'eventId']) validateStableId(value[field], context, field);
       const raw = value as unknown as TaskClaimReceipt;
       requirePlainObject(raw.counts, context, 'counts');
@@ -60,6 +61,7 @@ export function createSqliteTaskClaimStore(session: SqliteStorageSession, option
           || l.hostInstanceId !== attempt.hostInstanceId || l.executionVersion !== attempt.executionVersion
           || l.leaseUntilUtcMs !== attempt.leaseUntilUtcMs || l.state !== 'held')) throw new Error('invalid_receipt');
       return { ...raw, attempt, leases,
+        ...(raw.dispatch === undefined ? {} : { dispatch: validateTaskClaimDispatch(raw.dispatch) }),
         ...(raw.launch === undefined ? {} : { launch: validateTaskClaimLaunch(raw.launch, context, 'receipt.launch') }) };
     } catch (cause) {
       throw new StorageError('corrupt', operation, 'Invalid persisted Task claim receipt', { cause });
@@ -194,13 +196,17 @@ export function createSqliteTaskClaimStore(session: SqliteStorageSession, option
             .policies.executionLimits?.value.maxAttemptsPerTask ?? null;
           const reservation = execution.reserveTaskAttemptInTransaction({ projectId: valid.projectId, batchId: view.batch.id,
             runId: valid.runId, taskId: task.id, attemptKey: attemptId, maxAttemptsPerTask });
+          const dispatch = createSqliteAttemptDispatchAccess(session, { nowUtcMs: () => now })
+            .acquireInTransaction(attempts.getAttempt(valid.projectId, attemptId), valid.dispatch,
+              latest && !latestIsCode && latest.invocationId === null && latest.startedAtUtcMs === null
+                && latest.executionStage === 'preflight' ? latest : undefined);
           const resources = createSqliteWorkResourceAccess(session, { workspaceAuthority: options.workspaceAuthority, nowUtcMs: () => now });
           const occupied = resources.acquireInTransaction({ projectId: valid.projectId, attemptId,
             owner: valid.owner, hostInstanceId: valid.hostInstanceId, executionVersion }, valid.workspace, valid.leaseUntilUtcMs);
           const counters = execution.getTaskExecutionCountersInTransaction(valid.projectId, task.id);
           const eventId = execution.appendExecutionEventInTransaction({ projectId: valid.projectId, eventType: TASK_CLAIMED_EVENT_TYPE,
             aggregateType: 'task', aggregateId: task.id, aggregateRevision: counters.revision, payload: { claimed: true } });
-          const receipt: TaskClaimReceipt = { schemaVersion: 1, claimKey: valid.claimKey, batchId: view.batch.id,
+          const receipt: TaskClaimReceipt = { schemaVersion: 1, dispatch, claimKey: valid.claimKey, batchId: view.batch.id,
             attempt: attempts.getAttempt(valid.projectId, attemptId), taskRevision: counters.revision,
             reservationId: reservation.id, leases: occupied.leases, counts: { batchAttempts: view.batch.attemptsCreated + 1,
               runAttempts: view.run.attemptsCreated + 1, taskAttempts: counters.attemptCounter, codeAttempts: counters.codeAttemptsUsed },

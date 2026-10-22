@@ -7,6 +7,8 @@ import {
   type WorkResourceAccess, type WorkResourceIdentity, type WorkResourceSnapshot, type WorkWorkspaceAuthority, type WorkResourceStopVerifier,
 } from '../../ports/work-resources.js';
 import { createSqliteAttemptAccess } from './attempt-store.js';
+import { createSqliteAttemptDispatchAccess } from './attempt-dispatch.js';
+import type { ExecutionPermissionsReader } from '../../ports/execution-input-prepare.js';
 import { createSqliteStateAccess, transactSqliteConsistentRead } from './state-store.js';
 import type { SqliteStorageSession } from './session.js';
 
@@ -15,6 +17,7 @@ export function createSqliteWorkResourceAccess(session: SqliteStorageSession, op
   readonly workspaceAuthority: WorkWorkspaceAuthority;
   readonly stopVerifier?: Pick<WorkResourceStopVerifier, 'inspect'>;
   readonly nowUtcMs?: () => number;
+  readonly permissions?: ExecutionPermissionsReader;
 }): WorkResourceAccess {
   const operation = 'WorkResources';
   const attempts = createSqliteAttemptAccess(session);
@@ -185,6 +188,12 @@ export function createSqliteWorkResourceAccess(session: SqliteStorageSession, op
       }
       return expired.length;
     },
+    assertLaunchInTransaction(input) {
+      write();
+      const identity = validateWorkResourceIdentity(input);
+      createSqliteAttemptDispatchAccess(session, { nowUtcMs: now, permissions: options.permissions })
+        .assertLaunchInTransaction(current(identity));
+    },
     beginLaunchInTransaction(input) {
       write();
       const raw = requirePlainObject(input, { operation: 'WorkResources.beginLaunch' }, 'input');
@@ -197,6 +206,8 @@ export function createSqliteWorkResourceAccess(session: SqliteStorageSession, op
       if (result.leases[0]!.state === 'quarantined') return { authorized: false, invocationId: null };
       const attempt = current(identity);
       if (attempt.status !== 'preparing' || attempt.executionStage !== 'preflight' || attempt.invocationId !== null) return fail('conflict', 'launch_already_authorized');
+      createSqliteAttemptDispatchAccess(session, { nowUtcMs: now, permissions: options.permissions })
+        .assertLaunchInTransaction(attempt);
       const invocationId = requestedInvocationId ?? randomUUID();
       const changed = db.prepare("UPDATE attempts SET invocation_id = ?, execution_stage = 'runtime', revision = revision + 1, updated_at = ? WHERE id = ? AND invocation_id IS NULL")
         .run(invocationId, timestamp, identity.attemptId);

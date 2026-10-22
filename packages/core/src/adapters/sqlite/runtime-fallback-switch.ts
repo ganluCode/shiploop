@@ -13,6 +13,7 @@ import {
 import { requirePlainObject, rejectUnknownKeys, validateStableId } from '../../ports/validation.js';
 import type { WorkWorkspaceAuthority, WorkResourceStopVerifier } from '../../ports/work-resources.js';
 import { createSqliteAttemptAccess } from './attempt-store.js';
+import { createSqliteAttemptDispatchAccess } from './attempt-dispatch.js';
 import { createSqliteExecutionAccess } from './execution-store.js';
 import { createSqliteTaskDagStore } from './task-dag-store.js';
 import { createSqliteWorkResourceAccess } from './work-resources.js';
@@ -143,6 +144,8 @@ export function createSqliteRuntimeFallbackSwitchService(session: SqliteStorageS
           runId: valid.runId, taskId: task.id, attemptKey: nextAttemptId, maxAttemptsPerTask });
         execution.reserveRuntimeStartInTransaction({ projectId: valid.projectId, batchId: view.batch.id,
           runId: valid.runId, startKey: runtimeStartReservationKey(nextAttemptId, nextExecutionVersion) });
+        const dispatch = createSqliteAttemptDispatchAccess(session, { nowUtcMs: () => now })
+          .acquireInTransaction(attempts.getAttempt(valid.projectId, nextAttemptId), undefined, old);
         const occupied = resources.acquireInTransaction({ projectId: valid.projectId, attemptId: nextAttemptId,
           owner: valid.newOwner, hostInstanceId: valid.newHostInstanceId, executionVersion: nextExecutionVersion },
           valid.workspace, valid.leaseUntilUtcMs);
@@ -151,7 +154,7 @@ export function createSqliteRuntimeFallbackSwitchService(session: SqliteStorageS
           eventType: ATTEMPT_UPDATED_EVENT_TYPE, aggregateType: 'task', aggregateId: task.id,
           aggregateRevision: counters.revision, payload: { updated: true } });
         const attempt = attempts.getAttempt(valid.projectId, nextAttemptId);
-        const receipt: TaskClaimReceipt = { schemaVersion: 1, claimKey: valid.switchKey, batchId: view.batch.id,
+        const receipt: TaskClaimReceipt = { schemaVersion: 1, dispatch, claimKey: valid.switchKey, batchId: view.batch.id,
           attempt, taskRevision: counters.revision, reservationId: reservation.id, leases: occupied.leases,
           counts: { batchAttempts: view.batch.attemptsCreated + 1, runAttempts: view.run.attemptsCreated + 1,
             taskAttempts: counters.attemptCounter, codeAttempts: counters.codeAttemptsUsed }, eventId };

@@ -10,7 +10,8 @@ import { createSqliteWorkResourceAccess } from '../../../packages/core/src/adapt
 import { createSqliteStateAccess } from '../../../packages/core/src/adapters/sqlite/state-store.ts';
 import { createSqliteBaselineAccess } from '../../../packages/core/src/adapters/sqlite/baseline-store.ts';
 import { openSqliteStorageSession } from '../../../packages/core/src/adapters/sqlite/session.ts';
-import { recordVerifiedPass } from '../../helpers/p03-4/task-dag-state-fixture.ts';
+import { recordVerifiedPass, publishPreparedInputFixture } from '../../helpers/p03-4/task-dag-state-fixture.ts';
+import { createSqliteTaskClaimStore } from '../../../packages/core/src/adapters/sqlite/task-claim-store.ts';
 import { createCommandProcessAdapter } from '../../../packages/core/src/adapters/process/command-process.ts';
 import { createWorkResourceStopVerifier } from '../../../packages/core/src/application/work-resource-stop.ts';
 import type { WorkResourceStopVerifier } from '../../../packages/core/src/ports/work-resources.ts';
@@ -20,12 +21,10 @@ import { BUDGET, openBudgetFixture, NOW } from '../../helpers/p03-3/budget-fixtu
 
 async function fixture(stopVerifier?: WorkResourceStopVerifier, sameFeaturePeer = false) {
   const tasks = ['t-1', ...(sameFeaturePeer ? ['t-peer'] : [])].map(id => ({ id, title: id, acceptance: { criteria: ['resource consistency'] }, dependsOn: [] as string[] }));
-  const box = await openBudgetFixture(BUDGET, tasks);
+  const { maxCostTotal: _cost, maxTokenTotal: _tokens, ...batch } = BUDGET.batch;
+  const box = await openBudgetFixture({ ...BUDGET, batch }, tasks);
   const ids = await box.start();
-  recordVerifiedPass(box, ids, 't-1');
-  if (sameFeaturePeer) recordVerifiedPass(box, ids, 't-peer');
-  box.session.database.prepare("UPDATE attempts SET status = 'preparing', execution_stage = 'preflight', started_at = NULL, ended_at = NULL").run();
-  box.session.database.prepare("UPDATE tasks SET status = 'running'").run();
+  const inputSnapshot = publishPreparedInputFixture(box, ids, 't-1');
   let now = NOW;
   const authority = createWorkWorkspaceAuthority({ authorizedRoots: [box.box.root] });
   const binding = createSqliteStateAccess(box.session).getRepositoryBinding(box.projectId);
@@ -34,6 +33,18 @@ async function fixture(stopVerifier?: WorkResourceStopVerifier, sameFeaturePeer 
   const identity = { projectId: box.projectId, attemptId: 't-1-attempt', owner: 'owner-1', hostInstanceId: 'host-1', executionVersion: 1 };
   const access = createSqliteWorkResourceAccess(box.session, { workspaceAuthority: authority, nowUtcMs: () => now, ...(stopVerifier ? { stopVerifier } : {}) });
   const tx = <T>(fn: () => T) => box.session.transactWrite('test.work-resources', fn);
+  // Launch tests need a committed Run/slot/Attempt association. Release only the
+  // unstarted workspace group so the resource-acquisition cases retain their setup.
+  createSqliteTaskClaimStore(box.session, { workspaceAuthority: authority, nowUtcMs: () => now }).claimTask({
+    ...identity, attemptId: identity.attemptId, claimKey: 'resource-fixture-claim', runId: ids.runId,
+    taskId: 't-1', expectedRevision: 1, executionVersion: 0, workspace, leaseUntilUtcMs: NOW + 1000, inputSnapshot,
+  });
+  tx(() => access.releaseUnstartedInTransaction(identity));
+  if (sameFeaturePeer) {
+    recordVerifiedPass(box, ids, 't-peer');
+    box.session.database.prepare("UPDATE attempts SET status = 'preparing', execution_stage = 'preflight', started_at = NULL, ended_at = NULL WHERE id = 't-peer-attempt'").run();
+    box.session.database.prepare("UPDATE tasks SET status = 'running' WHERE id = 't-peer'").run();
+  }
   return { box, identity, authority, binding, path, workspace, access, tx, tick: () => { now += 1001; } };
 }
 

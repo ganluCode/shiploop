@@ -1,0 +1,19 @@
+{
+  "schema_version": 2,
+  "task_id": "F-004",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/scheduling/p04-9-f004-dispatch-task-claim.test.ts", "all": true },
+      { "file": "test/modules/scheduling/p03-4-task-claim.test.ts", "all": true },
+      { "file": "test/modules/scheduling/p03-4-work-resources.test.ts", "all": true },
+      { "file": "test/modules/runtime/p03-6-execution-service.test.ts", "all": true },
+      { "file": "test/modules/runtime/p04-3-runtime-fallback.test.ts", "all": true },
+      { "file": "test/modules/verification/p03-7-f012-rework-continuation.test.ts", "all": true },
+      { "file": "test/modules/execution/budget/p03-3-runtime-start-reservation.test.ts", "all": true },
+      { "file": "test/modules/runtime/p03-6-execution-input-binding.test.ts", "all": true },
+      { "file": "test/modules/scheduling/p03-4-attempt-lifecycle.test.ts", "all": true },
+      { "file": "test/modules/scheduling/p04-9-f003-execution-slot.test.ts", "all": true }
+    ]
+  }]
+}

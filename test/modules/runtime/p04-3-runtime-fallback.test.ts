@@ -176,7 +176,7 @@ describe('P04-3 F-004 冻结备用链纯决策', () => {
 });
 
 describe('P04-3 F-005 Core 备用 Runtime 切换', () => {
-  it('确认旧执行停止后创建新 Attempt、启动预占并保护重复命令', async () => {
+  it.each(['normal', 'quarantined'])('[case:fallback-slot-%s] 确认旧执行停止后创建新 Attempt、启动预占并保护重复命令，隔离槽位禁止切换', async slotState => {
     const f = await openClaimFixture();
     const stopVerifier = createWorkResourceStopVerifier({
       process: { recoverStop: async () => ({ confirmed: true }) },
@@ -228,7 +228,28 @@ describe('P04-3 F-005 Core 备用 Runtime 切换', () => {
       expect(() => service.switch({ ...base, leaseUntilUtcMs: NOW + 1 })).toThrow(/Invalid fallback lease/);
       expect(f.box.session.database.prepare('SELECT status, reason FROM runs').get())
         .toEqual({ status: 'paused', reason: 'runtime_failed' });
+      if (slotState === 'quarantined') {
+        f.box.session.database.prepare("UPDATE execution_slot_claims SET state = 'quarantined', reason = 'uncertain'").run();
+        const before = f.snapshot();
+        const slots = f.box.session.database.prepare('SELECT * FROM execution_slot_claims').all();
+        const claims = f.box.session.database.prepare('SELECT * FROM run_dispatch_claims').all();
+        expect(() => service.switch(base)).toThrow(expect.objectContaining({ kind: 'conflict' }));
+        expect(f.snapshot()).toEqual(before);
+        expect(f.box.session.database.prepare('SELECT * FROM execution_slot_claims').all()).toEqual(slots);
+        expect(f.box.session.database.prepare('SELECT * FROM run_dispatch_claims').all()).toEqual(claims);
+        return;
+      }
       const result = service.switch(base);
+      expect(result.receipt.dispatch).toMatchObject({ claimVersion: 2 });
+      expect(f.box.session.database.prepare("SELECT count(*) AS n FROM execution_slot_claims WHERE state = 'held'").get()).toEqual({ n: 1 });
+      expect(f.box.session.database.prepare('SELECT state, claim_version FROM run_dispatch_claims ORDER BY claim_version').all())
+        .toEqual([{ state: 'released', claim_version: 1 }, { state: 'held', claim_version: 2 }]);
+      const newResources = createSqliteWorkResourceAccess(f.box.session, { workspaceAuthority: f.authority, nowUtcMs: () => NOW + 2 });
+      const next = result.receipt.attempt;
+      expect(f.box.session.transactWrite('test.fallback-launch', () => newResources.beginLaunchInTransaction({
+        projectId: next.projectId, attemptId: next.id, owner: next.owner, hostInstanceId: next.hostInstanceId,
+        executionVersion: next.executionVersion,
+      })).authorized).toBe(true);
       expect(f.box.session.database.prepare('SELECT status, reason FROM runs').get())
         .toEqual({ status: 'running', reason: null });
       expect(result.disposition).toBe('applied');

@@ -75,6 +75,11 @@ test/
   [F-003 交接](../docs/p04-9-f003-execution-slot.md)。`p03-4-task-dag`/`p03-4-task-claim`
   的迁移版本硬编码断言在开工基线即失败（v33/v34 追加后未更新），未纳入本 Task 范围。
 
+- `index/phases/P04/features/P04-9/tasks/F-004.json`：Run 归属/槽位与 Task claim 同事务衔接、
+  回执持久关联、正常/返工/备用启动围栏。前六文件本地定向通过，新增派发文件 20 项；
+  后四文件仅登记交 Nezha 独立复验。事务边界、故障证据和后续生命周期范围见
+  [F-004 交接](../docs/p04-9-f004-atomic-dispatch-claim.md)。
+
 Task JSON 使用 Nezha v2 schema。当前存量用例首轮按文件显式 `all: true`，
 对应 19 个本 Feature 文件，不包含此前大批历史模块回归。
 部分文件有多个测试类型，暂不凭猜测拆掉其中断言或谎称函数级选择。
