@@ -1,0 +1,14 @@
+{
+  "schema_version": 2,
+  "task_id": "F-003",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        { "file": "test/modules/scheduling/p04-9-f003-execution-slot.test.ts", "all": true },
+        { "file": "test/modules/scheduling/p03-4-work-resources.test.ts", "all": true },
+        { "file": "test/modules/workspace/p03-5-git-operation-lock.test.ts", "all": true }
+      ]
+    }
+  ]
+}

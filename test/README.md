@@ -67,6 +67,14 @@ test/
   收尾回归因本 workspace 未构建 Host 原生写入锁而无法运行（与本 Task 无关），
   模型、阶段全量与 live 保持 `not_run`。
 
+- `index/phases/P04/features/P04-9/tasks/F-003.json`：单执行槽位事务原语（迁移 v33 表）。
+  覆盖真实临时 SQLite 的跨连接/跨进程容量 1 竞争、同身份幂等、一 Run 一槽与一槽一
+  owner、旧 owner/version 与伪造释放围栏、到期只隔离不回收、容量 >1/0/负数/非整数
+  与生产并发配置 fail-closed、槽位不改写三组租约/基线/Git 事实，以及项目/工作区/
+  Git 短锁既有回归。新增文件本地 8 项通过；三文件索引见
+  [F-003 交接](../docs/p04-9-f003-execution-slot.md)。`p03-4-task-dag`/`p03-4-task-claim`
+  的迁移版本硬编码断言在开工基线即失败（v33/v34 追加后未更新），未纳入本 Task 范围。
+
 Task JSON 使用 Nezha v2 schema。当前存量用例首轮按文件显式 `all: true`，
 对应 19 个本 Feature 文件，不包含此前大批历史模块回归。
 部分文件有多个测试类型，暂不凭猜测拆掉其中断言或谎称函数级选择。
