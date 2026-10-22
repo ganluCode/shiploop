@@ -240,7 +240,19 @@ describe.skipIf(process.platform !== 'darwin')('P03-9 / F-016 real Host kill rec
     };
     const first = await spawnHost(entry.env, config, 'f016-host-runtime');
     entry.children.push(first);
-    await waitFor(() => runtimeStarts(markerDir).length === 1, '首个 Runtime 启动身份');
+    // Host ready is not Runtime ready: real supervised Git preparation exceeds
+    // 20s under the four-worker Feature union. Keep a bounded admission budget.
+    const admissionStarted = Date.now();
+    await waitFor(() => runtimeStarts(markerDir).length === 1, '首个 Runtime 启动身份', 40_000).catch(error => {
+      throw new Error(`Runtime admission diagnostic: ${JSON.stringify({
+        runs: probe.database.prepare('SELECT status, reason FROM runs').all(),
+        attempts: attemptRows(probe),
+        claims: probe.database.prepare('SELECT state, claim_version FROM run_dispatch_claims').all(),
+        leases: probe.database.prepare('SELECT state, resource_key FROM workspace_leases').all(),
+        hostAlive: first.isAlive(),
+      })}`, { cause: error });
+    });
+    process.stdout.write(`Runtime admission elapsed ms: ${Date.now() - admissionStarted}\n`);
     await waitFor(() => {
       const managed = q(probe, 'SELECT canonical_path FROM managed_workspaces') as { canonical_path: string } | undefined;
       return managed !== undefined && existsSync(join(managed.canonical_path, 'worker.pid'));
@@ -328,7 +340,7 @@ describe.skipIf(process.platform !== 'darwin')('P03-9 / F-016 real Host kill rec
     };
     const first = await spawnHost(entry.env, config, 'f016-host-identity');
     entry.children.push(first);
-    await waitFor(() => runtimeStarts(markerDir).length === 1, 'Runtime 启动');
+    await waitFor(() => runtimeStarts(markerDir).length === 1, 'Runtime 启动', 40_000);
     await waitFor(() => {
       const managed = q(probe, 'SELECT canonical_path FROM managed_workspaces') as { canonical_path: string } | undefined;
       return managed !== undefined && existsSync(join(managed.canonical_path, 'worker.pid'));

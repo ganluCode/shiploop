@@ -139,3 +139,19 @@ P05 才开放 Feature DAG 并发、受控集成、共享项目编码门禁与 Gi
 - P04 未放行：Phase 完整工程/集成、live、负责人确认三项 `not_run`/`pending`。
 - P04-9 六项补充检查在报告中保持 `not_run`，需要独立核对的 SQLite/竞争/恢复证据。
 - 上述基线缺口未在本 Task 修复，不能由工具局部通过清除。
+
+## 9. 2026-10-22 Feature 门禁复验
+
+- 原 Feature 合集在恢复测试等待 Runtime 首次启动时超时；诊断确认 Host 存活、
+  Attempt 已认领且处于 `preparing/preflight`，认领及三类资源占用均保留。
+- 同一四 worker 合集复跑测得工作区准备至 Runtime 就绪耗时 25,411 ms，超过
+  旧夹具 20 秒上限。仅将两个慢启动用例的等待预算调整为有界 40 秒，并保留
+  启动耗时及失败时的 Run/Attempt/认领/资源诊断；其他等待及生产超时不变。
+- 强杀、旧工具继续写入、身份不确定时拒绝发信号、迟到结果隔离等断言不删减；
+  不添加自动重试，不放宽生产资源释放条件。
+- 复验：恢复文件 4/4；Feature task union 64 文件、821/821；`typecheck`、
+  `check:boundaries`、`build` 均通过。第 6 节引用的历史基线问题不再阻塞本次
+  Feature 复验，但历史证据仍保留。
+- Harness 证据：`verifications/feature-union/5ed1212608d84cc6930b42004de28ae7/verification.json`
+  及 `state/acceptance/p04-9-manual-20261022/`。
+- 结论仅为 P04-9 Feature 通过；未运行 Phase 全量、真实模型或负责人签署。
