@@ -23,6 +23,7 @@
     "accept:p01": "node scripts/acceptance/p01-accept.ts",
     "accept:p02": "node scripts/acceptance/p02-accept.ts",
     "accept:p03": "node scripts/acceptance/p03-accept.ts",
+    "accept:p04": "node scripts/acceptance/p04-accept.ts",
     "accept:p03:clean-replay": "node scripts/acceptance/p03-clean-replay.ts"
   },
   "devDependencies": {

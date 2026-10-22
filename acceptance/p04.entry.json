@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "stepOrder": ["engineering-gate", "p04-integration"],
+  "testIndexRoot": "test/index/phases/P04/features",
+  "engineeringGate": ["scripts/verify.ts", "--step-timeout-ms", "{stepMs}"],
+  "integrationRunner": "scripts/run-tests.ts"
+}
