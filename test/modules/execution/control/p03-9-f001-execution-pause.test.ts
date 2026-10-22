@@ -333,9 +333,10 @@ describe('P03-9 / F-001 Run/Batch Task 边界暂停', () => {
   });
 
   it('迁移 v27：仅追加暂停意图列，历史 checksum 稳定，空库与 v26 库均可升级', async () => {
-    expect(SQLITE_MIGRATIONS.map(migration => migration.version)).toEqual(
-      Array.from({ length: 32 }, (_, index) => index + 1),
-    );
+    // 后续迁移只允许追加：版本从 1 连续递增到当前最新（v27 之后仍保持）。
+    const versions = SQLITE_MIGRATIONS.map(migration => migration.version);
+    const latest = versions[versions.length - 1]!;
+    expect(versions).toEqual(Array.from({ length: latest }, (_, index) => index + 1));
     expect(SQLITE_MIGRATIONS[26]?.sql).toContain('ADD COLUMN pause_requested_at');
     // 既有 v1-v26 的 SQL 只在文件末尾追加 v27（后续 v28 再追加停止 operation
     // 表）；这里的冻结摘要由本文件生成，任何历史迁移被改写都会使 checksum
@@ -349,7 +350,7 @@ describe('P03-9 / F-001 Run/Batch Task 边界暂停', () => {
       const session = openSqliteStorageSession({ path: join(empty.path, 'state.db') });
       try {
         const result = await migrateSqliteStorage(session, { nowUtcMs: () => NOW });
-        expect(result).toMatchObject({ fromVersion: 0, toVersion: 32 });
+        expect(result).toMatchObject({ fromVersion: 0, toVersion: latest });
         for (const table of ['runs', 'execution_batches']) {
           const columns = session.database.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
           expect(columns.map(column => column.name)).toContain('pause_requested_at');
@@ -368,11 +369,12 @@ describe('P03-9 / F-001 Run/Batch Task 边界暂停', () => {
           "INSERT INTO projects (id, created_at, revision, updated_at, display_name, status, labels) VALUES ('p-keep', ?, 1, ?, '保留项目', 'active', '[]')",
         ).run(NOW, NOW);
         const upgraded = await migrateSqliteStorage(session, { nowUtcMs: () => NOW });
-        expect(upgraded).toMatchObject({ fromVersion: 26, toVersion: 32, appliedVersions: [27, 28, 29, 30, 31, 32] });
+        expect(upgraded).toMatchObject({ fromVersion: 26, toVersion: latest,
+          appliedVersions: versions.filter(version => version > 26) });
         expect(session.database.prepare("SELECT display_name FROM projects WHERE id = 'p-keep'").get())
           .toEqual({ display_name: '保留项目' });
         expect(session.database.prepare('SELECT MAX(version) AS version FROM schema_migrations').get())
-          .toEqual({ version: 32 });
+          .toEqual({ version: latest });
       } finally { session.close(); }
     } finally { upgrade.cleanup(); }
   });

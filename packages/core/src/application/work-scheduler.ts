@@ -79,6 +79,11 @@ export function createWorkScheduler(options: WorkSchedulerOptions) {
   }
 
   async function processRun(projectId: string, runId: string): Promise<SchedulerRunResult> {
+    // F-006：先结算已无活动执行的派发归属/槽位（暂停/取消/终态），再评估 DAG。
+    // 结算失败不影响补扫：保留当前占槽，原因由调用方记录并可查询。
+    if (options.beforeRun !== undefined) {
+      try { await options.beforeRun({ projectId, runId }); } catch { /* caller owns diagnostics */ }
+    }
     const run = options.store.readRun(projectId, runId);
     // finalization-only Run 必须在任何 DAG/认领路径之前分流：不得创建编码
     // Attempt、准备 worktree 或启动 Runtime。

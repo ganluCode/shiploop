@@ -87,6 +87,12 @@ test/
   handoff 幂等、启动门控与关闭。六文件本地定向通过（新增 6 项）；Host 纵向因本
   workspace 未构建原生写入锁而保持 `not_run`，范围与证据见
   [F-005 交接](../docs/p04-9-f005-persistent-rescan.md)。
+- `index/phases/P04/features/P04-9/tasks/F-006.json`：暂停/取消接入派发与槽位生命周期。
+  覆盖暂停即时阻止认领、排队控制不启动 Runner、补扫不复活控制状态、终态/暂停/取消
+  的安全结算、停止不确定与持久结算失败保留/隔离、owner/认领版本/Attempt 围栏下的
+  迟到结果与重复结算、显式继续追加 resume 代次、心跳续租与查询解释。新增 8 项本地
+  通过；既有暂停/取消迁移版本断言按当前迁移清单派生后本地通过。范围与证据见
+  [F-006 交接](../docs/p04-9-f006-dispatch-control-settlement.md)。
 
 Task JSON 使用 Nezha v2 schema。当前存量用例首轮按文件显式 `all: true`，
 对应 19 个本 Feature 文件，不包含此前大批历史模块回归。

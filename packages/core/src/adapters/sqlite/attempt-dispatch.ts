@@ -90,16 +90,38 @@ export function createSqliteAttemptDispatchAccess(session: SqliteStorageSession,
         newGeneration = true;
       }
       if (!row) {
-        // A released generation requires explicit recovery, never an implicit takeover.
-        if (expected || db.prepare('SELECT id FROM run_dispatch_claims WHERE project_id = ? AND run_id = ? LIMIT 1')
-          .get(attempt.projectId, attempt.runId)) deny('dispatch_recovery_required');
-        const id = randomUUID();
-        db.prepare(`INSERT INTO run_dispatch_claims (id, created_at, project_id, revision, updated_at,
-          feature_id, run_id, claim_version, origin, owner_id, host_instance_id, acquired_at, lease_until, state)
-          VALUES (?, ?, ?, 1, ?, ?, ?, 1, 'dispatch', ?, ?, ?, ?, 'held')`)
-          .run(id, now, attempt.projectId, now, attempt.featureId, attempt.runId, attempt.owner,
-            attempt.hostInstanceId, now, attempt.leaseUntilUtcMs);
+        // 已释放代次：只有同 Run 的显式继续（无旧活动 Attempt/工作区占用）才能追加
+        // resume 代次；隔离代次必须由受信恢复流程处理，绝不隐式接管。
+        const previous = db.prepare<[string, string], ClaimRow>(
+          "SELECT id, claim_version, feature_id, owner_id, host_instance_id, state, lease_until FROM run_dispatch_claims WHERE project_id = ? AND run_id = ? ORDER BY claim_version DESC LIMIT 1",
+        ).get(attempt.projectId, attempt.runId);
+        if (expected || (previous !== undefined && (previous.state !== 'released'
+          || previous.feature_id !== attempt.featureId))) deny('dispatch_recovery_required');
+        if (previous === undefined) {
+          const id = randomUUID();
+          db.prepare(`INSERT INTO run_dispatch_claims (id, created_at, project_id, revision, updated_at,
+            feature_id, run_id, claim_version, origin, owner_id, host_instance_id, acquired_at, lease_until, state)
+            VALUES (?, ?, ?, 1, ?, ?, ?, 1, 'dispatch', ?, ?, ?, ?, 'held')`)
+            .run(id, now, attempt.projectId, now, attempt.featureId, attempt.runId, attempt.owner,
+              attempt.hostInstanceId, now, attempt.leaseUntilUtcMs);
+        } else {
+          // 同一 Run 的显式继续：仅当上一代已核对停止并释放、且没有其他活动
+          // Attempt/工作区占用时才能追加受控代次；不重开终态 Run、不清理证据。
+          if (db.prepare("SELECT id FROM attempts WHERE project_id = ? AND run_id = ? AND id <> ? AND status IN ('preparing', 'executing', 'verifying') LIMIT 1")
+            .get(attempt.projectId, attempt.runId, attempt.id)) deny('dispatch_attempt_active');
+          if (db.prepare(`SELECT l.id FROM workspace_leases l JOIN attempts a ON a.id = l.owner_id
+            WHERE a.project_id = ? AND a.run_id = ? AND a.id <> ? LIMIT 1`)
+            .get(attempt.projectId, attempt.runId, attempt.id)) deny('dispatch_workspace_retained');
+          db.prepare(`INSERT INTO run_dispatch_claims (id, created_at, project_id, revision, updated_at,
+            feature_id, run_id, claim_version, origin, resumed_from_claim_id, resumed_from_claim_version,
+            owner_id, host_instance_id, acquired_at, lease_until, state)
+            VALUES (?, ?, ?, 1, ?, ?, ?, ?, 'resume', ?, ?, ?, ?, ?, ?, 'held')`)
+            .run(randomUUID(), now, attempt.projectId, now, attempt.featureId, attempt.runId,
+              previous.claim_version + 1, previous.id, previous.claim_version, attempt.owner,
+              attempt.hostInstanceId, now, attempt.leaseUntilUtcMs);
+        }
         row = claim(attempt);
+        newGeneration = true;
       }
       const current = held(attempt, row, now);
       if (expected && (expected.claimId !== current.id || expected.claimVersion !== current.claim_version)) deny('stale_dispatch_identity');

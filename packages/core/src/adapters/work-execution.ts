@@ -51,6 +51,10 @@ import { PublicError } from '../ports/commands.js';
 import { isFinalizationOnlyRun, type FinalizationExecutionPort } from '../ports/finalization-execution.js';
 import type { FinalizationCompletionPort } from '../ports/finalization-completion.js';
 import type { createWorkStartupRecovery } from '../application/work-startup-recovery.js';
+import { createSqliteRunDispatchSettlement } from './sqlite/dispatch-settlement.js';
+import { deriveRunDispatchDisplay } from '../ports/execution-dispatch.js';
+import type { DispatchAttemptFence, DispatchSettlementResult } from '../ports/dispatch-settlement.js';
+import type { ExecutionRunStatus } from '../ports/execution-store.js';
 
 export interface WorkRuntimeContext {
   readonly capabilityCatalog: import('../ports/runtime-capabilities.js').RuntimeCapabilityCatalog;
@@ -99,6 +103,8 @@ export function assembleWorkExecution(options: {
   readonly readReworkScene?: (projectId: string, featureId: string) => Promise<{
     readonly worktreeId: string; readonly headCommit: string; readonly codeDigest: string;
   } | null>;
+  /** F-006：派发归属/槽位心跳续租周期（毫秒）；0 关闭周期续租（测试可显式调用）。 */
+  readonly heartbeatIntervalMs?: number;
 }) {
   const { session, application: app } = options;
   const now = options.nowUtcMs ?? Date.now;
@@ -117,6 +123,98 @@ export function assembleWorkExecution(options: {
   let execution: ExecutionService;
   const resources = createSqliteWorkResourceAccess(session, { workspaceAuthority: app.workWorkspaceAuthority,
     stopVerifier: { inspect: token => execution.stopVerifier.inspect(token) }, nowUtcMs: now });
+  // P04-9 / F-006：Run 级派发归属与槽位的收尾/续租（短事务、完整身份 CAS）。
+  const dispatchSettlement = createSqliteRunDispatchSettlement(session, { nowUtcMs: now });
+  const dispatches = new Map<string, { readonly projectId: string; readonly runId: string;
+    readonly claimId: string; readonly claimVersion: number; readonly slotId: string;
+    readonly attempt: DispatchAttemptFence }>();
+  const settlementNotes = new Map<string, { readonly decision: string; readonly reason: string | null;
+    readonly atUtcMs: number }>();
+  const runKey = (projectId: string, runId: string) => `${projectId}\u0000${runId}`;
+  const DISPATCH_LEASE_MS = 60_000;
+  const heartbeatIntervalMs = options.heartbeatIntervalMs ?? 20_000;
+  let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function settlementReasonOf(error: unknown): string {
+    return error instanceof StorageError && typeof error.details?.reason === 'string'
+      ? error.details.reason : 'settlement_failed';
+  }
+
+  /**
+   * 结算一个 Run 的派发归属与槽位。只读事实 + 短写事务；失败保留当前占槽并
+   * 记下可解释原因，绝不因调用方结果 Promise 结束而“假定”可以回收。
+   * `attempt` 为关联 Attempt 围栏：迟到结果只能命中旧代次并被拒绝。
+   */
+  function settleRun(projectId: string, runId: string, attempt?: DispatchAttemptFence): DispatchSettlementResult | null {
+    let facts: ReturnType<typeof dispatchSettlement.read>;
+    try {
+      facts = dispatchSettlement.read({ projectId, runId });
+    } catch (error) {
+      settlementNotes.set(runKey(projectId, runId), { decision: 'failed', reason: settlementReasonOf(error), atUtcMs: now() });
+      return null;
+    }
+    const claim = facts.claim;
+    if (claim === null) {
+      // 无派发归属也是可解释事实：排队中的暂停/取消尚未产生消费者。
+      settlementNotes.set(runKey(projectId, runId), { decision: 'absent', reason: null, atUtcMs: now() });
+      return null;
+    }
+    try {
+      const result = session.transactWrite('WorkExecution.settleRun', () => dispatchSettlement.settleInTransaction({
+        projectId, runId,
+        expected: { claimId: claim.id, claimVersion: claim.claimVersion,
+          ownerId: claim.ownerId, hostInstanceId: claim.hostInstanceId },
+        ...(attempt === undefined ? {} : { attempt }),
+      }));
+      settlementNotes.set(runKey(projectId, runId), { decision: result.decision, reason: result.reason, atUtcMs: now() });
+      return result;
+    } catch (error) {
+      settlementNotes.set(runKey(projectId, runId), { decision: 'failed', reason: settlementReasonOf(error), atUtcMs: now() });
+      return null;
+    }
+  }
+
+  function scheduleHeartbeat(): void {
+    if (heartbeatTimer !== null || heartbeatIntervalMs <= 0 || closed) return;
+    const timer = setTimeout(() => {
+      heartbeatTimer = null;
+      if (closed) return;
+      void heartbeat().catch(() => undefined).finally(() => { scheduleHeartbeat(); });
+    }, heartbeatIntervalMs);
+    heartbeatTimer = timer;
+    const unref = (timer as { unref?: () => void }).unref;
+    if (typeof unref === 'function') unref.call(timer);
+  }
+
+  /** 活动执行期间的派发/槽位续租：每次均重核认领身份与关联 Attempt 围栏。 */
+  async function heartbeat(): Promise<{ renewed: number; unchanged: number; quarantined: number; failed: number }> {
+    const outcome = { renewed: 0, unchanged: 0, quarantined: 0, failed: 0 };
+    for (const [attemptId, entry] of [...dispatches]) {
+      try {
+        const result = session.transactWrite('WorkExecution.renewDispatch', () => dispatchSettlement.renewInTransaction({
+          projectId: entry.projectId, runId: entry.runId,
+          expected: { claimId: entry.claimId, claimVersion: entry.claimVersion,
+            ownerId: entry.attempt.ownerId, hostInstanceId: entry.attempt.hostInstanceId },
+          attempt: entry.attempt, leaseUntilUtcMs: now() + DISPATCH_LEASE_MS,
+        }));
+        if (result.decision === 'renewed') outcome.renewed += 1;
+        else if (result.decision === 'unchanged') outcome.unchanged += 1;
+        else {
+          outcome.quarantined += 1;
+          dispatches.delete(attemptId);
+          settlementNotes.set(runKey(entry.projectId, entry.runId),
+            { decision: 'quarantined', reason: result.reason, atUtcMs: now() });
+        }
+      } catch (error) {
+        outcome.failed += 1;
+        const reason = settlementReasonOf(error);
+        // 旧代次/旧 Attempt 不再续租：保留当前归属，停止重复尝试。
+        if (reason === 'stale_dispatch_identity') dispatches.delete(attemptId);
+        settlementNotes.set(runKey(entry.projectId, entry.runId), { decision: 'renew_failed', reason, atUtcMs: now() });
+      }
+    }
+    return outcome;
+  }
   const runtimeAssembly = options.runtimeFactory?.({ capabilityCatalog: options.capabilityCatalog, workspaceRoots, reader: request => readers.get(request.invocationId),
     async commitCommandIdentity(processIdentity, request) {
       if (request.identity.purpose !== 'work') throw new TypeError('Work identity required');
@@ -292,6 +390,7 @@ export function assembleWorkExecution(options: {
   const scheduler = createWorkScheduler({ store, dag: { evaluate: (projectId, runId) => evaluateTaskDag(dag.readTaskDagView(projectId, runId), now()) },
     claims: app.taskClaims,
     admission: { check: ref => finalizationAdmission(ref.projectId) },
+    beforeRun: ref => { settleRun(ref.projectId, ref.runId); },
     ...(options.finalizationExecution === undefined ? {} : {
       finalization: {
         async execute(handoff: { readonly projectId: string; readonly runId: string }) {
@@ -397,6 +496,15 @@ export function assembleWorkExecution(options: {
       const identity = { projectId: attempt.projectId, attemptId: attempt.id, owner: attempt.owner,
         hostInstanceId: attempt.hostInstanceId, executionVersion: attempt.executionVersion };
       active.add(attempt.id);
+      const fence: DispatchAttemptFence = { attemptId: attempt.id, executionVersion: attempt.executionVersion,
+        ownerId: attempt.owner, hostInstanceId: attempt.hostInstanceId };
+      if (claim.dispatch !== undefined) {
+        // 登记派发归属用于心跳续租；续租时重核认领身份与本次 Attempt 围栏。
+        dispatches.set(attempt.id, { projectId: attempt.projectId, runId: attempt.runId,
+          claimId: claim.dispatch.claimId, claimVersion: claim.dispatch.claimVersion, slotId: claim.dispatch.slotId,
+          attempt: fence });
+        scheduleHeartbeat();
+      }
       try {
         // F-012：同一 Feature 已存在受管 worktree 时复用其工作区身份（新准备操作
         // 仍用随机 operationId；journal 现场检查点按工作区的 preparationOperationId
@@ -456,17 +564,40 @@ export function assembleWorkExecution(options: {
           if (result.stopConfirmed && result.persisted && result.error === null) active.delete(attempt.id);
           readers.delete(started.context.request.invocationId);
           routes.delete(attempt.id);
+          dispatches.delete(attempt.id);
+          // 完成/失败/取消共用同一结算入口：是否释放由持久事实（活动 Attempt、
+          // 停止/保留的占用、Run 状态）决定，不由结果 Promise 结束本身决定。
+          settleRun(attempt.projectId, attempt.runId, fence);
         }, () => undefined);
       } catch (error) {
         cancelRequested.delete(attempt.id);
+        dispatches.delete(attempt.id);
         // Preparation/launch uncertainty must keep this Host occupied.
         store.recordRunReason(attempt.projectId, attempt.runId, 'not_ready');
         throw error;
       }
     },
   });
+  /**
+   * 有界收尾扫描：终态/暂停/中断且已无活动 Attempt 的 Run 即使不在调度候选页
+   * （例如取消后不再活跃）也必须由持久派发事实被发现，否则占槽会永久泄漏。
+   * 不做进程/网络 I/O，只走短事务结算。
+   */
+  function settleClaimedRuns(): void {
+    const rows = session.database.prepare(
+      `SELECT c.project_id AS project_id, c.run_id AS run_id FROM run_dispatch_claims c
+        JOIN runs r ON r.project_id = c.project_id AND r.id = c.run_id
+        WHERE c.state IN ('held', 'quarantined')
+          AND r.status IN ('succeeded', 'failed', 'cancelled', 'paused', 'interrupted')
+          AND NOT EXISTS (SELECT 1 FROM attempts a WHERE a.project_id = c.project_id AND a.run_id = c.run_id
+            AND a.status IN ('preparing', 'executing', 'verifying'))
+        ORDER BY c.updated_at, c.rowid LIMIT 64`,
+    ).all() as { project_id: string; run_id: string }[];
+    for (const row of rows) settleRun(row.project_id, row.run_id);
+  }
   const scan = () => options.startupRecovery.blocked()
-    ? Promise.resolve({ closed: false, pages: 0, bounded: true, runs: [] }) : scheduler.scan();
+    ? Promise.resolve({ closed: false, pages: 0, bounded: true, runs: [] })
+    : (() => { settleClaimedRuns(); return scheduler.scan(); })();
   return {
     scan,
     enterRecovery: () => options.startupRecovery.enter(),
@@ -489,7 +620,27 @@ export function assembleWorkExecution(options: {
     },
     async cancel(identity: WorkResourceIdentity) {
       if (!execution.get(identity.projectId, identity.attemptId)) { cancelRequested.add(identity.attemptId); return null; }
-      return execution.cancel(identity);
+      const completion = await execution.cancel(identity);
+      // 取消停止后同样走持久事实结算：停止未确认/现场仍保留时保留或隔离占槽。
+      const attempt = attempts.getAttempt(identity.projectId, identity.attemptId);
+      settleRun(identity.projectId, attempt.runId, { attemptId: attempt.id, executionVersion: attempt.executionVersion,
+        ownerId: attempt.owner, hostInstanceId: attempt.hostInstanceId });
+      return completion;
+    },
+    settleDispatch(projectId: string, runId: string) { return settleRun(projectId, runId); },
+    heartbeat,
+    dispatchState(projectId: string, runId: string) {
+      const facts = dispatchSettlement.read({ projectId, runId });
+      const display = deriveRunDispatchDisplay({ runStatus: facts.runStatus as ExecutionRunStatus,
+        claim: facts.claim, slot: facts.slot, activeAttempt: facts.activeAttempt,
+        slotCapacityAvailable: facts.slotCapacityAvailable, nowUtcMs: now() });
+      return { ...display, runStatus: facts.runStatus, pauseRequested: facts.pauseRequested,
+        claimId: facts.claim?.id ?? null, claimVersion: facts.claim?.claimVersion ?? null,
+        claimState: facts.claim?.state ?? null, claimReason: facts.claim?.reason ?? null,
+        slotId: facts.slot?.id ?? null, slotState: facts.slot?.state ?? null,
+        slotLeaseUntilUtcMs: facts.slot?.leaseUntilUtcMs ?? null,
+        activeAttemptCount: facts.activeAttemptCount, retainedLeaseCount: facts.retainedLeaseCount,
+        settlement: settlementNotes.get(runKey(projectId, runId)) ?? null };
     },
     activeAttemptIds() { return pending(); },
     enterQuiesce() { quiescing = true; return { accepted: pending().length }; },
@@ -500,6 +651,7 @@ export function assembleWorkExecution(options: {
     async close() {
       quiescing = true;
       probeCancellation.abort();
+      if (heartbeatTimer !== null) { clearTimeout(heartbeatTimer); heartbeatTimer = null; }
       await scheduler.close();
       const result = await execution.close();
       const pendingAttemptIds = [...new Set([...pending(), ...result.pendingAttemptIds])];

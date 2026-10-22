@@ -107,6 +107,11 @@ export interface WorkSchedulerOptions {
    * 目前用于 finalization-only Run 的槽位/资源准入，避免其绕过单槽与项目 Work 门控。
    */
   readonly admission?: { check(ref: SchedulerRunRef): string | null };
+  /**
+   * 每个候选 Run 在 DAG 评估/认领之前的受信短操作（当前用于 F-006 派发归属与
+   * 槽位收尾）。失败不得阻止补扫；调用方自己保留可查询原因。
+   */
+  readonly beforeRun?: (ref: SchedulerRunRef) => void | Promise<void>;
   readonly intervalMs?: number;
   readonly pageSize?: number;
   readonly maxPages?: number;

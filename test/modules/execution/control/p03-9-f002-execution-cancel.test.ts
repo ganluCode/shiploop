@@ -502,9 +502,10 @@ describe('P03-9 / F-002 Run/Batch 取消意图与终态竞争', () => {
   });
 
   it('迁移 v28：仅追加停止 operation 表，历史 checksum 稳定，空库与 v27 库可升级', async () => {
-    expect(SQLITE_MIGRATIONS.map(migration => migration.version)).toEqual(
-      Array.from({ length: 32 }, (_, index) => index + 1),
-    );
+    // 后续迁移只允许追加：版本从 1 连续递增到当前最新（v28 之后仍保持）。
+    const versions = SQLITE_MIGRATIONS.map(migration => migration.version);
+    const latest = versions[versions.length - 1]!;
+    expect(versions).toEqual(Array.from({ length: latest }, (_, index) => index + 1));
     expect(SQLITE_MIGRATIONS[27]?.sql).toContain('CREATE TABLE execution_stop_operations');
     for (const migration of SQLITE_MIGRATIONS.slice(0, 27)) {
       expect(migration.checksum).toMatch(/^[0-9a-f]{64}$/);
@@ -515,7 +516,7 @@ describe('P03-9 / F-002 Run/Batch 取消意图与终态竞争', () => {
       const session = openSqliteStorageSession({ path: join(empty.path, 'state.db') });
       try {
         const result = await migrateSqliteStorage(session, { nowUtcMs: () => NOW });
-        expect(result).toMatchObject({ fromVersion: 0, toVersion: 32 });
+        expect(result).toMatchObject({ fromVersion: 0, toVersion: latest });
         expect(session.database.prepare(
           "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'execution_stop_operations'",
         ).get()).toEqual({ name: 'execution_stop_operations' });
@@ -533,11 +534,12 @@ describe('P03-9 / F-002 Run/Batch 取消意图与终态竞争', () => {
           "INSERT INTO projects (id, created_at, revision, updated_at, display_name, status, labels) VALUES ('p-keep', ?, 1, ?, '保留项目', 'active', '[]')",
         ).run(NOW, NOW);
         const upgraded = await migrateSqliteStorage(session, { nowUtcMs: () => NOW });
-        expect(upgraded).toMatchObject({ fromVersion: 27, toVersion: 32, appliedVersions: [28, 29, 30, 31, 32] });
+        expect(upgraded).toMatchObject({ fromVersion: 27, toVersion: latest,
+          appliedVersions: versions.filter(version => version > 27) });
         expect(session.database.prepare("SELECT display_name FROM projects WHERE id = 'p-keep'").get())
           .toEqual({ display_name: '保留项目' });
         expect(session.database.prepare('SELECT MAX(version) AS version FROM schema_migrations').get())
-          .toEqual({ version: 32 });
+          .toEqual({ version: latest });
       } finally { session.close(); }
     } finally { upgrade.cleanup(); }
   });
