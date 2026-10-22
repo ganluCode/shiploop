@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "authorization": {
+    "approved": false,
+    "id": "REQUIRES_OWNER_APPROVAL",
+    "expiresAt": 0
+  },
+  "provider": "REQUIRES_APPROVED_PROVIDER",
+  "model": "REQUIRES_APPROVED_MODEL",
+  "authentication": {
+    "kind": "environment",
+    "sourceRef": "REQUIRES_APPROVED_AUTH_REFERENCE",
+    "variable": "SHIPLOOP_APPROVED_API_KEY"
+  },
+  "repository": "/canonical/temporary/repo",
+  "expectedCommit": "REQUIRES_TEMPORARY_REPO_HEAD",
+  "resources": [
+    "read_greeting",
+    "write_greeting"
+  ],
+  "fallback": [],
+  "budgets": {
+    "maxAttempts": 1,
+    "maxRequests": 3,
+    "timeoutMs": 60000,
+    "maxInputTokens": 12000,
+    "maxOutputTokens": 1024,
+    "maxTokens": 40000
+  },
+  "scenario": "change",
+  "reportDir": "/canonical/temporary/new-live-report"
+}

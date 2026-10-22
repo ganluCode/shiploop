@@ -51,6 +51,8 @@ test/
 
 - `index/phases/P04/features/P04-8/tasks/F-006.json`：五类控制事件（请求取消/工具取消/超时/Host 异常/Runner 强杀）、停止不确定保留占用、取消窗口迟到结果与报告证据完整性离线矩阵，组合新增真实进程+SQLite 18 项；本地通过后无遗留进程，其余取消/停止/步骤器回归交 Nezha，场景与证据见 [F-006 矩阵](../docs/p04-8-f006-control-fault-matrix.md)。
 
+- `index/phases/P04/features/P04-8/tasks/F-009.json`：live 授权/零调用、预算、定向检查/Git 交付、证据水位和凭据边界；真实 SDK 在离线 transport 下核对工具循环、401 与取消。阶段入口/报告和既有 SDK/认证回归交 Nezha；真实模型、Core 业务闭环和外部工具进程保持 `not_run`，见 [live 工具说明](../docs/p04-8-f009-live-entry.md)。
+
 Task JSON 使用 Nezha v2 schema。当前存量用例首轮按文件显式 `all: true`，
 对应 19 个本 Feature 文件，不包含此前大批历史模块回归。
 部分文件有多个测试类型，暂不凭猜测拆掉其中断言或谎称函数级选择。
