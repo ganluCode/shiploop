@@ -36,19 +36,20 @@ export function createSqliteDispatchRecovery(session: SqliteStorageSession) {
   }
   function quarantine(claim: Claim, reason: string, timestamp: number) {
     assertWrite();
+    // Wall-clock rollback cannot abort fencing or move durable timestamps before acquisition/prior updates.
     db.prepare(`UPDATE execution_slot_claims SET state = 'quarantined', reason = ?, revision = revision + 1,
-      updated_at = ? WHERE claim_id = ? AND state = 'held'`).run(reason, timestamp, claim.id);
-    db.prepare(`UPDATE run_dispatch_claims SET state = 'quarantined', reason = ?, settled_at = ?,
-      revision = revision + 1, updated_at = ? WHERE id = ? AND state = 'held'`).run(reason, timestamp, timestamp, claim.id);
+      updated_at = MAX(?, acquired_at, updated_at) WHERE claim_id = ? AND state = 'held'`).run(reason, timestamp, claim.id);
+    db.prepare(`UPDATE run_dispatch_claims SET state = 'quarantined', reason = ?, settled_at = MAX(?, acquired_at, updated_at),
+      revision = revision + 1, updated_at = MAX(?, acquired_at, updated_at) WHERE id = ? AND state = 'held'`).run(reason, timestamp, timestamp, claim.id);
   }
   function release(claim: Claim, timestamp: number, reason = 'startup_reconciled') {
     assertWrite();
     // Expiry does not authorize this path. The caller has proved unstarted or matched stop/reconciliation evidence.
-    db.prepare(`UPDATE execution_slot_claims SET state = 'released', reason = ?, released_at = ?,
-      revision = revision + 1, updated_at = ? WHERE claim_id = ? AND state IN ${active}`)
+    db.prepare(`UPDATE execution_slot_claims SET state = 'released', reason = ?, released_at = MAX(?, acquired_at, updated_at),
+      revision = revision + 1, updated_at = MAX(?, acquired_at, updated_at) WHERE claim_id = ? AND state IN ${active}`)
       .run(reason, timestamp, timestamp, claim.id);
-    db.prepare(`UPDATE run_dispatch_claims SET state = 'released', reason = ?, settled_at = ?,
-      revision = revision + 1, updated_at = ? WHERE id = ? AND state IN ${active}`)
+    db.prepare(`UPDATE run_dispatch_claims SET state = 'released', reason = ?, settled_at = MAX(?, acquired_at, updated_at),
+      revision = revision + 1, updated_at = MAX(?, acquired_at, updated_at) WHERE id = ? AND state IN ${active}`)
       .run(reason, timestamp, timestamp, claim.id);
   }
   function authorization(runId: string): boolean {

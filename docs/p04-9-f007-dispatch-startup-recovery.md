@@ -42,4 +42,20 @@ Host 重启时，启动恢复先核对 Run 认领/槽位，再核对 Attempt、�
 - 最终 `npm run typecheck`：exit 0，`test-joxpcap7.log`；`npm run check:boundaries`：339 个生产文件、0 diagnostics、exit 0，`test-v66eq4lb.log`。
 - 最终进程清理副本：`verifications/F-007/missing-process-receipt-cleanup.json` 与 `result-before-settlement-cleanup.json`，两组均为 `pass`、`processesGone: true`、`removed: true`，每组核对 4 个进程。
 
+以上为首次实现的本地记录；独立验收及后续修复见下文。
+
 仓库唯一选择索引为 `test/index/phases/P04/features/P04-9/tasks/F-007.json`（14 文件）。Harness selection 仅引用此索引。新增三文件、既有 F-006/F-008 恢复文件及 F-016 指定用例有本地通过证据；其他索引文件及 F-016 其余用例仅登记，交 Nezha 独立复验。未执行全量测试、Feature/Phase 验收、live 或真实模型。没有人工阻塞；独立验收结果由 Nezha 决定。
+
+## 第一次独立验收后的修复
+
+独立验证 `28a881fe4ca74639b61bfa5ffa5bb412/verification.json` 实际执行原索引 14 文件，138 passed / 11 failed。失败均在旧启动恢复文件：夹具获得时间晚于系统时钟，恢复直接写入当前时间，违反认领的 `settled_at >= acquired_at` 约束，导致 fencing 事务回滚及停止观察缺失。
+
+修复 `dispatch-recovery.ts` 的隔离/释放写入：结算与更新时间取当前时钟、该行获得时间和已有更新时间的最大值。时钟回退不能使隔离失败或回拨已有时间；未启动/停止证据准入和原绝对 deadline 继续按原政策核对。没有修改历史迁移、旧测试断言、预算或停止约束。
+
+- 新增两项时钟回退用例（释放和隔离），RED：`test-nasa3wbv.log`，两个约束错误均复现。
+- GREEN：启动扫描 7 项及全部旧启动恢复 15 项通过，`test-n0duvf2s.log`，exit 0。
+- 崩溃窗口/显式恢复 14 项通过，`test-qvm7fe89.log`，exit 0；本轮四文件合计 36 passed，新增三文件现为 21 项。
+- 类型检查通过：`test-0pwktf3c.log`，exit 0。
+- 本轮进程清理副本：`verifications/F-007/attempt-2-{missing-process-receipt,result-before-settlement}-cleanup.json`，两组各 4 个进程均确认停止并移除临时根。
+
+重新审阅并校验原 14 文件索引，范围保持完整。其余上轮独立验证已通过的 138 项不整体重跑，交 Nezha 独立复验；未运行全量、阶段或 live。首次独立失败不因本地通过而自行清除，本次按新 invocation 提交完成声明，最终通过状态由 Nezha 更新。

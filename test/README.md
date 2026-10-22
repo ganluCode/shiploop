@@ -96,7 +96,7 @@ test/
 
 - `index/phases/P04/features/P04-9/tasks/F-007.json`：启动恢复核对 Run 认领/槽位、
   Attempt/回执/invocation 与旧资源组；覆盖四类崩溃窗口、快照漂移、恢复事务回滚、
-  旧 owner 围栏、显式恢复占用/原 deadline 和旧库兼容。新增三文件本地 19 项通过，
+  旧 owner 围栏、显式恢复占用/原 deadline 和旧库兼容及时钟回退。新增三文件本地 21 项通过，
   既有恢复/显式恢复文件及真实 Host 强杀用例有定向证据；其余索引范围交 Nezha。
   实际日志、进程清理与边界见 [F-007 交接](../docs/p04-9-f007-dispatch-startup-recovery.md)。
 
