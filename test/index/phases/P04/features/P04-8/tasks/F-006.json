@@ -1,0 +1,47 @@
+{
+  "schema_version": 2,
+  "task_id": "F-006",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/execution/control/p04-8-control-fault-matrix.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/execution/control/p03-9-f002-execution-cancel.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/execution/control/p03-9-f004-time-limits.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/execution/control/p04-7-f007-stop-control-regression.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/execution/control/p04-7-real-process-deadlines.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/acceptance/acceptance-process-cleanup.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/acceptance/p03-10-clean-replay-control.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/acceptance/p04-8-step-runner.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p04-7-cleanup-manifest.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

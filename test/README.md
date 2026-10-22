@@ -49,6 +49,8 @@ test/
 
 - `index/phases/P04/features/P04-8/tasks/F-005.json`：恢复来源/权限/副作用政策、标准 Pi 原生写入者与档案故障、恢复水位及用量去重，组合新增真实 SQLite 记录故障/迟到结果 9 项。新增文件本地通过，其余已存在用例交 Nezha 独立复验；数据库故障不代表 Pi 使用 SQLite，范围与证据见 [F-005 矩阵](../docs/p04-8-f005-recovery-recording-matrix.md)。
 
+- `index/phases/P04/features/P04-8/tasks/F-006.json`：五类控制事件（请求取消/工具取消/超时/Host 异常/Runner 强杀）、停止不确定保留占用、取消窗口迟到结果与报告证据完整性离线矩阵，组合新增真实进程+SQLite 18 项；本地通过后无遗留进程，其余取消/停止/步骤器回归交 Nezha，场景与证据见 [F-006 矩阵](../docs/p04-8-f006-control-fault-matrix.md)。
+
 Task JSON 使用 Nezha v2 schema。当前存量用例首轮按文件显式 `all: true`，
 对应 19 个本 Feature 文件，不包含此前大批历史模块回归。
 部分文件有多个测试类型，暂不凭猜测拆掉其中断言或谎称函数级选择。
