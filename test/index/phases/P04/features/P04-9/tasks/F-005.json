@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "task_id": "F-005",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/scheduling/p04-9-f005-persistent-dispatch.test.ts", "all": true },
+      { "file": "test/modules/scheduling/p03-4-scheduler.test.ts", "all": true },
+      { "file": "test/modules/scheduling/p03-10-verification-pause.test.ts", "all": true },
+      { "file": "test/modules/delivery/retry/p03-9-f011-finalization-execution.test.ts", "all": true },
+      { "file": "test/modules/verification/p03-7-f016-e2e-three-task-chain.test.ts", "all": true },
+      { "file": "test/modules/runtime/p04-3-pi-inference-preflight.test.ts", "all": true }
+    ]
+  }]
+}

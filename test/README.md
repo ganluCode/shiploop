@@ -81,6 +81,13 @@ test/
   事务边界、故障证据和后续生命周期范围见
   [F-004 交接](../docs/p04-9-f004-atomic-dispatch-claim.md)。
 
+- `index/phases/P04/features/P04-9/tasks/F-005.json`：有界持久补扫与 Work 组合根。
+  覆盖派发意图/续跑 Run 的 keyset 分页、稳定游标、重建调度器补扫、同 Run 两 Task
+  复用同一认领/槽位、Runtime completed 不等于 passed、finalization-only 准入与
+  handoff 幂等、启动门控与关闭。六文件本地定向通过（新增 6 项）；Host 纵向因本
+  workspace 未构建原生写入锁而保持 `not_run`，范围与证据见
+  [F-005 交接](../docs/p04-9-f005-persistent-rescan.md)。
+
 Task JSON 使用 Nezha v2 schema。当前存量用例首轮按文件显式 `all: true`，
 对应 19 个本 Feature 文件，不包含此前大批历史模块回归。
 部分文件有多个测试类型，暂不凭猜测拆掉其中断言或谎称函数级选择。

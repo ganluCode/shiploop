@@ -5,6 +5,7 @@ import type {
   SchedulerHandoff,
   SchedulerRunRef,
   SchedulerRunResult,
+  SchedulerScanCursor,
   SchedulerScanResult,
   SchedulerStore,
   SchedulerTimers,
@@ -51,7 +52,7 @@ export function createWorkScheduler(options: WorkSchedulerOptions) {
   const diagnostics = new Map<string, SchedulerRunResult>();
   let scanPromise: Promise<SchedulerScanResult> | null = null;
   let closePromise: Promise<void> | null = null;
-  let compensationCursor: SchedulerRunRef | null = null;
+  let compensationCursor: SchedulerScanCursor | null = null;
   let timer: unknown = null;
   let started = false;
   let closed = false;
@@ -111,6 +112,16 @@ export function createWorkScheduler(options: WorkSchedulerOptions) {
         const result: SchedulerRunResult = { projectId, runId, reason: 'scheduler_capability_missing',
           capabilityGaps: ['feature_finalization_consumer'], claimed: false, handoff: null };
         options.store.recordRunReason(projectId, runId, result.reason);
+        diagnostics.set(key(projectId, runId), result);
+        return result;
+      }
+      // 仅收尾 Run 不创建编码 Attempt，但同样受槽位/资源准入控制：忙时只持久化
+      // 可查询原因并等待后续补扫，不调用 finalization、不启动 Runtime。
+      const admitted = options.admission?.check({ projectId, runId }) ?? null;
+      if (admitted !== null) {
+        options.store.recordRunReason(projectId, runId, admitted);
+        const result: SchedulerRunResult = { projectId, runId, reason: 'resource_busy',
+          capabilityGaps: [], claimed: false, handoff: null };
         diagnostics.set(key(projectId, runId), result);
         return result;
       }
@@ -220,19 +231,25 @@ export function createWorkScheduler(options: WorkSchedulerOptions) {
   async function runScan(): Promise<SchedulerScanResult> {
     if (closed) return { closed: true, pages: 0, bounded: false, runs: [] };
     const runs: SchedulerRunResult[] = [];
-    let cursor: SchedulerRunRef | null = compensationCursor;
+    const processed = new Set<string>();
+    let cursor: SchedulerScanCursor | null = compensationCursor;
     let pages = 0;
     let hasMore = true;
     pendingWakes.clear();
     while (hasMore && pages < maxPages) {
       const page = options.store.listActiveRuns({ after: cursor, limit: pageSize });
       pages += 1;
-      for (const ref of page.runs) runs.push(await processRun(ref.projectId, ref.runId));
-      hasMore = page.hasMore;
-      const last = page.runs[page.runs.length - 1];
-      cursor = last === undefined ? cursor : last;
+      for (const ref of page.runs) {
+        // 分页来源在扫描期间可能因状态推进而重叠；同一 Run 只消费一次。
+        const runKey = key(ref.projectId, ref.runId);
+        if (processed.has(runKey)) continue;
+        processed.add(runKey);
+        runs.push(await processRun(ref.projectId, ref.runId));
+      }
+      // `hasMore` 必须同时具备稳定游标；否则不重复读取同一页。
+      hasMore = page.hasMore && (page.nextCursor ?? null) !== null;
+      cursor = page.nextCursor ?? null;
       compensationCursor = hasMore ? cursor : null;
-      if (last === undefined) break;
     }
     if (closed) return { closed: true, pages, bounded: false, runs };
     return { closed: false, pages, bounded: hasMore, runs };

@@ -276,8 +276,22 @@ export function assembleWorkExecution(options: {
       WHERE s.status IS NULL OR s.status <> 'stopped' OR s.result_ref IS NULL`).all() as { owner_id: string }[]
   ).map(row => row.owner_id)])];
   let quiescing = false, closed = false;
+  // 仅收尾 Run 不创建编码 Attempt，但不得绕过单槽/项目 Work 门控：读取既有
+  // 持久占用事实（只读、短查询），忙时由调度器保留可查询阻塞原因。
+  function finalizationAdmission(projectId: string): string | null {
+    const activeSlot = session.database.prepare(
+      "SELECT id FROM execution_slot_claims WHERE project_id = ? AND state IN ('held', 'quarantined') AND lease_until > ? LIMIT 1",
+    ).get(projectId, now());
+    if (activeSlot !== undefined) return 'execution_slot_unavailable';
+    const executionGate = session.database.prepare(
+      "SELECT id FROM workspace_leases WHERE project_id = ? AND resource_key = 'global:execution' AND state IN ('held', 'quarantined') LIMIT 1",
+    ).get(projectId);
+    if (executionGate !== undefined) return 'project_execution_gate_busy';
+    return null;
+  }
   const scheduler = createWorkScheduler({ store, dag: { evaluate: (projectId, runId) => evaluateTaskDag(dag.readTaskDagView(projectId, runId), now()) },
     claims: app.taskClaims,
+    admission: { check: ref => finalizationAdmission(ref.projectId) },
     ...(options.finalizationExecution === undefined ? {} : {
       finalization: {
         async execute(handoff: { readonly projectId: string; readonly runId: string }) {

@@ -7,14 +7,31 @@ export interface SchedulerRunRef {
   readonly runId: string;
 }
 
+/**
+ * 稳定补扫游标：由「来源优先级 + 该来源不可变排序键」组成。
+ * 派发意图（rank 0）按 `enqueued_at, rowid`，其余活动 Run（rank 1）按
+ * `created_at, rowid`；两者在 SQLite 中都不可变，因此重放同一游标返回同一页。
+ */
+export interface SchedulerScanCursor extends SchedulerRunRef {
+  readonly rank: number;
+  readonly key1: number;
+  readonly key2: number;
+}
+
 export interface SchedulerPage {
   readonly runs: readonly SchedulerRunRef[];
   readonly hasMore: boolean;
+  /** 下一页的稳定游标；`hasMore=false` 时为 null。 */
+  readonly nextCursor?: SchedulerScanCursor | null;
 }
 
 export interface SchedulerStore {
-  /** Reads a bounded, stable page of active Runs. A null cursor starts a fresh scan. */
-  listActiveRuns(input: { readonly after: SchedulerRunRef | null; readonly limit: number }): SchedulerPage;
+  /**
+   * Reads a bounded, stable page of active Runs. A null cursor starts a fresh scan.
+   * 数据来源是持久 Run 与派发意图事实：未派发的 queued Run 即使没有内存唤醒
+   * 也能被发现，续跑中的 Run 仍按既有活动状态进入候选。
+   */
+  listActiveRuns(input: { readonly after: SchedulerScanCursor | null; readonly limit: number }): SchedulerPage;
   /** Persists a bounded diagnostic without changing lifecycle state. */
   recordRunReason(projectId: string, runId: string, reason: string): void;
   /** Returns whether the stable handoff key has already been delivered. */
@@ -85,6 +102,11 @@ export interface WorkSchedulerOptions {
   readonly finalization?: SchedulerFinalization;
   /** handoff 已记录后继续审批/提交；仅在 Run 仍可调度时调用。 */
   readonly finalizationCompletion?: SchedulerFinalizationCompletion;
+  /**
+   * 资源准入前置核对（无副作用）。返回有界原因即表示当前不可消费；
+   * 目前用于 finalization-only Run 的槽位/资源准入，避免其绕过单槽与项目 Work 门控。
+   */
+  readonly admission?: { check(ref: SchedulerRunRef): string | null };
   readonly intervalMs?: number;
   readonly pageSize?: number;
   readonly maxPages?: number;
