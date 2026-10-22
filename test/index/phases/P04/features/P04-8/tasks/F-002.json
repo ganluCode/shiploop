@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "task_id": "F-002",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/acceptance/p04-8-fixture.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}
