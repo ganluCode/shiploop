@@ -1,0 +1,65 @@
+{
+  "configVersion": 1,
+  "checklist": "acceptance/p04.checklist.json",
+  "reportRoot": "artifacts/acceptance/p04",
+  "requiredChecks": [
+    "P04-FR1-FAILURE-MATRIX",
+    "P04-FR2-BOUNDED-ENTRY",
+    "P04-FR3-LIVE-GUARD",
+    "P04-FR4-MANUAL-GATE",
+    "P04-T35",
+    "P04-T36",
+    "P04-T37",
+    "P04-T39",
+    "P04-T40",
+    "P04-T41",
+    "P04-T42",
+    "P04-T43",
+    "P04-T44",
+    "P04-VERT-OFFLINE-FAIL-CLOSED",
+    "P04-VERT-LIVE-ZERO-CALL",
+    "P04-VERT-MANUAL-BLOCK"
+  ],
+  "toolchain": {
+    "packageManager": "npm@10.9.3",
+    "node": "22.19.0",
+    "npm": "10.9.3",
+    "lockfile": "package-lock.json"
+  },
+  "timeouts": {
+    "stepMs": 3600000,
+    "overallMs": 7200000
+  },
+  "maxCommandOutputBytes": 262144,
+  "fakeIdentity": {
+    "provider": "fake-provider",
+    "model": "fake-model",
+    "realModel": false,
+    "network": "denied"
+  },
+  "tempResources": {
+    "git": "temp",
+    "sqlite": "temp",
+    "dataRoot": "temp",
+    "home": "temp",
+    "reusePrevious": false
+  },
+  "reportScope": {
+    "statuses": [
+      "pass",
+      "fail",
+      "not_run"
+    ],
+    "includeEvidenceHash": true,
+    "includeManualChecklist": true,
+    "deferredCountsAsPassed": false
+  },
+  "plan": {
+    "phaseId": "2026-10-20-12-01-23_p04-8-pi",
+    "stepId": "p04-acceptance",
+    "title": "P04 阶段验收契约与执行报告",
+    "scope": "FR-1/FR-2/FR-3/FR-4 的离线、live、人工和后置能力清单；live 需显式授权，人工确认不得由工具代签",
+    "version": "0.4",
+    "contractDoc": "docs/p04-acceptance.md"
+  }
+}

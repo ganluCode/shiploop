@@ -1,0 +1,425 @@
+{
+  "checklistVersion": 1,
+  "phase": "P04",
+  "layers": [
+    "unit",
+    "feature-integration",
+    "phase-acceptance"
+  ],
+  "evidenceCategories": [
+    "command-exit",
+    "sqlite",
+    "git",
+    "process",
+    "artifact",
+    "report",
+    "manifest",
+    "live",
+    "manual"
+  ],
+  "countRule": "必需项全部 pass 才算通过；deferred 项显示 not_run 或 postponed，不参与 P04 已通过计数；覆盖按必需断言判定，不按测试数量判断",
+  "items": [
+    {
+      "id": "P04-FR1-FAILURE-MATRIX",
+      "group": "fr",
+      "title": "FR-1 确定性集成与故障矩阵",
+      "layer": "phase-acceptance",
+      "execution": "offline",
+      "fr": [
+        "FR-1"
+      ],
+      "acceptanceRefs": [
+        "T35",
+        "T36",
+        "T41",
+        "T42"
+      ],
+      "assertions": [
+        "SDK、认证、资源授权、工具越权、限流/连接/服务端错误、重试与备用均有可重放的业务状态和副作用断言",
+        "取消、超时、强杀、迟到结果、存储故障与清理事实分别记录，失败或未运行不冒充通过"
+      ],
+      "evidence": [
+        "command-exit",
+        "sqlite",
+        "process",
+        "manifest"
+      ]
+    },
+    {
+      "id": "P04-FR2-BOUNDED-ENTRY",
+      "group": "fr",
+      "title": "FR-2 独立阶段入口与有界执行",
+      "layer": "phase-acceptance",
+      "execution": "offline",
+      "fr": [
+        "FR-2"
+      ],
+      "acceptanceRefs": [
+        "T35",
+        "T37"
+      ],
+      "assertions": [
+        "步骤按固定 argv/cwd 和有限单步/总预算顺序执行，每步开始即保存运行身份、日志位置、状态、退出码和耗时",
+        "缺入口、超时、未知退出码、证据写入失败、非空目录或输入不匹配均 fail-closed，前序证据保留"
+      ],
+      "evidence": [
+        "command-exit",
+        "artifact",
+        "manifest"
+      ]
+    },
+    {
+      "id": "P04-FR3-LIVE-GUARD",
+      "group": "fr",
+      "title": "FR-3 真实 Pi live 授权边界",
+      "layer": "phase-acceptance",
+      "execution": "live",
+      "fr": [
+        "FR-3"
+      ],
+      "acceptanceRefs": [
+        "T40",
+        "T41",
+        "T43",
+        "T44"
+      ],
+      "assertions": [
+        "live 输入明确 provider/model、获准认证来源、临时 Git、资源与预算；缺授权或认证时 zero-call 并保持 not_run",
+        "已授权调用记录真实模型、工具过程、usage、取消/停止和恢复结果；未知能力和缺失字段准确标记 unknown/partial"
+      ],
+      "evidence": [
+        "command-exit",
+        "git",
+        "process",
+        "live"
+      ]
+    },
+    {
+      "id": "P04-FR4-MANUAL-GATE",
+      "group": "fr",
+      "title": "FR-4 报告与人工阶段放行门槛",
+      "layer": "phase-acceptance",
+      "execution": "manual",
+      "fr": [
+        "FR-4"
+      ],
+      "acceptanceRefs": [
+        "T39"
+      ],
+      "assertions": [
+        "报告保存受测 commit、工具版本、命令身份、运行状态、耗时、退出码、证据引用、覆盖度、清理事实和已知缺口",
+        "完整工程/集成、获准 live 和负责人确认三者缺一不可；工具交付通过不能替代阶段验收通过"
+      ],
+      "evidence": [
+        "report",
+        "manual",
+        "manifest"
+      ]
+    },
+    {
+      "id": "P04-T35",
+      "group": "acceptance",
+      "title": "T35 局部测试选择与安全回退",
+      "layer": "feature-integration",
+      "execution": "offline",
+      "fr": [
+        "FR-1",
+        "FR-2"
+      ],
+      "acceptanceRefs": [
+        "T35"
+      ],
+      "assertions": [
+        "选择使用已登记的测试文件和稳定 case，记录 argv/cwd/timeout/退出码；候选缺失、越界或零测试按策略拒绝或回退",
+        "不递归启动全仓或阶段入口，选择范围和缺口可追溯"
+      ],
+      "evidence": [
+        "artifact",
+        "command-exit"
+      ]
+    },
+    {
+      "id": "P04-T36",
+      "group": "acceptance",
+      "title": "T36 失败、超时和未知停止状态",
+      "layer": "feature-integration",
+      "execution": "offline",
+      "fr": [
+        "FR-1",
+        "FR-2"
+      ],
+      "acceptanceRefs": [
+        "T36"
+      ],
+      "assertions": [
+        "步骤失败、超时、缺入口、证据损坏和停止不确定均返回非零并保留现场",
+        "未确认停止不得释放资源、重跑或写入 processesGone=true"
+      ],
+      "evidence": [
+        "command-exit",
+        "process",
+        "manifest"
+      ]
+    },
+    {
+      "id": "P04-T37",
+      "group": "acceptance",
+      "title": "T37 证据目录隔离与运行身份",
+      "layer": "feature-integration",
+      "execution": "offline",
+      "fr": [
+        "FR-2",
+        "FR-4"
+      ],
+      "acceptanceRefs": [
+        "T37"
+      ],
+      "assertions": [
+        "非空证据目录、受测 commit 不匹配或资源输入不匹配时拒绝覆盖和复用旧成功",
+        "每步保存稳定运行身份、命令、日志位置、退出码和耗时"
+      ],
+      "evidence": [
+        "artifact",
+        "manifest"
+      ]
+    },
+    {
+      "id": "P04-T39",
+      "group": "acceptance",
+      "title": "T39 人工确认优先于机器成功",
+      "layer": "feature-integration",
+      "execution": "manual",
+      "fr": [
+        "FR-4"
+      ],
+      "acceptanceRefs": [
+        "T39"
+      ],
+      "assertions": [
+        "负责人未确认、明确阻塞或代码摘要不匹配时，机器全绿不能放行 P05",
+        "确认记录包含负责人身份、时间、结论并绑定受测 commit；模型不能自行签字"
+      ],
+      "evidence": [
+        "report",
+        "manual"
+      ]
+    },
+    {
+      "id": "P04-T40",
+      "group": "acceptance",
+      "title": "T40 同 Task 续接与增量审计",
+      "layer": "feature-integration",
+      "execution": "offline",
+      "fr": [
+        "FR-1",
+        "FR-3"
+      ],
+      "acceptanceRefs": [
+        "T40"
+      ],
+      "assertions": [
+        "续接前核验旧执行停止、身份和输入兼容；auto/new/required 决策及不支持原因可追溯",
+        "旧档案不变，历史事件、usage 和新回复不重复计量，预算不因新 Attempt 清零"
+      ],
+      "evidence": [
+        "sqlite",
+        "process",
+        "artifact"
+      ]
+    },
+    {
+      "id": "P04-T41",
+      "group": "acceptance",
+      "title": "T41 认证、预检、重试与备用边界",
+      "layer": "feature-integration",
+      "execution": "offline",
+      "fr": [
+        "FR-1",
+        "FR-3"
+      ],
+      "acceptanceRefs": [
+        "T41"
+      ],
+      "assertions": [
+        "认证失败、推理失败、限流、连接、服务端和协议错误分类清晰，重试受统一预算约束",
+        "未经批准不切换 provider/model；未授权场景真实请求数为零"
+      ],
+      "evidence": [
+        "command-exit",
+        "artifact",
+        "live"
+      ]
+    },
+    {
+      "id": "P04-T42",
+      "group": "acceptance",
+      "title": "T42 长轮次与工具过程诊断",
+      "layer": "feature-integration",
+      "execution": "offline",
+      "fr": [
+        "FR-1",
+        "FR-4"
+      ],
+      "acceptanceRefs": [
+        "T42"
+      ],
+      "assertions": [
+        "工具调用、重读、错误、大输出、上下文和检查耗时分别记录，缺字段保持 unknown",
+        "诊断告警不改业务状态，不以不同 Task 或 Fake 结果宣称真实节省"
+      ],
+      "evidence": [
+        "artifact",
+        "report"
+      ]
+    },
+    {
+      "id": "P04-T43",
+      "group": "acceptance",
+      "title": "T43 恢复能力分离与未知能力拒绝",
+      "layer": "feature-integration",
+      "execution": "live",
+      "fr": [
+        "FR-3"
+      ],
+      "acceptanceRefs": [
+        "T43"
+      ],
+      "assertions": [
+        "conversation resume、execution recovery 和 checkpoint 能力分开记录；required 不支持时明确拒绝",
+        "跨项目/用途、活跃旧执行和未知能力按 fail-closed 处理，不加载未授权原生存储"
+      ],
+      "evidence": [
+        "live",
+        "process",
+        "report"
+      ]
+    },
+    {
+      "id": "P04-T44",
+      "group": "acceptance",
+      "title": "T44 live 稳定身份、停止与增量用量",
+      "layer": "feature-integration",
+      "execution": "live",
+      "fr": [
+        "FR-3"
+      ],
+      "acceptanceRefs": [
+        "T44"
+      ],
+      "assertions": [
+        "重复请求、工具前后崩溃、停止不确定、重复事件/usage 和两个写入者均保留可追踪证据",
+        "live 事实按当前调用增量记录，已通过 Task 和历史登录日志不能替代实际运行"
+      ],
+      "evidence": [
+        "live",
+        "process",
+        "manifest"
+      ]
+    },
+    {
+      "id": "P04-VERT-OFFLINE-FAIL-CLOSED",
+      "group": "vertical",
+      "title": "纵向演示：离线集成与失败关闭",
+      "layer": "phase-acceptance",
+      "execution": "offline",
+      "fr": [
+        "FR-1",
+        "FR-2"
+      ],
+      "acceptanceRefs": [
+        "T35",
+        "T36",
+        "T37"
+      ],
+      "assertions": [
+        "确定性集成场景独立执行且不调用模型/网络，步骤故障、证据损坏和清理失败均形成非零报告",
+        "失败保留已完成步骤证据、现场和已知缺口"
+      ],
+      "evidence": [
+        "command-exit",
+        "artifact",
+        "manifest"
+      ]
+    },
+    {
+      "id": "P04-VERT-LIVE-ZERO-CALL",
+      "group": "vertical",
+      "title": "纵向演示：live 无授权零调用",
+      "layer": "phase-acceptance",
+      "execution": "live",
+      "fr": [
+        "FR-3"
+      ],
+      "acceptanceRefs": [
+        "T41"
+      ],
+      "assertions": [
+        "缺认证或未获批准时不发真实 Pi 请求，报告记录 zero-call 和 not_run/pending",
+        "不以 Fake、mock 或已完成 Task 替代 live 证据"
+      ],
+      "evidence": [
+        "command-exit",
+        "live",
+        "report"
+      ]
+    },
+    {
+      "id": "P04-VERT-MANUAL-BLOCK",
+      "group": "vertical",
+      "title": "纵向演示：负责人确认阻塞",
+      "layer": "phase-acceptance",
+      "execution": "manual",
+      "fr": [
+        "FR-4"
+      ],
+      "acceptanceRefs": [
+        "T39"
+      ],
+      "assertions": [
+        "定向工具通过但负责人状态为 pending/rejected 时阶段结论为 fail，不能放行 P05",
+        "确认解除必须由明确负责人提交并绑定当前 commit"
+      ],
+      "evidence": [
+        "manual",
+        "report"
+      ]
+    },
+    {
+      "id": "P04-POST-DURABLE",
+      "group": "deferred",
+      "title": "后置：Pi Durable 生产引擎",
+      "layer": "phase-acceptance",
+      "execution": "postponed",
+      "fr": [],
+      "acceptanceRefs": [
+        "T43",
+        "T44"
+      ],
+      "deferredStatus": "postponed",
+      "assertions": [
+        "Durable 不自动进入生产依赖；其独有能力须另行批准和验证，不以标准 Pi 或 mock 证据替代"
+      ],
+      "evidence": [
+        "report"
+      ]
+    },
+    {
+      "id": "P04-POST-CHAT-SANDBOX",
+      "group": "deferred",
+      "title": "后置：Chat、桌面与强沙箱",
+      "layer": "phase-acceptance",
+      "execution": "postponed",
+      "fr": [
+        "FR-4"
+      ],
+      "acceptanceRefs": [],
+      "deferredStatus": "postponed",
+      "assertions": [
+        "Chat、桌面、通知、发布和强 OS 沙箱不属于本阶段放行能力，保持 postponed"
+      ],
+      "evidence": [
+        "report"
+      ]
+    }
+  ]
+}

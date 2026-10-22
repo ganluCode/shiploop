@@ -6,7 +6,7 @@
       "id": "shiploop",
       "tests": [
         {
-          "file": "test/modules/runtime/p04-1-pi-adapter.test.ts",
+          "file": "test/modules/acceptance/p04-8-checklist-report.test.ts",
           "all": true
         }
       ]
