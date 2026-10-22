@@ -85,6 +85,9 @@ const SCHEMA_TABLES = [
   // P04-5 / F-001：Work 公开消息索引与 recording manifest（迁移 v32）。
   ['session_messages', schema.sessionMessages],
   ['recording_manifests', schema.recordingManifests],
+  // P04-9 / F-001：Run 级持久派发认领与单执行槽位（迁移 v33）。
+  ['run_dispatch_claims', schema.runDispatchClaims],
+  ['execution_slot_claims', schema.executionSlotClaims],
   // P03-7 / F-002：VerificationBatch / CheckResult 与不可变验证证据身份（迁移 v21）。
   ['verification_batches', schema.verificationBatches],
   ['check_results', schema.checkResults],
@@ -642,6 +645,15 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
         'git_operations:(feature_id,run_id)->runs.(feature_id,id)',
         'git_operations:(project_id,attempt_id)->attempts.(project_id,id)',
         'git_operations:(project_id,repository_binding_id)->repository_bindings.(project_id,id)',
+        // P04-9 / F-001 Run 级派发认领与槽位（迁移 v33）：同项目/同 Feature Run、
+        // 恢复血缘与 claim 绑定外键。
+        'run_dispatch_claims:(project_id)->projects.(id)',
+        'run_dispatch_claims:(project_id,run_id)->runs.(project_id,id)',
+        'run_dispatch_claims:(feature_id,run_id)->runs.(feature_id,id)',
+        'run_dispatch_claims:(project_id,resumed_from_claim_id)->run_dispatch_claims.(project_id,id)',
+        'execution_slot_claims:(project_id)->projects.(id)',
+        'execution_slot_claims:(project_id,run_id)->runs.(project_id,id)',
+        'execution_slot_claims:(project_id,claim_id)->run_dispatch_claims.(project_id,id)',
         // P03-9 / F-002 取消停止 operation（迁移 v28）：同项目 Batch/Run 关联。
         'execution_stop_operations:(project_id)->projects.(id)',
         'execution_stop_operations:(project_id,batch_id)->execution_batches.(project_id,id)',

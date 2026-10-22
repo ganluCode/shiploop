@@ -2675,6 +2675,169 @@ BEGIN SELECT RAISE(ABORT, 'recording manifest version or durable watermark misma
 ${WORK_RECORDING_V32_JSON_GUARDS_SQL}
 `;
 
+
+/**
+ * P04-9 / F-001（迁移 v33）：Run 级持久派发认领与单执行槽位。
+ *
+ * 只新增既有结构无法表达的三件事实：Run 级认领代次（owner/host/claimVersion）、
+ * 槽位归属（slot_index + claim 身份）与恢复关联（origin/resumed_from_*）。
+ * `runs` 的 queued/控制/终态仍唯一表达业务状态；本迁移不新建 Task/预算状态机，
+ * 不把 `work_key` 作为队列唯一键，也不改动 v1–v32 任何 SQL/checksum。
+ *
+ * 迁移不自动认领、不释放或隔离既有 workspace_leases：旧活动/隔离占用保持原样，
+ * 旧 queued Run 仍按 `runs.status` 可被后续补扫。
+ */
+const MIGRATION_033_SQL = `
+CREATE TABLE run_dispatch_claims (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  feature_id TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  claim_version INTEGER NOT NULL,
+  origin TEXT NOT NULL,
+  resumed_from_claim_id TEXT,
+  resumed_from_claim_version INTEGER,
+  owner_id TEXT NOT NULL,
+  host_instance_id TEXT NOT NULL,
+  acquired_at INTEGER NOT NULL,
+  lease_until INTEGER NOT NULL,
+  state TEXT NOT NULL DEFAULT 'held',
+  reason TEXT,
+  settled_at INTEGER,
+  CONSTRAINT run_dispatch_claims_revision_check CHECK (revision >= 1),
+  CONSTRAINT run_dispatch_claims_version_check CHECK (typeof(claim_version) = 'integer' AND claim_version >= 1),
+  CONSTRAINT run_dispatch_claims_origin_check CHECK (origin IN ('dispatch', 'resume')),
+  CONSTRAINT run_dispatch_claims_state_check CHECK (state IN ('held', 'released', 'quarantined')),
+  CONSTRAINT run_dispatch_claims_owner_check CHECK (length(owner_id) BETWEEN 1 AND 128 AND length(host_instance_id) BETWEEN 1 AND 128),
+  CONSTRAINT run_dispatch_claims_times_check CHECK (typeof(created_at) = 'integer' AND created_at >= 0
+    AND typeof(updated_at) = 'integer' AND updated_at >= 0
+    AND typeof(acquired_at) = 'integer' AND acquired_at >= 1
+    AND typeof(lease_until) = 'integer' AND lease_until >= acquired_at),
+  CONSTRAINT run_dispatch_claims_generation_check CHECK (
+    (origin = 'dispatch' AND claim_version = 1
+      AND resumed_from_claim_id IS NULL AND resumed_from_claim_version IS NULL)
+    OR (origin = 'resume' AND resumed_from_claim_id IS NOT NULL AND resumed_from_claim_version IS NOT NULL
+      AND resumed_from_claim_version = claim_version - 1)),
+  CONSTRAINT run_dispatch_claims_settlement_check CHECK (
+    (state = 'held' AND settled_at IS NULL AND reason IS NULL)
+    OR (state = 'quarantined' AND settled_at IS NOT NULL AND settled_at >= acquired_at
+      AND reason IS NOT NULL AND length(reason) BETWEEN 1 AND 512)
+    OR (state = 'released' AND settled_at IS NOT NULL AND settled_at >= acquired_at
+      AND (reason IS NULL OR length(reason) BETWEEN 1 AND 512))),
+  CONSTRAINT run_dispatch_claims_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT run_dispatch_claims_run_fk FOREIGN KEY (project_id, run_id) REFERENCES runs (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT run_dispatch_claims_feature_run_fk FOREIGN KEY (feature_id, run_id) REFERENCES runs (feature_id, id) ON DELETE RESTRICT,
+  CONSTRAINT run_dispatch_claims_lineage_fk FOREIGN KEY (project_id, resumed_from_claim_id) REFERENCES run_dispatch_claims (project_id, id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX run_dispatch_claims_project_id_id_unique ON run_dispatch_claims (project_id, id);
+CREATE UNIQUE INDEX run_dispatch_claims_run_version_unique ON run_dispatch_claims (project_id, run_id, claim_version);
+CREATE UNIQUE INDEX run_dispatch_claims_active_run_unique ON run_dispatch_claims (project_id, run_id)
+  WHERE state IN ('held', 'quarantined');
+CREATE INDEX run_dispatch_claims_project_state_index ON run_dispatch_claims (project_id, state, acquired_at);
+
+CREATE TRIGGER run_dispatch_claims_insert_scope_check BEFORE INSERT ON run_dispatch_claims
+WHEN NOT EXISTS (
+  SELECT 1 FROM runs r WHERE r.project_id = NEW.project_id AND r.id = NEW.run_id
+    AND r.feature_id = NEW.feature_id
+    AND r.status IN ('queued', 'running', 'paused', 'interrupted')
+)
+BEGIN SELECT RAISE(ABORT, 'run dispatch claim scope or run state mismatch'); END;
+CREATE TRIGGER run_dispatch_claims_lineage_check BEFORE INSERT ON run_dispatch_claims
+WHEN NEW.origin = 'resume' AND NOT EXISTS (
+  SELECT 1 FROM run_dispatch_claims p WHERE p.project_id = NEW.project_id AND p.id = NEW.resumed_from_claim_id
+    AND p.run_id = NEW.run_id AND p.feature_id = NEW.feature_id
+    AND p.claim_version = NEW.resumed_from_claim_version AND p.state = 'released'
+)
+BEGIN SELECT RAISE(ABORT, 'run dispatch resume lineage mismatch or previous claim not released'); END;
+CREATE TRIGGER run_dispatch_claims_identity_immutable BEFORE UPDATE ON run_dispatch_claims
+WHEN NEW.created_at IS NOT OLD.created_at OR NEW.project_id IS NOT OLD.project_id
+  OR NEW.feature_id IS NOT OLD.feature_id OR NEW.run_id IS NOT OLD.run_id
+  OR NEW.claim_version IS NOT OLD.claim_version OR NEW.origin IS NOT OLD.origin
+  OR NEW.resumed_from_claim_id IS NOT OLD.resumed_from_claim_id
+  OR NEW.resumed_from_claim_version IS NOT OLD.resumed_from_claim_version
+  OR NEW.owner_id IS NOT OLD.owner_id OR NEW.host_instance_id IS NOT OLD.host_instance_id
+  OR NEW.acquired_at IS NOT OLD.acquired_at
+BEGIN SELECT RAISE(ABORT, 'run dispatch claim identity is immutable'); END;
+CREATE TRIGGER run_dispatch_claims_transition_check BEFORE UPDATE ON run_dispatch_claims
+WHEN (OLD.state = 'released' AND NEW.state <> 'released')
+  OR (OLD.state = 'quarantined' AND NEW.state = 'held')
+BEGIN SELECT RAISE(ABORT, 'illegal run dispatch claim state transition'); END;
+
+CREATE TABLE execution_slot_claims (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  slot_index INTEGER NOT NULL,
+  feature_id TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  claim_id TEXT NOT NULL,
+  claim_version INTEGER NOT NULL,
+  owner_id TEXT NOT NULL,
+  host_instance_id TEXT NOT NULL,
+  acquired_at INTEGER NOT NULL,
+  lease_until INTEGER NOT NULL,
+  state TEXT NOT NULL DEFAULT 'held',
+  reason TEXT,
+  released_at INTEGER,
+  CONSTRAINT execution_slot_claims_revision_check CHECK (revision >= 1),
+  CONSTRAINT execution_slot_claims_slot_check CHECK (typeof(slot_index) = 'integer' AND slot_index >= 0),
+  CONSTRAINT execution_slot_claims_version_check CHECK (typeof(claim_version) = 'integer' AND claim_version >= 1),
+  CONSTRAINT execution_slot_claims_state_check CHECK (state IN ('held', 'quarantined', 'released')),
+  CONSTRAINT execution_slot_claims_owner_check CHECK (length(owner_id) BETWEEN 1 AND 128 AND length(host_instance_id) BETWEEN 1 AND 128),
+  CONSTRAINT execution_slot_claims_times_check CHECK (typeof(created_at) = 'integer' AND created_at >= 0
+    AND typeof(updated_at) = 'integer' AND updated_at >= 0
+    AND typeof(acquired_at) = 'integer' AND acquired_at >= 1
+    AND typeof(lease_until) = 'integer' AND lease_until >= acquired_at),
+  CONSTRAINT execution_slot_claims_settlement_check CHECK (
+    (state = 'held' AND released_at IS NULL AND reason IS NULL)
+    OR (state = 'quarantined' AND released_at IS NULL
+      AND reason IS NOT NULL AND length(reason) BETWEEN 1 AND 512)
+    OR (state = 'released' AND released_at IS NOT NULL AND released_at >= acquired_at
+      AND (reason IS NULL OR length(reason) BETWEEN 1 AND 512))),
+  CONSTRAINT execution_slot_claims_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT execution_slot_claims_run_fk FOREIGN KEY (project_id, run_id) REFERENCES runs (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT execution_slot_claims_claim_fk FOREIGN KEY (project_id, claim_id) REFERENCES run_dispatch_claims (project_id, id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX execution_slot_claims_active_slot_unique ON execution_slot_claims (slot_index)
+  WHERE state IN ('held', 'quarantined');
+CREATE UNIQUE INDEX execution_slot_claims_active_run_unique ON execution_slot_claims (project_id, run_id)
+  WHERE state IN ('held', 'quarantined');
+CREATE INDEX execution_slot_claims_project_state_index ON execution_slot_claims (project_id, state, acquired_at);
+
+CREATE TRIGGER execution_slot_claims_claim_scope_check BEFORE INSERT ON execution_slot_claims
+WHEN NOT EXISTS (
+  SELECT 1 FROM run_dispatch_claims c
+   WHERE c.project_id = NEW.project_id AND c.id = NEW.claim_id AND c.run_id = NEW.run_id
+     AND c.feature_id = NEW.feature_id AND c.claim_version = NEW.claim_version
+     AND c.owner_id = NEW.owner_id AND c.host_instance_id = NEW.host_instance_id
+     AND c.state = 'held' AND c.lease_until >= NEW.lease_until
+)
+BEGIN SELECT RAISE(ABORT, 'execution slot claim identity mismatch'); END;
+CREATE TRIGGER execution_slot_claims_identity_immutable BEFORE UPDATE ON execution_slot_claims
+WHEN NEW.created_at IS NOT OLD.created_at OR NEW.project_id IS NOT OLD.project_id
+  OR NEW.slot_index IS NOT OLD.slot_index OR NEW.feature_id IS NOT OLD.feature_id
+  OR NEW.run_id IS NOT OLD.run_id OR NEW.claim_id IS NOT OLD.claim_id
+  OR NEW.claim_version IS NOT OLD.claim_version OR NEW.owner_id IS NOT OLD.owner_id
+  OR NEW.host_instance_id IS NOT OLD.host_instance_id OR NEW.acquired_at IS NOT OLD.acquired_at
+BEGIN SELECT RAISE(ABORT, 'execution slot claim identity is immutable'); END;
+CREATE TRIGGER execution_slot_claims_transition_check BEFORE UPDATE ON execution_slot_claims
+WHEN (OLD.state = 'released' AND NEW.state <> 'released')
+  OR (OLD.state = 'quarantined' AND NEW.state = 'held')
+BEGIN SELECT RAISE(ABORT, 'illegal execution slot claim state transition'); END;
+
+CREATE TRIGGER run_dispatch_claims_release_requires_slot_released BEFORE UPDATE ON run_dispatch_claims
+WHEN NEW.state = 'released' AND OLD.state <> 'released' AND EXISTS (
+  SELECT 1 FROM execution_slot_claims s WHERE s.project_id = NEW.project_id AND s.claim_id = NEW.id
+    AND s.state IN ('held', 'quarantined')
+)
+BEGIN SELECT RAISE(ABORT, 'run dispatch claim release requires released slot'); END;
+`;
+
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     version: 1,
@@ -2772,4 +2935,5 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 30, sql: MIGRATION_030_SQL, checksum: sha256Hex(MIGRATION_030_SQL), foreignKeysOff: true },
   { version: 31, sql: MIGRATION_031_SQL, checksum: sha256Hex(MIGRATION_031_SQL), foreignKeysOff: true },
   { version: 32, sql: MIGRATION_032_SQL, checksum: sha256Hex(MIGRATION_032_SQL) },
+  { version: 33, sql: MIGRATION_033_SQL, checksum: sha256Hex(MIGRATION_033_SQL) },
 ];

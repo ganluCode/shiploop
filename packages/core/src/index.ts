@@ -41,6 +41,7 @@ export * from './application/task-dag.js';
 export * from './application/work-scheduler.js';
 export * from './ports/work-resource-selection.js';
 export * from './ports/work-resources.js';
+export * from './ports/execution-dispatch.js';
 export * from './ports/git-public-metadata-lock.js';
 export * from './ports/workspace.js';
 export * from './ports/workspace-inspector.js';

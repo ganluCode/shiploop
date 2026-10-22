@@ -1,3 +1,13 @@
+# P04-9 工作进度
+
+## F-001 — Run 级持久派发与单执行槽位契约（2026-10-22）
+
+- 新增 `packages/core/src/ports/execution-dispatch.ts`：派发身份固定为「同项目、同 Feature 的 Run」（workKey 只表示跨重试逻辑工作），Run 级 `claim_version` 与 Task/Attempt `execution_version` 严格区分；定义首代 dispatch/v1、resume 只追加 version+1 且必须接在已释放上一代之后、认领/槽位合法状态转换、Attempt 关联与 `deriveRunDispatchDisplay` 展示派生；容量缺省/开放为 1，>1 与非法值 fail-closed。
+- 迁移 v33 只新增 `run_dispatch_claims`、`execution_slot_claims` 两表、索引、CHECK/FK 与 trigger（身份不可变、活动认领/槽位唯一、终态 Run 不认领、槽位绑定认领身份、认领释放需先释放槽位）；v1–v32 SQL/checksum 冻结不变，Drizzle Schema 同步。复用/新增理由与不能复用原因见 [F-001 契约](docs/p04-9-f001-dispatch-slot-contract.md)。
+- 真实临时 SQLite 验证：v32（P04-8）旧库升级前后逐表逐行一致，旧 queued Run 仍可被有界补扫且不自动认领，既有 held/quarantined 工作区租约原样保留；迁移失败整组回滚、高版本拒写；新库约束失败样例（跨项目/换 Feature、重复活动认领、一槽多 owner、一 Run 多槽、旧 owner/版本改写、非法状态转换）全部被拒绝。
+- 因新增迁移维护“当前最新版本”断言：p03-6/p04-5 的 32→派生最新版本、p03-4 迁移序列按清单长度、migration-runner 空库表清单补 v32/v33 新表；历史 checksum 与既有失败断言未改写。
+- 索引 `test/index/phases/P04/features/P04-9/tasks/F-001.json`（7 文件 `all:true`）本地整套 `test-7gmlkeqd.log` exit 0：7 files / 144 passed；`npm run typecheck` 与 `npm run check:boundaries` exit 0。未运行全量、阶段验收或 live。
+
 # P04-7 工作进度
 
 ## F-008 — 真实进程/资源故障矩阵与清理证据（2026-10-22）

@@ -60,7 +60,11 @@ export type StorageEntityType =
   /** P03-7 / F-002：逐项检查结果（check_results，迁移 v21）。 */
   | 'check_result'
   /** P03-8 / F-002：受控 Git 提交意图与操作回执（git_operations，迁移 v26）。 */
-  | 'git_operation';
+  | 'git_operation'
+  /** P04-9 / F-001：Run 级持久派发认领（run_dispatch_claims，迁移 v33）。 */
+  | 'run_dispatch_claim'
+  /** P04-9 / F-001：单执行槽位认领（execution_slot_claims，迁移 v33）。 */
+  | 'execution_slot_claim';
 
 export type StorageErrorKind =
   /** 外部输入未通过运行时校验（缺字段/类型错误/未知 schemaVersion/非法摘要等）。 */

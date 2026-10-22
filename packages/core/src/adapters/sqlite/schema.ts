@@ -1977,3 +1977,165 @@ export const gitOperations = sqliteTable('git_operations', {
   index('git_operations_project_run_index').on(table.projectId, table.runId),
   index('git_operations_project_intent_index').on(table.projectId, table.intentDigest),
 ]);
+
+/**
+ * P04-9 / F-001 Run 级持久派发认领（迁移 v33；ports/execution-dispatch.ts 契约）。
+ *
+ * 复用既有事实：`runs` 的 queued/控制/终态与不可变授权快照仍是业务事实，本表不保存
+ * 第二套 Run 生命周期，也不按 Task 数量复制行。本表只补既有结构无法表达的 Run 级
+ * 消费身份：
+ * - 派发身份就是「同项目、同 Feature 的 Run」本身；`work_key` 仍只表示可跨重试的
+ *   逻辑工作，既不是本表列也不是唯一键（新 Run 有独立派发身份）；
+ * - `claim_version` 是该 Run 的受控认领代次（1 起），与 Task/Attempt 的
+ *   `execution_version` 是不同计数器；显式 resume 只追加下一代认领，不重开终态
+ *   Attempt 或修改既有认领行；
+ * - `origin`/`resumed_from_*` 保存恢复关联：首代恒为 dispatch/v1，后续代必须是上一代
+ *   已释放（停止已核对）的 resume/version+1（DDL CHECK + lineage trigger）；
+ * - owner/host/claim_version/acquired_at 等身份列由 trigger 冻结；state 只允许
+ *   held→released/quarantined、quarantined→released（不自动回收、不复用小代次）；
+ * - 活动认领（held/quarantined）对同一 Run 唯一；终态 Run 不得再插入新认领。
+ */
+export const runDispatchClaims = sqliteTable('run_dispatch_claims', {
+  id: text('id').primaryKey(),
+  createdAt: integer('created_at').notNull(),
+  projectId: text('project_id')
+    .notNull()
+    .references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  revision: integer('revision').notNull().default(1),
+  updatedAt: integer('updated_at').notNull(),
+  /** 目标 Feature（必须与 Run 的 Feature 一致；同 Feature 派发身份由 Run 唯一表达）。 */
+  featureId: text('feature_id').notNull(),
+  /** 派发身份：已授权 Run 自身（重复入队复用同一 Run，因此代数在同一 Run 内递增）。 */
+  runId: text('run_id').notNull(),
+  /** Run 级受控认领代次（≥1；UNIQUE(project_id,run_id,claim_version)）。 */
+  claimVersion: integer('claim_version').notNull(),
+  /** 认领来源：dispatch=首次派发；resume=核对停止后的显式恢复代次。 */
+  origin: text('origin').notNull(),
+  /** 恢复关联：上一代认领身份（仅 resume；与 resumedFromClaimVersion 同时存在）。 */
+  resumedFromClaimId: text('resumed_from_claim_id'),
+  resumedFromClaimVersion: integer('resumed_from_claim_version'),
+  /** Run 级消费者身份（不是 Task/Attempt 认领；Attempt 版本由 attempts 表记录）。 */
+  ownerId: text('owner_id').notNull(),
+  hostInstanceId: text('host_instance_id').notNull(),
+  acquiredAt: integer('acquired_at').notNull(),
+  leaseUntil: integer('lease_until').notNull(),
+  /** 认领状态：held=当前持有；released=已核对停止；quarantined=待核对隔离。 */
+  state: text('state').notNull().default('held'),
+  /** 有界原因（隔离必须给出；不保存正文或凭据）。 */
+  reason: text('reason'),
+  /** 认领代次结束时刻（held 为 NULL；到期不等于已停止，不自动改写）。 */
+  settledAt: integer('settled_at'),
+}, (table) => [
+  check('run_dispatch_claims_revision_check', sql`${table.revision} >= 1`),
+  check('run_dispatch_claims_version_check', sql`typeof(${table.claimVersion}) = 'integer' AND ${table.claimVersion} >= 1`),
+  check('run_dispatch_claims_origin_check', sql`${table.origin} IN ('dispatch', 'resume')`),
+  check('run_dispatch_claims_state_check', sql`${table.state} IN ('held', 'released', 'quarantined')`),
+  check('run_dispatch_claims_owner_check', sql`length(${table.ownerId}) BETWEEN 1 AND 128 AND length(${table.hostInstanceId}) BETWEEN 1 AND 128`),
+  check('run_dispatch_claims_times_check', sql`typeof(${table.createdAt}) = 'integer' AND ${table.createdAt} >= 0
+    AND typeof(${table.updatedAt}) = 'integer' AND ${table.updatedAt} >= 0
+    AND typeof(${table.acquiredAt}) = 'integer' AND ${table.acquiredAt} >= 1
+    AND typeof(${table.leaseUntil}) = 'integer' AND ${table.leaseUntil} >= ${table.acquiredAt}`),
+  // 代次血缘：首代 dispatch/v1 无来源；resume 必须指向 version-1。
+  check('run_dispatch_claims_generation_check', sql`
+    (${table.origin} = 'dispatch' AND ${table.claimVersion} = 1
+      AND ${table.resumedFromClaimId} IS NULL AND ${table.resumedFromClaimVersion} IS NULL)
+    OR (${table.origin} = 'resume' AND ${table.resumedFromClaimId} IS NOT NULL AND ${table.resumedFromClaimVersion} IS NOT NULL
+      AND ${table.resumedFromClaimVersion} = ${table.claimVersion} - 1)`),
+  // 结算形状：held 未结束；隔离必须给出原因；released 的结束时间不早于认领时间。
+  check('run_dispatch_claims_settlement_check', sql`
+    (${table.state} = 'held' AND ${table.settledAt} IS NULL AND ${table.reason} IS NULL)
+    OR (${table.state} = 'quarantined' AND ${table.settledAt} IS NOT NULL AND ${table.settledAt} >= ${table.acquiredAt}
+      AND ${table.reason} IS NOT NULL AND length(${table.reason}) BETWEEN 1 AND 512)
+    OR (${table.state} = 'released' AND ${table.settledAt} IS NOT NULL AND ${table.settledAt} >= ${table.acquiredAt}
+      AND (${table.reason} IS NULL OR length(${table.reason}) BETWEEN 1 AND 512))`),
+  foreignKey({
+    name: 'run_dispatch_claims_run_fk',
+    columns: [table.projectId, table.runId],
+    foreignColumns: [runs.projectId, runs.id],
+  }).onDelete('restrict'),
+  // 同 Feature：Run 必须是该 Feature 的 Run（runs_feature_id_id_unique）。
+  foreignKey({
+    name: 'run_dispatch_claims_feature_run_fk',
+    columns: [table.featureId, table.runId],
+    foreignColumns: [runs.featureId, runs.id],
+  }).onDelete('restrict'),
+  foreignKey({
+    name: 'run_dispatch_claims_lineage_fk',
+    columns: [table.projectId, table.resumedFromClaimId],
+    foreignColumns: [table.projectId, table.id],
+  }).onDelete('restrict'),
+  uniqueIndex('run_dispatch_claims_project_id_id_unique').on(table.projectId, table.id),
+  uniqueIndex('run_dispatch_claims_run_version_unique').on(table.projectId, table.runId, table.claimVersion),
+  // 活动认领唯一：隔离也占用身份，未核对停止前不能产生下一代或第二个消费者。
+  uniqueIndex('run_dispatch_claims_active_run_unique')
+    .on(table.projectId, table.runId)
+    .where(sql`${table.state} IN ('held', 'quarantined')`),
+  index('run_dispatch_claims_project_state_index').on(table.projectId, table.state, table.acquiredAt),
+]);
+
+/**
+ * P04-9 / F-001 单执行槽位认领（迁移 v33；容量默认/开放为 1）。
+ *
+ * 槽位按 Run 消费者持有：每个活动 Run 至多一行活动槽位，不随 Task 数量重复分配；
+ * 同一 slot_index 至多一个活动持有者。槽位只限制并行执行数量，不替代授权、
+ * Task 依赖、global:execution/项目 Work/工作区租约或 Git 公共元数据短锁。
+ * 旧 owner/版本不能续租或释放新持有者（身份列冻结 + 状态转换约束）。
+ */
+export const executionSlotClaims = sqliteTable('execution_slot_claims', {
+  id: text('id').primaryKey(),
+  createdAt: integer('created_at').notNull(),
+  projectId: text('project_id')
+    .notNull()
+    .references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  revision: integer('revision').notNull().default(1),
+  updatedAt: integer('updated_at').notNull(),
+  /** 全局槽位序号（≥0；首版容量 1 只使用 0；>1 未获支持）。 */
+  slotIndex: integer('slot_index').notNull(),
+  featureId: text('feature_id').notNull(),
+  runId: text('run_id').notNull(),
+  /** 绑定的 Run 级认领（同项目复合外键；identity trigger 核对版本/owner/host）。 */
+  claimId: text('claim_id').notNull(),
+  claimVersion: integer('claim_version').notNull(),
+  ownerId: text('owner_id').notNull(),
+  hostInstanceId: text('host_instance_id').notNull(),
+  acquiredAt: integer('acquired_at').notNull(),
+  leaseUntil: integer('lease_until').notNull(),
+  /** 槽位状态：held/quarantined/released（隔离不自动回收）。 */
+  state: text('state').notNull().default('held'),
+  reason: text('reason'),
+  releasedAt: integer('released_at'),
+}, (table) => [
+  check('execution_slot_claims_revision_check', sql`${table.revision} >= 1`),
+  check('execution_slot_claims_slot_check', sql`typeof(${table.slotIndex}) = 'integer' AND ${table.slotIndex} >= 0`),
+  check('execution_slot_claims_version_check', sql`typeof(${table.claimVersion}) = 'integer' AND ${table.claimVersion} >= 1`),
+  check('execution_slot_claims_state_check', sql`${table.state} IN ('held', 'quarantined', 'released')`),
+  check('execution_slot_claims_owner_check', sql`length(${table.ownerId}) BETWEEN 1 AND 128 AND length(${table.hostInstanceId}) BETWEEN 1 AND 128`),
+  check('execution_slot_claims_times_check', sql`typeof(${table.createdAt}) = 'integer' AND ${table.createdAt} >= 0
+    AND typeof(${table.updatedAt}) = 'integer' AND ${table.updatedAt} >= 0
+    AND typeof(${table.acquiredAt}) = 'integer' AND ${table.acquiredAt} >= 1
+    AND typeof(${table.leaseUntil}) = 'integer' AND ${table.leaseUntil} >= ${table.acquiredAt}`),
+  check('execution_slot_claims_settlement_check', sql`
+    (${table.state} = 'held' AND ${table.releasedAt} IS NULL AND ${table.reason} IS NULL)
+    OR (${table.state} = 'quarantined' AND ${table.releasedAt} IS NULL
+      AND ${table.reason} IS NOT NULL AND length(${table.reason}) BETWEEN 1 AND 512)
+    OR (${table.state} = 'released' AND ${table.releasedAt} IS NOT NULL AND ${table.releasedAt} >= ${table.acquiredAt}
+      AND (${table.reason} IS NULL OR length(${table.reason}) BETWEEN 1 AND 512))`),
+  foreignKey({
+    name: 'execution_slot_claims_run_fk',
+    columns: [table.projectId, table.runId],
+    foreignColumns: [runs.projectId, runs.id],
+  }).onDelete('restrict'),
+  foreignKey({
+    name: 'execution_slot_claims_claim_fk',
+    columns: [table.projectId, table.claimId],
+    foreignColumns: [runDispatchClaims.projectId, runDispatchClaims.id],
+  }).onDelete('restrict'),
+  // 一槽一持有者 / 一 Run 一活动槽位（held+quarantined 都占用，未核对前不回收）。
+  uniqueIndex('execution_slot_claims_active_slot_unique')
+    .on(table.slotIndex)
+    .where(sql`${table.state} IN ('held', 'quarantined')`),
+  uniqueIndex('execution_slot_claims_active_run_unique')
+    .on(table.projectId, table.runId)
+    .where(sql`${table.state} IN ('held', 'quarantined')`),
+  index('execution_slot_claims_project_state_index').on(table.projectId, table.state, table.acquiredAt),
+]);

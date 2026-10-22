@@ -55,6 +55,11 @@ test/
 
 - `index/phases/P04/features/P04-8/feature.json`：F-001 至 F-010 的完整 Task 索引目录，仅作为 Feature 去重选择。F-010 新增干净临时 Git 项目的六种最终接线场景与交付守护；既有步骤器/入口/报告/live 回归交 Nezha。默认无模型/网络调用，不递归启动全量或阶段。版本、实际命令与退出码见 [交付报告](../docs/p04-8-f010-delivery-report.md)，人工阶段及真实 live、签署分别保持独立门槛。
 
+- `index/phases/P04/features/P04-9/tasks/F-001.json`：Run 级持久派发认领与单执行槽位（迁移 v33）。
+  覆盖新端口契约、真实临时 SQLite 约束/升级/回滚/高版本拒写、Drizzle 与迁移对齐、迁移执行器，
+  以及因新增迁移而维护的 P03-4/P03-6/P04-5 版本断言；七文件全部本地定向通过，模型、阶段全量与
+  live 保持 `not_run`，范围见 [F-001 契约](../docs/p04-9-f001-dispatch-slot-contract.md)。
+
 Task JSON 使用 Nezha v2 schema。当前存量用例首轮按文件显式 `all: true`，
 对应 19 个本 Feature 文件，不包含此前大批历史模块回归。
 部分文件有多个测试类型，暂不凭猜测拆掉其中断言或谎称函数级选择。

@@ -10,6 +10,8 @@ import { createTempSandbox } from '../../../helpers/temp-sandbox.ts';
 import { BINDING_NOW as NOW, openBindingFixture, publishReadyArtifact } from '../../../helpers/p03-6/input-binding-fixture.ts';
 import { RECORDING_MANIFEST as manifest } from '../../../helpers/p04-5/recording-fixture.ts';
 
+const LATEST_VERSION = SQLITE_MIGRATIONS.at(-1)!.version;
+
 type Row = Record<string, string | number | null>;
 function insert(db: Database.Database, table: 'session_messages' | 'recording_manifests' | 'attempts', row: Row): void {
   const keys = Object.keys(row);
@@ -249,7 +251,8 @@ describe('P04-5 v32 migration compatibility', () => {
         { version: 32, sql, checksum: createHash('sha256').update(sql).digest('hex') }] })).rejects.toThrow();
       expect(session.database.prepare("SELECT name FROM sqlite_master WHERE name IN ('session_messages','recording_manifests')").all()).toEqual([]);
       expect(session.database.prepare('SELECT MAX(version) AS version FROM schema_migrations').get()).toEqual({ version: 31 });
-      expect((await migrateSqliteStorage(session)).appliedVersions).toEqual([32]);
+      expect((await migrateSqliteStorage(session)).appliedVersions)
+        .toEqual(Array.from({ length: LATEST_VERSION - 31 }, (_, i) => 32 + i));
     } finally { session.close(); sandbox.cleanup(); }
   });
 
@@ -279,8 +282,8 @@ describe('P04-5 v32 migration compatibility', () => {
       const oldRecords = ['sessions', 'artifacts', 'state_events'].map(table => version > 0 ? session.database.prepare(`SELECT * FROM ${table}`).all() : []);
       const oldMigrations = version > 0 ? session.database.prepare('SELECT * FROM schema_migrations').all() : [];
       const result = await migrateSqliteStorage(session);
-      expect(result.toVersion).toBe(32);
-      expect(result.appliedVersions).toEqual(Array.from({ length: 32 - version }, (_, i) => version + i + 1));
+      expect(result.toVersion).toBe(LATEST_VERSION);
+      expect(result.appliedVersions).toEqual(Array.from({ length: LATEST_VERSION - version }, (_, i) => version + i + 1));
       expect(session.database.prepare('SELECT * FROM schema_migrations WHERE version <= ?').all(version)).toEqual(oldMigrations);
       expect(['sessions', 'artifacts', 'state_events'].map(table => session.database.prepare(`SELECT * FROM ${table}`).all())).toEqual(oldRecords);
       expect(session.database.prepare('PRAGMA foreign_key_check').all()).toEqual([]);
