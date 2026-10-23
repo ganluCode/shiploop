@@ -11,8 +11,9 @@ function evidence(name: string) {
   mkdirSync(logs, { recursive: true });
   return mkdtempSync(join(logs, `${name}-`));
 }
-async function waitFor(condition: () => boolean, label: string) {
-  await expect.poll(condition, { timeout: 15_000, message: label }).toBe(true);
+// Observation includes real Git worktree preparation before Runtime/Verifier entry.
+async function waitFor(condition: () => boolean, label: string, timeoutMs = 30_000) {
+  await expect.poll(condition, { timeout: timeoutMs, message: label }).toBe(true);
 }
 function run(f: P03Fixture) { return f.rows('runs').find(row => row.id === f.ids.runId)!; }
 async function control(f: P03Fixture, operation: 'pause' | 'cancel', commandId = randomUUID()) {
@@ -35,7 +36,7 @@ test('[case:runtime-pause-drains] 真实挂起 Fake 工具在 pause 后继续收
     toolCommands: { probe: { argv: [process.execPath, writer, dir, 'gated'], timeoutMs: 30_000 } },
   }, async f => {
     await f.startExecution();
-    await waitFor(() => existsSync(join(dir, 'ready.json')), 'owned Runtime tree launched');
+    await waitFor(() => existsSync(join(dir, 'ready.json')), 'owned Runtime tree launched', 30_000);
     expect(await control(f, 'pause')).toMatchObject({ outcome: 'pausing', status: 'pausing' });
     expect(f.rows('attempts')).toHaveLength(1);
     expect(f.rows('workspace_leases')).toHaveLength(3);
@@ -93,7 +94,7 @@ test('[case:real-cancel-cas] 真实进程取消等待进程组停止，重复取
     toolCommands: { probe: { argv: [process.execPath, writer, dir, 'gated'], timeoutMs: 30_000 } },
   }, async f => {
     await f.startExecution();
-    await waitFor(() => existsSync(join(dir, 'ready.json')), 'owned Runtime tree launched');
+    await waitFor(() => existsSync(join(dir, 'ready.json')), 'owned Runtime tree launched', 30_000);
     const beforeEvents = f.rows('state_events').length;
     const first = await control(f, 'cancel');
     expect(['cancelling', 'cancelled']).toContain(first.outcome);
@@ -122,7 +123,7 @@ test('[case:stop-uncertain-isolates] 真实阶段停止确认缺失时保留 int
     toolCommands: { probe: { argv: [process.execPath, writer, dir, 'gated'], timeoutMs: 30_000 } },
   }, async f => {
     await f.startExecution();
-    await waitFor(() => existsSync(join(dir, 'ready.json')), 'owned Runtime tree launched');
+    await waitFor(() => existsSync(join(dir, 'ready.json')), 'owned Runtime tree launched', 30_000);
     writeFileSync(join(dir, 'release'), 'release');
     await waitFor(() => f.rows('attempts')[0]?.status === 'interrupted', 'uncertain stop persisted');
     expect(f.rows('workspace_leases').every(lease => lease.state === 'quarantined')).toBe(true);

@@ -5,7 +5,7 @@ type ProcessIdentity = { pid: number; ppid: number; identity: string; zombie: bo
 
 function processTable(): ProcessIdentity[] {
   const text = execFileSync('/bin/ps', ['-axo', 'pid=,ppid=,stat=,lstart=,args='], {
-    encoding: 'utf8', timeout: 2000, maxBuffer: 8 * 1024 * 1024,
+    encoding: 'utf8', timeout: 5_000, maxBuffer: 8 * 1024 * 1024,
   });
   return text.split('\n').flatMap((line) => {
     const match = /^\s*(\d+)\s+(\d+)\s+(\S+)\s+(\w{3}\s+\w{3}\s+\d+\s+\d{2}:\d{2}:\d{2}\s+\d{4})\s+(.*)$/.exec(line);

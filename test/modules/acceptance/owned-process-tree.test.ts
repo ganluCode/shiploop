@@ -13,6 +13,14 @@ describe('acceptance process ownership is bounded and identity-fenced', () => {
   beforeEach(() => { vi.useFakeTimers(); mocks.ps.mockReset(); });
   afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
+  it('uses a finite snapshot budget with headroom for concurrent real-process tests', async () => {
+    snapshots(row(100, 1));
+    const tree = new OwnedProcessTree(100);
+    expect(mocks.ps).toHaveBeenCalledWith('/bin/ps', expect.any(Array),
+      expect.objectContaining({ timeout: 5_000, maxBuffer: 8 * 1024 * 1024 }));
+    await tree.finish(false);
+  });
+
   it('retains only current matching identities across many short-lived children', async () => {
     snapshots(row(100, 1), row(101, 100));
     const tree = new OwnedProcessTree(100);
