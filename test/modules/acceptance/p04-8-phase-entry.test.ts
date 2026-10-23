@@ -1,6 +1,6 @@
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, expect, it, vi } from 'vitest';
 import { resolveP04Args, runP04Acceptance } from '../../../scripts/acceptance/p04-accept.ts';
@@ -20,7 +20,7 @@ function options() {
   dirs.push(reportRoot);
   return { repoRoot: ROOT, reportRoot, runId: 'p048-entry-test', exec: (cmd: string, args: readonly string[]) => {
     if (cmd === 'git' && args.join(' ') === 'rev-parse HEAD') return COMMIT;
-    if (cmd === 'git' && args.join(' ') === 'status --porcelain') return '';
+    if (cmd === 'git' && args[0] === 'status' && args.includes('--porcelain')) return '';
     if (cmd === 'git' && args[0] === 'rev-parse') return 'b'.repeat(40);
     if (cmd === 'git' && args[0] === 'branch') return 'feat/p04/p04-acceptance';
     if (cmd === 'node') return process.version;
@@ -234,6 +234,45 @@ it('[case:post-step-drift] reports commit drift after the last command as a bloc
   expect(result.problems.join('\n')).toMatch(/执行期间变化/);
   expect(JSON.parse(readFileSync(join(result.runDir!, 'report.json'), 'utf8')).openIssues).toContainEqual(expect.objectContaining({ id: 'P04-CODE-DRIFT', blocking: true }));
 });
+
+it('[case:owned-report-output-is-not-source-drift] ignores only this invocation\'s untracked evidence directory between steps', async () => {
+  const reportRoot = mkdtempSync(join(ROOT, 'artifacts', 'p048-owned-'));
+  dirs.push(reportRoot);
+  const runId = 'p048-owned-output';
+  let statusCalls = 0;
+  const opts = options();
+  const result = await runP04Acceptance({ ...opts, reportRoot, runId, runProcess: async () => PASS,
+    exec: (command, args) => {
+      if (command === 'git' && ['status --porcelain', 'status --porcelain --untracked-files=all'].includes(args.join(' '))) {
+        statusCalls++;
+        return statusCalls === 1 ? '' : `?? ${relative(ROOT, join(reportRoot, 'runs', runId, 'step-run', 'run.json'))}`;
+      }
+      if (command === 'git' && args.join(' ') === 'rev-parse HEAD') return COMMIT;
+      if (command === 'git' && args[0] === 'rev-parse') return 'b'.repeat(40);
+      if (command === 'git' && args[0] === 'branch') return 'feat/p04/p04-acceptance';
+      if (command === 'node') return process.version;
+      if (command === 'npm') return '10.9.3';
+      return 'tool-version';
+    } });
+  expect(result.steps.map(step => step.exitCode)).toEqual([0, 0]);
+  expect(result.problems.join('\n')).not.toMatch(/受测代码在步骤间变化/);
+  const report = JSON.parse(readFileSync(join(result.runDir!, 'report.json'), 'utf8'));
+  expect(report.git.worktree).toBe('clean');
+});
+
+it.each([' M tracked.ts', '?? unrelated/new.ts', '?? artifacts/sibling-run/new.json'])
+  ('[case:owned-output-does-not-hide-drift] still rejects %s after startup', async changed => {
+    const opts = options();
+    let started = false;
+    const result = await runP04Acceptance({ ...opts,
+      runProcess: async () => { started = true; return PASS; },
+      exec: (command, args) => command === 'git' && args[0] === 'status' && started
+        ? changed : opts.exec(command, args),
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.steps[1]!.status).toBe('fail');
+    expect(result.problems.join('\n')).toMatch(/受测代码在步骤间变化/);
+  });
 
 it('[case:real-exit-code] propagates a real bounded child exit without executing an engineering gate', async () => {
   const opts = options();

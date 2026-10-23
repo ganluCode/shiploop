@@ -7,7 +7,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join, relative, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   loadP04AcceptanceConfig, loadP04Checklist, validateP04AcceptanceConfig,
@@ -63,6 +63,20 @@ function canonical(value: unknown): string {
   return JSON.stringify(value);
 }
 function readJson(path: string): unknown { return JSON.parse(readFileSync(path, 'utf8')); }
+/** Only this invocation's two output directories may create untracked files. */
+function sourceChanges(status: string, repoRoot: string, ownedOutputs: readonly string[]): string {
+  if (!status.trim()) return '';
+  const owned = ownedOutputs.map(path => relative(repoRoot, path).replaceAll('\\', '/'))
+    .filter(path => path && path !== '.' && path !== '..' && !path.startsWith('../') && !isAbsolute(path));
+  return status.split(/\r?\n/).filter(line => line.trim()).filter(line => {
+    const match = /^\?\? (.+)$/.exec(line);
+    let file = match?.[1];
+    if (file?.startsWith('"')) {
+      try { file = JSON.parse(file) as string; } catch { return true; }
+    }
+    return file === undefined || !owned.some(path => file === path || file.startsWith(`${path}/`));
+  }).join('\n');
+}
 function budget(value: number, label: string): number {
   if (!Number.isSafeInteger(value) || value < P04_ACCEPT_MIN_TIMEOUT_MS || value > P04_ACCEPT_MAX_TIMEOUT_MS) fail(`${label} 必须是有限毫秒预算`);
   return value;
@@ -350,6 +364,10 @@ export async function runP04Acceptance(options: P04AcceptanceOptions): Promise<P
     files: contractFiles.map(file => [file, digest(readFileSync(repoFile(repoRoot, file)))]) }));
   const identity = { runId, commit, inputsDigest };
   const resultPath = join(workDir, 'entry-result.json');
+  const sourceDrift = () => sourceChanges(exec('git', ['status', '--porcelain', '--untracked-files=all']),
+    repoRoot, [workDir, reportDir]);
+  const reportExec = (command: string, args: readonly string[]): string =>
+    command === 'git' && args[0] === 'status' && args.includes('--porcelain') ? sourceDrift() : exec(command, args);
 
   if (options.observe) {
     const evidence = loadP04StepRunEvidence(stepRunDir);
@@ -382,7 +400,7 @@ export async function runP04Acceptance(options: P04AcceptanceOptions): Promise<P
     evidenceDir: stepRunDir, identity, stepTimeoutMs, overallTimeoutMs,
     maxOutputBytes: config.maxCommandOutputBytes, env, redact: sanitize, log: options.log,
     runProcess: async (command, args, processOptions) => {
-      if (exec('git', ['rev-parse', 'HEAD']) !== commit || exec('git', ['status', '--porcelain']) !== '') fail('受测代码在步骤间变化');
+      if (exec('git', ['rev-parse', 'HEAD']) !== commit || sourceDrift() !== '') fail('受测代码在步骤间变化');
       const remaining = overallTimeoutMs - (Date.now() - started);
       if (remaining <= 0) fail('阶段总预算耗尽');
       return (options.runProcess ?? runBoundedProcess)(command, args, { ...processOptions, timeoutMs: Math.min(processOptions.timeoutMs, remaining) });
@@ -395,11 +413,11 @@ export async function runP04Acceptance(options: P04AcceptanceOptions): Promise<P
     catch (error) { problems.push(`资源清理失败：${message(error)}`); }
   }
   let drift = false;
-  try { drift = exec('git', ['rev-parse', 'HEAD']) !== commit || exec('git', ['status', '--porcelain']) !== ''; }
+  try { drift = exec('git', ['rev-parse', 'HEAD']) !== commit || sourceDrift() !== ''; }
   catch { drift = true; }
   if (drift) problems.push('受测 commit/工作树在执行期间变化');
   const aggregation = aggregateP04IntegrationReport({
-    repoRoot, config, checklist, runId, reportRoot: join(reportRoot, 'reports'), stepRunDir, exec,
+    repoRoot, config, checklist, runId, reportRoot: join(reportRoot, 'reports'), stepRunDir, exec: reportExec,
     cleanup: { confirmed: cleaned, processesGone: sequence.stopConfirmed, notes: ['仅回收本次入口创建的 resources；停止不确定保留现场。'] },
     bindings: [
       { checkId: 'P04-FR1-FAILURE-MATRIX', stepIds: ['p04-integration'] },
