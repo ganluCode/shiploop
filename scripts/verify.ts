@@ -238,11 +238,12 @@ function runStepCommand(
 /** 运行完整 verify 编排，返回进程退出码（0＝全部步骤退出 0；否则 1）。 */
 export async function runVerify(
   rootInput: string,
-  options: { stepTimeoutMs?: number } = {},
+  options: { stepTimeoutMs?: number; checksOnly?: boolean } = {},
 ): Promise<number> {
   const root = resolve(rootInput);
   const stepTimeoutMs = options.stepTimeoutMs ?? DEFAULT_STEP_TIMEOUT_MS;
-  const total = VERIFY_STEPS.length;
+  const steps = options.checksOnly ? VERIFY_STEPS.filter(step => step.requiredScript !== 'test') : VERIFY_STEPS;
+  const total = steps.length;
   const allLabels = VERIFY_STEPS.map((step) => step.label).join(', ');
 
   out(`verify: root ${root}`);
@@ -261,7 +262,7 @@ export async function runVerify(
   out(`verify: using ${npm.description}`);
 
   for (let index = 0; index < total; index += 1) {
-    const step = VERIFY_STEPS[index] as VerifyStep;
+    const step = steps[index] as VerifyStep;
     const position = `[${index + 1}/${total}]`;
     out(`verify: ${position} RUN ${step.label}`);
     const outcome = await runStepCommand(
@@ -275,13 +276,14 @@ export async function runVerify(
       continue;
     }
     err(`verify: ${position} FAIL ${step.label} -> ${describeOutcome(outcome)}`);
-    const remaining = VERIFY_STEPS.slice(index + 1).map((entry) => entry.label);
+    const remaining = steps.slice(index + 1).map((entry) => entry.label);
     if (remaining.length > 0) {
       out(`verify: NOT RUN (未执行，不标记为通过): ${remaining.join(', ')}`);
     }
     err(`verify: FAIL ${index}/${total} checks exited 0; first failing step: ${step.label}`);
     return 1;
   }
+  if (options.checksOnly) out('verify: full repository tests NOT RUN (--checks-only); phase tests are executed separately');
   out(`verify: PASS ${total}/${total} checks exited 0`);
   return 0;
 }
@@ -296,7 +298,7 @@ function parsePositiveInt(raw: string): number | null {
 
 function printUsage(): void {
   out(
-    'usage: node scripts/verify.ts [--root <dir>] [--step-timeout-ms <ms>]\n' +
+    'usage: node scripts/verify.ts [--root <dir>] [--step-timeout-ms <ms>] [--checks-only]\n' +
       `  --root <dir>           受检工作区根目录（默认：本脚本所在仓库）\n` +
       `  --step-timeout-ms <ms> 单步有限超时（默认 ${DEFAULT_STEP_TIMEOUT_MS}；亦可经 ${STEP_TIMEOUT_ENV} 设置，供隔离夹具验收）`,
   );
@@ -306,6 +308,7 @@ async function main(argv: string[]): Promise<number> {
   const scriptDir = dirname(fileURLToPath(import.meta.url));
   let root = resolve(scriptDir, '..');
   let stepTimeoutMs = DEFAULT_STEP_TIMEOUT_MS;
+  let checksOnly = false;
 
   const envTimeout = process.env[STEP_TIMEOUT_ENV];
   if (typeof envTimeout === 'string' && envTimeout.length > 0) {
@@ -320,7 +323,9 @@ async function main(argv: string[]): Promise<number> {
   const rest = argv.slice(2);
   for (let i = 0; i < rest.length; i += 1) {
     const arg = rest[i] as string;
-    if (arg === '--root' && i + 1 < rest.length) {
+    if (arg === '--checks-only') {
+      checksOnly = true;
+    } else if (arg === '--root' && i + 1 < rest.length) {
       root = resolve(rest[i + 1] as string);
       i += 1;
     } else if (arg === '--step-timeout-ms' && i + 1 < rest.length) {
@@ -341,7 +346,7 @@ async function main(argv: string[]): Promise<number> {
     }
   }
 
-  return runVerify(root, { stepTimeoutMs });
+  return runVerify(root, { stepTimeoutMs, checksOnly });
 }
 
 const invokedPath = process.argv[1] !== undefined ? resolve(process.argv[1]) : '';

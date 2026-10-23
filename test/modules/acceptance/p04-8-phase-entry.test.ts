@@ -10,6 +10,17 @@ import type { P02BoundedRunOutcome } from '../../../scripts/acceptance/p02-accep
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const COMMIT = 'a'.repeat(40);
+it('full-gate requires an explicit flag and runs the original engineering command', async () => {
+  expect(resolveP04Args(['--full-gate']).fullGate).toBe(true);
+  expect(resolveP04Args([]).fullGate).toBeUndefined();
+  const opts = options();
+  const seen: string[][] = [];
+  await runP04Acceptance({ ...opts, fullGate: true, runProcess: async (_command, args) => {
+    seen.push([...args]); return PASS;
+  } });
+  expect(seen[0]).toEqual(['scripts/verify.ts', '--step-timeout-ms', '3600000']);
+  await expect(runP04Acceptance({ ...opts, observe: true, runProcess: async () => PASS })).rejects.toThrow(/不匹配/);
+});
 const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 const PASS: P02BoundedRunOutcome = { kind: 'exit', exitCode: 0, signal: null, durationMs: 1,
@@ -66,7 +77,7 @@ it('[case:fixed-plan-isolated-env] uses fixed argv/cwd, bounded sequential execu
       seen.push([...args]); active = false;
       return PASS;
     } });
-    expect(seen[0]).toEqual(['scripts/verify.ts', '--step-timeout-ms', '3600000']);
+    expect(seen[0]).toEqual(['scripts/verify.ts', '--step-timeout-ms', '3600000', '--checks-only']);
     expect(seen[1]![0]).toBe('scripts/run-tests.ts');
     expect(seen[1]!.slice(1).length).toBeGreaterThan(0);
     expect(seen.flat().some(arg => arg.includes('accept:p04') || arg.includes('p04-accept.ts'))).toBe(false);

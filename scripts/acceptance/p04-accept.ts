@@ -23,7 +23,7 @@ import { runP04StepSequence, type P04StepRecord, type P04StepSpec } from './p04-
 import { runBoundedProcess } from './p02-accept.ts';
 
 export const P04_ACCEPT_USAGE = 'usage: accept:p04 [--run-id <id>] [--report-dir <root>] ' +
-  '[--expected-commit <sha>] [--step-timeout-ms <ms>] [--overall-timeout-ms <ms>] [--observe] [--help]';
+  '[--expected-commit <sha>] [--step-timeout-ms <ms>] [--overall-timeout-ms <ms>] [--full-gate] [--observe] [--help]';
 const ENTRY_PATH = 'acceptance/p04.entry.json';
 /** P04-9 补充检查 → Task 索引报告映射（冻结；范围声明，不是通过证据）。 */
 const SUPPLEMENT_MAPPING: Readonly<Record<string, readonly string[]>> = {
@@ -119,6 +119,7 @@ export interface P04AcceptanceOptions {
   readonly stepTimeoutMs?: number;
   readonly overallTimeoutMs?: number;
   readonly observe?: boolean;
+  readonly fullGate?: boolean;
   readonly runProcess?: typeof runBoundedProcess;
   /** 只读 Git/工具版本探测；控制器测试可注入，CLI 不暴露此入口。 */
   readonly exec?: (command: string, args: readonly string[]) => string;
@@ -360,7 +361,7 @@ export async function runP04Acceptance(options: P04AcceptanceOptions): Promise<P
     'scripts/acceptance/p04-accept.ts', 'scripts/acceptance/p04-steps.ts', 'scripts/acceptance/p04-integration-report.ts',
     'scripts/acceptance/p04-config.ts', 'scripts/acceptance/p04-report.ts', 'scripts/verify.ts', ENTRY.integrationRunner,
     ...tests.inputs, ...tests.files];
-  const inputsDigest = digest(canonical({ repoRoot, config, stepTimeoutMs, overallTimeoutMs,
+  const inputsDigest = digest(canonical({ repoRoot, config, stepTimeoutMs, overallTimeoutMs, fullGate: options.fullGate === true,
     files: contractFiles.map(file => [file, digest(readFileSync(repoFile(repoRoot, file)))]) }));
   const identity = { runId, commit, inputsDigest };
   const resultPath = join(workDir, 'entry-result.json');
@@ -391,7 +392,7 @@ export async function runP04Acceptance(options: P04AcceptanceOptions): Promise<P
   const env = isolatedEnv(resources, repoRoot, stepTimeoutMs);
   const steps: P04StepSpec[] = ENTRY.stepOrder.map(id => ({ id, command: process.execPath, cwd: repoRoot,
     args: id === 'engineering-gate'
-      ? ENTRY.engineeringGate.map(arg => arg === '{stepMs}' ? String(stepTimeoutMs) : arg)
+      ? [...ENTRY.engineeringGate.map(arg => arg === '{stepMs}' ? String(stepTimeoutMs) : arg), ...(options.fullGate ? [] : ['--checks-only'])]
       : [ENTRY.integrationRunner, ...tests.files],
   }));
   const sanitize = (text: string): string => text.replaceAll(process.execPath, '<node>').replaceAll(repoRoot, '<repo>').replaceAll(reportRoot, '<reports>')
@@ -425,7 +426,8 @@ export async function runP04Acceptance(options: P04AcceptanceOptions): Promise<P
         content: JSON.stringify({ identity, steps: sequence.steps, problems: sequence.problems }) + '\n' }] },
       ...supplementBindings(repoRoot, checklist),
     ],
-    knownLimitations: ['命令退出记录不替代逐项 SQLite/进程快照或产品 Feature 报告；缺少的证据保留缺口。',
+    knownLimitations: [options.fullGate ? '已显式请求全仓门禁。' : '默认阶段范围：全仓测试not_run，仅类型/构建及P04可信索引合集；不代表全仓回归通过。',
+      '命令退出记录不替代逐项 SQLite/进程快照或产品 Feature 报告；缺少的证据保留缺口。',
       'P04-9 六项补充检查只登记 Task 索引报告映射：SQLite/竞争/恢复证据未核对时保持 not_run，不能凭原有八项成功声称完整覆盖。',
       '本入口只编排离线执行；live not_run、人工 pending，不签署 P04 Phase 通过。'],
     openIssues: drift ? [{ id: 'P04-CODE-DRIFT', summary: '受测代码身份变化', blocking: true }] : [],
@@ -444,7 +446,7 @@ export async function runP04Acceptance(options: P04AcceptanceOptions): Promise<P
 }
 
 export function resolveP04Args(argv: readonly string[]): Omit<P04AcceptanceOptions, 'repoRoot'> & { help?: boolean } {
-  const result: { runId?: string; reportRoot?: string; expectedCommit?: string; stepTimeoutMs?: number; overallTimeoutMs?: number; observe?: boolean; help?: boolean } = {};
+  const result: { runId?: string; reportRoot?: string; expectedCommit?: string; stepTimeoutMs?: number; overallTimeoutMs?: number; observe?: boolean; fullGate?: boolean; help?: boolean } = {};
   const seen = new Set<string>();
   for (let index = 0; index < argv.length; index++) {
     const arg = argv[index]!;
@@ -452,6 +454,7 @@ export function resolveP04Args(argv: readonly string[]): Omit<P04AcceptanceOptio
     seen.add(arg);
     if (arg === '--help') { result.help = true; continue; }
     if (arg === '--observe') { result.observe = true; continue; }
+    if (arg === '--full-gate') { result.fullGate = true; continue; }
     if (!['--run-id', '--report-dir', '--expected-commit', '--step-timeout-ms', '--overall-timeout-ms'].includes(arg)) fail(`未知参数：${arg}`);
     const value = argv[++index];
     if (!value || value.startsWith('--') || value.includes('\0')) fail(`参数缺少值：${arg}`);

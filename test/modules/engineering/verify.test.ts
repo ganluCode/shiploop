@@ -365,6 +365,15 @@ describe('verify wiring and source contract', () => {
 });
 
 describe('verify on a real fixture workspace (positive, real subcommands)', () => {
+  it('checks-only executes typecheck and build while explicitly leaving full tests not run', () => {
+    const root = newSandbox('shiploop-checks-only-');
+    buildVerifyFixture(root, { testRunnerKind: 'hang' });
+    const result = runVerifyInSandbox(root, { extraArgs: ['--checks-only'] });
+    expect(result.status, result.output).toBe(0);
+    expect(result.output).toContain('full repository tests NOT RUN');
+    expect(result.output).not.toContain('fixture-tests: hanging');
+    expect(existsSync(join(root, 'dist', 'entry.js'))).toBe(true);
+  }, 180_000);
   it('passes and runs real test / typecheck / build subcommands with visible exit codes', () => {
     const root = newSandbox('shiploop-f005-pass-');
     buildVerifyFixture(root);
