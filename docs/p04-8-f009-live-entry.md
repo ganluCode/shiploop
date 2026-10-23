@@ -1,6 +1,6 @@
 # P04-8 F-009：显式授权的 Pi live 工具
 
-`npm run accept:p04:live -- --approval /absolute/private/approval.json` 是独立、手工调用的标准 Pi SDK 小样本工具。普通 CI、Task 索引、`accept:p04` 离线执行均不会调用它。无参数调用退出 2，输出 `status=not_run, realCalls=0`。本次未获真实模型授权，真实 live 验收仍为 **not_run**。
+`npm run accept:p04:live -- --approval /absolute/private/approval.json` 是独立、手工调用的标准 Pi SDK 小样本工具。普通 CI、Task 索引、`accept:p04` 离线执行均不会调用它。无参数调用退出 2，输出 `status=not_run, realCalls=0`。没有显式授权或对应真实证据的场景始终保持 **not_run**。
 
 工具只支持一个临时 Git 仓库的一次 Attempt，将唯一跟踪文件 `greeting.txt` 从 `hello\n` 改为 `hello pi\n`。模型只能调用 `read_greeting`、`write_greeting` 两个同步文件工具；工具没有路径参数，不创建外部进程。标准工具、Bash、Skills、MCP、扩展、上下文文件、缓存预热、自动压缩和自动重试均关闭。不自动重试或切换 provider/model；首版备用策略必须显式为 `[]`，其他资源/认证形式明确拒绝。
 
