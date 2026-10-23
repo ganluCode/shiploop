@@ -415,5 +415,7 @@ describe('F-014 显式验证继续（复用有效机器证据，零新增编码�
     const final = okResult(await runApp(['task', 'status', 't-1', '--project', projectId, '--json']), 'task.status');
     expect(final).toMatchObject({ display: 'passed', passed: true });
     expect(final.task).toMatchObject({ status: 'passed', effectivePassed: true });
-  }, 40_000);
+  // Two independently bounded 20s waits precede approval/continue CLI calls;
+  // the outer test budget must also cover setup and those real Git/Host operations.
+  }, 120_000);
 });
