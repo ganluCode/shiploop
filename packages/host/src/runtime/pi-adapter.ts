@@ -428,7 +428,7 @@ function textOf(value: unknown): string {
   }).join('');
 }
 
-function usageOf(message: unknown): RuntimeUsageReport | null {
+function usageOf(message: unknown, nativeSdkMessageUsage = false): RuntimeUsageReport | null {
   if (message === null || typeof message !== 'object') return null;
   if ((message as Record<symbol, unknown>)[Symbol.for('shiploop.pi.usageUnavailable')] === true) return null;
   const usage = (message as { usage?: unknown }).usage;
@@ -442,6 +442,20 @@ function usageOf(message: unknown): RuntimeUsageReport | null {
     ? Math.round(total * 1_000_000)
     : null;
   if (inputTokens === null && outputTokens === null && costUsdMicros === null) return null;
+  // Pi 1.0.4 emits the finalized request's usage on each native assistant
+  // message (pi-ai/api/openai-responses-shared finalizeResponse). Session
+  // totals and arbitrary injected session events have no such scope proof.
+  if (nativeSdkMessageUsage && messageRole(message) === 'assistant'
+      && ['stop', 'toolUse', 'length'].includes(messageStopReason(message) ?? '')
+      && inputTokens !== null && outputTokens !== null) {
+    const count = (field: string) => typeof raw[field] === 'number' && Number.isSafeInteger(raw[field]) && raw[field] >= 0
+      ? raw[field] as number : null;
+    return { basis: 'reported', inputTokens, outputTokens, costUsdMicros,
+      cacheReadTokens: count('cacheRead'), cacheWriteTokens: count('cacheWrite'), reasoningTokens: count('reasoning'),
+      providerTotalTokens: count('totalTokens'), cacheReadIncludedInInput: false, cacheWriteIncludedInInput: false,
+      coverage: 'partial', normalization: 'raw', completeness: 'partial', accounting: 'incremental',
+      sourceRefs: ['pi-sdk-1.0.4-assistant-message'] };
+  }
   // Pi exposes message usage but does not identify whether it is a delta or a
   // session cumulative total. Keep the fact usable while preserving that gap.
   return { basis: 'reported', inputTokens, outputTokens, costUsdMicros, completeness: 'unknown', accounting: 'unknown' };
@@ -565,6 +579,13 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
         await lease?.release();
         throw classifyPiFailure(error, 'sdk_initialization_failed', 'configuration');
       }
+      let nativeSdkMessageUsage = false;
+      if (session.agent !== undefined && session.model !== undefined) {
+        try {
+          const sdk = await import('@earendil-works/pi-coding-agent');
+          nativeSdkMessageUsage = sdk.VERSION === PI_SDK_VERSION && sdk.VERSION === '1.0.4' && session instanceof sdk.AgentSession;
+        } catch { /* Unknown/custom sessions retain unknown accounting. */ }
+      }
       const events = new EventChannel();
       let sequence = 0;
       let lastUsage: RuntimeUsageReport | null = null;
@@ -640,7 +661,7 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
       const rememberMessage = (type: string, message: unknown): string => {
         const key = messageKeyFor(type, message);
         const previous = pendingMessages.get(key);
-        pendingMessages.set(key, { message, usage: usageOf(message) ?? previous?.usage ?? null });
+        pendingMessages.set(key, { message, usage: usageOf(message, nativeSdkMessageUsage) ?? previous?.usage ?? null });
         return key;
       };
       const flushMessage = (key: string): void => {
@@ -689,7 +710,7 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
           });
           agent.streamFunction = wrapPiRequestStream(original.bind(agent), retry, message => {
             if (finalized) return;
-            const usage = usageOf(message);
+            const usage = usageOf(message, nativeSdkMessageUsage);
             if (usage !== null) publish('usage', { kind: 'usage', usage });
           }, failure => { if (!finalized) lastRequestFailure = failure; });
           restoreRequestStream = () => { agent.streamFunction = original; };

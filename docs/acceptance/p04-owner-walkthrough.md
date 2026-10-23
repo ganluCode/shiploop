@@ -10,7 +10,7 @@ cd /Users/ganlu/Documents/my-dev/code/mygit/AI/shiploop
 nvm use 22.19.0
 git branch --show-current
 git rev-parse HEAD
-export P04_DIR=/Users/ganlu/Documents/my-dev/code/ai-coding/shiploop-harness/state/acceptance/p04-owner-20261023
+export P04_DIR=/Users/ganlu/Documents/my-dev/code/ai-coding/shiploop-harness/state/acceptance/p04-owner-20261023-final
 ```
 
 分支应为 `acceptance/p04`。使用 npm，不是 pnpm。不要为了核对结果重新运行

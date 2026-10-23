@@ -17,7 +17,7 @@ export const P04_OFFLINE_TEST_BINDINGS: Readonly<Record<string, readonly string[
   'P04-T36': [steps, control],
   'P04-T37': [steps, entry],
   'P04-T40': [recovery, file('runtime/p04-4-pi-managed-session'), file('runtime/recovery/p04-4-recovery-recording')],
-  'P04-T41': [access, file('acceptance/p04-8-live')],
+  'P04-T41': [access, file('acceptance/p04-8-live'), file('runtime/p04-pi-native-usage')],
   'P04-T42': [file('runtime/p04-6-efficiency-projection'), file('cli/p04-6-feature-report-diagnostics')],
   'P04-VERT-OFFLINE-FAIL-CLOSED': [steps, entry, control],
   'P04-P9-AC1-SINGLE-DISPATCH': [dispatch, file('execution/dispatch/p04-9-f002-dispatch-enqueue')],
