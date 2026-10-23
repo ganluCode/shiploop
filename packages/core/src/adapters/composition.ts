@@ -203,9 +203,10 @@ export interface CoreApplicationOptions {
   /** P03-9 / F-012：重验后最终审批/提交/完成消费者（不启动 Runtime）。 */
   readonly finalizationCompletion?: FinalizationCompletionPort;
   /**
-   * P05-1 / F-005：planning 认领回执消费者（回执已在独立短事务提交后调用；
-   * 真实 Runtime 执行由 F-007 接线）。未装配时调度器保留 planning_consumer
-   * capability gap，planning Run 保持 queued 且可查询原因。
+   * P05-1 / F-007：planning 认领回执消费者受信覆盖（回执已在独立短事务提交后
+   * 调用）。缺省时组合根在装配了 Runtime 工厂的情况下接入内部真实执行（复用
+   * 标准 ExecutionService/受监督 Runner/Session/Recorder）；两者皆缺时调度器
+   * 保留 planning_consumer capability gap，planning Run 保持 queued 且可查询原因。
    */
   readonly planningExecution?: {
     consumePlanningClaim(receipt: import('../ports/task-claim.js').TaskClaimReceipt,

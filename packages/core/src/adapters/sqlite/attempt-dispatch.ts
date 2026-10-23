@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { evaluateTaskDag } from '../../application/task-dag.js';
-import type { AttemptRecord } from '../../ports/attempt-store.js';
+import { isPlanningAttemptSnapshot, type AttemptRecord } from '../../ports/attempt-store.js';
 import { computeRunDispatchAuthorizationDigest } from '../../ports/execution-dispatch.js';
 import { computeExecutionPermissionsDigest, TRUSTED_PROJECT_PERMISSIONS_READER,
   type ExecutionPermissionsReader } from '../../ports/execution-input-prepare.js';
+import { computePlanningPermissionsDigest } from '../../ports/planning-input-prepare.js';
 import { StorageError } from '../../ports/errors.js';
 import { validateTaskClaimDispatch, type TaskClaimDispatch } from '../../ports/task-claim.js';
 import { createSqliteExecutionSlotAccess } from './execution-slots.js';
@@ -144,11 +145,22 @@ export function createSqliteAttemptDispatchAccess(session: SqliteStorageSession,
       return { claimId: current.id, claimVersion: current.claim_version, slotId: slot.id };
     },
     assertLaunchInTransaction(attempt: AttemptRecord): void {
-      authorized(attempt);
+      const run = authorized(attempt);
       const now = options.nowUtcMs();
-      const eligibility = evaluateTaskDag(createSqliteTaskDagStore(session).readTaskDagView(attempt.projectId, attempt.runId), now);
-      if (eligibility.reason !== 'resource_busy'
-        || eligibility.tasks.find(task => task.taskId === attempt.taskId)?.reason !== 'resource_busy') deny(eligibility.reason);
+      // P05-1 / F-007：planning Attempt 不在编码 DAG（计划成员仅 coding），启动
+      // 围栏按 Run purpose 与 planning Task 行级事实重核；其余派发/槽位/回执
+      // 身份检查与编码共用（authorized 已重核 Run/Batch 控制与派发意图）。
+      if (isPlanningAttemptSnapshot(attempt.inputSnapshot)) {
+        if (run.purpose !== 'plan') deny('run_purpose_mismatch');
+        const planningTask = db.prepare<[string], { kind: string; status: string; execution_version: number }>(
+          'SELECT kind, status, execution_version FROM tasks WHERE id = ?').get(attempt.taskId);
+        if (!planningTask || planningTask.kind !== 'planning' || planningTask.status !== 'running'
+          || planningTask.execution_version !== attempt.executionVersion) deny('stale_task');
+      } else {
+        const eligibility = evaluateTaskDag(createSqliteTaskDagStore(session).readTaskDagView(attempt.projectId, attempt.runId), now);
+        if (eligibility.reason !== 'resource_busy'
+          || eligibility.tasks.find(task => task.taskId === attempt.taskId)?.reason !== 'resource_busy') deny(eligibility.reason);
+      }
       const row = held(attempt, claim(attempt), now);
       const receipt = db.prepare<[string, string], { receipt: string }>(
         'SELECT receipt FROM task_claim_receipts WHERE project_id = ? AND attempt_id = ?',
@@ -167,7 +179,11 @@ export function createSqliteAttemptDispatchAccess(session: SqliteStorageSession,
         || slot.featureId !== attempt.featureId) deny('dispatch_slot_not_held');
       const face = (options.permissions ?? TRUSTED_PROJECT_PERMISSIONS_READER)({ projectId: attempt.projectId,
         featureId: attempt.featureId, taskId: attempt.taskId });
-      if (computeExecutionPermissionsDigest(face.grants) !== attempt.inputSnapshot.digests.permissionsDigest) deny('permissions_changed');
+      // P05-1 / F-007：planning 快照权限面为规划摘要域（与编码域不同源）。
+      const permissionsDigest = isPlanningAttemptSnapshot(attempt.inputSnapshot)
+        ? computePlanningPermissionsDigest(face.grants)
+        : computeExecutionPermissionsDigest(face.grants);
+      if (permissionsDigest !== attempt.inputSnapshot.digests.permissionsDigest) deny('permissions_changed');
     },
   };
 }

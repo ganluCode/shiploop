@@ -10,6 +10,7 @@ import type { WorkspaceRetentionInput, WorkspaceRetentionIntent, WorkspaceRetent
 import type { WorkResourceAccess, WorkWorkspaceAuthority } from '../../ports/work-resources.js';
 import { createSqliteWorkspaceAccess } from './workspace.js';
 import { createSqliteAttemptAccess } from './attempt-store.js';
+import { isPlanningAttemptSnapshot } from '../../ports/attempt-store.js';
 import { createSqliteCommandReceiptAccess } from './command-receipts.js';
 import { createSqliteAtomicCommandStore } from './atomic-commands.js';
 import { createSqliteAttemptLifecycleStore } from './attempt-lifecycle-store.js';
@@ -35,7 +36,7 @@ export function createSqliteWorkspaceRetentionStore(session: SqliteStorageSessio
     // Workspace initial identity is immutable; latest operation, not first owner, fences later Tasks.
     const writer = db.prepare(`SELECT attempt_id FROM state_events WHERE project_id = ? AND aggregate_id = ?
       AND event_type = 'workspace.operation_updated' ORDER BY sequence DESC LIMIT 1`).get(input.identity.projectId, attempt.featureId) as { attempt_id: string } | undefined;
-    if (writer?.attempt_id !== attempt.id) fail('workspace_has_newer_writer');
+    if (writer?.attempt_id !== attempt.id && !isPlanningAttemptSnapshot(attempt.inputSnapshot)) fail('workspace_has_newer_writer');
     return { resources, attempt, workspace };
   }
   function preparationStopped(workspaceId: string, projectId: string): boolean {

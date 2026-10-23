@@ -19,11 +19,13 @@ import type { WorkSessionRecord, WorkSessionStore } from '../ports/work-session.
 import type { RuntimeExecutionLimits, RuntimeExecutionRequest, RuntimeStopEvidence, RuntimeExecutionResult } from '../ports/runtime-execution.js';
 import { RuntimeError, isRuntimeError, validateRuntimeExecutionRequest } from '../ports/runtime-execution.js';
 import { StorageError } from '../ports/errors.js';
+import { isPlanningAttemptSnapshot } from '../ports/attempt-store.js';
 import { validateStableId } from '../ports/validation.js';
 import type { TaskDagStore } from '../ports/task-dag.js';
 import type { AttemptStore } from '../ports/attempt-store.js';
 import { evaluateTaskDag } from './task-dag.js';
 import { computeExecutionPermissionsDigest, TRUSTED_PROJECT_PERMISSIONS_READER, type ExecutionPermissionsReader } from '../ports/execution-input-prepare.js';
+import { computePlanningPermissionsDigest } from '../ports/planning-input-prepare.js';
 import type { WorkEvidenceRecorder, WorkEvidenceRecordingOutcome } from './work-evidence-recorder.js';
 import type { RuntimeSettlementService } from './runtime-settlement.js';
 import type { RuntimeRecoverySelection } from '../ports/runtime-recovery.js';
@@ -435,11 +437,21 @@ export function createExecutionService(deps: ExecutionServiceDeps): ExecutionSer
     const deny = (reason: string): never => { throw new StorageError('conflict', 'ExecutionService.start', 'Runtime launch rejected', { details: { reason } }); };
     if (!Number.isSafeInteger(now) || now < 1) throw new TypeError('Invalid execution clock');
     const view = deps.dag.readTaskDagView(attempt.projectId, attempt.runId);
-    const eligibility = evaluateTaskDag(view, now);
-    // The claimed Attempt already owns global/project/workspace occupancy and its
-    // Task is running. Reuse all DAG input, policy, approval and dependency checks.
-    if (eligibility.reason !== 'resource_busy' || eligibility.tasks.find(task => task.taskId === attempt.taskId)?.reason !== 'resource_busy') {
-      deny(eligibility.reason);
+    // P05-1 / F-007：planning Attempt 不在编码 DAG（计划成员仅 coding）：准入按
+    // Run purpose 与 planning Task 行级事实重核；预算/截止/占用检查共用。
+    const planning = isPlanningAttemptSnapshot(attempt.inputSnapshot);
+    if (planning) {
+      if (view.run.purpose !== 'plan') deny('run_purpose_mismatch');
+      if (view.run.pauseRequestedAtUtcMs !== null || !['queued', 'running'].includes(view.run.status)) deny('run_control_blocked');
+      if (view.batch.pauseRequestedAtUtcMs !== null || !['queued', 'running'].includes(view.batch.status)) deny('batch_control_blocked');
+      if (view.plan.tasks.some(task => task.id === attempt.taskId)) deny('task_outside_scope');
+    } else {
+      const eligibility = evaluateTaskDag(view, now);
+      // The claimed Attempt already owns global/project/workspace occupancy and its
+      // Task is running. Reuse all DAG input, policy, approval and dependency checks.
+      if (eligibility.reason !== 'resource_busy' || eligibility.tasks.find(task => task.taskId === attempt.taskId)?.reason !== 'resource_busy') {
+        deny(eligibility.reason);
+      }
     }
     if (view.batch.id !== input.claim.batchId || view.run.projectId !== attempt.projectId) deny('claim_identity_mismatch');
     const fact = view.facts.find(task => task.taskId === attempt.taskId);
@@ -447,14 +459,17 @@ export function createExecutionService(deps: ExecutionServiceDeps): ExecutionSer
     if (!current || current.status !== 'preparing' || current.executionStage !== 'runtime'
       || current.invocationId !== invocationId || current.inputDigest !== attempt.inputDigest
       || current.owner !== attempt.owner || current.hostInstanceId !== attempt.hostInstanceId
-      || current.executionVersion !== attempt.executionVersion || fact?.executionVersion !== attempt.executionVersion
+      || current.executionVersion !== attempt.executionVersion || (!planning && fact?.executionVersion !== attempt.executionVersion)
       || current.leaseUntilUtcMs <= now) deny('stale_execution_identity');
     deps.resources.assertLaunchInTransaction(identity(input.claim));
     const resources = deps.resources.read(identity(input.claim));
     if (resources.invocationId !== invocationId || resources.leases.length !== 3
       || resources.leases.some(lease => lease.state !== 'held' || lease.leaseUntilUtcMs <= now)) deny('launch_not_held');
     const face = (deps.permissions ?? TRUSTED_PROJECT_PERMISSIONS_READER)({ projectId: attempt.projectId, featureId: attempt.featureId, taskId: attempt.taskId });
-    if (computeExecutionPermissionsDigest(face.grants) !== attempt.inputSnapshot.digests.permissionsDigest) deny('permissions_changed');
+    const permissionsDigest = planning
+      ? computePlanningPermissionsDigest(face.grants)
+      : computeExecutionPermissionsDigest(face.grants);
+    if (permissionsDigest !== attempt.inputSnapshot.digests.permissionsDigest) deny('permissions_changed');
     if (view.run.startedAtUtcMs !== null && now - view.run.startedAtUtcMs >= view.run.runTimeLimitMs) deny('run_time_exhausted');
     const limits = view.batch.budgetSnapshot.batch;
     if (now >= view.batch.deadlineAtUtcMs || now >= limits.deadlineUtcMs) deny('deadline_exhausted');

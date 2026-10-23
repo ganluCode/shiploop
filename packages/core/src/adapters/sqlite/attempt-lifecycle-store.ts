@@ -142,6 +142,18 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
             const receipt = requirePlainObject(JSON.parse(previous.receipt), context, 'receipt');
             rejectUnknownKeys(receipt, ['disposition', 'attemptId', 'status', 'reason', 'waitingFor', 'runtimeCompleted', 'resultSaved', 'stopConfirmed', 'eventId'], context, 'receipt');
             validateStableId(receipt.eventId, context, 'eventId');
+            // P05-1 / F-007：planning 结算回执无等待语义（无验证/审批等待），
+            // 终态集合由 planning 分支定义（executing/succeeded/failed/cancelled/interrupted）。
+            if (isPlanningAttemptSnapshot(attempt.inputSnapshot)) {
+              if (receipt.disposition !== 'applied' || receipt.attemptId !== attempt.id || receipt.reason !== null
+                || receipt.waitingFor !== null
+                || !['succeeded', 'failed', 'cancelled', 'interrupted', 'executing'].includes(String(receipt.status))
+                || ![receipt.runtimeCompleted, receipt.resultSaved, receipt.stopConfirmed].every(v => typeof v === 'boolean')
+                || receipt.resultSaved !== (valid.kind !== 'executing')
+                || receipt.runtimeCompleted !== (runtime !== null ? runtime.result?.terminal === 'completed' : false)
+                || (valid.kind === 'executing' && (receipt.status !== 'executing' || receipt.stopConfirmed !== false))) throw new Error('invalid_receipt');
+              return { ...receipt, disposition: 'replayed' } as unknown as AttemptApplicationResult;
+            }
             if (receipt.disposition !== 'applied' || receipt.attemptId !== attempt.id || receipt.reason !== null
               || receipt.status !== targetStatus
               || (runtime !== null && targetStatus === 'verifying'
@@ -164,7 +176,8 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
         if (now < (attempt.startedAtUtcMs ?? attempt.createdAtUtcMs)) throw new StorageError('validation', operation, 'Lifecycle clock precedes Attempt');
         const occupied = resources.read(identity);
         if (valid.kind === 'executing' && (occupied.leases.length !== 3 || occupied.leases.some(l => l.state !== 'held' || l.leaseUntilUtcMs <= now)
-          || occupied.invocationId === null || occupied.processIdentity === null)) return ignored('invalid_transition');
+          || occupied.invocationId === null
+          || (occupied.processIdentity === null && !isPlanningAttemptSnapshot(attempt.inputSnapshot)))) return ignored('invalid_transition');
         if (valid.kind !== 'executing') transaction.getArtifactInputRef(valid.projectId, valid.evidenceRef);
         let settlementRevision = attempt.revision;
         const workSession = runtime === null ? null : sessions.getWorkSession(valid.projectId, runtime.sessionId);
@@ -186,16 +199,16 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
             sessionId: runtime.sessionId, expectedRevision: ended.session.revision, kind: 'stopped' });
           settlementRevision = attempts.getAttempt(valid.projectId, valid.attemptId).revision;
         }
+        // P05-1 / F-007：planning Attempt 走独立生命周期结算（executing/preparation_
+        // failed/runtime_settled）；成功仅在本 Run 存在已发布候选且停止/记录/终态
+        // 全部满足时成立，不进入编码验证/提交/审批路径。
+        if (isPlanningAttemptSnapshot(attempt.inputSnapshot)) {
+          return applyPlanningInTransaction(transaction, { valid, identity, attempt, runtime, targetStatus, now, digest, settlementRevision,
+            preparationIsolated });
+        }
         const approval = verifyFeaturePlanApprovalInTransaction(transaction, valid.projectId, attempt.featureId);
         const view = dag.readTaskDagView(valid.projectId, attempt.runId);
         const graph = evaluateTaskDag(view, now);
-        // P05-1 / F-005：planning Attempt 不进入编码生命周期结算（F-007/F-009 另行接线）；
-        // 到达即 fail-closed，不静默忽略也不伪造批准身份。
-        if (isPlanningAttemptSnapshot(attempt.inputSnapshot)) {
-          throw new StorageError('conflict', operation, 'Planning Attempt is outside the coding attempt lifecycle', {
-            details: { reason: 'planning_attempt_lifecycle_unsupported' },
-          });
-        }
         const snapshot = attempt.inputSnapshot.approval;
         const approvalWaiting = task.manual_block === 1 || !approval.validity.valid
           || approval.planDigest !== snapshot.planDigest || approval.checkPolicyDigest !== snapshot.checkPolicyDigest
@@ -276,6 +289,181 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
           VALUES (?, ?, ?, ?, ?, ?)`).run(randomUUID(), valid.projectId, attempt.id, valid.notificationId, digest, JSON.stringify(receipt));
         return receipt;
   }
+  /**
+   * P05-1 / F-007 planning Attempt 生命周期结算（同一短写事务内完成）：
+   * - executing：已认领启动（Runtime 会话已开始）→ Attempt executing + Run/Batch
+   *   queued→running（工具通道准入依赖这些事实）；
+   * - preparation_failed：启动前确定性失败 → Attempt/Task failed + Run failed（规划
+   *   重试只能由新的 planning.start 授权；未真正启动时释放占用，否则隔离）；
+   * - runtime_settled：成功仅当本 Run 已发布候选（上下文 candidate_published 且
+   *   候选制品绑定）+ Runtime 正常完成 + 停止确认 + required 记录完整；否则按
+   *   受控原因失败（候选缺失/记录不完整/停止未确认均不伪造成功）。取消/中断
+   *   控制路径不在此终结 Run（取消竞争与重启核对由后续任务补齐）。
+   * 预算：成功 settle passed；确定性失败 settle non_code_failure（规划不消耗代码
+   * 返工次数）；Run 终态经 settleExecutionRunOutcome（幂等 resultKey）。
+   */
+  function applyPlanningInTransaction(transaction: CommandTransaction, input: {
+    readonly valid: ReturnType<typeof validateAttemptNotification>;
+    readonly identity: WorkResourceIdentity;
+    readonly attempt: import('../../ports/attempt-store.js').AttemptRecord;
+    readonly runtime: import('../../ports/runtime-settlement.js').RuntimeSettlementFacts | null;
+    readonly targetStatus: string;
+    readonly now: number;
+    readonly digest: string;
+    readonly settlementRevision: number;
+    readonly preparationIsolated: boolean;
+  }): AttemptApplicationResult {
+    if (!db.inTransaction) throw new TypeError('Planning lifecycle requires a write transaction');
+    const { valid, identity, attempt, runtime, targetStatus, now, digest, settlementRevision } = input;
+    const snapshot = attempt.inputSnapshot;
+    if (!isPlanningAttemptSnapshot(snapshot)) throw new TypeError('Planning lifecycle requires a planning snapshot');
+    const persist = (receipt: AttemptApplicationResult): AttemptApplicationResult => {
+      db.prepare('INSERT INTO attempt_notifications (id, project_id, attempt_id, notification_id, request_digest, receipt)\n          VALUES (?, ?, ?, ?, ?, ?)').run(randomUUID(), valid.projectId, attempt.id, valid.notificationId, digest, JSON.stringify(receipt));
+      return receipt;
+    };
+    /* 规划上下文（按 Run 绑定；同事务权威读）。 */
+    const contextRow = db.prepare<[string, string], {
+      run_id: string; planning_task_id: string; candidate_id: string; status: string;
+      candidate_artifact_id: string | null;
+    }>('SELECT run_id, planning_task_id, candidate_id, status, candidate_artifact_id FROM planning_contexts WHERE project_id = ? AND run_id = ?')
+      .get(valid.projectId, valid.runId);
+
+    /* ---- executing：Runtime 会话已开始 → executing + Run/Batch running ---- */
+    if (valid.kind === 'executing') {
+      const changed = db.prepare(`UPDATE attempts SET status = 'executing', started_at = ?, updated_at = ?, revision = revision + 1\n        WHERE id = ? AND owner_id = ? AND host_instance_id = ? AND execution_version = ? AND revision = ?\n        AND status = 'preparing' AND execution_stage = 'runtime' AND invocation_id IS NOT NULL`)
+        .run(now, now, valid.attemptId, valid.owner, valid.hostInstanceId, valid.executionVersion, settlementRevision);
+      if (changed.changes !== 1) throw new StorageError('conflict', operation, 'Planning executing CAS failed');
+      db.prepare(`UPDATE runs SET status = 'running', reason = NULL, revision = revision + 1, updated_at = ?\n        WHERE id = ? AND project_id = ? AND status = 'queued'`).run(now, valid.runId, valid.projectId);
+      db.prepare(`UPDATE execution_batches SET status = 'running', reason = NULL, revision = revision + 1, updated_at = ?\n        WHERE id = (SELECT batch_id FROM runs WHERE project_id = ? AND id = ?) AND project_id = ? AND status = 'queued'`)
+        .run(now, valid.projectId, valid.runId, valid.projectId);
+      finalizePauseIntentInTransaction(valid.projectId, valid.runId, now);
+      const counters = transaction.getTaskExecutionCounters(valid.projectId, valid.taskId);
+      const eventId = executions.appendExecutionEventInTransaction({ projectId: valid.projectId, eventType: ATTEMPT_UPDATED_EVENT_TYPE,
+        aggregateType: 'task', aggregateId: valid.taskId, aggregateRevision: counters.revision, payload: { updated: true } });
+      return persist({ disposition: 'applied', attemptId: valid.attemptId, status: 'executing', reason: null, waitingFor: null,
+        runtimeCompleted: false, resultSaved: false, stopConfirmed: false, eventId });
+    }
+
+    /* ---- preparation_failed：启动前确定性失败（Attempt/Task/Run 全部 failed） ---- */
+    if (valid.kind === 'preparation_failed') {
+      const occupiedNow = resources.read(identity);
+      const unstarted = !input.preparationIsolated && attempt.invocationId === null && attempt.startedAtUtcMs === null
+        && attempt.executionStage === 'preflight' && occupiedNow.leases.every(l => l.processIdentity === null);
+      let stopConfirmed = false;
+      if (unstarted) {
+        resources.releaseUnstartedInTransaction(identity);
+        stopConfirmed = true;
+      } else resources.quarantineInTransaction(identity);
+      transaction.reclassifyTaskAttemptAsInfrastructure({ projectId: valid.projectId, taskId: valid.taskId,
+        attemptKey: valid.attemptId, reason: `planning_preparation_failed:${valid.errorKind}` });
+      const changed = db.prepare(`UPDATE attempts SET status = 'failed', execution_stage = ?, error_kind = ?, diagnostic_ref = ?,\n        ended_at = ?, updated_at = ?, revision = revision + 1\n        WHERE id = ? AND owner_id = ? AND host_instance_id = ? AND execution_version = ? AND revision = ?\n        AND status = 'preparing' AND EXISTS (SELECT 1 FROM tasks WHERE id = attempts.task_id AND execution_version = ? AND status = 'running')`)
+        .run(attempt.executionStage, valid.errorKind, valid.evidenceRef, now, now, valid.attemptId, valid.owner,
+          valid.hostInstanceId, valid.executionVersion, settlementRevision, valid.executionVersion);
+      if (changed.changes !== 1) throw new StorageError('conflict', operation, 'Planning preparation failure CAS failed');
+      const taskChanged = db.prepare(`UPDATE tasks SET status = 'failed', revision = revision + 1, updated_at = ?\n        WHERE id = ? AND execution_version = ? AND status = 'running'`).run(now, valid.taskId, valid.executionVersion);
+      if (taskChanged.changes !== 1) throw new StorageError('conflict', operation, 'Planning preparation Task CAS failed');
+      settlePlanningRunOutcome(transaction, valid, 'failed', `planning_preparation_failed:${valid.errorKind}`, null);
+      transaction.settleTaskAttemptBudget({ projectId: valid.projectId, batchId: batchIdOf(valid), runId: valid.runId,
+        taskId: valid.taskId, attemptKey: valid.attemptId, outcome: 'non_code_failure', observationDigest: digest });
+      finalizePauseIntentInTransaction(valid.projectId, valid.runId, now);
+      const counters = transaction.getTaskExecutionCounters(valid.projectId, valid.taskId);
+      const eventId = executions.appendExecutionEventInTransaction({ projectId: valid.projectId, eventType: ATTEMPT_UPDATED_EVENT_TYPE,
+        aggregateType: 'task', aggregateId: valid.taskId, aggregateRevision: counters.revision, payload: { updated: true } });
+      return persist({ disposition: 'applied', attemptId: valid.attemptId, status: 'failed', reason: null, waitingFor: null,
+        runtimeCompleted: false, resultSaved: true, stopConfirmed, eventId });
+    }
+
+    if (valid.kind !== 'runtime_settled' || runtime === null) {
+      throw new StorageError('conflict', operation, 'Planning Attempt does not accept this notification kind', {
+        details: { reason: 'planning_notification_unsupported', kind: valid.kind },
+      });
+    }
+
+    /* ---- runtime_settled：候选绑定 + 停止/记录/终态全部满足才成功 ---- */
+    const contextBound = contextRow !== undefined && contextRow.run_id === valid.runId
+      && contextRow.planning_task_id === valid.taskId && contextRow.candidate_id === snapshot.candidateId
+      && ['candidate_published', 'applied', 'rejected'].includes(contextRow.status)
+      && contextRow.candidate_artifact_id !== null;
+    const recordingOk = runtime.recording.mode === 'best_effort' || runtime.recording.complete;
+    const stopConfirmed = runtime.stopped?.confirmed === true;
+    const success = targetStatus === 'verifying' && contextBound && recordingOk && stopConfirmed;
+    // 成功保留占用由受信 retention 路径凭停止证据释放；其余一律隔离（不确定/失败现场不重分配）。
+    if (!success) {
+      resources.quarantineInTransaction(identity);
+      // 规划失败不消耗代码返工次数（基础设施口径）。
+      transaction.reclassifyTaskAttemptAsInfrastructure({ projectId: valid.projectId, taskId: valid.taskId,
+        attemptKey: valid.attemptId, reason: `planning_failed:${targetStatus}` });
+    }
+    const startupFailure = !success && targetStatus === 'interrupted' && runtime.result === null
+      && runtime.failure !== null && runtime.control?.reason === 'runtime_failed';
+    const finalStatus: 'succeeded' | 'failed' | 'cancelled' | 'interrupted' = success ? 'succeeded'
+      : startupFailure ? 'failed'
+      : targetStatus === 'verifying' ? 'failed'
+      : targetStatus === 'cancelled' ? 'cancelled' : 'interrupted';
+    const failureReason = success ? null
+      : targetStatus === 'verifying' ? (!contextBound ? 'planning_candidate_missing' : !recordingOk ? 'recording_required' : 'stop_unconfirmed')
+      : runtime.control?.reason ?? runtime.failure?.reason ?? `runtime_${targetStatus}`;
+    const errorKind = success ? null
+      : finalStatus === 'cancelled' ? null : runtime.failure?.kind ?? (finalStatus === 'interrupted' ? 'process' : 'runtime');
+    const startedAt = attempt.startedAtUtcMs ?? null;
+    const changed = db.prepare(`UPDATE attempts SET status = ?, execution_stage = ?, error_kind = ?, diagnostic_ref = ?,\n      ended_at = ?, exit_code = ?, duration_ms = ?, usage_summary = ?, updated_at = ?, revision = revision + 1\n      WHERE id = ? AND owner_id = ? AND host_instance_id = ? AND execution_version = ? AND revision = ?\n      AND status IN ('preparing', 'executing')\n      AND EXISTS (SELECT 1 FROM tasks WHERE id = attempts.task_id AND execution_version = ? AND status = 'running')`)
+      .run(finalStatus, success ? 'verification' : 'runtime', errorKind, valid.evidenceRef, now,
+        runtime.result?.exitCode ?? null,
+        startedAt === null ? null : now - startedAt,
+        // 保留合成观察的用量事实；绝不把未知记为 0。
+        runtime.result?.usage?.basis === 'reported' ? JSON.stringify({ schemaVersion: 1,
+          inputTokens: runtime.result.usage.inputTokens, outputTokens: runtime.result.usage.outputTokens,
+          costMicros: runtime.result.usage.costUsdMicros,
+          currency: runtime.result.usage.costUsdMicros === null ? null : 'USD' }) : null,
+        now, valid.attemptId, valid.owner, valid.hostInstanceId, valid.executionVersion, settlementRevision, valid.executionVersion);
+    if (changed.changes !== 1) throw new StorageError('conflict', operation, 'Planning settlement CAS failed');
+    // Never clear manual_block, grant acceptance or reset budgets, even for a published candidate.
+    const taskChanged = db.prepare(`UPDATE tasks SET status = ?, revision = revision + 1, updated_at = ?\n      WHERE id = ? AND execution_version = ? AND status = 'running'`)
+      .run(finalStatus === 'succeeded' ? 'passed' : finalStatus === 'cancelled' ? 'cancelled'
+        : finalStatus === 'failed' ? 'failed' : 'running', now, valid.taskId, valid.executionVersion);
+    if (taskChanged.changes !== 1) throw new StorageError('conflict', operation, 'Planning settlement Task CAS failed');
+    if (finalStatus === 'succeeded' || finalStatus === 'failed') {
+      settlePlanningRunOutcome(transaction, valid, finalStatus,
+        finalStatus === 'succeeded' ? 'planning_candidate_published' : failureReason!,
+        finalStatus === 'succeeded' ? valid.taskId : null);
+      transaction.settleTaskAttemptBudget({ projectId: valid.projectId, batchId: batchIdOf(valid), runId: valid.runId,
+        taskId: valid.taskId, attemptKey: valid.attemptId,
+        outcome: finalStatus === 'succeeded' ? 'passed' : 'non_code_failure', observationDigest: digest });
+    } else {
+      // 取消/中断控制路径不终结 Run：保留可查询原因，由后续取消/恢复任务收尾。
+      db.prepare(`UPDATE runs SET status = 'paused', reason = ?, revision = revision + 1, updated_at = ?\n        WHERE id = ? AND project_id = ? AND status IN ('queued', 'running', 'pausing')`)
+        .run(failureReason ?? 'runtime_interrupted', now, valid.runId, valid.projectId);
+    }
+    finalizePauseIntentInTransaction(valid.projectId, valid.runId, now);
+    const counters = transaction.getTaskExecutionCounters(valid.projectId, valid.taskId);
+    const eventId = executions.appendExecutionEventInTransaction({ projectId: valid.projectId, eventType: ATTEMPT_UPDATED_EVENT_TYPE,
+      aggregateType: 'task', aggregateId: valid.taskId, aggregateRevision: counters.revision, payload: { updated: true } });
+    return persist({ disposition: 'applied', attemptId: valid.attemptId, status: finalStatus, reason: null, waitingFor: null,
+      runtimeCompleted: runtime.result?.terminal === 'completed', resultSaved: true, stopConfirmed, eventId });
+  }
+
+  function batchIdOf(valid: { readonly projectId: string; readonly runId: string }): string {
+    const row = db.prepare<[string, string], { batch_id: string }>(
+      'SELECT batch_id FROM runs WHERE project_id = ? AND id = ?').get(valid.projectId, valid.runId);
+    if (row === undefined) throw new StorageError('not_found', operation, 'Planning settlement Run is missing');
+    return row.batch_id;
+  }
+
+  /** planning Run 终态结算（幂等 resultKey；进展证据 = planning Task 首次 passed）。 */
+  function settlePlanningRunOutcome(transaction: CommandTransaction,
+    valid: { readonly projectId: string; readonly runId: string },
+    outcome: 'succeeded' | 'failed', reason: string, progressTaskId: string | null): void {
+    const row = db.prepare<[string, string], { batch_id: string; revision: number }>(
+      'SELECT batch_id, revision FROM runs WHERE project_id = ? AND id = ?').get(valid.projectId, valid.runId);
+    if (row === undefined) throw new StorageError('not_found', operation, 'Planning outcome Run is missing');
+    executions.settleExecutionRunOutcomeInTransaction({
+      projectId: valid.projectId, batchId: row.batch_id, runId: valid.runId,
+      runRevision: row.revision, resultKey: `planning:${valid.runId}`,
+      outcome, reason,
+      ...(progressTaskId === null ? {} : { progressEvidence: { type: 'new_valid_task_passed' as const, taskId: progressTaskId } }),
+    });
+  }
+
   function submitVerificationInTransaction(transaction: CommandTransaction, input: unknown, verifierStopEvidence?: unknown): AttemptApplicationResult {
     if (!db.inTransaction) throw new TypeError('Verification submission requires a write transaction');
     const valid: VerificationSubmission = validateVerificationSubmission(input);

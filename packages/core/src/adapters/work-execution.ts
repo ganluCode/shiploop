@@ -56,6 +56,8 @@ import { isFinalizationOnlyRun, type FinalizationExecutionPort } from '../ports/
 import type { FinalizationCompletionPort } from '../ports/finalization-completion.js';
 import type { createWorkStartupRecovery } from '../application/work-startup-recovery.js';
 import { createSqliteRunDispatchSettlement } from './sqlite/dispatch-settlement.js';
+import { isPlanningAttemptSnapshot } from '../ports/attempt-store.js';
+import { computePlanningStrategyCopyDigest } from '../ports/planning-input-prepare.js';
 import { deriveRunDispatchDisplay } from '../ports/execution-dispatch.js';
 import type { DispatchAttemptFence, DispatchSettlementResult } from '../ports/dispatch-settlement.js';
 import type { ExecutionRunStatus } from '../ports/execution-store.js';
@@ -138,6 +140,8 @@ export function assembleWorkExecution(options: {
     stopVerifier: { inspect: token => execution.stopVerifier.inspect(token) }, nowUtcMs: now });
   // P04-9 / F-006：Run 级派发归属与槽位的收尾/续租（短事务、完整身份 CAS）。
   const dispatchSettlement = createSqliteRunDispatchSettlement(session, { nowUtcMs: now });
+  // P05-1 / F-007：planning 生命周期结算（executing/preparation_failed/runtime_settled）。
+  const planningLifecycle = createSqliteAttemptLifecycleStore(session, { workspaceAuthority: app.workWorkspaceAuthority, nowUtcMs: now });
   const dispatches = new Map<string, { readonly projectId: string; readonly runId: string;
     readonly claimId: string; readonly claimVersion: number; readonly slotId: string;
     readonly attempt: DispatchAttemptFence }>();
@@ -438,6 +442,136 @@ export function assembleWorkExecution(options: {
     hostInstanceId,
     ...(options.nowUtcMs === undefined ? {} : { nowMs: options.nowUtcMs }),
   });
+  /**
+   * P05-1 / F-007 planning 认领回执消费者：以冻结 planner 策略与 F-004 规划输入
+   * 发起一次标准 Work（ExecutionService/受监督 Runner/Session/Recorder/启动预检
+   * 全链复用；Runtime identity 保持 work）。会话开始后推进 Attempt → executing、
+   * Run/Batch → running（受限工具通道准入依赖这些事实）；完成/失败经 supervision
+   * 结算（候选已发布且停止/记录/终态满足才成功），再由既有派发收尾释放占用。
+   * 重复唤醒不重复调用 Runtime（已启动或已结算的 Attempt 直接返回）。
+   */
+  async function consumePlanningExecutionClaim(receipt: import('../ports/task-claim.js').TaskClaimReceipt,
+    ref: { readonly projectId: string; readonly runId: string }): Promise<void> {
+    const attempt = receipt.attempt;
+    // 幂等：重复唤醒/丢失唤醒补扫对已启动（beginLaunch 已授权）或已结算的
+    // planning Attempt 不再启动 Runtime（claimKey 重放由调度器/认领存储承担）。
+    const current = attempts.getAttempt(attempt.projectId, attempt.id);
+    if (attempt.projectId !== ref.projectId || attempt.runId !== ref.runId
+      || !isPlanningAttemptSnapshot(current.inputSnapshot)
+      || current.status !== 'preparing' || current.executionStage !== 'preflight' || current.invocationId !== null) {
+      dispatches.delete(attempt.id);
+      return;
+    }
+    const identity = { projectId: attempt.projectId, attemptId: attempt.id, owner: attempt.owner,
+      hostInstanceId: attempt.hostInstanceId, executionVersion: attempt.executionVersion };
+    const fence: DispatchAttemptFence = { attemptId: attempt.id, executionVersion: attempt.executionVersion,
+      ownerId: attempt.owner, hostInstanceId: attempt.hostInstanceId };
+    if (receipt.dispatch !== undefined) {
+      dispatches.set(attempt.id, { projectId: attempt.projectId, runId: attempt.runId,
+        claimId: receipt.dispatch.claimId, claimVersion: receipt.dispatch.claimVersion, slotId: receipt.dispatch.slotId,
+        attempt: fence });
+      scheduleHeartbeat();
+    }
+    active.add(attempt.id);
+    try {
+      /* 冻结 planner 策略（planning Task executionConfig 副本）+ 行级事实/摘要重核。 */
+      const taskRow = session.database.prepare<[string], { kind: string; status: string; execution_version: number;
+        execution_config: string; config_source: string; config_source_key: string | null }>(
+        'SELECT kind, status, execution_version, execution_config, config_source, config_source_key FROM tasks WHERE id = ?',
+      ).get(attempt.taskId);
+      if (taskRow === undefined || taskRow.kind !== 'planning' || taskRow.status !== 'running'
+        || taskRow.execution_version !== attempt.executionVersion) {
+        throw new StorageError('conflict', 'PlanningRuntime.prepare', 'Planning Task drift rejected the launch', {
+          details: { reason: 'planning_identity_mismatch' },
+        });
+      }
+      const configJson = JSON.parse(taskRow.execution_config) as Record<string, unknown>;
+      const config = validateTaskExecutionConfig(configJson, 'PlanningRuntime.prepare');
+      if (computePlanningStrategyCopyDigest({ executionConfig: configJson,
+        configSource: taskRow.config_source, configSourceKey: taskRow.config_source_key })
+        !== current.inputSnapshot.digests.strategyCopyDigest) {
+        throw new StorageError('conflict', 'PlanningRuntime.prepare', 'Frozen planner strategy copy drifted', {
+          details: { reason: 'strategy_copy_changed' },
+        });
+      }
+      if (!registry.resolve(config.runtime)) {
+        throw new StorageError('conflict', 'PlanningRuntime.prepare', 'Runtime adapter is not installed', {
+          details: { reason: 'runtime_not_found' },
+        });
+      }
+      const { schemaVersion: _schema, maxCodeAttempts: _attempts, workTimeoutMs: _work, toolTimeoutMs: _tool, ...strategy } = config;
+
+      /* 工作区（与认领同一权威的幂等复核）与截止（Batch/Run/租约）。 */
+      const binding = await app.stateStore.getRepositoryBinding(attempt.projectId);
+      const workspace = await app.workWorkspaceAuthority.verifyPreparation(binding, attempt.featureId);
+      const view = dag.readTaskDagView(attempt.projectId, attempt.runId);
+      const nowMs = now();
+      const batchDeadline = Math.min(view.batch.deadlineAtUtcMs, view.batch.budgetSnapshot.batch.deadlineUtcMs);
+      const sessionLimit = Math.min(config.workTimeoutMs ?? DEFAULT_WORK_TIME_LIMIT_MS,
+        Math.max(0, attempt.leaseUntilUtcMs - nowMs));
+      const deadlines = resolveExecutionDeadlines({
+        nowUtcMs: nowMs,
+        sessionTimeLimitMs: Math.max(1, sessionLimit),
+        toolTimeLimitMs: config.toolTimeoutMs ?? DEFAULT_TOOL_TIME_LIMIT_MS,
+        runStartedAtUtcMs: view.run.startedAtUtcMs,
+        runTimeLimitMs: view.run.runTimeLimitMs,
+        batchDeadlineUtcMs: batchDeadline,
+      });
+      if (deadlines.expired || deadlines.remainingMs < WORK_TIMEOUT_MS_MIN) {
+        throw new StorageError('conflict', 'PlanningRuntime.start', 'Execution deadline has already been reached', {
+          details: { reason: deadlines.expiredLayers.includes('run') || deadlines.remainingMs <= 0
+            ? 'run_time_exhausted' : 'deadline_exhausted' },
+        });
+      }
+
+      /* 发起一次 Work：Runtime identity 保持 work；认证/资源预检随工厂
+       * prepareRequest（prepareAccess）复用，不引入 Durable 或托管 Chat。 */
+      const started = await execution.start({
+        claim: receipt, workspace,
+        sessionId: receipt.launch?.sessionId ?? randomUUID(),
+        ...(receipt.launch === undefined ? {} : { invocationId: receipt.launch.invocationId, parentSessionId: receipt.launch.parentSessionId }),
+        strategy,
+        permissions: { ...TRUSTED_PROJECT_PERMISSIONS_READER({ projectId: attempt.projectId, featureId: attempt.featureId, taskId: attempt.taskId }), isolation: 'trusted_project' },
+        limits: {
+          timeoutMs: Math.max(1, deadlines.remainingMs),
+          toolTimeoutMs: Math.max(1, Math.min(deadlines.toolTimeoutMs ?? DEFAULT_TOOL_TIME_LIMIT_MS, deadlines.remainingMs)),
+          maxEvents: 10_000,
+          maxOutputBytes: 8_000_000,
+        },
+        recovery: { mode: 'new' }, cwdRoot: 'managed-work',
+      });
+
+      /* 会话已开始：Attempt → executing、Run/Batch queued → running（受限工具
+       * 通道按这些事实准入；短会话可能已先结算，届时跳过推进不伪造状态）。 */
+      const afterStart = attempts.getAttempt(attempt.projectId, attempt.id);
+      if (afterStart.status === 'preparing' && afterStart.executionStage === 'runtime') {
+        try {
+          planningLifecycle.apply({ ...identity, taskId: attempt.taskId, runId: attempt.runId,
+            notificationId: `planning-execution-started-${attempt.id}`, kind: 'executing' });
+        } catch (error) {
+          const settled = attempts.getAttempt(attempt.projectId, attempt.id);
+          if (settled.status === 'preparing') throw error;
+        }
+      }
+      if (cancelRequested.delete(attempt.id)) void execution.cancel(identity).catch(() => undefined);
+      void started.context.completion!.then(result => {
+        if (result.stopConfirmed && result.persisted && result.error === null) active.delete(attempt.id);
+        readers.delete(started.context.request.invocationId);
+        dispatches.delete(attempt.id);
+        // 完成/失败/取消共用同一结算入口：释放与否由持久事实决定。
+        settleRun(attempt.projectId, attempt.runId, fence);
+      }, () => undefined);
+    } catch (error) {
+      cancelRequested.delete(attempt.id);
+      dispatches.delete(attempt.id);
+      active.delete(attempt.id);
+      // 启动不确定性保留可查询原因（与编码 consumeClaim 同一纪律；失败结算
+      // 已由 ExecutionService 的 rejectLaunch/settlement 路径承担）。
+      store.recordRunReason(attempt.projectId, attempt.runId, 'not_ready');
+      throw error;
+    }
+  }
+
   const scheduler = createWorkScheduler({ store, dag: { evaluate: (projectId, runId) => evaluateTaskDag(dag.readTaskDagView(projectId, runId), now()) },
     claims: app.taskClaims,
     admission: { check: ref => finalizationAdmission(ref.projectId) },
@@ -462,15 +596,19 @@ export function assembleWorkExecution(options: {
       },
     }),
     // P05-1 / F-005：planning Run 按 purpose 路由（准备/重核在事务外，认领自有
-    // 短事务，消费只在回执提交后；未装配消费者时保留 capability gap）。
-    ...(options.planningExecution === undefined ? {} : {
+    // 短事务，消费只在回执提交后）。F-007：优先使用受信注入的消费者；否则在
+    // 装配了 Runtime 工厂时接入内部真实执行（复用标准 ExecutionService 链路）；
+    // 两者皆缺时保留 planning_consumer capability gap，不认领不占槽。
+    ...(options.planningExecution === undefined && options.runtimeFactory === undefined ? {} : {
       planning: {
         prepare: async (ref: { readonly projectId: string; readonly runId: string }) =>
           planningDispatchPrepare.preparePlanningClaim(ref),
         claims: planningClaims,
         consume: async (receipt: import('../ports/task-claim.js').TaskClaimReceipt,
           ref: { readonly projectId: string; readonly runId: string }) =>
-          options.planningExecution!.consumePlanningClaim(receipt, ref),
+          (options.planningExecution !== undefined
+            ? options.planningExecution.consumePlanningClaim(receipt, ref)
+            : consumePlanningExecutionClaim(receipt, ref)),
       },
     }),
     async prepareClaim({ candidate, taskId }) {

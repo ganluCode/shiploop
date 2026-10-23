@@ -174,6 +174,7 @@ export function superviseExecution(input: {
         const evidenceRef = input.evidenceRef();
         if (evidenceRef === null) throw new Error('missing_settlement_evidence');
         const retentionReason: WorkspaceRetentionReason = receipt.status === 'cancelled' ? 'cancelled'
+          : receipt.status === 'succeeded' ? 'planning_delivered'
           : control?.reason === 'runtime_timeout' || control?.reason === 'tool_timeout' || control?.reason === 'parent_deadline' ? 'timed_out' : 'execution_error';
         const work = input.request.identity;
         if (work.purpose !== 'work') throw new TypeError('Expected Work execution');
