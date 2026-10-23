@@ -139,11 +139,31 @@ packages/cli/src/bin.ts       F-012 唯一显式可执行入口（shebang → di
 `npm run verify` 实际执行 `node scripts/verify.ts`，这是**开发工程检查编排**，不是未来 ShipLoop 的业务 Verifier；本阶段**不提供 accept:p01 验收命令**，verify 通过不代表任何业务验收。编排 fail-fast，输出中可核对每个检查命令、退出码与失败项：
 
 - **预检（不启动子命令）**：根 `package.json` 可解析且声明 `test` / `typecheck` / `build` 三个脚本（缺失即失败，检查不得跳过）；`package-lock.json` 存在、可解析、`lockfileVersion` 有效、`name`/`version` 与根清单一致。预检不看 `node_modules`，锁文件缺失不会被“依赖已安装”的表象掩盖。
-- **串联真实子命令**：依次运行 `npm test`、`npm run typecheck`、`npm run build`；只有全部退出码为 0，verify 才返回 0。优先使用 `npm_execpath` 指定的当前 npm，否则回退 PATH 上的 npm；**不通过 npx 临时下载工具，也不跳过检查恢复成功**。
+- **串联真实子命令**：依次运行 `npm run typecheck`、`npm test`（轻量 → 常规 → 重量）、`npm run build`；只有全部退出码为 0，verify 才返回 0。类型错误先返回，不再等待整仓测试结束。优先使用 `npm_execpath` 指定的当前 npm，否则回退 PATH 上的 npm；**不通过 npx 临时下载工具，也不跳过检查恢复成功**。
 - **有限超时与进程收尾**：单步默认 600s 超时（可用 `--step-timeout-ms` 或 `SHIPLOOP_VERIFY_STEP_TIMEOUT_MS` 覆盖，供隔离夹具验收）；子命令以独立进程组运行，超时对整个进程组 SIGKILL；退出码非 0、信号退出、超时或无法启动一律算失败。
 - **NOT RUN 语义**：任一步失败即停止，后续未执行步骤明确标记 NOT RUN，绝不把未运行项标为通过。
 
 负向验收见 `test/modules/engineering/verify.test.ts`：在系统临时目录构建独立夹具工作区（真实锁文件、真实断言的有限测试集合、真实 tsc 与构建脚本），以真实子进程运行同一个生产 `verify.ts`，分别验证缺锁文件、无测试文件、注入失败断言、注入类型错误、构建非零、必需工具被删、步骤超时与信号死亡等场景均非零退出；夹具测试子命令不回跳本仓库 `npm test`，不产生递归验收。
+
+### 测试按耗时分阶段
+
+默认 `npm test` 依次运行 `light`、`standard`、`heavy` 三组，每组保留 Vitest 最多 4 个文件并发、文件内顺序执行。前组失败时，后组显示 `NOT_RUN`。三组共用 `SHIPLOOP_TEST_RUN_TIMEOUT_MS` 总预算，拆组不会让超时预算翻倍。
+
+[test/stages.json](test/stages.json) 只登记轻量和常规测试，初始分类参考 P04 实测文件耗时（分别不超过 200ms、3s）；未登记及新增文件默认进入重量组。分组表示观察到的开销，不代表覆盖层级。清单引用缺失文件、重复归组或格式错误会拒绝执行。所有分组的合集仍覆盖完整测试集。
+
+```bash
+npm test                               # 轻量 → 常规 → 重量，全部通过才返回 0
+npm test -- --list-stages               # 只列出各组文件，不运行测试
+npm test -- --stage light               # 只跑轻量组，便于快速反馈
+npm test -- --stage standard            # 只跑常规组
+SHIPLOOP_TEST_RUN_TIMEOUT_MS=3600000 npm test -- --stage heavy # 重量组沿用长时预算
+npm test -- test/modules/...test.ts -t 'case' # 保留单文件/case 过滤语义
+npm test -- --stage all --stage-report /tmp/shiploop-tests-unique.json
+```
+
+`--stage-report` 保存各组范围、退出码、耗时及未执行状态，拒绝覆盖已有报告。默认全量及重量组仍使用原来的总超时设置；长时整仓检查可运行 `SHIPLOOP_TEST_RUN_TIMEOUT_MS=3600000 SHIPLOOP_VERIFY_STEP_TIMEOUT_MS=3600000 npm run verify`。分组命令不能混入 Vitest 文件/case 过滤器；需要局部验证时使用原来的显式文件入口。显式过滤和选项调用仍透传 Vitest；只有默认无参调用和 `--stage` 命令启用分组。单组通过不代表全量通过，报告也不能用于跨提交自动复用阶段结果。
+
+分组运行保留默认全量的隐式调用语义，不会因为内部传入了文件清单而触发 clean-replay 等“用户显式点名”模式。当前 P04 专项集成仍独立执行：其中测试的运行环境、证据导出与普通全量不同，尚未合并其证据或跳过重跑。完整验收总耗时的改善仍需后续完整执行测量；本次主要缩短轻量错误反馈和定向重测的等待时间。
 
 ### 集成验收报告（F-006）
 
@@ -383,7 +403,7 @@ npm test           # 启动器校验本地 vitest@5.0.3 后一次性执行全部
 npm run typecheck  # 严格类型检查（strict），覆盖 vitest.config.ts、源码、测试（含 helpers）与 scripts/，不产出文件
 npm run build      # tsc -b 构建三个包到各自 dist，并运行构建入口冒烟脚本
 npm run check:boundaries  # 工作区单向依赖与 Core 分层边界检查（fail-closed），合法返回 0
-npm run verify     # 工程检查编排：锁文件预检 + npm test / typecheck / build 全绿才返回 0
+npm run verify     # 工程检查：锁文件预检 + typecheck / 分组全量测试 / build 全绿才返回 0
 npm run accept:p01 # P01 阶段验收：verify + 四个固定场景 + 构建冒烟，写出 artifacts/acceptance/p01/<run-id>/ 报告与证据
 node scripts/acceptance/clean-snapshot-replay.ts --root . --out docs/acceptance/evidence-p01-4  # 干净已提交快照复跑七条命令（两次 accept:p01）
 ```

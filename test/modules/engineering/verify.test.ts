@@ -375,8 +375,8 @@ describe('verify on a real fixture workspace (positive, real subcommands)', () =
     expect(result.status, `verify must pass on legal fixture:\n${result.output}`).toBe(0);
     // 可核对：每个检查命令与其退出码。
     expect(result.output).toContain('precheck package-lock.json OK');
-    expect(result.output).toContain('[1/3] EXIT 0 npm test');
-    expect(result.output).toContain('[2/3] EXIT 0 npm run typecheck');
+    expect(result.output).toContain('[2/3] EXIT 0 npm test');
+    expect(result.output).toContain('[1/3] EXIT 0 npm run typecheck');
     expect(result.output).toContain('[3/3] EXIT 0 npm run build');
     expect(result.output).toContain('PASS 3/3');
     // 证明真实子命令确实运行：夹具测试汇总与真实构建产物。
@@ -412,9 +412,9 @@ describe('verify negative scenarios (isolated fixture copies, real subcommands)'
     expect(result.outerError).toBe(false);
     expect(result.status, `empty test set must fail verify:\n${result.output}`).toBe(1);
     expect(result.output).toContain('no fixture test files');
-    expect(result.output).toContain('[1/3] FAIL npm test');
+    expect(result.output).toContain('[2/3] FAIL npm test');
     expect(result.output).toContain('NOT RUN');
-    expect(result.output).toContain('npm run typecheck');
+    expect(result.output).toContain('[1/3] EXIT 0 npm run typecheck');
     expect(result.output).toContain('npm run build');
     // 后续步骤未执行：不产生构建产物。
     expect(existsSync(join(root, 'dist'))).toBe(false);
@@ -435,7 +435,7 @@ describe('verify negative scenarios (isolated fixture copies, real subcommands)'
     expect(result.status, `failing assertion must fail verify:\n${result.output}`).toBe(1);
     expect(result.output).toContain('injected-failure.test.mjs');
     expect(result.output).toContain('注入的失败断言');
-    expect(result.output).toContain('[1/3] FAIL npm test');
+    expect(result.output).toContain('[2/3] FAIL npm test');
     expect(result.output).not.toContain('PASS 3/3');
   }, 120_000);
 
@@ -448,8 +448,9 @@ describe('verify negative scenarios (isolated fixture copies, real subcommands)'
     const result = runVerifyInSandbox(root);
     expect(result.outerError).toBe(false);
     expect(result.status, `type error must fail verify:\n${result.output}`).toBe(1);
-    expect(result.output).toContain('[1/3] EXIT 0 npm test');
-    expect(result.output).toContain('[2/3] FAIL npm run typecheck');
+    expect(result.output).not.toContain('fixture-tests:');
+    expect(result.output).not.toContain('RUN npm test');
+    expect(result.output).toContain('[1/3] FAIL npm run typecheck');
     expect(result.output).toContain('NOT RUN');
     expect(result.output).toContain('npm run build');
     expect(existsSync(join(root, 'dist'))).toBe(false);
@@ -462,8 +463,8 @@ describe('verify negative scenarios (isolated fixture copies, real subcommands)'
     const result = runVerifyInSandbox(root);
     expect(result.outerError).toBe(false);
     expect(result.status, `failing build must fail verify:\n${result.output}`).toBe(1);
-    expect(result.output).toContain('[1/3] EXIT 0 npm test');
-    expect(result.output).toContain('[2/3] EXIT 0 npm run typecheck');
+    expect(result.output).toContain('[2/3] EXIT 0 npm test');
+    expect(result.output).toContain('[1/3] EXIT 0 npm run typecheck');
     expect(result.output).toContain('[3/3] FAIL npm run build');
     expect(result.output).toContain('build-fail.marker');
     expect(result.output).not.toContain('PASS 3/3');
@@ -478,7 +479,7 @@ describe('verify negative scenarios (isolated fixture copies, real subcommands)'
     const result = runVerifyInSandbox(root);
     expect(result.outerError).toBe(false);
     expect(result.status, `deleted tool must fail verify:\n${result.output}`).toBe(1);
-    expect(result.output).toContain('[1/3] FAIL npm test');
+    expect(result.output).toContain('[2/3] FAIL npm test');
     expect(result.output).toContain('run-fixture-tests.mjs');
     // 没有任何经 npx 的临时下载/恢复行为。
     expect(result.output).not.toMatch(/\bnpx\b/);
@@ -497,7 +498,7 @@ describe('verify negative scenarios (isolated fixture copies, real subcommands)'
     expect(result.signal).toBeNull();
     expect(result.status, `timed-out step must fail verify:\n${result.output}`).toBe(1);
     expect(result.output).toMatch(/timed out after 2000\s?ms/);
-    expect(result.output).toContain('[1/3] FAIL npm test');
+    expect(result.output).toContain('[2/3] FAIL npm test');
     // 有限超时：整个 verify 必须在远小于默认 600s 的时间内结束。
     expect(result.durationMs).toBeLessThan(45_000);
     // 进程收尾：悬挂的夹具测试进程（含孙进程）不得残留。
@@ -516,7 +517,7 @@ describe('verify negative scenarios (isolated fixture copies, real subcommands)'
     expect(result.outerError).toBe(false);
     expect(result.signal).toBeNull();
     expect(result.status, `signal-terminated step must fail verify:\n${result.output}`).toBe(1);
-    expect(result.output).toContain('[1/3] FAIL npm test');
+    expect(result.output).toContain('[2/3] FAIL npm test');
     expect(result.output).not.toContain('PASS 3/3');
   }, 120_000);
 

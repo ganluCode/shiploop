@@ -6,13 +6,14 @@
  *    不使用 PATH 全局 vitest，不通过 npx 临时下载；
  * 2. 校验工具身份与精确版本（name=vitest、version=5.0.3），缺失或版本不符即非零退出，
  *    并在输出中给出工具名、要求版本与修复命令；
- * 3. 以 run（一次性、非 watch）模式 spawn 真实 vitest，透传额外参数，原样继承 stdio；
- * 4. 传播退出码；信号退出、超时或进程错误一律非零。
+ * 3. 默认按轻量、常规、重量组顺序运行 Vitest（每组继承配置并发）；
+ *    显式文件/case 调用保持透传，--stage 可单独重测某组；
+ * 4. 传播退出码；信号退出、超时或进程错误一律非零。各组共享总预算。
  *
  * 仅使用可擦除 TypeScript 语法，由 Node 22 原生类型擦除直接运行，无需先构建。
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, linkSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -102,23 +103,75 @@ process.stdout.write(
 );
 
 const passthroughArgs = process.argv.slice(2);
-// 显式测试过滤器导出给子进程（positional 参数）：测试入口据此区分「显式验收运行」
-// 与「npm test 默认收集」（如 p02-4-clean-replay 完整复跑形态只在显式点名时触发）。
-const explicitFilters = passthroughArgs.filter((arg) => !arg.startsWith('-'));
-const result = spawnSync(process.execPath, [binaryPath, 'run', ...passthroughArgs], {
-  cwd: repoRoot,
-  stdio: 'inherit',
-  env: {
-    ...process.env,
-    SHIPLOOP_TEST_EXPLICIT_FILTERS: JSON.stringify(explicitFilters),
-  },
-  timeout: resolveRunTimeoutMs(),
-});
-
-if (result.error) {
-  fail(`failed to execute ${REQUIRED_TOOL}: ${result.error.message}`);
+// 显式文件/case 调用保持原语义；默认全量才按轻重分组，不能把分组文件列表
+// 伪装成用户显式点名（clean-replay 等测试依赖这个区别）。
+const stageIndex = passthroughArgs.indexOf('--stage');
+let stage = 'all';
+if (stageIndex !== -1) {
+  stage = passthroughArgs[stageIndex + 1] ?? '';
+  if (!['all', 'light', 'standard', 'heavy'].includes(stage)
+    || passthroughArgs.lastIndexOf('--stage') !== stageIndex) fail('invalid --stage (all/light/standard/heavy)');
+  passthroughArgs.splice(stageIndex, 2);
 }
-if (result.signal) {
-  fail(`${REQUIRED_TOOL} was terminated by signal ${result.signal}`);
+const listIndex = passthroughArgs.indexOf('--list-stages');
+const list = listIndex !== -1;
+if (list) passthroughArgs.splice(listIndex, 1);
+let reportPath: string | undefined;
+const reportIndex = passthroughArgs.indexOf('--stage-report');
+if (reportIndex !== -1) {
+  const value = passthroughArgs[reportIndex + 1];
+  if (!value || value.startsWith('-')) fail('--stage-report requires a file path');
+  reportPath = resolve(value);
+  if (existsSync(reportPath)) fail(`refusing to overwrite stage report: ${reportPath}`);
+  passthroughArgs.splice(reportIndex, 2);
 }
-process.exit(result.status ?? 1);
+const grouped = stageIndex !== -1 || list || passthroughArgs.length === 0;
+const timeoutMs = resolveRunTimeoutMs();
+if (!grouped) {
+  if (reportPath) fail('--stage-report requires --stage for a filtered invocation');
+  const explicitFilters = passthroughArgs.filter((arg) => !arg.startsWith('-'));
+  const result = spawnSync(process.execPath, [binaryPath, 'run', ...passthroughArgs], {
+    cwd: repoRoot, stdio: 'inherit',
+    env: { ...process.env, SHIPLOOP_TEST_EXPLICIT_FILTERS: JSON.stringify(explicitFilters) },
+    timeout: timeoutMs,
+  });
+  if (result.error) fail(`failed to execute ${REQUIRED_TOOL}: ${result.error.message}`);
+  if (result.signal) fail(`${REQUIRED_TOOL} was terminated by signal ${result.signal}`);
+  process.exit(result.status ?? 1);
+} else {
+  // Dynamic import preserves the missing-tool diagnostic in standalone launcher fixtures.
+  const { loadTestStages, executeTestStages } = await import('./test-stages.ts');
+  try {
+    if (passthroughArgs.length) fail('--stage cannot be combined with Vitest filters/options; use a focused invocation instead');
+    const plans = loadTestStages(repoRoot);
+    const selected = plans.filter(plan => stage === 'all' || plan.stage === stage);
+    if (list) {
+      process.stdout.write(`${JSON.stringify({ scope: stage, plans: selected }, null, 2)}\n`);
+      process.exit(0);
+    }
+    if (!selected.some(plan => plan.files.length)) fail('selected stage contains no tests');
+    const outcomes = executeTestStages(selected, timeoutMs, (plan, remainingMs) => {
+      process.stdout.write(`run-tests: RUN ${plan.stage} (${plan.files.length} files, maxWorkers=4, remaining=${remainingMs}ms)\n`);
+      // Exclude the complement as well: Vitest positional filters are substring matches.
+      const excluded = plans.flatMap(other => other.stage === plan.stage ? [] : other.files)
+        .flatMap(file => ['--exclude', file]);
+      const result = spawnSync(process.execPath, [binaryPath, 'run', ...plan.files, ...excluded], {
+        cwd: repoRoot, stdio: 'inherit', timeout: remainingMs,
+        env: { ...process.env, SHIPLOOP_TEST_EXPLICIT_FILTERS: '[]' },
+      });
+      process.stdout.write(`run-tests: END ${plan.stage} exit=${result.status} signal=${result.signal ?? 'none'}\n`);
+      return result;
+    });
+    if (reportPath) {
+      mkdirSync(dirname(reportPath), { recursive: true });
+      const temp = `${reportPath}.${process.pid}.tmp`;
+      writeFileSync(temp, JSON.stringify({ schemaVersion: 1, scope: stage, fullSuiteRequested: stage === 'all',
+        passed: outcomes.every(row => row.status === 'pass'), outcomes }, null, 2) + '\n', { encoding: 'utf8', flag: 'wx' });
+      // Publish without replacing another run's report, even if it appeared while tests ran.
+      try { linkSync(temp, reportPath); }
+      finally { unlinkSync(temp); }
+    }
+    for (const row of outcomes) process.stdout.write(`run-tests: ${row.status.toUpperCase()} ${row.stage} (${row.durationMs}ms)${row.error ? ` ${row.error}` : ''}\n`);
+    process.exit(outcomes.every(row => row.status === 'pass') ? 0 : 1);
+  } catch (error) { fail(error instanceof Error ? error.message : String(error)); }
+}

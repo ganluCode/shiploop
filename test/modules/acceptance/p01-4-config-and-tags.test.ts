@@ -865,7 +865,8 @@ describe('F-006 项目标签检查组（P01-FR2-TAGS）', () => {
         const counts = await app.projectService.countProjectLabels();
         const normalizedCounts = [...counts]
           .map((entry) => ({ label: entry.label, projectCount: entry.projectCount }))
-          .sort((a, b) => a.label.localeCompare(b.label));
+          // Normalize only for comparison; the machine's default locale is not part of this count contract.
+          .sort((a, b) => a.label.localeCompare(b.label, 'en'));
         expect(normalizedCounts).toEqual([
           { label: 'api', projectCount: 1 },
           { label: 'core', projectCount: 2 },
@@ -978,7 +979,7 @@ describe('F-006 项目标签检查组（P01-FR2-TAGS）', () => {
         expect(oldApi.records).toEqual([]);
         const countsAfter = [...(await app.projectService.countProjectLabels())]
           .map((entry) => ({ label: entry.label, projectCount: entry.projectCount }))
-          .sort((a, b) => a.label.localeCompare(b.label));
+          .sort((a, b) => a.label.localeCompare(b.label, 'en'));
         expect(countsAfter).toEqual([
           { label: 'core', projectCount: 1 },
           { label: 'renamed', projectCount: 1 },

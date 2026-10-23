@@ -7,7 +7,7 @@
  *    三个脚本（缺失即失败，检查不得跳过）；package-lock.json 存在、可解析、
  *    lockfileVersion 为有效数字、name/version 与根清单一致。预检不看 node_modules，
  *    锁文件缺失不会被“依赖已安装”的表象掩盖。
- * 1. npm test   2. npm run typecheck   3. npm run build
+ * 1. npm run typecheck   2. npm test（轻量 → 常规 → 重量）   3. npm run build
  *    每一步都是真实子进程：优先使用 npm_execpath 指定的当前 npm（即 `npm run verify`
  *    启动者的固定版本），否则回退 PATH 上的 npm；不通过 npx 临时下载任何工具。
  *    有限超时（默认 600s，可用 --step-timeout-ms 或 SHIPLOOP_VERIFY_STEP_TIMEOUT_MS
@@ -32,8 +32,8 @@ export type VerifyStep = {
 };
 
 export const VERIFY_STEPS: readonly VerifyStep[] = [
-  { label: 'npm test', npmArgs: ['test'], requiredScript: 'test' },
   { label: 'npm run typecheck', npmArgs: ['run', 'typecheck'], requiredScript: 'typecheck' },
+  { label: 'npm test', npmArgs: ['test'], requiredScript: 'test' },
   { label: 'npm run build', npmArgs: ['run', 'build'], requiredScript: 'build' },
 ];
 

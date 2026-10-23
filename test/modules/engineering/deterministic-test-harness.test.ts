@@ -343,7 +343,7 @@ describe('real vitest subprocess fixtures (no mocks, one-shot, reaped)', () => {
     const output = `${run.stdout}\n${run.stderr}`;
     expect(run.timedOut).toBe(false);
     expect(run.signal).toBeNull();
-    expect(run.status).toBe(0);
+    expect(run.status, output).toBe(0);
     expect(output).toMatch(/1\s+passed/);
   });
 });
