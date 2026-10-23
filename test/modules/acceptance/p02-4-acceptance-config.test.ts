@@ -22,6 +22,7 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
+import { currentMigrationVersions } from '../../helpers/current-schema.ts';
 import {
   P02_ACCEPT_CONFIG_PATH,
   P02_ACCEPT_CONFIG_VERSION,
@@ -313,7 +314,7 @@ describe('F-010 配置内容边界（无绝对路径 / 不解析认证 / 不依�
     expect(schemaVersions.settingsExportFormat).toBe(SETTINGS_EXPORT_FORMAT_VERSION);
     expect(schemaVersions.applicationWireSchema).toBe(WIRE_MESSAGE_SCHEMA_VERSION);
     expect(schemaVersions.eventEnvelopeSchema).toBe(PUBLIC_EVENT_SCHEMA_VERSION);
-    expect(schemaVersions.sqliteMigrations).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]);
+    expect(schemaVersions.sqliteMigrations).toEqual(currentMigrationVersions);
 
     for (const baseline of raw.priorBaselines as Record<string, string>[]) {
       expect(CONTRACT_DOC).toContain(baseline.tipCommit.slice(0, 7));

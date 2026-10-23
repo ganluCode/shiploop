@@ -966,6 +966,7 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
     expect(validated.capabilities.application).toEqual({
       commands: [
         'execution.attempt.cancel',
+        'execution.stop.manual',
         'execution.pause',
         'execution.cancel',
         // P03-9 / F-008：显式工作流 resume 经同一命令路由接线。
