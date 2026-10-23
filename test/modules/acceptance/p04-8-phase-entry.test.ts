@@ -236,16 +236,18 @@ it('[case:post-step-drift] reports commit drift after the last command as a bloc
 });
 
 it('[case:owned-report-output-is-not-source-drift] ignores only this invocation\'s untracked evidence directory between steps', async () => {
-  const reportRoot = mkdtempSync(join(ROOT, 'artifacts', 'p048-owned-'));
+  const isolated = isolatedRepo();
+  mkdirSync(join(isolated, 'artifacts'));
+  const reportRoot = mkdtempSync(join(isolated, 'artifacts', 'p048-owned-'));
   dirs.push(reportRoot);
   const runId = 'p048-owned-output';
   let statusCalls = 0;
   const opts = options();
-  const result = await runP04Acceptance({ ...opts, reportRoot, runId, runProcess: async () => PASS,
+  const result = await runP04Acceptance({ ...opts, repoRoot: isolated, reportRoot, runId, runProcess: async () => PASS,
     exec: (command, args) => {
       if (command === 'git' && ['status --porcelain', 'status --porcelain --untracked-files=all'].includes(args.join(' '))) {
         statusCalls++;
-        return statusCalls === 1 ? '' : `?? ${relative(ROOT, join(reportRoot, 'runs', runId, 'step-run', 'run.json'))}`;
+        return statusCalls === 1 ? '' : `?? ${relative(isolated, join(reportRoot, 'runs', runId, 'step-run', 'run.json'))}`;
       }
       if (command === 'git' && args.join(' ') === 'rev-parse HEAD') return COMMIT;
       if (command === 'git' && args[0] === 'rev-parse') return 'b'.repeat(40);
