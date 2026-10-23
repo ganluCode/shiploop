@@ -107,6 +107,12 @@ test/
   单槽位与计划分页文件本地通过。范围与证据见
   [F-008 交接](../docs/p04-9-f008-dispatch-slot-query.md)；Host/CLI 接线属 F-009。
 
+- `index/phases/P05/features/P05-1/tasks/F-001.json`：一次性规划候选纯数据契约。
+  覆盖规划请求/候选/身份封装校验、执行语义字段冻结拒绝、复用业务计划 v1 的 DAG 负例
+  定位、四类摘要区分与审批依据评估、测试候选协议不混用与契约文档守护。
+  新增三文件 45 项本地通过；无存储/命令/工具通道变更，较广回归交 Nezha。
+  契约见 [P05-1 规划候选契约](../docs/p05-1-planning-candidate-contract.md)。
+
 - `index/phases/P04/features/P04-9/tasks/F-009.json`：派发/槽位查询接入 Host、HostClient 与 CLI。
   覆盖真实 Host/HostClient 读取 Core 投影（派生状态用同一规则复核）、槽位摘要与跨项目
   布尔摘要、未认证/未知参数/可写意图拒绝、客户端解码冻结形状、CLI 参数与结构化/文本

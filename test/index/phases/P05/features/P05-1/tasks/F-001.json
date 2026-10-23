@@ -1,0 +1,23 @@
+{
+  "schema_version": 2,
+  "task_id": "F-001",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/planning/p05-1-f001-planning-candidate-validation.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/planning/p05-1-f001-planning-candidate-digest.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/planning/docs-p05-1-planning-candidate-contract.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "kind": "feature",
+  "phase": "P05",
+  "feature": "P05-1",
+  "scope": "registered task-local indexes; P05-1 feature union for Nezha task_union; not full/Phase/live acceptance",
+  "tasks": [
+    {
+      "task_id": "F-001",
+      "index": "test/index/phases/P05/features/P05-1/tasks/F-001.json"
+    }
+  ]
+}
