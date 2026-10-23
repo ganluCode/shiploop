@@ -1,0 +1,63 @@
+{
+  "schema_version": 2,
+  "task_id": "F-006",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/planning/p05-1-f006-planning-candidate-submit.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/host/p05-1-f006-submission-tools.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/authorization/p04-2-work-tool-channel.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/host/p04-2-work-tools.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p04-1-pi-adapter.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p04-1-pi-f007-contract.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p04-2-access-integration.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p04-2-runtime-access.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/planning/docs-p05-1-planning-candidate-contract.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/planning/p05-1-f005-planning-dispatch-claim.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/storage/sqlite/p05-1-f003-planning-start-schema.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/planning/p05-1-f002-planning-strategy-selection.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p04-1-pi-composition.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

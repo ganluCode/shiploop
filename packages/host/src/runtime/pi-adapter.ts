@@ -136,6 +136,13 @@ export interface PiTrustedAssembly {
   readonly recoverySourceManager?: PiRecoverySourceManager;
   /** Current authorized reasoning configuration; omission resets inherited reasoning to off. */
   readonly resolveThinkingLevel?: (request: RuntimeExecutionRequest) => NonNullable<CreateAgentSessionOptions['thinkingLevel']>;
+  /**
+   * P05-1 / F-006：按请求解析受限提交自定义工具（如规划候选提交桥）；仅可信
+   * 装配提供，不从请求字段/模型输出/全局发现推导。返回空数组 = 本次无工具。
+   */
+  readonly resolveSubmissionTools?: (
+    request: RuntimeExecutionRequest,
+  ) => readonly PiSubmissionToolDefinition[] | Promise<readonly PiSubmissionToolDefinition[]>;
 }
 
 export interface PiTrustedWorkAccess {
@@ -223,9 +230,48 @@ export interface PiSessionFactoryOptions {
   readonly resourceLoader: NonNullable<CreateAgentSessionOptions['resourceLoader']>;
   readonly thinkingLevel?: NonNullable<CreateAgentSessionOptions['thinkingLevel']>;
   readonly recovery?: PiPreparedRecovery;
+  /** P05-1 / F-006：本次执行的受限提交工具（可信装配注入；空缺省 = 无自定义工具）。 */
+  readonly customTools?: readonly PiSubmissionToolDefinition[];
 }
 
 export type PiSessionFactory = (options: PiSessionFactoryOptions) => Promise<PiSession>;
+
+/** 受限提交工具名词法（与 SDK 工具名同一保守形态；防注入/伪装）。 */
+const PI_SUBMISSION_TOOL_NAME_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/;
+
+/**
+ * P05-1 / F-006：受限提交自定义工具的结构化定义（不加载 SDK 类型；仅由可信
+ * Host/Runner 装配提供，适配器不发明工具、不从请求/模型输出推导）。结构上
+ * 兼容 SDK customTools 的 ToolDefinition；在 SDK 边界处受控转换。
+ */
+export interface PiSubmissionToolDefinition {
+  readonly name: string;
+  readonly label: string;
+  readonly description: string;
+  /** 参数 schema（JSON Schema/TypeBox 形态；由 SDK 在调用前验证）。 */
+  readonly parameters: unknown;
+  readonly outputSchema?: unknown;
+  readonly promptSnippet?: string;
+  readonly executionMode?: 'sequential' | 'parallel';
+  /** 受限执行：参数与结果由工具实现受控映射；signal 传递取消。 */
+  execute(toolCallId: string, params: unknown, signal?: AbortSignal): Promise<unknown>;
+}
+
+/** 校验受限提交工具定义形态（名字词法/去重/描述有界；execute 必须存在）。 */
+export function validatePiSubmissionTools(tools: readonly PiSubmissionToolDefinition[]): readonly PiSubmissionToolDefinition[] {
+  const seen = new Set<string>();
+  return tools.map(tool => {
+    if (tool === null || typeof tool !== 'object') throw startupError('submission_tool_invalid', 'customTools');
+    if (typeof tool.name !== 'string' || !PI_SUBMISSION_TOOL_NAME_PATTERN.test(tool.name)
+      || typeof tool.label !== 'string' || tool.label.length === 0 || tool.label.length > 128
+      || typeof tool.description !== 'string' || tool.description.length === 0 || tool.description.length > 4096
+      || tool.parameters === null || typeof tool.parameters !== 'object'
+      || typeof tool.execute !== 'function') throw startupError('submission_tool_invalid', `customTools:${tool.name}`);
+    if (seen.has(tool.name)) throw startupError('submission_tool_duplicate', `customTools:${tool.name}`);
+    seen.add(tool.name);
+    return tool;
+  });
+}
 
 /** Shared lazy SDK boundary for construction and native-session identity checks. */
 async function loadPiSdk() {
@@ -234,7 +280,7 @@ async function loadPiSdk() {
 
 /** 标准 SDK 的实际初始化入口：受管 SessionManager + 受控 resourceLoader。 */
 export function createPiSdkSessionFactory(assembly: PiTrustedAssembly): PiSessionFactory {
-  return async ({ cwd, agentDir, sessionDir, provider, model, resourceLoader, thinkingLevel, recovery }) => {
+  return async ({ cwd, agentDir, sessionDir, provider, model, resourceLoader, thinkingLevel, recovery, customTools }) => {
     const resolvedModel = assembly.resolveModel?.(provider, model);
     if (resolvedModel === undefined) {
       throw new RuntimeError('configuration', 'model_resolution_unavailable', { field: 'strategy.model' });
@@ -248,6 +294,9 @@ export function createPiSdkSessionFactory(assembly: PiTrustedAssembly): PiSessio
       throw new RuntimeError('configuration', 'sdk_version_incompatible');
     }
     const sessionManager = await createPiManagedSessionManager(sdk, cwd, sessionDir, recovery);
+    // P05-1 / F-006：受限提交工具只以显式白名单激活（内置工具保持全部禁用，
+    // 与 noTools:'all' 同一排除面）；结构化定义在 SDK 边界受控转换。
+    const submissionTools = customTools === undefined ? [] : validatePiSubmissionTools(customTools);
     const result = await createAgentSession({
       cwd,
       agentDir,
@@ -255,7 +304,12 @@ export function createPiSdkSessionFactory(assembly: PiTrustedAssembly): PiSessio
       resourceLoader,
       sessionManager,
       thinkingLevel: thinkingLevel ?? 'off',
-      noTools: 'all',
+      ...(submissionTools.length > 0
+        ? {
+            customTools: submissionTools as unknown as NonNullable<CreateAgentSessionOptions['customTools']>,
+            tools: submissionTools.map(tool => tool.name),
+          }
+        : { noTools: 'all' as const }),
     });
     try {
       if (result.session.model?.provider !== provider || result.session.model.id !== model ||
@@ -325,6 +379,16 @@ function preflightCredential(credential: { readonly kind: 'trusted-resolution'; 
     throw new RuntimeError('authentication', 'credential_reference_invalid', { field: 'assembly.credentialRef.id' });
   }
   return credential;
+}
+
+/** P05-1 / F-006：受限提交工具解析（可信装配专属；形态校验在 SDK 边界重复执行）。 */
+async function resolveSubmissionTools(
+  assembly: PiTrustedAssembly,
+  request: RuntimeExecutionRequest,
+): Promise<readonly PiSubmissionToolDefinition[]> {
+  if (assembly.resolveSubmissionTools === undefined) return [];
+  const tools = await assembly.resolveSubmissionTools(request);
+  return validatePiSubmissionTools(tools);
 }
 
 function resolveTrustedAccess(assembly: PiTrustedAssembly, request: RuntimeExecutionRequest): Promise<PiTrustedWorkAccess | undefined> {
@@ -547,6 +611,8 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
       const cwd = options.assembly.resolveWorkingDirectory(request.cwd);
       const sessionDir = managedSessionDirectory(options.assembly, request, cwd);
       const thinkingLevel = options.assembly.resolveThinkingLevel?.(request) ?? 'off';
+      // P05-1 / F-006：受限提交工具由可信装配按请求解析（不可用时不注入工具）。
+      const submissionTools = await resolveSubmissionTools(options.assembly, request);
       let lease: PiRecoveryWriterLease | undefined;
       let prepared: PiPreparedRecovery | undefined;
       let decision: RuntimeRecoveryDecision;
@@ -569,6 +635,7 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
           resourceLoader,
           thinkingLevel,
           ...(decision.mode === 'resume' ? { recovery: prepared } : {}),
+          ...(submissionTools.length > 0 ? { customTools: submissionTools } : {}),
         });
         if (decision.mode === 'resume') {
           try {

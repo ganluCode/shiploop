@@ -222,6 +222,9 @@ export function createSqliteAtomicCommandStore(
           // 内原子生效）。
           createPlanningContextInTransaction: guarded(planningContexts.createPlanningContextInTransaction),
           getActivePlanningContextForFeature: guarded(planningContexts.getActivePlanningContextForFeatureInTransaction),
+          // P05-1 / F-006：规划候选受限提交的短事务重核与发布绑定原语。
+          getPlanningContextByRun: guarded(planningContexts.getPlanningContextByRun),
+          publishPlanningCandidate: guarded(planningContexts.publishPlanningCandidateInTransaction),
           // P03-3 / F-007：Runtime 启动额度预占原语（迁移 v12；同一 BEGIN IMMEDIATE
           // 内原子生效；SDK 启动前的受信边界，不经命令路由暴露）。
           reserveRuntimeStart: guarded(executions.reserveRuntimeStartInTransaction),

@@ -89,6 +89,19 @@ export const PLANNING_RUNTIME_IDENTITY_PURPOSE = 'work' as const;
  */
 export const PLANNING_CANDIDATE_SUBMIT_OPERATION = 'planning.candidate.submit' as const;
 
+/**
+ * P05-1 / F-006：受限提交入口的候选正文字节上限（UTF-8）。语义上限由候选
+ * 契约本身（任务数/摘要长度等）约束，本上限只是入口防滥用边界。工具通道与
+ * Pi 工具桥共用同一常量，不各自另立数值。
+ */
+export const PLANNING_CANDIDATE_SUBMIT_MAX_BODY_BYTES = 1_048_576;
+
+/** P05-1 / F-006：候选发布为受管 Artifact 的 kind（正文由 Core 持有）。 */
+export const PLANNING_CANDIDATE_ARTIFACT_KIND = 'planning-candidate' as const;
+
+/** P05-1 / F-006：候选 Artifact 的 mediaType。 */
+export const PLANNING_CANDIDATE_ARTIFACT_MEDIA_TYPE = 'application/json' as const;
+
 /** 规划输入身份摘要（inputDigest）的领域前缀：锚定「一次性规划请求 v1」语义。 */
 export const PLANNING_INPUT_DIGEST_DOMAIN = 'shiploop:planning-request:v1';
 

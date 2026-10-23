@@ -70,6 +70,7 @@ import type { ContextBudget } from '../application/context-build.js';
 import { createArtifactPublisher } from '../application/artifact-publish.js';
 import { createArtifactVerifier } from '../application/artifact-verify.js';
 import { createWorkToolChannel } from '../application/work-tool-channel.js';
+import { PLANNING_CANDIDATE_SUBMIT_MAX_BODY_BYTES } from '../ports/planning-candidates.js';
 import type { WorkToolChannelDeps } from '../application/work-tool-channel.js';
 import { createVerificationCandidateValidator } from '../application/verification-candidates.js';
 import { createTestTargetResolver } from './fs/verification-target-resolver.js';
@@ -1207,7 +1208,11 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
         const verifier = createArtifactVerifier({ artifacts: artifactStore, files: artifactFileStore,
           limits: { maxReadBytes: 16_000_000 } });
         return createWorkToolChannel({ ...authority, atomicStore, attempts, dag: createSqliteTaskDagStore(session), verifier,
-          candidates: createVerificationCandidateValidator({ attempts, verifier, resolver: createTestTargetResolver() }) });
+          candidates: createVerificationCandidateValidator({ attempts, verifier, resolver: createTestTargetResolver() }),
+          // P05-1 / F-006：规划候选受管发布（受控暂存 → ready；正文上限与通道入口一致）。
+          planning: { publisher: createArtifactPublisher({ artifacts: artifactStore, files: artifactFileStore,
+            limits: { maxSizeBytes: PLANNING_CANDIDATE_SUBMIT_MAX_BODY_BYTES, timeoutMs: 60_000 },
+            ...(nowUtcMs === undefined ? {} : { nowMs: nowUtcMs }) }) } });
       },
       workExecution,
       dataRoot: basePathService.dataRoot(),

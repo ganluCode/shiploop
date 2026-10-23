@@ -366,6 +366,12 @@ export type {
 } from './ports/git-operations.js';
 // Work 客户端只消费纯信封校验和查询结果形状，不加载业务通道。
 export type { WorkTaskResult } from './application/work-tool-channel.js';
+// P05-1 / F-006：规划候选受限提交的纯常量（操作身份/正支上限；供 Host 工具桥
+// 组装命令信封与客户端侧入口限界，服务端仍独立校验）。
+export {
+  PLANNING_CANDIDATE_SUBMIT_OPERATION,
+  PLANNING_CANDIDATE_SUBMIT_MAX_BODY_BYTES,
+} from './ports/planning-candidates.js';
 // type-only 导出擦除后不加载业务服务。
 export type { EffectiveSettings } from './application/effective-settings.js';
 export type { ExportedSettings } from './application/configuration-service.js';

@@ -27,8 +27,18 @@
 
 非目标（由后续 Task 交付，本文不虚构已实现）：
 
-- 规划启动命令、预算绑定与持久派发（F-003/F-005）；
-- 候选提交工具通道、受管 Artifact 发布（F-006）；
+- 规划启动命令、预算绑定与持久派发（F-003/F-005，已交付）；
+- 批准决策命令与计划原子应用（后续 Task）；
+- 不引入 PlanRevision、第二套 Runtime 或新的通用工作流引擎；
+- 不扩展后续 Phase DAG/Batch 功能（Feature DAG 并发、代码集成属 P05 其他 Feature）。
+
+已交付接线（F-006）：候选提交工具通道与受管 Artifact 发布经 Core Work 工具桥
+（`planning.candidate.submit` 有界正文入口 → F-001 校验 → 受控暂存发布 →
+planning_contexts 单候选绑定 + 持久回执）、Host 受限入口
+（`/v1/work/tools` + WorkToolClient 复用，无新管理命令）与 Pi 自定义工具桥
+（`PiTrustedAssembly.resolveSubmissionTools` → session 工厂 customTools 白名单；
+内置工具保持禁用）贯通；单候选/稳定重放/双提交竞争/撤权重核语义见
+`application/work-tool-channel.ts` 与 F-006 测试。
 - 批准决策命令与计划原子应用（后续 Task）；
 - 不引入 PlanRevision、第二套 Runtime 或新的通用工作流引擎；
 - 不扩展后续 Phase DAG/Batch 功能（Feature DAG 并发、代码集成属 P05 其他 Feature）。
@@ -133,7 +143,9 @@ Artifact 发布后补充为身份级制品引用。
    feature.plan.import/revise 既有导入能力），**不自动编码**、不自动创建编码 Run/Batch。
 5. **操作身份区分**：既有 `candidate.submit`（WORK_TOOL_OPERATION_SPECS）仍表示测试候选；
    规划提交使用独立且受限的操作身份 `planning.candidate.submit`
-   （PLANNING_CANDIDATE_SUBMIT_OPERATION，工具通道接线由 F-006 完成，本任务只冻结常量）。
+   （PLANNING_CANDIDATE_SUBMIT_OPERATION；F-001 冻结常量，F-006 完成工具通道接线：
+   有界 JSON 正文入口，载荷不接受 artifactId/文件路径，正文上限
+   PLANNING_CANDIDATE_SUBMIT_MAX_BODY_BYTES）。
 6. **空草稿首次规划**：首次规划复用空 Task 草稿 Feature 的既有导入能力，不要求先有有效
    交付计划（executable=false 的草稿可被规划）；也不扩展后续 Phase DAG/Batch 功能。
 7. **执行期核验**：实际测试目标存在性、路径安全与影响范围核验继续在执行期完成

@@ -378,6 +378,24 @@ export interface CommandTransaction {
     projectId: string,
     featureId: string,
   ): import('./planning-context.js').PlanningContextRecord | null;
+  /**
+   * P05-1 / F-006：按规划 Run 读取规划上下文（同一事务内一致读；无则 null）。
+   * 供规划候选受限提交在提交前/发布后的短事务内重核 Run purpose 与 planning
+   * Task 绑定；损坏行由存储层以 corrupt fail-closed，不作为有效记录返回。
+   */
+  getPlanningContextByRun(
+    projectId: string,
+    runId: string,
+  ): import('./planning-context.js').PlanningContextRecord | null;
+  /**
+   * P05-1 / F-006：绑定候选发布事实（open → candidate_published；同一写事务内
+   * 与回执保存原子生效）。同身份重放复用持久结果，异身份/替换已发布候选
+   * conflict；候选 Artifact 必须同项目、ready 且 contentHash 一致。
+   */
+  publishPlanningCandidate(input: unknown): {
+    readonly context: import('./planning-context.js').PlanningContextRecord;
+    readonly outcome: 'published' | 'reused';
+  };
   /* ---------------------------------------------------------------- *
    * P03-3 / F-007 Runtime 启动额度预占（迁移 v12；受信 Core 内部原语，
    * 不经命令面暴露；SDK 启动前的受信边界）

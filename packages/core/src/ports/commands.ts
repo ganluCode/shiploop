@@ -1799,6 +1799,9 @@ export const WORK_TOOL_OPERATION_SPECS = Object.freeze({
   'candidate.submit': { scopeKind: 'project', mutation: 'create', capability: 'project.read' },
   'evidence.submit': { scopeKind: 'project', mutation: 'create', capability: 'project.read' },
   'task.read': { scopeKind: 'project', mutation: 'create', capability: 'project.read' },
+  // P05-1 / F-006：规划候选受限提交（有界正史入口，非已登记 artifactId）；
+  // 仍不是通用 Host 命令，不经命令路由暴露。
+  'planning.candidate.submit': { scopeKind: 'project', mutation: 'create', capability: 'project.read' },
 } as const);
 export type ReceiptOperation = AppOperation | keyof typeof WORK_TOOL_OPERATION_SPECS;
 export const RECEIPT_OPERATION_SPECS = Object.freeze({ ...COMMAND_OPERATION_SPECS, ...WORK_TOOL_OPERATION_SPECS });
