@@ -17,6 +17,7 @@ import { createLocalOwnerPrincipal } from '../../../packages/core/src/ports/auth
 import { createStaticRuntimeCapabilityCatalog } from '../../../packages/core/src/ports/runtime-capabilities.ts';
 import { TRUSTED_PROJECT_PERMISSIONS_READER } from '../../../packages/core/src/ports/execution-input-prepare.ts';
 import { createCommandsTestFixture } from '../p02-2/index.ts';
+import { captureP04SqliteEvidence } from '../p04-sqlite-evidence.ts';
 
 export const NOW = 1_900_000_100_000;
 export const BUDGET = {
@@ -148,7 +149,7 @@ export async function openBudgetFixture(
         session = openSqliteStorageSession({ path: box.dbPath });
         services = budgetServices(session, fixtureOptions);
       },
-      close() { session.close(); box.cleanup(); },
+      close() { captureP04SqliteEvidence(session, 'budget'); session.close(); box.cleanup(); },
     };
   } catch (error) { box.cleanup(); throw error; }
 }

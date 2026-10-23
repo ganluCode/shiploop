@@ -7,6 +7,7 @@
  * beginLaunch（授权 invocationId）。绑定服务在此真实前置之上核验。
  */
 import { createHash, randomUUID } from 'node:crypto';
+import { captureP04SqliteEvidence } from '../p04-sqlite-evidence.ts';
 import { join } from 'node:path';
 import { openSqliteStorageSession } from '../../../packages/core/src/adapters/sqlite/session.ts';
 import type { SqliteStorageSession } from '../../../packages/core/src/adapters/sqlite/session.ts';
@@ -63,6 +64,8 @@ export const FAKE_STRATEGY = { runtime: 'fake', provider: 'test-provider', model
 const sha256 = (value: string | Buffer): string => createHash('sha256').update(value).digest('hex');
 
 export interface BindingFixtureOptions {
+  /** Explicit requirement body for separately authorized acceptance probes. */
+  readonly requirementContent?: string;
   /** Trusted Runtime strategy for adapter composition tests; default retains Fake fixtures. */
   readonly strategy?: { readonly runtime: string; readonly provider: string; readonly model: string };
   /** P03-3A 可信恢复能力描述符数组（缺省即无目录、全部 unverified）。 */
@@ -236,7 +239,7 @@ export async function openBindingFixture(options: BindingFixtureOptions = {}): P
     );
 
     /* 真实需求制品（真实文件正文；Task 必需输入引用）。 */
-    const requirementContent = '# 需求规格\n\n任务一必须阅读的验收依据正文（真实字节）。\n';
+    const requirementContent = options.requirementContent ?? '# 需求规格\n\n任务一必须阅读的验收依据正文（真实字节）。\n';
     const requirement = await publisher.publishArtifact({
       projectId,
       kind: 'requirement',
@@ -446,7 +449,7 @@ export async function openBindingFixture(options: BindingFixtureOptions = {}): P
       workspace, authority, artifacts, verifier, publisher, bindingService,
       advance, claimTask, launch, claimAndLaunch, expireLeases, createResources: resources, bindingInput,
       query: (sql: string, ...params: unknown[]) => db.prepare(sql).get(...params as never[]),
-      close() { session?.close(); box.cleanup(); },
+      close() { if (session) captureP04SqliteEvidence(session, 'binding'); session?.close(); box.cleanup(); },
     };
   } catch (error) {
     session?.close();

@@ -48,6 +48,7 @@ export default defineConfig({
     passWithNoTests: false,
     cache: false,
     pool: 'forks',
+    setupFiles: ['test/helpers/p04-evidence-setup.ts'],
     // Each integration file can launch real Git/Host/process trees. Bound file
     // concurrency instead of multiplying those resources by every CPU core.
     maxWorkers: 4,
