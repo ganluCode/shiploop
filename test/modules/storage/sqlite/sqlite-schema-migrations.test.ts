@@ -90,6 +90,8 @@ const SCHEMA_TABLES = [
   ['execution_slot_claims', schema.executionSlotClaims],
   // P04-9 / F-002：Run 持久入队意图（迁移 v34）。
   ['run_dispatch_intents', schema.runDispatchIntents],
+  // P05-1 / F-002：一次性规划上下文（迁移 v35）。
+  ['planning_contexts', schema.planningContexts],
   // P03-7 / F-002：VerificationBatch / CheckResult 与不可变验证证据身份（迁移 v21）。
   ['verification_batches', schema.verificationBatches],
   ['check_results', schema.checkResults],
@@ -660,6 +662,15 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
         'run_dispatch_intents:(project_id)->projects.(id)',
         'run_dispatch_intents:(project_id,run_id)->runs.(project_id,id)',
         'run_dispatch_intents:(feature_id,run_id)->runs.(feature_id,id)',
+        // P05-1 / F-002 规划上下文（迁移 v35）：同项目三层归属/规划 Run/planning
+        // Task/候选 Artifact 关联。
+        'planning_contexts:(project_id)->projects.(id)',
+        'planning_contexts:(project_id,phase_id)->phases.(project_id,id)',
+        'planning_contexts:(project_id,phase_id,feature_id)->features.(project_id,phase_id,id)',
+        'planning_contexts:(project_id,run_id)->runs.(project_id,id)',
+        'planning_contexts:(feature_id,run_id)->runs.(feature_id,id)',
+        'planning_contexts:(feature_id,planning_task_id)->tasks.(feature_id,id)',
+        'planning_contexts:(project_id,candidate_artifact_id)->artifacts.(project_id,id)',
         // P03-9 / F-002 取消停止 operation（迁移 v28）：同项目 Batch/Run 关联。
         'execution_stop_operations:(project_id)->projects.(id)',
         'execution_stop_operations:(project_id,batch_id)->execution_batches.(project_id,id)',

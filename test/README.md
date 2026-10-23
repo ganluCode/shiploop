@@ -113,6 +113,13 @@ test/
   新增三文件 45 项本地通过；无存储/命令/工具通道变更，较广回归交 Nezha。
   契约见 [P05-1 规划候选契约](../docs/p05-1-planning-candidate-contract.md)。
 
+- `index/phases/P05/features/P05-1/tasks/F-002.json`：规划上下文窄存储与 planner 用途策略副本
+  （迁移 v35）。覆盖 v35 只追加/v1–v34 冻结、空库与 v34 升级保留既有计划/审批/派发/Attempt
+  数据、真实 SQLite 归属/唯一/枚举/形状/写一次触发器负例、创建发布决策状态机与事务回滚、
+  planning Task 与业务计划视图/编码范围/Task 列表隔离及修订保留、重开库副本一致与默认配置
+  非追溯、损坏持久 JSON corrupt 拒绝，以及 purposeStrategies.planner → defaultStrategy 回退
+  选择纯函数。新增三文件 25 项与受影响迁移断言本地通过；较广回归交 Nezha。
+
 - `index/phases/P04/features/P04-9/tasks/F-009.json`：派发/槽位查询接入 Host、HostClient 与 CLI。
   覆盖真实 Host/HostClient 读取 Core 投影（派生状态用同一规则复核）、槽位摘要与跨项目
   布尔摘要、未认证/未知参数/可写意图拒绝、客户端解码冻结形状、CLI 参数与结构化/文本

@@ -2195,3 +2195,117 @@ export const runDispatchIntents = sqliteTable('run_dispatch_intents', {
   uniqueIndex('run_dispatch_intents_run_unique').on(table.projectId, table.runId),
   index('run_dispatch_intents_project_enqueued_index').on(table.projectId, table.enqueuedAt),
 ]);
+
+/**
+ * P05-1 / F-002（迁移 v35）：一次性规划上下文（planning_contexts）。
+ *
+ * 只持久绑定一次规划的身份与依据事实（Project/Phase/Feature、规划 Run、
+ * planning Task、candidateId、inputDigest、目标 revision/计划摘要、候选
+ * Artifact/摘要与后续决策/应用关联）；预算/队列/Artifact 正文/审批正文一律复用
+ * 既有设施。候选事实未生成时恒为 NULL（不伪造内容摘要）；身份列不可变、候选
+ * 绑定与决策结果写一次（DDL 触发器防御纵深，Drizzle 不声明触发器，由迁移 SQL
+ * 冻结）；同 Run 单候选、同 Feature 单活动规划（部分唯一索引）。
+ */
+export const planningContexts = sqliteTable('planning_contexts', {
+  id: text('id').primaryKey(),
+  createdAt: integer('created_at').notNull(),
+  projectId: text('project_id')
+    .notNull()
+    .references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  updatedAt: integer('updated_at').notNull(),
+  phaseId: text('phase_id').notNull(),
+  featureId: text('feature_id').notNull(),
+  /** 规划 Run（Run.purpose=plan；创建时核验归属与用途）。 */
+  runId: text('run_id').notNull(),
+  /** 绑定的 planning Task（tasks.kind='planning'；同 Feature 复合外键）。 */
+  planningTaskId: text('planning_task_id').notNull(),
+  /** 稳定候选身份（随 Run 持久绑定；单候选）。 */
+  candidateId: text('candidate_id').notNull(),
+  /** 规划输入身份摘要（computePlanningInputDigest；64 位小写 hex）。 */
+  inputDigest: text('input_digest').notNull(),
+  /** 规划启动时的 Feature revision（应用候选时的 CAS 目标依据；≥1）。 */
+  targetRevision: integer('target_revision').notNull(),
+  /** 规划启动时的当前计划摘要（首次规划草稿为 NULL）。 */
+  planDigest: text('plan_digest'),
+  /** 候选 Artifact 引用（发布后写入且不可改；未生成为 NULL）。 */
+  candidateArtifactId: text('candidate_artifact_id'),
+  /** 候选 Artifact 内容摘要（与 candidate_artifact_id 同组写入/置空）。 */
+  candidateContentHash: text('candidate_content_hash'),
+  /** 候选语义摘要（批准绑定的 candidateDigest；发布后不可改）。 */
+  candidateDigest: text('candidate_digest'),
+  /** 候选审批摘要（供人工决策阅读；不是批准依据）。 */
+  candidateSummary: text('candidate_summary'),
+  /** 生命周期：open/candidate_published/applied/rejected/cancelled。 */
+  status: text('status').notNull(),
+  /** 人工决策（approved/rejected；未决策为 NULL）。 */
+  decision: text('decision'),
+  /** 决策原因（拒绝保留原因；不含正文/凭据）。 */
+  decisionReason: text('decision_reason'),
+  decidedAt: integer('decided_at'),
+  /** 批准原子应用后的 Feature revision（拒绝/未决策为 NULL）。 */
+  appliedRevision: integer('applied_revision'),
+  appliedAt: integer('applied_at'),
+}, (table) => [
+  check('planning_contexts_times_check', sql`typeof(${table.createdAt}) = 'integer' AND ${table.createdAt} >= 0
+    AND typeof(${table.updatedAt}) = 'integer' AND ${table.updatedAt} >= 0
+    AND (${table.decidedAt} IS NULL OR (typeof(${table.decidedAt}) = 'integer' AND ${table.decidedAt} >= 1 AND ${table.decidedAt} >= ${table.createdAt}))
+    AND (${table.appliedAt} IS NULL OR (typeof(${table.appliedAt}) = 'integer' AND ${table.appliedAt} >= 1 AND ${table.appliedAt} >= ${table.createdAt}))`),
+  check('planning_contexts_status_check', sql`${table.status} IN ('open', 'candidate_published', 'applied', 'rejected', 'cancelled')`),
+  check('planning_contexts_digest_check', sql`length(${table.inputDigest}) = 64 AND ${table.inputDigest} NOT GLOB '*[^0-9a-f]*'
+    AND (${table.planDigest} IS NULL OR (length(${table.planDigest}) = 64 AND ${table.planDigest} NOT GLOB '*[^0-9a-f]*'))
+    AND (${table.candidateDigest} IS NULL OR (length(${table.candidateDigest}) = 64 AND ${table.candidateDigest} NOT GLOB '*[^0-9a-f]*'))
+    AND (${table.candidateContentHash} IS NULL OR (length(${table.candidateContentHash}) = 64 AND ${table.candidateContentHash} NOT GLOB '*[^0-9a-f]*'))`),
+  check('planning_contexts_revision_check', sql`typeof(${table.targetRevision}) = 'integer' AND ${table.targetRevision} >= 1
+    AND (${table.appliedRevision} IS NULL OR (typeof(${table.appliedRevision}) = 'integer' AND ${table.appliedRevision} >= 1))`),
+  check('planning_contexts_candidate_shape_check', sql`
+    (${table.status} = 'open' AND ${table.candidateArtifactId} IS NULL AND ${table.candidateContentHash} IS NULL
+      AND ${table.candidateDigest} IS NULL AND ${table.candidateSummary} IS NULL)
+    OR (${table.status} IN ('candidate_published', 'applied', 'rejected') AND ${table.candidateArtifactId} IS NOT NULL
+      AND ${table.candidateContentHash} IS NOT NULL AND ${table.candidateDigest} IS NOT NULL AND ${table.candidateSummary} IS NOT NULL)
+    OR ${table.status} = 'cancelled'`),
+  check('planning_contexts_summary_check', sql`${table.candidateSummary} IS NULL OR length(${table.candidateSummary}) BETWEEN 1 AND 2000`),
+  check('planning_contexts_decision_check', sql`
+    (${table.decision} IS NULL AND ${table.status} IN ('open', 'candidate_published', 'cancelled'))
+    OR (${table.decision} = 'approved' AND ${table.status} = 'applied' AND ${table.decidedAt} IS NOT NULL
+      AND ${table.appliedRevision} IS NOT NULL AND ${table.appliedAt} IS NOT NULL)
+    OR (${table.decision} = 'rejected' AND ${table.status} = 'rejected' AND ${table.decidedAt} IS NOT NULL
+      AND ${table.appliedRevision} IS NULL AND ${table.appliedAt} IS NULL)`),
+  check('planning_contexts_decision_reason_check', sql`${table.decisionReason} IS NULL OR length(${table.decisionReason}) BETWEEN 1 AND 512`),
+  foreignKey({
+    name: 'planning_contexts_candidate_artifact_fk',
+    columns: [table.projectId, table.candidateArtifactId],
+    foreignColumns: [artifacts.projectId, artifacts.id],
+  }).onDelete('restrict'),
+  foreignKey({
+    name: 'planning_contexts_phase_fk',
+    columns: [table.projectId, table.phaseId],
+    foreignColumns: [phases.projectId, phases.id],
+  }).onDelete('restrict'),
+  foreignKey({
+    name: 'planning_contexts_feature_fk',
+    columns: [table.projectId, table.phaseId, table.featureId],
+    foreignColumns: [features.projectId, features.phaseId, features.id],
+  }).onDelete('restrict'),
+  foreignKey({
+    name: 'planning_contexts_run_fk',
+    columns: [table.projectId, table.runId],
+    foreignColumns: [runs.projectId, runs.id],
+  }).onDelete('restrict'),
+  foreignKey({
+    name: 'planning_contexts_feature_run_fk',
+    columns: [table.featureId, table.runId],
+    foreignColumns: [runs.featureId, runs.id],
+  }).onDelete('restrict'),
+  foreignKey({
+    name: 'planning_contexts_planning_task_fk',
+    columns: [table.featureId, table.planningTaskId],
+    foreignColumns: [tasks.featureId, tasks.id],
+  }).onDelete('restrict'),
+  // 单候选：同项目 candidateId 唯一；同一 Run 只有一个规划上下文。
+  uniqueIndex('planning_contexts_candidate_unique').on(table.projectId, table.candidateId),
+  uniqueIndex('planning_contexts_run_unique').on(table.projectId, table.runId),
+  // 重复规划归属：同 Feature 同时只有一个活动规划（open/candidate_published）。
+  uniqueIndex('planning_contexts_feature_active_unique').on(table.featureId)
+    .where(sql`${table.status} IN ('open', 'candidate_published')`),
+  index('planning_contexts_project_updated_index').on(table.projectId, table.updatedAt),
+]);

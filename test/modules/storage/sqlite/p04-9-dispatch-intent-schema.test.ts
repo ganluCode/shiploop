@@ -90,7 +90,8 @@ async function fixture() {
 
 describe('P04-9 F-002 migration v34 dispatch intents', () => {
   it('[case:migration-appends-v34] v34 只追加入队意图结构，历史迁移与校验摘要冻结', () => {
-    expect(SQLITE_MIGRATIONS).toHaveLength(34);
+    expect(SQLITE_MIGRATIONS).toHaveLength(35);
+    expect(SQLITE_MIGRATIONS[34]?.version).toBe(35);
     expect(SQLITE_MIGRATIONS[33]?.version).toBe(34);
     expect(hashOfChecksums(SQLITE_MIGRATIONS.slice(0, 33))).toBe(FROZEN_V33_CHECKSUM_HASH);
     const sql = SQLITE_MIGRATIONS[33]?.sql ?? '';
@@ -219,7 +220,7 @@ describe('P04-9 F-002 v33 to v34 upgrade on real SQLite', () => {
         tableNames.map((table) => [table, predecessor.database.prepare(`SELECT * FROM ${table} ORDER BY id`).all()]),
       );
       const migration = await migrateSqliteStorage(predecessor);
-      expect(migration.appliedVersions).toEqual([34]);
+      expect(migration.appliedVersions).toEqual([34, 35]);
       for (const table of tableNames) {
         // v34 不改变任何既有列：升级前后逐表逐行完全一致。
         expect(predecessor.database.prepare(`SELECT * FROM ${table} ORDER BY id`).all(), table)

@@ -1386,7 +1386,7 @@ export function createSqlitePlanAccess(
       throw ownership(operation, entity, 'Feature 不属于声明的项目（跨项目目标被拒绝）');
     }
     const taskRows = db
-      .prepare<[string], TaskSqlRow>(`${SELECT_TASK} WHERE feature_id = ? ORDER BY id`)
+      .prepare<[string], TaskSqlRow>(`${SELECT_TASK} WHERE feature_id = ? AND kind = 'coding' ORDER BY id`)
       .all(validFeatureId) as TaskSqlRow[];
     const dependencyRows = db
       .prepare<[string], TaskDependencySqlRow>(`${SELECT_TASK_DEPENDENCY} WHERE feature_id = ? ORDER BY task_id, depends_on_id`)
@@ -1426,9 +1426,11 @@ export function createSqlitePlanAccess(
     if (featureRow.project_id !== valid.projectId) {
       throw ownership(operation, entity, 'Feature 不属于声明的项目（跨项目目标被拒绝）');
     }
-    // 库内既有成员身份（同事务读取，串行化无竞争窗口）。
+    // 库内既有成员身份（同事务读取，串行化无竞争窗口）。P05-1 / F-002 起业务
+    // 计划成员只含 kind='coding' 行：planning Task 不参与保留/移除划分，也不被
+    // 计划修订删除（保留其 Attempt/Session 历史引用；应用候选时同样保留）。
     const existingRows = db
-      .prepare<[string], TaskSqlRow>(`${SELECT_TASK} WHERE feature_id = ? ORDER BY id`)
+      .prepare<[string], TaskSqlRow>(`${SELECT_TASK} WHERE feature_id = ? AND kind = 'coding' ORDER BY id`)
       .all(valid.featureId) as TaskSqlRow[];
     const existingIds = new Set(existingRows.map((row) => row.id));
     const finalIds = new Set(valid.tasks.map((task) => task.id));
@@ -1596,7 +1598,7 @@ export function createSqlitePlanAccess(
       db.prepare<[string], FeatureSqlRow>(`${SELECT_FEATURE} WHERE id = ?`).get(valid.featureId)!,
     );
     const tasks = (
-      db.prepare<[string], TaskSqlRow>(`${SELECT_TASK} WHERE feature_id = ? ORDER BY id`).all(valid.featureId) as TaskSqlRow[]
+      db.prepare<[string], TaskSqlRow>(`${SELECT_TASK} WHERE feature_id = ? AND kind = 'coding' ORDER BY id`).all(valid.featureId) as TaskSqlRow[]
     ).map(taskFromRow);
     return {
       feature,
@@ -1653,6 +1655,7 @@ export function createSqlitePlanAccess(
     parent: { readonly column: string; readonly value: unknown; readonly entityType: StorageEntityRef['type'] } | null,
     request: PlanListRequest,
     mapRow: (row: unknown) => T,
+    extraCondition?: string,
   ): PlanRecordPage<T> {
     assertOpen(operation);
     assertNotInTransaction(operation);
@@ -1671,6 +1674,9 @@ export function createSqlitePlanAccess(
     if (visible.condition !== undefined) {
       conditions.push(visible.condition);
       params.push(...visible.params);
+    }
+    if (extraCondition !== undefined) {
+      conditions.push(extraCondition);
     }
     params.push(request.limit + 1);
     const rows = session.database
@@ -1725,7 +1731,7 @@ export function createSqlitePlanAccess(
         return undefined;
       }
       const taskRows = db
-        .prepare<[string], TaskSqlRow>(`${SELECT_TASK} WHERE feature_id = ? ORDER BY id`)
+        .prepare<[string], TaskSqlRow>(`${SELECT_TASK} WHERE feature_id = ? AND kind = 'coding' ORDER BY id`)
         .all(id) as TaskSqlRow[];
       const dependencyRows = db
         .prepare<[string], TaskDependencySqlRow>(
@@ -1832,7 +1838,7 @@ export function createSqlitePlanAccess(
         throw ownership(operation, entity, 'Feature 不属于声明的项目（跨项目目标被拒绝）');
       }
       const taskRows = db
-        .prepare<[string], TaskSqlRow>(`${SELECT_TASK} WHERE feature_id = ? ORDER BY id`)
+        .prepare<[string], TaskSqlRow>(`${SELECT_TASK} WHERE feature_id = ? AND kind = 'coding' ORDER BY id`)
         .all(validFeatureId) as TaskSqlRow[];
       const dependencyRows = db
         .prepare<[string], TaskDependencySqlRow>(
@@ -1945,7 +1951,7 @@ export function createSqlitePlanAccess(
         .get(validProjectId) as { canonical_path: string; repo_identity: string } | undefined;
 
       const taskRows = db
-        .prepare<[string], TaskSqlRow>(`${SELECT_TASK} WHERE feature_id = ? ORDER BY id`)
+        .prepare<[string], TaskSqlRow>(`${SELECT_TASK} WHERE feature_id = ? AND kind = 'coding' ORDER BY id`)
         .all(validFeatureId) as TaskSqlRow[];
       const dependencyRows = db
         .prepare<[string], TaskDependencySqlRow>(
@@ -2128,6 +2134,9 @@ export function createSqlitePlanAccess(
       { column: 'feature_id', value: featureId, entityType: 'feature' },
       request,
       (row) => taskFromRow(row as TaskSqlRow),
+      // P05-1 / F-002：业务 Task 列表只含 kind='coding' 成员；planning Task 由
+      // 规划上下文查询（F-011）提供，不混入业务计划成员分页。
+      "kind = 'coding'",
     );
   }
 

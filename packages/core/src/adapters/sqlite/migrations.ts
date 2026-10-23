@@ -2839,6 +2839,112 @@ BEGIN SELECT RAISE(ABORT, 'run dispatch claim release requires released slot'); 
 `;
 
 /**
+ * P05-1 / F-002（迁移 v35）：一次性规划上下文（planning_contexts）。
+ *
+ * 只持久绑定一次规划的身份与依据事实：Project/Phase/Feature、规划 Run
+ * （Run.purpose=plan）、planning Task、candidateId、输入身份 inputDigest、目标
+ * revision/计划摘要（应用候选时的 CAS 依据）、候选 Artifact/摘要（发布后写入，
+ * 未生成时恒为 NULL）及后续决策/应用关联。预算/队列/Artifact 正文/审批决策正文
+ * 一律复用既有设施，本表不复制，也不新建任何 Task/预算状态机。
+ *
+ * 入口约束：复合外键冻结同项目归属（project/phase/feature 三层一致、Run 属于
+ * 同一 Feature、planning Task 属于同一 Feature）；(project_id, candidate_id) 与
+ * (project_id, run_id) 唯一（单候选、单 Run 一上下文）；部分唯一索引限制同
+ * Feature 同时只有一个活动规划（open/candidate_published）。
+ *
+ * 状态与写一次约束：状态枚举 CHECK 冻结 open/candidate_published/applied/
+ * rejected/cancelled；候选形状 CHECK（open 无候选事实、发布后候选齐备）与决策
+ * 一致性 CHECK（approved ⇒ applied+应用关联，rejected ⇒ 无应用关联）；身份列
+ * 不可变触发器、候选绑定写一次触发器与决策写一次触发器作为防御纵深。
+ * 迁移不改动 v1–v34 任何 SQL/checksum，也不自动创建规划 Run/Task。
+ */
+const MIGRATION_035_SQL = `
+CREATE TABLE planning_contexts (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  updated_at INTEGER NOT NULL,
+  phase_id TEXT NOT NULL,
+  feature_id TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  planning_task_id TEXT NOT NULL,
+  candidate_id TEXT NOT NULL,
+  input_digest TEXT NOT NULL,
+  target_revision INTEGER NOT NULL,
+  plan_digest TEXT,
+  candidate_artifact_id TEXT,
+  candidate_content_hash TEXT,
+  candidate_digest TEXT,
+  candidate_summary TEXT,
+  status TEXT NOT NULL,
+  decision TEXT,
+  decision_reason TEXT,
+  decided_at INTEGER,
+  applied_revision INTEGER,
+  applied_at INTEGER,
+  CONSTRAINT planning_contexts_times_check CHECK (typeof(created_at) = 'integer' AND created_at >= 0
+    AND typeof(updated_at) = 'integer' AND updated_at >= 0
+    AND (decided_at IS NULL OR (typeof(decided_at) = 'integer' AND decided_at >= 1 AND decided_at >= created_at))
+    AND (applied_at IS NULL OR (typeof(applied_at) = 'integer' AND applied_at >= 1 AND applied_at >= created_at))),
+  CONSTRAINT planning_contexts_status_check CHECK (status IN ('open', 'candidate_published', 'applied', 'rejected', 'cancelled')),
+  CONSTRAINT planning_contexts_digest_check CHECK (length(input_digest) = 64 AND input_digest NOT GLOB '*[^0-9a-f]*'
+    AND (plan_digest IS NULL OR (length(plan_digest) = 64 AND plan_digest NOT GLOB '*[^0-9a-f]*'))
+    AND (candidate_digest IS NULL OR (length(candidate_digest) = 64 AND candidate_digest NOT GLOB '*[^0-9a-f]*'))
+    AND (candidate_content_hash IS NULL OR (length(candidate_content_hash) = 64 AND candidate_content_hash NOT GLOB '*[^0-9a-f]*'))),
+  CONSTRAINT planning_contexts_revision_check CHECK (typeof(target_revision) = 'integer' AND target_revision >= 1
+    AND (applied_revision IS NULL OR (typeof(applied_revision) = 'integer' AND applied_revision >= 1))),
+  CONSTRAINT planning_contexts_candidate_shape_check CHECK (
+    (status = 'open' AND candidate_artifact_id IS NULL AND candidate_content_hash IS NULL
+      AND candidate_digest IS NULL AND candidate_summary IS NULL)
+    OR (status IN ('candidate_published', 'applied', 'rejected') AND candidate_artifact_id IS NOT NULL
+      AND candidate_content_hash IS NOT NULL AND candidate_digest IS NOT NULL AND candidate_summary IS NOT NULL)
+    OR status = 'cancelled'),
+  CONSTRAINT planning_contexts_summary_check CHECK (candidate_summary IS NULL OR length(candidate_summary) BETWEEN 1 AND 2000),
+  CONSTRAINT planning_contexts_decision_check CHECK (
+    (decision IS NULL AND status IN ('open', 'candidate_published', 'cancelled'))
+    OR (decision = 'approved' AND status = 'applied' AND decided_at IS NOT NULL
+      AND applied_revision IS NOT NULL AND applied_at IS NOT NULL)
+    OR (decision = 'rejected' AND status = 'rejected' AND decided_at IS NOT NULL
+      AND applied_revision IS NULL AND applied_at IS NULL)),
+  CONSTRAINT planning_contexts_decision_reason_check CHECK (decision_reason IS NULL OR length(decision_reason) BETWEEN 1 AND 512),
+  CONSTRAINT planning_contexts_candidate_artifact_fk FOREIGN KEY (project_id, candidate_artifact_id) REFERENCES artifacts (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT planning_contexts_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT planning_contexts_phase_fk FOREIGN KEY (project_id, phase_id) REFERENCES phases (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT planning_contexts_feature_fk FOREIGN KEY (project_id, phase_id, feature_id) REFERENCES features (project_id, phase_id, id) ON DELETE RESTRICT,
+  CONSTRAINT planning_contexts_run_fk FOREIGN KEY (project_id, run_id) REFERENCES runs (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT planning_contexts_feature_run_fk FOREIGN KEY (feature_id, run_id) REFERENCES runs (feature_id, id) ON DELETE RESTRICT,
+  CONSTRAINT planning_contexts_planning_task_fk FOREIGN KEY (feature_id, planning_task_id) REFERENCES tasks (feature_id, id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX planning_contexts_candidate_unique ON planning_contexts (project_id, candidate_id);
+CREATE UNIQUE INDEX planning_contexts_run_unique ON planning_contexts (project_id, run_id);
+CREATE UNIQUE INDEX planning_contexts_feature_active_unique ON planning_contexts (feature_id)
+  WHERE status IN ('open', 'candidate_published');
+CREATE INDEX planning_contexts_project_updated_index ON planning_contexts (project_id, updated_at);
+
+CREATE TRIGGER planning_contexts_identity_immutable BEFORE UPDATE ON planning_contexts
+WHEN NEW.created_at IS NOT OLD.created_at OR NEW.project_id IS NOT OLD.project_id
+  OR NEW.phase_id IS NOT OLD.phase_id OR NEW.feature_id IS NOT OLD.feature_id
+  OR NEW.run_id IS NOT OLD.run_id OR NEW.planning_task_id IS NOT OLD.planning_task_id
+  OR NEW.candidate_id IS NOT OLD.candidate_id OR NEW.input_digest IS NOT OLD.input_digest
+  OR NEW.target_revision IS NOT OLD.target_revision OR NEW.plan_digest IS NOT OLD.plan_digest
+  OR typeof(NEW.updated_at) <> 'integer' OR NEW.updated_at < OLD.updated_at
+BEGIN SELECT RAISE(ABORT, 'planning context identity is immutable'); END;
+CREATE TRIGGER planning_contexts_candidate_write_once BEFORE UPDATE ON planning_contexts
+WHEN (NEW.candidate_artifact_id IS NOT OLD.candidate_artifact_id AND OLD.candidate_artifact_id IS NOT NULL)
+  OR (NEW.candidate_content_hash IS NOT OLD.candidate_content_hash AND OLD.candidate_content_hash IS NOT NULL)
+  OR (NEW.candidate_digest IS NOT OLD.candidate_digest AND OLD.candidate_digest IS NOT NULL)
+  OR (NEW.candidate_summary IS NOT OLD.candidate_summary AND OLD.candidate_summary IS NOT NULL)
+BEGIN SELECT RAISE(ABORT, 'planning candidate binding is write-once'); END;
+CREATE TRIGGER planning_contexts_decision_write_once BEFORE UPDATE ON planning_contexts
+WHEN (NEW.decision IS NOT OLD.decision AND OLD.decision IS NOT NULL)
+  OR (NEW.decision_reason IS NOT OLD.decision_reason AND OLD.decision_reason IS NOT NULL)
+  OR (NEW.decided_at IS NOT OLD.decided_at AND OLD.decided_at IS NOT NULL)
+  OR (NEW.applied_revision IS NOT OLD.applied_revision AND OLD.applied_revision IS NOT NULL)
+  OR (NEW.applied_at IS NOT OLD.applied_at AND OLD.applied_at IS NOT NULL)
+BEGIN SELECT RAISE(ABORT, 'planning decision is write-once'); END;
+`;
+
+/**
  * P04-9 / F-002（迁移 v34）：Run 已授权即持久执行意图。
  *
  * 只新增既有列无法表达的三件入队事实：第几次以何种授权来源登记（source）、
@@ -2997,4 +3103,5 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 32, sql: MIGRATION_032_SQL, checksum: sha256Hex(MIGRATION_032_SQL) },
   { version: 33, sql: MIGRATION_033_SQL, checksum: sha256Hex(MIGRATION_033_SQL) },
   { version: 34, sql: MIGRATION_034_SQL, checksum: sha256Hex(MIGRATION_034_SQL) },
+  { version: 35, sql: MIGRATION_035_SQL, checksum: sha256Hex(MIGRATION_035_SQL) },
 ];

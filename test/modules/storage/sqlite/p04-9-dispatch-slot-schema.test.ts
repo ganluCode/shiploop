@@ -118,7 +118,7 @@ function hashOfChecksums(count: number): string {
 
 describe('P04-9 F-001 migration v33 dispatch and slot schema', () => {
   it('[case:migration-appends-v33] v33 只追加派发/槽位结构，历史迁移与校验摘要冻结', () => {
-    expect(SQLITE_MIGRATIONS).toHaveLength(34);
+    expect(SQLITE_MIGRATIONS).toHaveLength(35);
     expect(SQLITE_MIGRATIONS[32]?.version).toBe(33);
     // Frozen from the predecessor source, not recomputed from the new descriptors.
     expect(hashOfChecksums(32)).toBe('a221e2a99963b0166285b7ad6ac607a6abf9b7bd3874f2b93c5cfdb29913b3b2');
@@ -305,7 +305,7 @@ describe('P04-9 F-001 v32 to v33 upgrade on real SQLite', () => {
         tableNames.map((table) => [table, predecessor.database.prepare(`SELECT * FROM ${table} ORDER BY id`).all()]),
       );
       const migration = await migrateSqliteStorage(predecessor);
-      expect(migration.appliedVersions).toEqual([33, 34]);
+      expect(migration.appliedVersions).toEqual([33, 34, 35]);
       for (const table of tableNames) {
         // v33 不改变任何既有列：升级前后逐表逐行必须完全一致。
         expect(predecessor.database.prepare(`SELECT * FROM ${table} ORDER BY id`).all(), table)
@@ -371,10 +371,10 @@ describe('P04-9 F-001 v32 to v33 upgrade on real SQLite', () => {
       expect(tables).not.toContain('execution_slot_claims');
       expect(tables).not.toContain('broken_v33');
       expect(session.database.prepare('SELECT max(version) AS v FROM schema_migrations').get()).toEqual({ v: 32 });
-      expect((await migrateSqliteStorage(session)).appliedVersions).toEqual([33, 34]);
+      expect((await migrateSqliteStorage(session)).appliedVersions).toEqual([33, 34, 35]);
       // 高版本库拒写，且不产生任何 DDL/DML 变更。
-      session.database.prepare('INSERT INTO schema_migrations (id, created_at, version, checksum, applied_at) VALUES (?, ?, 35, ?, ?)')
-        .run('migration-v35', NOW, HASH, NOW);
+      session.database.prepare('INSERT INTO schema_migrations (id, created_at, version, checksum, applied_at) VALUES (?, ?, 36, ?, ?)')
+        .run('migration-v36', NOW, HASH, NOW);
       await expect(migrateSqliteStorage(session)).rejects.toMatchObject({ kind: 'unsupported_version' });
       expect(session.database.prepare('SELECT count(*) AS n FROM run_dispatch_claims').get()).toEqual({ n: 0 });
       expect(session.database.prepare('SELECT count(*) AS n FROM run_dispatch_intents').get()).toEqual({ n: 0 });
