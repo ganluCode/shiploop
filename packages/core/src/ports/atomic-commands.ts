@@ -154,6 +154,8 @@ export interface CommandTransaction {
   getArtifactInputRef(projectId: string, artifactId: string): ArtifactInputRef;
   /** 既有任务 → 所属 Feature 的解析（仅返回存在的行；跨 Feature 依赖定位用）。 */
   getTaskFeatureLinks(taskIds: readonly string[]): ReadonlyMap<string, string>;
+  /** F-008：历史 Attempt/预算/人审引用的 Task 不得被候选应用删除。 */
+  hasTaskExecutionHistory(projectId: string, taskIds: readonly string[]): ReadonlySet<string>;
   /**
    * P03-1 / F-008：修订事务内读取 Feature 计划快照（Feature+全部 Task+全部
    * 边；缺失 not_found、跨项目 ownership 抛出，零写入）。
@@ -383,6 +385,10 @@ export interface CommandTransaction {
    * 供规划候选受限提交在提交前/发布后的短事务内重核 Run purpose 与 planning
    * Task 绑定；损坏行由存储层以 corrupt fail-closed，不作为有效记录返回。
    */
+  getPlanningContextByCandidate(
+    projectId: string,
+    candidateId: string,
+  ): import('./planning-context.js').PlanningContextRecord | null;
   getPlanningContextByRun(
     projectId: string,
     runId: string,
@@ -396,6 +402,8 @@ export interface CommandTransaction {
     readonly context: import('./planning-context.js').PlanningContextRecord;
     readonly outcome: 'published' | 'reused';
   };
+  /** P05-1 / F-008：规划候选决策与应用关联，同一事务内只写一次。 */
+  decidePlanningCandidate(input: unknown): import('./planning-context.js').PlanningContextRecord;
   /* ---------------------------------------------------------------- *
    * P03-3 / F-007 Runtime 启动额度预占（迁移 v12；受信 Core 内部原语，
    * 不经命令面暴露；SDK 启动前的受信边界）
@@ -444,7 +452,12 @@ export interface CommandTransaction {
 export interface AtomicCommandStore {
   /** 仅预检时效使用；不能替代事务内的权威重读。 */
   findReceipt(principalId: string, commandId: string): CommandReceipt | undefined;
-  /** P03-9 / F-003：停止 operation 只读查询（持久状态与证据引用）。 */
+  /** P05-1 / F-008：按候选身份读取规划上下文，供事务外不可变候选预读。 */
+  getPlanningContextByCandidate(
+    projectId: string,
+    candidateId: string,
+  ): import('./planning-context.js').PlanningContextRecord | null;
+
   getExecutionStopOperation(
     projectId: string,
     stopOperationId: string,

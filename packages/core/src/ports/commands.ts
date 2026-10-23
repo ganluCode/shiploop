@@ -222,6 +222,8 @@ export const COMMAND_OPERATIONS = [
   // planning Task/上下文、初始预算行、派发意图、事件与 accepted v7 回执；
   // 不借用编码计划审批，不在命令提交中启动模型）。
   'planning.start',
+  // P05-1 / F-008：候选摘要绑定的人工批准/拒绝。
+  'planning.candidate.decide',
   // P03-5 / F-010：人工丢弃受管工作区（project scope + workspace.discard；
   // 创建类命令不携带 expectedRevision——工作区 revision 与预览绑定在 payload
   // 内由应用层深校验；Host 接线随 F-011）。
@@ -384,6 +386,11 @@ export const COMMAND_OPERATION_SPECS: Readonly<Record<AppOperation, CommandOpera
       scopeKind: 'project',
       mutation: 'update',
       capability: 'execution.start',
+    },
+    'planning.candidate.decide': {
+      scopeKind: 'project',
+      mutation: 'update',
+      capability: 'feature.plan.decide',
     },
     // P03-5 / F-010：人工丢弃（创建类；预览绑定与 revision CAS 由应用层在
     // payload 深校验中重核，不经信封 expectedRevision）。
@@ -834,6 +841,14 @@ export interface ValidatedPlanningStartPayload {
   readonly budget: Record<string, unknown>;
 }
 
+export interface ValidatedPlanningCandidateDecisionPayload {
+  readonly candidateId: string;
+  readonly candidateDigest: string;
+  readonly decision: 'approve' | 'reject';
+  readonly reason: string | null;
+}
+
+
 /**
  * P03-3 / F-009 批次预算显式修订 payload：batchId 定位目标（归属与 CAS 在事务
  * 内重核），budget 为修订后的完整预算快照（深校验在应用层复用
@@ -1031,6 +1046,12 @@ export type ValidatedCommandEnvelope =
       readonly scope: { readonly kind: 'project'; readonly projectId: string };
       readonly expectedRevision: number;
       readonly payload: ValidatedFeaturePlanDecidePayload;
+    })
+  | (EnvelopeCommon & {
+      readonly operation: 'planning.candidate.decide';
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: number;
+      readonly payload: ValidatedPlanningCandidateDecisionPayload;
     })
   | (EnvelopeCommon & {
       readonly operation: 'task.approval.approve' | 'task.approval.reject' | 'task.approval.unblock';
@@ -1383,6 +1404,33 @@ function validateFeaturePlanRevisePayload(
   }
 }
 
+const PLANNING_CANDIDATE_DECIDE_PAYLOAD_KEYS = ['candidateId', 'candidateDigest', 'decision', 'reason'] as const;
+
+function validatePlanningCandidateDecisionPayload(
+  operation: AppOperation,
+  raw: unknown,
+): ValidatedPlanningCandidateDecisionPayload {
+  const object = requireObject(operation, raw, 'payload');
+  exactKeys(operation, object, PLANNING_CANDIDATE_DECIDE_PAYLOAD_KEYS, 'payload.');
+  if (typeof object.candidateId !== 'string' || object.candidateId.length === 0) {
+    fail(operation, 'invalid_input', 'payload.candidateId', '必须是非空候选 ID');
+  }
+  if (!isSha256Hex(object.candidateDigest)) {
+    fail(operation, 'invalid_input', 'payload.candidateDigest', '必须是 64 位小写 SHA-256 摘要');
+  }
+  if (object.decision !== 'approve' && object.decision !== 'reject') {
+    fail(operation, 'invalid_input', 'payload.decision', '必须是 approve 或 reject');
+  }
+  if (object.reason !== undefined && object.reason !== null && (typeof object.reason !== 'string' || object.reason.trim().length === 0 || object.reason.length > 512)) {
+    fail(operation, 'invalid_input', 'payload.reason', '必须是 null 或 1-512 个字符的有界理由');
+  }
+  return {
+    candidateId: object.candidateId,
+    candidateDigest: object.candidateDigest,
+    decision: object.decision,
+    reason: (object.reason ?? null) as string | null,
+  };
+}
 function validateTaskApprovalBlockPayload(operation: AppOperation, raw: unknown): ValidatedTaskApprovalBlockPayload {
   const object = requireObject(operation, raw, 'payload');
   exactKeys(operation, object, TASK_APPROVAL_BLOCK_PAYLOAD_KEYS, 'payload.');
@@ -1983,6 +2031,18 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
       scope,
       expectedRevision: expectedRevision as number,
       payload: validateTaskStrategyUpdatePayload(operation, object.payload),
+    };
+  }
+  if (operation === 'planning.candidate.decide') {
+    if (scope.kind !== 'project') {
+      fail(operation, 'invalid_input', 'scope.kind', 'scope 种类与操作不匹配');
+    }
+    return {
+      ...base,
+      operation,
+      scope,
+      expectedRevision: expectedRevision as number,
+      payload: validatePlanningCandidateDecisionPayload(operation, object.payload),
     };
   }
   if (operation === 'task.approval.block') {

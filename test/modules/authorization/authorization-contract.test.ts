@@ -348,6 +348,15 @@ function envelope(
           workKey: 'ab'.repeat(32),
         },
       } as ValidatedCommandEnvelope;
+    case 'planning.candidate.decide':
+      if (scope.kind !== 'project') throw new Error('project scope required');
+      return {
+        ...base,
+        operation,
+        scope,
+        expectedRevision: expectedRevision ?? 1,
+        payload: { candidateId: 'candidate-1', candidateDigest: '0'.repeat(64), decision: 'approve', reason: null },
+      };
     case 'planning.start':
       return {
         ...base,

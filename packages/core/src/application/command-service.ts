@@ -75,6 +75,8 @@ import { submitTaskApprovalBlock, TASK_APPROVAL_BLOCK_OPERATION } from './task-a
 import { submitTaskApprovalDecision, TASK_APPROVAL_DECISION_OPERATIONS } from './task-approval-decision.js';
 import { submitTaskVerificationContinue, validateTaskVerificationContinue, TASK_VERIFICATION_CONTINUE_OPERATION, type TaskVerificationContinueDeps } from './task-verification-continue.js';
 import { FEATURE_PLAN_DECIDE_OPERATION, submitFeaturePlanDecide } from './feature-plan-decide.js';
+import { PLANNING_CANDIDATE_DECIDE_OPERATION, submitPlanningCandidateDecision } from './planning-candidate-decision.js';
+import type { PlanningCandidateDecisionPort, PreparedPlanningCandidateDecision } from './planning-candidate-decision.js';
 import { FEATURE_PLAN_IMPORT_OPERATION, submitFeaturePlanImport } from './feature-plan-import.js';
 import {
   FEATURE_PLAN_REVISE_OPERATION,
@@ -197,6 +199,8 @@ export interface CommandServiceOptions {
    * 不传则命令 unsupported，不冒充能力）。装配者：composition 根。
    */
   readonly planningStart?: PlanningStartPort;
+  /** P05-1 / F-008：候选 Artifact 正文的事务外核验与候选应用。 */
+  readonly planningCandidateDecision?: PlanningCandidateDecisionPort;
   /**
    * P03-9 / F-008：显式工作流 resume 端口（事务外重新授权/现场核验 + 短写事务内
    * 重核解除暂停；不传则命令 unsupported，不冒充能力）。
@@ -295,6 +299,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
   const executionPreview = options.executionPreview;
   const executionStart = options.executionStart;
   const planningStart = options.planningStart;
+  const planningCandidateDecision = options.planningCandidateDecision;
   const executionResume = options.executionResume;
   const finalizationRetry = options.finalizationRetry;
   const executionDispatchSignal = options.executionDispatchSignal;
@@ -687,6 +692,9 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
         if (envelope.operation === PLANNING_START_OPERATION && planningStart === undefined) {
           throw new PublicError('unsupported', operation);
         }
+        if (envelope.operation === PLANNING_CANDIDATE_DECIDE_OPERATION && planningCandidateDecision === undefined) {
+          throw new PublicError('unsupported', operation);
+        }
         if (envelope.operation === 'execution.resume' && executionResume === undefined) {
           throw new PublicError('unsupported', operation);
         }
@@ -730,6 +738,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           envelope.operation !== EXECUTION_PREVIEW_OPERATION &&
           envelope.operation !== EXECUTION_START_OPERATION &&
           envelope.operation !== PLANNING_START_OPERATION &&
+          envelope.operation !== 'planning.candidate.decide' &&
           envelope.operation !== EXECUTION_BUDGET_REVISE_OPERATION &&
           envelope.operation !== WORKSPACE_DISCARD_OPERATION &&
           envelope.operation !== WORKSPACE_DISCARD_PREVIEW_OPERATION &&
@@ -860,7 +869,15 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           );
         }
 
-        // P03-9 / F-008：显式 resume 的事务外重新授权/现场核验（全部只读 I/O 在
+        let planningCandidatePrepared: PreparedPlanningCandidateDecision | undefined;
+        if (envelope.operation === PLANNING_CANDIDATE_DECIDE_OPERATION && existing === undefined) {
+          planningCandidatePrepared = await planningCandidateDecision!.prepare(
+            envelope.scope.projectId,
+            envelope.payload.candidateId,
+            envelope.payload.candidateDigest,
+          );
+        }
+
         // 写事务之外），事务内只重核身份并解除暂停。
         let executionResumePrepared: import('../ports/execution-resume.js').PreparedExecutionResume | undefined;
         if (envelope.operation === 'execution.resume' && existing === undefined) {
@@ -1208,6 +1225,26 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
               commandId: envelope.commandId, operation: envelope.operation, scope: envelope.scope,
               requestDigest: digest, issuedAt: envelope.issuedAt, completedAt: new Date(now).toISOString() },
               envelope, transaction, taskVerificationContinue!, continuationStopEvidence ?? undefined);
+          }
+          if (envelope.operation === PLANNING_CANDIDATE_DECIDE_OPERATION) {
+            if (planningCandidatePrepared === undefined) {
+              throw new TypeError('候选决策缺少事务外候选核验结果');
+            }
+            return submitPlanningCandidateDecision(
+              {
+                principalId: principal.principalId,
+                commandId: envelope.commandId,
+                operation: envelope.operation,
+                scope: envelope.scope,
+                requestDigest: digest,
+                issuedAt: envelope.issuedAt,
+                completedAt: new Date(now).toISOString(),
+              },
+              envelope,
+              transaction,
+              planningCandidatePrepared,
+              now,
+            );
           }
           if (envelope.operation === FEATURE_PLAN_DECIDE_OPERATION) {
             // P03-2 / F-002：计划批准/拒绝决策无事务外 I/O（无 Runtime/Git/检查

@@ -207,6 +207,8 @@ export interface SqlitePlanAccess {
   getArtifactInputRefInTransaction(projectId: string, artifactId: string): ArtifactInputRef;
   /** F-005：既有任务 → 所属 Feature 解析（仅返回存在行）。 */
   getTaskFeatureLinksInTransaction(taskIds: readonly string[]): ReadonlyMap<string, string>;
+  /** F-008：判断 coding Task 是否已有 Attempt/预算/人审历史，禁止不安全删除。 */
+  hasTaskExecutionHistoryInTransaction(projectId: string, taskIds: readonly string[]): ReadonlySet<string>;
   /** F-008：修订事务内读取 Feature 计划快照（缺失 not_found、跨项目 ownership）。 */
   getFeaturePlanInTransaction(projectId: string, featureId: string): FeaturePlanSnapshot;
   /**
@@ -1030,6 +1032,28 @@ export function createSqlitePlanAccess(
       }
     }
     return links;
+  }
+
+  function hasTaskExecutionHistoryInTransaction(projectId: string, taskIds: readonly string[]): ReadonlySet<string> {
+    const operation = 'PlanStore.hasTaskExecutionHistory';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const validProjectId = validateStableId(projectId, { operation }, 'projectId');
+    const validTaskIds = [...new Set(taskIds.map(taskId => validateStableId(taskId, { operation }, 'taskIds')) )];
+    if (validTaskIds.length === 0) return new Set();
+    const placeholders = validTaskIds.map(() => '?').join(',');
+    const result = new Set<string>();
+    for (const table of ['attempts', 'task_attempt_reservations', 'task_approval_items']) {
+      const exists = session.database.prepare<[string], { n: number }>(
+        "SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = ?",
+      ).get(table);
+      if (exists?.n !== 1) continue;
+      const rows = session.database.prepare<[string, ...string[]], { task_id: string }>(
+        `SELECT task_id FROM ${table} WHERE project_id = ? AND task_id IN (${placeholders})`,
+      ).all(validProjectId, ...validTaskIds);
+      for (const row of rows) result.add(row.task_id);
+    }
+    return result;
   }
 
   /**
@@ -2150,6 +2174,7 @@ export function createSqlitePlanAccess(
     getPhaseInTransaction,
     getArtifactInputRefInTransaction,
     getTaskFeatureLinksInTransaction,
+    hasTaskExecutionHistoryInTransaction,
     getFeaturePlanInTransaction,
     replaceFeaturePlanInTransaction,
     getTaskInTransaction,

@@ -40,6 +40,10 @@ export function createSqliteAtomicCommandStore(
       }
       return state.getGlobalSettingsOrNull();
     },
+    // P05-1 / F-008：候选正文预读的规划上下文。
+    getPlanningContextByCandidate(projectId, candidateId) {
+      return planningContexts.getPlanningContextByCandidate(projectId, candidateId);
+    },
     transact<T>(operation: string, submit: (transaction: CommandTransaction) => T): T {
       // 不允许在其他事务内使用；防止 savepoint 伪装成独立原子提交。
       if (session.database.inTransaction) throw new TypeError('原子命令不能嵌套事务');
@@ -148,6 +152,7 @@ export function createSqliteAtomicCommandStore(
           getPhase: guarded(plan.getPhaseInTransaction),
           getArtifactInputRef: guarded(plan.getArtifactInputRefInTransaction),
           getTaskFeatureLinks: guarded(plan.getTaskFeatureLinksInTransaction),
+          hasTaskExecutionHistory: guarded(plan.hasTaskExecutionHistoryInTransaction),
           // P03-1 / F-008：实质修订事务内快照读取与整体替换原语。
           getFeaturePlan: guarded(plan.getFeaturePlanInTransaction),
           replaceFeaturePlan: guarded(plan.replaceFeaturePlanInTransaction),
@@ -223,7 +228,9 @@ export function createSqliteAtomicCommandStore(
           createPlanningContextInTransaction: guarded(planningContexts.createPlanningContextInTransaction),
           getActivePlanningContextForFeature: guarded(planningContexts.getActivePlanningContextForFeatureInTransaction),
           // P05-1 / F-006：规划候选受限提交的短事务重核与发布绑定原语。
+          getPlanningContextByCandidate: guarded(planningContexts.getPlanningContextByCandidate),
           getPlanningContextByRun: guarded(planningContexts.getPlanningContextByRun),
+          decidePlanningCandidate: guarded(planningContexts.decidePlanningCandidateInTransaction),
           publishPlanningCandidate: guarded(planningContexts.publishPlanningCandidateInTransaction),
           // P03-3 / F-007：Runtime 启动额度预占原语（迁移 v12；同一 BEGIN IMMEDIATE
           // 内原子生效；SDK 启动前的受信边界，不经命令路由暴露）。

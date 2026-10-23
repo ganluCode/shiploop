@@ -70,6 +70,7 @@ import type { ContextBudget } from '../application/context-build.js';
 import { createArtifactPublisher } from '../application/artifact-publish.js';
 import { createArtifactVerifier } from '../application/artifact-verify.js';
 import { createWorkToolChannel } from '../application/work-tool-channel.js';
+import { createPlanningCandidateDecisionPort } from '../application/planning-candidate-decision.js';
 import { PLANNING_CANDIDATE_SUBMIT_MAX_BODY_BYTES } from '../ports/planning-candidates.js';
 import type { WorkToolChannelDeps } from '../application/work-tool-channel.js';
 import { createVerificationCandidateValidator } from '../application/verification-candidates.js';
@@ -1068,6 +1069,14 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       executionPreview,
       executionStart,
       planningStart,
+      planningCandidateDecision: createPlanningCandidateDecisionPort({
+        atomicStore,
+        verifier: createArtifactVerifier({
+          artifacts: artifactStore,
+          files: artifactFileStore,
+          limits: { maxReadBytes: PLANNING_CANDIDATE_SUBMIT_MAX_BODY_BYTES },
+        }),
+      }),
       executionResume,
       finalizationRetry,
       executionDispatchSignal: workExecution,
