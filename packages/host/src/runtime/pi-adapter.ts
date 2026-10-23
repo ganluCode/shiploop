@@ -227,6 +227,11 @@ export interface PiSessionFactoryOptions {
 
 export type PiSessionFactory = (options: PiSessionFactoryOptions) => Promise<PiSession>;
 
+/** Shared lazy SDK boundary for construction and native-session identity checks. */
+async function loadPiSdk() {
+  return await import('@earendil-works/pi-coding-agent');
+}
+
 /** 标准 SDK 的实际初始化入口：受管 SessionManager + 受控 resourceLoader。 */
 export function createPiSdkSessionFactory(assembly: PiTrustedAssembly): PiSessionFactory {
   return async ({ cwd, agentDir, sessionDir, provider, model, resourceLoader, thinkingLevel, recovery }) => {
@@ -237,7 +242,7 @@ export function createPiSdkSessionFactory(assembly: PiTrustedAssembly): PiSessio
     if (resolvedModel.provider !== provider || resolvedModel.id !== model) {
       throw new RuntimeError('configuration', 'resolved_model_mismatch');
     }
-    const sdk = await import('@earendil-works/pi-coding-agent');
+    const sdk = await loadPiSdk();
     const { createAgentSession, VERSION, CURRENT_SESSION_VERSION } = sdk;
     if (VERSION !== PI_SDK_VERSION || String(CURRENT_SESSION_VERSION) !== PI_NATIVE_SESSION_FORMAT_VERSION) {
       throw new RuntimeError('configuration', 'sdk_version_incompatible');
@@ -582,7 +587,7 @@ export function createPiRuntimeAdapter(options: PiRuntimeAdapterOptions): PiRunt
       let nativeSdkMessageUsage = false;
       if (session.agent !== undefined && session.model !== undefined) {
         try {
-          const sdk = await import('@earendil-works/pi-coding-agent');
+          const sdk = await loadPiSdk();
           nativeSdkMessageUsage = sdk.VERSION === PI_SDK_VERSION && sdk.VERSION === '1.0.4' && session instanceof sdk.AgentSession;
         } catch { /* Unknown/custom sessions retain unknown accounting. */ }
       }
