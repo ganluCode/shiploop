@@ -4,7 +4,7 @@ import { verifyFeaturePlanApprovalInTransaction } from '../../application/plan-a
 import { validateTaskExecutionConfig } from '../../application/task-strategy-selection.js';
 import { DEFAULT_TASK_MAX_CODE_ATTEMPTS } from '../../ports/execution-budget.js';
 import { createSqliteWorkSessionStore } from './work-session-store.js';
-import { ACTIVE_ATTEMPT_STATUSES } from '../../ports/attempt-store.js';
+import { ACTIVE_ATTEMPT_STATUSES, isPlanningAttemptSnapshot } from '../../ports/attempt-store.js';
 import { rejectUnknownKeys, requirePlainObject, validateStableId } from '../../ports/validation.js';
 import {
   ATTEMPT_UPDATED_EVENT_TYPE, validateAttemptNotification, validateVerificationSubmission,
@@ -189,6 +189,13 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
         const approval = verifyFeaturePlanApprovalInTransaction(transaction, valid.projectId, attempt.featureId);
         const view = dag.readTaskDagView(valid.projectId, attempt.runId);
         const graph = evaluateTaskDag(view, now);
+        // P05-1 / F-005：planning Attempt 不进入编码生命周期结算（F-007/F-009 另行接线）；
+        // 到达即 fail-closed，不静默忽略也不伪造批准身份。
+        if (isPlanningAttemptSnapshot(attempt.inputSnapshot)) {
+          throw new StorageError('conflict', operation, 'Planning Attempt is outside the coding attempt lifecycle', {
+            details: { reason: 'planning_attempt_lifecycle_unsupported' },
+          });
+        }
         const snapshot = attempt.inputSnapshot.approval;
         const approvalWaiting = task.manual_block === 1 || !approval.validity.valid
           || approval.planDigest !== snapshot.planDigest || approval.checkPolicyDigest !== snapshot.checkPolicyDigest

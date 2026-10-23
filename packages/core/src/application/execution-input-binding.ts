@@ -46,6 +46,7 @@ import { isArtifactVerifyError } from './artifact-verify.js';
 import type { ArtifactPublisher } from './artifact-publish.js';
 import type { RuntimeRecoveryService } from './runtime-recovery.js';
 import type { AttemptStore, AttemptRecord } from '../ports/attempt-store.js';
+import { isPlanningAttemptSnapshot } from '../ports/attempt-store.js';
 import { ACTIVE_ATTEMPT_STATUSES } from '../ports/attempt-store.js';
 import {
   CONTEXT_MANIFEST_DIGEST_DOMAIN,
@@ -402,6 +403,10 @@ export function createExecutionInputBindingService(
 
     /* ---- 5. 权限与恢复选择的前置核验（读取前 fail-fast） ---- */
     const snapshot = attempt.inputSnapshot;
+    // P05-1 / F-005：planning 快照不在编码输入绑定通道（无业务计划批准身份）。
+    if (isPlanningAttemptSnapshot(snapshot)) {
+      return reject('input', 'input_identity_mismatch', 'planning Attempt 快照不在编码输入绑定通道');
+    }
     if (computeExecutionPermissionsDigest(validated.permissions.grants) !== snapshot.digests.permissionsDigest) {
       return reject('input', 'permission_expansion', '请求权限与准备时权限面不一致（拒绝权限扩大）');
     }

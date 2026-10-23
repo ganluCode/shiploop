@@ -201,6 +201,15 @@ export interface CoreApplicationOptions {
   readonly finalizationExecution?: FinalizationExecutionPort;
   /** P03-9 / F-012：重验后最终审批/提交/完成消费者（不启动 Runtime）。 */
   readonly finalizationCompletion?: FinalizationCompletionPort;
+  /**
+   * P05-1 / F-005：planning 认领回执消费者（回执已在独立短事务提交后调用；
+   * 真实 Runtime 执行由 F-007 接线）。未装配时调度器保留 planning_consumer
+   * capability gap，planning Run 保持 queued 且可查询原因。
+   */
+  readonly planningExecution?: {
+    consumePlanningClaim(receipt: import('../ports/task-claim.js').TaskClaimReceipt,
+      ref: { readonly projectId: string; readonly runId: string }): Promise<void>;
+  };
   /** 显式授权数据根（绝对路径）；与 userHomeDir 二选一。 */
   readonly dataRoot?: string;
   /** 注入的 macOS 用户目录；用于解析默认根，与 dataRoot 二选一。 */
@@ -987,13 +996,16 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     const workExecution = assembleWorkExecution({ session,
       application: { dataRoot: basePathService.dataRoot(), artifactStore, artifactFileStore, stateStore,
         configurationService, workWorkspaceAuthority, taskClaims, workspacePreparation, executionInputPrepare,
-        runtimeRecovery, runtimeRecoveryCatalog: recoveryCatalog, workRecoveryContinuation },
+        planningInputPrepare, runtimeRecovery, runtimeRecoveryCatalog: recoveryCatalog, workRecoveryContinuation },
       capabilityCatalog, runtimeFactory: object.workRuntimeFactory as WorkRuntimeFactory | undefined, nowUtcMs, readReworkScene, startupRecovery,
       ...(object.finalizationExecution === undefined ? {} : {
         finalizationExecution: object.finalizationExecution as FinalizationExecutionPort,
       }),
       ...(object.finalizationCompletion === undefined ? {} : {
         finalizationCompletion: object.finalizationCompletion as FinalizationCompletionPort,
+      }),
+      ...(object.planningExecution === undefined ? {} : {
+        planningExecution: object.planningExecution as NonNullable<Parameters<typeof assembleWorkExecution>[0]['planningExecution']>,
       }) });
     // P03-9 / F-003：Verifier 停止登记与取消提交后的停止控制。Runtime 停止复用
     // WorkExecution.cancel 的既有受监督命令路径；Verifier 使用同一 CommandProcess

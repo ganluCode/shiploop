@@ -3177,5 +3177,5 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 33, sql: MIGRATION_033_SQL, checksum: sha256Hex(MIGRATION_033_SQL) },
   { version: 34, sql: MIGRATION_034_SQL, checksum: sha256Hex(MIGRATION_034_SQL) },
   { version: 35, sql: MIGRATION_035_SQL, checksum: sha256Hex(MIGRATION_035_SQL) },
-  { version: 36, sql: MIGRATION_036_SQL, checksum: sha256Hex(MIGRATION_036_SQL) },
+  { version: 36, sql: MIGRATION_036_SQL, checksum: sha256Hex(MIGRATION_036_SQL), foreignKeysOff: true },
 ];

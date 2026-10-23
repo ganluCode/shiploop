@@ -395,7 +395,9 @@ export function createFinalizationRetryPlanner(deps: FinalizationRetryPlannerDep
         if (latestAttempt === null) {
           addReason(globalReasons, 'code_evidence_missing');
         } else {
-          if (latestAttempt.inputSnapshot.approval.planDigest !== view.plan.feature.planDigest) {
+          // P05-1 / F-005：编码批准身份只在编码快照上存在；planning 快照无批准身份，
+          // 视为证据不匹配（fail-closed，不伪造比较基准）。
+          if (latestAttempt.inputSnapshot.approval?.planDigest !== view.plan.feature.planDigest) {
             addReason(globalReasons, 'requirements_changed');
           }
           const currentStrategyDigest = computeExecutionStrategyCopyDigest({

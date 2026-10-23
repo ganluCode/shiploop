@@ -55,7 +55,7 @@ describe('F-005 fenced Attempt lifecycle', () => {
            operation, code_digest, policy_digest, environment_summary, check_snapshot, selection, status, started_at, ended_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'tests', ?, ?, '{}', '[{"key":"tests"}]', '{}', 'passed', ?, ?)`)
           .run(batchId, NOW, f.attempt.projectId, NOW, f.attempt.featureId, f.attempt.runId, f.attempt.taskId, f.attempt.id,
-            f.attempt.executionVersion, code.content_hash, f.attempt.inputSnapshot.approval.checkPolicyDigest, NOW, NOW + 1);
+            f.attempt.executionVersion, code.content_hash, f.attempt.inputSnapshot.approval!.checkPolicyDigest, NOW, NOW + 1);
         database.prepare(`INSERT INTO check_results
           (id, created_at, project_id, updated_at, batch_id, check_key, argv_json, timeout_ms, required, status,
            exit_code, signal, timed_out, started_at, ended_at)
@@ -96,7 +96,7 @@ describe('F-005 fenced Attempt lifecycle', () => {
            operation, code_digest, policy_digest, environment_summary, check_snapshot, selection, status, started_at, ended_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'tests', ?, ?, '{}', '[{"key":"tests"}]', '{}', 'passed', ?, ?)`)
           .run(batchId, NOW, f.attempt.projectId, NOW, f.attempt.featureId, f.attempt.runId, f.attempt.taskId, f.attempt.id,
-            f.attempt.executionVersion, code.content_hash, f.attempt.inputSnapshot.approval.checkPolicyDigest, NOW, NOW + 1);
+            f.attempt.executionVersion, code.content_hash, f.attempt.inputSnapshot.approval!.checkPolicyDigest, NOW, NOW + 1);
         database.prepare(`INSERT INTO check_results
           (id, created_at, project_id, updated_at, batch_id, check_key, argv_json, timeout_ms, required, status,
            exit_code, signal, timed_out, started_at, ended_at)
@@ -184,7 +184,7 @@ describe('F-005 fenced Attempt lifecycle', () => {
       const block = async () => {
         const revision = other.database.prepare('SELECT revision FROM tasks WHERE id = ?').get('t-1') as { revision: number };
         const receipt = await budgetServices(other).commands.submit(f.box.owner,
-          f.box.envelope('task.approval.block', { taskId: 't-1', planDigest: f.attempt.inputSnapshot.approval.planDigest },
+          f.box.envelope('task.approval.block', { taskId: 't-1', planDigest: f.attempt.inputSnapshot.approval!.planDigest },
             { scope: f.box.scope, expectedRevision: revision.revision, commandId: randomUUID() }));
         expect(receipt.status).toBe('completed');
       };
@@ -342,7 +342,7 @@ describe('F-005 fenced Attempt lifecycle', () => {
     const f = await fixture();
     try {
       const revision = (f.box.session.database.prepare('SELECT revision FROM tasks WHERE id = ?').get('t-1') as { revision: number }).revision;
-      const command = (planDigest = f.attempt.inputSnapshot.approval.planDigest, expectedRevision = revision) =>
+      const command = (planDigest = f.attempt.inputSnapshot.approval!.planDigest, expectedRevision = revision) =>
         f.box.envelope('task.approval.block', { taskId: 't-1', planDigest }, { scope: f.box.scope, expectedRevision });
       const restricted = { principalId: 'test-denied', capabilities: new Set<'project.read'>(['project.read']), projectScope: { kind: 'all' as const } };
       const before = f.box.snapshot();

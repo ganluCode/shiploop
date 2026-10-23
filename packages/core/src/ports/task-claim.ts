@@ -1,5 +1,5 @@
 import type { AttemptRecord, WorkspaceLeaseRecord } from './attempt-store.js';
-import { validateAttemptInputSnapshot } from './attempt-store.js';
+import { isPlanningAttemptSnapshot, validateAttemptInputSnapshot } from './attempt-store.js';
 import type { PreparedExecutionInputGroup } from './execution-input-prepare.js';
 import type { VerifiedWorkWorkspace } from './work-resources.js';
 import type { ValidationContext } from './validation.js';
@@ -102,10 +102,15 @@ export function validateTaskClaimInput(value: unknown, inspectWorkspace: (token:
   };
   const launch = raw.launch === undefined || raw.launch === null
     ? undefined : validateTaskClaimLaunch(raw.launch, context, 'launch');
+  const inputSnapshot = validateAttemptInputSnapshot(raw.inputSnapshot);
+  // P05-1 / F-005：编码认领不接受 planning 判别快照（planning 认领走独立分支）。
+  if (isPlanningAttemptSnapshot(inputSnapshot)) {
+    throw validationError(context, 'inputSnapshot.purpose', 'coding_claim_rejects_planning_snapshot', inputSnapshot.purpose);
+  }
   return { claimKey: id('claimKey'), projectId: id('projectId'), runId: id('runId'), taskId: id('taskId'),
     owner: id('owner'), hostInstanceId: id('hostInstanceId'), expectedRevision: integer('expectedRevision', 1),
     executionVersion: integer('executionVersion', 0), leaseUntilUtcMs: integer('leaseUntilUtcMs', 1),
-    workspace: inspectWorkspace(raw.workspace), inputSnapshot: validateAttemptInputSnapshot(raw.inputSnapshot),
+    workspace: inspectWorkspace(raw.workspace), inputSnapshot,
     ...(raw.attemptId === undefined || raw.attemptId === null ? {} : { attemptId: id('attemptId') }),
     ...(raw.dispatch === undefined ? {} : { dispatch: validateTaskClaimDispatch(raw.dispatch) }),
     ...(launch === undefined ? {} : { launch }) };

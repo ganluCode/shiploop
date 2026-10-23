@@ -23,6 +23,10 @@ import { createSqliteRuntimeFallbackSwitchService } from './sqlite/runtime-fallb
 import { stableStringify } from '../ports/feature-plan.js';
 import { validateRuntimeStrategy } from '../ports/settings-schema.js';
 import { createWorkScheduler } from '../application/work-scheduler.js';
+import { createPlanningDispatchPrepareService } from '../application/planning-dispatch.js';
+import { createSqlitePlanningClaimStore } from './sqlite/planning-claim-store.js';
+import { createSqlitePlanningContextStore } from './sqlite/planning-context-store.js';
+import { transactSqliteConsistentRead } from './sqlite/state-store.js';
 import { evaluateTaskDag } from '../application/task-dag.js';
 import { validateTaskExecutionConfig } from '../application/task-strategy-selection.js';
 import { DEFAULT_TOOL_TIME_LIMIT_MS, DEFAULT_WORK_TIME_LIMIT_MS, resolveExecutionDeadlines } from '../ports/execution-time-limits.js';
@@ -84,7 +88,7 @@ export type WorkRuntimeFactory = (context: WorkRuntimeContext) => {
 export function assembleWorkExecution(options: {
   readonly session: SqliteStorageSession;
   readonly application: Pick<CoreApplication, 'dataRoot' | 'artifactStore' | 'artifactFileStore' | 'stateStore' |
-    'configurationService' | 'workWorkspaceAuthority' | 'taskClaims' | 'workspacePreparation' | 'executionInputPrepare'> & {
+    'configurationService' | 'workWorkspaceAuthority' | 'taskClaims' | 'workspacePreparation' | 'executionInputPrepare' | 'planningInputPrepare'> & {
       readonly runtimeRecovery?: CoreApplication['runtimeRecovery'];
       readonly runtimeRecoveryCatalog?: CoreApplication['runtimeRecoveryCatalog'];
       readonly workRecoveryContinuation?: CoreApplication['workRecoveryContinuation'];
@@ -98,6 +102,15 @@ export function assembleWorkExecution(options: {
   readonly finalizationExecution?: FinalizationExecutionPort;
   /** P03-9 / F-012：重验 handoff 后继续最终审批/提交/完成（不启动 Runtime）。 */
   readonly finalizationCompletion?: FinalizationCompletionPort;
+  /**
+   * P05-1 / F-005：planning 回执消费者（回执已提交后调用；Runtime 启动属于
+   * 事务外后续，由 F-007 接线真实执行）。未装配时调度器保留 planning_consumer
+   * capability gap，不准备规划输入也不认领。
+   */
+  readonly planningExecution?: {
+    consumePlanningClaim(receipt: import('../ports/task-claim.js').TaskClaimReceipt,
+      ref: { readonly projectId: string; readonly runId: string }): Promise<void>;
+  };
   /** F-012：受信返工现场读取（同 Feature 受管 worktree 的当前身份；无工作区时
    * 返回 null）。由 composition 用受界检查器实现；缺省时不接返工认领。 */
   readonly readReworkScene?: (projectId: string, featureId: string) => Promise<{
@@ -387,6 +400,44 @@ export function assembleWorkExecution(options: {
     if (executionGate !== undefined) return 'project_execution_gate_busy';
     return null;
   }
+  // P05-1 / F-005：planning 消费端口（准备/认领真实实现；消费者由装配注入，
+  // 未注入时调度器保留 planning_consumer capability gap，不认领不占槽）。
+  const planningClaims = createSqlitePlanningClaimStore(session, {
+    workspaceAuthority: app.workWorkspaceAuthority,
+    assertCanClaim() {
+      if (options.startupRecovery.blocked()) {
+        throw new StorageError('conflict', 'PlanningClaim.claimPlanningTask', 'Startup recovery census is not complete',
+          { details: { reason: 'startup_recovery' } });
+      }
+    },
+    ...(options.nowUtcMs === undefined ? {} : { nowUtcMs: options.nowUtcMs }),
+  });
+  const planningDispatchPrepare = createPlanningDispatchPrepareService({
+    views: createSqlitePlanningContextStore(session, options.nowUtcMs === undefined ? {} : { nowUtcMs: options.nowUtcMs }),
+    planningInputs: app.planningInputPrepare,
+    workspaceAuthority: app.workWorkspaceAuthority,
+    repositoryBindings: { getRepositoryBinding: projectId => app.stateStore.getRepositoryBinding(projectId) },
+    batchDeadline: {
+      readDeadlineUtcMs: (projectId, runId) => transactSqliteConsistentRead(session, 'PlanningDispatch.deadline', () => {
+        const row = session.database.prepare<[string, string], { deadline_at: number | null }>(
+          'SELECT b.deadline_at FROM runs r JOIN execution_batches b ON b.project_id = r.project_id AND b.id = r.batch_id WHERE r.project_id = ? AND r.id = ?',
+        ).get(projectId, runId);
+        return row?.deadline_at ?? null;
+      }),
+    },
+    taskFacts: {
+      readTaskFacts: (projectId, taskId) => transactSqliteConsistentRead(session, 'PlanningDispatch.taskFacts', () => {
+        const row = session.database.prepare<[string], { project_id: string; revision: number; execution_version: number }>(
+          'SELECT project_id, revision, execution_version FROM tasks WHERE id = ?',
+        ).get(taskId);
+        if (row === undefined || row.project_id !== projectId) return null;
+        return { revision: row.revision, executionVersion: row.execution_version };
+      }),
+    },
+    owner,
+    hostInstanceId,
+    ...(options.nowUtcMs === undefined ? {} : { nowMs: options.nowUtcMs }),
+  });
   const scheduler = createWorkScheduler({ store, dag: { evaluate: (projectId, runId) => evaluateTaskDag(dag.readTaskDagView(projectId, runId), now()) },
     claims: app.taskClaims,
     admission: { check: ref => finalizationAdmission(ref.projectId) },
@@ -408,6 +459,18 @@ export function assembleWorkExecution(options: {
         async execute(handoff: { readonly projectId: string; readonly runId: string }) {
           return options.finalizationCompletion!.execute({ projectId: handoff.projectId, runId: handoff.runId });
         },
+      },
+    }),
+    // P05-1 / F-005：planning Run 按 purpose 路由（准备/重核在事务外，认领自有
+    // 短事务，消费只在回执提交后；未装配消费者时保留 capability gap）。
+    ...(options.planningExecution === undefined ? {} : {
+      planning: {
+        prepare: async (ref: { readonly projectId: string; readonly runId: string }) =>
+          planningDispatchPrepare.preparePlanningClaim(ref),
+        claims: planningClaims,
+        consume: async (receipt: import('../ports/task-claim.js').TaskClaimReceipt,
+          ref: { readonly projectId: string; readonly runId: string }) =>
+          options.planningExecution!.consumePlanningClaim(receipt, ref),
       },
     }),
     async prepareClaim({ candidate, taskId }) {

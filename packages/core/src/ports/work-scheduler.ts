@@ -1,7 +1,6 @@
 import type { TaskClaimResult, TaskClaimStore, TaskClaimReceipt } from './task-claim.js';
 import type { TaskDagReason, TaskDagResult } from './task-dag.js';
 import type { RunRecord } from './execution-store.js';
-
 export interface SchedulerRunRef {
   readonly projectId: string;
   readonly runId: string;
@@ -68,6 +67,21 @@ export interface SchedulerFinalizationCompletion {
   execute(handoff: SchedulerHandoff): Promise<unknown>;
 }
 
+/**
+ * P05-1 / F-005 planning Run 的派发消费者端口（按 Run purpose 路由，复用既有
+ * 队列/Run 认领/槽位/资源记录）：prepare 事务外派生认领输入（含 F-004 输入
+ * 准备与启动前重核）；claims 在自有短写事务内原子认领；consume 只在回执已
+ * 提交后调用（Runtime 启动属于事务外后续）。planning Task 不进入编码 DAG。
+ */
+export interface SchedulerPlanningPorts {
+  /** 派生 planning 认领输入（不满足 readiness/输入准备失败时抛错）。 */
+  prepare(ref: SchedulerRunRef): Promise<unknown>;
+  /** planning 原子认领存储（一次调用=一次已提交事务）。 */
+  claims: { claimPlanningTask(input: unknown): TaskClaimResult };
+  /** 回执已提交后的消费者（后续 Runtime 启动在此事务外发生）。 */
+  consume(receipt: TaskClaimReceipt, ref: SchedulerRunRef): Promise<void>;
+}
+
 export interface SchedulerRunResult {
   readonly projectId: string;
   readonly runId: string;
@@ -107,6 +121,12 @@ export interface WorkSchedulerOptions {
    * 目前用于 finalization-only Run 的槽位/资源准入，避免其绕过单槽与项目 Work 门控。
    */
   readonly admission?: { check(ref: SchedulerRunRef): string | null };
+  /**
+   * P05-1 / F-005：planning Run（purpose=plan）的派发消费者端口。未装配时
+   * 调度器保留 capability gap（planning_consumer）并记录可查询原因，不把
+   * planning Task 送入编码 DAG，也不自行准备输入或认领。
+   */
+  readonly planning?: SchedulerPlanningPorts;
   /**
    * 每个候选 Run 在 DAG 评估/认领之前的受信短操作（当前用于 F-006 派发归属与
    * 槽位收尾）。失败不得阻止补扫；调用方自己保留可查询原因。

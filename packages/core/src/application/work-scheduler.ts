@@ -13,6 +13,7 @@ import type {
 } from '../ports/work-scheduler.js';
 import type { TaskClaimResult } from '../ports/task-claim.js';
 import { isFinalizationOnlyRun } from '../ports/finalization-execution.js';
+import { PLANNING_RUN_PURPOSE } from '../ports/planning-candidates.js';
 
 const DEFAULT_INTERVAL_MS = 1_000;
 const DEFAULT_PAGE_SIZE = 32;
@@ -85,6 +86,12 @@ export function createWorkScheduler(options: WorkSchedulerOptions) {
       try { await options.beforeRun({ projectId, runId }); } catch { /* caller owns diagnostics */ }
     }
     const run = options.store.readRun(projectId, runId);
+    // P05-1 / F-005：planning Run（purpose=plan）在编码 DAG 之前分流——
+    // 规划 readiness 依据已授权规划输入和上下文，不要求业务计划批准；
+    // planning Task 不进入 coding DAG 调度。
+    if (run.purpose === PLANNING_RUN_PURPOSE) {
+      return processPlanningRun(projectId, runId, run);
+    }
     // finalization-only Run 必须在任何 DAG/认领路径之前分流：不得创建编码
     // Attempt、准备 worktree 或启动 Runtime。
     if (isFinalizationOnlyRun(run)) {
@@ -230,6 +237,59 @@ export function createWorkScheduler(options: WorkSchedulerOptions) {
         capabilityGaps: [], claimed: false, handoff: null };
       diagnostics.set(key(projectId, runId), result);
       return result;
+    }
+  }
+
+  /**
+   * P05-1 / F-005 planning Run 消费：能力缺口→持久可查询原因；控制中/终态
+   * 不认领；准入（槽位/资源）忙时只记录原因；准备/认领/消费全部经注入端口
+   * （准备与重核在事务外；认领自有短事务；消费只在回执提交后）。重复投递/
+   * 丢失唤醒补扫不会重复创建 Attempt/占槽/扣额（幂等由认领回执与 Task CAS
+   * 承担）；租约到期不在这里重新分配写入者（只保留可查询阻塞事实）。
+   */
+  async function processPlanningRun(projectId: string, runId: string,
+    run: { readonly status: string; readonly pauseRequestedAtUtcMs: number | null }): Promise<SchedulerRunResult> {
+    const record = (result: SchedulerRunResult, reason: string | null): SchedulerRunResult => {
+      // 控制诊断不得覆盖持久暂停原因（与编码分支同一纪律）。
+      if (reason !== null && reason !== 'run_control_blocked') options.store.recordRunReason(projectId, runId, reason);
+      diagnostics.set(key(projectId, runId), result);
+      return result;
+    };
+    if (options.planning === undefined) {
+      return record({ projectId, runId, reason: 'scheduler_capability_missing',
+        capabilityGaps: ['planning_consumer'], claimed: false, handoff: null }, 'scheduler_capability_missing');
+    }
+    if (run.pauseRequestedAtUtcMs !== null || !['queued', 'running'].includes(run.status)) {
+      return record({ projectId, runId, reason: 'run_control_blocked',
+        capabilityGaps: [], claimed: false, handoff: null }, null);
+    }
+    const admitted = options.admission?.check({ projectId, runId }) ?? null;
+    if (admitted !== null) {
+      return record({ projectId, runId, reason: 'resource_busy',
+        capabilityGaps: [], claimed: false, handoff: null }, admitted);
+    }
+    try {
+      const input = await options.planning.prepare({ projectId, runId });
+      if (closed) {
+        return { projectId, runId, reason: 'run_control_blocked', capabilityGaps: [], claimed: false, handoff: null };
+      }
+      const prepared = input as { readonly projectId?: unknown; readonly runId?: unknown };
+      if (prepared.projectId !== projectId || prepared.runId !== runId) {
+        throw new StorageError('validation', 'WorkScheduler.planning', 'Prepared planning claim identity does not match the routed Run');
+      }
+      const claimed: TaskClaimResult = options.planning.claims.claimPlanningTask(input);
+      // claimPlanningTask owns and commits its transaction before this callback is reachable.
+      if (claimed.replayed) {
+        return record({ projectId, runId, reason: 'ready',
+          capabilityGaps: [], claimed: false, handoff: null }, null);
+      }
+      await options.planning.consume(claimed.receipt, { projectId, runId });
+      return record({ projectId, runId, reason: 'ready',
+        capabilityGaps: [], claimed: true, handoff: null }, null);
+    } catch (error) {
+      const reason = claimErrorReason(error);
+      return record({ projectId, runId, reason: 'claim_rejected',
+        capabilityGaps: [], claimed: false, handoff: null }, reason);
     }
   }
 
