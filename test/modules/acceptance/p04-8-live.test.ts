@@ -28,6 +28,32 @@ function fixture() {
   return { root, repo, git, approval, path, save };
 }
 
+const customModel = { api: 'openai-responses', baseUrl: 'https://ark.cn-beijing.volces.com/api/plan/v3',
+  contextWindow: 256_000, maxTokens: 4096, reasoning: true, supportsDeveloperRole: false };
+
+it('[case:custom-model-explicit] preserves only an explicitly approved custom model without reading global configuration', () => {
+  const f = fixture();
+  const a = validateP04LiveApproval({ ...f.approval, provider: 'ark-agentplan', model: 'ark-code-latest', customModel });
+  expect(a).toHaveProperty('customModel', customModel);
+});
+
+it.each([
+  { ...customModel, baseUrl: 'http://ark.example.invalid/v1' },
+  { ...customModel, baseUrl: 'https://secret@ark.example.invalid/v1' },
+  { ...customModel, baseUrl: 'https://ark.example.invalid/v1?key=secret' },
+  { ...customModel, baseUrl: 'https://localhost/v1' },
+  { ...customModel, api: 'unknown-api' },
+  { ...customModel, apiKey: 'secret' },
+  { ...customModel, headers: { Authorization: 'secret' } },
+  { ...customModel, contextWindow: 0 },
+])('[case:custom-model-invalid] rejects unsafe custom configuration before launching a Runner: %j', async customModel => {
+  const f = fixture(), runProcess = vi.fn();
+  f.save({ ...f.approval, customModel });
+  expect(await runP04Live({ approvalFile: f.path, environment: { P04_TEST_KEY: 'synthetic-secret' }, runProcess }))
+    .toMatchObject({ status: 'not_run', realCalls: 0 });
+  expect(runProcess).not.toHaveBeenCalled();
+});
+
 it('[case:missing-authorization-zero-call] missing approval fails with not_run and no executor call', async () => {
   const runProcess = vi.fn();
   const result = await runP04Live({ runProcess });
@@ -197,10 +223,11 @@ it('[case:secret-redaction] redacts escaped, encoded and bearer credentials befo
   expect(JSON.parse(redacted).secret).toBe('[REDACTED]');
 });
 
-it('[case:real-sdk-scripted-tools] installed SDK uses only selected tools, bounded requests and in-memory auth; provider stream is offline', async () => {
+it.each([false, true])('[case:real-sdk-scripted-tools] installed SDK uses only selected tools, bounded requests and in-memory auth; custom=%s', async custom => {
   const sdk = await import('@earendil-works/pi-coding-agent');
   const ai = await import('@earendil-works/pi-ai');
-  const f = fixture(), a = validateP04LiveApproval(f.approval);
+  const f = fixture(), a = validateP04LiveApproval(custom
+    ? { ...f.approval, provider: 'ark-agentplan', model: 'ark-code-latest', customModel } : f.approval);
   const { mkdirSync } = await import('node:fs');
   mkdirSync(a.reportDir); mkdirSync(join(a.reportDir, 'agent'));
   const runtime = await sdk.ModelRuntime.create({ credentials: new ai.InMemoryCredentialStore(), modelsStore: new ai.InMemoryModelsStore(), modelsPath: null,
@@ -209,6 +236,7 @@ it('[case:real-sdk-scripted-tools] installed SDK uses only selected tools, bound
   let requests = 0;
   runtime.streamSimple = (model, _context, options) => {
     requests++;
+    expect(model).toMatchObject({ provider: a.provider, id: a.model });
     expect(options).toMatchObject({ maxTokens: 1024, maxRetries: 0, apiKey: 'synthetic-secret' });
     const output = ai.createAssistantMessageEventStream();
     const message: import('@earendil-works/pi-ai').AssistantMessage = { role: 'assistant', api: model.api, model: model.id, provider: model.provider,
@@ -236,11 +264,15 @@ it('[case:real-sdk-scripted-tools] installed SDK uses only selected tools, bound
   } finally { create.mockRestore(); network.mockRestore(); if (previousKey === undefined) delete process.env.SHIPLOOP_P04_LIVE_KEY; else process.env.SHIPLOOP_P04_LIVE_KEY = previousKey; }
 });
 
-it.each(['authentication', 'cancel'] as const)('[case:sdk-transport-%s] actual installed transport failure/cancel preserves count and unknown usage without fallback', async mode => {
+it.each([
+  { mode: 'authentication', custom: false }, { mode: 'cancel', custom: false },
+  { mode: 'authentication', custom: true }, { mode: 'cancel', custom: true },
+] as const)('[case:sdk-transport-$mode] actual installed transport failure/cancel preserves count and unknown usage; custom=$custom', async ({ mode, custom }) => {
   const { mkdirSync } = await import('node:fs');
   const f = fixture();
   if (mode === 'cancel') Object.assign(f.approval, { scenario: 'cancel', cancelAfterMs: 29_000 });
-  const a = validateP04LiveApproval(f.approval);
+  const a = validateP04LiveApproval(custom
+    ? { ...f.approval, provider: 'ark-agentplan', model: 'ark-code-latest', customModel } : f.approval);
   mkdirSync(a.reportDir); mkdirSync(join(a.reportDir, 'agent'));
   const network = vi.spyOn(globalThis, 'fetch').mockImplementation(async (_request, init) => {
     if (mode === 'authentication') return new Response(JSON.stringify({ type: 'error', error: { type: 'authentication_error', message: 'synthetic-secret' } }),
@@ -254,6 +286,11 @@ it.each(['authentication', 'cancel'] as const)('[case:sdk-transport-%s] actual i
   try {
     await runP04LiveRunner({ approval: a, identity: { runId: 'run', taskId: 'task', attemptId: 'attempt' }, prompt: 'Make the approved greeting change.' });
     expect(network).toHaveBeenCalledTimes(1);
+    if (custom) {
+      const [url, init] = network.mock.calls[0]!;
+      expect(String(url)).toBe(customModel.baseUrl + '/responses');
+      expect(init?.redirect).toBe('error');
+    }
     const result = JSON.parse(readFileSync(join(a.reportDir, 'runner-result.json'), 'utf8'));
     expect(result).toMatchObject({ realCalls: 1, admittedRequests: 1, stopped: true, terminal: mode === 'cancel' ? 'cancelled' : 'failed', usageCoverage: 'unknown' });
     expect(readFileSync(join(a.reportDir, 'events.jsonl'), 'utf8')).not.toContain('synthetic-secret');

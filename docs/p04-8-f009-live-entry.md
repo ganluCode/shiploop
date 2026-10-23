@@ -50,7 +50,27 @@
 
 每次 SDK 模型请求先核对 provider/model、授权到期、绝对 deadline、请求数和累计 Token 预占；完整预占 `maxInputTokens + maxOutputTokens`，未知/失败用量不退还。上下文按 UTF-8 字节数再加 4096 余量限制，输出通过 `maxTokens` 限制。这是保守的本地预算约束，不能作为供应商精确计费或套餐余额证明。
 
-仅允许已具备 `maxRetries=0` 控制证据的 API：`anthropic-messages`、`openai-completions`、`openai-responses`；实际 provider/model 必须在锁定的 SDK 1.0.4 模型目录中存在。模型目录网络刷新关闭。每次 transport 调用还核对取消、到期和预占数，不允许隐藏的重试突破预占。
+仅允许已具备 `maxRetries=0` 控制证据的 API：`anthropic-messages`、`openai-completions`、`openai-responses`；默认从锁定的 SDK 1.0.4 模型目录选择。模型目录网络刷新关闭。每次 transport 调用还核对取消、到期和预占数，不允许隐藏的重试突破预占。
+
+自定义厂商可显式提供以下 `customModel` 字段（首版仅支持 `openai-responses`）。
+仅在内存注册获准的 provider/model，不加载本机 `models.json`、插件或任何其他厂商；
+认证仍单独经环境引用传递，不能放入模型描述。未知字段、HTTP、URL 内凭据、查询参数、
+本机/IP 地址和端口均拒绝；transport 只允许该 origin 及基础路径下的请求，拒绝重定向。
+模型价格未配置，不将零占位价格当成真实免费或费用统计。
+
+```json
+"customModel": {
+  "api": "openai-responses",
+  "baseUrl": "https://ark.cn-beijing.volces.com/api/plan/v3",
+  "contextWindow": 256000,
+  "maxTokens": 4096,
+  "reasoning": true,
+  "supportsDeveloperRole": false
+}
+```
+
+此入口不提供通用网络沙箱或 DNS 重绑定防护；endpoint 必须由负责人确认。描述仅扩展
+探针的显式装配能力，不代表 Core 的生产自定义厂商接入已完成验收。
 
 `admittedRequests` 是 SDK 请求预占数，`realCalls` 是在 transport 边界观察到的 fetch 调用数；未知 Runner 结果为 `null`，不能写成零。这里统计客户端调用，不证明供应商成功执行或扣费。usage 按请求身份保留 SDK 可得值，重复终态不重复累计，失败/取消的零占位记 `null/unknown`；即使有小计也只标 `partial`。
 

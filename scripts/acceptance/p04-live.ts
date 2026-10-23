@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { isIP } from 'node:net';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runBoundedProcess } from './p02-accept.ts';
@@ -12,6 +13,9 @@ export interface P04LiveApproval {
   authorization: { approved: true; id: string; expiresAt: number };
   provider: string;
   model: string;
+  /** Explicit non-secret descriptor; never discovers global models.json or loads extensions. */
+  customModel?: { api: 'openai-responses'; baseUrl: string; contextWindow: number; maxTokens: number;
+    reasoning: boolean; supportsDeveloperRole: boolean };
   authentication: { kind: 'environment'; sourceRef: string; variable: string };
   repository: string;
   expectedCommit: string;
@@ -57,6 +61,24 @@ export function validateP04LiveApproval(raw: unknown, reportDirectoryCreated = f
   if (!b || b.maxAttempts !== 1 || !positive(b.maxRequests, 5) || !positive(b.timeoutMs, 120_000)
       || !positive(b.maxInputTokens, 32_000) || !positive(b.maxOutputTokens, 4096) || !positive(b.maxTokens, 180_000)
       || b.maxTokens < b.maxInputTokens + b.maxOutputTokens) reject();
+  let customModel: P04LiveApproval['customModel'];
+  if (a.customModel !== undefined) {
+    const c = a.customModel;
+    const keys = ['api', 'baseUrl', 'contextWindow', 'maxTokens', 'reasoning', 'supportsDeveloperRole'];
+    if (!c || typeof c !== 'object' || Object.keys(c).length !== keys.length
+        || Object.keys(c).some(key => !keys.includes(key)) || c.api !== 'openai-responses'
+        || typeof c.baseUrl !== 'string' || c.baseUrl.length > 2048
+        || typeof c.reasoning !== 'boolean' || typeof c.supportsDeveloperRole !== 'boolean'
+        || !positive(c.contextWindow, 2_000_000) || !positive(c.maxTokens, 100_000)
+        || c.maxTokens < b.maxOutputTokens || c.contextWindow < b.maxInputTokens + b.maxOutputTokens) reject();
+    const url = new URL(c.baseUrl);
+    if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash
+        || url.port || url.hostname === 'localhost' || url.hostname.endsWith('.localhost')
+        || url.hostname.endsWith('.local') || !url.hostname.includes('.') || isIP(url.hostname)
+        || url.hostname.startsWith('[')) reject();
+    customModel = { api: c.api, baseUrl: url.href.replace(/\/$/, ''), contextWindow: c.contextWindow,
+      maxTokens: c.maxTokens, reasoning: c.reasoning, supportsDeveloperRole: c.supportsDeveloperRole };
+  }
   if (!['change', 'cancel', 'resume-required'].includes(a.scenario)) reject();
   if (a.scenario === 'cancel' && (!positive(a.cancelAfterMs, b.timeoutMs - 1))) reject();
   if (typeof a.repository !== 'string' || !isAbsolute(a.repository) || typeof a.reportDir !== 'string' || !isAbsolute(a.reportDir)
@@ -73,6 +95,7 @@ export function validateP04LiveApproval(raw: unknown, reportDirectoryCreated = f
       || !relative(repo, resolve(a.reportDir)).startsWith('..') || !relative(resolve(a.reportDir), repo).startsWith('..')) reject();
   // Copy only supported fields: arbitrary JSON properties never reach the SDK or snapshots.
   return { schemaVersion: 1, authorization: { approved: true, id: a.authorization.id, expiresAt: a.authorization.expiresAt }, provider: a.provider, model: a.model,
+    ...(customModel === undefined ? {} : { customModel }),
     authentication: { kind: 'environment', sourceRef: a.authentication.sourceRef, variable: a.authentication.variable },
     repository: repo, expectedCommit: a.expectedCommit, resources: ['read_greeting', 'write_greeting'], fallback: [],
     budgets: { maxAttempts: 1, maxRequests: b.maxRequests, timeoutMs: b.timeoutMs, maxInputTokens: b.maxInputTokens,
@@ -127,7 +150,8 @@ export async function runP04Live(options: { approvalFile?: string; environment?:
   writeFileSync(inputPath, JSON.stringify(input), { mode: 0o600, flag: 'wx' });
   const executionMode = options.runProcess ? 'fake' : 'live';
   save('input-manifest.json', { schemaVersion: 1, executionMode, scope: 'standalone-sdk-probe', identity,
-    authorization: a.authorization, provider: a.provider, model: a.model, authentication: { kind: 'environment', sourceRef: a.authentication.sourceRef },
+    authorization: a.authorization, provider: a.provider, model: a.model, customModel: a.customModel,
+    authentication: { kind: 'environment', sourceRef: a.authentication.sourceRef },
     resources: a.resources, fallback: a.fallback, budgets: a.budgets, scenario: a.scenario,
     expectedCommit: a.expectedCommit, authorizationDigest: hash(JSON.stringify(a)),
     prompt, promptHash: hash(prompt), coreBusinessAcceptance: 'not_run' });

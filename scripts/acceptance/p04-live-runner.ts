@@ -45,6 +45,16 @@ export async function runP04LiveRunner(input: { approval: P04LiveApproval; ident
       const agentDir = join(a.reportDir, 'agent');
       const modelRuntime = await sdk.ModelRuntime.create({ credentials: new InMemoryCredentialStore(),
         modelsStore: new InMemoryModelsStore(), modelsPath: null, allowModelNetwork: false, refreshOnCreate: false });
+      if (a.customModel) {
+        const c = a.customModel;
+        modelRuntime.registerProvider(a.provider, { api: c.api, baseUrl: c.baseUrl,
+          models: [{ id: a.model, name: a.model, input: ['text'], reasoning: c.reasoning,
+            contextWindow: c.contextWindow, maxTokens: c.maxTokens,
+            compat: { supportsDeveloperRole: c.supportsDeveloperRole },
+            cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }] });
+        observe({ type: 'custom_model_registered', provider: a.provider, model: a.model, configuration: c,
+          pricing: 'unknown_not_a_cost_estimate' });
+      }
       await modelRuntime.setRuntimeApiKey(a.provider, secret);
       const model = modelRuntime.getModel(a.provider, a.model);
       if (!model || !['anthropic-messages', 'openai-completions', 'openai-responses'].includes(model.api)) throw new Error('approved_model_or_bounded_api_unavailable');
@@ -56,11 +66,17 @@ export async function runP04LiveRunner(input: { approval: P04LiveApproval; ident
           model: actual.id, maxOutputTokens: maxTokens, reservedTokens: budget.snapshot().reservedTokens });
         return original(actual, context, { ...options, maxTokens, maxRetries: 0, apiKey: secret,
           fetch: async (url, init) => {
+            if (a.customModel) {
+              const endpoint = new URL(a.customModel.baseUrl);
+              const target = new URL(url instanceof Request ? url.url : String(url));
+              if (target.origin !== endpoint.origin || !target.pathname.startsWith(endpoint.pathname + '/')
+                  || target.username || target.password) throw new Error('live_endpoint_rejected');
+            }
             if (cancelled || Date.now() >= budget.snapshot().deadline || Date.now() >= a.authorization.expiresAt
                 || realCalls >= budget.snapshot().requests) throw new Error('live_transport_budget_rejected');
             realCalls++;
             observe({ type: 'provider_request_started', request: realCalls, provider: actual.provider, model: actual.id });
-            return fetch(url, init);
+            return fetch(url, { ...init, redirect: 'error' });
           } });
       };
       const settingsManager = sdk.SettingsManager.inMemory({ compaction: { enabled: false }, cacheWarming: 'off',
