@@ -90,6 +90,9 @@ describe('F-007 composed Work failure routing', () => {
       await f.run();
       expect(f.starts).toEqual([preferred.model, backup.model]);
       expect(f.query('SELECT attempts_created, runtime_starts FROM execution_batches')).toEqual({ attempts_created: 2, runtime_starts: 2 });
+      // Artifact creation and lease acquisition precede the asynchronous settlement transaction.
+      await expect.poll(() => f.session.database.prepare('SELECT status FROM attempts ORDER BY number').all(),
+        { timeout: 8_000 }).toEqual([{ status: 'failed' }, { status: 'verifying' }]);
       const rows = f.session.database.prepare('SELECT id, status, execution_version, input_snapshot FROM attempts ORDER BY number').all() as
         { id: string; status: string; execution_version: number; input_snapshot: string }[];
       expect(rows.map(row => row.status)).toEqual(['failed', 'verifying']);
