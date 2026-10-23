@@ -348,6 +348,36 @@ function envelope(
           workKey: 'ab'.repeat(32),
         },
       } as ValidatedCommandEnvelope;
+    case 'planning.start':
+      return {
+        ...base,
+        operation,
+        scope,
+        expectedRevision: expectedRevision ?? 1,
+        payload: {
+          request: {
+            schemaVersion: 1,
+            projectId: scope.kind === 'project' ? scope.projectId : 'proj-p051',
+            phaseId: 'phase-p051',
+            featureId: 'feat-p051',
+            requirementRefs: [],
+            constraints: [],
+            acceptance: { criteria: ['候选可审批'] },
+            strategy: { approvalMode: 'manual', taskLimit: null },
+            inputDigest: 'ab'.repeat(32),
+          },
+          budget: {
+            batch: {
+              maxRuns: 1,
+              maxTotalAttempts: 1,
+              maxRuntimeStarts: 1,
+              maxNoProgressRuns: 1,
+              deadlineUtcMs: 1_900_000_000_000,
+            },
+            run: { maxAttemptsPerRun: 1, runTimeLimitMs: 3_600_000 },
+          },
+        },
+      } as ValidatedCommandEnvelope;
     case 'execution.budget.revise':
       return {
         ...base,

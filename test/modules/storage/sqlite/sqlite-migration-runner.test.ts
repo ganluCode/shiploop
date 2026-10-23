@@ -207,6 +207,7 @@ describe('F-005 迁移执行与记录', () => {
           'global_settings',
           'managed_workspaces',
           'phases',
+          'planning_contexts',
           'project_settings',
           'projects',
           'recording_manifests',

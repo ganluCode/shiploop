@@ -93,6 +93,12 @@ export type PlanningContextStatus = (typeof PLANNING_CONTEXT_STATUSES)[number];
 export const PLANNING_CONTEXT_DECISIONS = ['approved', 'rejected'] as const;
 export type PlanningContextDecision = (typeof PLANNING_CONTEXT_DECISIONS)[number];
 
+/**
+ * 活动规划状态集（迁移 v35 部分唯一索引同源）：open/candidate_published 视为
+ * 规划仍在途（applied/rejected/cancelled 为终态，不阻塞新规划）。
+ */
+export const PLANNING_CONTEXT_ACTIVE_STATUSES = ['open', 'candidate_published'] as const;
+
 /** 合法状态迁移（纯规则；非法迁移在应用层 conflict、在 DDL 层由枚举兜底）。 */
 export const PLANNING_CONTEXT_TRANSITIONS: Readonly<
   Record<PlanningContextStatus, readonly PlanningContextStatus[]>

@@ -34,6 +34,8 @@ import { RepositoryInspectionError } from './repository-inspector.js';
 import type { RepositoryInspectionErrorKind } from './repository-inspector.js';
 import { validateSettingsPayload } from './settings-schema.js';
 import type { SettingsPayload } from './settings-schema.js';
+import { validatePlanningRequest } from './planning-candidates.js';
+import type { ValidatedPlanningRequest } from './planning-candidates.js';
 import { validateCreateProjectInput, validateUpdateProjectInput } from './state-store.js';
 import { validateExecutionStopManualPayload } from './execution-stop-manual.js';
 import type { ValidatedExecutionStopManualPayload } from './execution-stop-manual.js';
@@ -212,6 +214,14 @@ export const COMMAND_OPERATIONS = [
   // 当前预算/追加不可变修订行/脱敏事件与 completed 回执；不自动启动或
   // 恢复 Run，不触碰累计计数与快照）。
   'execution.budget.revise',
+  // P05-1 / F-003：一次性规划启动（project scope + execution.start 能力位；
+  // 更新类：信封 expectedRevision 为目标 Feature 聚合当前 revision CAS；
+  // payload = F-001 规划请求 v1 原样字段 + budget 完整预算提案（单次规划固定
+  // batch.maxRuns=1）——事务外请求/预算校验，短写事务内重核项目/Phase/Feature
+  // CAS/同项目活动规划编码与预算并原子提交单 Feature Batch、purpose=plan Run、
+  // planning Task/上下文、初始预算行、派发意图、事件与 accepted v7 回执；
+  // 不借用编码计划审批，不在命令提交中启动模型）。
+  'planning.start',
   // P03-5 / F-010：人工丢弃受管工作区（project scope + workspace.discard；
   // 创建类命令不携带 expectedRevision——工作区 revision 与预览绑定在 payload
   // 内由应用层深校验；Host 接线随 F-011）。
@@ -365,6 +375,15 @@ export const COMMAND_OPERATION_SPECS: Readonly<Record<AppOperation, CommandOpera
       scopeKind: 'project',
       mutation: 'update',
       capability: 'execution.budget.revise',
+    },
+    // P05-1 / F-003：一次性规划启动（更新类：expectedRevision 为目标 Feature
+    // 聚合当前 revision CAS；与 execution.preview/pause/cancel/resume 同一先例
+    // 复用 execution.start 授权面——规划启动是执行授权同类动作，不借用编码计划
+    // 审批能力）。
+    'planning.start': {
+      scopeKind: 'project',
+      mutation: 'update',
+      capability: 'execution.start',
     },
     // P03-5 / F-010：人工丢弃（创建类；预览绑定与 revision CAS 由应用层在
     // payload 深校验中重核，不经信封 expectedRevision）。
@@ -802,6 +821,20 @@ export type ValidatedExecutionStartPayload =
     };
 
 /**
+ * P05-1 / F-003 一次性规划启动 payload：F-001 规划请求 v1 原样字段（含
+ * schemaVersion/projectId/phaseId/featureId/requirementRefs/constraints/
+ * acceptance/strategy；经 validatePlanningRequest 校验并携带 inputDigest）+
+ * budget 完整预算提案（深校验在应用层复用 ports/execution-budget 权威校验器；
+ * 单次规划固定 batch.maxRuns=1）。严格未知键拒绝：batchId/runId/
+ * planningTaskId/candidateId 等服务端决定字段一律不能经请求输入。
+ */
+export interface ValidatedPlanningStartPayload {
+  readonly request: ValidatedPlanningRequest;
+  /** 完整预算提案（深校验在应用层；此处只保证 JSON 对象形态）。 */
+  readonly budget: Record<string, unknown>;
+}
+
+/**
  * P03-3 / F-009 批次预算显式修订 payload：batchId 定位目标（归属与 CAS 在事务
  * 内重核），budget 为修订后的完整预算快照（深校验在应用层复用
  * ports/execution-budget 权威校验器——仅增额或延期），reason 为非空有界修订
@@ -1045,6 +1078,15 @@ export type ValidatedCommandEnvelope =
       readonly scope: { readonly kind: 'project'; readonly projectId: string };
       readonly expectedRevision: null;
       readonly payload: ValidatedExecutionStartPayload;
+    })
+  // P05-1 / F-003：一次性规划启动命令信封（更新类：expectedRevision 为目标
+  // Feature 聚合当前 revision CAS——规划目标依据随授权冻结；payload = 规划
+  // 请求 v1 原样字段 + budget 完整预算提案）。
+  | (EnvelopeCommon & {
+      readonly operation: 'planning.start';
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: number;
+      readonly payload: ValidatedPlanningStartPayload;
     })
   // P03-3 / F-009：批次预算显式修订命令信封（更新类必须携带 expectedRevision
   // =目标 Batch 当前 budget_revision；payload 只含 batchId/budget/reason）。
@@ -1659,6 +1701,48 @@ function validateExecutionStartPayload(
   };
 }
 
+const PLANNING_START_PAYLOAD_KEYS = [
+  'schemaVersion',
+  'projectId',
+  'phaseId',
+  'featureId',
+  'requirementRefs',
+  'constraints',
+  'acceptance',
+  'strategy',
+  'budget',
+] as const;
+
+/**
+ * P05-1 / F-003 规划启动 payload 校验：严格未知键拒绝；请求 v1 部分整体交给
+ * F-001 validatePlanningRequest（未知版本/字段、非法结构带字段定位拒绝并携带
+ * inputDigest）；budget 只保证 JSON 对象形态（深校验与 maxRuns=1 固定值在应用层
+ * preparePlanningStart）。
+ */
+function validatePlanningStartPayload(
+  operation: AppOperation,
+  raw: unknown,
+): ValidatedPlanningStartPayload {
+  const object = requireObject(operation, raw, 'payload');
+  exactKeys(operation, object, PLANNING_START_PAYLOAD_KEYS, 'payload.');
+  if (!isPlainObjectPayload(object.budget)) {
+    fail(operation, 'invalid_input', 'payload.budget', '必须是 JSON 对象（完整预算提案）', object.budget);
+  }
+  const { budget: _budget, ...requestValue } = object;
+  try {
+    const request = validatePlanningRequest(requestValue, { operation: `${operation}.request` });
+    return { request, budget: object.budget as Record<string, unknown> };
+  } catch (error) {
+    if (isStorageError(error, 'validation')) {
+      throw new PublicError('invalid_input', operation, undefined, {
+        details: storageValidationDetails(error.details),
+        cause: error,
+      });
+    }
+    throw error;
+  }
+}
+
 /**
  * P03-3 / F-009 预算修订 payload 校验：严格未知键拒绝（approvedBy/principalId/
  * revision/version/tokenUsed/costUsed/status/runsCreated/Task 上限字段都是未知
@@ -1974,6 +2058,18 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
       payload: validateExecutionStartPayload(operation, object.payload),
     };
   }
+  if (operation === 'planning.start') {
+    if (scope.kind !== 'project') {
+      fail(operation, 'invalid_input', 'scope.kind', 'scope 种类与操作不匹配');
+    }
+    return {
+      ...base,
+      operation,
+      scope,
+      expectedRevision: expectedRevision as number,
+      payload: validatePlanningStartPayload(operation, object.payload),
+    };
+  }
   if (operation === 'execution.retryFinal') {
     if (scope.kind !== 'project') {
       fail(operation, 'invalid_input', 'scope.kind', 'scope 种类与操作不匹配');
@@ -2190,6 +2286,13 @@ export interface RejectedCommandReceipt extends ReceiptCommon {
 export const WORK_ACCEPTED_SCHEMA_VERSION = 6 as const;
 export const WORK_ACCEPTED_OPERATION = 'execution.start' as const;
 
+/**
+ * P05-1 / F-003：planning.start 接受回执专属结构版本（receipt-only 扩展，
+ * 与 v6 Work accepted 同一先例；不宣告新命令能力版本）。
+ */
+export const PLANNING_ACCEPTED_SCHEMA_VERSION = 7 as const;
+export const PLANNING_ACCEPTED_OPERATION = 'planning.start' as const;
+
 /** Legacy accepted receipt: operationId references a real baseline operation. */
 export interface BaselineAcceptedCommandReceipt extends ReceiptCommon {
   readonly status: 'accepted';
@@ -2207,7 +2310,27 @@ export interface WorkAcceptedCommandReceipt extends Omit<ReceiptCommon, 'schemaV
   readonly runId: string;
 }
 
-export type AcceptedCommandReceipt = BaselineAcceptedCommandReceipt | WorkAcceptedCommandReceipt;
+/**
+ * P05-1 / F-003 receipt-only v7 扩展：planning.start 接受回执携带授权 Batch、
+ * purpose=plan Run、planning Task 与稳定候选身份（operationId = batchId；
+ * 不携带 result/resultRef/error，不代表规划完成）。
+ */
+export interface PlanningAcceptedCommandReceipt extends Omit<ReceiptCommon, 'schemaVersion' | 'operation'> {
+  readonly schemaVersion: typeof PLANNING_ACCEPTED_SCHEMA_VERSION;
+  readonly operation: typeof PLANNING_ACCEPTED_OPERATION;
+  readonly status: 'accepted';
+  /** 规划授权身份是 Batch（与 v6 Work accepted 同一先例）。 */
+  readonly operationId: string;
+  readonly batchId: string;
+  readonly runId: string;
+  readonly planningTaskId: string;
+  readonly candidateId: string;
+}
+
+export type AcceptedCommandReceipt =
+  | BaselineAcceptedCommandReceipt
+  | WorkAcceptedCommandReceipt
+  | PlanningAcceptedCommandReceipt;
 
 /** Persisted/wire union: legacy v5 receipts and explicit Work accepted v6 receipts. */
 export type CommandReceipt = CompletedCommandReceipt | RejectedCommandReceipt | AcceptedCommandReceipt;
@@ -2338,10 +2461,10 @@ export function createRejectedReceipt(input: RejectedReceiptInput): RejectedComm
 }
 
 export interface AcceptedReceiptInput extends ReceiptInputBase {
-  /** v5 baseline accepted 操作：类型层排除 Work 操作 execution.start（P03-3 /
-   * F-005 起 'execution.start' 进入命令白名单，但 Work accepted 仍只能经
-   * WorkAcceptedReceiptInput 构造，避免重载歧义与 v5 形态混入）。 */
-  readonly operation: Exclude<AppOperation, typeof WORK_ACCEPTED_OPERATION>;
+  /** v5 baseline accepted 操作：类型层排除 Work 操作 execution.start 与规划
+   * 操作 planning.start（两者各自经专属 ReceiptInput 构造，避免重载歧义与
+   * v5 形态混入）。 */
+  readonly operation: Exclude<AppOperation, typeof WORK_ACCEPTED_OPERATION | typeof PLANNING_ACCEPTED_OPERATION>;
   /** 同事务写入的 baseline_operations 行 id（公开 operationId）。 */
   readonly operationId: string;
 }
@@ -2352,10 +2475,23 @@ export interface WorkAcceptedReceiptInput extends Omit<AcceptedReceiptInput, 'op
   readonly runId: string;
 }
 
+/** P05-1 / F-003：planning.start 接受回执输入（v7；携带 Batch/Run/planning
+ * Task/候选四身份；operationId = batchId）。 */
+export interface PlanningAcceptedReceiptInput extends Omit<AcceptedReceiptInput, 'operation'> {
+  readonly operation: typeof PLANNING_ACCEPTED_OPERATION;
+  readonly batchId: string;
+  readonly runId: string;
+  readonly planningTaskId: string;
+  readonly candidateId: string;
+}
+
 /** Existing factory; v5 baseline identity or explicit v6 Work Batch/Run identity. */
 export function createAcceptedReceipt(input: AcceptedReceiptInput): BaselineAcceptedCommandReceipt;
 export function createAcceptedReceipt(input: WorkAcceptedReceiptInput): WorkAcceptedCommandReceipt;
-export function createAcceptedReceipt(input: AcceptedReceiptInput | WorkAcceptedReceiptInput): AcceptedCommandReceipt {
+export function createAcceptedReceipt(input: PlanningAcceptedReceiptInput): PlanningAcceptedCommandReceipt;
+export function createAcceptedReceipt(
+  input: AcceptedReceiptInput | WorkAcceptedReceiptInput | PlanningAcceptedReceiptInput,
+): AcceptedCommandReceipt {
   assertReceiptIdentity(input, true);
   if (!isUuidV4(input.operationId)) {
     throw new TypeError('accepted 回执的 operationId 必须是 UUID v4');
@@ -2380,6 +2516,23 @@ export function createAcceptedReceipt(input: AcceptedReceiptInput | WorkAccepted
     return {
       ...base, schemaVersion: WORK_ACCEPTED_SCHEMA_VERSION, operation: input.operation,
       batchId: input.batchId, runId: input.runId,
+    };
+  }
+  // P05-1 / F-003：planning.start 接受回执（v7）携带四重 UUID 身份。
+  if (input.operation === PLANNING_ACCEPTED_OPERATION) {
+    if (
+      !isUuidV4(input.batchId) ||
+      !isUuidV4(input.runId) ||
+      !isUuidV4(input.planningTaskId) ||
+      !isUuidV4(input.candidateId) ||
+      input.operationId !== input.batchId
+    ) {
+      throw new TypeError('Planning accepted requires UUID Batch/Run/Task/Candidate IDs and operationId = batchId');
+    }
+    return {
+      ...base, schemaVersion: PLANNING_ACCEPTED_SCHEMA_VERSION, operation: input.operation,
+      batchId: input.batchId, runId: input.runId,
+      planningTaskId: input.planningTaskId, candidateId: input.candidateId,
     };
   }
   return { ...base, schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION, operation: input.operation };

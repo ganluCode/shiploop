@@ -94,7 +94,7 @@ async function fixture() {
 
 describe('P03-6 F-006 migration v20 work session schema', () => {
   it('appends v20 without changing the delivered v1-v19 checksums', () => {
-    expect(LATEST_VERSION).toBe(35);
+    expect(LATEST_VERSION).toBe(36);
     expect(SQLITE_MIGRATIONS).toHaveLength(LATEST_VERSION);
     // Frozen from the predecessor source, not recomputed from the new descriptors.
     const oldSql = SQLITE_MIGRATIONS.slice(0, 19).map(m => m.checksum).join('\n');

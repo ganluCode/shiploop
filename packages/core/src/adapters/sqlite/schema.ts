@@ -319,6 +319,9 @@ export const commandReceipts = sqliteTable('command_receipts', {
   ),
   batchId: text('batch_id'),
   runId: text('run_id'),
+  /** P05-1 / F-003（迁移 v36）：planning.start accepted v7 的 planning Task/候选身份；其余恒 NULL。 */
+  planningTaskId: text('planning_task_id'),
+  candidateId: text('candidate_id'),
   /** completed：有界业务结果 JSON（序列化 ≤ 16384 字节）。 */
   resultJson: text('result_json'),
   /** completed：不透明结果引用（v1.+43 字符 base64url；全库唯一）。 */
@@ -356,7 +359,7 @@ export const commandReceipts = sqliteTable('command_receipts', {
   ),
   check(
     'command_receipts_association_check',
-    sql`(${table.receiptVersion} = 5 AND ${table.batchId} IS NULL AND ${table.runId} IS NULL) OR (${table.receiptVersion} = 6 AND ${table.operation} = 'execution.start' AND ${table.status} = 'accepted' AND ${table.scopeKind} = 'project' AND ${table.batchId} IS NOT NULL AND ${table.runId} IS NOT NULL AND ${table.operationId} = ${table.batchId} AND ${table.errorMessage} IS NULL AND ${table.errorDetails} IS NULL)`,
+    sql`(${table.receiptVersion} = 5 AND ${table.batchId} IS NULL AND ${table.runId} IS NULL AND ${table.planningTaskId} IS NULL AND ${table.candidateId} IS NULL) OR (${table.receiptVersion} = 6 AND ${table.operation} = 'execution.start' AND ${table.status} = 'accepted' AND ${table.scopeKind} = 'project' AND ${table.batchId} IS NOT NULL AND ${table.runId} IS NOT NULL AND ${table.operationId} = ${table.batchId} AND ${table.planningTaskId} IS NULL AND ${table.candidateId} IS NULL AND ${table.errorMessage} IS NULL AND ${table.errorDetails} IS NULL) OR (${table.receiptVersion} = 7 AND ${table.operation} = 'planning.start' AND ${table.status} = 'accepted' AND ${table.scopeKind} = 'project' AND ${table.batchId} IS NOT NULL AND ${table.runId} IS NOT NULL AND ${table.planningTaskId} IS NOT NULL AND ${table.candidateId} IS NOT NULL AND ${table.operationId} = ${table.batchId} AND ${table.errorMessage} IS NULL AND ${table.errorDetails} IS NULL)`,
   ),
   check(
     'command_receipts_digest_check',
@@ -387,6 +390,14 @@ export const commandReceipts = sqliteTable('command_receipts', {
     name: 'command_receipts_work_run_fk',
     columns: [table.projectId, table.batchId, table.runId],
     foreignColumns: [runs.projectId, runs.batchId, runs.id],
+  }).onDelete('restrict'),
+  // P05-1 / F-003（迁移 v36）：v7 规划接受回执的候选身份指向同项目规划上下文
+  // （planning_contexts 的 (project_id, candidate_id) 唯一索引；惰性引用避免
+  // 模块定义顺序依赖）。
+  foreignKey({
+    name: 'command_receipts_planning_context_fk',
+    columns: [table.projectId, table.candidateId],
+    foreignColumns: [planningContexts.projectId, planningContexts.candidateId],
   }).onDelete('restrict'),
 ]);
 

@@ -121,6 +121,8 @@ import { createExecutionPreviewService } from '../application/execution-preview.
 import type { ExecutionPreviewPort } from '../application/execution-preview.js';
 import { createExecutionStartService } from '../application/execution-start.js';
 import type { ExecutionStartPort } from '../ports/execution-start.js';
+import { createPlanningStartService } from '../application/planning-start.js';
+import type { PlanningStartPort } from '../ports/planning-start.js';
 import { createExecutionResumeService } from '../application/execution-resume.js';
 import type { ExecutionResumePort } from '../ports/execution-resume.js';
 import { createFinalizationRetryPlanner } from '../application/finalization-retry.js';
@@ -275,6 +277,8 @@ export interface CoreApplication {
   /** F-003：同 Task continuation 的不可变规划服务；只发布记录，不创建 Attempt/Runtime。 */
   readonly workRecoveryContinuation: WorkRecoveryContinuationService;
   readonly executionStart: ExecutionStartPort;
+  /** P05-1 / F-003：一次性规划启动（事务外请求/预算校验 + 事务内原子提交；不启动模型）。 */
+  readonly planningStart: PlanningStartPort;
   /** P03-9 / F-008：显式工作流 resume（重新授权/现场核验/解除暂停；不启动 Runtime）。 */
   readonly executionResume: ExecutionResumePort;
   /** P03-9 / F-010：finalization-only retryFinal（新建受限 Run，不启动 Runtime）。 */
@@ -624,6 +628,16 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       },
       preview: executionPreview,
       permissions: TRUSTED_PROJECT_PERMISSIONS_READER,
+      ...(nowUtcMs === undefined ? {} : { nowMs: nowUtcMs }),
+    });
+    // P05-1 / F-003：一次性规划启动服务（ExecutionController 同一纪律：事务外
+    // 请求/预算纯校验 + 短写事务内重核与原子提交；不装配模型调用，accepted
+    // 不代表规划完成）。
+    const planningStart: PlanningStartPort = createPlanningStartService({
+      assertCanDispatch() {
+        if (startupRecovery.blocked()) throw new PublicError('resource_busy', 'planning.start', undefined,
+          { details: { reason: 'startup_recovery' } });
+      },
       ...(nowUtcMs === undefined ? {} : { nowMs: nowUtcMs }),
     });
     // P03-5 / F-011：workspace 栈装配（docs/p03-5-workspace-host-integration-contract.md §2）。
@@ -983,6 +997,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       executionInputPrepare,
       executionPreview,
       executionStart,
+      planningStart,
       executionResume,
       finalizationRetry,
       executionDispatchSignal: workExecution,
@@ -1142,6 +1157,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       executionInputPrepare,
       executionPreview,
       executionStart,
+      planningStart,
       executionResume,
       finalizationRetry,
       runtimeRecovery,

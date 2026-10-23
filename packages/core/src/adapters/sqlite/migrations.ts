@@ -3004,6 +3004,79 @@ WHEN NEW.created_at IS NOT OLD.created_at OR NEW.project_id IS NOT OLD.project_i
 BEGIN SELECT RAISE(ABORT, 'run dispatch intent identity is immutable'); END;
 `;
 
+/**
+ * v36: P05-1 / F-003 planning.start 接受回执（receipt v7）持久列。
+ *
+ * - command_receipts 重建（v10 同一方式）：追加 planning_task_id/candidate_id
+ *   两列（v5/v6 恒 NULL），v7 关联 CHECK 冻结 operation='planning.start' +
+ *   accepted + project scope + 四重身份非空 + operation_id = batch_id；
+ * - 新增复合外键 (project_id, candidate_id) → planning_contexts(project_id,
+ *   candidate_id)（v35 唯一索引）；既有 work_batch/work_run/baseline 外键与
+ *   全部索引原样保留；既有行经 INSERT…SELECT 逐列保留（规划列 NULL）；
+ * - 不触碰 v1–v35 任何其他表；不新建预算/队列/回执以外的新表。
+ */
+const MIGRATION_036_SQL = `
+CREATE TABLE command_receipts_v36 (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  principal_id TEXT NOT NULL,
+  command_id TEXT NOT NULL,
+  scope_kind TEXT NOT NULL,
+  project_id TEXT,
+  operation TEXT NOT NULL,
+  request_digest TEXT NOT NULL,
+  status TEXT NOT NULL,
+  operation_id TEXT,
+  receipt_version INTEGER NOT NULL DEFAULT 5,
+  baseline_operation_id TEXT GENERATED ALWAYS AS (CASE WHEN receipt_version = 5 THEN operation_id END) STORED,
+  batch_id TEXT,
+  run_id TEXT,
+  planning_task_id TEXT,
+  candidate_id TEXT,
+  result_json TEXT,
+  result_ref TEXT,
+  error_code TEXT,
+  error_message TEXT,
+  error_details TEXT,
+  issued_at INTEGER NOT NULL,
+  completed_at INTEGER NOT NULL,
+  CONSTRAINT command_receipts_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT command_receipts_operation_fk FOREIGN KEY (baseline_operation_id) REFERENCES baseline_operations (id) ON DELETE RESTRICT,
+  CONSTRAINT command_receipts_baseline_same_project_fk FOREIGN KEY (project_id, baseline_operation_id) REFERENCES baseline_operations (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT command_receipts_work_batch_fk FOREIGN KEY (project_id, batch_id) REFERENCES execution_batches (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT command_receipts_work_run_fk FOREIGN KEY (project_id, batch_id, run_id) REFERENCES runs (project_id, batch_id, id) ON DELETE RESTRICT,
+  CONSTRAINT command_receipts_planning_context_fk FOREIGN KEY (project_id, candidate_id) REFERENCES planning_contexts (project_id, candidate_id) ON DELETE RESTRICT,
+  CONSTRAINT command_receipts_scope_check CHECK ((scope_kind = 'project' AND project_id IS NOT NULL) OR (scope_kind IN ('registration','global') AND project_id IS NULL)),
+  CONSTRAINT command_receipts_status_check CHECK (status IN ('completed','rejected','accepted')),
+  CONSTRAINT command_receipts_completed_check CHECK (status <> 'completed' OR (result_json IS NOT NULL AND result_ref IS NOT NULL AND error_code IS NULL)),
+  CONSTRAINT command_receipts_rejected_check CHECK (status <> 'rejected' OR (error_code IS NOT NULL AND result_json IS NULL)),
+  CONSTRAINT command_receipts_accepted_check CHECK (status <> 'accepted' OR (operation_id IS NOT NULL AND result_json IS NULL AND result_ref IS NULL AND error_code IS NULL)),
+  CONSTRAINT command_receipts_association_check CHECK (
+    (receipt_version = 5 AND batch_id IS NULL AND run_id IS NULL AND planning_task_id IS NULL AND candidate_id IS NULL) OR
+    (receipt_version = 6 AND operation = 'execution.start' AND status = 'accepted' AND scope_kind = 'project'
+      AND batch_id IS NOT NULL AND run_id IS NOT NULL AND operation_id = batch_id
+      AND planning_task_id IS NULL AND candidate_id IS NULL
+      AND error_message IS NULL AND error_details IS NULL) OR
+    (receipt_version = 7 AND operation = 'planning.start' AND status = 'accepted' AND scope_kind = 'project'
+      AND batch_id IS NOT NULL AND run_id IS NOT NULL AND planning_task_id IS NOT NULL AND candidate_id IS NOT NULL
+      AND operation_id = batch_id AND error_message IS NULL AND error_details IS NULL)
+  ),
+  CONSTRAINT command_receipts_digest_check CHECK (length(request_digest) = 64 AND request_digest NOT GLOB '*[^0-9a-f]*')
+);
+
+INSERT INTO command_receipts_v36 (id, created_at, revision, updated_at, principal_id, command_id, scope_kind, project_id, operation, request_digest, status, operation_id, receipt_version, batch_id, run_id, planning_task_id, candidate_id, result_json, result_ref, error_code, error_message, error_details, issued_at, completed_at)
+SELECT id, created_at, revision, updated_at, principal_id, command_id, scope_kind, project_id, operation, request_digest, status, operation_id, receipt_version, batch_id, run_id, NULL, NULL, result_json, result_ref, error_code, error_message, error_details, issued_at, completed_at FROM command_receipts;
+
+DROP TABLE command_receipts;
+ALTER TABLE command_receipts_v36 RENAME TO command_receipts;
+CREATE UNIQUE INDEX command_receipts_principal_command_unique ON command_receipts (principal_id, command_id);
+CREATE UNIQUE INDEX command_receipts_result_ref_unique ON command_receipts (result_ref);
+CREATE UNIQUE INDEX command_receipts_operation_id_unique ON command_receipts (operation_id);
+CREATE INDEX command_receipts_principal_project_index ON command_receipts (principal_id, project_id);
+`;
+
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     version: 1,
@@ -3104,4 +3177,5 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 33, sql: MIGRATION_033_SQL, checksum: sha256Hex(MIGRATION_033_SQL) },
   { version: 34, sql: MIGRATION_034_SQL, checksum: sha256Hex(MIGRATION_034_SQL) },
   { version: 35, sql: MIGRATION_035_SQL, checksum: sha256Hex(MIGRATION_035_SQL) },
+  { version: 36, sql: MIGRATION_036_SQL, checksum: sha256Hex(MIGRATION_036_SQL) },
 ];

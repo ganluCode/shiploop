@@ -557,6 +557,8 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
         'command_receipts:(project_id,baseline_operation_id)->baseline_operations.(project_id,id)',
         'command_receipts:(project_id,batch_id)->execution_batches.(project_id,id)',
         'command_receipts:(project_id,batch_id,run_id)->runs.(project_id,batch_id,id)',
+        // P05-1 / F-003（迁移 v36）：planning.start accepted v7 回执的候选外键。
+        'command_receipts:(project_id,candidate_id)->planning_contexts.(project_id,candidate_id)',
         'baseline_authorizations:(project_id)->projects.(id)',
         'baseline_authorizations:(repository_binding_id)->repository_bindings.(id)',
         'baseline_authorizations:(project_id,repository_binding_id)->repository_bindings.(project_id,id)',

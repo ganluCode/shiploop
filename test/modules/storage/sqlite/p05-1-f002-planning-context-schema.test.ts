@@ -180,7 +180,7 @@ async function openFixture(v34 = false): Promise<Fixture> {
 
 describe('P05-1 F-002 migration v35 planning contexts', () => {
   it('[case:migration-appends-v35] v35 只追加规划上下文结构，历史迁移与校验摘要冻结', () => {
-    expect(SQLITE_MIGRATIONS).toHaveLength(35);
+    expect(SQLITE_MIGRATIONS).toHaveLength(36);
     expect(SQLITE_MIGRATIONS[33]?.version).toBe(34);
     expect(SQLITE_MIGRATIONS[34]?.version).toBe(35);
     // Frozen from the predecessor source, not recomputed from the new descriptor.
@@ -204,7 +204,7 @@ describe('P05-1 F-002 migration v35 planning contexts', () => {
       const session = openSqliteStorageSession({ path: join(sandbox.path, 'state.db') });
       try {
         const result = await migrateSqliteStorage(session);
-        expect(result.toVersion).toBe(35);
+        expect(result.toVersion).toBe(36);
         expect(
           session.database.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 'planning_contexts'").get(),
         ).toEqual({ n: 1 });
@@ -251,7 +251,7 @@ describe('P05-1 F-002 migration v35 planning contexts', () => {
       // 升级到 v35。
       const result = await migrateSqliteStorage(f.session);
       expect(result.fromVersion).toBe(34);
-      expect(result.toVersion).toBe(35);
+      expect(result.toVersion).toBe(36);
       // 既有数据逐字段可读；升级不自动创建规划上下文。
       expect(f.db.prepare('SELECT id, kind, config_source_key FROM tasks WHERE id = ?').get('task-p051-code-1'))
         .toEqual({ id: 'task-p051-code-1', kind: 'coding', config_source_key: 'defaultStrategy' });

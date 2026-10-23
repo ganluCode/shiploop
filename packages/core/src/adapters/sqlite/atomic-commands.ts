@@ -11,6 +11,7 @@ import { createSqliteCommandReceiptAccess } from './command-receipts.js';
 import { createSqliteExecutionAccess } from './execution-store.js';
 import { createSqliteGitOperationStore } from './git-operations.js';
 import { createSqlitePlanAccess } from './plan-store.js';
+import { createSqlitePlanningContextStore } from './planning-context-store.js';
 import type { SqliteStorageSession } from './session.js';
 import { createSqliteStateAccess } from './state-store.js';
 import type { SqliteStateStoreOptions } from './state-store.js';
@@ -25,6 +26,7 @@ export function createSqliteAtomicCommandStore(
   const plan = createSqlitePlanAccess(session, options);
   const executions = createSqliteExecutionAccess(session, options);
   const gitOperations = createSqliteGitOperationStore(session, options);
+  const planningContexts = createSqlitePlanningContextStore(session, options);
   return {
     findReceipt: receipts.findReceiptByCommandId,
     // P03-9 / F-003：停止 operation 的持久状态/证据引用读取（不进入写事务）。
@@ -187,6 +189,7 @@ export function createSqliteAtomicCommandStore(
           getExecutionBatch: guarded(executions.getExecutionBatchInTransaction),
           listExecutionRunsForWorkKey: guarded(executions.listExecutionRunsForWorkKeyInTransaction),
           getActiveExecutionRun: guarded(executions.getActiveExecutionRunInTransaction),
+          getActiveProjectExecutionRun: guarded(executions.getActiveProjectExecutionRunInTransaction),
           getActivePhaseExecutionBatch: guarded(executions.getActivePhaseExecutionBatchInTransaction),
           recordExecutionRunDispatch: guarded(executions.recordExecutionRunDispatchInTransaction),
           insertExecutionRun: guarded(executions.insertExecutionRunInTransaction),
@@ -215,6 +218,10 @@ export function createSqliteAtomicCommandStore(
           getTaskAttemptReservation: guarded(executions.getTaskAttemptReservationInTransaction),
           getTaskExecutionCounters: guarded(executions.getTaskExecutionCountersInTransaction),
           getExecutionRun: guarded(executions.getExecutionRunInTransaction),
+          // P05-1 / F-003：规划上下文原语（创建与活动读取；同一 BEGIN IMMEDIATE
+          // 内原子生效）。
+          createPlanningContextInTransaction: guarded(planningContexts.createPlanningContextInTransaction),
+          getActivePlanningContextForFeature: guarded(planningContexts.getActivePlanningContextForFeatureInTransaction),
           // P03-3 / F-007：Runtime 启动额度预占原语（迁移 v12；同一 BEGIN IMMEDIATE
           // 内原子生效；SDK 启动前的受信边界，不经命令路由暴露）。
           reserveRuntimeStart: guarded(executions.reserveRuntimeStartInTransaction),

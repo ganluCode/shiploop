@@ -354,6 +354,12 @@ export interface SqliteExecutionAccess {
   ): readonly RunRecord[];
   /** 同 Feature 当前活动 Run（迁移 v9 条件唯一索引同源活动集；无则 null）。 */
   getActiveExecutionRunInTransaction(projectId: string, featureId: string): RunRecord | null;
+  /**
+   * P05-1 / F-003：同项目任意活动 Run（规划/编码互斥的项目 Work 门控读取；
+   * 迁移 v9 活动集同源，含 queued/running/pausing/paused/cancelling/interrupted
+   * ——未确认停止不是可绕过的终态；无则 null）。
+   */
+  getActiveProjectExecutionRunInTransaction(projectId: string): RunRecord | null;
   /** 同 Phase 当前活动 Batch（迁移 v9 条件唯一索引同源活动集；无则 null）。 */
   getActivePhaseExecutionBatchInTransaction(projectId: string, phaseId: string): ExecutionBatchRecord | null;
   /** 派发计数原子递增（runs_created+1/revision+1/updated_at；仅非终态 Batch 命中）。 */
@@ -945,6 +951,19 @@ export function createSqliteExecutionAccess(
         `${SELECT_RUN} WHERE project_id = ? AND feature_id = ? AND status IN (${ACTIVE_PLACEHOLDERS}) ORDER BY id LIMIT 1`,
       )
       .get(projectId, featureId, ...activeStatuses) as RunSqlRow | undefined;
+    return row === undefined ? null : runFromRow(row, operation);
+  }
+
+  function getActiveProjectExecutionRunInTransaction(projectId: string): RunRecord | null {
+    const operation = 'ExecutionStore.getActiveProjectExecutionRun';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const activeStatuses = EXECUTION_ACTIVE_STATUSES as readonly string[];
+    const row = session.database
+      .prepare<unknown[], RunSqlRow>(
+        `${SELECT_RUN} WHERE project_id = ? AND status IN (${ACTIVE_PLACEHOLDERS}) ORDER BY id LIMIT 1`,
+      )
+      .get(projectId, ...activeStatuses) as RunSqlRow | undefined;
     return row === undefined ? null : runFromRow(row, operation);
   }
 
@@ -3281,6 +3300,7 @@ export function createSqliteExecutionAccess(
     getExecutionBatchInTransaction,
     listExecutionRunsForWorkKeyInTransaction,
     getActiveExecutionRunInTransaction,
+    getActiveProjectExecutionRunInTransaction,
     getActivePhaseExecutionBatchInTransaction,
     recordExecutionRunDispatchInTransaction,
     appendExecutionEventInTransaction,

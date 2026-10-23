@@ -90,6 +90,11 @@ export interface SqlitePlanningContextStore {
   getPlanningContextByCandidate(projectId: unknown, candidateId: unknown): PlanningContextRecord | null;
   /** 按规划 Run 读取（一致读；不存在返回 null）。 */
   getPlanningContextByRun(projectId: unknown, runId: unknown): PlanningContextRecord | null;
+  /**
+   * P05-1 / F-003：同 Feature 活动规划上下文（open/candidate_published；
+   * 写事务内读取——规划启动命令重核重复规划；无则 null）。
+   */
+  getActivePlanningContextForFeatureInTransaction(projectId: unknown, featureId: unknown): PlanningContextRecord | null;
   /** 绑定候选 Artifact/摘要（open → candidate_published；同身份重放复用）。 */
   publishPlanningCandidateInTransaction(input: unknown): PlanningCandidatePublication;
   /** 记录人工决策（candidate_published → applied/rejected；写一次）。 */
@@ -373,6 +378,20 @@ export function createSqlitePlanningContextStore(
 
   /* ------------------ 读取（一致读；损坏行 fail-closed） ------------------ */
 
+  function getActivePlanningContextForFeatureInTransaction(projectId: unknown, featureId: unknown): PlanningContextRecord | null {
+    const operation = 'PlanningContextStore.getActiveForFeature';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const validProjectId = validateStableId(projectId, { operation, entity: { type: 'planning_context' } }, 'projectId');
+    const validFeatureId = validateStableId(featureId, { operation, entity: { type: 'feature' } }, 'featureId');
+    const row = session.database
+      .prepare<[string, string], PlanningContextSqlRow>(
+        `${SELECT_PLANNING_CONTEXT} WHERE project_id = ? AND feature_id = ? AND status IN ('open', 'candidate_published') ORDER BY id LIMIT 1`,
+      )
+      .get(validProjectId, validFeatureId);
+    return row === undefined ? null : contextFromRow(row, operation);
+  }
+
   function getPlanningContextByCandidate(projectId: unknown, candidateId: unknown): PlanningContextRecord | null {
     const operation = 'PlanningContextStore.getByCandidate';
     assertOpen(operation);
@@ -532,6 +551,7 @@ export function createSqlitePlanningContextStore(
     createPlanningContextInTransaction,
     getPlanningContextByCandidate,
     getPlanningContextByRun,
+    getActivePlanningContextForFeatureInTransaction,
     publishPlanningCandidateInTransaction,
     decidePlanningCandidateInTransaction,
   };

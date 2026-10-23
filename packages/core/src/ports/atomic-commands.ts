@@ -252,6 +252,11 @@ export interface CommandTransaction {
   ): readonly RunRecord[];
   /** 同 Feature 当前活动 Run（条件唯一索引同源活动集；无则 null）。 */
   getActiveExecutionRun(projectId: string, featureId: string): RunRecord | null;
+  /**
+   * P05-1 / F-003：同项目任意活动 Run（规划/编码互斥的项目 Work 门控读取；
+   * 活动集含 paused/interrupted——未确认停止不是可绕过的终态；无则 null）。
+   */
+  getActiveProjectExecutionRun(projectId: string): RunRecord | null;
   /** 同 Phase 当前活动 Batch（条件唯一索引同源活动集；无则 null）。 */
   getActivePhaseExecutionBatch(projectId: string, phaseId: string): ExecutionBatchRecord | null;
   /** 派发计数原子递增（runs_created+1；仅非终态 Batch 命中，终态 conflict）。 */
@@ -362,6 +367,17 @@ export interface CommandTransaction {
   ): import('./execution-store.js').TaskExecutionCountersRecord;
   /** 读取目标 Run（含累计计数与冻结快照；缺失 not_found、跨项目 ownership）。 */
   getExecutionRun(projectId: string, runId: string): RunRecord;
+  /* ---------------------------------------------------------------- *
+   * P05-1 / F-003 规划上下文事务原语（同一 BEGIN IMMEDIATE 内；规划启动
+   * 命令在自身事务内组合创建原语与活动读取）
+   * ---------------------------------------------------------------- */
+  /** 创建规划上下文与 planning Task（F-002 存储原语；同一写事务内原子生效）。 */
+  createPlanningContextInTransaction(input: unknown): import('./planning-context.js').PlanningContextRecord;
+  /** 同 Feature 活动规划上下文（open/candidate_published；无则 null）。 */
+  getActivePlanningContextForFeature(
+    projectId: string,
+    featureId: string,
+  ): import('./planning-context.js').PlanningContextRecord | null;
   /* ---------------------------------------------------------------- *
    * P03-3 / F-007 Runtime 启动额度预占（迁移 v12；受信 Core 内部原语，
    * 不经命令面暴露；SDK 启动前的受信边界）
