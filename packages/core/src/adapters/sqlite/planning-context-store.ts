@@ -44,6 +44,16 @@ import type {
   PlanningContextRecord,
   PlanningContextStatus,
 } from '../../ports/planning-context.js';
+import { validatePlanningStrategyCopy } from '../../ports/planning-context.js';
+import { validatePlanningRequestBasis } from '../../ports/planning-input-prepare.js';
+import type {
+  PlanningFeatureView,
+  PlanningInputPreparationView,
+  PlanningRunView,
+  PlanningTaskView,
+} from '../../ports/planning-input-prepare.js';
+import { validatePlanArtifactRefs } from '../../ports/feature-plan.js';
+import { PLANNING_CONTEXT_REQUIREMENT_REFS_MAX_COUNT } from '../../ports/planning-context.js';
 import { validateStableId } from '../../ports/validation.js';
 
 /** 发布结果：published=首次绑定；reused=同身份重放复用原记录（零新增）。 */
@@ -95,6 +105,12 @@ export interface SqlitePlanningContextStore {
    * 写事务内读取——规划启动命令重核重复规划；无则 null）。
    */
   getActivePlanningContextForFeatureInTransaction(projectId: unknown, featureId: unknown): PlanningContextRecord | null;
+  /**
+   * P05-1 / F-004：规划输入准备一致读视图（同一 DEFERRED 读事务内取得规划
+   * 上下文 + planning Task 业务字段 + Feature 当前身份 + 规划 Run 冻结请求
+   * 快照；无则 undefined；损坏行 corrupt fail-closed）。
+   */
+  readPlanningInputPreparationView(projectId: string, runId: string): PlanningInputPreparationView | undefined;
   /** 绑定候选 Artifact/摘要（open → candidate_published；同身份重放复用）。 */
   publishPlanningCandidateInTransaction(input: unknown): PlanningCandidatePublication;
   /** 记录人工决策（candidate_published → applied/rejected；写一次）。 */
@@ -413,6 +429,130 @@ export function createSqlitePlanningContextStore(
     });
   }
 
+  /* ------------------ P05-1 / F-004 规划输入准备一致读视图 ------------------ */
+
+  /**
+   * 规划输入准备视图（单一 DEFERRED 读事务内取得全部成分；并发决策/应用/
+   * 计划变化只能观察到完整前后状态）。目标 Run 无规划上下文返回 undefined；
+   * 跨项目 ownership；损坏行/非法快照 corrupt fail-closed。无业务计划
+   * （plan_digest NULL）也是完整视图。
+   */
+  function readPlanningInputPreparationView(projectId: string, runId: string): PlanningInputPreparationView | undefined {
+    const operation = 'PlanningContextStore.readPlanningInputPreparationView';
+    assertOpen(operation);
+    const validProjectId = validateStableId(projectId, { operation, entity: { type: 'planning_context' } }, 'projectId');
+    const validRunId = validateStableId(runId, { operation, entity: { type: 'run' } }, 'runId');
+    return consistentRead(operation, () => {
+      const row = session.database
+        .prepare<[string, string], PlanningContextSqlRow>(`${SELECT_PLANNING_CONTEXT} WHERE project_id = ? AND run_id = ?`)
+        .get(validProjectId, validRunId);
+      if (row === undefined) {
+        return undefined;
+      }
+      const context = contextFromRow(row, operation);
+
+      // planning Task 完整业务字段（同一读事务；与上下文绑定校验）。
+      const taskRow = session.database
+        .prepare<[string, string], {
+          id: string; kind: string; status: string; title: string; description: string | null;
+          acceptance: string; requirements_refs: string; execution_config: string;
+          config_source: string; config_source_key: string | null;
+        }>(
+          'SELECT id, kind, status, title, description, acceptance, requirements_refs, execution_config, config_source, config_source_key ' +
+            'FROM tasks WHERE id = ? AND feature_id = ?',
+        )
+        .get(row.planning_task_id, row.feature_id);
+      if (taskRow === undefined) {
+        throw corrupt(operation, { type: 'planning_context', projectId: row.project_id, id: row.id }, '绑定的 planning Task 缺失（绑定漂移）', 'planning_task_missing');
+      }
+      if (taskRow.kind !== PLANNING_TASK_KIND) {
+        throw corrupt(operation, { type: 'planning_context', projectId: row.project_id, id: row.id }, `绑定 Task 的 kind 不是 ${PLANNING_TASK_KIND}`, 'planning_task_kind_mismatch');
+      }
+      const taskEntity: StorageEntityRef = { type: 'task', projectId: row.project_id, id: taskRow.id };
+      const taskAcceptanceValue = parseJsonColumn(taskRow.acceptance, operation, 'invalid_acceptance_json') as { criteria?: unknown };
+      if (
+        taskAcceptanceValue === null || typeof taskAcceptanceValue !== 'object' ||
+        !Array.isArray(taskAcceptanceValue.criteria) ||
+        taskAcceptanceValue.criteria.some((item) => typeof item !== 'string' || item.length === 0)
+      ) {
+        throw corrupt(operation, taskEntity, 'planning Task 验收持久 JSON 损坏', 'invalid_acceptance_json');
+      }
+      const taskRefsValue = parseJsonColumn(taskRow.requirements_refs, operation, 'invalid_requirements_refs_json');
+      const taskRequirementRefs = validatePlanArtifactRefs(
+        taskRefsValue,
+        { operation, entity: taskEntity },
+        'requirementsRefs',
+        PLANNING_CONTEXT_REQUIREMENT_REFS_MAX_COUNT,
+      );
+      const strategyCopy = validatePlanningStrategyCopy(
+        parseJsonColumn(taskRow.execution_config, operation, 'invalid_execution_config_json'),
+        operation,
+      );
+      const planningTask: PlanningTaskView = {
+        id: taskRow.id,
+        kind: PLANNING_TASK_KIND,
+        status: taskRow.status,
+        title: taskRow.title,
+        description: taskRow.description,
+        acceptance: { criteria: [...(taskAcceptanceValue.criteria as readonly string[])] },
+        requirementsRefs: taskRequirementRefs,
+        executionConfig: strategyCopy,
+        configSource: taskRow.config_source,
+        configSourceKey: taskRow.config_source_key,
+      };
+
+      // Feature 当前身份（同一读事务；plan_digest NULL 是首次草稿的如实记录）。
+      const featureRow = session.database
+        .prepare<[string], { id: string; revision: number; plan_digest: string | null; plan_status: string; status: string }>(
+          'SELECT id, revision, plan_digest, plan_status, status FROM features WHERE id = ?',
+        )
+        .get(row.feature_id);
+      if (featureRow === undefined) {
+        throw corrupt(operation, { type: 'planning_context', projectId: row.project_id, id: row.id }, '规划上下文绑定的 Feature 缺失', 'feature_missing');
+      }
+      const feature: PlanningFeatureView = {
+        id: featureRow.id,
+        revision: featureRow.revision,
+        planDigest: featureRow.plan_digest,
+        planStatus: featureRow.plan_status,
+        status: featureRow.status,
+      };
+
+      // 规划 Run 冻结身份（inputSnapshot 读取侧重校验；损坏 corrupt）。
+      const runRow = session.database
+        .prepare<[string], { id: string; purpose: string; status: string; input_snapshot: string }>(
+          'SELECT id, purpose, status, input_snapshot FROM runs WHERE id = ?',
+        )
+        .get(row.run_id);
+      if (runRow === undefined) {
+        throw corrupt(operation, { type: 'planning_context', projectId: row.project_id, id: row.id }, '规划上下文绑定的 Run 缺失', 'run_missing');
+      }
+      if (runRow.purpose !== PLANNING_RUN_PURPOSE) {
+        throw corrupt(operation, { type: 'run', projectId: row.project_id, id: runRow.id }, '绑定 Run 的 purpose 不是 plan', 'run_purpose_mismatch');
+      }
+      let basis;
+      try {
+        basis = validatePlanningRequestBasis(
+          parseJsonColumn(runRow.input_snapshot, operation, 'invalid_input_snapshot_json'),
+          operation,
+        );
+      } catch (error) {
+        if (error instanceof StorageError && error.kind === 'validation') {
+          throw corrupt(operation, { type: 'run', projectId: row.project_id, id: runRow.id }, '规划 Run 冻结请求快照损坏（读取侧校验失败）', 'invalid_input_snapshot', error);
+        }
+        throw error;
+      }
+      const run: PlanningRunView = {
+        id: runRow.id,
+        purpose: PLANNING_RUN_PURPOSE,
+        status: runRow.status,
+        inputSnapshot: basis,
+      };
+
+      return { context, planningTask, feature, run };
+    });
+  }
+
   /* ------------------ 发布候选绑定（open → candidate_published） ------------------ */
 
   function publishPlanningCandidateInTransaction(input: unknown): PlanningCandidatePublication {
@@ -552,6 +692,7 @@ export function createSqlitePlanningContextStore(
     getPlanningContextByCandidate,
     getPlanningContextByRun,
     getActivePlanningContextForFeatureInTransaction,
+    readPlanningInputPreparationView,
     publishPlanningCandidateInTransaction,
     decidePlanningCandidateInTransaction,
   };

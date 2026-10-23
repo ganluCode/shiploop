@@ -123,6 +123,10 @@ import { createExecutionStartService } from '../application/execution-start.js';
 import type { ExecutionStartPort } from '../ports/execution-start.js';
 import { createPlanningStartService } from '../application/planning-start.js';
 import type { PlanningStartPort } from '../ports/planning-start.js';
+import { createPlanningInputPrepareService } from '../application/planning-input-prepare.js';
+import type { PlanningInputPreparePort } from '../application/planning-input-prepare.js';
+import { DEFAULT_PLANNING_INPUT_PREPARE_LIMITS } from '../application/planning-input-prepare.js';
+import { createSqlitePlanningContextStore } from './sqlite/planning-context-store.js';
 import { createExecutionResumeService } from '../application/execution-resume.js';
 import type { ExecutionResumePort } from '../ports/execution-resume.js';
 import { createFinalizationRetryPlanner } from '../application/finalization-retry.js';
@@ -279,6 +283,12 @@ export interface CoreApplication {
   readonly executionStart: ExecutionStartPort;
   /** P05-1 / F-003：一次性规划启动（事务外请求/预算校验 + 事务内原子提交；不启动模型）。 */
   readonly planningStart: PlanningStartPort;
+  /**
+   * P05-1 / F-004：规划输入准备（事务外视图捕获/采集/组装/发布 + 启动前
+   * 事务外重核；无业务计划也能生成完整规划输入；供 planning Run 派发/
+   * 认领（F-005+）消费，不创建执行实体、不启动 Runtime）。
+   */
+  readonly planningInputPrepare: PlanningInputPreparePort;
   /** P03-9 / F-008：显式工作流 resume（重新授权/现场核验/解除暂停；不启动 Runtime）。 */
   readonly executionResume: ExecutionResumePort;
   /** P03-9 / F-010：finalization-only retryFinal（新建受限 Run，不启动 Runtime）。 */
@@ -921,6 +931,52 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       });
       return { worktreeId: managed.id, headCommit: inspection.repository.headCommit, codeDigest: inspection.codeDigest };
     };
+    // P05-1 / F-004：规划输入准备服务（复用输入采集/Artifact 发布/复验/权限面
+    // 与受管工作区现场读取；代码基线 = 既有 readReworkScene 同一受管 worktree
+    // 现场身份，只读，不改变开发仓库分支/worktree）。全程写事务外；供
+    // planning Run 派发/认领（F-005+）在提交或启动前调用。
+    const planningInputPrepare: PlanningInputPreparePort = createPlanningInputPrepareService({
+      views: createSqlitePlanningContextStore(session, nowUtcMs === undefined ? {} : { nowUtcMs }),
+      inputs: createExecutionInputService({
+        artifacts: artifactStore,
+        publisher: createArtifactPublisher({
+          artifacts: artifactStore,
+          files: artifactFileStore,
+          limits: { maxSizeBytes: 16_000_000, timeoutMs: 60_000 },
+        }),
+        verifier: createArtifactVerifier({
+          artifacts: artifactStore,
+          files: artifactFileStore,
+          limits: { maxReadBytes: 16_000_000 },
+        }),
+        sources: createInputSourceFileReader({
+          roots: { ...(object.inputSourceRoots as Record<string, string> | undefined) },
+        }),
+        limits: {
+          maxItems: 64,
+          maxItemBytes: 4_000_000,
+          maxTotalBytes: 16_000_000,
+          captureTimeoutMs: 60_000,
+          readTimeoutMs: 60_000,
+        },
+        ...(nowUtcMs === undefined ? {} : { nowMs: nowUtcMs }),
+      }),
+      artifacts: artifactStore,
+      publisher: createArtifactPublisher({
+        artifacts: artifactStore,
+        files: artifactFileStore,
+        limits: { maxSizeBytes: 2_000_000, timeoutMs: 60_000 },
+      }),
+      verifier: createArtifactVerifier({
+        artifacts: artifactStore,
+        files: artifactFileStore,
+        limits: { maxReadBytes: 2_000_000 },
+      }),
+      permissions: TRUSTED_PROJECT_PERMISSIONS_READER,
+      readCodeBaseline: (input) => readReworkScene(input.projectId, input.featureId),
+      limits: DEFAULT_PLANNING_INPUT_PREPARE_LIMITS,
+      ...(nowUtcMs === undefined ? {} : { nowMs: nowUtcMs }),
+    });
     const workRecoveryContinuation = createWorkRecoveryContinuationService({
       attempts: createSqliteAttemptAccess(session), artifacts: artifactStore,
       verifier: createArtifactVerifier({ artifacts: artifactStore, files: artifactFileStore, limits: { maxReadBytes: 16_000_000 } }),
@@ -1158,6 +1214,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       executionPreview,
       executionStart,
       planningStart,
+      planningInputPrepare,
       executionResume,
       finalizationRetry,
       runtimeRecovery,
