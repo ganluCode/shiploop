@@ -26,4 +26,24 @@ RED 已记录：`test-2c79aivr.log` 为缺少 Phase 输入支持；`test-nhts77r
 
 类型检查的唯一剩余错误为 `test/modules/planning/p05-1-f014-planning-e2e.test.ts:248`：`TS2554: Expected 2 arguments, but got 4`。前序 F-005 的 progress 已记录同一错误，文件未在本 Task 修改；不能将类型检查标为通过。
 
-较广受影响回归交 Nezha，范围以 `test/index/phases/P05/features/P05-3/tasks/F-006.json` 为准，所有文件显式 `all:true`。未本地执行的授权/路由/回执存储/控制恢复/F-004/F-005 回归保持 `not_run`；全仓、Phase、构建和真实模型均 `not_run`。
+较广受影响回归交 Nezha，范围以 `test/index/phases/P05/features/P05-3/tasks/F-006.json` 为准，所有文件显式 `all:true`。全仓、Phase、完整构建和真实模型均 `not_run`。
+
+## Attempt 2：原生 Host 锁产物准备与失败复验
+
+本轮受测代码为 `e24028af3c6e655f204bbbe28f32def5448fd05d`，invocation 为 `51e4dd3c4c8c45c0885a8ccfe63880b5`。上一轮独立验证 `84ca984d1feb46a89f4f229783ed5744` 的 12 文件共 277 passed / 9 failed；9 个失败全部在 `loadNative`，当前 worktree 缺少 `packages/host/dist/native/writer-lock.node`。记录 `human_blocked=false`。
+
+真实 `startHost` 测试前，在 macOS、锁定 Node 版本及本机 headers/clang 可用的环境，执行仓库已有准备命令：
+
+```bash
+node scripts/build-host-lock.ts
+```
+
+该命令只构建 Host 写入锁原生产物，不触发完整构建或测试。产物属于忽略的 `dist/`，不提交二进制；新 worktree 需先准备。保持原生锁缺失时的拒绝行为，不提供假锁或静默回退。
+
+本轮通过分配的日志助手执行准备命令，exit 0，日志 `test-zoechkl0.log`；随后复验独立验证指出的三个失败文件：
+
+- `test/modules/recovery/p03-9-f013-control-recovery-query.test.ts`
+- `test/modules/host/control/p03-9-f014-host-control-wiring.test.ts`
+- `test/modules/host/host-app-routes.test.ts`
+
+结果 3 文件 / 37 passed / 0 failed，exit 0，耗时约 16.6 秒，日志 `test-2d0v6ir3.log`。已核验产物存在且导出 `tryLock`。未修改业务实现或测试断言；12 文件选择索引保留，独立 Nezha 仍负责重新验收其合集。上一轮失败证据与类型检查已知错误保留，本地局部复验不改写独立验收状态。
