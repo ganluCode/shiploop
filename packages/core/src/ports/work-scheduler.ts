@@ -1,6 +1,7 @@
 import type { TaskClaimResult, TaskClaimStore, TaskClaimReceipt } from './task-claim.js';
 import type { TaskDagReason, TaskDagResult } from './task-dag.js';
-import type { RunRecord } from './execution-store.js';
+import type { FeatureDagEvaluation, FeatureDagReason } from './feature-dag.js';
+import type { ExecutionBatchRecord, RunRecord } from './execution-store.js';
 export interface SchedulerRunRef {
   readonly projectId: string;
   readonly runId: string;
@@ -70,6 +71,9 @@ export interface SchedulerStore {
   isFinalVerificationHandoffClaimed(projectId: string, runId: string): boolean;
   /** Records a successfully delivered handoff exactly once. */
   recordFinalVerificationHandoff(projectId: string, runId: string): boolean;
+  /** Reads the immutable Batch snapshot inside the scheduler's read path. */
+  readonly readBatch?: (projectId: string, batchId: string) => ExecutionBatchRecord;
+  /** Reads the current Run from the same persistent scheduler source. */
   readRun(projectId: string, runId: string): RunRecord;
 }
 
@@ -118,7 +122,7 @@ export interface SchedulerPlanningPorts {
 export interface SchedulerRunResult {
   readonly projectId: string;
   readonly runId: string;
-  readonly reason: TaskDagReason | 'scheduler_capability_missing' | 'claim_rejected' | 'handoff_delivery_failed';
+  readonly reason: TaskDagReason | FeatureDagReason | 'scheduler_capability_missing' | 'claim_rejected' | 'handoff_delivery_failed' | 'scheduler_exception';
   readonly capabilityGaps: readonly string[];
   readonly claimed: boolean;
   readonly handoff: SchedulerHandoff | null;
@@ -138,6 +142,10 @@ export interface SchedulerTimers {
 
 export interface WorkSchedulerOptions {
   readonly store: SchedulerStore;
+  /** Reads the outer Feature DAG before any input/workspace preparation. */
+  readonly featureDag?: { evaluate(projectId: string, phaseId: string): FeatureDagEvaluation };
+  /** Returns the approved Feature capacity for this Run's Batch. Defaults to one. */
+  readonly featureConcurrency?: (run: RunRecord) => number;
   readonly dag: { evaluate(projectId: unknown, runId: unknown): TaskDagResult };
   readonly claims?: TaskClaimStore;
   /** Prepares the opaque claim input outside the SQLite claim transaction. */

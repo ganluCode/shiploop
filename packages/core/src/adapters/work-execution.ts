@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { CoreApplication } from './composition.js';
 import type { SqliteStorageSession } from './sqlite/session.js';
 import { createSqliteSchedulerStore } from './sqlite/scheduler-store.js';
+import { createSqliteFeatureDagStore } from './sqlite/feature-dag-store.js';
 import { closeSucceededPlanningBatchInTransaction } from './sqlite/planning-batch-settlement.js';
 import { createSqliteTaskDagStore } from './sqlite/task-dag-store.js';
 import { createSqliteAttemptAccess } from './sqlite/attempt-store.js';
@@ -29,6 +30,7 @@ import { createSqlitePlanningClaimStore } from './sqlite/planning-claim-store.js
 import { createSqlitePlanningContextStore } from './sqlite/planning-context-store.js';
 import { transactSqliteConsistentRead } from './sqlite/state-store.js';
 import { evaluateTaskDag } from '../application/task-dag.js';
+import { createFeatureDagService } from '../application/feature-dag.js';
 import { validateTaskExecutionConfig } from '../application/task-strategy-selection.js';
 import { DEFAULT_TOOL_TIME_LIMIT_MS, DEFAULT_WORK_TIME_LIMIT_MS, resolveExecutionDeadlines } from '../ports/execution-time-limits.js';
 import { WORK_TIMEOUT_MS_MIN } from '../ports/settings-schema.js';
@@ -128,6 +130,7 @@ export function assembleWorkExecution(options: {
   const attempts = createSqliteAttemptAccess(session);
   const verification = createSqliteVerificationStore(session, options.nowUtcMs === undefined ? {} : { nowUtcMs: options.nowUtcMs });
   const dag = createSqliteTaskDagStore(session);
+  const featureDag = createFeatureDagService({ store: createSqliteFeatureDagStore(session) });
   const store = createSqliteSchedulerStore(session, { nowUtcMs: now });
   const sessions = createSqliteWorkSessionStore(session, { nowUtcMs: now });
   const publisher = createArtifactPublisher({ artifacts: app.artifactStore, files: app.artifactFileStore,
@@ -593,7 +596,7 @@ export function assembleWorkExecution(options: {
     }
   }
 
-  const scheduler = createWorkScheduler({ store, dag: { evaluate: (projectId, runId) => evaluateTaskDag(dag.readTaskDagView(projectId, runId), now()) },
+  const scheduler = createWorkScheduler({ store, featureDag, dag: { evaluate: (projectId, runId) => evaluateTaskDag(dag.readTaskDagView(projectId, runId), now()) },
     claims: app.taskClaims,
     admission: { check: ref => finalizationAdmission(ref.projectId) },
     beforeRun: ref => { settleRun(ref.projectId, ref.runId); },

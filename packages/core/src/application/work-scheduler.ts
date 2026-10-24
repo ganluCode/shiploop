@@ -12,8 +12,10 @@ import type {
   WorkSchedulerOptions,
 } from '../ports/work-scheduler.js';
 import type { TaskClaimResult } from '../ports/task-claim.js';
+import type { RunRecord } from '../ports/execution-store.js';
 import { isFinalizationOnlyRun } from '../ports/finalization-execution.js';
 import { PLANNING_RUN_PURPOSE } from '../ports/planning-candidates.js';
+import { resolveApprovedBatchConcurrency } from '../ports/feature-dispatch.js';
 
 const DEFAULT_INTERVAL_MS = 1_000;
 const DEFAULT_PAGE_SIZE = 32;
@@ -68,6 +70,35 @@ export function createWorkScheduler(options: WorkSchedulerOptions) {
     if (options.prepareClaim === undefined) gaps.push('workspace_input_preparation');
     if (options.claims === undefined || options.consumeClaim === undefined) gaps.push('committed_claim_consumer');
     return gaps;
+  }
+
+  function featureAdmission(run: SchedulerRunRef & { readonly batchId?: string; readonly featureId?: string }): SchedulerRunResult | null {
+    if (options.featureDag === undefined) return null;
+    if (options.store.readBatch === undefined || run.batchId === undefined || run.featureId === undefined) {
+      const result: SchedulerRunResult = { projectId: run.projectId, runId: run.runId,
+        reason: 'scheduler_capability_missing', capabilityGaps: ['feature_dag_admission'], claimed: false, handoff: null };
+      options.store.recordRunReason(run.projectId, run.runId, result.reason);
+      diagnostics.set(key(run.projectId, run.runId), result);
+      return result;
+    }
+    try {
+      const batch = options.store.readBatch(run.projectId, run.batchId);
+      const evaluation = options.featureDag.evaluate(run.projectId, batch.phaseId);
+      const readiness = evaluation.readiness.find(item => item.featureId === run.featureId);
+      if (readiness?.ready === true) return null;
+      const reason = readiness?.reason ?? 'invalid_graph';
+      const result: SchedulerRunResult = { projectId: run.projectId, runId: run.runId,
+        reason, capabilityGaps: [], claimed: false, handoff: null };
+      options.store.recordRunReason(run.projectId, run.runId, reason);
+      diagnostics.set(key(run.projectId, run.runId), result);
+      return result;
+    } catch {
+      const result: SchedulerRunResult = { projectId: run.projectId, runId: run.runId,
+        reason: 'scheduler_capability_missing', capabilityGaps: ['feature_dag_admission'], claimed: false, handoff: null };
+      options.store.recordRunReason(run.projectId, run.runId, result.reason);
+      diagnostics.set(key(run.projectId, run.runId), result);
+      return result;
+    }
   }
 
   function scheduleTimer(): void {
@@ -152,6 +183,8 @@ export function createWorkScheduler(options: WorkSchedulerOptions) {
         return result;
       }
     }
+    const featureBlocked = featureAdmission({ projectId, runId, batchId: run.batchId, featureId: run.featureId });
+    if (featureBlocked !== null) return featureBlocked;
     const dag = options.dag.evaluate(projectId, runId);
     const candidate: SchedulerCandidate = { run, dag };
     if (dag.reason === 'all_passed') {
@@ -293,9 +326,16 @@ export function createWorkScheduler(options: WorkSchedulerOptions) {
     }
   }
 
+  function concurrencyFor(run: RunRecord): number {
+    const configured = options.featureConcurrency === undefined
+      ? (options.store.readBatch === undefined ? 1 : resolveApprovedBatchConcurrency(options.store.readBatch(run.projectId, run.batchId).configSnapshot))
+      : options.featureConcurrency(run);
+    return validateBound('featureConcurrency', configured, 1, 16);
+  }
+
   async function runScan(): Promise<SchedulerScanResult> {
     if (closed) return { closed: true, pages: 0, bounded: false, runs: [] };
-    const runs: SchedulerRunResult[] = [];
+    const refs: SchedulerRunRef[] = [];
     const processed = new Set<string>();
     let cursor: SchedulerScanCursor | null = compensationCursor;
     let pages = 0;
@@ -309,15 +349,58 @@ export function createWorkScheduler(options: WorkSchedulerOptions) {
         const runKey = key(ref.projectId, ref.runId);
         if (processed.has(runKey)) continue;
         processed.add(runKey);
-        runs.push(await processRun(ref.projectId, ref.runId));
+        refs.push(ref);
       }
       // `hasMore` 必须同时具备稳定游标；否则不重复读取同一页。
       hasMore = page.hasMore && (page.nextCursor ?? null) !== null;
       cursor = page.nextCursor ?? null;
       compensationCursor = hasMore ? cursor : null;
     }
-    if (closed) return { closed: true, pages, bounded: false, runs };
-    return { closed: false, pages, bounded: hasMore, runs };
+    if (closed) return { closed: true, pages, bounded: false, runs: [] };
+
+    // 每个 Batch 使用自己的批准容量；同一 Feature 仍只有一个活动 Run，因而
+    // worker 只会并发不同 Feature。claimTask 仍是最终 SQLite 原子准入，worker
+    // 并发只是让已批准的不同 Feature 能在同一扫描中越过屏障。
+    const results = new Array<SchedulerRunResult | undefined>(refs.length);
+    const groups = new Map<string, Array<{ readonly index: number; readonly ref: SchedulerRunRef; readonly run: RunRecord }>>();
+    refs.forEach((ref, index) => {
+      const run = options.store.readRun(ref.projectId, ref.runId);
+      const groupKey = `${run.projectId}\u0000${run.batchId}`;
+      const group = groups.get(groupKey) ?? [];
+      group.push({ index, ref, run });
+      groups.set(groupKey, group);
+    });
+    await Promise.all([...groups.values()].map(async group => {
+      let limit: number;
+      try {
+        limit = Math.min(concurrencyFor(group[0]!.run), group.length);
+      } catch {
+        for (const item of group) {
+          options.store.recordRunReason(item.ref.projectId, item.ref.runId, 'scheduler_exception');
+          results[item.index] = { projectId: item.ref.projectId, runId: item.ref.runId,
+            reason: 'scheduler_exception', capabilityGaps: [], claimed: false, handoff: null };
+        }
+        return;
+      }
+      let next = 0;
+      const worker = async (): Promise<void> => {
+        while (true) {
+          const item = group[next++];
+          if (item === undefined) return;
+          try {
+            results[item.index] = await processRun(item.ref.projectId, item.ref.runId);
+          } catch {
+            // 扫描异常只留下有界诊断；Run/Attempt/槽位事实由已有事务保留，
+            // 不在调度器异常路径清理或重置任何持久状态。
+            options.store.recordRunReason(item.ref.projectId, item.ref.runId, 'scheduler_exception');
+            results[item.index] = { projectId: item.ref.projectId, runId: item.ref.runId,
+              reason: 'scheduler_exception', capabilityGaps: [], claimed: false, handoff: null };
+          }
+        }
+      };
+      await Promise.all(Array.from({ length: limit }, () => worker()));
+    }));
+    return { closed: false, pages, bounded: hasMore, runs: results.filter((result): result is SchedulerRunResult => result !== undefined) };
   }
 
   function scan(): Promise<SchedulerScanResult> {

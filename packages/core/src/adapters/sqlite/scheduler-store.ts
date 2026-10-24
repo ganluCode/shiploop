@@ -267,6 +267,12 @@ export function createSqliteSchedulerStore(session: SqliteStorageSession, option
         return changed.changes === 1;
       });
     },
+    readBatch(projectId: string, batchId: string) {
+      return read(`${OPERATION}.readBatch`, () => {
+        if (!session.database.inTransaction) throw new Error('readBatch must be called inside read transaction');
+        return execution.getExecutionBatchInTransaction(projectId, batchId);
+      });
+    },
     readRun(projectId: string, runId: string) {
       return read(`${OPERATION}.readRun`, () => {
         if (!session.database.inTransaction) throw new Error('readRun must be called inside read transaction');
