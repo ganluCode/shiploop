@@ -12,7 +12,7 @@
 import { randomUUID } from 'node:crypto';
 import { StorageError } from '../../ports/errors.js';
 import { isPlanningAttemptSnapshot } from '../../ports/attempt-store.js';
-import { EXECUTION_ACTIVE_STATUSES } from '../../ports/execution-store.js';
+import { closeSucceededPlanningBatchInTransaction } from './planning-batch-settlement.js';
 import { createSqliteAtomicCommandStore } from './atomic-commands.js';
 import { createSqliteAttemptAccess } from './attempt-store.js';
 import { createSqliteExecutionAccess } from './execution-store.js';
@@ -99,18 +99,7 @@ export function createSqlitePlanningRecoveryStore(session: SqliteStorageSession,
   /** 全部 Run 均已终态且全部成功时收尾 Batch（唤醒丢失的观察补完；
  * 混合终态或仍有活动 Run 时留给既有路径，不伪造成功）。 */
   function closeBatchIfAllRunsSucceeded(projectId: string, batchId: string, timestamp: number): void {
-    const active = EXECUTION_ACTIVE_STATUSES.map(() => '?').join(', ');
-    const open = db.prepare<unknown[], { n: number }>(
-      `SELECT COUNT(*) AS n FROM runs WHERE project_id = ? AND batch_id = ? AND status IN (${active})`,
-    ).get(projectId, batchId, ...EXECUTION_ACTIVE_STATUSES)!.n;
-    if (Number(open) !== 0) return;
-    const notSucceeded = db.prepare<[string, string], { n: number }>(
-      "SELECT COUNT(*) AS n FROM runs WHERE project_id = ? AND batch_id = ? AND status <> 'succeeded'",
-    ).get(projectId, batchId)!.n;
-    if (Number(notSucceeded) !== 0) return;
-    db.prepare<unknown[]>(`UPDATE execution_batches SET status = 'succeeded', reason = NULL, revision = revision + 1, updated_at = ?
-      WHERE id = ? AND project_id = ? AND status IN (${active})`)
-      .run(timestamp, batchId, projectId, ...EXECUTION_ACTIVE_STATUSES);
+    closeSucceededPlanningBatchInTransaction(session, projectId, batchId, timestamp);
   }
 
   function releaseDispatchForRun(runId: string, timestamp: number, reason: string): void {

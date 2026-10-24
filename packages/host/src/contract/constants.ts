@@ -169,6 +169,18 @@ export const WORKSPACE_OPERATIONS_ROUTE_PREFIX = '/v1/workspace-operations/';
  */
 export const GIT_OPERATIONS_ROUTE = '/v1/git-operations';
 export const GIT_OPERATIONS_ROUTE_PREFIX = '/v1/git-operations/';
+/**
+ * P05-1 / F-012：规划上下文/候选只读查询路由（全部 GET + Bearer；与 Core
+ * PLANNING_QUERY_OPERATIONS 一一对应）。
+ * - GET /v1/planning-contexts?projectId=&featureId?=&limit?=&cursor?=（集合根
+ *   + 必填 projectId，与 /v1/tasks 列表同一冻结形态）；
+ * - GET /v1/planning-contexts/:candidateId?projectId=（单段路径参数）；
+ * - GET /v1/planning-contexts/:candidateId/candidate?projectId=（候选正文经受管
+ *   内容接口核验读取）；其他嵌套/多段形态一律未匹配 → 404 unknown_operation。
+ */
+export const PLANNING_CONTEXTS_ROUTE = '/v1/planning-contexts';
+export const PLANNING_CONTEXTS_ROUTE_PREFIX = '/v1/planning-contexts/';
+export const PLANNING_CANDIDATE_ROUTE_SUFFIX = 'candidate';
 
 /** §7.2 客户端有限预算（毫秒）。 */
 export const TCP_CONNECT_TIMEOUT_MS = 2_000;

@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { CoreApplication } from './composition.js';
 import type { SqliteStorageSession } from './sqlite/session.js';
 import { createSqliteSchedulerStore } from './sqlite/scheduler-store.js';
+import { closeSucceededPlanningBatchInTransaction } from './sqlite/planning-batch-settlement.js';
 import { createSqliteTaskDagStore } from './sqlite/task-dag-store.js';
 import { createSqliteAttemptAccess } from './sqlite/attempt-store.js';
 import { createSqliteVerificationStore } from './sqlite/verification-store.js';
@@ -177,12 +178,21 @@ export function assembleWorkExecution(options: {
       return null;
     }
     try {
-      const result = session.transactWrite('WorkExecution.settleRun', () => dispatchSettlement.settleInTransaction({
-        projectId, runId,
-        expected: { claimId: claim.id, claimVersion: claim.claimVersion,
-          ownerId: claim.ownerId, hostInstanceId: claim.hostInstanceId },
-        ...(attempt === undefined ? {} : { attempt }),
-      }));
+      const result = session.transactWrite('WorkExecution.settleRun', () => {
+        const settled = dispatchSettlement.settleInTransaction({
+          projectId, runId,
+          expected: { claimId: claim.id, claimVersion: claim.claimVersion,
+            ownerId: claim.ownerId, hostInstanceId: claim.hostInstanceId },
+          ...(attempt === undefined ? {} : { attempt }),
+        });
+        if (settled.decision === 'released' || settled.decision === 'replayed') {
+          const run = session.database.prepare<[string, string], { batch_id: string; purpose: string }>(
+            'SELECT batch_id, purpose FROM runs WHERE project_id = ? AND id = ?',
+          ).get(projectId, runId);
+          if (run?.purpose === 'plan') closeSucceededPlanningBatchInTransaction(session, projectId, run.batch_id, now());
+        }
+        return settled;
+      });
       settlementNotes.set(runKey(projectId, runId), { decision: result.decision, reason: result.reason, atUtcMs: now() });
       return result;
     } catch (error) {

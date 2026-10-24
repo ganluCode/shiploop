@@ -107,6 +107,13 @@ export const APPLICATION_COMMAND_CAPABILITIES = [
   //（同一命令面；短写事务内 CAS+单调判定原子更新当前预算/不可变修订行/脱敏
   // 事件与回执；仅增额不自动启动或恢复 Run；HostClient/CLI 入口属 F-011/F-012）。
   'execution.budget.revise',
+  // P05-1 / F-003/F-012：一次性规划启动经既有 POST /v1/commands 通用路由接线
+  //（同一命令面；accepted v7 回执携带 Batch/Run/planning Task/候选四重身份；
+  // HostClient 入口属 F-012）。
+  'planning.start',
+  // P05-1 / F-008/F-012：候选人工批准/拒绝经同一通用命令路由接线（短写事务
+  // 内重核候选身份/摘要与目标 revision；HostClient 入口属 F-012）。
+  'planning.candidate.decide',
   // P03-5 / F-011：人工丢弃预览/确认经既有 POST /v1/commands 通用路由接线
   //（同一信封/回执/幂等命令面；预览发布不可变证据，确认走 F-010 专属幂等
   // 通道；HostClient/CLI 入口属 F-012）。
@@ -188,6 +195,11 @@ export const APPLICATION_QUERY_CAPABILITIES = [
   // P04-9 / F-009：派发队列与执行槽位只读投影真实接线（能力位复用
   // project.read；与 Core EXECUTION_DISPATCH_QUERY_OPERATIONS 同步，不漂移）。
   'execution.dispatch.list',
+  // P05-1 / F-012：规划上下文/候选只读查询真实接线（能力位复用 project.read；
+  // 与 Core PLANNING_QUERY_OPERATIONS 同步，不漂移）。
+  'planning.contexts.list',
+  'planning.context.get',
+  'planning.candidate.get',
 ] as const;
 
 /**

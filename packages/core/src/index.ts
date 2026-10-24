@@ -159,6 +159,10 @@ export * from './application/configuration-service.js';
 export * from './application/command-receipts-service.js';
 export * from './application/command-service.js';
 export * from './application/query-service.js';
+// P05-1 / F-012：规划上下文/候选只读查询服务类型进入公共入口（与 query-service
+// 同一纪律：类型与无副作用工厂；供 Host 传输面窄端口注入）。
+export * from './ports/planning-query.js';
+export * from './application/planning-query.js';
 export * from './application/onboarding-service.js';
 export * from './application/baseline-service.js';
 export * from './application/baseline-process-stop.js';

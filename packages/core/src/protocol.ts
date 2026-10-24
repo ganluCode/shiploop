@@ -8,6 +8,7 @@ export {
   isPublicError, publicErrorHttpStatus, validateCommandEnvelopeFields, WORK_TOOL_OPERATION_SPECS,
   WIRE_MESSAGE_SCHEMA_VERSION,
   WORK_ACCEPTED_SCHEMA_VERSION,
+  PLANNING_ACCEPTED_SCHEMA_VERSION,
 } from './ports/commands.js';
 export type { AppOperation, CommandReceipt, CommandScope } from './ports/commands.js';
 export {
@@ -371,7 +372,15 @@ export type { WorkTaskResult } from './application/work-tool-channel.js';
 export {
   PLANNING_CANDIDATE_SUBMIT_OPERATION,
   PLANNING_CANDIDATE_SUBMIT_MAX_BODY_BYTES,
+  PLANNING_REQUEST_SCHEMA_VERSION,
+  PLANNING_CANDIDATE_SUMMARY_MAX_CODE_POINTS,
 } from './ports/planning-candidates.js';
+// P05-1 / F-012：规划上下文状态/决策冻结词汇（客户端线校验器与服务端同源，
+// 不另立第二份清单）。
+export {
+  PLANNING_CONTEXT_DECISIONS,
+  PLANNING_CONTEXT_STATUSES,
+} from './ports/planning-context.js';
 // P05-1 / F-011：规划上下文/候选只读查询面：公开形状、操作身份与展示状态
 // 冻结词汇（服务端负责授权；HostClient 线校验器复用同一形状）。
 export {

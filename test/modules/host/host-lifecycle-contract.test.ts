@@ -59,7 +59,7 @@ import {
   validateStopResultView,
   verifyStopRequestDigest,
 } from '../../../packages/host/src/index.ts';
-import { COMMAND_OPERATIONS, EXECUTION_CONTROL_QUERY_OPERATIONS, EXECUTION_DISPATCH_QUERY_OPERATIONS, EXECUTION_SCHEDULE_QUERY_OPERATIONS, FEATURE_DELIVERY_QUERY_OPERATIONS, GIT_OPERATION_QUERY_OPERATIONS, PLAN_APPROVAL_QUERY_OPERATION, PLAN_QUERY_OPERATIONS, QUERY_OPERATIONS, TASK_EVIDENCE_QUERY_OPERATIONS } from '../../../packages/core/src/index.ts';
+import { COMMAND_OPERATIONS, EXECUTION_CONTROL_QUERY_OPERATIONS, EXECUTION_DISPATCH_QUERY_OPERATIONS, EXECUTION_SCHEDULE_QUERY_OPERATIONS, FEATURE_DELIVERY_QUERY_OPERATIONS, GIT_OPERATION_QUERY_OPERATIONS, PLAN_APPROVAL_QUERY_OPERATION, PLAN_QUERY_OPERATIONS, PLANNING_QUERY_OPERATIONS, QUERY_OPERATIONS, TASK_EVIDENCE_QUERY_OPERATIONS } from '../../../packages/core/src/index.ts';
 import type {
   HostDiscoveryRecord,
   HostErrorCode,
@@ -225,6 +225,8 @@ describe('F-002 冻结常量与能力声明', () => {
           // P03-3 / F-009：批次预算显式修订经既有 /v1/commands 通用路由接线
           //（仅增额不自动启动或恢复 Run；HostClient/CLI 入口属 F-011/F-012）。
           'execution.budget.revise',
+          'planning.start',
+          'planning.candidate.decide',
           'workspace.discard',
           'workspace.discard.preview',
         ],
@@ -288,6 +290,10 @@ describe('F-002 冻结常量与能力声明', () => {
           'execution.run.recovery.get',
           // P04-9 / F-009：派发队列/执行槽位只读投影真实接线（无写入口）。
           'execution.dispatch.list',
+          // P05-1 / F-012：规划上下文/候选只读查询真实接线（能力位复用 project.read）。
+          'planning.contexts.list',
+          'planning.context.get',
+          'planning.candidate.get',
         ],
         events: { transport: 'sse', route: '/v1/events', scopes: ['project', 'global'] },
       },
@@ -336,6 +342,9 @@ describe('F-002 冻结常量与能力声明', () => {
       // P04-9 / F-009：派发队列/执行槽位只读投影（与 Core
       // EXECUTION_DISPATCH_QUERY_OPERATIONS 同步，无写入口）。
       ...EXECUTION_DISPATCH_QUERY_OPERATIONS,
+      // P05-1 / F-012：规划上下文/候选只读查询（与 Core
+      // PLANNING_QUERY_OPERATIONS 同步，能力位复用 project.read）。
+      ...PLANNING_QUERY_OPERATIONS,
     ]);
     expect(CURRENT_HOST_CAPABILITIES.application.commands).toContain('baseline.cancel');
     expect(CURRENT_HOST_CAPABILITIES.application.queries).toContain('baselines.list');

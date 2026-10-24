@@ -145,6 +145,12 @@ test/
   五个文件合并回归本地 43 项通过；真实 `accept:p04`、`verify`、全仓、live 与负责人确认
   仍未运行。范围与证据见 [P04-9 补充项交接](../docs/p04-9-f011-acceptance-handoff.md)。
 
+- `index/phases/P05/features/P05-1/tasks/F-012.json`：一次性规划 Host/HostClient 接线。
+  新增真实 HTTP/SQLite/Git 与脚本化 Runtime 场景，覆盖 v7 回执恢复、候选查询与人工决定、
+  权限隔离、取消/resume、SSE 断开、畸形响应及旧计划兼容；正常规划 Batch 收尾复用恢复规则。
+  受影响的 Host/工具/规划执行与恢复、基线、预算和报告回归按文件登记；本地通过与未运行
+  范围见 [F-012 交接](../docs/p05-1-f012-planning-host-protocol.md)，不代表全量/阶段验收。
+
 Task JSON 使用 Nezha v2 schema。当前存量用例首轮按文件显式 `all: true`，
 对应 19 个本 Feature 文件，不包含此前大批历史模块回归。
 部分文件有多个测试类型，暂不凭猜测拆掉其中断言或谎称函数级选择。

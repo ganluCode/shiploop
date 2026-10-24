@@ -50,6 +50,14 @@ import {
   WORKSPACE_OPERATION_STATUSES,
   WORKSPACE_STATUSES,
   WORK_ACCEPTED_SCHEMA_VERSION,
+  PLANNING_ACCEPTED_SCHEMA_VERSION,
+  PLANNING_CANDIDATE_QUERY_STATES,
+  PLANNING_CONTEXT_DECISIONS,
+  PLANNING_CONTEXT_STATUSES,
+  PLANNING_QUERY_STATES,
+  PLANNING_CANDIDATE_SUMMARY_MAX_CODE_POINTS,
+  PLANNING_QUERY_DETAIL_ATTEMPTS_MAX_COUNT,
+  derivePlanningQueryState,
   EXECUTION_INPUT_GROUP_LOCATOR_PREFIX,
   EXECUTION_GROUP_JSON_MEDIA_TYPE,
   EXECUTION_GROUP_MANIFEST_PURPOSE,
@@ -113,6 +121,10 @@ import type {
   TaskApprovalItemListResult,
   TaskReworkChainListResult,
   TaskVerificationDetailResult,
+  PlanningCandidateDetailResult,
+  PlanningContextDetailResult,
+  PlanningContextListResult,
+  PublicPlanningContextRecord,
   BaselineAuthorizationSummary,
   BaselineCheckCounts,
   BaselineCheckOutputRef,
@@ -312,7 +324,12 @@ export type AppQueryOperation =
   | 'execution.run.recovery.get'
   // P04-9 / F-009：派发队列与槽位只读投影（与 Core
   // EXECUTION_DISPATCH_QUERY_OPERATIONS 同源）。
-  | 'execution.dispatch.list';
+  | 'execution.dispatch.list'
+  // P05-1 / F-012：规划上下文/候选只读查询（与 Core PLANNING_QUERY_OPERATIONS
+  // 同源；候选正文经受管内容接口核验读取）。
+  | 'planning.contexts.list'
+  | 'planning.context.get'
+  | 'planning.candidate.get';
 
 function malformed(operation: HostOperation, reason: string): never {
   throw new HostProtocolError('response_malformed', operation, 'Host 响应不符合线协议', {
@@ -376,12 +393,13 @@ export interface CommandReceiptExpectation {
   readonly expectedCommandId?: string;
   readonly expectedRequestDigest?: string;
   readonly expectedOperation?: string;
+  readonly expectedProjectId?: string;
 }
 
 /**
- * 接受既有 v5 与显式 Work accepted v6；其他 schemaVersion →
- * unsupported_schema_version；其余形状/不变量违反与身份/摘要不符 →
- * response_malformed。Core 同时核验版本、操作和关联身份，不能用 v6
+ * 接受既有 v5、显式 Work accepted v6 与 P05-1 / F-003 规划 accepted v7；其他
+ * schemaVersion → unsupported_schema_version；其余形状/不变量违反与身份/摘要
+ * 不符 → response_malformed。Core 同时核验版本、操作和关联身份，不能用 v6/v7
  * 绕过 v5 回执的未知字段拒绝规则。握手能力与命令白名单不随本扩展变化。
  */
 export function validateCommandReceiptWire(
@@ -394,7 +412,9 @@ export function validateCommandReceiptWire(
     typeof value.schemaVersion === 'number' &&
     value.schemaVersion !== WIRE_MESSAGE_SCHEMA_VERSION &&
     !(value.schemaVersion === WORK_ACCEPTED_SCHEMA_VERSION &&
-      value.operation === 'execution.start' && value.status === 'accepted')
+      value.operation === 'execution.start' && value.status === 'accepted') &&
+    !(value.schemaVersion === PLANNING_ACCEPTED_SCHEMA_VERSION &&
+      value.operation === 'planning.start' && value.status === 'accepted')
   ) {
     unsupportedVersion(operation, 'schemaVersion');
   }
@@ -422,6 +442,9 @@ export function validateCommandReceiptWire(
     receipt.operation !== expected.expectedOperation
   ) {
     malformed(operation, 'receipt_operation_mismatch');
+  }
+  if (expected.expectedProjectId !== undefined && (receipt.scope.kind !== 'project' || receipt.scope.projectId !== expected.expectedProjectId)) {
+    malformed(operation, 'receipt_scope_mismatch');
   }
   return receipt;
 }
@@ -5684,6 +5707,397 @@ export interface WorkspaceDiscardConfirmResult {
   readonly previewDigest: string;
 }
 
+/* ------------------------------------------------------------------ *
+ * P05-1 / F-012 规划上下文/候选查询线校验（冻结字段集精确键校验；候选
+ * 生成前明确 pending_generation，不伪造空候选；决策/时间空值保持 null）
+ * ------------------------------------------------------------------ */
+
+export function validatePlanningDecisionResultWire(
+  value: unknown,
+  expected: { candidateId: string; candidateDigest: string; decision: 'approve' | 'reject' },
+): void {
+  const operation = 'commands.submit';
+  const result = requirePlain(operation, value);
+  if (result.decision !== expected.decision || result.candidateId !== expected.candidateId || result.candidateDigest !== expected.candidateDigest) {
+    malformed(operation, 'planning_decision_identity_mismatch');
+  }
+  if (expected.decision === 'reject') {
+    exactKeys(operation, result, ['decision', 'candidateId', 'candidateDigest', 'summary', 'planningContextStatus', 'applied']);
+    if (typeof result.summary !== 'string' || result.planningContextStatus !== 'rejected' || result.applied !== false) malformed(operation, 'planning_decision_result_invalid');
+    return;
+  }
+  exactKeys(operation, result, ['decision', 'candidateId', 'candidateDigest', 'feature', 'application', 'verification', 'approval']);
+  const feature = requirePlain(operation, result.feature);
+  exactKeys(operation, feature, ['id', 'revision', 'planDigest', 'planStatus']);
+  requireStableId(operation, feature.id);
+  requirePositiveInteger(operation, feature.revision);
+  requireSha256Hex(operation, feature.planDigest, 'planning_decision_digest_invalid');
+  if (feature.planStatus !== 'approved') malformed(operation, 'planning_decision_result_invalid');
+  const application = requirePlain(operation, result.application);
+  exactKeys(operation, application, ['createdTaskIds', 'keptTaskIds', 'removedTaskIds', 'planningContextStatus']);
+  for (const key of ['createdTaskIds', 'keptTaskIds', 'removedTaskIds']) {
+    for (const id of requireStringArrayWire(operation, application[key], 'planning_decision_result_invalid')) requireStableId(operation, id);
+  }
+  if (application.planningContextStatus !== 'applied' || !Array.isArray(result.verification)) malformed(operation, 'planning_decision_result_invalid');
+  for (const value of result.verification as unknown[]) {
+    const intent = requirePlain(operation, value);
+    exactKeys(operation, intent, ['taskId', 'checkRefs', 'moduleRefs', 'impactScope']);
+    requireStableId(operation, intent.taskId);
+    for (const key of ['checkRefs', 'moduleRefs', 'impactScope']) requireStringArrayWire(operation, intent[key], 'planning_decision_result_invalid');
+  }
+  const approval = requirePlain(operation, result.approval);
+  exactKeys(operation, approval, ['id', 'subjectDigest', 'checkPolicyDigest', 'status']);
+  requireStableId(operation, approval.id);
+  requireSha256Hex(operation, approval.subjectDigest, 'planning_decision_digest_invalid');
+  requireSha256Hex(operation, approval.checkPolicyDigest, 'planning_decision_digest_invalid');
+  if (approval.status !== 'approved' || approval.subjectDigest !== feature.planDigest) malformed(operation, 'planning_decision_result_invalid');
+}
+
+function requireIsoOrNull(operation: HostOperation, value: unknown, reason: string): string | null {
+  if (value === null) {
+    return null;
+  }
+  if (typeof value !== 'string' || !isIsoUtcDateTime(value)) {
+    malformed(operation, reason);
+  }
+  return value as string;
+}
+
+function requireStringArrayWire(operation: HostOperation, value: unknown, reason: string): string[] {
+  if (!Array.isArray(value) || value.length > 256) {
+    malformed(operation, reason);
+  }
+  for (const entry of value as unknown[]) {
+    if (typeof entry !== 'string' || entry.length > 512) {
+      malformed(operation, reason);
+    }
+  }
+  return [...(value as string[])];
+}
+
+function validatePlanningCandidateRefWire(operation: HostOperation, value: unknown): void {
+  const ref = requirePlain(operation, value);
+  if (ref.state === 'pending_generation') {
+    exactKeys(operation, ref, ['state']);
+    return;
+  }
+  exactKeys(operation, ref, ['state', 'artifactId', 'contentHash', 'candidateDigest', 'summary']);
+  if (ref.state !== 'published') {
+    malformed(operation, 'planning_candidate_state_invalid');
+  }
+  requireStableId(operation, ref.artifactId);
+  requireSha256Hex(operation, ref.contentHash, 'planning_candidate_digest_invalid');
+  requireSha256Hex(operation, ref.candidateDigest, 'planning_candidate_digest_invalid');
+  if (typeof ref.summary !== 'string' || [...ref.summary].length > PLANNING_CANDIDATE_SUMMARY_MAX_CODE_POINTS) {
+    malformed(operation, 'planning_candidate_summary_invalid');
+  }
+}
+
+function validatePlanningContextRecordWire(operation: HostOperation, value: unknown): PublicPlanningContextRecord {
+  const record = requirePlain(operation, value);
+  exactKeys(operation, record, [
+    'id', 'projectId', 'phaseId', 'featureId', 'runId', 'planningTaskId', 'candidateId',
+    'inputDigest', 'targetRevision', 'planDigest', 'status', 'candidate', 'decision',
+    'planningTask', 'createdAt', 'updatedAt',
+  ]);
+  for (const key of ['id', 'projectId', 'phaseId', 'featureId', 'runId', 'planningTaskId', 'candidateId'] as const) {
+    requireStableId(operation, record[key]);
+  }
+  requireSha256Hex(operation, record.inputDigest, 'planning_context_digest_invalid');
+  requirePositiveInteger(operation, record.targetRevision);
+  if (record.planDigest !== null) {
+    requireSha256Hex(operation, record.planDigest, 'planning_context_digest_invalid');
+  }
+  if (!(PLANNING_CONTEXT_STATUSES as readonly unknown[]).includes(record.status)) {
+    malformed(operation, 'planning_context_status_invalid');
+  }
+  validatePlanningCandidateRefWire(operation, record.candidate);
+  if (record.decision !== null) {
+    const decision = requirePlain(operation, record.decision);
+    exactKeys(operation, decision, ['decision', 'reason', 'decidedAt', 'appliedRevision', 'appliedAt']);
+    if (!(PLANNING_CONTEXT_DECISIONS as readonly unknown[]).includes(decision.decision)) {
+      malformed(operation, 'planning_decision_invalid');
+    }
+    if (decision.reason !== null && (typeof decision.reason !== 'string' || decision.reason.length > 512)) {
+      malformed(operation, 'planning_decision_invalid');
+    }
+    requireIsoOrNull(operation, decision.decidedAt, 'planning_decision_date_invalid');
+    if (decision.appliedRevision !== null) {
+      requirePositiveInteger(operation, decision.appliedRevision);
+    }
+    requireIsoOrNull(operation, decision.appliedAt, 'planning_decision_date_invalid');
+  }
+  const task = requirePlain(operation, record.planningTask);
+  exactKeys(operation, task, ['id', 'status', 'strategy']);
+  requireStableId(operation, task.id);
+  if (!(TASK_STATUSES as readonly unknown[]).includes(task.status) || task.id !== record.planningTaskId) {
+    malformed(operation, 'planning_task_summary_invalid');
+  }
+  const strategy = requirePlain(operation, task.strategy);
+  exactKeys(operation, strategy, ['runtime', 'provider', 'model']);
+  for (const key of ['runtime', 'provider', 'model'] as const) {
+    if (typeof strategy[key] !== 'string' || (strategy[key] as string).length === 0) {
+      malformed(operation, 'planning_task_summary_invalid');
+    }
+  }
+  if (!isIsoUtcDateTime(record.createdAt) || !isIsoUtcDateTime(record.updatedAt)) {
+    malformed(operation, 'planning_context_date_invalid');
+  }
+  const published = (record.candidate as Record<string, unknown>).state === 'published';
+  if (record.status !== 'open' && record.status !== 'cancelled' && !published) malformed(operation, 'planning_context_candidate_mismatch');
+  if ((record.status === 'applied' || record.status === 'rejected') !== (record.decision !== null)) malformed(operation, 'planning_context_decision_mismatch');
+  if (record.decision !== null) {
+    const decision = record.decision as Record<string, unknown>;
+    if (decision.decidedAt === null || (record.status === 'applied'
+      ? decision.decision !== 'approved' || decision.appliedRevision === null || decision.appliedAt === null
+      : decision.decision !== 'rejected' || decision.appliedRevision !== null || decision.appliedAt !== null)) malformed(operation, 'planning_context_decision_mismatch');
+  }
+  return record as unknown as PublicPlanningContextRecord;
+}
+
+function validatePlanningRunRecordWire(operation: HostOperation, value: unknown): void {
+  const run = requirePlain(operation, value);
+  exactKeys(operation, run, [
+    'id', 'batchId', 'purpose', 'status', 'reason', 'startedAt', 'endedAt',
+    'pauseRequestedAt', 'attemptsCreated', 'maxAttemptsPerRun', 'runTimeLimitMs',
+  ]);
+  requireStableId(operation, run.id);
+  requireStableId(operation, run.batchId);
+  if (run.purpose !== 'plan') {
+    malformed(operation, 'planning_run_purpose_invalid');
+  }
+  if (!(EXECUTION_RUN_STATUSES as readonly unknown[]).includes(run.status)) {
+    malformed(operation, 'planning_run_status_invalid');
+  }
+  if (run.reason !== null && typeof run.reason !== 'string') {
+    malformed(operation, 'planning_run_reason_invalid');
+  }
+  requireIsoOrNull(operation, run.startedAt, 'planning_run_date_invalid');
+  requireIsoOrNull(operation, run.endedAt, 'planning_run_date_invalid');
+  requireIsoOrNull(operation, run.pauseRequestedAt, 'planning_run_date_invalid');
+  requireNonNegativeInteger(operation, run.attemptsCreated);
+  requirePositiveInteger(operation, run.maxAttemptsPerRun);
+  requirePositiveInteger(operation, run.runTimeLimitMs);
+}
+
+function validatePlanningAttemptRecordWire(operation: HostOperation, value: unknown): void {
+  const attempt = requirePlain(operation, value);
+  exactKeys(operation, attempt, [
+    'id', 'number', 'status', 'executionStage', 'startedAt', 'endedAt', 'exitCode', 'durationMs',
+  ]);
+  requireStableId(operation, attempt.id);
+  requirePositiveInteger(operation, attempt.number);
+  if (!(ATTEMPT_STATUSES as readonly unknown[]).includes(attempt.status)) {
+    malformed(operation, 'planning_attempt_status_invalid');
+  }
+  if (!(ATTEMPT_EXECUTION_STAGES as readonly unknown[]).includes(attempt.executionStage)) {
+    malformed(operation, 'planning_attempt_stage_invalid');
+  }
+  requireIsoOrNull(operation, attempt.startedAt, 'planning_attempt_date_invalid');
+  requireIsoOrNull(operation, attempt.endedAt, 'planning_attempt_date_invalid');
+  if (attempt.exitCode !== null) {
+    requireIntegerOrNull(operation, attempt.exitCode);
+  }
+  if (attempt.durationMs !== null) {
+    requireNonNegativeInteger(operation, attempt.durationMs);
+  }
+}
+
+/** planning.contexts.list 响应：schemaVersion/scope/records/nextCursor/limit。 */
+export function validatePlanningContextListResultWire(
+  body: unknown,
+  operation: HostOperation = 'planning.contexts.list',
+): PlanningContextListResult {
+  const object = requirePlain(operation, body);
+  exactKeys(operation, object, ['schemaVersion', 'scope', 'records', 'nextCursor', 'limit']);
+  if (object.schemaVersion !== WIRE_MESSAGE_SCHEMA_VERSION) {
+    if (typeof object.schemaVersion === 'number') {
+      unsupportedVersion(operation, 'schemaVersion');
+    }
+    malformed(operation, 'planning_list_schema_version_invalid');
+  }
+  if (object.scope !== 'planning-context-list') {
+    malformed(operation, 'planning_list_scope_invalid');
+  }
+  if (!Array.isArray(object.records)) {
+    malformed(operation, 'planning_list_records_invalid');
+  }
+  for (const value of object.records as unknown[]) {
+    const record = requirePlain(operation, value);
+    exactKeys(operation, record, [
+      'id', 'projectId', 'phaseId', 'featureId', 'runId', 'planningTaskId', 'candidateId',
+      'status', 'candidateState', 'candidateDigest', 'decision', 'runStatus', 'createdAt', 'updatedAt',
+    ]);
+    for (const key of ['id', 'projectId', 'phaseId', 'featureId', 'runId', 'planningTaskId', 'candidateId'] as const) {
+      requireStableId(operation, record[key]);
+    }
+    if (!(PLANNING_CONTEXT_STATUSES as readonly unknown[]).includes(record.status)) {
+      malformed(operation, 'planning_context_status_invalid');
+    }
+    if (!(PLANNING_CANDIDATE_QUERY_STATES as readonly unknown[]).includes(record.candidateState)) {
+      malformed(operation, 'planning_candidate_state_invalid');
+    }
+    if (record.candidateDigest !== null) {
+      requireSha256Hex(operation, record.candidateDigest, 'planning_candidate_digest_invalid');
+    }
+    if (record.decision !== null && !(PLANNING_CONTEXT_DECISIONS as readonly unknown[]).includes(record.decision)) {
+      malformed(operation, 'planning_decision_invalid');
+    }
+    if ((record.candidateState === 'published') !== (record.candidateDigest !== null)) malformed(operation, 'planning_candidate_digest_mismatch');
+    if (record.runStatus !== null && !(EXECUTION_RUN_STATUSES as readonly unknown[]).includes(record.runStatus)) {
+      malformed(operation, 'planning_run_status_invalid');
+    }
+    if (!isIsoUtcDateTime(record.createdAt) || !isIsoUtcDateTime(record.updatedAt)) {
+      malformed(operation, 'planning_context_date_invalid');
+    }
+  }
+  requirePlanCursorOrNull(operation, object.nextCursor);
+  requirePositiveInteger(operation, object.limit);
+  return object as unknown as PlanningContextListResult;
+}
+
+/** planning.context.get 响应：上下文详情 + 展示状态 + 三轴 + Run/Attempt/预算。 */
+export function validatePlanningContextDetailResultWire(
+  body: unknown,
+  operation: HostOperation = 'planning.context.get',
+): PlanningContextDetailResult {
+  const object = requirePlain(operation, body);
+  exactKeys(operation, object, [
+    'schemaVersion', 'scope', 'context', 'executionState', 'outcomeAxes', 'run',
+    'attempts', 'attemptsTruncated', 'budget',
+  ]);
+  if (object.schemaVersion !== WIRE_MESSAGE_SCHEMA_VERSION) {
+    if (typeof object.schemaVersion === 'number') {
+      unsupportedVersion(operation, 'schemaVersion');
+    }
+    malformed(operation, 'planning_detail_schema_version_invalid');
+  }
+  if (object.scope !== 'planning-context') {
+    malformed(operation, 'planning_detail_scope_invalid');
+  }
+  validatePlanningContextRecordWire(operation, object.context);
+  if (!(PLANNING_QUERY_STATES as readonly unknown[]).includes(object.executionState)) {
+    malformed(operation, 'planning_execution_state_invalid');
+  }
+  const axes = requirePlain(operation, object.outcomeAxes);
+  exactKeys(operation, axes, ['runSucceeded', 'planApproved', 'codingExecutable', 'notExecutableReasons']);
+  for (const key of ['runSucceeded', 'planApproved', 'codingExecutable'] as const) {
+    if (typeof axes[key] !== 'boolean') {
+      malformed(operation, 'planning_outcome_axes_invalid');
+    }
+  }
+  if (!Array.isArray(axes.notExecutableReasons) || axes.notExecutableReasons.some(reason => !(FEATURE_NOT_EXECUTABLE_REASONS as readonly unknown[]).includes(reason))) {
+    malformed(operation, 'planning_outcome_axes_invalid');
+  }
+  validatePlanningRunRecordWire(operation, object.run);
+  if (!Array.isArray(object.attempts) || object.attempts.length > PLANNING_QUERY_DETAIL_ATTEMPTS_MAX_COUNT) {
+    malformed(operation, 'planning_attempts_invalid');
+  }
+  for (const attempt of object.attempts as unknown[]) {
+    validatePlanningAttemptRecordWire(operation, attempt);
+  }
+  if (typeof object.attemptsTruncated !== 'boolean') {
+    malformed(operation, 'planning_attempts_invalid');
+  }
+  const budget = validateExecutionBudgetStatusResultWire(object.budget, operation);
+  const context = object.context as PublicPlanningContextRecord;
+  const run = object.run as PlanningContextDetailResult['run'];
+  const attempts = object.attempts as PlanningContextDetailResult['attempts'];
+  if (run.id !== context.runId || budget.batch.id !== run.batchId || budget.batch.projectId !== context.projectId
+    || axes.runSucceeded !== (run.status === 'succeeded') || axes.codingExecutable !== (axes.notExecutableReasons.length === 0)
+    || object.executionState !== derivePlanningQueryState({ contextStatus: context.status, runStatus: run.status, latestAttemptStatus: attempts.at(-1)?.status ?? null })) {
+    malformed(operation, 'planning_detail_identity_mismatch');
+  }
+  return object as unknown as PlanningContextDetailResult;
+}
+
+/** planning.candidate.get 响应：上下文 + Run 状态 + 候选（正文/生成前形态）。 */
+export function validatePlanningCandidateDetailResultWire(
+  body: unknown,
+  operation: HostOperation = 'planning.candidate.get',
+): PlanningCandidateDetailResult {
+  const object = requirePlain(operation, body);
+  exactKeys(operation, object, ['schemaVersion', 'scope', 'context', 'runStatus', 'candidate']);
+  if (object.schemaVersion !== WIRE_MESSAGE_SCHEMA_VERSION) {
+    if (typeof object.schemaVersion === 'number') {
+      unsupportedVersion(operation, 'schemaVersion');
+    }
+    malformed(operation, 'planning_candidate_schema_version_invalid');
+  }
+  if (object.scope !== 'planning-candidate') {
+    malformed(operation, 'planning_candidate_scope_invalid');
+  }
+  validatePlanningContextRecordWire(operation, object.context);
+  if (!(EXECUTION_RUN_STATUSES as readonly unknown[]).includes(object.runStatus)) {
+    malformed(operation, 'planning_run_status_invalid');
+  }
+  const candidate = requirePlain(operation, object.candidate);
+  if (candidate.state === 'pending_generation') {
+    exactKeys(operation, candidate, ['state']);
+    if ((object.context as PublicPlanningContextRecord).candidate.state !== 'pending_generation') malformed(operation, 'planning_candidate_state_mismatch');
+    return object as unknown as PlanningCandidateDetailResult;
+  }
+  exactKeys(operation, candidate, [
+    'state', 'artifact', 'candidateDigest', 'summary', 'plan', 'taskVerification',
+  ]);
+  if (candidate.state !== 'published') {
+    malformed(operation, 'planning_candidate_state_invalid');
+  }
+  const artifact = requirePlain(operation, candidate.artifact);
+  exactKeys(operation, artifact, ['artifactId', 'contentHash', 'sizeBytes']);
+  requireStableId(operation, artifact.artifactId);
+  requireSha256Hex(operation, artifact.contentHash, 'planning_candidate_digest_invalid');
+  requireNonNegativeInteger(operation, artifact.sizeBytes);
+  requireSha256Hex(operation, candidate.candidateDigest, 'planning_candidate_digest_invalid');
+  if (typeof candidate.summary !== 'string' || [...candidate.summary].length > PLANNING_CANDIDATE_SUMMARY_MAX_CODE_POINTS) {
+    malformed(operation, 'planning_candidate_summary_invalid');
+  }
+  const plan = requirePlain(operation, candidate.plan);
+  exactKeys(operation, plan, ['feature', 'tasks', 'taskCount', 'dependencyEdgeCount']);
+  const feature = requirePlain(operation, plan.feature);
+  exactKeys(operation, feature, ['title', 'description', 'labels']);
+  if (typeof feature.title !== 'string' || feature.title.length === 0 || feature.title.length > 512) {
+    malformed(operation, 'planning_candidate_plan_invalid');
+  }
+  if (feature.description !== null && typeof feature.description !== 'string') {
+    malformed(operation, 'planning_candidate_plan_invalid');
+  }
+  requireStringArrayWire(operation, feature.labels, 'planning_candidate_plan_invalid');
+  if (!Array.isArray(plan.tasks)) {
+    malformed(operation, 'planning_candidate_plan_invalid');
+  }
+  for (const taskValue of plan.tasks as unknown[]) {
+    const task = requirePlain(operation, taskValue);
+    exactKeys(operation, task, ['id', 'title', 'complexity', 'dependsOn']);
+    requireStableId(operation, task.id);
+    if (typeof task.title !== 'string' || task.title.length === 0 || task.title.length > 512) {
+      malformed(operation, 'planning_candidate_plan_invalid');
+    }
+    if (task.complexity !== null && !['low', 'medium', 'high'].includes(task.complexity as string)) {
+      malformed(operation, 'planning_candidate_plan_invalid');
+    }
+    requireStringArrayWire(operation, task.dependsOn, 'planning_candidate_plan_invalid');
+  }
+  requireNonNegativeInteger(operation, plan.taskCount);
+  requireNonNegativeInteger(operation, plan.dependencyEdgeCount);
+  if (!Array.isArray(candidate.taskVerification)) {
+    malformed(operation, 'planning_candidate_verification_invalid');
+  }
+  for (const intentValue of candidate.taskVerification as unknown[]) {
+    const intent = requirePlain(operation, intentValue);
+    exactKeys(operation, intent, ['taskId', 'checkRefs', 'moduleRefs', 'impactScope']);
+    requireStableId(operation, intent.taskId);
+    requireStringArrayWire(operation, intent.checkRefs, 'planning_candidate_verification_invalid');
+    requireStringArrayWire(operation, intent.moduleRefs, 'planning_candidate_verification_invalid');
+    requireStringArrayWire(operation, intent.impactScope, 'planning_candidate_verification_invalid');
+  }
+  const ref = (object.context as PublicPlanningContextRecord).candidate;
+  if (ref.state !== 'published' || ref.artifactId !== artifact.artifactId || ref.contentHash !== artifact.contentHash
+    || ref.candidateDigest !== candidate.candidateDigest || ref.summary !== candidate.summary) malformed(operation, 'planning_candidate_identity_mismatch');
+  if (plan.taskCount !== plan.tasks.length || plan.dependencyEdgeCount !== (plan.tasks as { dependsOn: string[] }[]).reduce((count, task) => count + task.dependsOn.length, 0)) malformed(operation, 'planning_candidate_plan_counts_invalid');
+  return object as unknown as PlanningCandidateDetailResult;
+}
+
 export function validateAppQueryResponse(
   operation: 'execution.budget.get',
   body: unknown,
@@ -5764,6 +6178,22 @@ export function validateAppQueryResponse(
   body: unknown,
   expectation?: SnapshotExpectation,
 ): DispatchQueueListResult;
+// P05-1 / F-012：规划上下文/候选查询响应重载。
+export function validateAppQueryResponse(
+  operation: 'planning.contexts.list',
+  body: unknown,
+  expectation?: SnapshotExpectation,
+): PlanningContextListResult;
+export function validateAppQueryResponse(
+  operation: 'planning.context.get',
+  body: unknown,
+  expectation?: SnapshotExpectation,
+): PlanningContextDetailResult;
+export function validateAppQueryResponse(
+  operation: 'planning.candidate.get',
+  body: unknown,
+  expectation?: SnapshotExpectation,
+): PlanningCandidateDetailResult;
 // P03-7 / F-013：Task 证据/人审/返工链查询响应重载。
 export function validateAppQueryResponse(
   operation: 'execution.task.verification.get',
@@ -5998,6 +6428,13 @@ export function validateAppQueryResponse(
     // P04-9 / F-009：派发队列与槽位投影响应分发（同一冻结字段集纪律）。
     case 'execution.dispatch.list':
       return validateDispatchQueueListResultWire(body, operation);
+    // P05-1 / F-012：规划上下文/候选查询响应分发（同一冻结字段集纪律）。
+    case 'planning.contexts.list':
+      return validatePlanningContextListResultWire(body, operation);
+    case 'planning.context.get':
+      return validatePlanningContextDetailResultWire(body, operation);
+    case 'planning.candidate.get':
+      return validatePlanningCandidateDetailResultWire(body, operation);
     // P03-7 / F-013：Task 证据/人审/返工链查询响应分发（同一冻结字段集纪律）。
     case 'execution.task.verification.get':
       return validateTaskVerificationResultWire(body, operation);

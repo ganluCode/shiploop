@@ -47,6 +47,7 @@ import type {
   CommandReceiptsService,
   CommandService,
   OnboardingService,
+  PlanningQueryService,
   PublicError,
   QueryService,
   TrustedPrincipal,
@@ -77,6 +78,9 @@ import {
   MAX_QUERY_STRING_BYTES,
   PHASES_ROUTE,
   PHASES_ROUTE_PREFIX,
+  PLANNING_CONTEXTS_ROUTE,
+  PLANNING_CONTEXTS_ROUTE_PREFIX,
+  PLANNING_CANDIDATE_ROUTE_SUFFIX,
   PROJECTS_INSPECT_ROUTE,
   PROJECTS_ROUTE,
   PROJECT_LABEL_COUNTS_ROUTE,
@@ -182,14 +186,19 @@ export type ApplicationOperation =
   | 'execution.run.recovery.get'
   // P04-9 / F-009：派发队列与执行槽位只读投影（与 Core
   // EXECUTION_DISPATCH_QUERY_OPERATIONS 同源；无写入口）。
-  | 'execution.dispatch.list';
+  | 'execution.dispatch.list'
+  // P05-1 / F-012：规划上下文/候选只读查询（与 Core PLANNING_QUERY_OPERATIONS
+  // 同源；候选正文经受管内容接口核验读取）。
+  | 'planning.contexts.list'
+  | 'planning.context.get'
+  | 'planning.candidate.get';
 
 /** 已解析的应用路由（path 形态匹配；路径参数为未解码原始片段）。 */
 export interface ResolvedAppRoute {
   readonly operation: ApplicationOperation;
   readonly method: 'GET' | 'POST';
   readonly pathParam?: {
-    readonly name: 'commandId' | 'projectId' | 'resultRef' | 'operationId' | 'artifactId' | 'phaseId' | 'featureId' | 'taskId' | 'batchId' | 'runId' | 'attemptId';
+    readonly name: 'commandId' | 'projectId' | 'resultRef' | 'operationId' | 'artifactId' | 'phaseId' | 'featureId' | 'taskId' | 'batchId' | 'runId' | 'attemptId' | 'candidateId';
     readonly value: string;
   };
 }
@@ -213,6 +222,12 @@ export interface HostApplicationContext {
    * 能力清单宣告 baselines.list/baselines.get/artifacts.get，必须真实接线。
    */
   readonly baselineQueryService: BaselineQueryService;
+  /**
+   * P05-1 / F-012：规划上下文/候选只读查询（授权/可见性/候选正文完整性全部在
+   * Core；能力清单宣告 planning.contexts.list/planning.context.get/
+   * planning.candidate.get，必须真实接线）。
+   */
+  readonly planningQueryService: Pick<PlanningQueryService, 'listPlanningContexts' | 'getPlanningContext' | 'getPlanningCandidate'>;
   /**
    * P02-3 / F-014（§5.3/§13）：baseline.run 经既有 POST /v1/commands 路由提交
    * 到执行编排（accepted 后异步启动检查）；其余命令仍走 commandService。
@@ -309,6 +324,34 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
         operation: 'git.operations.get',
         method: 'GET',
         pathParam: { name: 'operationId', value: segment },
+      };
+    }
+    return undefined;
+  }
+  // P05-1 / F-012：规划上下文/候选查询路由。集合根（必填 projectId + 可选
+  // Feature 过滤 + 分页）与单段路径参数详情；唯一冻结的候选子资源形态
+  // GET /v1/planning-contexts/:candidateId/candidate；其他嵌套/多段形态一律
+  // 未匹配 → 404 unknown_operation。
+  if (path === PLANNING_CONTEXTS_ROUTE) {
+    return { operation: 'planning.contexts.list', method: 'GET' };
+  }
+  if (path.startsWith(PLANNING_CONTEXTS_ROUTE_PREFIX)) {
+    const segments = path.slice(PLANNING_CONTEXTS_ROUTE_PREFIX.length).split('/');
+    if (segments.some((segment) => segment.length === 0)) {
+      return undefined;
+    }
+    if (segments.length === 1) {
+      return {
+        operation: 'planning.context.get',
+        method: 'GET',
+        pathParam: { name: 'candidateId', value: segments[0] as string },
+      };
+    }
+    if (segments.length === 2 && segments[1] === PLANNING_CANDIDATE_ROUTE_SUFFIX) {
+      return {
+        operation: 'planning.candidate.get',
+        method: 'GET',
+        pathParam: { name: 'candidateId', value: segments[0] as string },
       };
     }
     return undefined;
@@ -713,6 +756,14 @@ const QUERY_SPECS: Readonly<Partial<Record<ApplicationOperation, QuerySpec>>> = 
     allowed: ['projectId', 'limit', 'cursor'],
     repeatable: [],
   }),
+  // P05-1 / F-012：规划上下文/候选查询参数白名单（取值规则由 Core 单一权威
+  // 复核；candidateId 只来自冻结路径参数，不接受查询参数重复指定）。
+  'planning.contexts.list': Object.freeze({
+    allowed: ['projectId', 'featureId', 'limit', 'cursor'],
+    repeatable: [],
+  }),
+  'planning.context.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
+  'planning.candidate.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
   // P03-7 / F-013：Task 证据/人审/返工链查询参数白名单（取值规则由 Core 单一
   // 权威复核；taskId 只来自冻结路径参数，不接受查询参数重复指定）。
   'execution.task.verification.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
@@ -1343,6 +1394,30 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
       const query = buildPlanListQuery(params, operation, 'projectId');
       query.operationId = pathParam?.value;
       result = await app.queryService.getGitOperation(app.principal, query);
+      break;
+    }
+    // P05-1 / F-012：规划上下文/候选查询分发（本层只做形态转换；授权/可见性
+    // 折叠/分页范围/游标绑定/候选正文完整性全部由 Core 单一权威复核；跨项目
+    // 与不存在目标统一 not_found，不区分存在性）。
+    case 'planning.contexts.list': {
+      const query = buildPlanListQuery(params, operation, 'projectId');
+      const featureId = params.get('featureId');
+      if (featureId !== null) {
+        query.featureId = featureId;
+      }
+      result = await app.planningQueryService.listPlanningContexts(app.principal, query);
+      break;
+    }
+    case 'planning.context.get': {
+      const query = buildPlanListQuery(params, operation, 'projectId');
+      query.candidateId = pathParam?.value;
+      result = await app.planningQueryService.getPlanningContext(app.principal, query);
+      break;
+    }
+    case 'planning.candidate.get': {
+      const query = buildPlanListQuery(params, operation, 'projectId');
+      query.candidateId = pathParam?.value;
+      result = await app.planningQueryService.getPlanningCandidate(app.principal, query);
       break;
     }
     default:

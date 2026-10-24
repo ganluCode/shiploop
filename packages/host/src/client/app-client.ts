@@ -31,6 +31,7 @@ import { request as httpRequest, type ClientRequest, type IncomingMessage } from
 import {
   PLAN_LIST_CURSOR_PREFIX,
   PLAN_LIST_MAX_LIMIT,
+  PLANNING_REQUEST_SCHEMA_VERSION,
   WORKSPACE_LIST_CURSOR_PREFIX,
   WORKSPACE_LIST_MAX_LIMIT,
   computeCommandRequestDigest,
@@ -58,6 +59,9 @@ import type {
   GlobalSnapshotResult,
   PhaseDetailResult,
   PhaseListResult,
+  PlanningCandidateDetailResult,
+  PlanningContextDetailResult,
+  PlanningContextListResult,
   ProjectBindingResult,
   ProjectDetailResult,
   ProjectInspectionResult,
@@ -119,6 +123,8 @@ import {
   MAX_WORK_SESSION_EVIDENCE_RESPONSE_BYTES,
   PHASES_ROUTE,
   PHASES_ROUTE_PREFIX,
+  PLANNING_CONTEXTS_ROUTE,
+  PLANNING_CONTEXTS_ROUTE_PREFIX,
   PROJECTS_INSPECT_ROUTE,
   PROJECTS_ROUTE,
   PROJECT_LABEL_COUNTS_ROUTE,
@@ -148,6 +154,7 @@ import {
 import type { HostOperation } from '../contract/index.js';
 import { mapErrorResponse, requestLoopbackJson, requestLoopbackText } from './http-json.js';
 import {
+  validatePlanningDecisionResultWire,
   validateAppQueryResponse,
   validateBaselineCommandResultWire,
   validateBaselinePreviewResultWire,
@@ -434,6 +441,42 @@ export interface StartExecutionInput {
   readonly previewDigest?: string;
   readonly retryBatchId?: string;
   readonly commandId?: string;
+}
+
+/**
+ * P05-1 / F-012 planning.start 输入（更新类：expectedRevision 为目标 Feature
+ * 聚合当前 revision CAS；payload = 规划请求 v1 原样字段 + budget 完整预算
+ * 提案；深校验在 Core，客户端只做严格输入形态与未知键拒绝）。
+ */
+export interface StartPlanningInput {
+  readonly projectId: string;
+  readonly phaseId: string;
+  readonly featureId: string;
+  readonly requirementRefs?: readonly { readonly artifactId: string; readonly contentHash?: string | null }[];
+  readonly constraints: readonly string[];
+  readonly acceptance: { readonly criteria: readonly string[] };
+  readonly strategy: { readonly approvalMode: 'manual'; readonly taskLimit: number | null };
+  readonly budget: unknown;
+  readonly expectedRevision: number;
+  readonly commandId?: string;
+}
+
+/** P05-1 / F-012 planning.candidate.decide 输入（摘要绑定的人工决策）。 */
+export interface DecidePlanningCandidateInput {
+  readonly projectId: string;
+  readonly candidateId: string;
+  readonly candidateDigest: string;
+  readonly decision: 'approve' | 'reject';
+  readonly reason?: string | null;
+  readonly expectedRevision: number;
+  readonly commandId?: string;
+}
+
+/** P05-1 / F-012 planning.contexts.list 分页输入（可选 Feature 过滤）。 */
+export interface ListPlanningContextsInput {
+  readonly featureId?: string;
+  readonly limit?: number;
+  readonly cursor?: string;
 }
 
 export interface ReviseExecutionBudgetInput {
@@ -751,6 +794,32 @@ export interface HostClientApplication {
   previewExecution(input: PreviewExecutionInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
   /** execution.start：返回 completed/rejected 或 Work accepted；不等待 Runtime。 */
   startExecution(input: StartExecutionInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  /**
+   * P05-1 / F-012 planning.start：一次性规划启动（accepted v7 回执携带
+   * Batch/Run/planning Task/候选四重身份；不代表规划完成；重复提交以冻结信封
+   * 重放，连接丢失先查原 commandId 回执）。
+   */
+  startPlanning(input: StartPlanningInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  /**
+   * P05-1 / F-012 planning.candidate.decide：候选人工批准/拒绝（摘要绑定 +
+   * Feature revision CAS；批准要求规划 Run 已 succeeded，由 Core 重核）。
+   */
+  decidePlanningCandidate(
+    input: DecidePlanningCandidateInput,
+    options?: SubmitCommandOptions,
+  ): Promise<CommandReceipt>;
+  /** P05-1 / F-012 planning.contexts.list：项目（可选 Feature 过滤）规划上下文分页。 */
+  listPlanningContexts(
+    projectId: string,
+    input?: ListPlanningContextsInput,
+  ): Promise<PlanningContextListResult>;
+  /** P05-1 / F-012 planning.context.get：按候选身份的规划详情（只读）。 */
+  getPlanningContext(projectId: string, candidateId: string): Promise<PlanningContextDetailResult>;
+  /**
+   * P05-1 / F-012 planning.candidate.get：候选详情（正文经受管内容接口完整性
+   * 核验读取；生成前明确 pending_generation）。
+   */
+  getPlanningCandidate(projectId: string, candidateId: string): Promise<PlanningCandidateDetailResult>;
   /** execution.budget.revise：通过既有幂等命令入口提交 CAS 修订。 */
   reviseExecutionBudget(input: ReviseExecutionBudgetInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
   getExecutionBudgetStatus(projectId: string, batchId: string): Promise<ExecutionBudgetStatusResult>;
@@ -988,6 +1057,7 @@ const SUBMIT_INPUT_KEYS = [
 ] as const;
 
 interface FrozenEnvelope {
+  readonly scope: CommandScope;
   readonly commandId: string;
   readonly operation: AppOperation;
   readonly wire: Record<string, unknown>;
@@ -1028,6 +1098,7 @@ function freezeCommandEnvelope(input: SubmitCommandInput): FrozenEnvelope {
     const validated = validateCommandEnvelope(wire);
     return {
       commandId,
+      scope: validated.scope,
       operation: validated.operation,
       wire,
       requestDigest: computeCommandRequestDigest(validated),
@@ -1300,6 +1371,10 @@ const FEATURE_VERIFICATION_CONTINUE_INPUT_KEYS = [
 ] as const;
 const EXECUTION_PREVIEW_INPUT_KEYS = ['projectId', 'featureIds', 'budget', 'commandId'] as const;
 const EXECUTION_START_INPUT_KEYS = ['projectId', 'featureIds', 'budget', 'previewDigest', 'retryBatchId', 'commandId'] as const;
+// P05-1 / F-012：规划命令/查询输入键冻结（未知键拒绝；深校验在 Core）。
+const START_PLANNING_INPUT_KEYS = ['projectId', 'phaseId', 'featureId', 'requirementRefs', 'constraints', 'acceptance', 'strategy', 'budget', 'expectedRevision', 'commandId'] as const;
+const DECIDE_PLANNING_CANDIDATE_INPUT_KEYS = ['projectId', 'candidateId', 'candidateDigest', 'decision', 'reason', 'expectedRevision', 'commandId'] as const;
+const LIST_PLANNING_CONTEXTS_INPUT_KEYS = ['featureId', 'limit', 'cursor'] as const;
 const EXECUTION_BUDGET_REVISE_INPUT_KEYS = ['projectId', 'batchId', 'expectedRevision', 'budget', 'reason', 'commandId'] as const;
 const CONTROL_EXECUTION_INPUT_KEYS = ['projectId', 'runId', 'batchId', 'expectedRevision', 'commandId'] as const;
 const RETRY_FINAL_EXECUTION_INPUT_KEYS = ['projectId', 'featureId', 'historicalRunId', 'workKey', 'commandId'] as const;
@@ -1740,6 +1815,7 @@ export function createHostClientApplication(context: AppClientContext): HostClie
         ? { expectedRequestDigest: frozen.requestDigest }
         : {}),
       expectedOperation: frozen.operation,
+      ...(frozen.scope.kind === 'project' ? { expectedProjectId: frozen.scope.projectId } : {}),
     };
     if (response.statusCode === 200 || response.statusCode === 202) {
       return validateCommandReceiptWire(response.json, expectation, 'commands.submit');
@@ -1786,6 +1862,7 @@ export function createHostClientApplication(context: AppClientContext): HostClie
             ? { expectedRequestDigest: frozen.requestDigest }
             : {}),
           expectedOperation: frozen.operation,
+          ...(frozen.scope.kind === 'project' ? { expectedProjectId: frozen.scope.projectId } : {}),
         },
         'receipts.get',
       );
@@ -3064,6 +3141,145 @@ export function createHostClientApplication(context: AppClientContext): HostClie
         },
         options,
       );
+    },
+
+    /* ------------------------------------------------------------ *
+     * P05-1 / F-012 规划启动/候选决策与只读查询
+     * ------------------------------------------------------------ */
+
+    async startPlanning(
+      input: StartPlanningInput,
+      options?: SubmitCommandOptions,
+    ): Promise<CommandReceipt> {
+      const object = rejectUnknownInputKeys('commands.submit', input, START_PLANNING_INPUT_KEYS);
+      const projectId = requireProjectId('commands.submit', object.projectId as string);
+      const phaseId = requireStableIdInput('commands.submit', object.phaseId, 'phaseId');
+      const featureId = requireStableIdInput('commands.submit', object.featureId, 'featureId');
+      const requirementRefs = requireArtifactRefsInput('commands.submit', object.requirementRefs);
+      // 深层字段原样交给纯信封校验器；保留未知键以便严格拒绝，不能先投影丢弃。
+      const acceptance = object.acceptance;
+      const strategy = object.strategy;
+      const budget = requireBudgetObject('commands.submit', object.budget, 'budget');
+      const expectedRevision = requireExpectedRevisionInput('commands.submit', object.expectedRevision);
+      const receipt = await submitCommand(
+        {
+          ...optionalCommandIdInput('commands.submit', object.commandId),
+          operation: 'planning.start',
+          scope: { kind: 'project', projectId },
+          expectedRevision,
+          payload: {
+            schemaVersion: PLANNING_REQUEST_SCHEMA_VERSION,
+            projectId,
+            phaseId,
+            featureId,
+            requirementRefs,
+            constraints: object.constraints,
+            acceptance,
+            strategy,
+            budget,
+          },
+        },
+        options,
+      );
+      if (receipt.status !== 'rejected' && (receipt.status !== 'accepted' || receipt.schemaVersion !== 7)) {
+        throw new HostProtocolError('response_malformed', 'commands.submit', undefined, { details: { reason: 'planning_start_receipt_invalid' } });
+      }
+      return receipt;
+    },
+
+    async decidePlanningCandidate(
+      input: DecidePlanningCandidateInput,
+      options?: SubmitCommandOptions,
+    ): Promise<CommandReceipt> {
+      const object = rejectUnknownInputKeys('commands.submit', input, DECIDE_PLANNING_CANDIDATE_INPUT_KEYS);
+      const projectId = requireProjectId('commands.submit', object.projectId as string);
+      const candidateId = requireStableIdInput('commands.submit', object.candidateId, 'candidateId');
+      const candidateDigest = requireSha256Input('commands.submit', object.candidateDigest, 'candidateDigest');
+      if (object.decision !== 'approve' && object.decision !== 'reject') {
+        throw invalidInput('commands.submit', 'invalid_decision', 'decision');
+      }
+      const reason = object.reason ?? null;
+      if (reason !== null && (typeof reason !== 'string' || reason.trim().length === 0 || reason.length > 512)) {
+        throw invalidInput('commands.submit', 'invalid_reason', 'reason');
+      }
+      const expectedRevision = requireExpectedRevisionInput('commands.submit', object.expectedRevision);
+      const receipt = await submitCommand(
+        {
+          ...optionalCommandIdInput('commands.submit', object.commandId),
+          operation: 'planning.candidate.decide',
+          scope: { kind: 'project', projectId },
+          expectedRevision,
+          payload: { candidateId, candidateDigest, decision: object.decision, reason },
+        },
+        options,
+      );
+      if (receipt.status === 'accepted') throw new HostProtocolError('response_malformed', 'commands.submit');
+      if (receipt.status === 'completed') validatePlanningDecisionResultWire(receipt.result, { candidateId, candidateDigest, decision: object.decision });
+      return receipt;
+    },
+
+    async listPlanningContexts(
+      projectId: string,
+      input?: ListPlanningContextsInput,
+    ): Promise<PlanningContextListResult> {
+      context.assertOpen('planning.contexts.list');
+      const project = requireProjectId('planning.contexts.list', projectId);
+      const params = new URLSearchParams();
+      params.append('projectId', project);
+      if (input !== undefined) {
+        const object = rejectUnknownInputKeys('planning.contexts.list', input, LIST_PLANNING_CONTEXTS_INPUT_KEYS);
+        if (object.featureId !== undefined) {
+          params.append('featureId', requireStableIdInput('planning.contexts.list', object.featureId, 'featureId'));
+        }
+        if (object.limit !== undefined) {
+          if (typeof object.limit !== 'number' || !Number.isInteger(object.limit) || object.limit < 1 || object.limit > PLAN_LIST_MAX_LIMIT) {
+            throw invalidInput('planning.contexts.list', 'invalid_limit', 'limit');
+          }
+          params.append('limit', String(object.limit));
+        }
+        if (object.cursor !== undefined) {
+          if (typeof object.cursor !== 'string' || !object.cursor.startsWith(PLAN_LIST_CURSOR_PREFIX)) {
+            throw invalidInput('planning.contexts.list', 'invalid_cursor', 'cursor');
+          }
+          params.append('cursor', object.cursor);
+        }
+      }
+      const json = await getJson('planning.contexts.list', `${PLANNING_CONTEXTS_ROUTE}?${params.toString()}`);
+      const result = validateAppQueryResponse('planning.contexts.list', json);
+      if (result.records.some((record) => record.projectId !== project || (input?.featureId !== undefined && record.featureId !== input.featureId))) {
+        throw new HostProtocolError('response_malformed', 'planning.contexts.list', '规划上下文响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
+      }
+      return result;
+    },
+
+    async getPlanningContext(projectId: string, candidateId: string): Promise<PlanningContextDetailResult> {
+      context.assertOpen('planning.context.get');
+      const project = requireProjectId('planning.context.get', projectId);
+      const candidate = requireStableIdInput('planning.context.get', candidateId, 'candidateId');
+      const json = await getJson(
+        'planning.context.get',
+        `${PLANNING_CONTEXTS_ROUTE_PREFIX}${encodeURIComponent(candidate)}?projectId=${encodeURIComponent(project)}`,
+      );
+      const result = validateAppQueryResponse('planning.context.get', json);
+      if (result.context.projectId !== project || result.context.candidateId !== candidate) {
+        throw new HostProtocolError('response_malformed', 'planning.context.get', '规划上下文响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
+      }
+      return result;
+    },
+
+    async getPlanningCandidate(projectId: string, candidateId: string): Promise<PlanningCandidateDetailResult> {
+      context.assertOpen('planning.candidate.get');
+      const project = requireProjectId('planning.candidate.get', projectId);
+      const candidate = requireStableIdInput('planning.candidate.get', candidateId, 'candidateId');
+      const json = await getJson(
+        'planning.candidate.get',
+        `${PLANNING_CONTEXTS_ROUTE_PREFIX}${encodeURIComponent(candidate)}/candidate?projectId=${encodeURIComponent(project)}`,
+      );
+      const result = validateAppQueryResponse('planning.candidate.get', json);
+      if (result.context.projectId !== project || result.context.candidateId !== candidate) {
+        throw new HostProtocolError('response_malformed', 'planning.candidate.get', '候选响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
+      }
+      return result;
     },
 
     async getExecutionBudgetStatus(projectId: string, batchId: string): Promise<ExecutionBudgetStatusResult> {

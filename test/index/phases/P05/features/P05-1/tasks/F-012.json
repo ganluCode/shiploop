@@ -1,0 +1,83 @@
+{
+  "schema_version": 2,
+  "task_id": "F-012",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/planning/p05-1-f012-planning-host-wiring.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/host/host-lifecycle-contract.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/engineering/client-protocol-boundary.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/host/host-client-application.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/host/host-app-routes.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/host/host-sse-events.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/planning/p03-1-plan-host-wiring.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/planning/p05-1-f007-planning-execution.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/planning/p05-1-f009-planning-control.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/planning/p05-1-f010-planning-recovery.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/host/p04-2-work-tools.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/host/p05-1-f006-submission-tools.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/acceptance/p02-4-negative-acceptance.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/execution/budget/p03-3-execution-budget-query.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/onboarding/p02-3-baseline-host-routes.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/onboarding/p02-3-integration-regression.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/host/p03-10-feature-report-contract.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/planning/p05-1-f006-planning-candidate-submit.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

@@ -21,7 +21,8 @@ export async function openReportHost(f: BudgetFixture, options: {
     application: { principal: options.principal ?? f.owner, commandService: app.commandService,
       queryService: query, commandReceiptsService: app.commandReceiptsService,
       onboardingService: app.onboardingService, baselineQueryService: app.baselineQueryService,
-      baselineExecutionService: app.baselineExecutionService, getLifecycleState: () => 'ready' },
+      baselineExecutionService: app.baselineExecutionService, planningQueryService: app.planningQueryService,
+      getLifecycleState: () => 'ready' },
   });
   try {
     await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); });

@@ -100,6 +100,11 @@ export const APP_OPERATIONS = [
   // P04-9 / F-009：派发队列与执行槽位只读投影查询（无写入口；不提供 SQL、
   // 直接设置 owner/version 或释放槽位的外部接口）。
   'execution.dispatch.list',
+  // P05-1 / F-012：规划上下文/候选只读查询（与 Core PLANNING_QUERY_OPERATIONS
+  // 同步，能力位复用 project.read，不漂移）。
+  'planning.contexts.list',
+  'planning.context.get',
+  'planning.candidate.get',
 ] as const;
 
 export const HOST_OPERATIONS = [
