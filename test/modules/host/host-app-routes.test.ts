@@ -755,6 +755,9 @@ describe('F-011 传输纪律与版本门禁', () => {
         // P03-3 / F-009：批次预算显式修订随 Core 白名单进入接线宣告（仅增额
         // 不自动启动或恢复 Run；HostClient/CLI 入口属 F-011/F-012）。
         'execution.budget.revise',
+        // P05-1 / F-012：一次性规划与候选人工决策已接通通用命令面。
+        'planning.start',
+        'planning.candidate.decide',
         'workspace.discard',
         'workspace.discard.preview',
       ]);
@@ -1009,6 +1012,9 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         'execution.start',
         // P03-3 / F-009：批次预算显式修订经既有 /v1/commands 通用路由接线。
         'execution.budget.revise',
+        // P05-1 / F-012：规划命令经同一通用路由接线并宣告能力。
+        'planning.start',
+        'planning.candidate.decide',
         'workspace.discard',
         'workspace.discard.preview',
       ],
@@ -1073,6 +1079,10 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         'execution.run.recovery.get',
         // P04-9 / F-009：派发队列与执行槽位只读投影真实接线（无写入口）。
         'execution.dispatch.list',
+        // P05-1 / F-012：规划上下文及受管候选内容查询已接线。
+        'planning.contexts.list',
+        'planning.context.get',
+        'planning.candidate.get',
       ],
       events: { transport: 'sse', route: '/v1/events', scopes: ['project', 'global'] },
     });
