@@ -145,7 +145,10 @@ describe('P05-1 / F-007 生产组合根 planning 执行', () => {
     expect(f.query('SELECT status FROM runs WHERE id = ?', f.planningRunId)).toMatchObject({ status: 'paused' });
     expect(f.query('SELECT status FROM planning_contexts WHERE run_id = ?', f.planningRunId))
       .toMatchObject({ status: 'candidate_published' });
-    expect(Number((f.query('SELECT COUNT(*) AS n FROM workspace_leases') as { n: number }).n)).toBe(0);
+    /* 停止证据确认后占用由 retention 异步释放（结算事务之后）：轮询等待同一
+     * 终态，避免与 retention 完成时机竞态。 */
+    await expect.poll(() => Number((f.query('SELECT COUNT(*) AS n FROM workspace_leases') as { n: number }).n),
+      { timeout: 15_000 }).toBe(0);
   }, 120_000);
 
   it('[case:planning-stop-unconfirmed] 停止未确认：Attempt interrupted、Run 暂停且不终结', async () => {
