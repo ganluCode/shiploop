@@ -71,7 +71,7 @@ export interface F007Fixture {
 }
 
 /** 真实受管 feature worktree + managed_workspaces 现场行（宿主 Attempt 终态 succeeded）。 */
-async function seedFeatureWorkspace(box: CommandsTestFixture, session: SqliteStorageSession,
+export async function seedFeatureWorkspace(box: CommandsTestFixture, session: SqliteStorageSession,
   projectId: string, featureId: string, runId: string, now: number): Promise<string> {
   const binding = session.database.prepare<[string], {
     id: string; binding_revision: number; repo_identity: string; git_common_dir: string;

@@ -234,5 +234,11 @@ export function buildPlanningClientInput(
   command: { readonly projectId: string; readonly phaseId: string; readonly featureId: string; readonly revision: number },
   input: PlanningStartInputDocument,
 ): Parameters<HostClient['startPlanning']>[0] {
-  return { ...command, ...input, expectedRevision: command.revision };
+  return {
+    projectId: command.projectId,
+    phaseId: command.phaseId,
+    featureId: command.featureId,
+    ...input,
+    expectedRevision: command.revision,
+  };
 }
