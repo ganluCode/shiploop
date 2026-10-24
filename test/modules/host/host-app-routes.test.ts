@@ -726,6 +726,13 @@ describe('F-011 传输纪律与版本门禁', () => {
         'baseline.cancel',
         // P03-1 / F-004：Phase 创建随 Core 白名单进入接线宣告。
         'phase.create',
+        // P05-2 / F-007：Phase 生命周期、Feature 归属与依赖更新接线。
+        'phase.metadata.update',
+        'phase.close',
+        'phase.reopen',
+        'phase.archive',
+        'feature.phase.move',
+        'feature.dag.update',
         // P03-1 / F-005：计划导入随 Core 白名单进入接线宣告。
         'feature.plan.import',
         // P03-1 / F-007：纯标签 CAS 编辑随 Core 白名单进入接线宣告。
@@ -989,6 +996,13 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         'baseline.cancel',
         // P03-1 / F-004：Phase 创建经既有 /v1/commands 通用路由接线。
         'phase.create',
+        // P05-2 / F-007：已接线能力必须同时在握手中宣告。
+        'phase.metadata.update',
+        'phase.close',
+        'phase.reopen',
+        'phase.archive',
+        'feature.phase.move',
+        'feature.dag.update',
         // P03-1 / F-005：计划导入经既有 /v1/commands 通用路由接线。
         'feature.plan.import',
         // P03-1 / F-007：纯标签 CAS 编辑经既有 /v1/commands 通用路由接线。
@@ -1046,6 +1060,7 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         // P03-1 / F-009：计划层级/详情/DAG 查询真实接线（能力位复用 project.read）。
         'phases.list',
         'phases.get',
+        'phases.graph.get',
         'features.list',
         'features.get',
         'tasks.list',

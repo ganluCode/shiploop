@@ -70,6 +70,13 @@ export const APPLICATION_COMMAND_CAPABILITIES = [
   // P03-1 / F-004：Phase 创建经既有 POST /v1/commands 通用路由接线
   //（信封/回执/幂等同一命令面；CLI 计划入口仍由后续任务接入）。
   'phase.create',
+  // P05-2 / F-007：生命周期、归属和 DAG 命令均已接通 HostClient/CLI。
+  'phase.metadata.update',
+  'phase.close',
+  'phase.reopen',
+  'phase.archive',
+  'feature.phase.move',
+  'feature.dag.update',
   // P03-1 / F-005：单 Feature 计划导入经既有 POST /v1/commands 通用路由接线
   //（同一命令面；查询面/CLI 计划入口仍由后续任务接入）。
   'feature.plan.import',
@@ -151,6 +158,8 @@ export const APPLICATION_QUERY_CAPABILITIES = [
   // project.read；与 Core PLAN_QUERY_OPERATIONS 同步，不漂移）。
   'phases.list',
   'phases.get',
+  // P05-2 / F-007：Phase Feature 图的授权只读查询。
+  'phases.graph.get',
   'features.list',
   'features.get',
   'tasks.list',

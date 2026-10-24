@@ -46,6 +46,18 @@
           "all": true
         },
         {
+          "file": "test/modules/host/host-lifecycle-contract.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/host/host-client.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/host/host-client-application.test.ts",
+          "all": true
+        },
+        {
           "file": "test/modules/cli/app-cli-args.test.ts",
           "all": true
         }

@@ -198,6 +198,13 @@ describe('F-002 冻结常量与能力声明', () => {
           'baseline.cancel',
           // P03-1 / F-004：Phase 创建经既有 /v1/commands 通用路由接线。
           'phase.create',
+          // P05-2 / F-007：已接线的 Phase/Feature 命令。
+          'phase.metadata.update',
+          'phase.close',
+          'phase.reopen',
+          'phase.archive',
+          'feature.phase.move',
+          'feature.dag.update',
           // P03-1 / F-005：计划导入经既有 /v1/commands 通用路由接线。
           'feature.plan.import',
           // P03-1 / F-007：纯标签 CAS 编辑经既有 /v1/commands 通用路由接线。
@@ -258,6 +265,7 @@ describe('F-002 冻结常量与能力声明', () => {
           // P03-1 / F-009：计划域六项查询真实接线（能力位复用 project.read）。
           'phases.list',
           'phases.get',
+          'phases.graph.get',
           'features.list',
           'features.get',
           'tasks.list',
@@ -325,7 +333,9 @@ describe('F-002 冻结常量与能力声明', () => {
       'baselines.list',
       'baselines.get',
       'artifacts.get',
-      ...PLAN_QUERY_OPERATIONS,
+      ...PLAN_QUERY_OPERATIONS.slice(0, 2),
+      'phases.graph.get',
+      ...PLAN_QUERY_OPERATIONS.slice(2),
       PLAN_APPROVAL_QUERY_OPERATION,
       'execution.budget.get',
       'execution.budget.revisions',
