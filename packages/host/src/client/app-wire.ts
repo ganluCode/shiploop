@@ -2797,7 +2797,32 @@ export function validateBaselineCommandResultWire(
 
 function validateExecutionPreviewSummaryWire(operation: HostOperation, value: unknown): void {
   const summary = requirePlain(operation, value);
-  exactKeys(operation, summary, ['approval', 'plan', 'code', 'checkPolicyDigest', 'tasks', 'permissions', 'inputs', 'budget', 'concurrency']);
+  exactKeys(operation, summary, ['members', 'approval', 'plan', 'code', 'checkPolicyDigest', 'tasks', 'permissions', 'inputs', 'budget', 'concurrency']);
+  if (summary.members !== undefined) {
+    if (!Array.isArray(summary.members)) malformed(operation, 'execution_preview_members_invalid');
+    for (const value of summary.members) {
+      const member = requirePlain(operation, value);
+      exactKeys(operation, member, ['featureId', 'revision', 'planDigest', 'planStatus', 'status', 'readiness', 'codeBaselineRefs', 'dependencyFeatureIds', 'taskCount', 'pendingTaskIds']);
+      requireStableId(operation, member.featureId);
+      requirePositiveInteger(operation, member.revision);
+      if (member.planDigest !== null) requireSha256Hex(operation, member.planDigest, 'execution_preview_digest_invalid');
+      requireNonEmptyString(operation, member.planStatus, 'execution_preview_member_invalid');
+      requireNonEmptyString(operation, member.status, 'execution_preview_member_invalid');
+      if (!Array.isArray(member.codeBaselineRefs) || !member.codeBaselineRefs.every((ref) => typeof ref === 'string') ||
+          (member.dependencyFeatureIds !== undefined && (!Array.isArray(member.dependencyFeatureIds) || !member.dependencyFeatureIds.every((id) => typeof id === 'string')))) malformed(operation, 'execution_preview_member_invalid');
+      requireNonNegativeInteger(operation, member.taskCount);
+      if (!Array.isArray(member.pendingTaskIds)) malformed(operation, 'execution_preview_member_invalid');
+      for (const id of member.pendingTaskIds) requireStableId(operation, id);
+      const readiness = requirePlain(operation, member.readiness);
+      exactKeys(operation, readiness, ['featureId', 'dependencyCompleted', 'dependencyCompletion', 'integrationReady', 'dependencyIntegrationReady', 'ready', 'reason']);
+      requireStableId(operation, readiness.featureId);
+      for (const key of ['dependencyCompleted', 'integrationReady', 'dependencyIntegrationReady', 'ready']) {
+        if (typeof readiness[key] !== 'boolean') malformed(operation, 'execution_preview_member_invalid');
+      }
+      requireNonEmptyString(operation, readiness.dependencyCompletion, 'execution_preview_member_invalid');
+      requireNonEmptyString(operation, readiness.reason, 'execution_preview_member_invalid');
+    }
+  }
   const hash = (value: unknown): void => { requireSha256Hex(operation, value, 'execution_preview_digest_invalid'); };
   const text = (value: unknown): void => { requireNonEmptyString(operation, value, 'execution_preview_text_invalid'); };
   const rows = (value: unknown): unknown[] => {
@@ -2863,17 +2888,28 @@ function validateExecutionPreviewSummaryWire(operation: HostOperation, value: un
 function validateExecutionPreviewBlockerWire(operation: HostOperation, value: unknown): void {
   const row = requirePlain(operation, value);
   const fields: Record<string, readonly string[]> = {
+    plan_approval: ['kind', 'reason', 'featureId'], project_not_active: ['kind', 'status', 'featureId'],
+    phase_not_executable: ['kind', 'status', 'featureId'], active_run: ['kind', 'runId', 'status', 'featureId'],
+    active_batch_in_phase: ['kind', 'batchId', 'featureId', 'status'],
+    baseline_occupancy: ['kind', 'holderOperationId', 'featureId'],
+    required_input_unavailable: ['kind', 'artifactId', 'detail', 'featureId'],
+    feature_dependency: ['kind', 'featureId', 'reason'], feature_integration: ['kind', 'featureId', 'reason'],
+  };
+  const requiredFields: Record<string, readonly string[]> = {
     plan_approval: ['kind', 'reason'], project_not_active: ['kind', 'status'],
     phase_not_executable: ['kind', 'status'], active_run: ['kind', 'runId', 'status'],
     active_batch_in_phase: ['kind', 'batchId', 'featureId', 'status'],
-    baseline_occupancy: ['kind', 'holderOperationId'],
-    required_input_unavailable: ['kind', 'artifactId', 'detail'],
+    baseline_occupancy: ['kind', 'holderOperationId'], required_input_unavailable: ['kind', 'artifactId', 'detail'],
+    feature_dependency: ['kind', 'featureId', 'reason'], feature_integration: ['kind', 'featureId', 'reason'],
   };
   if (typeof row.kind !== 'string' || !Object.hasOwn(fields, row.kind)) malformed(operation, 'execution_preview_blocked_invalid');
   exactKeys(operation, row, fields[row.kind]!);
-  for (const key of fields[row.kind]!) {
+  for (const key of requiredFields[row.kind]!) {
     if (key.endsWith('Id')) requireStableId(operation, row[key]);
     else requireNonEmptyString(operation, row[key], 'execution_preview_blocked_invalid');
+  }
+  if (row.featureId !== undefined && !['feature_dependency', 'feature_integration'].includes(row.kind as string)) {
+    requireStableId(operation, row.featureId);
   }
   if (row.kind === 'required_input_unavailable' && !['not_found', 'not_ready', 'content_mismatch'].includes(row.detail as string)) {
     malformed(operation, 'execution_preview_blocked_invalid');
@@ -2892,11 +2928,25 @@ export function validateExecutionPreviewResultWire(
   if (object.schemaVersion !== 1) unsupportedVersion(operation, 'result.schemaVersion');
   requireStableId(operation, object.projectId);
   const scope = requirePlain(operation, object.scope);
-  exactKeys(operation, scope, ['featureIds']);
-  if (!Array.isArray(scope.featureIds) || scope.featureIds.length > 1) {
+  exactKeys(operation, scope, ['featureIds', 'phaseId', 'requestedFeatureIds', 'memberFeatureIds', 'members']);
+  if (!Array.isArray(scope.featureIds) || scope.featureIds.length > 16) {
     malformed(operation, 'execution_preview_scope_invalid');
   }
   for (const id of scope.featureIds) requireStableId(operation, id);
+  const expandedScope = scope.phaseId !== undefined || scope.requestedFeatureIds !== undefined || scope.memberFeatureIds !== undefined || scope.members !== undefined;
+  if (expandedScope) {
+    requireStableId(operation, scope.phaseId);
+    if (!Array.isArray(scope.requestedFeatureIds) || !Array.isArray(scope.memberFeatureIds) || !Array.isArray(scope.members)) malformed(operation, 'execution_preview_scope_invalid');
+    for (const id of [...scope.requestedFeatureIds, ...scope.memberFeatureIds]) requireStableId(operation, id);
+    if (scope.memberFeatureIds.length !== scope.featureIds.length) malformed(operation, 'execution_preview_scope_invalid');
+    for (const value of scope.members) {
+      const member = requirePlain(operation, value);
+      exactKeys(operation, member, ['featureId', 'revision', 'planDigest']);
+      requireStableId(operation, member.featureId);
+      requirePositiveInteger(operation, member.revision);
+      if (member.planDigest !== null) requireSha256Hex(operation, member.planDigest, 'execution_preview_digest_invalid');
+    }
+  }
   if (object.status !== 'ready' && object.status !== 'no_work' && object.status !== 'blocked') {
     malformed(operation, 'execution_preview_status_invalid');
   }
@@ -2910,13 +2960,13 @@ export function validateExecutionPreviewResultWire(
   if (object.runtimeExecution !== false || typeof object.generatedAtUtcMs !== 'number' || !Number.isSafeInteger(object.generatedAtUtcMs) || object.generatedAtUtcMs < 0) {
     malformed(operation, 'execution_preview_runtime_invalid');
   }
-  if (object.status === 'ready' && (object.previewDigest === null || object.summary === null || object.noWorkReason !== null || object.blocked.length !== 0 || scope.featureIds.length !== 1)) {
+  if (object.status === 'ready' && (object.previewDigest === null || object.summary === null || object.noWorkReason !== null || object.blocked.length !== 0 || scope.featureIds.length === 0)) {
     malformed(operation, 'execution_preview_ready_invariant');
   }
   if (object.status !== 'ready' && (object.previewDigest !== null || object.summary !== null)) {
     malformed(operation, 'execution_preview_non_ready_invariant');
   }
-  if (object.status === 'blocked' && (object.blocked.length === 0 || object.noWorkReason !== null || scope.featureIds.length !== 1)) {
+  if (object.status === 'blocked' && (object.blocked.length === 0 || object.noWorkReason !== null || scope.featureIds.length === 0)) {
     malformed(operation, 'execution_preview_blocked_invariant');
   }
   if (object.status === 'no_work' && (object.noWorkReason === null || object.blocked.length !== 0 || (object.noWorkReason === 'empty_scope') !== (scope.featureIds.length === 0))) {

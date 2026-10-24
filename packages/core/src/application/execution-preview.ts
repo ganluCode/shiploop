@@ -39,6 +39,7 @@
  * 本模块不实现：start 启动命令与 Batch/Run 创建（F-005）、预算预占/结算
  * （F-006/F-007）、Host/CLI 传输接线、Runtime 装配。
  */
+import { createHash } from 'node:crypto';
 import { PublicError, mapStorageError, mapToPublicError } from '../ports/commands.js';
 import type { ValidatedExecutionPreviewPayload } from '../ports/commands.js';
 import { RECEIPT_RESULT_MAX_BYTES } from '../ports/commands.js';
@@ -54,9 +55,12 @@ import type {
   ExecutionPreviewCodeIdentity,
   ExecutionPreviewInputRefSummary,
   ExecutionPreviewResult,
+  ExecutionPreviewScopeView,
+  ExecutionPreviewMemberView,
   ExecutionPreviewSummary,
   ExecutionPreviewTaskPermissions,
   ExecutionPreviewTaskSummary,
+  ExecutionPreviewView,
   ExecutionPreviewViewStore,
 } from '../ports/execution-preview.js';
 import { validateExecutionBudgetProposal } from '../ports/execution-budget.js';
@@ -68,6 +72,7 @@ import {
 import type { ExecutionPermissionsFace, ExecutionPermissionsReader } from '../ports/execution-input-prepare.js';
 import { evaluatePlanApprovalValidity } from '../ports/plan-approval-verification.js';
 import { validateStableId } from '../ports/validation.js';
+import { stableStringify } from '../ports/feature-plan.js';
 import type { ValidationContext } from '../ports/validation.js';
 import type { BaselineWorkspaceReader } from '../ports/baseline.js';
 import type { RepositoryInspector } from '../ports/repository-inspector.js';
@@ -152,6 +157,68 @@ function readPermissionsFace(
   return face as ExecutionPermissionsFace;
 }
 
+function semanticMemberIdentityDigest(
+  member: ExecutionPreviewMemberView,
+  dependencyFeatureIds: readonly string[] = [],
+): string {
+  const canonical = stableStringify({
+    featureId: member.feature.id,
+    planDigest: member.feature.planDigest,
+    planStatus: member.feature.planStatus,
+    status: member.feature.status,
+    tasks: member.tasks.map((task) => ({
+      id: task.id,
+      status: task.status,
+      strategy: computeExecutionStrategyCopyDigest({
+        executionConfig: task.executionConfig,
+        configSource: task.configSource,
+        configSourceKey: task.configSourceKey,
+      }),
+    })).sort((left, right) => left.id < right.id ? -1 : left.id > right.id ? 1 : 0),
+    dependencies: member.dependencies.map((edge) => ({ taskId: edge.taskId, dependsOnId: edge.dependsOnId }))
+      .sort((left, right) => `${left.taskId}:${left.dependsOnId}` < `${right.taskId}:${right.dependsOnId}` ? -1 : 1),
+    approvals: member.approvals.map((approval) => ({
+      id: approval.id,
+      subjectDigest: approval.subjectDigest,
+      checkPolicyDigest: approval.checkPolicyDigest,
+      status: approval.status,
+    })),
+    inputs: member.resolvedInputs.map((input) => ({
+      artifactId: input.artifactId,
+      declaredContentHash: input.declaredContentHash,
+      resolved: input.resolved,
+      unavailableReason: input.unavailableReason,
+    })).sort((left, right) => left.artifactId < right.artifactId ? -1 : 1),
+    dependencyFeatureIds: [...dependencyFeatureIds].sort(),
+    readiness: member.readiness,
+  });
+  return createHash('sha256').update(`shiploop:execution-preview-member:v1\n${canonical}`, 'utf8').digest('hex');
+}
+
+function semanticRevision(identityDigest: string): number {
+  // A bounded semantic revision avoids making a label-only row revision part of
+  // authorization identity while remaining stable and auditable in the digest.
+  return Number.parseInt(identityDigest.slice(0, 12), 16);
+}
+
+function scopeForResult(
+  view: ExecutionPreviewScopeView | undefined,
+  featureIds: readonly string[],
+): ExecutionPreviewResult['scope'] {
+  if (view === undefined) return { featureIds: [...featureIds] };
+  return {
+    featureIds: [...view.selection.memberFeatureIds],
+    phaseId: view.phase.id,
+    requestedFeatureIds: [...view.selection.requestedFeatureIds],
+    memberFeatureIds: [...view.selection.memberFeatureIds],
+    members: view.members.map((member) => ({
+      featureId: member.feature.id,
+      revision: member.entity.revision,
+      planDigest: member.entity.planDigest,
+    })),
+  };
+}
+
 /** 装配执行预览服务。只校验依赖形态（fail-closed），不执行任何 I/O。 */
 export function createExecutionPreviewService(deps: ExecutionPreviewServiceDeps): ExecutionPreviewPort {
   const context: ValidationContext = { operation: `${OPERATION}.create` };
@@ -174,11 +241,12 @@ export function createExecutionPreviewService(deps: ExecutionPreviewServiceDeps)
       );
     }
   }
-  if (typeof deps.views.readExecutionPreviewView !== 'function') {
+  if (typeof deps.views.readExecutionPreviewView !== 'function' &&
+      typeof deps.views.readExecutionPreviewScopeView !== 'function') {
     throw new StorageError(
       'validation',
       context.operation,
-      `${OPERATION}.create: deps.views 必须提供 readExecutionPreviewView 方法`,
+      `${OPERATION}.create: deps.views 必须提供单成员或范围预览读取方法`,
       { details: { field: 'deps.views.readExecutionPreviewView', reason: 'invalid_type' } },
     );
   }
@@ -239,8 +307,9 @@ export function createExecutionPreviewService(deps: ExecutionPreviewServiceDeps)
         runtimeExecution: false as const,
       } as const;
 
-      /* 2. 范围形态：空范围 no_work（零 I/O）；多成员结构化拒绝。 */
-      if (payload.featureIds.length === 0) {
+      /* 2. 范围形态与一致读视图选择。Legacy empty featureIds remains P04 no_work. */
+      const phaseSelector = payload.phaseId ?? null;
+      if (phaseSelector === null && payload.featureIds.length === 0) {
         const emptyResult: ExecutionPreviewResult = {
           ...base,
           scope: { featureIds: [] },
@@ -253,43 +322,77 @@ export function createExecutionPreviewService(deps: ExecutionPreviewServiceDeps)
         };
         return emptyResult;
       }
-      if (payload.featureIds.length > 1) {
+      if (typeof views.readExecutionPreviewScopeView !== 'function' && payload.featureIds.length !== 1) {
         throw publicError('invalid_input', 'multi_feature_scope_unsupported', {
           featureIds: payload.featureIds.length,
           supported: 1,
         });
       }
-      const featureId = payload.featureIds[0];
 
-      /* 3. 一致读视图捕获（单一 DEFERRED 读事务）。 */
-      let view;
+      let scopeView: ExecutionPreviewScopeView | undefined;
+      let legacyView: ExecutionPreviewView | undefined;
       try {
-        view = views.readExecutionPreviewView(projectKey, featureId);
+        if (typeof views.readExecutionPreviewScopeView === 'function' &&
+            (phaseSelector !== null || payload.featureIds.length > 1)) {
+          scopeView = views.readExecutionPreviewScopeView(projectKey, {
+            phaseId: phaseSelector,
+            featureIds: [...payload.featureIds],
+          });
+        } else {
+          legacyView = views.readExecutionPreviewView!(projectKey, payload.featureIds[0]!);
+        }
       } catch (cause) {
         if (isStorageError(cause, 'ownership')) {
-          throw publicError('forbidden', 'ownership_denied', { entityType: 'feature' }, cause);
+          throw publicError('forbidden', 'ownership_denied', { entityType: phaseSelector === null ? 'feature' : 'phase' }, cause);
         }
-        if (isStorageError(cause)) {
-          throw mapStorageError(cause, { operation });
-        }
+        if (isStorageError(cause)) throw mapStorageError(cause, { operation });
         throw cause;
       }
-      if (view === undefined) {
-        throw publicError('not_found', 'feature_not_found', { entityType: 'feature' });
+      if (scopeView === undefined && legacyView === undefined) {
+        throw publicError('not_found', phaseSelector === null ? 'feature_not_found' : 'phase_not_found', {
+          entityType: phaseSelector === null ? 'feature' : 'phase',
+        });
       }
 
-      /* 4. 有效并发核验（保存政策 ≠ 执行支持；>1 一律拒绝）。 */
+      const members: readonly ExecutionPreviewMemberView[] = scopeView?.members ?? [{
+        feature: legacyView!.feature,
+        tasks: legacyView!.tasks,
+        dependencies: legacyView!.dependencies,
+        approvals: legacyView!.approvals,
+        resolvedInputs: legacyView!.resolvedInputs,
+        activeRuns: legacyView!.activeRuns,
+        entity: { revision: legacyView!.feature.revision, planDigest: legacyView!.feature.planDigest },
+        readiness: {
+          featureId: legacyView!.feature.id,
+          dependencyCompleted: true,
+          dependencyCompletion: 'complete',
+          integrationReady: true,
+          dependencyIntegrationReady: true,
+          ready: true,
+          reason: 'ready',
+        },
+      }];
+      const project = scopeView?.project ?? legacyView!.project;
+      const phase = scopeView?.phase ?? legacyView!.phase;
+      const binding = scopeView?.binding ?? legacyView!.binding;
+      const settings = scopeView?.settings ?? legacyView!.settings;
+      const activePhaseBatches = scopeView?.activePhaseBatches ?? (
+        legacyView!.activePhaseBatch === null ? [] : [{
+          id: legacyView!.activePhaseBatch.id,
+          featureIds: [legacyView!.activePhaseBatch.featureId],
+          status: legacyView!.activePhaseBatch.status,
+        }]
+      );
+      const baselineOccupancy = scopeView?.baselineOccupancy ?? legacyView!.baselineOccupancy;
+      const finalFeatureIds = scopeView?.selection.memberFeatureIds ?? [legacyView!.feature.id];
+      const scope = scopeForResult(scopeView, finalFeatureIds);
+
+      /* 3. Effective concurrency is shared by every frozen member. */
       let effective;
       try {
         effective = mergeEffectiveSettings({
-          global:
-            view.settings.global === null
-              ? null
-              : { scopeRevision: view.settings.global.scopeRevision, payload: view.settings.global.payload },
-          project:
-            view.settings.project === null
-              ? null
-              : { scopeRevision: view.settings.project.scopeRevision, payload: view.settings.project.payload },
+          global: settings.global === null ? null : { scopeRevision: settings.global.scopeRevision, payload: settings.global.payload },
+          project: settings.project === null ? null : { scopeRevision: settings.project.scopeRevision, payload: settings.project.payload },
         });
       } catch (cause) {
         throw mapToPublicError(cause, { operation });
@@ -302,14 +405,18 @@ export function createExecutionPreviewService(deps: ExecutionPreviewServiceDeps)
         });
       }
 
-      /* 5. 待执行工作判定 → no_work（no_pending_tasks）。 */
-      const pendingTasks = view.tasks.filter((task) =>
-        (EXECUTION_PREVIEW_PENDING_WORK_TASK_STATUSES as readonly string[]).includes(task.status),
-      );
-      if (pendingTasks.length === 0) {
-        const noWorkResult: ExecutionPreviewResult = {
+      /* 4. No work is a scope-level result: do not hide blockers for a scope
+       * that has nothing eligible to execute. */
+      const memberPending = members.map((member) => ({
+        member,
+        tasks: member.tasks.filter((task) =>
+          (EXECUTION_PREVIEW_PENDING_WORK_TASK_STATUSES as readonly string[]).includes(task.status),
+        ),
+      }));
+      if (memberPending.every((entry) => entry.tasks.length === 0)) {
+        return {
           ...base,
-          scope: { featureIds: [featureId] },
+          scope,
           status: 'no_work',
           noWorkReason: 'no_pending_tasks',
           blocked: [],
@@ -317,77 +424,75 @@ export function createExecutionPreviewService(deps: ExecutionPreviewServiceDeps)
           summary: null,
           generatedAtUtcMs: now,
         };
-        return noWorkResult;
       }
 
-      /* 6. 视图内阻塞原因收集（确定性顺序；不做仓库 I/O）。 */
+      /* 5. All blockers come from the same consistent view. For a multi-member
+       * preview every member blocker carries its member identity. */
+      const multiMember = finalFeatureIds.length > 1 || phaseSelector !== null;
+      const memberReason = <T extends Record<string, unknown>>(featureId: string, reason: T): T =>
+        (multiMember ? { ...reason, featureId } : reason) as T;
       const blocked: ExecutionPreviewBlockedReason[] = [];
       const checkPolicyDigest = resolveCurrentCheckPolicyDigest(
-        view.settings.global === null
-          ? null
-          : { scopeRevision: view.settings.global.scopeRevision, payload: view.settings.global.payload },
-        view.settings.project === null
-          ? null
-          : { scopeRevision: view.settings.project.scopeRevision, payload: view.settings.project.payload },
+        settings.global === null ? null : { scopeRevision: settings.global.scopeRevision, payload: settings.global.payload },
+        settings.project === null ? null : { scopeRevision: settings.project.scopeRevision, payload: settings.project.payload },
       );
-      const validity = evaluatePlanApprovalValidity({
-        planDigest: view.feature.planDigest,
-        planStatus: view.feature.planStatus,
-        taskCount: view.tasks.length,
-        decisions: view.approvals,
-        currentCheckPolicyDigest: checkPolicyDigest,
-      });
-      if (!validity.valid) {
-        blocked.push({ kind: 'plan_approval', reason: validity.reason });
-      }
-      if (view.project.status !== 'active') {
-        blocked.push({ kind: 'project_not_active', status: view.project.status });
-      }
-      if (view.phase.status !== 'open') {
-        blocked.push({ kind: 'phase_not_executable', status: view.phase.status });
-      }
-      for (const run of [...view.activeRuns].sort((left, right) => (left.id < right.id ? -1 : 1))) {
-        blocked.push({ kind: 'active_run', runId: run.id, status: run.status });
-      }
-      if (view.activePhaseBatch !== null) {
-        blocked.push({
-          kind: 'active_batch_in_phase',
-          batchId: view.activePhaseBatch.id,
-          featureId: view.activePhaseBatch.featureId,
-          status: view.activePhaseBatch.status,
+      const validityByFeature = new Map<string, ReturnType<typeof evaluatePlanApprovalValidity>>();
+      for (const entry of memberPending) {
+        const validity = evaluatePlanApprovalValidity({
+          planDigest: entry.member.feature.planDigest,
+          planStatus: entry.member.feature.planStatus,
+          taskCount: entry.member.tasks.length,
+          decisions: entry.member.approvals,
+          currentCheckPolicyDigest: checkPolicyDigest,
         });
+        validityByFeature.set(entry.member.feature.id, validity);
+        if (!validity.valid) blocked.push(memberReason(entry.member.feature.id, { kind: 'plan_approval', reason: validity.reason } as const));
       }
-      if (view.baselineOccupancy.holderOperationId !== null) {
-        blocked.push({
-          kind: 'baseline_occupancy',
-          holderOperationId: view.baselineOccupancy.holderOperationId,
-        });
+      if (project.status !== 'active') {
+        for (const entry of memberPending) blocked.push(memberReason(entry.member.feature.id, { kind: 'project_not_active', status: project.status } as const));
       }
-      const resolvedInputs = [...view.resolvedInputs].sort((left, right) =>
-        left.artifactId < right.artifactId ? -1 : left.artifactId > right.artifactId ? 1 : 0,
-      );
-      for (const input of resolvedInputs) {
-        if (input.resolved === null) {
-          blocked.push({
-            kind: 'required_input_unavailable',
-            artifactId: input.artifactId,
-            detail: input.unavailableReason ?? 'not_found',
-          });
-        } else if (
-          input.declaredContentHash !== null &&
-          input.resolved.contentHash !== input.declaredContentHash
-        ) {
-          blocked.push({
-            kind: 'required_input_unavailable',
-            artifactId: input.artifactId,
-            detail: 'content_mismatch',
-          });
+      if (phase.status !== 'open') {
+        for (const entry of memberPending) blocked.push(memberReason(entry.member.feature.id, { kind: 'phase_not_executable', status: phase.status } as const));
+      }
+      for (const entry of memberPending) {
+        const readiness = entry.member.readiness;
+        if (readiness.reason === 'dependency_pending' || readiness.reason === 'dependency_failed') {
+          blocked.push({ kind: 'feature_dependency', featureId: entry.member.feature.id, reason: readiness.reason });
+        } else if (readiness.reason === 'integration_not_ready') {
+          blocked.push({ kind: 'feature_integration', featureId: entry.member.feature.id, reason: readiness.reason });
+        }
+        for (const run of [...entry.member.activeRuns].sort((left, right) => left.id < right.id ? -1 : 1)) {
+          blocked.push(memberReason(entry.member.feature.id, { kind: 'active_run', runId: run.id, status: run.status } as const));
+        }
+      }
+      for (const batch of [...activePhaseBatches].sort((left, right) => left.id < right.id ? -1 : 1)) {
+        for (const entry of memberPending) {
+          blocked.push({ kind: 'active_batch_in_phase', batchId: batch.id, featureId: entry.member.feature.id, status: batch.status });
+        }
+      }
+      if (baselineOccupancy.holderOperationId !== null) {
+        for (const entry of memberPending) {
+          blocked.push(memberReason(entry.member.feature.id, {
+            kind: 'baseline_occupancy', holderOperationId: baselineOccupancy.holderOperationId,
+          } as const));
+        }
+      }
+      const inputEntries = memberPending.flatMap(({ member }) => member.resolvedInputs.map((input) => ({ member, input })));
+      for (const { member, input } of inputEntries.sort((left, right) =>
+        left.input.artifactId < right.input.artifactId ? -1 : left.input.artifactId > right.input.artifactId ? 1 :
+          left.member.feature.id < right.member.feature.id ? -1 : 1)) {
+        const detail = input.resolved === null
+          ? (input.unavailableReason ?? 'not_found')
+          : input.declaredContentHash !== null && input.resolved.contentHash !== input.declaredContentHash
+            ? 'content_mismatch' : null;
+        if (detail !== null) {
+          blocked.push(memberReason(member.feature.id, { kind: 'required_input_unavailable', artifactId: input.artifactId, detail } as const));
         }
       }
       if (blocked.length > 0) {
-        const blockedResult: ExecutionPreviewResult = {
+        return {
           ...base,
-          scope: { featureIds: [featureId] },
+          scope,
           status: 'blocked',
           noWorkReason: null,
           blocked,
@@ -395,20 +500,18 @@ export function createExecutionPreviewService(deps: ExecutionPreviewServiceDeps)
           summary: null,
           generatedAtUtcMs: now,
         };
-        return blockedResult;
       }
 
-      /* 7. 受控仓库 I/O（仅无阻塞时）：绑定身份核验 + 工作区摘要。 */
-      if (view.binding === null) {
-        throw publicError('conflict', 'binding_missing', { entityType: 'repository_binding' });
-      }
+      /* 6. Controlled repository I/O is shared once for the frozen project
+       * baseline and remains outside any write transaction. */
+      if (binding === null) throw publicError('conflict', 'binding_missing', { entityType: 'repository_binding' });
       let inspection;
       try {
-        inspection = await inspector.inspect(view.binding.canonicalPath);
+        inspection = await inspector.inspect(binding.canonicalPath);
       } catch (cause) {
         throw mapToPublicError(cause, { operation });
       }
-      if (inspection.repoIdentity !== view.binding.repoIdentity) {
+      if (inspection.repoIdentity !== binding.repoIdentity) {
         throw publicError('conflict', 'binding_identity_mismatch', { entityType: 'repository_binding' });
       }
       let workspaceSummary;
@@ -423,15 +526,27 @@ export function createExecutionPreviewService(deps: ExecutionPreviewServiceDeps)
         hasUncommittedChanges: inspection.hasUncommittedChanges,
       };
 
-      /* 8. 完整输入身份摘要（纯计算）。ready 路径必然存在有效批准（非空
-       * planDigest）；防御性核对保持 fail-closed，不伪造身份。 */
-      const readyPlanDigest = validity.planDigest;
-      if (readyPlanDigest === null) {
-        throw publicError('corrupt_state', 'approval_state_inconsistent');
+      /* 7. Complete frozen identity summary. Labels are deliberately absent from
+       * the semantic member identity; plan, approval, task, input, readiness and
+       * code-baseline facts remain bound. */
+      const validityByMember = new Map<string, ReturnType<typeof evaluatePlanApprovalValidity>>();
+      for (const member of members) {
+        const validity = validityByFeature.get(member.feature.id) ?? evaluatePlanApprovalValidity({
+          planDigest: member.feature.planDigest,
+          planStatus: member.feature.planStatus,
+          taskCount: member.tasks.length,
+          decisions: member.approvals,
+          currentCheckPolicyDigest: checkPolicyDigest,
+        });
+        validityByMember.set(member.feature.id, validity);
+        if (!validity.valid || validity.planDigest === null) {
+          throw publicError('corrupt_state', 'approval_state_inconsistent', { featureId: member.feature.id });
+        }
       }
-      const tasks: readonly ExecutionPreviewTaskSummary[] = [...view.tasks]
-        .sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
-        .map((task) => ({
+      const taskEntries = members.flatMap((member) => member.tasks.map((task) => ({ member, task })));
+      const tasks: readonly ExecutionPreviewTaskSummary[] = [...taskEntries]
+        .sort((left, right) => left.task.id < right.task.id ? -1 : left.task.id > right.task.id ? 1 : left.member.feature.id < right.member.feature.id ? -1 : 1)
+        .map(({ member, task }) => ({
           taskId: task.id,
           status: task.status,
           strategyCopyDigest: computeExecutionStrategyCopyDigest({
@@ -440,39 +555,92 @@ export function createExecutionPreviewService(deps: ExecutionPreviewServiceDeps)
             configSourceKey: task.configSourceKey,
           }),
           strategyConfigSource: task.configSource,
+          ...(multiMember ? { featureId: member.feature.id } : {}),
         }));
-      const permissionsEntries: readonly ExecutionPreviewTaskPermissions[] = [...view.tasks]
-        .sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0))
-        .map((task) => ({
+      const permissionsEntries: readonly ExecutionPreviewTaskPermissions[] = [...taskEntries]
+        .sort((left, right) => left.task.id < right.task.id ? -1 : left.task.id > right.task.id ? 1 : left.member.feature.id < right.member.feature.id ? -1 : 1)
+        .map(({ member, task }) => ({
           taskId: task.id,
           digest: computeExecutionPermissionsDigest(
             readPermissionsFace(permissions, {
               projectId: projectKey,
-              featureId,
+              featureId: member.feature.id,
               taskId: task.id,
             }).grants,
           ),
+          ...(multiMember ? { featureId: member.feature.id } : {}),
         }));
-      const inputRefs: readonly ExecutionPreviewInputRefSummary[] = resolvedInputs
-        .filter((input) => input.resolved !== null)
-        .map((input) => ({
-          artifactId: input.artifactId,
-          version: input.resolved!.version,
-          contentHash: input.resolved!.contentHash,
-          sizeBytes: input.resolved!.sizeBytes,
-        }));
+      const inputRefsByIdentity = new Map<string, ExecutionPreviewInputRefSummary>();
+      for (const member of members) {
+        for (const input of member.resolvedInputs) {
+          if (input.resolved === null) continue;
+          const value: ExecutionPreviewInputRefSummary = {
+            artifactId: input.artifactId,
+            version: input.resolved.version,
+            contentHash: input.resolved.contentHash,
+            sizeBytes: input.resolved.sizeBytes,
+          };
+          inputRefsByIdentity.set(`${value.artifactId}\u0000${value.version}\u0000${value.contentHash}`, value);
+        }
+      }
+      const inputRefs = [...inputRefsByIdentity.values()].sort((left, right) => left.artifactId < right.artifactId ? -1 : 1);
+      const codeBaselineRefsByMember = new Map<string, string[]>();
+      for (const member of members) {
+        codeBaselineRefsByMember.set(member.feature.id, (scopeView?.featureDependencies ?? [])
+          .filter((edge) => edge.featureId === member.feature.id && edge.codeBaselineRef !== null)
+          .map((edge) => edge.codeBaselineRef!)
+          .sort());
+      }
+      const memberIdentityRows = members.map((member) => {
+        const dependencyFeatureIds = (scopeView?.featureDependencies ?? [])
+          .filter((edge) => edge.featureId === member.feature.id)
+          .map((edge) => edge.dependsOnId)
+          .sort();
+        const identityDigest = semanticMemberIdentityDigest(member, dependencyFeatureIds);
+        return {
+          featureId: member.feature.id,
+          revision: semanticRevision(identityDigest),
+          planDigest: member.feature.planDigest,
+          identityDigest,
+          codeBaselineRefs: codeBaselineRefsByMember.get(member.feature.id) ?? [],
+          dependencyFeatureIds,
+          readiness: member.readiness,
+        };
+      });
+      const aggregatePlanDigest = members.length === 1
+        ? members[0]!.feature.planDigest!
+        : createHash('sha256').update(`shiploop:execution-preview-plans:v1\n${stableStringify(
+          members.map((member) => ({ featureId: member.feature.id, planDigest: member.feature.planDigest }))
+            .sort((left, right) => left.featureId < right.featureId ? -1 : 1),
+        )}`, 'utf8').digest('hex');
+      const memberSummaries = members.map((member) => ({
+        featureId: member.feature.id,
+        revision: member.entity.revision,
+        planDigest: member.feature.planDigest,
+        planStatus: member.feature.planStatus,
+        status: member.feature.status,
+        readiness: member.readiness,
+        codeBaselineRefs: codeBaselineRefsByMember.get(member.feature.id) ?? [],
+        taskCount: member.tasks.length,
+        pendingTaskIds: member.tasks.filter((task) =>
+          (EXECUTION_PREVIEW_PENDING_WORK_TASK_STATUSES as readonly string[]).includes(task.status),
+        ).map((task) => task.id).sort(),
+      }));
+      const aggregateDecisionId = members.length === 1
+        ? (validityByMember.get(members[0]!.feature.id)?.currentDecisionId ?? null)
+        : null;
       const summary: ExecutionPreviewSummary = {
+        members: memberSummaries,
         approval: {
-          planDigest: readyPlanDigest,
+          planDigest: aggregatePlanDigest,
           checkPolicyDigest,
-          decisionId: validity.currentDecisionId,
+          decisionId: aggregateDecisionId,
         },
         plan: {
-          planDigest: view.feature.planDigest,
-          taskCount: view.tasks.length,
-          pendingTaskIds: pendingTasks
-            .map((task) => task.id)
-            .sort((left, right) => (left < right ? -1 : left > right ? 1 : 0)),
+          planDigest: aggregatePlanDigest,
+          taskCount: tasks.length,
+          pendingTaskIds: memberSummaries.flatMap((member) => member.pendingTaskIds)
+            .sort((left, right) => left < right ? -1 : left > right ? 1 : 0),
         },
         code,
         checkPolicyDigest,
@@ -485,21 +653,27 @@ export function createExecutionPreviewService(deps: ExecutionPreviewServiceDeps)
           source: concurrency.source,
         },
       };
-      const previewDigest = computeExecutionPreviewDigest({
+      const digestInput = {
         projectId: projectKey,
-        phaseId: view.feature.phaseId,
-        featureIds: [featureId],
-        planDigest: view.feature.planDigest,
+        phaseId: phase.id,
+        featureIds: finalFeatureIds,
+        planDigest: members.length === 1 ? members[0]!.feature.planDigest : aggregatePlanDigest,
         code,
-        tasks: tasks.map((task) => ({ taskId: task.taskId, strategyCopyDigest: task.strategyCopyDigest })),
+        tasks: tasks.map((task) => ({
+          taskId: task.taskId,
+          strategyCopyDigest: task.strategyCopyDigest,
+          ...(task.featureId === undefined ? {} : { featureId: task.featureId }),
+        })),
         checkPolicyDigest,
         permissions: permissionsEntries,
         inputs: inputRefs,
         budget,
-      });
+        ...(multiMember ? { memberIdentities: memberIdentityRows, concurrency } : {}),
+      };
+      const previewDigest = computeExecutionPreviewDigest(digestInput);
       const result: ExecutionPreviewResult = {
         ...base,
-        scope: { featureIds: [featureId] },
+        scope,
         status: 'ready',
         noWorkReason: null,
         blocked: [],

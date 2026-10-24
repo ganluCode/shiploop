@@ -101,6 +101,8 @@ export const EXECUTION_PREVIEW_BLOCKED_REASON_KINDS = [
   'plan_approval',
   'project_not_active',
   'phase_not_executable',
+  'feature_dependency',
+  'feature_integration',
   'active_run',
   'active_batch_in_phase',
   'baseline_occupancy',
@@ -113,22 +115,39 @@ export type ExecutionPreviewBlockedReasonKind =
 export interface PlanApprovalBlockedReason {
   readonly kind: 'plan_approval';
   readonly reason: string;
+  /** Multi-member previews identify the affected member; omitted for legacy single-member output. */
+  readonly featureId?: string;
 }
 
 export interface ProjectNotActiveBlockedReason {
   readonly kind: 'project_not_active';
   readonly status: ProjectStatus;
+  readonly featureId?: string;
 }
 
 export interface PhaseNotExecutableBlockedReason {
   readonly kind: 'phase_not_executable';
   readonly status: string;
+  readonly featureId?: string;
+}
+
+export interface FeatureDependencyBlockedReason {
+  readonly kind: 'feature_dependency';
+  readonly featureId: string;
+  readonly reason: string;
+}
+
+export interface FeatureIntegrationBlockedReason {
+  readonly kind: 'feature_integration';
+  readonly featureId: string;
+  readonly reason: string;
 }
 
 export interface ActiveRunBlockedReason {
   readonly kind: 'active_run';
   readonly runId: string;
   readonly status: string;
+  readonly featureId?: string;
 }
 
 export interface ActiveBatchBlockedReason {
@@ -142,6 +161,7 @@ export interface ActiveBatchBlockedReason {
 export interface BaselineOccupancyBlockedReason {
   readonly kind: 'baseline_occupancy';
   readonly holderOperationId: string;
+  readonly featureId?: string;
 }
 
 /** 必需不可变输入引用不可用：not_found / not_ready / content_mismatch。 */
@@ -149,12 +169,15 @@ export interface RequiredInputUnavailableBlockedReason {
   readonly kind: 'required_input_unavailable';
   readonly artifactId: string;
   readonly detail: 'not_found' | 'not_ready' | 'content_mismatch';
+  readonly featureId?: string;
 }
 
 export type ExecutionPreviewBlockedReason =
   | PlanApprovalBlockedReason
   | ProjectNotActiveBlockedReason
   | PhaseNotExecutableBlockedReason
+  | FeatureDependencyBlockedReason
+  | FeatureIntegrationBlockedReason
   | ActiveRunBlockedReason
   | ActiveBatchBlockedReason
   | BaselineOccupancyBlockedReason
@@ -273,10 +296,10 @@ export interface ExecutionPreviewViewStore {
   /** P05-3 F-002：Phase/显式 Feature 范围的一致读视图。 */
   readonly readExecutionPreviewScopeView?: ExecutionPreviewScopeViewStore['readExecutionPreviewScopeView'];
   /** P04 兼容面：单 Feature 视图。 */
-  readExecutionPreviewView(
+  readonly readExecutionPreviewView?: (
     projectId: string,
     featureId: string,
-  ): ExecutionPreviewView | undefined;
+  ) => ExecutionPreviewView | undefined;
 }
 
 /* ------------------------------------------------------------------ *
@@ -296,12 +319,14 @@ export interface ExecutionPreviewTaskSummary {
   readonly status: string;
   readonly strategyCopyDigest: string;
   readonly strategyConfigSource: string;
+  readonly featureId?: string;
 }
 
 /** 逐 Task 权限摘要（computeExecutionPermissionsDigest；可信装配读取器供料）。 */
 export interface ExecutionPreviewTaskPermissions {
   readonly taskId: string;
   readonly digest: string;
+  readonly featureId?: string;
 }
 
 /** 必需输入引用的解析身份（进入 previewDigest 的完整输入身份成分）。 */
@@ -312,8 +337,23 @@ export interface ExecutionPreviewInputRefSummary {
   readonly sizeBytes: number;
 }
 
+export interface ExecutionPreviewMemberSummary {
+  readonly featureId: string;
+  /** Persisted entity revision, exposed for the frozen scope/audit view. */
+  readonly revision: number;
+  readonly planDigest: string | null;
+  readonly planStatus: string;
+  readonly status: string;
+  readonly readiness: FeatureDagReadiness;
+  /** Fixed baseline identities on incoming dependency edges; paths are never included. */
+  readonly codeBaselineRefs: readonly string[];
+  readonly taskCount: number;
+  readonly pendingTaskIds: readonly string[];
+}
+
 /** ready 预览摘要：计划/代码/Task 策略/检查/权限/预算与并发政策。 */
 export interface ExecutionPreviewSummary {
+  readonly members: readonly ExecutionPreviewMemberSummary[];
   readonly approval: {
     readonly planDigest: string;
     readonly checkPolicyDigest: string;
@@ -340,19 +380,24 @@ export interface ExecutionPreviewSummary {
   };
 }
 
+export interface ExecutionPreviewScopeResult {
+  /** Backward-compatible alias for the final frozen member set. */
+  readonly featureIds: readonly string[];
+  readonly phaseId: string;
+  readonly requestedFeatureIds: readonly string[];
+  readonly memberFeatureIds: readonly string[];
+  readonly members: readonly { readonly featureId: string; readonly revision: number; readonly planDigest: string | null }[];
+}
+
 /**
- * 单 Feature 执行 prepare 预览结果：
- * - status=ready：previewDigest 与 summary 非空（完整输入身份）；
- * - status=no_work：noWorkReason 非空，previewDigest/summary 为 null；
- * - status=blocked：blocked 携带全部阻塞原因（确定性顺序），previewDigest/summary
- *   为 null；
- * - runtimeExecution 恒 false：预览（含预算授权预览）不宣称已具备 Runtime
- *   执行能力，不代表已启动任何执行。
+ * 单 Feature 执行 prepare 预览结果。P05 multi-member fields are additive;
+ * legacy single-member callers can continue consuming scope.featureIds and the
+ * original summary fields.
  */
 export interface ExecutionPreviewResult {
   readonly schemaVersion: typeof EXECUTION_PREVIEW_RESULT_SCHEMA_VERSION;
   readonly projectId: string;
-  readonly scope: { readonly featureIds: readonly string[] };
+  readonly scope: ExecutionPreviewScopeResult | { readonly featureIds: readonly string[] };
   readonly status: ExecutionPreviewStatus;
   readonly noWorkReason: ExecutionPreviewNoWorkReason | null;
   readonly blocked: readonly ExecutionPreviewBlockedReason[];
@@ -374,11 +419,22 @@ export interface ExecutionPreviewDigestInput {
   readonly featureIds: readonly string[];
   readonly planDigest: string | null;
   readonly code: ExecutionPreviewCodeIdentity;
-  readonly tasks: readonly { readonly taskId: string; readonly strategyCopyDigest: string }[];
+  readonly tasks: readonly { readonly taskId: string; readonly strategyCopyDigest: string; readonly featureId?: string }[];
   readonly checkPolicyDigest: string;
-  readonly permissions: readonly { readonly taskId: string; readonly digest: string }[];
+  readonly permissions: readonly { readonly taskId: string; readonly digest: string; readonly featureId?: string }[];
   readonly inputs: readonly ExecutionPreviewInputRefSummary[];
   readonly budget: { readonly batch: BatchBudgetLimits; readonly run: RunBudgetLimits };
+  /** P05 frozen scope identities. Omitted by legacy P04 single-member callers. */
+  readonly memberIdentities?: readonly {
+    readonly featureId: string;
+    readonly revision: number;
+    readonly planDigest: string | null;
+    readonly identityDigest: string;
+    readonly codeBaselineRefs: readonly string[];
+    readonly dependencyFeatureIds: readonly string[];
+    readonly readiness: FeatureDagReadiness;
+  }[];
+  readonly concurrency?: { readonly maxConcurrentWorks: number; readonly source: string };
 }
 
 /**
@@ -416,6 +472,20 @@ export function computeExecutionPreviewDigest(input: ExecutionPreviewDigestInput
         contentHash: ref.contentHash,
       })),
     budget: { batch: input.budget.batch, run: input.budget.run },
+    ...(input.memberIdentities === undefined ? {} : {
+      memberIdentities: [...input.memberIdentities]
+        .sort((left, right) => left.featureId < right.featureId ? -1 : left.featureId > right.featureId ? 1 : 0)
+        .map((member) => ({
+          featureId: member.featureId,
+          revision: member.revision,
+          planDigest: member.planDigest,
+          identityDigest: member.identityDigest,
+          codeBaselineRefs: [...member.codeBaselineRefs].sort(),
+          dependencyFeatureIds: [...member.dependencyFeatureIds].sort(),
+          readiness: member.readiness,
+        })),
+    }),
+    ...(input.concurrency === undefined ? {} : { concurrency: input.concurrency }),
   });
   return createHash('sha256').update(`${EXECUTION_PREVIEW_DIGEST_DOMAIN}\n${canonical}`, 'utf8').digest('hex');
 }

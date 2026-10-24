@@ -713,13 +713,19 @@ describe('F-004 结构化拒绝（跨项目/非法预算/并发/仓库绑定）'
     );
   });
 
-  it('多成员范围拒绝（本阶段固定单 Feature，不静默截断）', async () => {
+  it('多成员范围按固定闭包预览，并关联成员阻塞原因', async () => {
     const s = await setup();
     const second = await s.importSecondFeature();
-    await expectPublicError(
-      s.previewSubmit({ payload: { featureIds: [s.featureId, second], budget: VALID_BUDGET } }),
-      { code: 'invalid_input', reason: 'multi_feature_scope_unsupported' },
-    );
+    const result = resultOf(await s.previewSubmit({
+      payload: { featureIds: [s.featureId, second], budget: VALID_BUDGET },
+    }));
+    expect(result.status).toBe('blocked');
+    expect(result.scope).toMatchObject({
+      phaseId: 'phase-1',
+      requestedFeatureIds: expect.arrayContaining([s.featureId, second]),
+      memberFeatureIds: expect.arrayContaining([s.featureId, second]),
+    });
+    expect(result.blocked).toContainEqual({ kind: 'plan_approval', reason: 'not_approved', featureId: second });
   });
 
   it('非法预算拒绝：必需缺失/非整数/越界/跨层不一致/deadline 已过（字段定位）', async () => {

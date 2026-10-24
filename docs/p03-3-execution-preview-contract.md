@@ -30,14 +30,11 @@ previewDigest 纯函数）、`packages/core/src/application/execution-preview.ts
 - 幂等：同 commandId 重放复用原回执（同参数）；异参 conflict。预览唯一持久副作用是
   命令回执本身（completed 回执承载预览结果，与 baseline.preview 同一纪律）。
 
-## 2. 范围语义（固定单成员）
+## 2. 范围语义（P04 单成员兼容 + P05 固定多成员）
 
-- `scope.featureIds` 恰含目标 Feature（与迁移 v9 `execution_batches.scope_snapshot`
-  CHECK 的单成员形态同源）。预览**不自动加入**其他 Feature、依赖节点或 Phase 后续
-  新增成员：Phase 中新增其他 Feature 不改变既有预览的 scope 与 previewDigest。
-- 空范围（`featureIds: []`）→ `no_work`（`empty_scope`），零 I/O、零执行实体；
-  多成员（≥2）→ `invalid_input` reason=`multi_feature_scope_unsupported`（本阶段
-  不支持多 Feature 跑批，不静默截断）。
+- P05 通过 `phaseId` 或显式 Feature 集合选择范围；一致读视图按 P05-2 DAG 规则返回传递依赖闭包。`scope` 同时携带 `phaseId`、请求成员、最终 `memberFeatureIds` 及每个成员的 `revision/planDigest`；`scope.featureIds` 是最终成员集合的兼容别名。
+- 范围固定为本次预览解析出的成员集合。预览**不自动加入**闭包之外的 Feature 或 Phase 后续新增成员；重启不会扩大范围，授权时必须复核同一集合与身份。
+- P04 旧启动端口仍将 `multi_feature_scope_unsupported` 作为其单成员兼容拒绝原因；P05 预览本身接受有界多成员集合，不静默截断。
 
 ## 3. 状态与原因词汇（冻结）
 
@@ -54,6 +51,8 @@ previewDigest 纯函数）、`packages/core/src/application/execution-preview.ts
     plan_changed/check_policy_changed/no_plan/no_tasks/approval_state_inconsistent）；
   - `project_not_active`（status 携带当前项目状态）；
   - `phase_not_executable`（status；open 之外均不可执行）；
+  - `feature_dependency`（featureId/reason；前置 Feature 未完成）；
+  - `feature_integration`（featureId/reason；固定集成证据未就绪）；
   - `active_run`（runId/status；活动集与迁移 v9 条件唯一索引同源，含
     paused/interrupted——不是可绕过的终态）；
   - `active_batch_in_phase`（batchId/featureId/status；同 Phase 单活动 Batch 纪律）；
@@ -71,7 +70,7 @@ previewDigest 纯函数）、`packages/core/src/application/execution-preview.ts
 ## 4. 编排顺序（授权与纯校验先于 I/O；blocked 不做仓库 I/O）
 
 1. 预算深校验（纯；参考时钟 deadline）→ 非法即拒（零 I/O）；
-2. 范围形态（纯）：空 → no_work（零 I/O）；多成员 → 拒；
+2. 范围形态（纯）：空 → no_work（零 I/O）；Phase 或显式成员集合按 DAG 闭包冻结；
 3. 一致读视图（单一 DEFERRED 读事务）：项目状态、绑定最小面、Phase、Feature、
    全部 Task/依赖边/决策记录、全局与项目当前配置、必需输入解析、同 Feature
    活动 Run、同 Phase 活动 Batch、基线占用（不存在新旧混合状态）；
@@ -101,15 +100,15 @@ JSON，键排序；任务/权限/输入按身份键稳定排序）。成分：
 | 预算 | Batch+Run 两层提案 | 预算调整 |
 
 纯标签编辑与默认 modelMap 更新不改变 previewDigest（与 P03-2 逐身份同一纪律；
-策略按副本使用不重读路由）。摘要不含时间成分：相同输入跨请求恒一致；
+策略按副本使用不重读路由）。多成员摘要还绑定成员语义身份、依赖边、集成就绪、代码基线引用、并发政策和预算/deadline；摘要不含时间成分：相同输入跨请求恒一致；
 `generatedAtUtcMs` 独立返回。
 
 ## 6. 结果形态与边界
 
-- 结果 `{schemaVersion:1, projectId, scope:{featureIds}, status, noWorkReason,
+- 结果 `{schemaVersion:1, projectId, scope:{featureIds,phaseId?,requestedFeatureIds?,memberFeatureIds?,members?}, status, noWorkReason,
   blocked[], previewDigest|null, summary|null, runtimeExecution:false,
   generatedAtUtcMs}`；ready 时 summary 携带批准复合身份（planDigest+
-  checkPolicyDigest+decisionId）、计划摘要、代码身份、逐 Task 策略/权限摘要、
+  checkPolicyDigest+decisionId）、成员身份、计划摘要、代码身份、逐 Task 策略/权限摘要、
   必需输入解析身份、预算与并发政策；no_work/blocked 时 previewDigest 与 summary
   为 null（不可作为启动授权依据）。
 - 结果内嵌有界（≤ RECEIPT_RESULT_MAX_BYTES=16 KiB，超限 `preview_result_too_large`
@@ -126,7 +125,7 @@ JSON，键排序；任务/权限/输入按身份键稳定排序）。成分：
 
 - core-design/08 §9（跑批前的执行预览）：确定性计算、不调用模型决定调度、返回
   预览内容与摘要、不预先创建 Run/Attempt、空范围 no_work 不建空批次、范围外新增
-  不吸收——F-004 按单 Feature 子集实现；`prepareExecution` 的 Phase 级范围、
+  不吸收；P05 增加 Phase/Feature 闭包及固定成员摘要。
   候选顺序与已通过可复用项展示属 P05 多 Feature 扩展，不在本阶段。
 - core-design/04 §6（ExecutionController/单 Feature）：范围恰一个 Feature不自动
   扩大；活动 Run/活动 Batch 唯一由迁移 v9 条件唯一索引承担，预览提前以可理解
