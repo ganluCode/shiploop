@@ -3317,6 +3317,75 @@ DROP INDEX workspace_leases_resource_key_unique;
 CREATE INDEX workspace_leases_resource_key_index ON workspace_leases (resource_key);
 `;
 
+const MIGRATION_040_SQL = `
+-- v40 (P05-5 / F-002): durable Feature shared-resource leases.
+-- This table is independent from Attempt workspace_leases and Run dispatch claims.
+CREATE TABLE feature_resource_leases (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  resource_key TEXT NOT NULL,
+  resource_kind TEXT NOT NULL,
+  access_mode TEXT NOT NULL,
+  lease_mode TEXT NOT NULL,
+  owner_id TEXT NOT NULL,
+  owner_version INTEGER NOT NULL,
+  acquired_at INTEGER NOT NULL,
+  lease_until INTEGER NOT NULL,
+  state TEXT NOT NULL DEFAULT 'held',
+  waiting_reason TEXT,
+  released_at INTEGER,
+  CONSTRAINT feature_resource_leases_revision_check CHECK (revision >= 1),
+  CONSTRAINT feature_resource_leases_resource_check CHECK (length(resource_key) BETWEEN 1 AND 256),
+  CONSTRAINT feature_resource_leases_kind_check CHECK (resource_kind IN ('planning_exclusive', 'feature_code_shared', 'worktree_write_exclusive', 'git_public_metadata_short', 'migration', 'contract')),
+  CONSTRAINT feature_resource_leases_mode_check CHECK (access_mode IN ('exclusive', 'shared') AND lease_mode IN ('lease', 'short')),
+  CONSTRAINT feature_resource_leases_semantics_check CHECK (
+    (resource_kind = 'feature_code_shared' AND access_mode = 'shared' AND lease_mode = 'lease')
+    OR (resource_kind <> 'feature_code_shared' AND access_mode = 'exclusive'
+      AND ((resource_kind = 'git_public_metadata_short' AND lease_mode = 'short')
+        OR (resource_kind <> 'git_public_metadata_short' AND lease_mode = 'lease')))),
+  CONSTRAINT feature_resource_leases_owner_check CHECK (length(owner_id) BETWEEN 1 AND 128 AND typeof(owner_version) = 'integer' AND owner_version >= 1),
+  CONSTRAINT feature_resource_leases_times_check CHECK (typeof(created_at) = 'integer' AND created_at >= 0
+    AND typeof(updated_at) = 'integer' AND updated_at >= 0
+    AND typeof(acquired_at) = 'integer' AND acquired_at >= 0
+    AND typeof(lease_until) = 'integer' AND lease_until >= acquired_at),
+  CONSTRAINT feature_resource_leases_state_check CHECK (state IN ('held', 'quarantined', 'released')),
+  CONSTRAINT feature_resource_leases_waiting_reason_check CHECK (waiting_reason IS NULL OR (json_valid(waiting_reason) AND json_type(waiting_reason) = 'object'
+    AND json_type(waiting_reason, '$.code') = 'text' AND json_type(waiting_reason, '$.resourceKey') = 'text'
+    AND json_extract(waiting_reason, '$.resourceKey') = resource_key)),
+  CONSTRAINT feature_resource_leases_settlement_check CHECK (
+    (state = 'held' AND waiting_reason IS NULL AND released_at IS NULL)
+    OR (state = 'quarantined' AND waiting_reason IS NOT NULL AND released_at IS NULL)
+    OR (state = 'released' AND waiting_reason IS NULL AND released_at IS NOT NULL AND released_at >= acquired_at)),
+  CONSTRAINT feature_resource_leases_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX feature_resource_leases_active_exclusive_unique ON feature_resource_leases (project_id, resource_key)
+  WHERE state IN ('held', 'quarantined') AND access_mode = 'exclusive';
+CREATE UNIQUE INDEX feature_resource_leases_active_shared_owner_unique ON feature_resource_leases (project_id, resource_key, owner_id, owner_version)
+  WHERE state IN ('held', 'quarantined') AND access_mode = 'shared';
+CREATE INDEX feature_resource_leases_project_state_index ON feature_resource_leases (project_id, state, updated_at);
+CREATE INDEX feature_resource_leases_owner_index ON feature_resource_leases (project_id, owner_id, owner_version);
+CREATE TRIGGER feature_resource_leases_project_key_insert BEFORE INSERT ON feature_resource_leases
+WHEN substr(NEW.resource_key, 1, length('project:' || NEW.project_id || ':')) <> 'project:' || NEW.project_id || ':'
+BEGIN SELECT RAISE(ABORT, 'feature resource key is outside project'); END;
+CREATE TRIGGER feature_resource_leases_project_key_update BEFORE UPDATE OF project_id, resource_key ON feature_resource_leases
+WHEN substr(NEW.resource_key, 1, length('project:' || NEW.project_id || ':')) <> 'project:' || NEW.project_id || ':'
+BEGIN SELECT RAISE(ABORT, 'feature resource key is outside project'); END;
+CREATE TRIGGER feature_resource_leases_identity_immutable BEFORE UPDATE ON feature_resource_leases
+WHEN NEW.id IS NOT OLD.id OR NEW.project_id IS NOT OLD.project_id OR NEW.resource_key IS NOT OLD.resource_key
+  OR NEW.resource_kind IS NOT OLD.resource_kind OR NEW.access_mode IS NOT OLD.access_mode OR NEW.lease_mode IS NOT OLD.lease_mode
+  OR NEW.owner_id IS NOT OLD.owner_id OR NEW.owner_version IS NOT OLD.owner_version OR NEW.acquired_at IS NOT OLD.acquired_at
+BEGIN SELECT RAISE(ABORT, 'feature resource lease identity is immutable'); END;
+CREATE TRIGGER feature_resource_leases_revision_cas BEFORE UPDATE ON feature_resource_leases
+WHEN NEW.revision IS NOT OLD.revision + 1
+BEGIN SELECT RAISE(ABORT, 'feature resource lease revision CAS failed'); END;
+CREATE TRIGGER feature_resource_leases_state_transition BEFORE UPDATE ON feature_resource_leases
+WHEN (OLD.state = 'released' AND NEW.state <> 'released') OR (OLD.state = 'quarantined' AND NEW.state = 'held')
+BEGIN SELECT RAISE(ABORT, 'illegal feature resource lease transition'); END;
+`;
+
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     version: 1,
@@ -3421,4 +3490,5 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 37, sql: MIGRATION_037_SQL, checksum: sha256Hex(MIGRATION_037_SQL) },
   { version: 38, sql: MIGRATION_038_SQL, checksum: sha256Hex(MIGRATION_038_SQL), foreignKeysOff: true },
   { version: 39, sql: MIGRATION_039_SQL, checksum: sha256Hex(MIGRATION_039_SQL) },
+  { version: 40, sql: MIGRATION_040_SQL, checksum: sha256Hex(MIGRATION_040_SQL) },
 ];

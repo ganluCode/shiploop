@@ -1682,6 +1682,56 @@ export const workspaceOperations = sqliteTable('workspace_operations', {
   index('workspace_operations_project_created_index').on(table.projectId, table.createdAt, table.id),
 ]);
 
+export const featureResourceLeases = sqliteTable('feature_resource_leases', {
+  id: text('id').primaryKey(),
+  createdAt: integer('created_at').notNull(),
+  projectId: text('project_id').notNull().references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  revision: integer('revision').notNull().default(1),
+  updatedAt: integer('updated_at').notNull(),
+  resourceKey: text('resource_key').notNull(),
+  resourceKind: text('resource_kind').notNull(),
+  accessMode: text('access_mode').notNull(),
+  leaseMode: text('lease_mode').notNull(),
+  ownerId: text('owner_id').notNull(),
+  ownerVersion: integer('owner_version').notNull(),
+  acquiredAt: integer('acquired_at').notNull(),
+  leaseUntil: integer('lease_until').notNull(),
+  state: text('state').notNull().default('held'),
+  waitingReason: text('waiting_reason'),
+  releasedAt: integer('released_at'),
+}, (table) => [
+  check('feature_resource_leases_revision_check', sql`${table.revision} >= 1`),
+  check('feature_resource_leases_resource_check', sql`length(${table.resourceKey}) BETWEEN 1 AND 256`),
+  check('feature_resource_leases_kind_check', sql`${table.resourceKind} IN ('planning_exclusive', 'feature_code_shared', 'worktree_write_exclusive', 'git_public_metadata_short', 'migration', 'contract')`),
+  check('feature_resource_leases_mode_check', sql`${table.accessMode} IN ('exclusive', 'shared') AND ${table.leaseMode} IN ('lease', 'short')`),
+  check('feature_resource_leases_semantics_check', sql`
+    (${table.resourceKind} = 'feature_code_shared' AND ${table.accessMode} = 'shared' AND ${table.leaseMode} = 'lease')
+    OR (${table.resourceKind} <> 'feature_code_shared' AND ${table.accessMode} = 'exclusive'
+      AND ((${table.resourceKind} = 'git_public_metadata_short' AND ${table.leaseMode} = 'short')
+        OR (${table.resourceKind} <> 'git_public_metadata_short' AND ${table.leaseMode} = 'lease')))`),
+  check('feature_resource_leases_owner_check', sql`length(${table.ownerId}) BETWEEN 1 AND 128 AND typeof(${table.ownerVersion}) = 'integer' AND ${table.ownerVersion} >= 1`),
+  check('feature_resource_leases_times_check', sql`typeof(${table.createdAt}) = 'integer' AND ${table.createdAt} >= 0
+    AND typeof(${table.updatedAt}) = 'integer' AND ${table.updatedAt} >= 0
+    AND typeof(${table.acquiredAt}) = 'integer' AND ${table.acquiredAt} >= 0
+    AND typeof(${table.leaseUntil}) = 'integer' AND ${table.leaseUntil} >= ${table.acquiredAt}`),
+  check('feature_resource_leases_state_check', sql`${table.state} IN ('held', 'quarantined', 'released')`),
+  check('feature_resource_leases_waiting_reason_check', sql`${table.waitingReason} IS NULL OR (json_valid(${table.waitingReason}) AND json_type(${table.waitingReason}) = 'object'
+    AND json_type(${table.waitingReason}, '$.code') = 'text' AND json_type(${table.waitingReason}, '$.resourceKey') = 'text'
+    AND json_extract(${table.waitingReason}, '$.resourceKey') = ${table.resourceKey})`),
+  check('feature_resource_leases_settlement_check', sql`
+    (${table.state} = 'held' AND ${table.waitingReason} IS NULL AND ${table.releasedAt} IS NULL)
+    OR (${table.state} = 'quarantined' AND ${table.waitingReason} IS NOT NULL AND ${table.releasedAt} IS NULL)
+    OR (${table.state} = 'released' AND ${table.waitingReason} IS NULL AND ${table.releasedAt} IS NOT NULL AND ${table.releasedAt} >= ${table.acquiredAt})`),
+  uniqueIndex('feature_resource_leases_active_exclusive_unique')
+    .on(table.projectId, table.resourceKey)
+    .where(sql`${table.state} IN ('held', 'quarantined') AND ${table.accessMode} = 'exclusive'`),
+  uniqueIndex('feature_resource_leases_active_shared_owner_unique')
+    .on(table.projectId, table.resourceKey, table.ownerId, table.ownerVersion)
+    .where(sql`${table.state} IN ('held', 'quarantined') AND ${table.accessMode} = 'shared'`),
+  index('feature_resource_leases_project_state_index').on(table.projectId, table.state, table.updatedAt),
+  index('feature_resource_leases_owner_index').on(table.projectId, table.ownerId, table.ownerVersion),
+]);
+
 export const schemaMigrations = sqliteTable('schema_migrations', {
   id: text('id').primaryKey(),
   createdAt: integer('created_at').notNull(),

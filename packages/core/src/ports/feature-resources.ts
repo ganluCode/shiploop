@@ -128,6 +128,30 @@ export interface FeatureResourceOwner {
   readonly ownerVersion: number;
 }
 
+export interface FeatureResourceAcquireInput {
+  readonly resourceSet: FeatureResourceSet;
+  readonly owner: FeatureResourceOwner;
+  readonly leaseUntilUtcMs: number;
+}
+
+const ACQUIRE_KEYS = ['resourceSet', 'owner', 'leaseUntilUtcMs'] as const;
+
+/** Validate the complete immutable input admitted by the SQLite claim primitive. */
+export function validateFeatureResourceAcquireInput(value: unknown): FeatureResourceAcquireInput {
+  const ctx = context('validateAcquire', 'feature_resource_lease');
+  const raw = requirePlainObject(value, ctx, 'input');
+  rejectUnknownKeys(raw, ACQUIRE_KEYS, ctx, 'input');
+  const resourceSet = normalizeFeatureResourceSet(raw.resourceSet);
+  const owner = validateFeatureResourceOwner(raw.owner);
+  const leaseUntilUtcMs = validateNonNegativeInteger(raw.leaseUntilUtcMs, ctx, 'leaseUntilUtcMs');
+  return { resourceSet, owner, leaseUntilUtcMs };
+}
+
+/** Narrow read input; a read is always scoped to one canonical project resource. */
+export function validateFeatureResourceReadInput(value: unknown): FeatureResourceDeclaration {
+  return validateFeatureResourceDeclaration(value);
+}
+
 /** Narrow storage port reserved for F-002+ adapters; this file provides no implementation. */
 export interface FeatureResourceAccess {
   normalize(input: unknown): FeatureResourceSet;
@@ -339,7 +363,7 @@ function validateWaitReason(value: unknown, resourceKey: string, ctx: Validation
 
 /** Validate the durable lease shape used by F-002 adapters. */
 export function validateFeatureResourceLeaseRecord(value: unknown): FeatureResourceLeaseRecord {
-  const ctx = context('validateLease', 'workspace');
+  const ctx = context('validateLease', 'feature_resource_lease');
   const raw = requirePlainObject(value, ctx, 'lease');
   rejectUnknownKeys(raw, LEASE_KEYS, ctx, 'lease');
   const id = validateStableId(raw.id, ctx, 'id');
@@ -387,7 +411,7 @@ export function validateFeatureResourceLeaseRecord(value: unknown): FeatureResou
 }
 
 export function validateFeatureResourceOwner(value: unknown): FeatureResourceOwner {
-  const ctx = context('validateOwner', 'workspace');
+  const ctx = context('validateOwner', 'feature_resource_lease');
   const raw = requirePlainObject(value, ctx, 'owner');
   rejectUnknownKeys(raw, OWNER_KEYS, ctx, 'owner');
   return {
@@ -425,10 +449,10 @@ export function assertFeatureResourceLeaseTransition(
     });
   }
   if (after.revision !== before.revision + 1) {
-    throw validationError(context('assertTransition', 'workspace'), 'revision', '必须严格递增一代', after.revision);
+    throw validationError(context('assertTransition', 'feature_resource_lease'), 'revision', '必须严格递增一代', after.revision);
   }
   if (after.acquiredAtUtcMs !== before.acquiredAtUtcMs || after.leaseUntilUtcMs < before.leaseUntilUtcMs) {
-    throw validationError(context('assertTransition', 'workspace'), 'lease', '获得时刻不可变且租约不得缩短');
+    throw validationError(context('assertTransition', 'feature_resource_lease'), 'lease', '获得时刻不可变且租约不得缩短');
   }
   if (before.state === 'released' && after.state !== 'released') {
     fail('assertTransition', 'conflict', 'released 租约是终态，不能复活');

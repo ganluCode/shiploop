@@ -100,6 +100,8 @@ const SCHEMA_TABLES = [
   ['check_results', schema.checkResults],
   // P03-8 / F-002：受控 Git 操作意图与回执（迁移 v26）。
   ['git_operations', schema.gitOperations],
+  // P05-5 / F-002：Feature 共享资源租约（迁移 v40）。
+  ['feature_resource_leases', schema.featureResourceLeases],
   ['schema_migrations', schema.schemaMigrations],
 ] as const;
 
@@ -685,6 +687,7 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
         'planning_contexts:(feature_id,run_id)->runs.(feature_id,id)',
         'planning_contexts:(feature_id,planning_task_id)->tasks.(feature_id,id)',
         'planning_contexts:(project_id,candidate_artifact_id)->artifacts.(project_id,id)',
+        'feature_resource_leases:(project_id)->projects.(id)',
         // P03-9 / F-002 取消停止 operation（迁移 v28）：同项目 Batch/Run 关联。
         'execution_stop_operations:(project_id)->projects.(id)',
         'execution_stop_operations:(project_id,batch_id)->execution_batches.(project_id,id)',
