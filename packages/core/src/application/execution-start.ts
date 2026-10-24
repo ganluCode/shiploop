@@ -283,6 +283,201 @@ function submitMultiExecutionStart(
   return receipt;
 }
 
+function submitMultiExecutionRetry(
+  deps: ExecutionStartServiceDeps,
+  identity: ExecutionStartCommandIdentity,
+  envelope: ExecutionStartEnvelopeFace,
+  transaction: CommandTransaction,
+  prepared: Extract<PreparedExecutionStart, { readonly kind: 'retry' }>,
+  context: ExecutionStartSubmitContext,
+  receiptIdentity: {
+    readonly principalId: string;
+    readonly commandId: string;
+    readonly operation: typeof OPERATION;
+    readonly scope: ExecutionStartCommandIdentity['scope'];
+    readonly requestDigest: string;
+    readonly issuedAt: string;
+    readonly completedAt: string;
+  },
+): CommandReceipt {
+  const rejected = (reason: ExecutionStartRejectedReason): CommandReceipt => {
+    const receipt = createRejectedReceipt({
+      ...receiptIdentity,
+      error: new PublicError('conflict', OPERATION, undefined, { details: { reason } }),
+    });
+    transaction.saveReceipt(receipt);
+    return receipt;
+  };
+  const parent = transaction.getExecutionBatch(prepared.projectId, prepared.retryBatchId);
+  const memberIds = [...transaction.listExecutionBatchMemberFeatureIds(prepared.projectId, prepared.retryBatchId)];
+  const requestedIds = [...envelope.payload.featureIds];
+  const requested = new Set(requestedIds);
+  if (memberIds.length < 2 || requested.size !== memberIds.length || memberIds.some(id => !requested.has(id))) {
+    return rejected('retry_scope_mismatch');
+  }
+  if (isExecutionTerminalStatus(parent.status) || parent.status === 'cancelling' || parent.status === 'interrupted'
+      || parent.status === 'pausing' || parent.status === 'paused' || parent.pauseRequestedAtUtcMs !== null) {
+    return rejected('batch_not_active');
+  }
+  const parentPreviewDigest = parent.scopeSnapshot.previewDigest;
+  if (typeof parentPreviewDigest !== 'string' || !/^[0-9a-f]{64}$/.test(parentPreviewDigest)) {
+    throw publicError('corrupt_state', 'batch_scope_digest_corrupt');
+  }
+  const phase = transaction.getPhase(prepared.projectId, parent.phaseId);
+  if (phase.status !== 'open') return rejected('preview_stale');
+  const activePhaseBatch = transaction.getActivePhaseExecutionBatch(prepared.projectId, parent.phaseId);
+  if (activePhaseBatch !== null && activePhaseBatch.id !== parent.id) {
+    throw publicError('conflict', EXECUTION_IN_PROGRESS_REASON, {
+      batchId: activePhaseBatch.id,
+      status: activePhaseBatch.status,
+    });
+  }
+  const now = (deps.nowMs ?? Date.now)();
+  const parentBudget = evaluateBatchBudgetReservation(
+    parent.budgetSnapshot.batch,
+    {
+      runsCreated: parent.runsCreated,
+      attemptsCreated: parent.attemptsCreated,
+      runtimeStarts: parent.runtimeStarts,
+      noProgressRuns: parent.noProgressRuns,
+    },
+    now,
+  );
+  if (!parentBudget.allowed || parent.runsCreated + memberIds.length > parent.budgetSnapshot.batch.maxRuns) {
+    return rejected('budget_exhausted');
+  }
+
+  const facts: Array<{
+    readonly featureId: string;
+    readonly planDigest: string;
+    readonly pendingTaskIds: readonly string[];
+    readonly inputs: readonly ExecutionPreviewInputRefSummary[];
+    readonly workKey: string;
+    readonly workspaceBaseline: unknown;
+    readonly dispatchOrdinal: number;
+  }> = [];
+  for (const featureId of memberIds) {
+    const snapshot = transaction.getFeaturePlan(prepared.projectId, featureId);
+    if (snapshot.feature.phaseId !== parent.phaseId || snapshot.feature.planDigest === null) return rejected('preview_stale');
+    const global = transaction.getGlobalSettingsOrNull();
+    const project = transaction.getProjectSettingsOrNull(prepared.projectId);
+    const checkPolicyDigest = resolveCurrentCheckPolicyDigest(
+      global === null ? null : { scopeRevision: global.revision, payload: global.payload },
+      project === null ? null : { scopeRevision: project.revision, payload: project.payload },
+    );
+    const validity = evaluatePlanApprovalValidity({
+      planDigest: snapshot.feature.planDigest,
+      planStatus: snapshot.feature.planStatus,
+      taskCount: snapshot.tasks.length,
+      decisions: transaction.listPlanApprovals(prepared.projectId, featureId),
+      currentCheckPolicyDigest: checkPolicyDigest,
+    });
+    if (!validity.valid) return rejected('preview_stale');
+    const pendingTasks = snapshot.tasks.filter(task => task.status === 'pending' || task.status === 'failed');
+    if (pendingTasks.length === 0) return rejected('preview_stale');
+    const refs = new Map<string, PlanArtifactRef>();
+    for (const ref of [...snapshot.feature.sourceRefs, ...snapshot.tasks.flatMap(task => [...task.requirementsRefs])]) {
+      refs.set(`${ref.artifactId}\u0000${ref.contentHash ?? ''}`, ref);
+    }
+    const inputs: ExecutionPreviewInputRefSummary[] = [];
+    for (const ref of [...refs.values()].sort((left, right) => left.artifactId < right.artifactId ? -1 : 1)) {
+      try {
+        const input = transaction.getArtifactInputRef(prepared.projectId, ref.artifactId);
+        if (ref.contentHash !== null && ref.contentHash !== undefined && ref.contentHash !== input.contentHash) return rejected('preview_stale');
+        inputs.push({ artifactId: input.artifactId, version: input.version, contentHash: input.contentHash, sizeBytes: input.sizeBytes });
+      } catch (error) {
+        if (isStorageError(error, 'not_found') || isStorageError(error, 'conflict') || isStorageError(error, 'ownership')) return rejected('preview_stale');
+        throw error;
+      }
+    }
+    const workKey = computeExecutionWorkKey({ featureId, purpose: EXECUTION_RUN_PURPOSE, planDigest: snapshot.feature.planDigest, inputs });
+    const workRuns = transaction.listExecutionRunsForWorkKey(prepared.projectId, parent.id, workKey);
+    if (workRuns.length === 0) return rejected('retry_work_key_absent');
+    if (workRuns.some(run => run.status === 'succeeded')) return rejected('work_key_succeeded');
+    const activeRun = transaction.getActiveExecutionRun(prepared.projectId, featureId);
+    if (activeRun !== null) {
+      throw publicError('conflict', EXECUTION_IN_PROGRESS_REASON, { runId: activeRun.id, status: activeRun.status });
+    }
+    facts.push({
+      featureId,
+      planDigest: snapshot.feature.planDigest,
+      pendingTaskIds: pendingTasks.map(task => task.id).sort((left, right) => left < right ? -1 : 1),
+      inputs,
+      workKey,
+      workspaceBaseline: workRuns[0]!.inputSnapshot.workspaceBaseline ?? null,
+      dispatchOrdinal: Math.max(...workRuns.map(run => run.dispatchOrdinal)) + 1,
+    });
+  }
+
+  let batch = parent;
+  const createdRunIds: string[] = [];
+  const createdIntentIds: string[] = [];
+  for (const fact of facts) {
+    batch = transaction.recordExecutionRunDispatch(prepared.projectId, parent.id);
+    const run = transaction.insertExecutionRun({
+      projectId: prepared.projectId,
+      batchId: parent.id,
+      featureId: fact.featureId,
+      runId: randomUUID(),
+      purpose: EXECUTION_RUN_PURPOSE,
+      inputSnapshot: {
+        schemaVersion: 1,
+        previewDigest: parentPreviewDigest,
+        workKey: fact.workKey,
+        planDigest: fact.planDigest,
+        pendingTaskIds: fact.pendingTaskIds,
+        inputs: fact.inputs.map(input => ({ artifactId: input.artifactId, version: input.version, contentHash: input.contentHash })),
+        workspaceBaseline: fact.workspaceBaseline,
+      },
+      configSnapshot: { schemaVersion: 1, runLimits: parent.budgetSnapshot.run },
+      status: 'queued',
+      scopeDigest: parentPreviewDigest,
+      workKey: fact.workKey,
+      dispatchOrdinal: fact.dispatchOrdinal,
+      maxAttemptsPerRun: parent.budgetSnapshot.run.maxAttemptsPerRun,
+      runTimeLimitMs: parent.budgetSnapshot.run.runTimeLimitMs,
+      reason: context.schedulerAssembled ? null : EXECUTION_RUN_NOT_READY_REASON,
+    });
+    transaction.appendExecutionEvent({
+      projectId: prepared.projectId,
+      eventType: EXECUTION_RUN_DISPATCHED_EVENT_TYPE,
+      aggregateType: 'run',
+      aggregateId: run.id,
+      aggregateRevision: run.revision,
+      payload: { dispatched: true },
+    });
+    const intent = enqueueAuthorizedRunInTransaction(transaction, {
+      projectId: prepared.projectId,
+      runId: run.id,
+      source: 'retry',
+      reason: run.reason,
+    });
+    createdRunIds.push(run.id);
+    createdIntentIds.push(intent.intent.id);
+  }
+  const receipt = createCompletedReceipt({
+    ...receiptIdentity,
+    resultRef: createResultRef(randomBytes(32)),
+    result: {
+      schemaVersion: 1,
+      dispatched: true,
+      batchId: parent.id,
+      runId: createdRunIds[0]!,
+      runIds: createdRunIds,
+      featureId: facts[0]!.featureId,
+      featureIds: facts.map(fact => fact.featureId),
+      dispatchOrdinal: facts[0]!.dispatchOrdinal,
+      runsCreated: batch.runsCreated,
+      status: 'queued',
+      runtimeExecution: false,
+      dispatchIntentId: createdIntentIds[0]!,
+      dispatchIntentIds: createdIntentIds,
+    },
+  });
+  transaction.saveReceipt(receipt);
+  return receipt;
+}
+
 /** 装配显式执行启动服务。只校验依赖形态（fail-closed），不执行任何 I/O。 */
 export function createExecutionStartService(deps: ExecutionStartServiceDeps): ExecutionStartPort {
   const context = { operation: `${OPERATION}.create` } as const;
@@ -320,6 +515,7 @@ export function createExecutionStartService(deps: ExecutionStartServiceDeps): Ex
           kind: 'retry',
           projectId,
           featureId,
+          scopeFeatureIds: [...payload.featureIds],
           retryBatchId: payload.retryBatchId,
         };
       }
@@ -448,6 +644,9 @@ export function createExecutionStartService(deps: ExecutionStartServiceDeps): Ex
 
       if (fresh !== null && fresh.scopeFeatureIds.length > 1) {
         return submitMultiExecutionStart(deps, identity, envelope, transaction, fresh, context, receiptIdentity);
+      }
+      if (retry !== null && retry.scopeFeatureIds.length > 1) {
+        return submitMultiExecutionRetry(deps, identity, envelope, transaction, retry, context, receiptIdentity);
       }
 
       /* 2. 计划快照（同事务权威读）：缺失 not_found、跨项目 ownership 抛出。 */
@@ -698,6 +897,12 @@ export function createExecutionStartService(deps: ExecutionStartServiceDeps): Ex
           }
           throw error;
         }
+        const parentMemberIds = transaction.listExecutionBatchMemberFeatureIds(projectId, retryBatchId);
+        const requestedMemberIds = new Set(envelope.payload.featureIds);
+        if (requestedMemberIds.size !== parentMemberIds.length
+          || parentMemberIds.some(memberId => !requestedMemberIds.has(memberId))) {
+          return rejected('retry_scope_mismatch');
+        }
         if (parent.featureId !== targetFeatureId) {
           return rejected('retry_scope_mismatch');
         }
@@ -706,7 +911,8 @@ export function createExecutionStartService(deps: ExecutionStartServiceDeps): Ex
         }
         // P03-9 / F-002：取消意图（cancelling）或未确认停止（interrupted）的
         // Batch 不接受新 Run；重试不能绕过取消/隔离现场。
-        if (parent.status === 'cancelling' || parent.status === 'interrupted') {
+        if (parent.status === 'cancelling' || parent.status === 'interrupted'
+          || parent.status === 'pausing' || parent.status === 'paused') {
           return rejected('batch_not_active');
         }
         // P03-9 / F-001：暂停意图已生效的 Batch 不接受新 Run（重试也被阻止）；

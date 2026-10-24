@@ -212,6 +212,9 @@ export interface PreparedExecutionStartFresh {
 export interface PreparedExecutionStartRetry {
   readonly kind: 'retry';
   readonly projectId: string;
+  /** 请求必须完整复述父 Batch 的冻结成员集合。 */
+  readonly scopeFeatureIds: readonly string[];
+  /** 兼容单成员调用方的首个成员身份。 */
   readonly featureId: string;
   readonly retryBatchId: string;
 }

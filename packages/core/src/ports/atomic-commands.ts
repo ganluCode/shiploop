@@ -253,6 +253,8 @@ export interface CommandTransaction {
   reviseBatchBudget(input: unknown): BatchBudgetRevisionResult;
   /** 读取目标 Batch（同项目；缺失 not_found、跨项目 ownership 抛出，零写入）。 */
   getExecutionBatch(projectId: string, batchId: string): ExecutionBatchRecord;
+  /** 读取父 Batch 的不可变成员范围（按 memberOrdinal；同项目归属已核验）。 */
+  listExecutionBatchMemberFeatureIds(projectId: string, batchId: string): readonly string[];
   /** 同 Batch 同 workKey 的全部 Run（按 dispatchOrdinal 升序；重派发判定输入）。 */
   listExecutionRunsForWorkKey(
     projectId: string,

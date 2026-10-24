@@ -1,0 +1,39 @@
+{
+  "schema_version": 2,
+  "task_id": "F-005",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/execution/budget/p05-3-f005-batch-retry.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/execution/budget/p03-3-execution-start.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/recovery/p04-9-f007-dispatch-startup.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/recovery/p04-9-f007-dispatch-crash-windows.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/recovery/p04-9-f007-dispatch-resume.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/execution/budget/p03-3-attempt-budget-reservation.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/scheduling/p04-9-f004-dispatch-task-claim.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

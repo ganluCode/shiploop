@@ -195,6 +195,7 @@ export function createSqliteAtomicCommandStore(
           insertBatchBudgetRevision: guarded(executions.insertBatchBudgetRevisionInTransaction),
           reviseBatchBudget: guarded(executions.reviseBatchBudgetInTransaction),
           getExecutionBatch: guarded(executions.getExecutionBatchInTransaction),
+          listExecutionBatchMemberFeatureIds: guarded(executions.listExecutionBatchMemberFeatureIdsInTransaction),
           listExecutionRunsForWorkKey: guarded(executions.listExecutionRunsForWorkKeyInTransaction),
           getActiveExecutionRun: guarded(executions.getActiveExecutionRunInTransaction),
           getActiveProjectExecutionRun: guarded(executions.getActiveProjectExecutionRunInTransaction),

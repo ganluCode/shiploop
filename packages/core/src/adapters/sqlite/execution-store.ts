@@ -346,6 +346,8 @@ export interface SqliteExecutionAccess {
   insertExecutionRunInTransaction(input: unknown): RunRecord;
   /** 读取目标 Batch（同项目；缺失 not_found、跨项目 ownership）。 */
   getExecutionBatchInTransaction(projectId: string, batchId: string): ExecutionBatchRecord;
+  /** 读取 Batch 的不可变成员范围（按 memberOrdinal；同项目归属已核验）。 */
+  listExecutionBatchMemberFeatureIdsInTransaction(projectId: string, batchId: string): readonly string[];
   /** 同 Batch 同 workKey 的全部 Run（按 dispatch_ordinal 升序；重派发判定输入）。 */
   listExecutionRunsForWorkKeyInTransaction(
     projectId: string,
@@ -927,6 +929,20 @@ export function createSqliteExecutionAccess(
       throw ownership(operation, entity, 'Batch 不属于声明的项目（跨项目目标被拒绝）');
     }
     return batchFromRow(row, operation);
+  }
+
+  function listExecutionBatchMemberFeatureIdsInTransaction(projectId: string, batchId: string): readonly string[] {
+    const operation = 'ExecutionStore.listExecutionBatchMemberFeatureIds';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const batch = getExecutionBatchInTransaction(projectId, batchId);
+    const rows = session.database.prepare<[string, string], { feature_id: string }>(
+      'SELECT feature_id FROM execution_batch_members WHERE project_id = ? AND batch_id = ? ORDER BY member_ordinal',
+    ).all(projectId, batch.id) as { feature_id: string }[];
+    if (rows.length === 0) {
+      throw executionCorruptError(operation, { type: 'execution_batch', projectId, id: batchId }, 'Batch 固定成员范围为空');
+    }
+    return rows.map(row => row.feature_id);
   }
 
   function listExecutionRunsForWorkKeyInTransaction(
@@ -3313,6 +3329,7 @@ export function createSqliteExecutionAccess(
     reviseBatchBudgetInTransaction,
     insertExecutionRunInTransaction,
     getExecutionBatchInTransaction,
+    listExecutionBatchMemberFeatureIdsInTransaction,
     listExecutionRunsForWorkKeyInTransaction,
     getActiveExecutionRunInTransaction,
     getActiveProjectExecutionRunInTransaction,
