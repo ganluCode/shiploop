@@ -1309,6 +1309,7 @@ export const PLAN_EVENT_TYPES = [
   'phase.closed',
   'phase.reopened',
   'phase.archived',
+  'feature.phase.moved',
   FEATURE_PLAN_IMPORTED_EVENT_TYPE,
   PHASE_LABELS_UPDATED_EVENT_TYPE,
   FEATURE_LABELS_UPDATED_EVENT_TYPE,
@@ -1350,6 +1351,7 @@ interface PlanEventTypeSpec {
     | 'closed'
     | 'reopened'
     | 'archived'
+    | 'phaseMoved'
     | 'imported'
     | 'labelsUpdated'
     | 'revised'
@@ -1365,6 +1367,7 @@ const PLAN_EVENT_TYPE_SPECS: Readonly<Record<PlanEventType, PlanEventTypeSpec>> 
   'phase.closed': { aggregateType: 'phase', payloadKey: 'closed' },
   'phase.reopened': { aggregateType: 'phase', payloadKey: 'reopened' },
   'phase.archived': { aggregateType: 'phase', payloadKey: 'archived' },
+  'feature.phase.moved': { aggregateType: 'feature', payloadKey: 'phaseMoved' },
   [FEATURE_PLAN_IMPORTED_EVENT_TYPE]: Object.freeze({
     aggregateType: 'feature',
     payloadKey: 'imported',

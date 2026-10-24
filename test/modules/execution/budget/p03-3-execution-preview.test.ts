@@ -485,10 +485,11 @@ describe('F-004 ready 预览（固定范围 + 完整摘要 + previewDigest）', 
     expect(summary.budget.run).toEqual(VALID_BUDGET.run);
     expect(summary.concurrency).toEqual({ maxConcurrentWorks: 1, source: 'default' });
 
-    // 预览身份可由纯函数从摘要成分复算（完整输入身份，无隐藏成分）。
+    // 预览身份由摘要成分和所选 Feature 的当前 Phase 身份复算。
     expect(result.previewDigest).toBe(
       computeExecutionPreviewDigest({
         projectId: s.projectId,
+        phaseId: 'phase-1',
         featureIds: [s.featureId],
         planDigest: summary.plan.planDigest,
         code: summary.code,

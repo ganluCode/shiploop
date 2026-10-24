@@ -231,6 +231,10 @@ function envelope(
       return { ...base, operation, scope: { kind: 'project', projectId: PROJECT_A },
         expectedRevision: expectedRevision ?? 1,
         payload: { phaseId: 'phase-1', ...(operation === 'phase.metadata.update' ? { title: '阶段' } : {}) } };
+    case 'feature.phase.move':
+      return { ...base, operation, scope: { kind: 'project', projectId: PROJECT_A },
+        expectedRevision: expectedRevision ?? 1, payload: { featureId: 'feature-1',
+          sourcePhaseId: 'phase-1', targetPhaseId: 'phase-2', sourcePhaseRevision: 1, targetPhaseRevision: 1 } };
     case 'phase.create':
       return {
         ...base,

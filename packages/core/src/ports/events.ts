@@ -139,6 +139,7 @@ export const PUBLIC_STATE_EVENT_TYPES = [
   'phase.closed',
   'phase.reopened',
   'phase.archived',
+  'feature.phase.moved',
   // P03-1 / F-005：计划域事件白名单扩展（aggregate_type='feature'）。
   FEATURE_PLAN_IMPORTED_EVENT_TYPE,
   // P03-1 / F-007：纯标签 CAS 编辑事件（phase/feature/task 三个目标实体各自一条）。
@@ -199,6 +200,7 @@ type EventPayloadKind =
   | 'baselineCancelled'
   | 'phaseCreated'
   | 'phaseMutation'
+  | 'featurePhaseMoved'
   | 'featurePlanImported'
   | 'planLabelsUpdated'
   | 'featurePlanRevised'
@@ -339,6 +341,7 @@ export const STATE_EVENT_TYPE_SPECS: Readonly<
   'phase.closed': { aggregateType: 'phase', scopeKind: 'project', payloadKind: 'phaseMutation' },
   'phase.reopened': { aggregateType: 'phase', scopeKind: 'project', payloadKind: 'phaseMutation' },
   'phase.archived': { aggregateType: 'phase', scopeKind: 'project', payloadKind: 'phaseMutation' },
+  'feature.phase.moved': { aggregateType: 'feature', scopeKind: 'project', payloadKind: 'featurePhaseMoved' },
   [PHASE_CREATED_EVENT_TYPE]: Object.freeze({
     aggregateType: 'phase',
     scopeKind: 'project',
@@ -1030,6 +1033,10 @@ export function mapStateEvent(row: unknown, operation: string = EVENT_READ_OPERA
     exactPayloadKeys(operation, row.payload, [key]);
     if (row.payload[key] !== true) corrupt(operation, 'event_payload_violation');
     payload = { [key]: true };
+  } else if (spec.payloadKind === 'featurePhaseMoved') {
+    exactPayloadKeys(operation, row.payload, ['phaseMoved']);
+    if (row.payload.phaseMoved !== true) corrupt(operation, 'event_payload_violation');
+    payload = { phaseMoved: true };
   } else if (spec.payloadKind === 'featurePlanImported') {
     payload = validateFeaturePlanImportedPayload(row.payload, operation);
   } else if (spec.payloadKind === 'planLabelsUpdated') {

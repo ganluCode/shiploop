@@ -20,6 +20,7 @@
  *   有效记录返回；不泄漏驱动会话或 ORM 类型。
  */
 import { validatePhaseMutationInput } from '../../ports/phase-lifecycle.js';
+import { validateFeaturePhaseMoveInput } from '../../ports/feature-phase.js';
 import { randomUUID } from 'node:crypto';
 import type Database from 'better-sqlite3';
 import { StorageError } from '../../ports/errors.js';
@@ -193,6 +194,7 @@ function isSqliteConstraintError(error: unknown): error is Error & { code: strin
 export interface SqlitePlanAccess {
   insertPhaseInTransaction(input: unknown): PhaseRecord;
   updatePhaseInTransaction(input: unknown): PhaseRecord;
+  moveFeaturePhaseInTransaction(input: unknown): FeatureRecord;
   insertFeatureInTransaction(input: unknown): FeatureRecord;
   insertTaskInTransaction(input: unknown): TaskRecord;
   insertTaskDependencyInTransaction(input: unknown): TaskDependencyRecord;
@@ -733,6 +735,81 @@ export function createSqlitePlanAccess(
     return getPhaseInTransaction(valid.projectId, current.id);
   }
 
+  function moveFeaturePhaseInTransaction(input: unknown): FeatureRecord {
+    const operation = 'PlanStore.moveFeaturePhase';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const valid = validateFeaturePhaseMoveInput(input);
+    const { projectId, payload } = valid;
+    const db = session.database;
+    const current = getFeaturePlanInTransaction(projectId, payload.featureId).feature;
+    const source = getPhaseInTransaction(projectId, payload.sourcePhaseId);
+    const target = getPhaseInTransaction(projectId, payload.targetPhaseId);
+    const entity: StorageEntityRef = { type: 'feature', projectId, id: current.id };
+    const reject = (reason: string): never => {
+      throw conflict(operation, 'Feature 归属调整被拒绝', entity, { reason });
+    };
+    if (current.phaseId !== source.id) reject('source_phase_mismatch');
+    if (source.id === target.id) reject('same_phase');
+    for (const [record, expected] of [[current, valid.expectedRevision],
+      [source, payload.sourcePhaseRevision], [target, payload.targetPhaseRevision]] as const) {
+      if (record.revision !== expected) {
+        throw conflict(operation, '归属 revision 不匹配', entity, {
+          reason: 'conflict', expectedRevision: expected, actualRevision: record.revision,
+        });
+      }
+    }
+    if (source.status !== 'open' || target.status !== 'open') reject('phase_not_open');
+    const active = ACTIVE_EXECUTION_STATUSES.map(() => '?').join(',');
+    // Include transitive prerequisites, even when they are outside the selected Batch.
+    // UNION also terminates safely if corrupt persisted edges contain a cycle.
+    const protectedMember = db.prepare(`WITH RECURSIVE protected(id) AS (
+      SELECT feature_id FROM execution_batches WHERE project_id = ? AND status IN (${active})
+      UNION SELECT d.depends_on_id FROM feature_dependencies d JOIN protected p ON p.id = d.feature_id
+        WHERE d.project_id = ?
+    ) SELECT 1 FROM protected WHERE id = ? LIMIT 1`)
+      .get(projectId, ...ACTIVE_EXECUTION_STATUSES, projectId, current.id);
+    if (protectedMember !== undefined) reject('active_batch_scope');
+    const execution = db.prepare(`SELECT 1 FROM runs r WHERE r.project_id = ? AND r.feature_id = ? AND (
+      r.status IN (${active})
+      OR EXISTS (SELECT 1 FROM attempts a WHERE a.run_id = r.id AND a.status IN ('preparing','executing','verifying'))
+      OR EXISTS (SELECT 1 FROM workspace_leases l JOIN attempts a ON a.id = l.owner_id WHERE a.run_id = r.id)
+      OR EXISTS (SELECT 1 FROM run_dispatch_claims c WHERE c.run_id = r.id AND c.state IN ('held','quarantined'))
+      OR EXISTS (SELECT 1 FROM execution_slot_claims s WHERE s.run_id = r.id AND s.state IN ('held','quarantined'))
+      OR EXISTS (SELECT 1 FROM execution_stop_operations s WHERE s.run_id = r.id
+        AND (s.status <> 'stopped' OR s.stop_confirmed IS NOT 1))
+    ) LIMIT 1`).get(projectId, current.id, ...ACTIVE_EXECUTION_STATUSES);
+    if (execution !== undefined || current.status === 'running' || current.status === 'awaiting_approval') {
+      reject('active_execution_inputs');
+    }
+    // A single-node move cannot retain same-Phase edges. Never delete/rewrite them implicitly.
+    const edge = db.prepare(`SELECT 1 FROM feature_dependencies WHERE project_id = ?
+      AND (feature_id = ? OR depends_on_id = ?) LIMIT 1`).get(projectId, current.id, current.id);
+    if (edge !== undefined) reject('feature_has_dependencies');
+    // Existing Batch rows retain a composite FK to the original Phase/Feature tuple.
+    // Preserve historical scopes instead of rewriting terminal execution evidence.
+    if (db.prepare('SELECT 1 FROM execution_batches WHERE project_id = ? AND feature_id = ? LIMIT 1')
+      .get(projectId, current.id) !== undefined) reject('feature_batch_scope_bound');
+    // Planning contexts retain the original Phase identity for recovery and audit.
+    if (db.prepare('SELECT 1 FROM planning_contexts WHERE project_id = ? AND feature_id = ? LIMIT 1')
+      .get(projectId, current.id) !== undefined) reject('feature_planning_context_bound');
+
+    // No conflict decisions after the first write: unexpected faults must roll back all three CAS writes.
+    const timestamp = nowUtcMs();
+    const changed = db.prepare(`UPDATE features SET phase_id = ?, revision = revision + 1, updated_at = ?
+      WHERE id = ? AND project_id = ? AND revision = ? AND phase_id = ?`)
+      .run(target.id, timestamp, current.id, projectId, valid.expectedRevision, source.id);
+    if (changed.changes !== 1) throw new Error('Feature affiliation CAS failed inside serialized transaction');
+    for (const phase of [source, target]) {
+      const changedPhase = db.prepare(`UPDATE phases SET revision = revision + 1, updated_at = ?
+        WHERE id = ? AND project_id = ? AND revision = ? AND status = 'open'`)
+        .run(timestamp, phase.id, projectId, phase.revision);
+      if (changedPhase.changes !== 1) throw new Error('Phase affiliation CAS failed inside serialized transaction');
+    }
+    // Phase identity is absent from planDigest. Approval validity and Task/history facts are untouched.
+    return getFeaturePlanInTransaction(projectId, current.id).feature;
+  }
+
   function insertFeatureInTransaction(input: unknown): FeatureRecord {
     const operation = 'PlanStore.insertFeature';
     assertOpen(operation);
@@ -742,13 +819,16 @@ export function createSqlitePlanAccess(
     const db = session.database;
     assertProjectExists(db, operation, valid.projectId, entity);
     const phase = db
-      .prepare<[string], { project_id: string }>('SELECT project_id FROM phases WHERE id = ?')
+      .prepare<[string], { project_id: string; status: string }>('SELECT project_id, status FROM phases WHERE id = ?')
       .get(valid.phaseId);
     if (phase === undefined) {
       throw notFound(operation, entity, `Phase ${valid.phaseId} 不存在`);
     }
     if (phase.project_id !== valid.projectId) {
       throw ownership(operation, entity, 'Phase 不属于声明的项目（跨项目父级被拒绝）');
+    }
+    if (phase.status !== 'open') {
+      throw conflict(operation, '目标 Phase 非 open', entity, { reason: 'phase_not_open' });
     }
     const timestamp = nowUtcMs();
     const id = randomUUID();
@@ -2230,6 +2310,7 @@ export function createSqlitePlanAccess(
   return {
     insertPhaseInTransaction,
     updatePhaseInTransaction,
+    moveFeaturePhaseInTransaction,
     insertFeatureInTransaction,
     insertTaskInTransaction,
     insertTaskDependencyInTransaction,

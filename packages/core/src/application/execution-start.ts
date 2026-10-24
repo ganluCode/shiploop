@@ -433,6 +433,7 @@ export function createExecutionStartService(deps: ExecutionStartServiceDeps): Ex
         }
         const recomputedDigest = computeExecutionPreviewDigest({
           projectId,
+          phaseId: feature.phaseId,
           featureIds: [feature.id],
           planDigest: feature.planDigest,
           code: fresh.code,

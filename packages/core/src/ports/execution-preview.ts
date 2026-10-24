@@ -315,6 +315,8 @@ export interface ExecutionPreviewResult {
 /** computeExecutionPreviewDigest 输入（与 ExecutionPreviewSummary 同源的最小面）。 */
 export interface ExecutionPreviewDigestInput {
   readonly projectId: string;
+  /** Affiliation is execution scope identity, independent of plan approval. */
+  readonly phaseId: string;
   readonly featureIds: readonly string[];
   readonly planDigest: string | null;
   readonly code: ExecutionPreviewCodeIdentity;
@@ -335,6 +337,7 @@ export function computeExecutionPreviewDigest(input: ExecutionPreviewDigestInput
   const canonical = stableStringify({
     schemaVersion: EXECUTION_PREVIEW_RESULT_SCHEMA_VERSION,
     projectId: input.projectId,
+    phaseId: input.phaseId,
     scope: { featureIds: [...input.featureIds] },
     planDigest: input.planDigest,
     code: {

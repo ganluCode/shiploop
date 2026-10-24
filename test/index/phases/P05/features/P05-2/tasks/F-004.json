@@ -1,0 +1,17 @@
+{
+  "schema_version": 2,
+  "task_id": "F-004",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        { "file": "test/modules/planning/p05-2-feature-phase-affiliation.test.ts", "all": true },
+        { "file": "test/modules/commands/commands-contract.test.ts", "all": true },
+        { "file": "test/modules/events/events-contract.test.ts", "all": true },
+        { "file": "test/modules/authorization/authorization-contract.test.ts", "all": true },
+        { "file": "test/modules/execution/budget/p03-3-execution-preview.test.ts", "all": true },
+        { "file": "test/modules/execution/budget/p03-3-execution-start.test.ts", "all": true }
+      ]
+    }
+  ]
+}

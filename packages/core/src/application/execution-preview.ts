@@ -487,6 +487,7 @@ export function createExecutionPreviewService(deps: ExecutionPreviewServiceDeps)
       };
       const previewDigest = computeExecutionPreviewDigest({
         projectId: projectKey,
+        phaseId: view.feature.phaseId,
         featureIds: [featureId],
         planDigest: view.feature.planDigest,
         code,

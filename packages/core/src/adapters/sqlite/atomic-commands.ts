@@ -142,6 +142,7 @@ export function createSqliteAtomicCommandStore(
           // 环检测在同一事务内完成），同一 BEGIN IMMEDIATE 内原子生效。
           insertPhase: guarded(plan.insertPhaseInTransaction),
           updatePhase: guarded(plan.updatePhaseInTransaction),
+          moveFeaturePhase: guarded(plan.moveFeaturePhaseInTransaction),
           insertFeature: guarded(plan.insertFeatureInTransaction),
           insertTask: guarded(plan.insertTaskInTransaction),
           insertTaskDependency: guarded(plan.insertTaskDependencyInTransaction),

@@ -122,6 +122,8 @@ export interface CommandTransaction {
   insertPhase(input: unknown): PhaseRecord;
   /** Phase metadata/lifecycle CAS; execution occupancy checked in this same short transaction. */
   updatePhase(input: unknown): PhaseRecord;
+  /** Feature/source/target CAS with fixed Batch scope and execution occupancy guards. */
+  moveFeaturePhase(input: unknown): FeatureRecord;
   /**
    * P03-1 / F-007：纯标签 CAS 编辑（Phase/Feature/Task）。单语句条件 UPDATE
    * 只触达目标实体 labels/revision/updated_at：expectedRevision 为实体自身

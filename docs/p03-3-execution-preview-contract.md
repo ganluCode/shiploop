@@ -92,6 +92,7 @@ JSON，键排序；任务/权限/输入按身份键稳定排序）。成分：
 | 成分 | 来源 | 实质变化 |
 |---|---|---|
 | 需求 | `planDigest`（P03-1 冻结业务摘要；labels 明确排除） | 要求/验收/依赖/引用变化 |
+| 归属 | Feature 当前所属 Phase（`phaseId`） | Feature 跨 Phase 移动或 Phase 生命周期变化 |
 | 代码 | HEAD + 工作区摘要 + 脏标记（受控检查端口） | 提交/工作区内容变化 |
 | Task 策略 | 逐 Task `computeExecutionStrategyCopyDigest`（副本内容身份，非 revision） | 策略编辑 |
 | 检查政策 | `computeFeatureCheckPolicyDigest`（当前有效 verification 段） | 政策内容变化 |
