@@ -33,6 +33,7 @@ import type {
 } from './baseline-store.js';
 import type { SettingsPayload, SettingsScope } from './settings-schema.js';
 import type { PlanArtifactRef, PlanComplexity } from './feature-plan.js';
+import type { FeatureDagReadiness, FeatureDependencyRecord } from './feature-dag.js';
 import type {
   FeaturePlanStatus,
   FeatureRecord,
@@ -378,6 +379,8 @@ export interface BaselineQueryReadStore {
  * 计划查询操作身份（PublicError.operation 与后续 Host 路由共用；线接入由
  * F-009/F-010 冻结，本清单不提前进入握手能力集合）。
  */
+export const PHASE_GRAPH_QUERY_OPERATION = 'phases.graph.get' as const;
+
 export const PLAN_QUERY_OPERATIONS = [
   'phases.list',
   'phases.get',
@@ -480,7 +483,91 @@ export function deriveFeatureNotExecutableReasons(input: {
   return reasons;
 }
 
+export const FEATURE_GRAPH_BLOCKER_REASONS = [
+  'missing_dependency',
+  'no_tasks',
+  'plan_not_approved',
+  'dependency_pending',
+  'dependency_failed',
+  'active_batch_scope',
+  'code_baseline_missing',
+  'integration_not_ready',
+  'invalid_graph',
+] as const;
+export type FeatureGraphBlockerReason = (typeof FEATURE_GRAPH_BLOCKER_REASONS)[number];
+
+/** Phase 图查询的稳定阻塞投影，输入必须来自同一一致读视图。 */
+export function derivePhaseFeatureBlockers(input: {
+  readonly readiness: FeatureDagReadiness;
+  readonly taskCount: number;
+  readonly planStatus: FeaturePlanStatus;
+  readonly activeBatch: boolean;
+  readonly missingCodeBaseline: boolean;
+  readonly missingDependencyIds: readonly string[];
+}): readonly FeatureGraphBlockerReason[] {
+  const blockers: FeatureGraphBlockerReason[] = [];
+  if (input.missingDependencyIds.length > 0) blockers.push('missing_dependency');
+  if (input.taskCount === 0) blockers.push('no_tasks');
+  if (input.planStatus !== 'approved') blockers.push('plan_not_approved');
+  if (input.readiness.reason === 'dependency_pending') blockers.push('dependency_pending');
+  if (input.readiness.reason === 'dependency_failed') blockers.push('dependency_failed');
+  if (input.activeBatch) blockers.push('active_batch_scope');
+  if (input.missingCodeBaseline) blockers.push('code_baseline_missing');
+  if (input.readiness.reason === 'integration_not_ready') blockers.push('integration_not_ready');
+  if (input.readiness.reason === 'invalid_graph') blockers.push('invalid_graph');
+  return blockers;
+}
+
 /* ---------------------------- 查询结果形状 ---------------------------- */
+
+/** Phase 图依赖边公开形状；固定基线引用不代表集成已完成。 */
+export interface PublicFeatureDependencyEdge {
+  readonly id: string;
+  readonly projectId: string;
+  readonly phaseId: string;
+  readonly featureId: string;
+  readonly dependsOnId: string;
+  readonly codeBaselineRef: string | null;
+}
+
+export function toPublicFeatureDependencyEdge(
+  dependency: FeatureDependencyRecord,
+): PublicFeatureDependencyEdge {
+  if (dependency.id === null) {
+    throw new TypeError('Feature 依赖边缺少持久身份（适配器实现缺陷）');
+  }
+  return {
+    id: dependency.id,
+    projectId: dependency.projectId,
+    phaseId: dependency.phaseId,
+    featureId: dependency.featureId,
+    dependsOnId: dependency.dependsOnId,
+    codeBaselineRef: dependency.codeBaselineRef,
+  };
+}
+
+export interface PhaseGraphFeatureReadiness extends FeatureDagReadiness {
+  readonly blockers: readonly FeatureGraphBlockerReason[];
+}
+
+export interface PhaseGraphResult extends PlanListResultBase {
+  readonly scope: 'phase-graph';
+  readonly phase: PublicPhaseRecord;
+  readonly features: readonly PublicFeatureRecord[];
+  readonly dependencies: readonly PublicFeatureDependencyEdge[];
+  readonly readiness: readonly PhaseGraphFeatureReadiness[];
+  readonly readyFeatureIds: readonly string[];
+  readonly executableFeatureIds: readonly string[];
+}
+
+/** phases.graph.get 的一致读视图。 */
+export interface PhaseFeatureGraphView {
+  readonly phase: PhaseRecord;
+  readonly features: readonly FeatureRecord[];
+  readonly dependencies: readonly FeatureDependencyRecord[];
+  readonly taskCounts: Readonly<Record<string, number>>;
+  readonly activeFeatureIds: readonly string[];
+}
 
 /** phases.get → {phase}（真实父级 projectId 在记录内）。 */
 export interface PhaseDetailResult {
@@ -602,6 +689,7 @@ export const PLAN_LIST_CURSOR_VERSION = 1 as const;
 export type PlanListScope =
   | { readonly kind: 'work-recording'; readonly projectId: string; readonly parentKind: 'run' | 'attempt' | 'session'; readonly parentId: string; readonly recordType: 'messages' | 'manifests' }
   | { readonly kind: 'phases'; readonly projectId: string }
+  | { readonly kind: 'phase-graph'; readonly projectId: string; readonly phaseId: string }
   | { readonly kind: 'features'; readonly projectId: string; readonly phaseId: string }
   | { readonly kind: 'tasks'; readonly projectId: string; readonly featureId: string }
   | { readonly kind: 'budget-revisions'; readonly projectId: string; readonly batchId: string }
@@ -680,6 +768,17 @@ export function createPlanListCursorBinding(
       scope: {
         kind: 'phases',
         projectId: validateStableId(scope.projectId, { operation, entity: { type: 'project' } }, 'scope.projectId'),
+      },
+    };
+  }
+  if (scope.kind === 'phase-graph') {
+    rejectUnknownKeys(scope, ['kind', 'projectId', 'phaseId'], { operation }, 'scope');
+    return {
+      rootIdentity: input.rootIdentity,
+      scope: {
+        kind: 'phase-graph',
+        projectId: validateStableId(scope.projectId, { operation, entity: { type: 'project' } }, 'scope.projectId'),
+        phaseId: validateStableId(scope.phaseId, { operation, entity: { type: 'phase' } }, 'scope.phaseId'),
       },
     };
   }
@@ -838,7 +937,7 @@ export function createPlanListCursorBinding(
   planInvalidInput(
     operation,
     'scope.kind',
-    "必须是 'phases' / 'features' / 'tasks' / 'budget-revisions' / 'task-attempts' / 'attempt-diagnostics' / 'run-work-sessions' / 'task-work-sessions' / 'task-approvals' / 'task-rework-chain' / 'feature-git-operations' / 'run-git-operations' / 'dispatch-queue' / 'planning-contexts' / 'feature-planning-contexts'",
+    "必须是 'phases' / 'phase-graph' / 'features' / 'tasks' / 'budget-revisions' / 'task-attempts' / 'attempt-diagnostics' / 'run-work-sessions' / 'task-work-sessions' / 'task-approvals' / 'task-rework-chain' / 'feature-git-operations' / 'run-git-operations' / 'dispatch-queue' / 'planning-contexts' / 'feature-planning-contexts'",
     (scope as { kind?: unknown }).kind,
   );
 }
@@ -851,6 +950,7 @@ function planBindingAsTrusted(binding: PlanListCursorBinding): PlanListCursorBin
     !isPlainObject(binding.scope) ||
     (binding.scope.kind !== 'work-recording' &&
       binding.scope.kind !== 'phases' &&
+      binding.scope.kind !== 'phase-graph' &&
       binding.scope.kind !== 'features' &&
       binding.scope.kind !== 'tasks' &&
       binding.scope.kind !== 'budget-revisions' &&
@@ -887,6 +987,9 @@ function planScopeFingerprint(scope: PlanListScope): string {
     case 'dispatch-queue':
     case 'planning-contexts':
       parent = '-';
+      break;
+    case 'phase-graph':
+      parent = scope.phaseId;
       break;
     case 'features':
       parent = scope.phaseId;
@@ -1061,6 +1164,7 @@ export interface FeaturePlanView {
  */
 export interface PlanDetailReadStore {
   readPhaseRecord(phaseId: unknown): PhaseRecord | undefined;
+  readPhaseGraphView(projectId: unknown, phaseId: unknown): PhaseFeatureGraphView | undefined;
   readTaskRecord(taskId: unknown): TaskRecord | undefined;
   readFeaturePlanView(featureId: unknown): FeaturePlanView | undefined;
 }

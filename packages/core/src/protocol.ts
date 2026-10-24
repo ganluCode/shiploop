@@ -53,12 +53,14 @@ export type {
 // P03-1 / F-006 计划查询面：公开形状、分页常量与纯校验/游标函数（服务端负责授权）。
 export {
   PLAN_LIST_CURSOR_PREFIX, PLAN_LIST_DEFAULT_LIMIT, PLAN_LIST_MAX_LIMIT,
-  PLAN_QUERY_OPERATIONS, FEATURE_NOT_EXECUTABLE_REASONS, validatePlanListFilter,
-  encodePlanListCursor, decodePlanListCursor,
+  PLAN_QUERY_OPERATIONS, PHASE_GRAPH_QUERY_OPERATION, FEATURE_NOT_EXECUTABLE_REASONS, FEATURE_GRAPH_BLOCKER_REASONS, validatePlanListFilter,
+  encodePlanListCursor, decodePlanListCursor, derivePhaseFeatureBlockers,
 } from './ports/queries.js';
 export type {
   FeatureDetailResult, FeatureListResult, FeatureNotExecutableReason,
+  FeatureGraphBlockerReason, PhaseGraphFeatureReadiness, PhaseGraphResult,
   FeaturePlanValidationSummary, PhaseDetailResult, PhaseListResult,
+  PublicFeatureDependencyEdge,
   PlanListResultBase, PublicTaskDependencyEdge, PublicTaskRecord,
   TaskDetailResult, TaskListResult,
 } from './ports/queries.js';

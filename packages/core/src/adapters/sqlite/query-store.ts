@@ -21,6 +21,7 @@ import type {
   ConsistentSnapshotStore,
   FeatureApprovalsView,
   FeaturePlanView,
+  PhaseFeatureGraphView,
   PlanListRequest,
   PlanQueryReadStore,
   PlanRecordPage,
@@ -173,6 +174,9 @@ export function createSqliteQueryStore(
     },
     readPhaseRecord(phaseId: unknown): PhaseRecord | undefined {
       return plan.readPhaseRecord(phaseId);
+    },
+    readPhaseGraphView(projectId: unknown, phaseId: unknown): PhaseFeatureGraphView | undefined {
+      return plan.readPhaseGraphView(projectId, phaseId);
     },
     readTaskRecord(taskId: unknown): TaskRecord | undefined {
       return plan.readTaskRecord(taskId);

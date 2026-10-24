@@ -69,9 +69,12 @@ import {
   createPlanListCursorBinding,
   decodePlanListCursor,
   deriveFeatureNotExecutableReasons,
+  derivePhaseFeatureBlockers,
   encodePlanListCursor,
+  PHASE_GRAPH_QUERY_OPERATION,
   PLAN_APPROVAL_QUERY_OPERATION,
   toPublicFeatureRecord,
+  toPublicFeatureDependencyEdge,
   toPublicPhaseRecord,
   toPublicPlanApprovalRecord,
   toPublicProjectRecord,
@@ -99,11 +102,14 @@ import type {
   ProjectListResult,
   PublicSettingsState,
   PhaseDetailResult,
+  PhaseGraphResult,
   PhaseListResult,
   TaskDetailResult,
   TaskListResult,
 } from '../ports/queries.js';
 import type { StateEventReadStore } from '../ports/events.js';
+import { evaluateFeatureDag } from '../ports/feature-dag.js';
+import type { FeatureDagEvaluation } from '../ports/feature-dag.js';
 import { isStorageError } from '../ports/errors.js';
 import type { SettingsScope } from '../ports/settings-schema.js';
 import { validateProjectListFilter } from '../ports/state-store.js';
@@ -345,6 +351,8 @@ export interface QueryService {
    * revision）；能力 + 可见性先行，不可见与不存在统一 not_found。
    */
   getPhase(principal: unknown, phaseId: unknown): Promise<PhaseDetailResult>;
+  /** F-006：Phase Feature DAG 一致读投影，图游标绑定项目、Phase 和数据根。 */
+  getPhaseGraph(principal: unknown, input: unknown): Promise<PhaseGraphResult>;
   /**
    * F-006 features.get：Feature 详情（真实父级、planDigest/planStatus/不可执行
    * 原因）与完整同 Feature Task DAG（节点 + 依赖边）；内容取自同一一致读视图，
@@ -571,6 +579,7 @@ const EVENTS_SUBSCRIBE_OPERATION_NAME = 'events.subscribe';
 // P03-1 / F-006 计划查询操作身份（与 ports/queries.ts PLAN_QUERY_OPERATIONS 同源）。
 const PHASES_LIST_OPERATION = 'phases.list';
 const PHASES_GET_OPERATION = 'phases.get';
+const PHASES_GRAPH_GET_OPERATION = PHASE_GRAPH_QUERY_OPERATION;
 const FEATURES_LIST_OPERATION = 'features.list';
 const FEATURES_GET_OPERATION = 'features.get';
 const TASKS_LIST_OPERATION = 'tasks.list';
@@ -1174,6 +1183,98 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
           planEntityNotFound(operation, 'phase');
         }
         return { phase: toPublicPhaseRecord(record) };
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    async getPhaseGraph(principal: unknown, input: unknown): Promise<PhaseGraphResult> {
+      assertTrustedPrincipal(principal);
+      const operation = PHASES_GRAPH_GET_OPERATION;
+      try {
+        requireCapability(principal, 'project.read', operation);
+        const object = requirePlainObject(input, { operation }, 'input');
+        rejectUnknownKeys(object, ['projectId', 'phaseId', 'limit', 'cursor'], { operation }, 'input');
+        const projectId = validateStableId(object.projectId, { operation, entity: { type: 'project' } }, 'projectId');
+        const phaseId = validateStableId(object.phaseId, { operation, entity: { type: 'phase' } }, 'phaseId');
+        requireProjectVisible(principal, projectId, operation);
+        const filter = validatedPlanFilter(object, operation);
+        const binding = planCursorBinding({ kind: 'phase-graph', projectId, phaseId }, operation);
+        const request = planListRequest(filter, binding, operation);
+        const view = planReads.readPhaseGraphView(projectId, phaseId);
+        if (view === undefined || !isProjectVisible(principal, view.phase.projectId)) {
+          planEntityNotFound(operation, 'phase');
+        }
+
+        const featureIds = new Set(view.features.map((feature) => feature.id));
+        const missingDependencyIds = new Map<string, string[]>();
+        for (const edge of view.dependencies) {
+          if (!featureIds.has(edge.featureId)) {
+            const ids = missingDependencyIds.get(edge.featureId) ?? [];
+            ids.push(edge.featureId);
+            missingDependencyIds.set(edge.featureId, ids);
+          }
+          if (!featureIds.has(edge.dependsOnId)) {
+            const ids = missingDependencyIds.get(edge.featureId) ?? [];
+            ids.push(edge.dependsOnId);
+            missingDependencyIds.set(edge.featureId, ids);
+          }
+        }
+        const evaluation: FeatureDagEvaluation = evaluateFeatureDag({
+          projectId,
+          phaseId,
+          features: view.features.map((feature) => ({
+            id: feature.id,
+            projectId: feature.projectId,
+            phaseId: feature.phaseId,
+            status: feature.status,
+            // integrationEvidence is intentionally absent from the Feature row. A completed
+            // Feature therefore never becomes integration-ready by implication.
+            integrationEvidence: null,
+          })),
+          existingEdges: view.dependencies.filter((edge) =>
+            featureIds.has(edge.featureId) && featureIds.has(edge.dependsOnId),
+          ),
+        });
+        const readinessById = new Map(evaluation.readiness.map((item) => [item.featureId, item] as const));
+        const activeFeatureIds = new Set(view.activeFeatureIds);
+        const graphFeatures = view.features.map((feature) => {
+          const readiness = readinessById.get(feature.id);
+          if (readiness === undefined) throw new TypeError('Feature DAG readiness 缺少节点（适配器实现缺陷）');
+          const featureEdges = view.dependencies.filter((edge) => edge.featureId === feature.id);
+          const blockers = derivePhaseFeatureBlockers({
+            readiness,
+            taskCount: view.taskCounts[feature.id] ?? 0,
+            planStatus: feature.planStatus,
+            activeBatch: activeFeatureIds.has(feature.id),
+            missingCodeBaseline: featureEdges.some((edge) => edge.codeBaselineRef === null),
+            missingDependencyIds: missingDependencyIds.get(feature.id) ?? [],
+          });
+          return { feature, readiness: { ...readiness, blockers }, blockers };
+        });
+        const afterId = request.afterId;
+        const ordered = graphFeatures.filter((item) => afterId === null || item.feature.id > afterId);
+        const pageItems = ordered.slice(0, filter.limit);
+        const nextCursor = ordered.length > filter.limit
+          ? encodePlanListCursor(pageItems[pageItems.length - 1]!.feature.id, binding)
+          : null;
+        const pageIds = new Set(pageItems.map((item) => item.feature.id));
+        return {
+          schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION,
+          scope: 'phase-graph',
+          phase: toPublicPhaseRecord(view.phase),
+          features: pageItems.map((item) => toPublicFeatureRecord(item.feature)),
+          dependencies: view.dependencies.map(toPublicFeatureDependencyEdge),
+          readiness: pageItems.map((item) => item.readiness),
+          readyFeatureIds: evaluation.readyFeatureIds.filter((id) =>
+            pageIds.has(id) && (missingDependencyIds.get(id)?.length ?? 0) === 0,
+          ),
+          executableFeatureIds: pageItems
+            .filter((item) => item.readiness.ready && item.blockers.length === 0)
+            .map((item) => item.feature.id),
+          nextCursor,
+          limit: filter.limit,
+        };
       } catch (error) {
         throw mapToPublicError(error, { operation });
       }

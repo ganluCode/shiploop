@@ -62,6 +62,7 @@ import { assertPrincipalVisibility } from '../../ports/queries.js';
 import type {
   FeatureApprovalsView,
   FeaturePlanView,
+  PhaseFeatureGraphView,
   PlanListRequest,
   PlanRecordPage,
 } from '../../ports/queries.js';
@@ -286,6 +287,8 @@ export interface SqlitePlanAccess {
    * 可见性折叠由应用层统一处理，本层不区分不存在与跨项目。
    */
   readPhaseRecord(phaseId: unknown): PhaseRecord | undefined;
+  /** F-006：Phase + Feature DAG + Task 计数/活动范围的单一一致读视图。 */
+  readPhaseGraphView(projectId: unknown, phaseId: unknown): PhaseFeatureGraphView | undefined;
   readTaskRecord(taskId: unknown): TaskRecord | undefined;
   /** F-006：Feature + 全部 Task + 全部依赖边（单一 DEFERRED 读事务一致视图）。 */
   readFeaturePlanView(featureId: unknown): FeaturePlanView | undefined;
@@ -1985,6 +1988,58 @@ export function createSqlitePlanAccess(
     return row === undefined ? undefined : phaseFromRow(row);
   }
 
+  function readPhaseGraphView(projectId: unknown, phaseId: unknown): PhaseFeatureGraphView | undefined {
+    const operation = 'PlanStore.readPhaseGraphView';
+    const validProjectId = validateStableId(projectId, { operation }, 'projectId');
+    const validPhaseId = planReadId(operation, phaseId, 'phaseId', 'phase');
+    return transactSqliteConsistentRead(session, operation, (db) => {
+      const phaseRow = db
+        .prepare<[string, string], PhaseSqlRow>(`${SELECT_PHASE} WHERE id = ? AND project_id = ?`)
+        .get(validPhaseId, validProjectId);
+      if (phaseRow === undefined) return undefined;
+      const featureRows = db
+        .prepare<[string, string], FeatureSqlRow>(
+          `${SELECT_FEATURE} WHERE project_id = ? AND phase_id = ? ORDER BY id ASC`,
+        )
+        .all(validProjectId, validPhaseId) as FeatureSqlRow[];
+      const edgeRows = db
+        .prepare<[string, string], FeatureDependencySqlRow>(
+          'SELECT id, created_at, project_id, revision, updated_at, phase_id, feature_id, depends_on_id, code_baseline_ref ' +
+            'FROM feature_dependencies WHERE project_id = ? AND phase_id = ? ORDER BY feature_id ASC, depends_on_id ASC',
+        )
+        .all(validProjectId, validPhaseId) as FeatureDependencySqlRow[];
+      const countRows = db
+        .prepare<[string, string], { feature_id: string; count: number }>(
+          "SELECT t.feature_id, COUNT(*) AS count FROM tasks t JOIN features f ON f.id = t.feature_id " +
+            "WHERE t.project_id = ? AND f.phase_id = ? AND t.kind = 'coding' GROUP BY t.feature_id",
+        )
+        .all(validProjectId, validPhaseId) as { feature_id: string; count: number }[];
+      const activeStatuses = ACTIVE_EXECUTION_STATUSES as readonly string[];
+      const activePlaceholders = activeStatuses.map(() => '?').join(', ');
+      const activeRows = db
+        .prepare<[string, string, ...string[]], { feature_id: string }>(
+          `SELECT DISTINCT feature_id FROM execution_batches WHERE project_id = ? AND phase_id = ? AND status IN (${activePlaceholders}) ORDER BY feature_id ASC`,
+        )
+        .all(validProjectId, validPhaseId, ...activeStatuses) as { feature_id: string }[];
+      const taskCounts: Record<string, number> = {};
+      for (const row of countRows) taskCounts[row.feature_id] = row.count;
+      return {
+        phase: phaseFromRow(phaseRow),
+        features: featureRows.map(featureFromRow),
+        dependencies: edgeRows.map((row) => ({
+          id: row.id,
+          projectId: row.project_id,
+          phaseId: row.phase_id,
+          featureId: row.feature_id,
+          dependsOnId: row.depends_on_id,
+          codeBaselineRef: row.code_baseline_ref,
+        })),
+        taskCounts,
+        activeFeatureIds: activeRows.map((row) => row.feature_id),
+      };
+    });
+  }
+
   function readTaskRecord(taskId: unknown): TaskRecord | undefined {
     const operation = 'PlanStore.readTask';
     assertOpen(operation);
@@ -2452,6 +2507,7 @@ export function createSqlitePlanAccess(
     updateFeaturePlanStatusInTransaction,
     listPlanApprovalsInTransaction,
     readPhaseRecord,
+    readPhaseGraphView,
     readTaskRecord,
     readFeaturePlanView,
     readFeatureApprovalsView,

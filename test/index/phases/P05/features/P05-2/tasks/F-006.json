@@ -1,0 +1,18 @@
+{
+  "schema_version": 2,
+  "task_id": "F-006",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        { "file": "test/modules/planning/p05-2-f006-phase-graph-query.test.ts", "all": true },
+        { "file": "test/modules/planning/p05-2-f002-feature-dag.test.ts", "all": true },
+        { "file": "test/modules/planning/docs-p03-1-plan-import-contract.test.ts", "all": true },
+        { "file": "test/modules/planning/p03-1-plan-queries.test.ts", "all": true },
+        { "file": "test/modules/planning/p03-1-plan-queries-consistency.test.ts", "all": true },
+        { "file": "test/modules/planning/p03-1-plan-host-wiring.test.ts", "all": true },
+        { "file": "test/modules/scheduling/p03-4-schedule-query.test.ts", "all": true }
+      ]
+    }
+  ]
+}
