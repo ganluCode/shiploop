@@ -217,8 +217,8 @@ function submitMultiExecutionStart(
     project === null ? null : { scopeRevision: project.revision, payload: project.payload },
   );
   if (checkPolicyDigest !== prepared.checkPolicyDigest) return reject();
-  const strategies: { readonly taskId: string; readonly digest: string }[] = [];
-  const permissions: { readonly taskId: string; readonly digest: string }[] = [];
+  const strategyEntries: { readonly taskId: string; readonly featureId: string; readonly digest: string }[] = [];
+  const permissionEntries: { readonly taskId: string; readonly featureId: string; readonly digest: string }[] = [];
   const inputMap = new Map<string, ExecutionPreviewInputRefSummary>();
   const facts: Array<{ snapshot: typeof snapshots[number]; pendingTasks: typeof snapshots[number]['tasks']; inputs: ExecutionPreviewInputRefSummary[] }> = [];
   for (const snapshot of snapshots) {
@@ -240,10 +240,12 @@ function submitMultiExecutionStart(
         throw error;
       }
     }
-    strategies.push(...snapshot.tasks.slice().sort((left, right) => left.id < right.id ? -1 : 1).map((task) => ({ taskId: task.id, digest: computeExecutionStrategyCopyDigest({ executionConfig: task.executionConfig, configSource: task.configSource, configSourceKey: task.configSourceKey }) })));
-    permissions.push(...snapshot.tasks.slice().sort((left, right) => left.id < right.id ? -1 : 1).map((task) => ({ taskId: task.id, digest: computeExecutionPermissionsDigest(readPermissionsFace(deps.permissions, { projectId: prepared.projectId, featureId: snapshot.feature.id, taskId: task.id }).grants) })));
+    strategyEntries.push(...snapshot.tasks.slice().map((task) => ({ taskId: task.id, featureId: snapshot.feature.id, digest: computeExecutionStrategyCopyDigest({ executionConfig: task.executionConfig, configSource: task.configSource, configSourceKey: task.configSourceKey }) })));
+    permissionEntries.push(...snapshot.tasks.slice().map((task) => ({ taskId: task.id, featureId: snapshot.feature.id, digest: computeExecutionPermissionsDigest(readPermissionsFace(deps.permissions, { projectId: prepared.projectId, featureId: snapshot.feature.id, taskId: task.id }).grants) })));
     facts.push({ snapshot, pendingTasks, inputs });
   }
+  const strategies = strategyEntries.slice().sort((left, right) => left.taskId < right.taskId ? -1 : left.taskId > right.taskId ? 1 : left.featureId < right.featureId ? -1 : 1).map(({ taskId, digest }) => ({ taskId, digest }));
+  const permissions = permissionEntries.slice().sort((left, right) => left.taskId < right.taskId ? -1 : left.taskId > right.taskId ? 1 : left.featureId < right.featureId ? -1 : 1).map(({ taskId, digest }) => ({ taskId, digest }));
   if (stableStringify(strategies) !== stableStringify(prepared.taskStrategyDigests)) return reject();
   if (stableStringify(permissions) !== stableStringify(prepared.permissionDigests)) return reject();
   if (stableStringify([...inputMap.values()].sort((left, right) => left.artifactId < right.artifactId ? -1 : 1)) !== stableStringify([...prepared.inputs])) return reject();
