@@ -35,17 +35,27 @@ export interface BudgetServiceOptions {
    * 异常，用于断言“唤醒丢失/抛错不回滚已提交的持久入队意图”。
    */
   readonly dispatchSignal?: 'record' | 'throw';
+  /** F-008：让两个独立 SQLite 服务在同一只读预览屏障后进入提交竞争。 */
+  readonly previewBarrier?: { wait(): Promise<void> };
 }
 
 export function budgetServices(session: SqliteStorageSession, options: BudgetServiceOptions = {}) {
   const nowUtcMs = () => NOW;
   const atomic = createSqliteAtomicCommandStore(session, { nowUtcMs });
   const inspector = createRepositoryInspector();
-  const preview = createExecutionPreviewService({
+  const previewBase = createExecutionPreviewService({
     views: createSqlitePlanAccess(session, { nowUtcMs }), inspector,
     workspace: createBaselineWorkspaceReader(), permissions: TRUSTED_PROJECT_PERMISSIONS_READER,
     nowMs: nowUtcMs,
   });
+  const preview = {
+    async previewExecution(...args: Parameters<typeof previewBase.previewExecution>) {
+      const result = await previewBase.previewExecution(...args);
+      await options.previewBarrier?.wait();
+      return result;
+    },
+  };
+
   const signals: unknown[] = [];
   const workspaceRoots = options.workspaceRoots ?? [];
   const executionResume = createExecutionResumeService({
@@ -148,6 +158,9 @@ export async function openBudgetFixture(
         session.close();
         session = openSqliteStorageSession({ path: box.dbPath });
         services = budgetServices(session, fixtureOptions);
+      },
+      setPreviewBarrier(barrier: { wait(): Promise<void> }) {
+        services = budgetServices(session, { ...fixtureOptions, previewBarrier: barrier });
       },
       close() { captureP04SqliteEvidence(session, 'budget'); session.close(); box.cleanup(); },
     };

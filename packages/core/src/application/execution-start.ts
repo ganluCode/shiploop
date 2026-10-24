@@ -653,6 +653,12 @@ export function createExecutionStartService(deps: ExecutionStartServiceDeps): Ex
       const snapshot = transaction.getFeaturePlan(projectId, prepared.featureId);
       const feature = snapshot.feature;
       const targetFeatureId = feature.id;
+      if (fresh !== null) {
+        const member = fresh.memberRevisions.find((entry) => entry.featureId === feature.id);
+        if (member === undefined || member.revision !== feature.revision || member.planDigest !== feature.planDigest) {
+          return rejected('preview_stale');
+        }
+      }
 
       /* 3. 批准依据重核（复合身份 = planDigest + 当前检查政策内容摘要）。 */
       const decisions = transaction.listPlanApprovals(projectId, feature.id);
