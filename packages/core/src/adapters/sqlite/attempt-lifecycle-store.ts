@@ -297,8 +297,10 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
    *   重试只能由新的 planning.start 授权；未真正启动时释放占用，否则隔离）；
    * - runtime_settled：成功仅当本 Run 已发布候选（上下文 candidate_published 且
    *   候选制品绑定）+ Runtime 正常完成 + 停止确认 + required 记录完整；否则按
-   *   受控原因失败（候选缺失/记录不完整/停止未确认均不伪造成功）。取消/中断
-   *   控制路径不在此终结 Run（取消竞争与重启核对由后续任务补齐）。
+   *   受控原因失败（候选缺失/记录不完整/停止未确认均不伪造成功）。P05-1 /
+   *   F-009：取消/中断控制先获胜（Run 已 cancelling/interrupted）时，迟到成功
+   *   降级为 cancelled、迟到结果不覆盖控制状态也不结算 Run 终态（由取消/停止
+   *   核验路径收尾），Attempt/Task/预算事实仍在同一事务内落库。
    * 预算：成功 settle passed；确定性失败 settle non_code_failure（规划不消耗代码
    * 返工次数）；Run 终态经 settleExecutionRunOutcome（幂等 resultKey）。
    */
@@ -386,7 +388,15 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
       && contextRow.candidate_artifact_id !== null;
     const recordingOk = runtime.recording.mode === 'best_effort' || runtime.recording.complete;
     const stopConfirmed = runtime.stopped?.confirmed === true;
-    const success = targetStatus === 'verifying' && contextBound && recordingOk && stopConfirmed;
+    /* P05-1 / F-009：持久控制版本裁决——取消意图先提交（Run 已 cancelling/
+     * interrupted）时，迟到的成功/失败结果不覆盖控制状态，也不得成功收尾；
+     * Run 收尾由取消/停止核验路径拥有，本事务只落 Attempt/Task/预算事实。 */
+    const runStatusRow = db.prepare<[string, string], { status: string }>(
+      'SELECT status FROM runs WHERE project_id = ? AND id = ?').get(valid.projectId, valid.runId);
+    if (runStatusRow === undefined) throw new StorageError('not_found', operation, 'Planning settlement Run is missing');
+    const controlWon = runStatusRow.status === 'cancelling' || runStatusRow.status === 'interrupted';
+    const runOutcomeSettleable = ['queued', 'running', 'pausing', 'paused'].includes(runStatusRow.status);
+    const success = !controlWon && targetStatus === 'verifying' && contextBound && recordingOk && stopConfirmed;
     // 成功保留占用由受信 retention 路径凭停止证据释放；其余一律隔离（不确定/失败现场不重分配）。
     if (!success) {
       resources.quarantineInTransaction(identity);
@@ -398,6 +408,7 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
       && runtime.failure !== null && runtime.control?.reason === 'runtime_failed';
     const finalStatus: 'succeeded' | 'failed' | 'cancelled' | 'interrupted' = success ? 'succeeded'
       : startupFailure ? 'failed'
+      : controlWon && targetStatus === 'verifying' ? 'cancelled'
       : targetStatus === 'verifying' ? 'failed'
       : targetStatus === 'cancelled' ? 'cancelled' : 'interrupted';
     const failureReason = success ? null
@@ -423,14 +434,19 @@ export function createSqliteAttemptLifecycleStore(session: SqliteStorageSession,
         : finalStatus === 'failed' ? 'failed' : 'running', now, valid.taskId, valid.executionVersion);
     if (taskChanged.changes !== 1) throw new StorageError('conflict', operation, 'Planning settlement Task CAS failed');
     if (finalStatus === 'succeeded' || finalStatus === 'failed') {
-      settlePlanningRunOutcome(transaction, valid, finalStatus,
-        finalStatus === 'succeeded' ? 'planning_candidate_published' : failureReason!,
-        finalStatus === 'succeeded' ? valid.taskId : null);
+      // P05-1 / F-009：Run 已处控制/终态时，结算原语会拒绝迟到结果并回滚
+      // Attempt 事实；改为跳过 Run 收尾（由取消/停止核验路径拥有），预算仍结算。
+      if (runOutcomeSettleable) {
+        settlePlanningRunOutcome(transaction, valid, finalStatus,
+          finalStatus === 'succeeded' ? 'planning_candidate_published' : failureReason!,
+          finalStatus === 'succeeded' ? valid.taskId : null);
+      }
       transaction.settleTaskAttemptBudget({ projectId: valid.projectId, batchId: batchIdOf(valid), runId: valid.runId,
         taskId: valid.taskId, attemptKey: valid.attemptId,
         outcome: finalStatus === 'succeeded' ? 'passed' : 'non_code_failure', observationDigest: digest });
     } else {
-      // 取消/中断控制路径不终结 Run：保留可查询原因，由后续取消/恢复任务收尾。
+      // 取消/中断控制路径不终结 Run（cancelling/interrupted 不在 CAS 范围）；
+      // 无控制意图时保留可查询原因的暂停事实，收尾由取消/停止核验路径承担。
       db.prepare(`UPDATE runs SET status = 'paused', reason = ?, revision = revision + 1, updated_at = ?\n        WHERE id = ? AND project_id = ? AND status IN ('queued', 'running', 'pausing')`)
         .run(failureReason ?? 'runtime_interrupted', now, valid.runId, valid.projectId);
     }

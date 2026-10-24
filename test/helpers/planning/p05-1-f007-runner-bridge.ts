@@ -15,7 +15,7 @@ import type { CommandProcessHandle, CommandProcessPort } from '../../../packages
 import type { RuntimeExecutionRequest } from '../../../packages/core/src/ports/runtime-execution.ts';
 import type { WorkResourceSnapshot } from '../../../packages/core/src/ports/work-resources.ts';
 import type { CommandReceipt } from '../../../packages/core/src/ports/commands.ts';
-import type { F007Fixture } from '../../modules/planning/p05-1-f007-planning-execution.test.ts';
+import type { F007Fixture } from './p05-1-f007-fixture.ts';
 
 interface BridgeHandle {
   readonly fixture: F007Fixture;
@@ -24,7 +24,7 @@ interface BridgeHandle {
 }
 
 export async function startHostlessPlanningRunnerBridge(options: { readonly prefix: string }): Promise<BridgeHandle> {
-  const { openF007FixtureWithFactory } = await import('../../modules/planning/p05-1-f007-planning-execution.test.ts');
+  const { openF007FixtureWithFactory } = await import('./p05-1-f007-fixture.ts');
   const portHolder = { port: 0 };
   const bridges: { revoke(): void }[] = [];
   let server: Server | undefined;

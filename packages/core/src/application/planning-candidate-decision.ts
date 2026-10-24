@@ -202,6 +202,13 @@ export function submitPlanningCandidateDecision(
   ) {
     return rejected(identity, transaction, { reason: 'candidate_not_approvable' });
   }
+  /* P05-1 / F-009：持久控制版本裁决——取消/超时/失败或停止不确定先获胜时，
+   * 已发布候选至多保留为不可审批诊断（approve 要求规划 Run 已成功收尾）；
+   * reject 不导入任何内容，保留为人工收口上下文的路径。 */
+  const planningRun = transaction.getExecutionRun(projectId, context.runId);
+  if (envelope.payload.decision === 'approve' && planningRun.status !== 'succeeded') {
+    return rejected(identity, transaction, { reason: 'planning_run_not_succeeded' });
+  }
 
   let artifact: ArtifactInputRef;
   try {
