@@ -58,6 +58,7 @@ import type {
   FeatureListResult,
   GlobalSnapshotResult,
   PhaseDetailResult,
+  PhaseGraphResult, FeatureDependencyInput, FeaturePhaseMovePayload, PhaseMutationOperation,
   PhaseListResult,
   PlanningCandidateDetailResult,
   PlanningContextDetailResult,
@@ -168,6 +169,7 @@ import {
   validateFeatureDeliveryCommandResultWire,
   validateFeaturePlanReviseResultWire,
   validatePhaseCreateResultWire,
+  validateFeatureMoveResultWire, validateFeatureDagResultWire,
   validatePlanLabelsUpdateResultWire,
   validateStateEventWire,
   validateTaskApprovalBlockResultWire,
@@ -265,6 +267,25 @@ export interface ListBaselinesInput {
  * ------------------------------------------------------------------ */
 
 /** phase.create 输入（id 可缺省由服务端生成；字段语义由服务端单一权威复核）。 */
+export interface PhaseMutationInput {
+  readonly projectId: string;
+  readonly phaseId: string;
+  readonly expectedRevision: number;
+  readonly commandId?: string;
+}
+export interface UpdatePhaseMetadataInput extends PhaseMutationInput {
+  readonly title?: string;
+  readonly description?: string | null;
+  readonly labels?: readonly string[];
+}
+export interface MoveFeaturePhaseInput extends FeaturePhaseMovePayload {
+  readonly projectId: string;
+  readonly expectedRevision: number;
+  readonly commandId?: string;
+}
+export interface UpdateFeatureDagInput extends PhaseMutationInput {
+  readonly edges: readonly FeatureDependencyInput[];
+}
 export interface CreatePhaseInput {
   readonly projectId: string;
   readonly id?: string;
@@ -695,6 +716,13 @@ export interface HostClientApplication {
    * ------------------------------------------------------------ */
   /** phase.create：创建 open Phase（completed 回执 result 经线校验器复核）。 */
   createPhase(input: CreatePhaseInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  updatePhaseMetadata(input: UpdatePhaseMetadataInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  closePhase(input: PhaseMutationInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  reopenPhase(input: PhaseMutationInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  archivePhase(input: PhaseMutationInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  moveFeaturePhase(input: MoveFeaturePhaseInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  updateFeatureDag(input: UpdateFeatureDagInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  getPhaseGraph(projectId: string, phaseId: string, input?: PlanListPageInput): Promise<PhaseGraphResult>;
   /** feature.plan.import：单 Feature 草稿计划导入（Phase 聚合 CAS）。 */
   importFeaturePlan(
     input: ImportFeaturePlanInput,
@@ -2377,8 +2405,68 @@ export function createHostClientApplication(context: AppClientContext): HostClie
     return validateAppQueryResponse('snapshot.get', json, { scope: validScope });
   }
 
+  async function mutatePhase(operation: PhaseMutationOperation, input: UpdatePhaseMetadataInput, options?: SubmitCommandOptions): Promise<CommandReceipt> {
+    const metadata = operation === 'phase.metadata.update';
+    const object = rejectUnknownInputKeys('commands.submit', input, ['projectId', 'phaseId', 'expectedRevision', 'commandId', ...(metadata ? ['title', 'description', 'labels'] : [])]);
+    const projectId = requireProjectId('commands.submit', object.projectId as string);
+    const phaseId = requireStableIdInput('commands.submit', object.phaseId, 'phaseId');
+    const expectedRevision = requireExpectedRevisionInput('commands.submit', object.expectedRevision);
+    const receipt = await submitCommand({ ...optionalCommandIdInput('commands.submit', object.commandId), operation,
+      scope: { kind: 'project', projectId }, expectedRevision,
+      payload: { phaseId, ...Object.fromEntries(['title', 'description', 'labels'].filter(key => Object.hasOwn(object, key)).map(key => [key, object[key]])) },
+    }, options);
+    if (receipt.status === 'completed') {
+      const result = validatePhaseCreateResultWire(receipt.result);
+      if (result.phase.id !== phaseId || result.phase.projectId !== projectId) throw new HostProtocolError('response_malformed', 'commands.submit', 'Phase 回执归属不一致', { details: { reason: 'scope_mismatch' } });
+    }
+    return receipt;
+  }
+
   return {
     submitCommand,
+    updatePhaseMetadata: (input, options) => mutatePhase('phase.metadata.update', input, options),
+    closePhase: (input, options) => mutatePhase('phase.close', input, options),
+    reopenPhase: (input, options) => mutatePhase('phase.reopen', input, options),
+    archivePhase: (input, options) => mutatePhase('phase.archive', input, options),
+    async moveFeaturePhase(input, options) {
+      const object = rejectUnknownInputKeys('commands.submit', input, ['projectId', 'featureId', 'sourcePhaseId', 'targetPhaseId', 'sourcePhaseRevision', 'targetPhaseRevision', 'expectedRevision', 'commandId']);
+      const projectId = requireProjectId('commands.submit', object.projectId as string);
+      const payload = {
+        featureId: requireStableIdInput('commands.submit', object.featureId, 'featureId'),
+        sourcePhaseId: requireStableIdInput('commands.submit', object.sourcePhaseId, 'sourcePhaseId'),
+        targetPhaseId: requireStableIdInput('commands.submit', object.targetPhaseId, 'targetPhaseId'),
+        sourcePhaseRevision: requireExpectedRevisionInput('commands.submit', object.sourcePhaseRevision),
+        targetPhaseRevision: requireExpectedRevisionInput('commands.submit', object.targetPhaseRevision),
+      };
+      const receipt = await submitCommand({ ...optionalCommandIdInput('commands.submit', object.commandId), operation: 'feature.phase.move', scope: { kind: 'project', projectId }, expectedRevision: requireExpectedRevisionInput('commands.submit', object.expectedRevision), payload }, options);
+      if (receipt.status === 'completed') {
+        const { feature } = validateFeatureMoveResultWire(receipt.result);
+        if (feature.id !== payload.featureId || feature.projectId !== projectId || feature.phaseId !== payload.targetPhaseId) throw new HostProtocolError('response_malformed', 'commands.submit', 'Feature 回执归属不一致', { details: { reason: 'scope_mismatch' } });
+      }
+      return receipt;
+    },
+    async updateFeatureDag(input, options) {
+      const object = rejectUnknownInputKeys('commands.submit', input, ['projectId', 'phaseId', 'expectedRevision', 'commandId', 'edges']);
+      const projectId = requireProjectId('commands.submit', object.projectId as string);
+      const phaseId = requireStableIdInput('commands.submit', object.phaseId, 'phaseId');
+      const receipt = await submitCommand({ ...optionalCommandIdInput('commands.submit', object.commandId), operation: 'feature.dag.update', scope: { kind: 'project', projectId }, expectedRevision: requireExpectedRevisionInput('commands.submit', object.expectedRevision), payload: { phaseId, edges: object.edges } }, options);
+      if (receipt.status === 'completed') {
+        const { phase } = validateFeatureDagResultWire(receipt.result);
+        if (phase.id !== phaseId || phase.projectId !== projectId) throw new HostProtocolError('response_malformed', 'commands.submit', '图回执归属不一致', { details: { reason: 'scope_mismatch' } });
+      }
+      return receipt;
+    },
+    async getPhaseGraph(projectId, phaseId, input) {
+      const operation = 'phases.graph.get';
+      context.assertOpen(operation);
+      const project = requireProjectId(operation, projectId);
+      const phase = requireStableIdInput(operation, phaseId, 'phaseId');
+      const json = await getJson(operation, planListPath(
+        `${PHASES_ROUTE_PREFIX}${phase}/graph`, [['projectId', project]], input, operation));
+      const result = validateAppQueryResponse(operation, json);
+      if (result.phase.projectId !== project || result.phase.id !== phase || (input?.limit !== undefined && result.limit !== input.limit)) throw new HostProtocolError('response_malformed', operation, '图查询归属不一致', { details: { reason: 'scope_mismatch' } });
+      return result;
+    },
 
     async getReceipt(commandId: string): Promise<CommandReceipt> {
       context.assertOpen('receipts.get');

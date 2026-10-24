@@ -74,6 +74,13 @@ export type AppCliCommandId =
   | 'baseline.cancel'
   | 'baseline.evidence'
   | 'phase.create'
+  | 'phase.update'
+  | 'phase.close'
+  | 'phase.reopen'
+  | 'phase.archive'
+  | 'phase.graph'
+  | 'feature.move'
+  | 'feature.dependencies'
   | 'phase.list'
   | 'phase.get'
   | 'phase.labels'
@@ -157,6 +164,13 @@ export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'baseline.cancel',
   'baseline.evidence',
   'phase.create',
+  'phase.update',
+  'phase.close',
+  'phase.reopen',
+  'phase.archive',
+  'phase.graph',
+  'feature.move',
+  'feature.dependencies',
   'phase.list',
   'phase.get',
   'phase.labels',
@@ -711,6 +725,48 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
     minPositionals: 0,
     maxPositionals: 0,
     positionalFields: [],
+  },
+  'phase.update': {
+    command: 'phase', commandId: 'phase.update',
+    valueFlags: ["--project","--revision","--title","--description","--label","--command-id"],
+    boolFlags: ["--clear-description","--clear-labels"], repeatableFlags: ["--label"],
+    minPositionals: 1, maxPositionals: 1, positionalFields: ["phaseId"],
+  },
+  'phase.close': {
+    command: 'phase', commandId: 'phase.close',
+    valueFlags: ["--project","--revision","--command-id"],
+    boolFlags: [], repeatableFlags: [],
+    minPositionals: 1, maxPositionals: 1, positionalFields: ["phaseId"],
+  },
+  'phase.reopen': {
+    command: 'phase', commandId: 'phase.reopen',
+    valueFlags: ["--project","--revision","--command-id"],
+    boolFlags: [], repeatableFlags: [],
+    minPositionals: 1, maxPositionals: 1, positionalFields: ["phaseId"],
+  },
+  'phase.archive': {
+    command: 'phase', commandId: 'phase.archive',
+    valueFlags: ["--project","--revision","--command-id"],
+    boolFlags: [], repeatableFlags: [],
+    minPositionals: 1, maxPositionals: 1, positionalFields: ["phaseId"],
+  },
+  'phase.graph': {
+    command: 'phase', commandId: 'phase.graph',
+    valueFlags: ["--project","--limit","--cursor"],
+    boolFlags: [], repeatableFlags: [],
+    minPositionals: 1, maxPositionals: 1, positionalFields: ["phaseId"],
+  },
+  'feature.move': {
+    command: 'feature', commandId: 'feature.move',
+    valueFlags: ["--project","--revision","--from-phase","--to-phase","--source-revision","--target-revision","--command-id"],
+    boolFlags: [], repeatableFlags: [],
+    minPositionals: 1, maxPositionals: 1, positionalFields: ["featureId"],
+  },
+  'feature.dependencies': {
+    command: 'feature', commandId: 'feature.dependencies',
+    valueFlags: ["--project","--phase","--revision","--input","--command-id"],
+    boolFlags: [], repeatableFlags: [],
+    minPositionals: 0, maxPositionals: 0, positionalFields: [],
   },
   'phase.list': {
     command: 'phase',
@@ -1326,12 +1382,14 @@ const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, A
     },
     phase: {
       create: 'phase.create',
+      update: 'phase.update', close: 'phase.close', reopen: 'phase.reopen', archive: 'phase.archive', graph: 'phase.graph',
       list: 'phase.list',
       get: 'phase.get',
       labels: 'phase.labels',
     },
     feature: {
       import: 'feature.import',
+      move: 'feature.move', dependencies: 'feature.dependencies',
       list: 'feature.list',
       get: 'feature.get',
       revise: 'feature.revise',
@@ -2222,6 +2280,47 @@ export interface ParsedBaselineEvidence {
 /* ---- P03-1 / F-010 计划命令（phase/feature/task） ---- */
 
 /** `phase create --project <id> --title <t> [...]`：建立 open Phase。 */
+interface ParsedGraphCommandBase {
+  readonly kind: 'command';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly explicitCommandId?: string;
+}
+export interface ParsedPhaseMutation extends ParsedGraphCommandBase {
+  readonly command: 'phase';
+  readonly commandId: 'phase.update' | 'phase.close' | 'phase.reopen' | 'phase.archive';
+  readonly phaseId: string;
+  readonly revision: number;
+  readonly title?: string;
+  readonly description?: string | null;
+  readonly labels?: readonly string[];
+}
+export interface ParsedPhaseGraph extends ParsedGraphCommandBase {
+  readonly command: 'phase';
+  readonly commandId: 'phase.graph';
+  readonly phaseId: string;
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+export interface ParsedFeatureMove extends ParsedGraphCommandBase {
+  readonly command: 'feature';
+  readonly commandId: 'feature.move';
+  readonly featureId: string;
+  readonly revision: number;
+  readonly sourcePhaseId: string;
+  readonly targetPhaseId: string;
+  readonly sourcePhaseRevision: number;
+  readonly targetPhaseRevision: number;
+}
+export interface ParsedFeatureDependencies extends ParsedGraphCommandBase {
+  readonly command: 'feature';
+  readonly commandId: 'feature.dependencies';
+  readonly phaseId: string;
+  readonly revision: number;
+  readonly inputFile: string;
+}
 export interface ParsedPhaseCreate {
   readonly kind: 'command';
   readonly command: 'phase';
@@ -3152,6 +3251,10 @@ export type ParsedAppCliCommand =
   | ParsedBaselineCancel
   | ParsedBaselineEvidence
   | ParsedPhaseCreate
+  | ParsedPhaseMutation
+  | ParsedPhaseGraph
+  | ParsedFeatureMove
+  | ParsedFeatureDependencies
   | ParsedPhaseList
   | ParsedPhaseGet
   | ParsedPlanLabels
@@ -4142,6 +4245,54 @@ function buildPlanEntity(
   assertPositionals(scan, spec, state);
   const base = baseResult(state, scan);
   switch (spec.commandId) {
+    case 'phase.update':
+    case 'phase.close':
+    case 'phase.reopen':
+    case 'phase.archive': {
+      const explicitCommandId = optionalCommandId(scan, state);
+      const title = scan.options.has('--title') ? resolvePlanTitle(scan, state) : undefined;
+      const description = resolveInitDescription(scan, state);
+      if ((description !== undefined && scan.bools.has('--clear-description')) ||
+          (scan.options.has('--label') && scan.bools.has('--clear-labels'))) fail(state, 'conflicting_options');
+      const labels = scan.options.has('--label') || scan.bools.has('--clear-labels') ? takeLabels(scan, state) : undefined;
+      if (spec.commandId === 'phase.update' && title === undefined && description === undefined &&
+          !scan.bools.has('--clear-description') && labels === undefined) fail(state, 'missing_required_option', 'metadata');
+      return {
+        ...base, command: 'phase', commandId: spec.commandId,
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        phaseId: requirePlanId(scan.positionals[0] as string, state, 'phaseId'), revision: requireRevision(scan, state),
+        ...(title !== undefined ? { title } : {}),
+        ...(scan.bools.has('--clear-description') ? { description: null } : description !== undefined ? { description } : {}),
+        ...(labels !== undefined ? { labels } : {}),
+        ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
+      };
+    }
+    case 'phase.graph':
+      return { ...base, command: 'phase', commandId: 'phase.graph',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        phaseId: requirePlanId(scan.positionals[0] as string, state, 'phaseId'), ...optionalPlanListPage(scan, state) };
+    case 'feature.move': {
+      const positiveRevision = (flag: string) => {
+        const raw = requireOption(scan, flag, state, flag.slice(2));
+        if (!/^[1-9]\d*$/.test(raw) || !Number.isSafeInteger(Number(raw))) fail(state, 'invalid_revision', flag.slice(2));
+        return Number(raw);
+      };
+      const explicitCommandId = optionalCommandId(scan, state);
+      return { ...base, command: 'feature', commandId: 'feature.move',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        featureId: requirePlanId(scan.positionals[0] as string, state, 'featureId'), revision: requireRevision(scan, state),
+        sourcePhaseId: requirePlanIdOption(scan, '--from-phase', state, 'sourcePhaseId'),
+        targetPhaseId: requirePlanIdOption(scan, '--to-phase', state, 'targetPhaseId'),
+        sourcePhaseRevision: positiveRevision('--source-revision'), targetPhaseRevision: positiveRevision('--target-revision'),
+        ...(explicitCommandId !== undefined ? { explicitCommandId } : {}) };
+    }
+    case 'feature.dependencies': {
+      const explicitCommandId = optionalCommandId(scan, state);
+      return { ...base, command: 'feature', commandId: 'feature.dependencies',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        phaseId: requirePlanIdOption(scan, '--phase', state, 'phaseId'), revision: requireRevision(scan, state),
+        inputFile: requireInputFile(scan, state), ...(explicitCommandId !== undefined ? { explicitCommandId } : {}) };
+    }
     case 'phase.create': {
       const projectId = requireProjectId(requireOption(scan, '--project', state, 'project'), state);
       const title = resolvePlanTitle(scan, state);

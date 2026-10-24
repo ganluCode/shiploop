@@ -53,6 +53,7 @@ export const APP_OPERATIONS = [
   // P03-1 / F-009（§6.6）：计划域层级列表/详情/Task DAG 查询。
   'phases.list',
   'phases.get',
+  'phases.graph.get',
   'features.list',
   'features.get',
   'tasks.list',

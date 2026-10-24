@@ -148,6 +148,7 @@ export type ApplicationOperation =
   // P03-1 / F-009 §6.6：计划域查询操作身份（与 Core PLAN_QUERY_OPERATIONS 同源）。
   | 'phases.list'
   | 'phases.get'
+  | 'phases.graph.get'
   | 'features.list'
   | 'features.get'
   | 'tasks.list'
@@ -478,6 +479,10 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
   }
   if (path.startsWith(PHASES_ROUTE_PREFIX)) {
     const segment = path.slice(PHASES_ROUTE_PREFIX.length);
+    const parts = segment.split('/');
+    if (parts.length === 2 && parts[0] && parts[1] === 'graph') {
+      return { operation: 'phases.graph.get', method: 'GET', pathParam: { name: 'phaseId', value: parts[0] } };
+    }
     if (segment.length > 0 && !segment.includes('/')) {
       return {
         operation: 'phases.get',
@@ -786,6 +791,7 @@ const QUERY_SPECS: Readonly<Partial<Record<ApplicationOperation, QuerySpec>>> = 
   'baselines.list': Object.freeze({ allowed: ['limit', 'cursor'], repeatable: [] }),
   // P03-1 / F-009 §6.6：计划层级列表查询参数（父级身份 + 分页；取值规则由
   // Core validatePlanListFilter 单一权威复核）。
+  'phases.graph.get': Object.freeze({ allowed: ['projectId', 'limit', 'cursor'], repeatable: [] }),
   'phases.list': Object.freeze({ allowed: ['projectId', 'limit', 'cursor'], repeatable: [] }),
   'features.list': Object.freeze({
     allowed: ['projectId', 'phaseId', 'limit', 'cursor'],
@@ -1183,6 +1189,11 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
         app.principal,
         buildPlanListQuery(params, operation, 'projectId'),
       );
+      break;
+    case 'phases.graph.get':
+      result = await app.queryService.getPhaseGraph(app.principal, {
+        ...buildPlanListQuery(params, operation, 'projectId'), phaseId: pathParam?.value,
+      });
       break;
     case 'phases.get':
       result = await app.queryService.getPhase(app.principal, pathParam?.value);

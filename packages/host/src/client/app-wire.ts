@@ -16,6 +16,9 @@
  * - 本模块只做结构校验：无 I/O、不读时钟、不导入 node:http/net/fs；错误为
  *   HostProtocolError，details 只含受控 reason，不回显响应原文或秘密。
  */
+import { FEATURE_GRAPH_BLOCKER_REASONS, FEATURE_DAG_REASONS, FEATURE_DEPENDENCY_COMPLETION } from 'shiploop-core/protocol';
+import type { PhaseGraphResult, PublicFeatureDependencyEdge } from 'shiploop-core/protocol';
+export type { PhaseGraphResult, PhaseGraphFeatureReadiness, PublicFeatureDependencyEdge } from 'shiploop-core/protocol';
 import { validateFeatureReportWire } from './feature-report-wire.js';
 import { validateWorkSessionListWire, validateWorkSessionDetailWire, validateWorkSessionEvidenceWire } from './work-session-wire.js';
 import { validateWorkRecordingListWire, validateWorkRecordingBodyWire } from './work-recording-wire.js';
@@ -286,6 +289,7 @@ export type AppQueryOperation =
   // P03-1 / F-009 §6.6：计划域查询（与 Core PLAN_QUERY_OPERATIONS 同源）。
   | 'phases.list'
   | 'phases.get'
+  | 'phases.graph.get'
   | 'features.list'
   | 'features.get'
   | 'tasks.list'
@@ -488,6 +492,14 @@ function validateEventPayload(
     return { created: true };
   }
   // P03-1 / F-005（§9.2）：Feature 计划导入事件脱敏 payload。
+  if (kind === 'phaseMutation' || kind === 'featurePhaseMoved' || kind === 'featureDagUpdated') {
+    const key = kind === 'featurePhaseMoved' ? 'phaseMoved' : kind === 'featureDagUpdated' ? 'dagUpdated' :
+      ({ 'phase.metadata.updated': 'metadataUpdated', 'phase.closed': 'closed', 'phase.reopened': 'reopened', 'phase.archived': 'archived' } as Partial<Record<PublicStateEventType, string>>)[type];
+    if (key === undefined) malformed(operation, 'event_payload_violation');
+    exactKeys(operation, object, [key]);
+    if (object[key] !== true) malformed(operation, 'event_payload_violation');
+    return { [key]: true };
+  }
   if (kind === 'featurePlanImported') {
     exactKeys(operation, object, ['imported']);
     if (object.imported !== true) {
@@ -1107,6 +1119,7 @@ function validatePlanArtifactRefsWire(
 /** Phase 公开记录（§7.2 字段集冻结；status 由服务端枚举管理，客户端只做结构把关）。 */
 function validatePhaseRecordWire(operation: HostOperation, value: unknown): PublicPhaseRecord {
   const object = requirePlain(operation, value);
+  if (!['open', 'closed', 'archived'].includes(object.status as string)) malformed(operation, 'phase_status_invalid');
   exactKeys(operation, object, [
     'id',
     'projectId',
@@ -1413,6 +1426,61 @@ export function validatePhaseCreateResultWire(
   const object = requirePlain(operation, value);
   exactKeys(operation, object, ['phase']);
   return { phase: validatePhaseRecordWire(operation, object.phase) };
+}
+
+/** P05-2 图与修改回执：字段冻结，响应归属由 HostClient 绑定本次请求。 */
+function validateFeatureEdgeWire(operation: HostOperation, value: unknown): PublicFeatureDependencyEdge {
+  const edge = requirePlain(operation, value);
+  exactKeys(operation, edge, ['id', 'projectId', 'phaseId', 'featureId', 'dependsOnId', 'codeBaselineRef']);
+  for (const key of ['id', 'projectId', 'phaseId', 'featureId', 'dependsOnId']) requireStableId(operation, edge[key]);
+  if (edge.codeBaselineRef !== null && (typeof edge.codeBaselineRef !== 'string' || edge.codeBaselineRef.length === 0 || edge.codeBaselineRef.length > 512)) malformed(operation, 'feature_edge_baseline_invalid');
+  return edge as unknown as PublicFeatureDependencyEdge;
+}
+export function validateFeatureMoveResultWire(value: unknown, operation: HostOperation = 'commands.submit') {
+  const result = requirePlain(operation, value);
+  exactKeys(operation, result, ['feature']);
+  return { feature: validateFeatureRecordWire(operation, result.feature) };
+}
+export function validateFeatureDagResultWire(value: unknown, operation: HostOperation = 'commands.submit') {
+  const result = requirePlain(operation, value);
+  exactKeys(operation, result, ['phase', 'edges']);
+  const phase = validatePhaseRecordWire(operation, result.phase);
+  if (!Array.isArray(result.edges)) malformed(operation, 'feature_edges_invalid');
+  const edges = result.edges.map(edge => validateFeatureEdgeWire(operation, edge));
+  if (edges.some(edge => edge.projectId !== phase.projectId || edge.phaseId !== phase.id)) malformed(operation, 'scope_mismatch');
+  return { phase, edges };
+}
+function validatePhaseGraphWire(value: unknown): PhaseGraphResult {
+  const operation = 'phases.graph.get';
+  const graph = requirePlain(operation, value);
+  exactKeys(operation, graph, ['schemaVersion', 'scope', 'phase', 'features', 'dependencies', 'readiness', 'readyFeatureIds', 'executableFeatureIds', 'nextCursor', 'limit']);
+  if (graph.schemaVersion !== WIRE_MESSAGE_SCHEMA_VERSION) throw new HostProtocolError('unsupported_schema_version', operation, '不支持的图协议版本');
+  if (graph.scope !== 'phase-graph' || !Number.isInteger(graph.limit) || (graph.limit as number) < 1 || (graph.limit as number) > 200) malformed(operation, 'phase_graph_page_invalid');
+  if (graph.nextCursor !== null && (typeof graph.nextCursor !== 'string' || !graph.nextCursor.startsWith(PLAN_LIST_CURSOR_PREFIX))) malformed(operation, 'phase_graph_cursor_invalid');
+  const phase = validatePhaseRecordWire(operation, graph.phase);
+  if (!Array.isArray(graph.features) || graph.features.length > (graph.limit as number) || !Array.isArray(graph.dependencies) || !Array.isArray(graph.readiness)) malformed(operation, 'phase_graph_invalid');
+  const features = graph.features.map(item => validateFeatureRecordWire(operation, item));
+  const ids = new Set(features.map(item => item.id));
+  if (ids.size !== features.length || features.some(item => item.projectId !== phase.projectId || item.phaseId !== phase.id)) malformed(operation, 'scope_mismatch');
+  const dependencies = graph.dependencies.map(item => validateFeatureEdgeWire(operation, item));
+  // Dependencies cover the whole graph, including nodes outside this page.
+  if (dependencies.some(edge => edge.projectId !== phase.projectId || edge.phaseId !== phase.id)) malformed(operation, 'scope_mismatch');
+  const readiness = graph.readiness.map(value => {
+    const item = requirePlain(operation, value);
+    exactKeys(operation, item, ['featureId', 'dependencyCompleted', 'dependencyCompletion', 'integrationReady', 'dependencyIntegrationReady', 'ready', 'reason', 'blockers']);
+    requireStableId(operation, item.featureId);
+    for (const key of ['dependencyCompleted', 'integrationReady', 'dependencyIntegrationReady', 'ready']) if (typeof item[key] !== 'boolean') malformed(operation, 'phase_graph_readiness_invalid');
+    if (!(FEATURE_DAG_REASONS as readonly unknown[]).includes(item.reason) || !(FEATURE_DEPENDENCY_COMPLETION as readonly unknown[]).includes(item.dependencyCompletion) || !Array.isArray(item.blockers) || item.blockers.some(reason => !(FEATURE_GRAPH_BLOCKER_REASONS as readonly unknown[]).includes(reason))) malformed(operation, 'phase_graph_readiness_invalid');
+    if (!ids.has(item.featureId as string) || item.dependencyCompleted !== (item.dependencyCompletion === 'complete') || item.ready !== (item.reason === 'ready') || (item.ready && (!item.dependencyCompleted || !item.dependencyIntegrationReady))) malformed(operation, 'phase_graph_readiness_invalid');
+    return item as unknown as PhaseGraphResult['readiness'][number];
+  });
+  if (readiness.length !== ids.size || new Set(readiness.map(item => item.featureId)).size !== ids.size) malformed(operation, 'phase_graph_readiness_invalid');
+  for (const key of ['readyFeatureIds', 'executableFeatureIds'] as const) {
+    const candidates = graph[key];
+    if (!Array.isArray(candidates) || new Set(candidates).size !== candidates.length || candidates.some(id => !ids.has(id as string))) malformed(operation, 'phase_graph_candidates_invalid');
+    if (candidates.some(id => !readiness.some(item => item.featureId === id && item.ready && (key !== 'executableFeatureIds' || item.blockers.length === 0)))) malformed(operation, 'phase_graph_candidates_invalid');
+  }
+  return { ...graph, phase, features, dependencies, readiness } as unknown as PhaseGraphResult;
 }
 
 /** feature.plan.import completed 结果：{feature, tasks:[{id}], validation}。 */
@@ -6120,6 +6188,7 @@ export function validateAppQueryResponse(
   expectation?: SnapshotExpectation,
 ): BaselineDetailResult;
 // P03-1 / F-009 §6.6：计划域查询响应重载。
+export function validateAppQueryResponse(operation: 'phases.graph.get', body: unknown, expectation?: SnapshotExpectation): PhaseGraphResult;
 export function validateAppQueryResponse(
   operation: 'phases.list',
   body: unknown,
@@ -6393,6 +6462,7 @@ export function validateAppQueryResponse(
     case 'baselines.get':
       return validateBaselineDetail(operation, body);
     // P03-1 / F-009 §6.6：计划域查询响应分发（同一冻结字段集纪律）。
+    case 'phases.graph.get': return validatePhaseGraphWire(body);
     case 'phases.list':
       return validatePhaseListPage(operation, body);
     case 'phases.get': {

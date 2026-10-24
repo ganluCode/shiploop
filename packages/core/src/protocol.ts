@@ -11,6 +11,10 @@ export {
   PLANNING_ACCEPTED_SCHEMA_VERSION,
 } from './ports/commands.js';
 export type { AppOperation, CommandReceipt, CommandScope } from './ports/commands.js';
+export { FEATURE_DAG_REASONS, FEATURE_DEPENDENCY_COMPLETION } from './ports/feature-dag.js';
+export type { FeatureDependencyInput } from './ports/feature-dag.js';
+export type { FeaturePhaseMovePayload } from './ports/feature-phase.js';
+export type { PhaseMutationOperation } from './ports/phase-lifecycle.js';
 export {
   BASELINE_CAPABILITIES, BASELINE_CHECKS_MAX, BASELINE_CHECKS_MIN,
   BASELINE_CHECK_OUTPUT_MAX_BYTES, BASELINE_CHECK_TAIL_MAX_BYTES,

@@ -735,6 +735,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           envelope.operation !== 'phase.reopen' &&
           envelope.operation !== 'phase.archive' &&
           envelope.operation !== 'feature.phase.move' &&
+          envelope.operation !== 'feature.dag.update' &&
           envelope.operation !== FEATURE_PLAN_IMPORT_OPERATION &&
           envelope.operation !== PLAN_LABELS_UPDATE_OPERATION &&
           envelope.operation !== FEATURE_PLAN_REVISE_OPERATION &&

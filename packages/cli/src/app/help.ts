@@ -512,12 +512,18 @@ const EXECUTION_BOUNDARY_BLOCK = [
   '- 秘密/身份字段名在连接 Host 之前拒绝（input_secret_field_rejected / input_identity_field_rejected），错误不回显值。',
 ].join('\n');
 
+function phaseLifecycleHelp(action: 'close' | 'reopen' | 'archive'): string {
+  return `usage: shiploop phase ${action} <phaseId> --project <id> --revision <int> [--command-id <uuid>] [--data-root <abs>] [--json]` + '\n关闭不代表阶段验收通过；重开不启动执行；归档保留成果和执行历史。\n' + EXIT_CODE_BLOCK;
+}
+
 const PHASE_HELP = [
-  'usage: shiploop phase <create|list|get|labels> [options]',
+  'usage: shiploop phase <create|update|close|reopen|archive|graph|list|get|labels> [options]',
   '',
   'Phase 命令（计划层级顶层）：',
   '  phase create --project <id> --title <t> [--description <text>] [--label <l> ...]',
   '                                                    为已注册项目建立 Phase',
+  '  phase update/close/reopen/archive <phaseId> --project <id> --revision <int>',
+  '  phase graph <phaseId> --project <id> [--limit <int>] [--cursor <c>]',
   '  phase list --project <id> [--limit <int>] [--cursor <c>]   层级分页',
   '  phase get <phaseId>                                            Phase 详情',
   '  phase labels <phaseId> --project <id> --revision <int> [--label <l> ...]  纯标签 CAS 编辑',
@@ -622,7 +628,7 @@ const FEATURE_DELIVERY_BLOCK = [
 ].join('\n');
 
 const FEATURE_HELP = [
-  'usage: shiploop feature <import|list|get|revise|labels|approve|reject|delivery|final-approve|finalize> [options]',
+  'usage: shiploop feature <import|move|dependencies|list|get|revise|labels|approve|reject|delivery|final-approve|finalize> [options]',
   '',
   'Feature 命令（单 Feature 计划）：',
   '  feature import --project <id> --phase <id> --revision <int> --input <file> [--command-id <uuid>]',
@@ -2058,6 +2064,13 @@ const HELP_BY_SCOPE: Readonly<Record<AppHelpScope, string>> = Object.freeze({
   'planning.reject': PLANNING_DECISION_HELP('reject'),
 
   'phase.create': PHASE_CREATE_HELP,
+  'phase.update': 'usage: shiploop phase update <phaseId> --project <id> --revision <int> [--title <t>] [--description <text> | --clear-description] [--label <l> ... | --clear-labels] [--command-id <uuid>] [--data-root <abs>] [--json]\n省略的元数据保持原值；只更新提供的字段。\n' + EXIT_CODE_BLOCK,
+  'phase.close': phaseLifecycleHelp('close'),
+  'phase.reopen': phaseLifecycleHelp('reopen'),
+  'phase.archive': phaseLifecycleHelp('archive'),
+  'phase.graph': 'usage: shiploop phase graph <phaseId> --project <id> [--limit <int>] [--cursor <c>] [--data-root <abs>] [--json]\n只读分页：依赖完成、集成就绪和 blocker reason 分别展示；候选需另行执行授权。\n' + EXIT_CODE_BLOCK,
+  'feature.move': 'usage: shiploop feature move <featureId> --project <id> --revision <int> --from-phase <id> --to-phase <id> --source-revision <int> --target-revision <int> [--command-id <uuid>] [--data-root <abs>] [--json]\nFeature 与来源/目标 Phase 三方 CAS；Core 核验归属、活动范围及依赖。\n' + EXIT_CODE_BLOCK,
+  'feature.dependencies': 'usage: shiploop feature dependencies --project <id> --phase <id> --revision <int> --input <file> [--command-id <uuid>] [--data-root <abs>] [--json]\n文件形状 {"edges":[{"featureId":"C","dependsOnId":"A","codeBaselineRef":null}]}；整体替换 Phase 依赖边，空 edges 显式清空。Core 核验 DAG 和活动 Batch，不扩大已有执行范围。\n' + EXIT_CODE_BLOCK,
   'phase.list': PHASE_LIST_HELP,
   'phase.get': PHASE_GET_HELP,
   'phase.labels': PHASE_LABELS_HELP,

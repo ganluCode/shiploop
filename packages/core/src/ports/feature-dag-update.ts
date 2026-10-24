@@ -49,7 +49,13 @@ export function validateFeatureDagUpdatePayload(value: unknown): FeatureDagUpdat
       : typeof item.codeBaselineRef === 'string' && item.codeBaselineRef.length > 0 && item.codeBaselineRef.length <= 512
         ? item.codeBaselineRef
         : (() => { throw validationError(ctx, `payload.edges[${index}].codeBaselineRef`, '必须是长度不超过 512 的非空字符串或 null', item.codeBaselineRef); })();
-    return { id: id ?? undefined, projectId, phaseId: edgePhaseId, featureId, dependsOnId, codeBaselineRef };
+    // Omit absent fields: the canonical command digest accepts JSON values only.
+    return {
+      ...(id !== null ? { id } : {}),
+      ...(projectId !== undefined ? { projectId } : {}),
+      ...(edgePhaseId !== undefined ? { phaseId: edgePhaseId } : {}),
+      featureId, dependsOnId, codeBaselineRef,
+    };
   });
   return { phaseId, edges };
 }

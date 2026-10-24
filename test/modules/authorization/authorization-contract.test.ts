@@ -235,6 +235,9 @@ function envelope(
       return { ...base, operation, scope: { kind: 'project', projectId: PROJECT_A },
         expectedRevision: expectedRevision ?? 1, payload: { featureId: 'feature-1',
           sourcePhaseId: 'phase-1', targetPhaseId: 'phase-2', sourcePhaseRevision: 1, targetPhaseRevision: 1 } };
+    case 'feature.dag.update':
+      return { ...base, operation, scope: { kind: 'project', projectId: PROJECT_A },
+        expectedRevision: expectedRevision ?? 1, payload: { phaseId: 'phase-1', edges: [] } };
     case 'phase.create':
       return {
         ...base,
@@ -448,6 +451,8 @@ const COMMANDS_MATRIX = [
   { operation: 'settings.project.update', scope: { kind: 'project', projectId: PROJECT_A }, revision: 1, capability: 'settings.project.write' },
   // P03-1 / F-004：Phase 创建（project scope + phase.write）。
   { operation: 'phase.create', scope: { kind: 'project', projectId: PROJECT_A }, revision: null, capability: 'phase.write' },
+  ...(['phase.metadata.update', 'phase.close', 'phase.reopen', 'phase.archive', 'feature.phase.move', 'feature.dag.update'] as const)
+    .map(operation => ({ operation, scope: { kind: 'project' as const, projectId: PROJECT_A }, revision: 1, capability: 'phase.write' as const })),
   // P03-1 / F-005：计划导入（project scope + feature.plan.import；expectedRevision 为 Phase 聚合 CAS）。
   { operation: 'feature.plan.import', scope: { kind: 'project', projectId: PROJECT_A }, revision: 1, capability: 'feature.plan.import' },
   // P03-1 / F-007：纯标签 CAS 编辑（project scope + plan.labels.write；expectedRevision 为目标实体自身 revision）。

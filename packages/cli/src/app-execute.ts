@@ -1285,6 +1285,52 @@ async function executePlanCommand(
   inputs: PlanCommandInputs,
 ): Promise<AppCliRunResult> {
   switch (command.commandId) {
+    case 'phase.update':
+    case 'phase.close':
+    case 'phase.reopen':
+    case 'phase.archive': {
+      const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+      const identity = envelopeIdentityOptions(command.explicitCommandId, issuedAt);
+      const input = { projectId: command.projectId, phaseId: command.phaseId, expectedRevision: command.revision };
+      const receipt = command.commandId === 'phase.update'
+        ? await client.updatePhaseMetadata({ ...input,
+          ...(command.title !== undefined ? { title: command.title } : {}),
+          ...(command.description !== undefined ? { description: command.description } : {}),
+          ...(command.labels !== undefined ? { labels: command.labels } : {}) }, identity)
+        : command.commandId === 'phase.close' ? await client.closePhase(input, identity)
+          : command.commandId === 'phase.reopen' ? await client.reopenPhase(input, identity)
+            : await client.archivePhase(input, identity);
+      return emitCommandReceipt(io, command, receipt);
+    }
+    case 'feature.move': {
+      const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+      const receipt = await client.moveFeaturePhase({ projectId: command.projectId, featureId: command.featureId,
+        sourcePhaseId: command.sourcePhaseId, targetPhaseId: command.targetPhaseId,
+        sourcePhaseRevision: command.sourcePhaseRevision, targetPhaseRevision: command.targetPhaseRevision,
+        expectedRevision: command.revision }, envelopeIdentityOptions(command.explicitCommandId, issuedAt));
+      return emitCommandReceipt(io, command, receipt);
+    }
+    case 'feature.dependencies': {
+      const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+      const receipt = await client.updateFeatureDag({ projectId: command.projectId, phaseId: command.phaseId,
+        expectedRevision: command.revision,
+        edges: inputs.planPayload?.edges as Parameters<HostClient['updateFeatureDag']>[0]['edges'],
+      }, envelopeIdentityOptions(command.explicitCommandId, issuedAt));
+      return emitCommandReceipt(io, command, receipt);
+    }
+    case 'phase.graph': {
+      const result = await client.getPhaseGraph(command.projectId, command.phaseId, {
+        ...(command.limit !== undefined ? { limit: command.limit } : {}),
+        ...(command.cursor !== undefined ? { cursor: command.cursor } : {}),
+      });
+      const text = [
+        `shiploop phase graph: ${result.phase.id} status=${result.phase.status} revision=${result.phase.revision}`,
+        ...result.readiness.map(item => `${item.featureId}: dependency=${item.dependencyCompletion} integration=${item.integrationReady} dependencyIntegration=${item.dependencyIntegrationReady} ready=${item.ready} blockers=${item.blockers.join(",") || "none"}`),
+        `nextCursor=${result.nextCursor ?? "none"}`,
+        '候选只表示依赖与计划条件；执行需另行授权。',
+      ].join('\n') + '\n';
+      return emitSuccess(io, command, result, text);
+    }
     case 'phase.create': {
       const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
       const receipt = await client.createPhase(
@@ -3298,9 +3344,13 @@ export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunRes
   let planPayload: Record<string, unknown> | undefined;
   let strategyPayload: Record<string, unknown> | undefined;
   let prepareItems: readonly unknown[] | undefined;
-  if (command.commandId === 'feature.import' || command.commandId === 'feature.revise') {
+  if (command.commandId === 'feature.import' || command.commandId === 'feature.revise' || command.commandId === 'feature.dependencies') {
     try {
       planPayload = readPlanInputPayload(command);
+      if (command.commandId === 'feature.dependencies' &&
+          (Object.keys(planPayload).some(key => key !== 'edges') || !Array.isArray(planPayload.edges))) {
+        throw new AppCliParseError('invalid_input', 'invalid_input_file', command, 'input');
+      }
     } catch (error) {
       if (error instanceof AppCliParseError) {
         return emitParseFailure(io, error, jsonFlag);
