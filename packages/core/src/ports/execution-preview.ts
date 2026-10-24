@@ -48,6 +48,7 @@
 import { createHash } from 'node:crypto';
 import { stableStringify } from './feature-plan.js';
 import type { PreparationSettingsScopeSnapshot } from './execution-input-prepare.js';
+import type { FeatureDagReadiness, FeatureDependencyRecord } from './feature-dag.js';
 import type {
   FeatureRecord,
   PhaseRecord,
@@ -188,10 +189,60 @@ export interface ExecutionPreviewBindingFace {
   readonly repoIdentity: string;
 }
 
+export interface ExecutionPreviewSelection {
+  /** Phase 选择与显式 Feature 选择恰有一个非空。 */
+  readonly phaseId: string | null;
+  readonly featureIds: readonly string[];
+}
+
+/** 一个固定范围成员的完整只读执行前置事实。 */
+export interface ExecutionPreviewMemberView {
+  readonly feature: FeatureRecord;
+  readonly tasks: readonly TaskRecord[];
+  readonly dependencies: readonly TaskDependencyRecord[];
+  readonly approvals: readonly PlanApprovalRecord[];
+  readonly resolvedInputs: readonly ExecutionPreviewResolvedInput[];
+  readonly activeRuns: readonly { readonly id: string; readonly status: string }[];
+  readonly entity: { readonly revision: number; readonly planDigest: string | null };
+  readonly readiness: FeatureDagReadiness;
+}
+
+/**
+ * P05-3 F-002 范围一致读视图。Phase/显式 Feature 选择都在同一事务内解析为
+ * P05-2 DAG 的传递闭包；members 使用拓扑优先且稳定排序，身份与执行前置事实
+ * 不能由调用方拼装。
+ */
+export interface ExecutionPreviewScopeView {
+  readonly project: ExecutionPreviewProjectFace;
+  readonly binding: ExecutionPreviewBindingFace | null;
+  readonly phase: PhaseRecord;
+  readonly selection: {
+    readonly phaseId: string | null;
+    readonly requestedFeatureIds: readonly string[];
+    readonly memberFeatureIds: readonly string[];
+  };
+  readonly members: readonly ExecutionPreviewMemberView[];
+  readonly featureDependencies: readonly FeatureDependencyRecord[];
+  readonly settings: {
+    readonly global: PreparationSettingsScopeSnapshot | null;
+    readonly project: PreparationSettingsScopeSnapshot | null;
+  };
+  readonly activePhaseBatches: readonly { readonly id: string; readonly featureIds: readonly string[]; readonly status: string }[];
+  readonly baselineOccupancy: { readonly holderOperationId: string | null };
+}
+
+/** 执行预览范围的一致读端口；旧单 Feature 端口保留供 P04 调用方兼容。 */
+export interface ExecutionPreviewScopeViewStore {
+  readExecutionPreviewScopeView(
+    projectId: string,
+    selection: ExecutionPreviewSelection,
+  ): ExecutionPreviewScopeView | undefined;
+}
+
 /**
  * 执行预览一致读视图：项目状态、绑定、Phase、Feature、全部 Task/依赖边/决策
  * 记录、全局与项目当前配置、必需输入解析、同 Feature 活动 Run、同 Phase 活动
- * Batch 与基线占用快照。全部成分必须来自同一读事务（不存在新旧混合状态）。
+ * Batch 与基线占用快照。全部成分必须来自同一读事务。
  */
 export interface ExecutionPreviewView {
   readonly project: ExecutionPreviewProjectFace;
@@ -219,6 +270,9 @@ export interface ExecutionPreviewView {
  * undefined，跨项目抛 StorageError(ownership)（与既有视图读取端口同一约定）。
  */
 export interface ExecutionPreviewViewStore {
+  /** P05-3 F-002：Phase/显式 Feature 范围的一致读视图。 */
+  readonly readExecutionPreviewScopeView?: ExecutionPreviewScopeViewStore['readExecutionPreviewScopeView'];
+  /** P04 兼容面：单 Feature 视图。 */
   readExecutionPreviewView(
     projectId: string,
     featureId: string,

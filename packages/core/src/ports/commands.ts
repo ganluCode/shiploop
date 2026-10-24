@@ -820,7 +820,10 @@ export interface ValidatedExecutionInputPreparePayload {
  * summary/blocked 等服务端决定字段一律不能经请求输入。
  */
 export interface ValidatedExecutionPreviewPayload {
+  /** 显式 Feature 范围；与 phaseId 恰有一个为非空选择器。 */
   readonly featureIds: readonly string[];
+  /** Phase 范围选择；显式 Feature 范围时为 null。旧内部调用可省略，等价于 null。 */
+  readonly phaseId?: string | null;
   /** 完整预算提案（深校验在应用层；此处只保证 JSON 对象形态）。 */
   readonly budget: Record<string, unknown>;
 }
@@ -1198,7 +1201,7 @@ const TASK_VERIFICATION_CONTINUE_PAYLOAD_KEYS = ['taskId', 'attemptId', 'verific
 
 const FEATURE_PLAN_DECIDE_PAYLOAD_KEYS = ['featureId', 'planDigest', 'decision', 'reason'] as const;
 const EXECUTION_INPUT_PREPARE_PAYLOAD_KEYS = ['featureId', 'taskId', 'items'] as const;
-const EXECUTION_PREVIEW_PAYLOAD_KEYS = ['featureIds', 'budget'] as const;
+const EXECUTION_PREVIEW_PAYLOAD_KEYS = ['featureIds', 'phaseId', 'budget'] as const;
 /** 执行预览范围的形态上限（防无界数组；本阶段业务上限固定单成员）。 */
 export const EXECUTION_PREVIEW_FEATURE_IDS_MAX = 16;
 
@@ -1680,36 +1683,63 @@ function validateExecutionPreviewPayload(
   raw: unknown,
 ): ValidatedExecutionPreviewPayload {
   const object = requireObject(operation, raw, 'payload');
-  // 严格未知键拒绝：只接受预览面（featureIds/budget）；创建类命令不携带
-  // expectedRevision；previewDigest/summary/blocked/noWorkReason 等服务端决定
-  // 字段一律不能经请求输入（payload 内出现即未知键，定位 payload.<key>）。
+  // 严格未知键拒绝：只接受 Phase 或显式 Feature 范围选择器和预算；预览结果
+  // 字段一律不能经请求输入。phaseId 与 featureIds 必须恰有一个被选择。
   exactKeys(operation, object, EXECUTION_PREVIEW_PAYLOAD_KEYS, 'payload.');
-  if (!Array.isArray(object.featureIds)) {
+  const hasPhase = Object.prototype.hasOwnProperty.call(object, 'phaseId') && object.phaseId !== null && object.phaseId !== undefined;
+  const hasFeatures = Object.prototype.hasOwnProperty.call(object, 'featureIds') && object.featureIds !== undefined && object.featureIds !== null;
+  if (hasPhase === hasFeatures) {
+    fail(operation, 'invalid_input', 'payload', '必须在 phaseId 和 featureIds 之间选择一个且只能选择一个', object, {
+      reason: hasPhase ? 'multiple_scope_selectors' : 'missing_scope_selector',
+    });
+  }
+  if (hasPhase && typeof object.phaseId !== 'string') {
+    fail(operation, 'invalid_input', 'payload.phaseId', '必须是 Phase 稳定 ID 字符串', object.phaseId);
+  }
+  if (hasFeatures && !Array.isArray(object.featureIds)) {
     fail(operation, 'invalid_input', 'payload.featureIds', '必须是 Feature 稳定 ID 数组', object.featureIds);
   }
   const featureIds: string[] = [];
   const seen = new Set<string>();
-  for (const [index, candidate] of (object.featureIds as unknown[]).entries()) {
-    if (typeof candidate !== 'string') {
-      fail(operation, 'invalid_input', `payload.featureIds[${index}]`, '必须是稳定 ID 字符串', candidate);
-    }
-    if (seen.has(candidate)) {
-      fail(operation, 'invalid_input', `payload.featureIds[${index}]`, '范围成员重复', candidate, {
-        reason: 'duplicate_feature_id',
+  if (hasFeatures) {
+    const rawFeatureIds = object.featureIds as unknown[];
+    if (rawFeatureIds.length === 0 && Object.prototype.hasOwnProperty.call(object, 'phaseId')) {
+      fail(operation, 'invalid_input', 'payload.featureIds', '显式 Feature 范围不能为空', rawFeatureIds, {
+        reason: 'empty_scope',
       });
     }
-    seen.add(candidate);
-    featureIds.push(candidate);
-  }
-  if (featureIds.length > EXECUTION_PREVIEW_FEATURE_IDS_MAX) {
-    fail(operation, 'invalid_input', 'payload.featureIds',
-      `成员数不得超过 ${EXECUTION_PREVIEW_FEATURE_IDS_MAX}（形态上限；本阶段固定单成员）`,
-      featureIds.length, { reason: 'limit_exceeded' });
+    // P04 compatibility: the legacy { featureIds: [] } shape remains the
+    // preview no_work input. New selector payloads must use phaseId or a
+    // non-empty explicit Feature set.
+    for (const [index, candidate] of rawFeatureIds.entries()) {
+      if (typeof candidate !== 'string') {
+        fail(operation, 'invalid_input', `payload.featureIds[${index}]`, '必须是稳定 ID 字符串', candidate);
+      }
+      if (seen.has(candidate)) {
+        fail(operation, 'invalid_input', `payload.featureIds[${index}]`, '范围成员重复', candidate, {
+          reason: 'duplicate_feature_id',
+        });
+      }
+      seen.add(candidate);
+      featureIds.push(candidate);
+    }
+    if (featureIds.length > EXECUTION_PREVIEW_FEATURE_IDS_MAX) {
+      fail(operation, 'invalid_input', 'payload.featureIds',
+        `成员数不得超过 ${EXECUTION_PREVIEW_FEATURE_IDS_MAX}（形态上限）`,
+        featureIds.length, { reason: 'limit_exceeded' });
+    }
   }
   if (!isPlainObjectPayload(object.budget)) {
     fail(operation, 'invalid_input', 'payload.budget', '必须是 JSON 对象（完整预算提案）', object.budget);
   }
   try {
+    if (hasPhase) {
+      return {
+        featureIds: [],
+        phaseId: validateStableId(object.phaseId, { operation }, 'payload.phaseId'),
+        budget: object.budget as Record<string, unknown>,
+      };
+    }
     for (const [index, id] of featureIds.entries()) {
       featureIds[index] = validateStableId(id, { operation }, `payload.featureIds[${index}]`);
     }
@@ -1722,7 +1752,7 @@ function validateExecutionPreviewPayload(
     }
     throw error;
   }
-  return { featureIds, budget: object.budget as Record<string, unknown> };
+  return { featureIds, phaseId: null, budget: object.budget as Record<string, unknown> };
 }
 
 const EXECUTION_START_PAYLOAD_KEYS = ['featureIds', 'budget', 'previewDigest', 'retryBatchId'] as const;
@@ -1762,6 +1792,7 @@ function validateExecutionStartPayload(
     // 复用预览面的 featureIds 校验（合成 budget 占位；仅取回 featureIds）。
     const scope = validateExecutionPreviewPayload(operation, {
       featureIds: object.featureIds,
+      phaseId: null,
       budget: {},
     });
     return {
@@ -1777,6 +1808,7 @@ function validateExecutionStartPayload(
   }
   const scopeIds = validateExecutionPreviewPayload(operation, {
     featureIds: object.featureIds,
+    phaseId: null,
     budget: object.budget,
   });
   const previewDigest = validateExecutionStartPreviewDigest(operation, object.previewDigest);

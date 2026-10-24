@@ -56,7 +56,7 @@ import { validateFeatureDagUpdateInput, edgeKey, featureDagUpdateGraphError } fr
 import type { PlanArtifactRef, PlanComplexity } from '../../ports/feature-plan.js';
 import type { FeatureDependencyRecord } from '../../ports/feature-dag.js';
 import type { FeatureDagUpdateResult } from '../../ports/feature-dag-update.js';
-import { validateFeatureDag } from '../../ports/feature-dag.js';
+import { validateFeatureDag, evaluateFeatureDag } from '../../ports/feature-dag.js';
 import type { ArtifactInputRef } from '../../ports/artifact-store.js';
 import { assertPrincipalVisibility } from '../../ports/queries.js';
 import type {
@@ -68,7 +68,13 @@ import type {
 } from '../../ports/queries.js';
 import type { ExecutionInputPreparationView } from '../../ports/execution-input-prepare.js';
 import { ACTIVE_EXECUTION_STATUSES } from '../../ports/execution-preview.js';
-import type { ExecutionPreviewResolvedInput, ExecutionPreviewView } from '../../ports/execution-preview.js';
+import type {
+  ExecutionPreviewMemberView,
+  ExecutionPreviewResolvedInput,
+  ExecutionPreviewSelection,
+  ExecutionPreviewScopeView,
+  ExecutionPreviewView,
+} from '../../ports/execution-preview.js';
 import type { ProjectStatus } from '../../ports/state-store.js';
 import { validateSha256Digest, validateStableId } from '../../ports/validation.js';
 import { parseStoredSettingsPayload } from '../../ports/settings-schema.js';
@@ -311,7 +317,13 @@ export interface SqlitePlanAccess {
    * Feature 缺失返回 undefined；跨项目抛 StorageError(ownership)；嵌套于
    * 写事务内调用是编程错误（TypeError）。
    */
+  /** P05-3 / F-002：Phase/显式 Feature 选择与 DAG 闭包的一致读视图。 */
+  readExecutionPreviewScopeView(
+    projectId: string,
+    selection: ExecutionPreviewSelection,
+  ): ExecutionPreviewScopeView | undefined;
   readExecutionPreviewView(projectId: string, featureId: string): ExecutionPreviewView | undefined;
+  readExecutionPreviewView(projectId: string, selection: ExecutionPreviewSelection): ExecutionPreviewScopeView | undefined;
   /** F-006 层级列表：可见范围谓词下推 + 稳定 id 升序键集分页（先收窄再分页）。 */
   listPhaseRecords(
     visibility: unknown,
@@ -2234,10 +2246,240 @@ export function createSqlitePlanAccess(
     });
   }
 
+  function readExecutionPreviewScopeView(
+    projectId: string,
+    selection: ExecutionPreviewSelection,
+  ): ExecutionPreviewScopeView | undefined {
+    const operation = 'PlanStore.readExecutionPreviewScopeView';
+    const validProjectId = validateStableId(projectId, { operation }, 'projectId');
+    const hasPhase = selection.phaseId !== null;
+    const requestedIds = [...selection.featureIds];
+    if (hasPhase === (requestedIds.length > 0)) {
+      throw new StorageError('validation', operation, 'Phase 与 Feature 选择器必须恰有一个', {
+        details: { reason: hasPhase ? 'multiple_scope_selectors' : 'missing_scope_selector' },
+      });
+    }
+    const validPhaseId = hasPhase
+      ? validateStableId(selection.phaseId, { operation }, 'phaseId')
+      : null;
+    const validFeatureIds = requestedIds.map((id, index) => validateStableId(id, { operation }, `featureIds[${index}]`));
+    const maxMembers = 16;
+    if (validFeatureIds.length > maxMembers) {
+      throw new StorageError('validation', operation, '执行预览范围超过成员上限', {
+        details: { reason: 'limit_exceeded', limit: maxMembers },
+      });
+    }
+    return transactSqliteConsistentRead(session, operation, (db) => {
+      const projectRow = db.prepare<[string], { id: string; status: string }>(
+        'SELECT id, status FROM projects WHERE id = ?',
+      ).get(validProjectId);
+      if (projectRow === undefined) {
+        throw notFound(operation, { type: 'project', id: validProjectId }, `项目 ${validProjectId} 不存在`);
+      }
+      if (!(['active', 'archiving', 'archived', 'deleting'] as readonly string[]).includes(projectRow.status)) {
+        throw new StorageError('corrupt', operation, '项目状态非法', {
+          entity: { type: 'project', id: validProjectId }, details: { reason: 'invalid_status' },
+        });
+      }
+
+      const selectedRows: FeatureSqlRow[] = [];
+      if (validPhaseId !== null) {
+        const phase = db.prepare<[string, string], PhaseSqlRow>(
+          `${SELECT_PHASE} WHERE id = ? AND project_id = ?`,
+        ).get(validPhaseId, validProjectId);
+        if (phase === undefined) {
+          const foreignPhase = db.prepare<[string], PhaseSqlRow>(`${SELECT_PHASE} WHERE id = ?`).get(validPhaseId);
+          if (foreignPhase !== undefined && foreignPhase.project_id !== validProjectId) {
+            throw ownership(operation, { type: 'phase', projectId: validProjectId, id: validPhaseId }, 'Phase 不属于声明的项目');
+          }
+          return undefined;
+        }
+      } else {
+        for (const featureId of validFeatureIds) {
+          const row = db.prepare<[string], FeatureSqlRow>(`${SELECT_FEATURE} WHERE id = ?`).get(featureId);
+          if (row === undefined) return undefined;
+          if (row.project_id !== validProjectId) {
+            throw ownership(operation, { type: 'feature', projectId: validProjectId, id: featureId }, 'Feature 不属于声明的项目');
+          }
+          selectedRows.push(row);
+        }
+      }
+
+      const phaseId = validPhaseId ?? selectedRows[0]?.phase_id;
+      if (phaseId === undefined) return undefined;
+      for (const row of selectedRows) {
+        if (row.phase_id !== phaseId) {
+          throw new StorageError('validation', operation, '显式 Feature 必须属于同一 Phase', {
+            entity: { type: 'feature', projectId: validProjectId, id: row.id },
+            details: { reason: 'cross_phase', phaseId },
+          });
+        }
+      }
+      const phaseRow = db.prepare<[string, string], PhaseSqlRow>(`${SELECT_PHASE} WHERE id = ? AND project_id = ?`)
+        .get(phaseId, validProjectId);
+      if (phaseRow === undefined) return undefined;
+      const featureRows = db.prepare<[string, string], FeatureSqlRow>(
+        `${SELECT_FEATURE} WHERE project_id = ? AND phase_id = ? ORDER BY id ASC`,
+      ).all(validProjectId, phaseId) as FeatureSqlRow[];
+      const edgeRows = db.prepare<[string, string], FeatureDependencySqlRow>(
+        'SELECT id, created_at, project_id, revision, updated_at, phase_id, feature_id, depends_on_id, code_baseline_ref ' +
+          'FROM feature_dependencies WHERE project_id = ? AND phase_id = ? ORDER BY feature_id ASC, depends_on_id ASC',
+      ).all(validProjectId, phaseId) as FeatureDependencySqlRow[];
+      const features = featureRows.map(featureFromRow);
+      const featureEdges: FeatureDependencyRecord[] = edgeRows.map((row) => ({
+        id: row.id, projectId: row.project_id, phaseId: row.phase_id,
+        featureId: row.feature_id, dependsOnId: row.depends_on_id, codeBaselineRef: row.code_baseline_ref,
+      }));
+      const graph = evaluateFeatureDag({
+        projectId: validProjectId,
+        phaseId,
+        features: features.map((feature) => ({
+          id: feature.id,
+          projectId: feature.projectId,
+          phaseId: feature.phaseId,
+          status: feature.status,
+          // P05-2 deliberately does not infer integration from Feature completion.
+          integrationEvidence: null,
+        })),
+        existingEdges: featureEdges,
+      });
+      const requested = validPhaseId === null
+        ? [...new Set(validFeatureIds)].sort()
+        : featureRows.map((row) => row.id).sort();
+      const memberSet = new Set<string>();
+      const collect = (featureId: string): void => {
+        if (memberSet.has(featureId)) return;
+        memberSet.add(featureId);
+        for (const edge of featureEdges) {
+          if (edge.featureId === featureId) collect(edge.dependsOnId);
+        }
+      };
+      for (const featureId of requested) collect(featureId);
+      const memberFeatureIds = graph.topologicalOrder.filter((id) => memberSet.has(id));
+      if (memberFeatureIds.length > maxMembers) {
+        throw new StorageError('validation', operation, '依赖闭包超过执行预览成员上限', {
+          details: { reason: 'closure_limit_exceeded', limit: maxMembers },
+        });
+      }
+      const featureById = new Map(features.map((feature) => [feature.id, feature] as const));
+      const readinessById = new Map(graph.readiness.map((item) => [item.featureId, item] as const));
+      const taskRowsFor = (featureId: string): TaskSqlRow[] => db.prepare<[string], TaskSqlRow>(
+        `${SELECT_TASK} WHERE feature_id = ? AND kind = 'coding' ORDER BY id`,
+      ).all(featureId) as TaskSqlRow[];
+      const resolveInputs = (feature: FeatureRecord, tasks: readonly TaskRecord[]): ExecutionPreviewResolvedInput[] => {
+        const refs = new Map<string, ExecutionPreviewResolvedInput>();
+        const collectRefs = (items: readonly PlanArtifactRef[]): void => {
+          for (const ref of items) {
+            const key = `${ref.artifactId}\\u0000${ref.contentHash ?? ''}`;
+            if (!refs.has(key)) refs.set(key, {
+              artifactId: ref.artifactId,
+              declaredContentHash: ref.contentHash ?? null,
+              resolved: null,
+              unavailableReason: null,
+            });
+          }
+        };
+        collectRefs(feature.sourceRefs);
+        for (const task of tasks) collectRefs(task.requirementsRefs);
+        return [...refs.values()].map((input) => {
+          const artifact = db.prepare<[string, string], { version: number; content_hash: string | null; size_bytes: number | null; status: string }>(
+            'SELECT version, content_hash, size_bytes, status FROM artifacts WHERE project_id = ? AND id = ?',
+          ).get(validProjectId, input.artifactId);
+          if (artifact === undefined) return { ...input, resolved: null, unavailableReason: 'not_found' as const };
+          if (artifact.status !== 'ready' || artifact.content_hash === null || artifact.size_bytes === null) {
+            return { ...input, resolved: null, unavailableReason: 'not_ready' as const };
+          }
+          return { ...input, resolved: {
+            version: artifact.version, contentHash: artifact.content_hash, sizeBytes: artifact.size_bytes,
+          }, unavailableReason: null };
+        });
+      };
+      const activePlaceholders = (ACTIVE_EXECUTION_STATUSES as readonly string[]).map(() => '?').join(', ');
+      const members: ExecutionPreviewMemberView[] = memberFeatureIds.map((featureId) => {
+        const feature = featureById.get(featureId);
+        const readiness = readinessById.get(featureId);
+        if (feature === undefined || readiness === undefined) {
+          throw new StorageError('corrupt', operation, 'DAG 闭包缺少 Feature 身份', {
+            details: { reason: 'invalid_graph', featureId },
+          });
+        }
+        const tasks = taskRowsFor(featureId).map(taskFromRow);
+        const dependencies = (db.prepare<[string], TaskDependencySqlRow>(
+          `${SELECT_TASK_DEPENDENCY} WHERE feature_id = ? ORDER BY task_id, depends_on_id`,
+        ).all(featureId) as TaskDependencySqlRow[]).map(taskDependencyFromRow);
+        const approvals = (db.prepare<[string], ApprovalSqlRow>(
+          `${SELECT_APPROVAL} WHERE subject_type = 'feature_plan' AND subject_id = ? ORDER BY decided_at, id`,
+        ).all(featureId) as ApprovalSqlRow[]).map(approvalFromRow);
+        const activeRuns = db.prepare<unknown[], { id: string; status: string }>(
+          `SELECT id, status FROM runs WHERE project_id = ? AND feature_id = ? AND status IN (${activePlaceholders}) ORDER BY id`,
+        ).all(validProjectId, featureId, ...(ACTIVE_EXECUTION_STATUSES as readonly string[])) as { id: string; status: string }[];
+        return {
+          feature,
+          tasks,
+          dependencies,
+          approvals,
+          resolvedInputs: resolveInputs(feature, tasks),
+          activeRuns,
+          entity: { revision: feature.revision, planDigest: feature.planDigest },
+          readiness,
+        };
+      });
+      const globalRow = db.prepare<[string], { revision: number; payload: string }>(
+        'SELECT revision, payload FROM global_settings WHERE id = ?',
+      ).get('global');
+      const projectSettingsRow = db.prepare<[string], { revision: number; payload: string }>(
+        'SELECT revision, payload FROM project_settings WHERE project_id = ?',
+      ).get(validProjectId);
+      const settings = {
+        global: globalRow === undefined ? null : {
+          scopeRevision: globalRow.revision,
+          payload: parseStoredSettingsPayload(globalRow.payload, { operation, entity: { type: 'global_settings', id: 'global' } }),
+        },
+        project: projectSettingsRow === undefined ? null : {
+          scopeRevision: projectSettingsRow.revision,
+          payload: parseStoredSettingsPayload(projectSettingsRow.payload, { operation, entity: { type: 'project_settings', projectId: validProjectId } }),
+        },
+      };
+      const batchRows = db.prepare<unknown[], { id: string; status: string; feature_id: string | null }>(
+        `SELECT b.id, b.status, m.feature_id FROM execution_batches b LEFT JOIN execution_batch_members m ON m.project_id = b.project_id AND m.batch_id = b.id ` +
+          `WHERE b.project_id = ? AND b.phase_id = ? AND b.status IN (${activePlaceholders}) ORDER BY b.id, m.member_ordinal`,
+      ).all(validProjectId, phaseId, ...(ACTIVE_EXECUTION_STATUSES as readonly string[])) as { id: string; status: string; feature_id: string | null }[];
+      const batchMap = new Map<string, { id: string; status: string; featureIds: string[] }>();
+      for (const row of batchRows) {
+        const batch = batchMap.get(row.id) ?? { id: row.id, status: row.status, featureIds: [] };
+        if (row.feature_id !== null) batch.featureIds.push(row.feature_id);
+        batchMap.set(row.id, batch);
+      }
+      const occupancy = db.prepare<[], { holder_operation_id: string | null }>(
+        "SELECT holder_operation_id FROM baseline_occupancy WHERE id = 'global'",
+      ).get();
+      const bindingRow = db.prepare<[string], { canonical_path: string; repo_identity: string }>(
+        'SELECT canonical_path, repo_identity FROM repository_bindings WHERE project_id = ?',
+      ).get(validProjectId);
+      return {
+        project: { id: projectRow.id, status: projectRow.status as ProjectStatus },
+        binding: bindingRow === undefined ? null : { canonicalPath: bindingRow.canonical_path, repoIdentity: bindingRow.repo_identity },
+        phase: phaseFromRow(phaseRow),
+        selection: { phaseId: validPhaseId, requestedFeatureIds: requested, memberFeatureIds },
+        members,
+        featureDependencies: featureEdges.filter((edge) => memberSet.has(edge.featureId) && memberSet.has(edge.dependsOnId)),
+        settings,
+        activePhaseBatches: [...batchMap.values()],
+        baselineOccupancy: { holderOperationId: occupancy?.holder_operation_id ?? null },
+      };
+    });
+  }
+
+  function readExecutionPreviewView(projectId: string, featureId: string): ExecutionPreviewView | undefined;
+  function readExecutionPreviewView(projectId: string, selection: ExecutionPreviewSelection): ExecutionPreviewScopeView | undefined;
   function readExecutionPreviewView(
     projectId: string,
-    featureId: string,
-  ): ExecutionPreviewView | undefined {
+    featureIdOrSelection: string | ExecutionPreviewSelection,
+  ): ExecutionPreviewView | ExecutionPreviewScopeView | undefined {
+    if (typeof featureIdOrSelection !== 'string') {
+      return readExecutionPreviewScopeView(projectId, featureIdOrSelection);
+    }
+    const featureId = featureIdOrSelection;
     const operation = 'PlanStore.readExecutionPreviewView';
     const validProjectId = validateStableId(projectId, { operation }, 'projectId');
     const validFeatureId = validateStableId(featureId, { operation }, 'featureId');
@@ -2512,6 +2754,7 @@ export function createSqlitePlanAccess(
     readFeaturePlanView,
     readFeatureApprovalsView,
     readExecutionInputPreparationView,
+    readExecutionPreviewScopeView,
     readExecutionPreviewView,
     listPhaseRecords,
     listFeatureRecords,

@@ -1,0 +1,27 @@
+{
+  "schema_version": 2,
+  "task_id": "F-002",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/execution/budget/p05-3-f002-preview-scope.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/execution/budget/p03-3-execution-preview.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/execution/budget/p05-3-f001-batch-members.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/planning/p05-2-f006-phase-graph-query.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}
