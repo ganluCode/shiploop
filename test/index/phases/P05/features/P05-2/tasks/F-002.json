@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "task_id": "F-002",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/planning/p05-2-f002-feature-dag.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}
