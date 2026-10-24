@@ -105,8 +105,13 @@ describe('P05-1 / F-007 生产组合根 planning 执行', () => {
       .toContain('"outcome":"non_code_failure"');
     expect(f.query('SELECT classification FROM task_attempt_reservations WHERE task_id = ?', f.planningTaskId))
       .toMatchObject({ classification: 'infrastructure' });
-    /* 失败现场隔离保留；候选上下文保持 open（可再次人工决策路径另由后续任务承担）。 */
-    expect(f.query('SELECT state FROM workspace_leases LIMIT 1')).toMatchObject({ state: 'quarantined' });
+    /* 失败现场不伪造成功：停止证据经 retention 核验后释放占用（ leases 归零
+     * 与 workspace 置 retained 同一事务），现场保留供诊断、不直接重分配；
+     * 候选上下文保持 open（可再次人工决策路径另由后续任务承担）。 */
+    await expect.poll(() => Number((f.query('SELECT COUNT(*) AS n FROM workspace_leases') as { n: number }).n),
+      { timeout: 15_000 }).toBe(0);
+    expect(f.query('SELECT status FROM managed_workspaces WHERE feature_id = ?', f.featureId))
+      .toMatchObject({ status: 'retained' });
     expect(f.query('SELECT status FROM planning_contexts WHERE run_id = ?', f.planningRunId))
       .toMatchObject({ status: 'open' });
     expect(f.runtimeStarts()).toBe(1);

@@ -228,11 +228,12 @@ describe('P05-1 / F-009 规划取消、超时与失败的停止/结算控制', (
     const receipt = await submitCancel(f, { runId: f.planningRunId, batchId: null }, runRevision);
     expect(completedResult(receipt)).toMatchObject({ outcome: 'cancelling', stopStatus: 'stopping' });
 
-    /* 停止不确定：Attempt 保留 interrupted 事实，绝不释放占用/倒写终态。 */
+    /* 停止不确定：Attempt 保留 interrupted 事实，绝不释放占用/倒写终态；停止
+     * operation 的 uncertain 结算发生在停止控制收尾（结算事务之后），轮询等待。 */
     await expect.poll(() => f.query('SELECT status FROM attempts WHERE task_id = ?', f.planningTaskId),
       { timeout: 15_000 }).toMatchObject({ status: 'interrupted' });
-    expect(f.query('SELECT status, stop_confirmed FROM execution_stop_operations'))
-      .toMatchObject({ status: 'uncertain', stop_confirmed: 0 });
+    await expect.poll(() => f.query('SELECT status, stop_confirmed FROM execution_stop_operations'),
+      { timeout: 15_000 }).toMatchObject({ status: 'uncertain', stop_confirmed: 0 });
     expect(f.query('SELECT status FROM runs WHERE id = ?', f.planningRunId)).toMatchObject({ status: 'cancelling' });
     expect(f.query('SELECT status FROM tasks WHERE id = ?', f.planningTaskId)).toMatchObject({ status: 'running' });
     /* 占用隔离（quarantine）且派发归属/槽位不释放。 */
