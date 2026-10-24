@@ -52,7 +52,11 @@ import type {
   TaskDependencyRecord,
   TaskRecord,
 } from '../../ports/plan-store.js';
+import { validateFeatureDagUpdateInput, edgeKey, featureDagUpdateGraphError } from '../../ports/feature-dag-update.js';
 import type { PlanArtifactRef, PlanComplexity } from '../../ports/feature-plan.js';
+import type { FeatureDependencyRecord } from '../../ports/feature-dag.js';
+import type { FeatureDagUpdateResult } from '../../ports/feature-dag-update.js';
+import { validateFeatureDag } from '../../ports/feature-dag.js';
 import type { ArtifactInputRef } from '../../ports/artifact-store.js';
 import { assertPrincipalVisibility } from '../../ports/queries.js';
 import type {
@@ -133,6 +137,18 @@ export interface TaskApprovalItemSqlRow {
   readonly decision_code_digest: string | null; readonly decision_artifact_refs: string; readonly decided_at: number | null;
 }
 
+interface FeatureDependencySqlRow {
+  readonly id: string;
+  readonly created_at: number;
+  readonly project_id: string;
+  readonly revision: number;
+  readonly updated_at: number;
+  readonly phase_id: string;
+  readonly feature_id: string;
+  readonly depends_on_id: string;
+  readonly code_baseline_ref: string | null;
+}
+
 interface TaskDependencySqlRow {
   readonly id: string;
   readonly created_at: number;
@@ -195,6 +211,7 @@ export interface SqlitePlanAccess {
   insertPhaseInTransaction(input: unknown): PhaseRecord;
   updatePhaseInTransaction(input: unknown): PhaseRecord;
   moveFeaturePhaseInTransaction(input: unknown): FeatureRecord;
+  updateFeatureDagInTransaction(input: unknown): FeatureDagUpdateResult;
   insertFeatureInTransaction(input: unknown): FeatureRecord;
   insertTaskInTransaction(input: unknown): TaskRecord;
   insertTaskDependencyInTransaction(input: unknown): TaskDependencyRecord;
@@ -808,6 +825,108 @@ export function createSqlitePlanAccess(
     }
     // Phase identity is absent from planDigest. Approval validity and Task/history facts are untouched.
     return getFeaturePlanInTransaction(projectId, current.id).feature;
+  }
+
+  function updateFeatureDagInTransaction(input: unknown): FeatureDagUpdateResult {
+    const operation = 'PlanStore.updateFeatureDag';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const valid = validateFeatureDagUpdateInput(input);
+    const db = session.database;
+    const phase = getPhaseInTransaction(valid.projectId, valid.phaseId);
+    const entity: StorageEntityRef = { type: 'phase', projectId: valid.projectId, id: valid.phaseId };
+    if (phase.status !== 'open') {
+      throw conflict(operation, 'Feature DAG 只能修改 open Phase', entity, { reason: 'phase_not_open' });
+    }
+    if (phase.revision !== valid.expectedRevision) {
+      throw conflict(operation, 'Phase DAG revision 不匹配', entity, {
+        reason: 'conflict', expectedRevision: valid.expectedRevision, actualRevision: phase.revision,
+      });
+    }
+
+    const featureRows = db.prepare<[string, string], FeatureSqlRow>(
+      `${SELECT_FEATURE} WHERE project_id = ? AND phase_id = ? ORDER BY id ASC`,
+    ).all(valid.projectId, valid.phaseId) as FeatureSqlRow[];
+    const features = featureRows.map((row) => featureFromRow(row));
+    const edgeRows = db.prepare<[string, string], FeatureDependencySqlRow>(
+      'SELECT id, created_at, project_id, phase_id, feature_id, depends_on_id, code_baseline_ref FROM feature_dependencies WHERE project_id = ? AND phase_id = ? ORDER BY feature_id ASC, depends_on_id ASC',
+    ).all(valid.projectId, valid.phaseId) as FeatureDependencySqlRow[];
+    const existingEdges = edgeRows.map((row) => ({
+      id: row.id, projectId: row.project_id, phaseId: row.phase_id,
+      featureId: row.feature_id, dependsOnId: row.depends_on_id, codeBaselineRef: row.code_baseline_ref,
+    }));
+    let graph;
+    try {
+      graph = validateFeatureDag({
+        projectId: valid.projectId,
+        phaseId: valid.phaseId,
+        features: features.map((feature) => ({
+          id: feature.id, projectId: feature.projectId, phaseId: feature.phaseId, status: feature.status,
+        })),
+        candidateEdges: valid.edges,
+      });
+    } catch (error) {
+      if (error instanceof StorageError) throw error;
+      throw featureDagUpdateGraphError('invalid_graph');
+    }
+
+    const currentByKey = new Map(existingEdges.map((edge) => [edgeKey(edge), edge] as const));
+    const requestedByKey = new Map(graph.edges.map((edge) => [edgeKey(edge), edge] as const));
+    for (const [key, requested] of requestedByKey) {
+      const current = currentByKey.get(key);
+      if (current !== undefined && current.codeBaselineRef !== requested.codeBaselineRef) {
+        throw conflict(operation, '依赖边的 code baseline 引用与当前事实不匹配', entity, {
+          reason: 'code_baseline_mismatch', featureId: requested.featureId, dependsOnFeatureId: requested.dependsOnId,
+        });
+      }
+    }
+
+    const activeStatuses = ACTIVE_EXECUTION_STATUSES.map(() => '?').join(',');
+    const activeBatches = db.prepare<[string, ...string[]], { id: string; scope_snapshot: string }>(
+      `SELECT id, scope_snapshot FROM execution_batches WHERE project_id = ? AND phase_id = ? AND status IN (${activeStatuses}) ORDER BY id ASC`,
+    ).all(valid.projectId, valid.phaseId, ...ACTIVE_EXECUTION_STATUSES) as Array<{ id: string; scope_snapshot: string }>;
+    const stableIncoming = (edges: readonly FeatureDependencyRecord[], featureIds: ReadonlySet<string>): string[] => edges
+      .filter((edge) => featureIds.has(edge.featureId))
+      .map((edge) => `${edge.featureId}:${edge.dependsOnId}:${edge.codeBaselineRef ?? ''}`)
+      .sort();
+    for (const batch of activeBatches) {
+      let snapshot: unknown;
+      try { snapshot = JSON.parse(batch.scope_snapshot); } catch (cause) {
+        throw new StorageError('corrupt', operation, '活动 Batch 范围快照损坏', { entity, details: { reason: 'invalid_scope_snapshot' }, cause });
+      }
+      const scope = snapshot as { featureIds?: unknown };
+      if (!Array.isArray(scope.featureIds) || scope.featureIds.some((id) => typeof id !== 'string')) {
+        throw new StorageError('corrupt', operation, '活动 Batch 范围快照缺少 Feature 身份', { entity, details: { reason: 'invalid_scope_snapshot' } });
+      }
+      const featureIds = new Set(scope.featureIds as string[]);
+      if (stableIncoming(existingEdges, featureIds).join('|') !== stableIncoming(graph.edges, featureIds).join('|')) {
+        throw conflict(operation, '活动 Batch 范围内的前置关系不能变更', entity, {
+          reason: 'active_batch_scope', batchId: batch.id,
+        });
+      }
+    }
+
+    const timestamp = nowUtcMs();
+    const phaseUpdate = db.prepare(
+      "UPDATE phases SET revision = revision + 1, updated_at = ? WHERE project_id = ? AND id = ? AND revision = ? AND status = 'open'",
+    ).run(timestamp, valid.projectId, valid.phaseId, valid.expectedRevision);
+    if (phaseUpdate.changes !== 1) {
+      throw conflict(operation, 'Phase DAG CAS 未命中', entity, {
+        reason: 'conflict', expectedRevision: valid.expectedRevision, actualRevision: phase.revision,
+      });
+    }
+    db.prepare('DELETE FROM feature_dependencies WHERE project_id = ? AND phase_id = ?')
+      .run(valid.projectId, valid.phaseId);
+    const insert = db.prepare(
+      'INSERT INTO feature_dependencies (id, created_at, project_id, revision, updated_at, phase_id, feature_id, depends_on_id, code_baseline_ref) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?)',
+    );
+    const edges: FeatureDependencyRecord[] = graph.edges.map((edge) => {
+      const id = currentByKey.get(edgeKey(edge))?.id ?? randomUUID();
+      insert.run(id, timestamp, valid.projectId, timestamp, valid.phaseId, edge.featureId, edge.dependsOnId, edge.codeBaselineRef);
+      return { id, projectId: valid.projectId, phaseId: valid.phaseId, featureId: edge.featureId, dependsOnId: edge.dependsOnId, codeBaselineRef: edge.codeBaselineRef };
+    });
+    const updatedPhase = getPhaseInTransaction(valid.projectId, valid.phaseId);
+    return { phase: updatedPhase, edges };
   }
 
   function insertFeatureInTransaction(input: unknown): FeatureRecord {
@@ -2311,6 +2430,7 @@ export function createSqlitePlanAccess(
     insertPhaseInTransaction,
     updatePhaseInTransaction,
     moveFeaturePhaseInTransaction,
+    updateFeatureDagInTransaction,
     insertFeatureInTransaction,
     insertTaskInTransaction,
     insertTaskDependencyInTransaction,

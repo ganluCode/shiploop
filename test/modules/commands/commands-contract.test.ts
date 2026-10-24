@@ -167,7 +167,8 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       'phase.reopen',
       'phase.archive',
       'feature.phase.move',
-      // P03-1 / F-005：计划导入（project scope + feature.plan.import；Phase 聚合 CAS）。
+      // P05-2 / F-005：Feature DAG 完整边集替换。
+      'feature.dag.update',
       'feature.plan.import',
       // P03-1 / F-007：纯标签 CAS 编辑（project scope + plan.labels.write；实体自身 revision CAS）。
       'plan.labels.update',
@@ -229,6 +230,7 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       'phase.reopen': { scopeKind: 'project', mutation: 'update', capability: 'phase.write' },
       'phase.archive': { scopeKind: 'project', mutation: 'update', capability: 'phase.write' },
       'feature.phase.move': { scopeKind: 'project', mutation: 'update', capability: 'phase.write' },
+      'feature.dag.update': { scopeKind: 'project', mutation: 'update', capability: 'phase.write' },
       'feature.plan.import': { scopeKind: 'project', mutation: 'update', capability: 'feature.plan.import' },
       'plan.labels.update': { scopeKind: 'project', mutation: 'update', capability: 'plan.labels.write' },
       'feature.plan.revise': { scopeKind: 'project', mutation: 'update', capability: 'feature.plan.revise' },

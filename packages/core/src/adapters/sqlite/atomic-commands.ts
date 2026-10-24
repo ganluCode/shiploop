@@ -143,6 +143,7 @@ export function createSqliteAtomicCommandStore(
           insertPhase: guarded(plan.insertPhaseInTransaction),
           updatePhase: guarded(plan.updatePhaseInTransaction),
           moveFeaturePhase: guarded(plan.moveFeaturePhaseInTransaction),
+          updateFeatureDag: guarded(plan.updateFeatureDagInTransaction),
           insertFeature: guarded(plan.insertFeatureInTransaction),
           insertTask: guarded(plan.insertTaskInTransaction),
           insertTaskDependency: guarded(plan.insertTaskDependencyInTransaction),

@@ -1256,6 +1256,9 @@ export const PHASE_CREATED_EVENT_TYPE = 'phase.created';
  */
 export const FEATURE_PLAN_IMPORTED_EVENT_TYPE = 'feature.plan.imported';
 
+/** P05-2 / F-005：Phase Feature DAG 边集更新事件。 */
+export const FEATURE_DAG_UPDATED_EVENT_TYPE = 'feature.dag.updated';
+
 /**
  * F-007：纯标签 CAS 编辑事件（仅命令路径编辑成功写入；脱敏 payload 恒为
  * {labelsUpdated:true}，聚合为目标实体自身，aggregateRevision=编辑后 revision）。
@@ -1311,6 +1314,7 @@ export const PLAN_EVENT_TYPES = [
   'phase.archived',
   'feature.phase.moved',
   FEATURE_PLAN_IMPORTED_EVENT_TYPE,
+  FEATURE_DAG_UPDATED_EVENT_TYPE,
   PHASE_LABELS_UPDATED_EVENT_TYPE,
   FEATURE_LABELS_UPDATED_EVENT_TYPE,
   TASK_LABELS_UPDATED_EVENT_TYPE,
@@ -1353,6 +1357,7 @@ interface PlanEventTypeSpec {
     | 'archived'
     | 'phaseMoved'
     | 'imported'
+    | 'dagUpdated'
     | 'labelsUpdated'
     | 'revised'
     | 'strategyUpdated'
@@ -1371,6 +1376,10 @@ const PLAN_EVENT_TYPE_SPECS: Readonly<Record<PlanEventType, PlanEventTypeSpec>> 
   [FEATURE_PLAN_IMPORTED_EVENT_TYPE]: Object.freeze({
     aggregateType: 'feature',
     payloadKey: 'imported',
+  }),
+  [FEATURE_DAG_UPDATED_EVENT_TYPE]: Object.freeze({
+    aggregateType: 'phase',
+    payloadKey: 'dagUpdated',
   }),
   [PHASE_LABELS_UPDATED_EVENT_TYPE]: Object.freeze({
     aggregateType: 'phase',

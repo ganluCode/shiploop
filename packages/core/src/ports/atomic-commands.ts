@@ -9,6 +9,7 @@
  * Git/进程/文件输出/人审都在事务外，事务内不执行文件流/SDK/Git/网络/长检查。
  */
 import type { FeatureFinalizationRecord } from './feature-finalization.js';
+import type { FeatureDagUpdateInput, FeatureDagUpdateResult } from './feature-dag-update.js';
 import type { ArtifactInputRef } from './artifact-store.js';
 import type { CommandReceipt } from './commands.js';
 import type {
@@ -120,6 +121,8 @@ export interface CommandTransaction {
    * ---------------------------------------------------------------- */
   /** 创建 open Phase（适配器生成 UUID v4 与 UTC 毫秒；revision=1）。 */
   insertPhase(input: unknown): PhaseRecord;
+  /** P05-2/F-005：在同一事务内整体替换 Phase Feature DAG 边集并 CAS Phase revision。 */
+  updateFeatureDag(input: FeatureDagUpdateInput): FeatureDagUpdateResult;
   /** Phase metadata/lifecycle CAS; execution occupancy checked in this same short transaction. */
   updatePhase(input: unknown): PhaseRecord;
   /** Feature/source/target CAS with fixed Batch scope and execution occupancy guards. */

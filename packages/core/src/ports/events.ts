@@ -40,6 +40,7 @@ import { isStorageError } from './errors.js';
 import { ATTEMPT_UPDATED_EVENT_TYPE, TASK_APPROVAL_BLOCKED_EVENT_TYPE, TASK_APPROVAL_DECIDED_EVENT_TYPE, EXECUTION_BUDGET_REVISED_EVENT_TYPE, EXECUTION_RUN_DISPATCHED_EVENT_TYPE, EXECUTION_RUN_PAUSED_EVENT_TYPE, EXECUTION_BATCH_PAUSED_EVENT_TYPE, EXECUTION_RUN_CANCELLING_EVENT_TYPE, EXECUTION_RUN_CANCELLED_EVENT_TYPE, EXECUTION_BATCH_CANCELLING_EVENT_TYPE, EXECUTION_BATCH_CANCELLED_EVENT_TYPE, EXECUTION_RUN_RESUMED_EVENT_TYPE, EXECUTION_BATCH_RESUMED_EVENT_TYPE, TASK_CLAIMED_EVENT_TYPE, FEATURE_FINALIZED_EVENT_TYPE, FEATURE_FINALIZATION_BLOCKED_EVENT_TYPE } from './execution-store.js';
 import {
   EXECUTION_INPUT_PREPARED_EVENT_TYPE,
+  FEATURE_DAG_UPDATED_EVENT_TYPE,
   FEATURE_LABELS_UPDATED_EVENT_TYPE,
   FEATURE_PLAN_IMPORTED_EVENT_TYPE,
   FEATURE_PLAN_REVISED_EVENT_TYPE,
@@ -78,6 +79,7 @@ export { PROJECT_REGISTERED_EVENT_TYPE };
 /** P03-1 / F-004：仅命令路径 Phase 创建成功写入（脱敏 payload 恒为 {created:true}）。 */
 export { PHASE_CREATED_EVENT_TYPE };
 /** P03-1 / F-005：仅命令路径 Feature 计划导入成功写入（脱敏 payload 恒 {imported:true}）。 */
+export { FEATURE_DAG_UPDATED_EVENT_TYPE };
 export { FEATURE_PLAN_IMPORTED_EVENT_TYPE };
 /**
  * P03-1 / F-007：仅命令路径纯标签 CAS 编辑成功写入（脱敏 payload 恒
@@ -140,6 +142,8 @@ export const PUBLIC_STATE_EVENT_TYPES = [
   'phase.reopened',
   'phase.archived',
   'feature.phase.moved',
+  // P05-2 / F-005：Phase Feature DAG 边集更新事件（聚合为 Phase）。
+  FEATURE_DAG_UPDATED_EVENT_TYPE,
   // P03-1 / F-005：计划域事件白名单扩展（aggregate_type='feature'）。
   FEATURE_PLAN_IMPORTED_EVENT_TYPE,
   // P03-1 / F-007：纯标签 CAS 编辑事件（phase/feature/task 三个目标实体各自一条）。
@@ -201,6 +205,7 @@ type EventPayloadKind =
   | 'phaseCreated'
   | 'phaseMutation'
   | 'featurePhaseMoved'
+  | 'featureDagUpdated'
   | 'featurePlanImported'
   | 'planLabelsUpdated'
   | 'featurePlanRevised'
@@ -350,6 +355,11 @@ export const STATE_EVENT_TYPE_SPECS: Readonly<
   // P03-1 / F-005：Feature 计划导入事件（聚合为导入创建的 Feature 自身；
   // project_id 非空由 scopeKind='project' 与映射层共同保证，payload 恒为
   // {imported:true}，不携带计划正文/策略副本/批准语义）。
+  [FEATURE_DAG_UPDATED_EVENT_TYPE]: Object.freeze({
+    aggregateType: 'phase',
+    scopeKind: 'project',
+    payloadKind: 'featureDagUpdated',
+  }),
   [FEATURE_PLAN_IMPORTED_EVENT_TYPE]: Object.freeze({
     aggregateType: 'feature',
     scopeKind: 'project',
@@ -1037,6 +1047,10 @@ export function mapStateEvent(row: unknown, operation: string = EVENT_READ_OPERA
     exactPayloadKeys(operation, row.payload, ['phaseMoved']);
     if (row.payload.phaseMoved !== true) corrupt(operation, 'event_payload_violation');
     payload = { phaseMoved: true };
+  } else if (spec.payloadKind === 'featureDagUpdated') {
+    exactPayloadKeys(operation, row.payload, ['dagUpdated']);
+    if (row.payload.dagUpdated !== true) corrupt(operation, 'event_payload_violation');
+    payload = { dagUpdated: true };
   } else if (spec.payloadKind === 'featurePlanImported') {
     payload = validateFeaturePlanImportedPayload(row.payload, operation);
   } else if (spec.payloadKind === 'planLabelsUpdated') {

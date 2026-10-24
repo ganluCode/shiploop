@@ -13,6 +13,7 @@
  */
 import { submitPhaseMutation } from './phase-lifecycle.js';
 import { submitFeaturePhaseMove } from './feature-phase.js';
+import { submitFeatureDagUpdate } from './feature-dag-update.js';
 import { randomBytes } from 'node:crypto';
 import { createFeatureDeliveryCommandHandler, type FeatureDeliveryDependencies } from './feature-delivery-commands.js';
 import {
@@ -1147,6 +1148,9 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           }
           if (envelope.operation === 'feature.phase.move') {
             return submitFeaturePhaseMove(principal.principalId, envelope, digest, transaction, now);
+          }
+          if (envelope.operation === 'feature.dag.update') {
+            return submitFeatureDagUpdate(principal.principalId, envelope, digest, transaction, now);
           }
           if (envelope.operation === FEATURE_PLAN_IMPORT_OPERATION) {
             // P03-1 / F-005：计划导入无事务外 I/O（引用仅索引级身份重核）；

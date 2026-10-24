@@ -25,6 +25,8 @@
  */
 import { validatePhaseMutationPayload } from './phase-lifecycle.js';
 import { validateFeaturePhaseMovePayload } from './feature-phase.js';
+import { validateFeatureDagUpdatePayload } from './feature-dag-update.js';
+import type { FeatureDagUpdatePayload } from './feature-dag-update.js';
 import type { FeaturePhaseMovePayload } from './feature-phase.js';
 import type { PhaseMutationOperation, PhaseMutationPayload } from './phase-lifecycle.js';
 import { isStorageError, StorageError } from './errors.js';
@@ -171,6 +173,8 @@ export const COMMAND_OPERATIONS = [
   'phase.reopen',
   'phase.archive',
   'feature.phase.move',
+  // P05-2 / F-005：完整替换 Phase Feature DAG 边集，使用 Phase revision CAS。
+  'feature.dag.update',
   // P03-1 / F-005：单 Feature 计划导入（project scope + feature.plan.import；
   // 信封 expectedRevision 为目标 Phase 聚合 CAS，见契约 §6.2 F-005 定案）。
   'feature.plan.import',
@@ -304,6 +308,7 @@ export const COMMAND_OPERATION_SPECS: Readonly<Record<AppOperation, CommandOpera
     'phase.reopen': { scopeKind: 'project', mutation: 'update', capability: 'phase.write' },
     'phase.archive': { scopeKind: 'project', mutation: 'update', capability: 'phase.write' },
     'feature.phase.move': { scopeKind: 'project', mutation: 'update', capability: 'phase.write' },
+    'feature.dag.update': { scopeKind: 'project', mutation: 'update', capability: 'phase.write' },
     // P03-1 / F-005：计划导入在目标 Phase 聚合上追加成员（Feature 聚合本身为
     // 新建，服务端生成 revision=1，不建立第二 CAS 权威），信封 expectedRevision
     // 必填且指向 Phase 聚合当前 revision（docs/p03-1-plan-import-contract.md §6.2）。
@@ -693,6 +698,8 @@ export interface ValidatedPhaseCreatePayload {
  * Feature 草稿计划（结构深校验由应用层导入事务复用 F-001 纯校验器完成，
  * 事务内以真实库内解析重核归属/引用/CAS，见 application/feature-plan-import）。
  */
+export interface ValidatedFeatureDagUpdatePayload extends FeatureDagUpdatePayload {}
+
 export interface ValidatedFeaturePlanImportPayload {
   readonly phaseId: string;
   readonly plan: unknown;
@@ -1019,6 +1026,12 @@ export type ValidatedCommandEnvelope =
       readonly scope: { readonly kind: 'project'; readonly projectId: string };
       readonly expectedRevision: number;
       readonly payload: FeaturePhaseMovePayload;
+    })
+  | (EnvelopeCommon & {
+      readonly operation: 'feature.dag.update';
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: number;
+      readonly payload: ValidatedFeatureDagUpdatePayload;
     })
   | (EnvelopeCommon & {
       readonly operation: PhaseMutationOperation;
@@ -2026,6 +2039,15 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
     try {
       return { ...base, operation, scope, expectedRevision: expectedRevision as number,
         payload: validateFeaturePhaseMovePayload(object.payload) };
+    } catch (error) {
+      throw fromProjectValidatorError(error, operation);
+    }
+  }
+  if (operation === 'feature.dag.update') {
+    if (scope.kind !== 'project') fail(operation, 'invalid_input', 'scope.kind', 'scope 种类与操作不匹配');
+    try {
+      return { ...base, operation, scope, expectedRevision: expectedRevision as number,
+        payload: validateFeatureDagUpdatePayload(object.payload) };
     } catch (error) {
       throw fromProjectValidatorError(error, operation);
     }
