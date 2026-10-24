@@ -202,6 +202,7 @@ describe('F-005 迁移执行与记录', () => {
           'execution_batches',
           'execution_slot_claims',
           'execution_stop_operations',
+          'feature_dependencies',
           'features',
           'git_operations',
           'global_settings',

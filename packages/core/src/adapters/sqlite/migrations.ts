@@ -3077,6 +3077,40 @@ CREATE UNIQUE INDEX command_receipts_operation_id_unique ON command_receipts (op
 CREATE INDEX command_receipts_principal_project_index ON command_receipts (principal_id, project_id);
 `;
 
+/**
+ * P05-2 / F-001（迁移 v37）：Feature DAG 依赖边。
+ *
+ * 依赖边必须属于同一项目、同一 Phase，且两端都是该 Phase 的 Feature；简单外键
+ * 保证实体存在，复合外键防止直接 SQL 伪造项目/Phase 归属。自依赖和重复边由
+ * CHECK/唯一索引拒绝；环检测属于依赖写入原语的事务校验，不在 SQLite DDL 中复制。
+ * code_baseline_ref 是可选的前置代码集成基线引用，不承载 Batch/Run/Attempt 状态。
+ */
+const MIGRATION_037_SQL = `
+CREATE TABLE feature_dependencies (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  phase_id TEXT NOT NULL,
+  feature_id TEXT NOT NULL,
+  depends_on_id TEXT NOT NULL,
+  code_baseline_ref TEXT,
+  CONSTRAINT feature_dependencies_revision_positive_check CHECK (revision >= 1),
+  CONSTRAINT feature_dependencies_no_self_dependency_check CHECK (feature_id <> depends_on_id),
+  CONSTRAINT feature_dependencies_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT feature_dependencies_phase_fk FOREIGN KEY (phase_id) REFERENCES phases (id) ON DELETE RESTRICT,
+  CONSTRAINT feature_dependencies_feature_fk FOREIGN KEY (feature_id) REFERENCES features (id) ON DELETE RESTRICT,
+  CONSTRAINT feature_dependencies_depends_on_fk FOREIGN KEY (depends_on_id) REFERENCES features (id) ON DELETE RESTRICT,
+  CONSTRAINT feature_dependencies_phase_same_project_fk FOREIGN KEY (project_id, phase_id) REFERENCES phases (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT feature_dependencies_feature_same_phase_fk FOREIGN KEY (project_id, phase_id, feature_id) REFERENCES features (project_id, phase_id, id) ON DELETE RESTRICT,
+  CONSTRAINT feature_dependencies_depends_on_same_phase_fk FOREIGN KEY (project_id, phase_id, depends_on_id) REFERENCES features (project_id, phase_id, id) ON DELETE RESTRICT
+);
+
+CREATE UNIQUE INDEX feature_dependencies_phase_edge_unique ON feature_dependencies (phase_id, feature_id, depends_on_id);
+CREATE INDEX feature_dependencies_phase_depends_on_index ON feature_dependencies (phase_id, depends_on_id);
+`;
+
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     version: 1,
@@ -3178,4 +3212,5 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 34, sql: MIGRATION_034_SQL, checksum: sha256Hex(MIGRATION_034_SQL) },
   { version: 35, sql: MIGRATION_035_SQL, checksum: sha256Hex(MIGRATION_035_SQL) },
   { version: 36, sql: MIGRATION_036_SQL, checksum: sha256Hex(MIGRATION_036_SQL), foreignKeysOff: true },
+  { version: 37, sql: MIGRATION_037_SQL, checksum: sha256Hex(MIGRATION_037_SQL) },
 ];

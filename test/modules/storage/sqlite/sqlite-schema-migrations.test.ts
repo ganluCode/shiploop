@@ -60,6 +60,8 @@ const SCHEMA_TABLES = [
   ['tasks', schema.tasks],
   ['task_approval_items', schema.taskApprovalItems],
   ['task_dependencies', schema.taskDependencies],
+  // P05-2 / F-001：同项目同 Phase 的 Feature DAG 依赖边（迁移 v37）。
+  ['feature_dependencies', schema.featureDependencies],
   // P03-2 / F-002：计划决策记录（docs/p03-2-plan-approval-contract.md 与设计 11 §7，迁移 v7）。
   ['approvals', schema.approvals],
   // P03-3 / F-002：单 Feature 执行域三表（docs/p03-3-execution-schema-contract.md 与
@@ -104,7 +106,6 @@ const EXPECTED_TABLE_NAMES = SCHEMA_TABLES.map(([name]) => name).sort();
 
 /** 迁移与未来功能明确不在本 Feature 建立的后续表（设计 11 §4-§7、§9）。 */
 const FORBIDDEN_TABLE_NAMES = [
-  'feature_dependencies',
   'chat_turns',
   'check_definitions',
   'operations',
@@ -589,7 +590,14 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
         'task_dependencies:(feature_id,task_id)->tasks.(feature_id,id)',
         'task_dependencies:(depends_on_id)->tasks.(id)',
         'task_dependencies:(feature_id,depends_on_id)->tasks.(feature_id,id)',
-        // P03-2 / F-002 计划决策记录（迁移 v7）：项目归属 + 同项目 Feature 复合外键。
+        // P05-2 / F-001：Feature DAG 两端必须属于同一项目同一 Phase。
+        'feature_dependencies:(project_id)->projects.(id)',
+        'feature_dependencies:(phase_id)->phases.(id)',
+        'feature_dependencies:(feature_id)->features.(id)',
+        'feature_dependencies:(depends_on_id)->features.(id)',
+        'feature_dependencies:(project_id,phase_id)->phases.(project_id,id)',
+        'feature_dependencies:(project_id,phase_id,feature_id)->features.(project_id,phase_id,id)',
+        'feature_dependencies:(project_id,phase_id,depends_on_id)->features.(project_id,phase_id,id)',
         'approvals:(project_id)->projects.(id)',
         'approvals:(project_id,subject_id)->features.(project_id,id)',
         // P03-3 / F-002 单 Feature 执行域三表（迁移 v9）：同项目/同范围复合外键。

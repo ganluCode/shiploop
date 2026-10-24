@@ -9,7 +9,8 @@
  * attempts/sessions/chat 等后续表随对应功能以新迁移版本增加，不在本 Schema 出现。
  * P01-3 / F-006 起加入 state_events（迁移 v2），P02-2 / F-006 起加入
  * command_receipts（迁移 v3，见下方表注释）；P02-3 / F-007 起加入基线作用域
- * 四表（迁移 v4，见下方表注释）；P03-3 / F-002 起加入单 Feature 执行域三表
+ * 四表（迁移 v4，见下方表注释）；P05-2 / F-001 起加入 Feature DAG 的
+ * feature_dependencies（迁移 v37）；P03-3 / F-002 起加入单 Feature 执行域三表
  * execution_batches/runs/batch_budget_revisions（迁移 v9，见下方表注释）。
  *
  * 与手写迁移 DDL（./migrations.ts）的一致性由 test/modules/storage/sqlite/sqlite-schema-migrations.test.ts
@@ -849,6 +850,63 @@ export const taskDependencies = sqliteTable('task_dependencies', {
     table.dependsOnId,
   ),
   index('task_dependencies_feature_depends_on_index').on(table.featureId, table.dependsOnId),
+]);
+
+/**
+ * P05-2 / F-001 Feature DAG 依赖边（迁移 v37）。
+ *
+ * 依赖边必须属于同一项目、同一 Phase，且两端都是该 Phase 的 Feature；简单外键
+ * 保证实体存在，复合外键防止直接 SQL 伪造项目/Phase 归属。自依赖和重复边由
+ * CHECK/唯一索引拒绝；环检测属于依赖写入原语的事务校验，不在 SQLite DDL 中复制。
+ * code_baseline_ref 是可选的前置代码集成基线引用，不承载 Batch/Run/Attempt 状态。
+ */
+export const featureDependencies = sqliteTable('feature_dependencies', {
+  id: text('id').primaryKey(),
+  createdAt: integer('created_at').notNull(),
+  /** 依赖边插后不可变；计划修订在 Phase/Feature 聚合事务内整体替换。 */
+  revision: integer('revision').notNull().default(1),
+  updatedAt: integer('updated_at').notNull(),
+  projectId: text('project_id')
+    .notNull()
+    .references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  phaseId: text('phase_id')
+    .notNull()
+    .references((): SQLiteColumn => phases.id, { onDelete: 'restrict' }),
+  featureId: text('feature_id')
+    .notNull()
+    .references((): SQLiteColumn => features.id, { onDelete: 'restrict' }),
+  dependsOnId: text('depends_on_id')
+    .notNull()
+    .references((): SQLiteColumn => features.id, { onDelete: 'restrict' }),
+  /** 可选的前置代码集成基线引用；业务依赖身份与 Git 集成事实分开保存。 */
+  codeBaselineRef: text('code_baseline_ref'),
+}, (table) => [
+  check('feature_dependencies_revision_positive_check', sql`${table.revision} >= 1`),
+  check(
+    'feature_dependencies_no_self_dependency_check',
+    sql`${table.featureId} <> ${table.dependsOnId}`,
+  ),
+  foreignKey({
+    name: 'feature_dependencies_phase_same_project_fk',
+    columns: [table.projectId, table.phaseId],
+    foreignColumns: [phases.projectId, phases.id],
+  }).onDelete('restrict'),
+  foreignKey({
+    name: 'feature_dependencies_feature_same_phase_fk',
+    columns: [table.projectId, table.phaseId, table.featureId],
+    foreignColumns: [features.projectId, features.phaseId, features.id],
+  }).onDelete('restrict'),
+  foreignKey({
+    name: 'feature_dependencies_depends_on_same_phase_fk',
+    columns: [table.projectId, table.phaseId, table.dependsOnId],
+    foreignColumns: [features.projectId, features.phaseId, features.id],
+  }).onDelete('restrict'),
+  uniqueIndex('feature_dependencies_phase_edge_unique').on(
+    table.phaseId,
+    table.featureId,
+    table.dependsOnId,
+  ),
+  index('feature_dependencies_phase_depends_on_index').on(table.phaseId, table.dependsOnId),
 ]);
 
 /**
