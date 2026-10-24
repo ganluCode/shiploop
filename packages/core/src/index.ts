@@ -98,6 +98,8 @@ export * from './application/work-evidence-recorder.js';
 export * from './ports/execution-input-binding.js';
 export * from './application/execution-input-binding.js';
 export * from './ports/feature-plan.js';
+export * from './ports/feature-dispatch.js';
+export * from './application/feature-dispatch.js';
 export * from './ports/feature-dag.js';
 export * from './ports/feature-dag-update.js';
 export * from './ports/plan-store.js';

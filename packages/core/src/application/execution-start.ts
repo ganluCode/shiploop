@@ -261,7 +261,7 @@ function submitMultiExecutionStart(
   if (!budget.allowed || memberIds.length > prepared.budget.batch.maxRuns) return reject();
   const batch = transaction.insertExecutionBatch({ projectId: prepared.projectId, phaseId: phase.id, featureId: first.id, batchId: randomUUID(),
     scopeSnapshot: { schemaVersion: 1, featureIds: memberIds, previewDigest: prepared.previewDigest },
-    configSnapshot: { schemaVersion: 1, approval: { planDigest: prepared.planDigest, checkPolicyDigest }, tasks: strategies, permissions,
+    configSnapshot: { schemaVersion: 1, approval: { planDigest: prepared.planDigest, checkPolicyDigest }, concurrency: prepared.concurrency, tasks: strategies, permissions,
       members: snapshots.map((item) => ({ featureId: item.feature.id, revision: item.feature.revision, planDigest: item.feature.planDigest })) },
     budgetSnapshot: { schemaVersion: 1, batch: prepared.budget.batch, run: prepared.budget.run }, status: 'queued', runsCreated: memberIds.length, reason: null });
   transaction.insertBatchBudgetRevision({ projectId: prepared.projectId, batchId: batch.id, version: 1,
@@ -576,6 +576,7 @@ export function createExecutionStartService(deps: ExecutionStartServiceDeps): Ex
         memberRevisions: current.summary.members.map((member) => ({ featureId: member.featureId, revision: member.revision, planDigest: member.planDigest })),
         previewDigest: current.previewDigest,
         budget,
+        concurrency: summary.concurrency,
         code: summary.code,
         inputs: summary.inputs.refs,
         planDigest: summary.approval.planDigest,
@@ -863,6 +864,7 @@ export function createExecutionStartService(deps: ExecutionStartServiceDeps): Ex
             },
             tasks: taskStrategyDigests,
             permissions: permissionDigests,
+            concurrency: fresh.concurrency,
           },
           budgetSnapshot: {
             schemaVersion: 1,

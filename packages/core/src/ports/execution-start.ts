@@ -193,6 +193,8 @@ export interface PreparedExecutionStartFresh {
   /** 用户确认的预览摘要（= 当前重算摘要；不一致时准备结果为 not_startable）。 */
   readonly previewDigest: string;
   readonly budget: ExecutionBudgetProposal;
+  /** P05-4：批准 Batch 冻结的 Feature 并发策略；派发消费不回读可变配置。 */
+  readonly concurrency: { readonly maxConcurrentWorks: number; readonly source: string };
   readonly code: ExecutionPreviewCodeIdentity;
   readonly inputs: readonly ExecutionPreviewInputRefSummary[];
   readonly planDigest: string;
