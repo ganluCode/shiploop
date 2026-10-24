@@ -240,7 +240,7 @@ describe('P05-1 / F-014 一次性规划生产 Core/Host/CLI 纵向', () => {
     const attempt = rig.session.database.prepare<[string], {
       id: string; invocation_id: string; execution_version: number; host_instance_id: string;
     }>('SELECT id, invocation_id, execution_version, host_instance_id FROM attempts WHERE task_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1').get(planningTaskId)!;
-    const preflight = rig.session.database.prepare<[string, string], Record<string, unknown>>(
+    const preflight = rig.session.database.prepare<[string, string, string, string], Record<string, unknown>>(
       "SELECT (SELECT status FROM attempts WHERE task_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1) AS attempt_status, "
       + "(SELECT status FROM runs WHERE id = ?) AS run_status, "
       + "(SELECT status FROM tasks WHERE id = ?) AS task_status, "

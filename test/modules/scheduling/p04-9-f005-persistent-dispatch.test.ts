@@ -297,6 +297,7 @@ function finalizationScheduler(options: {
     store: {
       listActiveRuns: () => ({ runs: [{ projectId: run.projectId, runId: run.id }], hasMore: false,
         nextCursor: null }),
+      listBatchCandidates: () => ({ candidates: [], hasMore: false, nextCursor: null }),
       readRun: () => run as never,
       recordRunReason,
       isFinalVerificationHandoffClaimed,
