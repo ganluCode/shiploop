@@ -126,10 +126,17 @@ export function createSqliteDispatchRecovery(session: SqliteStorageSession) {
             || slot.owner_id !== claim.owner_id || slot.host_instance_id !== claim.host_instance_id);
           const uncertain = invalidSlot || !authorization(claim.run_id)
             || db.prepare('SELECT id FROM runtime_start_reservations WHERE run_id = ? LIMIT 1').get(claim.run_id)
-            || db.prepare('SELECT id FROM managed_workspaces WHERE run_id = ? LIMIT 1').get(claim.run_id)
+            || db.prepare('SELECT id FROM managed_workspaces WHERE project_id = ? AND feature_id = ? AND run_id = ? LIMIT 1')
+              .get(claim.project_id, claim.feature_id, claim.run_id)
             || db.prepare('SELECT id FROM git_operations WHERE run_id = ? LIMIT 1').get(claim.run_id)
             || db.prepare('SELECT id FROM workspace_operations WHERE run_id = ? LIMIT 1').get(claim.run_id)
-            || db.prepare('SELECT id FROM workspace_leases WHERE project_id = ? LIMIT 1').get(claim.project_id);
+            // Workspace leases have no run/feature columns; derive ownership through the
+            // immutable Attempt identity so another Feature in the same project cannot
+            // quarantine or retain this unstarted claim.
+            || db.prepare(`SELECT l.id FROM workspace_leases l
+              JOIN attempts a ON a.project_id = l.project_id AND a.id = l.owner_id
+              WHERE a.project_id = ? AND a.feature_id = ? AND a.run_id = ? LIMIT 1`)
+              .get(claim.project_id, claim.feature_id, claim.run_id);
           if (uncertain) { quarantine(claim, 'dispatch_unstarted_evidence_incomplete', timestamp); blocked = true; }
           else {
             release(claim, timestamp, 'startup_unstarted_verified');
