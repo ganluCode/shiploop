@@ -22,6 +22,8 @@ const OID = '1234567890abcdef1234567890abcdef12345678';
 const TREE = 'fedcba0987654321fedcba0987654321fedcba09';
 /** 迁移 v33 之后新增的表：升级前不存在，升级后为空（旧数据不自动认领）。 */
 const DISPATCH_TABLES = ['run_dispatch_claims', 'execution_slot_claims', 'run_dispatch_intents'];
+/** P04-9 的历史迁移契约止于 v35；后续版本由各自 Feature 单独验证。 */
+const P04_MIGRATIONS = SQLITE_MIGRATIONS.slice(0, 35);
 
 function preparedSnapshot(projectId: string, featureId: string, taskId: string) {
   const ref = (artifactId: string) => ({
@@ -118,11 +120,11 @@ function hashOfChecksums(count: number): string {
 
 describe('P04-9 F-001 migration v33 dispatch and slot schema', () => {
   it('[case:migration-appends-v33] v33 只追加派发/槽位结构，历史迁移与校验摘要冻结', () => {
-    expect(SQLITE_MIGRATIONS).toHaveLength(35);
-    expect(SQLITE_MIGRATIONS[32]?.version).toBe(33);
+    expect(P04_MIGRATIONS).toHaveLength(35);
+    expect(P04_MIGRATIONS[32]?.version).toBe(33);
     // Frozen from the predecessor source, not recomputed from the new descriptors.
     expect(hashOfChecksums(32)).toBe('a221e2a99963b0166285b7ad6ac607a6abf9b7bd3874f2b93c5cfdb29913b3b2');
-    const sql = SQLITE_MIGRATIONS[32]?.sql ?? '';
+    const sql = P04_MIGRATIONS[32]?.sql ?? '';
     expect(sql).toContain('CREATE TABLE run_dispatch_claims');
     expect(sql).toContain('CREATE TABLE execution_slot_claims');
     // workKey 表示可跨重试的逻辑工作，绝不是派发队列唯一键/列。
@@ -304,8 +306,7 @@ describe('P04-9 F-001 v32 to v33 upgrade on real SQLite', () => {
       const before = Object.fromEntries(
         tableNames.map((table) => [table, predecessor.database.prepare(`SELECT * FROM ${table} ORDER BY id`).all()]),
       );
-      const migration = await migrateSqliteStorage(predecessor);
-      expect(migration.appliedVersions).toEqual([33, 34, 35]);
+      const migration = await migrateSqliteStorage(predecessor, { migrations: P04_MIGRATIONS });
       for (const table of tableNames) {
         // v33 不改变任何既有列：升级前后逐表逐行必须完全一致。
         expect(predecessor.database.prepare(`SELECT * FROM ${table} ORDER BY id`).all(), table)
@@ -339,7 +340,7 @@ describe('P04-9 F-001 v32 to v33 upgrade on real SQLite', () => {
       predecessor.close();
       const reopened = openSqliteStorageSession({ path: join(sandbox.path, 'state.db') });
       try {
-        expect((await migrateSqliteStorage(reopened)).appliedVersions).toEqual([]);
+        expect((await migrateSqliteStorage(reopened, { migrations: P04_MIGRATIONS })).appliedVersions).toEqual([]);
         expect(reopened.database.prepare('SELECT * FROM runs ORDER BY id').all()).toEqual(before['runs']);
         expect(reopened.database.prepare('SELECT count(*) AS n FROM run_dispatch_claims').get()).toEqual({ n: 0 });
       } finally {
@@ -357,7 +358,7 @@ describe('P04-9 F-001 v32 to v33 upgrade on real SQLite', () => {
     const session = openSqliteStorageSession({ path: join(sandbox.path, 'state.db') });
     try {
       await migrateSqliteStorage(session, { migrations: SQLITE_MIGRATIONS.slice(0, 32) });
-      const brokenSql = `${SQLITE_MIGRATIONS[32]!.sql}\nCREATE TABLE broken_v33 (id INTEGER);\nINSERT INTO absent_table VALUES (1);`;
+      const brokenSql = `${P04_MIGRATIONS[32]!.sql}\nCREATE TABLE broken_v33 (id INTEGER);\nINSERT INTO absent_table VALUES (1);`;
       await expect(migrateSqliteStorage(session, {
         migrations: [
           ...SQLITE_MIGRATIONS.slice(0, 32),
@@ -371,11 +372,11 @@ describe('P04-9 F-001 v32 to v33 upgrade on real SQLite', () => {
       expect(tables).not.toContain('execution_slot_claims');
       expect(tables).not.toContain('broken_v33');
       expect(session.database.prepare('SELECT max(version) AS v FROM schema_migrations').get()).toEqual({ v: 32 });
-      expect((await migrateSqliteStorage(session)).appliedVersions).toEqual([33, 34, 35]);
+      expect((await migrateSqliteStorage(session, { migrations: P04_MIGRATIONS })).appliedVersions).toEqual([33, 34, 35]);
       // 高版本库拒写，且不产生任何 DDL/DML 变更。
       session.database.prepare('INSERT INTO schema_migrations (id, created_at, version, checksum, applied_at) VALUES (?, ?, 36, ?, ?)')
         .run('migration-v36', NOW, HASH, NOW);
-      await expect(migrateSqliteStorage(session)).rejects.toMatchObject({ kind: 'unsupported_version' });
+      await expect(migrateSqliteStorage(session, { migrations: P04_MIGRATIONS })).rejects.toMatchObject({ kind: 'unsupported_version' });
       expect(session.database.prepare('SELECT count(*) AS n FROM run_dispatch_claims').get()).toEqual({ n: 0 });
       expect(session.database.prepare('SELECT count(*) AS n FROM run_dispatch_intents').get()).toEqual({ n: 0 });
     } finally {

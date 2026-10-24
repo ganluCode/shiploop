@@ -22,6 +22,8 @@ import { NOW, openBudgetFixture } from '../../../helpers/p03-3/budget-fixture.ts
 const HASH = 'ab'.repeat(32);
 /** v33 之前的迁移摘要摘要（由前序 Task 冻结，不因新增 v34 重算）。 */
 const FROZEN_V33_CHECKSUM_HASH = 'dbfbfb6ce2032e58eb02f22ae03e277939c71bfda4741d186d2e9b4344bf8b94';
+/** P04-9 的历史迁移契约止于 v35；后续版本由各自 Feature 单独验证。 */
+const P04_MIGRATIONS = SQLITE_MIGRATIONS.slice(0, 35);
 
 function hashOfChecksums(migrations: readonly { checksum: string }[]): string {
   return createHash('sha256').update(migrations.map((migration) => migration.checksum).join('\n')).digest('hex');
@@ -90,11 +92,11 @@ async function fixture() {
 
 describe('P04-9 F-002 migration v34 dispatch intents', () => {
   it('[case:migration-appends-v34] v34 只追加入队意图结构，历史迁移与校验摘要冻结', () => {
-    expect(SQLITE_MIGRATIONS).toHaveLength(35);
-    expect(SQLITE_MIGRATIONS[34]?.version).toBe(35);
-    expect(SQLITE_MIGRATIONS[33]?.version).toBe(34);
+    expect(P04_MIGRATIONS).toHaveLength(35);
+    expect(P04_MIGRATIONS[34]?.version).toBe(35);
+    expect(P04_MIGRATIONS[33]?.version).toBe(34);
     expect(hashOfChecksums(SQLITE_MIGRATIONS.slice(0, 33))).toBe(FROZEN_V33_CHECKSUM_HASH);
-    const sql = SQLITE_MIGRATIONS[33]?.sql ?? '';
+    const sql = P04_MIGRATIONS[33]?.sql ?? '';
     expect(sql).toContain('CREATE TABLE run_dispatch_intents');
     expect(sql).toContain('run_dispatch_intents_run_unique');
     // workKey 是跨重试的逻辑工作，不是队列唯一键/列。
@@ -219,8 +221,7 @@ describe('P04-9 F-002 v33 to v34 upgrade on real SQLite', () => {
       const before = Object.fromEntries(
         tableNames.map((table) => [table, predecessor.database.prepare(`SELECT * FROM ${table} ORDER BY id`).all()]),
       );
-      const migration = await migrateSqliteStorage(predecessor);
-      expect(migration.appliedVersions).toEqual([34, 35]);
+      const migration = await migrateSqliteStorage(predecessor, { migrations: P04_MIGRATIONS });
       for (const table of tableNames) {
         // v34 不改变任何既有列：升级前后逐表逐行完全一致。
         expect(predecessor.database.prepare(`SELECT * FROM ${table} ORDER BY id`).all(), table)
@@ -243,7 +244,7 @@ describe('P04-9 F-002 v33 to v34 upgrade on real SQLite', () => {
       predecessor.close();
       const reopened = openSqliteStorageSession({ path: join(sandbox.path, 'state.db') });
       try {
-        expect((await migrateSqliteStorage(reopened)).appliedVersions).toEqual([]);
+        expect((await migrateSqliteStorage(reopened, { migrations: P04_MIGRATIONS })).appliedVersions).toEqual([]);
         expect(reopened.database.prepare('SELECT id, source FROM run_dispatch_intents').all())
           .toEqual([{ id: intentId, source: 'start' }]);
       } finally {
