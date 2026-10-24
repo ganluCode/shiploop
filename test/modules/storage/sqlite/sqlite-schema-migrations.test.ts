@@ -68,6 +68,7 @@ const SCHEMA_TABLES = [
   // 设计 11 §5，迁移 v9）；P03-3 / F-006：Task 尝试预占账本（迁移 v11）；
   // P03-3 / F-007：Runtime 启动预占账本（迁移 v12）。
   ['execution_batches', schema.executionBatches],
+  ['execution_batch_members', schema.executionBatchMembers],
   ['runs', schema.runs],
   // P03-9 / F-002：Run/Batch 取消的持久停止 operation（迁移 v28）。
   ['execution_stop_operations', schema.executionStopOperations],
@@ -604,13 +605,16 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
         'execution_batches:(project_id)->projects.(id)',
         'execution_batches:(phase_id)->phases.(id)',
         'execution_batches:(feature_id)->features.(id)',
-        'execution_batches:(project_id,phase_id,feature_id)->features.(project_id,phase_id,id)',
+        'execution_batches:(project_id,feature_id)->features.(project_id,id)',
+        'execution_batch_members:(project_id)->projects.(id)',
+        'execution_batch_members:(project_id,batch_id)->execution_batches.(project_id,id)',
+        'execution_batch_members:(project_id,phase_id,feature_id)->features.(project_id,phase_id,id)',
         'runs:(project_id)->projects.(id)',
         'runs:(batch_id)->execution_batches.(id)',
         'runs:(feature_id)->features.(id)',
         'runs:(project_id,batch_id)->execution_batches.(project_id,id)',
         'runs:(project_id,feature_id)->features.(project_id,id)',
-        'runs:(batch_id,feature_id)->execution_batches.(id,feature_id)',
+        'runs:(project_id,batch_id,feature_id)->execution_batch_members.(project_id,batch_id,feature_id)',
         'batch_budget_revisions:(project_id)->projects.(id)',
         'batch_budget_revisions:(batch_id)->execution_batches.(id)',
         'batch_budget_revisions:(project_id,batch_id)->execution_batches.(project_id,id)',

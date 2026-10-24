@@ -1064,11 +1064,10 @@ export const executionBatches = sqliteTable('execution_batches', {
     'execution_batches_scope_snapshot_json_check',
     sql`json_valid(${table.scopeSnapshot}) AND json_type(${table.scopeSnapshot}) = 'object'`,
   ),
-  // 恰一个 Feature 的不可变范围：featureIds 必须是恰含一个成员的 JSON 数组。
-  // 缺失键时 json_type 为 NULL，必须以 IS 判定显式失败（CHECK 对 NULL 视为通过）。
+  // 固定范围至少包含一个 Feature；成员与 Batch 的一致性由 v38 成员表及触发器保证。
   check(
-    'execution_batches_scope_single_feature_check',
-    sql`json_type(${table.scopeSnapshot}, '$.featureIds') IS 'array' AND json_array_length(${table.scopeSnapshot}, '$.featureIds') = 1`,
+    'execution_batches_scope_members_check',
+    sql`json_type(${table.scopeSnapshot}, '$.featureIds') IS 'array' AND json_array_length(${table.scopeSnapshot}, '$.featureIds') >= 1`,
   ),
   check(
     'execution_batches_config_snapshot_json_check',
@@ -1086,14 +1085,14 @@ export const executionBatches = sqliteTable('execution_batches', {
   check('execution_batches_deadline_at_positive_check', sql`${table.deadlineAt} >= 1`),
   check('execution_batches_pause_requested_at_non_negative_check',
     sql`${table.pauseRequestedAt} IS NULL OR (typeof(${table.pauseRequestedAt}) = 'integer' AND ${table.pauseRequestedAt} >= 1)`),
-  // 同项目复合外键 + Phase/Feature 归属一致：伪造归属的直接 SQL 被拒绝。
+  // P04 兼容锚点仍必须属于有效 Feature；完整多成员范围由成员表固定。
   foreignKey({
-    name: 'execution_batches_feature_phase_same_project_fk',
-    columns: [table.projectId, table.phaseId, table.featureId],
-    foreignColumns: [features.projectId, features.phaseId, features.id],
+    name: 'execution_batches_feature_same_project_fk',
+    columns: [table.projectId, table.featureId],
+    foreignColumns: [features.projectId, features.id],
   }).onDelete('restrict'),
   uniqueIndex('execution_batches_project_id_id_unique').on(table.projectId, table.id),
-  // runs(batch_id,feature_id) 复合外键目标：Run 必须落在单 Feature 范围内。
+  // 成员表以 (project_id,batch_id,feature_id) 为 Run 的范围目标。
   uniqueIndex('execution_batches_id_feature_id_unique').on(table.id, table.featureId),
   // 同 Phase 有效活动 Batch 唯一（paused/interrupted 不是可绕过的终态）。
   uniqueIndex('execution_batches_active_phase_unique')
@@ -1103,18 +1102,45 @@ export const executionBatches = sqliteTable('execution_batches', {
     ),
 ]);
 
+/** P05-3 / F-001：Batch 创建时一次性冻结的成员关系（迁移 v38）。 */
+export const executionBatchMembers = sqliteTable('execution_batch_members', {
+  id: text('id').primaryKey(),
+  createdAt: integer('created_at').notNull(),
+  projectId: text('project_id').notNull().references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  batchId: text('batch_id').notNull(),
+  phaseId: text('phase_id').notNull(),
+  featureId: text('feature_id').notNull(),
+  memberOrdinal: integer('member_ordinal').notNull(),
+}, (table) => [
+  check('execution_batch_members_created_at_check', sql`typeof(${table.createdAt}) = 'integer' AND ${table.createdAt} >= 0`),
+  check('execution_batch_members_ordinal_check', sql`typeof(${table.memberOrdinal}) = 'integer' AND ${table.memberOrdinal} >= 1`),
+  foreignKey({
+    name: 'execution_batch_members_batch_fk',
+    columns: [table.projectId, table.batchId],
+    foreignColumns: [executionBatches.projectId, executionBatches.id],
+  }).onDelete('restrict'),
+  foreignKey({
+    name: 'execution_batch_members_feature_fk',
+    columns: [table.projectId, table.phaseId, table.featureId],
+    foreignColumns: [features.projectId, features.phaseId, features.id],
+  }).onDelete('restrict'),
+  uniqueIndex('execution_batch_members_batch_feature_unique').on(table.projectId, table.batchId, table.featureId),
+  uniqueIndex('execution_batch_members_batch_ordinal_unique').on(table.batchId, table.memberOrdinal),
+  uniqueIndex('execution_batch_members_project_id_id_unique').on(table.projectId, table.id),
+  index('execution_batch_members_batch_index').on(table.projectId, table.batchId, table.memberOrdinal),
+]);
+
 /**
  * P03-3 / F-002 Run（迁移 v9；core-design/11 §5 runs）。
  *
- * - 引用同项目 Batch 与 Feature，且 (batch_id,feature_id) 复合外键保证落在父 Batch
- *   的单 Feature 范围内；
+ * - 引用同项目 Batch 与 Feature；v38 后 (project_id,batch_id,feature_id) 复合外键
+ *   改为引用 execution_batch_members，保证 Run 属于父 Batch 的固定成员；
  * - 保存 purpose、workKey、dispatchOrdinal（派发身份 UNIQUE(batch_id,work_key,
  *   dispatch_ordinal)）、输入快照与配置快照（不可变）、Run 上限（max_attempts_per_run/
  *   run_time_limit_ms，派发时冻结，精确范围归 ports/execution-budget 契约）与时间
  *   依据（started_at 设定后不可改，ended_at 收尾记录）；
  * - 条件唯一：同 Feature 有效活动 Run 唯一（部分唯一索引；活动集含
- *   paused/interrupted）；
- * - 不可变列由迁移 v9 触发器保护（同 executionBatches 注释）。
+ *   paused/interrupted）。
  */
 export const runs = sqliteTable('runs', {
   id: text('id').primaryKey(),
@@ -1198,11 +1224,11 @@ export const runs = sqliteTable('runs', {
     columns: [table.projectId, table.featureId],
     foreignColumns: [features.projectId, features.id],
   }).onDelete('restrict'),
-  // 单 Feature 范围：Run 的 Feature 必须是父 Batch 的同一 Feature。
+  // Run 必须引用父 Batch 的固定成员，而不是兼容锚点 feature_id。
   foreignKey({
-    name: 'runs_batch_feature_same_scope_fk',
-    columns: [table.batchId, table.featureId],
-    foreignColumns: [executionBatches.id, executionBatches.featureId],
+    name: 'runs_batch_member_same_scope_fk',
+    columns: [table.projectId, table.batchId, table.featureId],
+    foreignColumns: [executionBatchMembers.projectId, executionBatchMembers.batchId, executionBatchMembers.featureId],
   }).onDelete('restrict'),
   // 派发身份唯一（重复派发在 DDL 级被拒绝；失败重试以递增 dispatch_ordinal 表达）。
   uniqueIndex('runs_project_id_id_unique').on(table.projectId, table.id),

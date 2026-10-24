@@ -630,20 +630,24 @@ export function createSqliteExecutionAccess(
     const valid = validateExecutionBatchInsertInput(input, operation);
     const db = session.database;
     const timestamp = nowUtcMs();
-    // 归属核验（同事务绑定参数）：父 Feature/Phase 缺失或跨项目 → 结构化错误
-    // （迁移 v9 复合外键为兜底）。
-    const featureRow = db
-      .prepare('SELECT project_id, phase_id FROM features WHERE id = ?')
-      .get(valid.featureId) as { project_id: string; phase_id: string } | undefined;
+    // 归属核验（同事务绑定参数）：固定成员集合中的每个 Feature 都必须存在、属于
+    // 声明项目且属于同一 Phase；成员关系由 v38 AFTER INSERT 触发器在同一事务内写入。
+    const featureRows = valid.featureIds.map((featureId) => ({
+      featureId,
+      row: db.prepare('SELECT project_id, phase_id FROM features WHERE id = ?').get(featureId) as
+        { project_id: string; phase_id: string } | undefined,
+    }));
     const batchEntity: StorageEntityRef = { type: 'execution_batch', projectId: valid.projectId, id: valid.batchId };
-    if (featureRow === undefined) {
-      throw notFound(operation, batchEntity, `Feature ${valid.featureId} 不存在`);
-    }
-    if (featureRow.project_id !== valid.projectId) {
-      throw ownership(operation, batchEntity, 'Feature 不属于声明的项目（跨项目目标被拒绝）');
-    }
-    if (featureRow.phase_id !== valid.phaseId) {
-      throw ownership(operation, batchEntity, 'phaseId 与 Feature 所属 Phase 不一致');
+    for (const { featureId, row: featureRow } of featureRows) {
+      if (featureRow === undefined) {
+        throw notFound(operation, batchEntity, `Feature ${featureId} 不存在`);
+      }
+      if (featureRow.project_id !== valid.projectId) {
+        throw ownership(operation, batchEntity, `Feature ${featureId} 不属于声明的项目（跨项目目标被拒绝）`);
+      }
+      if (featureRow.phase_id !== valid.phaseId) {
+        throw ownership(operation, batchEntity, `Feature ${featureId} 不属于声明的 Phase`);
+      }
     }
     // 同 Phase 活动 Batch 唯一（事务内存在性检查 + 条件唯一索引兜底）。
     const activeStatuses = EXECUTION_ACTIVE_STATUSES as readonly string[];
@@ -1031,7 +1035,8 @@ export function createSqliteExecutionAccess(
     const db = session.database;
     const timestamp = nowUtcMs();
     const entity: StorageEntityRef = { type: 'run', projectId: valid.projectId, id: valid.runId };
-    // 归属核验：父 Batch 必须存在且同项目、同 Feature 范围（复合外键兜底）。
+    // 归属核验：v38 以成员表为 Run 的固定范围；v9-v37 的历史测试/兼容库仍
+    // 使用旧的单 Feature 复合约束，因而在成员表不存在时回退到兼容锚点检查。
     const batchRow = db
       .prepare('SELECT project_id, feature_id FROM execution_batches WHERE id = ?')
       .get(valid.batchId) as { project_id: string; feature_id: string } | undefined;
@@ -1041,7 +1046,17 @@ export function createSqliteExecutionAccess(
     if (batchRow.project_id !== valid.projectId) {
       throw ownership(operation, entity, '父 Batch 不属于声明的项目（跨项目目标被拒绝）');
     }
-    if (batchRow.feature_id !== valid.featureId) {
+    const hasMembersTable = (db.prepare(
+      "SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'execution_batch_members'",
+    ).get() as { present: number } | undefined) !== undefined;
+    if (hasMembersTable) {
+      const member = db.prepare(
+        'SELECT 1 AS present FROM execution_batch_members WHERE project_id = ? AND batch_id = ? AND feature_id = ?',
+      ).get(valid.projectId, valid.batchId, valid.featureId) as { present: number } | undefined;
+      if (member === undefined) {
+        throw ownership(operation, entity, 'Run 的 Feature 不在父 Batch 的固定成员范围内');
+      }
+    } else if (batchRow.feature_id !== valid.featureId) {
       throw ownership(operation, entity, 'Run 的 Feature 不在父 Batch 的单 Feature 范围内');
     }
     try {

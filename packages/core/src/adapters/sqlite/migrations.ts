@@ -3111,6 +3111,204 @@ CREATE UNIQUE INDEX feature_dependencies_phase_edge_unique ON feature_dependenci
 CREATE INDEX feature_dependencies_phase_depends_on_index ON feature_dependencies (phase_id, depends_on_id);
 `;
 
+/**
+ * P05-3 / F-001（迁移 v38）：固定 Batch 的多 Feature 成员关系。
+ *
+ * 旧 Batch 保留 feature_id 作为 P04 兼容锚点；scope_snapshot.featureIds 是完整
+ * 固定范围，成员表是 Run 的权威归属。迁移先回填既有单 Feature Batch，再重建 runs
+ * 以移除 v9 的单 Feature 复合外键。foreignKeysOff 只用于这个表重建窗口，提交前
+ * 由迁移器执行全库 foreign_key_check，失败时整组回滚。
+ */
+const MIGRATION_038_SQL = `
+PRAGMA legacy_alter_table = ON;
+CREATE TABLE execution_batches_v38 (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  phase_id TEXT NOT NULL,
+  feature_id TEXT NOT NULL,
+  scope_snapshot TEXT NOT NULL,
+  config_snapshot TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'queued',
+  budget_revision INTEGER NOT NULL DEFAULT 1,
+  budget_snapshot TEXT NOT NULL,
+  runs_created INTEGER NOT NULL DEFAULT 0,
+  attempts_created INTEGER NOT NULL DEFAULT 0,
+  runtime_starts INTEGER NOT NULL DEFAULT 0,
+  no_progress_runs INTEGER NOT NULL DEFAULT 0,
+  deadline_at INTEGER NOT NULL,
+  reason TEXT,
+  pause_requested_at INTEGER,
+  CONSTRAINT execution_batches_revision_positive_check CHECK (revision >= 1),
+  CONSTRAINT execution_batches_status_enum_check CHECK (status IN ('queued', 'running', 'pausing', 'paused', 'cancelling', 'cancelled', 'succeeded', 'failed', 'interrupted')),
+  CONSTRAINT execution_batches_scope_snapshot_json_check CHECK (json_valid(scope_snapshot) AND json_type(scope_snapshot) = 'object'),
+  CONSTRAINT execution_batches_scope_members_check CHECK (json_type(scope_snapshot, '$.featureIds') IS 'array' AND json_array_length(scope_snapshot, '$.featureIds') >= 1),
+  CONSTRAINT execution_batches_config_snapshot_json_check CHECK (json_valid(config_snapshot) AND json_type(config_snapshot) = 'object'),
+  CONSTRAINT execution_batches_budget_revision_positive_check CHECK (budget_revision >= 1),
+  CONSTRAINT execution_batches_budget_snapshot_json_check CHECK (json_valid(budget_snapshot) AND json_type(budget_snapshot) = 'object'),
+  CONSTRAINT execution_batches_runs_created_non_negative_check CHECK (runs_created >= 0),
+  CONSTRAINT execution_batches_attempts_created_non_negative_check CHECK (attempts_created >= 0),
+  CONSTRAINT execution_batches_runtime_starts_non_negative_check CHECK (runtime_starts >= 0),
+  CONSTRAINT execution_batches_no_progress_runs_non_negative_check CHECK (no_progress_runs >= 0),
+  CONSTRAINT execution_batches_deadline_at_positive_check CHECK (deadline_at >= 1),
+  CONSTRAINT execution_batches_pause_requested_at_non_negative_check CHECK (pause_requested_at IS NULL OR (typeof(pause_requested_at) = 'integer' AND pause_requested_at >= 1)),
+  CONSTRAINT execution_batches_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT execution_batches_phase_fk FOREIGN KEY (phase_id) REFERENCES phases (id) ON DELETE RESTRICT,
+  CONSTRAINT execution_batches_feature_fk FOREIGN KEY (feature_id) REFERENCES features (id) ON DELETE RESTRICT,
+  CONSTRAINT execution_batches_feature_same_project_fk FOREIGN KEY (project_id, feature_id) REFERENCES features (project_id, id) ON DELETE RESTRICT
+);
+DROP TRIGGER IF EXISTS run_dispatch_intents_insert_scope_check;
+INSERT INTO execution_batches_v38 SELECT id, created_at, project_id, revision, updated_at, phase_id, feature_id,
+  scope_snapshot, config_snapshot, status, budget_revision, budget_snapshot, runs_created, attempts_created,
+  runtime_starts, no_progress_runs, deadline_at, reason, pause_requested_at FROM execution_batches;
+DROP TABLE execution_batches;
+ALTER TABLE execution_batches_v38 RENAME TO execution_batches;
+CREATE UNIQUE INDEX execution_batches_project_id_id_unique ON execution_batches (project_id, id);
+CREATE UNIQUE INDEX execution_batches_id_feature_id_unique ON execution_batches (id, feature_id);
+CREATE UNIQUE INDEX execution_batches_active_phase_unique ON execution_batches (phase_id) WHERE status IN ('queued', 'running', 'pausing', 'paused', 'cancelling', 'interrupted');
+CREATE TRIGGER execution_batches_immutable_columns_update BEFORE UPDATE ON execution_batches
+WHEN NEW.id IS NOT OLD.id OR NEW.created_at IS NOT OLD.created_at OR NEW.project_id IS NOT OLD.project_id
+  OR NEW.phase_id IS NOT OLD.phase_id OR NEW.feature_id IS NOT OLD.feature_id
+  OR NEW.scope_snapshot IS NOT OLD.scope_snapshot OR NEW.config_snapshot IS NOT OLD.config_snapshot
+BEGIN
+  SELECT RAISE(ABORT, 'execution_batches immutable scope, config and identity columns cannot be updated');
+END;
+
+CREATE TABLE execution_batch_members (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  batch_id TEXT NOT NULL,
+  phase_id TEXT NOT NULL,
+  feature_id TEXT NOT NULL,
+  member_ordinal INTEGER NOT NULL,
+  CONSTRAINT execution_batch_members_created_at_check CHECK (typeof(created_at) = 'integer' AND created_at >= 0),
+  CONSTRAINT execution_batch_members_ordinal_check CHECK (typeof(member_ordinal) = 'integer' AND member_ordinal >= 1),
+  CONSTRAINT execution_batch_members_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT execution_batch_members_batch_fk FOREIGN KEY (project_id, batch_id) REFERENCES execution_batches (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT execution_batch_members_feature_fk FOREIGN KEY (project_id, phase_id, feature_id) REFERENCES features (project_id, phase_id, id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX execution_batch_members_batch_feature_unique ON execution_batch_members (project_id, batch_id, feature_id);
+CREATE UNIQUE INDEX execution_batch_members_batch_ordinal_unique ON execution_batch_members (batch_id, member_ordinal);
+CREATE UNIQUE INDEX execution_batch_members_project_id_id_unique ON execution_batch_members (project_id, id);
+CREATE INDEX execution_batch_members_batch_index ON execution_batch_members (project_id, batch_id, member_ordinal);
+
+INSERT INTO execution_batch_members (id, created_at, project_id, batch_id, phase_id, feature_id, member_ordinal)
+SELECT b.id || ':' || b.feature_id, b.created_at, b.project_id, b.id, b.phase_id, b.feature_id, 1
+FROM execution_batches b;
+
+CREATE TRIGGER execution_batch_members_immutable_update BEFORE UPDATE ON execution_batch_members
+BEGIN SELECT RAISE(ABORT, 'execution batch member rows are immutable'); END;
+CREATE TRIGGER execution_batch_members_immutable_delete BEFORE DELETE ON execution_batch_members
+BEGIN SELECT RAISE(ABORT, 'execution batch member rows are immutable'); END;
+CREATE TRIGGER execution_batches_scope_member_anchor_check BEFORE INSERT ON execution_batches
+WHEN NOT EXISTS (
+  SELECT 1 FROM json_each(NEW.scope_snapshot, '$.featureIds') WHERE value = NEW.feature_id
+)
+BEGIN SELECT RAISE(ABORT, 'execution batch feature anchor is outside fixed member scope'); END;
+CREATE TRIGGER execution_batches_scope_members_insert AFTER INSERT ON execution_batches
+BEGIN
+  INSERT INTO execution_batch_members (id, created_at, project_id, batch_id, phase_id, feature_id, member_ordinal)
+  SELECT NEW.id || ':' || CAST(value AS TEXT), NEW.created_at, NEW.project_id, NEW.id, NEW.phase_id,
+    CAST(value AS TEXT), CAST(key AS INTEGER) + 1
+  FROM json_each(NEW.scope_snapshot, '$.featureIds');
+END;
+
+CREATE TABLE runs_v38 (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  batch_id TEXT NOT NULL,
+  feature_id TEXT NOT NULL,
+  purpose TEXT NOT NULL,
+  input_snapshot TEXT NOT NULL,
+  config_snapshot TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'queued',
+  scope_digest TEXT NOT NULL,
+  work_key TEXT NOT NULL,
+  dispatch_ordinal INTEGER NOT NULL DEFAULT 1,
+  max_attempts_per_run INTEGER NOT NULL,
+  run_time_limit_ms INTEGER NOT NULL,
+  attempts_created INTEGER NOT NULL DEFAULT 0,
+  reason TEXT,
+  started_at INTEGER,
+  ended_at INTEGER,
+  pause_requested_at INTEGER,
+  CONSTRAINT runs_revision_positive_check CHECK (revision >= 1),
+  CONSTRAINT runs_purpose_not_empty_check CHECK (length(purpose) > 0),
+  CONSTRAINT runs_input_snapshot_json_check CHECK (json_valid(input_snapshot) AND json_type(input_snapshot) = 'object'),
+  CONSTRAINT runs_config_snapshot_json_check CHECK (json_valid(config_snapshot) AND json_type(config_snapshot) = 'object'),
+  CONSTRAINT runs_status_enum_check CHECK (status IN ('queued', 'running', 'pausing', 'paused', 'cancelling', 'cancelled', 'succeeded', 'failed', 'interrupted')),
+  CONSTRAINT runs_scope_digest_sha256_check CHECK (length(scope_digest) = 64 AND scope_digest NOT GLOB '*[^0-9a-f]*'),
+  CONSTRAINT runs_work_key_not_empty_check CHECK (length(work_key) > 0),
+  CONSTRAINT runs_dispatch_ordinal_positive_check CHECK (dispatch_ordinal >= 1),
+  CONSTRAINT runs_max_attempts_per_run_positive_check CHECK (max_attempts_per_run >= 1),
+  CONSTRAINT runs_run_time_limit_ms_positive_check CHECK (run_time_limit_ms >= 1),
+  CONSTRAINT runs_attempts_created_non_negative_check CHECK (attempts_created >= 0),
+  CONSTRAINT runs_started_at_non_negative_check CHECK (started_at IS NULL OR started_at >= 0),
+  CONSTRAINT runs_ended_at_non_negative_check CHECK (ended_at IS NULL OR ended_at >= 0),
+  CONSTRAINT runs_pause_requested_at_non_negative_check CHECK (pause_requested_at IS NULL OR (typeof(pause_requested_at) = 'integer' AND pause_requested_at >= 1)),
+  CONSTRAINT runs_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT runs_batch_fk FOREIGN KEY (batch_id) REFERENCES execution_batches (id) ON DELETE RESTRICT,
+  CONSTRAINT runs_feature_fk FOREIGN KEY (feature_id) REFERENCES features (id) ON DELETE RESTRICT,
+  CONSTRAINT runs_batch_same_project_fk FOREIGN KEY (project_id, batch_id) REFERENCES execution_batches (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT runs_feature_same_project_fk FOREIGN KEY (project_id, feature_id) REFERENCES features (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT runs_batch_member_same_scope_fk FOREIGN KEY (project_id, batch_id, feature_id) REFERENCES execution_batch_members (project_id, batch_id, feature_id) ON DELETE RESTRICT
+);
+DROP TRIGGER IF EXISTS run_dispatch_claims_insert_scope_check;
+DROP TRIGGER IF EXISTS run_dispatch_intents_insert_scope_check;
+INSERT INTO runs_v38 SELECT id, created_at, project_id, revision, updated_at, batch_id, feature_id, purpose,
+  input_snapshot, config_snapshot, status, scope_digest, work_key, dispatch_ordinal, max_attempts_per_run,
+  run_time_limit_ms, attempts_created, reason, started_at, ended_at, pause_requested_at FROM runs;
+DROP TABLE runs;
+ALTER TABLE runs_v38 RENAME TO runs;
+
+CREATE UNIQUE INDEX runs_dispatch_identity_unique ON runs (batch_id, work_key, dispatch_ordinal);
+CREATE UNIQUE INDEX runs_active_feature_unique ON runs (feature_id) WHERE status IN ('queued', 'running', 'pausing', 'paused', 'cancelling', 'interrupted');
+CREATE INDEX runs_batch_id_status_index ON runs (batch_id, status);
+CREATE UNIQUE INDEX runs_receipt_identity_unique ON runs (project_id, batch_id, id);
+CREATE UNIQUE INDEX runs_feature_id_id_unique ON runs (feature_id, id);
+CREATE UNIQUE INDEX runs_project_id_id_unique ON runs (project_id, id);
+
+CREATE TRIGGER runs_immutable_columns_update BEFORE UPDATE ON runs
+WHEN NEW.id IS NOT OLD.id OR NEW.created_at IS NOT OLD.created_at OR NEW.project_id IS NOT OLD.project_id
+  OR NEW.batch_id IS NOT OLD.batch_id OR NEW.feature_id IS NOT OLD.feature_id
+  OR NEW.purpose IS NOT OLD.purpose OR NEW.input_snapshot IS NOT OLD.input_snapshot
+  OR NEW.config_snapshot IS NOT OLD.config_snapshot OR NEW.scope_digest IS NOT OLD.scope_digest
+  OR NEW.work_key IS NOT OLD.work_key OR NEW.dispatch_ordinal IS NOT OLD.dispatch_ordinal
+  OR NEW.max_attempts_per_run IS NOT OLD.max_attempts_per_run OR NEW.run_time_limit_ms IS NOT OLD.run_time_limit_ms
+  OR (OLD.started_at IS NOT NULL AND NEW.started_at IS NOT OLD.started_at)
+BEGIN
+  SELECT RAISE(ABORT, 'runs immutable input, dispatch identity and time basis columns cannot be updated');
+END;
+CREATE TRIGGER runs_ended_at_immutable_update BEFORE UPDATE ON runs
+WHEN OLD.ended_at IS NOT NULL AND NEW.ended_at IS NOT OLD.ended_at
+BEGIN SELECT RAISE(ABORT, 'runs ended_at cannot be rewritten after settlement'); END;
+CREATE TRIGGER run_dispatch_claims_insert_scope_check BEFORE INSERT ON run_dispatch_claims
+WHEN NOT EXISTS (
+  SELECT 1 FROM runs r WHERE r.project_id = NEW.project_id AND r.id = NEW.run_id
+    AND r.feature_id = NEW.feature_id
+    AND r.status IN ('queued', 'running', 'paused', 'interrupted')
+)
+BEGIN SELECT RAISE(ABORT, 'run dispatch claim scope or run state mismatch'); END;
+CREATE TRIGGER run_dispatch_intents_insert_scope_check BEFORE INSERT ON run_dispatch_intents
+WHEN NOT EXISTS (
+  SELECT 1 FROM runs r
+    JOIN projects p ON p.id = r.project_id
+    JOIN execution_batches b ON b.project_id = r.project_id AND b.id = r.batch_id
+  WHERE r.project_id = NEW.project_id AND r.id = NEW.run_id
+    AND r.feature_id = NEW.feature_id AND r.batch_id = NEW.batch_id
+    AND r.status = 'queued' AND p.status = 'active'
+    AND b.status IN ('queued', 'running')
+)
+BEGIN SELECT RAISE(ABORT, 'run dispatch intent scope or state mismatch'); END;
+PRAGMA legacy_alter_table = OFF;
+`;
+
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     version: 1,
@@ -3213,4 +3411,5 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 35, sql: MIGRATION_035_SQL, checksum: sha256Hex(MIGRATION_035_SQL) },
   { version: 36, sql: MIGRATION_036_SQL, checksum: sha256Hex(MIGRATION_036_SQL), foreignKeysOff: true },
   { version: 37, sql: MIGRATION_037_SQL, checksum: sha256Hex(MIGRATION_037_SQL) },
+  { version: 38, sql: MIGRATION_038_SQL, checksum: sha256Hex(MIGRATION_038_SQL), foreignKeysOff: true },
 ];
