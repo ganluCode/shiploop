@@ -1,0 +1,27 @@
+{
+  "schema_version": 2,
+  "task_id": "F-002",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/scheduling/p05-4-f002-scheduler-candidates.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/scheduling/p03-4-scheduler.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/execution/dispatch/p04-9-f002-dispatch-enqueue.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/storage/sqlite/p04-9-dispatch-intent-schema.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

@@ -6,6 +6,32 @@ export interface SchedulerRunRef {
   readonly runId: string;
 }
 
+/** 固定 Batch 候选页使用的稳定 keyset 游标。 */
+export interface SchedulerBatchScanCursor {
+  readonly projectId: string;
+  readonly batchId: string;
+  readonly memberOrdinal: number;
+  readonly createdAt: number;
+  readonly rowid: number;
+  readonly featureId: string;
+  readonly runId: string;
+}
+
+export interface SchedulerBatchCandidate extends SchedulerRunRef {
+  readonly phaseId: string;
+  readonly batchId: string;
+  readonly featureId: string;
+  /** 候选来自 Batch 成员表和活动 Run；依赖/代码前置由 Feature DAG 端口另行评估。 */
+  readonly source: 'fixed_batch';
+}
+
+/** 固定 Batch 候选页。 */
+export interface SchedulerBatchCandidatePage {
+  readonly candidates: readonly SchedulerBatchCandidate[];
+  readonly hasMore: boolean;
+  readonly nextCursor: SchedulerBatchScanCursor | null;
+}
+
 /**
  * 稳定补扫游标：由「来源优先级 + 该来源不可变排序键」组成。
  * 派发意图（rank 0）按 `enqueued_at, rowid`，其余活动 Run（rank 1）按
@@ -31,6 +57,13 @@ export interface SchedulerStore {
    * 也能被发现，续跑中的 Run 仍按既有活动状态进入候选。
    */
   listActiveRuns(input: { readonly after: SchedulerScanCursor | null; readonly limit: number }): SchedulerPage;
+  /** Reads active Run candidates belonging to one immutable fixed Batch scope. */
+  listBatchCandidates(input: {
+    readonly projectId: string;
+    readonly batchId: string;
+    readonly after: SchedulerBatchScanCursor | null;
+    readonly limit: number;
+  }): SchedulerBatchCandidatePage;
   /** Persists a bounded diagnostic without changing lifecycle state. */
   recordRunReason(projectId: string, runId: string, reason: string): void;
   /** Returns whether the stable handoff key has already been delivered. */
