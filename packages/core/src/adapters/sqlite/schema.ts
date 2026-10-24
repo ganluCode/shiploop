@@ -1581,7 +1581,7 @@ export const workspaceLeases = sqliteTable('workspace_leases', {
   check('workspace_leases_lease_check', sql`typeof(${table.leaseUntil}) = 'integer' AND ${table.leaseUntil} >= 0`),
   check('workspace_leases_process_check', sql`${table.processIdentity} IS NULL OR (json_valid(${table.processIdentity}) AND json_type(${table.processIdentity}) = 'object')`),
   foreignKey({ name: 'workspace_leases_attempt_fk', columns: [table.projectId, table.ownerId], foreignColumns: [attempts.projectId, attempts.id] }).onDelete('restrict'),
-  uniqueIndex('workspace_leases_resource_key_unique').on(table.resourceKey),
+  index('workspace_leases_resource_key_index').on(table.resourceKey),
   index('workspace_leases_owner_id_index').on(table.ownerId),
 ]);
 

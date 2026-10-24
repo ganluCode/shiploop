@@ -1,0 +1,43 @@
+{
+  "schema_version": 2,
+  "task_id": "F-005",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/workspace/p05-4-f005-feature-workspace-concurrency.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/workspace/p03-5-workspace-preparation.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/workspace/p03-5-feature-integration.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/workspace/p03-5-workspace-persistence.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/workspace/p03-10-git-worktree-negatives.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/scheduling/p04-9-f004-dispatch-task-claim.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/scheduling/p03-4-work-resources.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/scheduling/p03-4-task-dag.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

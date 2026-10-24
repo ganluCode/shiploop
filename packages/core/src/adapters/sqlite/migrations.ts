@@ -3309,6 +3309,14 @@ BEGIN SELECT RAISE(ABORT, 'run dispatch intent scope or state mismatch'); END;
 PRAGMA legacy_alter_table = OFF;
 `;
 
+const MIGRATION_039_SQL = `
+-- P05-4：不同 Feature 的独立 worktree 可以同时持有同名 global/project gate。
+-- 资源键保留 P04 的稳定语义；同 Feature 排他由 WorkResourceAccess 按 Attempt→Feature
+-- 事实核对，workspace 键仍唯一标识具体 worktree。
+DROP INDEX workspace_leases_resource_key_unique;
+CREATE INDEX workspace_leases_resource_key_index ON workspace_leases (resource_key);
+`;
+
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     version: 1,
@@ -3412,4 +3420,5 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 36, sql: MIGRATION_036_SQL, checksum: sha256Hex(MIGRATION_036_SQL), foreignKeysOff: true },
   { version: 37, sql: MIGRATION_037_SQL, checksum: sha256Hex(MIGRATION_037_SQL) },
   { version: 38, sql: MIGRATION_038_SQL, checksum: sha256Hex(MIGRATION_038_SQL), foreignKeysOff: true },
+  { version: 39, sql: MIGRATION_039_SQL, checksum: sha256Hex(MIGRATION_039_SQL) },
 ];
