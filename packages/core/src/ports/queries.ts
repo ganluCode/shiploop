@@ -596,7 +596,9 @@ export const PLAN_LIST_CURSOR_VERSION = 1 as const;
  *  'task-approvals'（Task 人审事项分页，父级为 Task）与 'task-rework-chain'
  *  （有限返工链分页，父级为 Task）。P03-8 / F-009 起含
  *  'feature-git-operations' 与 'run-git-operations'（Git 操作列表分页，
- *  父级为 Feature / Run）。 */
+ *  父级为 Feature / Run）。P05-1 / F-011 起含 'planning-contexts'（项目范围
+ *  规划上下文分页）与 'feature-planning-contexts'（Feature 过滤的规划
+ *  上下文分页；游标绑定数据根 + 项目 + Feature，跨项目/跨过滤重放拒绝）。 */
 export type PlanListScope =
   | { readonly kind: 'work-recording'; readonly projectId: string; readonly parentKind: 'run' | 'attempt' | 'session'; readonly parentId: string; readonly recordType: 'messages' | 'manifests' }
   | { readonly kind: 'phases'; readonly projectId: string }
@@ -612,7 +614,11 @@ export type PlanListScope =
   | { readonly kind: 'feature-git-operations'; readonly projectId: string; readonly featureId: string }
   | { readonly kind: 'run-git-operations'; readonly projectId: string; readonly runId: string }
   /** P04-9 / F-008 派发队列与槽位只读投影：项目范围分页（父级固定为项目）。 */
-  | { readonly kind: 'dispatch-queue'; readonly projectId: string };
+  | { readonly kind: 'dispatch-queue'; readonly projectId: string }
+  /** P05-1 / F-011 项目范围规划上下文分页（无 Feature 过滤）。 */
+  | { readonly kind: 'planning-contexts'; readonly projectId: string }
+  /** P05-1 / F-011 Feature 过滤的规划上下文分页（游标绑定同一过滤）。 */
+  | { readonly kind: 'feature-planning-contexts'; readonly projectId: string; readonly featureId: string };
 
 /** 游标签发/解析绑定：数据根身份 + 列表 scope（只允许可信装配构造）。 */
 export interface PlanListCursorBinding {
@@ -808,10 +814,31 @@ export function createPlanListCursorBinding(
       },
     };
   }
+  if (scope.kind === 'planning-contexts') {
+    rejectUnknownKeys(scope, ['kind', 'projectId'], { operation }, 'scope');
+    return {
+      rootIdentity: input.rootIdentity,
+      scope: {
+        kind: 'planning-contexts',
+        projectId: validateStableId(scope.projectId, { operation, entity: { type: 'project' } }, 'scope.projectId'),
+      },
+    };
+  }
+  if (scope.kind === 'feature-planning-contexts') {
+    rejectUnknownKeys(scope, ['kind', 'projectId', 'featureId'], { operation }, 'scope');
+    return {
+      rootIdentity: input.rootIdentity,
+      scope: {
+        kind: 'feature-planning-contexts',
+        projectId: validateStableId(scope.projectId, { operation, entity: { type: 'project' } }, 'scope.projectId'),
+        featureId: validateStableId(scope.featureId, { operation, entity: { type: 'feature' } }, 'scope.featureId'),
+      },
+    };
+  }
   planInvalidInput(
     operation,
     'scope.kind',
-    "必须是 'phases' / 'features' / 'tasks' / 'budget-revisions' / 'task-attempts' / 'attempt-diagnostics' / 'run-work-sessions' / 'task-work-sessions' / 'task-approvals' / 'task-rework-chain' / 'feature-git-operations' / 'run-git-operations' / 'dispatch-queue'",
+    "必须是 'phases' / 'features' / 'tasks' / 'budget-revisions' / 'task-attempts' / 'attempt-diagnostics' / 'run-work-sessions' / 'task-work-sessions' / 'task-approvals' / 'task-rework-chain' / 'feature-git-operations' / 'run-git-operations' / 'dispatch-queue' / 'planning-contexts' / 'feature-planning-contexts'",
     (scope as { kind?: unknown }).kind,
   );
 }
@@ -835,7 +862,9 @@ function planBindingAsTrusted(binding: PlanListCursorBinding): PlanListCursorBin
       binding.scope.kind !== 'task-rework-chain' &&
       binding.scope.kind !== 'feature-git-operations' &&
       binding.scope.kind !== 'run-git-operations' &&
-      binding.scope.kind !== 'dispatch-queue')
+      binding.scope.kind !== 'dispatch-queue' &&
+      binding.scope.kind !== 'planning-contexts' &&
+      binding.scope.kind !== 'feature-planning-contexts')
   ) {
     planScopeShapeError('必须由 createPlanListCursorBinding 构造');
   }
@@ -856,10 +885,14 @@ function planScopeFingerprint(scope: PlanListScope): string {
       break;
     case 'phases':
     case 'dispatch-queue':
+    case 'planning-contexts':
       parent = '-';
       break;
     case 'features':
       parent = scope.phaseId;
+      break;
+    case 'feature-planning-contexts':
+      parent = scope.featureId;
       break;
     case 'tasks':
     case 'feature-git-operations':

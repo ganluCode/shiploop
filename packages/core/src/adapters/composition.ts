@@ -66,6 +66,8 @@ import { createProjectService } from '../application/project-service.js';
 import type { ProjectService } from '../application/project-service.js';
 import { createQueryService } from '../application/query-service.js';
 import type { QueryService } from '../application/query-service.js';
+import { createPlanningQueryService } from '../application/planning-query.js';
+import type { PlanningQueryService } from '../application/planning-query.js';
 import { createExecutionInputService } from '../application/execution-input.js';
 import { createContextBuilder } from '../application/context-build.js';
 import type { ContextBudget } from '../application/context-build.js';
@@ -310,6 +312,12 @@ export interface CoreApplication {
   readonly commandReceiptsService: CommandReceiptsService;
   /** F-010：授权查询/一致读视图快照水位/分页事件读取（§7/§8/§9.3）。 */
   readonly queryService: QueryService;
+  /**
+   * P05-1 / F-011：规划上下文/候选只读授权查询（planning.contexts.list /
+   * planning.context.get / planning.candidate.get；零写入、零事件、零恢复，
+   * 候选正文经受管 Artifact 完整性核验读取）。
+   */
+  readonly planningQueryService: PlanningQueryService;
   /** P02-3 / F-004：静态 inspect 与注册/健康分离的 overview 用例（§7.2/§7.3）。 */
   readonly onboardingService: OnboardingService;
   /** P02-3 / F-007：基线窄存储读取端口（迁移 v4 四表；写经原子命令事务）。 */
@@ -1185,6 +1193,17 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
     });
 
+    // P05-1 / F-011：规划上下文/候选只读授权查询（复用同一 queryStore 窄端口
+    // 与既有预算/制品设施；候选正文与 F-006 提交入口同一完整性界）。
+    const planningQueryService = createPlanningQueryService({
+      planningReads: queryStore,
+      executionBudgetReads: queryStore,
+      artifacts: artifactStore,
+      artifactFiles: artifactFileStore,
+      dataRootIdentity: computeDataRootIdentity(basePathService.dataRoot()),
+      ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
+    });
+
     // P02-3 / F-004：静态 inspect 与 overview 用例。绑定查找复用同一查询门面；
     // F-007 起基线健康读接入迁移 v4 的真实窄端口（空库 = 尚无检查 →
     // not_run/no_baseline，不以注册成功或配置存在冒充健康通过）。
@@ -1259,6 +1278,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       runtimeRecoveryCatalog: recoveryCatalog,
       workRecoveryContinuation,
       queryService,
+      planningQueryService,
       onboardingService,
       baselineStore,
       verificationStore,

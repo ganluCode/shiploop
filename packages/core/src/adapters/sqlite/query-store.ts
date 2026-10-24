@@ -62,6 +62,12 @@ import type {
   FeatureDeliveryView,
 } from '../../ports/feature-delivery-query.js';
 import { createSqliteExecutionControlQueryStore } from './execution-control-query-store.js';
+import { createSqlitePlanningQueryStore } from './planning-query-store.js';
+import type {
+  PlanningContextListRow,
+  PlanningContextQueryView,
+  PlanningQueryReadStore,
+} from '../../ports/planning-query.js';
 import type {
   ExecutionBatchControlView,
   ExecutionControlQueryReadStore,
@@ -96,7 +102,8 @@ import type { SqliteStateStoreOptions } from './state-store.js';
  * P03-7 / F-013 起追加 Task 证据/人审/返工链窄读取（TaskEvidenceQueryReadStore）；
  * P03-8 / F-009 起追加 Git 操作查询窄读取（GitOperationQueryReadStore）；
  * P03-8 / F-010 起追加 Feature 分轴结果查询窄读取（FeatureDeliveryQueryReadStore）；
- * P03-9 / F-013 起追加 Run/Batch 控制进度与恢复诊断窄读取（ExecutionControlQueryReadStore）。 */
+ * P03-9 / F-013 起追加 Run/Batch 控制进度与恢复诊断窄读取（ExecutionControlQueryReadStore）；
+ * P05-1 / F-011 起追加规划上下文/候选查询窄读取（PlanningQueryReadStore）。 */
 export interface SqliteQueryStore
   extends AuthorizedProjectReadStore,
     ConsistentSnapshotStore,
@@ -111,7 +118,8 @@ export interface SqliteQueryStore
     GitOperationQueryReadStore,
     FeatureDeliveryQueryReadStore,
     FeatureExecutionReportReadStore,
-    ExecutionControlQueryReadStore {}
+    ExecutionControlQueryReadStore,
+    PlanningQueryReadStore {}
 
 export function createSqliteQueryStore(
   session: SqliteStorageSession,
@@ -137,6 +145,10 @@ export function createSqliteQueryStore(
   const featureDelivery = createSqliteFeatureDeliveryQueryStore(session);
   const featureReport = createSqliteFeatureExecutionReportStore(session, featureDelivery, workSessions);
   const executionControl = createSqliteExecutionControlQueryStore(session, featureDelivery);
+  const planningQueries = createSqlitePlanningQueryStore(
+    session,
+    options.nowUtcMs === undefined ? {} : { nowUtcMs: options.nowUtcMs },
+  );
   return {
     listVisibleProjects(visibility: unknown, filter: unknown): ProjectPage {
       return access.listVisibleProjects(visibility, filter);
@@ -297,5 +309,14 @@ export function createSqliteQueryStore(
       executionControl.readBatchControlView(projectId, batchId),
     readRunRecoveryView: (projectId: unknown, runId: unknown): ExecutionRunRecoveryView | undefined =>
       executionControl.readRunRecoveryView(projectId, runId),
+    readPlanningContextView: (projectId: unknown, candidateId: unknown): PlanningContextQueryView | undefined =>
+      planningQueries.readPlanningContextView(projectId, candidateId),
+    listPlanningContextRecords: (
+      visibility: unknown,
+      projectId: unknown,
+      featureId: unknown,
+      request: PlanListRequest,
+    ): PlanRecordPage<PlanningContextListRow> =>
+      planningQueries.listPlanningContextRecords(visibility, projectId, featureId, request),
   };
 }

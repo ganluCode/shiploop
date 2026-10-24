@@ -372,6 +372,36 @@ export {
   PLANNING_CANDIDATE_SUBMIT_OPERATION,
   PLANNING_CANDIDATE_SUBMIT_MAX_BODY_BYTES,
 } from './ports/planning-candidates.js';
+// P05-1 / F-011：规划上下文/候选只读查询面：公开形状、操作身份与展示状态
+// 冻结词汇（服务端负责授权；HostClient 线校验器复用同一形状）。
+export {
+  PLANNING_CANDIDATE_BODY_MAX_READ_BYTES,
+  PLANNING_CANDIDATE_QUERY_STATES,
+  PLANNING_CONTEXTS_LIST_OPERATION,
+  PLANNING_CONTEXT_GET_OPERATION,
+  PLANNING_CANDIDATE_GET_OPERATION,
+  PLANNING_QUERY_DETAIL_ATTEMPTS_MAX_COUNT,
+  PLANNING_QUERY_OPERATIONS,
+  PLANNING_QUERY_STATES,
+  derivePlanningOutcomeAxes,
+  derivePlanningQueryState,
+} from './ports/planning-query.js';
+export type {
+  PlanningCandidateDetailResult,
+  PlanningCandidateQueryState,
+  PlanningContextDetailResult,
+  PlanningContextListResult,
+  PlanningQueryOperation,
+  PlanningQueryState,
+  PublicPlanningAttemptRecord,
+  PublicPlanningCandidateBody,
+  PublicPlanningCandidateRef,
+  PublicPlanningContextRecord,
+  PublicPlanningContextSummary,
+  PublicPlanningDecision,
+  PublicPlanningRunRecord,
+  PublicPlanningTaskSummary,
+} from './ports/planning-query.js';
 // type-only 导出擦除后不加载业务服务。
 export type { EffectiveSettings } from './application/effective-settings.js';
 export type { ExportedSettings } from './application/configuration-service.js';

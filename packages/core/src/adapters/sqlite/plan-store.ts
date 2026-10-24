@@ -1807,9 +1807,13 @@ export function createSqlitePlanAccess(
       return {
         feature,
         approvals: approvalRows.map((row) => approvalFromRow(row)),
+        // P05-1 / F-011：taskCount 只统计 kind='coding' 的业务 Task；planning
+        // Task 是规划历史身份，不计入可编码业务 Task 或完成数量。
         taskCount:
           db
-            .prepare<[string], { n: number }>('SELECT COUNT(*) AS n FROM tasks WHERE feature_id = ?')
+            .prepare<[string], { n: number }>(
+              "SELECT COUNT(*) AS n FROM tasks WHERE feature_id = ? AND kind = 'coding'",
+            )
             .get(id)?.n ?? 0,
         settings: {
           global:
