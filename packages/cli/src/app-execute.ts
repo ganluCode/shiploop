@@ -123,6 +123,21 @@ import {
   scanStrategyInputFields,
 } from './app/decisions.js';
 import {
+  buildPlanningCandidateView,
+  buildPlanningClientInput,
+  buildPlanningContextDetailView,
+  buildPlanningContextListView,
+  buildPlanningDecisionView,
+  buildPlanningStartView,
+  formatPlanningCandidateView,
+  formatPlanningContextDetailView,
+  formatPlanningContextListView,
+  formatPlanningDecisionView,
+  formatPlanningStartView,
+  parsePlanningStartInput,
+} from './app/planning.js';
+import type { PlanningStartInputDocument } from './app/planning.js';
+import {
   buildFeatureDeliveryView,
   buildFeatureFinalApprovalView,
   buildFeatureFinalizeView,
@@ -184,6 +199,10 @@ import type {
   ParsedConfigCreate,
   ParsedConfigUpdate,
   ParsedEventsObserve,
+  ParsedPlanningStart,
+  ParsedPlanningList,
+  ParsedPlanningGet,
+  ParsedPlanningDecision,
   ParsedFeatureImport,
   ParsedFeatureRevise,
   ParsedPlanLabels,
@@ -298,6 +317,8 @@ type FeatureListResult = Awaited<ReturnType<HostClient['listFeatures']>>;
 type FeatureDetailResult = Awaited<ReturnType<HostClient['getFeature']>>;
 type TaskListResult = Awaited<ReturnType<HostClient['listTasks']>>;
 type TaskDetailResult = Awaited<ReturnType<HostClient['getTask']>>;
+
+type ParsedPlanningCommand = Extract<ParsedAppCliCommand, { command: 'planning' }>;
 
 /** 计划命令（phase/feature/task）的解析形态（F-010）。 */
 type ParsedPlanCommand = Extract<ParsedAppCliCommand, { command: 'phase' | 'feature' | 'task' }>;
@@ -733,7 +754,85 @@ function emitDomainReceipt<View>(
   return emitSuccess(io, command, view, format(view));
 }
 
-/** 写命令 completed 回执的人类行（按命令身份分派；只输出脱敏字段）。 */
+function emitPlanningStartReceipt(
+  io: AppCliIo,
+  command: ParsedPlanningStart,
+  receipt: CommandReceipt,
+): AppCliRunResult {
+  if (receipt.status === 'rejected') {
+    return emitFailure(io, command.json, {
+      exitCode: exitCodeForReceiptStatus('rejected'), command: command.commandId,
+      code: receipt.error.code, message: receipt.error.message, commandId: receipt.commandId,
+      ...(receipt.error.details !== undefined ? { details: receipt.error.details } : {}),
+    });
+  }
+  if (receipt.status !== 'accepted' || receipt.operation !== 'planning.start' || receipt.schemaVersion !== 7) {
+    throw new HostProtocolError('response_malformed', 'commands.submit', undefined, { details: { reason: 'planning_start_receipt_invalid' } });
+  }
+  const view = buildPlanningStartView(receipt);
+  return emitSuccess(io, command, view, formatPlanningStartView(view));
+}
+
+/** P05-1 / F-013：一次性规划 CLI（启动、上下文审阅、候选正文与人工决定）。 */
+async function executePlanningCommand(
+  io: AppCliIo,
+  command: ParsedPlanningCommand,
+  client: HostClient,
+  planningInput: PlanningStartInputDocument | undefined,
+): Promise<AppCliRunResult> {
+  switch (command.commandId) {
+    case 'planning.start': {
+      if (planningInput === undefined) throw new TypeError('planning.start 缺少已校验输入');
+      const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+      const receipt = await client.startPlanning(
+        buildPlanningClientInput(command, planningInput),
+        envelopeIdentityOptions(command.explicitCommandId, issuedAt),
+      );
+      return emitPlanningStartReceipt(io, command, receipt);
+    }
+    case 'planning.list': {
+      const result = await client.listPlanningContexts(command.projectId, {
+        ...(command.featureId !== undefined ? { featureId: command.featureId } : {}),
+        ...(command.limit !== undefined ? { limit: command.limit } : {}),
+        ...(command.cursor !== undefined ? { cursor: command.cursor } : {}),
+      });
+      const view = buildPlanningContextListView(result);
+      return emitSuccess(io, command, view, formatPlanningContextListView(view));
+    }
+    case 'planning.get': {
+      const result = await client.getPlanningContext(command.projectId, command.candidateId);
+      const view = buildPlanningContextDetailView(result);
+      return emitSuccess(io, command, view, formatPlanningContextDetailView(view));
+    }
+    case 'planning.candidate': {
+      const result = await client.getPlanningCandidate(command.projectId, command.candidateId);
+      const view = buildPlanningCandidateView(result);
+      return emitSuccess(io, command, view, formatPlanningCandidateView(view));
+    }
+    case 'planning.approve':
+    case 'planning.reject': {
+      const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+      const decision = command.commandId === 'planning.approve' ? 'approve' : 'reject';
+      const receipt = await client.decidePlanningCandidate({
+        projectId: command.projectId,
+        candidateId: command.candidateId,
+        candidateDigest: command.candidateDigest,
+        decision,
+        reason: command.reason ?? null,
+        expectedRevision: command.revision,
+      }, envelopeIdentityOptions(command.explicitCommandId, issuedAt));
+      return emitDomainReceipt(
+        io,
+        command,
+        receipt,
+        (commandId, replayed, result) => buildPlanningDecisionView(commandId, replayed, decision, result),
+        formatPlanningDecisionView,
+      );
+    }
+  }
+}
+
+
 function writeCommandHumanLine(commandId: AppCliCommandId, receipt: CompletedReceipt): string {
   switch (commandId) {
     case 'project.register':
@@ -3261,6 +3360,25 @@ export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunRes
     }
   }
 
+  let planningInput: PlanningStartInputDocument | undefined;
+  if (command.commandId === 'planning.start') {
+    try {
+      const input = readPlanInputPayload(command);
+      planningInput = parsePlanningStartInput(input, {
+        commandId: command.commandId,
+        json: command.json,
+      });
+    } catch (error) {
+      if (error instanceof AppCliParseError) return emitParseFailure(io, error, jsonFlag);
+      return emitFailure(io, command.json, {
+        exitCode: 2,
+        command: command.commandId,
+        code: 'invalid_input',
+        message: '规划输入文件读取或校验失败',
+      });
+    }
+  }
+
   // P03-3 / F-012：执行预算文档（execution preview/start/revise 的 --input）在连接
   // Host 之前读取/校验：缺少预算、非法日期/整数、有效并发大于一、未知键与形态
   // 错误以退出码 2 拒绝（输入错误不发启动请求）。
@@ -3386,6 +3504,9 @@ export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunRes
         options.signal,
         observeBudgets as ResolvedEventsObserveBudgets,
       );
+    }
+    if (command.command === 'planning') {
+      return await executePlanningCommand(io, command, client, planningInput);
     }
     if (command.command === 'phase' || command.command === 'feature' || command.command === 'task') {
       return await executePlanCommand(io, command, client, {

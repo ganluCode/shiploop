@@ -20,6 +20,9 @@
  *   子命令（实际 Host 公共契约 execution.sessions.list/execution.session.get/
  *   execution.session.evidence.get/execution.attempt.cancel 的参数映射；
  *   取消必须 --confirm 显式确认，不猜测草案命令）；
+ * P05-1 / F-013 增补 planning start/list/get/candidate/approve/reject 子命令；规划输入文件
+ *   在连接前有界读取，规划 Run 的取消/恢复沿用 execution.cancel/pause/resume，
+ *   不自动批准、不自动开始编码；
  * - 监听地址覆盖零容忍：--bind/--host/--address/--port/--listen* 与
  *   SHIPLOOP_HOST_* env 覆盖一律 bind_address_override_rejected；
  * - 错误只携带 code/reason/参数名/命令身份，绝不回显参数值；
@@ -41,6 +44,7 @@ export const APP_CLI_COMMANDS = [
   'phase',
   'feature',
   'task',
+  'planning',
   'execution',
   'workspace',
   'git',
@@ -96,6 +100,12 @@ export type AppCliCommandId =
   | 'task.reject'
   | 'task.unblock'
   | 'task.continue'
+  | 'planning.start'
+  | 'planning.list'
+  | 'planning.get'
+  | 'planning.candidate'
+  | 'planning.approve'
+  | 'planning.reject'
   | 'execution.preview'
   | 'execution.start'
   | 'execution.budget'
@@ -173,6 +183,12 @@ export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'task.reject',
   'task.unblock',
   'task.continue',
+  'planning.start',
+  'planning.list',
+  'planning.get',
+  'planning.candidate',
+  'planning.approve',
+  'planning.reject',
   'execution.preview',
   'execution.start',
   'execution.budget',
@@ -214,6 +230,8 @@ export type AppCommandOperation =
   | 'feature.plan.revise'
   | 'feature.plan.decide'
   | 'task.strategy.update'
+  | 'planning.start'
+  | 'planning.candidate.decide'
   | 'execution.input.prepare'
   | 'execution.preview'
   | 'execution.start'
@@ -287,6 +305,7 @@ export type AppCliParseReason =
   | 'unknown_input_field'
   | 'input_secret_field_rejected'
   | 'input_identity_field_rejected'
+  | 'invalid_planning_input'
   | 'invalid_title'
   | 'invalid_plan_id'
   | 'invalid_plan_digest'
@@ -315,8 +334,8 @@ export type AppCliParseReason =
 
 const REASON_MESSAGE: Readonly<Record<AppCliParseReason, string>> = Object.freeze({
   invalid_argv_type: 'argv 必须是字符串数组',
-  missing_command: '缺少命令；本版本提供 project/config/receipt/events/baseline/phase/feature/task/execution',
-  unknown_command: '未知顶层命令；本版本仅提供 project/config/receipt/events/baseline/phase/feature/task/execution',
+  missing_command: '缺少命令；本版本提供 project/config/receipt/events/baseline/phase/feature/task/planning/execution',
+  unknown_command: '未知顶层命令；本版本仅提供 project/config/receipt/events/baseline/phase/feature/task/planning/execution',
   missing_subcommand: '命令缺少子命令',
   unknown_subcommand: '未知子命令',
   unknown_argument: '未知参数',
@@ -371,6 +390,7 @@ const REASON_MESSAGE: Readonly<Record<AppCliParseReason, string>> = Object.freez
   unknown_input_field: '输入包含未知字段（Schema 不接受前向宽容字段）',
   input_secret_field_rejected: '输入不允许携带明文秘密或环境值字段',
   input_identity_field_rejected: '输入不允许携带身份/权限/可见范围字段',
+  invalid_planning_input: '规划输入文件不合法（字段缺失、未知字段或超出边界）',
   invalid_title: 'title 不能为空且不能为空白',
   invalid_plan_id: '计划实体 ID 必须是稳定 ID（字母数字开头，仅含 [A-Za-z0-9._-]）',
   invalid_plan_digest: '计划摘要必须是 64 位小写十六进制',
@@ -647,6 +667,40 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
     minPositionals: 1,
     maxPositionals: 1,
     positionalFields: ['artifactId'],
+  },
+  'planning.start': {
+    command: 'planning', commandId: 'planning.start',
+    valueFlags: ['--project', '--phase', '--revision', '--input', '--command-id'],
+    boolFlags: [], repeatableFlags: [], minPositionals: 1, maxPositionals: 1,
+    positionalFields: ['featureId'],
+  },
+  'planning.list': {
+    command: 'planning', commandId: 'planning.list',
+    valueFlags: ['--project', '--feature', '--limit', '--cursor'],
+    boolFlags: [], repeatableFlags: [], minPositionals: 0, maxPositionals: 0,
+    positionalFields: [],
+  },
+  'planning.get': {
+    command: 'planning', commandId: 'planning.get',
+    valueFlags: ['--project'], boolFlags: [], repeatableFlags: [], minPositionals: 1, maxPositionals: 1,
+    positionalFields: ['candidateId'],
+  },
+  'planning.candidate': {
+    command: 'planning', commandId: 'planning.candidate',
+    valueFlags: ['--project'], boolFlags: [], repeatableFlags: [], minPositionals: 1, maxPositionals: 1,
+    positionalFields: ['candidateId'],
+  },
+  'planning.approve': {
+    command: 'planning', commandId: 'planning.approve',
+    valueFlags: ['--project', '--digest', '--revision', '--reason', '--command-id'],
+    boolFlags: [], repeatableFlags: [], minPositionals: 1, maxPositionals: 1,
+    positionalFields: ['candidateId'],
+  },
+  'planning.reject': {
+    command: 'planning', commandId: 'planning.reject',
+    valueFlags: ['--project', '--digest', '--revision', '--reason', '--command-id'],
+    boolFlags: [], repeatableFlags: [], minPositionals: 1, maxPositionals: 1,
+    positionalFields: ['candidateId'],
   },
   'phase.create': {
     command: 'phase',
@@ -1302,6 +1356,10 @@ const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, A
       reject: 'task.reject',
       unblock: 'task.unblock',
       continue: 'task.continue',
+    },
+    planning: {
+      start: 'planning.start', list: 'planning.list', get: 'planning.get', candidate: 'planning.candidate',
+      approve: 'planning.approve', reject: 'planning.reject',
     },
     execution: {
       preview: 'execution.preview',
@@ -3012,7 +3070,67 @@ export interface ParsedGitOperationGet {
   readonly operationId: string;
 }
 
+export interface ParsedPlanningStart {
+  readonly kind: 'command';
+  readonly command: 'planning';
+  readonly commandId: 'planning.start';
+  readonly operation: 'planning.start';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly phaseId: string;
+  readonly featureId: string;
+  readonly revision: number;
+  readonly inputFile: string;
+  readonly explicitCommandId?: string;
+}
+
+export interface ParsedPlanningList {
+  readonly kind: 'command';
+  readonly command: 'planning';
+  readonly commandId: 'planning.list';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly featureId?: string;
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+
+export interface ParsedPlanningGet {
+  readonly kind: 'command';
+  readonly command: 'planning';
+  readonly commandId: 'planning.get' | 'planning.candidate';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly candidateId: string;
+}
+
+export interface ParsedPlanningDecision {
+  readonly kind: 'command';
+  readonly command: 'planning';
+  readonly commandId: 'planning.approve' | 'planning.reject';
+  readonly operation: 'planning.candidate.decide';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly candidateId: string;
+  readonly candidateDigest: string;
+  readonly revision: number;
+  readonly reason?: string;
+  readonly explicitCommandId?: string;
+}
+
 export type ParsedAppCliCommand =
+  | ParsedPlanningStart
+  | ParsedPlanningList
+  | ParsedPlanningGet
+  | ParsedPlanningDecision
   | ParsedProjectInit
   | ParsedProjectOverview
   | ParsedProjectRegister
@@ -3952,6 +4070,65 @@ function buildWorkspace(
   }
 }
 
+function buildPlanning(
+  scan: ScanResult,
+  state: ParseState,
+  spec: AppCommandSpec,
+): ParsedAppCliCommand {
+  assertPositionals(scan, spec, state);
+  const base = baseResult(state, scan);
+  switch (spec.commandId) {
+    case 'planning.start': {
+      const explicitCommandId = optionalCommandId(scan, state);
+      return {
+        ...base,
+        command: 'planning', commandId: 'planning.start', operation: 'planning.start',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        phaseId: requirePlanIdOption(scan, '--phase', state, 'phaseId'),
+        featureId: requirePlanId(scan.positionals[0] as string, state, 'featureId'),
+        revision: requireRevision(scan, state),
+        inputFile: requireInputFile(scan, state),
+        ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
+      };
+    }
+    case 'planning.list': {
+      const featureRaw = takeOption(scan, '--feature');
+      return {
+        ...base,
+        command: 'planning', commandId: 'planning.list',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        ...(featureRaw !== undefined ? { featureId: requirePlanId(featureRaw, state, 'featureId') } : {}),
+        ...optionalPlanListPage(scan, state),
+      };
+    }
+    case 'planning.get':
+    case 'planning.candidate':
+      return {
+        ...base,
+        command: 'planning', commandId: spec.commandId,
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        candidateId: requirePlanId(scan.positionals[0] as string, state, 'candidateId'),
+      };
+    case 'planning.approve':
+    case 'planning.reject': {
+      const explicitCommandId = optionalCommandId(scan, state);
+      const reason = optionalReason(scan, state);
+      return {
+        ...base,
+        command: 'planning', commandId: spec.commandId, operation: 'planning.candidate.decide',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        candidateId: requirePlanId(scan.positionals[0] as string, state, 'candidateId'),
+        candidateDigest: requirePlanDigest(scan, state),
+        revision: requireRevision(scan, state),
+        ...(reason !== undefined ? { reason } : {}),
+        ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
+      };
+    }
+    default:
+      fail(state, 'unknown_subcommand');
+  }
+}
+
 /**
  * 计划命令（P03-1 / F-010）：Phase 建立、单 Feature 计划导入、层级/DAG 查询、
  * 草稿修订与纯标签编辑。expectedRevision（`--revision`）是唯一 CAS 入口；
@@ -4406,6 +4583,8 @@ export function parseAppCliArgs(
     case 'feature':
     case 'task':
       return buildPlanEntity(scan, state, spec);
+    case 'planning':
+      return buildPlanning(scan, state, spec);
     case 'execution':
       return buildExecution(scan, state, spec);
     case 'workspace':

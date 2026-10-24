@@ -1946,6 +1946,82 @@ const WORKSPACE_DISCARD_HELP = [
   '',
 ].join('\n');
 
+const PLANNING_HELP = [
+  'usage: shiploop planning <start|list|get|candidate|approve|reject> [options]',
+  '',
+  '一次性规划：启动只创建已授权 planning Run，候选须人工审阅；不自动批准或不自动开始编码。',
+  '  planning start <featureId> --project <id> --phase <id> --revision <int> --input <file>',
+  '  planning list --project <id> [--feature <id>] [--limit <int>] [--cursor <id>]',
+  '  planning get <candidateId> --project <id>                  查看 Run/Task/预算/状态',
+  '  planning candidate <candidateId> --project <id>            查看候选摘要、Task 与 verification',
+  '  planning approve <candidateId> --project <id> --digest <sha256> --revision <int> [--reason <text>]',
+  '  planning reject <candidateId> --project <id> --digest <sha256> --revision <int> --reason <text>',
+  '',
+  'planning start --input JSON 顶层字段：requirementRefs（需求制品 ID/hash）、constraints、',
+  'acceptance.criteria、strategy.approvalMode=manual/taskLimit、budget。输入仅本次请求，',
+  '由 Core 复核项目归属、策略、预算和 revision；规划启动回执的 batchId/runId/candidateId',
+  '是持久身份，accepted 不代表候选生成、Feature 交付或编码授权。approve/reject 使用',
+  '候选 candidateId + candidateDigest 摘要绑定和 Feature revision CAS；取消/恢复沿用',
+  '`execution cancel|pause|resume` 的显式命令，客户端断开不隐式取消。',
+  '',
+  BOUNDARY_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const PLANNING_START_HELP = [
+  'usage: shiploop planning start <featureId> --project <id> --phase <id> --revision <int> --input <file>',
+  '                                      [--command-id <uuid>] [--data-root <abs>] [--json]',
+  '',
+  '启动一次规划授权。--input 必须是有界 JSON：requirementRefs、constraints、acceptance、',
+  'strategy（approvalMode=manual、taskLimit）和完整 budget；文件读取/JSON/字段边界在连接 Host',
+  '前拒绝。--revision 是目标 Feature 的 CAS，空草稿 Feature 可以首次规划。',
+  'accepted 只表示 Batch/Run/planning Task/candidate 已持久绑定；不表示候选已生成或已批准，',
+  '不自动执行编码。重复 --command-id 复用原回执，响应丢失先查回执。',
+  '',
+  '  --project <id>       项目 ID（UUID v4）',
+  '  --phase <id>         所属 Phase ID',
+  '  --revision <int>     Feature 当前 revision（CAS）',
+  '  --input <file>       规划请求 JSON（需求制品/约束/验收/批准策略/预算）',
+  '  --command-id <uuid>  显式命令 ID（UUID v4）',
+  '  --json               stdout 只输出结构化结果；诊断到 stderr',
+  '', BOUNDARY_BLOCK, EXIT_CODE_BLOCK, '',
+].join('\n');
+
+const PLANNING_LIST_HELP = [
+  'usage: shiploop planning list --project <id> [--feature <id>] [--limit <int>] [--cursor <id>]',
+  '',
+  '列出可见规划上下文。返回候选摘要身份、规划状态、Run 状态与决定状态；不读取候选正文，',
+  '不启动执行。分页参数由 HostClient/Core 复核。',
+  '', BOUNDARY_BLOCK, EXIT_CODE_BLOCK, '',
+].join('\n');
+
+const PLANNING_GET_HELP = [
+  'usage: shiploop planning get <candidateId> --project <id> [--data-root <abs>] [--json]',
+  '',
+  '查看指定候选绑定的规划上下文、Run/Task/Attempt、预算、executionState 与决策来源。',
+  '规划状态不折算为 Feature 交付或编码授权。',
+  '', BOUNDARY_BLOCK, EXIT_CODE_BLOCK, '',
+].join('\n');
+
+const PLANNING_CANDIDATE_HELP = [
+  'usage: shiploop planning candidate <candidateId> --project <id> [--data-root <abs>] [--json]',
+  '',
+  '查看候选正文投影：candidateDigest、摘要、Feature/Task 描述、complexity、依赖、',
+  '验收计划及定向 verification。生成前明确显示 pending_generation；候选正文不含凭据或执行命令。',
+  '', BOUNDARY_BLOCK, EXIT_CODE_BLOCK, '',
+].join('\n');
+
+const PLANNING_DECISION_HELP = (decision: 'approve' | 'reject') => [
+  `usage: shiploop planning ${decision} <candidateId> --project <id> --digest <sha256> --revision <int>`,
+  '                                      [--reason <text>] [--command-id <uuid>] [--data-root <abs>] [--json]',
+  '',
+  `${decision === 'approve' ? '批准' : '拒绝'}必须显式提供候选身份、candidateDigest 摘要和 Feature revision CAS；`,
+  `${decision === 'reject' ? '拒绝原因会保留在规划上下文中且不自动重规划。' : '批准只原子应用候选业务计划，不自动开始编码。'}`,
+  '旧摘要、旧 revision、跨项目或不可见候选由 Core 拒绝；同 commandId 同摘要重放原命令。',
+  '', BOUNDARY_BLOCK, EXIT_CODE_BLOCK, '',
+].join('\n');
+
 const HELP_BY_SCOPE: Readonly<Record<AppHelpScope, string>> = Object.freeze({
   project: PROJECT_HELP,
   'project.init': PROJECT_INIT_HELP,
@@ -1973,6 +2049,14 @@ const HELP_BY_SCOPE: Readonly<Record<AppHelpScope, string>> = Object.freeze({
   'baseline.cancel': BASELINE_CANCEL_HELP,
   'baseline.evidence': BASELINE_EVIDENCE_HELP,
   phase: PHASE_HELP,
+  planning: PLANNING_HELP,
+  'planning.start': PLANNING_START_HELP,
+  'planning.list': PLANNING_LIST_HELP,
+  'planning.get': PLANNING_GET_HELP,
+  'planning.candidate': PLANNING_CANDIDATE_HELP,
+  'planning.approve': PLANNING_DECISION_HELP('approve'),
+  'planning.reject': PLANNING_DECISION_HELP('reject'),
+
   'phase.create': PHASE_CREATE_HELP,
   'phase.list': PHASE_LIST_HELP,
   'phase.get': PHASE_GET_HELP,

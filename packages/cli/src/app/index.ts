@@ -49,6 +49,10 @@ export type {
   ParsedProjectOverview,
   ParsedProjectRegister,
   ParsedReceiptGet,
+  ParsedPlanningStart,
+  ParsedPlanningList,
+  ParsedPlanningGet,
+  ParsedPlanningDecision,
   ParsedExecutionSessions,
   ParsedExecutionSession,
   ParsedExecutionSessionEvidence,
@@ -240,6 +244,29 @@ export {
   formatAppCliParseError,
 } from './output.js';
 export type { AppCliFailureEnvelope, AppCliSuccessEnvelope } from './output.js';
+export {
+  buildPlanningCandidateView,
+  buildPlanningClientInput,
+  buildPlanningContextDetailView,
+  buildPlanningContextListView,
+  buildPlanningDecisionView,
+  buildPlanningStartView,
+  formatPlanningCandidateView,
+  formatPlanningContextDetailView,
+  formatPlanningContextListView,
+  formatPlanningDecisionView,
+  formatPlanningStartView,
+  parsePlanningStartInput,
+} from './planning.js';
+export type {
+  PlanningCandidateCliView,
+  PlanningContextDetailCliView,
+  PlanningContextListCliView,
+  PlanningDecisionCliView,
+  PlanningStartCliView,
+  PlanningStartInputDocument,
+} from './planning.js';
+
 export {
   EXECUTION_BOUNDARY_VIEW,
   buildExecutionInputView,
