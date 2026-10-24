@@ -17,6 +17,7 @@
  */
 import { StorageError } from '../../ports/errors.js';
 import { assertPrincipalVisibility } from '../../ports/queries.js';
+import { resolveApprovedBatchConcurrency } from '../../ports/feature-dispatch.js';
 import { validateStableId } from '../../ports/validation.js';
 import type { ValidationContext } from '../../ports/validation.js';
 import { ACTIVE_ATTEMPT_STATUSES } from '../../ports/attempt-store.js';
@@ -195,7 +196,7 @@ function corruptAssociation(operation: string, runId: string, projectId: string)
   });
 }
 
-/** 全局（容量固定 1）活动槽位聚合；跨项目只给计数，无身份。 */
+/** 活动槽位聚合；容量取活动批准 Batch 快照中的最大有界策略。 */
 function readSlotSummary(
   db: SqliteStorageSession['database'],
   projectId: string,
@@ -213,7 +214,21 @@ function readSlotSummary(
       quarantined_count: number;
       project_active_count: number;
     };
-  const capacity = EXECUTION_SLOT_CAPACITY_DEFAULT;
+  const configured = db.prepare<[], { config_snapshot: string }>(
+    "SELECT config_snapshot FROM execution_batches WHERE status IN ('queued', 'running', 'pausing', 'paused', 'cancelling', 'interrupted')",
+  ).all() as { config_snapshot: string }[];
+  let capacity = EXECUTION_SLOT_CAPACITY_DEFAULT;
+  for (const row of configured) {
+    let snapshot: unknown;
+    try {
+      snapshot = JSON.parse(row.config_snapshot);
+    } catch (cause) {
+      throw new StorageError('corrupt', `${OPERATION}.readSlotSummary`, 'Batch config snapshot JSON 损坏', {
+        details: { reason: 'invalid_config_snapshot_json' }, cause,
+      });
+    }
+    capacity = Math.max(capacity, resolveApprovedBatchConcurrency(snapshot));
+  }
   const activeCount = row.active_count;
   const projectActiveCount = row.project_active_count;
   return {

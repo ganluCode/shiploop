@@ -1,15 +1,13 @@
 /**
  * P03-3 / F-001 执行授权并发政策（application 层纯函数）。
  *
- * 设计依据：core-design/04 §6.1（首版执行控制为全局单并发；并发 Work 上限是
- * 配置中的**政策**，不代表当前执行能力）与 P03-3 边界（本阶段只实现单 Feature
- * 单并发闭环）。
+ * 设计依据：core-design/04 §6.1（执行控制由批准的 Batch 并发快照驱动）与 P05-4
+ * 派发边界。
  *
  * 不变量：
  * - 纯函数：不读时钟/文件/网络，不创建执行实体；
- * - 「保存政策 ≠ 执行支持」：配置面允许保存 maxConcurrentWorks ∈ [1,16]
- *   （settings-schema 契约），但执行授权对**有效并发大于一**一律明确拒绝
- *   （concurrency_not_supported），不静默降级为串行、不悄悄放行；
+ * - 有效并发解析为 1..16 的有界整数；默认单并发，批准的大于一并发交给
+ *   持久槽位和 Task 原子认领执行；
  * - 有效并发解析：项目 executionLimits 段（整段覆盖）> 全局段；两段均未配置时
  *   为缺省单并发（1）；
  * - 输入为 mergeEffectiveSettings 产出的有效政策集合形态（结构校验 fail-closed，
@@ -100,31 +98,10 @@ export function resolveEffectiveMaxConcurrentWorks(policies: unknown): Effective
   return { maxConcurrentWorks: configured.value, source: configured.sourceKind };
 }
 
-/**
- * 执行授权单并发断言（纯函数）：有效并发大于一即明确拒绝
- * （concurrency_not_supported）。保存的并发政策不等于执行支持——配置面允许
- * 保存较高并发政策，但本阶段执行授权只放行单并发。
- */
+/** 执行授权支持断言：有效并发已在解析阶段限制为 1..16 的有界整数。 */
 export function assertSingleWorkConcurrencyAuthorization(
   policies: unknown,
-  context?: ValidationContext,
+  _context?: ValidationContext,
 ): void {
-  const effective = resolveEffectiveMaxConcurrentWorks(policies);
-  if (effective.maxConcurrentWorks > EFFECTIVE_MAX_CONCURRENT_WORKS_DEFAULT) {
-    throw new StorageError(
-      'validation',
-      context?.operation ?? EXECUTION_AUTHORIZATION_POLICY_OPERATION,
-      `${EXECUTION_AUTHORIZATION_POLICY_OPERATION}: 有效并发 ${effective.maxConcurrentWorks}（来源 ${effective.source}）超过本阶段执行支持` +
-        '（首版仅支持单并发；配置允许保存的并发政策不等于执行支持）',
-      {
-        entity: context?.entity,
-        details: {
-          field: 'policies.executionLimits.value.maxConcurrentWorks',
-          reason: 'concurrency_not_supported',
-          effectiveMaxConcurrentWorks: effective.maxConcurrentWorks,
-          source: effective.source,
-        },
-      },
-    );
-  }
+  resolveEffectiveMaxConcurrentWorks(policies);
 }

@@ -140,6 +140,24 @@ function requireBatchConcurrency(value: unknown): number {
   return value;
 }
 
+/** 从批准 Batch 的不可变 configSnapshot 读取执行槽位容量。 */
+export function resolveApprovedBatchConcurrency(configSnapshot: unknown): number {
+  if (!isRecord(configSnapshot)) {
+    return fail('configSnapshot', 'batch_concurrency_invalid', '必须是对象');
+  }
+  const rawConcurrency = configSnapshot.concurrency;
+  if (rawConcurrency === undefined) return FEATURE_DISPATCH_CONCURRENCY_DEFAULT;
+  const concurrency = requirePlainObject(rawConcurrency, { operation: `${OPERATION}.validateConcurrency` }, 'concurrency');
+  rejectUnknownKeys(concurrency, ['maxConcurrentFeatures', 'maxConcurrentWorks', 'source'], { operation: `${OPERATION}.validateConcurrency` }, 'concurrency');
+  if (concurrency.maxConcurrentFeatures !== undefined && concurrency.maxConcurrentWorks !== undefined
+    && concurrency.maxConcurrentFeatures !== concurrency.maxConcurrentWorks) {
+    return fail('concurrency', 'batch_concurrency_invalid', 'maxConcurrentFeatures 与 maxConcurrentWorks 不得漂移');
+  }
+  const source = concurrency.source;
+  if (source !== undefined) requireText(source, 'concurrency.source');
+  return requireBatchConcurrency(concurrency.maxConcurrentFeatures ?? concurrency.maxConcurrentWorks);
+}
+
 function validateBudget(value: unknown): FeatureDispatchBudgetSnapshot {
   const context = { operation: `${OPERATION}.validate` } as const;
   const raw = requirePlainObject(value, context, 'budget');

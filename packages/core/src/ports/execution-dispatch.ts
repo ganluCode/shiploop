@@ -21,8 +21,8 @@
  *   不相等、不同步、不可互相代替。二者只通过 `assertDispatchClaimOwnsAttempt` 关联：
  *   同一项目/Feature/Run、同 owner/host，且 Attempt 在该认领代次取得之后创建。
  *
- * 边界（后续 Task 实现）：入队/补扫事务与提交后唤醒（F-002）、槽位竞争/续租/释放
- * 原语与容量装配（F-003）、与既有 Task 原子认领和 Runtime 启动前重核（F-004）。
+ * 边界：入队/补扫事务与提交后唤醒（F-002）、批准容量下的槽位竞争/续租/释放原语与容量装配
+ * （F-003）、与既有 Task 原子认领和 Runtime 启动前重核（F-004）。
  * 本模块不打开数据库、不读取时钟、不启动进程，也不提供任何队列状态编辑入口。
  */
 import { createHash } from 'node:crypto';
@@ -43,9 +43,10 @@ import type { ValidationContext } from './validation.js';
 
 const OPERATION = 'ExecutionDispatch';
 
-/** 首版生产开放的执行槽位容量（默认且唯一允许值；>1 明确拒绝，不暗中串行）。 */
+/** 默认执行槽位容量，兼容既有单槽派发。 */
 export const EXECUTION_SLOT_CAPACITY_DEFAULT = 1;
-
+/** 首版生产执行槽位容量上限；批准 Batch 的并发快照必须落在该有界范围内。 */
+export const EXECUTION_SLOT_CAPACITY_MAX = 16;
 /** Run 级认领来源：首次派发 vs 核对停止后的显式恢复代次。 */
 export const RUN_DISPATCH_CLAIM_ORIGINS = ['dispatch', 'resume'] as const;
 export type RunDispatchClaimOrigin = (typeof RUN_DISPATCH_CLAIM_ORIGINS)[number];
@@ -422,19 +423,19 @@ export function validateExecutionSlotClaimRecord(value: unknown): ExecutionSlotC
 }
 
 /**
- * 校验执行槽位容量：缺省 1；大于 1 明确拒绝（不支持/配置拒绝），0、负数、
- * 非整数与非数字同样 fail-closed；不做「接受配置后暗中串行」。
+ * 校验执行槽位容量：缺省 1；容量必须是受支持范围内的正整数。
+ * 调度消费方仍须从不可变批准 Batch 快照解析容量，不能用可变配置覆盖它。
  */
 export function validateExecutionSlotCapacity(value: unknown = EXECUTION_SLOT_CAPACITY_DEFAULT): number {
   const ctx = context('validateSlotCapacity', 'execution_slot_claim');
-  if (typeof value !== 'number' || !Number.isInteger(value) || value < 1) {
-    throw validationError(ctx, 'capacity', '必须是 ≥1 的整数执行槽位容量', value);
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) {
+    throw validationError(ctx, 'capacity', '必须是 ≥1 的安全整数执行槽位容量', value);
   }
-  if (value > EXECUTION_SLOT_CAPACITY_DEFAULT) {
+  if (value > EXECUTION_SLOT_CAPACITY_MAX) {
     throw new StorageError(
       'validation',
       ctx.operation,
-      '执行槽位容量大于 1 尚未支持（不表面接受后暗中串行）',
+      `执行槽位容量不得超过 ${EXECUTION_SLOT_CAPACITY_MAX}`,
       { entity: ctx.entity, details: { field: 'capacity', reason: 'capacity_unsupported', capacity: value } },
     );
   }

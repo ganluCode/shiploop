@@ -21,12 +21,13 @@
  *   revision，不产生第二条完成事实。
  */
 import {
-  EXECUTION_SLOT_CAPACITY_DEFAULT,
+  validateExecutionSlotCapacity,
   validateExecutionSlotClaimRecord,
   validateRunDispatchClaimRecord,
   type ExecutionSlotClaimRecord,
   type RunDispatchClaimRecord,
 } from '../../ports/execution-dispatch.js';
+import { resolveApprovedBatchConcurrency } from '../../ports/feature-dispatch.js';
 import { EXECUTION_SLOT_LEASE_EXPIRED_REASON } from '../../ports/execution-slot.js';
 import {
   decideDispatchSettlement,
@@ -168,7 +169,7 @@ export function createSqliteRunDispatchSettlement(
 ): RunDispatchSettlementAccess {
   const db = session.database;
   const clock = options.nowUtcMs ?? Date.now;
-  const capacity = options.capacity ?? EXECUTION_SLOT_CAPACITY_DEFAULT;
+  const configuredCapacity = options.capacity === undefined ? undefined : validateExecutionSlotCapacity(options.capacity);
   const slots = createSqliteExecutionSlotAccess(session, { nowUtcMs: () => clock() });
 
   function write(operation: string): void {
@@ -229,8 +230,8 @@ export function createSqliteRunDispatchSettlement(
     readonly stopUncertain: boolean;
     readonly slotCapacityAvailable: boolean;
   } {
-    const run = db.prepare<[string, string], { status: string; pause_requested_at: number | null }>(
-      'SELECT status, pause_requested_at FROM runs WHERE project_id = ? AND id = ?',
+    const run = db.prepare<[string, string], { status: string; pause_requested_at: number | null; batch_id: string }>(
+      'SELECT status, pause_requested_at, batch_id FROM runs WHERE project_id = ? AND id = ?',
     ).get(projectId, runId);
     if (run === undefined) {
       throw new StorageError('not_found', `${OPERATION}.read`, 'Run 不存在', {
@@ -238,6 +239,24 @@ export function createSqliteRunDispatchSettlement(
         details: { reason: 'run_not_found' },
       });
     }
+    const batch = db.prepare<[string, string], { config_snapshot: string }>(
+      'SELECT config_snapshot FROM execution_batches WHERE project_id = ? AND id = ?',
+    ).get(projectId, run.batch_id);
+    if (batch === undefined) {
+      throw new StorageError('corrupt', `${OPERATION}.read`, 'Run 的 Batch 不存在', {
+        entity: { type: 'run', projectId, id: runId }, details: { reason: 'batch_not_found' },
+      });
+    }
+    let batchSnapshot: unknown;
+    try {
+      batchSnapshot = JSON.parse(batch.config_snapshot);
+    } catch (cause) {
+      throw new StorageError('corrupt', `${OPERATION}.read`, 'Batch config snapshot JSON 损坏', {
+        entity: { type: 'run', projectId, id: runId }, details: { reason: 'invalid_config_snapshot_json' }, cause,
+      });
+    }
+    const capacity = configuredCapacity ?? resolveApprovedBatchConcurrency(batchSnapshot);
+    const slots = createSqliteExecutionSlotAccess(session, { capacity, nowUtcMs: () => clock() });
     const claimRow = readClaim(projectId, runId);
     const claim = claimRow === undefined ? null : claimFromRow(claimRow);
     const slotRow = claim === null ? undefined : readSlot(projectId, runId, claim.id);

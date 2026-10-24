@@ -1,0 +1,35 @@
+{
+  "schema_version": 2,
+  "task_id": "F-003",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/scheduling/p05-4-f003-concurrent-dispatch.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/execution/budget/p03-3-execution-preview.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/scheduling/p04-9-f003-execution-slot.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/scheduling/p04-9-f006-dispatch-control-settlement.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/scheduling/p04-9-f008-dispatch-slot-query.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/scheduling/p04-9-f004-dispatch-task-claim.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

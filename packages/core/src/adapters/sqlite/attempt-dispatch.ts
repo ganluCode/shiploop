@@ -7,6 +7,7 @@ import { computeExecutionPermissionsDigest, TRUSTED_PROJECT_PERMISSIONS_READER,
 import { computePlanningPermissionsDigest } from '../../ports/planning-input-prepare.js';
 import { StorageError } from '../../ports/errors.js';
 import { validateTaskClaimDispatch, type TaskClaimDispatch } from '../../ports/task-claim.js';
+import { resolveApprovedBatchConcurrency } from '../../ports/feature-dispatch.js';
 import { createSqliteExecutionSlotAccess } from './execution-slots.js';
 import { createSqliteTaskDagStore } from './task-dag-store.js';
 import { createSqliteExecutionAccess } from './execution-store.js';
@@ -27,7 +28,6 @@ export function createSqliteAttemptDispatchAccess(session: SqliteStorageSession,
   readonly permissions?: ExecutionPermissionsReader;
 }) {
   const db = session.database;
-  const slots = createSqliteExecutionSlotAccess(session, { nowUtcMs: options.nowUtcMs });
   function write() {
     if (!session.isOpen() || !db.inTransaction) throw new TypeError('Attempt dispatch requires an open transaction');
   }
@@ -43,7 +43,7 @@ export function createSqliteAttemptDispatchAccess(session: SqliteStorageSession,
       || intent.authorizationDigest !== computeRunDispatchAuthorizationDigest({ projectId: run.projectId,
         featureId: run.featureId, batchId: run.batchId, runId: run.id, purpose: run.purpose,
         scopeDigest: run.scopeDigest, workKey: run.workKey, dispatchOrdinal: run.dispatchOrdinal })) deny('dispatch_authorization_changed');
-    return run;
+    return { run, batch };
   }
   function claim(attempt: AttemptRecord): ClaimRow | undefined {
     return db.prepare<[string, string], ClaimRow>(
@@ -60,7 +60,11 @@ export function createSqliteAttemptDispatchAccess(session: SqliteStorageSession,
   return {
     acquireInTransaction(attempt: AttemptRecord, expected?: TaskClaimDispatch,
       previousStoppedAttempt?: AttemptRecord): TaskClaimDispatch {
-      authorized(attempt);
+      const { batch } = authorized(attempt);
+      const slots = createSqliteExecutionSlotAccess(session, {
+        capacity: resolveApprovedBatchConcurrency(batch.configSnapshot),
+        nowUtcMs: options.nowUtcMs,
+      });
       const now = options.nowUtcMs();
       let row = claim(attempt);
       let newGeneration = row === undefined;
@@ -145,7 +149,11 @@ export function createSqliteAttemptDispatchAccess(session: SqliteStorageSession,
       return { claimId: current.id, claimVersion: current.claim_version, slotId: slot.id };
     },
     assertLaunchInTransaction(attempt: AttemptRecord): void {
-      const run = authorized(attempt);
+      const { run, batch } = authorized(attempt);
+      const slots = createSqliteExecutionSlotAccess(session, {
+        capacity: resolveApprovedBatchConcurrency(batch.configSnapshot),
+        nowUtcMs: options.nowUtcMs,
+      });
       const now = options.nowUtcMs();
       // P05-1 / F-007：planning Attempt 不在编码 DAG（计划成员仅 coding），启动
       // 围栏按 Run purpose 与 planning Task 行级事实重核；其余派发/槽位/回执

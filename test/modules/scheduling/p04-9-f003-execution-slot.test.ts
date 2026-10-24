@@ -259,26 +259,25 @@ describe('P04-9 F-003 single execution slot primitives', () => {
     }
   }, 60_000);
 
-  it('[case:capacity-fail-closed] 容量缺省 1；>1/0/负数/非整数与生产并发配置均 fail-closed', async () => {
+  it('[case:capacity-fail-closed] 容量缺省 1；批准的有限多槽与 0/负数/非整数、超上限均 fail-closed', async () => {
     const f = await openSlotFixture();
     try {
       expect(f.access.capacity).toBe(1);
       expect(createSqliteExecutionSlotAccess(f.box.session).capacity).toBe(1);
-      const unsupported = rejection(() => createSqliteExecutionSlotAccess(f.box.session, { capacity: 2 }));
-      expect(unsupported).toEqual({ kind: 'validation', reason: 'capacity_unsupported' });
+      const supported = createSqliteExecutionSlotAccess(f.box.session, { capacity: 2 });
+      expect(supported.capacity).toBe(2);
       for (const invalid of [0, -1, 1.5, Number.NaN, '1', null, true]) {
         expect(rejection(() => createSqliteExecutionSlotAccess(f.box.session, { capacity: invalid })))
           .toMatchObject({ kind: 'validation' });
       }
-      // 生产配置面：保存的并发政策 >1 仍被既有执行授权明确拒绝（不暗中串行）。
+      // 批准策略中的 1..16 并发会由派发槽位按 Batch 快照执行；非法配置仍在策略解析阶段拒绝。
       expect(resolveEffectiveMaxConcurrentWorks({}).maxConcurrentWorks).toBe(1);
       expect(() => assertSingleWorkConcurrencyAuthorization({})).not.toThrow();
       for (const policies of [
         { executionLimits: { source: { kind: 'project_default' }, value: { maxConcurrentWorks: 2 } } },
         { executionLimits: { source: { kind: 'global_default' }, value: { maxConcurrentWorks: 3 } } },
       ]) {
-        const rejected = rejection(() => assertSingleWorkConcurrencyAuthorization(policies));
-        expect(rejected).toEqual({ kind: 'validation', reason: 'concurrency_not_supported' });
+        expect(() => assertSingleWorkConcurrencyAuthorization(policies)).not.toThrow();
       }
     } finally {
       f.close();

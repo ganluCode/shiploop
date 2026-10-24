@@ -399,12 +399,6 @@ export function createExecutionPreviewService(deps: ExecutionPreviewServiceDeps)
         throw mapToPublicError(cause, { operation });
       }
       const concurrency = resolveEffectiveMaxConcurrentWorks(effective.policies);
-      if (concurrency.maxConcurrentWorks > 1) {
-        throw publicError('invalid_input', 'concurrency_not_supported', {
-          maxConcurrentWorks: concurrency.maxConcurrentWorks,
-          source: concurrency.source,
-        });
-      }
 
       /* 4. No work is a scope-level result: do not hide blockers for a scope
        * that has nothing eligible to execute. */

@@ -780,7 +780,7 @@ describe('F-004 结构化拒绝（跨项目/非法预算/并发/仓库绑定）'
     }
   });
 
-  it('有效并发大于一拒绝：concurrency_not_supported（保存政策≠执行支持）', async () => {
+  it('有效并发大于一进入批准快照：由派发槽位按冻结策略执行', async () => {
     const s = await setup();
     const updated = await s.submit(
       {
@@ -791,10 +791,9 @@ describe('F-004 结构化拒绝（跨项目/非法预算/并发/仓库绑定）'
       { scope: { kind: 'project', projectId: s.projectId }, expectedRevision: 1 },
     );
     expect(updated.status).toBe('completed');
-    await expectPublicError(s.previewSubmit(), {
-      code: 'invalid_input',
-      reason: 'concurrency_not_supported',
-    });
+    const result = resultOf(await s.previewSubmit());
+    expect(result.status).toBe('ready');
+    expect(result.summary?.concurrency).toMatchObject({ maxConcurrentWorks: 2 });
   });
 
   it('不安全仓库绑定拒绝：repoIdentity 漂移 binding_identity_mismatch（真实检查 vs 权威绑定行）', async () => {
