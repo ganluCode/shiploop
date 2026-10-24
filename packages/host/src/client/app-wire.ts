@@ -2795,6 +2795,59 @@ export function validateBaselineCommandResultWire(
   };
 }
 
+function executionFeatureIdsWire(operation: HostOperation, value: unknown): string[] {
+  if (!Array.isArray(value) || value.length > 16) malformed(operation, 'execution_feature_scope_invalid');
+  const ids = value.map(id => requireStableId(operation, id));
+  if (new Set(ids).size !== ids.length) malformed(operation, 'execution_feature_scope_invalid');
+  return ids;
+}
+
+function sameIds(left: readonly string[], right: readonly string[]): boolean {
+  return left.length === right.length && new Set(left).size === left.length && new Set(right).size === right.length && left.every(id => right.includes(id));
+}
+
+function validateExecutionPreviewMembershipWire(
+  operation: HostOperation,
+  scope: Record<string, unknown>,
+  summary: Record<string, unknown>,
+  expanded: boolean,
+): void {
+  const ids = scope.featureIds as string[];
+  if (expanded && !Array.isArray(summary.members)) malformed(operation, 'execution_preview_members_invalid');
+  const members = (summary.members as unknown[] | undefined)?.map(value => requirePlain(operation, value));
+  if (members !== undefined) {
+    if (!sameIds(ids, members.map(member => member.featureId as string))) malformed(operation, 'execution_preview_members_invalid');
+    for (const member of members) {
+      const identity = (scope.members as Record<string, unknown>[] | undefined)?.find(row => row.featureId === member.featureId);
+      if (identity !== undefined && (identity.revision !== member.revision || identity.planDigest !== member.planDigest)) malformed(operation, 'execution_preview_members_invalid');
+      const readiness = requirePlain(operation, member.readiness);
+      if (readiness.featureId !== member.featureId ||
+          !['complete', 'pending', 'failed'].includes(readiness.dependencyCompletion as string) ||
+          !['ready', 'dependency_pending', 'dependency_failed', 'integration_not_ready', 'invalid_graph'].includes(readiness.reason as string) ||
+          readiness.dependencyCompleted !== (readiness.dependencyCompletion === 'complete') ||
+          readiness.ready !== (readiness.dependencyCompleted && readiness.dependencyIntegrationReady)) malformed(operation, 'execution_preview_members_invalid');
+    }
+  }
+  const tasks = (summary.tasks as unknown[]).map(value => requirePlain(operation, value));
+  const permissions = (requirePlain(operation, summary.permissions).tasks as unknown[]).map(value => requirePlain(operation, value));
+  const key = (row: Record<string, unknown>): string => {
+    if ((ids.length > 1 && row.featureId === undefined) || (row.featureId !== undefined && !ids.includes(row.featureId as string))) malformed(operation, 'execution_preview_members_invalid');
+    return `${row.featureId ?? ids[0]}\u0000${row.taskId}`;
+  };
+  if (!sameIds(tasks.map(key), permissions.map(key))) malformed(operation, 'execution_preview_members_invalid');
+  const plan = requirePlain(operation, summary.plan);
+  const approval = requirePlain(operation, summary.approval);
+  if (plan.taskCount !== tasks.length || plan.planDigest !== approval.planDigest || approval.checkPolicyDigest !== summary.checkPolicyDigest) malformed(operation, 'execution_preview_members_invalid');
+  const pending = tasks.filter(task => task.status === 'pending' || task.status === 'failed').map(task => task.taskId as string).sort();
+  if (pending.length === 0) malformed(operation, 'execution_preview_members_invalid');
+  if (JSON.stringify(pending) !== JSON.stringify([...(plan.pendingTaskIds as string[])].sort())) malformed(operation, 'execution_preview_members_invalid');
+  if (members !== undefined) for (const member of members) {
+    const own = tasks.filter(task => (task.featureId ?? ids[0]) === member.featureId);
+    const ownPending = own.filter(task => task.status === 'pending' || task.status === 'failed').map(task => task.taskId as string).sort();
+    if (member.taskCount !== own.length || JSON.stringify(ownPending) !== JSON.stringify([...(member.pendingTaskIds as string[])].sort())) malformed(operation, 'execution_preview_members_invalid');
+  }
+}
+
 function validateExecutionPreviewSummaryWire(operation: HostOperation, value: unknown): void {
   const summary = requirePlain(operation, value);
   exactKeys(operation, summary, ['members', 'approval', 'plan', 'code', 'checkPolicyDigest', 'tasks', 'permissions', 'inputs', 'budget', 'concurrency']);
@@ -2806,8 +2859,8 @@ function validateExecutionPreviewSummaryWire(operation: HostOperation, value: un
       requireStableId(operation, member.featureId);
       requirePositiveInteger(operation, member.revision);
       if (member.planDigest !== null) requireSha256Hex(operation, member.planDigest, 'execution_preview_digest_invalid');
-      requireNonEmptyString(operation, member.planStatus, 'execution_preview_member_invalid');
-      requireNonEmptyString(operation, member.status, 'execution_preview_member_invalid');
+      if (!(FEATURE_PLAN_STATUSES as readonly unknown[]).includes(member.planStatus) ||
+          !(FEATURE_STATUSES as readonly unknown[]).includes(member.status)) malformed(operation, 'execution_preview_member_invalid');
       if (!Array.isArray(member.codeBaselineRefs) || !member.codeBaselineRefs.every((ref) => typeof ref === 'string') ||
           (member.dependencyFeatureIds !== undefined && (!Array.isArray(member.dependencyFeatureIds) || !member.dependencyFeatureIds.every((id) => typeof id === 'string')))) malformed(operation, 'execution_preview_member_invalid');
       requireNonNegativeInteger(operation, member.taskCount);
@@ -2850,9 +2903,10 @@ function validateExecutionPreviewSummaryWire(operation: HostOperation, value: un
   const tasks = rows(summary.tasks);
   for (const value of tasks) {
     const task = requirePlain(operation, value);
-    exactKeys(operation, task, ['taskId', 'status', 'strategyCopyDigest', 'strategyConfigSource']);
+    exactKeys(operation, task, ['taskId', 'featureId', 'status', 'strategyCopyDigest', 'strategyConfigSource']);
+    if (task.featureId !== undefined) requireStableId(operation, task.featureId);
     requireStableId(operation, task.taskId);
-    text(task.status);
+    if (!(TASK_STATUSES as readonly unknown[]).includes(task.status)) malformed(operation, 'execution_preview_task_invalid');
     hash(task.strategyCopyDigest);
     text(task.strategyConfigSource);
   }
@@ -2860,7 +2914,8 @@ function validateExecutionPreviewSummaryWire(operation: HostOperation, value: un
   exactKeys(operation, permissions, ['tasks']);
   for (const value of rows(permissions.tasks)) {
     const task = requirePlain(operation, value);
-    exactKeys(operation, task, ['taskId', 'digest']);
+    exactKeys(operation, task, ['taskId', 'featureId', 'digest']);
+    if (task.featureId !== undefined) requireStableId(operation, task.featureId);
     requireStableId(operation, task.taskId);
     hash(task.digest);
   }
@@ -2928,24 +2983,26 @@ export function validateExecutionPreviewResultWire(
   if (object.schemaVersion !== 1) unsupportedVersion(operation, 'result.schemaVersion');
   requireStableId(operation, object.projectId);
   const scope = requirePlain(operation, object.scope);
-  exactKeys(operation, scope, ['featureIds', 'phaseId', 'requestedFeatureIds', 'memberFeatureIds', 'members']);
-  if (!Array.isArray(scope.featureIds) || scope.featureIds.length > 16) {
-    malformed(operation, 'execution_preview_scope_invalid');
-  }
-  for (const id of scope.featureIds) requireStableId(operation, id);
-  const expandedScope = scope.phaseId !== undefined || scope.requestedFeatureIds !== undefined || scope.memberFeatureIds !== undefined || scope.members !== undefined;
+  exactKeys(operation, scope, ['featureIds', 'phaseId', 'phaseRevision', 'requestedFeatureIds', 'memberFeatureIds', 'members']);
+  const featureIds = executionFeatureIdsWire(operation, scope.featureIds);
+  const expandedScope = Object.keys(scope).some(key => key !== 'featureIds');
   if (expandedScope) {
     requireStableId(operation, scope.phaseId);
-    if (!Array.isArray(scope.requestedFeatureIds) || !Array.isArray(scope.memberFeatureIds) || !Array.isArray(scope.members)) malformed(operation, 'execution_preview_scope_invalid');
-    for (const id of [...scope.requestedFeatureIds, ...scope.memberFeatureIds]) requireStableId(operation, id);
-    if (scope.memberFeatureIds.length !== scope.featureIds.length) malformed(operation, 'execution_preview_scope_invalid');
-    for (const value of scope.members) {
+    if (scope.phaseRevision !== undefined) requirePositiveInteger(operation, scope.phaseRevision);
+    const requested = executionFeatureIdsWire(operation, scope.requestedFeatureIds);
+    const members = executionFeatureIdsWire(operation, scope.memberFeatureIds);
+    if (!sameIds(featureIds, members) || requested.some(id => !members.includes(id)) || !Array.isArray(scope.members)) malformed(operation, 'execution_preview_scope_invalid');
+    const identities = scope.members.map(value => {
       const member = requirePlain(operation, value);
       exactKeys(operation, member, ['featureId', 'revision', 'planDigest']);
       requireStableId(operation, member.featureId);
       requirePositiveInteger(operation, member.revision);
       if (member.planDigest !== null) requireSha256Hex(operation, member.planDigest, 'execution_preview_digest_invalid');
-    }
+      return member.featureId as string;
+    });
+    if (!sameIds(featureIds, identities)) malformed(operation, 'execution_preview_scope_invalid');
+  } else if (featureIds.length > 1) {
+    malformed(operation, 'execution_preview_scope_invalid');
   }
   if (object.status !== 'ready' && object.status !== 'no_work' && object.status !== 'blocked') {
     malformed(operation, 'execution_preview_status_invalid');
@@ -2954,22 +3011,29 @@ export function validateExecutionPreviewResultWire(
     malformed(operation, 'execution_preview_no_work_reason_invalid');
   }
   if (!Array.isArray(object.blocked)) malformed(operation, 'execution_preview_blocked_invalid');
-  for (const reason of object.blocked) validateExecutionPreviewBlockerWire(operation, reason);
+  for (const reason of object.blocked) {
+    validateExecutionPreviewBlockerWire(operation, reason);
+    const row = reason as Record<string, unknown>;
+    if (row.featureId !== undefined && !featureIds.includes(row.featureId as string)) malformed(operation, 'execution_preview_scope_invalid');
+  }
   if (object.previewDigest !== null) requireSha256Hex(operation, object.previewDigest, 'execution_preview_digest_invalid');
-  if (object.summary !== null) validateExecutionPreviewSummaryWire(operation, object.summary);
+  if (object.summary !== null) {
+    validateExecutionPreviewSummaryWire(operation, object.summary);
+    validateExecutionPreviewMembershipWire(operation, scope, requirePlain(operation, object.summary), expandedScope);
+  }
   if (object.runtimeExecution !== false || typeof object.generatedAtUtcMs !== 'number' || !Number.isSafeInteger(object.generatedAtUtcMs) || object.generatedAtUtcMs < 0) {
     malformed(operation, 'execution_preview_runtime_invalid');
   }
-  if (object.status === 'ready' && (object.previewDigest === null || object.summary === null || object.noWorkReason !== null || object.blocked.length !== 0 || scope.featureIds.length === 0)) {
+  if (object.status === 'ready' && (object.previewDigest === null || object.summary === null || object.noWorkReason !== null || object.blocked.length !== 0 || featureIds.length === 0)) {
     malformed(operation, 'execution_preview_ready_invariant');
   }
   if (object.status !== 'ready' && (object.previewDigest !== null || object.summary !== null)) {
     malformed(operation, 'execution_preview_non_ready_invariant');
   }
-  if (object.status === 'blocked' && (object.blocked.length === 0 || object.noWorkReason !== null || scope.featureIds.length === 0)) {
+  if (object.status === 'blocked' && (object.blocked.length === 0 || object.noWorkReason !== null || featureIds.length === 0)) {
     malformed(operation, 'execution_preview_blocked_invariant');
   }
-  if (object.status === 'no_work' && (object.noWorkReason === null || object.blocked.length !== 0 || (object.noWorkReason === 'empty_scope') !== (scope.featureIds.length === 0))) {
+  if (object.status === 'no_work' && (object.noWorkReason === null || object.blocked.length !== 0 || (object.noWorkReason === 'empty_scope') !== (featureIds.length === 0))) {
     malformed(operation, 'execution_preview_no_work_invariant');
   }
   return object as unknown as ExecutionPreviewResult;
@@ -3050,7 +3114,8 @@ export function validateExecutionBudgetStatusResultWire(
   budgetDate(operation, batch.updatedAt);
   if (batch.reason !== null) requireNonEmptyString(operation, batch.reason, 'execution_budget_reason_invalid');
   requireNonNegativeInteger(operation, batch.runtimeStartsReserved);
-  if (!Array.isArray(batch.featureIds) || batch.featureIds.length !== 1 || batch.featureIds[0] !== batch.featureId) {
+  const featureIds = executionFeatureIdsWire(operation, batch.featureIds);
+  if (featureIds.length === 0 || !featureIds.includes(batch.featureId as string)) {
     malformed(operation, 'execution_budget_feature_scope_invalid');
   }
   if (typeof batch.budgetRevision !== 'number' || !Number.isSafeInteger(batch.budgetRevision) || batch.budgetRevision < 1) {
@@ -3072,11 +3137,17 @@ export function validateExecutionBudgetStatusResultWire(
   if (!Array.isArray(object.runs) || !Array.isArray(object.tasks) || !Array.isArray(object.blockingReasons)) {
     malformed(operation, 'execution_budget_rows_invalid');
   }
+  const runIds = object.runs.map(value => requirePlain(operation, value).id);
+  const taskKeys = object.tasks.map(value => {
+    const task = requirePlain(operation, value);
+    return `${task.featureId ?? batch.featureId}/${task.taskId}`;
+  });
+  if (new Set(runIds).size !== runIds.length || new Set(taskKeys).size !== taskKeys.length) malformed(operation, 'execution_budget_rows_invalid');
   for (const value of object.runs) {
     const run = requirePlain(operation, value);
     exactKeys(operation, run, ['id', 'batchId', 'featureId', 'purpose', 'workKey', 'dispatchOrdinal', 'status', 'limits', 'dimensions', 'attemptsCreated', 'startedAt', 'endedAt', 'elapsedMs', 'reason', 'createdAt']);
     requireStableId(operation, run.id);
-    if (run.batchId !== batch.id || run.featureId !== batch.featureId || !(EXECUTION_BATCH_STATUSES as readonly unknown[]).includes(run.status)) malformed(operation, 'execution_budget_run_invalid');
+    if (run.batchId !== batch.id || !featureIds.includes(run.featureId as string) || !(EXECUTION_BATCH_STATUSES as readonly unknown[]).includes(run.status)) malformed(operation, 'execution_budget_run_invalid');
     requireNonEmptyString(operation, run.purpose, 'execution_budget_run_invalid');
     requireNonEmptyString(operation, run.workKey, 'execution_budget_run_invalid');
     requirePositiveInteger(operation, run.dispatchOrdinal);
@@ -3094,7 +3165,8 @@ export function validateExecutionBudgetStatusResultWire(
   }
   for (const value of object.tasks) {
     const task = requirePlain(operation, value);
-    exactKeys(operation, task, ['taskId', 'status', 'firstPassedAt', 'attempts', 'codeAttempts', 'caps']);
+    exactKeys(operation, task, ['taskId', 'featureId', 'status', 'firstPassedAt', 'attempts', 'codeAttempts', 'caps']);
+    if ((featureIds.length > 1 && task.featureId === undefined) || (task.featureId !== undefined && !featureIds.includes(task.featureId as string))) malformed(operation, 'execution_budget_task_invalid');
     requireStableId(operation, task.taskId);
     if (!(TASK_STATUSES as readonly unknown[]).includes(task.status)) malformed(operation, 'execution_budget_task_invalid');
     budgetDate(operation, task.firstPassedAt, true);
@@ -3642,6 +3714,8 @@ function validateExecutionControlBatchBriefWire(operation: HostOperation, value:
   exactKeys(operation, batch, [
     'batchId',
     'featureId',
+    'featureIds',
+    'phaseId',
     'status',
     'reason',
     'pauseRequestedAt',
@@ -3654,6 +3728,11 @@ function validateExecutionControlBatchBriefWire(operation: HostOperation, value:
   requireStableId(operation, batch.featureId);
   if (!(EXECUTION_BATCH_STATUSES as readonly unknown[]).includes(batch.status)) {
     malformed(operation, 'execution_control_batch_status_invalid');
+  }
+  if (batch.featureIds !== undefined || batch.phaseId !== undefined) {
+    requireStableId(operation, batch.phaseId);
+    const ids = executionFeatureIdsWire(operation, batch.featureIds);
+    if (ids.length === 0 || !ids.includes(batch.featureId as string)) malformed(operation, 'execution_control_batch_scope_invalid');
   }
   if (batch.reason !== null) requireNonEmptyString(operation, batch.reason, 'execution_control_batch_invalid');
   requireIsoUtcOrNull(operation, batch.pauseRequestedAt);
@@ -3762,7 +3841,13 @@ export function validateBatchControlDetailResultWire(
   if (!Array.isArray(runs.records) || runs.records.length > EXECUTION_CONTROL_RUNS_MAX || typeof runs.truncated !== 'boolean') {
     malformed(operation, 'execution_control_runs_invalid');
   }
-  for (const run of runs.records as unknown[]) validateExecutionControlRunBriefWire(operation, run);
+  for (const value of runs.records as unknown[]) {
+    validateExecutionControlRunBriefWire(operation, value);
+    const run = requirePlain(operation, value);
+    const batch = requirePlain(operation, object.batch);
+    const ids = (batch.featureIds ?? [batch.featureId]) as string[];
+    if (run.batchId !== batch.batchId || !ids.includes(run.featureId as string)) malformed(operation, 'execution_control_batch_scope_invalid');
+  }
   validateExecutionControlAttemptListWire(operation, object.attempts, EXECUTION_CONTROL_ATTEMPTS_MAX);
   validateExecutionControlStopOperationsWire(operation, object.stopOperations);
   validateExecutionControlLeasesWire(operation, object.leases);

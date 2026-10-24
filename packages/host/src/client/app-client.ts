@@ -38,6 +38,7 @@ import {
   isUuidV4,
   isValidResultRef,
   validateCommandEnvelope,
+  WORK_ACCEPTED_SCHEMA_VERSION,
   WIRE_MESSAGE_SCHEMA_VERSION,
 } from 'shiploop-core/protocol';
 import type {
@@ -447,13 +448,15 @@ export interface PrepareExecutionInputInput {
   readonly commandId?: string;
 }
 
-/** execution.preview/start 的单 Feature 授权输入。预算深校验由 Core 完成。 */
-export interface PreviewExecutionInput {
+/** Phase 预览或显式固定 Feature 集合；预算深校验由 Core 完成。 */
+export type PreviewExecutionInput = {
   readonly projectId: string;
-  readonly featureIds: readonly string[];
   readonly budget: unknown;
   readonly commandId?: string;
-}
+} & (
+  | { readonly phaseId: string; readonly featureIds?: never }
+  | { readonly featureIds: readonly string[]; readonly phaseId?: never }
+);
 
 export interface StartExecutionInput {
   readonly projectId: string;
@@ -1397,7 +1400,7 @@ const FEATURE_VERIFICATION_CONTINUE_INPUT_KEYS = [
   'expectedRevision',
   'commandId',
 ] as const;
-const EXECUTION_PREVIEW_INPUT_KEYS = ['projectId', 'featureIds', 'budget', 'commandId'] as const;
+const EXECUTION_PREVIEW_INPUT_KEYS = ['projectId', 'phaseId', 'featureIds', 'budget', 'commandId'] as const;
 const EXECUTION_START_INPUT_KEYS = ['projectId', 'featureIds', 'budget', 'previewDigest', 'retryBatchId', 'commandId'] as const;
 // P05-1 / F-012：规划命令/查询输入键冻结（未知键拒绝；深校验在 Core）。
 const START_PLANNING_INPUT_KEYS = ['projectId', 'phaseId', 'featureId', 'requirementRefs', 'constraints', 'acceptance', 'strategy', 'budget', 'expectedRevision', 'commandId'] as const;
@@ -1409,7 +1412,7 @@ const RETRY_FINAL_EXECUTION_INPUT_KEYS = ['projectId', 'featureId', 'historicalR
 const BUDGET_REVISION_LIST_INPUT_KEYS = ['limit', 'cursor'] as const;
 
 function requireFeatureIds(operation: HostOperation, value: unknown): string[] {
-  if (!Array.isArray(value) || !value.every((id) => typeof id === 'string' && STABLE_ID_PATTERN.test(id))) {
+  if (!Array.isArray(value) || value.length > 16 || new Set(value).size !== value.length || !value.every((id) => typeof id === 'string' && STABLE_ID_PATTERN.test(id))) {
     throw invalidInput(operation, 'invalid_feature_ids', 'featureIds');
   }
   return [...value];
@@ -3160,19 +3163,30 @@ export function createHostClientApplication(context: AppClientContext): HostClie
     ): Promise<CommandReceipt> {
       const object = rejectUnknownInputKeys('commands.submit', input, EXECUTION_PREVIEW_INPUT_KEYS);
       const projectId = requireProjectId('commands.submit', object.projectId as string);
-      const featureIds = requireFeatureIds('commands.submit', object.featureIds);
+      if (Object.hasOwn(object, 'phaseId') === Object.hasOwn(object, 'featureIds')) {
+        throw invalidInput('commands.submit', 'invalid_scope_selector');
+      }
+      const selector = Object.hasOwn(object, 'phaseId')
+        ? { phaseId: requireStableIdInput('commands.submit', object.phaseId, 'phaseId') }
+        : { featureIds: requireFeatureIds('commands.submit', object.featureIds) };
       const budget = requireBudgetObject('commands.submit', object.budget, 'budget');
       const receipt = await submitCommand(
         {
           ...optionalCommandIdInput('commands.submit', object.commandId),
           operation: 'execution.preview',
           scope: { kind: 'project', projectId },
-          payload: { featureIds, budget },
+          payload: { ...selector, budget },
         },
         options,
       );
       if (receipt.status === 'completed') {
-        validateExecutionPreviewResultWire(receipt.result, 'commands.submit');
+        const result = validateExecutionPreviewResultWire(receipt.result, 'commands.submit');
+        const actualRequested = 'requestedFeatureIds' in result.scope ? result.scope.requestedFeatureIds : result.scope.featureIds;
+        if (result.projectId !== projectId || ('phaseId' in selector
+          ? !('phaseId' in result.scope) || result.scope.phaseId !== selector.phaseId
+          : selector.featureIds.length !== actualRequested.length || selector.featureIds.some(id => !actualRequested.includes(id)))) {
+          throw new HostProtocolError('response_malformed', 'commands.submit', '预览响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
+        }
       }
       return receipt;
     },
@@ -3196,7 +3210,7 @@ export function createHostClientApplication(context: AppClientContext): HostClie
         const previewDigest = requireSha256Input('commands.submit', object.previewDigest, 'previewDigest');
         payload = { featureIds, budget, previewDigest, retryBatchId: null };
       }
-      return submitCommand(
+      const receipt = await submitCommand(
         {
           ...optionalCommandIdInput('commands.submit', object.commandId),
           operation: 'execution.start',
@@ -3205,6 +3219,10 @@ export function createHostClientApplication(context: AppClientContext): HostClie
         },
         options,
       );
+      if (receipt.schemaVersion === WORK_ACCEPTED_SCHEMA_VERSION && featureIds.length > 1 && receipt.runIds?.length !== featureIds.length) {
+        throw new HostProtocolError('response_malformed', 'commands.submit', '启动回执缺少完整初始 Run 关联', { details: { reason: 'scope_mismatch' } });
+      }
+      return receipt;
     },
 
     async reviseExecutionBudget(

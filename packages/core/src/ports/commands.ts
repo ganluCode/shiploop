@@ -2470,6 +2470,8 @@ export interface WorkAcceptedCommandReceipt extends Omit<ReceiptCommon, 'schemaV
   readonly operationId: string;
   readonly batchId: string;
   readonly runId: string;
+  /** P05 固定多成员授权的全部初始 Run；旧 v6 单成员回执可缺省。 */
+  readonly runIds?: readonly string[];
 }
 
 /**
@@ -2635,6 +2637,7 @@ export interface WorkAcceptedReceiptInput extends Omit<AcceptedReceiptInput, 'op
   readonly operation: typeof WORK_ACCEPTED_OPERATION;
   readonly batchId: string;
   readonly runId: string;
+  readonly runIds?: readonly string[];
 }
 
 /** P05-1 / F-003：planning.start 接受回执输入（v7；携带 Batch/Run/planning
@@ -2675,9 +2678,14 @@ export function createAcceptedReceipt(
     if (!isUuidV4(input.batchId) || !isUuidV4(input.runId) || input.operationId !== input.batchId) {
       throw new TypeError('Work accepted requires UUID Batch/Run IDs and operationId = batchId');
     }
+    if (input.runIds !== undefined && (input.runIds.length < 2 || input.runIds.length > 16 ||
+        input.runIds[0] !== input.runId || new Set(input.runIds).size !== input.runIds.length || !input.runIds.every(isUuidV4))) {
+      throw new TypeError('Work accepted runIds must be unique initial Run IDs with runId first');
+    }
     return {
       ...base, schemaVersion: WORK_ACCEPTED_SCHEMA_VERSION, operation: input.operation,
       batchId: input.batchId, runId: input.runId,
+      ...(input.runIds === undefined ? {} : { runIds: [...input.runIds] }),
     };
   }
   // P05-1 / F-003：planning.start 接受回执（v7）携带四重 UUID 身份。

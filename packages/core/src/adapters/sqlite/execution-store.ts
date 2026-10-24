@@ -30,6 +30,7 @@
  * listBatchBudgetRevisionRecords）：一致读视图零写入、零事件、零唤醒，跨项目/
  * 不存在目标统一 undefined（存在性折叠由应用层承担）。
  */
+import { readFixedExecutionBatchFeatureIds } from '../../ports/execution-budget-query.js';
 import { randomUUID } from 'node:crypto';
 import { createSqliteDispatchRecovery } from './dispatch-recovery.js';
 import { ACTIVE_ATTEMPT_STATUSES } from '../../ports/attempt-store.js';
@@ -3193,12 +3194,13 @@ export function createSqliteExecutionAccess(
           `${SELECT_RUN} WHERE batch_id = ? AND project_id = ? ORDER BY dispatch_ordinal, id`,
         )
         .all(validBatchId, validProjectId) as RunSqlRow[];
+      const memberIds = readFixedExecutionBatchFeatureIds(batch);
       const taskRows = db
-        .prepare<[string, string], TaskBudgetSqlRow>(
-          'SELECT id, status, first_passed_at, attempt_counter, code_attempts_used, execution_config ' +
-            'FROM tasks WHERE feature_id = ? AND project_id = ? ORDER BY id',
+        .prepare(
+          'SELECT id, feature_id, status, first_passed_at, attempt_counter, code_attempts_used, execution_config ' +
+            `FROM tasks WHERE feature_id IN (${memberIds.map(() => '?').join(', ')}) AND project_id = ? ORDER BY feature_id, id`,
         )
-        .all(batch.featureId, validProjectId) as TaskBudgetSqlRow[];
+        .all(...memberIds, validProjectId) as (TaskBudgetSqlRow & { feature_id: string })[];
       const globalRow = db
         .prepare<[string], { revision: number; payload: string }>(
           'SELECT revision, payload FROM global_settings WHERE id = ?',
@@ -3237,7 +3239,7 @@ export function createSqliteExecutionAccess(
       return {
         batch,
         runs: runRows.map((row) => runFromRow(row, operation)),
-        tasks: taskRows.map((row) => taskBudgetRowFromRow(row, operation)),
+        tasks: taskRows.map((row) => ({ ...taskBudgetRowFromRow(row, operation), ...(memberIds.length > 1 ? { featureId: row.feature_id } : {}) })),
         settings,
       };
     });

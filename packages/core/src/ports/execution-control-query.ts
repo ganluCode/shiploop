@@ -64,6 +64,7 @@ import {
   validateStableId,
   validationError,
 } from './validation.js';
+import { readFixedExecutionBatchFeatureIds } from './execution-budget-query.js';
 import type { ValidationContext } from './validation.js';
 
 /* ------------------------------------------------------------------ *
@@ -474,6 +475,8 @@ export interface PublicExecutionControlRunBrief {
 export interface PublicExecutionControlBatchBrief {
   readonly batchId: string;
   readonly featureId: string;
+  readonly featureIds?: readonly string[];
+  readonly phaseId?: string;
   readonly status: ExecutionBatchStatus;
   readonly reason: string | null;
   readonly pauseRequestedAt: string | null;
@@ -689,9 +692,11 @@ export function toPublicExecutionControlRunBrief(record: RunRecord): PublicExecu
 export function toPublicExecutionControlBatchBrief(
   record: ExecutionBatchRecord,
 ): PublicExecutionControlBatchBrief {
+  const featureIds = readFixedExecutionBatchFeatureIds(record);
   return {
     batchId: record.id,
     featureId: record.featureId,
+    ...(featureIds.length > 1 ? { phaseId: record.phaseId, featureIds } : {}),
     status: record.status,
     reason: record.reason,
     pauseRequestedAt: isoOr(record.pauseRequestedAtUtcMs),

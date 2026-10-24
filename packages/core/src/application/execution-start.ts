@@ -278,7 +278,7 @@ function submitMultiExecutionStart(
     enqueueAuthorizedRunInTransaction(transaction, { projectId: prepared.projectId, runId: run.id, source: 'start', reason: run.reason });
     runIds.push(run.id);
   }
-  const receipt = createAcceptedReceipt({ ...receiptIdentity, operation: OPERATION, operationId: batch.id, batchId: batch.id, runId: runIds[0]! });
+  const receipt = createAcceptedReceipt({ ...receiptIdentity, operation: OPERATION, operationId: batch.id, batchId: batch.id, runId: runIds[0]!, runIds });
   transaction.saveReceipt(receipt);
   return receipt;
 }

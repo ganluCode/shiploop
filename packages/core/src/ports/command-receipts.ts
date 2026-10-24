@@ -554,7 +554,7 @@ function validateReceiptShape(
   const object = requirePlainObject(value, context, 'receipt');
   const isWork = object.schemaVersion === WORK_ACCEPTED_SCHEMA_VERSION;
   const isPlanning = object.schemaVersion === PLANNING_ACCEPTED_SCHEMA_VERSION;
-  const extendedKeys = isPlanning ? [...RECEIPT_KEYS, 'batchId', 'runId', 'planningTaskId', 'candidateId'] : [...RECEIPT_KEYS, 'batchId', 'runId'];
+  const extendedKeys = isPlanning ? [...RECEIPT_KEYS, 'batchId', 'runId', 'planningTaskId', 'candidateId'] : [...RECEIPT_KEYS, 'batchId', 'runId', 'runIds'];
   rejectUnknownKeys(object, isWork || isPlanning ? extendedKeys : RECEIPT_KEYS, context, 'receipt');
 
   if (!isWork && !isPlanning && object.schemaVersion !== WIRE_MESSAGE_SCHEMA_VERSION) {
@@ -613,9 +613,14 @@ function validateReceiptShape(
     if (!isUuidV4(object.batchId) || !isUuidV4(object.runId) || object.operationId !== object.batchId) {
       throw validationError(context, 'receipt.association', 'Work accepted 必须携带 UUID Batch/Run 且 operationId = batchId');
     }
+    if (object.runIds !== undefined && (!Array.isArray(object.runIds) || object.runIds.length < 2 || object.runIds.length > 16 ||
+        object.runIds[0] !== object.runId || new Set(object.runIds).size !== object.runIds.length || !object.runIds.every(isUuidV4))) {
+      throw validationError(context, 'receipt.runIds', '初始 Run 列表必须有界、唯一且以 runId 开头');
+    }
     return {
       ...base, schemaVersion: WORK_ACCEPTED_SCHEMA_VERSION, operation: WORK_ACCEPTED_OPERATION,
       status: 'accepted', operationId: object.batchId, batchId: object.batchId, runId: object.runId,
+      ...(object.runIds === undefined ? {} : { runIds: [...object.runIds as string[]] }),
     };
   }
   // P05-1 / F-003：planning.start 接受回执（v7）——仅 accepted，携带四重 UUID

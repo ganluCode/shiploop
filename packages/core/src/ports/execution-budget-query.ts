@@ -17,6 +17,7 @@
  * - accepted/queued 等未验收状态原样展示（status 原值），绝不推导为验收
  *   成功；passed/firstPassedAt 只反映受信领域事实。
  */
+import { validateStableId } from './validation.js';
 import type { ValidationContext } from './validation.js';
 import { StorageError } from './errors.js';
 import { WIRE_MESSAGE_SCHEMA_VERSION } from './commands.js';
@@ -105,7 +106,7 @@ export interface PublicExecutionBudgetBatchView {
   readonly projectId: string;
   readonly phaseId: string;
   readonly featureId: string;
-  /** 固定授权范围（不可变单成员；恰等于 featureId）。 */
+  /** 固定授权成员集合；featureId 是兼容的首成员身份。 */
   readonly featureIds: readonly string[];
   readonly status: ExecutionBatchStatus;
   /** 当前预算版本（修订后递增；修订历史见 execution.budget.revisions）。 */
@@ -166,6 +167,7 @@ export interface PublicExecutionBudgetRunView {
 /** Task 层视图：累计尝试计数 + 策略副本/有效配置解析出的上限与剩余。 */
 export interface PublicExecutionBudgetTaskView {
   readonly taskId: string;
+  readonly featureId?: string;
   readonly status: TaskStatus;
   /** 首次受信通过事实时间（只反映受信 Verifier 写入；未通过 = null）。 */
   readonly firstPassedAt: string | null;
@@ -224,6 +226,7 @@ export interface BudgetRevisionListResult {
 /** Task 层持久事实行（执行计数列 + 策略副本；副本正文不进入公开形状）。 */
 export interface ExecutionBudgetTaskRow {
   readonly taskId: string;
+  readonly featureId?: string;
   readonly status: TaskStatus;
   readonly firstPassedAtUtcMs: number | null;
   readonly attemptCounter: number;
@@ -286,18 +289,18 @@ function requirePositiveSafeInteger(value: unknown, field: string): number {
   return value;
 }
 
-/** 固定范围校验：scopeSnapshot.featureIds 恰含一个成员且等于 Batch.featureId。 */
-function fixedFeatureIds(batch: ExecutionBatchRecord): readonly string[] {
+/** 从不可变授权快照读取成员，绝不重新解析当前 Phase 范围。 */
+export function readFixedExecutionBatchFeatureIds(batch: ExecutionBatchRecord): readonly string[] {
   const raw: unknown = batch.scopeSnapshot.featureIds;
-  if (
-    !Array.isArray(raw) ||
-    raw.length !== 1 ||
-    typeof raw[0] !== 'string' ||
-    raw[0] !== batch.featureId
-  ) {
-    throw corrupt('Batch 范围快照不是固定单 Feature 范围（scope_snapshot 损坏）');
+  if (!Array.isArray(raw) || raw.length === 0 || raw.length > 16 ||
+      raw.some(id => typeof id !== 'string') || new Set(raw).size !== raw.length || !raw.includes(batch.featureId)) {
+    throw corrupt('Batch 固定 Feature 范围损坏');
   }
-  return [batch.featureId];
+  try {
+    return raw.map(id => validateStableId(id, { operation: OPERATION }, 'featureIds'));
+  } catch (cause) {
+    throw corrupt('Batch 固定 Feature 身份损坏', cause);
+  }
 }
 
 function isoOr(value: number | null): string | null {
@@ -342,7 +345,11 @@ export function buildExecutionBudgetStatus(
 ): ExecutionBudgetStatusResult {
   const now = requirePositiveSafeInteger(options.nowUtcMs, 'nowUtcMs');
   const batch = view.batch;
-  const featureIds = fixedFeatureIds(batch);
+  const featureIds = readFixedExecutionBatchFeatureIds(batch);
+  if (view.runs.some(run => run.batchId !== batch.id || run.projectId !== batch.projectId || !featureIds.includes(run.featureId)) ||
+      view.tasks.some(task => (featureIds.length > 1 && task.featureId === undefined) || (task.featureId !== undefined && !featureIds.includes(task.featureId)))) {
+    throw corrupt('预算查询成员不属于固定 Batch 范围');
+  }
 
   const batchDecision = evaluateBatchBudgetReservation(
     batch.budgetSnapshot.batch,
@@ -444,6 +451,7 @@ export function buildExecutionBudgetStatus(
     }
     return {
       taskId: row.taskId,
+      ...(row.featureId === undefined ? {} : { featureId: row.featureId }),
       status: row.status,
       firstPassedAt: isoOr(row.firstPassedAtUtcMs),
       attempts: {

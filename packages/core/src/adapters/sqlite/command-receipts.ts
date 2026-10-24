@@ -31,6 +31,7 @@ import {
 import type { CommandReceipt } from '../../ports/commands.js';
 import {
   mapPersistedCommandReceipt,
+  RECEIPT_READ_OPERATION,
   validatePersistableCommandReceipt,
 } from '../../ports/command-receipts.js';
 import type {
@@ -161,11 +162,38 @@ export function createSqliteCommandReceiptAccess(
     };
   }
 
+  /** 初始关联来自不可变范围与 execute/ordinal=1 的 Run，重试不会进入本列表。 */
+  function initialMultiRunIds(projectId: string, batchId: string, runId: string): readonly string[] | undefined {
+    const db = session.database;
+    const batch = db.prepare('SELECT scope_snapshot FROM execution_batches WHERE project_id = ? AND id = ?')
+      .get(projectId, batchId) as { scope_snapshot: string } | undefined;
+    if (batch === undefined) return undefined;
+    const scope = parseJsonColumn(batch.scope_snapshot, RECEIPT_READ_OPERATION, 'invalid_scope_json') as { featureIds?: unknown };
+    const members = scope?.featureIds;
+    if (!Array.isArray(members) || members.length === 0 || members.length > 16 ||
+        members.some(id => typeof id !== 'string') || new Set(members).size !== members.length) {
+      throw new StorageError('corrupt', RECEIPT_READ_OPERATION, '固定 Batch 范围损坏', { details: { reason: 'corrupt_receipt_association' } });
+    }
+    if (members.length === 1) return undefined;
+    const rows = db.prepare("SELECT id, feature_id FROM runs WHERE project_id = ? AND batch_id = ? AND purpose = 'execute' AND dispatch_ordinal = 1 ORDER BY feature_id, id")
+      .all(projectId, batchId) as { id: string; feature_id: string }[];
+    if (rows.length !== members.length ||
+        new Set(rows.map(row => row.feature_id)).size !== members.length || rows.some(row => !members.includes(row.feature_id)) || rows[0]?.id !== runId) {
+      throw new StorageError('corrupt', RECEIPT_READ_OPERATION, '初始 Run 关联与固定 Batch 不一致', { details: { reason: 'corrupt_receipt_association' } });
+    }
+    return rows.map(row => row.id);
+  }
+
   function mapRow(row: CommandReceiptSqlRow | undefined, operation: string): CommandReceipt | undefined {
     if (row === undefined) {
       return undefined;
     }
-    return mapPersistedCommandReceipt(toPersistedRow(row, operation), operation);
+    const receipt = mapPersistedCommandReceipt(toPersistedRow(row, operation), operation);
+    if (receipt.schemaVersion === WORK_ACCEPTED_SCHEMA_VERSION && receipt.scope.kind === 'project') {
+      const runIds = initialMultiRunIds(receipt.scope.projectId, receipt.batchId, receipt.runId);
+      if (runIds !== undefined) return validatePersistableCommandReceipt({ ...receipt, runIds }, operation);
+    }
+    return receipt;
   }
 
   function saveReceiptInTransaction(receipt: unknown): void {
@@ -181,6 +209,11 @@ export function createSqliteCommandReceiptAccess(
         if (valid.schemaVersion === WORK_ACCEPTED_SCHEMA_VERSION) {
           const target = db.prepare('SELECT id FROM runs WHERE project_id = ? AND batch_id = ? AND id = ?')
               .get(scopeProjectId, valid.batchId, valid.runId);
+          const initial = initialMultiRunIds(scopeProjectId!, valid.batchId, valid.runId);
+          if (valid.runIds !== undefined && JSON.stringify(valid.runIds) !== JSON.stringify(initial ?? [valid.runId])) {
+            throw validationError({ operation, entity: { type: 'command_receipt' } },
+              'receipt.runIds', '初始 Run 关联必须与固定 Batch 全部成员一致');
+          }
           if (target === undefined) {
             throw validationError({ operation, entity: { type: 'command_receipt' } },
               'receipt.association', '操作实体必须存在且 Batch/Run 与回执属于同一项目');
