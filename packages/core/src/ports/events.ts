@@ -135,6 +135,10 @@ export const PUBLIC_STATE_EVENT_TYPES = [
   BASELINE_CANCELLED_EVENT_TYPE,
   // P03-1 / F-004：计划域事件白名单扩展（aggregate_type='phase'）。
   PHASE_CREATED_EVENT_TYPE,
+  'phase.metadata.updated',
+  'phase.closed',
+  'phase.reopened',
+  'phase.archived',
   // P03-1 / F-005：计划域事件白名单扩展（aggregate_type='feature'）。
   FEATURE_PLAN_IMPORTED_EVENT_TYPE,
   // P03-1 / F-007：纯标签 CAS 编辑事件（phase/feature/task 三个目标实体各自一条）。
@@ -194,6 +198,7 @@ type EventPayloadKind =
   | 'baselineCompleted'
   | 'baselineCancelled'
   | 'phaseCreated'
+  | 'phaseMutation'
   | 'featurePlanImported'
   | 'planLabelsUpdated'
   | 'featurePlanRevised'
@@ -330,6 +335,10 @@ export const STATE_EVENT_TYPE_SPECS: Readonly<
   }),
   // P03-1 / F-004：Phase 创建事件（聚合为 Phase 自身；project_id 非空由
   // scopeKind='project' 与映射层共同保证，payload 恒为 {created:true}）。
+  'phase.metadata.updated': { aggregateType: 'phase', scopeKind: 'project', payloadKind: 'phaseMutation' },
+  'phase.closed': { aggregateType: 'phase', scopeKind: 'project', payloadKind: 'phaseMutation' },
+  'phase.reopened': { aggregateType: 'phase', scopeKind: 'project', payloadKind: 'phaseMutation' },
+  'phase.archived': { aggregateType: 'phase', scopeKind: 'project', payloadKind: 'phaseMutation' },
   [PHASE_CREATED_EVENT_TYPE]: Object.freeze({
     aggregateType: 'phase',
     scopeKind: 'project',
@@ -1013,6 +1022,14 @@ export function mapStateEvent(row: unknown, operation: string = EVENT_READ_OPERA
     payload = validateRegisteredPayload(row.payload, operation);
   } else if (spec.payloadKind === 'phaseCreated') {
     payload = validatePhaseCreatedPayload(row.payload, operation);
+  } else if (spec.payloadKind === 'phaseMutation') {
+    const key = {
+      'phase.metadata.updated': 'metadataUpdated', 'phase.closed': 'closed',
+      'phase.reopened': 'reopened', 'phase.archived': 'archived',
+    }[row.eventType as 'phase.metadata.updated' | 'phase.closed' | 'phase.reopened' | 'phase.archived'];
+    exactPayloadKeys(operation, row.payload, [key]);
+    if (row.payload[key] !== true) corrupt(operation, 'event_payload_violation');
+    payload = { [key]: true };
   } else if (spec.payloadKind === 'featurePlanImported') {
     payload = validateFeaturePlanImportedPayload(row.payload, operation);
   } else if (spec.payloadKind === 'planLabelsUpdated') {

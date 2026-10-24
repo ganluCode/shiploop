@@ -141,6 +141,7 @@ export function createSqliteAtomicCommandStore(
           // P03-1 / F-002：计划结构原语（Phase/Feature/Task/依赖边插入；归属核验与
           // 环检测在同一事务内完成），同一 BEGIN IMMEDIATE 内原子生效。
           insertPhase: guarded(plan.insertPhaseInTransaction),
+          updatePhase: guarded(plan.updatePhaseInTransaction),
           insertFeature: guarded(plan.insertFeatureInTransaction),
           insertTask: guarded(plan.insertTaskInTransaction),
           insertTaskDependency: guarded(plan.insertTaskDependencyInTransaction),

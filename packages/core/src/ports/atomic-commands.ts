@@ -120,6 +120,8 @@ export interface CommandTransaction {
    * ---------------------------------------------------------------- */
   /** 创建 open Phase（适配器生成 UUID v4 与 UTC 毫秒；revision=1）。 */
   insertPhase(input: unknown): PhaseRecord;
+  /** Phase metadata/lifecycle CAS; execution occupancy checked in this same short transaction. */
+  updatePhase(input: unknown): PhaseRecord;
   /**
    * P03-1 / F-007：纯标签 CAS 编辑（Phase/Feature/Task）。单语句条件 UPDATE
    * 只触达目标实体 labels/revision/updated_at：expectedRevision 为实体自身

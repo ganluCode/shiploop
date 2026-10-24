@@ -19,6 +19,7 @@
  * - 读取映射对持久 JSON 重新解析，损坏 JSON 以 kind='corrupt' 拒绝，不作为
  *   有效记录返回；不泄漏驱动会话或 ORM 类型。
  */
+import { validatePhaseMutationInput } from '../../ports/phase-lifecycle.js';
 import { randomUUID } from 'node:crypto';
 import type Database from 'better-sqlite3';
 import { StorageError } from '../../ports/errors.js';
@@ -191,6 +192,7 @@ function isSqliteConstraintError(error: unknown): error is Error & { code: strin
 /** 同会话同步原语集合：供原子命令事务复用，绝不嵌套 Promise/事务。 */
 export interface SqlitePlanAccess {
   insertPhaseInTransaction(input: unknown): PhaseRecord;
+  updatePhaseInTransaction(input: unknown): PhaseRecord;
   insertFeatureInTransaction(input: unknown): FeatureRecord;
   insertTaskInTransaction(input: unknown): TaskRecord;
   insertTaskDependencyInTransaction(input: unknown): TaskDependencyRecord;
@@ -672,6 +674,63 @@ export function createSqlitePlanAccess(
       throw mapConstraintError(error, operation, entity, 'phase');
     }
     return phaseFromRow(row!);
+  }
+
+  function updatePhaseInTransaction(input: unknown): PhaseRecord {
+    const operation = 'PlanStore.updatePhase';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const valid = validatePhaseMutationInput(input);
+    const current = getPhaseInTransaction(valid.projectId, valid.payload.phaseId);
+    const entity: StorageEntityRef = { type: 'phase', id: current.id, projectId: valid.projectId };
+    if (current.revision !== valid.expectedRevision) {
+      throw conflict(operation, 'Phase revision 不匹配', entity, {
+        reason: 'conflict', expectedRevision: valid.expectedRevision, actualRevision: current.revision,
+      });
+    }
+    const db = session.database;
+    let status = current.status;
+    if (valid.operation !== 'phase.metadata.update') {
+      const required = valid.operation === 'phase.close' ? 'open' : 'closed';
+      if (current.status !== required) {
+        throw conflict(operation, 'Phase 生命周期迁移不合法', entity, { reason: 'invalid_phase_transition' });
+      }
+      status = valid.operation === 'phase.close' ? 'closed'
+        : valid.operation === 'phase.reopen' ? 'open' : 'archived';
+      if (valid.operation !== 'phase.reopen') {
+        // BEGIN IMMEDIATE serializes these checks with Batch creation, claims and recovery.
+        // Expiry does not prove a writer stopped; held/quarantined rows remain blockers.
+        const active = ACTIVE_EXECUTION_STATUSES.map(() => '?').join(',');
+        const batch = db.prepare(`SELECT 1 FROM execution_batches WHERE project_id = ? AND phase_id = ?
+          AND status IN (${active}) LIMIT 1`).get(valid.projectId, current.id, ...ACTIVE_EXECUTION_STATUSES);
+        const execution = db.prepare(`SELECT 1 FROM runs r JOIN features f ON f.id = r.feature_id
+          WHERE f.project_id = ? AND f.phase_id = ? AND (
+            r.status IN (${active})
+            OR EXISTS (SELECT 1 FROM attempts a WHERE a.run_id = r.id AND a.status IN ('preparing','executing','verifying'))
+            OR EXISTS (SELECT 1 FROM workspace_leases l JOIN attempts a ON a.id = l.owner_id WHERE a.run_id = r.id)
+            OR EXISTS (SELECT 1 FROM run_dispatch_claims c WHERE c.run_id = r.id AND c.state IN ('held','quarantined'))
+            OR EXISTS (SELECT 1 FROM execution_slot_claims s WHERE s.run_id = r.id AND s.state IN ('held','quarantined'))
+          ) LIMIT 1`).get(valid.projectId, current.id, ...ACTIVE_EXECUTION_STATUSES);
+        const stop = db.prepare(`SELECT 1 FROM execution_stop_operations s
+          JOIN execution_batches b ON b.id = s.batch_id
+          WHERE b.project_id = ? AND b.phase_id = ?
+            AND (s.status <> 'stopped' OR s.stop_confirmed IS NOT 1) LIMIT 1`).get(valid.projectId, current.id);
+        if (batch !== undefined || execution !== undefined || stop !== undefined) {
+          throw conflict(operation, 'Phase 仍有活动执行或未核验停止的占用', entity, { reason: 'phase_execution_active' });
+        }
+      }
+    }
+    const updated = db.prepare(`UPDATE phases SET title = ?, description = ?, labels = ?, status = ?,
+      revision = revision + 1, updated_at = ? WHERE id = ? AND project_id = ? AND revision = ?`)
+      .run(valid.payload.title ?? current.title,
+        valid.payload.description === undefined ? current.description : valid.payload.description,
+        JSON.stringify(valid.payload.labels ?? current.labels), status, nowUtcMs(),
+        current.id, valid.projectId, valid.expectedRevision);
+    if (updated.changes !== 1) {
+      // Unexpected write failure must roll back, never become a persisted business rejection.
+      throw new Error('Phase CAS failed inside serialized transaction');
+    }
+    return getPhaseInTransaction(valid.projectId, current.id);
   }
 
   function insertFeatureInTransaction(input: unknown): FeatureRecord {
@@ -2170,6 +2229,7 @@ export function createSqlitePlanAccess(
 
   return {
     insertPhaseInTransaction,
+    updatePhaseInTransaction,
     insertFeatureInTransaction,
     insertTaskInTransaction,
     insertTaskDependencyInTransaction,

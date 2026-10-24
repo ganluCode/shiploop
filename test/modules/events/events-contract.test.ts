@@ -151,6 +151,10 @@ describe('F-003 冻结事件封套版本与 §9.2 事件白名单（P02-2 六类
       BASELINE_CANCELLED_EVENT_TYPE,
       // P03-1 / F-004：计划域事件白名单扩展（phase.created，聚合为 Phase 自身）。
       PHASE_CREATED_EVENT_TYPE,
+      'phase.metadata.updated',
+      'phase.closed',
+      'phase.reopened',
+      'phase.archived',
       // P03-1 / F-005：计划域事件白名单扩展（feature.plan.imported，聚合为导入创建的 Feature）。
       FEATURE_PLAN_IMPORTED_EVENT_TYPE,
       // P03-1 / F-007：纯标签 CAS 编辑事件（三目标实体各自一条，payload 恒 {labelsUpdated:true}）。

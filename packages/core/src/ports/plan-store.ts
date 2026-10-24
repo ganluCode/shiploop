@@ -1305,6 +1305,10 @@ export const EXECUTION_INPUT_PREPARED_EVENT_TYPE = 'execution.input.prepared';
 /** 计划域事件白名单（顺序即冻结顺序；白名单外不得进入公开事件流）。 */
 export const PLAN_EVENT_TYPES = [
   PHASE_CREATED_EVENT_TYPE,
+  'phase.metadata.updated',
+  'phase.closed',
+  'phase.reopened',
+  'phase.archived',
   FEATURE_PLAN_IMPORTED_EVENT_TYPE,
   PHASE_LABELS_UPDATED_EVENT_TYPE,
   FEATURE_LABELS_UPDATED_EVENT_TYPE,
@@ -1342,6 +1346,10 @@ interface PlanEventTypeSpec {
   readonly aggregateType: 'phase' | 'feature' | 'task';
   readonly payloadKey:
     | 'created'
+    | 'metadataUpdated'
+    | 'closed'
+    | 'reopened'
+    | 'archived'
     | 'imported'
     | 'labelsUpdated'
     | 'revised'
@@ -1353,6 +1361,10 @@ interface PlanEventTypeSpec {
 
 const PLAN_EVENT_TYPE_SPECS: Readonly<Record<PlanEventType, PlanEventTypeSpec>> = Object.freeze({
   [PHASE_CREATED_EVENT_TYPE]: Object.freeze({ aggregateType: 'phase', payloadKey: 'created' }),
+  'phase.metadata.updated': { aggregateType: 'phase', payloadKey: 'metadataUpdated' },
+  'phase.closed': { aggregateType: 'phase', payloadKey: 'closed' },
+  'phase.reopened': { aggregateType: 'phase', payloadKey: 'reopened' },
+  'phase.archived': { aggregateType: 'phase', payloadKey: 'archived' },
   [FEATURE_PLAN_IMPORTED_EVENT_TYPE]: Object.freeze({
     aggregateType: 'feature',
     payloadKey: 'imported',
@@ -1432,22 +1444,7 @@ export function validatePlanEventAppend(value: unknown, operation: string): Vali
     aggregateType: spec.aggregateType,
     aggregateId: validateStableId(object.aggregateId, context, 'aggregateId'),
     aggregateRevision,
-    payload:
-      spec.payloadKey === 'created'
-        ? { created: true }
-        : spec.payloadKey === 'imported'
-          ? { imported: true }
-          : spec.payloadKey === 'labelsUpdated'
-            ? { labelsUpdated: true }
-            : spec.payloadKey === 'revised'
-              ? { revised: true }
-              : spec.payloadKey === 'strategyUpdated'
-                ? { strategyUpdated: true }
-                : spec.payloadKey === 'approved'
-                  ? { approved: true }
-                  : spec.payloadKey === 'rejected'
-                    ? { rejected: true }
-                    : { prepared: true },
+    payload: { [spec.payloadKey]: true },
   };
 }
 

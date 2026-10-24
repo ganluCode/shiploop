@@ -11,6 +11,7 @@
  * 创建成功同事务写 settings.*_created 创建事件（仅命令路径，契约 §15.3），
  * 更新复用 P01 既有 *_updated 写入，不重复。
  */
+import { submitPhaseMutation } from './phase-lifecycle.js';
 import { randomBytes } from 'node:crypto';
 import { createFeatureDeliveryCommandHandler, type FeatureDeliveryDependencies } from './feature-delivery-commands.js';
 import {
@@ -727,6 +728,10 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           envelope.operation !== FINALIZATION_RETRY_OPERATION &&
           envelope.operation !== 'baseline.cancel' &&
           envelope.operation !== 'phase.create' &&
+          envelope.operation !== 'phase.metadata.update' &&
+          envelope.operation !== 'phase.close' &&
+          envelope.operation !== 'phase.reopen' &&
+          envelope.operation !== 'phase.archive' &&
           envelope.operation !== FEATURE_PLAN_IMPORT_OPERATION &&
           envelope.operation !== PLAN_LABELS_UPDATE_OPERATION &&
           envelope.operation !== FEATURE_PLAN_REVISE_OPERATION &&
@@ -1133,6 +1138,10 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           if (envelope.operation === 'phase.create') {
             // P03-1 / F-004：Phase 创建无事务外 I/O；项目把关/业务/事件/回执同一事务。
             return submitPhaseCreate(principal, envelope, digest, transaction, now);
+          }
+          if (envelope.operation === 'phase.metadata.update' || envelope.operation === 'phase.close'
+            || envelope.operation === 'phase.reopen' || envelope.operation === 'phase.archive') {
+            return submitPhaseMutation(principal.principalId, envelope, digest, transaction, now);
           }
           if (envelope.operation === FEATURE_PLAN_IMPORT_OPERATION) {
             // P03-1 / F-005：计划导入无事务外 I/O（引用仅索引级身份重核）；

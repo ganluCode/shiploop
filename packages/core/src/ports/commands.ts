@@ -23,6 +23,8 @@
  *   payload 原文或堆栈；客户端传入的 actorId/principal/capabilities/scope
  *   提权字段按未知键拒绝，永不成为可信身份来源。
  */
+import { validatePhaseMutationPayload } from './phase-lifecycle.js';
+import type { PhaseMutationOperation, PhaseMutationPayload } from './phase-lifecycle.js';
 import { isStorageError, StorageError } from './errors.js';
 import {
   validatePhaseFields,
@@ -160,8 +162,12 @@ export const COMMAND_OPERATIONS = [
   'baseline.run',
   'baseline.cancel',
   // P03-1 / F-004：Phase 创建（project scope + phase.write；创建类命令，
-  // 不携带 expectedRevision；关闭/重开/归档生命周期不在本版本）。
+  // 不携带 expectedRevision；P05-2 的生命周期更新命令使用 Phase 自身 revision CAS）。
   'phase.create',
+  'phase.metadata.update',
+  'phase.close',
+  'phase.reopen',
+  'phase.archive',
   // P03-1 / F-005：单 Feature 计划导入（project scope + feature.plan.import；
   // 信封 expectedRevision 为目标 Phase 聚合 CAS，见契约 §6.2 F-005 定案）。
   'feature.plan.import',
@@ -290,6 +296,10 @@ export const COMMAND_OPERATION_SPECS: Readonly<Record<AppOperation, CommandOpera
     'baseline.cancel': { scopeKind: 'project', mutation: 'create', capability: 'baseline.run' },
     // P03-1 / F-004：Phase 创建归属 Phase 聚合（docs/p03-1-plan-import-contract.md §6.1）。
     'phase.create': { scopeKind: 'project', mutation: 'create', capability: 'phase.write' },
+    'phase.metadata.update': { scopeKind: 'project', mutation: 'update', capability: 'phase.write' },
+    'phase.close': { scopeKind: 'project', mutation: 'update', capability: 'phase.write' },
+    'phase.reopen': { scopeKind: 'project', mutation: 'update', capability: 'phase.write' },
+    'phase.archive': { scopeKind: 'project', mutation: 'update', capability: 'phase.write' },
     // P03-1 / F-005：计划导入在目标 Phase 聚合上追加成员（Feature 聚合本身为
     // 新建，服务端生成 revision=1，不建立第二 CAS 权威），信封 expectedRevision
     // 必填且指向 Phase 聚合当前 revision（docs/p03-1-plan-import-contract.md §6.2）。
@@ -999,6 +1009,12 @@ export type ValidatedCommandEnvelope =
       readonly scope: { readonly kind: 'project'; readonly projectId: string };
       readonly expectedRevision: null;
       readonly payload: ValidatedPhaseCreatePayload;
+    })
+  | (EnvelopeCommon & {
+      readonly operation: PhaseMutationOperation;
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: number;
+      readonly payload: PhaseMutationPayload;
     })
   // P03-1 / F-005：计划导入命令信封（expectedRevision=目标 Phase 聚合 CAS；
   // plan 深校验在应用层导入事务内复用 validateFeaturePlanInput 完成，本层只
@@ -1984,6 +2000,16 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
       expectedRevision: null,
       payload: validatePhaseCreatePayload(operation, object.payload),
     };
+  }
+  if (operation === 'phase.metadata.update' || operation === 'phase.close'
+    || operation === 'phase.reopen' || operation === 'phase.archive') {
+    if (scope.kind !== 'project') fail(operation, 'invalid_input', 'scope.kind', 'scope 种类与操作不匹配');
+    try {
+      return { ...base, operation, scope, expectedRevision: expectedRevision as number,
+        payload: validatePhaseMutationPayload(operation, object.payload) };
+    } catch (error) {
+      throw fromProjectValidatorError(error, operation);
+    }
   }
   if (operation === 'feature.plan.import') {
     if (scope.kind !== 'project') {

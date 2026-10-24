@@ -224,6 +224,13 @@ function envelope(
         expectedRevision,
         payload: { schemaVersion: 2 },
       } as ValidatedCommandEnvelope;
+    case 'phase.metadata.update':
+    case 'phase.close':
+    case 'phase.reopen':
+    case 'phase.archive':
+      return { ...base, operation, scope: { kind: 'project', projectId: PROJECT_A },
+        expectedRevision: expectedRevision ?? 1,
+        payload: { phaseId: 'phase-1', ...(operation === 'phase.metadata.update' ? { title: '阶段' } : {}) } };
     case 'phase.create':
       return {
         ...base,
