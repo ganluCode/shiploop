@@ -186,6 +186,10 @@ export interface PreparedExecutionStartFresh {
   readonly kind: 'fresh';
   readonly projectId: string;
   readonly featureId: string;
+  readonly scopeFeatureIds: readonly string[];
+  readonly phaseId: string;
+  readonly phaseRevision: number | null;
+  readonly memberRevisions: readonly { readonly featureId: string; readonly revision: number; readonly planDigest: string | null }[];
   /** 用户确认的预览摘要（= 当前重算摘要；不一致时准备结果为 not_startable）。 */
   readonly previewDigest: string;
   readonly budget: ExecutionBudgetProposal;

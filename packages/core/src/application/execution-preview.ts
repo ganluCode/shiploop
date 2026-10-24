@@ -209,6 +209,7 @@ function scopeForResult(
   return {
     featureIds: [...view.selection.memberFeatureIds],
     phaseId: view.phase.id,
+    phaseRevision: view.phase.revision,
     requestedFeatureIds: [...view.selection.requestedFeatureIds],
     memberFeatureIds: [...view.selection.memberFeatureIds],
     members: view.members.map((member) => ({

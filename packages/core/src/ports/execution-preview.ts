@@ -384,6 +384,7 @@ export interface ExecutionPreviewScopeResult {
   /** Backward-compatible alias for the final frozen member set. */
   readonly featureIds: readonly string[];
   readonly phaseId: string;
+  readonly phaseRevision?: number;
   readonly requestedFeatureIds: readonly string[];
   readonly memberFeatureIds: readonly string[];
   readonly members: readonly { readonly featureId: string; readonly revision: number; readonly planDigest: string | null }[];

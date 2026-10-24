@@ -42,8 +42,7 @@
  * 本模块不实现：预算预占/结算与 Task 累计额度记账（F-006..F-008）、Run 生命
  * 周期 CAS（F-008）、预算显式修订（F-009）、查询面（F-010）。
  */
-import { randomBytes } from 'node:crypto';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import {
   PublicError,
   createAcceptedReceipt,
@@ -168,6 +167,120 @@ function readPermissionsFace(
   return face as ExecutionPermissionsFace;
 }
 
+function aggregatePlanDigest(features: readonly { readonly id: string; readonly planDigest: string | null }[]): string | null {
+  if (features.length === 0 || features.some((feature) => feature.planDigest === null)) return null;
+  if (features.length === 1) return features[0]!.planDigest;
+  return createHash('sha256').update(`shiploop:execution-preview-plans:v1\n${stableStringify(
+    features.map((feature) => ({ featureId: feature.id, planDigest: feature.planDigest }))
+      .sort((left, right) => left.featureId < right.featureId ? -1 : 1),
+  )}`, 'utf8').digest('hex');
+}
+
+function submitMultiExecutionStart(
+  deps: ExecutionStartServiceDeps,
+  identity: ExecutionStartCommandIdentity,
+  envelope: ExecutionStartEnvelopeFace,
+  transaction: CommandTransaction,
+  prepared: Extract<PreparedExecutionStart, { readonly kind: 'fresh' }>,
+  context: ExecutionStartSubmitContext,
+  receiptIdentity: {
+    readonly principalId: string;
+    readonly commandId: string;
+    readonly operation: typeof OPERATION;
+    readonly scope: ExecutionStartCommandIdentity['scope'];
+    readonly requestDigest: string;
+    readonly issuedAt: string;
+    readonly completedAt: string;
+  },
+): CommandReceipt {
+  const reject = (): CommandReceipt => {
+    const receipt = createRejectedReceipt({ ...receiptIdentity, error: new PublicError('conflict', OPERATION, undefined, { details: { reason: 'preview_stale' } }) });
+    transaction.saveReceipt(receipt);
+    return receipt;
+  };
+  const memberIds = [...prepared.scopeFeatureIds];
+  const requestedIds = new Set(envelope.payload.featureIds);
+  if (memberIds.length < 2 || new Set(memberIds).size !== memberIds.length || requestedIds.size !== memberIds.length || memberIds.some((id) => !requestedIds.has(id))) return reject();
+  const snapshots = memberIds.map((featureId) => transaction.getFeaturePlan(prepared.projectId, featureId));
+  const first = snapshots[0]!.feature;
+  const phase = transaction.getPhase(prepared.projectId, prepared.phaseId);
+  if (phase.status !== 'open' || phase.revision !== prepared.phaseRevision || snapshots.some((item) => item.feature.phaseId !== phase.id)) return reject();
+  const expected = new Map(prepared.memberRevisions.map((member) => [member.featureId, member] as const));
+  if (expected.size !== snapshots.length || snapshots.some((item) => {
+    const member = expected.get(item.feature.id);
+    return member === undefined || member.revision !== item.feature.revision || member.planDigest !== item.feature.planDigest;
+  })) return reject();
+  const global = transaction.getGlobalSettingsOrNull();
+  const project = transaction.getProjectSettingsOrNull(prepared.projectId);
+  const checkPolicyDigest = resolveCurrentCheckPolicyDigest(
+    global === null ? null : { scopeRevision: global.revision, payload: global.payload },
+    project === null ? null : { scopeRevision: project.revision, payload: project.payload },
+  );
+  if (checkPolicyDigest !== prepared.checkPolicyDigest) return reject();
+  const strategies: { readonly taskId: string; readonly digest: string }[] = [];
+  const permissions: { readonly taskId: string; readonly digest: string }[] = [];
+  const inputMap = new Map<string, ExecutionPreviewInputRefSummary>();
+  const facts: Array<{ snapshot: typeof snapshots[number]; pendingTasks: typeof snapshots[number]['tasks']; inputs: ExecutionPreviewInputRefSummary[] }> = [];
+  for (const snapshot of snapshots) {
+    const validity = evaluatePlanApprovalValidity({ planDigest: snapshot.feature.planDigest, planStatus: snapshot.feature.planStatus, taskCount: snapshot.tasks.length,
+      decisions: transaction.listPlanApprovals(prepared.projectId, snapshot.feature.id), currentCheckPolicyDigest: checkPolicyDigest });
+    const pendingTasks = snapshot.tasks.filter((task) => task.status === 'pending' || task.status === 'failed');
+    if (!validity.valid || snapshot.feature.planDigest === null || pendingTasks.length === 0) return reject();
+    const refs = new Map<string, PlanArtifactRef>();
+    for (const ref of [...snapshot.feature.sourceRefs, ...snapshot.tasks.flatMap((task) => [...task.requirementsRefs])]) refs.set(`${ref.artifactId}\u0000${ref.contentHash ?? ''}`, ref);
+    const inputs: ExecutionPreviewInputRefSummary[] = [];
+    for (const ref of [...refs.values()].sort((left, right) => left.artifactId < right.artifactId ? -1 : 1)) {
+      try {
+        const input = transaction.getArtifactInputRef(prepared.projectId, ref.artifactId);
+        if (ref.contentHash !== null && ref.contentHash !== undefined && ref.contentHash !== input.contentHash) return reject();
+        const resolved = { artifactId: input.artifactId, version: input.version, contentHash: input.contentHash, sizeBytes: input.sizeBytes };
+        inputs.push(resolved); inputMap.set(`${resolved.artifactId}\u0000${resolved.contentHash}`, resolved);
+      } catch (error) {
+        if (isStorageError(error, 'not_found') || isStorageError(error, 'conflict') || isStorageError(error, 'ownership')) return reject();
+        throw error;
+      }
+    }
+    strategies.push(...snapshot.tasks.slice().sort((left, right) => left.id < right.id ? -1 : 1).map((task) => ({ taskId: task.id, digest: computeExecutionStrategyCopyDigest({ executionConfig: task.executionConfig, configSource: task.configSource, configSourceKey: task.configSourceKey }) })));
+    permissions.push(...snapshot.tasks.slice().sort((left, right) => left.id < right.id ? -1 : 1).map((task) => ({ taskId: task.id, digest: computeExecutionPermissionsDigest(readPermissionsFace(deps.permissions, { projectId: prepared.projectId, featureId: snapshot.feature.id, taskId: task.id }).grants) })));
+    facts.push({ snapshot, pendingTasks, inputs });
+  }
+  if (stableStringify(strategies) !== stableStringify(prepared.taskStrategyDigests)) return reject();
+  if (stableStringify(permissions) !== stableStringify(prepared.permissionDigests)) return reject();
+  if (stableStringify([...inputMap.values()].sort((left, right) => left.artifactId < right.artifactId ? -1 : 1)) !== stableStringify([...prepared.inputs])) return reject();
+  if (aggregatePlanDigest(snapshots.map((item) => item.feature)) !== prepared.planDigest) return reject();
+  for (const snapshot of snapshots) {
+    const active = transaction.getActiveExecutionRun(prepared.projectId, snapshot.feature.id);
+    if (active !== null) throw publicError('conflict', EXECUTION_IN_PROGRESS_REASON, { runId: active.id, status: active.status });
+  }
+  if (transaction.readBaselineOccupancy().holderOperationId !== null) throw publicError('resource_busy', 'baseline_in_progress');
+  if (transaction.getActivePhaseExecutionBatch(prepared.projectId, phase.id) !== null) throw publicError('conflict', EXECUTION_IN_PROGRESS_REASON);
+  const now = (deps.nowMs ?? Date.now)();
+  const budget = evaluateBatchBudgetReservation(prepared.budget.batch, { runsCreated: 0, attemptsCreated: 0, runtimeStarts: 0, noProgressRuns: 0 }, now);
+  if (!budget.allowed || memberIds.length > prepared.budget.batch.maxRuns) return reject();
+  const batch = transaction.insertExecutionBatch({ projectId: prepared.projectId, phaseId: phase.id, featureId: first.id, batchId: randomUUID(),
+    scopeSnapshot: { schemaVersion: 1, featureIds: memberIds, previewDigest: prepared.previewDigest },
+    configSnapshot: { schemaVersion: 1, approval: { planDigest: prepared.planDigest, checkPolicyDigest }, tasks: strategies, permissions,
+      members: snapshots.map((item) => ({ featureId: item.feature.id, revision: item.feature.revision, planDigest: item.feature.planDigest })) },
+    budgetSnapshot: { schemaVersion: 1, batch: prepared.budget.batch, run: prepared.budget.run }, status: 'queued', runsCreated: memberIds.length, reason: null });
+  transaction.insertBatchBudgetRevision({ projectId: prepared.projectId, batchId: batch.id, version: 1,
+    budgetSnapshot: { schemaVersion: 1, batch: prepared.budget.batch, run: prepared.budget.run }, approvedBy: identity.principalId, reason: 'initial_authorization' });
+  const binding = transaction.getRepositoryBinding(prepared.projectId);
+  const runIds: string[] = [];
+  for (const fact of facts) {
+    const workKey = computeExecutionWorkKey({ featureId: fact.snapshot.feature.id, purpose: EXECUTION_RUN_PURPOSE, planDigest: fact.snapshot.feature.planDigest!, inputs: fact.inputs });
+    const run = transaction.insertExecutionRun({ projectId: prepared.projectId, batchId: batch.id, featureId: fact.snapshot.feature.id, runId: randomUUID(), purpose: EXECUTION_RUN_PURPOSE,
+      inputSnapshot: { schemaVersion: 1, previewDigest: prepared.previewDigest, workKey, planDigest: fact.snapshot.feature.planDigest, pendingTaskIds: fact.pendingTasks.map((task) => task.id).sort(), inputs: fact.inputs.map((input) => ({ artifactId: input.artifactId, version: input.version, contentHash: input.contentHash })), workspaceBaseline: { repositoryBindingId: binding.id, repositoryBindingRevision: binding.bindingRevision, baseCommit: prepared.code.headCommit } },
+      configSnapshot: { schemaVersion: 1, runLimits: prepared.budget.run }, status: 'queued', scopeDigest: prepared.previewDigest, workKey, dispatchOrdinal: 1,
+      maxAttemptsPerRun: prepared.budget.run.maxAttemptsPerRun, runTimeLimitMs: prepared.budget.run.runTimeLimitMs, reason: context.schedulerAssembled ? null : EXECUTION_RUN_NOT_READY_REASON });
+    transaction.appendExecutionEvent({ projectId: prepared.projectId, eventType: EXECUTION_RUN_DISPATCHED_EVENT_TYPE, aggregateType: 'run', aggregateId: run.id, aggregateRevision: run.revision, payload: { dispatched: true } });
+    enqueueAuthorizedRunInTransaction(transaction, { projectId: prepared.projectId, runId: run.id, source: 'start', reason: run.reason });
+    runIds.push(run.id);
+  }
+  const receipt = createAcceptedReceipt({ ...receiptIdentity, operation: OPERATION, operationId: batch.id, batchId: batch.id, runId: runIds[0]! });
+  transaction.saveReceipt(receipt);
+  return receipt;
+}
+
 /** 装配显式执行启动服务。只校验依赖形态（fail-closed），不执行任何 I/O。 */
 export function createExecutionStartService(deps: ExecutionStartServiceDeps): ExecutionStartPort {
   const context = { operation: `${OPERATION}.create` } as const;
@@ -233,12 +346,6 @@ export function createExecutionStartService(deps: ExecutionStartServiceDeps): Ex
       if (payload.featureIds.length === 0) {
         throw publicError('invalid_input', 'empty_scope');
       }
-      if (payload.featureIds.length > 1) {
-        throw publicError('invalid_input', 'multi_feature_scope_unsupported', {
-          featureIds: payload.featureIds.length,
-          supported: 1,
-        });
-      }
 
       /* 3. 只读预览重算（事务外：一致读视图 + 受控仓库 I/O 均在写事务之外）；
        * 非 ready（no_work/blocked）或用户摘要与当前重算摘要不一致 → 漂移，
@@ -265,6 +372,10 @@ export function createExecutionStartService(deps: ExecutionStartServiceDeps): Ex
         kind: 'fresh',
         projectId,
         featureId: payload.featureIds[0],
+        scopeFeatureIds: 'memberFeatureIds' in current.scope ? [...current.scope.memberFeatureIds] : [payload.featureIds[0]!],
+        phaseId: 'phaseId' in current.scope ? current.scope.phaseId : '',
+        phaseRevision: 'phaseRevision' in current.scope ? current.scope.phaseRevision ?? null : null,
+        memberRevisions: current.summary.members.map((member) => ({ featureId: member.featureId, revision: member.revision, planDigest: member.planDigest })),
         previewDigest: current.previewDigest,
         budget,
         code: summary.code,
@@ -331,6 +442,10 @@ export function createExecutionStartService(deps: ExecutionStartServiceDeps): Ex
       }
       if (project.status !== 'active') {
         return rejected('preview_stale');
+      }
+
+      if (fresh !== null && fresh.scopeFeatureIds.length > 1) {
+        return submitMultiExecutionStart(deps, identity, envelope, transaction, fresh, context, receiptIdentity);
       }
 
       /* 2. 计划快照（同事务权威读）：缺失 not_found、跨项目 ownership 抛出。 */
