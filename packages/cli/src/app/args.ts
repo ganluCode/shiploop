@@ -300,6 +300,8 @@ export type AppCliParseReason =
   | 'missing_required_option'
   | 'invalid_scope'
   | 'scope_conflict'
+  | 'duplicate_scope_selector'
+  | 'scope_limit_exceeded'
   | 'project_required_for_scope'
   | 'conflicting_options'
   | 'invalid_input_json'
@@ -385,6 +387,8 @@ const REASON_MESSAGE: Readonly<Record<AppCliParseReason, string>> = Object.freez
   missing_required_option: '缺少必填参数',
   invalid_scope: 'scope 只能是 global 或 project',
   scope_conflict: '不能同时指定互斥的 scope 参数',
+  duplicate_scope_selector: 'Feature 选择不能重复',
+  scope_limit_exceeded: 'Feature 选择数量超出上限',
   project_required_for_scope: 'scope=project 时必须提供 --project',
   conflicting_options: '参数组合冲突',
   invalid_input_json: '输入 JSON 不是合法对象',
@@ -1058,20 +1062,20 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
   'execution.preview': {
     command: 'execution',
     commandId: 'execution.preview',
-    valueFlags: ['--project', '--input', '--command-id'],
+    valueFlags: ['--project', '--phase', '--feature', '--input', '--command-id'],
     boolFlags: [],
-    repeatableFlags: [],
-    minPositionals: 1,
+    repeatableFlags: ['--feature'],
+    minPositionals: 0,
     maxPositionals: 1,
     positionalFields: ['featureId'],
   },
   'execution.start': {
     command: 'execution',
     commandId: 'execution.start',
-    valueFlags: ['--project', '--input', '--preview-digest', '--retry-batch', '--command-id'],
+    valueFlags: ['--project', '--phase', '--feature', '--input', '--preview-digest', '--retry-batch', '--command-id'],
     boolFlags: ['--confirm'],
-    repeatableFlags: [],
-    minPositionals: 1,
+    repeatableFlags: ['--feature'],
+    minPositionals: 0,
     maxPositionals: 1,
     positionalFields: ['featureId'],
   },
@@ -1830,6 +1834,52 @@ function requirePlanId(raw: string, state: ParseState, field: string): string {
 function requirePlanIdOption(scan: ScanResult, name: string, state: ParseState, field: string): string {
   return requirePlanId(requireOption(scan, name, state, field), state, field);
 }
+
+interface ParsedExecutionSelector {
+  readonly phaseId?: string;
+  readonly featureIds: readonly string[];
+  readonly featureId?: string;
+}
+
+/**
+ * execution.preview/start 的范围选择：旧位置参数保留；新形态使用 --phase 或重复
+ * --feature。CLI 只校验选择器形态和边界，不解析 Phase DAG。
+ */
+function resolveExecutionSelector(
+  scan: ScanResult,
+  state: ParseState,
+): ParsedExecutionSelector {
+  const phaseRaw = takeOption(scan, '--phase');
+  const optionFeatureIds = scan.options.get('--feature') ?? [];
+  const positionalFeatureId = scan.positionals[0];
+  if (phaseRaw !== undefined && (optionFeatureIds.length > 0 || positionalFeatureId !== undefined)) {
+    fail(state, 'scope_conflict', 'scope');
+  }
+  if (positionalFeatureId !== undefined && optionFeatureIds.length > 0) {
+    fail(state, 'scope_conflict', 'scope');
+  }
+  if (phaseRaw !== undefined) {
+    return { phaseId: requirePlanId(phaseRaw, state, 'phaseId'), featureIds: [] };
+  }
+  const rawFeatureIds = positionalFeatureId === undefined
+    ? optionFeatureIds
+    : [positionalFeatureId];
+  if (rawFeatureIds.length === 0) {
+    fail(state, 'missing_required_option', 'scope');
+  }
+  if (rawFeatureIds.length > 16) {
+    fail(state, 'scope_limit_exceeded', 'feature');
+  }
+  const featureIds = rawFeatureIds.map((value, index) => requirePlanId(value, state, `featureIds[${index}]`));
+  if (new Set(featureIds).size !== featureIds.length) {
+    fail(state, 'duplicate_scope_selector', 'feature');
+  }
+  return {
+    featureIds,
+    ...(positionalFeatureId !== undefined ? { featureId: featureIds[0] } : {}),
+  };
+}
+
 
 /** Phase 标题：必填非空（深度语义由 Core 单一权威复核）。 */
 function resolvePlanTitle(scan: ScanResult, state: ParseState): string {
@@ -2647,7 +2697,10 @@ export interface ParsedExecutionPreview {
   readonly startTimeoutMs: number;
   readonly dataRoot?: string;
   readonly projectId: string;
-  readonly featureId: string;
+  readonly phaseId?: string;
+  readonly featureIds: readonly string[];
+  /** Legacy positional single Feature identity, retained for compatibility. */
+  readonly featureId?: string;
   readonly inputFile: string;
   readonly explicitCommandId?: string;
 }
@@ -2667,7 +2720,10 @@ export interface ParsedExecutionStart {
   readonly startTimeoutMs: number;
   readonly dataRoot?: string;
   readonly projectId: string;
-  readonly featureId: string;
+  readonly phaseId?: string;
+  readonly featureIds: readonly string[];
+  /** Legacy positional single Feature identity, retained for compatibility. */
+  readonly featureId?: string;
   readonly confirm: true;
   readonly inputFile?: string;
   readonly previewDigest?: string;
@@ -3744,13 +3800,14 @@ function buildExecution(
   switch (spec.commandId) {
     case 'execution.preview': {
       const explicitCommandId = optionalCommandId(scan, state);
+      const selector = resolveExecutionSelector(scan, state);
       return {
         ...base,
         command: 'execution',
         commandId: 'execution.preview',
         operation: 'execution.preview',
         projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
-        featureId: requirePlanId(scan.positionals[0] as string, state, 'featureId'),
+        ...selector,
         inputFile: requireBudgetFile(scan, state),
         ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
       };
@@ -3762,11 +3819,12 @@ function buildExecution(
         fail(state, 'confirmation_required', 'confirm');
       }
       const projectId = requireProjectId(requireOption(scan, '--project', state, 'project'), state);
-      const featureId = requirePlanId(scan.positionals[0] as string, state, 'featureId');
+      const selector = resolveExecutionSelector(scan, state);
       const retryBatchId = takeOption(scan, '--retry-batch');
       if (retryBatchId !== undefined) {
-        // 重试形态与新授权形态互斥（冲突参数拒绝，不发启动请求）。
-        if (scan.options.has('--input') || scan.options.has('--preview-digest')) {
+        // 重试形态与新授权形态互斥（冲突参数拒绝，不发启动请求）；Phase 选择
+        // 需要预算预览才能展开，不能与不携带预算的重试形态混用。
+        if (selector.phaseId !== undefined || scan.options.has('--input') || scan.options.has('--preview-digest')) {
           fail(state, 'conflicting_options');
         }
         return {
@@ -3775,7 +3833,7 @@ function buildExecution(
           commandId: 'execution.start',
           operation: 'execution.start',
           projectId,
-          featureId,
+          ...selector,
           retryBatchId: requireBatchId(retryBatchId, state),
           confirm: true,
           ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
@@ -3787,7 +3845,7 @@ function buildExecution(
         commandId: 'execution.start',
         operation: 'execution.start',
         projectId,
-        featureId,
+        ...selector,
         inputFile: requireBudgetFile(scan, state),
         previewDigest: requirePreviewDigest(scan, state),
         confirm: true,

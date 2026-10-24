@@ -340,6 +340,8 @@ export interface ExecutionPreviewView {
   readonly replayed: boolean;
   readonly operation: 'execution.preview';
   readonly projectId: string;
+  /** 服务端解析出的固定范围；包含 phase/requested/member 身份与成员快照。 */
+  readonly scope: ExecutionPreviewResult['scope'];
   readonly featureIds: readonly string[];
   readonly status: 'ready' | 'no_work' | 'blocked';
   readonly noWorkReason: string | null;
@@ -368,6 +370,7 @@ export function buildExecutionPreviewView(
     replayed,
     operation: 'execution.preview',
     projectId: result.projectId,
+    scope: result.scope,
     featureIds: result.scope.featureIds,
     status: result.status,
     noWorkReason: result.noWorkReason,
@@ -386,12 +389,31 @@ export function buildExecutionPreviewView(
 export function formatExecutionPreviewView(view: ExecutionPreviewView): string {
   const marker = view.replayed ? '（replayed）' : '';
   if (view.status === 'ready') {
-    return (
-      `shiploop execution preview: status=ready feature=${view.featureIds.join(',')} ` +
-      `digest=${String(view.previewDigest)} tasks=${String(view.summary?.plan.taskCount ?? 0)} ` +
-      `pending=${String(view.summary?.plan.pendingTaskIds.length ?? 0)} ` +
-      `（预览不是授权；执行需 execution start --confirm --preview-digest）${marker}\n`
-    );
+    const scopeRecord = view.scope as {
+      readonly phaseId?: string;
+      readonly requestedFeatureIds?: readonly string[];
+      readonly memberFeatureIds?: readonly string[];
+    };
+    const expandedScope = typeof scopeRecord.phaseId === 'string'
+      && Array.isArray(scopeRecord.requestedFeatureIds)
+      && Array.isArray(scopeRecord.memberFeatureIds);
+    const scope = expandedScope
+      ? `phase=${scopeRecord.phaseId} requested=${scopeRecord.requestedFeatureIds!.join(',')} members=${scopeRecord.memberFeatureIds!.join(',')}`
+      : `features=${view.featureIds.join(',')}`;
+    const summary = view.summary;
+    const baselines = summary?.members?.flatMap((member) => member.codeBaselineRefs).join(',') ?? 'none';
+    const dependencies = expandedScope
+      ? scopeRecord.memberFeatureIds!.filter((id) => !scopeRecord.requestedFeatureIds!.includes(id)).join(',') || 'none'
+      : 'none';
+    const concurrency = summary?.concurrency?.maxConcurrentWorks ?? 'unknown';
+    const deadline = summary?.budget.batch.deadlineUtcMs ?? 'unknown';
+    return [
+      `shiploop execution preview: status=ready ${scope}`,
+      `  dependencies=${dependencies} baseline=${baselines} concurrency=${String(concurrency)} deadline=${String(deadline)}`,
+      `  digest=${String(view.previewDigest)} tasks=${String(summary?.plan.taskCount ?? 0)} pending=${String(summary?.plan.pendingTaskIds.length ?? 0)}`,
+      `  （预览不是授权；执行需 execution start --confirm --preview-digest）${marker}`,
+      '',
+    ].join('\n');
   }
   if (view.status === 'no_work') {
     return (
@@ -429,6 +451,10 @@ export interface ExecutionStartView {
   readonly featureIds: readonly string[];
   /** 真实授权 Batch 身份（=operationId，不是合成操作）。 */
   readonly batchId: string;
+  /** 真实初始 Run 身份；旧单成员回执也统一为一个元素。 */
+  readonly runIds: readonly string[];
+  /** 首次授权创建的 Run 都已持久入队；状态不是 Runtime/验收完成。 */
+  readonly runs: readonly { readonly runId: string; readonly status: 'queued' }[];
   /** 真实 Run 身份。 */
   readonly runId: string;
   readonly operationId: string;
@@ -451,6 +477,7 @@ export function buildExecutionStartView(
     readonly operationId: string;
     readonly batchId: string;
     readonly runId: string;
+    readonly runIds?: readonly string[];
   },
 ): ExecutionStartView {
   return {
@@ -461,6 +488,8 @@ export function buildExecutionStartView(
     executionState: 'accepted',
     featureIds: identity.featureIds,
     batchId: receipt.batchId,
+    runIds: receipt.runIds ?? [receipt.runId],
+    runs: (receipt.runIds ?? [receipt.runId]).map((runId) => ({ runId, status: 'queued' as const })),
     runId: receipt.runId,
     operationId: receipt.operationId,
     authorization: {
@@ -479,8 +508,9 @@ export function buildExecutionStartView(
 export function formatExecutionStartView(view: ExecutionStartView): string {
   const marker = view.replayed ? '（replayed）' : '';
   return (
-    `shiploop execution start: accepted batch=${view.batchId} run=${view.runId} ` +
-    `（提交成功；尚未执行、未验收，不代表 Feature 完成）${marker}\n`
+    `shiploop execution start: accepted batch=${view.batchId} ` +
+    `runs=${view.runIds.join(',')} status=queued ` +
+    `（授权已完成；Runtime 仍排队，尚未执行、未验收，不代表 Feature/Phase 完成）${marker}\n`
   );
 }
 

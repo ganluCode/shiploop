@@ -1718,6 +1718,7 @@ function emitExecutionStartReceipt(
   io: AppCliIo,
   command: ParsedExecutionCommand & { commandId: 'execution.start' },
   receipt: CommandReceipt,
+  fixedFeatureIds?: readonly string[],
 ): AppCliRunResult {
   if (receipt.status === 'rejected') {
     return emitFailure(io, command.json, {
@@ -1737,7 +1738,7 @@ function emitExecutionStartReceipt(
     {
       commandId: accepted.commandId,
       replayed: accepted.replayed,
-      featureIds: [command.featureId],
+      featureIds: fixedFeatureIds ?? command.featureIds,
       previewDigest: command.previewDigest ?? null,
       retryBatchId: command.retryBatchId ?? null,
     },
@@ -1759,7 +1760,7 @@ async function executeExecutionCommand(
       const receipt = await client.previewExecution(
         {
           projectId: command.projectId,
-          featureIds: [command.featureId],
+          ...(command.phaseId !== undefined ? { phaseId: command.phaseId } : { featureIds: command.featureIds }),
           budget: inputs.budget,
         },
         envelopeIdentityOptions(command.explicitCommandId, issuedAt),
@@ -1775,12 +1776,52 @@ async function executeExecutionCommand(
     }
     case 'execution.start': {
       const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+      let featureIds = command.featureIds;
+      if (command.phaseId !== undefined) {
+        if (command.retryBatchId !== undefined || inputs.budget === undefined) {
+          throw new HostProtocolError('invalid_input', 'commands.submit', 'Phase 启动缺少可用于固定范围展开的预算', {
+            details: { reason: 'phase_scope_requires_fresh_budget' },
+          });
+        }
+        // Phase 启动先读取一次只读预览，由 Host/Core 解析依赖闭包；随后把服务端
+        // 返回的固定成员 ID 集合提交给 execution.start。CLI 不自行计算 DAG。
+        const expansion = await client.previewExecution(
+          { projectId: command.projectId, phaseId: command.phaseId, budget: inputs.budget },
+        );
+        if (expansion.status === 'rejected') {
+          return emitFailure(io, command.json, {
+            exitCode: exitCodeForReceiptStatus('rejected'),
+            command: command.commandId,
+            code: expansion.error.code,
+            message: expansion.error.message,
+            commandId: expansion.commandId,
+            ...(expansion.error.details !== undefined ? { details: expansion.error.details } : {}),
+          });
+        }
+        if (expansion.status !== 'completed') {
+          throw new HostProtocolError('response_malformed', 'commands.submit', 'Phase 预览未返回完整结果', {
+            details: { reason: 'phase_scope_preview_incomplete' },
+          });
+        }
+        const expanded = expansion.result as ExecutionPreviewResult;
+        if (expanded.status !== 'ready' || !('memberFeatureIds' in expanded.scope)) {
+          return emitFailure(io, command.json, {
+            exitCode: 1,
+            command: command.commandId,
+            code: 'conflict',
+            message: 'Phase 当前范围不可启动，预览未形成固定 Feature 成员',
+            commandId: expansion.commandId,
+            details: { reason: expanded.status === 'blocked' ? 'blocked' : expanded.noWorkReason ?? 'preview_stale' },
+          });
+        }
+        featureIds = expanded.scope.memberFeatureIds;
+      }
       const receipt =
         command.retryBatchId !== undefined
           ? await client.startExecution(
               {
                 projectId: command.projectId,
-                featureIds: [command.featureId],
+                featureIds,
                 retryBatchId: command.retryBatchId,
               },
               envelopeIdentityOptions(command.explicitCommandId, issuedAt),
@@ -1788,13 +1829,13 @@ async function executeExecutionCommand(
           : await client.startExecution(
               {
                 projectId: command.projectId,
-                featureIds: [command.featureId],
+                featureIds,
                 budget: inputs.budget,
                 previewDigest: command.previewDigest as string,
               },
               envelopeIdentityOptions(command.explicitCommandId, issuedAt),
             );
-      return emitExecutionStartReceipt(io, command, receipt);
+      return emitExecutionStartReceipt(io, command, receipt, featureIds);
     }
     case 'execution.budget': {
       const status = await client.getExecutionBudgetStatus(command.projectId, command.batchId);
