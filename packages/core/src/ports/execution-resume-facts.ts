@@ -42,6 +42,23 @@ export interface ExecutionResumeFacts {
   readonly attemptsWithLeases: readonly AttemptRecord[];
   readonly leases: readonly WorkspaceLeaseRecord[];
   readonly dispatchOccupied?: boolean;
+  /** P05-1 / F-010：planning Run 的上下文/Task/Feature 只读事实（非 planning Run 为 null）。 */
+  readonly planning?: {
+    readonly contextStatus: string;
+    readonly candidateId: string;
+    readonly inputDigest: string;
+    readonly targetRevision: number;
+    readonly planDigest: string | null;
+    readonly planningTaskId: string;
+    readonly taskStatus: string;
+    readonly taskRevision: number;
+    readonly taskExecutionVersion: number;
+    readonly taskManualBlock: boolean;
+    readonly featureStatus: string;
+    readonly featurePlanDigest: string | null;
+    readonly featureRevision: number;
+    readonly attemptCount: number;
+  } | null;
 }
 
 export interface ExecutionResumeFactsReader {

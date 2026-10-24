@@ -1,4 +1,5 @@
 import type { CommandProcessIdentity, CommandProcessPort } from './command-process.js';
+import type { PlanningStartupRecoveryResult } from './planning-recovery.js';
 import type { WorkRecoveryReconciliationResult } from './work-recovery-reconciliation.js';
 
 /** Startup evidence is Core-owned; it never grants resume or releases a workspace. */
@@ -28,6 +29,8 @@ export interface WorkStartupRecoveryStore {
   readObservation(target: WorkStartupRecoveryTarget): WorkStartupRecoveryEvidence | null;
   observed(evidence: WorkStartupRecoveryEvidence, evidenceRef: string | null): void;
   failed(): void;
+  /** P05-1 / F-010：该 Attempt 是否已被规划恢复补完为终态（跳过通用逐个核对）。 */
+  planningCompletionFinalized?(attemptId: string): boolean;
 }
 export interface WorkStartupRecoveryOptions {
   readonly store: WorkStartupRecoveryStore;
@@ -35,9 +38,11 @@ export interface WorkStartupRecoveryOptions {
   readonly publishEvidence: (projectId: string, evidence: WorkStartupRecoveryEvidence) => Promise<string>;
   /** P03-9 / F-006: optional Git/worktree/recording reconciliation after stopped evidence exists. */
   readonly reconcile?: (evidence: WorkStartupRecoveryEvidence) => Promise<WorkRecoveryReconciliationResult>;
+  /** P05-1 / F-010：规划窗口恢复（在 fence 之后、通用逐个核对之前执行）。 */
+  readonly planning?: { readonly recover: () => Promise<PlanningStartupRecoveryResult> };
   readonly nowUtcMs?: () => number;
 }
 export interface WorkStartupRecoveryState {
   readonly status: 'idle' | 'recovering' | 'complete' | 'blocked';
-  readonly reason: 'startup_recovery' | 'workspace_reconciliation_required' | 'scan_limit' | 'recovery_failed' | null;
+  readonly reason: 'startup_recovery' | 'workspace_reconciliation_required' | 'scan_limit' | 'recovery_failed' | 'planning_recovery_required' | null;
 }

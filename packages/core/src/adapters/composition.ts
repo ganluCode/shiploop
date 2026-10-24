@@ -25,8 +25,10 @@
  */
 import { assembleWorkExecution, type WorkRuntimeFactory, type WorkExecution } from './work-execution.js';
 import { createWorkStartupRecovery } from '../application/work-startup-recovery.js';
+import { createPlanningStartupRecovery } from '../application/planning-recovery.js';
 import { PublicError } from '../ports/commands.js';
 import { createSqliteWorkStartupRecoveryStore } from './sqlite/work-startup-recovery.js';
+import { createSqlitePlanningRecoveryStore } from './sqlite/planning-recovery.js';
 import { createSqliteWorkRecoveryReconciliationStore } from './sqlite/work-recovery-reconciliation.js';
 import { createWorkRecoveryReconciler } from '../application/work-recovery-reconciliation.js';
 import { createWorkRecoveryContinuationService } from '../application/work-recovery-continuation.js';
@@ -359,6 +361,7 @@ const ALLOWED_OPTION_KEYS = [
   'featureDeliveryFactory',
   'finalizationExecution',
   'finalizationCompletion',
+  'planningExecution',
   'dataRoot',
   'userHomeDir',
   'capabilityCatalog',
@@ -756,6 +759,14 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       nowUtcMs,
       publishEvidence: (projectId, evidence) => publishWorkspaceEvidence(projectId, randomUUID(), { ...evidence }),
       reconcile: evidence => startupReconciler.reconcile(evidence),
+      /* P05-1 / F-010：规划窗口恢复（fence 后、通用逐个核对前；受信制品核验
+       * + 幂等补完；证据不足保留 blocked/interrupted 与诊断）。 */
+      planning: createPlanningStartupRecovery({
+        store: createSqlitePlanningRecoveryStore(session, { nowUtcMs }),
+        verifier: createArtifactVerifier({ artifacts: artifactStore, files: artifactFileStore,
+          limits: { maxReadBytes: 2 * 1024 * 1024 } }),
+        ...(nowUtcMs === undefined ? {} : { nowMs: nowUtcMs }),
+      }),
     });
     if (object.workStartupRecoveryRequired === true) startupRecovery.enter();
     const taskClaims = createSqliteTaskClaimStore(session, {

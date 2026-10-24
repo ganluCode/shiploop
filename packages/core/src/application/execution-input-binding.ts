@@ -418,8 +418,14 @@ export function createExecutionInputBindingService(
     // 按规划摘要域重算；planning Task 单 Attempt 语义不接受任何续接选择。
     const planningSnapshot = isPlanningAttemptSnapshot(snapshot) ? snapshot : null;
     if (planningSnapshot !== null) {
-      if (validated.recovery.mode !== 'new') {
-        return reject('recovery', 'recovery_source_invalid', 'planning Attempt 不支持续接（只能新会话）');
+      /* P05-1 / F-010：同一未完成 planning Task 的会话策略沿用 auto/new/
+       * required 契约：首次 planning Attempt 只接受 new；存在历史 Attempt（
+       * 重启核对后的显式 resume）时允许 auto（按实测能力降级新会话并记录原因）
+       * 与 required（能力不足明确拒绝，绝不降级）。来源身份/授权由通用路径与
+       * decideRuntimeRecovery 承担；原生续聊不等于检查点工具可重放。 */
+      const hasPriorAttempt = taskAttempts.some(candidate => candidate.id !== attempt.id);
+      if (validated.recovery.mode !== 'new' && !hasPriorAttempt) {
+        return reject('recovery', 'recovery_source_invalid', '首次 planning Attempt 只接受新会话（无历史可续接）');
       }
       if (computePlanningPermissionsDigest(validated.permissions.grants) !== planningSnapshot.digests.permissionsDigest) {
         return reject('input', 'permission_expansion', '请求权限与准备时规划权限面不一致（拒绝权限扩大）');

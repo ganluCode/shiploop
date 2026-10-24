@@ -88,6 +88,46 @@ export function createSqliteExecutionResumeFactsReader(
         const attemptsWithLeasesIds = new Set(attemptsWithLeases.map(attempt => attempt.id));
         const leases = attempts.listWorkspaceLeases(request.projectId)
           .filter(lease => attemptsWithLeasesIds.has(lease.owner));
+        /* P05-1 / F-010：planning Run 只读事实（同一次一致读；非 planning 目标为 null）。 */
+        const planningRun = runs.find(run => run.purpose === 'plan');
+        let planning: ExecutionResumeFacts['planning'] = null;
+        if (planningRun !== undefined) {
+          const context = session.database.prepare<[string, string], {
+            status: string; candidate_id: string; input_digest: string; target_revision: number;
+            plan_digest: string | null; planning_task_id: string;
+          } | undefined>(`SELECT status, candidate_id, input_digest, target_revision, plan_digest, planning_task_id
+            FROM planning_contexts WHERE project_id = ? AND run_id = ?`)
+            .get(request.projectId, planningRun.id);
+          if (context !== undefined) {
+            const task = session.database.prepare<[string], {
+              status: string; revision: number; execution_version: number; manual_block: number;
+            } | undefined>('SELECT status, revision, execution_version, manual_block FROM tasks WHERE id = ?')
+              .get(context.planning_task_id);
+            const feature = session.database.prepare<[string], {
+              status: string; plan_digest: string | null; revision: number;
+            } | undefined>('SELECT status, plan_digest, revision FROM features WHERE id = ?')
+              .get(planningRun.featureId);
+            const attemptCount = session.database.prepare<[string, string], { n: number }>(
+              'SELECT COUNT(*) AS n FROM attempts WHERE project_id = ? AND task_id = ?',
+            ).get(request.projectId, context.planning_task_id)!.n;
+            planning = {
+              contextStatus: context.status,
+              candidateId: context.candidate_id,
+              inputDigest: context.input_digest,
+              targetRevision: context.target_revision,
+              planDigest: context.plan_digest,
+              planningTaskId: context.planning_task_id,
+              taskStatus: task?.status ?? 'missing',
+              taskRevision: task?.revision ?? 0,
+              taskExecutionVersion: task?.execution_version ?? 0,
+              taskManualBlock: (task?.manual_block ?? 0) !== 0,
+              featureStatus: feature?.status ?? 'missing',
+              featurePlanDigest: feature?.plan_digest ?? null,
+              featureRevision: feature?.revision ?? 0,
+              attemptCount: Number(attemptCount),
+            };
+          }
+        }
         return {
           projectId: request.projectId,
           projectStatus: project.status,
@@ -100,6 +140,7 @@ export function createSqliteExecutionResumeFactsReader(
           attemptsWithLeases,
           leases,
           dispatchOccupied: runs.some(run => createSqliteDispatchRecovery(session).resumeBlocked(run.id, now())),
+          ...(planning === null ? {} : { planning }),
         };
       });
     },

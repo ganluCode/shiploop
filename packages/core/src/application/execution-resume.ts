@@ -284,41 +284,69 @@ export function createExecutionResumeService(deps: ExecutionResumeServiceDeps): 
       nowMs,
     );
     const runBudget = evaluateRunBudgetReservation(run, run, nowMs);
-    if (!batchBudget.allowed || !runBudget.allowed) return notResumable('budget_exhausted');
+    /* P05-1 / F-010：planning resume 复用既有 Run（不新建 Run），Batch 的
+     * maxRuns 维度不适用；按尝试/无进展/deadline 与 Run 尝试上限重核。 */
+    const planningRun = run.purpose === 'plan';
+    if (planningRun) {
+      const limits = batch.budgetSnapshot.batch;
+      if (batch.attemptsCreated >= limits.maxTotalAttempts
+        || batch.noProgressRuns >= limits.maxNoProgressRuns
+        || nowMs >= limits.deadlineUtcMs || !runBudget.allowed) return notResumable('budget_exhausted');
+    } else if (!batchBudget.allowed || !runBudget.allowed) return notResumable('budget_exhausted');
 
-    let view: TaskDagView;
-    try {
-      view = deps.dag.readTaskDagView(projectId, run.id);
-    } catch (error) {
-      if (isStorageError(error)) return notResumable('resume_stale');
-      throw error;
-    }
-    const checkPolicyDigest = resolveCurrentCheckPolicyDigest(view.settings.global, view.settings.project);
-    const validity = evaluatePlanApprovalValidity({
-      planDigest: view.plan.feature.planDigest,
-      planStatus: view.plan.feature.planStatus,
-      taskCount: view.plan.tasks.length,
-      decisions: view.approvals,
-      currentCheckPolicyDigest: checkPolicyDigest,
-    });
-    if (!validity.valid || view.phase.status !== 'open') return notResumable('authorization_invalid');
-    // P03-9 / F-012：finalization-only Run 的 input/config scope 刻意不含编码
-    // Task，不能走编码 DAG 预演。它只重新核对全 Task passed、计划授权、检查
-    // 政策、工作区与预算；审批/代码/Git operation 仍由 F-012 完成编排重核。
-    const finalizationOnly = isFinalizationOnlyRun(run);
-    if (finalizationOnly
-      && (view.plan.tasks.length === 0 || view.plan.tasks.some(task => task.status !== 'passed'))) {
-      return notResumable('evidence_invalid');
-    }
-    const dag = finalizationOnly ? null : evaluateTaskDagAfterResume(view, nowMs);
-    if (dag !== null) {
-      const rejected = rejectReasonForDag(dag, view);
-      if (rejected !== null) return notResumable(rejected);
+    /* P05-1 / F-010：planning Run 的显式 resume 走独立就绪判定（规划上下文/
+     * planning Task/预算/deadline/占用/工作区；不调 coding DAG 预演，也不要求
+     * 业务计划批准）。候选已发布（上下文非 open）说明存在待核对的完成证据，
+     * 不允许以 resume 重跑模型；终态 Run 由通用门控先行拒绝。 */
+    const planning = run.purpose === 'plan' ? facts.planning ?? null : null;
+    if (run.purpose === 'plan' || planning !== null) {
+      if (planning === null) return notResumable('not_resumable');
+      if (planning.contextStatus !== 'open') return notResumable('not_resumable');
+      if (planning.taskStatus !== 'pending' || planning.taskManualBlock) return notResumable('not_resumable');
+      if (['completed', 'partial', 'failed'].includes(planning.featureStatus)) return notResumable('not_resumable');
+      if (planning.featurePlanDigest !== planning.planDigest) return notResumable('resume_stale');
     }
 
-    const strategies = sortedTaskDigests(view);
-    const permissions = permissionDigests(deps.permissions, projectId, view);
-    const inputs = inputSummaries(view);
+    /* P05-1 / F-010：planning Run 不进入 coding DAG/计划批准预演（规划先于
+     * 业务计划批准；授权由规划上下文/Task/Feature 身份重核承担）。 */
+    let view: TaskDagView | null = null;
+    let checkPolicyDigest = '';
+    let dag: TaskDagResult | null = null;
+    if (planning === null) {
+      try {
+        view = deps.dag.readTaskDagView(projectId, run.id);
+      } catch (error) {
+        if (isStorageError(error)) return notResumable('resume_stale');
+        throw error;
+      }
+      const checkPolicy = resolveCurrentCheckPolicyDigest(view.settings.global, view.settings.project);
+      checkPolicyDigest = checkPolicy;
+      const validity = evaluatePlanApprovalValidity({
+        planDigest: view.plan.feature.planDigest,
+        planStatus: view.plan.feature.planStatus,
+        taskCount: view.plan.tasks.length,
+        decisions: view.approvals,
+        currentCheckPolicyDigest: checkPolicy,
+      });
+      if (!validity.valid || view.phase.status !== 'open') return notResumable('authorization_invalid');
+      // P03-9 / F-012：finalization-only Run 的 input/config scope 刻意不含编码
+      // Task，不能走编码 DAG 预演。它只重新核对全 Task passed、计划授权、检查
+      // 政策、工作区与预算；审批/代码/Git operation 仍由 F-012 完成编排重核。
+      const finalizationOnly = isFinalizationOnlyRun(run);
+      if (finalizationOnly
+        && (view.plan.tasks.length === 0 || view.plan.tasks.some(task => task.status !== 'passed'))) {
+        return notResumable('evidence_invalid');
+      }
+      dag = finalizationOnly ? null : evaluateTaskDagAfterResume(view, nowMs);
+      if (dag !== null) {
+        const rejected = rejectReasonForDag(dag, view);
+        if (rejected !== null) return notResumable(rejected);
+      }
+    }
+
+    const strategies = planning === null ? sortedTaskDigests(view!) : [];
+    const permissions = planning === null ? permissionDigests(deps.permissions, projectId, view!) : [];
+    const inputs = planning === null ? inputSummaries(view!) : [];
 
     let workspace: PreparedExecutionResumeReady['workspace'] = null;
     let observedHeadCommit: string | null = null;
@@ -347,11 +375,47 @@ export function createExecutionResumeService(deps: ExecutionResumeServiceDeps): 
     } else {
       // 从未启动的首次执行没有工作区是合法的；已有历史 Attempt 却没有工作区
       // 说明原现场丢失，不能用新 Session 绕过。
-      const hasHistory = view.plan.tasks.some(task => deps.attempts.listTaskAttempts(projectId, task.id).length > 0);
+      const hasHistory = planning !== null
+        ? planning.attemptCount > 0
+        : view!.plan.tasks.some(task => deps.attempts.listTaskAttempts(projectId, task.id).length > 0);
       if (hasHistory) return notResumable('workspace_invalid');
     }
 
-    const digest = resumeDigest(view, view.approvals, checkPolicyDigest, strategies, permissions, inputs);
+    /* planning 就绪：摘要覆盖规划上下文/Task CAS/Feature 计划身份与历史
+     * Attempt 计数（事务内逐一重核；预算不重置，新 Attempt 由既有认领链路创建）。 */
+    if (planning !== null) {
+      const digest = stableStringify({
+        purpose: 'planning-resume:v1',
+        candidateId: planning.candidateId,
+        inputDigest: planning.inputDigest,
+        targetRevision: planning.targetRevision,
+        contextPlanDigest: planning.planDigest,
+        contextStatus: planning.contextStatus,
+        planningTaskId: planning.planningTaskId,
+        taskStatus: planning.taskStatus,
+        taskRevision: planning.taskRevision,
+        featurePlanDigest: planning.featurePlanDigest,
+        featureRevision: planning.featureRevision,
+        attemptCount: planning.attemptCount,
+      });
+      return {
+        kind: 'ready',
+        projectId,
+        targetKind,
+        targetId,
+        expectedRevision: targetKind === 'run' ? run.revision : batch.revision,
+        batchId: batch.id,
+        featureId: batch.featureId,
+        runId: run.id,
+        resumeScope: 'planning',
+        nextTaskIds: [],
+        resumeDigest: digest,
+        workspace,
+        observedHeadCommit,
+      };
+    }
+
+    const digest = resumeDigest(view!, view!.approvals, checkPolicyDigest, strategies, permissions, inputs);
     const scope = dag === null ? { scope: 'approval' as const, nextTaskIds: [] } : scopeForDag(dag);
     return {
       kind: 'ready',
@@ -497,7 +561,16 @@ export function createExecutionResumeService(deps: ExecutionResumeServiceDeps): 
       if (prepared.targetKind === 'batch' && batch.status !== 'paused') return rejected('not_resumable');
       const run = transaction.getExecutionRun(projectId, prepared.runId);
       const nowMs = now();
-      if (!evaluateBatchBudgetReservation(batch.budgetSnapshot.batch, {
+      /* P05-1 / F-010：planning resume 不新建 Run，Batch maxRuns 维度不适用。 */
+      if (prepared.resumeScope === 'planning') {
+        const limits = batch.budgetSnapshot.batch;
+        if (batch.attemptsCreated >= limits.maxTotalAttempts
+          || batch.noProgressRuns >= limits.maxNoProgressRuns
+          || nowMs >= limits.deadlineUtcMs
+          || !evaluateRunBudgetReservation(run, run, nowMs).allowed) {
+          return rejected('budget_exhausted');
+        }
+      } else if (!evaluateBatchBudgetReservation(batch.budgetSnapshot.batch, {
         runsCreated: batch.runsCreated,
         attemptsCreated: batch.attemptsCreated,
         runtimeStarts: batch.runtimeStarts,
@@ -506,6 +579,38 @@ export function createExecutionResumeService(deps: ExecutionResumeServiceDeps): 
         return rejected('budget_exhausted');
       }
 
+      /* P05-1 / F-010：planning resume 只重核规划上下文/Task CAS/Feature 身份；
+       * 不调 coding 计划批准/检查政策（规划先于业务计划批准）。 */
+      if (prepared.resumeScope === 'planning') {
+        const context = transaction.getPlanningContextByRun(projectId, prepared.runId);
+        const task = transaction.getTask(projectId, context?.planningTaskId ?? '');
+        const feature = transaction.getFeaturePlan(projectId, prepared.featureId);
+        if (context === null || context.runId !== prepared.runId || context.status !== 'open') {
+          return rejected('not_resumable');
+        }
+        if (task === null || task.id !== context.planningTaskId || task.status !== 'pending') {
+          return rejected('not_resumable');
+        }
+        if (['completed', 'partial', 'failed'].includes(feature.feature.status)
+          || feature.feature.planDigest !== context.planDigest) {
+          return rejected('resume_stale');
+        }
+        const digest = stableStringify({
+          purpose: 'planning-resume:v1',
+          candidateId: context.candidateId,
+          inputDigest: context.inputDigest,
+          targetRevision: context.targetRevision,
+          contextPlanDigest: context.planDigest,
+          contextStatus: context.status,
+          planningTaskId: context.planningTaskId,
+          taskStatus: task.status,
+          taskRevision: task.revision,
+          featurePlanDigest: feature.feature.planDigest,
+          featureRevision: feature.feature.revision,
+          attemptCount: deps.attempts.listTaskAttempts(projectId, task.id).length,
+        });
+        if (digest !== prepared.resumeDigest) return rejected('resume_stale');
+      } else {
       const snapshot = transaction.getFeaturePlan(projectId, prepared.featureId);
       const decisions = transaction.listPlanApprovals(projectId, prepared.featureId);
       const globalSettings = transaction.getGlobalSettingsOrNull();
@@ -527,6 +632,7 @@ export function createExecutionResumeService(deps: ExecutionResumeServiceDeps): 
       }
       const identityCheck = transactionResumeDigest(projectId, prepared, snapshot, decisions, checkPolicyDigest, transaction);
       if (identityCheck.digest !== prepared.resumeDigest) return rejected('resume_stale');
+      }
 
       let result;
       try {
@@ -598,7 +704,7 @@ export function signalExecutionResumeAfterCommit(
   if (signal === undefined || receipt.replayed || receipt.status !== 'completed' || !('result' in receipt)) return;
   if (receipt.operation !== OPERATION || receipt.scope.kind !== 'project') return;
   const result = receipt.result as Record<string, unknown>;
-  if (result.resumeScope !== 'coding' && result.resumeScope !== 'final_verification') return;
+  if (result.resumeScope !== 'coding' && result.resumeScope !== 'final_verification' && result.resumeScope !== 'planning') return;
   const projectId = receipt.scope.projectId;
   const batchId = result.batchId;
   const featureId = result.featureId;

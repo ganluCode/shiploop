@@ -139,6 +139,8 @@ export async function openF007Fixture(options: {
   readonly usage?: { readonly inputTokens: number; readonly outputTokens: number } | null;
   readonly runTimeLimitMs?: number;
   readonly workRuntimeFactory?: WorkRuntimeFactory;
+  /** P05-1 / F-010：提升 Run/Batch 尝试与启动上限（显式 resume 的新 Attempt 预算）。 */
+  readonly attemptBudget?: number;
 }): Promise<F007Fixture> {
   const box = createCommandsTestFixture({ prefix: options.prefix });
   try {
@@ -195,14 +197,15 @@ export async function openF007Fixture(options: {
         },
       }, { scope, expectedRevision: 1 }) as CommandReceipt & { result: { feature: { id: string; revision: number } } };
       const featureId = featureRow.result.feature.id;
+      const attempts = options.attemptBudget ?? 1;
       const planningReceipt = await submitCommand(PLANNING_START_OPERATION, {
         schemaVersion: 1, projectId, phaseId: 'phase-1', featureId, requirementRefs: [],
         constraints: ['不改变既有公开接口'],
         acceptance: { criteria: ['候选包含 Task 拆分与验收'] },
         strategy: { approvalMode: 'manual', taskLimit: null },
         budget: {
-          batch: { maxRuns: 1, maxTotalAttempts: 1, maxRuntimeStarts: 1, maxNoProgressRuns: 1, deadlineUtcMs: F007_NOW_BASE + 3_600_000 },
-          run: { maxAttemptsPerRun: 1, runTimeLimitMs: options.runTimeLimitMs ?? 3_600_000 },
+          batch: { maxRuns: 1, maxTotalAttempts: attempts, maxRuntimeStarts: attempts, maxNoProgressRuns: 1, deadlineUtcMs: F007_NOW_BASE + 3_600_000 },
+          run: { maxAttemptsPerRun: attempts, runTimeLimitMs: options.runTimeLimitMs ?? 3_600_000 },
         },
       }, { scope, expectedRevision: featureRow.result.feature.revision });
       const accepted = planningReceipt as PlanningAcceptedCommandReceipt;
@@ -223,16 +226,16 @@ export async function openF007Fixture(options: {
         ...overrides,
       });
       const waitForExecutingState = async (): Promise<void> => {
-        /* 轮询等待真实执行事实：Attempt executing + Run/Batch running。 */
+        /* 轮询等待真实执行事实：最新 Attempt executing + Run/Batch running。 */
         const state = () => {
           const row = query(
-            "SELECT CASE WHEN (SELECT status FROM attempts WHERE task_id = ?) = 'executing'" +
+            "SELECT CASE WHEN (SELECT status FROM attempts WHERE task_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1) = 'executing'" +
             " AND (SELECT status FROM runs WHERE id = ?) = 'running'" +
             " AND (SELECT status FROM execution_batches WHERE id = (SELECT batch_id FROM runs WHERE id = ?)) = 'running'" +
             ' THEN 1 ELSE 0 END AS ok', accepted.planningTaskId, accepted.runId, accepted.runId,
           ) as Record<string, unknown> & { ok: number };
           return { ...row,
-            attempt: query('SELECT status, execution_stage, invocation_id, error_kind FROM attempts WHERE task_id = ?', accepted.planningTaskId),
+            attempt: query('SELECT status, execution_stage, invocation_id, error_kind FROM attempts WHERE task_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1', accepted.planningTaskId),
             task: query('SELECT status, execution_version FROM tasks WHERE id = ?', accepted.planningTaskId),
             run: query('SELECT status, reason FROM runs WHERE id = ?', accepted.runId) };
         };
@@ -245,7 +248,7 @@ export async function openF007Fixture(options: {
       /* P05-1 / F-009：不等待执行状态，直接按当前 Attempt 事实受限绑定提交授权
        *（控制状态下 bind/invoke 的拒绝由此验证）。 */
       const bindSubmitBridge = (): { invoke(body: string): Promise<CommandReceipt | WorkTaskResult>; revoke(): void } => {
-        const attemptRow = query('SELECT id, invocation_id, execution_version, owner_id, host_instance_id FROM attempts WHERE task_id = ?',
+        const attemptRow = query('SELECT id, invocation_id, execution_version, owner_id, host_instance_id FROM attempts WHERE task_id = ?\n          ORDER BY created_at DESC, rowid DESC LIMIT 1',
           accepted.planningTaskId) as { id: string; invocation_id: string; execution_version: number; owner_id: string; host_instance_id: string };
         let current: unknown = {
           principal: owner, projectId, hostInstanceId: attemptRow.host_instance_id,
@@ -342,6 +345,8 @@ export async function openF007ControlFixture(options: {
   readonly lifecycle?: Record<string, unknown>;
   readonly startFailure?: { readonly kind: string; readonly reason: string };
   readonly runTimeLimitMs?: number;
+  /** P05-1 / F-010：提升 Run/Batch 尝试与启动上限（显式 resume 的新 Attempt 预算）。 */
+  readonly attemptBudget?: number;
 }): Promise<F007Fixture> {
   return openF007Fixture(options);
 }

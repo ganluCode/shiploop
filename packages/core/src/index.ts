@@ -68,6 +68,8 @@ export * from './ports/runtime-recovery-source.js';
 export * from './application/runtime-recovery.js';
 export * from './ports/work-recovery-continuation.js';
 export * from './application/work-recovery-continuation.js';
+export * from './ports/planning-recovery.js';
+export * from './application/planning-recovery.js';
 export * from './ports/runtime-execution.js';
 export * from './ports/usage-diagnostics.js';
 export * from './ports/runtime-failure.js';

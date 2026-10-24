@@ -525,7 +525,18 @@ export function assembleWorkExecution(options: {
       }
 
       /* 发起一次 Work：Runtime identity 保持 work；认证/资源预检随工厂
-       * prepareRequest（prepareAccess）复用，不引入 Durable 或托管 Chat。 */
+       * prepareRequest（prepareAccess）复用，不引入 Durable 或托管 Chat。
+       * P05-1 / F-010：同一未完成 planning Task 的会话策略——首次 Attempt 显式
+       * 新会话；重启核对后的 resume Attempt 默认 auto（conversation）：无受信
+       * 原生归档来源或能力未验证时由输入绑定按授权政策降级新会话并记录原因
+       * （绑定证据 recovery 记录）；required 只能经恢复来源显式给出，能力不足
+       * 时在绑定层明确拒绝启动（不降级）。新进程启动由既有预算记账，活进程
+       * 重连不重复计启动；原生续聊不等于检查点工具可重放。 */
+      const priorAttempts = attempts.listTaskAttempts(attempt.projectId, attempt.taskId)
+        .filter(entry => entry.id !== attempt.id);
+      const planningRecovery = priorAttempts.length === 0
+        ? { mode: 'new' as const }
+        : { mode: 'auto' as const, kind: 'conversation' as const };
       const started = await execution.start({
         claim: receipt, workspace,
         sessionId: receipt.launch?.sessionId ?? randomUUID(),
@@ -538,7 +549,7 @@ export function assembleWorkExecution(options: {
           maxEvents: 10_000,
           maxOutputBytes: 8_000_000,
         },
-        recovery: { mode: 'new' }, cwdRoot: 'managed-work',
+        recovery: planningRecovery, cwdRoot: 'managed-work',
       });
 
       /* 会话已开始：Attempt → executing、Run/Batch queued → running（受限工具

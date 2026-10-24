@@ -49,7 +49,7 @@ export const EXECUTION_RESUME_REJECTED_REASONS = [
 export type ExecutionResumeRejectedReason = (typeof EXECUTION_RESUME_REJECTED_REASONS)[number];
 
 /** 解除暂停后本次 resume 进入的缺失步骤（不是 Runtime 已启动的证明）。 */
-export const EXECUTION_RESUME_SCOPES = ['coding', 'final_verification', 'approval'] as const;
+export const EXECUTION_RESUME_SCOPES = ['coding', 'final_verification', 'approval', 'planning'] as const;
 export type ExecutionResumeScope = (typeof EXECUTION_RESUME_SCOPES)[number];
 
 /** resume 事务原语输入（目标身份 + 目标自身 revision + 已核对工作区身份）。 */

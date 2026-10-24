@@ -15,7 +15,7 @@
  *    （queued/running、无暂停意图、deadline/预算）、Project active、Phase open、
  *    Feature 非终态且计划摘要未漂移、规划上下文 open 且身份绑定一致、planning
  *    Task（kind=planning、pending、无人工阻塞、revision/executionVersion CAS、
- *    无历史 Attempt）、inputDigest 重算、策略副本/权限面内容身份、三正文与
+ *    无仍活动历史 Attempt）、inputDigest 重算、策略副本/权限面内容身份、三正文与
  *    必需输入逐条 ready 制品身份、项目 Work 排他（workspace 租约/基线占用）；
  * 3. 写入次序与编码认领一致：Task CAS → Attempt 插入 → 预算预占 → Run 级认领
  *    +槽位 → 三组资源租约 → task.claimed 事件 → 认领回执；
@@ -202,9 +202,14 @@ export function createSqlitePlanningClaimStore(session: SqliteStorageSession, op
           if (taskRow.kind !== 'planning') return notReady('task_outside_scope');
           if (taskRow.status !== 'pending' || taskRow.manual_block !== 0) return notReady('planning_task_not_pending');
           if (taskRow.revision !== valid.expectedRevision || taskRow.execution_version !== valid.executionVersion) fail('stale_task');
-          /* 首次规划认领：已有任何历史 Attempt（含终态）都不再接受——规划重试由
-           * 新的明确用户授权（新 planning.start）承担，不沿用返工/恢复身份。 */
-          if (attempts.listTaskAttempts(valid.projectId, valid.taskId).length > 0) return notReady('planning_attempt_history_present');
+          /* 首次规划认领：仍活动的历史 Attempt 一律拒绝。P05-1 / F-010：重启核对
+           * /恢复补完后的 planning Task 回到 pending 且占用已收口，此时允许用户
+           * 显式 resume 后的新 Attempt（受 Run 尝试上限、项目排他与上下文状态
+           * 门控约束；不重置计数、不绕过 deadline）。 */
+          const history = attempts.listTaskAttempts(valid.projectId, valid.taskId);
+          if (history.some(attempt => ['preparing', 'executing', 'verifying'].includes(attempt.status))) {
+            return notReady('planning_attempt_history_present');
+          }
           if ([taskRow.execution_version, taskRow.attempt_counter, taskRow.revision, batch.attemptsCreated,
             batch.revision, run.attemptsCreated, run.revision].some(n => n >= Number.MAX_SAFE_INTEGER - 2)) {
             fail('counter_overflow');
