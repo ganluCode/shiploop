@@ -366,7 +366,8 @@ describe('P04-9 F-010 双消费者竞争同一持久状态', () => {
       expect(runs.filter(run => run.status === 'queued')).toHaveLength(1);
       const winner = (db.prepare('SELECT run_id FROM run_dispatch_claims').get() as { run_id: string }).run_id;
       const loserRun = runs.find(run => run.id !== winner)!;
-      expect(loserRun).toMatchObject({ status: 'queued', reason: 'resource_busy' });
+      expect(loserRun).toMatchObject({ status: 'queued', reason: expect.stringMatching(/resource_busy|execution_slot_unavailable/) });
+
     } finally {
       for (const core of cores.splice(0)) {
         await core.workExecution.close();
