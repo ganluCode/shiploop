@@ -1134,7 +1134,7 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
   'execution.dispatch': {
     command: 'execution',
     commandId: 'execution.dispatch',
-    valueFlags: ['--project', '--limit', '--cursor'],
+    valueFlags: ['--project', '--batch', '--feature', '--limit', '--cursor'],
     boolFlags: [],
     repeatableFlags: [],
     minPositionals: 0,
@@ -2802,6 +2802,8 @@ export interface ParsedExecutionDispatch {
   readonly startTimeoutMs: number;
   readonly dataRoot?: string;
   readonly projectId: string;
+  readonly batchId?: string;
+  readonly featureId?: string;
   readonly limit?: number;
   readonly cursor?: string;
 }
@@ -3907,11 +3909,18 @@ function buildExecution(
       };
     }
     case 'execution.dispatch': {
+      const batchId = takeOption(scan, '--batch');
+      const featureId = takeOption(scan, '--feature');
+      if (batchId !== undefined && featureId !== undefined) {
+        fail(state, 'conflicting_options');
+      }
       return {
         ...base,
         command: 'execution',
         commandId: 'execution.dispatch',
         projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        ...(batchId !== undefined ? { batchId: requireBatchId(batchId, state) } : {}),
+        ...(featureId !== undefined ? { featureId: requirePlanId(featureId, state, 'feature') } : {}),
         ...optionalPlanListPage(scan, state),
       };
     }

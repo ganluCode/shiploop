@@ -758,7 +758,7 @@ const QUERY_SPECS: Readonly<Partial<Record<ApplicationOperation, QuerySpec>>> = 
   // P04-9 / F-009：派发队列查询参数白名单（只读；容量/owner/version/释放
   // 等可写意图不在白名单内，一律 400；取值规则由 Core 单一权威复核）。
   'execution.dispatch.list': Object.freeze({
-    allowed: ['projectId', 'limit', 'cursor'],
+    allowed: ['projectId', 'batchId', 'featureId', 'limit', 'cursor'],
     repeatable: [],
   }),
   // P05-1 / F-012：规划上下文/候选查询参数白名单（取值规则由 Core 单一权威
@@ -1286,12 +1286,17 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
     // P04-9 / F-009：派发队列与槽位只读投影分发（本层只做形态转换；授权/
     // 可见性折叠/分页范围/游标绑定由 Core 单一权威复核；查询零写入，不认领、
     // 不扣预算、不唤醒执行、不释放槽位）。
-    case 'execution.dispatch.list':
+    case 'execution.dispatch.list': {
+      const query = buildPlanListQuery(params, operation, 'projectId');
+      for (const key of ['batchId', 'featureId']) {
+        if (params.has(key)) query[key] = params.get(key);
+      }
       result = await app.queryService.listExecutionDispatchQueue(
         app.principal,
-        buildPlanListQuery(params, operation, 'projectId'),
+        query,
       );
       break;
+    }
     // P03-7 / F-013：Task 机器证据/人审/返工链查询分发（本层只做形态转换；
     // 授权/可见性折叠/分页范围/游标绑定全部由 Core 单一权威复核；跨项目与
     // 不存在目标统一 not_found，不区分存在性）。

@@ -327,6 +327,14 @@ export interface ReviseFeaturePlanInput {
   readonly commandId?: string;
 }
 
+/** execution.dispatch.list 的可选固定范围与分页输入。 */
+export interface DispatchQueueListInput {
+  readonly batchId?: string;
+  readonly featureId?: string;
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+
 /** 计划层级列表分页输入（limit 1..200；cursor 为不透明 plcur_v1_ 游标）。 */
 export interface PlanListPageInput {
   readonly limit?: number;
@@ -884,7 +892,7 @@ export interface HostClientApplication {
    */
   listExecutionDispatchQueue(
     projectId: string,
-    input?: PlanListPageInput,
+    input?: DispatchQueueListInput,
   ): Promise<DispatchQueueListResult>;
   /* ------------------------------------------------------------ *
    * P03-7 / F-013 Task 机器证据/人审事项/有限返工链只读查询
@@ -1562,6 +1570,28 @@ function planListPath(
   const paging = buildPlanListQuery(input, operation);
   const query = `${params.toString()}${paging.length === 0 ? '' : `&${paging}`}`;
   return `${base}?${query}`;
+}
+
+const DISPATCH_QUEUE_INPUT_KEYS = ['batchId', 'featureId', 'limit', 'cursor'] as const;
+
+function buildDispatchQueueQuery(input: DispatchQueueListInput | undefined, operation: HostOperation): string {
+  if (input === undefined) return '';
+  const object = rejectUnknownInputKeys(operation, input, DISPATCH_QUEUE_INPUT_KEYS);
+  if (object.batchId !== undefined && object.featureId !== undefined) {
+    throw invalidInput(operation, 'conflicting_scope', 'selector');
+  }
+  const params = new URLSearchParams();
+  if (object.batchId !== undefined) params.append('batchId', requireStableIdInput(operation, object.batchId, 'batchId'));
+  if (object.featureId !== undefined) params.append('featureId', requireStableIdInput(operation, object.featureId, 'featureId'));
+  const paging = buildPlanListQuery({
+    ...(object.limit !== undefined ? { limit: object.limit as number } : {}),
+    ...(object.cursor !== undefined ? { cursor: object.cursor as string } : {}),
+  }, operation);
+  if (paging.length > 0) {
+    const pagingParams = new URLSearchParams(paging);
+    pagingParams.forEach((value, key) => params.append(key, value));
+  }
+  return params.toString();
 }
 
 /* ------------------------------------------------------------------ *
@@ -3712,14 +3742,12 @@ export function createHostClientApplication(context: AppClientContext): HostClie
 
     async listExecutionDispatchQueue(
       projectId: string,
-      input?: PlanListPageInput,
+      input?: DispatchQueueListInput,
     ): Promise<DispatchQueueListResult> {
       context.assertOpen('execution.dispatch.list');
       const project = requireProjectId('execution.dispatch.list', projectId);
-      const paging = buildPlanListQuery(input, 'execution.dispatch.list');
-      const query =
-        `projectId=${encodeURIComponent(project)}` +
-        `${paging.length === 0 ? '' : `&${paging}`}`;
+      const paging = buildDispatchQueueQuery(input, 'execution.dispatch.list');
+      const query = `projectId=${encodeURIComponent(project)}${paging.length === 0 ? '' : `&${paging}`}`;
       const json = await getJson('execution.dispatch.list', `${DISPATCH_QUEUE_ROUTE}?${query}`);
       const result = validateAppQueryResponse('execution.dispatch.list', json);
       if (result.records.some((record) => record.projectId !== project)) {

@@ -1511,10 +1511,10 @@ const EXECUTION_DIAGNOSTICS_HELP = [
 ].join('\n');
 
 const EXECUTION_DISPATCH_HELP = [
-  'usage: shiploop execution dispatch --project <id> [--limit <int>] [--cursor <c>]',
+  'usage: shiploop execution dispatch --project <id> [--batch <id> | --feature <id>] [--limit <int>] [--cursor <c>]',
   '                                       [--data-root <abs>] [--json]',
   '',
-  '派发队列与执行槽位只读查询（execution.dispatch.list）：显示全局槽位摘要（容量、',
+  '派发队列与执行槽位只读查询（execution.dispatch.list）：可按固定 Batch 或 Feature 限定范围，',
   '活动/隔离计数、本项活动数、跨项目占用的布尔摘要）、每个 Run 的派发事实（派生状态、',
   '是否有可用槽位）与当前认领/槽位/活动或最近 Attempt 身份，并给出可理解的等待/隔离',
   '原因（等待槽位、认领/槽位隔离、缺少可核对归属、租约到期未核实、暂停/取消/中断）。',

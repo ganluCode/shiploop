@@ -580,6 +580,11 @@ export interface DispatchQueuePage {
  * 列表沿用计划分页的可见范围谓词与键集分页形态（复合排序键由
  * ExecutionListRequest 承载，应用层已解码校验）。
  */
+export interface DispatchQueueSelector {
+  readonly batchId?: string;
+  readonly featureId?: string;
+}
+
 export interface ExecutionScheduleQueryReadStore {
   readRunScheduleView(projectId: unknown, runId: unknown): RunScheduleView | undefined;
   readAttemptRecord(projectId: unknown, attemptId: unknown): AttemptRecord | undefined;
@@ -604,5 +609,6 @@ export interface ExecutionScheduleQueryReadStore {
     visibility: unknown,
     projectId: unknown,
     request: ExecutionListRequest,
+    selector?: DispatchQueueSelector,
   ): DispatchQueuePage;
 }

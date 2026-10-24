@@ -156,6 +156,7 @@ import type {
   DispatchQueueViewRow,
   ExecutionScheduleQueryReadStore,
   PublicDispatchQueueRecord,
+  DispatchQueueSelector,
   PublicScheduleTaskView,
   RunScheduleEvaluation,
   RunScheduleStatusResult,
@@ -1697,11 +1698,44 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
       try {
         requireCapability(principal, 'project.read', operation);
         const object = requirePlainObject(input, { operation }, 'input');
-        rejectUnknownKeys(object, ['projectId', 'limit', 'cursor'], { operation }, 'input');
+        rejectUnknownKeys(object, ['projectId', 'batchId', 'featureId', 'limit', 'cursor'], { operation }, 'input');
         const projectId = requireProjectId(object.projectId, operation);
+        const batchId = object.batchId === undefined
+          ? undefined
+          : validateStableId(object.batchId, { operation, entity: { type: 'execution_batch' } }, 'batchId');
+        const featureId = object.featureId === undefined
+          ? undefined
+          : validateStableId(object.featureId, { operation, entity: { type: 'feature' } }, 'featureId');
+        if (batchId !== undefined && featureId !== undefined) {
+          throw new PublicError('invalid_input', operation, undefined, {
+            details: { field: 'selector', reason: 'conflicting_scope' },
+          });
+        }
         requireProjectVisible(principal, projectId, operation);
+        if (batchId !== undefined && executionBudgetReads.findExecutionBatchRecord(projectId, batchId) === undefined) {
+          executionEntityNotFound(operation);
+        }
+        if (featureId !== undefined) {
+          const feature = planReads.readFeaturePlanView(featureId);
+          if (feature === undefined || feature.feature.projectId !== projectId) {
+            planEntityNotFound(operation, 'feature');
+          }
+        }
         const filter = validatedPlanFilter(object, operation);
-        const binding = planCursorBinding({ kind: 'dispatch-queue', projectId }, operation);
+        const selector: DispatchQueueSelector | undefined =
+          batchId === undefined && featureId === undefined
+            ? undefined
+            : batchId !== undefined
+              ? { batchId }
+              : { featureId };
+        const binding = planCursorBinding(
+          batchId !== undefined
+            ? { kind: 'dispatch-queue-batch', projectId, batchId }
+            : featureId !== undefined
+              ? { kind: 'dispatch-queue-feature', projectId, featureId }
+              : { kind: 'dispatch-queue', projectId },
+          operation,
+        );
         // 游标先于存储读取核验：跨项目/跨根/篡改载荷一律 invalid_cursor，
         // 绝不当作从零读取。
         const after = planListRequest(filter, binding, operation);
@@ -1714,6 +1748,7 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
           principalProjectVisibility(principal),
           projectId,
           request,
+          selector,
         );
         const now = nowUtcMs();
         const records: PublicDispatchQueueRecord[] = page.records.map(

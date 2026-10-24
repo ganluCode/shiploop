@@ -701,6 +701,9 @@ export type PlanListScope =
   | { readonly kind: 'task-rework-chain'; readonly projectId: string; readonly taskId: string }
   | { readonly kind: 'feature-git-operations'; readonly projectId: string; readonly featureId: string }
   | { readonly kind: 'run-git-operations'; readonly projectId: string; readonly runId: string }
+  /** P05-4：只读派发范围；最多选择一个固定 Batch 或 Feature。 */
+  | { readonly kind: 'dispatch-queue-batch'; readonly projectId: string; readonly batchId: string }
+  | { readonly kind: 'dispatch-queue-feature'; readonly projectId: string; readonly featureId: string }
   /** P04-9 / F-008 派发队列与槽位只读投影：项目范围分页（父级固定为项目）。 */
   | { readonly kind: 'dispatch-queue'; readonly projectId: string }
   /** P05-1 / F-011 项目范围规划上下文分页（无 Feature 过滤）。 */
@@ -903,6 +906,28 @@ export function createPlanListCursorBinding(
       },
     };
   }
+  if (scope.kind === 'dispatch-queue-batch') {
+    rejectUnknownKeys(scope, ['kind', 'projectId', 'batchId'], { operation }, 'scope');
+    return {
+      rootIdentity: input.rootIdentity,
+      scope: {
+        kind: 'dispatch-queue-batch',
+        projectId: validateStableId(scope.projectId, { operation, entity: { type: 'project' } }, 'scope.projectId'),
+        batchId: validateStableId(scope.batchId, { operation, entity: { type: 'execution_batch' } }, 'scope.batchId'),
+      },
+    };
+  }
+  if (scope.kind === 'dispatch-queue-feature') {
+    rejectUnknownKeys(scope, ['kind', 'projectId', 'featureId'], { operation }, 'scope');
+    return {
+      rootIdentity: input.rootIdentity,
+      scope: {
+        kind: 'dispatch-queue-feature',
+        projectId: validateStableId(scope.projectId, { operation, entity: { type: 'project' } }, 'scope.projectId'),
+        featureId: validateStableId(scope.featureId, { operation, entity: { type: 'feature' } }, 'scope.featureId'),
+      },
+    };
+  }
   if (scope.kind === 'dispatch-queue') {
     rejectUnknownKeys(scope, ['kind', 'projectId'], { operation }, 'scope');
     return {
@@ -937,7 +962,7 @@ export function createPlanListCursorBinding(
   planInvalidInput(
     operation,
     'scope.kind',
-    "必须是 'phases' / 'phase-graph' / 'features' / 'tasks' / 'budget-revisions' / 'task-attempts' / 'attempt-diagnostics' / 'run-work-sessions' / 'task-work-sessions' / 'task-approvals' / 'task-rework-chain' / 'feature-git-operations' / 'run-git-operations' / 'dispatch-queue' / 'planning-contexts' / 'feature-planning-contexts'",
+    "必须是 'phases' / 'phase-graph' / 'features' / 'tasks' / 'budget-revisions' / 'task-attempts' / 'attempt-diagnostics' / 'run-work-sessions' / 'task-work-sessions' / 'task-approvals' / 'task-rework-chain' / 'feature-git-operations' / 'run-git-operations' / 'dispatch-queue' / 'dispatch-queue-batch' / 'dispatch-queue-feature' / 'planning-contexts' / 'feature-planning-contexts'",
     (scope as { kind?: unknown }).kind,
   );
 }
@@ -962,6 +987,8 @@ function planBindingAsTrusted(binding: PlanListCursorBinding): PlanListCursorBin
       binding.scope.kind !== 'task-rework-chain' &&
       binding.scope.kind !== 'feature-git-operations' &&
       binding.scope.kind !== 'run-git-operations' &&
+      binding.scope.kind !== 'dispatch-queue-batch' &&
+      binding.scope.kind !== 'dispatch-queue-feature' &&
       binding.scope.kind !== 'dispatch-queue' &&
       binding.scope.kind !== 'planning-contexts' &&
       binding.scope.kind !== 'feature-planning-contexts')
@@ -983,8 +1010,14 @@ function planScopeFingerprint(scope: PlanListScope): string {
     case 'work-recording':
       parent = `${scope.parentKind}:${scope.parentId}:${scope.recordType}`;
       break;
-    case 'phases':
+    case 'dispatch-queue-batch':
+      parent = `batch:${scope.batchId}`;
+      break;
+    case 'dispatch-queue-feature':
+      parent = `feature:${scope.featureId}`;
+      break;
     case 'dispatch-queue':
+    case 'phases':
     case 'planning-contexts':
       parent = '-';
       break;

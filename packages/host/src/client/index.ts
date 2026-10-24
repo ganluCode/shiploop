@@ -60,6 +60,7 @@ export type {
   ReviseExecutionBudgetInput,
   BudgetRevisionListInput,
   PlanListPageInput,
+  DispatchQueueListInput,
   PlanLabelEntityType,
   ListWorkspacesInput,
   ListWorkspaceOperationsInput,

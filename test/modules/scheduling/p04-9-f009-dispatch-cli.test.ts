@@ -216,6 +216,21 @@ describe('F-009 execution dispatch 参数解析', () => {
     });
   });
 
+  it('固定 Batch 或 Feature selector 只能选择一个，并映射为只读查询参数', () => {
+    expect(parseAppCliArgs(
+      ['execution', 'dispatch', '--project', PROJECT_ID, '--batch', RUN_ID],
+      {},
+    )).toMatchObject({ batchId: RUN_ID });
+    expect(parseAppCliArgs(
+      ['execution', 'dispatch', '--project', PROJECT_ID, '--feature', FEATURE_ID],
+      {},
+    )).toMatchObject({ featureId: FEATURE_ID });
+    expectParseError(
+      ['execution', 'dispatch', '--project', PROJECT_ID, '--batch', RUN_ID, '--feature', FEATURE_ID],
+      'conflicting_options',
+    );
+  });
+
   it('非法身份、分页与位置参数在连接前拒绝（不回显参数值）', () => {
     expectParseError(['execution', 'dispatch'], 'missing_required_option', 'project');
     expectParseError(

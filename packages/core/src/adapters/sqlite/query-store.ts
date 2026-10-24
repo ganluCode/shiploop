@@ -40,6 +40,7 @@ import type {
   ExecutionListRequest,
   ExecutionRecordPage,
   ExecutionScheduleQueryReadStore,
+  DispatchQueueSelector,
   RunScheduleView,
 } from '../../ports/execution-schedule-query.js';
 import type { AttemptRecord } from '../../ports/attempt-store.js';
@@ -250,8 +251,9 @@ export function createSqliteQueryStore(
       visibility: unknown,
       projectId: unknown,
       request: ExecutionListRequest,
+      selector?: DispatchQueueSelector,
     ): DispatchQueuePage {
-      return schedule.listDispatchQueueRecords(visibility, projectId, request);
+      return schedule.listDispatchQueueRecords(visibility, projectId, request, selector);
     },
     readWorkspaceDetail: (projectId: unknown, featureId: unknown) =>
       workspace.readWorkspaceDetail(projectId, featureId),

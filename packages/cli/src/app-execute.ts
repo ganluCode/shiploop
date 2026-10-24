@@ -1897,6 +1897,8 @@ async function executeExecutionCommand(
      * ------------------------------------------------------------ */
     case 'execution.dispatch': {
       const result = await client.listExecutionDispatchQueue(command.projectId, {
+        ...(command.batchId !== undefined ? { batchId: command.batchId } : {}),
+        ...(command.featureId !== undefined ? { featureId: command.featureId } : {}),
         ...(command.limit !== undefined ? { limit: command.limit } : {}),
         ...(command.cursor !== undefined ? { cursor: command.cursor } : {}),
       });
