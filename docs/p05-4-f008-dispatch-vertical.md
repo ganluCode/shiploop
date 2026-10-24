@@ -1,7 +1,7 @@
 # P05-4 F-008 派发纵向验收证据
 
 - 受测分支：`feat/p05/concurrent-dispatch`
-- 受测 commit SHA：`640fe2c`
+- 受测 commit SHA：`fe25e24`（基于代码验收提交 `640fe2c`）
 - 测试索引：`test/index/phases/P05/features/P05-4/tasks/F-008.json`
 - selection manifest：Harness `verifications/F-008/test-selection.json`
 
@@ -14,14 +14,15 @@
 | 架构边界检查 | `npm run check:boundaries` | 0 | Harness `tool-logs/f008-boundaries.log` |
 | 构建与入口 smoke | `npm run build` | 0 | Harness `tool-logs/f008-build.log` |
 | selection 路径校验 | `node -e '<selection validator>'` | 0 | Harness `tool-logs/f008-selection-validation.log` |
+| P04-9 F-010 派发纵向回归（返工） | `/Users/ganlu/.local/pipx/venvs/nezha/bin/python -m nezha.dag.test_command --log-dir /Users/ganlu/Documents/my-dev/code/ai-coding/shiploop-harness/workspace/features/2026-10-23-18-55-21_p05-4-feature/verifications/F-008/runtime-logs -- node scripts/run-tests.ts test/modules/execution/dispatch/p04-9-f010-dispatch-vertical.test.ts` | 0 | `verifications/F-008/runtime-logs/test-3jdkokdj.log` |
+| 类型检查（返工） | `npm run typecheck` | 0 | Harness `tool-logs/f008-rework-typecheck-2.log` |
 
 聚焦测试结果为 1 个测试文件、2 个用例通过。第一用例使用真实临时 SQLite 派发候选、真实 Git worktree 和可控屏障：A/B 在两个调度 worker 中进入消费，C 由持久 DAG 原因 `dependency_pending` 保持等待；第二用例使用生产组合根验证重复唤醒、Host 重建和 SQLite Attempt/Runtime 预算不重复。测试自身创建的 worktree 在 `finally` 中移除。
 
 ## 范围边界
 
-selection 共登记 8 个完整测试文件。当前 Runtime 只执行新增 F-008 文件；以下 7 个已登记的 P04/P05 受影响回归交由 Nezha 独立验证，当前记录为 `not_run`：
+selection 共登记 8 个完整测试文件。当前 Runtime 已执行新增 F-008 文件和失败回归 `test/modules/execution/dispatch/p04-9-f010-dispatch-vertical.test.ts`；该回归现为 5 passed。以下 6 个已登记的 P04/P05 受影响回归交由 Nezha 独立验证，当前记录为 `not_run`：
 
-- `test/modules/execution/dispatch/p04-9-f010-dispatch-vertical.test.ts`
 - `test/modules/scheduling/p05-4-f004-feature-scheduler.test.ts`
 - `test/modules/recovery/p05-4-f006-dispatch-recovery.test.ts`
 - `test/modules/workspace/p05-4-f005-feature-workspace-concurrency.test.ts`
