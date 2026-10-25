@@ -206,6 +206,8 @@ describe('F-005 迁移执行与记录', () => {
           'feature_dependencies',
           'feature_resource_leases',
           'features',
+          'git_integration_commands',
+          'git_integration_observations',
           'git_operations',
           'global_settings',
           'integration_plans',

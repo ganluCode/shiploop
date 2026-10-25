@@ -48,3 +48,9 @@ Core 公共入口只导出端口与应用服务；已移除前序 F-003 的 fs a
 - 分层修复复验：`test-epe4cllq.log`，386 文件、0 diagnostics，退出 0。
 
 上述本地测试按最终覆盖去重为 97 项；不同轮次的执行数不累加为新增覆盖。独立 Verifier、Feature gate 和阶段验收仍分别保留其结论。
+
+## F-004 返工：迁移器表清单同步（attempt 2）
+
+上次独立验收执行原索引 8 文件，共 124 项，结果为 123 passed / 1 failed。唯一失败是 `sqlite-migration-runner.test.ts` 的空库迁移完整表清单尚未加入 v44 的 `git_integration_commands`、`git_integration_observations`；原始失败证据保留在 Harness `verifications/F-004/b1a2e8727f01492abd96470f4e585997/verification.json`。
+
+本次仅补齐该完整表清单，保留精确相等断言、既有业务实现、迁移内容和 8 文件测试选择。定向复验 `test/modules/storage/sqlite/sqlite-migration-runner.test.ts`：16 passed，exit 0；日志 `verifications/F-004/runtime-logs/test-ktfl11ap.log` 及其 `.exitcode`/`.json` 旁文件绑定本次 invocation `12deba48ad5b4edbadb2d2a622485330`。其余索引文件交 Nezha 独立复验，本次不重复运行未改动组；不据此宣称 124 项已经全部复验通过。
