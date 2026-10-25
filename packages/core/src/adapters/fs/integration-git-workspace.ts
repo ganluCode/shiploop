@@ -262,8 +262,11 @@ export function createIntegrationGitWorkspace(options: {
       const source = await verifyTarget(input);
       const workspaceId = randomUUID();
       state = { input: { ...input, integrationPath: path }, source, privateGitDir: '', workspaceId };
-      const added = await withLock(input, input.plan.target.canonicalPath, () => run(input.plan.target.canonicalPath,
-        ['worktree', 'add', '--detach', path, input.plan.target.baseCommit], input));
+      const added = await withLock(input, input.plan.target.canonicalPath, () => {
+        input.beforeWrite?.();
+        return run(input.plan.target.canonicalPath,
+          ['worktree', 'add', '--detach', path, input.plan.target.baseCommit], input);
+      });
       if (added.exitCode !== 0 || added.reason !== null) throw new IntegrationGitError('workspace_creation_failed');
       if (await safeRealpath(path) !== path) throw new IntegrationGitError('path_changed');
       const privateDir = await privateGitDir(path, input);
@@ -310,8 +313,10 @@ export function createIntegrationGitWorkspace(options: {
       const object = await run(state.input.integrationPath, ['cat-file', '-e', `${inputSha}^{commit}`], state.input, [0, 1]);
       if (object.exitCode !== 0) throw new IntegrationGitError('input_missing');
       const parentBefore = actualFacts.head;
-      const merged = await withLock(state.input, state.input.integrationPath, () => run(state.input.integrationPath,
-        ['merge', '--no-ff', '--no-commit', '--no-edit', inputSha], state.input, [0, 1]));
+      const merged = await withLock(state.input, state.input.integrationPath, () => {
+        state.input.beforeWrite?.();
+        return run(state.input.integrationPath, ['merge', '--no-ff', '--no-commit', '--no-edit', inputSha], state.input, [0, 1]);
+      });
       const afterMerge = await facts(state.input.integrationPath, state.input);
       if (merged.exitCode !== 0 || afterMerge.unresolvedPaths.length > 0) {
         const reason: IntegrationWorkspaceReason = afterMerge.unresolvedPaths.length > 0 ? 'merge_conflict' : 'merge_failed';
@@ -321,8 +326,10 @@ export function createIntegrationGitWorkspace(options: {
       const mergeHead = text((await run(state.input.integrationPath, ['rev-parse', '--verify', 'MERGE_HEAD'], state.input)).output).trim();
       if (mergeHead !== inputSha) throw new IntegrationGitError('commit_facts_mismatch');
       const message = `Merge ${inputSha} into ShipLoop integration ${state.input.plan.integrationId}\n`;
-      const committed = await withLock(state.input, state.input.integrationPath, () => run(state.input.integrationPath,
-        ['commit', '--no-gpg-sign', '--cleanup=verbatim', '--file=-'], state.input, [0], Buffer.from(message)));
+      const committed = await withLock(state.input, state.input.integrationPath, () => {
+        state.input.beforeWrite?.();
+        return run(state.input.integrationPath, ['commit', '--no-gpg-sign', '--cleanup=verbatim', '--file=-'], state.input, [0], Buffer.from(message));
+      });
       if (committed.exitCode !== 0) throw new IntegrationGitError('merge_failed');
       const afterCommit = await facts(state.input.integrationPath, state.input);
       if (afterCommit.head === parentBefore || afterCommit.parents[0] !== parentBefore || !afterCommit.parents.includes(inputSha)
@@ -335,6 +342,7 @@ export function createIntegrationGitWorkspace(options: {
         planId: state.input.plan.integrationId, targetBase: state.input.plan.target.baseCommit, steps }) + '\n', { mode: 0o600 });
       if (!(await sourceUnchanged(state, state.input))) throw new IntegrationGitError('source_changed');
       current = makeHandle(state, 'ready', afterCommit.head, steps, afterCommit);
+      state.input.onStep?.(current);
       if (steps.length === state.input.plan.mergeOrder.length) {
         const completed = makeHandle(state, 'succeeded', afterCommit.head, steps, afterCommit);
         return { ...outcome('succeeded', null, completed, { complete: true }), steps };

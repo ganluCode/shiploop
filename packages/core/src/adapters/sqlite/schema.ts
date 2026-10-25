@@ -2138,6 +2138,37 @@ export const gitOperations = sqliteTable('git_operations', {
   index('git_operations_project_intent_index').on(table.projectId, table.intentDigest),
 ]);
 
+/** P05-7: private command associations and observed facts, append-only in migration v44. */
+export const gitIntegrationCommands = sqliteTable('git_integration_commands', {
+  id: text('id').primaryKey(),
+  projectId: text('project_id').notNull(),
+  commandId: text('command_id').notNull(),
+  operationId: text('operation_id').notNull(),
+  requestDigest: text('request_digest').notNull(),
+  createdAt: integer('created_at').notNull(),
+}, table => [
+  check('git_integration_commands_digest_check', sql`length(${table.requestDigest}) = 64 AND ${table.requestDigest} NOT GLOB '*[^0-9a-f]*'`),
+  check('git_integration_commands_time_check', sql`${table.createdAt} >= 1`),
+  foreignKey({ columns: [table.projectId, table.operationId], foreignColumns: [gitOperations.projectId, gitOperations.id] }).onDelete('restrict'),
+  uniqueIndex('git_integration_commands_command_index').on(table.projectId, table.commandId),
+]);
+
+export const gitIntegrationObservations = sqliteTable('git_integration_observations', {
+  id: text('id').primaryKey(),
+  projectId: text('project_id').notNull(),
+  operationId: text('operation_id').notNull(),
+  sequence: integer('sequence').notNull(),
+  operationRevision: integer('operation_revision').notNull(),
+  observation: text('observation').notNull(),
+  createdAt: integer('created_at').notNull(),
+}, table => [
+  check('git_integration_observations_revision_check', sql`${table.operationRevision} >= 1 AND ${table.sequence} >= 1`),
+  check('git_integration_observations_json_check', sql`json_valid(${table.observation}) AND json_type(${table.observation}) = 'object'`),
+  check('git_integration_observations_time_check', sql`${table.createdAt} >= 1`),
+  foreignKey({ columns: [table.projectId, table.operationId], foreignColumns: [gitOperations.projectId, gitOperations.id] }).onDelete('restrict'),
+  uniqueIndex('git_integration_observations_operation_index').on(table.projectId, table.operationId, table.sequence),
+]);
+
 /**
  * P04-9 / F-001 Run 级持久派发认领（迁移 v33；ports/execution-dispatch.ts 契约）。
  *

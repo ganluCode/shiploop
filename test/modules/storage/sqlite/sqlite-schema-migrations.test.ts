@@ -100,6 +100,8 @@ const SCHEMA_TABLES = [
   ['check_results', schema.checkResults],
   // P03-8 / F-002：受控 Git 操作意图与回执（迁移 v26）。
   ['git_operations', schema.gitOperations],
+  ['git_integration_commands', schema.gitIntegrationCommands],
+  ['git_integration_observations', schema.gitIntegrationObservations],
   // P05-5 / F-002：Feature 共享资源租约（迁移 v40）。
   ['feature_resource_leases', schema.featureResourceLeases],
   // P05-6 / F-002：冻结的集成计划和前置成果快照（迁移 v42）。
@@ -692,6 +694,8 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
         'planning_contexts:(project_id,candidate_artifact_id)->artifacts.(project_id,id)',
         'feature_resource_leases:(project_id)->projects.(id)',
         // P05-6 / F-002 集成计划及前置成果快照（迁移 v42）。
+        'git_integration_commands:(project_id,operation_id)->git_operations.(project_id,id)',
+        'git_integration_observations:(project_id,operation_id)->git_operations.(project_id,id)',
         'integration_plans:(project_id)->projects.(id)',
         'integration_plans:(project_id,phase_id)->phases.(project_id,id)',
         'integration_plans:(project_id,batch_id)->execution_batches.(project_id,id)',

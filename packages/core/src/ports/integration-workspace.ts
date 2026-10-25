@@ -75,6 +75,10 @@ export interface IntegrationWorkspacePrepareInput {
   readonly owner: IntegrationWorkspaceOwner;
   readonly gitIdentity: ConfirmedGitIdentity;
   readonly signal?: AbortSignal;
+  /** Core admission recheck immediately before every external mutation, outside any DB transaction. */
+  readonly beforeWrite?: () => void;
+  /** Persist observed parent/tree facts after each input, outside external Git I/O. */
+  readonly onStep?: (workspace: IntegrationWorkspaceHandle) => void;
 }
 
 export interface IntegrationWorkspaceOutcome {

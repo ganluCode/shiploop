@@ -3646,6 +3646,40 @@ CREATE TRIGGER git_operations_task_identity_check BEFORE INSERT ON git_operation
 PRAGMA foreign_keys = ON;
 `;
 
+const MIGRATION_044_SQL = `
+-- Evidence only: lifecycle and fencing remain in git_operations.
+CREATE TABLE git_integration_commands (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  command_id TEXT NOT NULL,
+  operation_id TEXT NOT NULL,
+  request_digest TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  CONSTRAINT git_integration_commands_digest_check CHECK (length(request_digest) = 64 AND request_digest NOT GLOB '*[^0-9a-f]*'),
+  CONSTRAINT git_integration_commands_time_check CHECK (created_at >= 1),
+  FOREIGN KEY (project_id, operation_id) REFERENCES git_operations (project_id, id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX git_integration_commands_command_index ON git_integration_commands (project_id, command_id);
+CREATE TABLE git_integration_observations (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  operation_id TEXT NOT NULL,
+  sequence INTEGER NOT NULL,
+  operation_revision INTEGER NOT NULL,
+  observation TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  CONSTRAINT git_integration_observations_revision_check CHECK (operation_revision >= 1 AND sequence >= 1),
+  CONSTRAINT git_integration_observations_json_check CHECK (json_valid(observation) AND json_type(observation) = 'object'),
+  CONSTRAINT git_integration_observations_time_check CHECK (created_at >= 1),
+  FOREIGN KEY (project_id, operation_id) REFERENCES git_operations (project_id, id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX git_integration_observations_operation_index ON git_integration_observations (project_id, operation_id, sequence);
+CREATE TRIGGER git_integration_commands_immutable BEFORE UPDATE ON git_integration_commands BEGIN SELECT RAISE(ABORT, 'integration command is immutable'); END;
+CREATE TRIGGER git_integration_commands_retained BEFORE DELETE ON git_integration_commands BEGIN SELECT RAISE(ABORT, 'integration command is retained'); END;
+CREATE TRIGGER git_integration_observations_immutable BEFORE UPDATE ON git_integration_observations BEGIN SELECT RAISE(ABORT, 'integration observation is immutable'); END;
+CREATE TRIGGER git_integration_observations_retained BEFORE DELETE ON git_integration_observations BEGIN SELECT RAISE(ABORT, 'integration observation is retained'); END;
+`;
+
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     version: 1,
@@ -3754,4 +3788,5 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 41, sql: MIGRATION_041_SQL, checksum: sha256Hex(MIGRATION_041_SQL), foreignKeysOff: true },
   { version: 42, sql: MIGRATION_042_SQL, checksum: sha256Hex(MIGRATION_042_SQL) },
   { version: 43, sql: MIGRATION_043_SQL, checksum: sha256Hex(MIGRATION_043_SQL), foreignKeysOff: true },
+  { version: 44, sql: MIGRATION_044_SQL, checksum: sha256Hex(MIGRATION_044_SQL) },
 ];
