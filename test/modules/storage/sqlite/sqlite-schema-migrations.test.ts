@@ -691,6 +691,7 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
         // P03-9 / F-002 取消停止 operation（迁移 v28）：同项目 Batch/Run 关联。
         'execution_stop_operations:(project_id)->projects.(id)',
         'execution_stop_operations:(project_id,batch_id)->execution_batches.(project_id,id)',
+        'execution_stop_operations:(project_id,feature_id)->features.(project_id,id)',
         'execution_stop_operations:(project_id,run_id)->runs.(project_id,id)',
       ]);
       type FkPragmaRow = { id: number; seq: number; table: string; from: string; to: string; on_update: string; on_delete: string };

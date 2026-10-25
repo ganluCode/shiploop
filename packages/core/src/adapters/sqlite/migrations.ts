@@ -3386,6 +3386,79 @@ WHEN (OLD.state = 'released' AND NEW.state <> 'released') OR (OLD.state = 'quara
 BEGIN SELECT RAISE(ABORT, 'illegal feature resource lease transition'); END;
 `;
 
+const MIGRATION_041_SQL = `
+-- P05-5 / F-006：停止 operation 增加 Feature 目标，保留旧 Run/Batch 行。
+PRAGMA legacy_alter_table = ON;
+CREATE TABLE execution_stop_operations_v41 (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  command_id TEXT NOT NULL,
+  target_kind TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  batch_id TEXT NOT NULL,
+  feature_id TEXT,
+  run_id TEXT,
+  reason TEXT NOT NULL,
+  status TEXT NOT NULL,
+  requested_at INTEGER NOT NULL,
+  settled_at INTEGER,
+  evidence_ref TEXT,
+  stop_confirmed INTEGER,
+  forced INTEGER,
+  checked_at INTEGER,
+  CONSTRAINT execution_stop_operations_revision_check CHECK (revision >= 1),
+  CONSTRAINT execution_stop_operations_target_kind_check CHECK (target_kind IN ('run','batch','feature')),
+  CONSTRAINT execution_stop_operations_status_check CHECK (status IN ('stopping','stopped','uncertain')),
+  CONSTRAINT execution_stop_operations_reason_check CHECK (reason = 'user_cancel'),
+  CONSTRAINT execution_stop_operations_target_shape_check CHECK (
+    (target_kind = 'run' AND run_id = target_id AND feature_id IS NULL)
+    OR (target_kind = 'batch' AND run_id IS NULL AND feature_id IS NULL)
+    OR (target_kind = 'feature' AND run_id IS NULL AND feature_id = target_id)
+  ),
+  CONSTRAINT execution_stop_operations_times_check CHECK (
+    typeof(created_at) = 'integer' AND created_at >= 1
+    AND typeof(updated_at) = 'integer' AND updated_at >= 1
+    AND typeof(requested_at) = 'integer' AND requested_at >= 1
+    AND (settled_at IS NULL OR (typeof(settled_at) = 'integer' AND settled_at >= requested_at))
+  ),
+  CONSTRAINT execution_stop_operations_command_check CHECK (length(command_id) > 0 AND length(command_id) <= 128),
+  CONSTRAINT execution_stop_operations_evidence_ref_check CHECK (evidence_ref IS NULL OR (length(evidence_ref) > 0 AND length(evidence_ref) <= 128)),
+  CONSTRAINT execution_stop_operations_stop_confirmed_check CHECK (stop_confirmed IS NULL OR stop_confirmed IN (0, 1)),
+  CONSTRAINT execution_stop_operations_forced_check CHECK (forced IS NULL OR forced IN (0, 1)),
+  CONSTRAINT execution_stop_operations_checked_at_check CHECK (checked_at IS NULL OR (typeof(checked_at) = 'integer' AND checked_at >= 1)),
+  CONSTRAINT execution_stop_operations_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT execution_stop_operations_batch_fk FOREIGN KEY (project_id, batch_id) REFERENCES execution_batches (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT execution_stop_operations_feature_fk FOREIGN KEY (project_id, feature_id) REFERENCES features (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT execution_stop_operations_run_fk FOREIGN KEY (project_id, run_id) REFERENCES runs (project_id, id) ON DELETE RESTRICT
+);
+INSERT INTO execution_stop_operations_v41
+  (id, created_at, project_id, revision, updated_at, command_id, target_kind, target_id,
+   batch_id, feature_id, run_id, reason, status, requested_at, settled_at, evidence_ref,
+   stop_confirmed, forced, checked_at)
+SELECT id, created_at, project_id, revision, updated_at, command_id, target_kind, target_id,
+  batch_id, NULL, run_id, reason, status, requested_at, settled_at, evidence_ref,
+  stop_confirmed, forced, checked_at
+FROM execution_stop_operations;
+DROP TABLE execution_stop_operations;
+ALTER TABLE execution_stop_operations_v41 RENAME TO execution_stop_operations;
+CREATE UNIQUE INDEX execution_stop_operations_project_id_id_unique ON execution_stop_operations (project_id, id);
+CREATE UNIQUE INDEX execution_stop_operations_project_command_unique ON execution_stop_operations (project_id, command_id);
+CREATE UNIQUE INDEX execution_stop_operations_active_target_unique ON execution_stop_operations (project_id, target_kind, target_id)
+  WHERE status IN ('stopping', 'uncertain');
+CREATE INDEX execution_stop_operations_target_index ON execution_stop_operations (project_id, target_kind, target_id, requested_at);
+CREATE TRIGGER execution_stop_operations_identity_immutable BEFORE UPDATE ON execution_stop_operations
+WHEN NEW.id IS NOT OLD.id OR NEW.project_id IS NOT OLD.project_id OR NEW.created_at IS NOT OLD.created_at
+  OR NEW.command_id IS NOT OLD.command_id OR NEW.target_kind IS NOT OLD.target_kind
+  OR NEW.target_id IS NOT OLD.target_id OR NEW.batch_id IS NOT OLD.batch_id
+  OR NEW.feature_id IS NOT OLD.feature_id OR NEW.run_id IS NOT OLD.run_id OR NEW.reason IS NOT OLD.reason
+  OR NEW.requested_at IS NOT OLD.requested_at
+BEGIN SELECT RAISE(ABORT, 'execution stop operation identity is immutable'); END;
+PRAGMA legacy_alter_table = OFF;
+`;
+
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     version: 1,
@@ -3491,4 +3564,5 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 38, sql: MIGRATION_038_SQL, checksum: sha256Hex(MIGRATION_038_SQL), foreignKeysOff: true },
   { version: 39, sql: MIGRATION_039_SQL, checksum: sha256Hex(MIGRATION_039_SQL) },
   { version: 40, sql: MIGRATION_040_SQL, checksum: sha256Hex(MIGRATION_040_SQL) },
+  { version: 41, sql: MIGRATION_041_SQL, checksum: sha256Hex(MIGRATION_041_SQL), foreignKeysOff: true },
 ];

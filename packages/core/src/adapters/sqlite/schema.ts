@@ -1261,6 +1261,7 @@ export const executionStopOperations = sqliteTable('execution_stop_operations', 
   targetKind: text('target_kind').notNull(),
   targetId: text('target_id').notNull(),
   batchId: text('batch_id').notNull(),
+  featureId: text('feature_id'),
   runId: text('run_id'),
   reason: text('reason').notNull(),
   status: text('status').notNull(),
@@ -1273,12 +1274,13 @@ export const executionStopOperations = sqliteTable('execution_stop_operations', 
   checkedAt: integer('checked_at'),
 }, (table) => [
   check('execution_stop_operations_revision_check', sql`${table.revision} >= 1`),
-  check('execution_stop_operations_target_kind_check', sql`${table.targetKind} IN ('run', 'batch')`),
+  check('execution_stop_operations_target_kind_check', sql`${table.targetKind} IN ('run', 'batch', 'feature')`),
   check('execution_stop_operations_status_check', sql`${table.status} IN ('stopping', 'stopped', 'uncertain')`),
   check('execution_stop_operations_reason_check', sql`${table.reason} = 'user_cancel'`),
   check('execution_stop_operations_target_shape_check', sql`
-    (${table.targetKind} = 'run' AND ${table.runId} = ${table.targetId})
-    OR (${table.targetKind} = 'batch' AND ${table.runId} IS NULL)`),
+    (${table.targetKind} = 'run' AND ${table.runId} = ${table.targetId} AND ${table.featureId} IS NULL)
+    OR (${table.targetKind} = 'batch' AND ${table.runId} IS NULL AND ${table.featureId} IS NULL)
+    OR (${table.targetKind} = 'feature' AND ${table.runId} IS NULL AND ${table.featureId} = ${table.targetId})`),
   check('execution_stop_operations_times_check', sql`
     typeof(${table.createdAt}) = 'integer' AND ${table.createdAt} >= 1
     AND typeof(${table.updatedAt}) = 'integer' AND ${table.updatedAt} >= 1
@@ -1291,6 +1293,8 @@ export const executionStopOperations = sqliteTable('execution_stop_operations', 
   check('execution_stop_operations_checked_at_check', sql`${table.checkedAt} IS NULL OR (typeof(${table.checkedAt}) = 'integer' AND ${table.checkedAt} >= 1)`),
   foreignKey({ name: 'execution_stop_operations_batch_fk', columns: [table.projectId, table.batchId],
     foreignColumns: [executionBatches.projectId, executionBatches.id] }).onDelete('restrict'),
+  foreignKey({ name: 'execution_stop_operations_feature_fk', columns: [table.projectId, table.featureId],
+    foreignColumns: [features.projectId, features.id] }).onDelete('restrict'),
   foreignKey({ name: 'execution_stop_operations_run_fk', columns: [table.projectId, table.runId],
     foreignColumns: [runs.projectId, runs.id] }).onDelete('restrict'),
   uniqueIndex('execution_stop_operations_project_id_id_unique').on(table.projectId, table.id),

@@ -6,10 +6,11 @@
  */
 import type { AttemptRecord, WorkspaceLeaseRecord } from './attempt-store.js';
 import type { ExecutionBatchRecord, RunRecord } from './execution-store.js';
+import type { FeatureRecord } from './plan-store.js';
 
 export interface ExecutionResumeFactsRequest {
   readonly projectId: string;
-  readonly targetKind: 'run' | 'batch';
+  readonly targetKind: 'run' | 'batch' | 'feature';
   readonly targetId: string;
 }
 
@@ -33,8 +34,8 @@ export interface ExecutionResumeWorkspaceFacts {
 export interface ExecutionResumeFacts {
   readonly projectId: string;
   readonly projectStatus: string;
-  readonly targetKind: 'run' | 'batch';
-  readonly target: RunRecord | ExecutionBatchRecord;
+  readonly targetKind: 'run' | 'batch' | 'feature';
+  readonly target: RunRecord | ExecutionBatchRecord | FeatureRecord;
   readonly batch: ExecutionBatchRecord;
   readonly runs: readonly RunRecord[];
   readonly workspace: ExecutionResumeWorkspaceFacts | null;

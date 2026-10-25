@@ -42,7 +42,7 @@ describe('P05-5 F-002 feature resource SQLite access', () => {
       try {
         const result = await migrateSqliteStorage(reopened, { nowUtcMs: () => NOW });
         expect(result.fromVersion).toBe(39);
-        expect(result.toVersion).toBe(40);
+        expect(result.toVersion).toBe(41);
         expect(reopened.database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='feature_resource_leases'").get()).toBeTruthy();
         expect(reopened.database.prepare('SELECT display_name FROM projects WHERE id = ?').get('legacy-project')).toEqual({ display_name: 'Legacy' });
       } finally {

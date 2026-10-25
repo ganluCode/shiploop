@@ -76,6 +76,7 @@ interface StopOperationRow {
   readonly target_kind: string;
   readonly target_id: string;
   readonly batch_id: string;
+  readonly feature_id: string | null;
   readonly run_id: string | null;
   readonly reason: string;
   readonly status: string;
@@ -141,9 +142,10 @@ export function createSqliteExecutionControlQueryStore(
       projectId: row.project_id,
       revision: row.revision,
       commandId: row.command_id,
-      targetKind: row.target_kind as 'run' | 'batch',
+      targetKind: row.target_kind as 'run' | 'batch' | 'feature',
       targetId: row.target_id,
       batchId: row.batch_id,
+      featureId: row.feature_id,
       runId: row.run_id,
       reason: row.reason,
       status: row.status as 'stopping' | 'stopped' | 'uncertain',

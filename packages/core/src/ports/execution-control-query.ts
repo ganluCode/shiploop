@@ -433,9 +433,10 @@ export interface PublicExecutionControlAttempt {
 /** 停止 operation 投影（stopConfirmed/forced 未知保持 null，不以 false 冒充）。 */
 export interface PublicExecutionControlStopOperation {
   readonly operationId: string;
-  readonly targetKind: 'run' | 'batch';
+  readonly targetKind: 'run' | 'batch' | 'feature';
   readonly targetId: string;
   readonly batchId: string;
+  readonly featureId: string | null;
   readonly runId: string | null;
   readonly status: ExecutionStopOperationStatus;
   readonly reason: string;
@@ -647,6 +648,7 @@ export function toPublicExecutionControlStopOperation(
     targetKind: record.targetKind,
     targetId: record.targetId,
     batchId: record.batchId,
+    featureId: record.featureId,
     runId: record.runId,
     status: record.status,
     reason: record.reason,

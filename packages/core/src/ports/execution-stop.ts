@@ -14,7 +14,7 @@
 export const EXECUTION_STOP_EVIDENCE_SCHEMA_VERSION = 1;
 export const EXECUTION_STOP_EVIDENCE_KIND = 'execution-stop';
 
-export type ExecutionStopTargetKind = 'run' | 'batch';
+export type ExecutionStopTargetKind = 'run' | 'batch' | 'feature';
 
 /** 取消事务提交后交给停止控制的唯一身份（目标从持久 operation 读取）。 */
 export interface ExecutionStopRequest {

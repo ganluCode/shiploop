@@ -66,6 +66,11 @@ export const EXECUTION_RUN_CANCELLING_EVENT_TYPE = 'execution.run.cancelling';
 export const EXECUTION_RUN_CANCELLED_EVENT_TYPE = 'execution.run.cancelled';
 export const EXECUTION_BATCH_CANCELLING_EVENT_TYPE = 'execution.batch.cancelling';
 export const EXECUTION_BATCH_CANCELLED_EVENT_TYPE = 'execution.batch.cancelled';
+/** P05-5：Feature 范围控制事件（payload 恒为控制意图，不表示验收/交付完成）。 */
+export const EXECUTION_FEATURE_PAUSED_EVENT_TYPE = 'execution.feature.paused';
+export const EXECUTION_FEATURE_CANCELLING_EVENT_TYPE = 'execution.feature.cancelling';
+export const EXECUTION_FEATURE_CANCELLED_EVENT_TYPE = 'execution.feature.cancelled';
+export const EXECUTION_FEATURE_RESUMED_EVENT_TYPE = 'execution.feature.resumed';
 /** P03-9 / F-008 显式工作流 resume 事件（payload 恒 {resumed:true}）。 */
 export const EXECUTION_RUN_RESUMED_EVENT_TYPE = 'execution.run.resumed';
 export const EXECUTION_BATCH_RESUMED_EVENT_TYPE = 'execution.batch.resumed';
@@ -90,6 +95,10 @@ export const EXECUTION_EVENT_TYPES = [
   EXECUTION_BATCH_CANCELLED_EVENT_TYPE,
   EXECUTION_RUN_RESUMED_EVENT_TYPE,
   EXECUTION_BATCH_RESUMED_EVENT_TYPE,
+  EXECUTION_FEATURE_PAUSED_EVENT_TYPE,
+  EXECUTION_FEATURE_CANCELLING_EVENT_TYPE,
+  EXECUTION_FEATURE_CANCELLED_EVENT_TYPE,
+  EXECUTION_FEATURE_RESUMED_EVENT_TYPE,
   TASK_CLAIMED_EVENT_TYPE,
   ATTEMPT_UPDATED_EVENT_TYPE,
   TASK_APPROVAL_BLOCKED_EVENT_TYPE,
@@ -123,6 +132,10 @@ const EXECUTION_EVENT_SPECS: Readonly<Record<ExecutionEventType, ExecutionEventS
   [EXECUTION_BATCH_CANCELLED_EVENT_TYPE]: Object.freeze({ aggregateType: 'execution_batch', payloadKey: 'cancelled' }),
   [EXECUTION_RUN_RESUMED_EVENT_TYPE]: Object.freeze({ aggregateType: 'run', payloadKey: 'resumed' }),
   [EXECUTION_BATCH_RESUMED_EVENT_TYPE]: Object.freeze({ aggregateType: 'execution_batch', payloadKey: 'resumed' }),
+  [EXECUTION_FEATURE_PAUSED_EVENT_TYPE]: Object.freeze({ aggregateType: 'feature', payloadKey: 'paused' }),
+  [EXECUTION_FEATURE_CANCELLING_EVENT_TYPE]: Object.freeze({ aggregateType: 'feature', payloadKey: 'cancelling' }),
+  [EXECUTION_FEATURE_CANCELLED_EVENT_TYPE]: Object.freeze({ aggregateType: 'feature', payloadKey: 'cancelled' }),
+  [EXECUTION_FEATURE_RESUMED_EVENT_TYPE]: Object.freeze({ aggregateType: 'feature', payloadKey: 'resumed' }),
 });
 
 /** 快照 JSON 列（scope/config/input）序列化字节上限（有界，拒绝无界快照）。 */
@@ -280,7 +293,7 @@ function requireBoundedSnapshot(
 }
 
 /** P03-9 / F-001 暂停目标与结果（同一短写事务内原子持久化）。 */
-export type ExecutionPauseTargetKind = 'run' | 'batch';
+export type ExecutionPauseTargetKind = 'run' | 'batch' | 'feature';
 export type ExecutionPauseOutcome = 'paused' | 'pausing' | 'already_terminal' | 'interrupted';
 
 export interface ExecutionPauseInput {
@@ -302,7 +315,7 @@ export interface ExecutionPauseResult {
 }
 
 /** P03-9 / F-008 显式 resume 的事务原语输入/输出（同一短写事务内原子生效）。 */
-export type ExecutionResumeTargetKind = 'run' | 'batch';
+export type ExecutionResumeTargetKind = 'run' | 'batch' | 'feature';
 export interface ExecutionResumeInput {
   readonly projectId: string;
   readonly targetKind: ExecutionResumeTargetKind;
@@ -350,7 +363,7 @@ export interface FinalizationRetryBatchOpenResult {
 /** P03-9 / F-002 持久停止 operation 阶段；与 Run/Batch 生命周期分离。 */export const EXECUTION_STOP_OPERATION_STATUSES = ['stopping', 'stopped', 'uncertain'] as const;
 export type ExecutionStopOperationStatus = (typeof EXECUTION_STOP_OPERATION_STATUSES)[number];
 
-export type ExecutionCancelTargetKind = 'run' | 'batch';
+export type ExecutionCancelTargetKind = 'run' | 'batch' | 'feature';
 export type ExecutionCancelOutcome = 'cancelled' | 'cancelling' | 'stop_uncertain' | 'already_terminal';
 
 export interface ExecutionCancelInput {
@@ -383,6 +396,8 @@ export interface ExecutionStopOperationRecord {
   readonly targetKind: ExecutionCancelTargetKind;
   readonly targetId: string;
   readonly batchId: string;
+  /** Feature 目标的持久归属；Run/Batch operation 为 null。 */
+  readonly featureId: string | null;
   readonly runId: string | null;
   readonly reason: string;
   readonly status: ExecutionStopOperationStatus;

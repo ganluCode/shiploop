@@ -50,7 +50,7 @@ export interface VerificationStopControl {
   /** 请求中止匹配的活动验证批次并在有界预算内返回停止证据。 */
   stop(input: {
     readonly projectId: string;
-    readonly targetKind: 'run' | 'batch';
+    readonly targetKind: 'run' | 'batch' | 'feature';
     readonly targetId: string;
   }): Promise<readonly VerificationStopEvidence[]>;
 }

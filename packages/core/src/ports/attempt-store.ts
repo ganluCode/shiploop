@@ -91,9 +91,9 @@ export interface AttemptStore {
   getAttempt(projectId: unknown, attemptId: unknown): AttemptRecord;
   listTaskAttempts(projectId: unknown, taskId: unknown): readonly AttemptRecord[];
   /** P03-9 / F-003：取消目标下的活动 Attempt（preparing/executing/verifying）。 */
-  listActiveAttempts(projectId: unknown, targetKind: 'run' | 'batch', targetId: unknown): readonly AttemptRecord[];
+  listActiveAttempts(projectId: unknown, targetKind: 'run' | 'batch' | 'feature', targetId: unknown): readonly AttemptRecord[];
   /** P03-9 / F-003：取消目标下仍持有 workspace 租约的 Attempt（含已结束但占用未收尾）。 */
-  listAttemptsWithLeases(projectId: unknown, targetKind: 'run' | 'batch', targetId: unknown): readonly AttemptRecord[];
+  listAttemptsWithLeases(projectId: unknown, targetKind: 'run' | 'batch' | 'feature', targetId: unknown): readonly AttemptRecord[];
   listWorkspaceLeases(projectId: unknown): readonly WorkspaceLeaseRecord[];
 }
 

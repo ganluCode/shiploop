@@ -230,8 +230,10 @@ export function createExecutionResumeService(deps: ExecutionResumeServiceDeps): 
     projectId: string,
     payload: ExecutionResumeEnvelopeFace['payload'],
   ): Promise<PreparedExecutionResume> {
-    const targetKind = payload.runId !== null ? 'run' : 'batch';
-    const targetId = payload.runId ?? payload.batchId!;
+    const targetKind = typeof payload.featureId === 'string'
+      ? 'feature'
+      : payload.runId !== null ? 'run' : 'batch';
+    const targetId = payload.featureId ?? payload.runId ?? payload.batchId!;
     const notResumable = (reason: ExecutionResumeRejectedReason): PreparedExecutionResume => ({
       kind: 'not_resumable', reason, targetKind, targetId,
     });
@@ -260,11 +262,20 @@ export function createExecutionResumeService(deps: ExecutionResumeServiceDeps): 
       // Run 级 resume 允许父 Batch 仍 queued/running；若 Batch 本身已暂停，
       // 同一事务一并解除，避免出现 Batch 暂停但 Run 可调度的矛盾状态。
       if (!['queued', 'running', 'paused'].includes(batch.status)) return notResumable('not_resumable');
-    } else {
+    } else if (targetKind === 'batch') {
       if (batch.status !== 'paused') return notResumable('not_resumable');
       const paused = facts.runs.filter(candidate => candidate.status !== 'succeeded'
         && candidate.status !== 'failed' && candidate.status !== 'cancelled');
       if (paused.length !== 1 || paused[0]!.status !== 'paused') return notResumable('not_resumable');
+      run = paused[0]!;
+    } else {
+      const feature = facts.target as import('../ports/plan-store.js').FeatureRecord;
+      if (['completed', 'failed'].includes(feature.status)) return notResumable('already_terminal');
+      const paused = facts.runs.filter(candidate => candidate.status === 'paused');
+      if (paused.length !== 1 || facts.runs.some(candidate =>
+        !['paused', 'succeeded', 'failed', 'cancelled'].includes(candidate.status))) {
+        return notResumable('not_resumable');
+      }
       run = paused[0]!;
     }
 
@@ -495,11 +506,13 @@ export function createExecutionResumeService(deps: ExecutionResumeServiceDeps): 
   }
 
   function targetStatus(transaction: CommandTransaction, prepared: PreparedExecutionResumeReady): string {
+    if (prepared.targetKind === 'feature') return transaction.getExecutionRun(prepared.projectId, prepared.runId).status;
     if (prepared.targetKind === 'run') return transaction.getExecutionRun(prepared.projectId, prepared.targetId).status;
     return transaction.getExecutionBatch(prepared.projectId, prepared.targetId).status;
   }
 
   function targetRevision(transaction: CommandTransaction, prepared: PreparedExecutionResumeReady): number {
+    if (prepared.targetKind === 'feature') return transaction.getFeaturePlan(prepared.projectId, prepared.targetId).feature.revision;
     if (prepared.targetKind === 'run') return transaction.getExecutionRun(prepared.projectId, prepared.targetId).revision;
     return transaction.getExecutionBatch(prepared.projectId, prepared.targetId).revision;
   }
@@ -535,6 +548,7 @@ export function createExecutionResumeService(deps: ExecutionResumeServiceDeps): 
       };
       if (prepared.kind === 'not_resumable') return rejected(prepared.reason);
       deps.assertCanResume?.();
+      if (prepared.targetKind === 'feature' && envelope.payload.featureId !== prepared.targetId) return rejected('not_resumable');
       if (prepared.targetKind === 'run' && envelope.payload.runId !== prepared.targetId) return rejected('not_resumable');
       if (prepared.targetKind === 'batch' && envelope.payload.batchId !== prepared.targetId) return rejected('not_resumable');
       const project = transaction.getProject(projectId);
@@ -558,6 +572,7 @@ export function createExecutionResumeService(deps: ExecutionResumeServiceDeps): 
 
       const batch = transaction.getExecutionBatch(projectId, prepared.batchId);
       if (!['queued', 'running', 'paused'].includes(batch.status)) return rejected('not_resumable');
+      if (prepared.targetKind === 'feature' && batch.status === 'cancelling') return rejected('cancelled_not_resumable');
       if (prepared.targetKind === 'batch' && batch.status !== 'paused') return rejected('not_resumable');
       const run = transaction.getExecutionRun(projectId, prepared.runId);
       const nowMs = now();

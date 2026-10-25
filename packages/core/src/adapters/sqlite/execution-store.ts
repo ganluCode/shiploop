@@ -55,6 +55,10 @@ import {
   EXECUTION_RUN_PAUSED_EVENT_TYPE,
   EXECUTION_RUN_RESUMED_EVENT_TYPE,
   EXECUTION_BATCH_RESUMED_EVENT_TYPE,
+  EXECUTION_FEATURE_PAUSED_EVENT_TYPE,
+  EXECUTION_FEATURE_CANCELLING_EVENT_TYPE,
+  EXECUTION_FEATURE_CANCELLED_EVENT_TYPE,
+  EXECUTION_FEATURE_RESUMED_EVENT_TYPE,
   FINALIZATION_RETRY_BATCH_OPEN_REASON,
   executionCorruptError,
   isExecutionActiveStatus,
@@ -252,6 +256,7 @@ interface ExecutionStopOperationSqlRow {
   readonly target_kind: string;
   readonly target_id: string;
   readonly batch_id: string;
+  readonly feature_id: string | null;
   readonly run_id: string | null;
   readonly reason: string;
   readonly status: string;
@@ -283,7 +288,7 @@ const SELECT_SETTLEMENT =
   'progress_type, progress_task_id, run_ended_at, no_progress_runs_after, reason FROM run_outcome_settlements';
 const SELECT_STOP_OPERATION =
   'SELECT id, created_at, updated_at, project_id, revision, command_id, target_kind, target_id, ' +
-  'batch_id, run_id, reason, status, requested_at, settled_at, evidence_ref, stop_confirmed, forced, checked_at ' +
+  'batch_id, feature_id, run_id, reason, status, requested_at, settled_at, evidence_ref, stop_confirmed, forced, checked_at ' +
   'FROM execution_stop_operations';
 const SELECT_REVISION =
   'SELECT id, created_at, project_id, revision, updated_at, batch_id, version, budget_snapshot, ' +
@@ -1828,8 +1833,8 @@ export function createSqliteExecutionAccess(
     rejectUnknownKeys(raw, ['projectId', 'targetKind', 'targetId', 'expectedRevision'], { operation }, 'input');
     const projectId = validateStableId(raw.projectId, { operation }, 'projectId');
     const targetId = validateStableId(raw.targetId, { operation }, 'targetId');
-    if (raw.targetKind !== 'run' && raw.targetKind !== 'batch') {
-      throw new StorageError('validation', operation, 'targetKind 必须是 run 或 batch');
+    if (raw.targetKind !== 'run' && raw.targetKind !== 'batch' && raw.targetKind !== 'feature') {
+      throw new StorageError('validation', operation, 'targetKind 必须是 run、batch 或 feature');
     }
     const targetKind = raw.targetKind;
     if (!Number.isSafeInteger(raw.expectedRevision) || (raw.expectedRevision as number) < 1) {
@@ -1840,10 +1845,51 @@ export function createSqliteExecutionAccess(
     if (!Number.isSafeInteger(timestamp) || timestamp < 1) throw new StorageError('validation', operation, 'Invalid pause clock');
     const conflict = (reason: string, extra: Record<string, unknown> = {}): never => {
       throw new StorageError('conflict', operation, `Execution pause rejected: ${reason}`, {
-        entity: { type: targetKind === 'run' ? 'run' : 'execution_batch', projectId, id: targetId },
+        entity: { type: targetKind === 'run' ? 'run' : targetKind === 'batch' ? 'execution_batch' : 'feature', projectId, id: targetId },
         details: { reason, ...extra },
       });
     };
+    if (targetKind === 'feature') {
+      const feature = session.database.prepare<[string, string], { revision: number; status: string }>(
+        'SELECT revision, status FROM features WHERE project_id = ? AND id = ?',
+      ).get(projectId, targetId);
+      if (feature === undefined) throw notFound(operation, { type: 'feature', projectId, id: targetId }, `Feature ${targetId} 不存在`);
+      const featureRuns = session.database.prepare<[string, string], CancelRunRow & { batch_id: string }>(
+        `SELECT id, status, revision, batch_id FROM runs WHERE project_id = ? AND feature_id = ?
+         AND status IN ('queued', 'running', 'pausing', 'paused', 'cancelling', 'interrupted') ORDER BY dispatch_ordinal, id`,
+      ).all(projectId, targetId);
+      if (feature.status === 'completed' || feature.status === 'failed') {
+        return { outcome: 'already_terminal', targetKind, targetId,
+          status: feature.status === 'completed' ? 'succeeded' : 'failed', revision: feature.revision,
+          changed: false, eventId: null };
+      }
+      if (feature.revision !== expectedRevision) conflict('stale_revision', { expectedRevision, actualRevision: feature.revision });
+      if (featureRuns.some(run => run.status === 'cancelling' || run.status === 'interrupted')) {
+        return { outcome: 'interrupted', targetKind, targetId, status: 'interrupted', revision: feature.revision,
+          changed: false, eventId: null };
+      }
+      if (featureRuns.length === 0) conflict('no_active_run', { featureId: targetId });
+      const statuses = featureRuns.map(run => activeAttemptCountForRun(projectId, run.id) > 0 ? 'pausing' : 'paused');
+      for (const [index, run] of featureRuns.entries()) {
+        const nextStatus = statuses[index]!;
+        const changed = session.database.prepare(`UPDATE runs SET status = ?, reason = 'user_pause',
+          pause_requested_at = COALESCE(pause_requested_at, ?), revision = revision + 1, updated_at = ?
+          WHERE project_id = ? AND id = ? AND revision = ? AND status IN ('queued', 'running', 'pausing', 'paused')`)
+          .run(nextStatus, timestamp, timestamp, projectId, run.id, run.revision);
+        if (changed.changes !== 1) conflict('stale_revision', { runId: run.id });
+        appendExecutionEventInTransaction({ projectId, eventType: EXECUTION_RUN_PAUSED_EVENT_TYPE,
+          aggregateType: 'run', aggregateId: run.id, aggregateRevision: run.revision + 1, payload: { paused: true } });
+      }
+      const featureChanged = session.database.prepare(
+        `UPDATE features SET revision = revision + 1, updated_at = ? WHERE project_id = ? AND id = ? AND revision = ?`,
+      ).run(timestamp, projectId, targetId, expectedRevision);
+      if (featureChanged.changes !== 1) conflict('stale_revision', { expectedRevision, actualRevision: feature.revision });
+      const nextStatus = statuses.includes('pausing') ? 'pausing' : 'paused';
+      const eventId = appendExecutionEventInTransaction({ projectId, eventType: EXECUTION_FEATURE_PAUSED_EVENT_TYPE,
+        aggregateType: 'feature', aggregateId: targetId, aggregateRevision: expectedRevision + 1, payload: { paused: true } });
+      return { outcome: nextStatus, targetKind, targetId, status: nextStatus, revision: expectedRevision + 1,
+        changed: true, eventId };
+    }
 
     if (targetKind === 'run') {
       const run = getExecutionRunInTransaction(projectId, targetId);
@@ -1925,8 +1971,8 @@ export function createSqliteExecutionAccess(
     rejectUnknownKeys(raw, ['projectId', 'targetKind', 'targetId', 'expectedRevision', 'workspace'], { operation }, 'input');
     const projectId = validateStableId(raw.projectId, { operation }, 'projectId');
     const targetId = validateStableId(raw.targetId, { operation }, 'targetId');
-    if (raw.targetKind !== 'run' && raw.targetKind !== 'batch') {
-      throw new StorageError('validation', operation, 'targetKind 必须是 run 或 batch');
+    if (raw.targetKind !== 'run' && raw.targetKind !== 'batch' && raw.targetKind !== 'feature') {
+      throw new StorageError('validation', operation, 'targetKind 必须是 run、batch 或 feature');
     }
     const targetKind = raw.targetKind;
     if (!Number.isSafeInteger(raw.expectedRevision) || (raw.expectedRevision as number) < 1) {
@@ -1948,7 +1994,7 @@ export function createSqliteExecutionAccess(
     if (!Number.isSafeInteger(timestamp) || timestamp < 1) throw new StorageError('validation', operation, 'Invalid resume clock');
     const conflict = (reason: string, extra: Record<string, unknown> = {}): never => {
       throw new StorageError('conflict', operation, `Execution resume rejected: ${reason}`, {
-        entity: { type: targetKind === 'run' ? 'run' : 'execution_batch', projectId, id: targetId },
+        entity: { type: targetKind === 'run' ? 'run' : targetKind === 'batch' ? 'execution_batch' : 'feature', projectId, id: targetId },
         details: { reason, ...extra },
       });
     };
@@ -1980,6 +2026,43 @@ export function createSqliteExecutionAccess(
       const dispatchOccupied = runIds.some(runId => createSqliteDispatchRecovery(session).resumeBlocked(runId, timestamp));
       if (dispatchOccupied || active > 0 || leases > 0) conflict('occupancy_unresolved', { activeAttempts: active, leases });
     };
+
+    if (targetKind === 'feature') {
+      const feature = session.database.prepare<[string, string], { revision: number; status: string }>(
+        'SELECT revision, status FROM features WHERE project_id = ? AND id = ?',
+      ).get(projectId, targetId);
+      if (feature === undefined) throw notFound(operation, { type: 'feature', projectId, id: targetId }, `Feature ${targetId} 不存在`);
+      if (feature.status === 'completed' || feature.status === 'failed') {
+        return { outcome: 'already_terminal', targetKind, targetId, batchId: '', featureId: targetId,
+          status: feature.status === 'completed' ? 'succeeded' : 'failed', revision: feature.revision, runIds: [], eventId: null };
+      }
+      if (feature.revision !== expectedRevision) conflict('stale_revision', { expectedRevision, actualRevision: feature.revision });
+      const pausedRuns = session.database.prepare<[string, string], { id: string; batch_id: string; feature_id: string; revision: number }>(
+        `SELECT id, batch_id, feature_id, revision FROM runs WHERE project_id = ? AND feature_id = ? AND status = 'paused'
+         ORDER BY dispatch_ordinal, id`,
+      ).all(projectId, targetId);
+      if (pausedRuns.length !== 1) conflict('not_resumable', { reasonDetail: 'feature_paused_run_count' });
+      const pausedRun = pausedRuns[0]!;
+      const batch = getExecutionBatchInTransaction(projectId, pausedRun.batch_id);
+      if (!['queued', 'running'].includes(batch.status)) conflict('not_resumable', { batchStatus: batch.status });
+      verifyNoOccupancy([pausedRun.id]);
+      verifyWorkspace(targetId);
+      const runChanged = session.database.prepare(`UPDATE runs SET status = 'queued', reason = NULL,
+        pause_requested_at = NULL, revision = revision + 1, updated_at = ?
+        WHERE project_id = ? AND id = ? AND revision = ? AND status = 'paused'`)
+        .run(timestamp, projectId, pausedRun.id, pausedRun.revision);
+      if (runChanged.changes !== 1) conflict('stale_revision', { runId: pausedRun.id });
+      const featureChanged = session.database.prepare(
+        `UPDATE features SET revision = revision + 1, updated_at = ? WHERE project_id = ? AND id = ? AND revision = ?`,
+      ).run(timestamp, projectId, targetId, expectedRevision);
+      if (featureChanged.changes !== 1) conflict('stale_revision', { expectedRevision, actualRevision: feature.revision });
+      appendExecutionEventInTransaction({ projectId, eventType: EXECUTION_RUN_RESUMED_EVENT_TYPE,
+        aggregateType: 'run', aggregateId: pausedRun.id, aggregateRevision: pausedRun.revision + 1, payload: { resumed: true } });
+      const eventId = appendExecutionEventInTransaction({ projectId, eventType: EXECUTION_FEATURE_RESUMED_EVENT_TYPE,
+        aggregateType: 'feature', aggregateId: targetId, aggregateRevision: expectedRevision + 1, payload: { resumed: true } });
+      return { outcome: 'resumed', targetKind, targetId, batchId: batch.id, featureId: targetId,
+        status: 'queued', revision: expectedRevision + 1, runIds: [pausedRun.id], eventId };
+    }
 
     if (targetKind === 'run') {
       const run = getExecutionRunInTransaction(projectId, targetId);
@@ -2104,7 +2187,7 @@ export function createSqliteExecutionAccess(
     return {
       id: row.id, projectId: row.project_id, revision: row.revision, commandId: row.command_id,
       targetKind: row.target_kind as ExecutionCancelTargetKind, targetId: row.target_id,
-      batchId: row.batch_id, runId: row.run_id, reason: row.reason,
+      batchId: row.batch_id, featureId: row.feature_id, runId: row.run_id, reason: row.reason,
       status: row.status as ExecutionStopOperationStatus,
       requestedAtUtcMs: row.requested_at, settledAtUtcMs: row.settled_at,
       createdAtUtcMs: row.created_at, updatedAtUtcMs: row.updated_at,
@@ -2138,14 +2221,16 @@ export function createSqliteExecutionAccess(
 
   function writeStopOperation(input: {
     readonly projectId: string; readonly commandId: string; readonly targetKind: ExecutionCancelTargetKind;
-    readonly targetId: string; readonly batchId: string; readonly runId: string | null;
+    readonly targetId: string; readonly batchId: string; readonly featureId: string | null;
+    readonly runId: string | null;
     readonly status: ExecutionStopOperationStatus; readonly timestamp: number;
     readonly existing: ExecutionStopOperationRecord | undefined;
   }): ExecutionStopOperationRecord {
     const operation = 'ExecutionStore.requestExecutionCancel';
     if (input.existing !== undefined) {
       if (input.existing.targetKind !== input.targetKind || input.existing.targetId !== input.targetId
-        || input.existing.batchId !== input.batchId || input.existing.runId !== input.runId) {
+        || input.existing.batchId !== input.batchId || input.existing.featureId !== input.featureId
+        || input.existing.runId !== input.runId) {
         throw new StorageError('conflict', operation, 'Stop operation identity mismatch', {
           details: { reason: 'stop_operation_reused' },
         });
@@ -2169,10 +2254,10 @@ export function createSqliteExecutionAccess(
     const id = randomUUID();
     session.database.prepare(`INSERT INTO execution_stop_operations
       (id, created_at, project_id, revision, updated_at, command_id, target_kind, target_id,
-       batch_id, run_id, reason, status, requested_at, settled_at)
-      VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, 'user_cancel', ?, ?, ?)`)
+       batch_id, feature_id, run_id, reason, status, requested_at, settled_at)
+      VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, 'user_cancel', ?, ?, ?)`)
       .run(id, input.timestamp, input.projectId, input.timestamp, input.commandId, input.targetKind,
-        input.targetId, input.batchId, input.runId, input.status, input.timestamp,
+        input.targetId, input.batchId, input.featureId, input.runId, input.status, input.timestamp,
         input.status === 'stopped' ? input.timestamp : null);
     const created = readStopOperationById(input.projectId, id);
     if (created === undefined) throw new StorageError('corrupt', operation, 'Stop operation insert not readable');
@@ -2264,8 +2349,8 @@ export function createSqliteExecutionAccess(
     const projectId = validateStableId(raw.projectId, { operation }, 'projectId');
     const targetId = validateStableId(raw.targetId, { operation }, 'targetId');
     const commandId = validateStableId(raw.commandId, { operation }, 'commandId');
-    if (raw.targetKind !== 'run' && raw.targetKind !== 'batch') {
-      throw new StorageError('validation', operation, 'targetKind 必须是 run 或 batch');
+    if (raw.targetKind !== 'run' && raw.targetKind !== 'batch' && raw.targetKind !== 'feature') {
+      throw new StorageError('validation', operation, 'targetKind 必须是 run、batch 或 feature');
     }
     const targetKind = raw.targetKind;
     if (!Number.isSafeInteger(raw.expectedRevision) || (raw.expectedRevision as number) < 1) {
@@ -2278,10 +2363,78 @@ export function createSqliteExecutionAccess(
     }
     const conflict = (reason: string, extra: Record<string, unknown> = {}): never => {
       throw new StorageError('conflict', operation, `Execution cancel rejected: ${reason}`, {
-        entity: { type: targetKind === 'run' ? 'run' : 'execution_batch', projectId, id: targetId },
+        entity: { type: targetKind === 'run' ? 'run' : targetKind === 'batch' ? 'execution_batch' : 'feature', projectId, id: targetId },
         details: { reason, ...extra },
       });
     };
+
+    if (targetKind === 'feature') {
+      const feature = session.database.prepare<[string, string], { revision: number; status: string }>(
+        'SELECT revision, status FROM features WHERE project_id = ? AND id = ?',
+      ).get(projectId, targetId);
+      if (feature === undefined) throw notFound(operation, { type: 'feature', projectId, id: targetId }, `Feature ${targetId} 不存在`);
+      const runRows = session.database.prepare<[string, string], CancelRunRow & { batch_id: string }>(
+        `SELECT id, status, revision, batch_id FROM runs WHERE project_id = ? AND feature_id = ?
+         AND status IN ('queued', 'running', 'pausing', 'paused', 'cancelling', 'interrupted') ORDER BY dispatch_ordinal, id`,
+      ).all(projectId, targetId);
+      if (feature.status === 'completed' || feature.status === 'failed') {
+        return { outcome: 'already_terminal', targetKind, targetId,
+          status: feature.status === 'completed' ? 'succeeded' : 'failed', revision: feature.revision,
+          changed: false, stopOperationId: null, stopStatus: null, eventId: null };
+      }
+      if (feature.revision !== expectedRevision) conflict('stale_revision', { expectedRevision, actualRevision: feature.revision });
+      if (runRows.length === 0) conflict('no_active_run', { featureId: targetId });
+      const batchId = runRows[0]!.batch_id;
+      const facts = executionCancelFacts(projectId, runRows.map(row => row.id));
+      const hasInterrupted = runRows.some(row => row.status === 'interrupted') || facts.interruptedAttempts > 0;
+      const hasActivity = facts.activeAttempts > 0 || facts.leases > 0;
+      let existing = findActiveStopOperation(projectId, targetKind, targetId)
+        ?? findStopOperationByCommand(projectId, commandId);
+      if (existing !== undefined && (existing.targetKind !== targetKind || existing.targetId !== targetId
+        || existing.featureId !== targetId)) conflict('stop_operation_reused');
+      const updateFeature = (eventType: typeof EXECUTION_FEATURE_CANCELLING_EVENT_TYPE | typeof EXECUTION_FEATURE_CANCELLED_EVENT_TYPE): number => {
+        const changed = session.database.prepare(
+          `UPDATE features SET revision = revision + 1, updated_at = ? WHERE project_id = ? AND id = ? AND revision = ?`,
+        ).run(timestamp, projectId, targetId, feature.revision);
+        if (changed.changes !== 1) conflict('stale_revision', { expectedRevision, actualRevision: feature.revision });
+        appendExecutionEventInTransaction({ projectId, eventType, aggregateType: 'feature', aggregateId: targetId,
+          aggregateRevision: feature.revision + 1, payload: eventType.endsWith('cancelled') ? { cancelled: true } : { cancelling: true } });
+        return feature.revision + 1;
+      };
+      const markFeatureRuns = (status: 'cancelling' | 'cancelled') => {
+        for (const row of runRows) {
+          if (row.status === 'interrupted') continue;
+          const result = applyRunCancelStatus(projectId, row, status, timestamp);
+          if (result.changed) appendRunCancelEvent(projectId, row.id, result.revision, status === 'cancelled');
+        }
+      };
+      if (hasInterrupted) {
+        const changed = runRows.some(row => row.status !== 'interrupted' && ['queued', 'running', 'pausing', 'paused'].includes(row.status));
+        if (changed) {
+          markFeatureRuns('cancelling');
+          updateFeature(EXECUTION_FEATURE_CANCELLING_EVENT_TYPE);
+        }
+        const stop = writeStopOperation({ projectId, commandId, targetKind, targetId, batchId,
+          featureId: targetId, runId: null, status: 'uncertain', timestamp, existing });
+        return { outcome: 'stop_uncertain', targetKind, targetId, status: changed ? 'cancelling' : 'interrupted',
+          revision: changed ? feature.revision + 1 : feature.revision, changed, stopOperationId: stop.id,
+          stopStatus: stop.status, eventId: null };
+      }
+      if (hasActivity) {
+        markFeatureRuns('cancelling');
+        const revision = updateFeature(EXECUTION_FEATURE_CANCELLING_EVENT_TYPE);
+        const stop = writeStopOperation({ projectId, commandId, targetKind, targetId, batchId,
+          featureId: targetId, runId: null, status: 'stopping', timestamp, existing });
+        return { outcome: 'cancelling', targetKind, targetId, status: 'cancelling', revision,
+          changed: true, stopOperationId: stop.id, stopStatus: stop.status, eventId: null };
+      }
+      markFeatureRuns('cancelled');
+      const revision = updateFeature(EXECUTION_FEATURE_CANCELLED_EVENT_TYPE);
+      const stop = writeStopOperation({ projectId, commandId, targetKind, targetId, batchId,
+        featureId: targetId, runId: null, status: 'stopped', timestamp, existing });
+      return { outcome: 'cancelled', targetKind, targetId, status: 'cancelled', revision,
+        changed: true, stopOperationId: stop.id, stopStatus: stop.status, eventId: null };
+    }
 
     let targetStatus: string;
     let targetRevision: number;
@@ -2368,6 +2521,7 @@ export function createSqliteExecutionAccess(
         }
       }
       const stop = writeStopOperation({ projectId, commandId, targetKind, targetId, batchId,
+        featureId: null,
         runId: targetKind === 'run' ? targetId : null, status: 'uncertain', timestamp, existing });
       return {
         outcome: 'stop_uncertain', targetKind, targetId, status: nextStatus as ExecutionRunStatus,
@@ -2397,6 +2551,7 @@ export function createSqliteExecutionAccess(
       }
       nextStatus = 'cancelling';
       const stop = writeStopOperation({ projectId, commandId, targetKind, targetId, batchId,
+        featureId: null,
         runId: targetKind === 'run' ? targetId : null, status: 'stopping', timestamp, existing });
       return {
         outcome: 'cancelling', targetKind, targetId, status: nextStatus as ExecutionRunStatus,
@@ -2426,6 +2581,7 @@ export function createSqliteExecutionAccess(
       }
     }
     const stop = writeStopOperation({ projectId, commandId, targetKind, targetId, batchId,
+      featureId: null,
       runId: targetKind === 'run' ? targetId : null, status: 'stopped', timestamp, existing });
     return {
       outcome: 'cancelled', targetKind, targetId, status: 'cancelled', revision: currentRevision,

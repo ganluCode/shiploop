@@ -890,16 +890,17 @@ export interface ValidatedExecutionBudgetRevisePayload {
 }
 
 /**
- * P03-9 / F-001 Run/Batch Task 边界暂停 payload：恰好一个目标身份（runId 或
- * batchId）；两者同时出现/同时缺席均结构化拒绝。expectedRevision 在信封顶层，
- * 是目标行自身 revision 的 CAS。服务端决定字段（status/reason/changed）不能经
- * 请求输入。
+ * P05-5：Feature/Run/Batch 控制目标；恰好一个目标身份（featureId、runId 或
+ * batchId）；expectedRevision 在信封顶层，是目标聚合自身 revision 的 CAS。服务端决定字段
+ *（status/reason/changed）不能经请求输入。
  */
-export type ValidatedExecutionPausePayload =
-  | { readonly runId: string; readonly batchId: null }
-  | { readonly runId: null; readonly batchId: string };
+export type ValidatedExecutionPausePayload = {
+  readonly featureId?: string | null;
+  readonly runId: string | null;
+  readonly batchId: string | null;
+};
 
-/** P03-9 / F-002 Run/Batch 取消 payload：与暂停相同的单目标身份形态。 */
+/** P03-9 / F-002 Run/Batch/Feature 取消 payload：与暂停相同的单目标身份形态。 */
 export type ValidatedExecutionCancelPayload = ValidatedExecutionPausePayload;
 
 /** P03-9 / F-008 显式 resume payload：与暂停/取消相同的单目标身份形态。 */
@@ -1595,26 +1596,26 @@ function validateExecutionPausePayload(
   raw: unknown,
 ): ValidatedExecutionPausePayload {
   const object = requireObject(operation, raw, 'payload');
-  const hasRun = Object.prototype.hasOwnProperty.call(object, 'runId')
-    && object.runId !== undefined && object.runId !== null;
-  const hasBatch = Object.prototype.hasOwnProperty.call(object, 'batchId')
-    && object.batchId !== undefined && object.batchId !== null;
-  if (hasRun === hasBatch) {
-    fail(operation, 'invalid_input', 'payload', '必须恰好提供 runId 或 batchId 之一', undefined);
+  const selected = ['featureId', 'runId', 'batchId'].filter(key =>
+    Object.prototype.hasOwnProperty.call(object, key) && object[key] !== undefined && object[key] !== null,
+  );
+  if (selected.length !== 1) {
+    fail(operation, 'invalid_input', 'payload', '必须恰好提供 featureId、runId 或 batchId 之一', undefined);
   }
-  // 允许同时出现目标键但其中恰一个为非空（null/缺省表示未选择），便于调用方
-  // 使用稳定的两键形态；两个非空或都为空已在上面拒绝。
-  exactKeys(operation, object, ['runId', 'batchId'], 'payload.');
-  if (hasRun) {
-    if (!isUuidV4(object.runId)) {
-      fail(operation, 'invalid_input', 'payload.runId', '必须是 UUID v4（目标 Run）', object.runId);
+  exactKeys(operation, object, ['featureId', 'runId', 'batchId'], 'payload.');
+  const featureId = object.featureId === null || object.featureId === undefined ? null : object.featureId;
+  const runId = object.runId === null || object.runId === undefined ? null : object.runId;
+  const batchId = object.batchId === null || object.batchId === undefined ? null : object.batchId;
+  for (const [field, value, description] of [
+    ['featureId', featureId, '目标 Feature'],
+    ['runId', runId, '目标 Run'],
+    ['batchId', batchId, '目标 Batch'],
+  ] as const) {
+    if (value !== null && !isUuidV4(value)) {
+      fail(operation, 'invalid_input', `payload.${field}`, `必须是 UUID v4（${description}）`, value);
     }
-    return { runId: object.runId, batchId: null };
   }
-  if (!isUuidV4(object.batchId)) {
-    fail(operation, 'invalid_input', 'payload.batchId', '必须是 UUID v4（目标 Batch）', object.batchId);
-  }
-  return { runId: null, batchId: object.batchId };
+  return { featureId, runId, batchId } as ValidatedExecutionPausePayload;
 }
 
 /** P03-9 / F-010：显式 retryFinal 的严格 payload（只接受历史身份，不接受预算/状态）。 */

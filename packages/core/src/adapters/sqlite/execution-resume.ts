@@ -17,6 +17,7 @@ import type { ExecutionBatchRecord, RunRecord } from '../../ports/execution-stor
 import { createSqliteAttemptAccess } from './attempt-store.js';
 import { createSqliteDispatchRecovery } from './dispatch-recovery.js';
 import { createSqliteExecutionAccess } from './execution-store.js';
+import { createSqlitePlanAccess } from './plan-store.js';
 import { createSqliteStateAccess } from './state-store.js';
 import { transactSqliteConsistentRead } from './state-store.js';
 import type { SqliteStorageSession } from './session.js';
@@ -38,9 +39,10 @@ export function createSqliteExecutionResumeFactsReader(
       }
       return transactSqliteConsistentRead(session, OPERATION, () => {
         const execution = createSqliteExecutionAccess(session, { nowUtcMs: now });
+        const plan = createSqlitePlanAccess(session);
         const state = createSqliteStateAccess(session);
         const project = state.getProject(request.projectId);
-        let target: RunRecord | ExecutionBatchRecord;
+        let target: RunRecord | ExecutionBatchRecord | import('../../ports/plan-store.js').FeatureRecord;
         let batch: ExecutionBatchRecord;
         let runs: RunRecord[];
         if (request.targetKind === 'run') {
@@ -48,15 +50,24 @@ export function createSqliteExecutionResumeFactsReader(
           batch = execution.getExecutionBatchInTransaction(request.projectId, run.batchId);
           target = run;
           runs = [run];
-        } else {
+        } else if (request.targetKind === 'batch') {
           batch = execution.getExecutionBatchInTransaction(request.projectId, request.targetId);
           target = batch;
           const ids = session.database.prepare<[string, string], { id: string }>(
             'SELECT id FROM runs WHERE project_id = ? AND batch_id = ? ORDER BY id',
           ).all(request.projectId, batch.id);
           runs = ids.map(row => execution.getExecutionRunInTransaction(request.projectId, row.id));
+        } else {
+          const featurePlan = plan.getFeaturePlanInTransaction(request.projectId, request.targetId);
+          target = featurePlan.feature;
+          const ids = session.database.prepare<[string, string], { id: string }>(
+            'SELECT id FROM runs WHERE project_id = ? AND feature_id = ? ORDER BY dispatch_ordinal, id',
+          ).all(request.projectId, request.targetId);
+          if (ids.length === 0) throw new StorageError('conflict', OPERATION, 'Feature has no execution Run');
+          runs = ids.map(row => execution.getExecutionRunInTransaction(request.projectId, row.id));
+          batch = execution.getExecutionBatchInTransaction(request.projectId, runs[0]!.batchId);
         }
-        const featureId = batch.featureId;
+        const featureId = request.targetKind === 'feature' ? request.targetId : batch.featureId;
         const managed = session.database.prepare<[string, string], {
           id: string; revision: number; status: string; repository_binding_id: string;
           repository_binding_revision: number; repo_identity: string; canonical_path: string;
