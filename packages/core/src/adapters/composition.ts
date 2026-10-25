@@ -189,6 +189,17 @@ import { createSqlitePlanAccess } from './sqlite/plan-store.js';
 import { openSqliteStorageSession } from './sqlite/session.js';
 import { createSqliteStateStore } from './sqlite/state-store.js';
 import { createInputSourceFileReader } from './fs/input-source-files.js';
+import { createSqliteIntegrationPlanStore } from './sqlite/integration-plan-store.js';
+import { createIntegrationPlanGenerationService } from '../application/integration-plan-generation.js';
+import type {
+  IntegrationBatchApprovalReader,
+  IntegrationPlanGenerationService,
+  IntegrationPredecessorEvidenceReader,
+} from '../application/integration-plan-generation.js';
+import { createIntegrationPlanControlService } from '../application/integration-plan-control.js';
+import type { IntegrationPlanControlService } from '../application/integration-plan-control.js';
+import type { AtomicCommandStore } from '../ports/atomic-commands.js';
+import type { IntegrationPlanAccess } from '../ports/integration-plan-store.js';
 
 // F-009 standalone process adapter; baseline execution orchestration is not assembled yet.
 export { createCommandProcessAdapter } from './process/command-process.js';
@@ -203,6 +214,14 @@ export interface CoreApplicationOptions {
   readonly workRuntimeFactory?: WorkRuntimeFactory;
   /** Trusted delivery adapters; absent until explicitly assembled. */
   readonly featureDeliveryFactory?: FeatureDeliveryFactory;
+  /** Trusted integration facts; absent means plan generation remains unavailable. */
+  readonly integrationPlanFactory?: (deps: {
+    readonly atomicStore: AtomicCommandStore;
+    readonly planStore: IntegrationPlanAccess;
+  }) => {
+    readonly batches: IntegrationBatchApprovalReader;
+    readonly predecessors: IntegrationPredecessorEvidenceReader;
+  };
   /** P03-9 / F-011：受信 finalization-only Run 重验执行（未装配时调度保留 capability gap）。 */
   readonly finalizationExecution?: FinalizationExecutionPort;
   /** P03-9 / F-012：重验后最终审批/提交/完成消费者（不启动 Runtime）。 */
@@ -312,6 +331,10 @@ export interface CoreApplication {
   readonly commandReceiptsService: CommandReceiptsService;
   /** F-010：授权查询/一致读视图快照水位/分页事件读取（§7/§8/§9.3）。 */
   readonly queryService: QueryService;
+  /** P05-6: generation is exposed only with trusted Batch/delivery facts. */
+  readonly integrationPlanGeneration?: IntegrationPlanGenerationService;
+  /** P05-6: control and successor gating use the authoritative plan store. */
+  readonly integrationPlanControl: IntegrationPlanControlService;
   /**
    * P05-1 / F-011：规划上下文/候选只读授权查询（planning.contexts.list /
    * planning.context.get / planning.candidate.get；零写入、零事件、零恢复，
@@ -367,6 +390,7 @@ const ALLOWED_OPTION_KEYS = [
   'workStartupRecoveryRequired',
   'workRuntimeFactory',
   'featureDeliveryFactory',
+  'integrationPlanFactory',
   'finalizationExecution',
   'finalizationCompletion',
   'planningExecution',
@@ -466,6 +490,9 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
   }
   if (object.featureDeliveryFactory !== undefined && typeof object.featureDeliveryFactory !== 'function') {
     throw validationError(context, 'featureDeliveryFactory', 'trusted_factory_required');
+  }
+  if (object.integrationPlanFactory !== undefined && typeof object.integrationPlanFactory !== 'function') {
+    throw validationError(context, 'integrationPlanFactory', 'trusted_factory_required');
   }
   if (object.finalizationExecution !== undefined && (
     object.finalizationExecution === null || typeof object.finalizationExecution !== 'object'
@@ -1077,6 +1104,23 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     if (object.featureDeliveryFactory !== undefined && featureDelivery === undefined) {
       throw validationError(context, 'featureDeliveryFactory', 'delivery_adapters_required');
     }
+    const integrationPlanStore = createSqliteIntegrationPlanStore(session, nowUtcMs === undefined ? {} : { nowUtcMs });
+    const integrationPlanFacts = (object.integrationPlanFactory as CoreApplicationOptions['integrationPlanFactory'] | undefined)?.({
+      atomicStore,
+      planStore: integrationPlanStore,
+    });
+    if (object.integrationPlanFactory !== undefined && (
+      integrationPlanFacts === undefined || integrationPlanFacts.batches === undefined || integrationPlanFacts.predecessors === undefined
+    )) {
+      throw validationError(context, 'integrationPlanFactory', 'integration_fact_adapters_required');
+    }
+    const integrationPlanControl = createIntegrationPlanControlService({ atomic: atomicStore, plans: integrationPlanStore });
+    const integrationPlanGeneration = integrationPlanFacts === undefined ? undefined : createIntegrationPlanGenerationService({
+      atomic: atomicStore,
+      plans: integrationPlanStore,
+      batches: integrationPlanFacts.batches,
+      predecessors: integrationPlanFacts.predecessors,
+    });
     const commandService = createCommandService({
       atomicStore,
       featureDelivery,
@@ -1268,6 +1312,8 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       commandReceiptStore,
       commandReceiptsService,
       commandService,
+      integrationPlanGeneration,
+      integrationPlanControl,
       executionInputPrepare,
       executionPreview,
       executionStart,

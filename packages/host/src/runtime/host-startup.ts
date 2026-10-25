@@ -37,7 +37,7 @@ import { createLocalOwnerPrincipal, deriveDefaultDataRoot } from 'shiploop-core'
 import type { RuntimeCapabilityCatalog, RuntimeRecoveryCapabilities, RuntimeRecoverySourceReader, WorkToolChannelDeps } from 'shiploop-core';
 import { openCoreApplication } from 'shiploop-core/assembly';
 import { PI_RUNTIME_RECOVERY_DESCRIPTOR } from './pi-adapter.js';
-import type { CoreApplication, WorkRuntimeFactory, FeatureDeliveryFactory } from 'shiploop-core/assembly';
+import type { CoreApplication, WorkRuntimeFactory, FeatureDeliveryFactory, CoreApplicationOptions } from 'shiploop-core/assembly';
 import type { FinalizationCompletionPort, FinalizationExecutionPort } from 'shiploop-core';
 import {
   HostProtocolError,
@@ -91,6 +91,7 @@ const ALLOWED_OPTION_KEYS = [
   'workToolAuthority',
   'workRuntimeFactory',
   'featureDeliveryFactory',
+  'integrationPlanFactory',
   'finalizationExecution',
   'finalizationCompletion',
   'dataRoot',
@@ -117,6 +118,8 @@ export interface HostStartOptions {
   readonly featureDeliveryFactory?: FeatureDeliveryFactory;
   /** Trusted finalization-only execution consumer; absent keeps the scheduler capability gap. */
   readonly finalizationExecution?: FinalizationExecutionPort;
+  /** Trusted integration facts and delivery evidence readers. */
+  readonly integrationPlanFactory?: CoreApplicationOptions['integrationPlanFactory'];
   /** Trusted finalization approval/commit/completion consumer; absent keeps the capability gap. */
   readonly finalizationCompletion?: FinalizationCompletionPort;
   /** 显式数据根（POSIX 绝对路径）；与 userHomeDir 二选一。 */
@@ -234,6 +237,9 @@ function validateStartOptions(options: HostStartOptions): void {
   }
   if (options.featureDeliveryFactory !== undefined && typeof options.featureDeliveryFactory !== 'function') {
     throw invalidInput('trusted_factory_required', { field: 'featureDeliveryFactory' });
+  }
+  if (options.integrationPlanFactory !== undefined && typeof options.integrationPlanFactory !== 'function') {
+    throw invalidInput('trusted_factory_required', { field: 'integrationPlanFactory' });
   }
   if (options.finalizationExecution !== undefined && (
     options.finalizationExecution === null || typeof options.finalizationExecution !== 'object'
@@ -370,6 +376,7 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
         : { runtimeRecoverySources: options.runtimeRecoverySources }),
       workRuntimeFactory: options.workRuntimeFactory,
       featureDeliveryFactory: options.featureDeliveryFactory,
+      integrationPlanFactory: options.integrationPlanFactory,
       ...(options.finalizationExecution === undefined
         ? {}
         : { finalizationExecution: options.finalizationExecution }),
