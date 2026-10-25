@@ -22,6 +22,7 @@ export * from './ports/integration-execution-plan.js';
 export * from './ports/integration-workspace.js';
 export * from './ports/git-integration-journal.js';
 export * from './ports/integration-verification.js';
+export * from './ports/git-agent-repair.js';
 export * from './application/integration-verification.js';
 export * from './ports/git-operation-query.js';
 export * from './ports/feature-delivery-query.js';
