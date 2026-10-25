@@ -2055,6 +2055,8 @@ export const gitOperations = sqliteTable('git_operations', {
   worktreePath: text('worktree_path').notNull(),
   expectedHead: text('expected_head').notNull(),
   candidateTree: text('candidate_tree').notNull(),
+  integrationPlan: text('integration_plan'),
+  budgetSnapshot: text('budget_snapshot'),
   codeDigest: text('code_digest').notNull(),
   verificationRefs: text('verification_refs').notNull(),
   approvalRefs: text('approval_refs').notNull(),
@@ -2073,12 +2075,15 @@ export const gitOperations = sqliteTable('git_operations', {
   durationMs: integer('duration_ms'),
   reasonCode: text('reason_code'),
   receipt: text('receipt'),
+  integrationResult: text('integration_result'),
+  recoveryState: text('recovery_state').notNull().default('none'),
+  workspacePreserved: integer('workspace_preserved').notNull().default(0),
   deliveryStatus: text('delivery_status'),
   settledAt: integer('settled_at'),
 }, (table) => [
   check('git_operations_revision_check', sql`${table.revision} >= 1`),
   check('git_operations_version_check', sql`typeof(${table.executionVersion}) = 'integer' AND ${table.executionVersion} >= 1`),
-  check('git_operations_type_check', sql`${table.operationType} IN ('feature_final_commit', 'task_commit')`),
+  check('git_operations_type_check', sql`${table.operationType} IN ('feature_final_commit', 'task_commit', 'integration', 'integration_commit')`),
   check('git_operations_task_attempt_check', sql`${table.operationType} <> 'task_commit' OR ${table.attemptId} IS NOT NULL`),
   check('git_operations_oid_check', sql`
     (length(${table.expectedHead}) IN (40, 64) AND ${table.expectedHead} NOT GLOB '*[^0-9a-f]*')
@@ -2101,6 +2106,10 @@ export const gitOperations = sqliteTable('git_operations', {
   check('git_operations_duration_check', sql`${table.durationMs} IS NULL OR (typeof(${table.durationMs}) = 'integer' AND ${table.durationMs} >= 0)`),
   check('git_operations_reason_check', sql`${table.reasonCode} IS NULL OR ${table.reasonCode} GLOB '[a-z]*' AND length(${table.reasonCode}) <= 64 AND ${table.reasonCode} NOT GLOB '*[^a-z0-9_]*'`),
   check('git_operations_receipt_check', sql`${table.receipt} IS NULL OR (json_valid(${table.receipt}) AND json_type(${table.receipt}) = 'object')`),
+  check('git_operations_integration_plan_check', sql`${table.integrationPlan} IS NULL OR (json_valid(${table.integrationPlan}) AND json_type(${table.integrationPlan}) = 'object')`),
+  check('git_operations_budget_snapshot_check', sql`${table.budgetSnapshot} IS NULL OR (json_valid(${table.budgetSnapshot}) AND json_type(${table.budgetSnapshot}) = 'object')`),
+  check('git_operations_integration_result_check', sql`${table.integrationResult} IS NULL OR (json_valid(${table.integrationResult}) AND json_type(${table.integrationResult}) = 'object')`),
+  check('git_operations_recovery_check', sql`${table.recoveryState} IN ('none', 'resumable', 'preserved', 'cleaned', 'quarantined') AND ${table.workspacePreserved} IN (0, 1)`),
   check('git_operations_times_check', sql`
     typeof(${table.createdAt}) = 'integer' AND ${table.createdAt} >= 0
     AND typeof(${table.updatedAt}) = 'integer' AND ${table.updatedAt} >= 0
@@ -2109,13 +2118,15 @@ export const gitOperations = sqliteTable('git_operations', {
     (${table.status} = 'pending' AND ${table.actualCommit} IS NULL AND ${table.actualTree} IS NULL AND ${table.exitCode} IS NULL
       AND ${table.durationMs} IS NULL AND ${table.reasonCode} IS NULL AND ${table.receipt} IS NULL
       AND ${table.deliveryStatus} IS NULL AND ${table.settledAt} IS NULL)
-    OR (${table.status} = 'succeeded' AND ${table.actualCommit} IS NOT NULL AND ${table.actualTree} = ${table.candidateTree}
-      AND ${table.receipt} IS NOT NULL AND ${table.deliveryStatus} = CASE WHEN ${table.operationType} = 'task_commit' THEN 'not_requested' ELSE 'succeeded' END AND ${table.settledAt} IS NOT NULL)
+    OR (${table.status} = 'succeeded' AND ${table.actualCommit} IS NOT NULL
+      AND ((${table.operationType} IN ('integration', 'integration_commit') AND ${table.actualTree} IS NOT NULL AND ${table.integrationResult} IS NOT NULL)
+        OR (${table.operationType} NOT IN ('integration', 'integration_commit') AND ${table.actualTree} = ${table.candidateTree}))
+      AND ${table.receipt} IS NOT NULL AND ${table.deliveryStatus} = CASE WHEN ${table.operationType} IN ('task_commit', 'integration', 'integration_commit') THEN 'not_requested' ELSE 'succeeded' END AND ${table.settledAt} IS NOT NULL)
     OR (${table.status} = 'no_change' AND ${table.actualCommit} = ${table.expectedHead} AND ${table.actualTree} IS NOT NULL
-      AND ${table.receipt} IS NOT NULL AND ${table.deliveryStatus} = CASE WHEN ${table.operationType} = 'task_commit' THEN 'not_requested' ELSE 'succeeded' END AND ${table.settledAt} IS NOT NULL)
-    OR (${table.status} = 'failed' AND ${table.receipt} IS NOT NULL AND ${table.deliveryStatus} = CASE WHEN ${table.operationType} = 'task_commit' THEN 'not_requested' ELSE 'failed' END AND ${table.settledAt} IS NOT NULL)
+      AND ${table.receipt} IS NOT NULL AND ${table.deliveryStatus} = CASE WHEN ${table.operationType} IN ('task_commit', 'integration', 'integration_commit') THEN 'not_requested' ELSE 'succeeded' END AND ${table.settledAt} IS NOT NULL)
+    OR (${table.status} = 'failed' AND ${table.receipt} IS NOT NULL AND ${table.deliveryStatus} = CASE WHEN ${table.operationType} IN ('task_commit', 'integration', 'integration_commit') THEN 'not_requested' ELSE 'failed' END AND ${table.settledAt} IS NOT NULL)
     OR (${table.status} = 'unknown' AND ${table.actualCommit} IS NULL AND ${table.actualTree} IS NULL
-      AND ${table.receipt} IS NOT NULL AND ${table.deliveryStatus} = CASE WHEN ${table.operationType} = 'task_commit' THEN 'not_requested' ELSE 'pending' END AND ${table.settledAt} IS NOT NULL)`),
+      AND ${table.receipt} IS NOT NULL AND ${table.deliveryStatus} = CASE WHEN ${table.operationType} IN ('task_commit', 'integration', 'integration_commit') THEN 'not_requested' ELSE 'pending' END AND ${table.settledAt} IS NOT NULL)`),
   foreignKey({ name: 'git_operations_binding_fk', columns: [table.repositoryBindingId], foreignColumns: [repositoryBindings.id] }).onDelete('restrict'),
   foreignKey({ name: 'git_operations_feature_fk', columns: [table.projectId, table.featureId], foreignColumns: [features.projectId, features.id] }).onDelete('restrict'),
   foreignKey({ name: 'git_operations_run_fk', columns: [table.featureId, table.runId], foreignColumns: [runs.featureId, runs.id] }).onDelete('restrict'),
