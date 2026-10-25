@@ -8,6 +8,8 @@ import { computePlanningPermissionsDigest } from '../../ports/planning-input-pre
 import { StorageError } from '../../ports/errors.js';
 import { validateTaskClaimDispatch, type TaskClaimDispatch } from '../../ports/task-claim.js';
 import { resolveApprovedBatchConcurrency } from '../../ports/feature-dispatch.js';
+import { deriveFeatureDispatchResourceSet } from '../../ports/feature-resources.js';
+import { createSqliteFeatureResourceAccess } from './feature-resources.js';
 import { createSqliteExecutionSlotAccess } from './execution-slots.js';
 import { createSqliteTaskDagStore } from './task-dag-store.js';
 import { createSqliteExecutionAccess } from './execution-store.js';
@@ -28,6 +30,7 @@ export function createSqliteAttemptDispatchAccess(session: SqliteStorageSession,
   readonly permissions?: ExecutionPermissionsReader;
 }) {
   const db = session.database;
+  const featureResources = createSqliteFeatureResourceAccess(session, { nowUtcMs: options.nowUtcMs });
   function write() {
     if (!session.isOpen() || !db.inTransaction) throw new TypeError('Attempt dispatch requires an open transaction');
   }
@@ -38,6 +41,15 @@ export function createSqliteAttemptDispatchAccess(session: SqliteStorageSession,
     const batch = execution.getExecutionBatchInTransaction(attempt.projectId, run.batchId);
     if (!['queued', 'running'].includes(run.status) || !['queued', 'running'].includes(batch.status)
       || run.pauseRequestedAtUtcMs !== null || batch.pauseRequestedAtUtcMs !== null) deny('run_control_blocked');
+    if (run.projectId !== attempt.projectId || run.featureId !== attempt.featureId || run.batchId !== batch.id) {
+      deny('feature_ownership_mismatch');
+    }
+    const featureIds = batch.scopeSnapshot.featureIds;
+    if (!Array.isArray(featureIds) || !featureIds.includes(attempt.featureId)) deny('feature_outside_batch_scope');
+    const batchBudget = batch.budgetSnapshot.batch;
+    const now = options.nowUtcMs();
+    if (batch.attemptsCreated > batchBudget.maxTotalAttempts || now >= batch.deadlineAtUtcMs
+      || run.attemptsCreated > run.maxAttemptsPerRun) deny('budget_exhausted');
     const intent = execution.getRunDispatchIntentInTransaction(attempt.projectId, attempt.runId);
     if (!intent || intent.featureId !== attempt.featureId || intent.batchId !== batch.id
       || intent.authorizationDigest !== computeRunDispatchAuthorizationDigest({ projectId: run.projectId,
@@ -130,6 +142,27 @@ export function createSqliteAttemptDispatchAccess(session: SqliteStorageSession,
       }
       const current = held(attempt, row, now);
       if (expected && (expected.claimId !== current.id || expected.claimVersion !== current.claim_version)) deny('stale_dispatch_identity');
+      const resourceSet = deriveFeatureDispatchResourceSet({
+        projectId: attempt.projectId,
+        featureId: attempt.featureId,
+        purpose: isPlanningAttemptSnapshot(attempt.inputSnapshot) ? 'plan' : 'code',
+        batch: { scopeSnapshot: batch.scopeSnapshot, configSnapshot: batch.configSnapshot },
+      });
+      // Git public metadata is a short external lock, acquired only around the
+      // concrete Git operation. It must never become a durable SQLite lease held
+      // while a Runner/model/test is active.
+      const leaseResourceSet = {
+        ...resourceSet,
+        resources: resourceSet.resources.filter(resource => resource.leaseMode === 'lease'),
+      };
+      // Feature resources use the Run dispatch generation as their durable owner.
+      // They are acquired inside this same transaction as the Attempt/slot claim;
+      // no external Git, process, model or network operation can be awaited here.
+      featureResources.acquireInTransaction({
+        resourceSet: leaseResourceSet,
+        owner: { ownerId: current.id, ownerVersion: current.claim_version },
+        leaseUntilUtcMs: attempt.leaseUntilUtcMs,
+      });
       const existingSlot = slots.readActive({ projectId: attempt.projectId, runId: attempt.runId });
       if (!newGeneration && !existingSlot && db.prepare(`SELECT r.id FROM task_claim_receipts r JOIN attempts a ON a.id = r.attempt_id
         WHERE a.project_id = ? AND a.run_id = ? LIMIT 1`).get(attempt.projectId, attempt.runId)) deny('dispatch_slot_not_held');

@@ -88,6 +88,108 @@ export interface FeatureResourceSet {
   readonly resources: readonly FeatureResourceDeclaration[];
 }
 
+/**
+ * The immutable resource set admitted immediately before a Run/Attempt claim.
+ * Batch snapshots are intentionally accepted as unknown here: this is the final
+ * Core boundary where scope and resource declarations are rechecked inside the
+ * claim transaction, rather than trusting a scheduler's earlier read.
+ */
+export interface FeatureDispatchResourceSetInput {
+  readonly projectId: string;
+  readonly featureId: string;
+  readonly purpose: 'plan' | 'code';
+  readonly batch: {
+    readonly scopeSnapshot: unknown;
+    readonly configSnapshot: unknown;
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function declaredResourceItems(configSnapshot: unknown, featureId: string): readonly unknown[] {
+  if (!isRecord(configSnapshot)) {
+    throw new StorageError('corrupt', `${OPERATION}.deriveDispatchSet`, 'Batch config snapshot 不是对象');
+  }
+  const candidates = ['resourceSet', 'resourceDeclarations', 'featureResources', 'resourcesByFeature', 'resources'] as const;
+  for (const name of candidates) {
+    if (!(name in configSnapshot)) continue;
+    const value = configSnapshot[name];
+    if (name === 'resources' && Array.isArray(value)
+      && !value.some(item => isRecord(item) && ('key' in item || FEATURE_RESOURCE_KINDS.includes(item.kind as FeatureResourceKind)
+        || Object.keys(RESOURCE_KIND_ALIASES).includes(String(item.kind))))) {
+      // Existing runtime/access snapshots also use a `resources` field. They are
+      // unrelated to Feature resource declarations and must not be interpreted as
+      // locks merely because the JSON field has the same generic name.
+      return [];
+    }
+    if (Array.isArray(value)) return value;
+    if (!isRecord(value)) {
+      throw new StorageError('validation', `${OPERATION}.deriveDispatchSet`, `${name} 必须是资源数组或按 Feature 分组的对象`, {
+        details: { field: name },
+      });
+    }
+    const grouped = isRecord(value.byFeature) ? value.byFeature : value;
+    const selected = grouped[featureId];
+    if (selected !== undefined) {
+      if (!Array.isArray(selected)) {
+        throw new StorageError('validation', `${OPERATION}.deriveDispatchSet`, 'Feature 资源声明必须是数组', {
+          details: { field: `${name}.${featureId}` },
+        });
+      }
+      return selected;
+    }
+    if (Array.isArray(value.resources)) return value.resources;
+    throw new StorageError('validation', `${OPERATION}.deriveDispatchSet`, 'Batch 资源声明缺少当前 Feature 分组', {
+      details: { field: name, featureId },
+    });
+  }
+  return [];
+}
+
+/**
+ * Derive the resource set for one dispatch consumer. The mandatory defaults are
+ * Core-owned: planning is project-exclusive; coding shares the project Feature
+ * gate but always owns its Feature worktree exclusively. Additional migration or
+ * contract declarations come only from the fixed Batch snapshot.
+ */
+export function deriveFeatureDispatchResourceSet(input: FeatureDispatchResourceSetInput): FeatureResourceSet {
+  const context = { operation: `${OPERATION}.deriveDispatchSet` } as const;
+  const projectId = validateStableId(input.projectId, context, 'projectId');
+  const featureId = validateStableId(input.featureId, context, 'featureId');
+  if (input.purpose !== 'plan' && input.purpose !== 'code') {
+    throw validationError(context, 'purpose', '必须是 plan 或 code', input.purpose);
+  }
+  if (!isRecord(input.batch)) {
+    throw validationError(context, 'batch', '必须是对象', input.batch);
+  }
+  const scope = requirePlainObject(input.batch.scopeSnapshot, context, 'batch.scopeSnapshot');
+  const featureIds = scope.featureIds;
+  if (!Array.isArray(featureIds) || !featureIds.some(candidate => candidate === featureId)) {
+    throw new StorageError('conflict', `${OPERATION}.deriveDispatchSet`, 'Feature 不属于批准 Batch 固定范围', {
+      entity: { type: 'feature', projectId, id: featureId },
+      details: { reason: 'feature_outside_batch_scope', featureId },
+    });
+  }
+  for (const [index, candidate] of featureIds.entries()) validateStableId(candidate, context, `batch.scopeSnapshot.featureIds[${index}]`);
+
+  const mandatory = input.purpose === 'plan'
+    ? [{ kind: 'planning_exclusive', key: 'planning' }]
+    : [
+      { kind: 'feature_code_shared', key: 'feature-code' },
+      { kind: 'worktree_write_exclusive', key: `worktree:${featureId}` },
+    ];
+  const declarations = [...mandatory, ...declaredResourceItems(input.batch.configSnapshot, featureId).map(item => {
+    if (!isRecord(item)) return item;
+    // accessMode/leaseMode are derived semantics. Accept a persisted normalized
+    // declaration, but never trust either field to change the kind's meaning.
+    const { accessMode: _accessMode, leaseMode: _leaseMode, ...declaration } = item;
+    return declaration;
+  })];
+  return normalizeFeatureResourceSet({ projectId, resources: declarations });
+}
+
 export const FEATURE_RESOURCE_WAIT_REASONS = [
   'resource_occupied',
   'resource_quarantined',
@@ -320,10 +422,15 @@ export function normalizeFeatureResourceSet(value: unknown): FeatureResourceSet 
     // A set is already scoped by its project; declarations may omit the repeated
     // projectId, while an explicit different project remains a cross-project error.
     const declarationInput = requirePlainObject(item, ctx, 'resources[]');
+    const { accessMode, leaseMode, ...rawDeclaration } = declarationInput;
     const declaration = validateFeatureResourceDeclaration(
-      { projectId, ...declarationInput },
+      { projectId, ...rawDeclaration },
       projectId,
     );
+    if ((accessMode !== undefined && accessMode !== declaration.accessMode)
+      || (leaseMode !== undefined && leaseMode !== declaration.leaseMode)) {
+      throw validationError(ctx, 'resources[]', '资源占用语义不能由声明输入改写', item);
+    }
     const previous = unique.get(declaration.key);
     if (previous !== undefined && previous.kind !== declaration.kind) {
       fail('normalizeSet', 'validation', '同一资源键不能对应多个资源类别', { resourceKey: declaration.key });
