@@ -68,5 +68,21 @@ F-003/F-004/F-005 继续接线，Host/CLI 公开协议由 F-006 交付。
 
 独立回归范围由 `test/index/phases/P05/features/P05-8/tasks/F-002.json` 登记：新增行为和
 F-001 契约，以及受影响的入队/编码准入/资源互斥、暂停/取消/resume、派发收尾与崩溃窗口、
-迁移器和 Core 组合根。较广回归由 Nezha 执行，本地保持 not_run；未启动全仓、Phase
-验收或真实模型。此 Task 的通过声明不代表整个 GitAgent Feature 已完成验收。
+迁移器和 Core 组合根。较广回归由 Nezha 执行；未在本地运行的文件保持 not_run。
+未启动全仓、Phase 验收或真实模型。此 Task 的通过声明不代表整个 GitAgent Feature 已完成验收。
+
+## F-002 第 2 次执行修复
+
+基于既有提交 `e411676156f74de25502a5e4d4fb66a96e4c4145` 继续，本次 invocation 为
+`7c87ab756bd2441ea2e34dafc23fffe0`。首轮独立验收的 14 文件/149 项中有 147 项通过、
+2 项失败，原始证据保留在 Harness
+`verifications/F-002/e67dc163188642169690c76c101c1311/`，没有人工阻塞。
+
+- 迁移器的全部表断言补入 v45 三张修复表，仍用完整精确清单核对，不放宽断言。
+- Host 组合根测试沿用已有 Host 测试约定，在 beforeAll 显式执行受控原生锁构建脚本。
+  这样按文件独立执行时不依赖其他测试或事先生成的 dist；生产锁仍按原规则校验。
+- 仅对上述两个已知失败回归执行定向复验：19/19 通过，退出码 0，完整日志为
+  `runtime-logs/test-v5xuvkek.log`；TypeScript 退出码 0，日志为
+  `runtime-logs/test-cto4jsko.log`。日志旁保留真实退出码和带本次 invocation 的 JSON。
+- 14 文件索引和 Harness selection 引用保持原范围，独立验收待 Nezha 重跑；
+  本轮未重跑其余测试，不把首轮整体失败改写为通过。
