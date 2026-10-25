@@ -61,6 +61,8 @@ export type {
 } from './start-entry.js';
 export { createPiInferencePreflightAdapter } from './pi-inference-preflight.js';
 export type { PiInferenceSource } from './pi-inference-preflight.js';
+export { createPiGitAgentRuntimeAdapter } from './pi-git-agent-adapter.js';
+export type { PiGitAgentRuntimeDriver, PiGitAgentRuntimeOptions } from './pi-git-agent-adapter.js';
 export { createPiWorkRuntimeFactory } from './pi-work-runtime.js';
 export {
   createPiAuthenticationCatalog,
