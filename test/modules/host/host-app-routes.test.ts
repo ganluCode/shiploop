@@ -1088,12 +1088,14 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         // P03-8 / F-010：Feature 分轴结果查询真实接线。
         'features.delivery.get',
         'features.report.get',
+        'integration.plan.get',
         // P03-9 / F-013：Run/Batch 控制进度、恢复诊断与 finalization 收尾结果查询真实接线。
         'execution.run.control.get',
         'execution.batch.control.get',
         'execution.run.recovery.get',
         // P04-9 / F-009：派发队列与执行槽位只读投影真实接线（无写入口）。
         'execution.dispatch.list',
+        'execution.resources.list',
         // P05-1 / F-012：规划上下文及受管候选内容查询已接线。
         'planning.contexts.list',
         'planning.context.get',

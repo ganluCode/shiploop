@@ -292,12 +292,15 @@ describe('F-002 冻结常量与能力声明', () => {
           // P03-8 / F-010：Feature 分轴结果查询真实接线。
           'features.delivery.get',
           'features.report.get',
+          // P05-6 / F-005：固定集成计划只读查询。
+          'integration.plan.get',
           // P03-9 / F-013：Run/Batch 控制进度、恢复诊断与 finalization 收尾结果查询真实接线。
           'execution.run.control.get',
           'execution.batch.control.get',
           'execution.run.recovery.get',
           // P04-9 / F-009：派发队列/执行槽位只读投影真实接线（无写入口）。
           'execution.dispatch.list',
+          'execution.resources.list',
           // P05-1 / F-012：规划上下文/候选只读查询真实接线（能力位复用 project.read）。
           'planning.contexts.list',
           'planning.context.get',
@@ -348,10 +351,12 @@ describe('F-002 冻结常量与能力声明', () => {
       ...GIT_OPERATION_QUERY_OPERATIONS,
       ...FEATURE_DELIVERY_QUERY_OPERATIONS,
       'features.report.get',
-      ...EXECUTION_CONTROL_QUERY_OPERATIONS,
+      'integration.plan.get',
+      ...EXECUTION_CONTROL_QUERY_OPERATIONS.slice(0, 3),
       // P04-9 / F-009：派发队列/执行槽位只读投影（与 Core
       // EXECUTION_DISPATCH_QUERY_OPERATIONS 同步，无写入口）。
       ...EXECUTION_DISPATCH_QUERY_OPERATIONS,
+      'execution.resources.list',
       // P05-1 / F-012：规划上下文/候选只读查询（与 Core
       // PLANNING_QUERY_OPERATIONS 同步，能力位复用 project.read）。
       ...PLANNING_QUERY_OPERATIONS,
