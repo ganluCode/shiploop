@@ -178,6 +178,7 @@ export function createSqliteGitAgentRepairStore(session: SqliteStorageSession,
     for (const key of ['projectId', 'repairId', 'attemptId', 'ownerId', 'hostInstanceId'] as const) {
       validateStableId(input[key], { operation: OP }, key);
     }
+    if (input.claimKey !== undefined) validateStableId(input.claimKey, { operation: OP }, 'claimKey');
     validatePositiveInteger(input.authorizationVersion, { operation: OP }, 'authorizationVersion');
   }
   function fence(attempt: GitAgentRepairAttempt, input: GitAgentRepairClaim) {
@@ -254,6 +255,8 @@ export function createSqliteGitAgentRepairStore(session: SqliteStorageSession,
       claimIdentity(input);
       const current = view(tx, input.projectId, input.repairId);
       const previous = current.attempts.find(a => a.id === input.attemptId);
+      const keyed = input.claimKey === undefined ? undefined : current.attempts.find(a => a.dispatch.claimKey === input.claimKey);
+      if (keyed !== undefined && keyed.id !== input.attemptId) fail('attempt_identity_conflict');
       if (previous) {
         if (previous.ownerId !== input.ownerId || previous.hostInstanceId !== input.hostInstanceId
           || previous.authorizationVersion !== input.authorizationVersion) fail('attempt_identity_conflict');
@@ -291,9 +294,10 @@ export function createSqliteGitAgentRepairStore(session: SqliteStorageSession,
       try {
         source(tx, current.request);
         const deadlineUtcMs = now() + maxRuntimeMs;
-        const admitted = dispatch.acquireInTransaction({ id: input.attemptId, projectId: input.projectId,
+        const admittedBase = dispatch.acquireInTransaction({ id: input.attemptId, projectId: input.projectId,
           featureId: current.request.featureId, runId: run.id, owner: input.ownerId, hostInstanceId: input.hostInstanceId,
           leaseUntilUtcMs: deadlineUtcMs, inputSnapshot: current.request, integrationWorkspaceId: current.request.workspace.workspaceId });
+        const admitted = input.claimKey === undefined ? admittedBase : { ...admittedBase, claimKey: input.claimKey };
         tx.reserveRuntimeStart({ projectId: input.projectId, batchId: batch.id, runId: run.id, startKey: input.attemptId });
         db.prepare('UPDATE execution_batches SET attempts_created = attempts_created + 1, revision = revision + 1, updated_at = ? WHERE id = ?')
           .run(now(), batch.id);

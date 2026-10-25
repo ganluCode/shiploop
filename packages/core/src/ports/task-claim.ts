@@ -7,6 +7,8 @@ import { requirePlainObject, rejectUnknownKeys, validateStableId, validatePositi
 
 export interface TaskClaimDispatch {
   readonly claimId: string;
+  /** Optional Core command/claim replay identity; persisted in repair dispatch receipts when present. */
+  readonly claimKey?: string;
   /** Run consumer generation, independent of Attempt.executionVersion. */
   readonly claimVersion: number;
   readonly slotId: string;
@@ -15,8 +17,9 @@ export interface TaskClaimDispatch {
 export function validateTaskClaimDispatch(value: unknown): TaskClaimDispatch {
   const context = { operation: 'TaskClaim.dispatch' };
   const raw = requirePlainObject(value, context, 'dispatch');
-  rejectUnknownKeys(raw, ['claimId', 'claimVersion', 'slotId'], context, 'dispatch');
+  rejectUnknownKeys(raw, ['claimId', 'claimVersion', 'slotId', 'claimKey'], context, 'dispatch');
   return { claimId: validateStableId(raw.claimId, context, 'claimId'),
+    ...(raw.claimKey === undefined ? {} : { claimKey: validateStableId(raw.claimKey, context, 'dispatch.claimKey') }),
     claimVersion: validatePositiveInteger(raw.claimVersion, context, 'claimVersion'),
     slotId: validateStableId(raw.slotId, context, 'slotId') };
 }

@@ -43,6 +43,8 @@ export interface GitAgentRepairView {
 export interface GitAgentRepairClaim {
   readonly projectId: string;
   readonly repairId: string;
+  /** Stable admission identity; a replay with the same key never starts another Attempt. */
+  readonly claimKey?: string;
   readonly attemptId: string;
   readonly ownerId: string;
   readonly hostInstanceId: string;
