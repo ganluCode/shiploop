@@ -93,6 +93,7 @@ export * from './ports/runtime-retry.js';
 export * from './ports/runtime-registry.js';
 export * from './application/runtime-execution.js';
 export * from './application/git-agent-runtime-supervision.js';
+export * from './application/git-agent-candidate-finalization.js';
 export * from './ports/task-claim.js';
 export * from './ports/work-session.js';
 export * from './ports/work-session-query.js';
