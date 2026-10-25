@@ -4,13 +4,15 @@ import { StorageError } from '../ports/errors.js';
 import { isUuidV4 } from '../ports/commands.js';
 import { validateStableId } from '../ports/validation.js';
 import { gitOperationCommitMessage } from '../ports/controlled-git-commit.js';
-import type { GitCommitAuthorization } from '../ports/controlled-git-commit.js';
+import type { GitCommitAuthorization, GitCommitRequest } from '../ports/controlled-git-commit.js';
 import type { GitOperationIntent, GitOperationRecord } from '../ports/git-operations.js';
 import type { GitCommitReconciliation, GitCommitReconciliationService } from '../ports/git-commit-reconciliation.js';
 import type { WorkspaceInspection } from '../ports/workspace-inspector.js';
 import { verificationCodeIdentity } from '../ports/verification-aggregate.js';
 import { gitCommitSourceDigest } from './controlled-git-commit.js';
 import type { createControlledGitCommitService } from './controlled-git-commit.js';
+import type { GitIntegrationReconciliationDependencies, GitIntegrationReconciliationService } from '../ports/git-integration-reconciliation.js';
+import { createGitIntegrationReconciliationService } from './git-integration-reconciliation.js';
 
 const OP = 'GitCommit.reconcile';
 function fail(reason: string): never {
@@ -25,15 +27,25 @@ function recorded(operation: GitOperationRecord): GitCommitReconciliation {
  * The trusted authorization reader must enforce the existing Run deadline/budget.
  * Each call uses the existing bounded driver/inspector; only HEAD is searched.
  */
-export function createGitCommitReconciliationService(deps: Parameters<typeof createControlledGitCommitService>[0] & {
-  /** Resolve the original immutable Verifier inspection via intent.verificationRefs,
-   * including same-project artifact/digest checks. Never synthesize it from today's
-   * worktree or SDK checkpoints. Missing evidence cannot authorize delivery.
-   */
-  readonly readVerificationInspection: (intent: GitOperationIntent) => WorkspaceInspection | null;
-}): GitCommitReconciliationService {
+export function createGitCommitReconciliationService(
+  deps: Parameters<typeof createControlledGitCommitService>[0] & {
+    /** Resolve the original immutable Verifier inspection via intent.verificationRefs,
+     * including same-project artifact/digest checks. Never synthesize it from today's
+     * worktree or SDK checkpoints. Missing evidence cannot authorize delivery.
+     */
+    readonly readVerificationInspection: (intent: GitOperationIntent) => WorkspaceInspection | null;
+  },
+): GitCommitReconciliationService;
+export function createGitCommitReconciliationService(
+  deps: GitIntegrationReconciliationDependencies,
+): GitIntegrationReconciliationService;
+export function createGitCommitReconciliationService(deps: any): any {
+  if (deps && typeof deps === 'object' && 'atomic' in deps && 'reader' in deps && 'journal' in deps
+    && typeof deps.readAuthorization === 'function' && typeof deps.verifyWriterStopped === 'function') {
+    return createGitIntegrationReconciliationService(deps as GitIntegrationReconciliationDependencies);
+  }
   const now = deps.nowMs ?? Date.now;
-  return { async reconcile(request) {
+  return { async reconcile(request: GitCommitRequest) {
     if (!request || Object.keys(request).some(key => !['projectId', 'operationId'].includes(key))) fail('invalid_request');
     validateStableId(request.projectId, { operation: OP }, 'projectId');
     if (!isUuidV4(request.operationId)) fail('invalid_operation_id');
@@ -45,7 +57,13 @@ export function createGitCommitReconciliationService(deps: Parameters<typeof cre
     const { baseline, resourceIdentity } = authorization;
     function sameIntent(auth: GitCommitAuthorization) {
       const { expectedFeatureRevision: _revision, ...currentIntent } = auth.intent;
-      return isDeepStrictEqual({ ...currentIntent, candidateTree: intent.candidateTree }, intent);
+      const normalize = (value: Record<string, unknown>) => {
+        const normalized = { ...value };
+        if (normalized.integrationPlan == null) delete normalized.integrationPlan;
+        if (normalized.budgetSnapshot == null) delete normalized.budgetSnapshot;
+        return normalized;
+      };
+      return isDeepStrictEqual(normalize({ ...currentIntent, candidateTree: intent.candidateTree }), normalize({ ...intent }));
     }
     if (!sameIntent(authorization) || resourceIdentity.projectId !== intent.projectId
       || resourceIdentity.owner !== intent.ownerId || resourceIdentity.hostInstanceId !== intent.hostInstanceId
