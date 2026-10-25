@@ -3625,6 +3625,7 @@ function validateExecutionControlStopOperationWire(operation: HostOperation, val
     'targetKind',
     'targetId',
     'batchId',
+    'featureId',
     'runId',
     'status',
     'reason',
@@ -3636,11 +3637,12 @@ function validateExecutionControlStopOperationWire(operation: HostOperation, val
     'checkedAt',
   ]);
   requireStableId(operation, stop.operationId);
-  if (stop.targetKind !== 'run' && stop.targetKind !== 'batch') {
+  if (stop.targetKind !== 'run' && stop.targetKind !== 'batch' && stop.targetKind !== 'feature') {
     malformed(operation, 'execution_control_stop_target_invalid');
   }
   requireStableId(operation, stop.targetId);
   requireStableId(operation, stop.batchId);
+  requireStableIdOrNull(operation, stop.featureId);
   requireStableIdOrNull(operation, stop.runId);
   if (!(EXECUTION_STOP_OPERATION_STATUSES as readonly unknown[]).includes(stop.status)) {
     malformed(operation, 'execution_control_stop_status_invalid');
