@@ -122,6 +122,41 @@ describe('P05-6 F-002 integration plan SQLite storage', () => {
     });
   });
 
+  it('[case:integration-operation-owner-fencing] persists operation facts, keeps unknown blocked, and allows only explicit same-operation reconciliation', async () => {
+    await withSandbox(async (root) => {
+      const session = await openMigrated(join(root, 'state.db'));
+      try {
+        const atomic = createSqliteAtomicCommandStore(session);
+        const created = atomic.transact('integration.create', (tx) => tx.createIntegrationPlan(planInput()));
+        const frozen = atomic.transact('integration.freeze', (tx) => tx.freezeIntegrationPlan({ projectId: 'project-a', integrationId: created.integrationId, expectedRevision: created.revision }));
+        const operationId = 'operation-a';
+        const pending = atomic.transact('integration.pending', (tx) => tx.updateIntegrationPlanResult({
+          projectId: 'project-a', integrationId: created.integrationId, expectedRevision: frozen.revision,
+          operationId, ownerId: 'runner-a', ownerVersion: 1,
+          integrationResult: { operationId, ownerId: 'runner-a', ownerVersion: 1, operationStatus: 'pending', commitSha: null, treeSha: null, verificationEvidence: null, llmNoConflictText: null },
+        }));
+        expect(pending.status).toBe('blocked');
+        expect(() => atomic.transact('integration.late-owner', (tx) => tx.updateIntegrationPlanResult({
+          projectId: 'project-a', integrationId: created.integrationId, expectedRevision: pending.revision,
+          operationId, ownerId: 'runner-b', ownerVersion: 2,
+          integrationResult: { operationId, ownerId: 'runner-b', ownerVersion: 2, operationStatus: 'succeeded', commitSha: 'f'.repeat(40), treeSha: '1'.repeat(40), verificationEvidence: { evidenceId: 'late', evidenceDigest: DIGEST }, llmNoConflictText: null },
+        }))).toThrowError(expect.objectContaining({ kind: 'conflict' }));
+        const unknown = atomic.transact('integration.unknown', (tx) => tx.updateIntegrationPlanResult({
+          projectId: 'project-a', integrationId: created.integrationId, expectedRevision: pending.revision,
+          operationId, ownerId: 'runner-a', ownerVersion: 1,
+          integrationResult: { operationId, ownerId: 'runner-a', ownerVersion: 1, operationStatus: 'unknown', commitSha: null, treeSha: null, verificationEvidence: null, llmNoConflictText: null },
+        }));
+        expect(unknown.status).toBe('blocked');
+        const recovered = atomic.transact('integration.reconcile', (tx) => tx.updateIntegrationPlanResult({
+          projectId: 'project-a', integrationId: created.integrationId, expectedRevision: unknown.revision,
+          operationId, ownerId: 'runner-b', ownerVersion: 2, reconcile: true,
+          integrationResult: { operationId, ownerId: 'runner-b', ownerVersion: 2, operationStatus: 'succeeded', commitSha: 'f'.repeat(40), treeSha: '1'.repeat(40), verificationEvidence: { evidenceId: 'reconciled', evidenceDigest: DIGEST }, llmNoConflictText: null },
+        }));
+        expect(recovered.status).toBe('integration_passed');
+        expect(recovered.integrationResult).toMatchObject({ operationId, ownerId: 'runner-b', ownerVersion: 2, operationStatus: 'succeeded' });
+      } finally { session.close(); }
+    });
+  });
   it('[case:integration-atomic-rollback] rolls back the plan, snapshots and migration event boundary together', async () => {
     await withSandbox(async (root) => {
       const session = await openMigrated(join(root, 'state.db'));

@@ -39,6 +39,7 @@ import type {
 import type {
   IntegrationPlanResultUpdateInput,
   IntegrationPlanFreezeInput,
+  IntegrationPlanStatusUpdateInput,
   PersistedIntegrationPlan,
 } from './integration-plan-store.js';
 import type { GlobalSettingsRecord, ProjectRecord, RepositoryBindingRecord,
@@ -384,6 +385,7 @@ export interface CommandTransaction {
   createIntegrationPlan(input: unknown): PersistedIntegrationPlan;
   freezeIntegrationPlan(input: IntegrationPlanFreezeInput | unknown): PersistedIntegrationPlan;
   updateIntegrationPlanResult(input: IntegrationPlanResultUpdateInput | unknown): PersistedIntegrationPlan;
+  updateIntegrationPlanStatus(input: IntegrationPlanStatusUpdateInput | unknown): PersistedIntegrationPlan;
   getIntegrationPlan(projectId: string, integrationId: string): PersistedIntegrationPlan;
 
   /** 创建规划上下文与 planning Task（F-002 存储原语；同一写事务内原子生效）。 */

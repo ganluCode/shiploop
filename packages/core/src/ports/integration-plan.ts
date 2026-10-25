@@ -14,6 +14,7 @@ import {
   requirePlainObject,
   validateSha256Digest,
   validateStableId,
+  validatePositiveInteger,
   validationError,
 } from './validation.js';
 import { stableStringify } from './feature-plan.js';
@@ -45,6 +46,9 @@ export const INTEGRATION_BLOCK_REASONS = [
   'integration_evidence_incomplete',
 ] as const;
 export type IntegrationBlockReason = (typeof INTEGRATION_BLOCK_REASONS)[number];
+
+export const INTEGRATION_OPERATION_STATUSES = ['pending', 'succeeded', 'failed', 'unknown'] as const;
+export type IntegrationOperationStatus = (typeof INTEGRATION_OPERATION_STATUSES)[number];
 
 export const INTEGRATION_STALE_REASONS = [
   'input_digest_changed',
@@ -100,6 +104,11 @@ export interface IntegrationResult {
   readonly verificationEvidence: IntegrationVerificationEvidence | null;
   /** 仅作审计文字，不能单独使状态变为 integration_passed。 */
   readonly llmNoConflictText: string | null;
+  /** F-004：外部集成操作的持久身份；缺省表示旧版无操作元数据。 */
+  readonly operationId?: string | null;
+  readonly ownerId?: string | null;
+  readonly ownerVersion?: number | null;
+  readonly operationStatus?: IntegrationOperationStatus | null;
 }
 
 export interface IntegrationPlanInput {
@@ -151,7 +160,8 @@ const PREDECESSOR_KEYS = ['projectId', 'phaseId', 'featureId', 'dependencyPassed
   'coveredInputIds', 'ancestorVerified'] as const;
 const DELIVERY_KEYS = ['commitSha', 'evidenceId', 'evidenceDigest'] as const;
 const INPUT_REF_KEYS = ['inputId', 'digest'] as const;
-const RESULT_KEYS = ['commitSha', 'treeSha', 'verificationEvidence', 'llmNoConflictText'] as const;
+const RESULT_KEYS = ['commitSha', 'treeSha', 'verificationEvidence', 'llmNoConflictText',
+  'operationId', 'ownerId', 'ownerVersion', 'operationStatus'] as const;
 const VERIFICATION_EVIDENCE_KEYS = ['evidenceId', 'evidenceDigest'] as const;
 
 function context(operation = 'IntegrationPlan.validate'): ValidationContext {
@@ -304,11 +314,32 @@ function validateResult(value: unknown, ctx: ValidationContext): IntegrationResu
   rejectUnknownKeys(object, RESULT_KEYS, ctx, field);
   const llmNoConflictText = object.llmNoConflictText === undefined || object.llmNoConflictText === null
     ? null : validateBoundedText(object.llmNoConflictText, ctx, `${field}.llmNoConflictText`);
+  const operationId = object.operationId === undefined || object.operationId === null
+    ? null : validateStableId(object.operationId, ctx, `${field}.operationId`);
+  const ownerId = object.ownerId === undefined || object.ownerId === null
+    ? null : validateStableId(object.ownerId, ctx, `${field}.ownerId`);
+  const ownerVersion = object.ownerVersion === undefined || object.ownerVersion === null
+    ? null : validatePositiveInteger(object.ownerVersion, ctx, `${field}.ownerVersion`);
+  const operationStatus = object.operationStatus === undefined || object.operationStatus === null
+    ? null : (() => {
+      if (typeof object.operationStatus !== 'string'
+        || !(INTEGRATION_OPERATION_STATUSES as readonly string[]).includes(object.operationStatus)) {
+        throw validationError(ctx, `${field}.operationStatus`, '必须是有效的集成操作状态', object.operationStatus);
+      }
+      return object.operationStatus as IntegrationOperationStatus;
+    })();
+  if ((operationId === null) !== (ownerId === null) || (operationId === null) !== (ownerVersion === null)) {
+    throw validationError(ctx, field, 'operationId、ownerId、ownerVersion 必须同时存在或同时为空');
+  }
+  if (operationStatus !== null && operationId === null) {
+    throw validationError(ctx, `${field}.operationStatus`, '带操作状态时必须绑定操作和 owner 身份');
+  }
   return {
     commitSha: validateOptionalGitSha(object.commitSha, ctx, `${field}.commitSha`),
     treeSha: validateOptionalGitSha(object.treeSha, ctx, `${field}.treeSha`),
     verificationEvidence: validateVerificationEvidence(object.verificationEvidence, ctx, `${field}.verificationEvidence`),
     llmNoConflictText,
+    operationId, ownerId, ownerVersion, operationStatus,
   };
 }
 
@@ -370,14 +401,18 @@ function deriveBlockedReasons(input: IntegrationPlanInput, coverage: Integration
     || (result.commitSha !== null && result.verificationEvidence === null))) {
     reasons.push('integration_evidence_incomplete');
   }
-  return reasons;
+  if (result?.operationStatus !== undefined && result.operationStatus !== null && result.operationStatus !== 'succeeded') {
+    reasons.push('integration_evidence_incomplete');
+  }
+  return [...new Set(reasons)];
 }
 
 function hasCompleteIntegrationResult(result: IntegrationResult | null): boolean {
   return result !== null
     && result.commitSha !== null
     && result.treeSha !== null
-    && result.verificationEvidence !== null;
+    && result.verificationEvidence !== null
+    && (result.operationStatus === undefined || result.operationStatus === null || result.operationStatus === 'succeeded');
 }
 
 function deriveStatus(input: IntegrationPlanInput, coverage: IntegrationCoverage): IntegrationPlanStatusResult {

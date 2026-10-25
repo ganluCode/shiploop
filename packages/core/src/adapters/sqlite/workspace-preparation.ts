@@ -25,6 +25,8 @@ import type { SqliteStorageSession } from './session.js';
 export function createSqliteWorkspacePreparationStore(session: SqliteStorageSession, options: {
   readonly resources: WorkResourceAccess;
   readonly workspaceAuthority: WorkWorkspaceAuthority;
+  /** F-004：校验 Run 快照中的基线来自已通过集成计划；不得回退到 branch HEAD。 */
+  readonly integrationBaselineGate?: (input: { readonly projectId: string; readonly featureId: string; readonly baseCommit: string }) => void;
   readonly nowUtcMs?: () => number;
 }): WorkspacePreparationStore {
   const db = session.database, now = options.nowUtcMs ?? Date.now;
@@ -62,6 +64,7 @@ export function createSqliteWorkspacePreparationStore(session: SqliteStorageSess
     const baseline = run.inputSnapshot.workspaceBaseline as { repositoryBindingId?: unknown; repositoryBindingRevision?: unknown; baseCommit?: unknown } | undefined;
     if (!baseline || baseline.repositoryBindingId !== binding.id || baseline.repositoryBindingRevision !== binding.bindingRevision) fail('confirmed_baseline_or_current_binding_required');
     const baseCommit = validateWorkspaceCommit(baseline!.baseCommit);
+    options.integrationBaselineGate?.({ projectId: identity.projectId, featureId: attempt.featureId, baseCommit });
     if (binding.gitCommonDir === null) fail('git_common_dir_required');
     return { binding, featureId: attempt.featureId, baseCommit };
   }

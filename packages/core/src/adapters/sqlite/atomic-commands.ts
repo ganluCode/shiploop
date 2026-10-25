@@ -233,6 +233,7 @@ export function createSqliteAtomicCommandStore(
           createIntegrationPlan: guarded(integrationPlans.createIntegrationPlanInTransaction),
           freezeIntegrationPlan: guarded(integrationPlans.freezeIntegrationPlanInTransaction),
           updateIntegrationPlanResult: guarded(integrationPlans.updateIntegrationPlanResultInTransaction),
+          updateIntegrationPlanStatus: guarded(integrationPlans.updateIntegrationPlanStatusInTransaction),
           getIntegrationPlan: guarded(integrationPlans.getIntegrationPlanInTransaction),
           createPlanningContextInTransaction: guarded(planningContexts.createPlanningContextInTransaction),
 

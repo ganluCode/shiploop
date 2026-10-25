@@ -127,6 +127,8 @@ export interface ExecutionStartServiceDeps {
   readonly permissions: ExecutionPermissionsReader;
   /** Trusted startup gate, invoked in the dispatch transaction before creating authorization. */
   readonly assertCanDispatch?: () => void;
+  /** F-004：若 Feature 有已通过集成计划，返回该计划固定 commit；返回 null 表示无集成门控。 */
+  readonly integrationBaseline?: (projectId: string, featureId: string) => { readonly baseCommit: string } | null;
   /** 时间源（默认 Date.now；测试注入以获得确定性）。 */
   readonly nowMs?: () => number;
 }
@@ -176,6 +178,15 @@ function aggregatePlanDigest(features: readonly { readonly id: string; readonly 
   )}`, 'utf8').digest('hex');
 }
 
+function resolveWorkspaceBaseCommit(
+  deps: ExecutionStartServiceDeps,
+  projectId: string,
+  featureId: string,
+  fallback: string,
+): string {
+  const fixed = deps.integrationBaseline?.(projectId, featureId);
+  return fixed?.baseCommit ?? fallback;
+}
 function submitMultiExecutionStart(
   deps: ExecutionStartServiceDeps,
   identity: ExecutionStartCommandIdentity,
@@ -271,7 +282,7 @@ function submitMultiExecutionStart(
   for (const fact of facts) {
     const workKey = computeExecutionWorkKey({ featureId: fact.snapshot.feature.id, purpose: EXECUTION_RUN_PURPOSE, planDigest: fact.snapshot.feature.planDigest!, inputs: fact.inputs });
     const run = transaction.insertExecutionRun({ projectId: prepared.projectId, batchId: batch.id, featureId: fact.snapshot.feature.id, runId: randomUUID(), purpose: EXECUTION_RUN_PURPOSE,
-      inputSnapshot: { schemaVersion: 1, previewDigest: prepared.previewDigest, workKey, planDigest: fact.snapshot.feature.planDigest, pendingTaskIds: fact.pendingTasks.map((task) => task.id).sort(), inputs: fact.inputs.map((input) => ({ artifactId: input.artifactId, version: input.version, contentHash: input.contentHash })), workspaceBaseline: { repositoryBindingId: binding.id, repositoryBindingRevision: binding.bindingRevision, baseCommit: prepared.code.headCommit } },
+      inputSnapshot: { schemaVersion: 1, previewDigest: prepared.previewDigest, workKey, planDigest: fact.snapshot.feature.planDigest, pendingTaskIds: fact.pendingTasks.map((task) => task.id).sort(), inputs: fact.inputs.map((input) => ({ artifactId: input.artifactId, version: input.version, contentHash: input.contentHash })), workspaceBaseline: { repositoryBindingId: binding.id, repositoryBindingRevision: binding.bindingRevision, baseCommit: resolveWorkspaceBaseCommit(deps, prepared.projectId, fact.snapshot.feature.id, prepared.code.headCommit ?? '') } },
       configSnapshot: { schemaVersion: 1, runLimits: prepared.budget.run }, status: 'queued', scopeDigest: prepared.previewDigest, workKey, dispatchOrdinal: 1,
       maxAttemptsPerRun: prepared.budget.run.maxAttemptsPerRun, runTimeLimitMs: prepared.budget.run.runTimeLimitMs, reason: context.schedulerAssembled ? null : EXECUTION_RUN_NOT_READY_REASON });
     transaction.appendExecutionEvent({ projectId: prepared.projectId, eventType: EXECUTION_RUN_DISPATCHED_EVENT_TYPE, aggregateType: 'run', aggregateId: run.id, aggregateRevision: run.revision, payload: { dispatched: true } });
@@ -889,7 +900,7 @@ export function createExecutionStartService(deps: ExecutionStartServiceDeps): Ex
         const binding = transaction.getRepositoryBinding(projectId);
         runInputSnapshot = { schemaVersion: 1, previewDigest: fresh.previewDigest, ...baseInputSnapshot,
           workspaceBaseline: { repositoryBindingId: binding.id, repositoryBindingRevision: binding.bindingRevision,
-            baseCommit: fresh.code.headCommit } };
+            baseCommit: resolveWorkspaceBaseCommit(deps, projectId, feature.id, fresh.code.headCommit ?? '') } };
       } else {
         /* 11b. 显式失败重试：同一父 Batch，共享父预算（不携带新预算/新授权依据）；
          * 终态 Batch 不接受新派发；重试工作身份必须与父 Batch 既有 Run 的

@@ -3,6 +3,9 @@ import type Database from 'better-sqlite3';
 import { StorageError } from '../../ports/errors.js';
 import {
   createIntegrationPlan,
+  INTEGRATION_BLOCK_REASONS,
+  INTEGRATION_PLAN_STATUSES,
+  INTEGRATION_STALE_REASONS,
   type IntegrationInputRef,
   type IntegrationPlan,
   type IntegrationPlanInput,
@@ -243,6 +246,34 @@ export function createSqliteIntegrationPlanAccess(
     return getInTransaction(projectId, integrationId);
   }
 
+  function validateOwnerUpdate(value: Record<string, unknown>, operation: string): {
+    readonly operationId: string | undefined;
+    readonly ownerId: string | undefined;
+    readonly ownerVersion: number | undefined;
+    readonly reconcile: boolean;
+  } {
+    const operationId = value.operationId === undefined ? undefined : validateStableId(value.operationId, { operation }, 'operationId');
+    const ownerId = value.ownerId === undefined ? undefined : validateStableId(value.ownerId, { operation }, 'ownerId');
+    const ownerVersion = value.ownerVersion === undefined ? undefined : validateRevision(value.ownerVersion, operation);
+    const reconcile = value.reconcile === true;
+    if ((operationId === undefined) !== (ownerId === undefined) || (operationId === undefined) !== (ownerVersion === undefined)) {
+      throw new StorageError('validation', operation, 'operationId、ownerId、ownerVersion 必须同时提供');
+    }
+    return { operationId, ownerId, ownerVersion, reconcile };
+  }
+
+  function assertOwnerFence(current: PersistedIntegrationPlan, owner: ReturnType<typeof validateOwnerUpdate>, operation: string): void {
+    const previous = current.integrationResult;
+    if (previous?.operationId === undefined || previous.operationId === null) return;
+    if (owner.operationId !== previous.operationId || owner.ownerId !== previous.ownerId || owner.ownerVersion !== previous.ownerVersion) {
+      if (!(owner.reconcile === true && previous.operationStatus === 'unknown' && owner.operationId === previous.operationId)) {
+        throw new StorageError('conflict', operation, '集成操作 owner/version fencing 未命中', {
+          entity: entity(current.projectId, current.integrationId), details: { reason: 'owner_fenced', operationId: previous.operationId },
+        });
+      }
+    }
+  }
+
   function updateResultInTransaction(raw: unknown): PersistedIntegrationPlan {
     const operation = `${OPERATION}.updateResult`;
     assertTransaction(db, operation);
@@ -251,9 +282,21 @@ export function createSqliteIntegrationPlanAccess(
     const projectId = validateStableId(value.projectId, { operation }, 'projectId');
     const integrationId = validateStableId(value.integrationId, { operation }, 'integrationId');
     const expectedRevision = validateRevision(value.expectedRevision, operation);
+    const owner = validateOwnerUpdate(value, operation);
     const current = getInTransaction(projectId, integrationId);
+    assertOwnerFence(current, owner, operation);
     if (current.frozenAtUtcMs === null) throw new StorageError('conflict', operation, '集成计划必须先冻结才能写入结果', { entity: entity(projectId, integrationId) });
-    const result = value.integrationResult as IntegrationResult | null;
+    let result = value.integrationResult as IntegrationResult | null;
+    if (owner.operationId !== undefined && result !== null) {
+      result = { ...result, operationId: owner.operationId, ownerId: owner.ownerId, ownerVersion: owner.ownerVersion,
+        operationStatus: result.operationStatus ?? (result.commitSha !== null && result.treeSha !== null && result.verificationEvidence !== null ? 'succeeded' : 'unknown') };
+    }
+    if (current.integrationResult?.operationStatus === 'succeeded') {
+      if (JSON.stringify(current.integrationResult) === JSON.stringify(result)) return current;
+      throw new StorageError('conflict', operation, '已完成的集成操作不可被覆盖', {
+        entity: entity(projectId, integrationId), details: { reason: 'operation_already_settled' },
+      });
+    }
     const next = createIntegrationPlan(planInput(current, result));
     const changed = db.prepare(`UPDATE integration_plans SET integration_result = ?, status = ?, block_reasons = ?, stale_reasons = ?, revision = revision + 1, updated_at = ? WHERE project_id = ? AND id = ? AND revision = ?`).run(
       result === null ? null : JSON.stringify(next.integrationResult), next.status, JSON.stringify(next.blockReasons), JSON.stringify(next.staleReasons), now(), projectId, integrationId, expectedRevision,
@@ -262,10 +305,35 @@ export function createSqliteIntegrationPlanAccess(
     return getInTransaction(projectId, integrationId);
   }
 
+  function updateStatusInTransaction(raw: unknown): PersistedIntegrationPlan {
+    const operation = `${OPERATION}.updateStatus`;
+    assertTransaction(db, operation);
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) throw new StorageError('validation', operation, 'status update 输入必须是对象');
+    const value = raw as Record<string, unknown>;
+    const projectId = validateStableId(value.projectId, { operation }, 'projectId');
+    const integrationId = validateStableId(value.integrationId, { operation }, 'integrationId');
+    const expectedRevision = validateRevision(value.expectedRevision, operation);
+    const owner = validateOwnerUpdate(value, operation);
+    const current = getInTransaction(projectId, integrationId);
+    assertOwnerFence(current, owner, operation);
+    if (typeof value.status !== 'string' || !(INTEGRATION_PLAN_STATUSES as readonly string[]).includes(value.status)
+      || !Array.isArray(value.blockReasons) || value.blockReasons.some(reason => !(INTEGRATION_BLOCK_REASONS as readonly string[]).includes(reason))
+      || !Array.isArray(value.staleReasons) || value.staleReasons.some(reason => !(INTEGRATION_STALE_REASONS as readonly string[]).includes(reason))) {
+      throw new StorageError('validation', operation, '状态更新形态非法');
+    }
+    if (current.status === value.status && JSON.stringify(current.blockReasons) === JSON.stringify(value.blockReasons)
+      && JSON.stringify(current.staleReasons) === JSON.stringify(value.staleReasons)) return current;
+    const changed = db.prepare('UPDATE integration_plans SET status = ?, block_reasons = ?, stale_reasons = ?, revision = revision + 1, updated_at = ? WHERE project_id = ? AND id = ? AND revision = ?')
+      .run(value.status, JSON.stringify(value.blockReasons), JSON.stringify(value.staleReasons), now(), projectId, integrationId, expectedRevision);
+    if (changed.changes !== 1) throw new StorageError('conflict', operation, '集成计划状态 revision CAS 未命中', { entity: entity(projectId, integrationId), details: { expectedRevision, actualRevision: current.revision } });
+    return getInTransaction(projectId, integrationId);
+  }
+
   return {
     createIntegrationPlanInTransaction: createInTransaction,
     freezeIntegrationPlanInTransaction: freezeInTransaction,
     updateIntegrationPlanResultInTransaction: updateResultInTransaction,
+    updateIntegrationPlanStatusInTransaction: updateStatusInTransaction,
     getIntegrationPlanInTransaction: getInTransaction,
     readIntegrationPlan(projectIdInput, integrationIdInput) {
       const operation = `${OPERATION}.read`;

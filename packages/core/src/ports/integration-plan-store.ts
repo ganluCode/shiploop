@@ -6,10 +6,13 @@
  * 均不属于本端口。
  */
 import type {
+  IntegrationBlockReason,
   IntegrationPlan,
   IntegrationPlanInput,
+  IntegrationPlanStatus,
   IntegrationPredecessorInput,
   IntegrationResult,
+  IntegrationStaleReason,
 } from './integration-plan.js';
 
 export interface PersistedIntegrationPlan extends IntegrationPlan {
@@ -35,12 +38,30 @@ export interface IntegrationPlanResultUpdateInput {
   readonly integrationId: string;
   readonly expectedRevision: number;
   readonly integrationResult: IntegrationResult | null;
+  /** F-004 operation fencing; legacy F-002 callers may omit these fields. */
+  readonly operationId?: string;
+  readonly ownerId?: string;
+  readonly ownerVersion?: number;
+  readonly reconcile?: boolean;
+}
+
+export interface IntegrationPlanStatusUpdateInput {
+  readonly projectId: string;
+  readonly integrationId: string;
+  readonly expectedRevision: number;
+  readonly status: IntegrationPlanStatus;
+  readonly blockReasons: readonly IntegrationBlockReason[];
+  readonly staleReasons: readonly IntegrationStaleReason[];
+  readonly operationId?: string;
+  readonly ownerId?: string;
+  readonly ownerVersion?: number;
 }
 
 export interface IntegrationPlanAccess {
   readonly createIntegrationPlanInTransaction: (input: unknown) => PersistedIntegrationPlan;
   readonly freezeIntegrationPlanInTransaction: (input: unknown) => PersistedIntegrationPlan;
   readonly updateIntegrationPlanResultInTransaction: (input: unknown) => PersistedIntegrationPlan;
+  readonly updateIntegrationPlanStatusInTransaction: (input: unknown) => PersistedIntegrationPlan;
   readonly getIntegrationPlanInTransaction: (projectId: string, integrationId: string) => PersistedIntegrationPlan;
   readonly readIntegrationPlan: (projectId: unknown, integrationId: unknown) => PersistedIntegrationPlan | undefined;
 }
