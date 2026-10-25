@@ -5407,6 +5407,28 @@ export function validateFeatureDeliveryCommandResultWire(
   return object as unknown as FeatureDeliveryCommandResult;
 }
 
+export interface IntegrationStartCommandResult {
+  readonly featureId: string;
+  readonly runId: string;
+  readonly batchId: string;
+  readonly gitOperationId: string;
+  readonly outcome: 'merging' | 'pending_verification' | 'blocked' | 'unknown';
+  readonly reason: string | null;
+  readonly deliveryStatus: null;
+  readonly runtimeCalled: false;
+  readonly executionStarted: true;
+}
+
+export function validateIntegrationStartCommandResultWire(value: unknown, operation: HostOperation = 'commands.submit'): IntegrationStartCommandResult {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, ['featureId', 'runId', 'batchId', 'gitOperationId', 'outcome', 'reason', 'deliveryStatus', 'runtimeCalled', 'executionStarted']);
+  for (const key of ['featureId', 'runId', 'batchId', 'gitOperationId']) requireStableId(operation, object[key]);
+  if (!['merging', 'pending_verification', 'blocked', 'unknown'].includes(object.outcome as string)) malformed(operation, 'integration_start_outcome_invalid');
+  if (object.reason !== null && typeof object.reason !== 'string') malformed(operation, 'integration_start_reason_invalid');
+  if (object.deliveryStatus !== null || object.runtimeCalled !== false || object.executionStarted !== true) malformed(operation, 'integration_start_execution_boundary_invalid');
+  return object as unknown as IntegrationStartCommandResult;
+}
+
 export interface IntegrationReconcileCommandResult {
   readonly featureId: string;
   readonly runId: string;

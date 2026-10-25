@@ -23,6 +23,7 @@ import type {
   GitOperationDetailResult,
   GitOperationListResult,
   IntegrationPlanQueryResult,
+  IntegrationStartCommandResult,
   IntegrationReconcileCommandResult,
   PublicGitOperationRecord,
   TaskApprovalDecisionResult,
@@ -107,6 +108,12 @@ export function buildIntegrationReconcileCliView(
     deliveryStatus: result.deliveryStatus,
     canStartSuccessor: state === 'matched' && result.deliveryStatus === 'succeeded',
   };
+}
+
+export function buildIntegrationStartCliView(result: IntegrationStartCommandResult): IntegrationReconcileCliView {
+  const state: IntegrationCliState = result.outcome === 'blocked' ? 'blocked' : result.outcome === 'unknown' ? 'unknown' : 'pending';
+  return { state, featureId: result.featureId, runId: result.runId, batchId: result.batchId, gitOperationId: result.gitOperationId,
+    reason: result.reason ?? result.outcome, deliveryStatus: null, canStartSuccessor: false };
 }
 
 export function formatIntegrationReconcileView(view: IntegrationReconcileCliView): string {

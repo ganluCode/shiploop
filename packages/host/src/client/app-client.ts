@@ -172,6 +172,7 @@ import {
   validateFeaturePlanDecideResultWire,
   validateFeaturePlanImportResultWire,
   validateFeatureDeliveryCommandResultWire,
+  validateIntegrationStartCommandResultWire,
   validateIntegrationReconcileCommandResultWire,
   validateFeaturePlanReviseResultWire,
   validatePhaseCreateResultWire,
@@ -457,7 +458,12 @@ export interface FeatureVerificationContinueInput {
  * 但只做只读 Git 事实核对，不启动新的 merge/commit；结果仍经持久回执
  * 返回，调用方可在连接故障后使用同一 commandId 查询原回执。
  */
+export interface IntegrationStartInput extends FeatureVerificationContinueInput {
+  readonly inputDigest: string;
+}
+
 export interface IntegrationReconcileInput extends FeatureVerificationContinueInput {}
+
 
 /**
  * execution.input.prepare 输入（创建类：不携带 expectedRevision；items 为
@@ -834,6 +840,8 @@ export interface HostClientApplication {
     input: FeatureVerificationContinueInput,
     options?: SubmitCommandOptions,
   ): Promise<CommandReceipt>;
+  /** git.operation.start：通过 Core 受信集成执行端口启动固定集成。 */
+  startIntegration(input: IntegrationStartInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
   /**
    * git.operation.reconcile：核对已存在的集成 Git operation。该命令不会
    * 重做 merge/commit；pending/unknown 只按 Core 回执和查询事实展示。
@@ -1445,8 +1453,9 @@ const FEATURE_VERIFICATION_CONTINUE_INPUT_KEYS = [
   'expectedRevision',
   'commandId',
 ] as const;
-const EXECUTION_PREVIEW_INPUT_KEYS = ['projectId', 'phaseId', 'featureIds', 'budget', 'commandId'] as const;
+const INTEGRATION_START_INPUT_KEYS = [...FEATURE_VERIFICATION_CONTINUE_INPUT_KEYS, 'inputDigest'] as const;
 const EXECUTION_START_INPUT_KEYS = ['projectId', 'featureIds', 'budget', 'previewDigest', 'retryBatchId', 'commandId'] as const;
+const EXECUTION_PREVIEW_INPUT_KEYS = ['projectId', 'phaseId', 'featureIds', 'budget', 'commandId'] as const;
 // P05-1 / F-012：规划命令/查询输入键冻结（未知键拒绝；深校验在 Core）。
 const START_PLANNING_INPUT_KEYS = ['projectId', 'phaseId', 'featureId', 'requirementRefs', 'constraints', 'acceptance', 'strategy', 'budget', 'expectedRevision', 'commandId'] as const;
 const DECIDE_PLANNING_CANDIDATE_INPUT_KEYS = ['projectId', 'candidateId', 'candidateDigest', 'decision', 'reason', 'expectedRevision', 'commandId'] as const;
@@ -3157,6 +3166,24 @@ export function createHostClientApplication(context: AppClientContext): HostClie
       if (receipt.status === 'completed') {
         validateFeatureDeliveryCommandResultWire(receipt.result, 'commands.submit');
       }
+      return receipt;
+    },
+
+    async startIntegration(
+      input: IntegrationStartInput,
+      options?: SubmitCommandOptions,
+    ): Promise<CommandReceipt> {
+      const object = rejectUnknownInputKeys('commands.submit', input, INTEGRATION_START_INPUT_KEYS);
+      const projectId = requireProjectId('commands.submit', object.projectId as string);
+      const featureId = requireStableIdInput('commands.submit', object.featureId, 'featureId');
+      const runId = requireStableIdInput('commands.submit', object.runId, 'runId');
+      const batchId = requireStableIdInput('commands.submit', object.batchId, 'batchId');
+      if (typeof object.operationId !== 'string' || !isUuidV4(object.operationId)) throw invalidInput('commands.submit', 'invalid_operation_id', 'operationId');
+      if (typeof object.inputDigest !== 'string' || !SHA256_HEX_PATTERN.test(object.inputDigest)) throw invalidInput('commands.submit', 'invalid_input_digest', 'inputDigest');
+      const expectedRevision = requireExpectedRevisionInput('commands.submit', object.expectedRevision);
+      const receipt = await submitCommand({ ...optionalCommandIdInput('commands.submit', object.commandId), operation: 'git.operation.start', scope: { kind: 'project', projectId }, expectedRevision,
+        payload: { featureId, runId, batchId, operationId: object.operationId, inputDigest: object.inputDigest } }, options);
+      if (receipt.status === 'completed') validateIntegrationStartCommandResultWire(receipt.result, 'commands.submit');
       return receipt;
     },
 

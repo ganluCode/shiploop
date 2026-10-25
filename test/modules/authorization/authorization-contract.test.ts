@@ -157,6 +157,9 @@ function envelope(
       return { ...base, operation, scope: { kind: 'project', projectId: '0f0d9c36-765a-4b62-a6b9-38a5ff4f4bf1' },
         expectedRevision: expectedRevision ?? 1,
         payload: { taskId: 't-1', itemId: 'i-1', planDigest: '0'.repeat(64), codeDigest: '0'.repeat(64), artifactRefs: [], reason: null } };
+    case 'git.operation.start':
+      return { ...base, operation, scope: { kind: 'project', projectId: '0f0d9c36-765a-4b62-a6b9-38a5ff4f4bf1' },
+        expectedRevision: expectedRevision ?? 1, payload: { featureId: 'f-1', runId: 'run-1', batchId: 'batch-1', operationId: COMMAND_ID, inputDigest: '0'.repeat(64) } };
     case 'feature.verification.continue':
     case 'git.operation.reconcile':
       return { ...base, operation, scope: { kind: 'project', projectId: '0f0d9c36-765a-4b62-a6b9-38a5ff4f4bf1' },

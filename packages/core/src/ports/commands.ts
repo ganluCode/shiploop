@@ -205,6 +205,7 @@ export const COMMAND_OPERATIONS = [
   'task.verification.continue',
   // P03-8 F-008: explicit delivery control, sharing the existing execution authority.
   'feature.verification.continue',
+  'git.operation.start',
   'git.operation.reconcile',
   // P03-2 / F-006：执行输入制品组准备（project scope + execution.input.prepare；
   // 创建类命令不携带 expectedRevision；采集/组装/发布为事务外 I/O，最终重核、
@@ -358,6 +359,7 @@ export const COMMAND_OPERATION_SPECS: Readonly<Record<AppOperation, CommandOpera
     // F-012：显式验证继续是执行控制面决定（不启动 Runtime、不创建实体），
     // 沿用 execution.start 能力位；真实主体与能力仍由可信装配绑定。
     'feature.verification.continue': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
+    'git.operation.start': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
     'git.operation.reconcile': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
     'task.verification.continue': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
     // P03-2 / F-006：执行输入制品组准备（创建类：不携带 expectedRevision，
@@ -783,6 +785,11 @@ export interface ValidatedFeatureDeliveryPayload {
   readonly operationId: string;
 }
 
+export interface ValidatedIntegrationStartPayload extends ValidatedFeatureDeliveryPayload {
+  readonly inputDigest: string;
+}
+
+
 /**
  * F-012：显式验证继续 payload。只携带目标与已保存机器证据身份（批次/代码/
  * 观察摘要）：全部与服务端从持久事实重建的当前身份逐项比对，任何漂移
@@ -1103,6 +1110,12 @@ export type ValidatedCommandEnvelope =
       readonly payload: ValidatedTaskApprovalDecisionPayload;
     })
   | (EnvelopeCommon & {
+      readonly operation: 'git.operation.start';
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: number;
+      readonly payload: ValidatedIntegrationStartPayload;
+    })
+  | (EnvelopeCommon & {
       readonly operation: 'feature.verification.continue' | 'git.operation.reconcile';
       readonly scope: { readonly kind: 'project'; readonly projectId: string };
       readonly expectedRevision: number;
@@ -1199,13 +1212,13 @@ const TASK_STRATEGY_UPDATE_PAYLOAD_KEYS = ['taskId', 'executionConfig'] as const
 const TASK_APPROVAL_BLOCK_PAYLOAD_KEYS = ['taskId', 'planDigest', 'kind', 'description', 'responsibleParty', 'codeDigest', 'artifactRefs'] as const;
 const TASK_APPROVAL_DECISION_PAYLOAD_KEYS = ['taskId', 'itemId', 'planDigest', 'codeDigest', 'artifactRefs', 'reason'] as const;
 const TASK_VERIFICATION_CONTINUE_PAYLOAD_KEYS = ['taskId', 'attemptId', 'verificationBatchId', 'codeDigest', 'observationDigest'] as const;
+const INTEGRATION_START_PAYLOAD_KEYS = ['featureId', 'runId', 'batchId', 'operationId', 'inputDigest'] as const;
 
 const FEATURE_PLAN_DECIDE_PAYLOAD_KEYS = ['featureId', 'planDigest', 'decision', 'reason'] as const;
 const EXECUTION_INPUT_PREPARE_PAYLOAD_KEYS = ['featureId', 'taskId', 'items'] as const;
 const EXECUTION_PREVIEW_PAYLOAD_KEYS = ['featureIds', 'phaseId', 'budget'] as const;
 /** 执行预览范围的形态上限（防无界数组；本阶段业务上限固定单成员）。 */
 export const EXECUTION_PREVIEW_FEATURE_IDS_MAX = 16;
-
 /**
  * P01 校验器抛 StorageError(validation)，其字段名面向端口输入（'input'、
  * 'displayName' 等）；命令面统一改写为 payload.* 定位，错误码经 §5.7 同一映射。
@@ -2154,6 +2167,18 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
     if (scope.kind !== 'project') fail(operation, 'invalid_input', 'scope.kind', 'scope mismatch');
     return { ...base, operation, scope: scope as { kind: 'project'; projectId: string }, expectedRevision: expectedRevision as number,
       payload: validateTaskApprovalDecisionPayload(operation, object.payload) };
+  }
+  if (operation === 'git.operation.start') {
+    const payload = requireObject(operation, object.payload, 'payload');
+    exactKeys(operation, payload, INTEGRATION_START_PAYLOAD_KEYS, 'payload.');
+    if (!isUuidV4(payload.operationId)) fail(operation, 'invalid_input', 'payload.operationId', '必须是 UUID v4');
+    if (typeof payload.inputDigest !== 'string' || !/^[0-9a-f]{64}$/.test(payload.inputDigest)) {
+      fail(operation, 'invalid_input', 'payload.inputDigest', '必须是 64 位小写 SHA-256 摘要');
+    }
+    if (scope.kind !== 'project') fail(operation, 'invalid_input', 'scope.kind', 'scope mismatch');
+    return { ...base, operation, scope: scope as { kind: 'project'; projectId: string }, expectedRevision: expectedRevision as number,
+      payload: { featureId: validateStableId(payload.featureId, { operation }, 'payload.featureId'), runId: validateStableId(payload.runId, { operation }, 'payload.runId'),
+        batchId: validateStableId(payload.batchId, { operation }, 'payload.batchId'), operationId: payload.operationId, inputDigest: payload.inputDigest } };
   }
   if (operation === 'feature.verification.continue' || operation === 'git.operation.reconcile') {
     const payload = requireObject(operation, object.payload, 'payload');

@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
+  validateIntegrationStartCommandResultWire,
   validateIntegrationReconcileCommandResultWire,
 } from '../../../packages/host/src/client/app-wire.ts';
 import {
+  buildIntegrationStartCliView,
   buildIntegrationReconcileCliView,
   formatIntegrationReconcileView,
 } from '../../../packages/cli/src/app/delivery.ts';
@@ -19,6 +21,17 @@ const base = {
 };
 
 describe('P05-7 F-007 integration Host/CLI projection', () => {
+  it('[case:integration-start-wire-and-cli] keeps a started integration pending until Core verification evidence exists', () => {
+    const result = validateIntegrationStartCommandResultWire({
+      ...base,
+      outcome: 'pending_verification',
+      reason: null,
+      deliveryStatus: null,
+      executionStarted: true,
+    });
+    expect(buildIntegrationStartCliView(result)).toMatchObject({ state: 'pending', canStartSuccessor: false });
+  });
+
   it('[case:integration-reconcile-wire-four-states] accepts Core reconciliation states without treating blocked or unknown as success', () => {
     for (const outcome of ['pending', 'blocked', 'unknown', 'matched'] as const) {
       const result = validateIntegrationReconcileCommandResultWire({ ...base, outcome });

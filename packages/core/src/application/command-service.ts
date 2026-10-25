@@ -640,7 +640,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
         const envelope = validateCommandEnvelope(input);
         operation = envelope.operation;
         authorizeCommand(principal, envelope);
-        if (envelope.operation === 'feature.verification.continue' || envelope.operation === 'git.operation.reconcile') {
+        if (envelope.operation === 'feature.verification.continue' || envelope.operation === 'git.operation.start' || envelope.operation === 'git.operation.reconcile') {
           const digest = computeCommandRequestDigest(envelope);
           if (delivery === undefined) {
             const receipt = store.transact(operation, transaction =>
