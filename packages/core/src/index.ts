@@ -102,6 +102,7 @@ export * from './ports/feature-plan.js';
 export * from './ports/feature-dispatch.js';
 export * from './application/feature-dispatch.js';
 export * from './ports/feature-dag.js';
+export * from './ports/integration-plan.js';
 export * from './ports/feature-dag-update.js';
 export * from './ports/plan-store.js';
 export * from './ports/command-process.js';

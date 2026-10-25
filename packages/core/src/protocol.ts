@@ -12,6 +12,37 @@ export {
 } from './ports/commands.js';
 export type { AppOperation, CommandReceipt, CommandScope } from './ports/commands.js';
 export { FEATURE_DAG_REASONS, FEATURE_DEPENDENCY_COMPLETION } from './ports/feature-dag.js';
+export {
+  INTEGRATION_BLOCK_REASONS,
+  INTEGRATION_IDENTITY_DIGEST_DOMAIN,
+  INTEGRATION_INPUT_DIGEST_DOMAIN,
+  INTEGRATION_PLAN_MODES,
+  INTEGRATION_PLAN_SCHEMA_VERSION,
+  INTEGRATION_PLAN_STATUSES,
+  INTEGRATION_STALE_REASONS,
+  computeIntegrationIdentity,
+  computeIntegrationInputDigest,
+  createIntegrationPlan,
+  deriveIntegrationPlanStatus,
+  validateIntegrationPlanInput,
+} from './ports/integration-plan.js';
+export type {
+  IntegrationBlockReason,
+  IntegrationCoverage,
+  IntegrationDeliveryEvidence,
+  IntegrationInputRef,
+  IntegrationPlan,
+  IntegrationPlanInput,
+  IntegrationPlanMode,
+  IntegrationPlanObservation,
+  IntegrationPlanStatus,
+  IntegrationPlanStatusResult,
+  IntegrationPredecessorInput,
+  IntegrationResult,
+  IntegrationStaleReason,
+  IntegrationStrategySummary,
+  IntegrationVerificationEvidence,
+} from './ports/integration-plan.js';
 export type { FeatureDependencyInput } from './ports/feature-dag.js';
 export type { FeaturePhaseMovePayload } from './ports/feature-phase.js';
 export type { PhaseMutationOperation } from './ports/phase-lifecycle.js';
