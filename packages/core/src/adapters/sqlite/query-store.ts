@@ -63,6 +63,9 @@ import type {
   FeatureDeliveryQueryReadStore,
   FeatureDeliveryView,
 } from '../../ports/feature-delivery-query.js';
+import { createSqliteIntegrationPlanAccess } from './integration-plan-store.js';
+import { createSqliteIntegrationPlanQueryStore } from './integration-plan-query-store.js';
+import type { IntegrationPlanQueryReadStore } from '../../ports/integration-plan-query.js';
 import { createSqliteExecutionControlQueryStore } from './execution-control-query-store.js';
 import { createSqlitePlanningQueryStore } from './planning-query-store.js';
 import type {
@@ -122,6 +125,7 @@ export interface SqliteQueryStore
     TaskEvidenceQueryReadStore,
     GitOperationQueryReadStore,
     FeatureDeliveryQueryReadStore,
+    IntegrationPlanQueryReadStore,
     FeatureExecutionReportReadStore,
     ExecutionControlQueryReadStore,
     PlanningQueryReadStore {}
@@ -149,6 +153,9 @@ export function createSqliteQueryStore(
   const gitOperations = createSqliteGitOperationQueryStore(session);
   const featureDelivery = createSqliteFeatureDeliveryQueryStore(session);
   const featureReport = createSqliteFeatureExecutionReportStore(session, featureDelivery, workSessions);
+  const integrationPlan = createSqliteIntegrationPlanQueryStore(
+    createSqliteIntegrationPlanAccess(session, options.nowUtcMs === undefined ? {} : { nowUtcMs: options.nowUtcMs }),
+  );
   const executionControl = createSqliteExecutionControlQueryStore(session, featureDelivery);
   const planningQueries = createSqlitePlanningQueryStore(
     session,
@@ -312,6 +319,8 @@ export function createSqliteQueryStore(
     readFeatureExecutionReportView: (projectId, featureId) => featureReport.readFeatureExecutionReportView(projectId, featureId),
     readFeatureDeliveryView: (projectId: unknown, featureId: unknown): FeatureDeliveryView | undefined =>
       featureDelivery.readFeatureDeliveryView(projectId, featureId),
+    readIntegrationPlanView: (projectId: unknown, integrationId: unknown) =>
+      integrationPlan.readIntegrationPlanView(projectId, integrationId),
     readRunControlView: (projectId: unknown, runId: unknown): ExecutionRunControlView | undefined =>
       executionControl.readRunControlView(projectId, runId),
     readBatchControlView: (projectId: unknown, batchId: unknown): ExecutionBatchControlView | undefined =>

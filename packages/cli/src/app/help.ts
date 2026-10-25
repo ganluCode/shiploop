@@ -1002,6 +1002,14 @@ const GIT_OPERATIONS_HELP = [
   '',
 ].join('\n');
 
+const INTEGRATION_PLAN_HELP = [
+  'usage: shiploop integration plan <integrationId> --project <id> [--data-root <abs>] [--json]',
+  '',
+  '读取固定集成成果、目标基线、顺序、验证范围、digest、状态和阻塞原因。',
+  '查询只读 SQLite 一致视图；nextStep 只表示等待集成、核对、刷新计划或人工处理，不自动重跑编码。',
+  '', BOUNDARY_BLOCK, EXIT_CODE_BLOCK, '',
+].join('\\n');
+
 const GIT_OPERATION_HELP = [
   'usage: shiploop git operation <operationId> --project <id> [--data-root <abs>] [--json]',
   '',
@@ -2161,6 +2169,8 @@ const HELP_BY_SCOPE: Readonly<Record<AppHelpScope, string>> = Object.freeze({
   git: GIT_HELP,
   'git.operations': GIT_OPERATIONS_HELP,
   'git.operation': GIT_OPERATION_HELP,
+  integration: INTEGRATION_PLAN_HELP,
+  'integration.plan': INTEGRATION_PLAN_HELP,
 });
 
 /** 返回指定作用域的应用命令帮助文本（以换行结尾）；不做任何 I/O。 */

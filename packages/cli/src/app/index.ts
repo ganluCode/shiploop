@@ -88,12 +88,14 @@ export type {
 export { getAppCliHelp } from './help.js';
 export {
   FEATURE_FINAL_APPROVAL_NOTE,
+  buildIntegrationPlanCliView,
   buildFeatureDeliveryView,
   buildFeatureFinalApprovalView,
   buildFeatureFinalizeView,
   buildGitOperationDetailView,
   buildGitOperationListView,
   buildGitOperationRecordView,
+  formatIntegrationPlanView,
   formatFeatureDeliveryView,
   formatFeatureFinalApprovalView,
   formatFeatureFinalizeView,
@@ -102,6 +104,7 @@ export {
   gitOperationCommitted,
 } from './delivery.js';
 export type {
+  IntegrationPlanCliView,
   FeatureDeliveryCliView,
   FeatureFinalApprovalCliView,
   FeatureFinalizeCliView,

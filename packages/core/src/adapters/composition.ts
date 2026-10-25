@@ -1184,6 +1184,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       gitOperationReads: queryStore,
       featureReportReads: queryStore,
       featureDeliveryReads: queryStore,
+      integrationPlanReads: queryStore,
       executionControlReads: queryStore,
       artifacts: artifactStore,
       artifactFiles: artifactFileStore,

@@ -88,6 +88,7 @@ import type {
   GitOperationDetailResult,
   GitOperationListResult,
   FeatureDeliveryDetailResult,
+  IntegrationPlanQueryResult,
   FeatureExecutionReport,
   WorkSessionListResult,
   WorkSessionDetailResult,
@@ -121,6 +122,7 @@ import {
   FEATURES_ROUTE_PREFIX,
   GIT_OPERATIONS_ROUTE,
   GIT_OPERATIONS_ROUTE_PREFIX,
+  INTEGRATION_PLANS_ROUTE_PREFIX,
   HostProtocolError,
   MAX_APP_BODY_BYTES,
   MAX_ARTIFACT_CONTENT_BYTES,
@@ -951,6 +953,7 @@ export interface HostClientApplication {
    */
   getFeatureDelivery(projectId: string, featureId: string): Promise<FeatureDeliveryDetailResult>;
   getFeatureReport(projectId: string, featureId: string): Promise<FeatureExecutionReport>;
+  getIntegrationPlan(projectId: string, integrationId: string): Promise<IntegrationPlanQueryResult>;
   /* ------------------------------------------------------------ *
    * P03-5 / F-012 工作区状态只读查询与人工丢弃预览/确认
    * ------------------------------------------------------------ */
@@ -4012,6 +4015,21 @@ export function createHostClientApplication(context: AppClientContext): HostClie
       const result = validateAppQueryResponse(op, json);
       if (result.feature.featureId !== id || result.outcome.identities.featureId !== id) {
         throw new HostProtocolError('response_malformed', op, 'Feature 分轴结果响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
+      }
+      return result;
+    },
+
+    async getIntegrationPlan(projectId: string, integrationId: string): Promise<IntegrationPlanQueryResult> {
+      const op = 'integration.plan.get';
+      context.assertOpen(op);
+      const project = requireProjectId(op, projectId);
+      const id = requireStableIdInput(op, integrationId, 'integrationId');
+      const result = validateAppQueryResponse(op, await getJson(
+        op,
+        `${INTEGRATION_PLANS_ROUTE_PREFIX}${encodeURIComponent(id)}?projectId=${encodeURIComponent(project)}`,
+      ));
+      if (result.integration.integrationId !== id || result.integration.projectId !== project) {
+        throw new HostProtocolError('response_malformed', op, '集成计划响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
       }
       return result;
     },

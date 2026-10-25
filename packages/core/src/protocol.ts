@@ -43,6 +43,20 @@ export type {
   IntegrationStrategySummary,
   IntegrationVerificationEvidence,
 } from './ports/integration-plan.js';
+export {
+  INTEGRATION_PLAN_GET_OPERATION,
+  INTEGRATION_PLAN_NEXT_STEPS,
+  INTEGRATION_PLAN_QUERY_OPERATIONS,
+} from './ports/integration-plan-query.js';
+export type {
+  IntegrationPlanNextStep,
+  IntegrationPlanQueryOperation,
+  IntegrationPlanQueryResult,
+  IntegrationPlanQueryView,
+  PublicIntegrationPlan,
+  PublicIntegrationPlanOutcome,
+  PublicIntegrationPlanPredecessor,
+} from './ports/integration-plan-query.js';
 export type { FeatureDependencyInput } from './ports/feature-dag.js';
 export type { FeaturePhaseMovePayload } from './ports/feature-phase.js';
 export type { PhaseMutationOperation } from './ports/phase-lifecycle.js';

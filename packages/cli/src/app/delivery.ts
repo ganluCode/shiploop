@@ -22,13 +22,56 @@ import type {
   FeatureDeliveryDetailResult,
   GitOperationDetailResult,
   GitOperationListResult,
+  IntegrationPlanQueryResult,
   PublicGitOperationRecord,
   TaskApprovalDecisionResult,
 } from 'shiploop-host';
 
-/* ------------------------------------------------------------------ *
- * Feature 分轴结果视图（features.delivery.get）
- * ------------------------------------------------------------------ */
+export interface IntegrationPlanCliView {
+  readonly scope: 'integration-plan';
+  readonly integration: IntegrationPlanQueryResult['integration'];
+  readonly predecessors: IntegrationPlanQueryResult['predecessors'];
+  readonly integrationResult: IntegrationPlanQueryResult['integrationResult'];
+  readonly outcome: IntegrationPlanQueryResult['outcome'];
+  readonly completed: boolean;
+  readonly note: string;
+}
+
+export function buildIntegrationPlanCliView(result: IntegrationPlanQueryResult): IntegrationPlanCliView {
+  const completed = result.outcome.status === 'integration_passed';
+  return {
+    scope: 'integration-plan',
+    integration: result.integration,
+    predecessors: result.predecessors,
+    integrationResult: result.integrationResult,
+    outcome: result.outcome,
+    completed,
+    note: completed
+      ? '固定集成 commit 与组合验证证据已完成'
+      : `集成计划未完成（${result.outcome.status}）；按 nextStep=${result.outcome.nextStep} 核对或等待，不自动重跑编码`,
+  };
+}
+
+export function formatIntegrationPlanView(view: IntegrationPlanCliView): string {
+  const plan = view.integration;
+  const lines = [
+    `shiploop integration plan: ${plan.integrationId} status=${plan.status} completed=${String(view.completed)}`,
+    `  project=${plan.projectId} phase=${plan.phaseId} batch=${plan.batchId} successorFeature=${plan.successorFeatureId}`,
+    `  targetBaseline=${plan.targetBaseline} inputDigest=${plan.inputDigest}`,
+    `  mode=${plan.mode} mergeOrder=${plan.mergeOrder.join(',')} verificationScope=${plan.verificationScope.join(',')}`,
+    `  coverage=${plan.coverage.coveredInputCount}/${plan.coverage.approvedInputCount} complete=${String(plan.coverage.complete)}`,
+  ];
+  for (const predecessor of view.predecessors) {
+    lines.push(`  predecessor ${predecessor.featureId} dependencyPassed=${String(predecessor.dependencyPassed)} commit=${String(predecessor.commitSha)} ancestorVerified=${String(predecessor.ancestorVerified)}`);
+  }
+  lines.push(`  outcome=${view.outcome.status} nextStep=${view.outcome.nextStep} reason=${view.outcome.reason}`);
+  if (view.outcome.blockReasons.length > 0) lines.push(`  blockReasons=${view.outcome.blockReasons.join(',')}`);
+  if (view.outcome.staleReasons.length > 0) lines.push(`  staleReasons=${view.outcome.staleReasons.join(',')}`);
+  if (view.integrationResult !== null) lines.push(`  result commit=${String(view.integrationResult.commitSha)} tree=${String(view.integrationResult.treeSha)} operationStatus=${String(view.integrationResult.operationStatus)}`);
+  lines.push(`  （${view.note}）`);
+  return `${lines.join('\\n')}\\n`;
+}
+
 
 /** Feature 分轴结果 CLI 视图：公开投影逐轴保留 + 派生 completed 不变量。 */
 export interface FeatureDeliveryCliView {

@@ -213,6 +213,12 @@ import {
   type FeatureDeliveryQueryReadStore,
 } from '../ports/feature-delivery-query.js';
 import {
+  INTEGRATION_PLAN_GET_OPERATION,
+  buildIntegrationPlanQueryResult,
+  type IntegrationPlanQueryResult,
+  type IntegrationPlanQueryReadStore,
+} from '../ports/integration-plan-query.js';
+import {
   EXECUTION_BATCH_CONTROL_GET_OPERATION,
   EXECUTION_RUN_CONTROL_GET_OPERATION,
   EXECUTION_RUN_RECOVERY_GET_OPERATION,
@@ -501,6 +507,8 @@ export interface QueryService {
    * 视图重建，查询零写入、零事件，重复读取不增加计数。
    */
   getFeatureDelivery(principal: unknown, input: unknown): Promise<FeatureDeliveryDetailResult>;
+  /** P05-6 / F-005 integration plan fixed-input/status query; read-only and bounded. */
+  getIntegrationPlan(principal: unknown, input: unknown): Promise<IntegrationPlanQueryResult>;
   /**
    * P03-9 / F-013 execution.run.control.get：Run 控制进度查询——持久状态与
    * 原因（pausing/cancelling/paused/interrupted 原样）、父 Batch 简报、关联
@@ -559,6 +567,8 @@ export interface QueryServiceOptions {
   readonly featureReportReads?: FeatureExecutionReportReadStore;
   /** P03-8 / F-010 Feature 分轴结果查询一致读取窄端口（只读）。 */
   readonly featureDeliveryReads: FeatureDeliveryQueryReadStore;
+  /** P05-6 / F-005 集成计划一致读投影（只读，不执行 Git/Runtime）。 */
+  readonly integrationPlanReads?: IntegrationPlanQueryReadStore;
   /** P03-9 / F-013 Run/Batch 控制进度与恢复诊断一致读取窄端口（只读）。 */
   readonly executionControlReads: ExecutionControlQueryReadStore;
   /** P03-6 / F-011 证据制品索引（正文经完整性核验读取；只读用法）。 */
@@ -728,6 +738,7 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
     gitOperationReads,
     featureReportReads,
     featureDeliveryReads,
+    integrationPlanReads,
     executionControlReads,
     artifacts,
     artifactFiles,
@@ -2737,7 +2748,38 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
       }
     },
 
-    // P03-9 / F-013：Run 控制进度只读查询（能力核验 → 身份校验 → 项目可见
+    // P05-6 / F-005：固定成果/基线/顺序/阻塞原因只读投影；查询不触发
+    // Git、Runtime、租约或事件写入。
+    async getIntegrationPlan(
+      principal: unknown,
+      input: unknown,
+    ): Promise<IntegrationPlanQueryResult> {
+      assertTrustedPrincipal(principal);
+      const operation = INTEGRATION_PLAN_GET_OPERATION;
+      try {
+        requireCapability(principal, 'project.read', operation);
+        const object = requirePlainObject(input, { operation }, 'input');
+        rejectUnknownKeys(object, ['projectId', 'integrationId'], { operation }, 'input');
+        const projectId = requireProjectId(object.projectId, operation);
+        const integrationId = validateStableId(
+          object.integrationId,
+          { operation, entity: { type: 'integration_plan' } },
+          'integrationId',
+        );
+        requireProjectVisible(principal, projectId, operation);
+        if (integrationPlanReads === undefined) throw new PublicError('unsupported', operation);
+        const view = integrationPlanReads.readIntegrationPlanView(projectId, integrationId);
+        if (view === undefined) {
+          throw new PublicError('not_found', operation, '集成计划不存在或不可见', {
+            details: { reason: 'integration_plan_not_found' },
+          });
+        }
+        return buildIntegrationPlanQueryResult(view);
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
     // → 一致读视图重建；跨项目/不存在折叠 not_found；持久状态与原因原样，
     // 不以日志推断完成；查询零写入、零事件、零唤醒，重复读取不增加计数）。
     async getRunControl(principal: unknown, input: unknown): Promise<RunControlDetailResult> {

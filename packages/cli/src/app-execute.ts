@@ -141,6 +141,8 @@ import {
 } from './app/planning.js';
 import type { PlanningStartInputDocument } from './app/planning.js';
 import {
+  buildIntegrationPlanCliView,
+  formatIntegrationPlanView,
   buildFeatureDeliveryView,
   buildFeatureFinalApprovalView,
   buildFeatureFinalizeView,
@@ -324,7 +326,7 @@ type TaskDetailResult = Awaited<ReturnType<HostClient['getTask']>>;
 type ParsedPlanningCommand = Extract<ParsedAppCliCommand, { command: 'planning' }>;
 
 /** 计划命令（phase/feature/task）的解析形态（F-010）。 */
-type ParsedPlanCommand = Extract<ParsedAppCliCommand, { command: 'phase' | 'feature' | 'task' }>;
+type ParsedPlanCommand = Extract<ParsedAppCliCommand, { command: 'phase' | 'feature' | 'task' | 'integration' }>;
 
 /** P03-3 / F-012 执行授权命令（execution preview/start/budget/revise）的解析形态。 */
 type ParsedExecutionCommand = Extract<ParsedAppCliCommand, { command: 'execution' }>;
@@ -1448,6 +1450,11 @@ async function executePlanCommand(
     }
     /* P03-8 / F-011：Feature 分轴结果查询与最终审批/显式收尾命令（全部经
      * HostClient 公共面；completed 回执结果经冻结字段集线校验器复核后投影）。 */
+    case 'integration.plan': {
+      const result = await client.getIntegrationPlan(command.projectId, command.integrationId);
+      const view = buildIntegrationPlanCliView(result);
+      return emitSuccess(io, command, view, formatIntegrationPlanView(view));
+    }
     case 'feature.report': {
       const result = await client.getFeatureReport(command.projectId, command.featureId);
       // F-006：文本输出为可审阅文本视图（同一报告投影重新生成，不倾倒 JSON）。
@@ -3614,7 +3621,7 @@ export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunRes
     if (command.command === 'planning') {
       return await executePlanningCommand(io, command, client, planningInput);
     }
-    if (command.command === 'phase' || command.command === 'feature' || command.command === 'task') {
+    if (command.command === 'phase' || command.command === 'feature' || command.command === 'task' || command.command === 'integration') {
       return await executePlanCommand(io, command, client, {
         ...(planPayload !== undefined ? { planPayload } : {}),
         ...(strategyPayload !== undefined ? { strategyPayload } : {}),

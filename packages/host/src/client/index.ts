@@ -145,6 +145,7 @@ export type {
   GitOperationListResult,
   PublicGitOperationRecord,
   FeatureDeliveryDetailResult,
+  IntegrationPlanQueryResult,
   FeatureExecutionReport,
   FeatureDeliveryCommandResult,
   RunControlDetailResult,

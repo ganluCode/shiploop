@@ -48,6 +48,7 @@ export const APP_CLI_COMMANDS = [
   'execution',
   'workspace',
   'git',
+  'integration',
 ] as const;
 export type AppCliCommand = (typeof APP_CLI_COMMANDS)[number];
 
@@ -141,7 +142,8 @@ export type AppCliCommandId =
   | 'workspace.discard-preview'
   | 'workspace.discard'
   | 'git.operations'
-  | 'git.operation';
+  | 'git.operation'
+  | 'integration.plan';
 
 export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'project.init',
@@ -227,6 +229,7 @@ export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'workspace.discard',
   'git.operations',
   'git.operation',
+  'integration.plan',
 ]);
 
 /** 命令对应的 Core 操作身份（F-015/F-016 组装命令信封时使用）。 */
@@ -921,6 +924,16 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
     maxPositionals: 1,
     positionalFields: ['featureId'],
   },
+  'integration.plan': {
+    command: 'integration',
+    commandId: 'integration.plan',
+    valueFlags: ['--project'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['integrationId'],
+  },
   'feature.final-approve': {
     command: 'feature',
     commandId: 'feature.final-approve',
@@ -1470,6 +1483,7 @@ const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, A
       operations: 'git.operations',
       operation: 'git.operation',
     },
+    integration: { plan: 'integration.plan' },
   });
 
 const COMMON_VALUE_FLAGS = ['--data-root', '--start-timeout-ms'] as const;
@@ -3173,8 +3187,20 @@ export interface ParsedFeatureDelivery {
   readonly featureId: string;
 }
 
+export interface ParsedIntegrationPlan {
+  readonly kind: 'command';
+  readonly command: 'integration';
+  readonly commandId: 'integration.plan';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly integrationId: string;
+}
+
 /**
- * P03-8 / F-011 Feature 最终审批（task.approval.approve 既有授权命令）：决定
+ * P03-8 / F-011 Feature 最终审批
+ *（task.approval.approve 既有授权命令）：决定
  * 绑定当前计划/代码摘要（`--digest`/`--code-digest` 必填），`--revision` 是
  * 事项 expectedRevision；必须 `--confirm` 明确确认，缺确认在任何 I/O 之前
  * 拒绝。批准不自动运行最终检查或提交。
@@ -3386,6 +3412,7 @@ export type ParsedAppCliCommand =
   | ParsedWorkspaceDiscardPreview
   | ParsedWorkspaceDiscard
   | ParsedFeatureDelivery
+  | ParsedIntegrationPlan
   | ParsedFeatureFinalApprove
   | ParsedFeatureFinalize
   | ParsedGitOperations
@@ -4500,6 +4527,15 @@ function buildPlanEntity(
         ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
       };
     }
+    case 'integration.plan': {
+      return {
+        ...base,
+        command: 'integration',
+        commandId: 'integration.plan',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        integrationId: requirePlanId(scan.positionals[0] as string, state, 'integrationId'),
+      };
+    }
     case 'feature.report':
     case 'feature.delivery': {
       return {
@@ -4757,7 +4793,7 @@ function buildGit(
       };
     }
     default:
-      fail(state, 'unknown_subcommand');
+      return fail(state, 'unknown_subcommand');
   }
 }
 
@@ -4851,8 +4887,10 @@ export function parseAppCliArgs(
       return buildWorkspace(scan, state, spec);
     case 'git':
       return buildGit(scan, state, spec);
+    case 'integration':
+      return buildPlanEntity(scan, state, spec);
     default:
-      fail(state, 'unknown_subcommand');
+      return fail(state, 'unknown_subcommand');
   }
 }
 

@@ -105,7 +105,10 @@ import {
   GIT_OPERATION_RECEIPT_SCHEMA_VERSION,
   GIT_OPERATION_STATUSES,
   GIT_OPERATION_TERMINAL_STATUSES,
-  // P03-8 / F-010：Feature 分轴结果线校验用冻结词汇（同一来源，不复制第二份枚举）。
+  // P05-6 / F-005：集成计划查询线校验复用 Core 冻结词汇。
+  INTEGRATION_PLAN_NEXT_STEPS,
+  INTEGRATION_PLAN_STATUSES,
+  INTEGRATION_PLAN_MODES,
   FEATURE_APPROVAL_AXIS_STATUSES,
   FEATURE_DELIVERY_NEXT_STEPS,
   FEATURE_DELIVERY_OUTCOMES,
@@ -180,6 +183,7 @@ import type {
   GitOperationDetailResult,
   GitOperationListResult,
   FeatureDeliveryDetailResult,
+  IntegrationPlanQueryResult,
   WorkspaceDetailResult,
   WorkspaceDiscardPreview,
   WorkspaceListResult,
@@ -256,7 +260,7 @@ export type {
 } from 'shiploop-core/protocol';
 
 /** P03-8 / F-010：Feature 分轴结果查询形状经公共面再导出。 */
-export type { FeatureDeliveryDetailResult, FeatureExecutionReport } from 'shiploop-core/protocol';
+export type { FeatureDeliveryDetailResult, FeatureExecutionReport, IntegrationPlanQueryResult } from 'shiploop-core/protocol';
 import type { FeatureExecutionReport } from 'shiploop-core/protocol';
 
 /** P05-5 / F-007：资源租约列表查询形状经公共面再导出。 */
@@ -325,6 +329,8 @@ export type AppQueryOperation =
   // FEATURE_DELIVERY_QUERY_OPERATIONS 同源）。
   | 'features.delivery.get'
   | 'features.report.get'
+  // P05-6 / F-005：固定集成计划只读投影。
+  | 'integration.plan.get'
   // P03-9 / F-013/F-014：Run/Batch 控制进度、恢复诊断与 finalization 收尾
   // 结果查询（与 Core EXECUTION_CONTROL_QUERY_OPERATIONS 同源）。
   | 'execution.run.control.get'
@@ -5191,6 +5197,65 @@ function validateFeatureDeliveryAxesWire(operation: HostOperation, value: unknow
   }
 }
 
+function validateIntegrationPlanQueryResultWire(
+  value: unknown,
+  operation: HostOperation = 'integration.plan.get',
+): IntegrationPlanQueryResult {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, ['schemaVersion', 'scope', 'integration', 'predecessors', 'integrationResult', 'outcome']);
+  if (object.schemaVersion !== WIRE_MESSAGE_SCHEMA_VERSION) {
+    if (typeof object.schemaVersion === 'number') unsupportedVersion(operation, 'schemaVersion');
+    malformed(operation, 'integration_plan_schema_version_invalid');
+  }
+  if (object.scope !== 'integration-plan') malformed(operation, 'integration_plan_scope_invalid');
+  const integration = requirePlain(operation, object.integration);
+  exactKeys(operation, integration, ['integrationId', 'projectId', 'phaseId', 'batchId', 'successorFeatureId', 'mode', 'status', 'inputDigest', 'targetBaseline', 'mergeOrder', 'verificationScope', 'strategySummary', 'coverage', 'blockReasons', 'staleReasons', 'revision', 'createdAt', 'updatedAt', 'frozenAt']);
+  for (const key of ['integrationId', 'projectId', 'phaseId', 'batchId', 'successorFeatureId']) requireStableId(operation, integration[key]);
+  if (!(INTEGRATION_PLAN_MODES as readonly unknown[]).includes(integration.mode)) malformed(operation, 'integration_plan_mode_invalid');
+  if (!(INTEGRATION_PLAN_STATUSES as readonly unknown[]).includes(integration.status)) malformed(operation, 'integration_plan_status_invalid');
+  requireSha256Hex(operation, integration.inputDigest, 'integration_plan_digest_invalid');
+  if (typeof integration.targetBaseline !== 'string' || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(integration.targetBaseline)) malformed(operation, 'integration_plan_baseline_invalid');
+  requireStringArrayWire(operation, integration.mergeOrder, 'integration_plan_order_invalid');
+  requireStringArrayWire(operation, integration.verificationScope, 'integration_plan_scope_items_invalid');
+  requirePlain(operation, integration.strategySummary);
+  const coverage = requirePlain(operation, integration.coverage);
+  exactKeys(operation, coverage, ['approvedInputCount', 'coveredInputCount', 'complete', 'missingInputIds']);
+  requirePositiveInteger(operation, coverage.approvedInputCount);
+  if (typeof coverage.coveredInputCount !== 'number' || coverage.coveredInputCount < 0 || !Number.isSafeInteger(coverage.coveredInputCount) || typeof coverage.complete !== 'boolean') malformed(operation, 'integration_plan_coverage_invalid');
+  requireStringArrayWire(operation, coverage.missingInputIds, 'integration_plan_missing_inputs_invalid');
+  if (!Array.isArray(integration.blockReasons) || !integration.blockReasons.every(reason => typeof reason === 'string') || !Array.isArray(integration.staleReasons) || !integration.staleReasons.every(reason => typeof reason === 'string')) malformed(operation, 'integration_plan_reasons_invalid');
+  requirePositiveInteger(operation, integration.revision);
+  if (!isIsoUtcDateTime(integration.createdAt) || !isIsoUtcDateTime(integration.updatedAt) || (integration.frozenAt !== null && !isIsoUtcDateTime(integration.frozenAt))) malformed(operation, 'integration_plan_time_invalid');
+  if (!Array.isArray(object.predecessors) || object.predecessors.length > 128) malformed(operation, 'integration_plan_predecessors_invalid');
+  for (const raw of object.predecessors as unknown[]) {
+    const predecessor = requirePlain(operation, raw);
+    exactKeys(operation, predecessor, ['featureId', 'dependencyPassed', 'commitSha', 'evidenceId', 'evidenceDigest', 'coveredInputIds', 'ancestorVerified']);
+    requireStableId(operation, predecessor.featureId);
+    if (typeof predecessor.dependencyPassed !== 'boolean' || typeof predecessor.ancestorVerified !== 'boolean') malformed(operation, 'integration_plan_predecessor_invalid');
+    if (predecessor.commitSha !== null && (typeof predecessor.commitSha !== 'string' || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(predecessor.commitSha))) malformed(operation, 'integration_plan_commit_invalid');
+    if (predecessor.evidenceId !== null) requireStableId(operation, predecessor.evidenceId);
+    if (predecessor.evidenceDigest !== null) requireSha256Hex(operation, predecessor.evidenceDigest, 'integration_plan_evidence_invalid');
+    requireStringArrayWire(operation, predecessor.coveredInputIds, 'integration_plan_covered_inputs_invalid');
+  }
+  if (object.integrationResult !== null) {
+    const result = requirePlain(operation, object.integrationResult);
+    exactKeys(operation, result, ['commitSha', 'treeSha', 'verificationEvidence', 'operationStatus']);
+    for (const key of ['commitSha', 'treeSha']) if (result[key] !== null && (typeof result[key] !== 'string' || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(result[key]))) malformed(operation, 'integration_plan_result_oid_invalid');
+    if (result.verificationEvidence !== null) {
+      const evidence = requirePlain(operation, result.verificationEvidence);
+      exactKeys(operation, evidence, ['evidenceId', 'evidenceDigest']);
+      requireStableId(operation, evidence.evidenceId);
+      requireSha256Hex(operation, evidence.evidenceDigest, 'integration_plan_result_evidence_invalid');
+    }
+    if (result.operationStatus !== null && !['pending', 'succeeded', 'failed', 'unknown'].includes(result.operationStatus as string)) malformed(operation, 'integration_plan_operation_status_invalid');
+  }
+  const outcome = requirePlain(operation, object.outcome);
+  exactKeys(operation, outcome, ['status', 'reason', 'blockReasons', 'staleReasons', 'nextStep']);
+  if (!(INTEGRATION_PLAN_STATUSES as readonly unknown[]).includes(outcome.status) || typeof outcome.reason !== 'string' || !(INTEGRATION_PLAN_NEXT_STEPS as readonly unknown[]).includes(outcome.nextStep)) malformed(operation, 'integration_plan_outcome_invalid');
+  if (!Array.isArray(outcome.blockReasons) || !Array.isArray(outcome.staleReasons)) malformed(operation, 'integration_plan_outcome_reasons_invalid');
+  return object as unknown as IntegrationPlanQueryResult;
+}
+
 /** features.delivery.get：Feature 分轴结果（冻结字段集）。 */
 export function validateFeatureDeliveryDetailResultWire(
   value: unknown,
@@ -6498,8 +6563,13 @@ export function validateAppQueryResponse(
   body: unknown,
   expectation?: SnapshotExpectation,
 ): GitOperationDetailResult;
-export function validateAppQueryResponse(operation: 'features.report.get', body: unknown, expectation?: SnapshotExpectation): FeatureExecutionReport;
+export function validateAppQueryResponse(
+  operation: 'integration.plan.get',
+  body: unknown,
+  expectation?: SnapshotExpectation,
+): IntegrationPlanQueryResult;
 // P03-8 / F-010：Feature 分轴结果查询响应重载。
+export function validateAppQueryResponse(operation: 'features.report.get', body: unknown, expectation?: SnapshotExpectation): FeatureExecutionReport;
 export function validateAppQueryResponse(
   operation: 'features.delivery.get',
   body: unknown,
@@ -6731,14 +6801,16 @@ export function validateAppQueryResponse(
     case 'git.operations.get':
       return validateGitOperationDetailResultWire(body, operation);
     // P03-8 / F-010：Feature 分轴结果查询响应分发（同一冻结字段集纪律）。
-    case 'features.delivery.get':
-      return validateFeatureDeliveryDetailResultWire(body, operation);
     case 'features.report.get':
       return validateFeatureReportWire(body, {
         delivery: value => validateFeatureDeliveryDetailResultWire(value, operation),
         verification: value => validateVerificationBatchWire(operation, value),
         operation: value => validatePublicGitOperationWire(operation, value),
       });
+    case 'features.delivery.get':
+      return validateFeatureDeliveryDetailResultWire(body, operation);
+    case 'integration.plan.get':
+      return validateIntegrationPlanQueryResultWire(body, operation);
     // P03-9 / F-014：控制进度与恢复诊断查询响应分发（同一冻结字段集纪律）。
     case 'execution.run.control.get':
       return validateRunControlDetailResultWire(body, operation);

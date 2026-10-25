@@ -171,6 +171,8 @@ export const WORKSPACE_OPERATIONS_ROUTE_PREFIX = '/v1/workspace-operations/';
  */
 export const GIT_OPERATIONS_ROUTE = '/v1/git-operations';
 export const GIT_OPERATIONS_ROUTE_PREFIX = '/v1/git-operations/';
+/** P05-6 / F-005：固定成果/基线/顺序/状态只读查询。 */
+export const INTEGRATION_PLANS_ROUTE_PREFIX = '/v1/integration-plans/';
 /**
  * P05-1 / F-012：规划上下文/候选只读查询路由（全部 GET + Bearer；与 Core
  * PLANNING_QUERY_OPERATIONS 一一对应）。

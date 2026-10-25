@@ -72,6 +72,7 @@ import {
   FEATURES_ROUTE_PREFIX,
   GIT_OPERATIONS_ROUTE,
   GIT_OPERATIONS_ROUTE_PREFIX,
+  INTEGRATION_PLANS_ROUTE_PREFIX,
   MAX_APP_BODY_BYTES,
   MAX_ARTIFACT_CONTENT_BYTES,
   MAX_WORK_SESSION_EVIDENCE_RESPONSE_BYTES,
@@ -181,7 +182,8 @@ export type ApplicationOperation =
   // FEATURE_DELIVERY_QUERY_OPERATIONS 同源）。
   | 'features.delivery.get'
   | 'features.report.get'
-  // P03-9 / F-013：Run/Batch 控制进度、恢复诊断与 finalization 收尾结果只读
+  // P05-6 / F-005：固定成果/基线/顺序/状态只读投影。
+  | 'integration.plan.get'
   // 查询（与 Core EXECUTION_CONTROL_QUERY_OPERATIONS 同源）。
   | 'execution.run.control.get'
   | 'execution.batch.control.get'
@@ -201,7 +203,7 @@ export interface ResolvedAppRoute {
   readonly operation: ApplicationOperation;
   readonly method: 'GET' | 'POST';
   readonly pathParam?: {
-    readonly name: 'commandId' | 'projectId' | 'resultRef' | 'operationId' | 'artifactId' | 'phaseId' | 'featureId' | 'taskId' | 'batchId' | 'runId' | 'attemptId' | 'candidateId';
+    readonly name: 'commandId' | 'projectId' | 'resultRef' | 'operationId' | 'integrationId' | 'artifactId' | 'phaseId' | 'featureId' | 'taskId' | 'batchId' | 'runId' | 'attemptId' | 'candidateId';
     readonly value: string;
   };
 }
@@ -535,6 +537,14 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
     }
     return undefined;
   }
+  if (path.startsWith(INTEGRATION_PLANS_ROUTE_PREFIX)) {
+    const segments = path.slice(INTEGRATION_PLANS_ROUTE_PREFIX.length).split('/');
+    if (segments.length === 1 && segments[0]!.length > 0) {
+      return { operation: 'integration.plan.get', method: 'GET',
+        pathParam: { name: 'integrationId', value: segments[0]! } };
+    }
+    return undefined;
+  }
   if (path === TASKS_ROUTE) {
     return { operation: 'tasks.list', method: 'GET' };
   }
@@ -828,6 +838,7 @@ const QUERY_SPECS: Readonly<Partial<Record<ApplicationOperation, QuerySpec>>> = 
   // P03-8 / F-010：Feature 分轴结果查询参数白名单（取值规则由 Core 单一权威复核）。
   'features.delivery.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
   'features.report.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
+  'integration.plan.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
   'execution.run.control.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
   'execution.batch.control.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
   'execution.run.recovery.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
@@ -1349,6 +1360,12 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
       const query = buildPlanListQuery(params, operation, 'projectId');
       query.featureId = pathParam?.value;
       result = await app.queryService.getFeatureDelivery(app.principal, query);
+      break;
+    }
+    case 'integration.plan.get': {
+      const query = buildPlanListQuery(params, operation, 'projectId');
+      query.integrationId = pathParam?.value;
+      result = await app.queryService.getIntegrationPlan(app.principal, query);
       break;
     }
     // P03-9 / F-013：控制进度/恢复诊断查询分发（本层只做形态转换；授权/
