@@ -44,6 +44,9 @@ export const INTEGRATION_BLOCK_REASONS = [
   'input_coverage_incomplete',
   'ancestor_not_verified',
   'integration_evidence_incomplete',
+  'verification_failed',
+  'verification_stop_unconfirmed',
+  'authorization_not_current',
 ] as const;
 export type IntegrationBlockReason = (typeof INTEGRATION_BLOCK_REASONS)[number];
 
@@ -94,6 +97,9 @@ export interface IntegrationPredecessorInput {
 export interface IntegrationVerificationEvidence {
   readonly evidenceId: string;
   readonly evidenceDigest: string;
+  /** 组合验证采用的冻结计划和实际结果的不可变引用。 */
+  readonly planRef?: { readonly id: string; readonly digest: string };
+  readonly resultRef?: { readonly id: string; readonly digest: string };
 }
 
 export interface IntegrationResult {
@@ -162,7 +168,8 @@ const DELIVERY_KEYS = ['commitSha', 'evidenceId', 'evidenceDigest'] as const;
 const INPUT_REF_KEYS = ['inputId', 'digest'] as const;
 const RESULT_KEYS = ['commitSha', 'treeSha', 'verificationEvidence', 'llmNoConflictText',
   'operationId', 'ownerId', 'ownerVersion', 'operationStatus'] as const;
-const VERIFICATION_EVIDENCE_KEYS = ['evidenceId', 'evidenceDigest'] as const;
+const VERIFICATION_EVIDENCE_KEYS = ['evidenceId', 'evidenceDigest', 'planRef', 'resultRef'] as const;
+const VERIFICATION_REF_KEYS = ['id', 'digest'] as const;
 
 function context(operation = 'IntegrationPlan.validate'): ValidationContext {
   return { operation, entity: { type: 'feature' } };
@@ -301,9 +308,22 @@ function validateVerificationEvidence(
   if (value === undefined || value === null) return null;
   const object = requirePlainObject(value, ctx, field);
   rejectUnknownKeys(object, VERIFICATION_EVIDENCE_KEYS, ctx, field);
+  const ref = (raw: unknown, refField: string) => {
+    if (raw === undefined || raw === null) return undefined;
+    const refObject = requirePlainObject(raw, ctx, refField);
+    rejectUnknownKeys(refObject, VERIFICATION_REF_KEYS, ctx, refField);
+    return {
+      id: validateStableId(refObject.id, ctx, `${refField}.id`),
+      digest: validateSha256Digest(refObject.digest, ctx, `${refField}.digest`),
+    };
+  };
+  const planRef = ref(object.planRef, `${field}.planRef`);
+  const resultRef = ref(object.resultRef, `${field}.resultRef`);
   return {
     evidenceId: validateStableId(object.evidenceId, ctx, `${field}.evidenceId`),
     evidenceDigest: validateSha256Digest(object.evidenceDigest, ctx, `${field}.evidenceDigest`),
+    ...(planRef === undefined ? {} : { planRef }),
+    ...(resultRef === undefined ? {} : { resultRef }),
   };
 }
 

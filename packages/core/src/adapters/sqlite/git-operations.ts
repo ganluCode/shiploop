@@ -609,7 +609,11 @@ export function createSqliteGitOperationStore(
       }
     }
     if (isIntegrationGitOperationType(existing.intent.operationType) && existing.intent.integrationPlan != null
-      && input.integrationResult !== undefined && input.integrationResult !== null) {
+      && input.integrationResult !== undefined && input.integrationResult !== null
+      // P05-7/F-004 stores the P05-6 source plan separately. F-005 performs that
+      // CAS in the same transaction; writing the execution plan JSON here would
+      // mix the two digest domains and make the source row unreadable.
+      && typeof existing.intent.budgetSnapshot?.sourcePlanId !== 'string') {
       const planChanged = db.prepare(
         `UPDATE integration_plans SET integration_result = ?, status = ?, revision = revision + 1,
           updated_at = ? WHERE project_id = ? AND id = ?`,
