@@ -172,6 +172,7 @@ import {
   validateFeaturePlanDecideResultWire,
   validateFeaturePlanImportResultWire,
   validateFeatureDeliveryCommandResultWire,
+  validateIntegrationReconcileCommandResultWire,
   validateFeaturePlanReviseResultWire,
   validatePhaseCreateResultWire,
   validateFeatureMoveResultWire, validateFeatureDagResultWire,
@@ -450,6 +451,13 @@ export interface FeatureVerificationContinueInput {
   readonly expectedRevision: number;
   readonly commandId?: string;
 }
+
+/**
+ * git.operation.reconcile 输入。它与 Feature 收尾共享同一 Core 命令信封，
+ * 但只做只读 Git 事实核对，不启动新的 merge/commit；结果仍经持久回执
+ * 返回，调用方可在连接故障后使用同一 commandId 查询原回执。
+ */
+export interface IntegrationReconcileInput extends FeatureVerificationContinueInput {}
 
 /**
  * execution.input.prepare 输入（创建类：不携带 expectedRevision；items 为
@@ -827,6 +835,14 @@ export interface HostClientApplication {
     options?: SubmitCommandOptions,
   ): Promise<CommandReceipt>;
   /**
+   * git.operation.reconcile：核对已存在的集成 Git operation。该命令不会
+   * 重做 merge/commit；pending/unknown 只按 Core 回执和查询事实展示。
+   */
+  reconcileIntegration(
+    input: IntegrationReconcileInput,
+    options?: SubmitCommandOptions,
+  ): Promise<CommandReceipt>;
+  /**
    * execution.input.prepare：执行输入制品组准备（可绑定输入身份；正文永不
    * 内联，不创建执行实体、不声称已启动执行）。
    */
@@ -954,6 +970,14 @@ export interface HostClientApplication {
   getFeatureDelivery(projectId: string, featureId: string): Promise<FeatureDeliveryDetailResult>;
   getFeatureReport(projectId: string, featureId: string): Promise<FeatureExecutionReport>;
   getIntegrationPlan(projectId: string, integrationId: string): Promise<IntegrationPlanQueryResult>;
+  /** 集成详情别名：与计划详情共用 Core 脱敏投影。 */
+  getIntegrationDetail(projectId: string, integrationId: string): Promise<IntegrationPlanQueryResult>;
+  /** 集成 operation 分页别名：仍要求 Feature/Run 父级，复用稳定 ID 游标。 */
+  listIntegrationOperations(
+    projectId: string,
+    parent: GitOperationListParentInput,
+    input?: PlanListPageInput,
+  ): Promise<GitOperationListResult>;
   /* ------------------------------------------------------------ *
    * P03-5 / F-012 工作区状态只读查询与人工丢弃预览/确认
    * ------------------------------------------------------------ */
@@ -3136,6 +3160,39 @@ export function createHostClientApplication(context: AppClientContext): HostClie
       return receipt;
     },
 
+    async reconcileIntegration(
+      input: IntegrationReconcileInput,
+      options?: SubmitCommandOptions,
+    ): Promise<CommandReceipt> {
+      const object = rejectUnknownInputKeys(
+        'commands.submit',
+        input,
+        FEATURE_VERIFICATION_CONTINUE_INPUT_KEYS,
+      );
+      const projectId = requireProjectId('commands.submit', object.projectId as string);
+      const featureId = requireStableIdInput('commands.submit', object.featureId, 'featureId');
+      const runId = requireStableIdInput('commands.submit', object.runId, 'runId');
+      const batchId = requireStableIdInput('commands.submit', object.batchId, 'batchId');
+      if (typeof object.operationId !== 'string' || !isUuidV4(object.operationId)) {
+        throw invalidInput('commands.submit', 'invalid_operation_id', 'operationId');
+      }
+      const expectedRevision = requireExpectedRevisionInput('commands.submit', object.expectedRevision);
+      const receipt = await submitCommand(
+        {
+          ...optionalCommandIdInput('commands.submit', object.commandId),
+          operation: 'git.operation.reconcile',
+          scope: { kind: 'project', projectId },
+          expectedRevision,
+          payload: { featureId, runId, batchId, operationId: object.operationId },
+        },
+        options,
+      );
+      if (receipt.status === 'completed') {
+        validateIntegrationReconcileCommandResultWire(receipt.result, 'commands.submit');
+      }
+      return receipt;
+    },
+
     async updateTaskStrategy(
       input: UpdateTaskStrategyInput,
       options?: SubmitCommandOptions,
@@ -4032,6 +4089,18 @@ export function createHostClientApplication(context: AppClientContext): HostClie
         throw new HostProtocolError('response_malformed', op, '集成计划响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
       }
       return result;
+    },
+
+    async getIntegrationDetail(projectId: string, integrationId: string): Promise<IntegrationPlanQueryResult> {
+      return this.getIntegrationPlan(projectId, integrationId);
+    },
+
+    async listIntegrationOperations(
+      projectId: string,
+      parent: GitOperationListParentInput,
+      input?: PlanListPageInput,
+    ): Promise<GitOperationListResult> {
+      return this.listGitOperations(projectId, parent, input);
     },
 
     async previewWorkspaceDiscard(

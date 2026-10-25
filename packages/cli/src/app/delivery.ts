@@ -23,6 +23,7 @@ import type {
   GitOperationDetailResult,
   GitOperationListResult,
   IntegrationPlanQueryResult,
+  IntegrationReconcileCommandResult,
   PublicGitOperationRecord,
   TaskApprovalDecisionResult,
 } from 'shiploop-host';
@@ -71,6 +72,52 @@ export function formatIntegrationPlanView(view: IntegrationPlanCliView): string 
   lines.push(`  （${view.note}）`);
   return `${lines.join('\\n')}\\n`;
 }
+
+
+export type IntegrationCliState = 'pending' | 'blocked' | 'unknown' | 'matched' | 'failed';
+
+export interface IntegrationReconcileCliView {
+  readonly state: IntegrationCliState;
+  readonly featureId: string;
+  readonly runId: string;
+  readonly batchId: string;
+  readonly gitOperationId: string;
+  readonly reason: string;
+  readonly deliveryStatus: IntegrationReconcileCommandResult['deliveryStatus'];
+  readonly canStartSuccessor: boolean;
+}
+
+export function buildIntegrationReconcileCliView(
+  result: IntegrationReconcileCommandResult,
+): IntegrationReconcileCliView {
+  const state: IntegrationCliState = result.outcome === 'matched'
+    ? 'matched'
+    : result.outcome === 'blocked'
+      ? 'blocked'
+      : result.outcome === 'unknown'
+        ? 'unknown'
+        : 'pending';
+  return {
+    state,
+    featureId: result.featureId,
+    runId: result.runId,
+    batchId: result.batchId,
+    gitOperationId: result.gitOperationId,
+    reason: result.reason,
+    deliveryStatus: result.deliveryStatus,
+    canStartSuccessor: state === 'matched' && result.deliveryStatus === 'succeeded',
+  };
+}
+
+export function formatIntegrationReconcileView(view: IntegrationReconcileCliView): string {
+  return [
+    `shiploop integration reconcile: state=${view.state} matched=${String(view.state === 'matched')}`,
+    `  feature=${view.featureId} run=${view.runId} batch=${view.batchId} operation=${view.gitOperationId}`,
+    `  deliveryStatus=${String(view.deliveryStatus)} successorStart=${String(view.canStartSuccessor)}`,
+    `  reason=${view.reason}`,
+  ].join('\\n') + '\\n';
+}
+
 
 
 /** Feature 分轴结果 CLI 视图：公开投影逐轴保留 + 派生 completed 不变量。 */

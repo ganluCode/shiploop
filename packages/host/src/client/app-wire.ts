@@ -5407,6 +5407,44 @@ export function validateFeatureDeliveryCommandResultWire(
   return object as unknown as FeatureDeliveryCommandResult;
 }
 
+export interface IntegrationReconcileCommandResult {
+  readonly featureId: string;
+  readonly runId: string;
+  readonly batchId: string;
+  readonly gitOperationId: string;
+  readonly outcome: 'pending' | 'matched' | 'blocked' | 'unknown';
+  readonly reason: string;
+  readonly deliveryStatus: (typeof FEATURE_DELIVERY_STATUSES)[number] | null;
+  readonly runtimeCalled: false;
+  readonly executionStarted: false;
+}
+
+export function validateIntegrationReconcileCommandResultWire(
+  value: unknown,
+  operation: HostOperation = 'commands.submit',
+): IntegrationReconcileCommandResult {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, [
+    'featureId', 'runId', 'batchId', 'gitOperationId', 'outcome', 'reason',
+    'deliveryStatus', 'runtimeCalled', 'executionStarted',
+  ]);
+  requireStableId(operation, object.featureId);
+  requireStableId(operation, object.runId);
+  requireStableId(operation, object.batchId);
+  requireStableId(operation, object.gitOperationId);
+  if (!['pending', 'matched', 'blocked', 'unknown'].includes(object.outcome as string)) {
+    malformed(operation, 'integration_reconcile_outcome_invalid');
+  }
+  if (object.deliveryStatus !== null && !(FEATURE_DELIVERY_STATUSES as readonly unknown[]).includes(object.deliveryStatus)) {
+    malformed(operation, 'integration_reconcile_delivery_status_invalid');
+  }
+  requireNonEmptyString(operation, object.reason, 'integration_reconcile_reason_invalid');
+  if (object.runtimeCalled !== false || object.executionStarted !== false) {
+    malformed(operation, 'integration_reconcile_execution_boundary_invalid');
+  }
+  return object as unknown as IntegrationReconcileCommandResult;
+}
+
 /* ------------------------------------------------------------------ *
  * P03-7 / F-014 人审事项决定/阻塞与显式验证继续命令回执结果线校验
  *（冻结字段集精确键校验；命令结果的 item 是持久事项记录（毫秒时间戳形态），
