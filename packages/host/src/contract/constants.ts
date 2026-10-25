@@ -171,7 +171,9 @@ export const WORKSPACE_OPERATIONS_ROUTE_PREFIX = '/v1/workspace-operations/';
  */
 export const GIT_OPERATIONS_ROUTE = '/v1/git-operations';
 export const GIT_OPERATIONS_ROUTE_PREFIX = '/v1/git-operations/';
-/** P05-6 / F-005：固定成果/基线/顺序/状态只读查询。 */
+export const GIT_REPAIRS_ROUTE = '/v1/git-repairs';
+export const GIT_REPAIRS_ROUTE_PREFIX = '/v1/git-repairs/';
+/** P05-8 / F-006 GitAgent 修复授权/Attempt 只读查询路由。 */
 export const INTEGRATION_PLANS_ROUTE_PREFIX = '/v1/integration-plans/';
 /**
  * P05-1 / F-012：规划上下文/候选只读查询路由（全部 GET + Bearer；与 Core

@@ -143,6 +143,8 @@ export type AppCliCommandId =
   | 'workspace.discard'
   | 'git.operations'
   | 'git.operation'
+  | 'git.repairs'
+  | 'git.repair'
   | 'integration.plan';
 
 export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
@@ -229,6 +231,8 @@ export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'workspace.discard',
   'git.operations',
   'git.operation',
+  'git.repairs',
+  'git.repair',
   'integration.plan',
 ]);
 
@@ -1369,6 +1373,26 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
     maxPositionals: 0,
     positionalFields: [],
   },
+  'git.repairs': {
+    command: 'git',
+    commandId: 'git.repairs',
+    valueFlags: ['--project', '--limit', '--cursor'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 0,
+    maxPositionals: 0,
+    positionalFields: [],
+  },
+  'git.repair': {
+    command: 'git',
+    commandId: 'git.repair',
+    valueFlags: ['--project'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['repairId'],
+  },
   'git.operation': {
     command: 'git',
     commandId: 'git.operation',
@@ -1482,6 +1506,8 @@ const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, A
     git: {
       operations: 'git.operations',
       operation: 'git.operation',
+      repairs: 'git.repairs',
+      repair: 'git.repair',
     },
     integration: { plan: 'integration.plan' },
   });
@@ -3268,6 +3294,29 @@ export interface ParsedGitOperations {
   readonly cursor?: string;
 }
 
+export interface ParsedGitRepairs {
+  readonly kind: 'command';
+  readonly command: 'git';
+  readonly commandId: 'git.repairs';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+
+export interface ParsedGitRepairGet {
+  readonly kind: 'command';
+  readonly command: 'git';
+  readonly commandId: 'git.repair';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly repairId: string;
+}
+
 /** P03-8 / F-011 单条 Git 操作详情（git.operations.get；意图 + 实际事实 + 回执投影）。 */
 export interface ParsedGitOperationGet {
   readonly kind: 'command';
@@ -3416,7 +3465,9 @@ export type ParsedAppCliCommand =
   | ParsedFeatureFinalApprove
   | ParsedFeatureFinalize
   | ParsedGitOperations
-  | ParsedGitOperationGet;
+  | ParsedGitOperationGet
+  | ParsedGitRepairs
+  | ParsedGitRepairGet;
 
 export interface ParsedAppCliHelp {
   readonly kind: 'help';
@@ -4781,6 +4832,24 @@ function buildGit(
           ? { featureId: requirePlanId(featureRaw, state, 'feature') }
           : { runId: requireRunId(runRaw as string, state) }),
         ...optionalPlanListPage(scan, state),
+      };
+    }
+    case 'git.repairs': {
+      return {
+        ...base,
+        command: 'git',
+        commandId: 'git.repairs',
+        projectId,
+        ...optionalPlanListPage(scan, state),
+      };
+    }
+    case 'git.repair': {
+      return {
+        ...base,
+        command: 'git',
+        commandId: 'git.repair',
+        projectId,
+        repairId: requirePlanId(scan.positionals[0] as string, state, 'repairId'),
       };
     }
     case 'git.operation': {

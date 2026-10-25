@@ -376,6 +376,21 @@ export type {
   GitOperationQueryOperation,
   PublicGitOperationRecord,
 } from './ports/git-operation-query.js';
+// P05-8 / F-006 GitAgent 修复只读查询面。
+export {
+  GIT_REPAIR_QUERY_OPERATIONS,
+  GIT_REPAIRS_LIST_OPERATION,
+  GIT_REPAIR_GET_OPERATION,
+  validateGitAgentRepairQueryResult,
+} from './ports/git-agent-repair-query.js';
+export type {
+  GitAgentRepairQueryOperation,
+  GitAgentRepairQueryReadStore,
+  PublicGitAgentRepairAttempt,
+  PublicGitAgentRepairRecord,
+  GitAgentRepairListResult,
+  GitAgentRepairDetailResult,
+} from './ports/git-agent-repair-query.js';
 // P03-8 / F-010 Feature 分轴结果只读查询面：公开形状、操作身份与冻结词汇
 //（Task/最终检查/人工审批/交付四轴 + 可区分总体 outcome；服务端负责授权）。
 export {

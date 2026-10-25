@@ -23,6 +23,7 @@ export * from './ports/integration-workspace.js';
 export * from './ports/git-integration-journal.js';
 export * from './ports/integration-verification.js';
 export * from './ports/git-agent-repair.js';
+export * from './ports/git-agent-repair-query.js';
 export * from './ports/git-agent-runtime.js';
 export * from './ports/git-agent-recovery.js';
 export * from './ports/git-agent-runtime-script.js';

@@ -218,6 +218,16 @@ import {
   type IntegrationPlanQueryResult,
   type IntegrationPlanQueryReadStore,
 } from '../ports/integration-plan-query.js';
+import { gitAgentRepairCommitOperationId } from './git-agent-candidate-finalization.js';
+import {
+  GIT_REPAIRS_LIST_OPERATION,
+  GIT_REPAIR_GET_OPERATION,
+  toPublicGitAgentRepairRecord,
+  type GitAgentRepairDetailResult,
+  type GitAgentRepairListResult,
+  type GitAgentRepairQueryReadStore,
+} from '../ports/git-agent-repair-query.js';
+
 import {
   EXECUTION_BATCH_CONTROL_GET_OPERATION,
   EXECUTION_RUN_CONTROL_GET_OPERATION,
@@ -507,6 +517,9 @@ export interface QueryService {
    * 视图重建，查询零写入、零事件，重复读取不增加计数。
    */
   getFeatureDelivery(principal: unknown, input: unknown): Promise<FeatureDeliveryDetailResult>;
+  /** P05-8 / F-006 GitAgent 修复授权/Attempt 只读投影。 */
+  listGitAgentRepairs(principal: unknown, input: unknown): Promise<GitAgentRepairListResult>;
+  getGitAgentRepair(principal: unknown, input: unknown): Promise<GitAgentRepairDetailResult>;
   /** P05-6 / F-005 integration plan fixed-input/status query; read-only and bounded. */
   getIntegrationPlan(principal: unknown, input: unknown): Promise<IntegrationPlanQueryResult>;
   /**
@@ -567,6 +580,8 @@ export interface QueryServiceOptions {
   readonly featureReportReads?: FeatureExecutionReportReadStore;
   /** P03-8 / F-010 Feature 分轴结果查询一致读取窄端口（只读）。 */
   readonly featureDeliveryReads: FeatureDeliveryQueryReadStore;
+  /** P05-8 / F-006 GitAgent 修复一致读投影（只读）。 */
+  readonly gitAgentRepairReads?: GitAgentRepairQueryReadStore;
   /** P05-6 / F-005 集成计划一致读投影（只读，不执行 Git/Runtime）。 */
   readonly integrationPlanReads?: IntegrationPlanQueryReadStore;
   /** P03-9 / F-013 Run/Batch 控制进度与恢复诊断一致读取窄端口（只读）。 */
@@ -738,6 +753,7 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
     gitOperationReads,
     featureReportReads,
     featureDeliveryReads,
+    gitAgentRepairReads,
     integrationPlanReads,
     executionControlReads,
     artifacts,
@@ -2599,6 +2615,60 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
           gitOperationTargetNotFound(operation, 'git_operation');
         }
         return { operation: toPublicGitOperationRecord(record) };
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    async listGitAgentRepairs(principal: unknown, input: unknown): Promise<GitAgentRepairListResult> {
+      assertTrustedPrincipal(principal);
+      const operation = GIT_REPAIRS_LIST_OPERATION;
+      try {
+        requireCapability(principal, 'project.read', operation);
+        const object = requirePlainObject(input, { operation }, 'input');
+        rejectUnknownKeys(object, ['projectId', 'limit', 'cursor'], { operation }, 'input');
+        const projectId = requireProjectId(object.projectId, operation);
+        requireProjectVisible(principal, projectId, operation);
+        if (gitAgentRepairReads === undefined) throw new PublicError('unsupported', operation);
+        const filter = validatedPlanFilter(object, operation);
+        const binding = planCursorBinding({ kind: 'git-repairs', projectId }, operation);
+        const request = planListRequest(filter, binding, operation);
+        const page = gitAgentRepairReads.listGitAgentRepairs(projectId, request);
+        const records = page.records.map(view => {
+          const source = gitOperationReads.readGitOperationRecord(projectId, view.request.source.operationId);
+          const candidateId = gitAgentRepairCommitOperationId(view.request.repairId);
+          const candidate = gitOperationReads.readGitOperationRecord(projectId, candidateId);
+          return toPublicGitAgentRepairRecord(view,
+            source === undefined ? null : toPublicGitOperationRecord(source),
+            candidate === undefined ? null : toPublicGitOperationRecord(candidate));
+        });
+        const lastId = page.nextCursor;
+        return { schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION, scope: 'git-repair-list', records,
+          nextCursor: lastId === null ? null : encodePlanListCursor(lastId, binding), limit: filter.limit };
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    async getGitAgentRepair(principal: unknown, input: unknown): Promise<GitAgentRepairDetailResult> {
+      assertTrustedPrincipal(principal);
+      const operation = GIT_REPAIR_GET_OPERATION;
+      try {
+        requireCapability(principal, 'project.read', operation);
+        const object = requirePlainObject(input, { operation }, 'input');
+        rejectUnknownKeys(object, ['projectId', 'repairId'], { operation }, 'input');
+        const projectId = requireProjectId(object.projectId, operation);
+        const repairId = validateStableId(object.repairId, { operation, entity: { type: 'git_operation' } }, 'repairId');
+        requireProjectVisible(principal, projectId, operation);
+        if (gitAgentRepairReads === undefined) throw new PublicError('unsupported', operation);
+        const view = gitAgentRepairReads.readGitAgentRepair(projectId, repairId);
+        if (view === undefined) throw new PublicError('not_found', operation, undefined,
+          { details: { reason: 'git_agent_repair_not_found', entityType: 'git_agent_repair' } });
+        const source = gitOperationReads.readGitOperationRecord(projectId, view.request.source.operationId);
+        const candidate = gitOperationReads.readGitOperationRecord(projectId, gitAgentRepairCommitOperationId(repairId));
+        return { repair: toPublicGitAgentRepairRecord(view,
+          source === undefined ? null : toPublicGitOperationRecord(source),
+          candidate === undefined ? null : toPublicGitOperationRecord(candidate)) };
       } catch (error) {
         throw mapToPublicError(error, { operation });
       }

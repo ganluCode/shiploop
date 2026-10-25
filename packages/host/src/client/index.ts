@@ -147,6 +147,8 @@ export type {
   WorkspaceDiscardPreviewEntry,
   GitOperationDetailResult,
   GitOperationListResult,
+  GitAgentRepairListResult,
+  GitAgentRepairDetailResult,
   PublicGitOperationRecord,
   FeatureDeliveryDetailResult,
   IntegrationPlanQueryResult,

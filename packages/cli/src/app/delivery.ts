@@ -22,6 +22,8 @@ import type {
   FeatureDeliveryDetailResult,
   GitOperationDetailResult,
   GitOperationListResult,
+  GitAgentRepairListResult,
+  GitAgentRepairDetailResult,
   IntegrationPlanQueryResult,
   IntegrationStartCommandResult,
   IntegrationReconcileCommandResult,
@@ -282,6 +284,47 @@ export function buildGitOperationRecordView(record: PublicGitOperationRecord): G
   };
 }
 
+export interface GitAgentRepairCliView {
+  readonly scope: 'git-repair';
+  readonly repair: GitAgentRepairListResult['records'][number];
+  readonly completed: boolean;
+}
+
+export function buildGitAgentRepairView(result: GitAgentRepairDetailResult): GitAgentRepairCliView {
+  const repair = result.repair;
+  const completed = repair.candidateOperation?.status === 'succeeded' && repair.candidateOperation.deliveryStatus === 'succeeded';
+  return { scope: 'git-repair', repair, completed };
+}
+
+export interface GitAgentRepairListCliView {
+  readonly scope: 'git-repair-list';
+  readonly records: GitAgentRepairListResult['records'];
+  readonly nextCursor: string | null;
+  readonly limit: number;
+}
+
+export function buildGitAgentRepairListView(result: GitAgentRepairListResult): GitAgentRepairListCliView {
+  return { scope: 'git-repair-list', records: result.records, nextCursor: result.nextCursor, limit: result.limit };
+}
+
+export function formatGitAgentRepairListView(view: GitAgentRepairListCliView): string {
+  const lines = [`shiploop git repairs: ${view.records.length} record(s)`];
+  for (const repair of view.records) lines.push(`  - ${repair.repairId} run=${String(repair.runId)} blocked=${String(repair.blockedReason)} attempts=${repair.attempts.length} candidate=${repair.candidateOperation?.status ?? 'none'}`);
+  lines.push(`  nextCursor=${view.nextCursor ?? 'none'}`);
+  return `${lines.join('\\n')}\\n`;
+}
+
+export function formatGitAgentRepairView(view: GitAgentRepairCliView): string {
+  const repair = view.repair;
+  const latest = repair.attempts.at(-1);
+  return [
+    `shiploop git repair: ${repair.repairId} completed=${String(view.completed)}`,
+    `  project=${repair.projectId} feature=${repair.featureId} run=${String(repair.runId)} sourceOperation=${repair.sourceOperationId}`,
+    `  blocked=${String(repair.blockedReason)} failureKind=${repair.source.failureKind} inputDigest=${repair.source.inputDigest}`,
+    `  attempts=${repair.attempts.length} latestStatus=${latest?.status ?? 'none'} tokens=${String(latest?.consumedTokens ?? null)} runtimeMs=${String(latest?.runtimeMs ?? null)}`,
+    `  candidate=${repair.candidateOperation?.status ?? 'none'} deliveryStatus=${String(repair.candidateOperation?.deliveryStatus ?? null)}（候选/模型完成不等于交付完成）`,
+  ].join('\\n') + '\\n';
+}
 export interface GitOperationListCliView {
   readonly scope: 'git-operation-list';
   readonly records: readonly GitOperationRecordView[];

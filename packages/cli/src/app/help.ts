@@ -2169,6 +2169,8 @@ const HELP_BY_SCOPE: Readonly<Record<AppHelpScope, string>> = Object.freeze({
   git: GIT_HELP,
   'git.operations': GIT_OPERATIONS_HELP,
   'git.operation': GIT_OPERATION_HELP,
+  'git.repairs': GIT_OPERATIONS_HELP,
+  'git.repair': GIT_OPERATION_HELP,
   integration: INTEGRATION_PLAN_HELP,
   'integration.plan': INTEGRATION_PLAN_HELP,
 });

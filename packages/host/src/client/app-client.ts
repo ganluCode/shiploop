@@ -87,6 +87,8 @@ import type {
   TaskVerificationDetailResult,
   GitOperationDetailResult,
   GitOperationListResult,
+  GitAgentRepairListResult,
+  GitAgentRepairDetailResult,
   FeatureDeliveryDetailResult,
   IntegrationPlanQueryResult,
   FeatureExecutionReport,
@@ -122,6 +124,8 @@ import {
   FEATURES_ROUTE_PREFIX,
   GIT_OPERATIONS_ROUTE,
   GIT_OPERATIONS_ROUTE_PREFIX,
+  GIT_REPAIRS_ROUTE,
+  GIT_REPAIRS_ROUTE_PREFIX,
   INTEGRATION_PLANS_ROUTE_PREFIX,
   HostProtocolError,
   MAX_APP_BODY_BYTES,
@@ -185,6 +189,7 @@ import {
   validateTaskVerificationContinueResultWire,
   validateWorkspaceDiscardConfirmResultWire,
   validateWorkspaceDiscardPreviewWire,
+  validateGitAgentRepairQueryResultWire,
 } from './app-wire.js';
 
 /* ------------------------------------------------------------------ *
@@ -968,6 +973,9 @@ export interface HostClientApplication {
   ): Promise<GitOperationListResult>;
   /** git.operations.get：按 operationId 的完整意图 + 实际事实 + 回执投影。 */
   getGitOperation(projectId: string, operationId: string): Promise<GitOperationDetailResult>;
+  /** git.repairs.list/get：Core GitAgent 修复授权、Attempt、用量、阻塞和候选提交投影。 */
+  listGitAgentRepairs(projectId: string, input?: PlanListPageInput): Promise<GitAgentRepairListResult>;
+  getGitAgentRepair(projectId: string, repairId: string): Promise<GitAgentRepairDetailResult>;
   /* ------------------------------------------------------------ *
    * P03-8 / F-010 Feature 分轴结果只读查询
    * ------------------------------------------------------------ */
@@ -4060,6 +4068,32 @@ export function createHostClientApplication(context: AppClientContext): HostClie
       const result = validateAppQueryResponse(op, json);
       if (result.operation.operationId !== id || result.operation.projectId !== project) {
         throw new HostProtocolError('response_malformed', op, 'Git 操作响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
+      }
+      return result;
+    },
+
+    async listGitAgentRepairs(projectId: string, input?: PlanListPageInput): Promise<GitAgentRepairListResult> {
+      const op = 'git.repairs.list';
+      context.assertOpen(op);
+      const project = requireProjectId(op, projectId);
+      const paging = buildPlanListQuery(input, op);
+      const json = await getJson(op, `${GIT_REPAIRS_ROUTE}?projectId=${encodeURIComponent(project)}${paging.length === 0 ? '' : `&${paging}`}`);
+      const result = validateGitAgentRepairQueryResultWire(json, op) as GitAgentRepairListResult;
+      if (result.records.some(record => record.projectId !== project)) {
+        throw new HostProtocolError('response_malformed', op, 'GitAgent 修复响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
+      }
+      return result;
+    },
+
+    async getGitAgentRepair(projectId: string, repairId: string): Promise<GitAgentRepairDetailResult> {
+      const op = 'git.repairs.get';
+      context.assertOpen(op);
+      const project = requireProjectId(op, projectId);
+      const id = requireStableIdInput(op, repairId, 'repairId');
+      const json = await getJson(op, `${GIT_REPAIRS_ROUTE_PREFIX}${encodeURIComponent(id)}?projectId=${encodeURIComponent(project)}`);
+      const result = validateGitAgentRepairQueryResultWire(json, op) as GitAgentRepairDetailResult;
+      if (result.repair.repairId !== id || result.repair.projectId !== project) {
+        throw new HostProtocolError('response_malformed', op, 'GitAgent 修复响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
       }
       return result;
     },

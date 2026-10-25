@@ -72,6 +72,8 @@ import {
   FEATURES_ROUTE_PREFIX,
   GIT_OPERATIONS_ROUTE,
   GIT_OPERATIONS_ROUTE_PREFIX,
+  GIT_REPAIRS_ROUTE,
+  GIT_REPAIRS_ROUTE_PREFIX,
   INTEGRATION_PLANS_ROUTE_PREFIX,
   MAX_APP_BODY_BYTES,
   MAX_ARTIFACT_CONTENT_BYTES,
@@ -178,6 +180,8 @@ export type ApplicationOperation =
   // GIT_OPERATION_QUERY_OPERATIONS 同源）。
   | 'git.operations.list'
   | 'git.operations.get'
+  | 'git.repairs.list'
+  | 'git.repairs.get'
   // P03-8 / F-010：Feature 分轴结果只读查询（与 Core
   // FEATURE_DELIVERY_QUERY_OPERATIONS 同源）。
   | 'features.delivery.get'
@@ -313,6 +317,16 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
         method: 'GET',
         pathParam: { name: 'operationId', value: segments[0] as string },
       };
+    }
+    return undefined;
+  }
+  if (path === GIT_REPAIRS_ROUTE) {
+    return { operation: 'git.repairs.list', method: 'GET' };
+  }
+  if (path.startsWith(GIT_REPAIRS_ROUTE_PREFIX)) {
+    const segment = path.slice(GIT_REPAIRS_ROUTE_PREFIX.length);
+    if (segment.length > 0 && !segment.includes('/')) {
+      return { operation: 'git.repairs.get', method: 'GET', pathParam: { name: 'candidateId', value: segment } };
     }
     return undefined;
   }
@@ -835,6 +849,8 @@ const QUERY_SPECS: Readonly<Partial<Record<ApplicationOperation, QuerySpec>>> = 
     repeatable: [],
   }),
   'git.operations.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
+  'git.repairs.list': Object.freeze({ allowed: ['projectId', 'limit', 'cursor'], repeatable: [] }),
+  'git.repairs.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
   // P03-8 / F-010：Feature 分轴结果查询参数白名单（取值规则由 Core 单一权威复核）。
   'features.delivery.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
   'features.report.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
@@ -1425,6 +1441,17 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
     // P03-8 / F-009：Git 操作查询分发（本层只做形态转换；授权/可见性折叠/
     // 父级二选一/分页范围/游标绑定全部由 Core 单一权威复核；跨项目与不存在
     // 目标统一 not_found，不区分存在性）。
+    case 'git.repairs.list': {
+      const query = buildPlanListQuery(params, operation, 'projectId');
+      result = await app.queryService.listGitAgentRepairs(app.principal, query);
+      break;
+    }
+    case 'git.repairs.get': {
+      const query = buildPlanListQuery(params, operation, 'projectId');
+      query.repairId = pathParam?.value;
+      result = await app.queryService.getGitAgentRepair(app.principal, query);
+      break;
+    }
     case 'git.operations.list': {
       const query = buildPlanListQuery(params, operation, 'projectId');
       const featureId = params.get('featureId');

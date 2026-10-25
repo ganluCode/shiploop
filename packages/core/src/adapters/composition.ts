@@ -198,6 +198,7 @@ import type {
 } from '../application/integration-plan-generation.js';
 import { createGitAgentRepairService, type GitAgentRepairService } from '../application/git-agent-repair.js';
 import { createSqliteGitAgentRepairStore } from './sqlite/git-agent-repair-store.js';
+import { createSqliteGitAgentRepairQueryStore } from './sqlite/git-agent-repair-query-store.js';
 import { createIntegrationPlanControlService } from '../application/integration-plan-control.js';
 import type { IntegrationPlanControlService } from '../application/integration-plan-control.js';
 import type { AtomicCommandStore } from '../ports/atomic-commands.js';
@@ -1232,7 +1233,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       workSessionReads: queryStore,
       taskEvidenceReads: queryStore,
       gitOperationReads: queryStore,
-      featureReportReads: queryStore,
+      gitAgentRepairReads: createSqliteGitAgentRepairQueryStore(session),      featureReportReads: queryStore,
       featureDeliveryReads: queryStore,
       integrationPlanReads: queryStore,
       executionControlReads: queryStore,

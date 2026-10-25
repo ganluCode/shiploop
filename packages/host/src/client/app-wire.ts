@@ -17,6 +17,8 @@
  *   HostProtocolError，details 只含受控 reason，不回显响应原文或秘密。
  */
 import { FEATURE_GRAPH_BLOCKER_REASONS, FEATURE_DAG_REASONS, FEATURE_DEPENDENCY_COMPLETION } from 'shiploop-core/protocol';
+import { validateGitAgentRepairQueryResult as validateCoreGitAgentRepairQueryResult } from 'shiploop-core/protocol';
+import type { GitAgentRepairListResult, GitAgentRepairDetailResult } from 'shiploop-core/protocol';
 import type { PhaseGraphResult, PublicFeatureDependencyEdge } from 'shiploop-core/protocol';
 export type { PhaseGraphResult, PhaseGraphFeatureReadiness, PublicFeatureDependencyEdge } from 'shiploop-core/protocol';
 import { validateFeatureReportWire } from './feature-report-wire.js';
@@ -257,7 +259,10 @@ export type {
   GitOperationDetailResult,
   GitOperationListResult,
   PublicGitOperationRecord,
+  GitAgentRepairListResult,
+  GitAgentRepairDetailResult,
 } from 'shiploop-core/protocol';
+
 
 /** P03-8 / F-010：Feature 分轴结果查询形状经公共面再导出。 */
 export type { FeatureDeliveryDetailResult, FeatureExecutionReport, IntegrationPlanQueryResult } from 'shiploop-core/protocol';
@@ -325,6 +330,8 @@ export type AppQueryOperation =
   // GIT_OPERATION_QUERY_OPERATIONS 同源）。
   | 'git.operations.list'
   | 'git.operations.get'
+  | 'git.repairs.list'
+  | 'git.repairs.get'
   // P03-8 / F-010：Feature 分轴结果查询（与 Core
   // FEATURE_DELIVERY_QUERY_OPERATIONS 同源）。
   | 'features.delivery.get'
@@ -5265,6 +5272,47 @@ function validateFeatureDeliveryAxesWire(operation: HostOperation, value: unknow
   }
 }
 
+export function validateGitAgentRepairQueryResultWire(
+  value: unknown,
+  operation: HostOperation = 'git.repairs.get',
+): GitAgentRepairListResult | GitAgentRepairDetailResult {
+  const root = requirePlain(operation, value);
+  exactKeys(operation, root, operation === 'git.repairs.list'
+    ? ['schemaVersion', 'scope', 'records', 'nextCursor', 'limit']
+    : ['schemaVersion', 'repair']);
+  const checkRecord = (value: unknown): void => {
+    const record = requirePlain(operation, value);
+    exactKeys(operation, record, ['repairId', 'projectId', 'featureId', 'parentBatchId', 'sourceOperationId', 'runId', 'authorizationDigest', 'authorizationVersion', 'blockedReason', 'source', 'target', 'workspaceId', 'conflictFiles', 'writablePaths', 'intentId', 'verificationStrategyId', 'budget', 'attempts', 'sourceOperation', 'candidateOperation']);
+    const source = requirePlain(operation, record.source);
+    exactKeys(operation, source, ['failureKind', 'evidenceId', 'inputDigest']);
+    const target = requirePlain(operation, record.target);
+    exactKeys(operation, target, ['repoIdentity', 'baselineCommitSha']);
+    const budget = requirePlain(operation, record.budget);
+    exactKeys(operation, budget, ['remainingAttempts', 'remainingTokens', 'remainingRuntimeMs', 'deadline']);
+    if (!Array.isArray(record.conflictFiles) || !Array.isArray(record.writablePaths) || !Array.isArray(record.attempts)) malformed(operation, 'git_repair_record_malformed');
+    for (const path of [...record.conflictFiles, ...record.writablePaths]) {
+      if (typeof path !== 'string' || path.startsWith('/') || path.includes('\\\\') || path.includes('..')) malformed(operation, 'git_repair_path_invalid');
+    }
+    for (const attemptValue of record.attempts) {
+      const attempt = requirePlain(operation, attemptValue);
+      exactKeys(operation, attempt, ['attemptId', 'runId', 'status', 'changedPaths', 'consumedTokens', 'runtimeMs', 'failureCode', 'startedAt', 'stoppedAt']);
+      if (!Array.isArray(attempt.changedPaths)) malformed(operation, 'git_repair_attempt_malformed');
+    }
+    if (record.sourceOperation !== null) validatePublicGitOperationWire(operation, record.sourceOperation);
+    if (record.candidateOperation !== null) validatePublicGitOperationWire(operation, record.candidateOperation);
+  };
+  if (operation === 'git.repairs.get') checkRecord(root.repair);
+  else {
+    if (root.scope !== 'git-repair-list' || !Array.isArray(root.records)) malformed(operation, 'git_repair_list_malformed');
+    for (const record of root.records) checkRecord(record);
+  }
+  try {
+    return validateCoreGitAgentRepairQueryResult(value, operation === 'git.repairs.list' ? 'git.repairs.list' : 'git.repairs.get');
+  } catch {
+    malformed(operation, 'git_repair_query_malformed');
+  }
+}
+
 function validateIntegrationPlanQueryResultWire(
   value: unknown,
   operation: HostOperation = 'integration.plan.get',
@@ -6928,6 +6976,9 @@ export function validateAppQueryResponse(
       return validateGitOperationListResultWire(body, operation);
     case 'git.operations.get':
       return validateGitOperationDetailResultWire(body, operation);
+    case 'git.repairs.list':
+    case 'git.repairs.get':
+      return validateGitAgentRepairQueryResultWire(body, operation);
     // P03-8 / F-010：Feature 分轴结果查询响应分发（同一冻结字段集纪律）。
     case 'features.report.get':
       return validateFeatureReportWire(body, {

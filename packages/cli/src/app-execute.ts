@@ -148,11 +148,15 @@ import {
   buildFeatureFinalizeView,
   buildGitOperationDetailView,
   buildGitOperationListView,
+  buildGitAgentRepairListView,
+  buildGitAgentRepairView,
   formatFeatureDeliveryView,
   formatFeatureFinalApprovalView,
   formatFeatureFinalizeView,
   formatGitOperationDetailView,
   formatGitOperationListView,
+  formatGitAgentRepairListView,
+  formatGitAgentRepairView,
 } from './app/delivery.js';
 import { buildFeatureReportTextView, formatFeatureReportTextView } from './app/report.js';
 import {
@@ -2191,6 +2195,19 @@ async function executeGitCommand(
       );
       const view = buildGitOperationListView(result);
       return emitSuccess(io, command, view, formatGitOperationListView(view));
+    }
+    case 'git.repairs': {
+      const result = await client.listGitAgentRepairs(command.projectId, {
+        ...(command.limit !== undefined ? { limit: command.limit } : {}),
+        ...(command.cursor !== undefined ? { cursor: command.cursor } : {}),
+      });
+      const view = buildGitAgentRepairListView(result);
+      return emitSuccess(io, command, view, formatGitAgentRepairListView(view));
+    }
+    case 'git.repair': {
+      const result = await client.getGitAgentRepair(command.projectId, command.repairId);
+      const view = buildGitAgentRepairView(result);
+      return emitSuccess(io, command, view, formatGitAgentRepairView(view));
     }
     case 'git.operation': {
       const result = await client.getGitOperation(command.projectId, command.operationId);

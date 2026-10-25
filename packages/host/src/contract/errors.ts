@@ -88,6 +88,8 @@ export const APP_OPERATIONS = [
   // project.read；与 Core GIT_OPERATION_QUERY_OPERATIONS 同步，不漂移）。
   'git.operations.list',
   'git.operations.get',
+  'git.repairs.list',
+  'git.repairs.get',
   // P03-8 / F-010：Feature 分轴结果授权只读查询（能力位复用 project.read；
   // 与 Core FEATURE_DELIVERY_QUERY_OPERATIONS 同步，不漂移）。
   'features.delivery.get',

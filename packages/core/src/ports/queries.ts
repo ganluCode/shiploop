@@ -710,6 +710,8 @@ export type PlanListScope =
   | { readonly kind: 'planning-contexts'; readonly projectId: string }
   /** P05-1 / F-011 Feature 过滤的规划上下文分页（游标绑定同一过滤）。 */
   | { readonly kind: 'feature-planning-contexts'; readonly projectId: string; readonly featureId: string }
+  /** P05-8：项目范围 GitAgent 修复查询。 */
+  | { readonly kind: 'git-repairs'; readonly projectId: string }
   /** P05-5：项目/Feature/Batch 资源租约分页；游标绑定筛选范围。 */
   | { readonly kind: 'execution-resources'; readonly projectId: string; readonly featureId?: string; readonly batchId?: string };
 /** 游标签发/解析绑定：数据根身份 + 列表 scope（只允许可信装配构造）。 */
@@ -939,6 +941,13 @@ export function createPlanListCursorBinding(
       },
     };
   }
+  if (scope.kind === 'git-repairs') {
+    rejectUnknownKeys(scope, ['kind', 'projectId'], { operation }, 'scope');
+    return {
+      rootIdentity: input.rootIdentity,
+      scope: { kind: 'git-repairs', projectId: validateStableId(scope.projectId, { operation, entity: { type: 'project' } }, 'scope.projectId') },
+    };
+  }
   if (scope.kind === 'execution-resources') {
     rejectUnknownKeys(scope, ['kind', 'projectId', 'featureId', 'batchId'], { operation }, 'scope');
     if (scope.featureId !== undefined && scope.batchId !== undefined) {
@@ -978,7 +987,7 @@ export function createPlanListCursorBinding(
   planInvalidInput(
     operation,
     'scope.kind',
-    "必须是 'phases' / 'phase-graph' / 'features' / 'tasks' / 'budget-revisions' / 'task-attempts' / 'attempt-diagnostics' / 'run-work-sessions' / 'task-work-sessions' / 'task-approvals' / 'task-rework-chain' / 'feature-git-operations' / 'run-git-operations' / 'dispatch-queue' / 'dispatch-queue-batch' / 'dispatch-queue-feature' / 'execution-resources' / 'planning-contexts' / 'feature-planning-contexts'",
+    "必须是 'phases' / 'phase-graph' / 'features' / 'tasks' / 'budget-revisions' / 'task-attempts' / 'attempt-diagnostics' / 'run-work-sessions' / 'task-work-sessions' / 'task-approvals' / 'task-rework-chain' / 'feature-git-operations' / 'run-git-operations' / 'dispatch-queue' / 'dispatch-queue-batch' / 'dispatch-queue-feature' / 'execution-resources' / 'git-repairs' / 'planning-contexts' / 'feature-planning-contexts'",
     (scope as { kind?: unknown }).kind,
   );
 }
@@ -1006,6 +1015,7 @@ function planBindingAsTrusted(binding: PlanListCursorBinding): PlanListCursorBin
       binding.scope.kind !== 'dispatch-queue-batch' &&
       binding.scope.kind !== 'dispatch-queue-feature' &&
       binding.scope.kind !== 'dispatch-queue' &&
+      binding.scope.kind !== 'git-repairs' &&
       binding.scope.kind !== 'execution-resources' &&
       binding.scope.kind !== 'planning-contexts' &&
       binding.scope.kind !== 'feature-planning-contexts')
@@ -1038,6 +1048,7 @@ function planScopeFingerprint(scope: PlanListScope): string {
         ? scope.batchId === undefined ? '-' : `batch:${scope.batchId}`
         : `feature:${scope.featureId}`;
       break;
+    case 'git-repairs':
     case 'dispatch-queue':
     case 'phases':
     case 'planning-contexts':
