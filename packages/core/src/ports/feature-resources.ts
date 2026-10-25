@@ -268,6 +268,8 @@ export interface FeatureResourceAccess {
   releaseOwnerInTransaction(projectId: unknown, owner: unknown): readonly FeatureResourceLeaseRecord[];
   /** Renew every lease of one owner or quarantine the whole group when any lease is stale. */
   renewOwnerInTransaction(projectId: unknown, owner: unknown, leaseUntilUtcMs: unknown): readonly FeatureResourceLeaseRecord[];
+  /** Quarantine every held lease whose deadline has passed; never delete or reassign it. */
+  expireInTransaction(): number;
   /** Trusted stop/recovery release; permits an expired or quarantined row only after external evidence. */
   releaseOwnerAfterStopInTransaction(projectId: unknown, owner: unknown): readonly FeatureResourceLeaseRecord[];
   /** Quarantine every held lease of one owner. */

@@ -465,6 +465,38 @@ export function createSqliteFeatureResourceAccess(
         }, releasedAtUtcMs: null }, 'quarantineOwnerInTransaction') : record);
     },
 
+    expireInTransaction() {
+      assertTransaction('expireInTransaction');
+      const timestamp = now('expireInTransaction');
+      const owners = db.prepare<[number], { project_id: string; owner_id: string; owner_version: number }>(
+        `SELECT DISTINCT project_id, owner_id, owner_version FROM feature_resource_leases
+          WHERE state = 'held' AND lease_until <= ? ORDER BY project_id, owner_id, owner_version`,
+      ).all(timestamp);
+      let changed = 0;
+      for (const owner of owners) {
+        const records = ownerRecords(owner.project_id, {
+          ownerId: owner.owner_id,
+          ownerVersion: owner.owner_version,
+        }, 'expireInTransaction');
+        for (const record of records) {
+          if (record.state !== 'held') continue;
+          updateRecord(record, {
+            leaseUntilUtcMs: record.leaseUntilUtcMs,
+            state: 'quarantined',
+            waitingReason: {
+              code: 'lease_expired_unverified',
+              resourceKey: record.resource.key,
+              blockingOwnerId: owner.owner_id,
+              blockingOwnerVersion: owner.owner_version,
+            },
+            releasedAtUtcMs: null,
+          }, 'expireInTransaction');
+          changed += 1;
+        }
+      }
+      return changed;
+    },
+
     renewOwnerInTransaction(projectIdInput, ownerInput, leaseUntilUtcMsInput) {
       assertTransaction('renewOwnerInTransaction');
       const projectId = validateStableId(projectIdInput, { operation: `${OPERATION}.renewOwnerInTransaction` }, 'projectId');

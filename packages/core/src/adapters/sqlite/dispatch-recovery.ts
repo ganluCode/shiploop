@@ -20,9 +20,11 @@ function recoveryConflict(reason: string): never {
 }
 
 /** Adapter-private recovery authority. Call mutations only inside the caller's recovery transaction. */
-export function createSqliteDispatchRecovery(session: SqliteStorageSession) {
+export function createSqliteDispatchRecovery(session: SqliteStorageSession, options: {
+  readonly nowUtcMs?: () => number;
+} = {}) {
   const db = session.database;
-  const featureResources = createSqliteFeatureResourceAccess(session);
+  const featureResources = createSqliteFeatureResourceAccess(session, options);
   function claims(runId: string): Claim[] {
     const rows = db.prepare<[string], Claim>(`SELECT * FROM run_dispatch_claims WHERE run_id = ? ORDER BY claim_version LIMIT ${LIMIT + 1}`).all(runId);
     if (rows.length > LIMIT) recoveryConflict('dispatch_history_limit');
@@ -121,6 +123,10 @@ export function createSqliteDispatchRecovery(session: SqliteStorageSession) {
     /** Census includes claims with no Attempt, slots and legacy orphan resource groups. */
     fence(timestamp: number) {
       assertWrite();
+      // Expiry is a fencing event for the complete Feature resource group. It
+      // must happen before claim census so an expired resource can never be
+      // mistaken for an unstarted claim that is safe to release.
+      featureResources.expireInTransaction();
       const rows = db.prepare<[], Claim>(`SELECT * FROM run_dispatch_claims WHERE state IN ${active} ORDER BY id LIMIT ${LIMIT + 1}`).all();
       let blocked = false;
       const attemptIds: string[] = [];
@@ -145,7 +151,11 @@ export function createSqliteDispatchRecovery(session: SqliteStorageSession) {
               JOIN attempts a ON a.project_id = l.project_id AND a.id = l.owner_id
               WHERE a.project_id = ? AND a.feature_id = ? AND a.run_id = ? LIMIT 1`)
               .get(claim.project_id, claim.feature_id, claim.run_id);
-          if (uncertain) { quarantine(claim, 'dispatch_unstarted_evidence_incomplete', timestamp); blocked = true; }
+          const expiredFeatureResource = db.prepare(`SELECT id FROM feature_resource_leases
+            WHERE project_id = ? AND owner_id = ? AND owner_version = ?
+              AND (state = 'quarantined' OR (state = 'held' AND lease_until <= ?)) LIMIT 1`)
+            .get(claim.project_id, claim.id, claim.claim_version, timestamp);
+          if (uncertain || expiredFeatureResource) { quarantine(claim, 'dispatch_unstarted_evidence_incomplete', timestamp); blocked = true; }
           else {
             release(claim, timestamp, 'startup_unstarted_verified');
             db.prepare(`UPDATE runs SET status = 'paused', reason = 'restart_recovery', revision = revision + 1,

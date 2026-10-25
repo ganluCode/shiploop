@@ -24,8 +24,8 @@ interface LeaseRow {
 export function createSqliteWorkStartupRecoveryStore(session: SqliteStorageSession,
   options: { readonly nowUtcMs?: () => number } = {}): WorkStartupRecoveryStore {
   const db = session.database;
-  const dispatch = createSqliteDispatchRecovery(session);
   const now = options.nowUtcMs ?? Date.now;
+  const dispatch = createSqliteDispatchRecovery(session, { nowUtcMs: now });
   function findEvent(phase: RecoveryPhase, id: string) {
     const row = db.prepare<[string, string], Omit<PersistedStateEventRow, 'payload'> & { payload: string }>(`SELECT
       id, sequence, event_type AS eventType, aggregate_type AS aggregateType, aggregate_id AS aggregateId,
