@@ -122,7 +122,7 @@ export interface SchedulerPlanningPorts {
 export interface SchedulerRunResult {
   readonly projectId: string;
   readonly runId: string;
-  readonly reason: TaskDagReason | FeatureDagReason | 'scheduler_capability_missing' | 'claim_rejected' | 'handoff_delivery_failed' | 'scheduler_exception';
+  readonly reason: TaskDagReason | FeatureDagReason | 'repair_consumer_handed_off' | 'scheduler_capability_missing' | 'claim_rejected' | 'handoff_delivery_failed' | 'scheduler_exception';
   readonly capabilityGaps: readonly string[];
   readonly claimed: boolean;
   readonly handoff: SchedulerHandoff | null;
@@ -167,6 +167,7 @@ export interface WorkSchedulerOptions {
    * 调度器保留 capability gap（planning_consumer）并记录可查询原因，不把
    * planning Task 送入编码 DAG，也不自行准备输入或认领。
    */
+  readonly gitAgentRepair?: { consume(ref: SchedulerRunRef): Promise<void> };
   readonly planning?: SchedulerPlanningPorts;
   /**
    * 每个候选 Run 在 DAG 评估/认领之前的受信短操作（当前用于 F-006 派发归属与

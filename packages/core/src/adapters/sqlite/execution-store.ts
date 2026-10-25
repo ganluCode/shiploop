@@ -1810,15 +1810,26 @@ export function createSqliteExecutionAccess(
    * P03-9 / F-001 Task 边界暂停意图（迁移 v27）
    * ------------------------------------------------------------ */
 
+  function activeRepairAttemptCount(projectId: string, runIds: readonly string[]): number {
+    if (runIds.length === 0 || !session.database.prepare(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'git_agent_repair_attempts'",
+    ).get()) return 0;
+    return (session.database.prepare(`SELECT COUNT(*) AS count FROM git_agent_repair_attempts
+      WHERE project_id = ? AND run_id IN (${runIds.map(() => '?').join(',')}) AND stopped_at IS NULL`)
+      .get(projectId, ...runIds) as { count: number }).count;
+  }
+
   function activeAttemptCountForRun(projectId: string, runId: string): number {
-    return session.database.prepare<unknown[], { count: number }>(
+    return activeRepairAttemptCount(projectId, [runId]) + session.database.prepare<unknown[], { count: number }>(
       `SELECT COUNT(*) AS count FROM attempts WHERE project_id = ? AND run_id = ?
         AND status IN (${ACTIVE_ATTEMPT_STATUSES.map(() => '?').join(', ')})`,
     ).get(projectId, runId, ...ACTIVE_ATTEMPT_STATUSES)!.count;
   }
 
   function activeAttemptCountForBatch(projectId: string, batchId: string): number {
-    return session.database.prepare<unknown[], { count: number }>(
+    const repairRuns = session.database.prepare('SELECT id FROM runs WHERE project_id = ? AND batch_id = ?')
+      .all(projectId, batchId) as { id: string }[];
+    return activeRepairAttemptCount(projectId, repairRuns.map(run => run.id)) + session.database.prepare<unknown[], { count: number }>(
       `SELECT COUNT(*) AS count FROM attempts WHERE project_id = ? AND run_id IN
         (SELECT id FROM runs WHERE project_id = ? AND batch_id = ?)
         AND status IN (${ACTIVE_ATTEMPT_STATUSES.map(() => '?').join(', ')})`,
@@ -2271,7 +2282,7 @@ export function createSqliteExecutionAccess(
   } {
     if (runIds.length === 0) return { activeAttempts: 0, interruptedAttempts: 0, leases: 0 };
     const placeholders = runIds.map(() => '?').join(', ');
-    const activeAttempts = session.database.prepare<unknown[], { count: number }>(
+    const activeAttempts = activeRepairAttemptCount(projectId, runIds) + session.database.prepare<unknown[], { count: number }>(
       `SELECT COUNT(*) AS count FROM attempts WHERE project_id = ? AND run_id IN (${placeholders})
         AND status IN (${ACTIVE_ATTEMPT_STATUSES.map(() => '?').join(', ')})`,
     ).get(projectId, ...runIds, ...ACTIVE_ATTEMPT_STATUSES)!.count;

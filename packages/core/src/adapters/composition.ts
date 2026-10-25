@@ -196,6 +196,8 @@ import type {
   IntegrationPlanGenerationService,
   IntegrationPredecessorEvidenceReader,
 } from '../application/integration-plan-generation.js';
+import { createGitAgentRepairService, type GitAgentRepairService } from '../application/git-agent-repair.js';
+import { createSqliteGitAgentRepairStore } from './sqlite/git-agent-repair-store.js';
 import { createIntegrationPlanControlService } from '../application/integration-plan-control.js';
 import type { IntegrationPlanControlService } from '../application/integration-plan-control.js';
 import type { AtomicCommandStore } from '../ports/atomic-commands.js';
@@ -335,6 +337,8 @@ export interface CoreApplication {
   readonly integrationPlanGeneration?: IntegrationPlanGenerationService;
   /** P05-6: control and successor gating use the authoritative plan store. */
   readonly integrationPlanControl: IntegrationPlanControlService;
+  /** Trusted Core repair orchestration; never exposed as a raw Runtime tool. */
+  readonly gitAgentRepair: GitAgentRepairService;
   /**
    * P05-1 / F-011：规划上下文/候选只读授权查询（planning.contexts.list /
    * planning.context.get / planning.candidate.get；零写入、零事件、零恢复，
@@ -1114,6 +1118,8 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     )) {
       throw validationError(context, 'integrationPlanFactory', 'integration_fact_adapters_required');
     }
+    const gitAgentRepair = createGitAgentRepairService({ atomic: atomicStore,
+      store: createSqliteGitAgentRepairStore(session, nowUtcMs === undefined ? {} : { nowUtcMs }) });
     const integrationPlanControl = createIntegrationPlanControlService({ atomic: atomicStore, plans: integrationPlanStore });
     const integrationPlanGeneration = integrationPlanFacts === undefined ? undefined : createIntegrationPlanGenerationService({
       atomic: atomicStore,
@@ -1314,6 +1320,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       commandService,
       integrationPlanGeneration,
       integrationPlanControl,
+      gitAgentRepair,
       executionInputPrepare,
       executionPreview,
       executionStart,

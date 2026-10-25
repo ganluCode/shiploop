@@ -8,7 +8,8 @@ import { computePlanningPermissionsDigest } from '../../ports/planning-input-pre
 import { StorageError } from '../../ports/errors.js';
 import { validateTaskClaimDispatch, type TaskClaimDispatch } from '../../ports/task-claim.js';
 import { resolveApprovedBatchConcurrency } from '../../ports/feature-dispatch.js';
-import { deriveFeatureDispatchResourceSet } from '../../ports/feature-resources.js';
+import { deriveFeatureDispatchResourceSet, normalizeFeatureResourceSet } from '../../ports/feature-resources.js';
+import { validateStableId } from '../../ports/validation.js';
 import { createSqliteFeatureResourceAccess } from './feature-resources.js';
 import { createSqliteExecutionSlotAccess } from './execution-slots.js';
 import { createSqliteTaskDagStore } from './task-dag-store.js';
@@ -20,6 +21,12 @@ interface ClaimRow {
   host_instance_id: string; state: string; lease_until: number;
 }
 const operation = 'RunDispatch.attempt';
+/** Admission identity also supports Core-owned repair attempts without a coding Task. */
+export type DispatchAdmissionAttempt = Pick<AttemptRecord,
+  'id' | 'projectId' | 'featureId' | 'runId' | 'owner' | 'hostInstanceId' | 'leaseUntilUtcMs'> & {
+    readonly inputSnapshot: unknown;
+    readonly integrationWorkspaceId?: string;
+  };
 function deny(reason: string): never {
   throw new StorageError('conflict', operation, `Run dispatch rejected: ${reason}`, { details: { reason } });
 }
@@ -34,7 +41,7 @@ export function createSqliteAttemptDispatchAccess(session: SqliteStorageSession,
   function write() {
     if (!session.isOpen() || !db.inTransaction) throw new TypeError('Attempt dispatch requires an open transaction');
   }
-  function authorized(attempt: AttemptRecord) {
+  function authorized(attempt: DispatchAdmissionAttempt) {
     write();
     const execution = createSqliteExecutionAccess(session, { nowUtcMs: options.nowUtcMs });
     const run = execution.getExecutionRunInTransaction(attempt.projectId, attempt.runId);
@@ -57,12 +64,12 @@ export function createSqliteAttemptDispatchAccess(session: SqliteStorageSession,
         scopeDigest: run.scopeDigest, workKey: run.workKey, dispatchOrdinal: run.dispatchOrdinal })) deny('dispatch_authorization_changed');
     return { run, batch };
   }
-  function claim(attempt: AttemptRecord): ClaimRow | undefined {
+  function claim(attempt: DispatchAdmissionAttempt): ClaimRow | undefined {
     return db.prepare<[string, string], ClaimRow>(
       "SELECT id, claim_version, feature_id, owner_id, host_instance_id, state, lease_until FROM run_dispatch_claims WHERE project_id = ? AND run_id = ? AND state IN ('held', 'quarantined')",
     ).get(attempt.projectId, attempt.runId);
   }
-  function held(attempt: AttemptRecord, row: ClaimRow | undefined, now: number): ClaimRow {
+  function held(attempt: DispatchAdmissionAttempt, row: ClaimRow | undefined, now: number): ClaimRow {
     if (!row) return deny('dispatch_ownership_missing');
     if (row.feature_id !== attempt.featureId || row.owner_id !== attempt.owner
       || row.host_instance_id !== attempt.hostInstanceId) deny('dispatch_owner_mismatch');
@@ -70,7 +77,7 @@ export function createSqliteAttemptDispatchAccess(session: SqliteStorageSession,
     return row;
   }
   return {
-    acquireInTransaction(attempt: AttemptRecord, expected?: TaskClaimDispatch,
+    acquireInTransaction(attempt: DispatchAdmissionAttempt, expected?: TaskClaimDispatch,
       previousStoppedAttempt?: AttemptRecord): TaskClaimDispatch {
       const { batch } = authorized(attempt);
       const slots = createSqliteExecutionSlotAccess(session, {
@@ -146,11 +153,19 @@ export function createSqliteAttemptDispatchAccess(session: SqliteStorageSession,
       }
       const current = held(attempt, row, now);
       if (expected && (expected.claimId !== current.id || expected.claimVersion !== current.claim_version)) deny('stale_dispatch_identity');
-      const resourceSet = deriveFeatureDispatchResourceSet({
+      const dispatchResourceSet = deriveFeatureDispatchResourceSet({
         projectId: attempt.projectId,
         featureId: attempt.featureId,
-        purpose: isPlanningAttemptSnapshot(attempt.inputSnapshot) ? 'plan' : 'code',
+        purpose: (attempt.inputSnapshot as { purpose?: unknown })?.purpose === 'planning' ? 'plan' : 'code',
         batch: { scopeSnapshot: batch.scopeSnapshot, configSnapshot: batch.configSnapshot },
+      });
+      const resourceSet = attempt.integrationWorkspaceId === undefined ? dispatchResourceSet : normalizeFeatureResourceSet({
+        projectId: attempt.projectId,
+        resources: [
+          ...dispatchResourceSet.resources.map(({ projectId, kind, key }) => ({ projectId, kind, key })),
+          { projectId: attempt.projectId, kind: 'worktree_write_exclusive',
+            key: `worktree:${validateStableId(attempt.integrationWorkspaceId, { operation }, 'integrationWorkspaceId')}` },
+        ],
       });
       // Git public metadata is a short external lock, acquired only around the
       // concrete Git operation. It must never become a durable SQLite lease held

@@ -3680,6 +3680,109 @@ CREATE TRIGGER git_integration_observations_immutable BEFORE UPDATE ON git_integ
 CREATE TRIGGER git_integration_observations_retained BEFORE DELETE ON git_integration_observations BEGIN SELECT RAISE(ABORT, 'integration observation is retained'); END;
 `;
 
+const MIGRATION_045_SQL = `
+-- Repair authorizations and attempt admissions extend existing Runs, queues and budgets.
+-- Repair attempts have no coding Task and cannot publish task passes or integration success.
+CREATE TABLE git_agent_repairs (
+  repair_id TEXT PRIMARY KEY NOT NULL,
+  project_id TEXT NOT NULL,
+  batch_id TEXT NOT NULL,
+  feature_id TEXT NOT NULL,
+  source_operation_id TEXT NOT NULL,
+  run_id TEXT,
+  request TEXT NOT NULL CHECK (json_valid(request) AND json_type(request) = 'object'),
+  authorization_digest TEXT NOT NULL CHECK (length(authorization_digest) = 64),
+  authorization_version INTEGER NOT NULL CHECK (authorization_version >= 1),
+  receipt TEXT NOT NULL CHECK (json_valid(receipt) AND json_type(receipt) = 'object'),
+  blocked_reason TEXT CHECK (blocked_reason IS NULL OR blocked_reason IN
+    ('public_contract_break','requirements_tradeoff','high_risk_delete','out_of_scope','identity_or_lock',
+     'budget_exhausted','invalid_runtime_output','stop_unconfirmed')),
+  created_at INTEGER NOT NULL CHECK (created_at >= 1),
+  UNIQUE (project_id, source_operation_id),
+  FOREIGN KEY (project_id, batch_id, feature_id) REFERENCES execution_batch_members (project_id, batch_id, feature_id),
+  FOREIGN KEY (project_id, source_operation_id) REFERENCES git_operations (project_id, id),
+  FOREIGN KEY (project_id, batch_id, run_id) REFERENCES runs (project_id, batch_id, id)
+);
+CREATE TABLE git_agent_repair_commands (
+  project_id TEXT NOT NULL,
+  command_id TEXT NOT NULL,
+  repair_id TEXT NOT NULL REFERENCES git_agent_repairs (repair_id),
+  command_digest TEXT NOT NULL CHECK (length(command_digest) = 64),
+  PRIMARY KEY (project_id, command_id)
+);
+CREATE TABLE git_agent_repair_attempts (
+  id TEXT PRIMARY KEY NOT NULL,
+  project_id TEXT NOT NULL,
+  repair_id TEXT NOT NULL REFERENCES git_agent_repairs (repair_id),
+  run_id TEXT NOT NULL,
+  owner_id TEXT NOT NULL,
+  host_instance_id TEXT NOT NULL,
+  authorization_version INTEGER NOT NULL CHECK (authorization_version >= 1),
+  dispatch TEXT NOT NULL CHECK (json_valid(dispatch) AND json_type(dispatch) = 'object'),
+  started_at INTEGER NOT NULL CHECK (started_at >= 1),
+  deadline_at INTEGER NOT NULL CHECK (deadline_at > started_at),
+  max_tokens INTEGER NOT NULL CHECK (max_tokens >= 1),
+  max_runtime_ms INTEGER NOT NULL CHECK (max_runtime_ms >= 1),
+  output TEXT CHECK (output IS NULL OR (json_valid(output) AND json_type(output) = 'object')),
+  stopped_at INTEGER CHECK (stopped_at IS NULL OR stopped_at >= started_at),
+  FOREIGN KEY (project_id, run_id) REFERENCES runs (project_id, id)
+);
+CREATE TRIGGER git_agent_repair_run_identity BEFORE INSERT ON git_agent_repairs
+WHEN NOT EXISTS (SELECT 1 FROM git_operations g WHERE g.project_id = NEW.project_id
+ AND g.id = NEW.source_operation_id AND g.feature_id = NEW.feature_id
+ AND g.run_id = json_extract(NEW.request, '$.runId'))
+ OR (NEW.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.project_id = NEW.project_id
+ AND r.id = NEW.run_id AND r.batch_id = NEW.batch_id AND r.feature_id = NEW.feature_id
+ AND r.purpose = 'git_agent_repair' AND r.scope_digest = NEW.authorization_digest))
+BEGIN SELECT RAISE(ABORT, 'repair Run/source identity mismatch'); END;
+CREATE TRIGGER git_agent_repair_attempt_identity BEFORE INSERT ON git_agent_repair_attempts
+WHEN NOT EXISTS (SELECT 1 FROM git_agent_repairs r JOIN run_dispatch_claims c
+ ON c.project_id = r.project_id AND c.run_id = r.run_id JOIN execution_slot_claims s ON s.claim_id = c.id
+ WHERE r.repair_id = NEW.repair_id AND r.project_id = NEW.project_id AND r.run_id = NEW.run_id
+ AND r.authorization_version = NEW.authorization_version AND r.blocked_reason IS NULL
+ AND c.owner_id = NEW.owner_id AND c.host_instance_id = NEW.host_instance_id AND c.state = 'held'
+ AND c.id = json_extract(NEW.dispatch, '$.claimId') AND c.claim_version = json_extract(NEW.dispatch, '$.claimVersion')
+ AND s.id = json_extract(NEW.dispatch, '$.slotId') AND s.state = 'held' AND s.run_id = NEW.run_id
+ AND s.owner_id = c.owner_id AND s.host_instance_id = c.host_instance_id AND s.claim_version = c.claim_version)
+BEGIN SELECT RAISE(ABORT, 'repair Attempt owner identity mismatch'); END;
+CREATE UNIQUE INDEX git_agent_repair_attempt_active ON git_agent_repair_attempts (repair_id) WHERE stopped_at IS NULL;
+CREATE INDEX git_agent_repair_attempt_run ON git_agent_repair_attempts (project_id, run_id);
+CREATE TRIGGER git_agent_repair_identity BEFORE UPDATE ON git_agent_repairs
+WHEN NEW.repair_id IS NOT OLD.repair_id OR NEW.project_id IS NOT OLD.project_id
+ OR NEW.batch_id IS NOT OLD.batch_id OR NEW.feature_id IS NOT OLD.feature_id
+ OR NEW.source_operation_id IS NOT OLD.source_operation_id OR NEW.run_id IS NOT OLD.run_id
+ OR NEW.request IS NOT OLD.request OR NEW.authorization_digest IS NOT OLD.authorization_digest
+ OR NEW.authorization_version IS NOT OLD.authorization_version OR NEW.receipt IS NOT OLD.receipt
+ OR NEW.created_at IS NOT OLD.created_at OR OLD.blocked_reason IS NOT NULL
+BEGIN SELECT RAISE(ABORT, 'repair authorization or hold is immutable'); END;
+CREATE TRIGGER git_agent_repair_retained BEFORE DELETE ON git_agent_repairs BEGIN SELECT RAISE(ABORT, 'repair retained'); END;
+CREATE TRIGGER git_agent_repair_command_immutable BEFORE UPDATE ON git_agent_repair_commands BEGIN SELECT RAISE(ABORT, 'repair command immutable'); END;
+CREATE TRIGGER git_agent_repair_command_retained BEFORE DELETE ON git_agent_repair_commands BEGIN SELECT RAISE(ABORT, 'repair command retained'); END;
+CREATE TRIGGER git_agent_repair_attempt_immutable BEFORE UPDATE ON git_agent_repair_attempts
+WHEN NEW.id IS NOT OLD.id OR NEW.project_id IS NOT OLD.project_id OR NEW.repair_id IS NOT OLD.repair_id
+ OR NEW.run_id IS NOT OLD.run_id OR NEW.owner_id IS NOT OLD.owner_id OR NEW.host_instance_id IS NOT OLD.host_instance_id
+ OR NEW.authorization_version IS NOT OLD.authorization_version OR NEW.dispatch IS NOT OLD.dispatch
+ OR NEW.started_at IS NOT OLD.started_at OR NEW.deadline_at IS NOT OLD.deadline_at
+ OR NEW.max_tokens IS NOT OLD.max_tokens OR NEW.max_runtime_ms IS NOT OLD.max_runtime_ms
+ OR (OLD.output IS NOT NULL AND NEW.output IS NOT OLD.output) OR OLD.stopped_at IS NOT NULL
+BEGIN SELECT RAISE(ABORT, 'repair attempt identity and settled facts immutable'); END;
+CREATE TRIGGER git_agent_repair_attempt_retained BEFORE DELETE ON git_agent_repair_attempts BEGIN SELECT RAISE(ABORT, 'repair attempt retained'); END;
+-- An unconfirmed repair writer prevents every generic cleanup path from releasing its ownership.
+CREATE TRIGGER git_agent_repair_claim_retained BEFORE UPDATE OF state ON run_dispatch_claims
+WHEN NEW.state = 'released' AND EXISTS (SELECT 1 FROM git_agent_repair_attempts a
+ WHERE a.project_id = OLD.project_id AND a.run_id = OLD.run_id AND a.stopped_at IS NULL)
+BEGIN SELECT RAISE(ABORT, 'repair writer stop unconfirmed'); END;
+CREATE TRIGGER git_agent_repair_slot_retained BEFORE UPDATE OF state ON execution_slot_claims
+WHEN NEW.state = 'released' AND EXISTS (SELECT 1 FROM git_agent_repair_attempts a
+ WHERE a.project_id = OLD.project_id AND a.run_id = OLD.run_id AND a.stopped_at IS NULL)
+BEGIN SELECT RAISE(ABORT, 'repair writer stop unconfirmed'); END;
+CREATE TRIGGER git_agent_repair_resource_retained BEFORE UPDATE OF state ON feature_resource_leases
+WHEN NEW.state = 'released' AND EXISTS (SELECT 1 FROM git_agent_repair_attempts a
+ WHERE a.project_id = OLD.project_id AND json_extract(a.dispatch, '$.claimId') = OLD.owner_id
+ AND json_extract(a.dispatch, '$.claimVersion') = OLD.owner_version AND a.stopped_at IS NULL)
+BEGIN SELECT RAISE(ABORT, 'repair writer stop unconfirmed'); END;
+`;
+
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     version: 1,
@@ -3789,4 +3892,5 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 42, sql: MIGRATION_042_SQL, checksum: sha256Hex(MIGRATION_042_SQL) },
   { version: 43, sql: MIGRATION_043_SQL, checksum: sha256Hex(MIGRATION_043_SQL), foreignKeysOff: true },
   { version: 44, sql: MIGRATION_044_SQL, checksum: sha256Hex(MIGRATION_044_SQL) },
+  { version: 45, sql: MIGRATION_045_SQL, checksum: sha256Hex(MIGRATION_045_SQL) },
 ];

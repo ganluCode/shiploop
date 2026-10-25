@@ -14,6 +14,7 @@ import type {
 import type { TaskClaimResult } from '../ports/task-claim.js';
 import type { RunRecord } from '../ports/execution-store.js';
 import { isFinalizationOnlyRun } from '../ports/finalization-execution.js';
+import { GIT_AGENT_REPAIR_RUN_PURPOSE } from '../ports/git-agent-repair-store.js';
 import { PLANNING_RUN_PURPOSE } from '../ports/planning-candidates.js';
 import { resolveApprovedBatchConcurrency } from '../ports/feature-dispatch.js';
 
@@ -117,6 +118,20 @@ export function createWorkScheduler(options: WorkSchedulerOptions) {
       try { await options.beforeRun({ projectId, runId }); } catch { /* caller owns diagnostics */ }
     }
     const run = options.store.readRun(projectId, runId);
+    if (run.purpose === GIT_AGENT_REPAIR_RUN_PURPOSE) {
+      let result: SchedulerRunResult = { projectId, runId, reason: 'scheduler_capability_missing',
+        capabilityGaps: ['git_agent_repair_consumer'], claimed: false, handoff: null };
+      if (options.gitAgentRepair !== undefined && ['queued', 'running'].includes(run.status)) {
+        // Consumer must atomically admit its durable repair Attempt before invoking Runtime.
+        // Never send a repair Run into the coding DAG or finalization handoff.
+        await options.gitAgentRepair.consume({ projectId, runId });
+        result = { projectId, runId, reason: 'repair_consumer_handed_off', capabilityGaps: [], claimed: false, handoff: null };
+      } else if (['queued', 'running'].includes(run.status)) {
+        options.store.recordRunReason(projectId, runId, result.reason);
+      }
+      diagnostics.set(key(projectId, runId), result);
+      return result;
+    }
     // P05-1 / F-005：planning Run（purpose=plan）在编码 DAG 之前分流——
     // 规划 readiness 依据已授权规划输入和上下文，不要求业务计划批准；
     // planning Task 不进入 coding DAG 调度。

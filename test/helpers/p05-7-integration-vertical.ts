@@ -111,8 +111,8 @@ export interface IntegrationVerticalFixture {
   close(): void;
 }
 
-export async function openIntegrationFixture(): Promise<IntegrationVerticalFixture> {
-  const box = await openBudgetFixture();
+export async function openIntegrationFixture(budget?: import('../../packages/core/src/ports/execution-budget.ts').ExecutionBudgetProposal): Promise<IntegrationVerticalFixture> {
+  const box = await openBudgetFixture(budget);
   const ids = await box.start();
   const binding = box.atomic.transact('f008-read-binding', tx => tx.getRepositoryBinding(box.projectId));
   const feature = box.atomic.transact('f008-read-feature', tx => tx.getFeaturePlan(box.projectId, box.featureId).feature);
