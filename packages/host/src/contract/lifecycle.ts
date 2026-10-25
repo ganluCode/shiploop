@@ -204,6 +204,7 @@ export const APPLICATION_QUERY_CAPABILITIES = [
   // P04-9 / F-009：派发队列与执行槽位只读投影真实接线（能力位复用
   // project.read；与 Core EXECUTION_DISPATCH_QUERY_OPERATIONS 同步，不漂移）。
   'execution.dispatch.list',
+  'execution.resources.list',
   // P05-1 / F-012：规划上下文/候选只读查询真实接线（能力位复用 project.read；
   // 与 Core PLANNING_QUERY_OPERATIONS 同步，不漂移）。
   'planning.contexts.list',

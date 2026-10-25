@@ -216,13 +216,16 @@ import {
   EXECUTION_BATCH_CONTROL_GET_OPERATION,
   EXECUTION_RUN_CONTROL_GET_OPERATION,
   EXECUTION_RUN_RECOVERY_GET_OPERATION,
+  EXECUTION_RESOURCE_LIST_OPERATION,
   buildBatchControlDetailResult,
   buildRunControlDetailResult,
   buildRunRecoveryDetailResult,
+  toPublicExecutionResourceRecord,
   type BatchControlDetailResult,
   type ExecutionControlQueryReadStore,
   type RunControlDetailResult,
   type RunRecoveryDetailResult,
+  type ResourceListResult,
 } from '../ports/execution-control-query.js';
 import type { ArtifactStore } from '../ports/artifact-store.js';
 import type { ArtifactFileStore } from '../ports/artifact-files.js';
@@ -412,6 +415,8 @@ export interface QueryService {
     principal: unknown,
     input: unknown,
   ): Promise<DispatchQueueListResult>;
+  /** P05-5 execution.resources.list：项目内 Feature 资源租约只读投影。 */
+  listExecutionResources(principal: unknown, input: unknown): Promise<ResourceListResult>;
   /** F-006 phases.list：项目内 Phase 层级列表（稳定排序、有限分页、受控游标）。 */
   listPhases(principal: unknown, input: unknown): Promise<PhaseListResult>;
   /** F-006 features.list：Phase 内 Feature 层级列表（游标绑定项目 + 父级）。 */
@@ -2663,6 +2668,70 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
           featureDeliveryTargetNotFound(operation);
         }
         return buildFeatureDeliveryDetailResult(view);
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    async listExecutionResources(
+      principal: unknown,
+      input: unknown,
+    ): Promise<ResourceListResult> {
+      assertTrustedPrincipal(principal);
+      const operation = EXECUTION_RESOURCE_LIST_OPERATION;
+      try {
+        requireCapability(principal, 'project.read', operation);
+        const object = requirePlainObject(input, { operation }, 'input');
+        rejectUnknownKeys(object, ['projectId', 'featureId', 'batchId', 'limit', 'cursor'], { operation }, 'input');
+        const projectId = requireProjectId(object.projectId, operation);
+        const featureId = object.featureId === undefined
+          ? undefined
+          : validateStableId(object.featureId, { operation, entity: { type: 'feature' } }, 'featureId');
+        const batchId = object.batchId === undefined
+          ? undefined
+          : validateStableId(object.batchId, { operation, entity: { type: 'execution_batch' } }, 'batchId');
+        if (featureId !== undefined && batchId !== undefined) {
+          throw new PublicError('invalid_input', operation, undefined, {
+            details: { field: 'selector', reason: 'conflicting_scope' },
+          });
+        }
+        requireProjectVisible(principal, projectId, operation);
+        if (featureId !== undefined) {
+          const feature = planReads.readFeaturePlanView(featureId);
+          if (feature === undefined || feature.feature.projectId !== projectId) planEntityNotFound(operation, 'feature');
+        }
+        if (batchId !== undefined && executionBudgetReads.findExecutionBatchRecord(projectId, batchId) === undefined) {
+          executionEntityNotFound(operation);
+        }
+        const filter = validatedPlanFilter(object, operation);
+        const binding = planCursorBinding({
+          kind: 'execution-resources',
+          projectId,
+          ...(featureId === undefined ? {} : { featureId }),
+          ...(batchId === undefined ? {} : { batchId }),
+        }, operation);
+        const after = planListRequest(filter, binding, operation);
+        const request = {
+          after: after.afterId === null ? null : decodeExecutionListKey(after.afterId, operation),
+          limit: filter.limit,
+        };
+        const page = executionControlReads.listFeatureResourceRecords(
+          projectId,
+          request,
+          {
+            ...(featureId === undefined ? {} : { featureId }),
+            ...(batchId === undefined ? {} : { batchId }),
+          },
+        );
+        return {
+          schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION,
+          scope: 'execution-resources',
+          records: page.records.map(toPublicExecutionResourceRecord),
+          nextCursor: page.nextKey === null
+            ? null
+            : encodePlanListCursor(encodeExecutionListKey(page.nextKey), binding),
+          limit: filter.limit,
+        };
       } catch (error) {
         throw mapToPublicError(error, { operation });
       }

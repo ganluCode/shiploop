@@ -62,6 +62,7 @@ import {
   BASELINES_ROUTE_PREFIX,
   COMMANDS_ROUTE,
   DISPATCH_QUEUE_ROUTE,
+  EXECUTION_RESOURCES_ROUTE,
   EVENTS_ROUTE,
   FEATURE_APPROVALS_ROUTE_SUFFIX,
   FEATURE_DELIVERY_ROUTE_SUFFIX,
@@ -188,6 +189,7 @@ export type ApplicationOperation =
   // P04-9 / F-009：派发队列与执行槽位只读投影（与 Core
   // EXECUTION_DISPATCH_QUERY_OPERATIONS 同源；无写入口）。
   | 'execution.dispatch.list'
+  | 'execution.resources.list'
   // P05-1 / F-012：规划上下文/候选只读查询（与 Core PLANNING_QUERY_OPERATIONS
   // 同源；候选正文经受管内容接口核验读取）。
   | 'planning.contexts.list'
@@ -403,6 +405,7 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
   // P04-9 / F-009：GET /v1/dispatch-queue（集合根 + 必填 projectId + 分页）；
   // 其他嵌套/多段形态一律未匹配 → 404 unknown_operation（无子资源/写入口）。
   if (path === DISPATCH_QUEUE_ROUTE) return { operation: 'execution.dispatch.list', method: 'GET' };
+  if (path === EXECUTION_RESOURCES_ROUTE) return { operation: 'execution.resources.list', method: 'GET' };
   if (path === ATTEMPTS_ROUTE) {
     return { operation: 'execution.attempts.list', method: 'GET' };
   }
@@ -758,6 +761,10 @@ const QUERY_SPECS: Readonly<Partial<Record<ApplicationOperation, QuerySpec>>> = 
   // P04-9 / F-009：派发队列查询参数白名单（只读；容量/owner/version/释放
   // 等可写意图不在白名单内，一律 400；取值规则由 Core 单一权威复核）。
   'execution.dispatch.list': Object.freeze({
+    allowed: ['projectId', 'batchId', 'featureId', 'limit', 'cursor'],
+    repeatable: [],
+  }),
+  'execution.resources.list': Object.freeze({
     allowed: ['projectId', 'batchId', 'featureId', 'limit', 'cursor'],
     repeatable: [],
   }),
@@ -1295,6 +1302,14 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
         app.principal,
         query,
       );
+      break;
+    }
+    case 'execution.resources.list': {
+      const query = buildPlanListQuery(params, operation, 'projectId');
+      for (const key of ['batchId', 'featureId']) {
+        if (params.has(key)) query[key] = params.get(key);
+      }
+      result = await app.queryService.listExecutionResources(app.principal, query);
       break;
     }
     // P03-7 / F-013：Task 机器证据/人审/返工链查询分发（本层只做形态转换；

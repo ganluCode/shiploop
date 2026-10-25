@@ -46,6 +46,7 @@ import type {
   AttemptDiagnosticsResult,
   AttemptListResult,
   DispatchQueueListResult,
+  ResourceListResult,
   BaselineDetailResult,
   BaselineListResult,
   CommandReceipt,
@@ -106,6 +107,7 @@ import {
   ATTEMPTS_ROUTE,
   ATTEMPTS_ROUTE_PREFIX,
   DISPATCH_QUEUE_ROUTE,
+  EXECUTION_RESOURCES_ROUTE,
   ATTEMPT_DIAGNOSTICS_ROUTE_SUFFIX,
   BATCHES_ROUTE_PREFIX,
   BASELINES_ROUTE_PREFIX,
@@ -334,6 +336,9 @@ export interface DispatchQueueListInput {
   readonly limit?: number;
   readonly cursor?: string;
 }
+
+/** execution.resources.list 的可选固定范围与分页输入。 */
+export type ResourceListInput = DispatchQueueListInput;
 
 /** 计划层级列表分页输入（limit 1..200；cursor 为不透明 plcur_v1_ 游标）。 */
 export interface PlanListPageInput {
@@ -894,6 +899,11 @@ export interface HostClientApplication {
     projectId: string,
     input?: DispatchQueueListInput,
   ): Promise<DispatchQueueListResult>;
+  /** execution.resources.list：项目/Feature/Batch 资源租约只读投影。 */
+  listExecutionResources(
+    projectId: string,
+    input?: ResourceListInput,
+  ): Promise<ResourceListResult>;
   /* ------------------------------------------------------------ *
    * P03-7 / F-013 Task 机器证据/人审事项/有限返工链只读查询
    * ------------------------------------------------------------ */
@@ -3752,6 +3762,22 @@ export function createHostClientApplication(context: AppClientContext): HostClie
       const result = validateAppQueryResponse('execution.dispatch.list', json);
       if (result.records.some((record) => record.projectId !== project)) {
         throw new HostProtocolError('response_malformed', 'execution.dispatch.list', '派发队列响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
+      }
+      return result;
+    },
+
+    async listExecutionResources(
+      projectId: string,
+      input?: ResourceListInput,
+    ): Promise<ResourceListResult> {
+      context.assertOpen('execution.resources.list');
+      const project = requireProjectId('execution.resources.list', projectId);
+      const paging = buildDispatchQueueQuery(input, 'execution.resources.list');
+      const query = `projectId=${encodeURIComponent(project)}${paging.length === 0 ? '' : `&${paging}`}`;
+      const json = await getJson('execution.resources.list', `${EXECUTION_RESOURCES_ROUTE}?${query}`);
+      const result = validateAppQueryResponse('execution.resources.list', json);
+      if (result.records.some((record) => record.projectId !== project)) {
+        throw new HostProtocolError('response_malformed', 'execution.resources.list', '资源查询响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
       }
       return result;
     },

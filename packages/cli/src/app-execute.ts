@@ -84,8 +84,11 @@ import type { WorkRecordingParent } from './app/work-recording.js';
 import {
   buildExecutionControlCommandView,
   buildExecutionControlQueryView,
+  buildExecutionResourceQueryView,
   buildExecutionRecoveryCliView,
   buildExecutionRetryFinalView,
+  formatExecutionResourceQueryView,
+
   formatExecutionControlCommandView,
   formatExecutionControlQueryView,
   formatExecutionRecoveryCliView,
@@ -2060,6 +2063,16 @@ async function executeExecutionCommand(
       const result = await client.getBatchControl(command.projectId, command.batchId);
       const view = buildExecutionControlQueryView(result);
       return emitSuccess(io, command, view, formatExecutionControlQueryView(view));
+    }
+    case 'execution.resources': {
+      const result = await client.listExecutionResources(command.projectId, {
+        ...(command.batchId === undefined ? {} : { batchId: command.batchId }),
+        ...(command.featureId === undefined ? {} : { featureId: command.featureId }),
+        ...(command.limit === undefined ? {} : { limit: command.limit }),
+        ...(command.cursor === undefined ? {} : { cursor: command.cursor }),
+      });
+      const view = buildExecutionResourceQueryView(result);
+      return emitSuccess(io, command, view, formatExecutionResourceQueryView(view));
     }
     case 'execution.recovery': {
       const result = await client.getRunRecovery(command.projectId, command.runId);

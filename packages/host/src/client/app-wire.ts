@@ -172,6 +172,7 @@ import type {
   RunControlDetailResult,
   BatchControlDetailResult,
   RunRecoveryDetailResult,
+  ResourceListResult,
   SettingsScope,
   SnapshotResult,
   TaskDetailResult,
@@ -258,6 +259,9 @@ export type {
 export type { FeatureDeliveryDetailResult, FeatureExecutionReport } from 'shiploop-core/protocol';
 import type { FeatureExecutionReport } from 'shiploop-core/protocol';
 
+/** P05-5 / F-007：资源租约列表查询形状经公共面再导出。 */
+export type { ResourceListResult, PublicExecutionResourceRecord } from 'shiploop-core/protocol';
+
 /** P03-9 / F-014：控制进度与恢复诊断查询形状经公共面再导出。 */
 export type {
   BatchControlDetailResult,
@@ -329,6 +333,7 @@ export type AppQueryOperation =
   // P04-9 / F-009：派发队列与槽位只读投影（与 Core
   // EXECUTION_DISPATCH_QUERY_OPERATIONS 同源）。
   | 'execution.dispatch.list'
+  | 'execution.resources.list'
   // P05-1 / F-012：规划上下文/候选只读查询（与 Core PLANNING_QUERY_OPERATIONS
   // 同源；候选正文经受管内容接口核验读取）。
   | 'planning.contexts.list'
@@ -4179,6 +4184,61 @@ function validateDispatchAttemptViewWire(operation: HostOperation, value: unknow
   requireNonNegativeIntegerOrNull(operation, attempt.durationMs);
 }
 
+/** execution.resources.list：Feature 资源租约只读投影，拒绝路径/正文/凭据字段。 */
+export function validateResourceListResultWire(
+  value: unknown,
+  operation: HostOperation = 'execution.resources.list',
+): ResourceListResult {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, ['schemaVersion', 'scope', 'records', 'nextCursor', 'limit']);
+  if (object.schemaVersion !== WIRE_MESSAGE_SCHEMA_VERSION) {
+    if (typeof object.schemaVersion === 'number') unsupportedVersion(operation, 'schemaVersion');
+    malformed(operation, 'list_schema_version_invalid');
+  }
+  if (object.scope !== 'execution-resources' || !Array.isArray(object.records)) {
+    malformed(operation, 'resource_list_shape_invalid');
+  }
+  const nextCursor = object.nextCursor;
+  const limit = object.limit;
+  if (nextCursor !== null && typeof nextCursor !== 'string') malformed(operation, 'resource_cursor_invalid');
+  if (typeof limit !== 'number' || !Number.isSafeInteger(limit) || limit < 1 || limit > 200) malformed(operation, 'resource_limit_invalid');
+  for (const item of object.records as unknown[]) {
+    const record = requirePlain(operation, item);
+    exactKeys(operation, record, [
+      'id', 'projectId', 'featureId', 'batchId', 'runId', 'claimId', 'ownerId',
+      'ownerVersion', 'revision', 'kind', 'accessMode', 'leaseMode', 'resourceKey',
+      'state', 'waitingReason', 'blockingReason', 'acquiredAt', 'leaseUntil',
+    ]);
+    for (const field of ['id', 'projectId', 'featureId', 'batchId', 'runId', 'claimId', 'ownerId']) {
+      requireStableId(operation, record[field]);
+    }
+    const ownerVersion = record.ownerVersion;
+    const revision = record.revision;
+    if (typeof ownerVersion !== 'number' || !Number.isSafeInteger(ownerVersion) || ownerVersion < 1 ||
+        typeof revision !== 'number' || !Number.isSafeInteger(revision) || revision < 1) {
+      malformed(operation, 'execution_resource_revision_invalid');
+    }
+    if (!(['planning_exclusive', 'feature_code_shared', 'worktree_write_exclusive', 'git_public_metadata_short', 'migration', 'contract'] as readonly unknown[]).includes(record.kind)) malformed(operation, 'execution_resource_kind_invalid');
+    if (record.accessMode !== 'exclusive' && record.accessMode !== 'shared') malformed(operation, 'execution_resource_access_invalid');
+    if (record.leaseMode !== 'lease' && record.leaseMode !== 'short') malformed(operation, 'execution_resource_lease_mode_invalid');
+    if (typeof record.resourceKey !== 'string' || record.resourceKey.length === 0 || record.resourceKey.includes('/') || record.resourceKey.includes('\\')) malformed(operation, 'execution_resource_key_invalid');
+    if (record.state !== 'held' && record.state !== 'quarantined') malformed(operation, 'execution_resource_state_invalid');
+    if (record.blockingReason !== null && !['resource_conflict', 'stop_verification', 'authorization_blocked'].includes(record.blockingReason as string)) malformed(operation, 'execution_resource_blocking_reason_invalid');
+    if (record.waitingReason !== null) {
+      const waiting = requirePlain(operation, record.waitingReason);
+      exactKeys(operation, waiting, ['code', 'resourceKey', 'blockingOwnerId', 'blockingOwnerVersion']);
+      if (!['resource_occupied', 'resource_quarantined', 'lease_expired_unverified'].includes(waiting.code as string)) malformed(operation, 'execution_resource_waiting_reason_invalid');
+      if (waiting.resourceKey !== record.resourceKey || typeof waiting.resourceKey !== 'string') malformed(operation, 'execution_resource_waiting_reason_invalid');
+      if (waiting.blockingOwnerId !== null) requireStableId(operation, waiting.blockingOwnerId);
+      if (waiting.blockingOwnerVersion !== null) {
+        if (typeof waiting.blockingOwnerVersion !== 'number' || !Number.isSafeInteger(waiting.blockingOwnerVersion) || waiting.blockingOwnerVersion < 1) malformed(operation, 'execution_resource_waiting_reason_invalid');
+      }
+    }
+    if (!isIsoUtcDateTime(record.acquiredAt) || !isIsoUtcDateTime(record.leaseUntil)) malformed(operation, 'execution_resource_date_invalid');
+  }
+  return object as unknown as ResourceListResult;
+}
+
 /** execution.dispatch.list：派发队列 + 槽位摘要只读投影（无写字段）。 */
 export function validateDispatchQueueListResultWire(
   value: unknown,
@@ -6384,6 +6444,11 @@ export function validateAppQueryResponse(
   body: unknown,
   expectation?: SnapshotExpectation,
 ): DispatchQueueListResult;
+export function validateAppQueryResponse(
+  operation: 'execution.resources.list',
+  body: unknown,
+  expectation?: SnapshotExpectation,
+): ResourceListResult;
 // P05-1 / F-012：规划上下文/候选查询响应重载。
 export function validateAppQueryResponse(
   operation: 'planning.contexts.list',
@@ -6635,6 +6700,8 @@ export function validateAppQueryResponse(
     // P04-9 / F-009：派发队列与槽位投影响应分发（同一冻结字段集纪律）。
     case 'execution.dispatch.list':
       return validateDispatchQueueListResultWire(body, operation);
+    case 'execution.resources.list':
+      return validateResourceListResultWire(body, operation);
     // P05-1 / F-012：规划上下文/候选查询响应分发（同一冻结字段集纪律）。
     case 'planning.contexts.list':
       return validatePlanningContextListResultWire(body, operation);

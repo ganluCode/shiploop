@@ -1536,6 +1536,25 @@ const EXECUTION_DISPATCH_HELP = [
   '',
 ].join('\n');
 
+const EXECUTION_RESOURCES_HELP = [
+  'usage: shiploop execution resources --project <id> [--batch <id> | --feature <id>] [--limit <int>] [--cursor <c>] [--json]',
+  '',
+  'Feature 共享资源租约只读查询（execution.resources.list）：显示资源键、类别、owner/version、revision、租约状态、等待与隔离原因。',
+  '- 查询按项目及可选 Batch/Feature 范围分页；不续租、不释放、不唤醒 Runtime、不创建 Attempt；pending/隔离资源不显示为完成。',
+  '- 资源键只输出规范化受控键，不包含凭据、模型正文或绝对路径；重复查询零副作用。',
+  '',
+  '选项：',
+  '  --project <id>   项目 ID（必填，UUID v4）',
+  '  --batch <id>     固定 Batch 范围（与 --feature 二选一）',
+  '  --feature <id>   固定 Feature 范围（与 --batch 二选一）',
+  '  --limit <int>    每页条数 1..200（默认 50）',
+  '  --cursor <c>     上一页返回的 nextCursor（不透明）',
+  '  --json            stdout 只输出结果 JSON；诊断到 stderr',
+  '',
+  EXIT_CODE_BLOCK,
+  '',
+].join('\\n');
+
 const EXECUTION_SESSIONS_HELP = [
   'usage: shiploop execution sessions --project <id> (--run <runId> | --task <taskId>)',
   '                                   [--limit <int>] [--cursor <c>] [--data-root <abs>] [--json]',
@@ -2119,6 +2138,7 @@ const HELP_BY_SCOPE: Readonly<Record<AppHelpScope, string>> = Object.freeze({
   'execution.attempts': EXECUTION_ATTEMPTS_HELP,
   'execution.diagnostics': EXECUTION_DIAGNOSTICS_HELP,
   'execution.dispatch': EXECUTION_DISPATCH_HELP,
+  'execution.resources': EXECUTION_RESOURCES_HELP,
   'execution.sessions': EXECUTION_SESSIONS_HELP,
   'execution.session': EXECUTION_SESSION_HELP,
   'execution.session-evidence': EXECUTION_SESSION_EVIDENCE_HELP,

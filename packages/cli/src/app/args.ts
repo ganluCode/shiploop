@@ -121,6 +121,7 @@ export type AppCliCommandId =
   | 'execution.attempts'
   | 'execution.diagnostics'
   | 'execution.dispatch'
+  | 'execution.resources'
   | 'execution.sessions'
   | 'execution.session'
   | 'execution.session-evidence'
@@ -211,6 +212,7 @@ export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'execution.attempts',
   'execution.diagnostics',
   'execution.dispatch',
+  'execution.resources',
   'execution.sessions',
   'execution.session',
   'execution.session-evidence',
@@ -1141,6 +1143,16 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
     maxPositionals: 0,
     positionalFields: [],
   },
+  'execution.resources': {
+    command: 'execution',
+    commandId: 'execution.resources',
+    valueFlags: ['--project', '--batch', '--feature', '--limit', '--cursor'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 0,
+    maxPositionals: 0,
+    positionalFields: [],
+  },
   /* P03-6 / F-013 Work Session 状态/证据查询与 Attempt 取消（实际 Host 公共
    * 契约的参数映射；sessions 的父级 Run/Task 二选一，取消必须 --confirm）。 */
   'execution.sessions': {
@@ -1432,6 +1444,7 @@ const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, A
       attempts: 'execution.attempts',
       diagnostics: 'execution.diagnostics',
       dispatch: 'execution.dispatch',
+      resources: 'execution.resources',
       sessions: 'execution.sessions',
       session: 'execution.session',
       'session-evidence': 'execution.session-evidence',
@@ -2808,6 +2821,20 @@ export interface ParsedExecutionDispatch {
   readonly cursor?: string;
 }
 
+export interface ParsedExecutionResources {
+  readonly kind: 'command';
+  readonly command: 'execution';
+  readonly commandId: 'execution.resources';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly batchId?: string;
+  readonly featureId?: string;
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+
 /**
  * P03-6 / F-013 Work Session 列表（execution.sessions.list）：父级 Run/Task
  * 二选一（--run/--task，同现或缺失均本地拒绝）；有界分页同计划列表。
@@ -3338,6 +3365,7 @@ export type ParsedAppCliCommand =
   | ParsedExecutionAttempts
   | ParsedExecutionDiagnostics
   | ParsedExecutionDispatch
+  | ParsedExecutionResources
   | ParsedExecutionSessions
   | ParsedExecutionSession
   | ParsedExecutionSessionEvidence
@@ -3918,6 +3946,20 @@ function buildExecution(
         ...base,
         command: 'execution',
         commandId: 'execution.dispatch',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        ...(batchId !== undefined ? { batchId: requireBatchId(batchId, state) } : {}),
+        ...(featureId !== undefined ? { featureId: requirePlanId(featureId, state, 'feature') } : {}),
+        ...optionalPlanListPage(scan, state),
+      };
+    }
+    case 'execution.resources': {
+      const batchId = takeOption(scan, '--batch');
+      const featureId = takeOption(scan, '--feature');
+      if (batchId !== undefined && featureId !== undefined) fail(state, 'conflicting_options');
+      return {
+        ...base,
+        command: 'execution',
+        commandId: 'execution.resources',
         projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
         ...(batchId !== undefined ? { batchId: requireBatchId(batchId, state) } : {}),
         ...(featureId !== undefined ? { featureId: requirePlanId(featureId, state, 'feature') } : {}),

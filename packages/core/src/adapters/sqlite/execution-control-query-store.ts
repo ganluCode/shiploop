@@ -29,6 +29,10 @@ import type {
   ExecutionRunControlView,
   ExecutionRunRecoveryContinuationEntry,
   ExecutionRunRecoveryView,
+  ExecutionResourceListPage,
+  ExecutionResourceListRequest,
+  ExecutionResourceListSelector,
+  ExecutionResourceQueryRow,
 } from '../../ports/execution-control-query.js';
 import {
   EXECUTION_CONTROL_ATTEMPTS_MAX,
@@ -44,6 +48,7 @@ import type {
 } from '../../ports/execution-store.js';
 import type { FeatureDeliveryQueryReadStore, FeatureDeliveryView } from '../../ports/feature-delivery-query.js';
 import { createSqliteFeatureDeliveryQueryStore } from './feature-delivery-query-store.js';
+import { createSqliteFeatureResourceAccess } from './feature-resources.js';
 import { transactSqliteConsistentRead } from './state-store.js';
 import type { SqliteStorageSession } from './session.js';
 
@@ -100,6 +105,7 @@ export function createSqliteExecutionControlQueryStore(
     throw new TypeError('createSqliteExecutionControlQueryStore: session 必须是 SqliteStorageSession');
   }
   const execution = createSqliteExecutionAccess(session);
+  const featureResources = createSqliteFeatureResourceAccess(session);
   const delivery: FeatureDeliveryQueryReadStore =
     deliveryReads ?? createSqliteFeatureDeliveryQueryStore(session);
 
@@ -223,6 +229,60 @@ export function createSqliteExecutionControlQueryStore(
     return { attempts, truncated, scanned: rows.length };
   }
 
+  function listFeatureResources(
+    projectId: string,
+    request: ExecutionResourceListRequest,
+    selector: ExecutionResourceListSelector | undefined,
+    operation: string,
+  ): ExecutionResourceListPage {
+    if (!Number.isSafeInteger(request.limit) || request.limit < 1 || request.limit > 200) {
+      throw new StorageError('validation', operation, '资源查询分页上限非法', {
+        details: { field: 'limit', reason: 'invalid_limit' },
+      });
+    }
+    const leases = featureResources.listProjectInTransaction(projectId);
+    const rows: ExecutionResourceQueryRow[] = [];
+    for (const lease of leases) {
+      const owner = session.database.prepare<[string, string, number], {
+        readonly feature_id: string;
+        readonly run_id: string;
+        readonly batch_id: string;
+        readonly run_feature_id: string;
+      }>(
+        `SELECT claims.feature_id, claims.run_id, runs.batch_id, runs.feature_id AS run_feature_id
+         FROM run_dispatch_claims AS claims
+         JOIN runs ON runs.project_id = claims.project_id AND runs.id = claims.run_id
+         WHERE claims.project_id = ? AND claims.id = ? AND claims.claim_version = ?`,
+      ).get(projectId, lease.ownerId, lease.ownerVersion);
+      if (owner === undefined || owner.feature_id !== owner.run_feature_id) {
+        throw corrupt(operation, '资源租约缺少一致的派发归属', projectId, lease.id);
+      }
+      if (selector?.featureId !== undefined && owner.feature_id !== selector.featureId) continue;
+      if (selector?.batchId !== undefined && owner.batch_id !== selector.batchId) continue;
+      rows.push({
+        lease,
+        featureId: owner.feature_id,
+        batchId: owner.batch_id,
+        runId: owner.run_id,
+      });
+    }
+    rows.sort((a, b) => a.lease.acquiredAtUtcMs - b.lease.acquiredAtUtcMs || a.lease.id.localeCompare(b.lease.id));
+    const after = request.after;
+    const visible = after === null
+      ? rows
+      : rows.filter((row) => row.lease.acquiredAtUtcMs > after.sort ||
+          (row.lease.acquiredAtUtcMs === after.sort && row.lease.id > after.id));
+    const truncated = visible.length > request.limit;
+    const records = (truncated ? visible.slice(0, request.limit) : visible);
+    const last = records[records.length - 1];
+    return {
+      records,
+      nextKey: truncated && last !== undefined
+        ? { sort: last.lease.acquiredAtUtcMs, id: last.lease.id }
+        : null,
+    };
+  }
+
   function readRunRow(operation: string, projectId: string, runId: string): RunRecord | undefined {
     try {
       return execution.getExecutionRunInTransaction(projectId, runId);
@@ -239,6 +299,14 @@ export function createSqliteExecutionControlQueryStore(
   }
 
   return {
+    listFeatureResourceRecords(project: unknown, request, selector) {
+      const operation = `${OPERATION}.listFeatureResourceRecords`;
+      const projectId = stableId(operation, project, 'projectId');
+      if (selector?.featureId !== undefined) stableId(operation, selector.featureId, 'featureId');
+      if (selector?.batchId !== undefined) stableId(operation, selector.batchId, 'batchId');
+      return read(operation, () => listFeatureResources(projectId, request, selector, operation));
+    },
+
     readRunControlView(project: unknown, run: unknown): ExecutionRunControlView | undefined {
       const operation = `${OPERATION}.readRunControlView`;
       const projectId = stableId(operation, project, 'projectId');

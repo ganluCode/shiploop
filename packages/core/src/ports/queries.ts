@@ -709,8 +709,9 @@ export type PlanListScope =
   /** P05-1 / F-011 项目范围规划上下文分页（无 Feature 过滤）。 */
   | { readonly kind: 'planning-contexts'; readonly projectId: string }
   /** P05-1 / F-011 Feature 过滤的规划上下文分页（游标绑定同一过滤）。 */
-  | { readonly kind: 'feature-planning-contexts'; readonly projectId: string; readonly featureId: string };
-
+  | { readonly kind: 'feature-planning-contexts'; readonly projectId: string; readonly featureId: string }
+  /** P05-5：项目/Feature/Batch 资源租约分页；游标绑定筛选范围。 */
+  | { readonly kind: 'execution-resources'; readonly projectId: string; readonly featureId?: string; readonly batchId?: string };
 /** 游标签发/解析绑定：数据根身份 + 列表 scope（只允许可信装配构造）。 */
 export interface PlanListCursorBinding {
   readonly rootIdentity: string;
@@ -938,6 +939,21 @@ export function createPlanListCursorBinding(
       },
     };
   }
+  if (scope.kind === 'execution-resources') {
+    rejectUnknownKeys(scope, ['kind', 'projectId', 'featureId', 'batchId'], { operation }, 'scope');
+    if (scope.featureId !== undefined && scope.batchId !== undefined) {
+      planInvalidInput(operation, 'scope', 'featureId 与 batchId 不能同时存在', scope);
+    }
+    return {
+      rootIdentity: input.rootIdentity,
+      scope: {
+        kind: 'execution-resources',
+        projectId: validateStableId(scope.projectId, { operation, entity: { type: 'project' } }, 'scope.projectId'),
+        ...(scope.featureId === undefined ? {} : { featureId: validateStableId(scope.featureId, { operation, entity: { type: 'feature' } }, 'scope.featureId') }),
+        ...(scope.batchId === undefined ? {} : { batchId: validateStableId(scope.batchId, { operation, entity: { type: 'execution_batch' } }, 'scope.batchId') }),
+      },
+    };
+  }
   if (scope.kind === 'planning-contexts') {
     rejectUnknownKeys(scope, ['kind', 'projectId'], { operation }, 'scope');
     return {
@@ -962,7 +978,7 @@ export function createPlanListCursorBinding(
   planInvalidInput(
     operation,
     'scope.kind',
-    "必须是 'phases' / 'phase-graph' / 'features' / 'tasks' / 'budget-revisions' / 'task-attempts' / 'attempt-diagnostics' / 'run-work-sessions' / 'task-work-sessions' / 'task-approvals' / 'task-rework-chain' / 'feature-git-operations' / 'run-git-operations' / 'dispatch-queue' / 'dispatch-queue-batch' / 'dispatch-queue-feature' / 'planning-contexts' / 'feature-planning-contexts'",
+    "必须是 'phases' / 'phase-graph' / 'features' / 'tasks' / 'budget-revisions' / 'task-attempts' / 'attempt-diagnostics' / 'run-work-sessions' / 'task-work-sessions' / 'task-approvals' / 'task-rework-chain' / 'feature-git-operations' / 'run-git-operations' / 'dispatch-queue' / 'dispatch-queue-batch' / 'dispatch-queue-feature' / 'execution-resources' / 'planning-contexts' / 'feature-planning-contexts'",
     (scope as { kind?: unknown }).kind,
   );
 }
@@ -990,6 +1006,7 @@ function planBindingAsTrusted(binding: PlanListCursorBinding): PlanListCursorBin
       binding.scope.kind !== 'dispatch-queue-batch' &&
       binding.scope.kind !== 'dispatch-queue-feature' &&
       binding.scope.kind !== 'dispatch-queue' &&
+      binding.scope.kind !== 'execution-resources' &&
       binding.scope.kind !== 'planning-contexts' &&
       binding.scope.kind !== 'feature-planning-contexts')
   ) {
@@ -1015,6 +1032,11 @@ function planScopeFingerprint(scope: PlanListScope): string {
       break;
     case 'dispatch-queue-feature':
       parent = `feature:${scope.featureId}`;
+      break;
+    case 'execution-resources':
+      parent = scope.featureId === undefined
+        ? scope.batchId === undefined ? '-' : `batch:${scope.batchId}`
+        : `feature:${scope.featureId}`;
       break;
     case 'dispatch-queue':
     case 'phases':
@@ -1045,7 +1067,7 @@ function planScopeFingerprint(scope: PlanListScope): string {
       parent = scope.runId;
       break;
     default:
-      parent = scope.taskId;
+      parent = 'taskId' in scope ? scope.taskId : '-';
       break;
   }
   return createHash('sha256')

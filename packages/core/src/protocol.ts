@@ -345,6 +345,7 @@ export {
   EXECUTION_RECOVERY_CONTINUATIONS_MAX,
   EXECUTION_RUN_CONTROL_GET_OPERATION,
   EXECUTION_RUN_RECOVERY_GET_OPERATION,
+  EXECUTION_RESOURCE_LIST_OPERATION,
   validateRunFinalizationScope,
 } from './ports/execution-control-query.js';
 export type {
@@ -354,6 +355,8 @@ export type {
   PublicExecutionControlAttempt,
   PublicExecutionControlStopOperation,
   PublicExecutionRecoveryContinuation,
+  ResourceListResult,
+  PublicExecutionResourceRecord,
   RunControlDetailResult,
   RunRecoveryDetailResult,
 } from './ports/execution-control-query.js';

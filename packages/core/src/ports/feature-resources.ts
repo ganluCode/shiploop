@@ -258,6 +258,8 @@ export function validateFeatureResourceReadInput(value: unknown): FeatureResourc
 export interface FeatureResourceAccess {
   normalize(input: unknown): FeatureResourceSet;
   read(resource: unknown): readonly FeatureResourceLeaseRecord[];
+  /** List all resource rows for one project inside a caller-owned read transaction. */
+  listProjectInTransaction(projectId: unknown): readonly FeatureResourceLeaseRecord[];
   /** List all resource rows owned by one dispatch generation inside its write transaction. */
   listOwnerInTransaction(projectId: unknown, owner: unknown): readonly FeatureResourceLeaseRecord[];
   acquireInTransaction(input: unknown): readonly FeatureResourceLeaseRecord[];

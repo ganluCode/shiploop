@@ -145,6 +145,8 @@ export const ATTEMPT_DIAGNOSTICS_ROUTE_SUFFIX = 'diagnostics';
  * 只读：不认领、不扣预算、不唤醒执行、不释放/改写槽位，没有任何写入口。
  */
 export const DISPATCH_QUEUE_ROUTE = '/v1/dispatch-queue';
+/** P05-5 / F-007：Feature 共享资源租约只读查询集合根。 */
+export const EXECUTION_RESOURCES_ROUTE = '/v1/execution-resources';
 /**
  * P03-5 / F-011：工作区状态只读查询路由（全部 GET + Bearer；与 Core
  * WORKSPACE_QUERY_OPERATIONS 一一对应，docs/p03-5-workspace-host-integration-contract.md §4）。

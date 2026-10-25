@@ -281,6 +281,15 @@ export function createSqliteFeatureResourceAccess(
       return rowsFor(declaration.projectId, declaration.key).map((row) => rowToRecord(row, 'read'));
     },
 
+    listProjectInTransaction(projectIdInput) {
+      assertTransaction('listProjectInTransaction');
+      const projectId = validateStableId(projectIdInput, { operation: `${OPERATION}.listProjectInTransaction` }, 'projectId');
+      const rows = db.prepare<[string], FeatureResourceSqlRow>(
+        "SELECT id, created_at, project_id, revision, updated_at, resource_key, resource_kind, access_mode, lease_mode, owner_id, owner_version, acquired_at, lease_until, state, waiting_reason, released_at FROM feature_resource_leases WHERE project_id = ? AND state IN ('held', 'quarantined') ORDER BY acquired_at, id",
+      ).all(projectId) as FeatureResourceSqlRow[];
+      return rows.map(row => rowToRecord(row, 'listProjectInTransaction'));
+    },
+
     listOwnerInTransaction(projectIdInput, ownerInput) {
       assertTransaction('listOwnerInTransaction');
       const projectId = validateStableId(projectIdInput, { operation: `${OPERATION}.listOwnerInTransaction` }, 'projectId');

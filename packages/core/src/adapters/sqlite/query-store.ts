@@ -75,6 +75,9 @@ import type {
   ExecutionControlQueryReadStore,
   ExecutionRunControlView,
   ExecutionRunRecoveryView,
+  ExecutionResourceListPage,
+  ExecutionResourceListRequest,
+  ExecutionResourceListSelector,
 } from '../../ports/execution-control-query.js';
 import type {
   TaskApprovalItemRow,
@@ -315,6 +318,11 @@ export function createSqliteQueryStore(
       executionControl.readBatchControlView(projectId, batchId),
     readRunRecoveryView: (projectId: unknown, runId: unknown): ExecutionRunRecoveryView | undefined =>
       executionControl.readRunRecoveryView(projectId, runId),
+    listFeatureResourceRecords: (
+      projectId: unknown,
+      request: ExecutionResourceListRequest,
+      selector?: ExecutionResourceListSelector,
+    ): ExecutionResourceListPage => executionControl.listFeatureResourceRecords(projectId, request, selector),
     readPlanningContextView: (projectId: unknown, candidateId: unknown): PlanningContextQueryView | undefined =>
       planningQueries.readPlanningContextView(projectId, candidateId),
     listPlanningContextRecords: (
