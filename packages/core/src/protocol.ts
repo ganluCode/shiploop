@@ -44,6 +44,29 @@ export type {
   IntegrationVerificationEvidence,
 } from './ports/integration-plan.js';
 export {
+  computeCoveredInputDigest,
+  computeIntegrationExecutionIdentity,
+  computeIntegrationExecutionInputDigest,
+  createIntegrationExecutionPlan,
+  INTEGRATION_EXECUTION_COVERED_INPUT_DIGEST_DOMAIN,
+  INTEGRATION_EXECUTION_IDENTITY_DIGEST_DOMAIN,
+  INTEGRATION_EXECUTION_INPUT_DIGEST_DOMAIN,
+  INTEGRATION_EXECUTION_PLAN_SCHEMA_VERSION,
+  validateIntegrationExecutionPlan,
+  validateIntegrationExecutionPlanInput,
+} from './ports/integration-execution-plan.js';
+export type {
+  IntegrationApprovedInput,
+  IntegrationCombinedVerificationEvidence,
+  IntegrationDeliverySnapshot,
+  IntegrationExecutionPlan,
+  IntegrationExecutionPlanInput,
+  IntegrationExecutionPlanStatus,
+  IntegrationExecutionPredecessor,
+  IntegrationExecutionResult,
+  IntegrationExecutionTarget,
+} from './ports/integration-execution-plan.js';
+export {
   INTEGRATION_PLAN_GET_OPERATION,
   INTEGRATION_PLAN_NEXT_STEPS,
   INTEGRATION_PLAN_QUERY_OPERATIONS,
