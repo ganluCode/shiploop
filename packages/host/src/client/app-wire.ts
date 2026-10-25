@@ -4890,6 +4890,9 @@ function validateGitOperationReceiptWire(
     'exitCode',
     'durationMs',
     'reasonCode',
+    'integrationResult',
+    'recoveryState',
+    'workspacePreserved',
     'deliveryStatus',
     'recordedAtUtcMs',
   ]);
@@ -4917,10 +4920,63 @@ function validateGitOperationReceiptWire(
     malformed(operation, 'git_delivery_status_invalid');
   }
   requireNonNegativeInteger(operation, record.recordedAtUtcMs);
+  if (record.integrationResult !== undefined && record.integrationResult !== null) {
+    validateGitIntegrationResultWire(operation, record.integrationResult);
+  }
+  if (record.recoveryState !== undefined && record.recoveryState !== null && !['none', 'resumable', 'preserved', 'cleaned', 'quarantined'].includes(record.recoveryState as string)) malformed(operation, 'integration_recovery_invalid');
+  if (record.workspacePreserved !== undefined && typeof record.workspacePreserved !== 'boolean') malformed(operation, 'integration_preserved_invalid');
   return record;
 }
 
+function validateGitIntegrationResultWire(operation: HostOperation, value: unknown): Record<string, unknown> {
+  const result = requirePlain(operation, value);
+  exactKeys(operation, result, ['commitSha', 'treeSha', 'inputDigest', 'verificationEvidence']);
+  requireGitOidOrNull(operation, result.commitSha);
+  requireGitOidOrNull(operation, result.treeSha);
+  requireSha256Hex(operation, result.inputDigest, 'integration_digest_invalid');
+  if (result.verificationEvidence !== null) {
+    const evidence = requirePlain(operation, result.verificationEvidence);
+    exactKeys(operation, evidence, ['evidenceId', 'evidenceDigest']);
+    requireStableId(operation, evidence.evidenceId);
+    requireSha256Hex(operation, evidence.evidenceDigest, 'integration_evidence_invalid');
+  }
+  return result;
+}
+
 /** 公开 Git 操作记录（冻结字段集 + 与持久 CHECK 同源的生命周期不变量）。 */
+function validateGitIntegrationWire(operation: HostOperation, value: unknown): Record<string, unknown> {
+  const view = requirePlain(operation, value);
+  exactKeys(operation, view, ['integrationId', 'targetBase', 'inputDigest', 'approvedInputs',
+    'mergeOrder', 'verificationScope', 'predecessors', 'result', 'recoveryState', 'workspacePreserved']);
+  requireStableId(operation, view.integrationId);
+  requireGitOid(operation, view.targetBase);
+  requireSha256Hex(operation, view.inputDigest, 'integration_digest_invalid');
+  if (!Array.isArray(view.approvedInputs) || view.approvedInputs.length > 4096) malformed(operation, 'integration_inputs_invalid');
+  for (const raw of view.approvedInputs as unknown[]) {
+    const input = requirePlain(operation, raw);
+    exactKeys(operation, input, ['inputId', 'digest']);
+    requireStableId(operation, input.inputId);
+    requireSha256Hex(operation, input.digest, 'integration_digest_invalid');
+  }
+  requireStringArrayWire(operation, view.mergeOrder, 'integration_order_invalid');
+  requireStringArrayWire(operation, view.verificationScope, 'integration_scope_invalid');
+  if (!Array.isArray(view.predecessors) || view.predecessors.length > 128) malformed(operation, 'integration_predecessors_invalid');
+  for (const raw of view.predecessors as unknown[]) {
+    const predecessor = requirePlain(operation, raw);
+    exactKeys(operation, predecessor, ['featureId', 'commitSha', 'coveredInputIds']);
+    requireStableId(operation, predecessor.featureId);
+    requireGitOidOrNull(operation, predecessor.commitSha);
+    requireStringArrayWire(operation, predecessor.coveredInputIds, 'integration_coverage_invalid');
+  }
+  if (view.recoveryState !== null && !['none', 'resumable', 'preserved', 'cleaned', 'quarantined'].includes(view.recoveryState as string)) malformed(operation, 'integration_recovery_invalid');
+  if (typeof view.workspacePreserved !== 'boolean') malformed(operation, 'integration_preserved_invalid');
+  if (view.result !== null) {
+    const result = validateGitIntegrationResultWire(operation, view.result);
+    if (result.inputDigest !== view.inputDigest) malformed(operation, 'integration_digest_mismatch');
+  }
+  return view;
+}
+
 function validatePublicGitOperationWire(operation: HostOperation, value: unknown): void {
   const record = requirePlain(operation, value);
   exactKeys(operation, record, [
@@ -4952,6 +5008,7 @@ function validatePublicGitOperationWire(operation: HostOperation, value: unknown
     'reasonCode',
     'deliveryStatus',
     'receipt',
+    'integration',
     'settledAt',
     'revision',
     'createdAt',
@@ -4963,7 +5020,18 @@ function validatePublicGitOperationWire(operation: HostOperation, value: unknown
   requireStableId(operation, record.runId);
   requireStableIdOrNull(operation, record.attemptId);
   requirePositiveInteger(operation, record.executionVersion);
-  if (record.operationType !== 'feature_final_commit' && record.operationType !== 'task_commit') {
+  const integrationOperation = record.operationType === 'integration' || record.operationType === 'integration_commit';
+  if (record.operationType !== 'feature_final_commit' && record.operationType !== 'task_commit' && !integrationOperation) {
+    malformed(operation, 'git_operation_type_invalid');
+  }
+  if (integrationOperation) {
+    const integration = validateGitIntegrationWire(operation, record.integration);
+    if (integration.integrationId !== record.operationId) malformed(operation, 'integration_identity_invalid');
+    if (integration.result !== null) {
+      const facts = integration.result as Record<string, unknown>;
+      if (facts.commitSha !== record.actualCommit || facts.treeSha !== record.actualTree) malformed(operation, 'integration_result_mismatch');
+    }
+  } else if (record.integration !== undefined && record.integration !== null) {
     malformed(operation, 'git_operation_type_invalid');
   }
   if (record.operationType === 'task_commit' && record.attemptId === null) {
@@ -5031,7 +5099,7 @@ function validatePublicGitOperationWire(operation: HostOperation, value: unknown
   if (record.receipt === null || record.deliveryStatus === null || record.settledAt === null) {
     malformed(operation, 'git_operation_terminal_facts_invalid');
   }
-  const taskCommit = record.operationType === 'task_commit';
+  const taskCommit = record.operationType === 'task_commit' || integrationOperation;
   if (record.status === 'unknown') {
     if (
       record.actualCommit !== null ||
@@ -5045,7 +5113,7 @@ function validatePublicGitOperationWire(operation: HostOperation, value: unknown
     if (
       record.actualCommit === null ||
       record.actualTree === null ||
-      record.actualTree !== record.candidateTree ||
+      (!integrationOperation && record.actualTree !== record.candidateTree) ||
       record.actualParent !== record.expectedHead ||
       record.deliveryStatus !== (taskCommit ? 'not_requested' : 'succeeded')
     ) {

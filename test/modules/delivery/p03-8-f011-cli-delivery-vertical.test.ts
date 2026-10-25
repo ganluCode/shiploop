@@ -393,7 +393,7 @@ describe('F-011 最终审批与显式收尾命令', () => {
 
     // 交付后分轴查询：提交轴显示已核对记录（succeeded + actualParent）。
     const delivery = await runApp(c, ['feature', 'delivery', c.box.featureId, '--project', c.box.projectId, '--json']);
-    expect(delivery.exitCode).toBe(0);
+    expect(delivery.exitCode, `${delivery.stdout}\n${delivery.stderr}`).toBe(0);
     const axes = (delivery.envelope.result as { axes: { delivery: { status: string; operation: { status: string; actualParent: string | null } | null } } }).axes;
     expect(axes.delivery.status).toBe('succeeded');
     expect(axes.delivery.operation?.status).toBe('succeeded');
