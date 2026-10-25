@@ -69,7 +69,10 @@ export type StorageEntityType =
   | 'run_dispatch_intent'
   /** P05-1 / F-002：一次性规划上下文（planning_contexts，迁移 v35）。 */
   | 'planning_context'
-  /** P05-5 / F-002：Feature 共享资源租约（feature_resource_leases，迁移 v40）。 */
+  /** P05-6 / F-002：冻结的集成计划及前置成果快照。 */
+  | 'integration_plan'
+  | 'integration_predecessor_snapshot'
+  /** P05-5 / F-002：Feature 共享资源租约。 */
   | 'feature_resource_lease';
 
 export type StorageErrorKind =

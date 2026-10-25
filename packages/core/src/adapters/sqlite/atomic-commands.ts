@@ -10,6 +10,7 @@ import { createSqliteBaselineAccess } from './baseline-store.js';
 import { createSqliteCommandReceiptAccess } from './command-receipts.js';
 import { createSqliteExecutionAccess } from './execution-store.js';
 import { createSqliteGitOperationStore } from './git-operations.js';
+import { createSqliteIntegrationPlanAccess } from './integration-plan-store.js';
 import { createSqlitePlanAccess } from './plan-store.js';
 import { createSqlitePlanningContextStore } from './planning-context-store.js';
 import type { SqliteStorageSession } from './session.js';
@@ -27,6 +28,7 @@ export function createSqliteAtomicCommandStore(
   const executions = createSqliteExecutionAccess(session, options);
   const gitOperations = createSqliteGitOperationStore(session, options);
   const planningContexts = createSqlitePlanningContextStore(session, options);
+  const integrationPlans = createSqliteIntegrationPlanAccess(session, options);
   return {
     findReceipt: receipts.findReceiptByCommandId,
     // P03-9 / F-003：停止 operation 的持久状态/证据引用读取（不进入写事务）。
@@ -227,9 +229,13 @@ export function createSqliteAtomicCommandStore(
           getTaskAttemptReservation: guarded(executions.getTaskAttemptReservationInTransaction),
           getTaskExecutionCounters: guarded(executions.getTaskExecutionCountersInTransaction),
           getExecutionRun: guarded(executions.getExecutionRunInTransaction),
-          // P05-1 / F-003：规划上下文原语（创建与活动读取；同一 BEGIN IMMEDIATE
-          // 内原子生效）。
+          // P05-6 / F-002：集成计划及前置成果在同一短写事务内整体插入、冻结和结果 CAS。
+          createIntegrationPlan: guarded(integrationPlans.createIntegrationPlanInTransaction),
+          freezeIntegrationPlan: guarded(integrationPlans.freezeIntegrationPlanInTransaction),
+          updateIntegrationPlanResult: guarded(integrationPlans.updateIntegrationPlanResultInTransaction),
+          getIntegrationPlan: guarded(integrationPlans.getIntegrationPlanInTransaction),
           createPlanningContextInTransaction: guarded(planningContexts.createPlanningContextInTransaction),
+
           getActivePlanningContextForFeature: guarded(planningContexts.getActivePlanningContextForFeatureInTransaction),
           // P05-1 / F-006：规划候选受限提交的短事务重核与发布绑定原语。
           getPlanningContextByCandidate: guarded(planningContexts.getPlanningContextByCandidate),

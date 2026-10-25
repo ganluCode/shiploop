@@ -102,6 +102,9 @@ const SCHEMA_TABLES = [
   ['git_operations', schema.gitOperations],
   // P05-5 / F-002：Feature 共享资源租约（迁移 v40）。
   ['feature_resource_leases', schema.featureResourceLeases],
+  // P05-6 / F-002：冻结的集成计划和前置成果快照（迁移 v42）。
+  ['integration_plans', schema.integrationPlans],
+  ['integration_predecessor_snapshots', schema.integrationPredecessorSnapshots],
   ['schema_migrations', schema.schemaMigrations],
 ] as const;
 
@@ -688,6 +691,14 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
         'planning_contexts:(feature_id,planning_task_id)->tasks.(feature_id,id)',
         'planning_contexts:(project_id,candidate_artifact_id)->artifacts.(project_id,id)',
         'feature_resource_leases:(project_id)->projects.(id)',
+        // P05-6 / F-002 集成计划及前置成果快照（迁移 v42）。
+        'integration_plans:(project_id)->projects.(id)',
+        'integration_plans:(project_id,phase_id)->phases.(project_id,id)',
+        'integration_plans:(project_id,batch_id)->execution_batches.(project_id,id)',
+        'integration_plans:(project_id,phase_id,successor_feature_id)->features.(project_id,phase_id,id)',
+        'integration_predecessor_snapshots:(project_id)->projects.(id)',
+        'integration_predecessor_snapshots:(project_id,plan_id)->integration_plans.(project_id,id)',
+        'integration_predecessor_snapshots:(project_id,phase_id,feature_id)->features.(project_id,phase_id,id)',
         // P03-9 / F-002 取消停止 operation（迁移 v28）：同项目 Batch/Run 关联。
         'execution_stop_operations:(project_id)->projects.(id)',
         'execution_stop_operations:(project_id,batch_id)->execution_batches.(project_id,id)',

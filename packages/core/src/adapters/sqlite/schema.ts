@@ -2355,6 +2355,78 @@ export const runDispatchIntents = sqliteTable('run_dispatch_intents', {
  * 绑定与决策结果写一次（DDL 触发器防御纵深，Drizzle 不声明触发器，由迁移 SQL
  * 冻结）；同 Run 单候选、同 Feature 单活动规划（部分唯一索引）。
  */
+
+/** P05-6 / F-002：冻结的集成计划；正文列和成果快照在适配器事务内一次写入。 */
+export const integrationPlans = sqliteTable('integration_plans', {
+  id: text('id').primaryKey(),
+  createdAt: integer('created_at').notNull(),
+  projectId: text('project_id').notNull().references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  revision: integer('revision').notNull().default(1),
+  updatedAt: integer('updated_at').notNull(),
+  phaseId: text('phase_id').notNull(),
+  batchId: text('batch_id').notNull(),
+  successorFeatureId: text('successor_feature_id').notNull(),
+  targetBaseline: text('target_baseline').notNull(),
+  inputDigest: text('input_digest').notNull(),
+  mode: text('mode').notNull(),
+  mergeOrder: text('merge_order').notNull(),
+  approvedInputs: text('approved_inputs').notNull(),
+  verificationScope: text('verification_scope').notNull(),
+  strategySummary: text('strategy_summary').notNull(),
+  integrationResult: text('integration_result'),
+  status: text('status').notNull(),
+  blockReasons: text('block_reasons').notNull().default('[]'),
+  staleReasons: text('stale_reasons').notNull().default('[]'),
+  frozenAt: integer('frozen_at'),
+}, (table) => [
+  check('integration_plans_revision_check', sql`${table.revision} >= 1`),
+  check('integration_plans_target_baseline_check', sql`length(${table.targetBaseline}) IN (40, 64) AND ${table.targetBaseline} NOT GLOB '*[^0-9a-f]*'`),
+  check('integration_plans_input_digest_check', sql`length(${table.inputDigest}) = 64 AND ${table.inputDigest} NOT GLOB '*[^0-9a-f]*'`),
+  check('integration_plans_mode_check', sql`${table.mode} IN ('reuse_single_predecessor', 'merge_multiple_predecessors')`),
+  check('integration_plans_status_check', sql`${table.status} IN ('dependency_passed', 'integration_passed', 'stale', 'blocked')`),
+  check('integration_plans_merge_order_json_check', sql`json_valid(${table.mergeOrder}) AND json_type(${table.mergeOrder}) = 'array'`),
+  check('integration_plans_approved_inputs_json_check', sql`json_valid(${table.approvedInputs}) AND json_type(${table.approvedInputs}) = 'array'`),
+  check('integration_plans_verification_scope_json_check', sql`json_valid(${table.verificationScope}) AND json_type(${table.verificationScope}) = 'array'`),
+  check('integration_plans_strategy_json_check', sql`json_valid(${table.strategySummary}) AND json_type(${table.strategySummary}) = 'object'`),
+  check('integration_plans_result_json_check', sql`${table.integrationResult} IS NULL OR (json_valid(${table.integrationResult}) AND json_type(${table.integrationResult}) = 'object')`),
+  check('integration_plans_reasons_json_check', sql`json_valid(${table.blockReasons}) AND json_type(${table.blockReasons}) = 'array' AND json_valid(${table.staleReasons}) AND json_type(${table.staleReasons}) = 'array'`),
+  check('integration_plans_times_check', sql`typeof(${table.createdAt}) = 'integer' AND ${table.createdAt} >= 1 AND typeof(${table.updatedAt}) = 'integer' AND ${table.updatedAt} >= ${table.createdAt} AND (${table.frozenAt} IS NULL OR (typeof(${table.frozenAt}) = 'integer' AND ${table.frozenAt} >= ${table.createdAt}))`),
+  foreignKey({ name: 'integration_plans_phase_fk', columns: [table.projectId, table.phaseId], foreignColumns: [phases.projectId, phases.id] }).onDelete('restrict'),
+  foreignKey({ name: 'integration_plans_batch_fk', columns: [table.projectId, table.batchId], foreignColumns: [executionBatches.projectId, executionBatches.id] }).onDelete('restrict'),
+  foreignKey({ name: 'integration_plans_successor_fk', columns: [table.projectId, table.phaseId, table.successorFeatureId], foreignColumns: [features.projectId, features.phaseId, features.id] }).onDelete('restrict'),
+  uniqueIndex('integration_plans_project_id_id_unique').on(table.projectId, table.id),
+  index('integration_plans_project_status_index').on(table.projectId, table.status, table.updatedAt, table.id),
+]);
+
+/** 前置 Feature 的不可变交付成果快照；不会跟随分支 HEAD 漂移。 */
+export const integrationPredecessorSnapshots = sqliteTable('integration_predecessor_snapshots', {
+  id: text('id').primaryKey(),
+  createdAt: integer('created_at').notNull(),
+  projectId: text('project_id').notNull().references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  planId: text('plan_id').notNull(),
+  phaseId: text('phase_id').notNull(),
+  featureId: text('feature_id').notNull(),
+  predecessorOrdinal: integer('predecessor_ordinal').notNull(),
+  dependencyPassed: integer('dependency_passed').notNull(),
+  deliveryCommit: text('delivery_commit'),
+  deliveryEvidenceId: text('delivery_evidence_id'),
+  deliveryEvidenceDigest: text('delivery_evidence_digest'),
+  coveredInputIds: text('covered_input_ids').notNull(),
+  ancestorVerified: integer('ancestor_verified').notNull(),
+}, (table) => [
+  check('integration_snapshots_ordinal_check', sql`${table.predecessorOrdinal} >= 1`),
+  check('integration_snapshots_created_check', sql`typeof(${table.createdAt}) = 'integer' AND ${table.createdAt} >= 1`),
+  check('integration_snapshots_boolean_check', sql`${table.dependencyPassed} IN (0, 1) AND ${table.ancestorVerified} IN (0, 1)`),
+  check('integration_snapshots_commit_check', sql`${table.deliveryCommit} IS NULL OR (length(${table.deliveryCommit}) IN (40, 64) AND ${table.deliveryCommit} NOT GLOB '*[^0-9a-f]*')`),
+  check('integration_snapshots_evidence_shape_check', sql`(${table.deliveryCommit} IS NULL AND ${table.deliveryEvidenceId} IS NULL AND ${table.deliveryEvidenceDigest} IS NULL) OR (${table.deliveryCommit} IS NOT NULL AND length(${table.deliveryEvidenceId}) > 0 AND length(${table.deliveryEvidenceDigest}) = 64 AND ${table.deliveryEvidenceDigest} NOT GLOB '*[^0-9a-f]*')`),
+  check('integration_snapshots_inputs_json_check', sql`json_valid(${table.coveredInputIds}) AND json_type(${table.coveredInputIds}) = 'array'`),
+  foreignKey({ name: 'integration_snapshots_plan_fk', columns: [table.projectId, table.planId], foreignColumns: [integrationPlans.projectId, integrationPlans.id] }).onDelete('restrict'),
+  foreignKey({ name: 'integration_snapshots_feature_fk', columns: [table.projectId, table.phaseId, table.featureId], foreignColumns: [features.projectId, features.phaseId, features.id] }).onDelete('restrict'),
+  uniqueIndex('integration_snapshots_plan_feature_unique').on(table.planId, table.featureId),
+  uniqueIndex('integration_snapshots_plan_ordinal_unique').on(table.planId, table.predecessorOrdinal),
+  uniqueIndex('integration_snapshots_project_id_id_unique').on(table.projectId, table.id),
+]);
+
 export const planningContexts = sqliteTable('planning_contexts', {
   id: text('id').primaryKey(),
   createdAt: integer('created_at').notNull(),

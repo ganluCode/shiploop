@@ -37,12 +37,12 @@ import type {
   TaskRecord,
 } from './plan-store.js';
 import type {
-  GlobalSettingsRecord,
-  ProjectRecord,
-  RepositoryBindingRecord,
-  ProjectSettingsRecord,
-  ProjectWithRepositoryBindingResult,
-} from './state-store.js';
+  IntegrationPlanResultUpdateInput,
+  IntegrationPlanFreezeInput,
+  PersistedIntegrationPlan,
+} from './integration-plan-store.js';
+import type { GlobalSettingsRecord, ProjectRecord, RepositoryBindingRecord,
+  ProjectSettingsRecord, ProjectWithRepositoryBindingResult } from './state-store.js';
 
 export interface CommandTransaction {
   findReceipt(principalId: string, commandId: string): CommandReceipt | undefined;
@@ -379,9 +379,13 @@ export interface CommandTransaction {
   /** 读取目标 Run（含累计计数与冻结快照；缺失 not_found、跨项目 ownership）。 */
   getExecutionRun(projectId: string, runId: string): RunRecord;
   /* ---------------------------------------------------------------- *
-   * P05-1 / F-003 规划上下文事务原语（同一 BEGIN IMMEDIATE 内；规划启动
-   * 命令在自身事务内组合创建原语与活动读取）
+   * P05-6 / F-002 集成计划与前置成果快照（同一 BEGIN IMMEDIATE 内）
    * ---------------------------------------------------------------- */
+  createIntegrationPlan(input: unknown): PersistedIntegrationPlan;
+  freezeIntegrationPlan(input: IntegrationPlanFreezeInput | unknown): PersistedIntegrationPlan;
+  updateIntegrationPlanResult(input: IntegrationPlanResultUpdateInput | unknown): PersistedIntegrationPlan;
+  getIntegrationPlan(projectId: string, integrationId: string): PersistedIntegrationPlan;
+
   /** 创建规划上下文与 planning Task（F-002 存储原语；同一写事务内原子生效）。 */
   createPlanningContextInTransaction(input: unknown): import('./planning-context.js').PlanningContextRecord;
   /** 同 Feature 活动规划上下文（open/candidate_published；无则 null）。 */

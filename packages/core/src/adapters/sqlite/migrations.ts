@@ -3459,6 +3459,103 @@ BEGIN SELECT RAISE(ABORT, 'execution stop operation identity is immutable'); END
 PRAGMA legacy_alter_table = OFF;
 `;
 
+
+/**
+ * P05-6 / F-002（迁移 v42）：冻结的集成计划及前置成果快照。
+ *
+ * 计划正文、获准输入、合并顺序、验证范围和策略摘要只保存身份级 JSON；每个
+ * 前置 Feature 单独保存一行成果快照，使查询和重启读取不依赖当前 branch HEAD。
+ * 所有归属由复合外键和插入触发器双重保护，冻结后输入列与快照列不可改写。
+ */
+const MIGRATION_042_SQL = `
+CREATE TABLE integration_plans (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  phase_id TEXT NOT NULL,
+  batch_id TEXT NOT NULL,
+  successor_feature_id TEXT NOT NULL,
+  target_baseline TEXT NOT NULL,
+  input_digest TEXT NOT NULL,
+  mode TEXT NOT NULL,
+  merge_order TEXT NOT NULL,
+  approved_inputs TEXT NOT NULL,
+  verification_scope TEXT NOT NULL,
+  strategy_summary TEXT NOT NULL,
+  integration_result TEXT,
+  status TEXT NOT NULL,
+  block_reasons TEXT NOT NULL DEFAULT '[]',
+  stale_reasons TEXT NOT NULL DEFAULT '[]',
+  frozen_at INTEGER,
+  CONSTRAINT integration_plans_revision_check CHECK (revision >= 1),
+  CONSTRAINT integration_plans_target_baseline_check CHECK (length(target_baseline) IN (40, 64) AND target_baseline NOT GLOB '*[^0-9a-f]*'),
+  CONSTRAINT integration_plans_input_digest_check CHECK (length(input_digest) = 64 AND input_digest NOT GLOB '*[^0-9a-f]*'),
+  CONSTRAINT integration_plans_mode_check CHECK (mode IN ('reuse_single_predecessor', 'merge_multiple_predecessors')),
+  CONSTRAINT integration_plans_status_check CHECK (status IN ('dependency_passed', 'integration_passed', 'stale', 'blocked')),
+  CONSTRAINT integration_plans_merge_order_json_check CHECK (json_valid(merge_order) AND json_type(merge_order) = 'array'),
+  CONSTRAINT integration_plans_approved_inputs_json_check CHECK (json_valid(approved_inputs) AND json_type(approved_inputs) = 'array'),
+  CONSTRAINT integration_plans_verification_scope_json_check CHECK (json_valid(verification_scope) AND json_type(verification_scope) = 'array'),
+  CONSTRAINT integration_plans_strategy_json_check CHECK (json_valid(strategy_summary) AND json_type(strategy_summary) = 'object'),
+  CONSTRAINT integration_plans_result_json_check CHECK (integration_result IS NULL OR (json_valid(integration_result) AND json_type(integration_result) = 'object')),
+  CONSTRAINT integration_plans_reasons_json_check CHECK (json_valid(block_reasons) AND json_type(block_reasons) = 'array' AND json_valid(stale_reasons) AND json_type(stale_reasons) = 'array'),
+  CONSTRAINT integration_plans_times_check CHECK (typeof(created_at) = 'integer' AND created_at >= 1 AND typeof(updated_at) = 'integer' AND updated_at >= created_at AND (frozen_at IS NULL OR (typeof(frozen_at) = 'integer' AND frozen_at >= created_at))),
+  CONSTRAINT integration_plans_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT integration_plans_phase_fk FOREIGN KEY (project_id, phase_id) REFERENCES phases (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT integration_plans_batch_fk FOREIGN KEY (project_id, batch_id) REFERENCES execution_batches (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT integration_plans_successor_fk FOREIGN KEY (project_id, phase_id, successor_feature_id) REFERENCES features (project_id, phase_id, id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX integration_plans_project_id_id_unique ON integration_plans (project_id, id);
+CREATE INDEX integration_plans_project_status_index ON integration_plans (project_id, status, updated_at, id);
+
+CREATE TABLE integration_predecessor_snapshots (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  plan_id TEXT NOT NULL,
+  phase_id TEXT NOT NULL,
+  feature_id TEXT NOT NULL,
+  predecessor_ordinal INTEGER NOT NULL,
+  dependency_passed INTEGER NOT NULL,
+  delivery_commit TEXT,
+  delivery_evidence_id TEXT,
+  delivery_evidence_digest TEXT,
+  covered_input_ids TEXT NOT NULL,
+  ancestor_verified INTEGER NOT NULL,
+  CONSTRAINT integration_snapshots_created_check CHECK (typeof(created_at) = 'integer' AND created_at >= 1),
+  CONSTRAINT integration_snapshots_ordinal_check CHECK (typeof(predecessor_ordinal) = 'integer' AND predecessor_ordinal >= 1),
+  CONSTRAINT integration_snapshots_boolean_check CHECK (dependency_passed IN (0, 1) AND ancestor_verified IN (0, 1)),
+  CONSTRAINT integration_snapshots_commit_check CHECK (delivery_commit IS NULL OR (length(delivery_commit) IN (40, 64) AND delivery_commit NOT GLOB '*[^0-9a-f]*')),
+  CONSTRAINT integration_snapshots_evidence_shape_check CHECK ((delivery_commit IS NULL AND delivery_evidence_id IS NULL AND delivery_evidence_digest IS NULL) OR (delivery_commit IS NOT NULL AND length(delivery_evidence_id) > 0 AND length(delivery_evidence_digest) = 64 AND delivery_evidence_digest NOT GLOB '*[^0-9a-f]*')),
+  CONSTRAINT integration_snapshots_inputs_json_check CHECK (json_valid(covered_input_ids) AND json_type(covered_input_ids) = 'array'),
+  CONSTRAINT integration_snapshots_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT integration_snapshots_plan_fk FOREIGN KEY (project_id, plan_id) REFERENCES integration_plans (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT integration_snapshots_feature_fk FOREIGN KEY (project_id, phase_id, feature_id) REFERENCES features (project_id, phase_id, id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX integration_snapshots_plan_feature_unique ON integration_predecessor_snapshots (plan_id, feature_id);
+CREATE UNIQUE INDEX integration_snapshots_plan_ordinal_unique ON integration_predecessor_snapshots (plan_id, predecessor_ordinal);
+CREATE UNIQUE INDEX integration_snapshots_project_id_id_unique ON integration_predecessor_snapshots (project_id, id);
+
+CREATE TRIGGER integration_plans_batch_phase_check BEFORE INSERT ON integration_plans
+WHEN NOT EXISTS (SELECT 1 FROM execution_batches WHERE project_id = NEW.project_id AND id = NEW.batch_id AND phase_id = NEW.phase_id)
+BEGIN SELECT RAISE(ABORT, 'integration plan batch is outside phase'); END;
+CREATE TRIGGER integration_plans_identity_immutable BEFORE UPDATE ON integration_plans
+WHEN NEW.id IS NOT OLD.id OR NEW.created_at IS NOT OLD.created_at OR NEW.project_id IS NOT OLD.project_id
+  OR NEW.phase_id IS NOT OLD.phase_id OR NEW.batch_id IS NOT OLD.batch_id OR NEW.successor_feature_id IS NOT OLD.successor_feature_id
+  OR NEW.target_baseline IS NOT OLD.target_baseline OR NEW.input_digest IS NOT OLD.input_digest OR NEW.mode IS NOT OLD.mode
+  OR NEW.merge_order IS NOT OLD.merge_order OR NEW.approved_inputs IS NOT OLD.approved_inputs
+  OR NEW.verification_scope IS NOT OLD.verification_scope OR NEW.strategy_summary IS NOT OLD.strategy_summary
+BEGIN SELECT RAISE(ABORT, 'integration plan frozen input is immutable'); END;
+CREATE TRIGGER integration_plans_frozen_at_immutable BEFORE UPDATE ON integration_plans
+WHEN OLD.frozen_at IS NOT NULL AND NEW.frozen_at IS NOT OLD.frozen_at
+BEGIN SELECT RAISE(ABORT, 'integration plan freeze seal is immutable'); END;
+CREATE TRIGGER integration_predecessor_snapshots_immutable_update BEFORE UPDATE ON integration_predecessor_snapshots
+BEGIN SELECT RAISE(ABORT, 'integration predecessor snapshot is immutable'); END;
+CREATE TRIGGER integration_predecessor_snapshots_immutable_delete BEFORE DELETE ON integration_predecessor_snapshots
+BEGIN SELECT RAISE(ABORT, 'integration predecessor snapshot is immutable'); END;
+`;
+
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     version: 1,
@@ -3565,4 +3662,5 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 39, sql: MIGRATION_039_SQL, checksum: sha256Hex(MIGRATION_039_SQL) },
   { version: 40, sql: MIGRATION_040_SQL, checksum: sha256Hex(MIGRATION_040_SQL) },
   { version: 41, sql: MIGRATION_041_SQL, checksum: sha256Hex(MIGRATION_041_SQL), foreignKeysOff: true },
+  { version: 42, sql: MIGRATION_042_SQL, checksum: sha256Hex(MIGRATION_042_SQL) },
 ];
