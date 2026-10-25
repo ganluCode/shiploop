@@ -258,9 +258,20 @@ export function validateFeatureResourceReadInput(value: unknown): FeatureResourc
 export interface FeatureResourceAccess {
   normalize(input: unknown): FeatureResourceSet;
   read(resource: unknown): readonly FeatureResourceLeaseRecord[];
+  /** List all resource rows owned by one dispatch generation inside its write transaction. */
+  listOwnerInTransaction(projectId: unknown, owner: unknown): readonly FeatureResourceLeaseRecord[];
   acquireInTransaction(input: unknown): readonly FeatureResourceLeaseRecord[];
   renewInTransaction(owner: unknown, resource: unknown, leaseUntilUtcMs: unknown): FeatureResourceLeaseRecord;
+  /** Normal release: released is idempotent; held must be unexpired and quarantined is rejected. */
   releaseInTransaction(owner: unknown, resource: unknown): FeatureResourceLeaseRecord;
+  /** Release every lease of one owner in the canonical resource order. */
+  releaseOwnerInTransaction(projectId: unknown, owner: unknown): readonly FeatureResourceLeaseRecord[];
+  /** Renew every lease of one owner or quarantine the whole group when any lease is stale. */
+  renewOwnerInTransaction(projectId: unknown, owner: unknown, leaseUntilUtcMs: unknown): readonly FeatureResourceLeaseRecord[];
+  /** Trusted stop/recovery release; permits an expired or quarantined row only after external evidence. */
+  releaseOwnerAfterStopInTransaction(projectId: unknown, owner: unknown): readonly FeatureResourceLeaseRecord[];
+  /** Quarantine every held lease of one owner. */
+  quarantineOwnerInTransaction(projectId: unknown, owner: unknown, reason: unknown): readonly FeatureResourceLeaseRecord[];
   quarantineInTransaction(owner: unknown, resource: unknown, waitingReason: unknown): FeatureResourceLeaseRecord;
 }
 

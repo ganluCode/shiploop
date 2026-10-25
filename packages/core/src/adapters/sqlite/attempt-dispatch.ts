@@ -95,6 +95,10 @@ export function createSqliteAttemptDispatchAccess(session: SqliteStorageSession,
         if (!oldSlot) deny('dispatch_slot_not_held');
         slots.releaseInTransaction({ projectId: attempt.projectId, slotId: oldSlot.id, claimId: previous.id,
           claimVersion: previous.claim_version, ownerId: previous.owner_id, hostInstanceId: previous.host_instance_id });
+        // Transfer releases the previous dispatch generation in the same short
+        // transaction as its slot/claim, before the new generation is inserted.
+        featureResources.releaseOwnerInTransaction(attempt.projectId,
+          { ownerId: previous.id, ownerVersion: previous.claim_version });
         db.prepare("UPDATE run_dispatch_claims SET state = 'released', settled_at = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND state = 'held'")
           .run(now, now, previous.id);
         db.prepare(`INSERT INTO run_dispatch_claims (id, created_at, project_id, revision, updated_at,

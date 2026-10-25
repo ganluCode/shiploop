@@ -8,6 +8,7 @@ import {
   validateFeatureResourceDeclaration,
   validateFeatureResourceLeaseRecord,
   validateFeatureResourceOwner,
+  FEATURE_RESOURCE_KIND_ORDER,
   type FeatureResourceAccess,
   type FeatureResourceAcquireInput,
   type FeatureResourceDeclaration,
@@ -16,6 +17,7 @@ import {
   type FeatureResourceWaitReason,
 } from '../../ports/feature-resources.js';
 import { StorageError } from '../../ports/errors.js';
+import { validateStableId } from '../../ports/validation.js';
 import type { SqliteStorageSession } from './session.js';
 
 const OPERATION = 'FeatureResources';
@@ -66,6 +68,22 @@ function asAcquireInput(value: unknown): FeatureResourceAcquireInput {
     owner: { ownerId: raw.ownerId, ownerVersion: raw.ownerVersion },
     leaseUntilUtcMs: raw.leaseUntilUtcMs,
   });
+}
+
+function asResourceDeclaration(value: unknown): FeatureResourceDeclaration {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return validateFeatureResourceDeclaration(value);
+  }
+  const raw = value as Record<string, unknown>;
+  const { accessMode, leaseMode, ...declaration } = raw;
+  const normalized = validateFeatureResourceDeclaration(declaration);
+  if ((accessMode !== undefined && accessMode !== normalized.accessMode)
+    || (leaseMode !== undefined && leaseMode !== normalized.leaseMode)) {
+    throw new StorageError('validation', `${OPERATION}.validateDeclaration`, '资源占用语义不能由输入改写', {
+      entity: { type: 'feature_resource_lease', projectId: normalized.projectId },
+    });
+  }
+  return normalized;
 }
 
 export interface SqliteFeatureResourceAccessOptions {
@@ -172,6 +190,17 @@ export function createSqliteFeatureResourceAccess(
     ).all(projectId, resourceKey) as FeatureResourceSqlRow[];
   }
 
+  function ownerRecords(projectId: string, owner: FeatureResourceOwner, operation: string): FeatureResourceLeaseRecord[] {
+    const rows = db.prepare<[string, string, number], FeatureResourceSqlRow>(
+      'SELECT id, created_at, project_id, revision, updated_at, resource_key, resource_kind, access_mode, lease_mode, owner_id, owner_version, acquired_at, lease_until, state, waiting_reason, released_at ' +
+      'FROM feature_resource_leases WHERE project_id = ? AND owner_id = ? AND owner_version = ?',
+    ).all(projectId, owner.ownerId, owner.ownerVersion) as FeatureResourceSqlRow[];
+    return rows.map(row => rowToRecord(row, operation)).sort((a, b) => {
+      const kindOrder = FEATURE_RESOURCE_KIND_ORDER.indexOf(a.resource.kind) - FEATURE_RESOURCE_KIND_ORDER.indexOf(b.resource.kind);
+      return kindOrder !== 0 ? kindOrder : a.resource.key.localeCompare(b.resource.key);
+    });
+  }
+
   function currentOrReleased(resource: FeatureResourceDeclaration, owner: FeatureResourceOwner, operation: string): FeatureResourceLeaseRecord {
     const active = activeRows(resource.projectId, resource.key);
     const owned = active.find((row) => row.owner_id === owner.ownerId && row.owner_version === owner.ownerVersion);
@@ -248,8 +277,15 @@ export function createSqliteFeatureResourceAccess(
 
     read(resource: unknown): readonly FeatureResourceLeaseRecord[] {
       assertOpen('read');
-      const declaration = validateFeatureResourceDeclaration(resource);
+      const declaration = asResourceDeclaration(resource);
       return rowsFor(declaration.projectId, declaration.key).map((row) => rowToRecord(row, 'read'));
+    },
+
+    listOwnerInTransaction(projectIdInput, ownerInput) {
+      assertTransaction('listOwnerInTransaction');
+      const projectId = validateStableId(projectIdInput, { operation: `${OPERATION}.listOwnerInTransaction` }, 'projectId');
+      const owner = validateFeatureResourceOwner(ownerInput);
+      return ownerRecords(projectId, owner, 'listOwnerInTransaction');
     },
 
     acquireInTransaction(input: unknown): readonly FeatureResourceLeaseRecord[] {
@@ -330,7 +366,7 @@ export function createSqliteFeatureResourceAccess(
     renewInTransaction(ownerInput: unknown, resourceInput: unknown, leaseUntilUtcMsInput: unknown): FeatureResourceLeaseRecord {
       assertTransaction('renewInTransaction');
       const owner = validateFeatureResourceOwner(ownerInput);
-      const resource = validateFeatureResourceDeclaration(resourceInput);
+      const resource = asResourceDeclaration(resourceInput);
       const leaseUntilUtcMs = Number(leaseUntilUtcMsInput);
       if (!Number.isSafeInteger(leaseUntilUtcMs) || leaseUntilUtcMs < 0) {
         throw new StorageError('validation', `${OPERATION}.renewInTransaction`, '租约截止时间必须是非负安全整数', {
@@ -360,16 +396,111 @@ export function createSqliteFeatureResourceAccess(
     releaseInTransaction(ownerInput: unknown, resourceInput: unknown): FeatureResourceLeaseRecord {
       assertTransaction('releaseInTransaction');
       const owner = validateFeatureResourceOwner(ownerInput);
-      const resource = validateFeatureResourceDeclaration(resourceInput);
+      const resource = asResourceDeclaration(resourceInput);
       const current = currentOrReleased(resource, owner, 'releaseInTransaction');
       if (current.state === 'released') return current;
-      return updateRecord(current, { leaseUntilUtcMs: current.leaseUntilUtcMs, state: 'released', waitingReason: null, releasedAtUtcMs: now('releaseInTransaction') }, 'releaseInTransaction');
+      const timestamp = now('releaseInTransaction');
+      if (current.state === 'quarantined') {
+        conflict('releaseInTransaction', '已隔离资源不能通过普通释放完成', resource.projectId, {
+          reason: 'resource_quarantined', resourceKey: resource.key,
+        });
+      }
+      if (current.leaseUntilUtcMs <= timestamp) {
+        conflict('releaseInTransaction', '资源租约已到期，需先核对停止证据', resource.projectId, {
+          reason: 'lease_expired_unverified', resourceKey: resource.key,
+        });
+      }
+      return updateRecord(current, { leaseUntilUtcMs: current.leaseUntilUtcMs, state: 'released', waitingReason: null, releasedAtUtcMs: timestamp }, 'releaseInTransaction');
+    },
+
+    releaseOwnerInTransaction(projectIdInput, ownerInput) {
+      assertTransaction('releaseOwnerInTransaction');
+      const projectId = validateStableId(projectIdInput, { operation: `${OPERATION}.releaseOwnerInTransaction` }, 'projectId');
+      const owner = validateFeatureResourceOwner(ownerInput);
+      const records = ownerRecords(projectId, owner, 'releaseOwnerInTransaction');
+      const timestamp = now('releaseOwnerInTransaction');
+      // Release order is canonical and deterministic. The caller's transaction
+      // rolls back all earlier rows if a later row fails its stop/lease guard.
+      return records.map(record => {
+        if (record.state === 'released') return record;
+        if (record.state === 'quarantined') {
+          conflict('releaseOwnerInTransaction', '已隔离资源不能通过普通释放完成', projectId, {
+            reason: 'resource_quarantined', resourceKey: record.resource.key,
+          });
+        }
+        if (record.leaseUntilUtcMs <= timestamp) {
+          conflict('releaseOwnerInTransaction', '资源租约已到期，需先核对停止证据', projectId, {
+            reason: 'lease_expired_unverified', resourceKey: record.resource.key,
+          });
+        }
+        return updateRecord(record, { leaseUntilUtcMs: record.leaseUntilUtcMs, state: 'released',
+          waitingReason: null, releasedAtUtcMs: timestamp }, 'releaseOwnerInTransaction');
+      });
+    },
+
+    releaseOwnerAfterStopInTransaction(projectIdInput, ownerInput) {
+      assertTransaction('releaseOwnerAfterStopInTransaction');
+      const projectId = validateStableId(projectIdInput, { operation: `${OPERATION}.releaseOwnerAfterStopInTransaction` }, 'projectId');
+      const owner = validateFeatureResourceOwner(ownerInput);
+      const timestamp = now('releaseOwnerAfterStopInTransaction');
+      return ownerRecords(projectId, owner, 'releaseOwnerAfterStopInTransaction').map(record => record.state === 'released'
+        ? record
+        : updateRecord(record, {
+          leaseUntilUtcMs: record.leaseUntilUtcMs, state: 'released', waitingReason: null,
+          releasedAtUtcMs: Math.max(timestamp, record.acquiredAtUtcMs),
+        }, 'releaseOwnerAfterStopInTransaction'));
+    },
+
+    quarantineOwnerInTransaction(projectIdInput, ownerInput, reasonInput) {
+      assertTransaction('quarantineOwnerInTransaction');
+      const projectId = validateStableId(projectIdInput, { operation: `${OPERATION}.quarantineOwnerInTransaction` }, 'projectId');
+      const owner = validateFeatureResourceOwner(ownerInput);
+      const records = ownerRecords(projectId, owner, 'quarantineOwnerInTransaction');
+      const rawReason = typeof reasonInput === 'object' && reasonInput !== null ? reasonInput as Record<string, unknown> : {};
+      const code: FeatureResourceWaitReason['code'] = rawReason.code === 'lease_expired_unverified'
+        ? 'lease_expired_unverified' : 'resource_quarantined';
+      return records.map(record => record.state === 'held'
+        ? updateRecord(record, { leaseUntilUtcMs: record.leaseUntilUtcMs, state: 'quarantined', waitingReason: {
+          code, resourceKey: record.resource.key, blockingOwnerId: owner.ownerId, blockingOwnerVersion: owner.ownerVersion,
+        }, releasedAtUtcMs: null }, 'quarantineOwnerInTransaction') : record);
+    },
+
+    renewOwnerInTransaction(projectIdInput, ownerInput, leaseUntilUtcMsInput) {
+      assertTransaction('renewOwnerInTransaction');
+      const projectId = validateStableId(projectIdInput, { operation: `${OPERATION}.renewOwnerInTransaction` }, 'projectId');
+      const owner = validateFeatureResourceOwner(ownerInput);
+      const leaseUntilUtcMs = Number(leaseUntilUtcMsInput);
+      if (!Number.isSafeInteger(leaseUntilUtcMs) || leaseUntilUtcMs < 0) {
+        throw new StorageError('validation', `${OPERATION}.renewOwnerInTransaction`, '租约截止时间必须是非负安全整数', {
+          entity: entity(projectId), details: { field: 'leaseUntilUtcMs' },
+        });
+      }
+      const records = ownerRecords(projectId, owner, 'renewOwnerInTransaction');
+      if (records.length === 0) return records;
+      const timestamp = now('renewOwnerInTransaction');
+      if (records.some(record => record.state === 'quarantined' || record.leaseUntilUtcMs <= timestamp)) {
+        const reasonCode: FeatureResourceWaitReason['code'] = records.some(record => record.state === 'quarantined')
+          ? 'resource_quarantined' : 'lease_expired_unverified';
+        const quarantined = records.map(record => record.state === 'held'
+          ? updateRecord(record, { leaseUntilUtcMs: record.leaseUntilUtcMs, state: 'quarantined', waitingReason: {
+            code: reasonCode, resourceKey: record.resource.key, blockingOwnerId: owner.ownerId, blockingOwnerVersion: owner.ownerVersion,
+          }, releasedAtUtcMs: null }, 'renewOwnerInTransaction') : record);
+        return quarantined;
+      }
+      if (records.some(record => leaseUntilUtcMs < record.leaseUntilUtcMs)) {
+        throw new StorageError('validation', `${OPERATION}.renewOwnerInTransaction`, '续租不得缩短当前资源组租约', {
+          entity: entity(projectId), details: { field: 'leaseUntilUtcMs' },
+        });
+      }
+      return records.map(record => updateRecord(record, {
+        leaseUntilUtcMs, state: 'held', waitingReason: null, releasedAtUtcMs: null,
+      }, 'renewOwnerInTransaction'));
     },
 
     quarantineInTransaction(ownerInput: unknown, resourceInput: unknown, reasonInput: unknown): FeatureResourceLeaseRecord {
       assertTransaction('quarantineInTransaction');
       const owner = validateFeatureResourceOwner(ownerInput);
-      const resource = validateFeatureResourceDeclaration(resourceInput);
+      const resource = asResourceDeclaration(resourceInput);
       const current = currentOrReleased(resource, owner, 'quarantineInTransaction');
       if (current.state === 'released') return current;
       const reason = reasonInput as FeatureResourceWaitReason;

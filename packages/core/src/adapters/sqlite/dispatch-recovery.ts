@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { StorageError } from '../../ports/errors.js';
 import { computeRunDispatchAuthorizationDigest } from '../../ports/execution-dispatch.js';
 import type { SqliteStorageSession } from './session.js';
+import { createSqliteFeatureResourceAccess } from './feature-resources.js';
 
 interface Claim {
   id: string; project_id: string; feature_id: string; run_id: string; claim_version: number;
@@ -21,6 +22,7 @@ function recoveryConflict(reason: string): never {
 /** Adapter-private recovery authority. Call mutations only inside the caller's recovery transaction. */
 export function createSqliteDispatchRecovery(session: SqliteStorageSession) {
   const db = session.database;
+  const featureResources = createSqliteFeatureResourceAccess(session);
   function claims(runId: string): Claim[] {
     const rows = db.prepare<[string], Claim>(`SELECT * FROM run_dispatch_claims WHERE run_id = ? ORDER BY claim_version LIMIT ${LIMIT + 1}`).all(runId);
     if (rows.length > LIMIT) recoveryConflict('dispatch_history_limit');
@@ -36,6 +38,9 @@ export function createSqliteDispatchRecovery(session: SqliteStorageSession) {
   }
   function quarantine(claim: Claim, reason: string, timestamp: number) {
     assertWrite();
+    featureResources.quarantineOwnerInTransaction(claim.project_id, { ownerId: claim.id, ownerVersion: claim.claim_version }, {
+      code: reason === 'lease_expired_unverified' ? 'lease_expired_unverified' : 'resource_quarantined',
+    });
     // Wall-clock rollback cannot abort fencing or move durable timestamps before acquisition/prior updates.
     db.prepare(`UPDATE execution_slot_claims SET state = 'quarantined', reason = ?, revision = revision + 1,
       updated_at = MAX(?, acquired_at, updated_at) WHERE claim_id = ? AND state = 'held'`).run(reason, timestamp, claim.id);
@@ -44,6 +49,9 @@ export function createSqliteDispatchRecovery(session: SqliteStorageSession) {
   }
   function release(claim: Claim, timestamp: number, reason = 'startup_reconciled') {
     assertWrite();
+    // Recovery already has a trusted stop/unstarted proof; release the Feature
+    // resource group before the slot and claim in the same transaction.
+    featureResources.releaseOwnerAfterStopInTransaction(claim.project_id, { ownerId: claim.id, ownerVersion: claim.claim_version });
     // Expiry does not authorize this path. The caller has proved unstarted or matched stop/reconciliation evidence.
     db.prepare(`UPDATE execution_slot_claims SET state = 'released', reason = ?, released_at = MAX(?, acquired_at, updated_at),
       revision = revision + 1, updated_at = MAX(?, acquired_at, updated_at) WHERE claim_id = ? AND state IN ${active}`)
@@ -215,6 +223,7 @@ export function workRecoveryFingerprint(session: SqliteStorageSession, attemptId
     ['run_dispatch_intents', 'run_id = ?', runId],
     ['managed_workspaces', 'feature_id = ?', attempt.feature_id],
     ['workspace_leases', 'owner_id IN (SELECT id FROM attempts WHERE run_id = ?)', runId],
+    ['feature_resource_leases', 'owner_id IN (SELECT id FROM run_dispatch_claims WHERE run_id = ?)', runId],
     ['sessions', 'attempt_id IN (SELECT id FROM attempts WHERE run_id = ?)', runId],
     ['task_claim_receipts', 'attempt_id IN (SELECT id FROM attempts WHERE run_id = ?)', runId],
     ['runtime_start_reservations', 'run_id = ?', runId],
