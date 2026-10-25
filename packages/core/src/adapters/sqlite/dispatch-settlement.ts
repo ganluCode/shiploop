@@ -370,6 +370,14 @@ export function createSqliteRunDispatchSettlement(
   }
 
   function quarantineClaim(row: ClaimRow, reason: string, timestamp: number): boolean {
+    // Claim quarantine is the fencing boundary for the whole dispatch group. Keep
+    // Feature resources aligned with the claim even when the caller reached this
+    // path through stop uncertainty or an expired slot/claim, rather than through
+    // the explicit Feature-resource problem branch below.
+    const featureReason = reason === 'slot_lease_expired_unverified'
+      ? 'lease_expired_unverified' as const
+      : 'resource_quarantined' as const;
+    quarantineFeatureResources(row.project_id, claimFromRow(row), featureReason);
     const changed = db.prepare(
       "UPDATE run_dispatch_claims SET state = 'quarantined', settled_at = ?, reason = ?, " +
       'revision = revision + 1, updated_at = ? WHERE project_id = ? AND id = ? AND state = \'held\' AND revision = ?',
@@ -509,7 +517,13 @@ export function createSqliteRunDispatchSettlement(
         return { ...factsWith(input), decision: 'quarantined', reason: 'slot_quarantined' };
       }
       if (claim.leaseUntilUtcMs <= timestamp) {
-        // 认领已到期：不延长，隔离后交受信核对。
+        // 认领已到期：不延长，先把槽位和 Feature 资源整组隔离，再交受信核对。
+        if (slotRow !== undefined && slotRow.state === 'held') {
+          slots.quarantineInTransaction({
+            projectId: slotRow.project_id, slotId: slotRow.id, claimId: slotRow.claim_id,
+            claimVersion: slotRow.claim_version, ownerId: slotRow.owner_id, hostInstanceId: slotRow.host_instance_id,
+          }, 'slot_lease_expired_unverified');
+        }
         quarantineClaim(claimRow, 'slot_lease_expired_unverified', timestamp);
         return { ...factsWith(input), decision: 'quarantined', reason: 'slot_lease_expired_unverified' };
       }
