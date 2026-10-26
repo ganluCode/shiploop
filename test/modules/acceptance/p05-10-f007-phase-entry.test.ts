@@ -1,8 +1,9 @@
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { afterEach, expect, it } from 'vitest';
-import { resolveP05Args, collectP05TrustedTests } from '../../../scripts/acceptance/p05-accept.ts';
+import { resolveP05Args, collectP05TrustedTests, runP05Acceptance } from '../../../scripts/acceptance/p05-accept.ts';
 import { aggregateP05CheckResults, loadP05Checklist } from '../../../scripts/acceptance/p05-config.ts';
 import { runP05StepSequence, type P05StepSpec } from '../../../scripts/acceptance/p05-steps.ts';
 import type { P02BoundedRunOutcome } from '../../../scripts/acceptance/p02-accept.ts';
@@ -19,6 +20,20 @@ const pass: P02BoundedRunOutcome = {
   stdout: '', stderr: '', stdoutBytes: 0, stderrBytes: 0,
   stdoutTruncated: false, stderrTruncated: false, spawnError: null, stoppedVerified: true,
 };
+
+it('writes an offline report with manual/live pending instead of binding manual checks to mock steps', async () => {
+  const reportRoot = mkdtempSync(join(tmpdir(), 'shiploop-p05-offline-report-'));
+  tempDirs.push(reportRoot);
+  const result = await runP05Acceptance({
+    repoRoot: ROOT, reportRoot, runId: 'offline-report-regression',
+    runProcess: async () => ({ ...pass }),
+    exec: (command, args) => command === 'git' && args[0] === 'status' ? '' :
+      execFileSync(command === 'node' ? process.execPath : command, [...args], { cwd: ROOT, encoding: 'utf8' }).trim(),
+  });
+  expect(result.reportWritten).toBe(true);
+  expect(result.phaseAccepted).toBe(false);
+  expect(result.exitCode).toBe(1);
+});
 
 it('[case:p05-entry-options-and-bounded-steps] parses explicit full regression and preserves a failed prefix', async () => {
   expect(resolveP05Args(['--full-regression']).fullRegression).toBe(true);

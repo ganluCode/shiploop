@@ -375,11 +375,7 @@ export async function runP05Acceptance(options: P05AcceptanceOptions): Promise<P
   const aggregation = aggregateP05IntegrationReport({
     repoRoot, config, checklist, runId, reportRoot: join(reportRoot, 'reports'), stepRunDir, exec: reportExec,
     cleanup: { confirmed: cleaned, processesGone: sequence.stopConfirmed, notes: ['仅回收本次入口创建的 resources；停止不确定保留现场。'] },
-    bindings: [
-      ...offlineBindings(checklist, ENTRY.stepOrder.filter(id => id !== 'p05-manual-gate')),
-      { checkId: 'P05-FR4-REPORT-MANUAL-GATE', stepIds: ['p05-manual-gate'], extraEvidence: [{ name: 'entry-steps.json', category: 'artifact',
-        content: JSON.stringify({ identity, steps: sequence.steps, problems: sequence.problems }) + '\n' }] },
-    ],
+    bindings: offlineBindings(checklist, ENTRY.stepOrder.filter(id => id !== 'p05-manual-gate')),
     knownLimitations: [
       fullRegression
         ? '已显式请求全仓历史回归；其结果仍不能替代 live 和负责人确认。'
