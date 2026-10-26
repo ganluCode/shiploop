@@ -20,6 +20,7 @@
 import type {
   FeatureDeliveryCommandResult,
   FeatureDeliveryDetailResult,
+  HostClient,
   GitOperationDetailResult,
   GitOperationListResult,
   GitAgentRepairListResult,
@@ -30,6 +31,129 @@ import type {
   PublicGitOperationRecord,
   TaskApprovalDecisionResult,
 } from 'shiploop-host';
+
+type PublicBatchDeliveryResult = Awaited<ReturnType<HostClient['getBatchDelivery']>>;
+type BatchControlDetailResult = Awaited<ReturnType<HostClient['getBatchControl']>>;
+type BatchObservationResult = Awaited<ReturnType<HostClient['observeBatch']>>;
+
+export interface BatchDeliveryCliView {
+  readonly scope: 'batch-delivery';
+  readonly delivery: PublicBatchDeliveryResult;
+  readonly state: 'completed' | 'failed' | 'blocked' | 'cancelled' | 'awaiting_approval' | 'in_progress' | 'budget_exhausted' | 'pending';
+  /** Query output never turns an empty queue or passed Tasks into phase completion. */
+  readonly phaseCompleted: false;
+  readonly evidenceRefs: readonly string[];
+}
+
+function batchDeliveryState(result: PublicBatchDeliveryResult): BatchDeliveryCliView['state'] {
+  const summary = result.summary;
+  if (summary.budget_exhausted > 0 || result.batch.budget.status === 'exhausted') return 'budget_exhausted';
+  if (summary.failed > 0) return 'failed';
+  if (summary.blocked > 0) return 'blocked';
+  if (summary.cancelled > 0) return 'cancelled';
+  if (summary.awaiting_approval > 0) return 'awaiting_approval';
+  if (summary.in_progress > 0 || result.currentRunningCount > 0 || result.readyCount > 0 || result.resourceWaitingCount > 0) return 'in_progress';
+  if (summary.completed === result.records.length && result.records.length > 0) return 'completed';
+  return 'pending';
+}
+
+function batchEvidenceRefs(result: PublicBatchDeliveryResult): readonly string[] {
+  return result.records.flatMap(record => record.evidenceRefs);
+}
+
+export function buildBatchDeliveryView(result: PublicBatchDeliveryResult): BatchDeliveryCliView {
+  return { scope: 'batch-delivery', delivery: result, state: batchDeliveryState(result), phaseCompleted: false, evidenceRefs: batchEvidenceRefs(result) };
+}
+
+export function formatBatchDeliveryView(view: BatchDeliveryCliView): string {
+  const result = view.delivery;
+  const lines = [
+    `shiploop batch delivery: batch=${result.batch.id} phase=${result.batch.phaseId} status=${result.batch.status} state=${view.state} phaseCompleted=false`,
+    `  features=${result.batch.featureIds.length} completed=${result.summary.completed} failed=${result.summary.failed} blocked=${result.summary.blocked} cancelled=${result.summary.cancelled} awaitingApproval=${result.summary.awaiting_approval} inProgress=${result.summary.in_progress}`,
+    `  concurrency=running:${result.currentRunningCount} ready:${result.readyCount} resourceWaiting=${result.resourceWaitingCount} limit=${result.batch.maxConcurrentFeatures}`,
+    `  budget=status:${result.batch.budget.status} runs=${String(result.batch.budget.runsCreated)} attempts=${String(result.batch.budget.attemptsCreated)} runtimeStarts=${String(result.batch.budget.runtimeStarts)} deadline=${String(result.batch.budget.deadlineAt)} tokenUsed=${String(result.batch.budget.tokenUsed)} costUsed=${String(result.batch.budget.costUsed)}`,
+  ];
+  for (const record of result.records) {
+    lines.push(`  feature=${record.featureId} status=${record.status} reason=${record.reason} blockers=${record.blockingReasons.join(',') || 'none'} predecessors=${record.failurePredecessors.join(',') || 'none'} evidence=${record.evidenceRefs.join(',') || 'none'}`);
+  }
+  if (result.stopOperations.length > 0) lines.push(`  stops=${result.stopOperations.map(stop => `${stop.operationId}:${stop.status}`).join(',')}`);
+  if (result.integrations.length > 0) lines.push(`  integrations=${result.integrations.map(integration => `${integration.integrationId}:${integration.status}`).join(',')}`);
+  lines.push(`  evidenceRefs=${view.evidenceRefs.join(',') || 'none'} nextCursor=${result.nextCursor ?? 'none'}`);
+  lines.push('  阶段交付仍需显式收尾、候选核对和 Phase 批准；队列为空或 Task 全通过不等于阶段完成。', '');
+  return lines.join('\n');
+}
+
+export interface BatchObservationCliView {
+  readonly scope: 'batch-observe';
+  readonly delivery: BatchDeliveryCliView;
+  readonly control: BatchControlDetailResult;
+  readonly blockingChain: readonly { readonly featureId: string; readonly failurePredecessors: readonly string[]; readonly blockingReasons: readonly string[] }[];
+  readonly actualConcurrency: number;
+  readonly resourceWaiting: number;
+  readonly stopStatus: readonly string[];
+}
+
+export function buildBatchObservationView(result: BatchObservationResult): BatchObservationCliView {
+  return {
+    scope: 'batch-observe',
+    delivery: buildBatchDeliveryView(result.delivery),
+    control: result.control,
+    blockingChain: result.blockingChain,
+    actualConcurrency: result.delivery.currentRunningCount,
+    resourceWaiting: result.delivery.resourceWaitingCount,
+    stopStatus: result.control.stopOperations.map(stop => `${stop.operationId}:${stop.status}`),
+  };
+}
+
+export function formatBatchObservationView(view: BatchObservationCliView): string {
+  const lines = [formatBatchDeliveryView(view.delivery).trimEnd(), `  controlStatus=${view.control.batch.status} nextActions=${view.control.nextActions.join(',') || 'none'} actualConcurrency=${view.actualConcurrency} resourceWaiting=${view.resourceWaiting}`];
+  for (const entry of view.blockingChain) lines.push(`  blocking feature=${entry.featureId} predecessors=${entry.failurePredecessors.join(',') || 'none'} reasons=${entry.blockingReasons.join(',') || 'none'}`);
+  lines.push(`  stopStatus=${view.stopStatus.join(',') || 'unknown'} evidence=${view.delivery.evidenceRefs.join(',') || 'unknown'}`, '');
+  return lines.join('\n');
+}
+
+export interface BatchDeliveryCommandCliView {
+  readonly commandId: string;
+  readonly replayed: boolean;
+  readonly operation: 'execution.batch.finalize' | 'phase.delivery.approve';
+  readonly status: string;
+  readonly phaseId: string;
+  readonly batchId: string;
+  readonly batchRevision: number;
+  readonly candidateId: string;
+  readonly candidateRevision: number;
+  readonly integrationEvidenceId: string;
+  readonly verificationEvidenceId: string;
+  readonly approvalId: string | null;
+  readonly summaryDigest: string | null;
+  readonly phaseCompleted: false;
+  readonly note: string;
+}
+
+export function buildBatchDeliveryCommandView(
+  commandId: string,
+  replayed: boolean,
+  operation: BatchDeliveryCommandCliView['operation'],
+  result: Record<string, unknown>,
+): BatchDeliveryCommandCliView {
+  const text = (key: string): string => typeof result[key] === 'string' ? result[key] as string : 'unknown';
+  const number = (key: string): number => typeof result[key] === 'number' ? result[key] as number : 0;
+  return {
+    commandId, replayed, operation, status: text('status'), phaseId: text('phaseId'), batchId: text('batchId'),
+    batchRevision: number('batchRevision'), candidateId: text('candidateId'), candidateRevision: number('candidateRevision'),
+    integrationEvidenceId: text('integrationEvidenceId'), verificationEvidenceId: text('verificationEvidenceId'),
+    approvalId: typeof result.approvalId === 'string' ? result.approvalId : null,
+    summaryDigest: typeof result.summaryDigest === 'string' ? result.summaryDigest : null,
+    phaseCompleted: false,
+    note: operation === 'phase.delivery.approve'
+      ? 'Phase 交付批准已绑定候选摘要；不关闭 Phase、不合入 main、不 push、不新建 Batch'
+      : 'Batch 收尾命令已处理；候选仍需显式核对/批准，未宣称阶段完成',
+  };
+}
+
+export function formatBatchDeliveryCommandView(view: BatchDeliveryCommandCliView): string {
+  return `shiploop ${view.operation}: status=${view.status} phase=${view.phaseId} batch=${view.batchId} batchRevision=${view.batchRevision} candidate=${view.candidateId}@${view.candidateRevision} integrationEvidence=${view.integrationEvidenceId} verificationEvidence=${view.verificationEvidenceId} approval=${view.approvalId ?? 'none'} summaryDigest=${view.summaryDigest ?? 'none'} phaseCompleted=false${view.replayed ? '（replayed）' : ''}\n  ${view.note}\n`;
+}
 
 export interface IntegrationPlanCliView {
   readonly scope: 'integration-plan';

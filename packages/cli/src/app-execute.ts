@@ -143,6 +143,12 @@ import type { PlanningStartInputDocument } from './app/planning.js';
 import {
   buildIntegrationPlanCliView,
   formatIntegrationPlanView,
+  buildBatchDeliveryView,
+  formatBatchDeliveryView,
+  buildBatchObservationView,
+  formatBatchObservationView,
+  buildBatchDeliveryCommandView,
+  formatBatchDeliveryCommandView,
   buildFeatureDeliveryView,
   buildFeatureFinalApprovalView,
   buildFeatureFinalizeView,
@@ -220,6 +226,7 @@ import type {
   ParsedReceiptGet,
   ParsedTaskPrepare,
   ParsedTaskStrategy,
+  ParsedPhaseDeliveryApprove,
 } from './app/args.js';
 import type {
   WorkspaceDiscardPreview,
@@ -1379,6 +1386,24 @@ async function executePlanCommand(
       );
       return emitCommandReceipt(io, command, receipt);
     }
+    case 'phase.delivery-approve': {
+      const phaseCommand = command as ParsedPhaseDeliveryApprove;
+      const issuedAt = await replayIssuedAt(client, phaseCommand.explicitCommandId);
+      const receipt = await client.approvePhaseDelivery(
+        {
+          projectId: phaseCommand.projectId,
+          phaseId: phaseCommand.phaseId,
+          batchId: phaseCommand.batchId,
+          expectedRevision: phaseCommand.revision,
+          candidateId: phaseCommand.candidateId,
+          expectedCandidateRevision: phaseCommand.candidateRevision,
+        },
+        envelopeIdentityOptions(phaseCommand.explicitCommandId, issuedAt),
+      );
+      if (receipt.status !== 'completed') return emitCommandReceipt(io, command, receipt);
+      const view = buildBatchDeliveryCommandView(receipt.commandId, receipt.replayed, 'phase.delivery.approve', receipt.result as Record<string, unknown>);
+      return emitSuccess(io, command, receipt.result, formatBatchDeliveryCommandView(view));
+    }
     case 'phase.labels':
     case 'feature.labels':
     case 'task.labels': {
@@ -1879,6 +1904,37 @@ async function executeExecutionCommand(
         (commandId, replayed, result) => buildExecutionReviseView(commandId, replayed, result),
         formatExecutionReviseView,
       );
+    }
+    case 'execution.batch-delivery': {
+      const result = await client.getBatchDelivery(command.projectId, command.batchId, {
+        ...(command.limit !== undefined ? { limit: command.limit } : {}),
+        ...(command.cursor !== undefined ? { cursor: command.cursor } : {}),
+      });
+      const view = buildBatchDeliveryView(result);
+      return emitSuccess(io, command, result, formatBatchDeliveryView(view));
+    }
+    case 'execution.batch-observe': {
+      const result = await client.observeBatch(command.projectId, command.batchId, {
+        ...(command.limit !== undefined ? { limit: command.limit } : {}),
+        ...(command.cursor !== undefined ? { cursor: command.cursor } : {}),
+      });
+      const view = buildBatchObservationView(result);
+      return emitSuccess(io, command, result, formatBatchObservationView(view));
+    }
+    case 'execution.finalize': {
+      const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+      const receipt = await client.finalizeBatch(
+        {
+          projectId: command.projectId,
+          phaseId: command.phaseId,
+          batchId: command.batchId,
+          expectedRevision: command.revision,
+        },
+        envelopeIdentityOptions(command.explicitCommandId, issuedAt),
+      );
+      if (receipt.status !== 'completed') return emitCommandReceipt(io, command, receipt);
+      const view = buildBatchDeliveryCommandView(receipt.commandId, receipt.replayed, 'execution.batch.finalize', receipt.result as Record<string, unknown>);
+      return emitSuccess(io, command, receipt.result, formatBatchDeliveryCommandView(view));
     }
     /* ------------------------------------------------------------ *
      * P03-4 / F-009 调度诊断与 Attempt 审计只读查询

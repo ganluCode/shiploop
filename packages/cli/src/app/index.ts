@@ -63,6 +63,9 @@ export type {
   ParsedExecutionRetryFinal,
   ParsedExecutionControl,
   ParsedExecutionBatchControl,
+  ParsedExecutionBatchDelivery,
+  ParsedExecutionFinalize,
+  ParsedPhaseDeliveryApprove,
   ParsedExecutionRecovery,
   ParsedTaskGet,
   ParsedTaskInputs,
@@ -88,6 +91,9 @@ export type {
 export { getAppCliHelp } from './help.js';
 export {
   FEATURE_FINAL_APPROVAL_NOTE,
+  buildBatchDeliveryView,
+  buildBatchObservationView,
+  buildBatchDeliveryCommandView,
   buildIntegrationPlanCliView,
   buildFeatureDeliveryView,
   buildFeatureFinalApprovalView,
@@ -95,6 +101,9 @@ export {
   buildGitOperationDetailView,
   buildGitOperationListView,
   buildGitOperationRecordView,
+  formatBatchDeliveryView,
+  formatBatchObservationView,
+  formatBatchDeliveryCommandView,
   formatIntegrationPlanView,
   formatFeatureDeliveryView,
   formatFeatureFinalApprovalView,
@@ -104,6 +113,9 @@ export {
   gitOperationCommitted,
 } from './delivery.js';
 export type {
+  BatchDeliveryCliView,
+  BatchObservationCliView,
+  BatchDeliveryCommandCliView,
   IntegrationPlanCliView,
   FeatureDeliveryCliView,
   FeatureFinalApprovalCliView,

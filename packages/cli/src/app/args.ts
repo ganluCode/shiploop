@@ -85,6 +85,7 @@ export type AppCliCommandId =
   | 'phase.list'
   | 'phase.get'
   | 'phase.labels'
+  | 'phase.delivery-approve'
   | 'feature.import'
   | 'feature.list'
   | 'feature.get'
@@ -118,6 +119,9 @@ export type AppCliCommandId =
   | 'execution.start'
   | 'execution.budget'
   | 'execution.revise'
+  | 'execution.batch-delivery'
+  | 'execution.batch-observe'
+  | 'execution.finalize'
   | 'execution.schedule'
   | 'execution.attempts'
   | 'execution.diagnostics'
@@ -179,6 +183,7 @@ export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'phase.list',
   'phase.get',
   'phase.labels',
+  'phase.delivery-approve',
   'feature.import',
   'feature.list',
   'feature.get',
@@ -212,6 +217,9 @@ export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'execution.start',
   'execution.budget',
   'execution.revise',
+  'execution.batch-delivery',
+  'execution.batch-observe',
+  'execution.finalize',
   'execution.schedule',
   'execution.attempts',
   'execution.diagnostics',
@@ -811,6 +819,16 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
     maxPositionals: 1,
     positionalFields: ['phaseId'],
   },
+  'phase.delivery-approve': {
+    command: 'phase',
+    commandId: 'phase.delivery-approve',
+    valueFlags: ['--project', '--batch', '--candidate', '--revision', '--candidate-revision', '--command-id'],
+    boolFlags: ['--confirm'],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['phaseId'],
+  },
   'feature.import': {
     command: 'feature',
     commandId: 'feature.import',
@@ -1113,6 +1131,36 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
     commandId: 'execution.revise',
     valueFlags: ['--project', '--revision', '--reason', '--input', '--command-id'],
     boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['batchId'],
+  },
+  'execution.batch-delivery': {
+    command: 'execution',
+    commandId: 'execution.batch-delivery',
+    valueFlags: ['--project', '--limit', '--cursor'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['batchId'],
+  },
+  'execution.batch-observe': {
+    command: 'execution',
+    commandId: 'execution.batch-observe',
+    valueFlags: ['--project', '--limit', '--cursor'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['batchId'],
+  },
+  'execution.finalize': {
+    command: 'execution',
+    commandId: 'execution.finalize',
+    valueFlags: ['--project', '--phase', '--revision', '--command-id'],
+    boolFlags: ['--confirm'],
     repeatableFlags: [],
     minPositionals: 1,
     maxPositionals: 1,
@@ -1439,6 +1487,7 @@ const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, A
       list: 'phase.list',
       get: 'phase.get',
       labels: 'phase.labels',
+      'delivery-approve': 'phase.delivery-approve',
     },
     feature: {
       import: 'feature.import',
@@ -1477,6 +1526,9 @@ const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, A
       start: 'execution.start',
       budget: 'execution.budget',
       revise: 'execution.revise',
+      'batch-delivery': 'execution.batch-delivery',
+      'batch-observe': 'execution.batch-observe',
+      finalize: 'execution.finalize',
       schedule: 'execution.schedule',
       attempts: 'execution.attempts',
       diagnostics: 'execution.diagnostics',
@@ -3071,6 +3123,56 @@ export interface ParsedExecutionBatchControl {
   readonly batchId: string;
 }
 
+/** P05-9 Batch delivery fixed-scope read-only projection. */
+export interface ParsedExecutionBatchDelivery {
+  readonly kind: 'command';
+  readonly command: 'execution';
+  readonly commandId: 'execution.batch-delivery' | 'execution.batch-observe';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly batchId: string;
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+
+/** P05-9 Batch finalization: explicit CAS and confirmation are required. */
+export interface ParsedExecutionFinalize {
+  readonly kind: 'command';
+  readonly command: 'execution';
+  readonly commandId: 'execution.finalize';
+  readonly operation: 'execution.batch.finalize';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly phaseId: string;
+  readonly batchId: string;
+  readonly revision: number;
+  readonly confirm: true;
+  readonly explicitCommandId?: string;
+}
+
+/** P05-9 Phase delivery candidate approval, bound to Batch/Candidate revisions. */
+export interface ParsedPhaseDeliveryApprove {
+  readonly kind: 'command';
+  readonly command: 'phase';
+  readonly commandId: 'phase.delivery-approve';
+  readonly operation: 'phase.delivery.approve';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly phaseId: string;
+  readonly batchId: string;
+  readonly candidateId: string;
+  readonly revision: number;
+  readonly candidateRevision: number;
+  readonly confirm: true;
+  readonly explicitCommandId?: string;
+}
+
 /** P03-9 / F-015 Run 恢复诊断（execution.run.recovery.get；只读）。 */
 export interface ParsedExecutionRecovery {
   readonly kind: 'command';
@@ -3453,6 +3555,9 @@ export type ParsedAppCliCommand =
   | ParsedExecutionRetryFinal
   | ParsedExecutionControl
   | ParsedExecutionBatchControl
+  | ParsedExecutionBatchDelivery
+  | ParsedExecutionFinalize
+  | ParsedPhaseDeliveryApprove
   | ParsedExecutionRecovery
   | ParsedWorkspaceList
   | ParsedWorkspaceGet
@@ -3985,6 +4090,33 @@ function buildExecution(
         ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
       };
     }
+    case 'execution.batch-delivery':
+    case 'execution.batch-observe': {
+      return {
+        ...base,
+        command: 'execution',
+        commandId: spec.commandId,
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        batchId: requireBatchId(scan.positionals[0] as string, state),
+        ...optionalPlanListPage(scan, state),
+      };
+    }
+    case 'execution.finalize': {
+      if (!scan.bools.has('--confirm')) fail(state, 'confirmation_required', 'confirm');
+      const explicitCommandId = optionalCommandId(scan, state);
+      return {
+        ...base,
+        command: 'execution',
+        commandId: 'execution.finalize',
+        operation: 'execution.batch.finalize',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        phaseId: requirePlanIdOption(scan, '--phase', state, 'phaseId'),
+        batchId: requireBatchId(scan.positionals[0] as string, state),
+        revision: requireRevision(scan, state),
+        confirm: true,
+        ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
+      };
+    }
     case 'execution.schedule': {
       return {
         ...base,
@@ -4512,6 +4644,27 @@ function buildPlanEntity(
         command: 'phase',
         commandId: 'phase.get',
         phaseId: requirePlanId(scan.positionals[0] as string, state, 'phaseId'),
+      };
+    }
+    case 'phase.delivery-approve': {
+      if (!scan.bools.has('--confirm')) fail(state, 'confirmation_required', 'confirm');
+      const explicitCommandId = optionalCommandId(scan, state);
+      const candidateRevisionRaw = requireOption(scan, '--candidate-revision', state, 'candidateRevision');
+      const candidateRevision = parseUnsignedInteger(candidateRevisionRaw);
+      if (candidateRevision === undefined || candidateRevision < 1) fail(state, 'invalid_revision', 'candidateRevision');
+      return {
+        ...base,
+        command: 'phase',
+        commandId: 'phase.delivery-approve',
+        operation: 'phase.delivery.approve',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        phaseId: requirePlanId(scan.positionals[0] as string, state, 'phaseId'),
+        batchId: requireBatchId(requireOption(scan, '--batch', state, 'batch'), state),
+        candidateId: requirePlanId(requireOption(scan, '--candidate', state, 'candidate'), state, 'candidateId'),
+        revision: requireRevision(scan, state),
+        candidateRevision,
+        confirm: true,
+        ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
       };
     }
     case 'phase.labels':
