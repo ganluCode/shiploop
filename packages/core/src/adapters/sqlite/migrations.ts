@@ -3783,6 +3783,67 @@ WHEN NEW.state = 'released' AND EXISTS (SELECT 1 FROM git_agent_repair_attempts 
 BEGIN SELECT RAISE(ABORT, 'repair writer stop unconfirmed'); END;
 `;
 
+const MIGRATION_046_SQL = `
+-- P05-9 / F-003: durable Phase delivery candidates. Identity and frozen inputs
+-- are immutable; lifecycle transitions use application CAS on revision.
+CREATE TABLE phase_delivery_candidates (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  command_id TEXT NOT NULL,
+  phase_id TEXT NOT NULL,
+  batch_id TEXT NOT NULL,
+  batch_revision INTEGER NOT NULL,
+  scope_digest TEXT NOT NULL,
+  input_digest TEXT NOT NULL,
+  target_baseline TEXT NOT NULL,
+  approved_inputs TEXT NOT NULL,
+  leaf_feature_ids TEXT NOT NULL,
+  merge_order TEXT NOT NULL,
+  leaves TEXT NOT NULL,
+  verification_scope TEXT NOT NULL,
+  strategy_summary TEXT NOT NULL,
+  status TEXT NOT NULL,
+  integration TEXT,
+  verification TEXT,
+  workspace_preserved INTEGER NOT NULL DEFAULT 0,
+  CONSTRAINT phase_delivery_candidates_revision_check CHECK (revision >= 1),
+  CONSTRAINT phase_delivery_candidates_batch_revision_check CHECK (batch_revision >= 1),
+  CONSTRAINT phase_delivery_candidates_digest_check CHECK (
+    length(scope_digest) = 64 AND scope_digest NOT GLOB '*[^0-9a-f]*'
+    AND length(input_digest) = 64 AND input_digest NOT GLOB '*[^0-9a-f]*'
+  ),
+  CONSTRAINT phase_delivery_candidates_target_baseline_check CHECK (length(target_baseline) IN (40, 64) AND target_baseline NOT GLOB '*[^0-9a-f]*'),
+  CONSTRAINT phase_delivery_candidates_status_check CHECK (status IN ('pending_integration', 'awaiting_verification', 'reconciliation_required', 'blocked', 'ready_for_phase_approval')),
+  CONSTRAINT phase_delivery_candidates_inputs_json_check CHECK (json_valid(approved_inputs) AND json_type(approved_inputs) = 'array'),
+  CONSTRAINT phase_delivery_candidates_features_json_check CHECK (json_valid(leaf_feature_ids) AND json_type(leaf_feature_ids) = 'array' AND json_valid(merge_order) AND json_type(merge_order) = 'array' AND json_valid(leaves) AND json_type(leaves) = 'array'),
+  CONSTRAINT phase_delivery_candidates_scope_json_check CHECK (json_valid(verification_scope) AND json_type(verification_scope) = 'array' AND json_valid(strategy_summary) AND json_type(strategy_summary) = 'object'),
+  CONSTRAINT phase_delivery_candidates_result_json_check CHECK ((integration IS NULL OR (json_valid(integration) AND json_type(integration) = 'object')) AND (verification IS NULL OR (json_valid(verification) AND json_type(verification) = 'object'))),
+  CONSTRAINT phase_delivery_candidates_workspace_check CHECK (workspace_preserved IN (0, 1)),
+  CONSTRAINT phase_delivery_candidates_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT phase_delivery_candidates_phase_fk FOREIGN KEY (project_id, phase_id) REFERENCES phases (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT phase_delivery_candidates_batch_fk FOREIGN KEY (project_id, batch_id) REFERENCES execution_batches (project_id, id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX phase_delivery_candidates_project_id_id_unique ON phase_delivery_candidates (project_id, id);
+CREATE UNIQUE INDEX phase_delivery_candidates_command_unique ON phase_delivery_candidates (project_id, command_id);
+CREATE INDEX phase_delivery_candidates_batch_index ON phase_delivery_candidates (project_id, batch_id, updated_at, id);
+CREATE TRIGGER phase_delivery_candidates_batch_gate BEFORE INSERT ON phase_delivery_candidates
+WHEN NOT EXISTS (SELECT 1 FROM execution_batches WHERE project_id = NEW.project_id AND id = NEW.batch_id AND phase_id = NEW.phase_id AND status = 'succeeded')
+BEGIN SELECT RAISE(ABORT, 'phase delivery candidate requires succeeded parent Batch'); END;
+CREATE TRIGGER phase_delivery_candidates_identity_immutable BEFORE UPDATE ON phase_delivery_candidates
+WHEN NEW.id IS NOT OLD.id OR NEW.created_at IS NOT OLD.created_at OR NEW.project_id IS NOT OLD.project_id
+ OR NEW.command_id IS NOT OLD.command_id OR NEW.phase_id IS NOT OLD.phase_id OR NEW.batch_id IS NOT OLD.batch_id
+ OR NEW.batch_revision IS NOT OLD.batch_revision OR NEW.scope_digest IS NOT OLD.scope_digest OR NEW.input_digest IS NOT OLD.input_digest
+ OR NEW.target_baseline IS NOT OLD.target_baseline OR NEW.approved_inputs IS NOT OLD.approved_inputs OR NEW.leaf_feature_ids IS NOT OLD.leaf_feature_ids
+ OR NEW.merge_order IS NOT OLD.merge_order OR NEW.leaves IS NOT OLD.leaves OR NEW.verification_scope IS NOT OLD.verification_scope
+ OR NEW.strategy_summary IS NOT OLD.strategy_summary
+BEGIN SELECT RAISE(ABORT, 'phase delivery candidate frozen identity is immutable'); END;
+CREATE TRIGGER phase_delivery_candidates_retained BEFORE DELETE ON phase_delivery_candidates
+BEGIN SELECT RAISE(ABORT, 'phase delivery candidate is retained'); END;
+`;
+
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     version: 1,
@@ -3893,4 +3954,5 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 43, sql: MIGRATION_043_SQL, checksum: sha256Hex(MIGRATION_043_SQL), foreignKeysOff: true },
   { version: 44, sql: MIGRATION_044_SQL, checksum: sha256Hex(MIGRATION_044_SQL) },
   { version: 45, sql: MIGRATION_045_SQL, checksum: sha256Hex(MIGRATION_045_SQL) },
+  { version: 46, sql: MIGRATION_046_SQL, checksum: sha256Hex(MIGRATION_046_SQL) },
 ];

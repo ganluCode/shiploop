@@ -220,9 +220,7 @@ function validateSnapshot(snapshot: BatchFinalizationBatchSnapshot, request: Bat
     fail('batch_identity_mismatch');
   }
   if (snapshot.approved !== true) fail('batch_not_approved');
-  if (snapshot.status === 'failed' || snapshot.status === 'cancelled' || snapshot.status === 'interrupted') {
-    fail('batch_not_successful', { status: snapshot.status });
-  }
+  if (snapshot.status !== 'succeeded') fail('batch_not_terminal', { status: snapshot.status });
   if (snapshot.featureIds.length === 0) fail('empty_batch');
   if (new Set(snapshot.featureIds).size !== snapshot.featureIds.length) fail('duplicate_batch_feature');
   validateStableId(snapshot.phaseId, { operation: `${OPERATION}.validate` }, 'phaseId');
