@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "phase": "P05",
+  "stepOrder": [
+    "p05-trusted-index",
+    "p05-affected-regression",
+    "p05-cross-layer-smoke",
+    "p05-manual-gate"
+  ],
+  "trustedIndexRoot": "test/index/phases/P05/features",
+  "requiredFeatures": ["P05-1", "P05-2", "P05-3", "P05-4", "P05-5", "P05-6", "P05-7", "P05-8", "P05-9"],
+  "defaultExecution": {
+    "mode": "offline",
+    "network": "denied",
+    "llmCalls": false,
+    "fullRegression": false
+  },
+  "explicitOptions": {
+    "fullRegression": "--full-regression",
+    "live": "--live-authorized",
+    "manual": "--manual-record"
+  },
+  "evidence": {
+    "requiredFields": ["scenarioId", "inputDigest", "testedCommit", "command", "exitCode", "status", "evidenceRefs", "usageSource", "cleanup"],
+    "statuses": ["pass", "fail", "not_run"],
+    "notRunCountsAsPassed": false
+  }
+}

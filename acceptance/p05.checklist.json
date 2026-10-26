@@ -1,0 +1,631 @@
+{
+  "checklistVersion": 1,
+  "phase": "P05",
+  "layers": [
+    "unit",
+    "feature-integration",
+    "phase-acceptance"
+  ],
+  "executionTypes": [
+    "offline",
+    "live",
+    "manual",
+    "postponed"
+  ],
+  "evidenceCategories": [
+    "command-exit",
+    "sqlite",
+    "git",
+    "process",
+    "artifact",
+    "report",
+    "manifest",
+    "live",
+    "manual",
+    "sha",
+    "usage",
+    "cleanup"
+  ],
+  "countRule": "必需项全部 pass 才算通过；not_run 和人工 pending 不计入通过；deferred 项不参与通过计数；覆盖按必需断言判定，不按测试数量判断",
+  "items": [
+    {
+      "id": "P05-FR1-OFFLINE-CLOSURE",
+      "group": "fr",
+      "title": "FR-1 离线闭环与证据身份",
+      "layer": "phase-acceptance",
+      "execution": "offline",
+      "features": [
+        "P05-1",
+        "P05-2",
+        "P05-3",
+        "P05-4",
+        "P05-5",
+        "P05-6",
+        "P05-7",
+        "P05-8",
+        "P05-9"
+      ],
+      "scenarioIds": [
+        "I01",
+        "I02",
+        "I03",
+        "I04",
+        "I05",
+        "I06",
+        "I07",
+        "I08",
+        "I09"
+      ],
+      "fr": [
+        "FR-1"
+      ],
+      "acceptanceRefs": [
+        "FR-1",
+        "AC-1",
+        "AC-3"
+      ],
+      "assertions": [
+        "阶段入口使用 FakeRuntime/脚本化 Runtime，不调用模型或网络，并逐项绑定场景、输入摘要和受测完整 SHA",
+        "SQLite、Git、文件、进程和清理事实由真实临时资源断言，失败、缺证据和 not_run 保留原状"
+      ],
+      "evidence": [
+        "command-exit",
+        "artifact",
+        "manifest",
+        "sha",
+        "usage",
+        "cleanup"
+      ]
+    },
+    {
+      "id": "P05-FR2-CONCURRENCY-INTEGRATION",
+      "group": "fr",
+      "title": "FR-2 并发、依赖与确定性集成",
+      "layer": "phase-acceptance",
+      "execution": "offline",
+      "features": [
+        "P05-2",
+        "P05-3",
+        "P05-4",
+        "P05-5",
+        "P05-6",
+        "P05-7",
+        "P05-9"
+      ],
+      "scenarioIds": [
+        "I02",
+        "I03",
+        "I05",
+        "I07",
+        "I08"
+      ],
+      "fr": [
+        "FR-2"
+      ],
+      "acceptanceRefs": [
+        "FR-2",
+        "AC-1",
+        "AC-3"
+      ],
+      "assertions": [
+        "A/B 只在批准并发和资源允许时重叠，C 在固定前置成果和组合验证前保持 blocked/pending",
+        "Batch 范围、预算、锁、Git 集成顺序和叶子汇总均以持久事实核对，追加 Feature 使用新 Batch"
+      ],
+      "evidence": [
+        "sqlite",
+        "git",
+        "process",
+        "artifact",
+        "sha",
+        "usage"
+      ]
+    },
+    {
+      "id": "P05-FR3-FAULT-RECOVERY",
+      "group": "fr",
+      "title": "FR-3 故障、恢复与有界修复",
+      "layer": "phase-acceptance",
+      "execution": "offline",
+      "features": [
+        "P05-4",
+        "P05-5",
+        "P05-7",
+        "P05-8"
+      ],
+      "scenarioIds": [
+        "I04",
+        "I05",
+        "I06"
+      ],
+      "fr": [
+        "FR-3"
+      ],
+      "acceptanceRefs": [
+        "FR-3",
+        "AC-1",
+        "AC-3"
+      ],
+      "assertions": [
+        "重复信号、崩溃、租约过期、迟到结果、取消和未确认停止分别保留 owner fencing、资源和进程证据",
+        "Git 冲突修复只使用授权范围和父预算，失败或预算耗尽阻塞并保留现场，不由模型自报成功"
+      ],
+      "evidence": [
+        "sqlite",
+        "git",
+        "process",
+        "artifact",
+        "usage",
+        "cleanup"
+      ]
+    },
+    {
+      "id": "P05-FR4-REPORT-MANUAL-GATE",
+      "group": "fr",
+      "title": "FR-4 报告完整性与人工放行",
+      "layer": "phase-acceptance",
+      "execution": "manual",
+      "features": [
+        "P05-1",
+        "P05-2",
+        "P05-3",
+        "P05-4",
+        "P05-5",
+        "P05-6",
+        "P05-7",
+        "P05-8",
+        "P05-9"
+      ],
+      "scenarioIds": [
+        "I09"
+      ],
+      "fr": [
+        "FR-4"
+      ],
+      "acceptanceRefs": [
+        "FR-4",
+        "AC-2",
+        "AC-4"
+      ],
+      "assertions": [
+        "报告逐项记录状态、实际命令、退出码、耗时、证据哈希、受测完整 SHA、用量来源、清理事实和未执行原因",
+        "工程/集成、live 证据和负责人确认缺一不可；机器成功不能覆盖 manual pending 或 rejected"
+      ],
+      "evidence": [
+        "report",
+        "manual",
+        "manifest",
+        "sha",
+        "usage",
+        "cleanup"
+      ]
+    },
+    {
+      "id": "P05-I01-PLANNING-APPROVAL",
+      "group": "scenario",
+      "title": "I01 一次性规划候选批准",
+      "layer": "feature-integration",
+      "execution": "offline",
+      "features": [
+        "P05-1",
+        "P05-2",
+        "P05-3"
+      ],
+      "scenarioIds": [
+        "I01"
+      ],
+      "fr": [
+        "FR-1",
+        "FR-2"
+      ],
+      "acceptanceRefs": [
+        "I01",
+        "P05-1",
+        "P05-2",
+        "P05-3"
+      ],
+      "assertions": [
+        "一次规划只产生一份冻结候选，未经批准不可执行；重复、跨项目和环依赖被拒绝并记录原因",
+        "候选、批准、Task 导入和固定 Batch 的身份与 digest 保持一致"
+      ],
+      "evidence": [
+        "sqlite",
+        "artifact",
+        "command-exit",
+        "sha",
+        "usage"
+      ]
+    },
+    {
+      "id": "P05-I02-AB-CONVERGENCE",
+      "group": "scenario",
+      "title": "I02 A/B 并发与 C 集成前阻塞",
+      "layer": "feature-integration",
+      "execution": "offline",
+      "features": [
+        "P05-4",
+        "P05-6",
+        "P05-7"
+      ],
+      "scenarioIds": [
+        "I02"
+      ],
+      "fr": [
+        "FR-2"
+      ],
+      "acceptanceRefs": [
+        "I02",
+        "P05-4",
+        "P05-6",
+        "P05-7"
+      ],
+      "assertions": [
+        "A/B 在共同基线保留独立成果，C 在两者成果、合并顺序和组合验证证据齐全前保持 blocked/pending",
+        "输入 SHA、目标基线或策略漂移会使旧集成证据失效"
+      ],
+      "evidence": [
+        "sqlite",
+        "git",
+        "artifact",
+        "sha",
+        "usage"
+      ]
+    },
+    {
+      "id": "P05-I03-RESOURCE-MUTEX",
+      "group": "scenario",
+      "title": "I03 共享资源互斥",
+      "layer": "feature-integration",
+      "execution": "offline",
+      "features": [
+        "P05-4",
+        "P05-5"
+      ],
+      "scenarioIds": [
+        "I03"
+      ],
+      "fr": [
+        "FR-2",
+        "FR-3"
+      ],
+      "acceptanceRefs": [
+        "I03",
+        "P05-4",
+        "P05-5"
+      ],
+      "assertions": [
+        "共享项目、迁移、契约或工作区资源按统一顺序互斥，独立资源仍可推进且不死锁",
+        "锁竞争等待不启动越权 Runner、不重复扣预算，租约和 owner 事实可解释"
+      ],
+      "evidence": [
+        "sqlite",
+        "process",
+        "artifact",
+        "usage",
+        "cleanup"
+      ]
+    },
+    {
+      "id": "P05-I04-RECOVERY-FENCING",
+      "group": "scenario",
+      "title": "I04 崩溃、取消与迟到结果恢复",
+      "layer": "feature-integration",
+      "execution": "offline",
+      "features": [
+        "P05-4",
+        "P05-5",
+        "P05-7"
+      ],
+      "scenarioIds": [
+        "I04"
+      ],
+      "fr": [
+        "FR-3"
+      ],
+      "acceptanceRefs": [
+        "I04",
+        "P05-4",
+        "P05-5",
+        "P05-7"
+      ],
+      "assertions": [
+        "重复派发、重启补扫、进程崩溃和租约过期不重复启动同一 Feature；旧 owner 迟到结果不能覆盖或释放新资源",
+        "取消、暂停和未确认停止分别保留状态、进程、工作区和清理事实"
+      ],
+      "evidence": [
+        "sqlite",
+        "process",
+        "artifact",
+        "usage",
+        "cleanup"
+      ]
+    },
+    {
+      "id": "P05-I05-GIT-INTEGRATION",
+      "group": "scenario",
+      "title": "I05 确定性 Git 集成与冲突留场",
+      "layer": "feature-integration",
+      "execution": "offline",
+      "features": [
+        "P05-6",
+        "P05-7"
+      ],
+      "scenarioIds": [
+        "I05"
+      ],
+      "fr": [
+        "FR-2",
+        "FR-3"
+      ],
+      "acceptanceRefs": [
+        "I05",
+        "P05-6",
+        "P05-7"
+      ],
+      "assertions": [
+        "无冲突时组合工作区包含全部固定前置成果并经验证；冲突、验证失败和回执前崩溃均保留可恢复意图与现场",
+        "重复集成按 operationId 幂等，不以漂移 HEAD 或未核对的文件状态放行"
+      ],
+      "evidence": [
+        "git",
+        "sqlite",
+        "artifact",
+        "sha",
+        "usage",
+        "cleanup"
+      ]
+    },
+    {
+      "id": "P05-I06-BOUNDED-REPAIR",
+      "group": "scenario",
+      "title": "I06 有界 GitAgent 冲突修复",
+      "layer": "feature-integration",
+      "execution": "offline",
+      "features": [
+        "P05-8"
+      ],
+      "scenarioIds": [
+        "I06"
+      ],
+      "fr": [
+        "FR-3"
+      ],
+      "acceptanceRefs": [
+        "I06",
+        "P05-8"
+      ],
+      "assertions": [
+        "修复 Runtime 只能使用保存的冲突上下文和授权写入范围，并受父预算、取消和次数上限约束",
+        "越界、无效修复、预算耗尽或停止不确定均阻塞并保留候选、日志和资源"
+      ],
+      "evidence": [
+        "git",
+        "sqlite",
+        "process",
+        "artifact",
+        "usage",
+        "cleanup"
+      ]
+    },
+    {
+      "id": "P05-I07-LEAF-DELIVERY",
+      "group": "scenario",
+      "title": "I07 并行叶子汇总与交付",
+      "layer": "feature-integration",
+      "execution": "offline",
+      "features": [
+        "P05-9"
+      ],
+      "scenarioIds": [
+        "I07"
+      ],
+      "fr": [
+        "FR-2",
+        "FR-4"
+      ],
+      "acceptanceRefs": [
+        "I07",
+        "P05-9"
+      ],
+      "assertions": [
+        "无共同后继的叶子全部纳入 Batch/Phase 汇总，Task 完成、Feature 交付、集成通过和 Phase 批准分层记录",
+        "缺叶子、缺验证或缺人工批准不得生成可放行交付结论"
+      ],
+      "evidence": [
+        "sqlite",
+        "git",
+        "report",
+        "artifact",
+        "sha",
+        "usage"
+      ]
+    },
+    {
+      "id": "P05-I08-APPEND-BATCH",
+      "group": "scenario",
+      "title": "I08 追加 Feature 与新 Batch",
+      "layer": "feature-integration",
+      "execution": "offline",
+      "features": [
+        "P05-2",
+        "P05-3",
+        "P05-9"
+      ],
+      "scenarioIds": [
+        "I08"
+      ],
+      "fr": [
+        "FR-2"
+      ],
+      "acceptanceRefs": [
+        "I08",
+        "P05-2",
+        "P05-3",
+        "P05-9"
+      ],
+      "assertions": [
+        "活动 Batch 的范围、策略和累计预算冻结，追加 Feature 不扩大旧 Batch 或隐式创建成员",
+        "新 Feature 只能通过显式新 Batch 进入执行，旧 Batch 的结果和计数保持不变"
+      ],
+      "evidence": [
+        "sqlite",
+        "artifact",
+        "sha",
+        "usage"
+      ]
+    },
+    {
+      "id": "P05-I09-INPUT-BUDGET-INTEGRITY",
+      "group": "scenario",
+      "title": "I09 输入漂移、预算耗尽与验收失败关闭",
+      "layer": "phase-acceptance",
+      "execution": "offline",
+      "features": [
+        "P05-1",
+        "P05-2",
+        "P05-3",
+        "P05-4",
+        "P05-5",
+        "P05-6",
+        "P05-7",
+        "P05-8",
+        "P05-9"
+      ],
+      "scenarioIds": [
+        "I09"
+      ],
+      "fr": [
+        "FR-1",
+        "FR-3",
+        "FR-4"
+      ],
+      "acceptanceRefs": [
+        "I09",
+        "P05-10"
+      ],
+      "assertions": [
+        "输入摘要、受测 SHA、预算、报告身份或证据哈希不匹配时 fail-closed，不覆盖既有成功证据",
+        "步骤错误、超时、清理不确定和证据写入失败保留前序结果、现场及 not_run 原因"
+      ],
+      "evidence": [
+        "command-exit",
+        "artifact",
+        "manifest",
+        "sha",
+        "usage",
+        "cleanup"
+      ]
+    },
+    {
+      "id": "P05-LIVE-GIT-AGENT-AUTH",
+      "group": "live",
+      "title": "P05 live GitAgent 授权与有界请求",
+      "layer": "phase-acceptance",
+      "execution": "live",
+      "features": [
+        "P05-8"
+      ],
+      "scenarioIds": [
+        "I06"
+      ],
+      "fr": [
+        "FR-3"
+      ],
+      "acceptanceRefs": [
+        "FR-3",
+        "I06",
+        "P05-8"
+      ],
+      "assertions": [
+        "只有负责人明确授权的临时 Git 项目、provider/model、请求预算和写入范围才能发起 live 调用",
+        "缺失授权、认证或真实证据保持 not_run/failed，离线 Fake 结果不能折算 live 通过"
+      ],
+      "evidence": [
+        "live",
+        "git",
+        "process",
+        "command-exit",
+        "sha",
+        "usage",
+        "cleanup"
+      ]
+    },
+    {
+      "id": "P05-MANUAL-OWNER-GATE",
+      "group": "manual",
+      "title": "P05 负责人 macOS 操作与阶段放行",
+      "layer": "phase-acceptance",
+      "execution": "manual",
+      "features": [
+        "P05-1",
+        "P05-2",
+        "P05-3",
+        "P05-4",
+        "P05-5",
+        "P05-6",
+        "P05-7",
+        "P05-8",
+        "P05-9"
+      ],
+      "scenarioIds": [
+        "I09"
+      ],
+      "fr": [
+        "FR-4"
+      ],
+      "acceptanceRefs": [
+        "FR-4",
+        "AC-2",
+        "AC-4"
+      ],
+      "assertions": [
+        "负责人按 macOS 清单记录完整 SHA、实际命令、退出码、用量来源、清理事实和未执行项，并明确确认时间与结论",
+        "pending/rejected、缺签署、SHA 不匹配或 live not_run 时阶段结论不能通过"
+      ],
+      "evidence": [
+        "manual",
+        "report",
+        "manifest",
+        "sha",
+        "usage",
+        "cleanup"
+      ]
+    },
+    {
+      "id": "P05-POST-FULL-HISTORY-REGRESSION",
+      "group": "deferred",
+      "title": "后置：全仓历史回归",
+      "layer": "phase-acceptance",
+      "execution": "postponed",
+      "features": [
+        "P05-1",
+        "P05-2",
+        "P05-3",
+        "P05-4",
+        "P05-5",
+        "P05-6",
+        "P05-7",
+        "P05-8",
+        "P05-9"
+      ],
+      "scenarioIds": [
+        "I09"
+      ],
+      "fr": [
+        "FR-4"
+      ],
+      "acceptanceRefs": [
+        "FR-4",
+        "FULL-REGRESSION"
+      ],
+      "assertions": [
+        "全仓历史回归只能由显式 --full-regression 选项或发布验收发起，不属于默认 P05 阶段门禁",
+        "未运行全仓回归报告为 not_run，不计入阶段通过"
+      ],
+      "evidence": [
+        "command-exit",
+        "report",
+        "manifest"
+      ]
+    }
+  ]
+}

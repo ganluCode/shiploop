@@ -1,0 +1,100 @@
+{
+  "configVersion": 1,
+  "checklist": "acceptance/p05.checklist.json",
+  "reportRoot": "artifacts/acceptance/p05",
+  "requiredChecks": [
+    "P05-FR1-OFFLINE-CLOSURE",
+    "P05-FR2-CONCURRENCY-INTEGRATION",
+    "P05-FR3-FAULT-RECOVERY",
+    "P05-FR4-REPORT-MANUAL-GATE",
+    "P05-I01-PLANNING-APPROVAL",
+    "P05-I02-AB-CONVERGENCE",
+    "P05-I03-RESOURCE-MUTEX",
+    "P05-I04-RECOVERY-FENCING",
+    "P05-I05-GIT-INTEGRATION",
+    "P05-I06-BOUNDED-REPAIR",
+    "P05-I07-LEAF-DELIVERY",
+    "P05-I08-APPEND-BATCH",
+    "P05-I09-INPUT-BUDGET-INTEGRITY",
+    "P05-LIVE-GIT-AGENT-AUTH",
+    "P05-MANUAL-OWNER-GATE"
+  ],
+  "toolchain": {
+    "packageManager": "npm@10.9.3",
+    "node": "22.19.0",
+    "npm": "10.9.3",
+    "lockfile": "package-lock.json"
+  },
+  "timeouts": {
+    "stepMs": 3600000,
+    "overallMs": 7200000
+  },
+  "maxCommandOutputBytes": 262144,
+  "fakeIdentity": {
+    "provider": "fake-provider",
+    "model": "fake-model",
+    "realModel": false,
+    "network": "denied"
+  },
+  "tempResources": {
+    "git": "temp",
+    "sqlite": "temp",
+    "dataRoot": "temp",
+    "home": "temp",
+    "processes": "owned-only",
+    "reusePrevious": false
+  },
+  "executionPolicy": {
+    "offline": {
+      "runtime": "fake-or-scripted",
+      "network": "denied",
+      "llmCalls": false
+    },
+    "live": {
+      "authorizationRequired": true,
+      "boundedRequestsRequired": true,
+      "credentialsInEvidence": false
+    },
+    "manual": {
+      "ownerConfirmationRequired": true,
+      "machineMaySign": false
+    },
+    "notRun": {
+      "countsAsPassed": false
+    }
+  },
+  "reportScope": {
+    "statuses": [
+      "pass",
+      "fail",
+      "not_run"
+    ],
+    "includeEvidenceHash": true,
+    "includeManualChecklist": true,
+    "notRunCountsAsPassed": false,
+    "deferredCountsAsPassed": false
+  },
+  "fullRegression": {
+    "defaultEnabled": false,
+    "optInFlag": "--full-regression",
+    "command": [
+      "npm",
+      "test"
+    ],
+    "reason": "全仓历史回归必须由负责人显式启用，默认阶段门禁只运行可信索引及受影响范围"
+  },
+  "usageSources": [
+    "runtime-usage",
+    "command-output",
+    "manual-record",
+    "not_run"
+  ],
+  "plan": {
+    "phaseId": "2026-10-23-18-55-21_shiploop-p05-feature",
+    "stepId": "p05-acceptance",
+    "title": "P05 阶段验收契约与执行报告",
+    "scope": "FR-1/FR-2/FR-3/FR-4 及 P05-1～P05-9 的离线、live、人工和显式全仓回归开关",
+    "version": "1.0",
+    "contractDoc": "docs/p05-acceptance.md"
+  }
+}
