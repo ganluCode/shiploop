@@ -423,10 +423,30 @@ export function validateExecutionSlotClaimRecord(value: unknown): ExecutionSlotC
 }
 
 /**
- * 校验执行槽位容量：缺省 1；容量必须是受支持范围内的正整数。
+ * 校验单槽执行容量：缺省 1；公共单槽端口不接受多槽值。
  * 调度消费方仍须从不可变批准 Batch 快照解析容量，不能用可变配置覆盖它。
  */
 export function validateExecutionSlotCapacity(value: unknown = EXECUTION_SLOT_CAPACITY_DEFAULT): number {
+  const capacity = validateApprovedExecutionSlotCapacity(value);
+  if (capacity > EXECUTION_SLOT_CAPACITY_DEFAULT) {
+    const ctx = context('validateSlotCapacity', 'execution_slot_claim');
+    throw new StorageError(
+      'validation',
+      ctx.operation,
+      '执行槽位容量大于 1 尚未支持',
+      { entity: ctx.entity, details: { field: 'capacity', reason: 'capacity_unsupported', capacity } },
+    );
+  }
+  return capacity;
+}
+
+/**
+ * 校验已由批准 Batch 快照冻结的有限槽位容量。多槽只允许通过该受信装配路径进入，
+ * 不能把普通单槽配置校验的结果当成生产并发授权。
+ */
+export function validateApprovedExecutionSlotCapacity(
+  value: unknown = EXECUTION_SLOT_CAPACITY_DEFAULT,
+): number {
   const ctx = context('validateSlotCapacity', 'execution_slot_claim');
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) {
     throw validationError(ctx, 'capacity', '必须是 ≥1 的安全整数执行槽位容量', value);

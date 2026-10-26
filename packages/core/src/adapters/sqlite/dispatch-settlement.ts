@@ -21,7 +21,7 @@
  *   revision，不产生第二条完成事实。
  */
 import {
-  validateExecutionSlotCapacity,
+  validateApprovedExecutionSlotCapacity,
   validateExecutionSlotClaimRecord,
   validateRunDispatchClaimRecord,
   type ExecutionSlotClaimRecord,
@@ -170,7 +170,7 @@ export function createSqliteRunDispatchSettlement(
 ): RunDispatchSettlementAccess {
   const db = session.database;
   const clock = options.nowUtcMs ?? Date.now;
-  const configuredCapacity = options.capacity === undefined ? undefined : validateExecutionSlotCapacity(options.capacity);
+  const configuredCapacity = options.capacity === undefined ? undefined : validateApprovedExecutionSlotCapacity(options.capacity);
   const slots = createSqliteExecutionSlotAccess(session, { nowUtcMs: () => clock() });
   const featureResources = createSqliteFeatureResourceAccess(session, { nowUtcMs: () => clock() });
 

@@ -9,7 +9,7 @@
  * - 只读写 `execution_slot_claims` 与只读 `run_dispatch_claims`；不改写
  *   `workspace_leases`、`baseline_occupancy`、`git_operations`、`attempts`、
  *   `runs`、预算表，也不启动进程/网络/文件准备。槽位不是 Attempt 工作区租约；
- * - 容量在装配时用 `validateExecutionSlotCapacity` 固定（缺省 1；必须是受支持的正整数，
+ * - 容量在装配时用 `validateApprovedExecutionSlotCapacity` 固定（缺省 1；必须是批准的受支持正整数，
  *   非法值直接拒绝）；派发调用方从批准 Batch 快照传入冻结容量；
  * - 获取在同一个短写事务内重核认领行身份（项目/Feature/Run/代次/owner/Host）、
  *   认领状态与租约，再按最小空闲槽号插入；`(slot_index)` 与 `(project, run)`
@@ -21,7 +21,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import {
-  validateExecutionSlotCapacity,
+  validateApprovedExecutionSlotCapacity,
   validateExecutionSlotClaimRecord,
   type ExecutionSlotClaimRecord,
 } from '../../ports/execution-dispatch.js';
@@ -109,7 +109,7 @@ export function createSqliteExecutionSlotAccess(
   session: SqliteStorageSession,
   options: { readonly capacity?: unknown; readonly nowUtcMs?: () => number } = {},
 ): ExecutionSlotAccess {
-  const capacity = validateExecutionSlotCapacity(options.capacity);
+  const capacity = validateApprovedExecutionSlotCapacity(options.capacity);
   const db = session.database;
   const clock = options.nowUtcMs ?? Date.now;
 
