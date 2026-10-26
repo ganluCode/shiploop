@@ -109,6 +109,8 @@ const SCHEMA_TABLES = [
   ['integration_predecessor_snapshots', schema.integrationPredecessorSnapshots],
   // P05-9 / F-003：Phase 交付候选冻结事实与收尾生命周期。
   ['phase_delivery_candidates', schema.phaseDeliveryCandidates],
+  // P05-9 / F-004：人工批准绑定及失效事实。
+  ['phase_delivery_approvals', schema.phaseDeliveryApprovals],
   ['schema_migrations', schema.schemaMigrations],
 ] as const;
 
@@ -713,6 +715,9 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
         'integration_predecessor_snapshots:(project_id,plan_id)->integration_plans.(project_id,id)',
         'integration_predecessor_snapshots:(project_id,phase_id,feature_id)->features.(project_id,phase_id,id)',
         'phase_delivery_candidates:(project_id)->projects.(id)',
+        'phase_delivery_approvals:(project_id)->projects.(id)',
+        'phase_delivery_approvals:(project_id,phase_id)->phases.(project_id,id)',
+        'phase_delivery_approvals:(project_id,candidate_id)->phase_delivery_candidates.(project_id,id)',
         'phase_delivery_candidates:(project_id,phase_id)->phases.(project_id,id)',
         'phase_delivery_candidates:(project_id,batch_id)->execution_batches.(project_id,id)',
         // P03-9 / F-002 取消停止 operation（迁移 v28）：同项目 Batch/Run 关联。

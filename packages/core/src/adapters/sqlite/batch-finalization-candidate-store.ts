@@ -52,6 +52,7 @@ function candidateFromRow(row: CandidateRow): BatchFinalizationCandidate {
   }
   return {
     schemaVersion: 1,
+    revision: row.revision,
     candidateId: row.id,
     commandId: row.command_id,
     projectId: row.project_id,

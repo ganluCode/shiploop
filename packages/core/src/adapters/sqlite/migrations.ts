@@ -3844,6 +3844,116 @@ CREATE TRIGGER phase_delivery_candidates_retained BEFORE DELETE ON phase_deliver
 BEGIN SELECT RAISE(ABORT, 'phase delivery candidate is retained'); END;
 `;
 
+const MIGRATION_047_SQL = `
+-- P05-9 / F-004: human Phase delivery approval binding. Approval is an
+-- immutable evidence snapshot; invalidation and Phase pointer update are Core CAS facts.
+CREATE TABLE phases_new (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open',
+  description TEXT,
+  labels TEXT NOT NULL DEFAULT '[]',
+  delivery_status TEXT NOT NULL DEFAULT 'not_requested',
+  delivery_approval_id TEXT,
+  delivery_candidate_id TEXT,
+  delivery_batch_id TEXT,
+  delivery_summary_digest TEXT,
+  CONSTRAINT phases_revision_positive_check CHECK (revision >= 1),
+  CONSTRAINT phases_title_not_empty_check CHECK (length(title) > 0),
+  CONSTRAINT phases_status_enum_check CHECK (status IN ('open', 'closed', 'archived')),
+  CONSTRAINT phases_labels_json_array_check CHECK (json_valid(labels) AND json_type(labels) = 'array'),
+  CONSTRAINT phases_delivery_status_enum_check CHECK (delivery_status IN ('not_requested', 'awaiting_approval', 'approved', 'invalidated')),
+  CONSTRAINT phases_delivery_summary_digest_check CHECK (delivery_summary_digest IS NULL OR (length(delivery_summary_digest) = 64 AND delivery_summary_digest NOT GLOB '*[^0-9a-f]*')),
+  CONSTRAINT phases_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT
+);
+INSERT INTO phases_new (id, created_at, project_id, revision, updated_at, title, status, description, labels)
+  SELECT id, created_at, project_id, revision, updated_at, title, status, description, labels FROM phases;
+DROP TABLE phases;
+ALTER TABLE phases_new RENAME TO phases;
+CREATE UNIQUE INDEX phases_project_id_id_unique ON phases (project_id, id);
+CREATE TABLE phase_delivery_approvals (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  command_id TEXT NOT NULL,
+  actor_id TEXT NOT NULL,
+  phase_id TEXT NOT NULL,
+  batch_id TEXT NOT NULL,
+  candidate_id TEXT NOT NULL,
+  candidate_revision INTEGER NOT NULL,
+  batch_revision INTEGER NOT NULL,
+  scope_digest TEXT NOT NULL,
+  input_digest TEXT NOT NULL,
+  target_baseline TEXT NOT NULL,
+  integration_commit_sha TEXT NOT NULL,
+  integration_tree_sha TEXT NOT NULL,
+  leaf_commit_shas TEXT NOT NULL,
+  integration_evidence_id TEXT NOT NULL,
+  integration_evidence_digest TEXT NOT NULL,
+  verification_evidence_id TEXT NOT NULL,
+  verification_evidence_digest TEXT NOT NULL,
+  budget_digest TEXT NOT NULL,
+  budget_summary TEXT NOT NULL,
+  code_summary TEXT NOT NULL,
+  plan_summary TEXT NOT NULL,
+  summary_digest TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'approved',
+  invalidation_reason TEXT,
+  CONSTRAINT phase_delivery_approvals_revision_check CHECK (revision >= 1 AND candidate_revision >= 1 AND batch_revision >= 1),
+  CONSTRAINT phase_delivery_approvals_digest_check CHECK (
+    length(scope_digest) = 64 AND scope_digest NOT GLOB '*[^0-9a-f]*'
+    AND length(input_digest) = 64 AND input_digest NOT GLOB '*[^0-9a-f]*'
+    AND length(budget_digest) = 64 AND budget_digest NOT GLOB '*[^0-9a-f]*'
+    AND length(summary_digest) = 64 AND summary_digest NOT GLOB '*[^0-9a-f]*'
+  ),
+  CONSTRAINT phase_delivery_approvals_sha_check CHECK (
+    length(target_baseline) IN (40, 64) AND target_baseline NOT GLOB '*[^0-9a-f]*'
+    AND length(integration_commit_sha) IN (40, 64) AND integration_commit_sha NOT GLOB '*[^0-9a-f]*'
+    AND length(integration_tree_sha) IN (40, 64) AND integration_tree_sha NOT GLOB '*[^0-9a-f]*'
+  ),
+  CONSTRAINT phase_delivery_approvals_evidence_digest_check CHECK (
+    length(integration_evidence_digest) = 64 AND integration_evidence_digest NOT GLOB '*[^0-9a-f]*'
+    AND length(verification_evidence_digest) = 64 AND verification_evidence_digest NOT GLOB '*[^0-9a-f]*'
+  ),
+  CONSTRAINT phase_delivery_approvals_json_check CHECK (
+    json_valid(leaf_commit_shas) AND json_type(leaf_commit_shas) = 'array'
+    AND json_valid(budget_summary) AND json_type(budget_summary) = 'object'
+    AND json_valid(code_summary) AND json_type(code_summary) = 'object'
+    AND json_valid(plan_summary) AND json_type(plan_summary) = 'object'
+  ),
+  CONSTRAINT phase_delivery_approvals_status_check CHECK (
+    status IN ('approved', 'invalidated')
+    AND ((status = 'approved' AND invalidation_reason IS NULL) OR (status = 'invalidated' AND invalidation_reason IS NOT NULL))
+  ),
+  CONSTRAINT phase_delivery_approvals_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT phase_delivery_approvals_phase_fk FOREIGN KEY (project_id, phase_id) REFERENCES phases (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT phase_delivery_approvals_candidate_fk FOREIGN KEY (project_id, candidate_id) REFERENCES phase_delivery_candidates (project_id, id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX phase_delivery_approvals_project_id_id_unique ON phase_delivery_approvals (project_id, id);
+CREATE UNIQUE INDEX phase_delivery_approvals_command_unique ON phase_delivery_approvals (project_id, command_id);
+CREATE INDEX phase_delivery_approvals_candidate_index ON phase_delivery_approvals (project_id, phase_id, candidate_id, updated_at);
+CREATE TRIGGER phase_delivery_approvals_identity_immutable BEFORE UPDATE ON phase_delivery_approvals
+WHEN NEW.id IS NOT OLD.id OR NEW.created_at IS NOT OLD.created_at OR NEW.project_id IS NOT OLD.project_id
+ OR NEW.command_id IS NOT OLD.command_id OR NEW.actor_id IS NOT OLD.actor_id OR NEW.phase_id IS NOT OLD.phase_id
+ OR NEW.batch_id IS NOT OLD.batch_id OR NEW.candidate_id IS NOT OLD.candidate_id OR NEW.candidate_revision IS NOT OLD.candidate_revision
+ OR NEW.batch_revision IS NOT OLD.batch_revision OR NEW.scope_digest IS NOT OLD.scope_digest OR NEW.input_digest IS NOT OLD.input_digest
+ OR NEW.target_baseline IS NOT OLD.target_baseline OR NEW.integration_commit_sha IS NOT OLD.integration_commit_sha
+ OR NEW.integration_tree_sha IS NOT OLD.integration_tree_sha OR NEW.leaf_commit_shas IS NOT OLD.leaf_commit_shas
+ OR NEW.integration_evidence_id IS NOT OLD.integration_evidence_id OR NEW.integration_evidence_digest IS NOT OLD.integration_evidence_digest
+ OR NEW.verification_evidence_id IS NOT OLD.verification_evidence_id OR NEW.verification_evidence_digest IS NOT OLD.verification_evidence_digest
+ OR NEW.budget_digest IS NOT OLD.budget_digest OR NEW.budget_summary IS NOT OLD.budget_summary
+ OR NEW.code_summary IS NOT OLD.code_summary OR NEW.plan_summary IS NOT OLD.plan_summary OR NEW.summary_digest IS NOT OLD.summary_digest
+BEGIN SELECT RAISE(ABORT, 'phase delivery approval identity is immutable'); END;
+CREATE TRIGGER phase_delivery_approvals_retained BEFORE DELETE ON phase_delivery_approvals
+BEGIN SELECT RAISE(ABORT, 'phase delivery approval is retained'); END;
+`;
+
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     version: 1,
@@ -3955,4 +4065,5 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 44, sql: MIGRATION_044_SQL, checksum: sha256Hex(MIGRATION_044_SQL) },
   { version: 45, sql: MIGRATION_045_SQL, checksum: sha256Hex(MIGRATION_045_SQL) },
   { version: 46, sql: MIGRATION_046_SQL, checksum: sha256Hex(MIGRATION_046_SQL) },
+  { version: 47, sql: MIGRATION_047_SQL, checksum: sha256Hex(MIGRATION_047_SQL), foreignKeysOff: true },
 ];

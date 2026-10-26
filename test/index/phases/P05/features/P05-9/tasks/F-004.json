@@ -1,0 +1,30 @@
+{
+  "schema_version": 2,
+  "task_id": "F-004",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      {
+        "file": "test/modules/delivery/p05-9-f004-phase-delivery-approval.test.ts",
+        "cases": [
+          "phase-delivery-approval-binds-frozen-summary",
+          "phase-delivery-approval-rejects-stale-and-blocked",
+          "phase-delivery-approval-rejects-duplicate-and-cross-phase",
+          "phase-delivery-approval-rejects-empty-summary"
+        ]
+      },
+      {
+        "file": "test/modules/delivery/p05-9-f004-phase-delivery-approval-sqlite.test.ts",
+        "cases": ["phase-delivery-approval-atomic-sqlite-binding"]
+      },
+      {
+        "file": "test/modules/delivery/p05-9-f003-batch-lifecycle.test.ts",
+        "all": true
+      },
+      {
+        "file": "test/modules/storage/sqlite/sqlite-schema-migrations.test.ts",
+        "all": true
+      }
+    ]
+  }]
+}

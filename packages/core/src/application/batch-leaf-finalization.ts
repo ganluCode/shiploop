@@ -71,6 +71,8 @@ export type BatchFinalizationCandidateStatus =
 
 export interface BatchFinalizationCandidate {
   readonly schemaVersion: 1;
+  /** Candidate lifecycle revision; every integration/verification CAS increments it. */
+  readonly revision: number;
   readonly candidateId: string;
   readonly commandId: string;
   readonly projectId: string;
@@ -301,6 +303,7 @@ function buildCandidate(
   const frozenInputDigest = inputDigest(snapshot, leafSnapshots, mergeOrder);
   return {
     schemaVersion: 1,
+    revision: 1,
     candidateId: candidateId(request.projectId, request.batchId, frozenInputDigest),
     commandId: request.commandId,
     projectId: request.projectId,
