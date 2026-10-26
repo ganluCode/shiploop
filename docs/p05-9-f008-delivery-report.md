@@ -3,7 +3,7 @@
 日期：2026-10-26。范围：P05-9 Batch 收尾的代表性纵向验证、可信测试索引和交付记录接线。本文是 Feature 交付记录，不是 P05 阶段放行或负责人签署。
 
 - 受测分支：`feat/p05/batch-delivery`
-- 受测实现提交：`__FINAL_COMMIT__`（报告提交前一提交；仅绑定本 Task 的实现/测试/index 变更）
+- 受测实现提交：`7d8a8529c6348989a409060fd412d772df26d4b3`（报告提交前一提交；仅绑定本 Task 的实现/测试/index 变更）
 - 测试索引：`test/index/phases/P05/features/P05-9/tasks/F-008.json`
 - Feature 合集：`test/index/phases/P05/features/P05-9/feature.json`
 - Harness selection：`workspace/features/2026-10-23-18-55-21_p05-9-batch/verifications/F-008/test-selection.json`
@@ -12,7 +12,7 @@
 
 | 项目 | 实际命令 | 退出码 | 证据 |
 |---|---|---:|---|
-| F-008 聚焦纵向测试 | `/Users/ganlu/.local/pipx/venvs/nezha/bin/python -m nezha.dag.test_command --log-dir <feature-workspace>/verifications/F-008/runtime-logs -- node scripts/run-tests.ts test/modules/delivery/p05-9-f008-batch-delivery-vertical.test.ts` | 0 | `verifications/F-008/runtime-logs/test-aeffi4uc.log`；最终本地结果 1 file / 4 passed / 0 failed / 0 skipped |
+| F-008 聚焦纵向测试 | `/Users/ganlu/.local/pipx/venvs/nezha/bin/python -m nezha.dag.test_command --log-dir <feature-workspace>/verifications/F-008/runtime-logs -- node scripts/run-tests.ts test/modules/delivery/p05-9-f008-batch-delivery-vertical.test.ts` | 0 | `verifications/F-008/runtime-logs/test-ux1c6_0g.log`；最终本地结果 2 files / 5 passed / 0 failed / 0 skipped |
 | 选择清单校验 | `node scripts/run-tests.ts test/modules/delivery/p05-9-f008-batch-delivery-vertical.test.ts` 使用同一项目 runner；Harness selection 指向 F-008 v2 索引 | not_run | 选择文件在提交后由 Nezha completion preflight 校验；不得把索引存在等同测试通过 |
 | 受影响回归合集 | F-008 索引登记的 P05-7 Git、P05-9 Host、P05-3 Batch、P04-9 派发/恢复和 P03-9 resume 文件 | not_run | 交 Nezha 独立验证，未在 Runtime 重复运行大合集 |
 

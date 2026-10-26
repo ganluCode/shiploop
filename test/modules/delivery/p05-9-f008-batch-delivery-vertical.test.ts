@@ -214,7 +214,7 @@ describe('P05-9 F-008 Batch delivery vertical acceptance', { timeout: 120_000 },
           sideEffects: { targetHeadBefore: initialHead, targetHeadAfter: git(real.repo, 'rev-parse', 'HEAD'), remoteRefsChanged: false, nextRangeStarted },
           notRun: ['main merge', 'remote push', 'live provider/model', 'Phase full acceptance'],
           manualBlock: '负责人批准仍是独立门槛；本地脚本通过不能覆盖人工阻塞',
-        }, null, 2) + '\\n', { mode: 0o600 });
+        }, null, 2) + '\n', { mode: 0o600 });
       }
     } finally {
       if (real) removeWorktree(real.repo, real.path);
