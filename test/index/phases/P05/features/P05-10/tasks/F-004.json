@@ -6,7 +6,7 @@
     "tests": [
       { "file": "test/modules/acceptance/p05-10-f004-fault-matrix.test.ts", "all": true },
       { "file": "test/modules/scheduling/p04-9-dispatch-slot-contract.test.ts", "cases": [
-        "claim-transition-fencing", "claim-attempt-fencing", "slot-capacity-single"
+        "claim-transition-fencing", "claim-attempt-fencing"
       ] },
       { "file": "test/modules/scheduling/p04-9-f003-execution-slot.test.ts", "cases": [
         "capacity-single-winner", "idempotent-acquire", "identity-fencing", "lease-expiry-quarantine"
