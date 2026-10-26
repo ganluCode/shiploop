@@ -4,5 +4,7 @@
 // P05-4 / F-005（v39）：不同 Feature 的 global/project Work gate 允许并行，
 // workspace 键仍按受管目录排他。
 // P05-7 / F-002：Git integration operation persistence (v43); F-004：integration evidence journal (v44).
-export const currentSchemaVersion = 44;
+// P05-8 / F-001：GitAgent repair authorization and attempt admission (v45).
+// P05-9 / F-003：durable Phase delivery candidates (v46); F-004：human delivery approval binding (v47).
+export const currentSchemaVersion = 47;
 export const currentMigrationVersions = Array.from({ length: currentSchemaVersion }, (_, index) => index + 1);
