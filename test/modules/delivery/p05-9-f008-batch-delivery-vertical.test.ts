@@ -146,7 +146,7 @@ describe('P05-9 F-008 Batch delivery vertical acceptance', { timeout: 120_000 },
       const result = await finalization.run({ projectId: f.box.projectId, batchId: f.plan.batchId, commandId: 'f008-real-delivery' });
       expect(result.status).toBe('ready_for_phase_approval');
       expect(nextRangeStarted).toBe(true);
-      expect(verificationCandidate?.integration?.commitSha).toMatch(/^[0-9a-f]{40}$/);
+      expect((verificationCandidate as BatchFinalizationCandidate | null)?.integration?.commitSha).toMatch(/^[0-9a-f]{40}$/);
       const candidate = candidates.read(f.box.projectId, f.plan.batchId, 'f008-real-delivery')!;
       expect(candidate.leafFeatureIds).toEqual(['predecessor-a', 'predecessor-b']);
       expect(candidate.targetBaseline).toBe(base);

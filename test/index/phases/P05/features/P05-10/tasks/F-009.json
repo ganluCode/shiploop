@@ -1,0 +1,13 @@
+{
+  "schema_version": 2,
+  "task_id": "F-009",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/acceptance/p05-10-f009-closeout.test.ts", "all": true },
+      { "file": "test/modules/delivery/p05-9-f008-batch-delivery-vertical.test.ts", "all": true },
+      { "file": "test/modules/engineering/typescript-build.test.ts", "all": true },
+      { "file": "test/modules/engineering/verify.test.ts", "all": true }
+    ]
+  }]
+}
