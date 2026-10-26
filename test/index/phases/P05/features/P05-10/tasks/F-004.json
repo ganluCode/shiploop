@@ -1,0 +1,24 @@
+{
+  "schema_version": 2,
+  "task_id": "F-004",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/acceptance/p05-10-f004-fault-matrix.test.ts", "all": true },
+      { "file": "test/modules/scheduling/p04-9-dispatch-slot-contract.test.ts", "cases": [
+        "claim-transition-fencing", "claim-attempt-fencing", "slot-capacity-single"
+      ] },
+      { "file": "test/modules/scheduling/p04-9-f003-execution-slot.test.ts", "cases": [
+        "capacity-single-winner", "idempotent-acquire", "identity-fencing", "lease-expiry-quarantine"
+      ] },
+      { "file": "test/modules/scheduling/p04-9-f004-dispatch-task-claim.test.ts", "cases": [
+        "cross-process-claim", "claim-commit-replay", "slot-required-at-launch"
+      ] },
+      { "file": "test/modules/recovery/p04-9-f007-dispatch-crash-windows.test.ts", "all": true },
+      { "file": "test/modules/recovery/p04-9-f007-dispatch-resume.test.ts", "all": true },
+      { "file": "test/modules/recovery/p04-9-f007-dispatch-startup.test.ts", "all": true },
+      { "file": "test/modules/recovery/p05-4-f006-dispatch-recovery.test.ts", "all": true },
+      { "file": "test/modules/recovery/p05-5-f005-resource-recovery.test.ts", "all": true }
+    ]
+  }]
+}
