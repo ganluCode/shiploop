@@ -1,0 +1,17 @@
+{
+  "schema_version": 2,
+  "task_id": "F-003",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/acceptance/p05-10-f003-normal-flow.test.ts", "all": true },
+      { "file": "test/modules/planning/p05-1-f014-planning-e2e.test.ts", "all": true },
+      { "file": "test/modules/planning/p05-2-f008-phase-graph-vertical.test.ts", "all": true },
+      { "file": "test/modules/execution/budget/p05-3-f008-batch-cross-layer.test.ts", "all": true },
+      { "file": "test/modules/delivery/p05-6-f003-integration-plan-generation.test.ts", "all": true },
+      { "file": "test/modules/delivery/p05-6-f004-integration-plan-control.test.ts", "all": true },
+      { "file": "test/modules/delivery/p05-7-f008-integration-vertical.test.ts", "all": true },
+      { "file": "test/modules/delivery/p05-9-f008-batch-delivery-vertical.test.ts", "all": true }
+    ]
+  }]
+}
