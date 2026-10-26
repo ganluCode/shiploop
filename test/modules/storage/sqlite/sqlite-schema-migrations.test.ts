@@ -112,7 +112,14 @@ const SCHEMA_TABLES = [
   ['schema_migrations', schema.schemaMigrations],
 ] as const;
 
-const EXPECTED_TABLE_NAMES = SCHEMA_TABLES.map(([name]) => name).sort();
+const EXPECTED_TABLE_NAMES = [
+  ...SCHEMA_TABLES.map(([name]) => name),
+  // v45 GitAgent repair tables are migration-owned execution tables and are
+  // intentionally not part of the Drizzle public schema list above.
+  'git_agent_repairs',
+  'git_agent_repair_commands',
+  'git_agent_repair_attempts',
+].sort();
 
 /** 迁移与未来功能明确不在本 Feature 建立的后续表（设计 11 §4-§7、§9）。 */
 const FORBIDDEN_TABLE_NAMES = [
