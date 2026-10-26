@@ -20,7 +20,7 @@ describe('P05-7 F-004 integration observation schema', () => {
     const f = await fixture();
     try {
       const oldTables = f.session.database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all();
-      const result = await migrateSqliteStorage(f.session, { nowUtcMs: () => NOW + 1 });
+      const result = await migrateSqliteStorage(f.session, { migrations: SQLITE_MIGRATIONS.slice(0, 44), nowUtcMs: () => NOW + 1 });
       expect(result.appliedVersions).toEqual([44]);
       expect(f.session.database.prepare('SELECT display_name FROM projects WHERE id = ?').get('legacy')).toEqual({ display_name: 'legacy' });
       const tables = f.session.database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").all();
@@ -32,7 +32,7 @@ describe('P05-7 F-004 integration observation schema', () => {
       expect(() => insert('[]')).toThrow(/CHECK/);
       expect(() => insert('{}', 0)).toThrow(/CHECK/);
       expect(f.session.database.prepare('SELECT COUNT(*) AS count FROM git_integration_observations').get()).toEqual({ count: 0 });
-      expect((await migrateSqliteStorage(f.session, { nowUtcMs: () => NOW + 2 })).appliedVersions).toEqual([]);
+      expect((await migrateSqliteStorage(f.session, { migrations: SQLITE_MIGRATIONS.slice(0, 44), nowUtcMs: () => NOW + 2 })).appliedVersions).toEqual([]);
     } finally { f.close(); }
   });
 

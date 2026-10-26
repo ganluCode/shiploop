@@ -529,7 +529,10 @@ describe('F-006 Host inspect/overview 路由与握手能力（真实 Host + SQLi
     // P04-9 / F-009：派发队列/执行槽位只读投影进入能力清单（48 → 49）；无写入口。
     expect(body.capabilities.application.queries).toContain('execution.dispatch.list');
     expect(body.capabilities.application.queries).toContain('execution.resources.list');
-    expect(body.capabilities.application.queries).toHaveLength(55);
+    expect(body.capabilities.application.queries).toContain('git.repairs.list');
+    expect(body.capabilities.application.queries).toContain('git.repairs.get');
+    expect(body.capabilities.application.queries).toContain('execution.batch.delivery.get');
+    expect(body.capabilities.application.queries).toHaveLength(58);
     expect(body.capabilities.application.commands).toEqual([
       'execution.attempt.cancel',
       'execution.stop.manual',

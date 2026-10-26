@@ -724,6 +724,8 @@ describe('F-011 传输纪律与版本门禁', () => {
         'baseline.preview',
         'baseline.run',
         'baseline.cancel',
+        'execution.batch.finalize',
+        'phase.delivery.approve',
         // P03-1 / F-004：Phase 创建随 Core 白名单进入接线宣告。
         'phase.create',
         // P05-2 / F-007：Phase 生命周期、Feature 归属与依赖更新接线。
@@ -1086,6 +1088,8 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         // P03-8 / F-009：Git 意图/实际提交/操作回执查询真实接线。
         'git.operations.list',
         'git.operations.get',
+        'git.repairs.list',
+        'git.repairs.get',
         // P03-8 / F-010：Feature 分轴结果查询真实接线。
         'features.delivery.get',
         'features.report.get',
@@ -1093,6 +1097,7 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         // P03-9 / F-013：Run/Batch 控制进度、恢复诊断与 finalization 收尾结果查询真实接线。
         'execution.run.control.get',
         'execution.batch.control.get',
+        'execution.batch.delivery.get',
         'execution.run.recovery.get',
         // P04-9 / F-009：派发队列与执行槽位只读投影真实接线（无写入口）。
         'execution.dispatch.list',

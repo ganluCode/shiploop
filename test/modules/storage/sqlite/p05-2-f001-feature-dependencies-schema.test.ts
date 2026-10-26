@@ -72,7 +72,7 @@ describe('P05-2 F-001 Feature DAG SQLite schema', () => {
         seedPlanGraph(legacy);
         const before = legacy.database.prepare('SELECT COUNT(*) AS count FROM features').get() as { count: number };
         expect(before.count).toBe(4);
-        const upgraded = await migrateSqliteStorage(legacy, { nowUtcMs: () => NOW + 1 });
+        const upgraded = await migrateSqliteStorage(legacy, { migrations: SQLITE_MIGRATIONS.slice(0, 37), nowUtcMs: () => NOW + 1 });
         expect(upgraded.appliedVersions).toEqual([37]);
         expect(legacy.database.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'feature_dependencies'").get()).toBeTruthy();
         expect((legacy.database.prepare('SELECT COUNT(*) AS count FROM features').get() as { count: number }).count).toBe(4);

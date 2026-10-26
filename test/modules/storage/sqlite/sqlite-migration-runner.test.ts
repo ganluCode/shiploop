@@ -216,6 +216,8 @@ describe('F-005 迁移执行与记录', () => {
           'integration_plans',
           'integration_predecessor_snapshots',
           'managed_workspaces',
+          'phase_delivery_approvals',
+          'phase_delivery_candidates',
           'phases',
           'planning_contexts',
           'project_settings',

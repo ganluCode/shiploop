@@ -57,7 +57,7 @@ async function openFixture(v34 = false): Promise<Fixture> {
   const session = openSqliteStorageSession({ path: join(sandbox.path, 'state.db') });
   try {
     await migrateSqliteStorage(session, {
-      ...(v34 ? { migrations: SQLITE_MIGRATIONS.slice(0, 34) } : {}),
+      migrations: SQLITE_MIGRATIONS.slice(0, v34 ? 34 : 35),
     });
   } catch (error) {
     session.close();
@@ -180,7 +180,7 @@ async function openFixture(v34 = false): Promise<Fixture> {
 
 describe('P05-1 F-002 migration v35 planning contexts', () => {
   it('[case:migration-appends-v35] v35 只追加规划上下文结构，历史迁移与校验摘要冻结', () => {
-    expect(SQLITE_MIGRATIONS).toHaveLength(36);
+    expect(SQLITE_MIGRATIONS.slice(0, 35)).toHaveLength(35);
     expect(SQLITE_MIGRATIONS[33]?.version).toBe(34);
     expect(SQLITE_MIGRATIONS[34]?.version).toBe(35);
     // Frozen from the predecessor source, not recomputed from the new descriptor.
@@ -203,8 +203,8 @@ describe('P05-1 F-002 migration v35 planning contexts', () => {
     try {
       const session = openSqliteStorageSession({ path: join(sandbox.path, 'state.db') });
       try {
-        const result = await migrateSqliteStorage(session);
-        expect(result.toVersion).toBe(36);
+        const result = await migrateSqliteStorage(session, { migrations: SQLITE_MIGRATIONS.slice(0, 35) });
+        expect(result.toVersion).toBe(35);
         expect(
           session.database.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 'planning_contexts'").get(),
         ).toEqual({ n: 1 });
@@ -249,9 +249,9 @@ describe('P05-1 F-002 migration v35 planning contexts', () => {
       ).run('attempt-p051-1', NOW_MS, f.projectId, NOW_MS, f.featureId, f.runId, 'task-p051-code-1', 'owner-1', 'host-1', NOW_MS, 'succeeded', attemptSnapshot, HASH, f.artifactId);
 
       // 升级到 v35。
-      const result = await migrateSqliteStorage(f.session);
+      const result = await migrateSqliteStorage(f.session, { migrations: SQLITE_MIGRATIONS.slice(0, 35) });
       expect(result.fromVersion).toBe(34);
-      expect(result.toVersion).toBe(36);
+      expect(result.toVersion).toBe(35);
       // 既有数据逐字段可读；升级不自动创建规划上下文。
       expect(f.db.prepare('SELECT id, kind, config_source_key FROM tasks WHERE id = ?').get('task-p051-code-1'))
         .toEqual({ id: 'task-p051-code-1', kind: 'coding', config_source_key: 'defaultStrategy' });

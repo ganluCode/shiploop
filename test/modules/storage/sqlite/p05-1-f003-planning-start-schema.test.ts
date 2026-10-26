@@ -48,7 +48,7 @@ async function openFixture(fromV35 = false): Promise<Fixture> {
   const session = openSqliteStorageSession({ path: join(sandbox.path, 'state.db') });
   try {
     await migrateSqliteStorage(session, {
-      ...(fromV35 ? { migrations: SQLITE_MIGRATIONS.slice(0, 35) } : {}),
+      migrations: SQLITE_MIGRATIONS.slice(0, fromV35 ? 35 : 36),
       nowUtcMs: () => NOW_MS,
     });
   } catch (error) {
@@ -146,7 +146,7 @@ function expectConstraintRejected(attempt: () => unknown): void {
 
 describe('P05-1 / F-003 迁移 v36：planning.start 接受回执持久列', () => {
   it('[case:v36-append-only-frozen-prior-checksums] v36 只追加，v1–v35 checksum 冻结不变', () => {
-    expect(SQLITE_MIGRATIONS.length).toBe(36);
+    expect(SQLITE_MIGRATIONS.slice(0, 36)).toHaveLength(36);
     expect(SQLITE_MIGRATIONS[35]?.version).toBe(36);
     expect(hashOfChecksums(SQLITE_MIGRATIONS.slice(0, 35))).toBe(FROZEN_V35_CHECKSUM_HASH);
     const v36 = SQLITE_MIGRATIONS[35]!;
@@ -173,7 +173,7 @@ describe('P05-1 / F-003 迁移 v36：planning.start 接受回执持久列', () =
       legacy.db.prepare(
         "INSERT INTO command_receipts (id, created_at, revision, updated_at, principal_id, command_id, scope_kind, project_id, operation, request_digest, status, receipt_version, result_json, result_ref, issued_at, completed_at) VALUES (?, ?, 1, ?, 'local-owner', ?, 'project', ?, 'phase.create', ?, 'completed', 5, '{}', ?, ?, ?)",
       ).run(randomUUID(), NOW_MS, NOW_MS, randomUUID(), legacy.projectId, HASH, `v1.${'a'.repeat(43)}`, NOW_MS, NOW_MS);
-      await migrateSqliteStorage(legacy.session, { nowUtcMs: () => NOW_MS });
+      await migrateSqliteStorage(legacy.session, { migrations: SQLITE_MIGRATIONS.slice(0, 36), nowUtcMs: () => NOW_MS });
       expect(legacy.db.prepare('SELECT max(version) AS v FROM schema_migrations').get()).toEqual({ v: 36 });
       const rows = legacy.db.prepare('SELECT planning_task_id, candidate_id, receipt_version, result_json FROM command_receipts').all() as { planning_task_id: string | null; candidate_id: string | null; receipt_version: number; result_json: string }[];
       expect(rows).toHaveLength(1);
