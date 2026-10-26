@@ -3,13 +3,6 @@
   "task_id": "F-005",
   "projects": [{
     "id": "shiploop",
-    "tests": [{
-      "file": "test/modules/delivery/p05-9-f005-batch-operations.test.ts",
-      "cases": [
-        "batch-operations-route-and-observe",
-        "batch-operations-rejects-wrong-operation-and-preserves-command-failure",
-        "batch-operations-finalization-is-authorized"
-      ]
-    }]
+    "tests": [{ "file": "test/modules/delivery/p05-9-f005-batch-operations.test.ts", "all": true }]
   }]
 }

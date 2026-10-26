@@ -5,10 +5,10 @@
     "id": "shiploop",
     "tests": [
       { "file": "test/modules/acceptance/p05-10-f006-combined-faults.test.ts", "all": true },
-      { "file": "test/modules/acceptance/p05-10-f003-normal-flow.test.ts", "cases": ["p05-f003-dag-fixed-batch-and-append"] },
+      { "file": "test/modules/acceptance/p05-10-f003-normal-flow.test.ts", "all": true },
       { "file": "test/modules/acceptance/p05-10-f004-fault-matrix.test.ts", "all": true },
-      { "file": "test/modules/acceptance/p05-10-f005-git-integration.test.ts", "cases": ["f005-verification-failure-stays-blocked", "f005-interruption-reconciles-real-head", "f005-baseline-drift-rejects-reuse"] },
-      { "file": "test/modules/recovery/p03-9-f008-workflow-resume.test.ts", "cases": ["continue-once-fenced-budget"] },
+      { "file": "test/modules/acceptance/p05-10-f005-git-integration.test.ts", "all": true },
+      { "file": "test/modules/recovery/p03-9-f008-workflow-resume.test.ts", "all": true },
       { "file": "test/modules/recovery/p04-9-f007-dispatch-resume.test.ts", "all": true },
       { "file": "test/modules/scheduling/p04-9-f006-dispatch-control-settlement.test.ts", "all": true },
       { "file": "test/modules/events/events-contract.test.ts", "all": true },

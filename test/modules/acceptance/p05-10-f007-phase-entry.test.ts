@@ -64,6 +64,13 @@ it('[case:p05-status-preserves-live-and-manual-gates] keeps missing live and man
   expect(result.conclusion).toBe('fail');
 });
 
-it('[case:p05-trusted-index-fail-closed] refuses the current incomplete Feature index set before running commands', () => {
-  expect(() => collectP05TrustedTests(ROOT)).toThrow(/Feature 集合不匹配/);
+it('[case:p05-trusted-index-is-complete] discovers every required Feature and deduplicates its existing test files', () => {
+  const selection = collectP05TrustedTests(ROOT);
+  expect(selection.features.map(feature => feature.feature)).toEqual([
+    'P05-1', 'P05-2', 'P05-3', 'P05-4', 'P05-5', 'P05-6', 'P05-7', 'P05-8', 'P05-9',
+  ]);
+  expect(selection.files.length).toBe(new Set(selection.files).size);
+  expect(selection.features.find(feature => feature.feature === 'P05-5')?.files).toContain(
+    'test/modules/scheduling/p05-5-f008-cross-layer.test.ts',
+  );
 });

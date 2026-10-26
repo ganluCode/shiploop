@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "task_id": "F-004",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/scheduling/p05-5-f004-resource-settlement.test.ts", "all": true },
+      { "file": "test/modules/scheduling/p05-5-f002-feature-resource-sqlite.test.ts", "all": true },
+      { "file": "test/modules/scheduling/p05-5-f003-feature-dispatch-resources.test.ts", "all": true },
+      { "file": "test/modules/scheduling/p04-9-f006-dispatch-control-settlement.test.ts", "all": true },
+      { "file": "test/modules/recovery/p04-9-f007-dispatch-crash-windows.test.ts", "all": true },
+      { "file": "test/modules/scheduling/p03-4-work-resources.test.ts", "all": true }
+    ]
+  }]
+}

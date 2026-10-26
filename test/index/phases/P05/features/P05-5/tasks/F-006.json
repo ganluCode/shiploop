@@ -1,0 +1,14 @@
+{
+  "schema_version": 2,
+  "task_id": "F-006",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/execution/control/p05-5-f006-feature-control.test.ts", "all": true },
+      { "file": "test/modules/host/control/p03-9-f014-host-control-wiring.test.ts", "all": true },
+      { "file": "test/modules/cli/control/p03-9-f015-cli-control-vertical.test.ts", "all": true },
+      { "file": "test/modules/scheduling/p04-9-f006-dispatch-control-settlement.test.ts", "all": true },
+      { "file": "test/modules/recovery/p04-9-f007-dispatch-resume.test.ts", "all": true }
+    ]
+  }]
+}

@@ -34,6 +34,18 @@
       "index": "test/index/phases/P05/features/P05-1/tasks/F-008.json"
     },
     {
+      "task_id": "F-009",
+      "index": "test/index/phases/P05/features/P05-1/tasks/F-009.json"
+    },
+    {
+      "task_id": "F-010",
+      "index": "test/index/phases/P05/features/P05-1/tasks/F-010.json"
+    },
+    {
+      "task_id": "F-011",
+      "index": "test/index/phases/P05/features/P05-1/tasks/F-011.json"
+    },
+    {
       "task_id": "F-012",
       "index": "test/index/phases/P05/features/P05-1/tasks/F-012.json"
     },

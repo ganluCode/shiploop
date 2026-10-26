@@ -3,9 +3,6 @@
   "task_id": "F-006",
   "projects": [{
     "id": "shiploop",
-    "tests": [{
-      "file": "test/modules/delivery/p05-8-f006-git-agent-host-query.test.ts",
-      "cases": ["repair-route-client-shape", "repair-cli-readonly"]
-    }]
+    "tests": [{ "file": "test/modules/delivery/p05-8-f006-git-agent-host-query.test.ts", "all": true }]
   }]
 }

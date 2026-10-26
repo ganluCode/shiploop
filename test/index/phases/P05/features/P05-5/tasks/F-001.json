@@ -1,0 +1,8 @@
+{
+  "schema_version": 2,
+  "task_id": "F-001",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [{ "file": "test/modules/scheduling/p05-5-f001-feature-resources.test.ts", "all": true }]
+  }]
+}

@@ -1,0 +1,13 @@
+{
+  "schema_version": 2,
+  "task_id": "F-002",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/scheduling/p05-5-f002-feature-resource-sqlite.test.ts", "all": true },
+      { "file": "test/modules/storage/sqlite/sqlite-schema-migrations.test.ts", "all": true },
+      { "file": "test/modules/storage/sqlite/p04-9-dispatch-intent-schema.test.ts", "all": true },
+      { "file": "test/modules/storage/sqlite/p04-9-dispatch-slot-schema.test.ts", "all": true }
+    ]
+  }]
+}

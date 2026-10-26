@@ -16,18 +16,36 @@
 - [ ] 确认可信索引按 P05-1～P05-9 去重，空索引、越界路径、缺失 Feature 声明、SHA/输入摘要不匹配和证据写入失败均 fail-closed。
 - [ ] 核对 A/B/C、资源锁、迟到结果、Git 冲突/修复、叶子汇总和追加 Batch 的 SQLite、Git、文件与进程事实；不能用模型输出或分支 HEAD 漂移代替固定成果证据。
 
-## 3. 可选 live GitAgent
+## 3. macOS 临时项目与代表性场景
+
+每次人工验收先创建一个新的临时项目和报告根，项目、SQLite、Git/worktree、数据根、home、进程和报告分别归属于本次 `run_id`。示例命令只使用仓库外的临时目录，不把本机路径写进报告：
+
+```sh
+REPORT_ROOT="$(mktemp -d)"
+PROJECT_ROOT="$(mktemp -d)"
+cd "$PROJECT_ROOT"
+git init -q
+```
+
+- [ ] 规划 A、B、C 三个 Feature：A/B 依赖同一固定基线但保留独立 worktree 和成果 SHA；C 在两个成果、集成计划和组合验证证据形成前保持 `blocked`/`pending`。
+- [ ] 先在批准并发和执行槽位允许的条件下运行不同资源的 A/B，再用同一迁移、契约或项目资源制造资源竞争；用持久租约、owner/version 和可观察屏障记录串行等待，不能只看日志。
+- [ ] 在临时 Git 中记录固定目标基线和合并顺序；制造 Git 冲突后保留冲突现场，核对修复失败、预算耗尽或取消时的工作区、operation 回执和后继阻塞。禁止选择 ours/theirs、强推或删除现场来伪造成功。
+- [ ] 对重复派发、进程遗留、租约到期、重启、迟到结果和未确认停止逐项核对 SQLite、Git/worktree、进程树及资源归属；旧 owner 不得释放新 owner 的资源。
+- [ ] 清理前导出报告、步骤日志、SQLite/Git/进程和 cleanup manifest；正常停止才记录 `cleanup=confirmed`，停止不确定、修复失败或预算耗尽时保留现场并记录 `uncertain`/`failed`。
+
+## 4. 可选 live GitAgent
+
 
 - [ ] 只有负责人单独批准后才填写 live 输入：临时 Git、provider/model、认证来源名称、请求次数/预算、写入范围和过期时间。
 - [ ] 未批准、认证缺失或证据缺失时记录 `not_run`/`zero-call`，不发请求，也不以离线 Fake 结果替代。
 - [ ] 已批准时记录真实请求数、工具副作用、退出码、usage 来源、停止/清理事实和完整 SHA；报告不得包含凭据。
 
-## 4. 显式全仓回归
+## 5. 显式全仓回归
 
 - [ ] 只有负责人明确选择 `--full-regression` 时才运行全仓历史回归；默认阶段入口不得隐式执行 `npm test`。
 - [ ] 未选择时将该项记录为 `not_run`，不能写成 pass；选择后记录命令、退出码、耗时、受测 SHA 和证据摘要。
 
-## 5. 清理与签署
+## 6. 清理与签署
 
 - [ ] 阶段结束后核对本次运行创建的临时 Git、SQLite、文件和进程均已清理；停止不确定时保留现场并记录 `cleanup=uncertain`，不得释放业务占用或标记 `processesGone=true`。
 - [ ] 报告重新读取并确认没有凭据、绝对路径、未绑定 SHA 的成功结果、重复 run ID 或被覆盖的既有成功证据。

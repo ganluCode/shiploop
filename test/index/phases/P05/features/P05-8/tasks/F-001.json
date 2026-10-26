@@ -1,22 +1,8 @@
 {
   "schema_version": 2,
   "task_id": "F-001",
-  "projects": [
-    {
-      "id": "shiploop",
-      "tests": [
-        {
-          "file": "test/modules/delivery/p05-8-f001-git-agent-repair-contract.test.ts",
-          "cases": [
-            "git-agent-repair-authorized-input-is-frozen-and-redacted",
-            "git-agent-repair-requires-persisted-failure-source",
-            "git-agent-repair-rejects-baseline-drift-and-expired-deadline",
-            "git-agent-repair-rejects-cross-project-source-and-path-escape",
-            "git-agent-repair-detects-duplicate-identity-and-command-digest-conflict",
-            "git-agent-runtime-output-is-scoped-and-cannot-self-approve"
-          ]
-        }
-      ]
-    }
-  ]
+  "projects": [{
+    "id": "shiploop",
+    "tests": [{ "file": "test/modules/delivery/p05-8-f001-git-agent-repair-contract.test.ts", "all": true }]
+  }]
 }

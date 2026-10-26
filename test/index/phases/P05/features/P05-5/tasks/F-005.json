@@ -1,0 +1,17 @@
+{
+  "schema_version": 2,
+  "task_id": "F-005",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/recovery/p05-5-f005-resource-recovery.test.ts", "all": true },
+      { "file": "test/modules/scheduling/p05-5-f002-feature-resource-sqlite.test.ts", "all": true },
+      { "file": "test/modules/scheduling/p05-5-f004-resource-settlement.test.ts", "all": true },
+      { "file": "test/modules/recovery/p05-4-f006-dispatch-recovery.test.ts", "all": true },
+      { "file": "test/modules/recovery/p04-9-f007-dispatch-crash-windows.test.ts", "all": true },
+      { "file": "test/modules/recovery/p04-9-f007-dispatch-resume.test.ts", "all": true },
+      { "file": "test/modules/recovery/p03-9-f006-recovery-reconciliation.test.ts", "all": true },
+      { "file": "test/modules/runtime/p04-7-process-fault-matrix.test.ts", "all": true }
+    ]
+  }]
+}
