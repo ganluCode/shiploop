@@ -13,7 +13,7 @@
 | 项目 | 实际命令 | 退出码 | 证据 |
 |---|---|---:|---|
 | F-008 聚焦纵向测试 | `/Users/ganlu/.local/pipx/venvs/nezha/bin/python -m nezha.dag.test_command --log-dir <feature-workspace>/verifications/F-008/runtime-logs -- node scripts/run-tests.ts test/modules/delivery/p05-9-f008-batch-delivery-vertical.test.ts` | 0 | `verifications/F-008/runtime-logs/test-al58vx6y.log`；最终本地结果 2 files / 5 passed / 0 failed / 0 skipped |
-| 选择清单校验 | `node scripts/run-tests.ts test/modules/delivery/p05-9-f008-batch-delivery-vertical.test.ts` 使用同一项目 runner；Harness selection 指向 F-008 v2 索引 | not_run | 选择文件在提交后由 Nezha completion preflight 校验；不得把索引存在等同测试通过 |
+| 选择清单校验 | `node -e '<F-008 selection schema/path validation>'` | 0 | `verifications/F-008/test-selection.json`；确认 task_id、索引路径、9 个测试文件均存在且符合模式 |
 | 受影响回归合集 | F-008 索引登记的 P05-7 Git、P05-9 Host、P05-3 Batch、P04-9 派发/恢复和 P03-9 resume 文件 | not_run | 交 Nezha 独立验证，未在 Runtime 重复运行大合集 |
 
 ## 覆盖事实
@@ -28,7 +28,7 @@
 
 ## 范围边界
 
-F-008 索引登记 F-001～F-008 的完整 Feature 合集及 8 个纵向/受影响回归文件。Runtime 本地只执行新增 F-008 文件；其余文件交 Nezha 独立验证，未运行项保持 `not_run`。本轮没有运行全仓测试、`npm run verify`、P05 阶段验收、真实模型/网络或远端 push。
+F-008 索引登记 P05-9 F-001～F-008 的完整 Feature 合集及 9 个纵向/受影响回归文件。Runtime 本地只执行新增 F-008 文件和交付记录守护；其余文件交 Nezha 独立验证，未运行项保持 `not_run`。本轮没有运行全仓测试、`npm run verify`、P05 阶段验收、真实模型/网络或远端 push。
 
 机器通过不能替代人工批准。Phase 交付批准在测试中使用明确的 owner actor 和持久批准服务验证；P05 阶段负责人确认、main 合入和 push 仍是独立未授权动作，不能由本报告或脚本自动完成。
 
