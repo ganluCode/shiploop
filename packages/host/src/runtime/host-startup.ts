@@ -37,6 +37,7 @@ import { createLocalOwnerPrincipal, deriveDefaultDataRoot } from 'shiploop-core'
 import type { RuntimeCapabilityCatalog, RuntimeRecoveryCapabilities, RuntimeRecoverySourceReader, WorkToolChannelDeps } from 'shiploop-core';
 import { openCoreApplication } from 'shiploop-core/assembly';
 import { PI_RUNTIME_RECOVERY_DESCRIPTOR } from './pi-adapter.js';
+import type { BatchDeliveryFactory } from 'shiploop-core/assembly';
 import type { CoreApplication, WorkRuntimeFactory, FeatureDeliveryFactory, CoreApplicationOptions } from 'shiploop-core/assembly';
 import type { FinalizationCompletionPort, FinalizationExecutionPort } from 'shiploop-core';
 import {
@@ -90,6 +91,7 @@ export const BIND_OVERRIDE_ENV_KEYS = [
 const ALLOWED_OPTION_KEYS = [
   'workToolAuthority',
   'workRuntimeFactory',
+  'batchDeliveryFactory',
   'featureDeliveryFactory',
   'integrationPlanFactory',
   'finalizationExecution',
@@ -115,6 +117,7 @@ export interface HostStartOptions {
   /** Trusted code injection only; not accepted from CLI, environment or discovery. */
   readonly workRuntimeFactory?: WorkRuntimeFactory;
   /** Static trusted adapters only; never read from argv, env or request fields. */
+  readonly batchDeliveryFactory?: BatchDeliveryFactory;
   readonly featureDeliveryFactory?: FeatureDeliveryFactory;
   /** Trusted finalization-only execution consumer; absent keeps the scheduler capability gap. */
   readonly finalizationExecution?: FinalizationExecutionPort;
@@ -234,6 +237,9 @@ function validateStartOptions(options: HostStartOptions): void {
     || typeof options.runtimeRecoverySources.readSource !== 'function'
   )) {
     throw invalidInput('trusted_recovery_source_required', { field: 'runtimeRecoverySources' });
+  }
+  if (options.batchDeliveryFactory !== undefined && typeof options.batchDeliveryFactory !== 'function') {
+    throw invalidInput('trusted_factory_required', { field: 'batchDeliveryFactory' });
   }
   if (options.featureDeliveryFactory !== undefined && typeof options.featureDeliveryFactory !== 'function') {
     throw invalidInput('trusted_factory_required', { field: 'featureDeliveryFactory' });
@@ -375,6 +381,7 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
       ...(options.runtimeRecoverySources === undefined ? {}
         : { runtimeRecoverySources: options.runtimeRecoverySources }),
       workRuntimeFactory: options.workRuntimeFactory,
+      batchDeliveryFactory: options.batchDeliveryFactory,
       featureDeliveryFactory: options.featureDeliveryFactory,
       integrationPlanFactory: options.integrationPlanFactory,
       ...(options.finalizationExecution === undefined

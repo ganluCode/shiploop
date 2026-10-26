@@ -101,6 +101,7 @@ export const APP_OPERATIONS = [
   // EXECUTION_CONTROL_QUERY_OPERATIONS 同步，不漂移）。
   'execution.run.control.get',
   'execution.batch.control.get',
+  'execution.batch.delivery.get',
   'execution.run.recovery.get',
   // P04-9 / F-009：派发队列与执行槽位只读投影查询（无写入口；不提供 SQL、
   // 直接设置 owner/version 或释放槽位的外部接口）。

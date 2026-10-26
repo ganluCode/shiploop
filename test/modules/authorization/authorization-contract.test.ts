@@ -136,6 +136,12 @@ function envelope(
     expiresAt: null,
   };
   switch (operation) {
+    case 'execution.batch.finalize':
+      return { ...base, operation, scope: { kind: 'project', projectId: PROJECT_A }, expectedRevision: expectedRevision ?? 1,
+        payload: { phaseId: 'phase-1', batchId: 'batch-1' } };
+    case 'phase.delivery.approve':
+      return { ...base, operation, scope: { kind: 'project', projectId: PROJECT_A }, expectedRevision: expectedRevision ?? 1,
+        payload: { phaseId: 'phase-1', batchId: 'batch-1', candidateId: 'candidate-1', expectedCandidateRevision: 3 } };
     case 'execution.stop.manual':
       return { ...base, operation, scope: { kind: 'project', projectId: PROJECT_A },
         expectedRevision: expectedRevision ?? 1,

@@ -1,3 +1,4 @@
+import { StorageError } from './errors.js';
 import type { FeatureDeliveryDetailResult } from './feature-delivery-query.js';
 import type { FeatureStatus, TaskStatus } from './plan-store.js';
 import type { ExecutionBatchStatus, ExecutionRunStatus } from './execution-store.js';
@@ -220,12 +221,20 @@ function publicBudget(budget: BatchDeliveryBudgetView): PublicBatchDeliveryBudge
   };
 }
 
+export function isBatchDeliveryPublicSummary(value: unknown): boolean {
+  if (typeof value === 'string') return !/(?:Bearer\s|\/(?:Users|home|tmp|private|var|Volumes)\/|[A-Za-z]:\\|(?:token|password|api[_-]?key)\s*[=:])/i.test(value);
+  if (Array.isArray(value)) return value.every(isBatchDeliveryPublicSummary);
+  if (value !== null && typeof value === 'object') return Object.entries(value).every(([key, entry]) =>
+    !['content', 'body', 'stdout', 'stderr', 'prompt', 'token', 'password', 'apiKey', 'credential', 'authorization'].includes(key) && isBatchDeliveryPublicSummary(entry));
+  return true;
+}
+
 export function buildBatchDeliveryResult(
   view: BatchDeliveryView,
   cursor: string | null,
   limit: number,
 ): PublicBatchDeliveryResult {
-  return {
+  const result: PublicBatchDeliveryResult = {
     schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION,
     scope: 'batch-delivery',
     batch: {
@@ -272,4 +281,6 @@ export function buildBatchDeliveryResult(
     nextCursor: cursor,
     limit,
   };
+  if (!isBatchDeliveryPublicSummary(result)) throw new StorageError('corrupt', 'execution.batch.delivery.get', 'Batch 公开摘要包含非法内容');
+  return result;
 }

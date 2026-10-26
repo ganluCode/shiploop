@@ -16,6 +16,10 @@
  * - 本模块只做结构校验：无 I/O、不读时钟、不导入 node:http/net/fs；错误为
  *   HostProtocolError，details 只含受控 reason，不回显响应原文或秘密。
  */
+import { validateBatchDeliveryCommandResult } from 'shiploop-core/protocol';
+import { BATCH_DELIVERY_STATUSES, isBatchDeliveryPublicSummary } from 'shiploop-core/protocol';
+import type { PublicBatchDeliveryResult } from 'shiploop-core/protocol';
+export type { PublicBatchDeliveryResult } from 'shiploop-core/protocol';
 import { FEATURE_GRAPH_BLOCKER_REASONS, FEATURE_DAG_REASONS, FEATURE_DEPENDENCY_COMPLETION } from 'shiploop-core/protocol';
 import { validateGitAgentRepairQueryResult as validateCoreGitAgentRepairQueryResult } from 'shiploop-core/protocol';
 import type { GitAgentRepairListResult, GitAgentRepairDetailResult } from 'shiploop-core/protocol';
@@ -342,6 +346,7 @@ export type AppQueryOperation =
   // 结果查询（与 Core EXECUTION_CONTROL_QUERY_OPERATIONS 同源）。
   | 'execution.run.control.get'
   | 'execution.batch.control.get'
+  | 'execution.batch.delivery.get'
   | 'execution.run.recovery.get'
   // P04-9 / F-009：派发队列与槽位只读投影（与 Core
   // EXECUTION_DISPATCH_QUERY_OPERATIONS 同源）。
@@ -468,6 +473,12 @@ export function validateCommandReceiptWire(
   if (expected.expectedProjectId !== undefined && (receipt.scope.kind !== 'project' || receipt.scope.projectId !== expected.expectedProjectId)) {
     malformed(operation, 'receipt_scope_mismatch');
   }
+  if (receipt.status === 'completed' && (receipt.operation === 'execution.batch.finalize' || receipt.operation === 'phase.delivery.approve')) {
+    let result;
+    try { result = validateBatchDeliveryCommandResult(receipt.result); } catch { malformed(operation, 'batch_delivery_command_result_invalid'); }
+    if (receipt.scope.kind !== 'project' || result.projectId !== receipt.scope.projectId ||
+      result.status !== (receipt.operation === 'phase.delivery.approve' ? 'approved' : 'ready_for_phase_approval')) malformed(operation, 'batch_delivery_command_scope_invalid');
+  }
   return receipt;
 }
 
@@ -510,6 +521,11 @@ function validateEventPayload(
     return { created: true };
   }
   // P03-1 / F-005（§9.2）：Feature 计划导入事件脱敏 payload。
+  if (kind === 'phaseDelivery') {
+    exactKeys(operation, object, ['deliveryUpdated']);
+    if (object.deliveryUpdated !== true) malformed(operation, 'event_payload_violation');
+    return { deliveryUpdated: true };
+  }
   if (kind === 'phaseMutation' || kind === 'featurePhaseMoved' || kind === 'featureDagUpdated') {
     const key = kind === 'featurePhaseMoved' ? 'phaseMoved' : kind === 'featureDagUpdated' ? 'dagUpdated' :
       ({ 'phase.metadata.updated': 'metadataUpdated', 'phase.closed': 'closed', 'phase.reopened': 'reopened', 'phase.archived': 'archived' } as Partial<Record<PublicStateEventType, string>>)[type];
@@ -5372,6 +5388,99 @@ function validateIntegrationPlanQueryResultWire(
   return object as unknown as IntegrationPlanQueryResult;
 }
 
+/** Batch delivery uses the existing v5 envelope and a frozen, bounded projection. */
+export function validateBatchDeliveryResultWire(value: unknown, operation: HostOperation = 'execution.batch.delivery.get'): PublicBatchDeliveryResult {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, ['schemaVersion', 'scope', 'batch', 'records', 'summary', 'currentRunningCount', 'readyCount', 'resourceWaitingCount', 'stopOperations', 'integrations', 'nextCursor', 'limit']);
+  if (object.schemaVersion !== WIRE_MESSAGE_SCHEMA_VERSION) unsupportedVersion(operation, 'schemaVersion');
+  if (object.scope !== 'batch-delivery') malformed(operation, 'batch_delivery_scope_invalid');
+  if (!isBatchDeliveryPublicSummary(object)) malformed(operation, 'batch_delivery_private_content');
+  const enumeration = (v: unknown, values: readonly unknown[]) => { if (!values.includes(v)) malformed(operation, 'batch_delivery_enum_invalid'); };
+  const array = (v: unknown): unknown[] => { if (!Array.isArray(v) || v.length > 1000) malformed(operation, 'batch_delivery_array_invalid'); return v; };
+  const ids = (v: unknown): string[] => {
+    const result = array(v).map(id => requireStableId(operation, id));
+    if (new Set(result).size !== result.length) malformed(operation, 'batch_delivery_duplicate_identity');
+    return result;
+  };
+  const text = (v: unknown) => { if (typeof v !== 'string' || v.length === 0 || v.length > 512 || /(?:Bearer\s|\/Users\/|\/home\/|[A-Za-z]:\\|(?:token|password|api[_-]?key)\s*[=:])/i.test(v)) malformed(operation, 'batch_delivery_text_invalid'); };
+  const texts = (v: unknown) => array(v).forEach(text);
+  const budget = (v: unknown) => {
+    const b = requirePlain(operation, v);
+    exactKeys(operation, b, ['status', 'blockingReasons', 'runsCreated', 'attemptsCreated', 'runtimeStarts', 'deadlineAt', 'tokenUsed', 'costUsed']);
+    enumeration(b.status, ['available', 'exhausted', 'unknown']); texts(b.blockingReasons);
+    for (const key of ['runsCreated', 'attemptsCreated', 'runtimeStarts', 'tokenUsed']) requireNonNegativeIntegerOrNull(operation, b[key]);
+    requireUsageMeasureOrNull(operation, b.costUsed); requireIsoUtcOrNull(operation, b.deadlineAt);
+  };
+  const batch = requirePlain(operation, object.batch);
+  exactKeys(operation, batch, ['id', 'projectId', 'phaseId', 'status', 'revision', 'featureIds', 'maxConcurrentFeatures', 'concurrencySource', 'deadlineAt', 'budget']);
+  for (const key of ['id', 'projectId', 'phaseId']) requireStableId(operation, batch[key]);
+  requirePositiveInteger(operation, batch.revision); enumeration(batch.status, EXECUTION_BATCH_STATUSES);
+  const members = ids(batch.featureIds); if (members.length === 0) malformed(operation, 'batch_delivery_members_invalid');
+  if (batch.maxConcurrentFeatures !== null) requirePositiveInteger(operation, batch.maxConcurrentFeatures);
+  if (batch.concurrencySource !== null) text(batch.concurrencySource);
+  requireIsoUtcOrNull(operation, batch.deadlineAt); budget(batch.budget);
+  const stops = (v: unknown) => {
+    const records = array(v); const seen = new Set<string>();
+    for (const entry of records) {
+      const s = requirePlain(operation, entry);
+      exactKeys(operation, s, ['operationId', 'targetKind', 'targetId', 'status', 'reason', 'stopConfirmed', 'forced', 'evidenceRef', 'requestedAt', 'settledAt']);
+      const id = requireStableId(operation, s.operationId); if (seen.has(id)) malformed(operation, 'batch_delivery_duplicate_identity'); seen.add(id);
+      requireStableId(operation, s.targetId); enumeration(s.targetKind, ['run', 'batch', 'feature']); enumeration(s.status, ['stopping', 'stopped', 'uncertain']);
+      if ((s.targetKind === 'batch' && s.targetId !== batch.id) || (s.targetKind === 'feature' && !members.includes(s.targetId as string))) malformed(operation, 'batch_delivery_stop_scope_invalid');
+      text(s.reason); for (const key of ['stopConfirmed', 'forced']) if (s[key] !== null && typeof s[key] !== 'boolean') malformed(operation, 'batch_delivery_stop_invalid');
+      if (s.evidenceRef !== null) text(s.evidenceRef);
+      if (!isIsoUtcDateTime(s.requestedAt)) malformed(operation, 'batch_delivery_date_invalid'); requireIsoUtcOrNull(operation, s.settledAt);
+    }
+  };
+  const integrations = (v: unknown, featureId?: string) => {
+    const seen = new Set<string>();
+    for (const entry of array(v)) {
+      const i = requirePlain(operation, entry);
+      exactKeys(operation, i, ['integrationId', 'successorFeatureId', 'status', 'blockReasons', 'staleReasons', 'commitSha', 'treeSha', 'evidenceRef']);
+      const id = requireStableId(operation, i.integrationId); if (seen.has(id)) malformed(operation, 'batch_delivery_duplicate_identity'); seen.add(id);
+      requireStableId(operation, i.successorFeatureId);
+      if (!members.includes(i.successorFeatureId as string) || (featureId !== undefined && i.successorFeatureId !== featureId)) malformed(operation, 'batch_delivery_integration_scope_invalid');
+      enumeration(i.status, ['dependency_passed', 'integration_passed', 'stale', 'blocked']); texts(i.blockReasons); texts(i.staleReasons);
+      requireGitOidOrNull(operation, i.commitSha); requireGitOidOrNull(operation, i.treeSha); if (i.evidenceRef !== null) text(i.evidenceRef);
+    }
+  };
+  const records = array(object.records); const seen = new Set<string>();
+  requirePositiveInteger(operation, object.limit); if ((object.limit as number) > 200 || records.length > (object.limit as number)) malformed(operation, 'batch_delivery_page_invalid');
+  for (const entry of records) {
+    const r = requirePlain(operation, entry);
+    exactKeys(operation, r, ['featureId', 'featureStatus', 'deliveryStatus', 'status', 'reason', 'failurePredecessors', 'blockingReasons', 'delivery', 'runs', 'integrations', 'stopOperations', 'budget', 'evidenceRefs']);
+    const id = requireStableId(operation, r.featureId);
+    if (!members.includes(id) || seen.has(id)) malformed(operation, 'batch_delivery_feature_scope_invalid'); seen.add(id);
+    enumeration(r.featureStatus, FEATURE_STATUSES); enumeration(r.deliveryStatus, FEATURE_DELIVERY_STATUSES); enumeration(r.status, BATCH_DELIVERY_STATUSES);
+    text(r.reason); texts(r.blockingReasons); texts(r.evidenceRefs);
+    if (ids(r.failurePredecessors).some(id => !members.includes(id))) malformed(operation, 'batch_delivery_predecessor_invalid');
+    const delivery = validateFeatureDeliveryDetailResultWire(r.delivery, operation);
+    if (delivery.feature.featureId !== id || delivery.feature.status !== r.featureStatus || delivery.feature.deliveryStatus !== r.deliveryStatus || delivery.outcome.identities.featureId !== id
+      || (delivery.run !== null && delivery.run.batchId !== batch.id)
+      || delivery.axes.approval.items.some(item => item.projectId !== batch.projectId || item.featureId !== id)
+      || (delivery.axes.verification.batch !== null && (delivery.axes.verification.batch.projectId !== batch.projectId || delivery.axes.verification.batch.featureId !== id))
+      || (delivery.axes.delivery.operation !== null && (delivery.axes.delivery.operation.projectId !== batch.projectId || delivery.axes.delivery.operation.featureId !== id))) malformed(operation, 'batch_delivery_nested_scope_invalid');
+    const runs = new Set<string>();
+    for (const entry of array(r.runs)) {
+      const run = requirePlain(operation, entry);
+      exactKeys(operation, run, ['runId', 'featureId', 'status', 'reason', 'durationMs', 'startedAt', 'endedAt']);
+      const runId = requireStableId(operation, run.runId); if (runs.has(runId) || run.featureId !== id) malformed(operation, 'batch_delivery_run_scope_invalid'); runs.add(runId);
+      enumeration(run.status, EXECUTION_RUN_STATUSES); if (run.reason !== null) text(run.reason);
+      requireNonNegativeIntegerOrNull(operation, run.durationMs); requireIsoUtcOrNull(operation, run.startedAt); requireIsoUtcOrNull(operation, run.endedAt);
+    }
+    integrations(r.integrations, id); stops(r.stopOperations); budget(r.budget);
+  }
+  const summary = requirePlain(operation, object.summary); exactKeys(operation, summary, BATCH_DELIVERY_STATUSES);
+  for (const status of BATCH_DELIVERY_STATUSES) requireNonNegativeInteger(operation, summary[status]);
+  if (Object.values(summary).reduce<number>((sum, count) => sum + (count as number), 0) !== members.length) malformed(operation, 'batch_delivery_summary_invalid');
+  for (const key of ['currentRunningCount', 'readyCount', 'resourceWaitingCount']) {
+    requireNonNegativeInteger(operation, object[key]); if ((object[key] as number) > members.length) malformed(operation, 'batch_delivery_count_invalid');
+  }
+  stops(object.stopOperations); integrations(object.integrations);
+  if (object.nextCursor !== null && (typeof object.nextCursor !== 'string' || !object.nextCursor.startsWith(PLAN_LIST_CURSOR_PREFIX) || object.nextCursor.length > 4096 || records.length === 0)) malformed(operation, 'batch_delivery_cursor_invalid');
+  return object as unknown as PublicBatchDeliveryResult;
+}
+
 /** features.delivery.get：Feature 分轴结果（冻结字段集）。 */
 export function validateFeatureDeliveryDetailResultWire(
   value: unknown,
@@ -6781,6 +6890,7 @@ export function validateAppQueryResponse(operation: 'execution.sessions.list', b
 export function validateAppQueryResponse(operation: 'execution.session.get', body: unknown, expectation?: SnapshotExpectation): WorkSessionDetailResult;
 export function validateAppQueryResponse(operation: 'execution.session.evidence.get', body: unknown, expectation?: SnapshotExpectation): WorkSessionEvidenceContent;
 export function validateAppQueryResponse(operation: 'execution.recording.list', body: unknown, expectation?: SnapshotExpectation): WorkRecordingPage;
+export function validateAppQueryResponse(operation: 'execution.batch.delivery.get', body: unknown, expectation?: SnapshotExpectation): PublicBatchDeliveryResult;
 export function validateAppQueryResponse(operation: 'execution.recording.body.get', body: unknown, expectation?: SnapshotExpectation): WorkRecordingBody;
 export function validateAppQueryResponse(
   operation: 'workspace.operations.get',
@@ -6993,6 +7103,8 @@ export function validateAppQueryResponse(
     // P03-9 / F-014：控制进度与恢复诊断查询响应分发（同一冻结字段集纪律）。
     case 'execution.run.control.get':
       return validateRunControlDetailResultWire(body, operation);
+    case 'execution.batch.delivery.get':
+      return validateBatchDeliveryResultWire(body, operation);
     case 'execution.batch.control.get':
       return validateBatchControlDetailResultWire(body, operation);
     case 'execution.run.recovery.get':

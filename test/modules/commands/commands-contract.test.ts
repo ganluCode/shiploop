@@ -161,6 +161,8 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       'baseline.run',
       'baseline.cancel',
       // P03-1 / F-004：Phase 创建（project scope + phase.write）。
+      'execution.batch.finalize',
+      'phase.delivery.approve',
       'phase.create',
       'phase.metadata.update',
       'phase.close',
@@ -186,6 +188,7 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       // 更新类 expectedRevision=Task 当前 revision；只推进当前验证收尾，不再调用 Runtime）。
       'task.verification.continue',
       'feature.verification.continue',
+      'git.operation.start',
       'git.operation.reconcile',
       // P03-2 / F-006：执行输入制品组准备（project scope + execution.input.prepare；
       // 创建类不携带 expectedRevision；采集/组装/发布为事务外 I/O）。
@@ -224,6 +227,8 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       'baseline.preview': { scopeKind: 'project', mutation: 'create', capability: 'baseline.run' },
       'baseline.run': { scopeKind: 'project', mutation: 'create', capability: 'baseline.run' },
       'baseline.cancel': { scopeKind: 'project', mutation: 'create', capability: 'baseline.run' },
+      'execution.batch.finalize': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
+      'phase.delivery.approve': { scopeKind: 'project', mutation: 'update', capability: 'feature.plan.decide' },
       'phase.create': { scopeKind: 'project', mutation: 'create', capability: 'phase.write' },
       'phase.metadata.update': { scopeKind: 'project', mutation: 'update', capability: 'phase.write' },
       'phase.close': { scopeKind: 'project', mutation: 'update', capability: 'phase.write' },
@@ -241,6 +246,7 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       'task.approval.unblock': { scopeKind: 'project', mutation: 'update', capability: 'feature.plan.decide' },
       'task.verification.continue': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
       'feature.verification.continue': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
+      'git.operation.start': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
       'git.operation.reconcile': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
       'feature.plan.decide': { scopeKind: 'project', mutation: 'update', capability: 'feature.plan.decide' },
       'execution.input.prepare': { scopeKind: 'project', mutation: 'create', capability: 'execution.input.prepare' },

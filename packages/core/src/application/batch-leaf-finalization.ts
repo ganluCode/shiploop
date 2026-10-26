@@ -131,6 +131,9 @@ export interface BatchFinalizationVerificationExecutor {
 }
 
 export interface BatchFinalizationPrepareRequest {
+  /** Command-channel CAS; legacy trusted callers may omit these checks. */
+  readonly expectedBatchRevision?: number;
+  readonly phaseId?: string;
   readonly projectId: string;
   readonly batchId: string;
   readonly commandId: string;
@@ -221,6 +224,8 @@ function validateSnapshot(snapshot: BatchFinalizationBatchSnapshot, request: Bat
   if (snapshot.schemaVersion !== 1 || snapshot.projectId !== request.projectId || snapshot.batchId !== request.batchId) {
     fail('batch_identity_mismatch');
   }
+  if ((request.expectedBatchRevision !== undefined && snapshot.revision !== request.expectedBatchRevision)
+    || (request.phaseId !== undefined && snapshot.phaseId !== request.phaseId)) fail('stale_revision');
   if (snapshot.approved !== true) fail('batch_not_approved');
   if (snapshot.status !== 'succeeded') fail('batch_not_terminal', { status: snapshot.status });
   if (snapshot.featureIds.length === 0) fail('empty_batch');
@@ -376,7 +381,11 @@ export function createBatchLeafFinalizationService(deps: {
   const prepare = async (raw: BatchFinalizationPrepareRequest): Promise<BatchFinalizationPrepareResult> => {
     const request = validateRequest(raw);
     const existing = deps.candidates.read(request.projectId, request.batchId, request.commandId);
-    if (existing !== null) return { status: 'candidate_replayed', blockReasons: [], candidate: existing };
+    if (existing !== null) {
+      if ((request.expectedBatchRevision !== undefined && existing.batchRevision !== request.expectedBatchRevision)
+        || (request.phaseId !== undefined && existing.phaseId !== request.phaseId)) return { status: 'blocked', blockReasons: ['stale_revision'], candidate: null };
+      return { status: 'candidate_replayed', blockReasons: [], candidate: existing };
+    }
     const snapshot = deps.batches.read(request.projectId, request.batchId);
     if (snapshot === undefined) return { status: 'blocked', blockReasons: ['batch_not_found'], candidate: null };
     try { validateSnapshot(snapshot, request); }

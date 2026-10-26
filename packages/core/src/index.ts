@@ -12,6 +12,7 @@
  * - 不反向依赖 shiploop-host / shiploop-cli；
  * - 加载本模块没有副作用：不监听端口、不启动进程、不写用户数据。
  */
+export * from './ports/batch-delivery-commands.js';
 export * from './ports/errors.js';
 export * from './ports/validation.js';
 export * from './ports/settings-schema.js';

@@ -29,6 +29,7 @@
 import { randomUUID } from 'node:crypto';
 import { request as httpRequest, type ClientRequest, type IncomingMessage } from 'node:http';
 import {
+  validateBatchDeliveryCommandResult,
   PLAN_LIST_CURSOR_PREFIX,
   PLAN_LIST_MAX_LIMIT,
   PLANNING_REQUEST_SCHEMA_VERSION,
@@ -76,6 +77,7 @@ import type {
   PublicStateEvent,
   RunScheduleStatusResult,
   RunControlDetailResult,
+  PublicBatchDeliveryResult,
   BatchControlDetailResult,
   RunRecoveryDetailResult,
   SettingsScope,
@@ -165,6 +167,7 @@ import type { HostOperation } from '../contract/index.js';
 import { mapErrorResponse, requestLoopbackJson, requestLoopbackText } from './http-json.js';
 import {
   validatePlanningDecisionResultWire,
+  validateBatchDeliveryResultWire,
   validateAppQueryResponse,
   validateBaselineCommandResultWire,
   validateBaselinePreviewResultWire,
@@ -660,8 +663,30 @@ export interface HostEventSubscription {
   close(): void;
 }
 
+/** Explicit human Batch delivery actions; authority is bound by Host. */
+export interface FinalizeBatchInput {
+  readonly projectId: string;
+  readonly phaseId: string;
+  readonly batchId: string;
+  readonly expectedRevision: number;
+  readonly commandId?: string;
+}
+export interface ApprovePhaseDeliveryInput extends FinalizeBatchInput {
+  readonly candidateId: string;
+  readonly expectedCandidateRevision: number;
+}
+
 /** HostClient 应用面方法集（connectToHost 返回对象的一部分）。 */
 export interface HostClientApplication {
+  finalizeBatch(input: FinalizeBatchInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  approvePhaseDelivery(input: ApprovePhaseDeliveryInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  getBatchDelivery(projectId: string, batchId: string, input?: PlanListPageInput): Promise<PublicBatchDeliveryResult>;
+  observeBatch(projectId: string, batchId: string, input?: PlanListPageInput): Promise<{
+    readonly delivery: PublicBatchDeliveryResult;
+    readonly control: BatchControlDetailResult;
+    readonly blockingChain: readonly { readonly featureId: string; readonly failurePredecessors: readonly string[]; readonly blockingReasons: readonly string[] }[];
+  }>;
+
   listWorkSessions(projectId: string, input: { readonly runId?: string; readonly taskId?: string; readonly limit?: number; readonly cursor?: string }): Promise<WorkSessionListResult>;
   getWorkSession(projectId: string, attemptId: string): Promise<WorkSessionDetailResult>;
   readWorkSessionEvidence(projectId: string, attemptId: string, artifactId: string): Promise<WorkSessionEvidenceContent>;
@@ -3751,6 +3776,70 @@ export function createHostClientApplication(context: AppClientContext): HostClie
         throw new HostProtocolError('response_malformed', 'execution.run.control.get', '控制响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
       }
       return result;
+    },
+
+    async finalizeBatch(input: FinalizeBatchInput, options?: SubmitCommandOptions): Promise<CommandReceipt> {
+      const op = 'commands.submit';
+      const object = rejectUnknownInputKeys(op, input, ['projectId', 'phaseId', 'batchId', 'expectedRevision', 'commandId']);
+      const projectId = requireProjectId(op, object.projectId as string);
+      const phaseId = requireStableIdInput(op, object.phaseId, 'phaseId');
+      const batchId = requireStableIdInput(op, object.batchId, 'batchId');
+      const expectedRevision = requireExpectedRevisionInput(op, object.expectedRevision);
+      const receipt = await submitCommand({ ...optionalCommandIdInput(op, object.commandId), operation: 'execution.batch.finalize',
+        scope: { kind: 'project', projectId }, expectedRevision, payload: { phaseId, batchId } }, options);
+      if (receipt.status === 'completed') {
+        const result = validateBatchDeliveryCommandResult(receipt.result);
+        if (result.phaseId !== phaseId || result.batchId !== batchId || result.batchRevision !== expectedRevision) {
+          throw new HostProtocolError('response_malformed', op, 'Batch 收尾响应归属不一致', { details: { reason: 'scope_mismatch' } });
+        }
+      }
+      return receipt;
+    },
+
+    async approvePhaseDelivery(input: ApprovePhaseDeliveryInput, options?: SubmitCommandOptions): Promise<CommandReceipt> {
+      const op = 'commands.submit';
+      const object = rejectUnknownInputKeys(op, input, ['projectId', 'phaseId', 'batchId', 'expectedRevision', 'commandId', 'candidateId', 'expectedCandidateRevision']);
+      const projectId = requireProjectId(op, object.projectId as string);
+      const phaseId = requireStableIdInput(op, object.phaseId, 'phaseId');
+      const batchId = requireStableIdInput(op, object.batchId, 'batchId');
+      const candidateId = requireStableIdInput(op, object.candidateId, 'candidateId');
+      const expectedRevision = requireExpectedRevisionInput(op, object.expectedRevision);
+      const expectedCandidateRevision = requireExpectedRevisionInput(op, object.expectedCandidateRevision);
+      const receipt = await submitCommand({ ...optionalCommandIdInput(op, object.commandId), operation: 'phase.delivery.approve', scope: { kind: 'project', projectId },
+        expectedRevision, payload: { phaseId, batchId, candidateId, expectedCandidateRevision } }, options);
+      if (receipt.status === 'completed') {
+        const result = validateBatchDeliveryCommandResult(receipt.result);
+        if (result.phaseId !== phaseId || result.batchId !== batchId || result.batchRevision !== expectedRevision
+          || result.candidateId !== candidateId || result.candidateRevision !== expectedCandidateRevision) {
+          throw new HostProtocolError('response_malformed', op, 'Phase 批准响应归属不一致', { details: { reason: 'scope_mismatch' } });
+        }
+      }
+      return receipt;
+    },
+
+    async getBatchDelivery(projectId: string, batchId: string, input?: PlanListPageInput): Promise<PublicBatchDeliveryResult> {
+      const op = 'execution.batch.delivery.get';
+      context.assertOpen(op);
+      const project = requireProjectId(op, projectId);
+      const batch = requireStableIdInput(op, batchId, 'batchId');
+      const paging = buildPlanListQuery(input, op);
+      const result = validateBatchDeliveryResultWire(await getJson(op,
+        `${BATCHES_ROUTE_PREFIX}${encodeURIComponent(batch)}/delivery?projectId=${encodeURIComponent(project)}${paging ? `&${paging}` : ''}`));
+      if (result.batch.projectId !== project || result.batch.id !== batch || (input?.limit !== undefined && result.limit !== input.limit)) {
+        throw new HostProtocolError('response_malformed', op, 'Batch 收尾响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
+      }
+      return result;
+    },
+
+    async observeBatch(projectId: string, batchId: string, input?: PlanListPageInput) {
+      const [delivery, control] = await Promise.all([this.getBatchDelivery(projectId, batchId, input), this.getBatchControl(projectId, batchId)]);
+      const controlMembers = control.batch.featureIds ?? [control.batch.featureId];
+      if ((control.batch.phaseId !== undefined && control.batch.phaseId !== delivery.batch.phaseId)
+        || controlMembers.some(id => !delivery.batch.featureIds.includes(id)) || controlMembers.length !== delivery.batch.featureIds.length) {
+        throw new HostProtocolError('response_malformed', 'execution.batch.delivery.get', 'Batch 观察响应归属不一致', { details: { reason: 'scope_mismatch' } });
+      }
+      return { delivery, control, blockingChain: delivery.records.map(record => ({ featureId: record.featureId,
+        failurePredecessors: record.failurePredecessors, blockingReasons: record.blockingReasons })) };
     },
 
     async getBatchControl(projectId: string, batchId: string): Promise<BatchControlDetailResult> {

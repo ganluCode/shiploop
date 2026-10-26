@@ -191,6 +191,7 @@ export type ApplicationOperation =
   // 查询（与 Core EXECUTION_CONTROL_QUERY_OPERATIONS 同源）。
   | 'execution.run.control.get'
   | 'execution.batch.control.get'
+  | 'execution.batch.delivery.get'
   | 'execution.run.recovery.get'
   // P04-9 / F-009：派发队列与执行槽位只读投影（与 Core
   // EXECUTION_DISPATCH_QUERY_OPERATIONS 同源；无写入口）。
@@ -450,6 +451,9 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
     }
     // P03-9 / F-013：GET /v1/batches/:batchId/control（Batch 控制进度；与
     // budget 同一冻结形态）；其他形态一律未匹配 → 404 unknown_operation。
+    if (segments.length === 2 && segments[0] !== '' && segments[1] === 'delivery') {
+      return { operation: 'execution.batch.delivery.get', method: 'GET', pathParam: { name: 'batchId', value: segments[0]! } };
+    }
     if (segments.length === 2 && segments[0] !== '' && segments[1] === 'control') {
       return { operation: 'execution.batch.control.get', method: 'GET', pathParam: { name: 'batchId', value: segments[0]! } };
     }
@@ -857,6 +861,7 @@ const QUERY_SPECS: Readonly<Partial<Record<ApplicationOperation, QuerySpec>>> = 
   'integration.plan.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
   'execution.run.control.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
   'execution.batch.control.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
+  'execution.batch.delivery.get': Object.freeze({ allowed: ['projectId', 'limit', 'cursor'], repeatable: [] }),
   'execution.run.recovery.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
 });
 
@@ -1391,6 +1396,13 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
       const query = buildPlanListQuery(params, operation, 'projectId');
       query.runId = pathParam?.value;
       result = await app.queryService.getRunControl(app.principal, query);
+      break;
+    }
+    case 'execution.batch.delivery.get': {
+      if (app.queryService.batchDeliveryAvailable !== true || typeof app.queryService.getBatchDelivery !== 'function') reject(501, 'unsupported', operation, 'Batch 收尾查询未装配');
+      const query = buildPlanListQuery(params, operation, 'projectId');
+      query.batchId = pathParam?.value;
+      result = await app.queryService.getBatchDelivery(app.principal, query);
       break;
     }
     case 'execution.batch.control.get': {

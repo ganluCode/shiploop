@@ -1,4 +1,6 @@
-import { randomUUID } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { createResultRef } from '../../ports/command-receipts.js';
+import { validateBatchDeliveryCommandResult } from '../../ports/batch-delivery-commands.js';
 import type { SqliteStorageSession } from './session.js';
 import { StorageError } from '../../ports/errors.js';
 import type {
@@ -90,6 +92,23 @@ export function createSqlitePhaseDeliveryApprovalStore(
           throw new StorageError('conflict', OPERATION, 'Phase 交付候选已经批准', { details: { reason: 'already_approved' } });
         }
         const timestamp = now();
+        let publicResult: unknown = { schemaVersion: 1, approvalId: record.approvalId, phaseId: record.phaseId, batchId: record.batchId, candidateId: record.candidateId, summaryDigest: record.summaryDigest };
+        if (record.commandContext !== undefined) {
+          const current = session.database.prepare('SELECT phase_id, revision, status FROM execution_batches WHERE project_id = ? AND id = ?').get(record.projectId, record.batchId) as { phase_id: string; revision: number; status: string } | undefined;
+          const candidate = session.database.prepare('SELECT revision, status, input_digest, scope_digest FROM phase_delivery_candidates WHERE project_id = ? AND id = ? AND batch_id = ?').get(record.projectId, record.candidateId, record.batchId) as { revision: number; status: string; input_digest: string; scope_digest: string } | undefined;
+          if (current?.phase_id !== record.phaseId || current.revision !== record.batchRevision || current.status !== 'succeeded'
+            || candidate?.revision !== record.candidateRevision || candidate.status !== 'ready_for_phase_approval'
+            || candidate.input_digest !== record.inputDigest || candidate.scope_digest !== record.scopeDigest) {
+            throw new StorageError('conflict', OPERATION, '批准依据已过期', { details: { reason: 'stale_revision' } });
+          }
+          publicResult = validateBatchDeliveryCommandResult({ schemaVersion: 1, projectId: record.projectId, phaseId: record.phaseId,
+            batchId: record.batchId, batchRevision: record.batchRevision, candidateId: record.candidateId, candidateRevision: record.candidateRevision,
+            status: 'approved', featureIds: record.deliveryFeatureIds ?? [], scopeDigest: record.scopeDigest, inputDigest: record.inputDigest,
+            integrationCommitSha: record.integrationCommitSha, integrationTreeSha: record.integrationTreeSha,
+            integrationEvidenceId: record.integrationEvidenceId, integrationEvidenceDigest: record.integrationEvidenceDigest,
+            verificationEvidenceId: record.verificationEvidenceId, verificationEvidenceDigest: record.verificationEvidenceDigest,
+            approvalId: record.approvalId, summaryDigest: record.summaryDigest });
+        }
         session.database.prepare(
           `INSERT INTO phase_delivery_approvals
            (id, created_at, project_id, revision, updated_at, command_id, actor_id, phase_id, batch_id, candidate_id,
@@ -113,9 +132,10 @@ export function createSqlitePhaseDeliveryApprovalStore(
             result_json, result_ref, error_code, error_message, error_details, issued_at, completed_at)
            VALUES (?, ?, 1, ?, ?, ?, 'project', ?, 'phase.delivery.approve', ?, 'completed', NULL, 5, NULL, NULL, NULL, NULL, ?, ?, NULL, NULL, NULL, ?, ?)`,
         ).run(
-          randomUUID(), timestamp, timestamp, record.actorId, record.commandId, record.projectId, record.summaryDigest,
-          json({ schemaVersion: 1, approvalId: record.approvalId, phaseId: record.phaseId, batchId: record.batchId, candidateId: record.candidateId, summaryDigest: record.summaryDigest }),
-          record.approvalId, timestamp, timestamp,
+          randomUUID(), timestamp, timestamp, record.actorId, record.commandId, record.projectId, record.commandContext?.requestDigest ?? record.summaryDigest,
+          json(publicResult),
+          record.commandContext === undefined ? record.approvalId : createResultRef(randomBytes(32)),
+          record.commandContext === undefined ? timestamp : Date.parse(record.commandContext.issuedAt), timestamp,
         );
         const phase = session.database.prepare<[string, string], { revision: number }>(
           'SELECT revision FROM phases WHERE project_id = ? AND id = ?',

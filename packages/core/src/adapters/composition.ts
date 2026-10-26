@@ -50,6 +50,8 @@ import { createVerificationStopControl } from '../application/verification-stop-
 import type { VerificationStopControl } from '../ports/verification-stop.js';
 import type { ExecutionStopControlPort } from '../ports/execution-stop.js';
 import type { RuntimeFallbackSwitchService } from '../ports/runtime-fallback-switch.js';
+import type { BatchDeliveryFactory } from '../application/batch-delivery-commands.js';
+export type { BatchDeliveryFactory, BatchDeliveryDependencies } from '../application/batch-delivery-commands.js';
 import type { FeatureDeliveryFactory } from '../application/feature-delivery-commands.js';
 export type { FeatureDeliveryFactory, FeatureDeliveryDependencies } from '../application/feature-delivery-commands.js';
 import { assertVerificationReuseIdentity, validateTaskVerificationContinue } from '../application/task-verification-continue.js';
@@ -64,6 +66,7 @@ import { createOnboardingService } from '../application/onboarding-service.js';
 import type { OnboardingService } from '../application/onboarding-service.js';
 import { createProjectService } from '../application/project-service.js';
 import type { ProjectService } from '../application/project-service.js';
+import { createSqliteBatchDeliveryQueryStore } from './sqlite/batch-delivery-query-store.js';
 import { createQueryService } from '../application/query-service.js';
 import type { QueryService } from '../application/query-service.js';
 import { createPlanningQueryService } from '../application/planning-query.js';
@@ -216,6 +219,7 @@ export interface CoreApplicationOptions {
   /** Trusted static adapter assembly; never a settings/argv/env field. */
   readonly workRuntimeFactory?: WorkRuntimeFactory;
   /** Trusted delivery adapters; absent until explicitly assembled. */
+  readonly batchDeliveryFactory?: BatchDeliveryFactory;
   readonly featureDeliveryFactory?: FeatureDeliveryFactory;
   /** Trusted integration facts; absent means plan generation remains unavailable. */
   readonly integrationPlanFactory?: (deps: {
@@ -394,6 +398,7 @@ export interface CoreApplication {
 const ALLOWED_OPTION_KEYS = [
   'workStartupRecoveryRequired',
   'workRuntimeFactory',
+  'batchDeliveryFactory',
   'featureDeliveryFactory',
   'integrationPlanFactory',
   'finalizationExecution',
@@ -492,6 +497,9 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
   const capabilityCatalog = requireCapabilityCatalog(object.capabilityCatalog, context);
   if (object.workRuntimeFactory !== undefined && typeof object.workRuntimeFactory !== 'function') {
     throw validationError(context, 'workRuntimeFactory', 'trusted_factory_required');
+  }
+  if (object.batchDeliveryFactory !== undefined && typeof object.batchDeliveryFactory !== 'function') {
+    throw validationError(context, 'batchDeliveryFactory', 'trusted_factory_required');
   }
   if (object.featureDeliveryFactory !== undefined && typeof object.featureDeliveryFactory !== 'function') {
     throw validationError(context, 'featureDeliveryFactory', 'trusted_factory_required');
@@ -1105,6 +1113,8 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
         expectedHead: input.observation.afterIdentity.headCommit }),
       ...(nowUtcMs === undefined ? {} : { nowMs: nowUtcMs }),
     });
+    const batchDelivery = (object.batchDeliveryFactory as BatchDeliveryFactory | undefined)?.({ atomicStore });
+    if (object.batchDeliveryFactory !== undefined && batchDelivery === undefined) throw validationError(context, 'batchDeliveryFactory', 'delivery_adapters_required');
     const featureDelivery = (object.featureDeliveryFactory as FeatureDeliveryFactory | undefined)?.({ atomicStore });
     if (object.featureDeliveryFactory !== undefined && featureDelivery === undefined) {
       throw validationError(context, 'featureDeliveryFactory', 'delivery_adapters_required');
@@ -1130,6 +1140,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     });
     const commandService = createCommandService({
       atomicStore,
+      batchDelivery,
       featureDelivery,
       repositoryInspector,
       // F-009：配置命令的能力目录复检复用同一可信装配目录。
@@ -1235,6 +1246,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       gitOperationReads: queryStore,
       gitAgentRepairReads: createSqliteGitAgentRepairQueryStore(session),      featureReportReads: queryStore,
       featureDeliveryReads: queryStore,
+      batchDeliveryReads: createSqliteBatchDeliveryQueryStore(session, { nowUtcMs }),
       integrationPlanReads: queryStore,
       executionControlReads: queryStore,
       artifacts: artifactStore,

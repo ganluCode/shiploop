@@ -24,7 +24,7 @@ describe('P05-8 F-006 GitAgent Host/CLI query protocol', () => {
   });
 
   it('[case:repair-cli-readonly] parses bounded repair list/detail commands without mutation flags', () => {
-    expect(parseAppCliArgs(['git', 'repairs', '--project', projectId, '--limit', '10']).commandId).toBe('git.repairs');
-    expect(parseAppCliArgs(['git', 'repair', '--project', projectId, 'repair-1']).commandId).toBe('git.repair');
+    expect(parseAppCliArgs(['git', 'repairs', '--project', projectId, '--limit', '10'])).toMatchObject({ commandId: 'git.repairs' });
+    expect(parseAppCliArgs(['git', 'repair', '--project', projectId, 'repair-1'])).toMatchObject({ commandId: 'git.repair' });
   });
 });

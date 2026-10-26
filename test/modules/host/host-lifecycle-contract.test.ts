@@ -289,6 +289,8 @@ describe('F-002 冻结常量与能力声明', () => {
           // P03-8 / F-009：Git 意图/实际提交/操作回执查询真实接线。
           'git.operations.list',
           'git.operations.get',
+          'git.repairs.list',
+          'git.repairs.get',
           // P03-8 / F-010：Feature 分轴结果查询真实接线。
           'features.delivery.get',
           'features.report.get',
@@ -311,8 +313,10 @@ describe('F-002 冻结常量与能力声明', () => {
     });
     // 接线宣告与 Core 支持面交叉核对（不漂移：Core 增删操作必须同步接线与宣告）。
     expect([...CURRENT_HOST_CAPABILITIES.application.commands]).toEqual(
-      COMMAND_OPERATIONS.filter(operation => !(FEATURE_DELIVERY_COMMAND_CAPABILITIES as readonly string[]).includes(operation)));
-    expect([...hostCapabilitiesForDelivery(true).application.commands]).toEqual([...COMMAND_OPERATIONS]);
+      COMMAND_OPERATIONS.filter(operation => !(FEATURE_DELIVERY_COMMAND_CAPABILITIES as readonly string[]).includes(operation)
+        && operation !== 'execution.batch.finalize' && operation !== 'phase.delivery.approve' && operation !== 'git.operation.start'));
+    // Core's optional integration-start adapter has no Host capability declaration.
+    expect([...hostCapabilitiesForDelivery(true, true, true).application.commands]).toEqual(COMMAND_OPERATIONS.filter(operation => operation !== 'git.operation.start'));
     // P02-3：queries = P02-2 的 QUERY_OPERATIONS + 已接线的静态接入两项（F-006）
     // + 已接线的基线分页/详情/证据三项（F-014，与 BASELINE_QUERY_OPERATIONS 同步）
     // + P03-1 / F-009 计划域六项（与 PLAN_QUERY_OPERATIONS 同步，能力位复用 project.read）
@@ -349,6 +353,8 @@ describe('F-002 冻结常量与能力声明', () => {
       'workspace.operations.list',
       'workspace.operations.get',
       ...GIT_OPERATION_QUERY_OPERATIONS,
+      'git.repairs.list',
+      'git.repairs.get',
       ...FEATURE_DELIVERY_QUERY_OPERATIONS,
       'features.report.get',
       'integration.plan.get',

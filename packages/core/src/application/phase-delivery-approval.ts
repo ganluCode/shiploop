@@ -32,6 +32,9 @@ export interface PhaseDeliveryApprovalSnapshot {
 export type PhaseDeliveryApprovalStatus = 'approved' | 'invalidated';
 
 export interface PhaseDeliveryApprovalRecord {
+  /** Only supplied by the trusted versioned command channel; not a persisted summary. */
+  readonly commandContext?: { readonly requestDigest: string; readonly issuedAt: string };
+  readonly deliveryFeatureIds?: readonly string[];
   readonly schemaVersion: 1;
   readonly approvalId: string;
   readonly revision: number;
@@ -76,6 +79,7 @@ export interface PhaseDeliveryApprovalSnapshotSource {
 }
 
 export interface PhaseDeliveryApprovalRequest {
+  readonly commandContext?: { readonly requestDigest: string; readonly issuedAt: string };
   readonly projectId: string;
   readonly phaseId: string;
   readonly batchId: string;
@@ -191,6 +195,7 @@ function buildRecord(request: PhaseDeliveryApprovalRequest, snapshot: PhaseDeliv
   const budgetDigest = digest('shiploop:phase-delivery-approval-budget:v1', batch.budgetSummary);
   const summaryDigest = buildSummaryDigest(snapshot);
   return {
+    ...(request.commandContext === undefined ? {} : { commandContext: request.commandContext, deliveryFeatureIds: [...candidate.leafFeatureIds] }),
     schemaVersion: 1,
     approvalId: digest('shiploop:phase-delivery-approval:v1', { projectId: request.projectId, phaseId: request.phaseId, candidateId: request.candidateId, summaryDigest }),
     revision: 1,

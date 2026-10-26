@@ -127,6 +127,7 @@ import {
 } from './task-strategy-update.js';
 import type { TaskStrategyEditGuards } from './task-strategy-update.js';
 
+import { createBatchDeliveryCommandHandler, type BatchDeliveryDependencies } from './batch-delivery-commands.js';
 export interface DeliveryActivity {
   enterQuiesce(): { readonly accepted: number };
   awaitQuiesce(budgetMs: number): Promise<{ readonly confirmed: boolean; readonly pending: readonly string[] }>;
@@ -134,6 +135,7 @@ export interface DeliveryActivity {
 
 export interface CommandService {
   readonly deliveryActivity?: DeliveryActivity;
+  readonly batchDeliveryAvailable?: boolean;
   submit(principal: unknown, envelope: unknown): Promise<CommandReceipt>;
 }
 /**
@@ -234,6 +236,7 @@ export interface CommandServiceOptions {
    * composition 根；受控测试可直接注入窄端口实现。
    */
   readonly taskVerificationContinue?: TaskVerificationContinueDeps;
+  readonly batchDelivery?: BatchDeliveryDependencies;
   readonly featureDelivery?: FeatureDeliveryDependencies;
   readonly nowUtcMs?: () => number;
 }
@@ -313,6 +316,18 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
   const delivery = options.featureDelivery === undefined ? undefined : createFeatureDeliveryCommandHandler({
     atomicStore: store, dependencies: options.featureDelivery, nowUtcMs,
   });
+
+  const batchDelivery = options.batchDelivery === undefined ? undefined : createBatchDeliveryCommandHandler({
+    atomicStore: store, dependencies: options.batchDelivery, nowUtcMs,
+  });
+  const activities = [delivery?.activity, batchDelivery?.activity].filter((activity): activity is DeliveryActivity => activity !== undefined);
+  const deliveryActivity: DeliveryActivity | undefined = activities.length === 0 ? undefined : {
+    enterQuiesce() { return { accepted: activities.reduce((sum, activity) => sum + activity.enterQuiesce().accepted, 0) }; },
+    async awaitQuiesce(budgetMs) {
+      const results = await Promise.all(activities.map(activity => activity.awaitQuiesce(budgetMs)));
+      return { confirmed: results.every(result => result.confirmed), pending: results.flatMap(result => result.pending) };
+    },
+  };
 
   /** 既有项目元数据 CAS：业务 + metadata_updated 事件 + 回执同一事务（F-007）。 */
   function submitMetadataUpdate(
@@ -630,7 +645,8 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
   }
 
   return {
-    deliveryActivity: delivery?.activity,
+    deliveryActivity,
+    batchDeliveryAvailable: batchDelivery !== undefined,
     async submit(principal: unknown, input: unknown): Promise<CommandReceipt> {
       // 非法可信装配为编程错误，不折算客户端错误。
       assertTrustedPrincipal(principal);
@@ -640,6 +656,16 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
         const envelope = validateCommandEnvelope(input);
         operation = envelope.operation;
         authorizeCommand(principal, envelope);
+        if (envelope.operation === 'execution.batch.finalize' || envelope.operation === 'phase.delivery.approve') {
+          const digest = computeCommandRequestDigest(envelope);
+          if (batchDelivery === undefined) {
+            const receipt = store.transact(operation, tx => replay(principal, tx.findReceipt(principal.principalId, envelope.commandId), digest, operation));
+            if (receipt) return receipt;
+            checkTiming(envelope, nowUtcMs());
+            throw new PublicError('unsupported', operation);
+          }
+          return await batchDelivery.submit(principal, envelope, digest);
+        }
         if (envelope.operation === 'feature.verification.continue' || envelope.operation === 'git.operation.start' || envelope.operation === 'git.operation.reconcile') {
           const digest = computeCommandRequestDigest(envelope);
           if (delivery === undefined) {

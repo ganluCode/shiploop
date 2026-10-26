@@ -942,6 +942,14 @@ export function createPlanListCursorBinding(
       },
     };
   }
+  if (scope.kind === 'batch-delivery') {
+    rejectUnknownKeys(scope, ['kind', 'projectId', 'batchId'], { operation }, 'scope');
+    return { rootIdentity: input.rootIdentity, scope: {
+      kind: 'batch-delivery',
+      projectId: validateStableId(scope.projectId, { operation }, 'scope.projectId'),
+      batchId: validateStableId(scope.batchId, { operation }, 'scope.batchId'),
+    } };
+  }
   if (scope.kind === 'git-repairs') {
     rejectUnknownKeys(scope, ['kind', 'projectId'], { operation }, 'scope');
     return {
@@ -1016,6 +1024,7 @@ function planBindingAsTrusted(binding: PlanListCursorBinding): PlanListCursorBin
       binding.scope.kind !== 'dispatch-queue-batch' &&
       binding.scope.kind !== 'dispatch-queue-feature' &&
       binding.scope.kind !== 'dispatch-queue' &&
+      binding.scope.kind !== 'batch-delivery' &&
       binding.scope.kind !== 'git-repairs' &&
       binding.scope.kind !== 'execution-resources' &&
       binding.scope.kind !== 'planning-contexts' &&
@@ -1068,6 +1077,7 @@ function planScopeFingerprint(scope: PlanListScope): string {
     case 'feature-git-operations':
       parent = scope.featureId;
       break;
+    case 'batch-delivery':
     case 'budget-revisions':
       parent = scope.batchId;
       break;

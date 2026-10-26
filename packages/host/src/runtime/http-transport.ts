@@ -144,7 +144,7 @@ function buildHandshakeResponse(context: HostLifecycleContext): HandshakeRespons
     dataRootIdentity: context.dataRootIdentity,
     lifecycleState: context.getLifecycleState(),
     startedAt: context.startedAt,
-    capabilities: hostCapabilitiesForDelivery(context.featureDeliveryAvailable === true),
+    capabilities: hostCapabilitiesForDelivery(context.featureDeliveryAvailable === true, context.application?.commandService.batchDeliveryAvailable === true, context.application?.queryService.batchDeliveryAvailable === true && typeof context.application.queryService.getBatchDelivery === 'function'),
   };
 }
 

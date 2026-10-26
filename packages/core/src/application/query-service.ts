@@ -335,6 +335,7 @@ export type SnapshotResult = ProjectSnapshotResult | GlobalSnapshotResult;
  * （生产固定 local-owner；受限主体仅测试装配），本服务绝不从请求数据取身份。
  */
 export interface QueryService {
+  readonly batchDeliveryAvailable?: boolean;
   /** projects.list：project.read + 可见谓词下推 + P01 标签/分页规则。 */
   listProjects(principal: unknown, filter?: unknown): Promise<ProjectListResult>;
   /** projects.labelCounts：与列表同一可见范围的项目层标签去重计数。 */
@@ -858,6 +859,7 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
   }
 
   return {
+    batchDeliveryAvailable: batchDeliveryReads !== undefined,
     async listProjects(principal: unknown, filter?: unknown): Promise<ProjectListResult> {
       assertTrustedPrincipal(principal);
       const operation = PROJECTS_LIST_OPERATION;

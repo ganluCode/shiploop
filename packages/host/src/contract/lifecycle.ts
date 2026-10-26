@@ -69,6 +69,8 @@ export const APPLICATION_COMMAND_CAPABILITIES = [
   'baseline.cancel',
   // P03-1 / F-004：Phase 创建经既有 POST /v1/commands 通用路由接线
   //（信封/回执/幂等同一命令面；CLI 计划入口仍由后续任务接入）。
+  'execution.batch.finalize',
+  'phase.delivery.approve',
   'phase.create',
   // P05-2 / F-007：生命周期、归属和 DAG 命令均已接通 HostClient/CLI。
   'phase.metadata.update',
@@ -204,6 +206,7 @@ export const APPLICATION_QUERY_CAPABILITIES = [
   // 仍由 F-014/F-015 接入）。
   'execution.run.control.get',
   'execution.batch.control.get',
+  'execution.batch.delivery.get',
   'execution.run.recovery.get',
   // P04-9 / F-009：派发队列与执行槽位只读投影真实接线（能力位复用
   // project.read；与 Core EXECUTION_DISPATCH_QUERY_OPERATIONS 同步，不漂移）。
@@ -256,10 +259,15 @@ function deepFreeze<T>(value: T): T {
 export const FEATURE_DELIVERY_COMMAND_CAPABILITIES = ['feature.verification.continue', 'git.operation.reconcile'] as const;
 
 /** Additive v5 capability pair: production defaults stay honest without adapters. */
-export function hostCapabilitiesForDelivery(available: boolean): HostCapabilities {
-  if (!available) return CURRENT_HOST_CAPABILITIES;
+export const BATCH_DELIVERY_COMMAND_CAPABILITIES = ['execution.batch.finalize', 'phase.delivery.approve'] as const;
+export function hostCapabilitiesForDelivery(available: boolean, batchDeliveryAvailable = false, batchQueryAvailable = false): HostCapabilities {
+  if (!available && !batchDeliveryAvailable && !batchQueryAvailable) return CURRENT_HOST_CAPABILITIES;
   return deepFreeze({ ...CURRENT_HOST_CAPABILITIES, application: {
-    ...CURRENT_HOST_CAPABILITIES.application, commands: [...APPLICATION_COMMAND_CAPABILITIES],
+    ...CURRENT_HOST_CAPABILITIES.application,
+    queries: APPLICATION_QUERY_CAPABILITIES.filter(query => batchQueryAvailable || query !== 'execution.batch.delivery.get'),
+    commands: APPLICATION_COMMAND_CAPABILITIES.filter(command =>
+      (available || !(FEATURE_DELIVERY_COMMAND_CAPABILITIES as readonly string[]).includes(command)) &&
+      (batchDeliveryAvailable || !(BATCH_DELIVERY_COMMAND_CAPABILITIES as readonly string[]).includes(command))),
   } });
 }
 
@@ -272,8 +280,9 @@ export const CURRENT_HOST_CAPABILITIES: HostCapabilities = deepFreeze({
   },
   application: {
     commands: APPLICATION_COMMAND_CAPABILITIES.filter(command =>
-      command !== 'feature.verification.continue' && command !== 'git.operation.reconcile'),
-    queries: [...APPLICATION_QUERY_CAPABILITIES],
+      command !== 'feature.verification.continue' && command !== 'git.operation.reconcile' &&
+      !(BATCH_DELIVERY_COMMAND_CAPABILITIES as readonly string[]).includes(command)),
+    queries: APPLICATION_QUERY_CAPABILITIES.filter(query => query !== 'execution.batch.delivery.get'),
     events: { transport: 'sse', route: EVENTS_ROUTE, scopes: ['project', 'global'] },
   },
 });

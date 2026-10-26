@@ -137,6 +137,8 @@ export const PUBLIC_STATE_EVENT_TYPES = [
   BASELINE_CANCELLED_EVENT_TYPE,
   // P03-1 / F-004：计划域事件白名单扩展（aggregate_type='phase'）。
   PHASE_CREATED_EVENT_TYPE,
+  'phase.delivery.approved',
+  'phase.delivery.invalidated',
   'phase.metadata.updated',
   'phase.closed',
   'phase.reopened',
@@ -207,6 +209,7 @@ type EventPayloadKind =
   | 'baselineCompleted'
   | 'baselineCancelled'
   | 'phaseCreated'
+  | 'phaseDelivery'
   | 'phaseMutation'
   | 'featurePhaseMoved'
   | 'featureDagUpdated'
@@ -346,6 +349,8 @@ export const STATE_EVENT_TYPE_SPECS: Readonly<
   }),
   // P03-1 / F-004：Phase 创建事件（聚合为 Phase 自身；project_id 非空由
   // scopeKind='project' 与映射层共同保证，payload 恒为 {created:true}）。
+  'phase.delivery.approved': { aggregateType: 'phase', scopeKind: 'project', payloadKind: 'phaseDelivery' },
+  'phase.delivery.invalidated': { aggregateType: 'phase', scopeKind: 'project', payloadKind: 'phaseDelivery' },
   'phase.metadata.updated': { aggregateType: 'phase', scopeKind: 'project', payloadKind: 'phaseMutation' },
   'phase.closed': { aggregateType: 'phase', scopeKind: 'project', payloadKind: 'phaseMutation' },
   'phase.reopened': { aggregateType: 'phase', scopeKind: 'project', payloadKind: 'phaseMutation' },
@@ -1043,6 +1048,15 @@ export function mapStateEvent(row: unknown, operation: string = EVENT_READ_OPERA
     payload = validateRegisteredPayload(row.payload, operation);
   } else if (spec.payloadKind === 'phaseCreated') {
     payload = validatePhaseCreatedPayload(row.payload, operation);
+  } else if (spec.payloadKind === 'phaseDelivery') {
+    exactPayloadKeys(operation, row.payload, ['schemaVersion', 'approvalId', 'candidateId', 'batchId', 'summaryDigest', 'status', 'reason']);
+    if (row.payload.schemaVersion !== 1 || row.payload.status !== (row.eventType === 'phase.delivery.approved' ? 'approved' : 'invalidated')
+      || typeof row.payload.summaryDigest !== 'string' || !/^[a-f0-9]{64}$/.test(row.payload.summaryDigest)
+      || (row.payload.reason !== null && typeof row.payload.reason !== 'string')) corrupt(operation, 'event_payload_violation');
+    try { for (const key of ['approvalId', 'candidateId', 'batchId']) validateStableId(row.payload[key], { operation }, key); }
+    catch { corrupt(operation, 'event_payload_violation'); }
+    // Detailed audit bindings remain Core-owned; observation carries no free text.
+    payload = { deliveryUpdated: true };
   } else if (spec.payloadKind === 'phaseMutation') {
     const key = {
       'phase.metadata.updated': 'metadataUpdated', 'phase.closed': 'closed',

@@ -40,6 +40,7 @@ import { RepositoryInspectionError } from './repository-inspector.js';
 import type { RepositoryInspectionErrorKind } from './repository-inspector.js';
 import { validateSettingsPayload } from './settings-schema.js';
 import type { SettingsPayload } from './settings-schema.js';
+import type { BatchDeliveryCommandPayload, PhaseDeliveryApprovePayload } from './batch-delivery-commands.js';
 import { validatePlanningRequest } from './planning-candidates.js';
 import type { ValidatedPlanningRequest } from './planning-candidates.js';
 import { validateCreateProjectInput, validateUpdateProjectInput } from './state-store.js';
@@ -167,6 +168,8 @@ export const COMMAND_OPERATIONS = [
   'baseline.cancel',
   // P03-1 / F-004：Phase 创建（project scope + phase.write；创建类命令，
   // 不携带 expectedRevision；P05-2 的生命周期更新命令使用 Phase 自身 revision CAS）。
+  'execution.batch.finalize',
+  'phase.delivery.approve',
   'phase.create',
   'phase.metadata.update',
   'phase.close',
@@ -305,6 +308,8 @@ export const COMMAND_OPERATION_SPECS: Readonly<Record<AppOperation, CommandOpera
     // P03-1 / F-004：Phase 创建归属 Phase 聚合（docs/p03-1-plan-import-contract.md §6.1）。
     'phase.create': { scopeKind: 'project', mutation: 'create', capability: 'phase.write' },
     'phase.metadata.update': { scopeKind: 'project', mutation: 'update', capability: 'phase.write' },
+    'execution.batch.finalize': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
+    'phase.delivery.approve': { scopeKind: 'project', mutation: 'update', capability: 'feature.plan.decide' },
     'phase.close': { scopeKind: 'project', mutation: 'update', capability: 'phase.write' },
     'phase.reopen': { scopeKind: 'project', mutation: 'update', capability: 'phase.write' },
     'phase.archive': { scopeKind: 'project', mutation: 'update', capability: 'phase.write' },
@@ -932,6 +937,18 @@ interface EnvelopeCommon {
 }
 
 export type ValidatedCommandEnvelope =
+  | (EnvelopeCommon & {
+      readonly operation: 'execution.batch.finalize';
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: number;
+      readonly payload: BatchDeliveryCommandPayload;
+    })
+  | (EnvelopeCommon & {
+      readonly operation: 'phase.delivery.approve';
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: number;
+      readonly payload: PhaseDeliveryApprovePayload;
+    })
   | (EnvelopeCommon & {
       readonly operation: 'project.register';
       readonly scope: { readonly kind: 'registration' };
@@ -2057,6 +2074,20 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
       expectedRevision: expectedRevision as number,
       payload: validateMetadataPayload(operation, object.payload, expectedRevision as number),
     };
+  }
+  if (operation === 'execution.batch.finalize' || operation === 'phase.delivery.approve') {
+    if (scope.kind !== 'project') fail(operation, 'invalid_input', 'scope.kind', 'scope 种类与操作不匹配');
+    if (!isPlainObject(object.payload)) fail(operation, 'invalid_input', 'payload', '必须是对象');
+    const payload = object.payload as Record<string, unknown>;
+    exactKeys(operation, payload, operation === 'execution.batch.finalize' ? ['phaseId', 'batchId'] : ['phaseId', 'batchId', 'candidateId', 'expectedCandidateRevision'], 'payload.');
+    const target = {
+      phaseId: validateStableId(payload.phaseId, { operation }, 'payload.phaseId'),
+      batchId: validateStableId(payload.batchId, { operation }, 'payload.batchId'),
+    };
+    if (operation === 'execution.batch.finalize') return { ...base, operation, scope, expectedRevision: expectedRevision as number, payload: target };
+    if (!Number.isSafeInteger(payload.expectedCandidateRevision) || (payload.expectedCandidateRevision as number) < 1) fail(operation, 'invalid_input', 'payload.expectedCandidateRevision', '必须是正整数');
+    return { ...base, operation, scope, expectedRevision: expectedRevision as number, payload: { ...target,
+      candidateId: validateStableId(payload.candidateId, { operation }, 'payload.candidateId'), expectedCandidateRevision: payload.expectedCandidateRevision as number } };
   }
   if (operation === 'phase.create') {
     if (scope.kind !== 'project') {

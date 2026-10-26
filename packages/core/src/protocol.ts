@@ -3,6 +3,7 @@
  * 不从根入口重导出，不加载 application 服务或 adapters 装配。
  * 服务端仍负责授权和业务语义，客户端校验不能替代服务端校验。
  */
+export * from './ports/batch-delivery-commands.js';
 export {
   isIsoUtcDateTime, isUuidV4, isValidResultRef, validateCommandEnvelope,
   isPublicError, publicErrorHttpStatus, validateCommandEnvelopeFields, WORK_TOOL_OPERATION_SPECS,
@@ -418,6 +419,7 @@ export type {
 } from './ports/feature-delivery-query.js';
 // P05-9 / F-001 Batch 收尾聚合查询。
 export {
+  isBatchDeliveryPublicSummary,
   BATCH_DELIVERY_GET_OPERATION,
   BATCH_DELIVERY_QUERY_OPERATIONS,
   BATCH_DELIVERY_STATUSES,

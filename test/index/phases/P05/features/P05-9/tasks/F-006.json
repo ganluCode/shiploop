@@ -1,0 +1,75 @@
+{
+  "schema_version": 2,
+  "task_id": "F-006",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/host/p05-9-f006-batch-delivery-host.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/authorization/authorization-contract.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/commands/commands-contract.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/events/events-contract.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/host/host-lifecycle-contract.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/host/host-client-application.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/host/host-http-transport.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/delivery/p05-8-f006-git-agent-host-query.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/delivery/p05-9-f001-batch-delivery-query.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/delivery/p05-9-f002-batch-leaf-finalization.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/delivery/p05-9-f003-batch-lifecycle.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/delivery/p05-9-f004-phase-delivery-approval.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/delivery/p05-9-f004-phase-delivery-approval-sqlite.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/delivery/p05-9-f005-batch-operations.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/host/p05-3-f006-batch-host.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/host/p05-3-f006-batch-wire.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}
