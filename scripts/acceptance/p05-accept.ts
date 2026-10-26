@@ -36,6 +36,16 @@ const ENTRY = {
     notRunCountsAsPassed: false,
   },
 };
+const P05_PHASE_SCENARIO_FILES = Object.freeze([
+  'test/modules/acceptance/p05-10-f002-fixture.test.ts',
+  'test/modules/acceptance/p05-10-f003-normal-flow.test.ts',
+  'test/modules/acceptance/p05-10-f004-fault-matrix.test.ts',
+  'test/modules/acceptance/p05-10-f005-git-integration.test.ts',
+  'test/modules/acceptance/p05-10-f006-combined-faults.test.ts',
+  'test/modules/acceptance/p05-10-f007-phase-entry.test.ts',
+  'test/modules/acceptance/p05-10-f008-closeout.test.ts',
+  'test/modules/acceptance/p05-10-f009-closeout.test.ts',
+] as const);
 const TASK_INDEX_PATTERN = /^F-\d{3}\.json$/;
 const TASK_ID_PATTERN = /^F-\d{3}$/;
 const HEX40 = /^[0-9a-f]{40}$/;
@@ -173,6 +183,12 @@ function assertFeatureManifest(
   return [file];
 }
 
+/** P05-10 阶段场景是独立的显式覆盖面，不混入 P05-1～P05-9 可信索引合集。 */
+export function collectP05PhaseScenarioTests(repoRoot: string): string[] {
+  for (const file of P05_PHASE_SCENARIO_FILES) repoFile(repoRoot, file);
+  return [...P05_PHASE_SCENARIO_FILES];
+}
+
 /**
  * 发现并校验 Phase 可信测试索引合集：
  * - Feature 集合必须与冻结入口声明完全一致（缺 P05-9 或多出未登记 Feature 即失败）；
@@ -297,10 +313,11 @@ export async function runP05Acceptance(options: P05AcceptanceOptions): Promise<P
   if (exec('git', ['status', '--porcelain']) !== '') fail('阶段受测代码必须已提交，工作树非空');
   if (exec('node', ['--version']).replace(/^v/, '') !== config.toolchain.node || exec('npm', ['--version']) !== config.toolchain.npm) fail('Node/npm 工具版本不匹配');
   const tests = collectP05TrustedTests(repoRoot);
+  const phaseScenarioFiles = collectP05PhaseScenarioTests(repoRoot);
   const contractFiles = [ENTRY_PATH, P05_ACCEPT_CONFIG_PATH, config.checklist, 'package.json', config.toolchain.lockfile,
     'scripts/acceptance/p05-accept.ts', 'scripts/acceptance/p05-steps.ts', 'scripts/acceptance/p05-integration-report.ts',
     'scripts/acceptance/p05-config.ts', 'scripts/acceptance/p05-report.ts', 'scripts/verify.ts', 'scripts/run-tests.ts',
-    ...tests.inputs, ...tests.files];
+    ...tests.inputs, ...tests.files, ...phaseScenarioFiles];
   const fullRegression = options.fullRegression === true;
   const inputsDigest = digest(canonical({ repoRoot, config, stepTimeoutMs, overallTimeoutMs, fullRegression,
     files: contractFiles.map(file => [file, digest(readFileSync(repoFile(repoRoot, file)))]) }));
@@ -333,7 +350,9 @@ export async function runP05Acceptance(options: P05AcceptanceOptions): Promise<P
   const env = isolatedEnv(resources, repoRoot, stepTimeoutMs);
   const stepFiles = {
     'p05-trusted-index': tests.files,
-    'p05-affected-regression': tests.files.filter(file => file.includes('/p05-')),
+    // P05-10 的阶段场景是显式覆盖面；此前这里筛选 tests.files 中的 P05 文件，
+    // 导致它们在第二步被重复执行。
+    'p05-affected-regression': phaseScenarioFiles,
     'p05-cross-layer-smoke': ['test/modules/acceptance/p05-acceptance-contract.test.ts'],
     'p05-manual-gate': [],
   } as const;

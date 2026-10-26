@@ -509,7 +509,10 @@ describe('P05-1 / F-011 规划上下文列表：排序、分页与受控游标',
     const pageB = await rig.planning.listPlanningContexts(f.binding.principal, { projectId: projectB, limit: 1 });
     expect(pageB.nextCursor).toBeTypeOf('string');
     const pageB2 = await rig.planning.listPlanningContexts(f.binding.principal, { projectId: projectB, limit: 1, cursor: pageB.nextCursor });
-    expect(pageB2.records.map((record) => record.candidateId)).toEqual([planningB2.candidateId]);
+    // UUID 是稳定分页键而非创建序号；第二页应只包含第一页之外的剩余记录。
+    expect(pageB2.records.map((record) => record.candidateId)).toEqual(
+      [planningB1.candidateId, planningB2.candidateId].filter((candidateId) => candidateId !== pageB.records[0]!.candidateId),
+    );
     await expect(publicErrorOf(() => list({ projectId: f.projectId, cursor: pageB.nextCursor })))
       .resolves.toMatchObject({ code: 'invalid_input', details: { reason: 'invalid_cursor' } });
 

@@ -24,15 +24,22 @@ const pass: P02BoundedRunOutcome = {
 it('writes an offline report with manual/live pending instead of binding manual checks to mock steps', async () => {
   const reportRoot = mkdtempSync(join(tmpdir(), 'shiploop-p05-offline-report-'));
   tempDirs.push(reportRoot);
+  const commands: string[][] = [];
   const result = await runP05Acceptance({
     repoRoot: ROOT, reportRoot, runId: 'offline-report-regression',
-    runProcess: async () => ({ ...pass }),
+    runProcess: async (command, args) => {
+      commands.push([command, ...args]);
+      return { ...pass };
+    },
     exec: (command, args) => command === 'git' && args[0] === 'status' ? '' :
       execFileSync(command === 'node' ? process.execPath : command, [...args], { cwd: ROOT, encoding: 'utf8' }).trim(),
   });
   expect(result.reportWritten).toBe(true);
   expect(result.phaseAccepted).toBe(false);
   expect(result.exitCode).toBe(1);
+  expect(commands[0]).toContain('scripts/run-tests.ts');
+  expect(commands[1]).toContain('test/modules/acceptance/p05-10-f002-fixture.test.ts');
+  expect(commands[1]).not.toContain('test/modules/planning/p05-1-f011-planning-query.test.ts');
 });
 
 it('[case:p05-entry-options-and-bounded-steps] parses explicit full regression and preserves a failed prefix', async () => {

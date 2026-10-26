@@ -259,7 +259,7 @@ describe('P05-1 / F-003 一次性规划启动命令', () => {
     const fixture = await openPlanningFixture();
     try {
       const db = fixture.session.database;
-      const insertActiveRun = (status: string, purpose: string): void => {
+      const insertActiveRun = (status: string, purpose: string): string => {
         const batchId = randomUUID();
         db.prepare(
           "INSERT INTO execution_batches (id, created_at, project_id, updated_at, phase_id, feature_id, scope_snapshot, config_snapshot, status, budget_revision, budget_snapshot, deadline_at, runs_created) VALUES (?, ?, ?, ?, 'phase-1', ?, ?, ?, ?, 1, ?, ?, 1)",
@@ -270,10 +270,11 @@ describe('P05-1 / F-003 一次性规划启动命令', () => {
           "INSERT INTO runs (id, created_at, project_id, updated_at, batch_id, feature_id, purpose, input_snapshot, config_snapshot, status, scope_digest, work_key, dispatch_ordinal, max_attempts_per_run, run_time_limit_ms) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 1, 3600000)",
         ).run(randomUUID(), NOW, fixture.projectId, NOW, batchId, fixture.featureId, purpose,
           JSON.stringify({ schemaVersion: 1 }), JSON.stringify({ schemaVersion: 1 }), status, 'ab'.repeat(32), `work-${batchId}`);
+        return batchId;
       };
       for (const [status, purpose] of [['running', 'execute'], ['paused', 'execute'], ['interrupted', 'execute']] as const) {
         const counts = rowCounts(db);
-        insertActiveRun(status, purpose);
+        const batchId = insertActiveRun(status, purpose);
         await expect(fixture.submit()).rejects.toSatisfy((error: unknown) => {
           expectPublicError(error, 'conflict', 'execution_in_progress');
           return true;
@@ -283,8 +284,9 @@ describe('P05-1 / F-003 一次性规划启动命令', () => {
         expect(after.command_receipts).toBe(counts.command_receipts);
         expect(after.planning_contexts).toBe(counts.planning_contexts);
         expect(after.runs).toBe(counts.runs + 1);
-        db.prepare('DELETE FROM runs WHERE purpose = ? AND status = ?').run(purpose, status);
-        db.prepare('DELETE FROM execution_batches WHERE id NOT IN (SELECT batch_id FROM runs)').run();
+        // 结束注入的事实行，保留不可删除的 Batch member 历史，供下一轮继续验证互斥。
+        db.prepare("UPDATE runs SET status = 'failed', reason = 'test_cleanup' WHERE batch_id = ?").run(batchId);
+        db.prepare("UPDATE execution_batches SET status = 'failed', reason = 'test_cleanup' WHERE id = ?").run(batchId);
       }
     } finally { fixture.close(); }
   });

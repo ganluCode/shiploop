@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { expect, it } from 'vitest';
-import { collectP05TrustedTests, resolveP05Args } from '../../../scripts/acceptance/p05-accept.ts';
+import { collectP05PhaseScenarioTests, collectP05TrustedTests, resolveP05Args } from '../../../scripts/acceptance/p05-accept.ts';
 
 const ROOT = resolve(import.meta.dirname, '../../..');
 const json = (path: string): any => JSON.parse(readFileSync(path, 'utf8'));
@@ -31,6 +31,18 @@ it('[case:p05-f008-entry-wiring] package entry loads the frozen offline contract
 });
 
 it('[case:p05-f008-trusted-index-files] indexes every required Feature by complete test files and keeps the union deduplicated', () => {
+  const scenarios = collectP05PhaseScenarioTests(ROOT);
+  expect(scenarios).toEqual([
+    'test/modules/acceptance/p05-10-f002-fixture.test.ts',
+    'test/modules/acceptance/p05-10-f003-normal-flow.test.ts',
+    'test/modules/acceptance/p05-10-f004-fault-matrix.test.ts',
+    'test/modules/acceptance/p05-10-f005-git-integration.test.ts',
+    'test/modules/acceptance/p05-10-f006-combined-faults.test.ts',
+    'test/modules/acceptance/p05-10-f007-phase-entry.test.ts',
+    'test/modules/acceptance/p05-10-f008-closeout.test.ts',
+    'test/modules/acceptance/p05-10-f009-closeout.test.ts',
+  ]);
+  expect(scenarios).toEqual([...new Set(scenarios)]);
   const selection = collectP05TrustedTests(ROOT);
   expect(selection.features).toHaveLength(9);
   expect(selection.files).toEqual([...new Set(selection.files)].sort());

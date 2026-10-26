@@ -360,7 +360,8 @@ describe.skipIf(process.platform !== 'darwin')('P03-9 / F-005 startup recovery',
         const rows: [string, Record<string, any>][] = [
           ['phases', { ...phase, id: phaseId }],
           ['features', { ...feature, id: featureId, phase_id: phaseId }],
-          ['execution_batches', { ...batch, id: batchId, phase_id: phaseId, feature_id: featureId }],
+          ['execution_batches', { ...batch, id: batchId, phase_id: phaseId, feature_id: featureId,
+            scope_snapshot: JSON.stringify({ ...(JSON.parse(batch.scope_snapshot) as Record<string, unknown>), featureIds: [featureId] }) }],
           ['runs', { ...run, id: randomUUID(), batch_id: batchId, feature_id: featureId }],
         ];
         for (const [table, row] of rows) {
