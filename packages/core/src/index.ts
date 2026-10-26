@@ -163,6 +163,7 @@ export * from './application/finalization-execution.js';
 export * from './application/finalization-node-verifier.js';
 export * from './ports/finalization-completion.js';
 export * from './application/finalization-completion.js';
+export * from './application/batch-leaf-finalization.js';
 export * from './application/finalization-git-delivery.js';
 export * from './ports/execution-budget.js';
 export * from './ports/execution-budget-query.js';
