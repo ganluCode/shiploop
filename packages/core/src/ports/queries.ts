@@ -713,7 +713,8 @@ export type PlanListScope =
   /** P05-8：项目范围 GitAgent 修复查询。 */
   | { readonly kind: 'git-repairs'; readonly projectId: string }
   /** P05-5：项目/Feature/Batch 资源租约分页；游标绑定筛选范围。 */
-  | { readonly kind: 'execution-resources'; readonly projectId: string; readonly featureId?: string; readonly batchId?: string };
+  | { readonly kind: 'execution-resources'; readonly projectId: string; readonly featureId?: string; readonly batchId?: string }
+  | { readonly kind: 'batch-delivery'; readonly projectId: string; readonly batchId: string };
 /** 游标签发/解析绑定：数据根身份 + 列表 scope（只允许可信装配构造）。 */
 export interface PlanListCursorBinding {
   readonly rootIdentity: string;

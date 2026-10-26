@@ -213,6 +213,13 @@ import {
   type FeatureDeliveryQueryReadStore,
 } from '../ports/feature-delivery-query.js';
 import {
+  EXECUTION_BATCH_DELIVERY_GET_OPERATION,
+  buildBatchDeliveryResult,
+  type BatchDeliveryQueryReadStore,
+  type PublicBatchDeliveryResult,
+} from '../ports/batch-delivery-query.js';
+
+import {
   INTEGRATION_PLAN_GET_OPERATION,
   buildIntegrationPlanQueryResult,
   type IntegrationPlanQueryResult,
@@ -517,6 +524,8 @@ export interface QueryService {
    * 视图重建，查询零写入、零事件，重复读取不增加计数。
    */
   getFeatureDelivery(principal: unknown, input: unknown): Promise<FeatureDeliveryDetailResult>;
+  /** P05-9 / F-001 fixed Batch delivery aggregation; read-only and bounded. */
+  getBatchDelivery(principal: unknown, input: unknown): Promise<PublicBatchDeliveryResult>;
   /** P05-8 / F-006 GitAgent 修复授权/Attempt 只读投影。 */
   listGitAgentRepairs(principal: unknown, input: unknown): Promise<GitAgentRepairListResult>;
   getGitAgentRepair(principal: unknown, input: unknown): Promise<GitAgentRepairDetailResult>;
@@ -580,6 +589,8 @@ export interface QueryServiceOptions {
   readonly featureReportReads?: FeatureExecutionReportReadStore;
   /** P03-8 / F-010 Feature 分轴结果查询一致读取窄端口（只读）。 */
   readonly featureDeliveryReads: FeatureDeliveryQueryReadStore;
+  /** P05-9 / F-001 Batch 收尾聚合查询一致读取窄端口（只读）。 */
+  readonly batchDeliveryReads?: BatchDeliveryQueryReadStore;
   /** P05-8 / F-006 GitAgent 修复一致读投影（只读）。 */
   readonly gitAgentRepairReads?: GitAgentRepairQueryReadStore;
   /** P05-6 / F-005 集成计划一致读投影（只读，不执行 Git/Runtime）。 */
@@ -753,6 +764,7 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
     gitOperationReads,
     featureReportReads,
     featureDeliveryReads,
+    batchDeliveryReads,
     gitAgentRepairReads,
     integrationPlanReads,
     executionControlReads,
@@ -2749,6 +2761,32 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
           featureDeliveryTargetNotFound(operation);
         }
         return buildFeatureDeliveryDetailResult(view);
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    async getBatchDelivery(
+      principal: unknown,
+      input: unknown,
+    ): Promise<PublicBatchDeliveryResult> {
+      assertTrustedPrincipal(principal);
+      const operation = EXECUTION_BATCH_DELIVERY_GET_OPERATION;
+      try {
+        requireCapability(principal, 'project.read', operation);
+        const object = requirePlainObject(input, { operation }, 'input');
+        rejectUnknownKeys(object, ['projectId', 'batchId', 'limit', 'cursor'], { operation }, 'input');
+        const projectId = requireProjectId(object.projectId, operation);
+        const batchId = validateStableId(object.batchId, { operation, entity: { type: 'execution_batch' } }, 'batchId');
+        requireProjectVisible(principal, projectId, operation);
+        if (batchDeliveryReads === undefined) throw new PublicError('unsupported', operation);
+        const filter = validatedPlanFilter(object, operation);
+        const binding = planCursorBinding({ kind: 'batch-delivery', projectId, batchId }, operation);
+        const request = planListRequest(filter, binding, operation);
+        const view = batchDeliveryReads.readBatchDeliveryView(projectId, batchId, request);
+        if (view === undefined) executionEntityNotFound(operation);
+        const nextCursor = view.nextId === null ? null : encodePlanListCursor(view.nextId, binding);
+        return buildBatchDeliveryResult(view, nextCursor, filter.limit);
       } catch (error) {
         throw mapToPublicError(error, { operation });
       }

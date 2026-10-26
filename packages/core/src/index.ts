@@ -29,6 +29,7 @@ export * from './ports/git-agent-recovery.js';
 export * from './ports/git-agent-runtime-script.js';
 export * from './application/integration-verification.js';
 export * from './ports/git-operation-query.js';
+export * from './ports/batch-delivery-query.js';
 export * from './ports/feature-delivery-query.js';
 export * from './ports/feature-execution-report.js';
 export * from './application/feature-execution-report.js';
