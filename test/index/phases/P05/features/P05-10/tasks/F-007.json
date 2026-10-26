@@ -1,0 +1,19 @@
+{
+  "schema_version": 2,
+  "task_id": "F-007",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/acceptance/p05-10-f007-phase-entry.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/acceptance/p05-acceptance-contract.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

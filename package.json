@@ -24,6 +24,7 @@
     "accept:p02": "node scripts/acceptance/p02-accept.ts",
     "accept:p03": "node scripts/acceptance/p03-accept.ts",
     "accept:p04": "node scripts/acceptance/p04-accept.ts",
+    "accept:p05": "node scripts/acceptance/p05-accept.ts",
     "accept:p04:live": "node scripts/acceptance/p04-live.ts",
     "accept:p03:clean-replay": "node scripts/acceptance/p03-clean-replay.ts"
   },

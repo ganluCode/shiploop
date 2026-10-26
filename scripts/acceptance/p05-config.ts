@@ -56,6 +56,9 @@ export type P05FrozenItem = {
   readonly acceptanceRefs: readonly string[];
   readonly assertions: readonly string[];
   readonly evidence: readonly P05EvidenceCategory[];
+  readonly coverage?: 'partial' | null;
+  readonly coverageNote?: string | null;
+  readonly deferredStatus?: 'not_run' | 'postponed';
 };
 
 const FR_ITEMS: readonly P05FrozenItem[] = [
@@ -282,7 +285,7 @@ export function validateP05AcceptanceConfig(value: unknown): P05AcceptanceConfig
 }
 
 export type P05Checklist = { readonly checklistVersion: 1; readonly phase: 'P05'; readonly layers: readonly P05Layer[]; readonly executionTypes: readonly P05ExecutionType[]; readonly evidenceCategories: readonly P05EvidenceCategory[]; readonly countRule: string; readonly items: readonly P05FrozenItem[] };
-export function loadP05Checklist(path: string): P05Checklist { if (!existsSync(path)) fail(`清单不存在：${path}`); let raw: unknown; try { raw = JSON.parse(readFileSync(path, 'utf8')); } catch (error) { fail(`清单不是有效 JSON：${String(error)}`); } return validateP05Checklist(raw); }
+export function loadP05Checklist(path = P05_CHECKLIST_PATH): P05Checklist { if (!existsSync(path)) fail(`清单不存在：${path}`); let raw: unknown; try { raw = JSON.parse(readFileSync(path, 'utf8')); } catch (error) { fail(`清单不是有效 JSON：${String(error)}`); } return validateP05Checklist(raw); }
 export function loadP05AcceptanceConfig(path: string): P05AcceptanceConfig { if (!existsSync(path)) fail(`配置不存在：${path}`); let raw: unknown; try { raw = JSON.parse(readFileSync(path, 'utf8')); } catch (error) { fail(`配置不是有效 JSON：${String(error)}`); } return validateP05AcceptanceConfig(raw); }
 export function summarizeP05Checklist(checklist: P05Checklist): { required: number; deferred: number; byExecution: Record<P05ExecutionType, number>; byFeature: Record<string, number> } {
   const byExecution = Object.fromEntries(P05_EXECUTION_TYPES.map(type => [type, checklist.items.filter(item => item.execution === type).length])) as Record<P05ExecutionType, number>;
@@ -314,3 +317,12 @@ export function aggregateP05CheckResults(checklist: P05Checklist, results: reado
   const conclusion = requiredChecks.every(check => check.status === 'pass') ? 'pass' : 'fail';
   return { checks, counts, conclusion };
 }
+
+// Compatibility surface for the shared acceptance engine.
+export type P05ChecklistItem = P05FrozenItem;
+export type P05DeferredStatus = 'not_run' | 'postponed';
+export type P05Coverage = 'partial';
+export const P05_ACCEPT_MIN_TIMEOUT_MS = 1_000;
+export const P05_ACCEPT_MAX_TIMEOUT_MS = 7_200_000;
+export const P05_ACCEPT_MIN_OUTPUT_BYTES = 1_024;
+export const P05_ACCEPT_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
