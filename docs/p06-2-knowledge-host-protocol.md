@@ -12,7 +12,7 @@
 
 文档搜索支持 `documentId/version/keyword/title/path`，记忆搜索支持 `keyword/recordKey/scope/version`。两者使用已有 Core 的 `limit/snippetMaxChars/maxReadBytes/maxCandidates` 上限和默认值；读文档接收 `documentId/version/maxReadBytes`。`path` 是受控逻辑路径片段，不能提供任意物理文件路径。所有参数复用 Core 校验，数字查询参数必须是正十进制整数。
 
-握手按方法分别发现三个能力，仅在实际装配对应函数时宣告。缺席方法返回 `501 unsupported`。未装配旧上下文的能力清单保持原有形状；握手仍严格拒绝未知能力与重复项。沿用现有 Host schema v5 / protocol v1，知识响应使用独立 schemaVersion 1；客户端和 Host 随同一仓库版本发布。
+握手按方法分别发现三个能力，仅在实际装配对应函数时宣告。能力名称由独立的 Host 契约声明，测试核对其与 Core 查询操作集合一致；Host `contract/` 不依赖 Core 包，响应校验器由传输及客户端层复用。缺席方法返回 `501 unsupported`。未装配旧上下文的能力清单保持原有形状；握手仍严格拒绝未知能力与重复项。沿用现有 Host schema v5 / protocol v1，知识响应使用独立 schemaVersion 1；客户端和 Host 随同一仓库版本发布。
 
 `shiploop-core/protocol` 导出纯数据类型、输入校验和 `validateKnowledgeQueryResponse`，Host 输出与 HostClient 解码使用同一响应校验器。文档/记忆结果保留来源制品引用、版本、hash、片段、位置、选择理由、预算和诊断。所有嵌套引用必须属于响应项目；额外存储字段、物理 locator、非法预算、未知版本均拒绝。现有 SQLite 检索投影的 `sourceLocators` 可以为空，来源追踪以 `sourceRefs` 的项目/制品/version/hash 为依据。
 

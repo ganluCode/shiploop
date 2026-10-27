@@ -3,7 +3,8 @@ import { createServer } from 'node:http';
 import { describe, expect, it } from 'vitest';
 import { createHostClientApplication } from '../../../packages/host/src/client/app-client.ts';
 import { validateAppQueryResponse } from '../../../packages/host/src/client/app-wire.ts';
-import { validateKnowledgeQueryResponse, type KnowledgeSearchResultSet } from '../../../packages/core/src/protocol.ts';
+import { validateKnowledgeQueryResponse, KNOWLEDGE_QUERY_OPERATIONS, type KnowledgeSearchResultSet } from '../../../packages/core/src/protocol.ts';
+import { KNOWLEDGE_QUERY_CAPABILITIES } from '../../../packages/host/src/contract/lifecycle.ts';
 
 const projectId = randomUUID();
 const documentId = randomUUID();
@@ -32,6 +33,7 @@ async function withFakeHost(run: (f: { client: ReturnType<typeof createHostClien
 
 describe('knowledge shared wire and client rejection', () => {
   it('[case:knowledge-shared-schema] shares a strict Core schema and rejects unknown versions, nested private fields, invalid references, positions and budgets', () => {
+    expect(KNOWLEDGE_QUERY_CAPABILITIES).toEqual(KNOWLEDGE_QUERY_OPERATIONS);
     const valid = searchResult();
     expect(validateKnowledgeQueryResponse('knowledge.search', valid)).toEqual(valid);
     const mutations: ((v: any) => void)[] = [
