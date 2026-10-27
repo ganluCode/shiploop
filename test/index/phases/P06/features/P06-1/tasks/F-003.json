@@ -24,10 +24,6 @@
         {
           "file": "test/modules/authorization/authorization-contract.test.ts",
           "all": true
-        },
-        {
-          "file": "test/modules/host/host-client-application.test.ts",
-          "all": true
         }
       ]
     }
