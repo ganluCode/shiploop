@@ -138,6 +138,7 @@ export * from './ports/repository-inspector.js';
 export * from './ports/commands.js';
 export * from './ports/baseline.js';
 export * from './ports/project-profile.js';
+export * from './ports/project-profile-store.js';
 export * from './ports/baseline-store.js';
 export * from './ports/command-receipts.js';
 export * from './ports/atomic-commands.js';

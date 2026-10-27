@@ -1762,6 +1762,72 @@ export const schemaMigrations = sqliteTable('schema_migrations', {
   uniqueIndex('schema_migrations_version_unique').on(table.version),
 ]);
 
+export const projectProfiles = sqliteTable('project_profiles', {
+  id: text('id').primaryKey(),
+  createdAt: integer('created_at').notNull(),
+  projectId: text('project_id').notNull().references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  revision: integer('revision').notNull().default(1),
+  updatedAt: integer('updated_at').notNull(),
+  schemaVersion: integer('schema_version').notNull(),
+  version: integer('version').notNull(),
+  profileRevision: text('profile_revision'),
+  status: text('status').notNull(),
+  modules: text('modules').notNull(),
+  documentRefs: text('document_refs').notNull(),
+  detectionRefs: text('detection_refs').notNull(),
+  detectionEvidence: text('detection_evidence').notNull().default('[]'),
+  confirmedBy: text('confirmed_by'),
+  profileDigest: text('profile_digest').notNull(),
+}, table => [
+  check('project_profiles_revision_check', sql`typeof(${table.revision}) = 'integer' AND ${table.revision} >= 1`),
+  check('project_profiles_schema_version_check', sql`typeof(${table.schemaVersion}) = 'integer' AND ${table.schemaVersion} >= 1`),
+  check('project_profiles_version_check', sql`typeof(${table.version}) = 'integer' AND ${table.version} >= 1`),
+  check('project_profiles_profile_revision_check', sql`${table.profileRevision} IS NULL OR length(${table.profileRevision}) > 0`),
+  check('project_profiles_status_check', sql`${table.status} IN ('candidate', 'confirmed', 'rejected', 'manual_configuration_required')`),
+  check('project_profiles_modules_json_check', sql`json_valid(${table.modules}) AND json_type(${table.modules}) = 'array'`),
+  check('project_profiles_document_refs_json_check', sql`json_valid(${table.documentRefs}) AND json_type(${table.documentRefs}) = 'array'`),
+  check('project_profiles_detection_refs_json_check', sql`json_valid(${table.detectionRefs}) AND json_type(${table.detectionRefs}) = 'array'`),
+  check('project_profiles_detection_evidence_json_check', sql`json_valid(${table.detectionEvidence}) AND json_type(${table.detectionEvidence}) = 'array'`),
+  check('project_profiles_confirmed_by_check', sql`(${table.status} = 'confirmed' AND ${table.confirmedBy} IS NOT NULL) OR (${table.status} <> 'confirmed' AND ${table.confirmedBy} IS NULL)`),
+  check('project_profiles_digest_check', sql`length(${table.profileDigest}) = 64 AND ${table.profileDigest} NOT GLOB '*[^0-9a-f]*'`),
+  uniqueIndex('project_profiles_project_version_unique').on(table.projectId, table.version),
+  uniqueIndex('project_profiles_project_id_unique').on(table.projectId, table.id),
+  index('project_profiles_project_status_index').on(table.projectId, table.status, table.version),
+]);
+
+export const capabilityModules = sqliteTable('capability_modules', {
+  id: text('id').primaryKey(),
+  createdAt: integer('created_at').notNull(),
+  projectId: text('project_id').notNull().references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  revision: integer('revision').notNull().default(1),
+  updatedAt: integer('updated_at').notNull(),
+  schemaVersion: integer('schema_version').notNull(),
+  moduleKey: text('module_key').notNull(),
+  version: text('version').notNull(),
+  scope: text('scope').notNull(),
+  appliesTo: text('applies_to').notNull(),
+  dependencies: text('dependencies').notNull(),
+  contentRef: text('content_ref').notNull(),
+  digest: text('digest').notNull(),
+  status: text('status').notNull(),
+}, table => [
+  check('capability_modules_revision_check', sql`typeof(${table.revision}) = 'integer' AND ${table.revision} >= 1`),
+  check('capability_modules_schema_version_check', sql`typeof(${table.schemaVersion}) = 'integer' AND ${table.schemaVersion} >= 1`),
+  check('capability_modules_key_check', sql`length(${table.moduleKey}) > 0`),
+  check('capability_modules_version_check', sql`length(${table.version}) > 0`),
+  check('capability_modules_scope_json_check', sql`json_valid(${table.scope}) AND json_type(${table.scope}) = 'array'`),
+  check('capability_modules_applies_to_json_check', sql`json_valid(${table.appliesTo}) AND json_type(${table.appliesTo}) = 'array'`),
+  check('capability_modules_dependencies_json_check', sql`json_valid(${table.dependencies}) AND json_type(${table.dependencies}) = 'array'`),
+  check('capability_modules_content_ref_check', sql`length(${table.contentRef}) > 0`),
+  check('capability_modules_digest_check', sql`length(${table.digest}) = 64 AND ${table.digest} NOT GLOB '*[^0-9a-f]*'`),
+  check('capability_modules_status_check', sql`${table.status} IN ('candidate', 'confirmed', 'rejected', 'manual_configuration_required')`),
+  uniqueIndex('capability_modules_project_module_version_unique').on(table.projectId, table.moduleKey, table.version),
+  uniqueIndex('capability_modules_project_id_unique').on(table.projectId, table.id),
+  index('capability_modules_project_status_index').on(table.projectId, table.status, table.moduleKey, table.version),
+]);
+
+/** P06-1 / F-002：画像和能力模块版本均为插后不可变快照。 */
+
 /**
  * P03-6 / F-006：最小 Work Session 与 Attempt 执行诊断持久关联（sessions，迁移 v20）。
  * 顶层 Work Session 唯一关联同项目 Attempt（attempt_id 部分唯一）；生命周期区分

@@ -44,6 +44,9 @@ const SCHEMA_TABLES = [
   ['repository_bindings', schema.repositoryBindings],
   ['global_settings', schema.globalSettings],
   ['project_settings', schema.projectSettings],
+  // P06-1 / F-002：不可变项目画像与项目能力模块版本（迁移 v48）。
+  ['project_profiles', schema.projectProfiles],
+  ['capability_modules', schema.capabilityModules],
   ['artifacts', schema.artifacts],
   // P01-3 / F-006：状态事件审计切片（设计 11 §9）。
   ['state_events', schema.stateEvents],
@@ -545,6 +548,8 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
         'projects:(id,repository_binding_id)->repository_bindings.(project_id,id)',
         'repository_bindings:(project_id)->projects.(id)',
         'project_settings:(project_id)->projects.(id)',
+        'project_profiles:(project_id)->projects.(id)',
+        'capability_modules:(project_id)->projects.(id)',
         'artifacts:(project_id)->projects.(id)',
         'attempts:(project_id)->projects.(id)',
         'attempts:(project_id,feature_id)->features.(project_id,id)',

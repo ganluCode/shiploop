@@ -3954,6 +3954,81 @@ CREATE TRIGGER phase_delivery_approvals_retained BEFORE DELETE ON phase_delivery
 BEGIN SELECT RAISE(ABORT, 'phase delivery approval is retained'); END;
 `;
 
+const MIGRATION_048_SQL = `
+-- P06-1 / F-002: immutable project profile and capability module snapshots.
+CREATE TABLE project_profiles (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  schema_version INTEGER NOT NULL,
+  version INTEGER NOT NULL,
+  profile_revision TEXT,
+  status TEXT NOT NULL,
+  modules TEXT NOT NULL,
+  document_refs TEXT NOT NULL,
+  detection_refs TEXT NOT NULL,
+  detection_evidence TEXT NOT NULL DEFAULT '[]',
+  confirmed_by TEXT,
+  profile_digest TEXT NOT NULL,
+  CONSTRAINT project_profiles_revision_check CHECK (typeof(revision) = 'integer' AND revision >= 1),
+  CONSTRAINT project_profiles_schema_version_check CHECK (typeof(schema_version) = 'integer' AND schema_version >= 1),
+  CONSTRAINT project_profiles_version_check CHECK (typeof(version) = 'integer' AND version >= 1),
+  CONSTRAINT project_profiles_profile_revision_check CHECK (profile_revision IS NULL OR length(profile_revision) > 0),
+  CONSTRAINT project_profiles_status_check CHECK (status IN ('candidate', 'confirmed', 'rejected', 'manual_configuration_required')),
+  CONSTRAINT project_profiles_modules_json_check CHECK (json_valid(modules) AND json_type(modules) = 'array'),
+  CONSTRAINT project_profiles_document_refs_json_check CHECK (json_valid(document_refs) AND json_type(document_refs) = 'array'),
+  CONSTRAINT project_profiles_detection_refs_json_check CHECK (json_valid(detection_refs) AND json_type(detection_refs) = 'array'),
+  CONSTRAINT project_profiles_detection_evidence_json_check CHECK (json_valid(detection_evidence) AND json_type(detection_evidence) = 'array'),
+  CONSTRAINT project_profiles_confirmed_by_check CHECK ((status = 'confirmed' AND confirmed_by IS NOT NULL) OR (status <> 'confirmed' AND confirmed_by IS NULL)),
+  CONSTRAINT project_profiles_digest_check CHECK (length(profile_digest) = 64 AND profile_digest NOT GLOB '*[^0-9a-f]*'),
+  CONSTRAINT project_profiles_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX project_profiles_project_version_unique ON project_profiles (project_id, version);
+CREATE UNIQUE INDEX project_profiles_project_id_unique ON project_profiles (project_id, id);
+CREATE INDEX project_profiles_project_status_index ON project_profiles (project_id, status, version);
+CREATE TRIGGER project_profiles_immutable_update BEFORE UPDATE ON project_profiles
+BEGIN SELECT RAISE(ABORT, 'project profiles are immutable'); END;
+CREATE TRIGGER project_profiles_immutable_delete BEFORE DELETE ON project_profiles
+BEGIN SELECT RAISE(ABORT, 'project profiles are immutable'); END;
+
+CREATE TABLE capability_modules (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  schema_version INTEGER NOT NULL,
+  module_key TEXT NOT NULL,
+  version TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  applies_to TEXT NOT NULL,
+  dependencies TEXT NOT NULL,
+  content_ref TEXT NOT NULL,
+  digest TEXT NOT NULL,
+  status TEXT NOT NULL,
+  CONSTRAINT capability_modules_revision_check CHECK (typeof(revision) = 'integer' AND revision >= 1),
+  CONSTRAINT capability_modules_schema_version_check CHECK (typeof(schema_version) = 'integer' AND schema_version >= 1),
+  CONSTRAINT capability_modules_key_check CHECK (length(module_key) > 0),
+  CONSTRAINT capability_modules_version_check CHECK (length(version) > 0),
+  CONSTRAINT capability_modules_scope_json_check CHECK (json_valid(scope) AND json_type(scope) = 'array'),
+  CONSTRAINT capability_modules_applies_to_json_check CHECK (json_valid(applies_to) AND json_type(applies_to) = 'array'),
+  CONSTRAINT capability_modules_dependencies_json_check CHECK (json_valid(dependencies) AND json_type(dependencies) = 'array'),
+  CONSTRAINT capability_modules_content_ref_check CHECK (length(content_ref) > 0),
+  CONSTRAINT capability_modules_digest_check CHECK (length(digest) = 64 AND digest NOT GLOB '*[^0-9a-f]*'),
+  CONSTRAINT capability_modules_status_check CHECK (status IN ('candidate', 'confirmed', 'rejected', 'manual_configuration_required')),
+  CONSTRAINT capability_modules_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX capability_modules_project_module_version_unique ON capability_modules (project_id, module_key, version);
+CREATE UNIQUE INDEX capability_modules_project_id_unique ON capability_modules (project_id, id);
+CREATE INDEX capability_modules_project_status_index ON capability_modules (project_id, status, module_key, version);
+CREATE TRIGGER capability_modules_immutable_update BEFORE UPDATE ON capability_modules
+BEGIN SELECT RAISE(ABORT, 'capability modules are immutable'); END;
+CREATE TRIGGER capability_modules_immutable_delete BEFORE DELETE ON capability_modules
+BEGIN SELECT RAISE(ABORT, 'capability modules are immutable'); END;
+`;
+
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     version: 1,
@@ -4066,4 +4141,5 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 45, sql: MIGRATION_045_SQL, checksum: sha256Hex(MIGRATION_045_SQL) },
   { version: 46, sql: MIGRATION_046_SQL, checksum: sha256Hex(MIGRATION_046_SQL) },
   { version: 47, sql: MIGRATION_047_SQL, checksum: sha256Hex(MIGRATION_047_SQL), foreignKeysOff: true },
+  { version: 48, sql: MIGRATION_048_SQL, checksum: sha256Hex(MIGRATION_048_SQL) },
 ];

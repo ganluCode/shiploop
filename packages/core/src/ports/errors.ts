@@ -17,6 +17,10 @@ export type StorageEntityType =
   | 'repository_binding'
   | 'global_settings'
   | 'project_settings'
+  /** P06-1 / F-002：版本化项目画像。 */
+  | 'project_profile'
+  /** P06-1 / F-002：项目能力模块版本。 */
+  | 'capability_module'
   | 'artifact'
   | 'migration'
   /** P02-2 / F-006：幂等命令回执（command_receipts，迁移 v3）。 */

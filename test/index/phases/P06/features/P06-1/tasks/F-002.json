@@ -1,0 +1,19 @@
+{
+  "schema_version": 2,
+  "task_id": "F-002",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/storage/sqlite/p06-1-project-profile-store.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/storage/sqlite/sqlite-schema-migrations.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}
