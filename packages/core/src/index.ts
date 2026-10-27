@@ -227,6 +227,7 @@ export * from './application/plan-approval-verification.js';
 export * from './application/execution-input.js';
 export * from './application/context-build.js';
 export * from './application/execution-input-prepare.js';
+export * from './application/execution-knowledge.js';
 export * from './application/execution-preview.js';
 export * from './application/execution-start.js';
 export * from './application/execution-resume.js';

@@ -339,6 +339,8 @@ export interface ContextBuildInput {
   readonly permissions: ContextPermissionsInput;
   /** P06-1：执行前固定的已确认画像与能力模块身份摘要。 */
   readonly profile?: ProfileExecutionSnapshot;
+  /** P06-2：Core 已解析的知识选择预算身份，随 Manifest 固定。 */
+  readonly knowledgeBudget?: ContextKnowledgeBudget;
   /** P06-2：已授权的文档/记忆选择；正文必须绑定同项目版本化受管制品。 */
   readonly knowledge?: ContextKnowledgeInput | null;
   /** P06-2 兼容受信装配的字段别名；与 knowledge 不能同时提供。 */
@@ -455,6 +457,18 @@ export interface ContextOmission {
   readonly note: string;
 }
 
+export interface ContextKnowledgeBudget {
+  readonly maxSources: number;
+  readonly maxSnippetChars: number;
+  readonly maxTotalBytes: number;
+  readonly maxReadBytes: number;
+  readonly maxCandidates: number;
+  readonly candidatesInspected: number;
+  readonly bytesRead: number;
+  readonly selectedSources: number;
+  readonly omittedSources: number;
+}
+
 /** 输入 manifest：逐来源记录选取证据，关联最终 prompt（经 promptDigest）。 */
 export interface ContextInputManifest {
   readonly schemaVersion: number;
@@ -463,6 +477,8 @@ export interface ContextInputManifest {
   readonly taskId: string;
   readonly sources: readonly ContextManifestSource[];
   readonly omissions: readonly ContextOmission[];
+  /** P06-2：知识检索预算及实际消耗；缺席表示本次没有知识选择。 */
+  readonly knowledgeBudget?: ContextKnowledgeBudget;
   /** 最终 prompt 内容摘要（64hex；manifest 与实际交付 prompt 绑定）。 */
   readonly promptDigest: string;
 }
@@ -502,6 +518,8 @@ export interface ContextInputSnapshot {
   readonly permissions: ContextPermissionsInput;
   /** P06-1：已确认画像与选中模块的不可变身份摘要；正文/路径不进入快照。 */
   readonly profile?: ProfileExecutionSnapshot;
+  /** P06-2：Core 已解析的知识选择预算身份，随 Manifest 固定。 */
+  readonly knowledgeBudget?: ContextKnowledgeBudget;
   /** P06-2：已授权选择的有效知识片段（普通构建无知识选择时缺省）。 */
   readonly knowledge?: readonly ContextKnowledgeSelection[];
   readonly requiredInputs: readonly ExecutionInputRef[];
@@ -580,6 +598,7 @@ const BUILD_INPUT_KEYS = [
   'requiredInputs',
   'knowledge',
   'knowledgeSources',
+  'knowledgeBudget',
   'historyIndex',
   'rework',
   'recovery',
@@ -964,6 +983,23 @@ function validateKnowledge(value: unknown, field: string, projectId: string): Co
   return { selections };
 }
 
+function validateKnowledgeBudget(value: unknown, field: string): ContextKnowledgeBudget {
+  const object = requirePlainObject(value, { operation: CONTEXT_OPERATION }, field);
+  const keys = ['maxSources', 'maxSnippetChars', 'maxTotalBytes', 'maxReadBytes', 'maxCandidates', 'candidatesInspected', 'bytesRead', 'selectedSources', 'omittedSources'];
+  rejectUnknownKeys(object, keys, { operation: CONTEXT_OPERATION }, field);
+  return {
+    maxSources: validatePositiveInteger(object.maxSources, { operation: CONTEXT_OPERATION }, `${field}.maxSources`),
+    maxSnippetChars: validatePositiveInteger(object.maxSnippetChars, { operation: CONTEXT_OPERATION }, `${field}.maxSnippetChars`),
+    maxTotalBytes: validatePositiveInteger(object.maxTotalBytes, { operation: CONTEXT_OPERATION }, `${field}.maxTotalBytes`),
+    maxReadBytes: validatePositiveInteger(object.maxReadBytes, { operation: CONTEXT_OPERATION }, `${field}.maxReadBytes`),
+    maxCandidates: validatePositiveInteger(object.maxCandidates, { operation: CONTEXT_OPERATION }, `${field}.maxCandidates`),
+    candidatesInspected: validateNonNegativeInteger(object.candidatesInspected, { operation: CONTEXT_OPERATION }, `${field}.candidatesInspected`),
+    bytesRead: validateNonNegativeInteger(object.bytesRead, { operation: CONTEXT_OPERATION }, `${field}.bytesRead`),
+    selectedSources: validateNonNegativeInteger(object.selectedSources, { operation: CONTEXT_OPERATION }, `${field}.selectedSources`),
+    omittedSources: validateNonNegativeInteger(object.omittedSources, { operation: CONTEXT_OPERATION }, `${field}.omittedSources`),
+  };
+}
+
 function validateTask(value: unknown, field: string): ContextTaskInput {
   if (value === undefined || value === null) {
     throw contextError('missing_required_input', field, '当前 Task 固定输入是必需字段');
@@ -1269,6 +1305,9 @@ function validateContextBuildInputInner(value: unknown): ContextBuildInput {
   const knowledge = knowledgeValue === undefined || knowledgeValue === null
     ? undefined
     : validateKnowledge(knowledgeValue, 'input.knowledge', projectId);
+  const knowledgeBudget = object.knowledgeBudget === undefined || object.knowledgeBudget === null
+    ? undefined
+    : validateKnowledgeBudget(object.knowledgeBudget, 'input.knowledgeBudget');
   if (object.requiredInputs === undefined || object.requiredInputs === null) {
     throw contextError('missing_required_input', 'input.requiredInputs', '必需输入引用清单是必需字段（可为空数组）');
   }
@@ -1322,6 +1361,7 @@ function validateContextBuildInputInner(value: unknown): ContextBuildInput {
     permissions,
     ...(profile === undefined ? {} : { profile }),
     ...(knowledge === undefined ? {} : { knowledge }),
+    ...(knowledgeBudget === undefined ? {} : { knowledgeBudget }),
     requiredInputs,
     ...(historyIndex.entries.length > 0 || object.historyIndex !== undefined
       ? { historyIndex }

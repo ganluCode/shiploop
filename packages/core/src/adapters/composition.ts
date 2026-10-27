@@ -81,6 +81,7 @@ import { createSqliteMemoryStore } from './sqlite/memory-store.js';
 import { createPlanningQueryService } from '../application/planning-query.js';
 import type { PlanningQueryService } from '../application/planning-query.js';
 import { createExecutionInputService } from '../application/execution-input.js';
+import { createExecutionKnowledgeReader } from '../application/execution-knowledge.js';
 import { createContextBuilder } from '../application/context-build.js';
 import type { ContextBudget } from '../application/context-build.js';
 import { createArtifactPublisher } from '../application/artifact-publish.js';
@@ -718,6 +719,12 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
         limits: { maxReadBytes: 2_000_000 },
       }),
       permissions: TRUSTED_PROJECT_PERMISSIONS_READER,
+      knowledge: createExecutionKnowledgeReader({
+        documents: documentStore,
+        documentQuery: queryStore,
+        memoryQuery: queryStore,
+        verifier: createArtifactVerifier({ artifacts: artifactStore, files: artifactFileStore, limits: { maxReadBytes: 16_000_000 } }),
+      }),
       limits: DEFAULT_EXECUTION_INPUT_PREPARE_LIMITS,
       ...(nowUtcMs === undefined ? {} : { nowMs: nowUtcMs }),
     });

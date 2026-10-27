@@ -829,6 +829,8 @@ export interface ValidatedExecutionInputPreparePayload {
   readonly taskId: string;
   /** 必需输入采集清单（可为空数组；逐项深校验在应用层）。 */
   readonly items: readonly Record<string, unknown>[];
+  /** P06-2：受控知识选择描述；正文、hash、项目身份由 Core 读取端口解析。 */
+  readonly knowledge?: readonly Record<string, unknown>[];
 }
 
 /**
@@ -1245,7 +1247,7 @@ const TASK_VERIFICATION_CONTINUE_PAYLOAD_KEYS = ['taskId', 'attemptId', 'verific
 const INTEGRATION_START_PAYLOAD_KEYS = ['featureId', 'runId', 'batchId', 'operationId', 'inputDigest'] as const;
 
 const FEATURE_PLAN_DECIDE_PAYLOAD_KEYS = ['featureId', 'planDigest', 'decision', 'reason'] as const;
-const EXECUTION_INPUT_PREPARE_PAYLOAD_KEYS = ['featureId', 'taskId', 'items'] as const;
+const EXECUTION_INPUT_PREPARE_PAYLOAD_KEYS = ['featureId', 'taskId', 'items', 'knowledge'] as const;
 const EXECUTION_PREVIEW_PAYLOAD_KEYS = ['featureIds', 'phaseId', 'budget'] as const;
 /** 执行预览范围的形态上限（防无界数组；本阶段业务上限固定单成员）。 */
 export const EXECUTION_PREVIEW_FEATURE_IDS_MAX = 16;
@@ -1693,7 +1695,7 @@ function validateExecutionInputPreparePayload(
   raw: unknown,
 ): ValidatedExecutionInputPreparePayload {
   const object = requireObject(operation, raw, 'payload');
-  // 严格未知键拒绝：只接受准备面（featureId/taskId/items）；创建类命令不携带
+  // 严格未知键拒绝：只接受准备面（featureId/taskId/items/knowledge）；创建类命令不携带
   // expectedRevision；snapshot/manifest/prompt/permissions/approval 等服务端
   // 决定字段一律不能经请求输入（payload 内出现即未知键，定位 payload.<key>）。
   exactKeys(operation, object, EXECUTION_INPUT_PREPARE_PAYLOAD_KEYS, 'payload.');
@@ -1706,10 +1708,22 @@ function validateExecutionInputPreparePayload(
     }
   }
   try {
+    const knowledge = object.knowledge;
+    if (knowledge !== undefined) {
+      if (!Array.isArray(knowledge)) {
+        fail(operation, 'invalid_input', 'payload.knowledge', '必须是受控知识选择描述数组', knowledge);
+      }
+      for (const [index, item] of (knowledge as unknown[]).entries()) {
+        if (!isPlainObjectPayload(item)) {
+          fail(operation, 'invalid_input', `payload.knowledge[${index}]`, '必须是 JSON 对象', item);
+        }
+      }
+    }
     return {
       featureId: validateStableId(object.featureId, { operation }, 'payload.featureId'),
       taskId: validateStableId(object.taskId, { operation }, 'payload.taskId'),
       items: object.items as Record<string, unknown>[],
+      ...(knowledge === undefined ? {} : { knowledge: knowledge as Record<string, unknown>[] }),
     };
   } catch (error) {
     if (isStorageError(error, 'validation')) {

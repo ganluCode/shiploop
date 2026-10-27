@@ -71,6 +71,7 @@ import type {
   ExecutionPermissionsFace,
   ExecutionPermissionsReader,
   ExecutionInputPreparationViewStore,
+  ExecutionKnowledgeReader,
   PreparedExecutionInputGroup,
 } from '../ports/execution-input-prepare.js';
 import { stableStringify } from '../ports/feature-plan.js';
@@ -147,6 +148,14 @@ export const DEFAULT_EXECUTION_INPUT_CONTEXT_BUDGET: Readonly<import('./context-
     bytesPerTokenEstimate: 4,
   });
 
+export const DEFAULT_EXECUTION_KNOWLEDGE_BUDGET: Readonly<import('../ports/execution-input-prepare.js').ExecutionKnowledgeBudget> = Object.freeze({
+  maxSources: 32,
+  maxSnippetChars: 8_192,
+  maxTotalBytes: 64 * 1024,
+  maxReadBytes: 256 * 1024,
+  maxCandidates: 128,
+});
+
 /** 准备服务装配依赖（全部窄端口/用例；不接触具体适配器）。 */
 export interface ExecutionInputPrepareServiceDeps {
   readonly views: ExecutionInputPreparationViewStore;
@@ -155,6 +164,8 @@ export interface ExecutionInputPrepareServiceDeps {
   readonly publisher: ArtifactPublisher;
   readonly verifier: ArtifactVerifier;
   readonly permissions: ExecutionPermissionsReader;
+  /** P06-2：解析并核验受控知识选择的只读端口。 */
+  readonly knowledge?: ExecutionKnowledgeReader;
   readonly limits: ExecutionInputPrepareLimits;
   /** 时间源（默认 Date.now；测试注入以获得确定性）。 */
   readonly nowMs?: () => number;
@@ -277,7 +288,7 @@ export function createExecutionInputPrepareService(
     ),
   };
   const nowMs = deps.nowMs ?? Date.now;
-  const { views, inputs, builder, publisher, verifier, permissions } = deps;
+  const { views, inputs, builder, publisher, verifier, permissions, knowledge } = deps;
 
   /** 发布单个组正文并返回身份引用（expectedHash = 正文字节摘要）。 */
   async function publishGroupBody(
@@ -466,7 +477,29 @@ export function createExecutionInputPrepareService(
         taskId: task.id,
       });
 
-      /* 阶段 2a：必需输入采集（事务外文件/索引 I/O 由 F-004 用例承担）。 */
+      /* 阶段 2a：知识选择解析（只读知识索引/Artifact 校验，事务外执行）。
+       * 请求仅描述选择，不信任其 projectId/hash/body；解析结果由 Core 固定进
+       * snapshot/manifest，知识端口缺席时 fail-closed。 */
+      let resolvedKnowledge: Awaited<ReturnType<ExecutionKnowledgeReader['resolve']>> | undefined;
+      if (payload.knowledge !== undefined) {
+        if (knowledge === undefined) {
+          throw publicError('internal', 'source_unavailable', { reason: 'knowledge_reader_unavailable' });
+        }
+        try {
+          resolvedKnowledge = await knowledge.resolve({
+            projectId,
+            featureId: view.feature.id,
+            taskId: task.id,
+            requests: payload.knowledge,
+            budget: DEFAULT_EXECUTION_KNOWLEDGE_BUDGET,
+          });
+        } catch (cause) {
+          if (cause instanceof PublicError) throw cause;
+          throw publicError('conflict', 'source_unavailable', undefined, cause);
+        }
+      }
+
+      /* 阶段 2b：必需输入采集（事务外文件/索引 I/O 由 F-004 用例承担）。 */
       if (payload.items.length > limits.maxRequiredItems) {
         throw publicError('invalid_input', 'limit_exceeded', {
           limit: 'maxRequiredItems',
@@ -537,6 +570,10 @@ export function createExecutionInputPrepareService(
           permissions: { grants: [...permissionsFace.grants] },
           ...(view.profile === undefined || view.profile === null ? {} : { profile: view.profile }),
           requiredInputs: captured.refs,
+          ...(resolvedKnowledge === undefined ? {} : {
+            knowledge: { selections: resolvedKnowledge.selections },
+            knowledgeBudget: resolvedKnowledge.budget,
+          }),
           ...(reworkInput !== undefined ? { rework: reworkInput } : {}),
           ...(recoveryInput !== undefined ? { recovery: recoveryInput } : {}),
         });
@@ -564,6 +601,9 @@ export function createExecutionInputPrepareService(
         schemaVersion: built.schemaVersion,
         group: { snapshot: snapshotRef, manifest: manifestRef, prompt: promptRef },
         requiredInputs: captured.refs,
+        ...(resolvedKnowledge === undefined || resolvedKnowledge.selections.length === 0
+          ? {}
+          : { knowledge: resolvedKnowledge.selections }),
         digests: {
           snapshotDigest: built.digests.snapshotDigest,
           manifestDigest: built.digests.manifestDigest,
@@ -585,6 +625,7 @@ export function createExecutionInputPrepareService(
         taskRevision: task.revision,
         promptBytes: built.promptBytes,
         tokenEstimate: built.tokenEstimate,
+        ...(resolvedKnowledge === undefined ? {} : { knowledgeBudget: resolvedKnowledge.budget }),
         preparedAtUtcMs: nowMs(),
         ...(built.inputSnapshot.rework !== null && built.inputSnapshot.rework !== undefined
           ? { rework: built.inputSnapshot.rework }
@@ -658,10 +699,15 @@ export function mapContextBuildFailure(cause: unknown): PublicError {
 
 /** 制品索引重核：ready + hash/size/locator 与准备结果一致（不一致即漂移/篡改）。 */
 function recheckArtifactRef(
-  ref: { readonly artifactId: string; readonly contentHash: string; readonly sizeBytes: number; readonly locator: string },
-  expected: { readonly contentHash: string; readonly sizeBytes: number; readonly locator: string },
+  ref: { readonly artifactId: string; readonly version?: number; readonly contentHash: string; readonly sizeBytes: number; readonly locator?: string },
+  expected: { readonly version?: number; readonly contentHash: string; readonly sizeBytes: number; readonly locator?: string },
 ): { readonly ok: true } | { readonly ok: false; readonly reason: string } {
-  if (ref.contentHash !== expected.contentHash || ref.sizeBytes !== expected.sizeBytes || ref.locator !== expected.locator) {
+  if (
+    ref.contentHash !== expected.contentHash ||
+    (expected.version !== undefined && ref.version !== expected.version) ||
+    ref.sizeBytes !== expected.sizeBytes ||
+    (expected.locator !== undefined && ref.locator !== expected.locator)
+  ) {
     return { ok: false, reason: 'artifact_changed' };
   }
   return { ok: true };
@@ -755,13 +801,22 @@ export function submitExecutionInputPrepare(
 
   // 7) 全部制品索引重核：三正文 + 每条必需输入必须 ready 且 hash/size/locator
   //    与准备结果一致（缺失/未 ready/被篡改都不产生可绑定结果）。
-  const artifactChecks: readonly { label: string; ref: { artifactId: string; contentHash: string; sizeBytes: number; locator: string } }[] = [
+  const artifactChecks: readonly { label: string; ref: { artifactId: string; version?: number; contentHash: string; sizeBytes: number; locator?: string } }[] = [
     { label: 'snapshot', ref: prepared.group.snapshot },
     { label: 'manifest', ref: prepared.group.manifest },
     { label: 'prompt', ref: prepared.group.prompt },
     ...prepared.requiredInputs.map((ref, index) => ({
       label: `required-input[${index}]`,
       ref,
+    })),
+    ...(prepared.knowledge ?? []).map((selection, index) => ({
+      label: `knowledge[${index}]`,
+      ref: {
+        artifactId: selection.contentRef.artifactId,
+        version: selection.contentRef.version,
+        contentHash: selection.contentRef.contentHash,
+        sizeBytes: selection.contentRef.sizeBytes,
+      },
     })),
   ];
   for (const check of artifactChecks) {
@@ -820,6 +875,8 @@ export function submitExecutionInputPrepare(
         mediaType: ref.mediaType,
         origin: ref.origin,
       })),
+      ...(prepared.knowledge === undefined ? {} : { knowledge: prepared.knowledge }),
+      ...(prepared.knowledgeBudget === undefined ? {} : { knowledgeBudget: prepared.knowledgeBudget }),
       digests: { ...prepared.digests },
       approval: {
         planDigest: prepared.approval.planDigest,

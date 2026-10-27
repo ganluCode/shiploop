@@ -701,6 +701,7 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
       permissions: validated.permissions,
       ...(validated.profile === undefined ? {} : { profile: validated.profile }),
       ...(knowledge.length === 0 ? {} : { knowledge }),
+      ...(validated.knowledgeBudget === undefined ? {} : { knowledgeBudget: validated.knowledgeBudget }),
       requiredInputs: validated.requiredInputs,
       ...(historyIndex === null ? {} : { historyIndex }),
       ...(rework === null ? {} : { rework }),
@@ -727,6 +728,7 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
       permissions: validated.permissions,
       ...(validated.profile === undefined ? {} : { profile: validated.profile }),
       ...(knowledge.length === 0 ? {} : { knowledge }),
+      ...(validated.knowledgeBudget === undefined ? {} : { knowledgeBudget: validated.knowledgeBudget }),
       requiredInputs: validated.requiredInputs,
       historyIndex,
       rework,
@@ -1044,6 +1046,7 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
       taskId: validated.taskId,
       sources,
       omissions,
+      ...(validated.knowledgeBudget === undefined ? {} : { knowledgeBudget: validated.knowledgeBudget }),
       promptDigest,
     };
   }
