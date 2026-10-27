@@ -1828,6 +1828,99 @@ export const capabilityModules = sqliteTable('capability_modules', {
 
 /** P06-1 / F-002：画像和能力模块版本均为插后不可变快照。 */
 
+export const documents = sqliteTable('documents', {
+  id: text('id').primaryKey(),
+  createdAt: integer('created_at').notNull(),
+  projectId: text('project_id').notNull().references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  revision: integer('revision').notNull().default(1),
+  updatedAt: integer('updated_at').notNull(),
+  title: text('title').notNull(),
+  documentType: text('document_type').notNull(),
+  effectiveVersionId: text('effective_version_id'),
+  status: text('status').notNull().default('active'),
+}, table => [
+  check('documents_revision_check', sql`typeof(${table.revision}) = 'integer' AND ${table.revision} >= 1`),
+  check('documents_title_check', sql`length(${table.title}) > 0`),
+  check('documents_type_check', sql`length(${table.documentType}) > 0`),
+  check('documents_status_check', sql`${table.status} IN ('active', 'archived')`),
+  uniqueIndex('documents_project_id_unique').on(table.projectId, table.id),
+  index('documents_project_status_index').on(table.projectId, table.status, table.id),
+]);
+
+export const documentVersions = sqliteTable('document_versions', {
+  id: text('id').primaryKey(),
+  createdAt: integer('created_at').notNull(),
+  projectId: text('project_id').notNull().references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  revision: integer('revision').notNull().default(1),
+  updatedAt: integer('updated_at').notNull(),
+  documentId: text('document_id').notNull(),
+  version: integer('version').notNull(),
+  status: text('status').notNull().default('draft'),
+  contentRef: text('content_ref').notNull(),
+  contentHash: text('content_hash').notNull(),
+  sourceRefs: text('source_refs').notNull().default('[]'),
+  reviewStatus: text('review_status').notNull().default('pending'),
+  reviewedAgainstRevision: text('reviewed_against_revision'),
+}, table => [
+  check('document_versions_revision_check', sql`typeof(${table.revision}) = 'integer' AND ${table.revision} >= 1`),
+  check('document_versions_version_check', sql`typeof(${table.version}) = 'integer' AND ${table.version} >= 1`),
+  check('document_versions_status_check', sql`${table.status} IN ('draft', 'published', 'withdrawn')`),
+  check('document_versions_content_ref_check', sql`length(${table.contentRef}) > 0`),
+  check('document_versions_content_hash_check', sql`length(${table.contentHash}) = 64 AND ${table.contentHash} NOT GLOB '*[^0-9a-f]*'`),
+  check('document_versions_source_refs_json_check', sql`json_valid(${table.sourceRefs}) AND json_type(${table.sourceRefs}) = 'array'`),
+  check('document_versions_review_status_check', sql`${table.reviewStatus} IN ('pending', 'approved', 'rejected')`),
+  check('document_versions_reviewed_revision_check', sql`${table.reviewedAgainstRevision} IS NULL OR length(${table.reviewedAgainstRevision}) > 0`),
+  foreignKey({
+    name: 'document_versions_document_same_project_fk',
+    columns: [table.projectId, table.documentId],
+    foreignColumns: [documents.projectId, documents.id],
+  }).onDelete('restrict'),
+  foreignKey({
+    name: 'document_versions_content_artifact_same_project_fk',
+    columns: [table.projectId, table.contentRef],
+    foreignColumns: [artifacts.projectId, artifacts.id],
+  }).onDelete('restrict'),
+  uniqueIndex('document_versions_project_id_unique').on(table.projectId, table.id),
+  uniqueIndex('document_versions_document_version_unique').on(table.documentId, table.version),
+  index('document_versions_project_status_index').on(table.projectId, table.status, table.version),
+]);
+
+export const memoryRecords = sqliteTable('memory_records', {
+  id: text('id').primaryKey(),
+  createdAt: integer('created_at').notNull(),
+  projectId: text('project_id').notNull().references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  revision: integer('revision').notNull().default(1),
+  updatedAt: integer('updated_at').notNull(),
+  recordKey: text('record_key').notNull(),
+  version: integer('version').notNull(),
+  scope: text('scope').notNull(),
+  status: text('status').notNull().default('candidate'),
+  contentRef: text('content_ref').notNull(),
+  contentHash: text('content_hash').notNull(),
+  sourceRefs: text('source_refs').notNull().default('[]'),
+  retrievalCount: integer('retrieval_count').notNull().default(0),
+}, table => [
+  check('memory_records_revision_check', sql`typeof(${table.revision}) = 'integer' AND ${table.revision} >= 1`),
+  check('memory_records_key_check', sql`length(${table.recordKey}) > 0`),
+  check('memory_records_version_check', sql`typeof(${table.version}) = 'integer' AND ${table.version} >= 1`),
+  check('memory_records_scope_check', sql`length(${table.scope}) > 0`),
+  check('memory_records_status_check', sql`${table.status} IN ('candidate', 'accepted', 'revoked')`),
+  check('memory_records_content_ref_check', sql`length(${table.contentRef}) > 0`),
+  check('memory_records_content_hash_check', sql`length(${table.contentHash}) = 64 AND ${table.contentHash} NOT GLOB '*[^0-9a-f]*'`),
+  check('memory_records_source_refs_json_check', sql`json_valid(${table.sourceRefs}) AND json_type(${table.sourceRefs}) = 'array'`),
+  check('memory_records_retrieval_count_check', sql`typeof(${table.retrievalCount}) = 'integer' AND ${table.retrievalCount} >= 0`),
+  foreignKey({
+    name: 'memory_records_content_artifact_same_project_fk',
+    columns: [table.projectId, table.contentRef],
+    foreignColumns: [artifacts.projectId, artifacts.id],
+  }).onDelete('restrict'),
+  uniqueIndex('memory_records_project_key_version_unique').on(table.projectId, table.recordKey, table.version),
+  uniqueIndex('memory_records_project_id_unique').on(table.projectId, table.id),
+  index('memory_records_project_status_index').on(table.projectId, table.status, table.recordKey, table.version),
+]);
+
+/** P06-2：正文引用、版本身份和来源在写入后不可被原地换绑。 */
+
 /**
  * P03-6 / F-006：最小 Work Session 与 Attempt 执行诊断持久关联（sessions，迁移 v20）。
  * 顶层 Work Session 唯一关联同项目 Attempt（attempt_id 部分唯一）；生命周期区分

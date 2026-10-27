@@ -91,10 +91,10 @@ describe('P06-1 ProjectProfile SQLite store', () => {
     await withAsyncSandbox(async (root) => {
       const session = openSqliteStorageSession({ path: join(root, 'state.db') });
       try {
-        const before = SQLITE_MIGRATIONS.slice(0, -1);
+        const before = SQLITE_MIGRATIONS.slice(0, 47);
         await migrateSqliteStorage(session, { migrations: before });
         const oldRows = session.database.prepare('SELECT version, checksum FROM schema_migrations ORDER BY version').all();
-        await migrateSqliteStorage(session);
+        await migrateSqliteStorage(session, { migrations: SQLITE_MIGRATIONS.slice(0, 48) });
         const tables = session.database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('project_profiles', 'capability_modules') ORDER BY name").all() as { name: string }[];
         expect(tables.map((row) => row.name)).toEqual(['capability_modules', 'project_profiles']);
         expect(session.database.prepare('SELECT MAX(version) AS version FROM schema_migrations').get()).toEqual({ version: 48 });

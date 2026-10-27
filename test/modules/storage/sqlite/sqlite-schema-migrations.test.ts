@@ -47,6 +47,10 @@ const SCHEMA_TABLES = [
   // P06-1 / F-002：不可变项目画像与项目能力模块版本（迁移 v48）。
   ['project_profiles', schema.projectProfiles],
   ['capability_modules', schema.capabilityModules],
+  // P06-2 / F-001：项目隔离文档、不可变文档版本与轻量记忆（迁移 v49）。
+  ['documents', schema.documents],
+  ['document_versions', schema.documentVersions],
+  ['memory_records', schema.memoryRecords],
   ['artifacts', schema.artifacts],
   // P01-3 / F-006：状态事件审计切片（设计 11 §9）。
   ['state_events', schema.stateEvents],
@@ -133,9 +137,6 @@ const FORBIDDEN_TABLE_NAMES = [
   'operations',
   'notification_channels',
   'notification_deliveries',
-  'documents',
-  'document_versions',
-  'memory_records',
 ];
 
 const VALID_SHA256 = 'ab'.repeat(32);
@@ -550,6 +551,12 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
         'project_settings:(project_id)->projects.(id)',
         'project_profiles:(project_id)->projects.(id)',
         'capability_modules:(project_id)->projects.(id)',
+        'documents:(project_id)->projects.(id)',
+        'document_versions:(project_id)->projects.(id)',
+        'document_versions:(project_id,document_id)->documents.(project_id,id)',
+        'document_versions:(project_id,content_ref)->artifacts.(project_id,id)',
+        'memory_records:(project_id)->projects.(id)',
+        'memory_records:(project_id,content_ref)->artifacts.(project_id,id)',
         'artifacts:(project_id)->projects.(id)',
         'attempts:(project_id)->projects.(id)',
         'attempts:(project_id,feature_id)->features.(project_id,id)',

@@ -4029,6 +4029,108 @@ CREATE TRIGGER capability_modules_immutable_delete BEFORE DELETE ON capability_m
 BEGIN SELECT RAISE(ABORT, 'capability modules are immutable'); END;
 `;
 
+const MIGRATION_049_SQL = `
+-- P06-2 / F-001: project-isolated document versions and lightweight memory indexes.
+CREATE TABLE documents (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  document_type TEXT NOT NULL,
+  effective_version_id TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  CONSTRAINT documents_revision_check CHECK (typeof(revision) = 'integer' AND revision >= 1),
+  CONSTRAINT documents_title_check CHECK (length(title) > 0),
+  CONSTRAINT documents_type_check CHECK (length(document_type) > 0),
+  CONSTRAINT documents_status_check CHECK (status IN ('active', 'archived')),
+  CONSTRAINT documents_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX documents_project_id_unique ON documents (project_id, id);
+CREATE INDEX documents_project_status_index ON documents (project_id, status, id);
+CREATE TRIGGER documents_effective_version_same_project_insert
+BEFORE INSERT ON documents
+WHEN NEW.effective_version_id IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM document_versions WHERE project_id = NEW.project_id AND id = NEW.effective_version_id
+)
+BEGIN SELECT RAISE(ABORT, 'document effective version must belong to project'); END;
+CREATE TRIGGER documents_effective_version_same_project_update
+BEFORE UPDATE OF project_id, effective_version_id ON documents
+WHEN NEW.effective_version_id IS NOT NULL AND NOT EXISTS (
+  SELECT 1 FROM document_versions WHERE project_id = NEW.project_id AND id = NEW.effective_version_id
+)
+BEGIN SELECT RAISE(ABORT, 'document effective version must belong to project'); END;
+
+CREATE TABLE document_versions (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  document_id TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'draft',
+  content_ref TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  source_refs TEXT NOT NULL DEFAULT '[]',
+  review_status TEXT NOT NULL DEFAULT 'pending',
+  reviewed_against_revision TEXT,
+  CONSTRAINT document_versions_revision_check CHECK (typeof(revision) = 'integer' AND revision >= 1),
+  CONSTRAINT document_versions_version_check CHECK (typeof(version) = 'integer' AND version >= 1),
+  CONSTRAINT document_versions_status_check CHECK (status IN ('draft', 'published', 'withdrawn')),
+  CONSTRAINT document_versions_content_ref_check CHECK (length(content_ref) > 0),
+  CONSTRAINT document_versions_content_hash_check CHECK (length(content_hash) = 64 AND content_hash NOT GLOB '*[^0-9a-f]*'),
+  CONSTRAINT document_versions_source_refs_json_check CHECK (json_valid(source_refs) AND json_type(source_refs) = 'array'),
+  CONSTRAINT document_versions_review_status_check CHECK (review_status IN ('pending', 'approved', 'rejected')),
+  CONSTRAINT document_versions_reviewed_revision_check CHECK (reviewed_against_revision IS NULL OR length(reviewed_against_revision) > 0),
+  CONSTRAINT document_versions_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT document_versions_document_same_project_fk FOREIGN KEY (project_id, document_id) REFERENCES documents (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT document_versions_content_artifact_same_project_fk FOREIGN KEY (project_id, content_ref) REFERENCES artifacts (project_id, id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX document_versions_project_id_unique ON document_versions (project_id, id);
+CREATE UNIQUE INDEX document_versions_document_version_unique ON document_versions (document_id, version);
+CREATE INDEX document_versions_project_status_index ON document_versions (project_id, status, version);
+CREATE TRIGGER document_versions_identity_immutable_update BEFORE UPDATE ON document_versions
+WHEN OLD.status = 'published'
+  OR NEW.id IS NOT OLD.id OR NEW.project_id IS NOT OLD.project_id OR NEW.document_id IS NOT OLD.document_id
+  OR NEW.version IS NOT OLD.version OR NEW.content_ref IS NOT OLD.content_ref
+  OR NEW.content_hash IS NOT OLD.content_hash OR NEW.source_refs IS NOT OLD.source_refs
+BEGIN SELECT RAISE(ABORT, 'document version identity is immutable'); END;
+CREATE TRIGGER document_versions_retained BEFORE DELETE ON document_versions
+BEGIN SELECT RAISE(ABORT, 'document version is retained'); END;
+
+CREATE TABLE memory_records (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  record_key TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  scope TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'candidate',
+  content_ref TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  source_refs TEXT NOT NULL DEFAULT '[]',
+  retrieval_count INTEGER NOT NULL DEFAULT 0,
+  CONSTRAINT memory_records_revision_check CHECK (typeof(revision) = 'integer' AND revision >= 1),
+  CONSTRAINT memory_records_key_check CHECK (length(record_key) > 0),
+  CONSTRAINT memory_records_version_check CHECK (typeof(version) = 'integer' AND version >= 1),
+  CONSTRAINT memory_records_scope_check CHECK (length(scope) > 0),
+  CONSTRAINT memory_records_status_check CHECK (status IN ('candidate', 'accepted', 'revoked')),
+  CONSTRAINT memory_records_content_ref_check CHECK (length(content_ref) > 0),
+  CONSTRAINT memory_records_content_hash_check CHECK (length(content_hash) = 64 AND content_hash NOT GLOB '*[^0-9a-f]*'),
+  CONSTRAINT memory_records_source_refs_json_check CHECK (json_valid(source_refs) AND json_type(source_refs) = 'array'),
+  CONSTRAINT memory_records_retrieval_count_check CHECK (typeof(retrieval_count) = 'integer' AND retrieval_count >= 0),
+  CONSTRAINT memory_records_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT memory_records_content_artifact_same_project_fk FOREIGN KEY (project_id, content_ref) REFERENCES artifacts (project_id, id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX memory_records_project_key_version_unique ON memory_records (project_id, record_key, version);
+CREATE UNIQUE INDEX memory_records_project_id_unique ON memory_records (project_id, id);
+CREATE INDEX memory_records_project_status_index ON memory_records (project_id, status, record_key, version);
+`;
+
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     version: 1,
@@ -4142,4 +4244,5 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 46, sql: MIGRATION_046_SQL, checksum: sha256Hex(MIGRATION_046_SQL) },
   { version: 47, sql: MIGRATION_047_SQL, checksum: sha256Hex(MIGRATION_047_SQL), foreignKeysOff: true },
   { version: 48, sql: MIGRATION_048_SQL, checksum: sha256Hex(MIGRATION_048_SQL) },
+  { version: 49, sql: MIGRATION_049_SQL, checksum: sha256Hex(MIGRATION_049_SQL) },
 ];
