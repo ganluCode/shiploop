@@ -126,6 +126,7 @@ import {
   submitTaskStrategyUpdate,
 } from './task-strategy-update.js';
 import type { TaskStrategyEditGuards } from './task-strategy-update.js';
+import type { ProjectProfileService } from './project-profile-service.js';
 
 import { createBatchDeliveryCommandHandler, type BatchDeliveryDependencies } from './batch-delivery-commands.js';
 export interface DeliveryActivity {
@@ -162,7 +163,9 @@ export interface CommandServiceOptions {
    */
   readonly executionStopControl?: import('../ports/execution-stop.js').ExecutionStopControlPort;
   readonly atomicStore: AtomicCommandStore;
-  /** F-008：project.register 的只读仓库检查（写事务之外调用；不传则注册命令 unsupported）。 */
+  /** P06-1：Profile confirm/modify/reject uses Core-owned authorization and version CAS. */
+  readonly projectProfileService?: ProjectProfileService;
+
   readonly repositoryInspector?: RepositoryInspector;
   /** F-009：配置命令的能力目录复检（可信装配注入；不传则配置命令 unsupported）。 */
   readonly capabilityCatalog?: RuntimeCapabilityCatalog;
@@ -296,6 +299,8 @@ function isSettingsEnvelope(envelope: ValidatedCommandEnvelope): envelope is Set
 export function createCommandService(options: CommandServiceOptions): CommandService {
   const store = options.atomicStore;
   const repositoryInspector = options.repositoryInspector;
+  const projectProfileService = options.projectProfileService;
+
   const capabilityCatalog = options.capabilityCatalog;
   const baselineService = options.baselineService;
   const baselineCancel = options.baselineCancel;
@@ -680,6 +685,10 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
         if (envelope.operation === 'project.register' && repositoryInspector === undefined) {
           throw new PublicError('unsupported', operation);
         }
+        if (envelope.operation === 'project.profile.confirm' || envelope.operation === 'project.profile.modify' || envelope.operation === 'project.profile.reject') {
+          if (projectProfileService === undefined) throw new PublicError('unsupported', operation);
+        }
+
         if (isSettingsEnvelope(envelope) && capabilityCatalog === undefined) {
           throw new PublicError('unsupported', operation);
         }
@@ -745,6 +754,9 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
         }
         if (
           envelope.operation !== 'project.metadata.update' &&
+          envelope.operation !== 'project.profile.confirm' &&
+          envelope.operation !== 'project.profile.modify' &&
+          envelope.operation !== 'project.profile.reject' &&
           envelope.operation !== 'project.register' &&
           envelope.operation !== 'baseline.preview' &&
           envelope.operation !== 'baseline.run' &&
@@ -804,6 +816,16 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           options.atomicStore.transact('task.verification.continue.preflight', tx =>
             validateTaskVerificationContinue(envelope, tx, taskVerificationContinue!));
           continuationStopEvidence = await taskVerificationContinue.verifyCurrentEvidence(envelope);
+        }
+
+        let profileMutationResult: import('../ports/project-profile-store.js').PersistedProjectProfile | undefined;
+        if ((envelope.operation === 'project.profile.confirm' || envelope.operation === 'project.profile.modify' || envelope.operation === 'project.profile.reject') && existing === undefined) {
+          const action = envelope.operation === 'project.profile.confirm' ? 'confirm' : envelope.operation === 'project.profile.modify' ? 'modify' : 'reject';
+          profileMutationResult = projectProfileService![action](principal, {
+            projectId: envelope.scope.projectId,
+            expectedRevision: envelope.expectedRevision,
+            ...(envelope.payload.profile === undefined ? {} : { profile: envelope.payload.profile }),
+          });
         }
 
         // F-008：只读仓库检查（Git/文件系统）在写事务之外，仅对新命令执行；
@@ -991,6 +1013,17 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           if (original !== undefined) return original;
           const now = nowUtcMs();
           checkTiming(envelope, now);
+          if (envelope.operation === 'project.profile.confirm' || envelope.operation === 'project.profile.modify' || envelope.operation === 'project.profile.reject') {
+            if (profileMutationResult === undefined) throw new TypeError('Profile 命令缺少事务外变更结果');
+            const receipt = createCompletedReceipt({
+              principalId: principal.principalId, commandId: envelope.commandId, operation: envelope.operation,
+              scope: envelope.scope, requestDigest: digest, issuedAt: envelope.issuedAt,
+              completedAt: new Date(now).toISOString(), resultRef: createResultRef(randomBytes(32)),
+              result: { profile: profileMutationResult.profile, profileDigest: profileMutationResult.profileDigest },
+            });
+            transaction.saveReceipt(receipt);
+            return receipt;
+          }
           if (envelope.operation === 'project.register') {
             // 新注册命令必定已在事务外完成仓库检查（重放已在上面返回）。
             if (binding === undefined) throw new TypeError('注册命令缺少事务外仓库检查结果');

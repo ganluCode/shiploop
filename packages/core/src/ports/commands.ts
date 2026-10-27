@@ -155,6 +155,10 @@ export const COMMAND_OPERATIONS = [
   'execution.retryFinal',
   'project.register',
   'project.metadata.update',
+  // P06-1 / F-005：画像写操作共享 project metadata 授权与 Profile version CAS。
+  'project.profile.confirm',
+  'project.profile.modify',
+  'project.profile.reject',
   'settings.global.create',
   'settings.global.update',
   'settings.project.create',
@@ -277,6 +281,9 @@ export const COMMAND_OPERATION_SPECS: Readonly<Record<AppOperation, CommandOpera
       mutation: 'update',
       capability: 'project.metadata.write',
     },
+    'project.profile.confirm': { scopeKind: 'project', mutation: 'update', capability: 'project.metadata.write' },
+    'project.profile.modify': { scopeKind: 'project', mutation: 'update', capability: 'project.metadata.write' },
+    'project.profile.reject': { scopeKind: 'project', mutation: 'update', capability: 'project.metadata.write' },
     'settings.global.create': {
       scopeKind: 'global',
       mutation: 'create',
@@ -960,6 +967,12 @@ export type ValidatedCommandEnvelope =
       readonly scope: { readonly kind: 'project'; readonly projectId: string };
       readonly expectedRevision: number;
       readonly payload: ValidatedProjectMetadataPayload;
+    })
+  | (EnvelopeCommon & {
+      readonly operation: 'project.profile.confirm' | 'project.profile.modify' | 'project.profile.reject';
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: number;
+      readonly payload: { readonly profile?: unknown };
     })
   | (EnvelopeCommon & {
       readonly operation: 'settings.global.create';
@@ -2053,6 +2066,17 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
   const operation = operationName as AppOperation;
   const object = { payload: header.payload };
 
+  if (operation === 'project.profile.confirm' || operation === 'project.profile.modify' || operation === 'project.profile.reject') {
+    if (scope.kind !== 'project') fail(operation, 'invalid_input', 'scope.kind', 'scope 种类与操作不匹配');
+    if (!isPlainObject(object.payload)) fail(operation, 'invalid_input', 'payload', '必须是对象');
+    const payload = object.payload as Record<string, unknown>;
+    exactKeys(operation, payload, operation === 'project.profile.reject' ? [] : ['profile'], 'payload.');
+    if (operation !== 'project.profile.reject' && !Object.hasOwn(payload, 'profile')) {
+      fail(operation, 'invalid_input', 'payload.profile', '确认或修改必须提供 Profile');
+    }
+    return { ...base, operation, scope, expectedRevision: expectedRevision as number,
+      payload: operation === 'project.profile.reject' ? {} : { profile: payload.profile } };
+  }
   if (operation === 'project.register') {
     return {
       ...base,

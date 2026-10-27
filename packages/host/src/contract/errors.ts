@@ -39,6 +39,8 @@ export const APP_OPERATIONS = [
   'projects.labelCounts',
   'projects.inspect',
   'projects.overview',
+  'projects.profile.get',
+  'projects.profile.match',
   'settings.global.get',
   'settings.global.export',
   'settings.project.get',

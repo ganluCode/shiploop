@@ -15,6 +15,12 @@ import {
   validateProfileModuleSelection,
   type ProjectProfile,
 } from '../ports/project-profile.js';
+import {
+  createProjectProfileQueryResult,
+  type ProfileModuleMatchResult,
+  type ProjectProfileQueryResult,
+} from '../ports/project-profile-query.js';
+export type { ProfileModuleMatchResult, ProfileModuleSelection } from '../ports/project-profile-query.js';
 import type {
   PersistedProjectProfile,
   ProjectProfileStore,
@@ -32,26 +38,13 @@ const OPERATION = 'project.profile';
 const MUTATION_KEYS = ['projectId', 'expectedRevision', 'profile'] as const;
 const MATCH_KEYS = ['projectId', 'directory', 'requiredModuleIds', 'languages', 'frameworks', 'scope'] as const;
 
-export interface ProfileModuleSelection {
-  readonly id: string;
-  readonly version: string;
-  readonly reason: string;
-}
-
-export interface ProfileModuleMatchResult {
-  readonly status: 'ready' | 'not_ready';
-  readonly profileVersion: number | null;
-  readonly modules: readonly ProfileModuleSelection[];
-  readonly missing: readonly string[];
-  readonly reason?: 'profile_not_confirmed' | 'required_module_missing' | 'required_module_not_applicable' | 'module_dependency_missing' | 'task_scope_required' | 'module_scope_unmatched';
-}
-
 export interface ProjectProfileService {
   readonly confirm: (principal: unknown, input: unknown) => PersistedProjectProfile;
   readonly modify: (principal: unknown, input: unknown) => PersistedProjectProfile;
   readonly reject: (principal: unknown, input: unknown) => PersistedProjectProfile;
   readonly getCurrent: (principal: unknown, projectId: unknown) => PersistedProjectProfile | null;
   readonly matchTaskModules: (principal: unknown, input: unknown) => ProfileModuleMatchResult;
+  readonly getQuery: (principal: unknown, projectId: unknown) => ProjectProfileQueryResult;
 }
 
 export interface ProjectProfileServiceOptions {
@@ -258,6 +251,22 @@ export function createProjectProfileService(options: ProjectProfileServiceOption
             id: module.id, version: module.version, reason: 'confirmed_profile_scope_match',
           })),
         };
+      });
+    },
+    getQuery(principal, projectIdInput) {
+      const operation = `${OPERATION}.query`;
+      return boundary(principal, operation, false, () => {
+        const projectId = validateStableId(projectIdInput, validationContext(operation), 'projectId');
+        authorize(principal, projectId, operation, false);
+        const rows = store.listProjectProfiles(projectId);
+        const latestRow = rows[rows.length - 1] ?? null;
+        const confirmed = currentConfirmed(store, projectId);
+        return createProjectProfileQueryResult({
+          projectId,
+          candidate: latestRow !== null && latestRow.profile.status !== 'confirmed' ? latestRow : null,
+          confirmed,
+          modules: store.listCapabilityModules(projectId).map(row => ({ module: row.module, digest: row.digest })),
+        });
       });
     },
   };

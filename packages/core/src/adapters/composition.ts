@@ -641,6 +641,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       session,
       nowUtcMs === undefined ? {} : { nowUtcMs },
     );
+    const projectProfileService = createProjectProfileService({ store: projectProfileStore });
     const executionInputPrepare: ExecutionInputPreparePort = createExecutionInputPrepareService({
       views: createSqlitePlanAccess(session, { ...(nowUtcMs === undefined ? {} : { nowUtcMs }), profileStore: projectProfileStore }),
       inputs: createExecutionInputService({
@@ -1152,6 +1153,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       batchDelivery,
       featureDelivery,
       repositoryInspector,
+      projectProfileService,
       // F-009：配置命令的能力目录复检复用同一可信装配目录。
       capabilityCatalog,
       baselineService,
@@ -1292,8 +1294,6 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       baselineReads: baselineStore,
       ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
     });
-
-    const projectProfileService = createProjectProfileService({ store: projectProfileStore });
 
     const gitPublicMetadataLock = createGitPublicMetadataLock();
     const baselineExecutionService = createBaselineExecutionService({

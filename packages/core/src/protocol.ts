@@ -116,6 +116,20 @@ export {
 export type { PublicStateEvent, PublicStateEventType } from './ports/events.js';
 export { validateProfileAuditPayload } from './ports/project-profile-store.js';
 export {
+  PROJECT_PROFILE_QUERY_SCHEMA_VERSION,
+  createProjectProfileQueryResult,
+  toPublicProfileRecord,
+} from './ports/project-profile-query.js';
+export type {
+  ProjectProfileMatchQueryResult,
+  ProfileModuleMatchResult,
+  ProfileModuleSelection,
+  ProjectProfileQueryResult,
+  PublicProfileEvidence,
+  PublicProfileModule,
+  PublicProfileRecord,
+} from './ports/project-profile-query.js';
+export {
   SETTINGS_SCHEMA_VERSION, SETTINGS_EXPORT_FORMAT_VERSION, validateSettingsPayload,
 } from './ports/settings-schema.js';
 export type { SettingsScope } from './ports/settings-schema.js';

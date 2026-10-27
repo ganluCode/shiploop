@@ -37,6 +37,8 @@ export type {
   HostEventSubscription,
   EventStreamEnd,
   ListProjectsInput,
+  UpdateProjectProfileInput,
+  MatchProjectProfileInput,
   SubmitCommandInput,
   SubmitCommandOptions,
   SubscribeEventsInput,

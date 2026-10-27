@@ -199,6 +199,8 @@ import type {
 } from 'shiploop-core/protocol';
 import { HostProtocolError, isPlainObject } from '../contract/index.js';
 import type { HostOperation } from '../contract/index.js';
+import type { ProjectProfileQueryResult, ProjectProfileMatchQueryResult } from 'shiploop-core/protocol';
+
 
 /** P03-3 / F-012：执行预览/预算查询结果形状经公共面再导出（供 CLI 纯视图层使用）。 */
 export type {
@@ -296,6 +298,8 @@ export type AppQueryOperation =
   | 'projects.labelCounts'
   | 'projects.inspect'
   | 'projects.overview'
+  | 'projects.profile.get'
+  | 'projects.profile.match'
   | 'settings.global.get'
   | 'settings.global.export'
   | 'settings.project.get'
@@ -359,11 +363,65 @@ export type AppQueryOperation =
   | 'planning.context.get'
   | 'planning.candidate.get';
 
+function validateProjectProfileQueryWire(operation: HostOperation, body: unknown): ProjectProfileQueryResult {
+  const object = requirePlain(operation, body);
+  exactKeys(operation, object, ['schemaVersion', 'projectId', 'candidate', 'confirmed', 'modules']);
+  if (object.schemaVersion !== 1) unsupportedVersion(operation, 'schemaVersion');
+  if (typeof object.projectId !== 'string') malformed(operation, 'profile_query_header_invalid');
+  requireStableId(operation, object.projectId as string);
+  const validateRecord = (value: unknown): unknown => {
+    if (value === null) return null;
+    const record = requirePlain(operation, value);
+    exactKeys(operation, record, ['projectId', 'version', 'revision', 'status', 'confirmed', 'confirmedBy', 'modules', 'evidence', 'profileDigest', 'storeRevision']);
+    if (record.projectId !== object.projectId || typeof record.version !== 'number' || !Number.isSafeInteger(record.version) || record.version < 1 || typeof record.confirmed !== 'boolean' || typeof record.profileDigest !== 'string' || !/^[a-f0-9]{64}$/u.test(record.profileDigest) || !['candidate', 'confirmed', 'rejected', 'manual_configuration_required'].includes(record.status as string) || record.confirmed !== (record.status === 'confirmed')) malformed(operation, 'profile_record_invalid');
+    if (!Array.isArray(record.modules) || !Array.isArray(record.evidence)) malformed(operation, 'profile_record_invalid');
+    for (const item of record.modules) {
+      const module = requirePlain(operation, item);
+      exactKeys(operation, module, ['id', 'version', 'roots', 'languages', 'frameworks', 'capabilityRefs', 'checkRefs']);
+      if (typeof module.id !== 'string' || typeof module.version !== 'string' || !['candidate', 'confirmed', 'rejected', 'manual_configuration_required'].includes(module.status as string)) malformed(operation, 'profile_module_invalid');
+    }
+    for (const item of record.evidence) {
+      const evidence = requirePlain(operation, item);
+      exactKeys(operation, evidence, ['id', 'detectorId', 'detectorVersion', 'source', 'summary', 'status', 'confirmed']);
+      if (typeof evidence.id !== 'string' || typeof evidence.summary !== 'string' || typeof evidence.confirmed !== 'boolean' || !['candidate', 'confirmed', 'rejected', 'manual_configuration_required'].includes(evidence.status as string)) malformed(operation, 'profile_evidence_invalid');
+    }
+    return record;
+  };
+  const candidate = validateRecord(object.candidate);
+  const confirmed = validateRecord(object.confirmed);
+  if (!Array.isArray(object.modules)) malformed(operation, 'profile_modules_invalid');
+  for (const item of object.modules) {
+    const module = requirePlain(operation, item);
+    exactKeys(operation, module, ['id', 'version', 'status', 'scope', 'appliesTo', 'dependencies', 'digest']);
+    if (typeof module.id !== 'string' || typeof module.version !== 'string' || typeof module.digest !== 'string' || !/^[a-f0-9]{64}$/u.test(module.digest) || !['candidate', 'confirmed', 'rejected', 'manual_configuration_required'].includes(module.status as string)) malformed(operation, 'profile_module_invalid');
+    for (const key of ['scope', 'appliesTo', 'dependencies'] as const) if (!Array.isArray(module[key]) || module[key].some(value => typeof value !== 'string')) malformed(operation, 'profile_module_invalid');
+  }
+  return object as unknown as ProjectProfileQueryResult;
+}
+
+function validateProjectProfileMatchQueryWire(operation: HostOperation, body: unknown): ProjectProfileMatchQueryResult {
+  const object = requirePlain(operation, body);
+  exactKeys(operation, object, ['schemaVersion', 'projectId', 'match']);
+  if (object.schemaVersion !== 1) unsupportedVersion(operation, 'schemaVersion');
+  if (typeof object.projectId !== 'string') malformed(operation, 'profile_match_header_invalid');
+  requireStableId(operation, object.projectId as string);
+  const match = requirePlain(operation, object.match);
+  exactKeys(operation, match, ['status', 'profileVersion', 'modules', 'missing', 'reason']);
+  if (!['ready', 'not_ready'].includes(match.status as string) || (match.profileVersion !== null && typeof match.profileVersion !== 'number') || !Array.isArray(match.modules) || !Array.isArray(match.missing)) malformed(operation, 'profile_match_invalid');
+  for (const item of match.modules) {
+    const module = requirePlain(operation, item);
+    exactKeys(operation, module, ['id', 'version', 'reason']);
+    if (typeof module.id !== 'string' || typeof module.version !== 'string' || typeof module.reason !== 'string') malformed(operation, 'profile_match_invalid');
+  }
+  if (match.missing.some(value => typeof value !== 'string')) malformed(operation, 'profile_match_invalid');
+  return object as unknown as ProjectProfileMatchQueryResult;
+}
 function malformed(operation: HostOperation, reason: string): never {
   throw new HostProtocolError('response_malformed', operation, 'Host 响应不符合线协议', {
     details: { reason },
   });
 }
+
 
 function unsupportedVersion(operation: HostOperation, field: string): never {
   throw new HostProtocolError(
@@ -6725,6 +6783,16 @@ export function validatePlanningCandidateDetailResultWire(
 }
 
 export function validateAppQueryResponse(
+  operation: 'projects.profile.get',
+  body: unknown,
+  expectation?: SnapshotExpectation,
+): ProjectProfileQueryResult;
+export function validateAppQueryResponse(
+  operation: 'projects.profile.match',
+  body: unknown,
+  expectation?: SnapshotExpectation,
+): ProjectProfileMatchQueryResult;
+export function validateAppQueryResponse(
   operation: 'execution.budget.get',
   body: unknown,
   expectation?: SnapshotExpectation,
@@ -7013,6 +7081,10 @@ export function validateAppQueryResponse(
     }
     case 'projects.inspect':
       return validateProjectInspection(operation, body);
+    case 'projects.profile.get':
+      return validateProjectProfileQueryWire(operation, body);
+    case 'projects.profile.match':
+      return validateProjectProfileMatchQueryWire(operation, body);
     case 'projects.overview':
       return validateProjectOverview(operation, body);
     case 'settings.global.get':

@@ -139,6 +139,8 @@ export type ApplicationOperation =
   | 'projects.labelCounts'
   | 'projects.inspect'
   | 'projects.overview'
+  | 'projects.profile.get'
+  | 'projects.profile.match'
   | 'settings.global.get'
   | 'settings.global.export'
   | 'settings.project.get'
@@ -225,6 +227,7 @@ export interface HostApplicationContext {
   readonly commandService: CommandService;
   readonly queryService: QueryService;
   readonly commandReceiptsService: CommandReceiptsService;
+  readonly projectProfileService?: Pick<import('shiploop-core').ProjectProfileService, 'getQuery' | 'matchTaskModules'>;
   /** P02-3 / F-006（§7.2/§7.3）：静态接入用例（inspect/overview）；授权在 Core。 */
   readonly onboardingService: OnboardingService;
   /**
@@ -644,6 +647,10 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
           method: 'GET',
           pathParam: { name: 'projectId', value: projectId },
         };
+      case 'profile':
+        return { operation: 'projects.profile.get', method: 'GET', pathParam: { name: 'projectId', value: projectId } };
+      case 'profile/match':
+        return { operation: 'projects.profile.match', method: 'GET', pathParam: { name: 'projectId', value: projectId } };
       case 'settings':
         return {
           operation: 'settings.project.get',
@@ -819,6 +826,9 @@ const QUERY_SPECS: Readonly<Partial<Record<ApplicationOperation, QuerySpec>>> = 
   // P02-3 / F-006（§7.2）：path 是唯一例外查询参数（仓库根绝对路径，经
   // RepositoryInspector 校验；不是通用文件读取）。
   'projects.inspect': Object.freeze({ allowed: ['path'], repeatable: [] }),
+  'projects.profile.get': Object.freeze({ allowed: [], repeatable: [] }),
+  'projects.profile.match': Object.freeze({ allowed: ['directory', 'requiredModuleId', 'language', 'framework', 'scope'], repeatable: ['requiredModuleId', 'language', 'framework', 'scope'] }),
+
   'snapshot.get': Object.freeze({ allowed: ['scope', 'projectId'], repeatable: [] }),
   // F-012（§9.4）：订阅恢复位置 Last-Event-ID（头）优先于 ?cursor=；缺省 400。
   'events.subscribe': Object.freeze({ allowed: ['scope', 'projectId', 'cursor'], repeatable: [] }),
@@ -1170,6 +1180,27 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
         });
       }
       result = await app.onboardingService.inspectRepository(app.principal, repositoryPath);
+      break;
+    }
+    case 'projects.profile.get':
+      if (app.projectProfileService === undefined) reject(501, 'unsupported', operation, 'Profile 查询未在本装配中启用', { reason: 'profile_unsupported' });
+      result = app.projectProfileService.getQuery(app.principal, pathParam?.value);
+      break;
+    case 'projects.profile.match': {
+      if (app.projectProfileService === undefined) reject(501, 'unsupported', operation, 'Profile 匹配未在本装配中启用', { reason: 'profile_unsupported' });
+      const projectId = pathParam?.value;
+      result = {
+        schemaVersion: 1,
+        projectId,
+        match: app.projectProfileService.matchTaskModules(app.principal, {
+          projectId,
+          directory: params.get('directory') ?? undefined,
+          requiredModuleIds: params.getAll('requiredModuleId'),
+          languages: params.getAll('language'),
+          frameworks: params.getAll('framework'),
+          scope: params.getAll('scope'),
+        }),
+      };
       break;
     }
     case 'projects.overview':

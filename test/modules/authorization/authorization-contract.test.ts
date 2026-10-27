@@ -215,6 +215,16 @@ function envelope(
         expectedRevision: expectedRevision ?? 1,
         payload: { displayName: '新名称' },
       } as ValidatedCommandEnvelope;
+    case 'project.profile.confirm':
+    case 'project.profile.modify':
+    case 'project.profile.reject':
+      return {
+        ...base,
+        operation,
+        scope,
+        expectedRevision: expectedRevision ?? 1,
+        payload: operation === 'project.profile.reject' ? {} : { profile: {} },
+      } as ValidatedCommandEnvelope;
     case 'settings.global.create':
     case 'settings.global.update':
       return {

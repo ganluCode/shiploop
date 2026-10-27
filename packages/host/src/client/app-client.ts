@@ -27,6 +27,8 @@
  * import 本模块无副作用：不发起网络、不读文件系统/argv/env。
  */
 import { randomUUID } from 'node:crypto';
+import type { ProjectProfileQueryResult, ProjectProfileMatchQueryResult } from 'shiploop-core/protocol';
+
 import { request as httpRequest, type ClientRequest, type IncomingMessage } from 'node:http';
 import {
   validateBatchDeliveryCommandResult,
@@ -533,7 +535,23 @@ export interface DecidePlanningCandidateInput {
   readonly commandId?: string;
 }
 
-/** P05-1 / F-012 planning.contexts.list 分页输入（可选 Feature 过滤）。 */
+export interface UpdateProjectProfileInput {
+  readonly projectId: string;
+  readonly expectedRevision: number;
+  readonly profile?: unknown;
+  readonly commandId?: string;
+}
+
+export interface MatchProjectProfileInput {
+  readonly directory?: string;
+  readonly requiredModuleIds?: readonly string[];
+  readonly languages?: readonly string[];
+  readonly frameworks?: readonly string[];
+  readonly scope?: readonly string[];
+}
+
+
+
 export interface ListPlanningContextsInput {
   readonly featureId?: string;
   readonly limit?: number;
@@ -735,6 +753,11 @@ export interface HostClientApplication {
   inspectRepository(path: string): Promise<ProjectInspectionResult>;
   /** P02-3 / F-006（§7.3）：注册状态与健康状态分开的项目概览。 */
   getProjectOverview(projectId: string): Promise<ProjectOverviewResult>;
+  getProjectProfile(projectId: string): Promise<ProjectProfileQueryResult>;
+  confirmProjectProfile(input: UpdateProjectProfileInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  modifyProjectProfile(input: UpdateProjectProfileInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  rejectProjectProfile(input: Omit<UpdateProjectProfileInput, 'profile'>, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  matchProjectProfile(projectId: string, input?: MatchProjectProfileInput): Promise<ProjectProfileMatchQueryResult>;
   getRepositoryBinding(projectId: string): Promise<ProjectBindingResult>;
   countProjectLabels(): Promise<ProjectLabelCountsResult>;
   getGlobalSettings(): Promise<PublicSettingsState>;
@@ -2632,6 +2655,66 @@ export function createHostClientApplication(context: AppClientContext): HostClie
       const json = await getJson('projects.overview', `${PROJECTS_ROUTE}/${id}/overview`);
       return validateAppQueryResponse('projects.overview', json);
     },
+
+    async confirmProjectProfile(input: UpdateProjectProfileInput, options?: SubmitCommandOptions): Promise<CommandReceipt> {
+      const object = rejectUnknownInputKeys('commands.submit', input, ['projectId', 'expectedRevision', 'profile', 'commandId'] as const);
+      const projectId = requireProjectId('commands.submit', object.projectId as string);
+      return submitCommand({
+        ...optionalCommandIdInput('commands.submit', object.commandId), operation: 'project.profile.confirm',
+        scope: { kind: 'project', projectId }, expectedRevision: requireExpectedRevisionInput('commands.submit', object.expectedRevision),
+        payload: { profile: object.profile },
+      }, options);
+    },
+    async modifyProjectProfile(input: UpdateProjectProfileInput, options?: SubmitCommandOptions): Promise<CommandReceipt> {
+      const object = rejectUnknownInputKeys('commands.submit', input, ['projectId', 'expectedRevision', 'profile', 'commandId'] as const);
+      const projectId = requireProjectId('commands.submit', object.projectId as string);
+      return submitCommand({
+        ...optionalCommandIdInput('commands.submit', object.commandId), operation: 'project.profile.modify',
+        scope: { kind: 'project', projectId }, expectedRevision: requireExpectedRevisionInput('commands.submit', object.expectedRevision),
+        payload: { profile: object.profile },
+      }, options);
+    },
+    async rejectProjectProfile(input: Omit<UpdateProjectProfileInput, 'profile'>, options?: SubmitCommandOptions): Promise<CommandReceipt> {
+      const object = rejectUnknownInputKeys('commands.submit', input, ['projectId', 'expectedRevision', 'commandId'] as const);
+      const projectId = requireProjectId('commands.submit', object.projectId as string);
+      return submitCommand({
+        ...optionalCommandIdInput('commands.submit', object.commandId), operation: 'project.profile.reject',
+        scope: { kind: 'project', projectId }, expectedRevision: requireExpectedRevisionInput('commands.submit', object.expectedRevision),
+        payload: {},
+      }, options);
+    },
+
+    async getProjectProfile(projectId: string): Promise<ProjectProfileQueryResult> {
+      context.assertOpen('projects.profile.get');
+      const id = requireProjectId('projects.profile.get', projectId);
+      const json = await getJson('projects.profile.get', `${PROJECTS_ROUTE}/${id}/profile`);
+      return validateAppQueryResponse('projects.profile.get', json);
+    },
+
+    async matchProjectProfile(projectId: string, input?: MatchProjectProfileInput): Promise<ProjectProfileMatchQueryResult> {
+      context.assertOpen('projects.profile.match');
+      const id = requireProjectId('projects.profile.match', projectId);
+      if (input !== undefined && !isPlainObject(input)) throw invalidInput('projects.profile.match', 'invalid_options');
+      const value = input as Record<string, unknown> | undefined;
+      const params = new URLSearchParams();
+      const append = (key: string, raw: unknown): void => {
+        if (raw === undefined) return;
+        if (!Array.isArray(raw) || raw.some(item => typeof item !== 'string' || item.length === 0)) throw invalidInput('projects.profile.match', 'invalid_match_input', key);
+        for (const item of raw) params.append(key, item);
+      };
+      if (value?.directory !== undefined) {
+        if (typeof value.directory !== 'string' || value.directory.length === 0) throw invalidInput('projects.profile.match', 'invalid_directory', 'directory');
+        params.set('directory', value.directory);
+      }
+      append('requiredModuleId', value?.requiredModuleIds);
+      append('language', value?.languages);
+      append('framework', value?.frameworks);
+      append('scope', value?.scope);
+      const suffix = params.toString().length === 0 ? '' : `?${params.toString()}`;
+      const json = await getJson('projects.profile.match', `${PROJECTS_ROUTE}/${id}/profile/match${suffix}`);
+      return validateAppQueryResponse('projects.profile.match', json);
+    },
+
 
     async getRepositoryBinding(projectId: string): Promise<ProjectBindingResult> {
       const id = requireProjectId('projects.binding.get', projectId);
