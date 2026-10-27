@@ -97,7 +97,13 @@ import type {
   TaskRecord,
 } from '../../ports/plan-store.js';
 import type { ProjectLabelCount, ProjectPage, RepositoryBindingRecord } from '../../ports/state-store.js';
+import type {
+  KnowledgeDocumentQueryFilter,
+  KnowledgeDocumentQueryRow,
+  KnowledgeQueryReadStore,
+} from '../../ports/knowledge-query.js';
 import type { SqliteStorageSession } from './session.js';
+import { createSqliteDocumentQueryStore } from './document-query-store.js';
 import { createSqlitePlanAccess } from './plan-store.js';
 import { createSqliteStateAccess } from './state-store.js';
 import { createSqliteExecutionAccess } from './execution-store.js';
@@ -132,7 +138,8 @@ export interface SqliteQueryStore
     IntegrationPlanQueryReadStore,
     FeatureExecutionReportReadStore,
     ExecutionControlQueryReadStore,
-    PlanningQueryReadStore {}
+    PlanningQueryReadStore,
+    KnowledgeQueryReadStore {}
 
 export function createSqliteQueryStore(
   session: SqliteStorageSession,
@@ -166,6 +173,7 @@ export function createSqliteQueryStore(
     session,
     options.nowUtcMs === undefined ? {} : { nowUtcMs: options.nowUtcMs },
   );
+  const knowledgeQueries = createSqliteDocumentQueryStore(session);
   return {
     listVisibleProjects(visibility: unknown, filter: unknown): ProjectPage {
       return access.listVisibleProjects(visibility, filter);
@@ -348,5 +356,7 @@ export function createSqliteQueryStore(
       request: PlanListRequest,
     ): PlanRecordPage<PlanningContextListRow> =>
       planningQueries.listPlanningContextRecords(visibility, projectId, featureId, request),
+    listDocumentVersions: (projectId: string, filter: KnowledgeDocumentQueryFilter): readonly KnowledgeDocumentQueryRow[] =>
+      knowledgeQueries.listDocumentVersions(projectId, filter),
   };
 }

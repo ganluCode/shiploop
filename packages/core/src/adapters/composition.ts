@@ -71,6 +71,8 @@ import type { ProjectService } from '../application/project-service.js';
 import { createSqliteBatchDeliveryQueryStore } from './sqlite/batch-delivery-query-store.js';
 import { createQueryService } from '../application/query-service.js';
 import type { QueryService } from '../application/query-service.js';
+import { createKnowledgeQueryService } from '../application/knowledge-query-service.js';
+import type { KnowledgeQueryService } from '../application/knowledge-query-service.js';
 import { createPlanningQueryService } from '../application/planning-query.js';
 import type { PlanningQueryService } from '../application/planning-query.js';
 import { createExecutionInputService } from '../application/execution-input.js';
@@ -194,6 +196,7 @@ import { createSqlitePlanAccess } from './sqlite/plan-store.js';
 import { openSqliteStorageSession } from './sqlite/session.js';
 import { createSqliteStateStore } from './sqlite/state-store.js';
 import { createSqliteProjectProfileStore } from './sqlite/project-profile-store.js';
+import { createSqliteDocumentStore } from './sqlite/document-store.js';
 import { createInputSourceFileReader } from './fs/input-source-files.js';
 import { createSqliteIntegrationPlanStore } from './sqlite/integration-plan-store.js';
 import { createIntegrationPlanGenerationService } from '../application/integration-plan-generation.js';
@@ -341,6 +344,8 @@ export interface CoreApplication {
   readonly commandReceiptsService: CommandReceiptsService;
   /** F-010：授权查询/一致读视图快照水位/分页事件读取（§7/§8/§9.3）。 */
   readonly queryService: QueryService;
+  /** F-003：项目隔离的有界文档关键词/身份检索与受控正文读取。 */
+  readonly knowledgeQueryService: KnowledgeQueryService;
   /** P05-6: generation is exposed only with trusted Batch/delivery facts. */
   readonly integrationPlanGeneration?: IntegrationPlanGenerationService;
   /** P05-6: control and successor gating use the authoritative plan store. */
@@ -599,6 +604,12 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     // P03-5 / F-001：查询门面提前装配，PathService 的 Feature 归属核验与
     // QueryService 共用同一 PlanStore 读取面（createSqliteQueryStore）。
     const queryStore = createSqliteQueryStore(session);
+    const documentStore = createSqliteDocumentStore(session, nowUtcMs === undefined ? {} : { nowUtcMs });
+    const knowledgeQueryService = createKnowledgeQueryService({
+      documents: documentStore,
+      documentQuery: queryStore,
+      verifier: createArtifactVerifier({ artifacts: artifactStore, files: artifactFileStore, limits: { maxReadBytes: 16_000_000 } }),
+    });
     const pathService = basePathService
       .withProjectLookup(stateStore)
       .withFeatureLookup(queryStore);
@@ -1361,6 +1372,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       runtimeRecoveryCatalog: recoveryCatalog,
       workRecoveryContinuation,
       queryService,
+      knowledgeQueryService,
       planningQueryService,
       onboardingService,
       projectProfileService,

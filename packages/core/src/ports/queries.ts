@@ -298,6 +298,8 @@ export interface AuthorizedProjectReadStore {
   countVisibleProjectLabels(visibility: unknown): readonly ProjectLabelCount[];
 }
 
+export type { KnowledgeDocumentQueryFilter, KnowledgeDocumentQueryRow, KnowledgeQueryReadStore } from './knowledge-query.js';
+
 /* ------------------------------------------------------------------ *
  * §8 一致读视图窄端口
  * ------------------------------------------------------------------ */
