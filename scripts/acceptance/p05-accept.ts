@@ -18,6 +18,8 @@ import { aggregateP05IntegrationReport, loadP05StepRunEvidence } from './p05-int
 import type { P05IntegrationCheckBinding } from './p05-integration-report.ts';
 import { runP05StepSequence, type P05StepRecord, type P05StepSpec } from './p05-steps.ts';
 import { runBoundedProcess } from './p02-accept.ts';
+import { selectP05TestScope } from './p05-test-scope.ts';
+import { loadP05ProductCapture } from './p05-product-evidence.ts';
 
 export const P05_ACCEPT_USAGE = 'usage: accept:p05 [--run-id <id>] [--report-dir <root>] ' +
   '[--expected-commit <sha>] [--step-timeout-ms <ms>] [--overall-timeout-ms <ms>] [--full-regression] [--observe] [--help]';
@@ -142,7 +144,7 @@ export interface P05FeatureTestSelection {
 }
 
 export interface P05TrustedTestSelection {
-  /** 全部 Feature 去重后的测试文件（Phase 按完整文件执行）。 */
+  /** 全部 Feature 去重后的可信合集；默认执行范围另由影响策略选择。 */
   readonly files: string[];
   /** 参与身份摘要的索引/声明文件。 */
   readonly inputs: string[];
@@ -314,12 +316,15 @@ export async function runP05Acceptance(options: P05AcceptanceOptions): Promise<P
   if (exec('node', ['--version']).replace(/^v/, '') !== config.toolchain.node || exec('npm', ['--version']) !== config.toolchain.npm) fail('Node/npm 工具版本不匹配');
   const tests = collectP05TrustedTests(repoRoot);
   const phaseScenarioFiles = collectP05PhaseScenarioTests(repoRoot);
+  const fullRegression = options.fullRegression === true;
+  const scope = selectP05TestScope(tests.files, fullRegression);
+  const productTest = 'test/modules/acceptance/p05-product-report.test.ts';
   const contractFiles = [ENTRY_PATH, P05_ACCEPT_CONFIG_PATH, config.checklist, 'package.json', config.toolchain.lockfile,
     'scripts/acceptance/p05-accept.ts', 'scripts/acceptance/p05-steps.ts', 'scripts/acceptance/p05-integration-report.ts',
     'scripts/acceptance/p05-config.ts', 'scripts/acceptance/p05-report.ts', 'scripts/verify.ts', 'scripts/run-tests.ts',
+    'scripts/acceptance/p05-test-scope.ts', 'scripts/acceptance/p05-product-evidence.ts', productTest,
     ...tests.inputs, ...tests.files, ...phaseScenarioFiles];
-  const fullRegression = options.fullRegression === true;
-  const inputsDigest = digest(canonical({ repoRoot, config, stepTimeoutMs, overallTimeoutMs, fullRegression,
+  const inputsDigest = digest(canonical({ repoRoot, config, stepTimeoutMs, overallTimeoutMs, fullRegression, scope,
     files: contractFiles.map(file => [file, digest(readFileSync(repoFile(repoRoot, file)))]) }));
   const identity = { runId, commit, inputsDigest };
   const resultPath = join(workDir, 'entry-result.json');
@@ -348,12 +353,16 @@ export async function runP05Acceptance(options: P05AcceptanceOptions): Promise<P
   options.log?.(`accept:p05: run-id=${runId} step-run=${stepRunDir} report=${reportDir}`);
   const resources = join(workDir, 'resources');
   const env = isolatedEnv(resources, repoRoot, stepTimeoutMs);
+  const productDir = join(resources, 'product-reports');
+  mkdirSync(productDir, { recursive: true });
+  const scopeContent = JSON.stringify({ identity, ...scope }, null, 2) + '\n';
+  writeFileSync(join(workDir, 'test-scope.json'), scopeContent, { flag: 'wx' });
   const stepFiles = {
-    'p05-trusted-index': tests.files,
+    'p05-trusted-index': scope.selected,
     // P05-10 的阶段场景是显式覆盖面；此前这里筛选 tests.files 中的 P05 文件，
     // 导致它们在第二步被重复执行。
     'p05-affected-regression': phaseScenarioFiles,
-    'p05-cross-layer-smoke': ['test/modules/acceptance/p05-acceptance-contract.test.ts'],
+    'p05-cross-layer-smoke': ['test/modules/acceptance/p05-acceptance-contract.test.ts', productTest],
     'p05-manual-gate': [],
   } as const;
   const steps: P05StepSpec[] = ENTRY.stepOrder.map(id => {
@@ -378,10 +387,24 @@ export async function runP05Acceptance(options: P05AcceptanceOptions): Promise<P
       if (exec('git', ['rev-parse', 'HEAD']) !== commit || sourceDrift() !== '') fail('受测代码在步骤间变化');
       const remaining = overallTimeoutMs - (Date.now() - started);
       if (remaining <= 0) fail('阶段总预算耗尽');
-      return (options.runProcess ?? runBoundedProcess)(command, args, { ...processOptions, timeoutMs: Math.min(processOptions.timeoutMs, remaining) });
+      // Only the dedicated exporter receives the run-bound output destination.
+      const productEnv = args.includes(productTest) ? {
+        ...processOptions.env, SHIPLOOP_P05_PRODUCT_REPORT_DIR: productDir,
+        SHIPLOOP_P05_REPORT_IDENTITY: JSON.stringify(identity),
+      } : processOptions.env;
+      return (options.runProcess ?? runBoundedProcess)(command, args, { ...processOptions, env: productEnv,
+        timeoutMs: Math.min(processOptions.timeoutMs, remaining) });
     },
   });
   const problems = [...sequence.problems];
+  const productReports: { featureId: string; label: string; command: string; content: string }[] = [];
+  try {
+    const smoke = sequence.steps.find(step => step.stepId === 'p05-cross-layer-smoke');
+    if (smoke?.status !== 'pass') throw new Error('产品报告导出步骤未通过');
+    const captured = loadP05ProductCapture(join(productDir, 'feature-report.json'), identity);
+    productReports.push({ ...captured, label: 'Core/Host 临时项目排队状态报告（离线，不代表真实模型执行完成）',
+      command: `node scripts/run-tests.ts test/modules/acceptance/p05-acceptance-contract.test.ts ${productTest}` });
+  } catch (error) { problems.push(`产品报告证据缺失或无效：${message(error)}`); }
   let cleaned = false;
   if (sequence.stopConfirmed) {
     try { rmSync(resources, { recursive: true }); cleaned = !existsSync(resources); }
@@ -394,11 +417,15 @@ export async function runP05Acceptance(options: P05AcceptanceOptions): Promise<P
   const aggregation = aggregateP05IntegrationReport({
     repoRoot, config, checklist, runId, reportRoot: join(reportRoot, 'reports'), stepRunDir, exec: reportExec,
     cleanup: { confirmed: cleaned, processesGone: sequence.stopConfirmed, notes: ['仅回收本次入口创建的 resources；停止不确定保留现场。'] },
-    bindings: offlineBindings(checklist, ENTRY.stepOrder.filter(id => id !== 'p05-manual-gate')),
+    bindings: offlineBindings(checklist, ENTRY.stepOrder.filter(id => id !== 'p05-manual-gate')).map(binding => ({
+      ...binding, extraEvidence: [{ name: 'test-scope.json', category: 'report' as const, content: scopeContent }],
+    })),
+    productReports,
     knownLimitations: [
       fullRegression
         ? '已显式请求全仓历史回归；其结果仍不能替代 live 和负责人确认。'
-        : '默认阶段范围：全仓历史回归 not_run；执行的是冻结可信索引、受影响 P05 文件和必要跨层冒烟。',
+        : `默认阶段范围：可信索引中 ${scope.selected.length} 个 P05/必要底层测试文件；${scope.deferred.length} 个历史文件 not_run，详见 test-scope.json。`,
+      '产品报告来自临时项目真实 Core/Host 查询，状态为 queued；仅证明查询与报告导出链路，不替代 Runtime 执行完成证据。',
       'live not_run、人工 pending，不签署 P05 Phase 通过。',
     ],
     openIssues: drift ? [{ id: 'P05-CODE-DRIFT', summary: '受测代码身份变化', blocking: true }] : [],

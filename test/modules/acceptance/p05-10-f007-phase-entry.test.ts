@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -7,6 +7,11 @@ import { resolveP05Args, collectP05TrustedTests, runP05Acceptance } from '../../
 import { aggregateP05CheckResults, loadP05Checklist } from '../../../scripts/acceptance/p05-config.ts';
 import { runP05StepSequence, type P05StepSpec } from '../../../scripts/acceptance/p05-steps.ts';
 import type { P02BoundedRunOutcome } from '../../../scripts/acceptance/p02-accept.ts';
+import { BUDGET, openBudgetFixture } from '../../helpers/p03-3/budget-fixture.ts';
+import { openReportHost } from '../../helpers/p03-10/report-host.ts';
+import { writeP05ProductCapture } from '../../../scripts/acceptance/p05-product-evidence.ts';
+import { selectP05TestScope, P05_REQUIRED_REGRESSIONS } from '../../../scripts/acceptance/p05-test-scope.ts';
+import { verifyP05ReportDirectory } from '../../../scripts/acceptance/p05-report.ts';
 
 const ROOT = process.cwd();
 const tempDirs: string[] = [];
@@ -40,6 +45,16 @@ it('writes an offline report with manual/live pending instead of binding manual 
   expect(commands[0]).toContain('scripts/run-tests.ts');
   expect(commands[1]).toContain('test/modules/acceptance/p05-10-f002-fixture.test.ts');
   expect(commands[1]).not.toContain('test/modules/planning/p05-1-f011-planning-query.test.ts');
+  expect(commands[0]).not.toContain('test/modules/workspace/p03-5-workspace-discard.test.ts');
+  expect(commands[0]).toContain('test/modules/delivery/p03-8-f004-git-commit-reconciliation.test.ts');
+  expect(commands[2]).toContain('test/modules/acceptance/p05-product-report.test.ts');
+  // A green child exit cannot invent a product report it never exported.
+  expect(result.problems.some(problem => problem.includes('产品报告证据缺失'))).toBe(true);
+  const scope = JSON.parse(readFileSync(join(reportRoot, 'runs/offline-report-regression/test-scope.json'), 'utf8'));
+  expect(scope.deferred.map((row: { file: string }) => row.file)).toContain('test/modules/workspace/p03-5-workspace-discard.test.ts');
+  const all = collectP05TrustedTests(ROOT).files;
+  expect([...scope.selected, ...scope.deferred.map((row: { file: string }) => row.file)].sort()).toEqual(all);
+  expect(all.filter(file => file.includes('p05-')).every(file => scope.selected.includes(file))).toBe(true);
 });
 
 it('[case:p05-entry-options-and-bounded-steps] parses explicit full regression and preserves a failed prefix', async () => {
@@ -68,6 +83,49 @@ it('[case:p05-entry-options-and-bounded-steps] parses explicit full regression a
     ['affected', 'fail', 23],
     ['smoke', 'not_run', null],
   ]);
+});
+
+it('preserves the actual run-bound product capture through cleanup and report hashing', async () => {
+  const reportRoot = mkdtempSync(join(tmpdir(), 'shiploop-p05-product-entry-'));
+  tempDirs.push(reportRoot);
+  const result = await runP05Acceptance({
+    repoRoot: ROOT, reportRoot, runId: 'actual-product-export',
+    exec: (command, args) => command === 'git' && args[0] === 'status' ? '' :
+      execFileSync(command === 'node' ? process.execPath : command, [...args], { cwd: ROOT, encoding: 'utf8' }).trim(),
+    runProcess: async (_command, args, options) => {
+      if (args.includes('test/modules/acceptance/p05-product-report.test.ts')) {
+        const f = await openBudgetFixture(BUDGET);
+        let host: Awaited<ReturnType<typeof openReportHost>> | undefined;
+        try {
+          await f.start();
+          host = await openReportHost(f);
+          const report = await host.client.getFeatureReport(f.projectId, f.featureId);
+          const identity = JSON.parse(options.env!.SHIPLOOP_P05_REPORT_IDENTITY!);
+          writeP05ProductCapture(join(options.env!.SHIPLOOP_P05_PRODUCT_REPORT_DIR!, 'feature-report.json'), {
+            schemaVersion: 1, source: 'features.report.get', mode: 'offline-fixture', identity,
+            projectId: f.projectId, featureId: f.featureId, report,
+          }, identity);
+        } finally { await host?.close(); await f.close(); }
+      }
+      return { ...pass };
+    },
+  });
+  // Mocked test exits do not supply the other SQLite/Git scenario evidence.
+  expect(result.problems.some(problem => /产品报告|产品 Feature 执行报告/.test(problem))).toBe(false);
+  expect(result.phaseAccepted).toBe(false);
+  const report = JSON.parse(readFileSync(join(result.runDir!, 'report.json'), 'utf8'));
+  expect(report.productReports).toHaveLength(1);
+  expect(report.cleanup.confirmed).toBe(true);
+  const product = JSON.parse(readFileSync(join(result.runDir!, report.productReports[0].evidenceRef), 'utf8'));
+  expect(product.identity.runId).toBe('actual-product-export');
+  expect(product.report.runs.length).toBeGreaterThan(0);
+  expect(verifyP05ReportDirectory(result.runDir!).ok).toBe(true);
+});
+
+it('fails closed when required history disappears and keeps the full union opt-in', () => {
+  const all = collectP05TrustedTests(ROOT).files;
+  expect(() => selectP05TestScope(all.filter(file => file !== P05_REQUIRED_REGRESSIONS[0]))).toThrow('missing');
+  expect(selectP05TestScope(all, true)).toMatchObject({ selected: all, deferred: [] });
 });
 
 it('[case:p05-status-preserves-live-and-manual-gates] keeps missing live and manual evidence from becoming pass', () => {

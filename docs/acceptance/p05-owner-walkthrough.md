@@ -14,6 +14,8 @@
 - [ ] 运行 P05 入口的离线模式，使用临时 SQLite、Git、数据根和 home；确认网络关闭、FakeRuntime/脚本化 Runtime 和真实模型请求数为零。
 - [ ] 记录每个 I01～I09 的实际命令、cwd 的仓库相对标识、开始/结束时间、退出码、状态、证据引用和用量来源。
 - [ ] 确认可信索引按 P05-1～P05-9 去重，空索引、越界路径、缺失 Feature 声明、SHA/输入摘要不匹配和证据写入失败均 fail-closed。
+- [ ] 查看 `runs/<run_id>/test-scope.json`：selected 包含全部 P05 文件和登记的底层回归，deferred 逐项记录后置历史测试及原因；后置不算通过。默认总预算 20 分钟。
+- [ ] 查看阶段报告的 `productReports` 引用及相应 JSON：封套身份与本次运行一致，内容来自临时项目真实 Core/Host 查询。queued 快照仅验证报告链路，不能记为真实 Runtime 任务完成。
 - [ ] 核对 A/B/C、资源锁、迟到结果、Git 冲突/修复、叶子汇总和追加 Batch 的 SQLite、Git、文件与进程事实；不能用模型输出或分支 HEAD 漂移代替固定成果证据。
 
 ## 3. macOS 临时项目与代表性场景

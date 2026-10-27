@@ -26,8 +26,8 @@
     "lockfile": "package-lock.json"
   },
   "timeouts": {
-    "stepMs": 3600000,
-    "overallMs": 7200000
+    "stepMs": 900000,
+    "overallMs": 1200000
   },
   "maxCommandOutputBytes": 262144,
   "fakeIdentity": {
