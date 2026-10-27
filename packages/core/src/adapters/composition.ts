@@ -641,7 +641,12 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       session,
       nowUtcMs === undefined ? {} : { nowUtcMs },
     );
-    const projectProfileService = createProjectProfileService({ store: projectProfileStore });
+    const projectProfileService = createProjectProfileService({
+      store: projectProfileStore,
+      projectLookup: {
+        projectExists: projectId => session.database.prepare('SELECT 1 AS found FROM projects WHERE id = ?').get(projectId) !== undefined,
+      },
+    });
     const executionInputPrepare: ExecutionInputPreparePort = createExecutionInputPrepareService({
       views: createSqlitePlanAccess(session, { ...(nowUtcMs === undefined ? {} : { nowUtcMs }), profileStore: projectProfileStore }),
       inputs: createExecutionInputService({

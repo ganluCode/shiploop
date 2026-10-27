@@ -378,7 +378,12 @@ function validateProjectProfileQueryWire(operation: HostOperation, body: unknown
     for (const item of record.modules) {
       const module = requirePlain(operation, item);
       exactKeys(operation, module, ['id', 'version', 'roots', 'languages', 'frameworks', 'capabilityRefs', 'checkRefs']);
-      if (typeof module.id !== 'string' || typeof module.version !== 'string' || !['candidate', 'confirmed', 'rejected', 'manual_configuration_required'].includes(module.status as string)) malformed(operation, 'profile_module_invalid');
+      if (typeof module.id !== 'string' || typeof module.version !== 'string'
+        || !Array.isArray(module.roots) || !Array.isArray(module.languages)
+        || !Array.isArray(module.frameworks) || !Array.isArray(module.capabilityRefs)
+        || !Array.isArray(module.checkRefs)
+        || [module.roots, module.languages, module.frameworks, module.capabilityRefs, module.checkRefs]
+          .some(values => values.some(value => typeof value !== 'string'))) malformed(operation, 'profile_module_invalid');
     }
     for (const item of record.evidence) {
       const evidence = requirePlain(operation, item);

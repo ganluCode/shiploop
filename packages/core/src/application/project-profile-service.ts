@@ -49,6 +49,8 @@ export interface ProjectProfileService {
 
 export interface ProjectProfileServiceOptions {
   readonly store: ProjectProfileStore;
+  /** Optional Core-owned project identity lookup; production uses the same StateStore. */
+  readonly projectLookup?: { readonly projectExists: (projectId: string) => boolean };
 }
 
 function validationContext(operation: string): ValidationContext {
@@ -152,6 +154,15 @@ export function createProjectProfileService(options: ProjectProfileServiceOption
     throw new TypeError('createProjectProfileService: store 必须是可信 ProjectProfileStore');
   }
   const store = options.store;
+  const projectLookup = options.projectLookup;
+
+  function requireProjectExists(projectId: string, operation: string): void {
+    if (projectLookup !== undefined && !projectLookup.projectExists(projectId)) {
+      throw new StorageError('not_found', operation, '项目不存在', {
+        entity: { type: 'project', projectId },
+      });
+    }
+  }
 
   function authorize(principal: unknown, projectId: string, operation: string, write: boolean): asserts principal is TrustedPrincipal {
     assertTrustedPrincipal(principal);
@@ -213,6 +224,7 @@ export function createProjectProfileService(options: ProjectProfileServiceOption
       return boundary(principal, operation, false, () => {
         const projectId = validateStableId(projectIdInput, validationContext(operation), 'projectId');
         authorize(principal, projectId, operation, false);
+        requireProjectExists(projectId, operation);
         return currentConfirmed(store, projectId);
       });
     },
@@ -221,6 +233,7 @@ export function createProjectProfileService(options: ProjectProfileServiceOption
       return boundary(principal, operation, false, (): ProfileModuleMatchResult => {
         const parsed = parseMatch(input);
         authorize(principal, parsed.projectId, operation, false);
+        requireProjectExists(parsed.projectId, operation);
         const profile = currentConfirmed(store, parsed.projectId);
         const notReady = (reason: ProfileModuleMatchResult['reason'], missing: readonly string[] = []): ProfileModuleMatchResult => ({
           status: 'not_ready', profileVersion: profile?.profile.version ?? null, modules: [], missing: [...missing].sort(), reason,
@@ -258,6 +271,7 @@ export function createProjectProfileService(options: ProjectProfileServiceOption
       return boundary(principal, operation, false, () => {
         const projectId = validateStableId(projectIdInput, validationContext(operation), 'projectId');
         authorize(principal, projectId, operation, false);
+        requireProjectExists(projectId, operation);
         const rows = store.listProjectProfiles(projectId);
         const latestRow = rows[rows.length - 1] ?? null;
         const confirmed = currentConfirmed(store, projectId);
