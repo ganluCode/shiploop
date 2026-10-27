@@ -37,6 +37,8 @@ import { DATABASE_FILE_NAME } from '../../../packages/core/src/ports/path-servic
 import { openSqliteStorageSession } from '../../../packages/core/src/adapters/sqlite/session.ts';
 import { migrateSqliteStorage } from '../../../packages/core/src/adapters/sqlite/migrator.ts';
 import { createSqliteArtifactStore } from '../../../packages/core/src/adapters/sqlite/artifact-store.ts';
+import { createSqliteProjectProfileStore } from '../../../packages/core/src/adapters/sqlite/project-profile-store.ts';
+import { computeCapabilityModuleDigest } from '../../../packages/core/src/ports/project-profile-store.ts';
 import {
   createIsolatedHostEnvironment,
   type IsolatedHostEnvironment,
@@ -256,6 +258,49 @@ describe('F-008 决策/策略/固定输入 CLI 纵向（真实 Host + HostClient
     ) as { status: string; result?: { project?: { id?: string } } };
     const projectId = registered.result?.project?.id as string;
     expect(typeof projectId).toBe('string');
+
+    const profileModule = {
+      schemaVersion: 1 as const,
+      id: 'language-node',
+      version: '1.0.0',
+      scope: ['language:node'],
+      appliesTo: ['.'],
+      dependencies: [],
+      contentRef: 'artifact:language-node@1.0.0',
+      status: 'candidate' as const,
+    };
+    const profile = {
+      schemaVersion: 1 as const,
+      projectId,
+      version: 1,
+      revision: 'v1',
+      status: 'candidate' as const,
+      modules: [{
+        id: 'language-node', version: '1.0.0', roots: ['.'], languages: ['node'], frameworks: [],
+        capabilityRefs: [], checkRefs: [],
+      }],
+      documentRefs: [],
+      detectionEvidenceRefs: [],
+      confirmedBy: null,
+    };
+    const profilePath = join(env.sandboxRoot, 'profile.json');
+    writeFileSync(profilePath, JSON.stringify(profile), 'utf8');
+    const profileSession = openSqliteStorageSession({ path: join(root, DATABASE_FILE_NAME) });
+    try {
+      const profileStore = createSqliteProjectProfileStore(profileSession);
+      profileStore.createCapabilityModule({ projectId, module: profileModule, digest: computeCapabilityModuleDigest(profileModule) });
+      profileStore.createProjectProfile({ profile, evidence: [] });
+    } finally {
+      profileSession.close();
+    }
+    successResult(
+      await runApp(env, [
+        'project', 'profile', 'confirm', projectId,
+        '--revision', '1', '--input', profilePath, '--confirm',
+        '--data-root', root, '--json',
+      ]),
+      'project.profile-confirm',
+    );
 
     const configPath = join(env.sandboxRoot, 'config.json');
     writeFileSync(configPath, JSON.stringify(GLOBAL_CONFIG), 'utf8');
