@@ -6,7 +6,8 @@
   F-007/F-008（本项不实现）。P03-7 / F-011 扩展可选同 Task 返工输入（见 §7），
   schemaVersion 升至 2；P03-8 / F-001 扩展可选交付政策固定（见 §8），
   schemaVersion 升至 3；P03-9 / F-007 以 v3 兼容的可选同 Task 续接记录
-  扩展（见 §9，未提供该键的旧输入逐字节不变）。
+  扩展（见 §9，未提供该键的旧输入逐字节不变）；P06-2 / F-005 扩展已授权
+  文档/记忆选择结果（见 §10），schemaVersion 升至 5。
 - 实现入口：`packages/core/src/ports/context-build.ts`（输入/输出契约、
   `CONTEXT_FIXED_GUIDANCE` 固定指导常量、`validateContextBuildInput` 纯校验与
   `ContextBuildError`）、`packages/core/src/application/context-build.ts`
@@ -23,14 +24,15 @@
   （上游 taskId + 证据引用）、**实际策略副本与来源**（`executionConfig` +
   `configSource`/`configSourceKey`，按副本原样使用）、适用检查政策（digest 必填、
   内容副本可选）、权限清单、必需输入引用（F-004 `ExecutionInputRef`，逐条列明
-  必须读取）与实际选入的有界历史索引；`meta.labels` 仅作追溯（见 §5）；
+  必须读取）与实际选入的有界历史索引；已授权文档/记忆选择的版本化受管制品身份、
+  片段范围、用途、必需性、选择理由和截断状态；`meta.labels` 仅作追溯（见 §5）；
 - `inputManifest`：逐来源记录 `sourceId`/`kind`/身份/`version`/`hash`/
   `purpose`/`selection`（选取范围）/`required`（必需性）/`reason`（选择理由）/
   `truncated`，来源类别词汇冻结为 fixed-guidance / task / acceptance /
-  strategy / requirements / dependencies / check-policy / permissions /
+  strategy / requirements / dependencies / check-policy / permissions / profile /
   required-input / history-index（v2 起追加 rework-guidance / rework-scene /
-  failure-evidence / recovery-record；v3 起追加 delivery-policy；新增类别须升
-  schemaVersion）；
+  failure-evidence / recovery-record；v3 起追加 delivery-policy；v5 起追加
+  knowledge；新增类别须升 schemaVersion）；
   `promptDigest` 把 manifest 与最终 prompt 绑定，`omissions`
   标注可选内容省略/截断；
 - `prompt`：有界文本（头部携带 `schemaVersion`），固定指导原样置于开头，
@@ -72,7 +74,11 @@
    历史索引）规范化字节超限 → limit_exceeded（不截断 acceptance/策略副本）；
 3. `maxPromptBytes`：无历史 prompt 骨架超限 → limit_exceeded（**不删减验收
    条目、不留可变路径**）；必需内容超预算永远整体失败；
-4. 历史索引按剩余预算贪心保留（前缀策略），省略/截断在 manifest 标注——
+4. `maxKnowledgeSources`：知识来源引用数上限；`maxKnowledgeSnippetChars`：单个
+   片段字符上限；`maxKnowledgeTotalBytes`：知识片段 UTF-8 总字节上限。必需知识
+   任一预算不足均返回 `limit_exceeded`，details 明确预算名、实测值与上限；可选
+   知识按输入顺序截断或省略，并在 `omissions` 中记录；
+5. 历史索引按剩余预算贪心保留（前缀策略），省略/截断在 manifest 标注——
    可选内容的省略是成功路径的一部分，不产生失败。
 
 必需输入成分缺席或语义为空（无验收条目、缺必需输入清单、缺检查政策/权限/
@@ -83,14 +89,15 @@
 ## 4. 秘密纪律与不自动继承
 
 - 输入项不允许内联正文/凭据字段：`apiKey`/`secret`/`content`/`credentials`
-  等未知键一律 validation 拒绝（fail-closed），必需输入引用严格按
-  `ExecutionInputRef` 字段集校验；
+  等未知键一律 validation 拒绝（fail-closed）。知识选择只能携带文档/记忆 ID、
+  版本、hash、片段范围和同项目受管 Artifact 引用；可选 snippet 也必须绑定该
+  引用，正文不能通过可变路径或脱离制品的字段进入输入；
 - 不读取 modelMap 重新路由：输入契约不存在任何路由/配置字段（`modelMap`、
   `settings`、`strategies` 等未知键拒绝），`executionConfig` 按副本原样进入
   snapshot 与 prompt（canonical 相等）；装配依赖只有预算；
 - 不自动继承未选择的全局 MCP、Skills、扩展或全文知识（`mcpServers`/`skills`/
-  `extensions`/`knowledge`/`projectProfile` 等未知键一律拒绝）；文件正文一律
-  不进入 prompt（只有受管引用），不能覆盖 Core 权限指导或扩大资源清单。
+  `extensions`/`projectProfile` 等未知键一律拒绝）；文件正文一律不进入 prompt
+  （只有受管引用），不能覆盖 Core 权限指导或扩大资源清单。
 
 ## 5. 有效验收身份（labels 等非业务元数据不混入）
 
@@ -102,9 +109,10 @@
 ## 6. 本项不实现
 
 执行输入准备编排与 snapshot/manifest/prompt 制品组发布、批准最终重核（F-006）、
-Host/CLI 接线（F-007/F-008）、ProjectProfile、知识检索、LLM 蒸馏、SDK 自动
-资源加载（AGENTS.md 等）与原生会话续接；不宣称强 OS 沙箱（可信项目模式，
-见 `docs/p03-2-execution-input-contract.md` §3 边界）。
+Host/CLI 接线（F-007/F-008）、ProjectProfile 检测/确认流程、知识检索与 Artifact 字节读取、LLM 蒸馏、SDK 自动
+资源加载（AGENTS.md 等）与原生会话续接；本项只消费已授权选择结果，不自动搜索或
+继承全局知识；不宣称强 OS 沙箱（可信项目模式，见
+`docs/p03-2-execution-input-contract.md` §3 边界）。
 
 ## 7. 同 Task 返工输入扩展（P03-7 / F-011，schemaVersion 2）
 
@@ -186,3 +194,13 @@ sha256、`copy` 可选有界普通 JSON 对象，上限
   `recovery` 的输入不携带该字段且摘要/字节不变（v1/v2/v3 历史形态兼容）；
   Attempt 持久快照读取接受 v1/v2/v3 历史快照与当前版本。该字段是 v3 内的
   可选追加，复用既有 `recovery-record` manifest 类别，不新增强制类别。
+
+## 10. 已授权知识来源扩展（P06-2 / F-005，schemaVersion 5）
+
+`ContextBuildInput.knowledge`（兼容受信装配的 `knowledgeSources` 别名）只接受已授权的文档或 accepted memory 选择。每项必须提供 `kind`、文档或记忆 ID、来源项目、知识版本、命中片段范围、用途、`required`、选择理由，以及同项目版本化 `contentRef`（Artifact ID、版本、contentHash、大小）。`snippet` 只能作为受管制品的命中片段随引用携带；未知字段、未知来源类别、跨项目身份、可变路径、内联正文或凭据均 fail-closed。
+
+有效选择按输入顺序进入 snapshot 的业务投影和 Manifest。Manifest 使用 `knowledge` 来源类别，identity 记录项目、文档/记忆 ID 与 Artifact ID，`version`/`hash` 绑定知识版本与正文制品，`selection` 记录 `[start..end)` 范围，`purpose`、`required`、`reason` 与 `truncated` 记录选择依据。labels 仍只进入 `meta`，不影响摘要；相同输入可使用 `stableStringify` 独立复算 snapshot、Manifest 和 prompt 摘要。
+
+知识预算包括引用数、单片段字符数和片段总 UTF-8 字节数。必需知识任一预算不足返回 `limit_exceeded`，details 保留预算名、实测值与上限；可选知识按输入顺序截断或省略，并在 `omissions` 记录。最终 prompt 仍受 `maxPromptBytes` 限制，固定指导始终位于知识内容之前。
+
+ContextBuilder 升级到 v5 后，`CONTEXT_INPUT_SUPPORTED_SCHEMA_VERSIONS` 继续接受 v1、v2、v3、v4 历史快照与当前 v5；未知版本拒绝。未包含知识字段的历史快照不被重写，旧输入仍按原有可选字段边界读取。

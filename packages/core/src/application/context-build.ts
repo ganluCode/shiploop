@@ -53,6 +53,7 @@ import type {
   ContextHistoryEntry,
   ContextInputManifest,
   ContextInputSnapshot,
+  ContextKnowledgeSelection,
   ContextManifestSource,
   ContextOmission,
   ContextSelectedHistoryIndex,
@@ -82,6 +83,12 @@ export interface ContextBudget {
   readonly maxHistoryEntries: number;
   /** 历史索引单条摘要最大保留长度（Unicode 码点，≥1；超出截断并标注）。 */
   readonly maxHistoryEntryChars: number;
+  /** 已授权知识来源最大条数；缺省使用有限默认值。 */
+  readonly maxKnowledgeSources?: number;
+  /** 已授权知识单个片段最大字符数；缺省使用有限默认值。 */
+  readonly maxKnowledgeSnippetChars?: number;
+  /** 已授权知识片段总 UTF-8 字节预算；缺省使用有限默认值。 */
+  readonly maxKnowledgeTotalBytes?: number;
   /** token 估算的每 token 字节数（≥1；估算仅标注 estimation）。 */
   readonly bytesPerTokenEstimate: number;
 }
@@ -156,6 +163,9 @@ function validateBudget(value: unknown): ContextBudget {
       'maxRequiredInputRefs',
       'maxHistoryEntries',
       'maxHistoryEntryChars',
+      'maxKnowledgeSources',
+      'maxKnowledgeSnippetChars',
+      'maxKnowledgeTotalBytes',
       'bytesPerTokenEstimate',
     ],
     context,
@@ -179,6 +189,15 @@ function validateBudget(value: unknown): ContextBudget {
       context,
       'budget.maxHistoryEntryChars',
     ),
+    maxKnowledgeSources: object.maxKnowledgeSources === undefined
+      ? 256
+      : validatePositiveInteger(object.maxKnowledgeSources, context, 'budget.maxKnowledgeSources'),
+    maxKnowledgeSnippetChars: object.maxKnowledgeSnippetChars === undefined
+      ? 8_192
+      : validatePositiveInteger(object.maxKnowledgeSnippetChars, context, 'budget.maxKnowledgeSnippetChars'),
+    maxKnowledgeTotalBytes: object.maxKnowledgeTotalBytes === undefined
+      ? 64 * 1024
+      : validatePositiveInteger(object.maxKnowledgeTotalBytes, context, 'budget.maxKnowledgeTotalBytes'),
     bytesPerTokenEstimate: validatePositiveInteger(
       object.bytesPerTokenEstimate,
       context,
@@ -187,10 +206,107 @@ function validateBudget(value: unknown): ContextBudget {
   };
 }
 
-/** 历史条目渲染（单行；换行归一为空格，保证索引条目不破坏段落结构）。 */
 function singleLine(text: string): string {
   return text.replaceAll(/\r?\n/g, ' ');
 }
+
+function truncateToUtf8Bytes(value: string, maxBytes: number): string {
+  if (utf8Bytes(value) <= maxBytes) return value;
+  let result = '';
+  for (const char of value) {
+    if (utf8Bytes(result + char) > maxBytes) break;
+    result += char;
+  }
+  return result;
+}
+
+function knowledgeSourceId(source: ContextKnowledgeSelection): string {
+  return `knowledge:${source.kind}:${source.sourceId}@v${source.version}`;
+}
+
+function knowledgeRangeText(value: ContextKnowledgeSelection['range'] | ContextKnowledgeSelection): string {
+  const range = 'range' in value ? value.range : value;
+  return `range[${range.start}..${range.end})`;
+}
+
+/** 按确定性前缀策略处理可选知识；必需知识任何预算不足都整体失败。 */
+function selectKnowledge(
+  selections: readonly ContextKnowledgeSelection[],
+  budget: ContextBudget,
+): { readonly selections: readonly ContextKnowledgeSelection[]; readonly omissions: readonly ContextOmission[] } {
+  if (selections.length === 0) return { selections: [], omissions: [] };
+  const maxSources = budget.maxKnowledgeSources ?? 256;
+  const maxSnippetChars = budget.maxKnowledgeSnippetChars ?? 8_192;
+  const maxTotalBytes = budget.maxKnowledgeTotalBytes ?? 64 * 1024;
+  const required = selections.filter((selection) => selection.required);
+  if (required.length > maxSources) {
+    throw limitError('budget.maxKnowledgeSources', '必需知识引用数量超限', {
+      limitName: 'maxKnowledgeSources', measured: required.length, limit: maxSources,
+    });
+  }
+  let requiredBytes = 0;
+  const requiredSelected = new Map<string, ContextKnowledgeSelection>();
+  for (const source of required) {
+    let normalized = source;
+    if (source.snippet !== undefined && codePointLength(source.snippet) > maxSnippetChars) {
+      throw limitError('budget.maxKnowledgeSnippetChars', '必需知识片段超限', {
+        limitName: 'maxKnowledgeSnippetChars', sourceId: source.sourceId,
+        measuredChars: codePointLength(source.snippet), limitChars: maxSnippetChars,
+      });
+    }
+    requiredBytes += source.snippet === undefined ? 0 : utf8Bytes(source.snippet);
+    if (requiredBytes > maxTotalBytes) {
+      throw limitError('budget.maxKnowledgeTotalBytes', '必需知识片段总预算超限', {
+        limitName: 'maxKnowledgeTotalBytes', measuredBytes: requiredBytes, limitBytes: maxTotalBytes,
+      });
+    }
+    requiredSelected.set(knowledgeSourceId(source), normalized);
+  }
+
+  const omissions: ContextOmission[] = [];
+  let optionalCount = 0;
+  let usedBytes = requiredBytes;
+  const optionalSelected = new Map<string, ContextKnowledgeSelection>();
+  const optionalCapacity = maxSources - required.length;
+  for (const source of selections) {
+    if (source.required) continue;
+    const sourceId = knowledgeSourceId(source);
+    if (optionalCount >= optionalCapacity) {
+      omissions.push({ sourceId, kind: 'knowledge-entry-omitted', note: `知识引用数量预算 maxKnowledgeSources=${maxSources} 省略可选来源` });
+      continue;
+    }
+    let normalized = source;
+    if (source.snippet !== undefined && codePointLength(source.snippet) > maxSnippetChars) {
+      normalized = { ...normalized, snippet: truncateToCodePoints(source.snippet, maxSnippetChars), truncated: true };
+      omissions.push({ sourceId, kind: 'knowledge-entry-truncated', note: `片段预算 maxKnowledgeSnippetChars=${maxSnippetChars} 截断可选来源` });
+    }
+    if (normalized.snippet !== undefined) {
+      const remaining = maxTotalBytes - usedBytes;
+      if (remaining <= 0) {
+        omissions.push({ sourceId, kind: 'knowledge-entry-omitted', note: `总预算 maxKnowledgeTotalBytes=${maxTotalBytes} 省略可选来源` });
+        continue;
+      }
+      const clipped = truncateToUtf8Bytes(normalized.snippet, remaining);
+      if (clipped.length === 0 && normalized.snippet.length > 0) {
+        omissions.push({ sourceId, kind: 'knowledge-entry-omitted', note: `总预算 maxKnowledgeTotalBytes=${maxTotalBytes} 无剩余空间，省略可选来源` });
+        continue;
+      }
+      if (clipped !== normalized.snippet) {
+        normalized = { ...normalized, snippet: clipped, truncated: true };
+        omissions.push({ sourceId, kind: 'knowledge-entry-truncated', note: `总预算 maxKnowledgeTotalBytes=${maxTotalBytes} 截断可选来源` });
+      }
+      usedBytes += utf8Bytes(clipped);
+    }
+    optionalSelected.set(sourceId, normalized);
+    optionalCount += 1;
+  }
+  const selected = selections.flatMap((source) => {
+    const chosen = source.required ? requiredSelected.get(knowledgeSourceId(source)) : optionalSelected.get(knowledgeSourceId(source));
+    return chosen === undefined ? [] : [chosen];
+  });
+  return { selections: selected, omissions };
+}
+
 
 function renderOrigin(origin: ContextBuildInput['requiredInputs'][number]['origin']): string {
   return origin.kind === 'artifact'
@@ -227,9 +343,12 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
       });
     }
 
+    const knowledgeSelection = selectKnowledge(validated.knowledge?.selections ?? [], budget);
+    let selectedKnowledge = knowledgeSelection.selections;
+
     /* 2) 可选历史索引：先做确定性条数/长度截断（前缀策略，保持输入顺序）。 */
     const historyInput = validated.historyIndex ?? undefined;
-    const omissions: ContextOmission[] = [];
+    const omissions: ContextOmission[] = [...knowledgeSelection.omissions];
     const totalAvailable = historyInput?.totalAvailable ?? historyInput?.entries.length ?? 0;
     const cappedEntries: ContextHistoryEntry[] = [];
     const truncatedEntryIds: string[] = [];
@@ -287,6 +406,7 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
       ...(validated.deliveryPolicy === undefined ? {} : { deliveryPolicy: validated.deliveryPolicy }),
       permissions: validated.permissions,
       ...(validated.profile === undefined ? {} : { profile: validated.profile }),
+      ...(selectedKnowledge.length === 0 ? {} : { knowledge: selectedKnowledge }),
       requiredInputs: validated.requiredInputs,
       ...(rework === null ? {} : { rework }),
       ...(recovery === null ? {} : { recovery }),
@@ -301,7 +421,20 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
     }
 
     /* 4) prompt 骨架（固定指导 + 全部必需内容；不含历史）。 */
-    const basePrompt = renderRequiredPrompt(validated);
+    let basePrompt = renderRequiredPrompt(validated, selectedKnowledge);
+    while (utf8Bytes(basePrompt) > budget.maxPromptBytes) {
+      const optionalIndex = selectedKnowledge.reduce((last, source, index) =>
+        source.required ? last : index, -1);
+      if (optionalIndex < 0) break;
+      const omitted = selectedKnowledge[optionalIndex];
+      selectedKnowledge = selectedKnowledge.filter((_, index) => index !== optionalIndex);
+      omissions.push({
+        sourceId: knowledgeSourceId(omitted),
+        kind: 'knowledge-entry-omitted',
+        note: `prompt 字节预算 maxPromptBytes=${budget.maxPromptBytes} 省略可选知识来源（保持输入顺序）`,
+      });
+      basePrompt = renderRequiredPrompt(validated, selectedKnowledge);
+    }
     const baseBytes = utf8Bytes(basePrompt);
     if (baseBytes > budget.maxPromptBytes) {
       throw limitError('budget.maxPromptBytes', '必需内容 prompt 字节数超限（不删减验收条目）', {
@@ -349,7 +482,7 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
           omittedCount,
           truncated: truncatedEntryIds.length > 0,
         };
-        return finalize(validated, historyIndex, omissions, prompt);
+        return finalize(validated, selectedKnowledge, historyIndex, omissions, prompt);
       }
       omissions.push({
         sourceId: 'history-index',
@@ -357,11 +490,14 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
         note: `prompt 字节预算 maxPromptBytes=${budget.maxPromptBytes} 无剩余空间，历史索引整体省略`,
       });
     }
-    return finalize(validated, null, omissions, prompt);
+    return finalize(validated, selectedKnowledge, null, omissions, prompt);
   }
 
   /** 必需 prompt 骨架：固定指导原样开头 + 结构化必需内容（完整 acceptance 逐条）。 */
-  function renderRequiredPrompt(validated: ContextBuildInput): string {
+  function renderRequiredPrompt(
+    validated: ContextBuildInput,
+    knowledge: readonly ContextKnowledgeSelection[],
+  ): string {
     const parts: string[] = [];
     parts.push(`ShipLoop task context (schemaVersion ${CONTEXT_INPUT_SCHEMA_VERSION})`);
     parts.push('');
@@ -510,6 +646,17 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
       parts.push('- module bodies, paths and credentials are not included; use only the fixed identity references');
       parts.push('');
     }
+    if (knowledge.length > 0) {
+      parts.push('## Authorized knowledge selections (managed artifacts; bounded)');
+      for (const source of knowledge) {
+        const sourceLabel = source.kind === 'document' ? `document ${source.documentId}` : `memory ${source.memoryId}`;
+        parts.push(
+          `- ${sourceLabel} v${source.version}: artifact ${source.contentRef.artifactId} v${source.contentRef.version} sha256:${source.contentHash} ${knowledgeRangeText(source)} purpose ${source.purpose} required ${source.required} truncated ${source.truncated} reason ${singleLine(source.reason)}`,
+        );
+        if (source.snippet !== undefined) parts.push(`  excerpt: ${singleLine(source.snippet)}`);
+      }
+      parts.push('');
+    }
     parts.push('## Required inputs (must read each before work; verify hash)');
     if (validated.requiredInputs.length === 0) {
       parts.push('- (none)');
@@ -527,6 +674,7 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
   /** 组装 snapshot/manifest/prompt 最终形态与确定性摘要。 */
   function finalize(
     validated: ContextBuildInput,
+    knowledge: readonly ContextKnowledgeSelection[],
     historyIndex: ContextSelectedHistoryIndex | null,
     omissions: readonly ContextOmission[],
     prompt: string,
@@ -552,6 +700,7 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
       ...(validated.deliveryPolicy === undefined ? {} : { deliveryPolicy: validated.deliveryPolicy }),
       permissions: validated.permissions,
       ...(validated.profile === undefined ? {} : { profile: validated.profile }),
+      ...(knowledge.length === 0 ? {} : { knowledge }),
       requiredInputs: validated.requiredInputs,
       ...(historyIndex === null ? {} : { historyIndex }),
       ...(rework === null ? {} : { rework }),
@@ -577,6 +726,7 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
       ...(validated.deliveryPolicy === undefined ? {} : { deliveryPolicy: validated.deliveryPolicy }),
       permissions: validated.permissions,
       ...(validated.profile === undefined ? {} : { profile: validated.profile }),
+      ...(knowledge.length === 0 ? {} : { knowledge }),
       requiredInputs: validated.requiredInputs,
       historyIndex,
       rework,
@@ -586,7 +736,7 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
     const promptDigest = digestOf(CONTEXT_PROMPT_DIGEST_DOMAIN, prompt);
     const snapshotDigest = digestOf(CONTEXT_SNAPSHOT_DIGEST_DOMAIN, stableStringify(snapshotBusiness));
 
-    const manifest = buildManifest(validated, historyIndex, omissions, promptDigest);
+    const manifest = buildManifest(validated, knowledge, historyIndex, omissions, promptDigest);
     const manifestDigest = digestOf(CONTEXT_MANIFEST_DIGEST_DOMAIN, stableStringify(manifest));
     const promptBytes = utf8Bytes(prompt);
     const tokenEstimate: ContextTokenEstimate = {
@@ -609,6 +759,7 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
   /** manifest：逐来源记录身份、版本、hash、用途、选取范围、必需性与选择理由。 */
   function buildManifest(
     validated: ContextBuildInput,
+    knowledge: readonly ContextKnowledgeSelection[],
     historyIndex: ContextSelectedHistoryIndex | null,
     omissions: readonly ContextOmission[],
     promptDigest: string,
@@ -762,6 +913,22 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
         truncated: false,
       },
     ];
+    for (const source of knowledge) {
+      sources.push({
+        sourceId: knowledgeSourceId(source),
+        kind: 'knowledge',
+        identity: source.kind === 'document'
+          ? { projectId: source.projectId, documentId: source.documentId ?? source.sourceId, artifactId: source.contentRef.artifactId }
+          : { projectId: source.projectId, memoryId: source.memoryId ?? source.sourceId, artifactId: source.contentRef.artifactId },
+        version: source.version,
+        hash: source.contentHash,
+        purpose: source.purpose,
+        selection: knowledgeRangeText(source),
+        required: source.required,
+        reason: source.reason,
+        truncated: source.truncated,
+      });
+    }
     for (const ref of validated.requiredInputs) {
       sources.push({
         sourceId: `required-input:${ref.artifactId}`,

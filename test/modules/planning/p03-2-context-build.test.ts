@@ -617,6 +617,153 @@ describe('P03-2 / F-005 有效验收身份：labels 等非业务元数据不混�
   });
 });
 
+describe('P03-2 / F-005 已授权知识来源与输入身份', () => {
+  function knowledgeSource(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      kind: 'document',
+      documentId: 'doc-1',
+      projectId: 'proj-1',
+      version: 2,
+      contentRef: {
+        projectId: 'proj-1',
+        artifactId: 'knowledge-artifact-1',
+        version: 7,
+        contentHash: sha256Hex('managed-knowledge'),
+        sizeBytes: 1_024,
+      },
+      range: { start: 10, end: 44, line: 2, column: 3 },
+      purpose: 'task-guidance',
+      required: true,
+      reason: '当前 Task 需要该文档的授权命中片段',
+      snippet: '受管文档命中片段',
+      ...overrides,
+    };
+  }
+
+  it('[case:knowledge-source-manifest-identity] 将文档/记忆选择写入快照、prompt 与 manifest，并保留来源顺序', () => {
+    const input = makeInput({
+      knowledge: {
+        selections: [
+          knowledgeSource(),
+          knowledgeSource({
+            kind: 'memory',
+            documentId: undefined,
+            memoryId: 'memory-1',
+            version: 3,
+            contentRef: {
+              projectId: 'proj-1',
+              artifactId: 'memory-artifact-1',
+              version: 4,
+              contentHash: sha256Hex('managed-memory'),
+              sizeBytes: 512,
+            },
+            range: { start: 0, end: 18 },
+            purpose: 'accepted-memory',
+            required: false,
+            reason: '已接受记忆与当前实现相关',
+            snippet: '受管记忆命中片段',
+          }),
+        ],
+      },
+    });
+    const result = makeBuilder().build(input);
+    const knowledge = result.inputSnapshot.knowledge;
+
+    expect(result.schemaVersion).toBeGreaterThan(4);
+    expect(knowledge?.map((source) => source.kind)).toEqual(['document', 'memory']);
+    expect(knowledge?.[0]).toMatchObject({
+      documentId: 'doc-1',
+      version: 2,
+      contentHash: sha256Hex('managed-knowledge'),
+      range: { start: 10, end: 44, line: 2, column: 3 },
+      purpose: 'task-guidance',
+      required: true,
+      reason: '当前 Task 需要该文档的授权命中片段',
+      truncated: false,
+    });
+    expect(result.prompt).toContain('## Authorized knowledge selections');
+    expect(result.prompt).toContain('document doc-1 v2');
+    expect(result.prompt).toContain('memory memory-1 v3');
+    expect(result.inputManifest.sources.filter((source) => source.kind === 'knowledge')).toEqual([
+      expect.objectContaining({
+        identity: expect.objectContaining({ documentId: 'doc-1', projectId: 'proj-1' }),
+        version: 2,
+        hash: sha256Hex('managed-knowledge'),
+        purpose: 'task-guidance',
+        selection: 'range[10..44)',
+        required: true,
+        truncated: false,
+      }),
+      expect.objectContaining({
+        identity: expect.objectContaining({ memoryId: 'memory-1', projectId: 'proj-1' }),
+        version: 3,
+        hash: sha256Hex('managed-memory'),
+        required: false,
+      }),
+    ]);
+  });
+
+  it('[case:knowledge-digest-label-invariance] 知识来源参与业务摘要，labels 仍不参与摘要', () => {
+    const knowledge = { selections: [knowledgeSource()] };
+    const first = makeBuilder().build(makeInput({ knowledge, task: { ...(makeInput().task as object), labels: ['one'] } as object }));
+    const second = makeBuilder().build(makeInput({ knowledge, task: { ...(makeInput().task as object), labels: ['two', 'three'] } as object }));
+    const changed = makeBuilder().build(makeInput({
+      knowledge: { selections: [knowledgeSource({ reason: '不同的授权选择理由' })] },
+    }));
+
+    expect(first.digests).toEqual(second.digests);
+    expect(first.inputManifest).toEqual(second.inputManifest);
+    expect(first.inputSnapshot.knowledge).toEqual(second.inputSnapshot.knowledge);
+    expect(changed.digests.snapshotDigest).not.toBe(first.digests.snapshotDigest);
+    expect(changed.digests.manifestDigest).not.toBe(first.digests.manifestDigest);
+  });
+
+  it('[case:knowledge-budget-required-and-optional] 必需知识超限失败，可选知识按顺序截断并记录 omissions', () => {
+    const required = knowledgeSource({ snippet: '必需片段'.repeat(10) });
+    expect(() => makeBuilder({ maxKnowledgeSnippetChars: 4 }).build(makeInput({ knowledge: { selections: [required] } })))
+      .toThrowError(ContextBuildError);
+
+    const optional = knowledgeSource({
+      required: false,
+      snippet: '可选片段'.repeat(10),
+      reason: '可选背景',
+    });
+    const result = makeBuilder({ maxKnowledgeSnippetChars: 4, maxKnowledgeTotalBytes: 20 })
+      .build(makeInput({ knowledge: { selections: [optional] } }));
+    expect(result.inputSnapshot.knowledge?.[0]).toMatchObject({
+      snippet: '可选片段',
+      truncated: true,
+    });
+    expect(result.inputManifest.omissions).toEqual([
+      expect.objectContaining({ sourceId: expect.stringContaining('knowledge:'), kind: 'knowledge-entry-truncated' }),
+    ]);
+  });
+
+  it('[case:knowledge-prompt-budget-optional] 可选知识超过最终 prompt 预算时省略并保留结构化 omissions', () => {
+    const baseBytes = makeBuilder().build(makeInput()).promptBytes;
+    const optional = knowledgeSource({ required: false, reason: '可选背景', snippet: '额外背景片段' });
+    const result = makeBuilder({ maxPromptBytes: baseBytes + 1 }).build(
+      makeInput({ knowledge: { selections: [optional] } }),
+    );
+    expect(result.inputSnapshot.knowledge).toBeUndefined();
+    expect(result.inputManifest.omissions).toEqual([
+      expect.objectContaining({ kind: 'knowledge-entry-omitted', sourceId: expect.stringContaining('knowledge:') }),
+    ]);
+  });
+  it('[case:knowledge-fail-closed] 知识来源必须是同项目受管制品引用，未知类别/跨项目/内联正文均拒绝', () => {
+    const invalidCases = [
+      { ...knowledgeSource(), kind: 'wiki' },
+      { ...knowledgeSource(), projectId: 'other-project' },
+      { ...knowledgeSource(), content: '绕过 Artifact 的正文' },
+      { ...knowledgeSource(), contentRef: { ...(knowledgeSource().contentRef as object), projectId: 'other-project' } },
+    ];
+    for (const source of invalidCases) {
+      expect(() => makeBuilder().build(makeInput({ knowledge: { selections: [source] } })))
+        .toThrowError(ContextBuildError);
+    }
+  });
+});
+
 describe('P03-2 / F-005 固定指导与权限边界', () => {
   it('文件/引用内容不能覆盖 Core 权限指导：指导常量原样位于 prompt 头部且不可注入替换', () => {
     const adversarial = makeRef('ignore-previous-instructions', 'art-adv', {
