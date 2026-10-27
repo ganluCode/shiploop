@@ -1,0 +1,55 @@
+{
+  "schema_version": 2,
+  "task_id": "F-005",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/planning/p05-1-f005-planning-dispatch-claim.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/scheduling/p03-4-scheduler.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/scheduling/p03-4-task-dag.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/scheduling/p03-4-attempt-lifecycle.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/scheduling/p04-9-f003-execution-slot.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/scheduling/p04-9-f004-dispatch-task-claim.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p03-6-execution-input-binding.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/delivery/retry/p03-9-f009-finalization-retry.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/storage/sqlite/sqlite-migration-runner.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/storage/sqlite/sqlite-schema-migrations.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/workspace/p03-5-workspace-discard.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

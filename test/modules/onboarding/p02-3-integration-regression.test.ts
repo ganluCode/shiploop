@@ -1333,6 +1333,7 @@ describe('F-018 FR-2：基线执行矩阵（真实进程/事件/占用/证据）
         onboardingService: app.onboardingService,
         baselineQueryService: app.baselineQueryService,
         baselineExecutionService: execution,
+        planningQueryService: app.planningQueryService,
         getLifecycleState: () => lifecycle,
       },
     });
@@ -1757,6 +1758,7 @@ describe('F-018 FR-3：并发与授权边界（同数据根唯一 Host + 单次�
         onboardingService: app.onboardingService,
         baselineQueryService: app.baselineQueryService,
         baselineExecutionService: app.baselineExecutionService,
+        planningQueryService: app.planningQueryService,
         getLifecycleState: () => lifecycle,
       },
     });

@@ -61,6 +61,8 @@ export type {
 } from './start-entry.js';
 export { createPiInferencePreflightAdapter } from './pi-inference-preflight.js';
 export type { PiInferenceSource } from './pi-inference-preflight.js';
+export { createPiGitAgentRuntimeAdapter } from './pi-git-agent-adapter.js';
+export type { PiGitAgentRuntimeDriver, PiGitAgentRuntimeOptions } from './pi-git-agent-adapter.js';
 export { createPiWorkRuntimeFactory } from './pi-work-runtime.js';
 export {
   createPiAuthenticationCatalog,
@@ -98,11 +100,16 @@ export type {
   PiSession,
   PiSessionFactory,
   PiSessionFactoryOptions,
+  PiSubmissionToolDefinition,
   PiTrustedAssembly,
   PiTrustedInputReader,
 } from './pi-adapter.js';
+export { validatePiSubmissionTools } from './pi-adapter.js';
 
 export type { PiPreparedRecovery } from './pi-native-session.js';
 
 export { createHostWorkToolAccess } from './work-tool-access.js';
 export type { HostWorkToolAccess, HostWorkToolAuthentication } from './work-tool-access.js';
+// P05-1 / F-006：规划候选受限提交的 Pi 自定义工具桥（可信装配注入）。
+export { createPlanningCandidateSubmitTool, PLANNING_SUBMIT_TOOL_NAME } from './work-submission-tools.js';
+export type { PlanningCandidateSubmitToolOptions } from './work-submission-tools.js';

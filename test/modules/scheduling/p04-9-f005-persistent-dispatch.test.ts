@@ -62,6 +62,7 @@ function seedDispatchRun(
   const feature = db.prepare('SELECT * FROM features LIMIT 1').get() as Record<string, unknown>;
   const batch = db.prepare('SELECT * FROM execution_batches LIMIT 1').get() as Record<string, unknown>;
   const run = db.prepare('SELECT * FROM runs LIMIT 1').get() as Record<string, unknown>;
+  const batchScope = JSON.parse(String(batch.scope_snapshot)) as Record<string, unknown>;
   const phaseId = randomUUID();
   const featureId = randomUUID();
   const batchId = randomUUID();
@@ -77,6 +78,7 @@ function seedDispatchRun(
     insert('features', { ...feature, id: featureId, phase_id: phaseId, created_at: options.createdAt,
       updated_at: options.createdAt });
     insert('execution_batches', { ...batch, id: batchId, phase_id: phaseId, feature_id: featureId,
+      scope_snapshot: JSON.stringify({ ...batchScope, featureIds: [featureId] }),
       created_at: options.createdAt, updated_at: options.createdAt });
     insert('runs', { ...run, id: runId, batch_id: batchId, feature_id: featureId,
       created_at: options.createdAt, updated_at: options.createdAt });
@@ -295,6 +297,7 @@ function finalizationScheduler(options: {
     store: {
       listActiveRuns: () => ({ runs: [{ projectId: run.projectId, runId: run.id }], hasMore: false,
         nextCursor: null }),
+      listBatchCandidates: () => ({ candidates: [], hasMore: false, nextCursor: null }),
       readRun: () => run as never,
       recordRunReason,
       isFinalVerificationHandoffClaimed,

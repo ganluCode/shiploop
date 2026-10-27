@@ -20,6 +20,9 @@
  *   子命令（实际 Host 公共契约 execution.sessions.list/execution.session.get/
  *   execution.session.evidence.get/execution.attempt.cancel 的参数映射；
  *   取消必须 --confirm 显式确认，不猜测草案命令）；
+ * P05-1 / F-013 增补 planning start/list/get/candidate/approve/reject 子命令；规划输入文件
+ *   在连接前有界读取，规划 Run 的取消/恢复沿用 execution.cancel/pause/resume，
+ *   不自动批准、不自动开始编码；
  * - 监听地址覆盖零容忍：--bind/--host/--address/--port/--listen* 与
  *   SHIPLOOP_HOST_* env 覆盖一律 bind_address_override_rejected；
  * - 错误只携带 code/reason/参数名/命令身份，绝不回显参数值；
@@ -41,9 +44,11 @@ export const APP_CLI_COMMANDS = [
   'phase',
   'feature',
   'task',
+  'planning',
   'execution',
   'workspace',
   'git',
+  'integration',
 ] as const;
 export type AppCliCommand = (typeof APP_CLI_COMMANDS)[number];
 
@@ -70,9 +75,17 @@ export type AppCliCommandId =
   | 'baseline.cancel'
   | 'baseline.evidence'
   | 'phase.create'
+  | 'phase.update'
+  | 'phase.close'
+  | 'phase.reopen'
+  | 'phase.archive'
+  | 'phase.graph'
+  | 'feature.move'
+  | 'feature.dependencies'
   | 'phase.list'
   | 'phase.get'
   | 'phase.labels'
+  | 'phase.delivery-approve'
   | 'feature.import'
   | 'feature.list'
   | 'feature.get'
@@ -96,14 +109,24 @@ export type AppCliCommandId =
   | 'task.reject'
   | 'task.unblock'
   | 'task.continue'
+  | 'planning.start'
+  | 'planning.list'
+  | 'planning.get'
+  | 'planning.candidate'
+  | 'planning.approve'
+  | 'planning.reject'
   | 'execution.preview'
   | 'execution.start'
   | 'execution.budget'
   | 'execution.revise'
+  | 'execution.batch-delivery'
+  | 'execution.batch-observe'
+  | 'execution.finalize'
   | 'execution.schedule'
   | 'execution.attempts'
   | 'execution.diagnostics'
   | 'execution.dispatch'
+  | 'execution.resources'
   | 'execution.sessions'
   | 'execution.session'
   | 'execution.session-evidence'
@@ -123,7 +146,10 @@ export type AppCliCommandId =
   | 'workspace.discard-preview'
   | 'workspace.discard'
   | 'git.operations'
-  | 'git.operation';
+  | 'git.operation'
+  | 'git.repairs'
+  | 'git.repair'
+  | 'integration.plan';
 
 export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'project.init',
@@ -147,9 +173,17 @@ export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'baseline.cancel',
   'baseline.evidence',
   'phase.create',
+  'phase.update',
+  'phase.close',
+  'phase.reopen',
+  'phase.archive',
+  'phase.graph',
+  'feature.move',
+  'feature.dependencies',
   'phase.list',
   'phase.get',
   'phase.labels',
+  'phase.delivery-approve',
   'feature.import',
   'feature.list',
   'feature.get',
@@ -173,14 +207,24 @@ export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'task.reject',
   'task.unblock',
   'task.continue',
+  'planning.start',
+  'planning.list',
+  'planning.get',
+  'planning.candidate',
+  'planning.approve',
+  'planning.reject',
   'execution.preview',
   'execution.start',
   'execution.budget',
   'execution.revise',
+  'execution.batch-delivery',
+  'execution.batch-observe',
+  'execution.finalize',
   'execution.schedule',
   'execution.attempts',
   'execution.diagnostics',
   'execution.dispatch',
+  'execution.resources',
   'execution.sessions',
   'execution.session',
   'execution.session-evidence',
@@ -195,6 +239,9 @@ export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'workspace.discard',
   'git.operations',
   'git.operation',
+  'git.repairs',
+  'git.repair',
+  'integration.plan',
 ]);
 
 /** 命令对应的 Core 操作身份（F-015/F-016 组装命令信封时使用）。 */
@@ -214,6 +261,8 @@ export type AppCommandOperation =
   | 'feature.plan.revise'
   | 'feature.plan.decide'
   | 'task.strategy.update'
+  | 'planning.start'
+  | 'planning.candidate.decide'
   | 'execution.input.prepare'
   | 'execution.preview'
   | 'execution.start'
@@ -268,6 +317,8 @@ export type AppCliParseReason =
   | 'missing_required_option'
   | 'invalid_scope'
   | 'scope_conflict'
+  | 'duplicate_scope_selector'
+  | 'scope_limit_exceeded'
   | 'project_required_for_scope'
   | 'conflicting_options'
   | 'invalid_input_json'
@@ -287,6 +338,7 @@ export type AppCliParseReason =
   | 'unknown_input_field'
   | 'input_secret_field_rejected'
   | 'input_identity_field_rejected'
+  | 'invalid_planning_input'
   | 'invalid_title'
   | 'invalid_plan_id'
   | 'invalid_plan_digest'
@@ -315,8 +367,8 @@ export type AppCliParseReason =
 
 const REASON_MESSAGE: Readonly<Record<AppCliParseReason, string>> = Object.freeze({
   invalid_argv_type: 'argv 必须是字符串数组',
-  missing_command: '缺少命令；本版本提供 project/config/receipt/events/baseline/phase/feature/task/execution',
-  unknown_command: '未知顶层命令；本版本仅提供 project/config/receipt/events/baseline/phase/feature/task/execution',
+  missing_command: '缺少命令；本版本提供 project/config/receipt/events/baseline/phase/feature/task/planning/execution',
+  unknown_command: '未知顶层命令；本版本仅提供 project/config/receipt/events/baseline/phase/feature/task/planning/execution',
   missing_subcommand: '命令缺少子命令',
   unknown_subcommand: '未知子命令',
   unknown_argument: '未知参数',
@@ -352,6 +404,8 @@ const REASON_MESSAGE: Readonly<Record<AppCliParseReason, string>> = Object.freez
   missing_required_option: '缺少必填参数',
   invalid_scope: 'scope 只能是 global 或 project',
   scope_conflict: '不能同时指定互斥的 scope 参数',
+  duplicate_scope_selector: 'Feature 选择不能重复',
+  scope_limit_exceeded: 'Feature 选择数量超出上限',
   project_required_for_scope: 'scope=project 时必须提供 --project',
   conflicting_options: '参数组合冲突',
   invalid_input_json: '输入 JSON 不是合法对象',
@@ -371,6 +425,7 @@ const REASON_MESSAGE: Readonly<Record<AppCliParseReason, string>> = Object.freez
   unknown_input_field: '输入包含未知字段（Schema 不接受前向宽容字段）',
   input_secret_field_rejected: '输入不允许携带明文秘密或环境值字段',
   input_identity_field_rejected: '输入不允许携带身份/权限/可见范围字段',
+  invalid_planning_input: '规划输入文件不合法（字段缺失、未知字段或超出边界）',
   invalid_title: 'title 不能为空且不能为空白',
   invalid_plan_id: '计划实体 ID 必须是稳定 ID（字母数字开头，仅含 [A-Za-z0-9._-]）',
   invalid_plan_digest: '计划摘要必须是 64 位小写十六进制',
@@ -648,6 +703,40 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
     maxPositionals: 1,
     positionalFields: ['artifactId'],
   },
+  'planning.start': {
+    command: 'planning', commandId: 'planning.start',
+    valueFlags: ['--project', '--phase', '--revision', '--input', '--command-id'],
+    boolFlags: [], repeatableFlags: [], minPositionals: 1, maxPositionals: 1,
+    positionalFields: ['featureId'],
+  },
+  'planning.list': {
+    command: 'planning', commandId: 'planning.list',
+    valueFlags: ['--project', '--feature', '--limit', '--cursor'],
+    boolFlags: [], repeatableFlags: [], minPositionals: 0, maxPositionals: 0,
+    positionalFields: [],
+  },
+  'planning.get': {
+    command: 'planning', commandId: 'planning.get',
+    valueFlags: ['--project'], boolFlags: [], repeatableFlags: [], minPositionals: 1, maxPositionals: 1,
+    positionalFields: ['candidateId'],
+  },
+  'planning.candidate': {
+    command: 'planning', commandId: 'planning.candidate',
+    valueFlags: ['--project'], boolFlags: [], repeatableFlags: [], minPositionals: 1, maxPositionals: 1,
+    positionalFields: ['candidateId'],
+  },
+  'planning.approve': {
+    command: 'planning', commandId: 'planning.approve',
+    valueFlags: ['--project', '--digest', '--revision', '--reason', '--command-id'],
+    boolFlags: [], repeatableFlags: [], minPositionals: 1, maxPositionals: 1,
+    positionalFields: ['candidateId'],
+  },
+  'planning.reject': {
+    command: 'planning', commandId: 'planning.reject',
+    valueFlags: ['--project', '--digest', '--revision', '--reason', '--command-id'],
+    boolFlags: [], repeatableFlags: [], minPositionals: 1, maxPositionals: 1,
+    positionalFields: ['candidateId'],
+  },
   'phase.create': {
     command: 'phase',
     commandId: 'phase.create',
@@ -657,6 +746,48 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
     minPositionals: 0,
     maxPositionals: 0,
     positionalFields: [],
+  },
+  'phase.update': {
+    command: 'phase', commandId: 'phase.update',
+    valueFlags: ["--project","--revision","--title","--description","--label","--command-id"],
+    boolFlags: ["--clear-description","--clear-labels"], repeatableFlags: ["--label"],
+    minPositionals: 1, maxPositionals: 1, positionalFields: ["phaseId"],
+  },
+  'phase.close': {
+    command: 'phase', commandId: 'phase.close',
+    valueFlags: ["--project","--revision","--command-id"],
+    boolFlags: [], repeatableFlags: [],
+    minPositionals: 1, maxPositionals: 1, positionalFields: ["phaseId"],
+  },
+  'phase.reopen': {
+    command: 'phase', commandId: 'phase.reopen',
+    valueFlags: ["--project","--revision","--command-id"],
+    boolFlags: [], repeatableFlags: [],
+    minPositionals: 1, maxPositionals: 1, positionalFields: ["phaseId"],
+  },
+  'phase.archive': {
+    command: 'phase', commandId: 'phase.archive',
+    valueFlags: ["--project","--revision","--command-id"],
+    boolFlags: [], repeatableFlags: [],
+    minPositionals: 1, maxPositionals: 1, positionalFields: ["phaseId"],
+  },
+  'phase.graph': {
+    command: 'phase', commandId: 'phase.graph',
+    valueFlags: ["--project","--limit","--cursor"],
+    boolFlags: [], repeatableFlags: [],
+    minPositionals: 1, maxPositionals: 1, positionalFields: ["phaseId"],
+  },
+  'feature.move': {
+    command: 'feature', commandId: 'feature.move',
+    valueFlags: ["--project","--revision","--from-phase","--to-phase","--source-revision","--target-revision","--command-id"],
+    boolFlags: [], repeatableFlags: [],
+    minPositionals: 1, maxPositionals: 1, positionalFields: ["featureId"],
+  },
+  'feature.dependencies': {
+    command: 'feature', commandId: 'feature.dependencies',
+    valueFlags: ["--project","--phase","--revision","--input","--command-id"],
+    boolFlags: [], repeatableFlags: [],
+    minPositionals: 0, maxPositionals: 0, positionalFields: [],
   },
   'phase.list': {
     command: 'phase',
@@ -684,6 +815,16 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
     valueFlags: ['--project', '--revision', '--label', '--command-id'],
     boolFlags: [],
     repeatableFlags: ['--label'],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['phaseId'],
+  },
+  'phase.delivery-approve': {
+    command: 'phase',
+    commandId: 'phase.delivery-approve',
+    valueFlags: ['--project', '--batch', '--candidate', '--revision', '--candidate-revision', '--command-id'],
+    boolFlags: ['--confirm'],
+    repeatableFlags: [],
     minPositionals: 1,
     maxPositionals: 1,
     positionalFields: ['phaseId'],
@@ -804,6 +945,16 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
     minPositionals: 1,
     maxPositionals: 1,
     positionalFields: ['featureId'],
+  },
+  'integration.plan': {
+    command: 'integration',
+    commandId: 'integration.plan',
+    valueFlags: ['--project'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['integrationId'],
   },
   'feature.final-approve': {
     command: 'feature',
@@ -948,20 +1099,20 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
   'execution.preview': {
     command: 'execution',
     commandId: 'execution.preview',
-    valueFlags: ['--project', '--input', '--command-id'],
+    valueFlags: ['--project', '--phase', '--feature', '--input', '--command-id'],
     boolFlags: [],
-    repeatableFlags: [],
-    minPositionals: 1,
+    repeatableFlags: ['--feature'],
+    minPositionals: 0,
     maxPositionals: 1,
     positionalFields: ['featureId'],
   },
   'execution.start': {
     command: 'execution',
     commandId: 'execution.start',
-    valueFlags: ['--project', '--input', '--preview-digest', '--retry-batch', '--command-id'],
+    valueFlags: ['--project', '--phase', '--feature', '--input', '--preview-digest', '--retry-batch', '--command-id'],
     boolFlags: ['--confirm'],
-    repeatableFlags: [],
-    minPositionals: 1,
+    repeatableFlags: ['--feature'],
+    minPositionals: 0,
     maxPositionals: 1,
     positionalFields: ['featureId'],
   },
@@ -980,6 +1131,36 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
     commandId: 'execution.revise',
     valueFlags: ['--project', '--revision', '--reason', '--input', '--command-id'],
     boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['batchId'],
+  },
+  'execution.batch-delivery': {
+    command: 'execution',
+    commandId: 'execution.batch-delivery',
+    valueFlags: ['--project', '--limit', '--cursor'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['batchId'],
+  },
+  'execution.batch-observe': {
+    command: 'execution',
+    commandId: 'execution.batch-observe',
+    valueFlags: ['--project', '--limit', '--cursor'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['batchId'],
+  },
+  'execution.finalize': {
+    command: 'execution',
+    commandId: 'execution.finalize',
+    valueFlags: ['--project', '--phase', '--revision', '--command-id'],
+    boolFlags: ['--confirm'],
     repeatableFlags: [],
     minPositionals: 1,
     maxPositionals: 1,
@@ -1020,7 +1201,17 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
   'execution.dispatch': {
     command: 'execution',
     commandId: 'execution.dispatch',
-    valueFlags: ['--project', '--limit', '--cursor'],
+    valueFlags: ['--project', '--batch', '--feature', '--limit', '--cursor'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 0,
+    maxPositionals: 0,
+    positionalFields: [],
+  },
+  'execution.resources': {
+    command: 'execution',
+    commandId: 'execution.resources',
+    valueFlags: ['--project', '--batch', '--feature', '--limit', '--cursor'],
     boolFlags: [],
     repeatableFlags: [],
     minPositionals: 0,
@@ -1230,6 +1421,26 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
     maxPositionals: 0,
     positionalFields: [],
   },
+  'git.repairs': {
+    command: 'git',
+    commandId: 'git.repairs',
+    valueFlags: ['--project', '--limit', '--cursor'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 0,
+    maxPositionals: 0,
+    positionalFields: [],
+  },
+  'git.repair': {
+    command: 'git',
+    commandId: 'git.repair',
+    valueFlags: ['--project'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['repairId'],
+  },
   'git.operation': {
     command: 'git',
     commandId: 'git.operation',
@@ -1272,12 +1483,15 @@ const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, A
     },
     phase: {
       create: 'phase.create',
+      update: 'phase.update', close: 'phase.close', reopen: 'phase.reopen', archive: 'phase.archive', graph: 'phase.graph',
       list: 'phase.list',
       get: 'phase.get',
       labels: 'phase.labels',
+      'delivery-approve': 'phase.delivery-approve',
     },
     feature: {
       import: 'feature.import',
+      move: 'feature.move', dependencies: 'feature.dependencies',
       list: 'feature.list',
       get: 'feature.get',
       revise: 'feature.revise',
@@ -1303,15 +1517,23 @@ const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, A
       unblock: 'task.unblock',
       continue: 'task.continue',
     },
+    planning: {
+      start: 'planning.start', list: 'planning.list', get: 'planning.get', candidate: 'planning.candidate',
+      approve: 'planning.approve', reject: 'planning.reject',
+    },
     execution: {
       preview: 'execution.preview',
       start: 'execution.start',
       budget: 'execution.budget',
       revise: 'execution.revise',
+      'batch-delivery': 'execution.batch-delivery',
+      'batch-observe': 'execution.batch-observe',
+      finalize: 'execution.finalize',
       schedule: 'execution.schedule',
       attempts: 'execution.attempts',
       diagnostics: 'execution.diagnostics',
       dispatch: 'execution.dispatch',
+      resources: 'execution.resources',
       sessions: 'execution.sessions',
       session: 'execution.session',
       'session-evidence': 'execution.session-evidence',
@@ -1336,7 +1558,10 @@ const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, A
     git: {
       operations: 'git.operations',
       operation: 'git.operation',
+      repairs: 'git.repairs',
+      repair: 'git.repair',
     },
+    integration: { plan: 'integration.plan' },
   });
 
 const COMMON_VALUE_FLAGS = ['--data-root', '--start-timeout-ms'] as const;
@@ -1714,6 +1939,52 @@ function requirePlanId(raw: string, state: ParseState, field: string): string {
 function requirePlanIdOption(scan: ScanResult, name: string, state: ParseState, field: string): string {
   return requirePlanId(requireOption(scan, name, state, field), state, field);
 }
+
+interface ParsedExecutionSelector {
+  readonly phaseId?: string;
+  readonly featureIds: readonly string[];
+  readonly featureId?: string;
+}
+
+/**
+ * execution.preview/start 的范围选择：旧位置参数保留；新形态使用 --phase 或重复
+ * --feature。CLI 只校验选择器形态和边界，不解析 Phase DAG。
+ */
+function resolveExecutionSelector(
+  scan: ScanResult,
+  state: ParseState,
+): ParsedExecutionSelector {
+  const phaseRaw = takeOption(scan, '--phase');
+  const optionFeatureIds = scan.options.get('--feature') ?? [];
+  const positionalFeatureId = scan.positionals[0];
+  if (phaseRaw !== undefined && (optionFeatureIds.length > 0 || positionalFeatureId !== undefined)) {
+    fail(state, 'scope_conflict', 'scope');
+  }
+  if (positionalFeatureId !== undefined && optionFeatureIds.length > 0) {
+    fail(state, 'scope_conflict', 'scope');
+  }
+  if (phaseRaw !== undefined) {
+    return { phaseId: requirePlanId(phaseRaw, state, 'phaseId'), featureIds: [] };
+  }
+  const rawFeatureIds = positionalFeatureId === undefined
+    ? optionFeatureIds
+    : [positionalFeatureId];
+  if (rawFeatureIds.length === 0) {
+    fail(state, 'missing_required_option', 'scope');
+  }
+  if (rawFeatureIds.length > 16) {
+    fail(state, 'scope_limit_exceeded', 'feature');
+  }
+  const featureIds = rawFeatureIds.map((value, index) => requirePlanId(value, state, `featureIds[${index}]`));
+  if (new Set(featureIds).size !== featureIds.length) {
+    fail(state, 'duplicate_scope_selector', 'feature');
+  }
+  return {
+    featureIds,
+    ...(positionalFeatureId !== undefined ? { featureId: featureIds[0] } : {}),
+  };
+}
+
 
 /** Phase 标题：必填非空（深度语义由 Core 单一权威复核）。 */
 function resolvePlanTitle(scan: ScanResult, state: ParseState): string {
@@ -2164,6 +2435,47 @@ export interface ParsedBaselineEvidence {
 /* ---- P03-1 / F-010 计划命令（phase/feature/task） ---- */
 
 /** `phase create --project <id> --title <t> [...]`：建立 open Phase。 */
+interface ParsedGraphCommandBase {
+  readonly kind: 'command';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly explicitCommandId?: string;
+}
+export interface ParsedPhaseMutation extends ParsedGraphCommandBase {
+  readonly command: 'phase';
+  readonly commandId: 'phase.update' | 'phase.close' | 'phase.reopen' | 'phase.archive';
+  readonly phaseId: string;
+  readonly revision: number;
+  readonly title?: string;
+  readonly description?: string | null;
+  readonly labels?: readonly string[];
+}
+export interface ParsedPhaseGraph extends ParsedGraphCommandBase {
+  readonly command: 'phase';
+  readonly commandId: 'phase.graph';
+  readonly phaseId: string;
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+export interface ParsedFeatureMove extends ParsedGraphCommandBase {
+  readonly command: 'feature';
+  readonly commandId: 'feature.move';
+  readonly featureId: string;
+  readonly revision: number;
+  readonly sourcePhaseId: string;
+  readonly targetPhaseId: string;
+  readonly sourcePhaseRevision: number;
+  readonly targetPhaseRevision: number;
+}
+export interface ParsedFeatureDependencies extends ParsedGraphCommandBase {
+  readonly command: 'feature';
+  readonly commandId: 'feature.dependencies';
+  readonly phaseId: string;
+  readonly revision: number;
+  readonly inputFile: string;
+}
 export interface ParsedPhaseCreate {
   readonly kind: 'command';
   readonly command: 'phase';
@@ -2490,7 +2802,10 @@ export interface ParsedExecutionPreview {
   readonly startTimeoutMs: number;
   readonly dataRoot?: string;
   readonly projectId: string;
-  readonly featureId: string;
+  readonly phaseId?: string;
+  readonly featureIds: readonly string[];
+  /** Legacy positional single Feature identity, retained for compatibility. */
+  readonly featureId?: string;
   readonly inputFile: string;
   readonly explicitCommandId?: string;
 }
@@ -2510,7 +2825,10 @@ export interface ParsedExecutionStart {
   readonly startTimeoutMs: number;
   readonly dataRoot?: string;
   readonly projectId: string;
-  readonly featureId: string;
+  readonly phaseId?: string;
+  readonly featureIds: readonly string[];
+  /** Legacy positional single Feature identity, retained for compatibility. */
+  readonly featureId?: string;
   readonly confirm: true;
   readonly inputFile?: string;
   readonly previewDigest?: string;
@@ -2589,6 +2907,22 @@ export interface ParsedExecutionDispatch {
   readonly startTimeoutMs: number;
   readonly dataRoot?: string;
   readonly projectId: string;
+  readonly batchId?: string;
+  readonly featureId?: string;
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+
+export interface ParsedExecutionResources {
+  readonly kind: 'command';
+  readonly command: 'execution';
+  readonly commandId: 'execution.resources';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly batchId?: string;
+  readonly featureId?: string;
   readonly limit?: number;
   readonly cursor?: string;
 }
@@ -2789,6 +3123,56 @@ export interface ParsedExecutionBatchControl {
   readonly batchId: string;
 }
 
+/** P05-9 Batch delivery fixed-scope read-only projection. */
+export interface ParsedExecutionBatchDelivery {
+  readonly kind: 'command';
+  readonly command: 'execution';
+  readonly commandId: 'execution.batch-delivery' | 'execution.batch-observe';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly batchId: string;
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+
+/** P05-9 Batch finalization: explicit CAS and confirmation are required. */
+export interface ParsedExecutionFinalize {
+  readonly kind: 'command';
+  readonly command: 'execution';
+  readonly commandId: 'execution.finalize';
+  readonly operation: 'execution.batch.finalize';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly phaseId: string;
+  readonly batchId: string;
+  readonly revision: number;
+  readonly confirm: true;
+  readonly explicitCommandId?: string;
+}
+
+/** P05-9 Phase delivery candidate approval, bound to Batch/Candidate revisions. */
+export interface ParsedPhaseDeliveryApprove {
+  readonly kind: 'command';
+  readonly command: 'phase';
+  readonly commandId: 'phase.delivery-approve';
+  readonly operation: 'phase.delivery.approve';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly phaseId: string;
+  readonly batchId: string;
+  readonly candidateId: string;
+  readonly revision: number;
+  readonly candidateRevision: number;
+  readonly confirm: true;
+  readonly explicitCommandId?: string;
+}
+
 /** P03-9 / F-015 Run 恢复诊断（execution.run.recovery.get；只读）。 */
 export interface ParsedExecutionRecovery {
   readonly kind: 'command';
@@ -2931,8 +3315,20 @@ export interface ParsedFeatureDelivery {
   readonly featureId: string;
 }
 
+export interface ParsedIntegrationPlan {
+  readonly kind: 'command';
+  readonly command: 'integration';
+  readonly commandId: 'integration.plan';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly integrationId: string;
+}
+
 /**
- * P03-8 / F-011 Feature 最终审批（task.approval.approve 既有授权命令）：决定
+ * P03-8 / F-011 Feature 最终审批
+ *（task.approval.approve 既有授权命令）：决定
  * 绑定当前计划/代码摘要（`--digest`/`--code-digest` 必填），`--revision` 是
  * 事项 expectedRevision；必须 `--confirm` 明确确认，缺确认在任何 I/O 之前
  * 拒绝。批准不自动运行最终检查或提交。
@@ -3000,6 +3396,29 @@ export interface ParsedGitOperations {
   readonly cursor?: string;
 }
 
+export interface ParsedGitRepairs {
+  readonly kind: 'command';
+  readonly command: 'git';
+  readonly commandId: 'git.repairs';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+
+export interface ParsedGitRepairGet {
+  readonly kind: 'command';
+  readonly command: 'git';
+  readonly commandId: 'git.repair';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly repairId: string;
+}
+
 /** P03-8 / F-011 单条 Git 操作详情（git.operations.get；意图 + 实际事实 + 回执投影）。 */
 export interface ParsedGitOperationGet {
   readonly kind: 'command';
@@ -3012,7 +3431,67 @@ export interface ParsedGitOperationGet {
   readonly operationId: string;
 }
 
+export interface ParsedPlanningStart {
+  readonly kind: 'command';
+  readonly command: 'planning';
+  readonly commandId: 'planning.start';
+  readonly operation: 'planning.start';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly phaseId: string;
+  readonly featureId: string;
+  readonly revision: number;
+  readonly inputFile: string;
+  readonly explicitCommandId?: string;
+}
+
+export interface ParsedPlanningList {
+  readonly kind: 'command';
+  readonly command: 'planning';
+  readonly commandId: 'planning.list';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly featureId?: string;
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+
+export interface ParsedPlanningGet {
+  readonly kind: 'command';
+  readonly command: 'planning';
+  readonly commandId: 'planning.get' | 'planning.candidate';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly candidateId: string;
+}
+
+export interface ParsedPlanningDecision {
+  readonly kind: 'command';
+  readonly command: 'planning';
+  readonly commandId: 'planning.approve' | 'planning.reject';
+  readonly operation: 'planning.candidate.decide';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly candidateId: string;
+  readonly candidateDigest: string;
+  readonly revision: number;
+  readonly reason?: string;
+  readonly explicitCommandId?: string;
+}
+
 export type ParsedAppCliCommand =
+  | ParsedPlanningStart
+  | ParsedPlanningList
+  | ParsedPlanningGet
+  | ParsedPlanningDecision
   | ParsedProjectInit
   | ParsedProjectOverview
   | ParsedProjectRegister
@@ -3034,6 +3513,10 @@ export type ParsedAppCliCommand =
   | ParsedBaselineCancel
   | ParsedBaselineEvidence
   | ParsedPhaseCreate
+  | ParsedPhaseMutation
+  | ParsedPhaseGraph
+  | ParsedFeatureMove
+  | ParsedFeatureDependencies
   | ParsedPhaseList
   | ParsedPhaseGet
   | ParsedPlanLabels
@@ -3059,6 +3542,7 @@ export type ParsedAppCliCommand =
   | ParsedExecutionAttempts
   | ParsedExecutionDiagnostics
   | ParsedExecutionDispatch
+  | ParsedExecutionResources
   | ParsedExecutionSessions
   | ParsedExecutionSession
   | ParsedExecutionSessionEvidence
@@ -3071,6 +3555,9 @@ export type ParsedAppCliCommand =
   | ParsedExecutionRetryFinal
   | ParsedExecutionControl
   | ParsedExecutionBatchControl
+  | ParsedExecutionBatchDelivery
+  | ParsedExecutionFinalize
+  | ParsedPhaseDeliveryApprove
   | ParsedExecutionRecovery
   | ParsedWorkspaceList
   | ParsedWorkspaceGet
@@ -3079,10 +3566,13 @@ export type ParsedAppCliCommand =
   | ParsedWorkspaceDiscardPreview
   | ParsedWorkspaceDiscard
   | ParsedFeatureDelivery
+  | ParsedIntegrationPlan
   | ParsedFeatureFinalApprove
   | ParsedFeatureFinalize
   | ParsedGitOperations
-  | ParsedGitOperationGet;
+  | ParsedGitOperationGet
+  | ParsedGitRepairs
+  | ParsedGitRepairGet;
 
 export interface ParsedAppCliHelp {
   readonly kind: 'help';
@@ -3523,13 +4013,14 @@ function buildExecution(
   switch (spec.commandId) {
     case 'execution.preview': {
       const explicitCommandId = optionalCommandId(scan, state);
+      const selector = resolveExecutionSelector(scan, state);
       return {
         ...base,
         command: 'execution',
         commandId: 'execution.preview',
         operation: 'execution.preview',
         projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
-        featureId: requirePlanId(scan.positionals[0] as string, state, 'featureId'),
+        ...selector,
         inputFile: requireBudgetFile(scan, state),
         ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
       };
@@ -3541,11 +4032,12 @@ function buildExecution(
         fail(state, 'confirmation_required', 'confirm');
       }
       const projectId = requireProjectId(requireOption(scan, '--project', state, 'project'), state);
-      const featureId = requirePlanId(scan.positionals[0] as string, state, 'featureId');
+      const selector = resolveExecutionSelector(scan, state);
       const retryBatchId = takeOption(scan, '--retry-batch');
       if (retryBatchId !== undefined) {
-        // 重试形态与新授权形态互斥（冲突参数拒绝，不发启动请求）。
-        if (scan.options.has('--input') || scan.options.has('--preview-digest')) {
+        // 重试形态与新授权形态互斥（冲突参数拒绝，不发启动请求）；Phase 选择
+        // 需要预算预览才能展开，不能与不携带预算的重试形态混用。
+        if (selector.phaseId !== undefined || scan.options.has('--input') || scan.options.has('--preview-digest')) {
           fail(state, 'conflicting_options');
         }
         return {
@@ -3554,7 +4046,7 @@ function buildExecution(
           commandId: 'execution.start',
           operation: 'execution.start',
           projectId,
-          featureId,
+          ...selector,
           retryBatchId: requireBatchId(retryBatchId, state),
           confirm: true,
           ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
@@ -3566,7 +4058,7 @@ function buildExecution(
         commandId: 'execution.start',
         operation: 'execution.start',
         projectId,
-        featureId,
+        ...selector,
         inputFile: requireBudgetFile(scan, state),
         previewDigest: requirePreviewDigest(scan, state),
         confirm: true,
@@ -3595,6 +4087,33 @@ function buildExecution(
         revision: requireRevision(scan, state),
         reason: requireReason(scan, state),
         inputFile: requireBudgetFile(scan, state),
+        ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
+      };
+    }
+    case 'execution.batch-delivery':
+    case 'execution.batch-observe': {
+      return {
+        ...base,
+        command: 'execution',
+        commandId: spec.commandId,
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        batchId: requireBatchId(scan.positionals[0] as string, state),
+        ...optionalPlanListPage(scan, state),
+      };
+    }
+    case 'execution.finalize': {
+      if (!scan.bools.has('--confirm')) fail(state, 'confirmation_required', 'confirm');
+      const explicitCommandId = optionalCommandId(scan, state);
+      return {
+        ...base,
+        command: 'execution',
+        commandId: 'execution.finalize',
+        operation: 'execution.batch.finalize',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        phaseId: requirePlanIdOption(scan, '--phase', state, 'phaseId'),
+        batchId: requireBatchId(scan.positionals[0] as string, state),
+        revision: requireRevision(scan, state),
+        confirm: true,
         ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
       };
     }
@@ -3628,11 +4147,32 @@ function buildExecution(
       };
     }
     case 'execution.dispatch': {
+      const batchId = takeOption(scan, '--batch');
+      const featureId = takeOption(scan, '--feature');
+      if (batchId !== undefined && featureId !== undefined) {
+        fail(state, 'conflicting_options');
+      }
       return {
         ...base,
         command: 'execution',
         commandId: 'execution.dispatch',
         projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        ...(batchId !== undefined ? { batchId: requireBatchId(batchId, state) } : {}),
+        ...(featureId !== undefined ? { featureId: requirePlanId(featureId, state, 'feature') } : {}),
+        ...optionalPlanListPage(scan, state),
+      };
+    }
+    case 'execution.resources': {
+      const batchId = takeOption(scan, '--batch');
+      const featureId = takeOption(scan, '--feature');
+      if (batchId !== undefined && featureId !== undefined) fail(state, 'conflicting_options');
+      return {
+        ...base,
+        command: 'execution',
+        commandId: 'execution.resources',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        ...(batchId !== undefined ? { batchId: requireBatchId(batchId, state) } : {}),
+        ...(featureId !== undefined ? { featureId: requirePlanId(featureId, state, 'feature') } : {}),
         ...optionalPlanListPage(scan, state),
       };
     }
@@ -3952,6 +4492,65 @@ function buildWorkspace(
   }
 }
 
+function buildPlanning(
+  scan: ScanResult,
+  state: ParseState,
+  spec: AppCommandSpec,
+): ParsedAppCliCommand {
+  assertPositionals(scan, spec, state);
+  const base = baseResult(state, scan);
+  switch (spec.commandId) {
+    case 'planning.start': {
+      const explicitCommandId = optionalCommandId(scan, state);
+      return {
+        ...base,
+        command: 'planning', commandId: 'planning.start', operation: 'planning.start',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        phaseId: requirePlanIdOption(scan, '--phase', state, 'phaseId'),
+        featureId: requirePlanId(scan.positionals[0] as string, state, 'featureId'),
+        revision: requireRevision(scan, state),
+        inputFile: requireInputFile(scan, state),
+        ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
+      };
+    }
+    case 'planning.list': {
+      const featureRaw = takeOption(scan, '--feature');
+      return {
+        ...base,
+        command: 'planning', commandId: 'planning.list',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        ...(featureRaw !== undefined ? { featureId: requirePlanId(featureRaw, state, 'featureId') } : {}),
+        ...optionalPlanListPage(scan, state),
+      };
+    }
+    case 'planning.get':
+    case 'planning.candidate':
+      return {
+        ...base,
+        command: 'planning', commandId: spec.commandId,
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        candidateId: requirePlanId(scan.positionals[0] as string, state, 'candidateId'),
+      };
+    case 'planning.approve':
+    case 'planning.reject': {
+      const explicitCommandId = optionalCommandId(scan, state);
+      const reason = optionalReason(scan, state);
+      return {
+        ...base,
+        command: 'planning', commandId: spec.commandId, operation: 'planning.candidate.decide',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        candidateId: requirePlanId(scan.positionals[0] as string, state, 'candidateId'),
+        candidateDigest: requirePlanDigest(scan, state),
+        revision: requireRevision(scan, state),
+        ...(reason !== undefined ? { reason } : {}),
+        ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
+      };
+    }
+    default:
+      fail(state, 'unknown_subcommand');
+  }
+}
+
 /**
  * 计划命令（P03-1 / F-010）：Phase 建立、单 Feature 计划导入、层级/DAG 查询、
  * 草稿修订与纯标签编辑。expectedRevision（`--revision`）是唯一 CAS 入口；
@@ -3965,6 +4564,54 @@ function buildPlanEntity(
   assertPositionals(scan, spec, state);
   const base = baseResult(state, scan);
   switch (spec.commandId) {
+    case 'phase.update':
+    case 'phase.close':
+    case 'phase.reopen':
+    case 'phase.archive': {
+      const explicitCommandId = optionalCommandId(scan, state);
+      const title = scan.options.has('--title') ? resolvePlanTitle(scan, state) : undefined;
+      const description = resolveInitDescription(scan, state);
+      if ((description !== undefined && scan.bools.has('--clear-description')) ||
+          (scan.options.has('--label') && scan.bools.has('--clear-labels'))) fail(state, 'conflicting_options');
+      const labels = scan.options.has('--label') || scan.bools.has('--clear-labels') ? takeLabels(scan, state) : undefined;
+      if (spec.commandId === 'phase.update' && title === undefined && description === undefined &&
+          !scan.bools.has('--clear-description') && labels === undefined) fail(state, 'missing_required_option', 'metadata');
+      return {
+        ...base, command: 'phase', commandId: spec.commandId,
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        phaseId: requirePlanId(scan.positionals[0] as string, state, 'phaseId'), revision: requireRevision(scan, state),
+        ...(title !== undefined ? { title } : {}),
+        ...(scan.bools.has('--clear-description') ? { description: null } : description !== undefined ? { description } : {}),
+        ...(labels !== undefined ? { labels } : {}),
+        ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
+      };
+    }
+    case 'phase.graph':
+      return { ...base, command: 'phase', commandId: 'phase.graph',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        phaseId: requirePlanId(scan.positionals[0] as string, state, 'phaseId'), ...optionalPlanListPage(scan, state) };
+    case 'feature.move': {
+      const positiveRevision = (flag: string) => {
+        const raw = requireOption(scan, flag, state, flag.slice(2));
+        if (!/^[1-9]\d*$/.test(raw) || !Number.isSafeInteger(Number(raw))) fail(state, 'invalid_revision', flag.slice(2));
+        return Number(raw);
+      };
+      const explicitCommandId = optionalCommandId(scan, state);
+      return { ...base, command: 'feature', commandId: 'feature.move',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        featureId: requirePlanId(scan.positionals[0] as string, state, 'featureId'), revision: requireRevision(scan, state),
+        sourcePhaseId: requirePlanIdOption(scan, '--from-phase', state, 'sourcePhaseId'),
+        targetPhaseId: requirePlanIdOption(scan, '--to-phase', state, 'targetPhaseId'),
+        sourcePhaseRevision: positiveRevision('--source-revision'), targetPhaseRevision: positiveRevision('--target-revision'),
+        ...(explicitCommandId !== undefined ? { explicitCommandId } : {}) };
+    }
+    case 'feature.dependencies': {
+      const explicitCommandId = optionalCommandId(scan, state);
+      return { ...base, command: 'feature', commandId: 'feature.dependencies',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        phaseId: requirePlanIdOption(scan, '--phase', state, 'phaseId'), revision: requireRevision(scan, state),
+        inputFile: requireInputFile(scan, state), ...(explicitCommandId !== undefined ? { explicitCommandId } : {}) };
+    }
     case 'phase.create': {
       const projectId = requireProjectId(requireOption(scan, '--project', state, 'project'), state);
       const title = resolvePlanTitle(scan, state);
@@ -3997,6 +4644,27 @@ function buildPlanEntity(
         command: 'phase',
         commandId: 'phase.get',
         phaseId: requirePlanId(scan.positionals[0] as string, state, 'phaseId'),
+      };
+    }
+    case 'phase.delivery-approve': {
+      if (!scan.bools.has('--confirm')) fail(state, 'confirmation_required', 'confirm');
+      const explicitCommandId = optionalCommandId(scan, state);
+      const candidateRevisionRaw = requireOption(scan, '--candidate-revision', state, 'candidateRevision');
+      const candidateRevision = parseUnsignedInteger(candidateRevisionRaw);
+      if (candidateRevision === undefined || candidateRevision < 1) fail(state, 'invalid_revision', 'candidateRevision');
+      return {
+        ...base,
+        command: 'phase',
+        commandId: 'phase.delivery-approve',
+        operation: 'phase.delivery.approve',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        phaseId: requirePlanId(scan.positionals[0] as string, state, 'phaseId'),
+        batchId: requireBatchId(requireOption(scan, '--batch', state, 'batch'), state),
+        candidateId: requirePlanId(requireOption(scan, '--candidate', state, 'candidate'), state, 'candidateId'),
+        revision: requireRevision(scan, state),
+        candidateRevision,
+        confirm: true,
+        ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
       };
     }
     case 'phase.labels':
@@ -4061,6 +4729,15 @@ function buildPlanEntity(
         revision: requireRevision(scan, state),
         inputFile: requireInputFile(scan, state),
         ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
+      };
+    }
+    case 'integration.plan': {
+      return {
+        ...base,
+        command: 'integration',
+        commandId: 'integration.plan',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        integrationId: requirePlanId(scan.positionals[0] as string, state, 'integrationId'),
       };
     }
     case 'feature.report':
@@ -4310,6 +4987,24 @@ function buildGit(
         ...optionalPlanListPage(scan, state),
       };
     }
+    case 'git.repairs': {
+      return {
+        ...base,
+        command: 'git',
+        commandId: 'git.repairs',
+        projectId,
+        ...optionalPlanListPage(scan, state),
+      };
+    }
+    case 'git.repair': {
+      return {
+        ...base,
+        command: 'git',
+        commandId: 'git.repair',
+        projectId,
+        repairId: requirePlanId(scan.positionals[0] as string, state, 'repairId'),
+      };
+    }
     case 'git.operation': {
       return {
         ...base,
@@ -4320,7 +5015,7 @@ function buildGit(
       };
     }
     default:
-      fail(state, 'unknown_subcommand');
+      return fail(state, 'unknown_subcommand');
   }
 }
 
@@ -4406,14 +5101,18 @@ export function parseAppCliArgs(
     case 'feature':
     case 'task':
       return buildPlanEntity(scan, state, spec);
+    case 'planning':
+      return buildPlanning(scan, state, spec);
     case 'execution':
       return buildExecution(scan, state, spec);
     case 'workspace':
       return buildWorkspace(scan, state, spec);
     case 'git':
       return buildGit(scan, state, spec);
+    case 'integration':
+      return buildPlanEntity(scan, state, spec);
     default:
-      fail(state, 'unknown_subcommand');
+      return fail(state, 'unknown_subcommand');
   }
 }
 

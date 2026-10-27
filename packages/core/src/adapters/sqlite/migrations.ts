@@ -2839,6 +2839,112 @@ BEGIN SELECT RAISE(ABORT, 'run dispatch claim release requires released slot'); 
 `;
 
 /**
+ * P05-1 / F-002（迁移 v35）：一次性规划上下文（planning_contexts）。
+ *
+ * 只持久绑定一次规划的身份与依据事实：Project/Phase/Feature、规划 Run
+ * （Run.purpose=plan）、planning Task、candidateId、输入身份 inputDigest、目标
+ * revision/计划摘要（应用候选时的 CAS 依据）、候选 Artifact/摘要（发布后写入，
+ * 未生成时恒为 NULL）及后续决策/应用关联。预算/队列/Artifact 正文/审批决策正文
+ * 一律复用既有设施，本表不复制，也不新建任何 Task/预算状态机。
+ *
+ * 入口约束：复合外键冻结同项目归属（project/phase/feature 三层一致、Run 属于
+ * 同一 Feature、planning Task 属于同一 Feature）；(project_id, candidate_id) 与
+ * (project_id, run_id) 唯一（单候选、单 Run 一上下文）；部分唯一索引限制同
+ * Feature 同时只有一个活动规划（open/candidate_published）。
+ *
+ * 状态与写一次约束：状态枚举 CHECK 冻结 open/candidate_published/applied/
+ * rejected/cancelled；候选形状 CHECK（open 无候选事实、发布后候选齐备）与决策
+ * 一致性 CHECK（approved ⇒ applied+应用关联，rejected ⇒ 无应用关联）；身份列
+ * 不可变触发器、候选绑定写一次触发器与决策写一次触发器作为防御纵深。
+ * 迁移不改动 v1–v34 任何 SQL/checksum，也不自动创建规划 Run/Task。
+ */
+const MIGRATION_035_SQL = `
+CREATE TABLE planning_contexts (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  updated_at INTEGER NOT NULL,
+  phase_id TEXT NOT NULL,
+  feature_id TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  planning_task_id TEXT NOT NULL,
+  candidate_id TEXT NOT NULL,
+  input_digest TEXT NOT NULL,
+  target_revision INTEGER NOT NULL,
+  plan_digest TEXT,
+  candidate_artifact_id TEXT,
+  candidate_content_hash TEXT,
+  candidate_digest TEXT,
+  candidate_summary TEXT,
+  status TEXT NOT NULL,
+  decision TEXT,
+  decision_reason TEXT,
+  decided_at INTEGER,
+  applied_revision INTEGER,
+  applied_at INTEGER,
+  CONSTRAINT planning_contexts_times_check CHECK (typeof(created_at) = 'integer' AND created_at >= 0
+    AND typeof(updated_at) = 'integer' AND updated_at >= 0
+    AND (decided_at IS NULL OR (typeof(decided_at) = 'integer' AND decided_at >= 1 AND decided_at >= created_at))
+    AND (applied_at IS NULL OR (typeof(applied_at) = 'integer' AND applied_at >= 1 AND applied_at >= created_at))),
+  CONSTRAINT planning_contexts_status_check CHECK (status IN ('open', 'candidate_published', 'applied', 'rejected', 'cancelled')),
+  CONSTRAINT planning_contexts_digest_check CHECK (length(input_digest) = 64 AND input_digest NOT GLOB '*[^0-9a-f]*'
+    AND (plan_digest IS NULL OR (length(plan_digest) = 64 AND plan_digest NOT GLOB '*[^0-9a-f]*'))
+    AND (candidate_digest IS NULL OR (length(candidate_digest) = 64 AND candidate_digest NOT GLOB '*[^0-9a-f]*'))
+    AND (candidate_content_hash IS NULL OR (length(candidate_content_hash) = 64 AND candidate_content_hash NOT GLOB '*[^0-9a-f]*'))),
+  CONSTRAINT planning_contexts_revision_check CHECK (typeof(target_revision) = 'integer' AND target_revision >= 1
+    AND (applied_revision IS NULL OR (typeof(applied_revision) = 'integer' AND applied_revision >= 1))),
+  CONSTRAINT planning_contexts_candidate_shape_check CHECK (
+    (status = 'open' AND candidate_artifact_id IS NULL AND candidate_content_hash IS NULL
+      AND candidate_digest IS NULL AND candidate_summary IS NULL)
+    OR (status IN ('candidate_published', 'applied', 'rejected') AND candidate_artifact_id IS NOT NULL
+      AND candidate_content_hash IS NOT NULL AND candidate_digest IS NOT NULL AND candidate_summary IS NOT NULL)
+    OR status = 'cancelled'),
+  CONSTRAINT planning_contexts_summary_check CHECK (candidate_summary IS NULL OR length(candidate_summary) BETWEEN 1 AND 2000),
+  CONSTRAINT planning_contexts_decision_check CHECK (
+    (decision IS NULL AND status IN ('open', 'candidate_published', 'cancelled'))
+    OR (decision = 'approved' AND status = 'applied' AND decided_at IS NOT NULL
+      AND applied_revision IS NOT NULL AND applied_at IS NOT NULL)
+    OR (decision = 'rejected' AND status = 'rejected' AND decided_at IS NOT NULL
+      AND applied_revision IS NULL AND applied_at IS NULL)),
+  CONSTRAINT planning_contexts_decision_reason_check CHECK (decision_reason IS NULL OR length(decision_reason) BETWEEN 1 AND 512),
+  CONSTRAINT planning_contexts_candidate_artifact_fk FOREIGN KEY (project_id, candidate_artifact_id) REFERENCES artifacts (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT planning_contexts_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT planning_contexts_phase_fk FOREIGN KEY (project_id, phase_id) REFERENCES phases (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT planning_contexts_feature_fk FOREIGN KEY (project_id, phase_id, feature_id) REFERENCES features (project_id, phase_id, id) ON DELETE RESTRICT,
+  CONSTRAINT planning_contexts_run_fk FOREIGN KEY (project_id, run_id) REFERENCES runs (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT planning_contexts_feature_run_fk FOREIGN KEY (feature_id, run_id) REFERENCES runs (feature_id, id) ON DELETE RESTRICT,
+  CONSTRAINT planning_contexts_planning_task_fk FOREIGN KEY (feature_id, planning_task_id) REFERENCES tasks (feature_id, id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX planning_contexts_candidate_unique ON planning_contexts (project_id, candidate_id);
+CREATE UNIQUE INDEX planning_contexts_run_unique ON planning_contexts (project_id, run_id);
+CREATE UNIQUE INDEX planning_contexts_feature_active_unique ON planning_contexts (feature_id)
+  WHERE status IN ('open', 'candidate_published');
+CREATE INDEX planning_contexts_project_updated_index ON planning_contexts (project_id, updated_at);
+
+CREATE TRIGGER planning_contexts_identity_immutable BEFORE UPDATE ON planning_contexts
+WHEN NEW.created_at IS NOT OLD.created_at OR NEW.project_id IS NOT OLD.project_id
+  OR NEW.phase_id IS NOT OLD.phase_id OR NEW.feature_id IS NOT OLD.feature_id
+  OR NEW.run_id IS NOT OLD.run_id OR NEW.planning_task_id IS NOT OLD.planning_task_id
+  OR NEW.candidate_id IS NOT OLD.candidate_id OR NEW.input_digest IS NOT OLD.input_digest
+  OR NEW.target_revision IS NOT OLD.target_revision OR NEW.plan_digest IS NOT OLD.plan_digest
+  OR typeof(NEW.updated_at) <> 'integer' OR NEW.updated_at < OLD.updated_at
+BEGIN SELECT RAISE(ABORT, 'planning context identity is immutable'); END;
+CREATE TRIGGER planning_contexts_candidate_write_once BEFORE UPDATE ON planning_contexts
+WHEN (NEW.candidate_artifact_id IS NOT OLD.candidate_artifact_id AND OLD.candidate_artifact_id IS NOT NULL)
+  OR (NEW.candidate_content_hash IS NOT OLD.candidate_content_hash AND OLD.candidate_content_hash IS NOT NULL)
+  OR (NEW.candidate_digest IS NOT OLD.candidate_digest AND OLD.candidate_digest IS NOT NULL)
+  OR (NEW.candidate_summary IS NOT OLD.candidate_summary AND OLD.candidate_summary IS NOT NULL)
+BEGIN SELECT RAISE(ABORT, 'planning candidate binding is write-once'); END;
+CREATE TRIGGER planning_contexts_decision_write_once BEFORE UPDATE ON planning_contexts
+WHEN (NEW.decision IS NOT OLD.decision AND OLD.decision IS NOT NULL)
+  OR (NEW.decision_reason IS NOT OLD.decision_reason AND OLD.decision_reason IS NOT NULL)
+  OR (NEW.decided_at IS NOT OLD.decided_at AND OLD.decided_at IS NOT NULL)
+  OR (NEW.applied_revision IS NOT OLD.applied_revision AND OLD.applied_revision IS NOT NULL)
+  OR (NEW.applied_at IS NOT OLD.applied_at AND OLD.applied_at IS NOT NULL)
+BEGIN SELECT RAISE(ABORT, 'planning decision is write-once'); END;
+`;
+
+/**
  * P04-9 / F-002（迁移 v34）：Run 已授权即持久执行意图。
  *
  * 只新增既有列无法表达的三件入队事实：第几次以何种授权来源登记（source）、
@@ -2896,6 +3002,956 @@ WHEN NEW.created_at IS NOT OLD.created_at OR NEW.project_id IS NOT OLD.project_i
   OR NEW.authorization_digest IS NOT OLD.authorization_digest
   OR NEW.enqueued_at IS NOT OLD.enqueued_at OR NEW.reason IS NOT OLD.reason
 BEGIN SELECT RAISE(ABORT, 'run dispatch intent identity is immutable'); END;
+`;
+
+/**
+ * v36: P05-1 / F-003 planning.start 接受回执（receipt v7）持久列。
+ *
+ * - command_receipts 重建（v10 同一方式）：追加 planning_task_id/candidate_id
+ *   两列（v5/v6 恒 NULL），v7 关联 CHECK 冻结 operation='planning.start' +
+ *   accepted + project scope + 四重身份非空 + operation_id = batch_id；
+ * - 新增复合外键 (project_id, candidate_id) → planning_contexts(project_id,
+ *   candidate_id)（v35 唯一索引）；既有 work_batch/work_run/baseline 外键与
+ *   全部索引原样保留；既有行经 INSERT…SELECT 逐列保留（规划列 NULL）；
+ * - 不触碰 v1–v35 任何其他表；不新建预算/队列/回执以外的新表。
+ */
+const MIGRATION_036_SQL = `
+CREATE TABLE command_receipts_v36 (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  principal_id TEXT NOT NULL,
+  command_id TEXT NOT NULL,
+  scope_kind TEXT NOT NULL,
+  project_id TEXT,
+  operation TEXT NOT NULL,
+  request_digest TEXT NOT NULL,
+  status TEXT NOT NULL,
+  operation_id TEXT,
+  receipt_version INTEGER NOT NULL DEFAULT 5,
+  baseline_operation_id TEXT GENERATED ALWAYS AS (CASE WHEN receipt_version = 5 THEN operation_id END) STORED,
+  batch_id TEXT,
+  run_id TEXT,
+  planning_task_id TEXT,
+  candidate_id TEXT,
+  result_json TEXT,
+  result_ref TEXT,
+  error_code TEXT,
+  error_message TEXT,
+  error_details TEXT,
+  issued_at INTEGER NOT NULL,
+  completed_at INTEGER NOT NULL,
+  CONSTRAINT command_receipts_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT command_receipts_operation_fk FOREIGN KEY (baseline_operation_id) REFERENCES baseline_operations (id) ON DELETE RESTRICT,
+  CONSTRAINT command_receipts_baseline_same_project_fk FOREIGN KEY (project_id, baseline_operation_id) REFERENCES baseline_operations (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT command_receipts_work_batch_fk FOREIGN KEY (project_id, batch_id) REFERENCES execution_batches (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT command_receipts_work_run_fk FOREIGN KEY (project_id, batch_id, run_id) REFERENCES runs (project_id, batch_id, id) ON DELETE RESTRICT,
+  CONSTRAINT command_receipts_planning_context_fk FOREIGN KEY (project_id, candidate_id) REFERENCES planning_contexts (project_id, candidate_id) ON DELETE RESTRICT,
+  CONSTRAINT command_receipts_scope_check CHECK ((scope_kind = 'project' AND project_id IS NOT NULL) OR (scope_kind IN ('registration','global') AND project_id IS NULL)),
+  CONSTRAINT command_receipts_status_check CHECK (status IN ('completed','rejected','accepted')),
+  CONSTRAINT command_receipts_completed_check CHECK (status <> 'completed' OR (result_json IS NOT NULL AND result_ref IS NOT NULL AND error_code IS NULL)),
+  CONSTRAINT command_receipts_rejected_check CHECK (status <> 'rejected' OR (error_code IS NOT NULL AND result_json IS NULL)),
+  CONSTRAINT command_receipts_accepted_check CHECK (status <> 'accepted' OR (operation_id IS NOT NULL AND result_json IS NULL AND result_ref IS NULL AND error_code IS NULL)),
+  CONSTRAINT command_receipts_association_check CHECK (
+    (receipt_version = 5 AND batch_id IS NULL AND run_id IS NULL AND planning_task_id IS NULL AND candidate_id IS NULL) OR
+    (receipt_version = 6 AND operation = 'execution.start' AND status = 'accepted' AND scope_kind = 'project'
+      AND batch_id IS NOT NULL AND run_id IS NOT NULL AND operation_id = batch_id
+      AND planning_task_id IS NULL AND candidate_id IS NULL
+      AND error_message IS NULL AND error_details IS NULL) OR
+    (receipt_version = 7 AND operation = 'planning.start' AND status = 'accepted' AND scope_kind = 'project'
+      AND batch_id IS NOT NULL AND run_id IS NOT NULL AND planning_task_id IS NOT NULL AND candidate_id IS NOT NULL
+      AND operation_id = batch_id AND error_message IS NULL AND error_details IS NULL)
+  ),
+  CONSTRAINT command_receipts_digest_check CHECK (length(request_digest) = 64 AND request_digest NOT GLOB '*[^0-9a-f]*')
+);
+
+INSERT INTO command_receipts_v36 (id, created_at, revision, updated_at, principal_id, command_id, scope_kind, project_id, operation, request_digest, status, operation_id, receipt_version, batch_id, run_id, planning_task_id, candidate_id, result_json, result_ref, error_code, error_message, error_details, issued_at, completed_at)
+SELECT id, created_at, revision, updated_at, principal_id, command_id, scope_kind, project_id, operation, request_digest, status, operation_id, receipt_version, batch_id, run_id, NULL, NULL, result_json, result_ref, error_code, error_message, error_details, issued_at, completed_at FROM command_receipts;
+
+DROP TABLE command_receipts;
+ALTER TABLE command_receipts_v36 RENAME TO command_receipts;
+CREATE UNIQUE INDEX command_receipts_principal_command_unique ON command_receipts (principal_id, command_id);
+CREATE UNIQUE INDEX command_receipts_result_ref_unique ON command_receipts (result_ref);
+CREATE UNIQUE INDEX command_receipts_operation_id_unique ON command_receipts (operation_id);
+CREATE INDEX command_receipts_principal_project_index ON command_receipts (principal_id, project_id);
+`;
+
+/**
+ * P05-2 / F-001（迁移 v37）：Feature DAG 依赖边。
+ *
+ * 依赖边必须属于同一项目、同一 Phase，且两端都是该 Phase 的 Feature；简单外键
+ * 保证实体存在，复合外键防止直接 SQL 伪造项目/Phase 归属。自依赖和重复边由
+ * CHECK/唯一索引拒绝；环检测属于依赖写入原语的事务校验，不在 SQLite DDL 中复制。
+ * code_baseline_ref 是可选的前置代码集成基线引用，不承载 Batch/Run/Attempt 状态。
+ */
+const MIGRATION_037_SQL = `
+CREATE TABLE feature_dependencies (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  phase_id TEXT NOT NULL,
+  feature_id TEXT NOT NULL,
+  depends_on_id TEXT NOT NULL,
+  code_baseline_ref TEXT,
+  CONSTRAINT feature_dependencies_revision_positive_check CHECK (revision >= 1),
+  CONSTRAINT feature_dependencies_no_self_dependency_check CHECK (feature_id <> depends_on_id),
+  CONSTRAINT feature_dependencies_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT feature_dependencies_phase_fk FOREIGN KEY (phase_id) REFERENCES phases (id) ON DELETE RESTRICT,
+  CONSTRAINT feature_dependencies_feature_fk FOREIGN KEY (feature_id) REFERENCES features (id) ON DELETE RESTRICT,
+  CONSTRAINT feature_dependencies_depends_on_fk FOREIGN KEY (depends_on_id) REFERENCES features (id) ON DELETE RESTRICT,
+  CONSTRAINT feature_dependencies_phase_same_project_fk FOREIGN KEY (project_id, phase_id) REFERENCES phases (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT feature_dependencies_feature_same_phase_fk FOREIGN KEY (project_id, phase_id, feature_id) REFERENCES features (project_id, phase_id, id) ON DELETE RESTRICT,
+  CONSTRAINT feature_dependencies_depends_on_same_phase_fk FOREIGN KEY (project_id, phase_id, depends_on_id) REFERENCES features (project_id, phase_id, id) ON DELETE RESTRICT
+);
+
+CREATE UNIQUE INDEX feature_dependencies_phase_edge_unique ON feature_dependencies (phase_id, feature_id, depends_on_id);
+CREATE INDEX feature_dependencies_phase_depends_on_index ON feature_dependencies (phase_id, depends_on_id);
+`;
+
+/**
+ * P05-3 / F-001（迁移 v38）：固定 Batch 的多 Feature 成员关系。
+ *
+ * 旧 Batch 保留 feature_id 作为 P04 兼容锚点；scope_snapshot.featureIds 是完整
+ * 固定范围，成员表是 Run 的权威归属。迁移先回填既有单 Feature Batch，再重建 runs
+ * 以移除 v9 的单 Feature 复合外键。foreignKeysOff 只用于这个表重建窗口，提交前
+ * 由迁移器执行全库 foreign_key_check，失败时整组回滚。
+ */
+const MIGRATION_038_SQL = `
+PRAGMA legacy_alter_table = ON;
+CREATE TABLE execution_batches_v38 (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  phase_id TEXT NOT NULL,
+  feature_id TEXT NOT NULL,
+  scope_snapshot TEXT NOT NULL,
+  config_snapshot TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'queued',
+  budget_revision INTEGER NOT NULL DEFAULT 1,
+  budget_snapshot TEXT NOT NULL,
+  runs_created INTEGER NOT NULL DEFAULT 0,
+  attempts_created INTEGER NOT NULL DEFAULT 0,
+  runtime_starts INTEGER NOT NULL DEFAULT 0,
+  no_progress_runs INTEGER NOT NULL DEFAULT 0,
+  deadline_at INTEGER NOT NULL,
+  reason TEXT,
+  pause_requested_at INTEGER,
+  CONSTRAINT execution_batches_revision_positive_check CHECK (revision >= 1),
+  CONSTRAINT execution_batches_status_enum_check CHECK (status IN ('queued', 'running', 'pausing', 'paused', 'cancelling', 'cancelled', 'succeeded', 'failed', 'interrupted')),
+  CONSTRAINT execution_batches_scope_snapshot_json_check CHECK (json_valid(scope_snapshot) AND json_type(scope_snapshot) = 'object'),
+  CONSTRAINT execution_batches_scope_members_check CHECK (json_type(scope_snapshot, '$.featureIds') IS 'array' AND json_array_length(scope_snapshot, '$.featureIds') >= 1),
+  CONSTRAINT execution_batches_config_snapshot_json_check CHECK (json_valid(config_snapshot) AND json_type(config_snapshot) = 'object'),
+  CONSTRAINT execution_batches_budget_revision_positive_check CHECK (budget_revision >= 1),
+  CONSTRAINT execution_batches_budget_snapshot_json_check CHECK (json_valid(budget_snapshot) AND json_type(budget_snapshot) = 'object'),
+  CONSTRAINT execution_batches_runs_created_non_negative_check CHECK (runs_created >= 0),
+  CONSTRAINT execution_batches_attempts_created_non_negative_check CHECK (attempts_created >= 0),
+  CONSTRAINT execution_batches_runtime_starts_non_negative_check CHECK (runtime_starts >= 0),
+  CONSTRAINT execution_batches_no_progress_runs_non_negative_check CHECK (no_progress_runs >= 0),
+  CONSTRAINT execution_batches_deadline_at_positive_check CHECK (deadline_at >= 1),
+  CONSTRAINT execution_batches_pause_requested_at_non_negative_check CHECK (pause_requested_at IS NULL OR (typeof(pause_requested_at) = 'integer' AND pause_requested_at >= 1)),
+  CONSTRAINT execution_batches_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT execution_batches_phase_fk FOREIGN KEY (phase_id) REFERENCES phases (id) ON DELETE RESTRICT,
+  CONSTRAINT execution_batches_feature_fk FOREIGN KEY (feature_id) REFERENCES features (id) ON DELETE RESTRICT,
+  CONSTRAINT execution_batches_feature_same_project_fk FOREIGN KEY (project_id, feature_id) REFERENCES features (project_id, id) ON DELETE RESTRICT
+);
+DROP TRIGGER IF EXISTS run_dispatch_intents_insert_scope_check;
+INSERT INTO execution_batches_v38 SELECT id, created_at, project_id, revision, updated_at, phase_id, feature_id,
+  scope_snapshot, config_snapshot, status, budget_revision, budget_snapshot, runs_created, attempts_created,
+  runtime_starts, no_progress_runs, deadline_at, reason, pause_requested_at FROM execution_batches;
+DROP TABLE execution_batches;
+ALTER TABLE execution_batches_v38 RENAME TO execution_batches;
+CREATE UNIQUE INDEX execution_batches_project_id_id_unique ON execution_batches (project_id, id);
+CREATE UNIQUE INDEX execution_batches_id_feature_id_unique ON execution_batches (id, feature_id);
+CREATE UNIQUE INDEX execution_batches_active_phase_unique ON execution_batches (phase_id) WHERE status IN ('queued', 'running', 'pausing', 'paused', 'cancelling', 'interrupted');
+CREATE TRIGGER execution_batches_immutable_columns_update BEFORE UPDATE ON execution_batches
+WHEN NEW.id IS NOT OLD.id OR NEW.created_at IS NOT OLD.created_at OR NEW.project_id IS NOT OLD.project_id
+  OR NEW.phase_id IS NOT OLD.phase_id OR NEW.feature_id IS NOT OLD.feature_id
+  OR NEW.scope_snapshot IS NOT OLD.scope_snapshot OR NEW.config_snapshot IS NOT OLD.config_snapshot
+BEGIN
+  SELECT RAISE(ABORT, 'execution_batches immutable scope, config and identity columns cannot be updated');
+END;
+
+CREATE TABLE execution_batch_members (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  batch_id TEXT NOT NULL,
+  phase_id TEXT NOT NULL,
+  feature_id TEXT NOT NULL,
+  member_ordinal INTEGER NOT NULL,
+  CONSTRAINT execution_batch_members_created_at_check CHECK (typeof(created_at) = 'integer' AND created_at >= 0),
+  CONSTRAINT execution_batch_members_ordinal_check CHECK (typeof(member_ordinal) = 'integer' AND member_ordinal >= 1),
+  CONSTRAINT execution_batch_members_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT execution_batch_members_batch_fk FOREIGN KEY (project_id, batch_id) REFERENCES execution_batches (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT execution_batch_members_feature_fk FOREIGN KEY (project_id, phase_id, feature_id) REFERENCES features (project_id, phase_id, id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX execution_batch_members_batch_feature_unique ON execution_batch_members (project_id, batch_id, feature_id);
+CREATE UNIQUE INDEX execution_batch_members_batch_ordinal_unique ON execution_batch_members (batch_id, member_ordinal);
+CREATE UNIQUE INDEX execution_batch_members_project_id_id_unique ON execution_batch_members (project_id, id);
+CREATE INDEX execution_batch_members_batch_index ON execution_batch_members (project_id, batch_id, member_ordinal);
+
+INSERT INTO execution_batch_members (id, created_at, project_id, batch_id, phase_id, feature_id, member_ordinal)
+SELECT b.id || ':' || b.feature_id, b.created_at, b.project_id, b.id, b.phase_id, b.feature_id, 1
+FROM execution_batches b;
+
+CREATE TRIGGER execution_batch_members_immutable_update BEFORE UPDATE ON execution_batch_members
+BEGIN SELECT RAISE(ABORT, 'execution batch member rows are immutable'); END;
+CREATE TRIGGER execution_batch_members_immutable_delete BEFORE DELETE ON execution_batch_members
+BEGIN SELECT RAISE(ABORT, 'execution batch member rows are immutable'); END;
+CREATE TRIGGER execution_batches_scope_member_anchor_check BEFORE INSERT ON execution_batches
+WHEN NOT EXISTS (
+  SELECT 1 FROM json_each(NEW.scope_snapshot, '$.featureIds') WHERE value = NEW.feature_id
+)
+BEGIN SELECT RAISE(ABORT, 'execution batch feature anchor is outside fixed member scope'); END;
+CREATE TRIGGER execution_batches_scope_members_insert AFTER INSERT ON execution_batches
+BEGIN
+  INSERT INTO execution_batch_members (id, created_at, project_id, batch_id, phase_id, feature_id, member_ordinal)
+  SELECT NEW.id || ':' || CAST(value AS TEXT), NEW.created_at, NEW.project_id, NEW.id, NEW.phase_id,
+    CAST(value AS TEXT), CAST(key AS INTEGER) + 1
+  FROM json_each(NEW.scope_snapshot, '$.featureIds');
+END;
+
+CREATE TABLE runs_v38 (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  batch_id TEXT NOT NULL,
+  feature_id TEXT NOT NULL,
+  purpose TEXT NOT NULL,
+  input_snapshot TEXT NOT NULL,
+  config_snapshot TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'queued',
+  scope_digest TEXT NOT NULL,
+  work_key TEXT NOT NULL,
+  dispatch_ordinal INTEGER NOT NULL DEFAULT 1,
+  max_attempts_per_run INTEGER NOT NULL,
+  run_time_limit_ms INTEGER NOT NULL,
+  attempts_created INTEGER NOT NULL DEFAULT 0,
+  reason TEXT,
+  started_at INTEGER,
+  ended_at INTEGER,
+  pause_requested_at INTEGER,
+  CONSTRAINT runs_revision_positive_check CHECK (revision >= 1),
+  CONSTRAINT runs_purpose_not_empty_check CHECK (length(purpose) > 0),
+  CONSTRAINT runs_input_snapshot_json_check CHECK (json_valid(input_snapshot) AND json_type(input_snapshot) = 'object'),
+  CONSTRAINT runs_config_snapshot_json_check CHECK (json_valid(config_snapshot) AND json_type(config_snapshot) = 'object'),
+  CONSTRAINT runs_status_enum_check CHECK (status IN ('queued', 'running', 'pausing', 'paused', 'cancelling', 'cancelled', 'succeeded', 'failed', 'interrupted')),
+  CONSTRAINT runs_scope_digest_sha256_check CHECK (length(scope_digest) = 64 AND scope_digest NOT GLOB '*[^0-9a-f]*'),
+  CONSTRAINT runs_work_key_not_empty_check CHECK (length(work_key) > 0),
+  CONSTRAINT runs_dispatch_ordinal_positive_check CHECK (dispatch_ordinal >= 1),
+  CONSTRAINT runs_max_attempts_per_run_positive_check CHECK (max_attempts_per_run >= 1),
+  CONSTRAINT runs_run_time_limit_ms_positive_check CHECK (run_time_limit_ms >= 1),
+  CONSTRAINT runs_attempts_created_non_negative_check CHECK (attempts_created >= 0),
+  CONSTRAINT runs_started_at_non_negative_check CHECK (started_at IS NULL OR started_at >= 0),
+  CONSTRAINT runs_ended_at_non_negative_check CHECK (ended_at IS NULL OR ended_at >= 0),
+  CONSTRAINT runs_pause_requested_at_non_negative_check CHECK (pause_requested_at IS NULL OR (typeof(pause_requested_at) = 'integer' AND pause_requested_at >= 1)),
+  CONSTRAINT runs_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT runs_batch_fk FOREIGN KEY (batch_id) REFERENCES execution_batches (id) ON DELETE RESTRICT,
+  CONSTRAINT runs_feature_fk FOREIGN KEY (feature_id) REFERENCES features (id) ON DELETE RESTRICT,
+  CONSTRAINT runs_batch_same_project_fk FOREIGN KEY (project_id, batch_id) REFERENCES execution_batches (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT runs_feature_same_project_fk FOREIGN KEY (project_id, feature_id) REFERENCES features (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT runs_batch_member_same_scope_fk FOREIGN KEY (project_id, batch_id, feature_id) REFERENCES execution_batch_members (project_id, batch_id, feature_id) ON DELETE RESTRICT
+);
+DROP TRIGGER IF EXISTS run_dispatch_claims_insert_scope_check;
+DROP TRIGGER IF EXISTS run_dispatch_intents_insert_scope_check;
+INSERT INTO runs_v38 SELECT id, created_at, project_id, revision, updated_at, batch_id, feature_id, purpose,
+  input_snapshot, config_snapshot, status, scope_digest, work_key, dispatch_ordinal, max_attempts_per_run,
+  run_time_limit_ms, attempts_created, reason, started_at, ended_at, pause_requested_at FROM runs;
+DROP TABLE runs;
+ALTER TABLE runs_v38 RENAME TO runs;
+
+CREATE UNIQUE INDEX runs_dispatch_identity_unique ON runs (batch_id, work_key, dispatch_ordinal);
+CREATE UNIQUE INDEX runs_active_feature_unique ON runs (feature_id) WHERE status IN ('queued', 'running', 'pausing', 'paused', 'cancelling', 'interrupted');
+CREATE INDEX runs_batch_id_status_index ON runs (batch_id, status);
+CREATE UNIQUE INDEX runs_receipt_identity_unique ON runs (project_id, batch_id, id);
+CREATE UNIQUE INDEX runs_feature_id_id_unique ON runs (feature_id, id);
+CREATE UNIQUE INDEX runs_project_id_id_unique ON runs (project_id, id);
+
+CREATE TRIGGER runs_immutable_columns_update BEFORE UPDATE ON runs
+WHEN NEW.id IS NOT OLD.id OR NEW.created_at IS NOT OLD.created_at OR NEW.project_id IS NOT OLD.project_id
+  OR NEW.batch_id IS NOT OLD.batch_id OR NEW.feature_id IS NOT OLD.feature_id
+  OR NEW.purpose IS NOT OLD.purpose OR NEW.input_snapshot IS NOT OLD.input_snapshot
+  OR NEW.config_snapshot IS NOT OLD.config_snapshot OR NEW.scope_digest IS NOT OLD.scope_digest
+  OR NEW.work_key IS NOT OLD.work_key OR NEW.dispatch_ordinal IS NOT OLD.dispatch_ordinal
+  OR NEW.max_attempts_per_run IS NOT OLD.max_attempts_per_run OR NEW.run_time_limit_ms IS NOT OLD.run_time_limit_ms
+  OR (OLD.started_at IS NOT NULL AND NEW.started_at IS NOT OLD.started_at)
+BEGIN
+  SELECT RAISE(ABORT, 'runs immutable input, dispatch identity and time basis columns cannot be updated');
+END;
+CREATE TRIGGER runs_ended_at_immutable_update BEFORE UPDATE ON runs
+WHEN OLD.ended_at IS NOT NULL AND NEW.ended_at IS NOT OLD.ended_at
+BEGIN SELECT RAISE(ABORT, 'runs ended_at cannot be rewritten after settlement'); END;
+CREATE TRIGGER run_dispatch_claims_insert_scope_check BEFORE INSERT ON run_dispatch_claims
+WHEN NOT EXISTS (
+  SELECT 1 FROM runs r WHERE r.project_id = NEW.project_id AND r.id = NEW.run_id
+    AND r.feature_id = NEW.feature_id
+    AND r.status IN ('queued', 'running', 'paused', 'interrupted')
+)
+BEGIN SELECT RAISE(ABORT, 'run dispatch claim scope or run state mismatch'); END;
+CREATE TRIGGER run_dispatch_intents_insert_scope_check BEFORE INSERT ON run_dispatch_intents
+WHEN NOT EXISTS (
+  SELECT 1 FROM runs r
+    JOIN projects p ON p.id = r.project_id
+    JOIN execution_batches b ON b.project_id = r.project_id AND b.id = r.batch_id
+  WHERE r.project_id = NEW.project_id AND r.id = NEW.run_id
+    AND r.feature_id = NEW.feature_id AND r.batch_id = NEW.batch_id
+    AND r.status = 'queued' AND p.status = 'active'
+    AND b.status IN ('queued', 'running')
+)
+BEGIN SELECT RAISE(ABORT, 'run dispatch intent scope or state mismatch'); END;
+PRAGMA legacy_alter_table = OFF;
+`;
+
+const MIGRATION_039_SQL = `
+-- P05-4：不同 Feature 的独立 worktree 可以同时持有同名 global/project gate。
+-- 资源键保留 P04 的稳定语义；同 Feature 排他由 WorkResourceAccess 按 Attempt→Feature
+-- 事实核对，workspace 键仍唯一标识具体 worktree。
+DROP INDEX workspace_leases_resource_key_unique;
+CREATE INDEX workspace_leases_resource_key_index ON workspace_leases (resource_key);
+`;
+
+const MIGRATION_040_SQL = `
+-- v40 (P05-5 / F-002): durable Feature shared-resource leases.
+-- This table is independent from Attempt workspace_leases and Run dispatch claims.
+CREATE TABLE feature_resource_leases (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  resource_key TEXT NOT NULL,
+  resource_kind TEXT NOT NULL,
+  access_mode TEXT NOT NULL,
+  lease_mode TEXT NOT NULL,
+  owner_id TEXT NOT NULL,
+  owner_version INTEGER NOT NULL,
+  acquired_at INTEGER NOT NULL,
+  lease_until INTEGER NOT NULL,
+  state TEXT NOT NULL DEFAULT 'held',
+  waiting_reason TEXT,
+  released_at INTEGER,
+  CONSTRAINT feature_resource_leases_revision_check CHECK (revision >= 1),
+  CONSTRAINT feature_resource_leases_resource_check CHECK (length(resource_key) BETWEEN 1 AND 256),
+  CONSTRAINT feature_resource_leases_kind_check CHECK (resource_kind IN ('planning_exclusive', 'feature_code_shared', 'worktree_write_exclusive', 'git_public_metadata_short', 'migration', 'contract')),
+  CONSTRAINT feature_resource_leases_mode_check CHECK (access_mode IN ('exclusive', 'shared') AND lease_mode IN ('lease', 'short')),
+  CONSTRAINT feature_resource_leases_semantics_check CHECK (
+    (resource_kind = 'feature_code_shared' AND access_mode = 'shared' AND lease_mode = 'lease')
+    OR (resource_kind <> 'feature_code_shared' AND access_mode = 'exclusive'
+      AND ((resource_kind = 'git_public_metadata_short' AND lease_mode = 'short')
+        OR (resource_kind <> 'git_public_metadata_short' AND lease_mode = 'lease')))),
+  CONSTRAINT feature_resource_leases_owner_check CHECK (length(owner_id) BETWEEN 1 AND 128 AND typeof(owner_version) = 'integer' AND owner_version >= 1),
+  CONSTRAINT feature_resource_leases_times_check CHECK (typeof(created_at) = 'integer' AND created_at >= 0
+    AND typeof(updated_at) = 'integer' AND updated_at >= 0
+    AND typeof(acquired_at) = 'integer' AND acquired_at >= 0
+    AND typeof(lease_until) = 'integer' AND lease_until >= acquired_at),
+  CONSTRAINT feature_resource_leases_state_check CHECK (state IN ('held', 'quarantined', 'released')),
+  CONSTRAINT feature_resource_leases_waiting_reason_check CHECK (waiting_reason IS NULL OR (json_valid(waiting_reason) AND json_type(waiting_reason) = 'object'
+    AND json_type(waiting_reason, '$.code') = 'text' AND json_type(waiting_reason, '$.resourceKey') = 'text'
+    AND json_extract(waiting_reason, '$.resourceKey') = resource_key)),
+  CONSTRAINT feature_resource_leases_settlement_check CHECK (
+    (state = 'held' AND waiting_reason IS NULL AND released_at IS NULL)
+    OR (state = 'quarantined' AND waiting_reason IS NOT NULL AND released_at IS NULL)
+    OR (state = 'released' AND waiting_reason IS NULL AND released_at IS NOT NULL AND released_at >= acquired_at)),
+  CONSTRAINT feature_resource_leases_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX feature_resource_leases_active_exclusive_unique ON feature_resource_leases (project_id, resource_key)
+  WHERE state IN ('held', 'quarantined') AND access_mode = 'exclusive';
+CREATE UNIQUE INDEX feature_resource_leases_active_shared_owner_unique ON feature_resource_leases (project_id, resource_key, owner_id, owner_version)
+  WHERE state IN ('held', 'quarantined') AND access_mode = 'shared';
+CREATE INDEX feature_resource_leases_project_state_index ON feature_resource_leases (project_id, state, updated_at);
+CREATE INDEX feature_resource_leases_owner_index ON feature_resource_leases (project_id, owner_id, owner_version);
+CREATE TRIGGER feature_resource_leases_project_key_insert BEFORE INSERT ON feature_resource_leases
+WHEN substr(NEW.resource_key, 1, length('project:' || NEW.project_id || ':')) <> 'project:' || NEW.project_id || ':'
+BEGIN SELECT RAISE(ABORT, 'feature resource key is outside project'); END;
+CREATE TRIGGER feature_resource_leases_project_key_update BEFORE UPDATE OF project_id, resource_key ON feature_resource_leases
+WHEN substr(NEW.resource_key, 1, length('project:' || NEW.project_id || ':')) <> 'project:' || NEW.project_id || ':'
+BEGIN SELECT RAISE(ABORT, 'feature resource key is outside project'); END;
+CREATE TRIGGER feature_resource_leases_identity_immutable BEFORE UPDATE ON feature_resource_leases
+WHEN NEW.id IS NOT OLD.id OR NEW.project_id IS NOT OLD.project_id OR NEW.resource_key IS NOT OLD.resource_key
+  OR NEW.resource_kind IS NOT OLD.resource_kind OR NEW.access_mode IS NOT OLD.access_mode OR NEW.lease_mode IS NOT OLD.lease_mode
+  OR NEW.owner_id IS NOT OLD.owner_id OR NEW.owner_version IS NOT OLD.owner_version OR NEW.acquired_at IS NOT OLD.acquired_at
+BEGIN SELECT RAISE(ABORT, 'feature resource lease identity is immutable'); END;
+CREATE TRIGGER feature_resource_leases_revision_cas BEFORE UPDATE ON feature_resource_leases
+WHEN NEW.revision IS NOT OLD.revision + 1
+BEGIN SELECT RAISE(ABORT, 'feature resource lease revision CAS failed'); END;
+CREATE TRIGGER feature_resource_leases_state_transition BEFORE UPDATE ON feature_resource_leases
+WHEN (OLD.state = 'released' AND NEW.state <> 'released') OR (OLD.state = 'quarantined' AND NEW.state = 'held')
+BEGIN SELECT RAISE(ABORT, 'illegal feature resource lease transition'); END;
+`;
+
+const MIGRATION_041_SQL = `
+-- P05-5 / F-006：停止 operation 增加 Feature 目标，保留旧 Run/Batch 行。
+PRAGMA legacy_alter_table = ON;
+CREATE TABLE execution_stop_operations_v41 (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  command_id TEXT NOT NULL,
+  target_kind TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  batch_id TEXT NOT NULL,
+  feature_id TEXT,
+  run_id TEXT,
+  reason TEXT NOT NULL,
+  status TEXT NOT NULL,
+  requested_at INTEGER NOT NULL,
+  settled_at INTEGER,
+  evidence_ref TEXT,
+  stop_confirmed INTEGER,
+  forced INTEGER,
+  checked_at INTEGER,
+  CONSTRAINT execution_stop_operations_revision_check CHECK (revision >= 1),
+  CONSTRAINT execution_stop_operations_target_kind_check CHECK (target_kind IN ('run','batch','feature')),
+  CONSTRAINT execution_stop_operations_status_check CHECK (status IN ('stopping','stopped','uncertain')),
+  CONSTRAINT execution_stop_operations_reason_check CHECK (reason = 'user_cancel'),
+  CONSTRAINT execution_stop_operations_target_shape_check CHECK (
+    (target_kind = 'run' AND run_id = target_id AND feature_id IS NULL)
+    OR (target_kind = 'batch' AND run_id IS NULL AND feature_id IS NULL)
+    OR (target_kind = 'feature' AND run_id IS NULL AND feature_id = target_id)
+  ),
+  CONSTRAINT execution_stop_operations_times_check CHECK (
+    typeof(created_at) = 'integer' AND created_at >= 1
+    AND typeof(updated_at) = 'integer' AND updated_at >= 1
+    AND typeof(requested_at) = 'integer' AND requested_at >= 1
+    AND (settled_at IS NULL OR (typeof(settled_at) = 'integer' AND settled_at >= requested_at))
+  ),
+  CONSTRAINT execution_stop_operations_command_check CHECK (length(command_id) > 0 AND length(command_id) <= 128),
+  CONSTRAINT execution_stop_operations_evidence_ref_check CHECK (evidence_ref IS NULL OR (length(evidence_ref) > 0 AND length(evidence_ref) <= 128)),
+  CONSTRAINT execution_stop_operations_stop_confirmed_check CHECK (stop_confirmed IS NULL OR stop_confirmed IN (0, 1)),
+  CONSTRAINT execution_stop_operations_forced_check CHECK (forced IS NULL OR forced IN (0, 1)),
+  CONSTRAINT execution_stop_operations_checked_at_check CHECK (checked_at IS NULL OR (typeof(checked_at) = 'integer' AND checked_at >= 1)),
+  CONSTRAINT execution_stop_operations_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT execution_stop_operations_batch_fk FOREIGN KEY (project_id, batch_id) REFERENCES execution_batches (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT execution_stop_operations_feature_fk FOREIGN KEY (project_id, feature_id) REFERENCES features (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT execution_stop_operations_run_fk FOREIGN KEY (project_id, run_id) REFERENCES runs (project_id, id) ON DELETE RESTRICT
+);
+INSERT INTO execution_stop_operations_v41
+  (id, created_at, project_id, revision, updated_at, command_id, target_kind, target_id,
+   batch_id, feature_id, run_id, reason, status, requested_at, settled_at, evidence_ref,
+   stop_confirmed, forced, checked_at)
+SELECT id, created_at, project_id, revision, updated_at, command_id, target_kind, target_id,
+  batch_id, NULL, run_id, reason, status, requested_at, settled_at, evidence_ref,
+  stop_confirmed, forced, checked_at
+FROM execution_stop_operations;
+DROP TABLE execution_stop_operations;
+ALTER TABLE execution_stop_operations_v41 RENAME TO execution_stop_operations;
+CREATE UNIQUE INDEX execution_stop_operations_project_id_id_unique ON execution_stop_operations (project_id, id);
+CREATE UNIQUE INDEX execution_stop_operations_project_command_unique ON execution_stop_operations (project_id, command_id);
+CREATE UNIQUE INDEX execution_stop_operations_active_target_unique ON execution_stop_operations (project_id, target_kind, target_id)
+  WHERE status IN ('stopping', 'uncertain');
+CREATE INDEX execution_stop_operations_target_index ON execution_stop_operations (project_id, target_kind, target_id, requested_at);
+CREATE TRIGGER execution_stop_operations_identity_immutable BEFORE UPDATE ON execution_stop_operations
+WHEN NEW.id IS NOT OLD.id OR NEW.project_id IS NOT OLD.project_id OR NEW.created_at IS NOT OLD.created_at
+  OR NEW.command_id IS NOT OLD.command_id OR NEW.target_kind IS NOT OLD.target_kind
+  OR NEW.target_id IS NOT OLD.target_id OR NEW.batch_id IS NOT OLD.batch_id
+  OR NEW.feature_id IS NOT OLD.feature_id OR NEW.run_id IS NOT OLD.run_id OR NEW.reason IS NOT OLD.reason
+  OR NEW.requested_at IS NOT OLD.requested_at
+BEGIN SELECT RAISE(ABORT, 'execution stop operation identity is immutable'); END;
+PRAGMA legacy_alter_table = OFF;
+`;
+
+
+/**
+ * P05-6 / F-002（迁移 v42）：冻结的集成计划及前置成果快照。
+ *
+ * 计划正文、获准输入、合并顺序、验证范围和策略摘要只保存身份级 JSON；每个
+ * 前置 Feature 单独保存一行成果快照，使查询和重启读取不依赖当前 branch HEAD。
+ * 所有归属由复合外键和插入触发器双重保护，冻结后输入列与快照列不可改写。
+ */
+const MIGRATION_042_SQL = `
+CREATE TABLE integration_plans (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  phase_id TEXT NOT NULL,
+  batch_id TEXT NOT NULL,
+  successor_feature_id TEXT NOT NULL,
+  target_baseline TEXT NOT NULL,
+  input_digest TEXT NOT NULL,
+  mode TEXT NOT NULL,
+  merge_order TEXT NOT NULL,
+  approved_inputs TEXT NOT NULL,
+  verification_scope TEXT NOT NULL,
+  strategy_summary TEXT NOT NULL,
+  integration_result TEXT,
+  status TEXT NOT NULL,
+  block_reasons TEXT NOT NULL DEFAULT '[]',
+  stale_reasons TEXT NOT NULL DEFAULT '[]',
+  frozen_at INTEGER,
+  CONSTRAINT integration_plans_revision_check CHECK (revision >= 1),
+  CONSTRAINT integration_plans_target_baseline_check CHECK (length(target_baseline) IN (40, 64) AND target_baseline NOT GLOB '*[^0-9a-f]*'),
+  CONSTRAINT integration_plans_input_digest_check CHECK (length(input_digest) = 64 AND input_digest NOT GLOB '*[^0-9a-f]*'),
+  CONSTRAINT integration_plans_mode_check CHECK (mode IN ('reuse_single_predecessor', 'merge_multiple_predecessors')),
+  CONSTRAINT integration_plans_status_check CHECK (status IN ('dependency_passed', 'integration_passed', 'stale', 'blocked')),
+  CONSTRAINT integration_plans_merge_order_json_check CHECK (json_valid(merge_order) AND json_type(merge_order) = 'array'),
+  CONSTRAINT integration_plans_approved_inputs_json_check CHECK (json_valid(approved_inputs) AND json_type(approved_inputs) = 'array'),
+  CONSTRAINT integration_plans_verification_scope_json_check CHECK (json_valid(verification_scope) AND json_type(verification_scope) = 'array'),
+  CONSTRAINT integration_plans_strategy_json_check CHECK (json_valid(strategy_summary) AND json_type(strategy_summary) = 'object'),
+  CONSTRAINT integration_plans_result_json_check CHECK (integration_result IS NULL OR (json_valid(integration_result) AND json_type(integration_result) = 'object')),
+  CONSTRAINT integration_plans_reasons_json_check CHECK (json_valid(block_reasons) AND json_type(block_reasons) = 'array' AND json_valid(stale_reasons) AND json_type(stale_reasons) = 'array'),
+  CONSTRAINT integration_plans_times_check CHECK (typeof(created_at) = 'integer' AND created_at >= 1 AND typeof(updated_at) = 'integer' AND updated_at >= created_at AND (frozen_at IS NULL OR (typeof(frozen_at) = 'integer' AND frozen_at >= created_at))),
+  CONSTRAINT integration_plans_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT integration_plans_phase_fk FOREIGN KEY (project_id, phase_id) REFERENCES phases (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT integration_plans_batch_fk FOREIGN KEY (project_id, batch_id) REFERENCES execution_batches (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT integration_plans_successor_fk FOREIGN KEY (project_id, phase_id, successor_feature_id) REFERENCES features (project_id, phase_id, id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX integration_plans_project_id_id_unique ON integration_plans (project_id, id);
+CREATE INDEX integration_plans_project_status_index ON integration_plans (project_id, status, updated_at, id);
+
+CREATE TABLE integration_predecessor_snapshots (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  plan_id TEXT NOT NULL,
+  phase_id TEXT NOT NULL,
+  feature_id TEXT NOT NULL,
+  predecessor_ordinal INTEGER NOT NULL,
+  dependency_passed INTEGER NOT NULL,
+  delivery_commit TEXT,
+  delivery_evidence_id TEXT,
+  delivery_evidence_digest TEXT,
+  covered_input_ids TEXT NOT NULL,
+  ancestor_verified INTEGER NOT NULL,
+  CONSTRAINT integration_snapshots_created_check CHECK (typeof(created_at) = 'integer' AND created_at >= 1),
+  CONSTRAINT integration_snapshots_ordinal_check CHECK (typeof(predecessor_ordinal) = 'integer' AND predecessor_ordinal >= 1),
+  CONSTRAINT integration_snapshots_boolean_check CHECK (dependency_passed IN (0, 1) AND ancestor_verified IN (0, 1)),
+  CONSTRAINT integration_snapshots_commit_check CHECK (delivery_commit IS NULL OR (length(delivery_commit) IN (40, 64) AND delivery_commit NOT GLOB '*[^0-9a-f]*')),
+  CONSTRAINT integration_snapshots_evidence_shape_check CHECK ((delivery_commit IS NULL AND delivery_evidence_id IS NULL AND delivery_evidence_digest IS NULL) OR (delivery_commit IS NOT NULL AND length(delivery_evidence_id) > 0 AND length(delivery_evidence_digest) = 64 AND delivery_evidence_digest NOT GLOB '*[^0-9a-f]*')),
+  CONSTRAINT integration_snapshots_inputs_json_check CHECK (json_valid(covered_input_ids) AND json_type(covered_input_ids) = 'array'),
+  CONSTRAINT integration_snapshots_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT integration_snapshots_plan_fk FOREIGN KEY (project_id, plan_id) REFERENCES integration_plans (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT integration_snapshots_feature_fk FOREIGN KEY (project_id, phase_id, feature_id) REFERENCES features (project_id, phase_id, id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX integration_snapshots_plan_feature_unique ON integration_predecessor_snapshots (plan_id, feature_id);
+CREATE UNIQUE INDEX integration_snapshots_plan_ordinal_unique ON integration_predecessor_snapshots (plan_id, predecessor_ordinal);
+CREATE UNIQUE INDEX integration_snapshots_project_id_id_unique ON integration_predecessor_snapshots (project_id, id);
+
+CREATE TRIGGER integration_plans_batch_phase_check BEFORE INSERT ON integration_plans
+WHEN NOT EXISTS (SELECT 1 FROM execution_batches WHERE project_id = NEW.project_id AND id = NEW.batch_id AND phase_id = NEW.phase_id)
+BEGIN SELECT RAISE(ABORT, 'integration plan batch is outside phase'); END;
+CREATE TRIGGER integration_plans_identity_immutable BEFORE UPDATE ON integration_plans
+WHEN NEW.id IS NOT OLD.id OR NEW.created_at IS NOT OLD.created_at OR NEW.project_id IS NOT OLD.project_id
+  OR NEW.phase_id IS NOT OLD.phase_id OR NEW.batch_id IS NOT OLD.batch_id OR NEW.successor_feature_id IS NOT OLD.successor_feature_id
+  OR NEW.target_baseline IS NOT OLD.target_baseline OR NEW.input_digest IS NOT OLD.input_digest OR NEW.mode IS NOT OLD.mode
+  OR NEW.merge_order IS NOT OLD.merge_order OR NEW.approved_inputs IS NOT OLD.approved_inputs
+  OR NEW.verification_scope IS NOT OLD.verification_scope OR NEW.strategy_summary IS NOT OLD.strategy_summary
+BEGIN SELECT RAISE(ABORT, 'integration plan frozen input is immutable'); END;
+CREATE TRIGGER integration_plans_frozen_at_immutable BEFORE UPDATE ON integration_plans
+WHEN OLD.frozen_at IS NOT NULL AND NEW.frozen_at IS NOT OLD.frozen_at
+BEGIN SELECT RAISE(ABORT, 'integration plan freeze seal is immutable'); END;
+CREATE TRIGGER integration_predecessor_snapshots_immutable_update BEFORE UPDATE ON integration_predecessor_snapshots
+BEGIN SELECT RAISE(ABORT, 'integration predecessor snapshot is immutable'); END;
+CREATE TRIGGER integration_predecessor_snapshots_immutable_delete BEFORE DELETE ON integration_predecessor_snapshots
+BEGIN SELECT RAISE(ABORT, 'integration predecessor snapshot is immutable'); END;
+`;
+
+const MIGRATION_043_SQL = `
+-- P05-7 / F-002: extend the existing Git operation fact with integration intent/result.
+-- Rebuild is required because SQLite cannot alter the v30 operation/status checks in place.
+PRAGMA foreign_keys = OFF;
+CREATE TABLE git_operations_v43 (
+  id TEXT PRIMARY KEY NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1, project_id TEXT NOT NULL, feature_id TEXT NOT NULL,
+  run_id TEXT NOT NULL, attempt_id TEXT, execution_version INTEGER NOT NULL,
+  operation_type TEXT NOT NULL, repository_binding_id TEXT NOT NULL, repo_identity TEXT NOT NULL,
+  worktree_path TEXT NOT NULL, expected_head TEXT NOT NULL, candidate_tree TEXT NOT NULL,
+  integration_plan TEXT, budget_snapshot TEXT, code_digest TEXT NOT NULL,
+  verification_refs TEXT NOT NULL, approval_refs TEXT NOT NULL, message TEXT NOT NULL,
+  identity_name TEXT NOT NULL, identity_email TEXT NOT NULL, delivery_policy_digest TEXT NOT NULL,
+  runtime_source TEXT, owner_id TEXT NOT NULL, host_instance_id TEXT NOT NULL,
+  intent_digest TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', actual_commit TEXT,
+  actual_tree TEXT, exit_code INTEGER, duration_ms INTEGER, reason_code TEXT, receipt TEXT,
+  integration_result TEXT, recovery_state TEXT NOT NULL DEFAULT 'none',
+  workspace_preserved INTEGER NOT NULL DEFAULT 0, delivery_status TEXT, settled_at INTEGER,
+  CONSTRAINT git_operations_revision_check CHECK (revision >= 1),
+  CONSTRAINT git_operations_version_check CHECK (typeof(execution_version) = 'integer' AND execution_version >= 1),
+  CONSTRAINT git_operations_type_check CHECK (operation_type IN ('feature_final_commit', 'task_commit', 'integration', 'integration_commit')),
+  CONSTRAINT git_operations_task_attempt_check CHECK (operation_type <> 'task_commit' OR attempt_id IS NOT NULL),
+  CONSTRAINT git_operations_oid_check CHECK (
+    length(expected_head) IN (40, 64) AND expected_head NOT GLOB '*[^0-9a-f]*'
+    AND length(candidate_tree) IN (40, 64) AND candidate_tree NOT GLOB '*[^0-9a-f]*'
+    AND (actual_commit IS NULL OR (length(actual_commit) IN (40, 64) AND actual_commit NOT GLOB '*[^0-9a-f]*'))
+    AND (actual_tree IS NULL OR (length(actual_tree) IN (40, 64) AND actual_tree NOT GLOB '*[^0-9a-f]*'))
+  ),
+  CONSTRAINT git_operations_digest_check CHECK (
+    length(code_digest) = 64 AND code_digest NOT GLOB '*[^0-9a-f]*'
+    AND length(delivery_policy_digest) = 64 AND delivery_policy_digest NOT GLOB '*[^0-9a-f]*'
+    AND length(intent_digest) = 64 AND intent_digest NOT GLOB '*[^0-9a-f]*'
+  ),
+  CONSTRAINT git_operations_refs_check CHECK (json_valid(verification_refs) AND json_type(verification_refs) = 'array' AND json_valid(approval_refs) AND json_type(approval_refs) = 'array'),
+  CONSTRAINT git_operations_message_check CHECK (length(trim(message)) > 0 AND length(message) <= 16384),
+  CONSTRAINT git_operations_identity_check CHECK (length(trim(identity_name)) > 0 AND length(trim(identity_email)) > 0),
+  CONSTRAINT git_operations_runtime_check CHECK (runtime_source IS NULL OR (json_valid(runtime_source) AND json_type(runtime_source) = 'object')),
+  CONSTRAINT git_operations_integration_plan_check CHECK (integration_plan IS NULL OR (json_valid(integration_plan) AND json_type(integration_plan) = 'object')),
+  CONSTRAINT git_operations_budget_snapshot_check CHECK (budget_snapshot IS NULL OR (json_valid(budget_snapshot) AND json_type(budget_snapshot) = 'object')),
+  CONSTRAINT git_operations_integration_result_check CHECK (integration_result IS NULL OR (json_valid(integration_result) AND json_type(integration_result) = 'object')),
+  CONSTRAINT git_operations_recovery_check CHECK (recovery_state IN ('none', 'resumable', 'preserved', 'cleaned', 'quarantined') AND workspace_preserved IN (0, 1)),
+  CONSTRAINT git_operations_status_check CHECK (status IN ('pending', 'succeeded', 'no_change', 'failed', 'unknown')),
+  CONSTRAINT git_operations_delivery_status_check CHECK (delivery_status IS NULL OR delivery_status IN ('not_requested', 'pending', 'succeeded', 'failed')),
+  CONSTRAINT git_operations_exit_check CHECK (exit_code IS NULL OR (typeof(exit_code) = 'integer' AND exit_code >= 0)),
+  CONSTRAINT git_operations_duration_check CHECK (duration_ms IS NULL OR (typeof(duration_ms) = 'integer' AND duration_ms >= 0)),
+  CONSTRAINT git_operations_reason_check CHECK (reason_code IS NULL OR reason_code GLOB '[a-z]*' AND length(reason_code) <= 64 AND reason_code NOT GLOB '*[^a-z0-9_]'),
+  CONSTRAINT git_operations_receipt_check CHECK (receipt IS NULL OR (json_valid(receipt) AND json_type(receipt) = 'object')),
+  CONSTRAINT git_operations_times_check CHECK (typeof(created_at) = 'integer' AND created_at >= 0 AND typeof(updated_at) = 'integer' AND updated_at >= 0 AND (settled_at IS NULL OR (typeof(settled_at) = 'integer' AND settled_at >= 0))),
+  CONSTRAINT git_operations_terminal_shape_check CHECK (
+    (status = 'pending' AND actual_commit IS NULL AND actual_tree IS NULL AND exit_code IS NULL AND duration_ms IS NULL AND reason_code IS NULL AND receipt IS NULL AND integration_result IS NULL AND recovery_state = 'none' AND workspace_preserved = 0 AND delivery_status IS NULL AND settled_at IS NULL)
+    OR (status = 'succeeded' AND actual_commit IS NOT NULL AND actual_tree IS NOT NULL AND receipt IS NOT NULL AND delivery_status = CASE WHEN operation_type IN ('task_commit', 'integration', 'integration_commit') THEN 'not_requested' ELSE 'succeeded' END AND settled_at IS NOT NULL)
+    OR (status = 'no_change' AND actual_commit = expected_head AND actual_tree IS NOT NULL AND receipt IS NOT NULL AND delivery_status = CASE WHEN operation_type IN ('task_commit', 'integration', 'integration_commit') THEN 'not_requested' ELSE 'succeeded' END AND settled_at IS NOT NULL)
+    OR (status = 'failed' AND receipt IS NOT NULL AND delivery_status = CASE WHEN operation_type IN ('task_commit', 'integration', 'integration_commit') THEN 'not_requested' ELSE 'failed' END AND settled_at IS NOT NULL)
+    OR (status = 'unknown' AND actual_commit IS NULL AND actual_tree IS NULL AND receipt IS NOT NULL AND delivery_status = CASE WHEN operation_type IN ('task_commit', 'integration', 'integration_commit') THEN 'not_requested' ELSE 'pending' END AND settled_at IS NOT NULL)
+  ),
+  CONSTRAINT git_operations_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT git_operations_binding_fk FOREIGN KEY (repository_binding_id) REFERENCES repository_bindings (id) ON DELETE RESTRICT,
+  CONSTRAINT git_operations_feature_fk FOREIGN KEY (project_id, feature_id) REFERENCES features (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT git_operations_run_fk FOREIGN KEY (feature_id, run_id) REFERENCES runs (feature_id, id) ON DELETE RESTRICT,
+  CONSTRAINT git_operations_attempt_fk FOREIGN KEY (project_id, attempt_id) REFERENCES attempts (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT git_operations_binding_same_project_fk FOREIGN KEY (project_id, repository_binding_id) REFERENCES repository_bindings (project_id, id) ON DELETE RESTRICT
+);
+INSERT INTO git_operations_v43
+  (rowid, id, created_at, updated_at, revision, project_id, feature_id, run_id, attempt_id,
+   execution_version, operation_type, repository_binding_id, repo_identity, worktree_path,
+   expected_head, candidate_tree, code_digest, verification_refs, approval_refs, message,
+   identity_name, identity_email, delivery_policy_digest, runtime_source, owner_id,
+   host_instance_id, intent_digest, status, actual_commit, actual_tree, exit_code, duration_ms,
+   reason_code, receipt, delivery_status, settled_at)
+SELECT rowid, id, created_at, updated_at, revision, project_id, feature_id, run_id, attempt_id,
+   execution_version, operation_type, repository_binding_id, repo_identity, worktree_path,
+   expected_head, candidate_tree, code_digest, verification_refs, approval_refs, message,
+   identity_name, identity_email, delivery_policy_digest, runtime_source, owner_id,
+   host_instance_id, intent_digest, status, actual_commit, actual_tree, exit_code, duration_ms,
+   reason_code, receipt, delivery_status, settled_at FROM git_operations;
+DROP TABLE git_operations;
+ALTER TABLE git_operations_v43 RENAME TO git_operations;
+CREATE UNIQUE INDEX git_operations_project_id_id_unique ON git_operations (project_id, id);
+CREATE INDEX git_operations_project_feature_status_index ON git_operations (project_id, feature_id, status);
+CREATE INDEX git_operations_project_run_index ON git_operations (project_id, run_id);
+CREATE INDEX git_operations_project_intent_index ON git_operations (project_id, intent_digest);
+CREATE TRIGGER git_operations_insert_pending BEFORE INSERT ON git_operations WHEN NEW.status <> 'pending' BEGIN SELECT RAISE(ABORT, 'git operation must start pending'); END;
+CREATE TRIGGER git_operations_attempt_identity_check BEFORE INSERT ON git_operations WHEN NEW.attempt_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM attempts WHERE attempts.id = NEW.attempt_id AND attempts.project_id = NEW.project_id AND attempts.feature_id = NEW.feature_id AND attempts.run_id = NEW.run_id AND attempts.execution_version = NEW.execution_version) BEGIN SELECT RAISE(ABORT, 'git operation attempt identity mismatch'); END;
+CREATE TRIGGER git_operations_integration_shape_check BEFORE INSERT ON git_operations WHEN (NEW.operation_type IN ('integration', 'integration_commit') AND (NEW.integration_plan IS NULL OR json_extract(NEW.integration_plan, '$.integrationId') <> NEW.id)) OR (NEW.operation_type NOT IN ('integration', 'integration_commit') AND NEW.integration_plan IS NOT NULL) BEGIN SELECT RAISE(ABORT, 'git operation integration intent mismatch'); END;
+CREATE TRIGGER git_operations_intent_immutable BEFORE UPDATE ON git_operations WHEN NEW.id IS NOT OLD.id OR NEW.project_id IS NOT OLD.project_id OR NEW.feature_id IS NOT OLD.feature_id OR NEW.run_id IS NOT OLD.run_id OR NEW.attempt_id IS NOT OLD.attempt_id OR NEW.execution_version IS NOT OLD.execution_version OR NEW.operation_type IS NOT OLD.operation_type OR NEW.repository_binding_id IS NOT OLD.repository_binding_id OR NEW.repo_identity IS NOT OLD.repo_identity OR NEW.worktree_path IS NOT OLD.worktree_path OR NEW.expected_head IS NOT OLD.expected_head OR NEW.candidate_tree IS NOT OLD.candidate_tree OR NEW.code_digest IS NOT OLD.code_digest OR NEW.verification_refs IS NOT OLD.verification_refs OR NEW.approval_refs IS NOT OLD.approval_refs OR NEW.message IS NOT OLD.message OR NEW.identity_name IS NOT OLD.identity_name OR NEW.identity_email IS NOT OLD.identity_email OR NEW.delivery_policy_digest IS NOT OLD.delivery_policy_digest OR NEW.runtime_source IS NOT OLD.runtime_source OR NEW.integration_plan IS NOT OLD.integration_plan OR NEW.budget_snapshot IS NOT OLD.budget_snapshot OR NEW.owner_id IS NOT OLD.owner_id OR NEW.host_instance_id IS NOT OLD.host_instance_id OR NEW.intent_digest IS NOT OLD.intent_digest OR NEW.created_at IS NOT OLD.created_at BEGIN SELECT RAISE(ABORT, 'git operation intent is immutable'); END;
+CREATE TRIGGER git_operations_terminal_immutable BEFORE UPDATE ON git_operations WHEN OLD.status <> 'pending' BEGIN SELECT RAISE(ABORT, 'git operation is terminal'); END;
+CREATE TRIGGER git_operations_task_identity_check BEFORE INSERT ON git_operations WHEN NEW.operation_type = 'task_commit' AND NOT EXISTS (SELECT 1 FROM attempts a JOIN tasks t ON t.id = a.task_id AND t.project_id = a.project_id AND t.feature_id = a.feature_id AND t.execution_version = a.execution_version WHERE a.id = NEW.attempt_id AND a.project_id = NEW.project_id AND a.feature_id = NEW.feature_id AND a.run_id = NEW.run_id AND a.execution_version = NEW.execution_version AND a.owner_id = NEW.owner_id AND a.host_instance_id = NEW.host_instance_id) BEGIN SELECT RAISE(ABORT, 'task commit current identity mismatch'); END;
+PRAGMA foreign_keys = ON;
+`;
+
+const MIGRATION_044_SQL = `
+-- Evidence only: lifecycle and fencing remain in git_operations.
+CREATE TABLE git_integration_commands (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  command_id TEXT NOT NULL,
+  operation_id TEXT NOT NULL,
+  request_digest TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  CONSTRAINT git_integration_commands_digest_check CHECK (length(request_digest) = 64 AND request_digest NOT GLOB '*[^0-9a-f]*'),
+  CONSTRAINT git_integration_commands_time_check CHECK (created_at >= 1),
+  FOREIGN KEY (project_id, operation_id) REFERENCES git_operations (project_id, id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX git_integration_commands_command_index ON git_integration_commands (project_id, command_id);
+CREATE TABLE git_integration_observations (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL,
+  operation_id TEXT NOT NULL,
+  sequence INTEGER NOT NULL,
+  operation_revision INTEGER NOT NULL,
+  observation TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  CONSTRAINT git_integration_observations_revision_check CHECK (operation_revision >= 1 AND sequence >= 1),
+  CONSTRAINT git_integration_observations_json_check CHECK (json_valid(observation) AND json_type(observation) = 'object'),
+  CONSTRAINT git_integration_observations_time_check CHECK (created_at >= 1),
+  FOREIGN KEY (project_id, operation_id) REFERENCES git_operations (project_id, id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX git_integration_observations_operation_index ON git_integration_observations (project_id, operation_id, sequence);
+CREATE TRIGGER git_integration_commands_immutable BEFORE UPDATE ON git_integration_commands BEGIN SELECT RAISE(ABORT, 'integration command is immutable'); END;
+CREATE TRIGGER git_integration_commands_retained BEFORE DELETE ON git_integration_commands BEGIN SELECT RAISE(ABORT, 'integration command is retained'); END;
+CREATE TRIGGER git_integration_observations_immutable BEFORE UPDATE ON git_integration_observations BEGIN SELECT RAISE(ABORT, 'integration observation is immutable'); END;
+CREATE TRIGGER git_integration_observations_retained BEFORE DELETE ON git_integration_observations BEGIN SELECT RAISE(ABORT, 'integration observation is retained'); END;
+`;
+
+const MIGRATION_045_SQL = `
+-- Repair authorizations and attempt admissions extend existing Runs, queues and budgets.
+-- Repair attempts have no coding Task and cannot publish task passes or integration success.
+CREATE TABLE git_agent_repairs (
+  repair_id TEXT PRIMARY KEY NOT NULL,
+  project_id TEXT NOT NULL,
+  batch_id TEXT NOT NULL,
+  feature_id TEXT NOT NULL,
+  source_operation_id TEXT NOT NULL,
+  run_id TEXT,
+  request TEXT NOT NULL CHECK (json_valid(request) AND json_type(request) = 'object'),
+  authorization_digest TEXT NOT NULL CHECK (length(authorization_digest) = 64),
+  authorization_version INTEGER NOT NULL CHECK (authorization_version >= 1),
+  receipt TEXT NOT NULL CHECK (json_valid(receipt) AND json_type(receipt) = 'object'),
+  blocked_reason TEXT CHECK (blocked_reason IS NULL OR blocked_reason IN
+    ('public_contract_break','requirements_tradeoff','high_risk_delete','out_of_scope','identity_or_lock',
+     'budget_exhausted','invalid_runtime_output','stop_unconfirmed')),
+  created_at INTEGER NOT NULL CHECK (created_at >= 1),
+  UNIQUE (project_id, source_operation_id),
+  FOREIGN KEY (project_id, batch_id, feature_id) REFERENCES execution_batch_members (project_id, batch_id, feature_id),
+  FOREIGN KEY (project_id, source_operation_id) REFERENCES git_operations (project_id, id),
+  FOREIGN KEY (project_id, batch_id, run_id) REFERENCES runs (project_id, batch_id, id)
+);
+CREATE TABLE git_agent_repair_commands (
+  project_id TEXT NOT NULL,
+  command_id TEXT NOT NULL,
+  repair_id TEXT NOT NULL REFERENCES git_agent_repairs (repair_id),
+  command_digest TEXT NOT NULL CHECK (length(command_digest) = 64),
+  PRIMARY KEY (project_id, command_id)
+);
+CREATE TABLE git_agent_repair_attempts (
+  id TEXT PRIMARY KEY NOT NULL,
+  project_id TEXT NOT NULL,
+  repair_id TEXT NOT NULL REFERENCES git_agent_repairs (repair_id),
+  run_id TEXT NOT NULL,
+  owner_id TEXT NOT NULL,
+  host_instance_id TEXT NOT NULL,
+  authorization_version INTEGER NOT NULL CHECK (authorization_version >= 1),
+  dispatch TEXT NOT NULL CHECK (json_valid(dispatch) AND json_type(dispatch) = 'object'),
+  started_at INTEGER NOT NULL CHECK (started_at >= 1),
+  deadline_at INTEGER NOT NULL CHECK (deadline_at > started_at),
+  max_tokens INTEGER NOT NULL CHECK (max_tokens >= 1),
+  max_runtime_ms INTEGER NOT NULL CHECK (max_runtime_ms >= 1),
+  output TEXT CHECK (output IS NULL OR (json_valid(output) AND json_type(output) = 'object')),
+  stopped_at INTEGER CHECK (stopped_at IS NULL OR stopped_at >= started_at),
+  FOREIGN KEY (project_id, run_id) REFERENCES runs (project_id, id)
+);
+CREATE TRIGGER git_agent_repair_run_identity BEFORE INSERT ON git_agent_repairs
+WHEN NOT EXISTS (SELECT 1 FROM git_operations g WHERE g.project_id = NEW.project_id
+ AND g.id = NEW.source_operation_id AND g.feature_id = NEW.feature_id
+ AND g.run_id = json_extract(NEW.request, '$.runId'))
+ OR (NEW.run_id IS NOT NULL AND NOT EXISTS (SELECT 1 FROM runs r WHERE r.project_id = NEW.project_id
+ AND r.id = NEW.run_id AND r.batch_id = NEW.batch_id AND r.feature_id = NEW.feature_id
+ AND r.purpose = 'git_agent_repair' AND r.scope_digest = NEW.authorization_digest))
+BEGIN SELECT RAISE(ABORT, 'repair Run/source identity mismatch'); END;
+CREATE TRIGGER git_agent_repair_attempt_identity BEFORE INSERT ON git_agent_repair_attempts
+WHEN NOT EXISTS (SELECT 1 FROM git_agent_repairs r JOIN run_dispatch_claims c
+ ON c.project_id = r.project_id AND c.run_id = r.run_id JOIN execution_slot_claims s ON s.claim_id = c.id
+ WHERE r.repair_id = NEW.repair_id AND r.project_id = NEW.project_id AND r.run_id = NEW.run_id
+ AND r.authorization_version = NEW.authorization_version AND r.blocked_reason IS NULL
+ AND c.owner_id = NEW.owner_id AND c.host_instance_id = NEW.host_instance_id AND c.state = 'held'
+ AND c.id = json_extract(NEW.dispatch, '$.claimId') AND c.claim_version = json_extract(NEW.dispatch, '$.claimVersion')
+ AND s.id = json_extract(NEW.dispatch, '$.slotId') AND s.state = 'held' AND s.run_id = NEW.run_id
+ AND s.owner_id = c.owner_id AND s.host_instance_id = c.host_instance_id AND s.claim_version = c.claim_version)
+BEGIN SELECT RAISE(ABORT, 'repair Attempt owner identity mismatch'); END;
+CREATE UNIQUE INDEX git_agent_repair_attempt_active ON git_agent_repair_attempts (repair_id) WHERE stopped_at IS NULL;
+CREATE INDEX git_agent_repair_attempt_run ON git_agent_repair_attempts (project_id, run_id);
+CREATE TRIGGER git_agent_repair_identity BEFORE UPDATE ON git_agent_repairs
+WHEN NEW.repair_id IS NOT OLD.repair_id OR NEW.project_id IS NOT OLD.project_id
+ OR NEW.batch_id IS NOT OLD.batch_id OR NEW.feature_id IS NOT OLD.feature_id
+ OR NEW.source_operation_id IS NOT OLD.source_operation_id OR NEW.run_id IS NOT OLD.run_id
+ OR NEW.request IS NOT OLD.request OR NEW.authorization_digest IS NOT OLD.authorization_digest
+ OR NEW.authorization_version IS NOT OLD.authorization_version OR NEW.receipt IS NOT OLD.receipt
+ OR NEW.created_at IS NOT OLD.created_at OR OLD.blocked_reason IS NOT NULL
+BEGIN SELECT RAISE(ABORT, 'repair authorization or hold is immutable'); END;
+CREATE TRIGGER git_agent_repair_retained BEFORE DELETE ON git_agent_repairs BEGIN SELECT RAISE(ABORT, 'repair retained'); END;
+CREATE TRIGGER git_agent_repair_command_immutable BEFORE UPDATE ON git_agent_repair_commands BEGIN SELECT RAISE(ABORT, 'repair command immutable'); END;
+CREATE TRIGGER git_agent_repair_command_retained BEFORE DELETE ON git_agent_repair_commands BEGIN SELECT RAISE(ABORT, 'repair command retained'); END;
+CREATE TRIGGER git_agent_repair_attempt_immutable BEFORE UPDATE ON git_agent_repair_attempts
+WHEN NEW.id IS NOT OLD.id OR NEW.project_id IS NOT OLD.project_id OR NEW.repair_id IS NOT OLD.repair_id
+ OR NEW.run_id IS NOT OLD.run_id OR NEW.owner_id IS NOT OLD.owner_id OR NEW.host_instance_id IS NOT OLD.host_instance_id
+ OR NEW.authorization_version IS NOT OLD.authorization_version OR NEW.dispatch IS NOT OLD.dispatch
+ OR NEW.started_at IS NOT OLD.started_at OR NEW.deadline_at IS NOT OLD.deadline_at
+ OR NEW.max_tokens IS NOT OLD.max_tokens OR NEW.max_runtime_ms IS NOT OLD.max_runtime_ms
+ OR (OLD.output IS NOT NULL AND NEW.output IS NOT OLD.output) OR OLD.stopped_at IS NOT NULL
+BEGIN SELECT RAISE(ABORT, 'repair attempt identity and settled facts immutable'); END;
+CREATE TRIGGER git_agent_repair_attempt_retained BEFORE DELETE ON git_agent_repair_attempts BEGIN SELECT RAISE(ABORT, 'repair attempt retained'); END;
+-- An unconfirmed repair writer prevents every generic cleanup path from releasing its ownership.
+CREATE TRIGGER git_agent_repair_claim_retained BEFORE UPDATE OF state ON run_dispatch_claims
+WHEN NEW.state = 'released' AND EXISTS (SELECT 1 FROM git_agent_repair_attempts a
+ WHERE a.project_id = OLD.project_id AND a.run_id = OLD.run_id AND a.stopped_at IS NULL)
+BEGIN SELECT RAISE(ABORT, 'repair writer stop unconfirmed'); END;
+CREATE TRIGGER git_agent_repair_slot_retained BEFORE UPDATE OF state ON execution_slot_claims
+WHEN NEW.state = 'released' AND EXISTS (SELECT 1 FROM git_agent_repair_attempts a
+ WHERE a.project_id = OLD.project_id AND a.run_id = OLD.run_id AND a.stopped_at IS NULL)
+BEGIN SELECT RAISE(ABORT, 'repair writer stop unconfirmed'); END;
+CREATE TRIGGER git_agent_repair_resource_retained BEFORE UPDATE OF state ON feature_resource_leases
+WHEN NEW.state = 'released' AND EXISTS (SELECT 1 FROM git_agent_repair_attempts a
+ WHERE a.project_id = OLD.project_id AND json_extract(a.dispatch, '$.claimId') = OLD.owner_id
+ AND json_extract(a.dispatch, '$.claimVersion') = OLD.owner_version AND a.stopped_at IS NULL)
+BEGIN SELECT RAISE(ABORT, 'repair writer stop unconfirmed'); END;
+`;
+
+const MIGRATION_046_SQL = `
+-- P05-9 / F-003: durable Phase delivery candidates. Identity and frozen inputs
+-- are immutable; lifecycle transitions use application CAS on revision.
+CREATE TABLE phase_delivery_candidates (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  command_id TEXT NOT NULL,
+  phase_id TEXT NOT NULL,
+  batch_id TEXT NOT NULL,
+  batch_revision INTEGER NOT NULL,
+  scope_digest TEXT NOT NULL,
+  input_digest TEXT NOT NULL,
+  target_baseline TEXT NOT NULL,
+  approved_inputs TEXT NOT NULL,
+  leaf_feature_ids TEXT NOT NULL,
+  merge_order TEXT NOT NULL,
+  leaves TEXT NOT NULL,
+  verification_scope TEXT NOT NULL,
+  strategy_summary TEXT NOT NULL,
+  status TEXT NOT NULL,
+  integration TEXT,
+  verification TEXT,
+  workspace_preserved INTEGER NOT NULL DEFAULT 0,
+  CONSTRAINT phase_delivery_candidates_revision_check CHECK (revision >= 1),
+  CONSTRAINT phase_delivery_candidates_batch_revision_check CHECK (batch_revision >= 1),
+  CONSTRAINT phase_delivery_candidates_digest_check CHECK (
+    length(scope_digest) = 64 AND scope_digest NOT GLOB '*[^0-9a-f]*'
+    AND length(input_digest) = 64 AND input_digest NOT GLOB '*[^0-9a-f]*'
+  ),
+  CONSTRAINT phase_delivery_candidates_target_baseline_check CHECK (length(target_baseline) IN (40, 64) AND target_baseline NOT GLOB '*[^0-9a-f]*'),
+  CONSTRAINT phase_delivery_candidates_status_check CHECK (status IN ('pending_integration', 'awaiting_verification', 'reconciliation_required', 'blocked', 'ready_for_phase_approval')),
+  CONSTRAINT phase_delivery_candidates_inputs_json_check CHECK (json_valid(approved_inputs) AND json_type(approved_inputs) = 'array'),
+  CONSTRAINT phase_delivery_candidates_features_json_check CHECK (json_valid(leaf_feature_ids) AND json_type(leaf_feature_ids) = 'array' AND json_valid(merge_order) AND json_type(merge_order) = 'array' AND json_valid(leaves) AND json_type(leaves) = 'array'),
+  CONSTRAINT phase_delivery_candidates_scope_json_check CHECK (json_valid(verification_scope) AND json_type(verification_scope) = 'array' AND json_valid(strategy_summary) AND json_type(strategy_summary) = 'object'),
+  CONSTRAINT phase_delivery_candidates_result_json_check CHECK ((integration IS NULL OR (json_valid(integration) AND json_type(integration) = 'object')) AND (verification IS NULL OR (json_valid(verification) AND json_type(verification) = 'object'))),
+  CONSTRAINT phase_delivery_candidates_workspace_check CHECK (workspace_preserved IN (0, 1)),
+  CONSTRAINT phase_delivery_candidates_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT phase_delivery_candidates_phase_fk FOREIGN KEY (project_id, phase_id) REFERENCES phases (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT phase_delivery_candidates_batch_fk FOREIGN KEY (project_id, batch_id) REFERENCES execution_batches (project_id, id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX phase_delivery_candidates_project_id_id_unique ON phase_delivery_candidates (project_id, id);
+CREATE UNIQUE INDEX phase_delivery_candidates_command_unique ON phase_delivery_candidates (project_id, command_id);
+CREATE INDEX phase_delivery_candidates_batch_index ON phase_delivery_candidates (project_id, batch_id, updated_at, id);
+CREATE TRIGGER phase_delivery_candidates_batch_gate BEFORE INSERT ON phase_delivery_candidates
+WHEN NOT EXISTS (SELECT 1 FROM execution_batches WHERE project_id = NEW.project_id AND id = NEW.batch_id AND phase_id = NEW.phase_id AND status = 'succeeded')
+BEGIN SELECT RAISE(ABORT, 'phase delivery candidate requires succeeded parent Batch'); END;
+CREATE TRIGGER phase_delivery_candidates_identity_immutable BEFORE UPDATE ON phase_delivery_candidates
+WHEN NEW.id IS NOT OLD.id OR NEW.created_at IS NOT OLD.created_at OR NEW.project_id IS NOT OLD.project_id
+ OR NEW.command_id IS NOT OLD.command_id OR NEW.phase_id IS NOT OLD.phase_id OR NEW.batch_id IS NOT OLD.batch_id
+ OR NEW.batch_revision IS NOT OLD.batch_revision OR NEW.scope_digest IS NOT OLD.scope_digest OR NEW.input_digest IS NOT OLD.input_digest
+ OR NEW.target_baseline IS NOT OLD.target_baseline OR NEW.approved_inputs IS NOT OLD.approved_inputs OR NEW.leaf_feature_ids IS NOT OLD.leaf_feature_ids
+ OR NEW.merge_order IS NOT OLD.merge_order OR NEW.leaves IS NOT OLD.leaves OR NEW.verification_scope IS NOT OLD.verification_scope
+ OR NEW.strategy_summary IS NOT OLD.strategy_summary
+BEGIN SELECT RAISE(ABORT, 'phase delivery candidate frozen identity is immutable'); END;
+CREATE TRIGGER phase_delivery_candidates_retained BEFORE DELETE ON phase_delivery_candidates
+BEGIN SELECT RAISE(ABORT, 'phase delivery candidate is retained'); END;
+`;
+
+const MIGRATION_047_SQL = `
+-- P05-9 / F-004: human Phase delivery approval binding. Approval is an
+-- immutable evidence snapshot; invalidation and Phase pointer update are Core CAS facts.
+CREATE TABLE phases_new (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  title TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'open',
+  description TEXT,
+  labels TEXT NOT NULL DEFAULT '[]',
+  delivery_status TEXT NOT NULL DEFAULT 'not_requested',
+  delivery_approval_id TEXT,
+  delivery_candidate_id TEXT,
+  delivery_batch_id TEXT,
+  delivery_summary_digest TEXT,
+  CONSTRAINT phases_revision_positive_check CHECK (revision >= 1),
+  CONSTRAINT phases_title_not_empty_check CHECK (length(title) > 0),
+  CONSTRAINT phases_status_enum_check CHECK (status IN ('open', 'closed', 'archived')),
+  CONSTRAINT phases_labels_json_array_check CHECK (json_valid(labels) AND json_type(labels) = 'array'),
+  CONSTRAINT phases_delivery_status_enum_check CHECK (delivery_status IN ('not_requested', 'awaiting_approval', 'approved', 'invalidated')),
+  CONSTRAINT phases_delivery_summary_digest_check CHECK (delivery_summary_digest IS NULL OR (length(delivery_summary_digest) = 64 AND delivery_summary_digest NOT GLOB '*[^0-9a-f]*')),
+  CONSTRAINT phases_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT
+);
+INSERT INTO phases_new (id, created_at, project_id, revision, updated_at, title, status, description, labels)
+  SELECT id, created_at, project_id, revision, updated_at, title, status, description, labels FROM phases;
+DROP TABLE phases;
+ALTER TABLE phases_new RENAME TO phases;
+CREATE UNIQUE INDEX phases_project_id_id_unique ON phases (project_id, id);
+CREATE TABLE phase_delivery_approvals (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 1,
+  updated_at INTEGER NOT NULL,
+  command_id TEXT NOT NULL,
+  actor_id TEXT NOT NULL,
+  phase_id TEXT NOT NULL,
+  batch_id TEXT NOT NULL,
+  candidate_id TEXT NOT NULL,
+  candidate_revision INTEGER NOT NULL,
+  batch_revision INTEGER NOT NULL,
+  scope_digest TEXT NOT NULL,
+  input_digest TEXT NOT NULL,
+  target_baseline TEXT NOT NULL,
+  integration_commit_sha TEXT NOT NULL,
+  integration_tree_sha TEXT NOT NULL,
+  leaf_commit_shas TEXT NOT NULL,
+  integration_evidence_id TEXT NOT NULL,
+  integration_evidence_digest TEXT NOT NULL,
+  verification_evidence_id TEXT NOT NULL,
+  verification_evidence_digest TEXT NOT NULL,
+  budget_digest TEXT NOT NULL,
+  budget_summary TEXT NOT NULL,
+  code_summary TEXT NOT NULL,
+  plan_summary TEXT NOT NULL,
+  summary_digest TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'approved',
+  invalidation_reason TEXT,
+  CONSTRAINT phase_delivery_approvals_revision_check CHECK (revision >= 1 AND candidate_revision >= 1 AND batch_revision >= 1),
+  CONSTRAINT phase_delivery_approvals_digest_check CHECK (
+    length(scope_digest) = 64 AND scope_digest NOT GLOB '*[^0-9a-f]*'
+    AND length(input_digest) = 64 AND input_digest NOT GLOB '*[^0-9a-f]*'
+    AND length(budget_digest) = 64 AND budget_digest NOT GLOB '*[^0-9a-f]*'
+    AND length(summary_digest) = 64 AND summary_digest NOT GLOB '*[^0-9a-f]*'
+  ),
+  CONSTRAINT phase_delivery_approvals_sha_check CHECK (
+    length(target_baseline) IN (40, 64) AND target_baseline NOT GLOB '*[^0-9a-f]*'
+    AND length(integration_commit_sha) IN (40, 64) AND integration_commit_sha NOT GLOB '*[^0-9a-f]*'
+    AND length(integration_tree_sha) IN (40, 64) AND integration_tree_sha NOT GLOB '*[^0-9a-f]*'
+  ),
+  CONSTRAINT phase_delivery_approvals_evidence_digest_check CHECK (
+    length(integration_evidence_digest) = 64 AND integration_evidence_digest NOT GLOB '*[^0-9a-f]*'
+    AND length(verification_evidence_digest) = 64 AND verification_evidence_digest NOT GLOB '*[^0-9a-f]*'
+  ),
+  CONSTRAINT phase_delivery_approvals_json_check CHECK (
+    json_valid(leaf_commit_shas) AND json_type(leaf_commit_shas) = 'array'
+    AND json_valid(budget_summary) AND json_type(budget_summary) = 'object'
+    AND json_valid(code_summary) AND json_type(code_summary) = 'object'
+    AND json_valid(plan_summary) AND json_type(plan_summary) = 'object'
+  ),
+  CONSTRAINT phase_delivery_approvals_status_check CHECK (
+    status IN ('approved', 'invalidated')
+    AND ((status = 'approved' AND invalidation_reason IS NULL) OR (status = 'invalidated' AND invalidation_reason IS NOT NULL))
+  ),
+  CONSTRAINT phase_delivery_approvals_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT phase_delivery_approvals_phase_fk FOREIGN KEY (project_id, phase_id) REFERENCES phases (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT phase_delivery_approvals_candidate_fk FOREIGN KEY (project_id, candidate_id) REFERENCES phase_delivery_candidates (project_id, id) ON DELETE RESTRICT
+);
+CREATE UNIQUE INDEX phase_delivery_approvals_project_id_id_unique ON phase_delivery_approvals (project_id, id);
+CREATE UNIQUE INDEX phase_delivery_approvals_command_unique ON phase_delivery_approvals (project_id, command_id);
+CREATE INDEX phase_delivery_approvals_candidate_index ON phase_delivery_approvals (project_id, phase_id, candidate_id, updated_at);
+CREATE TRIGGER phase_delivery_approvals_identity_immutable BEFORE UPDATE ON phase_delivery_approvals
+WHEN NEW.id IS NOT OLD.id OR NEW.created_at IS NOT OLD.created_at OR NEW.project_id IS NOT OLD.project_id
+ OR NEW.command_id IS NOT OLD.command_id OR NEW.actor_id IS NOT OLD.actor_id OR NEW.phase_id IS NOT OLD.phase_id
+ OR NEW.batch_id IS NOT OLD.batch_id OR NEW.candidate_id IS NOT OLD.candidate_id OR NEW.candidate_revision IS NOT OLD.candidate_revision
+ OR NEW.batch_revision IS NOT OLD.batch_revision OR NEW.scope_digest IS NOT OLD.scope_digest OR NEW.input_digest IS NOT OLD.input_digest
+ OR NEW.target_baseline IS NOT OLD.target_baseline OR NEW.integration_commit_sha IS NOT OLD.integration_commit_sha
+ OR NEW.integration_tree_sha IS NOT OLD.integration_tree_sha OR NEW.leaf_commit_shas IS NOT OLD.leaf_commit_shas
+ OR NEW.integration_evidence_id IS NOT OLD.integration_evidence_id OR NEW.integration_evidence_digest IS NOT OLD.integration_evidence_digest
+ OR NEW.verification_evidence_id IS NOT OLD.verification_evidence_id OR NEW.verification_evidence_digest IS NOT OLD.verification_evidence_digest
+ OR NEW.budget_digest IS NOT OLD.budget_digest OR NEW.budget_summary IS NOT OLD.budget_summary
+ OR NEW.code_summary IS NOT OLD.code_summary OR NEW.plan_summary IS NOT OLD.plan_summary OR NEW.summary_digest IS NOT OLD.summary_digest
+BEGIN SELECT RAISE(ABORT, 'phase delivery approval identity is immutable'); END;
+CREATE TRIGGER phase_delivery_approvals_retained BEFORE DELETE ON phase_delivery_approvals
+BEGIN SELECT RAISE(ABORT, 'phase delivery approval is retained'); END;
 `;
 
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
@@ -2997,4 +4053,17 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 32, sql: MIGRATION_032_SQL, checksum: sha256Hex(MIGRATION_032_SQL) },
   { version: 33, sql: MIGRATION_033_SQL, checksum: sha256Hex(MIGRATION_033_SQL) },
   { version: 34, sql: MIGRATION_034_SQL, checksum: sha256Hex(MIGRATION_034_SQL) },
+  { version: 35, sql: MIGRATION_035_SQL, checksum: sha256Hex(MIGRATION_035_SQL) },
+  { version: 36, sql: MIGRATION_036_SQL, checksum: sha256Hex(MIGRATION_036_SQL), foreignKeysOff: true },
+  { version: 37, sql: MIGRATION_037_SQL, checksum: sha256Hex(MIGRATION_037_SQL) },
+  { version: 38, sql: MIGRATION_038_SQL, checksum: sha256Hex(MIGRATION_038_SQL), foreignKeysOff: true },
+  { version: 39, sql: MIGRATION_039_SQL, checksum: sha256Hex(MIGRATION_039_SQL) },
+  { version: 40, sql: MIGRATION_040_SQL, checksum: sha256Hex(MIGRATION_040_SQL) },
+  { version: 41, sql: MIGRATION_041_SQL, checksum: sha256Hex(MIGRATION_041_SQL), foreignKeysOff: true },
+  { version: 42, sql: MIGRATION_042_SQL, checksum: sha256Hex(MIGRATION_042_SQL) },
+  { version: 43, sql: MIGRATION_043_SQL, checksum: sha256Hex(MIGRATION_043_SQL), foreignKeysOff: true },
+  { version: 44, sql: MIGRATION_044_SQL, checksum: sha256Hex(MIGRATION_044_SQL) },
+  { version: 45, sql: MIGRATION_045_SQL, checksum: sha256Hex(MIGRATION_045_SQL) },
+  { version: 46, sql: MIGRATION_046_SQL, checksum: sha256Hex(MIGRATION_046_SQL) },
+  { version: 47, sql: MIGRATION_047_SQL, checksum: sha256Hex(MIGRATION_047_SQL), foreignKeysOff: true },
 ];

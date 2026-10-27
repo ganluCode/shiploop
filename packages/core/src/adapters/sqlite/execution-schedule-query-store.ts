@@ -17,6 +17,7 @@
  */
 import { StorageError } from '../../ports/errors.js';
 import { assertPrincipalVisibility } from '../../ports/queries.js';
+import { resolveApprovedBatchConcurrency } from '../../ports/feature-dispatch.js';
 import { validateStableId } from '../../ports/validation.js';
 import type { ValidationContext } from '../../ports/validation.js';
 import { ACTIVE_ATTEMPT_STATUSES } from '../../ports/attempt-store.js';
@@ -195,7 +196,7 @@ function corruptAssociation(operation: string, runId: string, projectId: string)
   });
 }
 
-/** 全局（容量固定 1）活动槽位聚合；跨项目只给计数，无身份。 */
+/** 活动槽位聚合；容量取活动批准 Batch 快照中的最大有界策略。 */
 function readSlotSummary(
   db: SqliteStorageSession['database'],
   projectId: string,
@@ -213,7 +214,21 @@ function readSlotSummary(
       quarantined_count: number;
       project_active_count: number;
     };
-  const capacity = EXECUTION_SLOT_CAPACITY_DEFAULT;
+  const configured = db.prepare<[], { config_snapshot: string }>(
+    "SELECT config_snapshot FROM execution_batches WHERE status IN ('queued', 'running', 'pausing', 'paused', 'cancelling', 'interrupted')",
+  ).all() as { config_snapshot: string }[];
+  let capacity = EXECUTION_SLOT_CAPACITY_DEFAULT;
+  for (const row of configured) {
+    let snapshot: unknown;
+    try {
+      snapshot = JSON.parse(row.config_snapshot);
+    } catch (cause) {
+      throw new StorageError('corrupt', `${OPERATION}.readSlotSummary`, 'Batch config snapshot JSON 损坏', {
+        details: { reason: 'invalid_config_snapshot_json' }, cause,
+      });
+    }
+    capacity = Math.max(capacity, resolveApprovedBatchConcurrency(snapshot));
+  }
   const activeCount = row.active_count;
   const projectActiveCount = row.project_active_count;
   return {
@@ -437,19 +452,32 @@ export function createSqliteExecutionScheduleQueryStore(
       visibility: unknown,
       project: unknown,
       request: ExecutionListRequest,
+      selector: { readonly batchId?: unknown; readonly featureId?: unknown } = {},
     ): DispatchQueuePage {
       const operation = `${OPERATION}.listDispatchQueue`;
       assertRequest(operation, request);
       assertPrincipalVisibility(visibility);
       const projectId = stableId(operation, project, 'projectId');
+      const batchId = selector.batchId === undefined ? undefined : stableId(operation, selector.batchId, 'batchId');
+      const featureId = selector.featureId === undefined ? undefined : stableId(operation, selector.featureId, 'featureId');
+      if (batchId !== undefined && featureId !== undefined) {
+        throw new TypeError(`${operation}: batchId 与 featureId 不能同时提供`);
+      }
       return read(operation, () => {
         // 稳定排序：runs.created_at,id 升序（最早入队先展示）；键集排他下界。
         const conditions = [
           'project_id = ?',
+          ...(batchId === undefined ? [] : [
+            'batch_id = ?',
+            'EXISTS (SELECT 1 FROM execution_batch_members AS fixed_member WHERE fixed_member.project_id = runs.project_id AND fixed_member.batch_id = runs.batch_id AND fixed_member.feature_id = runs.feature_id)',
+          ]),
+          ...(featureId === undefined ? [] : ['feature_id = ?']),
           '(created_at > ? OR (created_at = ? AND id > ?))',
         ];
         const params: unknown[] = [
           projectId,
+          ...(batchId === undefined ? [] : [batchId]),
+          ...(featureId === undefined ? [] : [featureId]),
           request.after?.sort ?? -1,
           request.after?.sort ?? -1,
           request.after?.id ?? '',
@@ -462,7 +490,7 @@ export function createSqliteExecutionScheduleQueryStore(
         params.push(request.limit + 1);
         const runRows = session.database
           .prepare<unknown[], { id: string }>(
-            `SELECT id FROM runs WHERE ${conditions.join(' AND ')} ORDER BY created_at, id LIMIT ?`,
+            `SELECT id FROM runs AS runs WHERE ${conditions.join(' AND ')} ORDER BY created_at, id LIMIT ?`,
           )
           .all(...params);
         const pageRunRows = runRows.length > request.limit ? runRows.slice(0, request.limit) : runRows;

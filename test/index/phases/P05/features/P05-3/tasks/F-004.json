@@ -1,0 +1,19 @@
+{
+  "schema_version": 2,
+  "task_id": "F-004",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/execution/budget/p05-3-f004-batch-authorization.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/execution/budget/p03-3-execution-start.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

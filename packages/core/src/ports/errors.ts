@@ -66,7 +66,14 @@ export type StorageEntityType =
   /** P04-9 / F-001：单执行槽位认领（execution_slot_claims，迁移 v33）。 */
   | 'execution_slot_claim'
   /** P04-9 / F-002：Run 持久入队意图（run_dispatch_intents，迁移 v34）。 */
-  | 'run_dispatch_intent';
+  | 'run_dispatch_intent'
+  /** P05-1 / F-002：一次性规划上下文（planning_contexts，迁移 v35）。 */
+  | 'planning_context'
+  /** P05-6 / F-002：冻结的集成计划及前置成果快照。 */
+  | 'integration_plan'
+  | 'integration_predecessor_snapshot'
+  /** P05-5 / F-002：Feature 共享资源租约。 */
+  | 'feature_resource_lease';
 
 export type StorageErrorKind =
   /** 外部输入未通过运行时校验（缺字段/类型错误/未知 schemaVersion/非法摘要等）。 */

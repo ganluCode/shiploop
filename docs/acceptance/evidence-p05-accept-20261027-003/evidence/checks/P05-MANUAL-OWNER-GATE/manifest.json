@@ -1,0 +1,9 @@
+{
+  "component": "p05-integration-report",
+  "checkId": "P05-MANUAL-OWNER-GATE",
+  "capturedFiles": [
+    "evidence/checks/P05-MANUAL-OWNER-GATE/manual.json",
+    "evidence/checks/P05-MANUAL-OWNER-GATE/result.json"
+  ],
+  "capturedBeforeCleanup": true
+}

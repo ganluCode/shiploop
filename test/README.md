@@ -107,6 +107,19 @@ test/
   单槽位与计划分页文件本地通过。范围与证据见
   [F-008 交接](../docs/p04-9-f008-dispatch-slot-query.md)；Host/CLI 接线属 F-009。
 
+- `index/phases/P05/features/P05-1/tasks/F-001.json`：一次性规划候选纯数据契约。
+  覆盖规划请求/候选/身份封装校验、执行语义字段冻结拒绝、复用业务计划 v1 的 DAG 负例
+  定位、四类摘要区分与审批依据评估、测试候选协议不混用与契约文档守护。
+  新增三文件 45 项本地通过；无存储/命令/工具通道变更，较广回归交 Nezha。
+  契约见 [P05-1 规划候选契约](../docs/p05-1-planning-candidate-contract.md)。
+
+- `index/phases/P05/features/P05-1/tasks/F-002.json`：规划上下文窄存储与 planner 用途策略副本
+  （迁移 v35）。覆盖 v35 只追加/v1–v34 冻结、空库与 v34 升级保留既有计划/审批/派发/Attempt
+  数据、真实 SQLite 归属/唯一/枚举/形状/写一次触发器负例、创建发布决策状态机与事务回滚、
+  planning Task 与业务计划视图/编码范围/Task 列表隔离及修订保留、重开库副本一致与默认配置
+  非追溯、损坏持久 JSON corrupt 拒绝，以及 purposeStrategies.planner → defaultStrategy 回退
+  选择纯函数。新增三文件 25 项与受影响迁移断言本地通过；较广回归交 Nezha。
+
 - `index/phases/P04/features/P04-9/tasks/F-009.json`：派发/槽位查询接入 Host、HostClient 与 CLI。
   覆盖真实 Host/HostClient 读取 Core 投影（派生状态用同一规则复核）、槽位摘要与跨项目
   布尔摘要、未认证/未知参数/可写意图拒绝、客户端解码冻结形状、CLI 参数与结构化/文本
@@ -131,6 +144,12 @@ test/
   的 fail-closed，以及受影响清单/入口/集成报告/交付回归。新增文件本地 5 项通过，
   五个文件合并回归本地 43 项通过；真实 `accept:p04`、`verify`、全仓、live 与负责人确认
   仍未运行。范围与证据见 [P04-9 补充项交接](../docs/p04-9-f011-acceptance-handoff.md)。
+
+- `index/phases/P05/features/P05-1/tasks/F-012.json`：一次性规划 Host/HostClient 接线。
+  新增真实 HTTP/SQLite/Git 与脚本化 Runtime 场景，覆盖 v7 回执恢复、候选查询与人工决定、
+  权限隔离、取消/resume、SSE 断开、畸形响应及旧计划兼容；正常规划 Batch 收尾复用恢复规则。
+  受影响的 Host/工具/规划执行与恢复、基线、预算和报告回归按文件登记；本地通过与未运行
+  范围见 [F-012 交接](../docs/p05-1-f012-planning-host-protocol.md)，不代表全量/阶段验收。
 
 Task JSON 使用 Nezha v2 schema。当前存量用例首轮按文件显式 `all: true`，
 对应 19 个本 Feature 文件，不包含此前大批历史模块回归。

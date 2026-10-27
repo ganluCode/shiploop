@@ -11,6 +11,9 @@
  * 创建成功同事务写 settings.*_created 创建事件（仅命令路径，契约 §15.3），
  * 更新复用 P01 既有 *_updated 写入，不重复。
  */
+import { submitPhaseMutation } from './phase-lifecycle.js';
+import { submitFeaturePhaseMove } from './feature-phase.js';
+import { submitFeatureDagUpdate } from './feature-dag-update.js';
 import { randomBytes } from 'node:crypto';
 import { createFeatureDeliveryCommandHandler, type FeatureDeliveryDependencies } from './feature-delivery-commands.js';
 import {
@@ -75,6 +78,8 @@ import { submitTaskApprovalBlock, TASK_APPROVAL_BLOCK_OPERATION } from './task-a
 import { submitTaskApprovalDecision, TASK_APPROVAL_DECISION_OPERATIONS } from './task-approval-decision.js';
 import { submitTaskVerificationContinue, validateTaskVerificationContinue, TASK_VERIFICATION_CONTINUE_OPERATION, type TaskVerificationContinueDeps } from './task-verification-continue.js';
 import { FEATURE_PLAN_DECIDE_OPERATION, submitFeaturePlanDecide } from './feature-plan-decide.js';
+import { PLANNING_CANDIDATE_DECIDE_OPERATION, submitPlanningCandidateDecision } from './planning-candidate-decision.js';
+import type { PlanningCandidateDecisionPort, PreparedPlanningCandidateDecision } from './planning-candidate-decision.js';
 import { FEATURE_PLAN_IMPORT_OPERATION, submitFeaturePlanImport } from './feature-plan-import.js';
 import {
   FEATURE_PLAN_REVISE_OPERATION,
@@ -92,6 +97,9 @@ import { EXECUTION_PREVIEW_OPERATION } from '../ports/execution-preview.js';
 import type { ExecutionPreviewPort } from './execution-preview.js';
 import type { ExecutionPreviewResult } from '../ports/execution-preview.js';
 import { EXECUTION_START_OPERATION } from '../ports/execution-start.js';
+import { PLANNING_START_OPERATION } from '../ports/planning-start.js';
+import type { PlanningStartPort, PreparedPlanningStart } from '../ports/planning-start.js';
+import { signalPlanningRunDispatchAfterCommit } from './planning-start.js';
 import {
   computeWorkspaceDiscardRequestDigest,
   toWorkspaceDiscardStoreInput,
@@ -119,6 +127,7 @@ import {
 } from './task-strategy-update.js';
 import type { TaskStrategyEditGuards } from './task-strategy-update.js';
 
+import { createBatchDeliveryCommandHandler, type BatchDeliveryDependencies } from './batch-delivery-commands.js';
 export interface DeliveryActivity {
   enterQuiesce(): { readonly accepted: number };
   awaitQuiesce(budgetMs: number): Promise<{ readonly confirmed: boolean; readonly pending: readonly string[] }>;
@@ -126,6 +135,7 @@ export interface DeliveryActivity {
 
 export interface CommandService {
   readonly deliveryActivity?: DeliveryActivity;
+  readonly batchDeliveryAvailable?: boolean;
   submit(principal: unknown, envelope: unknown): Promise<CommandReceipt>;
 }
 /**
@@ -189,6 +199,14 @@ export interface CommandServiceOptions {
    */
   readonly executionStart?: ExecutionStartPort;
   /**
+   * P05-1 / F-003：一次性规划启动端口（事务外请求/预算校验 + 短写事务内重核
+   * 与原子提交 Batch/Run/planning Task/上下文/派发意图/事件/accepted v7 回执；
+   * 不传则命令 unsupported，不冒充能力）。装配者：composition 根。
+   */
+  readonly planningStart?: PlanningStartPort;
+  /** P05-1 / F-008：候选 Artifact 正文的事务外核验与候选应用。 */
+  readonly planningCandidateDecision?: PlanningCandidateDecisionPort;
+  /**
    * P03-9 / F-008：显式工作流 resume 端口（事务外重新授权/现场核验 + 短写事务内
    * 重核解除暂停；不传则命令 unsupported，不冒充能力）。
    */
@@ -218,6 +236,7 @@ export interface CommandServiceOptions {
    * composition 根；受控测试可直接注入窄端口实现。
    */
   readonly taskVerificationContinue?: TaskVerificationContinueDeps;
+  readonly batchDelivery?: BatchDeliveryDependencies;
   readonly featureDelivery?: FeatureDeliveryDependencies;
   readonly nowUtcMs?: () => number;
 }
@@ -285,6 +304,8 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
   const executionInputPrepare = options.executionInputPrepare;
   const executionPreview = options.executionPreview;
   const executionStart = options.executionStart;
+  const planningStart = options.planningStart;
+  const planningCandidateDecision = options.planningCandidateDecision;
   const executionResume = options.executionResume;
   const finalizationRetry = options.finalizationRetry;
   const executionDispatchSignal = options.executionDispatchSignal;
@@ -295,6 +316,18 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
   const delivery = options.featureDelivery === undefined ? undefined : createFeatureDeliveryCommandHandler({
     atomicStore: store, dependencies: options.featureDelivery, nowUtcMs,
   });
+
+  const batchDelivery = options.batchDelivery === undefined ? undefined : createBatchDeliveryCommandHandler({
+    atomicStore: store, dependencies: options.batchDelivery, nowUtcMs,
+  });
+  const activities = [delivery?.activity, batchDelivery?.activity].filter((activity): activity is DeliveryActivity => activity !== undefined);
+  const deliveryActivity: DeliveryActivity | undefined = activities.length === 0 ? undefined : {
+    enterQuiesce() { return { accepted: activities.reduce((sum, activity) => sum + activity.enterQuiesce().accepted, 0) }; },
+    async awaitQuiesce(budgetMs) {
+      const results = await Promise.all(activities.map(activity => activity.awaitQuiesce(budgetMs)));
+      return { confirmed: results.every(result => result.confirmed), pending: results.flatMap(result => result.pending) };
+    },
+  };
 
   /** 既有项目元数据 CAS：业务 + metadata_updated 事件 + 回执同一事务（F-007）。 */
   function submitMetadataUpdate(
@@ -612,7 +645,8 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
   }
 
   return {
-    deliveryActivity: delivery?.activity,
+    deliveryActivity,
+    batchDeliveryAvailable: batchDelivery !== undefined,
     async submit(principal: unknown, input: unknown): Promise<CommandReceipt> {
       // 非法可信装配为编程错误，不折算客户端错误。
       assertTrustedPrincipal(principal);
@@ -622,7 +656,17 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
         const envelope = validateCommandEnvelope(input);
         operation = envelope.operation;
         authorizeCommand(principal, envelope);
-        if (envelope.operation === 'feature.verification.continue' || envelope.operation === 'git.operation.reconcile') {
+        if (envelope.operation === 'execution.batch.finalize' || envelope.operation === 'phase.delivery.approve') {
+          const digest = computeCommandRequestDigest(envelope);
+          if (batchDelivery === undefined) {
+            const receipt = store.transact(operation, tx => replay(principal, tx.findReceipt(principal.principalId, envelope.commandId), digest, operation));
+            if (receipt) return receipt;
+            checkTiming(envelope, nowUtcMs());
+            throw new PublicError('unsupported', operation);
+          }
+          return await batchDelivery.submit(principal, envelope, digest);
+        }
+        if (envelope.operation === 'feature.verification.continue' || envelope.operation === 'git.operation.start' || envelope.operation === 'git.operation.reconcile') {
           const digest = computeCommandRequestDigest(envelope);
           if (delivery === undefined) {
             const receipt = store.transact(operation, transaction =>
@@ -673,6 +717,13 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
         if (envelope.operation === EXECUTION_START_OPERATION && executionStart === undefined) {
           throw new PublicError('unsupported', operation);
         }
+        // P05-1 / F-003：规划启动端口缺席时 unsupported（同一纪律，不冒充能力）。
+        if (envelope.operation === PLANNING_START_OPERATION && planningStart === undefined) {
+          throw new PublicError('unsupported', operation);
+        }
+        if (envelope.operation === PLANNING_CANDIDATE_DECIDE_OPERATION && planningCandidateDecision === undefined) {
+          throw new PublicError('unsupported', operation);
+        }
         if (envelope.operation === 'execution.resume' && executionResume === undefined) {
           throw new PublicError('unsupported', operation);
         }
@@ -705,6 +756,12 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           envelope.operation !== FINALIZATION_RETRY_OPERATION &&
           envelope.operation !== 'baseline.cancel' &&
           envelope.operation !== 'phase.create' &&
+          envelope.operation !== 'phase.metadata.update' &&
+          envelope.operation !== 'phase.close' &&
+          envelope.operation !== 'phase.reopen' &&
+          envelope.operation !== 'phase.archive' &&
+          envelope.operation !== 'feature.phase.move' &&
+          envelope.operation !== 'feature.dag.update' &&
           envelope.operation !== FEATURE_PLAN_IMPORT_OPERATION &&
           envelope.operation !== PLAN_LABELS_UPDATE_OPERATION &&
           envelope.operation !== FEATURE_PLAN_REVISE_OPERATION &&
@@ -715,6 +772,8 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           envelope.operation !== EXECUTION_INPUT_PREPARE_OPERATION &&
           envelope.operation !== EXECUTION_PREVIEW_OPERATION &&
           envelope.operation !== EXECUTION_START_OPERATION &&
+          envelope.operation !== PLANNING_START_OPERATION &&
+          envelope.operation !== 'planning.candidate.decide' &&
           envelope.operation !== EXECUTION_BUDGET_REVISE_OPERATION &&
           envelope.operation !== WORKSPACE_DISCARD_OPERATION &&
           envelope.operation !== WORKSPACE_DISCARD_PREVIEW_OPERATION &&
@@ -834,7 +893,26 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           );
         }
 
-        // P03-9 / F-008：显式 resume 的事务外重新授权/现场核验（全部只读 I/O 在
+        // P05-1 / F-003：一次性规划启动的事务外准备（请求/预算纯校验；无仓库/
+        // 模型 I/O，仅对新命令执行）；短写事务内重核并原子提交 Batch/Run/
+        // planning Task/上下文/派发意图/事件/回执。
+        let planningStartPrepared: PreparedPlanningStart | undefined;
+        if (envelope.operation === PLANNING_START_OPERATION && existing === undefined) {
+          planningStartPrepared = await planningStart!.preparePlanningStart(
+            envelope.scope.projectId,
+            envelope.payload,
+          );
+        }
+
+        let planningCandidatePrepared: PreparedPlanningCandidateDecision | undefined;
+        if (envelope.operation === PLANNING_CANDIDATE_DECIDE_OPERATION && existing === undefined) {
+          planningCandidatePrepared = await planningCandidateDecision!.prepare(
+            envelope.scope.projectId,
+            envelope.payload.candidateId,
+            envelope.payload.candidateDigest,
+          );
+        }
+
         // 写事务之外），事务内只重核身份并解除暂停。
         let executionResumePrepared: import('../ports/execution-resume.js').PreparedExecutionResume | undefined;
         if (envelope.operation === 'execution.resume' && existing === undefined) {
@@ -1091,6 +1169,16 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
             // P03-1 / F-004：Phase 创建无事务外 I/O；项目把关/业务/事件/回执同一事务。
             return submitPhaseCreate(principal, envelope, digest, transaction, now);
           }
+          if (envelope.operation === 'phase.metadata.update' || envelope.operation === 'phase.close'
+            || envelope.operation === 'phase.reopen' || envelope.operation === 'phase.archive') {
+            return submitPhaseMutation(principal.principalId, envelope, digest, transaction, now);
+          }
+          if (envelope.operation === 'feature.phase.move') {
+            return submitFeaturePhaseMove(principal.principalId, envelope, digest, transaction, now);
+          }
+          if (envelope.operation === 'feature.dag.update') {
+            return submitFeatureDagUpdate(principal.principalId, envelope, digest, transaction, now);
+          }
           if (envelope.operation === FEATURE_PLAN_IMPORT_OPERATION) {
             // P03-1 / F-005：计划导入无事务外 I/O（引用仅索引级身份重核）；
             // 归属/CAS/引用/配置重核与 Feature/Task/边/事件/回执同一事务。
@@ -1183,6 +1271,26 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
               requestDigest: digest, issuedAt: envelope.issuedAt, completedAt: new Date(now).toISOString() },
               envelope, transaction, taskVerificationContinue!, continuationStopEvidence ?? undefined);
           }
+          if (envelope.operation === PLANNING_CANDIDATE_DECIDE_OPERATION) {
+            if (planningCandidatePrepared === undefined) {
+              throw new TypeError('候选决策缺少事务外候选核验结果');
+            }
+            return submitPlanningCandidateDecision(
+              {
+                principalId: principal.principalId,
+                commandId: envelope.commandId,
+                operation: envelope.operation,
+                scope: envelope.scope,
+                requestDigest: digest,
+                issuedAt: envelope.issuedAt,
+                completedAt: new Date(now).toISOString(),
+              },
+              envelope,
+              transaction,
+              planningCandidatePrepared,
+              now,
+            );
+          }
           if (envelope.operation === FEATURE_PLAN_DECIDE_OPERATION) {
             // P03-2 / F-002：计划批准/拒绝决策无事务外 I/O（无 Runtime/Git/检查
             // 进程）；项目把关/摘要绑定/空任务/重复决策/聚合 CAS 重核、决策
@@ -1266,6 +1374,28 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
               { schedulerAssembled: executionDispatchSignal !== undefined },
             );
           }
+          if (envelope.operation === PLANNING_START_OPERATION) {
+            // P05-1 / F-003：一次性规划启动——事务外请求/预算校验已完成；本事务
+            // 内重核全部前置条件并原子提交单 Feature Batch/purpose=plan Run/
+            // planning Task/上下文/初始预算行/派发意图/事件与 accepted v7 回执
+            // （任一失败整组回滚）。
+            if (planningStartPrepared === undefined) {
+              throw new TypeError('规划启动缺少事务外准备结果');
+            }
+            return planningStart!.submitPlanningStart(
+              {
+                principalId: principal.principalId,
+                commandId: envelope.commandId,
+                scope: envelope.scope,
+                requestDigest: digest,
+                issuedAt: envelope.issuedAt,
+              },
+              envelope,
+              transaction,
+              planningStartPrepared,
+              { schedulerAssembled: executionDispatchSignal !== undefined },
+            );
+          }
           if (envelope.operation === EXECUTION_BUDGET_REVISE_OPERATION) {
             // P03-3 / F-009：批次预算显式修订——无事务外 I/O；项目把关/预算深
             // 校验/CAS/单调判定/原子写入（当前预算+不可变修订行）/脱敏事件与
@@ -1321,6 +1451,15 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
             executionDispatchSignal,
             receipt,
             envelope.payload.featureIds[0] ?? '',
+          );
+        }
+        // P05-1 / F-003：规划启动提交后 best-effort 唤醒（仅新回执；重放不重复
+        // 通知；持久 queued Run 仍是权威）。
+        if (envelope.operation === PLANNING_START_OPERATION) {
+          signalPlanningRunDispatchAfterCommit(
+            executionDispatchSignal,
+            receipt,
+            envelope.payload.request.featureId,
           );
         }
         // P03-9 / F-008：显式 resume 提交后只对新回执发出调度唤醒；approval 缺失

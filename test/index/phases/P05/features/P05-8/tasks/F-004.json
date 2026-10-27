@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "task_id": "F-004",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/delivery/p05-8-f004-git-agent-candidate-finalization.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

@@ -13,6 +13,7 @@ interface AttemptRow {
   id: string; project_id: string; run_id: string; task_id: string; feature_id: string;
   owner_id: string; host_instance_id: string; execution_version: number; execution_stage: string;
   status: string; revision: number; started_at: number | null; created_at: number;
+  input_snapshot: string;
 }
 interface LeaseRow {
   project_id: string; owner_id: string; host_instance_id: string; execution_version: number;
@@ -23,8 +24,8 @@ interface LeaseRow {
 export function createSqliteWorkStartupRecoveryStore(session: SqliteStorageSession,
   options: { readonly nowUtcMs?: () => number } = {}): WorkStartupRecoveryStore {
   const db = session.database;
-  const dispatch = createSqliteDispatchRecovery(session);
   const now = options.nowUtcMs ?? Date.now;
+  const dispatch = createSqliteDispatchRecovery(session, { nowUtcMs: now });
   function findEvent(phase: RecoveryPhase, id: string) {
     const row = db.prepare<[string, string], Omit<PersistedStateEventRow, 'payload'> & { payload: string }>(`SELECT
       id, sequence, event_type AS eventType, aggregate_type AS aggregateType, aggregate_id AS aggregateId,
@@ -80,6 +81,28 @@ export function createSqliteWorkStartupRecoveryStore(session: SqliteStorageSessi
               processIdentity = validateWorkProcessIdentity(identity);
             }
           } catch { gaps.push('invalid_process_identity'); }
+          /* P05-1 / F-010：planning Attempt 额外核对输入快照绑定、候选发布与审计
+           * 水位（任一漂移都作为 gap 保留隔离，不从原生历史或租约过期推断安全）。 */
+          try {
+            const snapshot = JSON.parse(row.input_snapshot) as { candidateId?: unknown; purpose?: unknown };
+            if (snapshot?.purpose === 'planning' && typeof snapshot.candidateId === 'string') {
+              const context = db.prepare<[string, string], { planning_task_id: string; candidate_id: string;
+                status: string; candidate_artifact_id: string | null }>(
+                'SELECT planning_task_id, candidate_id, status, candidate_artifact_id FROM planning_contexts WHERE project_id = ? AND run_id = ?',
+              ).get(row.project_id, row.run_id);
+              if (context === undefined || context.planning_task_id !== row.task_id
+                || context.candidate_id !== snapshot.candidateId) gaps.push('planning_context_binding_mismatch');
+              else if (context.candidate_artifact_id !== null
+                && !db.prepare<[string, string], { n: number }>(
+                  "SELECT COUNT(*) AS n FROM artifacts WHERE project_id = ? AND id = ? AND status = 'ready'",
+                ).get(row.project_id, context.candidate_artifact_id)!.n) gaps.push('planning_candidate_artifact_missing');
+              const sessionRow = db.prepare<[string], { status: string; recording_watermark: number | null }>(
+                'SELECT status, recording_watermark FROM sessions WHERE attempt_id = ?').get(row.id);
+              if (sessionRow !== undefined && sessionRow.status !== 'reserved' && sessionRow.recording_watermark === null) {
+                gaps.push('planning_recording_watermark_missing');
+              }
+            }
+          } catch { gaps.push('planning_input_snapshot_invalid'); }
           const workspace = db.prepare<[string, string], { owner_id: string; host_instance_id: string; execution_version: number; run_id: string; attempt_id: string }>(
             'SELECT owner_id, host_instance_id, execution_version, run_id, attempt_id FROM managed_workspaces WHERE project_id = ? AND feature_id = ?')
             .get(row.project_id, row.feature_id);
@@ -191,6 +214,18 @@ export function createSqliteWorkStartupRecoveryStore(session: SqliteStorageSessi
       session.transactWrite('Work.startupRecovery.failed', () => {
         event('failed', null, null, { schemaVersion: 1, reason: 'recovery_failed' });
       });
+    },
+    /** P05-1 / F-010：规划恢复已补完（或已判定证据不足）的终态 planning Run/
+     * Attempt——终态现场由规划窗口诊断拥有，通用逐个核对不再改写。 */
+    planningCompletionFinalized(attemptId: string): boolean {
+      const row = db.prepare<[string], AttemptRow & { run_status?: string }>('SELECT a.* FROM attempts a WHERE a.id = ?').get(attemptId);
+      if (row === undefined || !['succeeded', 'failed', 'cancelled'].includes(row.status)) return false;
+      try {
+        const snapshot = JSON.parse(row.input_snapshot) as { purpose?: unknown };
+        if (snapshot?.purpose !== 'planning') return false;
+      } catch { return false; }
+      const run = db.prepare<[string], { status: string }>('SELECT status FROM runs WHERE id = ?').get(row.run_id);
+      return run !== undefined && ['succeeded', 'failed', 'cancelled'].includes(run.status);
     },
   };
 }

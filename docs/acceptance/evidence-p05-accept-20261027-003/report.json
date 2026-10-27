@@ -1,0 +1,3015 @@
+{
+  "reportSchemaVersion": 1,
+  "reportLayer": "phase-acceptance",
+  "runId": "p05-accept-20261027-003",
+  "generatedAtUtc": "2026-10-27T06:23:57.454Z",
+  "plan": {
+    "phaseId": "2026-10-23-18-55-21_shiploop-p05-feature",
+    "stepId": "p05-acceptance",
+    "title": "P05 阶段验收契约与执行报告",
+    "scope": "FR-1/FR-2/FR-3/FR-4 及 P05-1～P05-9 的离线、live、人工和显式全仓回归开关",
+    "version": "1.0",
+    "contractDoc": "docs/p05-acceptance.md",
+    "digestSha256": "deb0f36e824cd3e9872d8b494f799e31dd4b0d66501270c753de877cdef2026c",
+    "checklistDigestSha256": "2096d41b97f3a83baece5032cbabdbd36122272d79490587ccc6f779638d387f"
+  },
+  "git": {
+    "commit": "245fa62f5fc36e22d510dd98fe9c61aeb2a58b03",
+    "worktree": "clean",
+    "branch": "acceptance/p05",
+    "priorBaselines": [
+      {
+        "phase": "2026-10-23-18-55-21_shiploop-p05-feature",
+        "branch": "acceptance/p05",
+        "tipCommit": "245fa62f5fc36e22d510dd98fe9c61aeb2a58b03"
+      }
+    ]
+  },
+  "platform": {
+    "system": "darwin",
+    "release": "25.6.0",
+    "arch": "arm64"
+  },
+  "tools": {
+    "node": "v22.19.0",
+    "npm": "10.9.3",
+    "git": "git version 2.50.1 (Apple Git-155)",
+    "sqlite": "3.51.0 2025-06-12 13:14:41 f0ca7bba1c5e232e5d279fad6338121ab55af0c8c68c84cdfb18ba5114dcaapl (64-bit)",
+    "betterSqlite3": "13.0.3",
+    "drizzleOrm": "unknown"
+  },
+  "fakeIdentity": {
+    "provider": "fake-provider",
+    "model": "fake-model",
+    "realModel": false,
+    "network": "denied"
+  },
+  "commands": [
+    {
+      "label": "p05-trusted-index",
+      "argv": [
+        "<node>",
+        "scripts/run-tests.ts",
+        "test/modules/authorization/authorization-contract.test.ts",
+        "test/modules/cli/p05-9-batch-delivery-cli.test.ts",
+        "test/modules/commands/command-receipts-store.test.ts",
+        "test/modules/commands/commands-contract.test.ts",
+        "test/modules/delivery/p03-8-f004-git-commit-reconciliation.test.ts",
+        "test/modules/delivery/p05-6-f001-integration-plan.test.ts",
+        "test/modules/delivery/p05-6-f002-integration-plan-store.test.ts",
+        "test/modules/delivery/p05-6-f003-integration-plan-generation.test.ts",
+        "test/modules/delivery/p05-6-f004-integration-plan-control.test.ts",
+        "test/modules/delivery/p05-6-f005-integration-plan-query.test.ts",
+        "test/modules/delivery/p05-6-f005-integration-plan-sqlite-query.test.ts",
+        "test/modules/delivery/p05-6-f006-integration-assembly.test.ts",
+        "test/modules/delivery/p05-7-f001-integration-execution-plan.test.ts",
+        "test/modules/delivery/p05-7-f002-git-operation-persistence.test.ts",
+        "test/modules/delivery/p05-7-f003-integration-git-workspace.test.ts",
+        "test/modules/delivery/p05-7-f004-deterministic-integration.test.ts",
+        "test/modules/delivery/p05-7-f005-integration-verification.test.ts",
+        "test/modules/delivery/p05-7-f006-integration-reconciliation.test.ts",
+        "test/modules/delivery/p05-7-f008-integration-vertical.test.ts",
+        "test/modules/delivery/p05-8-f001-git-agent-repair-contract.test.ts",
+        "test/modules/delivery/p05-8-f002-git-agent-repair-run.test.ts",
+        "test/modules/delivery/p05-8-f003-git-agent-runtime.test.ts",
+        "test/modules/delivery/p05-8-f004-git-agent-candidate-finalization.test.ts",
+        "test/modules/delivery/p05-8-f005-git-agent-recovery-sqlite.test.ts",
+        "test/modules/delivery/p05-8-f005-git-agent-recovery.test.ts",
+        "test/modules/delivery/p05-8-f006-git-agent-host-query.test.ts",
+        "test/modules/delivery/p05-8-f007-git-agent-composition.test.ts",
+        "test/modules/delivery/p05-9-f001-batch-delivery-query.test.ts",
+        "test/modules/delivery/p05-9-f002-batch-leaf-finalization.test.ts",
+        "test/modules/delivery/p05-9-f003-batch-lifecycle.test.ts",
+        "test/modules/delivery/p05-9-f004-phase-delivery-approval-sqlite.test.ts",
+        "test/modules/delivery/p05-9-f004-phase-delivery-approval.test.ts",
+        "test/modules/delivery/p05-9-f005-batch-operations.test.ts",
+        "test/modules/delivery/p05-9-f008-batch-delivery-vertical.test.ts",
+        "test/modules/delivery/p05-9-f008-delivery-record.test.ts",
+        "test/modules/execution/budget/p03-3-attempt-budget-reservation.test.ts",
+        "test/modules/execution/budget/p03-3-execution-start.test.ts",
+        "test/modules/execution/budget/p03-3-work-command-receipts.test.ts",
+        "test/modules/execution/budget/p05-3-f001-batch-members.test.ts",
+        "test/modules/execution/budget/p05-3-f002-preview-scope.test.ts",
+        "test/modules/execution/budget/p05-3-f003-preview-orchestration.test.ts",
+        "test/modules/execution/budget/p05-3-f004-batch-authorization.test.ts",
+        "test/modules/execution/budget/p05-3-f005-batch-retry.test.ts",
+        "test/modules/execution/budget/p05-3-f008-batch-cross-layer.test.ts",
+        "test/modules/execution/control/p05-5-f006-feature-control.test.ts",
+        "test/modules/execution/dispatch/p05-4-f008-feature-dispatch-vertical.test.ts",
+        "test/modules/host/control/p05-5-f007-resource-host-wiring.test.ts",
+        "test/modules/host/p03-10-feature-report-contract.test.ts",
+        "test/modules/host/p05-1-f006-submission-tools.test.ts",
+        "test/modules/host/p05-3-f006-batch-host.test.ts",
+        "test/modules/host/p05-3-f006-batch-wire.test.ts",
+        "test/modules/host/p05-7-f007-integration-host-cli.test.ts",
+        "test/modules/host/p05-9-f006-batch-delivery-host.test.ts",
+        "test/modules/planning/docs-p05-1-planning-candidate-contract.test.ts",
+        "test/modules/planning/p05-1-f001-planning-candidate-digest.test.ts",
+        "test/modules/planning/p05-1-f001-planning-candidate-validation.test.ts",
+        "test/modules/planning/p05-1-f002-planning-context-store.test.ts",
+        "test/modules/planning/p05-1-f002-planning-strategy-selection.test.ts",
+        "test/modules/planning/p05-1-f003-planning-start-command.test.ts",
+        "test/modules/planning/p05-1-f004-planning-input-prepare.test.ts",
+        "test/modules/planning/p05-1-f005-planning-dispatch-claim.test.ts",
+        "test/modules/planning/p05-1-f006-planning-candidate-submit.test.ts",
+        "test/modules/planning/p05-1-f007-planning-execution.test.ts",
+        "test/modules/planning/p05-1-f008-planning-candidate-decision.test.ts",
+        "test/modules/planning/p05-1-f009-planning-control.test.ts",
+        "test/modules/planning/p05-1-f010-planning-recovery.test.ts",
+        "test/modules/planning/p05-1-f011-planning-query.test.ts",
+        "test/modules/planning/p05-1-f012-planning-host-wiring.test.ts",
+        "test/modules/planning/p05-1-f013-planning-cli.test.ts",
+        "test/modules/planning/p05-1-f014-planning-e2e.test.ts",
+        "test/modules/planning/p05-2-f002-feature-dag.test.ts",
+        "test/modules/planning/p05-2-f005-feature-dag-update.test.ts",
+        "test/modules/planning/p05-2-f006-phase-graph-query.test.ts",
+        "test/modules/planning/p05-2-f007-phase-graph-cli.test.ts",
+        "test/modules/planning/p05-2-f007-phase-graph-host-wiring.test.ts",
+        "test/modules/planning/p05-2-f008-phase-graph-vertical.test.ts",
+        "test/modules/planning/p05-2-feature-phase-affiliation.test.ts",
+        "test/modules/planning/p05-2-phase-lifecycle.test.ts",
+        "test/modules/recovery/p03-9-f005-startup-recovery.test.ts",
+        "test/modules/recovery/p04-9-f007-dispatch-crash-windows.test.ts",
+        "test/modules/recovery/p05-4-f006-dispatch-recovery.test.ts",
+        "test/modules/recovery/p05-5-f005-resource-recovery.test.ts",
+        "test/modules/scheduling/p03-4-work-resources.test.ts",
+        "test/modules/scheduling/p04-9-f003-execution-slot.test.ts",
+        "test/modules/scheduling/p04-9-f004-dispatch-task-claim.test.ts",
+        "test/modules/scheduling/p04-9-f006-dispatch-control-settlement.test.ts",
+        "test/modules/scheduling/p05-4-f002-scheduler-candidates.test.ts",
+        "test/modules/scheduling/p05-4-f003-concurrent-dispatch.test.ts",
+        "test/modules/scheduling/p05-4-f004-feature-scheduler.test.ts",
+        "test/modules/scheduling/p05-5-f001-feature-resources.test.ts",
+        "test/modules/scheduling/p05-5-f002-feature-resource-sqlite.test.ts",
+        "test/modules/scheduling/p05-5-f003-feature-dispatch-resources.test.ts",
+        "test/modules/scheduling/p05-5-f004-resource-settlement.test.ts",
+        "test/modules/scheduling/p05-5-f007-resource-query.test.ts",
+        "test/modules/scheduling/p05-5-f008-cross-layer.test.ts",
+        "test/modules/storage/sqlite/p04-9-dispatch-intent-schema.test.ts",
+        "test/modules/storage/sqlite/p04-9-dispatch-slot-schema.test.ts",
+        "test/modules/storage/sqlite/p05-1-f002-planning-context-schema.test.ts",
+        "test/modules/storage/sqlite/p05-1-f003-planning-start-schema.test.ts",
+        "test/modules/storage/sqlite/p05-2-f001-feature-dependencies-schema.test.ts",
+        "test/modules/storage/sqlite/p05-7-f004-integration-journal-schema.test.ts",
+        "test/modules/storage/sqlite/p05-8-f002-repair-migration.test.ts",
+        "test/modules/storage/sqlite/sqlite-cas-and-atomicity.test.ts",
+        "test/modules/storage/sqlite/sqlite-migration-runner.test.ts",
+        "test/modules/storage/sqlite/sqlite-schema-migrations.test.ts",
+        "test/modules/workspace/p05-4-f005-feature-workspace-concurrency.test.ts"
+      ],
+      "cwd": "<repo>",
+      "exitCode": 0,
+      "durationMs": 502839
+    },
+    {
+      "label": "p05-affected-regression",
+      "argv": [
+        "<node>",
+        "scripts/run-tests.ts",
+        "test/modules/acceptance/p05-10-f002-fixture.test.ts",
+        "test/modules/acceptance/p05-10-f003-normal-flow.test.ts",
+        "test/modules/acceptance/p05-10-f004-fault-matrix.test.ts",
+        "test/modules/acceptance/p05-10-f005-git-integration.test.ts",
+        "test/modules/acceptance/p05-10-f006-combined-faults.test.ts",
+        "test/modules/acceptance/p05-10-f007-phase-entry.test.ts",
+        "test/modules/acceptance/p05-10-f008-closeout.test.ts",
+        "test/modules/acceptance/p05-10-f009-closeout.test.ts"
+      ],
+      "cwd": "<repo>",
+      "exitCode": 0,
+      "durationMs": 56787
+    },
+    {
+      "label": "p05-cross-layer-smoke",
+      "argv": [
+        "<node>",
+        "scripts/run-tests.ts",
+        "test/modules/acceptance/p05-acceptance-contract.test.ts",
+        "test/modules/acceptance/p05-product-report.test.ts",
+        "test/modules/acceptance/p05-phase-evidence.test.ts"
+      ],
+      "cwd": "<repo>",
+      "exitCode": 0,
+      "durationMs": 3974
+    },
+    {
+      "label": "p05-manual-gate",
+      "argv": [
+        "<node>",
+        "-e",
+        "process.exit(0)"
+      ],
+      "cwd": "<repo>",
+      "exitCode": 0,
+      "durationMs": 47
+    }
+  ],
+  "checks": [
+    {
+      "id": "P05-FR1-OFFLINE-CLOSURE",
+      "group": "fr",
+      "title": "FR-1 离线闭环与证据身份",
+      "layer": "phase-acceptance",
+      "execution": "offline",
+      "fr": [
+        "FR-1"
+      ],
+      "acceptanceRefs": [
+        "FR-1",
+        "AC-1",
+        "AC-3"
+      ],
+      "checklistAssertions": [
+        "阶段入口使用 FakeRuntime/脚本化 Runtime，不调用模型或网络，并逐项绑定场景、输入摘要和受测完整 SHA",
+        "SQLite、Git、文件、进程和清理事实由真实临时资源断言，失败、缺证据和 not_run 保留原状"
+      ],
+      "evidenceCategories": [
+        "command-exit",
+        "artifact",
+        "manifest",
+        "sha",
+        "usage",
+        "cleanup"
+      ],
+      "coverage": null,
+      "coverageNote": null,
+      "status": "pass",
+      "notRunReason": null,
+      "executionMode": "fake",
+      "manualStatus": null,
+      "assertions": [
+        {
+          "id": "step:p05-trusted-index:exit-0-stop-verified",
+          "satisfied": true
+        },
+        {
+          "id": "step:p05-affected-regression:exit-0-stop-verified",
+          "satisfied": true
+        },
+        {
+          "id": "step:p05-cross-layer-smoke:exit-0-stop-verified",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-command-exit.json:I01",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-command-exit.json:I02",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-command-exit.json:I03",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-command-exit.json:I04",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-command-exit.json:I05",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-command-exit.json:I06",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-command-exit.json:I07",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-command-exit.json:I08",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-command-exit.json:I09",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-artifact.json:I01",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-artifact.json:I02",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-artifact.json:I03",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-artifact.json:I04",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-artifact.json:I05",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-artifact.json:I06",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-artifact.json:I07",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-artifact.json:I08",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-artifact.json:I09",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-manifest.json:I01",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-manifest.json:I02",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-manifest.json:I03",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-manifest.json:I04",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-manifest.json:I05",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-manifest.json:I06",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-manifest.json:I07",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-manifest.json:I08",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-manifest.json:I09",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-sha.json:I01",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-sha.json:I02",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-sha.json:I03",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-sha.json:I04",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-sha.json:I05",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-sha.json:I06",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-sha.json:I07",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-sha.json:I08",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-sha.json:I09",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-usage.json:I01",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-usage.json:I02",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-usage.json:I03",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-usage.json:I04",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-usage.json:I05",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-usage.json:I06",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-usage.json:I07",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-usage.json:I08",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-usage.json:I09",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-cleanup.json:I01",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-cleanup.json:I02",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-cleanup.json:I03",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-cleanup.json:I04",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-cleanup.json:I05",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-cleanup.json:I06",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-cleanup.json:I07",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-cleanup.json:I08",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-cleanup.json:I09",
+          "satisfied": true
+        }
+      ],
+      "sideEffectVerified": true,
+      "durationMs": 563600,
+      "detail": "步骤 3/3 通过；场景 54/54 覆盖；停止核验与副作用断言见证据",
+      "evidenceRefs": [
+        "evidence/checks/P05-FR1-OFFLINE-CLOSURE/steps/01-p05-trusted-index.json",
+        "evidence/checks/P05-FR1-OFFLINE-CLOSURE/steps/02-p05-affected-regression.json",
+        "evidence/checks/P05-FR1-OFFLINE-CLOSURE/steps/03-p05-cross-layer-smoke.json",
+        "evidence/checks/P05-FR1-OFFLINE-CLOSURE/scenarios/phase-evidence-command-exit.json",
+        "evidence/checks/P05-FR1-OFFLINE-CLOSURE/scenarios/phase-evidence-artifact.json",
+        "evidence/checks/P05-FR1-OFFLINE-CLOSURE/scenarios/phase-evidence-manifest.json",
+        "evidence/checks/P05-FR1-OFFLINE-CLOSURE/scenarios/phase-evidence-sha.json",
+        "evidence/checks/P05-FR1-OFFLINE-CLOSURE/scenarios/phase-evidence-usage.json",
+        "evidence/checks/P05-FR1-OFFLINE-CLOSURE/scenarios/phase-evidence-cleanup.json",
+        "evidence/checks/P05-FR1-OFFLINE-CLOSURE/extra/test-scope.json",
+        "evidence/checks/P05-FR1-OFFLINE-CLOSURE/result.json",
+        "evidence/checks/P05-FR1-OFFLINE-CLOSURE/manifest.json"
+      ]
+    },
+    {
+      "id": "P05-FR2-CONCURRENCY-INTEGRATION",
+      "group": "fr",
+      "title": "FR-2 并发、依赖与确定性集成",
+      "layer": "phase-acceptance",
+      "execution": "offline",
+      "fr": [
+        "FR-2"
+      ],
+      "acceptanceRefs": [
+        "FR-2",
+        "AC-1",
+        "AC-3"
+      ],
+      "checklistAssertions": [
+        "A/B 只在批准并发和资源允许时重叠，C 在固定前置成果和组合验证前保持 blocked/pending",
+        "Batch 范围、预算、锁、Git 集成顺序和叶子汇总均以持久事实核对，追加 Feature 使用新 Batch"
+      ],
+      "evidenceCategories": [
+        "sqlite",
+        "git",
+        "process",
+        "artifact",
+        "sha",
+        "usage"
+      ],
+      "coverage": null,
+      "coverageNote": null,
+      "status": "pass",
+      "notRunReason": null,
+      "executionMode": "fake",
+      "manualStatus": null,
+      "assertions": [
+        {
+          "id": "step:p05-trusted-index:exit-0-stop-verified",
+          "satisfied": true
+        },
+        {
+          "id": "step:p05-affected-regression:exit-0-stop-verified",
+          "satisfied": true
+        },
+        {
+          "id": "step:p05-cross-layer-smoke:exit-0-stop-verified",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-sqlite.json:I02",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-sqlite.json:I03",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-sqlite.json:I05",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-sqlite.json:I07",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-sqlite.json:I08",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-git.json:I02",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-git.json:I03",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-git.json:I05",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-git.json:I07",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-git.json:I08",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-process.json:I02",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-process.json:I03",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-process.json:I05",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-process.json:I07",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-process.json:I08",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-artifact.json:I02",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-artifact.json:I03",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-artifact.json:I05",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-artifact.json:I07",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-artifact.json:I08",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-sha.json:I02",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-sha.json:I03",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-sha.json:I05",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-sha.json:I07",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-sha.json:I08",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-usage.json:I02",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-usage.json:I03",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-usage.json:I05",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-usage.json:I07",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-usage.json:I08",
+          "satisfied": true
+        }
+      ],
+      "sideEffectVerified": true,
+      "durationMs": 563600,
+      "detail": "步骤 3/3 通过；场景 30/30 覆盖；停止核验与副作用断言见证据",
+      "evidenceRefs": [
+        "evidence/checks/P05-FR2-CONCURRENCY-INTEGRATION/steps/01-p05-trusted-index.json",
+        "evidence/checks/P05-FR2-CONCURRENCY-INTEGRATION/steps/02-p05-affected-regression.json",
+        "evidence/checks/P05-FR2-CONCURRENCY-INTEGRATION/steps/03-p05-cross-layer-smoke.json",
+        "evidence/checks/P05-FR2-CONCURRENCY-INTEGRATION/scenarios/phase-evidence-sqlite.json",
+        "evidence/checks/P05-FR2-CONCURRENCY-INTEGRATION/scenarios/phase-evidence-git.json",
+        "evidence/checks/P05-FR2-CONCURRENCY-INTEGRATION/scenarios/phase-evidence-process.json",
+        "evidence/checks/P05-FR2-CONCURRENCY-INTEGRATION/scenarios/phase-evidence-artifact.json",
+        "evidence/checks/P05-FR2-CONCURRENCY-INTEGRATION/scenarios/phase-evidence-sha.json",
+        "evidence/checks/P05-FR2-CONCURRENCY-INTEGRATION/scenarios/phase-evidence-usage.json",
+        "evidence/checks/P05-FR2-CONCURRENCY-INTEGRATION/extra/test-scope.json",
+        "evidence/checks/P05-FR2-CONCURRENCY-INTEGRATION/result.json"
+      ]
+    },
+    {
+      "id": "P05-FR3-FAULT-RECOVERY",
+      "group": "fr",
+      "title": "FR-3 故障、恢复与有界修复",
+      "layer": "phase-acceptance",
+      "execution": "offline",
+      "fr": [
+        "FR-3"
+      ],
+      "acceptanceRefs": [
+        "FR-3",
+        "AC-1",
+        "AC-3"
+      ],
+      "checklistAssertions": [
+        "重复信号、崩溃、租约过期、迟到结果、取消和未确认停止分别保留 owner fencing、资源和进程证据",
+        "Git 冲突修复只使用授权范围和父预算，失败或预算耗尽阻塞并保留现场，不由模型自报成功"
+      ],
+      "evidenceCategories": [
+        "sqlite",
+        "git",
+        "process",
+        "artifact",
+        "usage",
+        "cleanup"
+      ],
+      "coverage": null,
+      "coverageNote": null,
+      "status": "pass",
+      "notRunReason": null,
+      "executionMode": "fake",
+      "manualStatus": null,
+      "assertions": [
+        {
+          "id": "step:p05-trusted-index:exit-0-stop-verified",
+          "satisfied": true
+        },
+        {
+          "id": "step:p05-affected-regression:exit-0-stop-verified",
+          "satisfied": true
+        },
+        {
+          "id": "step:p05-cross-layer-smoke:exit-0-stop-verified",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-sqlite.json:I04",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-sqlite.json:I05",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-sqlite.json:I06",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-git.json:I04",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-git.json:I05",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-git.json:I06",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-process.json:I04",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-process.json:I05",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-process.json:I06",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-artifact.json:I04",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-artifact.json:I05",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-artifact.json:I06",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-usage.json:I04",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-usage.json:I05",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-usage.json:I06",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-cleanup.json:I04",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-cleanup.json:I05",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-cleanup.json:I06",
+          "satisfied": true
+        }
+      ],
+      "sideEffectVerified": true,
+      "durationMs": 563600,
+      "detail": "步骤 3/3 通过；场景 18/18 覆盖；停止核验与副作用断言见证据",
+      "evidenceRefs": [
+        "evidence/checks/P05-FR3-FAULT-RECOVERY/steps/01-p05-trusted-index.json",
+        "evidence/checks/P05-FR3-FAULT-RECOVERY/steps/02-p05-affected-regression.json",
+        "evidence/checks/P05-FR3-FAULT-RECOVERY/steps/03-p05-cross-layer-smoke.json",
+        "evidence/checks/P05-FR3-FAULT-RECOVERY/scenarios/phase-evidence-sqlite.json",
+        "evidence/checks/P05-FR3-FAULT-RECOVERY/scenarios/phase-evidence-git.json",
+        "evidence/checks/P05-FR3-FAULT-RECOVERY/scenarios/phase-evidence-process.json",
+        "evidence/checks/P05-FR3-FAULT-RECOVERY/scenarios/phase-evidence-artifact.json",
+        "evidence/checks/P05-FR3-FAULT-RECOVERY/scenarios/phase-evidence-usage.json",
+        "evidence/checks/P05-FR3-FAULT-RECOVERY/scenarios/phase-evidence-cleanup.json",
+        "evidence/checks/P05-FR3-FAULT-RECOVERY/extra/test-scope.json",
+        "evidence/checks/P05-FR3-FAULT-RECOVERY/result.json"
+      ]
+    },
+    {
+      "id": "P05-FR4-REPORT-MANUAL-GATE",
+      "group": "fr",
+      "title": "FR-4 报告完整性与人工放行",
+      "layer": "phase-acceptance",
+      "execution": "manual",
+      "fr": [
+        "FR-4"
+      ],
+      "acceptanceRefs": [
+        "FR-4",
+        "AC-2",
+        "AC-4"
+      ],
+      "checklistAssertions": [
+        "报告逐项记录状态、实际命令、退出码、耗时、证据哈希、受测完整 SHA、用量来源、清理事实和未执行原因",
+        "工程/集成、live 证据和负责人确认缺一不可；机器成功不能覆盖 manual pending 或 rejected"
+      ],
+      "evidenceCategories": [
+        "report",
+        "manual",
+        "manifest",
+        "sha",
+        "usage",
+        "cleanup"
+      ],
+      "coverage": null,
+      "coverageNote": null,
+      "status": "not_run",
+      "notRunReason": "skipped",
+      "executionMode": "fake",
+      "manualStatus": "pending",
+      "assertions": [],
+      "sideEffectVerified": null,
+      "durationMs": null,
+      "detail": "人工验收待负责人确认（pending）；工具不代签放行",
+      "evidenceRefs": [
+        "evidence/checks/P05-FR4-REPORT-MANUAL-GATE/manual.json",
+        "evidence/checks/P05-FR4-REPORT-MANUAL-GATE/result.json",
+        "evidence/checks/P05-FR4-REPORT-MANUAL-GATE/manifest.json"
+      ]
+    },
+    {
+      "id": "P05-I01-PLANNING-APPROVAL",
+      "group": "scenario",
+      "title": "I01 一次性规划候选批准",
+      "layer": "feature-integration",
+      "execution": "offline",
+      "fr": [
+        "FR-1",
+        "FR-2"
+      ],
+      "acceptanceRefs": [
+        "I01",
+        "P05-1",
+        "P05-2",
+        "P05-3"
+      ],
+      "checklistAssertions": [
+        "一次规划只产生一份冻结候选，未经批准不可执行；重复、跨项目和环依赖被拒绝并记录原因",
+        "候选、批准、Task 导入和固定 Batch 的身份与 digest 保持一致"
+      ],
+      "evidenceCategories": [
+        "sqlite",
+        "artifact",
+        "command-exit",
+        "sha",
+        "usage"
+      ],
+      "coverage": null,
+      "coverageNote": null,
+      "status": "pass",
+      "notRunReason": null,
+      "executionMode": "fake",
+      "manualStatus": null,
+      "assertions": [
+        {
+          "id": "step:p05-trusted-index:exit-0-stop-verified",
+          "satisfied": true
+        },
+        {
+          "id": "step:p05-affected-regression:exit-0-stop-verified",
+          "satisfied": true
+        },
+        {
+          "id": "step:p05-cross-layer-smoke:exit-0-stop-verified",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-sqlite.json:I01",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-artifact.json:I01",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-command-exit.json:I01",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-sha.json:I01",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-usage.json:I01",
+          "satisfied": true
+        }
+      ],
+      "sideEffectVerified": true,
+      "durationMs": 563600,
+      "detail": "步骤 3/3 通过；场景 5/5 覆盖；停止核验与副作用断言见证据",
+      "evidenceRefs": [
+        "evidence/checks/P05-I01-PLANNING-APPROVAL/steps/01-p05-trusted-index.json",
+        "evidence/checks/P05-I01-PLANNING-APPROVAL/steps/02-p05-affected-regression.json",
+        "evidence/checks/P05-I01-PLANNING-APPROVAL/steps/03-p05-cross-layer-smoke.json",
+        "evidence/checks/P05-I01-PLANNING-APPROVAL/scenarios/phase-evidence-sqlite.json",
+        "evidence/checks/P05-I01-PLANNING-APPROVAL/scenarios/phase-evidence-artifact.json",
+        "evidence/checks/P05-I01-PLANNING-APPROVAL/scenarios/phase-evidence-command-exit.json",
+        "evidence/checks/P05-I01-PLANNING-APPROVAL/scenarios/phase-evidence-sha.json",
+        "evidence/checks/P05-I01-PLANNING-APPROVAL/scenarios/phase-evidence-usage.json",
+        "evidence/checks/P05-I01-PLANNING-APPROVAL/extra/test-scope.json",
+        "evidence/checks/P05-I01-PLANNING-APPROVAL/result.json"
+      ]
+    },
+    {
+      "id": "P05-I02-AB-CONVERGENCE",
+      "group": "scenario",
+      "title": "I02 A/B 并发与 C 集成前阻塞",
+      "layer": "feature-integration",
+      "execution": "offline",
+      "fr": [
+        "FR-2"
+      ],
+      "acceptanceRefs": [
+        "I02",
+        "P05-4",
+        "P05-6",
+        "P05-7"
+      ],
+      "checklistAssertions": [
+        "A/B 在共同基线保留独立成果，C 在两者成果、合并顺序和组合验证证据齐全前保持 blocked/pending",
+        "输入 SHA、目标基线或策略漂移会使旧集成证据失效"
+      ],
+      "evidenceCategories": [
+        "sqlite",
+        "git",
+        "artifact",
+        "sha",
+        "usage"
+      ],
+      "coverage": null,
+      "coverageNote": null,
+      "status": "pass",
+      "notRunReason": null,
+      "executionMode": "fake",
+      "manualStatus": null,
+      "assertions": [
+        {
+          "id": "step:p05-trusted-index:exit-0-stop-verified",
+          "satisfied": true
+        },
+        {
+          "id": "step:p05-affected-regression:exit-0-stop-verified",
+          "satisfied": true
+        },
+        {
+          "id": "step:p05-cross-layer-smoke:exit-0-stop-verified",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-sqlite.json:I02",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-git.json:I02",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-artifact.json:I02",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-sha.json:I02",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-usage.json:I02",
+          "satisfied": true
+        }
+      ],
+      "sideEffectVerified": true,
+      "durationMs": 563600,
+      "detail": "步骤 3/3 通过；场景 5/5 覆盖；停止核验与副作用断言见证据",
+      "evidenceRefs": [
+        "evidence/checks/P05-I02-AB-CONVERGENCE/steps/01-p05-trusted-index.json",
+        "evidence/checks/P05-I02-AB-CONVERGENCE/steps/02-p05-affected-regression.json",
+        "evidence/checks/P05-I02-AB-CONVERGENCE/steps/03-p05-cross-layer-smoke.json",
+        "evidence/checks/P05-I02-AB-CONVERGENCE/scenarios/phase-evidence-sqlite.json",
+        "evidence/checks/P05-I02-AB-CONVERGENCE/scenarios/phase-evidence-git.json",
+        "evidence/checks/P05-I02-AB-CONVERGENCE/scenarios/phase-evidence-artifact.json",
+        "evidence/checks/P05-I02-AB-CONVERGENCE/scenarios/phase-evidence-sha.json",
+        "evidence/checks/P05-I02-AB-CONVERGENCE/scenarios/phase-evidence-usage.json",
+        "evidence/checks/P05-I02-AB-CONVERGENCE/extra/test-scope.json",
+        "evidence/checks/P05-I02-AB-CONVERGENCE/result.json"
+      ]
+    },
+    {
+      "id": "P05-I03-RESOURCE-MUTEX",
+      "group": "scenario",
+      "title": "I03 共享资源互斥",
+      "layer": "feature-integration",
+      "execution": "offline",
+      "fr": [
+        "FR-2",
+        "FR-3"
+      ],
+      "acceptanceRefs": [
+        "I03",
+        "P05-4",
+        "P05-5"
+      ],
+      "checklistAssertions": [
+        "共享项目、迁移、契约或工作区资源按统一顺序互斥，独立资源仍可推进且不死锁",
+        "锁竞争等待不启动越权 Runner、不重复扣预算，租约和 owner 事实可解释"
+      ],
+      "evidenceCategories": [
+        "sqlite",
+        "process",
+        "artifact",
+        "usage",
+        "cleanup"
+      ],
+      "coverage": null,
+      "coverageNote": null,
+      "status": "pass",
+      "notRunReason": null,
+      "executionMode": "fake",
+      "manualStatus": null,
+      "assertions": [
+        {
+          "id": "step:p05-trusted-index:exit-0-stop-verified",
+          "satisfied": true
+        },
+        {
+          "id": "step:p05-affected-regression:exit-0-stop-verified",
+          "satisfied": true
+        },
+        {
+          "id": "step:p05-cross-layer-smoke:exit-0-stop-verified",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-sqlite.json:I03",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-process.json:I03",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-artifact.json:I03",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-usage.json:I03",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-cleanup.json:I03",
+          "satisfied": true
+        }
+      ],
+      "sideEffectVerified": true,
+      "durationMs": 563600,
+      "detail": "步骤 3/3 通过；场景 5/5 覆盖；停止核验与副作用断言见证据",
+      "evidenceRefs": [
+        "evidence/checks/P05-I03-RESOURCE-MUTEX/steps/01-p05-trusted-index.json",
+        "evidence/checks/P05-I03-RESOURCE-MUTEX/steps/02-p05-affected-regression.json",
+        "evidence/checks/P05-I03-RESOURCE-MUTEX/steps/03-p05-cross-layer-smoke.json",
+        "evidence/checks/P05-I03-RESOURCE-MUTEX/scenarios/phase-evidence-sqlite.json",
+        "evidence/checks/P05-I03-RESOURCE-MUTEX/scenarios/phase-evidence-process.json",
+        "evidence/checks/P05-I03-RESOURCE-MUTEX/scenarios/phase-evidence-artifact.json",
+        "evidence/checks/P05-I03-RESOURCE-MUTEX/scenarios/phase-evidence-usage.json",
+        "evidence/checks/P05-I03-RESOURCE-MUTEX/scenarios/phase-evidence-cleanup.json",
+        "evidence/checks/P05-I03-RESOURCE-MUTEX/extra/test-scope.json",
+        "evidence/checks/P05-I03-RESOURCE-MUTEX/result.json"
+      ]
+    },
+    {
+      "id": "P05-I04-RECOVERY-FENCING",
+      "group": "scenario",
+      "title": "I04 崩溃、取消与迟到结果恢复",
+      "layer": "feature-integration",
+      "execution": "offline",
+      "fr": [
+        "FR-3"
+      ],
+      "acceptanceRefs": [
+        "I04",
+        "P05-4",
+        "P05-5",
+        "P05-7"
+      ],
+      "checklistAssertions": [
+        "重复派发、重启补扫、进程崩溃和租约过期不重复启动同一 Feature；旧 owner 迟到结果不能覆盖或释放新资源",
+        "取消、暂停和未确认停止分别保留状态、进程、工作区和清理事实"
+      ],
+      "evidenceCategories": [
+        "sqlite",
+        "process",
+        "artifact",
+        "usage",
+        "cleanup"
+      ],
+      "coverage": null,
+      "coverageNote": null,
+      "status": "pass",
+      "notRunReason": null,
+      "executionMode": "fake",
+      "manualStatus": null,
+      "assertions": [
+        {
+          "id": "step:p05-trusted-index:exit-0-stop-verified",
+          "satisfied": true
+        },
+        {
+          "id": "step:p05-affected-regression:exit-0-stop-verified",
+          "satisfied": true
+        },
+        {
+          "id": "step:p05-cross-layer-smoke:exit-0-stop-verified",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-sqlite.json:I04",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-process.json:I04",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-artifact.json:I04",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-usage.json:I04",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-cleanup.json:I04",
+          "satisfied": true
+        }
+      ],
+      "sideEffectVerified": true,
+      "durationMs": 563600,
+      "detail": "步骤 3/3 通过；场景 5/5 覆盖；停止核验与副作用断言见证据",
+      "evidenceRefs": [
+        "evidence/checks/P05-I04-RECOVERY-FENCING/steps/01-p05-trusted-index.json",
+        "evidence/checks/P05-I04-RECOVERY-FENCING/steps/02-p05-affected-regression.json",
+        "evidence/checks/P05-I04-RECOVERY-FENCING/steps/03-p05-cross-layer-smoke.json",
+        "evidence/checks/P05-I04-RECOVERY-FENCING/scenarios/phase-evidence-sqlite.json",
+        "evidence/checks/P05-I04-RECOVERY-FENCING/scenarios/phase-evidence-process.json",
+        "evidence/checks/P05-I04-RECOVERY-FENCING/scenarios/phase-evidence-artifact.json",
+        "evidence/checks/P05-I04-RECOVERY-FENCING/scenarios/phase-evidence-usage.json",
+        "evidence/checks/P05-I04-RECOVERY-FENCING/scenarios/phase-evidence-cleanup.json",
+        "evidence/checks/P05-I04-RECOVERY-FENCING/extra/test-scope.json",
+        "evidence/checks/P05-I04-RECOVERY-FENCING/result.json"
+      ]
+    },
+    {
+      "id": "P05-I05-GIT-INTEGRATION",
+      "group": "scenario",
+      "title": "I05 确定性 Git 集成与冲突留场",
+      "layer": "feature-integration",
+      "execution": "offline",
+      "fr": [
+        "FR-2",
+        "FR-3"
+      ],
+      "acceptanceRefs": [
+        "I05",
+        "P05-6",
+        "P05-7"
+      ],
+      "checklistAssertions": [
+        "无冲突时组合工作区包含全部固定前置成果并经验证；冲突、验证失败和回执前崩溃均保留可恢复意图与现场",
+        "重复集成按 operationId 幂等，不以漂移 HEAD 或未核对的文件状态放行"
+      ],
+      "evidenceCategories": [
+        "git",
+        "sqlite",
+        "artifact",
+        "sha",
+        "usage",
+        "cleanup"
+      ],
+      "coverage": null,
+      "coverageNote": null,
+      "status": "pass",
+      "notRunReason": null,
+      "executionMode": "fake",
+      "manualStatus": null,
+      "assertions": [
+        {
+          "id": "step:p05-trusted-index:exit-0-stop-verified",
+          "satisfied": true
+        },
+        {
+          "id": "step:p05-affected-regression:exit-0-stop-verified",
+          "satisfied": true
+        },
+        {
+          "id": "step:p05-cross-layer-smoke:exit-0-stop-verified",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-git.json:I05",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-sqlite.json:I05",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-artifact.json:I05",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-sha.json:I05",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-usage.json:I05",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-cleanup.json:I05",
+          "satisfied": true
+        }
+      ],
+      "sideEffectVerified": true,
+      "durationMs": 563600,
+      "detail": "步骤 3/3 通过；场景 6/6 覆盖；停止核验与副作用断言见证据",
+      "evidenceRefs": [
+        "evidence/checks/P05-I05-GIT-INTEGRATION/steps/01-p05-trusted-index.json",
+        "evidence/checks/P05-I05-GIT-INTEGRATION/steps/02-p05-affected-regression.json",
+        "evidence/checks/P05-I05-GIT-INTEGRATION/steps/03-p05-cross-layer-smoke.json",
+        "evidence/checks/P05-I05-GIT-INTEGRATION/scenarios/phase-evidence-git.json",
+        "evidence/checks/P05-I05-GIT-INTEGRATION/scenarios/phase-evidence-sqlite.json",
+        "evidence/checks/P05-I05-GIT-INTEGRATION/scenarios/phase-evidence-artifact.json",
+        "evidence/checks/P05-I05-GIT-INTEGRATION/scenarios/phase-evidence-sha.json",
+        "evidence/checks/P05-I05-GIT-INTEGRATION/scenarios/phase-evidence-usage.json",
+        "evidence/checks/P05-I05-GIT-INTEGRATION/scenarios/phase-evidence-cleanup.json",
+        "evidence/checks/P05-I05-GIT-INTEGRATION/extra/test-scope.json",
+        "evidence/checks/P05-I05-GIT-INTEGRATION/result.json"
+      ]
+    },
+    {
+      "id": "P05-I06-BOUNDED-REPAIR",
+      "group": "scenario",
+      "title": "I06 有界 GitAgent 冲突修复",
+      "layer": "feature-integration",
+      "execution": "offline",
+      "fr": [
+        "FR-3"
+      ],
+      "acceptanceRefs": [
+        "I06",
+        "P05-8"
+      ],
+      "checklistAssertions": [
+        "修复 Runtime 只能使用保存的冲突上下文和授权写入范围，并受父预算、取消和次数上限约束",
+        "越界、无效修复、预算耗尽或停止不确定均阻塞并保留候选、日志和资源"
+      ],
+      "evidenceCategories": [
+        "git",
+        "sqlite",
+        "process",
+        "artifact",
+        "usage",
+        "cleanup"
+      ],
+      "coverage": null,
+      "coverageNote": null,
+      "status": "pass",
+      "notRunReason": null,
+      "executionMode": "fake",
+      "manualStatus": null,
+      "assertions": [
+        {
+          "id": "step:p05-trusted-index:exit-0-stop-verified",
+          "satisfied": true
+        },
+        {
+          "id": "step:p05-affected-regression:exit-0-stop-verified",
+          "satisfied": true
+        },
+        {
+          "id": "step:p05-cross-layer-smoke:exit-0-stop-verified",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-git.json:I06",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-sqlite.json:I06",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-process.json:I06",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-artifact.json:I06",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-usage.json:I06",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-cleanup.json:I06",
+          "satisfied": true
+        }
+      ],
+      "sideEffectVerified": true,
+      "durationMs": 563600,
+      "detail": "步骤 3/3 通过；场景 6/6 覆盖；停止核验与副作用断言见证据",
+      "evidenceRefs": [
+        "evidence/checks/P05-I06-BOUNDED-REPAIR/steps/01-p05-trusted-index.json",
+        "evidence/checks/P05-I06-BOUNDED-REPAIR/steps/02-p05-affected-regression.json",
+        "evidence/checks/P05-I06-BOUNDED-REPAIR/steps/03-p05-cross-layer-smoke.json",
+        "evidence/checks/P05-I06-BOUNDED-REPAIR/scenarios/phase-evidence-git.json",
+        "evidence/checks/P05-I06-BOUNDED-REPAIR/scenarios/phase-evidence-sqlite.json",
+        "evidence/checks/P05-I06-BOUNDED-REPAIR/scenarios/phase-evidence-process.json",
+        "evidence/checks/P05-I06-BOUNDED-REPAIR/scenarios/phase-evidence-artifact.json",
+        "evidence/checks/P05-I06-BOUNDED-REPAIR/scenarios/phase-evidence-usage.json",
+        "evidence/checks/P05-I06-BOUNDED-REPAIR/scenarios/phase-evidence-cleanup.json",
+        "evidence/checks/P05-I06-BOUNDED-REPAIR/extra/test-scope.json",
+        "evidence/checks/P05-I06-BOUNDED-REPAIR/result.json"
+      ]
+    },
+    {
+      "id": "P05-I07-LEAF-DELIVERY",
+      "group": "scenario",
+      "title": "I07 并行叶子汇总与交付",
+      "layer": "feature-integration",
+      "execution": "offline",
+      "fr": [
+        "FR-2",
+        "FR-4"
+      ],
+      "acceptanceRefs": [
+        "I07",
+        "P05-9"
+      ],
+      "checklistAssertions": [
+        "无共同后继的叶子全部纳入 Batch/Phase 汇总，Task 完成、Feature 交付、集成通过和 Phase 批准分层记录",
+        "缺叶子、缺验证或缺人工批准不得生成可放行交付结论"
+      ],
+      "evidenceCategories": [
+        "sqlite",
+        "git",
+        "report",
+        "artifact",
+        "sha",
+        "usage"
+      ],
+      "coverage": null,
+      "coverageNote": null,
+      "status": "pass",
+      "notRunReason": null,
+      "executionMode": "fake",
+      "manualStatus": null,
+      "assertions": [
+        {
+          "id": "step:p05-trusted-index:exit-0-stop-verified",
+          "satisfied": true
+        },
+        {
+          "id": "step:p05-affected-regression:exit-0-stop-verified",
+          "satisfied": true
+        },
+        {
+          "id": "step:p05-cross-layer-smoke:exit-0-stop-verified",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-sqlite.json:I07",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-git.json:I07",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-report.json:I07",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-artifact.json:I07",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-sha.json:I07",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-usage.json:I07",
+          "satisfied": true
+        }
+      ],
+      "sideEffectVerified": true,
+      "durationMs": 563600,
+      "detail": "步骤 3/3 通过；场景 6/6 覆盖；停止核验与副作用断言见证据",
+      "evidenceRefs": [
+        "evidence/checks/P05-I07-LEAF-DELIVERY/steps/01-p05-trusted-index.json",
+        "evidence/checks/P05-I07-LEAF-DELIVERY/steps/02-p05-affected-regression.json",
+        "evidence/checks/P05-I07-LEAF-DELIVERY/steps/03-p05-cross-layer-smoke.json",
+        "evidence/checks/P05-I07-LEAF-DELIVERY/scenarios/phase-evidence-sqlite.json",
+        "evidence/checks/P05-I07-LEAF-DELIVERY/scenarios/phase-evidence-git.json",
+        "evidence/checks/P05-I07-LEAF-DELIVERY/scenarios/phase-evidence-report.json",
+        "evidence/checks/P05-I07-LEAF-DELIVERY/scenarios/phase-evidence-artifact.json",
+        "evidence/checks/P05-I07-LEAF-DELIVERY/scenarios/phase-evidence-sha.json",
+        "evidence/checks/P05-I07-LEAF-DELIVERY/scenarios/phase-evidence-usage.json",
+        "evidence/checks/P05-I07-LEAF-DELIVERY/extra/test-scope.json",
+        "evidence/checks/P05-I07-LEAF-DELIVERY/result.json"
+      ]
+    },
+    {
+      "id": "P05-I08-APPEND-BATCH",
+      "group": "scenario",
+      "title": "I08 追加 Feature 与新 Batch",
+      "layer": "feature-integration",
+      "execution": "offline",
+      "fr": [
+        "FR-2"
+      ],
+      "acceptanceRefs": [
+        "I08",
+        "P05-2",
+        "P05-3",
+        "P05-9"
+      ],
+      "checklistAssertions": [
+        "活动 Batch 的范围、策略和累计预算冻结，追加 Feature 不扩大旧 Batch 或隐式创建成员",
+        "新 Feature 只能通过显式新 Batch 进入执行，旧 Batch 的结果和计数保持不变"
+      ],
+      "evidenceCategories": [
+        "sqlite",
+        "artifact",
+        "sha",
+        "usage"
+      ],
+      "coverage": null,
+      "coverageNote": null,
+      "status": "pass",
+      "notRunReason": null,
+      "executionMode": "fake",
+      "manualStatus": null,
+      "assertions": [
+        {
+          "id": "step:p05-trusted-index:exit-0-stop-verified",
+          "satisfied": true
+        },
+        {
+          "id": "step:p05-affected-regression:exit-0-stop-verified",
+          "satisfied": true
+        },
+        {
+          "id": "step:p05-cross-layer-smoke:exit-0-stop-verified",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-sqlite.json:I08",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-artifact.json:I08",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-sha.json:I08",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-usage.json:I08",
+          "satisfied": true
+        }
+      ],
+      "sideEffectVerified": true,
+      "durationMs": 563600,
+      "detail": "步骤 3/3 通过；场景 4/4 覆盖；停止核验与副作用断言见证据",
+      "evidenceRefs": [
+        "evidence/checks/P05-I08-APPEND-BATCH/steps/01-p05-trusted-index.json",
+        "evidence/checks/P05-I08-APPEND-BATCH/steps/02-p05-affected-regression.json",
+        "evidence/checks/P05-I08-APPEND-BATCH/steps/03-p05-cross-layer-smoke.json",
+        "evidence/checks/P05-I08-APPEND-BATCH/scenarios/phase-evidence-sqlite.json",
+        "evidence/checks/P05-I08-APPEND-BATCH/scenarios/phase-evidence-artifact.json",
+        "evidence/checks/P05-I08-APPEND-BATCH/scenarios/phase-evidence-sha.json",
+        "evidence/checks/P05-I08-APPEND-BATCH/scenarios/phase-evidence-usage.json",
+        "evidence/checks/P05-I08-APPEND-BATCH/extra/test-scope.json",
+        "evidence/checks/P05-I08-APPEND-BATCH/result.json"
+      ]
+    },
+    {
+      "id": "P05-I09-INPUT-BUDGET-INTEGRITY",
+      "group": "scenario",
+      "title": "I09 输入漂移、预算耗尽与验收失败关闭",
+      "layer": "phase-acceptance",
+      "execution": "offline",
+      "fr": [
+        "FR-1",
+        "FR-3",
+        "FR-4"
+      ],
+      "acceptanceRefs": [
+        "I09",
+        "P05-10"
+      ],
+      "checklistAssertions": [
+        "输入摘要、受测 SHA、预算、报告身份或证据哈希不匹配时 fail-closed，不覆盖既有成功证据",
+        "步骤错误、超时、清理不确定和证据写入失败保留前序结果、现场及 not_run 原因"
+      ],
+      "evidenceCategories": [
+        "command-exit",
+        "artifact",
+        "manifest",
+        "sha",
+        "usage",
+        "cleanup"
+      ],
+      "coverage": null,
+      "coverageNote": null,
+      "status": "pass",
+      "notRunReason": null,
+      "executionMode": "fake",
+      "manualStatus": null,
+      "assertions": [
+        {
+          "id": "step:p05-trusted-index:exit-0-stop-verified",
+          "satisfied": true
+        },
+        {
+          "id": "step:p05-affected-regression:exit-0-stop-verified",
+          "satisfied": true
+        },
+        {
+          "id": "step:p05-cross-layer-smoke:exit-0-stop-verified",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-command-exit.json:I09",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-artifact.json:I09",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-manifest.json:I09",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-sha.json:I09",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-usage.json:I09",
+          "satisfied": true
+        },
+        {
+          "id": "scenario:phase-evidence-cleanup.json:I09",
+          "satisfied": true
+        }
+      ],
+      "sideEffectVerified": true,
+      "durationMs": 563600,
+      "detail": "步骤 3/3 通过；场景 6/6 覆盖；停止核验与副作用断言见证据",
+      "evidenceRefs": [
+        "evidence/checks/P05-I09-INPUT-BUDGET-INTEGRITY/steps/01-p05-trusted-index.json",
+        "evidence/checks/P05-I09-INPUT-BUDGET-INTEGRITY/steps/02-p05-affected-regression.json",
+        "evidence/checks/P05-I09-INPUT-BUDGET-INTEGRITY/steps/03-p05-cross-layer-smoke.json",
+        "evidence/checks/P05-I09-INPUT-BUDGET-INTEGRITY/scenarios/phase-evidence-command-exit.json",
+        "evidence/checks/P05-I09-INPUT-BUDGET-INTEGRITY/scenarios/phase-evidence-artifact.json",
+        "evidence/checks/P05-I09-INPUT-BUDGET-INTEGRITY/scenarios/phase-evidence-manifest.json",
+        "evidence/checks/P05-I09-INPUT-BUDGET-INTEGRITY/scenarios/phase-evidence-sha.json",
+        "evidence/checks/P05-I09-INPUT-BUDGET-INTEGRITY/scenarios/phase-evidence-usage.json",
+        "evidence/checks/P05-I09-INPUT-BUDGET-INTEGRITY/scenarios/phase-evidence-cleanup.json",
+        "evidence/checks/P05-I09-INPUT-BUDGET-INTEGRITY/extra/test-scope.json",
+        "evidence/checks/P05-I09-INPUT-BUDGET-INTEGRITY/result.json",
+        "evidence/checks/P05-I09-INPUT-BUDGET-INTEGRITY/manifest.json"
+      ]
+    },
+    {
+      "id": "P05-LIVE-GIT-AGENT-AUTH",
+      "group": "live",
+      "title": "P05 live GitAgent 授权与有界请求",
+      "layer": "phase-acceptance",
+      "execution": "live",
+      "fr": [
+        "FR-3"
+      ],
+      "acceptanceRefs": [
+        "FR-3",
+        "I06",
+        "P05-8"
+      ],
+      "checklistAssertions": [
+        "只有负责人明确授权的临时 Git 项目、provider/model、请求预算和写入范围才能发起 live 调用",
+        "缺失授权、认证或真实证据保持 not_run/failed，离线 Fake 结果不能折算 live 通过"
+      ],
+      "evidenceCategories": [
+        "live",
+        "git",
+        "process",
+        "command-exit",
+        "sha",
+        "usage",
+        "cleanup"
+      ],
+      "coverage": null,
+      "coverageNote": null,
+      "status": "not_run",
+      "notRunReason": "skipped",
+      "executionMode": "fake",
+      "manualStatus": null,
+      "assertions": [],
+      "sideEffectVerified": null,
+      "durationMs": null,
+      "detail": "真实 live 验收未运行（未获授权或缺认证保持 zero-call not_run）；不被离线/mock 结果覆盖",
+      "evidenceRefs": [
+        "evidence/checks/P05-LIVE-GIT-AGENT-AUTH/live.json"
+      ]
+    },
+    {
+      "id": "P05-MANUAL-OWNER-GATE",
+      "group": "manual",
+      "title": "P05 负责人 macOS 操作与阶段放行",
+      "layer": "phase-acceptance",
+      "execution": "manual",
+      "fr": [
+        "FR-4"
+      ],
+      "acceptanceRefs": [
+        "FR-4",
+        "AC-2",
+        "AC-4"
+      ],
+      "checklistAssertions": [
+        "负责人按 macOS 清单记录完整 SHA、实际命令、退出码、用量来源、清理事实和未执行项，并明确确认时间与结论",
+        "pending/rejected、缺签署、SHA 不匹配或 live not_run 时阶段结论不能通过"
+      ],
+      "evidenceCategories": [
+        "manual",
+        "report",
+        "manifest",
+        "sha",
+        "usage",
+        "cleanup"
+      ],
+      "coverage": null,
+      "coverageNote": null,
+      "status": "not_run",
+      "notRunReason": "skipped",
+      "executionMode": "fake",
+      "manualStatus": "pending",
+      "assertions": [],
+      "sideEffectVerified": null,
+      "durationMs": null,
+      "detail": "人工验收待负责人确认（pending）；工具不代签放行",
+      "evidenceRefs": [
+        "evidence/checks/P05-MANUAL-OWNER-GATE/manual.json",
+        "evidence/checks/P05-MANUAL-OWNER-GATE/result.json",
+        "evidence/checks/P05-MANUAL-OWNER-GATE/manifest.json"
+      ]
+    }
+  ],
+  "counts": {
+    "pass": 12,
+    "fail": 0,
+    "not_run": 3,
+    "total": 15
+  },
+  "conclusion": "fail",
+  "evidence": [
+    {
+      "identity": "evidence/checks/P05-FR1-OFFLINE-CLOSURE/steps/01-p05-trusted-index.json",
+      "category": "command-exit",
+      "path": "evidence/checks/P05-FR1-OFFLINE-CLOSURE/steps/01-p05-trusted-index.json",
+      "sha256": "146690ff5f1bc83e48f5abfa2d89ccc6095ee10d167453e7e4b14e9544b20a4f",
+      "sizeBytes": 8126,
+      "checkId": "P05-FR1-OFFLINE-CLOSURE",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-FR1-OFFLINE-CLOSURE/steps/02-p05-affected-regression.json",
+      "category": "command-exit",
+      "path": "evidence/checks/P05-FR1-OFFLINE-CLOSURE/steps/02-p05-affected-regression.json",
+      "sha256": "0f7792f2965b8907caa64d3ef9f7f5446f40d4667ff076b18d49ed64fe45dc2c",
+      "sizeBytes": 1245,
+      "checkId": "P05-FR1-OFFLINE-CLOSURE",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-FR1-OFFLINE-CLOSURE/steps/03-p05-cross-layer-smoke.json",
+      "category": "command-exit",
+      "path": "evidence/checks/P05-FR1-OFFLINE-CLOSURE/steps/03-p05-cross-layer-smoke.json",
+      "sha256": "9989144b936dc415184b42686dce4427d1c932ccd2bf6a01ac2f26f4d6d4fc83",
+      "sizeBytes": 911,
+      "checkId": "P05-FR1-OFFLINE-CLOSURE",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-FR1-OFFLINE-CLOSURE/scenarios/phase-evidence-command-exit.json",
+      "category": "command-exit",
+      "path": "evidence/checks/P05-FR1-OFFLINE-CLOSURE/scenarios/phase-evidence-command-exit.json",
+      "sha256": "3997151ae9ce9b702e5b33910bd514596fcbc071cf51eaec796d02715a45c09f",
+      "sizeBytes": 11702,
+      "checkId": "P05-FR1-OFFLINE-CLOSURE",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-FR1-OFFLINE-CLOSURE/scenarios/phase-evidence-artifact.json",
+      "category": "artifact",
+      "path": "evidence/checks/P05-FR1-OFFLINE-CLOSURE/scenarios/phase-evidence-artifact.json",
+      "sha256": "54c0fb0e611dae76e9590984ec7645fa816a7cd9302eb629373f736336ef9dc5",
+      "sizeBytes": 11698,
+      "checkId": "P05-FR1-OFFLINE-CLOSURE",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-FR1-OFFLINE-CLOSURE/scenarios/phase-evidence-manifest.json",
+      "category": "manifest",
+      "path": "evidence/checks/P05-FR1-OFFLINE-CLOSURE/scenarios/phase-evidence-manifest.json",
+      "sha256": "cdeaa336124123c09f05ba1587a2a916a81d826fd5c05966b4a751e0e027711d",
+      "sizeBytes": 11698,
+      "checkId": "P05-FR1-OFFLINE-CLOSURE",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-FR1-OFFLINE-CLOSURE/scenarios/phase-evidence-sha.json",
+      "category": "sha",
+      "path": "evidence/checks/P05-FR1-OFFLINE-CLOSURE/scenarios/phase-evidence-sha.json",
+      "sha256": "1b3f2ce551b9d0b90f5e12a3a5452447b9947486587ffe29189fc91e85a52660",
+      "sizeBytes": 11693,
+      "checkId": "P05-FR1-OFFLINE-CLOSURE",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-FR1-OFFLINE-CLOSURE/scenarios/phase-evidence-usage.json",
+      "category": "usage",
+      "path": "evidence/checks/P05-FR1-OFFLINE-CLOSURE/scenarios/phase-evidence-usage.json",
+      "sha256": "ebfdb27fcb3efb7695089bf82cfa0ceba12d4dbcd6e5803862856fc8d44c8e0b",
+      "sizeBytes": 11695,
+      "checkId": "P05-FR1-OFFLINE-CLOSURE",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-FR1-OFFLINE-CLOSURE/scenarios/phase-evidence-cleanup.json",
+      "category": "cleanup",
+      "path": "evidence/checks/P05-FR1-OFFLINE-CLOSURE/scenarios/phase-evidence-cleanup.json",
+      "sha256": "d17200a4fff642565e4fe1156d147f93981b9f7b1ae94d3437095fcc83dcb761",
+      "sizeBytes": 11697,
+      "checkId": "P05-FR1-OFFLINE-CLOSURE",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-FR1-OFFLINE-CLOSURE/extra/test-scope.json",
+      "category": "report",
+      "path": "evidence/checks/P05-FR1-OFFLINE-CLOSURE/extra/test-scope.json",
+      "sha256": "b2285244ecaf8cd1e5fef3d9d2ee36b705e983790a9f0cb403dd56accc5d4130",
+      "sizeBytes": 25105,
+      "checkId": "P05-FR1-OFFLINE-CLOSURE",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-FR1-OFFLINE-CLOSURE/result.json",
+      "category": "report",
+      "path": "evidence/checks/P05-FR1-OFFLINE-CLOSURE/result.json",
+      "sha256": "49cbb65fd50ad076047093f24efd1e10df2186826e176714745cef469e43479d",
+      "sizeBytes": 5552,
+      "checkId": "P05-FR1-OFFLINE-CLOSURE",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-FR1-OFFLINE-CLOSURE/manifest.json",
+      "category": "manifest",
+      "path": "evidence/checks/P05-FR1-OFFLINE-CLOSURE/manifest.json",
+      "sha256": "f1ced4ff74eec915195a780153fb9aaeebfae2cf7bfb3fb411339b52c3e45d0d",
+      "sizeBytes": 1028,
+      "checkId": "P05-FR1-OFFLINE-CLOSURE",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-FR2-CONCURRENCY-INTEGRATION/steps/01-p05-trusted-index.json",
+      "category": "command-exit",
+      "path": "evidence/checks/P05-FR2-CONCURRENCY-INTEGRATION/steps/01-p05-trusted-index.json",
+      "sha256": "146690ff5f1bc83e48f5abfa2d89ccc6095ee10d167453e7e4b14e9544b20a4f",
+      "sizeBytes": 8126,
+      "checkId": "P05-FR2-CONCURRENCY-INTEGRATION",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-FR2-CONCURRENCY-INTEGRATION/steps/02-p05-affected-regression.json",
+      "category": "command-exit",
+      "path": "evidence/checks/P05-FR2-CONCURRENCY-INTEGRATION/steps/02-p05-affected-regression.json",
+      "sha256": "0f7792f2965b8907caa64d3ef9f7f5446f40d4667ff076b18d49ed64fe45dc2c",
+      "sizeBytes": 1245,
+      "checkId": "P05-FR2-CONCURRENCY-INTEGRATION",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-FR2-CONCURRENCY-INTEGRATION/steps/03-p05-cross-layer-smoke.json",
+      "category": "command-exit",
+      "path": "evidence/checks/P05-FR2-CONCURRENCY-INTEGRATION/steps/03-p05-cross-layer-smoke.json",
+      "sha256": "9989144b936dc415184b42686dce4427d1c932ccd2bf6a01ac2f26f4d6d4fc83",
+      "sizeBytes": 911,
+      "checkId": "P05-FR2-CONCURRENCY-INTEGRATION",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-FR2-CONCURRENCY-INTEGRATION/scenarios/phase-evidence-sqlite.json",
+      "category": "sqlite",
+      "path": "evidence/checks/P05-FR2-CONCURRENCY-INTEGRATION/scenarios/phase-evidence-sqlite.json",
+      "sha256": "c31730bf441f54cffb0a4f74aed39a599f630c6cc472db3f49db3e286a2f76e1",
+      "sizeBytes": 11696,
+      "checkId": "P05-FR2-CONCURRENCY-INTEGRATION",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-FR2-CONCURRENCY-INTEGRATION/scenarios/phase-evidence-git.json",
+      "category": "git",
+      "path": "evidence/checks/P05-FR2-CONCURRENCY-INTEGRATION/scenarios/phase-evidence-git.json",
+      "sha256": "5ea4e7c81e8e120af1142015820c8ba7043de1af61b5fa266313ec049c38b175",
+      "sizeBytes": 11693,
+      "checkId": "P05-FR2-CONCURRENCY-INTEGRATION",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-FR2-CONCURRENCY-INTEGRATION/scenarios/phase-evidence-process.json",
+      "category": "process",
+      "path": "evidence/checks/P05-FR2-CONCURRENCY-INTEGRATION/scenarios/phase-evidence-process.json",
+      "sha256": "747dc173f423d7990ec37bd704b4b73cc6ea6f8157d77668833c566c263a394a",
+      "sizeBytes": 11697,
+      "checkId": "P05-FR2-CONCURRENCY-INTEGRATION",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-FR2-CONCURRENCY-INTEGRATION/scenarios/phase-evidence-artifact.json",
+      "category": "artifact",
+      "path": "evidence/checks/P05-FR2-CONCURRENCY-INTEGRATION/scenarios/phase-evidence-artifact.json",
+      "sha256": "54c0fb0e611dae76e9590984ec7645fa816a7cd9302eb629373f736336ef9dc5",
+      "sizeBytes": 11698,
+      "checkId": "P05-FR2-CONCURRENCY-INTEGRATION",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-FR2-CONCURRENCY-INTEGRATION/scenarios/phase-evidence-sha.json",
+      "category": "sha",
+      "path": "evidence/checks/P05-FR2-CONCURRENCY-INTEGRATION/scenarios/phase-evidence-sha.json",
+      "sha256": "1b3f2ce551b9d0b90f5e12a3a5452447b9947486587ffe29189fc91e85a52660",
+      "sizeBytes": 11693,
+      "checkId": "P05-FR2-CONCURRENCY-INTEGRATION",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-FR2-CONCURRENCY-INTEGRATION/scenarios/phase-evidence-usage.json",
+      "category": "usage",
+      "path": "evidence/checks/P05-FR2-CONCURRENCY-INTEGRATION/scenarios/phase-evidence-usage.json",
+      "sha256": "ebfdb27fcb3efb7695089bf82cfa0ceba12d4dbcd6e5803862856fc8d44c8e0b",
+      "sizeBytes": 11695,
+      "checkId": "P05-FR2-CONCURRENCY-INTEGRATION",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-FR2-CONCURRENCY-INTEGRATION/extra/test-scope.json",
+      "category": "report",
+      "path": "evidence/checks/P05-FR2-CONCURRENCY-INTEGRATION/extra/test-scope.json",
+      "sha256": "b2285244ecaf8cd1e5fef3d9d2ee36b705e983790a9f0cb403dd56accc5d4130",
+      "sizeBytes": 25105,
+      "checkId": "P05-FR2-CONCURRENCY-INTEGRATION",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-FR2-CONCURRENCY-INTEGRATION/result.json",
+      "category": "report",
+      "path": "evidence/checks/P05-FR2-CONCURRENCY-INTEGRATION/result.json",
+      "sha256": "f102b15f181703c75eb41af0f595032700da55918c1c9ec3b1d30def1e132743",
+      "sizeBytes": 3269,
+      "checkId": "P05-FR2-CONCURRENCY-INTEGRATION",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-FR3-FAULT-RECOVERY/steps/01-p05-trusted-index.json",
+      "category": "command-exit",
+      "path": "evidence/checks/P05-FR3-FAULT-RECOVERY/steps/01-p05-trusted-index.json",
+      "sha256": "146690ff5f1bc83e48f5abfa2d89ccc6095ee10d167453e7e4b14e9544b20a4f",
+      "sizeBytes": 8126,
+      "checkId": "P05-FR3-FAULT-RECOVERY",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-FR3-FAULT-RECOVERY/steps/02-p05-affected-regression.json",
+      "category": "command-exit",
+      "path": "evidence/checks/P05-FR3-FAULT-RECOVERY/steps/02-p05-affected-regression.json",
+      "sha256": "0f7792f2965b8907caa64d3ef9f7f5446f40d4667ff076b18d49ed64fe45dc2c",
+      "sizeBytes": 1245,
+      "checkId": "P05-FR3-FAULT-RECOVERY",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-FR3-FAULT-RECOVERY/steps/03-p05-cross-layer-smoke.json",
+      "category": "command-exit",
+      "path": "evidence/checks/P05-FR3-FAULT-RECOVERY/steps/03-p05-cross-layer-smoke.json",
+      "sha256": "9989144b936dc415184b42686dce4427d1c932ccd2bf6a01ac2f26f4d6d4fc83",
+      "sizeBytes": 911,
+      "checkId": "P05-FR3-FAULT-RECOVERY",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-FR3-FAULT-RECOVERY/scenarios/phase-evidence-sqlite.json",
+      "category": "sqlite",
+      "path": "evidence/checks/P05-FR3-FAULT-RECOVERY/scenarios/phase-evidence-sqlite.json",
+      "sha256": "c31730bf441f54cffb0a4f74aed39a599f630c6cc472db3f49db3e286a2f76e1",
+      "sizeBytes": 11696,
+      "checkId": "P05-FR3-FAULT-RECOVERY",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-FR3-FAULT-RECOVERY/scenarios/phase-evidence-git.json",
+      "category": "git",
+      "path": "evidence/checks/P05-FR3-FAULT-RECOVERY/scenarios/phase-evidence-git.json",
+      "sha256": "5ea4e7c81e8e120af1142015820c8ba7043de1af61b5fa266313ec049c38b175",
+      "sizeBytes": 11693,
+      "checkId": "P05-FR3-FAULT-RECOVERY",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-FR3-FAULT-RECOVERY/scenarios/phase-evidence-process.json",
+      "category": "process",
+      "path": "evidence/checks/P05-FR3-FAULT-RECOVERY/scenarios/phase-evidence-process.json",
+      "sha256": "747dc173f423d7990ec37bd704b4b73cc6ea6f8157d77668833c566c263a394a",
+      "sizeBytes": 11697,
+      "checkId": "P05-FR3-FAULT-RECOVERY",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-FR3-FAULT-RECOVERY/scenarios/phase-evidence-artifact.json",
+      "category": "artifact",
+      "path": "evidence/checks/P05-FR3-FAULT-RECOVERY/scenarios/phase-evidence-artifact.json",
+      "sha256": "54c0fb0e611dae76e9590984ec7645fa816a7cd9302eb629373f736336ef9dc5",
+      "sizeBytes": 11698,
+      "checkId": "P05-FR3-FAULT-RECOVERY",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-FR3-FAULT-RECOVERY/scenarios/phase-evidence-usage.json",
+      "category": "usage",
+      "path": "evidence/checks/P05-FR3-FAULT-RECOVERY/scenarios/phase-evidence-usage.json",
+      "sha256": "ebfdb27fcb3efb7695089bf82cfa0ceba12d4dbcd6e5803862856fc8d44c8e0b",
+      "sizeBytes": 11695,
+      "checkId": "P05-FR3-FAULT-RECOVERY",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-FR3-FAULT-RECOVERY/scenarios/phase-evidence-cleanup.json",
+      "category": "cleanup",
+      "path": "evidence/checks/P05-FR3-FAULT-RECOVERY/scenarios/phase-evidence-cleanup.json",
+      "sha256": "d17200a4fff642565e4fe1156d147f93981b9f7b1ae94d3437095fcc83dcb761",
+      "sizeBytes": 11697,
+      "checkId": "P05-FR3-FAULT-RECOVERY",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-FR3-FAULT-RECOVERY/extra/test-scope.json",
+      "category": "report",
+      "path": "evidence/checks/P05-FR3-FAULT-RECOVERY/extra/test-scope.json",
+      "sha256": "b2285244ecaf8cd1e5fef3d9d2ee36b705e983790a9f0cb403dd56accc5d4130",
+      "sizeBytes": 25105,
+      "checkId": "P05-FR3-FAULT-RECOVERY",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-FR3-FAULT-RECOVERY/result.json",
+      "category": "report",
+      "path": "evidence/checks/P05-FR3-FAULT-RECOVERY/result.json",
+      "sha256": "7825efbadba290bbf378e438271bd553ca4da20c72a5326a34dae3f854d69f2a",
+      "sizeBytes": 2176,
+      "checkId": "P05-FR3-FAULT-RECOVERY",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-FR4-REPORT-MANUAL-GATE/manual.json",
+      "category": "manual",
+      "path": "evidence/checks/P05-FR4-REPORT-MANUAL-GATE/manual.json",
+      "sha256": "57d376924cd5c1cc9e53aa25dff8050ac0c28f84abf05e097e4591ca9c9d1982",
+      "sizeBytes": 224,
+      "checkId": "P05-FR4-REPORT-MANUAL-GATE",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-FR4-REPORT-MANUAL-GATE/result.json",
+      "category": "report",
+      "path": "evidence/checks/P05-FR4-REPORT-MANUAL-GATE/result.json",
+      "sha256": "ba078b7d63e21fbd9622d9816d30eca052d847e70ba1253bb9becb76fb2c3360",
+      "sizeBytes": 247,
+      "checkId": "P05-FR4-REPORT-MANUAL-GATE",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-FR4-REPORT-MANUAL-GATE/manifest.json",
+      "category": "manifest",
+      "path": "evidence/checks/P05-FR4-REPORT-MANUAL-GATE/manifest.json",
+      "sha256": "cfe12e75c0fba2fefd5348541de2ecef36a164f0ec46f610186d180675dcb52c",
+      "sizeBytes": 269,
+      "checkId": "P05-FR4-REPORT-MANUAL-GATE",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I01-PLANNING-APPROVAL/steps/01-p05-trusted-index.json",
+      "category": "command-exit",
+      "path": "evidence/checks/P05-I01-PLANNING-APPROVAL/steps/01-p05-trusted-index.json",
+      "sha256": "146690ff5f1bc83e48f5abfa2d89ccc6095ee10d167453e7e4b14e9544b20a4f",
+      "sizeBytes": 8126,
+      "checkId": "P05-I01-PLANNING-APPROVAL",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I01-PLANNING-APPROVAL/steps/02-p05-affected-regression.json",
+      "category": "command-exit",
+      "path": "evidence/checks/P05-I01-PLANNING-APPROVAL/steps/02-p05-affected-regression.json",
+      "sha256": "0f7792f2965b8907caa64d3ef9f7f5446f40d4667ff076b18d49ed64fe45dc2c",
+      "sizeBytes": 1245,
+      "checkId": "P05-I01-PLANNING-APPROVAL",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I01-PLANNING-APPROVAL/steps/03-p05-cross-layer-smoke.json",
+      "category": "command-exit",
+      "path": "evidence/checks/P05-I01-PLANNING-APPROVAL/steps/03-p05-cross-layer-smoke.json",
+      "sha256": "9989144b936dc415184b42686dce4427d1c932ccd2bf6a01ac2f26f4d6d4fc83",
+      "sizeBytes": 911,
+      "checkId": "P05-I01-PLANNING-APPROVAL",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I01-PLANNING-APPROVAL/scenarios/phase-evidence-sqlite.json",
+      "category": "sqlite",
+      "path": "evidence/checks/P05-I01-PLANNING-APPROVAL/scenarios/phase-evidence-sqlite.json",
+      "sha256": "c31730bf441f54cffb0a4f74aed39a599f630c6cc472db3f49db3e286a2f76e1",
+      "sizeBytes": 11696,
+      "checkId": "P05-I01-PLANNING-APPROVAL",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I01-PLANNING-APPROVAL/scenarios/phase-evidence-artifact.json",
+      "category": "artifact",
+      "path": "evidence/checks/P05-I01-PLANNING-APPROVAL/scenarios/phase-evidence-artifact.json",
+      "sha256": "54c0fb0e611dae76e9590984ec7645fa816a7cd9302eb629373f736336ef9dc5",
+      "sizeBytes": 11698,
+      "checkId": "P05-I01-PLANNING-APPROVAL",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I01-PLANNING-APPROVAL/scenarios/phase-evidence-command-exit.json",
+      "category": "command-exit",
+      "path": "evidence/checks/P05-I01-PLANNING-APPROVAL/scenarios/phase-evidence-command-exit.json",
+      "sha256": "3997151ae9ce9b702e5b33910bd514596fcbc071cf51eaec796d02715a45c09f",
+      "sizeBytes": 11702,
+      "checkId": "P05-I01-PLANNING-APPROVAL",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I01-PLANNING-APPROVAL/scenarios/phase-evidence-sha.json",
+      "category": "sha",
+      "path": "evidence/checks/P05-I01-PLANNING-APPROVAL/scenarios/phase-evidence-sha.json",
+      "sha256": "1b3f2ce551b9d0b90f5e12a3a5452447b9947486587ffe29189fc91e85a52660",
+      "sizeBytes": 11693,
+      "checkId": "P05-I01-PLANNING-APPROVAL",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I01-PLANNING-APPROVAL/scenarios/phase-evidence-usage.json",
+      "category": "usage",
+      "path": "evidence/checks/P05-I01-PLANNING-APPROVAL/scenarios/phase-evidence-usage.json",
+      "sha256": "ebfdb27fcb3efb7695089bf82cfa0ceba12d4dbcd6e5803862856fc8d44c8e0b",
+      "sizeBytes": 11695,
+      "checkId": "P05-I01-PLANNING-APPROVAL",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I01-PLANNING-APPROVAL/extra/test-scope.json",
+      "category": "report",
+      "path": "evidence/checks/P05-I01-PLANNING-APPROVAL/extra/test-scope.json",
+      "sha256": "b2285244ecaf8cd1e5fef3d9d2ee36b705e983790a9f0cb403dd56accc5d4130",
+      "sizeBytes": 25105,
+      "checkId": "P05-I01-PLANNING-APPROVAL",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I01-PLANNING-APPROVAL/result.json",
+      "category": "report",
+      "path": "evidence/checks/P05-I01-PLANNING-APPROVAL/result.json",
+      "sha256": "a83bc84e76667f79ba3fe8544dde3f5f5ec1bda52813a307fd2b7f3b8eb9b9c5",
+      "sizeBytes": 985,
+      "checkId": "P05-I01-PLANNING-APPROVAL",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I02-AB-CONVERGENCE/steps/01-p05-trusted-index.json",
+      "category": "command-exit",
+      "path": "evidence/checks/P05-I02-AB-CONVERGENCE/steps/01-p05-trusted-index.json",
+      "sha256": "146690ff5f1bc83e48f5abfa2d89ccc6095ee10d167453e7e4b14e9544b20a4f",
+      "sizeBytes": 8126,
+      "checkId": "P05-I02-AB-CONVERGENCE",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I02-AB-CONVERGENCE/steps/02-p05-affected-regression.json",
+      "category": "command-exit",
+      "path": "evidence/checks/P05-I02-AB-CONVERGENCE/steps/02-p05-affected-regression.json",
+      "sha256": "0f7792f2965b8907caa64d3ef9f7f5446f40d4667ff076b18d49ed64fe45dc2c",
+      "sizeBytes": 1245,
+      "checkId": "P05-I02-AB-CONVERGENCE",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I02-AB-CONVERGENCE/steps/03-p05-cross-layer-smoke.json",
+      "category": "command-exit",
+      "path": "evidence/checks/P05-I02-AB-CONVERGENCE/steps/03-p05-cross-layer-smoke.json",
+      "sha256": "9989144b936dc415184b42686dce4427d1c932ccd2bf6a01ac2f26f4d6d4fc83",
+      "sizeBytes": 911,
+      "checkId": "P05-I02-AB-CONVERGENCE",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I02-AB-CONVERGENCE/scenarios/phase-evidence-sqlite.json",
+      "category": "sqlite",
+      "path": "evidence/checks/P05-I02-AB-CONVERGENCE/scenarios/phase-evidence-sqlite.json",
+      "sha256": "c31730bf441f54cffb0a4f74aed39a599f630c6cc472db3f49db3e286a2f76e1",
+      "sizeBytes": 11696,
+      "checkId": "P05-I02-AB-CONVERGENCE",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I02-AB-CONVERGENCE/scenarios/phase-evidence-git.json",
+      "category": "git",
+      "path": "evidence/checks/P05-I02-AB-CONVERGENCE/scenarios/phase-evidence-git.json",
+      "sha256": "5ea4e7c81e8e120af1142015820c8ba7043de1af61b5fa266313ec049c38b175",
+      "sizeBytes": 11693,
+      "checkId": "P05-I02-AB-CONVERGENCE",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I02-AB-CONVERGENCE/scenarios/phase-evidence-artifact.json",
+      "category": "artifact",
+      "path": "evidence/checks/P05-I02-AB-CONVERGENCE/scenarios/phase-evidence-artifact.json",
+      "sha256": "54c0fb0e611dae76e9590984ec7645fa816a7cd9302eb629373f736336ef9dc5",
+      "sizeBytes": 11698,
+      "checkId": "P05-I02-AB-CONVERGENCE",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I02-AB-CONVERGENCE/scenarios/phase-evidence-sha.json",
+      "category": "sha",
+      "path": "evidence/checks/P05-I02-AB-CONVERGENCE/scenarios/phase-evidence-sha.json",
+      "sha256": "1b3f2ce551b9d0b90f5e12a3a5452447b9947486587ffe29189fc91e85a52660",
+      "sizeBytes": 11693,
+      "checkId": "P05-I02-AB-CONVERGENCE",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I02-AB-CONVERGENCE/scenarios/phase-evidence-usage.json",
+      "category": "usage",
+      "path": "evidence/checks/P05-I02-AB-CONVERGENCE/scenarios/phase-evidence-usage.json",
+      "sha256": "ebfdb27fcb3efb7695089bf82cfa0ceba12d4dbcd6e5803862856fc8d44c8e0b",
+      "sizeBytes": 11695,
+      "checkId": "P05-I02-AB-CONVERGENCE",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I02-AB-CONVERGENCE/extra/test-scope.json",
+      "category": "report",
+      "path": "evidence/checks/P05-I02-AB-CONVERGENCE/extra/test-scope.json",
+      "sha256": "b2285244ecaf8cd1e5fef3d9d2ee36b705e983790a9f0cb403dd56accc5d4130",
+      "sizeBytes": 25105,
+      "checkId": "P05-I02-AB-CONVERGENCE",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I02-AB-CONVERGENCE/result.json",
+      "category": "report",
+      "path": "evidence/checks/P05-I02-AB-CONVERGENCE/result.json",
+      "sha256": "0ac97b5c18a36be5d7e64194c9cd6b94fc6e4a0a3ed853db5bf487a7a792a699",
+      "sizeBytes": 973,
+      "checkId": "P05-I02-AB-CONVERGENCE",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I03-RESOURCE-MUTEX/steps/01-p05-trusted-index.json",
+      "category": "command-exit",
+      "path": "evidence/checks/P05-I03-RESOURCE-MUTEX/steps/01-p05-trusted-index.json",
+      "sha256": "146690ff5f1bc83e48f5abfa2d89ccc6095ee10d167453e7e4b14e9544b20a4f",
+      "sizeBytes": 8126,
+      "checkId": "P05-I03-RESOURCE-MUTEX",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I03-RESOURCE-MUTEX/steps/02-p05-affected-regression.json",
+      "category": "command-exit",
+      "path": "evidence/checks/P05-I03-RESOURCE-MUTEX/steps/02-p05-affected-regression.json",
+      "sha256": "0f7792f2965b8907caa64d3ef9f7f5446f40d4667ff076b18d49ed64fe45dc2c",
+      "sizeBytes": 1245,
+      "checkId": "P05-I03-RESOURCE-MUTEX",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I03-RESOURCE-MUTEX/steps/03-p05-cross-layer-smoke.json",
+      "category": "command-exit",
+      "path": "evidence/checks/P05-I03-RESOURCE-MUTEX/steps/03-p05-cross-layer-smoke.json",
+      "sha256": "9989144b936dc415184b42686dce4427d1c932ccd2bf6a01ac2f26f4d6d4fc83",
+      "sizeBytes": 911,
+      "checkId": "P05-I03-RESOURCE-MUTEX",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I03-RESOURCE-MUTEX/scenarios/phase-evidence-sqlite.json",
+      "category": "sqlite",
+      "path": "evidence/checks/P05-I03-RESOURCE-MUTEX/scenarios/phase-evidence-sqlite.json",
+      "sha256": "c31730bf441f54cffb0a4f74aed39a599f630c6cc472db3f49db3e286a2f76e1",
+      "sizeBytes": 11696,
+      "checkId": "P05-I03-RESOURCE-MUTEX",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I03-RESOURCE-MUTEX/scenarios/phase-evidence-process.json",
+      "category": "process",
+      "path": "evidence/checks/P05-I03-RESOURCE-MUTEX/scenarios/phase-evidence-process.json",
+      "sha256": "747dc173f423d7990ec37bd704b4b73cc6ea6f8157d77668833c566c263a394a",
+      "sizeBytes": 11697,
+      "checkId": "P05-I03-RESOURCE-MUTEX",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I03-RESOURCE-MUTEX/scenarios/phase-evidence-artifact.json",
+      "category": "artifact",
+      "path": "evidence/checks/P05-I03-RESOURCE-MUTEX/scenarios/phase-evidence-artifact.json",
+      "sha256": "54c0fb0e611dae76e9590984ec7645fa816a7cd9302eb629373f736336ef9dc5",
+      "sizeBytes": 11698,
+      "checkId": "P05-I03-RESOURCE-MUTEX",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I03-RESOURCE-MUTEX/scenarios/phase-evidence-usage.json",
+      "category": "usage",
+      "path": "evidence/checks/P05-I03-RESOURCE-MUTEX/scenarios/phase-evidence-usage.json",
+      "sha256": "ebfdb27fcb3efb7695089bf82cfa0ceba12d4dbcd6e5803862856fc8d44c8e0b",
+      "sizeBytes": 11695,
+      "checkId": "P05-I03-RESOURCE-MUTEX",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I03-RESOURCE-MUTEX/scenarios/phase-evidence-cleanup.json",
+      "category": "cleanup",
+      "path": "evidence/checks/P05-I03-RESOURCE-MUTEX/scenarios/phase-evidence-cleanup.json",
+      "sha256": "d17200a4fff642565e4fe1156d147f93981b9f7b1ae94d3437095fcc83dcb761",
+      "sizeBytes": 11697,
+      "checkId": "P05-I03-RESOURCE-MUTEX",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I03-RESOURCE-MUTEX/extra/test-scope.json",
+      "category": "report",
+      "path": "evidence/checks/P05-I03-RESOURCE-MUTEX/extra/test-scope.json",
+      "sha256": "b2285244ecaf8cd1e5fef3d9d2ee36b705e983790a9f0cb403dd56accc5d4130",
+      "sizeBytes": 25105,
+      "checkId": "P05-I03-RESOURCE-MUTEX",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I03-RESOURCE-MUTEX/result.json",
+      "category": "report",
+      "path": "evidence/checks/P05-I03-RESOURCE-MUTEX/result.json",
+      "sha256": "dca0949a24851be50521f3de71132176416f81c8e421586dccf8f39c4526daf5",
+      "sizeBytes": 981,
+      "checkId": "P05-I03-RESOURCE-MUTEX",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I04-RECOVERY-FENCING/steps/01-p05-trusted-index.json",
+      "category": "command-exit",
+      "path": "evidence/checks/P05-I04-RECOVERY-FENCING/steps/01-p05-trusted-index.json",
+      "sha256": "146690ff5f1bc83e48f5abfa2d89ccc6095ee10d167453e7e4b14e9544b20a4f",
+      "sizeBytes": 8126,
+      "checkId": "P05-I04-RECOVERY-FENCING",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I04-RECOVERY-FENCING/steps/02-p05-affected-regression.json",
+      "category": "command-exit",
+      "path": "evidence/checks/P05-I04-RECOVERY-FENCING/steps/02-p05-affected-regression.json",
+      "sha256": "0f7792f2965b8907caa64d3ef9f7f5446f40d4667ff076b18d49ed64fe45dc2c",
+      "sizeBytes": 1245,
+      "checkId": "P05-I04-RECOVERY-FENCING",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I04-RECOVERY-FENCING/steps/03-p05-cross-layer-smoke.json",
+      "category": "command-exit",
+      "path": "evidence/checks/P05-I04-RECOVERY-FENCING/steps/03-p05-cross-layer-smoke.json",
+      "sha256": "9989144b936dc415184b42686dce4427d1c932ccd2bf6a01ac2f26f4d6d4fc83",
+      "sizeBytes": 911,
+      "checkId": "P05-I04-RECOVERY-FENCING",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I04-RECOVERY-FENCING/scenarios/phase-evidence-sqlite.json",
+      "category": "sqlite",
+      "path": "evidence/checks/P05-I04-RECOVERY-FENCING/scenarios/phase-evidence-sqlite.json",
+      "sha256": "c31730bf441f54cffb0a4f74aed39a599f630c6cc472db3f49db3e286a2f76e1",
+      "sizeBytes": 11696,
+      "checkId": "P05-I04-RECOVERY-FENCING",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I04-RECOVERY-FENCING/scenarios/phase-evidence-process.json",
+      "category": "process",
+      "path": "evidence/checks/P05-I04-RECOVERY-FENCING/scenarios/phase-evidence-process.json",
+      "sha256": "747dc173f423d7990ec37bd704b4b73cc6ea6f8157d77668833c566c263a394a",
+      "sizeBytes": 11697,
+      "checkId": "P05-I04-RECOVERY-FENCING",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I04-RECOVERY-FENCING/scenarios/phase-evidence-artifact.json",
+      "category": "artifact",
+      "path": "evidence/checks/P05-I04-RECOVERY-FENCING/scenarios/phase-evidence-artifact.json",
+      "sha256": "54c0fb0e611dae76e9590984ec7645fa816a7cd9302eb629373f736336ef9dc5",
+      "sizeBytes": 11698,
+      "checkId": "P05-I04-RECOVERY-FENCING",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I04-RECOVERY-FENCING/scenarios/phase-evidence-usage.json",
+      "category": "usage",
+      "path": "evidence/checks/P05-I04-RECOVERY-FENCING/scenarios/phase-evidence-usage.json",
+      "sha256": "ebfdb27fcb3efb7695089bf82cfa0ceba12d4dbcd6e5803862856fc8d44c8e0b",
+      "sizeBytes": 11695,
+      "checkId": "P05-I04-RECOVERY-FENCING",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I04-RECOVERY-FENCING/scenarios/phase-evidence-cleanup.json",
+      "category": "cleanup",
+      "path": "evidence/checks/P05-I04-RECOVERY-FENCING/scenarios/phase-evidence-cleanup.json",
+      "sha256": "d17200a4fff642565e4fe1156d147f93981b9f7b1ae94d3437095fcc83dcb761",
+      "sizeBytes": 11697,
+      "checkId": "P05-I04-RECOVERY-FENCING",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I04-RECOVERY-FENCING/extra/test-scope.json",
+      "category": "report",
+      "path": "evidence/checks/P05-I04-RECOVERY-FENCING/extra/test-scope.json",
+      "sha256": "b2285244ecaf8cd1e5fef3d9d2ee36b705e983790a9f0cb403dd56accc5d4130",
+      "sizeBytes": 25105,
+      "checkId": "P05-I04-RECOVERY-FENCING",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I04-RECOVERY-FENCING/result.json",
+      "category": "report",
+      "path": "evidence/checks/P05-I04-RECOVERY-FENCING/result.json",
+      "sha256": "3bb3c1f75b25e76a5b04c96a5a85139e1e4434e3d887ca04c495c1dd45debf43",
+      "sizeBytes": 983,
+      "checkId": "P05-I04-RECOVERY-FENCING",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I05-GIT-INTEGRATION/steps/01-p05-trusted-index.json",
+      "category": "command-exit",
+      "path": "evidence/checks/P05-I05-GIT-INTEGRATION/steps/01-p05-trusted-index.json",
+      "sha256": "146690ff5f1bc83e48f5abfa2d89ccc6095ee10d167453e7e4b14e9544b20a4f",
+      "sizeBytes": 8126,
+      "checkId": "P05-I05-GIT-INTEGRATION",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I05-GIT-INTEGRATION/steps/02-p05-affected-regression.json",
+      "category": "command-exit",
+      "path": "evidence/checks/P05-I05-GIT-INTEGRATION/steps/02-p05-affected-regression.json",
+      "sha256": "0f7792f2965b8907caa64d3ef9f7f5446f40d4667ff076b18d49ed64fe45dc2c",
+      "sizeBytes": 1245,
+      "checkId": "P05-I05-GIT-INTEGRATION",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I05-GIT-INTEGRATION/steps/03-p05-cross-layer-smoke.json",
+      "category": "command-exit",
+      "path": "evidence/checks/P05-I05-GIT-INTEGRATION/steps/03-p05-cross-layer-smoke.json",
+      "sha256": "9989144b936dc415184b42686dce4427d1c932ccd2bf6a01ac2f26f4d6d4fc83",
+      "sizeBytes": 911,
+      "checkId": "P05-I05-GIT-INTEGRATION",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I05-GIT-INTEGRATION/scenarios/phase-evidence-git.json",
+      "category": "git",
+      "path": "evidence/checks/P05-I05-GIT-INTEGRATION/scenarios/phase-evidence-git.json",
+      "sha256": "5ea4e7c81e8e120af1142015820c8ba7043de1af61b5fa266313ec049c38b175",
+      "sizeBytes": 11693,
+      "checkId": "P05-I05-GIT-INTEGRATION",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I05-GIT-INTEGRATION/scenarios/phase-evidence-sqlite.json",
+      "category": "sqlite",
+      "path": "evidence/checks/P05-I05-GIT-INTEGRATION/scenarios/phase-evidence-sqlite.json",
+      "sha256": "c31730bf441f54cffb0a4f74aed39a599f630c6cc472db3f49db3e286a2f76e1",
+      "sizeBytes": 11696,
+      "checkId": "P05-I05-GIT-INTEGRATION",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I05-GIT-INTEGRATION/scenarios/phase-evidence-artifact.json",
+      "category": "artifact",
+      "path": "evidence/checks/P05-I05-GIT-INTEGRATION/scenarios/phase-evidence-artifact.json",
+      "sha256": "54c0fb0e611dae76e9590984ec7645fa816a7cd9302eb629373f736336ef9dc5",
+      "sizeBytes": 11698,
+      "checkId": "P05-I05-GIT-INTEGRATION",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I05-GIT-INTEGRATION/scenarios/phase-evidence-sha.json",
+      "category": "sha",
+      "path": "evidence/checks/P05-I05-GIT-INTEGRATION/scenarios/phase-evidence-sha.json",
+      "sha256": "1b3f2ce551b9d0b90f5e12a3a5452447b9947486587ffe29189fc91e85a52660",
+      "sizeBytes": 11693,
+      "checkId": "P05-I05-GIT-INTEGRATION",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I05-GIT-INTEGRATION/scenarios/phase-evidence-usage.json",
+      "category": "usage",
+      "path": "evidence/checks/P05-I05-GIT-INTEGRATION/scenarios/phase-evidence-usage.json",
+      "sha256": "ebfdb27fcb3efb7695089bf82cfa0ceba12d4dbcd6e5803862856fc8d44c8e0b",
+      "sizeBytes": 11695,
+      "checkId": "P05-I05-GIT-INTEGRATION",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I05-GIT-INTEGRATION/scenarios/phase-evidence-cleanup.json",
+      "category": "cleanup",
+      "path": "evidence/checks/P05-I05-GIT-INTEGRATION/scenarios/phase-evidence-cleanup.json",
+      "sha256": "d17200a4fff642565e4fe1156d147f93981b9f7b1ae94d3437095fcc83dcb761",
+      "sizeBytes": 11697,
+      "checkId": "P05-I05-GIT-INTEGRATION",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I05-GIT-INTEGRATION/extra/test-scope.json",
+      "category": "report",
+      "path": "evidence/checks/P05-I05-GIT-INTEGRATION/extra/test-scope.json",
+      "sha256": "b2285244ecaf8cd1e5fef3d9d2ee36b705e983790a9f0cb403dd56accc5d4130",
+      "sizeBytes": 25105,
+      "checkId": "P05-I05-GIT-INTEGRATION",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I05-GIT-INTEGRATION/result.json",
+      "category": "report",
+      "path": "evidence/checks/P05-I05-GIT-INTEGRATION/result.json",
+      "sha256": "a2429ffdabd33b8b9877b916d9ca369d51f90f92aaf68127c8430bfb563c55b1",
+      "sizeBytes": 1067,
+      "checkId": "P05-I05-GIT-INTEGRATION",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I06-BOUNDED-REPAIR/steps/01-p05-trusted-index.json",
+      "category": "command-exit",
+      "path": "evidence/checks/P05-I06-BOUNDED-REPAIR/steps/01-p05-trusted-index.json",
+      "sha256": "146690ff5f1bc83e48f5abfa2d89ccc6095ee10d167453e7e4b14e9544b20a4f",
+      "sizeBytes": 8126,
+      "checkId": "P05-I06-BOUNDED-REPAIR",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I06-BOUNDED-REPAIR/steps/02-p05-affected-regression.json",
+      "category": "command-exit",
+      "path": "evidence/checks/P05-I06-BOUNDED-REPAIR/steps/02-p05-affected-regression.json",
+      "sha256": "0f7792f2965b8907caa64d3ef9f7f5446f40d4667ff076b18d49ed64fe45dc2c",
+      "sizeBytes": 1245,
+      "checkId": "P05-I06-BOUNDED-REPAIR",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I06-BOUNDED-REPAIR/steps/03-p05-cross-layer-smoke.json",
+      "category": "command-exit",
+      "path": "evidence/checks/P05-I06-BOUNDED-REPAIR/steps/03-p05-cross-layer-smoke.json",
+      "sha256": "9989144b936dc415184b42686dce4427d1c932ccd2bf6a01ac2f26f4d6d4fc83",
+      "sizeBytes": 911,
+      "checkId": "P05-I06-BOUNDED-REPAIR",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I06-BOUNDED-REPAIR/scenarios/phase-evidence-git.json",
+      "category": "git",
+      "path": "evidence/checks/P05-I06-BOUNDED-REPAIR/scenarios/phase-evidence-git.json",
+      "sha256": "5ea4e7c81e8e120af1142015820c8ba7043de1af61b5fa266313ec049c38b175",
+      "sizeBytes": 11693,
+      "checkId": "P05-I06-BOUNDED-REPAIR",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I06-BOUNDED-REPAIR/scenarios/phase-evidence-sqlite.json",
+      "category": "sqlite",
+      "path": "evidence/checks/P05-I06-BOUNDED-REPAIR/scenarios/phase-evidence-sqlite.json",
+      "sha256": "c31730bf441f54cffb0a4f74aed39a599f630c6cc472db3f49db3e286a2f76e1",
+      "sizeBytes": 11696,
+      "checkId": "P05-I06-BOUNDED-REPAIR",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I06-BOUNDED-REPAIR/scenarios/phase-evidence-process.json",
+      "category": "process",
+      "path": "evidence/checks/P05-I06-BOUNDED-REPAIR/scenarios/phase-evidence-process.json",
+      "sha256": "747dc173f423d7990ec37bd704b4b73cc6ea6f8157d77668833c566c263a394a",
+      "sizeBytes": 11697,
+      "checkId": "P05-I06-BOUNDED-REPAIR",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I06-BOUNDED-REPAIR/scenarios/phase-evidence-artifact.json",
+      "category": "artifact",
+      "path": "evidence/checks/P05-I06-BOUNDED-REPAIR/scenarios/phase-evidence-artifact.json",
+      "sha256": "54c0fb0e611dae76e9590984ec7645fa816a7cd9302eb629373f736336ef9dc5",
+      "sizeBytes": 11698,
+      "checkId": "P05-I06-BOUNDED-REPAIR",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I06-BOUNDED-REPAIR/scenarios/phase-evidence-usage.json",
+      "category": "usage",
+      "path": "evidence/checks/P05-I06-BOUNDED-REPAIR/scenarios/phase-evidence-usage.json",
+      "sha256": "ebfdb27fcb3efb7695089bf82cfa0ceba12d4dbcd6e5803862856fc8d44c8e0b",
+      "sizeBytes": 11695,
+      "checkId": "P05-I06-BOUNDED-REPAIR",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I06-BOUNDED-REPAIR/scenarios/phase-evidence-cleanup.json",
+      "category": "cleanup",
+      "path": "evidence/checks/P05-I06-BOUNDED-REPAIR/scenarios/phase-evidence-cleanup.json",
+      "sha256": "d17200a4fff642565e4fe1156d147f93981b9f7b1ae94d3437095fcc83dcb761",
+      "sizeBytes": 11697,
+      "checkId": "P05-I06-BOUNDED-REPAIR",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I06-BOUNDED-REPAIR/extra/test-scope.json",
+      "category": "report",
+      "path": "evidence/checks/P05-I06-BOUNDED-REPAIR/extra/test-scope.json",
+      "sha256": "b2285244ecaf8cd1e5fef3d9d2ee36b705e983790a9f0cb403dd56accc5d4130",
+      "sizeBytes": 25105,
+      "checkId": "P05-I06-BOUNDED-REPAIR",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I06-BOUNDED-REPAIR/result.json",
+      "category": "report",
+      "path": "evidence/checks/P05-I06-BOUNDED-REPAIR/result.json",
+      "sha256": "a40666036fbe59e8da070dee03d2f28577e7114593917e5f1a8143f5b84bb2f5",
+      "sizeBytes": 1070,
+      "checkId": "P05-I06-BOUNDED-REPAIR",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I07-LEAF-DELIVERY/steps/01-p05-trusted-index.json",
+      "category": "command-exit",
+      "path": "evidence/checks/P05-I07-LEAF-DELIVERY/steps/01-p05-trusted-index.json",
+      "sha256": "146690ff5f1bc83e48f5abfa2d89ccc6095ee10d167453e7e4b14e9544b20a4f",
+      "sizeBytes": 8126,
+      "checkId": "P05-I07-LEAF-DELIVERY",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I07-LEAF-DELIVERY/steps/02-p05-affected-regression.json",
+      "category": "command-exit",
+      "path": "evidence/checks/P05-I07-LEAF-DELIVERY/steps/02-p05-affected-regression.json",
+      "sha256": "0f7792f2965b8907caa64d3ef9f7f5446f40d4667ff076b18d49ed64fe45dc2c",
+      "sizeBytes": 1245,
+      "checkId": "P05-I07-LEAF-DELIVERY",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I07-LEAF-DELIVERY/steps/03-p05-cross-layer-smoke.json",
+      "category": "command-exit",
+      "path": "evidence/checks/P05-I07-LEAF-DELIVERY/steps/03-p05-cross-layer-smoke.json",
+      "sha256": "9989144b936dc415184b42686dce4427d1c932ccd2bf6a01ac2f26f4d6d4fc83",
+      "sizeBytes": 911,
+      "checkId": "P05-I07-LEAF-DELIVERY",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I07-LEAF-DELIVERY/scenarios/phase-evidence-sqlite.json",
+      "category": "sqlite",
+      "path": "evidence/checks/P05-I07-LEAF-DELIVERY/scenarios/phase-evidence-sqlite.json",
+      "sha256": "c31730bf441f54cffb0a4f74aed39a599f630c6cc472db3f49db3e286a2f76e1",
+      "sizeBytes": 11696,
+      "checkId": "P05-I07-LEAF-DELIVERY",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I07-LEAF-DELIVERY/scenarios/phase-evidence-git.json",
+      "category": "git",
+      "path": "evidence/checks/P05-I07-LEAF-DELIVERY/scenarios/phase-evidence-git.json",
+      "sha256": "5ea4e7c81e8e120af1142015820c8ba7043de1af61b5fa266313ec049c38b175",
+      "sizeBytes": 11693,
+      "checkId": "P05-I07-LEAF-DELIVERY",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I07-LEAF-DELIVERY/scenarios/phase-evidence-report.json",
+      "category": "report",
+      "path": "evidence/checks/P05-I07-LEAF-DELIVERY/scenarios/phase-evidence-report.json",
+      "sha256": "6e846b33e5126c3aa7d0e6e287bb8fbed3916bf4c41d3d46055bc75bb684da5a",
+      "sizeBytes": 11696,
+      "checkId": "P05-I07-LEAF-DELIVERY",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I07-LEAF-DELIVERY/scenarios/phase-evidence-artifact.json",
+      "category": "artifact",
+      "path": "evidence/checks/P05-I07-LEAF-DELIVERY/scenarios/phase-evidence-artifact.json",
+      "sha256": "54c0fb0e611dae76e9590984ec7645fa816a7cd9302eb629373f736336ef9dc5",
+      "sizeBytes": 11698,
+      "checkId": "P05-I07-LEAF-DELIVERY",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I07-LEAF-DELIVERY/scenarios/phase-evidence-sha.json",
+      "category": "sha",
+      "path": "evidence/checks/P05-I07-LEAF-DELIVERY/scenarios/phase-evidence-sha.json",
+      "sha256": "1b3f2ce551b9d0b90f5e12a3a5452447b9947486587ffe29189fc91e85a52660",
+      "sizeBytes": 11693,
+      "checkId": "P05-I07-LEAF-DELIVERY",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I07-LEAF-DELIVERY/scenarios/phase-evidence-usage.json",
+      "category": "usage",
+      "path": "evidence/checks/P05-I07-LEAF-DELIVERY/scenarios/phase-evidence-usage.json",
+      "sha256": "ebfdb27fcb3efb7695089bf82cfa0ceba12d4dbcd6e5803862856fc8d44c8e0b",
+      "sizeBytes": 11695,
+      "checkId": "P05-I07-LEAF-DELIVERY",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I07-LEAF-DELIVERY/extra/test-scope.json",
+      "category": "report",
+      "path": "evidence/checks/P05-I07-LEAF-DELIVERY/extra/test-scope.json",
+      "sha256": "b2285244ecaf8cd1e5fef3d9d2ee36b705e983790a9f0cb403dd56accc5d4130",
+      "sizeBytes": 25105,
+      "checkId": "P05-I07-LEAF-DELIVERY",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I07-LEAF-DELIVERY/result.json",
+      "category": "report",
+      "path": "evidence/checks/P05-I07-LEAF-DELIVERY/result.json",
+      "sha256": "91a10f20230e3e3aa7496607a3678c3ca62a971dcc2a58710c9d8670770fdd4c",
+      "sizeBytes": 1064,
+      "checkId": "P05-I07-LEAF-DELIVERY",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I08-APPEND-BATCH/steps/01-p05-trusted-index.json",
+      "category": "command-exit",
+      "path": "evidence/checks/P05-I08-APPEND-BATCH/steps/01-p05-trusted-index.json",
+      "sha256": "146690ff5f1bc83e48f5abfa2d89ccc6095ee10d167453e7e4b14e9544b20a4f",
+      "sizeBytes": 8126,
+      "checkId": "P05-I08-APPEND-BATCH",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I08-APPEND-BATCH/steps/02-p05-affected-regression.json",
+      "category": "command-exit",
+      "path": "evidence/checks/P05-I08-APPEND-BATCH/steps/02-p05-affected-regression.json",
+      "sha256": "0f7792f2965b8907caa64d3ef9f7f5446f40d4667ff076b18d49ed64fe45dc2c",
+      "sizeBytes": 1245,
+      "checkId": "P05-I08-APPEND-BATCH",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I08-APPEND-BATCH/steps/03-p05-cross-layer-smoke.json",
+      "category": "command-exit",
+      "path": "evidence/checks/P05-I08-APPEND-BATCH/steps/03-p05-cross-layer-smoke.json",
+      "sha256": "9989144b936dc415184b42686dce4427d1c932ccd2bf6a01ac2f26f4d6d4fc83",
+      "sizeBytes": 911,
+      "checkId": "P05-I08-APPEND-BATCH",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I08-APPEND-BATCH/scenarios/phase-evidence-sqlite.json",
+      "category": "sqlite",
+      "path": "evidence/checks/P05-I08-APPEND-BATCH/scenarios/phase-evidence-sqlite.json",
+      "sha256": "c31730bf441f54cffb0a4f74aed39a599f630c6cc472db3f49db3e286a2f76e1",
+      "sizeBytes": 11696,
+      "checkId": "P05-I08-APPEND-BATCH",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I08-APPEND-BATCH/scenarios/phase-evidence-artifact.json",
+      "category": "artifact",
+      "path": "evidence/checks/P05-I08-APPEND-BATCH/scenarios/phase-evidence-artifact.json",
+      "sha256": "54c0fb0e611dae76e9590984ec7645fa816a7cd9302eb629373f736336ef9dc5",
+      "sizeBytes": 11698,
+      "checkId": "P05-I08-APPEND-BATCH",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I08-APPEND-BATCH/scenarios/phase-evidence-sha.json",
+      "category": "sha",
+      "path": "evidence/checks/P05-I08-APPEND-BATCH/scenarios/phase-evidence-sha.json",
+      "sha256": "1b3f2ce551b9d0b90f5e12a3a5452447b9947486587ffe29189fc91e85a52660",
+      "sizeBytes": 11693,
+      "checkId": "P05-I08-APPEND-BATCH",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I08-APPEND-BATCH/scenarios/phase-evidence-usage.json",
+      "category": "usage",
+      "path": "evidence/checks/P05-I08-APPEND-BATCH/scenarios/phase-evidence-usage.json",
+      "sha256": "ebfdb27fcb3efb7695089bf82cfa0ceba12d4dbcd6e5803862856fc8d44c8e0b",
+      "sizeBytes": 11695,
+      "checkId": "P05-I08-APPEND-BATCH",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I08-APPEND-BATCH/extra/test-scope.json",
+      "category": "report",
+      "path": "evidence/checks/P05-I08-APPEND-BATCH/extra/test-scope.json",
+      "sha256": "b2285244ecaf8cd1e5fef3d9d2ee36b705e983790a9f0cb403dd56accc5d4130",
+      "sizeBytes": 25105,
+      "checkId": "P05-I08-APPEND-BATCH",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I08-APPEND-BATCH/result.json",
+      "category": "report",
+      "path": "evidence/checks/P05-I08-APPEND-BATCH/result.json",
+      "sha256": "ba44893451de297b561eb3670a5eb24515154be9c17aa43c350dc871d2c5e57a",
+      "sizeBytes": 882,
+      "checkId": "P05-I08-APPEND-BATCH",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I09-INPUT-BUDGET-INTEGRITY/steps/01-p05-trusted-index.json",
+      "category": "command-exit",
+      "path": "evidence/checks/P05-I09-INPUT-BUDGET-INTEGRITY/steps/01-p05-trusted-index.json",
+      "sha256": "146690ff5f1bc83e48f5abfa2d89ccc6095ee10d167453e7e4b14e9544b20a4f",
+      "sizeBytes": 8126,
+      "checkId": "P05-I09-INPUT-BUDGET-INTEGRITY",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I09-INPUT-BUDGET-INTEGRITY/steps/02-p05-affected-regression.json",
+      "category": "command-exit",
+      "path": "evidence/checks/P05-I09-INPUT-BUDGET-INTEGRITY/steps/02-p05-affected-regression.json",
+      "sha256": "0f7792f2965b8907caa64d3ef9f7f5446f40d4667ff076b18d49ed64fe45dc2c",
+      "sizeBytes": 1245,
+      "checkId": "P05-I09-INPUT-BUDGET-INTEGRITY",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I09-INPUT-BUDGET-INTEGRITY/steps/03-p05-cross-layer-smoke.json",
+      "category": "command-exit",
+      "path": "evidence/checks/P05-I09-INPUT-BUDGET-INTEGRITY/steps/03-p05-cross-layer-smoke.json",
+      "sha256": "9989144b936dc415184b42686dce4427d1c932ccd2bf6a01ac2f26f4d6d4fc83",
+      "sizeBytes": 911,
+      "checkId": "P05-I09-INPUT-BUDGET-INTEGRITY",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I09-INPUT-BUDGET-INTEGRITY/scenarios/phase-evidence-command-exit.json",
+      "category": "command-exit",
+      "path": "evidence/checks/P05-I09-INPUT-BUDGET-INTEGRITY/scenarios/phase-evidence-command-exit.json",
+      "sha256": "3997151ae9ce9b702e5b33910bd514596fcbc071cf51eaec796d02715a45c09f",
+      "sizeBytes": 11702,
+      "checkId": "P05-I09-INPUT-BUDGET-INTEGRITY",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I09-INPUT-BUDGET-INTEGRITY/scenarios/phase-evidence-artifact.json",
+      "category": "artifact",
+      "path": "evidence/checks/P05-I09-INPUT-BUDGET-INTEGRITY/scenarios/phase-evidence-artifact.json",
+      "sha256": "54c0fb0e611dae76e9590984ec7645fa816a7cd9302eb629373f736336ef9dc5",
+      "sizeBytes": 11698,
+      "checkId": "P05-I09-INPUT-BUDGET-INTEGRITY",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I09-INPUT-BUDGET-INTEGRITY/scenarios/phase-evidence-manifest.json",
+      "category": "manifest",
+      "path": "evidence/checks/P05-I09-INPUT-BUDGET-INTEGRITY/scenarios/phase-evidence-manifest.json",
+      "sha256": "cdeaa336124123c09f05ba1587a2a916a81d826fd5c05966b4a751e0e027711d",
+      "sizeBytes": 11698,
+      "checkId": "P05-I09-INPUT-BUDGET-INTEGRITY",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I09-INPUT-BUDGET-INTEGRITY/scenarios/phase-evidence-sha.json",
+      "category": "sha",
+      "path": "evidence/checks/P05-I09-INPUT-BUDGET-INTEGRITY/scenarios/phase-evidence-sha.json",
+      "sha256": "1b3f2ce551b9d0b90f5e12a3a5452447b9947486587ffe29189fc91e85a52660",
+      "sizeBytes": 11693,
+      "checkId": "P05-I09-INPUT-BUDGET-INTEGRITY",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I09-INPUT-BUDGET-INTEGRITY/scenarios/phase-evidence-usage.json",
+      "category": "usage",
+      "path": "evidence/checks/P05-I09-INPUT-BUDGET-INTEGRITY/scenarios/phase-evidence-usage.json",
+      "sha256": "ebfdb27fcb3efb7695089bf82cfa0ceba12d4dbcd6e5803862856fc8d44c8e0b",
+      "sizeBytes": 11695,
+      "checkId": "P05-I09-INPUT-BUDGET-INTEGRITY",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I09-INPUT-BUDGET-INTEGRITY/scenarios/phase-evidence-cleanup.json",
+      "category": "cleanup",
+      "path": "evidence/checks/P05-I09-INPUT-BUDGET-INTEGRITY/scenarios/phase-evidence-cleanup.json",
+      "sha256": "d17200a4fff642565e4fe1156d147f93981b9f7b1ae94d3437095fcc83dcb761",
+      "sizeBytes": 11697,
+      "checkId": "P05-I09-INPUT-BUDGET-INTEGRITY",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I09-INPUT-BUDGET-INTEGRITY/extra/test-scope.json",
+      "category": "report",
+      "path": "evidence/checks/P05-I09-INPUT-BUDGET-INTEGRITY/extra/test-scope.json",
+      "sha256": "b2285244ecaf8cd1e5fef3d9d2ee36b705e983790a9f0cb403dd56accc5d4130",
+      "sizeBytes": 25105,
+      "checkId": "P05-I09-INPUT-BUDGET-INTEGRITY",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I09-INPUT-BUDGET-INTEGRITY/result.json",
+      "category": "report",
+      "path": "evidence/checks/P05-I09-INPUT-BUDGET-INTEGRITY/result.json",
+      "sha256": "b77363771f26693109f8b64b5fcadce96f2b272fe34f89a80cea31ca2d99a827",
+      "sizeBytes": 1085,
+      "checkId": "P05-I09-INPUT-BUDGET-INTEGRITY",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-I09-INPUT-BUDGET-INTEGRITY/manifest.json",
+      "category": "manifest",
+      "path": "evidence/checks/P05-I09-INPUT-BUDGET-INTEGRITY/manifest.json",
+      "sha256": "8eaebc93c7dc5e3833533103b15087bd364ff3c2ffef8d4cc29ec567e218a009",
+      "sizeBytes": 1112,
+      "checkId": "P05-I09-INPUT-BUDGET-INTEGRITY",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-LIVE-GIT-AGENT-AUTH/live.json",
+      "category": "live",
+      "path": "evidence/checks/P05-LIVE-GIT-AGENT-AUTH/live.json",
+      "sha256": "1771966bc2acdd50af0ea177f0a5af1fa3d8107cfaad1bed8fb6ad4cf2621906",
+      "sizeBytes": 240,
+      "checkId": "P05-LIVE-GIT-AGENT-AUTH",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-MANUAL-OWNER-GATE/manual.json",
+      "category": "manual",
+      "path": "evidence/checks/P05-MANUAL-OWNER-GATE/manual.json",
+      "sha256": "c5dbde2e33600eb2857a18bab60b86aa979529c7a690b14669606958d92cec0c",
+      "sizeBytes": 219,
+      "checkId": "P05-MANUAL-OWNER-GATE",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-MANUAL-OWNER-GATE/result.json",
+      "category": "report",
+      "path": "evidence/checks/P05-MANUAL-OWNER-GATE/result.json",
+      "sha256": "97f69a50ce58e7b1ed517a577c4c9cf27ded1dd0dff52afbebe280667a3a059d",
+      "sizeBytes": 242,
+      "checkId": "P05-MANUAL-OWNER-GATE",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/checks/P05-MANUAL-OWNER-GATE/manifest.json",
+      "category": "manifest",
+      "path": "evidence/checks/P05-MANUAL-OWNER-GATE/manifest.json",
+      "sha256": "88378342f46ebc9d50c50aa090c9a898fc124b97b45b89ab16385568a0721c50",
+      "sizeBytes": 254,
+      "checkId": "P05-MANUAL-OWNER-GATE",
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/product/13decda1-f800-4732-a0aa-732311a0a0ac.json",
+      "category": "report",
+      "path": "evidence/product/13decda1-f800-4732-a0aa-732311a0a0ac.json",
+      "sha256": "7d5d61c64a497a3820d13c6900353b85772b126a30929f4f2a7012755d42101b",
+      "sizeBytes": 10086,
+      "checkId": null,
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/state/git.json",
+      "category": "git",
+      "path": "evidence/state/git.json",
+      "sha256": "065be9eb2835d3254e2810b1c6d9a4a1f4a50335dab8291fc6f4096a51ff9db0",
+      "sizeBytes": 306,
+      "checkId": null,
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/state/process.json",
+      "category": "process",
+      "path": "evidence/state/process.json",
+      "sha256": "38bc6272ecc63c471b53200dc9f3e0a727bc12962daae0fce16fbf2b5e05abfa",
+      "sizeBytes": 631,
+      "checkId": null,
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/state/inputs.json",
+      "category": "artifact",
+      "path": "evidence/state/inputs.json",
+      "sha256": "9f06f2679b0b0fb581c8ae848702267116749548a714c944e7852426ecacc226",
+      "sizeBytes": 18408,
+      "checkId": null,
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/toolchain/tool-versions.json",
+      "category": "artifact",
+      "path": "evidence/toolchain/tool-versions.json",
+      "sha256": "88edf291fd019fd77a1c89596fe90b80419f54fbc5b328612ed06b2ddccffa35",
+      "sizeBytes": 391,
+      "checkId": null,
+      "capturedBeforeCleanup": true
+    },
+    {
+      "identity": "evidence/cleanup/manifest.json",
+      "category": "manifest",
+      "path": "evidence/cleanup/manifest.json",
+      "sha256": "8514b88bc5cc37afa75f8350c633d053bf95ebc5b8b2f1127be28b9ab2128f1a",
+      "sizeBytes": 303,
+      "checkId": null,
+      "capturedBeforeCleanup": true
+    }
+  ],
+  "cleanup": {
+    "confirmed": true,
+    "processesGone": true,
+    "manifestEvidenceRefs": [
+      "evidence/cleanup/manifest.json"
+    ],
+    "notes": [
+      "仅回收本次入口创建的 resources；停止不确定保留现场。"
+    ]
+  },
+  "productReports": [
+    {
+      "featureId": "13decda1-f800-4732-a0aa-732311a0a0ac",
+      "label": "Core/Host 临时项目排队状态报告（离线，不代表真实模型执行完成）",
+      "command": "node scripts/run-tests.ts test/modules/acceptance/p05-acceptance-contract.test.ts test/modules/acceptance/p05-product-report.test.ts",
+      "evidenceRef": "evidence/product/13decda1-f800-4732-a0aa-732311a0a0ac.json"
+    }
+  ],
+  "deferred": [
+    {
+      "id": "P05-POST-FULL-HISTORY-REGRESSION",
+      "title": "后置：全仓历史回归",
+      "status": "not_run"
+    }
+  ],
+  "openIssues": [
+    {
+      "id": "P05-PHASE-GATE-LIVE",
+      "summary": "P05 阶段放行待真实 live 验收证据（当前 not_run，不被 mock 覆盖）",
+      "blocking": false
+    },
+    {
+      "id": "P05-PHASE-GATE-MANUAL",
+      "summary": "P05 阶段放行待负责人人工确认（当前 pending，工具不代签）",
+      "blocking": false
+    }
+  ],
+  "knownLimitations": [
+    "live 检查在本次汇总中保持 not_run：真实 Pi 闭环需显式授权与真实证据，不被 mock 结果覆盖。",
+    "人工验收保持 pending：负责人身份/时间/结论由人工清单确认，模型不代签。",
+    "本报告为阶段验收工具输出（phase-acceptance 层），工具交付通过不等于 P05 阶段验收通过。",
+    "Pi SDK 版本记录于 evidence/toolchain/tool-versions.json（@earendil-works/pi-agent-core）。",
+    "默认阶段范围：可信索引中 106 个 P05/必要底层测试文件；76 个历史文件 not_run，详见 test-scope.json。",
+    "产品报告来自临时项目真实 Core/Host 查询，状态为 queued；仅证明查询与报告导出链路，不替代 Runtime 执行完成证据。",
+    "live not_run、人工 pending，不签署 P05 Phase 通过。"
+  ],
+  "stateDigests": {
+    "codeSha256": "9437d6394f4c2ce4db4a03b0cddcc3157a618784b03a64df7a4606426d69ca4a",
+    "businessInputSha256": "e279945a1d058e88c7ebbe09c32adf6f7cf5412fee9322a9acf91c9dc42d4325"
+  }
+}

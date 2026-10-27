@@ -23,6 +23,12 @@
  *   payload 原文或堆栈；客户端传入的 actorId/principal/capabilities/scope
  *   提权字段按未知键拒绝，永不成为可信身份来源。
  */
+import { validatePhaseMutationPayload } from './phase-lifecycle.js';
+import { validateFeaturePhaseMovePayload } from './feature-phase.js';
+import { validateFeatureDagUpdatePayload } from './feature-dag-update.js';
+import type { FeatureDagUpdatePayload } from './feature-dag-update.js';
+import type { FeaturePhaseMovePayload } from './feature-phase.js';
+import type { PhaseMutationOperation, PhaseMutationPayload } from './phase-lifecycle.js';
 import { isStorageError, StorageError } from './errors.js';
 import {
   validatePhaseFields,
@@ -34,6 +40,9 @@ import { RepositoryInspectionError } from './repository-inspector.js';
 import type { RepositoryInspectionErrorKind } from './repository-inspector.js';
 import { validateSettingsPayload } from './settings-schema.js';
 import type { SettingsPayload } from './settings-schema.js';
+import type { BatchDeliveryCommandPayload, PhaseDeliveryApprovePayload } from './batch-delivery-commands.js';
+import { validatePlanningRequest } from './planning-candidates.js';
+import type { ValidatedPlanningRequest } from './planning-candidates.js';
 import { validateCreateProjectInput, validateUpdateProjectInput } from './state-store.js';
 import { validateExecutionStopManualPayload } from './execution-stop-manual.js';
 import type { ValidatedExecutionStopManualPayload } from './execution-stop-manual.js';
@@ -158,8 +167,17 @@ export const COMMAND_OPERATIONS = [
   'baseline.run',
   'baseline.cancel',
   // P03-1 / F-004：Phase 创建（project scope + phase.write；创建类命令，
-  // 不携带 expectedRevision；关闭/重开/归档生命周期不在本版本）。
+  // 不携带 expectedRevision；P05-2 的生命周期更新命令使用 Phase 自身 revision CAS）。
+  'execution.batch.finalize',
+  'phase.delivery.approve',
   'phase.create',
+  'phase.metadata.update',
+  'phase.close',
+  'phase.reopen',
+  'phase.archive',
+  'feature.phase.move',
+  // P05-2 / F-005：完整替换 Phase Feature DAG 边集，使用 Phase revision CAS。
+  'feature.dag.update',
   // P03-1 / F-005：单 Feature 计划导入（project scope + feature.plan.import；
   // 信封 expectedRevision 为目标 Phase 聚合 CAS，见契约 §6.2 F-005 定案）。
   'feature.plan.import',
@@ -190,6 +208,7 @@ export const COMMAND_OPERATIONS = [
   'task.verification.continue',
   // P03-8 F-008: explicit delivery control, sharing the existing execution authority.
   'feature.verification.continue',
+  'git.operation.start',
   'git.operation.reconcile',
   // P03-2 / F-006：执行输入制品组准备（project scope + execution.input.prepare；
   // 创建类命令不携带 expectedRevision；采集/组装/发布为事务外 I/O，最终重核、
@@ -212,6 +231,16 @@ export const COMMAND_OPERATIONS = [
   // 当前预算/追加不可变修订行/脱敏事件与 completed 回执；不自动启动或
   // 恢复 Run，不触碰累计计数与快照）。
   'execution.budget.revise',
+  // P05-1 / F-003：一次性规划启动（project scope + execution.start 能力位；
+  // 更新类：信封 expectedRevision 为目标 Feature 聚合当前 revision CAS；
+  // payload = F-001 规划请求 v1 原样字段 + budget 完整预算提案（单次规划固定
+  // batch.maxRuns=1）——事务外请求/预算校验，短写事务内重核项目/Phase/Feature
+  // CAS/同项目活动规划编码与预算并原子提交单 Feature Batch、purpose=plan Run、
+  // planning Task/上下文、初始预算行、派发意图、事件与 accepted v7 回执；
+  // 不借用编码计划审批，不在命令提交中启动模型）。
+  'planning.start',
+  // P05-1 / F-008：候选摘要绑定的人工批准/拒绝。
+  'planning.candidate.decide',
   // P03-5 / F-010：人工丢弃受管工作区（project scope + workspace.discard；
   // 创建类命令不携带 expectedRevision——工作区 revision 与预览绑定在 payload
   // 内由应用层深校验；Host 接线随 F-011）。
@@ -278,6 +307,14 @@ export const COMMAND_OPERATION_SPECS: Readonly<Record<AppOperation, CommandOpera
     'baseline.cancel': { scopeKind: 'project', mutation: 'create', capability: 'baseline.run' },
     // P03-1 / F-004：Phase 创建归属 Phase 聚合（docs/p03-1-plan-import-contract.md §6.1）。
     'phase.create': { scopeKind: 'project', mutation: 'create', capability: 'phase.write' },
+    'phase.metadata.update': { scopeKind: 'project', mutation: 'update', capability: 'phase.write' },
+    'execution.batch.finalize': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
+    'phase.delivery.approve': { scopeKind: 'project', mutation: 'update', capability: 'feature.plan.decide' },
+    'phase.close': { scopeKind: 'project', mutation: 'update', capability: 'phase.write' },
+    'phase.reopen': { scopeKind: 'project', mutation: 'update', capability: 'phase.write' },
+    'phase.archive': { scopeKind: 'project', mutation: 'update', capability: 'phase.write' },
+    'feature.phase.move': { scopeKind: 'project', mutation: 'update', capability: 'phase.write' },
+    'feature.dag.update': { scopeKind: 'project', mutation: 'update', capability: 'phase.write' },
     // P03-1 / F-005：计划导入在目标 Phase 聚合上追加成员（Feature 聚合本身为
     // 新建，服务端生成 revision=1，不建立第二 CAS 权威），信封 expectedRevision
     // 必填且指向 Phase 聚合当前 revision（docs/p03-1-plan-import-contract.md §6.2）。
@@ -327,6 +364,7 @@ export const COMMAND_OPERATION_SPECS: Readonly<Record<AppOperation, CommandOpera
     // F-012：显式验证继续是执行控制面决定（不启动 Runtime、不创建实体），
     // 沿用 execution.start 能力位；真实主体与能力仍由可信装配绑定。
     'feature.verification.continue': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
+    'git.operation.start': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
     'git.operation.reconcile': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
     'task.verification.continue': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
     // P03-2 / F-006：执行输入制品组准备（创建类：不携带 expectedRevision，
@@ -365,6 +403,20 @@ export const COMMAND_OPERATION_SPECS: Readonly<Record<AppOperation, CommandOpera
       scopeKind: 'project',
       mutation: 'update',
       capability: 'execution.budget.revise',
+    },
+    // P05-1 / F-003：一次性规划启动（更新类：expectedRevision 为目标 Feature
+    // 聚合当前 revision CAS；与 execution.preview/pause/cancel/resume 同一先例
+    // 复用 execution.start 授权面——规划启动是执行授权同类动作，不借用编码计划
+    // 审批能力）。
+    'planning.start': {
+      scopeKind: 'project',
+      mutation: 'update',
+      capability: 'execution.start',
+    },
+    'planning.candidate.decide': {
+      scopeKind: 'project',
+      mutation: 'update',
+      capability: 'feature.plan.decide',
     },
     // P03-5 / F-010：人工丢弃（创建类；预览绑定与 revision CAS 由应用层在
     // payload 深校验中重核，不经信封 expectedRevision）。
@@ -653,6 +705,8 @@ export interface ValidatedPhaseCreatePayload {
  * Feature 草稿计划（结构深校验由应用层导入事务复用 F-001 纯校验器完成，
  * 事务内以真实库内解析重核归属/引用/CAS，见 application/feature-plan-import）。
  */
+export interface ValidatedFeatureDagUpdatePayload extends FeatureDagUpdatePayload {}
+
 export interface ValidatedFeaturePlanImportPayload {
   readonly phaseId: string;
   readonly plan: unknown;
@@ -736,6 +790,11 @@ export interface ValidatedFeatureDeliveryPayload {
   readonly operationId: string;
 }
 
+export interface ValidatedIntegrationStartPayload extends ValidatedFeatureDeliveryPayload {
+  readonly inputDigest: string;
+}
+
+
 /**
  * F-012：显式验证继续 payload。只携带目标与已保存机器证据身份（批次/代码/
  * 观察摘要）：全部与服务端从持久事实重建的当前身份逐项比对，任何漂移
@@ -773,7 +832,10 @@ export interface ValidatedExecutionInputPreparePayload {
  * summary/blocked 等服务端决定字段一律不能经请求输入。
  */
 export interface ValidatedExecutionPreviewPayload {
+  /** 显式 Feature 范围；与 phaseId 恰有一个为非空选择器。 */
   readonly featureIds: readonly string[];
+  /** Phase 范围选择；显式 Feature 范围时为 null。旧内部调用可省略，等价于 null。 */
+  readonly phaseId?: string | null;
   /** 完整预算提案（深校验在应用层；此处只保证 JSON 对象形态）。 */
   readonly budget: Record<string, unknown>;
 }
@@ -802,6 +864,28 @@ export type ValidatedExecutionStartPayload =
     };
 
 /**
+ * P05-1 / F-003 一次性规划启动 payload：F-001 规划请求 v1 原样字段（含
+ * schemaVersion/projectId/phaseId/featureId/requirementRefs/constraints/
+ * acceptance/strategy；经 validatePlanningRequest 校验并携带 inputDigest）+
+ * budget 完整预算提案（深校验在应用层复用 ports/execution-budget 权威校验器；
+ * 单次规划固定 batch.maxRuns=1）。严格未知键拒绝：batchId/runId/
+ * planningTaskId/candidateId 等服务端决定字段一律不能经请求输入。
+ */
+export interface ValidatedPlanningStartPayload {
+  readonly request: ValidatedPlanningRequest;
+  /** 完整预算提案（深校验在应用层；此处只保证 JSON 对象形态）。 */
+  readonly budget: Record<string, unknown>;
+}
+
+export interface ValidatedPlanningCandidateDecisionPayload {
+  readonly candidateId: string;
+  readonly candidateDigest: string;
+  readonly decision: 'approve' | 'reject';
+  readonly reason: string | null;
+}
+
+
+/**
  * P03-3 / F-009 批次预算显式修订 payload：batchId 定位目标（归属与 CAS 在事务
  * 内重核），budget 为修订后的完整预算快照（深校验在应用层复用
  * ports/execution-budget 权威校验器——仅增额或延期），reason 为非空有界修订
@@ -818,16 +902,17 @@ export interface ValidatedExecutionBudgetRevisePayload {
 }
 
 /**
- * P03-9 / F-001 Run/Batch Task 边界暂停 payload：恰好一个目标身份（runId 或
- * batchId）；两者同时出现/同时缺席均结构化拒绝。expectedRevision 在信封顶层，
- * 是目标行自身 revision 的 CAS。服务端决定字段（status/reason/changed）不能经
- * 请求输入。
+ * P05-5：Feature/Run/Batch 控制目标；恰好一个目标身份（featureId、runId 或
+ * batchId）；expectedRevision 在信封顶层，是目标聚合自身 revision 的 CAS。服务端决定字段
+ *（status/reason/changed）不能经请求输入。
  */
-export type ValidatedExecutionPausePayload =
-  | { readonly runId: string; readonly batchId: null }
-  | { readonly runId: null; readonly batchId: string };
+export type ValidatedExecutionPausePayload = {
+  readonly featureId?: string | null;
+  readonly runId: string | null;
+  readonly batchId: string | null;
+};
 
-/** P03-9 / F-002 Run/Batch 取消 payload：与暂停相同的单目标身份形态。 */
+/** P03-9 / F-002 Run/Batch/Feature 取消 payload：与暂停相同的单目标身份形态。 */
 export type ValidatedExecutionCancelPayload = ValidatedExecutionPausePayload;
 
 /** P03-9 / F-008 显式 resume payload：与暂停/取消相同的单目标身份形态。 */
@@ -852,6 +937,18 @@ interface EnvelopeCommon {
 }
 
 export type ValidatedCommandEnvelope =
+  | (EnvelopeCommon & {
+      readonly operation: 'execution.batch.finalize';
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: number;
+      readonly payload: BatchDeliveryCommandPayload;
+    })
+  | (EnvelopeCommon & {
+      readonly operation: 'phase.delivery.approve';
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: number;
+      readonly payload: PhaseDeliveryApprovePayload;
+    })
   | (EnvelopeCommon & {
       readonly operation: 'project.register';
       readonly scope: { readonly kind: 'registration' };
@@ -952,6 +1049,24 @@ export type ValidatedCommandEnvelope =
       readonly expectedRevision: null;
       readonly payload: ValidatedPhaseCreatePayload;
     })
+  | (EnvelopeCommon & {
+      readonly operation: 'feature.phase.move';
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: number;
+      readonly payload: FeaturePhaseMovePayload;
+    })
+  | (EnvelopeCommon & {
+      readonly operation: 'feature.dag.update';
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: number;
+      readonly payload: ValidatedFeatureDagUpdatePayload;
+    })
+  | (EnvelopeCommon & {
+      readonly operation: PhaseMutationOperation;
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: number;
+      readonly payload: PhaseMutationPayload;
+    })
   // P03-1 / F-005：计划导入命令信封（expectedRevision=目标 Phase 聚合 CAS；
   // plan 深校验在应用层导入事务内复用 validateFeaturePlanInput 完成，本层只
   // 把关 phaseId 形态与 plan 为 JSON 对象——与基线命令同一分层纪律）。
@@ -1000,10 +1115,22 @@ export type ValidatedCommandEnvelope =
       readonly payload: ValidatedFeaturePlanDecidePayload;
     })
   | (EnvelopeCommon & {
+      readonly operation: 'planning.candidate.decide';
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: number;
+      readonly payload: ValidatedPlanningCandidateDecisionPayload;
+    })
+  | (EnvelopeCommon & {
       readonly operation: 'task.approval.approve' | 'task.approval.reject' | 'task.approval.unblock';
       readonly scope: { readonly kind: 'project'; readonly projectId: string };
       readonly expectedRevision: number;
       readonly payload: ValidatedTaskApprovalDecisionPayload;
+    })
+  | (EnvelopeCommon & {
+      readonly operation: 'git.operation.start';
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: number;
+      readonly payload: ValidatedIntegrationStartPayload;
     })
   | (EnvelopeCommon & {
       readonly operation: 'feature.verification.continue' | 'git.operation.reconcile';
@@ -1045,6 +1172,15 @@ export type ValidatedCommandEnvelope =
       readonly scope: { readonly kind: 'project'; readonly projectId: string };
       readonly expectedRevision: null;
       readonly payload: ValidatedExecutionStartPayload;
+    })
+  // P05-1 / F-003：一次性规划启动命令信封（更新类：expectedRevision 为目标
+  // Feature 聚合当前 revision CAS——规划目标依据随授权冻结；payload = 规划
+  // 请求 v1 原样字段 + budget 完整预算提案）。
+  | (EnvelopeCommon & {
+      readonly operation: 'planning.start';
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: number;
+      readonly payload: ValidatedPlanningStartPayload;
     })
   // P03-3 / F-009：批次预算显式修订命令信封（更新类必须携带 expectedRevision
   // =目标 Batch 当前 budget_revision；payload 只含 batchId/budget/reason）。
@@ -1093,13 +1229,13 @@ const TASK_STRATEGY_UPDATE_PAYLOAD_KEYS = ['taskId', 'executionConfig'] as const
 const TASK_APPROVAL_BLOCK_PAYLOAD_KEYS = ['taskId', 'planDigest', 'kind', 'description', 'responsibleParty', 'codeDigest', 'artifactRefs'] as const;
 const TASK_APPROVAL_DECISION_PAYLOAD_KEYS = ['taskId', 'itemId', 'planDigest', 'codeDigest', 'artifactRefs', 'reason'] as const;
 const TASK_VERIFICATION_CONTINUE_PAYLOAD_KEYS = ['taskId', 'attemptId', 'verificationBatchId', 'codeDigest', 'observationDigest'] as const;
+const INTEGRATION_START_PAYLOAD_KEYS = ['featureId', 'runId', 'batchId', 'operationId', 'inputDigest'] as const;
 
 const FEATURE_PLAN_DECIDE_PAYLOAD_KEYS = ['featureId', 'planDigest', 'decision', 'reason'] as const;
 const EXECUTION_INPUT_PREPARE_PAYLOAD_KEYS = ['featureId', 'taskId', 'items'] as const;
-const EXECUTION_PREVIEW_PAYLOAD_KEYS = ['featureIds', 'budget'] as const;
+const EXECUTION_PREVIEW_PAYLOAD_KEYS = ['featureIds', 'phaseId', 'budget'] as const;
 /** 执行预览范围的形态上限（防无界数组；本阶段业务上限固定单成员）。 */
 export const EXECUTION_PREVIEW_FEATURE_IDS_MAX = 16;
-
 /**
  * P01 校验器抛 StorageError(validation)，其字段名面向端口输入（'input'、
  * 'displayName' 等）；命令面统一改写为 payload.* 定位，错误码经 §5.7 同一映射。
@@ -1341,6 +1477,33 @@ function validateFeaturePlanRevisePayload(
   }
 }
 
+const PLANNING_CANDIDATE_DECIDE_PAYLOAD_KEYS = ['candidateId', 'candidateDigest', 'decision', 'reason'] as const;
+
+function validatePlanningCandidateDecisionPayload(
+  operation: AppOperation,
+  raw: unknown,
+): ValidatedPlanningCandidateDecisionPayload {
+  const object = requireObject(operation, raw, 'payload');
+  exactKeys(operation, object, PLANNING_CANDIDATE_DECIDE_PAYLOAD_KEYS, 'payload.');
+  if (typeof object.candidateId !== 'string' || object.candidateId.length === 0) {
+    fail(operation, 'invalid_input', 'payload.candidateId', '必须是非空候选 ID');
+  }
+  if (!isSha256Hex(object.candidateDigest)) {
+    fail(operation, 'invalid_input', 'payload.candidateDigest', '必须是 64 位小写 SHA-256 摘要');
+  }
+  if (object.decision !== 'approve' && object.decision !== 'reject') {
+    fail(operation, 'invalid_input', 'payload.decision', '必须是 approve 或 reject');
+  }
+  if (object.reason !== undefined && object.reason !== null && (typeof object.reason !== 'string' || object.reason.trim().length === 0 || object.reason.length > 512)) {
+    fail(operation, 'invalid_input', 'payload.reason', '必须是 null 或 1-512 个字符的有界理由');
+  }
+  return {
+    candidateId: object.candidateId,
+    candidateDigest: object.candidateDigest,
+    decision: object.decision,
+    reason: (object.reason ?? null) as string | null,
+  };
+}
 function validateTaskApprovalBlockPayload(operation: AppOperation, raw: unknown): ValidatedTaskApprovalBlockPayload {
   const object = requireObject(operation, raw, 'payload');
   exactKeys(operation, object, TASK_APPROVAL_BLOCK_PAYLOAD_KEYS, 'payload.');
@@ -1463,26 +1626,26 @@ function validateExecutionPausePayload(
   raw: unknown,
 ): ValidatedExecutionPausePayload {
   const object = requireObject(operation, raw, 'payload');
-  const hasRun = Object.prototype.hasOwnProperty.call(object, 'runId')
-    && object.runId !== undefined && object.runId !== null;
-  const hasBatch = Object.prototype.hasOwnProperty.call(object, 'batchId')
-    && object.batchId !== undefined && object.batchId !== null;
-  if (hasRun === hasBatch) {
-    fail(operation, 'invalid_input', 'payload', '必须恰好提供 runId 或 batchId 之一', undefined);
+  const selected = ['featureId', 'runId', 'batchId'].filter(key =>
+    Object.prototype.hasOwnProperty.call(object, key) && object[key] !== undefined && object[key] !== null,
+  );
+  if (selected.length !== 1) {
+    fail(operation, 'invalid_input', 'payload', '必须恰好提供 featureId、runId 或 batchId 之一', undefined);
   }
-  // 允许同时出现目标键但其中恰一个为非空（null/缺省表示未选择），便于调用方
-  // 使用稳定的两键形态；两个非空或都为空已在上面拒绝。
-  exactKeys(operation, object, ['runId', 'batchId'], 'payload.');
-  if (hasRun) {
-    if (!isUuidV4(object.runId)) {
-      fail(operation, 'invalid_input', 'payload.runId', '必须是 UUID v4（目标 Run）', object.runId);
+  exactKeys(operation, object, ['featureId', 'runId', 'batchId'], 'payload.');
+  const featureId = object.featureId === null || object.featureId === undefined ? null : object.featureId;
+  const runId = object.runId === null || object.runId === undefined ? null : object.runId;
+  const batchId = object.batchId === null || object.batchId === undefined ? null : object.batchId;
+  for (const [field, value, description] of [
+    ['featureId', featureId, '目标 Feature'],
+    ['runId', runId, '目标 Run'],
+    ['batchId', batchId, '目标 Batch'],
+  ] as const) {
+    if (value !== null && !isUuidV4(value)) {
+      fail(operation, 'invalid_input', `payload.${field}`, `必须是 UUID v4（${description}）`, value);
     }
-    return { runId: object.runId, batchId: null };
   }
-  if (!isUuidV4(object.batchId)) {
-    fail(operation, 'invalid_input', 'payload.batchId', '必须是 UUID v4（目标 Batch）', object.batchId);
-  }
-  return { runId: null, batchId: object.batchId };
+  return { featureId, runId, batchId } as ValidatedExecutionPausePayload;
 }
 
 /** P03-9 / F-010：显式 retryFinal 的严格 payload（只接受历史身份，不接受预算/状态）。 */
@@ -1551,36 +1714,63 @@ function validateExecutionPreviewPayload(
   raw: unknown,
 ): ValidatedExecutionPreviewPayload {
   const object = requireObject(operation, raw, 'payload');
-  // 严格未知键拒绝：只接受预览面（featureIds/budget）；创建类命令不携带
-  // expectedRevision；previewDigest/summary/blocked/noWorkReason 等服务端决定
-  // 字段一律不能经请求输入（payload 内出现即未知键，定位 payload.<key>）。
+  // 严格未知键拒绝：只接受 Phase 或显式 Feature 范围选择器和预算；预览结果
+  // 字段一律不能经请求输入。phaseId 与 featureIds 必须恰有一个被选择。
   exactKeys(operation, object, EXECUTION_PREVIEW_PAYLOAD_KEYS, 'payload.');
-  if (!Array.isArray(object.featureIds)) {
+  const hasPhase = Object.prototype.hasOwnProperty.call(object, 'phaseId') && object.phaseId !== null && object.phaseId !== undefined;
+  const hasFeatures = Object.prototype.hasOwnProperty.call(object, 'featureIds') && object.featureIds !== undefined && object.featureIds !== null;
+  if (hasPhase === hasFeatures) {
+    fail(operation, 'invalid_input', 'payload', '必须在 phaseId 和 featureIds 之间选择一个且只能选择一个', object, {
+      reason: hasPhase ? 'multiple_scope_selectors' : 'missing_scope_selector',
+    });
+  }
+  if (hasPhase && typeof object.phaseId !== 'string') {
+    fail(operation, 'invalid_input', 'payload.phaseId', '必须是 Phase 稳定 ID 字符串', object.phaseId);
+  }
+  if (hasFeatures && !Array.isArray(object.featureIds)) {
     fail(operation, 'invalid_input', 'payload.featureIds', '必须是 Feature 稳定 ID 数组', object.featureIds);
   }
   const featureIds: string[] = [];
   const seen = new Set<string>();
-  for (const [index, candidate] of (object.featureIds as unknown[]).entries()) {
-    if (typeof candidate !== 'string') {
-      fail(operation, 'invalid_input', `payload.featureIds[${index}]`, '必须是稳定 ID 字符串', candidate);
-    }
-    if (seen.has(candidate)) {
-      fail(operation, 'invalid_input', `payload.featureIds[${index}]`, '范围成员重复', candidate, {
-        reason: 'duplicate_feature_id',
+  if (hasFeatures) {
+    const rawFeatureIds = object.featureIds as unknown[];
+    if (rawFeatureIds.length === 0 && Object.prototype.hasOwnProperty.call(object, 'phaseId')) {
+      fail(operation, 'invalid_input', 'payload.featureIds', '显式 Feature 范围不能为空', rawFeatureIds, {
+        reason: 'empty_scope',
       });
     }
-    seen.add(candidate);
-    featureIds.push(candidate);
-  }
-  if (featureIds.length > EXECUTION_PREVIEW_FEATURE_IDS_MAX) {
-    fail(operation, 'invalid_input', 'payload.featureIds',
-      `成员数不得超过 ${EXECUTION_PREVIEW_FEATURE_IDS_MAX}（形态上限；本阶段固定单成员）`,
-      featureIds.length, { reason: 'limit_exceeded' });
+    // P04 compatibility: the legacy { featureIds: [] } shape remains the
+    // preview no_work input. New selector payloads must use phaseId or a
+    // non-empty explicit Feature set.
+    for (const [index, candidate] of rawFeatureIds.entries()) {
+      if (typeof candidate !== 'string') {
+        fail(operation, 'invalid_input', `payload.featureIds[${index}]`, '必须是稳定 ID 字符串', candidate);
+      }
+      if (seen.has(candidate)) {
+        fail(operation, 'invalid_input', `payload.featureIds[${index}]`, '范围成员重复', candidate, {
+          reason: 'duplicate_feature_id',
+        });
+      }
+      seen.add(candidate);
+      featureIds.push(candidate);
+    }
+    if (featureIds.length > EXECUTION_PREVIEW_FEATURE_IDS_MAX) {
+      fail(operation, 'invalid_input', 'payload.featureIds',
+        `成员数不得超过 ${EXECUTION_PREVIEW_FEATURE_IDS_MAX}（形态上限）`,
+        featureIds.length, { reason: 'limit_exceeded' });
+    }
   }
   if (!isPlainObjectPayload(object.budget)) {
     fail(operation, 'invalid_input', 'payload.budget', '必须是 JSON 对象（完整预算提案）', object.budget);
   }
   try {
+    if (hasPhase) {
+      return {
+        featureIds: [],
+        phaseId: validateStableId(object.phaseId, { operation }, 'payload.phaseId'),
+        budget: object.budget as Record<string, unknown>,
+      };
+    }
     for (const [index, id] of featureIds.entries()) {
       featureIds[index] = validateStableId(id, { operation }, `payload.featureIds[${index}]`);
     }
@@ -1593,7 +1783,7 @@ function validateExecutionPreviewPayload(
     }
     throw error;
   }
-  return { featureIds, budget: object.budget as Record<string, unknown> };
+  return { featureIds, phaseId: null, budget: object.budget as Record<string, unknown> };
 }
 
 const EXECUTION_START_PAYLOAD_KEYS = ['featureIds', 'budget', 'previewDigest', 'retryBatchId'] as const;
@@ -1633,6 +1823,7 @@ function validateExecutionStartPayload(
     // 复用预览面的 featureIds 校验（合成 budget 占位；仅取回 featureIds）。
     const scope = validateExecutionPreviewPayload(operation, {
       featureIds: object.featureIds,
+      phaseId: null,
       budget: {},
     });
     return {
@@ -1648,6 +1839,7 @@ function validateExecutionStartPayload(
   }
   const scopeIds = validateExecutionPreviewPayload(operation, {
     featureIds: object.featureIds,
+    phaseId: null,
     budget: object.budget,
   });
   const previewDigest = validateExecutionStartPreviewDigest(operation, object.previewDigest);
@@ -1657,6 +1849,48 @@ function validateExecutionStartPayload(
     previewDigest,
     retryBatchId: null,
   };
+}
+
+const PLANNING_START_PAYLOAD_KEYS = [
+  'schemaVersion',
+  'projectId',
+  'phaseId',
+  'featureId',
+  'requirementRefs',
+  'constraints',
+  'acceptance',
+  'strategy',
+  'budget',
+] as const;
+
+/**
+ * P05-1 / F-003 规划启动 payload 校验：严格未知键拒绝；请求 v1 部分整体交给
+ * F-001 validatePlanningRequest（未知版本/字段、非法结构带字段定位拒绝并携带
+ * inputDigest）；budget 只保证 JSON 对象形态（深校验与 maxRuns=1 固定值在应用层
+ * preparePlanningStart）。
+ */
+function validatePlanningStartPayload(
+  operation: AppOperation,
+  raw: unknown,
+): ValidatedPlanningStartPayload {
+  const object = requireObject(operation, raw, 'payload');
+  exactKeys(operation, object, PLANNING_START_PAYLOAD_KEYS, 'payload.');
+  if (!isPlainObjectPayload(object.budget)) {
+    fail(operation, 'invalid_input', 'payload.budget', '必须是 JSON 对象（完整预算提案）', object.budget);
+  }
+  const { budget: _budget, ...requestValue } = object;
+  try {
+    const request = validatePlanningRequest(requestValue, { operation: `${operation}.request` });
+    return { request, budget: object.budget as Record<string, unknown> };
+  } catch (error) {
+    if (isStorageError(error, 'validation')) {
+      throw new PublicError('invalid_input', operation, undefined, {
+        details: storageValidationDetails(error.details),
+        cause: error,
+      });
+    }
+    throw error;
+  }
 }
 
 /**
@@ -1715,6 +1949,9 @@ export const WORK_TOOL_OPERATION_SPECS = Object.freeze({
   'candidate.submit': { scopeKind: 'project', mutation: 'create', capability: 'project.read' },
   'evidence.submit': { scopeKind: 'project', mutation: 'create', capability: 'project.read' },
   'task.read': { scopeKind: 'project', mutation: 'create', capability: 'project.read' },
+  // P05-1 / F-006：规划候选受限提交（有界正史入口，非已登记 artifactId）；
+  // 仍不是通用 Host 命令，不经命令路由暴露。
+  'planning.candidate.submit': { scopeKind: 'project', mutation: 'create', capability: 'project.read' },
 } as const);
 export type ReceiptOperation = AppOperation | keyof typeof WORK_TOOL_OPERATION_SPECS;
 export const RECEIPT_OPERATION_SPECS = Object.freeze({ ...COMMAND_OPERATION_SPECS, ...WORK_TOOL_OPERATION_SPECS });
@@ -1838,6 +2075,20 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
       payload: validateMetadataPayload(operation, object.payload, expectedRevision as number),
     };
   }
+  if (operation === 'execution.batch.finalize' || operation === 'phase.delivery.approve') {
+    if (scope.kind !== 'project') fail(operation, 'invalid_input', 'scope.kind', 'scope 种类与操作不匹配');
+    if (!isPlainObject(object.payload)) fail(operation, 'invalid_input', 'payload', '必须是对象');
+    const payload = object.payload as Record<string, unknown>;
+    exactKeys(operation, payload, operation === 'execution.batch.finalize' ? ['phaseId', 'batchId'] : ['phaseId', 'batchId', 'candidateId', 'expectedCandidateRevision'], 'payload.');
+    const target = {
+      phaseId: validateStableId(payload.phaseId, { operation }, 'payload.phaseId'),
+      batchId: validateStableId(payload.batchId, { operation }, 'payload.batchId'),
+    };
+    if (operation === 'execution.batch.finalize') return { ...base, operation, scope, expectedRevision: expectedRevision as number, payload: target };
+    if (!Number.isSafeInteger(payload.expectedCandidateRevision) || (payload.expectedCandidateRevision as number) < 1) fail(operation, 'invalid_input', 'payload.expectedCandidateRevision', '必须是正整数');
+    return { ...base, operation, scope, expectedRevision: expectedRevision as number, payload: { ...target,
+      candidateId: validateStableId(payload.candidateId, { operation }, 'payload.candidateId'), expectedCandidateRevision: payload.expectedCandidateRevision as number } };
+  }
   if (operation === 'phase.create') {
     if (scope.kind !== 'project') {
       fail(operation, 'invalid_input', 'scope.kind', 'scope 种类与操作不匹配');
@@ -1849,6 +2100,34 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
       expectedRevision: null,
       payload: validatePhaseCreatePayload(operation, object.payload),
     };
+  }
+  if (operation === 'phase.metadata.update' || operation === 'phase.close'
+    || operation === 'phase.reopen' || operation === 'phase.archive') {
+    if (scope.kind !== 'project') fail(operation, 'invalid_input', 'scope.kind', 'scope 种类与操作不匹配');
+    try {
+      return { ...base, operation, scope, expectedRevision: expectedRevision as number,
+        payload: validatePhaseMutationPayload(operation, object.payload) };
+    } catch (error) {
+      throw fromProjectValidatorError(error, operation);
+    }
+  }
+  if (operation === 'feature.phase.move') {
+    if (scope.kind !== 'project') fail(operation, 'invalid_input', 'scope.kind', 'scope 种类与操作不匹配');
+    try {
+      return { ...base, operation, scope, expectedRevision: expectedRevision as number,
+        payload: validateFeaturePhaseMovePayload(object.payload) };
+    } catch (error) {
+      throw fromProjectValidatorError(error, operation);
+    }
+  }
+  if (operation === 'feature.dag.update') {
+    if (scope.kind !== 'project') fail(operation, 'invalid_input', 'scope.kind', 'scope 种类与操作不匹配');
+    try {
+      return { ...base, operation, scope, expectedRevision: expectedRevision as number,
+        payload: validateFeatureDagUpdatePayload(object.payload) };
+    } catch (error) {
+      throw fromProjectValidatorError(error, operation);
+    }
   }
   if (operation === 'feature.plan.import') {
     if (scope.kind !== 'project') {
@@ -1898,6 +2177,18 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
       payload: validateTaskStrategyUpdatePayload(operation, object.payload),
     };
   }
+  if (operation === 'planning.candidate.decide') {
+    if (scope.kind !== 'project') {
+      fail(operation, 'invalid_input', 'scope.kind', 'scope 种类与操作不匹配');
+    }
+    return {
+      ...base,
+      operation,
+      scope,
+      expectedRevision: expectedRevision as number,
+      payload: validatePlanningCandidateDecisionPayload(operation, object.payload),
+    };
+  }
   if (operation === 'task.approval.block') {
     if (scope.kind !== 'project') fail(operation, 'invalid_input', 'scope.kind', 'scope mismatch');
     return { ...base, operation, scope: scope as { kind: 'project'; projectId: string }, expectedRevision: expectedRevision as number,
@@ -1907,6 +2198,18 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
     if (scope.kind !== 'project') fail(operation, 'invalid_input', 'scope.kind', 'scope mismatch');
     return { ...base, operation, scope: scope as { kind: 'project'; projectId: string }, expectedRevision: expectedRevision as number,
       payload: validateTaskApprovalDecisionPayload(operation, object.payload) };
+  }
+  if (operation === 'git.operation.start') {
+    const payload = requireObject(operation, object.payload, 'payload');
+    exactKeys(operation, payload, INTEGRATION_START_PAYLOAD_KEYS, 'payload.');
+    if (!isUuidV4(payload.operationId)) fail(operation, 'invalid_input', 'payload.operationId', '必须是 UUID v4');
+    if (typeof payload.inputDigest !== 'string' || !/^[0-9a-f]{64}$/.test(payload.inputDigest)) {
+      fail(operation, 'invalid_input', 'payload.inputDigest', '必须是 64 位小写 SHA-256 摘要');
+    }
+    if (scope.kind !== 'project') fail(operation, 'invalid_input', 'scope.kind', 'scope mismatch');
+    return { ...base, operation, scope: scope as { kind: 'project'; projectId: string }, expectedRevision: expectedRevision as number,
+      payload: { featureId: validateStableId(payload.featureId, { operation }, 'payload.featureId'), runId: validateStableId(payload.runId, { operation }, 'payload.runId'),
+        batchId: validateStableId(payload.batchId, { operation }, 'payload.batchId'), operationId: payload.operationId, inputDigest: payload.inputDigest } };
   }
   if (operation === 'feature.verification.continue' || operation === 'git.operation.reconcile') {
     const payload = requireObject(operation, object.payload, 'payload');
@@ -1972,6 +2275,18 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
       scope,
       expectedRevision: null,
       payload: validateExecutionStartPayload(operation, object.payload),
+    };
+  }
+  if (operation === 'planning.start') {
+    if (scope.kind !== 'project') {
+      fail(operation, 'invalid_input', 'scope.kind', 'scope 种类与操作不匹配');
+    }
+    return {
+      ...base,
+      operation,
+      scope,
+      expectedRevision: expectedRevision as number,
+      payload: validatePlanningStartPayload(operation, object.payload),
     };
   }
   if (operation === 'execution.retryFinal') {
@@ -2190,6 +2505,13 @@ export interface RejectedCommandReceipt extends ReceiptCommon {
 export const WORK_ACCEPTED_SCHEMA_VERSION = 6 as const;
 export const WORK_ACCEPTED_OPERATION = 'execution.start' as const;
 
+/**
+ * P05-1 / F-003：planning.start 接受回执专属结构版本（receipt-only 扩展，
+ * 与 v6 Work accepted 同一先例；不宣告新命令能力版本）。
+ */
+export const PLANNING_ACCEPTED_SCHEMA_VERSION = 7 as const;
+export const PLANNING_ACCEPTED_OPERATION = 'planning.start' as const;
+
 /** Legacy accepted receipt: operationId references a real baseline operation. */
 export interface BaselineAcceptedCommandReceipt extends ReceiptCommon {
   readonly status: 'accepted';
@@ -2205,9 +2527,31 @@ export interface WorkAcceptedCommandReceipt extends Omit<ReceiptCommon, 'schemaV
   readonly operationId: string;
   readonly batchId: string;
   readonly runId: string;
+  /** P05 固定多成员授权的全部初始 Run；旧 v6 单成员回执可缺省。 */
+  readonly runIds?: readonly string[];
 }
 
-export type AcceptedCommandReceipt = BaselineAcceptedCommandReceipt | WorkAcceptedCommandReceipt;
+/**
+ * P05-1 / F-003 receipt-only v7 扩展：planning.start 接受回执携带授权 Batch、
+ * purpose=plan Run、planning Task 与稳定候选身份（operationId = batchId；
+ * 不携带 result/resultRef/error，不代表规划完成）。
+ */
+export interface PlanningAcceptedCommandReceipt extends Omit<ReceiptCommon, 'schemaVersion' | 'operation'> {
+  readonly schemaVersion: typeof PLANNING_ACCEPTED_SCHEMA_VERSION;
+  readonly operation: typeof PLANNING_ACCEPTED_OPERATION;
+  readonly status: 'accepted';
+  /** 规划授权身份是 Batch（与 v6 Work accepted 同一先例）。 */
+  readonly operationId: string;
+  readonly batchId: string;
+  readonly runId: string;
+  readonly planningTaskId: string;
+  readonly candidateId: string;
+}
+
+export type AcceptedCommandReceipt =
+  | BaselineAcceptedCommandReceipt
+  | WorkAcceptedCommandReceipt
+  | PlanningAcceptedCommandReceipt;
 
 /** Persisted/wire union: legacy v5 receipts and explicit Work accepted v6 receipts. */
 export type CommandReceipt = CompletedCommandReceipt | RejectedCommandReceipt | AcceptedCommandReceipt;
@@ -2338,10 +2682,10 @@ export function createRejectedReceipt(input: RejectedReceiptInput): RejectedComm
 }
 
 export interface AcceptedReceiptInput extends ReceiptInputBase {
-  /** v5 baseline accepted 操作：类型层排除 Work 操作 execution.start（P03-3 /
-   * F-005 起 'execution.start' 进入命令白名单，但 Work accepted 仍只能经
-   * WorkAcceptedReceiptInput 构造，避免重载歧义与 v5 形态混入）。 */
-  readonly operation: Exclude<AppOperation, typeof WORK_ACCEPTED_OPERATION>;
+  /** v5 baseline accepted 操作：类型层排除 Work 操作 execution.start 与规划
+   * 操作 planning.start（两者各自经专属 ReceiptInput 构造，避免重载歧义与
+   * v5 形态混入）。 */
+  readonly operation: Exclude<AppOperation, typeof WORK_ACCEPTED_OPERATION | typeof PLANNING_ACCEPTED_OPERATION>;
   /** 同事务写入的 baseline_operations 行 id（公开 operationId）。 */
   readonly operationId: string;
 }
@@ -2350,12 +2694,26 @@ export interface WorkAcceptedReceiptInput extends Omit<AcceptedReceiptInput, 'op
   readonly operation: typeof WORK_ACCEPTED_OPERATION;
   readonly batchId: string;
   readonly runId: string;
+  readonly runIds?: readonly string[];
+}
+
+/** P05-1 / F-003：planning.start 接受回执输入（v7；携带 Batch/Run/planning
+ * Task/候选四身份；operationId = batchId）。 */
+export interface PlanningAcceptedReceiptInput extends Omit<AcceptedReceiptInput, 'operation'> {
+  readonly operation: typeof PLANNING_ACCEPTED_OPERATION;
+  readonly batchId: string;
+  readonly runId: string;
+  readonly planningTaskId: string;
+  readonly candidateId: string;
 }
 
 /** Existing factory; v5 baseline identity or explicit v6 Work Batch/Run identity. */
 export function createAcceptedReceipt(input: AcceptedReceiptInput): BaselineAcceptedCommandReceipt;
 export function createAcceptedReceipt(input: WorkAcceptedReceiptInput): WorkAcceptedCommandReceipt;
-export function createAcceptedReceipt(input: AcceptedReceiptInput | WorkAcceptedReceiptInput): AcceptedCommandReceipt {
+export function createAcceptedReceipt(input: PlanningAcceptedReceiptInput): PlanningAcceptedCommandReceipt;
+export function createAcceptedReceipt(
+  input: AcceptedReceiptInput | WorkAcceptedReceiptInput | PlanningAcceptedReceiptInput,
+): AcceptedCommandReceipt {
   assertReceiptIdentity(input, true);
   if (!isUuidV4(input.operationId)) {
     throw new TypeError('accepted 回执的 operationId 必须是 UUID v4');
@@ -2377,9 +2735,31 @@ export function createAcceptedReceipt(input: AcceptedReceiptInput | WorkAccepted
     if (!isUuidV4(input.batchId) || !isUuidV4(input.runId) || input.operationId !== input.batchId) {
       throw new TypeError('Work accepted requires UUID Batch/Run IDs and operationId = batchId');
     }
+    if (input.runIds !== undefined && (input.runIds.length < 2 || input.runIds.length > 16 ||
+        input.runIds[0] !== input.runId || new Set(input.runIds).size !== input.runIds.length || !input.runIds.every(isUuidV4))) {
+      throw new TypeError('Work accepted runIds must be unique initial Run IDs with runId first');
+    }
     return {
       ...base, schemaVersion: WORK_ACCEPTED_SCHEMA_VERSION, operation: input.operation,
       batchId: input.batchId, runId: input.runId,
+      ...(input.runIds === undefined ? {} : { runIds: [...input.runIds] }),
+    };
+  }
+  // P05-1 / F-003：planning.start 接受回执（v7）携带四重 UUID 身份。
+  if (input.operation === PLANNING_ACCEPTED_OPERATION) {
+    if (
+      !isUuidV4(input.batchId) ||
+      !isUuidV4(input.runId) ||
+      !isUuidV4(input.planningTaskId) ||
+      !isUuidV4(input.candidateId) ||
+      input.operationId !== input.batchId
+    ) {
+      throw new TypeError('Planning accepted requires UUID Batch/Run/Task/Candidate IDs and operationId = batchId');
+    }
+    return {
+      ...base, schemaVersion: PLANNING_ACCEPTED_SCHEMA_VERSION, operation: input.operation,
+      batchId: input.batchId, runId: input.runId,
+      planningTaskId: input.planningTaskId, candidateId: input.candidateId,
     };
   }
   return { ...base, schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION, operation: input.operation };

@@ -90,18 +90,36 @@ async function seedPassedEvidence(fixture: BindingFixture): Promise<{ attemptId:
 /** 还原 P04-8（v32）形态：移除 P04-9 新增结构与迁移记录，既有数据行不动。 */
 function downgradeToP04_8(path: string): void {
   const session = openSqliteStorageSession({ path });
+  session.database.pragma('foreign_keys = OFF');
   try {
     session.transactWrite('F-010.downgrade-to-p04-8', () => {
       session.database.exec([
         'DROP TABLE IF EXISTS execution_slot_claims;',
         'DROP TABLE IF EXISTS run_dispatch_claims;',
         'DROP TABLE IF EXISTS run_dispatch_intents;',
+        // P05-1/P05-2 v35/v37 的规划上下文和 Feature DAG 也必须移除，才能真实还原 P04-8 v32。
+        'DROP TABLE IF EXISTS planning_contexts;',
+        'DROP TABLE IF EXISTS feature_dependencies;',
+        'DROP TRIGGER IF EXISTS execution_batches_scope_member_anchor_check;',
+        'DROP TRIGGER IF EXISTS execution_batches_scope_members_insert;',
+        'DROP TRIGGER IF EXISTS execution_batch_members_immutable_update;',
+        'DROP TRIGGER IF EXISTS execution_batch_members_immutable_delete;',
+        'DROP INDEX IF EXISTS execution_batch_members_batch_feature_unique;',
+        'DROP INDEX IF EXISTS execution_batch_members_batch_ordinal_unique;',
+        'DROP INDEX IF EXISTS execution_batch_members_project_id_id_unique;',
+        'DROP INDEX IF EXISTS execution_batch_members_batch_index;',
+        'ALTER TABLE execution_batch_members RENAME TO execution_batch_members_p04_legacy;',
+        'CREATE UNIQUE INDEX execution_batch_members_p04_legacy_scope_unique ON execution_batch_members_p04_legacy (project_id, batch_id, feature_id);',
+        // v39 已把资源键索引改为普通索引，回退到 v32 要恢复 v38 的唯一索引，供 v39 正常重放。
+        'DROP INDEX IF EXISTS workspace_leases_resource_key_index;',
+        'CREATE UNIQUE INDEX workspace_leases_resource_key_unique ON workspace_leases (resource_key);',
         'DELETE FROM schema_migrations WHERE version >= 33;',
       ].join('\n'));
     });
     expect(session.database.prepare('SELECT max(version) AS version FROM schema_migrations').get())
       .toEqual({ version: 32 });
   } finally {
+    session.database.pragma('foreign_keys = ON');
     session.close();
   }
 }
@@ -141,7 +159,7 @@ describe('P04-9 F-010 P04-8 旧数据升级后的查询', () => {
     } finally {
       migrating.close();
     }
-    expect(appliedVersions).toEqual([33, 34]);
+    expect(appliedVersions).toEqual([33, 34, 35, 36, 37, 38, 39]);
 
     const core = await openCoreApplication({
       dataRoot,

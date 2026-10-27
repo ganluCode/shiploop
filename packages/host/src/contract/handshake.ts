@@ -21,6 +21,7 @@ import { isIsoUtcDateTime, isSha256Hex, isUuidV4 } from './identifiers.js';
 import {
   CURRENT_HOST_CAPABILITIES,
   FEATURE_DELIVERY_COMMAND_CAPABILITIES,
+  BATCH_DELIVERY_COMMAND_CAPABILITIES,
   hostCapabilitiesForDelivery,
   LIFECYCLE_ROUTE_NAMES,
   isLifecycleState,
@@ -250,14 +251,19 @@ function validateCapabilities(input: unknown): HostCapabilities {
     'capabilities.application.commands',
     application.commands,
     hostCapabilitiesForDelivery(Array.isArray(application.commands) &&
-      FEATURE_DELIVERY_COMMAND_CAPABILITIES.some(command => (application.commands as unknown[]).includes(command))).application.commands,
+      FEATURE_DELIVERY_COMMAND_CAPABILITIES.some(command => (application.commands as unknown[]).includes(command)),
+      Array.isArray(application.commands) && BATCH_DELIVERY_COMMAND_CAPABILITIES.some(command => (application.commands as unknown[]).includes(command))).application.commands,
   );
   requireStringSetEqual(
     surface,
     'capabilities.application.queries',
     application.queries,
-    CURRENT_HOST_CAPABILITIES.application.queries,
+    hostCapabilitiesForDelivery(false, false, Array.isArray(application.queries) && application.queries.includes('execution.batch.delivery.get')).application.queries,
   );
+  if (Array.isArray(application.commands) && BATCH_DELIVERY_COMMAND_CAPABILITIES.some(command => (application.commands as unknown[]).includes(command))
+    && (!Array.isArray(application.queries) || !application.queries.includes('execution.batch.delivery.get'))) {
+    throw new HostProtocolError('response_malformed', surface.operation, 'Batch 命令缺少配套查询能力', { details: { reason: 'capability_mismatch' } });
+  }
   const events = application.events;
   if (!isPlainObject(events)) {
     throw new HostProtocolError('response_malformed', surface.operation, 'capabilities.application.events 必须是 JSON 对象', {

@@ -59,7 +59,7 @@ import {
   validateStopResultView,
   verifyStopRequestDigest,
 } from '../../../packages/host/src/index.ts';
-import { COMMAND_OPERATIONS, EXECUTION_CONTROL_QUERY_OPERATIONS, EXECUTION_DISPATCH_QUERY_OPERATIONS, EXECUTION_SCHEDULE_QUERY_OPERATIONS, FEATURE_DELIVERY_QUERY_OPERATIONS, GIT_OPERATION_QUERY_OPERATIONS, PLAN_APPROVAL_QUERY_OPERATION, PLAN_QUERY_OPERATIONS, QUERY_OPERATIONS, TASK_EVIDENCE_QUERY_OPERATIONS } from '../../../packages/core/src/index.ts';
+import { COMMAND_OPERATIONS, EXECUTION_CONTROL_QUERY_OPERATIONS, EXECUTION_DISPATCH_QUERY_OPERATIONS, EXECUTION_SCHEDULE_QUERY_OPERATIONS, FEATURE_DELIVERY_QUERY_OPERATIONS, GIT_OPERATION_QUERY_OPERATIONS, PLAN_APPROVAL_QUERY_OPERATION, PLAN_QUERY_OPERATIONS, PLANNING_QUERY_OPERATIONS, QUERY_OPERATIONS, TASK_EVIDENCE_QUERY_OPERATIONS } from '../../../packages/core/src/index.ts';
 import type {
   HostDiscoveryRecord,
   HostErrorCode,
@@ -198,6 +198,13 @@ describe('F-002 冻结常量与能力声明', () => {
           'baseline.cancel',
           // P03-1 / F-004：Phase 创建经既有 /v1/commands 通用路由接线。
           'phase.create',
+          // P05-2 / F-007：已接线的 Phase/Feature 命令。
+          'phase.metadata.update',
+          'phase.close',
+          'phase.reopen',
+          'phase.archive',
+          'feature.phase.move',
+          'feature.dag.update',
           // P03-1 / F-005：计划导入经既有 /v1/commands 通用路由接线。
           'feature.plan.import',
           // P03-1 / F-007：纯标签 CAS 编辑经既有 /v1/commands 通用路由接线。
@@ -225,6 +232,8 @@ describe('F-002 冻结常量与能力声明', () => {
           // P03-3 / F-009：批次预算显式修订经既有 /v1/commands 通用路由接线
           //（仅增额不自动启动或恢复 Run；HostClient/CLI 入口属 F-011/F-012）。
           'execution.budget.revise',
+          'planning.start',
+          'planning.candidate.decide',
           'workspace.discard',
           'workspace.discard.preview',
         ],
@@ -256,6 +265,7 @@ describe('F-002 冻结常量与能力声明', () => {
           // P03-1 / F-009：计划域六项查询真实接线（能力位复用 project.read）。
           'phases.list',
           'phases.get',
+          'phases.graph.get',
           'features.list',
           'features.get',
           'tasks.list',
@@ -279,23 +289,34 @@ describe('F-002 冻结常量与能力声明', () => {
           // P03-8 / F-009：Git 意图/实际提交/操作回执查询真实接线。
           'git.operations.list',
           'git.operations.get',
+          'git.repairs.list',
+          'git.repairs.get',
           // P03-8 / F-010：Feature 分轴结果查询真实接线。
           'features.delivery.get',
           'features.report.get',
+          // P05-6 / F-005：固定集成计划只读查询。
+          'integration.plan.get',
           // P03-9 / F-013：Run/Batch 控制进度、恢复诊断与 finalization 收尾结果查询真实接线。
           'execution.run.control.get',
           'execution.batch.control.get',
           'execution.run.recovery.get',
           // P04-9 / F-009：派发队列/执行槽位只读投影真实接线（无写入口）。
           'execution.dispatch.list',
+          'execution.resources.list',
+          // P05-1 / F-012：规划上下文/候选只读查询真实接线（能力位复用 project.read）。
+          'planning.contexts.list',
+          'planning.context.get',
+          'planning.candidate.get',
         ],
         events: { transport: 'sse', route: '/v1/events', scopes: ['project', 'global'] },
       },
     });
     // 接线宣告与 Core 支持面交叉核对（不漂移：Core 增删操作必须同步接线与宣告）。
     expect([...CURRENT_HOST_CAPABILITIES.application.commands]).toEqual(
-      COMMAND_OPERATIONS.filter(operation => !(FEATURE_DELIVERY_COMMAND_CAPABILITIES as readonly string[]).includes(operation)));
-    expect([...hostCapabilitiesForDelivery(true).application.commands]).toEqual([...COMMAND_OPERATIONS]);
+      COMMAND_OPERATIONS.filter(operation => !(FEATURE_DELIVERY_COMMAND_CAPABILITIES as readonly string[]).includes(operation)
+        && operation !== 'execution.batch.finalize' && operation !== 'phase.delivery.approve' && operation !== 'git.operation.start'));
+    // Core's optional integration-start adapter has no Host capability declaration.
+    expect([...hostCapabilitiesForDelivery(true, true, true).application.commands]).toEqual(COMMAND_OPERATIONS.filter(operation => operation !== 'git.operation.start'));
     // P02-3：queries = P02-2 的 QUERY_OPERATIONS + 已接线的静态接入两项（F-006）
     // + 已接线的基线分页/详情/证据三项（F-014，与 BASELINE_QUERY_OPERATIONS 同步）
     // + P03-1 / F-009 计划域六项（与 PLAN_QUERY_OPERATIONS 同步，能力位复用 project.read）
@@ -319,7 +340,9 @@ describe('F-002 冻结常量与能力声明', () => {
       'baselines.list',
       'baselines.get',
       'artifacts.get',
-      ...PLAN_QUERY_OPERATIONS,
+      ...PLAN_QUERY_OPERATIONS.slice(0, 2),
+      'phases.graph.get',
+      ...PLAN_QUERY_OPERATIONS.slice(2),
       PLAN_APPROVAL_QUERY_OPERATION,
       'execution.budget.get',
       'execution.budget.revisions',
@@ -330,12 +353,19 @@ describe('F-002 冻结常量与能力声明', () => {
       'workspace.operations.list',
       'workspace.operations.get',
       ...GIT_OPERATION_QUERY_OPERATIONS,
+      'git.repairs.list',
+      'git.repairs.get',
       ...FEATURE_DELIVERY_QUERY_OPERATIONS,
       'features.report.get',
-      ...EXECUTION_CONTROL_QUERY_OPERATIONS,
+      'integration.plan.get',
+      ...EXECUTION_CONTROL_QUERY_OPERATIONS.slice(0, 3),
       // P04-9 / F-009：派发队列/执行槽位只读投影（与 Core
       // EXECUTION_DISPATCH_QUERY_OPERATIONS 同步，无写入口）。
       ...EXECUTION_DISPATCH_QUERY_OPERATIONS,
+      'execution.resources.list',
+      // P05-1 / F-012：规划上下文/候选只读查询（与 Core
+      // PLANNING_QUERY_OPERATIONS 同步，能力位复用 project.read）。
+      ...PLANNING_QUERY_OPERATIONS,
     ]);
     expect(CURRENT_HOST_CAPABILITIES.application.commands).toContain('baseline.cancel');
     expect(CURRENT_HOST_CAPABILITIES.application.queries).toContain('baselines.list');

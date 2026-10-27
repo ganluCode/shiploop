@@ -1,0 +1,35 @@
+{
+  "schema_version": 2,
+  "task_id": "F-004",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/scheduling/p05-4-f004-feature-scheduler.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/scheduling/p03-4-scheduler.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/scheduling/p04-9-f005-persistent-dispatch.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/delivery/retry/p03-9-f011-finalization-execution.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/scheduling/p05-4-f002-scheduler-candidates.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/scheduling/p05-4-f003-concurrent-dispatch.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "schema_version": 2,
+  "task_id": "F-001",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [{ "file": "test/modules/delivery/p05-8-f001-git-agent-repair-contract.test.ts", "all": true }]
+  }]
+}

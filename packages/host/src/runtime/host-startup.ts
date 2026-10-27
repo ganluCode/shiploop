@@ -37,7 +37,8 @@ import { createLocalOwnerPrincipal, deriveDefaultDataRoot } from 'shiploop-core'
 import type { RuntimeCapabilityCatalog, RuntimeRecoveryCapabilities, RuntimeRecoverySourceReader, WorkToolChannelDeps } from 'shiploop-core';
 import { openCoreApplication } from 'shiploop-core/assembly';
 import { PI_RUNTIME_RECOVERY_DESCRIPTOR } from './pi-adapter.js';
-import type { CoreApplication, WorkRuntimeFactory, FeatureDeliveryFactory } from 'shiploop-core/assembly';
+import type { BatchDeliveryFactory } from 'shiploop-core/assembly';
+import type { CoreApplication, WorkRuntimeFactory, FeatureDeliveryFactory, CoreApplicationOptions } from 'shiploop-core/assembly';
 import type { FinalizationCompletionPort, FinalizationExecutionPort } from 'shiploop-core';
 import {
   HostProtocolError,
@@ -90,7 +91,9 @@ export const BIND_OVERRIDE_ENV_KEYS = [
 const ALLOWED_OPTION_KEYS = [
   'workToolAuthority',
   'workRuntimeFactory',
+  'batchDeliveryFactory',
   'featureDeliveryFactory',
+  'integrationPlanFactory',
   'finalizationExecution',
   'finalizationCompletion',
   'dataRoot',
@@ -114,9 +117,12 @@ export interface HostStartOptions {
   /** Trusted code injection only; not accepted from CLI, environment or discovery. */
   readonly workRuntimeFactory?: WorkRuntimeFactory;
   /** Static trusted adapters only; never read from argv, env or request fields. */
+  readonly batchDeliveryFactory?: BatchDeliveryFactory;
   readonly featureDeliveryFactory?: FeatureDeliveryFactory;
   /** Trusted finalization-only execution consumer; absent keeps the scheduler capability gap. */
   readonly finalizationExecution?: FinalizationExecutionPort;
+  /** Trusted integration facts and delivery evidence readers. */
+  readonly integrationPlanFactory?: CoreApplicationOptions['integrationPlanFactory'];
   /** Trusted finalization approval/commit/completion consumer; absent keeps the capability gap. */
   readonly finalizationCompletion?: FinalizationCompletionPort;
   /** 显式数据根（POSIX 绝对路径）；与 userHomeDir 二选一。 */
@@ -232,8 +238,14 @@ function validateStartOptions(options: HostStartOptions): void {
   )) {
     throw invalidInput('trusted_recovery_source_required', { field: 'runtimeRecoverySources' });
   }
+  if (options.batchDeliveryFactory !== undefined && typeof options.batchDeliveryFactory !== 'function') {
+    throw invalidInput('trusted_factory_required', { field: 'batchDeliveryFactory' });
+  }
   if (options.featureDeliveryFactory !== undefined && typeof options.featureDeliveryFactory !== 'function') {
     throw invalidInput('trusted_factory_required', { field: 'featureDeliveryFactory' });
+  }
+  if (options.integrationPlanFactory !== undefined && typeof options.integrationPlanFactory !== 'function') {
+    throw invalidInput('trusted_factory_required', { field: 'integrationPlanFactory' });
   }
   if (options.finalizationExecution !== undefined && (
     options.finalizationExecution === null || typeof options.finalizationExecution !== 'object'
@@ -369,7 +381,9 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
       ...(options.runtimeRecoverySources === undefined ? {}
         : { runtimeRecoverySources: options.runtimeRecoverySources }),
       workRuntimeFactory: options.workRuntimeFactory,
+      batchDeliveryFactory: options.batchDeliveryFactory,
       featureDeliveryFactory: options.featureDeliveryFactory,
+      integrationPlanFactory: options.integrationPlanFactory,
       ...(options.finalizationExecution === undefined
         ? {}
         : { finalizationExecution: options.finalizationExecution }),
@@ -504,6 +518,9 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
         //（与握手能力清单一致，不宣告未接线接口）。
         baselineQueryService: locked.writer.baselineQueryService,
         baselineExecutionService: locked.writer.baselineExecutionService,
+        // P05-1 / F-012：规划上下文/候选只读查询接线（与握手能力清单一致；
+        // 授权/可见性/候选正文完整性全部在 Core 复核）。
+        planningQueryService: locked.writer.planningQueryService,
         getLifecycleState: () => lifecycle,
         eventStreams,
       },

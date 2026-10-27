@@ -39,6 +39,12 @@ import { StorageError } from './errors.js';
 import { stableStringify } from './feature-plan.js';
 import type { CommandTransaction } from './atomic-commands.js';
 import {
+  createIntegrationExecutionPlan,
+  type IntegrationExecutionPlan,
+  type IntegrationExecutionResult,
+} from './integration-execution-plan.js';
+
+import {
   rejectUnknownKeys,
   requireNonEmptyString,
   requirePlainObject,
@@ -54,9 +60,17 @@ import {
 /** Feature 交付与 Task 本地提交是独立操作。 */
 export const GIT_OPERATION_TYPE_FEATURE_FINAL_COMMIT = 'feature_final_commit';
 export const GIT_OPERATION_TYPE_TASK_COMMIT = 'task_commit';
+export const GIT_OPERATION_TYPE_INTEGRATION = 'integration';
+export const GIT_OPERATION_TYPE_INTEGRATION_COMMIT = 'integration_commit';
 export type GitOperationType =
   | typeof GIT_OPERATION_TYPE_FEATURE_FINAL_COMMIT
-  | typeof GIT_OPERATION_TYPE_TASK_COMMIT;
+  | typeof GIT_OPERATION_TYPE_TASK_COMMIT
+  | typeof GIT_OPERATION_TYPE_INTEGRATION
+  | typeof GIT_OPERATION_TYPE_INTEGRATION_COMMIT;
+
+export function isIntegrationGitOperationType(value: GitOperationType | string): boolean {
+  return value === GIT_OPERATION_TYPE_INTEGRATION || value === GIT_OPERATION_TYPE_INTEGRATION_COMMIT;
+}
 
 /** 意图身份摘要的领域前缀（与计划/检查/交付政策摘要域隔离）。 */
 export const GIT_OPERATION_INTENT_DIGEST_DOMAIN = 'shiploop:git-operation-intent:v1';
@@ -146,7 +160,7 @@ export interface GitOperationIntent {
   readonly worktreePath: string;
   /** 预期 HEAD（提交前固定；外部漂移暂停而非 reset）。 */
   readonly expectedHead: string;
-  /** 候选 tree（提交前固定的暂存结果身份）。 */
+  /** 候选 tree（集成操作内部以目标 base 作为兼容存储占位，真实结果见 integrationResult）。 */
   readonly candidateTree: string;
   /** 候选源码摘要（sha256；验证证据绑定的代码身份）。 */
   readonly codeDigest: string;
@@ -164,12 +178,21 @@ export interface GitOperationIntent {
   /** 执行归属（owner/host 身份；不携带凭据）。 */
   readonly ownerId: string;
   readonly hostInstanceId: string;
+  /** P05-7 集成执行的完整冻结输入；旧提交类型为 null。 */
+  readonly integrationPlan?: IntegrationExecutionPlan | null;
+  /** 集成启动时的脱敏预算/归属快照。 */
+  readonly budgetSnapshot?: Readonly<Record<string, unknown>> | null;
 }
 
 /** 注册输入 = 意图 + 注册时的 Feature revision 前置条件（不进入意图摘要）。 */
 export interface GitOperationRegisterInput extends GitOperationIntent {
   readonly expectedFeatureRevision: number;
 }
+
+export const INTEGRATION_RECOVERY_STATES = [
+  'none', 'resumable', 'preserved', 'cleaned', 'quarantined',
+] as const;
+export type IntegrationRecoveryState = (typeof INTEGRATION_RECOVERY_STATES)[number];
 
 /** Git 操作回执（终态事实的权威应用侧形态；与操作行同事务落库）。 */
 export interface GitOperationReceipt {
@@ -184,6 +207,9 @@ export interface GitOperationReceipt {
   readonly exitCode: number | null;
   readonly durationMs: number | null;
   readonly reasonCode: string | null;
+  readonly integrationResult: IntegrationExecutionResult | null;
+  readonly recoveryState: IntegrationRecoveryState | null;
+  readonly workspacePreserved: boolean;
   /** Task 终态恒 not_requested，不代表 Feature 交付成功。 */
   readonly deliveryStatus: FeatureDeliveryStatus;
   readonly recordedAtUtcMs: number;
@@ -204,6 +230,9 @@ export interface GitOperationFinalizeInput {
   readonly reasonCode: string | null;
   readonly deliveryStatus: FeatureDeliveryStatus;
   readonly settledAtUtcMs: number;
+  readonly integrationResult?: IntegrationExecutionResult | null;
+  readonly recoveryState?: IntegrationRecoveryState;
+  readonly workspacePreserved?: boolean;
 }
 
 /** 持久化记录（与 git_operations 表逐列对应）。 */
@@ -219,6 +248,9 @@ export interface GitOperationRecord {
   readonly receipt: GitOperationReceipt | null;
   readonly deliveryStatus: FeatureDeliveryStatus | null;
   readonly settledAtUtcMs: number | null;
+  readonly integrationResult: IntegrationExecutionResult | null;
+  readonly recoveryState: IntegrationRecoveryState | null;
+  readonly workspacePreserved: boolean;
   readonly revision: number;
   readonly createdAtUtcMs: number;
   readonly updatedAtUtcMs: number;
@@ -284,6 +316,8 @@ const REGISTER_KEYS = [
   'ownerId',
   'hostInstanceId',
   'expectedFeatureRevision',
+  'integrationPlan',
+  'budgetSnapshot',
 ] as const;
 
 const FINALIZE_KEYS = [
@@ -298,6 +332,9 @@ const FINALIZE_KEYS = [
   'reasonCode',
   'deliveryStatus',
   'settledAtUtcMs',
+  'integrationResult',
+  'recoveryState',
+  'workspacePreserved',
 ] as const;
 
 const EVIDENCE_KEYS = ['kind', 'id', 'digest'] as const;
@@ -442,6 +479,61 @@ function normalizeRuntimeSource(
   return validateRuntimeSourceAuditRecord(value, context, 'runtimeSource');
 }
 
+function normalizeIntegrationPlan(
+  value: unknown,
+  context: ValidationContext,
+): IntegrationExecutionPlan | null {
+  if (value === undefined || value === null) return null;
+  const object = requirePlainObject(value, context, 'integrationPlan');
+  const { schemaVersion, integrationId, inputDigest, status, ...input } = object;
+  const plan = createIntegrationExecutionPlan(input);
+  if (schemaVersion !== undefined && schemaVersion !== plan.schemaVersion) {
+    throw validationError(context, 'integrationPlan.schemaVersion', '版本不受支持');
+  }
+  if (integrationId !== undefined && integrationId !== plan.integrationId) {
+    throw validationError(context, 'integrationPlan.integrationId', '与冻结集成身份不一致');
+  }
+  if (inputDigest !== undefined && inputDigest !== plan.inputDigest) {
+    throw validationError(context, 'integrationPlan.inputDigest', '与冻结输入摘要不一致');
+  }
+  if (status !== undefined && status !== plan.status) {
+    throw validationError(context, 'integrationPlan.status', '与冻结集成状态不一致');
+  }
+  return plan;
+}
+
+function normalizeBudgetSnapshot(
+  value: unknown,
+  context: ValidationContext,
+): Readonly<Record<string, unknown>> | null {
+  if (value === undefined || value === null) return null;
+  return requirePlainObject(value, context, 'budgetSnapshot');
+}
+
+function normalizeIntegrationResult(
+  value: unknown,
+  context: ValidationContext,
+): IntegrationExecutionResult | null {
+  if (value === undefined || value === null) return null;
+  const object = requirePlainObject(value, context, 'integrationResult');
+  rejectUnknownKeys(object, ['commitSha', 'treeSha', 'inputDigest', 'verificationEvidence'], context, 'integrationResult');
+  let verificationEvidence: IntegrationExecutionResult['verificationEvidence'] = null;
+  if (object.verificationEvidence !== undefined && object.verificationEvidence !== null) {
+    const evidence = requirePlainObject(object.verificationEvidence, context, 'integrationResult.verificationEvidence');
+    rejectUnknownKeys(evidence, ['evidenceId', 'evidenceDigest'], context, 'integrationResult.verificationEvidence');
+    verificationEvidence = {
+      evidenceId: validateStableId(evidence.evidenceId, context, 'integrationResult.verificationEvidence.evidenceId'),
+      evidenceDigest: validateSha256Digest(evidence.evidenceDigest, context, 'integrationResult.verificationEvidence.evidenceDigest'),
+    };
+  }
+  return {
+    commitSha: object.commitSha === undefined || object.commitSha === null ? null : validateGitOid(object.commitSha, context, 'integrationResult.commitSha'),
+    treeSha: object.treeSha === undefined || object.treeSha === null ? null : validateGitOid(object.treeSha, context, 'integrationResult.treeSha'),
+    inputDigest: validateSha256Digest(object.inputDigest, context, 'integrationResult.inputDigest'),
+    verificationEvidence,
+  };
+}
+
 /** 规范化后的意图身份摘要（稳定 JSON + SHA-256；不含时间戳/前置 revision）。 */
 export function computeGitOperationIntentDigest(intent: GitOperationIntent): string {
   return createHash('sha256')
@@ -469,6 +561,8 @@ export function computeGitOperationIntentDigest(intent: GitOperationIntent): str
         runtimeSource: intent.runtimeSource,
         ownerId: intent.ownerId,
         hostInstanceId: intent.hostInstanceId,
+        integrationPlan: intent.integrationPlan,
+        budgetSnapshot: intent.budgetSnapshot,
       }),
       'utf8',
     )
@@ -497,7 +591,9 @@ export function validateGitOperationRegisterInput(
       : validateStableId(object.attemptId, context, 'attemptId');
   const executionVersion = validatePositiveInteger(object.executionVersion, context, 'executionVersion');
   if (object.operationType !== GIT_OPERATION_TYPE_FEATURE_FINAL_COMMIT &&
-      object.operationType !== GIT_OPERATION_TYPE_TASK_COMMIT) {
+      object.operationType !== GIT_OPERATION_TYPE_TASK_COMMIT &&
+      object.operationType !== GIT_OPERATION_TYPE_INTEGRATION &&
+      object.operationType !== GIT_OPERATION_TYPE_INTEGRATION_COMMIT) {
     throw validationError(
       context,
       'operationType',
@@ -521,7 +617,22 @@ export function validateGitOperationRegisterInput(
   );
   const worktreePath = validateWorktreePath(object.worktreePath, context, 'worktreePath');
   const expectedHead = validateGitOid(object.expectedHead, context, 'expectedHead');
-  const candidateTree = validateGitOid(object.candidateTree, context, 'candidateTree');
+  const integrationPlan = normalizeIntegrationPlan(object.integrationPlan, context);
+  const isIntegration = isIntegrationGitOperationType(object.operationType as string);
+  if (isIntegration && integrationPlan === null) {
+    throw validationError(context, 'integrationPlan', '集成操作必须携带冻结集成计划');
+  }
+  if (isIntegration && integrationPlan !== null && integrationPlan.integrationId !== operationId) {
+    throw validationError(context, 'operationId', '必须等于冻结集成身份');
+  }
+  if (!isIntegration && integrationPlan !== null) {
+    throw validationError(context, 'integrationPlan', '普通 Git 操作不得携带集成计划');
+  }
+  const candidateTree = isIntegration
+    ? (object.candidateTree === undefined || object.candidateTree === null
+      ? expectedHead : validateGitOid(object.candidateTree, context, 'candidateTree'))
+    : validateGitOid(object.candidateTree, context, 'candidateTree');
+
   const codeDigest = validateSha256Digest(object.codeDigest, context, 'codeDigest');
   const verificationRefs = validateEvidenceRefs(object.verificationRefs, context, 'verificationRefs');
   const approvalRefs = validateEvidenceRefs(object.approvalRefs, context, 'approvalRefs');
@@ -568,6 +679,8 @@ export function validateGitOperationRegisterInput(
     runtimeSource,
     ownerId,
     hostInstanceId,
+    integrationPlan,
+    budgetSnapshot: normalizeBudgetSnapshot(object.budgetSnapshot, context),
     expectedFeatureRevision,
   };
 }
@@ -635,6 +748,16 @@ export function validateGitOperationFinalizeInput(
   }
   const deliveryStatus = object.deliveryStatus as FeatureDeliveryStatus;
   const settledAtUtcMs = validateNonNegativeInteger(object.settledAtUtcMs, context, 'settledAtUtcMs');
+  const integrationResult = normalizeIntegrationResult(object.integrationResult, context);
+  const recoveryState = object.recoveryState === undefined || object.recoveryState === null
+    ? 'none'
+    : (typeof object.recoveryState === 'string' && (INTEGRATION_RECOVERY_STATES as readonly string[]).includes(object.recoveryState)
+      ? object.recoveryState as IntegrationRecoveryState
+      : (() => { throw validationError(context, 'recoveryState', '必须是受控恢复状态'); })());
+  const workspacePreserved = object.workspacePreserved === undefined ? false : object.workspacePreserved;
+  if (typeof workspacePreserved !== 'boolean') {
+    throw validationError(context, 'workspacePreserved', '必须是布尔值');
+  }
 
   if (status === 'succeeded') {
     if (actualCommit === null || actualTree === null) {
@@ -677,6 +800,9 @@ export function validateGitOperationFinalizeInput(
     reasonCode,
     deliveryStatus,
     settledAtUtcMs,
+    integrationResult,
+    recoveryState,
+    workspacePreserved,
   };
 }
 
@@ -687,6 +813,7 @@ function assertTerminalMatchesIntent(
   operation: string,
 ): void {
   const expectedDeliveryStatus = intent.operationType === GIT_OPERATION_TYPE_TASK_COMMIT
+    || isIntegrationGitOperationType(intent.operationType)
     ? 'not_requested'
     : input.status === 'unknown' ? 'pending'
       : input.status === 'failed' ? 'failed' : 'succeeded';
@@ -694,11 +821,29 @@ function assertTerminalMatchesIntent(
     throw validationError({ operation }, 'deliveryStatus',
       `操作 ${intent.operationType} 的 deliveryStatus 必须是 ${expectedDeliveryStatus}`);
   }
-  if (input.status === 'succeeded' && input.actualTree !== intent.candidateTree) {
+  if (input.status === 'succeeded' && !isIntegrationGitOperationType(intent.operationType) && input.actualTree !== intent.candidateTree) {
     throw new StorageError('conflict', operation, 'succeeded actualTree must equal the fixed candidateTree', {
       entity: { type: 'git_operation', id: intent.operationId, projectId: intent.projectId },
       details: { reason: 'candidate_tree_mismatch' },
     });
+  }
+  if (isIntegrationGitOperationType(intent.operationType)) {
+    if (input.status === 'succeeded') {
+      const result = input.integrationResult;
+      if (result === undefined || result === null || result.commitSha !== input.actualCommit || result.treeSha !== input.actualTree || result.verificationEvidence === null
+        || intent.integrationPlan == null || result.inputDigest !== intent.integrationPlan.inputDigest) {
+        throw new StorageError('conflict', operation, '集成成功结果必须完整匹配冻结输入摘要', {
+          entity: { type: 'git_operation', id: intent.operationId, projectId: intent.projectId },
+          details: { reason: 'integration_result_mismatch' },
+        });
+      }
+    }
+    if (input.status === 'unknown' && input.integrationResult !== null) {
+      throw new StorageError('conflict', operation, 'unknown 集成结果不得携带 commit/tree/验证证据', {
+        entity: { type: 'git_operation', id: intent.operationId, projectId: intent.projectId },
+        details: { reason: 'unknown_result_not_empty' },
+      });
+    }
   }
   if (input.status === 'no_change' && input.actualCommit !== intent.expectedHead) {
     throw new StorageError('conflict', operation, 'no_change actualCommit must equal the fixed expectedHead', {
@@ -726,6 +871,9 @@ export function buildGitOperationReceipt(
     exitCode: input.exitCode,
     durationMs: input.durationMs,
     reasonCode: input.reasonCode,
+    integrationResult: input.integrationResult ?? null,
+    recoveryState: input.recoveryState ?? 'none',
+    workspacePreserved: input.workspacePreserved ?? false,
     deliveryStatus: input.deliveryStatus,
     recordedAtUtcMs: input.settledAtUtcMs,
   };
@@ -750,6 +898,9 @@ function validateReceiptShape(
       'exitCode',
       'durationMs',
       'reasonCode',
+      'integrationResult',
+      'recoveryState',
+      'workspacePreserved',
       'deliveryStatus',
       'recordedAtUtcMs',
     ],
@@ -791,6 +942,13 @@ function validateReceiptShape(
     context,
     'receipt.recordedAtUtcMs',
   );
+  const integrationResult = normalizeIntegrationResult(object.integrationResult, context);
+  const recoveryState = object.recoveryState === undefined || object.recoveryState === null ? 'none' : object.recoveryState;
+  if (!(INTEGRATION_RECOVERY_STATES as readonly string[]).includes(recoveryState as string)) {
+    throw validationError(context, 'receipt.recoveryState', '必须是受控恢复状态');
+  }
+  const workspacePreserved = object.workspacePreserved === undefined ? false : object.workspacePreserved;
+  if (typeof workspacePreserved !== 'boolean') throw validationError(context, 'receipt.workspacePreserved', '必须是布尔值');
   return {
     schemaVersion: GIT_OPERATION_RECEIPT_SCHEMA_VERSION,
     operationId,
@@ -803,6 +961,9 @@ function validateReceiptShape(
     exitCode,
     durationMs,
     reasonCode,
+    integrationResult,
+    recoveryState: recoveryState as IntegrationRecoveryState,
+    workspacePreserved,
     deliveryStatus: object.deliveryStatus as FeatureDeliveryStatus,
     recordedAtUtcMs,
   };
@@ -832,6 +993,9 @@ export function validateGitOperationRecord(
       'receipt',
       'deliveryStatus',
       'settledAtUtcMs',
+      'integrationResult',
+      'recoveryState',
+      'workspacePreserved',
       'revision',
       'createdAtUtcMs',
       'updatedAtUtcMs',
@@ -886,6 +1050,13 @@ export function validateGitOperationRecord(
     object.receipt === undefined || object.receipt === null
       ? null
       : validateReceiptShape(object.receipt, context);
+  const integrationResult = normalizeIntegrationResult(object.integrationResult, context);
+  const recoveryState = object.recoveryState === undefined || object.recoveryState === null ? 'none' : object.recoveryState;
+  if (!(INTEGRATION_RECOVERY_STATES as readonly string[]).includes(recoveryState as string)) {
+    throw validationError(context, 'recoveryState', '必须是受控恢复状态');
+  }
+  const workspacePreserved = object.workspacePreserved === undefined ? false : object.workspacePreserved;
+  if (typeof workspacePreserved !== 'boolean') throw validationError(context, 'workspacePreserved', '必须是布尔值');
 
   if (status === 'pending') {
     if (
@@ -896,7 +1067,10 @@ export function validateGitOperationRecord(
       reasonCode !== null ||
       receipt !== null ||
       deliveryStatus !== null ||
-      settledAtUtcMs !== null
+      settledAtUtcMs !== null ||
+      integrationResult !== null ||
+      recoveryState !== 'none' ||
+      workspacePreserved
     ) {
       throw validationError(context, 'status', 'pending 不得携带终态事实/回执/deliveryStatus');
     }
@@ -916,6 +1090,9 @@ export function validateGitOperationRecord(
       receipt.durationMs !== durationMs ||
       receipt.reasonCode !== reasonCode ||
       receipt.deliveryStatus !== deliveryStatus ||
+      JSON.stringify(receipt.integrationResult) !== JSON.stringify(integrationResult) ||
+      receipt.recoveryState !== recoveryState ||
+      receipt.workspacePreserved !== workspacePreserved ||
       receipt.recordedAtUtcMs !== settledAtUtcMs
     ) {
       throw validationError(context, 'receipt', '回执与操作行事实不一致');
@@ -934,6 +1111,9 @@ export function validateGitOperationRecord(
     receipt,
     deliveryStatus,
     settledAtUtcMs,
+    integrationResult,
+    recoveryState: recoveryState as IntegrationRecoveryState,
+    workspacePreserved,
     revision,
     createdAtUtcMs,
     updatedAtUtcMs,
@@ -971,6 +1151,9 @@ export function isSameGitOperationFinalization(
     existing.durationMs === input.durationMs &&
     existing.reasonCode === input.reasonCode &&
     existing.deliveryStatus === input.deliveryStatus &&
+    JSON.stringify(existing.integrationResult) === JSON.stringify(input.integrationResult ?? null) &&
+    existing.recoveryState === (input.recoveryState ?? 'none') &&
+    existing.workspacePreserved === (input.workspacePreserved ?? false) &&
     existing.settledAtUtcMs === input.settledAtUtcMs
   );
 }

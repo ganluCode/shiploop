@@ -13,8 +13,21 @@ import { evaluateFeatureFinalApproval } from './feature-final-approval.js';
 import { verifyFeaturePlanApprovalInTransaction } from './plan-approval-verification.js';
 
 export type FeatureDeliveryEnvelope = Extract<ValidatedCommandEnvelope, {
-  operation: 'feature.verification.continue' | 'git.operation.reconcile';
+  operation: 'feature.verification.continue' | 'git.operation.start' | 'git.operation.reconcile';
 }>;
+
+export interface IntegrationStartExecution {
+  start(input: {
+    readonly projectId: string;
+    readonly featureId: string;
+    readonly runId: string;
+    readonly batchId: string;
+    readonly operationId: string;
+    readonly expectedRevision: number;
+    readonly inputDigest: string;
+    readonly commandId: string;
+  }): Promise<{ readonly outcome: 'merging' | 'pending_verification' | 'blocked' | 'unknown'; readonly reason: string | null }>;
+}
 
 /** Trusted code only. These adapters must enforce current evidence, budgets,
  * fencing and stop confirmation using the existing verification/Git services.
@@ -27,6 +40,7 @@ export interface FeatureDeliveryDependencies {
     'projectId' | 'featureId' | 'runId' | 'operationId' | 'codeDigest'>;
   readonly commit: ControlledGitCommitService;
   readonly reconciliation: GitCommitReconciliationService;
+  readonly integrationStart?: IntegrationStartExecution;
 }
 export type FeatureDeliveryFactory = (context: {
   readonly atomicStore: AtomicCommandStore;
@@ -88,7 +102,8 @@ export function createFeatureDeliveryCommandHandler(options: {
     }
     if (run.featureId !== featureId || run.batchId !== batchId || batch.featureId !== featureId
       || (operation && (operation.intent.projectId !== projectId || operation.intent.featureId !== featureId
-      || operation.intent.runId !== runId || operation.intent.operationType !== 'feature_final_commit'))) {
+      || operation.intent.runId !== runId || (envelope.operation === 'git.operation.start'
+        ? operation.intent.operationType !== 'integration' : operation.intent.operationType !== 'feature_final_commit')))) {
       throw new PublicError('not_found', envelope.operation);
     }
     if (feature.revision !== envelope.expectedRevision) {
@@ -142,13 +157,17 @@ export function createFeatureDeliveryCommandHandler(options: {
     const input = { projectId: envelope.scope.projectId, ...envelope.payload };
     const result = envelope.operation === 'feature.verification.continue'
       ? await finalization.finalize(input)
-      : await deps.reconciliation.reconcile({ projectId: input.projectId, operationId: input.operationId });
+      : envelope.operation === 'git.operation.start'
+        ? (deps.integrationStart === undefined ? (() => { throw new PublicError('unsupported', envelope.operation); })() : await deps.integrationStart.start({ ...input, expectedRevision: envelope.expectedRevision, inputDigest: (input as { inputDigest: string }).inputDigest, commandId: envelope.commandId }))
+        : await deps.reconciliation.reconcile({ projectId: input.projectId, operationId: input.operationId });
     return store.transact(envelope.operation, transaction => {
       const receipt = original(principal, envelope, digest, transaction);
       if (receipt) return receipt;
       const delivery = envelope.operation === 'feature.verification.continue'
         ? result as Awaited<ReturnType<typeof finalization.finalize>> : null;
-      const reconciliation = delivery === null
+      const starting = envelope.operation === 'git.operation.start'
+        ? result as Awaited<ReturnType<NonNullable<FeatureDeliveryDependencies['integrationStart']>['start']>> : null;
+      const reconciliation = delivery === null && starting === null
         ? result as Awaited<ReturnType<GitCommitReconciliationService['reconcile']>> : null;
       // Keep command and Git operation identities separate; don't expose native
       // paths, Git user configuration or internal authorization in public results.
@@ -158,10 +177,10 @@ export function createFeatureDeliveryCommandHandler(options: {
         resultRef: createResultRef(randomBytes(32)), result: {
           featureId: input.featureId, runId: input.runId, batchId: input.batchId,
           gitOperationId: input.operationId,
-          outcome: delivery?.outcome ?? reconciliation!.outcome,
-          reason: delivery?.reason ?? reconciliation!.reasonCode,
-          deliveryStatus: delivery?.deliveryStatus ?? reconciliation!.operation.deliveryStatus,
-          runtimeCalled: false, executionStarted: false,
+          outcome: delivery?.outcome ?? starting?.outcome ?? reconciliation!.outcome,
+          reason: delivery?.reason ?? starting?.reason ?? reconciliation!.reasonCode,
+          deliveryStatus: delivery?.deliveryStatus ?? reconciliation?.operation.deliveryStatus ?? null,
+          runtimeCalled: false, executionStarted: envelope.operation === 'git.operation.start',
         } });
       transaction.saveReceipt(completed);
       return completed;

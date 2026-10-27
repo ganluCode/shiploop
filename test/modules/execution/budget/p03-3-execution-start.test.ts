@@ -783,7 +783,7 @@ describe('F-005 漂移与前置条件重核（验收 1）', () => {
         s.startEnvelope({ payload: { featureIds: [s.featureId, 'feature-other'], budget: VALID_BUDGET, previewDigest: staleDigest } }),
       ),
     ).then((error) => {
-      expect(error.details?.reason).toBe('multi_feature_scope_unsupported');
+      expect(error.details?.reason).toBe('feature_not_found');
     });
     await expectPublicError(
       s.service.submit(s.owner, s.startEnvelope({ payload: { featureIds: [s.featureId], budget: VALID_BUDGET, previewDigest: 'not-hex' } })),

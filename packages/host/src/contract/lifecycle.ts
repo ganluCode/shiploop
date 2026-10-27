@@ -69,7 +69,16 @@ export const APPLICATION_COMMAND_CAPABILITIES = [
   'baseline.cancel',
   // P03-1 / F-004：Phase 创建经既有 POST /v1/commands 通用路由接线
   //（信封/回执/幂等同一命令面；CLI 计划入口仍由后续任务接入）。
+  'execution.batch.finalize',
+  'phase.delivery.approve',
   'phase.create',
+  // P05-2 / F-007：生命周期、归属和 DAG 命令均已接通 HostClient/CLI。
+  'phase.metadata.update',
+  'phase.close',
+  'phase.reopen',
+  'phase.archive',
+  'feature.phase.move',
+  'feature.dag.update',
   // P03-1 / F-005：单 Feature 计划导入经既有 POST /v1/commands 通用路由接线
   //（同一命令面；查询面/CLI 计划入口仍由后续任务接入）。
   'feature.plan.import',
@@ -107,6 +116,13 @@ export const APPLICATION_COMMAND_CAPABILITIES = [
   //（同一命令面；短写事务内 CAS+单调判定原子更新当前预算/不可变修订行/脱敏
   // 事件与回执；仅增额不自动启动或恢复 Run；HostClient/CLI 入口属 F-011/F-012）。
   'execution.budget.revise',
+  // P05-1 / F-003/F-012：一次性规划启动经既有 POST /v1/commands 通用路由接线
+  //（同一命令面；accepted v7 回执携带 Batch/Run/planning Task/候选四重身份；
+  // HostClient 入口属 F-012）。
+  'planning.start',
+  // P05-1 / F-008/F-012：候选人工批准/拒绝经同一通用命令路由接线（短写事务
+  // 内重核候选身份/摘要与目标 revision；HostClient 入口属 F-012）。
+  'planning.candidate.decide',
   // P03-5 / F-011：人工丢弃预览/确认经既有 POST /v1/commands 通用路由接线
   //（同一信封/回执/幂等命令面；预览发布不可变证据，确认走 F-010 专属幂等
   // 通道；HostClient/CLI 入口属 F-012）。
@@ -144,6 +160,8 @@ export const APPLICATION_QUERY_CAPABILITIES = [
   // project.read；与 Core PLAN_QUERY_OPERATIONS 同步，不漂移）。
   'phases.list',
   'phases.get',
+  // P05-2 / F-007：Phase Feature 图的授权只读查询。
+  'phases.graph.get',
   'features.list',
   'features.get',
   'tasks.list',
@@ -174,20 +192,31 @@ export const APPLICATION_QUERY_CAPABILITIES = [
   // project.read；与 Core GIT_OPERATION_QUERY_OPERATIONS 同步，不漂移）。
   'git.operations.list',
   'git.operations.get',
+  'git.repairs.list',
+  'git.repairs.get',
   // P03-8 / F-010：Feature 分轴结果只读查询真实接线（能力位复用
   // project.read；与 Core FEATURE_DELIVERY_QUERY_OPERATIONS 同步，不漂移）。
   'features.delivery.get',
   'features.report.get',
+  // P05-6 / F-005：固定集成计划只读查询。
+  'integration.plan.get',
   // P03-9 / F-013：Run/Batch 控制进度、恢复诊断与 finalization 收尾结果只读
   // 查询真实接线（能力位复用 project.read；与 Core
   // EXECUTION_CONTROL_QUERY_OPERATIONS 同步，不漂移；HostClient/CLI 专用入口
   // 仍由 F-014/F-015 接入）。
   'execution.run.control.get',
   'execution.batch.control.get',
+  'execution.batch.delivery.get',
   'execution.run.recovery.get',
   // P04-9 / F-009：派发队列与执行槽位只读投影真实接线（能力位复用
   // project.read；与 Core EXECUTION_DISPATCH_QUERY_OPERATIONS 同步，不漂移）。
   'execution.dispatch.list',
+  'execution.resources.list',
+  // P05-1 / F-012：规划上下文/候选只读查询真实接线（能力位复用 project.read；
+  // 与 Core PLANNING_QUERY_OPERATIONS 同步，不漂移）。
+  'planning.contexts.list',
+  'planning.context.get',
+  'planning.candidate.get',
 ] as const;
 
 /**
@@ -230,10 +259,15 @@ function deepFreeze<T>(value: T): T {
 export const FEATURE_DELIVERY_COMMAND_CAPABILITIES = ['feature.verification.continue', 'git.operation.reconcile'] as const;
 
 /** Additive v5 capability pair: production defaults stay honest without adapters. */
-export function hostCapabilitiesForDelivery(available: boolean): HostCapabilities {
-  if (!available) return CURRENT_HOST_CAPABILITIES;
+export const BATCH_DELIVERY_COMMAND_CAPABILITIES = ['execution.batch.finalize', 'phase.delivery.approve'] as const;
+export function hostCapabilitiesForDelivery(available: boolean, batchDeliveryAvailable = false, batchQueryAvailable = false): HostCapabilities {
+  if (!available && !batchDeliveryAvailable && !batchQueryAvailable) return CURRENT_HOST_CAPABILITIES;
   return deepFreeze({ ...CURRENT_HOST_CAPABILITIES, application: {
-    ...CURRENT_HOST_CAPABILITIES.application, commands: [...APPLICATION_COMMAND_CAPABILITIES],
+    ...CURRENT_HOST_CAPABILITIES.application,
+    queries: APPLICATION_QUERY_CAPABILITIES.filter(query => batchQueryAvailable || query !== 'execution.batch.delivery.get'),
+    commands: APPLICATION_COMMAND_CAPABILITIES.filter(command =>
+      (available || !(FEATURE_DELIVERY_COMMAND_CAPABILITIES as readonly string[]).includes(command)) &&
+      (batchDeliveryAvailable || !(BATCH_DELIVERY_COMMAND_CAPABILITIES as readonly string[]).includes(command))),
   } });
 }
 
@@ -246,8 +280,9 @@ export const CURRENT_HOST_CAPABILITIES: HostCapabilities = deepFreeze({
   },
   application: {
     commands: APPLICATION_COMMAND_CAPABILITIES.filter(command =>
-      command !== 'feature.verification.continue' && command !== 'git.operation.reconcile'),
-    queries: [...APPLICATION_QUERY_CAPABILITIES],
+      command !== 'feature.verification.continue' && command !== 'git.operation.reconcile' &&
+      !(BATCH_DELIVERY_COMMAND_CAPABILITIES as readonly string[]).includes(command)),
+    queries: APPLICATION_QUERY_CAPABILITIES.filter(query => query !== 'execution.batch.delivery.get'),
     events: { transport: 'sse', route: EVENTS_ROUTE, scopes: ['project', 'global'] },
   },
 });

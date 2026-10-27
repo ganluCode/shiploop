@@ -21,12 +21,13 @@
  *   revision，不产生第二条完成事实。
  */
 import {
-  EXECUTION_SLOT_CAPACITY_DEFAULT,
+  validateApprovedExecutionSlotCapacity,
   validateExecutionSlotClaimRecord,
   validateRunDispatchClaimRecord,
   type ExecutionSlotClaimRecord,
   type RunDispatchClaimRecord,
 } from '../../ports/execution-dispatch.js';
+import { resolveApprovedBatchConcurrency } from '../../ports/feature-dispatch.js';
 import { EXECUTION_SLOT_LEASE_EXPIRED_REASON } from '../../ports/execution-slot.js';
 import {
   decideDispatchSettlement,
@@ -41,6 +42,7 @@ import {
 } from '../../ports/dispatch-settlement.js';
 import { StorageError } from '../../ports/errors.js';
 import { createSqliteExecutionSlotAccess } from './execution-slots.js';
+import { createSqliteFeatureResourceAccess } from './feature-resources.js';
 import type { SqliteStorageSession } from './session.js';
 import { transactSqliteConsistentRead } from './state-store.js';
 
@@ -168,8 +170,9 @@ export function createSqliteRunDispatchSettlement(
 ): RunDispatchSettlementAccess {
   const db = session.database;
   const clock = options.nowUtcMs ?? Date.now;
-  const capacity = options.capacity ?? EXECUTION_SLOT_CAPACITY_DEFAULT;
+  const configuredCapacity = options.capacity === undefined ? undefined : validateApprovedExecutionSlotCapacity(options.capacity);
   const slots = createSqliteExecutionSlotAccess(session, { nowUtcMs: () => clock() });
+  const featureResources = createSqliteFeatureResourceAccess(session, { nowUtcMs: () => clock() });
 
   function write(operation: string): void {
     if (!session.isOpen() || !db.inTransaction) {
@@ -229,8 +232,8 @@ export function createSqliteRunDispatchSettlement(
     readonly stopUncertain: boolean;
     readonly slotCapacityAvailable: boolean;
   } {
-    const run = db.prepare<[string, string], { status: string; pause_requested_at: number | null }>(
-      'SELECT status, pause_requested_at FROM runs WHERE project_id = ? AND id = ?',
+    const run = db.prepare<[string, string], { status: string; pause_requested_at: number | null; batch_id: string }>(
+      'SELECT status, pause_requested_at, batch_id FROM runs WHERE project_id = ? AND id = ?',
     ).get(projectId, runId);
     if (run === undefined) {
       throw new StorageError('not_found', `${OPERATION}.read`, 'Run 不存在', {
@@ -238,6 +241,24 @@ export function createSqliteRunDispatchSettlement(
         details: { reason: 'run_not_found' },
       });
     }
+    const batch = db.prepare<[string, string], { config_snapshot: string }>(
+      'SELECT config_snapshot FROM execution_batches WHERE project_id = ? AND id = ?',
+    ).get(projectId, run.batch_id);
+    if (batch === undefined) {
+      throw new StorageError('corrupt', `${OPERATION}.read`, 'Run 的 Batch 不存在', {
+        entity: { type: 'run', projectId, id: runId }, details: { reason: 'batch_not_found' },
+      });
+    }
+    let batchSnapshot: unknown;
+    try {
+      batchSnapshot = JSON.parse(batch.config_snapshot);
+    } catch (cause) {
+      throw new StorageError('corrupt', `${OPERATION}.read`, 'Batch config snapshot JSON 损坏', {
+        entity: { type: 'run', projectId, id: runId }, details: { reason: 'invalid_config_snapshot_json' }, cause,
+      });
+    }
+    const capacity = configuredCapacity ?? resolveApprovedBatchConcurrency(batchSnapshot);
+    const slots = createSqliteExecutionSlotAccess(session, { capacity, nowUtcMs: () => clock() });
     const claimRow = readClaim(projectId, runId);
     const claim = claimRow === undefined ? null : claimFromRow(claimRow);
     const slotRow = claim === null ? undefined : readSlot(projectId, runId, claim.id);
@@ -277,6 +298,22 @@ export function createSqliteRunDispatchSettlement(
       stopUncertain: interrupted > 0 || leases.some((row) => row.state === 'quarantined'),
       slotCapacityAvailable: occupied < capacity,
     };
+  }
+
+  function quarantineFeatureResources(projectId: string, claim: RunDispatchClaimRecord, reason: 'resource_quarantined' | 'lease_expired_unverified'): void {
+    const owner = { ownerId: claim.id, ownerVersion: claim.claimVersion };
+    for (const lease of featureResources.listOwnerInTransaction(projectId, owner)) {
+      if (lease.state === 'held') {
+        featureResources.quarantineInTransaction(owner, lease.resource, {
+          code: reason, resourceKey: lease.resource.key,
+          blockingOwnerId: owner.ownerId, blockingOwnerVersion: owner.ownerVersion,
+        });
+      }
+    }
+  }
+
+  function featureResourcesFor(projectId: string, claim: RunDispatchClaimRecord) {
+    return featureResources.listOwnerInTransaction(projectId, { ownerId: claim.id, ownerVersion: claim.claimVersion });
   }
 
   function factsWith(input: { readonly projectId: string; readonly runId: string }): DispatchSettlementFacts {
@@ -333,6 +370,14 @@ export function createSqliteRunDispatchSettlement(
   }
 
   function quarantineClaim(row: ClaimRow, reason: string, timestamp: number): boolean {
+    // Claim quarantine is the fencing boundary for the whole dispatch group. Keep
+    // Feature resources aligned with the claim even when the caller reached this
+    // path through stop uncertainty or an expired slot/claim, rather than through
+    // the explicit Feature-resource problem branch below.
+    const featureReason = reason === 'slot_lease_expired_unverified'
+      ? 'lease_expired_unverified' as const
+      : 'resource_quarantined' as const;
+    quarantineFeatureResources(row.project_id, claimFromRow(row), featureReason);
     const changed = db.prepare(
       "UPDATE run_dispatch_claims SET state = 'quarantined', settled_at = ?, reason = ?, " +
       'revision = revision + 1, updated_at = ? WHERE project_id = ? AND id = ? AND state = \'held\' AND revision = ?',
@@ -393,7 +438,26 @@ export function createSqliteRunDispatchSettlement(
         const changed = quarantineClaim(claimRow, decision.reason, timestamp);
         return { ...factsWith(input), decision: 'quarantined', reason: decision.reason, changed };
       }
-      // released：先释放槽位（触发器要求），到期则改判隔离。
+      // Feature resource leases are part of the same durable resource group as
+      // the dispatch claim. A stale/isolated member prevents normal release.
+      const featureLeases = featureResourcesFor(input.projectId, claim);
+      const featureLeaseProblem = featureLeases.find(lease => lease.state === 'quarantined'
+        || (lease.state === 'held' && lease.leaseUntilUtcMs <= timestamp));
+      if (featureLeaseProblem !== undefined) {
+        const reason = featureLeaseProblem.state === 'quarantined' ? 'resource_quarantined' : 'lease_expired_unverified';
+        quarantineFeatureResources(input.projectId, claim, reason);
+        if (slotRow !== undefined && slotRow.state === 'held') {
+          slots.quarantineInTransaction({ projectId: slotRow.project_id, slotId: slotRow.id, claimId: slotRow.claim_id,
+            claimVersion: slotRow.claim_version, ownerId: slotRow.owner_id, hostInstanceId: slotRow.host_instance_id },
+          reason === 'resource_quarantined' ? 'slot_quarantined' : 'slot_lease_expired_unverified');
+        }
+        const changed = quarantineClaim(claimRow, reason === 'resource_quarantined' ? 'claim_quarantined' : 'slot_lease_expired_unverified', timestamp);
+        return { ...factsWith(input), decision: 'quarantined',
+          reason: (reason === 'resource_quarantined' ? 'claim_quarantined' : 'slot_lease_expired_unverified') as DispatchSettlementResult['reason'], changed };
+      }
+      // released：先释放槽位（反向于认领顺序），再释放 Feature resource
+      // leases，最后释放 Run claim。所有步骤都在当前短事务中；任一步失败
+      // 由上层回滚整组。
       if (slotRow !== undefined && slotRow.state === 'held') {
         try {
           slots.releaseInTransaction({
@@ -417,6 +481,7 @@ export function createSqliteRunDispatchSettlement(
           };
         }
       }
+      featureResources.releaseOwnerInTransaction(input.projectId, { ownerId: claim.id, ownerVersion: claim.claimVersion });
       const changed = releaseClaim(claimRow, timestamp);
       if (!changed) {
         // 并发修改：宁可保留，不覆盖当前行。
@@ -444,7 +509,6 @@ export function createSqliteRunDispatchSettlement(
       const slotRow = readSlot(input.projectId, input.runId, claim.id);
       const slot = slotRow === undefined ? null : slotFromRow(slotRow);
       assertFence(claim, input, slot);
-      const facts = factsWith(input);
       if (slot === null) {
         fail('renewInTransaction', 'slot_not_found', 'Run 认领缺少对应槽位，拒绝续租', input.projectId, claim.id);
       }
@@ -453,12 +517,42 @@ export function createSqliteRunDispatchSettlement(
         return { ...factsWith(input), decision: 'quarantined', reason: 'slot_quarantined' };
       }
       if (claim.leaseUntilUtcMs <= timestamp) {
-        // 认领已到期：不延长，隔离后交受信核对。
+        // 认领已到期：不延长，先把槽位和 Feature 资源整组隔离，再交受信核对。
+        if (slotRow !== undefined && slotRow.state === 'held') {
+          slots.quarantineInTransaction({
+            projectId: slotRow.project_id, slotId: slotRow.id, claimId: slotRow.claim_id,
+            claimVersion: slotRow.claim_version, ownerId: slotRow.owner_id, hostInstanceId: slotRow.host_instance_id,
+          }, 'slot_lease_expired_unverified');
+        }
         quarantineClaim(claimRow, 'slot_lease_expired_unverified', timestamp);
         return { ...factsWith(input), decision: 'quarantined', reason: 'slot_lease_expired_unverified' };
       }
+      const facts = factsWith(input);
       if (input.leaseUntilUtcMs <= claim.leaseUntilUtcMs) {
         return { ...facts, decision: 'unchanged', reason: null };
+      }
+      const featureLeases = featureResourcesFor(input.projectId, claim);
+      if (featureLeases.some(lease => lease.state === 'quarantined')) {
+        quarantineFeatureResources(input.projectId, claim, 'resource_quarantined');
+        slots.quarantineInTransaction({ projectId: slot.projectId, slotId: slot.id, claimId: slot.claimId,
+          claimVersion: slot.claimVersion, ownerId: slot.ownerId, hostInstanceId: slot.hostInstanceId }, 'slot_quarantined');
+        quarantineClaim(claimRow, 'claim_quarantined', timestamp);
+        return { ...factsWith(input), decision: 'quarantined', reason: 'claim_quarantined' };
+      }
+      if (featureLeases.length !== 0) {
+        const renewedFeatures = featureResources.renewOwnerInTransaction(input.projectId,
+          { ownerId: claim.id, ownerVersion: claim.claimVersion }, input.leaseUntilUtcMs);
+        if (renewedFeatures.some(lease => lease.state !== 'held')) {
+          const reason = renewedFeatures.some(lease => lease.waitingReason?.code === 'resource_quarantined')
+            ? 'resource_quarantined' : 'lease_expired_unverified';
+          quarantineFeatureResources(input.projectId, claim, reason);
+          slots.quarantineInTransaction({ projectId: slot.projectId, slotId: slot.id, claimId: slot.claimId,
+            claimVersion: slot.claimVersion, ownerId: slot.ownerId, hostInstanceId: slot.hostInstanceId },
+          reason === 'resource_quarantined' ? 'slot_quarantined' : 'slot_lease_expired_unverified');
+          quarantineClaim(claimRow, reason === 'resource_quarantined' ? 'claim_quarantined' : 'slot_lease_expired_unverified', timestamp);
+          return { ...factsWith(input), decision: 'quarantined',
+            reason: (reason === 'resource_quarantined' ? 'claim_quarantined' : 'slot_lease_expired_unverified') as DispatchRenewalResult['reason'] };
+        }
       }
       const changed = db.prepare(
         "UPDATE run_dispatch_claims SET lease_until = ?, revision = revision + 1, updated_at = ? " +
@@ -473,7 +567,8 @@ export function createSqliteRunDispatchSettlement(
         claimVersion: slot.claimVersion, ownerId: slot.ownerId, hostInstanceId: slot.hostInstanceId,
       }, input.leaseUntilUtcMs);
       if (renewedSlot.state !== 'held') {
-        // 槽位在续租时到期：连同认领一起隔离（用续租后的最新 revision）。
+        // 槽位在续租时到期：连同认领和 Feature 资源一起隔离。
+        quarantineFeatureResources(input.projectId, claim, 'lease_expired_unverified');
         const current = db.prepare<[string, string], ClaimRow>(
           `${SELECT_CLAIM} WHERE project_id = ? AND id = ?`,
         ).get(input.projectId, claim.id) as ClaimRow | undefined;

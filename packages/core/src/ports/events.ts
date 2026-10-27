@@ -37,9 +37,10 @@ import {
   BASELINE_REASON_CODES,
 } from './baseline.js';
 import { isStorageError } from './errors.js';
-import { ATTEMPT_UPDATED_EVENT_TYPE, TASK_APPROVAL_BLOCKED_EVENT_TYPE, TASK_APPROVAL_DECIDED_EVENT_TYPE, EXECUTION_BUDGET_REVISED_EVENT_TYPE, EXECUTION_RUN_DISPATCHED_EVENT_TYPE, EXECUTION_RUN_PAUSED_EVENT_TYPE, EXECUTION_BATCH_PAUSED_EVENT_TYPE, EXECUTION_RUN_CANCELLING_EVENT_TYPE, EXECUTION_RUN_CANCELLED_EVENT_TYPE, EXECUTION_BATCH_CANCELLING_EVENT_TYPE, EXECUTION_BATCH_CANCELLED_EVENT_TYPE, EXECUTION_RUN_RESUMED_EVENT_TYPE, EXECUTION_BATCH_RESUMED_EVENT_TYPE, TASK_CLAIMED_EVENT_TYPE, FEATURE_FINALIZED_EVENT_TYPE, FEATURE_FINALIZATION_BLOCKED_EVENT_TYPE } from './execution-store.js';
+import { ATTEMPT_UPDATED_EVENT_TYPE, TASK_APPROVAL_BLOCKED_EVENT_TYPE, TASK_APPROVAL_DECIDED_EVENT_TYPE, EXECUTION_BUDGET_REVISED_EVENT_TYPE, EXECUTION_RUN_DISPATCHED_EVENT_TYPE, EXECUTION_RUN_PAUSED_EVENT_TYPE, EXECUTION_BATCH_PAUSED_EVENT_TYPE, EXECUTION_RUN_CANCELLING_EVENT_TYPE, EXECUTION_RUN_CANCELLED_EVENT_TYPE, EXECUTION_BATCH_CANCELLING_EVENT_TYPE, EXECUTION_BATCH_CANCELLED_EVENT_TYPE, EXECUTION_RUN_RESUMED_EVENT_TYPE, EXECUTION_BATCH_RESUMED_EVENT_TYPE, EXECUTION_FEATURE_PAUSED_EVENT_TYPE, EXECUTION_FEATURE_CANCELLING_EVENT_TYPE, EXECUTION_FEATURE_CANCELLED_EVENT_TYPE, EXECUTION_FEATURE_RESUMED_EVENT_TYPE, TASK_CLAIMED_EVENT_TYPE, FEATURE_FINALIZED_EVENT_TYPE, FEATURE_FINALIZATION_BLOCKED_EVENT_TYPE } from './execution-store.js';
 import {
   EXECUTION_INPUT_PREPARED_EVENT_TYPE,
+  FEATURE_DAG_UPDATED_EVENT_TYPE,
   FEATURE_LABELS_UPDATED_EVENT_TYPE,
   FEATURE_PLAN_IMPORTED_EVENT_TYPE,
   FEATURE_PLAN_REVISED_EVENT_TYPE,
@@ -78,6 +79,7 @@ export { PROJECT_REGISTERED_EVENT_TYPE };
 /** P03-1 / F-004：仅命令路径 Phase 创建成功写入（脱敏 payload 恒为 {created:true}）。 */
 export { PHASE_CREATED_EVENT_TYPE };
 /** P03-1 / F-005：仅命令路径 Feature 计划导入成功写入（脱敏 payload 恒 {imported:true}）。 */
+export { FEATURE_DAG_UPDATED_EVENT_TYPE };
 export { FEATURE_PLAN_IMPORTED_EVENT_TYPE };
 /**
  * P03-1 / F-007：仅命令路径纯标签 CAS 编辑成功写入（脱敏 payload 恒
@@ -99,11 +101,11 @@ export { EXECUTION_RUN_DISPATCHED_EVENT_TYPE };
 /** P03-3 / F-009：仅命令路径预算修订成功后写入（脱敏 payload 恒 {revised:true}）。 */
 export { EXECUTION_BUDGET_REVISED_EVENT_TYPE };
 /** P03-9 / F-001：仅暂停命令成功写入（Run/Batch 各自聚合；payload 恒 {paused:true}）。 */
-export { EXECUTION_RUN_PAUSED_EVENT_TYPE, EXECUTION_BATCH_PAUSED_EVENT_TYPE };
+export { EXECUTION_RUN_PAUSED_EVENT_TYPE, EXECUTION_BATCH_PAUSED_EVENT_TYPE, EXECUTION_FEATURE_PAUSED_EVENT_TYPE };
 /** P03-9 / F-008：仅显式 resume 命令成功写入（payload 恒 {resumed:true}）。 */
-export { EXECUTION_RUN_RESUMED_EVENT_TYPE, EXECUTION_BATCH_RESUMED_EVENT_TYPE };
+export { EXECUTION_RUN_RESUMED_EVENT_TYPE, EXECUTION_BATCH_RESUMED_EVENT_TYPE, EXECUTION_FEATURE_RESUMED_EVENT_TYPE };
 /** P03-9 / F-002：仅取消命令成功写入（cancelling 意图与 cancelled 终态可区分）。 */
-export { EXECUTION_RUN_CANCELLING_EVENT_TYPE, EXECUTION_RUN_CANCELLED_EVENT_TYPE, EXECUTION_BATCH_CANCELLING_EVENT_TYPE, EXECUTION_BATCH_CANCELLED_EVENT_TYPE };
+export { EXECUTION_RUN_CANCELLING_EVENT_TYPE, EXECUTION_RUN_CANCELLED_EVENT_TYPE, EXECUTION_BATCH_CANCELLING_EVENT_TYPE, EXECUTION_BATCH_CANCELLED_EVENT_TYPE, EXECUTION_FEATURE_CANCELLING_EVENT_TYPE, EXECUTION_FEATURE_CANCELLED_EVENT_TYPE };
 /** 仅命令路径全局配置首建成功写入（F-009 已实施；P01 直接服务首建不写事件）。 */
 export { SETTINGS_GLOBAL_CREATED_EVENT_TYPE };
 /** 仅命令路径项目配置首建成功写入（F-009 已实施；P01 直接服务首建不写事件）。 */
@@ -135,6 +137,15 @@ export const PUBLIC_STATE_EVENT_TYPES = [
   BASELINE_CANCELLED_EVENT_TYPE,
   // P03-1 / F-004：计划域事件白名单扩展（aggregate_type='phase'）。
   PHASE_CREATED_EVENT_TYPE,
+  'phase.delivery.approved',
+  'phase.delivery.invalidated',
+  'phase.metadata.updated',
+  'phase.closed',
+  'phase.reopened',
+  'phase.archived',
+  'feature.phase.moved',
+  // P05-2 / F-005：Phase Feature DAG 边集更新事件（聚合为 Phase）。
+  FEATURE_DAG_UPDATED_EVENT_TYPE,
   // P03-1 / F-005：计划域事件白名单扩展（aggregate_type='feature'）。
   FEATURE_PLAN_IMPORTED_EVENT_TYPE,
   // P03-1 / F-007：纯标签 CAS 编辑事件（phase/feature/task 三个目标实体各自一条）。
@@ -168,6 +179,10 @@ export const PUBLIC_STATE_EVENT_TYPES = [
   EXECUTION_BATCH_CANCELLED_EVENT_TYPE,
   EXECUTION_RUN_RESUMED_EVENT_TYPE,
   EXECUTION_BATCH_RESUMED_EVENT_TYPE,
+  EXECUTION_FEATURE_PAUSED_EVENT_TYPE,
+  EXECUTION_FEATURE_CANCELLING_EVENT_TYPE,
+  EXECUTION_FEATURE_CANCELLED_EVENT_TYPE,
+  EXECUTION_FEATURE_RESUMED_EVENT_TYPE,
   TASK_CLAIMED_EVENT_TYPE,
   ATTEMPT_UPDATED_EVENT_TYPE,
   TASK_APPROVAL_BLOCKED_EVENT_TYPE,
@@ -194,6 +209,10 @@ type EventPayloadKind =
   | 'baselineCompleted'
   | 'baselineCancelled'
   | 'phaseCreated'
+  | 'phaseDelivery'
+  | 'phaseMutation'
+  | 'featurePhaseMoved'
+  | 'featureDagUpdated'
   | 'featurePlanImported'
   | 'planLabelsUpdated'
   | 'featurePlanRevised'
@@ -330,6 +349,13 @@ export const STATE_EVENT_TYPE_SPECS: Readonly<
   }),
   // P03-1 / F-004：Phase 创建事件（聚合为 Phase 自身；project_id 非空由
   // scopeKind='project' 与映射层共同保证，payload 恒为 {created:true}）。
+  'phase.delivery.approved': { aggregateType: 'phase', scopeKind: 'project', payloadKind: 'phaseDelivery' },
+  'phase.delivery.invalidated': { aggregateType: 'phase', scopeKind: 'project', payloadKind: 'phaseDelivery' },
+  'phase.metadata.updated': { aggregateType: 'phase', scopeKind: 'project', payloadKind: 'phaseMutation' },
+  'phase.closed': { aggregateType: 'phase', scopeKind: 'project', payloadKind: 'phaseMutation' },
+  'phase.reopened': { aggregateType: 'phase', scopeKind: 'project', payloadKind: 'phaseMutation' },
+  'phase.archived': { aggregateType: 'phase', scopeKind: 'project', payloadKind: 'phaseMutation' },
+  'feature.phase.moved': { aggregateType: 'feature', scopeKind: 'project', payloadKind: 'featurePhaseMoved' },
   [PHASE_CREATED_EVENT_TYPE]: Object.freeze({
     aggregateType: 'phase',
     scopeKind: 'project',
@@ -338,6 +364,11 @@ export const STATE_EVENT_TYPE_SPECS: Readonly<
   // P03-1 / F-005：Feature 计划导入事件（聚合为导入创建的 Feature 自身；
   // project_id 非空由 scopeKind='project' 与映射层共同保证，payload 恒为
   // {imported:true}，不携带计划正文/策略副本/批准语义）。
+  [FEATURE_DAG_UPDATED_EVENT_TYPE]: Object.freeze({
+    aggregateType: 'phase',
+    scopeKind: 'project',
+    payloadKind: 'featureDagUpdated',
+  }),
   [FEATURE_PLAN_IMPORTED_EVENT_TYPE]: Object.freeze({
     aggregateType: 'feature',
     scopeKind: 'project',
@@ -472,6 +503,10 @@ export const STATE_EVENT_TYPE_SPECS: Readonly<
     scopeKind: 'project',
     payloadKind: 'executionResumed',
   }),
+  [EXECUTION_FEATURE_PAUSED_EVENT_TYPE]: Object.freeze({ aggregateType: 'feature', scopeKind: 'project', payloadKind: 'executionPaused' }),
+  [EXECUTION_FEATURE_CANCELLING_EVENT_TYPE]: Object.freeze({ aggregateType: 'feature', scopeKind: 'project', payloadKind: 'executionCancelling' }),
+  [EXECUTION_FEATURE_CANCELLED_EVENT_TYPE]: Object.freeze({ aggregateType: 'feature', scopeKind: 'project', payloadKind: 'executionCancelled' }),
+  [EXECUTION_FEATURE_RESUMED_EVENT_TYPE]: Object.freeze({ aggregateType: 'feature', scopeKind: 'project', payloadKind: 'executionResumed' }),
 });
 
 /** §9.1 公开事件 scope：只有 project/global（命令的 registration scope 不进事件流）。 */
@@ -1013,6 +1048,31 @@ export function mapStateEvent(row: unknown, operation: string = EVENT_READ_OPERA
     payload = validateRegisteredPayload(row.payload, operation);
   } else if (spec.payloadKind === 'phaseCreated') {
     payload = validatePhaseCreatedPayload(row.payload, operation);
+  } else if (spec.payloadKind === 'phaseDelivery') {
+    exactPayloadKeys(operation, row.payload, ['schemaVersion', 'approvalId', 'candidateId', 'batchId', 'summaryDigest', 'status', 'reason']);
+    if (row.payload.schemaVersion !== 1 || row.payload.status !== (row.eventType === 'phase.delivery.approved' ? 'approved' : 'invalidated')
+      || typeof row.payload.summaryDigest !== 'string' || !/^[a-f0-9]{64}$/.test(row.payload.summaryDigest)
+      || (row.payload.reason !== null && typeof row.payload.reason !== 'string')) corrupt(operation, 'event_payload_violation');
+    try { for (const key of ['approvalId', 'candidateId', 'batchId']) validateStableId(row.payload[key], { operation }, key); }
+    catch { corrupt(operation, 'event_payload_violation'); }
+    // Detailed audit bindings remain Core-owned; observation carries no free text.
+    payload = { deliveryUpdated: true };
+  } else if (spec.payloadKind === 'phaseMutation') {
+    const key = {
+      'phase.metadata.updated': 'metadataUpdated', 'phase.closed': 'closed',
+      'phase.reopened': 'reopened', 'phase.archived': 'archived',
+    }[row.eventType as 'phase.metadata.updated' | 'phase.closed' | 'phase.reopened' | 'phase.archived'];
+    exactPayloadKeys(operation, row.payload, [key]);
+    if (row.payload[key] !== true) corrupt(operation, 'event_payload_violation');
+    payload = { [key]: true };
+  } else if (spec.payloadKind === 'featurePhaseMoved') {
+    exactPayloadKeys(operation, row.payload, ['phaseMoved']);
+    if (row.payload.phaseMoved !== true) corrupt(operation, 'event_payload_violation');
+    payload = { phaseMoved: true };
+  } else if (spec.payloadKind === 'featureDagUpdated') {
+    exactPayloadKeys(operation, row.payload, ['dagUpdated']);
+    if (row.payload.dagUpdated !== true) corrupt(operation, 'event_payload_violation');
+    payload = { dagUpdated: true };
   } else if (spec.payloadKind === 'featurePlanImported') {
     payload = validateFeaturePlanImportedPayload(row.payload, operation);
   } else if (spec.payloadKind === 'planLabelsUpdated') {

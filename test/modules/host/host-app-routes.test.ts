@@ -119,6 +119,7 @@ async function startAppServer(
       onboardingService: app.onboardingService,
       baselineQueryService: app.baselineQueryService,
       baselineExecutionService: app.baselineExecutionService,
+      planningQueryService: app.planningQueryService,
       getLifecycleState: () => lifecycle,
     },
   });
@@ -723,8 +724,17 @@ describe('F-011 传输纪律与版本门禁', () => {
         'baseline.preview',
         'baseline.run',
         'baseline.cancel',
+        'execution.batch.finalize',
+        'phase.delivery.approve',
         // P03-1 / F-004：Phase 创建随 Core 白名单进入接线宣告。
         'phase.create',
+        // P05-2 / F-007：Phase 生命周期、Feature 归属与依赖更新接线。
+        'phase.metadata.update',
+        'phase.close',
+        'phase.reopen',
+        'phase.archive',
+        'feature.phase.move',
+        'feature.dag.update',
         // P03-1 / F-005：计划导入随 Core 白名单进入接线宣告。
         'feature.plan.import',
         // P03-1 / F-007：纯标签 CAS 编辑随 Core 白名单进入接线宣告。
@@ -741,6 +751,7 @@ describe('F-011 传输纪律与版本门禁', () => {
         'task.approval.unblock',
         'task.verification.continue',
         'feature.verification.continue',
+        'git.operation.start',
         'git.operation.reconcile',
         // P03-2 / F-006：执行输入制品组准备随 Core 白名单进入接线宣告
         //（HostClient/CLI 入口属 F-007/F-008）。
@@ -754,6 +765,9 @@ describe('F-011 传输纪律与版本门禁', () => {
         // P03-3 / F-009：批次预算显式修订随 Core 白名单进入接线宣告（仅增额
         // 不自动启动或恢复 Run；HostClient/CLI 入口属 F-011/F-012）。
         'execution.budget.revise',
+        // P05-1 / F-012：一次性规划与候选人工决策已接通通用命令面。
+        'planning.start',
+        'planning.candidate.decide',
         'workspace.discard',
         'workspace.discard.preview',
       ]);
@@ -985,6 +999,13 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         'baseline.cancel',
         // P03-1 / F-004：Phase 创建经既有 /v1/commands 通用路由接线。
         'phase.create',
+        // P05-2 / F-007：已接线能力必须同时在握手中宣告。
+        'phase.metadata.update',
+        'phase.close',
+        'phase.reopen',
+        'phase.archive',
+        'feature.phase.move',
+        'feature.dag.update',
         // P03-1 / F-005：计划导入经既有 /v1/commands 通用路由接线。
         'feature.plan.import',
         // P03-1 / F-007：纯标签 CAS 编辑经既有 /v1/commands 通用路由接线。
@@ -1008,6 +1029,9 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         'execution.start',
         // P03-3 / F-009：批次预算显式修订经既有 /v1/commands 通用路由接线。
         'execution.budget.revise',
+        // P05-1 / F-012：规划命令经同一通用路由接线并宣告能力。
+        'planning.start',
+        'planning.candidate.decide',
         'workspace.discard',
         'workspace.discard.preview',
       ],
@@ -1039,6 +1063,7 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         // P03-1 / F-009：计划层级/详情/DAG 查询真实接线（能力位复用 project.read）。
         'phases.list',
         'phases.get',
+        'phases.graph.get',
         'features.list',
         'features.get',
         'tasks.list',
@@ -1063,15 +1088,24 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         // P03-8 / F-009：Git 意图/实际提交/操作回执查询真实接线。
         'git.operations.list',
         'git.operations.get',
+        'git.repairs.list',
+        'git.repairs.get',
         // P03-8 / F-010：Feature 分轴结果查询真实接线。
         'features.delivery.get',
         'features.report.get',
+        'integration.plan.get',
         // P03-9 / F-013：Run/Batch 控制进度、恢复诊断与 finalization 收尾结果查询真实接线。
         'execution.run.control.get',
         'execution.batch.control.get',
+        'execution.batch.delivery.get',
         'execution.run.recovery.get',
         // P04-9 / F-009：派发队列与执行槽位只读投影真实接线（无写入口）。
         'execution.dispatch.list',
+        'execution.resources.list',
+        // P05-1 / F-012：规划上下文及受管候选内容查询已接线。
+        'planning.contexts.list',
+        'planning.context.get',
+        'planning.candidate.get',
       ],
       events: { transport: 'sse', route: '/v1/events', scopes: ['project', 'global'] },
     });

@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "task_id": "F-003",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/delivery/p05-7-f003-integration-git-workspace.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

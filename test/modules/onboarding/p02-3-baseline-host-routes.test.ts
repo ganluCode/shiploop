@@ -255,6 +255,7 @@ async function startAppServer(
       onboardingService: app.onboardingService,
       baselineQueryService: app.baselineQueryService,
       baselineExecutionService: app.baselineExecutionService,
+      planningQueryService: app.planningQueryService,
       getLifecycleState: () => lifecycle,
     },
   });

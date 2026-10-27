@@ -1,0 +1,8 @@
+{
+  "schema_version": 2,
+  "task_id": "F-007",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [{ "file": "test/modules/cli/p05-9-batch-delivery-cli.test.ts", "all": true }]
+  }]
+}

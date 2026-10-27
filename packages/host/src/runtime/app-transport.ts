@@ -47,6 +47,7 @@ import type {
   CommandReceiptsService,
   CommandService,
   OnboardingService,
+  PlanningQueryService,
   PublicError,
   QueryService,
   TrustedPrincipal,
@@ -61,6 +62,7 @@ import {
   BASELINES_ROUTE_PREFIX,
   COMMANDS_ROUTE,
   DISPATCH_QUEUE_ROUTE,
+  EXECUTION_RESOURCES_ROUTE,
   EVENTS_ROUTE,
   FEATURE_APPROVALS_ROUTE_SUFFIX,
   FEATURE_DELIVERY_ROUTE_SUFFIX,
@@ -70,6 +72,9 @@ import {
   FEATURES_ROUTE_PREFIX,
   GIT_OPERATIONS_ROUTE,
   GIT_OPERATIONS_ROUTE_PREFIX,
+  GIT_REPAIRS_ROUTE,
+  GIT_REPAIRS_ROUTE_PREFIX,
+  INTEGRATION_PLANS_ROUTE_PREFIX,
   MAX_APP_BODY_BYTES,
   MAX_ARTIFACT_CONTENT_BYTES,
   MAX_WORK_SESSION_EVIDENCE_RESPONSE_BYTES,
@@ -77,6 +82,9 @@ import {
   MAX_QUERY_STRING_BYTES,
   PHASES_ROUTE,
   PHASES_ROUTE_PREFIX,
+  PLANNING_CONTEXTS_ROUTE,
+  PLANNING_CONTEXTS_ROUTE_PREFIX,
+  PLANNING_CANDIDATE_ROUTE_SUFFIX,
   PROJECTS_INSPECT_ROUTE,
   PROJECTS_ROUTE,
   PROJECT_LABEL_COUNTS_ROUTE,
@@ -144,6 +152,7 @@ export type ApplicationOperation =
   // P03-1 / F-009 §6.6：计划域查询操作身份（与 Core PLAN_QUERY_OPERATIONS 同源）。
   | 'phases.list'
   | 'phases.get'
+  | 'phases.graph.get'
   | 'features.list'
   | 'features.get'
   | 'tasks.list'
@@ -171,25 +180,35 @@ export type ApplicationOperation =
   // GIT_OPERATION_QUERY_OPERATIONS 同源）。
   | 'git.operations.list'
   | 'git.operations.get'
+  | 'git.repairs.list'
+  | 'git.repairs.get'
   // P03-8 / F-010：Feature 分轴结果只读查询（与 Core
   // FEATURE_DELIVERY_QUERY_OPERATIONS 同源）。
   | 'features.delivery.get'
   | 'features.report.get'
-  // P03-9 / F-013：Run/Batch 控制进度、恢复诊断与 finalization 收尾结果只读
+  // P05-6 / F-005：固定成果/基线/顺序/状态只读投影。
+  | 'integration.plan.get'
   // 查询（与 Core EXECUTION_CONTROL_QUERY_OPERATIONS 同源）。
   | 'execution.run.control.get'
   | 'execution.batch.control.get'
+  | 'execution.batch.delivery.get'
   | 'execution.run.recovery.get'
   // P04-9 / F-009：派发队列与执行槽位只读投影（与 Core
   // EXECUTION_DISPATCH_QUERY_OPERATIONS 同源；无写入口）。
-  | 'execution.dispatch.list';
+  | 'execution.dispatch.list'
+  | 'execution.resources.list'
+  // P05-1 / F-012：规划上下文/候选只读查询（与 Core PLANNING_QUERY_OPERATIONS
+  // 同源；候选正文经受管内容接口核验读取）。
+  | 'planning.contexts.list'
+  | 'planning.context.get'
+  | 'planning.candidate.get';
 
 /** 已解析的应用路由（path 形态匹配；路径参数为未解码原始片段）。 */
 export interface ResolvedAppRoute {
   readonly operation: ApplicationOperation;
   readonly method: 'GET' | 'POST';
   readonly pathParam?: {
-    readonly name: 'commandId' | 'projectId' | 'resultRef' | 'operationId' | 'artifactId' | 'phaseId' | 'featureId' | 'taskId' | 'batchId' | 'runId' | 'attemptId';
+    readonly name: 'commandId' | 'projectId' | 'resultRef' | 'operationId' | 'integrationId' | 'artifactId' | 'phaseId' | 'featureId' | 'taskId' | 'batchId' | 'runId' | 'attemptId' | 'candidateId';
     readonly value: string;
   };
 }
@@ -213,6 +232,12 @@ export interface HostApplicationContext {
    * 能力清单宣告 baselines.list/baselines.get/artifacts.get，必须真实接线。
    */
   readonly baselineQueryService: BaselineQueryService;
+  /**
+   * P05-1 / F-012：规划上下文/候选只读查询（授权/可见性/候选正文完整性全部在
+   * Core；能力清单宣告 planning.contexts.list/planning.context.get/
+   * planning.candidate.get，必须真实接线）。
+   */
+  readonly planningQueryService: Pick<PlanningQueryService, 'listPlanningContexts' | 'getPlanningContext' | 'getPlanningCandidate'>;
   /**
    * P02-3 / F-014（§5.3/§13）：baseline.run 经既有 POST /v1/commands 路由提交
    * 到执行编排（accepted 后异步启动检查）；其余命令仍走 commandService。
@@ -296,6 +321,16 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
     }
     return undefined;
   }
+  if (path === GIT_REPAIRS_ROUTE) {
+    return { operation: 'git.repairs.list', method: 'GET' };
+  }
+  if (path.startsWith(GIT_REPAIRS_ROUTE_PREFIX)) {
+    const segment = path.slice(GIT_REPAIRS_ROUTE_PREFIX.length);
+    if (segment.length > 0 && !segment.includes('/')) {
+      return { operation: 'git.repairs.get', method: 'GET', pathParam: { name: 'candidateId', value: segment } };
+    }
+    return undefined;
+  }
   // P03-8 / F-009：GET /v1/git-operations（集合根 + projectId + 父级二选一/
   // 分页查询参数）与单段路径参数 GET /v1/git-operations/:operationId；其他
   // 嵌套/多段形态一律未匹配 → 404 unknown_operation。
@@ -309,6 +344,34 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
         operation: 'git.operations.get',
         method: 'GET',
         pathParam: { name: 'operationId', value: segment },
+      };
+    }
+    return undefined;
+  }
+  // P05-1 / F-012：规划上下文/候选查询路由。集合根（必填 projectId + 可选
+  // Feature 过滤 + 分页）与单段路径参数详情；唯一冻结的候选子资源形态
+  // GET /v1/planning-contexts/:candidateId/candidate；其他嵌套/多段形态一律
+  // 未匹配 → 404 unknown_operation。
+  if (path === PLANNING_CONTEXTS_ROUTE) {
+    return { operation: 'planning.contexts.list', method: 'GET' };
+  }
+  if (path.startsWith(PLANNING_CONTEXTS_ROUTE_PREFIX)) {
+    const segments = path.slice(PLANNING_CONTEXTS_ROUTE_PREFIX.length).split('/');
+    if (segments.some((segment) => segment.length === 0)) {
+      return undefined;
+    }
+    if (segments.length === 1) {
+      return {
+        operation: 'planning.context.get',
+        method: 'GET',
+        pathParam: { name: 'candidateId', value: segments[0] as string },
+      };
+    }
+    if (segments.length === 2 && segments[1] === PLANNING_CANDIDATE_ROUTE_SUFFIX) {
+      return {
+        operation: 'planning.candidate.get',
+        method: 'GET',
+        pathParam: { name: 'candidateId', value: segments[0] as string },
       };
     }
     return undefined;
@@ -359,6 +422,7 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
   // P04-9 / F-009：GET /v1/dispatch-queue（集合根 + 必填 projectId + 分页）；
   // 其他嵌套/多段形态一律未匹配 → 404 unknown_operation（无子资源/写入口）。
   if (path === DISPATCH_QUEUE_ROUTE) return { operation: 'execution.dispatch.list', method: 'GET' };
+  if (path === EXECUTION_RESOURCES_ROUTE) return { operation: 'execution.resources.list', method: 'GET' };
   if (path === ATTEMPTS_ROUTE) {
     return { operation: 'execution.attempts.list', method: 'GET' };
   }
@@ -387,6 +451,9 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
     }
     // P03-9 / F-013：GET /v1/batches/:batchId/control（Batch 控制进度；与
     // budget 同一冻结形态）；其他形态一律未匹配 → 404 unknown_operation。
+    if (segments.length === 2 && segments[0] !== '' && segments[1] === 'delivery') {
+      return { operation: 'execution.batch.delivery.get', method: 'GET', pathParam: { name: 'batchId', value: segments[0]! } };
+    }
     if (segments.length === 2 && segments[0] !== '' && segments[1] === 'control') {
       return { operation: 'execution.batch.control.get', method: 'GET', pathParam: { name: 'batchId', value: segments[0]! } };
     }
@@ -435,6 +502,10 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
   }
   if (path.startsWith(PHASES_ROUTE_PREFIX)) {
     const segment = path.slice(PHASES_ROUTE_PREFIX.length);
+    const parts = segment.split('/');
+    if (parts.length === 2 && parts[0] && parts[1] === 'graph') {
+      return { operation: 'phases.graph.get', method: 'GET', pathParam: { name: 'phaseId', value: parts[0] } };
+    }
     if (segment.length > 0 && !segment.includes('/')) {
       return {
         operation: 'phases.get',
@@ -481,6 +552,14 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
         method: 'GET',
         pathParam: { name: 'featureId', value: segments[0] as string },
       };
+    }
+    return undefined;
+  }
+  if (path.startsWith(INTEGRATION_PLANS_ROUTE_PREFIX)) {
+    const segments = path.slice(INTEGRATION_PLANS_ROUTE_PREFIX.length).split('/');
+    if (segments.length === 1 && segments[0]!.length > 0) {
+      return { operation: 'integration.plan.get', method: 'GET',
+        pathParam: { name: 'integrationId', value: segments[0]! } };
     }
     return undefined;
   }
@@ -710,9 +789,21 @@ const QUERY_SPECS: Readonly<Partial<Record<ApplicationOperation, QuerySpec>>> = 
   // P04-9 / F-009：派发队列查询参数白名单（只读；容量/owner/version/释放
   // 等可写意图不在白名单内，一律 400；取值规则由 Core 单一权威复核）。
   'execution.dispatch.list': Object.freeze({
-    allowed: ['projectId', 'limit', 'cursor'],
+    allowed: ['projectId', 'batchId', 'featureId', 'limit', 'cursor'],
     repeatable: [],
   }),
+  'execution.resources.list': Object.freeze({
+    allowed: ['projectId', 'batchId', 'featureId', 'limit', 'cursor'],
+    repeatable: [],
+  }),
+  // P05-1 / F-012：规划上下文/候选查询参数白名单（取值规则由 Core 单一权威
+  // 复核；candidateId 只来自冻结路径参数，不接受查询参数重复指定）。
+  'planning.contexts.list': Object.freeze({
+    allowed: ['projectId', 'featureId', 'limit', 'cursor'],
+    repeatable: [],
+  }),
+  'planning.context.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
+  'planning.candidate.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
   // P03-7 / F-013：Task 证据/人审/返工链查询参数白名单（取值规则由 Core 单一
   // 权威复核；taskId 只来自冻结路径参数，不接受查询参数重复指定）。
   'execution.task.verification.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
@@ -735,6 +826,7 @@ const QUERY_SPECS: Readonly<Partial<Record<ApplicationOperation, QuerySpec>>> = 
   'baselines.list': Object.freeze({ allowed: ['limit', 'cursor'], repeatable: [] }),
   // P03-1 / F-009 §6.6：计划层级列表查询参数（父级身份 + 分页；取值规则由
   // Core validatePlanListFilter 单一权威复核）。
+  'phases.graph.get': Object.freeze({ allowed: ['projectId', 'limit', 'cursor'], repeatable: [] }),
   'phases.list': Object.freeze({ allowed: ['projectId', 'limit', 'cursor'], repeatable: [] }),
   'features.list': Object.freeze({
     allowed: ['projectId', 'phaseId', 'limit', 'cursor'],
@@ -761,11 +853,15 @@ const QUERY_SPECS: Readonly<Partial<Record<ApplicationOperation, QuerySpec>>> = 
     repeatable: [],
   }),
   'git.operations.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
+  'git.repairs.list': Object.freeze({ allowed: ['projectId', 'limit', 'cursor'], repeatable: [] }),
+  'git.repairs.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
   // P03-8 / F-010：Feature 分轴结果查询参数白名单（取值规则由 Core 单一权威复核）。
   'features.delivery.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
   'features.report.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
+  'integration.plan.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
   'execution.run.control.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
   'execution.batch.control.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
+  'execution.batch.delivery.get': Object.freeze({ allowed: ['projectId', 'limit', 'cursor'], repeatable: [] }),
   'execution.run.recovery.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
 });
 
@@ -1133,6 +1229,11 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
         buildPlanListQuery(params, operation, 'projectId'),
       );
       break;
+    case 'phases.graph.get':
+      result = await app.queryService.getPhaseGraph(app.principal, {
+        ...buildPlanListQuery(params, operation, 'projectId'), phaseId: pathParam?.value,
+      });
+      break;
     case 'phases.get':
       result = await app.queryService.getPhase(app.principal, pathParam?.value);
       break;
@@ -1224,12 +1325,25 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
     // P04-9 / F-009：派发队列与槽位只读投影分发（本层只做形态转换；授权/
     // 可见性折叠/分页范围/游标绑定由 Core 单一权威复核；查询零写入，不认领、
     // 不扣预算、不唤醒执行、不释放槽位）。
-    case 'execution.dispatch.list':
+    case 'execution.dispatch.list': {
+      const query = buildPlanListQuery(params, operation, 'projectId');
+      for (const key of ['batchId', 'featureId']) {
+        if (params.has(key)) query[key] = params.get(key);
+      }
       result = await app.queryService.listExecutionDispatchQueue(
         app.principal,
-        buildPlanListQuery(params, operation, 'projectId'),
+        query,
       );
       break;
+    }
+    case 'execution.resources.list': {
+      const query = buildPlanListQuery(params, operation, 'projectId');
+      for (const key of ['batchId', 'featureId']) {
+        if (params.has(key)) query[key] = params.get(key);
+      }
+      result = await app.queryService.listExecutionResources(app.principal, query);
+      break;
+    }
     // P03-7 / F-013：Task 机器证据/人审/返工链查询分发（本层只做形态转换；
     // 授权/可见性折叠/分页范围/游标绑定全部由 Core 单一权威复核；跨项目与
     // 不存在目标统一 not_found，不区分存在性）。
@@ -1269,6 +1383,12 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
       result = await app.queryService.getFeatureDelivery(app.principal, query);
       break;
     }
+    case 'integration.plan.get': {
+      const query = buildPlanListQuery(params, operation, 'projectId');
+      query.integrationId = pathParam?.value;
+      result = await app.queryService.getIntegrationPlan(app.principal, query);
+      break;
+    }
     // P03-9 / F-013：控制进度/恢复诊断查询分发（本层只做形态转换；授权/
     // 可见性折叠/身份校验全部由 Core 单一权威复核；跨项目与不存在目标
     // 统一 not_found，不区分存在性）。
@@ -1276,6 +1396,13 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
       const query = buildPlanListQuery(params, operation, 'projectId');
       query.runId = pathParam?.value;
       result = await app.queryService.getRunControl(app.principal, query);
+      break;
+    }
+    case 'execution.batch.delivery.get': {
+      if (app.queryService.batchDeliveryAvailable !== true || typeof app.queryService.getBatchDelivery !== 'function') reject(501, 'unsupported', operation, 'Batch 收尾查询未装配');
+      const query = buildPlanListQuery(params, operation, 'projectId');
+      query.batchId = pathParam?.value;
+      result = await app.queryService.getBatchDelivery(app.principal, query);
       break;
     }
     case 'execution.batch.control.get': {
@@ -1326,6 +1453,17 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
     // P03-8 / F-009：Git 操作查询分发（本层只做形态转换；授权/可见性折叠/
     // 父级二选一/分页范围/游标绑定全部由 Core 单一权威复核；跨项目与不存在
     // 目标统一 not_found，不区分存在性）。
+    case 'git.repairs.list': {
+      const query = buildPlanListQuery(params, operation, 'projectId');
+      result = await app.queryService.listGitAgentRepairs(app.principal, query);
+      break;
+    }
+    case 'git.repairs.get': {
+      const query = buildPlanListQuery(params, operation, 'projectId');
+      query.repairId = pathParam?.value;
+      result = await app.queryService.getGitAgentRepair(app.principal, query);
+      break;
+    }
     case 'git.operations.list': {
       const query = buildPlanListQuery(params, operation, 'projectId');
       const featureId = params.get('featureId');
@@ -1343,6 +1481,30 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
       const query = buildPlanListQuery(params, operation, 'projectId');
       query.operationId = pathParam?.value;
       result = await app.queryService.getGitOperation(app.principal, query);
+      break;
+    }
+    // P05-1 / F-012：规划上下文/候选查询分发（本层只做形态转换；授权/可见性
+    // 折叠/分页范围/游标绑定/候选正文完整性全部由 Core 单一权威复核；跨项目
+    // 与不存在目标统一 not_found，不区分存在性）。
+    case 'planning.contexts.list': {
+      const query = buildPlanListQuery(params, operation, 'projectId');
+      const featureId = params.get('featureId');
+      if (featureId !== null) {
+        query.featureId = featureId;
+      }
+      result = await app.planningQueryService.listPlanningContexts(app.principal, query);
+      break;
+    }
+    case 'planning.context.get': {
+      const query = buildPlanListQuery(params, operation, 'projectId');
+      query.candidateId = pathParam?.value;
+      result = await app.planningQueryService.getPlanningContext(app.principal, query);
+      break;
+    }
+    case 'planning.candidate.get': {
+      const query = buildPlanListQuery(params, operation, 'projectId');
+      query.candidateId = pathParam?.value;
+      result = await app.planningQueryService.getPlanningCandidate(app.principal, query);
       break;
     }
     default:

@@ -13,6 +13,7 @@ import type { TaskDagStore } from '../ports/task-dag.js';
 import { isRuntimeError, validateRuntimeExecutionRequest, validateRuntimeExecutionResult, validateRuntimeStopEvidence,
   type RuntimeExecutionRequest, type RuntimeExecutionResult, type RuntimeStopEvidence } from '../ports/runtime-execution.js';
 import { classifyRuntimeExecutionResult, classifyRuntimeFailure, type RuntimeFailureClassification } from '../ports/runtime-failure.js';
+import { isPlanningAttemptSnapshot } from '../ports/attempt-store.js';
 import type { WorkResourceIdentity } from '../ports/work-resources.js';
 import type { RuntimeSettlementFacts, RuntimeControlFacts } from '../ports/runtime-settlement.js';
 import type { WorkEvidenceRecordingOutcome } from './work-evidence-recorder.js';
@@ -130,7 +131,11 @@ export function createRuntimeSettlementService(deps: RuntimeSettlementDeps): Run
           ...(recovery?.gaps ?? []).map(gap => token(`recovery:${gap}`))])].slice(0, 32).map(token) }, stopped,
       ...(input.control ? { control: input.control } : {}) };
     const attempt = deps.attempts.getAttempt(identity.projectId, identity.attemptId);
-    const task = deps.dag.readTaskDagView(identity.projectId, identity.runId).facts.find(f => f.taskId === identity.taskId);
+    // P05-1 / F-007：planning Task 不在编码 DAG 事实集内；行级围栏由 planning
+    // 生命周期结算分支重核（Task 状态/版本 CAS）。
+    const task = isPlanningAttemptSnapshot(attempt.inputSnapshot)
+      ? { executionVersion: identity.executionVersion }
+      : deps.dag.readTaskDagView(identity.projectId, identity.runId).facts.find(f => f.taskId === identity.taskId);
     const current = attempt.owner === identity.owner && attempt.hostInstanceId === identity.hostInstanceId
       && attempt.executionVersion === identity.executionVersion && task?.executionVersion === identity.executionVersion
       && attempt.taskId === identity.taskId && attempt.runId === identity.runId && attempt.invocationId === request.invocationId;

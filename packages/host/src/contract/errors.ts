@@ -53,6 +53,7 @@ export const APP_OPERATIONS = [
   // P03-1 / F-009（§6.6）：计划域层级列表/详情/Task DAG 查询。
   'phases.list',
   'phases.get',
+  'phases.graph.get',
   'features.list',
   'features.get',
   'tasks.list',
@@ -87,19 +88,30 @@ export const APP_OPERATIONS = [
   // project.read；与 Core GIT_OPERATION_QUERY_OPERATIONS 同步，不漂移）。
   'git.operations.list',
   'git.operations.get',
+  'git.repairs.list',
+  'git.repairs.get',
   // P03-8 / F-010：Feature 分轴结果授权只读查询（能力位复用 project.read；
   // 与 Core FEATURE_DELIVERY_QUERY_OPERATIONS 同步，不漂移）。
   'features.delivery.get',
   'features.report.get',
+  // P05-6 / F-005：固定集成计划只读查询。
+  'integration.plan.get',
   // P03-9 / F-013：Run/Batch 控制进度、恢复诊断与 finalization 收尾结果授权
   // 只读查询（能力位复用 project.read；与 Core
   // EXECUTION_CONTROL_QUERY_OPERATIONS 同步，不漂移）。
   'execution.run.control.get',
   'execution.batch.control.get',
+  'execution.batch.delivery.get',
   'execution.run.recovery.get',
   // P04-9 / F-009：派发队列与执行槽位只读投影查询（无写入口；不提供 SQL、
   // 直接设置 owner/version 或释放槽位的外部接口）。
   'execution.dispatch.list',
+  'execution.resources.list',
+  // P05-1 / F-012：规划上下文/候选只读查询（与 Core PLANNING_QUERY_OPERATIONS
+  // 同步，能力位复用 project.read，不漂移）。
+  'planning.contexts.list',
+  'planning.context.get',
+  'planning.candidate.get',
 ] as const;
 
 export const HOST_OPERATIONS = [

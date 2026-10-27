@@ -94,15 +94,33 @@ export interface PublicGitOperationRecord {
   readonly deliveryStatus: FeatureDeliveryStatus | null;
   /** 权威操作回执（pending 回执缺失为 null——明确的待核对展示，不是成功）。 */
   readonly receipt: GitOperationReceipt | null;
+  readonly integration?: PublicGitIntegrationView | null;
   readonly settledAt: string | null;
   readonly revision: number;
   readonly createdAt: string;
   readonly updatedAt: string;
 }
 
+export interface PublicGitIntegrationView {
+  readonly integrationId: string;
+  readonly targetBase: string;
+  readonly inputDigest: string;
+  readonly approvedInputs: readonly { readonly inputId: string; readonly digest: string }[];
+  readonly mergeOrder: readonly string[];
+  readonly verificationScope: readonly string[];
+  readonly predecessors: readonly {
+    readonly featureId: string;
+    readonly commitSha: string | null;
+    readonly coveredInputIds: readonly string[];
+  }[];
+  readonly result: GitOperationRecord['integrationResult'];
+  readonly recoveryState: GitOperationRecord['recoveryState'];
+  readonly workspacePreserved: boolean;
+}
 /**
  * 持久记录 → 公开投影（纯转换；输入已经 validateGitOperationRecord 复核）。
- * 脱敏纪律：不投影 worktreePath/ownerId/hostInstanceId。
+ * 脱敏纪律：不投影 worktreePath/ownerId/hostInstanceId，也不暴露集成计划中的
+ * canonicalPath、gitCommonDir 或预算快照。
  */
 export function toPublicGitOperationRecord(record: GitOperationRecord): PublicGitOperationRecord {
   return {
@@ -142,6 +160,22 @@ export function toPublicGitOperationRecord(record: GitOperationRecord): PublicGi
     reasonCode: record.reasonCode,
     deliveryStatus: record.deliveryStatus,
     receipt: record.receipt === null ? null : { ...record.receipt },
+    integration: record.intent.integrationPlan === null || record.intent.integrationPlan === undefined ? null : {
+      integrationId: record.intent.integrationPlan.integrationId,
+      targetBase: record.intent.integrationPlan.target.baseCommit,
+      inputDigest: record.intent.integrationPlan.inputDigest,
+      approvedInputs: record.intent.integrationPlan.approvedInputs.map(input => ({ ...input })),
+      mergeOrder: [...record.intent.integrationPlan.mergeOrder],
+      verificationScope: [...record.intent.integrationPlan.verificationScope],
+      predecessors: record.intent.integrationPlan.predecessors.map(predecessor => ({
+        featureId: predecessor.featureId,
+        commitSha: predecessor.delivery?.commitSha ?? null,
+        coveredInputIds: [...predecessor.coveredInputIds],
+      })),
+      result: record.integrationResult,
+      recoveryState: record.recoveryState,
+      workspacePreserved: record.workspacePreserved,
+    },
     settledAt:
       record.settledAtUtcMs === null ? null : new Date(record.settledAtUtcMs).toISOString(),
     revision: record.revision,
@@ -209,6 +243,11 @@ export function validateGitOperationListSelector(
  */
 export interface GitOperationQueryReadStore {
   readGitOperationRecord(projectId: unknown, operationId: unknown): GitOperationRecord | undefined;
+  listGitOperationRecordsByProject?(
+    visibility: unknown,
+    projectId: unknown,
+    request: PlanListRequest,
+  ): PlanRecordPage<GitOperationRecord>;
   listGitOperationRecordsByFeature(
     visibility: unknown,
     projectId: unknown,

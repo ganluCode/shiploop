@@ -1256,6 +1256,9 @@ export const PHASE_CREATED_EVENT_TYPE = 'phase.created';
  */
 export const FEATURE_PLAN_IMPORTED_EVENT_TYPE = 'feature.plan.imported';
 
+/** P05-2 / F-005：Phase Feature DAG 边集更新事件。 */
+export const FEATURE_DAG_UPDATED_EVENT_TYPE = 'feature.dag.updated';
+
 /**
  * F-007：纯标签 CAS 编辑事件（仅命令路径编辑成功写入；脱敏 payload 恒为
  * {labelsUpdated:true}，聚合为目标实体自身，aggregateRevision=编辑后 revision）。
@@ -1305,7 +1308,13 @@ export const EXECUTION_INPUT_PREPARED_EVENT_TYPE = 'execution.input.prepared';
 /** 计划域事件白名单（顺序即冻结顺序；白名单外不得进入公开事件流）。 */
 export const PLAN_EVENT_TYPES = [
   PHASE_CREATED_EVENT_TYPE,
+  'phase.metadata.updated',
+  'phase.closed',
+  'phase.reopened',
+  'phase.archived',
+  'feature.phase.moved',
   FEATURE_PLAN_IMPORTED_EVENT_TYPE,
+  FEATURE_DAG_UPDATED_EVENT_TYPE,
   PHASE_LABELS_UPDATED_EVENT_TYPE,
   FEATURE_LABELS_UPDATED_EVENT_TYPE,
   TASK_LABELS_UPDATED_EVENT_TYPE,
@@ -1342,7 +1351,13 @@ interface PlanEventTypeSpec {
   readonly aggregateType: 'phase' | 'feature' | 'task';
   readonly payloadKey:
     | 'created'
+    | 'metadataUpdated'
+    | 'closed'
+    | 'reopened'
+    | 'archived'
+    | 'phaseMoved'
     | 'imported'
+    | 'dagUpdated'
     | 'labelsUpdated'
     | 'revised'
     | 'strategyUpdated'
@@ -1353,9 +1368,18 @@ interface PlanEventTypeSpec {
 
 const PLAN_EVENT_TYPE_SPECS: Readonly<Record<PlanEventType, PlanEventTypeSpec>> = Object.freeze({
   [PHASE_CREATED_EVENT_TYPE]: Object.freeze({ aggregateType: 'phase', payloadKey: 'created' }),
+  'phase.metadata.updated': { aggregateType: 'phase', payloadKey: 'metadataUpdated' },
+  'phase.closed': { aggregateType: 'phase', payloadKey: 'closed' },
+  'phase.reopened': { aggregateType: 'phase', payloadKey: 'reopened' },
+  'phase.archived': { aggregateType: 'phase', payloadKey: 'archived' },
+  'feature.phase.moved': { aggregateType: 'feature', payloadKey: 'phaseMoved' },
   [FEATURE_PLAN_IMPORTED_EVENT_TYPE]: Object.freeze({
     aggregateType: 'feature',
     payloadKey: 'imported',
+  }),
+  [FEATURE_DAG_UPDATED_EVENT_TYPE]: Object.freeze({
+    aggregateType: 'phase',
+    payloadKey: 'dagUpdated',
   }),
   [PHASE_LABELS_UPDATED_EVENT_TYPE]: Object.freeze({
     aggregateType: 'phase',
@@ -1432,22 +1456,7 @@ export function validatePlanEventAppend(value: unknown, operation: string): Vali
     aggregateType: spec.aggregateType,
     aggregateId: validateStableId(object.aggregateId, context, 'aggregateId'),
     aggregateRevision,
-    payload:
-      spec.payloadKey === 'created'
-        ? { created: true }
-        : spec.payloadKey === 'imported'
-          ? { imported: true }
-          : spec.payloadKey === 'labelsUpdated'
-            ? { labelsUpdated: true }
-            : spec.payloadKey === 'revised'
-              ? { revised: true }
-              : spec.payloadKey === 'strategyUpdated'
-                ? { strategyUpdated: true }
-                : spec.payloadKey === 'approved'
-                  ? { approved: true }
-                  : spec.payloadKey === 'rejected'
-                    ? { rejected: true }
-                    : { prepared: true },
+    payload: { [spec.payloadKey]: true },
   };
 }
 

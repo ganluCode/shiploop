@@ -1,0 +1,51 @@
+{
+  "schema_version": 2,
+  "task_id": "F-003",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/planning/p05-1-f003-planning-start-command.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/storage/sqlite/p05-1-f003-planning-start-schema.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/planning/p05-1-f002-planning-context-store.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/storage/sqlite/p05-1-f002-planning-context-schema.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/execution/budget/p03-3-work-command-receipts.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/execution/dispatch/p04-9-f002-dispatch-enqueue.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/authorization/authorization-contract.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/storage/sqlite/sqlite-migration-runner.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/storage/sqlite/sqlite-schema-migrations.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/runtime/p03-6-work-session.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

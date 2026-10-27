@@ -46,6 +46,7 @@ import { isArtifactVerifyError } from './artifact-verify.js';
 import type { ArtifactPublisher } from './artifact-publish.js';
 import type { RuntimeRecoveryService } from './runtime-recovery.js';
 import type { AttemptStore, AttemptRecord } from '../ports/attempt-store.js';
+import { isPlanningAttemptSnapshot } from '../ports/attempt-store.js';
 import { ACTIVE_ATTEMPT_STATUSES } from '../ports/attempt-store.js';
 import {
   CONTEXT_MANIFEST_DIGEST_DOMAIN,
@@ -59,7 +60,18 @@ import {
   EXECUTION_PROMPT_ARTIFACT_KIND,
   EXECUTION_SNAPSHOT_ARTIFACT_KIND,
 } from '../ports/execution-input-prepare.js';
+import {
+  computePlanningPermissionsDigest,
+  computePlanningStrategyCopyDigest,
+  PLANNING_MANIFEST_ARTIFACT_KIND,
+  PLANNING_MANIFEST_DIGEST_DOMAIN,
+  PLANNING_PROMPT_ARTIFACT_KIND,
+  PLANNING_PROMPT_DIGEST_DOMAIN,
+  PLANNING_SNAPSHOT_ARTIFACT_KIND,
+  PLANNING_SNAPSHOT_DIGEST_DOMAIN,
+} from '../ports/planning-input-prepare.js';
 import type { ExecutionInputRef } from '../ports/execution-input.js';
+import type { PreparedExecutionInputGroup } from '../ports/execution-input-prepare.js';
 import { isStorageError } from '../ports/errors.js';
 import { stableStringify } from '../ports/feature-plan.js';
 import {
@@ -402,12 +414,31 @@ export function createExecutionInputBindingService(
 
     /* ---- 5. 权限与恢复选择的前置核验（读取前 fail-fast） ---- */
     const snapshot = attempt.inputSnapshot;
-    if (computeExecutionPermissionsDigest(validated.permissions.grants) !== snapshot.digests.permissionsDigest) {
+    // P05-1 / F-007：planning 快照走独立绑定分支（无业务计划批准身份）：权限面
+    // 按规划摘要域重算；planning Task 单 Attempt 语义不接受任何续接选择。
+    const planningSnapshot = isPlanningAttemptSnapshot(snapshot) ? snapshot : null;
+    if (planningSnapshot !== null) {
+      /* P05-1 / F-010：同一未完成 planning Task 的会话策略沿用 auto/new/
+       * required 契约：首次 planning Attempt 只接受 new；存在历史 Attempt（
+       * 重启核对后的显式 resume）时允许 auto（按实测能力降级新会话并记录原因）
+       * 与 required（能力不足明确拒绝，绝不降级）。来源身份/授权由通用路径与
+       * decideRuntimeRecovery 承担；原生续聊不等于检查点工具可重放。 */
+      const hasPriorAttempt = taskAttempts.some(candidate => candidate.id !== attempt.id);
+      if (validated.recovery.mode !== 'new' && !hasPriorAttempt) {
+        return reject('recovery', 'recovery_source_invalid', '首次 planning Attempt 只接受新会话（无历史可续接）');
+      }
+      if (computePlanningPermissionsDigest(validated.permissions.grants) !== planningSnapshot.digests.permissionsDigest) {
+        return reject('input', 'permission_expansion', '请求权限与准备时规划权限面不一致（拒绝权限扩大）');
+      }
+    } else if (computeExecutionPermissionsDigest(validated.permissions.grants) !== snapshot.digests.permissionsDigest) {
       return reject('input', 'permission_expansion', '请求权限与准备时权限面不一致（拒绝权限扩大）');
     }
 
     /* ---- 6. 必需正文读取（索引身份核对 + 有界 verified 读取 + 逐项证据） ---- */
     const expectedKinds = new Map<string, string>();
+    const groupArtifactKinds = planningSnapshot !== null
+      ? { snapshot: PLANNING_SNAPSHOT_ARTIFACT_KIND, manifest: PLANNING_MANIFEST_ARTIFACT_KIND, prompt: PLANNING_PROMPT_ARTIFACT_KIND }
+      : { snapshot: EXECUTION_SNAPSHOT_ARTIFACT_KIND, manifest: EXECUTION_MANIFEST_ARTIFACT_KIND, prompt: EXECUTION_PROMPT_ARTIFACT_KIND };
     const groupRef = (
       part: 'snapshot' | 'manifest' | 'prompt',
       kind: string,
@@ -425,9 +456,9 @@ export function createExecutionInputBindingService(
       };
     };
     boundInputs = [
-      groupRef('snapshot', EXECUTION_SNAPSHOT_ARTIFACT_KIND),
-      groupRef('manifest', EXECUTION_MANIFEST_ARTIFACT_KIND),
-      groupRef('prompt', EXECUTION_PROMPT_ARTIFACT_KIND),
+      groupRef('snapshot', groupArtifactKinds.snapshot),
+      groupRef('manifest', groupArtifactKinds.manifest),
+      groupRef('prompt', groupArtifactKinds.prompt),
       ...snapshot.requiredInputs.map((ref) => {
         expectedKinds.set(ref.purpose, ref.kind);
         return {
@@ -576,6 +607,70 @@ export function createExecutionInputBindingService(
     const manifestBody = await parseJson('manifest', bodies.get('manifest')!);
     const promptBody = decodeUtf8(bodies.get('prompt')!);
 
+    if (planningSnapshot !== null) {
+      /* P05-1 / F-007：planning 分支内容身份重算：三正文按规划摘要域重算；
+       * 身份键与 Attempt 冻结快照逐项一致；冻结策略副本与请求策略逐项一致；
+       * prompt 完整携带验收条目；不携带业务计划批准身份。 */
+      if (domainDigest(PLANNING_SNAPSHOT_DIGEST_DOMAIN, stableStringify(snapshotBody)) !== planningSnapshot.digests.snapshotDigest) {
+        return reject('input', 'snapshot_digest_mismatch', 'planning snapshot 正文与冻结摘要重算不一致');
+      }
+      if (domainDigest(PLANNING_MANIFEST_DIGEST_DOMAIN, stableStringify(manifestBody)) !== planningSnapshot.digests.manifestDigest) {
+        return reject('input', 'manifest_digest_mismatch', 'planning manifest 正文与冻结摘要重算不一致');
+      }
+      if (domainDigest(PLANNING_PROMPT_DIGEST_DOMAIN, promptBody) !== planningSnapshot.digests.promptDigest) {
+        return reject('input', 'prompt_digest_mismatch', 'planning prompt 正文与冻结摘要重算不一致');
+      }
+      if (
+        snapshotBody['projectId'] !== projectId ||
+        snapshotBody['featureId'] !== attempt.featureId ||
+        snapshotBody['runId'] !== attempt.runId ||
+        snapshotBody['planningTaskId'] !== attempt.taskId ||
+        snapshotBody['candidateId'] !== planningSnapshot.candidateId ||
+        snapshotBody['phaseId'] !== planningSnapshot.phaseId
+      ) {
+        return reject('input', 'input_identity_mismatch', 'planning snapshot 正文身份与 Attempt 不一致');
+      }
+      const purposeStrategy = snapshotBody['purposeStrategy'];
+      const strategyCopy = typeof purposeStrategy === 'object' && purposeStrategy !== null
+        ? (purposeStrategy as Record<string, unknown>)['executionConfig'] : undefined;
+      const strategySource = typeof purposeStrategy === 'object' && purposeStrategy !== null
+        ? (purposeStrategy as Record<string, unknown>)['configSource'] : undefined;
+      const strategySourceKey = typeof purposeStrategy === 'object' && purposeStrategy !== null
+        ? (purposeStrategy as Record<string, unknown>)['configSourceKey'] : undefined;
+      if (typeof strategyCopy !== 'object' || strategyCopy === null || Array.isArray(strategyCopy)
+        || typeof strategySource !== 'string' || !(strategySourceKey === null || typeof strategySourceKey === 'string')) {
+        return reject('input', 'input_corrupt', 'planning snapshot 缺少冻结策略副本');
+      }
+      const strategyRecord = strategyCopy as Record<string, unknown>;
+      if (
+        computePlanningStrategyCopyDigest({
+          executionConfig: strategyCopy as Record<string, unknown>,
+          configSource: strategySource as string,
+          configSourceKey: strategySourceKey as string | null,
+        }) !== planningSnapshot.digests.strategyCopyDigest
+        || strategyRecord['runtime'] !== validated.strategy.runtime
+        || strategyRecord['provider'] !== validated.strategy.provider
+        || strategyRecord['model'] !== validated.strategy.model
+        || (strategyRecord['credentialRef'] ?? undefined) !== validated.strategy.credentialRef
+        || (strategyRecord['endpointRef'] ?? undefined) !== validated.strategy.endpointRef
+      ) {
+        return reject('input', 'strategy_mismatch', '请求策略与 planning 冻结策略副本不一致');
+      }
+      const planningRequest = snapshotBody['request'];
+      const planningAcceptance = typeof planningRequest === 'object' && planningRequest !== null
+        ? (planningRequest as Record<string, unknown>)['acceptance'] : undefined;
+      const planningCriteria = typeof planningAcceptance === 'object' && planningAcceptance !== null
+        ? (planningAcceptance as Record<string, unknown>)['criteria'] : undefined;
+      if (!Array.isArray(planningCriteria) || planningCriteria.length === 0
+        || planningCriteria.some(item => typeof item !== 'string')) {
+        return reject('input', 'acceptance_incomplete', 'planning snapshot 缺少完整结构化验收条目');
+      }
+      for (const criterion of planningCriteria) {
+        if (!promptBody.includes(singleLine(criterion as string))) {
+          return reject('input', 'acceptance_incomplete', 'planning prompt 未完整携带验收条目');
+        }
+      }
+    } else {
     const { meta: _meta, ...snapshotBusiness } = snapshotBody;
     if (snapshotBusiness['historyIndex'] === null) {
       delete snapshotBusiness['historyIndex'];
@@ -604,9 +699,10 @@ export function createExecutionInputBindingService(
       return reject('input', 'input_identity_mismatch', 'snapshot/manifest 正文身份与 Attempt 不一致');
     }
     const snapshotCheckPolicy = snapshotBody['checkPolicy'];
+    const codingSnapshot = snapshot as PreparedExecutionInputGroup;
     if (
       typeof snapshotCheckPolicy !== 'object' || snapshotCheckPolicy === null ||
-      (snapshotCheckPolicy as Record<string, unknown>)['digest'] !== snapshot.approval.checkPolicyDigest
+      (snapshotCheckPolicy as Record<string, unknown>)['digest'] !== codingSnapshot.approval.checkPolicyDigest
     ) {
       return reject('input', 'input_identity_mismatch', 'snapshot 检查政策与批准复合身份不一致');
     }
@@ -624,8 +720,8 @@ export function createExecutionInputBindingService(
     if (!Array.isArray(criteria) || criteria.length === 0 || criteria.some((item) => typeof item !== 'string')) {
       return reject('input', 'acceptance_incomplete', '快照缺少完整结构化验收条目');
     }
-    const manifestSources = Array.isArray(manifestBody['sources']) ? manifestBody['sources'] : [];
-    const acceptanceSource = manifestSources.find(
+    const codingManifestSources = Array.isArray(manifestBody['sources']) ? manifestBody['sources'] : [];
+    const acceptanceSource = codingManifestSources.find(
       (source) =>
         typeof source === 'object' && source !== null &&
         (source as Record<string, unknown>)['kind'] === 'acceptance',
@@ -643,8 +739,10 @@ export function createExecutionInputBindingService(
         return reject('input', 'acceptance_incomplete', 'prompt 未完整携带验收条目');
       }
     }
+    }
 
     /* manifest 必需标记与绑定引用集双向一致（引用存在但未读取不算已满足）。 */
+    const manifestSources = Array.isArray(manifestBody['sources']) ? manifestBody['sources'] : [];
     const requiredSources = manifestSources.filter(
       (source) =>
         typeof source === 'object' && source !== null &&
@@ -684,17 +782,19 @@ export function createExecutionInputBindingService(
     }
 
     /* 请求策略必须与快照中的实际策略副本逐项一致。 */
+    if (planningSnapshot === null) {
+    const strategyTaskBody = snapshotBody['task'];
     const executionConfig =
-      typeof snapshotTask === 'object' && snapshotTask !== null
-        ? (snapshotTask as Record<string, unknown>)['executionConfig']
+      typeof strategyTaskBody === 'object' && strategyTaskBody !== null
+        ? (strategyTaskBody as Record<string, unknown>)['executionConfig']
         : undefined;
     const configSource =
-      typeof snapshotTask === 'object' && snapshotTask !== null
-        ? (snapshotTask as Record<string, unknown>)['configSource']
+      typeof strategyTaskBody === 'object' && strategyTaskBody !== null
+        ? (strategyTaskBody as Record<string, unknown>)['configSource']
         : undefined;
     const configSourceKey =
-      typeof snapshotTask === 'object' && snapshotTask !== null
-        ? (snapshotTask as Record<string, unknown>)['configSourceKey']
+      typeof strategyTaskBody === 'object' && strategyTaskBody !== null
+        ? (strategyTaskBody as Record<string, unknown>)['configSourceKey']
         : undefined;
     if (
       typeof executionConfig !== 'object' || executionConfig === null || Array.isArray(executionConfig) ||
@@ -728,6 +828,7 @@ export function createExecutionInputBindingService(
        (configRecord['endpointRef'] ?? undefined) !== validated.strategy.endpointRef) && !fallbackStrategyMatches
     ) {
       return reject('input', 'strategy_mismatch', '请求策略与快照实际策略副本逐项不一致');
+    }
     }
 
     /* ---- 8. 恢复来源解析与能力决定 ---- */
@@ -892,8 +993,8 @@ export function createExecutionInputBindingService(
       identity: { purpose: 'work', runId: attempt.runId, taskId: attempt.taskId, attemptId: attempt.id },
       invocationId: validated.invocationId,
       strategy: validated.strategy,
-      prompt: toInputRef('prompt', EXECUTION_PROMPT_ARTIFACT_KIND),
-      inputManifest: toInputRef('manifest', EXECUTION_MANIFEST_ARTIFACT_KIND),
+      prompt: toInputRef('prompt', groupArtifactKinds.prompt),
+      inputManifest: toInputRef('manifest', groupArtifactKinds.manifest),
       cwd: { root: validated.cwdRoot, relativePath: posixRelative },
       permissions: { grants: [...validated.permissions.grants], isolation: validated.permissions.isolation },
       limits: validated.limits,

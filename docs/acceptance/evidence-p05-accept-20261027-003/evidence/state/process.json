@@ -1,0 +1,31 @@
+{
+  "component": "p05-integration-report",
+  "stopConfirmed": true,
+  "processesGone": true,
+  "executedSteps": [
+    {
+      "stepId": "p05-trusted-index",
+      "endKind": "exit",
+      "exitCode": 0,
+      "stoppedVerified": true
+    },
+    {
+      "stepId": "p05-affected-regression",
+      "endKind": "exit",
+      "exitCode": 0,
+      "stoppedVerified": true
+    },
+    {
+      "stepId": "p05-cross-layer-smoke",
+      "endKind": "exit",
+      "exitCode": 0,
+      "stoppedVerified": true
+    },
+    {
+      "stepId": "p05-manual-gate",
+      "endKind": "exit",
+      "exitCode": 0,
+      "stoppedVerified": true
+    }
+  ]
+}

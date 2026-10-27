@@ -84,8 +84,11 @@ import type { WorkRecordingParent } from './app/work-recording.js';
 import {
   buildExecutionControlCommandView,
   buildExecutionControlQueryView,
+  buildExecutionResourceQueryView,
   buildExecutionRecoveryCliView,
   buildExecutionRetryFinalView,
+  formatExecutionResourceQueryView,
+
   formatExecutionControlCommandView,
   formatExecutionControlQueryView,
   formatExecutionRecoveryCliView,
@@ -123,16 +126,43 @@ import {
   scanStrategyInputFields,
 } from './app/decisions.js';
 import {
+  buildPlanningCandidateView,
+  buildPlanningClientInput,
+  buildPlanningContextDetailView,
+  buildPlanningContextListView,
+  buildPlanningDecisionView,
+  buildPlanningStartView,
+  formatPlanningCandidateView,
+  formatPlanningContextDetailView,
+  formatPlanningContextListView,
+  formatPlanningDecisionView,
+  formatPlanningStartView,
+  parsePlanningStartInput,
+} from './app/planning.js';
+import type { PlanningStartInputDocument } from './app/planning.js';
+import {
+  buildIntegrationPlanCliView,
+  formatIntegrationPlanView,
+  buildBatchDeliveryView,
+  formatBatchDeliveryView,
+  buildBatchObservationView,
+  formatBatchObservationView,
+  buildBatchDeliveryCommandView,
+  formatBatchDeliveryCommandView,
   buildFeatureDeliveryView,
   buildFeatureFinalApprovalView,
   buildFeatureFinalizeView,
   buildGitOperationDetailView,
   buildGitOperationListView,
+  buildGitAgentRepairListView,
+  buildGitAgentRepairView,
   formatFeatureDeliveryView,
   formatFeatureFinalApprovalView,
   formatFeatureFinalizeView,
   formatGitOperationDetailView,
   formatGitOperationListView,
+  formatGitAgentRepairListView,
+  formatGitAgentRepairView,
 } from './app/delivery.js';
 import { buildFeatureReportTextView, formatFeatureReportTextView } from './app/report.js';
 import {
@@ -184,6 +214,10 @@ import type {
   ParsedConfigCreate,
   ParsedConfigUpdate,
   ParsedEventsObserve,
+  ParsedPlanningStart,
+  ParsedPlanningList,
+  ParsedPlanningGet,
+  ParsedPlanningDecision,
   ParsedFeatureImport,
   ParsedFeatureRevise,
   ParsedPlanLabels,
@@ -192,6 +226,7 @@ import type {
   ParsedReceiptGet,
   ParsedTaskPrepare,
   ParsedTaskStrategy,
+  ParsedPhaseDeliveryApprove,
 } from './app/args.js';
 import type {
   WorkspaceDiscardPreview,
@@ -299,8 +334,10 @@ type FeatureDetailResult = Awaited<ReturnType<HostClient['getFeature']>>;
 type TaskListResult = Awaited<ReturnType<HostClient['listTasks']>>;
 type TaskDetailResult = Awaited<ReturnType<HostClient['getTask']>>;
 
+type ParsedPlanningCommand = Extract<ParsedAppCliCommand, { command: 'planning' }>;
+
 /** 计划命令（phase/feature/task）的解析形态（F-010）。 */
-type ParsedPlanCommand = Extract<ParsedAppCliCommand, { command: 'phase' | 'feature' | 'task' }>;
+type ParsedPlanCommand = Extract<ParsedAppCliCommand, { command: 'phase' | 'feature' | 'task' | 'integration' }>;
 
 /** P03-3 / F-012 执行授权命令（execution preview/start/budget/revise）的解析形态。 */
 type ParsedExecutionCommand = Extract<ParsedAppCliCommand, { command: 'execution' }>;
@@ -733,7 +770,85 @@ function emitDomainReceipt<View>(
   return emitSuccess(io, command, view, format(view));
 }
 
-/** 写命令 completed 回执的人类行（按命令身份分派；只输出脱敏字段）。 */
+function emitPlanningStartReceipt(
+  io: AppCliIo,
+  command: ParsedPlanningStart,
+  receipt: CommandReceipt,
+): AppCliRunResult {
+  if (receipt.status === 'rejected') {
+    return emitFailure(io, command.json, {
+      exitCode: exitCodeForReceiptStatus('rejected'), command: command.commandId,
+      code: receipt.error.code, message: receipt.error.message, commandId: receipt.commandId,
+      ...(receipt.error.details !== undefined ? { details: receipt.error.details } : {}),
+    });
+  }
+  if (receipt.status !== 'accepted' || receipt.operation !== 'planning.start' || receipt.schemaVersion !== 7) {
+    throw new HostProtocolError('response_malformed', 'commands.submit', undefined, { details: { reason: 'planning_start_receipt_invalid' } });
+  }
+  const view = buildPlanningStartView(receipt);
+  return emitSuccess(io, command, view, formatPlanningStartView(view));
+}
+
+/** P05-1 / F-013：一次性规划 CLI（启动、上下文审阅、候选正文与人工决定）。 */
+async function executePlanningCommand(
+  io: AppCliIo,
+  command: ParsedPlanningCommand,
+  client: HostClient,
+  planningInput: PlanningStartInputDocument | undefined,
+): Promise<AppCliRunResult> {
+  switch (command.commandId) {
+    case 'planning.start': {
+      if (planningInput === undefined) throw new TypeError('planning.start 缺少已校验输入');
+      const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+      const receipt = await client.startPlanning(
+        buildPlanningClientInput(command, planningInput),
+        envelopeIdentityOptions(command.explicitCommandId, issuedAt),
+      );
+      return emitPlanningStartReceipt(io, command, receipt);
+    }
+    case 'planning.list': {
+      const result = await client.listPlanningContexts(command.projectId, {
+        ...(command.featureId !== undefined ? { featureId: command.featureId } : {}),
+        ...(command.limit !== undefined ? { limit: command.limit } : {}),
+        ...(command.cursor !== undefined ? { cursor: command.cursor } : {}),
+      });
+      const view = buildPlanningContextListView(result);
+      return emitSuccess(io, command, view, formatPlanningContextListView(view));
+    }
+    case 'planning.get': {
+      const result = await client.getPlanningContext(command.projectId, command.candidateId);
+      const view = buildPlanningContextDetailView(result);
+      return emitSuccess(io, command, view, formatPlanningContextDetailView(view));
+    }
+    case 'planning.candidate': {
+      const result = await client.getPlanningCandidate(command.projectId, command.candidateId);
+      const view = buildPlanningCandidateView(result);
+      return emitSuccess(io, command, view, formatPlanningCandidateView(view));
+    }
+    case 'planning.approve':
+    case 'planning.reject': {
+      const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+      const decision = command.commandId === 'planning.approve' ? 'approve' : 'reject';
+      const receipt = await client.decidePlanningCandidate({
+        projectId: command.projectId,
+        candidateId: command.candidateId,
+        candidateDigest: command.candidateDigest,
+        decision,
+        reason: command.reason ?? null,
+        expectedRevision: command.revision,
+      }, envelopeIdentityOptions(command.explicitCommandId, issuedAt));
+      return emitDomainReceipt(
+        io,
+        command,
+        receipt,
+        (commandId, replayed, result) => buildPlanningDecisionView(commandId, replayed, decision, result),
+        formatPlanningDecisionView,
+      );
+    }
+  }
+}
+
+
 function writeCommandHumanLine(commandId: AppCliCommandId, receipt: CompletedReceipt): string {
   switch (commandId) {
     case 'project.register':
@@ -1186,6 +1301,52 @@ async function executePlanCommand(
   inputs: PlanCommandInputs,
 ): Promise<AppCliRunResult> {
   switch (command.commandId) {
+    case 'phase.update':
+    case 'phase.close':
+    case 'phase.reopen':
+    case 'phase.archive': {
+      const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+      const identity = envelopeIdentityOptions(command.explicitCommandId, issuedAt);
+      const input = { projectId: command.projectId, phaseId: command.phaseId, expectedRevision: command.revision };
+      const receipt = command.commandId === 'phase.update'
+        ? await client.updatePhaseMetadata({ ...input,
+          ...(command.title !== undefined ? { title: command.title } : {}),
+          ...(command.description !== undefined ? { description: command.description } : {}),
+          ...(command.labels !== undefined ? { labels: command.labels } : {}) }, identity)
+        : command.commandId === 'phase.close' ? await client.closePhase(input, identity)
+          : command.commandId === 'phase.reopen' ? await client.reopenPhase(input, identity)
+            : await client.archivePhase(input, identity);
+      return emitCommandReceipt(io, command, receipt);
+    }
+    case 'feature.move': {
+      const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+      const receipt = await client.moveFeaturePhase({ projectId: command.projectId, featureId: command.featureId,
+        sourcePhaseId: command.sourcePhaseId, targetPhaseId: command.targetPhaseId,
+        sourcePhaseRevision: command.sourcePhaseRevision, targetPhaseRevision: command.targetPhaseRevision,
+        expectedRevision: command.revision }, envelopeIdentityOptions(command.explicitCommandId, issuedAt));
+      return emitCommandReceipt(io, command, receipt);
+    }
+    case 'feature.dependencies': {
+      const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+      const receipt = await client.updateFeatureDag({ projectId: command.projectId, phaseId: command.phaseId,
+        expectedRevision: command.revision,
+        edges: inputs.planPayload?.edges as Parameters<HostClient['updateFeatureDag']>[0]['edges'],
+      }, envelopeIdentityOptions(command.explicitCommandId, issuedAt));
+      return emitCommandReceipt(io, command, receipt);
+    }
+    case 'phase.graph': {
+      const result = await client.getPhaseGraph(command.projectId, command.phaseId, {
+        ...(command.limit !== undefined ? { limit: command.limit } : {}),
+        ...(command.cursor !== undefined ? { cursor: command.cursor } : {}),
+      });
+      const text = [
+        `shiploop phase graph: ${result.phase.id} status=${result.phase.status} revision=${result.phase.revision}`,
+        ...result.readiness.map(item => `${item.featureId}: dependency=${item.dependencyCompletion} integration=${item.integrationReady} dependencyIntegration=${item.dependencyIntegrationReady} ready=${item.ready} blockers=${item.blockers.join(",") || "none"}`),
+        `nextCursor=${result.nextCursor ?? "none"}`,
+        '候选只表示依赖与计划条件；执行需另行授权。',
+      ].join('\n') + '\n';
+      return emitSuccess(io, command, result, text);
+    }
     case 'phase.create': {
       const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
       const receipt = await client.createPhase(
@@ -1224,6 +1385,24 @@ async function executePlanCommand(
         envelopeIdentityOptions(command.explicitCommandId, issuedAt),
       );
       return emitCommandReceipt(io, command, receipt);
+    }
+    case 'phase.delivery-approve': {
+      const phaseCommand = command as ParsedPhaseDeliveryApprove;
+      const issuedAt = await replayIssuedAt(client, phaseCommand.explicitCommandId);
+      const receipt = await client.approvePhaseDelivery(
+        {
+          projectId: phaseCommand.projectId,
+          phaseId: phaseCommand.phaseId,
+          batchId: phaseCommand.batchId,
+          expectedRevision: phaseCommand.revision,
+          candidateId: phaseCommand.candidateId,
+          expectedCandidateRevision: phaseCommand.candidateRevision,
+        },
+        envelopeIdentityOptions(phaseCommand.explicitCommandId, issuedAt),
+      );
+      if (receipt.status !== 'completed') return emitCommandReceipt(io, command, receipt);
+      const view = buildBatchDeliveryCommandView(receipt.commandId, receipt.replayed, 'phase.delivery.approve', receipt.result as Record<string, unknown>);
+      return emitSuccess(io, command, receipt.result, formatBatchDeliveryCommandView(view));
     }
     case 'phase.labels':
     case 'feature.labels':
@@ -1300,6 +1479,11 @@ async function executePlanCommand(
     }
     /* P03-8 / F-011：Feature 分轴结果查询与最终审批/显式收尾命令（全部经
      * HostClient 公共面；completed 回执结果经冻结字段集线校验器复核后投影）。 */
+    case 'integration.plan': {
+      const result = await client.getIntegrationPlan(command.projectId, command.integrationId);
+      const view = buildIntegrationPlanCliView(result);
+      return emitSuccess(io, command, view, formatIntegrationPlanView(view));
+    }
     case 'feature.report': {
       const result = await client.getFeatureReport(command.projectId, command.featureId);
       // F-006：文本输出为可审阅文本视图（同一报告投影重新生成，不倾倒 JSON）。
@@ -1573,6 +1757,7 @@ function emitExecutionStartReceipt(
   io: AppCliIo,
   command: ParsedExecutionCommand & { commandId: 'execution.start' },
   receipt: CommandReceipt,
+  fixedFeatureIds?: readonly string[],
 ): AppCliRunResult {
   if (receipt.status === 'rejected') {
     return emitFailure(io, command.json, {
@@ -1592,7 +1777,7 @@ function emitExecutionStartReceipt(
     {
       commandId: accepted.commandId,
       replayed: accepted.replayed,
-      featureIds: [command.featureId],
+      featureIds: fixedFeatureIds ?? command.featureIds,
       previewDigest: command.previewDigest ?? null,
       retryBatchId: command.retryBatchId ?? null,
     },
@@ -1614,7 +1799,7 @@ async function executeExecutionCommand(
       const receipt = await client.previewExecution(
         {
           projectId: command.projectId,
-          featureIds: [command.featureId],
+          ...(command.phaseId !== undefined ? { phaseId: command.phaseId } : { featureIds: command.featureIds }),
           budget: inputs.budget,
         },
         envelopeIdentityOptions(command.explicitCommandId, issuedAt),
@@ -1630,12 +1815,52 @@ async function executeExecutionCommand(
     }
     case 'execution.start': {
       const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+      let featureIds = command.featureIds;
+      if (command.phaseId !== undefined) {
+        if (command.retryBatchId !== undefined || inputs.budget === undefined) {
+          throw new HostProtocolError('invalid_input', 'commands.submit', 'Phase 启动缺少可用于固定范围展开的预算', {
+            details: { reason: 'phase_scope_requires_fresh_budget' },
+          });
+        }
+        // Phase 启动先读取一次只读预览，由 Host/Core 解析依赖闭包；随后把服务端
+        // 返回的固定成员 ID 集合提交给 execution.start。CLI 不自行计算 DAG。
+        const expansion = await client.previewExecution(
+          { projectId: command.projectId, phaseId: command.phaseId, budget: inputs.budget },
+        );
+        if (expansion.status === 'rejected') {
+          return emitFailure(io, command.json, {
+            exitCode: exitCodeForReceiptStatus('rejected'),
+            command: command.commandId,
+            code: expansion.error.code,
+            message: expansion.error.message,
+            commandId: expansion.commandId,
+            ...(expansion.error.details !== undefined ? { details: expansion.error.details } : {}),
+          });
+        }
+        if (expansion.status !== 'completed') {
+          throw new HostProtocolError('response_malformed', 'commands.submit', 'Phase 预览未返回完整结果', {
+            details: { reason: 'phase_scope_preview_incomplete' },
+          });
+        }
+        const expanded = expansion.result as ExecutionPreviewResult;
+        if (expanded.status !== 'ready' || !('memberFeatureIds' in expanded.scope)) {
+          return emitFailure(io, command.json, {
+            exitCode: 1,
+            command: command.commandId,
+            code: 'conflict',
+            message: 'Phase 当前范围不可启动，预览未形成固定 Feature 成员',
+            commandId: expansion.commandId,
+            details: { reason: expanded.status === 'blocked' ? 'blocked' : expanded.noWorkReason ?? 'preview_stale' },
+          });
+        }
+        featureIds = expanded.scope.memberFeatureIds;
+      }
       const receipt =
         command.retryBatchId !== undefined
           ? await client.startExecution(
               {
                 projectId: command.projectId,
-                featureIds: [command.featureId],
+                featureIds,
                 retryBatchId: command.retryBatchId,
               },
               envelopeIdentityOptions(command.explicitCommandId, issuedAt),
@@ -1643,13 +1868,13 @@ async function executeExecutionCommand(
           : await client.startExecution(
               {
                 projectId: command.projectId,
-                featureIds: [command.featureId],
+                featureIds,
                 budget: inputs.budget,
                 previewDigest: command.previewDigest as string,
               },
               envelopeIdentityOptions(command.explicitCommandId, issuedAt),
             );
-      return emitExecutionStartReceipt(io, command, receipt);
+      return emitExecutionStartReceipt(io, command, receipt, featureIds);
     }
     case 'execution.budget': {
       const status = await client.getExecutionBudgetStatus(command.projectId, command.batchId);
@@ -1679,6 +1904,37 @@ async function executeExecutionCommand(
         (commandId, replayed, result) => buildExecutionReviseView(commandId, replayed, result),
         formatExecutionReviseView,
       );
+    }
+    case 'execution.batch-delivery': {
+      const result = await client.getBatchDelivery(command.projectId, command.batchId, {
+        ...(command.limit !== undefined ? { limit: command.limit } : {}),
+        ...(command.cursor !== undefined ? { cursor: command.cursor } : {}),
+      });
+      const view = buildBatchDeliveryView(result);
+      return emitSuccess(io, command, result, formatBatchDeliveryView(view));
+    }
+    case 'execution.batch-observe': {
+      const result = await client.observeBatch(command.projectId, command.batchId, {
+        ...(command.limit !== undefined ? { limit: command.limit } : {}),
+        ...(command.cursor !== undefined ? { cursor: command.cursor } : {}),
+      });
+      const view = buildBatchObservationView(result);
+      return emitSuccess(io, command, result, formatBatchObservationView(view));
+    }
+    case 'execution.finalize': {
+      const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+      const receipt = await client.finalizeBatch(
+        {
+          projectId: command.projectId,
+          phaseId: command.phaseId,
+          batchId: command.batchId,
+          expectedRevision: command.revision,
+        },
+        envelopeIdentityOptions(command.explicitCommandId, issuedAt),
+      );
+      if (receipt.status !== 'completed') return emitCommandReceipt(io, command, receipt);
+      const view = buildBatchDeliveryCommandView(receipt.commandId, receipt.replayed, 'execution.batch.finalize', receipt.result as Record<string, unknown>);
+      return emitSuccess(io, command, receipt.result, formatBatchDeliveryCommandView(view));
     }
     /* ------------------------------------------------------------ *
      * P03-4 / F-009 调度诊断与 Attempt 审计只读查询
@@ -1711,6 +1967,8 @@ async function executeExecutionCommand(
      * ------------------------------------------------------------ */
     case 'execution.dispatch': {
       const result = await client.listExecutionDispatchQueue(command.projectId, {
+        ...(command.batchId !== undefined ? { batchId: command.batchId } : {}),
+        ...(command.featureId !== undefined ? { featureId: command.featureId } : {}),
         ...(command.limit !== undefined ? { limit: command.limit } : {}),
         ...(command.cursor !== undefined ? { cursor: command.cursor } : {}),
       });
@@ -1873,6 +2131,16 @@ async function executeExecutionCommand(
       const view = buildExecutionControlQueryView(result);
       return emitSuccess(io, command, view, formatExecutionControlQueryView(view));
     }
+    case 'execution.resources': {
+      const result = await client.listExecutionResources(command.projectId, {
+        ...(command.batchId === undefined ? {} : { batchId: command.batchId }),
+        ...(command.featureId === undefined ? {} : { featureId: command.featureId }),
+        ...(command.limit === undefined ? {} : { limit: command.limit }),
+        ...(command.cursor === undefined ? {} : { cursor: command.cursor }),
+      });
+      const view = buildExecutionResourceQueryView(result);
+      return emitSuccess(io, command, view, formatExecutionResourceQueryView(view));
+    }
     case 'execution.recovery': {
       const result = await client.getRunRecovery(command.projectId, command.runId);
       const view = buildExecutionRecoveryCliView(result);
@@ -1983,6 +2251,19 @@ async function executeGitCommand(
       );
       const view = buildGitOperationListView(result);
       return emitSuccess(io, command, view, formatGitOperationListView(view));
+    }
+    case 'git.repairs': {
+      const result = await client.listGitAgentRepairs(command.projectId, {
+        ...(command.limit !== undefined ? { limit: command.limit } : {}),
+        ...(command.cursor !== undefined ? { cursor: command.cursor } : {}),
+      });
+      const view = buildGitAgentRepairListView(result);
+      return emitSuccess(io, command, view, formatGitAgentRepairListView(view));
+    }
+    case 'git.repair': {
+      const result = await client.getGitAgentRepair(command.projectId, command.repairId);
+      const view = buildGitAgentRepairView(result);
+      return emitSuccess(io, command, view, formatGitAgentRepairView(view));
     }
     case 'git.operation': {
       const result = await client.getGitOperation(command.projectId, command.operationId);
@@ -3199,9 +3480,13 @@ export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunRes
   let planPayload: Record<string, unknown> | undefined;
   let strategyPayload: Record<string, unknown> | undefined;
   let prepareItems: readonly unknown[] | undefined;
-  if (command.commandId === 'feature.import' || command.commandId === 'feature.revise') {
+  if (command.commandId === 'feature.import' || command.commandId === 'feature.revise' || command.commandId === 'feature.dependencies') {
     try {
       planPayload = readPlanInputPayload(command);
+      if (command.commandId === 'feature.dependencies' &&
+          (Object.keys(planPayload).some(key => key !== 'edges') || !Array.isArray(planPayload.edges))) {
+        throw new AppCliParseError('invalid_input', 'invalid_input_file', command, 'input');
+      }
     } catch (error) {
       if (error instanceof AppCliParseError) {
         return emitParseFailure(io, error, jsonFlag);
@@ -3257,6 +3542,25 @@ export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunRes
         command: command.commandId,
         code: 'invalid_input',
         message: '输入文件读取或校验失败',
+      });
+    }
+  }
+
+  let planningInput: PlanningStartInputDocument | undefined;
+  if (command.commandId === 'planning.start') {
+    try {
+      const input = readPlanInputPayload(command);
+      planningInput = parsePlanningStartInput(input, {
+        commandId: command.commandId,
+        json: command.json,
+      });
+    } catch (error) {
+      if (error instanceof AppCliParseError) return emitParseFailure(io, error, jsonFlag);
+      return emitFailure(io, command.json, {
+        exitCode: 2,
+        command: command.commandId,
+        code: 'invalid_input',
+        message: '规划输入文件读取或校验失败',
       });
     }
   }
@@ -3387,7 +3691,10 @@ export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunRes
         observeBudgets as ResolvedEventsObserveBudgets,
       );
     }
-    if (command.command === 'phase' || command.command === 'feature' || command.command === 'task') {
+    if (command.command === 'planning') {
+      return await executePlanningCommand(io, command, client, planningInput);
+    }
+    if (command.command === 'phase' || command.command === 'feature' || command.command === 'task' || command.command === 'integration') {
       return await executePlanCommand(io, command, client, {
         ...(planPayload !== undefined ? { planPayload } : {}),
         ...(strategyPayload !== undefined ? { strategyPayload } : {}),

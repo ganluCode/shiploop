@@ -16,6 +16,7 @@ import type {
   BatchControlDetailResult,
   RunControlDetailResult,
   RunRecoveryDetailResult,
+  ResourceListResult,
 } from 'shiploop-host';
 
 /** nextActions 冻结词汇（与 Core EXECUTION_CONTROL_NEXT_ACTIONS 同源；Host 线类型推导）。 */
@@ -313,6 +314,29 @@ export interface ExecutionControlStopView {
   readonly checkedAt: string | null;
 }
 
+export interface ExecutionResourceQueryView {
+  readonly operation: 'execution.resources.list';
+  readonly records: ResourceListResult['records'];
+  readonly nextCursor: string | null;
+  readonly limit: number;
+  readonly completed: false;
+}
+
+export function buildExecutionResourceQueryView(result: ResourceListResult): ExecutionResourceQueryView {
+  return { operation: 'execution.resources.list', records: result.records, nextCursor: result.nextCursor, limit: result.limit, completed: false };
+}
+
+export function formatExecutionResourceQueryView(view: ExecutionResourceQueryView): string {
+  const lines = [`shiploop ${view.operation}: resources=${view.records.length} completed=false limit=${view.limit}`];
+  for (const record of view.records) {
+    lines.push(`  resource=${record.resourceKey} kind=${record.kind} state=${record.state} ` +
+      `feature=${record.featureId} batch=${record.batchId} run=${record.runId} ` +
+      `owner=${record.ownerId}/${record.ownerVersion} revision=${record.revision} ` +
+      `blocking=${record.blockingReason ?? 'none'} waiting=${record.waitingReason?.code ?? 'none'}`);
+  }
+  if (view.nextCursor !== null) lines.push(`  nextCursor=${view.nextCursor}`);
+  return `${lines.join('\n')}\n`;
+}
 export interface ExecutionControlQueryView {
   readonly operation: 'execution.run.control.get' | 'execution.batch.control.get';
   readonly targetKind: 'run' | 'batch';

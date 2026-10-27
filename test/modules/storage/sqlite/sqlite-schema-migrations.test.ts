@@ -60,12 +60,15 @@ const SCHEMA_TABLES = [
   ['tasks', schema.tasks],
   ['task_approval_items', schema.taskApprovalItems],
   ['task_dependencies', schema.taskDependencies],
+  // P05-2 / F-001：同项目同 Phase 的 Feature DAG 依赖边（迁移 v37）。
+  ['feature_dependencies', schema.featureDependencies],
   // P03-2 / F-002：计划决策记录（docs/p03-2-plan-approval-contract.md 与设计 11 §7，迁移 v7）。
   ['approvals', schema.approvals],
   // P03-3 / F-002：单 Feature 执行域三表（docs/p03-3-execution-schema-contract.md 与
   // 设计 11 §5，迁移 v9）；P03-3 / F-006：Task 尝试预占账本（迁移 v11）；
   // P03-3 / F-007：Runtime 启动预占账本（迁移 v12）。
   ['execution_batches', schema.executionBatches],
+  ['execution_batch_members', schema.executionBatchMembers],
   ['runs', schema.runs],
   // P03-9 / F-002：Run/Batch 取消的持久停止 operation（迁移 v28）。
   ['execution_stop_operations', schema.executionStopOperations],
@@ -90,19 +93,38 @@ const SCHEMA_TABLES = [
   ['execution_slot_claims', schema.executionSlotClaims],
   // P04-9 / F-002：Run 持久入队意图（迁移 v34）。
   ['run_dispatch_intents', schema.runDispatchIntents],
+  // P05-1 / F-002：一次性规划上下文（迁移 v35）。
+  ['planning_contexts', schema.planningContexts],
   // P03-7 / F-002：VerificationBatch / CheckResult 与不可变验证证据身份（迁移 v21）。
   ['verification_batches', schema.verificationBatches],
   ['check_results', schema.checkResults],
   // P03-8 / F-002：受控 Git 操作意图与回执（迁移 v26）。
   ['git_operations', schema.gitOperations],
+  ['git_integration_commands', schema.gitIntegrationCommands],
+  ['git_integration_observations', schema.gitIntegrationObservations],
+  // P05-5 / F-002：Feature 共享资源租约（迁移 v40）。
+  ['feature_resource_leases', schema.featureResourceLeases],
+  // P05-6 / F-002：冻结的集成计划和前置成果快照（迁移 v42）。
+  ['integration_plans', schema.integrationPlans],
+  ['integration_predecessor_snapshots', schema.integrationPredecessorSnapshots],
+  // P05-9 / F-003：Phase 交付候选冻结事实与收尾生命周期。
+  ['phase_delivery_candidates', schema.phaseDeliveryCandidates],
+  // P05-9 / F-004：人工批准绑定及失效事实。
+  ['phase_delivery_approvals', schema.phaseDeliveryApprovals],
   ['schema_migrations', schema.schemaMigrations],
 ] as const;
 
-const EXPECTED_TABLE_NAMES = SCHEMA_TABLES.map(([name]) => name).sort();
+const EXPECTED_TABLE_NAMES = [
+  ...SCHEMA_TABLES.map(([name]) => name),
+  // v45 GitAgent repair tables are migration-owned execution tables and are
+  // intentionally not part of the Drizzle public schema list above.
+  'git_agent_repairs',
+  'git_agent_repair_commands',
+  'git_agent_repair_attempts',
+].sort();
 
 /** 迁移与未来功能明确不在本 Feature 建立的后续表（设计 11 §4-§7、§9）。 */
 const FORBIDDEN_TABLE_NAMES = [
-  'feature_dependencies',
   'chat_turns',
   'check_definitions',
   'operations',
@@ -555,6 +577,8 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
         'command_receipts:(project_id,baseline_operation_id)->baseline_operations.(project_id,id)',
         'command_receipts:(project_id,batch_id)->execution_batches.(project_id,id)',
         'command_receipts:(project_id,batch_id,run_id)->runs.(project_id,batch_id,id)',
+        // P05-1 / F-003（迁移 v36）：planning.start accepted v7 回执的候选外键。
+        'command_receipts:(project_id,candidate_id)->planning_contexts.(project_id,candidate_id)',
         'baseline_authorizations:(project_id)->projects.(id)',
         'baseline_authorizations:(repository_binding_id)->repository_bindings.(id)',
         'baseline_authorizations:(project_id,repository_binding_id)->repository_bindings.(project_id,id)',
@@ -585,20 +609,30 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
         'task_dependencies:(feature_id,task_id)->tasks.(feature_id,id)',
         'task_dependencies:(depends_on_id)->tasks.(id)',
         'task_dependencies:(feature_id,depends_on_id)->tasks.(feature_id,id)',
-        // P03-2 / F-002 计划决策记录（迁移 v7）：项目归属 + 同项目 Feature 复合外键。
+        // P05-2 / F-001：Feature DAG 两端必须属于同一项目同一 Phase。
+        'feature_dependencies:(project_id)->projects.(id)',
+        'feature_dependencies:(phase_id)->phases.(id)',
+        'feature_dependencies:(feature_id)->features.(id)',
+        'feature_dependencies:(depends_on_id)->features.(id)',
+        'feature_dependencies:(project_id,phase_id)->phases.(project_id,id)',
+        'feature_dependencies:(project_id,phase_id,feature_id)->features.(project_id,phase_id,id)',
+        'feature_dependencies:(project_id,phase_id,depends_on_id)->features.(project_id,phase_id,id)',
         'approvals:(project_id)->projects.(id)',
         'approvals:(project_id,subject_id)->features.(project_id,id)',
         // P03-3 / F-002 单 Feature 执行域三表（迁移 v9）：同项目/同范围复合外键。
         'execution_batches:(project_id)->projects.(id)',
         'execution_batches:(phase_id)->phases.(id)',
         'execution_batches:(feature_id)->features.(id)',
-        'execution_batches:(project_id,phase_id,feature_id)->features.(project_id,phase_id,id)',
+        'execution_batches:(project_id,feature_id)->features.(project_id,id)',
+        'execution_batch_members:(project_id)->projects.(id)',
+        'execution_batch_members:(project_id,batch_id)->execution_batches.(project_id,id)',
+        'execution_batch_members:(project_id,phase_id,feature_id)->features.(project_id,phase_id,id)',
         'runs:(project_id)->projects.(id)',
         'runs:(batch_id)->execution_batches.(id)',
         'runs:(feature_id)->features.(id)',
         'runs:(project_id,batch_id)->execution_batches.(project_id,id)',
         'runs:(project_id,feature_id)->features.(project_id,id)',
-        'runs:(batch_id,feature_id)->execution_batches.(id,feature_id)',
+        'runs:(project_id,batch_id,feature_id)->execution_batch_members.(project_id,batch_id,feature_id)',
         'batch_budget_revisions:(project_id)->projects.(id)',
         'batch_budget_revisions:(batch_id)->execution_batches.(id)',
         'batch_budget_revisions:(project_id,batch_id)->execution_batches.(project_id,id)',
@@ -660,9 +694,36 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
         'run_dispatch_intents:(project_id)->projects.(id)',
         'run_dispatch_intents:(project_id,run_id)->runs.(project_id,id)',
         'run_dispatch_intents:(feature_id,run_id)->runs.(feature_id,id)',
+        // P05-1 / F-002 规划上下文（迁移 v35）：同项目三层归属/规划 Run/planning
+        // Task/候选 Artifact 关联。
+        'planning_contexts:(project_id)->projects.(id)',
+        'planning_contexts:(project_id,phase_id)->phases.(project_id,id)',
+        'planning_contexts:(project_id,phase_id,feature_id)->features.(project_id,phase_id,id)',
+        'planning_contexts:(project_id,run_id)->runs.(project_id,id)',
+        'planning_contexts:(feature_id,run_id)->runs.(feature_id,id)',
+        'planning_contexts:(feature_id,planning_task_id)->tasks.(feature_id,id)',
+        'planning_contexts:(project_id,candidate_artifact_id)->artifacts.(project_id,id)',
+        'feature_resource_leases:(project_id)->projects.(id)',
+        // P05-6 / F-002 集成计划及前置成果快照（迁移 v42）。
+        'git_integration_commands:(project_id,operation_id)->git_operations.(project_id,id)',
+        'git_integration_observations:(project_id,operation_id)->git_operations.(project_id,id)',
+        'integration_plans:(project_id)->projects.(id)',
+        'integration_plans:(project_id,phase_id)->phases.(project_id,id)',
+        'integration_plans:(project_id,batch_id)->execution_batches.(project_id,id)',
+        'integration_plans:(project_id,phase_id,successor_feature_id)->features.(project_id,phase_id,id)',
+        'integration_predecessor_snapshots:(project_id)->projects.(id)',
+        'integration_predecessor_snapshots:(project_id,plan_id)->integration_plans.(project_id,id)',
+        'integration_predecessor_snapshots:(project_id,phase_id,feature_id)->features.(project_id,phase_id,id)',
+        'phase_delivery_candidates:(project_id)->projects.(id)',
+        'phase_delivery_approvals:(project_id)->projects.(id)',
+        'phase_delivery_approvals:(project_id,phase_id)->phases.(project_id,id)',
+        'phase_delivery_approvals:(project_id,candidate_id)->phase_delivery_candidates.(project_id,id)',
+        'phase_delivery_candidates:(project_id,phase_id)->phases.(project_id,id)',
+        'phase_delivery_candidates:(project_id,batch_id)->execution_batches.(project_id,id)',
         // P03-9 / F-002 取消停止 operation（迁移 v28）：同项目 Batch/Run 关联。
         'execution_stop_operations:(project_id)->projects.(id)',
         'execution_stop_operations:(project_id,batch_id)->execution_batches.(project_id,id)',
+        'execution_stop_operations:(project_id,feature_id)->features.(project_id,id)',
         'execution_stop_operations:(project_id,run_id)->runs.(project_id,id)',
       ]);
       type FkPragmaRow = { id: number; seq: number; table: string; from: string; to: string; on_update: string; on_delete: string };

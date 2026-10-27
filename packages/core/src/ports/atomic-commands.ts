@@ -9,6 +9,7 @@
  * Git/进程/文件输出/人审都在事务外，事务内不执行文件流/SDK/Git/网络/长检查。
  */
 import type { FeatureFinalizationRecord } from './feature-finalization.js';
+import type { FeatureDagUpdateInput, FeatureDagUpdateResult } from './feature-dag-update.js';
 import type { ArtifactInputRef } from './artifact-store.js';
 import type { CommandReceipt } from './commands.js';
 import type {
@@ -36,12 +37,13 @@ import type {
   TaskRecord,
 } from './plan-store.js';
 import type {
-  GlobalSettingsRecord,
-  ProjectRecord,
-  RepositoryBindingRecord,
-  ProjectSettingsRecord,
-  ProjectWithRepositoryBindingResult,
-} from './state-store.js';
+  IntegrationPlanResultUpdateInput,
+  IntegrationPlanFreezeInput,
+  IntegrationPlanStatusUpdateInput,
+  PersistedIntegrationPlan,
+} from './integration-plan-store.js';
+import type { GlobalSettingsRecord, ProjectRecord, RepositoryBindingRecord,
+  ProjectSettingsRecord, ProjectWithRepositoryBindingResult } from './state-store.js';
 
 export interface CommandTransaction {
   findReceipt(principalId: string, commandId: string): CommandReceipt | undefined;
@@ -120,6 +122,12 @@ export interface CommandTransaction {
    * ---------------------------------------------------------------- */
   /** 创建 open Phase（适配器生成 UUID v4 与 UTC 毫秒；revision=1）。 */
   insertPhase(input: unknown): PhaseRecord;
+  /** P05-2/F-005：在同一事务内整体替换 Phase Feature DAG 边集并 CAS Phase revision。 */
+  updateFeatureDag(input: FeatureDagUpdateInput): FeatureDagUpdateResult;
+  /** Phase metadata/lifecycle CAS; execution occupancy checked in this same short transaction. */
+  updatePhase(input: unknown): PhaseRecord;
+  /** Feature/source/target CAS with fixed Batch scope and execution occupancy guards. */
+  moveFeaturePhase(input: unknown): FeatureRecord;
   /**
    * P03-1 / F-007：纯标签 CAS 编辑（Phase/Feature/Task）。单语句条件 UPDATE
    * 只触达目标实体 labels/revision/updated_at：expectedRevision 为实体自身
@@ -154,6 +162,8 @@ export interface CommandTransaction {
   getArtifactInputRef(projectId: string, artifactId: string): ArtifactInputRef;
   /** 既有任务 → 所属 Feature 的解析（仅返回存在的行；跨 Feature 依赖定位用）。 */
   getTaskFeatureLinks(taskIds: readonly string[]): ReadonlyMap<string, string>;
+  /** F-008：历史 Attempt/预算/人审引用的 Task 不得被候选应用删除。 */
+  hasTaskExecutionHistory(projectId: string, taskIds: readonly string[]): ReadonlySet<string>;
   /**
    * P03-1 / F-008：修订事务内读取 Feature 计划快照（Feature+全部 Task+全部
    * 边；缺失 not_found、跨项目 ownership 抛出，零写入）。
@@ -244,6 +254,8 @@ export interface CommandTransaction {
   reviseBatchBudget(input: unknown): BatchBudgetRevisionResult;
   /** 读取目标 Batch（同项目；缺失 not_found、跨项目 ownership 抛出，零写入）。 */
   getExecutionBatch(projectId: string, batchId: string): ExecutionBatchRecord;
+  /** 读取父 Batch 的不可变成员范围（按 memberOrdinal；同项目归属已核验）。 */
+  listExecutionBatchMemberFeatureIds(projectId: string, batchId: string): readonly string[];
   /** 同 Batch 同 workKey 的全部 Run（按 dispatchOrdinal 升序；重派发判定输入）。 */
   listExecutionRunsForWorkKey(
     projectId: string,
@@ -252,6 +264,11 @@ export interface CommandTransaction {
   ): readonly RunRecord[];
   /** 同 Feature 当前活动 Run（条件唯一索引同源活动集；无则 null）。 */
   getActiveExecutionRun(projectId: string, featureId: string): RunRecord | null;
+  /**
+   * P05-1 / F-003：同项目任意活动 Run（规划/编码互斥的项目 Work 门控读取；
+   * 活动集含 paused/interrupted——未确认停止不是可绕过的终态；无则 null）。
+   */
+  getActiveProjectExecutionRun(projectId: string): RunRecord | null;
   /** 同 Phase 当前活动 Batch（条件唯一索引同源活动集；无则 null）。 */
   getActivePhaseExecutionBatch(projectId: string, phaseId: string): ExecutionBatchRecord | null;
   /** 派发计数原子递增（runs_created+1；仅非终态 Batch 命中，终态 conflict）。 */
@@ -363,6 +380,46 @@ export interface CommandTransaction {
   /** 读取目标 Run（含累计计数与冻结快照；缺失 not_found、跨项目 ownership）。 */
   getExecutionRun(projectId: string, runId: string): RunRecord;
   /* ---------------------------------------------------------------- *
+   * P05-6 / F-002 集成计划与前置成果快照（同一 BEGIN IMMEDIATE 内）
+   * ---------------------------------------------------------------- */
+  createIntegrationPlan(input: unknown): PersistedIntegrationPlan;
+  freezeIntegrationPlan(input: IntegrationPlanFreezeInput | unknown): PersistedIntegrationPlan;
+  updateIntegrationPlanResult(input: IntegrationPlanResultUpdateInput | unknown): PersistedIntegrationPlan;
+  updateIntegrationPlanStatus(input: IntegrationPlanStatusUpdateInput | unknown): PersistedIntegrationPlan;
+  getIntegrationPlan(projectId: string, integrationId: string): PersistedIntegrationPlan;
+
+  /** 创建规划上下文与 planning Task（F-002 存储原语；同一写事务内原子生效）。 */
+  createPlanningContextInTransaction(input: unknown): import('./planning-context.js').PlanningContextRecord;
+  /** 同 Feature 活动规划上下文（open/candidate_published；无则 null）。 */
+  getActivePlanningContextForFeature(
+    projectId: string,
+    featureId: string,
+  ): import('./planning-context.js').PlanningContextRecord | null;
+  /**
+   * P05-1 / F-006：按规划 Run 读取规划上下文（同一事务内一致读；无则 null）。
+   * 供规划候选受限提交在提交前/发布后的短事务内重核 Run purpose 与 planning
+   * Task 绑定；损坏行由存储层以 corrupt fail-closed，不作为有效记录返回。
+   */
+  getPlanningContextByCandidate(
+    projectId: string,
+    candidateId: string,
+  ): import('./planning-context.js').PlanningContextRecord | null;
+  getPlanningContextByRun(
+    projectId: string,
+    runId: string,
+  ): import('./planning-context.js').PlanningContextRecord | null;
+  /**
+   * P05-1 / F-006：绑定候选发布事实（open → candidate_published；同一写事务内
+   * 与回执保存原子生效）。同身份重放复用持久结果，异身份/替换已发布候选
+   * conflict；候选 Artifact 必须同项目、ready 且 contentHash 一致。
+   */
+  publishPlanningCandidate(input: unknown): {
+    readonly context: import('./planning-context.js').PlanningContextRecord;
+    readonly outcome: 'published' | 'reused';
+  };
+  /** P05-1 / F-008：规划候选决策与应用关联，同一事务内只写一次。 */
+  decidePlanningCandidate(input: unknown): import('./planning-context.js').PlanningContextRecord;
+  /* ---------------------------------------------------------------- *
    * P03-3 / F-007 Runtime 启动额度预占（迁移 v12；受信 Core 内部原语，
    * 不经命令面暴露；SDK 启动前的受信边界）
    * ---------------------------------------------------------------- */
@@ -410,7 +467,12 @@ export interface CommandTransaction {
 export interface AtomicCommandStore {
   /** 仅预检时效使用；不能替代事务内的权威重读。 */
   findReceipt(principalId: string, commandId: string): CommandReceipt | undefined;
-  /** P03-9 / F-003：停止 operation 只读查询（持久状态与证据引用）。 */
+  /** P05-1 / F-008：按候选身份读取规划上下文，供事务外不可变候选预读。 */
+  getPlanningContextByCandidate(
+    projectId: string,
+    candidateId: string,
+  ): import('./planning-context.js').PlanningContextRecord | null;
+
   getExecutionStopOperation(
     projectId: string,
     stopOperationId: string,

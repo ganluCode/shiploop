@@ -1,4 +1,6 @@
-import { afterEach, describe, expect, it } from 'vitest';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { openCoreApplication } from '../../../packages/core/src/adapters/composition.ts';
 import { openFakeCoreApplication } from '../../../packages/core/src/adapters/testing.ts';
 import { createStaticRuntimeCapabilityCatalog } from '../../../packages/core/src/ports/runtime-capabilities.ts';
@@ -23,6 +25,11 @@ const fakeCatalog = () => createStaticRuntimeCapabilityCatalog([{
 let fixture: BindingFixture | undefined;
 let host: RunningHost | undefined;
 let sandbox: TempSandbox | undefined;
+
+// This file can be selected independently on a clean worktree, before npm run build.
+beforeAll(() => {
+  execFileSync(process.execPath, [fileURLToPath(new URL('../../../scripts/build-host-lock.ts', import.meta.url))], { timeout: 60_000 });
+});
 
 afterEach(async () => {
   if (host) { await host.close(); host = undefined; }

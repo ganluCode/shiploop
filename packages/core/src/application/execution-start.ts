@@ -42,8 +42,7 @@
  * 本模块不实现：预算预占/结算与 Task 累计额度记账（F-006..F-008）、Run 生命
  * 周期 CAS（F-008）、预算显式修订（F-009）、查询面（F-010）。
  */
-import { randomBytes } from 'node:crypto';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import {
   PublicError,
   createAcceptedReceipt,
@@ -128,6 +127,8 @@ export interface ExecutionStartServiceDeps {
   readonly permissions: ExecutionPermissionsReader;
   /** Trusted startup gate, invoked in the dispatch transaction before creating authorization. */
   readonly assertCanDispatch?: () => void;
+  /** F-004：若 Feature 有已通过集成计划，返回该计划固定 commit；返回 null 表示无集成门控。 */
+  readonly integrationBaseline?: (projectId: string, featureId: string) => { readonly baseCommit: string } | null;
   /** 时间源（默认 Date.now；测试注入以获得确定性）。 */
   readonly nowMs?: () => number;
 }
@@ -168,6 +169,326 @@ function readPermissionsFace(
   return face as ExecutionPermissionsFace;
 }
 
+function aggregatePlanDigest(features: readonly { readonly id: string; readonly planDigest: string | null }[]): string | null {
+  if (features.length === 0 || features.some((feature) => feature.planDigest === null)) return null;
+  if (features.length === 1) return features[0]!.planDigest;
+  return createHash('sha256').update(`shiploop:execution-preview-plans:v1\n${stableStringify(
+    features.map((feature) => ({ featureId: feature.id, planDigest: feature.planDigest }))
+      .sort((left, right) => left.featureId < right.featureId ? -1 : 1),
+  )}`, 'utf8').digest('hex');
+}
+
+function resolveWorkspaceBaseCommit(
+  deps: ExecutionStartServiceDeps,
+  projectId: string,
+  featureId: string,
+  fallback: string,
+): string {
+  const fixed = deps.integrationBaseline?.(projectId, featureId);
+  return fixed?.baseCommit ?? fallback;
+}
+function submitMultiExecutionStart(
+  deps: ExecutionStartServiceDeps,
+  identity: ExecutionStartCommandIdentity,
+  envelope: ExecutionStartEnvelopeFace,
+  transaction: CommandTransaction,
+  prepared: Extract<PreparedExecutionStart, { readonly kind: 'fresh' }>,
+  context: ExecutionStartSubmitContext,
+  receiptIdentity: {
+    readonly principalId: string;
+    readonly commandId: string;
+    readonly operation: typeof OPERATION;
+    readonly scope: ExecutionStartCommandIdentity['scope'];
+    readonly requestDigest: string;
+    readonly issuedAt: string;
+    readonly completedAt: string;
+  },
+): CommandReceipt {
+  const reject = (): CommandReceipt => {
+    const receipt = createRejectedReceipt({ ...receiptIdentity, error: new PublicError('conflict', OPERATION, undefined, { details: { reason: 'preview_stale' } }) });
+    transaction.saveReceipt(receipt);
+    return receipt;
+  };
+  const memberIds = [...prepared.scopeFeatureIds];
+  const requestedIds = new Set(envelope.payload.featureIds);
+  if (memberIds.length < 2 || new Set(memberIds).size !== memberIds.length || requestedIds.size !== memberIds.length || memberIds.some((id) => !requestedIds.has(id))) return reject();
+  const snapshots = memberIds.map((featureId) => transaction.getFeaturePlan(prepared.projectId, featureId));
+  const first = snapshots[0]!.feature;
+  const phase = transaction.getPhase(prepared.projectId, prepared.phaseId);
+  if (phase.status !== 'open' || phase.revision !== prepared.phaseRevision || snapshots.some((item) => item.feature.phaseId !== phase.id)) return reject();
+  const expected = new Map(prepared.memberRevisions.map((member) => [member.featureId, member] as const));
+  if (expected.size !== snapshots.length || snapshots.some((item) => {
+    const member = expected.get(item.feature.id);
+    return member === undefined || member.revision !== item.feature.revision || member.planDigest !== item.feature.planDigest;
+  })) return reject();
+  const global = transaction.getGlobalSettingsOrNull();
+  const project = transaction.getProjectSettingsOrNull(prepared.projectId);
+  const checkPolicyDigest = resolveCurrentCheckPolicyDigest(
+    global === null ? null : { scopeRevision: global.revision, payload: global.payload },
+    project === null ? null : { scopeRevision: project.revision, payload: project.payload },
+  );
+  if (checkPolicyDigest !== prepared.checkPolicyDigest) return reject();
+  const strategyEntries: { readonly taskId: string; readonly featureId: string; readonly digest: string }[] = [];
+  const permissionEntries: { readonly taskId: string; readonly featureId: string; readonly digest: string }[] = [];
+  const inputMap = new Map<string, ExecutionPreviewInputRefSummary>();
+  const facts: Array<{ snapshot: typeof snapshots[number]; pendingTasks: typeof snapshots[number]['tasks']; inputs: ExecutionPreviewInputRefSummary[] }> = [];
+  for (const snapshot of snapshots) {
+    const validity = evaluatePlanApprovalValidity({ planDigest: snapshot.feature.planDigest, planStatus: snapshot.feature.planStatus, taskCount: snapshot.tasks.length,
+      decisions: transaction.listPlanApprovals(prepared.projectId, snapshot.feature.id), currentCheckPolicyDigest: checkPolicyDigest });
+    const pendingTasks = snapshot.tasks.filter((task) => task.status === 'pending' || task.status === 'failed');
+    if (!validity.valid || snapshot.feature.planDigest === null || pendingTasks.length === 0) return reject();
+    const refs = new Map<string, PlanArtifactRef>();
+    for (const ref of [...snapshot.feature.sourceRefs, ...snapshot.tasks.flatMap((task) => [...task.requirementsRefs])]) refs.set(`${ref.artifactId}\u0000${ref.contentHash ?? ''}`, ref);
+    const inputs: ExecutionPreviewInputRefSummary[] = [];
+    for (const ref of [...refs.values()].sort((left, right) => left.artifactId < right.artifactId ? -1 : 1)) {
+      try {
+        const input = transaction.getArtifactInputRef(prepared.projectId, ref.artifactId);
+        if (ref.contentHash !== null && ref.contentHash !== undefined && ref.contentHash !== input.contentHash) return reject();
+        const resolved = { artifactId: input.artifactId, version: input.version, contentHash: input.contentHash, sizeBytes: input.sizeBytes };
+        inputs.push(resolved); inputMap.set(`${resolved.artifactId}\u0000${resolved.contentHash}`, resolved);
+      } catch (error) {
+        if (isStorageError(error, 'not_found') || isStorageError(error, 'conflict') || isStorageError(error, 'ownership')) return reject();
+        throw error;
+      }
+    }
+    strategyEntries.push(...snapshot.tasks.slice().map((task) => ({ taskId: task.id, featureId: snapshot.feature.id, digest: computeExecutionStrategyCopyDigest({ executionConfig: task.executionConfig, configSource: task.configSource, configSourceKey: task.configSourceKey }) })));
+    permissionEntries.push(...snapshot.tasks.slice().map((task) => ({ taskId: task.id, featureId: snapshot.feature.id, digest: computeExecutionPermissionsDigest(readPermissionsFace(deps.permissions, { projectId: prepared.projectId, featureId: snapshot.feature.id, taskId: task.id }).grants) })));
+    facts.push({ snapshot, pendingTasks, inputs });
+  }
+  const strategies = strategyEntries.slice().sort((left, right) => left.taskId < right.taskId ? -1 : left.taskId > right.taskId ? 1 : left.featureId < right.featureId ? -1 : 1).map(({ taskId, digest }) => ({ taskId, digest }));
+  const permissions = permissionEntries.slice().sort((left, right) => left.taskId < right.taskId ? -1 : left.taskId > right.taskId ? 1 : left.featureId < right.featureId ? -1 : 1).map(({ taskId, digest }) => ({ taskId, digest }));
+  if (stableStringify(strategies) !== stableStringify(prepared.taskStrategyDigests)) return reject();
+  if (stableStringify(permissions) !== stableStringify(prepared.permissionDigests)) return reject();
+  if (stableStringify([...inputMap.values()].sort((left, right) => left.artifactId < right.artifactId ? -1 : 1)) !== stableStringify([...prepared.inputs])) return reject();
+  if (aggregatePlanDigest(snapshots.map((item) => item.feature)) !== prepared.planDigest) return reject();
+  for (const snapshot of snapshots) {
+    const active = transaction.getActiveExecutionRun(prepared.projectId, snapshot.feature.id);
+    if (active !== null) throw publicError('conflict', EXECUTION_IN_PROGRESS_REASON, { runId: active.id, status: active.status });
+  }
+  if (transaction.readBaselineOccupancy().holderOperationId !== null) throw publicError('resource_busy', 'baseline_in_progress');
+  if (transaction.getActivePhaseExecutionBatch(prepared.projectId, phase.id) !== null) throw publicError('conflict', EXECUTION_IN_PROGRESS_REASON);
+  const now = (deps.nowMs ?? Date.now)();
+  const budget = evaluateBatchBudgetReservation(prepared.budget.batch, { runsCreated: 0, attemptsCreated: 0, runtimeStarts: 0, noProgressRuns: 0 }, now);
+  if (!budget.allowed || memberIds.length > prepared.budget.batch.maxRuns) return reject();
+  const batch = transaction.insertExecutionBatch({ projectId: prepared.projectId, phaseId: phase.id, featureId: first.id, batchId: randomUUID(),
+    scopeSnapshot: { schemaVersion: 1, featureIds: memberIds, previewDigest: prepared.previewDigest },
+    configSnapshot: { schemaVersion: 1, approval: { planDigest: prepared.planDigest, checkPolicyDigest }, concurrency: prepared.concurrency, tasks: strategies, permissions,
+      members: snapshots.map((item) => ({ featureId: item.feature.id, revision: item.feature.revision, planDigest: item.feature.planDigest })) },
+    budgetSnapshot: { schemaVersion: 1, batch: prepared.budget.batch, run: prepared.budget.run }, status: 'queued', runsCreated: memberIds.length, reason: null });
+  transaction.insertBatchBudgetRevision({ projectId: prepared.projectId, batchId: batch.id, version: 1,
+    budgetSnapshot: { schemaVersion: 1, batch: prepared.budget.batch, run: prepared.budget.run }, approvedBy: identity.principalId, reason: 'initial_authorization' });
+  const binding = transaction.getRepositoryBinding(prepared.projectId);
+  const runIds: string[] = [];
+  for (const fact of facts) {
+    const workKey = computeExecutionWorkKey({ featureId: fact.snapshot.feature.id, purpose: EXECUTION_RUN_PURPOSE, planDigest: fact.snapshot.feature.planDigest!, inputs: fact.inputs });
+    const run = transaction.insertExecutionRun({ projectId: prepared.projectId, batchId: batch.id, featureId: fact.snapshot.feature.id, runId: randomUUID(), purpose: EXECUTION_RUN_PURPOSE,
+      inputSnapshot: { schemaVersion: 1, previewDigest: prepared.previewDigest, workKey, planDigest: fact.snapshot.feature.planDigest, pendingTaskIds: fact.pendingTasks.map((task) => task.id).sort(), inputs: fact.inputs.map((input) => ({ artifactId: input.artifactId, version: input.version, contentHash: input.contentHash })), workspaceBaseline: { repositoryBindingId: binding.id, repositoryBindingRevision: binding.bindingRevision, baseCommit: resolveWorkspaceBaseCommit(deps, prepared.projectId, fact.snapshot.feature.id, prepared.code.headCommit ?? '') } },
+      configSnapshot: { schemaVersion: 1, runLimits: prepared.budget.run }, status: 'queued', scopeDigest: prepared.previewDigest, workKey, dispatchOrdinal: 1,
+      maxAttemptsPerRun: prepared.budget.run.maxAttemptsPerRun, runTimeLimitMs: prepared.budget.run.runTimeLimitMs, reason: context.schedulerAssembled ? null : EXECUTION_RUN_NOT_READY_REASON });
+    transaction.appendExecutionEvent({ projectId: prepared.projectId, eventType: EXECUTION_RUN_DISPATCHED_EVENT_TYPE, aggregateType: 'run', aggregateId: run.id, aggregateRevision: run.revision, payload: { dispatched: true } });
+    enqueueAuthorizedRunInTransaction(transaction, { projectId: prepared.projectId, runId: run.id, source: 'start', reason: run.reason });
+    runIds.push(run.id);
+  }
+  const receipt = createAcceptedReceipt({ ...receiptIdentity, operation: OPERATION, operationId: batch.id, batchId: batch.id, runId: runIds[0]!, runIds });
+  transaction.saveReceipt(receipt);
+  return receipt;
+}
+
+function submitMultiExecutionRetry(
+  deps: ExecutionStartServiceDeps,
+  identity: ExecutionStartCommandIdentity,
+  envelope: ExecutionStartEnvelopeFace,
+  transaction: CommandTransaction,
+  prepared: Extract<PreparedExecutionStart, { readonly kind: 'retry' }>,
+  context: ExecutionStartSubmitContext,
+  receiptIdentity: {
+    readonly principalId: string;
+    readonly commandId: string;
+    readonly operation: typeof OPERATION;
+    readonly scope: ExecutionStartCommandIdentity['scope'];
+    readonly requestDigest: string;
+    readonly issuedAt: string;
+    readonly completedAt: string;
+  },
+): CommandReceipt {
+  const rejected = (reason: ExecutionStartRejectedReason): CommandReceipt => {
+    const receipt = createRejectedReceipt({
+      ...receiptIdentity,
+      error: new PublicError('conflict', OPERATION, undefined, { details: { reason } }),
+    });
+    transaction.saveReceipt(receipt);
+    return receipt;
+  };
+  const parent = transaction.getExecutionBatch(prepared.projectId, prepared.retryBatchId);
+  const memberIds = [...transaction.listExecutionBatchMemberFeatureIds(prepared.projectId, prepared.retryBatchId)];
+  const requestedIds = [...envelope.payload.featureIds];
+  const requested = new Set(requestedIds);
+  if (memberIds.length < 2 || requested.size !== memberIds.length || memberIds.some(id => !requested.has(id))) {
+    return rejected('retry_scope_mismatch');
+  }
+  if (isExecutionTerminalStatus(parent.status) || parent.status === 'cancelling' || parent.status === 'interrupted'
+      || parent.status === 'pausing' || parent.status === 'paused' || parent.pauseRequestedAtUtcMs !== null) {
+    return rejected('batch_not_active');
+  }
+  const parentPreviewDigest = parent.scopeSnapshot.previewDigest;
+  if (typeof parentPreviewDigest !== 'string' || !/^[0-9a-f]{64}$/.test(parentPreviewDigest)) {
+    throw publicError('corrupt_state', 'batch_scope_digest_corrupt');
+  }
+  const phase = transaction.getPhase(prepared.projectId, parent.phaseId);
+  if (phase.status !== 'open') return rejected('preview_stale');
+  const activePhaseBatch = transaction.getActivePhaseExecutionBatch(prepared.projectId, parent.phaseId);
+  if (activePhaseBatch !== null && activePhaseBatch.id !== parent.id) {
+    throw publicError('conflict', EXECUTION_IN_PROGRESS_REASON, {
+      batchId: activePhaseBatch.id,
+      status: activePhaseBatch.status,
+    });
+  }
+  const now = (deps.nowMs ?? Date.now)();
+  const parentBudget = evaluateBatchBudgetReservation(
+    parent.budgetSnapshot.batch,
+    {
+      runsCreated: parent.runsCreated,
+      attemptsCreated: parent.attemptsCreated,
+      runtimeStarts: parent.runtimeStarts,
+      noProgressRuns: parent.noProgressRuns,
+    },
+    now,
+  );
+  if (!parentBudget.allowed || parent.runsCreated + memberIds.length > parent.budgetSnapshot.batch.maxRuns) {
+    return rejected('budget_exhausted');
+  }
+
+  const facts: Array<{
+    readonly featureId: string;
+    readonly planDigest: string;
+    readonly pendingTaskIds: readonly string[];
+    readonly inputs: readonly ExecutionPreviewInputRefSummary[];
+    readonly workKey: string;
+    readonly workspaceBaseline: unknown;
+    readonly dispatchOrdinal: number;
+  }> = [];
+  for (const featureId of memberIds) {
+    const snapshot = transaction.getFeaturePlan(prepared.projectId, featureId);
+    if (snapshot.feature.phaseId !== parent.phaseId || snapshot.feature.planDigest === null) return rejected('preview_stale');
+    const global = transaction.getGlobalSettingsOrNull();
+    const project = transaction.getProjectSettingsOrNull(prepared.projectId);
+    const checkPolicyDigest = resolveCurrentCheckPolicyDigest(
+      global === null ? null : { scopeRevision: global.revision, payload: global.payload },
+      project === null ? null : { scopeRevision: project.revision, payload: project.payload },
+    );
+    const validity = evaluatePlanApprovalValidity({
+      planDigest: snapshot.feature.planDigest,
+      planStatus: snapshot.feature.planStatus,
+      taskCount: snapshot.tasks.length,
+      decisions: transaction.listPlanApprovals(prepared.projectId, featureId),
+      currentCheckPolicyDigest: checkPolicyDigest,
+    });
+    if (!validity.valid) return rejected('preview_stale');
+    const pendingTasks = snapshot.tasks.filter(task => task.status === 'pending' || task.status === 'failed');
+    if (pendingTasks.length === 0) return rejected('preview_stale');
+    const refs = new Map<string, PlanArtifactRef>();
+    for (const ref of [...snapshot.feature.sourceRefs, ...snapshot.tasks.flatMap(task => [...task.requirementsRefs])]) {
+      refs.set(`${ref.artifactId}\u0000${ref.contentHash ?? ''}`, ref);
+    }
+    const inputs: ExecutionPreviewInputRefSummary[] = [];
+    for (const ref of [...refs.values()].sort((left, right) => left.artifactId < right.artifactId ? -1 : 1)) {
+      try {
+        const input = transaction.getArtifactInputRef(prepared.projectId, ref.artifactId);
+        if (ref.contentHash !== null && ref.contentHash !== undefined && ref.contentHash !== input.contentHash) return rejected('preview_stale');
+        inputs.push({ artifactId: input.artifactId, version: input.version, contentHash: input.contentHash, sizeBytes: input.sizeBytes });
+      } catch (error) {
+        if (isStorageError(error, 'not_found') || isStorageError(error, 'conflict') || isStorageError(error, 'ownership')) return rejected('preview_stale');
+        throw error;
+      }
+    }
+    const workKey = computeExecutionWorkKey({ featureId, purpose: EXECUTION_RUN_PURPOSE, planDigest: snapshot.feature.planDigest, inputs });
+    const workRuns = transaction.listExecutionRunsForWorkKey(prepared.projectId, parent.id, workKey);
+    if (workRuns.length === 0) return rejected('retry_work_key_absent');
+    if (workRuns.some(run => run.status === 'succeeded')) return rejected('work_key_succeeded');
+    const activeRun = transaction.getActiveExecutionRun(prepared.projectId, featureId);
+    if (activeRun !== null) {
+      throw publicError('conflict', EXECUTION_IN_PROGRESS_REASON, { runId: activeRun.id, status: activeRun.status });
+    }
+    facts.push({
+      featureId,
+      planDigest: snapshot.feature.planDigest,
+      pendingTaskIds: pendingTasks.map(task => task.id).sort((left, right) => left < right ? -1 : 1),
+      inputs,
+      workKey,
+      workspaceBaseline: workRuns[0]!.inputSnapshot.workspaceBaseline ?? null,
+      dispatchOrdinal: Math.max(...workRuns.map(run => run.dispatchOrdinal)) + 1,
+    });
+  }
+
+  let batch = parent;
+  const createdRunIds: string[] = [];
+  const createdIntentIds: string[] = [];
+  for (const fact of facts) {
+    batch = transaction.recordExecutionRunDispatch(prepared.projectId, parent.id);
+    const run = transaction.insertExecutionRun({
+      projectId: prepared.projectId,
+      batchId: parent.id,
+      featureId: fact.featureId,
+      runId: randomUUID(),
+      purpose: EXECUTION_RUN_PURPOSE,
+      inputSnapshot: {
+        schemaVersion: 1,
+        previewDigest: parentPreviewDigest,
+        workKey: fact.workKey,
+        planDigest: fact.planDigest,
+        pendingTaskIds: fact.pendingTaskIds,
+        inputs: fact.inputs.map(input => ({ artifactId: input.artifactId, version: input.version, contentHash: input.contentHash })),
+        workspaceBaseline: fact.workspaceBaseline,
+      },
+      configSnapshot: { schemaVersion: 1, runLimits: parent.budgetSnapshot.run },
+      status: 'queued',
+      scopeDigest: parentPreviewDigest,
+      workKey: fact.workKey,
+      dispatchOrdinal: fact.dispatchOrdinal,
+      maxAttemptsPerRun: parent.budgetSnapshot.run.maxAttemptsPerRun,
+      runTimeLimitMs: parent.budgetSnapshot.run.runTimeLimitMs,
+      reason: context.schedulerAssembled ? null : EXECUTION_RUN_NOT_READY_REASON,
+    });
+    transaction.appendExecutionEvent({
+      projectId: prepared.projectId,
+      eventType: EXECUTION_RUN_DISPATCHED_EVENT_TYPE,
+      aggregateType: 'run',
+      aggregateId: run.id,
+      aggregateRevision: run.revision,
+      payload: { dispatched: true },
+    });
+    const intent = enqueueAuthorizedRunInTransaction(transaction, {
+      projectId: prepared.projectId,
+      runId: run.id,
+      source: 'retry',
+      reason: run.reason,
+    });
+    createdRunIds.push(run.id);
+    createdIntentIds.push(intent.intent.id);
+  }
+  const receipt = createCompletedReceipt({
+    ...receiptIdentity,
+    resultRef: createResultRef(randomBytes(32)),
+    result: {
+      schemaVersion: 1,
+      dispatched: true,
+      batchId: parent.id,
+      runId: createdRunIds[0]!,
+      runIds: createdRunIds,
+      featureId: facts[0]!.featureId,
+      featureIds: facts.map(fact => fact.featureId),
+      dispatchOrdinal: facts[0]!.dispatchOrdinal,
+      runsCreated: batch.runsCreated,
+      status: 'queued',
+      runtimeExecution: false,
+      dispatchIntentId: createdIntentIds[0]!,
+      dispatchIntentIds: createdIntentIds,
+    },
+  });
+  transaction.saveReceipt(receipt);
+  return receipt;
+}
+
 /** 装配显式执行启动服务。只校验依赖形态（fail-closed），不执行任何 I/O。 */
 export function createExecutionStartService(deps: ExecutionStartServiceDeps): ExecutionStartPort {
   const context = { operation: `${OPERATION}.create` } as const;
@@ -205,6 +526,7 @@ export function createExecutionStartService(deps: ExecutionStartServiceDeps): Ex
           kind: 'retry',
           projectId,
           featureId,
+          scopeFeatureIds: [...payload.featureIds],
           retryBatchId: payload.retryBatchId,
         };
       }
@@ -233,12 +555,6 @@ export function createExecutionStartService(deps: ExecutionStartServiceDeps): Ex
       if (payload.featureIds.length === 0) {
         throw publicError('invalid_input', 'empty_scope');
       }
-      if (payload.featureIds.length > 1) {
-        throw publicError('invalid_input', 'multi_feature_scope_unsupported', {
-          featureIds: payload.featureIds.length,
-          supported: 1,
-        });
-      }
 
       /* 3. 只读预览重算（事务外：一致读视图 + 受控仓库 I/O 均在写事务之外）；
        * 非 ready（no_work/blocked）或用户摘要与当前重算摘要不一致 → 漂移，
@@ -265,8 +581,13 @@ export function createExecutionStartService(deps: ExecutionStartServiceDeps): Ex
         kind: 'fresh',
         projectId,
         featureId: payload.featureIds[0],
+        scopeFeatureIds: 'memberFeatureIds' in current.scope ? [...current.scope.memberFeatureIds] : [payload.featureIds[0]!],
+        phaseId: 'phaseId' in current.scope ? current.scope.phaseId : '',
+        phaseRevision: 'phaseRevision' in current.scope ? current.scope.phaseRevision ?? null : null,
+        memberRevisions: current.summary.members.map((member) => ({ featureId: member.featureId, revision: member.revision, planDigest: member.planDigest })),
         previewDigest: current.previewDigest,
         budget,
+        concurrency: summary.concurrency,
         code: summary.code,
         inputs: summary.inputs.refs,
         planDigest: summary.approval.planDigest,
@@ -333,10 +654,23 @@ export function createExecutionStartService(deps: ExecutionStartServiceDeps): Ex
         return rejected('preview_stale');
       }
 
+      if (fresh !== null && fresh.scopeFeatureIds.length > 1) {
+        return submitMultiExecutionStart(deps, identity, envelope, transaction, fresh, context, receiptIdentity);
+      }
+      if (retry !== null && retry.scopeFeatureIds.length > 1) {
+        return submitMultiExecutionRetry(deps, identity, envelope, transaction, retry, context, receiptIdentity);
+      }
+
       /* 2. 计划快照（同事务权威读）：缺失 not_found、跨项目 ownership 抛出。 */
       const snapshot = transaction.getFeaturePlan(projectId, prepared.featureId);
       const feature = snapshot.feature;
       const targetFeatureId = feature.id;
+      if (fresh !== null) {
+        const member = fresh.memberRevisions.find((entry) => entry.featureId === feature.id);
+        if (member === undefined || member.revision !== feature.revision || member.planDigest !== feature.planDigest) {
+          return rejected('preview_stale');
+        }
+      }
 
       /* 3. 批准依据重核（复合身份 = planDigest + 当前检查政策内容摘要）。 */
       const decisions = transaction.listPlanApprovals(projectId, feature.id);
@@ -433,6 +767,7 @@ export function createExecutionStartService(deps: ExecutionStartServiceDeps): Ex
         }
         const recomputedDigest = computeExecutionPreviewDigest({
           projectId,
+          phaseId: feature.phaseId,
           featureIds: [feature.id],
           planDigest: feature.planDigest,
           code: fresh.code,
@@ -540,6 +875,7 @@ export function createExecutionStartService(deps: ExecutionStartServiceDeps): Ex
             },
             tasks: taskStrategyDigests,
             permissions: permissionDigests,
+            concurrency: fresh.concurrency,
           },
           budgetSnapshot: {
             schemaVersion: 1,
@@ -564,7 +900,7 @@ export function createExecutionStartService(deps: ExecutionStartServiceDeps): Ex
         const binding = transaction.getRepositoryBinding(projectId);
         runInputSnapshot = { schemaVersion: 1, previewDigest: fresh.previewDigest, ...baseInputSnapshot,
           workspaceBaseline: { repositoryBindingId: binding.id, repositoryBindingRevision: binding.bindingRevision,
-            baseCommit: fresh.code.headCommit } };
+            baseCommit: resolveWorkspaceBaseCommit(deps, projectId, feature.id, fresh.code.headCommit ?? '') } };
       } else {
         /* 11b. 显式失败重试：同一父 Batch，共享父预算（不携带新预算/新授权依据）；
          * 终态 Batch 不接受新派发；重试工作身份必须与父 Batch 既有 Run 的
@@ -580,6 +916,12 @@ export function createExecutionStartService(deps: ExecutionStartServiceDeps): Ex
           }
           throw error;
         }
+        const parentMemberIds = transaction.listExecutionBatchMemberFeatureIds(projectId, retryBatchId);
+        const requestedMemberIds = new Set(envelope.payload.featureIds);
+        if (requestedMemberIds.size !== parentMemberIds.length
+          || parentMemberIds.some(memberId => !requestedMemberIds.has(memberId))) {
+          return rejected('retry_scope_mismatch');
+        }
         if (parent.featureId !== targetFeatureId) {
           return rejected('retry_scope_mismatch');
         }
@@ -588,7 +930,8 @@ export function createExecutionStartService(deps: ExecutionStartServiceDeps): Ex
         }
         // P03-9 / F-002：取消意图（cancelling）或未确认停止（interrupted）的
         // Batch 不接受新 Run；重试不能绕过取消/隔离现场。
-        if (parent.status === 'cancelling' || parent.status === 'interrupted') {
+        if (parent.status === 'cancelling' || parent.status === 'interrupted'
+          || parent.status === 'pausing' || parent.status === 'paused') {
           return rejected('batch_not_active');
         }
         // P03-9 / F-001：暂停意图已生效的 Batch 不接受新 Run（重试也被阻止）；

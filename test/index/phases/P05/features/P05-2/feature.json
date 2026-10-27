@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "kind": "feature",
+  "phase": "P05",
+  "feature": "P05-2",
+  "scope": "registered task-local indexes; P05 feature union for Nezha task_union; not full/Phase/live acceptance",
+  "tasks": [
+    {
+      "task_id": "F-002",
+      "index": "test/index/phases/P05/features/P05-2/tasks/F-002.json"
+    },
+    {
+      "task_id": "F-003",
+      "index": "test/index/phases/P05/features/P05-2/tasks/F-003.json"
+    },
+    {
+      "task_id": "F-004",
+      "index": "test/index/phases/P05/features/P05-2/tasks/F-004.json"
+    },
+    {
+      "task_id": "F-005",
+      "index": "test/index/phases/P05/features/P05-2/tasks/F-005.json"
+    },
+    {
+      "task_id": "F-006",
+      "index": "test/index/phases/P05/features/P05-2/tasks/F-006.json"
+    },
+    {
+      "task_id": "F-007",
+      "index": "test/index/phases/P05/features/P05-2/tasks/F-007.json"
+    },
+    {
+      "task_id": "F-008",
+      "index": "test/index/phases/P05/features/P05-2/tasks/F-008.json"
+    }
+  ]
+}

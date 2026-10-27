@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "task_id": "F-003",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/delivery/p05-8-f003-git-agent-runtime.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

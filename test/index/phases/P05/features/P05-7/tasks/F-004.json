@@ -1,0 +1,17 @@
+{
+  "schema_version": 2,
+  "task_id": "F-004",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/delivery/p05-7-f004-deterministic-integration.test.ts", "all": true },
+      { "file": "test/modules/delivery/p05-7-f003-integration-git-workspace.test.ts", "all": true },
+      { "file": "test/modules/storage/sqlite/p05-7-f004-integration-journal-schema.test.ts", "all": true },
+      { "file": "test/modules/storage/sqlite/sqlite-schema-migrations.test.ts", "all": true },
+      { "file": "test/modules/storage/sqlite/sqlite-migration-runner.test.ts", "all": true },
+      { "file": "test/modules/delivery/p05-7-f002-git-operation-persistence.test.ts", "all": true },
+      { "file": "test/modules/delivery/p05-6-f002-integration-plan-store.test.ts", "all": true },
+      { "file": "test/modules/delivery/p05-6-f004-integration-plan-control.test.ts", "all": true }
+    ]
+  }]
+}

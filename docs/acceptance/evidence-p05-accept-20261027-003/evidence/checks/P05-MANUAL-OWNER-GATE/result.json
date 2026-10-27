@@ -1,0 +1,8 @@
+{
+  "component": "p05-integration-report",
+  "checkId": "P05-MANUAL-OWNER-GATE",
+  "execution": "manual",
+  "manualStatus": "pending",
+  "reason": "人工验收待负责人确认（pending）；工具不代签放行",
+  "status": "not_run"
+}

@@ -1,0 +1,43 @@
+{
+  "schema_version": 2,
+  "task_id": "F-009",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/planning/p05-1-f009-planning-control.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/planning/p05-1-f007-planning-execution.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/planning/p05-1-f008-planning-candidate-decision.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/planning/p05-1-f006-planning-candidate-submit.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/planning/p05-1-f005-planning-dispatch-claim.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/execution/control/p03-9-f002-execution-cancel.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/execution/control/p03-9-f003-execution-stop.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/scheduling/p04-9-f006-dispatch-control-settlement.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

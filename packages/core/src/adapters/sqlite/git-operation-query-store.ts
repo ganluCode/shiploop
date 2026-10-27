@@ -126,6 +126,41 @@ export function createSqliteGitOperationQueryStore(
       });
     },
 
+    listGitOperationRecordsByProject(
+      visibility: unknown,
+      project: unknown,
+      request: PlanListRequest,
+    ): PlanRecordPage<GitOperationRecord> {
+      const operation = `${OPERATION}.listByProject`;
+      assertListRequest(operation, request);
+      assertPrincipalVisibility(visibility);
+      const projectId = stableId(operation, project, 'projectId');
+      return read(operation, () => {
+        const conditions = [
+          'project_id = ?',
+          "operation_type IN ('integration', 'integration_commit')",
+          'id > ?',
+        ];
+        const params: unknown[] = [projectId, request.afterId ?? ''];
+        const visible = visibilityCondition(visibility, 'project_id');
+        if (visible.condition !== undefined) {
+          conditions.push(visible.condition);
+          params.push(...visible.params);
+        }
+        params.push(request.limit + 1);
+        const rows = session.database.prepare<unknown[], GitOperationRow>(
+          `SELECT ${GIT_OPERATION_COLUMNS} FROM git_operations WHERE ${conditions.join(' AND ')} ORDER BY id LIMIT ?`,
+        ).all(...params);
+        const pageRows = rows.length > request.limit ? rows.slice(0, request.limit) : rows;
+        const records = pageRows.map(row => gitOperationRecordFromRow(row, operation));
+        return {
+          records,
+          nextId: rows.length > request.limit && records.length > 0
+            ? records[records.length - 1]!.intent.operationId : null,
+        };
+      });
+    },
+
     listGitOperationRecordsByFeature(
       visibility: unknown,
       projectId: unknown,

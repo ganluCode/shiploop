@@ -1,0 +1,18 @@
+{
+  "schema_version": 2,
+  "task_id": "F-008",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/delivery/p05-9-f008-batch-delivery-vertical.test.ts", "all": true },
+      { "file": "test/modules/delivery/p05-9-f008-delivery-record.test.ts", "all": true },
+      { "file": "test/modules/delivery/p05-7-f008-integration-vertical.test.ts", "all": true },
+      { "file": "test/modules/host/p05-9-f006-batch-delivery-host.test.ts", "all": true },
+      { "file": "test/modules/execution/budget/p05-3-f008-batch-cross-layer.test.ts", "all": true },
+      { "file": "test/modules/execution/dispatch/p04-9-f010-dispatch-vertical.test.ts", "all": true },
+      { "file": "test/modules/recovery/p04-9-f007-dispatch-crash-windows.test.ts", "all": true },
+      { "file": "test/modules/recovery/p04-9-f007-dispatch-resume.test.ts", "all": true },
+      { "file": "test/modules/recovery/p03-9-f008-workflow-resume.test.ts", "all": true }
+    ]
+  }]
+}

@@ -1,0 +1,17 @@
+{
+  "schema_version": 2,
+  "task_id": "F-005",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        { "file": "test/modules/planning/p05-2-f005-feature-dag-update.test.ts", "all": true },
+        { "file": "test/modules/planning/p05-2-f002-feature-dag.test.ts", "all": true },
+        { "file": "test/modules/commands/commands-contract.test.ts", "all": true },
+        { "file": "test/modules/events/events-contract.test.ts", "all": true },
+        { "file": "test/modules/planning/p05-2-feature-phase-affiliation.test.ts", "all": true },
+        { "file": "test/modules/storage/sqlite/p05-2-f001-feature-dependencies-schema.test.ts", "all": true }
+      ]
+    }
+  ]
+}

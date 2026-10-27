@@ -29,14 +29,17 @@
 import { randomUUID } from 'node:crypto';
 import { request as httpRequest, type ClientRequest, type IncomingMessage } from 'node:http';
 import {
+  validateBatchDeliveryCommandResult,
   PLAN_LIST_CURSOR_PREFIX,
   PLAN_LIST_MAX_LIMIT,
+  PLANNING_REQUEST_SCHEMA_VERSION,
   WORKSPACE_LIST_CURSOR_PREFIX,
   WORKSPACE_LIST_MAX_LIMIT,
   computeCommandRequestDigest,
   isUuidV4,
   isValidResultRef,
   validateCommandEnvelope,
+  WORK_ACCEPTED_SCHEMA_VERSION,
   WIRE_MESSAGE_SCHEMA_VERSION,
 } from 'shiploop-core/protocol';
 import type {
@@ -44,6 +47,7 @@ import type {
   AttemptDiagnosticsResult,
   AttemptListResult,
   DispatchQueueListResult,
+  ResourceListResult,
   BaselineDetailResult,
   BaselineListResult,
   CommandReceipt,
@@ -57,7 +61,11 @@ import type {
   FeatureListResult,
   GlobalSnapshotResult,
   PhaseDetailResult,
+  PhaseGraphResult, FeatureDependencyInput, FeaturePhaseMovePayload, PhaseMutationOperation,
   PhaseListResult,
+  PlanningCandidateDetailResult,
+  PlanningContextDetailResult,
+  PlanningContextListResult,
   ProjectBindingResult,
   ProjectDetailResult,
   ProjectInspectionResult,
@@ -69,6 +77,7 @@ import type {
   PublicStateEvent,
   RunScheduleStatusResult,
   RunControlDetailResult,
+  PublicBatchDeliveryResult,
   BatchControlDetailResult,
   RunRecoveryDetailResult,
   SettingsScope,
@@ -80,7 +89,10 @@ import type {
   TaskVerificationDetailResult,
   GitOperationDetailResult,
   GitOperationListResult,
+  GitAgentRepairListResult,
+  GitAgentRepairDetailResult,
   FeatureDeliveryDetailResult,
+  IntegrationPlanQueryResult,
   FeatureExecutionReport,
   WorkSessionListResult,
   WorkSessionDetailResult,
@@ -100,6 +112,7 @@ import {
   ATTEMPTS_ROUTE,
   ATTEMPTS_ROUTE_PREFIX,
   DISPATCH_QUEUE_ROUTE,
+  EXECUTION_RESOURCES_ROUTE,
   ATTEMPT_DIAGNOSTICS_ROUTE_SUFFIX,
   BATCHES_ROUTE_PREFIX,
   BASELINES_ROUTE_PREFIX,
@@ -113,12 +126,17 @@ import {
   FEATURES_ROUTE_PREFIX,
   GIT_OPERATIONS_ROUTE,
   GIT_OPERATIONS_ROUTE_PREFIX,
+  GIT_REPAIRS_ROUTE,
+  GIT_REPAIRS_ROUTE_PREFIX,
+  INTEGRATION_PLANS_ROUTE_PREFIX,
   HostProtocolError,
   MAX_APP_BODY_BYTES,
   MAX_ARTIFACT_CONTENT_BYTES,
   MAX_WORK_SESSION_EVIDENCE_RESPONSE_BYTES,
   PHASES_ROUTE,
   PHASES_ROUTE_PREFIX,
+  PLANNING_CONTEXTS_ROUTE,
+  PLANNING_CONTEXTS_ROUTE_PREFIX,
   PROJECTS_INSPECT_ROUTE,
   PROJECTS_ROUTE,
   PROJECT_LABEL_COUNTS_ROUTE,
@@ -148,6 +166,8 @@ import {
 import type { HostOperation } from '../contract/index.js';
 import { mapErrorResponse, requestLoopbackJson, requestLoopbackText } from './http-json.js';
 import {
+  validatePlanningDecisionResultWire,
+  validateBatchDeliveryResultWire,
   validateAppQueryResponse,
   validateBaselineCommandResultWire,
   validateBaselinePreviewResultWire,
@@ -159,8 +179,11 @@ import {
   validateFeaturePlanDecideResultWire,
   validateFeaturePlanImportResultWire,
   validateFeatureDeliveryCommandResultWire,
+  validateIntegrationStartCommandResultWire,
+  validateIntegrationReconcileCommandResultWire,
   validateFeaturePlanReviseResultWire,
   validatePhaseCreateResultWire,
+  validateFeatureMoveResultWire, validateFeatureDagResultWire,
   validatePlanLabelsUpdateResultWire,
   validateStateEventWire,
   validateTaskApprovalBlockResultWire,
@@ -169,6 +192,7 @@ import {
   validateTaskVerificationContinueResultWire,
   validateWorkspaceDiscardConfirmResultWire,
   validateWorkspaceDiscardPreviewWire,
+  validateGitAgentRepairQueryResultWire,
 } from './app-wire.js';
 
 /* ------------------------------------------------------------------ *
@@ -258,6 +282,25 @@ export interface ListBaselinesInput {
  * ------------------------------------------------------------------ */
 
 /** phase.create 输入（id 可缺省由服务端生成；字段语义由服务端单一权威复核）。 */
+export interface PhaseMutationInput {
+  readonly projectId: string;
+  readonly phaseId: string;
+  readonly expectedRevision: number;
+  readonly commandId?: string;
+}
+export interface UpdatePhaseMetadataInput extends PhaseMutationInput {
+  readonly title?: string;
+  readonly description?: string | null;
+  readonly labels?: readonly string[];
+}
+export interface MoveFeaturePhaseInput extends FeaturePhaseMovePayload {
+  readonly projectId: string;
+  readonly expectedRevision: number;
+  readonly commandId?: string;
+}
+export interface UpdateFeatureDagInput extends PhaseMutationInput {
+  readonly edges: readonly FeatureDependencyInput[];
+}
 export interface CreatePhaseInput {
   readonly projectId: string;
   readonly id?: string;
@@ -297,6 +340,17 @@ export interface ReviseFeaturePlanInput {
   readonly plan: unknown;
   readonly commandId?: string;
 }
+
+/** execution.dispatch.list 的可选固定范围与分页输入。 */
+export interface DispatchQueueListInput {
+  readonly batchId?: string;
+  readonly featureId?: string;
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+
+/** execution.resources.list 的可选固定范围与分页输入。 */
+export type ResourceListInput = DispatchQueueListInput;
 
 /** 计划层级列表分页输入（limit 1..200；cursor 为不透明 plcur_v1_ 游标）。 */
 export interface PlanListPageInput {
@@ -408,6 +462,18 @@ export interface FeatureVerificationContinueInput {
 }
 
 /**
+ * git.operation.reconcile 输入。它与 Feature 收尾共享同一 Core 命令信封，
+ * 但只做只读 Git 事实核对，不启动新的 merge/commit；结果仍经持久回执
+ * 返回，调用方可在连接故障后使用同一 commandId 查询原回执。
+ */
+export interface IntegrationStartInput extends FeatureVerificationContinueInput {
+  readonly inputDigest: string;
+}
+
+export interface IntegrationReconcileInput extends FeatureVerificationContinueInput {}
+
+
+/**
  * execution.input.prepare 输入（创建类：不携带 expectedRevision；items 为
  * 必需输入采集清单，逐项深校验在应用层，拒绝任何内联正文/任意路径形态）。
  */
@@ -419,13 +485,15 @@ export interface PrepareExecutionInputInput {
   readonly commandId?: string;
 }
 
-/** execution.preview/start 的单 Feature 授权输入。预算深校验由 Core 完成。 */
-export interface PreviewExecutionInput {
+/** Phase 预览或显式固定 Feature 集合；预算深校验由 Core 完成。 */
+export type PreviewExecutionInput = {
   readonly projectId: string;
-  readonly featureIds: readonly string[];
   readonly budget: unknown;
   readonly commandId?: string;
-}
+} & (
+  | { readonly phaseId: string; readonly featureIds?: never }
+  | { readonly featureIds: readonly string[]; readonly phaseId?: never }
+);
 
 export interface StartExecutionInput {
   readonly projectId: string;
@@ -434,6 +502,42 @@ export interface StartExecutionInput {
   readonly previewDigest?: string;
   readonly retryBatchId?: string;
   readonly commandId?: string;
+}
+
+/**
+ * P05-1 / F-012 planning.start 输入（更新类：expectedRevision 为目标 Feature
+ * 聚合当前 revision CAS；payload = 规划请求 v1 原样字段 + budget 完整预算
+ * 提案；深校验在 Core，客户端只做严格输入形态与未知键拒绝）。
+ */
+export interface StartPlanningInput {
+  readonly projectId: string;
+  readonly phaseId: string;
+  readonly featureId: string;
+  readonly requirementRefs?: readonly { readonly artifactId: string; readonly contentHash?: string | null }[];
+  readonly constraints: readonly string[];
+  readonly acceptance: { readonly criteria: readonly string[] };
+  readonly strategy: { readonly approvalMode: 'manual'; readonly taskLimit: number | null };
+  readonly budget: unknown;
+  readonly expectedRevision: number;
+  readonly commandId?: string;
+}
+
+/** P05-1 / F-012 planning.candidate.decide 输入（摘要绑定的人工决策）。 */
+export interface DecidePlanningCandidateInput {
+  readonly projectId: string;
+  readonly candidateId: string;
+  readonly candidateDigest: string;
+  readonly decision: 'approve' | 'reject';
+  readonly reason?: string | null;
+  readonly expectedRevision: number;
+  readonly commandId?: string;
+}
+
+/** P05-1 / F-012 planning.contexts.list 分页输入（可选 Feature 过滤）。 */
+export interface ListPlanningContextsInput {
+  readonly featureId?: string;
+  readonly limit?: number;
+  readonly cursor?: string;
 }
 
 export interface ReviseExecutionBudgetInput {
@@ -559,8 +663,30 @@ export interface HostEventSubscription {
   close(): void;
 }
 
+/** Explicit human Batch delivery actions; authority is bound by Host. */
+export interface FinalizeBatchInput {
+  readonly projectId: string;
+  readonly phaseId: string;
+  readonly batchId: string;
+  readonly expectedRevision: number;
+  readonly commandId?: string;
+}
+export interface ApprovePhaseDeliveryInput extends FinalizeBatchInput {
+  readonly candidateId: string;
+  readonly expectedCandidateRevision: number;
+}
+
 /** HostClient 应用面方法集（connectToHost 返回对象的一部分）。 */
 export interface HostClientApplication {
+  finalizeBatch(input: FinalizeBatchInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  approvePhaseDelivery(input: ApprovePhaseDeliveryInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  getBatchDelivery(projectId: string, batchId: string, input?: PlanListPageInput): Promise<PublicBatchDeliveryResult>;
+  observeBatch(projectId: string, batchId: string, input?: PlanListPageInput): Promise<{
+    readonly delivery: PublicBatchDeliveryResult;
+    readonly control: BatchControlDetailResult;
+    readonly blockingChain: readonly { readonly featureId: string; readonly failurePredecessors: readonly string[]; readonly blockingReasons: readonly string[] }[];
+  }>;
+
   listWorkSessions(projectId: string, input: { readonly runId?: string; readonly taskId?: string; readonly limit?: number; readonly cursor?: string }): Promise<WorkSessionListResult>;
   getWorkSession(projectId: string, attemptId: string): Promise<WorkSessionDetailResult>;
   readWorkSessionEvidence(projectId: string, attemptId: string, artifactId: string): Promise<WorkSessionEvidenceContent>;
@@ -652,6 +778,13 @@ export interface HostClientApplication {
    * ------------------------------------------------------------ */
   /** phase.create：创建 open Phase（completed 回执 result 经线校验器复核）。 */
   createPhase(input: CreatePhaseInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  updatePhaseMetadata(input: UpdatePhaseMetadataInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  closePhase(input: PhaseMutationInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  reopenPhase(input: PhaseMutationInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  archivePhase(input: PhaseMutationInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  moveFeaturePhase(input: MoveFeaturePhaseInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  updateFeatureDag(input: UpdateFeatureDagInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  getPhaseGraph(projectId: string, phaseId: string, input?: PlanListPageInput): Promise<PhaseGraphResult>;
   /** feature.plan.import：单 Feature 草稿计划导入（Phase 聚合 CAS）。 */
   importFeaturePlan(
     input: ImportFeaturePlanInput,
@@ -737,6 +870,16 @@ export interface HostClientApplication {
     input: FeatureVerificationContinueInput,
     options?: SubmitCommandOptions,
   ): Promise<CommandReceipt>;
+  /** git.operation.start：通过 Core 受信集成执行端口启动固定集成。 */
+  startIntegration(input: IntegrationStartInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  /**
+   * git.operation.reconcile：核对已存在的集成 Git operation。该命令不会
+   * 重做 merge/commit；pending/unknown 只按 Core 回执和查询事实展示。
+   */
+  reconcileIntegration(
+    input: IntegrationReconcileInput,
+    options?: SubmitCommandOptions,
+  ): Promise<CommandReceipt>;
   /**
    * execution.input.prepare：执行输入制品组准备（可绑定输入身份；正文永不
    * 内联，不创建执行实体、不声称已启动执行）。
@@ -751,6 +894,32 @@ export interface HostClientApplication {
   previewExecution(input: PreviewExecutionInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
   /** execution.start：返回 completed/rejected 或 Work accepted；不等待 Runtime。 */
   startExecution(input: StartExecutionInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  /**
+   * P05-1 / F-012 planning.start：一次性规划启动（accepted v7 回执携带
+   * Batch/Run/planning Task/候选四重身份；不代表规划完成；重复提交以冻结信封
+   * 重放，连接丢失先查原 commandId 回执）。
+   */
+  startPlanning(input: StartPlanningInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  /**
+   * P05-1 / F-012 planning.candidate.decide：候选人工批准/拒绝（摘要绑定 +
+   * Feature revision CAS；批准要求规划 Run 已 succeeded，由 Core 重核）。
+   */
+  decidePlanningCandidate(
+    input: DecidePlanningCandidateInput,
+    options?: SubmitCommandOptions,
+  ): Promise<CommandReceipt>;
+  /** P05-1 / F-012 planning.contexts.list：项目（可选 Feature 过滤）规划上下文分页。 */
+  listPlanningContexts(
+    projectId: string,
+    input?: ListPlanningContextsInput,
+  ): Promise<PlanningContextListResult>;
+  /** P05-1 / F-012 planning.context.get：按候选身份的规划详情（只读）。 */
+  getPlanningContext(projectId: string, candidateId: string): Promise<PlanningContextDetailResult>;
+  /**
+   * P05-1 / F-012 planning.candidate.get：候选详情（正文经受管内容接口完整性
+   * 核验读取；生成前明确 pending_generation）。
+   */
+  getPlanningCandidate(projectId: string, candidateId: string): Promise<PlanningCandidateDetailResult>;
   /** execution.budget.revise：通过既有幂等命令入口提交 CAS 修订。 */
   reviseExecutionBudget(input: ReviseExecutionBudgetInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
   getExecutionBudgetStatus(projectId: string, batchId: string): Promise<ExecutionBudgetStatusResult>;
@@ -784,8 +953,13 @@ export interface HostClientApplication {
    */
   listExecutionDispatchQueue(
     projectId: string,
-    input?: PlanListPageInput,
+    input?: DispatchQueueListInput,
   ): Promise<DispatchQueueListResult>;
+  /** execution.resources.list：项目/Feature/Batch 资源租约只读投影。 */
+  listExecutionResources(
+    projectId: string,
+    input?: ResourceListInput,
+  ): Promise<ResourceListResult>;
   /* ------------------------------------------------------------ *
    * P03-7 / F-013 Task 机器证据/人审事项/有限返工链只读查询
    * ------------------------------------------------------------ */
@@ -824,6 +998,9 @@ export interface HostClientApplication {
   ): Promise<GitOperationListResult>;
   /** git.operations.get：按 operationId 的完整意图 + 实际事实 + 回执投影。 */
   getGitOperation(projectId: string, operationId: string): Promise<GitOperationDetailResult>;
+  /** git.repairs.list/get：Core GitAgent 修复授权、Attempt、用量、阻塞和候选提交投影。 */
+  listGitAgentRepairs(projectId: string, input?: PlanListPageInput): Promise<GitAgentRepairListResult>;
+  getGitAgentRepair(projectId: string, repairId: string): Promise<GitAgentRepairDetailResult>;
   /* ------------------------------------------------------------ *
    * P03-8 / F-010 Feature 分轴结果只读查询
    * ------------------------------------------------------------ */
@@ -833,6 +1010,15 @@ export interface HostClientApplication {
    */
   getFeatureDelivery(projectId: string, featureId: string): Promise<FeatureDeliveryDetailResult>;
   getFeatureReport(projectId: string, featureId: string): Promise<FeatureExecutionReport>;
+  getIntegrationPlan(projectId: string, integrationId: string): Promise<IntegrationPlanQueryResult>;
+  /** 集成详情别名：与计划详情共用 Core 脱敏投影。 */
+  getIntegrationDetail(projectId: string, integrationId: string): Promise<IntegrationPlanQueryResult>;
+  /** 集成 operation 分页别名：仍要求 Feature/Run 父级，复用稳定 ID 游标。 */
+  listIntegrationOperations(
+    projectId: string,
+    parent: GitOperationListParentInput,
+    input?: PlanListPageInput,
+  ): Promise<GitOperationListResult>;
   /* ------------------------------------------------------------ *
    * P03-5 / F-012 工作区状态只读查询与人工丢弃预览/确认
    * ------------------------------------------------------------ */
@@ -988,6 +1174,7 @@ const SUBMIT_INPUT_KEYS = [
 ] as const;
 
 interface FrozenEnvelope {
+  readonly scope: CommandScope;
   readonly commandId: string;
   readonly operation: AppOperation;
   readonly wire: Record<string, unknown>;
@@ -1028,6 +1215,7 @@ function freezeCommandEnvelope(input: SubmitCommandInput): FrozenEnvelope {
     const validated = validateCommandEnvelope(wire);
     return {
       commandId,
+      scope: validated.scope,
       operation: validated.operation,
       wire,
       requestDigest: computeCommandRequestDigest(validated),
@@ -1298,15 +1486,20 @@ const FEATURE_VERIFICATION_CONTINUE_INPUT_KEYS = [
   'expectedRevision',
   'commandId',
 ] as const;
-const EXECUTION_PREVIEW_INPUT_KEYS = ['projectId', 'featureIds', 'budget', 'commandId'] as const;
+const INTEGRATION_START_INPUT_KEYS = [...FEATURE_VERIFICATION_CONTINUE_INPUT_KEYS, 'inputDigest'] as const;
 const EXECUTION_START_INPUT_KEYS = ['projectId', 'featureIds', 'budget', 'previewDigest', 'retryBatchId', 'commandId'] as const;
+const EXECUTION_PREVIEW_INPUT_KEYS = ['projectId', 'phaseId', 'featureIds', 'budget', 'commandId'] as const;
+// P05-1 / F-012：规划命令/查询输入键冻结（未知键拒绝；深校验在 Core）。
+const START_PLANNING_INPUT_KEYS = ['projectId', 'phaseId', 'featureId', 'requirementRefs', 'constraints', 'acceptance', 'strategy', 'budget', 'expectedRevision', 'commandId'] as const;
+const DECIDE_PLANNING_CANDIDATE_INPUT_KEYS = ['projectId', 'candidateId', 'candidateDigest', 'decision', 'reason', 'expectedRevision', 'commandId'] as const;
+const LIST_PLANNING_CONTEXTS_INPUT_KEYS = ['featureId', 'limit', 'cursor'] as const;
 const EXECUTION_BUDGET_REVISE_INPUT_KEYS = ['projectId', 'batchId', 'expectedRevision', 'budget', 'reason', 'commandId'] as const;
 const CONTROL_EXECUTION_INPUT_KEYS = ['projectId', 'runId', 'batchId', 'expectedRevision', 'commandId'] as const;
 const RETRY_FINAL_EXECUTION_INPUT_KEYS = ['projectId', 'featureId', 'historicalRunId', 'workKey', 'commandId'] as const;
 const BUDGET_REVISION_LIST_INPUT_KEYS = ['limit', 'cursor'] as const;
 
 function requireFeatureIds(operation: HostOperation, value: unknown): string[] {
-  if (!Array.isArray(value) || !value.every((id) => typeof id === 'string' && STABLE_ID_PATTERN.test(id))) {
+  if (!Array.isArray(value) || value.length > 16 || new Set(value).size !== value.length || !value.every((id) => typeof id === 'string' && STABLE_ID_PATTERN.test(id))) {
     throw invalidInput(operation, 'invalid_feature_ids', 'featureIds');
   }
   return [...value];
@@ -1456,6 +1649,28 @@ function planListPath(
   const paging = buildPlanListQuery(input, operation);
   const query = `${params.toString()}${paging.length === 0 ? '' : `&${paging}`}`;
   return `${base}?${query}`;
+}
+
+const DISPATCH_QUEUE_INPUT_KEYS = ['batchId', 'featureId', 'limit', 'cursor'] as const;
+
+function buildDispatchQueueQuery(input: DispatchQueueListInput | undefined, operation: HostOperation): string {
+  if (input === undefined) return '';
+  const object = rejectUnknownInputKeys(operation, input, DISPATCH_QUEUE_INPUT_KEYS);
+  if (object.batchId !== undefined && object.featureId !== undefined) {
+    throw invalidInput(operation, 'conflicting_scope', 'selector');
+  }
+  const params = new URLSearchParams();
+  if (object.batchId !== undefined) params.append('batchId', requireStableIdInput(operation, object.batchId, 'batchId'));
+  if (object.featureId !== undefined) params.append('featureId', requireStableIdInput(operation, object.featureId, 'featureId'));
+  const paging = buildPlanListQuery({
+    ...(object.limit !== undefined ? { limit: object.limit as number } : {}),
+    ...(object.cursor !== undefined ? { cursor: object.cursor as string } : {}),
+  }, operation);
+  if (paging.length > 0) {
+    const pagingParams = new URLSearchParams(paging);
+    pagingParams.forEach((value, key) => params.append(key, value));
+  }
+  return params.toString();
 }
 
 /* ------------------------------------------------------------------ *
@@ -1740,6 +1955,7 @@ export function createHostClientApplication(context: AppClientContext): HostClie
         ? { expectedRequestDigest: frozen.requestDigest }
         : {}),
       expectedOperation: frozen.operation,
+      ...(frozen.scope.kind === 'project' ? { expectedProjectId: frozen.scope.projectId } : {}),
     };
     if (response.statusCode === 200 || response.statusCode === 202) {
       return validateCommandReceiptWire(response.json, expectation, 'commands.submit');
@@ -1786,6 +2002,7 @@ export function createHostClientApplication(context: AppClientContext): HostClie
             ? { expectedRequestDigest: frozen.requestDigest }
             : {}),
           expectedOperation: frozen.operation,
+          ...(frozen.scope.kind === 'project' ? { expectedProjectId: frozen.scope.projectId } : {}),
         },
         'receipts.get',
       );
@@ -2300,8 +2517,68 @@ export function createHostClientApplication(context: AppClientContext): HostClie
     return validateAppQueryResponse('snapshot.get', json, { scope: validScope });
   }
 
+  async function mutatePhase(operation: PhaseMutationOperation, input: UpdatePhaseMetadataInput, options?: SubmitCommandOptions): Promise<CommandReceipt> {
+    const metadata = operation === 'phase.metadata.update';
+    const object = rejectUnknownInputKeys('commands.submit', input, ['projectId', 'phaseId', 'expectedRevision', 'commandId', ...(metadata ? ['title', 'description', 'labels'] : [])]);
+    const projectId = requireProjectId('commands.submit', object.projectId as string);
+    const phaseId = requireStableIdInput('commands.submit', object.phaseId, 'phaseId');
+    const expectedRevision = requireExpectedRevisionInput('commands.submit', object.expectedRevision);
+    const receipt = await submitCommand({ ...optionalCommandIdInput('commands.submit', object.commandId), operation,
+      scope: { kind: 'project', projectId }, expectedRevision,
+      payload: { phaseId, ...Object.fromEntries(['title', 'description', 'labels'].filter(key => Object.hasOwn(object, key)).map(key => [key, object[key]])) },
+    }, options);
+    if (receipt.status === 'completed') {
+      const result = validatePhaseCreateResultWire(receipt.result);
+      if (result.phase.id !== phaseId || result.phase.projectId !== projectId) throw new HostProtocolError('response_malformed', 'commands.submit', 'Phase 回执归属不一致', { details: { reason: 'scope_mismatch' } });
+    }
+    return receipt;
+  }
+
   return {
     submitCommand,
+    updatePhaseMetadata: (input, options) => mutatePhase('phase.metadata.update', input, options),
+    closePhase: (input, options) => mutatePhase('phase.close', input, options),
+    reopenPhase: (input, options) => mutatePhase('phase.reopen', input, options),
+    archivePhase: (input, options) => mutatePhase('phase.archive', input, options),
+    async moveFeaturePhase(input, options) {
+      const object = rejectUnknownInputKeys('commands.submit', input, ['projectId', 'featureId', 'sourcePhaseId', 'targetPhaseId', 'sourcePhaseRevision', 'targetPhaseRevision', 'expectedRevision', 'commandId']);
+      const projectId = requireProjectId('commands.submit', object.projectId as string);
+      const payload = {
+        featureId: requireStableIdInput('commands.submit', object.featureId, 'featureId'),
+        sourcePhaseId: requireStableIdInput('commands.submit', object.sourcePhaseId, 'sourcePhaseId'),
+        targetPhaseId: requireStableIdInput('commands.submit', object.targetPhaseId, 'targetPhaseId'),
+        sourcePhaseRevision: requireExpectedRevisionInput('commands.submit', object.sourcePhaseRevision),
+        targetPhaseRevision: requireExpectedRevisionInput('commands.submit', object.targetPhaseRevision),
+      };
+      const receipt = await submitCommand({ ...optionalCommandIdInput('commands.submit', object.commandId), operation: 'feature.phase.move', scope: { kind: 'project', projectId }, expectedRevision: requireExpectedRevisionInput('commands.submit', object.expectedRevision), payload }, options);
+      if (receipt.status === 'completed') {
+        const { feature } = validateFeatureMoveResultWire(receipt.result);
+        if (feature.id !== payload.featureId || feature.projectId !== projectId || feature.phaseId !== payload.targetPhaseId) throw new HostProtocolError('response_malformed', 'commands.submit', 'Feature 回执归属不一致', { details: { reason: 'scope_mismatch' } });
+      }
+      return receipt;
+    },
+    async updateFeatureDag(input, options) {
+      const object = rejectUnknownInputKeys('commands.submit', input, ['projectId', 'phaseId', 'expectedRevision', 'commandId', 'edges']);
+      const projectId = requireProjectId('commands.submit', object.projectId as string);
+      const phaseId = requireStableIdInput('commands.submit', object.phaseId, 'phaseId');
+      const receipt = await submitCommand({ ...optionalCommandIdInput('commands.submit', object.commandId), operation: 'feature.dag.update', scope: { kind: 'project', projectId }, expectedRevision: requireExpectedRevisionInput('commands.submit', object.expectedRevision), payload: { phaseId, edges: object.edges } }, options);
+      if (receipt.status === 'completed') {
+        const { phase } = validateFeatureDagResultWire(receipt.result);
+        if (phase.id !== phaseId || phase.projectId !== projectId) throw new HostProtocolError('response_malformed', 'commands.submit', '图回执归属不一致', { details: { reason: 'scope_mismatch' } });
+      }
+      return receipt;
+    },
+    async getPhaseGraph(projectId, phaseId, input) {
+      const operation = 'phases.graph.get';
+      context.assertOpen(operation);
+      const project = requireProjectId(operation, projectId);
+      const phase = requireStableIdInput(operation, phaseId, 'phaseId');
+      const json = await getJson(operation, planListPath(
+        `${PHASES_ROUTE_PREFIX}${phase}/graph`, [['projectId', project]], input, operation));
+      const result = validateAppQueryResponse(operation, json);
+      if (result.phase.projectId !== project || result.phase.id !== phase || (input?.limit !== undefined && result.limit !== input.limit)) throw new HostProtocolError('response_malformed', operation, '图查询归属不一致', { details: { reason: 'scope_mismatch' } });
+      return result;
+    },
 
     async getReceipt(commandId: string): Promise<CommandReceipt> {
       context.assertOpen('receipts.get');
@@ -2925,6 +3202,57 @@ export function createHostClientApplication(context: AppClientContext): HostClie
       return receipt;
     },
 
+    async startIntegration(
+      input: IntegrationStartInput,
+      options?: SubmitCommandOptions,
+    ): Promise<CommandReceipt> {
+      const object = rejectUnknownInputKeys('commands.submit', input, INTEGRATION_START_INPUT_KEYS);
+      const projectId = requireProjectId('commands.submit', object.projectId as string);
+      const featureId = requireStableIdInput('commands.submit', object.featureId, 'featureId');
+      const runId = requireStableIdInput('commands.submit', object.runId, 'runId');
+      const batchId = requireStableIdInput('commands.submit', object.batchId, 'batchId');
+      if (typeof object.operationId !== 'string' || !isUuidV4(object.operationId)) throw invalidInput('commands.submit', 'invalid_operation_id', 'operationId');
+      if (typeof object.inputDigest !== 'string' || !SHA256_HEX_PATTERN.test(object.inputDigest)) throw invalidInput('commands.submit', 'invalid_input_digest', 'inputDigest');
+      const expectedRevision = requireExpectedRevisionInput('commands.submit', object.expectedRevision);
+      const receipt = await submitCommand({ ...optionalCommandIdInput('commands.submit', object.commandId), operation: 'git.operation.start', scope: { kind: 'project', projectId }, expectedRevision,
+        payload: { featureId, runId, batchId, operationId: object.operationId, inputDigest: object.inputDigest } }, options);
+      if (receipt.status === 'completed') validateIntegrationStartCommandResultWire(receipt.result, 'commands.submit');
+      return receipt;
+    },
+
+    async reconcileIntegration(
+      input: IntegrationReconcileInput,
+      options?: SubmitCommandOptions,
+    ): Promise<CommandReceipt> {
+      const object = rejectUnknownInputKeys(
+        'commands.submit',
+        input,
+        FEATURE_VERIFICATION_CONTINUE_INPUT_KEYS,
+      );
+      const projectId = requireProjectId('commands.submit', object.projectId as string);
+      const featureId = requireStableIdInput('commands.submit', object.featureId, 'featureId');
+      const runId = requireStableIdInput('commands.submit', object.runId, 'runId');
+      const batchId = requireStableIdInput('commands.submit', object.batchId, 'batchId');
+      if (typeof object.operationId !== 'string' || !isUuidV4(object.operationId)) {
+        throw invalidInput('commands.submit', 'invalid_operation_id', 'operationId');
+      }
+      const expectedRevision = requireExpectedRevisionInput('commands.submit', object.expectedRevision);
+      const receipt = await submitCommand(
+        {
+          ...optionalCommandIdInput('commands.submit', object.commandId),
+          operation: 'git.operation.reconcile',
+          scope: { kind: 'project', projectId },
+          expectedRevision,
+          payload: { featureId, runId, batchId, operationId: object.operationId },
+        },
+        options,
+      );
+      if (receipt.status === 'completed') {
+        validateIntegrationReconcileCommandResultWire(receipt.result, 'commands.submit');
+      }
+      return receipt;
+    },
+
     async updateTaskStrategy(
       input: UpdateTaskStrategyInput,
       options?: SubmitCommandOptions,
@@ -2995,19 +3323,30 @@ export function createHostClientApplication(context: AppClientContext): HostClie
     ): Promise<CommandReceipt> {
       const object = rejectUnknownInputKeys('commands.submit', input, EXECUTION_PREVIEW_INPUT_KEYS);
       const projectId = requireProjectId('commands.submit', object.projectId as string);
-      const featureIds = requireFeatureIds('commands.submit', object.featureIds);
+      if (Object.hasOwn(object, 'phaseId') === Object.hasOwn(object, 'featureIds')) {
+        throw invalidInput('commands.submit', 'invalid_scope_selector');
+      }
+      const selector = Object.hasOwn(object, 'phaseId')
+        ? { phaseId: requireStableIdInput('commands.submit', object.phaseId, 'phaseId') }
+        : { featureIds: requireFeatureIds('commands.submit', object.featureIds) };
       const budget = requireBudgetObject('commands.submit', object.budget, 'budget');
       const receipt = await submitCommand(
         {
           ...optionalCommandIdInput('commands.submit', object.commandId),
           operation: 'execution.preview',
           scope: { kind: 'project', projectId },
-          payload: { featureIds, budget },
+          payload: { ...selector, budget },
         },
         options,
       );
       if (receipt.status === 'completed') {
-        validateExecutionPreviewResultWire(receipt.result, 'commands.submit');
+        const result = validateExecutionPreviewResultWire(receipt.result, 'commands.submit');
+        const actualRequested = 'requestedFeatureIds' in result.scope ? result.scope.requestedFeatureIds : result.scope.featureIds;
+        if (result.projectId !== projectId || ('phaseId' in selector
+          ? !('phaseId' in result.scope) || result.scope.phaseId !== selector.phaseId
+          : selector.featureIds.length !== actualRequested.length || selector.featureIds.some(id => !actualRequested.includes(id)))) {
+          throw new HostProtocolError('response_malformed', 'commands.submit', '预览响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
+        }
       }
       return receipt;
     },
@@ -3031,7 +3370,7 @@ export function createHostClientApplication(context: AppClientContext): HostClie
         const previewDigest = requireSha256Input('commands.submit', object.previewDigest, 'previewDigest');
         payload = { featureIds, budget, previewDigest, retryBatchId: null };
       }
-      return submitCommand(
+      const receipt = await submitCommand(
         {
           ...optionalCommandIdInput('commands.submit', object.commandId),
           operation: 'execution.start',
@@ -3040,6 +3379,10 @@ export function createHostClientApplication(context: AppClientContext): HostClie
         },
         options,
       );
+      if (receipt.schemaVersion === WORK_ACCEPTED_SCHEMA_VERSION && featureIds.length > 1 && receipt.runIds?.length !== featureIds.length) {
+        throw new HostProtocolError('response_malformed', 'commands.submit', '启动回执缺少完整初始 Run 关联', { details: { reason: 'scope_mismatch' } });
+      }
+      return receipt;
     },
 
     async reviseExecutionBudget(
@@ -3064,6 +3407,145 @@ export function createHostClientApplication(context: AppClientContext): HostClie
         },
         options,
       );
+    },
+
+    /* ------------------------------------------------------------ *
+     * P05-1 / F-012 规划启动/候选决策与只读查询
+     * ------------------------------------------------------------ */
+
+    async startPlanning(
+      input: StartPlanningInput,
+      options?: SubmitCommandOptions,
+    ): Promise<CommandReceipt> {
+      const object = rejectUnknownInputKeys('commands.submit', input, START_PLANNING_INPUT_KEYS);
+      const projectId = requireProjectId('commands.submit', object.projectId as string);
+      const phaseId = requireStableIdInput('commands.submit', object.phaseId, 'phaseId');
+      const featureId = requireStableIdInput('commands.submit', object.featureId, 'featureId');
+      const requirementRefs = requireArtifactRefsInput('commands.submit', object.requirementRefs);
+      // 深层字段原样交给纯信封校验器；保留未知键以便严格拒绝，不能先投影丢弃。
+      const acceptance = object.acceptance;
+      const strategy = object.strategy;
+      const budget = requireBudgetObject('commands.submit', object.budget, 'budget');
+      const expectedRevision = requireExpectedRevisionInput('commands.submit', object.expectedRevision);
+      const receipt = await submitCommand(
+        {
+          ...optionalCommandIdInput('commands.submit', object.commandId),
+          operation: 'planning.start',
+          scope: { kind: 'project', projectId },
+          expectedRevision,
+          payload: {
+            schemaVersion: PLANNING_REQUEST_SCHEMA_VERSION,
+            projectId,
+            phaseId,
+            featureId,
+            requirementRefs,
+            constraints: object.constraints,
+            acceptance,
+            strategy,
+            budget,
+          },
+        },
+        options,
+      );
+      if (receipt.status !== 'rejected' && (receipt.status !== 'accepted' || receipt.schemaVersion !== 7)) {
+        throw new HostProtocolError('response_malformed', 'commands.submit', undefined, { details: { reason: 'planning_start_receipt_invalid' } });
+      }
+      return receipt;
+    },
+
+    async decidePlanningCandidate(
+      input: DecidePlanningCandidateInput,
+      options?: SubmitCommandOptions,
+    ): Promise<CommandReceipt> {
+      const object = rejectUnknownInputKeys('commands.submit', input, DECIDE_PLANNING_CANDIDATE_INPUT_KEYS);
+      const projectId = requireProjectId('commands.submit', object.projectId as string);
+      const candidateId = requireStableIdInput('commands.submit', object.candidateId, 'candidateId');
+      const candidateDigest = requireSha256Input('commands.submit', object.candidateDigest, 'candidateDigest');
+      if (object.decision !== 'approve' && object.decision !== 'reject') {
+        throw invalidInput('commands.submit', 'invalid_decision', 'decision');
+      }
+      const reason = object.reason ?? null;
+      if (reason !== null && (typeof reason !== 'string' || reason.trim().length === 0 || reason.length > 512)) {
+        throw invalidInput('commands.submit', 'invalid_reason', 'reason');
+      }
+      const expectedRevision = requireExpectedRevisionInput('commands.submit', object.expectedRevision);
+      const receipt = await submitCommand(
+        {
+          ...optionalCommandIdInput('commands.submit', object.commandId),
+          operation: 'planning.candidate.decide',
+          scope: { kind: 'project', projectId },
+          expectedRevision,
+          payload: { candidateId, candidateDigest, decision: object.decision, reason },
+        },
+        options,
+      );
+      if (receipt.status === 'accepted') throw new HostProtocolError('response_malformed', 'commands.submit');
+      if (receipt.status === 'completed') validatePlanningDecisionResultWire(receipt.result, { candidateId, candidateDigest, decision: object.decision });
+      return receipt;
+    },
+
+    async listPlanningContexts(
+      projectId: string,
+      input?: ListPlanningContextsInput,
+    ): Promise<PlanningContextListResult> {
+      context.assertOpen('planning.contexts.list');
+      const project = requireProjectId('planning.contexts.list', projectId);
+      const params = new URLSearchParams();
+      params.append('projectId', project);
+      if (input !== undefined) {
+        const object = rejectUnknownInputKeys('planning.contexts.list', input, LIST_PLANNING_CONTEXTS_INPUT_KEYS);
+        if (object.featureId !== undefined) {
+          params.append('featureId', requireStableIdInput('planning.contexts.list', object.featureId, 'featureId'));
+        }
+        if (object.limit !== undefined) {
+          if (typeof object.limit !== 'number' || !Number.isInteger(object.limit) || object.limit < 1 || object.limit > PLAN_LIST_MAX_LIMIT) {
+            throw invalidInput('planning.contexts.list', 'invalid_limit', 'limit');
+          }
+          params.append('limit', String(object.limit));
+        }
+        if (object.cursor !== undefined) {
+          if (typeof object.cursor !== 'string' || !object.cursor.startsWith(PLAN_LIST_CURSOR_PREFIX)) {
+            throw invalidInput('planning.contexts.list', 'invalid_cursor', 'cursor');
+          }
+          params.append('cursor', object.cursor);
+        }
+      }
+      const json = await getJson('planning.contexts.list', `${PLANNING_CONTEXTS_ROUTE}?${params.toString()}`);
+      const result = validateAppQueryResponse('planning.contexts.list', json);
+      if (result.records.some((record) => record.projectId !== project || (input?.featureId !== undefined && record.featureId !== input.featureId))) {
+        throw new HostProtocolError('response_malformed', 'planning.contexts.list', '规划上下文响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
+      }
+      return result;
+    },
+
+    async getPlanningContext(projectId: string, candidateId: string): Promise<PlanningContextDetailResult> {
+      context.assertOpen('planning.context.get');
+      const project = requireProjectId('planning.context.get', projectId);
+      const candidate = requireStableIdInput('planning.context.get', candidateId, 'candidateId');
+      const json = await getJson(
+        'planning.context.get',
+        `${PLANNING_CONTEXTS_ROUTE_PREFIX}${encodeURIComponent(candidate)}?projectId=${encodeURIComponent(project)}`,
+      );
+      const result = validateAppQueryResponse('planning.context.get', json);
+      if (result.context.projectId !== project || result.context.candidateId !== candidate) {
+        throw new HostProtocolError('response_malformed', 'planning.context.get', '规划上下文响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
+      }
+      return result;
+    },
+
+    async getPlanningCandidate(projectId: string, candidateId: string): Promise<PlanningCandidateDetailResult> {
+      context.assertOpen('planning.candidate.get');
+      const project = requireProjectId('planning.candidate.get', projectId);
+      const candidate = requireStableIdInput('planning.candidate.get', candidateId, 'candidateId');
+      const json = await getJson(
+        'planning.candidate.get',
+        `${PLANNING_CONTEXTS_ROUTE_PREFIX}${encodeURIComponent(candidate)}/candidate?projectId=${encodeURIComponent(project)}`,
+      );
+      const result = validateAppQueryResponse('planning.candidate.get', json);
+      if (result.context.projectId !== project || result.context.candidateId !== candidate) {
+        throw new HostProtocolError('response_malformed', 'planning.candidate.get', '候选响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
+      }
+      return result;
     },
 
     async getExecutionBudgetStatus(projectId: string, batchId: string): Promise<ExecutionBudgetStatusResult> {
@@ -3296,6 +3778,70 @@ export function createHostClientApplication(context: AppClientContext): HostClie
       return result;
     },
 
+    async finalizeBatch(input: FinalizeBatchInput, options?: SubmitCommandOptions): Promise<CommandReceipt> {
+      const op = 'commands.submit';
+      const object = rejectUnknownInputKeys(op, input, ['projectId', 'phaseId', 'batchId', 'expectedRevision', 'commandId']);
+      const projectId = requireProjectId(op, object.projectId as string);
+      const phaseId = requireStableIdInput(op, object.phaseId, 'phaseId');
+      const batchId = requireStableIdInput(op, object.batchId, 'batchId');
+      const expectedRevision = requireExpectedRevisionInput(op, object.expectedRevision);
+      const receipt = await submitCommand({ ...optionalCommandIdInput(op, object.commandId), operation: 'execution.batch.finalize',
+        scope: { kind: 'project', projectId }, expectedRevision, payload: { phaseId, batchId } }, options);
+      if (receipt.status === 'completed') {
+        const result = validateBatchDeliveryCommandResult(receipt.result);
+        if (result.phaseId !== phaseId || result.batchId !== batchId || result.batchRevision !== expectedRevision) {
+          throw new HostProtocolError('response_malformed', op, 'Batch 收尾响应归属不一致', { details: { reason: 'scope_mismatch' } });
+        }
+      }
+      return receipt;
+    },
+
+    async approvePhaseDelivery(input: ApprovePhaseDeliveryInput, options?: SubmitCommandOptions): Promise<CommandReceipt> {
+      const op = 'commands.submit';
+      const object = rejectUnknownInputKeys(op, input, ['projectId', 'phaseId', 'batchId', 'expectedRevision', 'commandId', 'candidateId', 'expectedCandidateRevision']);
+      const projectId = requireProjectId(op, object.projectId as string);
+      const phaseId = requireStableIdInput(op, object.phaseId, 'phaseId');
+      const batchId = requireStableIdInput(op, object.batchId, 'batchId');
+      const candidateId = requireStableIdInput(op, object.candidateId, 'candidateId');
+      const expectedRevision = requireExpectedRevisionInput(op, object.expectedRevision);
+      const expectedCandidateRevision = requireExpectedRevisionInput(op, object.expectedCandidateRevision);
+      const receipt = await submitCommand({ ...optionalCommandIdInput(op, object.commandId), operation: 'phase.delivery.approve', scope: { kind: 'project', projectId },
+        expectedRevision, payload: { phaseId, batchId, candidateId, expectedCandidateRevision } }, options);
+      if (receipt.status === 'completed') {
+        const result = validateBatchDeliveryCommandResult(receipt.result);
+        if (result.phaseId !== phaseId || result.batchId !== batchId || result.batchRevision !== expectedRevision
+          || result.candidateId !== candidateId || result.candidateRevision !== expectedCandidateRevision) {
+          throw new HostProtocolError('response_malformed', op, 'Phase 批准响应归属不一致', { details: { reason: 'scope_mismatch' } });
+        }
+      }
+      return receipt;
+    },
+
+    async getBatchDelivery(projectId: string, batchId: string, input?: PlanListPageInput): Promise<PublicBatchDeliveryResult> {
+      const op = 'execution.batch.delivery.get';
+      context.assertOpen(op);
+      const project = requireProjectId(op, projectId);
+      const batch = requireStableIdInput(op, batchId, 'batchId');
+      const paging = buildPlanListQuery(input, op);
+      const result = validateBatchDeliveryResultWire(await getJson(op,
+        `${BATCHES_ROUTE_PREFIX}${encodeURIComponent(batch)}/delivery?projectId=${encodeURIComponent(project)}${paging ? `&${paging}` : ''}`));
+      if (result.batch.projectId !== project || result.batch.id !== batch || (input?.limit !== undefined && result.limit !== input.limit)) {
+        throw new HostProtocolError('response_malformed', op, 'Batch 收尾响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
+      }
+      return result;
+    },
+
+    async observeBatch(projectId: string, batchId: string, input?: PlanListPageInput) {
+      const [delivery, control] = await Promise.all([this.getBatchDelivery(projectId, batchId, input), this.getBatchControl(projectId, batchId)]);
+      const controlMembers = control.batch.featureIds ?? [control.batch.featureId];
+      if ((control.batch.phaseId !== undefined && control.batch.phaseId !== delivery.batch.phaseId)
+        || controlMembers.some(id => !delivery.batch.featureIds.includes(id)) || controlMembers.length !== delivery.batch.featureIds.length) {
+        throw new HostProtocolError('response_malformed', 'execution.batch.delivery.get', 'Batch 观察响应归属不一致', { details: { reason: 'scope_mismatch' } });
+      }
+      return { delivery, control, blockingChain: delivery.records.map(record => ({ featureId: record.featureId,
+        failurePredecessors: record.failurePredecessors, blockingReasons: record.blockingReasons })) };
+    },
+
     async getBatchControl(projectId: string, batchId: string): Promise<BatchControlDetailResult> {
       context.assertOpen('execution.batch.control.get');
       const project = requireProjectId('execution.batch.control.get', projectId);
@@ -3390,18 +3936,32 @@ export function createHostClientApplication(context: AppClientContext): HostClie
 
     async listExecutionDispatchQueue(
       projectId: string,
-      input?: PlanListPageInput,
+      input?: DispatchQueueListInput,
     ): Promise<DispatchQueueListResult> {
       context.assertOpen('execution.dispatch.list');
       const project = requireProjectId('execution.dispatch.list', projectId);
-      const paging = buildPlanListQuery(input, 'execution.dispatch.list');
-      const query =
-        `projectId=${encodeURIComponent(project)}` +
-        `${paging.length === 0 ? '' : `&${paging}`}`;
+      const paging = buildDispatchQueueQuery(input, 'execution.dispatch.list');
+      const query = `projectId=${encodeURIComponent(project)}${paging.length === 0 ? '' : `&${paging}`}`;
       const json = await getJson('execution.dispatch.list', `${DISPATCH_QUEUE_ROUTE}?${query}`);
       const result = validateAppQueryResponse('execution.dispatch.list', json);
       if (result.records.some((record) => record.projectId !== project)) {
         throw new HostProtocolError('response_malformed', 'execution.dispatch.list', '派发队列响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
+      }
+      return result;
+    },
+
+    async listExecutionResources(
+      projectId: string,
+      input?: ResourceListInput,
+    ): Promise<ResourceListResult> {
+      context.assertOpen('execution.resources.list');
+      const project = requireProjectId('execution.resources.list', projectId);
+      const paging = buildDispatchQueueQuery(input, 'execution.resources.list');
+      const query = `projectId=${encodeURIComponent(project)}${paging.length === 0 ? '' : `&${paging}`}`;
+      const json = await getJson('execution.resources.list', `${EXECUTION_RESOURCES_ROUTE}?${query}`);
+      const result = validateAppQueryResponse('execution.resources.list', json);
+      if (result.records.some((record) => record.projectId !== project)) {
+        throw new HostProtocolError('response_malformed', 'execution.resources.list', '资源查询响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
       }
       return result;
     },
@@ -3601,6 +4161,32 @@ export function createHostClientApplication(context: AppClientContext): HostClie
       return result;
     },
 
+    async listGitAgentRepairs(projectId: string, input?: PlanListPageInput): Promise<GitAgentRepairListResult> {
+      const op = 'git.repairs.list';
+      context.assertOpen(op);
+      const project = requireProjectId(op, projectId);
+      const paging = buildPlanListQuery(input, op);
+      const json = await getJson(op, `${GIT_REPAIRS_ROUTE}?projectId=${encodeURIComponent(project)}${paging.length === 0 ? '' : `&${paging}`}`);
+      const result = validateGitAgentRepairQueryResultWire(json, op) as GitAgentRepairListResult;
+      if (result.records.some(record => record.projectId !== project)) {
+        throw new HostProtocolError('response_malformed', op, 'GitAgent 修复响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
+      }
+      return result;
+    },
+
+    async getGitAgentRepair(projectId: string, repairId: string): Promise<GitAgentRepairDetailResult> {
+      const op = 'git.repairs.get';
+      context.assertOpen(op);
+      const project = requireProjectId(op, projectId);
+      const id = requireStableIdInput(op, repairId, 'repairId');
+      const json = await getJson(op, `${GIT_REPAIRS_ROUTE_PREFIX}${encodeURIComponent(id)}?projectId=${encodeURIComponent(project)}`);
+      const result = validateGitAgentRepairQueryResultWire(json, op) as GitAgentRepairDetailResult;
+      if (result.repair.repairId !== id || result.repair.projectId !== project) {
+        throw new HostProtocolError('response_malformed', op, 'GitAgent 修复响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
+      }
+      return result;
+    },
+
     /* ------------------------------------------------------------ *
      * P03-8 / F-010 Feature 分轴结果只读查询
      * ------------------------------------------------------------ */
@@ -3638,6 +4224,33 @@ export function createHostClientApplication(context: AppClientContext): HostClie
         throw new HostProtocolError('response_malformed', op, 'Feature 分轴结果响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
       }
       return result;
+    },
+
+    async getIntegrationPlan(projectId: string, integrationId: string): Promise<IntegrationPlanQueryResult> {
+      const op = 'integration.plan.get';
+      context.assertOpen(op);
+      const project = requireProjectId(op, projectId);
+      const id = requireStableIdInput(op, integrationId, 'integrationId');
+      const result = validateAppQueryResponse(op, await getJson(
+        op,
+        `${INTEGRATION_PLANS_ROUTE_PREFIX}${encodeURIComponent(id)}?projectId=${encodeURIComponent(project)}`,
+      ));
+      if (result.integration.integrationId !== id || result.integration.projectId !== project) {
+        throw new HostProtocolError('response_malformed', op, '集成计划响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
+      }
+      return result;
+    },
+
+    async getIntegrationDetail(projectId: string, integrationId: string): Promise<IntegrationPlanQueryResult> {
+      return this.getIntegrationPlan(projectId, integrationId);
+    },
+
+    async listIntegrationOperations(
+      projectId: string,
+      parent: GitOperationListParentInput,
+      input?: PlanListPageInput,
+    ): Promise<GitOperationListResult> {
+      return this.listGitOperations(projectId, parent, input);
     },
 
     async previewWorkspaceDiscard(

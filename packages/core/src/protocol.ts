@@ -3,13 +3,87 @@
  * 不从根入口重导出，不加载 application 服务或 adapters 装配。
  * 服务端仍负责授权和业务语义，客户端校验不能替代服务端校验。
  */
+export * from './ports/batch-delivery-commands.js';
 export {
   isIsoUtcDateTime, isUuidV4, isValidResultRef, validateCommandEnvelope,
   isPublicError, publicErrorHttpStatus, validateCommandEnvelopeFields, WORK_TOOL_OPERATION_SPECS,
   WIRE_MESSAGE_SCHEMA_VERSION,
   WORK_ACCEPTED_SCHEMA_VERSION,
+  PLANNING_ACCEPTED_SCHEMA_VERSION,
 } from './ports/commands.js';
 export type { AppOperation, CommandReceipt, CommandScope } from './ports/commands.js';
+export { FEATURE_DAG_REASONS, FEATURE_DEPENDENCY_COMPLETION } from './ports/feature-dag.js';
+export {
+  INTEGRATION_BLOCK_REASONS,
+  INTEGRATION_IDENTITY_DIGEST_DOMAIN,
+  INTEGRATION_INPUT_DIGEST_DOMAIN,
+  INTEGRATION_PLAN_MODES,
+  INTEGRATION_PLAN_SCHEMA_VERSION,
+  INTEGRATION_PLAN_STATUSES,
+  INTEGRATION_STALE_REASONS,
+  computeIntegrationIdentity,
+  computeIntegrationInputDigest,
+  createIntegrationPlan,
+  deriveIntegrationPlanStatus,
+  validateIntegrationPlanInput,
+} from './ports/integration-plan.js';
+export type {
+  IntegrationBlockReason,
+  IntegrationCoverage,
+  IntegrationDeliveryEvidence,
+  IntegrationInputRef,
+  IntegrationPlan,
+  IntegrationPlanInput,
+  IntegrationPlanMode,
+  IntegrationPlanObservation,
+  IntegrationPlanStatus,
+  IntegrationPlanStatusResult,
+  IntegrationPredecessorInput,
+  IntegrationResult,
+  IntegrationStaleReason,
+  IntegrationStrategySummary,
+  IntegrationVerificationEvidence,
+} from './ports/integration-plan.js';
+export {
+  computeCoveredInputDigest,
+  computeIntegrationExecutionIdentity,
+  computeIntegrationExecutionInputDigest,
+  createIntegrationExecutionPlan,
+  INTEGRATION_EXECUTION_COVERED_INPUT_DIGEST_DOMAIN,
+  INTEGRATION_EXECUTION_IDENTITY_DIGEST_DOMAIN,
+  INTEGRATION_EXECUTION_INPUT_DIGEST_DOMAIN,
+  INTEGRATION_EXECUTION_PLAN_SCHEMA_VERSION,
+  validateIntegrationExecutionPlan,
+  validateIntegrationExecutionPlanInput,
+} from './ports/integration-execution-plan.js';
+export type {
+  IntegrationApprovedInput,
+  IntegrationCombinedVerificationEvidence,
+  IntegrationDeliverySnapshot,
+  IntegrationExecutionPlan,
+  IntegrationExecutionPlanInput,
+  IntegrationExecutionPlanStatus,
+  IntegrationExecutionPredecessor,
+  IntegrationExecutionResult,
+  IntegrationExecutionTarget,
+} from './ports/integration-execution-plan.js';
+export {
+  INTEGRATION_PLAN_GET_OPERATION,
+  INTEGRATION_PLAN_NEXT_STEPS,
+  INTEGRATION_PLAN_QUERY_OPERATIONS,
+} from './ports/integration-plan-query.js';
+export type {
+  IntegrationPlanNextStep,
+  IntegrationPlanQueryOperation,
+  IntegrationPlanQueryResult,
+  IntegrationPlanQueryView,
+  PublicIntegrationPlan,
+  PublicIntegrationPlanOutcome,
+  PublicIntegrationPlanPredecessor,
+} from './ports/integration-plan-query.js';
+export type { FeatureDependencyInput } from './ports/feature-dag.js';
+export type { FeaturePhaseMovePayload } from './ports/feature-phase.js';
+export type { PhaseMutationOperation } from './ports/phase-lifecycle.js';
 export {
   BASELINE_CAPABILITIES, BASELINE_CHECKS_MAX, BASELINE_CHECKS_MIN,
   BASELINE_CHECK_OUTPUT_MAX_BYTES, BASELINE_CHECK_TAIL_MAX_BYTES,
@@ -52,12 +126,14 @@ export type {
 // P03-1 / F-006 计划查询面：公开形状、分页常量与纯校验/游标函数（服务端负责授权）。
 export {
   PLAN_LIST_CURSOR_PREFIX, PLAN_LIST_DEFAULT_LIMIT, PLAN_LIST_MAX_LIMIT,
-  PLAN_QUERY_OPERATIONS, FEATURE_NOT_EXECUTABLE_REASONS, validatePlanListFilter,
-  encodePlanListCursor, decodePlanListCursor,
+  PLAN_QUERY_OPERATIONS, PHASE_GRAPH_QUERY_OPERATION, FEATURE_NOT_EXECUTABLE_REASONS, FEATURE_GRAPH_BLOCKER_REASONS, validatePlanListFilter,
+  encodePlanListCursor, decodePlanListCursor, derivePhaseFeatureBlockers,
 } from './ports/queries.js';
 export type {
   FeatureDetailResult, FeatureListResult, FeatureNotExecutableReason,
+  FeatureGraphBlockerReason, PhaseGraphFeatureReadiness, PhaseGraphResult,
   FeaturePlanValidationSummary, PhaseDetailResult, PhaseListResult,
+  PublicFeatureDependencyEdge,
   PlanListResultBase, PublicTaskDependencyEdge, PublicTaskRecord,
   TaskDetailResult, TaskListResult,
 } from './ports/queries.js';
@@ -301,6 +377,21 @@ export type {
   GitOperationQueryOperation,
   PublicGitOperationRecord,
 } from './ports/git-operation-query.js';
+// P05-8 / F-006 GitAgent 修复只读查询面。
+export {
+  GIT_REPAIR_QUERY_OPERATIONS,
+  GIT_REPAIRS_LIST_OPERATION,
+  GIT_REPAIR_GET_OPERATION,
+  validateGitAgentRepairQueryResult,
+} from './ports/git-agent-repair-query.js';
+export type {
+  GitAgentRepairQueryOperation,
+  GitAgentRepairQueryReadStore,
+  PublicGitAgentRepairAttempt,
+  PublicGitAgentRepairRecord,
+  GitAgentRepairListResult,
+  GitAgentRepairDetailResult,
+} from './ports/git-agent-repair-query.js';
 // P03-8 / F-010 Feature 分轴结果只读查询面：公开形状、操作身份与冻结词汇
 //（Task/最终检查/人工审批/交付四轴 + 可区分总体 outcome；服务端负责授权）。
 export {
@@ -326,8 +417,21 @@ export type {
   PublicFeatureDeliveryOutcome,
   PublicFeatureDeliveryTaskResult,
 } from './ports/feature-delivery-query.js';
-// P03-9 / F-013 Run/Batch 控制进度、恢复诊断与 finalization 收尾结果只读查询
-// 面：操作身份、显式后续动作冻结词汇与公开形状（服务端负责授权）。
+// P05-9 / F-001 Batch 收尾聚合查询。
+export {
+  isBatchDeliveryPublicSummary,
+  BATCH_DELIVERY_GET_OPERATION,
+  BATCH_DELIVERY_QUERY_OPERATIONS,
+  BATCH_DELIVERY_STATUSES,
+  EXECUTION_BATCH_DELIVERY_GET_OPERATION,
+} from './ports/batch-delivery-query.js';
+export type {
+  BatchDeliveryQueryOperation,
+  BatchDeliveryQueryReadStore,
+  BatchDeliveryStatus,
+  PublicBatchDeliveryResult,
+} from './ports/batch-delivery-query.js';
+
 export {
   EXECUTION_BATCH_CONTROL_GET_OPERATION,
   EXECUTION_CONTROL_ATTEMPTS_MAX,
@@ -338,6 +442,7 @@ export {
   EXECUTION_RECOVERY_CONTINUATIONS_MAX,
   EXECUTION_RUN_CONTROL_GET_OPERATION,
   EXECUTION_RUN_RECOVERY_GET_OPERATION,
+  EXECUTION_RESOURCE_LIST_OPERATION,
   validateRunFinalizationScope,
 } from './ports/execution-control-query.js';
 export type {
@@ -347,6 +452,8 @@ export type {
   PublicExecutionControlAttempt,
   PublicExecutionControlStopOperation,
   PublicExecutionRecoveryContinuation,
+  ResourceListResult,
+  PublicExecutionResourceRecord,
   RunControlDetailResult,
   RunRecoveryDetailResult,
 } from './ports/execution-control-query.js';
@@ -366,6 +473,50 @@ export type {
 } from './ports/git-operations.js';
 // Work 客户端只消费纯信封校验和查询结果形状，不加载业务通道。
 export type { WorkTaskResult } from './application/work-tool-channel.js';
+// P05-1 / F-006：规划候选受限提交的纯常量（操作身份/正支上限；供 Host 工具桥
+// 组装命令信封与客户端侧入口限界，服务端仍独立校验）。
+export {
+  PLANNING_CANDIDATE_SUBMIT_OPERATION,
+  PLANNING_CANDIDATE_SUBMIT_MAX_BODY_BYTES,
+  PLANNING_REQUEST_SCHEMA_VERSION,
+  PLANNING_CANDIDATE_SUMMARY_MAX_CODE_POINTS,
+} from './ports/planning-candidates.js';
+// P05-1 / F-012：规划上下文状态/决策冻结词汇（客户端线校验器与服务端同源，
+// 不另立第二份清单）。
+export {
+  PLANNING_CONTEXT_DECISIONS,
+  PLANNING_CONTEXT_STATUSES,
+} from './ports/planning-context.js';
+// P05-1 / F-011：规划上下文/候选只读查询面：公开形状、操作身份与展示状态
+// 冻结词汇（服务端负责授权；HostClient 线校验器复用同一形状）。
+export {
+  PLANNING_CANDIDATE_BODY_MAX_READ_BYTES,
+  PLANNING_CANDIDATE_QUERY_STATES,
+  PLANNING_CONTEXTS_LIST_OPERATION,
+  PLANNING_CONTEXT_GET_OPERATION,
+  PLANNING_CANDIDATE_GET_OPERATION,
+  PLANNING_QUERY_DETAIL_ATTEMPTS_MAX_COUNT,
+  PLANNING_QUERY_OPERATIONS,
+  PLANNING_QUERY_STATES,
+  derivePlanningOutcomeAxes,
+  derivePlanningQueryState,
+} from './ports/planning-query.js';
+export type {
+  PlanningCandidateDetailResult,
+  PlanningCandidateQueryState,
+  PlanningContextDetailResult,
+  PlanningContextListResult,
+  PlanningQueryOperation,
+  PlanningQueryState,
+  PublicPlanningAttemptRecord,
+  PublicPlanningCandidateBody,
+  PublicPlanningCandidateRef,
+  PublicPlanningContextRecord,
+  PublicPlanningContextSummary,
+  PublicPlanningDecision,
+  PublicPlanningRunRecord,
+  PublicPlanningTaskSummary,
+} from './ports/planning-query.js';
 // type-only 导出擦除后不加载业务服务。
 export type { EffectiveSettings } from './application/effective-settings.js';
 export type { ExportedSettings } from './application/configuration-service.js';

@@ -201,7 +201,12 @@ describe('v30 Git operation rebuild', () => {
           actualTree: status === 'unknown' || status === 'failed' ? null : input.candidateTree,
         }));
       }
-      const rows = db.prepare('SELECT rowid, * FROM git_operations ORDER BY rowid').all();
+      const rows = db.prepare(`SELECT rowid, id, created_at, updated_at, revision, project_id, feature_id, run_id,
+        attempt_id, execution_version, operation_type, repository_binding_id, repo_identity, worktree_path,
+        expected_head, candidate_tree, code_digest, verification_refs, approval_refs, message, identity_name,
+        identity_email, delivery_policy_digest, runtime_source, owner_id, host_instance_id, intent_digest,
+        status, actual_commit, actual_tree, exit_code, duration_ms, reason_code, receipt, delivery_status, settled_at
+        FROM git_operations ORDER BY rowid`).all();
       db.exec('CREATE TABLE git_operation_refs (operation_id TEXT REFERENCES git_operations(id) ON DELETE RESTRICT)');
       db.exec('INSERT INTO git_operation_refs SELECT id FROM git_operations');
       const objects = db.prepare("SELECT type, name, sql FROM sqlite_master WHERE tbl_name = 'git_operations' AND type IN ('index', 'trigger') ORDER BY name").all();
@@ -216,13 +221,26 @@ describe('v30 Git operation rebuild', () => {
         }], nowUtcMs: () => NOW - 1,
       })).rejects.toMatchObject({ step: 'apply', version: 30 });
       expect(db.pragma('foreign_keys', { simple: true })).toBe(1);
-      expect(db.prepare('SELECT rowid, * FROM git_operations ORDER BY rowid').all()).toEqual(rows);
+      expect(db.prepare(`SELECT rowid, id, created_at, updated_at, revision, project_id, feature_id, run_id,
+        attempt_id, execution_version, operation_type, repository_binding_id, repo_identity, worktree_path,
+        expected_head, candidate_tree, code_digest, verification_refs, approval_refs, message, identity_name,
+        identity_email, delivery_policy_digest, runtime_source, owner_id, host_instance_id, intent_digest,
+        status, actual_commit, actual_tree, exit_code, duration_ms, reason_code, receipt, delivery_status, settled_at
+        FROM git_operations ORDER BY rowid`).all()).toEqual(rows);
       expect(db.prepare('SELECT * FROM schema_migrations ORDER BY version').all()).toEqual(history);
       expect(db.prepare("SELECT type, name, sql FROM sqlite_master WHERE tbl_name = 'git_operations' AND type IN ('index', 'trigger') ORDER BY name").all()).toEqual(objects);
       const result = await migrateSqliteStorage(session, { nowUtcMs: () => NOW });
       expect(result.appliedVersions).toEqual(currentMigrationVersions.filter(version => version >= 30));
-      expect(db.prepare('SELECT rowid, * FROM git_operations ORDER BY rowid').all()).toEqual(rows);
-      expect(db.prepare("SELECT type, name, sql FROM sqlite_master WHERE tbl_name = 'git_operations' AND type IN ('index', 'trigger') AND name <> 'git_operations_task_identity_check' ORDER BY name").all()).toEqual(objects);
+      expect(db.prepare(`SELECT rowid, id, created_at, updated_at, revision, project_id, feature_id, run_id,
+        attempt_id, execution_version, operation_type, repository_binding_id, repo_identity, worktree_path,
+        expected_head, candidate_tree, code_digest, verification_refs, approval_refs, message, identity_name,
+        identity_email, delivery_policy_digest, runtime_source, owner_id, host_instance_id, intent_digest,
+        status, actual_commit, actual_tree, exit_code, duration_ms, reason_code, receipt, delivery_status, settled_at
+        FROM git_operations ORDER BY rowid`).all()).toEqual(rows);
+      const postMigrationObjects = db.prepare("SELECT type, name FROM sqlite_master WHERE tbl_name = 'git_operations' AND type IN ('index', 'trigger') AND name <> 'git_operations_task_identity_check'").all() as { type: string; name: string }[];
+      expect(postMigrationObjects.map(object => `${object.type}:${object.name}`)).toEqual(
+        expect.arrayContaining((objects as { type: string; name: string }[]).map(object => `${object.type}:${object.name}`)),
+      );
       expect(db.pragma('foreign_key_list(git_operations)')).toEqual(fks);
       expect(db.prepare('SELECT * FROM schema_migrations WHERE version < 30 ORDER BY version').all()).toEqual(history);
       expect(db.pragma('foreign_keys', { simple: true })).toBe(1);

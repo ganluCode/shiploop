@@ -1,0 +1,23 @@
+{
+  "schema_version": 2,
+  "task_id": "F-013",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/planning/p05-1-f013-planning-cli.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/planning/p03-1-plan-cli.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/planning/p05-1-f012-planning-host-wiring.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "schema_version": 2,
+  "task_id": "F-003",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/scheduling/p05-5-f001-feature-resources.test.ts", "all": true },
+      { "file": "test/modules/scheduling/p05-5-f002-feature-resource-sqlite.test.ts", "all": true },
+      { "file": "test/modules/scheduling/p05-5-f003-feature-dispatch-resources.test.ts", "all": true },
+      { "file": "test/modules/scheduling/p04-9-f005-persistent-dispatch.test.ts", "all": true },
+      { "file": "test/modules/execution/dispatch/p04-9-f010-dispatch-vertical.test.ts", "all": true }
+    ]
+  }]
+}

@@ -2,6 +2,10 @@ import { validateWorkProcessIdentity } from './work-resources.js';
 import type { CommandProcessIdentity } from './command-process.js';
 import { validateRuntimeFallbackAttemptMetadata, type RuntimeFallbackAttemptMetadata } from './runtime-fallback-switch.js';
 import type { PreparedExecutionInputGroup, ExecutionInputGroupBodyRef } from './execution-input-prepare.js';
+import {
+  validatePlanningAttemptInputSnapshot,
+  type PlanningAttemptInputSnapshot,
+} from './planning-claim.js';
 import { CONTEXT_INPUT_SUPPORTED_SCHEMA_VERSIONS, isContextBuildError, validateContextReworkInput, type ContextReworkInput } from './context-build.js';
 import { validateWorkRecoveryContinuationRecord } from './work-recovery-continuation.js';
 import type { WorkRecoveryContinuationRecord } from './work-recovery-continuation.js';
@@ -42,8 +46,10 @@ export interface AttemptRecord {
   readonly leaseUntilUtcMs: number;
   readonly status: AttemptStatus;
   readonly executionStage: AttemptExecutionStage;
-  /** Frozen P03-2 prepared group identity; bodies live in immutable Artifacts. */
-  readonly inputSnapshot: PreparedExecutionInputGroup;
+  /** Frozen prepared input group identity; bodies live in immutable Artifacts.
+   *  P05-1 / F-005：编码与规划判别（planning 快照携带 purpose='planning'，
+   *  不携带业务计划批准身份）。 */
+  readonly inputSnapshot: AttemptInputSnapshot;
   readonly inputDigest: string;
   readonly inputRef: string;
   /** Core identities, never SDK requestId/providerSessionId aliases. No Session table here. */
@@ -85,9 +91,9 @@ export interface AttemptStore {
   getAttempt(projectId: unknown, attemptId: unknown): AttemptRecord;
   listTaskAttempts(projectId: unknown, taskId: unknown): readonly AttemptRecord[];
   /** P03-9 / F-003：取消目标下的活动 Attempt（preparing/executing/verifying）。 */
-  listActiveAttempts(projectId: unknown, targetKind: 'run' | 'batch', targetId: unknown): readonly AttemptRecord[];
+  listActiveAttempts(projectId: unknown, targetKind: 'run' | 'batch' | 'feature', targetId: unknown): readonly AttemptRecord[];
   /** P03-9 / F-003：取消目标下仍持有 workspace 租约的 Attempt（含已结束但占用未收尾）。 */
-  listAttemptsWithLeases(projectId: unknown, targetKind: 'run' | 'batch', targetId: unknown): readonly AttemptRecord[];
+  listAttemptsWithLeases(projectId: unknown, targetKind: 'run' | 'batch' | 'feature', targetId: unknown): readonly AttemptRecord[];
   listWorkspaceLeases(projectId: unknown): readonly WorkspaceLeaseRecord[];
 }
 
@@ -131,8 +137,23 @@ function bodyRef(value: unknown, field: string): ExecutionInputGroupBodyRef {
     locator: validateArtifactLocator(raw.locator, context, `${field}.locator`), mediaType: text(raw.mediaType, `${field}.mediaType`) };
 }
 
-/** Reuses the prepared input contract; no inline content, credential or arbitrary JSON fields. */
-export function validateAttemptInputSnapshot(value: unknown): PreparedExecutionInputGroup {
+/** Attempt 冻结输入快照：编码（PreparedExecutionInputGroup）或规划（P05-1/F-005）判别。 */
+export type AttemptInputSnapshot = PreparedExecutionInputGroup | PlanningAttemptInputSnapshot;
+
+/** 判别 planning Attempt 输入快照（编码快照恒 false）。 */
+export function isPlanningAttemptSnapshot(
+  snapshot: AttemptInputSnapshot,
+): snapshot is PlanningAttemptInputSnapshot {
+  return (snapshot as { purpose?: unknown }).purpose === 'planning';
+}
+
+/** Reuses the prepared input contract; no inline content, credential or arbitrary JSON fields.
+ *  P05-1 / F-005：planning 快照按独立契约校验（purpose 判别；不要求业务计划批准身份）。 */
+export function validateAttemptInputSnapshot(value: unknown): AttemptInputSnapshot {
+  const probe = requirePlainObject(value, context, 'inputSnapshot');
+  if (probe['purpose'] !== undefined) {
+    return validatePlanningAttemptInputSnapshot(value);
+  }
   const raw = object(value, ['schemaVersion', 'projectId', 'featureId', 'taskId', 'group', 'requiredInputs',
     'digests', 'approval', 'taskRevision', 'promptBytes', 'tokenEstimate', 'preparedAtUtcMs', 'rework', 'recovery', 'runtimeFallback'], 'inputSnapshot');
   // 历史快照不随 ContextBuilder 升版失效：v1/v2 历史快照与当前版本均可读回，未知版本拒绝。

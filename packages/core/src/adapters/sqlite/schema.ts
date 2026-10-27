@@ -9,7 +9,8 @@
  * attempts/sessions/chat 等后续表随对应功能以新迁移版本增加，不在本 Schema 出现。
  * P01-3 / F-006 起加入 state_events（迁移 v2），P02-2 / F-006 起加入
  * command_receipts（迁移 v3，见下方表注释）；P02-3 / F-007 起加入基线作用域
- * 四表（迁移 v4，见下方表注释）；P03-3 / F-002 起加入单 Feature 执行域三表
+ * 四表（迁移 v4，见下方表注释）；P05-2 / F-001 起加入 Feature DAG 的
+ * feature_dependencies（迁移 v37）；P03-3 / F-002 起加入单 Feature 执行域三表
  * execution_batches/runs/batch_budget_revisions（迁移 v9，见下方表注释）。
  *
  * 与手写迁移 DDL（./migrations.ts）的一致性由 test/modules/storage/sqlite/sqlite-schema-migrations.test.ts
@@ -319,6 +320,9 @@ export const commandReceipts = sqliteTable('command_receipts', {
   ),
   batchId: text('batch_id'),
   runId: text('run_id'),
+  /** P05-1 / F-003（迁移 v36）：planning.start accepted v7 的 planning Task/候选身份；其余恒 NULL。 */
+  planningTaskId: text('planning_task_id'),
+  candidateId: text('candidate_id'),
   /** completed：有界业务结果 JSON（序列化 ≤ 16384 字节）。 */
   resultJson: text('result_json'),
   /** completed：不透明结果引用（v1.+43 字符 base64url；全库唯一）。 */
@@ -356,7 +360,7 @@ export const commandReceipts = sqliteTable('command_receipts', {
   ),
   check(
     'command_receipts_association_check',
-    sql`(${table.receiptVersion} = 5 AND ${table.batchId} IS NULL AND ${table.runId} IS NULL) OR (${table.receiptVersion} = 6 AND ${table.operation} = 'execution.start' AND ${table.status} = 'accepted' AND ${table.scopeKind} = 'project' AND ${table.batchId} IS NOT NULL AND ${table.runId} IS NOT NULL AND ${table.operationId} = ${table.batchId} AND ${table.errorMessage} IS NULL AND ${table.errorDetails} IS NULL)`,
+    sql`(${table.receiptVersion} = 5 AND ${table.batchId} IS NULL AND ${table.runId} IS NULL AND ${table.planningTaskId} IS NULL AND ${table.candidateId} IS NULL) OR (${table.receiptVersion} = 6 AND ${table.operation} = 'execution.start' AND ${table.status} = 'accepted' AND ${table.scopeKind} = 'project' AND ${table.batchId} IS NOT NULL AND ${table.runId} IS NOT NULL AND ${table.operationId} = ${table.batchId} AND ${table.planningTaskId} IS NULL AND ${table.candidateId} IS NULL AND ${table.errorMessage} IS NULL AND ${table.errorDetails} IS NULL) OR (${table.receiptVersion} = 7 AND ${table.operation} = 'planning.start' AND ${table.status} = 'accepted' AND ${table.scopeKind} = 'project' AND ${table.batchId} IS NOT NULL AND ${table.runId} IS NOT NULL AND ${table.planningTaskId} IS NOT NULL AND ${table.candidateId} IS NOT NULL AND ${table.operationId} = ${table.batchId} AND ${table.errorMessage} IS NULL AND ${table.errorDetails} IS NULL)`,
   ),
   check(
     'command_receipts_digest_check',
@@ -387,6 +391,14 @@ export const commandReceipts = sqliteTable('command_receipts', {
     name: 'command_receipts_work_run_fk',
     columns: [table.projectId, table.batchId, table.runId],
     foreignColumns: [runs.projectId, runs.batchId, runs.id],
+  }).onDelete('restrict'),
+  // P05-1 / F-003（迁移 v36）：v7 规划接受回执的候选身份指向同项目规划上下文
+  // （planning_contexts 的 (project_id, candidate_id) 唯一索引；惰性引用避免
+  // 模块定义顺序依赖）。
+  foreignKey({
+    name: 'command_receipts_planning_context_fk',
+    columns: [table.projectId, table.candidateId],
+    foreignColumns: [planningContexts.projectId, planningContexts.candidateId],
   }).onDelete('restrict'),
 ]);
 
@@ -585,10 +597,19 @@ export const phases = sqliteTable('phases', {
   description: text('description'),
   /** 阶段标签 JSON 数组；默认 []，不向 Feature/Task 继承。 */
   labels: text('labels').notNull().default('[]'),
+  /** 阶段交付状态；批准不改变 Phase 生命周期 status。 */
+  deliveryStatus: text('delivery_status').notNull().default('not_requested'),
+  /** 当前生效的人工批准记录引用；批准/失效由 Core 原子更新。 */
+  deliveryApprovalId: text('delivery_approval_id'),
+  deliveryCandidateId: text('delivery_candidate_id'),
+  deliveryBatchId: text('delivery_batch_id'),
+  deliverySummaryDigest: text('delivery_summary_digest'),
 }, (table) => [
   check('phases_revision_positive_check', sql`${table.revision} >= 1`),
   check('phases_title_not_empty_check', sql`length(${table.title}) > 0`),
   check('phases_status_enum_check', sql`${table.status} IN ('open', 'closed', 'archived')`),
+  check('phases_delivery_status_enum_check', sql`${table.deliveryStatus} IN ('not_requested', 'awaiting_approval', 'approved', 'invalidated')`),
+  check('phases_delivery_summary_digest_check', sql`${table.deliverySummaryDigest} IS NULL OR (length(${table.deliverySummaryDigest}) = 64 AND ${table.deliverySummaryDigest} NOT GLOB '*[^0-9a-f]*')`),
   check(
     'phases_labels_json_array_check',
     sql`json_valid(${table.labels}) AND json_type(${table.labels}) = 'array'`,
@@ -841,6 +862,63 @@ export const taskDependencies = sqliteTable('task_dependencies', {
 ]);
 
 /**
+ * P05-2 / F-001 Feature DAG 依赖边（迁移 v37）。
+ *
+ * 依赖边必须属于同一项目、同一 Phase，且两端都是该 Phase 的 Feature；简单外键
+ * 保证实体存在，复合外键防止直接 SQL 伪造项目/Phase 归属。自依赖和重复边由
+ * CHECK/唯一索引拒绝；环检测属于依赖写入原语的事务校验，不在 SQLite DDL 中复制。
+ * code_baseline_ref 是可选的前置代码集成基线引用，不承载 Batch/Run/Attempt 状态。
+ */
+export const featureDependencies = sqliteTable('feature_dependencies', {
+  id: text('id').primaryKey(),
+  createdAt: integer('created_at').notNull(),
+  /** 依赖边插后不可变；计划修订在 Phase/Feature 聚合事务内整体替换。 */
+  revision: integer('revision').notNull().default(1),
+  updatedAt: integer('updated_at').notNull(),
+  projectId: text('project_id')
+    .notNull()
+    .references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  phaseId: text('phase_id')
+    .notNull()
+    .references((): SQLiteColumn => phases.id, { onDelete: 'restrict' }),
+  featureId: text('feature_id')
+    .notNull()
+    .references((): SQLiteColumn => features.id, { onDelete: 'restrict' }),
+  dependsOnId: text('depends_on_id')
+    .notNull()
+    .references((): SQLiteColumn => features.id, { onDelete: 'restrict' }),
+  /** 可选的前置代码集成基线引用；业务依赖身份与 Git 集成事实分开保存。 */
+  codeBaselineRef: text('code_baseline_ref'),
+}, (table) => [
+  check('feature_dependencies_revision_positive_check', sql`${table.revision} >= 1`),
+  check(
+    'feature_dependencies_no_self_dependency_check',
+    sql`${table.featureId} <> ${table.dependsOnId}`,
+  ),
+  foreignKey({
+    name: 'feature_dependencies_phase_same_project_fk',
+    columns: [table.projectId, table.phaseId],
+    foreignColumns: [phases.projectId, phases.id],
+  }).onDelete('restrict'),
+  foreignKey({
+    name: 'feature_dependencies_feature_same_phase_fk',
+    columns: [table.projectId, table.phaseId, table.featureId],
+    foreignColumns: [features.projectId, features.phaseId, features.id],
+  }).onDelete('restrict'),
+  foreignKey({
+    name: 'feature_dependencies_depends_on_same_phase_fk',
+    columns: [table.projectId, table.phaseId, table.dependsOnId],
+    foreignColumns: [features.projectId, features.phaseId, features.id],
+  }).onDelete('restrict'),
+  uniqueIndex('feature_dependencies_phase_edge_unique').on(
+    table.phaseId,
+    table.featureId,
+    table.dependsOnId,
+  ),
+  index('feature_dependencies_phase_depends_on_index').on(table.phaseId, table.dependsOnId),
+]);
+
+/**
  * 计划批准/拒绝决策记录（P03-2 / F-002 迁移 v7；设计 11 §7 approvals）。
  *
  * subject_type 冻结为 'feature_plan'（subject_id 即 Feature 稳定 ID）；决策绑定
@@ -995,11 +1073,10 @@ export const executionBatches = sqliteTable('execution_batches', {
     'execution_batches_scope_snapshot_json_check',
     sql`json_valid(${table.scopeSnapshot}) AND json_type(${table.scopeSnapshot}) = 'object'`,
   ),
-  // 恰一个 Feature 的不可变范围：featureIds 必须是恰含一个成员的 JSON 数组。
-  // 缺失键时 json_type 为 NULL，必须以 IS 判定显式失败（CHECK 对 NULL 视为通过）。
+  // 固定范围至少包含一个 Feature；成员与 Batch 的一致性由 v38 成员表及触发器保证。
   check(
-    'execution_batches_scope_single_feature_check',
-    sql`json_type(${table.scopeSnapshot}, '$.featureIds') IS 'array' AND json_array_length(${table.scopeSnapshot}, '$.featureIds') = 1`,
+    'execution_batches_scope_members_check',
+    sql`json_type(${table.scopeSnapshot}, '$.featureIds') IS 'array' AND json_array_length(${table.scopeSnapshot}, '$.featureIds') >= 1`,
   ),
   check(
     'execution_batches_config_snapshot_json_check',
@@ -1017,14 +1094,14 @@ export const executionBatches = sqliteTable('execution_batches', {
   check('execution_batches_deadline_at_positive_check', sql`${table.deadlineAt} >= 1`),
   check('execution_batches_pause_requested_at_non_negative_check',
     sql`${table.pauseRequestedAt} IS NULL OR (typeof(${table.pauseRequestedAt}) = 'integer' AND ${table.pauseRequestedAt} >= 1)`),
-  // 同项目复合外键 + Phase/Feature 归属一致：伪造归属的直接 SQL 被拒绝。
+  // P04 兼容锚点仍必须属于有效 Feature；完整多成员范围由成员表固定。
   foreignKey({
-    name: 'execution_batches_feature_phase_same_project_fk',
-    columns: [table.projectId, table.phaseId, table.featureId],
-    foreignColumns: [features.projectId, features.phaseId, features.id],
+    name: 'execution_batches_feature_same_project_fk',
+    columns: [table.projectId, table.featureId],
+    foreignColumns: [features.projectId, features.id],
   }).onDelete('restrict'),
   uniqueIndex('execution_batches_project_id_id_unique').on(table.projectId, table.id),
-  // runs(batch_id,feature_id) 复合外键目标：Run 必须落在单 Feature 范围内。
+  // 成员表以 (project_id,batch_id,feature_id) 为 Run 的范围目标。
   uniqueIndex('execution_batches_id_feature_id_unique').on(table.id, table.featureId),
   // 同 Phase 有效活动 Batch 唯一（paused/interrupted 不是可绕过的终态）。
   uniqueIndex('execution_batches_active_phase_unique')
@@ -1034,18 +1111,45 @@ export const executionBatches = sqliteTable('execution_batches', {
     ),
 ]);
 
+/** P05-3 / F-001：Batch 创建时一次性冻结的成员关系（迁移 v38）。 */
+export const executionBatchMembers = sqliteTable('execution_batch_members', {
+  id: text('id').primaryKey(),
+  createdAt: integer('created_at').notNull(),
+  projectId: text('project_id').notNull().references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  batchId: text('batch_id').notNull(),
+  phaseId: text('phase_id').notNull(),
+  featureId: text('feature_id').notNull(),
+  memberOrdinal: integer('member_ordinal').notNull(),
+}, (table) => [
+  check('execution_batch_members_created_at_check', sql`typeof(${table.createdAt}) = 'integer' AND ${table.createdAt} >= 0`),
+  check('execution_batch_members_ordinal_check', sql`typeof(${table.memberOrdinal}) = 'integer' AND ${table.memberOrdinal} >= 1`),
+  foreignKey({
+    name: 'execution_batch_members_batch_fk',
+    columns: [table.projectId, table.batchId],
+    foreignColumns: [executionBatches.projectId, executionBatches.id],
+  }).onDelete('restrict'),
+  foreignKey({
+    name: 'execution_batch_members_feature_fk',
+    columns: [table.projectId, table.phaseId, table.featureId],
+    foreignColumns: [features.projectId, features.phaseId, features.id],
+  }).onDelete('restrict'),
+  uniqueIndex('execution_batch_members_batch_feature_unique').on(table.projectId, table.batchId, table.featureId),
+  uniqueIndex('execution_batch_members_batch_ordinal_unique').on(table.batchId, table.memberOrdinal),
+  uniqueIndex('execution_batch_members_project_id_id_unique').on(table.projectId, table.id),
+  index('execution_batch_members_batch_index').on(table.projectId, table.batchId, table.memberOrdinal),
+]);
+
 /**
  * P03-3 / F-002 Run（迁移 v9；core-design/11 §5 runs）。
  *
- * - 引用同项目 Batch 与 Feature，且 (batch_id,feature_id) 复合外键保证落在父 Batch
- *   的单 Feature 范围内；
+ * - 引用同项目 Batch 与 Feature；v38 后 (project_id,batch_id,feature_id) 复合外键
+ *   改为引用 execution_batch_members，保证 Run 属于父 Batch 的固定成员；
  * - 保存 purpose、workKey、dispatchOrdinal（派发身份 UNIQUE(batch_id,work_key,
  *   dispatch_ordinal)）、输入快照与配置快照（不可变）、Run 上限（max_attempts_per_run/
  *   run_time_limit_ms，派发时冻结，精确范围归 ports/execution-budget 契约）与时间
  *   依据（started_at 设定后不可改，ended_at 收尾记录）；
  * - 条件唯一：同 Feature 有效活动 Run 唯一（部分唯一索引；活动集含
- *   paused/interrupted）；
- * - 不可变列由迁移 v9 触发器保护（同 executionBatches 注释）。
+ *   paused/interrupted）。
  */
 export const runs = sqliteTable('runs', {
   id: text('id').primaryKey(),
@@ -1129,11 +1233,11 @@ export const runs = sqliteTable('runs', {
     columns: [table.projectId, table.featureId],
     foreignColumns: [features.projectId, features.id],
   }).onDelete('restrict'),
-  // 单 Feature 范围：Run 的 Feature 必须是父 Batch 的同一 Feature。
+  // Run 必须引用父 Batch 的固定成员，而不是兼容锚点 feature_id。
   foreignKey({
-    name: 'runs_batch_feature_same_scope_fk',
-    columns: [table.batchId, table.featureId],
-    foreignColumns: [executionBatches.id, executionBatches.featureId],
+    name: 'runs_batch_member_same_scope_fk',
+    columns: [table.projectId, table.batchId, table.featureId],
+    foreignColumns: [executionBatchMembers.projectId, executionBatchMembers.batchId, executionBatchMembers.featureId],
   }).onDelete('restrict'),
   // 派发身份唯一（重复派发在 DDL 级被拒绝；失败重试以递增 dispatch_ordinal 表达）。
   uniqueIndex('runs_project_id_id_unique').on(table.projectId, table.id),
@@ -1166,6 +1270,7 @@ export const executionStopOperations = sqliteTable('execution_stop_operations', 
   targetKind: text('target_kind').notNull(),
   targetId: text('target_id').notNull(),
   batchId: text('batch_id').notNull(),
+  featureId: text('feature_id'),
   runId: text('run_id'),
   reason: text('reason').notNull(),
   status: text('status').notNull(),
@@ -1178,12 +1283,13 @@ export const executionStopOperations = sqliteTable('execution_stop_operations', 
   checkedAt: integer('checked_at'),
 }, (table) => [
   check('execution_stop_operations_revision_check', sql`${table.revision} >= 1`),
-  check('execution_stop_operations_target_kind_check', sql`${table.targetKind} IN ('run', 'batch')`),
+  check('execution_stop_operations_target_kind_check', sql`${table.targetKind} IN ('run', 'batch', 'feature')`),
   check('execution_stop_operations_status_check', sql`${table.status} IN ('stopping', 'stopped', 'uncertain')`),
   check('execution_stop_operations_reason_check', sql`${table.reason} = 'user_cancel'`),
   check('execution_stop_operations_target_shape_check', sql`
-    (${table.targetKind} = 'run' AND ${table.runId} = ${table.targetId})
-    OR (${table.targetKind} = 'batch' AND ${table.runId} IS NULL)`),
+    (${table.targetKind} = 'run' AND ${table.runId} = ${table.targetId} AND ${table.featureId} IS NULL)
+    OR (${table.targetKind} = 'batch' AND ${table.runId} IS NULL AND ${table.featureId} IS NULL)
+    OR (${table.targetKind} = 'feature' AND ${table.runId} IS NULL AND ${table.featureId} = ${table.targetId})`),
   check('execution_stop_operations_times_check', sql`
     typeof(${table.createdAt}) = 'integer' AND ${table.createdAt} >= 1
     AND typeof(${table.updatedAt}) = 'integer' AND ${table.updatedAt} >= 1
@@ -1196,6 +1302,8 @@ export const executionStopOperations = sqliteTable('execution_stop_operations', 
   check('execution_stop_operations_checked_at_check', sql`${table.checkedAt} IS NULL OR (typeof(${table.checkedAt}) = 'integer' AND ${table.checkedAt} >= 1)`),
   foreignKey({ name: 'execution_stop_operations_batch_fk', columns: [table.projectId, table.batchId],
     foreignColumns: [executionBatches.projectId, executionBatches.id] }).onDelete('restrict'),
+  foreignKey({ name: 'execution_stop_operations_feature_fk', columns: [table.projectId, table.featureId],
+    foreignColumns: [features.projectId, features.id] }).onDelete('restrict'),
   foreignKey({ name: 'execution_stop_operations_run_fk', columns: [table.projectId, table.runId],
     foreignColumns: [runs.projectId, runs.id] }).onDelete('restrict'),
   uniqueIndex('execution_stop_operations_project_id_id_unique').on(table.projectId, table.id),
@@ -1486,7 +1594,7 @@ export const workspaceLeases = sqliteTable('workspace_leases', {
   check('workspace_leases_lease_check', sql`typeof(${table.leaseUntil}) = 'integer' AND ${table.leaseUntil} >= 0`),
   check('workspace_leases_process_check', sql`${table.processIdentity} IS NULL OR (json_valid(${table.processIdentity}) AND json_type(${table.processIdentity}) = 'object')`),
   foreignKey({ name: 'workspace_leases_attempt_fk', columns: [table.projectId, table.ownerId], foreignColumns: [attempts.projectId, attempts.id] }).onDelete('restrict'),
-  uniqueIndex('workspace_leases_resource_key_unique').on(table.resourceKey),
+  index('workspace_leases_resource_key_index').on(table.resourceKey),
   index('workspace_leases_owner_id_index').on(table.ownerId),
 ]);
 
@@ -1585,6 +1693,56 @@ export const workspaceOperations = sqliteTable('workspace_operations', {
   uniqueIndex('workspace_operations_principal_command_unique').on(table.principalId, table.commandId),
   uniqueIndex('workspace_operations_project_id_id_unique').on(table.projectId, table.id),
   index('workspace_operations_project_created_index').on(table.projectId, table.createdAt, table.id),
+]);
+
+export const featureResourceLeases = sqliteTable('feature_resource_leases', {
+  id: text('id').primaryKey(),
+  createdAt: integer('created_at').notNull(),
+  projectId: text('project_id').notNull().references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  revision: integer('revision').notNull().default(1),
+  updatedAt: integer('updated_at').notNull(),
+  resourceKey: text('resource_key').notNull(),
+  resourceKind: text('resource_kind').notNull(),
+  accessMode: text('access_mode').notNull(),
+  leaseMode: text('lease_mode').notNull(),
+  ownerId: text('owner_id').notNull(),
+  ownerVersion: integer('owner_version').notNull(),
+  acquiredAt: integer('acquired_at').notNull(),
+  leaseUntil: integer('lease_until').notNull(),
+  state: text('state').notNull().default('held'),
+  waitingReason: text('waiting_reason'),
+  releasedAt: integer('released_at'),
+}, (table) => [
+  check('feature_resource_leases_revision_check', sql`${table.revision} >= 1`),
+  check('feature_resource_leases_resource_check', sql`length(${table.resourceKey}) BETWEEN 1 AND 256`),
+  check('feature_resource_leases_kind_check', sql`${table.resourceKind} IN ('planning_exclusive', 'feature_code_shared', 'worktree_write_exclusive', 'git_public_metadata_short', 'migration', 'contract')`),
+  check('feature_resource_leases_mode_check', sql`${table.accessMode} IN ('exclusive', 'shared') AND ${table.leaseMode} IN ('lease', 'short')`),
+  check('feature_resource_leases_semantics_check', sql`
+    (${table.resourceKind} = 'feature_code_shared' AND ${table.accessMode} = 'shared' AND ${table.leaseMode} = 'lease')
+    OR (${table.resourceKind} <> 'feature_code_shared' AND ${table.accessMode} = 'exclusive'
+      AND ((${table.resourceKind} = 'git_public_metadata_short' AND ${table.leaseMode} = 'short')
+        OR (${table.resourceKind} <> 'git_public_metadata_short' AND ${table.leaseMode} = 'lease')))`),
+  check('feature_resource_leases_owner_check', sql`length(${table.ownerId}) BETWEEN 1 AND 128 AND typeof(${table.ownerVersion}) = 'integer' AND ${table.ownerVersion} >= 1`),
+  check('feature_resource_leases_times_check', sql`typeof(${table.createdAt}) = 'integer' AND ${table.createdAt} >= 0
+    AND typeof(${table.updatedAt}) = 'integer' AND ${table.updatedAt} >= 0
+    AND typeof(${table.acquiredAt}) = 'integer' AND ${table.acquiredAt} >= 0
+    AND typeof(${table.leaseUntil}) = 'integer' AND ${table.leaseUntil} >= ${table.acquiredAt}`),
+  check('feature_resource_leases_state_check', sql`${table.state} IN ('held', 'quarantined', 'released')`),
+  check('feature_resource_leases_waiting_reason_check', sql`${table.waitingReason} IS NULL OR (json_valid(${table.waitingReason}) AND json_type(${table.waitingReason}) = 'object'
+    AND json_type(${table.waitingReason}, '$.code') = 'text' AND json_type(${table.waitingReason}, '$.resourceKey') = 'text'
+    AND json_extract(${table.waitingReason}, '$.resourceKey') = ${table.resourceKey})`),
+  check('feature_resource_leases_settlement_check', sql`
+    (${table.state} = 'held' AND ${table.waitingReason} IS NULL AND ${table.releasedAt} IS NULL)
+    OR (${table.state} = 'quarantined' AND ${table.waitingReason} IS NOT NULL AND ${table.releasedAt} IS NULL)
+    OR (${table.state} = 'released' AND ${table.waitingReason} IS NULL AND ${table.releasedAt} IS NOT NULL AND ${table.releasedAt} >= ${table.acquiredAt})`),
+  uniqueIndex('feature_resource_leases_active_exclusive_unique')
+    .on(table.projectId, table.resourceKey)
+    .where(sql`${table.state} IN ('held', 'quarantined') AND ${table.accessMode} = 'exclusive'`),
+  uniqueIndex('feature_resource_leases_active_shared_owner_unique')
+    .on(table.projectId, table.resourceKey, table.ownerId, table.ownerVersion)
+    .where(sql`${table.state} IN ('held', 'quarantined') AND ${table.accessMode} = 'shared'`),
+  index('feature_resource_leases_project_state_index').on(table.projectId, table.state, table.updatedAt),
+  index('feature_resource_leases_owner_index').on(table.projectId, table.ownerId, table.ownerVersion),
 ]);
 
 export const schemaMigrations = sqliteTable('schema_migrations', {
@@ -1906,6 +2064,8 @@ export const gitOperations = sqliteTable('git_operations', {
   worktreePath: text('worktree_path').notNull(),
   expectedHead: text('expected_head').notNull(),
   candidateTree: text('candidate_tree').notNull(),
+  integrationPlan: text('integration_plan'),
+  budgetSnapshot: text('budget_snapshot'),
   codeDigest: text('code_digest').notNull(),
   verificationRefs: text('verification_refs').notNull(),
   approvalRefs: text('approval_refs').notNull(),
@@ -1924,12 +2084,15 @@ export const gitOperations = sqliteTable('git_operations', {
   durationMs: integer('duration_ms'),
   reasonCode: text('reason_code'),
   receipt: text('receipt'),
+  integrationResult: text('integration_result'),
+  recoveryState: text('recovery_state').notNull().default('none'),
+  workspacePreserved: integer('workspace_preserved').notNull().default(0),
   deliveryStatus: text('delivery_status'),
   settledAt: integer('settled_at'),
 }, (table) => [
   check('git_operations_revision_check', sql`${table.revision} >= 1`),
   check('git_operations_version_check', sql`typeof(${table.executionVersion}) = 'integer' AND ${table.executionVersion} >= 1`),
-  check('git_operations_type_check', sql`${table.operationType} IN ('feature_final_commit', 'task_commit')`),
+  check('git_operations_type_check', sql`${table.operationType} IN ('feature_final_commit', 'task_commit', 'integration', 'integration_commit')`),
   check('git_operations_task_attempt_check', sql`${table.operationType} <> 'task_commit' OR ${table.attemptId} IS NOT NULL`),
   check('git_operations_oid_check', sql`
     (length(${table.expectedHead}) IN (40, 64) AND ${table.expectedHead} NOT GLOB '*[^0-9a-f]*')
@@ -1952,6 +2115,10 @@ export const gitOperations = sqliteTable('git_operations', {
   check('git_operations_duration_check', sql`${table.durationMs} IS NULL OR (typeof(${table.durationMs}) = 'integer' AND ${table.durationMs} >= 0)`),
   check('git_operations_reason_check', sql`${table.reasonCode} IS NULL OR ${table.reasonCode} GLOB '[a-z]*' AND length(${table.reasonCode}) <= 64 AND ${table.reasonCode} NOT GLOB '*[^a-z0-9_]*'`),
   check('git_operations_receipt_check', sql`${table.receipt} IS NULL OR (json_valid(${table.receipt}) AND json_type(${table.receipt}) = 'object')`),
+  check('git_operations_integration_plan_check', sql`${table.integrationPlan} IS NULL OR (json_valid(${table.integrationPlan}) AND json_type(${table.integrationPlan}) = 'object')`),
+  check('git_operations_budget_snapshot_check', sql`${table.budgetSnapshot} IS NULL OR (json_valid(${table.budgetSnapshot}) AND json_type(${table.budgetSnapshot}) = 'object')`),
+  check('git_operations_integration_result_check', sql`${table.integrationResult} IS NULL OR (json_valid(${table.integrationResult}) AND json_type(${table.integrationResult}) = 'object')`),
+  check('git_operations_recovery_check', sql`${table.recoveryState} IN ('none', 'resumable', 'preserved', 'cleaned', 'quarantined') AND ${table.workspacePreserved} IN (0, 1)`),
   check('git_operations_times_check', sql`
     typeof(${table.createdAt}) = 'integer' AND ${table.createdAt} >= 0
     AND typeof(${table.updatedAt}) = 'integer' AND ${table.updatedAt} >= 0
@@ -1960,13 +2127,15 @@ export const gitOperations = sqliteTable('git_operations', {
     (${table.status} = 'pending' AND ${table.actualCommit} IS NULL AND ${table.actualTree} IS NULL AND ${table.exitCode} IS NULL
       AND ${table.durationMs} IS NULL AND ${table.reasonCode} IS NULL AND ${table.receipt} IS NULL
       AND ${table.deliveryStatus} IS NULL AND ${table.settledAt} IS NULL)
-    OR (${table.status} = 'succeeded' AND ${table.actualCommit} IS NOT NULL AND ${table.actualTree} = ${table.candidateTree}
-      AND ${table.receipt} IS NOT NULL AND ${table.deliveryStatus} = CASE WHEN ${table.operationType} = 'task_commit' THEN 'not_requested' ELSE 'succeeded' END AND ${table.settledAt} IS NOT NULL)
+    OR (${table.status} = 'succeeded' AND ${table.actualCommit} IS NOT NULL
+      AND ((${table.operationType} IN ('integration', 'integration_commit') AND ${table.actualTree} IS NOT NULL AND ${table.integrationResult} IS NOT NULL)
+        OR (${table.operationType} NOT IN ('integration', 'integration_commit') AND ${table.actualTree} = ${table.candidateTree}))
+      AND ${table.receipt} IS NOT NULL AND ${table.deliveryStatus} = CASE WHEN ${table.operationType} IN ('task_commit', 'integration', 'integration_commit') THEN 'not_requested' ELSE 'succeeded' END AND ${table.settledAt} IS NOT NULL)
     OR (${table.status} = 'no_change' AND ${table.actualCommit} = ${table.expectedHead} AND ${table.actualTree} IS NOT NULL
-      AND ${table.receipt} IS NOT NULL AND ${table.deliveryStatus} = CASE WHEN ${table.operationType} = 'task_commit' THEN 'not_requested' ELSE 'succeeded' END AND ${table.settledAt} IS NOT NULL)
-    OR (${table.status} = 'failed' AND ${table.receipt} IS NOT NULL AND ${table.deliveryStatus} = CASE WHEN ${table.operationType} = 'task_commit' THEN 'not_requested' ELSE 'failed' END AND ${table.settledAt} IS NOT NULL)
+      AND ${table.receipt} IS NOT NULL AND ${table.deliveryStatus} = CASE WHEN ${table.operationType} IN ('task_commit', 'integration', 'integration_commit') THEN 'not_requested' ELSE 'succeeded' END AND ${table.settledAt} IS NOT NULL)
+    OR (${table.status} = 'failed' AND ${table.receipt} IS NOT NULL AND ${table.deliveryStatus} = CASE WHEN ${table.operationType} IN ('task_commit', 'integration', 'integration_commit') THEN 'not_requested' ELSE 'failed' END AND ${table.settledAt} IS NOT NULL)
     OR (${table.status} = 'unknown' AND ${table.actualCommit} IS NULL AND ${table.actualTree} IS NULL
-      AND ${table.receipt} IS NOT NULL AND ${table.deliveryStatus} = CASE WHEN ${table.operationType} = 'task_commit' THEN 'not_requested' ELSE 'pending' END AND ${table.settledAt} IS NOT NULL)`),
+      AND ${table.receipt} IS NOT NULL AND ${table.deliveryStatus} = CASE WHEN ${table.operationType} IN ('task_commit', 'integration', 'integration_commit') THEN 'not_requested' ELSE 'pending' END AND ${table.settledAt} IS NOT NULL)`),
   foreignKey({ name: 'git_operations_binding_fk', columns: [table.repositoryBindingId], foreignColumns: [repositoryBindings.id] }).onDelete('restrict'),
   foreignKey({ name: 'git_operations_feature_fk', columns: [table.projectId, table.featureId], foreignColumns: [features.projectId, features.id] }).onDelete('restrict'),
   foreignKey({ name: 'git_operations_run_fk', columns: [table.featureId, table.runId], foreignColumns: [runs.featureId, runs.id] }).onDelete('restrict'),
@@ -1976,6 +2145,37 @@ export const gitOperations = sqliteTable('git_operations', {
   index('git_operations_project_feature_status_index').on(table.projectId, table.featureId, table.status),
   index('git_operations_project_run_index').on(table.projectId, table.runId),
   index('git_operations_project_intent_index').on(table.projectId, table.intentDigest),
+]);
+
+/** P05-7: private command associations and observed facts, append-only in migration v44. */
+export const gitIntegrationCommands = sqliteTable('git_integration_commands', {
+  id: text('id').primaryKey(),
+  projectId: text('project_id').notNull(),
+  commandId: text('command_id').notNull(),
+  operationId: text('operation_id').notNull(),
+  requestDigest: text('request_digest').notNull(),
+  createdAt: integer('created_at').notNull(),
+}, table => [
+  check('git_integration_commands_digest_check', sql`length(${table.requestDigest}) = 64 AND ${table.requestDigest} NOT GLOB '*[^0-9a-f]*'`),
+  check('git_integration_commands_time_check', sql`${table.createdAt} >= 1`),
+  foreignKey({ columns: [table.projectId, table.operationId], foreignColumns: [gitOperations.projectId, gitOperations.id] }).onDelete('restrict'),
+  uniqueIndex('git_integration_commands_command_index').on(table.projectId, table.commandId),
+]);
+
+export const gitIntegrationObservations = sqliteTable('git_integration_observations', {
+  id: text('id').primaryKey(),
+  projectId: text('project_id').notNull(),
+  operationId: text('operation_id').notNull(),
+  sequence: integer('sequence').notNull(),
+  operationRevision: integer('operation_revision').notNull(),
+  observation: text('observation').notNull(),
+  createdAt: integer('created_at').notNull(),
+}, table => [
+  check('git_integration_observations_revision_check', sql`${table.operationRevision} >= 1 AND ${table.sequence} >= 1`),
+  check('git_integration_observations_json_check', sql`json_valid(${table.observation}) AND json_type(${table.observation}) = 'object'`),
+  check('git_integration_observations_time_check', sql`${table.createdAt} >= 1`),
+  foreignKey({ columns: [table.projectId, table.operationId], foreignColumns: [gitOperations.projectId, gitOperations.id] }).onDelete('restrict'),
+  uniqueIndex('git_integration_observations_operation_index').on(table.projectId, table.operationId, table.sequence),
 ]);
 
 /**
@@ -2194,4 +2394,274 @@ export const runDispatchIntents = sqliteTable('run_dispatch_intents', {
   // 一个 Run 只有一个入队意图（重复入队复用，不新增第二行）。
   uniqueIndex('run_dispatch_intents_run_unique').on(table.projectId, table.runId),
   index('run_dispatch_intents_project_enqueued_index').on(table.projectId, table.enqueuedAt),
+]);
+
+/**
+ * P05-1 / F-002（迁移 v35）：一次性规划上下文（planning_contexts）。
+ *
+ * 只持久绑定一次规划的身份与依据事实（Project/Phase/Feature、规划 Run、
+ * planning Task、candidateId、inputDigest、目标 revision/计划摘要、候选
+ * Artifact/摘要与后续决策/应用关联）；预算/队列/Artifact 正文/审批正文一律复用
+ * 既有设施。候选事实未生成时恒为 NULL（不伪造内容摘要）；身份列不可变、候选
+ * 绑定与决策结果写一次（DDL 触发器防御纵深，Drizzle 不声明触发器，由迁移 SQL
+ * 冻结）；同 Run 单候选、同 Feature 单活动规划（部分唯一索引）。
+ */
+
+/** P05-6 / F-002：冻结的集成计划；正文列和成果快照在适配器事务内一次写入。 */
+export const integrationPlans = sqliteTable('integration_plans', {
+  id: text('id').primaryKey(),
+  createdAt: integer('created_at').notNull(),
+  projectId: text('project_id').notNull().references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  revision: integer('revision').notNull().default(1),
+  updatedAt: integer('updated_at').notNull(),
+  phaseId: text('phase_id').notNull(),
+  batchId: text('batch_id').notNull(),
+  successorFeatureId: text('successor_feature_id').notNull(),
+  targetBaseline: text('target_baseline').notNull(),
+  inputDigest: text('input_digest').notNull(),
+  mode: text('mode').notNull(),
+  mergeOrder: text('merge_order').notNull(),
+  approvedInputs: text('approved_inputs').notNull(),
+  verificationScope: text('verification_scope').notNull(),
+  strategySummary: text('strategy_summary').notNull(),
+  integrationResult: text('integration_result'),
+  status: text('status').notNull(),
+  blockReasons: text('block_reasons').notNull().default('[]'),
+  staleReasons: text('stale_reasons').notNull().default('[]'),
+  frozenAt: integer('frozen_at'),
+}, (table) => [
+  check('integration_plans_revision_check', sql`${table.revision} >= 1`),
+  check('integration_plans_target_baseline_check', sql`length(${table.targetBaseline}) IN (40, 64) AND ${table.targetBaseline} NOT GLOB '*[^0-9a-f]*'`),
+  check('integration_plans_input_digest_check', sql`length(${table.inputDigest}) = 64 AND ${table.inputDigest} NOT GLOB '*[^0-9a-f]*'`),
+  check('integration_plans_mode_check', sql`${table.mode} IN ('reuse_single_predecessor', 'merge_multiple_predecessors')`),
+  check('integration_plans_status_check', sql`${table.status} IN ('dependency_passed', 'integration_passed', 'stale', 'blocked')`),
+  check('integration_plans_merge_order_json_check', sql`json_valid(${table.mergeOrder}) AND json_type(${table.mergeOrder}) = 'array'`),
+  check('integration_plans_approved_inputs_json_check', sql`json_valid(${table.approvedInputs}) AND json_type(${table.approvedInputs}) = 'array'`),
+  check('integration_plans_verification_scope_json_check', sql`json_valid(${table.verificationScope}) AND json_type(${table.verificationScope}) = 'array'`),
+  check('integration_plans_strategy_json_check', sql`json_valid(${table.strategySummary}) AND json_type(${table.strategySummary}) = 'object'`),
+  check('integration_plans_result_json_check', sql`${table.integrationResult} IS NULL OR (json_valid(${table.integrationResult}) AND json_type(${table.integrationResult}) = 'object')`),
+  check('integration_plans_reasons_json_check', sql`json_valid(${table.blockReasons}) AND json_type(${table.blockReasons}) = 'array' AND json_valid(${table.staleReasons}) AND json_type(${table.staleReasons}) = 'array'`),
+  check('integration_plans_times_check', sql`typeof(${table.createdAt}) = 'integer' AND ${table.createdAt} >= 1 AND typeof(${table.updatedAt}) = 'integer' AND ${table.updatedAt} >= ${table.createdAt} AND (${table.frozenAt} IS NULL OR (typeof(${table.frozenAt}) = 'integer' AND ${table.frozenAt} >= ${table.createdAt}))`),
+  foreignKey({ name: 'integration_plans_phase_fk', columns: [table.projectId, table.phaseId], foreignColumns: [phases.projectId, phases.id] }).onDelete('restrict'),
+  foreignKey({ name: 'integration_plans_batch_fk', columns: [table.projectId, table.batchId], foreignColumns: [executionBatches.projectId, executionBatches.id] }).onDelete('restrict'),
+  foreignKey({ name: 'integration_plans_successor_fk', columns: [table.projectId, table.phaseId, table.successorFeatureId], foreignColumns: [features.projectId, features.phaseId, features.id] }).onDelete('restrict'),
+  uniqueIndex('integration_plans_project_id_id_unique').on(table.projectId, table.id),
+  index('integration_plans_project_status_index').on(table.projectId, table.status, table.updatedAt, table.id),
+]);
+
+/** 前置 Feature 的不可变交付成果快照；不会跟随分支 HEAD 漂移。 */
+export const integrationPredecessorSnapshots = sqliteTable('integration_predecessor_snapshots', {
+  id: text('id').primaryKey(),
+  createdAt: integer('created_at').notNull(),
+  projectId: text('project_id').notNull().references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  planId: text('plan_id').notNull(),
+  phaseId: text('phase_id').notNull(),
+  featureId: text('feature_id').notNull(),
+  predecessorOrdinal: integer('predecessor_ordinal').notNull(),
+  dependencyPassed: integer('dependency_passed').notNull(),
+  deliveryCommit: text('delivery_commit'),
+  deliveryEvidenceId: text('delivery_evidence_id'),
+  deliveryEvidenceDigest: text('delivery_evidence_digest'),
+  coveredInputIds: text('covered_input_ids').notNull(),
+  ancestorVerified: integer('ancestor_verified').notNull(),
+}, (table) => [
+  check('integration_snapshots_ordinal_check', sql`${table.predecessorOrdinal} >= 1`),
+  check('integration_snapshots_created_check', sql`typeof(${table.createdAt}) = 'integer' AND ${table.createdAt} >= 1`),
+  check('integration_snapshots_boolean_check', sql`${table.dependencyPassed} IN (0, 1) AND ${table.ancestorVerified} IN (0, 1)`),
+  check('integration_snapshots_commit_check', sql`${table.deliveryCommit} IS NULL OR (length(${table.deliveryCommit}) IN (40, 64) AND ${table.deliveryCommit} NOT GLOB '*[^0-9a-f]*')`),
+  check('integration_snapshots_evidence_shape_check', sql`(${table.deliveryCommit} IS NULL AND ${table.deliveryEvidenceId} IS NULL AND ${table.deliveryEvidenceDigest} IS NULL) OR (${table.deliveryCommit} IS NOT NULL AND length(${table.deliveryEvidenceId}) > 0 AND length(${table.deliveryEvidenceDigest}) = 64 AND ${table.deliveryEvidenceDigest} NOT GLOB '*[^0-9a-f]*')`),
+  check('integration_snapshots_inputs_json_check', sql`json_valid(${table.coveredInputIds}) AND json_type(${table.coveredInputIds}) = 'array'`),
+  foreignKey({ name: 'integration_snapshots_plan_fk', columns: [table.projectId, table.planId], foreignColumns: [integrationPlans.projectId, integrationPlans.id] }).onDelete('restrict'),
+  foreignKey({ name: 'integration_snapshots_feature_fk', columns: [table.projectId, table.phaseId, table.featureId], foreignColumns: [features.projectId, features.phaseId, features.id] }).onDelete('restrict'),
+  uniqueIndex('integration_snapshots_plan_feature_unique').on(table.planId, table.featureId),
+  uniqueIndex('integration_snapshots_plan_ordinal_unique').on(table.planId, table.predecessorOrdinal),
+  uniqueIndex('integration_snapshots_project_id_id_unique').on(table.projectId, table.id),
+]);
+
+export const phaseDeliveryCandidates = sqliteTable('phase_delivery_candidates', {
+  id: text('id').primaryKey(),
+  createdAt: integer('created_at').notNull(),
+  projectId: text('project_id').notNull().references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  revision: integer('revision').notNull().default(1),
+  updatedAt: integer('updated_at').notNull(),
+  commandId: text('command_id').notNull(),
+  phaseId: text('phase_id').notNull(),
+  batchId: text('batch_id').notNull(),
+  batchRevision: integer('batch_revision').notNull(),
+  scopeDigest: text('scope_digest').notNull(),
+  inputDigest: text('input_digest').notNull(),
+  targetBaseline: text('target_baseline').notNull(),
+  approvedInputs: text('approved_inputs').notNull(),
+  leafFeatureIds: text('leaf_feature_ids').notNull(),
+  mergeOrder: text('merge_order').notNull(),
+  leaves: text('leaves').notNull(),
+  verificationScope: text('verification_scope').notNull(),
+  strategySummary: text('strategy_summary').notNull(),
+  status: text('status').notNull(),
+  integration: text('integration'),
+  verification: text('verification'),
+  workspacePreserved: integer('workspace_preserved').notNull().default(0),
+}, (table) => [
+  check('phase_delivery_candidates_revision_check', sql`${table.revision} >= 1`),
+  check('phase_delivery_candidates_batch_revision_check', sql`${table.batchRevision} >= 1`),
+  check('phase_delivery_candidates_digest_check', sql`length(${table.scopeDigest}) = 64 AND ${table.scopeDigest} NOT GLOB '*[^0-9a-f]*' AND length(${table.inputDigest}) = 64 AND ${table.inputDigest} NOT GLOB '*[^0-9a-f]*'`),
+  check('phase_delivery_candidates_target_baseline_check', sql`length(${table.targetBaseline}) IN (40, 64) AND ${table.targetBaseline} NOT GLOB '*[^0-9a-f]*'`),
+  check('phase_delivery_candidates_status_check', sql`${table.status} IN ('pending_integration', 'awaiting_verification', 'reconciliation_required', 'blocked', 'ready_for_phase_approval')`),
+  check('phase_delivery_candidates_inputs_json_check', sql`json_valid(${table.approvedInputs}) AND json_type(${table.approvedInputs}) = 'array'`),
+  check('phase_delivery_candidates_features_json_check', sql`json_valid(${table.leafFeatureIds}) AND json_type(${table.leafFeatureIds}) = 'array' AND json_valid(${table.mergeOrder}) AND json_type(${table.mergeOrder}) = 'array' AND json_valid(${table.leaves}) AND json_type(${table.leaves}) = 'array'`),
+  check('phase_delivery_candidates_scope_json_check', sql`json_valid(${table.verificationScope}) AND json_type(${table.verificationScope}) = 'array' AND json_valid(${table.strategySummary}) AND json_type(${table.strategySummary}) = 'object'`),
+  check('phase_delivery_candidates_result_json_check', sql`(${table.integration} IS NULL OR (json_valid(${table.integration}) AND json_type(${table.integration}) = 'object')) AND (${table.verification} IS NULL OR (json_valid(${table.verification}) AND json_type(${table.verification}) = 'object'))`),
+  check('phase_delivery_candidates_workspace_check', sql`${table.workspacePreserved} IN (0, 1)`),
+  foreignKey({ name: 'phase_delivery_candidates_phase_fk', columns: [table.projectId, table.phaseId], foreignColumns: [phases.projectId, phases.id] }).onDelete('restrict'),
+  foreignKey({ name: 'phase_delivery_candidates_batch_fk', columns: [table.projectId, table.batchId], foreignColumns: [executionBatches.projectId, executionBatches.id] }).onDelete('restrict'),
+  uniqueIndex('phase_delivery_candidates_project_id_id_unique').on(table.projectId, table.id),
+  uniqueIndex('phase_delivery_candidates_command_unique').on(table.projectId, table.commandId),
+  index('phase_delivery_candidates_batch_index').on(table.projectId, table.batchId, table.updatedAt, table.id),
+]);
+export const phaseDeliveryApprovals = sqliteTable('phase_delivery_approvals', {
+  id: text('id').primaryKey(),
+  createdAt: integer('created_at').notNull(),
+  projectId: text('project_id').notNull().references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  revision: integer('revision').notNull().default(1),
+  updatedAt: integer('updated_at').notNull(),
+  commandId: text('command_id').notNull(),
+  actorId: text('actor_id').notNull(),
+  phaseId: text('phase_id').notNull(),
+  batchId: text('batch_id').notNull(),
+  candidateId: text('candidate_id').notNull(),
+  candidateRevision: integer('candidate_revision').notNull(),
+  batchRevision: integer('batch_revision').notNull(),
+  scopeDigest: text('scope_digest').notNull(),
+  inputDigest: text('input_digest').notNull(),
+  targetBaseline: text('target_baseline').notNull(),
+  integrationCommitSha: text('integration_commit_sha').notNull(),
+  integrationTreeSha: text('integration_tree_sha').notNull(),
+  leafCommitShas: text('leaf_commit_shas').notNull(),
+  integrationEvidenceId: text('integration_evidence_id').notNull(),
+  integrationEvidenceDigest: text('integration_evidence_digest').notNull(),
+  verificationEvidenceId: text('verification_evidence_id').notNull(),
+  verificationEvidenceDigest: text('verification_evidence_digest').notNull(),
+  budgetDigest: text('budget_digest').notNull(),
+  budgetSummary: text('budget_summary').notNull(),
+  codeSummary: text('code_summary').notNull(),
+  planSummary: text('plan_summary').notNull(),
+  summaryDigest: text('summary_digest').notNull(),
+  status: text('status').notNull().default('approved'),
+  invalidationReason: text('invalidation_reason'),
+}, (table) => [
+  check('phase_delivery_approvals_revision_check', sql`${table.revision} >= 1 AND ${table.candidateRevision} >= 1 AND ${table.batchRevision} >= 1`),
+  check('phase_delivery_approvals_digest_check', sql`length(${table.scopeDigest}) = 64 AND ${table.scopeDigest} NOT GLOB '*[^0-9a-f]*' AND length(${table.inputDigest}) = 64 AND ${table.inputDigest} NOT GLOB '*[^0-9a-f]*' AND length(${table.budgetDigest}) = 64 AND ${table.budgetDigest} NOT GLOB '*[^0-9a-f]*' AND length(${table.summaryDigest}) = 64 AND ${table.summaryDigest} NOT GLOB '*[^0-9a-f]*'`),
+  check('phase_delivery_approvals_sha_check', sql`length(${table.targetBaseline}) IN (40, 64) AND ${table.targetBaseline} NOT GLOB '*[^0-9a-f]*' AND length(${table.integrationCommitSha}) IN (40, 64) AND ${table.integrationCommitSha} NOT GLOB '*[^0-9a-f]*' AND length(${table.integrationTreeSha}) IN (40, 64) AND ${table.integrationTreeSha} NOT GLOB '*[^0-9a-f]*'`),
+  check('phase_delivery_approvals_evidence_digest_check', sql`length(${table.integrationEvidenceDigest}) = 64 AND ${table.integrationEvidenceDigest} NOT GLOB '*[^0-9a-f]*' AND length(${table.verificationEvidenceDigest}) = 64 AND ${table.verificationEvidenceDigest} NOT GLOB '*[^0-9a-f]*'`),
+  check('phase_delivery_approvals_json_check', sql`json_valid(${table.leafCommitShas}) AND json_type(${table.leafCommitShas}) = 'array' AND json_valid(${table.budgetSummary}) AND json_type(${table.budgetSummary}) = 'object' AND json_valid(${table.codeSummary}) AND json_type(${table.codeSummary}) = 'object' AND json_valid(${table.planSummary}) AND json_type(${table.planSummary}) = 'object'`),
+  check('phase_delivery_approvals_status_check', sql`${table.status} IN ('approved', 'invalidated') AND (${table.status} = 'approved' AND ${table.invalidationReason} IS NULL OR ${table.status} = 'invalidated' AND ${table.invalidationReason} IS NOT NULL)`),
+  foreignKey({ name: 'phase_delivery_approvals_phase_fk', columns: [table.projectId, table.phaseId], foreignColumns: [phases.projectId, phases.id] }).onDelete('restrict'),
+  foreignKey({ name: 'phase_delivery_approvals_candidate_fk', columns: [table.projectId, table.candidateId], foreignColumns: [phaseDeliveryCandidates.projectId, phaseDeliveryCandidates.id] }).onDelete('restrict'),
+  uniqueIndex('phase_delivery_approvals_project_id_id_unique').on(table.projectId, table.id),
+  uniqueIndex('phase_delivery_approvals_command_unique').on(table.projectId, table.commandId),
+  index('phase_delivery_approvals_candidate_index').on(table.projectId, table.phaseId, table.candidateId, table.updatedAt),
+]);
+
+export const planningContexts = sqliteTable('planning_contexts', {
+  id: text('id').primaryKey(),
+  createdAt: integer('created_at').notNull(),
+  projectId: text('project_id')
+    .notNull()
+    .references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  updatedAt: integer('updated_at').notNull(),
+  phaseId: text('phase_id').notNull(),
+  featureId: text('feature_id').notNull(),
+  /** 规划 Run（Run.purpose=plan；创建时核验归属与用途）。 */
+  runId: text('run_id').notNull(),
+  /** 绑定的 planning Task（tasks.kind='planning'；同 Feature 复合外键）。 */
+  planningTaskId: text('planning_task_id').notNull(),
+  /** 稳定候选身份（随 Run 持久绑定；单候选）。 */
+  candidateId: text('candidate_id').notNull(),
+  /** 规划输入身份摘要（computePlanningInputDigest；64 位小写 hex）。 */
+  inputDigest: text('input_digest').notNull(),
+  /** 规划启动时的 Feature revision（应用候选时的 CAS 目标依据；≥1）。 */
+  targetRevision: integer('target_revision').notNull(),
+  /** 规划启动时的当前计划摘要（首次规划草稿为 NULL）。 */
+  planDigest: text('plan_digest'),
+  /** 候选 Artifact 引用（发布后写入且不可改；未生成为 NULL）。 */
+  candidateArtifactId: text('candidate_artifact_id'),
+  /** 候选 Artifact 内容摘要（与 candidate_artifact_id 同组写入/置空）。 */
+  candidateContentHash: text('candidate_content_hash'),
+  /** 候选语义摘要（批准绑定的 candidateDigest；发布后不可改）。 */
+  candidateDigest: text('candidate_digest'),
+  /** 候选审批摘要（供人工决策阅读；不是批准依据）。 */
+  candidateSummary: text('candidate_summary'),
+  /** 生命周期：open/candidate_published/applied/rejected/cancelled。 */
+  status: text('status').notNull(),
+  /** 人工决策（approved/rejected；未决策为 NULL）。 */
+  decision: text('decision'),
+  /** 决策原因（拒绝保留原因；不含正文/凭据）。 */
+  decisionReason: text('decision_reason'),
+  decidedAt: integer('decided_at'),
+  /** 批准原子应用后的 Feature revision（拒绝/未决策为 NULL）。 */
+  appliedRevision: integer('applied_revision'),
+  appliedAt: integer('applied_at'),
+}, (table) => [
+  check('planning_contexts_times_check', sql`typeof(${table.createdAt}) = 'integer' AND ${table.createdAt} >= 0
+    AND typeof(${table.updatedAt}) = 'integer' AND ${table.updatedAt} >= 0
+    AND (${table.decidedAt} IS NULL OR (typeof(${table.decidedAt}) = 'integer' AND ${table.decidedAt} >= 1 AND ${table.decidedAt} >= ${table.createdAt}))
+    AND (${table.appliedAt} IS NULL OR (typeof(${table.appliedAt}) = 'integer' AND ${table.appliedAt} >= 1 AND ${table.appliedAt} >= ${table.createdAt}))`),
+  check('planning_contexts_status_check', sql`${table.status} IN ('open', 'candidate_published', 'applied', 'rejected', 'cancelled')`),
+  check('planning_contexts_digest_check', sql`length(${table.inputDigest}) = 64 AND ${table.inputDigest} NOT GLOB '*[^0-9a-f]*'
+    AND (${table.planDigest} IS NULL OR (length(${table.planDigest}) = 64 AND ${table.planDigest} NOT GLOB '*[^0-9a-f]*'))
+    AND (${table.candidateDigest} IS NULL OR (length(${table.candidateDigest}) = 64 AND ${table.candidateDigest} NOT GLOB '*[^0-9a-f]*'))
+    AND (${table.candidateContentHash} IS NULL OR (length(${table.candidateContentHash}) = 64 AND ${table.candidateContentHash} NOT GLOB '*[^0-9a-f]*'))`),
+  check('planning_contexts_revision_check', sql`typeof(${table.targetRevision}) = 'integer' AND ${table.targetRevision} >= 1
+    AND (${table.appliedRevision} IS NULL OR (typeof(${table.appliedRevision}) = 'integer' AND ${table.appliedRevision} >= 1))`),
+  check('planning_contexts_candidate_shape_check', sql`
+    (${table.status} = 'open' AND ${table.candidateArtifactId} IS NULL AND ${table.candidateContentHash} IS NULL
+      AND ${table.candidateDigest} IS NULL AND ${table.candidateSummary} IS NULL)
+    OR (${table.status} IN ('candidate_published', 'applied', 'rejected') AND ${table.candidateArtifactId} IS NOT NULL
+      AND ${table.candidateContentHash} IS NOT NULL AND ${table.candidateDigest} IS NOT NULL AND ${table.candidateSummary} IS NOT NULL)
+    OR ${table.status} = 'cancelled'`),
+  check('planning_contexts_summary_check', sql`${table.candidateSummary} IS NULL OR length(${table.candidateSummary}) BETWEEN 1 AND 2000`),
+  check('planning_contexts_decision_check', sql`
+    (${table.decision} IS NULL AND ${table.status} IN ('open', 'candidate_published', 'cancelled'))
+    OR (${table.decision} = 'approved' AND ${table.status} = 'applied' AND ${table.decidedAt} IS NOT NULL
+      AND ${table.appliedRevision} IS NOT NULL AND ${table.appliedAt} IS NOT NULL)
+    OR (${table.decision} = 'rejected' AND ${table.status} = 'rejected' AND ${table.decidedAt} IS NOT NULL
+      AND ${table.appliedRevision} IS NULL AND ${table.appliedAt} IS NULL)`),
+  check('planning_contexts_decision_reason_check', sql`${table.decisionReason} IS NULL OR length(${table.decisionReason}) BETWEEN 1 AND 512`),
+  foreignKey({
+    name: 'planning_contexts_candidate_artifact_fk',
+    columns: [table.projectId, table.candidateArtifactId],
+    foreignColumns: [artifacts.projectId, artifacts.id],
+  }).onDelete('restrict'),
+  foreignKey({
+    name: 'planning_contexts_phase_fk',
+    columns: [table.projectId, table.phaseId],
+    foreignColumns: [phases.projectId, phases.id],
+  }).onDelete('restrict'),
+  foreignKey({
+    name: 'planning_contexts_feature_fk',
+    columns: [table.projectId, table.phaseId, table.featureId],
+    foreignColumns: [features.projectId, features.phaseId, features.id],
+  }).onDelete('restrict'),
+  foreignKey({
+    name: 'planning_contexts_run_fk',
+    columns: [table.projectId, table.runId],
+    foreignColumns: [runs.projectId, runs.id],
+  }).onDelete('restrict'),
+  foreignKey({
+    name: 'planning_contexts_feature_run_fk',
+    columns: [table.featureId, table.runId],
+    foreignColumns: [runs.featureId, runs.id],
+  }).onDelete('restrict'),
+  foreignKey({
+    name: 'planning_contexts_planning_task_fk',
+    columns: [table.featureId, table.planningTaskId],
+    foreignColumns: [tasks.featureId, tasks.id],
+  }).onDelete('restrict'),
+  // 单候选：同项目 candidateId 唯一；同一 Run 只有一个规划上下文。
+  uniqueIndex('planning_contexts_candidate_unique').on(table.projectId, table.candidateId),
+  uniqueIndex('planning_contexts_run_unique').on(table.projectId, table.runId),
+  // 重复规划归属：同 Feature 同时只有一个活动规划（open/candidate_published）。
+  uniqueIndex('planning_contexts_feature_active_unique').on(table.featureId)
+    .where(sql`${table.status} IN ('open', 'candidate_published')`),
+  index('planning_contexts_project_updated_index').on(table.projectId, table.updatedAt),
 ]);

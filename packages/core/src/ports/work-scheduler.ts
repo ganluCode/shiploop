@@ -1,10 +1,36 @@
 import type { TaskClaimResult, TaskClaimStore, TaskClaimReceipt } from './task-claim.js';
 import type { TaskDagReason, TaskDagResult } from './task-dag.js';
-import type { RunRecord } from './execution-store.js';
-
+import type { FeatureDagEvaluation, FeatureDagReason } from './feature-dag.js';
+import type { ExecutionBatchRecord, RunRecord } from './execution-store.js';
 export interface SchedulerRunRef {
   readonly projectId: string;
   readonly runId: string;
+}
+
+/** 固定 Batch 候选页使用的稳定 keyset 游标。 */
+export interface SchedulerBatchScanCursor {
+  readonly projectId: string;
+  readonly batchId: string;
+  readonly memberOrdinal: number;
+  readonly createdAt: number;
+  readonly rowid: number;
+  readonly featureId: string;
+  readonly runId: string;
+}
+
+export interface SchedulerBatchCandidate extends SchedulerRunRef {
+  readonly phaseId: string;
+  readonly batchId: string;
+  readonly featureId: string;
+  /** 候选来自 Batch 成员表和活动 Run；依赖/代码前置由 Feature DAG 端口另行评估。 */
+  readonly source: 'fixed_batch';
+}
+
+/** 固定 Batch 候选页。 */
+export interface SchedulerBatchCandidatePage {
+  readonly candidates: readonly SchedulerBatchCandidate[];
+  readonly hasMore: boolean;
+  readonly nextCursor: SchedulerBatchScanCursor | null;
 }
 
 /**
@@ -32,12 +58,22 @@ export interface SchedulerStore {
    * 也能被发现，续跑中的 Run 仍按既有活动状态进入候选。
    */
   listActiveRuns(input: { readonly after: SchedulerScanCursor | null; readonly limit: number }): SchedulerPage;
+  /** Reads active Run candidates belonging to one immutable fixed Batch scope. */
+  listBatchCandidates(input: {
+    readonly projectId: string;
+    readonly batchId: string;
+    readonly after: SchedulerBatchScanCursor | null;
+    readonly limit: number;
+  }): SchedulerBatchCandidatePage;
   /** Persists a bounded diagnostic without changing lifecycle state. */
   recordRunReason(projectId: string, runId: string, reason: string): void;
   /** Returns whether the stable handoff key has already been delivered. */
   isFinalVerificationHandoffClaimed(projectId: string, runId: string): boolean;
   /** Records a successfully delivered handoff exactly once. */
   recordFinalVerificationHandoff(projectId: string, runId: string): boolean;
+  /** Reads the immutable Batch snapshot inside the scheduler's read path. */
+  readonly readBatch?: (projectId: string, batchId: string) => ExecutionBatchRecord;
+  /** Reads the current Run from the same persistent scheduler source. */
   readRun(projectId: string, runId: string): RunRecord;
 }
 
@@ -68,10 +104,25 @@ export interface SchedulerFinalizationCompletion {
   execute(handoff: SchedulerHandoff): Promise<unknown>;
 }
 
+/**
+ * P05-1 / F-005 planning Run 的派发消费者端口（按 Run purpose 路由，复用既有
+ * 队列/Run 认领/槽位/资源记录）：prepare 事务外派生认领输入（含 F-004 输入
+ * 准备与启动前重核）；claims 在自有短写事务内原子认领；consume 只在回执已
+ * 提交后调用（Runtime 启动属于事务外后续）。planning Task 不进入编码 DAG。
+ */
+export interface SchedulerPlanningPorts {
+  /** 派生 planning 认领输入（不满足 readiness/输入准备失败时抛错）。 */
+  prepare(ref: SchedulerRunRef): Promise<unknown>;
+  /** planning 原子认领存储（一次调用=一次已提交事务）。 */
+  claims: { claimPlanningTask(input: unknown): TaskClaimResult };
+  /** 回执已提交后的消费者（后续 Runtime 启动在此事务外发生）。 */
+  consume(receipt: TaskClaimReceipt, ref: SchedulerRunRef): Promise<void>;
+}
+
 export interface SchedulerRunResult {
   readonly projectId: string;
   readonly runId: string;
-  readonly reason: TaskDagReason | 'scheduler_capability_missing' | 'claim_rejected' | 'handoff_delivery_failed';
+  readonly reason: TaskDagReason | FeatureDagReason | 'repair_consumer_handed_off' | 'scheduler_capability_missing' | 'claim_rejected' | 'handoff_delivery_failed' | 'scheduler_exception';
   readonly capabilityGaps: readonly string[];
   readonly claimed: boolean;
   readonly handoff: SchedulerHandoff | null;
@@ -91,6 +142,10 @@ export interface SchedulerTimers {
 
 export interface WorkSchedulerOptions {
   readonly store: SchedulerStore;
+  /** Reads the outer Feature DAG before any input/workspace preparation. */
+  readonly featureDag?: { evaluate(projectId: string, phaseId: string): FeatureDagEvaluation };
+  /** Returns the approved Feature capacity for this Run's Batch. Defaults to one. */
+  readonly featureConcurrency?: (run: RunRecord) => number;
   readonly dag: { evaluate(projectId: unknown, runId: unknown): TaskDagResult };
   readonly claims?: TaskClaimStore;
   /** Prepares the opaque claim input outside the SQLite claim transaction. */
@@ -107,6 +162,13 @@ export interface WorkSchedulerOptions {
    * 目前用于 finalization-only Run 的槽位/资源准入，避免其绕过单槽与项目 Work 门控。
    */
   readonly admission?: { check(ref: SchedulerRunRef): string | null };
+  /**
+   * P05-1 / F-005：planning Run（purpose=plan）的派发消费者端口。未装配时
+   * 调度器保留 capability gap（planning_consumer）并记录可查询原因，不把
+   * planning Task 送入编码 DAG，也不自行准备输入或认领。
+   */
+  readonly gitAgentRepair?: { consume(ref: SchedulerRunRef): Promise<void> };
+  readonly planning?: SchedulerPlanningPorts;
   /**
    * 每个候选 Run 在 DAG 评估/认领之前的受信短操作（当前用于 F-006 派发归属与
    * 槽位收尾）。失败不得阻止补扫；调用方自己保留可查询原因。

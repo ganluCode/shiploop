@@ -1,4 +1,5 @@
 import { StorageError } from '../ports/errors.js';
+import { isPlanningAttemptSnapshot } from '../ports/attempt-store.js';
 import type { TaskDagStore, TaskDagView, TaskDagReason, TaskDagResult } from '../ports/task-dag.js';
 import { stableStringify, validateFeaturePlanInput } from '../ports/feature-plan.js';
 import { computeExecutionWorkKey } from '../ports/execution-start.js';
@@ -144,6 +145,8 @@ export function evaluateTaskDag(view: TaskDagView, nowMs: number): TaskDagResult
       return attempt.status === 'succeeded' && ['verification', 'commit', 'cleanup'].includes(attempt.executionStage) && attempt.exitCode === 0
         && attempt.endedAtUtcMs !== null && attempt.codeRef !== null && attempt.executionVersion === fact.executionVersion
         && attempt.projectId === run.projectId && attempt.featureId === feature.id && attempt.taskId === id
+        // P05-1 / F-005：planning 快照无业务计划批准身份，不作为编码交付证据。
+        && !isPlanningAttemptSnapshot(snapshot)
         && snapshot.approval.planDigest === approval.planDigest && snapshot.approval.checkPolicyDigest === checkPolicyDigest
         && snapshot.approval.decisionId === approval.decisionId
         && snapshot.digests.strategyCopyDigest === taskConfig.digest && snapshot.digests.permissionsDigest === permissions.digest

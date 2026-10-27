@@ -49,13 +49,13 @@ export const EXECUTION_RESUME_REJECTED_REASONS = [
 export type ExecutionResumeRejectedReason = (typeof EXECUTION_RESUME_REJECTED_REASONS)[number];
 
 /** 解除暂停后本次 resume 进入的缺失步骤（不是 Runtime 已启动的证明）。 */
-export const EXECUTION_RESUME_SCOPES = ['coding', 'final_verification', 'approval'] as const;
+export const EXECUTION_RESUME_SCOPES = ['coding', 'final_verification', 'approval', 'planning'] as const;
 export type ExecutionResumeScope = (typeof EXECUTION_RESUME_SCOPES)[number];
 
 /** resume 事务原语输入（目标身份 + 目标自身 revision + 已核对工作区身份）。 */
 export interface ExecutionResumeInput {
   readonly projectId: string;
-  readonly targetKind: 'run' | 'batch';
+  readonly targetKind: 'run' | 'batch' | 'feature';
   readonly targetId: string;
   readonly expectedRevision: number;
   /**
@@ -68,7 +68,7 @@ export interface ExecutionResumeInput {
 
 export interface ExecutionResumeResult {
   readonly outcome: 'resumed' | 'already_terminal';
-  readonly targetKind: 'run' | 'batch';
+  readonly targetKind: 'run' | 'batch' | 'feature';
   readonly targetId: string;
   readonly batchId: string;
   readonly featureId: string;
@@ -83,7 +83,7 @@ export interface ExecutionResumeResult {
 export interface PreparedExecutionResumeReady {
   readonly kind: 'ready';
   readonly projectId: string;
-  readonly targetKind: 'run' | 'batch';
+  readonly targetKind: 'run' | 'batch' | 'feature';
   readonly targetId: string;
   readonly expectedRevision: number;
   readonly batchId: string;
@@ -100,7 +100,7 @@ export interface PreparedExecutionResumeReady {
 export interface PreparedExecutionResumeNotResumable {
   readonly kind: 'not_resumable';
   readonly reason: ExecutionResumeRejectedReason;
-  readonly targetKind: 'run' | 'batch';
+  readonly targetKind: 'run' | 'batch' | 'feature';
   readonly targetId: string;
 }
 
@@ -118,7 +118,7 @@ export interface ExecutionResumeCommandIdentity {
 /** 事务内提交使用的命令信封最小面（操作固定 execution.resume）。 */
 export interface ExecutionResumeEnvelopeFace {
   readonly scope: { readonly kind: 'project'; readonly projectId: string };
-  readonly payload: { readonly runId: string | null; readonly batchId: string | null };
+  readonly payload: { readonly featureId?: string | null; readonly runId: string | null; readonly batchId: string | null };
   readonly expectedRevision: number;
 }
 

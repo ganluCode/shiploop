@@ -1,0 +1,25 @@
+{
+  "schema_version": 2,
+  "task_id": "F-008",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/scheduling/p05-5-f008-cross-layer.test.ts", "all": true },
+      { "file": "test/modules/scheduling/p05-5-f001-feature-resources.test.ts", "all": true },
+      { "file": "test/modules/scheduling/p05-5-f002-feature-resource-sqlite.test.ts", "all": true },
+      { "file": "test/modules/scheduling/p05-5-f003-feature-dispatch-resources.test.ts", "all": true },
+      { "file": "test/modules/scheduling/p05-5-f004-resource-settlement.test.ts", "all": true },
+      { "file": "test/modules/recovery/p05-5-f005-resource-recovery.test.ts", "all": true },
+      { "file": "test/modules/execution/control/p05-5-f006-feature-control.test.ts", "all": true },
+      { "file": "test/modules/host/control/p05-5-f007-resource-host-wiring.test.ts", "all": true },
+      { "file": "test/modules/execution/dispatch/p05-4-f008-feature-dispatch-vertical.test.ts", "all": true },
+      { "file": "test/modules/scheduling/p05-4-f004-feature-scheduler.test.ts", "all": true },
+      { "file": "test/modules/workspace/p05-4-f005-feature-workspace-concurrency.test.ts", "all": true },
+      { "file": "test/modules/recovery/p05-4-f006-dispatch-recovery.test.ts", "all": true },
+      { "file": "test/modules/scheduling/p04-9-f004-dispatch-task-claim.test.ts", "all": true },
+      { "file": "test/modules/scheduling/p04-9-f006-dispatch-control-settlement.test.ts", "all": true },
+      { "file": "test/modules/recovery/p04-9-f007-dispatch-startup.test.ts", "all": true },
+      { "file": "test/modules/execution/dispatch/p04-9-f010-dispatch-vertical.test.ts", "all": true }
+    ]
+  }]
+}

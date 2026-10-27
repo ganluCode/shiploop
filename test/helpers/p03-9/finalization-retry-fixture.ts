@@ -176,7 +176,7 @@ function seedVerificationBatch(f: FinalizationFixture, input: SeedBatchInput): v
     required: true,
     requirementRefs: [],
   };
-  const policyDigest = input.attempt.inputSnapshot.approval.checkPolicyDigest;
+  const policyDigest = input.attempt.inputSnapshot.approval!.checkPolicyDigest;
   f.box.session.database.prepare(
     `INSERT INTO verification_batches
       (id, created_at, updated_at, revision, project_id, feature_id, run_id, task_id, attempt_id,

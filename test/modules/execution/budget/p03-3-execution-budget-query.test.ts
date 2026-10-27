@@ -347,6 +347,7 @@ describe('F-010 执行预算只读查询（一致读视图/已知与未知字段
         principal: s.owner, commandService: s.app.commandService, queryService: s.app.queryService,
         commandReceiptsService: s.app.commandReceiptsService, onboardingService: s.app.onboardingService,
         baselineQueryService: s.app.baselineQueryService, baselineExecutionService: s.app.baselineExecutionService,
+        planningQueryService: s.app.planningQueryService,
         getLifecycleState: () => 'ready',
       },
     });

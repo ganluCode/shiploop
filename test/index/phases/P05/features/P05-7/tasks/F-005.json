@@ -1,0 +1,11 @@
+{
+  "schema_version": 2,
+  "task_id": "F-005",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [{
+      "file": "test/modules/delivery/p05-7-f005-integration-verification.test.ts",
+      "all": true
+    }]
+  }]
+}

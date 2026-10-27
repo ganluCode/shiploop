@@ -145,12 +145,24 @@ export function createSqliteWorkResourceAccess(session: SqliteStorageSession, op
         return live(identity, timestamp);
       }
       const attempt = current(identity);
-      if (attempt.status !== 'preparing' || attempt.executionStage !== 'preflight' || attempt.invocationId !== null
-        || attempt.startedAtUtcMs !== null) return fail('conflict', 'attempt_not_preflight');
-      if (db.prepare('SELECT id FROM workspace_leases LIMIT 1').get()
-        || db.prepare('SELECT id FROM baseline_occupancy WHERE holder_operation_id IS NOT NULL LIMIT 1').get()) {
+      // P05-4：global gate 跨项目仍保持排他；同项目仅按 Feature 隔离。
+      // workspace 键则始终排他，防止两个 Feature 误用同一目录。不同 Feature
+      // 使用不同受管 worktree 时可并行；同 Feature 的第二个 Attempt 仍必须等待
+      // 既有 writer 停止并释放。租约过期不能被当作已停止。
+      if (db.prepare(`SELECT l.id FROM workspace_leases l
+        JOIN attempts a ON a.project_id = l.project_id AND a.id = l.owner_id
+        WHERE (l.resource_kind = 'global' AND (l.project_id <> ? OR a.feature_id = ?))
+           OR (l.resource_kind = 'workspace' AND l.resource_key = ?)
+           OR (l.project_id = ? AND a.feature_id = ?) LIMIT 1`).get(
+        identity.projectId, attempt.featureId, workspace.resourceKey, identity.projectId, attempt.featureId,
+      )) {
         return fail('conflict', 'resource_busy');
       }
+      if (db.prepare('SELECT id FROM baseline_occupancy WHERE holder_operation_id IS NOT NULL LIMIT 1').get()) {
+        return fail('conflict', 'resource_busy');
+      }
+      if (attempt.status !== 'preparing' || attempt.executionStage !== 'preflight' || attempt.invocationId !== null
+        || attempt.startedAtUtcMs !== null) return fail('conflict', 'attempt_not_preflight');
       const resources = [['global', 'global:execution'], ['project', `project:${identity.projectId}:work`], ['workspace', workspace.resourceKey]] as const;
       for (const [kind, key] of resources) {
         db.prepare(`INSERT INTO workspace_leases (id, created_at, updated_at, project_id, resource_key, resource_kind,

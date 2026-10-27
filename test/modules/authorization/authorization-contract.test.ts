@@ -136,6 +136,12 @@ function envelope(
     expiresAt: null,
   };
   switch (operation) {
+    case 'execution.batch.finalize':
+      return { ...base, operation, scope: { kind: 'project', projectId: PROJECT_A }, expectedRevision: expectedRevision ?? 1,
+        payload: { phaseId: 'phase-1', batchId: 'batch-1' } };
+    case 'phase.delivery.approve':
+      return { ...base, operation, scope: { kind: 'project', projectId: PROJECT_A }, expectedRevision: expectedRevision ?? 1,
+        payload: { phaseId: 'phase-1', batchId: 'batch-1', candidateId: 'candidate-1', expectedCandidateRevision: 3 } };
     case 'execution.stop.manual':
       return { ...base, operation, scope: { kind: 'project', projectId: PROJECT_A },
         expectedRevision: expectedRevision ?? 1,
@@ -157,6 +163,9 @@ function envelope(
       return { ...base, operation, scope: { kind: 'project', projectId: '0f0d9c36-765a-4b62-a6b9-38a5ff4f4bf1' },
         expectedRevision: expectedRevision ?? 1,
         payload: { taskId: 't-1', itemId: 'i-1', planDigest: '0'.repeat(64), codeDigest: '0'.repeat(64), artifactRefs: [], reason: null } };
+    case 'git.operation.start':
+      return { ...base, operation, scope: { kind: 'project', projectId: '0f0d9c36-765a-4b62-a6b9-38a5ff4f4bf1' },
+        expectedRevision: expectedRevision ?? 1, payload: { featureId: 'f-1', runId: 'run-1', batchId: 'batch-1', operationId: COMMAND_ID, inputDigest: '0'.repeat(64) } };
     case 'feature.verification.continue':
     case 'git.operation.reconcile':
       return { ...base, operation, scope: { kind: 'project', projectId: '0f0d9c36-765a-4b62-a6b9-38a5ff4f4bf1' },
@@ -224,6 +233,20 @@ function envelope(
         expectedRevision,
         payload: { schemaVersion: 2 },
       } as ValidatedCommandEnvelope;
+    case 'phase.metadata.update':
+    case 'phase.close':
+    case 'phase.reopen':
+    case 'phase.archive':
+      return { ...base, operation, scope: { kind: 'project', projectId: PROJECT_A },
+        expectedRevision: expectedRevision ?? 1,
+        payload: { phaseId: 'phase-1', ...(operation === 'phase.metadata.update' ? { title: '阶段' } : {}) } };
+    case 'feature.phase.move':
+      return { ...base, operation, scope: { kind: 'project', projectId: PROJECT_A },
+        expectedRevision: expectedRevision ?? 1, payload: { featureId: 'feature-1',
+          sourcePhaseId: 'phase-1', targetPhaseId: 'phase-2', sourcePhaseRevision: 1, targetPhaseRevision: 1 } };
+    case 'feature.dag.update':
+      return { ...base, operation, scope: { kind: 'project', projectId: PROJECT_A },
+        expectedRevision: expectedRevision ?? 1, payload: { phaseId: 'phase-1', edges: [] } };
     case 'phase.create':
       return {
         ...base,
@@ -348,6 +371,45 @@ function envelope(
           workKey: 'ab'.repeat(32),
         },
       } as ValidatedCommandEnvelope;
+    case 'planning.candidate.decide':
+      if (scope.kind !== 'project') throw new Error('project scope required');
+      return {
+        ...base,
+        operation,
+        scope,
+        expectedRevision: expectedRevision ?? 1,
+        payload: { candidateId: 'candidate-1', candidateDigest: '0'.repeat(64), decision: 'approve', reason: null },
+      };
+    case 'planning.start':
+      return {
+        ...base,
+        operation,
+        scope,
+        expectedRevision: expectedRevision ?? 1,
+        payload: {
+          request: {
+            schemaVersion: 1,
+            projectId: scope.kind === 'project' ? scope.projectId : 'proj-p051',
+            phaseId: 'phase-p051',
+            featureId: 'feat-p051',
+            requirementRefs: [],
+            constraints: [],
+            acceptance: { criteria: ['候选可审批'] },
+            strategy: { approvalMode: 'manual', taskLimit: null },
+            inputDigest: 'ab'.repeat(32),
+          },
+          budget: {
+            batch: {
+              maxRuns: 1,
+              maxTotalAttempts: 1,
+              maxRuntimeStarts: 1,
+              maxNoProgressRuns: 1,
+              deadlineUtcMs: 1_900_000_000_000,
+            },
+            run: { maxAttemptsPerRun: 1, runTimeLimitMs: 3_600_000 },
+          },
+        },
+      } as ValidatedCommandEnvelope;
     case 'execution.budget.revise':
       return {
         ...base,
@@ -398,6 +460,8 @@ const COMMANDS_MATRIX = [
   { operation: 'settings.project.update', scope: { kind: 'project', projectId: PROJECT_A }, revision: 1, capability: 'settings.project.write' },
   // P03-1 / F-004：Phase 创建（project scope + phase.write）。
   { operation: 'phase.create', scope: { kind: 'project', projectId: PROJECT_A }, revision: null, capability: 'phase.write' },
+  ...(['phase.metadata.update', 'phase.close', 'phase.reopen', 'phase.archive', 'feature.phase.move', 'feature.dag.update'] as const)
+    .map(operation => ({ operation, scope: { kind: 'project' as const, projectId: PROJECT_A }, revision: 1, capability: 'phase.write' as const })),
   // P03-1 / F-005：计划导入（project scope + feature.plan.import；expectedRevision 为 Phase 聚合 CAS）。
   { operation: 'feature.plan.import', scope: { kind: 'project', projectId: PROJECT_A }, revision: 1, capability: 'feature.plan.import' },
   // P03-1 / F-007：纯标签 CAS 编辑（project scope + plan.labels.write；expectedRevision 为目标实体自身 revision）。

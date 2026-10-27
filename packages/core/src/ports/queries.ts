@@ -33,6 +33,7 @@ import type {
 } from './baseline-store.js';
 import type { SettingsPayload, SettingsScope } from './settings-schema.js';
 import type { PlanArtifactRef, PlanComplexity } from './feature-plan.js';
+import type { FeatureDagReadiness, FeatureDependencyRecord } from './feature-dag.js';
 import type {
   FeaturePlanStatus,
   FeatureRecord,
@@ -378,6 +379,8 @@ export interface BaselineQueryReadStore {
  * 计划查询操作身份（PublicError.operation 与后续 Host 路由共用；线接入由
  * F-009/F-010 冻结，本清单不提前进入握手能力集合）。
  */
+export const PHASE_GRAPH_QUERY_OPERATION = 'phases.graph.get' as const;
+
 export const PLAN_QUERY_OPERATIONS = [
   'phases.list',
   'phases.get',
@@ -480,7 +483,91 @@ export function deriveFeatureNotExecutableReasons(input: {
   return reasons;
 }
 
+export const FEATURE_GRAPH_BLOCKER_REASONS = [
+  'missing_dependency',
+  'no_tasks',
+  'plan_not_approved',
+  'dependency_pending',
+  'dependency_failed',
+  'active_batch_scope',
+  'code_baseline_missing',
+  'integration_not_ready',
+  'invalid_graph',
+] as const;
+export type FeatureGraphBlockerReason = (typeof FEATURE_GRAPH_BLOCKER_REASONS)[number];
+
+/** Phase 图查询的稳定阻塞投影，输入必须来自同一一致读视图。 */
+export function derivePhaseFeatureBlockers(input: {
+  readonly readiness: FeatureDagReadiness;
+  readonly taskCount: number;
+  readonly planStatus: FeaturePlanStatus;
+  readonly activeBatch: boolean;
+  readonly missingCodeBaseline: boolean;
+  readonly missingDependencyIds: readonly string[];
+}): readonly FeatureGraphBlockerReason[] {
+  const blockers: FeatureGraphBlockerReason[] = [];
+  if (input.missingDependencyIds.length > 0) blockers.push('missing_dependency');
+  if (input.taskCount === 0) blockers.push('no_tasks');
+  if (input.planStatus !== 'approved') blockers.push('plan_not_approved');
+  if (input.readiness.reason === 'dependency_pending') blockers.push('dependency_pending');
+  if (input.readiness.reason === 'dependency_failed') blockers.push('dependency_failed');
+  if (input.activeBatch) blockers.push('active_batch_scope');
+  if (input.missingCodeBaseline) blockers.push('code_baseline_missing');
+  if (input.readiness.reason === 'integration_not_ready') blockers.push('integration_not_ready');
+  if (input.readiness.reason === 'invalid_graph') blockers.push('invalid_graph');
+  return blockers;
+}
+
 /* ---------------------------- 查询结果形状 ---------------------------- */
+
+/** Phase 图依赖边公开形状；固定基线引用不代表集成已完成。 */
+export interface PublicFeatureDependencyEdge {
+  readonly id: string;
+  readonly projectId: string;
+  readonly phaseId: string;
+  readonly featureId: string;
+  readonly dependsOnId: string;
+  readonly codeBaselineRef: string | null;
+}
+
+export function toPublicFeatureDependencyEdge(
+  dependency: FeatureDependencyRecord,
+): PublicFeatureDependencyEdge {
+  if (dependency.id === null) {
+    throw new TypeError('Feature 依赖边缺少持久身份（适配器实现缺陷）');
+  }
+  return {
+    id: dependency.id,
+    projectId: dependency.projectId,
+    phaseId: dependency.phaseId,
+    featureId: dependency.featureId,
+    dependsOnId: dependency.dependsOnId,
+    codeBaselineRef: dependency.codeBaselineRef,
+  };
+}
+
+export interface PhaseGraphFeatureReadiness extends FeatureDagReadiness {
+  readonly blockers: readonly FeatureGraphBlockerReason[];
+}
+
+export interface PhaseGraphResult extends PlanListResultBase {
+  readonly scope: 'phase-graph';
+  readonly phase: PublicPhaseRecord;
+  readonly features: readonly PublicFeatureRecord[];
+  readonly dependencies: readonly PublicFeatureDependencyEdge[];
+  readonly readiness: readonly PhaseGraphFeatureReadiness[];
+  readonly readyFeatureIds: readonly string[];
+  readonly executableFeatureIds: readonly string[];
+}
+
+/** phases.graph.get 的一致读视图。 */
+export interface PhaseFeatureGraphView {
+  readonly phase: PhaseRecord;
+  readonly features: readonly FeatureRecord[];
+  readonly dependencies: readonly FeatureDependencyRecord[];
+  readonly taskCounts: Readonly<Record<string, number>>;
+  readonly activeFeatureIds: readonly string[];
+}
 
 /** phases.get → {phase}（真实父级 projectId 在记录内）。 */
 export interface PhaseDetailResult {
@@ -596,10 +683,13 @@ export const PLAN_LIST_CURSOR_VERSION = 1 as const;
  *  'task-approvals'（Task 人审事项分页，父级为 Task）与 'task-rework-chain'
  *  （有限返工链分页，父级为 Task）。P03-8 / F-009 起含
  *  'feature-git-operations' 与 'run-git-operations'（Git 操作列表分页，
- *  父级为 Feature / Run）。 */
+ *  父级为 Feature / Run）。P05-1 / F-011 起含 'planning-contexts'（项目范围
+ *  规划上下文分页）与 'feature-planning-contexts'（Feature 过滤的规划
+ *  上下文分页；游标绑定数据根 + 项目 + Feature，跨项目/跨过滤重放拒绝）。 */
 export type PlanListScope =
   | { readonly kind: 'work-recording'; readonly projectId: string; readonly parentKind: 'run' | 'attempt' | 'session'; readonly parentId: string; readonly recordType: 'messages' | 'manifests' }
   | { readonly kind: 'phases'; readonly projectId: string }
+  | { readonly kind: 'phase-graph'; readonly projectId: string; readonly phaseId: string }
   | { readonly kind: 'features'; readonly projectId: string; readonly phaseId: string }
   | { readonly kind: 'tasks'; readonly projectId: string; readonly featureId: string }
   | { readonly kind: 'budget-revisions'; readonly projectId: string; readonly batchId: string }
@@ -611,9 +701,20 @@ export type PlanListScope =
   | { readonly kind: 'task-rework-chain'; readonly projectId: string; readonly taskId: string }
   | { readonly kind: 'feature-git-operations'; readonly projectId: string; readonly featureId: string }
   | { readonly kind: 'run-git-operations'; readonly projectId: string; readonly runId: string }
+  /** P05-4：只读派发范围；最多选择一个固定 Batch 或 Feature。 */
+  | { readonly kind: 'dispatch-queue-batch'; readonly projectId: string; readonly batchId: string }
+  | { readonly kind: 'dispatch-queue-feature'; readonly projectId: string; readonly featureId: string }
   /** P04-9 / F-008 派发队列与槽位只读投影：项目范围分页（父级固定为项目）。 */
-  | { readonly kind: 'dispatch-queue'; readonly projectId: string };
-
+  | { readonly kind: 'dispatch-queue'; readonly projectId: string }
+  /** P05-1 / F-011 项目范围规划上下文分页（无 Feature 过滤）。 */
+  | { readonly kind: 'planning-contexts'; readonly projectId: string }
+  /** P05-1 / F-011 Feature 过滤的规划上下文分页（游标绑定同一过滤）。 */
+  | { readonly kind: 'feature-planning-contexts'; readonly projectId: string; readonly featureId: string }
+  /** P05-8：项目范围 GitAgent 修复查询。 */
+  | { readonly kind: 'git-repairs'; readonly projectId: string }
+  /** P05-5：项目/Feature/Batch 资源租约分页；游标绑定筛选范围。 */
+  | { readonly kind: 'execution-resources'; readonly projectId: string; readonly featureId?: string; readonly batchId?: string }
+  | { readonly kind: 'batch-delivery'; readonly projectId: string; readonly batchId: string };
 /** 游标签发/解析绑定：数据根身份 + 列表 scope（只允许可信装配构造）。 */
 export interface PlanListCursorBinding {
   readonly rootIdentity: string;
@@ -674,6 +775,17 @@ export function createPlanListCursorBinding(
       scope: {
         kind: 'phases',
         projectId: validateStableId(scope.projectId, { operation, entity: { type: 'project' } }, 'scope.projectId'),
+      },
+    };
+  }
+  if (scope.kind === 'phase-graph') {
+    rejectUnknownKeys(scope, ['kind', 'projectId', 'phaseId'], { operation }, 'scope');
+    return {
+      rootIdentity: input.rootIdentity,
+      scope: {
+        kind: 'phase-graph',
+        projectId: validateStableId(scope.projectId, { operation, entity: { type: 'project' } }, 'scope.projectId'),
+        phaseId: validateStableId(scope.phaseId, { operation, entity: { type: 'phase' } }, 'scope.phaseId'),
       },
     };
   }
@@ -798,6 +910,28 @@ export function createPlanListCursorBinding(
       },
     };
   }
+  if (scope.kind === 'dispatch-queue-batch') {
+    rejectUnknownKeys(scope, ['kind', 'projectId', 'batchId'], { operation }, 'scope');
+    return {
+      rootIdentity: input.rootIdentity,
+      scope: {
+        kind: 'dispatch-queue-batch',
+        projectId: validateStableId(scope.projectId, { operation, entity: { type: 'project' } }, 'scope.projectId'),
+        batchId: validateStableId(scope.batchId, { operation, entity: { type: 'execution_batch' } }, 'scope.batchId'),
+      },
+    };
+  }
+  if (scope.kind === 'dispatch-queue-feature') {
+    rejectUnknownKeys(scope, ['kind', 'projectId', 'featureId'], { operation }, 'scope');
+    return {
+      rootIdentity: input.rootIdentity,
+      scope: {
+        kind: 'dispatch-queue-feature',
+        projectId: validateStableId(scope.projectId, { operation, entity: { type: 'project' } }, 'scope.projectId'),
+        featureId: validateStableId(scope.featureId, { operation, entity: { type: 'feature' } }, 'scope.featureId'),
+      },
+    };
+  }
   if (scope.kind === 'dispatch-queue') {
     rejectUnknownKeys(scope, ['kind', 'projectId'], { operation }, 'scope');
     return {
@@ -808,10 +942,61 @@ export function createPlanListCursorBinding(
       },
     };
   }
+  if (scope.kind === 'batch-delivery') {
+    rejectUnknownKeys(scope, ['kind', 'projectId', 'batchId'], { operation }, 'scope');
+    return { rootIdentity: input.rootIdentity, scope: {
+      kind: 'batch-delivery',
+      projectId: validateStableId(scope.projectId, { operation }, 'scope.projectId'),
+      batchId: validateStableId(scope.batchId, { operation }, 'scope.batchId'),
+    } };
+  }
+  if (scope.kind === 'git-repairs') {
+    rejectUnknownKeys(scope, ['kind', 'projectId'], { operation }, 'scope');
+    return {
+      rootIdentity: input.rootIdentity,
+      scope: { kind: 'git-repairs', projectId: validateStableId(scope.projectId, { operation, entity: { type: 'project' } }, 'scope.projectId') },
+    };
+  }
+  if (scope.kind === 'execution-resources') {
+    rejectUnknownKeys(scope, ['kind', 'projectId', 'featureId', 'batchId'], { operation }, 'scope');
+    if (scope.featureId !== undefined && scope.batchId !== undefined) {
+      planInvalidInput(operation, 'scope', 'featureId 与 batchId 不能同时存在', scope);
+    }
+    return {
+      rootIdentity: input.rootIdentity,
+      scope: {
+        kind: 'execution-resources',
+        projectId: validateStableId(scope.projectId, { operation, entity: { type: 'project' } }, 'scope.projectId'),
+        ...(scope.featureId === undefined ? {} : { featureId: validateStableId(scope.featureId, { operation, entity: { type: 'feature' } }, 'scope.featureId') }),
+        ...(scope.batchId === undefined ? {} : { batchId: validateStableId(scope.batchId, { operation, entity: { type: 'execution_batch' } }, 'scope.batchId') }),
+      },
+    };
+  }
+  if (scope.kind === 'planning-contexts') {
+    rejectUnknownKeys(scope, ['kind', 'projectId'], { operation }, 'scope');
+    return {
+      rootIdentity: input.rootIdentity,
+      scope: {
+        kind: 'planning-contexts',
+        projectId: validateStableId(scope.projectId, { operation, entity: { type: 'project' } }, 'scope.projectId'),
+      },
+    };
+  }
+  if (scope.kind === 'feature-planning-contexts') {
+    rejectUnknownKeys(scope, ['kind', 'projectId', 'featureId'], { operation }, 'scope');
+    return {
+      rootIdentity: input.rootIdentity,
+      scope: {
+        kind: 'feature-planning-contexts',
+        projectId: validateStableId(scope.projectId, { operation, entity: { type: 'project' } }, 'scope.projectId'),
+        featureId: validateStableId(scope.featureId, { operation, entity: { type: 'feature' } }, 'scope.featureId'),
+      },
+    };
+  }
   planInvalidInput(
     operation,
     'scope.kind',
-    "必须是 'phases' / 'features' / 'tasks' / 'budget-revisions' / 'task-attempts' / 'attempt-diagnostics' / 'run-work-sessions' / 'task-work-sessions' / 'task-approvals' / 'task-rework-chain' / 'feature-git-operations' / 'run-git-operations' / 'dispatch-queue'",
+    "必须是 'phases' / 'phase-graph' / 'features' / 'tasks' / 'budget-revisions' / 'task-attempts' / 'attempt-diagnostics' / 'run-work-sessions' / 'task-work-sessions' / 'task-approvals' / 'task-rework-chain' / 'feature-git-operations' / 'run-git-operations' / 'dispatch-queue' / 'dispatch-queue-batch' / 'dispatch-queue-feature' / 'execution-resources' / 'git-repairs' / 'planning-contexts' / 'feature-planning-contexts'",
     (scope as { kind?: unknown }).kind,
   );
 }
@@ -824,6 +1009,7 @@ function planBindingAsTrusted(binding: PlanListCursorBinding): PlanListCursorBin
     !isPlainObject(binding.scope) ||
     (binding.scope.kind !== 'work-recording' &&
       binding.scope.kind !== 'phases' &&
+      binding.scope.kind !== 'phase-graph' &&
       binding.scope.kind !== 'features' &&
       binding.scope.kind !== 'tasks' &&
       binding.scope.kind !== 'budget-revisions' &&
@@ -835,7 +1021,14 @@ function planBindingAsTrusted(binding: PlanListCursorBinding): PlanListCursorBin
       binding.scope.kind !== 'task-rework-chain' &&
       binding.scope.kind !== 'feature-git-operations' &&
       binding.scope.kind !== 'run-git-operations' &&
-      binding.scope.kind !== 'dispatch-queue')
+      binding.scope.kind !== 'dispatch-queue-batch' &&
+      binding.scope.kind !== 'dispatch-queue-feature' &&
+      binding.scope.kind !== 'dispatch-queue' &&
+      binding.scope.kind !== 'batch-delivery' &&
+      binding.scope.kind !== 'git-repairs' &&
+      binding.scope.kind !== 'execution-resources' &&
+      binding.scope.kind !== 'planning-contexts' &&
+      binding.scope.kind !== 'feature-planning-contexts')
   ) {
     planScopeShapeError('必须由 createPlanListCursorBinding 构造');
   }
@@ -854,17 +1047,37 @@ function planScopeFingerprint(scope: PlanListScope): string {
     case 'work-recording':
       parent = `${scope.parentKind}:${scope.parentId}:${scope.recordType}`;
       break;
-    case 'phases':
+    case 'dispatch-queue-batch':
+      parent = `batch:${scope.batchId}`;
+      break;
+    case 'dispatch-queue-feature':
+      parent = `feature:${scope.featureId}`;
+      break;
+    case 'execution-resources':
+      parent = scope.featureId === undefined
+        ? scope.batchId === undefined ? '-' : `batch:${scope.batchId}`
+        : `feature:${scope.featureId}`;
+      break;
+    case 'git-repairs':
     case 'dispatch-queue':
+    case 'phases':
+    case 'planning-contexts':
       parent = '-';
+      break;
+    case 'phase-graph':
+      parent = scope.phaseId;
       break;
     case 'features':
       parent = scope.phaseId;
+      break;
+    case 'feature-planning-contexts':
+      parent = scope.featureId;
       break;
     case 'tasks':
     case 'feature-git-operations':
       parent = scope.featureId;
       break;
+    case 'batch-delivery':
     case 'budget-revisions':
       parent = scope.batchId;
       break;
@@ -876,7 +1089,7 @@ function planScopeFingerprint(scope: PlanListScope): string {
       parent = scope.runId;
       break;
     default:
-      parent = scope.taskId;
+      parent = 'taskId' in scope ? scope.taskId : '-';
       break;
   }
   return createHash('sha256')
@@ -1028,6 +1241,7 @@ export interface FeaturePlanView {
  */
 export interface PlanDetailReadStore {
   readPhaseRecord(phaseId: unknown): PhaseRecord | undefined;
+  readPhaseGraphView(projectId: unknown, phaseId: unknown): PhaseFeatureGraphView | undefined;
   readTaskRecord(taskId: unknown): TaskRecord | undefined;
   readFeaturePlanView(featureId: unknown): FeaturePlanView | undefined;
 }

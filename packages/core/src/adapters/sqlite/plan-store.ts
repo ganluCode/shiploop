@@ -19,6 +19,8 @@
  * - 读取映射对持久 JSON 重新解析，损坏 JSON 以 kind='corrupt' 拒绝，不作为
  *   有效记录返回；不泄漏驱动会话或 ORM 类型。
  */
+import { validatePhaseMutationInput } from '../../ports/phase-lifecycle.js';
+import { validateFeaturePhaseMoveInput } from '../../ports/feature-phase.js';
 import { randomUUID } from 'node:crypto';
 import type Database from 'better-sqlite3';
 import { StorageError } from '../../ports/errors.js';
@@ -50,18 +52,29 @@ import type {
   TaskDependencyRecord,
   TaskRecord,
 } from '../../ports/plan-store.js';
+import { validateFeatureDagUpdateInput, edgeKey, featureDagUpdateGraphError } from '../../ports/feature-dag-update.js';
 import type { PlanArtifactRef, PlanComplexity } from '../../ports/feature-plan.js';
+import type { FeatureDependencyRecord } from '../../ports/feature-dag.js';
+import type { FeatureDagUpdateResult } from '../../ports/feature-dag-update.js';
+import { validateFeatureDag, evaluateFeatureDag } from '../../ports/feature-dag.js';
 import type { ArtifactInputRef } from '../../ports/artifact-store.js';
 import { assertPrincipalVisibility } from '../../ports/queries.js';
 import type {
   FeatureApprovalsView,
   FeaturePlanView,
+  PhaseFeatureGraphView,
   PlanListRequest,
   PlanRecordPage,
 } from '../../ports/queries.js';
 import type { ExecutionInputPreparationView } from '../../ports/execution-input-prepare.js';
 import { ACTIVE_EXECUTION_STATUSES } from '../../ports/execution-preview.js';
-import type { ExecutionPreviewResolvedInput, ExecutionPreviewView } from '../../ports/execution-preview.js';
+import type {
+  ExecutionPreviewMemberView,
+  ExecutionPreviewResolvedInput,
+  ExecutionPreviewSelection,
+  ExecutionPreviewScopeView,
+  ExecutionPreviewView,
+} from '../../ports/execution-preview.js';
 import type { ProjectStatus } from '../../ports/state-store.js';
 import { validateSha256Digest, validateStableId } from '../../ports/validation.js';
 import { parseStoredSettingsPayload } from '../../ports/settings-schema.js';
@@ -131,6 +144,18 @@ export interface TaskApprovalItemSqlRow {
   readonly decision_code_digest: string | null; readonly decision_artifact_refs: string; readonly decided_at: number | null;
 }
 
+interface FeatureDependencySqlRow {
+  readonly id: string;
+  readonly created_at: number;
+  readonly project_id: string;
+  readonly revision: number;
+  readonly updated_at: number;
+  readonly phase_id: string;
+  readonly feature_id: string;
+  readonly depends_on_id: string;
+  readonly code_baseline_ref: string | null;
+}
+
 interface TaskDependencySqlRow {
   readonly id: string;
   readonly created_at: number;
@@ -191,6 +216,9 @@ function isSqliteConstraintError(error: unknown): error is Error & { code: strin
 /** 同会话同步原语集合：供原子命令事务复用，绝不嵌套 Promise/事务。 */
 export interface SqlitePlanAccess {
   insertPhaseInTransaction(input: unknown): PhaseRecord;
+  updatePhaseInTransaction(input: unknown): PhaseRecord;
+  moveFeaturePhaseInTransaction(input: unknown): FeatureRecord;
+  updateFeatureDagInTransaction(input: unknown): FeatureDagUpdateResult;
   insertFeatureInTransaction(input: unknown): FeatureRecord;
   insertTaskInTransaction(input: unknown): TaskRecord;
   insertTaskDependencyInTransaction(input: unknown): TaskDependencyRecord;
@@ -207,6 +235,8 @@ export interface SqlitePlanAccess {
   getArtifactInputRefInTransaction(projectId: string, artifactId: string): ArtifactInputRef;
   /** F-005：既有任务 → 所属 Feature 解析（仅返回存在行）。 */
   getTaskFeatureLinksInTransaction(taskIds: readonly string[]): ReadonlyMap<string, string>;
+  /** F-008：判断 coding Task 是否已有 Attempt/预算/人审历史，禁止不安全删除。 */
+  hasTaskExecutionHistoryInTransaction(projectId: string, taskIds: readonly string[]): ReadonlySet<string>;
   /** F-008：修订事务内读取 Feature 计划快照（缺失 not_found、跨项目 ownership）。 */
   getFeaturePlanInTransaction(projectId: string, featureId: string): FeaturePlanSnapshot;
   /**
@@ -263,6 +293,8 @@ export interface SqlitePlanAccess {
    * 可见性折叠由应用层统一处理，本层不区分不存在与跨项目。
    */
   readPhaseRecord(phaseId: unknown): PhaseRecord | undefined;
+  /** F-006：Phase + Feature DAG + Task 计数/活动范围的单一一致读视图。 */
+  readPhaseGraphView(projectId: unknown, phaseId: unknown): PhaseFeatureGraphView | undefined;
   readTaskRecord(taskId: unknown): TaskRecord | undefined;
   /** F-006：Feature + 全部 Task + 全部依赖边（单一 DEFERRED 读事务一致视图）。 */
   readFeaturePlanView(featureId: unknown): FeaturePlanView | undefined;
@@ -285,7 +317,13 @@ export interface SqlitePlanAccess {
    * Feature 缺失返回 undefined；跨项目抛 StorageError(ownership)；嵌套于
    * 写事务内调用是编程错误（TypeError）。
    */
+  /** P05-3 / F-002：Phase/显式 Feature 选择与 DAG 闭包的一致读视图。 */
+  readExecutionPreviewScopeView(
+    projectId: string,
+    selection: ExecutionPreviewSelection,
+  ): ExecutionPreviewScopeView | undefined;
   readExecutionPreviewView(projectId: string, featureId: string): ExecutionPreviewView | undefined;
+  readExecutionPreviewView(projectId: string, selection: ExecutionPreviewSelection): ExecutionPreviewScopeView | undefined;
   /** F-006 层级列表：可见范围谓词下推 + 稳定 id 升序键集分页（先收窄再分页）。 */
   listPhaseRecords(
     visibility: unknown,
@@ -672,6 +710,240 @@ export function createSqlitePlanAccess(
     return phaseFromRow(row!);
   }
 
+  function updatePhaseInTransaction(input: unknown): PhaseRecord {
+    const operation = 'PlanStore.updatePhase';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const valid = validatePhaseMutationInput(input);
+    const current = getPhaseInTransaction(valid.projectId, valid.payload.phaseId);
+    const entity: StorageEntityRef = { type: 'phase', id: current.id, projectId: valid.projectId };
+    if (current.revision !== valid.expectedRevision) {
+      throw conflict(operation, 'Phase revision 不匹配', entity, {
+        reason: 'conflict', expectedRevision: valid.expectedRevision, actualRevision: current.revision,
+      });
+    }
+    const db = session.database;
+    let status = current.status;
+    if (valid.operation !== 'phase.metadata.update') {
+      const required = valid.operation === 'phase.close' ? 'open' : 'closed';
+      if (current.status !== required) {
+        throw conflict(operation, 'Phase 生命周期迁移不合法', entity, { reason: 'invalid_phase_transition' });
+      }
+      status = valid.operation === 'phase.close' ? 'closed'
+        : valid.operation === 'phase.reopen' ? 'open' : 'archived';
+      if (valid.operation !== 'phase.reopen') {
+        // BEGIN IMMEDIATE serializes these checks with Batch creation, claims and recovery.
+        // Expiry does not prove a writer stopped; held/quarantined rows remain blockers.
+        const active = ACTIVE_EXECUTION_STATUSES.map(() => '?').join(',');
+        const batch = db.prepare(`SELECT 1 FROM execution_batches WHERE project_id = ? AND phase_id = ?
+          AND status IN (${active}) LIMIT 1`).get(valid.projectId, current.id, ...ACTIVE_EXECUTION_STATUSES);
+        const execution = db.prepare(`SELECT 1 FROM runs r JOIN features f ON f.id = r.feature_id
+          WHERE f.project_id = ? AND f.phase_id = ? AND (
+            r.status IN (${active})
+            OR EXISTS (SELECT 1 FROM attempts a WHERE a.run_id = r.id AND a.status IN ('preparing','executing','verifying'))
+            OR EXISTS (SELECT 1 FROM workspace_leases l JOIN attempts a ON a.id = l.owner_id WHERE a.run_id = r.id)
+            OR EXISTS (SELECT 1 FROM run_dispatch_claims c WHERE c.run_id = r.id AND c.state IN ('held','quarantined'))
+            OR EXISTS (SELECT 1 FROM execution_slot_claims s WHERE s.run_id = r.id AND s.state IN ('held','quarantined'))
+          ) LIMIT 1`).get(valid.projectId, current.id, ...ACTIVE_EXECUTION_STATUSES);
+        const stop = db.prepare(`SELECT 1 FROM execution_stop_operations s
+          JOIN execution_batches b ON b.id = s.batch_id
+          WHERE b.project_id = ? AND b.phase_id = ?
+            AND (s.status <> 'stopped' OR s.stop_confirmed IS NOT 1) LIMIT 1`).get(valid.projectId, current.id);
+        if (batch !== undefined || execution !== undefined || stop !== undefined) {
+          throw conflict(operation, 'Phase 仍有活动执行或未核验停止的占用', entity, { reason: 'phase_execution_active' });
+        }
+      }
+    }
+    const updated = db.prepare(`UPDATE phases SET title = ?, description = ?, labels = ?, status = ?,
+      revision = revision + 1, updated_at = ? WHERE id = ? AND project_id = ? AND revision = ?`)
+      .run(valid.payload.title ?? current.title,
+        valid.payload.description === undefined ? current.description : valid.payload.description,
+        JSON.stringify(valid.payload.labels ?? current.labels), status, nowUtcMs(),
+        current.id, valid.projectId, valid.expectedRevision);
+    if (updated.changes !== 1) {
+      // Unexpected write failure must roll back, never become a persisted business rejection.
+      throw new Error('Phase CAS failed inside serialized transaction');
+    }
+    return getPhaseInTransaction(valid.projectId, current.id);
+  }
+
+  function moveFeaturePhaseInTransaction(input: unknown): FeatureRecord {
+    const operation = 'PlanStore.moveFeaturePhase';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const valid = validateFeaturePhaseMoveInput(input);
+    const { projectId, payload } = valid;
+    const db = session.database;
+    const current = getFeaturePlanInTransaction(projectId, payload.featureId).feature;
+    const source = getPhaseInTransaction(projectId, payload.sourcePhaseId);
+    const target = getPhaseInTransaction(projectId, payload.targetPhaseId);
+    const entity: StorageEntityRef = { type: 'feature', projectId, id: current.id };
+    const reject = (reason: string): never => {
+      throw conflict(operation, 'Feature 归属调整被拒绝', entity, { reason });
+    };
+    if (current.phaseId !== source.id) reject('source_phase_mismatch');
+    if (source.id === target.id) reject('same_phase');
+    for (const [record, expected] of [[current, valid.expectedRevision],
+      [source, payload.sourcePhaseRevision], [target, payload.targetPhaseRevision]] as const) {
+      if (record.revision !== expected) {
+        throw conflict(operation, '归属 revision 不匹配', entity, {
+          reason: 'conflict', expectedRevision: expected, actualRevision: record.revision,
+        });
+      }
+    }
+    if (source.status !== 'open' || target.status !== 'open') reject('phase_not_open');
+    const active = ACTIVE_EXECUTION_STATUSES.map(() => '?').join(',');
+    // Include transitive prerequisites, even when they are outside the selected Batch.
+    // UNION also terminates safely if corrupt persisted edges contain a cycle.
+    const protectedMember = db.prepare(`WITH RECURSIVE protected(id) AS (
+      SELECT feature_id FROM execution_batches WHERE project_id = ? AND status IN (${active})
+      UNION SELECT d.depends_on_id FROM feature_dependencies d JOIN protected p ON p.id = d.feature_id
+        WHERE d.project_id = ?
+    ) SELECT 1 FROM protected WHERE id = ? LIMIT 1`)
+      .get(projectId, ...ACTIVE_EXECUTION_STATUSES, projectId, current.id);
+    if (protectedMember !== undefined) reject('active_batch_scope');
+    const execution = db.prepare(`SELECT 1 FROM runs r WHERE r.project_id = ? AND r.feature_id = ? AND (
+      r.status IN (${active})
+      OR EXISTS (SELECT 1 FROM attempts a WHERE a.run_id = r.id AND a.status IN ('preparing','executing','verifying'))
+      OR EXISTS (SELECT 1 FROM workspace_leases l JOIN attempts a ON a.id = l.owner_id WHERE a.run_id = r.id)
+      OR EXISTS (SELECT 1 FROM run_dispatch_claims c WHERE c.run_id = r.id AND c.state IN ('held','quarantined'))
+      OR EXISTS (SELECT 1 FROM execution_slot_claims s WHERE s.run_id = r.id AND s.state IN ('held','quarantined'))
+      OR EXISTS (SELECT 1 FROM execution_stop_operations s WHERE s.run_id = r.id
+        AND (s.status <> 'stopped' OR s.stop_confirmed IS NOT 1))
+    ) LIMIT 1`).get(projectId, current.id, ...ACTIVE_EXECUTION_STATUSES);
+    if (execution !== undefined || current.status === 'running' || current.status === 'awaiting_approval') {
+      reject('active_execution_inputs');
+    }
+    // A single-node move cannot retain same-Phase edges. Never delete/rewrite them implicitly.
+    const edge = db.prepare(`SELECT 1 FROM feature_dependencies WHERE project_id = ?
+      AND (feature_id = ? OR depends_on_id = ?) LIMIT 1`).get(projectId, current.id, current.id);
+    if (edge !== undefined) reject('feature_has_dependencies');
+    // Existing Batch rows retain a composite FK to the original Phase/Feature tuple.
+    // Preserve historical scopes instead of rewriting terminal execution evidence.
+    if (db.prepare('SELECT 1 FROM execution_batches WHERE project_id = ? AND feature_id = ? LIMIT 1')
+      .get(projectId, current.id) !== undefined) reject('feature_batch_scope_bound');
+    // Planning contexts retain the original Phase identity for recovery and audit.
+    if (db.prepare('SELECT 1 FROM planning_contexts WHERE project_id = ? AND feature_id = ? LIMIT 1')
+      .get(projectId, current.id) !== undefined) reject('feature_planning_context_bound');
+
+    // No conflict decisions after the first write: unexpected faults must roll back all three CAS writes.
+    const timestamp = nowUtcMs();
+    const changed = db.prepare(`UPDATE features SET phase_id = ?, revision = revision + 1, updated_at = ?
+      WHERE id = ? AND project_id = ? AND revision = ? AND phase_id = ?`)
+      .run(target.id, timestamp, current.id, projectId, valid.expectedRevision, source.id);
+    if (changed.changes !== 1) throw new Error('Feature affiliation CAS failed inside serialized transaction');
+    for (const phase of [source, target]) {
+      const changedPhase = db.prepare(`UPDATE phases SET revision = revision + 1, updated_at = ?
+        WHERE id = ? AND project_id = ? AND revision = ? AND status = 'open'`)
+        .run(timestamp, phase.id, projectId, phase.revision);
+      if (changedPhase.changes !== 1) throw new Error('Phase affiliation CAS failed inside serialized transaction');
+    }
+    // Phase identity is absent from planDigest. Approval validity and Task/history facts are untouched.
+    return getFeaturePlanInTransaction(projectId, current.id).feature;
+  }
+
+  function updateFeatureDagInTransaction(input: unknown): FeatureDagUpdateResult {
+    const operation = 'PlanStore.updateFeatureDag';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const valid = validateFeatureDagUpdateInput(input);
+    const db = session.database;
+    const phase = getPhaseInTransaction(valid.projectId, valid.phaseId);
+    const entity: StorageEntityRef = { type: 'phase', projectId: valid.projectId, id: valid.phaseId };
+    if (phase.status !== 'open') {
+      throw conflict(operation, 'Feature DAG 只能修改 open Phase', entity, { reason: 'phase_not_open' });
+    }
+    if (phase.revision !== valid.expectedRevision) {
+      throw conflict(operation, 'Phase DAG revision 不匹配', entity, {
+        reason: 'conflict', expectedRevision: valid.expectedRevision, actualRevision: phase.revision,
+      });
+    }
+
+    const featureRows = db.prepare<[string, string], FeatureSqlRow>(
+      `${SELECT_FEATURE} WHERE project_id = ? AND phase_id = ? ORDER BY id ASC`,
+    ).all(valid.projectId, valid.phaseId) as FeatureSqlRow[];
+    const features = featureRows.map((row) => featureFromRow(row));
+    const edgeRows = db.prepare<[string, string], FeatureDependencySqlRow>(
+      'SELECT id, created_at, project_id, phase_id, feature_id, depends_on_id, code_baseline_ref FROM feature_dependencies WHERE project_id = ? AND phase_id = ? ORDER BY feature_id ASC, depends_on_id ASC',
+    ).all(valid.projectId, valid.phaseId) as FeatureDependencySqlRow[];
+    const existingEdges = edgeRows.map((row) => ({
+      id: row.id, projectId: row.project_id, phaseId: row.phase_id,
+      featureId: row.feature_id, dependsOnId: row.depends_on_id, codeBaselineRef: row.code_baseline_ref,
+    }));
+    let graph;
+    try {
+      graph = validateFeatureDag({
+        projectId: valid.projectId,
+        phaseId: valid.phaseId,
+        features: features.map((feature) => ({
+          id: feature.id, projectId: feature.projectId, phaseId: feature.phaseId, status: feature.status,
+        })),
+        candidateEdges: valid.edges,
+      });
+    } catch (error) {
+      if (error instanceof StorageError) throw error;
+      throw featureDagUpdateGraphError('invalid_graph');
+    }
+
+    const currentByKey = new Map(existingEdges.map((edge) => [edgeKey(edge), edge] as const));
+    const requestedByKey = new Map(graph.edges.map((edge) => [edgeKey(edge), edge] as const));
+    for (const [key, requested] of requestedByKey) {
+      const current = currentByKey.get(key);
+      if (current !== undefined && current.codeBaselineRef !== requested.codeBaselineRef) {
+        throw conflict(operation, '依赖边的 code baseline 引用与当前事实不匹配', entity, {
+          reason: 'code_baseline_mismatch', featureId: requested.featureId, dependsOnFeatureId: requested.dependsOnId,
+        });
+      }
+    }
+
+    const activeStatuses = ACTIVE_EXECUTION_STATUSES.map(() => '?').join(',');
+    const activeBatches = db.prepare<[string, ...string[]], { id: string; scope_snapshot: string }>(
+      `SELECT id, scope_snapshot FROM execution_batches WHERE project_id = ? AND phase_id = ? AND status IN (${activeStatuses}) ORDER BY id ASC`,
+    ).all(valid.projectId, valid.phaseId, ...ACTIVE_EXECUTION_STATUSES) as Array<{ id: string; scope_snapshot: string }>;
+    const stableIncoming = (edges: readonly FeatureDependencyRecord[], featureIds: ReadonlySet<string>): string[] => edges
+      .filter((edge) => featureIds.has(edge.featureId))
+      .map((edge) => `${edge.featureId}:${edge.dependsOnId}:${edge.codeBaselineRef ?? ''}`)
+      .sort();
+    for (const batch of activeBatches) {
+      let snapshot: unknown;
+      try { snapshot = JSON.parse(batch.scope_snapshot); } catch (cause) {
+        throw new StorageError('corrupt', operation, '活动 Batch 范围快照损坏', { entity, details: { reason: 'invalid_scope_snapshot' }, cause });
+      }
+      const scope = snapshot as { featureIds?: unknown };
+      if (!Array.isArray(scope.featureIds) || scope.featureIds.some((id) => typeof id !== 'string')) {
+        throw new StorageError('corrupt', operation, '活动 Batch 范围快照缺少 Feature 身份', { entity, details: { reason: 'invalid_scope_snapshot' } });
+      }
+      const featureIds = new Set(scope.featureIds as string[]);
+      if (stableIncoming(existingEdges, featureIds).join('|') !== stableIncoming(graph.edges, featureIds).join('|')) {
+        throw conflict(operation, '活动 Batch 范围内的前置关系不能变更', entity, {
+          reason: 'active_batch_scope', batchId: batch.id,
+        });
+      }
+    }
+
+    const timestamp = nowUtcMs();
+    const phaseUpdate = db.prepare(
+      "UPDATE phases SET revision = revision + 1, updated_at = ? WHERE project_id = ? AND id = ? AND revision = ? AND status = 'open'",
+    ).run(timestamp, valid.projectId, valid.phaseId, valid.expectedRevision);
+    if (phaseUpdate.changes !== 1) {
+      throw conflict(operation, 'Phase DAG CAS 未命中', entity, {
+        reason: 'conflict', expectedRevision: valid.expectedRevision, actualRevision: phase.revision,
+      });
+    }
+    db.prepare('DELETE FROM feature_dependencies WHERE project_id = ? AND phase_id = ?')
+      .run(valid.projectId, valid.phaseId);
+    const insert = db.prepare(
+      'INSERT INTO feature_dependencies (id, created_at, project_id, revision, updated_at, phase_id, feature_id, depends_on_id, code_baseline_ref) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?)',
+    );
+    const edges: FeatureDependencyRecord[] = graph.edges.map((edge) => {
+      const id = currentByKey.get(edgeKey(edge))?.id ?? randomUUID();
+      insert.run(id, timestamp, valid.projectId, timestamp, valid.phaseId, edge.featureId, edge.dependsOnId, edge.codeBaselineRef);
+      return { id, projectId: valid.projectId, phaseId: valid.phaseId, featureId: edge.featureId, dependsOnId: edge.dependsOnId, codeBaselineRef: edge.codeBaselineRef };
+    });
+    const updatedPhase = getPhaseInTransaction(valid.projectId, valid.phaseId);
+    return { phase: updatedPhase, edges };
+  }
+
   function insertFeatureInTransaction(input: unknown): FeatureRecord {
     const operation = 'PlanStore.insertFeature';
     assertOpen(operation);
@@ -681,13 +953,16 @@ export function createSqlitePlanAccess(
     const db = session.database;
     assertProjectExists(db, operation, valid.projectId, entity);
     const phase = db
-      .prepare<[string], { project_id: string }>('SELECT project_id FROM phases WHERE id = ?')
+      .prepare<[string], { project_id: string; status: string }>('SELECT project_id, status FROM phases WHERE id = ?')
       .get(valid.phaseId);
     if (phase === undefined) {
       throw notFound(operation, entity, `Phase ${valid.phaseId} 不存在`);
     }
     if (phase.project_id !== valid.projectId) {
       throw ownership(operation, entity, 'Phase 不属于声明的项目（跨项目父级被拒绝）');
+    }
+    if (phase.status !== 'open') {
+      throw conflict(operation, '目标 Phase 非 open', entity, { reason: 'phase_not_open' });
     }
     const timestamp = nowUtcMs();
     const id = randomUUID();
@@ -1030,6 +1305,28 @@ export function createSqlitePlanAccess(
       }
     }
     return links;
+  }
+
+  function hasTaskExecutionHistoryInTransaction(projectId: string, taskIds: readonly string[]): ReadonlySet<string> {
+    const operation = 'PlanStore.hasTaskExecutionHistory';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const validProjectId = validateStableId(projectId, { operation }, 'projectId');
+    const validTaskIds = [...new Set(taskIds.map(taskId => validateStableId(taskId, { operation }, 'taskIds')) )];
+    if (validTaskIds.length === 0) return new Set();
+    const placeholders = validTaskIds.map(() => '?').join(',');
+    const result = new Set<string>();
+    for (const table of ['attempts', 'task_attempt_reservations', 'task_approval_items']) {
+      const exists = session.database.prepare<[string], { n: number }>(
+        "SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table' AND name = ?",
+      ).get(table);
+      if (exists?.n !== 1) continue;
+      const rows = session.database.prepare<[string, ...string[]], { task_id: string }>(
+        `SELECT task_id FROM ${table} WHERE project_id = ? AND task_id IN (${placeholders})`,
+      ).all(validProjectId, ...validTaskIds);
+      for (const row of rows) result.add(row.task_id);
+    }
+    return result;
   }
 
   /**
@@ -1386,7 +1683,7 @@ export function createSqlitePlanAccess(
       throw ownership(operation, entity, 'Feature 不属于声明的项目（跨项目目标被拒绝）');
     }
     const taskRows = db
-      .prepare<[string], TaskSqlRow>(`${SELECT_TASK} WHERE feature_id = ? ORDER BY id`)
+      .prepare<[string], TaskSqlRow>(`${SELECT_TASK} WHERE feature_id = ? AND kind = 'coding' ORDER BY id`)
       .all(validFeatureId) as TaskSqlRow[];
     const dependencyRows = db
       .prepare<[string], TaskDependencySqlRow>(`${SELECT_TASK_DEPENDENCY} WHERE feature_id = ? ORDER BY task_id, depends_on_id`)
@@ -1426,9 +1723,11 @@ export function createSqlitePlanAccess(
     if (featureRow.project_id !== valid.projectId) {
       throw ownership(operation, entity, 'Feature 不属于声明的项目（跨项目目标被拒绝）');
     }
-    // 库内既有成员身份（同事务读取，串行化无竞争窗口）。
+    // 库内既有成员身份（同事务读取，串行化无竞争窗口）。P05-1 / F-002 起业务
+    // 计划成员只含 kind='coding' 行：planning Task 不参与保留/移除划分，也不被
+    // 计划修订删除（保留其 Attempt/Session 历史引用；应用候选时同样保留）。
     const existingRows = db
-      .prepare<[string], TaskSqlRow>(`${SELECT_TASK} WHERE feature_id = ? ORDER BY id`)
+      .prepare<[string], TaskSqlRow>(`${SELECT_TASK} WHERE feature_id = ? AND kind = 'coding' ORDER BY id`)
       .all(valid.featureId) as TaskSqlRow[];
     const existingIds = new Set(existingRows.map((row) => row.id));
     const finalIds = new Set(valid.tasks.map((task) => task.id));
@@ -1596,7 +1895,7 @@ export function createSqlitePlanAccess(
       db.prepare<[string], FeatureSqlRow>(`${SELECT_FEATURE} WHERE id = ?`).get(valid.featureId)!,
     );
     const tasks = (
-      db.prepare<[string], TaskSqlRow>(`${SELECT_TASK} WHERE feature_id = ? ORDER BY id`).all(valid.featureId) as TaskSqlRow[]
+      db.prepare<[string], TaskSqlRow>(`${SELECT_TASK} WHERE feature_id = ? AND kind = 'coding' ORDER BY id`).all(valid.featureId) as TaskSqlRow[]
     ).map(taskFromRow);
     return {
       feature,
@@ -1653,6 +1952,7 @@ export function createSqlitePlanAccess(
     parent: { readonly column: string; readonly value: unknown; readonly entityType: StorageEntityRef['type'] } | null,
     request: PlanListRequest,
     mapRow: (row: unknown) => T,
+    extraCondition?: string,
   ): PlanRecordPage<T> {
     assertOpen(operation);
     assertNotInTransaction(operation);
@@ -1671,6 +1971,9 @@ export function createSqlitePlanAccess(
     if (visible.condition !== undefined) {
       conditions.push(visible.condition);
       params.push(...visible.params);
+    }
+    if (extraCondition !== undefined) {
+      conditions.push(extraCondition);
     }
     params.push(request.limit + 1);
     const rows = session.database
@@ -1695,6 +1998,58 @@ export function createSqlitePlanAccess(
       .prepare<[string], PhaseSqlRow>(`${SELECT_PHASE} WHERE id = ?`)
       .get(id);
     return row === undefined ? undefined : phaseFromRow(row);
+  }
+
+  function readPhaseGraphView(projectId: unknown, phaseId: unknown): PhaseFeatureGraphView | undefined {
+    const operation = 'PlanStore.readPhaseGraphView';
+    const validProjectId = validateStableId(projectId, { operation }, 'projectId');
+    const validPhaseId = planReadId(operation, phaseId, 'phaseId', 'phase');
+    return transactSqliteConsistentRead(session, operation, (db) => {
+      const phaseRow = db
+        .prepare<[string, string], PhaseSqlRow>(`${SELECT_PHASE} WHERE id = ? AND project_id = ?`)
+        .get(validPhaseId, validProjectId);
+      if (phaseRow === undefined) return undefined;
+      const featureRows = db
+        .prepare<[string, string], FeatureSqlRow>(
+          `${SELECT_FEATURE} WHERE project_id = ? AND phase_id = ? ORDER BY id ASC`,
+        )
+        .all(validProjectId, validPhaseId) as FeatureSqlRow[];
+      const edgeRows = db
+        .prepare<[string, string], FeatureDependencySqlRow>(
+          'SELECT id, created_at, project_id, revision, updated_at, phase_id, feature_id, depends_on_id, code_baseline_ref ' +
+            'FROM feature_dependencies WHERE project_id = ? AND phase_id = ? ORDER BY feature_id ASC, depends_on_id ASC',
+        )
+        .all(validProjectId, validPhaseId) as FeatureDependencySqlRow[];
+      const countRows = db
+        .prepare<[string, string], { feature_id: string; count: number }>(
+          "SELECT t.feature_id, COUNT(*) AS count FROM tasks t JOIN features f ON f.id = t.feature_id " +
+            "WHERE t.project_id = ? AND f.phase_id = ? AND t.kind = 'coding' GROUP BY t.feature_id",
+        )
+        .all(validProjectId, validPhaseId) as { feature_id: string; count: number }[];
+      const activeStatuses = ACTIVE_EXECUTION_STATUSES as readonly string[];
+      const activePlaceholders = activeStatuses.map(() => '?').join(', ');
+      const activeRows = db
+        .prepare<[string, string, ...string[]], { feature_id: string }>(
+          `SELECT DISTINCT feature_id FROM execution_batches WHERE project_id = ? AND phase_id = ? AND status IN (${activePlaceholders}) ORDER BY feature_id ASC`,
+        )
+        .all(validProjectId, validPhaseId, ...activeStatuses) as { feature_id: string }[];
+      const taskCounts: Record<string, number> = {};
+      for (const row of countRows) taskCounts[row.feature_id] = row.count;
+      return {
+        phase: phaseFromRow(phaseRow),
+        features: featureRows.map(featureFromRow),
+        dependencies: edgeRows.map((row) => ({
+          id: row.id,
+          projectId: row.project_id,
+          phaseId: row.phase_id,
+          featureId: row.feature_id,
+          dependsOnId: row.depends_on_id,
+          codeBaselineRef: row.code_baseline_ref,
+        })),
+        taskCounts,
+        activeFeatureIds: activeRows.map((row) => row.feature_id),
+      };
+    });
   }
 
   function readTaskRecord(taskId: unknown): TaskRecord | undefined {
@@ -1725,7 +2080,7 @@ export function createSqlitePlanAccess(
         return undefined;
       }
       const taskRows = db
-        .prepare<[string], TaskSqlRow>(`${SELECT_TASK} WHERE feature_id = ? ORDER BY id`)
+        .prepare<[string], TaskSqlRow>(`${SELECT_TASK} WHERE feature_id = ? AND kind = 'coding' ORDER BY id`)
         .all(id) as TaskSqlRow[];
       const dependencyRows = db
         .prepare<[string], TaskDependencySqlRow>(
@@ -1777,9 +2132,13 @@ export function createSqlitePlanAccess(
       return {
         feature,
         approvals: approvalRows.map((row) => approvalFromRow(row)),
+        // P05-1 / F-011：taskCount 只统计 kind='coding' 的业务 Task；planning
+        // Task 是规划历史身份，不计入可编码业务 Task 或完成数量。
         taskCount:
           db
-            .prepare<[string], { n: number }>('SELECT COUNT(*) AS n FROM tasks WHERE feature_id = ?')
+            .prepare<[string], { n: number }>(
+              "SELECT COUNT(*) AS n FROM tasks WHERE feature_id = ? AND kind = 'coding'",
+            )
             .get(id)?.n ?? 0,
         settings: {
           global:
@@ -1832,7 +2191,7 @@ export function createSqlitePlanAccess(
         throw ownership(operation, entity, 'Feature 不属于声明的项目（跨项目目标被拒绝）');
       }
       const taskRows = db
-        .prepare<[string], TaskSqlRow>(`${SELECT_TASK} WHERE feature_id = ? ORDER BY id`)
+        .prepare<[string], TaskSqlRow>(`${SELECT_TASK} WHERE feature_id = ? AND kind = 'coding' ORDER BY id`)
         .all(validFeatureId) as TaskSqlRow[];
       const dependencyRows = db
         .prepare<[string], TaskDependencySqlRow>(
@@ -1887,10 +2246,240 @@ export function createSqlitePlanAccess(
     });
   }
 
+  function readExecutionPreviewScopeView(
+    projectId: string,
+    selection: ExecutionPreviewSelection,
+  ): ExecutionPreviewScopeView | undefined {
+    const operation = 'PlanStore.readExecutionPreviewScopeView';
+    const validProjectId = validateStableId(projectId, { operation }, 'projectId');
+    const hasPhase = selection.phaseId !== null;
+    const requestedIds = [...selection.featureIds];
+    if (hasPhase === (requestedIds.length > 0)) {
+      throw new StorageError('validation', operation, 'Phase 与 Feature 选择器必须恰有一个', {
+        details: { reason: hasPhase ? 'multiple_scope_selectors' : 'missing_scope_selector' },
+      });
+    }
+    const validPhaseId = hasPhase
+      ? validateStableId(selection.phaseId, { operation }, 'phaseId')
+      : null;
+    const validFeatureIds = requestedIds.map((id, index) => validateStableId(id, { operation }, `featureIds[${index}]`));
+    const maxMembers = 16;
+    if (validFeatureIds.length > maxMembers) {
+      throw new StorageError('validation', operation, '执行预览范围超过成员上限', {
+        details: { reason: 'limit_exceeded', limit: maxMembers },
+      });
+    }
+    return transactSqliteConsistentRead(session, operation, (db) => {
+      const projectRow = db.prepare<[string], { id: string; status: string }>(
+        'SELECT id, status FROM projects WHERE id = ?',
+      ).get(validProjectId);
+      if (projectRow === undefined) {
+        throw notFound(operation, { type: 'project', id: validProjectId }, `项目 ${validProjectId} 不存在`);
+      }
+      if (!(['active', 'archiving', 'archived', 'deleting'] as readonly string[]).includes(projectRow.status)) {
+        throw new StorageError('corrupt', operation, '项目状态非法', {
+          entity: { type: 'project', id: validProjectId }, details: { reason: 'invalid_status' },
+        });
+      }
+
+      const selectedRows: FeatureSqlRow[] = [];
+      if (validPhaseId !== null) {
+        const phase = db.prepare<[string, string], PhaseSqlRow>(
+          `${SELECT_PHASE} WHERE id = ? AND project_id = ?`,
+        ).get(validPhaseId, validProjectId);
+        if (phase === undefined) {
+          const foreignPhase = db.prepare<[string], PhaseSqlRow>(`${SELECT_PHASE} WHERE id = ?`).get(validPhaseId);
+          if (foreignPhase !== undefined && foreignPhase.project_id !== validProjectId) {
+            throw ownership(operation, { type: 'phase', projectId: validProjectId, id: validPhaseId }, 'Phase 不属于声明的项目');
+          }
+          return undefined;
+        }
+      } else {
+        for (const featureId of validFeatureIds) {
+          const row = db.prepare<[string], FeatureSqlRow>(`${SELECT_FEATURE} WHERE id = ?`).get(featureId);
+          if (row === undefined) return undefined;
+          if (row.project_id !== validProjectId) {
+            throw ownership(operation, { type: 'feature', projectId: validProjectId, id: featureId }, 'Feature 不属于声明的项目');
+          }
+          selectedRows.push(row);
+        }
+      }
+
+      const phaseId = validPhaseId ?? selectedRows[0]?.phase_id;
+      if (phaseId === undefined) return undefined;
+      for (const row of selectedRows) {
+        if (row.phase_id !== phaseId) {
+          throw new StorageError('validation', operation, '显式 Feature 必须属于同一 Phase', {
+            entity: { type: 'feature', projectId: validProjectId, id: row.id },
+            details: { reason: 'cross_phase', phaseId },
+          });
+        }
+      }
+      const phaseRow = db.prepare<[string, string], PhaseSqlRow>(`${SELECT_PHASE} WHERE id = ? AND project_id = ?`)
+        .get(phaseId, validProjectId);
+      if (phaseRow === undefined) return undefined;
+      const featureRows = db.prepare<[string, string], FeatureSqlRow>(
+        `${SELECT_FEATURE} WHERE project_id = ? AND phase_id = ? ORDER BY id ASC`,
+      ).all(validProjectId, phaseId) as FeatureSqlRow[];
+      const edgeRows = db.prepare<[string, string], FeatureDependencySqlRow>(
+        'SELECT id, created_at, project_id, revision, updated_at, phase_id, feature_id, depends_on_id, code_baseline_ref ' +
+          'FROM feature_dependencies WHERE project_id = ? AND phase_id = ? ORDER BY feature_id ASC, depends_on_id ASC',
+      ).all(validProjectId, phaseId) as FeatureDependencySqlRow[];
+      const features = featureRows.map(featureFromRow);
+      const featureEdges: FeatureDependencyRecord[] = edgeRows.map((row) => ({
+        id: row.id, projectId: row.project_id, phaseId: row.phase_id,
+        featureId: row.feature_id, dependsOnId: row.depends_on_id, codeBaselineRef: row.code_baseline_ref,
+      }));
+      const graph = evaluateFeatureDag({
+        projectId: validProjectId,
+        phaseId,
+        features: features.map((feature) => ({
+          id: feature.id,
+          projectId: feature.projectId,
+          phaseId: feature.phaseId,
+          status: feature.status,
+          // P05-2 deliberately does not infer integration from Feature completion.
+          integrationEvidence: null,
+        })),
+        existingEdges: featureEdges,
+      });
+      const requested = validPhaseId === null
+        ? [...new Set(validFeatureIds)].sort()
+        : featureRows.map((row) => row.id).sort();
+      const memberSet = new Set<string>();
+      const collect = (featureId: string): void => {
+        if (memberSet.has(featureId)) return;
+        memberSet.add(featureId);
+        for (const edge of featureEdges) {
+          if (edge.featureId === featureId) collect(edge.dependsOnId);
+        }
+      };
+      for (const featureId of requested) collect(featureId);
+      const memberFeatureIds = graph.topologicalOrder.filter((id) => memberSet.has(id));
+      if (memberFeatureIds.length > maxMembers) {
+        throw new StorageError('validation', operation, '依赖闭包超过执行预览成员上限', {
+          details: { reason: 'closure_limit_exceeded', limit: maxMembers },
+        });
+      }
+      const featureById = new Map(features.map((feature) => [feature.id, feature] as const));
+      const readinessById = new Map(graph.readiness.map((item) => [item.featureId, item] as const));
+      const taskRowsFor = (featureId: string): TaskSqlRow[] => db.prepare<[string], TaskSqlRow>(
+        `${SELECT_TASK} WHERE feature_id = ? AND kind = 'coding' ORDER BY id`,
+      ).all(featureId) as TaskSqlRow[];
+      const resolveInputs = (feature: FeatureRecord, tasks: readonly TaskRecord[]): ExecutionPreviewResolvedInput[] => {
+        const refs = new Map<string, ExecutionPreviewResolvedInput>();
+        const collectRefs = (items: readonly PlanArtifactRef[]): void => {
+          for (const ref of items) {
+            const key = `${ref.artifactId}\\u0000${ref.contentHash ?? ''}`;
+            if (!refs.has(key)) refs.set(key, {
+              artifactId: ref.artifactId,
+              declaredContentHash: ref.contentHash ?? null,
+              resolved: null,
+              unavailableReason: null,
+            });
+          }
+        };
+        collectRefs(feature.sourceRefs);
+        for (const task of tasks) collectRefs(task.requirementsRefs);
+        return [...refs.values()].map((input) => {
+          const artifact = db.prepare<[string, string], { version: number; content_hash: string | null; size_bytes: number | null; status: string }>(
+            'SELECT version, content_hash, size_bytes, status FROM artifacts WHERE project_id = ? AND id = ?',
+          ).get(validProjectId, input.artifactId);
+          if (artifact === undefined) return { ...input, resolved: null, unavailableReason: 'not_found' as const };
+          if (artifact.status !== 'ready' || artifact.content_hash === null || artifact.size_bytes === null) {
+            return { ...input, resolved: null, unavailableReason: 'not_ready' as const };
+          }
+          return { ...input, resolved: {
+            version: artifact.version, contentHash: artifact.content_hash, sizeBytes: artifact.size_bytes,
+          }, unavailableReason: null };
+        });
+      };
+      const activePlaceholders = (ACTIVE_EXECUTION_STATUSES as readonly string[]).map(() => '?').join(', ');
+      const members: ExecutionPreviewMemberView[] = memberFeatureIds.map((featureId) => {
+        const feature = featureById.get(featureId);
+        const readiness = readinessById.get(featureId);
+        if (feature === undefined || readiness === undefined) {
+          throw new StorageError('corrupt', operation, 'DAG 闭包缺少 Feature 身份', {
+            details: { reason: 'invalid_graph', featureId },
+          });
+        }
+        const tasks = taskRowsFor(featureId).map(taskFromRow);
+        const dependencies = (db.prepare<[string], TaskDependencySqlRow>(
+          `${SELECT_TASK_DEPENDENCY} WHERE feature_id = ? ORDER BY task_id, depends_on_id`,
+        ).all(featureId) as TaskDependencySqlRow[]).map(taskDependencyFromRow);
+        const approvals = (db.prepare<[string], ApprovalSqlRow>(
+          `${SELECT_APPROVAL} WHERE subject_type = 'feature_plan' AND subject_id = ? ORDER BY decided_at, id`,
+        ).all(featureId) as ApprovalSqlRow[]).map(approvalFromRow);
+        const activeRuns = db.prepare<unknown[], { id: string; status: string }>(
+          `SELECT id, status FROM runs WHERE project_id = ? AND feature_id = ? AND status IN (${activePlaceholders}) ORDER BY id`,
+        ).all(validProjectId, featureId, ...(ACTIVE_EXECUTION_STATUSES as readonly string[])) as { id: string; status: string }[];
+        return {
+          feature,
+          tasks,
+          dependencies,
+          approvals,
+          resolvedInputs: resolveInputs(feature, tasks),
+          activeRuns,
+          entity: { revision: feature.revision, planDigest: feature.planDigest },
+          readiness,
+        };
+      });
+      const globalRow = db.prepare<[string], { revision: number; payload: string }>(
+        'SELECT revision, payload FROM global_settings WHERE id = ?',
+      ).get('global');
+      const projectSettingsRow = db.prepare<[string], { revision: number; payload: string }>(
+        'SELECT revision, payload FROM project_settings WHERE project_id = ?',
+      ).get(validProjectId);
+      const settings = {
+        global: globalRow === undefined ? null : {
+          scopeRevision: globalRow.revision,
+          payload: parseStoredSettingsPayload(globalRow.payload, { operation, entity: { type: 'global_settings', id: 'global' } }),
+        },
+        project: projectSettingsRow === undefined ? null : {
+          scopeRevision: projectSettingsRow.revision,
+          payload: parseStoredSettingsPayload(projectSettingsRow.payload, { operation, entity: { type: 'project_settings', projectId: validProjectId } }),
+        },
+      };
+      const batchRows = db.prepare<unknown[], { id: string; status: string; feature_id: string | null }>(
+        `SELECT b.id, b.status, m.feature_id FROM execution_batches b LEFT JOIN execution_batch_members m ON m.project_id = b.project_id AND m.batch_id = b.id ` +
+          `WHERE b.project_id = ? AND b.phase_id = ? AND b.status IN (${activePlaceholders}) ORDER BY b.id, m.member_ordinal`,
+      ).all(validProjectId, phaseId, ...(ACTIVE_EXECUTION_STATUSES as readonly string[])) as { id: string; status: string; feature_id: string | null }[];
+      const batchMap = new Map<string, { id: string; status: string; featureIds: string[] }>();
+      for (const row of batchRows) {
+        const batch = batchMap.get(row.id) ?? { id: row.id, status: row.status, featureIds: [] };
+        if (row.feature_id !== null) batch.featureIds.push(row.feature_id);
+        batchMap.set(row.id, batch);
+      }
+      const occupancy = db.prepare<[], { holder_operation_id: string | null }>(
+        "SELECT holder_operation_id FROM baseline_occupancy WHERE id = 'global'",
+      ).get();
+      const bindingRow = db.prepare<[string], { canonical_path: string; repo_identity: string }>(
+        'SELECT canonical_path, repo_identity FROM repository_bindings WHERE project_id = ?',
+      ).get(validProjectId);
+      return {
+        project: { id: projectRow.id, status: projectRow.status as ProjectStatus },
+        binding: bindingRow === undefined ? null : { canonicalPath: bindingRow.canonical_path, repoIdentity: bindingRow.repo_identity },
+        phase: phaseFromRow(phaseRow),
+        selection: { phaseId: validPhaseId, requestedFeatureIds: requested, memberFeatureIds },
+        members,
+        featureDependencies: featureEdges.filter((edge) => memberSet.has(edge.featureId) && memberSet.has(edge.dependsOnId)),
+        settings,
+        activePhaseBatches: [...batchMap.values()],
+        baselineOccupancy: { holderOperationId: occupancy?.holder_operation_id ?? null },
+      };
+    });
+  }
+
+  function readExecutionPreviewView(projectId: string, featureId: string): ExecutionPreviewView | undefined;
+  function readExecutionPreviewView(projectId: string, selection: ExecutionPreviewSelection): ExecutionPreviewScopeView | undefined;
   function readExecutionPreviewView(
     projectId: string,
-    featureId: string,
-  ): ExecutionPreviewView | undefined {
+    featureIdOrSelection: string | ExecutionPreviewSelection,
+  ): ExecutionPreviewView | ExecutionPreviewScopeView | undefined {
+    if (typeof featureIdOrSelection !== 'string') {
+      return readExecutionPreviewScopeView(projectId, featureIdOrSelection);
+    }
+    const featureId = featureIdOrSelection;
     const operation = 'PlanStore.readExecutionPreviewView';
     const validProjectId = validateStableId(projectId, { operation }, 'projectId');
     const validFeatureId = validateStableId(featureId, { operation }, 'featureId');
@@ -1945,7 +2534,7 @@ export function createSqlitePlanAccess(
         .get(validProjectId) as { canonical_path: string; repo_identity: string } | undefined;
 
       const taskRows = db
-        .prepare<[string], TaskSqlRow>(`${SELECT_TASK} WHERE feature_id = ? ORDER BY id`)
+        .prepare<[string], TaskSqlRow>(`${SELECT_TASK} WHERE feature_id = ? AND kind = 'coding' ORDER BY id`)
         .all(validFeatureId) as TaskSqlRow[];
       const dependencyRows = db
         .prepare<[string], TaskDependencySqlRow>(
@@ -2128,11 +2717,17 @@ export function createSqlitePlanAccess(
       { column: 'feature_id', value: featureId, entityType: 'feature' },
       request,
       (row) => taskFromRow(row as TaskSqlRow),
+      // P05-1 / F-002：业务 Task 列表只含 kind='coding' 成员；planning Task 由
+      // 规划上下文查询（F-011）提供，不混入业务计划成员分页。
+      "kind = 'coding'",
     );
   }
 
   return {
     insertPhaseInTransaction,
+    updatePhaseInTransaction,
+    moveFeaturePhaseInTransaction,
+    updateFeatureDagInTransaction,
     insertFeatureInTransaction,
     insertTaskInTransaction,
     insertTaskDependencyInTransaction,
@@ -2141,6 +2736,7 @@ export function createSqlitePlanAccess(
     getPhaseInTransaction,
     getArtifactInputRefInTransaction,
     getTaskFeatureLinksInTransaction,
+    hasTaskExecutionHistoryInTransaction,
     getFeaturePlanInTransaction,
     replaceFeaturePlanInTransaction,
     getTaskInTransaction,
@@ -2153,10 +2749,12 @@ export function createSqlitePlanAccess(
     updateFeaturePlanStatusInTransaction,
     listPlanApprovalsInTransaction,
     readPhaseRecord,
+    readPhaseGraphView,
     readTaskRecord,
     readFeaturePlanView,
     readFeatureApprovalsView,
     readExecutionInputPreparationView,
+    readExecutionPreviewScopeView,
     readExecutionPreviewView,
     listPhaseRecords,
     listFeatureRecords,

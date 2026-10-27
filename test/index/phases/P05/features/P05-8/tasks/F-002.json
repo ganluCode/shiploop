@@ -1,0 +1,25 @@
+{
+  "schema_version": 2,
+  "task_id": "F-002",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        { "file": "test/modules/delivery/p05-8-f002-git-agent-repair-run.test.ts", "all": true },
+        { "file": "test/modules/storage/sqlite/p05-8-f002-repair-migration.test.ts", "all": true },
+        { "file": "test/modules/delivery/p05-8-f001-git-agent-repair-contract.test.ts", "all": true },
+        { "file": "test/modules/execution/dispatch/p04-9-f002-dispatch-enqueue.test.ts", "all": true },
+        { "file": "test/modules/scheduling/p04-9-f004-dispatch-task-claim.test.ts", "all": true },
+        { "file": "test/modules/scheduling/p04-9-f006-dispatch-control-settlement.test.ts", "all": true },
+        { "file": "test/modules/scheduling/p05-5-f003-feature-dispatch-resources.test.ts", "all": true },
+        { "file": "test/modules/execution/control/p03-9-f001-execution-pause.test.ts", "all": true },
+        { "file": "test/modules/execution/control/p03-9-f002-execution-cancel.test.ts", "all": true },
+        { "file": "test/modules/recovery/p03-9-f008-workflow-resume.test.ts", "all": true },
+        { "file": "test/modules/recovery/p04-9-f007-dispatch-crash-windows.test.ts", "all": true },
+        { "file": "test/modules/scheduling/p03-4-scheduler.test.ts", "all": true },
+        { "file": "test/modules/storage/sqlite/sqlite-migration-runner.test.ts", "all": true },
+        { "file": "test/modules/runtime/p04-4-f007-composition-root.test.ts", "all": true }
+      ]
+    }
+  ]
+}

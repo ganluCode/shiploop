@@ -48,18 +48,22 @@ export function submitExecutionPause(
   } catch (error) {
     mapProjectLookupError(error, operation);
   }
-  const targetKind = envelope.payload.runId !== null ? 'run' : 'batch';
-  const targetId = envelope.payload.runId ?? envelope.payload.batchId!;
-  const current = targetKind === 'run'
-    ? transaction.getExecutionRun(envelope.scope.projectId, targetId)
-    : transaction.getExecutionBatch(envelope.scope.projectId, targetId);
+  const targetKind = typeof envelope.payload.featureId === 'string'
+    ? 'feature'
+    : envelope.payload.runId !== null ? 'run' : 'batch';
+  const targetId = envelope.payload.featureId ?? envelope.payload.runId ?? envelope.payload.batchId!;
+  const current = targetKind === 'feature'
+    ? transaction.getFeaturePlan(envelope.scope.projectId, targetId).feature
+    : targetKind === 'run'
+      ? transaction.getExecutionRun(envelope.scope.projectId, targetId)
+      : transaction.getExecutionBatch(envelope.scope.projectId, targetId);
   if (current.revision !== envelope.expectedRevision) {
     const receipt = createRejectedReceipt({
       ...identity,
       error: new PublicError('conflict', operation, undefined, {
         details: {
           reason: 'stale_revision',
-          entityType: targetKind === 'run' ? 'run' : 'execution_batch',
+          entityType: targetKind === 'run' ? 'run' : targetKind === 'batch' ? 'execution_batch' : 'feature',
           expectedRevision: envelope.expectedRevision,
           actualRevision: current.revision,
         },

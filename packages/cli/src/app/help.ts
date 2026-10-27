@@ -512,15 +512,23 @@ const EXECUTION_BOUNDARY_BLOCK = [
   '- 秘密/身份字段名在连接 Host 之前拒绝（input_secret_field_rejected / input_identity_field_rejected），错误不回显值。',
 ].join('\n');
 
+function phaseLifecycleHelp(action: 'close' | 'reopen' | 'archive'): string {
+  return `usage: shiploop phase ${action} <phaseId> --project <id> --revision <int> [--command-id <uuid>] [--data-root <abs>] [--json]` + '\n关闭不代表阶段验收通过；重开不启动执行；归档保留成果和执行历史。\n' + EXIT_CODE_BLOCK;
+}
+
 const PHASE_HELP = [
-  'usage: shiploop phase <create|list|get|labels> [options]',
+  'usage: shiploop phase <create|update|close|reopen|archive|graph|list|get|labels> [options]',
   '',
   'Phase 命令（计划层级顶层）：',
   '  phase create --project <id> --title <t> [--description <text>] [--label <l> ...]',
   '                                                    为已注册项目建立 Phase',
+  '  phase update/close/reopen/archive <phaseId> --project <id> --revision <int>',
+  '  phase graph <phaseId> --project <id> [--limit <int>] [--cursor <c>]',
   '  phase list --project <id> [--limit <int>] [--cursor <c>]   层级分页',
   '  phase get <phaseId>                                            Phase 详情',
   '  phase labels <phaseId> --project <id> --revision <int> [--label <l> ...]  纯标签 CAS 编辑',
+  '  phase delivery-approve <phaseId> --project <id> --batch <batchId> --candidate <candidateId> --revision <int> --candidate-revision <int> --confirm',
+  '                                                    绑定候选摘要批准 Phase 交付（不关闭 Phase/合入 main）',
   '',
   '查看各子命令参数：shiploop phase create --help',
   '',
@@ -622,7 +630,7 @@ const FEATURE_DELIVERY_BLOCK = [
 ].join('\n');
 
 const FEATURE_HELP = [
-  'usage: shiploop feature <import|list|get|revise|labels|approve|reject|delivery|final-approve|finalize> [options]',
+  'usage: shiploop feature <import|move|dependencies|list|get|revise|labels|approve|reject|delivery|final-approve|finalize> [options]',
   '',
   'Feature 命令（单 Feature 计划）：',
   '  feature import --project <id> --phase <id> --revision <int> --input <file> [--command-id <uuid>]',
@@ -996,6 +1004,14 @@ const GIT_OPERATIONS_HELP = [
   '',
 ].join('\n');
 
+const INTEGRATION_PLAN_HELP = [
+  'usage: shiploop integration plan <integrationId> --project <id> [--data-root <abs>] [--json]',
+  '',
+  '读取固定集成成果、目标基线、顺序、验证范围、digest、状态和阻塞原因。',
+  '查询只读 SQLite 一致视图；nextStep 只表示等待集成、核对、刷新计划或人工处理，不自动重跑编码。',
+  '', BOUNDARY_BLOCK, EXIT_CODE_BLOCK, '',
+].join('\\n');
+
 const GIT_OPERATION_HELP = [
   'usage: shiploop git operation <operationId> --project <id> [--data-root <abs>] [--json]',
   '',
@@ -1229,7 +1245,7 @@ const EXECUTION_AUTHORIZATION_BLOCK = [
   '执行授权边界：',
   '- 预览不是授权：execution preview 只读展示候选执行身份与预算，不创建 Batch/Run、不扣预算；',
   '- 授权只经 execution start --confirm + --preview-digest（或同父 Batch 重试 --retry-batch）；',
-  '- 本版本只支持单 Feature 单并发执行：有效并发大于一按输入错误拒绝；',
+  '- 本版本支持 Phase 或有界 Feature 集合选择（默认最多 16 个成员），实际并发仍以服务端授权摘要为准；',
   '- accepted 只代表执行授权提交成功：尚未执行、未验收，不代表 Feature 完成或业务完成；',
   '- 本命令面不提供 wait/resume；取消只经 execution cancel <attemptId> --confirm（单 Attempt 显式取消，不是 Run/Batch 级取消）；',
   '- task prepare 不升级为执行授权。',
@@ -1276,16 +1292,19 @@ const EXECUTION_DIAGNOSTICS_BLOCK = [
 ].join('\n');
 
 const EXECUTION_HELP = [
-  'usage: shiploop execution <preview|start|budget|revise|schedule|attempts|diagnostics|dispatch|sessions|session|session-evidence|cancel|pause|resume|retry-final|control|batch-control|recovery> [options]',
+  'usage: shiploop execution <preview|start|budget|revise|batch-delivery|batch-observe|finalize|schedule|attempts|diagnostics|dispatch|sessions|session|session-evidence|cancel|pause|resume|retry-final|control|batch-control|recovery> [options]',
   '',
-  '执行授权命令（单 Feature 显式授权与持久预算）：',
-  '  execution preview <featureId> --project <id> --input <file>             执行预览（只读，不是授权）',
-  '  execution start <featureId> --project <id> --input <file> --preview-digest <hex64> --confirm',
+  '执行授权命令（Phase/Feature 固定范围与持久预算）：',
+  '  execution preview [<featureId> | --phase <phaseId> | --feature <featureId> ...] --project <id> --input <file>  执行预览（只读，不是授权）',
+  '  execution start [<featureId> | --phase <phaseId> | --feature <featureId> ...] --project <id> --input <file> --preview-digest <hex64> --confirm',
   '                                                                          显式授权启动（accepted 不等于完成）',
-  '  execution start <featureId> --project <id> --retry-batch <batchId> --confirm   同父 Batch 显式重试',
+  '       execution start [<featureId> | --feature <featureId> ...] --project <id> --retry-batch <batchId> --confirm   同父 Batch 显式重试',
   '  execution budget <batchId> --project <id> [--limit <int>] [--cursor <c>] 预算状态与修订历史（剩余额度）',
   '  execution revise <batchId> --project <id> --revision <int> --reason <text> --input <file>',
   '                                                                          预算显式修订（CAS + 理由）',
+  '  execution batch-delivery <batchId> --project <id> [--limit <int>] [--cursor <c>]  Batch 收尾聚合（只读）',
+  '  execution batch-observe <batchId> --project <id> [--limit <int>] [--cursor <c>]   阻塞链/并发/资源/停止观察（只读）',
+  '  execution finalize <batchId> --project <id> --phase <phaseId> --revision <int> --confirm  显式收尾（不批准/合入/push）',
   '  execution schedule <runId> --project <id>                              Run 调度原因/就绪视图/占用审计（只读）',
   '  execution attempts <taskId> --project <id> [--limit <int>] [--cursor <c>]  ',
   '                                                                          Task 的 Attempt 归属与审计（只读）',
@@ -1331,10 +1350,10 @@ const EXECUTION_HELP = [
 ].join('\n');
 
 const EXECUTION_PREVIEW_HELP = [
-  'usage: shiploop execution preview <featureId> --project <id> --input <file>',
+  'usage: shiploop execution preview [<featureId> | --phase <phaseId> | --feature <featureId> ...] --project <id> --input <file>',
   '                                      [--command-id <uuid>] [--data-root <abs>] [--json]',
   '',
-  '单 Feature 执行预览（execution.preview；只读）：展示计划/代码/策略/检查/权限/输入',
+  'Phase 或 Feature 集合执行预览（execution.preview；只读）：展示依赖闭包、固定成员身份、计划/代码基线、策略/检查/权限/输入',
   '身份与完整有限预算，返回 previewDigest（完整输入身份）。',
   '- `--input` 是预算文档（必填）：`{batch:{...},run:{...},concurrency?:{maxConcurrentWorks}}`；',
   '  deadlineUtcMs 接受 epoch 毫秒整数或 ISO-8601 UTC 日期（映射为毫秒）；缺少预算、',
@@ -1344,6 +1363,9 @@ const EXECUTION_PREVIEW_HELP = [
   '- runtimeExecution 恒 false：预览不代表已具备 Runtime 执行能力或已启动执行。',
   '',
   '选项：',
+  '  --phase <id>           选择一个 Phase；与 --feature 和位置 Feature 互斥',
+  '  --feature <id>         选择一个 Feature，可重复，最多 16 个；不能与 --phase 混用',
+  '  <featureId>            兼容旧单 Feature 位置参数；不能与选择器选项混用',
   '  --project <id>        项目 ID（必填，UUID v4）',
   '  --input <file>        预算文档（必填；本次请求的输入）',
   '  --command-id <uuid>   显式命令 ID（UUID v4）；幂等重放用同一信封',
@@ -1355,12 +1377,12 @@ const EXECUTION_PREVIEW_HELP = [
 ].join('\n');
 
 const EXECUTION_START_HELP = [
-  'usage: shiploop execution start <featureId> --project <id> --input <file>',
+  'usage: shiploop execution start [<featureId> | --phase <phaseId> | --feature <featureId> ...] --project <id> --input <file>',
   '                                      --preview-digest <hex64> --confirm',
   '                                      [--command-id <uuid>] [--data-root <abs>] [--json]',
-  '       execution start <featureId> --project <id> --retry-batch <batchId> --confirm [...]',
+  '       execution start [<featureId> | --feature <featureId> ...] --project <id> --retry-batch <batchId> --confirm [...]',
   '',
-  '显式授权启动单 Feature 执行（execution.start）：必须 --confirm 明确确认，携带',
+  '显式授权启动固定范围执行（execution.start）：必须 --confirm 明确确认，携带',
   '`--preview-digest`（previewDigest：用户确认的预览摘要，服务端重算比对）与完整有限预算。',
   '- 缺失确认、缺少预算、非法日期/整数、有效并发大于一与冲突参数在连接前拒绝',
   '  （不发启动请求）；重试形态（--retry-batch）与预算/预览摘要互斥；',
@@ -1372,6 +1394,9 @@ const EXECUTION_START_HELP = [
   '- 同 `--command-id` 重复提交先查回执并以原信封重放（同参 → 原 Batch/Run；异参 → conflict）。',
   '',
   '选项：',
+  '  --phase <id>           先由服务端预览解析 Phase 依赖闭包，再提交固定成员；与 --feature/位置参数互斥',
+  '  --feature <id>         固定 Feature 成员，可重复，最多 16 个',
+  '  <featureId>            兼容旧单 Feature 位置参数',
   '  --project <id>        项目 ID（必填，UUID v4）',
   '  --input <file>        预算文档（新授权形态必填）',
   '  --preview-digest <hex64>  已确认的预览摘要（新授权形态必填）',
@@ -1499,10 +1524,10 @@ const EXECUTION_DIAGNOSTICS_HELP = [
 ].join('\n');
 
 const EXECUTION_DISPATCH_HELP = [
-  'usage: shiploop execution dispatch --project <id> [--limit <int>] [--cursor <c>]',
+  'usage: shiploop execution dispatch --project <id> [--batch <id> | --feature <id>] [--limit <int>] [--cursor <c>]',
   '                                       [--data-root <abs>] [--json]',
   '',
-  '派发队列与执行槽位只读查询（execution.dispatch.list）：显示全局槽位摘要（容量、',
+  '派发队列与执行槽位只读查询（execution.dispatch.list）：可按固定 Batch 或 Feature 限定范围，',
   '活动/隔离计数、本项活动数、跨项目占用的布尔摘要）、每个 Run 的派发事实（派生状态、',
   '是否有可用槽位）与当前认领/槽位/活动或最近 Attempt 身份，并给出可理解的等待/隔离',
   '原因（等待槽位、认领/槽位隔离、缺少可核对归属、租约到期未核实、暂停/取消/中断）。',
@@ -1523,6 +1548,25 @@ const EXECUTION_DISPATCH_HELP = [
   EXIT_CODE_BLOCK,
   '',
 ].join('\n');
+
+const EXECUTION_RESOURCES_HELP = [
+  'usage: shiploop execution resources --project <id> [--batch <id> | --feature <id>] [--limit <int>] [--cursor <c>] [--json]',
+  '',
+  'Feature 共享资源租约只读查询（execution.resources.list）：显示资源键、类别、owner/version、revision、租约状态、等待与隔离原因。',
+  '- 查询按项目及可选 Batch/Feature 范围分页；不续租、不释放、不唤醒 Runtime、不创建 Attempt；pending/隔离资源不显示为完成。',
+  '- 资源键只输出规范化受控键，不包含凭据、模型正文或绝对路径；重复查询零副作用。',
+  '',
+  '选项：',
+  '  --project <id>   项目 ID（必填，UUID v4）',
+  '  --batch <id>     固定 Batch 范围（与 --feature 二选一）',
+  '  --feature <id>   固定 Feature 范围（与 --batch 二选一）',
+  '  --limit <int>    每页条数 1..200（默认 50）',
+  '  --cursor <c>     上一页返回的 nextCursor（不透明）',
+  '  --json            stdout 只输出结果 JSON；诊断到 stderr',
+  '',
+  EXIT_CODE_BLOCK,
+  '',
+].join('\\n');
 
 const EXECUTION_SESSIONS_HELP = [
   'usage: shiploop execution sessions --project <id> (--run <runId> | --task <taskId>)',
@@ -1946,6 +1990,82 @@ const WORKSPACE_DISCARD_HELP = [
   '',
 ].join('\n');
 
+const PLANNING_HELP = [
+  'usage: shiploop planning <start|list|get|candidate|approve|reject> [options]',
+  '',
+  '一次性规划：启动只创建已授权 planning Run，候选须人工审阅；不自动批准或不自动开始编码。',
+  '  planning start <featureId> --project <id> --phase <id> --revision <int> --input <file>',
+  '  planning list --project <id> [--feature <id>] [--limit <int>] [--cursor <id>]',
+  '  planning get <candidateId> --project <id>                  查看 Run/Task/预算/状态',
+  '  planning candidate <candidateId> --project <id>            查看候选摘要、Task 与 verification',
+  '  planning approve <candidateId> --project <id> --digest <sha256> --revision <int> [--reason <text>]',
+  '  planning reject <candidateId> --project <id> --digest <sha256> --revision <int> --reason <text>',
+  '',
+  'planning start --input JSON 顶层字段：requirementRefs（需求制品 ID/hash）、constraints、',
+  'acceptance.criteria、strategy.approvalMode=manual/taskLimit、budget。输入仅本次请求，',
+  '由 Core 复核项目归属、策略、预算和 revision；规划启动回执的 batchId/runId/candidateId',
+  '是持久身份，accepted 不代表候选生成、Feature 交付或编码授权。approve/reject 使用',
+  '候选 candidateId + candidateDigest 摘要绑定和 Feature revision CAS；取消/恢复沿用',
+  '`execution cancel|pause|resume` 的显式命令，客户端断开不隐式取消。',
+  '',
+  BOUNDARY_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
+const PLANNING_START_HELP = [
+  'usage: shiploop planning start <featureId> --project <id> --phase <id> --revision <int> --input <file>',
+  '                                      [--command-id <uuid>] [--data-root <abs>] [--json]',
+  '',
+  '启动一次规划授权。--input 必须是有界 JSON：requirementRefs、constraints、acceptance、',
+  'strategy（approvalMode=manual、taskLimit）和完整 budget；文件读取/JSON/字段边界在连接 Host',
+  '前拒绝。--revision 是目标 Feature 的 CAS，空草稿 Feature 可以首次规划。',
+  'accepted 只表示 Batch/Run/planning Task/candidate 已持久绑定；不表示候选已生成或已批准，',
+  '不自动执行编码。重复 --command-id 复用原回执，响应丢失先查回执。',
+  '',
+  '  --project <id>       项目 ID（UUID v4）',
+  '  --phase <id>         所属 Phase ID',
+  '  --revision <int>     Feature 当前 revision（CAS）',
+  '  --input <file>       规划请求 JSON（需求制品/约束/验收/批准策略/预算）',
+  '  --command-id <uuid>  显式命令 ID（UUID v4）',
+  '  --json               stdout 只输出结构化结果；诊断到 stderr',
+  '', BOUNDARY_BLOCK, EXIT_CODE_BLOCK, '',
+].join('\n');
+
+const PLANNING_LIST_HELP = [
+  'usage: shiploop planning list --project <id> [--feature <id>] [--limit <int>] [--cursor <id>]',
+  '',
+  '列出可见规划上下文。返回候选摘要身份、规划状态、Run 状态与决定状态；不读取候选正文，',
+  '不启动执行。分页参数由 HostClient/Core 复核。',
+  '', BOUNDARY_BLOCK, EXIT_CODE_BLOCK, '',
+].join('\n');
+
+const PLANNING_GET_HELP = [
+  'usage: shiploop planning get <candidateId> --project <id> [--data-root <abs>] [--json]',
+  '',
+  '查看指定候选绑定的规划上下文、Run/Task/Attempt、预算、executionState 与决策来源。',
+  '规划状态不折算为 Feature 交付或编码授权。',
+  '', BOUNDARY_BLOCK, EXIT_CODE_BLOCK, '',
+].join('\n');
+
+const PLANNING_CANDIDATE_HELP = [
+  'usage: shiploop planning candidate <candidateId> --project <id> [--data-root <abs>] [--json]',
+  '',
+  '查看候选正文投影：candidateDigest、摘要、Feature/Task 描述、complexity、依赖、',
+  '验收计划及定向 verification。生成前明确显示 pending_generation；候选正文不含凭据或执行命令。',
+  '', BOUNDARY_BLOCK, EXIT_CODE_BLOCK, '',
+].join('\n');
+
+const PLANNING_DECISION_HELP = (decision: 'approve' | 'reject') => [
+  `usage: shiploop planning ${decision} <candidateId> --project <id> --digest <sha256> --revision <int>`,
+  '                                      [--reason <text>] [--command-id <uuid>] [--data-root <abs>] [--json]',
+  '',
+  `${decision === 'approve' ? '批准' : '拒绝'}必须显式提供候选身份、candidateDigest 摘要和 Feature revision CAS；`,
+  `${decision === 'reject' ? '拒绝原因会保留在规划上下文中且不自动重规划。' : '批准只原子应用候选业务计划，不自动开始编码。'}`,
+  '旧摘要、旧 revision、跨项目或不可见候选由 Core 拒绝；同 commandId 同摘要重放原命令。',
+  '', BOUNDARY_BLOCK, EXIT_CODE_BLOCK, '',
+].join('\n');
+
 const HELP_BY_SCOPE: Readonly<Record<AppHelpScope, string>> = Object.freeze({
   project: PROJECT_HELP,
   'project.init': PROJECT_INIT_HELP,
@@ -1973,10 +2093,26 @@ const HELP_BY_SCOPE: Readonly<Record<AppHelpScope, string>> = Object.freeze({
   'baseline.cancel': BASELINE_CANCEL_HELP,
   'baseline.evidence': BASELINE_EVIDENCE_HELP,
   phase: PHASE_HELP,
+  planning: PLANNING_HELP,
+  'planning.start': PLANNING_START_HELP,
+  'planning.list': PLANNING_LIST_HELP,
+  'planning.get': PLANNING_GET_HELP,
+  'planning.candidate': PLANNING_CANDIDATE_HELP,
+  'planning.approve': PLANNING_DECISION_HELP('approve'),
+  'planning.reject': PLANNING_DECISION_HELP('reject'),
+
   'phase.create': PHASE_CREATE_HELP,
+  'phase.update': 'usage: shiploop phase update <phaseId> --project <id> --revision <int> [--title <t>] [--description <text> | --clear-description] [--label <l> ... | --clear-labels] [--command-id <uuid>] [--data-root <abs>] [--json]\n省略的元数据保持原值；只更新提供的字段。\n' + EXIT_CODE_BLOCK,
+  'phase.close': phaseLifecycleHelp('close'),
+  'phase.reopen': phaseLifecycleHelp('reopen'),
+  'phase.archive': phaseLifecycleHelp('archive'),
+  'phase.graph': 'usage: shiploop phase graph <phaseId> --project <id> [--limit <int>] [--cursor <c>] [--data-root <abs>] [--json]\n只读分页：依赖完成、集成就绪和 blocker reason 分别展示；候选需另行执行授权。\n' + EXIT_CODE_BLOCK,
+  'feature.move': 'usage: shiploop feature move <featureId> --project <id> --revision <int> --from-phase <id> --to-phase <id> --source-revision <int> --target-revision <int> [--command-id <uuid>] [--data-root <abs>] [--json]\nFeature 与来源/目标 Phase 三方 CAS；Core 核验归属、活动范围及依赖。\n' + EXIT_CODE_BLOCK,
+  'feature.dependencies': 'usage: shiploop feature dependencies --project <id> --phase <id> --revision <int> --input <file> [--command-id <uuid>] [--data-root <abs>] [--json]\n文件形状 {"edges":[{"featureId":"C","dependsOnId":"A","codeBaselineRef":null}]}；整体替换 Phase 依赖边，空 edges 显式清空。Core 核验 DAG 和活动 Batch，不扩大已有执行范围。\n' + EXIT_CODE_BLOCK,
   'phase.list': PHASE_LIST_HELP,
   'phase.get': PHASE_GET_HELP,
   'phase.labels': PHASE_LABELS_HELP,
+  'phase.delivery-approve': 'usage: shiploop phase delivery-approve <phaseId> --project <id> --batch <batchId> --candidate <candidateId> --revision <int> --candidate-revision <int> --confirm [--command-id <uuid>] [--json]\n绑定已核对的 Batch 收尾候选摘要；不关闭 Phase、不合入 main、不 push、不新建 Batch。\n' + EXIT_CODE_BLOCK,
   feature: FEATURE_HELP,
   'feature.import': FEATURE_IMPORT_HELP,
   'feature.list': FEATURE_LIST_HELP,
@@ -2012,10 +2148,14 @@ const HELP_BY_SCOPE: Readonly<Record<AppHelpScope, string>> = Object.freeze({
   'execution.start': EXECUTION_START_HELP,
   'execution.budget': EXECUTION_BUDGET_HELP,
   'execution.revise': EXECUTION_REVISE_HELP,
+  'execution.batch-delivery': 'usage: shiploop execution batch-delivery <batchId> --project <id> [--limit <int>] [--cursor <c>] [--json]\n只读展示 Batch 固定成员、Feature 状态、失败前置、阻塞原因、并发、预算和证据引用；队列为空或 Task 全通过不等于阶段完成。\n' + EXIT_CODE_BLOCK,
+  'execution.batch-observe': 'usage: shiploop execution batch-observe <batchId> --project <id> [--limit <int>] [--cursor <c>] [--json]\n只读组合观察交付摘要、阻塞链、实际并发、资源等待和停止状态；不认领、不扣预算、不改变状态。\n' + EXIT_CODE_BLOCK,
+  'execution.finalize': 'usage: shiploop execution finalize <batchId> --project <id> --phase <phaseId> --revision <int> --confirm [--command-id <uuid>] [--json]\n显式请求 Batch 收尾；收尾结果仍需候选核对与 Phase 批准，不自动合入 main 或 push。\n' + EXIT_CODE_BLOCK,
   'execution.schedule': EXECUTION_SCHEDULE_HELP,
   'execution.attempts': EXECUTION_ATTEMPTS_HELP,
   'execution.diagnostics': EXECUTION_DIAGNOSTICS_HELP,
   'execution.dispatch': EXECUTION_DISPATCH_HELP,
+  'execution.resources': EXECUTION_RESOURCES_HELP,
   'execution.sessions': EXECUTION_SESSIONS_HELP,
   'execution.session': EXECUTION_SESSION_HELP,
   'execution.session-evidence': EXECUTION_SESSION_EVIDENCE_HELP,
@@ -2038,6 +2178,10 @@ const HELP_BY_SCOPE: Readonly<Record<AppHelpScope, string>> = Object.freeze({
   git: GIT_HELP,
   'git.operations': GIT_OPERATIONS_HELP,
   'git.operation': GIT_OPERATION_HELP,
+  'git.repairs': GIT_OPERATIONS_HELP,
+  'git.repair': GIT_OPERATION_HELP,
+  integration: INTEGRATION_PLAN_HELP,
+  'integration.plan': INTEGRATION_PLAN_HELP,
 });
 
 /** 返回指定作用域的应用命令帮助文本（以换行结尾）；不做任何 I/O。 */

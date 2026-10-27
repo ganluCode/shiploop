@@ -71,11 +71,16 @@ export function createSqliteTaskDagStore(session: SqliteStorageSession): TaskDag
           settings: { global: global === null ? null : { scopeRevision: global.revision, payload: global.payload },
             project: local === null ? null : { scopeRevision: local.revision, payload: local.payload } },
           facts, inputs, inputsAvailable,
-          // Global single concurrency: expiry never releases held or quarantined occupancy.
-          resourceBusy: db.prepare('SELECT id FROM workspace_leases LIMIT 1').get() !== undefined
-            || db.prepare("SELECT id FROM baseline_occupancy WHERE holder_operation_id IS NOT NULL LIMIT 1").get() !== undefined
-            || db.prepare("SELECT id FROM attempts WHERE status IN ('preparing', 'executing', 'verifying') LIMIT 1").get() !== undefined
-            || db.prepare("SELECT id FROM tasks WHERE status = 'running' LIMIT 1").get() !== undefined,
+          // P05-4：工作资源的排他范围是当前 Feature；不同 Feature 的受管
+          // worktree 可以并行。baseline 仍是项目级公共资源，保持全局阻塞。
+          resourceBusy: db.prepare(`SELECT l.id FROM workspace_leases l
+            JOIN attempts a ON a.project_id = l.project_id AND a.id = l.owner_id
+            WHERE l.project_id = ? AND a.feature_id = ? LIMIT 1`).get(projectId, currentRun.featureId) !== undefined
+            || db.prepare('SELECT id FROM baseline_occupancy WHERE holder_operation_id IS NOT NULL LIMIT 1').get() !== undefined
+            || db.prepare("SELECT id FROM attempts WHERE project_id = ? AND feature_id = ? AND status IN ('preparing', 'executing', 'verifying') LIMIT 1")
+              .get(projectId, currentRun.featureId) !== undefined
+            || db.prepare("SELECT id FROM tasks WHERE project_id = ? AND feature_id = ? AND status = 'running' LIMIT 1")
+              .get(projectId, currentRun.featureId) !== undefined,
         };
       };
       if (!session.isOpen()) throw new StorageError('corrupt', operation, 'Storage session is closed');

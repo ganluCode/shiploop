@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "task_id": "F-007",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/scheduling/p05-5-f007-resource-query.test.ts", "all": true },
+      { "file": "test/modules/scheduling/p04-9-f008-dispatch-slot-query.test.ts", "all": true },
+      { "file": "test/modules/scheduling/p04-9-f009-dispatch-host-wiring.test.ts", "all": true },
+      { "file": "test/modules/scheduling/p04-9-f009-dispatch-cli.test.ts", "all": true },
+      { "file": "test/modules/host/control/p05-5-f007-resource-host-wiring.test.ts", "all": true },
+      { "file": "test/modules/host/control/p03-9-f014-host-control-wiring.test.ts", "all": true }
+    ]
+  }]
+}

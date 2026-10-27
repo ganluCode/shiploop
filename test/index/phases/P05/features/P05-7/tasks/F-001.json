@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "task_id": "F-001",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/delivery/p05-7-f001-integration-execution-plan.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

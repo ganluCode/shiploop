@@ -4,7 +4,7 @@ import type { WorkspaceOperationCommit } from './workspace.js';
 import { rejectUnknownKeys, requirePlainObject, validateStableId, validatePositiveInteger, validationError } from './validation.js';
 
 export const WORKSPACE_RETENTION_REASONS = ['authentication_failed', 'rate_limited', 'protocol_error', 'execution_error',
-  'verification_failed', 'timed_out', 'cancelled', 'partial', 'approval_waiting', 'interrupted'] as const;
+  'verification_failed', 'timed_out', 'cancelled', 'partial', 'approval_waiting', 'interrupted', 'planning_delivered'] as const;
 export type WorkspaceRetentionReason = typeof WORKSPACE_RETENTION_REASONS[number];
 export type WorkspaceRetentionStop = 'not_started' | 'confirmed' | 'unknown';
 export interface WorkspaceRetentionInput {

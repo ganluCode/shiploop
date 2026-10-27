@@ -1,0 +1,377 @@
+{
+  "schemaVersion": 1,
+  "source": "features.report.get",
+  "mode": "offline-fixture",
+  "identity": {
+    "runId": "p05-accept-20261027-003",
+    "commit": "245fa62f5fc36e22d510dd98fe9c61aeb2a58b03",
+    "inputsDigest": "451d9a2478b85ed42371cd4a21861bedfebb4ee6a67248e6967e3814e8af5bc5"
+  },
+  "projectId": "a2a348cb-6afc-4d41-820c-e816f15d6333",
+  "featureId": "13decda1-f800-4732-a0aa-732311a0a0ac",
+  "report": {
+    "schemaVersion": 1,
+    "scope": "feature-execution-report",
+    "consistency": {
+      "mode": "single-read-transaction",
+      "eventWatermark": 6
+    },
+    "feature": {
+      "featureId": "13decda1-f800-4732-a0aa-732311a0a0ac",
+      "status": "draft",
+      "deliveryStatus": "not_requested",
+      "planStatus": "approved",
+      "planDigest": "7b2ff7507db879ac08f7bb4454ab5462f528d85d861642c8677a4193551fa444",
+      "revision": 2,
+      "updatedAt": "2030-03-17T17:48:20.000Z"
+    },
+    "axes": {
+      "tasks": {
+        "total": 1,
+        "passed": 0,
+        "allPassed": false,
+        "records": [
+          {
+            "taskId": "t-1",
+            "status": "pending",
+            "effectivePassed": false,
+            "manualBlock": false,
+            "firstPassedAt": null,
+            "latestAttemptId": null
+          }
+        ]
+      },
+      "verification": {
+        "status": "none",
+        "batch": null
+      },
+      "approval": {
+        "status": "none",
+        "reason": null,
+        "items": [],
+        "itemsTruncated": false
+      },
+      "delivery": {
+        "status": "not_requested",
+        "operation": null
+      }
+    },
+    "outcome": {
+      "status": "in_progress",
+      "executionStage": "task_execution",
+      "reason": "tasks_not_passed",
+      "nextStep": "continue_execution",
+      "identities": {
+        "featureId": "13decda1-f800-4732-a0aa-732311a0a0ac",
+        "runId": "c939b962-d7d9-4128-a0c7-cecb71ec341c",
+        "batchId": "32a0a64d-e17b-4f2f-8d49-6cda5c690f1b",
+        "verificationBatchId": null,
+        "gitOperationId": null
+      }
+    },
+    "tasks": [
+      {
+        "current": {
+          "taskId": "t-1",
+          "status": "pending",
+          "effectivePassed": false,
+          "manualBlock": false,
+          "firstPassedAt": null,
+          "latestAttemptId": null
+        },
+        "latestAttempt": null,
+        "cumulative": {
+          "attempts": 0,
+          "byStatus": {
+            "preparing": 0,
+            "executing": 0,
+            "verifying": 0,
+            "succeeded": 0,
+            "failed": 0,
+            "cancelled": 0,
+            "interrupted": 0
+          },
+          "reworks": 0
+        },
+        "usage": {
+          "aggregate": {
+            "basis": "none",
+            "totals": {
+              "inputTokens": null,
+              "outputTokens": null,
+              "cacheReadTokens": null,
+              "cacheWriteTokens": null,
+              "reasoningTokens": null,
+              "providerTotalTokens": null,
+              "costUsdMicros": null
+            },
+            "cache": {
+              "readTokens": null,
+              "writeTokens": null,
+              "comparableInputTokens": null,
+              "rate": null,
+              "reason": "unknown_input"
+            },
+            "countedObservations": 0,
+            "observationKeys": [],
+            "identities": [],
+            "coverage": "unknown",
+            "accounting": "unknown",
+            "normalization": "unknown",
+            "sourceRefs": [],
+            "diagnostics": [
+              "cache_rate_unknown_input"
+            ],
+            "observations": []
+          }
+        },
+        "timing": {
+          "cumulativeMs": null,
+          "wallClockMs": null,
+          "completeness": "partial"
+        },
+        "codeChangeRefs": [],
+        "evidenceRefs": [],
+        "attempts": []
+      }
+    ],
+    "usage": {
+      "attempts": [],
+      "tasks": [],
+      "runs": [],
+      "feature": {
+        "scope": "feature",
+        "id": "unknown-feature",
+        "aggregate": {
+          "basis": "none",
+          "totals": {
+            "inputTokens": null,
+            "outputTokens": null,
+            "cacheReadTokens": null,
+            "cacheWriteTokens": null,
+            "reasoningTokens": null,
+            "providerTotalTokens": null,
+            "costUsdMicros": null
+          },
+          "cache": {
+            "readTokens": null,
+            "writeTokens": null,
+            "comparableInputTokens": null,
+            "rate": null,
+            "reason": "unknown_input"
+          },
+          "countedObservations": 0,
+          "observationKeys": [],
+          "identities": [],
+          "coverage": "unknown",
+          "accounting": "unknown",
+          "normalization": "unknown",
+          "sourceRefs": [],
+          "diagnostics": [
+            "cache_rate_unknown_input"
+          ],
+          "observations": []
+        }
+      },
+      "dimensions": [],
+      "aggregate": {
+        "basis": "none",
+        "totals": {
+          "inputTokens": null,
+          "outputTokens": null,
+          "cacheReadTokens": null,
+          "cacheWriteTokens": null,
+          "reasoningTokens": null,
+          "providerTotalTokens": null,
+          "costUsdMicros": null
+        },
+        "cache": {
+          "readTokens": null,
+          "writeTokens": null,
+          "comparableInputTokens": null,
+          "rate": null,
+          "reason": "unknown_input"
+        },
+        "countedObservations": 0,
+        "observationKeys": [],
+        "identities": [],
+        "coverage": "unknown",
+        "accounting": "unknown",
+        "normalization": "unknown",
+        "sourceRefs": [],
+        "diagnostics": [
+          "cache_rate_unknown_input"
+        ],
+        "observations": []
+      }
+    },
+    "efficiency": {
+      "observations": [],
+      "metrics": {
+        "effectiveReplies": {
+          "value": null,
+          "coverage": "unknown",
+          "sourceRefs": []
+        },
+        "toolCalls": {
+          "value": null,
+          "coverage": "unknown",
+          "sourceRefs": []
+        },
+        "leafToolOperations": {
+          "value": null,
+          "coverage": "unknown",
+          "sourceRefs": []
+        },
+        "toolsPerReply": {
+          "value": null,
+          "coverage": "unknown",
+          "sourceRefs": []
+        },
+        "batchToolCalls": {
+          "value": null,
+          "coverage": "unknown",
+          "sourceRefs": []
+        },
+        "codemodeCalls": {
+          "value": null,
+          "coverage": "unknown",
+          "sourceRefs": []
+        },
+        "repeatedReads": {
+          "value": null,
+          "coverage": "unknown",
+          "sourceRefs": []
+        },
+        "toolErrors": {
+          "value": null,
+          "coverage": "unknown",
+          "sourceRefs": []
+        },
+        "largeOutputs": {
+          "value": null,
+          "coverage": "unknown",
+          "sourceRefs": []
+        }
+      },
+      "replyTools": [],
+      "context": {
+        "basis": "per_request_input",
+        "first": null,
+        "peak": null,
+        "last": null,
+        "coverage": "unknown",
+        "sourceRefs": []
+      },
+      "schemaVersion": 1,
+      "modelRequestTimingBasis": "waiting_network_generation",
+      "facts": [],
+      "stages": {
+        "model_request": {
+          "cumulativeMs": null,
+          "activeWallClockMs": null,
+          "wallClockSpanMs": null,
+          "measuredFacts": 0,
+          "totalFacts": 0,
+          "coverage": "unknown"
+        },
+        "failed_model_request": {
+          "cumulativeMs": null,
+          "activeWallClockMs": null,
+          "wallClockSpanMs": null,
+          "measuredFacts": 0,
+          "totalFacts": 0,
+          "coverage": "unknown"
+        },
+        "backoff_wait": {
+          "cumulativeMs": null,
+          "activeWallClockMs": null,
+          "wallClockSpanMs": null,
+          "measuredFacts": 0,
+          "totalFacts": 0,
+          "coverage": "unknown"
+        },
+        "tool_execution": {
+          "cumulativeMs": null,
+          "activeWallClockMs": null,
+          "wallClockSpanMs": null,
+          "measuredFacts": 0,
+          "totalFacts": 0,
+          "coverage": "unknown"
+        },
+        "runtime_test": {
+          "cumulativeMs": null,
+          "activeWallClockMs": null,
+          "wallClockSpanMs": null,
+          "measuredFacts": 0,
+          "totalFacts": 0,
+          "coverage": "unknown"
+        },
+        "verification": {
+          "cumulativeMs": null,
+          "activeWallClockMs": null,
+          "wallClockSpanMs": null,
+          "measuredFacts": 0,
+          "totalFacts": 0,
+          "coverage": "unknown"
+        },
+        "git": {
+          "cumulativeMs": null,
+          "activeWallClockMs": null,
+          "wallClockSpanMs": null,
+          "measuredFacts": 0,
+          "totalFacts": 0,
+          "coverage": "unknown"
+        },
+        "finalization": {
+          "cumulativeMs": null,
+          "activeWallClockMs": null,
+          "wallClockSpanMs": null,
+          "measuredFacts": 0,
+          "totalFacts": 0,
+          "coverage": "unknown"
+        }
+      },
+      "timing": {
+        "cumulativeMs": null,
+        "activeWallClockMs": null,
+        "wallClockSpanMs": null,
+        "measuredFacts": 0,
+        "totalFacts": 0,
+        "coverage": "unknown"
+      },
+      "coverage": "unknown",
+      "issues": []
+    },
+    "sessions": [],
+    "runs": [
+      {
+        "id": "c939b962-d7d9-4128-a0c7-cecb71ec341c",
+        "batchId": "32a0a64d-e17b-4f2f-8d49-6cda5c690f1b",
+        "status": "queued",
+        "reason": null,
+        "startedAt": null,
+        "endedAt": null
+      }
+    ],
+    "verifications": [],
+    "operations": [],
+    "evidence": [],
+    "timing": {
+      "cumulativeSessionMs": null,
+      "wallClockMs": null,
+      "measuredSessions": 0,
+      "totalSessions": 0,
+      "completeness": "partial"
+    },
+    "counts": {
+      "tasks": 1,
+      "runs": 1,
+      "attempts": 0,
+      "sessions": 0,
+      "operations": 0
+    },
+    "completeness": "partial",
+    "issues": []
+  }
+}

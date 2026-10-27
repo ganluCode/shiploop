@@ -1,0 +1,59 @@
+{
+  "schema_version": 2,
+  "task_id": "F-006",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/host/p05-3-f006-batch-host.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/host/p05-3-f006-batch-wire.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/execution/budget/p03-3-host-execution-client.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/execution/budget/p03-3-execution-budget-query.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/execution/budget/p03-3-work-command-receipts.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/commands/command-receipts-store.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/execution/budget/p05-3-f004-batch-authorization.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/execution/budget/p05-3-f005-batch-retry.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/recovery/p03-9-f013-control-recovery-query.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/host/control/p03-9-f014-host-control-wiring.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/host/host-app-routes.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/host/host-lifecycle-contract.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

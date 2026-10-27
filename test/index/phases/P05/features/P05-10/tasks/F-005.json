@@ -1,0 +1,23 @@
+{
+  "schema_version": 2,
+  "task_id": "F-005",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/acceptance/p05-10-f005-git-integration.test.ts", "all": true },
+      { "file": "test/modules/delivery/p05-7-f003-integration-git-workspace.test.ts", "all": true },
+      { "file": "test/modules/delivery/p05-7-f004-deterministic-integration.test.ts", "all": true },
+      { "file": "test/modules/delivery/p05-7-f005-integration-verification.test.ts", "all": true },
+      { "file": "test/modules/delivery/p05-7-f006-integration-reconciliation.test.ts", "all": true },
+      { "file": "test/modules/delivery/p05-7-f008-integration-vertical.test.ts", "all": true },
+      { "file": "test/modules/delivery/p05-8-f001-git-agent-repair-contract.test.ts", "all": true },
+      { "file": "test/modules/delivery/p05-8-f002-git-agent-repair-run.test.ts", "all": true },
+      { "file": "test/modules/delivery/p05-8-f003-git-agent-runtime.test.ts", "all": true },
+      { "file": "test/modules/delivery/p05-8-f004-git-agent-candidate-finalization.test.ts", "all": true },
+      { "file": "test/modules/delivery/p05-8-f005-git-agent-recovery.test.ts", "all": true },
+      { "file": "test/modules/delivery/p05-8-f005-git-agent-recovery-sqlite.test.ts", "all": true },
+      { "file": "test/modules/workspace/p03-5-git-operation-lock.test.ts", "all": true },
+      { "file": "test/modules/delivery/p03-10-git-faults.test.ts", "all": true }
+    ]
+  }]
+}

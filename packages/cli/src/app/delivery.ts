@@ -20,15 +20,238 @@
 import type {
   FeatureDeliveryCommandResult,
   FeatureDeliveryDetailResult,
+  HostClient,
   GitOperationDetailResult,
   GitOperationListResult,
+  GitAgentRepairListResult,
+  GitAgentRepairDetailResult,
+  IntegrationPlanQueryResult,
+  IntegrationStartCommandResult,
+  IntegrationReconcileCommandResult,
   PublicGitOperationRecord,
   TaskApprovalDecisionResult,
 } from 'shiploop-host';
 
-/* ------------------------------------------------------------------ *
- * Feature 分轴结果视图（features.delivery.get）
- * ------------------------------------------------------------------ */
+type PublicBatchDeliveryResult = Awaited<ReturnType<HostClient['getBatchDelivery']>>;
+type BatchControlDetailResult = Awaited<ReturnType<HostClient['getBatchControl']>>;
+type BatchObservationResult = Awaited<ReturnType<HostClient['observeBatch']>>;
+
+export interface BatchDeliveryCliView {
+  readonly scope: 'batch-delivery';
+  readonly delivery: PublicBatchDeliveryResult;
+  readonly state: 'completed' | 'failed' | 'blocked' | 'cancelled' | 'awaiting_approval' | 'in_progress' | 'budget_exhausted' | 'pending';
+  /** Query output never turns an empty queue or passed Tasks into phase completion. */
+  readonly phaseCompleted: false;
+  readonly evidenceRefs: readonly string[];
+}
+
+function batchDeliveryState(result: PublicBatchDeliveryResult): BatchDeliveryCliView['state'] {
+  const summary = result.summary;
+  if (summary.budget_exhausted > 0 || result.batch.budget.status === 'exhausted') return 'budget_exhausted';
+  if (summary.failed > 0) return 'failed';
+  if (summary.blocked > 0) return 'blocked';
+  if (summary.cancelled > 0) return 'cancelled';
+  if (summary.awaiting_approval > 0) return 'awaiting_approval';
+  if (summary.in_progress > 0 || result.currentRunningCount > 0 || result.readyCount > 0 || result.resourceWaitingCount > 0) return 'in_progress';
+  if (summary.completed === result.records.length && result.records.length > 0) return 'completed';
+  return 'pending';
+}
+
+function batchEvidenceRefs(result: PublicBatchDeliveryResult): readonly string[] {
+  return result.records.flatMap(record => record.evidenceRefs);
+}
+
+export function buildBatchDeliveryView(result: PublicBatchDeliveryResult): BatchDeliveryCliView {
+  return { scope: 'batch-delivery', delivery: result, state: batchDeliveryState(result), phaseCompleted: false, evidenceRefs: batchEvidenceRefs(result) };
+}
+
+export function formatBatchDeliveryView(view: BatchDeliveryCliView): string {
+  const result = view.delivery;
+  const lines = [
+    `shiploop batch delivery: batch=${result.batch.id} phase=${result.batch.phaseId} status=${result.batch.status} state=${view.state} phaseCompleted=false`,
+    `  features=${result.batch.featureIds.length} completed=${result.summary.completed} failed=${result.summary.failed} blocked=${result.summary.blocked} cancelled=${result.summary.cancelled} awaitingApproval=${result.summary.awaiting_approval} inProgress=${result.summary.in_progress}`,
+    `  concurrency=running:${result.currentRunningCount} ready:${result.readyCount} resourceWaiting=${result.resourceWaitingCount} limit=${result.batch.maxConcurrentFeatures}`,
+    `  budget=status:${result.batch.budget.status} runs=${String(result.batch.budget.runsCreated)} attempts=${String(result.batch.budget.attemptsCreated)} runtimeStarts=${String(result.batch.budget.runtimeStarts)} deadline=${String(result.batch.budget.deadlineAt)} tokenUsed=${String(result.batch.budget.tokenUsed)} costUsed=${String(result.batch.budget.costUsed)}`,
+  ];
+  for (const record of result.records) {
+    lines.push(`  feature=${record.featureId} status=${record.status} reason=${record.reason} blockers=${record.blockingReasons.join(',') || 'none'} predecessors=${record.failurePredecessors.join(',') || 'none'} evidence=${record.evidenceRefs.join(',') || 'none'}`);
+  }
+  if (result.stopOperations.length > 0) lines.push(`  stops=${result.stopOperations.map(stop => `${stop.operationId}:${stop.status}`).join(',')}`);
+  if (result.integrations.length > 0) lines.push(`  integrations=${result.integrations.map(integration => `${integration.integrationId}:${integration.status}`).join(',')}`);
+  lines.push(`  evidenceRefs=${view.evidenceRefs.join(',') || 'none'} nextCursor=${result.nextCursor ?? 'none'}`);
+  lines.push('  阶段交付仍需显式收尾、候选核对和 Phase 批准；队列为空或 Task 全通过不等于阶段完成。', '');
+  return lines.join('\n');
+}
+
+export interface BatchObservationCliView {
+  readonly scope: 'batch-observe';
+  readonly delivery: BatchDeliveryCliView;
+  readonly control: BatchControlDetailResult;
+  readonly blockingChain: readonly { readonly featureId: string; readonly failurePredecessors: readonly string[]; readonly blockingReasons: readonly string[] }[];
+  readonly actualConcurrency: number;
+  readonly resourceWaiting: number;
+  readonly stopStatus: readonly string[];
+}
+
+export function buildBatchObservationView(result: BatchObservationResult): BatchObservationCliView {
+  return {
+    scope: 'batch-observe',
+    delivery: buildBatchDeliveryView(result.delivery),
+    control: result.control,
+    blockingChain: result.blockingChain,
+    actualConcurrency: result.delivery.currentRunningCount,
+    resourceWaiting: result.delivery.resourceWaitingCount,
+    stopStatus: result.control.stopOperations.map(stop => `${stop.operationId}:${stop.status}`),
+  };
+}
+
+export function formatBatchObservationView(view: BatchObservationCliView): string {
+  const lines = [formatBatchDeliveryView(view.delivery).trimEnd(), `  controlStatus=${view.control.batch.status} nextActions=${view.control.nextActions.join(',') || 'none'} actualConcurrency=${view.actualConcurrency} resourceWaiting=${view.resourceWaiting}`];
+  for (const entry of view.blockingChain) lines.push(`  blocking feature=${entry.featureId} predecessors=${entry.failurePredecessors.join(',') || 'none'} reasons=${entry.blockingReasons.join(',') || 'none'}`);
+  lines.push(`  stopStatus=${view.stopStatus.join(',') || 'unknown'} evidence=${view.delivery.evidenceRefs.join(',') || 'unknown'}`, '');
+  return lines.join('\n');
+}
+
+export interface BatchDeliveryCommandCliView {
+  readonly commandId: string;
+  readonly replayed: boolean;
+  readonly operation: 'execution.batch.finalize' | 'phase.delivery.approve';
+  readonly status: string;
+  readonly phaseId: string;
+  readonly batchId: string;
+  readonly batchRevision: number;
+  readonly candidateId: string;
+  readonly candidateRevision: number;
+  readonly integrationEvidenceId: string;
+  readonly verificationEvidenceId: string;
+  readonly approvalId: string | null;
+  readonly summaryDigest: string | null;
+  readonly phaseCompleted: false;
+  readonly note: string;
+}
+
+export function buildBatchDeliveryCommandView(
+  commandId: string,
+  replayed: boolean,
+  operation: BatchDeliveryCommandCliView['operation'],
+  result: Record<string, unknown>,
+): BatchDeliveryCommandCliView {
+  const text = (key: string): string => typeof result[key] === 'string' ? result[key] as string : 'unknown';
+  const number = (key: string): number => typeof result[key] === 'number' ? result[key] as number : 0;
+  return {
+    commandId, replayed, operation, status: text('status'), phaseId: text('phaseId'), batchId: text('batchId'),
+    batchRevision: number('batchRevision'), candidateId: text('candidateId'), candidateRevision: number('candidateRevision'),
+    integrationEvidenceId: text('integrationEvidenceId'), verificationEvidenceId: text('verificationEvidenceId'),
+    approvalId: typeof result.approvalId === 'string' ? result.approvalId : null,
+    summaryDigest: typeof result.summaryDigest === 'string' ? result.summaryDigest : null,
+    phaseCompleted: false,
+    note: operation === 'phase.delivery.approve'
+      ? 'Phase 交付批准已绑定候选摘要；不关闭 Phase、不合入 main、不 push、不新建 Batch'
+      : 'Batch 收尾命令已处理；候选仍需显式核对/批准，未宣称阶段完成',
+  };
+}
+
+export function formatBatchDeliveryCommandView(view: BatchDeliveryCommandCliView): string {
+  return `shiploop ${view.operation}: status=${view.status} phase=${view.phaseId} batch=${view.batchId} batchRevision=${view.batchRevision} candidate=${view.candidateId}@${view.candidateRevision} integrationEvidence=${view.integrationEvidenceId} verificationEvidence=${view.verificationEvidenceId} approval=${view.approvalId ?? 'none'} summaryDigest=${view.summaryDigest ?? 'none'} phaseCompleted=false${view.replayed ? '（replayed）' : ''}\n  ${view.note}\n`;
+}
+
+export interface IntegrationPlanCliView {
+  readonly scope: 'integration-plan';
+  readonly integration: IntegrationPlanQueryResult['integration'];
+  readonly predecessors: IntegrationPlanQueryResult['predecessors'];
+  readonly integrationResult: IntegrationPlanQueryResult['integrationResult'];
+  readonly outcome: IntegrationPlanQueryResult['outcome'];
+  readonly completed: boolean;
+  readonly note: string;
+}
+
+export function buildIntegrationPlanCliView(result: IntegrationPlanQueryResult): IntegrationPlanCliView {
+  const completed = result.outcome.status === 'integration_passed';
+  return {
+    scope: 'integration-plan',
+    integration: result.integration,
+    predecessors: result.predecessors,
+    integrationResult: result.integrationResult,
+    outcome: result.outcome,
+    completed,
+    note: completed
+      ? '固定集成 commit 与组合验证证据已完成'
+      : `集成计划未完成（${result.outcome.status}）；按 nextStep=${result.outcome.nextStep} 核对或等待，不自动重跑编码`,
+  };
+}
+
+export function formatIntegrationPlanView(view: IntegrationPlanCliView): string {
+  const plan = view.integration;
+  const lines = [
+    `shiploop integration plan: ${plan.integrationId} status=${plan.status} completed=${String(view.completed)}`,
+    `  project=${plan.projectId} phase=${plan.phaseId} batch=${plan.batchId} successorFeature=${plan.successorFeatureId}`,
+    `  targetBaseline=${plan.targetBaseline} inputDigest=${plan.inputDigest}`,
+    `  mode=${plan.mode} mergeOrder=${plan.mergeOrder.join(',')} verificationScope=${plan.verificationScope.join(',')}`,
+    `  coverage=${plan.coverage.coveredInputCount}/${plan.coverage.approvedInputCount} complete=${String(plan.coverage.complete)}`,
+  ];
+  for (const predecessor of view.predecessors) {
+    lines.push(`  predecessor ${predecessor.featureId} dependencyPassed=${String(predecessor.dependencyPassed)} commit=${String(predecessor.commitSha)} ancestorVerified=${String(predecessor.ancestorVerified)}`);
+  }
+  lines.push(`  outcome=${view.outcome.status} nextStep=${view.outcome.nextStep} reason=${view.outcome.reason}`);
+  if (view.outcome.blockReasons.length > 0) lines.push(`  blockReasons=${view.outcome.blockReasons.join(',')}`);
+  if (view.outcome.staleReasons.length > 0) lines.push(`  staleReasons=${view.outcome.staleReasons.join(',')}`);
+  if (view.integrationResult !== null) lines.push(`  result commit=${String(view.integrationResult.commitSha)} tree=${String(view.integrationResult.treeSha)} operationStatus=${String(view.integrationResult.operationStatus)}`);
+  lines.push(`  （${view.note}）`);
+  return `${lines.join('\\n')}\\n`;
+}
+
+
+export type IntegrationCliState = 'pending' | 'blocked' | 'unknown' | 'matched' | 'failed';
+
+export interface IntegrationReconcileCliView {
+  readonly state: IntegrationCliState;
+  readonly featureId: string;
+  readonly runId: string;
+  readonly batchId: string;
+  readonly gitOperationId: string;
+  readonly reason: string;
+  readonly deliveryStatus: IntegrationReconcileCommandResult['deliveryStatus'];
+  readonly canStartSuccessor: boolean;
+}
+
+export function buildIntegrationReconcileCliView(
+  result: IntegrationReconcileCommandResult,
+): IntegrationReconcileCliView {
+  const state: IntegrationCliState = result.outcome === 'matched'
+    ? 'matched'
+    : result.outcome === 'blocked'
+      ? 'blocked'
+      : result.outcome === 'unknown'
+        ? 'unknown'
+        : 'pending';
+  return {
+    state,
+    featureId: result.featureId,
+    runId: result.runId,
+    batchId: result.batchId,
+    gitOperationId: result.gitOperationId,
+    reason: result.reason,
+    deliveryStatus: result.deliveryStatus,
+    canStartSuccessor: state === 'matched' && result.deliveryStatus === 'succeeded',
+  };
+}
+
+export function buildIntegrationStartCliView(result: IntegrationStartCommandResult): IntegrationReconcileCliView {
+  const state: IntegrationCliState = result.outcome === 'blocked' ? 'blocked' : result.outcome === 'unknown' ? 'unknown' : 'pending';
+  return { state, featureId: result.featureId, runId: result.runId, batchId: result.batchId, gitOperationId: result.gitOperationId,
+    reason: result.reason ?? result.outcome, deliveryStatus: null, canStartSuccessor: false };
+}
+
+export function formatIntegrationReconcileView(view: IntegrationReconcileCliView): string {
+  return [
+    `shiploop integration reconcile: state=${view.state} matched=${String(view.state === 'matched')}`,
+    `  feature=${view.featureId} run=${view.runId} batch=${view.batchId} operation=${view.gitOperationId}`,
+    `  deliveryStatus=${String(view.deliveryStatus)} successorStart=${String(view.canStartSuccessor)}`,
+    `  reason=${view.reason}`,
+  ].join('\\n') + '\\n';
+}
+
+
 
 /** Feature 分轴结果 CLI 视图：公开投影逐轴保留 + 派生 completed 不变量。 */
 export interface FeatureDeliveryCliView {
@@ -185,6 +408,47 @@ export function buildGitOperationRecordView(record: PublicGitOperationRecord): G
   };
 }
 
+export interface GitAgentRepairCliView {
+  readonly scope: 'git-repair';
+  readonly repair: GitAgentRepairListResult['records'][number];
+  readonly completed: boolean;
+}
+
+export function buildGitAgentRepairView(result: GitAgentRepairDetailResult): GitAgentRepairCliView {
+  const repair = result.repair;
+  const completed = repair.candidateOperation?.status === 'succeeded' && repair.candidateOperation.deliveryStatus === 'succeeded';
+  return { scope: 'git-repair', repair, completed };
+}
+
+export interface GitAgentRepairListCliView {
+  readonly scope: 'git-repair-list';
+  readonly records: GitAgentRepairListResult['records'];
+  readonly nextCursor: string | null;
+  readonly limit: number;
+}
+
+export function buildGitAgentRepairListView(result: GitAgentRepairListResult): GitAgentRepairListCliView {
+  return { scope: 'git-repair-list', records: result.records, nextCursor: result.nextCursor, limit: result.limit };
+}
+
+export function formatGitAgentRepairListView(view: GitAgentRepairListCliView): string {
+  const lines = [`shiploop git repairs: ${view.records.length} record(s)`];
+  for (const repair of view.records) lines.push(`  - ${repair.repairId} run=${String(repair.runId)} blocked=${String(repair.blockedReason)} attempts=${repair.attempts.length} candidate=${repair.candidateOperation?.status ?? 'none'}`);
+  lines.push(`  nextCursor=${view.nextCursor ?? 'none'}`);
+  return `${lines.join('\\n')}\\n`;
+}
+
+export function formatGitAgentRepairView(view: GitAgentRepairCliView): string {
+  const repair = view.repair;
+  const latest = repair.attempts.at(-1);
+  return [
+    `shiploop git repair: ${repair.repairId} completed=${String(view.completed)}`,
+    `  project=${repair.projectId} feature=${repair.featureId} run=${String(repair.runId)} sourceOperation=${repair.sourceOperationId}`,
+    `  blocked=${String(repair.blockedReason)} failureKind=${repair.source.failureKind} inputDigest=${repair.source.inputDigest}`,
+    `  attempts=${repair.attempts.length} latestStatus=${latest?.status ?? 'none'} tokens=${String(latest?.consumedTokens ?? null)} runtimeMs=${String(latest?.runtimeMs ?? null)}`,
+    `  candidate=${repair.candidateOperation?.status ?? 'none'} deliveryStatus=${String(repair.candidateOperation?.deliveryStatus ?? null)}（候选/模型完成不等于交付完成）`,
+  ].join('\\n') + '\\n';
+}
 export interface GitOperationListCliView {
   readonly scope: 'git-operation-list';
   readonly records: readonly GitOperationRecordView[];

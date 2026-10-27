@@ -485,10 +485,11 @@ describe('F-004 ready 预览（固定范围 + 完整摘要 + previewDigest）', 
     expect(summary.budget.run).toEqual(VALID_BUDGET.run);
     expect(summary.concurrency).toEqual({ maxConcurrentWorks: 1, source: 'default' });
 
-    // 预览身份可由纯函数从摘要成分复算（完整输入身份，无隐藏成分）。
+    // 预览身份由摘要成分和所选 Feature 的当前 Phase 身份复算。
     expect(result.previewDigest).toBe(
       computeExecutionPreviewDigest({
         projectId: s.projectId,
+        phaseId: 'phase-1',
         featureIds: [s.featureId],
         planDigest: summary.plan.planDigest,
         code: summary.code,
@@ -712,13 +713,19 @@ describe('F-004 结构化拒绝（跨项目/非法预算/并发/仓库绑定）'
     );
   });
 
-  it('多成员范围拒绝（本阶段固定单 Feature，不静默截断）', async () => {
+  it('多成员范围按固定闭包预览，并关联成员阻塞原因', async () => {
     const s = await setup();
     const second = await s.importSecondFeature();
-    await expectPublicError(
-      s.previewSubmit({ payload: { featureIds: [s.featureId, second], budget: VALID_BUDGET } }),
-      { code: 'invalid_input', reason: 'multi_feature_scope_unsupported' },
-    );
+    const result = resultOf(await s.previewSubmit({
+      payload: { featureIds: [s.featureId, second], budget: VALID_BUDGET },
+    }));
+    expect(result.status).toBe('blocked');
+    expect(result.scope).toMatchObject({
+      phaseId: 'phase-1',
+      requestedFeatureIds: expect.arrayContaining([s.featureId, second]),
+      memberFeatureIds: expect.arrayContaining([s.featureId, second]),
+    });
+    expect(result.blocked).toContainEqual({ kind: 'plan_approval', reason: 'not_approved', featureId: second });
   });
 
   it('非法预算拒绝：必需缺失/非整数/越界/跨层不一致/deadline 已过（字段定位）', async () => {
@@ -773,7 +780,7 @@ describe('F-004 结构化拒绝（跨项目/非法预算/并发/仓库绑定）'
     }
   });
 
-  it('有效并发大于一拒绝：concurrency_not_supported（保存政策≠执行支持）', async () => {
+  it('有效并发大于一进入批准快照：由派发槽位按冻结策略执行', async () => {
     const s = await setup();
     const updated = await s.submit(
       {
@@ -784,10 +791,9 @@ describe('F-004 结构化拒绝（跨项目/非法预算/并发/仓库绑定）'
       { scope: { kind: 'project', projectId: s.projectId }, expectedRevision: 1 },
     );
     expect(updated.status).toBe('completed');
-    await expectPublicError(s.previewSubmit(), {
-      code: 'invalid_input',
-      reason: 'concurrency_not_supported',
-    });
+    const result = resultOf(await s.previewSubmit());
+    expect(result.status).toBe('ready');
+    expect(result.summary?.concurrency).toMatchObject({ maxConcurrentWorks: 2 });
   });
 
   it('不安全仓库绑定拒绝：repoIdentity 漂移 binding_identity_mismatch（真实检查 vs 权威绑定行）', async () => {

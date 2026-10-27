@@ -9,8 +9,8 @@
  * - 只读写 `execution_slot_claims` 与只读 `run_dispatch_claims`；不改写
  *   `workspace_leases`、`baseline_occupancy`、`git_operations`、`attempts`、
  *   `runs`、预算表，也不启动进程/网络/文件准备。槽位不是 Attempt 工作区租约；
- * - 容量在装配时用 `validateExecutionSlotCapacity` 固定（缺省 1；>1/0/负数/
- *   非整数直接拒绝，不表面接受后暗中串行）；
+ * - 容量在装配时用 `validateApprovedExecutionSlotCapacity` 固定（缺省 1；必须是批准的受支持正整数，
+ *   非法值直接拒绝）；派发调用方从批准 Batch 快照传入冻结容量；
  * - 获取在同一个短写事务内重核认领行身份（项目/Feature/Run/代次/owner/Host）、
  *   认领状态与租约，再按最小空闲槽号插入；`(slot_index)` 与 `(project, run)`
  *   的活动唯一索引兜底并发竞争，失败方得到结构化阻塞原因，整组回滚；
@@ -21,7 +21,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import {
-  validateExecutionSlotCapacity,
+  validateApprovedExecutionSlotCapacity,
   validateExecutionSlotClaimRecord,
   type ExecutionSlotClaimRecord,
 } from '../../ports/execution-dispatch.js';
@@ -102,14 +102,14 @@ function isSqliteConstraintError(error: unknown): error is Error & { code: strin
 /**
  * 装配槽位窄端口。调用方负责先迁移到 v33+ 并打开会话；import 本模块无副作用。
  *
- * `capacity` 缺省 1；显式传入 >1、0、负数、非整数一律在装配期拒绝
- * （`capacity_unsupported`/校验错误），不返回「接受但暗中串行」的端口。
+ * `capacity` 缺省 1；显式容量必须是受支持范围内的正整数，不能用无界或漂移配置
+ * 覆盖批准 Batch 快照。
  */
 export function createSqliteExecutionSlotAccess(
   session: SqliteStorageSession,
   options: { readonly capacity?: unknown; readonly nowUtcMs?: () => number } = {},
 ): ExecutionSlotAccess {
-  const capacity = validateExecutionSlotCapacity(options.capacity);
+  const capacity = validateApprovedExecutionSlotCapacity(options.capacity);
   const db = session.database;
   const clock = options.nowUtcMs ?? Date.now;
 

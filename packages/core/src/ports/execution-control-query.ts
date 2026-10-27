@@ -64,7 +64,12 @@ import {
   validateStableId,
   validationError,
 } from './validation.js';
+import { readFixedExecutionBatchFeatureIds } from './execution-budget-query.js';
 import type { ValidationContext } from './validation.js';
+import type {
+  FeatureResourceLeaseRecord,
+  FeatureResourceWaitReason,
+} from './feature-resources.js';
 
 /* ------------------------------------------------------------------ *
  * 操作身份（PublicError.operation 与 Host 路由共用；冻结词汇）
@@ -74,17 +79,72 @@ export const EXECUTION_RUN_CONTROL_GET_OPERATION = 'execution.run.control.get' a
 export const EXECUTION_BATCH_CONTROL_GET_OPERATION = 'execution.batch.control.get' as const;
 export const EXECUTION_RUN_RECOVERY_GET_OPERATION = 'execution.run.recovery.get' as const;
 
+export const EXECUTION_RESOURCE_LIST_OPERATION = 'execution.resources.list' as const;
+
 export const EXECUTION_CONTROL_QUERY_OPERATIONS = [
   EXECUTION_RUN_CONTROL_GET_OPERATION,
   EXECUTION_BATCH_CONTROL_GET_OPERATION,
   EXECUTION_RUN_RECOVERY_GET_OPERATION,
+  EXECUTION_RESOURCE_LIST_OPERATION,
 ] as const;
 
 export type ExecutionControlQueryOperation = (typeof EXECUTION_CONTROL_QUERY_OPERATIONS)[number];
+export interface ExecutionResourceListRequest {
+  readonly after: { readonly sort: number; readonly id: string } | null;
+  readonly limit: number;
+}
 
-/* ------------------------------------------------------------------ *
- * 有界扫描上限（超限置 truncated；绝不静默丢弃语义）
- * ------------------------------------------------------------------ */
+export interface ExecutionResourceListSelector {
+  readonly featureId?: string;
+  readonly batchId?: string;
+}
+
+export interface ExecutionResourceQueryRow {
+  readonly lease: FeatureResourceLeaseRecord;
+  readonly featureId: string;
+  readonly batchId: string;
+  readonly runId: string;
+}
+
+export interface ExecutionResourceListPage {
+  readonly records: readonly ExecutionResourceQueryRow[];
+  readonly nextKey: { readonly sort: number; readonly id: string } | null;
+}
+
+export type PublicResourceBlockingReason =
+  | 'resource_conflict'
+  | 'stop_verification'
+  | 'authorization_blocked';
+
+export interface PublicExecutionResourceRecord {
+  readonly id: string;
+  readonly projectId: string;
+  readonly featureId: string;
+  readonly batchId: string;
+  readonly runId: string;
+  readonly claimId: string;
+  readonly ownerId: string;
+  readonly ownerVersion: number;
+  readonly revision: number;
+  readonly kind: FeatureResourceLeaseRecord['resource']['kind'];
+  readonly accessMode: FeatureResourceLeaseRecord['resource']['accessMode'];
+  readonly leaseMode: FeatureResourceLeaseRecord['resource']['leaseMode'];
+  readonly resourceKey: string;
+  readonly state: 'held' | 'quarantined';
+  readonly waitingReason: FeatureResourceWaitReason | null;
+  readonly blockingReason: PublicResourceBlockingReason | null;
+  readonly acquiredAt: string;
+  readonly leaseUntil: string;
+}
+
+export interface ResourceListResult {
+  readonly schemaVersion: typeof WIRE_MESSAGE_SCHEMA_VERSION;
+  readonly scope: 'execution-resources';
+  readonly records: readonly PublicExecutionResourceRecord[];
+  readonly nextCursor: string | null;
+  readonly limit: number;
+}
+
 
 /** 单目标 Attempt 展示上限（与调度查询分页同一量级）。 */
 export const EXECUTION_CONTROL_ATTEMPTS_MAX = 200;
@@ -187,6 +247,11 @@ export interface ExecutionControlQueryReadStore {
   readRunControlView(projectId: unknown, runId: unknown): ExecutionRunControlView | undefined;
   readBatchControlView(projectId: unknown, batchId: unknown): ExecutionBatchControlView | undefined;
   readRunRecoveryView(projectId: unknown, runId: unknown): ExecutionRunRecoveryView | undefined;
+  listFeatureResourceRecords(
+    projectId: unknown,
+    request: ExecutionResourceListRequest,
+    selector?: ExecutionResourceListSelector,
+  ): ExecutionResourceListPage;
 }
 
 /* ------------------------------------------------------------------ *
@@ -432,9 +497,10 @@ export interface PublicExecutionControlAttempt {
 /** 停止 operation 投影（stopConfirmed/forced 未知保持 null，不以 false 冒充）。 */
 export interface PublicExecutionControlStopOperation {
   readonly operationId: string;
-  readonly targetKind: 'run' | 'batch';
+  readonly targetKind: 'run' | 'batch' | 'feature';
   readonly targetId: string;
   readonly batchId: string;
+  readonly featureId: string | null;
   readonly runId: string | null;
   readonly status: ExecutionStopOperationStatus;
   readonly reason: string;
@@ -474,6 +540,8 @@ export interface PublicExecutionControlRunBrief {
 export interface PublicExecutionControlBatchBrief {
   readonly batchId: string;
   readonly featureId: string;
+  readonly featureIds?: readonly string[];
+  readonly phaseId?: string;
   readonly status: ExecutionBatchStatus;
   readonly reason: string | null;
   readonly pauseRequestedAt: string | null;
@@ -644,6 +712,7 @@ export function toPublicExecutionControlStopOperation(
     targetKind: record.targetKind,
     targetId: record.targetId,
     batchId: record.batchId,
+    featureId: record.featureId,
     runId: record.runId,
     status: record.status,
     reason: record.reason,
@@ -689,9 +758,11 @@ export function toPublicExecutionControlRunBrief(record: RunRecord): PublicExecu
 export function toPublicExecutionControlBatchBrief(
   record: ExecutionBatchRecord,
 ): PublicExecutionControlBatchBrief {
+  const featureIds = readFixedExecutionBatchFeatureIds(record);
   return {
     batchId: record.id,
     featureId: record.featureId,
+    ...(featureIds.length > 1 ? { phaseId: record.phaseId, featureIds } : {}),
     status: record.status,
     reason: record.reason,
     pauseRequestedAt: isoOr(record.pauseRequestedAtUtcMs),
@@ -785,6 +856,39 @@ export function toPublicExecutionRecoveryContinuation(
             previousStatus: recovery.handoff.previousStatus,
           },
     recordedAt: iso(recovery.recordedAtUtcMs),
+  };
+}
+
+export function toPublicExecutionResourceRecord(
+  row: ExecutionResourceQueryRow,
+): PublicExecutionResourceRecord {
+  const lease = row.lease;
+  const blockingReason: PublicResourceBlockingReason | null =
+    lease.waitingReason?.code === 'lease_expired_unverified'
+      ? 'stop_verification'
+      : lease.waitingReason?.code === 'resource_occupied' ||
+          lease.waitingReason?.code === 'resource_quarantined'
+        ? 'resource_conflict'
+        : null;
+  return {
+    id: lease.id,
+    projectId: lease.projectId,
+    featureId: row.featureId,
+    batchId: row.batchId,
+    runId: row.runId,
+    claimId: lease.ownerId,
+    ownerId: lease.ownerId,
+    ownerVersion: lease.ownerVersion,
+    revision: lease.revision,
+    kind: lease.resource.kind,
+    accessMode: lease.resource.accessMode,
+    leaseMode: lease.resource.leaseMode,
+    resourceKey: lease.resource.key,
+    state: lease.state === 'released' ? 'held' : lease.state,
+    waitingReason: lease.waitingReason,
+    blockingReason,
+    acquiredAt: iso(lease.acquiredAtUtcMs),
+    leaseUntil: iso(lease.leaseUntilUtcMs),
   };
 }
 

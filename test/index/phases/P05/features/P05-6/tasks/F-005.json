@@ -1,0 +1,19 @@
+{
+  "schema_version": 2,
+  "task_id": "F-005",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        { "file": "test/modules/delivery/p05-6-f005-integration-plan-query.test.ts", "all": true },
+        { "file": "test/modules/delivery/p05-6-f005-integration-plan-sqlite-query.test.ts", "all": true },
+        { "file": "test/modules/delivery/p03-8-f011-cli-args.test.ts", "all": true },
+        { "file": "test/modules/host/p03-10-feature-report-contract.test.ts", "all": true },
+        { "file": "test/modules/host/host-app-routes.test.ts", "all": true },
+        { "file": "test/modules/host/host-lifecycle-contract.test.ts", "all": true },
+        { "file": "test/modules/host/control/p03-9-f014-host-control-wiring.test.ts", "all": true },
+        { "file": "test/modules/onboarding/p02-3-init-overview-vertical.test.ts", "all": true }
+      ]
+    }
+  ]
+}

@@ -66,6 +66,11 @@ export const EXECUTION_RUN_CANCELLING_EVENT_TYPE = 'execution.run.cancelling';
 export const EXECUTION_RUN_CANCELLED_EVENT_TYPE = 'execution.run.cancelled';
 export const EXECUTION_BATCH_CANCELLING_EVENT_TYPE = 'execution.batch.cancelling';
 export const EXECUTION_BATCH_CANCELLED_EVENT_TYPE = 'execution.batch.cancelled';
+/** P05-5：Feature 范围控制事件（payload 恒为控制意图，不表示验收/交付完成）。 */
+export const EXECUTION_FEATURE_PAUSED_EVENT_TYPE = 'execution.feature.paused';
+export const EXECUTION_FEATURE_CANCELLING_EVENT_TYPE = 'execution.feature.cancelling';
+export const EXECUTION_FEATURE_CANCELLED_EVENT_TYPE = 'execution.feature.cancelled';
+export const EXECUTION_FEATURE_RESUMED_EVENT_TYPE = 'execution.feature.resumed';
 /** P03-9 / F-008 显式工作流 resume 事件（payload 恒 {resumed:true}）。 */
 export const EXECUTION_RUN_RESUMED_EVENT_TYPE = 'execution.run.resumed';
 export const EXECUTION_BATCH_RESUMED_EVENT_TYPE = 'execution.batch.resumed';
@@ -90,6 +95,10 @@ export const EXECUTION_EVENT_TYPES = [
   EXECUTION_BATCH_CANCELLED_EVENT_TYPE,
   EXECUTION_RUN_RESUMED_EVENT_TYPE,
   EXECUTION_BATCH_RESUMED_EVENT_TYPE,
+  EXECUTION_FEATURE_PAUSED_EVENT_TYPE,
+  EXECUTION_FEATURE_CANCELLING_EVENT_TYPE,
+  EXECUTION_FEATURE_CANCELLED_EVENT_TYPE,
+  EXECUTION_FEATURE_RESUMED_EVENT_TYPE,
   TASK_CLAIMED_EVENT_TYPE,
   ATTEMPT_UPDATED_EVENT_TYPE,
   TASK_APPROVAL_BLOCKED_EVENT_TYPE,
@@ -123,6 +132,10 @@ const EXECUTION_EVENT_SPECS: Readonly<Record<ExecutionEventType, ExecutionEventS
   [EXECUTION_BATCH_CANCELLED_EVENT_TYPE]: Object.freeze({ aggregateType: 'execution_batch', payloadKey: 'cancelled' }),
   [EXECUTION_RUN_RESUMED_EVENT_TYPE]: Object.freeze({ aggregateType: 'run', payloadKey: 'resumed' }),
   [EXECUTION_BATCH_RESUMED_EVENT_TYPE]: Object.freeze({ aggregateType: 'execution_batch', payloadKey: 'resumed' }),
+  [EXECUTION_FEATURE_PAUSED_EVENT_TYPE]: Object.freeze({ aggregateType: 'feature', payloadKey: 'paused' }),
+  [EXECUTION_FEATURE_CANCELLING_EVENT_TYPE]: Object.freeze({ aggregateType: 'feature', payloadKey: 'cancelling' }),
+  [EXECUTION_FEATURE_CANCELLED_EVENT_TYPE]: Object.freeze({ aggregateType: 'feature', payloadKey: 'cancelled' }),
+  [EXECUTION_FEATURE_RESUMED_EVENT_TYPE]: Object.freeze({ aggregateType: 'feature', payloadKey: 'resumed' }),
 });
 
 /** 快照 JSON 列（scope/config/input）序列化字节上限（有界，拒绝无界快照）。 */
@@ -280,7 +293,7 @@ function requireBoundedSnapshot(
 }
 
 /** P03-9 / F-001 暂停目标与结果（同一短写事务内原子持久化）。 */
-export type ExecutionPauseTargetKind = 'run' | 'batch';
+export type ExecutionPauseTargetKind = 'run' | 'batch' | 'feature';
 export type ExecutionPauseOutcome = 'paused' | 'pausing' | 'already_terminal' | 'interrupted';
 
 export interface ExecutionPauseInput {
@@ -302,7 +315,7 @@ export interface ExecutionPauseResult {
 }
 
 /** P03-9 / F-008 显式 resume 的事务原语输入/输出（同一短写事务内原子生效）。 */
-export type ExecutionResumeTargetKind = 'run' | 'batch';
+export type ExecutionResumeTargetKind = 'run' | 'batch' | 'feature';
 export interface ExecutionResumeInput {
   readonly projectId: string;
   readonly targetKind: ExecutionResumeTargetKind;
@@ -350,7 +363,7 @@ export interface FinalizationRetryBatchOpenResult {
 /** P03-9 / F-002 持久停止 operation 阶段；与 Run/Batch 生命周期分离。 */export const EXECUTION_STOP_OPERATION_STATUSES = ['stopping', 'stopped', 'uncertain'] as const;
 export type ExecutionStopOperationStatus = (typeof EXECUTION_STOP_OPERATION_STATUSES)[number];
 
-export type ExecutionCancelTargetKind = 'run' | 'batch';
+export type ExecutionCancelTargetKind = 'run' | 'batch' | 'feature';
 export type ExecutionCancelOutcome = 'cancelled' | 'cancelling' | 'stop_uncertain' | 'already_terminal';
 
 export interface ExecutionCancelInput {
@@ -383,6 +396,8 @@ export interface ExecutionStopOperationRecord {
   readonly targetKind: ExecutionCancelTargetKind;
   readonly targetId: string;
   readonly batchId: string;
+  /** Feature 目标的持久归属；Run/Batch operation 为 null。 */
+  readonly featureId: string | null;
   readonly runId: string | null;
   readonly reason: string;
   readonly status: ExecutionStopOperationStatus;
@@ -422,6 +437,8 @@ export interface ValidatedExecutionBatchInsertInput {
   readonly projectId: string;
   readonly phaseId: string;
   readonly featureId: string;
+  /** 固定成员集合；P04 单 Feature 输入归一化为一个成员。 */
+  readonly featureIds: readonly string[];
   readonly batchId: string;
   readonly scopeSnapshot: Readonly<Record<string, unknown>>;
   readonly configSnapshot: Readonly<Record<string, unknown>>;
@@ -445,9 +462,9 @@ const EXECUTION_BATCH_INSERT_KEYS = [
 ] as const;
 
 /**
- * Batch 插入输入校验：恰一个 Feature 范围（scopeSnapshot.featureIds 单成员与
- * featureId 一致）、身份级快照有界、预算快照经权威校验、初始状态 queued、
- * runsCreated ≥1（首次派发即占用一次 Run 名额，不出现零计数批次）。
+ * Batch 插入输入校验：scopeSnapshot.featureIds 为非空、无重复的固定成员集合，
+ * featureId 保留为 P04 兼容锚点且必须属于该集合；身份级快照有界、预算快照经权威校验、
+ * 初始状态 queued、runsCreated ≥1（首次派发即占用一次 Run 名额，不出现零计数批次）。
  */
 export function validateExecutionBatchInsertInput(
   value: unknown,
@@ -457,17 +474,28 @@ export function validateExecutionBatchInsertInput(
   const object = requirePlainObject(value, context, 'input');
   rejectUnknownKeys(object, EXECUTION_BATCH_INSERT_KEYS, context, 'input');
   const scopeSnapshot = requireBoundedSnapshot(object.scopeSnapshot, context, 'scopeSnapshot');
-  const featureIds = (scopeSnapshot as { featureIds?: unknown }).featureIds;
-  if (
-    !Array.isArray(featureIds) ||
-    featureIds.length !== 1 ||
-    featureIds[0] !== object.featureId
-  ) {
+  const featureId = requireStableIdField(object.featureId, context, 'featureId');
+  const rawFeatureIds = (scopeSnapshot as { featureIds?: unknown }).featureIds;
+  if (!Array.isArray(rawFeatureIds) || rawFeatureIds.length === 0) {
     throw validationError(
       context,
       'scopeSnapshot.featureIds',
-      '必须是恰含一个成员的数组且与 featureId 一致（单 Feature 范围）',
-      featureIds,
+      '必须是至少包含一个成员的数组',
+      rawFeatureIds,
+    );
+  }
+  const featureIds = rawFeatureIds.map((candidate, index) =>
+    requireStableIdField(candidate, context, `scopeSnapshot.featureIds[${index}]`),
+  );
+  if (new Set(featureIds).size !== featureIds.length) {
+    throw validationError(context, 'scopeSnapshot.featureIds', '成员不得重复', featureIds);
+  }
+  if (!featureIds.includes(featureId)) {
+    throw validationError(
+      context,
+      'featureId',
+      'P04 兼容锚点必须属于固定成员集合',
+      featureId,
     );
   }
   const budgetSnapshot = validateExecutionBudgetSnapshot(object.budgetSnapshot, context);
@@ -487,7 +515,8 @@ export function validateExecutionBatchInsertInput(
   return {
     projectId: requireStableIdField(object.projectId, context, 'projectId'),
     phaseId: requireStableIdField(object.phaseId, context, 'phaseId'),
-    featureId: requireStableIdField(object.featureId, context, 'featureId'),
+    featureId,
+    featureIds,
     batchId: requireStableIdField(object.batchId, context, 'batchId'),
     scopeSnapshot,
     configSnapshot: requireBoundedSnapshot(object.configSnapshot, context, 'configSnapshot'),

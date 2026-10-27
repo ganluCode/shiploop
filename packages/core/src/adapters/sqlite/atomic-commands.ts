@@ -10,7 +10,9 @@ import { createSqliteBaselineAccess } from './baseline-store.js';
 import { createSqliteCommandReceiptAccess } from './command-receipts.js';
 import { createSqliteExecutionAccess } from './execution-store.js';
 import { createSqliteGitOperationStore } from './git-operations.js';
+import { createSqliteIntegrationPlanAccess } from './integration-plan-store.js';
 import { createSqlitePlanAccess } from './plan-store.js';
+import { createSqlitePlanningContextStore } from './planning-context-store.js';
 import type { SqliteStorageSession } from './session.js';
 import { createSqliteStateAccess } from './state-store.js';
 import type { SqliteStateStoreOptions } from './state-store.js';
@@ -25,6 +27,8 @@ export function createSqliteAtomicCommandStore(
   const plan = createSqlitePlanAccess(session, options);
   const executions = createSqliteExecutionAccess(session, options);
   const gitOperations = createSqliteGitOperationStore(session, options);
+  const planningContexts = createSqlitePlanningContextStore(session, options);
+  const integrationPlans = createSqliteIntegrationPlanAccess(session, options);
   return {
     findReceipt: receipts.findReceiptByCommandId,
     // P03-9 / F-003：停止 operation 的持久状态/证据引用读取（不进入写事务）。
@@ -37,6 +41,10 @@ export function createSqliteAtomicCommandStore(
         throw new TypeError('配置一致性快照必须在写事务之外读取');
       }
       return state.getGlobalSettingsOrNull();
+    },
+    // P05-1 / F-008：候选正文预读的规划上下文。
+    getPlanningContextByCandidate(projectId, candidateId) {
+      return planningContexts.getPlanningContextByCandidate(projectId, candidateId);
     },
     transact<T>(operation: string, submit: (transaction: CommandTransaction) => T): T {
       // 不允许在其他事务内使用；防止 savepoint 伪装成独立原子提交。
@@ -135,6 +143,9 @@ export function createSqliteAtomicCommandStore(
           // P03-1 / F-002：计划结构原语（Phase/Feature/Task/依赖边插入；归属核验与
           // 环检测在同一事务内完成），同一 BEGIN IMMEDIATE 内原子生效。
           insertPhase: guarded(plan.insertPhaseInTransaction),
+          updatePhase: guarded(plan.updatePhaseInTransaction),
+          moveFeaturePhase: guarded(plan.moveFeaturePhaseInTransaction),
+          updateFeatureDag: guarded(plan.updateFeatureDagInTransaction),
           insertFeature: guarded(plan.insertFeatureInTransaction),
           insertTask: guarded(plan.insertTaskInTransaction),
           insertTaskDependency: guarded(plan.insertTaskDependencyInTransaction),
@@ -146,6 +157,7 @@ export function createSqliteAtomicCommandStore(
           getPhase: guarded(plan.getPhaseInTransaction),
           getArtifactInputRef: guarded(plan.getArtifactInputRefInTransaction),
           getTaskFeatureLinks: guarded(plan.getTaskFeatureLinksInTransaction),
+          hasTaskExecutionHistory: guarded(plan.hasTaskExecutionHistoryInTransaction),
           // P03-1 / F-008：实质修订事务内快照读取与整体替换原语。
           getFeaturePlan: guarded(plan.getFeaturePlanInTransaction),
           replaceFeaturePlan: guarded(plan.replaceFeaturePlanInTransaction),
@@ -185,8 +197,10 @@ export function createSqliteAtomicCommandStore(
           insertBatchBudgetRevision: guarded(executions.insertBatchBudgetRevisionInTransaction),
           reviseBatchBudget: guarded(executions.reviseBatchBudgetInTransaction),
           getExecutionBatch: guarded(executions.getExecutionBatchInTransaction),
+          listExecutionBatchMemberFeatureIds: guarded(executions.listExecutionBatchMemberFeatureIdsInTransaction),
           listExecutionRunsForWorkKey: guarded(executions.listExecutionRunsForWorkKeyInTransaction),
           getActiveExecutionRun: guarded(executions.getActiveExecutionRunInTransaction),
+          getActiveProjectExecutionRun: guarded(executions.getActiveProjectExecutionRunInTransaction),
           getActivePhaseExecutionBatch: guarded(executions.getActivePhaseExecutionBatchInTransaction),
           recordExecutionRunDispatch: guarded(executions.recordExecutionRunDispatchInTransaction),
           insertExecutionRun: guarded(executions.insertExecutionRunInTransaction),
@@ -215,6 +229,20 @@ export function createSqliteAtomicCommandStore(
           getTaskAttemptReservation: guarded(executions.getTaskAttemptReservationInTransaction),
           getTaskExecutionCounters: guarded(executions.getTaskExecutionCountersInTransaction),
           getExecutionRun: guarded(executions.getExecutionRunInTransaction),
+          // P05-6 / F-002：集成计划及前置成果在同一短写事务内整体插入、冻结和结果 CAS。
+          createIntegrationPlan: guarded(integrationPlans.createIntegrationPlanInTransaction),
+          freezeIntegrationPlan: guarded(integrationPlans.freezeIntegrationPlanInTransaction),
+          updateIntegrationPlanResult: guarded(integrationPlans.updateIntegrationPlanResultInTransaction),
+          updateIntegrationPlanStatus: guarded(integrationPlans.updateIntegrationPlanStatusInTransaction),
+          getIntegrationPlan: guarded(integrationPlans.getIntegrationPlanInTransaction),
+          createPlanningContextInTransaction: guarded(planningContexts.createPlanningContextInTransaction),
+
+          getActivePlanningContextForFeature: guarded(planningContexts.getActivePlanningContextForFeatureInTransaction),
+          // P05-1 / F-006：规划候选受限提交的短事务重核与发布绑定原语。
+          getPlanningContextByCandidate: guarded(planningContexts.getPlanningContextByCandidate),
+          getPlanningContextByRun: guarded(planningContexts.getPlanningContextByRun),
+          decidePlanningCandidate: guarded(planningContexts.decidePlanningCandidateInTransaction),
+          publishPlanningCandidate: guarded(planningContexts.publishPlanningCandidateInTransaction),
           // P03-3 / F-007：Runtime 启动额度预占原语（迁移 v12；同一 BEGIN IMMEDIATE
           // 内原子生效；SDK 启动前的受信边界，不经命令路由暴露）。
           reserveRuntimeStart: guarded(executions.reserveRuntimeStartInTransaction),

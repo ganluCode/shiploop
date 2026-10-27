@@ -161,8 +161,16 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       'baseline.run',
       'baseline.cancel',
       // P03-1 / F-004：Phase 创建（project scope + phase.write）。
+      'execution.batch.finalize',
+      'phase.delivery.approve',
       'phase.create',
-      // P03-1 / F-005：计划导入（project scope + feature.plan.import；Phase 聚合 CAS）。
+      'phase.metadata.update',
+      'phase.close',
+      'phase.reopen',
+      'phase.archive',
+      'feature.phase.move',
+      // P05-2 / F-005：Feature DAG 完整边集替换。
+      'feature.dag.update',
       'feature.plan.import',
       // P03-1 / F-007：纯标签 CAS 编辑（project scope + plan.labels.write；实体自身 revision CAS）。
       'plan.labels.update',
@@ -180,6 +188,7 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       // 更新类 expectedRevision=Task 当前 revision；只推进当前验证收尾，不再调用 Runtime）。
       'task.verification.continue',
       'feature.verification.continue',
+      'git.operation.start',
       'git.operation.reconcile',
       // P03-2 / F-006：执行输入制品组准备（project scope + execution.input.prepare；
       // 创建类不携带 expectedRevision；采集/组装/发布为事务外 I/O）。
@@ -193,6 +202,8 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       // P03-3 / F-009：批次预算显式修订（project scope + execution.budget.revise；
       // 更新类 expectedRevision=目标 Batch 当前 budget_revision；仅增额或延期）。
       'execution.budget.revise',
+      'planning.start',
+      'planning.candidate.decide',
       // P03-5 / F-010：人工丢弃受管工作区（project scope + workspace.discard；
       // 创建类不携带 expectedRevision；预览绑定在 payload 内由应用层重核）。
       'workspace.discard',
@@ -216,7 +227,15 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       'baseline.preview': { scopeKind: 'project', mutation: 'create', capability: 'baseline.run' },
       'baseline.run': { scopeKind: 'project', mutation: 'create', capability: 'baseline.run' },
       'baseline.cancel': { scopeKind: 'project', mutation: 'create', capability: 'baseline.run' },
+      'execution.batch.finalize': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
+      'phase.delivery.approve': { scopeKind: 'project', mutation: 'update', capability: 'feature.plan.decide' },
       'phase.create': { scopeKind: 'project', mutation: 'create', capability: 'phase.write' },
+      'phase.metadata.update': { scopeKind: 'project', mutation: 'update', capability: 'phase.write' },
+      'phase.close': { scopeKind: 'project', mutation: 'update', capability: 'phase.write' },
+      'phase.reopen': { scopeKind: 'project', mutation: 'update', capability: 'phase.write' },
+      'phase.archive': { scopeKind: 'project', mutation: 'update', capability: 'phase.write' },
+      'feature.phase.move': { scopeKind: 'project', mutation: 'update', capability: 'phase.write' },
+      'feature.dag.update': { scopeKind: 'project', mutation: 'update', capability: 'phase.write' },
       'feature.plan.import': { scopeKind: 'project', mutation: 'update', capability: 'feature.plan.import' },
       'plan.labels.update': { scopeKind: 'project', mutation: 'update', capability: 'plan.labels.write' },
       'feature.plan.revise': { scopeKind: 'project', mutation: 'update', capability: 'feature.plan.revise' },
@@ -227,12 +246,15 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       'task.approval.unblock': { scopeKind: 'project', mutation: 'update', capability: 'feature.plan.decide' },
       'task.verification.continue': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
       'feature.verification.continue': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
+      'git.operation.start': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
       'git.operation.reconcile': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
       'feature.plan.decide': { scopeKind: 'project', mutation: 'update', capability: 'feature.plan.decide' },
       'execution.input.prepare': { scopeKind: 'project', mutation: 'create', capability: 'execution.input.prepare' },
       'execution.preview': { scopeKind: 'project', mutation: 'create', capability: 'execution.start' },
       'execution.start': { scopeKind: 'project', mutation: 'create', capability: 'execution.start' },
       'execution.budget.revise': { scopeKind: 'project', mutation: 'update', capability: 'execution.budget.revise' },
+      'planning.start': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
+      'planning.candidate.decide': { scopeKind: 'project', mutation: 'update', capability: 'feature.plan.decide' },
       'workspace.discard': { scopeKind: 'project', mutation: 'create', capability: 'workspace.discard' },
       'workspace.discard.preview': { scopeKind: 'project', mutation: 'create', capability: 'workspace.discard' },
     });

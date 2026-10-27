@@ -29,6 +29,7 @@ import {
 import {
   GIT_OPERATION_TYPE_FEATURE_FINAL_COMMIT,
   GIT_OPERATION_TYPE_TASK_COMMIT,
+  isIntegrationGitOperationType,
   assertFinalizationMatchesIntent,
   buildGitOperationReceipt,
   computeGitOperationIntentDigest,
@@ -65,7 +66,9 @@ export interface GitOperationRow {
   repo_identity: string;
   worktree_path: string;
   expected_head: string;
-  candidate_tree: string;
+  candidate_tree: string | null;
+  integration_plan: string | null;
+  budget_snapshot: string | null;
   code_digest: string;
   verification_refs: string;
   approval_refs: string;
@@ -84,16 +87,29 @@ export interface GitOperationRow {
   duration_ms: number | null;
   reason_code: string | null;
   receipt: string | null;
+  integration_result: string | null;
+  recovery_state: string | null;
+  workspace_preserved: number;
   delivery_status: string | null;
   settled_at: number | null;
 }
 
 export const GIT_OPERATION_COLUMNS = `id, created_at, updated_at, revision, project_id,
   feature_id, run_id, attempt_id, execution_version, operation_type, repository_binding_id,
-  repo_identity, worktree_path, expected_head, candidate_tree, code_digest, verification_refs,
+  repo_identity, worktree_path, expected_head, candidate_tree, integration_plan, budget_snapshot, code_digest, verification_refs,
   approval_refs, message, identity_name, identity_email, delivery_policy_digest, runtime_source,
   owner_id, host_instance_id, intent_digest, status, actual_commit, actual_tree, exit_code,
-  duration_ms, reason_code, receipt, delivery_status, settled_at`;
+  duration_ms, reason_code, receipt, integration_result, recovery_state, workspace_preserved, delivery_status, settled_at`;
+
+const LEGACY_GIT_OPERATION_COLUMNS = `id, created_at, updated_at, revision, project_id,
+  feature_id, run_id, attempt_id, execution_version, operation_type, repository_binding_id,
+  repo_identity, worktree_path, expected_head, candidate_tree,
+  NULL AS integration_plan, NULL AS budget_snapshot, code_digest, verification_refs,
+  approval_refs, message, identity_name, identity_email, delivery_policy_digest, runtime_source,
+  owner_id, host_instance_id, intent_digest, status, actual_commit, actual_tree, exit_code,
+  duration_ms, reason_code, receipt, NULL AS integration_result, 'none' AS recovery_state,
+  0 AS workspace_preserved, delivery_status, settled_at`;
+
 
 /** 行列 → 记录（fail-closed：损坏 JSON/不一致回执抛 corrupt，不泄漏原始内容）。 */
 export function gitOperationRecordFromRow(
@@ -113,7 +129,9 @@ export function gitOperationRecordFromRow(
       repoIdentity: row.repo_identity,
       worktreePath: row.worktree_path,
       expectedHead: row.expected_head,
-      candidateTree: row.candidate_tree,
+      candidateTree: row.candidate_tree ?? row.expected_head,
+      integrationPlan: row.integration_plan === null ? null : JSON.parse(row.integration_plan),
+      budgetSnapshot: row.budget_snapshot === null ? null : JSON.parse(row.budget_snapshot),
       codeDigest: row.code_digest,
       verificationRefs: JSON.parse(row.verification_refs),
       approvalRefs: JSON.parse(row.approval_refs),
@@ -139,6 +157,9 @@ export function gitOperationRecordFromRow(
         durationMs: row.duration_ms,
         reasonCode: row.reason_code,
         receipt: row.receipt === null ? null : JSON.parse(row.receipt),
+        integrationResult: row.integration_result === null ? null : JSON.parse(row.integration_result),
+        recoveryState: row.recovery_state === null ? null : row.recovery_state,
+        workspacePreserved: row.workspace_preserved === 1,
         deliveryStatus: row.delivery_status,
         settledAtUtcMs: row.settled_at,
         revision: row.revision,
@@ -199,10 +220,16 @@ export function createSqliteGitOperationStore(
     });
   }
 
+  function supportsIntegrationColumns(): boolean {
+    const columns = db.pragma('table_info(git_operations)') as { name: string }[];
+    return columns.some(column => column.name === 'integration_plan');
+  }
+
   function readRow(operationId: string): GitOperationRow | undefined {
+    const columns = supportsIntegrationColumns() ? GIT_OPERATION_COLUMNS : LEGACY_GIT_OPERATION_COLUMNS;
     return db
       .prepare<[string], GitOperationRow>(
-        `SELECT ${GIT_OPERATION_COLUMNS} FROM git_operations WHERE id = ?`,
+        `SELECT ${columns} FROM git_operations WHERE id = ?`,
       )
       .get(operationId);
   }
@@ -212,43 +239,79 @@ export function createSqliteGitOperationStore(
     intentDigest: string,
     timestamp: number,
   ): void {
+    if (!supportsIntegrationColumns()) {
+      db.prepare(`INSERT INTO git_operations
+        (id, created_at, updated_at, revision, project_id, feature_id, run_id, attempt_id,
+         execution_version, operation_type, repository_binding_id, repo_identity, worktree_path,
+         expected_head, candidate_tree, code_digest, verification_refs, approval_refs, message,
+         identity_name, identity_email, delivery_policy_digest, runtime_source, owner_id,
+         host_instance_id, intent_digest, status, actual_commit, actual_tree, exit_code,
+         duration_ms, reason_code, receipt, delivery_status, settled_at)
+       VALUES (@id, @createdAt, @updatedAt, 1, @projectId, @featureId, @runId, @attemptId,
+         @executionVersion, @operationType, @repositoryBindingId, @repoIdentity, @worktreePath,
+         @expectedHead, @candidateTree, @codeDigest, @verificationRefs, @approvalRefs,
+         @message, @identityName, @identityEmail, @deliveryPolicyDigest, @runtimeSource,
+         @ownerId, @hostInstanceId, @intentDigest, 'pending', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)`)
+        .run({
+          id: input.operationId, createdAt: timestamp, updatedAt: timestamp,
+          projectId: input.projectId, featureId: input.featureId, runId: input.runId,
+          attemptId: input.attemptId, executionVersion: input.executionVersion,
+          operationType: input.operationType, repositoryBindingId: input.repositoryBindingId,
+          repoIdentity: input.repoIdentity, worktreePath: input.worktreePath,
+          expectedHead: input.expectedHead, candidateTree: input.candidateTree,
+          codeDigest: input.codeDigest, verificationRefs: JSON.stringify(input.verificationRefs),
+          approvalRefs: JSON.stringify(input.approvalRefs), message: input.message,
+          identityName: input.gitIdentity.name, identityEmail: input.gitIdentity.email,
+          deliveryPolicyDigest: input.deliveryPolicyDigest,
+          runtimeSource: input.runtimeSource === null ? null : JSON.stringify(input.runtimeSource),
+          ownerId: input.ownerId, hostInstanceId: input.hostInstanceId, intentDigest,
+        });
+      return;
+    }
     db.prepare(
       `INSERT INTO git_operations (id, created_at, updated_at, revision, project_id,
         feature_id, run_id, attempt_id, execution_version, operation_type,
         repository_binding_id, repo_identity, worktree_path, expected_head, candidate_tree,
-        code_digest, verification_refs, approval_refs, message, identity_name, identity_email,
-        delivery_policy_digest, runtime_source, owner_id, host_instance_id, intent_digest,
-        status, actual_commit, actual_tree, exit_code, duration_ms, reason_code, receipt,
+        integration_plan, budget_snapshot, code_digest, verification_refs, approval_refs, message,
+        identity_name, identity_email, delivery_policy_digest, runtime_source, owner_id,
+        host_instance_id, intent_digest, status, actual_commit, actual_tree, exit_code,
+        duration_ms, reason_code, receipt, integration_result, recovery_state, workspace_preserved,
         delivery_status, settled_at)
-       VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-        'pending', NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)`,
-    ).run(
-      input.operationId,
-      timestamp,
-      timestamp,
-      input.projectId,
-      input.featureId,
-      input.runId,
-      input.attemptId,
-      input.executionVersion,
-      input.operationType,
-      input.repositoryBindingId,
-      input.repoIdentity,
-      input.worktreePath,
-      input.expectedHead,
-      input.candidateTree,
-      input.codeDigest,
-      JSON.stringify(input.verificationRefs),
-      JSON.stringify(input.approvalRefs),
-      input.message,
-      input.gitIdentity.name,
-      input.gitIdentity.email,
-      input.deliveryPolicyDigest,
-      input.runtimeSource === null ? null : JSON.stringify(input.runtimeSource),
-      input.ownerId,
-      input.hostInstanceId,
+       VALUES (@id, @createdAt, @updatedAt, 1, @projectId, @featureId, @runId, @attemptId,
+        @executionVersion, @operationType, @repositoryBindingId, @repoIdentity, @worktreePath,
+        @expectedHead, @candidateTree, @integrationPlan, @budgetSnapshot, @codeDigest,
+        @verificationRefs, @approvalRefs, @message, @identityName, @identityEmail,
+        @deliveryPolicyDigest, @runtimeSource, @ownerId, @hostInstanceId, @intentDigest,
+        'pending', NULL, NULL, NULL, NULL, NULL, NULL, NULL, 'none', 0, NULL, NULL)`,
+    ).run({
+      id: input.operationId,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      projectId: input.projectId,
+      featureId: input.featureId,
+      runId: input.runId,
+      attemptId: input.attemptId,
+      executionVersion: input.executionVersion,
+      operationType: input.operationType,
+      repositoryBindingId: input.repositoryBindingId,
+      repoIdentity: input.repoIdentity,
+      worktreePath: input.worktreePath,
+      expectedHead: input.expectedHead,
+      candidateTree: input.candidateTree ?? input.expectedHead,
+      integrationPlan: input.integrationPlan == null ? null : JSON.stringify(input.integrationPlan),
+      budgetSnapshot: input.budgetSnapshot == null ? null : JSON.stringify(input.budgetSnapshot),
+      codeDigest: input.codeDigest,
+      verificationRefs: JSON.stringify(input.verificationRefs),
+      approvalRefs: JSON.stringify(input.approvalRefs),
+      message: input.message,
+      identityName: input.gitIdentity.name,
+      identityEmail: input.gitIdentity.email,
+      deliveryPolicyDigest: input.deliveryPolicyDigest,
+      runtimeSource: input.runtimeSource === null ? null : JSON.stringify(input.runtimeSource),
+      ownerId: input.ownerId,
+      hostInstanceId: input.hostInstanceId,
       intentDigest,
-    );
+    });
   }
 
   function appendEvent(
@@ -503,28 +566,33 @@ export function createSqliteGitOperationStore(
     }
     const receipt = buildGitOperationReceipt(existing.intent, existing.intentDigest, input);
     const timestamp = now();
-    const changed = db
-      .prepare(
-        `UPDATE git_operations SET status = ?, actual_commit = ?, actual_tree = ?,
-          exit_code = ?, duration_ms = ?, reason_code = ?, receipt = ?, delivery_status = ?,
-          settled_at = ?, revision = revision + 1, updated_at = ?
-         WHERE id = ? AND project_id = ? AND revision = ? AND status = 'pending'`,
-      )
-      .run(
-        input.status,
-        input.actualCommit,
-        input.actualTree,
-        input.exitCode,
-        input.durationMs,
-        input.reasonCode,
-        JSON.stringify(receipt),
-        input.deliveryStatus,
-        input.settledAtUtcMs,
-        timestamp,
-        input.operationId,
-        input.projectId,
-        input.expectedRevision,
-      );
+    const receiptJson = JSON.stringify(receipt);
+    const integrationResultJson = input.integrationResult === undefined || input.integrationResult === null
+      ? null : JSON.stringify(input.integrationResult);
+    const changed = supportsIntegrationColumns()
+      ? db.prepare(`UPDATE git_operations SET status = @status, actual_commit = @actualCommit,
+          actual_tree = @actualTree, exit_code = @exitCode, duration_ms = @durationMs,
+          reason_code = @reasonCode, receipt = @receipt, integration_result = @integrationResult,
+          recovery_state = @recoveryState, workspace_preserved = @workspacePreserved,
+          delivery_status = @deliveryStatus, settled_at = @settledAt,
+          revision = revision + 1, updated_at = @updatedAt
+         WHERE id = @id AND project_id = @projectId AND revision = @revision AND status = 'pending'`)
+        .run({ status: input.status, actualCommit: input.actualCommit, actualTree: input.actualTree,
+          exitCode: input.exitCode, durationMs: input.durationMs, reasonCode: input.reasonCode,
+          receipt: receiptJson, integrationResult: integrationResultJson,
+          recoveryState: input.recoveryState ?? 'none', workspacePreserved: input.workspacePreserved === true ? 1 : 0,
+          deliveryStatus: input.deliveryStatus, settledAt: input.settledAtUtcMs, updatedAt: timestamp,
+          id: input.operationId, projectId: input.projectId, revision: input.expectedRevision })
+      : db.prepare(`UPDATE git_operations SET status = @status, actual_commit = @actualCommit,
+          actual_tree = @actualTree, exit_code = @exitCode, duration_ms = @durationMs,
+          reason_code = @reasonCode, receipt = @receipt, delivery_status = @deliveryStatus,
+          settled_at = @settledAt, revision = revision + 1, updated_at = @updatedAt
+         WHERE id = @id AND project_id = @projectId AND revision = @revision AND status = 'pending'`)
+        .run({ status: input.status, actualCommit: input.actualCommit, actualTree: input.actualTree,
+          exitCode: input.exitCode, durationMs: input.durationMs, reasonCode: input.reasonCode,
+          receipt: receiptJson, deliveryStatus: input.deliveryStatus, settledAt: input.settledAtUtcMs,
+          updatedAt: timestamp, id: input.operationId, projectId: input.projectId,
+          revision: input.expectedRevision });
     if (changed.changes !== 1) {
       fail('conflict', operation, 'Git operation CAS did not match a pending row', entity,
         'stale_revision');
@@ -538,6 +606,26 @@ export function createSqliteGitOperationStore(
         .run(input.deliveryStatus, timestamp, existing.intent.projectId, existing.intent.featureId);
       if (featureChanged.changes !== 1) {
         fail('corrupt', operation, 'Feature missing while finalizing git operation', entity);
+      }
+    }
+    if (isIntegrationGitOperationType(existing.intent.operationType) && existing.intent.integrationPlan != null
+      && input.integrationResult !== undefined && input.integrationResult !== null
+      // P05-7/F-004 stores the P05-6 source plan separately. F-005 performs that
+      // CAS in the same transaction; writing the execution plan JSON here would
+      // mix the two digest domains and make the source row unreadable.
+      && typeof existing.intent.budgetSnapshot?.sourcePlanId !== 'string') {
+      const planChanged = db.prepare(
+        `UPDATE integration_plans SET integration_result = ?, status = ?, revision = revision + 1,
+          updated_at = ? WHERE project_id = ? AND id = ?`,
+      ).run(
+        JSON.stringify(input.integrationResult),
+        input.status === 'succeeded' ? 'integration_passed' : 'dependency_passed',
+        timestamp,
+        existing.intent.projectId,
+        existing.intent.integrationPlan.integrationId,
+      );
+      if (planChanged.changes !== 1) {
+        fail('corrupt', operation, 'Integration plan missing while finalizing git operation', entity);
       }
     }
     appendEvent(

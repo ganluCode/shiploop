@@ -69,9 +69,12 @@ import {
   createPlanListCursorBinding,
   decodePlanListCursor,
   deriveFeatureNotExecutableReasons,
+  derivePhaseFeatureBlockers,
   encodePlanListCursor,
+  PHASE_GRAPH_QUERY_OPERATION,
   PLAN_APPROVAL_QUERY_OPERATION,
   toPublicFeatureRecord,
+  toPublicFeatureDependencyEdge,
   toPublicPhaseRecord,
   toPublicPlanApprovalRecord,
   toPublicProjectRecord,
@@ -99,11 +102,14 @@ import type {
   ProjectListResult,
   PublicSettingsState,
   PhaseDetailResult,
+  PhaseGraphResult,
   PhaseListResult,
   TaskDetailResult,
   TaskListResult,
 } from '../ports/queries.js';
 import type { StateEventReadStore } from '../ports/events.js';
+import { evaluateFeatureDag } from '../ports/feature-dag.js';
+import type { FeatureDagEvaluation } from '../ports/feature-dag.js';
 import { isStorageError } from '../ports/errors.js';
 import type { SettingsScope } from '../ports/settings-schema.js';
 import { validateProjectListFilter } from '../ports/state-store.js';
@@ -150,6 +156,7 @@ import type {
   DispatchQueueViewRow,
   ExecutionScheduleQueryReadStore,
   PublicDispatchQueueRecord,
+  DispatchQueueSelector,
   PublicScheduleTaskView,
   RunScheduleEvaluation,
   RunScheduleStatusResult,
@@ -206,16 +213,42 @@ import {
   type FeatureDeliveryQueryReadStore,
 } from '../ports/feature-delivery-query.js';
 import {
+  EXECUTION_BATCH_DELIVERY_GET_OPERATION,
+  buildBatchDeliveryResult,
+  type BatchDeliveryQueryReadStore,
+  type PublicBatchDeliveryResult,
+} from '../ports/batch-delivery-query.js';
+
+import {
+  INTEGRATION_PLAN_GET_OPERATION,
+  buildIntegrationPlanQueryResult,
+  type IntegrationPlanQueryResult,
+  type IntegrationPlanQueryReadStore,
+} from '../ports/integration-plan-query.js';
+import { gitAgentRepairCommitOperationId } from './git-agent-candidate-finalization.js';
+import {
+  GIT_REPAIRS_LIST_OPERATION,
+  GIT_REPAIR_GET_OPERATION,
+  toPublicGitAgentRepairRecord,
+  type GitAgentRepairDetailResult,
+  type GitAgentRepairListResult,
+  type GitAgentRepairQueryReadStore,
+} from '../ports/git-agent-repair-query.js';
+
+import {
   EXECUTION_BATCH_CONTROL_GET_OPERATION,
   EXECUTION_RUN_CONTROL_GET_OPERATION,
   EXECUTION_RUN_RECOVERY_GET_OPERATION,
+  EXECUTION_RESOURCE_LIST_OPERATION,
   buildBatchControlDetailResult,
   buildRunControlDetailResult,
   buildRunRecoveryDetailResult,
+  toPublicExecutionResourceRecord,
   type BatchControlDetailResult,
   type ExecutionControlQueryReadStore,
   type RunControlDetailResult,
   type RunRecoveryDetailResult,
+  type ResourceListResult,
 } from '../ports/execution-control-query.js';
 import type { ArtifactStore } from '../ports/artifact-store.js';
 import type { ArtifactFileStore } from '../ports/artifact-files.js';
@@ -302,6 +335,7 @@ export type SnapshotResult = ProjectSnapshotResult | GlobalSnapshotResult;
  * （生产固定 local-owner；受限主体仅测试装配），本服务绝不从请求数据取身份。
  */
 export interface QueryService {
+  readonly batchDeliveryAvailable?: boolean;
   /** projects.list：project.read + 可见谓词下推 + P01 标签/分页规则。 */
   listProjects(principal: unknown, filter?: unknown): Promise<ProjectListResult>;
   /** projects.labelCounts：与列表同一可见范围的项目层标签去重计数。 */
@@ -345,6 +379,8 @@ export interface QueryService {
    * revision）；能力 + 可见性先行，不可见与不存在统一 not_found。
    */
   getPhase(principal: unknown, phaseId: unknown): Promise<PhaseDetailResult>;
+  /** F-006：Phase Feature DAG 一致读投影，图游标绑定项目、Phase 和数据根。 */
+  getPhaseGraph(principal: unknown, input: unknown): Promise<PhaseGraphResult>;
   /**
    * F-006 features.get：Feature 详情（真实父级、planDigest/planStatus/不可执行
    * 原因）与完整同 Feature Task DAG（节点 + 依赖边）；内容取自同一一致读视图，
@@ -403,6 +439,8 @@ export interface QueryService {
     principal: unknown,
     input: unknown,
   ): Promise<DispatchQueueListResult>;
+  /** P05-5 execution.resources.list：项目内 Feature 资源租约只读投影。 */
+  listExecutionResources(principal: unknown, input: unknown): Promise<ResourceListResult>;
   /** F-006 phases.list：项目内 Phase 层级列表（稳定排序、有限分页、受控游标）。 */
   listPhases(principal: unknown, input: unknown): Promise<PhaseListResult>;
   /** F-006 features.list：Phase 内 Feature 层级列表（游标绑定项目 + 父级）。 */
@@ -487,6 +525,13 @@ export interface QueryService {
    * 视图重建，查询零写入、零事件，重复读取不增加计数。
    */
   getFeatureDelivery(principal: unknown, input: unknown): Promise<FeatureDeliveryDetailResult>;
+  /** P05-9 / F-001 fixed Batch delivery aggregation; read-only and bounded. */
+  getBatchDelivery(principal: unknown, input: unknown): Promise<PublicBatchDeliveryResult>;
+  /** P05-8 / F-006 GitAgent 修复授权/Attempt 只读投影。 */
+  listGitAgentRepairs(principal: unknown, input: unknown): Promise<GitAgentRepairListResult>;
+  getGitAgentRepair(principal: unknown, input: unknown): Promise<GitAgentRepairDetailResult>;
+  /** P05-6 / F-005 integration plan fixed-input/status query; read-only and bounded. */
+  getIntegrationPlan(principal: unknown, input: unknown): Promise<IntegrationPlanQueryResult>;
   /**
    * P03-9 / F-013 execution.run.control.get：Run 控制进度查询——持久状态与
    * 原因（pausing/cancelling/paused/interrupted 原样）、父 Batch 简报、关联
@@ -545,6 +590,12 @@ export interface QueryServiceOptions {
   readonly featureReportReads?: FeatureExecutionReportReadStore;
   /** P03-8 / F-010 Feature 分轴结果查询一致读取窄端口（只读）。 */
   readonly featureDeliveryReads: FeatureDeliveryQueryReadStore;
+  /** P05-9 / F-001 Batch 收尾聚合查询一致读取窄端口（只读）。 */
+  readonly batchDeliveryReads?: BatchDeliveryQueryReadStore;
+  /** P05-8 / F-006 GitAgent 修复一致读投影（只读）。 */
+  readonly gitAgentRepairReads?: GitAgentRepairQueryReadStore;
+  /** P05-6 / F-005 集成计划一致读投影（只读，不执行 Git/Runtime）。 */
+  readonly integrationPlanReads?: IntegrationPlanQueryReadStore;
   /** P03-9 / F-013 Run/Batch 控制进度与恢复诊断一致读取窄端口（只读）。 */
   readonly executionControlReads: ExecutionControlQueryReadStore;
   /** P03-6 / F-011 证据制品索引（正文经完整性核验读取；只读用法）。 */
@@ -571,6 +622,7 @@ const EVENTS_SUBSCRIBE_OPERATION_NAME = 'events.subscribe';
 // P03-1 / F-006 计划查询操作身份（与 ports/queries.ts PLAN_QUERY_OPERATIONS 同源）。
 const PHASES_LIST_OPERATION = 'phases.list';
 const PHASES_GET_OPERATION = 'phases.get';
+const PHASES_GRAPH_GET_OPERATION = PHASE_GRAPH_QUERY_OPERATION;
 const FEATURES_LIST_OPERATION = 'features.list';
 const FEATURES_GET_OPERATION = 'features.get';
 const TASKS_LIST_OPERATION = 'tasks.list';
@@ -713,6 +765,9 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
     gitOperationReads,
     featureReportReads,
     featureDeliveryReads,
+    batchDeliveryReads,
+    gitAgentRepairReads,
+    integrationPlanReads,
     executionControlReads,
     artifacts,
     artifactFiles,
@@ -804,6 +859,7 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
   }
 
   return {
+    batchDeliveryAvailable: batchDeliveryReads !== undefined,
     async listProjects(principal: unknown, filter?: unknown): Promise<ProjectListResult> {
       assertTrustedPrincipal(principal);
       const operation = PROJECTS_LIST_OPERATION;
@@ -1174,6 +1230,98 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
           planEntityNotFound(operation, 'phase');
         }
         return { phase: toPublicPhaseRecord(record) };
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    async getPhaseGraph(principal: unknown, input: unknown): Promise<PhaseGraphResult> {
+      assertTrustedPrincipal(principal);
+      const operation = PHASES_GRAPH_GET_OPERATION;
+      try {
+        requireCapability(principal, 'project.read', operation);
+        const object = requirePlainObject(input, { operation }, 'input');
+        rejectUnknownKeys(object, ['projectId', 'phaseId', 'limit', 'cursor'], { operation }, 'input');
+        const projectId = validateStableId(object.projectId, { operation, entity: { type: 'project' } }, 'projectId');
+        const phaseId = validateStableId(object.phaseId, { operation, entity: { type: 'phase' } }, 'phaseId');
+        requireProjectVisible(principal, projectId, operation);
+        const filter = validatedPlanFilter(object, operation);
+        const binding = planCursorBinding({ kind: 'phase-graph', projectId, phaseId }, operation);
+        const request = planListRequest(filter, binding, operation);
+        const view = planReads.readPhaseGraphView(projectId, phaseId);
+        if (view === undefined || !isProjectVisible(principal, view.phase.projectId)) {
+          planEntityNotFound(operation, 'phase');
+        }
+
+        const featureIds = new Set(view.features.map((feature) => feature.id));
+        const missingDependencyIds = new Map<string, string[]>();
+        for (const edge of view.dependencies) {
+          if (!featureIds.has(edge.featureId)) {
+            const ids = missingDependencyIds.get(edge.featureId) ?? [];
+            ids.push(edge.featureId);
+            missingDependencyIds.set(edge.featureId, ids);
+          }
+          if (!featureIds.has(edge.dependsOnId)) {
+            const ids = missingDependencyIds.get(edge.featureId) ?? [];
+            ids.push(edge.dependsOnId);
+            missingDependencyIds.set(edge.featureId, ids);
+          }
+        }
+        const evaluation: FeatureDagEvaluation = evaluateFeatureDag({
+          projectId,
+          phaseId,
+          features: view.features.map((feature) => ({
+            id: feature.id,
+            projectId: feature.projectId,
+            phaseId: feature.phaseId,
+            status: feature.status,
+            // integrationEvidence is intentionally absent from the Feature row. A completed
+            // Feature therefore never becomes integration-ready by implication.
+            integrationEvidence: null,
+          })),
+          existingEdges: view.dependencies.filter((edge) =>
+            featureIds.has(edge.featureId) && featureIds.has(edge.dependsOnId),
+          ),
+        });
+        const readinessById = new Map(evaluation.readiness.map((item) => [item.featureId, item] as const));
+        const activeFeatureIds = new Set(view.activeFeatureIds);
+        const graphFeatures = view.features.map((feature) => {
+          const readiness = readinessById.get(feature.id);
+          if (readiness === undefined) throw new TypeError('Feature DAG readiness 缺少节点（适配器实现缺陷）');
+          const featureEdges = view.dependencies.filter((edge) => edge.featureId === feature.id);
+          const blockers = derivePhaseFeatureBlockers({
+            readiness,
+            taskCount: view.taskCounts[feature.id] ?? 0,
+            planStatus: feature.planStatus,
+            activeBatch: activeFeatureIds.has(feature.id),
+            missingCodeBaseline: featureEdges.some((edge) => edge.codeBaselineRef === null),
+            missingDependencyIds: missingDependencyIds.get(feature.id) ?? [],
+          });
+          return { feature, readiness: { ...readiness, blockers }, blockers };
+        });
+        const afterId = request.afterId;
+        const ordered = graphFeatures.filter((item) => afterId === null || item.feature.id > afterId);
+        const pageItems = ordered.slice(0, filter.limit);
+        const nextCursor = ordered.length > filter.limit
+          ? encodePlanListCursor(pageItems[pageItems.length - 1]!.feature.id, binding)
+          : null;
+        const pageIds = new Set(pageItems.map((item) => item.feature.id));
+        return {
+          schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION,
+          scope: 'phase-graph',
+          phase: toPublicPhaseRecord(view.phase),
+          features: pageItems.map((item) => toPublicFeatureRecord(item.feature)),
+          dependencies: view.dependencies.map(toPublicFeatureDependencyEdge),
+          readiness: pageItems.map((item) => item.readiness),
+          readyFeatureIds: evaluation.readyFeatureIds.filter((id) =>
+            pageIds.has(id) && (missingDependencyIds.get(id)?.length ?? 0) === 0,
+          ),
+          executableFeatureIds: pageItems
+            .filter((item) => item.readiness.ready && item.blockers.length === 0)
+            .map((item) => item.feature.id),
+          nextCursor,
+          limit: filter.limit,
+        };
       } catch (error) {
         throw mapToPublicError(error, { operation });
       }
@@ -1596,11 +1744,44 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
       try {
         requireCapability(principal, 'project.read', operation);
         const object = requirePlainObject(input, { operation }, 'input');
-        rejectUnknownKeys(object, ['projectId', 'limit', 'cursor'], { operation }, 'input');
+        rejectUnknownKeys(object, ['projectId', 'batchId', 'featureId', 'limit', 'cursor'], { operation }, 'input');
         const projectId = requireProjectId(object.projectId, operation);
+        const batchId = object.batchId === undefined
+          ? undefined
+          : validateStableId(object.batchId, { operation, entity: { type: 'execution_batch' } }, 'batchId');
+        const featureId = object.featureId === undefined
+          ? undefined
+          : validateStableId(object.featureId, { operation, entity: { type: 'feature' } }, 'featureId');
+        if (batchId !== undefined && featureId !== undefined) {
+          throw new PublicError('invalid_input', operation, undefined, {
+            details: { field: 'selector', reason: 'conflicting_scope' },
+          });
+        }
         requireProjectVisible(principal, projectId, operation);
+        if (batchId !== undefined && executionBudgetReads.findExecutionBatchRecord(projectId, batchId) === undefined) {
+          executionEntityNotFound(operation);
+        }
+        if (featureId !== undefined) {
+          const feature = planReads.readFeaturePlanView(featureId);
+          if (feature === undefined || feature.feature.projectId !== projectId) {
+            planEntityNotFound(operation, 'feature');
+          }
+        }
         const filter = validatedPlanFilter(object, operation);
-        const binding = planCursorBinding({ kind: 'dispatch-queue', projectId }, operation);
+        const selector: DispatchQueueSelector | undefined =
+          batchId === undefined && featureId === undefined
+            ? undefined
+            : batchId !== undefined
+              ? { batchId }
+              : { featureId };
+        const binding = planCursorBinding(
+          batchId !== undefined
+            ? { kind: 'dispatch-queue-batch', projectId, batchId }
+            : featureId !== undefined
+              ? { kind: 'dispatch-queue-feature', projectId, featureId }
+              : { kind: 'dispatch-queue', projectId },
+          operation,
+        );
         // 游标先于存储读取核验：跨项目/跨根/篡改载荷一律 invalid_cursor，
         // 绝不当作从零读取。
         const after = planListRequest(filter, binding, operation);
@@ -1613,6 +1794,7 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
           principalProjectVisibility(principal),
           projectId,
           request,
+          selector,
         );
         const now = nowUtcMs();
         const records: PublicDispatchQueueRecord[] = page.records.map(
@@ -2452,6 +2634,60 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
       }
     },
 
+    async listGitAgentRepairs(principal: unknown, input: unknown): Promise<GitAgentRepairListResult> {
+      assertTrustedPrincipal(principal);
+      const operation = GIT_REPAIRS_LIST_OPERATION;
+      try {
+        requireCapability(principal, 'project.read', operation);
+        const object = requirePlainObject(input, { operation }, 'input');
+        rejectUnknownKeys(object, ['projectId', 'limit', 'cursor'], { operation }, 'input');
+        const projectId = requireProjectId(object.projectId, operation);
+        requireProjectVisible(principal, projectId, operation);
+        if (gitAgentRepairReads === undefined) throw new PublicError('unsupported', operation);
+        const filter = validatedPlanFilter(object, operation);
+        const binding = planCursorBinding({ kind: 'git-repairs', projectId }, operation);
+        const request = planListRequest(filter, binding, operation);
+        const page = gitAgentRepairReads.listGitAgentRepairs(projectId, request);
+        const records = page.records.map(view => {
+          const source = gitOperationReads.readGitOperationRecord(projectId, view.request.source.operationId);
+          const candidateId = gitAgentRepairCommitOperationId(view.request.repairId);
+          const candidate = gitOperationReads.readGitOperationRecord(projectId, candidateId);
+          return toPublicGitAgentRepairRecord(view,
+            source === undefined ? null : toPublicGitOperationRecord(source),
+            candidate === undefined ? null : toPublicGitOperationRecord(candidate));
+        });
+        const lastId = page.nextCursor;
+        return { schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION, scope: 'git-repair-list', records,
+          nextCursor: lastId === null ? null : encodePlanListCursor(lastId, binding), limit: filter.limit };
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    async getGitAgentRepair(principal: unknown, input: unknown): Promise<GitAgentRepairDetailResult> {
+      assertTrustedPrincipal(principal);
+      const operation = GIT_REPAIR_GET_OPERATION;
+      try {
+        requireCapability(principal, 'project.read', operation);
+        const object = requirePlainObject(input, { operation }, 'input');
+        rejectUnknownKeys(object, ['projectId', 'repairId'], { operation }, 'input');
+        const projectId = requireProjectId(object.projectId, operation);
+        const repairId = validateStableId(object.repairId, { operation, entity: { type: 'git_operation' } }, 'repairId');
+        requireProjectVisible(principal, projectId, operation);
+        if (gitAgentRepairReads === undefined) throw new PublicError('unsupported', operation);
+        const view = gitAgentRepairReads.readGitAgentRepair(projectId, repairId);
+        if (view === undefined) throw new PublicError('not_found', operation, undefined,
+          { details: { reason: 'git_agent_repair_not_found', entityType: 'git_agent_repair' } });
+        const source = gitOperationReads.readGitOperationRecord(projectId, view.request.source.operationId);
+        const candidate = gitOperationReads.readGitOperationRecord(projectId, gitAgentRepairCommitOperationId(repairId));
+        return { repair: toPublicGitAgentRepairRecord(view,
+          source === undefined ? null : toPublicGitOperationRecord(source),
+          candidate === undefined ? null : toPublicGitOperationRecord(candidate)) };
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
     async getFeatureReport(principal: unknown, input: unknown): Promise<FeatureExecutionReport> {
       assertTrustedPrincipal(principal);
       const operation = FEATURE_REPORT_GET_OPERATION;
@@ -2532,7 +2768,128 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
       }
     },
 
-    // P03-9 / F-013：Run 控制进度只读查询（能力核验 → 身份校验 → 项目可见
+    async getBatchDelivery(
+      principal: unknown,
+      input: unknown,
+    ): Promise<PublicBatchDeliveryResult> {
+      assertTrustedPrincipal(principal);
+      const operation = EXECUTION_BATCH_DELIVERY_GET_OPERATION;
+      try {
+        requireCapability(principal, 'project.read', operation);
+        const object = requirePlainObject(input, { operation }, 'input');
+        rejectUnknownKeys(object, ['projectId', 'batchId', 'limit', 'cursor'], { operation }, 'input');
+        const projectId = requireProjectId(object.projectId, operation);
+        const batchId = validateStableId(object.batchId, { operation, entity: { type: 'execution_batch' } }, 'batchId');
+        requireProjectVisible(principal, projectId, operation);
+        if (batchDeliveryReads === undefined) throw new PublicError('unsupported', operation);
+        const filter = validatedPlanFilter(object, operation);
+        const binding = planCursorBinding({ kind: 'batch-delivery', projectId, batchId }, operation);
+        const request = planListRequest(filter, binding, operation);
+        const view = batchDeliveryReads.readBatchDeliveryView(projectId, batchId, request);
+        if (view === undefined) executionEntityNotFound(operation);
+        const nextCursor = view.nextId === null ? null : encodePlanListCursor(view.nextId, binding);
+        return buildBatchDeliveryResult(view, nextCursor, filter.limit);
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    async listExecutionResources(
+      principal: unknown,
+      input: unknown,
+    ): Promise<ResourceListResult> {
+      assertTrustedPrincipal(principal);
+      const operation = EXECUTION_RESOURCE_LIST_OPERATION;
+      try {
+        requireCapability(principal, 'project.read', operation);
+        const object = requirePlainObject(input, { operation }, 'input');
+        rejectUnknownKeys(object, ['projectId', 'featureId', 'batchId', 'limit', 'cursor'], { operation }, 'input');
+        const projectId = requireProjectId(object.projectId, operation);
+        const featureId = object.featureId === undefined
+          ? undefined
+          : validateStableId(object.featureId, { operation, entity: { type: 'feature' } }, 'featureId');
+        const batchId = object.batchId === undefined
+          ? undefined
+          : validateStableId(object.batchId, { operation, entity: { type: 'execution_batch' } }, 'batchId');
+        if (featureId !== undefined && batchId !== undefined) {
+          throw new PublicError('invalid_input', operation, undefined, {
+            details: { field: 'selector', reason: 'conflicting_scope' },
+          });
+        }
+        requireProjectVisible(principal, projectId, operation);
+        if (featureId !== undefined) {
+          const feature = planReads.readFeaturePlanView(featureId);
+          if (feature === undefined || feature.feature.projectId !== projectId) planEntityNotFound(operation, 'feature');
+        }
+        if (batchId !== undefined && executionBudgetReads.findExecutionBatchRecord(projectId, batchId) === undefined) {
+          executionEntityNotFound(operation);
+        }
+        const filter = validatedPlanFilter(object, operation);
+        const binding = planCursorBinding({
+          kind: 'execution-resources',
+          projectId,
+          ...(featureId === undefined ? {} : { featureId }),
+          ...(batchId === undefined ? {} : { batchId }),
+        }, operation);
+        const after = planListRequest(filter, binding, operation);
+        const request = {
+          after: after.afterId === null ? null : decodeExecutionListKey(after.afterId, operation),
+          limit: filter.limit,
+        };
+        const page = executionControlReads.listFeatureResourceRecords(
+          projectId,
+          request,
+          {
+            ...(featureId === undefined ? {} : { featureId }),
+            ...(batchId === undefined ? {} : { batchId }),
+          },
+        );
+        return {
+          schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION,
+          scope: 'execution-resources',
+          records: page.records.map(toPublicExecutionResourceRecord),
+          nextCursor: page.nextKey === null
+            ? null
+            : encodePlanListCursor(encodeExecutionListKey(page.nextKey), binding),
+          limit: filter.limit,
+        };
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    // P05-6 / F-005：固定成果/基线/顺序/阻塞原因只读投影；查询不触发
+    // Git、Runtime、租约或事件写入。
+    async getIntegrationPlan(
+      principal: unknown,
+      input: unknown,
+    ): Promise<IntegrationPlanQueryResult> {
+      assertTrustedPrincipal(principal);
+      const operation = INTEGRATION_PLAN_GET_OPERATION;
+      try {
+        requireCapability(principal, 'project.read', operation);
+        const object = requirePlainObject(input, { operation }, 'input');
+        rejectUnknownKeys(object, ['projectId', 'integrationId'], { operation }, 'input');
+        const projectId = requireProjectId(object.projectId, operation);
+        const integrationId = validateStableId(
+          object.integrationId,
+          { operation, entity: { type: 'integration_plan' } },
+          'integrationId',
+        );
+        requireProjectVisible(principal, projectId, operation);
+        if (integrationPlanReads === undefined) throw new PublicError('unsupported', operation);
+        const view = integrationPlanReads.readIntegrationPlanView(projectId, integrationId);
+        if (view === undefined) {
+          throw new PublicError('not_found', operation, '集成计划不存在或不可见', {
+            details: { reason: 'integration_plan_not_found' },
+          });
+        }
+        return buildIntegrationPlanQueryResult(view);
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
     // → 一致读视图重建；跨项目/不存在折叠 not_found；持久状态与原因原样，
     // 不以日志推断完成；查询零写入、零事件、零唤醒，重复读取不增加计数）。
     async getRunControl(principal: unknown, input: unknown): Promise<RunControlDetailResult> {

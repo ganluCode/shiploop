@@ -522,12 +522,17 @@ describe('F-006 Host inspect/overview 路由与握手能力（真实 Host + SQLi
     expect(body.capabilities.application.queries).toContain('git.operations.get');
     expect(body.capabilities.application.queries).toContain('features.delivery.get');
     expect(body.capabilities.application.queries).toContain('features.report.get');
+    expect(body.capabilities.application.queries).toContain('integration.plan.get');
     // P04-5 / F-007：Work 公开记录索引/有界正文只读查询已接线（46 → 48）。
     expect(body.capabilities.application.queries).toContain('execution.recording.list');
     expect(body.capabilities.application.queries).toContain('execution.recording.body.get');
     // P04-9 / F-009：派发队列/执行槽位只读投影进入能力清单（48 → 49）；无写入口。
     expect(body.capabilities.application.queries).toContain('execution.dispatch.list');
-    expect(body.capabilities.application.queries).toHaveLength(49);
+    expect(body.capabilities.application.queries).toContain('execution.resources.list');
+    expect(body.capabilities.application.queries).toContain('git.repairs.list');
+    expect(body.capabilities.application.queries).toContain('git.repairs.get');
+    expect(body.capabilities.application.queries).toContain('execution.batch.delivery.get');
+    expect(body.capabilities.application.queries).toHaveLength(58);
     expect(body.capabilities.application.commands).toEqual([
       'execution.attempt.cancel',
       'execution.stop.manual',
@@ -549,6 +554,12 @@ describe('F-006 Host inspect/overview 路由与握手能力（真实 Host + SQLi
       'baseline.cancel',
       // P03-1 / F-004：Phase 创建经既有 /v1/commands 通用路由接线（集合在 v3 内增量扩张）。
       'phase.create',
+      'phase.metadata.update',
+      'phase.close',
+      'phase.reopen',
+      'phase.archive',
+      'feature.phase.move',
+      'feature.dag.update',
       // P03-1 / F-005：计划导入经既有 /v1/commands 通用路由接线（v3 内增量扩张，同 F-004 先例）。
       'feature.plan.import',
       // P03-1 / F-007：纯标签 CAS 编辑经既有 /v1/commands 通用路由接线（v3 内增量扩张）。
@@ -579,6 +590,8 @@ describe('F-006 Host inspect/overview 路由与握手能力（真实 Host + SQLi
       //（v5 内增量宣告；仅增额不自动启动或恢复 Run；HostClient/CLI 入口属
       // F-011/F-012）。
       'execution.budget.revise',
+      'planning.start',
+      'planning.candidate.decide',
       'workspace.discard',
       'workspace.discard.preview',
     ]);

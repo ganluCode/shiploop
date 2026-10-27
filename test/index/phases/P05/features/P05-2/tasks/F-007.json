@@ -1,0 +1,67 @@
+{
+  "schema_version": 2,
+  "task_id": "F-007",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/planning/p05-2-f007-phase-graph-cli.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/planning/p05-2-f007-phase-graph-host-wiring.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/authorization/authorization-contract.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/planning/p05-2-phase-lifecycle.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/planning/p05-2-feature-phase-affiliation.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/planning/p05-2-f005-feature-dag-update.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/planning/p05-2-f006-phase-graph-query.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/planning/p03-1-plan-host-wiring.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/planning/p03-1-plan-cli.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/host/host-app-routes.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/host/host-lifecycle-contract.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/host/host-client.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/host/host-client-application.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/cli/app-cli-args.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "schema_version": 2,
+  "task_id": "F-007",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [{
+      "file": "test/modules/delivery/p05-8-f007-git-agent-composition.test.ts",
+      "all": true
+    }]
+  }]
+}

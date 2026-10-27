@@ -22,10 +22,16 @@
  * - 行 id（UUID）由适配器生成，只作主键，不出现在任何公开返回面。
  */
 import { randomUUID } from 'node:crypto';
-import { isValidResultRef, isUuidV4 } from '../../ports/commands.js';
+import {
+  isValidResultRef,
+  isUuidV4,
+  PLANNING_ACCEPTED_SCHEMA_VERSION,
+  WORK_ACCEPTED_SCHEMA_VERSION,
+} from '../../ports/commands.js';
 import type { CommandReceipt } from '../../ports/commands.js';
 import {
   mapPersistedCommandReceipt,
+  RECEIPT_READ_OPERATION,
   validatePersistableCommandReceipt,
 } from '../../ports/command-receipts.js';
 import type {
@@ -56,6 +62,9 @@ interface CommandReceiptSqlRow {
   readonly receipt_version: number;
   readonly batch_id: string | null;
   readonly run_id: string | null;
+  /** P05-1 / F-003（迁移 v36）：planning.start accepted v7 的 planning Task/候选身份；其余恒 NULL。 */
+  readonly planning_task_id: string | null;
+  readonly candidate_id: string | null;
   readonly result_json: string | null;
   readonly result_ref: string | null;
   readonly error_code: string | null;
@@ -67,7 +76,7 @@ interface CommandReceiptSqlRow {
 
 const SELECT_COLUMNS =
   'principal_id, command_id, scope_kind, project_id, operation, request_digest, status, ' +
-  'operation_id, receipt_version, batch_id, run_id, result_json, result_ref, error_code, error_message, error_details, issued_at, completed_at';
+  'operation_id, receipt_version, batch_id, run_id, planning_task_id, candidate_id, result_json, result_ref, error_code, error_message, error_details, issued_at, completed_at';
 
 /** better-sqlite3 约束冲突识别（SqliteError 带 code 字段）。 */
 function isSqliteConstraintError(error: unknown): error is Error & { code: string } {
@@ -134,6 +143,8 @@ export function createSqliteCommandReceiptAccess(
       receiptVersion: row.receipt_version,
       batchId: row.batch_id,
       runId: row.run_id,
+      planningTaskId: row.planning_task_id,
+      candidateId: row.candidate_id,
       // undefined 表示列 NULL：JSON.parse 永不产生 undefined，两种情形可区分。
       result:
         row.result_json === null
@@ -151,11 +162,38 @@ export function createSqliteCommandReceiptAccess(
     };
   }
 
+  /** 初始关联来自不可变范围与 execute/ordinal=1 的 Run，重试不会进入本列表。 */
+  function initialMultiRunIds(projectId: string, batchId: string, runId: string): readonly string[] | undefined {
+    const db = session.database;
+    const batch = db.prepare('SELECT scope_snapshot FROM execution_batches WHERE project_id = ? AND id = ?')
+      .get(projectId, batchId) as { scope_snapshot: string } | undefined;
+    if (batch === undefined) return undefined;
+    const scope = parseJsonColumn(batch.scope_snapshot, RECEIPT_READ_OPERATION, 'invalid_scope_json') as { featureIds?: unknown };
+    const members = scope?.featureIds;
+    if (!Array.isArray(members) || members.length === 0 || members.length > 16 ||
+        members.some(id => typeof id !== 'string') || new Set(members).size !== members.length) {
+      throw new StorageError('corrupt', RECEIPT_READ_OPERATION, '固定 Batch 范围损坏', { details: { reason: 'corrupt_receipt_association' } });
+    }
+    if (members.length === 1) return undefined;
+    const rows = db.prepare("SELECT id, feature_id FROM runs WHERE project_id = ? AND batch_id = ? AND purpose = 'execute' AND dispatch_ordinal = 1 ORDER BY feature_id, id")
+      .all(projectId, batchId) as { id: string; feature_id: string }[];
+    if (rows.length !== members.length ||
+        new Set(rows.map(row => row.feature_id)).size !== members.length || rows.some(row => !members.includes(row.feature_id)) || rows[0]?.id !== runId) {
+      throw new StorageError('corrupt', RECEIPT_READ_OPERATION, '初始 Run 关联与固定 Batch 不一致', { details: { reason: 'corrupt_receipt_association' } });
+    }
+    return rows.map(row => row.id);
+  }
+
   function mapRow(row: CommandReceiptSqlRow | undefined, operation: string): CommandReceipt | undefined {
     if (row === undefined) {
       return undefined;
     }
-    return mapPersistedCommandReceipt(toPersistedRow(row, operation), operation);
+    const receipt = mapPersistedCommandReceipt(toPersistedRow(row, operation), operation);
+    if (receipt.schemaVersion === WORK_ACCEPTED_SCHEMA_VERSION && receipt.scope.kind === 'project') {
+      const runIds = initialMultiRunIds(receipt.scope.projectId, receipt.batchId, receipt.runId);
+      if (runIds !== undefined) return validatePersistableCommandReceipt({ ...receipt, runIds }, operation);
+    }
+    return receipt;
   }
 
   function saveReceiptInTransaction(receipt: unknown): void {
@@ -167,21 +205,45 @@ export function createSqliteCommandReceiptAccess(
       if (!session.database.inTransaction) throw new TypeError('回执写入必须位于写事务内');
       const db = session.database;
       if (valid.status === 'accepted') {
-        const target = valid.schemaVersion === 6
-          ? db.prepare('SELECT id FROM runs WHERE project_id = ? AND batch_id = ? AND id = ?')
-              .get(valid.scope.kind === 'project' ? valid.scope.projectId : null, valid.batchId, valid.runId)
-          : db.prepare('SELECT id FROM baseline_operations WHERE project_id = ? AND id = ?')
-              .get(valid.scope.kind === 'project' ? valid.scope.projectId : null, valid.operationId);
-        if (target === undefined) {
-          throw validationError({ operation, entity: { type: 'command_receipt' } },
-            'receipt.association', '操作实体必须存在且 Batch/Run 与回执属于同一项目');
+        const scopeProjectId = valid.scope.kind === 'project' ? valid.scope.projectId : null;
+        if (valid.schemaVersion === WORK_ACCEPTED_SCHEMA_VERSION) {
+          const target = db.prepare('SELECT id FROM runs WHERE project_id = ? AND batch_id = ? AND id = ?')
+              .get(scopeProjectId, valid.batchId, valid.runId);
+          const initial = initialMultiRunIds(scopeProjectId!, valid.batchId, valid.runId);
+          if (valid.runIds !== undefined && JSON.stringify(valid.runIds) !== JSON.stringify(initial ?? [valid.runId])) {
+            throw validationError({ operation, entity: { type: 'command_receipt' } },
+              'receipt.runIds', '初始 Run 关联必须与固定 Batch 全部成员一致');
+          }
+          if (target === undefined) {
+            throw validationError({ operation, entity: { type: 'command_receipt' } },
+              'receipt.association', '操作实体必须存在且 Batch/Run 与回执属于同一项目');
+          }
+        } else if (valid.schemaVersion === PLANNING_ACCEPTED_SCHEMA_VERSION) {
+          // P05-1 / F-003：v7 规划接受回执——Run 存在且同项目，同时核对规划
+          // 上下文与回执四重身份一致（同一事务写入的防御纵深）。
+          const runTarget = db.prepare('SELECT id FROM runs WHERE project_id = ? AND batch_id = ? AND id = ?')
+              .get(scopeProjectId, valid.batchId, valid.runId);
+          const contextTarget = db.prepare(
+            'SELECT planning_task_id FROM planning_contexts WHERE project_id = ? AND run_id = ? AND candidate_id = ?',
+          ).get(scopeProjectId, valid.runId, valid.candidateId) as { planning_task_id: string } | undefined;
+          if (runTarget === undefined || contextTarget === undefined || contextTarget.planning_task_id !== valid.planningTaskId) {
+            throw validationError({ operation, entity: { type: 'command_receipt' } },
+              'receipt.association', '规划回执必须与同项目的 Run 及绑定候选/Task 的规划上下文一致');
+          }
+        } else {
+          const target = db.prepare('SELECT id FROM baseline_operations WHERE project_id = ? AND id = ?')
+              .get(scopeProjectId, valid.operationId);
+          if (target === undefined) {
+            throw validationError({ operation, entity: { type: 'command_receipt' } },
+              'receipt.association', '操作实体必须存在且与回执属于同一项目');
+          }
         }
       }
       db.prepare(
         'INSERT INTO command_receipts (id, created_at, revision, updated_at, principal_id, command_id, ' +
-          'scope_kind, project_id, operation, request_digest, status, operation_id, receipt_version, batch_id, run_id, result_json, result_ref, ' +
+          'scope_kind, project_id, operation, request_digest, status, operation_id, receipt_version, batch_id, run_id, planning_task_id, candidate_id, result_json, result_ref, ' +
           'error_code, error_message, error_details, issued_at, completed_at) ' +
-          'VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          'VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       ).run(
         randomUUID(),
         timestamp,
@@ -195,8 +257,16 @@ export function createSqliteCommandReceiptAccess(
         valid.status,
         valid.status === 'accepted' ? valid.operationId : null,
         valid.schemaVersion,
-        valid.status === 'accepted' && valid.schemaVersion === 6 ? valid.batchId : null,
-        valid.status === 'accepted' && valid.schemaVersion === 6 ? valid.runId : null,
+        valid.status === 'accepted' &&
+        (valid.schemaVersion === WORK_ACCEPTED_SCHEMA_VERSION || valid.schemaVersion === PLANNING_ACCEPTED_SCHEMA_VERSION)
+          ? valid.batchId
+          : null,
+        valid.status === 'accepted' &&
+        (valid.schemaVersion === WORK_ACCEPTED_SCHEMA_VERSION || valid.schemaVersion === PLANNING_ACCEPTED_SCHEMA_VERSION)
+          ? valid.runId
+          : null,
+        valid.status === 'accepted' && valid.schemaVersion === PLANNING_ACCEPTED_SCHEMA_VERSION ? valid.planningTaskId : null,
+        valid.status === 'accepted' && valid.schemaVersion === PLANNING_ACCEPTED_SCHEMA_VERSION ? valid.candidateId : null,
         valid.status === 'completed' ? JSON.stringify(valid.result) : null,
         valid.status === 'completed' ? valid.resultRef : null,
         valid.status === 'rejected' ? valid.error.code : null,

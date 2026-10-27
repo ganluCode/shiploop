@@ -1,0 +1,21 @@
+{
+  "schema_version": 2,
+  "task_id": "F-003",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        { "file": "test/modules/planning/p05-2-phase-lifecycle.test.ts", "all": true },
+        { "file": "test/modules/commands/commands-contract.test.ts", "all": true },
+        { "file": "test/modules/events/events-contract.test.ts", "all": true },
+        { "file": "test/modules/authorization/authorization-contract.test.ts", "all": true },
+        { "file": "test/modules/planning/p03-1-phase-create-command.test.ts", "all": true },
+        { "file": "test/modules/planning/p03-1-label-edit-command.test.ts", "all": true },
+        { "file": "test/modules/planning/p03-1-plan-host-wiring.test.ts", "all": true },
+        { "file": "test/modules/execution/budget/p03-3-execution-start.test.ts", "all": true },
+        { "file": "test/modules/execution/budget/p03-3-execution-preview.test.ts", "all": true },
+        { "file": "test/modules/scheduling/p04-9-f006-dispatch-control-settlement.test.ts", "all": true }
+      ]
+    }
+  ]
+}

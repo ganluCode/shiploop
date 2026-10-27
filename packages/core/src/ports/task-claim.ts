@@ -1,5 +1,5 @@
 import type { AttemptRecord, WorkspaceLeaseRecord } from './attempt-store.js';
-import { validateAttemptInputSnapshot } from './attempt-store.js';
+import { isPlanningAttemptSnapshot, validateAttemptInputSnapshot } from './attempt-store.js';
 import type { PreparedExecutionInputGroup } from './execution-input-prepare.js';
 import type { VerifiedWorkWorkspace } from './work-resources.js';
 import type { ValidationContext } from './validation.js';
@@ -7,6 +7,8 @@ import { requirePlainObject, rejectUnknownKeys, validateStableId, validatePositi
 
 export interface TaskClaimDispatch {
   readonly claimId: string;
+  /** Optional Core command/claim replay identity; persisted in repair dispatch receipts when present. */
+  readonly claimKey?: string;
   /** Run consumer generation, independent of Attempt.executionVersion. */
   readonly claimVersion: number;
   readonly slotId: string;
@@ -15,8 +17,9 @@ export interface TaskClaimDispatch {
 export function validateTaskClaimDispatch(value: unknown): TaskClaimDispatch {
   const context = { operation: 'TaskClaim.dispatch' };
   const raw = requirePlainObject(value, context, 'dispatch');
-  rejectUnknownKeys(raw, ['claimId', 'claimVersion', 'slotId'], context, 'dispatch');
+  rejectUnknownKeys(raw, ['claimId', 'claimVersion', 'slotId', 'claimKey'], context, 'dispatch');
   return { claimId: validateStableId(raw.claimId, context, 'claimId'),
+    ...(raw.claimKey === undefined ? {} : { claimKey: validateStableId(raw.claimKey, context, 'dispatch.claimKey') }),
     claimVersion: validatePositiveInteger(raw.claimVersion, context, 'claimVersion'),
     slotId: validateStableId(raw.slotId, context, 'slotId') };
 }
@@ -102,10 +105,15 @@ export function validateTaskClaimInput(value: unknown, inspectWorkspace: (token:
   };
   const launch = raw.launch === undefined || raw.launch === null
     ? undefined : validateTaskClaimLaunch(raw.launch, context, 'launch');
+  const inputSnapshot = validateAttemptInputSnapshot(raw.inputSnapshot);
+  // P05-1 / F-005：编码认领不接受 planning 判别快照（planning 认领走独立分支）。
+  if (isPlanningAttemptSnapshot(inputSnapshot)) {
+    throw validationError(context, 'inputSnapshot.purpose', 'coding_claim_rejects_planning_snapshot', inputSnapshot.purpose);
+  }
   return { claimKey: id('claimKey'), projectId: id('projectId'), runId: id('runId'), taskId: id('taskId'),
     owner: id('owner'), hostInstanceId: id('hostInstanceId'), expectedRevision: integer('expectedRevision', 1),
     executionVersion: integer('executionVersion', 0), leaseUntilUtcMs: integer('leaseUntilUtcMs', 1),
-    workspace: inspectWorkspace(raw.workspace), inputSnapshot: validateAttemptInputSnapshot(raw.inputSnapshot),
+    workspace: inspectWorkspace(raw.workspace), inputSnapshot,
     ...(raw.attemptId === undefined || raw.attemptId === null ? {} : { attemptId: id('attemptId') }),
     ...(raw.dispatch === undefined ? {} : { dispatch: validateTaskClaimDispatch(raw.dispatch) }),
     ...(launch === undefined ? {} : { launch }) };

@@ -25,8 +25,10 @@
  */
 import { assembleWorkExecution, type WorkRuntimeFactory, type WorkExecution } from './work-execution.js';
 import { createWorkStartupRecovery } from '../application/work-startup-recovery.js';
+import { createPlanningStartupRecovery } from '../application/planning-recovery.js';
 import { PublicError } from '../ports/commands.js';
 import { createSqliteWorkStartupRecoveryStore } from './sqlite/work-startup-recovery.js';
+import { createSqlitePlanningRecoveryStore } from './sqlite/planning-recovery.js';
 import { createSqliteWorkRecoveryReconciliationStore } from './sqlite/work-recovery-reconciliation.js';
 import { createWorkRecoveryReconciler } from '../application/work-recovery-reconciliation.js';
 import { createWorkRecoveryContinuationService } from '../application/work-recovery-continuation.js';
@@ -48,6 +50,8 @@ import { createVerificationStopControl } from '../application/verification-stop-
 import type { VerificationStopControl } from '../ports/verification-stop.js';
 import type { ExecutionStopControlPort } from '../ports/execution-stop.js';
 import type { RuntimeFallbackSwitchService } from '../ports/runtime-fallback-switch.js';
+import type { BatchDeliveryFactory } from '../application/batch-delivery-commands.js';
+export type { BatchDeliveryFactory, BatchDeliveryDependencies } from '../application/batch-delivery-commands.js';
 import type { FeatureDeliveryFactory } from '../application/feature-delivery-commands.js';
 export type { FeatureDeliveryFactory, FeatureDeliveryDependencies } from '../application/feature-delivery-commands.js';
 import { assertVerificationReuseIdentity, validateTaskVerificationContinue } from '../application/task-verification-continue.js';
@@ -62,14 +66,19 @@ import { createOnboardingService } from '../application/onboarding-service.js';
 import type { OnboardingService } from '../application/onboarding-service.js';
 import { createProjectService } from '../application/project-service.js';
 import type { ProjectService } from '../application/project-service.js';
+import { createSqliteBatchDeliveryQueryStore } from './sqlite/batch-delivery-query-store.js';
 import { createQueryService } from '../application/query-service.js';
 import type { QueryService } from '../application/query-service.js';
+import { createPlanningQueryService } from '../application/planning-query.js';
+import type { PlanningQueryService } from '../application/planning-query.js';
 import { createExecutionInputService } from '../application/execution-input.js';
 import { createContextBuilder } from '../application/context-build.js';
 import type { ContextBudget } from '../application/context-build.js';
 import { createArtifactPublisher } from '../application/artifact-publish.js';
 import { createArtifactVerifier } from '../application/artifact-verify.js';
 import { createWorkToolChannel } from '../application/work-tool-channel.js';
+import { createPlanningCandidateDecisionPort } from '../application/planning-candidate-decision.js';
+import { PLANNING_CANDIDATE_SUBMIT_MAX_BODY_BYTES } from '../ports/planning-candidates.js';
 import type { WorkToolChannelDeps } from '../application/work-tool-channel.js';
 import { createVerificationCandidateValidator } from '../application/verification-candidates.js';
 import { createTestTargetResolver } from './fs/verification-target-resolver.js';
@@ -121,6 +130,12 @@ import { createExecutionPreviewService } from '../application/execution-preview.
 import type { ExecutionPreviewPort } from '../application/execution-preview.js';
 import { createExecutionStartService } from '../application/execution-start.js';
 import type { ExecutionStartPort } from '../ports/execution-start.js';
+import { createPlanningStartService } from '../application/planning-start.js';
+import type { PlanningStartPort } from '../ports/planning-start.js';
+import { createPlanningInputPrepareService } from '../application/planning-input-prepare.js';
+import type { PlanningInputPreparePort } from '../application/planning-input-prepare.js';
+import { DEFAULT_PLANNING_INPUT_PREPARE_LIMITS } from '../application/planning-input-prepare.js';
+import { createSqlitePlanningContextStore } from './sqlite/planning-context-store.js';
 import { createExecutionResumeService } from '../application/execution-resume.js';
 import type { ExecutionResumePort } from '../ports/execution-resume.js';
 import { createFinalizationRetryPlanner } from '../application/finalization-retry.js';
@@ -177,6 +192,20 @@ import { createSqlitePlanAccess } from './sqlite/plan-store.js';
 import { openSqliteStorageSession } from './sqlite/session.js';
 import { createSqliteStateStore } from './sqlite/state-store.js';
 import { createInputSourceFileReader } from './fs/input-source-files.js';
+import { createSqliteIntegrationPlanStore } from './sqlite/integration-plan-store.js';
+import { createIntegrationPlanGenerationService } from '../application/integration-plan-generation.js';
+import type {
+  IntegrationBatchApprovalReader,
+  IntegrationPlanGenerationService,
+  IntegrationPredecessorEvidenceReader,
+} from '../application/integration-plan-generation.js';
+import { createGitAgentRepairService, type GitAgentRepairService } from '../application/git-agent-repair.js';
+import { createSqliteGitAgentRepairStore } from './sqlite/git-agent-repair-store.js';
+import { createSqliteGitAgentRepairQueryStore } from './sqlite/git-agent-repair-query-store.js';
+import { createIntegrationPlanControlService } from '../application/integration-plan-control.js';
+import type { IntegrationPlanControlService } from '../application/integration-plan-control.js';
+import type { AtomicCommandStore } from '../ports/atomic-commands.js';
+import type { IntegrationPlanAccess } from '../ports/integration-plan-store.js';
 
 // F-009 standalone process adapter; baseline execution orchestration is not assembled yet.
 export { createCommandProcessAdapter } from './process/command-process.js';
@@ -190,11 +219,30 @@ export interface CoreApplicationOptions {
   /** Trusted static adapter assembly; never a settings/argv/env field. */
   readonly workRuntimeFactory?: WorkRuntimeFactory;
   /** Trusted delivery adapters; absent until explicitly assembled. */
+  readonly batchDeliveryFactory?: BatchDeliveryFactory;
   readonly featureDeliveryFactory?: FeatureDeliveryFactory;
+  /** Trusted integration facts; absent means plan generation remains unavailable. */
+  readonly integrationPlanFactory?: (deps: {
+    readonly atomicStore: AtomicCommandStore;
+    readonly planStore: IntegrationPlanAccess;
+  }) => {
+    readonly batches: IntegrationBatchApprovalReader;
+    readonly predecessors: IntegrationPredecessorEvidenceReader;
+  };
   /** P03-9 / F-011：受信 finalization-only Run 重验执行（未装配时调度保留 capability gap）。 */
   readonly finalizationExecution?: FinalizationExecutionPort;
   /** P03-9 / F-012：重验后最终审批/提交/完成消费者（不启动 Runtime）。 */
   readonly finalizationCompletion?: FinalizationCompletionPort;
+  /**
+   * P05-1 / F-007：planning 认领回执消费者受信覆盖（回执已在独立短事务提交后
+   * 调用）。缺省时组合根在装配了 Runtime 工厂的情况下接入内部真实执行（复用
+   * 标准 ExecutionService/受监督 Runner/Session/Recorder）；两者皆缺时调度器
+   * 保留 planning_consumer capability gap，planning Run 保持 queued 且可查询原因。
+   */
+  readonly planningExecution?: {
+    consumePlanningClaim(receipt: import('../ports/task-claim.js').TaskClaimReceipt,
+      ref: { readonly projectId: string; readonly runId: string }): Promise<void>;
+  };
   /** 显式授权数据根（绝对路径）；与 userHomeDir 二选一。 */
   readonly dataRoot?: string;
   /** 注入的 macOS 用户目录；用于解析默认根，与 dataRoot 二选一。 */
@@ -275,6 +323,14 @@ export interface CoreApplication {
   /** F-003：同 Task continuation 的不可变规划服务；只发布记录，不创建 Attempt/Runtime。 */
   readonly workRecoveryContinuation: WorkRecoveryContinuationService;
   readonly executionStart: ExecutionStartPort;
+  /** P05-1 / F-003：一次性规划启动（事务外请求/预算校验 + 事务内原子提交；不启动模型）。 */
+  readonly planningStart: PlanningStartPort;
+  /**
+   * P05-1 / F-004：规划输入准备（事务外视图捕获/采集/组装/发布 + 启动前
+   * 事务外重核；无业务计划也能生成完整规划输入；供 planning Run 派发/
+   * 认领（F-005+）消费，不创建执行实体、不启动 Runtime）。
+   */
+  readonly planningInputPrepare: PlanningInputPreparePort;
   /** P03-9 / F-008：显式工作流 resume（重新授权/现场核验/解除暂停；不启动 Runtime）。 */
   readonly executionResume: ExecutionResumePort;
   /** P03-9 / F-010：finalization-only retryFinal（新建受限 Run，不启动 Runtime）。 */
@@ -282,6 +338,18 @@ export interface CoreApplication {
   readonly commandReceiptsService: CommandReceiptsService;
   /** F-010：授权查询/一致读视图快照水位/分页事件读取（§7/§8/§9.3）。 */
   readonly queryService: QueryService;
+  /** P05-6: generation is exposed only with trusted Batch/delivery facts. */
+  readonly integrationPlanGeneration?: IntegrationPlanGenerationService;
+  /** P05-6: control and successor gating use the authoritative plan store. */
+  readonly integrationPlanControl: IntegrationPlanControlService;
+  /** Trusted Core repair orchestration; never exposed as a raw Runtime tool. */
+  readonly gitAgentRepair: GitAgentRepairService;
+  /**
+   * P05-1 / F-011：规划上下文/候选只读授权查询（planning.contexts.list /
+   * planning.context.get / planning.candidate.get；零写入、零事件、零恢复，
+   * 候选正文经受管 Artifact 完整性核验读取）。
+   */
+  readonly planningQueryService: PlanningQueryService;
   /** P02-3 / F-004：静态 inspect 与注册/健康分离的 overview 用例（§7.2/§7.3）。 */
   readonly onboardingService: OnboardingService;
   /** P02-3 / F-007：基线窄存储读取端口（迁移 v4 四表；写经原子命令事务）。 */
@@ -330,9 +398,12 @@ export interface CoreApplication {
 const ALLOWED_OPTION_KEYS = [
   'workStartupRecoveryRequired',
   'workRuntimeFactory',
+  'batchDeliveryFactory',
   'featureDeliveryFactory',
+  'integrationPlanFactory',
   'finalizationExecution',
   'finalizationCompletion',
+  'planningExecution',
   'dataRoot',
   'userHomeDir',
   'capabilityCatalog',
@@ -427,8 +498,14 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
   if (object.workRuntimeFactory !== undefined && typeof object.workRuntimeFactory !== 'function') {
     throw validationError(context, 'workRuntimeFactory', 'trusted_factory_required');
   }
+  if (object.batchDeliveryFactory !== undefined && typeof object.batchDeliveryFactory !== 'function') {
+    throw validationError(context, 'batchDeliveryFactory', 'trusted_factory_required');
+  }
   if (object.featureDeliveryFactory !== undefined && typeof object.featureDeliveryFactory !== 'function') {
     throw validationError(context, 'featureDeliveryFactory', 'trusted_factory_required');
+  }
+  if (object.integrationPlanFactory !== undefined && typeof object.integrationPlanFactory !== 'function') {
+    throw validationError(context, 'integrationPlanFactory', 'trusted_factory_required');
   }
   if (object.finalizationExecution !== undefined && (
     object.finalizationExecution === null || typeof object.finalizationExecution !== 'object'
@@ -626,6 +703,16 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       permissions: TRUSTED_PROJECT_PERMISSIONS_READER,
       ...(nowUtcMs === undefined ? {} : { nowMs: nowUtcMs }),
     });
+    // P05-1 / F-003：一次性规划启动服务（ExecutionController 同一纪律：事务外
+    // 请求/预算纯校验 + 短写事务内重核与原子提交；不装配模型调用，accepted
+    // 不代表规划完成）。
+    const planningStart: PlanningStartPort = createPlanningStartService({
+      assertCanDispatch() {
+        if (startupRecovery.blocked()) throw new PublicError('resource_busy', 'planning.start', undefined,
+          { details: { reason: 'startup_recovery' } });
+      },
+      ...(nowUtcMs === undefined ? {} : { nowMs: nowUtcMs }),
+    });
     // P03-5 / F-011：workspace 栈装配（docs/p03-5-workspace-host-integration-contract.md §2）。
     // 授权根=数据根 + 登记绑定规范源路径（后者由 work-workspace authority 在每次
     // 核验时 realpath + repoIdentity/gitCommonDir 复核）；worktree 目标恒在数据根内。
@@ -720,6 +807,14 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       nowUtcMs,
       publishEvidence: (projectId, evidence) => publishWorkspaceEvidence(projectId, randomUUID(), { ...evidence }),
       reconcile: evidence => startupReconciler.reconcile(evidence),
+      /* P05-1 / F-010：规划窗口恢复（fence 后、通用逐个核对前；受信制品核验
+       * + 幂等补完；证据不足保留 blocked/interrupted 与诊断）。 */
+      planning: createPlanningStartupRecovery({
+        store: createSqlitePlanningRecoveryStore(session, { nowUtcMs }),
+        verifier: createArtifactVerifier({ artifacts: artifactStore, files: artifactFileStore,
+          limits: { maxReadBytes: 2 * 1024 * 1024 } }),
+        ...(nowUtcMs === undefined ? {} : { nowMs: nowUtcMs }),
+      }),
     });
     if (object.workStartupRecoveryRequired === true) startupRecovery.enter();
     const taskClaims = createSqliteTaskClaimStore(session, {
@@ -907,6 +1002,52 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       });
       return { worktreeId: managed.id, headCommit: inspection.repository.headCommit, codeDigest: inspection.codeDigest };
     };
+    // P05-1 / F-004：规划输入准备服务（复用输入采集/Artifact 发布/复验/权限面
+    // 与受管工作区现场读取；代码基线 = 既有 readReworkScene 同一受管 worktree
+    // 现场身份，只读，不改变开发仓库分支/worktree）。全程写事务外；供
+    // planning Run 派发/认领（F-005+）在提交或启动前调用。
+    const planningInputPrepare: PlanningInputPreparePort = createPlanningInputPrepareService({
+      views: createSqlitePlanningContextStore(session, nowUtcMs === undefined ? {} : { nowUtcMs }),
+      inputs: createExecutionInputService({
+        artifacts: artifactStore,
+        publisher: createArtifactPublisher({
+          artifacts: artifactStore,
+          files: artifactFileStore,
+          limits: { maxSizeBytes: 16_000_000, timeoutMs: 60_000 },
+        }),
+        verifier: createArtifactVerifier({
+          artifacts: artifactStore,
+          files: artifactFileStore,
+          limits: { maxReadBytes: 16_000_000 },
+        }),
+        sources: createInputSourceFileReader({
+          roots: { ...(object.inputSourceRoots as Record<string, string> | undefined) },
+        }),
+        limits: {
+          maxItems: 64,
+          maxItemBytes: 4_000_000,
+          maxTotalBytes: 16_000_000,
+          captureTimeoutMs: 60_000,
+          readTimeoutMs: 60_000,
+        },
+        ...(nowUtcMs === undefined ? {} : { nowMs: nowUtcMs }),
+      }),
+      artifacts: artifactStore,
+      publisher: createArtifactPublisher({
+        artifacts: artifactStore,
+        files: artifactFileStore,
+        limits: { maxSizeBytes: 2_000_000, timeoutMs: 60_000 },
+      }),
+      verifier: createArtifactVerifier({
+        artifacts: artifactStore,
+        files: artifactFileStore,
+        limits: { maxReadBytes: 2_000_000 },
+      }),
+      permissions: TRUSTED_PROJECT_PERMISSIONS_READER,
+      readCodeBaseline: (input) => readReworkScene(input.projectId, input.featureId),
+      limits: DEFAULT_PLANNING_INPUT_PREPARE_LIMITS,
+      ...(nowUtcMs === undefined ? {} : { nowMs: nowUtcMs }),
+    });
     const workRecoveryContinuation = createWorkRecoveryContinuationService({
       attempts: createSqliteAttemptAccess(session), artifacts: artifactStore,
       verifier: createArtifactVerifier({ artifacts: artifactStore, files: artifactFileStore, limits: { maxReadBytes: 16_000_000 } }),
@@ -917,13 +1058,16 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     const workExecution = assembleWorkExecution({ session,
       application: { dataRoot: basePathService.dataRoot(), artifactStore, artifactFileStore, stateStore,
         configurationService, workWorkspaceAuthority, taskClaims, workspacePreparation, executionInputPrepare,
-        runtimeRecovery, runtimeRecoveryCatalog: recoveryCatalog, workRecoveryContinuation },
+        planningInputPrepare, runtimeRecovery, runtimeRecoveryCatalog: recoveryCatalog, workRecoveryContinuation },
       capabilityCatalog, runtimeFactory: object.workRuntimeFactory as WorkRuntimeFactory | undefined, nowUtcMs, readReworkScene, startupRecovery,
       ...(object.finalizationExecution === undefined ? {} : {
         finalizationExecution: object.finalizationExecution as FinalizationExecutionPort,
       }),
       ...(object.finalizationCompletion === undefined ? {} : {
         finalizationCompletion: object.finalizationCompletion as FinalizationCompletionPort,
+      }),
+      ...(object.planningExecution === undefined ? {} : {
+        planningExecution: object.planningExecution as NonNullable<Parameters<typeof assembleWorkExecution>[0]['planningExecution']>,
       }) });
     // P03-9 / F-003：Verifier 停止登记与取消提交后的停止控制。Runtime 停止复用
     // WorkExecution.cancel 的既有受监督命令路径；Verifier 使用同一 CommandProcess
@@ -969,12 +1113,34 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
         expectedHead: input.observation.afterIdentity.headCommit }),
       ...(nowUtcMs === undefined ? {} : { nowMs: nowUtcMs }),
     });
+    const batchDelivery = (object.batchDeliveryFactory as BatchDeliveryFactory | undefined)?.({ atomicStore });
+    if (object.batchDeliveryFactory !== undefined && batchDelivery === undefined) throw validationError(context, 'batchDeliveryFactory', 'delivery_adapters_required');
     const featureDelivery = (object.featureDeliveryFactory as FeatureDeliveryFactory | undefined)?.({ atomicStore });
     if (object.featureDeliveryFactory !== undefined && featureDelivery === undefined) {
       throw validationError(context, 'featureDeliveryFactory', 'delivery_adapters_required');
     }
+    const integrationPlanStore = createSqliteIntegrationPlanStore(session, nowUtcMs === undefined ? {} : { nowUtcMs });
+    const integrationPlanFacts = (object.integrationPlanFactory as CoreApplicationOptions['integrationPlanFactory'] | undefined)?.({
+      atomicStore,
+      planStore: integrationPlanStore,
+    });
+    if (object.integrationPlanFactory !== undefined && (
+      integrationPlanFacts === undefined || integrationPlanFacts.batches === undefined || integrationPlanFacts.predecessors === undefined
+    )) {
+      throw validationError(context, 'integrationPlanFactory', 'integration_fact_adapters_required');
+    }
+    const gitAgentRepair = createGitAgentRepairService({ atomic: atomicStore,
+      store: createSqliteGitAgentRepairStore(session, nowUtcMs === undefined ? {} : { nowUtcMs }) });
+    const integrationPlanControl = createIntegrationPlanControlService({ atomic: atomicStore, plans: integrationPlanStore });
+    const integrationPlanGeneration = integrationPlanFacts === undefined ? undefined : createIntegrationPlanGenerationService({
+      atomic: atomicStore,
+      plans: integrationPlanStore,
+      batches: integrationPlanFacts.batches,
+      predecessors: integrationPlanFacts.predecessors,
+    });
     const commandService = createCommandService({
       atomicStore,
+      batchDelivery,
       featureDelivery,
       repositoryInspector,
       // F-009：配置命令的能力目录复检复用同一可信装配目录。
@@ -983,6 +1149,15 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       executionInputPrepare,
       executionPreview,
       executionStart,
+      planningStart,
+      planningCandidateDecision: createPlanningCandidateDecisionPort({
+        atomicStore,
+        verifier: createArtifactVerifier({
+          artifacts: artifactStore,
+          files: artifactFileStore,
+          limits: { maxReadBytes: PLANNING_CANDIDATE_SUBMIT_MAX_BODY_BYTES },
+        }),
+      }),
       executionResume,
       finalizationRetry,
       executionDispatchSignal: workExecution,
@@ -1069,13 +1244,26 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       workSessionReads: queryStore,
       taskEvidenceReads: queryStore,
       gitOperationReads: queryStore,
-      featureReportReads: queryStore,
+      gitAgentRepairReads: createSqliteGitAgentRepairQueryStore(session),      featureReportReads: queryStore,
       featureDeliveryReads: queryStore,
+      batchDeliveryReads: createSqliteBatchDeliveryQueryStore(session, { nowUtcMs }),
+      integrationPlanReads: queryStore,
       executionControlReads: queryStore,
       artifacts: artifactStore,
       artifactFiles: artifactFileStore,
       stateStore,
       configurationService,
+      dataRootIdentity: computeDataRootIdentity(basePathService.dataRoot()),
+      ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
+    });
+
+    // P05-1 / F-011：规划上下文/候选只读授权查询（复用同一 queryStore 窄端口
+    // 与既有预算/制品设施；候选正文与 F-006 提交入口同一完整性界）。
+    const planningQueryService = createPlanningQueryService({
+      planningReads: queryStore,
+      executionBudgetReads: queryStore,
+      artifacts: artifactStore,
+      artifactFiles: artifactFileStore,
       dataRootIdentity: computeDataRootIdentity(basePathService.dataRoot()),
       ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
     });
@@ -1124,7 +1312,11 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
         const verifier = createArtifactVerifier({ artifacts: artifactStore, files: artifactFileStore,
           limits: { maxReadBytes: 16_000_000 } });
         return createWorkToolChannel({ ...authority, atomicStore, attempts, dag: createSqliteTaskDagStore(session), verifier,
-          candidates: createVerificationCandidateValidator({ attempts, verifier, resolver: createTestTargetResolver() }) });
+          candidates: createVerificationCandidateValidator({ attempts, verifier, resolver: createTestTargetResolver() }),
+          // P05-1 / F-006：规划候选受管发布（受控暂存 → ready；正文上限与通道入口一致）。
+          planning: { publisher: createArtifactPublisher({ artifacts: artifactStore, files: artifactFileStore,
+            limits: { maxSizeBytes: PLANNING_CANDIDATE_SUBMIT_MAX_BODY_BYTES, timeoutMs: 60_000 },
+            ...(nowUtcMs === undefined ? {} : { nowMs: nowUtcMs }) }) } });
       },
       workExecution,
       dataRoot: basePathService.dataRoot(),
@@ -1139,15 +1331,21 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       commandReceiptStore,
       commandReceiptsService,
       commandService,
+      integrationPlanGeneration,
+      integrationPlanControl,
+      gitAgentRepair,
       executionInputPrepare,
       executionPreview,
       executionStart,
+      planningStart,
+      planningInputPrepare,
       executionResume,
       finalizationRetry,
       runtimeRecovery,
       runtimeRecoveryCatalog: recoveryCatalog,
       workRecoveryContinuation,
       queryService,
+      planningQueryService,
       onboardingService,
       baselineStore,
       verificationStore,

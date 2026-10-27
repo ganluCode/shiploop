@@ -37,6 +37,7 @@ import {
   EVENT_PAGE_MAX_LIMIT,
   EVENT_READ_OPERATION,
   FEATURE_LABELS_UPDATED_EVENT_TYPE,
+  FEATURE_DAG_UPDATED_EVENT_TYPE,
   FEATURE_PLAN_IMPORTED_EVENT_TYPE,
   FEATURE_PLAN_REVISED_EVENT_TYPE,
   PHASE_CREATED_EVENT_TYPE,
@@ -151,6 +152,15 @@ describe('F-003 冻结事件封套版本与 §9.2 事件白名单（P02-2 六类
       BASELINE_CANCELLED_EVENT_TYPE,
       // P03-1 / F-004：计划域事件白名单扩展（phase.created，聚合为 Phase 自身）。
       PHASE_CREATED_EVENT_TYPE,
+      'phase.delivery.approved',
+      'phase.delivery.invalidated',
+      'phase.metadata.updated',
+      'phase.closed',
+      'phase.reopened',
+      'phase.archived',
+      'feature.phase.moved',
+      // P05-2 / F-005：Feature DAG 更新事件（聚合为 Phase）。
+      FEATURE_DAG_UPDATED_EVENT_TYPE,
       // P03-1 / F-005：计划域事件白名单扩展（feature.plan.imported，聚合为导入创建的 Feature）。
       FEATURE_PLAN_IMPORTED_EVENT_TYPE,
       // P03-1 / F-007：纯标签 CAS 编辑事件（三目标实体各自一条，payload 恒 {labelsUpdated:true}）。
@@ -183,8 +193,12 @@ describe('F-003 冻结事件封套版本与 §9.2 事件白名单（P02-2 六类
       EXECUTION_RUN_CANCELLED_EVENT_TYPE,
       EXECUTION_BATCH_CANCELLING_EVENT_TYPE,
       EXECUTION_BATCH_CANCELLED_EVENT_TYPE,
-  EXECUTION_RUN_RESUMED_EVENT_TYPE,
-  EXECUTION_BATCH_RESUMED_EVENT_TYPE,
+      EXECUTION_RUN_RESUMED_EVENT_TYPE,
+      EXECUTION_BATCH_RESUMED_EVENT_TYPE,
+      'execution.feature.paused',
+      'execution.feature.cancelling',
+      'execution.feature.cancelled',
+      'execution.feature.resumed',
       'task.claimed',
       'task.attempt.updated',
       'task.approval.blocked',
@@ -204,6 +218,7 @@ describe('F-003 冻结事件封套版本与 §9.2 事件白名单（P02-2 六类
     expect(BASELINE_AUTHORIZED_EVENT_TYPE).toBe('baseline.authorized');
     expect(BASELINE_CANCELLED_EVENT_TYPE).toBe('baseline.cancelled');
     expect(PHASE_CREATED_EVENT_TYPE).toBe('phase.created');
+    expect(FEATURE_DAG_UPDATED_EVENT_TYPE).toBe('feature.dag.updated');
     expect(FEATURE_PLAN_IMPORTED_EVENT_TYPE).toBe('feature.plan.imported');
     expect(PHASE_LABELS_UPDATED_EVENT_TYPE).toBe('phase.labels.updated');
     expect(FEATURE_LABELS_UPDATED_EVENT_TYPE).toBe('feature.labels.updated');

@@ -38,6 +38,8 @@ import {
   WIRE_MESSAGE_SCHEMA_VERSION,
   WORK_ACCEPTED_SCHEMA_VERSION,
   WORK_ACCEPTED_OPERATION,
+  PLANNING_ACCEPTED_SCHEMA_VERSION,
+  PLANNING_ACCEPTED_OPERATION,
   PublicError,
   isIsoUtcDateTime,
   isUuidV4,
@@ -199,6 +201,9 @@ export interface PersistedCommandReceiptRow {
   readonly receiptVersion?: number;
   readonly batchId?: string | null;
   readonly runId?: string | null;
+  /** P05-1 / F-003：planning.start accepted v7 的 planning Task/候选身份；其余恒 null。 */
+  readonly planningTaskId?: string | null;
+  readonly candidateId?: string | null;
   readonly result: unknown;
   readonly resultRef: string | null;
   readonly errorCode: string | null;
@@ -220,6 +225,8 @@ const PERSISTED_ROW_KEYS = [
   'receiptVersion',
   'batchId',
   'runId',
+  'planningTaskId',
+  'candidateId',
   'result',
   'resultRef',
   'errorCode',
@@ -360,8 +367,31 @@ export function mapPersistedCommandReceipt(
       corrupt(operation, 'association');
     }
   }
+  // P05-1 / F-003：planning.start 接受回执（v7）携带 Batch/Run/planning Task/
+  // 候选四身份；规划列缺失或形状损坏按 corrupt 处理，不作为有效回执返回。
+  if (row.receiptVersion === PLANNING_ACCEPTED_SCHEMA_VERSION) {
+    if (row.result !== undefined || row.resultRef !== null || row.errorCode !== null ||
+        row.errorMessage !== null || row.errorDetails !== null ||
+        row.planningTaskId == null || row.candidateId == null ||
+        !isSafeNonNegativeInteger(row.issuedAtUtcMs) || !isSafeNonNegativeInteger(row.completedAtUtcMs)) {
+      corrupt(operation, 'association');
+    }
+    try {
+      return validateReceiptShape({
+        schemaVersion: row.receiptVersion, commandId: row.commandId, principalId: row.principalId,
+        operation: row.operation, scope: { kind: row.scopeKind, projectId: row.projectId },
+        requestDigest: row.requestDigest, status: row.status, operationId: row.operationId,
+        batchId: row.batchId, runId: row.runId,
+        planningTaskId: row.planningTaskId, candidateId: row.candidateId,
+        issuedAt: new Date(row.issuedAtUtcMs).toISOString(),
+        completedAt: new Date(row.completedAtUtcMs).toISOString(), replayed: false,
+      }, operation, 'persisted');
+    } catch {
+      corrupt(operation, 'association');
+    }
+  }
   if ((row.receiptVersion !== undefined && row.receiptVersion !== WIRE_MESSAGE_SCHEMA_VERSION) ||
-      row.batchId != null || row.runId != null) {
+      row.batchId != null || row.runId != null || row.planningTaskId != null || row.candidateId != null) {
     corrupt(operation, 'association');
   }
   const spec = Object.hasOwn(RECEIPT_OPERATION_SPECS, row.operation) ? RECEIPT_OPERATION_SPECS[row.operation as ReceiptOperation] : undefined;
@@ -523,9 +553,11 @@ function validateReceiptShape(
   const context: ValidationContext = { operation, entity: { type: 'command_receipt' } };
   const object = requirePlainObject(value, context, 'receipt');
   const isWork = object.schemaVersion === WORK_ACCEPTED_SCHEMA_VERSION;
-  rejectUnknownKeys(object, isWork ? [...RECEIPT_KEYS, 'batchId', 'runId'] : RECEIPT_KEYS, context, 'receipt');
+  const isPlanning = object.schemaVersion === PLANNING_ACCEPTED_SCHEMA_VERSION;
+  const extendedKeys = isPlanning ? [...RECEIPT_KEYS, 'batchId', 'runId', 'planningTaskId', 'candidateId'] : [...RECEIPT_KEYS, 'batchId', 'runId', 'runIds'];
+  rejectUnknownKeys(object, isWork || isPlanning ? extendedKeys : RECEIPT_KEYS, context, 'receipt');
 
-  if (!isWork && object.schemaVersion !== WIRE_MESSAGE_SCHEMA_VERSION) {
+  if (!isWork && !isPlanning && object.schemaVersion !== WIRE_MESSAGE_SCHEMA_VERSION) {
     throw validationError(context, 'receipt.schemaVersion', `必须是 ${WIRE_MESSAGE_SCHEMA_VERSION}`);
   }
   if (!isUuidV4(object.commandId)) {
@@ -538,7 +570,11 @@ function validateReceiptShape(
     throw validationError(context, 'receipt.operation', '必须是命令名字符串');
   }
   const spec = Object.hasOwn(RECEIPT_OPERATION_SPECS, object.operation) ? RECEIPT_OPERATION_SPECS[object.operation as ReceiptOperation] : undefined;
-  const scopeKind = isWork && object.operation === WORK_ACCEPTED_OPERATION ? 'project' : (!isWork ? spec?.scopeKind : undefined);
+  const scopeKind = isWork && object.operation === WORK_ACCEPTED_OPERATION
+    ? 'project'
+    : isPlanning && object.operation === PLANNING_ACCEPTED_OPERATION
+      ? 'project'
+      : (!isWork && !isPlanning ? spec?.scopeKind : undefined);
   if (scopeKind === undefined) {
     throw validationError(context, 'receipt.operation', '未知操作或版本不匹配');
   }
@@ -577,9 +613,35 @@ function validateReceiptShape(
     if (!isUuidV4(object.batchId) || !isUuidV4(object.runId) || object.operationId !== object.batchId) {
       throw validationError(context, 'receipt.association', 'Work accepted 必须携带 UUID Batch/Run 且 operationId = batchId');
     }
+    if (object.runIds !== undefined && (!Array.isArray(object.runIds) || object.runIds.length < 2 || object.runIds.length > 16 ||
+        object.runIds[0] !== object.runId || new Set(object.runIds).size !== object.runIds.length || !object.runIds.every(isUuidV4))) {
+      throw validationError(context, 'receipt.runIds', '初始 Run 列表必须有界、唯一且以 runId 开头');
+    }
     return {
       ...base, schemaVersion: WORK_ACCEPTED_SCHEMA_VERSION, operation: WORK_ACCEPTED_OPERATION,
       status: 'accepted', operationId: object.batchId, batchId: object.batchId, runId: object.runId,
+      ...(object.runIds === undefined ? {} : { runIds: [...object.runIds as string[]] }),
+    };
+  }
+  // P05-1 / F-003：planning.start 接受回执（v7）——仅 accepted，携带四重 UUID
+  // 身份（operationId = batchId），不携带 result/resultRef/error。
+  if (isPlanning) {
+    if (object.status !== 'accepted' || object.result !== undefined || object.resultRef !== undefined || object.error !== undefined) {
+      throw validationError(context, 'receipt.status', 'Planning v7 仅支持 accepted，且不携带结果或错误');
+    }
+    if (
+      !isUuidV4(object.batchId) ||
+      !isUuidV4(object.runId) ||
+      !isUuidV4(object.planningTaskId) ||
+      !isUuidV4(object.candidateId) ||
+      object.operationId !== object.batchId
+    ) {
+      throw validationError(context, 'receipt.association', 'Planning accepted 必须携带 UUID Batch/Run/Task/Candidate 且 operationId = batchId');
+    }
+    return {
+      ...base, schemaVersion: PLANNING_ACCEPTED_SCHEMA_VERSION, operation: PLANNING_ACCEPTED_OPERATION,
+      status: 'accepted', operationId: object.batchId, batchId: object.batchId, runId: object.runId,
+      planningTaskId: object.planningTaskId, candidateId: object.candidateId,
     };
   }
 

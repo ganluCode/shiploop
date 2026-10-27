@@ -49,6 +49,10 @@ export type {
   ParsedProjectOverview,
   ParsedProjectRegister,
   ParsedReceiptGet,
+  ParsedPlanningStart,
+  ParsedPlanningList,
+  ParsedPlanningGet,
+  ParsedPlanningDecision,
   ParsedExecutionSessions,
   ParsedExecutionSession,
   ParsedExecutionSessionEvidence,
@@ -59,6 +63,9 @@ export type {
   ParsedExecutionRetryFinal,
   ParsedExecutionControl,
   ParsedExecutionBatchControl,
+  ParsedExecutionBatchDelivery,
+  ParsedExecutionFinalize,
+  ParsedPhaseDeliveryApprove,
   ParsedExecutionRecovery,
   ParsedTaskGet,
   ParsedTaskInputs,
@@ -84,12 +91,20 @@ export type {
 export { getAppCliHelp } from './help.js';
 export {
   FEATURE_FINAL_APPROVAL_NOTE,
+  buildBatchDeliveryView,
+  buildBatchObservationView,
+  buildBatchDeliveryCommandView,
+  buildIntegrationPlanCliView,
   buildFeatureDeliveryView,
   buildFeatureFinalApprovalView,
   buildFeatureFinalizeView,
   buildGitOperationDetailView,
   buildGitOperationListView,
   buildGitOperationRecordView,
+  formatBatchDeliveryView,
+  formatBatchObservationView,
+  formatBatchDeliveryCommandView,
+  formatIntegrationPlanView,
   formatFeatureDeliveryView,
   formatFeatureFinalApprovalView,
   formatFeatureFinalizeView,
@@ -98,6 +113,10 @@ export {
   gitOperationCommitted,
 } from './delivery.js';
 export type {
+  BatchDeliveryCliView,
+  BatchObservationCliView,
+  BatchDeliveryCommandCliView,
+  IntegrationPlanCliView,
   FeatureDeliveryCliView,
   FeatureFinalApprovalCliView,
   FeatureFinalizeCliView,
@@ -240,6 +259,29 @@ export {
   formatAppCliParseError,
 } from './output.js';
 export type { AppCliFailureEnvelope, AppCliSuccessEnvelope } from './output.js';
+export {
+  buildPlanningCandidateView,
+  buildPlanningClientInput,
+  buildPlanningContextDetailView,
+  buildPlanningContextListView,
+  buildPlanningDecisionView,
+  buildPlanningStartView,
+  formatPlanningCandidateView,
+  formatPlanningContextDetailView,
+  formatPlanningContextListView,
+  formatPlanningDecisionView,
+  formatPlanningStartView,
+  parsePlanningStartInput,
+} from './planning.js';
+export type {
+  PlanningCandidateCliView,
+  PlanningContextDetailCliView,
+  PlanningContextListCliView,
+  PlanningDecisionCliView,
+  PlanningStartCliView,
+  PlanningStartInputDocument,
+} from './planning.js';
+
 export {
   EXECUTION_BOUNDARY_VIEW,
   buildExecutionInputView,

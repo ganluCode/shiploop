@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { StorageError } from '../../ports/errors.js';
 import { computeRunDispatchAuthorizationDigest } from '../../ports/execution-dispatch.js';
 import type { SqliteStorageSession } from './session.js';
+import { createSqliteFeatureResourceAccess } from './feature-resources.js';
 
 interface Claim {
   id: string; project_id: string; feature_id: string; run_id: string; claim_version: number;
@@ -19,8 +20,11 @@ function recoveryConflict(reason: string): never {
 }
 
 /** Adapter-private recovery authority. Call mutations only inside the caller's recovery transaction. */
-export function createSqliteDispatchRecovery(session: SqliteStorageSession) {
+export function createSqliteDispatchRecovery(session: SqliteStorageSession, options: {
+  readonly nowUtcMs?: () => number;
+} = {}) {
   const db = session.database;
+  const featureResources = createSqliteFeatureResourceAccess(session, options);
   function claims(runId: string): Claim[] {
     const rows = db.prepare<[string], Claim>(`SELECT * FROM run_dispatch_claims WHERE run_id = ? ORDER BY claim_version LIMIT ${LIMIT + 1}`).all(runId);
     if (rows.length > LIMIT) recoveryConflict('dispatch_history_limit');
@@ -36,6 +40,9 @@ export function createSqliteDispatchRecovery(session: SqliteStorageSession) {
   }
   function quarantine(claim: Claim, reason: string, timestamp: number) {
     assertWrite();
+    featureResources.quarantineOwnerInTransaction(claim.project_id, { ownerId: claim.id, ownerVersion: claim.claim_version }, {
+      code: reason === 'lease_expired_unverified' ? 'lease_expired_unverified' : 'resource_quarantined',
+    });
     // Wall-clock rollback cannot abort fencing or move durable timestamps before acquisition/prior updates.
     db.prepare(`UPDATE execution_slot_claims SET state = 'quarantined', reason = ?, revision = revision + 1,
       updated_at = MAX(?, acquired_at, updated_at) WHERE claim_id = ? AND state = 'held'`).run(reason, timestamp, claim.id);
@@ -44,6 +51,9 @@ export function createSqliteDispatchRecovery(session: SqliteStorageSession) {
   }
   function release(claim: Claim, timestamp: number, reason = 'startup_reconciled') {
     assertWrite();
+    // Recovery already has a trusted stop/unstarted proof; release the Feature
+    // resource group before the slot and claim in the same transaction.
+    featureResources.releaseOwnerAfterStopInTransaction(claim.project_id, { ownerId: claim.id, ownerVersion: claim.claim_version });
     // Expiry does not authorize this path. The caller has proved unstarted or matched stop/reconciliation evidence.
     db.prepare(`UPDATE execution_slot_claims SET state = 'released', reason = ?, released_at = MAX(?, acquired_at, updated_at),
       revision = revision + 1, updated_at = MAX(?, acquired_at, updated_at) WHERE claim_id = ? AND state IN ${active}`)
@@ -113,6 +123,10 @@ export function createSqliteDispatchRecovery(session: SqliteStorageSession) {
     /** Census includes claims with no Attempt, slots and legacy orphan resource groups. */
     fence(timestamp: number) {
       assertWrite();
+      // Expiry is a fencing event for the complete Feature resource group. It
+      // must happen before claim census so an expired resource can never be
+      // mistaken for an unstarted claim that is safe to release.
+      featureResources.expireInTransaction();
       const rows = db.prepare<[], Claim>(`SELECT * FROM run_dispatch_claims WHERE state IN ${active} ORDER BY id LIMIT ${LIMIT + 1}`).all();
       let blocked = false;
       const attemptIds: string[] = [];
@@ -126,11 +140,22 @@ export function createSqliteDispatchRecovery(session: SqliteStorageSession) {
             || slot.owner_id !== claim.owner_id || slot.host_instance_id !== claim.host_instance_id);
           const uncertain = invalidSlot || !authorization(claim.run_id)
             || db.prepare('SELECT id FROM runtime_start_reservations WHERE run_id = ? LIMIT 1').get(claim.run_id)
-            || db.prepare('SELECT id FROM managed_workspaces WHERE run_id = ? LIMIT 1').get(claim.run_id)
+            || db.prepare('SELECT id FROM managed_workspaces WHERE project_id = ? AND feature_id = ? AND run_id = ? LIMIT 1')
+              .get(claim.project_id, claim.feature_id, claim.run_id)
             || db.prepare('SELECT id FROM git_operations WHERE run_id = ? LIMIT 1').get(claim.run_id)
             || db.prepare('SELECT id FROM workspace_operations WHERE run_id = ? LIMIT 1').get(claim.run_id)
-            || db.prepare('SELECT id FROM workspace_leases WHERE project_id = ? LIMIT 1').get(claim.project_id);
-          if (uncertain) { quarantine(claim, 'dispatch_unstarted_evidence_incomplete', timestamp); blocked = true; }
+            // Workspace leases have no run/feature columns; derive ownership through the
+            // immutable Attempt identity so another Feature in the same project cannot
+            // quarantine or retain this unstarted claim.
+            || db.prepare(`SELECT l.id FROM workspace_leases l
+              JOIN attempts a ON a.project_id = l.project_id AND a.id = l.owner_id
+              WHERE a.project_id = ? AND a.feature_id = ? AND a.run_id = ? LIMIT 1`)
+              .get(claim.project_id, claim.feature_id, claim.run_id);
+          const expiredFeatureResource = db.prepare(`SELECT id FROM feature_resource_leases
+            WHERE project_id = ? AND owner_id = ? AND owner_version = ?
+              AND (state = 'quarantined' OR (state = 'held' AND lease_until <= ?)) LIMIT 1`)
+            .get(claim.project_id, claim.id, claim.claim_version, timestamp);
+          if (uncertain || expiredFeatureResource) { quarantine(claim, 'dispatch_unstarted_evidence_incomplete', timestamp); blocked = true; }
           else {
             release(claim, timestamp, 'startup_unstarted_verified');
             db.prepare(`UPDATE runs SET status = 'paused', reason = 'restart_recovery', revision = revision + 1,
@@ -208,6 +233,7 @@ export function workRecoveryFingerprint(session: SqliteStorageSession, attemptId
     ['run_dispatch_intents', 'run_id = ?', runId],
     ['managed_workspaces', 'feature_id = ?', attempt.feature_id],
     ['workspace_leases', 'owner_id IN (SELECT id FROM attempts WHERE run_id = ?)', runId],
+    ['feature_resource_leases', 'owner_id IN (SELECT id FROM run_dispatch_claims WHERE run_id = ?)', runId],
     ['sessions', 'attempt_id IN (SELECT id FROM attempts WHERE run_id = ?)', runId],
     ['task_claim_receipts', 'attempt_id IN (SELECT id FROM attempts WHERE run_id = ?)', runId],
     ['runtime_start_reservations', 'run_id = ?', runId],

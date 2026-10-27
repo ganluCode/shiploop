@@ -29,8 +29,10 @@
  *   （assessSettingsConfiguration 在执行能力未装配时恒 executable:false）。
  *
  * 本模块不实现（见契约文档范围边界）：Task 策略编辑、重新应用默认、凭据解析、
- * Attempt 快照，以及 agentOverrides / purposeStrategies（planner/judge/review）
- * 参与的用途选择（需要 Agent/用途身份，另行定案）。
+ * Attempt 快照；agentOverrides / judge / review 的用途选择仍待后续定案。
+ * P05-1 / F-002 起交付 planner 用途选择（selectPlanningPurposeStrategy：
+ * purposeStrategies.planner → defaultStrategy 受控回退，无条目拒绝；不取
+ * modelMap 复杂度路由，也不改编码策略优先级）。
  */
 import { mergeEffectiveSettings } from './effective-settings.js';
 import type { EffectiveStrategyEntry } from './effective-settings.js';
@@ -45,6 +47,7 @@ import {
 import type { ModelComplexity, RuntimeStrategyV1 } from '../ports/settings-schema.js';
 import { TASK_MAX_CODE_ATTEMPTS_MAX, TASK_MAX_CODE_ATTEMPTS_MIN } from '../ports/execution-budget.js';
 import { TASK_COMPLEXITY_VALUES } from '../ports/plan-store.js';
+import type { PlanningStrategyCopy } from '../ports/planning-context.js';
 import { StorageError } from '../ports/errors.js';
 import {
   rejectUnknownKeys,
@@ -347,4 +350,104 @@ export function validateTaskExecutionConfig(value: unknown, operation: string): 
     timeLimits.toolTimeoutMs = object.toolTimeoutMs;
   }
   return copyExecutionConfig(validateRuntimeStrategy(entry, context, 'executionConfig'), maxCodeAttempts, timeLimits);
+}
+
+/* ------------------------------------------------------------------ *
+ * P05-1 / F-002 规划用途策略选择（purposeStrategies.planner）
+ * ------------------------------------------------------------------ */
+
+/** 规划用途键（settings-schema 的 StrategyPurpose；与编码复杂度路由无关）。 */
+export const PLANNING_PURPOSE_STRATEGY_KEY = 'planner' as const;
+
+/** 用途命中的来源键（有效配置 purposeStrategies.planner 条目）。 */
+export const PLANNING_PURPOSE_STRATEGY_SOURCE_KEY = 'purposeStrategies.planner' as const;
+
+/** 受控回退的来源键（无用途条目时整体复制 defaultStrategy 并记录来源）。 */
+export const PLANNING_DEFAULT_STRATEGY_FALLBACK_SOURCE_KEY = 'defaultStrategy' as const;
+
+/** 一次规划用途策略选择的结果：完整策略独立副本 + 来源说明（仅解释用途）。 */
+export interface PlanningPurposeStrategySelection {
+  readonly strategy: PlanningStrategyCopy;
+  readonly configSource: TaskStrategyConfigSource;
+  readonly configSourceKey: string;
+}
+
+const SELECT_PLANNING_PURPOSE_STRATEGY_KEYS = ['global', 'project'] as const;
+
+/**
+ * 为一次性规划选择 planner 用途完整策略副本（纯函数；输入边界为 unknown）。
+ *
+ * 规则（docs/p05-1-planning-candidate-contract.md §6 与 core-design/02 §9：
+ * 「规划 Task 按 purposeStrategies 创建配置副本，Planner 本身不能指定厂商」）：
+ * - 只接受 `global` / `project` 两个键（与 mergeEffectiveSettings 相同的来源
+ *   scope 输入）：复杂度（complexity）与用户整体覆盖（userOverride）是**未知键**，
+ *   用途选择绝不取 modelMap 的编码复杂度路由，也没有隐式指定厂商/模型的路径；
+ * - 来源 payload 经 mergeEffectiveSettings 重新以 schemaVersion=2 完整条目校验
+ *   （未知键、不完整条目、秘密正文字段、非法引用一律拒绝，无效来源不降级）；
+ * - 优先级：purposeStrategies.planner（项目条目整体替换全局条目）→ 无用途条目时
+ *   按 defaultStrategy 受控回退（整体复制完整策略并记录来源键 defaultStrategy）；
+ *   两者皆无即 no_strategy_match 明确拒绝（不注入任何默认厂商/模型）；
+ * - 输出为全新独立副本（schemaVersion=2 标记；不含编码政策捕获——规划 Task 不在
+ *   编码 DAG/代码尝试预算语义内）；快照在创建时冻结，后续默认配置变化不追溯改写
+ *   既有副本（副本由存储原语随 planning Task 持久化）。
+ */
+export function selectPlanningPurposeStrategy(input: unknown): PlanningPurposeStrategySelection {
+  const context: ValidationContext = {
+    operation: `${TASK_STRATEGY_SELECTION_OPERATION}.planningPurpose`,
+    entity: { type: 'task' },
+  };
+  const object = requirePlainObject(input, context, 'input');
+  rejectUnknownKeys(object, SELECT_PLANNING_PURPOSE_STRATEGY_KEYS, context, 'input');
+
+  const effective = mergeEffectiveSettings({ global: object.global, project: object.project });
+  const purposeEntry = effective.strategies.purposeStrategies[PLANNING_PURPOSE_STRATEGY_KEY];
+  if (purposeEntry !== undefined) {
+    return {
+      strategy: planningCopyFromEntry(purposeEntry.strategy),
+      configSource: purposeEntry.source.kind,
+      configSourceKey: PLANNING_PURPOSE_STRATEGY_SOURCE_KEY,
+    };
+  }
+  const fallback = effective.strategies.defaultStrategy;
+  if (fallback !== undefined) {
+    return {
+      strategy: planningCopyFromEntry(fallback.strategy),
+      configSource: fallback.source.kind,
+      configSourceKey: PLANNING_DEFAULT_STRATEGY_FALLBACK_SOURCE_KEY,
+    };
+  }
+  throw new StorageError(
+    'validation',
+    context.operation,
+    `${context.operation}: 无可用的 planner 用途策略（purposeStrategies.planner 与 defaultStrategy 均未配置；` +
+      '不注入任何默认厂商/模型）',
+    {
+      entity: context.entity,
+      details: { field: 'strategies', reason: 'no_strategy_match', purpose: PLANNING_PURPOSE_STRATEGY_KEY },
+    },
+  );
+}
+
+/** 由有效配置整体条目构造规划用途策略全新独立副本（不与输入共享引用）。 */
+function planningCopyFromEntry(strategy: RuntimeStrategyV1): PlanningStrategyCopy {
+  const copy: {
+    schemaVersion: typeof SETTINGS_SCHEMA_VERSION;
+    runtime: string;
+    provider: string;
+    model: string;
+    credentialRef?: string;
+    endpointRef?: string;
+  } = {
+    schemaVersion: SETTINGS_SCHEMA_VERSION,
+    runtime: strategy.runtime,
+    provider: strategy.provider,
+    model: strategy.model,
+  };
+  if (strategy.credentialRef !== undefined) {
+    copy.credentialRef = strategy.credentialRef;
+  }
+  if (strategy.endpointRef !== undefined) {
+    copy.endpointRef = strategy.endpointRef;
+  }
+  return copy;
 }

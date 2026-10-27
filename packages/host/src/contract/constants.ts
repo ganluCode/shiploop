@@ -145,6 +145,8 @@ export const ATTEMPT_DIAGNOSTICS_ROUTE_SUFFIX = 'diagnostics';
  * 只读：不认领、不扣预算、不唤醒执行、不释放/改写槽位，没有任何写入口。
  */
 export const DISPATCH_QUEUE_ROUTE = '/v1/dispatch-queue';
+/** P05-5 / F-007：Feature 共享资源租约只读查询集合根。 */
+export const EXECUTION_RESOURCES_ROUTE = '/v1/execution-resources';
 /**
  * P03-5 / F-011：工作区状态只读查询路由（全部 GET + Bearer；与 Core
  * WORKSPACE_QUERY_OPERATIONS 一一对应，docs/p03-5-workspace-host-integration-contract.md §4）。
@@ -169,6 +171,22 @@ export const WORKSPACE_OPERATIONS_ROUTE_PREFIX = '/v1/workspace-operations/';
  */
 export const GIT_OPERATIONS_ROUTE = '/v1/git-operations';
 export const GIT_OPERATIONS_ROUTE_PREFIX = '/v1/git-operations/';
+export const GIT_REPAIRS_ROUTE = '/v1/git-repairs';
+export const GIT_REPAIRS_ROUTE_PREFIX = '/v1/git-repairs/';
+/** P05-8 / F-006 GitAgent 修复授权/Attempt 只读查询路由。 */
+export const INTEGRATION_PLANS_ROUTE_PREFIX = '/v1/integration-plans/';
+/**
+ * P05-1 / F-012：规划上下文/候选只读查询路由（全部 GET + Bearer；与 Core
+ * PLANNING_QUERY_OPERATIONS 一一对应）。
+ * - GET /v1/planning-contexts?projectId=&featureId?=&limit?=&cursor?=（集合根
+ *   + 必填 projectId，与 /v1/tasks 列表同一冻结形态）；
+ * - GET /v1/planning-contexts/:candidateId?projectId=（单段路径参数）；
+ * - GET /v1/planning-contexts/:candidateId/candidate?projectId=（候选正文经受管
+ *   内容接口核验读取）；其他嵌套/多段形态一律未匹配 → 404 unknown_operation。
+ */
+export const PLANNING_CONTEXTS_ROUTE = '/v1/planning-contexts';
+export const PLANNING_CONTEXTS_ROUTE_PREFIX = '/v1/planning-contexts/';
+export const PLANNING_CANDIDATE_ROUTE_SUFFIX = 'candidate';
 
 /** §7.2 客户端有限预算（毫秒）。 */
 export const TCP_CONNECT_TIMEOUT_MS = 2_000;

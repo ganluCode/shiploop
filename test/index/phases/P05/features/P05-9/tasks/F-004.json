@@ -1,0 +1,13 @@
+{
+  "schema_version": 2,
+  "task_id": "F-004",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/delivery/p05-9-f004-phase-delivery-approval.test.ts", "all": true },
+      { "file": "test/modules/delivery/p05-9-f004-phase-delivery-approval-sqlite.test.ts", "all": true },
+      { "file": "test/modules/delivery/p05-9-f003-batch-lifecycle.test.ts", "all": true },
+      { "file": "test/modules/storage/sqlite/sqlite-schema-migrations.test.ts", "all": true }
+    ]
+  }]
+}

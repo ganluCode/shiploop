@@ -1,11 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import { evaluateTaskDag } from '../../application/task-dag.js';
-import type { AttemptRecord } from '../../ports/attempt-store.js';
+import { isPlanningAttemptSnapshot, type AttemptRecord } from '../../ports/attempt-store.js';
 import { computeRunDispatchAuthorizationDigest } from '../../ports/execution-dispatch.js';
 import { computeExecutionPermissionsDigest, TRUSTED_PROJECT_PERMISSIONS_READER,
   type ExecutionPermissionsReader } from '../../ports/execution-input-prepare.js';
+import { computePlanningPermissionsDigest } from '../../ports/planning-input-prepare.js';
 import { StorageError } from '../../ports/errors.js';
 import { validateTaskClaimDispatch, type TaskClaimDispatch } from '../../ports/task-claim.js';
+import { resolveApprovedBatchConcurrency } from '../../ports/feature-dispatch.js';
+import { deriveFeatureDispatchResourceSet, normalizeFeatureResourceSet } from '../../ports/feature-resources.js';
+import { validateStableId } from '../../ports/validation.js';
+import { createSqliteFeatureResourceAccess } from './feature-resources.js';
 import { createSqliteExecutionSlotAccess } from './execution-slots.js';
 import { createSqliteTaskDagStore } from './task-dag-store.js';
 import { createSqliteExecutionAccess } from './execution-store.js';
@@ -16,6 +21,12 @@ interface ClaimRow {
   host_instance_id: string; state: string; lease_until: number;
 }
 const operation = 'RunDispatch.attempt';
+/** Admission identity also supports Core-owned repair attempts without a coding Task. */
+export type DispatchAdmissionAttempt = Pick<AttemptRecord,
+  'id' | 'projectId' | 'featureId' | 'runId' | 'owner' | 'hostInstanceId' | 'leaseUntilUtcMs'> & {
+    readonly inputSnapshot: unknown;
+    readonly integrationWorkspaceId?: string;
+  };
 function deny(reason: string): never {
   throw new StorageError('conflict', operation, `Run dispatch rejected: ${reason}`, { details: { reason } });
 }
@@ -26,30 +37,39 @@ export function createSqliteAttemptDispatchAccess(session: SqliteStorageSession,
   readonly permissions?: ExecutionPermissionsReader;
 }) {
   const db = session.database;
-  const slots = createSqliteExecutionSlotAccess(session, { nowUtcMs: options.nowUtcMs });
+  const featureResources = createSqliteFeatureResourceAccess(session, { nowUtcMs: options.nowUtcMs });
   function write() {
     if (!session.isOpen() || !db.inTransaction) throw new TypeError('Attempt dispatch requires an open transaction');
   }
-  function authorized(attempt: AttemptRecord) {
+  function authorized(attempt: DispatchAdmissionAttempt) {
     write();
     const execution = createSqliteExecutionAccess(session, { nowUtcMs: options.nowUtcMs });
     const run = execution.getExecutionRunInTransaction(attempt.projectId, attempt.runId);
     const batch = execution.getExecutionBatchInTransaction(attempt.projectId, run.batchId);
     if (!['queued', 'running'].includes(run.status) || !['queued', 'running'].includes(batch.status)
       || run.pauseRequestedAtUtcMs !== null || batch.pauseRequestedAtUtcMs !== null) deny('run_control_blocked');
+    if (run.projectId !== attempt.projectId || run.featureId !== attempt.featureId || run.batchId !== batch.id) {
+      deny('feature_ownership_mismatch');
+    }
+    const featureIds = batch.scopeSnapshot.featureIds;
+    if (!Array.isArray(featureIds) || !featureIds.includes(attempt.featureId)) deny('feature_outside_batch_scope');
+    const batchBudget = batch.budgetSnapshot.batch;
+    const now = options.nowUtcMs();
+    if (batch.attemptsCreated > batchBudget.maxTotalAttempts || now >= batch.deadlineAtUtcMs
+      || run.attemptsCreated > run.maxAttemptsPerRun) deny('budget_exhausted');
     const intent = execution.getRunDispatchIntentInTransaction(attempt.projectId, attempt.runId);
     if (!intent || intent.featureId !== attempt.featureId || intent.batchId !== batch.id
       || intent.authorizationDigest !== computeRunDispatchAuthorizationDigest({ projectId: run.projectId,
         featureId: run.featureId, batchId: run.batchId, runId: run.id, purpose: run.purpose,
         scopeDigest: run.scopeDigest, workKey: run.workKey, dispatchOrdinal: run.dispatchOrdinal })) deny('dispatch_authorization_changed');
-    return run;
+    return { run, batch };
   }
-  function claim(attempt: AttemptRecord): ClaimRow | undefined {
+  function claim(attempt: DispatchAdmissionAttempt): ClaimRow | undefined {
     return db.prepare<[string, string], ClaimRow>(
       "SELECT id, claim_version, feature_id, owner_id, host_instance_id, state, lease_until FROM run_dispatch_claims WHERE project_id = ? AND run_id = ? AND state IN ('held', 'quarantined')",
     ).get(attempt.projectId, attempt.runId);
   }
-  function held(attempt: AttemptRecord, row: ClaimRow | undefined, now: number): ClaimRow {
+  function held(attempt: DispatchAdmissionAttempt, row: ClaimRow | undefined, now: number): ClaimRow {
     if (!row) return deny('dispatch_ownership_missing');
     if (row.feature_id !== attempt.featureId || row.owner_id !== attempt.owner
       || row.host_instance_id !== attempt.hostInstanceId) deny('dispatch_owner_mismatch');
@@ -57,9 +77,13 @@ export function createSqliteAttemptDispatchAccess(session: SqliteStorageSession,
     return row;
   }
   return {
-    acquireInTransaction(attempt: AttemptRecord, expected?: TaskClaimDispatch,
+    acquireInTransaction(attempt: DispatchAdmissionAttempt, expected?: TaskClaimDispatch,
       previousStoppedAttempt?: AttemptRecord): TaskClaimDispatch {
-      authorized(attempt);
+      const { batch } = authorized(attempt);
+      const slots = createSqliteExecutionSlotAccess(session, {
+        capacity: resolveApprovedBatchConcurrency(batch.configSnapshot),
+        nowUtcMs: options.nowUtcMs,
+      });
       const now = options.nowUtcMs();
       let row = claim(attempt);
       let newGeneration = row === undefined;
@@ -78,6 +102,10 @@ export function createSqliteAttemptDispatchAccess(session: SqliteStorageSession,
         if (!oldSlot) deny('dispatch_slot_not_held');
         slots.releaseInTransaction({ projectId: attempt.projectId, slotId: oldSlot.id, claimId: previous.id,
           claimVersion: previous.claim_version, ownerId: previous.owner_id, hostInstanceId: previous.host_instance_id });
+        // Transfer releases the previous dispatch generation in the same short
+        // transaction as its slot/claim, before the new generation is inserted.
+        featureResources.releaseOwnerInTransaction(attempt.projectId,
+          { ownerId: previous.id, ownerVersion: previous.claim_version });
         db.prepare("UPDATE run_dispatch_claims SET state = 'released', settled_at = ?, revision = revision + 1, updated_at = ? WHERE id = ? AND state = 'held'")
           .run(now, now, previous.id);
         db.prepare(`INSERT INTO run_dispatch_claims (id, created_at, project_id, revision, updated_at,
@@ -125,6 +153,35 @@ export function createSqliteAttemptDispatchAccess(session: SqliteStorageSession,
       }
       const current = held(attempt, row, now);
       if (expected && (expected.claimId !== current.id || expected.claimVersion !== current.claim_version)) deny('stale_dispatch_identity');
+      const dispatchResourceSet = deriveFeatureDispatchResourceSet({
+        projectId: attempt.projectId,
+        featureId: attempt.featureId,
+        purpose: (attempt.inputSnapshot as { purpose?: unknown })?.purpose === 'planning' ? 'plan' : 'code',
+        batch: { scopeSnapshot: batch.scopeSnapshot, configSnapshot: batch.configSnapshot },
+      });
+      const resourceSet = attempt.integrationWorkspaceId === undefined ? dispatchResourceSet : normalizeFeatureResourceSet({
+        projectId: attempt.projectId,
+        resources: [
+          ...dispatchResourceSet.resources.map(({ projectId, kind, key }) => ({ projectId, kind, key })),
+          { projectId: attempt.projectId, kind: 'worktree_write_exclusive',
+            key: `worktree:${validateStableId(attempt.integrationWorkspaceId, { operation }, 'integrationWorkspaceId')}` },
+        ],
+      });
+      // Git public metadata is a short external lock, acquired only around the
+      // concrete Git operation. It must never become a durable SQLite lease held
+      // while a Runner/model/test is active.
+      const leaseResourceSet = {
+        ...resourceSet,
+        resources: resourceSet.resources.filter(resource => resource.leaseMode === 'lease'),
+      };
+      // Feature resources use the Run dispatch generation as their durable owner.
+      // They are acquired inside this same transaction as the Attempt/slot claim;
+      // no external Git, process, model or network operation can be awaited here.
+      featureResources.acquireInTransaction({
+        resourceSet: leaseResourceSet,
+        owner: { ownerId: current.id, ownerVersion: current.claim_version },
+        leaseUntilUtcMs: attempt.leaseUntilUtcMs,
+      });
       const existingSlot = slots.readActive({ projectId: attempt.projectId, runId: attempt.runId });
       if (!newGeneration && !existingSlot && db.prepare(`SELECT r.id FROM task_claim_receipts r JOIN attempts a ON a.id = r.attempt_id
         WHERE a.project_id = ? AND a.run_id = ? LIMIT 1`).get(attempt.projectId, attempt.runId)) deny('dispatch_slot_not_held');
@@ -144,11 +201,26 @@ export function createSqliteAttemptDispatchAccess(session: SqliteStorageSession,
       return { claimId: current.id, claimVersion: current.claim_version, slotId: slot.id };
     },
     assertLaunchInTransaction(attempt: AttemptRecord): void {
-      authorized(attempt);
+      const { run, batch } = authorized(attempt);
+      const slots = createSqliteExecutionSlotAccess(session, {
+        capacity: resolveApprovedBatchConcurrency(batch.configSnapshot),
+        nowUtcMs: options.nowUtcMs,
+      });
       const now = options.nowUtcMs();
-      const eligibility = evaluateTaskDag(createSqliteTaskDagStore(session).readTaskDagView(attempt.projectId, attempt.runId), now);
-      if (eligibility.reason !== 'resource_busy'
-        || eligibility.tasks.find(task => task.taskId === attempt.taskId)?.reason !== 'resource_busy') deny(eligibility.reason);
+      // P05-1 / F-007：planning Attempt 不在编码 DAG（计划成员仅 coding），启动
+      // 围栏按 Run purpose 与 planning Task 行级事实重核；其余派发/槽位/回执
+      // 身份检查与编码共用（authorized 已重核 Run/Batch 控制与派发意图）。
+      if (isPlanningAttemptSnapshot(attempt.inputSnapshot)) {
+        if (run.purpose !== 'plan') deny('run_purpose_mismatch');
+        const planningTask = db.prepare<[string], { kind: string; status: string; execution_version: number }>(
+          'SELECT kind, status, execution_version FROM tasks WHERE id = ?').get(attempt.taskId);
+        if (!planningTask || planningTask.kind !== 'planning' || planningTask.status !== 'running'
+          || planningTask.execution_version !== attempt.executionVersion) deny('stale_task');
+      } else {
+        const eligibility = evaluateTaskDag(createSqliteTaskDagStore(session).readTaskDagView(attempt.projectId, attempt.runId), now);
+        if (eligibility.reason !== 'resource_busy'
+          || eligibility.tasks.find(task => task.taskId === attempt.taskId)?.reason !== 'resource_busy') deny(eligibility.reason);
+      }
       const row = held(attempt, claim(attempt), now);
       const receipt = db.prepare<[string, string], { receipt: string }>(
         'SELECT receipt FROM task_claim_receipts WHERE project_id = ? AND attempt_id = ?',
@@ -167,7 +239,11 @@ export function createSqliteAttemptDispatchAccess(session: SqliteStorageSession,
         || slot.featureId !== attempt.featureId) deny('dispatch_slot_not_held');
       const face = (options.permissions ?? TRUSTED_PROJECT_PERMISSIONS_READER)({ projectId: attempt.projectId,
         featureId: attempt.featureId, taskId: attempt.taskId });
-      if (computeExecutionPermissionsDigest(face.grants) !== attempt.inputSnapshot.digests.permissionsDigest) deny('permissions_changed');
+      // P05-1 / F-007：planning 快照权限面为规划摘要域（与编码域不同源）。
+      const permissionsDigest = isPlanningAttemptSnapshot(attempt.inputSnapshot)
+        ? computePlanningPermissionsDigest(face.grants)
+        : computeExecutionPermissionsDigest(face.grants);
+      if (permissionsDigest !== attempt.inputSnapshot.digests.permissionsDigest) deny('permissions_changed');
     },
   };
 }

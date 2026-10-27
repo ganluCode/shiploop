@@ -44,6 +44,8 @@ import type {
 
 const PROJECT_ID = randomUUID();
 const FEATURE_ID = randomUUID();
+const FEATURE_ID_2 = randomUUID();
+const PHASE_ID = randomUUID();
 const BATCH_ID = randomUUID();
 const COMMAND_ID = randomUUID();
 const DIGEST = 'a'.repeat(64);
@@ -137,7 +139,7 @@ describe('F-012 执行授权命令面（execution preview/start/budget/revise）
     expect([...APP_CLI_COMMANDS]).not.toContain('work');
     for (const id of APP_CLI_COMMAND_IDS) {
       expect(id).toMatch(
-        /^(project|config|receipt|events|baseline|phase|feature|task|execution|workspace|git)\.[a-z-]+$/,
+        /^(project|config|receipt|events|baseline|phase|feature|task|planning|execution|workspace|git)\.[a-z-]+$/,
       );
     }
   });
@@ -160,6 +162,60 @@ describe('F-012 执行授权命令面（execution preview/start/budget/revise）
     });
   });
 
+  it('execution preview：支持 Phase 或重复 Feature 选择，旧单 Feature 位置参数保持兼容', () => {
+    const phase = parseAppCliArgs([
+      'execution', 'preview', '--phase', PHASE_ID,
+      '--project', PROJECT_ID, '--input', 'budget.json',
+    ]);
+    expect(phase).toMatchObject({
+      commandId: 'execution.preview',
+      phaseId: PHASE_ID,
+      featureIds: [],
+    });
+
+    const features = parseAppCliArgs([
+      'execution', 'preview', '--feature', FEATURE_ID, '--feature', FEATURE_ID_2,
+      '--project', PROJECT_ID, '--input', 'budget.json',
+    ]);
+    expect(features).toMatchObject({
+      commandId: 'execution.preview',
+      featureIds: [FEATURE_ID, FEATURE_ID_2],
+    });
+
+    const legacy = parseAppCliArgs([
+      'execution', 'preview', FEATURE_ID,
+      '--project', PROJECT_ID, '--input', 'budget.json',
+    ]);
+    expect(legacy).toMatchObject({ featureId: FEATURE_ID, featureIds: [FEATURE_ID] });
+  });
+
+  it('execution 选择器：Phase/Feature 互斥，空选择和重复选择在发送前拒绝', () => {
+    expectParseError(
+      ['execution', 'preview', '--phase', PHASE_ID, '--feature', FEATURE_ID, '--project', PROJECT_ID, '--input', 'budget.json'],
+      'scope_conflict',
+    );
+    expectParseError(
+      ['execution', 'preview', '--project', PROJECT_ID, '--input', 'budget.json'],
+      'missing_required_option',
+      'scope',
+    );
+    expectParseError(
+      ['execution', 'preview', '--feature', FEATURE_ID, '--feature', FEATURE_ID, '--project', PROJECT_ID, '--input', 'budget.json'],
+      'duplicate_scope_selector',
+    );
+  });
+
+  it('execution start：Feature 集合映射到固定授权范围', () => {
+    const parsed = parseAppCliArgs([
+      'execution', 'start', '--feature', FEATURE_ID, '--feature', FEATURE_ID_2,
+      '--project', PROJECT_ID, '--input', 'budget.json', '--preview-digest', DIGEST, '--confirm',
+    ]);
+    expect(parsed).toMatchObject({
+      commandId: 'execution.start',
+      featureIds: [FEATURE_ID, FEATURE_ID_2],
+      confirm: true,
+    });
+  });
   it('execution start：明确确认 + previewDigest 的新授权形态可得', () => {
     const parsed = parseAppCliArgs([
       'execution', 'start', FEATURE_ID,
