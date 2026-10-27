@@ -4,6 +4,9 @@
  * 服务端仍负责授权和业务语义，客户端校验不能替代服务端校验。
  */
 export * from './ports/batch-delivery-commands.js';
+export * from './ports/knowledge-query.js';
+export * from './ports/memory-query.js';
+export * from './ports/knowledge-query-wire.js';
 export {
   isIsoUtcDateTime, isUuidV4, isValidResultRef, validateCommandEnvelope,
   isPublicError, publicErrorHttpStatus, validateCommandEnvelopeFields, WORK_TOOL_OPERATION_SPECS,

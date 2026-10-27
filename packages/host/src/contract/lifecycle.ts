@@ -10,6 +10,7 @@
  * P02-2 / F-011 起 capabilities 按 §11.3 宣告真实接线的应用命令与查询；
  * F-012 起 events 宣告结构化 SSE 能力（transport/route/scopes 冻结）。
  */
+import { KNOWLEDGE_QUERY_OPERATIONS, type KnowledgeQueryOperation } from 'shiploop-core/protocol';
 import {
   ACTIVITY_SCOPE_IDLE_ONLY,
   EVENTS_ROUTE,
@@ -265,11 +266,11 @@ export const FEATURE_DELIVERY_COMMAND_CAPABILITIES = ['feature.verification.cont
 
 /** Additive v5 capability pair: production defaults stay honest without adapters. */
 export const BATCH_DELIVERY_COMMAND_CAPABILITIES = ['execution.batch.finalize', 'phase.delivery.approve'] as const;
-export function hostCapabilitiesForDelivery(available: boolean, batchDeliveryAvailable = false, batchQueryAvailable = false): HostCapabilities {
-  if (!available && !batchDeliveryAvailable && !batchQueryAvailable) return CURRENT_HOST_CAPABILITIES;
+export function hostCapabilitiesForDelivery(available: boolean, batchDeliveryAvailable = false, batchQueryAvailable = false, knowledgeQueries: readonly KnowledgeQueryOperation[] = []): HostCapabilities {
+  if (!available && !batchDeliveryAvailable && !batchQueryAvailable && knowledgeQueries.length === 0) return CURRENT_HOST_CAPABILITIES;
   return deepFreeze({ ...CURRENT_HOST_CAPABILITIES, application: {
     ...CURRENT_HOST_CAPABILITIES.application,
-    queries: APPLICATION_QUERY_CAPABILITIES.filter(query => batchQueryAvailable || query !== 'execution.batch.delivery.get'),
+    queries: [...APPLICATION_QUERY_CAPABILITIES.filter(query => batchQueryAvailable || query !== 'execution.batch.delivery.get'), ...KNOWLEDGE_QUERY_OPERATIONS.filter(query => knowledgeQueries.includes(query))],
     commands: APPLICATION_COMMAND_CAPABILITIES.filter(command =>
       (available || !(FEATURE_DELIVERY_COMMAND_CAPABILITIES as readonly string[]).includes(command)) &&
       (batchDeliveryAvailable || !(BATCH_DELIVERY_COMMAND_CAPABILITIES as readonly string[]).includes(command))),

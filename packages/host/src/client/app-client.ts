@@ -26,8 +26,9 @@
  *
  * import 本模块无副作用：不发起网络、不读文件系统/argv/env。
  */
-import { randomUUID } from 'node:crypto';
-import type { ProjectProfileQueryResult, ProjectProfileMatchQueryResult } from 'shiploop-core/protocol';
+import { createHash, randomUUID } from 'node:crypto';
+import type { ProjectProfileQueryResult, ProjectProfileMatchQueryResult, KnowledgeSearchInput, KnowledgeReadInput, MemorySearchInput, KnowledgeSearchResultSet, KnowledgeReadResult, MemorySearchResultSet } from 'shiploop-core/protocol';
+import { validateKnowledgeSearchInput, validateKnowledgeReadInput, validateMemorySearchInput, MAX_KNOWLEDGE_SEARCH_RESPONSE_BYTES, MAX_KNOWLEDGE_READ_RESPONSE_BYTES } from 'shiploop-core/protocol';
 
 import { request as httpRequest, type ClientRequest, type IncomingMessage } from 'node:http';
 import {
@@ -696,6 +697,9 @@ export interface ApprovePhaseDeliveryInput extends FinalizeBatchInput {
 
 /** HostClient 应用面方法集（connectToHost 返回对象的一部分）。 */
 export interface HostClientApplication {
+  searchKnowledge(projectId: string, input: KnowledgeSearchInput): Promise<KnowledgeSearchResultSet>;
+  readKnowledge(projectId: string, input: Omit<KnowledgeReadInput, 'projectId'>): Promise<KnowledgeReadResult>;
+  searchMemories(projectId: string, input: MemorySearchInput): Promise<MemorySearchResultSet>;
   finalizeBatch(input: FinalizeBatchInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
   approvePhaseDelivery(input: ApprovePhaseDeliveryInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
   getBatchDelivery(projectId: string, batchId: string, input?: PlanListPageInput): Promise<PublicBatchDeliveryResult>;
@@ -1947,7 +1951,9 @@ export function createHostClientApplication(context: AppClientContext): HostClie
       token,
       connectTimeoutMs: context.connectMs,
       overallTimeoutMs: requestBudget(),
-      maxResponseBytes: operation === 'execution.session.evidence.get' || operation === 'execution.recording.body.get' ? MAX_WORK_SESSION_EVIDENCE_RESPONSE_BYTES
+      maxResponseBytes: operation === 'knowledge.read' ? MAX_KNOWLEDGE_READ_RESPONSE_BYTES
+        : operation === 'knowledge.search' || operation === 'memory.search' ? MAX_KNOWLEDGE_SEARCH_RESPONSE_BYTES
+        : operation === 'execution.session.evidence.get' || operation === 'execution.recording.body.get' ? MAX_WORK_SESSION_EVIDENCE_RESPONSE_BYTES
         : operation === 'features.report.get' ? MAX_FEATURE_REPORT_RESPONSE_BYTES : MAX_APP_BODY_BYTES,
     });
     if (response.statusCode !== 200) {
@@ -2557,7 +2563,65 @@ export function createHostClientApplication(context: AppClientContext): HostClie
     return receipt;
   }
 
+  function knowledgeInput(operation: 'knowledge.search', input: unknown): ReturnType<typeof validateKnowledgeSearchInput>;
+  function knowledgeInput(operation: 'knowledge.read', input: unknown): ReturnType<typeof validateKnowledgeReadInput>;
+  function knowledgeInput(operation: 'memory.search', input: unknown): ReturnType<typeof validateMemorySearchInput>;
+  function knowledgeInput(operation: 'knowledge.search' | 'knowledge.read' | 'memory.search', input: unknown) {
+    try {
+      return operation === 'knowledge.search' ? validateKnowledgeSearchInput(input)
+        : operation === 'knowledge.read' ? validateKnowledgeReadInput(input) : validateMemorySearchInput(input);
+    } catch { throw invalidInput(operation, 'invalid_knowledge_query'); }
+  }
+
+  function assertKnowledgeBinding(operation: 'knowledge.search' | 'knowledge.read' | 'memory.search', expected: object, result: { query: object; budget: object }) {
+    const input = expected as Record<string, unknown>;
+    for (const [key, value] of Object.entries(result.query)) {
+      if (operation === 'knowledge.read' && key === 'version' && input.version === undefined) continue;
+      if (value !== (input[key] ?? null)) throw new HostProtocolError('response_malformed', operation, '知识查询条件不一致');
+    }
+    for (const [key, value] of Object.entries(result.budget)) {
+      if (Object.hasOwn(input, key) && value !== input[key]) throw new HostProtocolError('response_malformed', operation, '知识查询预算不一致');
+    }
+  }
+
+  function knowledgePath(projectId: string, route: string, input: object) {
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(input)) if (value !== undefined) query.set(key, String(value));
+    return `${PROJECTS_ROUTE}/${projectId}/${route}?${query}`;
+  }
+
   return {
+    async searchKnowledge(projectId, input) {
+      const op = 'knowledge.search';
+      context.assertOpen(op);
+      const id = requireProjectId(op, projectId);
+      const parsed = knowledgeInput(op, input);
+      const result = validateAppQueryResponse(op, await getJson(op, knowledgePath(id, 'knowledge/search', parsed)));
+      assertKnowledgeBinding(op, parsed, result);
+      if (result.projectId !== id || (parsed.documentId !== undefined && result.results.some(r => r.documentId !== parsed.documentId || (parsed.version !== undefined && r.version !== parsed.version)))) throw new HostProtocolError('response_malformed', op, '知识查询归属不一致');
+      return result;
+    },
+    async readKnowledge(projectId, input) {
+      const op = 'knowledge.read';
+      context.assertOpen(op);
+      const id = requireProjectId(op, projectId);
+      const parsed = knowledgeInput(op, input);
+      const result = validateAppQueryResponse(op, await getJson(op, knowledgePath(id, 'knowledge/read', parsed)));
+      assertKnowledgeBinding(op, parsed, result);
+      if (result.projectId !== id || result.documentId !== parsed.documentId || (parsed.version !== undefined && result.version !== parsed.version)) throw new HostProtocolError('response_malformed', op, '知识查询归属不一致');
+      if (createHash('sha256').update(result.contentText).digest('hex') !== result.contentHash) throw new HostProtocolError('response_malformed', op, '知识正文摘要不一致');
+      return result;
+    },
+    async searchMemories(projectId, input) {
+      const op = 'memory.search';
+      context.assertOpen(op);
+      const id = requireProjectId(op, projectId);
+      const parsed = knowledgeInput(op, input);
+      const result = validateAppQueryResponse(op, await getJson(op, knowledgePath(id, 'memory/search', parsed)));
+      assertKnowledgeBinding(op, parsed, result);
+      if (result.projectId !== id || (parsed.recordKey !== undefined && result.results.some(r => r.recordKey !== parsed.recordKey || (parsed.version !== undefined && r.version !== parsed.version)))) throw new HostProtocolError('response_malformed', op, '记忆查询归属不一致');
+      return result;
+    },
     submitCommand,
     updatePhaseMetadata: (input, options) => mutatePhase('phase.metadata.update', input, options),
     closePhase: (input, options) => mutatePhase('phase.close', input, options),

@@ -10,6 +10,7 @@
  * 客户端侧响应校验对假服务零容忍：身份/根必须与预期一致，能力声明必须等于
  * 冻结能力集（P02-2 §11.3 结构化视图），任何伪造或畸形都拒绝（不发送后续业务请求）。
  */
+import { KNOWLEDGE_QUERY_OPERATIONS } from 'shiploop-core/protocol';
 import {
   CURRENT_PROTOCOL_VERSION,
   CURRENT_SCHEMA_VERSION,
@@ -258,7 +259,8 @@ function validateCapabilities(input: unknown): HostCapabilities {
     surface,
     'capabilities.application.queries',
     application.queries,
-    hostCapabilitiesForDelivery(false, false, Array.isArray(application.queries) && application.queries.includes('execution.batch.delivery.get')).application.queries,
+    hostCapabilitiesForDelivery(false, false, Array.isArray(application.queries) && application.queries.includes('execution.batch.delivery.get'),
+      KNOWLEDGE_QUERY_OPERATIONS.filter(query => Array.isArray(application.queries) && application.queries.includes(query))).application.queries,
   );
   if (Array.isArray(application.commands) && BATCH_DELIVERY_COMMAND_CAPABILITIES.some(command => (application.commands as unknown[]).includes(command))
     && (!Array.isArray(application.queries) || !application.queries.includes('execution.batch.delivery.get'))) {

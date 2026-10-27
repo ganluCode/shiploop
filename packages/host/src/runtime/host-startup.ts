@@ -518,6 +518,8 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
         // P02-3 / F-014（§3.2/§7.4-§7.6）：基线查询与 baseline.run 执行编排接线
         //（与握手能力清单一致，不宣告未接线接口）。
         baselineQueryService: locked.writer.baselineQueryService,
+        knowledgeQueryService: locked.writer.knowledgeQueryService,
+        memoryQueryService: locked.writer.memoryQueryService,
         baselineExecutionService: locked.writer.baselineExecutionService,
         // P05-1 / F-012：规划上下文/候选只读查询接线（与握手能力清单一致；
         // 授权/可见性/候选正文完整性全部在 Core 复核）。

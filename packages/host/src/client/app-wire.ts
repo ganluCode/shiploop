@@ -16,7 +16,9 @@
  * - 本模块只做结构校验：无 I/O、不读时钟、不导入 node:http/net/fs；错误为
  *   HostProtocolError，details 只含受控 reason，不回显响应原文或秘密。
  */
-import { validateBatchDeliveryCommandResult } from 'shiploop-core/protocol';
+import { validateBatchDeliveryCommandResult, validateKnowledgeQueryResponse } from 'shiploop-core/protocol';
+import type { KnowledgeSearchResultSet, KnowledgeReadResult, MemorySearchResultSet } from 'shiploop-core/protocol';
+export type { KnowledgeSearchInput, KnowledgeReadInput, MemorySearchInput, KnowledgeSearchResultSet, KnowledgeReadResult, MemorySearchResultSet } from 'shiploop-core/protocol';
 import { BATCH_DELIVERY_STATUSES, isBatchDeliveryPublicSummary } from 'shiploop-core/protocol';
 import type { PublicBatchDeliveryResult } from 'shiploop-core/protocol';
 export type { PublicBatchDeliveryResult } from 'shiploop-core/protocol';
@@ -287,6 +289,7 @@ export type {
 
 /** §11.3 查询能力清单（回执/结果读取经 validateCommandReceiptWire，不在本类型内）。 */
 export type AppQueryOperation =
+  | 'knowledge.search' | 'knowledge.read' | 'memory.search'
   | 'execution.sessions.list'
   | 'execution.session.get'
   | 'execution.session.evidence.get'
@@ -6937,7 +6940,10 @@ export function validateAppQueryResponse(
   body: unknown,
   expectation?: SnapshotExpectation,
 ): IntegrationPlanQueryResult;
-// P03-8 / F-010：Feature 分轴结果查询响应重载。
+// P06-2：知识与记忆查询复用 Core 的同一线协议校验器。
+export function validateAppQueryResponse(operation: 'knowledge.search', body: unknown): KnowledgeSearchResultSet;
+export function validateAppQueryResponse(operation: 'knowledge.read', body: unknown): KnowledgeReadResult;
+export function validateAppQueryResponse(operation: 'memory.search', body: unknown): MemorySearchResultSet;
 export function validateAppQueryResponse(operation: 'features.report.get', body: unknown, expectation?: SnapshotExpectation): FeatureExecutionReport;
 export function validateAppQueryResponse(
   operation: 'features.delivery.get',
@@ -7041,6 +7047,12 @@ export function validateAppQueryResponse(
   expectation?: SnapshotExpectation,
 ): unknown {
   switch (operation) {
+    case 'knowledge.search':
+    case 'knowledge.read':
+    case 'memory.search':
+      if (isPlainObject(body) && body.schemaVersion !== 1) throw new HostProtocolError('unsupported_schema_version', operation, '知识查询响应版本不受支持');
+      try { return validateKnowledgeQueryResponse(operation, body); }
+      catch { throw new HostProtocolError('response_malformed', operation, '知识查询响应无效'); }
     case 'execution.sessions.list': return validateWorkSessionListWire(body);
     case 'execution.session.get': return validateWorkSessionDetailWire(body);
     case 'execution.session.evidence.get': return validateWorkSessionEvidenceWire(body);

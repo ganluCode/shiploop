@@ -87,7 +87,7 @@ function context(operation: string, projectId?: string, type: 'document' | 'docu
   };
 }
 
-function requireOwnedArtifactRef(
+export function requireOwnedArtifactRef(
   value: unknown,
   projectId: string,
   operation: string,
@@ -109,7 +109,7 @@ function requireOwnedArtifactRef(
   };
 }
 
-function requireSourceRefs(value: unknown, projectId: string, operation: string, field: string): KnowledgeSourceRef[] {
+export function requireSourceRefs(value: unknown, projectId: string, operation: string, field: string): KnowledgeSourceRef[] {
   const ctx = context(operation, projectId);
   if (!Array.isArray(value)) throw validationError(ctx, field, '必须是数组', value);
   return value.map((item, index) => {

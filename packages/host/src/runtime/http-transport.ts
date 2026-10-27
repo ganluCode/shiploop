@@ -144,7 +144,11 @@ function buildHandshakeResponse(context: HostLifecycleContext): HandshakeRespons
     dataRootIdentity: context.dataRootIdentity,
     lifecycleState: context.getLifecycleState(),
     startedAt: context.startedAt,
-    capabilities: hostCapabilitiesForDelivery(context.featureDeliveryAvailable === true, context.application?.commandService.batchDeliveryAvailable === true, context.application?.queryService.batchDeliveryAvailable === true && typeof context.application.queryService.getBatchDelivery === 'function'),
+    capabilities: hostCapabilitiesForDelivery(context.featureDeliveryAvailable === true, context.application?.commandService.batchDeliveryAvailable === true, context.application?.queryService.batchDeliveryAvailable === true && typeof context.application.queryService.getBatchDelivery === 'function', [
+      ...(typeof context.application?.knowledgeQueryService?.search === 'function' ? ['knowledge.search' as const] : []),
+      ...(typeof context.application?.knowledgeQueryService?.read === 'function' ? ['knowledge.read' as const] : []),
+      ...(typeof context.application?.memoryQueryService?.search === 'function' ? ['memory.search' as const] : []),
+    ]),
   };
 }
 

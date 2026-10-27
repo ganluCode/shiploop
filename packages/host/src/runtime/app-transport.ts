@@ -33,6 +33,7 @@
  * import 本模块无副作用：不监听端口、不读文件系统、不读 argv/env。
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { validateKnowledgeQueryResponse, MAX_KNOWLEDGE_SEARCH_RESPONSE_BYTES, MAX_KNOWLEDGE_READ_RESPONSE_BYTES } from 'shiploop-core/protocol';
 import {
   isPublicError,
   PublicError as CorePublicError,
@@ -122,6 +123,7 @@ import type { HostWorkToolAuthentication } from './work-tool-access.js';
 
 /** 应用操作身份字面量（与 §3.2 路由总表一一对应；错误体 operation）。 */
 export type ApplicationOperation =
+  | 'knowledge.search' | 'knowledge.read' | 'memory.search'
   | 'work.tools.invoke'
   | 'execution.sessions.list'
   | 'execution.session.get'
@@ -223,6 +225,8 @@ export interface ResolvedAppRoute {
 export interface HostApplicationContext {
   /** Instance-local restricted credentials; never authenticate against the owner token. */
   readonly workTools?: HostWorkToolAuthentication;
+  readonly knowledgeQueryService?: Partial<Pick<import('shiploop-core').KnowledgeQueryService, 'search' | 'read'>>;
+  readonly memoryQueryService?: Pick<import('shiploop-core').MemoryQueryService, 'search'>;
   readonly principal: TrustedPrincipal;
   readonly commandService: CommandService;
   readonly queryService: QueryService;
@@ -647,6 +651,12 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
           method: 'GET',
           pathParam: { name: 'projectId', value: projectId },
         };
+      case 'knowledge/search':
+        return { operation: 'knowledge.search', method: 'GET', pathParam: { name: 'projectId', value: projectId } };
+      case 'knowledge/read':
+        return { operation: 'knowledge.read', method: 'GET', pathParam: { name: 'projectId', value: projectId } };
+      case 'memory/search':
+        return { operation: 'memory.search', method: 'GET', pathParam: { name: 'projectId', value: projectId } };
       case 'profile':
         return { operation: 'projects.profile.get', method: 'GET', pathParam: { name: 'projectId', value: projectId } };
       case 'profile/match':
@@ -774,6 +784,9 @@ interface QuerySpec {
 }
 
 const QUERY_SPECS: Readonly<Partial<Record<ApplicationOperation, QuerySpec>>> = Object.freeze({
+  'knowledge.search': { allowed: ['documentId', 'version', 'keyword', 'title', 'path', 'limit', 'snippetMaxChars', 'maxReadBytes', 'maxCandidates'], repeatable: [] },
+  'knowledge.read': { allowed: ['documentId', 'version', 'maxReadBytes'], repeatable: [] },
+  'memory.search': { allowed: ['keyword', 'recordKey', 'scope', 'version', 'limit', 'snippetMaxChars', 'maxReadBytes', 'maxCandidates'], repeatable: [] },
   'execution.budget.get': Object.freeze({ allowed: ['projectId'], repeatable: [] }),
   'execution.budget.revisions': Object.freeze({ allowed: ['projectId', 'limit', 'cursor'], repeatable: [] }),
   // P03-4 / F-008：调度/审计查询参数白名单（取值规则由 Core 单一权威复核）。
@@ -1182,6 +1195,35 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
       result = await app.onboardingService.inspectRepository(app.principal, repositoryPath);
       break;
     }
+    case 'knowledge.search':
+    case 'knowledge.read':
+    case 'memory.search': {
+      const input: Record<string, unknown> = {};
+      for (const [key, value] of params) {
+        if (['version', 'limit', 'snippetMaxChars', 'maxReadBytes', 'maxCandidates'].includes(key)) {
+          if (!/^[1-9]\d{0,8}$/.test(value)) reject(400, 'invalid_input', operation, '查询预算或版本必须为正整数');
+          input[key] = Number(value);
+        } else input[key] = value;
+      }
+      const projectId = pathParam!.value;
+      if (operation === 'knowledge.search') {
+        if (typeof app.knowledgeQueryService?.search !== 'function') reject(501, 'unsupported', operation, '知识检索未装配');
+        result = await app.knowledgeQueryService.search(app.principal, projectId, input);
+      } else if (operation === 'knowledge.read') {
+        if (typeof app.knowledgeQueryService?.read !== 'function') reject(501, 'unsupported', operation, '知识读取未装配');
+        const { documentId, version, ...options } = input;
+        result = await app.knowledgeQueryService.read(app.principal, projectId, documentId as string, version as number | undefined, options);
+      } else {
+        if (typeof app.memoryQueryService?.search !== 'function') reject(501, 'unsupported', operation, '记忆检索未装配');
+        result = await app.memoryQueryService.search(app.principal, projectId, input);
+      }
+      try {
+        const checked = validateKnowledgeQueryResponse(operation, result);
+        if (checked.projectId !== projectId) throw new Error('query_scope_mismatch');
+      }
+      catch { reject(500, 'internal', operation, '知识查询响应未通过契约校验'); }
+      break;
+    }
     case 'projects.profile.get':
       if (app.projectProfileService === undefined) reject(501, 'unsupported', operation, 'Profile 查询未在本装配中启用', { reason: 'profile_unsupported' });
       result = app.projectProfileService.getQuery(app.principal, pathParam?.value);
@@ -1543,7 +1585,9 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
       throw new TypeError(`应用路由未接线：${operation}`);
   }
   sendBoundedJson(response, 200, result,
-    operation === 'execution.session.evidence.get' || operation === 'execution.recording.body.get' ? MAX_WORK_SESSION_EVIDENCE_RESPONSE_BYTES
+    operation === 'knowledge.read' ? MAX_KNOWLEDGE_READ_RESPONSE_BYTES
+      : operation === 'knowledge.search' || operation === 'memory.search' ? MAX_KNOWLEDGE_SEARCH_RESPONSE_BYTES
+      : operation === 'execution.session.evidence.get' || operation === 'execution.recording.body.get' ? MAX_WORK_SESSION_EVIDENCE_RESPONSE_BYTES
       : operation === 'features.report.get' ? MAX_FEATURE_REPORT_RESPONSE_BYTES : MAX_APP_BODY_BYTES, operation);
 }
 
