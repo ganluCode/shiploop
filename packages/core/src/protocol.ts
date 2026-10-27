@@ -114,6 +114,7 @@ export {
   STATE_EVENT_TYPE_SPECS,
 } from './ports/events.js';
 export type { PublicStateEvent, PublicStateEventType } from './ports/events.js';
+export { validateProfileAuditPayload } from './ports/project-profile-store.js';
 export {
   SETTINGS_SCHEMA_VERSION, SETTINGS_EXPORT_FORMAT_VERSION, validateSettingsPayload,
 } from './ports/settings-schema.js';

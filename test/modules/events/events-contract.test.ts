@@ -138,6 +138,7 @@ describe('F-003 冻结事件封套版本与 §9.2 事件白名单（P02-2 六类
 
   it('白名单冻结为六类 + 五类基线事件 + 七类计划事件 + 执行域事件且与既有事件常量同源', () => {
     expect([...PUBLIC_STATE_EVENT_TYPES]).toEqual([
+      'project_profile.confirmed', 'project_profile.modified', 'project_profile.rejected',
       'project.registered',
       PROJECT_METADATA_UPDATED_EVENT_TYPE,
       SETTINGS_GLOBAL_CREATED_EVENT_TYPE,

@@ -74,6 +74,7 @@ export const PROJECT_SETTINGS_CREATED_EVENT_TYPE = 'settings.project_created';
  * 无需重建审计表；写入方仍由本契约限定取值。
  */
 export type StateEventAggregateType =
+  | 'project_profile'
   | 'project'
   | 'global_settings'
   | 'project_settings'

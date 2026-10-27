@@ -197,6 +197,7 @@ export * from './application/query-service.js';
 export * from './ports/planning-query.js';
 export * from './application/planning-query.js';
 export * from './application/onboarding-service.js';
+export * from './application/project-profile-service.js';
 export * from './application/baseline-service.js';
 export * from './application/baseline-process-stop.js';
 export * from './application/baseline-evidence.js';

@@ -29,6 +29,7 @@
 import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { isUuidV4, PublicError } from './commands.js';
+import { PROJECT_PROFILE_AUDIT_TYPES, validateProfileAuditPayload } from './project-profile-store.js';
 import {
   BASELINE_CHECK_STATUSES,
   BASELINE_CHECKS_MAX,
@@ -124,6 +125,7 @@ export const GIT_OPERATION_SETTLED_EVENT_TYPE = 'git.operation.settled';
 
 /** §9.2 P02-2 事件类型白名单（顺序即冻结顺序；白名单外不得出现在公开流中）。 */
 export const PUBLIC_STATE_EVENT_TYPES = [
+  ...PROJECT_PROFILE_AUDIT_TYPES,
   PROJECT_REGISTERED_EVENT_TYPE,
   PROJECT_METADATA_UPDATED_EVENT_TYPE,
   SETTINGS_GLOBAL_CREATED_EVENT_TYPE,
@@ -200,6 +202,7 @@ export const PUBLIC_STATE_EVENT_TYPES = [
 export type PublicStateEventType = (typeof PUBLIC_STATE_EVENT_TYPES)[number];
 
 type EventPayloadKind =
+  | 'projectProfile'
   | 'registered'
   | 'changedFields'
   | 'settingsSummary'
@@ -290,6 +293,9 @@ export interface StateEventTypeSpec {
 export const STATE_EVENT_TYPE_SPECS: Readonly<
   Record<PublicStateEventType, StateEventTypeSpec>
 > = Object.freeze({
+  'project_profile.confirmed': { aggregateType: 'project_profile', scopeKind: 'project', payloadKind: 'projectProfile' },
+  'project_profile.modified': { aggregateType: 'project_profile', scopeKind: 'project', payloadKind: 'projectProfile' },
+  'project_profile.rejected': { aggregateType: 'project_profile', scopeKind: 'project', payloadKind: 'projectProfile' },
   [PROJECT_REGISTERED_EVENT_TYPE]: Object.freeze({
     aggregateType: 'project',
     scopeKind: 'project',
@@ -1065,6 +1071,10 @@ export function mapStateEvent(row: unknown, operation: string = EVENT_READ_OPERA
     exactPayloadKeys(operation, row.payload, [key]);
     if (row.payload[key] !== true) corrupt(operation, 'event_payload_violation');
     payload = { [key]: true };
+  } else if (spec.payloadKind === 'projectProfile') {
+    try { payload = { ...validateProfileAuditPayload(row.payload) }; }
+    catch { corrupt(operation, 'event_payload_violation'); }
+    if (row.eventType !== `project_profile.${payload.action}` || row.aggregateRevision !== payload.version) corrupt(operation, 'event_payload_violation');
   } else if (spec.payloadKind === 'featurePhaseMoved') {
     exactPayloadKeys(operation, row.payload, ['phaseMoved']);
     if (row.payload.phaseMoved !== true) corrupt(operation, 'event_payload_violation');

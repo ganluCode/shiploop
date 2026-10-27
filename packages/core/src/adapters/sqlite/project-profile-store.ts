@@ -5,6 +5,7 @@ import {
   validateCapabilityModule,
   validateDetectionEvidence,
   validateProjectProfile,
+  validateProfileModuleSelection,
   type CapabilityModule,
   type DetectionEvidence,
   type ProjectProfile,
@@ -13,7 +14,9 @@ import {
   computeCapabilityModuleDigest,
   type PersistedCapabilityModule,
   type PersistedProjectProfile,
+  validateProfileAuditPayload,
   type ProjectProfileStore,
+  type ProjectProfileUpdateInput,
 } from '../../ports/project-profile-store.js';
 import {
   rejectUnknownKeys,
@@ -39,7 +42,6 @@ type ProfileRow = {
 };
 
 const OPERATION = 'ProjectProfileStore';
-const PROFILE_STATUSES = ['candidate', 'confirmed', 'rejected', 'manual_configuration_required'] as const;
 
 function entity(type: 'project' | 'capability_module' | 'project_profile', projectId: string, id?: string) {
   return { type, projectId, ...(id === undefined ? {} : { id }) } as const;
@@ -132,6 +134,34 @@ function parseProfileInput(raw: unknown): { profile: ProjectProfile; evidence: r
     if (!ids.has(ref)) fail('validation', operation, '画像引用了未提供的检测证据', entity('project_profile', profile.projectId), { reason: 'missing_detection_evidence', ref });
   }
   return { profile, evidence };
+}
+
+function parseProfileUpdateInput(raw: ProjectProfileUpdateInput): {
+  expectedRevision: number;
+  profile: ProjectProfile;
+  evidence: readonly DetectionEvidence[] | undefined;
+  action: ProjectProfileUpdateInput['action'];
+  actorId: string;
+} {
+  const operation = `${OPERATION}.updateProjectProfile`;
+  const object = requirePlainObject(raw, context(operation), 'input');
+  rejectUnknownKeys(object, ['expectedRevision', 'profile', 'evidence', 'action', 'actorId'], context(operation), 'input');
+  const expectedRevision = validatePositiveInteger(object.expectedRevision, context(operation), 'expectedRevision');
+  if (!Number.isSafeInteger(expectedRevision) || expectedRevision >= Number.MAX_SAFE_INTEGER) fail('validation', operation, 'revision 超出安全范围');
+  const profile = validateProjectProfile(raw.profile);
+  const actorId = validateStableId(raw.actorId, context(operation), 'actorId');
+  if (!['confirmed', 'modified', 'rejected'].includes(raw.action)) {
+    fail('validation', operation, '画像操作类型无效', entity('project_profile', profile.projectId));
+  }
+  if (raw.evidence !== undefined && !Array.isArray(raw.evidence)) {
+    fail('validation', operation, 'evidence 必须是数组', entity('project_profile', profile.projectId));
+  }
+  const evidence = raw.evidence?.map((item) => validateDetectionEvidence(item));
+  const expectedStatus = raw.action === 'rejected' ? 'rejected' : 'confirmed';
+  if (profile.status !== expectedStatus || (expectedStatus === 'confirmed' && profile.confirmedBy !== actorId)) {
+    fail('validation', operation, '画像状态或确认身份与操作不匹配');
+  }
+  return { expectedRevision, profile, evidence, action: raw.action, actorId };
 }
 
 function moduleFromRow(row: ModuleRow, operation = `${OPERATION}.read`): PersistedCapabilityModule {
@@ -360,6 +390,69 @@ export function createSqliteProjectProfileStore(
     });
   };
 
+  const updateProfile = (projectIdInput: unknown, raw: ProjectProfileUpdateInput): PersistedProjectProfile => {
+    const operation = `${OPERATION}.updateProjectProfile`;
+    const projectId = validateStableId(projectIdInput, context(operation), 'projectId');
+    assertOpen(session);
+    const parsed = parseProfileUpdateInput(raw);
+    if (parsed.profile.projectId !== projectId) {
+      fail('ownership', operation, '画像项目归属与请求项目不一致', entity('project_profile', projectId));
+    }
+    const evidence = parsed.evidence;
+    const profile = parsed.profile;
+    return session.transactWrite(operation, () => {
+      projectExists(db, projectId, operation);
+      const current = db.prepare('SELECT version FROM project_profiles WHERE project_id = ? ORDER BY version DESC LIMIT 1').get(projectId) as { version: number } | undefined;
+      if (current === undefined) fail('not_found', operation, '项目画像不存在', entity('project_profile', projectId));
+      if (current.version !== parsed.expectedRevision) {
+        fail('conflict', operation, '项目画像 revision 已过期', entity('project_profile', projectId, `v${current.version}`), {
+          reason: 'stale_revision', expectedRevision: parsed.expectedRevision, actualRevision: current.version,
+        });
+      }
+      if (profile.version !== parsed.expectedRevision + 1) {
+        fail('validation', operation, '新画像版本必须紧接当前 revision', entity('project_profile', projectId), { reason: 'version_not_next' });
+      }
+      assertProfileModules(db, profile, operation);
+      // Recheck the complete selection under the same write lock, not only in the service preflight.
+      validateProfileModuleSelection(profile, readModuleRows(db, projectId).map(row => moduleFromRow(row, operation).module));
+      const previous = readProfile(projectId, current.version);
+      const savedEvidence = evidence ?? previous.detectionEvidence;
+      parseProfileInput({ profile, evidence: savedEvidence });
+      for (const old of previous.detectionEvidence) {
+        if (!savedEvidence.some(item => JSON.stringify(item) === JSON.stringify(old))) {
+          fail('validation', operation, '不得删除或改写原始检测证据', entity('project_profile', projectId), { reason: 'evidence_changed' });
+        }
+      }
+      const at = timestamp(now, operation);
+      const profileId = randomUUID();
+      const profileDigest = createHash('sha256').update(JSON.stringify(profile), 'utf8').digest('hex');
+      db.prepare(`INSERT INTO project_profiles
+        (id, created_at, project_id, revision, updated_at, schema_version, version, profile_revision, status, modules, document_refs, detection_refs, detection_evidence, confirmed_by, profile_digest)
+        VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+        profileId, at, projectId, at, profile.schemaVersion, profile.version, profile.revision ?? null, profile.status,
+        JSON.stringify(profile.modules), JSON.stringify(profile.documentRefs), JSON.stringify(profile.detectionEvidenceRefs),
+        JSON.stringify(savedEvidence), profile.confirmedBy, profileDigest,
+      );
+      const eventType = `project_profile.${parsed.action}`;
+      const payload = {
+        action: parsed.action,
+        version: profile.version,
+        previousVersion: current.version,
+        actorDigest: createHash('sha256').update(parsed.actorId).digest('hex'),
+        profileDigest,
+        moduleCount: profile.modules.length,
+        evidenceCount: savedEvidence.length,
+      };
+      validateProfileAuditPayload(payload);
+      const nextSequence = db.prepare<[], { next: number }>('SELECT COALESCE(MAX(sequence), 0) + 1 AS next FROM state_events').get()?.next ?? 1;
+      db.prepare(`INSERT INTO state_events
+        (id, created_at, revision, updated_at, project_id, sequence, event_type, aggregate_type, aggregate_id, aggregate_revision, payload, occurred_at)
+        VALUES (?, ?, 1, ?, ?, ?, ?, 'project_profile', ?, ?, ?, ?)`).run(
+        randomUUID(), at, at, projectId, nextSequence, eventType, profileId, profile.version, JSON.stringify(payload), at,
+      );
+      return readProfile(projectId, profile.version);
+    });
+  };
   return {
     createCapabilityModule(input): PersistedCapabilityModule {
       return createModules([input])[0]!;
@@ -380,6 +473,7 @@ export function createSqliteProjectProfileStore(
       return readModuleRows(db, projectId).map((row) => moduleFromRow(row, operation));
     },
     createProjectProfile: createProfile,
+    updateProjectProfile: updateProfile,
     getProjectProfile(projectIdInput, versionInput): PersistedProjectProfile {
       const operation = `${OPERATION}.getProjectProfile`;
       assertOpen(session);

@@ -64,6 +64,8 @@ import { createBaselineService } from '../application/baseline-service.js';
 import type { BaselineService } from '../application/baseline-service.js';
 import { createOnboardingService } from '../application/onboarding-service.js';
 import type { OnboardingService } from '../application/onboarding-service.js';
+import { createProjectProfileService } from '../application/project-profile-service.js';
+import type { ProjectProfileService } from '../application/project-profile-service.js';
 import { createProjectService } from '../application/project-service.js';
 import type { ProjectService } from '../application/project-service.js';
 import { createSqliteBatchDeliveryQueryStore } from './sqlite/batch-delivery-query-store.js';
@@ -191,6 +193,7 @@ import { createSqliteQueryStore } from './sqlite/query-store.js';
 import { createSqlitePlanAccess } from './sqlite/plan-store.js';
 import { openSqliteStorageSession } from './sqlite/session.js';
 import { createSqliteStateStore } from './sqlite/state-store.js';
+import { createSqliteProjectProfileStore } from './sqlite/project-profile-store.js';
 import { createInputSourceFileReader } from './fs/input-source-files.js';
 import { createSqliteIntegrationPlanStore } from './sqlite/integration-plan-store.js';
 import { createIntegrationPlanGenerationService } from '../application/integration-plan-generation.js';
@@ -352,6 +355,8 @@ export interface CoreApplication {
   readonly planningQueryService: PlanningQueryService;
   /** P02-3 / F-004：静态 inspect 与注册/健康分离的 overview 用例（§7.2/§7.3）。 */
   readonly onboardingService: OnboardingService;
+  /** P06-1：项目画像确认/版本化/CAS/模块匹配应用服务。 */
+  readonly projectProfileService: ProjectProfileService;
   /** P02-3 / F-007：基线窄存储读取端口（迁移 v4 四表；写经原子命令事务）。 */
   readonly baselineStore: BaselineStore;
   /** P03-7 / F-005：Task Node 检查批次与逐项结果窄存储。 */
@@ -1284,6 +1289,12 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
     });
 
+    const projectProfileStore = createSqliteProjectProfileStore(
+      session,
+      nowUtcMs === undefined ? {} : { nowUtcMs },
+    );
+    const projectProfileService = createProjectProfileService({ store: projectProfileStore });
+
     const gitPublicMetadataLock = createGitPublicMetadataLock();
     const baselineExecutionService = createBaselineExecutionService({
       commands: commandService, atomicStore, baselines: baselineStore, state: stateStore,
@@ -1347,6 +1358,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       queryService,
       planningQueryService,
       onboardingService,
+      projectProfileService,
       baselineStore,
       verificationStore,
       verificationStops,

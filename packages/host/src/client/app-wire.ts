@@ -46,6 +46,7 @@ import {
   PLAN_LIST_CURSOR_PREFIX,
   PUBLIC_EVENT_SCHEMA_VERSION,
   PUBLIC_STATE_EVENT_TYPES,
+  validateProfileAuditPayload,
   SETTINGS_EXPORT_FORMAT_VERSION,
   SETTINGS_SCHEMA_VERSION,
   STATE_EVENT_TYPE_SPECS,
@@ -504,6 +505,13 @@ function validateEventPayload(
 ): Record<string, unknown> {
   const object = requirePlain(operation, payload);
   const kind = STATE_EVENT_TYPE_SPECS[type].payloadKind;
+  if (kind === 'projectProfile') {
+    try {
+      const checked = validateProfileAuditPayload(object);
+      if (type !== `project_profile.${checked.action}`) malformed(operation, 'event_payload_violation');
+      return { ...checked };
+    } catch { malformed(operation, 'event_payload_violation'); }
+  }
   if (kind === 'registered') {
     exactKeys(operation, object, ['registered']);
     if (object.registered !== true) {
@@ -872,6 +880,9 @@ export function validateStateEventWire(
     malformed(operation, 'event_occurred_at_invalid');
   }
   const payload = validateEventPayload(operation, type, object.payload);
+  if (spec.payloadKind === 'projectProfile' && revision !== payload.version) {
+    malformed(operation, 'event_payload_violation');
+  }
 
   return {
     schemaVersion: PUBLIC_EVENT_SCHEMA_VERSION,

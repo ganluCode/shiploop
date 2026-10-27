@@ -387,6 +387,33 @@ export function validateProjectProfile(value: unknown): ProjectProfile {
   });
 }
 
+/** A confirmed profile explicitly selects the full, version-pinned dependency closure. */
+export function validateProfileModuleSelection(profile: ProjectProfile, catalog: readonly CapabilityModule[]): void {
+  const modules = new Map(catalog.map(module => [`${module.id}@${module.version}`, module]));
+  const selected = new Set(profile.modules.flatMap(module => [`${module.id}@${module.version}`, ...module.capabilityRefs]));
+  const visiting = new Set<string>();
+  const visited = new Set<string>();
+  const reject = (reason: string): never => {
+    throw new StorageError('validation', 'ProjectProfile.modules', '能力模块版本、状态或依赖无效', {
+      entity: { type: 'project_profile', projectId: profile.projectId }, details: { reason },
+    });
+  };
+  const visit = (ref: string): void => {
+    const module = modules.get(ref) ?? reject('missing_module');
+    if (module.status === 'rejected' || module.status === 'manual_configuration_required') reject('module_not_ready');
+    if (visiting.has(ref)) reject('dependency_cycle');
+    if (visited.has(ref)) return;
+    visiting.add(ref);
+    for (const dependency of module.dependencies) {
+      if (!selected.has(dependency)) reject('missing_dependency');
+      visit(dependency);
+    }
+    visiting.delete(ref);
+    visited.add(ref);
+  };
+  for (const ref of selected) visit(ref);
+}
+
 export function isProjectProfile(value: unknown): value is ProjectProfile {
   try {
     validateProjectProfile(value);
