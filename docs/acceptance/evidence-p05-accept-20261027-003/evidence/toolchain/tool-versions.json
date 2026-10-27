@@ -1,0 +1,13 @@
+{
+  "component": "p05-integration-report",
+  "node": "v22.19.0",
+  "npm": "10.9.3",
+  "git": "git version 2.50.1 (Apple Git-155)",
+  "sqlite": "3.51.0 2025-06-12 13:14:41 f0ca7bba1c5e232e5d279fad6338121ab55af0c8c68c84cdfb18ba5114dcaapl (64-bit)",
+  "betterSqlite3": "13.0.3",
+  "drizzleOrm": "unknown",
+  "sdk": {
+    "package": "@earendil-works/pi-agent-core",
+    "version": "1.0.4"
+  }
+}

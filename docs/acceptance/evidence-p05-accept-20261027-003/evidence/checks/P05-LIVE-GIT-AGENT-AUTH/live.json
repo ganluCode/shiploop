@@ -1,0 +1,7 @@
+{
+  "component": "p05-integration-report",
+  "checkId": "P05-LIVE-GIT-AGENT-AUTH",
+  "execution": "live",
+  "status": "not_run",
+  "reason": "真实 Pi live 验收未获授权执行（zero-call 保持）；不被离线/mock 结果覆盖"
+}

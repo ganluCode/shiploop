@@ -1,0 +1,11 @@
+{
+  "component": "p05-integration-report",
+  "runId": "p05-accept-20261027-003",
+  "confirmed": true,
+  "processesGone": true,
+  "stepStopConfirmed": true,
+  "notes": [
+    "仅回收本次入口创建的 resources；停止不确定保留现场。"
+  ],
+  "generatedAtUtc": "2026-10-27T06:23:57.454Z"
+}

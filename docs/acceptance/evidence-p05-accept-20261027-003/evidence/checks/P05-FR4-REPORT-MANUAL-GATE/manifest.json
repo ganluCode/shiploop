@@ -1,0 +1,9 @@
+{
+  "component": "p05-integration-report",
+  "checkId": "P05-FR4-REPORT-MANUAL-GATE",
+  "capturedFiles": [
+    "evidence/checks/P05-FR4-REPORT-MANUAL-GATE/manual.json",
+    "evidence/checks/P05-FR4-REPORT-MANUAL-GATE/result.json"
+  ],
+  "capturedBeforeCleanup": true
+}

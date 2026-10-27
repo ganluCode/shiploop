@@ -1,0 +1,40 @@
+{
+  "component": "p05-integration-report",
+  "checkId": "P05-I03-RESOURCE-MUTEX",
+  "status": "pass",
+  "assertions": [
+    {
+      "id": "step:p05-trusted-index:exit-0-stop-verified",
+      "satisfied": true
+    },
+    {
+      "id": "step:p05-affected-regression:exit-0-stop-verified",
+      "satisfied": true
+    },
+    {
+      "id": "step:p05-cross-layer-smoke:exit-0-stop-verified",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-sqlite.json:I03",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-process.json:I03",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-artifact.json:I03",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-usage.json:I03",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-cleanup.json:I03",
+      "satisfied": true
+    }
+  ],
+  "detail": "步骤 3/3 通过；场景 5/5 覆盖；停止核验与副作用断言见证据"
+}

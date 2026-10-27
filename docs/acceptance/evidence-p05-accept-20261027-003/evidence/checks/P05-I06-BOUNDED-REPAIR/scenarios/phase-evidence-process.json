@@ -1,0 +1,422 @@
+{
+  "schemaVersion": 1,
+  "offline": true,
+  "live": "not_run",
+  "observations": [
+    {
+      "scenarioId": "I01",
+      "status": "pass",
+      "inputDigest": "4e3c3ccba6fd8f6564b38bf2974c2ba5df061758c43ddbe2b5f7dc903827c0e8",
+      "testedCommit": "245fa62f5fc36e22d510dd98fe9c61aeb2a58b03",
+      "command": [
+        "node",
+        "scripts/run-tests.ts",
+        "test/modules/acceptance/p05-phase-evidence.test.ts"
+      ],
+      "exitCode": 0,
+      "sqlite": {
+        "journalMode": "wal",
+        "foreignKeysEnabled": true,
+        "recordCount": 1,
+        "openBeforeCleanup": true
+      },
+      "git": {
+        "head": "a38610e4e2abbd2e45c58f6b4b19caefda11af44",
+        "tree": "6ce811b164d4c1fcb746050987b569c839db1837",
+        "clean": true
+      },
+      "process": {
+        "owned": true,
+        "spawned": 1,
+        "exited": 1,
+        "aliveAfterCleanup": 0
+      },
+      "artifact": {
+        "refs": 1,
+        "source": "temporary-project"
+      },
+      "sha": {
+        "commit": "245fa62f5fc36e22d510dd98fe9c61aeb2a58b03",
+        "input": "4e3c3ccba6fd8f6564b38bf2974c2ba5df061758c43ddbe2b5f7dc903827c0e8"
+      },
+      "usage": {
+        "source": "runtime-usage"
+      },
+      "cleanup": {
+        "status": "passed",
+        "resourcesRemoved": true,
+        "processStopped": true,
+        "filesChecked": true
+      }
+    },
+    {
+      "scenarioId": "I02",
+      "status": "pass",
+      "inputDigest": "653c0363c87fe60663158d5755a326776f2b8f697eec35aa3189b39a6d17d506",
+      "testedCommit": "245fa62f5fc36e22d510dd98fe9c61aeb2a58b03",
+      "command": [
+        "node",
+        "scripts/run-tests.ts",
+        "test/modules/acceptance/p05-phase-evidence.test.ts"
+      ],
+      "exitCode": 0,
+      "sqlite": {
+        "journalMode": "wal",
+        "foreignKeysEnabled": true,
+        "recordCount": 1,
+        "openBeforeCleanup": true
+      },
+      "git": {
+        "head": "5bf47402978699d7f616e1270aa7f3a3f1cd6f70",
+        "tree": "6059878c43cca5a03732f971cd395325ca6afa79",
+        "clean": true
+      },
+      "process": {
+        "owned": true,
+        "spawned": 1,
+        "exited": 1,
+        "aliveAfterCleanup": 0
+      },
+      "artifact": {
+        "refs": 1,
+        "source": "temporary-project"
+      },
+      "sha": {
+        "commit": "245fa62f5fc36e22d510dd98fe9c61aeb2a58b03",
+        "input": "653c0363c87fe60663158d5755a326776f2b8f697eec35aa3189b39a6d17d506"
+      },
+      "usage": {
+        "source": "runtime-usage"
+      },
+      "cleanup": {
+        "status": "passed",
+        "resourcesRemoved": true,
+        "processStopped": true,
+        "filesChecked": true
+      }
+    },
+    {
+      "scenarioId": "I03",
+      "status": "pass",
+      "inputDigest": "5bb2daeaddec95f32fd20b0886e5c2ebae88307750f3085182261d0a59d13971",
+      "testedCommit": "245fa62f5fc36e22d510dd98fe9c61aeb2a58b03",
+      "command": [
+        "node",
+        "scripts/run-tests.ts",
+        "test/modules/acceptance/p05-phase-evidence.test.ts"
+      ],
+      "exitCode": 0,
+      "sqlite": {
+        "journalMode": "wal",
+        "foreignKeysEnabled": true,
+        "recordCount": 1,
+        "openBeforeCleanup": true
+      },
+      "git": {
+        "head": "0b51dc4fa6ddaa79fc78b71b6cd5a1be54bbd666",
+        "tree": "d725a7830624876ae3ee6ed8290bc92e5bee7f38",
+        "clean": true
+      },
+      "process": {
+        "owned": true,
+        "spawned": 1,
+        "exited": 1,
+        "aliveAfterCleanup": 0
+      },
+      "artifact": {
+        "refs": 1,
+        "source": "temporary-project"
+      },
+      "sha": {
+        "commit": "245fa62f5fc36e22d510dd98fe9c61aeb2a58b03",
+        "input": "5bb2daeaddec95f32fd20b0886e5c2ebae88307750f3085182261d0a59d13971"
+      },
+      "usage": {
+        "source": "runtime-usage"
+      },
+      "cleanup": {
+        "status": "passed",
+        "resourcesRemoved": true,
+        "processStopped": true,
+        "filesChecked": true
+      }
+    },
+    {
+      "scenarioId": "I04",
+      "status": "pass",
+      "inputDigest": "1c802ed1cc20d84e80b29db5883e35ce3d24d8aafc23e628a3a438b97c5a6552",
+      "testedCommit": "245fa62f5fc36e22d510dd98fe9c61aeb2a58b03",
+      "command": [
+        "node",
+        "scripts/run-tests.ts",
+        "test/modules/acceptance/p05-phase-evidence.test.ts"
+      ],
+      "exitCode": 0,
+      "sqlite": {
+        "journalMode": "wal",
+        "foreignKeysEnabled": true,
+        "recordCount": 1,
+        "openBeforeCleanup": true
+      },
+      "git": {
+        "head": "65b5abcba65aa49048e78da61b4689f4d3a38273",
+        "tree": "f994fc8b6ee79b3e46962c601d83528d5b2df434",
+        "clean": true
+      },
+      "process": {
+        "owned": true,
+        "spawned": 1,
+        "exited": 1,
+        "aliveAfterCleanup": 0
+      },
+      "artifact": {
+        "refs": 1,
+        "source": "temporary-project"
+      },
+      "sha": {
+        "commit": "245fa62f5fc36e22d510dd98fe9c61aeb2a58b03",
+        "input": "1c802ed1cc20d84e80b29db5883e35ce3d24d8aafc23e628a3a438b97c5a6552"
+      },
+      "usage": {
+        "source": "runtime-usage"
+      },
+      "cleanup": {
+        "status": "passed",
+        "resourcesRemoved": true,
+        "processStopped": true,
+        "filesChecked": true
+      }
+    },
+    {
+      "scenarioId": "I05",
+      "status": "pass",
+      "inputDigest": "8e7cf6a1aa9295c25c94899cf0ecc0f5f5c2e57e36917f3ec2e188cbc6e3e66f",
+      "testedCommit": "245fa62f5fc36e22d510dd98fe9c61aeb2a58b03",
+      "command": [
+        "node",
+        "scripts/run-tests.ts",
+        "test/modules/acceptance/p05-phase-evidence.test.ts"
+      ],
+      "exitCode": 0,
+      "sqlite": {
+        "journalMode": "wal",
+        "foreignKeysEnabled": true,
+        "recordCount": 1,
+        "openBeforeCleanup": true
+      },
+      "git": {
+        "head": "66bc59b53ad380042a68c0770b11b385d85affc2",
+        "tree": "ec2d236b003fbc112f7a1846178e949962b4e4b8",
+        "clean": true
+      },
+      "process": {
+        "owned": true,
+        "spawned": 1,
+        "exited": 1,
+        "aliveAfterCleanup": 0
+      },
+      "artifact": {
+        "refs": 1,
+        "source": "temporary-project"
+      },
+      "sha": {
+        "commit": "245fa62f5fc36e22d510dd98fe9c61aeb2a58b03",
+        "input": "8e7cf6a1aa9295c25c94899cf0ecc0f5f5c2e57e36917f3ec2e188cbc6e3e66f"
+      },
+      "usage": {
+        "source": "runtime-usage"
+      },
+      "cleanup": {
+        "status": "passed",
+        "resourcesRemoved": true,
+        "processStopped": true,
+        "filesChecked": true
+      }
+    },
+    {
+      "scenarioId": "I06",
+      "status": "pass",
+      "inputDigest": "60f036a39f744d29c1d0fd0404abed2cbe3b0dd64bad9fa934e43f01f7df8a3f",
+      "testedCommit": "245fa62f5fc36e22d510dd98fe9c61aeb2a58b03",
+      "command": [
+        "node",
+        "scripts/run-tests.ts",
+        "test/modules/acceptance/p05-phase-evidence.test.ts"
+      ],
+      "exitCode": 0,
+      "sqlite": {
+        "journalMode": "wal",
+        "foreignKeysEnabled": true,
+        "recordCount": 1,
+        "openBeforeCleanup": true
+      },
+      "git": {
+        "head": "9869a03debfb0ab793536ce8e00a234b551f04c0",
+        "tree": "078efd0664939fd232e1808343051d6421cf5486",
+        "clean": true
+      },
+      "process": {
+        "owned": true,
+        "spawned": 1,
+        "exited": 1,
+        "aliveAfterCleanup": 0
+      },
+      "artifact": {
+        "refs": 1,
+        "source": "temporary-project"
+      },
+      "sha": {
+        "commit": "245fa62f5fc36e22d510dd98fe9c61aeb2a58b03",
+        "input": "60f036a39f744d29c1d0fd0404abed2cbe3b0dd64bad9fa934e43f01f7df8a3f"
+      },
+      "usage": {
+        "source": "runtime-usage"
+      },
+      "cleanup": {
+        "status": "passed",
+        "resourcesRemoved": true,
+        "processStopped": true,
+        "filesChecked": true
+      }
+    },
+    {
+      "scenarioId": "I07",
+      "status": "pass",
+      "inputDigest": "b1c844692736617c6f64a731134c4bfd5d7c9d40286d4df85e44f526d633379c",
+      "testedCommit": "245fa62f5fc36e22d510dd98fe9c61aeb2a58b03",
+      "command": [
+        "node",
+        "scripts/run-tests.ts",
+        "test/modules/acceptance/p05-phase-evidence.test.ts"
+      ],
+      "exitCode": 0,
+      "sqlite": {
+        "journalMode": "wal",
+        "foreignKeysEnabled": true,
+        "recordCount": 1,
+        "openBeforeCleanup": true
+      },
+      "git": {
+        "head": "f09eb5b5d4b73e1fad4705f73426acfb920ee48d",
+        "tree": "3075cb599b31c4705c4fb477b9c003c69600eeac",
+        "clean": true
+      },
+      "process": {
+        "owned": true,
+        "spawned": 1,
+        "exited": 1,
+        "aliveAfterCleanup": 0
+      },
+      "artifact": {
+        "refs": 1,
+        "source": "temporary-project"
+      },
+      "sha": {
+        "commit": "245fa62f5fc36e22d510dd98fe9c61aeb2a58b03",
+        "input": "b1c844692736617c6f64a731134c4bfd5d7c9d40286d4df85e44f526d633379c"
+      },
+      "usage": {
+        "source": "runtime-usage"
+      },
+      "cleanup": {
+        "status": "passed",
+        "resourcesRemoved": true,
+        "processStopped": true,
+        "filesChecked": true
+      }
+    },
+    {
+      "scenarioId": "I08",
+      "status": "pass",
+      "inputDigest": "bce4728cf6972463c18ade59e8cc552a244734e866bc8562a9dae1e7a4203f34",
+      "testedCommit": "245fa62f5fc36e22d510dd98fe9c61aeb2a58b03",
+      "command": [
+        "node",
+        "scripts/run-tests.ts",
+        "test/modules/acceptance/p05-phase-evidence.test.ts"
+      ],
+      "exitCode": 0,
+      "sqlite": {
+        "journalMode": "wal",
+        "foreignKeysEnabled": true,
+        "recordCount": 1,
+        "openBeforeCleanup": true
+      },
+      "git": {
+        "head": "55bc7bbf3a212943ca1d9828053afae8f8dd8500",
+        "tree": "454343d669fe18c6cd778eda163929cc16180139",
+        "clean": true
+      },
+      "process": {
+        "owned": true,
+        "spawned": 1,
+        "exited": 1,
+        "aliveAfterCleanup": 0
+      },
+      "artifact": {
+        "refs": 1,
+        "source": "temporary-project"
+      },
+      "sha": {
+        "commit": "245fa62f5fc36e22d510dd98fe9c61aeb2a58b03",
+        "input": "bce4728cf6972463c18ade59e8cc552a244734e866bc8562a9dae1e7a4203f34"
+      },
+      "usage": {
+        "source": "runtime-usage"
+      },
+      "cleanup": {
+        "status": "passed",
+        "resourcesRemoved": true,
+        "processStopped": true,
+        "filesChecked": true
+      }
+    },
+    {
+      "scenarioId": "I09",
+      "status": "pass",
+      "inputDigest": "85d26d5eaf42b1da9eec996453a42707eb4d0476ae81beb865961aba01b4b91f",
+      "testedCommit": "245fa62f5fc36e22d510dd98fe9c61aeb2a58b03",
+      "command": [
+        "node",
+        "scripts/run-tests.ts",
+        "test/modules/acceptance/p05-phase-evidence.test.ts"
+      ],
+      "exitCode": 0,
+      "sqlite": {
+        "journalMode": "wal",
+        "foreignKeysEnabled": true,
+        "recordCount": 1,
+        "openBeforeCleanup": true
+      },
+      "git": {
+        "head": "0d4db42f35e6e161e9b36cb74d3674afe355bef5",
+        "tree": "bafaf8cd4748841120195113f2f38531f6b9c267",
+        "clean": true
+      },
+      "process": {
+        "owned": true,
+        "spawned": 1,
+        "exited": 1,
+        "aliveAfterCleanup": 0
+      },
+      "artifact": {
+        "refs": 1,
+        "source": "temporary-project"
+      },
+      "sha": {
+        "commit": "245fa62f5fc36e22d510dd98fe9c61aeb2a58b03",
+        "input": "85d26d5eaf42b1da9eec996453a42707eb4d0476ae81beb865961aba01b4b91f"
+      },
+      "usage": {
+        "source": "runtime-usage"
+      },
+      "cleanup": {
+        "status": "passed",
+        "resourcesRemoved": true,
+        "processStopped": true,
+        "filesChecked": true
+      }
+    }
+  ],
+  "category": "process"
+}

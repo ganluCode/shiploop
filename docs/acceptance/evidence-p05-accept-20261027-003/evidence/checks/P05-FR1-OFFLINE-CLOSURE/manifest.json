@@ -1,0 +1,18 @@
+{
+  "component": "p05-integration-report",
+  "checkId": "P05-FR1-OFFLINE-CLOSURE",
+  "capturedFiles": [
+    "evidence/checks/P05-FR1-OFFLINE-CLOSURE/steps/01-p05-trusted-index.json",
+    "evidence/checks/P05-FR1-OFFLINE-CLOSURE/steps/02-p05-affected-regression.json",
+    "evidence/checks/P05-FR1-OFFLINE-CLOSURE/steps/03-p05-cross-layer-smoke.json",
+    "evidence/checks/P05-FR1-OFFLINE-CLOSURE/scenarios/phase-evidence-command-exit.json",
+    "evidence/checks/P05-FR1-OFFLINE-CLOSURE/scenarios/phase-evidence-artifact.json",
+    "evidence/checks/P05-FR1-OFFLINE-CLOSURE/scenarios/phase-evidence-manifest.json",
+    "evidence/checks/P05-FR1-OFFLINE-CLOSURE/scenarios/phase-evidence-sha.json",
+    "evidence/checks/P05-FR1-OFFLINE-CLOSURE/scenarios/phase-evidence-usage.json",
+    "evidence/checks/P05-FR1-OFFLINE-CLOSURE/scenarios/phase-evidence-cleanup.json",
+    "evidence/checks/P05-FR1-OFFLINE-CLOSURE/extra/test-scope.json",
+    "evidence/checks/P05-FR1-OFFLINE-CLOSURE/result.json"
+  ],
+  "capturedBeforeCleanup": true
+}

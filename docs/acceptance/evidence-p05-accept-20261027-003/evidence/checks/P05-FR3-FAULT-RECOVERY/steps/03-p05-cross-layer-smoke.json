@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "runId": "p05-accept-20261027-003",
+  "index": 2,
+  "stepId": "p05-cross-layer-smoke",
+  "label": null,
+  "status": "pass",
+  "argv": [
+    "[REDACTED:f553b3601397]",
+    "scripts/run-tests.ts",
+    "test/modules/acceptance/p05-acceptance-contract.test.ts",
+    "test/modules/acceptance/p05-product-report.test.ts",
+    "test/modules/acceptance/p05-phase-evidence.test.ts"
+  ],
+  "cwd": "[REDACTED:34342dc08c2f]",
+  "timeoutMs": 640263,
+  "startedAtUtc": "2026-10-27T06:23:52.968Z",
+  "evidencePath": "steps/03-p05-cross-layer-smoke.json",
+  "logPath": "logs/03-p05-cross-layer-smoke.log",
+  "endKind": "exit",
+  "exitCode": 0,
+  "signal": null,
+  "timedOut": false,
+  "durationMs": 3974,
+  "stoppedVerified": true,
+  "spawnError": null,
+  "stdoutBytes": 989,
+  "stderrBytes": 0,
+  "stdoutTruncated": false,
+  "stderrTruncated": false,
+  "completedAtUtc": "2026-10-27T06:23:56.998Z"
+}

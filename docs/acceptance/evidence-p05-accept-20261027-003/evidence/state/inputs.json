@@ -1,0 +1,809 @@
+{
+  "schemaVersion": 1,
+  "component": "p05-integration-report",
+  "runId": "p05-accept-20261027-003",
+  "generatedAtUtc": "2026-10-27T06:23:57.454Z",
+  "stepRun": {
+    "dir": "step-run",
+    "identity": {
+      "runId": "p05-accept-20261027-003",
+      "commit": "245fa62f5fc36e22d510dd98fe9c61aeb2a58b03",
+      "inputsDigest": "451d9a2478b85ed42371cd4a21861bedfebb4ee6a67248e6967e3814e8af5bc5"
+    },
+    "manifestSha256": "2955388b2d3d279f80049345737f5077bb591d59dd320ea54e71dc55f73a0988"
+  },
+  "planDigestSha256": "deb0f36e824cd3e9872d8b494f799e31dd4b0d66501270c753de877cdef2026c",
+  "checklistDigestSha256": "2096d41b97f3a83baece5032cbabdbd36122272d79490587ccc6f779638d387f",
+  "scenarioFiles": [
+    {
+      "file": "phase-evidence-artifact.json",
+      "sha256": "54c0fb0e611dae76e9590984ec7645fa816a7cd9302eb629373f736336ef9dc5",
+      "sizeBytes": 11698
+    },
+    {
+      "file": "phase-evidence-cleanup.json",
+      "sha256": "d17200a4fff642565e4fe1156d147f93981b9f7b1ae94d3437095fcc83dcb761",
+      "sizeBytes": 11697
+    },
+    {
+      "file": "phase-evidence-command-exit.json",
+      "sha256": "3997151ae9ce9b702e5b33910bd514596fcbc071cf51eaec796d02715a45c09f",
+      "sizeBytes": 11702
+    },
+    {
+      "file": "phase-evidence-git.json",
+      "sha256": "5ea4e7c81e8e120af1142015820c8ba7043de1af61b5fa266313ec049c38b175",
+      "sizeBytes": 11693
+    },
+    {
+      "file": "phase-evidence-manifest.json",
+      "sha256": "cdeaa336124123c09f05ba1587a2a916a81d826fd5c05966b4a751e0e027711d",
+      "sizeBytes": 11698
+    },
+    {
+      "file": "phase-evidence-process.json",
+      "sha256": "747dc173f423d7990ec37bd704b4b73cc6ea6f8157d77668833c566c263a394a",
+      "sizeBytes": 11697
+    },
+    {
+      "file": "phase-evidence-report.json",
+      "sha256": "6e846b33e5126c3aa7d0e6e287bb8fbed3916bf4c41d3d46055bc75bb684da5a",
+      "sizeBytes": 11696
+    },
+    {
+      "file": "phase-evidence-sha.json",
+      "sha256": "1b3f2ce551b9d0b90f5e12a3a5452447b9947486587ffe29189fc91e85a52660",
+      "sizeBytes": 11693
+    },
+    {
+      "file": "phase-evidence-sqlite.json",
+      "sha256": "c31730bf441f54cffb0a4f74aed39a599f630c6cc472db3f49db3e286a2f76e1",
+      "sizeBytes": 11696
+    },
+    {
+      "file": "phase-evidence-usage.json",
+      "sha256": "ebfdb27fcb3efb7695089bf82cfa0ceba12d4dbcd6e5803862856fc8d44c8e0b",
+      "sizeBytes": 11695
+    }
+  ],
+  "bindings": [
+    {
+      "checkId": "P05-FR1-OFFLINE-CLOSURE",
+      "stepIds": [
+        "p05-trusted-index",
+        "p05-affected-regression",
+        "p05-cross-layer-smoke"
+      ],
+      "scenarios": [
+        {
+          "file": "phase-evidence-command-exit.json",
+          "category": "command-exit",
+          "scenarioIds": [
+            "I01",
+            "I02",
+            "I03",
+            "I04",
+            "I05",
+            "I06",
+            "I07",
+            "I08",
+            "I09"
+          ]
+        },
+        {
+          "file": "phase-evidence-artifact.json",
+          "category": "artifact",
+          "scenarioIds": [
+            "I01",
+            "I02",
+            "I03",
+            "I04",
+            "I05",
+            "I06",
+            "I07",
+            "I08",
+            "I09"
+          ]
+        },
+        {
+          "file": "phase-evidence-manifest.json",
+          "category": "manifest",
+          "scenarioIds": [
+            "I01",
+            "I02",
+            "I03",
+            "I04",
+            "I05",
+            "I06",
+            "I07",
+            "I08",
+            "I09"
+          ]
+        },
+        {
+          "file": "phase-evidence-sha.json",
+          "category": "sha",
+          "scenarioIds": [
+            "I01",
+            "I02",
+            "I03",
+            "I04",
+            "I05",
+            "I06",
+            "I07",
+            "I08",
+            "I09"
+          ]
+        },
+        {
+          "file": "phase-evidence-usage.json",
+          "category": "usage",
+          "scenarioIds": [
+            "I01",
+            "I02",
+            "I03",
+            "I04",
+            "I05",
+            "I06",
+            "I07",
+            "I08",
+            "I09"
+          ]
+        },
+        {
+          "file": "phase-evidence-cleanup.json",
+          "category": "cleanup",
+          "scenarioIds": [
+            "I01",
+            "I02",
+            "I03",
+            "I04",
+            "I05",
+            "I06",
+            "I07",
+            "I08",
+            "I09"
+          ]
+        }
+      ],
+      "extraEvidence": [
+        {
+          "name": "test-scope.json",
+          "category": "report"
+        }
+      ]
+    },
+    {
+      "checkId": "P05-FR2-CONCURRENCY-INTEGRATION",
+      "stepIds": [
+        "p05-trusted-index",
+        "p05-affected-regression",
+        "p05-cross-layer-smoke"
+      ],
+      "scenarios": [
+        {
+          "file": "phase-evidence-sqlite.json",
+          "category": "sqlite",
+          "scenarioIds": [
+            "I02",
+            "I03",
+            "I05",
+            "I07",
+            "I08"
+          ]
+        },
+        {
+          "file": "phase-evidence-git.json",
+          "category": "git",
+          "scenarioIds": [
+            "I02",
+            "I03",
+            "I05",
+            "I07",
+            "I08"
+          ]
+        },
+        {
+          "file": "phase-evidence-process.json",
+          "category": "process",
+          "scenarioIds": [
+            "I02",
+            "I03",
+            "I05",
+            "I07",
+            "I08"
+          ]
+        },
+        {
+          "file": "phase-evidence-artifact.json",
+          "category": "artifact",
+          "scenarioIds": [
+            "I02",
+            "I03",
+            "I05",
+            "I07",
+            "I08"
+          ]
+        },
+        {
+          "file": "phase-evidence-sha.json",
+          "category": "sha",
+          "scenarioIds": [
+            "I02",
+            "I03",
+            "I05",
+            "I07",
+            "I08"
+          ]
+        },
+        {
+          "file": "phase-evidence-usage.json",
+          "category": "usage",
+          "scenarioIds": [
+            "I02",
+            "I03",
+            "I05",
+            "I07",
+            "I08"
+          ]
+        }
+      ],
+      "extraEvidence": [
+        {
+          "name": "test-scope.json",
+          "category": "report"
+        }
+      ]
+    },
+    {
+      "checkId": "P05-FR3-FAULT-RECOVERY",
+      "stepIds": [
+        "p05-trusted-index",
+        "p05-affected-regression",
+        "p05-cross-layer-smoke"
+      ],
+      "scenarios": [
+        {
+          "file": "phase-evidence-sqlite.json",
+          "category": "sqlite",
+          "scenarioIds": [
+            "I04",
+            "I05",
+            "I06"
+          ]
+        },
+        {
+          "file": "phase-evidence-git.json",
+          "category": "git",
+          "scenarioIds": [
+            "I04",
+            "I05",
+            "I06"
+          ]
+        },
+        {
+          "file": "phase-evidence-process.json",
+          "category": "process",
+          "scenarioIds": [
+            "I04",
+            "I05",
+            "I06"
+          ]
+        },
+        {
+          "file": "phase-evidence-artifact.json",
+          "category": "artifact",
+          "scenarioIds": [
+            "I04",
+            "I05",
+            "I06"
+          ]
+        },
+        {
+          "file": "phase-evidence-usage.json",
+          "category": "usage",
+          "scenarioIds": [
+            "I04",
+            "I05",
+            "I06"
+          ]
+        },
+        {
+          "file": "phase-evidence-cleanup.json",
+          "category": "cleanup",
+          "scenarioIds": [
+            "I04",
+            "I05",
+            "I06"
+          ]
+        }
+      ],
+      "extraEvidence": [
+        {
+          "name": "test-scope.json",
+          "category": "report"
+        }
+      ]
+    },
+    {
+      "checkId": "P05-I01-PLANNING-APPROVAL",
+      "stepIds": [
+        "p05-trusted-index",
+        "p05-affected-regression",
+        "p05-cross-layer-smoke"
+      ],
+      "scenarios": [
+        {
+          "file": "phase-evidence-sqlite.json",
+          "category": "sqlite",
+          "scenarioIds": [
+            "I01"
+          ]
+        },
+        {
+          "file": "phase-evidence-artifact.json",
+          "category": "artifact",
+          "scenarioIds": [
+            "I01"
+          ]
+        },
+        {
+          "file": "phase-evidence-command-exit.json",
+          "category": "command-exit",
+          "scenarioIds": [
+            "I01"
+          ]
+        },
+        {
+          "file": "phase-evidence-sha.json",
+          "category": "sha",
+          "scenarioIds": [
+            "I01"
+          ]
+        },
+        {
+          "file": "phase-evidence-usage.json",
+          "category": "usage",
+          "scenarioIds": [
+            "I01"
+          ]
+        }
+      ],
+      "extraEvidence": [
+        {
+          "name": "test-scope.json",
+          "category": "report"
+        }
+      ]
+    },
+    {
+      "checkId": "P05-I02-AB-CONVERGENCE",
+      "stepIds": [
+        "p05-trusted-index",
+        "p05-affected-regression",
+        "p05-cross-layer-smoke"
+      ],
+      "scenarios": [
+        {
+          "file": "phase-evidence-sqlite.json",
+          "category": "sqlite",
+          "scenarioIds": [
+            "I02"
+          ]
+        },
+        {
+          "file": "phase-evidence-git.json",
+          "category": "git",
+          "scenarioIds": [
+            "I02"
+          ]
+        },
+        {
+          "file": "phase-evidence-artifact.json",
+          "category": "artifact",
+          "scenarioIds": [
+            "I02"
+          ]
+        },
+        {
+          "file": "phase-evidence-sha.json",
+          "category": "sha",
+          "scenarioIds": [
+            "I02"
+          ]
+        },
+        {
+          "file": "phase-evidence-usage.json",
+          "category": "usage",
+          "scenarioIds": [
+            "I02"
+          ]
+        }
+      ],
+      "extraEvidence": [
+        {
+          "name": "test-scope.json",
+          "category": "report"
+        }
+      ]
+    },
+    {
+      "checkId": "P05-I03-RESOURCE-MUTEX",
+      "stepIds": [
+        "p05-trusted-index",
+        "p05-affected-regression",
+        "p05-cross-layer-smoke"
+      ],
+      "scenarios": [
+        {
+          "file": "phase-evidence-sqlite.json",
+          "category": "sqlite",
+          "scenarioIds": [
+            "I03"
+          ]
+        },
+        {
+          "file": "phase-evidence-process.json",
+          "category": "process",
+          "scenarioIds": [
+            "I03"
+          ]
+        },
+        {
+          "file": "phase-evidence-artifact.json",
+          "category": "artifact",
+          "scenarioIds": [
+            "I03"
+          ]
+        },
+        {
+          "file": "phase-evidence-usage.json",
+          "category": "usage",
+          "scenarioIds": [
+            "I03"
+          ]
+        },
+        {
+          "file": "phase-evidence-cleanup.json",
+          "category": "cleanup",
+          "scenarioIds": [
+            "I03"
+          ]
+        }
+      ],
+      "extraEvidence": [
+        {
+          "name": "test-scope.json",
+          "category": "report"
+        }
+      ]
+    },
+    {
+      "checkId": "P05-I04-RECOVERY-FENCING",
+      "stepIds": [
+        "p05-trusted-index",
+        "p05-affected-regression",
+        "p05-cross-layer-smoke"
+      ],
+      "scenarios": [
+        {
+          "file": "phase-evidence-sqlite.json",
+          "category": "sqlite",
+          "scenarioIds": [
+            "I04"
+          ]
+        },
+        {
+          "file": "phase-evidence-process.json",
+          "category": "process",
+          "scenarioIds": [
+            "I04"
+          ]
+        },
+        {
+          "file": "phase-evidence-artifact.json",
+          "category": "artifact",
+          "scenarioIds": [
+            "I04"
+          ]
+        },
+        {
+          "file": "phase-evidence-usage.json",
+          "category": "usage",
+          "scenarioIds": [
+            "I04"
+          ]
+        },
+        {
+          "file": "phase-evidence-cleanup.json",
+          "category": "cleanup",
+          "scenarioIds": [
+            "I04"
+          ]
+        }
+      ],
+      "extraEvidence": [
+        {
+          "name": "test-scope.json",
+          "category": "report"
+        }
+      ]
+    },
+    {
+      "checkId": "P05-I05-GIT-INTEGRATION",
+      "stepIds": [
+        "p05-trusted-index",
+        "p05-affected-regression",
+        "p05-cross-layer-smoke"
+      ],
+      "scenarios": [
+        {
+          "file": "phase-evidence-git.json",
+          "category": "git",
+          "scenarioIds": [
+            "I05"
+          ]
+        },
+        {
+          "file": "phase-evidence-sqlite.json",
+          "category": "sqlite",
+          "scenarioIds": [
+            "I05"
+          ]
+        },
+        {
+          "file": "phase-evidence-artifact.json",
+          "category": "artifact",
+          "scenarioIds": [
+            "I05"
+          ]
+        },
+        {
+          "file": "phase-evidence-sha.json",
+          "category": "sha",
+          "scenarioIds": [
+            "I05"
+          ]
+        },
+        {
+          "file": "phase-evidence-usage.json",
+          "category": "usage",
+          "scenarioIds": [
+            "I05"
+          ]
+        },
+        {
+          "file": "phase-evidence-cleanup.json",
+          "category": "cleanup",
+          "scenarioIds": [
+            "I05"
+          ]
+        }
+      ],
+      "extraEvidence": [
+        {
+          "name": "test-scope.json",
+          "category": "report"
+        }
+      ]
+    },
+    {
+      "checkId": "P05-I06-BOUNDED-REPAIR",
+      "stepIds": [
+        "p05-trusted-index",
+        "p05-affected-regression",
+        "p05-cross-layer-smoke"
+      ],
+      "scenarios": [
+        {
+          "file": "phase-evidence-git.json",
+          "category": "git",
+          "scenarioIds": [
+            "I06"
+          ]
+        },
+        {
+          "file": "phase-evidence-sqlite.json",
+          "category": "sqlite",
+          "scenarioIds": [
+            "I06"
+          ]
+        },
+        {
+          "file": "phase-evidence-process.json",
+          "category": "process",
+          "scenarioIds": [
+            "I06"
+          ]
+        },
+        {
+          "file": "phase-evidence-artifact.json",
+          "category": "artifact",
+          "scenarioIds": [
+            "I06"
+          ]
+        },
+        {
+          "file": "phase-evidence-usage.json",
+          "category": "usage",
+          "scenarioIds": [
+            "I06"
+          ]
+        },
+        {
+          "file": "phase-evidence-cleanup.json",
+          "category": "cleanup",
+          "scenarioIds": [
+            "I06"
+          ]
+        }
+      ],
+      "extraEvidence": [
+        {
+          "name": "test-scope.json",
+          "category": "report"
+        }
+      ]
+    },
+    {
+      "checkId": "P05-I07-LEAF-DELIVERY",
+      "stepIds": [
+        "p05-trusted-index",
+        "p05-affected-regression",
+        "p05-cross-layer-smoke"
+      ],
+      "scenarios": [
+        {
+          "file": "phase-evidence-sqlite.json",
+          "category": "sqlite",
+          "scenarioIds": [
+            "I07"
+          ]
+        },
+        {
+          "file": "phase-evidence-git.json",
+          "category": "git",
+          "scenarioIds": [
+            "I07"
+          ]
+        },
+        {
+          "file": "phase-evidence-report.json",
+          "category": "report",
+          "scenarioIds": [
+            "I07"
+          ]
+        },
+        {
+          "file": "phase-evidence-artifact.json",
+          "category": "artifact",
+          "scenarioIds": [
+            "I07"
+          ]
+        },
+        {
+          "file": "phase-evidence-sha.json",
+          "category": "sha",
+          "scenarioIds": [
+            "I07"
+          ]
+        },
+        {
+          "file": "phase-evidence-usage.json",
+          "category": "usage",
+          "scenarioIds": [
+            "I07"
+          ]
+        }
+      ],
+      "extraEvidence": [
+        {
+          "name": "test-scope.json",
+          "category": "report"
+        }
+      ]
+    },
+    {
+      "checkId": "P05-I08-APPEND-BATCH",
+      "stepIds": [
+        "p05-trusted-index",
+        "p05-affected-regression",
+        "p05-cross-layer-smoke"
+      ],
+      "scenarios": [
+        {
+          "file": "phase-evidence-sqlite.json",
+          "category": "sqlite",
+          "scenarioIds": [
+            "I08"
+          ]
+        },
+        {
+          "file": "phase-evidence-artifact.json",
+          "category": "artifact",
+          "scenarioIds": [
+            "I08"
+          ]
+        },
+        {
+          "file": "phase-evidence-sha.json",
+          "category": "sha",
+          "scenarioIds": [
+            "I08"
+          ]
+        },
+        {
+          "file": "phase-evidence-usage.json",
+          "category": "usage",
+          "scenarioIds": [
+            "I08"
+          ]
+        }
+      ],
+      "extraEvidence": [
+        {
+          "name": "test-scope.json",
+          "category": "report"
+        }
+      ]
+    },
+    {
+      "checkId": "P05-I09-INPUT-BUDGET-INTEGRITY",
+      "stepIds": [
+        "p05-trusted-index",
+        "p05-affected-regression",
+        "p05-cross-layer-smoke"
+      ],
+      "scenarios": [
+        {
+          "file": "phase-evidence-command-exit.json",
+          "category": "command-exit",
+          "scenarioIds": [
+            "I09"
+          ]
+        },
+        {
+          "file": "phase-evidence-artifact.json",
+          "category": "artifact",
+          "scenarioIds": [
+            "I09"
+          ]
+        },
+        {
+          "file": "phase-evidence-manifest.json",
+          "category": "manifest",
+          "scenarioIds": [
+            "I09"
+          ]
+        },
+        {
+          "file": "phase-evidence-sha.json",
+          "category": "sha",
+          "scenarioIds": [
+            "I09"
+          ]
+        },
+        {
+          "file": "phase-evidence-usage.json",
+          "category": "usage",
+          "scenarioIds": [
+            "I09"
+          ]
+        },
+        {
+          "file": "phase-evidence-cleanup.json",
+          "category": "cleanup",
+          "scenarioIds": [
+            "I09"
+          ]
+        }
+      ],
+      "extraEvidence": [
+        {
+          "name": "test-scope.json",
+          "category": "report"
+        }
+      ]
+    }
+  ]
+}

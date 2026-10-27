@@ -1,0 +1,236 @@
+{
+  "component": "p05-integration-report",
+  "checkId": "P05-FR1-OFFLINE-CLOSURE",
+  "status": "pass",
+  "assertions": [
+    {
+      "id": "step:p05-trusted-index:exit-0-stop-verified",
+      "satisfied": true
+    },
+    {
+      "id": "step:p05-affected-regression:exit-0-stop-verified",
+      "satisfied": true
+    },
+    {
+      "id": "step:p05-cross-layer-smoke:exit-0-stop-verified",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-command-exit.json:I01",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-command-exit.json:I02",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-command-exit.json:I03",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-command-exit.json:I04",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-command-exit.json:I05",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-command-exit.json:I06",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-command-exit.json:I07",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-command-exit.json:I08",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-command-exit.json:I09",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-artifact.json:I01",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-artifact.json:I02",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-artifact.json:I03",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-artifact.json:I04",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-artifact.json:I05",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-artifact.json:I06",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-artifact.json:I07",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-artifact.json:I08",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-artifact.json:I09",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-manifest.json:I01",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-manifest.json:I02",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-manifest.json:I03",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-manifest.json:I04",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-manifest.json:I05",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-manifest.json:I06",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-manifest.json:I07",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-manifest.json:I08",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-manifest.json:I09",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-sha.json:I01",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-sha.json:I02",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-sha.json:I03",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-sha.json:I04",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-sha.json:I05",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-sha.json:I06",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-sha.json:I07",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-sha.json:I08",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-sha.json:I09",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-usage.json:I01",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-usage.json:I02",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-usage.json:I03",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-usage.json:I04",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-usage.json:I05",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-usage.json:I06",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-usage.json:I07",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-usage.json:I08",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-usage.json:I09",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-cleanup.json:I01",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-cleanup.json:I02",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-cleanup.json:I03",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-cleanup.json:I04",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-cleanup.json:I05",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-cleanup.json:I06",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-cleanup.json:I07",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-cleanup.json:I08",
+      "satisfied": true
+    },
+    {
+      "id": "scenario:phase-evidence-cleanup.json:I09",
+      "satisfied": true
+    }
+  ],
+  "detail": "步骤 3/3 通过；场景 54/54 覆盖；停止核验与副作用断言见证据"
+}
