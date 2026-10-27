@@ -102,8 +102,10 @@ import type {
   KnowledgeDocumentQueryRow,
   KnowledgeQueryReadStore,
 } from '../../ports/knowledge-query.js';
+import type { MemoryQueryFilter, MemoryQueryReadStore, MemoryQueryRow } from '../../ports/memory-query.js';
 import type { SqliteStorageSession } from './session.js';
 import { createSqliteDocumentQueryStore } from './document-query-store.js';
+import { createSqliteMemoryQueryStore } from './memory-store.js';
 import { createSqlitePlanAccess } from './plan-store.js';
 import { createSqliteStateAccess } from './state-store.js';
 import { createSqliteExecutionAccess } from './execution-store.js';
@@ -139,7 +141,8 @@ export interface SqliteQueryStore
     FeatureExecutionReportReadStore,
     ExecutionControlQueryReadStore,
     PlanningQueryReadStore,
-    KnowledgeQueryReadStore {}
+    KnowledgeQueryReadStore,
+    MemoryQueryReadStore {}
 
 export function createSqliteQueryStore(
   session: SqliteStorageSession,
@@ -174,6 +177,7 @@ export function createSqliteQueryStore(
     options.nowUtcMs === undefined ? {} : { nowUtcMs: options.nowUtcMs },
   );
   const knowledgeQueries = createSqliteDocumentQueryStore(session);
+  const memoryQueries = createSqliteMemoryQueryStore(session);
   return {
     listVisibleProjects(visibility: unknown, filter: unknown): ProjectPage {
       return access.listVisibleProjects(visibility, filter);
@@ -358,5 +362,7 @@ export function createSqliteQueryStore(
       planningQueries.listPlanningContextRecords(visibility, projectId, featureId, request),
     listDocumentVersions: (projectId: string, filter: KnowledgeDocumentQueryFilter): readonly KnowledgeDocumentQueryRow[] =>
       knowledgeQueries.listDocumentVersions(projectId, filter),
+    listAcceptedMemories: (projectId: string, filter: MemoryQueryFilter): readonly MemoryQueryRow[] =>
+      memoryQueries.listAcceptedMemories(projectId, filter),
   };
 }

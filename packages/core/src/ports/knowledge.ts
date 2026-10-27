@@ -72,6 +72,7 @@ export interface MemoryRecord {
   readonly scope: string;
   readonly status: MemoryRecordStatus;
   readonly contentRef: KnowledgeArtifactRef;
+  readonly contentHash: string;
   readonly sourceRefs: readonly KnowledgeSourceRef[];
   readonly retrievalCount: number;
   readonly revision: number;

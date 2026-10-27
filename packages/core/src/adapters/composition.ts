@@ -73,6 +73,11 @@ import { createQueryService } from '../application/query-service.js';
 import type { QueryService } from '../application/query-service.js';
 import { createKnowledgeQueryService } from '../application/knowledge-query-service.js';
 import type { KnowledgeQueryService } from '../application/knowledge-query-service.js';
+import { createMemoryService } from '../application/memory-service.js';
+import type { MemoryService } from '../application/memory-service.js';
+import { createMemoryQueryService } from '../application/memory-query-service.js';
+import type { MemoryQueryService } from '../application/memory-query-service.js';
+import { createSqliteMemoryStore } from './sqlite/memory-store.js';
 import { createPlanningQueryService } from '../application/planning-query.js';
 import type { PlanningQueryService } from '../application/planning-query.js';
 import { createExecutionInputService } from '../application/execution-input.js';
@@ -346,6 +351,9 @@ export interface CoreApplication {
   readonly queryService: QueryService;
   /** F-003：项目隔离的有界文档关键词/身份检索与受控正文读取。 */
   readonly knowledgeQueryService: KnowledgeQueryService;
+  /** F-004：受控候选写入、显式 accepted/revoked CAS 与项目内记忆检索。 */
+  readonly memoryService: MemoryService;
+  readonly memoryQueryService: MemoryQueryService;
   /** P05-6: generation is exposed only with trusted Batch/delivery facts. */
   readonly integrationPlanGeneration?: IntegrationPlanGenerationService;
   /** P05-6: control and successor gating use the authoritative plan store. */
@@ -608,6 +616,18 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     const knowledgeQueryService = createKnowledgeQueryService({
       documents: documentStore,
       documentQuery: queryStore,
+      verifier: createArtifactVerifier({ artifacts: artifactStore, files: artifactFileStore, limits: { maxReadBytes: 16_000_000 } }),
+    });
+    const memoryStore = createSqliteMemoryStore(session, nowUtcMs === undefined ? {} : { nowUtcMs });
+    const memoryQueryService = createMemoryQueryService({
+      memories: memoryStore,
+      memoryQuery: queryStore,
+      artifacts: artifactStore,
+      verifier: createArtifactVerifier({ artifacts: artifactStore, files: artifactFileStore, limits: { maxReadBytes: 16_000_000 } }),
+    });
+    const memoryService = createMemoryService({
+      memories: memoryStore,
+      artifacts: artifactStore,
       verifier: createArtifactVerifier({ artifacts: artifactStore, files: artifactFileStore, limits: { maxReadBytes: 16_000_000 } }),
     });
     const pathService = basePathService
@@ -1373,6 +1393,8 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       workRecoveryContinuation,
       queryService,
       knowledgeQueryService,
+      memoryService,
+      memoryQueryService,
       planningQueryService,
       onboardingService,
       projectProfileService,
