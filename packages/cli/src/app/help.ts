@@ -2035,6 +2035,23 @@ const WORKSPACE_DISCARD_HELP = [
   '',
 ].join('\n');
 
+const KNOWLEDGE_HELP = [
+  'usage: shiploop knowledge <search|read> [options]',
+  '',
+  '通过 HostClient 查询受控项目知识；CLI 不读取 SQLite、制品文件或项目任意路径。',
+  '  knowledge search --project <id> [--keyword <text>] [--document-id <id>] [--version <int>]',
+  '                   [--title <text>] [--path <logical-path>] [--limit <int>]',
+  '                   [--snippet-max-chars <int>] [--max-read-bytes <int>] [--max-candidates <int>]',
+  '  knowledge read <documentId> --project <id> [--version <int>] [--max-read-bytes <int>]',
+  '',
+  'search 至少需要非空关键词、文档 ID、标题或受控逻辑路径；version 必须绑定 documentId。',
+  '结果包含来源、版本、hash、片段、位置、预算和诊断；正文只经 Host/Core 完整性核验返回。',
+  '无结果、预算耗尽、超时或损坏正文保持结构化失败，不把错误日志解析为成功。',
+  BOUNDARY_BLOCK,
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
+
 const PLANNING_HELP = [
   'usage: shiploop planning <start|list|get|candidate|approve|reject> [options]',
   '',
@@ -2135,6 +2152,9 @@ const HELP_BY_SCOPE: Readonly<Record<AppHelpScope, string>> = Object.freeze({
   'receipt.get': RECEIPT_GET_HELP,
   events: EVENTS_HELP,
   'events.observe': EVENTS_HELP,
+  knowledge: KNOWLEDGE_HELP,
+  'knowledge.search': KNOWLEDGE_HELP,
+  'knowledge.read': KNOWLEDGE_HELP,
   baseline: BASELINE_HELP,
   'baseline.preview': BASELINE_PREVIEW_HELP,
   'baseline.run': BASELINE_RUN_HELP,

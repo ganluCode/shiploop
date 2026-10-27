@@ -5,7 +5,7 @@
  * - 同步纯函数：不读 process.argv / process.env（env/cwd 必须显式注入）、不读
  *   文件、不发现 Host、不访问网络、不启动进程、不生成 commandId；解析失败
  *   即 AppCliParseError，调用方保证解析成功前不做任何 I/O；
- * - 只识别契约白名单的 project/config/receipt/events/baseline 命令，不新增
+ * - 只识别契约白名单的 project/config/receipt/events/knowledge/baseline 命令，不新增
  *   Run/Work、模型、Profile、Skills 参数（未知即 unknown_argument）；P02-3
  *   （F-005）按契约 §12.1 增补 project init/overview 子命令；F-015 按契约
  *   §12.1/§12.2 增补 baseline preview/run/list/status/cancel/evidence 子命令；
@@ -40,6 +40,7 @@ export const APP_CLI_COMMANDS = [
   'config',
   'receipt',
   'events',
+  'knowledge',
   'baseline',
   'phase',
   'feature',
@@ -73,6 +74,8 @@ export type AppCliCommandId =
   | 'config.export'
   | 'receipt.get'
   | 'events.observe'
+  | 'knowledge.search'
+  | 'knowledge.read'
   | 'baseline.preview'
   | 'baseline.run'
   | 'baseline.list'
@@ -176,6 +179,8 @@ export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'config.export',
   'receipt.get',
   'events.observe',
+  'knowledge.search',
+  'knowledge.read',
   'baseline.preview',
   'baseline.run',
   'baseline.list',
@@ -309,6 +314,8 @@ export type AppCliParseReason =
   | 'listen_override_argument_rejected'
   | 'listen_override_env_rejected'
   | 'invalid_project_id'
+  | 'invalid_version'
+  | 'invalid_knowledge_query'
   | 'invalid_revision'
   | 'invalid_limit'
   | 'invalid_match'
@@ -377,8 +384,8 @@ export type AppCliParseReason =
 
 const REASON_MESSAGE: Readonly<Record<AppCliParseReason, string>> = Object.freeze({
   invalid_argv_type: 'argv 必须是字符串数组',
-  missing_command: '缺少命令；本版本提供 project/config/receipt/events/baseline/phase/feature/task/planning/execution',
-  unknown_command: '未知顶层命令；本版本仅提供 project/config/receipt/events/baseline/phase/feature/task/planning/execution',
+  missing_command: '缺少命令；本版本提供 project/config/receipt/events/knowledge/baseline/phase/feature/task/planning/execution',
+  unknown_command: '未知顶层命令；本版本仅提供 project/config/receipt/events/knowledge/baseline/phase/feature/task/planning/execution',
   missing_subcommand: '命令缺少子命令',
   unknown_subcommand: '未知子命令',
   unknown_argument: '未知参数',
@@ -396,6 +403,8 @@ const REASON_MESSAGE: Readonly<Record<AppCliParseReason, string>> = Object.freez
   listen_override_argument_rejected: '拒绝监听地址覆盖参数：Host 只监听 127.0.0.1',
   listen_override_env_rejected: '拒绝监听地址覆盖环境变量：Host 只监听 127.0.0.1',
   invalid_project_id: 'projectId 必须是 UUID v4',
+  invalid_version: 'version 必须是 ≥ 1 的整数',
+  invalid_knowledge_query: '知识查询条件不能为空，必须提供非空关键词、文档 ID、标题或路径',
   invalid_revision: 'revision 必须是 ≥ 1 的整数',
   invalid_limit: 'limit 必须是 1..200 的整数',
   invalid_match: 'match 只能是 any 或 all',
@@ -702,6 +711,16 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
     minPositionals: 0,
     maxPositionals: 0,
     positionalFields: [],
+  },
+  'knowledge.search': {
+    command: 'knowledge', commandId: 'knowledge.search',
+    valueFlags: ['--project', '--document-id', '--document', '--version', '--keyword', '--title', '--path', '--limit', '--snippet-max-chars', '--max-read-bytes', '--max-candidates'],
+    boolFlags: [], repeatableFlags: [], minPositionals: 0, maxPositionals: 0, positionalFields: [],
+  },
+  'knowledge.read': {
+    command: 'knowledge', commandId: 'knowledge.read',
+    valueFlags: ['--project', '--document-id', '--document', '--version', '--max-read-bytes'],
+    boolFlags: [], repeatableFlags: [], minPositionals: 0, maxPositionals: 1, positionalFields: ['documentId'],
   },
   'baseline.preview': {
     command: 'baseline',
@@ -1533,6 +1552,7 @@ const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, A
     },
     receipt: { get: 'receipt.get' },
     events: { observe: 'events.observe' },
+    knowledge: { search: 'knowledge.search', read: 'knowledge.read' },
     baseline: {
       preview: 'baseline.preview',
       run: 'baseline.run',
@@ -3551,6 +3571,40 @@ export interface ParsedGitOperationGet {
   readonly operationId: string;
 }
 
+export interface ParsedKnowledgeSearch {
+  readonly kind: 'command';
+  readonly command: 'knowledge';
+  readonly commandId: 'knowledge.search';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly documentId?: string;
+  readonly version?: number;
+  readonly keyword?: string;
+  readonly title?: string;
+  readonly path?: string;
+  readonly limit?: number;
+  readonly snippetMaxChars?: number;
+  readonly maxReadBytes?: number;
+  readonly maxCandidates?: number;
+}
+
+export interface ParsedKnowledgeRead {
+  readonly kind: 'command';
+  readonly command: 'knowledge';
+  readonly commandId: 'knowledge.read';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly documentId: string;
+  readonly version?: number;
+  readonly maxReadBytes?: number;
+}
+
+export type ParsedKnowledgeCommand = ParsedKnowledgeSearch | ParsedKnowledgeRead;
+
 export interface ParsedPlanningStart {
   readonly kind: 'command';
   readonly command: 'planning';
@@ -3627,6 +3681,7 @@ export type ParsedAppCliCommand =
   | ParsedConfigExport
   | ParsedReceiptGet
   | ParsedEventsObserve
+  | ParsedKnowledgeCommand
   | ParsedBaselinePreview
   | ParsedBaselineRun
   | ParsedBaselineList
@@ -4697,6 +4752,87 @@ function buildWorkspace(
   }
 }
 
+function buildKnowledge(
+  scan: ScanResult,
+  state: ParseState,
+  spec: AppCommandSpec,
+): ParsedAppCliCommand {
+  assertPositionals(scan, spec, state);
+  const base = baseResult(state, scan);
+  const optionValue = (primary: string, alias: string, field: string): string | undefined => {
+    const first = takeOption(scan, primary);
+    const second = takeOption(scan, alias);
+    if (first !== undefined && second !== undefined) fail(state, 'scope_conflict', field);
+    return first ?? second;
+  };
+  const optionalPositive = (flag: string, field: string, reason: AppCliParseReason = 'invalid_integer'): number | undefined => {
+    const raw = takeOption(scan, flag);
+    if (raw === undefined) return undefined;
+    const value = parseUnsignedInteger(raw);
+    if (value === undefined || value < 1 || !Number.isSafeInteger(value)) fail(state, reason, field);
+    return value;
+  };
+  const projectId = requireProjectId(requireOption(scan, '--project', state, 'project'), state);
+  if (spec.commandId === 'knowledge.read') {
+    const optionDocumentId = optionValue('--document-id', '--document', 'documentId');
+    const positionalDocumentId = scan.positionals[0];
+    if (optionDocumentId !== undefined && positionalDocumentId !== undefined) fail(state, 'scope_conflict', 'documentId');
+    const documentId = optionDocumentId ?? positionalDocumentId;
+    if (documentId === undefined) fail(state, 'missing_positional', 'documentId');
+    const parsedDocumentId = requirePlanId(documentId, state, 'documentId');
+    const version = optionalPositive('--version', 'version', 'invalid_version');
+    const maxReadBytes = optionalPositive('--max-read-bytes', 'max-read-bytes');
+    if (maxReadBytes !== undefined && maxReadBytes > 16 * 1024 * 1024) fail(state, 'integer_out_of_range', 'max-read-bytes');
+    return {
+      ...base,
+      command: 'knowledge', commandId: 'knowledge.read', projectId, documentId: parsedDocumentId,
+      ...(version !== undefined ? { version } : {}),
+      ...(maxReadBytes !== undefined ? { maxReadBytes } : {}),
+    };
+  }
+
+  const documentIdRaw = optionValue('--document-id', '--document', 'documentId');
+  const documentId = documentIdRaw === undefined ? undefined : requirePlanId(documentIdRaw, state, 'documentId');
+  const version = optionalPositive('--version', 'version', 'invalid_version');
+  if (version !== undefined && documentId === undefined) fail(state, 'invalid_knowledge_query', 'version');
+  const textOption = (flag: string, field: string): string | undefined => {
+    const raw = takeOption(scan, flag);
+    if (raw === undefined) return undefined;
+    if (raw.trim().length === 0 || raw.includes('\0')) fail(state, 'invalid_knowledge_query', field);
+    return raw;
+  };
+  const keyword = textOption('--keyword', 'keyword');
+  const title = textOption('--title', 'title');
+  const path = textOption('--path', 'path');
+  if (path !== undefined && (path.startsWith('/') || path.includes('\\') || path.split('/').includes('..'))) {
+    fail(state, 'invalid_knowledge_query', 'path');
+  }
+  if (documentId === undefined && keyword === undefined && title === undefined && path === undefined) {
+    fail(state, 'invalid_knowledge_query', 'query');
+  }
+  const limit = optionalPositive('--limit', 'limit', 'invalid_limit');
+  const snippetMaxChars = optionalPositive('--snippet-max-chars', 'snippet-max-chars');
+  const maxReadBytes = optionalPositive('--max-read-bytes', 'max-read-bytes');
+  const maxCandidates = optionalPositive('--max-candidates', 'max-candidates');
+  if (limit !== undefined && limit > 100) fail(state, 'integer_out_of_range', 'limit');
+  if (snippetMaxChars !== undefined && snippetMaxChars > 2_000) fail(state, 'integer_out_of_range', 'snippet-max-chars');
+  if (maxReadBytes !== undefined && maxReadBytes > 16 * 1024 * 1024) fail(state, 'integer_out_of_range', 'max-read-bytes');
+  if (maxCandidates !== undefined && maxCandidates > 500) fail(state, 'integer_out_of_range', 'max-candidates');
+  return {
+    ...base,
+    command: 'knowledge', commandId: 'knowledge.search', projectId,
+    ...(documentId !== undefined ? { documentId } : {}),
+    ...(version !== undefined ? { version } : {}),
+    ...(keyword !== undefined ? { keyword } : {}),
+    ...(title !== undefined ? { title } : {}),
+    ...(path !== undefined ? { path } : {}),
+    ...(limit !== undefined ? { limit } : {}),
+    ...(snippetMaxChars !== undefined ? { snippetMaxChars } : {}),
+    ...(maxReadBytes !== undefined ? { maxReadBytes } : {}),
+    ...(maxCandidates !== undefined ? { maxCandidates } : {}),
+  };
+}
+
 function buildPlanning(
   scan: ScanResult,
   state: ParseState,
@@ -5334,6 +5470,8 @@ export function parseAppCliArgs(
       return buildConfig(scan, state, spec);
     case 'receipt':
       return buildReceipt(scan, state, spec);
+    case 'knowledge':
+      return buildKnowledge(scan, state, spec);
     case 'baseline':
       return buildBaseline(scan, state, spec);
     case 'phase':

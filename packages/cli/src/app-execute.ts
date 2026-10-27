@@ -214,6 +214,9 @@ import type {
   ParsedConfigCreate,
   ParsedConfigUpdate,
   ParsedEventsObserve,
+  ParsedKnowledgeCommand,
+  ParsedKnowledgeSearch,
+  ParsedKnowledgeRead,
   ParsedPlanningStart,
   ParsedPlanningList,
   ParsedPlanningGet,
@@ -233,6 +236,10 @@ import type {
   WorkspaceDiscardPreview,
 } from 'shiploop-host';
 import { getAppCliHelp } from './app/help.js';
+import {
+  formatKnowledgeReadText,
+  formatKnowledgeSearchText,
+} from './app/knowledge.js';
 import {
   buildInitCliResult,
   buildInitConfirmationNotice,
@@ -3430,6 +3437,53 @@ async function executeBaselineCommand(
   }
 }
 
+async function executeKnowledgeCommand(
+  io: AppCliIo,
+  command: ParsedKnowledgeCommand,
+  client: HostClient,
+): Promise<AppCliRunResult> {
+  if (command.commandId === 'knowledge.read') {
+    const result = await client.readKnowledge(command.projectId, {
+      documentId: command.documentId,
+      ...(command.version !== undefined ? { version: command.version } : {}),
+      ...(command.maxReadBytes !== undefined ? { maxReadBytes: command.maxReadBytes } : {}),
+    });
+    return emitSuccess(io, command, result, formatKnowledgeReadText(result));
+  }
+
+  const result = await client.searchKnowledge(command.projectId, {
+    ...(command.documentId !== undefined ? { documentId: command.documentId } : {}),
+    ...(command.version !== undefined ? { version: command.version } : {}),
+    ...(command.keyword !== undefined ? { keyword: command.keyword } : {}),
+    ...(command.title !== undefined ? { title: command.title } : {}),
+    ...(command.path !== undefined ? { path: command.path } : {}),
+    ...(command.limit !== undefined ? { limit: command.limit } : {}),
+    ...(command.snippetMaxChars !== undefined ? { snippetMaxChars: command.snippetMaxChars } : {}),
+    ...(command.maxReadBytes !== undefined ? { maxReadBytes: command.maxReadBytes } : {}),
+    ...(command.maxCandidates !== undefined ? { maxCandidates: command.maxCandidates } : {}),
+  });
+  const diagnostic = result.diagnostics[0];
+  if (diagnostic !== undefined) {
+    return emitFailure(io, command.json, {
+      exitCode: 1,
+      command: command.commandId,
+      code: diagnostic.code,
+      message: diagnostic.reason,
+      details: { query: result.query, budget: result.budget, diagnostics: result.diagnostics },
+    });
+  }
+  if (result.results.length === 0) {
+    return emitFailure(io, command.json, {
+      exitCode: 1,
+      command: command.commandId,
+      code: 'no_results',
+      message: '知识查询没有结果',
+      details: { query: result.query, budget: result.budget, diagnostics: result.diagnostics },
+    });
+  }
+  return emitSuccess(io, command, result, formatKnowledgeSearchText(result));
+}
+
 /* ------------------------------------------------------------------ *
  * 回执读取（F-016）
  * ------------------------------------------------------------------ */
@@ -3819,6 +3873,9 @@ export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunRes
   }
 
   try {
+    if (command.command === 'knowledge') {
+      return await executeKnowledgeCommand(io, command, client);
+    }
     if (command.command === 'baseline') {
       return await executeBaselineCommand(io, command, client, baselinePlan, baselineBudgets, options.signal);
     }

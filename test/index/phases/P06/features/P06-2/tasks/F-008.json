@@ -1,0 +1,18 @@
+{
+  "schema_version": 2,
+  "task_id": "F-008",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        { "file": "test/modules/cli/p06-2-knowledge-cli.test.ts", "all": true },
+        { "file": "test/modules/cli/app-cli-args.test.ts", "all": true },
+        { "file": "test/modules/cli/app-cli-execute.test.ts", "all": true },
+        { "file": "test/modules/cli/p05-9-batch-delivery-cli.test.ts", "all": true },
+        { "file": "test/modules/planning/p03-2-cli-vertical.test.ts", "all": true },
+        { "file": "test/modules/host/p06-2-knowledge-host.test.ts", "all": true },
+        { "file": "test/modules/host/p06-2-knowledge-wire.test.ts", "all": true }
+      ]
+    }
+  ]
+}
