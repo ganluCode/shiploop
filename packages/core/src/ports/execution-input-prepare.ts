@@ -40,6 +40,7 @@
  * 本层不实现任何存储、文件系统或组装行为。Host/CLI 接线属 F-007/F-008。
  */
 import { createHash } from 'node:crypto';
+import type { ProfileExecutionSnapshot } from './project-profile.js';
 import type { ContextReworkInput, ContextTokenEstimate } from './context-build.js';
 import { CONTEXT_SNAPSHOT_DIGEST_DOMAIN } from './context-build.js';
 import type { ExecutionInputRef } from './execution-input.js';
@@ -167,6 +168,8 @@ export interface ExecutionInputPreparationView {
     readonly global: PreparationSettingsScopeSnapshot | null;
     readonly project: PreparationSettingsScopeSnapshot | null;
   };
+  /** P06-1：同一读事务捕获的已确认画像快照；缺失画像为 null。 */
+  readonly profile?: ProfileExecutionSnapshot | null;
 }
 
 /**
@@ -258,6 +261,8 @@ export interface PreparedExecutionInputGroup {
   readonly requiredInputs: readonly ExecutionInputRef[];
   readonly digests: ExecutionInputGroupDigests;
   readonly approval: ExecutionInputApprovalIdentity;
+  /** P06-1：与本次 Attempt 一起固定的画像/模块身份摘要。 */
+  readonly profile?: ProfileExecutionSnapshot;
   /** 捕获时 Task revision（记录用途；重核按策略副本内容身份，不按裸 revision）。 */
   readonly taskRevision: number;
   readonly promptBytes: number;
@@ -302,6 +307,9 @@ export const EXECUTION_INPUT_PREPARE_FAILURE_REASONS = [
   'approval_state_inconsistent',
   'limit_exceeded',
   'context_build_failed',
+  'profile_not_confirmed',
+  'profile_module_invalid',
+  'profile_scope_mismatch',
   'source_unavailable',
   'published_body_mismatch',
   'publish_failed',

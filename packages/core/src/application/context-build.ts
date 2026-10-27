@@ -286,6 +286,7 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
       checkPolicy: validated.checkPolicy,
       ...(validated.deliveryPolicy === undefined ? {} : { deliveryPolicy: validated.deliveryPolicy }),
       permissions: validated.permissions,
+      ...(validated.profile === undefined ? {} : { profile: validated.profile }),
       requiredInputs: validated.requiredInputs,
       ...(rework === null ? {} : { rework }),
       ...(recovery === null ? {} : { recovery }),
@@ -498,6 +499,17 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
       }
     }
     parts.push('');
+    if (validated.profile !== undefined) {
+      parts.push('## Confirmed project profile and capability modules (identity snapshot)');
+      parts.push(`- profileVersion: ${validated.profile.profileVersion}`);
+      parts.push(`- profileDigest: sha256:${validated.profile.profileDigest}`);
+      parts.push(`- confirmationDigest: sha256:${validated.profile.confirmationDigest}`);
+      for (const module of validated.profile.modules) {
+        parts.push(`- module ${module.id}@${module.version}: ${module.reason}`);
+      }
+      parts.push('- module bodies, paths and credentials are not included; use only the fixed identity references');
+      parts.push('');
+    }
     parts.push('## Required inputs (must read each before work; verify hash)');
     if (validated.requiredInputs.length === 0) {
       parts.push('- (none)');
@@ -539,6 +551,7 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
       checkPolicy: validated.checkPolicy,
       ...(validated.deliveryPolicy === undefined ? {} : { deliveryPolicy: validated.deliveryPolicy }),
       permissions: validated.permissions,
+      ...(validated.profile === undefined ? {} : { profile: validated.profile }),
       requiredInputs: validated.requiredInputs,
       ...(historyIndex === null ? {} : { historyIndex }),
       ...(rework === null ? {} : { rework }),
@@ -563,6 +576,7 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
       checkPolicy: validated.checkPolicy,
       ...(validated.deliveryPolicy === undefined ? {} : { deliveryPolicy: validated.deliveryPolicy }),
       permissions: validated.permissions,
+      ...(validated.profile === undefined ? {} : { profile: validated.profile }),
       requiredInputs: validated.requiredInputs,
       historyIndex,
       rework,
@@ -717,6 +731,24 @@ export function createContextBuilder(deps: ContextBuilderDeps): ContextBuilder {
               truncated: false,
             },
           ] as ContextManifestSource[])),
+      ...(validated.profile === undefined
+        ? []
+        : ([{
+            sourceId: `project-profile:v${validated.profile.profileVersion}`,
+            kind: 'profile',
+            identity: {
+              profileVersion: validated.profile.profileVersion,
+              profileDigest: validated.profile.profileDigest,
+              confirmationDigest: validated.profile.confirmationDigest,
+            },
+            version: validated.profile.profileVersion,
+            hash: digestOf(CONTEXT_SNAPSHOT_DIGEST_DOMAIN, stableStringify(validated.profile)),
+            purpose: 'confirmed-project-profile-and-capability-modules',
+            selection: `${validated.profile.modules.length} pinned modules`,
+            required: true,
+            reason: '已确认画像版本、模块版本、选择理由与确认身份摘要；不内联正文、路径或凭据',
+            truncated: false,
+          }] as ContextManifestSource[])),
       {
         sourceId: 'permissions',
         kind: 'permissions',

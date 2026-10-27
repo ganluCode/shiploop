@@ -637,8 +637,12 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     // 正文复验；命令服务在同一装配内接线，最终重核/事件/回执在命令短写事务内）。
     // 获准源文件根白名单由可信装配注入（缺省空名单 fail-closed）；预算面使用
     // Core 冻结缺省（F-004 采集限制/F-005 组装预算/发布与复验限制同一契约）。
+    const projectProfileStore = createSqliteProjectProfileStore(
+      session,
+      nowUtcMs === undefined ? {} : { nowUtcMs },
+    );
     const executionInputPrepare: ExecutionInputPreparePort = createExecutionInputPrepareService({
-      views: createSqlitePlanAccess(session, nowUtcMs === undefined ? {} : { nowUtcMs }),
+      views: createSqlitePlanAccess(session, { ...(nowUtcMs === undefined ? {} : { nowUtcMs }), profileStore: projectProfileStore }),
       inputs: createExecutionInputService({
         artifacts: artifactStore,
         publisher: createArtifactPublisher({
@@ -689,7 +693,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     // 权限面沿用 P03-2 生产缺省空集边界宣告，运行时授权面随后续阶段引入时
     // 替换为真实权威读取并保持同一重核契约）。
     const executionPreview: ExecutionPreviewPort = createExecutionPreviewService({
-      views: createSqlitePlanAccess(session, nowUtcMs === undefined ? {} : { nowUtcMs }),
+      views: createSqlitePlanAccess(session, { ...(nowUtcMs === undefined ? {} : { nowUtcMs }), profileStore: projectProfileStore }),
       inspector: repositoryInspector,
       workspace: createBaselineWorkspaceReader(),
       permissions: TRUSTED_PROJECT_PERMISSIONS_READER,
@@ -1289,10 +1293,6 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
     });
 
-    const projectProfileStore = createSqliteProjectProfileStore(
-      session,
-      nowUtcMs === undefined ? {} : { nowUtcMs },
-    );
     const projectProfileService = createProjectProfileService({ store: projectProfileStore });
 
     const gitPublicMetadataLock = createGitPublicMetadataLock();

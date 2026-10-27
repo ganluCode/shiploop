@@ -77,11 +77,16 @@ import type {
 } from '../../ports/execution-preview.js';
 import type { ProjectStatus } from '../../ports/state-store.js';
 import { validateSha256Digest, validateStableId } from '../../ports/validation.js';
+import type { ProjectProfileStore } from '../../ports/project-profile-store.js';
+import { computeProfileConfirmationDigest, validateProfileModuleSelection } from '../../ports/project-profile.js';
+import type { ProfileExecutionSnapshot } from '../../ports/project-profile.js';
 import { parseStoredSettingsPayload } from '../../ports/settings-schema.js';
 import type { SqliteStorageSession } from './session.js';
 import { transactSqliteConsistentRead, visibilityCondition } from './state-store.js';
 
 export interface SqlitePlanStoreOptions {
+  /** P06-1：与计划一致读视图共用的画像权威读取端口。 */
+  readonly profileStore?: ProjectProfileStore;
   /** UTC 毫秒时钟（默认 Date.now）；测试注入以获得确定性时间。 */
   readonly nowUtcMs?: () => number;
 }
@@ -399,7 +404,50 @@ export function createSqlitePlanAccess(
   options: SqlitePlanStoreOptions = {},
 ): SqlitePlanAccess {
   const nowUtcMs = options.nowUtcMs ?? Date.now;
+  const profileStore = options.profileStore;
 
+  function readExecutionProfileSnapshot(projectId: string, operation: string): ProfileExecutionSnapshot | null | undefined {
+    if (profileStore === undefined) return undefined;
+    const profiles = profileStore.listProjectProfiles(projectId);
+    let current = null;
+    for (let index = profiles.length - 1; index >= 0; index -= 1) {
+      if (profiles[index]!.profile.status === 'confirmed') {
+        current = profiles[index]!;
+        break;
+      }
+    }
+    if (current === null) return null;
+    const catalog = profileStore.listCapabilityModules(projectId).map((row) => row.module);
+    validateProfileModuleSelection(current.profile, catalog);
+    const moduleKeys = new Set<string>();
+    const modules = current.profile.modules.flatMap((binding) => [
+      { id: binding.id, version: binding.version, reason: 'confirmed_profile_scope_match' },
+      ...binding.capabilityRefs.map((reference) => {
+        const separator = reference.lastIndexOf('@');
+        return separator > 0
+          ? { id: reference.slice(0, separator), version: reference.slice(separator + 1), reason: 'confirmed_profile_dependency' }
+          : null;
+      }).filter((value): value is { id: string; version: string; reason: string } => value !== null),
+    ]).filter((module) => {
+      const key = `${module.id}@${module.version}`;
+      if (moduleKeys.has(key)) return false;
+      moduleKeys.add(key);
+      return true;
+    }).sort((a, b) => `${a.id}@${a.version}`.localeCompare(`${b.id}@${b.version}`));
+    if (current.profile.confirmedBy === null) return null;
+    return {
+      schemaVersion: 1,
+      profileVersion: current.profile.version,
+      profileDigest: current.profileDigest,
+      confirmationDigest: computeProfileConfirmationDigest({
+        projectId,
+        profileVersion: current.profile.version,
+        profileDigest: current.profileDigest,
+        confirmedBy: current.profile.confirmedBy,
+      }),
+      modules,
+    };
+  }
   function assertOpen(operation: string): void {
     if (!session.isOpen()) {
       throw new Error(`SQLite 存储会话已关闭，拒绝继续操作（operation: ${operation}）`);
@@ -2220,6 +2268,7 @@ export function createSqlitePlanAccess(
         tasks: taskRows.map((row) => taskFromRow(row)),
         dependencies: dependencyRows.map((row) => taskDependencyFromRow(row)),
         approvals: approvalRows.map((row) => approvalFromRow(row)),
+        profile: readExecutionProfileSnapshot(validProjectId, operation),
         settings: {
           global:
             globalRow === undefined

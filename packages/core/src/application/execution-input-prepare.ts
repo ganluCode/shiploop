@@ -437,6 +437,10 @@ export function createExecutionInputPrepareService(
         throw publicError('conflict', validity.reason, { entityType: 'feature' });
       }
 
+      if ('profile' in view && view.profile === null) {
+        throw publicError('conflict', 'profile_not_confirmed', { entityType: 'project_profile' });
+      }
+
       /* 阶段 1b：目标 Task 固定输入捕获（来自同一视图）。 */
       const task = view.tasks.find((candidate) => candidate.id === payload.taskId);
       if (task === undefined || task.featureId !== view.feature.id) {
@@ -531,6 +535,7 @@ export function createExecutionInputPrepareService(
               : { copy: effective.policies.deliveryPolicy.value as Record<string, unknown> }),
           },
           permissions: { grants: [...permissionsFace.grants] },
+          ...(view.profile === undefined || view.profile === null ? {} : { profile: view.profile }),
           requiredInputs: captured.refs,
           ...(reworkInput !== undefined ? { rework: reworkInput } : {}),
           ...(recoveryInput !== undefined ? { recovery: recoveryInput } : {}),
@@ -576,6 +581,7 @@ export function createExecutionInputPrepareService(
           decisionId: validity.currentDecisionId,
           featureRevision: view.feature.revision,
         },
+        ...(built.inputSnapshot.profile === undefined ? {} : { profile: built.inputSnapshot.profile }),
         taskRevision: task.revision,
         promptBytes: built.promptBytes,
         tokenEstimate: built.tokenEstimate,

@@ -61,6 +61,8 @@ import {
   validateStableId,
 } from './validation.js';
 import { isStorageError } from './errors.js';
+import { validateProfileExecutionSnapshot } from './project-profile.js';
+import type { ProfileExecutionSnapshot } from './project-profile.js';
 import { validateExecutionInputRef } from './execution-input.js';
 import type { ExecutionInputRef } from './execution-input.js';
 import type { PlanArtifactRef } from './feature-plan.js';
@@ -82,14 +84,15 @@ import type { WorkRecoveryContinuationRecord } from './work-recovery-continuatio
  *     来源类别；未提供该键的旧输入仍按原形态构建（不携带该字段）。
  * P03-9 / F-007 以 v3 兼容的可选 `recovery` 字段追加同 Task 续接记录
  * （auto/new/required 决策与来源快照）；未提供该键的旧输入逐字节不变。
+ * v4：固定已确认 ProjectProfile 与选中能力模块的版本/选择理由摘要；不携带正文、路径或凭据。
  */
-export const CONTEXT_INPUT_SCHEMA_VERSION = 3;
+export const CONTEXT_INPUT_SCHEMA_VERSION = 4;
 
 /**
  * 可读回的历史输入快照 schema 版本（含当前版本）：历史快照不随
  * ContextBuilder 升版失效，未知版本拒绝（attempt-store 读回校验使用）。
  */
-export const CONTEXT_INPUT_SUPPORTED_SCHEMA_VERSIONS = [1, 2, CONTEXT_INPUT_SCHEMA_VERSION] as const;
+export const CONTEXT_INPUT_SUPPORTED_SCHEMA_VERSIONS = [1, 2, 3, CONTEXT_INPUT_SCHEMA_VERSION] as const;
 
 /** snapshot 业务内容摘要域（与其他摘要域分隔，防跨域拼接碰撞）。 */
 export const CONTEXT_SNAPSHOT_DIGEST_DOMAIN = 'shiploop:context-input-snapshot:v1';
@@ -289,6 +292,8 @@ export interface ContextBuildInput {
   /** 可选适用交付政策（P03-8 / F-001；缺省即不固定进本次快照）。 */
   readonly deliveryPolicy?: ContextDeliveryPolicyInput;
   readonly permissions: ContextPermissionsInput;
+  /** P06-1：执行前固定的已确认画像与能力模块身份摘要。 */
+  readonly profile?: ProfileExecutionSnapshot;
   /** 必需输入引用（F-004 ExecutionInputRef；每条都必须读取并核对 hash）。 */
   readonly requiredInputs: readonly ExecutionInputRef[];
   /** 可选历史索引（缺省即不含历史；不是必需输入）。 */
@@ -357,6 +362,7 @@ export const CONTEXT_MANIFEST_SOURCE_KINDS = [
   'check-policy',
   'delivery-policy',
   'permissions',
+  'profile',
   'required-input',
   'history-index',
   'rework-guidance',
@@ -444,6 +450,8 @@ export interface ContextInputSnapshot {
   /** 适用交付政策（P03-8 / F-001；未提供即缺省，旧输入形态不携带该键）。 */
   readonly deliveryPolicy?: ContextDeliveryPolicyInput;
   readonly permissions: ContextPermissionsInput;
+  /** P06-1：已确认画像与选中模块的不可变身份摘要；正文/路径不进入快照。 */
+  readonly profile?: ProfileExecutionSnapshot;
   readonly requiredInputs: readonly ExecutionInputRef[];
   readonly historyIndex: ContextSelectedHistoryIndex | null;
   /** 同 Task 返工输入（普通构建为 null；返工构建为已校验的完整返工身份）。 */
@@ -506,6 +514,7 @@ const BUILD_INPUT_KEYS = [
   'checkPolicy',
   'deliveryPolicy',
   'permissions',
+  'profile',
   'requiredInputs',
   'historyIndex',
   'rework',
@@ -1044,6 +1053,9 @@ function validateContextBuildInputInner(value: unknown): ContextBuildInput {
       ? undefined
       : validateDeliveryPolicy(object.deliveryPolicy, 'input.deliveryPolicy');
   const permissions = validatePermissions(object.permissions, 'input.permissions');
+  const profile = object.profile === undefined || object.profile === null
+    ? undefined
+    : validateProfileExecutionSnapshot(object.profile);
   if (object.requiredInputs === undefined || object.requiredInputs === null) {
     throw contextError('missing_required_input', 'input.requiredInputs', '必需输入引用清单是必需字段（可为空数组）');
   }
@@ -1095,6 +1107,7 @@ function validateContextBuildInputInner(value: unknown): ContextBuildInput {
     checkPolicy,
     ...(deliveryPolicy === undefined ? {} : { deliveryPolicy }),
     permissions,
+    ...(profile === undefined ? {} : { profile }),
     requiredInputs,
     ...(historyIndex.entries.length > 0 || object.historyIndex !== undefined
       ? { historyIndex }

@@ -5,6 +5,7 @@
  * 静态候选不等于用户确认的事实，所有自动检测结果都带有显式状态和证据引用。
  * 契约不导入 Pi/MCP/HTTP/ORM，也不允许正文、凭据或绝对开发机路径进入结果。
  */
+import { createHash } from 'node:crypto';
 import { StorageError } from './errors.js';
 import {
   isPlainObject,
@@ -12,6 +13,7 @@ import {
   requireNonEmptyString,
   requirePlainObject,
   validatePositiveInteger,
+  validateSha256Digest,
   validateStableId,
   validationError,
 } from './validation.js';
@@ -414,6 +416,57 @@ export function validateProfileModuleSelection(profile: ProjectProfile, catalog:
   for (const ref of selected) visit(ref);
 }
 
+export const PROFILE_EXECUTION_SNAPSHOT_SCHEMA_VERSION = 1 as const;
+
+/** Attempt 输入中允许携带的画像身份摘要；不包含模块正文、适用路径或凭据。 */
+export interface ProfileExecutionSnapshot {
+  readonly schemaVersion: typeof PROFILE_EXECUTION_SNAPSHOT_SCHEMA_VERSION;
+  readonly profileVersion: number;
+  readonly profileDigest: string;
+  readonly confirmationDigest: string;
+  readonly modules: readonly {
+    readonly id: string;
+    readonly version: string;
+    readonly reason: string;
+  }[];
+}
+
+export function computeProfileConfirmationDigest(input: {
+  readonly projectId: string;
+  readonly profileVersion: number;
+  readonly profileDigest: string;
+  readonly confirmedBy: string;
+}): string {
+  return createHash('sha256')
+    .update(`shiploop:profile-confirmation:v1\\n${JSON.stringify(input)}`, 'utf8')
+    .digest('hex');
+}
+
+export function validateProfileExecutionSnapshot(value: unknown): ProfileExecutionSnapshot {
+  const context: ValidationContext = { operation: 'ProfileExecutionSnapshot.validate' };
+  const object = requirePlainObject(value, context, 'profile');
+  rejectUnknownKeys(object, ['schemaVersion', 'profileVersion', 'profileDigest', 'confirmationDigest', 'modules'], context, 'profile');
+  validateSchemaVersion(object.schemaVersion, PROFILE_EXECUTION_SNAPSHOT_SCHEMA_VERSION, context, 'profile.schemaVersion');
+  const profileVersion = validatePositiveInteger(object.profileVersion, context, 'profile.profileVersion');
+  const profileDigest = validateSha256Digest(object.profileDigest, context, 'profile.profileDigest');
+  const confirmationDigest = validateSha256Digest(object.confirmationDigest, context, 'profile.confirmationDigest');
+  if (!Array.isArray(object.modules) || object.modules.length > PROFILE_MODULE_MAX_COUNT) {
+    fail(context, 'profile.modules', `必须是最多 ${PROFILE_MODULE_MAX_COUNT} 项的数组`);
+  }
+  const modules = object.modules.map((item, index) => {
+    const field = `profile.modules[${index}]`;
+    const module = requirePlainObject(item, context, field);
+    rejectUnknownKeys(module, ['id', 'version', 'reason'], context, field);
+    return {
+      id: validateStableId(module.id, context, `${field}.id`),
+      version: boundedString(module.version, context, `${field}.version`, 64),
+      reason: boundedString(module.reason, context, `${field}.reason`, PROFILE_SUMMARY_MAX_LENGTH),
+    };
+  });
+  const keys = modules.map((module) => `${module.id}@${module.version}`);
+  if (new Set(keys).size !== keys.length) fail(context, 'profile.modules', '不允许重复模块');
+  return Object.freeze({ schemaVersion: PROFILE_EXECUTION_SNAPSHOT_SCHEMA_VERSION, profileVersion, profileDigest, confirmationDigest, modules });
+}
 export function isProjectProfile(value: unknown): value is ProjectProfile {
   try {
     validateProjectProfile(value);
