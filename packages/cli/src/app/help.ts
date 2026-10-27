@@ -40,7 +40,7 @@ const TASK_APPROVAL_VERIFICATION_BLOCK = [
 ].join('\n');
 
 const PROJECT_HELP = [
-  'usage: shiploop project <init|overview|register|list|get|edit|labels> [options]',
+  'usage: shiploop project <init|overview|profile|register|list|get|edit|labels> [options]',
   '',
   '项目命令：',
   '  project init <repository-path> [--name <displayName>] [--confirm] [options]',
@@ -50,7 +50,11 @@ const PROJECT_HELP = [
   '  project list [--label <l> ...] [--match any|all] [--limit <int>] [--cursor <id>]',
   '  project get <projectId>                                            查看项目与绑定',
   '  project edit <projectId> --revision <int> [options]                编辑名称/说明/标签',
-  '  project labels                                                     标签计数',
+  '  project profile get <projectId>                              查看候选/确认画像与证据\n' +
+  '  project profile match --project <id> [selectors]             查看任务匹配模块\n' +
+  '  project profile confirm|modify ... --revision <int> --input <file> --confirm\n' +
+  '                                                               确认或修改画像\n' +
+  '  project profile reject ... --revision <int> --confirm       拒绝候选画像',
   '',
   '查看各子命令参数：shiploop project register --help',
   '',
@@ -190,6 +194,47 @@ const PROJECT_LABELS_HELP = [
   BOUNDARY_BLOCK,
   EXIT_CODE_BLOCK,
   '',
+].join('\n');
+
+const PROJECT_PROFILE_GET_HELP = [
+  'usage: shiploop project profile get [<projectId> | --project <id>] [--data-root <abs>] [--json]',
+  '',
+  '读取候选画像、当前确认版本、证据摘要、能力模块版本和确认/未确认状态。',
+  '查询只读；候选、未知语言和 not_run 不会被当作已确认或执行成功。',
+  '', BOUNDARY_BLOCK, EXIT_CODE_BLOCK, '',
+].join('\n');
+
+const PROJECT_PROFILE_MATCH_HELP = [
+  'usage: shiploop project profile match [<projectId> | --project <id>] [selectors] [--json]',
+  '',
+  '按任务范围查询已确认画像可用的能力模块；not_ready 以业务失败退出。',
+  'selectors: --directory <path> --required-module <id> --language <name> --framework <name> --scope <scope>',
+  '', BOUNDARY_BLOCK, EXIT_CODE_BLOCK, '',
+].join('\n');
+
+const PROJECT_PROFILE_CONFIRM_HELP = [
+  'usage: shiploop project profile confirm [<projectId> | --project <id>] --revision <int> --input <file> --confirm',
+  '                                      [--command-id <uuid>] [--data-root <abs>] [--json]',
+  '',
+  '显式确认候选画像。输入文件是完整 Profile JSON；Host/Core 重新核对项目范围、模块版本、证据和 revision。',
+  '确认画像不会启动基线、审批、验收、Runtime 或增加预算。',
+  '', BOUNDARY_BLOCK, EXIT_CODE_BLOCK, '',
+].join('\n');
+
+const PROJECT_PROFILE_MODIFY_HELP = [
+  'usage: shiploop project profile modify [<projectId> | --project <id>] --revision <int> --input <file> --confirm',
+  '                                      [--command-id <uuid>] [--data-root <abs>] [--json]',
+  '',
+  '以新的不可变版本修改画像；过期 revision、未知模块或无效证据由 Host/Core 拒绝。',
+  '', BOUNDARY_BLOCK, EXIT_CODE_BLOCK, '',
+].join('\n');
+
+const PROJECT_PROFILE_REJECT_HELP = [
+  'usage: shiploop project profile reject [<projectId> | --project <id>] --revision <int> --confirm',
+  '                                      [--command-id <uuid>] [--data-root <abs>] [--json]',
+  '',
+  '显式拒绝候选画像；不删除仓库文件、不修改活动 Attempt 输入、不改变审批或预算。',
+  '', BOUNDARY_BLOCK, EXIT_CODE_BLOCK, '',
 ].join('\n');
 
 const CONFIG_HELP = [
@@ -2070,6 +2115,11 @@ const HELP_BY_SCOPE: Readonly<Record<AppHelpScope, string>> = Object.freeze({
   project: PROJECT_HELP,
   'project.init': PROJECT_INIT_HELP,
   'project.overview': PROJECT_OVERVIEW_HELP,
+  'project.profile-get': PROJECT_PROFILE_GET_HELP,
+  'project.profile-match': PROJECT_PROFILE_MATCH_HELP,
+  'project.profile-confirm': PROJECT_PROFILE_CONFIRM_HELP,
+  'project.profile-modify': PROJECT_PROFILE_MODIFY_HELP,
+  'project.profile-reject': PROJECT_PROFILE_REJECT_HELP,
   'project.register': PROJECT_REGISTER_HELP,
   'project.list': PROJECT_LIST_HELP,
   'project.get': PROJECT_GET_HELP,

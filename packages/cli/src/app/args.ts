@@ -56,6 +56,11 @@ export type AppCliCommand = (typeof APP_CLI_COMMANDS)[number];
 export type AppCliCommandId =
   | 'project.init'
   | 'project.overview'
+  | 'project.profile-get'
+  | 'project.profile-match'
+  | 'project.profile-confirm'
+  | 'project.profile-modify'
+  | 'project.profile-reject'
   | 'project.register'
   | 'project.list'
   | 'project.get'
@@ -154,6 +159,11 @@ export type AppCliCommandId =
 export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'project.init',
   'project.overview',
+  'project.profile-get',
+  'project.profile-match',
+  'project.profile-confirm',
+  'project.profile-modify',
+  'project.profile-reject',
   'project.register',
   'project.list',
   'project.get',
@@ -520,6 +530,56 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
     boolFlags: [],
     repeatableFlags: [],
     minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['projectId'],
+  },
+  'project.profile-get': {
+    command: 'project',
+    commandId: 'project.profile-get',
+    valueFlags: ['--project'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 0,
+    maxPositionals: 1,
+    positionalFields: ['projectId'],
+  },
+  'project.profile-match': {
+    command: 'project',
+    commandId: 'project.profile-match',
+    valueFlags: ['--project', '--directory', '--required-module', '--language', '--framework', '--scope'],
+    boolFlags: [],
+    repeatableFlags: ['--required-module', '--language', '--framework', '--scope'],
+    minPositionals: 0,
+    maxPositionals: 1,
+    positionalFields: ['projectId'],
+  },
+  'project.profile-confirm': {
+    command: 'project',
+    commandId: 'project.profile-confirm',
+    valueFlags: ['--project', '--revision', '--input', '--command-id'],
+    boolFlags: ['--confirm'],
+    repeatableFlags: [],
+    minPositionals: 0,
+    maxPositionals: 1,
+    positionalFields: ['projectId'],
+  },
+  'project.profile-modify': {
+    command: 'project',
+    commandId: 'project.profile-modify',
+    valueFlags: ['--project', '--revision', '--input', '--command-id'],
+    boolFlags: ['--confirm'],
+    repeatableFlags: [],
+    minPositionals: 0,
+    maxPositionals: 1,
+    positionalFields: ['projectId'],
+  },
+  'project.profile-reject': {
+    command: 'project',
+    commandId: 'project.profile-reject',
+    valueFlags: ['--project', '--revision', '--command-id'],
+    boolFlags: ['--confirm'],
+    repeatableFlags: [],
+    minPositionals: 0,
     maxPositionals: 1,
     positionalFields: ['projectId'],
   },
@@ -2186,7 +2246,67 @@ export interface ParsedProjectInit {
   readonly explicitCommandId?: string;
 }
 
-/** `project overview <projectId>`（契约 §12.1）：注册状态与健康状态分开查询。 */
+export interface ParsedProjectProfileGet {
+  readonly kind: 'command';
+  readonly command: 'project';
+  readonly commandId: 'project.profile-get';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+}
+
+export interface ParsedProjectProfileMatch {
+  readonly kind: 'command';
+  readonly command: 'project';
+  readonly commandId: 'project.profile-match';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly directory?: string;
+  readonly requiredModuleIds: readonly string[];
+  readonly languages: readonly string[];
+  readonly frameworks: readonly string[];
+  readonly scope: readonly string[];
+}
+
+interface ParsedProjectProfileWriteBase {
+  readonly kind: 'command';
+  readonly command: 'project';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly revision: number;
+  readonly confirm: true;
+  readonly inputFile?: string;
+  readonly explicitCommandId?: string;
+}
+
+export interface ParsedProjectProfileConfirm extends ParsedProjectProfileWriteBase {
+  readonly commandId: 'project.profile-confirm';
+  readonly inputFile: string;
+}
+
+export interface ParsedProjectProfileModify extends ParsedProjectProfileWriteBase {
+  readonly commandId: 'project.profile-modify';
+  readonly inputFile: string;
+}
+
+export interface ParsedProjectProfileReject extends ParsedProjectProfileWriteBase {
+  readonly commandId: 'project.profile-reject';
+}
+
+/** `project profile` commands use the Host profile query/command boundary. */
+export type ParsedProjectProfileCommand =
+  | ParsedProjectProfileGet
+  | ParsedProjectProfileMatch
+  | ParsedProjectProfileConfirm
+  | ParsedProjectProfileModify
+  | ParsedProjectProfileReject;
+
+/** `project overview` (contract §12.1): registration and health are separate. */
 export interface ParsedProjectOverview {
   readonly kind: 'command';
   readonly command: 'project';
@@ -3494,6 +3614,7 @@ export type ParsedAppCliCommand =
   | ParsedPlanningDecision
   | ParsedProjectInit
   | ParsedProjectOverview
+  | ParsedProjectProfileCommand
   | ParsedProjectRegister
   | ParsedProjectList
   | ParsedProjectGet
@@ -3581,6 +3702,84 @@ export interface ParsedAppCliHelp {
 
 export type ParsedAppCli = ParsedAppCliCommand | ParsedAppCliHelp;
 
+function resolveProfileProjectId(scan: ScanResult, state: ParseState): string {
+  const option = takeOption(scan, '--project');
+  if (scan.positionals.length > 1) {
+    fail(state, 'too_many_positionals');
+  }
+  const positional = scan.positionals[0];
+  if (option !== undefined && positional !== undefined) {
+    fail(state, 'scope_conflict', 'project');
+  }
+  if (option === undefined && positional === undefined) {
+    fail(state, 'missing_required_option', 'project');
+  }
+  return requireProjectId(option ?? positional as string, state);
+}
+
+function profileListOption(scan: ScanResult, name: string): readonly string[] {
+  return (scan.options.get(name) ?? []).filter((value): value is string => value !== undefined);
+}
+
+function buildProjectProfile(scan: ScanResult, state: ParseState, spec: AppCommandSpec): ParsedAppCliCommand {
+  const base = baseResult(state, scan);
+  const projectId = resolveProfileProjectId(scan, state);
+  switch (spec.commandId) {
+    case 'project.profile-get':
+      return { ...base, command: 'project', commandId: 'project.profile-get', projectId };
+    case 'project.profile-match': {
+      const directory = takeOption(scan, '--directory');
+      return {
+        ...base,
+        command: 'project',
+        commandId: 'project.profile-match',
+        projectId,
+        ...(directory !== undefined ? { directory } : {}),
+        requiredModuleIds: profileListOption(scan, '--required-module'),
+        languages: profileListOption(scan, '--language'),
+        frameworks: profileListOption(scan, '--framework'),
+        scope: profileListOption(scan, '--scope'),
+      };
+    }
+    case 'project.profile-confirm':
+    case 'project.profile-modify': {
+      if (!scan.bools.has('--confirm')) {
+        fail(state, 'confirmation_required', 'confirm');
+      }
+      const inputFile = requireInputFile(scan, state);
+      const revision = requireRevision(scan, state);
+      const explicitCommandId = optionalCommandId(scan, state);
+      return {
+        ...base,
+        command: 'project',
+        commandId: spec.commandId,
+        projectId,
+        revision,
+        confirm: true,
+        inputFile,
+        ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
+      };
+    }
+    case 'project.profile-reject':
+      if (!scan.bools.has('--confirm')) {
+        fail(state, 'confirmation_required', 'confirm');
+      }
+      const revision = requireRevision(scan, state);
+      const explicitCommandId = optionalCommandId(scan, state);
+      return {
+        ...base,
+        command: 'project',
+        commandId: 'project.profile-reject',
+        projectId,
+        revision,
+        confirm: true,
+        ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
+      };
+    default:
+      return fail(state, 'unknown_subcommand');
+  }
+}
+
 function buildProject(scan: ScanResult, state: ParseState, spec: AppCommandSpec): ParsedAppCliCommand {
   assertPositionals(scan, spec, state);
   const base = baseResult(state, scan);
@@ -3614,6 +3813,12 @@ function buildProject(scan: ScanResult, state: ParseState, spec: AppCommandSpec)
         projectId: requireProjectId(scan.positionals[0] as string, state),
       };
     }
+    case 'project.profile-get':
+    case 'project.profile-match':
+    case 'project.profile-confirm':
+    case 'project.profile-modify':
+    case 'project.profile-reject':
+      return buildProjectProfile(scan, state, spec);
     case 'project.register': {
       const repositoryPath = scan.positionals[0] as string;
       if (repositoryPath.length === 0 || repositoryPath.includes('\0')) {
@@ -5076,6 +5281,40 @@ export function parseAppCliArgs(
   if (second.startsWith('-')) {
     fail(state, 'missing_subcommand');
   }
+
+  // Profile 保持在 project 命令组内，但采用三级命令以区分查询和显式写操作。
+  // 解析仍是纯函数；任何 Host/文件 I/O 都在执行层完成。
+  if (state.command === 'project' && second === 'profile') {
+    const third = args[2];
+    if (third === undefined) {
+      fail(state, 'missing_subcommand', 'profile');
+    }
+    if (isHelpToken(third)) {
+      return { kind: 'help', scope: 'project' };
+    }
+    if (third.startsWith('-')) {
+      fail(state, 'missing_subcommand', 'profile');
+    }
+    const profileCommandId = ({
+      get: 'project.profile-get',
+      match: 'project.profile-match',
+      confirm: 'project.profile-confirm',
+      modify: 'project.profile-modify',
+      reject: 'project.profile-reject',
+    } as const)[third as 'get' | 'match' | 'confirm' | 'modify' | 'reject'];
+    if (profileCommandId === undefined) {
+      fail(state, 'unknown_subcommand', third);
+    }
+    state.commandId = profileCommandId;
+    const spec = SPECS[profileCommandId];
+    const scan = scanOptions(args.slice(3), spec, state);
+    if (scan.help) {
+      return { kind: 'help', scope: profileCommandId };
+    }
+    assertNoEnvOverride(state, env);
+    return buildProject(scan, state, spec);
+  }
+
   const commandId = SUBCOMMAND_TO_ID[state.command][second];
   if (commandId === undefined) {
     fail(state, 'unknown_subcommand', second);

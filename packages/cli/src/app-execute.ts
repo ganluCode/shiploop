@@ -223,6 +223,7 @@ import type {
   ParsedPlanLabels,
   ParsedProjectInit,
   ParsedProjectOverview,
+  ParsedProjectProfileCommand,
   ParsedReceiptGet,
   ParsedTaskPrepare,
   ParsedTaskStrategy,
@@ -324,6 +325,8 @@ type ProjectListResult = Awaited<ReturnType<HostClient['listProjects']>>;
 type ProjectLabelCountsResult = Awaited<ReturnType<HostClient['countProjectLabels']>>;
 type ProjectInspectionResult = Awaited<ReturnType<HostClient['inspectRepository']>>;
 type ProjectOverviewResult = Awaited<ReturnType<HostClient['getProjectOverview']>>;
+type ProjectProfileQueryResult = Awaited<ReturnType<HostClient['getProjectProfile']>>;
+type ProjectProfileMatchQueryResult = Awaited<ReturnType<HostClient['matchProjectProfile']>>;
 type SettingsStateResult = Awaited<ReturnType<HostClient['getGlobalSettings']>>;
 type EffectiveSettingsResult = Awaited<ReturnType<HostClient['getEffectiveSettings']>>;
 type ExportedSettingsResult = Awaited<ReturnType<HostClient['exportGlobalSettings']>>;
@@ -674,6 +677,44 @@ function taskDetailHumanLine(detail: TaskDetailResult): string {
   );
 }
 
+function profileQueryHumanLine(result: ProjectProfileQueryResult): string {
+  const lines = [`shiploop project profile get: project=${result.projectId}`];
+  const records = [
+    ['candidate', result.candidate],
+    ['confirmed', result.confirmed],
+  ] as const;
+  for (const [label, record] of records) {
+    if (record === null) {
+      lines.push(`  ${label}: none`);
+      continue;
+    }
+    lines.push(
+      `  ${label}: status=${record.status} confirmed=${String(record.confirmed)} ` +
+        `version=${record.version} storeRevision=${record.storeRevision} digest=${record.profileDigest}`,
+    );
+    lines.push(`    modules: ${record.modules.length === 0 ? 'none' : record.modules.map((module) => `${module.id}(${module.version})`).join(', ')}`);
+    lines.push(`    evidence: ${record.evidence.length === 0 ? 'none' : record.evidence.map((evidence) => `${evidence.id}:${evidence.status}/${evidence.confirmed ? 'confirmed' : 'unconfirmed'} source=${evidence.source} ${evidence.summary}`).join(' | ')}`);
+    const unconfirmed = record.evidence.filter((evidence) => !evidence.confirmed || evidence.status !== 'confirmed');
+    if (unconfirmed.length > 0) {
+      lines.push(`    unconfirmed: ${unconfirmed.map((evidence) => evidence.id).join(', ')}`);
+    }
+  }
+  lines.push(`  capability-modules: ${result.modules.length === 0 ? 'none' : result.modules.map((module) => `${module.id}@${module.version} status=${module.status} digest=${module.digest}`).join(', ')}`);
+  return `${lines.join('\n')}\n`;
+}
+
+function profileMatchHumanLine(result: ProjectProfileMatchQueryResult): string {
+  const match = result.match;
+  const modules = match.modules.length === 0 ? 'none' : match.modules.map((module) => `${module.id}@${module.version} (${module.reason})`).join(', ');
+  const missing = match.missing.length === 0 ? 'none' : match.missing.join(', ');
+  return `shiploop project profile match: project=${result.projectId} status=${match.status} profileVersion=${String(match.profileVersion)} modules=${modules} missing=${missing}${match.reason === undefined ? '' : ` reason=${match.reason}`}\n`;
+}
+
+function profileWriteHumanLine(action: 'confirm' | 'modify' | 'reject', receipt: CompletedReceipt): string {
+  const result = receipt.result as { profile?: { version?: unknown; status?: unknown; projectId?: unknown }; profileDigest?: unknown } | undefined;
+  return `shiploop project profile ${action}: status=${String(result?.profile?.status ?? receipt.status)} project=${String(result?.profile?.projectId)} version=${String(result?.profile?.version)} digest=${String(result?.profileDigest)}${receipt.replayed ? '（replayed）' : ''}\n`;
+}
+
 /* ------------------------------------------------------------------ *
  * 写命令：显式 commandId 先查回执、以原 issuedAt 重建同一信封
  * ------------------------------------------------------------------ */
@@ -1022,10 +1063,72 @@ async function executeProjectOverview(
  * 命令分发
  * ------------------------------------------------------------------ */
 
+async function executeProjectProfile(
+  io: AppCliIo,
+  command: ParsedProjectProfileCommand,
+  client: HostClient,
+  profilePayload?: Record<string, unknown>,
+): Promise<AppCliRunResult> {
+  switch (command.commandId) {
+    case 'project.profile-get': {
+      const result = await client.getProjectProfile(command.projectId);
+      return emitSuccess(io, command, result, profileQueryHumanLine(result));
+    }
+    case 'project.profile-match': {
+      const result = await client.matchProjectProfile(command.projectId, {
+        ...(command.directory !== undefined ? { directory: command.directory } : {}),
+        ...(command.requiredModuleIds.length > 0 ? { requiredModuleIds: command.requiredModuleIds } : {}),
+        ...(command.languages.length > 0 ? { languages: command.languages } : {}),
+        ...(command.frameworks.length > 0 ? { frameworks: command.frameworks } : {}),
+        ...(command.scope.length > 0 ? { scope: command.scope } : {}),
+      });
+      if (result.match.status === 'not_ready') {
+        return emitFailure(io, command.json, {
+          exitCode: 1,
+          command: command.commandId,
+          code: 'not_ready',
+          message: `Profile 尚未满足任务模块要求${result.match.reason === undefined ? '' : `：${result.match.reason}`}`,
+          details: { match: result.match },
+        });
+      }
+      return emitSuccess(io, command, result, profileMatchHumanLine(result));
+    }
+    case 'project.profile-confirm':
+    case 'project.profile-modify':
+    case 'project.profile-reject': {
+      if (command.commandId !== 'project.profile-reject' && profilePayload === undefined) {
+        throw new TypeError('Profile 写入命令缺少已校验输入');
+      }
+      const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+      const receipt = command.commandId === 'project.profile-confirm'
+        ? await client.confirmProjectProfile({ projectId: command.projectId, expectedRevision: command.revision, profile: profilePayload, ...(command.explicitCommandId !== undefined ? { commandId: command.explicitCommandId } : {}) }, envelopeIdentityOptions(command.explicitCommandId, issuedAt))
+        : command.commandId === 'project.profile-modify'
+          ? await client.modifyProjectProfile({ projectId: command.projectId, expectedRevision: command.revision, profile: profilePayload, ...(command.explicitCommandId !== undefined ? { commandId: command.explicitCommandId } : {}) }, envelopeIdentityOptions(command.explicitCommandId, issuedAt))
+          : await client.rejectProjectProfile({ projectId: command.projectId, expectedRevision: command.revision, ...(command.explicitCommandId !== undefined ? { commandId: command.explicitCommandId } : {}) }, envelopeIdentityOptions(command.explicitCommandId, issuedAt));
+      if (receipt.status === 'rejected') {
+        return emitFailure(io, command.json, {
+          exitCode: exitCodeForReceiptStatus('rejected'),
+          command: command.commandId,
+          code: receipt.error.code,
+          message: receipt.error.message,
+          commandId: receipt.commandId,
+          ...(receipt.error.details !== undefined ? { details: receipt.error.details } : {}),
+        });
+      }
+      if (receipt.status === 'accepted') {
+        throw new Error('unexpected_accepted_profile_receipt');
+      }
+      const action = command.commandId === 'project.profile-confirm' ? 'confirm' : command.commandId === 'project.profile-modify' ? 'modify' : 'reject';
+      return emitSuccess(io, command, receipt, profileWriteHumanLine(action, receipt));
+    }
+  }
+}
+
 async function executeProjectCommand(
   io: AppCliIo,
   command: ParsedAppCliCommand,
   client: HostClient,
+  profilePayload?: Record<string, unknown>,
 ): Promise<AppCliRunResult> {
   switch (command.commandId) {
     case 'project.init': {
@@ -1034,6 +1137,12 @@ async function executeProjectCommand(
     case 'project.overview': {
       return executeProjectOverview(io, command, client);
     }
+    case 'project.profile-get':
+    case 'project.profile-match':
+    case 'project.profile-confirm':
+    case 'project.profile-modify':
+    case 'project.profile-reject':
+      return executeProjectProfile(io, command, client, profilePayload);
     case 'project.register': {
       const payload: Record<string, unknown> = {
         repositoryPath: command.repositoryPath,
@@ -1125,6 +1234,23 @@ function configScope(
  */
 function readConfigInputPayload(
   command: ParsedConfigCreate | ParsedConfigUpdate,
+): Record<string, unknown> {
+  let text: string;
+  try {
+    text = readFileSync(command.inputFile, 'utf8');
+  } catch {
+    throw new AppCliParseError(
+      'invalid_input',
+      'invalid_input_file',
+      { command: command.command, commandId: command.commandId, json: command.json },
+      'input',
+    );
+  }
+  return parseAppInputJson(text, { commandId: command.commandId, json: command.json });
+}
+
+function readProfileInputPayload(
+  command: Extract<ParsedAppCliCommand, { commandId: 'project.profile-confirm' | 'project.profile-modify' }>,
 ): Record<string, unknown> {
   let text: string;
   try {
@@ -3632,6 +3758,26 @@ export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunRes
     }
   }
 
+  let profilePayload: Record<string, unknown> | undefined;
+  if (command.commandId === 'project.profile-confirm' || command.commandId === 'project.profile-modify') {
+    try {
+      profilePayload = readProfileInputPayload(command);
+    } catch (error) {
+      if (error instanceof AppCliParseError) {
+        return emitParseFailure(io, error, jsonFlag);
+      }
+      return emitFailure(io, command.json, {
+        exitCode: 2,
+        command: command.commandId,
+        code: 'invalid_input',
+        message: 'Profile 输入文件读取失败',
+      });
+    }
+  }
+
+  // Profile 查询和写入均经 HostClient；CLI 不打开 SQLite、不读取业务文件。
+  // Profile 确认不隐式授权基线、审批、验收或预算变更。
+
   // P03-5 / F-012：workspace.discard 确认在服务端包含 Git 删除与整组停止证明
   //（固有有界等待，实测约 13s），默认 10s 单请求预算会无谓落入响应丢失路径；
   // 本命令使用受界放大预算（仍有限：60s 单请求 / 120s 总预算），显式注入逐字段优先。
@@ -3714,7 +3860,7 @@ export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunRes
     if (command.command === 'git') {
       return await executeGitCommand(io, command, client);
     }
-    return await executeProjectCommand(io, command, client);
+    return await executeProjectCommand(io, command, client, profilePayload);
   } catch (error) {
     if (isHostProtocolError(error)) {
       return emitFailure(
