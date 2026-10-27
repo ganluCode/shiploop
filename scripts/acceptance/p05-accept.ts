@@ -319,10 +319,11 @@ export async function runP05Acceptance(options: P05AcceptanceOptions): Promise<P
   const fullRegression = options.fullRegression === true;
   const scope = selectP05TestScope(tests.files, fullRegression);
   const productTest = 'test/modules/acceptance/p05-product-report.test.ts';
+  const phaseEvidenceTest = 'test/modules/acceptance/p05-phase-evidence.test.ts';
   const contractFiles = [ENTRY_PATH, P05_ACCEPT_CONFIG_PATH, config.checklist, 'package.json', config.toolchain.lockfile,
     'scripts/acceptance/p05-accept.ts', 'scripts/acceptance/p05-steps.ts', 'scripts/acceptance/p05-integration-report.ts',
     'scripts/acceptance/p05-config.ts', 'scripts/acceptance/p05-report.ts', 'scripts/verify.ts', 'scripts/run-tests.ts',
-    'scripts/acceptance/p05-test-scope.ts', 'scripts/acceptance/p05-product-evidence.ts', productTest,
+    'scripts/acceptance/p05-test-scope.ts', 'scripts/acceptance/p05-product-evidence.ts', productTest, phaseEvidenceTest,
     ...tests.inputs, ...tests.files, ...phaseScenarioFiles];
   const inputsDigest = digest(canonical({ repoRoot, config, stepTimeoutMs, overallTimeoutMs, fullRegression, scope,
     files: contractFiles.map(file => [file, digest(readFileSync(repoFile(repoRoot, file)))]) }));
@@ -355,6 +356,8 @@ export async function runP05Acceptance(options: P05AcceptanceOptions): Promise<P
   const env = isolatedEnv(resources, repoRoot, stepTimeoutMs);
   const productDir = join(resources, 'product-reports');
   mkdirSync(productDir, { recursive: true });
+  const scenarioDir = join(workDir, 'scenario-evidence');
+  mkdirSync(scenarioDir, { recursive: true });
   const scopeContent = JSON.stringify({ identity, ...scope }, null, 2) + '\n';
   writeFileSync(join(workDir, 'test-scope.json'), scopeContent, { flag: 'wx' });
   const stepFiles = {
@@ -362,7 +365,7 @@ export async function runP05Acceptance(options: P05AcceptanceOptions): Promise<P
     // P05-10 的阶段场景是显式覆盖面；此前这里筛选 tests.files 中的 P05 文件，
     // 导致它们在第二步被重复执行。
     'p05-affected-regression': phaseScenarioFiles,
-    'p05-cross-layer-smoke': ['test/modules/acceptance/p05-acceptance-contract.test.ts', productTest],
+    'p05-cross-layer-smoke': ['test/modules/acceptance/p05-acceptance-contract.test.ts', productTest, phaseEvidenceTest],
     'p05-manual-gate': [],
   } as const;
   const steps: P05StepSpec[] = ENTRY.stepOrder.map(id => {
@@ -388,9 +391,10 @@ export async function runP05Acceptance(options: P05AcceptanceOptions): Promise<P
       const remaining = overallTimeoutMs - (Date.now() - started);
       if (remaining <= 0) fail('阶段总预算耗尽');
       // Only the dedicated exporter receives the run-bound output destination.
-      const productEnv = args.includes(productTest) ? {
+      const productEnv = args.includes(productTest) || args.includes(phaseEvidenceTest) ? {
         ...processOptions.env, SHIPLOOP_P05_PRODUCT_REPORT_DIR: productDir,
         SHIPLOOP_P05_REPORT_IDENTITY: JSON.stringify(identity),
+        SHIPLOOP_P05_SCENARIO_ROOT: scenarioDir,
       } : processOptions.env;
       return (options.runProcess ?? runBoundedProcess)(command, args, { ...processOptions, env: productEnv,
         timeoutMs: Math.min(processOptions.timeoutMs, remaining) });
@@ -405,6 +409,12 @@ export async function runP05Acceptance(options: P05AcceptanceOptions): Promise<P
     productReports.push({ ...captured, label: 'Core/Host 临时项目排队状态报告（离线，不代表真实模型执行完成）',
       command: `node scripts/run-tests.ts test/modules/acceptance/p05-acceptance-contract.test.ts ${productTest}` });
   } catch (error) { problems.push(`产品报告证据缺失或无效：${message(error)}`); }
+  const scenarioBindings = checklist.items
+    .filter(item => item.execution === 'offline')
+    .map(item => ({
+      checkId: item.id,
+      scenarios: item.evidence.map(category => ({ file: `phase-evidence-${category}.json`, category, scenarioIds: [...item.scenarioIds] })),
+    }));
   let cleaned = false;
   if (sequence.stopConfirmed) {
     try { rmSync(resources, { recursive: true }); cleaned = !existsSync(resources); }
@@ -418,8 +428,10 @@ export async function runP05Acceptance(options: P05AcceptanceOptions): Promise<P
     repoRoot, config, checklist, runId, reportRoot: join(reportRoot, 'reports'), stepRunDir, exec: reportExec,
     cleanup: { confirmed: cleaned, processesGone: sequence.stopConfirmed, notes: ['仅回收本次入口创建的 resources；停止不确定保留现场。'] },
     bindings: offlineBindings(checklist, ENTRY.stepOrder.filter(id => id !== 'p05-manual-gate')).map(binding => ({
-      ...binding, extraEvidence: [{ name: 'test-scope.json', category: 'report' as const, content: scopeContent }],
+      ...binding, ...(scenarioBindings.find(item => item.checkId === binding.checkId) ?? {}),
+      extraEvidence: [{ name: 'test-scope.json', category: 'report' as const, content: scopeContent }],
     })),
+    scenarioRoot: scenarioDir,
     productReports,
     knownLimitations: [
       fullRegression
