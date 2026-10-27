@@ -1174,7 +1174,10 @@ export function evaluateP05PhaseConclusion(input: {
         problems.push(`${check.id}: 证据 ${ref} 归属 ${entry.checkId}，不得跨检查复用`);
       }
     }
-    for (const category of check.evidenceCategories) {
+    // live/manual 尚未执行时，先记录 pending/not_run；这些未来运行所需的证据类别
+    // 不能在当前报告中伪造，也不应重复报告成“离线证据缺失”。真正执行后仍由
+    // 同一门禁逐类别校验。
+    for (const category of check.status === 'not_run' ? [] : check.evidenceCategories) {
       const covered = check.evidenceRefs.some((ref) => byPath.get(ref)?.category === category);
       if (!covered) {
         problems.push(`${check.id}: 证据类别未覆盖：${category}`);
