@@ -203,6 +203,8 @@ import { openSqliteStorageSession } from './sqlite/session.js';
 import { createSqliteStateStore } from './sqlite/state-store.js';
 import { createSqliteProjectProfileStore } from './sqlite/project-profile-store.js';
 import { createSqliteDocumentStore } from './sqlite/document-store.js';
+import { createDocumentService } from '../application/document-service.js';
+import type { DocumentService } from '../application/document-service.js';
 import { createInputSourceFileReader } from './fs/input-source-files.js';
 import { createSqliteIntegrationPlanStore } from './sqlite/integration-plan-store.js';
 import { createIntegrationPlanGenerationService } from '../application/integration-plan-generation.js';
@@ -350,6 +352,8 @@ export interface CoreApplication {
   readonly commandReceiptsService: CommandReceiptsService;
   /** F-010：授权查询/一致读视图快照水位/分页事件读取（§7/§8/§9.3）。 */
   readonly queryService: QueryService;
+  /** P06-2：受信项目内文档登记/版本追加/受控读取服务。 */
+  readonly documentService: DocumentService;
   /** F-003：项目隔离的有界文档关键词/身份检索与受控正文读取。 */
   readonly knowledgeQueryService: KnowledgeQueryService;
   /** F-004：受控候选写入、显式 accepted/revoked CAS 与项目内记忆检索。 */
@@ -614,6 +618,23 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     // QueryService 共用同一 PlanStore 读取面（createSqliteQueryStore）。
     const queryStore = createSqliteQueryStore(session);
     const documentStore = createSqliteDocumentStore(session, nowUtcMs === undefined ? {} : { nowUtcMs });
+    const documentService = createDocumentService({
+      documents: documentStore,
+      artifacts: artifactStore,
+      publisher: createArtifactPublisher({
+        artifacts: artifactStore,
+        files: artifactFileStore,
+        limits: { maxSizeBytes: 16_000_000, timeoutMs: 60_000 },
+      }),
+      verifier: createArtifactVerifier({
+        artifacts: artifactStore,
+        files: artifactFileStore,
+        limits: { maxReadBytes: 16_000_000 },
+      }),
+      sources: createInputSourceFileReader({
+        roots: { ...(object.inputSourceRoots as Record<string, string> | undefined) },
+      }),
+    });
     const knowledgeQueryService = createKnowledgeQueryService({
       documents: documentStore,
       documentQuery: queryStore,
@@ -1398,6 +1419,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       runtimeRecovery,
       runtimeRecoveryCatalog: recoveryCatalog,
       workRecoveryContinuation,
+      documentService,
       queryService,
       knowledgeQueryService,
       memoryService,

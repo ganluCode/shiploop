@@ -905,7 +905,8 @@ function validateKnowledgeSelection(value: unknown, field: string, projectId: st
   if (memoryId !== undefined && genericId !== undefined && memoryId !== genericId) throw contextError('validation', field, 'memoryId 与 sourceId 不一致');
 
   const contentCandidate = object.contentRef ?? object.artifactRef;
-  const flatContentPresent = object.artifactId !== undefined || object.contentHash !== undefined || object.sizeBytes !== undefined;
+  const flatContentPresent = object.artifactId !== undefined || object.sizeBytes !== undefined ||
+    (object.contentHash !== undefined && contentCandidate === undefined);
   const contentRef = contentCandidate === undefined
     ? validateKnowledgeContentRef({
         projectId: object.projectId ?? projectId,

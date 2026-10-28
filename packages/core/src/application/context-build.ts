@@ -238,7 +238,11 @@ function selectKnowledge(
   const maxSources = budget.maxKnowledgeSources ?? 256;
   const maxSnippetChars = budget.maxKnowledgeSnippetChars ?? 8_192;
   const maxTotalBytes = budget.maxKnowledgeTotalBytes ?? 64 * 1024;
-  const required = selections.filter((selection) => selection.required);
+  const required = [...new Map(
+    selections
+      .filter((selection) => selection.required)
+      .map((selection) => [knowledgeSourceId(selection), selection]),
+  ).values()];
   if (required.length > maxSources) {
     throw limitError('budget.maxKnowledgeSources', '必需知识引用数量超限', {
       limitName: 'maxKnowledgeSources', measured: required.length, limit: maxSources,
@@ -271,6 +275,7 @@ function selectKnowledge(
   for (const source of selections) {
     if (source.required) continue;
     const sourceId = knowledgeSourceId(source);
+    if (optionalSelected.has(sourceId)) continue;
     if (optionalCount >= optionalCapacity) {
       omissions.push({ sourceId, kind: 'knowledge-entry-omitted', note: `知识引用数量预算 maxKnowledgeSources=${maxSources} 省略可选来源` });
       continue;
@@ -300,8 +305,12 @@ function selectKnowledge(
     optionalSelected.set(sourceId, normalized);
     optionalCount += 1;
   }
+  const selectedIds = new Set<string>();
   const selected = selections.flatMap((source) => {
-    const chosen = source.required ? requiredSelected.get(knowledgeSourceId(source)) : optionalSelected.get(knowledgeSourceId(source));
+    const sourceId = knowledgeSourceId(source);
+    if (selectedIds.has(sourceId)) return [];
+    selectedIds.add(sourceId);
+    const chosen = source.required ? requiredSelected.get(sourceId) : optionalSelected.get(sourceId);
     return chosen === undefined ? [] : [chosen];
   });
   return { selections: selected, omissions };

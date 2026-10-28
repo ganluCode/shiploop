@@ -102,6 +102,7 @@ export function createExecutionKnowledgeReader(deps: ExecutionKnowledgeReaderDep
       let candidatesInspected = 0;
       let bytesRead = 0;
       let omittedSources = 0;
+      const selectedKeys = new Set<string>();
 
       for (const [index, raw] of input.requests.entries()) {
         const request = raw as Request;
@@ -134,13 +135,19 @@ export function createExecutionKnowledgeReader(deps: ExecutionKnowledgeReaderDep
         candidatesInspected += candidates.length;
         let found = false;
         for (const candidate of candidates) {
-          if (selections.length >= input.budget.maxSources) break;
           const documentCandidate = kind === 'document' ? candidate as KnowledgeDocumentQueryRow : undefined;
           const memoryCandidate = kind === 'memory' ? candidate as MemoryQueryRow : undefined;
           const record = kind === 'document' ? documentCandidate!.document : memoryCandidate!.memory;
           const actualId = kind === 'document' ? documentCandidate!.document.id : memoryCandidate!.memory.id;
+          const candidateVersion = kind === 'document' ? documentCandidate!.version.version : memoryCandidate!.memory.version;
+          const selectionKey = `${kind}:${actualId}@v${candidateVersion}`;
+          if (selectedKeys.has(selectionKey)) {
+            found = true;
+            break;
+          }
+          if (selections.length >= input.budget.maxSources) break;
           if ((kind === 'document' && documentId !== undefined && actualId !== documentId) ||
-              (kind === 'memory' && memoryId !== undefined && actualId !== memoryId)) continue;
+              (kind === 'memory' && memoryId !== undefined && actualId !== memoryId && memoryCandidate!.memory.recordKey !== memoryId)) continue;
           if (kind === 'document' && title !== undefined && !documentCandidate!.document.title.toLocaleLowerCase().includes(title.toLocaleLowerCase())) continue;
           if (kind === 'document' && path !== undefined && !documentCandidate!.contentLocator.includes(path)) continue;
           if (kind === 'memory' && recordKey !== undefined && memoryCandidate!.memory.recordKey !== recordKey) continue;
@@ -179,12 +186,13 @@ export function createExecutionKnowledgeReader(deps: ExecutionKnowledgeReaderDep
             sourceId: actualId,
             ...(kind === 'document' ? { documentId: actualId } : { memoryId: actualId }),
             projectId: input.projectId,
-            version: kind === 'document' ? documentCandidate!.version.version : memoryCandidate!.memory.version,
+            version: candidateVersion,
             contentRef,
             contentHash: expectedHash,
             range: { ...hit, ...position(body, hit.start, hit.end) },
             purpose, required, reason, snippet, truncated: false,
           });
+          selectedKeys.add(selectionKey);
           found = true;
           break;
         }

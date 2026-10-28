@@ -1,4 +1,4 @@
-import type { KnowledgeReadResult, KnowledgeSearchResultSet } from 'shiploop-core/protocol';
+import type { KnowledgeReadResult, KnowledgeSearchResultSet } from 'shiploop-host';
 
 function oneLine(value: string): string {
   return value.replaceAll(/[\r\n]+/g, ' ');

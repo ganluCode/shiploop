@@ -10,6 +10,8 @@
  * shiploop-core 公共入口的纯校验函数（不另立第二份），事件去重缓存与重连
  * 均有界。
  */
+export type { KnowledgeReadResult, KnowledgeSearchResultSet } from 'shiploop-core/protocol';
+
 export { connectToHost, probeDiscoveredHost } from './host-client.js';
 export type {
   ConnectHostClientOptions,
