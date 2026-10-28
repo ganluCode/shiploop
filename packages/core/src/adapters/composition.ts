@@ -706,13 +706,15 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
 
     // P02-3 / F-008：基线预览与明确授权用例（§6：规范 cwd、最小环境引用与
     // 代码身份绑定不可变检查输入；环境目录缺席 = 空目录 fail-closed）。
+    const baselineEnvironmentDirectory: BaselineEnvironmentDirectory =
+      object.baselineEnvironmentDirectory === undefined
+        ? { resolveEnvironmentRef: () => null }
+        : (object.baselineEnvironmentDirectory as BaselineEnvironmentDirectory);
+    const baselineWorkspaceReader = createBaselineWorkspaceReader();
     const baselineService = createBaselineService({
       repositoryInspector,
-      workspaceReader: createBaselineWorkspaceReader(),
-      environmentDirectory:
-        object.baselineEnvironmentDirectory === undefined
-          ? { resolveEnvironmentRef: () => null }
-          : (object.baselineEnvironmentDirectory as BaselineEnvironmentDirectory),
+      workspaceReader: baselineWorkspaceReader,
+      environmentDirectory: baselineEnvironmentDirectory,
       stateStore,
       ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
     });
@@ -1382,7 +1384,10 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     // not_run/no_baseline，不以注册成功或配置存在冒充健康通过）。
     const baselineStore = createSqliteBaselineStore(
       session,
-      nowUtcMs === undefined ? {} : { nowUtcMs },
+      {
+        ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
+        environmentDirectory: baselineEnvironmentDirectory,
+      },
     );
     const onboardingService = createOnboardingService({
       repositoryInspector,
@@ -1390,17 +1395,18 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       configurationService,
       bindingReads: queryStore,
       baselineReads: baselineStore,
+      workspaceReader: baselineWorkspaceReader,
       ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
     });
 
     const gitPublicMetadataLock = createGitPublicMetadataLock();
     const baselineExecutionService = createBaselineExecutionService({
       commands: commandService, atomicStore, baselines: baselineStore, state: stateStore,
-      inspector: repositoryInspector, workspace: createBaselineWorkspaceReader(),
+      inspector: repositoryInspector, workspace: baselineWorkspaceReader,
       processes: createCommandProcessAdapter(), artifacts: artifactStore, files: artifactFileStore,
       repositoryGuard: createBaselineRepositoryGuard({ lock: gitPublicMetadataLock }),
       recoverPartialOutput: createBaselinePartialOutputReader(basePathService.dataRoot()),
-      environmentDirectory: (object.baselineEnvironmentDirectory as BaselineEnvironmentDirectory | undefined) ?? { resolveEnvironmentRef: () => null },
+      environmentDirectory: baselineEnvironmentDirectory,
       resolveEnvironment: names => Object.fromEntries(names.flatMap(name => process.env[name] === undefined ? [] : [[name, process.env[name]!]])),
       ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
     });

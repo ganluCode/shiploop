@@ -115,12 +115,18 @@ function toOperationSummary(
 
 /** §6.2 不可变授权记录 → §7.5 公开摘要（authorizedAt epoch ms → ISO UTC）。 */
 function toAuthorizationSummary(record: BaselineAuthorizationRecord): BaselineAuthorizationSummary {
+  const missingFields = [
+    ...(record.repositoryBindingRevision === null ? ['repositoryBindingRevision' as const] : []),
+    ...(record.dirtyScope === null ? ['dirtyScope' as const] : []),
+    ...(record.environmentIdentity === null ? ['environmentIdentity' as const] : []),
+  ];
   return {
     projectId: record.projectId,
     repositoryBindingId: record.repositoryBindingId,
     ...(record.repositoryBindingRevision === null ? {} : { repositoryBindingRevision: record.repositoryBindingRevision }),
     ...(record.dirtyScope === null ? {} : { dirtyScope: record.dirtyScope }),
     ...(record.environmentIdentity === null ? {} : { environmentIdentity: record.environmentIdentity }),
+    ...(missingFields.length === 0 ? {} : { missingFields }),
     codeIdentity: {
       headCommit: record.headCommit,
       workingTreeDigest: record.workingTreeDigest,

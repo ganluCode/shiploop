@@ -2502,7 +2502,7 @@ function validateProjectOverview(
   let health: ProjectHealthSummary;
   const healthKeys = Object.keys(healthRecord);
   if (
-    !healthKeys.every((key) => ['status', 'lastBaselineOperationId', 'lastCompletedAt', 'reasonCode'].includes(key)) ||
+    !healthKeys.every((key) => ['status', 'lastBaselineOperationId', 'lastCompletedAt', 'reasonCode', 'applicability', 'applicabilityReasons', 'lastBaseline'].includes(key)) ||
     healthKeys.length < 3
   ) {
     malformed(operation, 'overview_health_invalid');
@@ -2516,18 +2516,43 @@ function validateProjectOverview(
   ) {
     malformed(operation, 'overview_health_invalid');
   }
-  if (
-    healthRecord.reasonCode !== undefined &&
-    typeof healthRecord.reasonCode !== 'string'
-  ) {
-    malformed(operation, 'overview_health_invalid');
+  if (healthRecord.applicability !== undefined && !['applicable', 'inapplicable', 'unknown'].includes(String(healthRecord.applicability))) {
+    malformed(operation, 'overview_health_applicability_invalid');
   }
+  if (healthRecord.applicabilityReasons !== undefined && (!Array.isArray(healthRecord.applicabilityReasons) || healthRecord.applicabilityReasons.some((reason) => typeof reason !== 'string'))) {
+    malformed(operation, 'overview_health_applicability_invalid');
+  }
+  if (healthRecord.lastBaseline !== undefined) {
+    const lastBaseline = requirePlain(operation, healthRecord.lastBaseline);
+    exactKeys(operation, lastBaseline, ['operation', 'checks']);
+    validateBaselineOperationSummaryWire(operation, lastBaseline.operation);
+    if (!Array.isArray(lastBaseline.checks)) malformed(operation, 'overview_health_history_invalid');
+    for (const rawCheck of lastBaseline.checks as unknown[]) {
+      const check = requirePlain(operation, rawCheck);
+      exactKeys(operation, check, ['checkKey', 'status', 'required', 'reasonCode']);
+      if (check.checkKey !== undefined && typeof check.checkKey !== 'string') malformed(operation, 'overview_health_history_invalid');
+      if (!['passed', 'failed', 'error', 'inconclusive', 'not_run'].includes(String(check.status)) || typeof check.required !== 'boolean') {
+        malformed(operation, 'overview_health_history_invalid');
+      }
+      if (check.reasonCode !== undefined && typeof check.reasonCode !== 'string') malformed(operation, 'overview_health_history_invalid');
+    }
+  }
+
   health = {
     status: healthRecord.status as ProjectHealthSummary['status'],
     lastBaselineOperationId: healthRecord.lastBaselineOperationId as string | null,
     lastCompletedAt: healthRecord.lastCompletedAt as string | null,
     ...(healthRecord.reasonCode !== undefined
       ? { reasonCode: healthRecord.reasonCode as ProjectHealthSummary['reasonCode'] }
+      : {}),
+    ...(healthRecord.applicability !== undefined
+      ? { applicability: healthRecord.applicability as ProjectHealthSummary['applicability'] }
+      : {}),
+    ...(healthRecord.applicabilityReasons !== undefined
+      ? { applicabilityReasons: [...healthRecord.applicabilityReasons] as ProjectHealthSummary['applicabilityReasons'] }
+      : {}),
+    ...(healthRecord.lastBaseline !== undefined
+      ? { lastBaseline: healthRecord.lastBaseline as ProjectHealthSummary['lastBaseline'] }
       : {}),
   };
   if (!isIsoUtcDateTime(object.readAt)) {

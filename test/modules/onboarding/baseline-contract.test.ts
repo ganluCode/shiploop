@@ -337,6 +337,15 @@ describe('F-002 仓库路径 / 项目元数据 / 授权摘要校验（§6.2/§7.
     });
     expect(summary.planDigest).toBe(DIGEST_A);
     expect(summary.plan.checks).toHaveLength(1);
+    const legacy = validateBaselineAuthorizationSummary({
+      ...summary,
+      missingFields: ['repositoryBindingRevision', 'dirtyScope', 'environmentIdentity'],
+    });
+    expect(legacy.missingFields).toEqual(['repositoryBindingRevision', 'dirtyScope', 'environmentIdentity']);
+    expectInvalidInput(
+      () => validateBaselineAuthorizationSummary({ ...summary, missingFields: ['currentConfig'] }),
+      'authorization.missingFields',
+    );
     expectInvalidInput(
       () =>
         validateBaselineAuthorizationSummary({
@@ -500,6 +509,59 @@ describe('F-002 结果摘要与健康派生（§8，三轴分离）', () => {
     });
     expect(health.status).toBe('unhealthy');
     expect(health.reasonCode).toBe('stop_unconfirmed');
+  });
+
+  it('当前代码身份变化时只保留历史通过事实，不得继续判为当前 healthy', () => {
+    const history = {
+      repositoryBindingId: 'binding-a',
+      repositoryBindingRevision: 1,
+      codeIdentity: { headCommit: 'a'.repeat(40), workingTreeDigest: 'b'.repeat(64), hasUncommittedChanges: false },
+      dirtyScope: { status: 'clean' as const, explanation: 'clean' },
+      environmentIdentity: null,
+      plan: null,
+    };
+    const health = deriveProjectHealth({
+      operation: completedOp,
+      checks: [{ checkKey: 'unit-tests', status: 'passed', required: true }],
+      authorization: history,
+      current: {
+        repositoryBindingId: 'binding-a',
+        repositoryBindingRevision: 1,
+        codeIdentity: { headCommit: 'c'.repeat(40), workingTreeDigest: 'd'.repeat(64), hasUncommittedChanges: false },
+        dirtyScope: { status: 'clean', explanation: 'clean' },
+        environmentIdentity: null,
+      },
+    });
+    expect(health.status).toBe('unhealthy');
+    expect(health.applicability).toBe('inapplicable');
+    expect(health.applicabilityReasons).toContain('source_changed');
+    expect(health.lastBaseline?.checks).toEqual([{ checkKey: 'unit-tests', status: 'passed', required: true }]);
+  });
+
+  it('历史身份字段缺失时标为 unknown，并保留逐项结果', () => {
+    const health = deriveProjectHealth({
+      operation: completedOp,
+      checks: [{ checkKey: 'unit-tests', status: 'passed', required: true }],
+      authorization: {
+        repositoryBindingId: 'binding-a',
+        repositoryBindingRevision: null,
+        codeIdentity: { headCommit: null, workingTreeDigest: 'b'.repeat(64), hasUncommittedChanges: false },
+        dirtyScope: null,
+        environmentIdentity: null,
+        plan: null,
+      },
+      current: {
+        repositoryBindingId: 'binding-a',
+        repositoryBindingRevision: 1,
+        codeIdentity: { headCommit: 'a'.repeat(40), workingTreeDigest: 'b'.repeat(64), hasUncommittedChanges: false },
+        dirtyScope: { status: 'clean', explanation: 'clean' },
+        environmentIdentity: null,
+      },
+    });
+    expect(health.status).toBe('unhealthy');
+    expect(health.applicability).toBe('unknown');
+    expect(health.applicabilityReasons).toEqual(expect.arrayContaining(['binding_identity_missing', 'code_identity_missing', 'dirty_scope_missing', 'environment_identity_missing']));
+    expect(health.lastBaseline?.checks[0]).toMatchObject({ checkKey: 'unit-tests', status: 'passed' });
   });
 
   it('操作 not_run（授权被拒）→ not_run，不折算通过', () => {

@@ -170,11 +170,37 @@ export type ProjectHealthStatus = (typeof PROJECT_HEALTH_STATUSES)[number];
 /** 健康派生原因：受控 reason 之外仅新增 §7.3 的 no_baseline。 */
 export type ProjectHealthReasonCode = BaselineReasonCode | 'no_baseline';
 
+export type ProjectHealthApplicability = 'applicable' | 'inapplicable' | 'unknown';
+export type ProjectHealthApplicabilityReason =
+  | 'no_baseline'
+  | 'authorization_missing'
+  | 'binding_identity_missing'
+  | 'binding_identity_changed'
+  | 'code_identity_missing'
+  | 'source_changed'
+  | 'no_head'
+  | 'dirty_scope_missing'
+  | 'dirty_scope_changed'
+  | 'environment_identity_missing'
+  | 'environment_identity_changed'
+  | 'command_identity_missing'
+  | 'check_definition_changed';
+
+export interface ProjectHealthHistory {
+  readonly operation: BaselineOperationSummary;
+  readonly checks: readonly BaselineCheckHealthInput[];
+}
+
 export interface ProjectHealthSummary {
   readonly status: ProjectHealthStatus;
   readonly lastBaselineOperationId: string | null;
   readonly lastCompletedAt: string | null;
   readonly reasonCode?: ProjectHealthReasonCode;
+  /** 当前工作区是否仍与最近一次授权基线适用；历史通过不等于 applicable。 */
+  readonly applicability?: ProjectHealthApplicability;
+  readonly applicabilityReasons?: readonly ProjectHealthApplicabilityReason[];
+  /** 最近一次终态基线的逐项历史结果，保留原状态，不参与当前重判。 */
+  readonly lastBaseline?: ProjectHealthHistory;
 }
 
 /* ------------------------------------------------------------------ *
@@ -234,7 +260,7 @@ export interface ProjectOverviewResult {
  * 实现方在读取前校验稳定 ID 形态。
  */
 export interface BaselineHealthReadStore {
-  readProjectHealthInput(projectId: unknown): ProjectHealthInput;
+  readProjectHealthInput(projectId: unknown, current?: BaselineHealthCurrentInput): ProjectHealthInput;
 }
 
 /* ------------------------------------------------------------------ *
@@ -297,6 +323,11 @@ export interface BaselinePreviewContext {
   readonly environmentIdentity: BaselineEnvironmentIdentity;
 }
 
+export type BaselineHistoricalMissingField =
+  | 'repositoryBindingRevision'
+  | 'dirtyScope'
+  | 'environmentIdentity';
+
 export interface BaselineAuthorizationSummary {
   readonly projectId: string;
   readonly repositoryBindingId: string;
@@ -305,6 +336,8 @@ export interface BaselineAuthorizationSummary {
   readonly codeIdentity: BaselineCodeIdentity;
   readonly dirtyScope?: BaselineDirtyScope;
   readonly environmentIdentity?: BaselineEnvironmentIdentity;
+  /** 旧版本授权未持久化的身份字段；只描述缺口，不使用当前配置补写。 */
+  readonly missingFields?: readonly BaselineHistoricalMissingField[];
   readonly policyRevision: string;
   readonly planDigest: string;
   readonly plan: BaselineCheckPlan;
@@ -1005,6 +1038,7 @@ export function validateBaselineAuthorizationSummary(
       'codeIdentity',
       'dirtyScope',
       'environmentIdentity',
+      'missingFields',
       'policyRevision',
       'planDigest',
       'plan',
@@ -1038,6 +1072,16 @@ export function validateBaselineAuthorizationSummary(
     ? undefined
     : validateBaselineEnvironmentIdentity(object.environmentIdentity, operation, `${field}.environmentIdentity`);
 
+  const missingFields = object.missingFields === undefined
+    ? undefined
+    : (() => {
+      if (!Array.isArray(object.missingFields)
+        || object.missingFields.some((value) => !['repositoryBindingRevision', 'dirtyScope', 'environmentIdentity'].includes(String(value)))) {
+        fail(operation, 'invalid_input', `${field}.missingFields`, '必须是受控历史字段缺口数组', object.missingFields);
+      }
+      return [...new Set(object.missingFields as string[])] as BaselineHistoricalMissingField[];
+    })();
+
   requireField(operation, object, 'policyRevision', `${field}.policyRevision`);
   const policyRevision = requireSha256(operation, object.policyRevision, `${field}.policyRevision`);
   requireField(operation, object, 'planDigest', `${field}.planDigest`);
@@ -1061,6 +1105,7 @@ export function validateBaselineAuthorizationSummary(
     codeIdentity,
     ...(dirtyScope === undefined ? {} : { dirtyScope }),
     ...(environmentIdentity === undefined ? {} : { environmentIdentity }),
+    ...(missingFields === undefined ? {} : { missingFields }),
     policyRevision,
     planDigest,
     plan,
@@ -1116,7 +1161,27 @@ export function validateBaselineListQuery(input: unknown, operation: string = 'b
  * §8 结果摘要与健康派生（纯函数）
  * ------------------------------------------------------------------ */
 
+export interface BaselineHealthAuthorizationInput {
+  readonly repositoryBindingId: string;
+  readonly repositoryBindingRevision: number | null;
+  readonly codeIdentity: BaselineCodeIdentity;
+  readonly dirtyScope: BaselineDirtyScope | null;
+  readonly environmentIdentity: BaselineEnvironmentIdentity | null;
+  readonly plan: BaselineCheckPlan | null;
+}
+
+export interface BaselineHealthCurrentInput {
+  readonly repositoryBindingId: string | null;
+  readonly repositoryBindingRevision: number | null;
+  readonly codeIdentity: BaselineCodeIdentity | null;
+  readonly dirtyScope: BaselineDirtyScope | null;
+  readonly environmentIdentity: BaselineEnvironmentIdentity | null;
+  /** 当前已知检查计划；省略表示调用方无法提供命令配置事实。 */
+  readonly plan?: BaselineCheckPlan | null;
+}
+
 export interface BaselineCheckHealthInput {
+  readonly checkKey?: string;
   readonly status: BaselineCheckStatus;
   readonly required: boolean;
   readonly reasonCode?: BaselineReasonCode;
@@ -1140,6 +1205,10 @@ export interface ProjectHealthInput {
   /** 最近一次**终态**基线操作；无终态操作时 null（非终态在途操作不参与派生）。 */
   readonly operation: BaselineOperationHealthInput | null;
   readonly checks: readonly BaselineCheckHealthInput[];
+  /** 最近一次授权的不可变身份；旧记录缺失字段保留为 null。 */
+  readonly authorization?: BaselineHealthAuthorizationInput | null;
+  /** 当前只读绑定/Git/环境现场；省略表示调用方只要求历史投影。 */
+  readonly current?: BaselineHealthCurrentInput;
 }
 
 /** §7.4/§7.5 逐项检查分桶计数（total/passed/failed/error/inconclusive/notRun）。 */
@@ -1195,27 +1264,83 @@ export function deriveProjectHealth(input: ProjectHealthInput): ProjectHealthSum
     lastBaselineOperationId: operation.operationId,
     lastCompletedAt: operation.endedAt ?? null,
   };
+  const history: ProjectHealthHistory = {
+    operation: summarizeBaselineOperation({
+      ...operation,
+      checks: input.checks,
+    }),
+    checks: input.checks.map((check) => ({ ...check })),
+  };
+  let result: ProjectHealthSummary;
   if (operation.status === 'not_run') {
-    return { status: 'not_run', ...identity, reasonCode: operation.reasonCode ?? 'empty_check_set' };
+    result = { status: 'not_run', ...identity, reasonCode: operation.reasonCode ?? 'empty_check_set', lastBaseline: history };
+  } else if (operation.status !== 'completed') {
+    result = { status: 'unhealthy', ...identity, reasonCode: operation.reasonCode, lastBaseline: history };
+  } else if (input.checks.length === 0) {
+    result = { status: 'unhealthy', ...identity, reasonCode: 'empty_check_set', lastBaseline: history };
+  } else {
+    const disqualifying = input.checks.find(
+      (check) => check.reasonCode !== undefined && BASELINE_DISQUALIFYING_REASONS.has(check.reasonCode),
+    );
+    if (disqualifying !== undefined) {
+      result = { status: 'unhealthy', ...identity, reasonCode: disqualifying.reasonCode, lastBaseline: history };
+    } else {
+      const failingRequired = input.checks.find((check) => check.required && check.status !== 'passed');
+      result = failingRequired === undefined
+        ? { status: 'healthy', ...identity, reasonCode: undefined, lastBaseline: history }
+        : { status: 'unhealthy', ...identity, reasonCode: failingRequired.reasonCode, lastBaseline: history };
+    }
   }
-  if (operation.status !== 'completed') {
-    return { status: 'unhealthy', ...identity, reasonCode: operation.reasonCode };
+
+  // 没有当前快照时只返回历史事实；真实 overview 会传入只读 Git 事实，
+  // 因而不能把历史成功误报为当前成功。
+  if (input.current === undefined) return result;
+  const reasons: ProjectHealthApplicabilityReason[] = [];
+  const authorization = input.authorization;
+  const current = input.current;
+  if (authorization === undefined || authorization === null) {
+    reasons.push('authorization_missing');
+  } else {
+    if (current.repositoryBindingId === null) reasons.push('binding_identity_changed');
+    else if (authorization.repositoryBindingRevision === null) reasons.push('binding_identity_missing');
+    else if (authorization.repositoryBindingId !== current.repositoryBindingId
+      || authorization.repositoryBindingRevision !== current.repositoryBindingRevision) reasons.push('binding_identity_changed');
+
+    if (current.codeIdentity === null || authorization.codeIdentity === null) reasons.push('code_identity_missing');
+    else if (current.codeIdentity.headCommit === null) reasons.push('no_head');
+    else if (authorization.codeIdentity.headCommit === null) reasons.push('code_identity_missing');
+    else if (current.codeIdentity.headCommit !== authorization.codeIdentity.headCommit
+      || current.codeIdentity.workingTreeDigest !== authorization.codeIdentity.workingTreeDigest
+      || current.codeIdentity.hasUncommittedChanges !== authorization.codeIdentity.hasUncommittedChanges) reasons.push('source_changed');
+
+    if (authorization.dirtyScope === null || current.dirtyScope === null) reasons.push('dirty_scope_missing');
+    else if (authorization.dirtyScope.status !== current.dirtyScope.status) reasons.push('dirty_scope_changed');
+
+    if (authorization.environmentIdentity === null || current.environmentIdentity === null) reasons.push('environment_identity_missing');
+    else if (stableCanonicalJson(authorization.environmentIdentity) !== stableCanonicalJson(current.environmentIdentity)) reasons.push('environment_identity_changed');
+
+    if (current.plan !== undefined) {
+      if (authorization.plan === null || current.plan === null) reasons.push('command_identity_missing');
+      else if (stableCanonicalJson(authorization.plan) !== stableCanonicalJson(current.plan)) reasons.push('check_definition_changed');
+    }
   }
-  const { checks } = input;
-  if (checks.length === 0) {
-    return { status: 'unhealthy', ...identity, reasonCode: 'empty_check_set' };
+  const uniqueReasons = [...new Set(reasons)];
+  if (uniqueReasons.length === 0) {
+    return { ...result, applicability: 'applicable', applicabilityReasons: [] };
   }
-  const disqualifying = checks.find(
-    (check) => check.reasonCode !== undefined && BASELINE_DISQUALIFYING_REASONS.has(check.reasonCode),
-  );
-  if (disqualifying !== undefined) {
-    return { status: 'unhealthy', ...identity, reasonCode: disqualifying.reasonCode };
-  }
-  const failingRequired = checks.find((check) => check.required && check.status !== 'passed');
-  if (failingRequired !== undefined) {
-    return { status: 'unhealthy', ...identity, reasonCode: failingRequired.reasonCode };
-  }
-  return { status: 'healthy', ...identity, reasonCode: undefined };
+  const unknownReasons = new Set<ProjectHealthApplicabilityReason>([
+    'authorization_missing', 'binding_identity_missing', 'code_identity_missing',
+    'dirty_scope_missing', 'environment_identity_missing', 'command_identity_missing',
+  ]);
+  const applicability = uniqueReasons.some((reason) => !unknownReasons.has(reason))
+    ? 'inapplicable'
+    : 'unknown';
+  return {
+    ...result,
+    status: result.status === 'healthy' ? 'unhealthy' : result.status,
+    applicability,
+    applicabilityReasons: uniqueReasons,
+  };
 }
 
 /** §7.4 操作摘要：在终态/在途操作身份之上附加逐项计数。 */
@@ -1370,6 +1495,58 @@ export interface BaselineEnvironmentAllowlist {
  */
 export interface BaselineEnvironmentDirectory {
   resolveEnvironmentRef(environmentRef: string): BaselineEnvironmentAllowlist | null;
+}
+
+/**
+ * 从获准检查计划和可信环境目录派生可比较的环境身份。它只记录引用、定义
+ * 版本、公开工具链和覆盖范围，不读取环境值；overview 与授权执行共用同一算法。
+ */
+export function snapshotBaselineEnvironmentIdentity(
+  plan: BaselineCheckPlan,
+  directory: BaselineEnvironmentDirectory,
+  platform: { readonly os: string | null; readonly arch: string | null } = {
+    os: process.platform,
+    arch: process.arch,
+  },
+): BaselineEnvironmentIdentity {
+  const refs = [...new Set(plan.checks.map((check) => check.environmentRef).filter((ref): ref is string => ref !== undefined))];
+  const definitions = refs.map((environmentRef) => ({
+    environmentRef,
+    definition: directory.resolveEnvironmentRef(environmentRef),
+  }));
+  const allowedVariables = new Set<string>(['PATH']);
+  const toolchain: Record<string, string | null> = {};
+  const unknownFields: string[] = [];
+  const coverage: string[] = ['PATH'];
+  for (const { environmentRef, definition } of definitions) {
+    if (definition === null) {
+      unknownFields.push(`environment:${environmentRef}`);
+      continue;
+    }
+    for (const variable of normalizeBaselineAllowedVariables(definition)) allowedVariables.add(variable);
+    coverage.push(`environmentRef:${environmentRef}`);
+    for (const [name, version] of Object.entries(definition.toolchain ?? {})) {
+      if (toolchain[name] !== undefined && toolchain[name] !== version) toolchain[name] = null;
+      else toolchain[name] = version;
+    }
+    if (definition.definitionRevision === undefined) unknownFields.push(`environmentRevision:${environmentRef}`);
+    for (const field of definition.unknownFields ?? []) unknownFields.push(field);
+  }
+  const revisions = definitions
+    .map(({ definition }) => definition?.definitionRevision)
+    .filter((value): value is string => value !== undefined);
+  const definitionRevision = refs.length === 1 ? (revisions[0] ?? null) : null;
+  if (refs.length > 1 && new Set(revisions).size > 1) unknownFields.push('environmentRevision:multiple');
+  return {
+    schemaVersion: 1,
+    environmentRef: refs.length === 1 ? refs[0]! : null,
+    definitionRevision,
+    toolchain,
+    platform,
+    allowedVariables: [...allowedVariables].sort(),
+    coverage: [...new Set(coverage)].sort(),
+    unknownFields: [...new Set(unknownFields)].sort(),
+  };
 }
 
 /** §6.4 最小默认环境：PATH（继承）+ 获准允许列表变量名。 */

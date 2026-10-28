@@ -35,6 +35,8 @@ import {
 import { deriveProjectHealth, ONBOARDING_QUERY_SCHEMA_VERSION, validateRepositoryRootPath } from '../ports/baseline.js';
 import type {
   BaselineHealthReadStore,
+  BaselineHealthCurrentInput,
+  BaselineWorkspaceReader,
   ProjectInspectionResult,
   ProjectOverviewResult,
   ProjectSettingsPresence,
@@ -72,7 +74,9 @@ export interface OnboardingServiceOptions {
   readonly configurationService: Pick<ConfigurationService, 'getCurrentSettings'>;
   /** §7.2 绑定查找窄端口（alreadyRegistered 判定）。 */
   readonly bindingReads: RepositoryBindingLookupStore;
-  /** §7.3 基线健康窄端口（迁移 v4 前由组合根装配显式占位「尚无检查」）。 */
+  /** 当前绑定现场的只读工作区摘要；不得执行项目命令。 */
+  readonly workspaceReader?: BaselineWorkspaceReader;
+  /** §7.3 基线健康窄读取端口（迁移 v4 前由组合根装配显式占位「尚无检查」）。 */
   readonly baselineReads: BaselineHealthReadStore;
   /** UTC 毫秒时钟（默认 Date.now）；测试注入以获得确定性 readAt。 */
   readonly nowUtcMs?: () => number;
@@ -102,7 +106,7 @@ export function createOnboardingService(options: OnboardingServiceOptions): Onbo
   requirePort(options.configurationService, 'configurationService', 'getCurrentSettings');
   requirePort(options.bindingReads, 'bindingReads', 'findBindingByCanonicalPath');
   requirePort(options.baselineReads, 'baselineReads', 'readProjectHealthInput');
-  const { repositoryInspector, stateStore, configurationService, bindingReads, baselineReads } =
+  const { repositoryInspector, stateStore, configurationService, bindingReads, baselineReads, workspaceReader } =
     options;
   const nowUtcMs = options.nowUtcMs ?? Date.now;
 
@@ -193,8 +197,57 @@ export function createOnboardingService(options: OnboardingServiceOptions): Onbo
             throw error;
           }
         }
-        // 健康只由基线窄端口的 §8.2 派生原料决定：注册/配置事实不参与。
-        const health = deriveProjectHealth(baselineReads.readProjectHealthInput(id));
+        // 只读复核当前绑定与 Git 现场；任何 Git 不可用/仓库被替换都转为
+        // 不可确定的当前适用性，不把历史授权当成新事实，也不执行项目命令。
+        let current: BaselineHealthCurrentInput;
+        if (binding === null) {
+          current = {
+            repositoryBindingId: null,
+            repositoryBindingRevision: null,
+            codeIdentity: null,
+            dirtyScope: null,
+            environmentIdentity: null,
+          };
+        } else {
+          try {
+            const inspection = await repositoryInspector.inspect(binding.canonicalPath);
+            const workspace = workspaceReader === undefined
+              ? null
+              : await workspaceReader.readWorkspaceSummary(inspection.canonicalPath);
+            const currentDigest = workspace?.digest ?? inspection.workingTreeDigest;
+            const identityMatches = inspection.repoIdentity === binding.repoIdentity
+              && inspection.canonicalPath === binding.canonicalPath
+              && inspection.gitCommonDir === binding.gitCommonDir;
+            const codeIdentity = identityMatches && typeof currentDigest === 'string'
+              ? {
+                headCommit: inspection.headCommit,
+                workingTreeDigest: currentDigest,
+                hasUncommittedChanges: inspection.hasUncommittedChanges,
+              }
+              : null;
+            current = {
+              repositoryBindingId: binding.id,
+              repositoryBindingRevision: binding.bindingRevision,
+              codeIdentity,
+              dirtyScope: codeIdentity === null ? null : {
+                status: codeIdentity.hasUncommittedChanges ? 'unknown' : 'clean',
+                explanation: codeIdentity.hasUncommittedChanges
+                  ? '当前 Git 现场存在未提交变化；历史范围不由查询推测。'
+                  : '当前 Git 现场没有未提交变化。',
+              },
+              environmentIdentity: null,
+            };
+          } catch {
+            current = {
+              repositoryBindingId: binding.id,
+              repositoryBindingRevision: binding.bindingRevision,
+              codeIdentity: null,
+              dirtyScope: null,
+              environmentIdentity: null,
+            };
+          }
+        }
+        const health = deriveProjectHealth(baselineReads.readProjectHealthInput(id, current));
         return {
           schemaVersion: ONBOARDING_QUERY_SCHEMA_VERSION,
           project: toPublicProjectRecord(project),
