@@ -7,6 +7,7 @@ export * from './ports/batch-delivery-commands.js';
 export * from './ports/knowledge-query.js';
 export * from './ports/memory-query.js';
 export * from './ports/knowledge-query-wire.js';
+export * from './ports/brownfield.js';
 export {
   isIsoUtcDateTime, isUuidV4, isValidResultRef, validateCommandEnvelope,
   isPublicError, publicErrorHttpStatus, validateCommandEnvelopeFields, WORK_TOOL_OPERATION_SPECS,

@@ -138,6 +138,7 @@ export * from './ports/artifact-files.js';
 export * from './ports/path-service.js';
 export * from './ports/repository-inspector.js';
 export * from './ports/commands.js';
+export * from './ports/brownfield.js';
 export * from './ports/baseline.js';
 export * from './ports/knowledge.js';
 export * from './ports/knowledge-query.js';
