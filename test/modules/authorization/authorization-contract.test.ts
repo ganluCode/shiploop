@@ -306,7 +306,22 @@ function envelope(
           executionConfig: { schemaVersion: 2, runtime: 'pi', provider: 'anthropic', model: 'claude-sonnet' },
         },
       } as ValidatedCommandEnvelope;
-    case 'feature.plan.decide':
+    case 'task.strategy.reapply':
+      return {
+        ...base,
+        operation,
+        scope: { kind: 'project', projectId: PROJECT_A },
+        expectedRevision: null,
+        payload: {
+          confirmed: true,
+          previewDigest: 'ab'.repeat(32),
+          globalSettingsRevision: 1,
+          projectSettingsRevision: null,
+          selectedTaskIds: ['t-1'],
+          expectedTaskRevisions: [{ taskId: 't-1', revision: 1 }],
+        },
+      } as ValidatedCommandEnvelope;
+
       return {
         ...base,
         operation,
@@ -465,9 +480,8 @@ function envelope(
         payload: { sourceId: 'source-1', sourceDigest: '0'.repeat(64), candidateId: 'candidate-1', candidateDigest: '0'.repeat(64) } };
     case 'project.resource.enable':
     case 'project.resource.disable':
-    case 'project.resource.revoke':
-      return { ...base, operation, scope: { kind: 'project', projectId: PROJECT_A }, expectedRevision: expectedRevision ?? 1,
-        payload: { resourceId: 'resource-1' } };
+    default:
+      throw new Error(`missing test envelope fixture for ${operation}`);
   }
 }
 
@@ -491,6 +505,7 @@ const COMMANDS_MATRIX = [
   { operation: 'feature.plan.revise', scope: { kind: 'project', projectId: PROJECT_A }, revision: 1, capability: 'feature.plan.revise' },
   // P03-2 / F-001：Task 策略副本 CAS 编辑（project scope + task.strategy.write；expectedRevision 为目标 Task 自身 revision）。
   { operation: 'task.strategy.update', scope: { kind: 'project', projectId: PROJECT_A }, revision: 1, capability: 'task.strategy.write' },
+  { operation: 'task.strategy.reapply', scope: { kind: 'project', projectId: PROJECT_A }, revision: null, capability: 'task.strategy.write' },
   // P03-2 / F-002：计划批准/拒绝决策（project scope + feature.plan.decide；expectedRevision 为 Feature 聚合 CAS）。
   { operation: 'feature.plan.decide', scope: { kind: 'project', projectId: PROJECT_A }, revision: 1, capability: 'feature.plan.decide' },
   // P03-2 / F-006：执行输入制品组准备（project scope + execution.input.prepare；创建类不携带 expectedRevision）。

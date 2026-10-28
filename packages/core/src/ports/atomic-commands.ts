@@ -36,6 +36,7 @@ import type {
   TaskApprovalItemDecisionInput,
   TaskRecord,
 } from './plan-store.js';
+import type { TaskStrategyReapplicationReadView } from './task-strategy-preview.js';
 import type {
   IntegrationPlanResultUpdateInput,
   IntegrationPlanFreezeInput,
@@ -186,6 +187,11 @@ export interface CommandTransaction {
    * 抛出，零写入），供策略编辑事务内重核归属/revision 与活动保护目标。
    */
   getTask(projectId: string, taskId: string): TaskRecord;
+  /** F-002：在本次写事务内重读默认策略重应用事实。 */
+  readTaskStrategyReapplicationViewInTransaction(
+    projectId: string,
+    taskIds: readonly string[],
+  ): TaskStrategyReapplicationReadView;
   blockTaskApproval(input: { readonly projectId: string; readonly taskId: string; readonly expectedRevision: number }): number;
   /** F-007：运行期人审事项与 Task/Feature/Run 状态在同一事务内追加。 */
   insertTaskApprovalItem(input: unknown): TaskApprovalItemInsertResult;

@@ -309,6 +309,11 @@ export interface SqlitePlanAccess {
     projectId: unknown,
     taskIds: readonly unknown[],
   ): TaskStrategyReapplicationReadView;
+  /** F-002：确认命令在同一 BEGIN IMMEDIATE 内重读预览事实。 */
+  readTaskStrategyReapplicationViewInTransaction(
+    projectId: unknown,
+    taskIds: readonly unknown[],
+  ): TaskStrategyReapplicationReadView;
   /** F-006：Feature + 全部 Task + 全部依赖边（单一 DEFERRED 读事务一致视图）。 */
   readFeaturePlanView(featureId: unknown): FeaturePlanView | undefined;
   /** P03-2 / F-002：Feature + 全部计划决策记录（单一 DEFERRED 读事务一致视图）。 */
@@ -2119,12 +2124,11 @@ export function createSqlitePlanAccess(
     return row === undefined ? undefined : taskFromRow(row);
   }
 
-  function readTaskStrategyReapplicationView(
+  function validateTaskStrategyReapplicationIds(
+    operation: string,
     projectId: unknown,
     taskIds: readonly unknown[],
-  ): TaskStrategyReapplicationReadView {
-    const operation = 'PlanStore.readTaskStrategyReapplicationView';
-    assertOpen(operation);
+  ): { readonly projectId: string; readonly taskIds: readonly string[] } {
     const context = { operation, entity: { type: 'project' as const } };
     const validProjectId = validateStableId(projectId, context, 'projectId');
     if (!Array.isArray(taskIds) || taskIds.length === 0) {
@@ -2140,81 +2144,110 @@ export function createSqlitePlanAccess(
         entity: { type: 'project', id: validProjectId }, details: { field: 'taskIds' },
       });
     }
+    return { projectId: validProjectId, taskIds: validTaskIds };
+  }
 
-    return transactSqliteConsistentRead(session, operation, (db) => {
-      const projectExists = db.prepare<[string], { id: string }>(
-        'SELECT id FROM projects WHERE id = ?',
-      ).get(validProjectId) !== undefined;
-      const globalRow = db.prepare<[], { revision: number; payload: string }>(
-        "SELECT revision, payload FROM global_settings WHERE id = 'global'",
-      ).get();
-      const projectRow = db.prepare<[string], { revision: number; payload: string }>(
-        'SELECT revision, payload FROM project_settings WHERE project_id = ?',
-      ).get(validProjectId);
-      const settings = (
-        row: { readonly revision: number; readonly payload: string } | undefined,
-        scope: 'global' | 'project',
-      ) => row === undefined ? null : {
-        revision: row.revision,
-        payload: parseStoredSettingsPayload(row.payload, {
-          operation,
-          entity: scope === 'global'
-            ? { type: 'global_settings', id: 'global' }
-            : { type: 'project_settings', projectId: validProjectId },
-        }),
-      };
+  function readTaskStrategyReapplicationViewFromDatabase(
+    db: typeof session.database,
+    operation: string,
+    validProjectId: string,
+    validTaskIds: readonly string[],
+  ): TaskStrategyReapplicationReadView {
+    const projectExists = db.prepare<[string], { id: string }>(
+      'SELECT id FROM projects WHERE id = ?',
+    ).get(validProjectId) !== undefined;
+    const globalRow = db.prepare<[], { revision: number; payload: string }>(
+      "SELECT revision, payload FROM global_settings WHERE id = 'global'",
+    ).get();
+    const projectRow = db.prepare<[string], { revision: number; payload: string }>(
+      'SELECT revision, payload FROM project_settings WHERE project_id = ?',
+    ).get(validProjectId);
+    const settings = (
+      row: { readonly revision: number; readonly payload: string } | undefined,
+      scope: 'global' | 'project',
+    ) => row === undefined ? null : {
+      revision: row.revision,
+      payload: parseStoredSettingsPayload(row.payload, {
+        operation,
+        entity: scope === 'global'
+          ? { type: 'global_settings', id: 'global' }
+          : { type: 'project_settings', projectId: validProjectId },
+      }),
+    };
 
-      const placeholders = validTaskIds.map(() => '?').join(',');
-      const rows = db.prepare<unknown[], TaskSqlRow>(
-        `${SELECT_TASK} WHERE id IN (${placeholders}) ORDER BY id`,
-      ).all(...validTaskIds) as TaskSqlRow[];
-      const rowById = new Map(rows.map((row) => [row.id, row]));
-      const tasks: TaskStrategyReapplicationTaskFact[] = validTaskIds.map((taskId) => {
-        const row = rowById.get(taskId);
-        if (row === undefined) {
-          return {
-            task: null,
-            ownership: 'missing',
-            execution: { hasExecutionHistory: false, hasActiveExecutionInputs: false, hasAuthorizedBatchScope: false },
-          };
-        }
-        const task = taskFromRow(row);
-        if (task.projectId !== validProjectId) {
-          return {
-            task,
-            ownership: 'other_project',
-            execution: { hasExecutionHistory: false, hasActiveExecutionInputs: false, hasAuthorizedBatchScope: false },
-          };
-        }
-        const hasAttempt = db.prepare<[string, string], { present: number }>(
-          'SELECT EXISTS (SELECT 1 FROM attempts WHERE project_id = ? AND task_id = ?) AS present',
-        ).get(validProjectId, task.id)?.present === 1;
-        const hasRun = db.prepare<[string, string], { present: number }>(
-          'SELECT EXISTS (SELECT 1 FROM runs WHERE project_id = ? AND feature_id = ?) AS present',
-        ).get(validProjectId, task.featureId)?.present === 1;
-        const hasActiveRun = db.prepare<[string, string], { present: number }>(
-          "SELECT EXISTS (SELECT 1 FROM runs WHERE project_id = ? AND feature_id = ? AND status IN ('queued', 'running', 'pausing', 'paused', 'cancelling', 'interrupted')) AS present",
-        ).get(validProjectId, task.featureId)?.present === 1;
-        const hasAuthorizedBatch = db.prepare<[string, string], { present: number }>(
-          'SELECT EXISTS (SELECT 1 FROM execution_batch_members WHERE project_id = ? AND feature_id = ?) AS present',
-        ).get(validProjectId, task.featureId)?.present === 1;
+    const placeholders = validTaskIds.map(() => '?').join(',');
+    const rows = db.prepare<unknown[], TaskSqlRow>(
+      `${SELECT_TASK} WHERE id IN (${placeholders}) ORDER BY id`,
+    ).all(...validTaskIds) as TaskSqlRow[];
+    const rowById = new Map(rows.map((row) => [row.id, row]));
+    const tasks: TaskStrategyReapplicationTaskFact[] = validTaskIds.map((taskId) => {
+      const row = rowById.get(taskId);
+      if (row === undefined) {
+        return {
+          task: null,
+          ownership: 'missing',
+          execution: { hasExecutionHistory: false, hasActiveExecutionInputs: false, hasAuthorizedBatchScope: false },
+        };
+      }
+      const task = taskFromRow(row);
+      if (task.projectId !== validProjectId) {
         return {
           task,
-          ownership: 'same_project',
-          execution: {
-            hasExecutionHistory: hasAttempt || hasRun,
-            hasActiveExecutionInputs: hasActiveRun,
-            hasAuthorizedBatchScope: hasAuthorizedBatch,
-          },
+          ownership: 'other_project',
+          execution: { hasExecutionHistory: false, hasActiveExecutionInputs: false, hasAuthorizedBatchScope: false },
         };
-      });
+      }
+      const hasAttempt = db.prepare<[string, string], { present: number }>(
+        'SELECT EXISTS (SELECT 1 FROM attempts WHERE project_id = ? AND task_id = ?) AS present',
+      ).get(validProjectId, task.id)?.present === 1;
+      const hasRun = db.prepare<[string, string], { present: number }>(
+        'SELECT EXISTS (SELECT 1 FROM runs WHERE project_id = ? AND feature_id = ?) AS present',
+      ).get(validProjectId, task.featureId)?.present === 1;
+      const hasActiveRun = db.prepare<[string, string], { present: number }>(
+        "SELECT EXISTS (SELECT 1 FROM runs WHERE project_id = ? AND feature_id = ? AND status IN ('queued', 'running', 'pausing', 'paused', 'cancelling', 'interrupted')) AS present",
+      ).get(validProjectId, task.featureId)?.present === 1;
+      const hasAuthorizedBatch = db.prepare<[string, string], { present: number }>(
+        'SELECT EXISTS (SELECT 1 FROM execution_batch_members WHERE project_id = ? AND feature_id = ?) AS present',
+      ).get(validProjectId, task.featureId)?.present === 1;
       return {
-        projectExists,
-        globalSettings: settings(globalRow, 'global'),
-        projectSettings: settings(projectRow, 'project'),
-        tasks,
+        task,
+        ownership: 'same_project',
+        execution: {
+          hasExecutionHistory: hasAttempt || hasRun,
+          hasActiveExecutionInputs: hasActiveRun,
+          hasAuthorizedBatchScope: hasAuthorizedBatch,
+        },
       };
     });
+    return {
+      projectExists,
+      globalSettings: settings(globalRow, 'global'),
+      projectSettings: settings(projectRow, 'project'),
+      tasks,
+    };
+  }
+
+  function readTaskStrategyReapplicationView(
+    projectId: unknown,
+    taskIds: readonly unknown[],
+  ): TaskStrategyReapplicationReadView {
+    const operation = 'PlanStore.readTaskStrategyReapplicationView';
+    assertOpen(operation);
+    const valid = validateTaskStrategyReapplicationIds(operation, projectId, taskIds);
+    return transactSqliteConsistentRead(session, operation, (db) =>
+      readTaskStrategyReapplicationViewFromDatabase(db, operation, valid.projectId, valid.taskIds));
+  }
+
+  function readTaskStrategyReapplicationViewInTransaction(
+    projectId: unknown,
+    taskIds: readonly unknown[],
+  ): TaskStrategyReapplicationReadView {
+    const operation = 'PlanStore.readTaskStrategyReapplicationViewInTransaction';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const valid = validateTaskStrategyReapplicationIds(operation, projectId, taskIds);
+    return readTaskStrategyReapplicationViewFromDatabase(
+      session.database, operation, valid.projectId, valid.taskIds);
   }
 
   /**
@@ -2907,6 +2940,7 @@ export function createSqlitePlanAccess(
     readPhaseGraphView,
     readTaskRecord,
     readTaskStrategyReapplicationView,
+    readTaskStrategyReapplicationViewInTransaction,
     readFeaturePlanView,
     readFeatureApprovalsView,
     readExecutionInputPreparationView,

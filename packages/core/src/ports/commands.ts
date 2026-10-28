@@ -46,7 +46,7 @@ import type { ValidatedPlanningRequest } from './planning-candidates.js';
 import { validateCreateProjectInput, validateUpdateProjectInput } from './state-store.js';
 import { validateExecutionStopManualPayload } from './execution-stop-manual.js';
 import type { ValidatedExecutionStopManualPayload } from './execution-stop-manual.js';
-import { validateStableId } from './validation.js';
+import { validateStableId, validateSha256Digest } from './validation.js';
 import {
   PROJECT_RESOURCE_COMMAND_OPERATIONS,
   validateProjectResourceCommandPayload,
@@ -202,6 +202,9 @@ export const COMMAND_OPERATIONS = [
   // 信封 expectedRevision 为目标 Task 自身 revision，同一写事务内重核活动
   // 执行输入保护与能力兼容性）。
   'task.strategy.update',
+  // P06-6 / F-002：预览摘要确认的批量策略重应用；CAS 事实在 payload 内
+  // 携带，事务内再次重核，不借用单 Task 的 expectedRevision。
+  'task.strategy.reapply',
   // P03-2 / F-002：计划批准/拒绝决策（project scope + feature.plan.decide；
   // 信封 expectedRevision 为 Feature 聚合 revision，同一写事务内记录决策、
   // 更新 planStatus、事件与回执；批准不是启动授权）。
@@ -363,6 +366,11 @@ export const COMMAND_OPERATION_SPECS: Readonly<Record<AppOperation, CommandOpera
     'task.strategy.update': {
       scopeKind: 'project',
       mutation: 'update',
+      capability: 'task.strategy.write',
+    },
+    'task.strategy.reapply': {
+      scopeKind: 'project',
+      mutation: 'create',
       capability: 'task.strategy.write',
     },
     // P03-4 / F-005：只加人工阻塞；expectedRevision 指向 Task 自身。
@@ -778,6 +786,16 @@ export interface ValidatedTaskStrategyUpdatePayload {
   readonly executionConfig: Record<string, unknown>;
 }
 
+/** F-002：显式确认绑定的只读预览身份与每个目标 Task 的 CAS revision。 */
+export interface ValidatedTaskStrategyReapplicationPayload {
+  readonly confirmed: true;
+  readonly previewDigest: string;
+  readonly globalSettingsRevision: number | null;
+  readonly projectSettingsRevision: number | null;
+  readonly selectedTaskIds: readonly string[];
+  readonly expectedTaskRevisions: readonly { readonly taskId: string; readonly revision: number }[];
+}
+
 export interface ValidatedTaskApprovalBlockPayload {
   readonly taskId: string;
   readonly planDigest: string;
@@ -1144,6 +1162,12 @@ export type ValidatedCommandEnvelope =
       readonly expectedRevision: number;
       readonly payload: ValidatedTaskStrategyUpdatePayload;
     })
+  | (EnvelopeCommon & {
+      readonly operation: 'task.strategy.reapply';
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: null;
+      readonly payload: ValidatedTaskStrategyReapplicationPayload;
+    })
   // P03-4 / F-005：人工阻塞命令（expectedRevision=目标 Task revision）。
   | (EnvelopeCommon & {
       readonly operation: 'task.approval.block';
@@ -1276,6 +1300,11 @@ const FEATURE_PLAN_IMPORT_PAYLOAD_KEYS = ['phaseId', 'plan'] as const;
 const PLAN_LABELS_UPDATE_PAYLOAD_KEYS = ['entityType', 'id', 'labels'] as const;
 const FEATURE_PLAN_REVISE_PAYLOAD_KEYS = ['featureId', 'plan'] as const;
 const TASK_STRATEGY_UPDATE_PAYLOAD_KEYS = ['taskId', 'executionConfig'] as const;
+const TASK_STRATEGY_REAPPLICATION_PAYLOAD_KEYS = [
+  'confirmed', 'previewDigest', 'globalSettingsRevision', 'projectSettingsRevision',
+  'selectedTaskIds', 'expectedTaskRevisions',
+] as const;
+
 const TASK_APPROVAL_BLOCK_PAYLOAD_KEYS = ['taskId', 'planDigest', 'kind', 'description', 'responsibleParty', 'codeDigest', 'artifactRefs'] as const;
 const TASK_APPROVAL_DECISION_PAYLOAD_KEYS = ['taskId', 'itemId', 'planDigest', 'codeDigest', 'artifactRefs', 'reason'] as const;
 const TASK_VERIFICATION_CONTINUE_PAYLOAD_KEYS = ['taskId', 'attemptId', 'verificationBatchId', 'codeDigest', 'observationDigest'] as const;
@@ -1640,6 +1669,61 @@ function validateTaskVerificationContinuePayload(operation: AppOperation, raw: u
     observationDigest: digest('observationDigest'),
   };
 }
+function validateTaskStrategyReapplicationPayload(
+  operation: AppOperation,
+  raw: unknown,
+): ValidatedTaskStrategyReapplicationPayload {
+  const object = requireObject(operation, raw, 'payload');
+  exactKeys(operation, object, TASK_STRATEGY_REAPPLICATION_PAYLOAD_KEYS, 'payload.');
+  if (object.confirmed !== true) {
+    fail(operation, 'invalid_input', 'payload.confirmed', '必须明确确认 true');
+  }
+  const previewDigest = validateSha256Digest(object.previewDigest, { operation }, 'payload.previewDigest');
+  const revision = (value: unknown, field: string): number | null => {
+    if (value === null) return null;
+    if (!Number.isSafeInteger(value) || (value as number) < 1) {
+      fail(operation, 'invalid_input', field, '必须是正整数或 null', value);
+    }
+    return value as number;
+  };
+  const globalSettingsRevision = revision(object.globalSettingsRevision, 'payload.globalSettingsRevision');
+  const projectSettingsRevision = revision(object.projectSettingsRevision, 'payload.projectSettingsRevision');
+  if (!Array.isArray(object.selectedTaskIds) || object.selectedTaskIds.length === 0) {
+    fail(operation, 'invalid_input', 'payload.selectedTaskIds', '必须是非空 Task ID 数组');
+  }
+  const selectedTaskIds = (object.selectedTaskIds as unknown[]).map((value, index) =>
+    validateStableId(value, { operation }, `payload.selectedTaskIds[${index}]`));
+  if (new Set(selectedTaskIds).size !== selectedTaskIds.length) {
+    fail(operation, 'invalid_input', 'payload.selectedTaskIds', 'Task ID 不得重复');
+  }
+  if (!Array.isArray(object.expectedTaskRevisions)
+    || object.expectedTaskRevisions.length !== selectedTaskIds.length) {
+    fail(operation, 'invalid_input', 'payload.expectedTaskRevisions', '必须为每个选中 Task 提供 revision');
+  }
+  const expectedTaskRevisions = (object.expectedTaskRevisions as unknown[]).map((value, index) => {
+    const entry = requireObject(operation, value, `payload.expectedTaskRevisions[${index}]`);
+    exactKeys(operation, entry, ['taskId', 'revision'], `payload.expectedTaskRevisions[${index}].`);
+    const taskId = validateStableId(entry.taskId, { operation }, `payload.expectedTaskRevisions[${index}].taskId`);
+    if (!Number.isSafeInteger(entry.revision) || (entry.revision as number) < 1) {
+      fail(operation, 'invalid_input', `payload.expectedTaskRevisions[${index}].revision`, '必须是正整数');
+    }
+    return { taskId, revision: entry.revision as number };
+  });
+  if (new Set(expectedTaskRevisions.map(entry => entry.taskId)).size !== expectedTaskRevisions.length
+    || new Set(expectedTaskRevisions.map(entry => entry.taskId)).size !== new Set(selectedTaskIds).size
+    || expectedTaskRevisions.some(entry => !selectedTaskIds.includes(entry.taskId))) {
+    fail(operation, 'invalid_input', 'payload.expectedTaskRevisions', '必须精确覆盖 selectedTaskIds');
+  }
+  return {
+    confirmed: true,
+    previewDigest,
+    globalSettingsRevision,
+    projectSettingsRevision,
+    selectedTaskIds: [...selectedTaskIds].sort(),
+    expectedTaskRevisions: expectedTaskRevisions.sort((a, b) => a.taskId.localeCompare(b.taskId)),
+  };
+}
+
 function validateTaskStrategyUpdatePayload(
   operation: AppOperation,
   raw: unknown,
@@ -2269,6 +2353,16 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
       scope,
       expectedRevision: expectedRevision as number,
       payload: validateTaskStrategyUpdatePayload(operation, object.payload),
+    };
+  }
+  if (operation === 'task.strategy.reapply') {
+    if (scope.kind !== 'project') fail(operation, 'invalid_input', 'scope.kind', 'scope mismatch');
+    return {
+      ...base,
+      operation,
+      scope,
+      expectedRevision: null,
+      payload: validateTaskStrategyReapplicationPayload(operation, object.payload),
     };
   }
   if (operation === 'planning.candidate.decide') {

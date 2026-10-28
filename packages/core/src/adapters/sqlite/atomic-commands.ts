@@ -165,6 +165,7 @@ export function createSqliteAtomicCommandStore(
           replaceFeaturePlan: guarded(plan.replaceFeaturePlanInTransaction),
           // P03-2 / F-001：Task 策略副本 CAS 编辑事务内读取与写入原语。
           getTask: guarded(plan.getTaskInTransaction),
+          readTaskStrategyReapplicationViewInTransaction: guarded(plan.readTaskStrategyReapplicationViewInTransaction),
           blockTaskApproval: guarded((input: { readonly projectId: string; readonly taskId: string; readonly expectedRevision: number }) => {
             const task = plan.getTaskInTransaction(input.projectId, input.taskId);
             if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 1) {

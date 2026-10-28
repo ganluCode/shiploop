@@ -126,6 +126,10 @@ import {
   submitTaskStrategyUpdate,
 } from './task-strategy-update.js';
 import type { TaskStrategyEditGuards } from './task-strategy-update.js';
+import {
+  TASK_STRATEGY_REAPPLICATION_OPERATION,
+  submitTaskStrategyReapplication,
+} from './task-strategy-reapply.js';
 import type { ProjectProfileService } from './project-profile-service.js';
 import type { ProjectResourceService } from './project-resource-service.js';
 import type { ProjectResourceStore } from '../ports/project-resource-store.js';
@@ -739,6 +743,9 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
         if (envelope.operation === TASK_STRATEGY_UPDATE_OPERATION && capabilityCatalog === undefined) {
           throw new PublicError('unsupported', operation);
         }
+        if (envelope.operation === TASK_STRATEGY_REAPPLICATION_OPERATION && capabilityCatalog === undefined) {
+          throw new PublicError('unsupported', operation);
+        }
         // P02-3 / F-014：baseline.cancel 已随取消/停止核验（F-010/F-012）进入白名单；
         // 取消执行端口缺席时仍 unsupported（不冒充能力）。
         if (
@@ -825,6 +832,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           envelope.operation !== PLAN_LABELS_UPDATE_OPERATION &&
           envelope.operation !== FEATURE_PLAN_REVISE_OPERATION &&
           envelope.operation !== TASK_STRATEGY_UPDATE_OPERATION &&
+          envelope.operation !== TASK_STRATEGY_REAPPLICATION_OPERATION &&
           envelope.operation !== FEATURE_PLAN_DECIDE_OPERATION &&
           envelope.operation !== TASK_APPROVAL_BLOCK_OPERATION &&
           !TASK_APPROVAL_DECISION_OPERATIONS.includes(envelope.operation as (typeof TASK_APPROVAL_DECISION_OPERATIONS)[number]) &&
@@ -1379,6 +1387,25 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
             // 活动执行输入保护/Task CAS/策略语义与能力兼容重核/副本替换/
             // 脱敏事件/回执同一事务。
             return submitTaskStrategyUpdate(
+              {
+                principalId: principal.principalId,
+                commandId: envelope.commandId,
+                operation: envelope.operation,
+                scope: envelope.scope,
+                requestDigest: digest,
+                issuedAt: envelope.issuedAt,
+                completedAt: new Date(now).toISOString(),
+              },
+              envelope,
+              transaction,
+              {
+                capabilityCatalog: capabilityCatalog!,
+                ...(taskStrategyEditGuards !== undefined ? { guards: taskStrategyEditGuards } : {}),
+              },
+            );
+          }
+          if (envelope.operation === TASK_STRATEGY_REAPPLICATION_OPERATION) {
+            return submitTaskStrategyReapplication(
               {
                 principalId: principal.principalId,
                 commandId: envelope.commandId,
