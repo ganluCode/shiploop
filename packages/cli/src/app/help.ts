@@ -56,6 +56,11 @@ const PROJECT_HELP = [
   '                                                               确认或修改画像\n' +
   '  project profile reject ... --revision <int> --confirm       拒绝候选画像',
   '',
+  '  project resource-list|resource-discover|resource-preview|resource-import|resource-enable|resource-disable|resource-revoke',
+  '                                                    项目 Skills/MCP 资源管理',
+  '  资源变更须项目授权、revision、command-id 与确认；仅影响新执行。',
+  '  Skills/MCP 不授予审批、验收、增额或 owner 权限。',
+  '',
   '查看各子命令参数：shiploop project register --help',
   '',
   BOUNDARY_BLOCK,
@@ -2130,6 +2135,13 @@ const PLANNING_DECISION_HELP = (decision: 'approve' | 'reject') => [
 
 const HELP_BY_SCOPE: Readonly<Record<AppHelpScope, string>> = Object.freeze({
   project: PROJECT_HELP,
+  'project.resource-list': 'usage: shiploop project resource-list --project <id> [--json]\n' + EXIT_CODE_BLOCK,
+  'project.resource-discover': 'usage: shiploop project resource-discover --project <id> --source <id> [--source <id> ...] [--json]\n' + EXIT_CODE_BLOCK,
+  'project.resource-preview': 'usage: shiploop project resource-preview --project <id> --source <id> [--selected <id> ...] [--json]\n' + EXIT_CODE_BLOCK,
+  'project.resource-import': 'usage: shiploop project resource-import --project <id> --source <id> --source-digest <sha256> --candidate <id> --candidate-digest <sha256> --revision <int> --command-id <uuid> --confirm [--json]\n项目授权后导入；仅影响新执行，不授予审批、验收、增额或 owner 权限。\n' + EXIT_CODE_BLOCK,
+  'project.resource-enable': 'usage: shiploop project resource-enable --project <id> --resource <id> --revision <int> --command-id <uuid> --confirm [--json]\n需要项目授权；仅影响新执行。\n' + EXIT_CODE_BLOCK,
+  'project.resource-disable': 'usage: shiploop project resource-disable --project <id> --resource <id> --revision <int> --command-id <uuid> --confirm [--json]\n需要项目授权；仅影响新执行。\n' + EXIT_CODE_BLOCK,
+  'project.resource-revoke': 'usage: shiploop project resource-revoke --project <id> --resource <id> --revision <int> --command-id <uuid> --confirm [--json]\n需要项目授权；仅影响新执行。\n' + EXIT_CODE_BLOCK,
   'project.init': PROJECT_INIT_HELP,
   'project.overview': PROJECT_OVERVIEW_HELP,
   'project.profile-get': PROJECT_PROFILE_GET_HELP,

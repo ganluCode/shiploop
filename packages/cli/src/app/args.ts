@@ -55,6 +55,13 @@ export type AppCliCommand = (typeof APP_CLI_COMMANDS)[number];
 
 /** 应用命令身份（点分 CLI 路径；用于 JSON 信封 command 字段）。 */
 export type AppCliCommandId =
+  | 'project.resource-list'
+  | 'project.resource-discover'
+  | 'project.resource-preview'
+  | 'project.resource-import'
+  | 'project.resource-enable'
+  | 'project.resource-disable'
+  | 'project.resource-revoke'
   | 'project.init'
   | 'project.overview'
   | 'project.profile-get'
@@ -160,6 +167,13 @@ export type AppCliCommandId =
   | 'integration.plan';
 
 export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
+  'project.resource-list',
+  'project.resource-discover',
+  'project.resource-preview',
+  'project.resource-import',
+  'project.resource-enable',
+  'project.resource-disable',
+  'project.resource-revoke',
   'project.init',
   'project.overview',
   'project.profile-get',
@@ -522,6 +536,13 @@ interface AppCommandSpec {
 }
 
 const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
+  'project.resource-list': { command: 'project', commandId: 'project.resource-list', valueFlags: ['--project'], boolFlags: [], repeatableFlags: [], minPositionals: 0, maxPositionals: 0, positionalFields: [] },
+  'project.resource-discover': { command: 'project', commandId: 'project.resource-discover', valueFlags: ['--project', '--source'], boolFlags: [], repeatableFlags: ['--source'], minPositionals: 0, maxPositionals: 0, positionalFields: [] },
+  'project.resource-preview': { command: 'project', commandId: 'project.resource-preview', valueFlags: ['--project', '--source', '--selected'], boolFlags: [], repeatableFlags: ['--source', '--selected'], minPositionals: 0, maxPositionals: 0, positionalFields: [] },
+  'project.resource-import': { command: 'project', commandId: 'project.resource-import', valueFlags: ['--project', '--source', '--source-digest', '--candidate', '--candidate-digest', '--revision', '--command-id'], boolFlags: ['--confirm'], repeatableFlags: [], minPositionals: 0, maxPositionals: 0, positionalFields: [] },
+  'project.resource-enable': { command: 'project', commandId: 'project.resource-enable', valueFlags: ['--project', '--resource', '--revision', '--command-id'], boolFlags: ['--confirm'], repeatableFlags: [], minPositionals: 0, maxPositionals: 0, positionalFields: [] },
+  'project.resource-disable': { command: 'project', commandId: 'project.resource-disable', valueFlags: ['--project', '--resource', '--revision', '--command-id'], boolFlags: ['--confirm'], repeatableFlags: [], minPositionals: 0, maxPositionals: 0, positionalFields: [] },
+  'project.resource-revoke': { command: 'project', commandId: 'project.resource-revoke', valueFlags: ['--project', '--resource', '--revision', '--command-id'], boolFlags: ['--confirm'], repeatableFlags: [], minPositionals: 0, maxPositionals: 0, positionalFields: [] },
   'project.init': {
     command: 'project',
     commandId: 'project.init',
@@ -1535,6 +1556,13 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
 const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, AppCliCommandId>>>> =
   Object.freeze({
     project: {
+      'resource-list': 'project.resource-list',
+      'resource-discover': 'project.resource-discover',
+      'resource-preview': 'project.resource-preview',
+      'resource-import': 'project.resource-import',
+      'resource-enable': 'project.resource-enable',
+      'resource-disable': 'project.resource-disable',
+      'resource-revoke': 'project.resource-revoke',
       init: 'project.init',
       overview: 'project.overview',
       register: 'project.register',
@@ -3661,7 +3689,18 @@ export interface ParsedPlanningDecision {
   readonly explicitCommandId?: string;
 }
 
+interface ParsedProjectResourceBase {
+  readonly kind: 'command'; readonly command: 'project'; readonly json: boolean;
+  readonly startTimeoutMs: number; readonly dataRoot?: string; readonly projectId: string;
+}
+export type ParsedProjectResource =
+  | (ParsedProjectResourceBase & { readonly commandId: 'project.resource-list' })
+  | (ParsedProjectResourceBase & { readonly commandId: 'project.resource-discover' | 'project.resource-preview'; readonly sourceIds: readonly string[]; readonly selectedResourceIds: readonly string[] })
+  | (ParsedProjectResourceBase & { readonly commandId: 'project.resource-import'; readonly revision: number; readonly explicitCommandId: string; readonly sourceId: string; readonly sourceDigest: string; readonly candidateId: string; readonly candidateDigest: string })
+  | (ParsedProjectResourceBase & { readonly commandId: 'project.resource-enable' | 'project.resource-disable' | 'project.resource-revoke'; readonly revision: number; readonly explicitCommandId: string; readonly resourceId: string });
+
 export type ParsedAppCliCommand =
+  | ParsedProjectResource
   | ParsedPlanningStart
   | ParsedPlanningList
   | ParsedPlanningGet
@@ -3839,6 +3878,36 @@ function buildProject(scan: ScanResult, state: ParseState, spec: AppCommandSpec)
   assertPositionals(scan, spec, state);
   const base = baseResult(state, scan);
   switch (spec.commandId) {
+    case 'project.resource-list':
+    case 'project.resource-discover':
+    case 'project.resource-preview':
+    case 'project.resource-import':
+    case 'project.resource-enable':
+    case 'project.resource-disable':
+    case 'project.resource-revoke': {
+      const projectId = requireProjectId(requireOption(scan, '--project', state, 'project'), state);
+      const common = { ...base, command: 'project' as const, projectId };
+      if (spec.commandId === 'project.resource-list') return { ...common, commandId: spec.commandId };
+      if (spec.commandId === 'project.resource-discover' || spec.commandId === 'project.resource-preview') {
+        const sourceIds = (scan.options.get('--source') ?? []).map(id => requirePlanId(id, state, 'source'));
+        if (sourceIds.length === 0) fail(state, 'missing_required_option', 'source');
+        const selectedResourceIds = (scan.options.get('--selected') ?? []).map(id => requirePlanId(id, state, 'selected'));
+        return { ...common, commandId: spec.commandId, sourceIds, selectedResourceIds };
+      }
+      if (!scan.bools.has('--confirm')) fail(state, 'confirmation_required', 'confirm');
+      const rawRevision = requireOption(scan, '--revision', state, 'revision');
+      const revision = parseUnsignedInteger(rawRevision);
+      if (revision === undefined || !Number.isSafeInteger(revision)) fail(state, 'invalid_revision', 'revision');
+      const explicitCommandId = optionalCommandId(scan, state);
+      if (explicitCommandId === undefined) fail(state, 'missing_required_option', 'command-id');
+      if (spec.commandId === 'project.resource-import') return { ...common, commandId: spec.commandId, revision, explicitCommandId,
+        sourceId: requirePlanId(requireOption(scan, '--source', state, 'source'), state, 'source'),
+        candidateId: requirePlanId(requireOption(scan, '--candidate', state, 'candidate'), state, 'candidate'),
+        sourceDigest: requireSha256Option(scan, '--source-digest', state, 'source-digest'),
+        candidateDigest: requireSha256Option(scan, '--candidate-digest', state, 'candidate-digest') };
+      return { ...common, commandId: spec.commandId, revision, explicitCommandId,
+        resourceId: requirePlanId(requireOption(scan, '--resource', state, 'resource'), state, 'resource') };
+    }
     case 'project.init': {
       const { repositoryPathInput, repositoryPath } = resolveRepositoryPath(
         scan.positionals[0] as string,

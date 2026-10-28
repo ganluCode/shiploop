@@ -1131,6 +1131,15 @@ async function executeProjectProfile(
   }
 }
 
+function resourceConfigurationView(result: Awaited<ReturnType<HostClient['listProjectResources']>>) {
+  return { schemaVersion: result.schemaVersion, projectId: result.projectId, revision: result.revision, digest: result.digest,
+    resources: result.resources.map(resource => ({ id: resource.id, kind: resource.kind, name: resource.name,
+      sourceRef: resource.sourceRef, sourceRevision: resource.sourceRevision, version: resource.version,
+      contentDigest: resource.contentDigest, candidateDigest: resource.candidateDigest, transport: resource.transport,
+      capabilities: resource.capabilities, credentialConfigured: resource.credentialRef !== null,
+      required: resource.required, onUnavailable: resource.onUnavailable, enabled: resource.enabled, status: resource.status })) };
+}
+
 async function executeProjectCommand(
   io: AppCliIo,
   command: ParsedAppCliCommand,
@@ -1138,6 +1147,42 @@ async function executeProjectCommand(
   profilePayload?: Record<string, unknown>,
 ): Promise<AppCliRunResult> {
   switch (command.commandId) {
+    case 'project.resource-list': {
+      const result = resourceConfigurationView(await client.listProjectResources(command.projectId));
+      return emitSuccess(io, command, result, `${JSON.stringify(result, null, 2)}\n`);
+    }
+    case 'project.resource-discover':
+    case 'project.resource-preview': {
+      const result = command.commandId === 'project.resource-discover'
+        ? await client.discoverProjectResourceCandidates(command.projectId, command.sourceIds)
+        : await client.previewProjectResourceCandidates(command.projectId, command.sourceIds, command.selectedResourceIds);
+      const view = { schemaVersion: result.schemaVersion, projectId: result.projectId, configurationChanged: result.configurationChanged,
+        ...('sources' in result ? { sources: result.sources.map(source => ({ sourceId: source.sourceId, sourceDigest: source.sourceDigest, status: source.status, candidateIds: source.candidateIds, error: source.error === null ? null : { reason: source.error.reason } })) } :
+          { entries: result.entries.map(entry => ({ sourceId: entry.sourceId, candidateId: entry.candidateId, name: entry.name, status: entry.status, reason: entry.reason })) }),
+        candidates: result.candidates.map(candidate => ({ id: candidate.id, sourceRef: candidate.sourceRef, digest: candidate.digest,
+          kind: candidate.kind, name: candidate.name, version: candidate.version, availability: candidate.availability })),
+        rejected: result.rejected.map(item => ({ sourceId: item.sourceId, reason: item.reason })) };
+      return emitSuccess(io, command, view, `${JSON.stringify(view, null, 2)}\n`);
+    }
+    case 'project.resource-import':
+    case 'project.resource-enable':
+    case 'project.resource-disable':
+    case 'project.resource-revoke': {
+      const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+      const options = envelopeIdentityOptions(command.explicitCommandId, issuedAt);
+      const base = { projectId: command.projectId, expectedRevision: command.revision, commandId: command.explicitCommandId };
+      const receipt = command.commandId === 'project.resource-import'
+        ? await client.importProjectResource({ ...base, sourceId: command.sourceId, sourceDigest: command.sourceDigest, candidateId: command.candidateId, candidateDigest: command.candidateDigest }, options)
+        : command.commandId === 'project.resource-enable'
+          ? await client.enableProjectResource({ ...base, resourceId: command.resourceId }, options)
+          : command.commandId === 'project.resource-disable'
+            ? await client.disableProjectResource({ ...base, resourceId: command.resourceId }, options)
+            : await client.revokeProjectResource({ ...base, resourceId: command.resourceId }, options);
+      if (receipt.status !== 'completed') return emitCommandReceipt(io, command, receipt);
+      const result = receipt.result as { configuration: Awaited<ReturnType<HostClient['listProjectResources']>>; resourceLoaded: boolean; runtimeExecuted: boolean; appliesTo: string };
+      const view = { ...receipt, result: { configuration: resourceConfigurationView(result.configuration), resourceLoaded: result.resourceLoaded, runtimeExecuted: result.runtimeExecuted, appliesTo: result.appliesTo } };
+      return emitSuccess(io, command, view, `shiploop ${command.commandId}: commandId=${receipt.commandId} status=${receipt.status} revision=${result.configuration.revision}${receipt.replayed ? ' replayed=true' : ''}\n`);
+    }
     case 'project.init': {
       return executeProjectInit(io, command, client);
     }

@@ -1647,6 +1647,13 @@ function requireExpectedRevisionInput(operation: HostOperation, value: unknown):
   return value;
 }
 
+function requireResourceRevisionInput(operation: HostOperation, value: unknown): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0 || value >= Number.MAX_SAFE_INTEGER) {
+    throw invalidInput(operation, 'invalid_expected_revision', 'expectedRevision');
+  }
+  return value;
+}
+
 function optionalCommandIdInput(operation: HostOperation, value: unknown): { readonly commandId?: string } {
   if (value === undefined) {
     return {};
@@ -2620,7 +2627,7 @@ export function createHostClientApplication(context: AppClientContext): HostClie
     return submitCommand({
       ...optionalCommandIdInput('commands.submit', object.commandId), operation,
       scope: { kind: 'project', projectId },
-      expectedRevision: requireExpectedRevisionInput('commands.submit', object.expectedRevision),
+      expectedRevision: requireResourceRevisionInput('commands.submit', object.expectedRevision),
       payload: { resourceId: requireStableIdInput('commands.submit', object.resourceId, 'resourceId') },
     }, options);
   }
@@ -4158,7 +4165,9 @@ export function createHostClientApplication(context: AppClientContext): HostClie
       const op = 'project.resources.list';
       context.assertOpen(op);
       const id = requireProjectId(op, projectId);
-      return validateAppQueryResponse(op, await getJson(op, `${PROJECTS_ROUTE}/${id}/resources`));
+      const result = validateAppQueryResponse(op, await getJson(op, `${PROJECTS_ROUTE}/${id}/resources`));
+      if (result.projectId !== projectId) throw new HostProtocolError('response_malformed', op, '资源响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
+      return result;
     },
 
     async discoverProjectResourceCandidates(projectId: string, sourceIds: readonly string[]): Promise<ProjectResourceCandidateDiscoveryResult> {
@@ -4167,7 +4176,9 @@ export function createHostClientApplication(context: AppClientContext): HostClie
       const id = requireProjectId(op, projectId);
       if (!Array.isArray(sourceIds) || sourceIds.length === 0) throw invalidInput(op, 'invalid_source_ids');
       const query = sourceIds.map(sourceId => `sourceId=${encodeURIComponent(requireStableIdInput(op, sourceId, 'sourceId'))}`).join('&');
-      return validateAppQueryResponse(op, await getJson(op, `${PROJECTS_ROUTE}/${id}/resources/candidates?${query}`));
+      const result = validateAppQueryResponse(op, await getJson(op, `${PROJECTS_ROUTE}/${id}/resources/candidates?${query}`));
+      if (result.projectId !== projectId) throw new HostProtocolError('response_malformed', op, '资源响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
+      return result;
     },
 
     async previewProjectResourceCandidates(projectId: string, sourceIds: readonly string[], selectedResourceIds: readonly string[] = []): Promise<ProjectResourceCandidatePreview> {
@@ -4179,7 +4190,9 @@ export function createHostClientApplication(context: AppClientContext): HostClie
         ...sourceIds.map(sourceId => `sourceId=${encodeURIComponent(requireStableIdInput(op, sourceId, 'sourceId'))}`),
         ...selectedResourceIds.map(resourceId => `selectedResourceId=${encodeURIComponent(requireStableIdInput(op, resourceId, 'selectedResourceId'))}`),
       ].join('&');
-      return validateAppQueryResponse(op, await getJson(op, `${PROJECTS_ROUTE}/${id}/resources/preview?${params}`));
+      const result = validateAppQueryResponse(op, await getJson(op, `${PROJECTS_ROUTE}/${id}/resources/preview?${params}`));
+      if (result.projectId !== projectId) throw new HostProtocolError('response_malformed', op, '资源响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
+      return result;
     },
 
     async importProjectResource(input: ImportProjectResourceInput, options?: SubmitCommandOptions): Promise<CommandReceipt> {
@@ -4192,7 +4205,7 @@ export function createHostClientApplication(context: AppClientContext): HostClie
         candidateDigest: object.candidateDigest,
       };
       return submitCommand({ ...optionalCommandIdInput('commands.submit', object.commandId), operation: 'project.resource.import',
-        scope: { kind: 'project', projectId }, expectedRevision: requireExpectedRevisionInput('commands.submit', object.expectedRevision), payload }, options);
+        scope: { kind: 'project', projectId }, expectedRevision: requireResourceRevisionInput('commands.submit', object.expectedRevision), payload }, options);
     },
 
     async enableProjectResource(input: ProjectResourceTargetInput, options?: SubmitCommandOptions): Promise<CommandReceipt> {

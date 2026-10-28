@@ -6808,7 +6808,8 @@ export function validatePlanningCandidateDetailResultWire(
 
 function validateProjectResourceQueryWire(operation: HostOperation, body: unknown): unknown {
   const object = requirePlain(operation, body);
-  if (object.schemaVersion !== 1 || typeof object.projectId !== 'string') malformed(operation, 'project_resource_identity_invalid');
+  if (object.schemaVersion !== 1) throw new HostProtocolError('unsupported_schema_version', operation, '项目资源响应版本不受支持');
+  if (typeof object.projectId !== 'string') malformed(operation, 'project_resource_identity_invalid');
   if (operation === 'project.resources.list') {
     exactKeys(operation, object, ['schemaVersion', 'projectId', 'revision', 'resources', 'digest']);
     if (typeof object.revision !== 'number' || !Number.isSafeInteger(object.revision) || object.revision < 0
