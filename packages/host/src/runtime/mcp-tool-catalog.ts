@@ -1,4 +1,8 @@
 import { createHash } from 'node:crypto';
+import {
+  McpAbortError, McpConnectionClosedError, McpError, McpTimeoutError, toLlmContent,
+  type CallToolResult, type ContentBlock,
+} from '@earendil-works/pi-mcp';
 import { stableStringify } from 'shiploop-core';
 import type { McpStartupPlan, McpStartupServerPlan } from './mcp-startup-plan.js';
 import type { PiSubmissionToolDefinition } from './pi-adapter.js';
@@ -6,7 +10,10 @@ import type { PiSubmissionToolDefinition } from './pi-adapter.js';
 export type McpToolFailureReason = 'invalid_discovery' | 'invalid_tool_name' | 'duplicate_tool'
   | 'invalid_schema' | 'unsupported_schema' | 'limit_exceeded' | 'pagination_no_progress'
   | 'unauthorized_server' | 'mapping_collision' | 'invalid_mapping' | 'invalid_arguments'
-  | 'tool_unavailable' | 'tool_identity_drift' | 'discovery_failed' | 'call_failed';
+  | 'tool_unavailable' | 'tool_identity_drift' | 'discovery_failed' | 'call_failed'
+  | 'unauthorized_call' | 'concurrency_limit' | 'invalid_response' | 'unsupported_content'
+  | 'mcp_tool_error' | 'json_rpc_error' | 'call_timeout' | 'call_cancelled'
+  | 'connection_closed' | 'response_lost';
 export class McpToolCatalogError extends Error {
   constructor(readonly reason: McpToolFailureReason) {
     super(`MCP tools rejected: ${reason}`);
@@ -16,6 +23,19 @@ export class McpToolCatalogError extends Error {
 function fail(reason: McpToolFailureReason): never { throw new McpToolCatalogError(reason); }
 export const MCP_DISCOVERY_LIMITS = Object.freeze({ tools: 128, pages: 32, bytes: 262_144,
   descriptionBytes: 4096, schemaBytes: 32_768, schemaDepth: 16, argumentBytes: 65_536 });
+/** Limits apply to the complete result before it is handed to Pi. Oversize results fail closed. */
+export interface McpCallLimits {
+  readonly maxConcurrentCalls: number;
+  readonly maxResultBytes: number;
+  readonly maxContentBlocks: number;
+  readonly maxTextBytes: number;
+  readonly maxStructuredBytes: number;
+  readonly maxToolCallIdBytes: number;
+}
+export const MCP_CALL_LIMITS: McpCallLimits = Object.freeze({
+  maxConcurrentCalls: 8, maxResultBytes: 262_144, maxContentBlocks: 128,
+  maxTextBytes: 65_536, maxStructuredBytes: 65_536, maxToolCallIdBytes: 256,
+});
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -149,14 +169,46 @@ export async function discoverMcpTools(request: (cursor?: string) => Promise<unk
   }
   return fail('limit_exceeded');
 }
+export interface McpToolCallContext {
+  readonly toolCallId: string;
+  readonly projectId: string;
+  readonly sessionId: string;
+  readonly invocationId: string;
+  readonly resourceId: string;
+  readonly serverId: string;
+  readonly sourceRef: string;
+  readonly originalName: string;
+  readonly piName: string;
+}
 export interface McpToolEndpoint {
   readonly server: McpStartupServerPlan;
   discover(signal?: AbortSignal): Promise<readonly unknown[]>;
-  call(name: string, args: Record<string, unknown>, signal?: AbortSignal): Promise<unknown>;
+  /** The optional context is for correlation only; it is never an authorization source. */
+  call(name: string, args: Record<string, unknown>, signal?: AbortSignal, context?: McpToolCallContext): Promise<unknown>;
+  /** Recheck the trusted execution qualification immediately before the side effect. */
+  authorize?(binding: McpToolBinding): void | Promise<void>;
+  /** A closed/revoked connection must fail before calling the server. */
+  isAvailable?(): boolean;
 }
 async function discoverEndpoint(endpoint: McpToolEndpoint, signal?: AbortSignal): Promise<readonly DiscoveredTool[]> {
   try { return validateMcpDiscoveredTools(await endpoint.discover(signal)); }
-  catch (error) { throw error instanceof McpToolCatalogError ? error : new McpToolCatalogError('discovery_failed'); }
+  catch (error) {
+    if (error instanceof McpToolCatalogError) throw error;
+    if (error instanceof McpError || typeof (error as { code?: unknown })?.code === 'number') {
+      throw new McpToolCatalogError('json_rpc_error');
+    }
+    if (error instanceof McpTimeoutError || error instanceof Error && error.name === 'McpTimeoutError') {
+      throw new McpToolCatalogError('call_timeout');
+    }
+    if (error instanceof McpAbortError || error instanceof Error && error.name === 'McpAbortError') {
+      throw new McpToolCatalogError('call_cancelled');
+    }
+    if (error instanceof McpConnectionClosedError || error instanceof Error && error.name === 'McpConnectionClosedError'
+      || (typeof (error as { code?: unknown })?.code === 'string' && ['closed', 'server_exited'].includes((error as { code: string }).code))) {
+      throw new McpToolCatalogError('connection_closed');
+    }
+    throw new McpToolCatalogError('discovery_failed');
+  }
 }
 export interface McpToolBinding {
   readonly projectId: string; readonly sessionId: string; readonly invocationId: string;
@@ -165,12 +217,85 @@ export interface McpToolBinding {
 export interface McpToolCatalog {
   readonly tools: readonly PiSubmissionToolDefinition[];
   resolve(piName: string): McpToolBinding | undefined;
-  dispatch(binding: McpToolBinding, params: unknown, signal?: AbortSignal): Promise<unknown>;
+  dispatch(binding: McpToolBinding, params: unknown, signal?: AbortSignal, toolCallId?: string): Promise<unknown>;
+}
+
+function strictJson(value: unknown, maxBytes: number, reason: McpToolFailureReason): string {
+  let text: string | undefined;
+  try {
+    text = JSON.stringify(value, (_key, item: unknown) => {
+      if (item === undefined || typeof item === 'function' || typeof item === 'symbol'
+        || typeof item === 'bigint' || typeof item === 'number' && !Number.isFinite(item)) fail(reason);
+      return item;
+    });
+  } catch { return fail(reason); }
+  if (text === undefined || Buffer.byteLength(text) > maxBytes) fail('limit_exceeded');
+  return text;
+}
+
+function validateCallContent(value: unknown, limits: McpCallLimits): asserts value is ContentBlock[] {
+  if (!Array.isArray(value) || value.length > limits.maxContentBlocks) fail('invalid_response');
+  for (const block of value) {
+    if (!record(block) || typeof block.type !== 'string') fail('invalid_response');
+    if (block.type === 'text') {
+      if (typeof block.text !== 'string') fail('invalid_response');
+      if (Buffer.byteLength(block.text) > limits.maxTextBytes) fail('limit_exceeded');
+      continue;
+    }
+    if (block.type === 'image') {
+      if (typeof block.data !== 'string' || typeof block.mimeType !== 'string') fail('invalid_response');
+      if (Buffer.byteLength(block.data) > limits.maxTextBytes) fail('limit_exceeded');
+      continue;
+    }
+    if (block.type === 'resource' && record(block.resource)) {
+      const resource = block.resource;
+      if (typeof resource.text === 'string') {
+        if (Buffer.byteLength(resource.text) > limits.maxTextBytes) fail('limit_exceeded');
+        continue;
+      }
+    }
+    // Resource links, audio and binary resources have no safe Pi mapping in this bridge.
+    fail('unsupported_content');
+  }
+}
+
+function validateCallResult(value: unknown, limits: McpCallLimits): CallToolResult {
+  if (!record(value) || !Object.hasOwn(value, 'content')) fail('invalid_response');
+  validateCallContent(value.content, limits);
+  if (value.structuredContent !== undefined) {
+    if (!record(value.structuredContent)) fail('invalid_response');
+    strictJson(value.structuredContent, limits.maxStructuredBytes, 'invalid_response');
+  }
+  if (value.isError !== undefined && typeof value.isError !== 'boolean') fail('invalid_response');
+  strictJson(value, limits.maxResultBytes, 'invalid_response');
+  return value as unknown as CallToolResult;
+}
+
+function callFailureReason(error: unknown): McpToolFailureReason {
+  if (error instanceof McpToolCatalogError) return error.reason;
+  if (error instanceof McpError || typeof (error as { code?: unknown })?.code === 'number') return 'json_rpc_error';
+  if (error instanceof McpTimeoutError || error instanceof Error && error.name === 'McpTimeoutError') return 'call_timeout';
+  if (error instanceof McpAbortError || error instanceof Error && error.name === 'McpAbortError') return 'call_cancelled';
+  if (error instanceof McpConnectionClosedError || error instanceof Error && error.name === 'McpConnectionClosedError') return 'connection_closed';
+  const code = (error as { code?: unknown })?.code;
+  if (code === 'closed' || code === 'server_exited') return 'connection_closed';
+  if (code === 'protocol_error' || code === 'process_exited_during_start') return 'response_lost';
+  if (error instanceof Error && /response|connection|pipe|socket/i.test(error.name)) return 'response_lost';
+  return 'call_failed';
 }
 /** Private Host assembly only. Endpoints and launch details never become model-facing definitions. */
 export async function createMcpToolCatalog(input: {
-  readonly plan: McpStartupPlan; readonly endpoints: readonly McpToolEndpoint[];
+  readonly plan: McpStartupPlan;
+  readonly endpoints: readonly McpToolEndpoint[];
+  readonly maxConcurrentCalls?: number;
+  readonly limits?: Partial<McpCallLimits>;
 }): Promise<McpToolCatalog> {
+  const requestedLimits = { ...MCP_CALL_LIMITS, ...(input.limits ?? {}),
+    ...(input.maxConcurrentCalls === undefined ? {} : { maxConcurrentCalls: input.maxConcurrentCalls }) };
+  for (const value of Object.values(requestedLimits)) {
+    if (!Number.isSafeInteger(value) || value < 1) fail('limit_exceeded');
+  }
+  const limits = requestedLimits;
   const plan = structuredClone(input.plan);
   const names = new Set<string>();
   for (const mapping of plan.tools) {
@@ -196,11 +321,17 @@ export async function createMcpToolCatalog(input: {
       entries.set(mapping.piName, { binding, tool, fingerprint: fingerprint(tool), endpoint, server });
     }
   }
-  const dispatch: McpToolCatalog['dispatch'] = async (binding, params, signal) => {
+  let activeCalls = 0;
+  const dispatch: McpToolCatalog['dispatch'] = async (binding, params, signal, toolCallId = '') => {
+    if (typeof toolCallId !== 'string' || Buffer.byteLength(toolCallId) > limits.maxToolCallIdBytes) fail('limit_exceeded');
     const entry = binding && entries.get(binding.piName);
     // Object identity makes mappings opaque: copying or importing one from another Session cannot authorize a call.
     if (!entry || entry.binding !== binding) fail('invalid_mapping');
     if (entry.unavailable) fail(entry.unavailable);
+    if (entry.endpoint.isAvailable && !entry.endpoint.isAvailable()) {
+      entry.unavailable = 'connection_closed';
+      fail(entry.unavailable);
+    }
     if (stableStringify(entry.server) !== stableStringify(entry.endpoint.server)) {
       entry.unavailable = 'tool_identity_drift';
       fail(entry.unavailable);
@@ -209,25 +340,49 @@ export async function createMcpToolCatalog(input: {
     // Compare original JSON too: undefined/non-finite values cannot be silently converted into valid parameters.
     if (!record(params) || !record(args) || stableStringify(params) !== stableStringify(args)
       || !matches(entry.tool.inputSchema, args)) fail('invalid_arguments');
-    let current: readonly DiscoveredTool[];
-    try { current = await discoverEndpoint(entry.endpoint, signal); }
-    catch (error) {
-      entry.unavailable = 'discovery_failed';
-      throw error instanceof McpToolCatalogError ? error : new McpToolCatalogError('discovery_failed');
+    if (activeCalls >= limits.maxConcurrentCalls) fail('concurrency_limit');
+    activeCalls++;
+    const context: McpToolCallContext = freeze({ toolCallId, serverId: binding.resourceId, ...binding });
+    try {
+      if (entry.endpoint.authorize) {
+        try { await entry.endpoint.authorize(binding); }
+        catch { fail('unauthorized_call'); }
+      }
+      let current: readonly DiscoveredTool[];
+      try { current = await discoverEndpoint(entry.endpoint, signal); }
+      catch (error) {
+        const failure = error instanceof McpToolCatalogError ? error : new McpToolCatalogError('discovery_failed');
+        entry.unavailable = failure.reason;
+        throw failure;
+      }
+      const tool = current.find(item => item.name === binding.originalName);
+      if (!tool || fingerprint(tool) !== entry.fingerprint
+        || stableStringify(entry.server) !== stableStringify(entry.endpoint.server)) {
+        entry.unavailable = tool ? 'tool_identity_drift' : 'tool_unavailable';
+        fail(entry.unavailable);
+      }
+      // A tool-call id is supplied by the Pi closure below; the placeholder is replaced there.
+      try {
+        const raw = await entry.endpoint.call(binding.originalName, args, signal, context);
+        const result = validateCallResult(raw, limits);
+        return {
+          content: toLlmContent(result),
+          details: result.structuredContent,
+          structuredContent: result.structuredContent,
+          isError: result.isError === true,
+        };
+      } catch (error) {
+        if (error instanceof McpToolCatalogError) throw error;
+        throw new McpToolCatalogError(callFailureReason(error));
+      }
+    } finally {
+      activeCalls--;
     }
-    const tool = current.find(item => item.name === binding.originalName);
-    if (!tool || fingerprint(tool) !== entry.fingerprint
-      || stableStringify(entry.server) !== stableStringify(entry.endpoint.server)) {
-      entry.unavailable = tool ? 'tool_identity_drift' : 'tool_unavailable';
-      fail(entry.unavailable);
-    }
-    try { return await entry.endpoint.call(binding.originalName, args, signal); }
-    catch { return fail('call_failed'); }
   };
   const tools = [...entries.values()].sort((a, b) => a.binding.piName.localeCompare(b.binding.piName)).map(entry => freeze({
     name: entry.binding.piName, label: entry.binding.piName, description: entry.tool.description || 'Approved MCP tool',
     parameters: entry.tool.inputSchema,
-    execute: (_toolCallId: string, params: unknown, signal?: AbortSignal) => dispatch(entry.binding, params, signal),
+    execute: (toolCallId: string, params: unknown, signal?: AbortSignal) => dispatch(entry.binding, params, signal, toolCallId),
   }));
   return Object.freeze({ tools: Object.freeze(tools), resolve: (name: string) => entries.get(name)?.binding, dispatch });
 }

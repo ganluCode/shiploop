@@ -76,7 +76,26 @@ export type {
   McpStartupToolMapping, McpTrustedResourceResolver,
 } from './mcp-startup-plan.js';
 
+export {
+  createMcpToolCatalog,
+  discoverMcpTools,
+  validateMcpDiscoveredTools,
+  MCP_CALL_LIMITS,
+  MCP_DISCOVERY_LIMITS,
+  McpToolCatalogError,
+} from './mcp-tool-catalog.js';
+export type {
+  McpCallLimits,
+  McpToolBinding,
+  McpToolCallContext,
+  McpToolCatalog,
+  McpToolEndpoint,
+  McpToolFailureReason,
+} from './mcp-tool-catalog.js';
+
 export type { PiInferenceSource } from './pi-inference-preflight.js';
+
+
 export { createPiGitAgentRuntimeAdapter } from './pi-git-agent-adapter.js';
 export type { PiGitAgentRuntimeDriver, PiGitAgentRuntimeOptions } from './pi-git-agent-adapter.js';
 export { createPiWorkRuntimeFactory } from './pi-work-runtime.js';
