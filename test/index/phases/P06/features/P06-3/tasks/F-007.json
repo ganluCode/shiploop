@@ -1,0 +1,19 @@
+{
+  "schema_version": 2,
+  "task_id": "F-007",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        { "file": "test/modules/host/p06-3-f007-resource-integration.test.ts", "all": true },
+        { "file": "test/modules/host/p06-3-source-registration.test.ts", "all": true },
+        { "file": "test/modules/cli/p06-3-f006-resource-cli.test.ts", "all": true },
+        { "file": "test/modules/runtime/p06-3-f004-resource-binding.test.ts", "all": true },
+        { "file": "test/modules/authorization/p06-3-f003-project-resource-service.test.ts", "all": true },
+        { "file": "test/modules/authorization/p04-2-work-tool-channel.test.ts", "all": true },
+        { "file": "test/modules/host/p04-2-access-integration.test.ts", "all": true },
+        { "file": "test/modules/storage/artifacts/p06-2-f003-knowledge-query.test.ts", "all": true }
+      ]
+    }
+  ]
+}
