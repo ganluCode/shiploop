@@ -24,7 +24,9 @@
  * （内部子路径仍由边界检查禁止）。
  */
 import { existsSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
+import { transform } from 'esbuild';
 
 /** 工作区公共入口 → 源码的精确映射（与各包 package.json exports 对齐）。 */
 const CORE_SRC_ROOT = new URL('../../../packages/core/src/', import.meta.url);
@@ -39,7 +41,7 @@ const WORKSPACE_PUBLIC_ENTRY_SOURCES = new Map([
 export async function resolve(specifier, context, next) {
   const publicEntrySource = WORKSPACE_PUBLIC_ENTRY_SOURCES.get(specifier);
   if (publicEntrySource !== undefined) {
-    return next(publicEntrySource, context);
+    return { url: publicEntrySource, shortCircuit: true };
   }
   if (
     (specifier.startsWith('./') || specifier.startsWith('../')) &&
@@ -48,8 +50,23 @@ export async function resolve(specifier, context, next) {
   ) {
     const candidate = new URL(`${specifier.slice(0, -3)}.ts`, context.parentURL);
     if (candidate.protocol === 'file:' && existsSync(fileURLToPath(candidate))) {
-      return next(candidate.href, context);
+      return { url: candidate.href, shortCircuit: true };
     }
   }
   return next(specifier, context);
+}
+
+export async function load(url, context, nextLoad) {
+  if (url.startsWith('file:') && url.endsWith('.ts')) {
+    const source = await readFile(fileURLToPath(url), 'utf8');
+    const transpiled = await transform(source, {
+      loader: 'ts',
+      format: 'esm',
+      target: 'es2022',
+      sourcemap: false,
+      sourcefile: fileURLToPath(url),
+    });
+    return { format: 'module', source: transpiled.code, shortCircuit: true };
+  }
+  return nextLoad(url, context);
 }

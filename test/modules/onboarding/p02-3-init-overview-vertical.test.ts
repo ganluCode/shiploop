@@ -532,7 +532,8 @@ describe('F-006 Host inspect/overview 路由与握手能力（真实 Host + SQLi
     expect(body.capabilities.application.queries).toContain('git.repairs.list');
     expect(body.capabilities.application.queries).toContain('git.repairs.get');
     expect(body.capabilities.application.queries).toContain('execution.batch.delivery.get');
-    expect(body.capabilities.application.queries).toHaveLength(58);
+    // P04-9/P05-P06 additions keep the live query surface at 67 entries.
+    expect(body.capabilities.application.queries).toHaveLength(67);
     expect(body.capabilities.application.commands).toEqual([
       'execution.attempt.cancel',
       'execution.stop.manual',
@@ -544,6 +545,9 @@ describe('F-006 Host inspect/overview 路由与握手能力（真实 Host + SQLi
       'execution.retryFinal',
       'project.register',
       'project.metadata.update',
+      'project.profile.confirm',
+      'project.profile.modify',
+      'project.profile.reject',
       'settings.global.create',
       'settings.global.update',
       'settings.project.create',
@@ -594,6 +598,10 @@ describe('F-006 Host inspect/overview 路由与握手能力（真实 Host + SQLi
       'planning.candidate.decide',
       'workspace.discard',
       'workspace.discard.preview',
+      'project.resource.import',
+      'project.resource.enable',
+      'project.resource.disable',
+      'project.resource.revoke',
     ]);
     // No delivery factory is installed in this fixture: do not advertise write capabilities.
     expect(body.capabilities.application.commands).not.toContain('feature.verification.continue');
