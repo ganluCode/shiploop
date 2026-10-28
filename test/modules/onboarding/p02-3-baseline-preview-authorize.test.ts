@@ -35,7 +35,7 @@ import {
   isPublicError,
   WIRE_MESSAGE_SCHEMA_VERSION,
 } from '../../../packages/core/src/index.ts';
-import type { BaselineCodeIdentity, BaselineWorkspaceFileEntry, CommandReceipt } from '../../../packages/core/src/index.ts';
+import type { BaselineCodeIdentity, BaselinePreviewContext, BaselineWorkspaceFileEntry, CommandReceipt } from '../../../packages/core/src/index.ts';
 import { createStaticRuntimeCapabilityCatalog } from '../../../packages/core/src/ports/runtime-capabilities.ts';
 import type { RuntimeCapabilityCatalog } from '../../../packages/core/src/ports/runtime-capabilities.ts';
 import { createLocalOwnerPrincipal, createRestrictedPrincipal, scopeAllowlist } from '../../helpers/p02-2/principals.ts';
@@ -269,6 +269,13 @@ describe('F-008 P02-3 基线预览与明确授权', () => {
     const recomputed = computeBaselinePreviewDigest(
       { checks: [{ ...NODE_CHECK, cwdRef: 'src', environmentRef: 'ci-env' }, { ...NODE_CHECK, checkKey: 'optional-check', required: false }] },
       identity as unknown as BaselineCodeIdentity,
+      {
+        repositoryBindingId: result.repositoryBindingId as string,
+        repositoryBindingRevision: result.repositoryBindingRevision as number,
+        bindingRecordRevision: result.bindingRecordRevision as number,
+        dirtyScope: result.dirtyScope as BaselinePreviewContext['dirtyScope'],
+        environmentIdentity: result.environmentIdentity as BaselinePreviewContext['environmentIdentity'],
+      },
     );
     expect(result.previewDigest).toBe(recomputed);
     // 非敏感：结果不携带任何环境值或合成秘密。

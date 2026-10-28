@@ -5,7 +5,8 @@ import type { ArtifactStore } from '../ports/artifact-store.js';
 import type { AtomicCommandStore, CommandTransaction } from '../ports/atomic-commands.js';
 import { assertTrustedPrincipal, authorizeBaselineCommand } from '../ports/authorization.js';
 import type { TrustedPrincipal } from '../ports/authorization.js';
-import type { BaselineCheckStatus, BaselineCodeIdentity, BaselineEnvironmentDirectory, BaselineReasonCode, BaselineWorkspaceReader } from '../ports/baseline.js';
+import type { BaselineCheckPlan, BaselineCheckStatus, BaselineCodeIdentity, BaselineEnvironmentDirectory, BaselineEnvironmentIdentity, BaselineReasonCode, BaselineWorkspaceReader } from '../ports/baseline.js';
+import { normalizeBaselineAllowedVariables } from '../ports/baseline.js';
 import { computeBaselinePlanDigest, validateBaselineCancelPayload } from '../ports/baseline.js';
 import type { BaselineRepositoryGuard, BaselineRepositoryLease } from '../ports/baseline-execution.js';
 import { isTerminalBaselineOperation } from '../ports/baseline-store.js';
@@ -13,6 +14,7 @@ import type { BaselineCheckResultRecord, BaselineOperationRecord, BaselineStore 
 import { CommandProcessError } from '../ports/command-process.js';
 import type { CommandProcessHandle, CommandProcessPort, CommandProcessRequest } from '../ports/command-process.js';
 import { PublicError } from '../ports/commands.js';
+import { stableCanonicalJson } from '../ports/command-receipts.js';
 import type { CommandReceipt } from '../ports/commands.js';
 import type { RepositoryInspector } from '../ports/repository-inspector.js';
 import type { RepositoryBindingRecord, StateStore } from '../ports/state-store.js';
@@ -69,6 +71,48 @@ function missingPackageScript(argv: readonly string[], evidence: BaselineEvidenc
 const sameCode = (a: BaselineCodeIdentity, b: BaselineCodeIdentity) => a.headCommit === b.headCommit &&
   a.workingTreeDigest === b.workingTreeDigest && a.hasUncommittedChanges === b.hasUncommittedChanges;
 
+function environmentIdentityForPlan(
+  plan: BaselineCheckPlan,
+  directory: BaselineEnvironmentDirectory,
+): BaselineEnvironmentIdentity {
+  const refs = [...new Set(plan.checks.map(check => check.environmentRef).filter((ref): ref is string => ref !== undefined && ref !== null))];
+  const definitions = refs.map(environmentRef => ({ environmentRef, definition: directory.resolveEnvironmentRef(environmentRef) }));
+  const allowedVariables = new Set<string>(['PATH']);
+  const toolchain: Record<string, string | null> = {};
+  const unknownFields: string[] = [];
+  const coverage: string[] = ['PATH'];
+  for (const { environmentRef, definition } of definitions) {
+    if (definition === null) {
+      unknownFields.push(`environment:${environmentRef}`);
+      continue;
+    }
+    for (const variable of normalizeBaselineAllowedVariables(definition)) allowedVariables.add(variable);
+    coverage.push(`environmentRef:${environmentRef}`);
+    for (const [name, version] of Object.entries(definition.toolchain ?? {})) {
+      if (toolchain[name] !== undefined && toolchain[name] !== version) toolchain[name] = null;
+      else toolchain[name] = version;
+    }
+    if (definition.definitionRevision === undefined) unknownFields.push(`environmentRevision:${environmentRef}`);
+    for (const field of definition.unknownFields ?? []) unknownFields.push(field);
+  }
+  const revisions = definitions.map(({ definition }) => definition?.definitionRevision).filter((value): value is string => value !== undefined);
+  const definitionRevision = refs.length === 1 ? (revisions[0] ?? null) : null;
+  if (refs.length > 1 && new Set(revisions).size > 1) unknownFields.push('environmentRevision:multiple');
+  return {
+    schemaVersion: 1,
+    environmentRef: refs.length === 1 ? refs[0]! : null,
+    definitionRevision,
+    toolchain,
+    platform: { os: process.platform, arch: process.arch },
+    allowedVariables: [...allowedVariables].sort(),
+    coverage: [...new Set(coverage)].sort(),
+    unknownFields: [...new Set(unknownFields)].sort(),
+  };
+}
+
+const sameEnvironment = (a: BaselineEnvironmentIdentity | null, b: BaselineEnvironmentIdentity) =>
+  a !== null && stableCanonicalJson(a) === stableCanonicalJson(b);
+
 export function createBaselineExecutionService(options: BaselineExecutionOptions): BaselineExecutionService {
   const { atomicStore: atomic, baselines, workspace } = options;
   const now = options.nowUtcMs ?? Date.now;
@@ -112,15 +156,19 @@ export function createBaselineExecutionService(options: BaselineExecutionOptions
   function checkResult(tx: CommandTransaction, id: string, run: ActiveExecution, check: BaselineCheckResultRecord,
     status: BaselineCheckStatus, reasonCode: BaselineReasonCode | null, evidence?: BaselineEvidence) {
     const row = assertOwner(id, run);
-    // Cancellation fences a result that was collected against an earlier running revision.
+    const recordedEvidence = evidence && status === 'not_run' &&
+      ['missing_command', 'unknown_script', 'permission_denied', 'spawn_failed'].includes(reasonCode ?? '')
+      ? { ...evidence, exitCode: null, signal: null, startedAtUtcMs: null }
+      : evidence;
+    // Cancellation fences a result collected against an earlier running revision.
     if (row.status === 'cancelling') {
       const uncertain = evidence?.stopConfirmed === false || (status === 'inconclusive' && reasonCode === 'stop_unconfirmed');
       status = evidence || uncertain ? 'inconclusive' : 'not_run';
       reasonCode = uncertain ? 'stop_unconfirmed' : 'cancelled';
     }
     tx.finalizeBaselineCheckResult(id, check.checkKey, { expectedRevision: check.revision, status, reasonCode,
-      exitCode: evidence?.exitCode ?? null, signal: evidence?.signal ?? null, timedOut: evidence?.timedOut === true || (status !== 'not_run' && reasonCode === 'timed_out'),
-      outputArtifactId: evidence?.output?.artifactId ?? null, startedAtUtcMs: evidence?.startedAtUtcMs ?? null, endedAtUtcMs: now() });
+      exitCode: recordedEvidence?.exitCode ?? null, signal: recordedEvidence?.signal ?? null, timedOut: recordedEvidence?.timedOut === true || (status !== 'not_run' && reasonCode === 'timed_out'),
+      outputArtifactId: recordedEvidence?.output?.artifactId ?? null, startedAtUtcMs: recordedEvidence?.startedAtUtcMs ?? null, endedAtUtcMs: now() });
     tx.appendBaselineEvent({ projectId: row.projectId, type: 'baseline.check_completed', operationId: id,
       aggregateRevision: row.revision, checkKey: check.checkKey, status, ...(reasonCode ? { reasonCode } : {}) });
   }
@@ -153,6 +201,10 @@ export function createBaselineExecutionService(options: BaselineExecutionOptions
       const initial = operation(id);
       const auth = initial.authorizationId ? baselines.getBaselineAuthorization(initial.authorizationId) : undefined;
       if (!auth || computeBaselinePlanDigest(auth.plan) !== auth.planDigest || auth.planDigest !== auth.policyRevision) throw new PublicError('corrupt_state', 'baseline.run');
+      if (!auth.environmentIdentity || !sameEnvironment(auth.environmentIdentity, environmentIdentityForPlan(auth.plan, options.environmentDirectory))) {
+        reason = 'preview_stale';
+        throw new PublicError('conflict', 'baseline.run');
+      }
       const binding = await options.state.getRepositoryBinding(initial.projectId);
       const snapshot = baselines.readBaselineOccupancy().processIdentity;
       if (binding.id !== auth.repositoryBindingId || !binding.gitCommonDir ||
@@ -171,13 +223,14 @@ export function createBaselineExecutionService(options: BaselineExecutionOptions
         if (operation(id).status === 'cancelling' || reason) break;
         if (now() >= deadline) { reason = 'timed_out'; break; }
         authorizeBaselineCommand(run.principal, initial.projectId, 'baseline.run');
-        if (!sameCode(authorizedCode, await currentCode(binding))) { reason = 'source_changed'; break; }
+        if (!sameCode(authorizedCode, await currentCode(binding)) ||
+            !sameEnvironment(auth.environmentIdentity, environmentIdentityForPlan(auth.plan, options.environmentDirectory))) { reason = 'source_changed'; break; }
         const cwd = await workspace.resolveContainedCwd(binding.canonicalPath, check.cwdRef);
         if (cwd.status !== 'inside') { reason = 'preview_stale'; break; }
         if (check.argv[0].startsWith('./')) {
           const target = await workspace.probeRelativeTarget(binding.canonicalPath, check.cwdRef, check.argv[0]);
           if (target !== 'exists') {
-            atomic.transact('baseline.check', tx => checkResult(tx, id, run, check, 'error', 'unknown_script'));
+            atomic.transact('baseline.check', tx => checkResult(tx, id, run, check, 'not_run', 'unknown_script'));
             continue;
           }
         }
@@ -192,7 +245,8 @@ export function createBaselineExecutionService(options: BaselineExecutionOptions
           startAttempted = true;
           const handle = await options.processes.start(request, async identity => {
             // Final filesystem/Git/cwd check BEFORE the short identity commit and command release.
-            if (!sameCode(authorizedCode, await currentCode(binding))) {
+            if (!sameCode(authorizedCode, await currentCode(binding)) ||
+                !sameEnvironment(auth.environmentIdentity, environmentIdentityForPlan(auth.plan, options.environmentDirectory))) {
               reason = 'source_changed';
               throw new PublicError('conflict', 'baseline.run');
             }
@@ -240,9 +294,9 @@ export function createBaselineExecutionService(options: BaselineExecutionOptions
           else if (reason === 'timed_out') { status = 'inconclusive'; checkReason = 'timed_out'; }
           else if (result.reason === 'cancelled') { status = 'inconclusive'; checkReason = 'cancelled'; reason = checkReason; }
           else if (result.reason === 'timed_out' || result.reason === 'output_overflow') { status = 'inconclusive'; checkReason = result.reason; reason = checkReason; }
-          else if (result.reason === 'missing_command' || result.reason === 'permission_denied' || result.reason === 'spawn_failed') { status = 'error'; checkReason = result.reason; }
+          else if (result.reason === 'missing_command' || result.reason === 'permission_denied' || result.reason === 'spawn_failed') { status = 'not_run'; checkReason = result.reason; }
           else if (!sameCode(authorizedCode, await currentCode(binding))) { status = 'inconclusive'; checkReason = 'source_changed'; reason = checkReason; }
-          else if (missingPackageScript(check.argv, evidence)) { status = 'error'; checkReason = 'unknown_script'; }
+          else if (missingPackageScript(check.argv, evidence)) { status = 'not_run'; checkReason = 'unknown_script'; }
           else if (!evidence.integrity.complete || !checkPublished || (evidence.exitCode === 0 && (evidence.integrity.observedBytes.stdout + evidence.integrity.observedBytes.stderr === 0 || EMPTY_CHECK_OUTPUT.test(evidence.tail)))) {
             status = 'inconclusive'; checkReason = 'evidence_incomplete';
           } else status = evidence.eligibleForPass ? 'passed' : evidence.exitCode !== null && evidence.exitCode !== 0 ? 'failed' : 'inconclusive';
@@ -252,7 +306,7 @@ export function createBaselineExecutionService(options: BaselineExecutionOptions
           if (!(error instanceof CommandProcessError)) throw error;
           stopConfirmed = error.reason !== 'stop_unconfirmed';
           reason = !stopConfirmed ? 'stop_unconfirmed' : operation(id).status === 'cancelling' ? 'cancelled' : reason ?? 'spawn_failed';
-          atomic.transact('baseline.check', tx => checkResult(tx, id, run, check, reason === 'spawn_failed' ? 'error' : 'inconclusive', reason ?? 'evidence_incomplete'));
+          atomic.transact('baseline.check', tx => checkResult(tx, id, run, check, reason === 'spawn_failed' ? 'not_run' : 'inconclusive', reason ?? 'evidence_incomplete'));
           break;
         }
       }

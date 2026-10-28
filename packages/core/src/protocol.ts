@@ -97,6 +97,7 @@ export {
   BASELINE_QUERY_OPERATIONS, BASELINE_REASON_CODES, BASELINE_CHECK_STATUSES,
   computeBaselinePlanDigest, computeBaselinePreviewDigest, validateBaselineAuthorizationSummary,
   validateBaselineCapability, validateBaselineCheckPlan, validateBaselineCodeIdentity,
+  validateBaselineDirtyScope, validateBaselineEnvironmentIdentity,
   validateBaselineListQuery, validateBaselinePreviewPayload, validateBaselineRunPayload,
   validateBaselineCancelPayload, validateProjectInitRequest, validateRepositoryRootPath,
   ONBOARDING_QUERY_SCHEMA_VERSION,
@@ -104,7 +105,8 @@ export {
 export type {
   BaselineAuthorizationSummary, BaselineCapability, BaselineCheck, BaselineCheckCounts,
   BaselineCheckOutputRef, BaselineCheckPlan, BaselineCheckResult, BaselineCheckStatus,
-  BaselineDeclinedResult, BaselineDetailResult, BaselineListQuery, BaselineListResult,
+  BaselineDeclinedResult, BaselineDetailResult, BaselineDirtyScope, BaselineEnvironmentIdentity,
+  BaselinePreviewContext, BaselineListQuery, BaselineListResult,
   BaselineOperationStatus, BaselineOperationSummary, BaselinePreviewCheckView,
   BaselinePreviewPayload, BaselinePreviewResult, BaselinePreviewWarning,
   BaselinePreviewWorkspaceView, BaselineRunPayload, BaselineReasonCode,

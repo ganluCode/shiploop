@@ -289,6 +289,14 @@ export interface BaselineEnvironmentIdentity {
   readonly unknownFields: readonly string[];
 }
 
+export interface BaselinePreviewContext {
+  readonly repositoryBindingId: string;
+  readonly repositoryBindingRevision: number;
+  readonly bindingRecordRevision: number;
+  readonly dirtyScope: BaselineDirtyScope;
+  readonly environmentIdentity: BaselineEnvironmentIdentity;
+}
+
 export interface BaselineAuthorizationSummary {
   readonly projectId: string;
   readonly repositoryBindingId: string;
@@ -1298,9 +1306,10 @@ export function computeBaselineWorkingTreeDigest(
 export function computeBaselinePreviewDigest(
   plan: BaselineCheckPlan,
   codeIdentity: BaselineCodeIdentity,
+  context?: BaselinePreviewContext,
 ): string {
   return createHash('sha256')
-    .update(stableCanonicalJson({ plan, codeIdentity }), 'utf8')
+    .update(stableCanonicalJson(context === undefined ? { plan, codeIdentity } : { plan, codeIdentity, context }), 'utf8')
     .digest('hex');
 }
 
@@ -1433,7 +1442,13 @@ export interface BaselinePreviewResult {
   readonly previewDigest: string;
   /** 检查政策修订（= planDigest = sha256(stableCanonicalJson(plan))）。 */
   readonly policyRevision: string;
+  /** F-005 绑定快照；revision 变化会使旧预览不可授权。 */
+  readonly repositoryBindingId: string;
+  readonly repositoryBindingRevision: number;
+  readonly bindingRecordRevision: number;
   readonly codeIdentity: BaselineCodeIdentity;
+  readonly dirtyScope: BaselineDirtyScope;
+  readonly environmentIdentity: BaselineEnvironmentIdentity;
   readonly workspace: BaselinePreviewWorkspaceView;
   readonly checks: readonly BaselinePreviewCheckView[];
   readonly warnings: readonly BaselinePreviewWarning[];

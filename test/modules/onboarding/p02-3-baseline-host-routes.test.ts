@@ -634,7 +634,21 @@ describe('F-014 HostClient 基线/证据响应 Schema 校验（线形状把关�
     const validPreview = {
       previewDigest: 'a'.repeat(64),
       policyRevision: 'b'.repeat(64),
+      repositoryBindingId: randomUUID(),
+      repositoryBindingRevision: 1,
+      bindingRecordRevision: 1,
       codeIdentity: { headCommit: null, workingTreeDigest: 'c'.repeat(64), hasUncommittedChanges: false },
+      dirtyScope: { status: 'clean', explanation: 'clean' },
+      environmentIdentity: {
+        schemaVersion: 1,
+        environmentRef: null,
+        definitionRevision: null,
+        toolchain: {},
+        platform: { os: 'darwin', arch: 'arm64' },
+        allowedVariables: ['PATH'],
+        coverage: ['PATH'],
+        unknownFields: [],
+      },
       workspace: { excludedDirNames: ['.git'], fileCount: 0 },
       checks: [
         {

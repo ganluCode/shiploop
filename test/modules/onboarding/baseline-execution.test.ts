@@ -166,8 +166,8 @@ describe('Core baseline execution invariants', () => {
       { ...check('e', [process.execPath, npmCliPath, 'run', 'shiploop-absent-script']), environmentRef: 'test-home' },
     ]));
     await f.execution.waitForIdle();
-    expect(f.results(receipt.operationId!)).toMatchObject([{ status: 'failed', exitCode: 7 }, { status: 'error', reasonCode: 'missing_command' },
-      { status: 'error', reasonCode: 'unknown_script' }, { status: 'error', reasonCode: 'permission_denied' }, { status: 'error', reasonCode: 'unknown_script' }]);
+    expect(f.results(receipt.operationId!)).toMatchObject([{ status: 'failed', exitCode: 7 }, { status: 'not_run', reasonCode: 'missing_command', exitCode: null },
+      { status: 'not_run', reasonCode: 'unknown_script', exitCode: null }, { status: 'not_run', reasonCode: 'permission_denied', exitCode: null }, { status: 'not_run', reasonCode: 'unknown_script', exitCode: null }]);
     expect((await f.app.stateStore.getProject(f.projectId)).status).toBe('active');
   });
   it('zero exit with empty output or source changes cannot pass; changes are retained', async () => {

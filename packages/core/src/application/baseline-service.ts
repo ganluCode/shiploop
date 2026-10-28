@@ -45,7 +45,7 @@ import {
   RECEIPT_RESULT_MAX_BYTES,
 } from '../ports/commands.js';
 import type { CommandReceipt, CommandScope } from '../ports/commands.js';
-import { createResultRef } from '../ports/command-receipts.js';
+import { createResultRef, stableCanonicalJson } from '../ports/command-receipts.js';
 import { isStorageError } from '../ports/errors.js';
 import { BASELINE_AUTHORIZED_EVENT_TYPE } from '../ports/events.js';
 import {
@@ -166,6 +166,31 @@ export function createBaselineService(options: BaselineServiceOptions): Baseline
   requirePort(options.stateStore, 'stateStore', 'getRepositoryBinding');
   const { repositoryInspector, workspaceReader, environmentDirectory, stateStore } = options;
   const nowUtcMs = options.nowUtcMs ?? Date.now;
+
+  function dirtyScopeFor(codeIdentity: BaselineCodeIdentity): BaselineDirtyScope {
+    return {
+      status: codeIdentity.hasUncommittedChanges ? 'unknown' : 'clean',
+      explanation: codeIdentity.hasUncommittedChanges
+        ? '工作区摘要确认存在未提交变化；逐路径范围由受管摘要保留，当前接口未暴露原始路径。'
+        : '工作区摘要确认没有未提交变化。',
+    };
+  }
+
+  function previewContext(
+    repositoryBindingId: string,
+    bindingRevision: number,
+    bindingRecordRevision: number,
+    codeIdentity: BaselineCodeIdentity,
+    environmentIdentity: BaselineEnvironmentIdentity,
+  ): import('../ports/baseline.js').BaselinePreviewContext {
+    return {
+      repositoryBindingId,
+      repositoryBindingRevision: bindingRevision,
+      bindingRecordRevision,
+      dirtyScope: dirtyScopeFor(codeIdentity),
+      environmentIdentity,
+    };
+  }
 
   function requireProjectId(projectId: unknown, operation: string): string {
     const context: ValidationContext = { operation, entity: { type: 'project' } };
@@ -390,13 +415,24 @@ export function createBaselineService(options: BaselineServiceOptions): Baseline
       try {
         const plan = validateBaselinePreviewPayload(payload).plan;
         const id = requireProjectId(projectId, operation);
-        const { inspection } = await loadBindingContext(principal, id, operation);
+        const { inspection, repositoryBindingId, bindingRevision, bindingRecordRevision } = await loadBindingContext(principal, id, operation);
         const views = await resolveChecks(operation, plan, inspection.canonicalPath);
         const { codeIdentity, workspace } = await computeCodeIdentity(inspection);
+        const environmentIdentity = snapshotEnvironmentIdentity(plan);
+        const dirtyScope = dirtyScopeFor(codeIdentity);
         const result: BaselinePreviewResult = {
-          previewDigest: computeBaselinePreviewDigest(plan, codeIdentity),
+          previewDigest: computeBaselinePreviewDigest(
+            plan,
+            codeIdentity,
+            previewContext(repositoryBindingId, bindingRevision, bindingRecordRevision, codeIdentity, environmentIdentity),
+          ),
           policyRevision: computeBaselinePlanDigest(plan),
+          repositoryBindingId,
+          repositoryBindingRevision: bindingRevision,
+          bindingRecordRevision,
           codeIdentity,
+          dirtyScope,
+          environmentIdentity,
           workspace: {
             excludedDirNames: [...workspace.excludedDirNames],
             fileCount: workspace.fileCount,
@@ -425,6 +461,7 @@ export function createBaselineService(options: BaselineServiceOptions): Baseline
         // 与预览完全相同的核验（cwd realpath 范围 + 环境引用）；失败零副作用。
         await resolveChecks(operation, plan, inspection.canonicalPath);
         const { codeIdentity } = await computeCodeIdentity(inspection);
+        const environmentIdentity = snapshotEnvironmentIdentity(plan);
         return {
           projectId: id,
           decision,
@@ -435,13 +472,8 @@ export function createBaselineService(options: BaselineServiceOptions): Baseline
           repositoryBindingId,
           bindingRevision,
           bindingRecordRevision,
-          dirtyScope: {
-            status: codeIdentity.hasUncommittedChanges ? 'unknown' : 'clean',
-            explanation: codeIdentity.hasUncommittedChanges
-              ? '工作区摘要确认存在未提交变化；逐路径范围由受管摘要保留，当前接口未暴露原始路径。'
-              : '工作区摘要确认没有未提交变化。',
-          },
-          environmentIdentity: snapshotEnvironmentIdentity(plan),
+          dirtyScope: dirtyScopeFor(codeIdentity),
+          environmentIdentity,
         };
       } catch (error) {
         throw mapToPublicError(error, { operation });
@@ -467,9 +499,22 @@ export function createBaselineService(options: BaselineServiceOptions): Baseline
 
       // 执行前必须重新核验：提交计划与当前代码身份的摘要必须与用户确认的
       // previewDigest 一致（argv/cwd/环境/政策/代码身份任一实质变化 → 失效）。
-      const expectedPreviewDigest = computeBaselinePreviewDigest(prepared.plan, prepared.codeIdentity);
+      const expectedPreviewDigest = computeBaselinePreviewDigest(
+        prepared.plan,
+        prepared.codeIdentity,
+        previewContext(
+          prepared.repositoryBindingId,
+          prepared.bindingRevision,
+          prepared.bindingRecordRevision,
+          prepared.codeIdentity,
+          prepared.environmentIdentity,
+        ),
+      );
+      const currentEnvironmentIdentity = snapshotEnvironmentIdentity(prepared.plan);
+      const environmentChanged = stableCanonicalJson(currentEnvironmentIdentity) !== stableCanonicalJson(prepared.environmentIdentity);
       const binding = transaction.getRepositoryBinding(prepared.projectId);
       if (prepared.claimedPreviewDigest !== expectedPreviewDigest ||
+          environmentChanged ||
           computeBaselinePlanDigest(prepared.plan) !== prepared.planDigest ||
           binding.id !== prepared.repositoryBindingId || binding.bindingRevision !== prepared.bindingRevision ||
           binding.revision !== prepared.bindingRecordRevision) {

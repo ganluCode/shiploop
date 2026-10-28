@@ -83,6 +83,8 @@ import {
   isIsoUtcDateTime,
   isUuidV4,
   validateBaselineAuthorizationSummary,
+  validateBaselineDirtyScope,
+  validateBaselineEnvironmentIdentity,
   validateExecutionBudgetProposal,
   EXECUTION_BATCH_STATUSES,
   EXECUTION_RUN_STATUSES,
@@ -2800,7 +2802,12 @@ export function validateBaselinePreviewResultWire(
   exactKeys(operation, object, [
     'previewDigest',
     'policyRevision',
+    'repositoryBindingId',
+    'repositoryBindingRevision',
+    'bindingRecordRevision',
     'codeIdentity',
+    'dirtyScope',
+    'environmentIdentity',
     'workspace',
     'checks',
     'warnings',
@@ -2812,6 +2819,26 @@ export function validateBaselinePreviewResultWire(
     !SHA256_HEX_PATTERN.test(object.policyRevision)
   ) {
     malformed(operation, 'preview_digest_invalid');
+  }
+  if (
+    typeof object.repositoryBindingId !== 'string' ||
+    !isUuidV4(object.repositoryBindingId) ||
+    typeof object.repositoryBindingRevision !== 'number' ||
+    !Number.isSafeInteger(object.repositoryBindingRevision) ||
+    object.repositoryBindingRevision < 1 ||
+    typeof object.bindingRecordRevision !== 'number' ||
+    !Number.isSafeInteger(object.bindingRecordRevision) ||
+    object.bindingRecordRevision < 1
+  ) {
+    malformed(operation, 'preview_binding_identity_invalid');
+  }
+  let dirtyScope: BaselinePreviewResult['dirtyScope'];
+  let environmentIdentity: BaselinePreviewResult['environmentIdentity'];
+  try {
+    dirtyScope = validateBaselineDirtyScope(object.dirtyScope, operation, 'dirtyScope');
+    environmentIdentity = validateBaselineEnvironmentIdentity(object.environmentIdentity, operation, 'environmentIdentity');
+  } catch {
+    malformed(operation, 'preview_environment_identity_invalid');
   }
   const codeIdentity = requirePlain(operation, object.codeIdentity);
   exactKeys(operation, codeIdentity, ['headCommit', 'workingTreeDigest', 'hasUncommittedChanges']);
@@ -2892,7 +2919,12 @@ export function validateBaselinePreviewResultWire(
   return {
     previewDigest: object.previewDigest,
     policyRevision: object.policyRevision,
+    repositoryBindingId: object.repositoryBindingId,
+    repositoryBindingRevision: object.repositoryBindingRevision,
+    bindingRecordRevision: object.bindingRecordRevision,
     codeIdentity: codeIdentity as unknown as BaselinePreviewResult['codeIdentity'],
+    dirtyScope,
+    environmentIdentity,
     workspace: workspace as unknown as BaselinePreviewResult['workspace'],
     checks,
     warnings,
