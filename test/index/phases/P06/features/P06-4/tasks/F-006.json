@@ -1,0 +1,16 @@
+{
+  "schema_version": 2,
+  "task_id": "F-006",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/runtime/p06-4-f006-mcp-recovery.test.ts", "all": true },
+      { "file": "test/modules/runtime/p06-4-f002-mcp-stdio.test.ts", "all": true },
+      { "file": "test/modules/runtime/p06-4-f005-mcp-lifecycle.test.ts", "all": true },
+      { "file": "test/modules/runtime/p04-1-pi-stopping.test.ts", "all": true },
+      { "file": "test/modules/runtime/p04-7-resource-fault-matrix.test.ts", "all": true },
+      { "file": "test/modules/runtime/command-process-recovery-reprobe.test.ts", "all": true },
+      { "file": "test/modules/recovery/p05-5-f005-resource-recovery.test.ts", "all": true }
+    ]
+  }]
+}

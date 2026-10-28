@@ -1,11 +1,13 @@
 /** Session-owned MCP lifecycle. Only trusted Host/Runner assembly supplies launch plans and registration. */
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
+import { dirname } from 'node:path';
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import {
   McpClient, McpTimeoutError, parseJsonRpcMessage, SUPPORTED_PROTOCOL_VERSIONS,
 } from '@earendil-works/pi-mcp';
 import type { InitializeResult, JsonRpcMessage, ServerCapabilities, Tool } from '@earendil-works/pi-mcp';
-import type { CommandProcessIdentity } from 'shiploop-core';
+import type { CommandProcessIdentity, WorkManagedProcess, WorkResourceSnapshot } from 'shiploop-core';
 import { stableStringify } from 'shiploop-core';
 import type { McpStartupPlan, McpStartupServerPlan } from './mcp-startup-plan.js';
 import { createMcpToolCatalog, discoverMcpTools, McpToolCatalogError, type McpToolCatalog, type McpToolFailureReason } from './mcp-tool-catalog.js';
@@ -32,7 +34,27 @@ export interface McpStdioProcessRegistration {
   readonly sessionId: string;
   readonly serverId: string;
   readonly invocationId: string;
+  readonly executionVersion: number;
   readonly planDigest: string;
+}
+/** Durable Host-side ownership registry. Active rows survive Runner and Host reconstruction. */
+export interface McpStdioProcessScope {
+  readonly projectId: string;
+  readonly sessionId: string;
+  readonly invocationId: string;
+  readonly executionVersion: number;
+}
+export interface McpStdioProcessRecovery {
+  readonly confirmed: boolean;
+  readonly registrations: readonly McpStdioProcessRegistration[];
+}
+export interface McpStdioProcessRegistry {
+  register(registration: McpStdioProcessRegistration): Promise<{ readonly launchId: string }>;
+  list(scope: McpStdioProcessScope): readonly McpStdioProcessRegistration[];
+  snapshot(scope: McpStdioProcessScope): readonly WorkManagedProcess[];
+  markStopped(registration: McpStdioProcessRegistration, result: McpStdioCloseResult): Promise<boolean>;
+  recover(scope: McpStdioProcessScope,
+    stop: (identity: CommandProcessIdentity) => Promise<{ readonly confirmed: boolean }>): Promise<McpStdioProcessRecovery>;
 }
 /** Resolve only after committing ownership. A late resolution cannot release protocol requests. */
 export type McpStdioProcessRegistrar = (registration: McpStdioProcessRegistration) => Promise<{ readonly launchId: string }>;
@@ -76,6 +98,8 @@ export interface McpStdioConnectionOptions {
   readonly maxMessageBytes?: number;
   readonly maxStderrBytes?: number;
   readonly processInspector?: McpStdioProcessInspector;
+  /** Durable invocation-owned registration; Core release waits for its stop proof. */
+  readonly processRegistry?: McpStdioProcessRegistry;
 }
 export interface McpStdioConnection {
   readonly state: McpStdioConnectionState;
@@ -123,6 +147,102 @@ function freeze<T>(value: T): T {
     Object.freeze(value);
   }
   return value;
+}
+
+type RegistryState = { readonly schemaVersion: 1; readonly registrations: readonly McpStdioProcessRegistration[] };
+function registrationKey(value: Pick<McpStdioProcessRegistration, 'projectId' | 'sessionId' | 'serverId' | 'invocationId'>): string {
+  return JSON.stringify([value.projectId, value.sessionId, value.serverId, value.invocationId]);
+}
+function sameRegistration(left: McpStdioProcessRegistration, right: McpStdioProcessRegistration): boolean {
+  return stableStringify(left) === stableStringify(right);
+}
+function validRegistration(value: McpStdioProcessRegistration): boolean {
+  const identity = value.processIdentity;
+  return [value.projectId, value.sessionId, value.serverId, value.invocationId, value.planDigest,
+    identity.launchId, identity.startTime].every(item => typeof item === 'string' && item.length > 0)
+    && Number.isSafeInteger(value.executionVersion) && value.executionVersion > 0
+    && Number.isSafeInteger(identity.pid) && identity.pid > 1
+    && identity.processGroupId === identity.pid;
+}
+function scopeMatches(value: McpStdioProcessRegistration, scope: McpStdioProcessScope): boolean {
+  return value.projectId === scope.projectId && value.sessionId === scope.sessionId
+    && value.invocationId === scope.invocationId && value.executionVersion === scope.executionVersion;
+}
+
+/**
+ * A small atomic JSON registry owned by Host. It is an ownership journal, not a PID
+ * authority: every recovery signal still requires the trusted process inspector.
+ */
+export function createMcpStdioProcessRegistry(options: { readonly path: string }): McpStdioProcessRegistry {
+  if (!options || typeof options.path !== 'string' || options.path.length === 0) {
+    throw new McpStdioError('invalid_startup_plan');
+  }
+  const path = options.path;
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  let registrations: McpStdioProcessRegistration[] = [];
+  try {
+    const raw = JSON.parse(readFileSync(path, 'utf8')) as RegistryState;
+    if (raw.schemaVersion !== 1 || !Array.isArray(raw.registrations)
+      || raw.registrations.some(value => !validRegistration(value))) throw new Error('invalid registry');
+    registrations = raw.registrations.map(value => structuredClone(value));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw new McpStdioError('process_registration_failed');
+  }
+  const persist = () => {
+    const temporary = `${path}.${randomUUID()}.tmp`;
+    writeFileSync(temporary, JSON.stringify({ schemaVersion: 1, registrations }), { mode: 0o600 });
+    renameSync(temporary, path);
+  };
+  return {
+    async register(value) {
+      const registration = structuredClone(value);
+      if (!validRegistration(registration)) throw new McpStdioError('process_registration_failed');
+      const key = registrationKey(registration);
+      const current = registrations.find(item => registrationKey(item) === key);
+      if (current) {
+        if (!sameRegistration(current, registration)) throw new McpStdioError('process_registration_failed');
+        return { launchId: current.processIdentity.launchId };
+      }
+      registrations.push(registration);
+      try { persist(); } catch { registrations = registrations.filter(item => item !== registration); throw new McpStdioError('process_registration_failed'); }
+      return { launchId: registration.processIdentity.launchId };
+    },
+    list(scope) {
+      return registrations.filter(value => scopeMatches(value, scope)).map(value => structuredClone(value));
+    },
+    snapshot(scope) {
+      return this.list(scope).map(value => ({ kind: 'mcp' as const, ...value }));
+    },
+    async markStopped(value, result) {
+      if (!result.confirmed) return false;
+      const index = registrations.findIndex(item => registrationKey(item) === registrationKey(value));
+      if (index < 0) return true;
+      if (!sameRegistration(registrations[index]!, value)) return false;
+      registrations.splice(index, 1);
+      try { persist(); return true; } catch { registrations.splice(index, 0, value); return false; }
+    },
+    async recover(scope, stop) {
+      const current = this.list(scope);
+      let observations: readonly { readonly confirmed: boolean }[];
+      try { observations = await Promise.all(current.map(value => stop(value.processIdentity))); }
+      catch { return { confirmed: false, registrations: current }; }
+      const confirmed = observations.every(value => value.confirmed === true);
+      if (confirmed) {
+        for (const value of current) {
+          if (!await this.markStopped(value, { status: 'confirmed', confirmed: true, processIdentity: value.processIdentity, pid: value.processIdentity.pid })) {
+            return { confirmed: false, registrations: current };
+          }
+        }
+      }
+      return { confirmed, registrations: current };
+    },
+  };
+}
+
+/** Merge the durable MCP child set into the Core resource snapshot before stop verification. */
+export function addMcpStdioProcesses(snapshot: WorkResourceSnapshot, registry: McpStdioProcessRegistry,
+  scope: McpStdioProcessScope): WorkResourceSnapshot {
+  return { ...snapshot, managedProcesses: registry.snapshot(scope) };
 }
 function ps(args: string[]): Promise<string> {
   return new Promise((resolve, reject) => execFile('/bin/ps', args, {
@@ -395,6 +515,11 @@ export function createMcpStdioConnection(options: McpStdioConnectionOptions): Mc
         // Closing the client removes correlation timers and SDK transport listeners.
         await client?.close().catch(() => {});
         stopEvidence = await transport.shutdown();
+        if (stopEvidence.confirmed && registration && options.processRegistry) {
+          let persisted = false;
+          try { persisted = await options.processRegistry.markStopped(registration, stopEvidence); } catch { persisted = false; }
+          if (!persisted) stopEvidence = freeze({ ...stopEvidence, status: 'unconfirmed' as const, confirmed: false });
+        }
         if (!stopEvidence.confirmed) {
           error = new McpStdioError('cleanup_unconfirmed', error?.code);
           state = 'failed';
@@ -429,9 +554,12 @@ export function createMcpStdioConnection(options: McpStdioConnectionOptions): Mc
         const processIdentity = transport.processIdentity;
         if (!processIdentity) throw new McpStdioError('process_registration_failed');
         registration = freeze({ processIdentity, projectId: plan.projectId, sessionId: plan.sessionId,
-          serverId: server.resourceId, invocationId: plan.invocationId, planDigest: plan.digest });
+          serverId: server.resourceId, invocationId: plan.invocationId, executionVersion: plan.executionVersion, planDigest: plan.digest });
         let ack: { readonly launchId: string };
-        try { ack = await options.registerProcess(registration); }
+        try {
+          if (options.processRegistry) await options.processRegistry.register(registration);
+          ack = await options.registerProcess(registration);
+        }
         catch { throw new McpStdioError('process_registration_failed'); }
         if (!ack || ack.launchId !== processIdentity.launchId) throw new McpStdioError('process_registration_failed');
         if (closing || error) throw error ?? new McpStdioError('closed');

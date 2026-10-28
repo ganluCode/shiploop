@@ -6,7 +6,7 @@ import { RuntimeError } from 'shiploop-core';
 import type {
   CommandProcessHandle, CommandProcessPort, CommandProcessResult, CommandProcessIdentity,
   RuntimeExecutionRequest, RuntimeExecutionResult, RuntimeEvent, RuntimeHandle, RuntimeStopEvidence, RuntimeUsageReport,
-  RuntimeCancelReceipt, WorkResourceSnapshot, WorkResourceStopVerifier,
+  RuntimeCancelReceipt, WorkManagedProcess, WorkResourceSnapshot, WorkResourceStopVerifier,
 } from 'shiploop-core';
 import {
   PiRunnerDecoder, PiRunnerEventChannel, validatePiRunnerMessage, validatePiRunnerRequest,
@@ -42,6 +42,8 @@ export interface PiRunnerAdapterOptions {
   /** Existing tool/resource authority, bound to this launch. Must not wait on this handle's stopped. */
   readonly resourceStop?: {
     readonly snapshot: (request: RuntimeExecutionRequest) => WorkResourceSnapshot;
+    /** Host registry projection; merged before Core stop verification and never trusted as a signal authority. */
+    readonly managedProcesses?: (request: RuntimeExecutionRequest) => readonly WorkManagedProcess[];
     readonly verifier: WorkResourceStopVerifier;
   };
 }
@@ -222,14 +224,16 @@ function manageRunner(request: RuntimeExecutionRequest, process: CommandProcessH
     else {
       const proof = await observePiWithin(Promise.resolve().then(async () => {
         const snapshot = structuredClone(resourceProof.snapshot(request));
+        const managedProcesses = resourceProof.managedProcesses?.(request);
+        const snapshotWithManaged = managedProcesses === undefined ? snapshot : { ...snapshot, managedProcesses };
         const work = request.identity;
-        if (work.purpose !== 'work' || snapshot.invocationId !== request.invocationId
-          || snapshot.identity.projectId !== request.projectId || snapshot.identity.attemptId !== work.attemptId
-          || snapshot.identity.owner !== request.owner.principalId || snapshot.identity.hostInstanceId !== request.owner.hostInstanceId
-          || snapshot.identity.executionVersion !== request.executionVersion
-          || !isDeepStrictEqual(snapshot.processIdentity, process.identity)) return false;
-        const token = await resourceProof.verifier.verify(snapshot);
-        return token !== null && isDeepStrictEqual(resourceProof.verifier.inspect(token), snapshot);
+        if (work.purpose !== 'work' || snapshotWithManaged.invocationId !== request.invocationId
+          || snapshotWithManaged.identity.projectId !== request.projectId || snapshotWithManaged.identity.attemptId !== work.attemptId
+          || snapshotWithManaged.identity.owner !== request.owner.principalId || snapshotWithManaged.identity.hostInstanceId !== request.owner.hostInstanceId
+          || snapshotWithManaged.identity.executionVersion !== request.executionVersion
+          || !isDeepStrictEqual(snapshotWithManaged.processIdentity, process.identity)) return false;
+        const token = await resourceProof.verifier.verify(snapshotWithManaged);
+        return token !== null && isDeepStrictEqual(resourceProof.verifier.inspect(token), snapshotWithManaged);
       }), PI_STOP_WAIT_MS);
       resourceStop = proof.status === 'fulfilled' ? (proof.value ? 'confirmed' : 'unconfirmed') : 'unknown';
       if (resourceStop !== 'confirmed') detail = proof.status === 'timeout' ? 'runner_resources_stop_timeout' : 'runner_resources_stop_unconfirmed';
