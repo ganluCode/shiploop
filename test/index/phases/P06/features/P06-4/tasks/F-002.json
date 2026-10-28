@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "task_id": "F-002",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/runtime/p06-4-f002-mcp-stdio.test.ts", "all": true },
+      { "file": "test/modules/runtime/p06-4-f002-mcp-fake-server.test.ts", "all": true },
+      { "file": "test/modules/runtime/p06-4-f001-mcp-startup-plan.test.ts", "all": true },
+      { "file": "test/modules/runtime/p04-1-pi-runner.test.ts", "all": true },
+      { "file": "test/modules/runtime/supervised-command-process.test.ts", "all": true },
+      { "file": "test/modules/runtime/supervised-process-stopping.test.ts", "all": true }
+    ]
+  }]
+}

@@ -59,6 +59,13 @@ export type {
   HostStartEntrySuccessResult,
   ParsedHostStartArgv,
 } from './start-entry.js';
+export { createMcpStdioConnection, createMcpStdioConnectionManager, startMcpStdioConnections, McpStdioError } from './mcp-stdio.js';
+export type {
+  McpStdioCloseResult, McpStdioConnection, McpStdioConnectionManager, McpStdioConnectionOptions,
+  McpStdioConnectionState, McpStdioErrorCode, McpStdioManagerStartOptions, McpStdioProcessRegistration,
+  McpStdioProcessRegistrar, McpStdioProcessInspector, McpStdioReady, McpStdioStopStatus,
+} from './mcp-stdio.js';
+
 export { createMcpStartupPlanParser, buildMcpStartupPlan, prepareMcpStartupPlan, parseMcpStartupPlan, resolveMcpStartupPlan,
   MCP_PI_TOOL_NAME_MAX_LENGTH, MCP_STARTUP_MAX_ARGV, MCP_STARTUP_MAX_ENVIRONMENT, MCP_STARTUP_MAX_SERVERS,
   MCP_STARTUP_MAX_TOOLS_PER_SERVER, MCP_STARTUP_PLAN_REASONS, MCP_STARTUP_PLAN_SCHEMA_VERSION, McpStartupPlanError,
