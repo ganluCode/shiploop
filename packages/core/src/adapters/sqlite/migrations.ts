@@ -4131,6 +4131,15 @@ CREATE UNIQUE INDEX memory_records_project_id_unique ON memory_records (project_
 CREATE INDEX memory_records_project_status_index ON memory_records (project_id, status, record_key, version);
 `;
 
+/**
+ * v50：ContextBuilder v4/v5 快照兼容修复。v26–v49 未重建 attempts，导致
+ * 当前基线仍拒绝已由 Core 支持的 schemaVersion 4/5。复用 v25 的完整重建与
+ * 外键关闭策略，只放宽快照版本约束；历史迁移 SQL/checksum 保持不变。
+ */
+const MIGRATION_050_SQL = MIGRATION_025_SQL
+  .replaceAll('attempts_v25', 'attempts_v50')
+  .replace('IN (1, 2, 3)', 'IN (1, 2, 3, 4, 5)');
+
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     version: 1,
@@ -4245,4 +4254,5 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 47, sql: MIGRATION_047_SQL, checksum: sha256Hex(MIGRATION_047_SQL), foreignKeysOff: true },
   { version: 48, sql: MIGRATION_048_SQL, checksum: sha256Hex(MIGRATION_048_SQL) },
   { version: 49, sql: MIGRATION_049_SQL, checksum: sha256Hex(MIGRATION_049_SQL) },
+  { version: 50, sql: MIGRATION_050_SQL, checksum: sha256Hex(MIGRATION_050_SQL), foreignKeysOff: true },
 ];
