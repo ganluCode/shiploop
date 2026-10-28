@@ -1,0 +1,16 @@
+{
+  "schema_version": 2,
+  "task_id": "F-003",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/runtime/p06-4-f003-mcp-tool-catalog.test.ts", "all": true },
+      { "file": "test/modules/runtime/p06-4-f002-mcp-stdio.test.ts", "all": true },
+      { "file": "test/modules/runtime/p06-4-f002-mcp-fake-server.test.ts", "all": true },
+      { "file": "test/modules/runtime/p06-4-f001-mcp-startup-plan.test.ts", "all": true },
+      { "file": "test/modules/host/p05-1-f006-submission-tools.test.ts", "all": true },
+      { "file": "test/modules/authorization/p04-2-work-resource-selection.test.ts", "all": true },
+      { "file": "test/modules/runtime/p04-2-runtime-access.test.ts", "all": true }
+    ]
+  }]
+}

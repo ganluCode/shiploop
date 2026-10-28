@@ -1,5 +1,5 @@
 /** Standalone newline JSON-RPC server. Files are test barriers; stdout is protocol only except injected faults. */
-import { existsSync, mkdirSync, watch, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, watch, writeFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 
@@ -50,6 +50,7 @@ const initialize = id => send(id, {
   protocolVersion: config.mode === 'invalid_protocol' ? '1900-01-01' : '2025-11-25',
   capabilities: config.mode === 'missing_tools_capability' ? {} : { tools: {} },
   serverInfo: { name: 'shiploop-local-fake', version: '1.0.0' },
+  ...(config.instructions ? { instructions: config.instructions } : {}),
 });
 process.stdin.on('data', chunk => {
   buffer += chunk;
@@ -75,7 +76,10 @@ process.stdin.on('data', chunk => {
       mark(config.toolsListFile ?? 'tools.list');
       if (config.mode === 'hang_list') continue;
       if (config.mode === 'list_error') { rpcError(message.id); continue; }
-      send(message.id, { tools: [{ name: config.toolName ?? 'echo', description: 'local fake', inputSchema: { type: 'object', properties: {} } }] });
+      const tools = config.discoveryFile ? JSON.parse(readFileSync(join(root, config.discoveryFile), 'utf8'))
+        : [{ name: config.toolName ?? 'echo', description: 'local fake', inputSchema: { type: 'object', properties: {} } }];
+      const pages = config.pagesFile ? JSON.parse(readFileSync(join(root, config.pagesFile), 'utf8')) : undefined;
+      send(message.id, pages ? pages[message.params?.cursor ?? 'first'] : { tools });
     } else if (message.method === 'tools/call') {
       mark('call.entered', JSON.stringify({ pid: process.pid, count: ++calls, id: message.id, params: message.params }));
       if (config.callMode === 'hang') continue;

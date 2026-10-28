@@ -8,6 +8,7 @@ import type { InitializeResult, JsonRpcMessage, ServerCapabilities, Tool } from 
 import type { CommandProcessIdentity } from 'shiploop-core';
 import { stableStringify } from 'shiploop-core';
 import type { McpStartupPlan, McpStartupServerPlan } from './mcp-startup-plan.js';
+import { createMcpToolCatalog, discoverMcpTools, McpToolCatalogError, type McpToolCatalog, type McpToolFailureReason } from './mcp-tool-catalog.js';
 
 const SYSTEM_PATH = '/usr/bin:/bin:/usr/sbin:/sbin';
 export type McpStdioConnectionState = 'not_started' | 'starting' | 'available' | 'failed' | 'closed';
@@ -15,11 +16,12 @@ export type McpStdioStopStatus = 'confirmed' | 'unconfirmed' | 'unknown';
 export type McpStdioErrorCode = 'unsupported_platform' | 'invalid_startup_plan' | 'missing_executable'
   | 'spawn_failed' | 'process_exited_during_start' | 'process_registration_failed' | 'startup_plan_conflict'
   | 'handshake_timeout' | 'incompatible_protocol' | 'incompatible_capabilities' | 'protocol_error'
-  | 'server_exited' | 'cleanup_unconfirmed' | 'closed';
+  | 'server_exited' | 'cleanup_unconfirmed' | 'closed' | 'tool_discovery_failed';
 
 /** Never includes executable, environment, server output or arbitrary SDK exception text. */
 export class McpStdioError extends Error {
-  constructor(readonly code: McpStdioErrorCode, readonly causeCode?: McpStdioErrorCode) {
+  constructor(readonly code: McpStdioErrorCode, readonly causeCode?: McpStdioErrorCode,
+    readonly discoveryReason?: McpToolFailureReason) {
     super(`MCP stdio ${code}`);
     this.name = 'McpStdioError';
   }
@@ -75,6 +77,8 @@ export interface McpStdioConnection {
   readonly stopEvidence: McpStdioCloseResult | null;
   readonly server: McpStartupServerPlan;
   start(): Promise<McpStdioReady>;
+  /** Approved Pi definitions only; raw MCP client and direct tool dispatch stay private. */
+  createToolCatalog(): Promise<McpToolCatalog>;
   close(): Promise<McpStdioCloseResult>;
 }
 export type McpStdioManagerStartOptions = McpStdioConnectionOptions;
@@ -324,6 +328,12 @@ export function createMcpStdioConnection(options: McpStdioConnectionOptions): Mc
   let startPromise: Promise<McpStdioReady> | undefined;
   let closePromise: Promise<McpStdioCloseResult> | undefined;
   let client: McpClient | undefined;
+  let catalogPromise: Promise<McpToolCatalog> | undefined;
+  const discover = (timeoutMs: number, signal?: AbortSignal) => {
+    const deadline = Date.now() + timeoutMs;
+    return discoverMcpTools(cursor => client!.request('tools/list', cursor === undefined ? undefined : { cursor },
+      { timeoutMs: Math.max(1, deadline - Date.now()), signal }));
+  };
   let closing = false;
   let stopEvidence: McpStdioCloseResult | null = null;
   let rejectFailure!: (error: McpStdioError) => void;
@@ -381,14 +391,15 @@ export function createMcpStdioConnection(options: McpStdioConnectionOptions): Mc
           || Array.isArray(initialized.capabilities.tools)) {
           throw new McpStdioError('incompatible_capabilities');
         }
-        const tools = await client.listTools({ timeoutMs: Math.max(1, deadline - Date.now()) });
+        const tools = await discover(Math.max(1, deadline - Date.now()));
         if (closing || error) throw error ?? new McpStdioError('closed');
         state = 'available';
         return freeze({ initialize: initialized, protocolVersion: initialized.protocolVersion,
           capabilities: initialized.capabilities, tools, processRegistration: registration });
       };
       startPromise = within(Promise.race([execute(), failure]), handshakeMs, 'handshake_timeout').catch(async cause => {
-        error ??= cause instanceof McpStdioError ? cause : cause instanceof McpTimeoutError
+        error ??= cause instanceof McpStdioError ? cause : cause instanceof McpToolCatalogError
+          ? new McpStdioError('tool_discovery_failed', undefined, cause.reason) : cause instanceof McpTimeoutError
           ? new McpStdioError('handshake_timeout') : new McpStdioError('protocol_error');
         state = 'failed';
         const result = await close();
@@ -396,6 +407,20 @@ export function createMcpStdioConnection(options: McpStdioConnectionOptions): Mc
         throw error;
       });
       return startPromise;
+    },
+    createToolCatalog() {
+      if (state !== 'available' || closing || !client) return Promise.reject(error ?? new McpStdioError('closed'));
+      catalogPromise ??= createMcpToolCatalog({ plan, endpoints: [{ server,
+        discover: async signal => {
+          if (state !== 'available' || closing) throw error ?? new McpStdioError('closed');
+          return discover(handshakeMs, signal);
+        },
+        call: async (name, args, signal) => {
+          if (state !== 'available' || closing) throw error ?? new McpStdioError('closed');
+          return client!.callTool(name, args, { signal, timeoutMs: handshakeMs });
+        },
+      }] });
+      return catalogPromise;
     }, close,
   };
 }

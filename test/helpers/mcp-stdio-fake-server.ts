@@ -11,6 +11,9 @@ export interface FakeMcpServerOptions {
   readonly ignoreTerminate?: boolean;
   readonly stderrBytes?: number;
   readonly toolName?: string;
+  readonly discoveryFile?: string;
+  readonly pagesFile?: string;
+  readonly instructions?: string;
   readonly pidFile?: string;
   readonly readyFile?: string;
   readonly initializeFile?: string;
