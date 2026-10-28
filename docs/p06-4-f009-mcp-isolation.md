@@ -28,6 +28,6 @@ F-009 新增 `test/modules/runtime/p06-4-f009-mcp-integration.test.ts`，使用�
 | 模块边界 | `npm run check:boundaries` | 退出码 0；453 个生产源文件、0 diagnostics；完整日志 `tool-logs/F-009-boundaries.log`，旁文件 `F-009-boundaries.log.exitcode` |
 | `npm run verify` | 未执行 | `not_run`；这是 PRD 的独立受控全仓门禁，不由 Task Runtime 代跑或以局部绿灯替代 |
 
-新增代码的受测基线为 `89d2fd00931181de8252827edbce7ffc4b15932a` 加本 Task 工作树改动；提交后应以包含本文件、索引和交付说明的 F-009 提交 SHA 作为交付引用。测试过程中每个夹具均在 `finally` 中按受管身份清理，停止不确定用例明确核对登记保留后再由匹配身份收尾；未发起真实模型、远程 MCP 或后台 Runner。
+新增代码的受测提交为 `98fb38394013fbfb2e9bbdda80de811c699cab59`（提交前工作树基线为 `89d2fd00931181de8252827edbce7ffc4b15932a`）。测试过程中每个夹具均在 `finally` 中按受管身份清理，停止不确定用例明确核对登记保留后再由匹配身份收尾；未发起真实模型、远程 MCP 或后台 Runner。
 
 Feature task_union、完整 verify 和 Phase 验收由编排/独立 Verifier 按各自门禁执行，不能由本说明预先宣称通过。
