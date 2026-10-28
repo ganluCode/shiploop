@@ -1,0 +1,19 @@
+{
+  "schema_version": 2,
+  "task_id": "F-008",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/onboarding/p06-5-f008-project-health.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/onboarding/p02-3-init-overview-vertical.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

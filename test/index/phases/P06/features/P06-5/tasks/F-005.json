@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "task_id": "F-005",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/onboarding/p06-5-f006-baseline-identity.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

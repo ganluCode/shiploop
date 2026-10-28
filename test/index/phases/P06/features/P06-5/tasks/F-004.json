@@ -1,0 +1,19 @@
+{
+  "schema_version": 2,
+  "task_id": "F-004",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/onboarding/p06-5-f004-repository-move.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/onboarding/p02-3-baseline-preview-authorize.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}
