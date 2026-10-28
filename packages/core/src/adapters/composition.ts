@@ -72,6 +72,8 @@ import { createOnboardingService } from '../application/onboarding-service.js';
 import type { OnboardingService } from '../application/onboarding-service.js';
 import { createProjectProfileService } from '../application/project-profile-service.js';
 import type { ProjectProfileService } from '../application/project-profile-service.js';
+import { createRepositoryMoveService } from '../application/repository-move-service.js';
+import type { RepositoryMoveService } from '../application/repository-move-service.js';
 import { createProjectService } from '../application/project-service.js';
 import type { ProjectService } from '../application/project-service.js';
 import { createSqliteBatchDeliveryQueryStore } from './sqlite/batch-delivery-query-store.js';
@@ -390,6 +392,8 @@ export interface CoreApplication {
   readonly onboardingService: OnboardingService;
   /** P06-1：项目画像确认/版本化/CAS/模块匹配应用服务。 */
   readonly projectProfileService: ProjectProfileService;
+  /** P06-5：存量仓库移动预览与确认；确认由 Host 转为既有命令事务。 */
+  readonly repositoryMoveService: RepositoryMoveService;
   /** P02-3 / F-007：基线窄存储读取端口（迁移 v4 四表；写经原子命令事务）。 */
   readonly baselineStore: BaselineStore;
   /** P03-7 / F-005：Task Node 检查批次与逐项结果窄存储。 */
@@ -1426,6 +1430,8 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       getBaseline: baselineQueryService.getBaseline,
     });
 
+    const repositoryMoveService = createRepositoryMoveService({ stateStore, repositoryInspector });
+
     const application: CoreApplication = {
       createWorkToolChannel(authority) {
         const attempts = createSqliteAttemptAccess(session);
@@ -1473,6 +1479,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       planningQueryService,
       onboardingService,
       projectProfileService,
+      repositoryMoveService,
       baselineStore,
       verificationStore,
       verificationStops,

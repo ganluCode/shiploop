@@ -29,7 +29,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { ProjectResourceSourceInput, ProjectResourceSourceResult } from 'shiploop-core';
 import type { ProjectProfileQueryResult, ProjectProfileMatchQueryResult, KnowledgeSearchInput, KnowledgeReadInput, MemorySearchInput, KnowledgeSearchResultSet, KnowledgeReadResult, MemorySearchResultSet } from 'shiploop-core/protocol';
-import type { ProjectResourceConfiguration, ProjectResourceCandidateDiscoveryResult, ProjectResourceCandidatePreview } from 'shiploop-core';
+import type { ProjectResourceConfiguration, ProjectResourceCandidateDiscoveryResult, ProjectResourceCandidatePreview, BrownfieldMovePreview } from 'shiploop-core';
 
 import { validateKnowledgeSearchInput, validateKnowledgeReadInput, validateMemorySearchInput, MAX_KNOWLEDGE_SEARCH_RESPONSE_BYTES, MAX_KNOWLEDGE_READ_RESPONSE_BYTES } from 'shiploop-core/protocol';
 
@@ -144,6 +144,8 @@ import {
   PLANNING_CONTEXTS_ROUTE,
   PLANNING_CONTEXTS_ROUTE_PREFIX,
   PROJECTS_INSPECT_ROUTE,
+  PROJECT_REPOSITORY_MOVE_CONFIRM_ROUTE_SUFFIX,
+  PROJECT_REPOSITORY_MOVE_PREVIEW_ROUTE_SUFFIX,
   PROJECTS_ROUTE,
   PROJECT_LABEL_COUNTS_ROUTE,
   RECEIPTS_ROUTE_PREFIX,
@@ -198,6 +200,8 @@ import {
   validateTaskVerificationContinueResultWire,
   validateWorkspaceDiscardConfirmResultWire,
   validateWorkspaceDiscardPreviewWire,
+  validateRepositoryMoveConfirmResultWire,
+  validateRepositoryMovePreviewWire,
   validateGitAgentRepairQueryResultWire,
 } from './app-wire.js';
 
@@ -629,6 +633,20 @@ export interface ProjectResourceTargetInput extends ProjectResourceMutationInput
   readonly resourceId: string;
 }
 
+export interface RepositoryMovePreviewInput {
+  readonly projectId: string;
+  readonly repositoryPath: string;
+}
+
+export interface RepositoryMoveConfirmationInput {
+  readonly projectId: string;
+  readonly preview: BrownfieldMovePreview;
+  readonly decision: 'confirm' | 'cancel';
+  readonly commandId?: string;
+  readonly issuedAt?: string;
+  readonly expiresAt?: string | null;
+}
+
 
 
 /** workspaces.list 分页/筛选输入（limit 1..500；cursor 为 wscur_v1_ 不透明游标）。 */
@@ -1008,6 +1026,8 @@ export interface HostClientApplication {
     input?: ResourceListInput,
   ): Promise<ResourceListResult>;
   listProjectResources(projectId: string): Promise<ProjectResourceConfiguration>;
+  previewRepositoryMove(input: RepositoryMovePreviewInput): Promise<BrownfieldMovePreview>;
+  confirmRepositoryMove(input: RepositoryMoveConfirmationInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
   configureProjectResourceSource(input: ProjectResourceSourceInput): Promise<ProjectResourceSourceResult>;
   discoverProjectResourceCandidates(projectId: string, sourceIds: readonly string[]): Promise<ProjectResourceCandidateDiscoveryResult>;
   previewProjectResourceCandidates(projectId: string, sourceIds: readonly string[], selectedResourceIds?: readonly string[]): Promise<ProjectResourceCandidatePreview>;
@@ -2152,9 +2172,69 @@ export function createHostClientApplication(context: AppClientContext): HostClie
     }
   }
 
-  /* ---------------------------------------------------------------- *
-   * SSE
-   * ---------------------------------------------------------------- */
+  async function submitRepositoryMoveConfirmation(
+    input: RepositoryMoveConfirmationInput,
+    options?: SubmitCommandOptions,
+  ): Promise<CommandReceipt> {
+    const operation = 'repository.move.confirm' as const;
+    const submitOptions = extractAbortSignal(options, operation);
+    const commandId = input.commandId ?? submitOptions.commandId ?? randomUUID();
+    const issuedAt = input.issuedAt ?? submitOptions.issuedAt ?? new Date().toISOString();
+    if (!isUuidV4(commandId)) throw invalidInput(operation, 'invalid_command_id', 'commandId');
+    const body = {
+      projectId: requireProjectId(operation, input.projectId),
+      preview: input.preview,
+      decision: input.decision,
+      commandId,
+      issuedAt,
+      ...(input.expiresAt === undefined ? {} : { expiresAt: input.expiresAt }),
+    };
+    const frozen: FrozenEnvelope = {
+      scope: { kind: 'project', projectId: body.projectId },
+      commandId,
+      operation: 'project.repository.rebind',
+      wire: body,
+      requestDigest: '',
+    };
+    const deadlineMs = Date.now() + context.submitBudgetMs;
+    let attempt = 0;
+    for (;;) {
+      if (submitOptions.signal?.aborted === true) throw abortedError(operation);
+      if (attempt >= SUBMIT_MAX_ATTEMPTS || Date.now() >= deadlineMs) {
+        throw new HostProtocolError('outcome_unknown', operation, undefined, { details: { reason: 'submit_budget_exhausted', commandId } });
+      }
+      attempt += 1;
+      try {
+        const response = await requestLoopbackJson({
+          port, method: 'POST', path: `${PROJECTS_ROUTE}/${body.projectId}/${PROJECT_REPOSITORY_MOVE_CONFIRM_ROUTE_SUFFIX}`,
+          operation, token, body, connectTimeoutMs: context.connectMs,
+          overallTimeoutMs: requestBudget(deadlineMs), maxResponseBytes: MAX_APP_BODY_BYTES,
+          ...(submitOptions.signal === undefined ? {} : { signal: submitOptions.signal }),
+        });
+        const receipt = validateCommandReceiptWire(response.json, {
+          expectedCommandId: commandId,
+          expectedOperation: 'project.repository.rebind',
+          expectedProjectId: body.projectId,
+        }, operation);
+        if (receipt.status === 'completed') {
+          validateRepositoryMoveConfirmResultWire(receipt.result, operation);
+        }
+        return receipt;
+      } catch (error) {
+        if (isAbortError(error, submitOptions.signal)) throw abortedError(operation);
+        if (!isHostProtocolError(error, 'unreachable')) throw error;
+      }
+      await boundedDelay(SUBMIT_RECEIPT_GRACE_MS, submitOptions.signal, deadlineMs, operation);
+      const receipt = await lookupReceipt(frozen, submitOptions.signal, deadlineMs, 'server_anchored');
+      if (receipt !== undefined) {
+        if (receipt.status === 'completed') validateRepositoryMoveConfirmResultWire(receipt.result, operation);
+        return receipt;
+      }
+      await boundedDelay(SUBMIT_RETRY_DELAY_MS, submitOptions.signal, deadlineMs, operation);
+    }
+  }
+
+
 
   function buildEventsQuery(scope: SettingsScope, cursor: string | undefined): string {
     const params = new URLSearchParams();
@@ -4178,6 +4258,22 @@ export function createHostClientApplication(context: AppClientContext): HostClie
         || !Number.isSafeInteger(result.revision) || result.revision < 1 || typeof result.registered !== 'boolean'
         || result.registered !== (input.action === 'register')) throw new HostProtocolError('response_malformed', op);
       return result;
+    },
+
+    async previewRepositoryMove(input: RepositoryMovePreviewInput): Promise<BrownfieldMovePreview> {
+      const op = 'repository.move.preview';
+      context.assertOpen(op);
+      const projectId = requireProjectId(op, input.projectId);
+      if (typeof input.repositoryPath !== 'string' || input.repositoryPath.length === 0) throw invalidInput(op, 'invalid_repository_path', 'repositoryPath');
+      const query = `path=${encodeURIComponent(input.repositoryPath)}`;
+      const result = validateAppQueryResponse(op, await getJson(op, `${PROJECTS_ROUTE}/${projectId}/${PROJECT_REPOSITORY_MOVE_PREVIEW_ROUTE_SUFFIX}?${query}`));
+      if (result.projectId !== projectId) throw new HostProtocolError('response_malformed', op, '移动预览项目归属不一致', { details: { reason: 'scope_mismatch' } });
+      return result;
+    },
+
+    async confirmRepositoryMove(input: RepositoryMoveConfirmationInput, options?: SubmitCommandOptions): Promise<CommandReceipt> {
+      if (input.decision !== 'confirm' && input.decision !== 'cancel') throw invalidInput('repository.move.confirm', 'invalid_decision', 'decision');
+      return submitRepositoryMoveConfirmation(input, options);
     },
 
     async listProjectResources(projectId: string): Promise<ProjectResourceConfiguration> {

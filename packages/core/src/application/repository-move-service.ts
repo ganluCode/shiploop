@@ -38,9 +38,21 @@ export interface RepositoryMoveConfirmationRequest {
   readonly decision: unknown;
 }
 
+export interface RepositoryMoveConfirmationPlan {
+  readonly projectId: string;
+  readonly expectedRevision: number;
+  readonly expectedBindingRevision: number;
+  readonly expectedBindingId: string;
+  readonly canonicalPath: string;
+  readonly gitCommonDir: string | null;
+  readonly repoIdentity: string;
+}
+
 export interface RepositoryMoveService {
   /** Read-only Git/filesystem inspection; no project or binding writes. */
   preview(principal: TrustedPrincipal, input: unknown): Promise<BrownfieldMovePreview>;
+  /** Re-inspects a preview and returns the exact CAS facts for a later command transaction. */
+  prepareConfirmation(principal: TrustedPrincipal, input: unknown): Promise<RepositoryMoveConfirmationPlan>;
   /** Re-inspects the preview target and commits the F-003 binding CAS only if unchanged. */
   confirm(principal: TrustedPrincipal, input: unknown): Promise<RepositoryRebindResult>;
 }
@@ -129,7 +141,7 @@ export function createRepositoryMoveService(deps: RepositoryMoveServiceDeps): Re
       });
     },
 
-    async confirm(principal, input) {
+    async prepareConfirmation(principal, input) {
       assertTrustedPrincipal(principal);
       const request = parseConfirmationRequest(input);
       requireCapability(principal, 'project.metadata.write', CONFIRM_OPERATION);
@@ -161,13 +173,26 @@ export function createRepositoryMoveService(deps: RepositoryMoveServiceDeps): Re
       if (freshPreview.previewDigest !== request.preview.previewDigest) {
         throw stale(CONFIRM_OPERATION, 'preview_facts_changed');
       }
-      return stateStore.rebindRepository(project.id, {
+      return {
+        projectId: project.id,
         expectedRevision: project.revision,
         expectedBindingRevision: binding.bindingRevision,
         expectedBindingId: binding.id,
         canonicalPath: inspection.canonicalPath,
         gitCommonDir: inspection.gitCommonDir,
         repoIdentity: inspection.repoIdentity,
+      };
+    },
+
+    async confirm(principal, input) {
+      const plan = await this.prepareConfirmation(principal, input);
+      return stateStore.rebindRepository(plan.projectId, {
+        expectedRevision: plan.expectedRevision,
+        expectedBindingRevision: plan.expectedBindingRevision,
+        expectedBindingId: plan.expectedBindingId,
+        canonicalPath: plan.canonicalPath,
+        gitCommonDir: plan.gitCommonDir,
+        repoIdentity: plan.repoIdentity,
       });
     },
   };

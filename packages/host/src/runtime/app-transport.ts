@@ -88,6 +88,8 @@ import {
   PLANNING_CANDIDATE_ROUTE_SUFFIX,
   PROJECTS_INSPECT_ROUTE,
   PROJECTS_ROUTE,
+  PROJECT_REPOSITORY_MOVE_CONFIRM_ROUTE_SUFFIX,
+  PROJECT_REPOSITORY_MOVE_PREVIEW_ROUTE_SUFFIX,
   PROJECT_RESOURCE_CANDIDATES_ROUTE_SUFFIX,
   PROJECT_RESOURCE_PREVIEW_ROUTE_SUFFIX,
   PROJECT_RESOURCE_ROUTE_SUFFIX,
@@ -212,7 +214,9 @@ export type ApplicationOperation =
   | 'project.resources.list'
   | 'project.resources.candidates'
   | 'project.resources.preview'
-  | 'project.resources.sources.configure';
+  | 'project.resources.sources.configure'
+  | 'repository.move.preview'
+  | 'repository.move.confirm';
 
 /** 已解析的应用路由（path 形态匹配；路径参数为未解码原始片段）。 */
 export interface ResolvedAppRoute {
@@ -253,6 +257,7 @@ export interface HostApplicationContext {
    */
   readonly planningQueryService: Pick<PlanningQueryService, 'listPlanningContexts' | 'getPlanningContext' | 'getPlanningCandidate'>;
   readonly projectResourceService?: Pick<import('shiploop-core').ProjectResourceService, 'getConfiguration' | 'discoverCandidates' | 'previewCandidates' | 'configureSource'>;
+  readonly repositoryMoveService?: Pick<import('shiploop-core').RepositoryMoveService, 'preview' | 'prepareConfirmation' | 'confirm'>;
   /**
    * P02-3 / F-014（§5.3/§13）：baseline.run 经既有 POST /v1/commands 路由提交
    * 到执行编排（accepted 后异步启动检查）；其余命令仍走 commandService。
@@ -694,6 +699,10 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
           method: 'GET',
           pathParam: { name: 'projectId', value: projectId },
         };
+      case PROJECT_REPOSITORY_MOVE_PREVIEW_ROUTE_SUFFIX:
+        return { operation: 'repository.move.preview', method: 'GET', pathParam: { name: 'projectId', value: projectId } };
+      case PROJECT_REPOSITORY_MOVE_CONFIRM_ROUTE_SUFFIX:
+        return { operation: 'repository.move.confirm', method: 'POST', pathParam: { name: 'projectId', value: projectId } };
       case PROJECT_RESOURCE_ROUTE_SUFFIX:
         return { operation: 'project.resources.list', method: 'GET', pathParam: { name: 'projectId', value: projectId } };
       case PROJECT_RESOURCE_CANDIDATES_ROUTE_SUFFIX:
@@ -866,6 +875,7 @@ const QUERY_SPECS: Readonly<Partial<Record<ApplicationOperation, QuerySpec>>> = 
   'project.resources.list': Object.freeze({ allowed: [], repeatable: [] }),
   'project.resources.candidates': Object.freeze({ allowed: ['sourceId'], repeatable: ['sourceId'] }),
   'project.resources.preview': Object.freeze({ allowed: ['sourceId', 'selectedResourceId'], repeatable: ['sourceId', 'selectedResourceId'] }),
+  'repository.move.preview': Object.freeze({ allowed: ['path'], repeatable: [] }),
   // P03-1 / F-009 §6.6：计划层级列表查询参数（父级身份 + 分页；取值规则由
   // Core validatePlanListFilter 单一权威复核）。
   'phases.graph.get': Object.freeze({ allowed: ['projectId', 'limit', 'cursor'], repeatable: [] }),
@@ -1130,6 +1140,73 @@ async function handleCommandSubmit(
   sendBoundedJson(response, status, receipt, MAX_APP_BODY_BYTES, operation);
 }
 
+async function handleRepositoryMoveConfirm(input: ApplicationRequestInput, parsedBody: unknown): Promise<void> {
+  const { app, request, response, route } = input;
+  const operation = route.operation;
+  authenticateOrReject(request, input.authToken, operation);
+  if (input.rawQuery !== '') reject(400, 'invalid_input', operation, '仓库移动确认不接受查询参数');
+  if (app.getLifecycleState() !== 'ready') reject(503, 'not_ready', operation, 'Host 未就绪');
+  if (parsedBody === null || typeof parsedBody !== 'object' || Array.isArray(parsedBody)) {
+    reject(400, 'invalid_input', operation, '仓库移动确认请求必须是对象');
+  }
+  const body = parsedBody as Record<string, unknown>;
+  const allowed = ['projectId', 'preview', 'decision', 'commandId', 'issuedAt', 'expiresAt'];
+  if (Object.keys(body).some(key => !allowed.includes(key))) {
+    reject(400, 'invalid_input', operation, '仓库移动确认包含未知字段', { field: 'body' });
+  }
+  if (body.projectId !== route.pathParam?.value) {
+    reject(400, 'invalid_input', operation, '仓库移动确认项目不匹配', { field: 'body.projectId' });
+  }
+  if (typeof body.commandId !== 'string' || typeof body.issuedAt !== 'string') {
+    reject(400, 'invalid_input', operation, '仓库移动确认缺少命令身份', { field: 'body.commandId' });
+  }
+  if (app.repositoryMoveService === undefined) reject(501, 'unsupported', operation, '仓库移动未装配');
+  try {
+    const plan = await app.repositoryMoveService.prepareConfirmation(app.principal, {
+      preview: body.preview,
+      decision: {
+        schemaVersion: 1,
+        projectId: body.projectId,
+        oldBinding: (body.preview as { readonly oldBinding?: unknown }).oldBinding,
+        previewDigest: (body.preview as { readonly previewDigest?: unknown }).previewDigest,
+        decision: body.decision,
+      },
+    });
+    const receipt = await app.commandService.submit(app.principal, {
+      schemaVersion: 5,
+      commandId: body.commandId,
+      issuedAt: body.issuedAt,
+      ...(body.expiresAt === undefined ? {} : { expiresAt: body.expiresAt }),
+      operation: 'project.repository.rebind',
+      scope: { kind: 'project', projectId: plan.projectId },
+      expectedRevision: plan.expectedRevision,
+      payload: {
+        expectedBindingRevision: plan.expectedBindingRevision,
+        expectedBindingId: plan.expectedBindingId,
+        canonicalPath: plan.canonicalPath,
+        gitCommonDir: plan.gitCommonDir,
+        repoIdentity: plan.repoIdentity,
+      },
+    });
+    const status = receipt.status === 'completed'
+      ? 200
+      : receipt.status === 'accepted'
+        ? 202
+        : publicErrorHttpStatus(receipt.error.code);
+    sendBoundedJson(response, status, receipt, MAX_APP_BODY_BYTES, operation);
+  } catch (error) {
+    if (isStorageError(error)) {
+      throw new CorePublicError(
+        error.kind === 'conflict' ? 'conflict' : error.kind === 'ownership' ? 'forbidden' : error.kind === 'not_found' ? 'not_found' : error.kind === 'validation' ? 'invalid_input' : 'internal',
+        operation,
+        undefined,
+        { details: { reason: 'repository_move_rejected' } },
+      );
+    }
+    throw error;
+  }
+}
+
 async function handleQuery(input: ApplicationRequestInput): Promise<void> {
   const { app, route, request, response } = input;
   const operation = route.operation;
@@ -1212,6 +1289,16 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
         });
       }
       result = await app.onboardingService.inspectRepository(app.principal, repositoryPath);
+      break;
+    }
+    case 'repository.move.preview': {
+      const projectId = pathParam?.value;
+      const repositoryPath = params.get('path');
+      if (repositoryPath === null) {
+        reject(400, 'invalid_input', operation, '仓库移动预览必须携带 path 查询参数', { field: 'query.path', reason: 'missing_path' });
+      }
+      if (app.repositoryMoveService === undefined) reject(501, 'unsupported', operation, '仓库移动未装配');
+      result = await app.repositoryMoveService.preview(app.principal, { projectId, repositoryPath });
       break;
     }
     case 'knowledge.search':
@@ -1728,6 +1815,10 @@ export async function handleApplicationRequest(input: ApplicationRequestInput): 
         }
         throw error;
       }
+      return;
+    }
+    if (operation === 'repository.move.confirm') {
+      await handleRepositoryMoveConfirm(input, parsedBody);
       return;
     }
     if (operation === 'commands.submit') {

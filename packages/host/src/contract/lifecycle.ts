@@ -57,6 +57,9 @@ export const APPLICATION_COMMAND_CAPABILITIES = [
   // P03-9 / F-010：finalization-only retryFinal 经同一通用命令路由接线。
   'execution.retryFinal',
   'project.register',
+  // P06-5：确认由 Host 输入转换为 Core 的既有 rebind 命令事务。
+  'repository.move.confirm',
+  'project.repository.rebind',
   'project.metadata.update',
   'project.profile.confirm',
   'project.profile.modify',
@@ -230,6 +233,7 @@ export const APPLICATION_QUERY_CAPABILITIES = [
   'project.resources.candidates',
   'project.resources.preview',
   'project.resources.sources.configure',
+  'repository.move.preview',
 ] as const;
 
 /**

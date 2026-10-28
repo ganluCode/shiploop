@@ -32,11 +32,9 @@ export const DISCOVERY_SCHEMA_VERSION = 1 as const;
  * 三命令与 features.approvals 查询进入能力集合，同一升版纪律；旧 v4/v3/v2/v1
  * → 400，不猜测降级）。
  */
-// P03-3 / F-011: execution capabilities are an additive v5 wiring change;
-// application envelopes and query results remain on their existing versions.
-// P03-4 / F-008：调度诊断/Attempt 审计三查询进入能力集合，同为 v5 内增量
-// 接线变化（形状集新增不改动既有字段，同一纪律）。
-export const CURRENT_SCHEMA_VERSION = 5 as const;
+// P06-5：仓库移动预览/确认进入应用能力集合，握手线 schema 升为 6；
+// discovery schema、Core 命令信封和其他协议版本独立保持不变。
+export const CURRENT_SCHEMA_VERSION = 6 as const;
 
 /** 当前 Host 生命周期线协议版本；本 Feature 只实现 v1。 */
 export const CURRENT_PROTOCOL_VERSION = 1 as const;
@@ -72,6 +70,9 @@ export const PROJECT_PROFILE_ROUTE_SUFFIX = '/profile';
 export const PROJECT_RESOURCE_ROUTE_SUFFIX = 'resources';
 export const PROJECT_RESOURCE_CANDIDATES_ROUTE_SUFFIX = 'resources/candidates';
 export const PROJECT_RESOURCE_PREVIEW_ROUTE_SUFFIX = 'resources/preview';
+/** P06-5：存量仓库移动预览/确认路由。 */
+export const PROJECT_REPOSITORY_MOVE_PREVIEW_ROUTE_SUFFIX = 'repository-move/preview';
+export const PROJECT_REPOSITORY_MOVE_CONFIRM_ROUTE_SUFFIX = 'repository-move/confirm';
 
 /** P02-3 / F-006 §3.2/§7.2：注册前只读仓库检查（字面量优先于 :projectId 形态）。 */
 export const PROJECTS_INSPECT_ROUTE = '/v1/projects/inspect';

@@ -206,6 +206,8 @@ import type { HostOperation } from '../contract/index.js';
 import type { ProjectProfileQueryResult, ProjectProfileMatchQueryResult } from 'shiploop-core/protocol';
 import type { ProjectResourceConfiguration, ProjectResourceCandidateDiscoveryResult, ProjectResourceCandidatePreview } from 'shiploop-core';
 import { validateProjectResourceCandidate, validateProjectResourceSettings, PROJECT_RESOURCE_CANDIDATE_REASONS } from 'shiploop-core';
+import { validateBrownfieldMovePreview } from 'shiploop-core';
+import type { BrownfieldMovePreview } from 'shiploop-core';
 
 
 
@@ -372,7 +374,8 @@ export type AppQueryOperation =
   | 'planning.candidate.get'
   | 'project.resources.list'
   | 'project.resources.candidates'
-  | 'project.resources.preview';
+  | 'project.resources.preview'
+  | 'repository.move.preview';
 
 function validateProjectProfileQueryWire(operation: HostOperation, body: unknown): ProjectProfileQueryResult {
   const object = requirePlain(operation, body);
@@ -6873,6 +6876,32 @@ export function validatePlanningCandidateDetailResultWire(
   return object as unknown as PlanningCandidateDetailResult;
 }
 
+export function validateRepositoryMovePreviewWire(
+  value: unknown,
+  operation: HostOperation = 'repository.move.preview',
+): BrownfieldMovePreview {
+  try {
+    return validateBrownfieldMovePreview(value);
+  } catch {
+    malformed(operation, 'repository_move_preview_invalid');
+  }
+}
+
+/** project.repository.rebind completed receipt result; snapshots remain opaque evidence rows. */
+export function validateRepositoryMoveConfirmResultWire(
+  value: unknown,
+  operation: HostOperation = 'repository.move.confirm',
+): { readonly project: PublicProjectRecord; readonly previousBinding: PublicRepositoryBindingRecord; readonly binding: PublicRepositoryBindingRecord; readonly snapshots: readonly unknown[] } {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, ['project', 'previousBinding', 'binding', 'snapshots']);
+  if (!Array.isArray(object.snapshots)) malformed(operation, 'repository_move_snapshots_invalid');
+  return {
+    project: validateProjectRecord(operation, object.project),
+    previousBinding: validateBindingRecord(operation, object.previousBinding),
+    binding: validateBindingRecord(operation, object.binding),
+    snapshots: object.snapshots,
+  };
+}
 function validateProjectResourceQueryWire(operation: HostOperation, body: unknown): unknown {
   const object = requirePlain(operation, body);
   if (object.schemaVersion !== 1) throw new HostProtocolError('unsupported_schema_version', operation, '项目资源响应版本不受支持');
@@ -7105,6 +7134,11 @@ export function validateAppQueryResponse(operation: 'features.report.get', body:
 export function validateAppQueryResponse(operation: 'project.resources.list', body: unknown, expectation?: SnapshotExpectation): ProjectResourceConfiguration;
 export function validateAppQueryResponse(operation: 'project.resources.candidates', body: unknown, expectation?: SnapshotExpectation): ProjectResourceCandidateDiscoveryResult;
 export function validateAppQueryResponse(operation: 'project.resources.preview', body: unknown, expectation?: SnapshotExpectation): ProjectResourceCandidatePreview;
+export function validateAppQueryResponse(
+  operation: 'repository.move.preview',
+  body: unknown,
+  expectation?: SnapshotExpectation,
+): BrownfieldMovePreview;
 
 export function validateAppQueryResponse(
   operation: 'features.delivery.get',
@@ -7330,6 +7364,9 @@ export function validateAppQueryResponse(
     case 'project.resources.candidates':
     case 'project.resources.preview':
       return validateProjectResourceQueryWire(operation, body);
+    case 'repository.move.preview':
+      return validateRepositoryMovePreviewWire(body, operation);
+
     // P03-7 / F-013：Task 证据/人审/返工链查询响应分发（同一冻结字段集纪律）。
     case 'execution.task.verification.get':
       return validateTaskVerificationResultWire(body, operation);

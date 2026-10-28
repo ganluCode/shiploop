@@ -1178,7 +1178,7 @@ describe('F-013 真实 Host：命令、回执、结果与查询闭环', () => {
       const token = readFileSync(join(fixture.dataRoot, 'host', 'auth.token'), 'utf8');
       environment.evidence.registerSecret(token);
       const client = await connectToHost({ canonicalRoot: fixture.dataRoot });
-      expect(client.handshake.schemaVersion).toBe(5);
+      expect(client.handshake.schemaVersion).toBe(6);
 
       const input: SubmitCommandInput = {
         operation: 'project.register',

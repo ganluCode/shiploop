@@ -716,6 +716,7 @@ describe('F-011 传输纪律与版本门禁', () => {
         // P03-9 / F-010：finalization-only retryFinal 经同一命令路由接线。
         'execution.retryFinal',
         'project.register',
+        'project.repository.rebind',
         'project.metadata.update',
         'project.profile.confirm',
         'project.profile.modify',
@@ -972,7 +973,7 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
       path: '/v1/host/handshake',
       token: STUB_TOKEN,
       body: {
-        schemaVersion: 5,
+        schemaVersion: 6,
         protocolVersion: 1,
         hostInstanceId: STUB_INSTANCE,
         dataRootIdentity: STUB_ROOT_IDENTITY,
@@ -983,7 +984,7 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
       expectedHostInstanceId: STUB_INSTANCE,
       expectedDataRootIdentity: STUB_ROOT_IDENTITY,
     });
-    expect(validated.schemaVersion).toBe(5);
+    expect(validated.schemaVersion).toBe(6);
     expect(validated.capabilities.application).toEqual({
       commands: [
         'execution.attempt.cancel',
@@ -995,6 +996,8 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         // P03-9 / F-010：finalization-only retryFinal 经同一命令路由接线。
         'execution.retryFinal',
         'project.register',
+        'repository.move.confirm',
+        'project.repository.rebind',
         'project.metadata.update',
         'project.profile.confirm',
         'project.profile.modify',
@@ -1127,6 +1130,7 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         'project.resources.preview',
         // P06-3 / F-006：owner 管理入口来源登记经真实 Host 路由接线并宣告能力。
         'project.resources.sources.configure',
+        'repository.move.preview',
       ],
       events: { transport: 'sse', route: '/v1/events', scopes: ['project', 'global'] },
     });
@@ -1170,7 +1174,7 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         path: '/v1/host/handshake',
         token,
         body: {
-          schemaVersion: 5,
+          schemaVersion: 6,
           protocolVersion: 1,
           hostInstanceId: discovery.hostInstanceId,
           dataRootIdentity: host.dataRootIdentity,
