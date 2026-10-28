@@ -263,7 +263,7 @@ import {
   formatRepositoryMovePreview,
   parseRepositoryMovePreviewDocument,
 } from './app/repository-move.js';
-import type { BrownfieldMovePreview } from 'shiploop-core';
+import type { BrownfieldMovePreview } from './app/repository-move.js';
 
 import {
   buildAppCliFailureEnvelope,

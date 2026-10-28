@@ -167,7 +167,6 @@ export const APPLICATION_QUERY_CAPABILITIES = [
   // P02-3 / F-014 §3.2/§7.4-§7.6：基线分页、单次详情与有界证据正文。
   'baselines.list',
   'baselines.get',
-  'baselines.compare',
   'artifacts.get',
   // P03-1 / F-009 §6.6：计划层级列表/详情/同 Feature Task DAG（能力位复用
   // project.read；与 Core PLAN_QUERY_OPERATIONS 同步，不漂移）。

@@ -1,4 +1,6 @@
-import { validateBrownfieldMovePreview, type BrownfieldMovePreview } from 'shiploop-core';
+import { validateRepositoryMovePreviewWire } from 'shiploop-host';
+export type { BrownfieldMovePreview } from 'shiploop-host';
+import type { BrownfieldMovePreview } from 'shiploop-host';
 import type { AppCliCommand, AppCliCommandId, AppCliParseError } from './args.js';
 import { AppCliParseError as AppCliParseErrorClass } from './args.js';
 
@@ -30,7 +32,7 @@ export function parseRepositoryMovePreviewDocument(
   projectId: string,
 ): BrownfieldMovePreview {
   try {
-    const preview = validateBrownfieldMovePreview(payload);
+    const preview = validateRepositoryMovePreviewWire(payload);
     if (preview.projectId !== projectId) {
       throw previewFileError(context, 'invalid_preview_file');
     }

@@ -11,6 +11,7 @@
  * 均有界。
  */
 export type { KnowledgeReadResult, KnowledgeSearchResultSet } from 'shiploop-core/protocol';
+export type { BrownfieldMovePreview } from 'shiploop-core';
 
 export { connectToHost, probeDiscoveredHost } from './host-client.js';
 export type {
@@ -105,6 +106,7 @@ export {
   validateWorkspaceOperationListResultWire,
   validateWorkspaceOperationDetailResultWire,
   validateWorkspaceDiscardPreviewWire,
+  validateRepositoryMovePreviewWire,
   validateWorkspaceDiscardConfirmResultWire,
   validateFeatureDeliveryCommandResultWire,
   validateIntegrationStartCommandResultWire,

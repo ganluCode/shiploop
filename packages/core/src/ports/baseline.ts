@@ -51,7 +51,6 @@ export const BASELINE_QUERY_OPERATIONS = [
   'projects.overview',
   'baselines.list',
   'baselines.get',
-  'baselines.compare',
   'artifacts.get',
 ] as const;
 export type BaselineQueryOperation = (typeof BASELINE_QUERY_OPERATIONS)[number];
