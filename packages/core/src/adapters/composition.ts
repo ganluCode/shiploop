@@ -223,6 +223,10 @@ import type { IntegrationPlanAccess } from '../ports/integration-plan-store.js';
 
 // F-009 standalone process adapter; baseline execution orchestration is not assembled yet.
 export { createCommandProcessAdapter } from './process/command-process.js';
+export {
+  createLocalProjectResourceCandidateSourceReader,
+  createProjectResourceCandidateSourceReader,
+} from './fs/project-resource-candidates.js';
 
 const OPERATION = 'CoreApplication.open';
 

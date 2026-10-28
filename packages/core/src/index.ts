@@ -151,6 +151,8 @@ export * from './ports/queries.js';
 export * from './ports/authorization.js';
 export * from './ports/work-access.js';
 export * from './ports/project-resources.js';
+export * from './ports/project-resource-candidates.js';
+export * from './application/project-resource-discovery.js';
 export * from './application/work-tool-channel.js';
 export * from './ports/work-authentication.js';
 export { createWorkAuthenticationPreflight } from './application/work-authentication-preflight.js';
