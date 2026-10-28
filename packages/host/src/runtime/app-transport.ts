@@ -44,6 +44,7 @@ import {
 } from 'shiploop-core';
 import type {
   BaselineExecutionService,
+  BaselineComparisonService,
   BaselineQueryService,
   CommandReceiptsService,
   CommandService,
@@ -60,6 +61,7 @@ import {
   BATCHES_ROUTE_PREFIX,
   ARTIFACT_CONTENT_ROUTE_SUFFIX,
   ARTIFACTS_ROUTE_PREFIX,
+  BASELINE_COMPARE_ROUTE,
   BASELINES_ROUTE_PREFIX,
   COMMANDS_ROUTE,
   DISPATCH_QUEUE_ROUTE,
@@ -156,6 +158,7 @@ export type ApplicationOperation =
   | 'snapshot.get'
   | 'baselines.list'
   | 'baselines.get'
+  | 'baselines.compare'
   | 'artifacts.get'
   | 'events.subscribe'
   // P03-1 / F-009 §6.6：计划域查询操作身份（与 Core PLAN_QUERY_OPERATIONS 同源）。
@@ -250,6 +253,8 @@ export interface HostApplicationContext {
    * 能力清单宣告 baselines.list/baselines.get/artifacts.get，必须真实接线。
    */
   readonly baselineQueryService: BaselineQueryService;
+  /** P06-5：同项目基线身份与逐项状态的只读比较；无写端口。 */
+  readonly baselineComparisonService?: Pick<BaselineComparisonService, 'compareBaselines'>;
   /**
    * P05-1 / F-012：规划上下文/候选只读查询（授权/可见性/候选正文完整性全部在
    * Core；能力清单宣告 planning.contexts.list/planning.context.get/
@@ -500,6 +505,10 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
       };
     }
     return undefined;
+  }
+  // P06-5：比较是固定字面量，必须先于 baselines/:operationId 解析。
+  if (path === BASELINE_COMPARE_ROUTE) {
+    return { operation: 'baselines.compare', method: 'GET' };
   }
   // P02-3 / F-014 §3.2：GET /v1/baselines/:operationId（单段路径参数）。
   if (path.startsWith(BASELINES_ROUTE_PREFIX)) {
@@ -872,6 +881,7 @@ const QUERY_SPECS: Readonly<Partial<Record<ApplicationOperation, QuerySpec>>> = 
   'events.subscribe': Object.freeze({ allowed: ['scope', 'projectId', 'cursor'], repeatable: [] }),
   // P02-3 / F-014（§7.4）：baselines.list 分页参数（取值规则由 Core 复核）。
   'baselines.list': Object.freeze({ allowed: ['limit', 'cursor'], repeatable: [] }),
+  'baselines.compare': Object.freeze({ allowed: ['previousOperationId', 'currentOperationId'], repeatable: [] }),
   'project.resources.list': Object.freeze({ allowed: [], repeatable: [] }),
   'project.resources.candidates': Object.freeze({ allowed: ['sourceId'], repeatable: ['sourceId'] }),
   'project.resources.preview': Object.freeze({ allowed: ['sourceId', 'selectedResourceId'], repeatable: ['sourceId', 'selectedResourceId'] }),
@@ -1417,6 +1427,18 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
     case 'baselines.get':
       result = await app.baselineQueryService.getBaseline(app.principal, pathParam?.value);
       break;
+    case 'baselines.compare': {
+      const previousOperationId = params.get('previousOperationId');
+      const currentOperationId = params.get('currentOperationId');
+      if (previousOperationId === null || currentOperationId === null) {
+        reject(400, 'invalid_input', operation, '基线比较必须携带 previousOperationId 和 currentOperationId', {
+          reason: 'missing_comparison_identity',
+        });
+      }
+      if (app.baselineComparisonService === undefined) reject(501, 'unsupported', operation, '基线比较未在本装配中启用');
+      result = await app.baselineComparisonService.compareBaselines(app.principal, previousOperationId, currentOperationId);
+      break;
+    }
     // P03-1 / F-009 §6.6：计划域查询分发。传输层只做形态转换（父级必填、
     // limit 十进制整数文本）；授权/可见性/分页范围/游标全部由 Core 单一权威复核。
     case 'phases.list':

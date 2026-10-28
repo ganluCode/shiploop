@@ -102,6 +102,18 @@ export {
   validateBaselineCancelPayload, validateProjectInitRequest, validateRepositoryRootPath,
   ONBOARDING_QUERY_SCHEMA_VERSION,
 } from './ports/baseline.js';
+export {
+  BASELINE_COMPARISON_SCHEMA_VERSION,
+} from './ports/baseline-comparison.js';
+export type {
+  BaselineComparisonClassification,
+  BaselineComparisonCodeDiff,
+  BaselineComparisonCheck,
+  BaselineComparisonEvidenceRef,
+  BaselineComparisonGap,
+  BaselineComparisonResult,
+  BaselineComparisonSource,
+} from './ports/baseline-comparison.js';
 export type {
   BaselineAuthorizationSummary, BaselineCapability, BaselineCheck, BaselineCheckCounts,
   BaselineCheckOutputRef, BaselineCheckPlan, BaselineCheckResult, BaselineCheckStatus,

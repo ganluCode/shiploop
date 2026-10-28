@@ -82,6 +82,8 @@ export const SNAPSHOT_ROUTE = '/v1/snapshot';
 export const EVENTS_ROUTE = '/v1/events';
 /** P02-3 / F-014 §3.2：基线分页/详情/证据正文路由（全部 GET + Bearer）。 */
 export const BASELINES_ROUTE_PREFIX = '/v1/baselines/';
+/** P06-5：同项目两次基线的只读逐项比较查询。 */
+export const BASELINE_COMPARE_ROUTE = '/v1/baselines/compare';
 export const ARTIFACTS_ROUTE_PREFIX = '/v1/artifacts/';
 export const ARTIFACT_CONTENT_ROUTE_SUFFIX = '/content';
 

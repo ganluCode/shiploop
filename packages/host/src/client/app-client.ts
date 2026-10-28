@@ -55,6 +55,7 @@ import type {
   DispatchQueueListResult,
   ResourceListResult,
   BaselineDetailResult,
+  BaselineComparisonResult,
   BaselineListResult,
   CommandReceipt,
   CommandScope,
@@ -121,6 +122,7 @@ import {
   EXECUTION_RESOURCES_ROUTE,
   ATTEMPT_DIAGNOSTICS_ROUTE_SUFFIX,
   BATCHES_ROUTE_PREFIX,
+  BASELINE_COMPARE_ROUTE,
   BASELINES_ROUTE_PREFIX,
   COMMANDS_ROUTE,
   EVENTS_ROUTE,
@@ -836,6 +838,8 @@ export interface HostClientApplication {
   listBaselines(projectId: string, input?: ListBaselinesInput): Promise<BaselineListResult>;
   /** P02-3 / F-014（§7.5）：单次基线操作详情（授权摘要 + 逐项检查）。 */
   getBaseline(operationId: string): Promise<BaselineDetailResult>;
+  /** P06-5：同项目两次基线的身份/逐项状态只读比较。 */
+  compareBaselines(previousOperationId: string, currentOperationId: string): Promise<BaselineComparisonResult>;
   /** P02-3 / F-014（§7.6）：正式基线证据制品正文（有界、已授权、已脱敏）。 */
   readArtifactContent(artifactId: string): Promise<BaselineArtifactContentResult>;
   /* ------------------------------------------------------------ *
@@ -3053,6 +3057,17 @@ export function createHostClientApplication(context: AppClientContext): HostClie
       const json = await getJson('baselines.get', `${BASELINES_ROUTE_PREFIX}${id}`);
       return validateAppQueryResponse('baselines.get', json);
     },
+
+    async compareBaselines(previousOperationId: string, currentOperationId: string): Promise<BaselineComparisonResult> {
+      const operation = 'baselines.compare';
+      context.assertOpen(operation);
+      const previous = requireOperationIdInput(operation, previousOperationId);
+      const current = requireOperationIdInput(operation, currentOperationId);
+      const query = `previousOperationId=${encodeURIComponent(previous)}&currentOperationId=${encodeURIComponent(current)}`;
+      const json = await getJson(operation, `${BASELINE_COMPARE_ROUTE}?${query}`);
+      return validateAppQueryResponse(operation, json);
+    },
+
 
     async readArtifactContent(artifactId: string): Promise<BaselineArtifactContentResult> {
       context.assertOpen('artifacts.get');

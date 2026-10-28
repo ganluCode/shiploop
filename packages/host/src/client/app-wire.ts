@@ -37,6 +37,7 @@ import {
   ATTEMPT_NOTIFICATION_DIAGNOSTIC_REASONS,
   ATTEMPT_STATUSES,
   BASELINE_CHECKS_MAX,
+  BASELINE_COMPARISON_SCHEMA_VERSION,
   BASELINE_CHECK_STATUSES,
   BASELINE_CHECK_TAIL_MAX_BYTES,
   BASELINE_OPERATION_STATUSES,
@@ -144,6 +145,9 @@ import type {
   PublicPlanningContextRecord,
   BaselineAuthorizationSummary,
   BaselineCheckCounts,
+  BaselineComparisonResult,
+  BaselineComparisonCheck,
+  BaselineComparisonSource,
   BaselineCheckOutputRef,
   BaselineCheckResult,
   BaselineDetailResult,
@@ -318,6 +322,7 @@ export type AppQueryOperation =
   | 'snapshot.get'
   | 'baselines.list'
   | 'baselines.get'
+  | 'baselines.compare'
   // P03-1 / F-009 §6.6：计划域查询（与 Core PLAN_QUERY_OPERATIONS 同源）。
   | 'phases.list'
   | 'phases.get'
@@ -2802,21 +2807,179 @@ function validateBaselineDetail(operation: HostOperation, body: unknown): Baseli
   exactKeys(operation, object, ['schemaVersion', 'operation', 'authorization', 'checks']);
   requireOnboardingSchemaVersion(operation, object.schemaVersion);
   const summary = validateBaselineOperationSummaryWire(operation, object.operation);
-  const authorization =
-    object.authorization === null
-      ? null
-      : validateAuthorizationSummaryWire(operation, object.authorization);
-  if (!Array.isArray(object.checks)) {
-    malformed(operation, 'baseline_checks_invalid');
-  }
+  const authorization = object.authorization === null
+    ? null
+    : validateAuthorizationSummaryWire(operation, object.authorization);
+  if (!Array.isArray(object.checks)) malformed(operation, 'baseline_checks_invalid');
   const checks = object.checks.map((check) => validateBaselineCheckResultWire(operation, check));
+  return { schemaVersion: ONBOARDING_QUERY_SCHEMA_VERSION, operation: summary, authorization, checks };
+}
+
+function validateBaselineComparison(
+  operation: HostOperation,
+  body: unknown,
+): BaselineComparisonResult {
+  const object = requirePlain(operation, body);
+  exactKeys(operation, object, [
+    'schemaVersion', 'projectId', 'previous', 'current', 'codeDiff', 'identityDiff', 'checks', 'comparable', 'gaps',
+  ]);
+  if (object.schemaVersion !== BASELINE_COMPARISON_SCHEMA_VERSION) {
+    if (typeof object.schemaVersion === 'number') unsupportedVersion(operation, 'schemaVersion');
+    malformed(operation, 'baseline_comparison_schema_invalid');
+  }
+  const projectId = requireStableId(operation, object.projectId);
+  const gaps = validateComparisonGaps(operation, object.gaps);
+  const previous = validateComparisonSource(operation, object.previous, projectId);
+  const current = validateComparisonSource(operation, object.current, projectId);
+  const codeDiff = requirePlain(operation, object.codeDiff);
+  exactKeys(operation, codeDiff, ['headCommitChanged', 'workingTreeDigestChanged', 'uncommittedChangesChanged', 'anyChanged']);
+  const identityDiff = requirePlain(operation, object.identityDiff);
+  exactKeys(operation, identityDiff, ['repositoryBindingChanged', 'dirtyScopeChanged', 'environmentChanged']);
+  for (const value of [codeDiff, identityDiff]) {
+    for (const key of Object.keys(value)) if (typeof value[key] !== 'boolean') malformed(operation, 'baseline_comparison_diff_invalid');
+  }
+  if (!Array.isArray(object.checks)) malformed(operation, 'baseline_comparison_checks_invalid');
+  const checks = object.checks.map((value) => validateComparisonCheck(operation, value, projectId, previous, current));
+  if (typeof object.comparable !== 'boolean') malformed(operation, 'baseline_comparison_comparable_invalid');
   return {
-    schemaVersion: ONBOARDING_QUERY_SCHEMA_VERSION,
-    operation: summary,
-    authorization,
+    schemaVersion: BASELINE_COMPARISON_SCHEMA_VERSION,
+    projectId,
+    previous,
+    current,
+    codeDiff: codeDiff as unknown as BaselineComparisonResult['codeDiff'],
+    identityDiff: identityDiff as unknown as BaselineComparisonResult['identityDiff'],
     checks,
+    comparable: object.comparable,
+    gaps,
   };
 }
+
+const BASELINE_COMPARISON_CLASSIFICATIONS = [
+  'unchanged_passed', 'existing_failure', 'regressed', 'new_failure', 'fixed', 'not_run',
+  'incomparable', 'removed', 'added',
+] as const;
+const BASELINE_COMPARISON_GAPS = [
+  'baseline_not_completed', 'authorization_missing', 'code_identity_missing', 'binding_identity_missing',
+  'binding_identity_changed', 'dirty_scope_missing', 'dirty_scope_changed', 'environment_identity_missing',
+  'environment_identity_changed', 'check_not_run', 'evidence_missing', 'evidence_incomplete', 'stop_unconfirmed',
+  'failure_identity_missing', 'check_removed', 'check_added', 'check_definition_changed',
+] as const;
+
+function validateComparisonGaps(operation: HostOperation, value: unknown): BaselineComparisonResult['gaps'] {
+  if (!Array.isArray(value) || value.some(item => !(BASELINE_COMPARISON_GAPS as readonly unknown[]).includes(item))) {
+    malformed(operation, 'baseline_comparison_gaps_invalid');
+  }
+  return value as BaselineComparisonResult['gaps'];
+}
+
+function validateComparisonIdentity(operation: HostOperation, value: unknown): BaselineComparisonSource['codeIdentity'] {
+  if (value === null) return null;
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, ['headCommit', 'workingTreeDigest', 'hasUncommittedChanges']);
+  if ((object.headCommit !== null && (typeof object.headCommit !== 'string' || !COMMIT_ID_PATTERN.test(object.headCommit)))
+    || typeof object.workingTreeDigest !== 'string' || !SHA256_HEX_PATTERN.test(object.workingTreeDigest)
+    || typeof object.hasUncommittedChanges !== 'boolean') {
+    malformed(operation, 'baseline_comparison_identity_invalid');
+  }
+  return object as unknown as BaselineComparisonSource['codeIdentity'];
+}
+
+function validateComparisonSource(
+  operation: HostOperation,
+  value: unknown,
+  projectId: string,
+): BaselineComparisonSource {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, [
+    'operationId', 'projectId', 'operationStatus', 'codeIdentity', 'repositoryBindingId',
+    'repositoryBindingRevision', 'dirtyScope', 'environmentIdentity', 'evidence', 'gaps',
+  ]);
+  const operationId = requireEventOperationId(operation, object.operationId);
+  if (object.projectId !== projectId || typeof object.operationStatus !== 'string'
+    || !(BASELINE_OPERATION_STATUSES as readonly unknown[]).includes(object.operationStatus)) {
+    malformed(operation, 'baseline_comparison_source_invalid');
+  }
+  if (object.repositoryBindingId !== null && !isUuidV4(object.repositoryBindingId)) malformed(operation, 'baseline_comparison_identity_invalid');
+  if (object.repositoryBindingRevision !== null
+    && (typeof object.repositoryBindingRevision !== 'number' || !Number.isSafeInteger(object.repositoryBindingRevision) || object.repositoryBindingRevision < 1)) {
+    malformed(operation, 'baseline_comparison_identity_invalid');
+  }
+  let dirtyScope: BaselineComparisonSource['dirtyScope'];
+  let environmentIdentity: BaselineComparisonSource['environmentIdentity'];
+  try {
+    dirtyScope = object.dirtyScope === null ? null : validateBaselineDirtyScope(object.dirtyScope, operation, 'dirtyScope');
+    environmentIdentity = object.environmentIdentity === null ? null : validateBaselineEnvironmentIdentity(object.environmentIdentity, operation, 'environmentIdentity');
+  } catch {
+    malformed(operation, 'baseline_comparison_identity_invalid');
+  }
+  if (!Array.isArray(object.evidence)) malformed(operation, 'baseline_comparison_evidence_invalid');
+  const evidence = object.evidence.map(value => {
+    const item = requirePlain(operation, value);
+    exactKeys(operation, item, ['operationId', 'checkKey', 'artifactId']);
+    if (item.operationId !== operationId || typeof item.checkKey !== 'string' || !CHECK_KEY_PATTERN.test(item.checkKey)
+      || (item.artifactId !== null && typeof item.artifactId !== 'string')) malformed(operation, 'baseline_comparison_evidence_invalid');
+    if (item.artifactId !== null) requireStableId(operation, item.artifactId);
+    return { operationId, checkKey: item.checkKey as string, artifactId: item.artifactId as string | null };
+  });
+  const sourceGaps = validateComparisonGaps(operation, object.gaps);
+  const hasGap = (gap: string): boolean => sourceGaps.includes(gap as never);
+  if (object.codeIdentity === null && !hasGap('authorization_missing') && !hasGap('code_identity_missing')) malformed(operation, 'baseline_comparison_identity_invalid');
+  if (object.repositoryBindingId === null && !hasGap('authorization_missing') && !hasGap('binding_identity_missing')) malformed(operation, 'baseline_comparison_identity_invalid');
+  if (object.dirtyScope === null && !hasGap('authorization_missing') && !hasGap('dirty_scope_missing')) malformed(operation, 'baseline_comparison_identity_invalid');
+  if (object.environmentIdentity === null && !hasGap('authorization_missing') && !hasGap('environment_identity_missing')) malformed(operation, 'baseline_comparison_identity_invalid');
+  return {
+    operationId,
+    projectId,
+    operationStatus: object.operationStatus as BaselineComparisonSource['operationStatus'],
+    codeIdentity: validateComparisonIdentity(operation, object.codeIdentity),
+    repositoryBindingId: object.repositoryBindingId as string | null,
+    repositoryBindingRevision: object.repositoryBindingRevision as number | null,
+    dirtyScope,
+    environmentIdentity,
+    evidence,
+    gaps: sourceGaps,
+  };
+}
+
+function validateComparisonCheck(
+  operation: HostOperation,
+  value: unknown,
+  projectId: string,
+  previous: BaselineComparisonSource,
+  current: BaselineComparisonSource,
+): BaselineComparisonCheck {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, ['checkKey', 'classification', 'reason', 'definitionChanged', 'previous', 'current', 'evidence']);
+  if (typeof object.checkKey !== 'string' || !CHECK_KEY_PATTERN.test(object.checkKey)
+    || !(BASELINE_COMPARISON_CLASSIFICATIONS as readonly unknown[]).includes(object.classification)
+    || typeof object.definitionChanged !== 'boolean') malformed(operation, 'baseline_comparison_check_invalid');
+  if (object.reason !== undefined && !(BASELINE_COMPARISON_GAPS as readonly unknown[]).includes(object.reason)) malformed(operation, 'baseline_comparison_check_invalid');
+  const validateDetail = (value: unknown): BaselineCheckResult | null => value === null ? null : validateBaselineCheckResultWire(operation, value);
+  const previousCheck = validateDetail(object.previous);
+  const currentCheck = validateDetail(object.current);
+  if ((previousCheck !== null && previousCheck.checkKey !== object.checkKey) || (currentCheck !== null && currentCheck.checkKey !== object.checkKey)) malformed(operation, 'baseline_comparison_check_invalid');
+  const evidenceObject = requirePlain(operation, object.evidence);
+  exactKeys(operation, evidenceObject, ['previous', 'current']);
+  const evidence = (side: unknown, source: BaselineComparisonSource): BaselineComparisonCheck['evidence'][keyof BaselineComparisonCheck['evidence']] => {
+    if (side === null) return null;
+    const item = requirePlain(operation, side);
+    exactKeys(operation, item, ['operationId', 'checkKey', 'artifactId']);
+    if (item.operationId !== source.operationId || item.checkKey !== object.checkKey
+      || (item.artifactId !== null && typeof item.artifactId !== 'string')) malformed(operation, 'baseline_comparison_evidence_invalid');
+    if (item.artifactId !== null) requireStableId(operation, item.artifactId);
+    return { operationId: item.operationId as string, checkKey: item.checkKey as string, artifactId: item.artifactId as string | null };
+  };
+  return {
+    checkKey: object.checkKey,
+    classification: object.classification as BaselineComparisonCheck['classification'],
+    ...(object.reason === undefined ? {} : { reason: object.reason as BaselineComparisonCheck['reason'] }),
+    definitionChanged: object.definitionChanged,
+    previous: previousCheck,
+    current: currentCheck,
+    evidence: { previous: evidence(evidenceObject.previous, previous), current: evidence(evidenceObject.current, current) },
+  };
+}
+
 
 /**
  * §6 baseline.preview 回执内嵌 result（completed 时）：预览摘要形状把关。
@@ -7007,6 +7170,11 @@ export function validateAppQueryResponse(
   body: unknown,
   expectation?: SnapshotExpectation,
 ): BaselineDetailResult;
+export function validateAppQueryResponse(
+  operation: 'baselines.compare',
+  body: unknown,
+  expectation?: SnapshotExpectation,
+): BaselineComparisonResult;
 // P03-1 / F-009 §6.6：计划域查询响应重载。
 export function validateAppQueryResponse(operation: 'phases.graph.get', body: unknown, expectation?: SnapshotExpectation): PhaseGraphResult;
 export function validateAppQueryResponse(
@@ -7314,6 +7482,8 @@ export function validateAppQueryResponse(
       return validateBaselineListPage(operation, body);
     case 'baselines.get':
       return validateBaselineDetail(operation, body);
+    case 'baselines.compare':
+      return validateBaselineComparison(operation, body);
     // P03-1 / F-009 §6.6：计划域查询响应分发（同一冻结字段集纪律）。
     case 'phases.graph.get': return validatePhaseGraphWire(body);
     case 'phases.list':
