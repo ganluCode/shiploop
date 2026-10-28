@@ -137,10 +137,12 @@ export type {
   PiSession,
   PiSessionFactory,
   PiSessionFactoryOptions,
+  PiStartupCancellableAdapter,
   PiSubmissionToolDefinition,
   PiTrustedAssembly,
   PiTrustedInputReader,
 } from './pi-adapter.js';
+export type { PiMcpAssembly } from './pi-mcp-session.js';
 export { validatePiSubmissionTools } from './pi-adapter.js';
 
 export type { PiPreparedRecovery } from './pi-native-session.js';

@@ -373,7 +373,11 @@ export function buildMcpStartupPlan(input: McpStartupPlanInput): McpStartupPlan 
       continue;
     }
     const definition = definitions.find(item => item.resourceId === entry.id);
-    if (definition === undefined) reject('missing_server');
+    if (definition === undefined) {
+      if (entry.required || entry.onUnavailable !== 'omit') reject('missing_server');
+      gaps.push({ resourceId: entry.id, reason: 'optional_resource_omitted' });
+      continue;
+    }
     if (!sameIdentity(entry, definition)) reject('resource_identity_mismatch');
     const refs = optionalSnapshotRefs(entry);
     if (refs.environmentRefs !== undefined && stableStringify(refs.environmentRefs) !== stableStringify(definition.environmentRefs)) {
@@ -417,7 +421,8 @@ export async function prepareMcpStartupPlan(
     try {
       definition = await options.resolver.resolve({ request, resource: entry });
     } catch {
-      reject('resource_not_authorized');
+      if (entry.required || entry.onUnavailable !== 'omit') reject('resource_not_authorized');
+      definition = null;
     }
     if (definition !== null) definitions.push(definition);
   }

@@ -3,7 +3,8 @@ import { createHash } from 'node:crypto';
 import {
   RuntimeError, validateRuntimeCancelReceipt, validateRuntimeExecutionResult, validateRuntimeStopEvidence,
 } from 'shiploop-core';
-import type { RuntimeAdapter, RuntimeCancelReceipt, RuntimeExecutionRequest, RuntimeHandle } from 'shiploop-core';
+import type { RuntimeCancelReceipt, RuntimeExecutionRequest, RuntimeHandle } from 'shiploop-core';
+import type { PiStartupCancellableAdapter } from './pi-adapter.js';
 import { observePiWithin, PI_ABORT_WAIT_MS, PI_STOP_WAIT_MS } from './pi-lifecycle.js';
 import {
   PI_RUNNER_MAX_REQUEST_BYTES, encodePiRunnerMessage, normalizePiRunnerEvent, piRunnerMessage, runnerProtocolError,
@@ -12,7 +13,7 @@ import {
 import type { PiRunnerBody } from './pi-runner-protocol.js';
 
 export interface PiWorkRunnerOptions {
-  readonly adapter: RuntimeAdapter;
+  readonly adapter: PiStartupCancellableAdapter;
   /** Dedicated protocol sink, never console/stdout logging. Completion means the bounded write drained. */
   readonly write: (bytes: Uint8Array) => Promise<void>;
   /** Trusted control input; OS signals are attached only by the standalone entry. */
@@ -39,8 +40,16 @@ export function createPiWorkRunner(options: PiWorkRunnerOptions): {
 }
 
 async function execute(request: RuntimeExecutionRequest, options: PiWorkRunnerOptions): Promise<void> {
+  const deadline = new AbortController();
+  const timer = setTimeout(() => deadline.abort(), request.limits.timeoutMs);
+  const signal = options.signal ? AbortSignal.any([options.signal, deadline.signal]) : deadline.signal;
+  try { await executeStarted(request, { ...options, signal }); }
+  finally { clearTimeout(timer); }
+}
+
+async function executeStarted(request: RuntimeExecutionRequest, options: PiWorkRunnerOptions): Promise<void> {
   let handle: RuntimeHandle;
-  try { handle = await options.adapter.start(request); }
+  try { handle = await options.adapter.start(request, options.signal); }
   catch { throw new RuntimeError('process', 'runner_runtime_start_failed'); }
   // Observe both promises immediately, even while the event sink is awaiting backpressure.
   const result = handle.result.then(value => ({ value, failed: false as const }), () => ({ failed: true as const }));
@@ -100,6 +109,8 @@ async function execute(request: RuntimeExecutionRequest, options: PiWorkRunnerOp
   } catch (error) {
     // Do not print arbitrary SDK exceptions or raw input. Host retains typed protocol/process evidence.
     cancel();
+    await cancelPromise?.catch(() => {});
+    await observePiWithin(stopped, PI_STOP_WAIT_MS);
     if (error instanceof RuntimeError) throw error;
     throw new RuntimeError('process', 'runner_channel_failed');
   } finally {
