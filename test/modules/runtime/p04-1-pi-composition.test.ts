@@ -13,6 +13,8 @@ import { createRuntimeExecutionService } from '../../../packages/core/src/applic
 
 // Any accidental eager SDK import makes this module fail to load.
 vi.mock('@earendil-works/pi-coding-agent', () => { throw new Error('SDK deliberately unavailable'); });
+import { createSqliteProjectProfileStore } from '../../../packages/core/src/adapters/sqlite/project-profile-store.ts';
+import { computeCapabilityModuleDigest } from '../../../packages/core/src/ports/project-profile-store.ts';
 import { createStaticRuntimeCapabilityCatalog } from '../../../packages/core/src/ports/runtime-capabilities.ts';
 import { createStaticRuntimeRegistry } from '../../../packages/core/src/ports/runtime-registry.ts';
 
@@ -179,6 +181,24 @@ it('[case:factory-runner-crash] real Runner crash retains partial public events 
   } finally { await f.dispose(); }
 }, 20_000);
 
+// This legacy binding fixture predates P06-1. Production input preparation now
+// requires a confirmed profile; seed only its candidate and use the real Core decision service.
+async function confirmCompositionProfile(binding: BindingFixture): Promise<void> {
+  const store = createSqliteProjectProfileStore(binding.session);
+  const module = { schemaVersion: 1 as const, id: 'language-node', version: '1.0.0',
+    scope: ['language:node'], appliesTo: ['.'], dependencies: [], contentRef: 'artifact:language-node', status: 'candidate' as const };
+  store.createCapabilityModule({ projectId: binding.projectId, module, digest: computeCapabilityModuleDigest(module) });
+  const profile = { schemaVersion: 1 as const, projectId: binding.projectId, version: 1, revision: 'v1', status: 'candidate' as const,
+    modules: [{ id: module.id, version: module.version, roots: ['.'], languages: ['node'], frameworks: [], capabilityRefs: [], checkRefs: [] }],
+    documentRefs: [], detectionEvidenceRefs: [], confirmedBy: null };
+  store.createProjectProfile({ profile, evidence: [] });
+  const app = await openCoreApplication({ dataRoot: binding.box.dataRoot, capabilityCatalog: binding.box.capabilityCatalog });
+  try {
+    const confirmed = app.projectProfileService.confirm(binding.box.localOwner(), { projectId: binding.projectId, expectedRevision: 1, profile });
+    expect(confirmed.profile).toMatchObject({ status: 'confirmed', version: 2 });
+  } finally { app.close(); }
+}
+
 let fixture: BindingFixture | undefined, host: RunningHost | undefined, client: HostClient | undefined;
 afterEach(async () => {
   client?.close(); client = undefined;
@@ -192,8 +212,10 @@ it.each(['complete', 'no-usage', 'cancel'] as const)('[case:host-pi-%s] Host exp
   fixture = await openBindingFixture({ strategy: { runtime: 'pi', provider: 'provider', model: 'model' } });
   const f = realAssembly(mode);
   try {
+    await confirmCompositionProfile(fixture);
     host = await startHost({ dataRoot: fixture.box.dataRoot, capabilityCatalog: workCatalog(), env: {}, workRuntimeFactory: f.factory });
     client = await connectToHost({ canonicalRoot: fixture.box.dataRoot });
+    // Host also starts its scheduler: observe the committed Attempt, regardless of which scan claims it.
     await host.core.workExecution.scan();
     await expect.poll(async () => (await client!.listExecutionAttempts(fixture!.projectId, 't-1')).records.length).toBe(1);
     const attemptId = (await client.listExecutionAttempts(fixture.projectId, 't-1')).records[0]!.id;
@@ -316,12 +338,14 @@ it('[case:sdk-absent-core-fake] SDK absence leaves Core, Host, CLI and Fake asse
     expect(fixture.query('SELECT reason FROM runs')).toEqual({ reason: 'runtime_not_found' });
     expect(fixture.query('SELECT count(*) AS n FROM attempts')).toEqual({ n: 0 });
   } finally { await core.workExecution.close(); core.close(); }
+  await confirmCompositionProfile(fixture);
   const fake = await openFakeCoreApplication({ dataRoot: fixture.box.dataRoot,
     capabilityCatalog: createStaticRuntimeCapabilityCatalog([{ runtimeId: 'fake', providers: [{ providerId: 'test-provider', models: ['fake-model'] }] }]),
     fake: { providers: [{ providerId: 'test-provider', models: ['fake-model'] }],
       script: { schemaVersion: 1, steps: [{ op: 'message', role: 'assistant', text: 'no Pi SDK' }] } } });
   try {
-    await fake.workExecution.scan();
+    const scan = await fake.workExecution.scan();
+    expect(scan.runs).toMatchObject([{ claimed: true, reason: 'ready' }]);
     await expect.poll(() => fake.workExecution.activeAttemptIds(), { timeout: 10_000 }).toEqual([]);
     expect(fixture.query('SELECT status FROM attempts')).toEqual({ status: 'verifying' });
   } finally { await fake.workExecution.close(); fake.close(); }
