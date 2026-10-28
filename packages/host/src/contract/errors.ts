@@ -62,6 +62,7 @@ export const APP_OPERATIONS = [
   'features.get',
   'tasks.list',
   'tasks.get',
+  'task.strategy.reapply.preview',
   // P03-2 / F-007：Feature 审批决策查询（当前决定 vs 历史 + 有效批准核验）。
   'features.approvals',
   'execution.budget.get',

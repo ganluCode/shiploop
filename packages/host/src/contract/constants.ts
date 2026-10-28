@@ -106,6 +106,7 @@ export const FEATURE_REPORT_ROUTE_SUFFIX = '/report';
 export const MAX_FEATURE_REPORT_RESPONSE_BYTES = 16 * 1024 * 1024;
 export const TASKS_ROUTE = '/v1/tasks';
 export const TASKS_ROUTE_PREFIX = '/v1/tasks/';
+export const TASK_STRATEGY_REAPPLICATION_ROUTE = '/v1/task-strategy-reapplication';
 /**
  * P03-7 / F-013：Task 机器证据/人审事项/有限返工链唯一冻结子资源形态
  * （GET /v1/tasks/:taskId/verification|approvals|rework-chain）；其他嵌套/

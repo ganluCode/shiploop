@@ -18,6 +18,7 @@
  */
 import { validateBatchDeliveryCommandResult, validateKnowledgeQueryResponse } from 'shiploop-core/protocol';
 import type { KnowledgeSearchResultSet, KnowledgeReadResult, MemorySearchResultSet } from 'shiploop-core/protocol';
+import type { TaskStrategyReapplicationPreview } from 'shiploop-core';
 export type { KnowledgeSearchInput, KnowledgeReadInput, MemorySearchInput, KnowledgeSearchResultSet, KnowledgeReadResult, MemorySearchResultSet } from 'shiploop-core/protocol';
 import { BATCH_DELIVERY_STATUSES, isBatchDeliveryPublicSummary } from 'shiploop-core/protocol';
 import type { PublicBatchDeliveryResult } from 'shiploop-core/protocol';
@@ -331,6 +332,7 @@ export type AppQueryOperation =
   | 'features.get'
   | 'tasks.list'
   | 'tasks.get'
+  | 'task.strategy.reapply.preview'
   // P03-2 / F-007：审批决策查询（与 Core PLAN_APPROVAL_QUERY_OPERATION 同源）。
   | 'features.approvals'
   | 'execution.budget.get'
@@ -1946,6 +1948,93 @@ export function validateTaskStrategyUpdateResultWire(
   return { task: validateTaskRecordWire(operation, object.task) };
 }
 
+export interface TaskStrategyReapplicationPreviewWire {
+  readonly schemaVersion: 1;
+  readonly scope: 'task-strategy-reapplication-preview';
+  readonly status: 'ready' | 'blocked';
+  readonly identity: TaskStrategyReapplicationPreview['identity'];
+  readonly items: readonly (Omit<TaskStrategyReapplicationPreview['items'][number], 'candidate'> & {
+    readonly candidate: { readonly configSource: string; readonly configSourceKey: string; readonly digest: string } | null;
+  })[];
+  readonly blockedReasons: readonly string[];
+}
+
+export function validateTaskStrategyReapplicationPreviewWire(
+  value: unknown,
+  operation: HostOperation = 'task.strategy.reapply.preview',
+): TaskStrategyReapplicationPreviewWire {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, ['schemaVersion', 'scope', 'status', 'identity', 'items', 'blockedReasons']);
+  if (object.schemaVersion !== 1 || object.scope !== 'task-strategy-reapplication-preview'
+    || (object.status !== 'ready' && object.status !== 'blocked')) malformed(operation, 'task_strategy_preview_header_invalid');
+  const identity = requirePlain(operation, object.identity);
+  exactKeys(operation, identity, ['projectId', 'globalSettingsRevision', 'projectSettingsRevision', 'selectedTaskIds', 'taskRevisions', 'candidateDigest']);
+  requireStableId(operation, identity.projectId);
+  for (const key of ['globalSettingsRevision', 'projectSettingsRevision'] as const) {
+    if (identity[key] !== null && (typeof identity[key] !== 'number' || !Number.isSafeInteger(identity[key]) || identity[key] < 1)) malformed(operation, 'task_strategy_preview_identity_invalid');
+  }
+  if (!Array.isArray(identity.selectedTaskIds) || identity.selectedTaskIds.some(id => typeof id !== 'string')) malformed(operation, 'task_strategy_preview_identity_invalid');
+  for (const entry of identity.taskRevisions as unknown[]) {
+    const revision = requirePlain(operation, entry);
+    exactKeys(operation, revision, ['taskId', 'revision']);
+    requireStableId(operation, revision.taskId);
+    if (revision.revision !== null && (typeof revision.revision !== 'number' || !Number.isSafeInteger(revision.revision) || revision.revision < 1)) malformed(operation, 'task_strategy_preview_identity_invalid');
+  }
+  requireSha256Hex(operation, identity.candidateDigest, 'task_strategy_preview_identity_invalid');
+  if (!Array.isArray(object.items) || !Array.isArray(object.blockedReasons)) malformed(operation, 'task_strategy_preview_items_invalid');
+  const items = object.items.map(valueItem => {
+    const item = requirePlain(operation, valueItem);
+    exactKeys(operation, item, ['taskId', 'featureId', 'taskRevision', 'complexity', 'current', 'candidate', 'diff', 'eligible', 'reasons']);
+    requireStableId(operation, item.taskId);
+    if (item.featureId !== null) requireStableId(operation, item.featureId);
+    if (item.taskRevision !== null && (typeof item.taskRevision !== 'number' || !Number.isSafeInteger(item.taskRevision) || item.taskRevision < 1)) malformed(operation, 'task_strategy_preview_item_invalid');
+    if (item.complexity !== null && typeof item.complexity !== 'string') malformed(operation, 'task_strategy_preview_item_invalid');
+    const current = requirePlain(operation, item.current);
+    exactKeys(operation, current, ['configSource', 'configSourceKey', 'digest']);
+    if (current.configSource !== null && typeof current.configSource !== 'string') malformed(operation, 'task_strategy_preview_source_invalid');
+    if (current.configSourceKey !== null && typeof current.configSourceKey !== 'string') malformed(operation, 'task_strategy_preview_source_invalid');
+    if (current.digest !== null) requireSha256Hex(operation, current.digest, 'task_strategy_preview_source_invalid');
+    const candidateSource = item.candidate;
+    if (candidateSource !== null) {
+      const candidate = requirePlain(operation, candidateSource);
+      exactKeys(operation, candidate, ['configSource', 'configSourceKey', 'digest']);
+      if (typeof candidate.configSource !== 'string' || typeof candidate.configSourceKey !== 'string') malformed(operation, 'task_strategy_preview_source_invalid');
+      requireSha256Hex(operation, candidate.digest, 'task_strategy_preview_source_invalid');
+    }
+    if (!isPlainObject(item.diff) && item.diff !== null) malformed(operation, 'task_strategy_preview_diff_invalid');
+    if (item.diff !== null) {
+      const diff = requirePlain(operation, item.diff);
+      exactKeys(operation, diff, ['changed', 'fields', 'beforeDigest', 'afterDigest']);
+      if (typeof diff.changed !== 'boolean' || !Array.isArray(diff.fields) || diff.fields.some(field => typeof field !== 'string')) malformed(operation, 'task_strategy_preview_diff_invalid');
+      requireSha256Hex(operation, diff.beforeDigest, 'task_strategy_preview_diff_invalid');
+      requireSha256Hex(operation, diff.afterDigest, 'task_strategy_preview_diff_invalid');
+    }
+    if (typeof item.eligible !== 'boolean' || !Array.isArray(item.reasons) || item.reasons.some(reason => typeof reason !== 'string')) malformed(operation, 'task_strategy_preview_item_invalid');
+    return item as unknown as TaskStrategyReapplicationPreviewWire['items'][number];
+  });
+  return { schemaVersion: 1, scope: 'task-strategy-reapplication-preview', status: object.status, identity: identity as unknown as TaskStrategyReapplicationPreview['identity'], items, blockedReasons: object.blockedReasons as string[] };
+}
+
+export interface TaskStrategyReapplicationResult {
+  readonly updatedTaskIds: readonly string[];
+  readonly taskRevisions: readonly { readonly taskId: string; readonly revision: number }[];
+  readonly updatedCount: number;
+}
+
+export function validateTaskStrategyReapplicationResultWire(value: unknown, operation: HostOperation = 'commands.submit'): TaskStrategyReapplicationResult {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, ['updatedTaskIds', 'taskRevisions', 'updatedCount']);
+  const updatedCount = object.updatedCount;
+  if (!Array.isArray(object.updatedTaskIds) || object.updatedTaskIds.some(id => typeof id !== 'string') || typeof updatedCount !== 'number' || !Number.isSafeInteger(updatedCount) || updatedCount < 0 || updatedCount !== object.updatedTaskIds.length) malformed(operation, 'task_strategy_reapply_result_invalid');
+
+  for (const entry of object.taskRevisions as unknown[]) {
+    const revision = requirePlain(operation, entry);
+    exactKeys(operation, revision, ['taskId', 'revision']);
+    requireStableId(operation, revision.taskId);
+    if (typeof revision.revision !== 'number' || !Number.isSafeInteger(revision.revision) || revision.revision < 1) malformed(operation, 'task_strategy_reapply_result_invalid');
+  }
+  return object as unknown as TaskStrategyReapplicationResult;
+}
 /** 制品组单正文引用（身份级；正文永不内联）。 */
 export interface ExecutionInputGroupBodyRefWire {
   readonly artifactId: string;
@@ -7504,7 +7593,9 @@ export function validateAppQueryResponse(
       exactKeys(operation, object, ['task']);
       return { task: validateTaskRecordWire(operation, object.task) };
     }
-    // P03-2 / F-007：审批决策查询响应分发（同一冻结字段集纪律）。
+    case 'task.strategy.reapply.preview':
+      return validateTaskStrategyReapplicationPreviewWire(body, operation);
+
     case 'features.approvals':
       return validateFeatureApprovalsResultWire(operation, body);
     case 'execution.budget.get':

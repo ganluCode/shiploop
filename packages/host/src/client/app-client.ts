@@ -166,6 +166,7 @@ import {
   SUBMIT_COMMAND_BUDGET_MS,
   TASKS_ROUTE,
   TASKS_ROUTE_PREFIX,
+  TASK_STRATEGY_REAPPLICATION_ROUTE,
   WORKSPACES_ROUTE,
   WORKSPACES_ROUTE_PREFIX,
   WORKSPACE_OPERATIONS_ROUTE,
@@ -175,9 +176,11 @@ import {
 } from '../contract/index.js';
 import type { HostOperation } from '../contract/index.js';
 import { mapErrorResponse, requestLoopbackJson, requestLoopbackText } from './http-json.js';
+import type { TaskStrategyReapplicationPreviewWire, TaskStrategyReapplicationResult } from './app-wire.js';
 import {
-  validatePlanningDecisionResultWire,
   validateBatchDeliveryResultWire,
+  validatePlanningDecisionResultWire,
+
   validateAppQueryResponse,
   validateBaselineCommandResultWire,
   validateBaselinePreviewResultWire,
@@ -199,6 +202,8 @@ import {
   validateTaskApprovalBlockResultWire,
   validateTaskApprovalDecisionResultWire,
   validateTaskStrategyUpdateResultWire,
+  validateTaskStrategyReapplicationPreviewWire,
+  validateTaskStrategyReapplicationResultWire,
   validateTaskVerificationContinueResultWire,
   validateWorkspaceDiscardConfirmResultWire,
   validateWorkspaceDiscardPreviewWire,
@@ -405,6 +410,16 @@ export interface UpdateTaskStrategyInput {
   readonly expectedRevision: number;
   readonly commandId?: string;
 }
+export interface TaskStrategyReapplicationInput {
+  readonly projectId: string;
+  readonly previewDigest: string;
+  readonly globalSettingsRevision: number | null;
+  readonly projectSettingsRevision: number | null;
+  readonly selectedTaskIds: readonly string[];
+  readonly expectedTaskRevisions: readonly { readonly taskId: string; readonly revision: number }[];
+  readonly commandId?: string;
+}
+
 
 /**
  * task.approval.block 输入（F-007/F-014：添加阻塞/必需审批事项）。
@@ -905,6 +920,10 @@ export interface HostClientApplication {
     input: UpdateTaskStrategyInput,
     options?: SubmitCommandOptions,
   ): Promise<CommandReceipt>;
+  /** task.strategy.reapply.preview：默认策略重应用的只读预览。 */
+  previewTaskStrategyReapplication(projectId: string, taskIds: readonly string[]): Promise<TaskStrategyReapplicationPreviewWire>;
+  /** task.strategy.reapply：显式确认后批量 CAS 重应用默认策略。 */
+  reapplyTaskStrategy(input: TaskStrategyReapplicationInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
   /**
    * task.approval.block：添加阻塞/必需审批事项（F-007/F-014）。只写事项事实，
    * 不创建执行实体、不调用 Runtime；completed 回执 result 经线校验器复核。
@@ -3571,6 +3590,44 @@ export function createHostClientApplication(context: AppClientContext): HostClie
       }
       return receipt;
     },
+
+    async previewTaskStrategyReapplication(projectId: string, taskIds: readonly string[]): Promise<TaskStrategyReapplicationPreviewWire> {
+      context.assertOpen('task.strategy.reapply.preview');
+      const id = requireProjectId('task.strategy.reapply.preview', projectId);
+      if (!Array.isArray(taskIds) || taskIds.length === 0 || taskIds.some(taskId => typeof taskId !== 'string')) {
+        throw invalidInput('task.strategy.reapply.preview', 'invalid_task_ids', 'taskIds');
+      }
+      const params = new URLSearchParams([['projectId', id], ...taskIds.map(taskId => ['taskId', requireStableIdInput('task.strategy.reapply.preview', taskId, 'taskId')] as [string, string])]);
+      const json = await getJson('task.strategy.reapply.preview', `${TASK_STRATEGY_REAPPLICATION_ROUTE}?${params.toString()}`);
+      return validateTaskStrategyReapplicationPreviewWire(json, 'task.strategy.reapply.preview');
+    },
+
+    async reapplyTaskStrategy(
+      input: TaskStrategyReapplicationInput,
+      options?: SubmitCommandOptions,
+    ): Promise<CommandReceipt> {
+      const object = rejectUnknownInputKeys('commands.submit', input, ['projectId', 'previewDigest', 'globalSettingsRevision', 'projectSettingsRevision', 'selectedTaskIds', 'expectedTaskRevisions', 'commandId']);
+      const projectId = requireProjectId('commands.submit', object.projectId as string);
+      const previewDigest = requireSha256Input('commands.submit', object.previewDigest, 'previewDigest');
+      if (object.globalSettingsRevision !== null && (!Number.isSafeInteger(object.globalSettingsRevision) || (object.globalSettingsRevision as number) < 1)) throw invalidInput('commands.submit', 'invalid_revision', 'globalSettingsRevision');
+      if (object.projectSettingsRevision !== null && (!Number.isSafeInteger(object.projectSettingsRevision) || (object.projectSettingsRevision as number) < 1)) throw invalidInput('commands.submit', 'invalid_revision', 'projectSettingsRevision');
+      if (!Array.isArray(object.selectedTaskIds) || object.selectedTaskIds.length === 0) throw invalidInput('commands.submit', 'invalid_task_ids', 'selectedTaskIds');
+      const selectedTaskIds = object.selectedTaskIds.map(taskId => requireStableIdInput('commands.submit', taskId, 'selectedTaskIds'));
+      if (!Array.isArray(object.expectedTaskRevisions) || object.expectedTaskRevisions.length !== selectedTaskIds.length) throw invalidInput('commands.submit', 'invalid_task_revisions', 'expectedTaskRevisions');
+      const expectedTaskRevisions = object.expectedTaskRevisions.map(entry => {
+        if (!isPlainObject(entry)) throw invalidInput('commands.submit', 'invalid_task_revisions', 'expectedTaskRevisions');
+        return { taskId: requireStableIdInput('commands.submit', entry.taskId, 'expectedTaskRevisions.taskId'), revision: requireExpectedRevisionInput('commands.submit', entry.revision) };
+      });
+      const receipt = await submitCommand({
+        ...optionalCommandIdInput('commands.submit', object.commandId),
+        operation: 'task.strategy.reapply',
+        scope: { kind: 'project', projectId },
+        payload: { confirmed: true, previewDigest, globalSettingsRevision: object.globalSettingsRevision as number | null, projectSettingsRevision: object.projectSettingsRevision as number | null, selectedTaskIds, expectedTaskRevisions },
+      }, options);
+      if (receipt.status === 'completed') validateTaskStrategyReapplicationResultWire(receipt.result, 'commands.submit');
+      return receipt;
+    },
+
 
     async prepareExecutionInput(
       input: PrepareExecutionInputInput,

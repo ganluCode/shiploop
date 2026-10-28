@@ -2241,6 +2241,8 @@ const HELP_BY_SCOPE: Readonly<Record<AppHelpScope, string>> = Object.freeze({
   'task.get': TASK_GET_HELP,
   'task.labels': TASK_LABELS_HELP,
   'task.strategy': TASK_STRATEGY_HELP,
+  'task.strategy-reapply-preview': 'usage: shiploop task strategy-preview [<taskId>] --project <id> [--task <taskId> ...] [--json]\n只读预览默认策略来源、摘要、差异数量与阻塞原因；不写 Task、不批准、不启动执行。\n' + EXIT_CODE_BLOCK,
+  'task.strategy-reapply': 'usage: shiploop task strategy-reapply --project <id> --input <file> --confirm [--command-id <uuid>] [--json]\n显式确认冻结预览摘要与 Task revision；输出更新回执，不表示批准或执行完成。\n' + EXIT_CODE_BLOCK,
   'task.prepare': TASK_PREPARE_HELP,
   'task.inputs': TASK_INPUTS_HELP,
   'task.status': TASK_STATUS_HELP,

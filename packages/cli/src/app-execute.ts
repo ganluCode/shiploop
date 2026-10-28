@@ -234,6 +234,8 @@ import type {
   ParsedReceiptGet,
   ParsedTaskPrepare,
   ParsedTaskStrategy,
+  ParsedTaskStrategyReapplyPreview,
+  ParsedTaskStrategyReapply,
   ParsedPhaseDeliveryApprove,
 } from './app/args.js';
 import type {
@@ -1802,6 +1804,28 @@ async function executePlanCommand(
           buildFeatureFinalizeView(commandId, replayed, result as FeatureDeliveryCommandResult),
         formatFeatureFinalizeView,
       );
+    }
+    case 'task.strategy-reapply-preview': {
+      const previewCommand = command as ParsedTaskStrategyReapplyPreview;
+      const result = await client.previewTaskStrategyReapplication(previewCommand.projectId, previewCommand.taskIds);
+      const changed = result.items.filter(item => item.diff?.changed === true).length;
+      return emitSuccess(io, command, result, `shiploop task strategy-reapply-preview: status=${result.status} tasks=${result.items.length} changed=${changed} blocked=${result.blockedReasons.length}\n`);
+    }
+    case 'task.strategy-reapply': {
+      const reapplyCommand = command as ParsedTaskStrategyReapply;
+      if (inputs.strategyPayload === undefined) throw new TypeError('task.strategy-reapply 缺少已校验输入');
+      const issuedAt = await replayIssuedAt(client, reapplyCommand.explicitCommandId);
+      const payload = inputs.strategyPayload;
+      const receipt = await client.reapplyTaskStrategy({
+        projectId: reapplyCommand.projectId,
+        previewDigest: String(payload.previewDigest),
+        globalSettingsRevision: (payload.globalSettingsRevision as number | null) ?? null,
+        projectSettingsRevision: (payload.projectSettingsRevision as number | null) ?? null,
+        selectedTaskIds: payload.selectedTaskIds as string[],
+        expectedTaskRevisions: payload.expectedTaskRevisions as { taskId: string; revision: number }[],
+      }, envelopeIdentityOptions(reapplyCommand.explicitCommandId, issuedAt));
+      const status = receipt.status;
+      return emitSuccess(io, command, receipt, `shiploop task strategy-reapply: ${status} commandId=${receipt.commandId} result=${status === 'completed' ? 'updated' : 'not_updated'}${receipt.replayed ? ' replayed' : ''}\n`);
     }
     case 'task.strategy': {
       const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
@@ -3840,14 +3864,16 @@ export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunRes
       });
     }
   }
-  if (command.commandId === 'task.strategy') {
+  if (command.commandId === 'task.strategy' || command.commandId === 'task.strategy-reapply') {
     try {
       strategyPayload = readPlanInputPayload(command);
-      scanStrategyInputFields(strategyPayload, {
-        command: command.command,
-        commandId: command.commandId,
-        json: command.json,
-      });
+      if (command.commandId === 'task.strategy') {
+        scanStrategyInputFields(strategyPayload, {
+          command: command.command,
+          commandId: command.commandId,
+          json: command.json,
+        });
+      }
     } catch (error) {
       if (error instanceof AppCliParseError) {
         return emitParseFailure(io, error, jsonFlag);

@@ -1366,6 +1366,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       executionControlReads: queryStore,
       artifacts: artifactStore,
       artifactFiles: artifactFileStore,
+      capabilityCatalog,
       stateStore,
       configurationService,
       dataRootIdentity: computeDataRootIdentity(basePathService.dataRoot()),

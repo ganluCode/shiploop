@@ -111,6 +111,7 @@ import {
   SNAPSHOT_ROUTE,
   TASKS_ROUTE,
   TASKS_ROUTE_PREFIX,
+  TASK_STRATEGY_REAPPLICATION_ROUTE,
   TASK_APPROVALS_ROUTE_SUFFIX,
   TASK_REWORK_CHAIN_ROUTE_SUFFIX,
   TASK_VERIFICATION_ROUTE_SUFFIX,
@@ -169,6 +170,7 @@ export type ApplicationOperation =
   | 'features.get'
   | 'tasks.list'
   | 'tasks.get'
+  | 'task.strategy.reapply.preview'
   // P03-2 / F-007：Feature 审批决策查询（与 Core PLAN_APPROVAL_QUERY_OPERATION 同源）。
   | 'features.approvals'
   | 'execution.budget.get'
@@ -592,6 +594,9 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
     }
     return undefined;
   }
+  if (path === TASK_STRATEGY_REAPPLICATION_ROUTE) {
+    return { operation: 'task.strategy.reapply.preview', method: 'GET' };
+  }
   if (path === TASKS_ROUTE) {
     return { operation: 'tasks.list', method: 'GET' };
   }
@@ -894,10 +899,7 @@ const QUERY_SPECS: Readonly<Partial<Record<ApplicationOperation, QuerySpec>>> = 
     allowed: ['projectId', 'phaseId', 'limit', 'cursor'],
     repeatable: [],
   }),
-  'tasks.list': Object.freeze({
-    allowed: ['projectId', 'featureId', 'limit', 'cursor'],
-    repeatable: [],
-  }),
+  'task.strategy.reapply.preview': Object.freeze({ allowed: ['projectId', 'taskId'], repeatable: ['taskId'] }),
   // P03-5 / F-011：工作区状态查询参数白名单（取值规则由 Core 单一权威复核）。
   'workspaces.list': Object.freeze({
     allowed: ['projectId', 'featureId', 'limit', 'cursor'],
@@ -1470,9 +1472,35 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
         buildPlanListQuery(params, operation, 'projectId', 'featureId'),
       );
       break;
-    case 'tasks.get':
-      result = await app.queryService.getTask(app.principal, pathParam?.value);
+    case 'task.strategy.reapply.preview': {
+      const projectId = params.get('projectId');
+      const taskIds = params.getAll('taskId');
+      result = await app.queryService.previewTaskStrategyReapplication(app.principal, { projectId, taskIds });
+      const preview = result as import('shiploop-core').TaskStrategyReapplicationPreview;
+      result = {
+        schemaVersion: preview.schemaVersion,
+        scope: preview.scope,
+        status: preview.status,
+        identity: preview.identity,
+        items: preview.items.map(item => ({
+          taskId: item.taskId,
+          featureId: item.featureId,
+          taskRevision: item.taskRevision,
+          complexity: item.complexity,
+          current: item.current,
+          candidate: item.candidate === null ? null : {
+            configSource: item.candidate.configSource,
+            configSourceKey: item.candidate.configSourceKey,
+            digest: item.candidate.digest,
+          },
+          diff: item.diff,
+          eligible: item.eligible,
+          reasons: item.reasons,
+        })),
+        blockedReasons: preview.blockedReasons,
+      };
       break;
+    }
     // P03-2 / F-007：审批决策查询分发（授权/可见性由 Core 单一权威复核；
     // 不可见/不存在统一 not_found，不区分存在性）。
     case 'execution.budget.get':

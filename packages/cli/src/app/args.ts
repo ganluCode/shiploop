@@ -121,6 +121,8 @@ export type AppCliCommandId =
   | 'task.get'
   | 'task.labels'
   | 'task.strategy'
+  | 'task.strategy-reapply-preview'
+  | 'task.strategy-reapply'
   | 'task.prepare'
   | 'task.inputs'
   | 'task.status'
@@ -238,6 +240,8 @@ export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'task.get',
   'task.labels',
   'task.strategy',
+  'task.strategy-reapply-preview',
+  'task.strategy-reapply',
   'task.prepare',
   'task.inputs',
   'task.status',
@@ -1138,6 +1142,16 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
     maxPositionals: 1,
     positionalFields: ['taskId'],
   },
+  'task.strategy-reapply-preview': {
+    command: 'task', commandId: 'task.strategy-reapply-preview',
+    valueFlags: ['--project', '--task'], boolFlags: [], repeatableFlags: ['--task'],
+    minPositionals: 0, maxPositionals: 1, positionalFields: ['taskId'],
+  },
+  'task.strategy-reapply': {
+    command: 'task', commandId: 'task.strategy-reapply',
+    valueFlags: ['--project', '--input', '--command-id'], boolFlags: ['--confirm'], repeatableFlags: [],
+    minPositionals: 0, maxPositionals: 0, positionalFields: [],
+  },
   'task.prepare': {
     command: 'task',
     commandId: 'task.prepare',
@@ -1666,6 +1680,8 @@ const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, A
       get: 'task.get',
       labels: 'task.labels',
       strategy: 'task.strategy',
+      'strategy-preview': 'task.strategy-reapply-preview',
+      'strategy-reapply': 'task.strategy-reapply',
       prepare: 'task.prepare',
       inputs: 'task.inputs',
       status: 'task.status',
@@ -2926,6 +2942,17 @@ export interface ParsedTaskStrategy {
  * `--input` 是 `{items: [...]}` 必需输入采集清单（必填——缺失必需输入必须
  * 显式声明，空清单由服务端明确拒绝）。
  */
+export interface ParsedTaskStrategyReapplyPreview {
+  readonly kind: 'command'; readonly command: 'task'; readonly commandId: 'task.strategy-reapply-preview';
+  readonly json: boolean; readonly startTimeoutMs: number; readonly dataRoot?: string;
+  readonly projectId: string; readonly taskIds: readonly string[];
+}
+
+export interface ParsedTaskStrategyReapply {
+  readonly kind: 'command'; readonly command: 'task'; readonly commandId: 'task.strategy-reapply';
+  readonly json: boolean; readonly startTimeoutMs: number; readonly dataRoot?: string;
+  readonly projectId: string; readonly inputFile: string; readonly confirm: true; readonly explicitCommandId?: string;
+}
 export interface ParsedTaskPrepare {
   readonly kind: 'command';
   readonly command: 'task';
@@ -3833,6 +3860,8 @@ export type ParsedAppCliCommand =
   | ParsedTaskList
   | ParsedTaskGet
   | ParsedTaskStrategy
+  | ParsedTaskStrategyReapplyPreview
+  | ParsedTaskStrategyReapply
   | ParsedTaskPrepare
   | ParsedTaskInputs
   | ParsedTaskStatus
@@ -5381,6 +5410,19 @@ function buildPlanEntity(
         ...(reason !== undefined ? { reason } : {}),
         ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
       };
+    }
+    case 'task.strategy-reapply-preview': {
+      const ids = [
+        ...scan.positionals.map(id => requirePlanId(id, state, 'taskId')),
+        ...(scan.options.get('--task') ?? []).map(id => requirePlanId(id as string, state, 'taskId')),
+      ];
+      if (ids.length === 0) fail(state, 'missing_required_option', 'task');
+      return { ...base, command: 'task', commandId: 'task.strategy-reapply-preview', projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state), taskIds: [...new Set(ids)] };
+    }
+    case 'task.strategy-reapply': {
+      if (!scan.bools.has('--confirm')) fail(state, 'confirmation_required', 'confirm');
+      const explicitCommandId = optionalCommandId(scan, state);
+      return { ...base, command: 'task', commandId: 'task.strategy-reapply', projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state), inputFile: requireInputFile(scan, state), confirm: true, ...(explicitCommandId !== undefined ? { explicitCommandId } : {}) };
     }
     case 'task.strategy': {
       const explicitCommandId = optionalCommandId(scan, state);

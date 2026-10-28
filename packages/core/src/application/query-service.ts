@@ -126,6 +126,10 @@ import { mergeEffectiveSettings } from './effective-settings.js';
 import type { EffectiveSettings } from './effective-settings.js';
 import { evaluatePlanApprovalValidity } from '../ports/plan-approval-verification.js';
 import { resolveCurrentCheckPolicyDigest } from './plan-approval-verification.js';
+import { previewTaskStrategyReapplication } from './task-strategy-preview.js';
+import type { TaskStrategyReapplicationPreview } from './task-strategy-preview.js';
+import type { RuntimeCapabilityCatalog } from '../ports/runtime-capabilities.js';
+
 import type { EventWatermark } from '../ports/events.js';
 import {
   EXECUTION_BUDGET_GET_OPERATION,
@@ -395,6 +399,8 @@ export interface QueryService {
   getFeatureApprovals(principal: unknown, featureId: unknown): Promise<FeatureApprovalsResult>;
   /** F-006 tasks.get：Task 详情（真实父级、验收/需求引用/策略副本及来源）。 */
   getTask(principal: unknown, taskId: unknown): Promise<TaskDetailResult>;
+  /** P06-6 task.strategy.reapply.preview：默认策略重应用的授权只读预览。 */
+  previewTaskStrategyReapplication(principal: unknown, input: unknown): Promise<TaskStrategyReapplicationPreview>;
   /**
    * P03-3 / F-010 execution.budget.get：执行预算只读查询（一致读视图：固定
    * 单 Feature 范围、Batch/Run 身份、各层上限、已用/剩余、绝对 deadline、
@@ -573,7 +579,7 @@ export interface QueryServiceOptions {
     'getCurrentSettings' | 'getEffectiveSettings' | 'exportSettings'
   >;
   /** P03-1 / F-006 计划层级列表/详情一致读取窄端口。 */
-  readonly planReads: PlanQueryReadStore;
+  readonly planReads: PlanQueryReadStore & import('../ports/task-strategy-preview.js').TaskStrategyReapplicationReadStore;
   /** P03-3 / F-010 执行预算查询一致读取窄端口（只读）。 */
   readonly executionBudgetReads: ExecutionBudgetQueryReadStore;
   /** P03-4 / F-007 Run 调度/Attempt/占用审计查询一致读取窄端口（只读）。 */
@@ -604,6 +610,7 @@ export interface QueryServiceOptions {
   readonly artifactFiles: ArtifactFileStore;
   /** 数据根身份（64hex；可信装配由 realpath 数据根派生，绝不来自请求数据）。 */
   readonly dataRootIdentity: string;
+  readonly capabilityCatalog?: RuntimeCapabilityCatalog;
   /** UTC 毫秒时钟（默认 Date.now）；测试注入以获得确定性 readAt。 */
   readonly nowUtcMs?: () => number;
 }
@@ -771,6 +778,7 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
     executionControlReads,
     artifacts,
     artifactFiles,
+    capabilityCatalog,
     dataRootIdentity,
   } = options;
   if (typeof dataRootIdentity !== 'string' || !/^[0-9a-f]{64}$/.test(dataRootIdentity)) {
@@ -1435,6 +1443,24 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
           planEntityNotFound(operation, 'task');
         }
         return { task: toPublicTaskRecord(record) };
+      } catch (error) {
+        throw mapToPublicError(error, { operation });
+      }
+    },
+
+    async previewTaskStrategyReapplication(principal: unknown, input: unknown): Promise<TaskStrategyReapplicationPreview> {
+      assertTrustedPrincipal(principal);
+      const operation = 'task.strategy.reapply.preview';
+      try {
+        requireCapability(principal, 'project.read', operation);
+        const object = requirePlainObject(input, { operation }, 'input');
+        rejectUnknownKeys(object, ['projectId', 'taskIds'], { operation }, 'input');
+        const projectId = requireProjectId(object.projectId, operation);
+        requireProjectVisible(principal, projectId, operation);
+        return previewTaskStrategyReapplication(input, {
+          reads: planReads,
+          ...(capabilityCatalog === undefined ? {} : { capabilityCatalog }),
+        });
       } catch (error) {
         throw mapToPublicError(error, { operation });
       }

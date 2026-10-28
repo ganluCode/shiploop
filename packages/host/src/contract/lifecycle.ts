@@ -97,6 +97,7 @@ export const APPLICATION_COMMAND_CAPABILITIES = [
   // P03-2 / F-001：Task 策略副本 CAS 编辑经既有 POST /v1/commands 通用路由
   // 接线（同一命令面；HostClient 入口 F-007，CLI 入口 F-008）。
   'task.strategy.update',
+  'task.strategy.reapply',
   // P03-2 / F-002：计划批准/拒绝决策经既有 POST /v1/commands 通用路由接线
   //（同一命令面；HostClient 入口 F-007，CLI 入口 F-008）。
   'feature.plan.decide',
@@ -178,6 +179,7 @@ export const APPLICATION_QUERY_CAPABILITIES = [
   'features.get',
   'tasks.list',
   'tasks.get',
+  'task.strategy.reapply.preview',
   // P03-2 / F-007：Feature 审批决策查询（能力位复用 project.read；与 Core
   // PLAN_APPROVAL_QUERY_OPERATION 同步，不漂移）。
   'features.approvals',
