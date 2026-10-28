@@ -176,11 +176,10 @@ import {
 } from '../contract/index.js';
 import type { HostOperation } from '../contract/index.js';
 import { mapErrorResponse, requestLoopbackJson, requestLoopbackText } from './http-json.js';
-import type { TaskStrategyReapplicationPreviewWire, TaskStrategyReapplicationResult } from './app-wire.js';
+import type { TaskStrategyReapplicationPreviewWire } from './app-wire.js';
 import {
   validateBatchDeliveryResultWire,
   validatePlanningDecisionResultWire,
-
   validateAppQueryResponse,
   validateBaselineCommandResultWire,
   validateBaselinePreviewResultWire,

@@ -899,6 +899,10 @@ const QUERY_SPECS: Readonly<Partial<Record<ApplicationOperation, QuerySpec>>> = 
     allowed: ['projectId', 'phaseId', 'limit', 'cursor'],
     repeatable: [],
   }),
+  'tasks.list': Object.freeze({
+    allowed: ['projectId', 'featureId', 'limit', 'cursor'],
+    repeatable: [],
+  }),
   'task.strategy.reapply.preview': Object.freeze({ allowed: ['projectId', 'taskId'], repeatable: ['taskId'] }),
   // P03-5 / F-011：工作区状态查询参数白名单（取值规则由 Core 单一权威复核）。
   'workspaces.list': Object.freeze({
@@ -1471,6 +1475,9 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
         app.principal,
         buildPlanListQuery(params, operation, 'projectId', 'featureId'),
       );
+      break;
+    case 'tasks.get':
+      result = await app.queryService.getTask(app.principal, pathParam?.value);
       break;
     case 'task.strategy.reapply.preview': {
       const projectId = params.get('projectId');
