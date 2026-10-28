@@ -1158,7 +1158,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     });
     const workExecution = assembleWorkExecution({ session,
       application: { dataRoot: basePathService.dataRoot(), artifactStore, artifactFileStore, stateStore,
-        configurationService, workWorkspaceAuthority, taskClaims, workspacePreparation, executionInputPrepare,
+        configurationService, projectResourceService, workWorkspaceAuthority, taskClaims, workspacePreparation, executionInputPrepare,
         planningInputPrepare, runtimeRecovery, runtimeRecoveryCatalog: recoveryCatalog, workRecoveryContinuation },
       capabilityCatalog, runtimeFactory: object.workRuntimeFactory as WorkRuntimeFactory | undefined, nowUtcMs, readReworkScene, startupRecovery,
       ...(object.finalizationExecution === undefined ? {} : {

@@ -11,6 +11,7 @@ import type {
   WorkAccessBinding, WorkAccessCapability, WorkAccessConfiguration, WorkAccessResource,
 } from './work-access.js';
 import type { WorkResourceLoadPlan } from './work-resource-selection.js';
+import type { RuntimeWorkAccessSnapshot } from './runtime-execution.js';
 import { stableStringify } from './feature-plan.js';
 
 export const PROJECT_RESOURCE_SCHEMA_VERSION = 1 as const;
@@ -480,6 +481,79 @@ export function assembleProjectResourceLoadManifest(value: unknown, observations
 }
 
 export const buildProjectResourceLoadManifest = assembleProjectResourceLoadManifest;
+
+function freezeSnapshot<T>(value: T): T {
+  if (value !== null && typeof value === 'object') {
+    for (const child of Object.values(value as Record<string, unknown>)) freezeSnapshot(child);
+    Object.freeze(value);
+  }
+  return value;
+}
+
+export function validateProjectResourceLoadManifest(value: unknown, expectedSelection?: unknown): ProjectResourceLoadManifest {
+  const raw = plainObject(value, ['schemaVersion', 'state', 'projectId', 'selectionRevision', 'resources', 'gaps', 'digest']);
+  if (raw.schemaVersion !== PROJECT_RESOURCE_SCHEMA_VERSION || raw.state !== 'loaded') reject('unsupported_schema_version');
+  if (!Array.isArray(raw.resources) || !Array.isArray(raw.gaps)) reject('invalid_shape');
+  const selection = validateProjectResourceSelection(expectedSelection ?? {
+    schemaVersion: PROJECT_RESOURCE_SCHEMA_VERSION, projectId: raw.projectId, revision: raw.selectionRevision,
+    resources: raw.resources.map((entry) => {
+      const item = plainObject(entry, [...RESOURCE_KEYS, 'status', 'unavailableReason', 'loadedCapabilities']);
+      const { status: _status, unavailableReason: _reason, loadedCapabilities: _capabilities, ...descriptor } = item;
+      return descriptor;
+    }), operations: [...PROJECT_RESOURCE_PUBLIC_OPERATIONS], allowGlobalScan: false,
+    allowProjectDirectoryScan: false, allowSdkDefaultScan: false,
+  });
+  if (raw.projectId !== selection.projectId || raw.selectionRevision !== selection.revision) reject('identity_mismatch');
+  const observations = raw.resources.map((entry) => {
+    const item = plainObject(entry, [...RESOURCE_KEYS, 'status', 'unavailableReason', 'loadedCapabilities']);
+    return { ...item, status: item.status === 'omitted' ? 'unavailable' : item.status,
+      unavailableReason: item.unavailableReason, loadedCapabilities: item.loadedCapabilities };
+  });
+  const normalized = assembleProjectResourceLoadManifest(selection, observations);
+  if (raw.digest !== normalized.digest || stableStringify(raw) !== stableStringify(normalized)) reject('invalid_digest');
+  return normalized;
+}
+
+/** Convert one selected project resource set and its actual load result into the
+ * immutable, redacted access snapshot carried by one Work Attempt. */
+export interface ProjectResourceRuntimeSnapshotInput {
+  readonly selection: unknown;
+  readonly loadManifest: unknown;
+  readonly projectId: string;
+  readonly runId: string;
+  readonly taskId: string;
+  readonly attemptId: string;
+  readonly invocationId: string;
+  readonly executionVersion: number;
+  readonly owner: RuntimeWorkAccessSnapshot['owner'];
+  readonly strategy: RuntimeWorkAccessSnapshot['strategy'];
+  readonly permissions: RuntimeWorkAccessSnapshot['permissions'];
+  readonly grantId: string;
+  readonly policyDigest: string;
+  readonly authentication: RuntimeWorkAccessSnapshot['authentication'];
+}
+
+export function buildRuntimeWorkAccessSnapshot(input: ProjectResourceRuntimeSnapshotInput): RuntimeWorkAccessSnapshot {
+  const selection = validateProjectResourceSelection(input.selection);
+  if (selection.projectId !== input.projectId) reject('cross_project_reference');
+  const loadManifest = validateProjectResourceLoadManifest(input.loadManifest, selection);
+  const entries = loadManifest.resources.map((resource) => ({
+    id: resource.id, kind: resource.kind, name: resource.name, sourceRef: resource.sourceRef,
+    sourceRevision: resource.sourceRevision, version: resource.version, contentDigest: resource.contentDigest,
+    required: resource.required, onUnavailable: resource.onUnavailable,
+    status: resource.status, capabilities: [...resource.loadedCapabilities], transport: resource.transport,
+  }));
+  return freezeSnapshot({
+    schemaVersion: 1, projectId: input.projectId, runId: input.runId, taskId: input.taskId,
+    attemptId: input.attemptId, invocationId: input.invocationId, executionVersion: input.executionVersion,
+    owner: input.owner, strategy: input.strategy, permissions: input.permissions, grantId: input.grantId,
+    policyDigest: input.policyDigest, authentication: input.authentication,
+    resources: {
+      digest: loadManifest.digest, selectionRevision: selection.revision, selectionDigest: selection.digest,
+      loadManifestDigest: loadManifest.digest, entries,
+    },
+  } as RuntimeWorkAccessSnapshot);
+}
 
 /** 持久化的项目资源条目：身份/版本/摘要字段不可变，enabled/status 由 Core CAS 更新。 */
 export interface ProjectResourceRecord extends ProjectResourceDescriptor {

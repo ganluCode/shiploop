@@ -44,6 +44,7 @@ import {
   DEFAULT_RUNTIME_REQUEST_RETRY_POLICY,
   decideRuntimeRecovery,
   validateRuntimeRecoveryCapabilities,
+  validateProjectResourceLoadManifest,
 } from 'shiploop-core';
 
 export const PI_RUNTIME_ID = 'pi';
@@ -132,6 +133,7 @@ export interface PiTrustedAssembly {
   readonly resolveSessionDirectory?: (request: RuntimeExecutionRequest, cwd: string) => string;
   /** F-004：按请求执行认证预检和显式资源装配；返回值只含受限快照和可信引用。 */
   readonly prepareAccess?: (request: RuntimeExecutionRequest) => Promise<PiTrustedWorkAccess>;
+
   /** Core-approved immutable Artifact access and exclusive writer authority. */
   readonly recoverySourceManager?: PiRecoverySourceManager;
   /** Current authorized reasoning configuration; omission resets inherited reasoning to off. */
@@ -145,11 +147,23 @@ export interface PiTrustedAssembly {
   ) => readonly PiSubmissionToolDefinition[] | Promise<readonly PiSubmissionToolDefinition[]>;
 }
 
+export interface PiResourceLoadPolicy {
+  readonly selectedResourceIds: readonly string[];
+  readonly allowGlobalScan: false;
+  readonly allowProjectDirectoryScan: false;
+  readonly allowSdkDefaultScan: false;
+}
+
 export interface PiTrustedWorkAccess {
   readonly snapshot: RuntimeWorkAccessSnapshot;
   readonly credentialRef: { readonly kind: 'trusted-resolution'; readonly id: string };
   readonly resourceLoader: NonNullable<CreateAgentSessionOptions['resourceLoader']>;
+  /** F-004: the actual, identity-checked project resource load manifest. */
+  readonly resourceManifest?: import('shiploop-core').ProjectResourceLoadManifest;
+  /** F-004: explicit loader policy; all implicit SDK scans must remain disabled. */
+  readonly resourceLoadPolicy?: PiResourceLoadPolicy;
 }
+
 
 /**
  * A Core-approved immutable source. It deliberately contains Artifact
@@ -391,6 +405,27 @@ async function resolveSubmissionTools(
   return validatePiSubmissionTools(tools);
 }
 
+function verifyActualResourceManifest(
+  snapshot: RuntimeWorkAccessSnapshot,
+  actual: PiTrustedWorkAccess,
+): void {
+  const expectedDigest = snapshot.resources.loadManifestDigest;
+  if (expectedDigest === undefined) return;
+  if (actual.resourceManifest === undefined || actual.resourceManifest.digest !== expectedDigest) {
+    throw new RuntimeError('permission', 'work_resource_manifest_mismatch');
+  }
+  const policy = actual.resourceLoadPolicy;
+  const expectedIds = snapshot.resources.entries.map(entry => entry.id).sort();
+  if (policy === undefined || policy.allowGlobalScan !== false || policy.allowProjectDirectoryScan !== false
+    || policy.allowSdkDefaultScan !== false || JSON.stringify([...policy.selectedResourceIds].sort()) !== JSON.stringify(expectedIds)) {
+    throw new RuntimeError('permission', 'work_resource_loader_policy_mismatch');
+  }
+  try {
+    validateProjectResourceLoadManifest(actual.resourceManifest);
+  } catch (error) {
+    throw new RuntimeError('permission', 'work_resource_manifest_invalid', { cause: error });
+  }
+}
 function resolveTrustedAccess(assembly: PiTrustedAssembly, request: RuntimeExecutionRequest): Promise<PiTrustedWorkAccess | undefined> {
   if (request.workAccess === undefined) {
     if (assembly.prepareAccess !== undefined) {
@@ -405,12 +440,14 @@ function resolveTrustedAccess(assembly: PiTrustedAssembly, request: RuntimeExecu
     if (actual.snapshot.authentication.status !== 'ready') {
       throw new RuntimeError('authentication', 'work_authentication_not_ready');
     }
-    if (actual.snapshot.resources.entries.some(entry => entry.status !== 'available')) {
+    if (actual.snapshot.resources.entries.some(entry => entry.status !== 'available'
+      && (entry.required !== false || entry.onUnavailable !== 'omit'))) {
       throw new RuntimeError('permission', 'resource_not_authorized');
     }
     if (!isDeepStrictEqual(actual.snapshot, request.workAccess)) {
       throw new RuntimeError('authentication', 'work_access_snapshot_mismatch');
     }
+    verifyActualResourceManifest(request.workAccess!, actual);
     return actual;
   }).catch(error => {
     if (error instanceof RuntimeError) throw error;
