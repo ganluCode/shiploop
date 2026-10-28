@@ -21,6 +21,7 @@ import {
   validateCreateProjectInput,
   validateCreateProjectSettingsInput,
   validateCreateRepositoryBindingInput,
+  validateRebindRepositoryInput,
   validateProjectListFilter,
   validateUpdateProjectInput,
   validatePutSettingsInput,
@@ -36,6 +37,8 @@ import type {
   ProjectWithInitialSettingsRecord,
   ProjectWithRepositoryBindingResult,
   RepositoryBindingRecord,
+  RepositoryBindingSnapshotRecord,
+  RepositoryRebindResult,
   SettingsWriteConsistency,
   StateStore,
 } from '../../packages/core/src/ports/state-store.ts';
@@ -84,6 +87,7 @@ export function createInMemoryStorage(now: () => number): InMemoryStorage {
   const settings = new Map<string, StoredSettingsRow>();
   const artifacts = new Map<string, ArtifactRecord>();
   const bindings = new Map<string, RepositoryBindingRecord>();
+  const bindingSnapshots = new Map<string, RepositoryBindingSnapshotRecord>();
 
   function findBindingByCanonicalPath(canonicalPath: string): RepositoryBindingRecord | undefined {
     for (const binding of bindings.values()) {
@@ -369,18 +373,57 @@ export function createInMemoryStorage(now: () => number): InMemoryStorage {
         { operation, entity: { type: 'repository_binding', projectId } },
         'projectId',
       );
-      for (const binding of bindings.values()) {
-        if (binding.projectId === id) {
-          return clone(binding);
-        }
+      const project = requireProject(id, operation);
+      if (project.repositoryBindingId !== null) {
+        const current = bindings.get(project.repositoryBindingId);
+        if (current !== undefined) return clone(current);
       }
-      // 区分“项目不存在”与“项目尚无绑定”，两者都是 not_found 但语义不同。
-      requireProject(id, operation);
       throw notFound(
         operation,
         { type: 'repository_binding', projectId: id },
         `项目 ${id} 尚无仓库绑定`,
       );
+    },
+
+    async rebindRepository(projectId: string, input: unknown): Promise<RepositoryRebindResult> {
+      const operation = 'StateStore.rebindRepository';
+      const id = validateStableId(projectId, { operation }, 'projectId');
+      const valid = validateRebindRepositoryInput(input, operation);
+      const project = requireProject(id, operation);
+      const previous = [...bindings.values()].find(binding => binding.projectId === id);
+      if (previous === undefined) throw notFound(operation, { type: 'repository_binding', projectId: id }, '项目尚无仓库绑定');
+      if (valid.expectedBindingId !== undefined && valid.expectedBindingId !== previous.id) {
+        throw conflict(operation, '当前绑定身份已变化，重新绑定 CAS 未命中', { type: 'repository_binding', projectId: id });
+      }
+      if (previous.revision !== valid.expectedRevision || previous.bindingRevision !== valid.expectedBindingRevision) {
+        throw conflict(operation, '当前绑定 revision 已变化，重新绑定 CAS 未命中', { type: 'repository_binding', projectId: id });
+      }
+      if (findBindingByCanonicalPath(valid.canonicalPath) !== undefined) {
+        throw conflict(operation, '目标规范路径已被其他绑定占用', { type: 'repository_binding', projectId: id });
+      }
+      const timestamp = now();
+      const next: RepositoryBindingRecord = {
+        id: randomUUID(), projectId: id, canonicalPath: valid.canonicalPath,
+        gitCommonDir: valid.gitCommonDir ?? null, repoIdentity: valid.repoIdentity,
+        revision: previous.revision + 1, bindingRevision: previous.bindingRevision + 1,
+        createdAtUtcMs: timestamp, updatedAtUtcMs: timestamp,
+      };
+      const updatedProject: ProjectRecord = { ...project, repositoryBindingId: next.id, revision: project.revision + 1, updatedAtUtcMs: timestamp };
+      const previousSnapshot: RepositoryBindingSnapshotRecord = { id: randomUUID(), projectId: id, bindingId: previous.id,
+        revision: previous.revision, bindingRevision: previous.bindingRevision, canonicalPath: previous.canonicalPath,
+        gitCommonDir: previous.gitCommonDir, repoIdentity: previous.repoIdentity, capturedAtUtcMs: timestamp, changeKind: 'previous' };
+      const currentSnapshot: RepositoryBindingSnapshotRecord = { id: randomUUID(), projectId: id, bindingId: next.id,
+        revision: next.revision, bindingRevision: next.bindingRevision, canonicalPath: next.canonicalPath,
+        gitCommonDir: next.gitCommonDir, repoIdentity: next.repoIdentity, capturedAtUtcMs: timestamp, changeKind: 'current' };
+      projects.set(id, updatedProject); bindings.set(next.id, next);
+      bindingSnapshots.set(previousSnapshot.id, previousSnapshot); bindingSnapshots.set(currentSnapshot.id, currentSnapshot);
+      return { project: clone(updatedProject), previousBinding: clone(previous), binding: clone(next), snapshots: [clone(previousSnapshot), clone(currentSnapshot)] };
+    },
+
+    async listRepositoryBindingSnapshots(projectId: string): Promise<readonly RepositoryBindingSnapshotRecord[]> {
+      const id = validateStableId(projectId, { operation: 'StateStore.listRepositoryBindingSnapshots' }, 'projectId');
+      requireProject(id, 'StateStore.listRepositoryBindingSnapshots');
+      return [...bindingSnapshots.values()].filter(snapshot => snapshot.projectId === id).map(clone);
     },
 
     async createGlobalSettings(input: unknown): Promise<GlobalSettingsRecord> {

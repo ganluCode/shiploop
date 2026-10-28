@@ -129,6 +129,35 @@ export const repositoryBindings = sqliteTable('repository_bindings', {
   uniqueIndex('repository_bindings_project_id_id_unique').on(table.projectId, table.id),
 ]);
 
+
+/** P06-5：重新绑定的不可变旧/新事实；不替代当前 binding，而是保留核验快照。 */
+export const repositoryBindingSnapshots = sqliteTable('repository_binding_snapshots', {
+  id: text('id').primaryKey(),
+  createdAt: integer('created_at').notNull(),
+  projectId: text('project_id').notNull().references((): SQLiteColumn => projects.id, { onDelete: 'restrict' }),
+  bindingId: text('binding_id').notNull().references((): SQLiteColumn => repositoryBindings.id, { onDelete: 'restrict' }),
+  revision: integer('revision').notNull(),
+  bindingRevision: integer('binding_revision').notNull(),
+  canonicalPath: text('canonical_path').notNull(),
+  gitCommonDir: text('git_common_dir'),
+  repoIdentity: text('repo_identity').notNull(),
+  capturedAt: integer('captured_at').notNull(),
+  changeKind: text('change_kind').notNull(),
+}, (table) => [
+  check('repository_binding_snapshots_revision_check', sql`${table.revision} >= 1`),
+  check('repository_binding_snapshots_binding_revision_check', sql`${table.bindingRevision} >= 1`),
+  check('repository_binding_snapshots_path_check', sql`length(${table.canonicalPath}) > 0`),
+  check('repository_binding_snapshots_identity_check', sql`length(${table.repoIdentity}) > 0`),
+  check('repository_binding_snapshots_kind_check', sql`${table.changeKind} IN ('previous', 'current')`),
+  foreignKey({
+    name: 'repository_binding_snapshots_binding_same_project_fk',
+    columns: [table.projectId, table.bindingId],
+    foreignColumns: [repositoryBindings.projectId, repositoryBindings.id],
+  }).onDelete('restrict'),
+  uniqueIndex('repository_binding_snapshots_binding_revision_unique').on(table.bindingId, table.revision, table.bindingRevision, table.changeKind),
+  index('repository_binding_snapshots_project_captured_index').on(table.projectId, table.capturedAt, table.id),
+]);
+
 export const globalSettings = sqliteTable('global_settings', {
   /** 全局单例：DDL 限制 id='global'，主键保证仅一条。 */
   id: text('id').primaryKey(),

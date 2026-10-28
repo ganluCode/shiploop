@@ -115,6 +115,8 @@ export function createSqliteAtomicCommandStore(
             state.createProjectWithBindingInTransaction(project, binding, {
               recordRegisteredEvent: true,
             })),
+          rebindRepository: guarded(state.rebindRepositoryInTransaction),
+          listRepositoryBindingSnapshots: guarded(state.listRepositoryBindingSnapshots),
           // F-009：配置读写原语；创建路径同事务写 settings.*_created 创建事件
           // （P01 直接服务首建不写，契约 §15.3），更新路径复用 P01 既有 *_updated 写入。
           getGlobalSettingsOrNull: guarded(state.getGlobalSettingsOrNull),

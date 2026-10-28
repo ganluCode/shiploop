@@ -42,6 +42,7 @@ type CoreDatabase = CoreConnection['database'];
 const SCHEMA_TABLES = [
   ['projects', schema.projects],
   ['repository_bindings', schema.repositoryBindings],
+  ['repository_binding_snapshots', schema.repositoryBindingSnapshots],
   ['global_settings', schema.globalSettings],
   ['project_settings', schema.projectSettings],
   // P06-1 / F-002：不可变项目画像与项目能力模块版本（迁移 v48）。
@@ -548,6 +549,9 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
         'projects:(repository_binding_id)->repository_bindings.(id)',
         'projects:(id,repository_binding_id)->repository_bindings.(project_id,id)',
         'repository_bindings:(project_id)->projects.(id)',
+        'repository_binding_snapshots:(project_id)->projects.(id)',
+        'repository_binding_snapshots:(binding_id)->repository_bindings.(id)',
+        'repository_binding_snapshots:(project_id,binding_id)->repository_bindings.(project_id,id)',
         'project_settings:(project_id)->projects.(id)',
         'project_profiles:(project_id)->projects.(id)',
         'capability_modules:(project_id)->projects.(id)',

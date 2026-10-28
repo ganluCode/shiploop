@@ -5,6 +5,6 @@
 // workspace 键仍按受管目录排他。
 // P05-7 / F-002：Git integration operation persistence (v43); F-004：integration evidence journal (v44).
 // P05-8 / F-001：GitAgent repair authorization and attempt admission (v45).
-// P05-9 / F-003：durable Phase delivery candidates (v46); F-004：human delivery approval binding (v47).
-export const currentSchemaVersion = 47;
+// P06-5 / F-003：重新绑定不可变快照与旧绑定事实（v51）。
+export const currentSchemaVersion = 51;
 export const currentMigrationVersions = Array.from({ length: currentSchemaVersion }, (_, index) => index + 1);

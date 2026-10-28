@@ -159,6 +159,7 @@ export const COMMAND_OPERATIONS = [
   // 不启动 Runtime/Attempt，不增额或新建授权 Batch）。
   'execution.retryFinal',
   'project.register',
+  'project.repository.rebind',
   'project.metadata.update',
   // P06-1 / F-005：画像写操作共享 project metadata 授权与 Profile version CAS。
   'project.profile.confirm',
@@ -283,6 +284,9 @@ export interface CommandOperationSpec {
 export const COMMAND_OPERATION_SPECS: Readonly<Record<AppOperation, CommandOperationSpec>> =
   Object.freeze({
     'project.register': { scopeKind: 'registration', mutation: 'create', capability: 'project.register' },
+    'project.repository.rebind': {
+      scopeKind: 'project', mutation: 'update', capability: 'project.metadata.write',
+    },
     'project.metadata.update': {
       scopeKind: 'project',
       mutation: 'update',
@@ -692,6 +696,14 @@ function exactKeys(
  * displayName/description/labels 规范化；repositoryPath 在本层只做字符串类型
  * 把关，绝对路径/存在性/仓库形态由 RepositoryInspector 在写事务之外只读检查。
  */
+export interface ValidatedRepositoryRebindPayload {
+  readonly canonicalPath: string;
+  readonly gitCommonDir: string | null;
+  readonly repoIdentity: string;
+  readonly expectedBindingRevision?: number;
+  readonly expectedBindingId?: string;
+}
+
 export interface ValidatedProjectRegisterPayload {
   readonly repositoryPath: string;
   readonly displayName: string;
@@ -974,6 +986,12 @@ export type ValidatedCommandEnvelope =
       readonly scope: { readonly kind: 'registration' };
       readonly expectedRevision: null;
       readonly payload: ValidatedProjectRegisterPayload;
+    })
+  | (EnvelopeCommon & {
+      readonly operation: 'project.repository.rebind';
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: number;
+      readonly payload: ValidatedRepositoryRebindPayload;
     })
   | (EnvelopeCommon & {
       readonly operation: 'project.metadata.update';
@@ -1359,6 +1377,21 @@ function validateTiming(
   return { issuedAt, expiresAt };
 }
 
+function validateRepositoryRebindPayload(operation: AppOperation, raw: unknown): ValidatedRepositoryRebindPayload {
+  const object = requireObject(operation, raw, 'payload');
+  exactKeys(operation, object, ['canonicalPath', 'gitCommonDir', 'repoIdentity', 'expectedBindingRevision', 'expectedBindingId'], 'payload.');
+  if (typeof object.canonicalPath !== 'string' || !object.canonicalPath.startsWith('/')
+    || object.canonicalPath.includes('\0')) fail(operation, 'invalid_input', 'payload.canonicalPath', '必须是绝对规范路径');
+  if (object.gitCommonDir !== null && object.gitCommonDir !== undefined
+    && (typeof object.gitCommonDir !== 'string' || !object.gitCommonDir.startsWith('/'))) fail(operation, 'invalid_input', 'payload.gitCommonDir', '必须是绝对路径或 null');
+  if (typeof object.repoIdentity !== 'string' || object.repoIdentity.length === 0) fail(operation, 'invalid_input', 'payload.repoIdentity', '不能为空');
+  const bindingRevision = object.expectedBindingRevision;
+  if (bindingRevision !== undefined && (typeof bindingRevision !== 'number' || !Number.isSafeInteger(bindingRevision) || bindingRevision < 1)) fail(operation, 'invalid_input', 'payload.expectedBindingRevision', '必须是正整数');
+  if (object.expectedBindingId !== undefined) validateStableId(object.expectedBindingId, { operation }, 'payload.expectedBindingId');
+  return { canonicalPath: object.canonicalPath, gitCommonDir: object.gitCommonDir === undefined ? null : object.gitCommonDir,
+    repoIdentity: object.repoIdentity, ...(object.expectedBindingRevision === undefined ? {} : { expectedBindingRevision: object.expectedBindingRevision as number }),
+    ...(object.expectedBindingId === undefined ? {} : { expectedBindingId: object.expectedBindingId as string }) };
+}
 function validateRegisterPayload(operation: AppOperation, raw: unknown): ValidatedProjectRegisterPayload {
   const object = requireObject(operation, raw, 'payload');
   exactKeys(operation, object, REGISTER_PAYLOAD_KEYS, 'payload.');
@@ -2108,6 +2141,11 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
     }
     return { ...base, operation, scope, expectedRevision: expectedRevision as number,
       payload: operation === 'project.profile.reject' ? {} : { profile: payload.profile } };
+  }
+  if (operation === 'project.repository.rebind') {
+    if (scope.kind !== 'project') fail(operation, 'invalid_input', 'scope.kind', 'scope 种类与操作不匹配');
+    return { ...base, operation, scope, expectedRevision: expectedRevision as number,
+      payload: validateRepositoryRebindPayload(operation, object.payload) };
   }
   if (operation === 'project.register') {
     return {

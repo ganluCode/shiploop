@@ -4132,6 +4132,46 @@ CREATE INDEX memory_records_project_status_index ON memory_records (project_id, 
 `;
 
 /**
+ * v51：P06-5 重新绑定事实。当前项目切换到新 binding 行，旧 binding 外键保持
+ * 可解析；快照与触发器提供不可变、同项目、可核验的路径/身份证据。
+ */
+const MIGRATION_051_SQL = `
+CREATE TABLE repository_binding_snapshots (
+  id TEXT PRIMARY KEY NOT NULL,
+  created_at INTEGER NOT NULL,
+  project_id TEXT NOT NULL,
+  binding_id TEXT NOT NULL,
+  revision INTEGER NOT NULL,
+  binding_revision INTEGER NOT NULL,
+  canonical_path TEXT NOT NULL,
+  git_common_dir TEXT,
+  repo_identity TEXT NOT NULL,
+  captured_at INTEGER NOT NULL,
+  change_kind TEXT NOT NULL,
+  CONSTRAINT repository_binding_snapshots_project_fk FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE RESTRICT,
+  CONSTRAINT repository_binding_snapshots_binding_fk FOREIGN KEY (binding_id) REFERENCES repository_bindings (id) ON DELETE RESTRICT,
+  CONSTRAINT repository_binding_snapshots_binding_same_project_fk FOREIGN KEY (project_id, binding_id) REFERENCES repository_bindings (project_id, id) ON DELETE RESTRICT,
+  CONSTRAINT repository_binding_snapshots_revision_check CHECK (revision >= 1),
+  CONSTRAINT repository_binding_snapshots_binding_revision_check CHECK (binding_revision >= 1),
+  CONSTRAINT repository_binding_snapshots_path_check CHECK (length(canonical_path) > 0),
+  CONSTRAINT repository_binding_snapshots_identity_check CHECK (length(repo_identity) > 0),
+  CONSTRAINT repository_binding_snapshots_kind_check CHECK (change_kind IN ('previous', 'current'))
+);
+CREATE UNIQUE INDEX repository_binding_snapshots_binding_revision_unique
+  ON repository_binding_snapshots (binding_id, revision, binding_revision, change_kind);
+CREATE INDEX repository_binding_snapshots_project_captured_index
+  ON repository_binding_snapshots (project_id, captured_at, id);
+CREATE TRIGGER repository_binding_snapshots_immutable_update
+BEFORE UPDATE ON repository_binding_snapshots
+BEGIN SELECT RAISE(ABORT, 'repository binding snapshot is immutable'); END;
+CREATE TRIGGER repository_binding_snapshots_immutable_delete
+BEFORE DELETE ON repository_binding_snapshots
+BEGIN SELECT RAISE(ABORT, 'repository binding snapshot is immutable'); END;
+CREATE TRIGGER repository_bindings_immutable
+BEFORE UPDATE OF project_id, revision, updated_at, canonical_path, git_common_dir, repo_identity, binding_revision ON repository_bindings
+BEGIN SELECT RAISE(ABORT, 'repository binding facts are immutable'); END;
+`;
+/**
  * v50：ContextBuilder v4/v5 快照兼容修复。v26–v49 未重建 attempts，导致
  * 当前基线仍拒绝已由 Core 支持的 schemaVersion 4/5。复用 v25 的完整重建与
  * 外键关闭策略，只放宽快照版本约束；历史迁移 SQL/checksum 保持不变。
@@ -4255,4 +4295,5 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 48, sql: MIGRATION_048_SQL, checksum: sha256Hex(MIGRATION_048_SQL) },
   { version: 49, sql: MIGRATION_049_SQL, checksum: sha256Hex(MIGRATION_049_SQL) },
   { version: 50, sql: MIGRATION_050_SQL, checksum: sha256Hex(MIGRATION_050_SQL), foreignKeysOff: true },
+  { version: 51, sql: MIGRATION_051_SQL, checksum: sha256Hex(MIGRATION_051_SQL) },
 ];

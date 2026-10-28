@@ -394,7 +394,40 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
     return receipt;
   }
 
-  /** 注册：项目 + 绑定 + project.registered 创建事件 + 回执同一事务（F-008）。 */
+  function submitRepositoryRebind(
+    principal: TrustedPrincipal,
+    envelope: Extract<ValidatedCommandEnvelope, { operation: 'project.repository.rebind' }>,
+    digest: string,
+    transaction: CommandTransaction,
+    now: number,
+  ): CommandReceipt {
+    const identity: ReceiptIdentity = { principalId: principal.principalId, commandId: envelope.commandId,
+      operation: envelope.operation, scope: envelope.scope, requestDigest: digest, issuedAt: envelope.issuedAt,
+      completedAt: new Date(now).toISOString() };
+    try {
+      const result = transaction.rebindRepository(envelope.scope.projectId, {
+        expectedRevision: envelope.expectedRevision,
+        expectedBindingRevision: envelope.payload.expectedBindingRevision,
+        expectedBindingId: envelope.payload.expectedBindingId,
+        canonicalPath: envelope.payload.canonicalPath,
+        gitCommonDir: envelope.payload.gitCommonDir,
+        repoIdentity: envelope.payload.repoIdentity,
+      });
+      const receipt = createCompletedReceipt({ ...identity, resultRef: createResultRef(randomBytes(32)), result: {
+        project: toPublicProjectRecord(result.project), previousBinding: toPublicRepositoryBindingRecord(result.previousBinding),
+        binding: toPublicRepositoryBindingRecord(result.binding), snapshots: result.snapshots,
+      } });
+      transaction.saveReceipt(receipt);
+      return receipt;
+    } catch (error) {
+      if (!isStorageError(error, 'conflict') && !isStorageError(error, 'not_found')) throw error;
+      const receipt = createRejectedReceipt({ ...identity, error: mapStorageError(error as import('../ports/errors.js').StorageError, { operation: envelope.operation }) });
+      transaction.saveReceipt(receipt);
+      return receipt;
+    }
+  }
+
+
   function submitRegister(
     principal: TrustedPrincipal,
     envelope: Extract<ValidatedCommandEnvelope, { operation: 'project.register' }>,
@@ -771,6 +804,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           envelope.operation !== 'project.profile.modify' &&
           envelope.operation !== 'project.profile.reject' &&
           envelope.operation !== 'project.register' &&
+          envelope.operation !== 'project.repository.rebind' &&
           envelope.operation !== 'baseline.preview' &&
           envelope.operation !== 'baseline.run' &&
           envelope.operation !== 'execution.attempt.cancel' &&
@@ -1543,6 +1577,9 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
             });
             transaction.saveReceipt(receipt);
             return receipt;
+          }
+          if (envelope.operation === 'project.repository.rebind') {
+            return submitRepositoryRebind(principal, envelope, digest, transaction, now);
           }
           if (isSettingsEnvelope(envelope)) {
             // 新配置命令必定已在事务外完成能力复检与一致性视图（重放已在上面返回）。

@@ -199,6 +199,9 @@ function envelope(
         expectedRevision: null,
         payload: { operationId: '0f0d9c36-765a-4b62-a6b9-38a5ff4f4bf1' },
       } as ValidatedCommandEnvelope;
+    case 'project.repository.rebind':
+      return { ...base, operation, scope: { kind: 'project', projectId: PROJECT_A }, expectedRevision: expectedRevision ?? 1,
+        payload: { canonicalPath: '/repo/new', gitCommonDir: '/repo/new/.git', repoIdentity: 'gitdir-sha256:' + 'b'.repeat(64) } };
     case 'project.register':
       return {
         ...base,

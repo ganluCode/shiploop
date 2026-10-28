@@ -228,6 +228,7 @@ describe('F-005 迁移执行与记录', () => {
           'project_settings',
           'projects',
           'recording_manifests',
+          'repository_binding_snapshots',
           'repository_bindings',
           'run_dispatch_claims',
           'run_dispatch_intents',

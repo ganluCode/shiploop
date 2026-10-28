@@ -51,6 +51,9 @@ export const PROJECT_METADATA_UPDATED_EVENT_TYPE = 'project.metadata_updated';
  */
 export const PROJECT_REGISTERED_EVENT_TYPE = 'project.registered';
 
+/** P06-5：重新绑定时记录旧/新绑定身份；payload 只含身份与 revision，不含路径正文。 */
+export const PROJECT_REPOSITORY_REBOUND_EVENT_TYPE = 'project.repository_rebound';
+
 /**
  * 当前配置更新事件类型（F-010）：全局/项目当前配置的 CAS 更新在同一短事务内
  * 追加一条对应类型的 state_events 脱敏审计记录（见契约文档 §4.4/§6.3）。
@@ -473,6 +476,61 @@ export interface ProjectWithInitialSettingsRecord {
  * - 仓库检查的瞬时事实（headCommit/脏状态等）不持久化：绑定只保存身份与位置，
  *   运行时状态每次按需重新只读检查。
  */
+export interface RepositoryBindingSnapshotRecord {
+  readonly id: string;
+  readonly projectId: string;
+  readonly bindingId: string;
+  readonly revision: number;
+  readonly bindingRevision: number;
+  readonly canonicalPath: string;
+  readonly gitCommonDir: string | null;
+  readonly repoIdentity: string;
+  readonly capturedAtUtcMs: number;
+  readonly changeKind: 'previous' | 'current';
+}
+
+export interface RebindRepositoryInput {
+  readonly expectedRevision: number;
+  readonly expectedBindingRevision?: number;
+  readonly expectedBindingId?: string;
+  readonly canonicalPath: string;
+  readonly gitCommonDir?: string | null;
+  readonly repoIdentity: string;
+}
+
+export interface RepositoryRebindResult {
+  readonly project: ProjectRecord;
+  readonly previousBinding: RepositoryBindingRecord;
+  readonly binding: RepositoryBindingRecord;
+  readonly snapshots: readonly RepositoryBindingSnapshotRecord[];
+}
+
+export function validateRebindRepositoryInput(value: unknown, operation: string): RebindRepositoryInput {
+  const context: ValidationContext = { operation, entity: { type: 'repository_binding' } };
+  const object = requirePlainObject(value, context, 'input');
+  rejectUnknownKeys(object, ['expectedRevision', 'expectedBindingRevision', 'expectedBindingId', 'canonicalPath', 'gitCommonDir', 'repoIdentity'], context, 'input');
+  const expectedRevision = validateExpectedRevision(object.expectedRevision, context);
+  const expectedBindingRevision = object.expectedBindingRevision === undefined
+    ? expectedRevision
+    : validateExpectedRevision(object.expectedBindingRevision, context);
+  return {
+    expectedRevision,
+    expectedBindingRevision,
+    expectedBindingId: object.expectedBindingId === undefined
+      ? undefined
+      : validateStableId(object.expectedBindingId, context, 'expectedBindingId'),
+    canonicalPath: validateCanonicalAbsolutePath(object.canonicalPath, context, 'canonicalPath'),
+    gitCommonDir: object.gitCommonDir === undefined || object.gitCommonDir === null
+      ? null
+      : validateCanonicalAbsolutePath(object.gitCommonDir, context, 'gitCommonDir'),
+    repoIdentity: requireNonEmptyString(object.repoIdentity, context, 'repoIdentity'),
+  };
+}
+
+/**
+ * 仓库绑定当前记录。重新绑定通过新建 binding id 保留旧身份，避免历史基线/工作区
+ * 的 binding 外键被改写为新路径。
+ */
 export interface RepositoryBindingRecord {
   readonly id: string;
   readonly projectId: string;
@@ -604,6 +662,11 @@ export interface StateStore {
     project: unknown,
     binding: unknown,
   ): Promise<ProjectWithRepositoryBindingResult>;
+
+  /** 绑定 CAS 更新；成功创建新绑定身份并保留旧绑定/快照，历史引用不被改写。 */
+  rebindRepository(projectId: string, input: unknown): Promise<RepositoryRebindResult>;
+  /** 读取项目绑定变更的不可变证据，按 capture 顺序返回。 */
+  listRepositoryBindingSnapshots(projectId: string): Promise<readonly RepositoryBindingSnapshotRecord[]>;
 
   /**
    * 按 projectId 返回完整仓库绑定；未知项目/无绑定返回 not_found。

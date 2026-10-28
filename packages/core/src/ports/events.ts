@@ -59,6 +59,7 @@ import {
   GLOBAL_SETTINGS_UPDATED_EVENT_TYPE,
   PROJECT_METADATA_UPDATED_EVENT_TYPE,
   PROJECT_REGISTERED_EVENT_TYPE,
+  PROJECT_REPOSITORY_REBOUND_EVENT_TYPE,
   PROJECT_SETTINGS_CREATED_EVENT_TYPE as SETTINGS_PROJECT_CREATED_EVENT_TYPE,
   PROJECT_SETTINGS_UPDATED_EVENT_TYPE,
 } from './state-store.js';
@@ -77,6 +78,8 @@ export const PUBLIC_EVENT_SCHEMA_VERSION = 1 as const;
 
 /** 仅命令路径注册成功写入（F-008）；P01 直接服务首建不写事件（契约 §15.3）。 */
 export { PROJECT_REGISTERED_EVENT_TYPE };
+/** P06-5：重新绑定事件保留旧/新 binding 身份与 revision。 */
+export { PROJECT_REPOSITORY_REBOUND_EVENT_TYPE };
 /** P03-1 / F-004：仅命令路径 Phase 创建成功写入（脱敏 payload 恒为 {created:true}）。 */
 export { PHASE_CREATED_EVENT_TYPE };
 /** P03-1 / F-005：仅命令路径 Feature 计划导入成功写入（脱敏 payload 恒 {imported:true}）。 */
@@ -127,6 +130,7 @@ export const GIT_OPERATION_SETTLED_EVENT_TYPE = 'git.operation.settled';
 export const PUBLIC_STATE_EVENT_TYPES = [
   ...PROJECT_PROFILE_AUDIT_TYPES,
   PROJECT_REGISTERED_EVENT_TYPE,
+  PROJECT_REPOSITORY_REBOUND_EVENT_TYPE,
   PROJECT_METADATA_UPDATED_EVENT_TYPE,
   SETTINGS_GLOBAL_CREATED_EVENT_TYPE,
   SETTINGS_PROJECT_CREATED_EVENT_TYPE,
@@ -204,6 +208,7 @@ export type PublicStateEventType = (typeof PUBLIC_STATE_EVENT_TYPES)[number];
 type EventPayloadKind =
   | 'projectProfile'
   | 'registered'
+  | 'repositoryRebound'
   | 'changedFields'
   | 'settingsSummary'
   | 'baselineAuthorized'
@@ -300,6 +305,11 @@ export const STATE_EVENT_TYPE_SPECS: Readonly<
     aggregateType: 'project',
     scopeKind: 'project',
     payloadKind: 'registered',
+  }),
+  [PROJECT_REPOSITORY_REBOUND_EVENT_TYPE]: Object.freeze({
+    aggregateType: 'project',
+    scopeKind: 'project',
+    payloadKind: 'repositoryRebound',
   }),
   [PROJECT_METADATA_UPDATED_EVENT_TYPE]: Object.freeze({
     aggregateType: 'project',
@@ -661,6 +671,31 @@ function validateChangedFieldsPayload(
     seen.add(field);
   }
   return { changedFields: [...seen] /* 保持输入顺序 */ };
+}
+
+function validateRepositoryReboundPayload(
+  payload: Record<string, unknown>,
+  operation: string,
+): Record<string, unknown> {
+  exactPayloadKeys(operation, payload, ['rebound', 'previousBindingId', 'bindingId', 'previousBindingRevision', 'bindingRevision']);
+  if (payload.rebound !== true || typeof payload.previousBindingId !== 'string' || typeof payload.bindingId !== 'string'
+    || !Number.isSafeInteger(payload.previousBindingRevision) || !Number.isSafeInteger(payload.bindingRevision)
+    || (payload.previousBindingRevision as number) < 1 || (payload.bindingRevision as number) < 1) {
+    corrupt(operation, 'event_payload_violation');
+  }
+  try {
+    validateStableId(payload.previousBindingId, { operation }, 'previousBindingId');
+    validateStableId(payload.bindingId, { operation }, 'bindingId');
+  } catch {
+    corrupt(operation, 'event_payload_violation');
+  }
+  return {
+    rebound: true,
+    previousBindingId: payload.previousBindingId,
+    bindingId: payload.bindingId,
+    previousBindingRevision: payload.previousBindingRevision,
+    bindingRevision: payload.bindingRevision,
+  };
 }
 
 function validateRegisteredPayload(
@@ -1063,6 +1098,8 @@ export function mapStateEvent(row: unknown, operation: string = EVENT_READ_OPERA
   let payload: Record<string, unknown>;
   if (spec.payloadKind === 'registered') {
     payload = validateRegisteredPayload(row.payload, operation);
+  } else if (spec.payloadKind === 'repositoryRebound') {
+    payload = validateRepositoryReboundPayload(row.payload, operation);
   } else if (spec.payloadKind === 'phaseCreated') {
     payload = validatePhaseCreatedPayload(row.payload, operation);
   } else if (spec.payloadKind === 'phaseDelivery') {

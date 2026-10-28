@@ -43,7 +43,7 @@ import type {
   PersistedIntegrationPlan,
 } from './integration-plan-store.js';
 import type { GlobalSettingsRecord, ProjectRecord, RepositoryBindingRecord,
-  ProjectSettingsRecord, ProjectWithRepositoryBindingResult } from './state-store.js';
+  ProjectSettingsRecord, ProjectWithRepositoryBindingResult, RepositoryRebindResult } from './state-store.js';
 
 export interface CommandTransaction {
   findReceipt(principalId: string, commandId: string): CommandReceipt | undefined;
@@ -59,6 +59,10 @@ export interface CommandTransaction {
    * 仓库检查产出；注册成功不表示基线健康或执行就绪。
    */
   registerProject(project: unknown, binding: unknown): ProjectWithRepositoryBindingResult;
+  /** F-003：项目绑定 CAS 更新及不可变快照在同一事务内生效。 */
+  rebindRepository(projectId: string, input: unknown): RepositoryRebindResult;
+  /** F-003：同事务读取绑定变更证据。 */
+  listRepositoryBindingSnapshots(projectId: string): readonly import('./state-store.js').RepositoryBindingSnapshotRecord[];
   /** F-009：事务内读取全局当前配置（项目配置一致性依赖的权威重核）；未配置返回 null。 */
   getGlobalSettingsOrNull(): GlobalSettingsRecord | null;
   /** F-009：事务内读取项目当前配置；未配置返回 null（项目缺失由 getProject 先行把关）。 */
