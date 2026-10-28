@@ -26,6 +26,8 @@ import {
   requireProjectVisible,
   type TrustedPrincipal,
 } from '../ports/authorization.js';
+import type { BaselineComparisonResult } from '../ports/baseline-comparison.js';
+import { compareBaselineDetails } from '../ports/baseline-comparison.js';
 import type {
   BaselineAuthorizationSummary,
   BaselineCheckOutputRef,
@@ -72,6 +74,12 @@ export interface BaselineQueryService {
   listBaselines(principal: TrustedPrincipal, projectId: unknown, query: unknown): BaselineListResult;
   /** §7.5：操作详情（授权摘要 + 检查明细含脱敏尾部）；未知/不可见 → not_found。 */
   getBaseline(principal: TrustedPrincipal, operationId: unknown): Promise<BaselineDetailResult>;
+  /** F-007：按同项目检查身份比较两次基线；只返回诊断，不改变任何状态。 */
+  compareBaselines(
+    principal: TrustedPrincipal,
+    previousOperationId: unknown,
+    currentOperationId: unknown,
+  ): Promise<BaselineComparisonResult>;
   /** §7.6：授权且有界的正式证据正文读取；未知/不可见/非正式制品 → not_found。 */
   readArtifactContent(principal: TrustedPrincipal, artifactId: unknown): Promise<BaselineArtifactContent>;
 }
@@ -186,7 +194,7 @@ export function createBaselineQueryService(deps: BaselineQueryServiceDeps): Base
     };
   }
 
-  return {
+  const service: BaselineQueryService = {
     listBaselines(principal, projectId, query) {
       const operation = 'baselines.list';
       requireCapability(principal, 'baseline.read', operation);
@@ -237,6 +245,35 @@ export function createBaselineQueryService(deps: BaselineQueryServiceDeps): Base
       };
     },
 
+    async compareBaselines(principal, previousOperationId, currentOperationId) {
+      const operation = 'baselines.compare';
+      requireCapability(principal, 'baseline.read', operation);
+      const validateOperationId = (value: unknown): string => {
+        if (typeof value !== 'string' || !isUuidV4(value)) {
+          throw new PublicError('invalid_input', operation, 'operationId 必须是 RFC 4122 UUID v4', {
+            details: { field: 'operationId', reason: 'invalid_operation_id' },
+          });
+        }
+        return value;
+      };
+      const previousId = validateOperationId(previousOperationId);
+      const currentId = validateOperationId(currentOperationId);
+      const previousRecord = baselines.getBaselineOperation(previousId);
+      const currentRecord = baselines.getBaselineOperation(currentId);
+      // Unknown, invisible, and cross-project sources share not_found to avoid enumeration.
+      if (previousRecord === undefined || currentRecord === undefined
+        || !isProjectVisible(principal, previousRecord.projectId)
+        || !isProjectVisible(principal, currentRecord.projectId)
+        || previousRecord.projectId !== currentRecord.projectId) {
+        throw new PublicError('not_found', operation, '基线操作不存在或不可比较');
+      }
+      // getBaseline performs authorization and every output artifact integrity check
+      // before compareBaselineDetails inspects a result.
+      const previous = await service.getBaseline(principal, previousId);
+      const current = await service.getBaseline(principal, currentId);
+      return compareBaselineDetails(previous, current, previousRecord.projectId);
+    },
+
     async readArtifactContent(principal, artifactId) {
       // §7.6：与 F-011 readBaselineOutput 同一纪律——能力缺失/未知/伪造/跨项目
       // 一律统一 not_found（防枚举），绝不区分「不存在」与「无权」。
@@ -264,6 +301,7 @@ export function createBaselineQueryService(deps: BaselineQueryServiceDeps): Base
       return { artifactId: artifactIdString, byteSize: content.length, content };
     },
   };
+  return service;
 }
 
 /** F-014 传输层上限：artifacts.get 正文有界输出（= 基线输出制品上限 8 MiB）。 */

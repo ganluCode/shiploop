@@ -64,6 +64,8 @@ import { createBaselineExecutionService } from '../application/baseline-executio
 import type { BaselineExecutionService } from '../application/baseline-execution.js';
 import { createBaselineQueryService } from '../application/baseline-query-service.js';
 import type { BaselineQueryService } from '../application/baseline-query-service.js';
+import { createBaselineComparisonService } from '../application/baseline-comparison-service.js';
+import type { BaselineComparisonService } from '../application/baseline-comparison-service.js';
 import { createBaselineService } from '../application/baseline-service.js';
 import type { BaselineService } from '../application/baseline-service.js';
 import { createOnboardingService } from '../application/onboarding-service.js';
@@ -403,6 +405,8 @@ export interface CoreApplication {
   readonly baselineService: BaselineService;
   /** F-012: explicit execution entry; Host routing is wired in F-014. */
   readonly baselineExecutionService: BaselineExecutionService;
+  /** F-007：历史/当前基线逐项只读诊断比较，不改变验收或基线事实。 */
+  readonly baselineComparisonService: BaselineComparisonService;
   /** P02-3 / F-014：baselines.list / baselines.get / artifacts.get 只读查询（§7.4-§7.6）。 */
   readonly baselineQueryService: BaselineQueryService;
   /** P03-5 / F-011：工作区资源门禁（P03-4 durable 工作资源 + 可信停止核验）。 */
@@ -1411,6 +1415,11 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       files: artifactFileStore,
     });
 
+    const baselineComparisonService = createBaselineComparisonService({
+      baselines: baselineStore,
+      getBaseline: baselineQueryService.getBaseline,
+    });
+
     const application: CoreApplication = {
       createWorkToolChannel(authority) {
         const attempts = createSqliteAttemptAccess(session);
@@ -1466,6 +1475,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       baselineService,
       baselineExecutionService,
       baselineQueryService,
+      baselineComparisonService,
       workResources,
       runtimeFallbackSwitch,
       workWorkspaceAuthority,
