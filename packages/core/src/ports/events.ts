@@ -833,17 +833,28 @@ function validateSettingsSummaryPayload(
   payload: Record<string, unknown>,
   operation: string,
 ): Record<string, unknown> {
-  exactPayloadKeys(operation, payload, ['schemaVersion', 'strategies', 'policies']);
+  exactPayloadKeys(operation, payload, ['schemaVersion', 'strategies', 'policies', 'resources']);
   if (payload.schemaVersion !== SETTINGS_SCHEMA_VERSION) {
     corrupt(operation, 'event_payload_violation');
   }
   if (!validateSummaryNameList(payload.strategies) || !validateSummaryNameList(payload.policies)) {
     corrupt(operation, 'event_payload_violation');
   }
+  let resources: { count: number; digest: string } | undefined;
+  if (payload.resources !== undefined) {
+    const raw = payload.resources;
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) corrupt(operation, 'event_payload_violation');
+    const item = raw as Record<string, unknown>;
+    exactPayloadKeys(operation, item, ['count', 'digest']);
+    if (typeof item.count !== 'number' || !Number.isSafeInteger(item.count) || item.count < 0 || item.count > 64
+      || typeof item.digest !== 'string' || !/^[a-f0-9]{64}$/.test(item.digest)) corrupt(operation, 'event_payload_violation');
+    resources = { count: item.count as number, digest: item.digest as string };
+  }
   return {
     schemaVersion: SETTINGS_SCHEMA_VERSION,
     strategies: [...(payload.strategies as string[])],
     policies: [...(payload.policies as string[])],
+    ...(resources === undefined ? {} : { resources }),
   };
 }
 

@@ -738,7 +738,7 @@ function validateEventPayload(
     return { operationId: object.operationId, status: object.status };
   }
   // settingsSummary
-  exactKeys(operation, object, ['schemaVersion', 'strategies', 'policies']);
+  exactKeys(operation, object, ['schemaVersion', 'strategies', 'policies', 'resources']);
   if (object.schemaVersion !== SETTINGS_SCHEMA_VERSION) {
     malformed(operation, 'event_payload_violation');
   }
@@ -748,10 +748,21 @@ function validateEventPayload(
       malformed(operation, 'event_payload_violation');
     }
   }
+  let resources: { count: number; digest: string } | undefined;
+  if (object.resources !== undefined) {
+    const raw = object.resources;
+    if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) malformed(operation, 'event_payload_violation');
+    const item = raw as Record<string, unknown>;
+    exactKeys(operation, item, ['count', 'digest']);
+    if (typeof item.count !== 'number' || !Number.isSafeInteger(item.count) || item.count < 0 || item.count > 64
+      || typeof item.digest !== 'string' || !/^[a-f0-9]{64}$/.test(item.digest)) malformed(operation, 'event_payload_violation');
+    resources = { count: item.count as number, digest: item.digest as string };
+  }
   return {
     schemaVersion: SETTINGS_SCHEMA_VERSION,
     strategies: [...(object.strategies as string[])],
     policies: [...(object.policies as string[])],
+    ...(resources === undefined ? {} : { resources }),
   };
 }
 

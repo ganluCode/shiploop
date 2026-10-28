@@ -27,6 +27,8 @@ export type StorageEntityType =
   | 'document_version'
   /** P06-2：带来源的轻量记忆记录。 */
   | 'memory_record'
+  /** P06-3：项目获准资源配置。 */
+  | 'project_resource'
   | 'artifact'
   | 'migration'
   /** P02-2 / F-006：幂等命令回执（command_receipts，迁移 v3）。 */

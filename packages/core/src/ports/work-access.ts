@@ -5,6 +5,8 @@
  * sourceRef/environmentRefs 为可信装配注册的 UUID 引用，绝不接受路径、环境值或配置正文。
  */
 import { createHash } from 'node:crypto';
+import { WORK_ACCESS_OPERATIONS } from './work-access-operations.js';
+export { WORK_ACCESS_OPERATIONS } from './work-access-operations.js';
 import { assertTrustedPrincipal, isProjectVisible } from './authorization.js';
 import type { TrustedPrincipal } from './authorization.js';
 import type { RuntimeStrategyV1 } from './settings-schema.js';
@@ -15,7 +17,6 @@ export const WORK_ACCESS_DIGEST_DOMAIN = 'shiploop:work-access:v1';
 export const WORK_ACCESS_MAX_RESOURCES = 64;
 export const WORK_ACCESS_MAX_ENVIRONMENT_REFS = 32;
 export const WORK_ACCESS_MAX_LIFETIME_MS = 86_400_000;
-export const WORK_ACCESS_OPERATIONS = ['task.read', 'candidate.submit', 'evidence.submit', 'planning.candidate.submit'] as const;
 export const WORK_ACCESS_RESOURCE_KINDS = ['auth_plugin', 'skill', 'mcp', 'extension', 'tool'] as const;
 export const WORK_ACCESS_CAPABILITIES = [
   'resource_selection', 'tool_interception', 'mcp_stdio', 'mcp_streamable_http', 'auth_plugin',

@@ -41,6 +41,9 @@ import { createHash, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { isAbsolute } from 'node:path';
 import { createConfigurationService } from '../application/configuration-service.js';
+import { createProjectResourceService } from '../application/project-resource-service.js';
+import type { ProjectResourceService, ProjectResourceCandidateSources } from '../application/project-resource-service.js';
+import { createLocalProjectResourceCandidateSourceReader } from './fs/project-resource-candidates.js';
 import type { ConfigurationService } from '../application/configuration-service.js';
 import { createCommandReceiptsService } from '../application/command-receipts-service.js';
 import type { CommandReceiptsService } from '../application/command-receipts-service.js';
@@ -201,6 +204,7 @@ import { createSqliteQueryStore } from './sqlite/query-store.js';
 import { createSqlitePlanAccess } from './sqlite/plan-store.js';
 import { openSqliteStorageSession } from './sqlite/session.js';
 import { createSqliteStateStore } from './sqlite/state-store.js';
+import { createSqliteProjectResourceStore } from './sqlite/project-resource-store.js';
 import { createSqliteProjectProfileStore } from './sqlite/project-profile-store.js';
 import { createSqliteDocumentStore } from './sqlite/document-store.js';
 import { createDocumentService } from '../application/document-service.js';
@@ -289,6 +293,8 @@ export interface CoreApplicationOptions {
    * （DEFAULT_EXECUTION_INPUT_PREPARE_LIMITS + F-004/F-005 限制契约）。
    */
   readonly inputSourceRoots?: Readonly<Record<string, string>>;
+  /** Trusted project-scoped source directory; absent means no candidate may be imported. */
+  readonly projectResourceSources?: ProjectResourceCandidateSources;
   /** 状态库单次 busy 等待预算（毫秒）；默认沿用适配器有限预算。 */
   readonly busyTimeoutMs?: number;
   /** 状态库 busy 重试次数（含首次）；默认沿用适配器有限预算。 */
@@ -314,6 +320,8 @@ export interface CoreApplication {
   readonly gitPublicMetadataLock: GitPublicMetadataLock;
   readonly projectService: ProjectService;
   readonly configurationService: ConfigurationService;
+  /** P06-3：项目获准 Skills/MCP 资源配置的 CAS 与授权服务。 */
+  readonly projectResourceService: ProjectResourceService;
   /** P02-2 / F-006：持久命令回执窄端口与授权回执/结果读取服务。 */
   readonly commandReceiptStore: CommandReceiptStore;
   /** F-007：幂等原子命令（当前仅 metadata CAS；注册/配置后续接入）。 */
@@ -441,6 +449,7 @@ const ALLOWED_OPTION_KEYS = [
   'repositoryInspectorOptions',
   'baselineEnvironmentDirectory',
   'inputSourceRoots',
+  'projectResourceSources',
   'busyTimeoutMs',
   'busyRetryAttempts',
 ] as const;
@@ -584,6 +593,11 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     );
   }
 
+  if (object.projectResourceSources !== undefined && (
+    object.projectResourceSources === null || typeof object.projectResourceSources !== 'object'
+    || typeof (object.projectResourceSources as ProjectResourceCandidateSources).getSource !== 'function'
+  )) throw validationError(context, 'projectResourceSources', 'Trusted project source directory required');
+
   const rootCandidate = resolveRootCandidate(object, context);
   ensureDataRootDirectory(rootCandidate);
 
@@ -667,6 +681,15 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
         : (object.repositoryInspector as unknown as RepositoryInspector);
     const projectService = createProjectService({ stateStore, repositoryInspector });
     const configurationService = createConfigurationService({ stateStore, capabilityCatalog });
+    const projectResourceStore = createSqliteProjectResourceStore(
+      session,
+      nowUtcMs === undefined ? {} : { nowUtcMs },
+    );
+    const projectResourceService = createProjectResourceService({
+      store: projectResourceStore,
+      sources: (object.projectResourceSources as ProjectResourceCandidateSources | undefined) ?? { getSource: () => null },
+      sourceReader: createLocalProjectResourceCandidateSourceReader(),
+    });
     const commandReceiptStore = createSqliteCommandReceiptStore(
       session,
       nowUtcMs === undefined ? {} : { nowUtcMs },
@@ -1407,6 +1430,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       gitPublicMetadataLock,
       projectService,
       configurationService,
+      projectResourceService,
       commandReceiptStore,
       commandReceiptsService,
       commandService,

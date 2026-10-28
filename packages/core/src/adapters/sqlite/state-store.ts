@@ -423,13 +423,13 @@ export function createSqliteStateAccess(
   createProjectSettingsInTransaction(
     projectId: string,
     input: unknown,
-    options?: { readonly timestamp?: number; readonly recordCreatedEvent?: boolean },
+    options?: { readonly timestamp?: number; readonly recordCreatedEvent?: boolean; readonly resourceWrite?: boolean },
   ): ProjectSettingsRecord;
   /** F-009：项目配置 expectedRevision CAS 更新同步原语（consistency 先于 CAS 核对）。 */
   updateProjectSettingsInTransaction(
     projectId: string,
     input: unknown,
-    options?: { readonly timestamp?: number },
+    options?: { readonly timestamp?: number; readonly resourceWrite?: boolean },
   ): ProjectSettingsRecord;
   /** F-010：可见范围下推的项目列表查询（复用 P01 筛选/分页 SQL 构建）。 */
   listVisibleProjects(visibility: unknown, filter: unknown): ProjectPage;
@@ -678,6 +678,8 @@ export function createSqliteStateAccess(
   interface SettingsWritePrimitiveOptions {
     readonly timestamp?: number;
     readonly recordCreatedEvent?: boolean;
+    /** Adapter-only: bypass generic settings resource guard after resource service validation. */
+    readonly resourceWrite?: boolean;
   }
 
   /** 全局当前配置同步读取；未配置返回 null（不是错误），损坏 JSON/未知版本仍 corrupt。 */
@@ -819,6 +821,11 @@ export function createSqliteStateAccess(
     const id = validateProjectId(projectId, operation, 'project_settings');
     const entity: StorageEntityRef = { type: 'project_settings', projectId: id };
     const valid = validateCreateProjectSettingsInput(input, operation, entity);
+    if (valid.payload.projectResources !== undefined && options.resourceWrite !== true) {
+      throw new StorageError('validation', operation, 'Resource changes require the resource service', {
+        entity, details: { reason: 'resource_service_required' },
+      });
+    }
     const timestamp = options.timestamp ?? nowUtcMs();
     const context: ValidationContext = { operation, entity };
     const db = session.database;
@@ -868,6 +875,15 @@ export function createSqliteStateAccess(
     const id = validateProjectId(projectId, operation, 'project_settings');
     const entity: StorageEntityRef = { type: 'project_settings', projectId: id };
     const valid = validateUpdateProjectSettingsInput(input, operation, entity);
+    if (valid.payload.projectResources !== undefined && options.resourceWrite !== true) {
+      throw new StorageError('validation', operation, 'Resource changes require the resource service', {
+        entity, details: { reason: 'resource_service_required' },
+      });
+    }
+    // Ordinary settings replacements retain the Core-managed section. Its revision
+    // shares this exact row/CAS; it cannot be erased by an older settings client.
+    const currentResources = options.resourceWrite === true ? undefined : getProjectSettingsOrNull(id)?.payload.projectResources;
+    const payload = currentResources === undefined ? valid.payload : { ...valid.payload, projectResources: currentResources };
     const timestamp = options.timestamp ?? nowUtcMs();
     const context: ValidationContext = { operation, entity };
     const db = session.database;
@@ -880,7 +896,7 @@ export function createSqliteStateAccess(
         'UPDATE project_settings SET revision = revision + 1, updated_at = ?, schema_version = ?, payload = ? ' +
           'WHERE project_id = ? AND revision = ?',
       )
-      .run(timestamp, valid.payload.schemaVersion, JSON.stringify(valid.payload), id, valid.expectedRevision);
+      .run(timestamp, payload.schemaVersion, JSON.stringify(payload), id, valid.expectedRevision);
     if (result.changes === 0) {
       requireCasTarget(
         (db
@@ -901,7 +917,7 @@ export function createSqliteStateAccess(
       aggregateType: 'project_settings',
       aggregateId: updated.id,
       aggregateRevision: updated.revision,
-      summary: settingsChangeSummary(valid.payload),
+      summary: settingsChangeSummary(payload),
     });
     return updated;
   }
@@ -1306,6 +1322,11 @@ export function createSqliteStateAccess(
       // 两个输入都在任何 SQL 之前完成校验：第二步校验失败不会残留项目行。
       const validProject = validateCreateProjectInput(projectInput, operation);
       const validSettings = validatePutSettingsInput(settingsInput, operation, { type: 'project_settings' });
+      if (validSettings.payload.projectResources !== undefined) {
+        throw new StorageError('validation', operation, 'Resource changes require the resource service', {
+          details: { reason: 'resource_service_required' },
+        });
+      }
       const timestamp = nowUtcMs();
       const projectId = randomUUID();
       const projectContext: ValidationContext = { operation, entity: { type: 'project', id: projectId } };

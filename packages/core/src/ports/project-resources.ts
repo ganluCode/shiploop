@@ -6,12 +6,9 @@
  * 是配置 CAS/输入快照事实，WorkAccessBinding 仍是执行身份的唯一来源。
  */
 import { createHash } from 'node:crypto';
-import {
-  WORK_ACCESS_OPERATIONS,
-  type WorkAccessBinding,
-  type WorkAccessCapability,
-  type WorkAccessConfiguration,
-  type WorkAccessResource,
+import { WORK_ACCESS_OPERATIONS } from './work-access-operations.js';
+import type {
+  WorkAccessBinding, WorkAccessCapability, WorkAccessConfiguration, WorkAccessResource,
 } from './work-access.js';
 import type { WorkResourceLoadPlan } from './work-resource-selection.js';
 import { stableStringify } from './feature-plan.js';
@@ -483,6 +480,34 @@ export function assembleProjectResourceLoadManifest(value: unknown, observations
 }
 
 export const buildProjectResourceLoadManifest = assembleProjectResourceLoadManifest;
+
+/** 持久化的项目资源条目：身份/版本/摘要字段不可变，enabled/status 由 Core CAS 更新。 */
+export interface ProjectResourceRecord extends ProjectResourceDescriptor {
+  readonly candidateDigest: string;
+  readonly importedAtUtcMs: number;
+  readonly enabled: boolean;
+  readonly status: 'active' | 'revoked';
+}
+
+export interface ProjectResourceConfiguration {
+  readonly schemaVersion: typeof PROJECT_RESOURCE_SCHEMA_VERSION;
+  readonly projectId: string;
+  /** Uses the authoritative project_settings CAS revision; absent settings starts at zero. */
+  readonly revision: number;
+  readonly resources: readonly ProjectResourceRecord[];
+  readonly digest: string;
+}
+
+export function computeProjectResourceConfigurationDigest(
+  value: Pick<ProjectResourceConfiguration, 'schemaVersion' | 'projectId' | 'revision' | 'resources'>,
+): string {
+  return createHash('sha256').update(`${PROJECT_RESOURCE_DIGEST_DOMAIN}:configuration\n${stableStringify({
+    schemaVersion: value.schemaVersion,
+    projectId: value.projectId,
+    revision: value.revision,
+    resources: value.resources,
+  })}`, 'utf8').digest('hex');
+}
 
 /** Strip P06 project metadata while preserving the P04 WorkAccess identity fields. */
 export function toWorkAccessResource(resource: ProjectResourceDescriptor): WorkAccessResource {

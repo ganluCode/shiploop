@@ -17,6 +17,7 @@
  * - 不提前实现：配置合并、模型路由、Task 策略复制、凭据解析、
  *   配置历史版本表（设计明确不建）。
  */
+import { computeProjectResourceConfigurationDigest } from './project-resources.js';
 import { listStrategyEntries, validateSettingsPayload } from './settings-schema.js';
 import type { SettingsPayload } from './settings-schema.js';
 import {
@@ -362,6 +363,8 @@ export interface SettingsChangeSummary {
   readonly strategies: readonly string[];
   /** 本次 payload 实际提供的政策段名（白名单内键名）。 */
   readonly policies: readonly string[];
+  /** Core-managed resource summary only; no credential/source references or text. */
+  readonly resources?: { readonly count: number; readonly digest: string };
 }
 
 const STRATEGY_FIELD_PREFIX = 'payload.strategies.';
@@ -373,6 +376,10 @@ export function settingsChangeSummary(payload: SettingsPayload): SettingsChangeS
       entry.field.startsWith(STRATEGY_FIELD_PREFIX) ? entry.field.slice(STRATEGY_FIELD_PREFIX.length) : entry.field,
     ),
     policies: Object.keys(payload.policies ?? {}),
+    ...(payload.projectResources === undefined ? {} : { resources: {
+      count: payload.projectResources.resources.length,
+      digest: computeProjectResourceConfigurationDigest({ ...payload.projectResources, revision: 0 }),
+    } }),
   };
 }
 
