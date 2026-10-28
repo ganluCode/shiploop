@@ -6,11 +6,14 @@ import { StorageError, type StorageErrorKind } from '../ports/errors.js';
 import {
   PROJECT_RESOURCE_PUBLIC_OPERATIONS, validateProjectResourceCandidate, validateProjectResourceSelection,
   type ProjectResourceCandidate, type ProjectResourceConfiguration, type ProjectResourceSelection,
+  type ProjectResourceSummary,
 } from '../ports/project-resources.js';
 import { freezeProjectResourceValue, type ProjectResourceStore } from '../ports/project-resource-store.js';
 import {
   type ProjectResourceCandidateSource, type ProjectResourceCandidateSourceReader,
+  type ProjectResourceCandidateDiscoveryResult, type ProjectResourceCandidatePreview,
 } from '../ports/project-resource-candidates.js';
+
 import { rejectUnknownKeys, requirePlainObject, validateStableId, validationError } from '../ports/validation.js';
 import { createProjectResourceCandidateDiscovery } from './project-resource-discovery.js';
 
@@ -25,6 +28,11 @@ export interface ProjectResourceImportRequest {
   readonly candidateDigest: string;
 }
 export interface ProjectResourceService {
+  assertWriteAccess(principal: TrustedPrincipal, projectId: string): void;
+  discoverCandidates(principal: TrustedPrincipal, projectId: string, sourceIds: readonly string[]): Promise<ProjectResourceCandidateDiscoveryResult>;
+  previewCandidates(principal: TrustedPrincipal, projectId: string, sourceIds: readonly string[], selectedResourceIds?: readonly string[]): Promise<ProjectResourceCandidatePreview>;
+  prepareImportCandidate(principal: TrustedPrincipal, projectId: string, expectedRevision: number, request: unknown): Promise<ProjectResourceCandidate>;
+  prepareEnable(principal: TrustedPrincipal, projectId: string, expectedRevision: number, resourceId: string): Promise<ProjectResourceCandidate>;
   getConfiguration(principal: TrustedPrincipal, projectId: string): ProjectResourceConfiguration;
   list(principal: TrustedPrincipal, projectId: string): ProjectResourceConfiguration;
   importCandidate(principal: TrustedPrincipal, projectId: string, expectedRevision: number, request: unknown): Promise<ProjectResourceConfiguration>;
@@ -76,6 +84,82 @@ export function createProjectResourceService(deps: {
     if (configuration.revision !== expectedRevision) fail('conflict', 'stale_revision');
     return configuration;
   }
+  function candidateSources(projectId: string, sourceIds: readonly string[]): ProjectResourceCandidateSource[] {
+    if (!Array.isArray(sourceIds) || sourceIds.length === 0 || sourceIds.length > 32) fail('validation', 'invalid_source_list');
+    const ids = sourceIds.map(sourceId => validateStableId(sourceId, CONTEXT, 'sourceId'));
+    if (new Set(ids).size !== ids.length) fail('validation', 'duplicate_source');
+    return ids.map(sourceId => {
+      const source = deps.sources.getSource(projectId, sourceId);
+      if (!source || source.projectId !== projectId || source.sourceId !== sourceId) fail('not_found', 'unknown_source');
+      return { sourceId: source.sourceId, path: source.path, ...(source.expectedDigest === undefined ? {} : { expectedDigest: source.expectedDigest }) };
+    });
+  }
+
+  function existingSummaries(configuration: ProjectResourceConfiguration): ProjectResourceSummary[] {
+    return configuration.resources.map(resource => ({
+      id: resource.id,
+      projectId: resource.projectId,
+      kind: resource.kind,
+      name: resource.name,
+      sourceRef: resource.sourceRef,
+      sourceRevision: resource.sourceRevision,
+      version: resource.version,
+      contentDigest: resource.contentDigest,
+      transport: resource.transport,
+      capabilities: [...resource.capabilities],
+      credentialConfigured: resource.credentialRef !== null,
+      required: resource.required,
+      onUnavailable: resource.onUnavailable,
+    }));
+  }
+
+  async function discoverCandidates(principal: TrustedPrincipal, projectId: string, sourceIds: readonly string[]) {
+    const id = validateStableId(projectId, CONTEXT, 'projectId');
+    authorize(principal, id, false);
+    return discovery.discover({ projectId: id, sources: candidateSources(id, sourceIds) });
+  }
+
+  async function previewCandidates(principal: TrustedPrincipal, projectId: string, sourceIds: readonly string[], selectedResourceIds: readonly string[] = []) {
+    const id = validateStableId(projectId, CONTEXT, 'projectId');
+    authorize(principal, id, false);
+    const configuration = read(id);
+    return discovery.preview({
+      projectId: id,
+      sources: candidateSources(id, sourceIds),
+      selectedResourceIds,
+      existingResources: existingSummaries(configuration),
+    });
+  }
+
+  function assertWriteAccess(principal: TrustedPrincipal, projectId: string) {
+    const id = validateStableId(projectId, CONTEXT, 'projectId');
+    authorize(principal, id, true);
+  }
+
+  async function prepareImportCandidate(principal: TrustedPrincipal, projectId: string, expectedRevision: number, value: unknown) {
+    const id = validateStableId(projectId, CONTEXT, 'projectId');
+    check(principal, id, expectedRevision);
+    return verify(principal, id, expectedRevision, request(value));
+  }
+
+  async function prepareEnable(principal: TrustedPrincipal, projectId: string, expectedRevision: number, resourceId: string) {
+    const id = validateStableId(projectId, CONTEXT, 'projectId');
+    const configuration = check(principal, id, expectedRevision);
+    const rid = validateStableId(resourceId, CONTEXT, 'resourceId');
+    const resource = configuration.resources.find(item => item.id === rid);
+    if (!resource) fail('not_found', 'resource_not_found');
+    if (resource.status === 'revoked') fail('conflict', 'resource_revoked');
+    const found = await resolve(id, resource.sourceRef, rid);
+    if (found.candidate.digest !== resource.candidateDigest) fail('conflict', 'resource_identity_conflict');
+    await verify(principal, id, expectedRevision, {
+      sourceId: resource.sourceRef,
+      sourceDigest: found.sourceDigest,
+      candidateId: rid,
+      candidateDigest: resource.candidateDigest,
+    });
+    return found.candidate;
+  }
+
   function getConfiguration(principal: TrustedPrincipal, projectId: string) {
     const id = validateStableId(projectId, CONTEXT, 'projectId');
     authorize(principal, id, false);
@@ -145,6 +229,11 @@ export function createProjectResourceService(deps: {
   }
 
   return {
+    assertWriteAccess,
+    discoverCandidates,
+    previewCandidates,
+    prepareImportCandidate,
+    prepareEnable,
     getConfiguration, list: getConfiguration, importCandidate, select: importCandidate,
     enable: (p, id, revision, rid) => changeEnabled(p, id, revision, rid, true),
     disable: (p, id, revision, rid) => changeEnabled(p, id, revision, rid, false),

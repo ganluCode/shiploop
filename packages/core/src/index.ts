@@ -152,6 +152,7 @@ export * from './ports/authorization.js';
 export * from './ports/work-access.js';
 export * from './ports/project-resources.js';
 export * from './ports/project-resource-candidates.js';
+export * from './ports/project-resource-commands.js';
 export * from './application/project-resource-discovery.js';
 export * from './ports/project-resource-store.js';
 export * from './application/project-resource-service.js';

@@ -131,6 +131,10 @@ export const APPLICATION_COMMAND_CAPABILITIES = [
   // 通道；HostClient/CLI 入口属 F-012）。
   'workspace.discard',
   'workspace.discard.preview',
+  'project.resource.import',
+  'project.resource.enable',
+  'project.resource.disable',
+  'project.resource.revoke',
 ] as const;
 
 /** P02-2 §11.3：Host 实际接线的应用查询（含回执/结果读取与快照；P02-3 / F-006 新增静态接入两项；F-014 新增基线分页/详情/证据正文三项；P03-1 / F-009 新增计划层级/详情/DAG 六项；P03-2 / F-007 新增审批决策查询一项；P03-4 / F-008 新增调度诊断/Attempt 审计三项）。 */
@@ -222,6 +226,9 @@ export const APPLICATION_QUERY_CAPABILITIES = [
   'planning.contexts.list',
   'planning.context.get',
   'planning.candidate.get',
+  'project.resources.list',
+  'project.resources.candidates',
+  'project.resources.preview',
 ] as const;
 
 /**

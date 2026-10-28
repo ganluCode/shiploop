@@ -127,6 +127,9 @@ import {
 } from './task-strategy-update.js';
 import type { TaskStrategyEditGuards } from './task-strategy-update.js';
 import type { ProjectProfileService } from './project-profile-service.js';
+import type { ProjectResourceService } from './project-resource-service.js';
+import type { ProjectResourceStore } from '../ports/project-resource-store.js';
+import type { ProjectResourceCandidate } from '../ports/project-resources.js';
 
 import { createBatchDeliveryCommandHandler, type BatchDeliveryDependencies } from './batch-delivery-commands.js';
 export interface DeliveryActivity {
@@ -239,8 +242,13 @@ export interface CommandServiceOptions {
    * composition 根；受控测试可直接注入窄端口实现。
    */
   readonly taskVerificationContinue?: TaskVerificationContinueDeps;
-  readonly batchDelivery?: BatchDeliveryDependencies;
   readonly featureDelivery?: FeatureDeliveryDependencies;
+  readonly batchDelivery?: BatchDeliveryDependencies;
+  /** P06-3 / F-005：资源命令事务外候选核验 + 同事务配置 CAS。 */
+  readonly projectResources?: {
+    readonly service: ProjectResourceService;
+    readonly store: ProjectResourceStore;
+  };
   readonly nowUtcMs?: () => number;
 }
 
@@ -316,6 +324,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
   const executionDispatchSignal = options.executionDispatchSignal;
   const executionStopControl = options.executionStopControl;
   const workspaceDiscard = options.workspaceDiscard;
+  const projectResources = options.projectResources;
   const taskVerificationContinue = options.taskVerificationContinue;
   const nowUtcMs = options.nowUtcMs ?? Date.now;
   const delivery = options.featureDelivery === undefined ? undefined : createFeatureDeliveryCommandHandler({
@@ -752,6 +761,10 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
         if (envelope.operation === TASK_VERIFICATION_CONTINUE_OPERATION && taskVerificationContinue === undefined) {
           throw new PublicError('unsupported', operation);
         }
+        if (envelope.operation === 'project.resource.import' || envelope.operation === 'project.resource.enable'
+          || envelope.operation === 'project.resource.disable' || envelope.operation === 'project.resource.revoke') {
+          if (projectResources === undefined) throw new PublicError('unsupported', operation);
+        }
         if (
           envelope.operation !== 'project.metadata.update' &&
           envelope.operation !== 'project.profile.confirm' &&
@@ -790,6 +803,10 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           envelope.operation !== WORKSPACE_DISCARD_OPERATION &&
           envelope.operation !== WORKSPACE_DISCARD_PREVIEW_OPERATION &&
           envelope.operation !== TASK_VERIFICATION_CONTINUE_OPERATION &&
+          envelope.operation !== 'project.resource.import' &&
+          envelope.operation !== 'project.resource.enable' &&
+          envelope.operation !== 'project.resource.disable' &&
+          envelope.operation !== 'project.resource.revoke' &&
           !isSettingsEnvelope(envelope)
         ) {
           throw new PublicError('unsupported', operation);
@@ -819,6 +836,23 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
         }
 
         let profileMutationResult: import('../ports/project-profile-store.js').PersistedProjectProfile | undefined;
+        let projectResourceCandidate: ProjectResourceCandidate | undefined;
+        if (existing === undefined && projectResources !== undefined
+          && (envelope.operation === 'project.resource.import' || envelope.operation === 'project.resource.enable'
+            || envelope.operation === 'project.resource.disable' || envelope.operation === 'project.resource.revoke')) {
+          const projectId = envelope.scope.projectId;
+          if (envelope.operation === 'project.resource.import') {
+            projectResourceCandidate = await projectResources.service.prepareImportCandidate(
+              principal, projectId, envelope.expectedRevision, envelope.payload,
+            );
+          } else if (envelope.operation === 'project.resource.enable') {
+            projectResourceCandidate = await projectResources.service.prepareEnable(
+              principal, projectId, envelope.expectedRevision, (envelope.payload as { readonly resourceId: string }).resourceId,
+            );
+          } else {
+            projectResources.service.assertWriteAccess(principal, projectId);
+          }
+        }
         if ((envelope.operation === 'project.profile.confirm' || envelope.operation === 'project.profile.modify' || envelope.operation === 'project.profile.reject') && existing === undefined) {
           const action = envelope.operation === 'project.profile.confirm' ? 'confirm' : envelope.operation === 'project.profile.modify' ? 'modify' : 'reject';
           profileMutationResult = projectProfileService![action](principal, {
@@ -1013,6 +1047,47 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
           if (original !== undefined) return original;
           const now = nowUtcMs();
           checkTiming(envelope, now);
+          if (projectResources !== undefined && (envelope.operation === 'project.resource.import'
+            || envelope.operation === 'project.resource.enable' || envelope.operation === 'project.resource.disable'
+            || envelope.operation === 'project.resource.revoke')) {
+            const identity: ReceiptIdentity = {
+              principalId: principal.principalId,
+              commandId: envelope.commandId,
+              operation: envelope.operation,
+              scope: envelope.scope,
+              requestDigest: digest,
+              issuedAt: envelope.issuedAt,
+              completedAt: new Date(now).toISOString(),
+            };
+            try {
+              const projectId = envelope.scope.projectId;
+              const configuration = envelope.operation === 'project.resource.import'
+                ? projectResources.store.importCandidateInTransaction(projectId, envelope.expectedRevision, projectResourceCandidate!)
+                : envelope.operation === 'project.resource.enable'
+                  ? projectResources.store.setEnabledInTransaction(projectId, envelope.expectedRevision, (envelope.payload as { readonly resourceId: string }).resourceId, true)
+                  : envelope.operation === 'project.resource.disable'
+                    ? projectResources.store.setEnabledInTransaction(projectId, envelope.expectedRevision, (envelope.payload as { readonly resourceId: string }).resourceId, false)
+                    : projectResources.store.revokeInTransaction(projectId, envelope.expectedRevision, (envelope.payload as { readonly resourceId: string }).resourceId);
+              const receipt = createCompletedReceipt({
+                ...identity,
+                resultRef: createResultRef(randomBytes(32)),
+                // Configuration acceptance is deliberately separate from Runtime loading/execution.
+                result: {
+                  configuration,
+                  resourceLoaded: false,
+                  runtimeExecuted: false,
+                  appliesTo: 'new_attempts_only',
+                },
+              });
+              transaction.saveReceipt(receipt);
+              return receipt;
+            } catch (error) {
+              if (!(isStorageError(error) || error instanceof PublicError)) throw error;
+              const receipt = createRejectedReceipt({ ...identity, error: mapToPublicError(error, { operation }) });
+              transaction.saveReceipt(receipt);
+              return receipt;
+            }
+          }
           if (envelope.operation === 'project.profile.confirm' || envelope.operation === 'project.profile.modify' || envelope.operation === 'project.profile.reject') {
             if (profileMutationResult === undefined) throw new TypeError('Profile 命令缺少事务外变更结果');
             const receipt = createCompletedReceipt({

@@ -47,6 +47,11 @@ import { validateCreateProjectInput, validateUpdateProjectInput } from './state-
 import { validateExecutionStopManualPayload } from './execution-stop-manual.js';
 import type { ValidatedExecutionStopManualPayload } from './execution-stop-manual.js';
 import { validateStableId } from './validation.js';
+import {
+  PROJECT_RESOURCE_COMMAND_OPERATIONS,
+  validateProjectResourceCommandPayload,
+  type ProjectResourceCommandOperation,
+} from './project-resource-commands.js';
 
 /* ------------------------------------------------------------------ *
  * 版本与路由级操作身份
@@ -253,6 +258,8 @@ export const COMMAND_OPERATIONS = [
   // completed 回执携带预览；复用 workspace.discard 能力位，信封层只要求
   // JSON 对象 payload，{featureId} 深校验在应用层）。
   'workspace.discard.preview',
+  // P06-3 / F-005：项目资源只允许经专用命令边界进行 CAS 变更；不复用 settings 写入。
+  ...PROJECT_RESOURCE_COMMAND_OPERATIONS,
 ] as const;
 
 export type AppOperation = (typeof COMMAND_OPERATIONS)[number];
@@ -439,6 +446,10 @@ export const COMMAND_OPERATION_SPECS: Readonly<Record<AppOperation, CommandOpera
       mutation: 'create',
       capability: 'workspace.discard',
     },
+    'project.resource.import': { scopeKind: 'project', mutation: 'update', capability: 'settings.project.write' },
+    'project.resource.enable': { scopeKind: 'project', mutation: 'update', capability: 'settings.project.write' },
+    'project.resource.disable': { scopeKind: 'project', mutation: 'update', capability: 'settings.project.write' },
+    'project.resource.revoke': { scopeKind: 'project', mutation: 'update', capability: 'settings.project.write' },
   });
 
 /* ------------------------------------------------------------------ *
@@ -1221,6 +1232,12 @@ export type ValidatedCommandEnvelope =
       readonly scope: { readonly kind: 'project'; readonly projectId: string };
       readonly expectedRevision: null;
       readonly payload: Readonly<Record<string, unknown>>;
+    })
+  | (EnvelopeCommon & {
+      readonly operation: ProjectResourceCommandOperation;
+      readonly scope: { readonly kind: 'project'; readonly projectId: string };
+      readonly expectedRevision: number;
+      readonly payload: import('./project-resource-commands.js').ProjectResourceCommandPayload;
     });
 
 const ENVELOPE_KEYS = [
@@ -2047,8 +2064,9 @@ export function validateCommandEnvelopeFields(
       fail(operation, 'invalid_input', 'expectedRevision', '更新类命令必须提供 ≥1 的整数 CAS 期望修订号');
     }
     const revision = object.expectedRevision;
-    if (typeof revision !== 'number' || !Number.isInteger(revision) || revision < 1) {
-      fail(operation, 'invalid_input', 'expectedRevision', '必须是 ≥1 的整数（CAS 期望修订号）', revision);
+    if (typeof revision !== 'number' || !Number.isInteger(revision)
+      || revision < (PROJECT_RESOURCE_COMMAND_OPERATIONS.includes(operationName as ProjectResourceCommandOperation) ? 0 : 1)) {
+      fail(operation, 'invalid_input', 'expectedRevision', '必须是非负整数（CAS 期望修订号）', revision);
     }
     expectedRevision = revision;
   } else if (hasRevision && object.expectedRevision !== undefined) {
@@ -2436,6 +2454,17 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
       expectedRevision: null,
       payload: normalizeBaselinePayload(object.payload) as Record<string, unknown>,
     };
+  }
+  if (operation === 'project.resource.import' || operation === 'project.resource.enable'
+    || operation === 'project.resource.disable' || operation === 'project.resource.revoke') {
+    if (scope.kind !== 'project') fail(operation, 'invalid_input', 'scope.kind', 'scope mismatch');
+    return {
+      ...base,
+      operation,
+      scope,
+      expectedRevision: expectedRevision as number,
+      payload: validateProjectResourceCommandPayload(operation as ProjectResourceCommandOperation, object.payload),
+    } as ValidatedCommandEnvelope;
   }
   // settings.project.create / settings.project.update
   if (scope.kind !== 'project') {

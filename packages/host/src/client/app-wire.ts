@@ -202,6 +202,8 @@ import type {
 import { HostProtocolError, isPlainObject } from '../contract/index.js';
 import type { HostOperation } from '../contract/index.js';
 import type { ProjectProfileQueryResult, ProjectProfileMatchQueryResult } from 'shiploop-core/protocol';
+import type { ProjectResourceConfiguration, ProjectResourceCandidateDiscoveryResult, ProjectResourceCandidatePreview } from 'shiploop-core';
+
 
 
 /** P03-3 / F-012：执行预览/预算查询结果形状经公共面再导出（供 CLI 纯视图层使用）。 */
@@ -364,7 +366,10 @@ export type AppQueryOperation =
   // 同源；候选正文经受管内容接口核验读取）。
   | 'planning.contexts.list'
   | 'planning.context.get'
-  | 'planning.candidate.get';
+  | 'planning.candidate.get'
+  | 'project.resources.list'
+  | 'project.resources.candidates'
+  | 'project.resources.preview';
 
 function validateProjectProfileQueryWire(operation: HostOperation, body: unknown): ProjectProfileQueryResult {
   const object = requirePlain(operation, body);
@@ -6801,6 +6806,29 @@ export function validatePlanningCandidateDetailResultWire(
   return object as unknown as PlanningCandidateDetailResult;
 }
 
+function validateProjectResourceQueryWire(operation: HostOperation, body: unknown): unknown {
+  const object = requirePlain(operation, body);
+  if (object.schemaVersion !== 1 || typeof object.projectId !== 'string') malformed(operation, 'project_resource_identity_invalid');
+  if (operation === 'project.resources.list') {
+    exactKeys(operation, object, ['schemaVersion', 'projectId', 'revision', 'resources', 'digest']);
+    if (typeof object.revision !== 'number' || !Number.isSafeInteger(object.revision) || object.revision < 0
+      || !Array.isArray(object.resources) || typeof object.digest !== 'string') malformed(operation, 'project_resource_configuration_invalid');
+    return object;
+  }
+  exactKeys(operation, object, operation === 'project.resources.preview'
+    ? ['schemaVersion', 'projectId', 'entries', 'candidates', 'rejected', 'configurationChanged']
+    : ['schemaVersion', 'projectId', 'sources', 'candidates', 'rejected', 'configurationChanged']);
+  if (!Array.isArray(object.candidates) || !Array.isArray(object.rejected) || object.configurationChanged !== false) {
+    malformed(operation, 'project_resource_candidates_invalid');
+  }
+  if (operation === 'project.resources.preview' && !Array.isArray(object.entries)) malformed(operation, 'project_resource_preview_invalid');
+  return object;
+}
+
+/**
+ * 按 §7.2/§8 冻结形状校验查询响应。schema 版本不符 → unsupported_schema_version；
+ * 形状/字段/scope 不符 → response_malformed。不修改输入对象以外的任何状态。
+ */
 export function validateAppQueryResponse(
   operation: 'projects.profile.get',
   body: unknown,
@@ -6956,6 +6984,10 @@ export function validateAppQueryResponse(operation: 'knowledge.search', body: un
 export function validateAppQueryResponse(operation: 'knowledge.read', body: unknown): KnowledgeReadResult;
 export function validateAppQueryResponse(operation: 'memory.search', body: unknown): MemorySearchResultSet;
 export function validateAppQueryResponse(operation: 'features.report.get', body: unknown, expectation?: SnapshotExpectation): FeatureExecutionReport;
+export function validateAppQueryResponse(operation: 'project.resources.list', body: unknown, expectation?: SnapshotExpectation): ProjectResourceConfiguration;
+export function validateAppQueryResponse(operation: 'project.resources.candidates', body: unknown, expectation?: SnapshotExpectation): ProjectResourceCandidateDiscoveryResult;
+export function validateAppQueryResponse(operation: 'project.resources.preview', body: unknown, expectation?: SnapshotExpectation): ProjectResourceCandidatePreview;
+
 export function validateAppQueryResponse(
   operation: 'features.delivery.get',
   body: unknown,
@@ -7176,6 +7208,10 @@ export function validateAppQueryResponse(
       return validatePlanningContextDetailResultWire(body, operation);
     case 'planning.candidate.get':
       return validatePlanningCandidateDetailResultWire(body, operation);
+    case 'project.resources.list':
+    case 'project.resources.candidates':
+    case 'project.resources.preview':
+      return validateProjectResourceQueryWire(operation, body);
     // P03-7 / F-013：Task 证据/人审/返工链查询响应分发（同一冻结字段集纪律）。
     case 'execution.task.verification.get':
       return validateTaskVerificationResultWire(body, operation);

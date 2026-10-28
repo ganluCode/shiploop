@@ -1245,6 +1245,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       featureDelivery,
       repositoryInspector,
       projectProfileService,
+      projectResources: { service: projectResourceService, store: projectResourceStore },
       // F-009：配置命令的能力目录复检复用同一可信装配目录。
       capabilityCatalog,
       baselineService,

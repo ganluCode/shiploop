@@ -69,7 +69,10 @@ export const RESULTS_ROUTE_PREFIX = '/v1/results/';
 export const PROJECTS_ROUTE = '/v1/projects';
 export const PROJECT_LABEL_COUNTS_ROUTE = '/v1/projects/label-counts';
 export const PROJECT_PROFILE_ROUTE_SUFFIX = '/profile';
-export const PROJECT_PROFILE_MATCH_ROUTE_SUFFIX = '/profile/match';
+export const PROJECT_RESOURCE_ROUTE_SUFFIX = 'resources';
+export const PROJECT_RESOURCE_CANDIDATES_ROUTE_SUFFIX = 'resources/candidates';
+export const PROJECT_RESOURCE_PREVIEW_ROUTE_SUFFIX = 'resources/preview';
+
 /** P02-3 / F-006 §3.2/§7.2：注册前只读仓库检查（字面量优先于 :projectId 形态）。 */
 export const PROJECTS_INSPECT_ROUTE = '/v1/projects/inspect';
 export const SETTINGS_GLOBAL_ROUTE = '/v1/settings/global';

@@ -512,6 +512,7 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
         commandService: locked.writer.commandService,
         queryService: locked.writer.queryService,
         commandReceiptsService: locked.writer.commandReceiptsService,
+        projectResourceService: locked.writer.projectResourceService,
         // P02-3 / F-006（§7.2/§7.3）：静态接入用例只经 Core 窄端口接线。
         onboardingService: locked.writer.onboardingService,
         projectProfileService: locked.writer.projectProfileService,

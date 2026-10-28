@@ -457,6 +457,14 @@ function envelope(
         expectedRevision: null,
         payload: { featureId: '0f0d9c36-765a-4b62-a6b9-38a5ff4f4bf1' },
       } as ValidatedCommandEnvelope;
+    case 'project.resource.import':
+      return { ...base, operation, scope: { kind: 'project', projectId: PROJECT_A }, expectedRevision: expectedRevision ?? 1,
+        payload: { sourceId: 'source-1', sourceDigest: '0'.repeat(64), candidateId: 'candidate-1', candidateDigest: '0'.repeat(64) } };
+    case 'project.resource.enable':
+    case 'project.resource.disable':
+    case 'project.resource.revoke':
+      return { ...base, operation, scope: { kind: 'project', projectId: PROJECT_A }, expectedRevision: expectedRevision ?? 1,
+        payload: { resourceId: 'resource-1' } };
   }
 }
 
@@ -502,6 +510,10 @@ const COMMANDS_MATRIX = [
   { operation: 'workspace.discard', scope: { kind: 'project', projectId: PROJECT_A }, revision: null, capability: 'workspace.discard' },
   // P03-5 / F-011：人工丢弃预览（同一能力位；创建类，payload 深校验在应用层）。
   { operation: 'workspace.discard.preview', scope: { kind: 'project', projectId: PROJECT_A }, revision: null, capability: 'workspace.discard' },
+  { operation: 'project.resource.import', scope: { kind: 'project', projectId: PROJECT_A }, revision: 0, capability: 'settings.project.write' },
+  { operation: 'project.resource.enable', scope: { kind: 'project', projectId: PROJECT_A }, revision: 1, capability: 'settings.project.write' },
+  { operation: 'project.resource.disable', scope: { kind: 'project', projectId: PROJECT_A }, revision: 1, capability: 'settings.project.write' },
+  { operation: 'project.resource.revoke', scope: { kind: 'project', projectId: PROJECT_A }, revision: 1, capability: 'settings.project.write' },
 ] as const;
 
 describe('F-005 TrustedPrincipal 产品构造与可信装配形状断言', () => {

@@ -115,6 +115,9 @@ export const APP_OPERATIONS = [
   'planning.contexts.list',
   'planning.context.get',
   'planning.candidate.get',
+  'project.resources.list',
+  'project.resources.candidates',
+  'project.resources.preview',
 ] as const;
 
 export const HOST_OPERATIONS = [

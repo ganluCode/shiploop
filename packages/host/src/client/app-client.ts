@@ -28,6 +28,8 @@
  */
 import { createHash, randomUUID } from 'node:crypto';
 import type { ProjectProfileQueryResult, ProjectProfileMatchQueryResult, KnowledgeSearchInput, KnowledgeReadInput, MemorySearchInput, KnowledgeSearchResultSet, KnowledgeReadResult, MemorySearchResultSet } from 'shiploop-core/protocol';
+import type { ProjectResourceConfiguration, ProjectResourceCandidateDiscoveryResult, ProjectResourceCandidatePreview } from 'shiploop-core';
+
 import { validateKnowledgeSearchInput, validateKnowledgeReadInput, validateMemorySearchInput, MAX_KNOWLEDGE_SEARCH_RESPONSE_BYTES, MAX_KNOWLEDGE_READ_RESPONSE_BYTES } from 'shiploop-core/protocol';
 
 import { request as httpRequest, type ClientRequest, type IncomingMessage } from 'node:http';
@@ -611,6 +613,23 @@ export interface BudgetRevisionListInput {
  * P03-5 / F-012 工作区状态查询与人工丢弃预览/确认输入类型
  * ------------------------------------------------------------------ */
 
+export interface ProjectResourceMutationInput {
+  readonly projectId: string;
+  readonly expectedRevision: number;
+  readonly commandId?: string;
+}
+export interface ImportProjectResourceInput extends ProjectResourceMutationInput {
+  readonly sourceId: string;
+  readonly sourceDigest: string;
+  readonly candidateId: string;
+  readonly candidateDigest: string;
+}
+export interface ProjectResourceTargetInput extends ProjectResourceMutationInput {
+  readonly resourceId: string;
+}
+
+
+
 /** workspaces.list 分页/筛选输入（limit 1..500；cursor 为 wscur_v1_ 不透明游标）。 */
 export interface ListWorkspacesInput {
   readonly featureId?: string;
@@ -987,6 +1006,13 @@ export interface HostClientApplication {
     projectId: string,
     input?: ResourceListInput,
   ): Promise<ResourceListResult>;
+  listProjectResources(projectId: string): Promise<ProjectResourceConfiguration>;
+  discoverProjectResourceCandidates(projectId: string, sourceIds: readonly string[]): Promise<ProjectResourceCandidateDiscoveryResult>;
+  previewProjectResourceCandidates(projectId: string, sourceIds: readonly string[], selectedResourceIds?: readonly string[]): Promise<ProjectResourceCandidatePreview>;
+  importProjectResource(input: ImportProjectResourceInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  enableProjectResource(input: ProjectResourceTargetInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  disableProjectResource(input: ProjectResourceTargetInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
+  revokeProjectResource(input: ProjectResourceTargetInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
   /* ------------------------------------------------------------ *
    * P03-7 / F-013 Task 机器证据/人审事项/有限返工链只读查询
    * ------------------------------------------------------------ */
@@ -2584,6 +2610,21 @@ export function createHostClientApplication(context: AppClientContext): HostClie
     }
   }
 
+  async function submitProjectResourceTarget(
+    operation: 'project.resource.enable' | 'project.resource.disable' | 'project.resource.revoke',
+    input: ProjectResourceTargetInput,
+    options?: SubmitCommandOptions,
+  ): Promise<CommandReceipt> {
+    const object = rejectUnknownInputKeys('commands.submit', input, ['projectId', 'expectedRevision', 'resourceId', 'commandId']);
+    const projectId = requireProjectId('commands.submit', object.projectId as string);
+    return submitCommand({
+      ...optionalCommandIdInput('commands.submit', object.commandId), operation,
+      scope: { kind: 'project', projectId },
+      expectedRevision: requireExpectedRevisionInput('commands.submit', object.expectedRevision),
+      payload: { resourceId: requireStableIdInput('commands.submit', object.resourceId, 'resourceId') },
+    }, options);
+  }
+
   function knowledgePath(projectId: string, route: string, input: object) {
     const query = new URLSearchParams();
     for (const [key, value] of Object.entries(input)) if (value !== undefined) query.set(key, String(value));
@@ -4113,9 +4154,57 @@ export function createHostClientApplication(context: AppClientContext): HostClie
       return result;
     },
 
-    /* ------------------------------------------------------------ *
-     * P03-7 / F-013 Task 机器证据/人审事项/有限返工链只读查询
-     * ------------------------------------------------------------ */
+    async listProjectResources(projectId: string): Promise<ProjectResourceConfiguration> {
+      const op = 'project.resources.list';
+      context.assertOpen(op);
+      const id = requireProjectId(op, projectId);
+      return validateAppQueryResponse(op, await getJson(op, `${PROJECTS_ROUTE}/${id}/resources`));
+    },
+
+    async discoverProjectResourceCandidates(projectId: string, sourceIds: readonly string[]): Promise<ProjectResourceCandidateDiscoveryResult> {
+      const op = 'project.resources.candidates';
+      context.assertOpen(op);
+      const id = requireProjectId(op, projectId);
+      if (!Array.isArray(sourceIds) || sourceIds.length === 0) throw invalidInput(op, 'invalid_source_ids');
+      const query = sourceIds.map(sourceId => `sourceId=${encodeURIComponent(requireStableIdInput(op, sourceId, 'sourceId'))}`).join('&');
+      return validateAppQueryResponse(op, await getJson(op, `${PROJECTS_ROUTE}/${id}/resources/candidates?${query}`));
+    },
+
+    async previewProjectResourceCandidates(projectId: string, sourceIds: readonly string[], selectedResourceIds: readonly string[] = []): Promise<ProjectResourceCandidatePreview> {
+      const op = 'project.resources.preview';
+      context.assertOpen(op);
+      const id = requireProjectId(op, projectId);
+      if (!Array.isArray(sourceIds) || sourceIds.length === 0) throw invalidInput(op, 'invalid_source_ids');
+      const params = [
+        ...sourceIds.map(sourceId => `sourceId=${encodeURIComponent(requireStableIdInput(op, sourceId, 'sourceId'))}`),
+        ...selectedResourceIds.map(resourceId => `selectedResourceId=${encodeURIComponent(requireStableIdInput(op, resourceId, 'selectedResourceId'))}`),
+      ].join('&');
+      return validateAppQueryResponse(op, await getJson(op, `${PROJECTS_ROUTE}/${id}/resources/preview?${params}`));
+    },
+
+    async importProjectResource(input: ImportProjectResourceInput, options?: SubmitCommandOptions): Promise<CommandReceipt> {
+      const object = rejectUnknownInputKeys('commands.submit', input, ['projectId', 'expectedRevision', 'sourceId', 'sourceDigest', 'candidateId', 'candidateDigest', 'commandId']);
+      const projectId = requireProjectId('commands.submit', object.projectId as string);
+      const payload = {
+        sourceId: requireStableIdInput('commands.submit', object.sourceId, 'sourceId'),
+        sourceDigest: object.sourceDigest,
+        candidateId: requireStableIdInput('commands.submit', object.candidateId, 'candidateId'),
+        candidateDigest: object.candidateDigest,
+      };
+      return submitCommand({ ...optionalCommandIdInput('commands.submit', object.commandId), operation: 'project.resource.import',
+        scope: { kind: 'project', projectId }, expectedRevision: requireExpectedRevisionInput('commands.submit', object.expectedRevision), payload }, options);
+    },
+
+    async enableProjectResource(input: ProjectResourceTargetInput, options?: SubmitCommandOptions): Promise<CommandReceipt> {
+      return submitProjectResourceTarget('project.resource.enable', input, options);
+    },
+    async disableProjectResource(input: ProjectResourceTargetInput, options?: SubmitCommandOptions): Promise<CommandReceipt> {
+      return submitProjectResourceTarget('project.resource.disable', input, options);
+    },
+    async revokeProjectResource(input: ProjectResourceTargetInput, options?: SubmitCommandOptions): Promise<CommandReceipt> {
+      return submitProjectResourceTarget('project.resource.revoke', input, options);
+    },
+
 
     async getTaskVerification(projectId, taskId) {
       const op = 'execution.task.verification.get';

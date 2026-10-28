@@ -88,6 +88,9 @@ import {
   PLANNING_CANDIDATE_ROUTE_SUFFIX,
   PROJECTS_INSPECT_ROUTE,
   PROJECTS_ROUTE,
+  PROJECT_RESOURCE_CANDIDATES_ROUTE_SUFFIX,
+  PROJECT_RESOURCE_PREVIEW_ROUTE_SUFFIX,
+  PROJECT_RESOURCE_ROUTE_SUFFIX,
   PROJECT_LABEL_COUNTS_ROUTE,
   RECEIPTS_ROUTE_PREFIX,
   RESULTS_ROUTE_PREFIX,
@@ -205,7 +208,10 @@ export type ApplicationOperation =
   // 同源；候选正文经受管内容接口核验读取）。
   | 'planning.contexts.list'
   | 'planning.context.get'
-  | 'planning.candidate.get';
+  | 'planning.candidate.get'
+  | 'project.resources.list'
+  | 'project.resources.candidates'
+  | 'project.resources.preview';
 
 /** 已解析的应用路由（path 形态匹配；路径参数为未解码原始片段）。 */
 export interface ResolvedAppRoute {
@@ -245,6 +251,7 @@ export interface HostApplicationContext {
    * planning.candidate.get，必须真实接线）。
    */
   readonly planningQueryService: Pick<PlanningQueryService, 'listPlanningContexts' | 'getPlanningContext' | 'getPlanningCandidate'>;
+  readonly projectResourceService?: Pick<import('shiploop-core').ProjectResourceService, 'getConfiguration' | 'discoverCandidates' | 'previewCandidates'>;
   /**
    * P02-3 / F-014（§5.3/§13）：baseline.run 经既有 POST /v1/commands 路由提交
    * 到执行编排（accepted 后异步启动检查）；其余命令仍走 commandService。
@@ -686,6 +693,12 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
           method: 'GET',
           pathParam: { name: 'projectId', value: projectId },
         };
+      case PROJECT_RESOURCE_ROUTE_SUFFIX:
+        return { operation: 'project.resources.list', method: 'GET', pathParam: { name: 'projectId', value: projectId } };
+      case PROJECT_RESOURCE_CANDIDATES_ROUTE_SUFFIX:
+        return { operation: 'project.resources.candidates', method: 'GET', pathParam: { name: 'projectId', value: projectId } };
+      case PROJECT_RESOURCE_PREVIEW_ROUTE_SUFFIX:
+        return { operation: 'project.resources.preview', method: 'GET', pathParam: { name: 'projectId', value: projectId } };
       default:
         return undefined;
     }
@@ -847,6 +860,9 @@ const QUERY_SPECS: Readonly<Partial<Record<ApplicationOperation, QuerySpec>>> = 
   'events.subscribe': Object.freeze({ allowed: ['scope', 'projectId', 'cursor'], repeatable: [] }),
   // P02-3 / F-014（§7.4）：baselines.list 分页参数（取值规则由 Core 复核）。
   'baselines.list': Object.freeze({ allowed: ['limit', 'cursor'], repeatable: [] }),
+  'project.resources.list': Object.freeze({ allowed: [], repeatable: [] }),
+  'project.resources.candidates': Object.freeze({ allowed: ['sourceId'], repeatable: ['sourceId'] }),
+  'project.resources.preview': Object.freeze({ allowed: ['sourceId', 'selectedResourceId'], repeatable: ['sourceId', 'selectedResourceId'] }),
   // P03-1 / F-009 §6.6：计划层级列表查询参数（父级身份 + 分页；取值规则由
   // Core validatePlanListFilter 单一权威复核）。
   'phases.graph.get': Object.freeze({ allowed: ['projectId', 'limit', 'cursor'], repeatable: [] }),
@@ -1289,6 +1305,23 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
         pathParam?.value,
         Object.keys(query).length === 0 ? undefined : query,
       );
+      break;
+    }
+    case 'project.resources.list':
+      if (app.projectResourceService === undefined) reject(501, 'unsupported', operation, '项目资源查询未装配');
+      result = app.projectResourceService.getConfiguration(app.principal, pathParam?.value as string);
+      break;
+    case 'project.resources.candidates': {
+      if (app.projectResourceService === undefined) reject(501, 'unsupported', operation, '项目资源查询未装配');
+      const sourceIds = params.getAll('sourceId');
+      result = await app.projectResourceService.discoverCandidates(app.principal, pathParam?.value as string, sourceIds);
+      break;
+    }
+    case 'project.resources.preview': {
+      if (app.projectResourceService === undefined) reject(501, 'unsupported', operation, '项目资源查询未装配');
+      const sourceIds = params.getAll('sourceId');
+      const selectedResourceIds = params.getAll('selectedResourceId');
+      result = await app.projectResourceService.previewCandidates(app.principal, pathParam?.value as string, sourceIds, selectedResourceIds);
       break;
     }
     case 'baselines.get':

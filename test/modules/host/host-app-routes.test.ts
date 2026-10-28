@@ -773,6 +773,10 @@ describe('F-011 传输纪律与版本门禁', () => {
         'planning.candidate.decide',
         'workspace.discard',
         'workspace.discard.preview',
+        'project.resource.import',
+        'project.resource.enable',
+        'project.resource.disable',
+        'project.resource.revoke',
       ]);
     }
     // actorId/principal 提权字段 → 400 invalid_input（未知键，定位字段）。
@@ -1040,6 +1044,10 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         'planning.candidate.decide',
         'workspace.discard',
         'workspace.discard.preview',
+        'project.resource.import',
+        'project.resource.enable',
+        'project.resource.disable',
+        'project.resource.revoke',
       ],
       queries: [
         'execution.sessions.list',
@@ -1114,6 +1122,9 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         'planning.contexts.list',
         'planning.context.get',
         'planning.candidate.get',
+        'project.resources.list',
+        'project.resources.candidates',
+        'project.resources.preview',
       ],
       events: { transport: 'sse', route: '/v1/events', scopes: ['project', 'global'] },
     });
