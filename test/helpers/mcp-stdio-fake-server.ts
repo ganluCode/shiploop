@@ -21,6 +21,7 @@ export interface FakeMcpServerOptions {
   readonly childPidFile?: string;
   readonly exitFile?: string;
   readonly holdInitialize?: boolean;
+  readonly parentExitAfterInitializeMs?: number;
 }
 /** Explicit no-secret local executable/argv; fixture modes never install or contact anything. */
 export function createFakeMcpServerCommand(root: string, options: FakeMcpServerOptions = {}): {

@@ -278,6 +278,8 @@ function callFailureReason(error: unknown): McpToolFailureReason {
   if (error instanceof McpAbortError || error instanceof Error && error.name === 'McpAbortError') return 'call_cancelled';
   if (error instanceof McpConnectionClosedError || error instanceof Error && error.name === 'McpConnectionClosedError') return 'connection_closed';
   const code = (error as { code?: unknown })?.code;
+  if (code === 'call_timeout') return 'call_timeout';
+  if (code === 'call_cancelled') return 'call_cancelled';
   if (code === 'closed' || code === 'server_exited') return 'connection_closed';
   if (code === 'protocol_error' || code === 'process_exited_during_start') return 'response_lost';
   if (error instanceof Error && /response|connection|pipe|socket/i.test(error.name)) return 'response_lost';

@@ -46,12 +46,17 @@ process.stdin.on('end', () => {
   if (hold) return;
   void exitGracefully();
 });
-const initialize = id => send(id, {
-  protocolVersion: config.mode === 'invalid_protocol' ? '1900-01-01' : '2025-11-25',
-  capabilities: config.mode === 'missing_tools_capability' ? {} : { tools: {} },
-  serverInfo: { name: 'shiploop-local-fake', version: '1.0.0' },
-  ...(config.instructions ? { instructions: config.instructions } : {}),
-});
+const initialize = id => {
+  send(id, {
+    protocolVersion: config.mode === 'invalid_protocol' ? '1900-01-01' : '2025-11-25',
+    capabilities: config.mode === 'missing_tools_capability' ? {} : { tools: {} },
+    serverInfo: { name: 'shiploop-local-fake', version: '1.0.0' },
+    ...(config.instructions ? { instructions: config.instructions } : {}),
+  });
+  if (Number.isSafeInteger(config.parentExitAfterInitializeMs) && config.parentExitAfterInitializeMs >= 0) {
+    setTimeout(() => process.exit(0), config.parentExitAfterInitializeMs);
+  }
+};
 process.stdin.on('data', chunk => {
   buffer += chunk;
   while (buffer.includes('\n')) {

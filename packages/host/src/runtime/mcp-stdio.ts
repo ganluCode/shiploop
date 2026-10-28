@@ -15,7 +15,7 @@ export type McpStdioConnectionState = 'not_started' | 'starting' | 'available' |
 export type McpStdioStopStatus = 'confirmed' | 'unconfirmed' | 'unknown';
 export type McpStdioErrorCode = 'unsupported_platform' | 'invalid_startup_plan' | 'missing_executable'
   | 'spawn_failed' | 'process_exited_during_start' | 'process_registration_failed' | 'startup_plan_conflict'
-  | 'handshake_timeout' | 'incompatible_protocol' | 'incompatible_capabilities' | 'protocol_error'
+  | 'handshake_timeout' | 'call_timeout' | 'call_cancelled' | 'incompatible_protocol' | 'incompatible_capabilities' | 'protocol_error'
   | 'server_exited' | 'cleanup_unconfirmed' | 'closed' | 'tool_discovery_failed';
 
 /** Never includes executable, environment, server output or arbitrary SDK exception text. */
@@ -57,6 +57,8 @@ export interface McpStdioProcessInspector {
   identify(pid: number, launchId: string): Promise<CommandProcessIdentity>;
   matches(identity: CommandProcessIdentity): Promise<boolean>;
   groupAbsent(processGroupId: number): Promise<boolean>;
+  /** Optional proof that the detached group is still owned after its leader exited. */
+  matchesGroup?(identity: CommandProcessIdentity): Promise<boolean>;
 }
 export interface McpStdioConnectionOptions {
   readonly plan: McpStartupPlan;
@@ -65,6 +67,12 @@ export interface McpStdioConnectionOptions {
   readonly platform?: string;
   readonly handshakeTimeoutMs?: number;
   readonly closeTimeoutMs?: number;
+  /** Fixed per-operation budget; progress notifications never extend it. */
+  readonly callTimeoutMs?: number;
+  /** Parent execution absolute deadline, applied to every operation. */
+  readonly outerDeadlineUtcMs?: number;
+  /** Session/Runner cancellation closes this owned connection and verifies its process group. */
+  readonly signal?: AbortSignal;
   readonly maxMessageBytes?: number;
   readonly maxStderrBytes?: number;
   readonly processInspector?: McpStdioProcessInspector;
@@ -93,11 +101,21 @@ function bounded(value: number | undefined, fallback: number, max: number): numb
   if (!Number.isSafeInteger(value) || value < 1 || value > max) throw new McpStdioError('invalid_startup_plan');
   return value;
 }
+function deadlineFor(timeoutMs: number, outerDeadlineUtcMs?: number): number {
+  const local = Date.now() + timeoutMs;
+  return outerDeadlineUtcMs === undefined ? local : Math.min(local, outerDeadlineUtcMs);
+}
+function remaining(deadlineUtcMs: number): number {
+  return Math.max(1, deadlineUtcMs - Date.now());
+}
 function within<T>(promise: Promise<T>, ms: number, code: McpStdioErrorCode): Promise<T> {
-  let timer: NodeJS.Timeout;
+  let timer: NodeJS.Timeout | undefined;
   return Promise.race([promise, new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new McpStdioError(code)), Math.max(1, ms));
-  })]).finally(() => clearTimeout(timer));
+  })]).finally(() => { if (timer) clearTimeout(timer); });
+}
+function withinDeadline<T>(promise: Promise<T>, deadlineUtcMs: number, code: McpStdioErrorCode): Promise<T> {
+  return within(promise, remaining(deadlineUtcMs), code);
 }
 function freeze<T>(value: T): T {
   if (value && typeof value === 'object') {
@@ -125,9 +143,16 @@ const realInspector: McpStdioProcessInspector = {
     const row = parseRow(await ps(['-p', String(identity.pid), '-o', 'pid=,pgid=,lstart=']), identity.pid);
     return row !== null && row.processGroupId === identity.processGroupId && row.startTime === identity.startTime;
   },
+  async matchesGroup(identity) {
+    // The detached supervisor creates a group whose id is its committed PID. While
+    // descendants remain, the OS cannot reuse that group id for another launch.
+    const rows = await ps(['-axo', 'pid=,pgid=']);
+    if (!rows.trim()) throw new McpStdioError('cleanup_unconfirmed');
+    return rows.trim().split('\n').some(line => Number(line.trim().split(/\s+/)[1]) === identity.processGroupId);
+  },
   async groupAbsent(pgid) {
     const rows = await ps(['-axo', 'pid=,pgid=']);
-    if (!rows.trim()) return false;
+    if (!rows.trim()) throw new McpStdioError('cleanup_unconfirmed');
     return !rows.trim().split('\n').some(line => Number(line.trim().split(/\s+/)[1]) === pgid);
   },
 };
@@ -274,7 +299,14 @@ class McpStdioTransport {
       if (!(await this.absent()) && child) {
         let matched = false;
         if (this.identity) {
-          try { matched = await within(this.options.inspector.matches(this.identity), 1_500, 'cleanup_unconfirmed'); } catch { /* unknown */ }
+          try {
+            const leaderAlive = child.exitCode === null && child.signalCode === null;
+            matched = leaderAlive
+              ? await within(this.options.inspector.matches(this.identity), 1_500, 'cleanup_unconfirmed')
+              : this.options.inspector.matchesGroup === undefined
+                ? false
+                : await within(this.options.inspector.matchesGroup(this.identity), 1_500, 'cleanup_unconfirmed');
+          } catch { /* unknown ownership: never signal an unrelated group */ }
         }
         if (matched && this.identity) {
           try { process.kill(-this.identity.processGroupId, 'SIGTERM'); } catch { /* verify absence below */ }
@@ -317,11 +349,17 @@ export function createMcpStdioConnection(options: McpStdioConnectionOptions): Mc
   if ((options.platform ?? process.platform) !== 'darwin' || process.platform !== 'darwin') throw new McpStdioError('unsupported_platform');
   if (typeof options.registerProcess !== 'function') throw new McpStdioError('invalid_startup_plan');
   const handshakeMs = bounded(options.handshakeTimeoutMs, 5_000, 60_000);
+  const callMs = bounded(options.callTimeoutMs, handshakeMs, 60_000);
   const closeMs = bounded(options.closeTimeoutMs, 2_000, 10_000);
+  if (options.outerDeadlineUtcMs !== undefined
+    && (!Number.isSafeInteger(options.outerDeadlineUtcMs) || options.outerDeadlineUtcMs < 1)) {
+    throw new McpStdioError('invalid_startup_plan');
+  }
+  const outerDeadline = options.outerDeadlineUtcMs;
+  const inspector = options.processInspector ?? realInspector;
   const transport = new McpStdioTransport({ server,
     maxMessageBytes: bounded(options.maxMessageBytes, 1_048_576, 8_388_608),
-    maxStderrBytes: bounded(options.maxStderrBytes, 65_536, 1_048_576), closeTimeoutMs: closeMs,
-    inspector: options.processInspector ?? realInspector });
+    maxStderrBytes: bounded(options.maxStderrBytes, 65_536, 1_048_576), closeTimeoutMs: closeMs, inspector });
   let state: McpStdioConnectionState = 'not_started';
   let error: McpStdioError | null = null;
   let registration: McpStdioProcessRegistration | null = null;
@@ -329,11 +367,10 @@ export function createMcpStdioConnection(options: McpStdioConnectionOptions): Mc
   let closePromise: Promise<McpStdioCloseResult> | undefined;
   let client: McpClient | undefined;
   let catalogPromise: Promise<McpToolCatalog> | undefined;
-  const discover = (timeoutMs: number, signal?: AbortSignal) => {
-    const deadline = Date.now() + timeoutMs;
-    return discoverMcpTools(cursor => client!.request('tools/list', cursor === undefined ? undefined : { cursor },
-      { timeoutMs: Math.max(1, deadline - Date.now()), signal }));
-  };
+  const activeCallControllers = new Set<AbortController>();
+  const discover = (deadlineUtcMs: number, signal?: AbortSignal) =>
+    discoverMcpTools(cursor => client!.request('tools/list', cursor === undefined ? undefined : { cursor },
+      { timeoutMs: remaining(deadlineUtcMs), signal }));
   let closing = false;
   let stopEvidence: McpStdioCloseResult | null = null;
   let rejectFailure!: (error: McpStdioError) => void;
@@ -352,27 +389,40 @@ export function createMcpStdioConnection(options: McpStdioConnectionOptions): Mc
   const close = (): Promise<McpStdioCloseResult> => {
     if (closePromise) return closePromise;
     closing = true;
-    if (state === 'starting') fail(new McpStdioError('closed'));
+    if (state === 'starting') fail(error ?? new McpStdioError('closed'));
     closePromise = (async () => {
-      // Closing the client removes correlation timers and SDK transport listeners.
-      await client?.close().catch(() => {});
-      stopEvidence = await transport.shutdown();
-      if (!stopEvidence.confirmed) {
-        error = new McpStdioError('cleanup_unconfirmed', error?.code);
-        state = 'failed';
-      } else if (state !== 'failed') state = 'closed';
-      return stopEvidence;
+      try {
+        // Closing the client removes correlation timers and SDK transport listeners.
+        await client?.close().catch(() => {});
+        stopEvidence = await transport.shutdown();
+        if (!stopEvidence.confirmed) {
+          error = new McpStdioError('cleanup_unconfirmed', error?.code);
+          state = 'failed';
+        } else if (state !== 'failed') state = 'closed';
+        return stopEvidence;
+      } finally {
+        options.signal?.removeEventListener('abort', onSessionAbort);
+      }
     })();
     return closePromise;
   };
+  const onSessionAbort = () => {
+    error ??= new McpStdioError('call_cancelled');
+    for (const controller of activeCallControllers) controller.abort(new McpStdioError('call_cancelled'));
+    if (state === 'available') state = 'failed';
+    // Let the SDK consume the per-call abort first; close then rejects any remaining requests.
+    void Promise.resolve().then(() => close()).catch(() => {});
+  };
+  options.signal?.addEventListener('abort', onSessionAbort, { once: true });
+  if (options.signal?.aborted) onSessionAbort();
   return {
     get state() { return state; }, get error() { return error; }, get processRegistration() { return registration; },
     get stopEvidence() { return stopEvidence; }, server,
     start() {
       if (startPromise) return startPromise;
-      if (closing) return Promise.reject(new McpStdioError('closed'));
+      if (closing || options.signal?.aborted) return Promise.reject(error ?? new McpStdioError('call_cancelled'));
       state = 'starting';
-      const deadline = Date.now() + handshakeMs;
+      const deadline = deadlineFor(handshakeMs, outerDeadline);
       const execute = async (): Promise<McpStdioReady> => {
         await transport.start();
         if (closing || Date.now() >= deadline) throw new McpStdioError('handshake_timeout');
@@ -385,19 +435,19 @@ export function createMcpStdioConnection(options: McpStdioConnectionOptions): Mc
         catch { throw new McpStdioError('process_registration_failed'); }
         if (!ack || ack.launchId !== processIdentity.launchId) throw new McpStdioError('process_registration_failed');
         if (closing || error) throw error ?? new McpStdioError('closed');
-        client = new McpClient({ name: 'shiploop-mcp-client', version: '1.0.0', requestTimeoutMs: handshakeMs });
+        client = new McpClient({ name: 'shiploop-mcp-client', version: '1.0.0', requestTimeoutMs: remaining(deadline) });
         const initialized = await client.connect(transport);
         if (!initialized.capabilities.tools || typeof initialized.capabilities.tools !== 'object'
           || Array.isArray(initialized.capabilities.tools)) {
           throw new McpStdioError('incompatible_capabilities');
         }
-        const tools = await discover(Math.max(1, deadline - Date.now()));
+        const tools = await discover(deadline);
         if (closing || error) throw error ?? new McpStdioError('closed');
         state = 'available';
         return freeze({ initialize: initialized, protocolVersion: initialized.protocolVersion,
           capabilities: initialized.capabilities, tools, processRegistration: registration });
       };
-      startPromise = within(Promise.race([execute(), failure]), handshakeMs, 'handshake_timeout').catch(async cause => {
+      startPromise = withinDeadline(Promise.race([execute(), failure]), deadline, 'handshake_timeout').catch(async cause => {
         error ??= cause instanceof McpStdioError ? cause : cause instanceof McpToolCatalogError
           ? new McpStdioError('tool_discovery_failed', undefined, cause.reason) : cause instanceof McpTimeoutError
           ? new McpStdioError('handshake_timeout') : new McpStdioError('protocol_error');
@@ -413,11 +463,68 @@ export function createMcpStdioConnection(options: McpStdioConnectionOptions): Mc
       catalogPromise ??= createMcpToolCatalog({ plan, endpoints: [{ server,
         discover: async signal => {
           if (state !== 'available' || closing) throw error ?? new McpStdioError('closed');
-          return discover(handshakeMs, signal);
+          const deadline = deadlineFor(handshakeMs, outerDeadline);
+          try {
+            return await discover(deadline, signal);
+          } catch (cause) {
+            const cancelled = signal?.aborted === true || cause instanceof Error && cause.name === 'McpAbortError';
+            const timedOut = Date.now() >= deadline || cause instanceof McpTimeoutError || cause instanceof Error && cause.name === 'McpTimeoutError';
+            if (cancelled || timedOut) {
+              const code = cancelled ? 'call_cancelled' : 'call_timeout';
+              error ??= new McpStdioError(code);
+              state = 'failed';
+              await close();
+              throw new McpStdioError(code);
+            }
+            throw cause;
+          }
         },
         call: async (name, args, signal) => {
           if (state !== 'available' || closing) throw error ?? new McpStdioError('closed');
-          return client!.callTool(name, args, { signal, timeoutMs: handshakeMs });
+          if (signal?.aborted) {
+            error ??= new McpStdioError('call_cancelled');
+            state = 'failed';
+            await close();
+            throw new McpStdioError('call_cancelled');
+          }
+          const deadline = deadlineFor(callMs, outerDeadline);
+          const controller = new AbortController();
+          let control: 'call_timeout' | 'call_cancelled' | null = null;
+          const abort = () => {
+            if (control === null) control = 'call_cancelled';
+            controller.abort(signal?.reason);
+          };
+          const timer = setTimeout(() => {
+            if (control === null) control = 'call_timeout';
+            controller.abort(new McpStdioError('call_timeout'));
+          }, remaining(deadline));
+          const requestSignal = options.signal === undefined
+            ? controller.signal : AbortSignal.any([controller.signal, options.signal]);
+          activeCallControllers.add(controller);
+          signal?.addEventListener('abort', abort, { once: true });
+          try {
+            const result = await client!.callTool(name, args, { signal: requestSignal, timeoutMs: remaining(deadline) });
+            if (control !== null || Date.now() >= deadline) {
+              control ??= 'call_timeout';
+              throw new McpStdioError(control);
+            }
+            return result;
+          } catch (cause) {
+            const sdkTimeout = cause instanceof McpTimeoutError || cause instanceof Error && cause.name === 'McpTimeoutError';
+            const sdkAbort = cause instanceof Error && cause.name === 'McpAbortError';
+            if (control !== null || sdkTimeout || sdkAbort) {
+              control ??= sdkTimeout ? 'call_timeout' : 'call_cancelled';
+              error ??= new McpStdioError(control);
+              state = 'failed';
+              await close();
+              throw new McpStdioError(control);
+            }
+            throw cause;
+          } finally {
+            activeCallControllers.delete(controller);
+            clearTimeout(timer);
+            signal?.removeEventListener('abort', abort);
+          }
         },
       }] });
       return catalogPromise;
