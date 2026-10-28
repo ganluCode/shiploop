@@ -128,6 +128,8 @@ export * from './ports/integration-plan-query.js';
 export * from './application/integration-plan-generation.js';
 export * from './application/integration-plan-control.js';
 export * from './ports/feature-dag-update.js';
+export * from './ports/task-strategy-preview.js';
+export * from './application/task-strategy-preview.js';
 export * from './ports/plan-store.js';
 export * from './ports/command-process.js';
 export * from './ports/execution-stop.js';

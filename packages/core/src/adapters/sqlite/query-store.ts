@@ -103,6 +103,10 @@ import type {
   KnowledgeQueryReadStore,
 } from '../../ports/knowledge-query.js';
 import type { MemoryQueryFilter, MemoryQueryReadStore, MemoryQueryRow } from '../../ports/memory-query.js';
+import type {
+  TaskStrategyReapplicationReadStore,
+  TaskStrategyReapplicationReadView,
+} from '../../ports/task-strategy-preview.js';
 import type { SqliteStorageSession } from './session.js';
 import { createSqliteDocumentQueryStore } from './document-query-store.js';
 import { createSqliteMemoryQueryStore } from './memory-store.js';
@@ -129,6 +133,7 @@ export interface SqliteQueryStore
     StateEventReadStore,
     RepositoryBindingLookupStore,
     PlanQueryReadStore,
+    TaskStrategyReapplicationReadStore,
     ExecutionBudgetQueryReadStore,
     ExecutionScheduleQueryReadStore,
     WorkspaceQueryReadStore,
@@ -208,6 +213,12 @@ export function createSqliteQueryStore(
     },
     readTaskRecord(taskId: unknown): TaskRecord | undefined {
       return plan.readTaskRecord(taskId);
+    },
+    readTaskStrategyReapplicationView(
+      projectId: unknown,
+      taskIds: readonly unknown[],
+    ): TaskStrategyReapplicationReadView {
+      return plan.readTaskStrategyReapplicationView(projectId, taskIds);
     },
     readFeaturePlanView(featureId: unknown): FeaturePlanView | undefined {
       return plan.readFeaturePlanView(featureId);
