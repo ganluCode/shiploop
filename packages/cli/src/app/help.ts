@@ -40,12 +40,14 @@ const TASK_APPROVAL_VERIFICATION_BLOCK = [
 ].join('\n');
 
 const PROJECT_HELP = [
-  'usage: shiploop project <init|overview|profile|register|list|get|edit|labels> [options]',
+  'usage: shiploop project <init|overview|move-preview|move|profile|register|list|get|edit|labels> [options]',
   '',
   '项目命令：',
   '  project init <repository-path> [--name <displayName>] [--confirm] [options]',
   '                                                    静态预览并（经确认）注册仓库',
   '  project overview <projectId>                      查看注册状态与健康状态',
+  '  project move-preview <repository-path> --project <id>  预览仓库移动（只读）',
+  '  project move <repository-path> --project <id> --preview-file <file> --confirm  确认移动',
   '  project register <repository-path> --name <displayName> [options]  注册已有仓库',
   '  project list [--label <l> ...] [--match any|all] [--limit <int>] [--cursor <id>]',
   '  project get <projectId>                                            查看项目与绑定',
@@ -98,7 +100,7 @@ const PROJECT_INIT_HELP = [
 ].join('\n');
 
 const PROJECT_OVERVIEW_HELP = [
-  'usage: shiploop project overview <projectId> [--data-root <abs>] [--json]',
+  'usage: shiploop project overview [<projectId> | --project <id>] [--data-root <abs>] [--json]',
   '',
   '查看项目的注册状态与健康状态（严格分开）：',
   '- 注册成功不代表基线健康：健康只由最近一次终态基线操作派生；',
@@ -2147,6 +2149,8 @@ const HELP_BY_SCOPE: Readonly<Record<AppHelpScope, string>> = Object.freeze({
   'project.resource-revoke': 'usage: shiploop project resource-revoke --project <id> --resource <id> --revision <int> --command-id <uuid> --confirm [--json]\n需要项目授权；仅影响新执行。\n' + EXIT_CODE_BLOCK,
   'project.init': PROJECT_INIT_HELP,
   'project.overview': PROJECT_OVERVIEW_HELP,
+  'project.repository-move-preview': 'usage: shiploop project move-preview <repository-path> --project <id> [--data-root <abs>] [--json]\n只读预览旧/新绑定身份、HEAD、脏状态与 previewDigest；不会修改项目或仓库。\n' + EXIT_CODE_BLOCK,
+  'project.repository-move-confirm': 'usage: shiploop project move <repository-path> --project <id> --preview-file <file> --confirm [--command-id <uuid>] [--data-root <abs>] [--json]\n必须使用同一项目、目标与冻结预览摘要确认；不会按 remote 自动选择项目。\n' + EXIT_CODE_BLOCK,
   'project.profile-get': PROJECT_PROFILE_GET_HELP,
   'project.profile-match': PROJECT_PROFILE_MATCH_HELP,
   'project.profile-confirm': PROJECT_PROFILE_CONFIRM_HELP,

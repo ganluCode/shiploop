@@ -18,7 +18,7 @@
  * `packages/cli/src/index.ts` 公共入口不 re-export 本模块（显式入口 bin.ts 专用）。
  */
 import { randomUUID } from 'node:crypto';
-import { closeSync, openSync, readFileSync, readSync } from 'node:fs';
+import { closeSync, openSync, readFileSync, readSync, realpathSync } from 'node:fs';
 import {
   ensureHostRunning,
   isHostProtocolError,
@@ -226,6 +226,8 @@ import type {
   ParsedPlanLabels,
   ParsedProjectInit,
   ParsedProjectOverview,
+  ParsedProjectRepositoryMovePreview,
+  ParsedProjectRepositoryMoveConfirm,
   ParsedProjectProfileCommand,
   ParsedReceiptGet,
   ParsedTaskPrepare,
@@ -254,6 +256,13 @@ import type {
   InitRequestView,
   ProjectOverviewView,
 } from './app/onboarding.js';
+import {
+  formatRepositoryMoveConfirmation,
+  formatRepositoryMovePreview,
+  parseRepositoryMovePreviewDocument,
+} from './app/repository-move.js';
+import type { BrownfieldMovePreview } from 'shiploop-core';
+
 import {
   buildAppCliFailureEnvelope,
   buildAppCliSuccessEnvelope,
@@ -332,6 +341,7 @@ type ProjectListResult = Awaited<ReturnType<HostClient['listProjects']>>;
 type ProjectLabelCountsResult = Awaited<ReturnType<HostClient['countProjectLabels']>>;
 type ProjectInspectionResult = Awaited<ReturnType<HostClient['inspectRepository']>>;
 type ProjectOverviewResult = Awaited<ReturnType<HostClient['getProjectOverview']>>;
+type RepositoryMovePreviewResult = Awaited<ReturnType<HostClient['previewRepositoryMove']>>;
 type ProjectProfileQueryResult = Awaited<ReturnType<HostClient['getProjectProfile']>>;
 type ProjectProfileMatchQueryResult = Awaited<ReturnType<HostClient['matchProjectProfile']>>;
 type SettingsStateResult = Awaited<ReturnType<HostClient['getGlobalSettings']>>;
@@ -1044,6 +1054,51 @@ async function executeProjectInit(
   );
 }
 
+async function executeProjectRepositoryMovePreview(
+  io: AppCliIo,
+  command: ParsedProjectRepositoryMovePreview,
+  client: HostClient,
+): Promise<AppCliRunResult> {
+  const preview: RepositoryMovePreviewResult = await client.previewRepositoryMove({
+    projectId: command.projectId,
+    repositoryPath: command.repositoryPath,
+  });
+  return emitSuccess(io, command, preview, formatRepositoryMovePreview(preview));
+}
+
+async function executeProjectRepositoryMoveConfirm(
+  io: AppCliIo,
+  command: ParsedProjectRepositoryMoveConfirm,
+  client: HostClient,
+  preview: BrownfieldMovePreview,
+): Promise<AppCliRunResult> {
+  const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+  const receipt = await client.confirmRepositoryMove({
+    projectId: command.projectId,
+    preview,
+    decision: 'confirm',
+    ...(command.explicitCommandId !== undefined ? { commandId: command.explicitCommandId } : {}),
+  }, envelopeIdentityOptions(command.explicitCommandId, issuedAt));
+  if (receipt.status === 'rejected') {
+    return emitFailure(io, command.json, {
+      exitCode: exitCodeForReceiptStatus('rejected'),
+      command: command.commandId,
+      code: receipt.error.code,
+      message: receipt.error.message,
+      commandId: receipt.commandId,
+      ...(receipt.error.details !== undefined ? { details: receipt.error.details } : {}),
+    });
+  }
+  if (receipt.status === 'accepted') {
+    throw new Error('unexpected_accepted_repository_move_receipt');
+  }
+  return emitSuccess(io, command, receipt, formatRepositoryMoveConfirmation(receipt));
+}
+
+/* ------------------------------------------------------------------ *
+ * 项目移动接线（显式 projectId + 预览摘要确认；不使用全局当前项目）
+ * ------------------------------------------------------------------ */
+
 async function executeProjectOverview(
   io: AppCliIo,
   command: ParsedProjectOverview,
@@ -1145,6 +1200,7 @@ async function executeProjectCommand(
   command: ParsedAppCliCommand,
   client: HostClient,
   profilePayload?: Record<string, unknown>,
+  repositoryMovePreview?: BrownfieldMovePreview,
 ): Promise<AppCliRunResult> {
   switch (command.commandId) {
     case 'project.resource-source-register':
@@ -1195,6 +1251,12 @@ async function executeProjectCommand(
     }
     case 'project.overview': {
       return executeProjectOverview(io, command, client);
+    }
+    case 'project.repository-move-preview': {
+      return executeProjectRepositoryMovePreview(io, command, client);
+    }
+    case 'project.repository-move-confirm': {
+      return executeProjectRepositoryMoveConfirm(io, command, client, repositoryMovePreview as BrownfieldMovePreview);
     }
     case 'project.profile-get':
     case 'project.profile-match':
@@ -3864,6 +3926,50 @@ export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunRes
     }
   }
 
+  let repositoryMovePreview: BrownfieldMovePreview | undefined;
+  if (command.commandId === 'project.repository-move-confirm') {
+    try {
+      const payload = readPlanInputPayload({
+        command: command.command,
+        commandId: command.commandId,
+        json: command.json,
+        inputFile: command.previewFile,
+      });
+      repositoryMovePreview = parseRepositoryMovePreviewDocument(payload, {
+        command: command.command,
+        commandId: command.commandId,
+        json: command.json,
+      }, command.projectId);
+      let targetCanonicalPath: string;
+      try {
+        targetCanonicalPath = realpathSync(command.repositoryPath);
+      } catch {
+        throw new AppCliParseError('invalid_input', 'invalid_repository_path', {
+          command: command.command,
+          commandId: command.commandId,
+          json: command.json,
+        }, 'repositoryPath');
+      }
+      if (targetCanonicalPath !== repositoryMovePreview.newRepository.canonicalPath) {
+        throw new AppCliParseError('invalid_input', 'invalid_preview_file', {
+          command: command.command,
+          commandId: command.commandId,
+          json: command.json,
+        }, 'preview-file');
+      }
+    } catch (error) {
+      if (error instanceof AppCliParseError) {
+        return emitParseFailure(io, error, jsonFlag);
+      }
+      return emitFailure(io, command.json, {
+        exitCode: 2,
+        command: command.commandId,
+        code: 'invalid_input',
+        message: '移动预览文件读取或校验失败',
+      });
+    }
+  }
+
   let profilePayload: Record<string, unknown> | undefined;
   if (command.commandId === 'project.profile-confirm' || command.commandId === 'project.profile-modify') {
     try {
@@ -3969,7 +4075,7 @@ export async function runAppCli(options: RunAppCliOptions): Promise<AppCliRunRes
     if (command.command === 'git') {
       return await executeGitCommand(io, command, client);
     }
-    return await executeProjectCommand(io, command, client, profilePayload);
+    return await executeProjectCommand(io, command, client, profilePayload, repositoryMovePreview);
   } catch (error) {
     if (isHostProtocolError(error)) {
       return emitFailure(

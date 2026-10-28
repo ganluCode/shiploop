@@ -66,6 +66,8 @@ export type AppCliCommandId =
   | 'project.resource-revoke'
   | 'project.init'
   | 'project.overview'
+  | 'project.repository-move-preview'
+  | 'project.repository-move-confirm'
   | 'project.profile-get'
   | 'project.profile-match'
   | 'project.profile-confirm'
@@ -180,6 +182,8 @@ export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'project.resource-revoke',
   'project.init',
   'project.overview',
+  'project.repository-move-preview',
+  'project.repository-move-confirm',
   'project.profile-get',
   'project.profile-match',
   'project.profile-confirm',
@@ -562,12 +566,32 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
   'project.overview': {
     command: 'project',
     commandId: 'project.overview',
-    valueFlags: [],
+    valueFlags: ['--project'],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 0,
+    maxPositionals: 1,
+    positionalFields: ['projectId'],
+  },
+  'project.repository-move-preview': {
+    command: 'project',
+    commandId: 'project.repository-move-preview',
+    valueFlags: ['--project'],
     boolFlags: [],
     repeatableFlags: [],
     minPositionals: 1,
     maxPositionals: 1,
-    positionalFields: ['projectId'],
+    positionalFields: ['repositoryPath'],
+  },
+  'project.repository-move-confirm': {
+    command: 'project',
+    commandId: 'project.repository-move-confirm',
+    valueFlags: ['--project', '--preview-file', '--command-id'],
+    boolFlags: ['--confirm'],
+    repeatableFlags: [],
+    minPositionals: 1,
+    maxPositionals: 1,
+    positionalFields: ['repositoryPath'],
   },
   'project.profile-get': {
     command: 'project',
@@ -1573,6 +1597,11 @@ const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, A
       'resource-revoke': 'project.resource-revoke',
       init: 'project.init',
       overview: 'project.overview',
+      'move-preview': 'project.repository-move-preview',
+      'repository-move-preview': 'project.repository-move-preview',
+      move: 'project.repository-move-confirm',
+      'move-confirm': 'project.repository-move-confirm',
+      'repository-move-confirm': 'project.repository-move-confirm',
       register: 'project.register',
       list: 'project.list',
       get: 'project.get',
@@ -2371,6 +2400,31 @@ export interface ParsedProjectOverview {
   readonly startTimeoutMs: number;
   readonly dataRoot?: string;
   readonly projectId: string;
+}
+
+export interface ParsedProjectRepositoryMovePreview {
+  readonly kind: 'command';
+  readonly command: 'project';
+  readonly commandId: 'project.repository-move-preview';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly repositoryPath: string;
+}
+
+export interface ParsedProjectRepositoryMoveConfirm {
+  readonly kind: 'command';
+  readonly command: 'project';
+  readonly commandId: 'project.repository-move-confirm';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly repositoryPath: string;
+  readonly previewFile: string;
+  readonly confirm: true;
+  readonly explicitCommandId?: string;
 }
 
 export interface ParsedProjectRegister {
@@ -3716,6 +3770,8 @@ export type ParsedAppCliCommand =
   | ParsedPlanningDecision
   | ParsedProjectInit
   | ParsedProjectOverview
+  | ParsedProjectRepositoryMovePreview
+  | ParsedProjectRepositoryMoveConfirm
   | ParsedProjectProfileCommand
   | ParsedProjectRegister
   | ParsedProjectList
@@ -3951,11 +4007,41 @@ function buildProject(scan: ScanResult, state: ParseState, spec: AppCommandSpec)
       };
     }
     case 'project.overview': {
+      const positional = scan.positionals[0];
+      const option = takeOption(scan, '--project');
+      if (positional !== undefined && option !== undefined) fail(state, 'scope_conflict', 'project');
+      const projectId = option ?? positional;
+      if (projectId === undefined) fail(state, 'missing_positional', 'projectId');
       return {
         ...base,
         command: 'project',
         commandId: 'project.overview',
-        projectId: requireProjectId(scan.positionals[0] as string, state),
+        projectId: requireProjectId(projectId, state),
+      };
+    }
+    case 'project.repository-move-preview': {
+      const { repositoryPath } = resolveRepositoryPath(scan.positionals[0] as string, state);
+      return {
+        ...base,
+        command: 'project',
+        commandId: 'project.repository-move-preview',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        repositoryPath,
+      };
+    }
+    case 'project.repository-move-confirm': {
+      if (!scan.bools.has('--confirm')) fail(state, 'confirmation_required', 'confirm');
+      const { repositoryPath } = resolveRepositoryPath(scan.positionals[0] as string, state);
+      const explicitCommandId = optionalCommandId(scan, state);
+      return {
+        ...base,
+        command: 'project',
+        commandId: 'project.repository-move-confirm',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        repositoryPath,
+        previewFile: requireOption(scan, '--preview-file', state, 'preview-file'),
+        confirm: true,
+        ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
       };
     }
     case 'project.profile-get':
@@ -5506,6 +5592,22 @@ export function parseAppCliArgs(
   }
   if (second.startsWith('-')) {
     fail(state, 'missing_subcommand');
+  }
+
+  if (state.command === 'project' && (second === 'move' || second === 'repository')) {
+    const nestedOffset = second === 'repository' ? 3 : 2;
+    const nested = args[nestedOffset];
+    if (nested === 'preview' || nested === 'confirm') {
+      const commandId = nested === 'preview'
+        ? 'project.repository-move-preview'
+        : 'project.repository-move-confirm';
+      state.commandId = commandId;
+      const spec = SPECS[commandId];
+      const scan = scanOptions(args.slice(nestedOffset + 1), spec, state);
+      if (scan.help) return { kind: 'help', scope: commandId };
+      assertNoEnvOverride(state, env);
+      return buildProject(scan, state, spec);
+    }
   }
 
   // Profile 保持在 project 命令组内，但采用三级命令以区分查询和显式写操作。
