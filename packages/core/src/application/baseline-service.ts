@@ -56,7 +56,9 @@ import {
   validateBaselineRunPayload,
   type BaselineCheckPlan,
   type BaselineCodeIdentity,
+  type BaselineDirtyScope,
   type BaselineEnvironmentDirectory,
+  type BaselineEnvironmentIdentity,
   type BaselinePreviewCheckView,
   type BaselinePreviewResult,
   type BaselinePreviewWarning,
@@ -94,6 +96,8 @@ export interface BaselineRunPrepared {
   readonly repositoryBindingId: string;
   readonly bindingRevision: number;
   readonly bindingRecordRevision: number;
+  readonly dirtyScope: BaselineDirtyScope;
+  readonly environmentIdentity: BaselineEnvironmentIdentity;
 }
 
 export interface BaselineService {
@@ -228,6 +232,43 @@ export function createBaselineService(options: BaselineServiceOptions): Baseline
       );
     }
     return ['PATH', ...extra];
+  }
+
+  /** 环境目录只提供获准定义摘要；不读取 Host 环境值或运行项目脚本。 */
+  function snapshotEnvironmentIdentity(plan: BaselineCheckPlan): BaselineEnvironmentIdentity {
+    const refs = [...new Set(plan.checks.map((check) => check.environmentRef).filter((ref): ref is string => ref !== undefined))];
+    const definitions = refs.map((environmentRef) => ({ environmentRef, definition: environmentDirectory.resolveEnvironmentRef(environmentRef) }));
+    const allowedVariables = new Set<string>(['PATH']);
+    const toolchain: Record<string, string | null> = {};
+    const unknownFields: string[] = [];
+    const coverage: string[] = ['PATH'];
+    for (const { environmentRef, definition } of definitions) {
+      if (definition === null || definition === undefined) {
+        unknownFields.push(`environment:${environmentRef}`);
+        continue;
+      }
+      for (const variable of normalizeBaselineAllowedVariables(definition)) allowedVariables.add(variable);
+      coverage.push(`environmentRef:${environmentRef}`);
+      for (const [name, version] of Object.entries(definition.toolchain ?? {})) {
+        if (toolchain[name] !== undefined && toolchain[name] !== version) toolchain[name] = null;
+        else toolchain[name] = version;
+      }
+      if (definition.definitionRevision === undefined) unknownFields.push(`environmentRevision:${environmentRef}`);
+      for (const field of definition.unknownFields ?? []) unknownFields.push(field);
+    }
+    const revisions = definitions.map(({ definition }) => definition?.definitionRevision).filter((value): value is string => value !== undefined);
+    const definitionRevision = refs.length === 1 ? (revisions[0] ?? null) : null;
+    if (refs.length > 1 && new Set(revisions).size > 1) unknownFields.push('environmentRevision:multiple');
+    return {
+      schemaVersion: 1,
+      environmentRef: refs.length === 1 ? refs[0]! : null,
+      definitionRevision,
+      toolchain,
+      platform: { os: process.platform, arch: process.arch },
+      allowedVariables: [...allowedVariables].sort(),
+      coverage: [...new Set(coverage)].sort(),
+      unknownFields: [...new Set(unknownFields)].sort(),
+    };
   }
 
   /** 逐项核验：cwd realpath 范围 + 环境引用（预览视图与授权共用同一核验）。 */
@@ -394,6 +435,13 @@ export function createBaselineService(options: BaselineServiceOptions): Baseline
           repositoryBindingId,
           bindingRevision,
           bindingRecordRevision,
+          dirtyScope: {
+            status: codeIdentity.hasUncommittedChanges ? 'unknown' : 'clean',
+            explanation: codeIdentity.hasUncommittedChanges
+              ? '工作区摘要确认存在未提交变化；逐路径范围由受管摘要保留，当前接口未暴露原始路径。'
+              : '工作区摘要确认没有未提交变化。',
+          },
+          environmentIdentity: snapshotEnvironmentIdentity(plan),
         };
       } catch (error) {
         throw mapToPublicError(error, { operation });
@@ -464,11 +512,14 @@ export function createBaselineService(options: BaselineServiceOptions): Baseline
       const authorization = transaction.insertBaselineAuthorization({
         projectId: prepared.projectId,
         repositoryBindingId: prepared.repositoryBindingId,
+        repositoryBindingRevision: prepared.bindingRevision,
         codeIdentity: {
           headCommit: prepared.codeIdentity.headCommit,
           workingTreeDigest: prepared.codeIdentity.workingTreeDigest,
           hasUncommittedChanges: prepared.codeIdentity.hasUncommittedChanges,
         },
+        dirtyScope: prepared.dirtyScope,
+        environmentIdentity: prepared.environmentIdentity,
         policyRevision: prepared.planDigest,
         planDigest: prepared.planDigest,
         plan: prepared.plan,

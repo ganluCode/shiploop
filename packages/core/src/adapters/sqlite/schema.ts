@@ -458,11 +458,17 @@ export const baselineAuthorizations = sqliteTable('baseline_authorizations', {
   repositoryBindingId: text('repository_binding_id')
     .notNull()
     .references((): SQLiteColumn => repositoryBindings.id, { onDelete: 'restrict' }),
+  /** 绑定 CAS revision 的不可变授权快照；历史 v4 行为 NULL，表示信息不全。 */
+  repositoryBindingRevision: integer('repository_binding_revision'),
   /** 无初始 commit 时为 NULL（不猜 main）。 */
   headCommit: text('head_commit'),
   /** 64 位小写 hex（§6.3 工作区内容摘要）。 */
   workingTreeDigest: text('working_tree_digest').notNull(),
   hasUncommittedChanges: integer('has_uncommitted_changes').notNull(),
+  /** 脏范围解释 JSON；历史授权缺失时为 NULL，不回填猜测值。 */
+  dirtyScopeJson: text('dirty_scope_json'),
+  /** 获准环境身份 JSON；只保存引用/版本和公开摘要。 */
+  environmentIdentityJson: text('environment_identity_json'),
   /** = plan_digest（§6.2）。 */
   policyRevision: text('policy_revision').notNull(),
   planDigest: text('plan_digest').notNull(),
@@ -474,6 +480,18 @@ export const baselineAuthorizations = sqliteTable('baseline_authorizations', {
   check(
     'baseline_authorizations_digest_check',
     sql`length(${table.workingTreeDigest}) = 64 AND length(${table.planDigest}) = 64`,
+  ),
+  check(
+    'baseline_authorizations_binding_revision_check',
+    sql`${table.repositoryBindingRevision} IS NULL OR ${table.repositoryBindingRevision} >= 1`,
+  ),
+  check(
+    'baseline_authorizations_dirty_scope_json_check',
+    sql`${table.dirtyScopeJson} IS NULL OR (json_valid(${table.dirtyScopeJson}) AND json_type(${table.dirtyScopeJson}) = 'object')`,
+  ),
+  check(
+    'baseline_authorizations_environment_identity_json_check',
+    sql`${table.environmentIdentityJson} IS NULL OR (json_valid(${table.environmentIdentityJson}) AND json_type(${table.environmentIdentityJson}) = 'object')`,
   ),
   check('baseline_authorizations_plan_json_check', sql`json_valid(${table.planJson})`),
   foreignKey({

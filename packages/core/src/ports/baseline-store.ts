@@ -46,7 +46,11 @@ import {
   BASELINE_TERMINAL_OPERATION_STATUSES,
   computeBaselinePlanDigest,
   validateBaselineCheckPlan,
+  validateBaselineDirtyScope,
+  validateBaselineEnvironmentIdentity,
   type BaselineCheckPlan,
+  type BaselineDirtyScope,
+  type BaselineEnvironmentIdentity,
   type BaselineCheckStatus,
   type BaselineOperationStatus,
   type BaselineReasonCode,
@@ -77,9 +81,13 @@ export interface BaselineAuthorizationRecord {
   readonly id: string;
   readonly projectId: string;
   readonly repositoryBindingId: string;
+  /** Binding CAS revision captured with this authorization; null means historical gap. */
+  readonly repositoryBindingRevision: number | null;
   readonly headCommit: string | null;
   readonly workingTreeDigest: string;
   readonly hasUncommittedChanges: boolean;
+  readonly dirtyScope: BaselineDirtyScope | null;
+  readonly environmentIdentity: BaselineEnvironmentIdentity | null;
   readonly policyRevision: string;
   readonly planDigest: string;
   readonly plan: BaselineCheckPlan;
@@ -244,9 +252,12 @@ function requireExactKeys(
 export interface ValidatedBaselineAuthorizationInsert {
   readonly projectId: string;
   readonly repositoryBindingId: string;
+  readonly repositoryBindingRevision: number | null;
   readonly headCommit: string | null;
   readonly workingTreeDigest: string;
   readonly hasUncommittedChanges: boolean;
+  readonly dirtyScope: BaselineDirtyScope | null;
+  readonly environmentIdentity: BaselineEnvironmentIdentity | null;
   readonly policyRevision: string;
   readonly planDigest: string;
   readonly plan: BaselineCheckPlan;
@@ -270,7 +281,10 @@ export function validateBaselineAuthorizationInsert(
   requireExactKeys(context, input, [
     'projectId',
     'repositoryBindingId',
+    'repositoryBindingRevision',
     'codeIdentity',
+    'dirtyScope',
+    'environmentIdentity',
     'policyRevision',
     'planDigest',
     'plan',
@@ -300,6 +314,17 @@ export function validateBaselineAuthorizationInsert(
   if (typeof input.codeIdentity.hasUncommittedChanges !== 'boolean') {
     throw validationError(context, 'codeIdentity.hasUncommittedChanges', '必须是布尔值', input.codeIdentity.hasUncommittedChanges);
   }
+  const repositoryBindingRevision = input.repositoryBindingRevision === undefined || input.repositoryBindingRevision === null
+    ? null
+    : (typeof input.repositoryBindingRevision === 'number' && Number.isSafeInteger(input.repositoryBindingRevision) && input.repositoryBindingRevision >= 1
+      ? input.repositoryBindingRevision
+      : (() => { throw validationError(context, 'repositoryBindingRevision', '必须是正整数或 null', input.repositoryBindingRevision); })());
+  const dirtyScope = input.dirtyScope === undefined || input.dirtyScope === null
+    ? null
+    : validateBaselineDirtyScope(input.dirtyScope, operation, 'dirtyScope');
+  const environmentIdentity = input.environmentIdentity === undefined || input.environmentIdentity === null
+    ? null
+    : validateBaselineEnvironmentIdentity(input.environmentIdentity, operation, 'environmentIdentity');
   const plan = validateBaselineCheckPlan(input.plan, operation);
   const expectedDigest = computeBaselinePlanDigest(plan);
   if (!isSha256HexValue(input.planDigest) || input.planDigest !== expectedDigest) {
@@ -324,9 +349,12 @@ export function validateBaselineAuthorizationInsert(
   return {
     projectId,
     repositoryBindingId,
+    repositoryBindingRevision,
     headCommit: input.codeIdentity.headCommit === null ? null : (input.codeIdentity.headCommit as string | null),
     workingTreeDigest: input.codeIdentity.workingTreeDigest,
     hasUncommittedChanges: input.codeIdentity.hasUncommittedChanges,
+    dirtyScope,
+    environmentIdentity,
     policyRevision: input.policyRevision,
     planDigest: input.planDigest,
     plan,
@@ -834,6 +862,8 @@ export function mapBaselineAuthorizationRow(row: unknown): BaselineAuthorization
     typeof row.id !== 'string' ||
     typeof row.projectId !== 'string' ||
     typeof row.repositoryBindingId !== 'string' ||
+    (row.repositoryBindingRevision !== null && row.repositoryBindingRevision !== undefined &&
+      (typeof row.repositoryBindingRevision !== 'number' || !Number.isSafeInteger(row.repositoryBindingRevision) || row.repositoryBindingRevision < 1)) ||
     !isNullableRowString(row.headCommit) ||
     (row.headCommit !== null && !GIT_COMMIT_PATTERN.test(row.headCommit)) ||
     (row.hasUncommittedChanges !== 0 && row.hasUncommittedChanges !== 1) ||
@@ -849,13 +879,26 @@ export function mapBaselineAuthorizationRow(row: unknown): BaselineAuthorization
   } catch {
     corrupt(operation, entity, 'invalid_plan');
   }
+  let dirtyScope: BaselineDirtyScope | null = null;
+  if (row.dirtyScope !== null && row.dirtyScope !== undefined) {
+    try { dirtyScope = validateBaselineDirtyScope(row.dirtyScope, operation, 'dirtyScope'); }
+    catch { corrupt(operation, entity, 'invalid_dirty_scope'); }
+  }
+  let environmentIdentity: BaselineEnvironmentIdentity | null = null;
+  if (row.environmentIdentity !== null && row.environmentIdentity !== undefined) {
+    try { environmentIdentity = validateBaselineEnvironmentIdentity(row.environmentIdentity, operation, 'environmentIdentity'); }
+    catch { corrupt(operation, entity, 'invalid_environment_identity'); }
+  }
   return {
     id: row.id,
     projectId: row.projectId,
     repositoryBindingId: row.repositoryBindingId,
+    repositoryBindingRevision: row.repositoryBindingRevision === undefined ? null : row.repositoryBindingRevision,
     headCommit: row.headCommit,
     workingTreeDigest: row.workingTreeDigest,
     hasUncommittedChanges: row.hasUncommittedChanges === 1,
+    dirtyScope,
+    environmentIdentity,
     policyRevision: row.policyRevision,
     planDigest: row.planDigest,
     plan,

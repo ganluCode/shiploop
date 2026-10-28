@@ -110,6 +110,9 @@ function toAuthorizationSummary(record: BaselineAuthorizationRecord): BaselineAu
   return {
     projectId: record.projectId,
     repositoryBindingId: record.repositoryBindingId,
+    ...(record.repositoryBindingRevision === null ? {} : { repositoryBindingRevision: record.repositoryBindingRevision }),
+    ...(record.dirtyScope === null ? {} : { dirtyScope: record.dirtyScope }),
+    ...(record.environmentIdentity === null ? {} : { environmentIdentity: record.environmentIdentity }),
     codeIdentity: {
       headCommit: record.headCommit,
       workingTreeDigest: record.workingTreeDigest,

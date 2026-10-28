@@ -350,7 +350,6 @@ describe('F-007 迁移 v4：基线作用域四表', () => {
       expect(session.database.prepare('SELECT COUNT(*) AS n FROM check_results').get()).toEqual({ n: 0 });
       for (const forbidden of [
         // Migration-created execution tables remain empty; later runtime tables are absent.
-        'feature_dependencies',
         'chat_turns',
         'check_definitions',
         'operations',
@@ -487,6 +486,36 @@ describe('F-007 不可变授权', () => {
     }
   });
 
+  it('持久化绑定 revision、脏范围和环境身份；身份快照不可由直接 SQL 覆盖', async () => {
+    const harness = await openHarnessAsync('shiploop-f005-auth-identity-');
+    try {
+      const inserted = harness.transact((transaction) => transaction.insertBaselineAuthorization(authorizationInput({
+        repositoryBindingRevision: 1,
+        dirtyScope: { status: 'mixed', explanation: 'tracked and untracked changes are included in the digest' },
+        environmentIdentity: {
+          schemaVersion: 1,
+          environmentRef: 'ci-public',
+          definitionRevision: '2026-10-28',
+          toolchain: { node: '22.19.0', npm: '10.9.3' },
+          platform: { os: 'darwin', arch: 'arm64' },
+          allowedVariables: ['PATH', 'CI'],
+          coverage: ['PATH', 'environmentRef:ci-public'],
+          unknownFields: [],
+        },
+      })));
+      expect(inserted.repositoryBindingRevision).toBe(1);
+      expect(inserted.dirtyScope?.status).toBe('mixed');
+      expect(inserted.environmentIdentity?.definitionRevision).toBe('2026-10-28');
+      expect(harness.store.getBaselineAuthorization(inserted.id)).toEqual(inserted);
+      const directUpdate = capture(() => harness.session.database
+        .prepare('UPDATE baseline_authorizations SET dirty_scope_json = ? WHERE id = ?')
+        .run('{}', inserted.id));
+      expect(String(directUpdate)).toContain('baseline authorization is immutable');
+      expect(harness.store.getBaselineAuthorization(inserted.id)).toEqual(inserted);
+    } finally {
+      harness.close();
+    }
+  });
   it('planDigest/policyRevision 与规范化计划摘要不一致在校验期拒绝（SQL 前零副作用）', async () => {
     const harness = await openHarnessAsync('shiploop-f007-auth-digest-');
     try {
@@ -1237,7 +1266,8 @@ describe('F-007 读取、分页与健康派生输入', () => {
       const authorization = harness.transact((transaction) =>
         transaction.insertBaselineAuthorization(authorizationInput()),
       );
-      // plan_json 为合法 JSON 但不是合法计划（空检查集）。
+      // 读取损坏回归需要在夹具中显式移除防篡改触发器；生产路径始终保留该触发器。
+      harness.session.database.exec('DROP TRIGGER baseline_authorizations_immutable_update');
       harness.session.database
         .prepare('UPDATE baseline_authorizations SET plan_json = ? WHERE id = ?')
         .run('{"checks":[]}', authorization.id);

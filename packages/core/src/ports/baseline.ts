@@ -263,10 +263,40 @@ export interface BaselineCodeIdentity {
   readonly hasUncommittedChanges: boolean;
 }
 
+/** 脏工作区的可解释范围；unknown 表示历史记录或可信采集没有提供范围。 */
+export type BaselineDirtyScopeStatus = 'clean' | 'tracked' | 'untracked' | 'mixed' | 'unknown';
+
+export interface BaselineDirtyScope {
+  readonly status: BaselineDirtyScopeStatus;
+  readonly explanation: string;
+}
+
+/**
+ * 获准环境的公开身份快照。只允许保存引用/版本、公开工具链摘要和覆盖说明；
+ * 凭据值、完整 Host 环境和原始转储不属于此结构。
+ */
+export interface BaselineEnvironmentIdentity {
+  readonly schemaVersion: 1;
+  readonly environmentRef: string | null;
+  readonly definitionRevision: string | null;
+  readonly toolchain: Readonly<Record<string, string | null>>;
+  readonly platform: {
+    readonly os: string | null;
+    readonly arch: string | null;
+  };
+  readonly allowedVariables: readonly string[];
+  readonly coverage: readonly string[];
+  readonly unknownFields: readonly string[];
+}
+
 export interface BaselineAuthorizationSummary {
   readonly projectId: string;
   readonly repositoryBindingId: string;
+  /** 新授权的绑定 CAS revision；旧记录缺失时省略，不能回填猜测值。 */
+  readonly repositoryBindingRevision?: number;
   readonly codeIdentity: BaselineCodeIdentity;
+  readonly dirtyScope?: BaselineDirtyScope;
+  readonly environmentIdentity?: BaselineEnvironmentIdentity;
   readonly policyRevision: string;
   readonly planDigest: string;
   readonly plan: BaselineCheckPlan;
@@ -870,6 +900,86 @@ export function validateBaselineCodeIdentity(
   return { headCommit, workingTreeDigest, hasUncommittedChanges };
 }
 
+function requireBaselinePositiveInteger(
+  operation: string,
+  value: unknown,
+  field: string,
+): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 1) {
+    fail(operation, 'invalid_input', field, '必须是正整数', value);
+  }
+  return value;
+}
+
+export function validateBaselineDirtyScope(
+  input: unknown,
+  operation: string,
+  field: string,
+): BaselineDirtyScope {
+  const object = requireObject(operation, input, field);
+  exactKeys(operation, object, ['status', 'explanation'], `${field}.`);
+  if (!(typeof object.status === 'string' && ['clean', 'tracked', 'untracked', 'mixed', 'unknown'].includes(object.status))) {
+    fail(operation, 'invalid_input', `${field}.status`, '必须是受控脏范围状态', object.status);
+  }
+  if (typeof object.explanation !== 'string' || object.explanation.length > 512) {
+    fail(operation, 'invalid_input', `${field}.explanation`, '必须是 ≤512 字符的范围说明', object.explanation);
+  }
+  return { status: object.status as BaselineDirtyScopeStatus, explanation: object.explanation };
+}
+
+export function validateBaselineEnvironmentIdentity(
+  input: unknown,
+  operation: string,
+  field: string,
+): BaselineEnvironmentIdentity {
+  const object = requireObject(operation, input, field);
+  exactKeys(operation, object, [
+    'schemaVersion', 'environmentRef', 'definitionRevision', 'toolchain', 'platform',
+    'allowedVariables', 'coverage', 'unknownFields',
+  ], `${field}.`);
+  if (object.schemaVersion !== 1) fail(operation, 'invalid_input', `${field}.schemaVersion`, '只支持环境身份 schemaVersion=1', object.schemaVersion);
+  if (object.environmentRef !== null && typeof object.environmentRef !== 'string') {
+    fail(operation, 'invalid_input', `${field}.environmentRef`, '必须是环境引用或 null', object.environmentRef);
+  }
+  if (object.definitionRevision !== null && typeof object.definitionRevision !== 'string') {
+    fail(operation, 'invalid_input', `${field}.definitionRevision`, '必须是环境定义版本或 null', object.definitionRevision);
+  }
+  const toolchainObject = requireObject(operation, object.toolchain, `${field}.toolchain`);
+  const toolchain: Record<string, string | null> = {};
+  for (const [name, version] of Object.entries(toolchainObject)) {
+    if (!/^[A-Za-z][A-Za-z0-9._-]{0,63}$/.test(name) || /token|secret|password|credential|key/i.test(name)) {
+      fail(operation, 'invalid_input', `${field}.toolchain`, '工具链键名必须是公开身份且不得表示凭据', name);
+    }
+    if (version !== null && typeof version !== 'string') {
+      fail(operation, 'invalid_input', `${field}.toolchain.${name}`, '工具链版本必须是字符串或 null', version);
+    }
+    toolchain[name] = version as string | null;
+  }
+  const platformObject = requireObject(operation, object.platform, `${field}.platform`);
+  exactKeys(operation, platformObject, ['os', 'arch'], `${field}.platform.`);
+  for (const name of ['os', 'arch'] as const) {
+    if (platformObject[name] !== null && typeof platformObject[name] !== 'string') {
+      fail(operation, 'invalid_input', `${field}.platform.${name}`, '平台字段必须是字符串或 null', platformObject[name]);
+    }
+  }
+  const stringList = (value: unknown, name: string): string[] => {
+    if (!Array.isArray(value) || value.some((item) => typeof item !== 'string' || item.length > 128)) {
+      fail(operation, 'invalid_input', `${field}.${name}`, '必须是有界字符串数组', value);
+    }
+    return [...new Set(value as string[])];
+  };
+  return {
+    schemaVersion: 1,
+    environmentRef: object.environmentRef as string | null,
+    definitionRevision: object.definitionRevision as string | null,
+    toolchain,
+    platform: { os: platformObject.os as string | null, arch: platformObject.arch as string | null },
+    allowedVariables: stringList(object.allowedVariables, 'allowedVariables'),
+    coverage: stringList(object.coverage, 'coverage'),
+    unknownFields: stringList(object.unknownFields, 'unknownFields'),
+  };
+}
+
 /** §6.2 不可变授权摘要：绑定项目/绑定/代码身份/计划摘要/规范化计划/授权人。 */
 export function validateBaselineAuthorizationSummary(
   input: unknown,
@@ -883,7 +993,10 @@ export function validateBaselineAuthorizationSummary(
     [
       'projectId',
       'repositoryBindingId',
+      'repositoryBindingRevision',
       'codeIdentity',
+      'dirtyScope',
+      'environmentIdentity',
       'policyRevision',
       'planDigest',
       'plan',
@@ -907,6 +1020,16 @@ export function validateBaselineAuthorizationSummary(
     operation,
     `${field}.codeIdentity`,
   );
+  const repositoryBindingRevision = object.repositoryBindingRevision === undefined
+    ? undefined
+    : requireBaselinePositiveInteger(operation, object.repositoryBindingRevision, `${field}.repositoryBindingRevision`);
+  const dirtyScope = object.dirtyScope === undefined
+    ? undefined
+    : validateBaselineDirtyScope(object.dirtyScope, operation, `${field}.dirtyScope`);
+  const environmentIdentity = object.environmentIdentity === undefined
+    ? undefined
+    : validateBaselineEnvironmentIdentity(object.environmentIdentity, operation, `${field}.environmentIdentity`);
+
   requireField(operation, object, 'policyRevision', `${field}.policyRevision`);
   const policyRevision = requireSha256(operation, object.policyRevision, `${field}.policyRevision`);
   requireField(operation, object, 'planDigest', `${field}.planDigest`);
@@ -926,7 +1049,10 @@ export function validateBaselineAuthorizationSummary(
   return {
     projectId,
     repositoryBindingId,
+    ...(repositoryBindingRevision === undefined ? {} : { repositoryBindingRevision }),
     codeIdentity,
+    ...(dirtyScope === undefined ? {} : { dirtyScope }),
+    ...(environmentIdentity === undefined ? {} : { environmentIdentity }),
     policyRevision,
     planDigest,
     plan,
@@ -1220,6 +1346,12 @@ export interface BaselineWorkspaceReader {
 /** §6.4 环境允许列表（只含变量名，永不携带值）。 */
 export interface BaselineEnvironmentAllowlist {
   readonly allowedVariables: readonly string[];
+  /** 可信装配定义的版本；缺失表示不可比较，不由运行时猜测。 */
+  readonly definitionRevision?: string;
+  readonly toolchain?: Readonly<Record<string, string | null>>;
+  readonly platform?: { readonly os: string | null; readonly arch: string | null };
+  readonly coverage?: readonly string[];
+  readonly unknownFields?: readonly string[];
 }
 
 /**

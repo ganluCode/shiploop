@@ -6,5 +6,6 @@
 // P05-7 / F-002：Git integration operation persistence (v43); F-004：integration evidence journal (v44).
 // P05-8 / F-001：GitAgent repair authorization and attempt admission (v45).
 // P06-5 / F-003：重新绑定不可变快照与旧绑定事实（v51）。
-export const currentSchemaVersion = 51;
+// P06-5 / F-005：基线授权的绑定 revision、脏范围和获准环境身份（v52）。
+export const currentSchemaVersion = 52;
 export const currentMigrationVersions = Array.from({ length: currentSchemaVersion }, (_, index) => index + 1);

@@ -4180,6 +4180,22 @@ const MIGRATION_050_SQL = MIGRATION_025_SQL
   .replaceAll('attempts_v25', 'attempts_v50')
   .replace('IN (1, 2, 3)', 'IN (1, 2, 3, 4, 5)');
 
+const MIGRATION_052_SQL = `
+-- v52（P06-5 / F-005）：基线授权绑定、脏范围和获准环境身份的不可变快照。
+-- NULL 只表示 v1-v51 历史记录没有该事实；迁移不猜测或回填旧环境。
+ALTER TABLE baseline_authorizations ADD COLUMN repository_binding_revision INTEGER
+  CONSTRAINT baseline_authorizations_binding_revision_check CHECK (repository_binding_revision IS NULL OR repository_binding_revision >= 1);
+ALTER TABLE baseline_authorizations ADD COLUMN dirty_scope_json TEXT
+  CONSTRAINT baseline_authorizations_dirty_scope_json_check CHECK (dirty_scope_json IS NULL OR (json_valid(dirty_scope_json) AND json_type(dirty_scope_json) = 'object'));
+ALTER TABLE baseline_authorizations ADD COLUMN environment_identity_json TEXT
+  CONSTRAINT baseline_authorizations_environment_identity_json_check CHECK (environment_identity_json IS NULL OR (json_valid(environment_identity_json) AND json_type(environment_identity_json) = 'object'));
+CREATE TRIGGER baseline_authorizations_immutable_update
+BEFORE UPDATE ON baseline_authorizations
+BEGIN SELECT RAISE(ABORT, 'baseline authorization is immutable'); END;
+CREATE TRIGGER baseline_authorizations_immutable_delete
+BEFORE DELETE ON baseline_authorizations
+BEGIN SELECT RAISE(ABORT, 'baseline authorization is immutable'); END;
+`;
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     version: 1,
@@ -4296,4 +4312,5 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 49, sql: MIGRATION_049_SQL, checksum: sha256Hex(MIGRATION_049_SQL) },
   { version: 50, sql: MIGRATION_050_SQL, checksum: sha256Hex(MIGRATION_050_SQL), foreignKeysOff: true },
   { version: 51, sql: MIGRATION_051_SQL, checksum: sha256Hex(MIGRATION_051_SQL) },
+  { version: 52, sql: MIGRATION_052_SQL, checksum: sha256Hex(MIGRATION_052_SQL) },
 ];
