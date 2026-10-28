@@ -7,7 +7,7 @@
  */
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, realpathSync, renameSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -157,6 +157,36 @@ describe('F-008 注册命令', () => {
       projects: 1, repository_bindings: 1, state_events: 1, command_receipts: 2,
     });
     expect(s.probe.stateEvents()).toHaveLength(1);
+  });
+
+  it('同一 canonicalPath 被替换为不同本地仓库时返回身份冲突且不写回执', async () => {
+    const s = await setup();
+    const originalPath = s.box.repoDirA;
+    const replacementPath = join(dirname(originalPath), 'replacement-repository');
+    execFileSync('git', ['init', '-q', replacementPath], {
+      env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' },
+    });
+    writeFileSync(join(replacementPath, 'replacement.txt'), 'replacement\n');
+    execFileSync('git', ['-C', replacementPath, 'add', '.'], {
+      env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' },
+    });
+    execFileSync('git', ['-C', replacementPath, '-c', 'user.name=ShipLoop', '-c', 'user.email=shiploop@example.test', 'commit', '-qm', 'replacement'], {
+      env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' },
+    });
+
+    const first = completedOf(await s.service.submit(s.owner, s.envelope()));
+    const movedAside = join(dirname(originalPath), 'original-repository');
+    renameSync(originalPath, movedAside);
+    renameSync(replacementPath, originalPath);
+
+    const error = await s.service.submit(s.owner, s.envelope({
+      payload: { repositoryPath: originalPath, displayName: '不应覆盖', labels: ['overwrite'] },
+    })).catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ code: 'conflict', details: { reason: 'repository_identity_mismatch' } });
+    expect(s.probe.counts()).toMatchObject({
+      projects: 1, repository_bindings: 1, state_events: 1, command_receipts: 1,
+    });
+    expect(first.project.displayName).toBe('Repo A');
   });
 
   it('符号链接别名复用同一项目身份；同 remote 的不同 clone 分别注册', async () => {

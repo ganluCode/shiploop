@@ -11,6 +11,7 @@ import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { CommandProcessError } from '../../ports/command-process.js';
 import type { CommandProcessPort, ConfirmCommandProcessIdentity } from '../../ports/command-process.js';
+import { deriveObservedRepoIdentity } from './repository-inspector.js';
 import { deriveRepoIdentity } from '../../ports/repository-inspector.js';
 import { validateWorkspaceBaseline, type WorkspaceBaseline } from '../../ports/workspace.js';
 import { WorkspaceInspectionError, type WorkspaceContentEntry, type WorkspaceInspectionReason,
@@ -128,7 +129,10 @@ export function createWorkspaceInspector(options: WorkspaceInspectorOptions): Wo
     try { baseline = validateWorkspaceBaseline(input); } catch { return fail('invalid_input'); }
     if (baseline.branch === 'HEAD') fail('invalid_input');
     if (!roots.some(root => inside(root, baseline.canonicalPath))) fail('outside_authorized_root');
-    if (deriveRepoIdentity(baseline.gitCommonDir) !== baseline.repoIdentity) fail('repository_mismatch');
+    if (
+      deriveObservedRepoIdentity(baseline.gitCommonDir) !== baseline.repoIdentity &&
+      deriveRepoIdentity(baseline.gitCommonDir) !== baseline.repoIdentity
+    ) fail('repository_mismatch');
     const startedAt = new Date().toISOString();
     const deadline = performance.now() + limits.totalTimeoutMs;
     let gitCalls = 0, outputBytes = 0;

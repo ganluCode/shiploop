@@ -40,7 +40,7 @@ import type {
   ProjectSettingsPresence,
 } from '../ports/baseline.js';
 import { mapToPublicError } from '../ports/commands.js';
-import { isStorageError } from '../ports/errors.js';
+import { isStorageError, StorageError } from '../ports/errors.js';
 import { toPublicProjectRecord, toPublicRepositoryBindingRecord } from '../ports/queries.js';
 import type { RepositoryBindingLookupStore } from '../ports/queries.js';
 import type { RepositoryInspector } from '../ports/repository-inspector.js';
@@ -124,6 +124,17 @@ export function createOnboardingService(options: OnboardingServiceOptions): Onbo
         const binding = bindingReads.findBindingByCanonicalPath(inspection.canonicalPath);
         let alreadyRegistered: { readonly projectId: string } | null = null;
         if (binding !== null) {
+          if (binding.repoIdentity !== inspection.repoIdentity) {
+            throw new StorageError(
+              'conflict',
+              operation,
+              '规范路径已绑定到不同的本地仓库身份',
+              {
+                entity: { type: 'repository_binding', projectId: binding.projectId },
+                details: { reason: 'repository_identity_mismatch' },
+              },
+            );
+          }
           // 已绑定到不可见项目 → forbidden（与注册一致，不泄漏存在性）。
           requireProjectVisible(principal, binding.projectId, operation);
           alreadyRegistered = { projectId: binding.projectId };

@@ -20,7 +20,7 @@
  *   禁止交互；不读取用户 gitconfig、不触网、不解析凭据；
  * - canonicalPath 由 realpath 输入路径得到（符号链接别名收敛到同一真实根）；
  *   gitCommonDir 来自实际 `git rev-parse --git-common-dir` 并 realpath 规范化；
- *   repoIdentity = deriveRepoIdentity(gitCommonDir)（稳定本地身份，remote 不参与）；
+ *   repoIdentity = deriveObservedRepoIdentity(gitCommonDir)（稳定本地身份，remote 不参与）；
  * - 支持范围（F-004 实施契约，见契约文档 §4.2/§9-6）：接受工作树根（含无初始
  *   commit、脏工作区）与 linked worktree 顶层；拒绝不存在路径、普通文件、非 Git
  *   目录、仓库子目录（repository_root_required，不误绑定到外层仓库）、裸仓库与
@@ -37,8 +37,9 @@
  * 本模块不实现：仓库注册事务（F-005）、存量基线扫描/静态扫描（R2，不在本
  * Feature）、rebind、Task 策略复制、Runtime 调用。
  */
+import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { lstatSync, realpathSync } from 'node:fs';
+import { lstatSync, realpathSync, statSync } from 'node:fs';
 import { devNull } from 'node:os';
 import { isAbsolute, resolve, sep } from 'node:path';
 import {
@@ -47,7 +48,7 @@ import {
   REPOSITORY_INSPECTION_MAX_MAX_OUTPUT_BYTES,
   REPOSITORY_INSPECTION_MAX_TIMEOUT_MS,
   RepositoryInspectionError,
-  deriveRepoIdentity,
+  REPO_IDENTITY_PREFIX,
   validateRepositoryInspectionPath,
 } from '../../ports/repository-inspector.js';
 import type {
@@ -57,6 +58,22 @@ import type {
 } from '../../ports/repository-inspector.js';
 
 const OPERATION = 'RepositoryInspector.inspect';
+
+/**
+ * 运行期仓库身份：在保留端口层路径派生身份的同时，加入 Git 公共目录的
+ * 文件系统对象标识。这样同一目录的符号链接/linked worktree 保持一致，而
+ * 原路径被另一仓库替换后不会误认为是同一个项目。
+ */
+export function deriveObservedRepoIdentity(gitCommonDirRealPath: string): string {
+  let identityMaterial = gitCommonDirRealPath;
+  try {
+    const metadata = statSync(gitCommonDirRealPath);
+    identityMaterial = `${gitCommonDirRealPath}\u0000${String(metadata.dev)}:${String(metadata.ino)}`;
+  } catch {
+    // 兼容已存在但暂不可 stat 的只读检查：退回原有路径身份，交由上层核对。
+  }
+  return `${REPO_IDENTITY_PREFIX}${createHash('sha256').update(identityMaterial, 'utf8').digest('hex')}`;
+}
 
 /** 已解析的装配配置（全部有限且有界）。 */
 interface ResolvedInspectorConfig {
@@ -424,7 +441,7 @@ export function createRepositoryInspector(options?: RepositoryInspectorOptions):
     return {
       canonicalPath,
       gitCommonDir,
-      repoIdentity: deriveRepoIdentity(gitCommonDir),
+      repoIdentity: deriveObservedRepoIdentity(gitCommonDir),
       headCommit,
       hasInitialCommit: headCommit !== null,
       hasUncommittedChanges,

@@ -50,6 +50,7 @@
 import { randomUUID } from 'node:crypto';
 import type Database from 'better-sqlite3';
 import type { PrincipalScope } from '../../ports/authorization.js';
+import { deriveRepoIdentity } from '../../ports/repository-inspector.js';
 import { StorageError } from '../../ports/errors.js';
 import type { StorageEntityRef } from '../../ports/errors.js';
 import {
@@ -1259,6 +1260,20 @@ export function createSqliteStateAccess(
     // 胜者已提交的绑定并复用，不新增行、不覆盖既有元数据、不写创建事件。
     const existing = selectBindingRowByCanonicalPath(db, validBinding.canonicalPath);
     if (existing !== undefined) {
+      const legacyPathIdentity = validBinding.gitCommonDir === null
+        ? null
+        : deriveRepoIdentity(validBinding.gitCommonDir);
+      if (
+        existing.repo_identity !== validBinding.repoIdentity &&
+        existing.repo_identity !== legacyPathIdentity
+      ) {
+        throw conflict(
+          operation,
+          '规范路径已绑定到不同的本地仓库身份',
+          { type: 'repository_binding', projectId: existing.project_id },
+          { reason: 'repository_identity_mismatch' },
+        );
+      }
       return alreadyExistsResult(db, existing, operation);
     }
     insertProjectRow(db, projectId, timestamp, validProject);
