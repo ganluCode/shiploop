@@ -59,7 +59,16 @@ export type {
   HostStartEntrySuccessResult,
   ParsedHostStartArgv,
 } from './start-entry.js';
-export { createPiInferencePreflightAdapter } from './pi-inference-preflight.js';
+export { createMcpStartupPlanParser, buildMcpStartupPlan, prepareMcpStartupPlan, parseMcpStartupPlan, resolveMcpStartupPlan,
+  MCP_PI_TOOL_NAME_MAX_LENGTH, MCP_STARTUP_MAX_ARGV, MCP_STARTUP_MAX_ENVIRONMENT, MCP_STARTUP_MAX_SERVERS,
+  MCP_STARTUP_MAX_TOOLS_PER_SERVER, MCP_STARTUP_PLAN_REASONS, MCP_STARTUP_PLAN_SCHEMA_VERSION, McpStartupPlanError,
+} from './mcp-startup-plan.js';
+export type {
+  McpApprovedServerDefinition, McpResourceResolutionInput, McpStartupPlan, McpStartupPlanGap,
+  McpStartupPlanInput, McpStartupPlanParserOptions, McpStartupPlanReason, McpStartupServerPlan,
+  McpStartupToolMapping, McpTrustedResourceResolver,
+} from './mcp-startup-plan.js';
+
 export type { PiInferenceSource } from './pi-inference-preflight.js';
 export { createPiGitAgentRuntimeAdapter } from './pi-git-agent-adapter.js';
 export type { PiGitAgentRuntimeDriver, PiGitAgentRuntimeOptions } from './pi-git-agent-adapter.js';
