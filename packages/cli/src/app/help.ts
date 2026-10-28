@@ -57,6 +57,7 @@ const PROJECT_HELP = [
   '  project profile reject ... --revision <int> --confirm       拒绝候选画像',
   '',
   '  project resource-list|resource-discover|resource-preview|resource-import|resource-enable|resource-disable|resource-revoke',
+  '  project resource-source-register|resource-source-remove（仅用户管理入口，需 --confirm）',
   '                                                    项目 Skills/MCP 资源管理',
   '  资源变更须项目授权、revision、command-id 与确认；仅影响新执行。',
   '  Skills/MCP 不授予审批、验收、增额或 owner 权限。',
@@ -2136,6 +2137,8 @@ const PLANNING_DECISION_HELP = (decision: 'approve' | 'reject') => [
 const HELP_BY_SCOPE: Readonly<Record<AppHelpScope, string>> = Object.freeze({
   project: PROJECT_HELP,
   'project.resource-list': 'usage: shiploop project resource-list --project <id> [--json]\n' + EXIT_CODE_BLOCK,
+  'project.resource-source-register': 'usage: shiploop project resource-source-register --project <id> --source <uuid> --manifest-file <absolute-path> --revision <int> --confirm [--json]\n仅用户管理入口；来源登记不导入、启用资源，也不授予 Agent 权限。\n' + EXIT_CODE_BLOCK,
+  'project.resource-source-remove': 'usage: shiploop project resource-source-remove --project <id> --source <uuid> --revision <int> --confirm [--json]\n移除来源登记；不删除文件或已有资源。\n' + EXIT_CODE_BLOCK,
   'project.resource-discover': 'usage: shiploop project resource-discover --project <id> --source <id> [--source <id> ...] [--json]\n' + EXIT_CODE_BLOCK,
   'project.resource-preview': 'usage: shiploop project resource-preview --project <id> --source <id> [--selected <id> ...] [--json]\n' + EXIT_CODE_BLOCK,
   'project.resource-import': 'usage: shiploop project resource-import --project <id> --source <id> --source-digest <sha256> --candidate <id> --candidate-digest <sha256> --revision <int> --command-id <uuid> --confirm [--json]\n项目授权后导入；仅影响新执行，不授予审批、验收、增额或 owner 权限。\n' + EXIT_CODE_BLOCK,

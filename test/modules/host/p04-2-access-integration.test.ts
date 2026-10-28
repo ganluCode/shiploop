@@ -43,6 +43,21 @@ async function fixture() {
 beforeAll(() => { execFileSync(process.execPath, ['scripts/build-host-lock.ts'], { timeout: 60_000 }); });
 
 describe('F-007 真实 Host/Core 访问边界', () => {
+  it('[case:work-cannot-register-resource-source] valid Work credentials cannot use owner source registration', async () => {
+    const h = await fixture();
+    try {
+      const before = h.f.snapshot();
+      const response = await loopbackRequest({ port: h.host.port, method: 'POST',
+        path: `/v1/projects/${h.f.binding.projectId}/resources/sources`, token: h.grant.token,
+        body: { action: 'register', manifestPath: '/private/unapproved.json', expectedRevision: 0,
+          projectId: h.f.binding.projectId, sourceId: randomUUID() } });
+      expect(response.statusCode).toBe(401);
+      expect(h.f.snapshot()).toEqual(before);
+      expect(await h.client.invoke(h.f.request())).toMatchObject({ operation: 'task.read' });
+      h.grant.revoke();
+      await expect(h.client.invoke(h.f.request())).rejects.toMatchObject({ code: 'unauthorized' });
+    } finally { await h.close(); }
+  });
   it('[case:real-host-allow-idempotency] 当前授权查询和候选/证据提交成功，同摘要重放、异摘要冲突且不改变业务状态', async () => {
     const h = await fixture(); const { f, client } = h;
     try {

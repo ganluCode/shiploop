@@ -55,6 +55,8 @@ export type AppCliCommand = (typeof APP_CLI_COMMANDS)[number];
 
 /** 应用命令身份（点分 CLI 路径；用于 JSON 信封 command 字段）。 */
 export type AppCliCommandId =
+  | 'project.resource-source-register'
+  | 'project.resource-source-remove'
   | 'project.resource-list'
   | 'project.resource-discover'
   | 'project.resource-preview'
@@ -167,6 +169,8 @@ export type AppCliCommandId =
   | 'integration.plan';
 
 export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
+  'project.resource-source-register',
+  'project.resource-source-remove',
   'project.resource-list',
   'project.resource-discover',
   'project.resource-preview',
@@ -538,6 +542,8 @@ interface AppCommandSpec {
 const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
   'project.resource-list': { command: 'project', commandId: 'project.resource-list', valueFlags: ['--project'], boolFlags: [], repeatableFlags: [], minPositionals: 0, maxPositionals: 0, positionalFields: [] },
   'project.resource-discover': { command: 'project', commandId: 'project.resource-discover', valueFlags: ['--project', '--source'], boolFlags: [], repeatableFlags: ['--source'], minPositionals: 0, maxPositionals: 0, positionalFields: [] },
+  'project.resource-source-register': { command: 'project', commandId: 'project.resource-source-register', valueFlags: ['--project', '--source', '--manifest-file', '--revision'], boolFlags: ['--confirm'], repeatableFlags: [], minPositionals: 0, maxPositionals: 0, positionalFields: [] },
+  'project.resource-source-remove': { command: 'project', commandId: 'project.resource-source-remove', valueFlags: ['--project', '--source', '--revision'], boolFlags: ['--confirm'], repeatableFlags: [], minPositionals: 0, maxPositionals: 0, positionalFields: [] },
   'project.resource-preview': { command: 'project', commandId: 'project.resource-preview', valueFlags: ['--project', '--source', '--selected'], boolFlags: [], repeatableFlags: ['--source', '--selected'], minPositionals: 0, maxPositionals: 0, positionalFields: [] },
   'project.resource-import': { command: 'project', commandId: 'project.resource-import', valueFlags: ['--project', '--source', '--source-digest', '--candidate', '--candidate-digest', '--revision', '--command-id'], boolFlags: ['--confirm'], repeatableFlags: [], minPositionals: 0, maxPositionals: 0, positionalFields: [] },
   'project.resource-enable': { command: 'project', commandId: 'project.resource-enable', valueFlags: ['--project', '--resource', '--revision', '--command-id'], boolFlags: ['--confirm'], repeatableFlags: [], minPositionals: 0, maxPositionals: 0, positionalFields: [] },
@@ -1558,6 +1564,8 @@ const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, A
     project: {
       'resource-list': 'project.resource-list',
       'resource-discover': 'project.resource-discover',
+      'resource-source-register': 'project.resource-source-register',
+      'resource-source-remove': 'project.resource-source-remove',
       'resource-preview': 'project.resource-preview',
       'resource-import': 'project.resource-import',
       'resource-enable': 'project.resource-enable',
@@ -3694,6 +3702,7 @@ interface ParsedProjectResourceBase {
   readonly startTimeoutMs: number; readonly dataRoot?: string; readonly projectId: string;
 }
 export type ParsedProjectResource =
+  | (ParsedProjectResourceBase & { readonly commandId: 'project.resource-source-register' | 'project.resource-source-remove'; readonly sourceId: string; readonly revision: number; readonly manifestPath?: string })
   | (ParsedProjectResourceBase & { readonly commandId: 'project.resource-list' })
   | (ParsedProjectResourceBase & { readonly commandId: 'project.resource-discover' | 'project.resource-preview'; readonly sourceIds: readonly string[]; readonly selectedResourceIds: readonly string[] })
   | (ParsedProjectResourceBase & { readonly commandId: 'project.resource-import'; readonly revision: number; readonly explicitCommandId: string; readonly sourceId: string; readonly sourceDigest: string; readonly candidateId: string; readonly candidateDigest: string })
@@ -3878,6 +3887,18 @@ function buildProject(scan: ScanResult, state: ParseState, spec: AppCommandSpec)
   assertPositionals(scan, spec, state);
   const base = baseResult(state, scan);
   switch (spec.commandId) {
+    case 'project.resource-source-register':
+    case 'project.resource-source-remove': {
+      if (!scan.bools.has('--confirm')) fail(state, 'confirmation_required', 'confirm');
+      const projectId = requireProjectId(requireOption(scan, '--project', state, 'project'), state);
+      const sourceId = requirePlanId(requireOption(scan, '--source', state, 'source'), state, 'source');
+      const revision = parseUnsignedInteger(requireOption(scan, '--revision', state, 'revision'));
+      if (revision === undefined || !Number.isSafeInteger(revision)) fail(state, 'invalid_revision', 'revision');
+      const manifestPath = spec.commandId === 'project.resource-source-register'
+        ? requireOption(scan, '--manifest-file', state, 'manifest-file') : undefined;
+      return { ...base, command: 'project', commandId: spec.commandId, projectId, sourceId, revision,
+        ...(manifestPath === undefined ? {} : { manifestPath }) };
+    }
     case 'project.resource-list':
     case 'project.resource-discover':
     case 'project.resource-preview':

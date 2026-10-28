@@ -211,7 +211,8 @@ export type ApplicationOperation =
   | 'planning.candidate.get'
   | 'project.resources.list'
   | 'project.resources.candidates'
-  | 'project.resources.preview';
+  | 'project.resources.preview'
+  | 'project.resources.sources.configure';
 
 /** 已解析的应用路由（path 形态匹配；路径参数为未解码原始片段）。 */
 export interface ResolvedAppRoute {
@@ -251,7 +252,7 @@ export interface HostApplicationContext {
    * planning.candidate.get，必须真实接线）。
    */
   readonly planningQueryService: Pick<PlanningQueryService, 'listPlanningContexts' | 'getPlanningContext' | 'getPlanningCandidate'>;
-  readonly projectResourceService?: Pick<import('shiploop-core').ProjectResourceService, 'getConfiguration' | 'discoverCandidates' | 'previewCandidates'>;
+  readonly projectResourceService?: Pick<import('shiploop-core').ProjectResourceService, 'getConfiguration' | 'discoverCandidates' | 'previewCandidates' | 'configureSource'>;
   /**
    * P02-3 / F-014（§5.3/§13）：baseline.run 经既有 POST /v1/commands 路由提交
    * 到执行编排（accepted 后异步启动检查）；其余命令仍走 commandService。
@@ -699,6 +700,8 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
         return { operation: 'project.resources.candidates', method: 'GET', pathParam: { name: 'projectId', value: projectId } };
       case PROJECT_RESOURCE_PREVIEW_ROUTE_SUFFIX:
         return { operation: 'project.resources.preview', method: 'GET', pathParam: { name: 'projectId', value: projectId } };
+      case 'resources/sources':
+        return { operation: 'project.resources.sources.configure', method: 'POST', pathParam: { name: 'projectId', value: projectId } };
       default:
         return undefined;
     }
@@ -1702,6 +1705,27 @@ export async function handleApplicationRequest(input: ApplicationRequestInput): 
             : error.kind === 'conflict' ? 'conflict' : 'internal', operation);
         }
         if (isPublicError(error)) throw new CorePublicError(error.code, operation);
+        throw error;
+      }
+      return;
+    }
+    if (operation === 'project.resources.sources.configure') {
+      authenticateOrReject(request, input.authToken, operation);
+      if (input.rawQuery !== '') reject(400, 'invalid_input', operation, '管理入口不接受查询参数');
+      if (input.app.getLifecycleState() !== 'ready') reject(503, 'not_ready', operation, 'Host 未就绪');
+      const service = input.app.projectResourceService;
+      if (!service) reject(501, 'unsupported', operation, '来源管理未装配');
+      if (parsedBody === null || typeof parsedBody !== 'object' || Array.isArray(parsedBody)
+        || (parsedBody as Record<string, unknown>).projectId !== route.pathParam?.value) {
+        reject(400, 'invalid_input', operation, '来源管理项目不匹配');
+      }
+      try {
+        sendBoundedJson(response, 200, await service.configureSource(input.app.principal, parsedBody), MAX_APP_BODY_BYTES, operation);
+      } catch (error) {
+        if (isStorageError(error)) {
+          reject(error.kind === 'conflict' ? 409 : error.kind === 'ownership' ? 403 : error.kind === 'validation' ? 400 : 500,
+            error.kind === 'conflict' ? 'conflict' : error.kind === 'ownership' ? 'forbidden' : error.kind === 'validation' ? 'invalid_input' : 'internal', operation, '来源管理请求被拒绝');
+        }
         throw error;
       }
       return;

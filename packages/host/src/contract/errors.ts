@@ -118,6 +118,7 @@ export const APP_OPERATIONS = [
   'project.resources.list',
   'project.resources.candidates',
   'project.resources.preview',
+  'project.resources.sources.configure',
 ] as const;
 
 export const HOST_OPERATIONS = [

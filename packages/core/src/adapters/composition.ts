@@ -42,6 +42,7 @@ import { homedir } from 'node:os';
 import { isAbsolute } from 'node:path';
 import { createConfigurationService } from '../application/configuration-service.js';
 import { createProjectResourceService } from '../application/project-resource-service.js';
+import { createLocalProjectResourceSources } from './fs/project-resource-sources.js';
 import type { ProjectResourceService, ProjectResourceCandidateSources } from '../application/project-resource-service.js';
 import { createLocalProjectResourceCandidateSourceReader } from './fs/project-resource-candidates.js';
 import type { ConfigurationService } from '../application/configuration-service.js';
@@ -687,7 +688,8 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
     );
     const projectResourceService = createProjectResourceService({
       store: projectResourceStore,
-      sources: (object.projectResourceSources as ProjectResourceCandidateSources | undefined) ?? { getSource: () => null },
+      sources: (object.projectResourceSources as ProjectResourceCandidateSources | undefined)
+        ?? createLocalProjectResourceSources(basePathService.dataRoot()),
       sourceReader: createLocalProjectResourceCandidateSourceReader(),
     });
     const commandReceiptStore = createSqliteCommandReceiptStore(

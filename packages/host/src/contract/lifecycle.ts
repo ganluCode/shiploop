@@ -229,6 +229,7 @@ export const APPLICATION_QUERY_CAPABILITIES = [
   'project.resources.list',
   'project.resources.candidates',
   'project.resources.preview',
+  'project.resources.sources.configure',
 ] as const;
 
 /**

@@ -27,6 +27,7 @@
  * import 本模块无副作用：不发起网络、不读文件系统/argv/env。
  */
 import { createHash, randomUUID } from 'node:crypto';
+import type { ProjectResourceSourceInput, ProjectResourceSourceResult } from 'shiploop-core';
 import type { ProjectProfileQueryResult, ProjectProfileMatchQueryResult, KnowledgeSearchInput, KnowledgeReadInput, MemorySearchInput, KnowledgeSearchResultSet, KnowledgeReadResult, MemorySearchResultSet } from 'shiploop-core/protocol';
 import type { ProjectResourceConfiguration, ProjectResourceCandidateDiscoveryResult, ProjectResourceCandidatePreview } from 'shiploop-core';
 
@@ -1007,6 +1008,7 @@ export interface HostClientApplication {
     input?: ResourceListInput,
   ): Promise<ResourceListResult>;
   listProjectResources(projectId: string): Promise<ProjectResourceConfiguration>;
+  configureProjectResourceSource(input: ProjectResourceSourceInput): Promise<ProjectResourceSourceResult>;
   discoverProjectResourceCandidates(projectId: string, sourceIds: readonly string[]): Promise<ProjectResourceCandidateDiscoveryResult>;
   previewProjectResourceCandidates(projectId: string, sourceIds: readonly string[], selectedResourceIds?: readonly string[]): Promise<ProjectResourceCandidatePreview>;
   importProjectResource(input: ImportProjectResourceInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
@@ -4158,6 +4160,23 @@ export function createHostClientApplication(context: AppClientContext): HostClie
       if (result.records.some((record) => record.projectId !== project)) {
         throw new HostProtocolError('response_malformed', 'execution.resources.list', '资源查询响应归属与请求不一致', { details: { reason: 'scope_mismatch' } });
       }
+      return result;
+    },
+
+    async configureProjectResourceSource(input: ProjectResourceSourceInput): Promise<ProjectResourceSourceResult> {
+      const op = 'project.resources.sources.configure';
+      context.assertOpen(op);
+      const id = requireProjectId(op, input.projectId);
+      const response = await requestLoopbackJson({ port, token, method: 'POST',
+        path: `${PROJECTS_ROUTE}/${id}/resources/sources`, operation: op, body: input,
+        connectTimeoutMs: context.connectMs, overallTimeoutMs: requestBudget(), maxResponseBytes: MAX_APP_BODY_BYTES });
+      if (response.statusCode !== 200) throw mapErrorResponse(response.statusCode, response.json, op);
+      const result = response.json as ProjectResourceSourceResult;
+      if (result === null || typeof result !== 'object' || Array.isArray(result)
+        || Object.keys(result).sort().join() !== 'projectId,registered,revision,schemaVersion,sourceId'
+        || result.schemaVersion !== 1 || result.projectId !== id || result.sourceId !== input.sourceId
+        || !Number.isSafeInteger(result.revision) || result.revision < 1 || typeof result.registered !== 'boolean'
+        || result.registered !== (input.action === 'register')) throw new HostProtocolError('response_malformed', op);
       return result;
     },
 

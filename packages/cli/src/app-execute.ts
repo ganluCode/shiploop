@@ -1147,6 +1147,13 @@ async function executeProjectCommand(
   profilePayload?: Record<string, unknown>,
 ): Promise<AppCliRunResult> {
   switch (command.commandId) {
+    case 'project.resource-source-register':
+    case 'project.resource-source-remove': {
+      const result = await client.configureProjectResourceSource({ projectId: command.projectId, sourceId: command.sourceId,
+        action: command.commandId === 'project.resource-source-register' ? 'register' : 'remove', expectedRevision: command.revision,
+        ...(command.manifestPath === undefined ? {} : { manifestPath: command.manifestPath }) });
+      return emitSuccess(io, command, result, `${JSON.stringify(result)}\n`);
+    }
     case 'project.resource-list': {
       const result = resourceConfigurationView(await client.listProjectResources(command.projectId));
       return emitSuccess(io, command, result, `${JSON.stringify(result, null, 2)}\n`);

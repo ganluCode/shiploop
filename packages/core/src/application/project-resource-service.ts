@@ -16,9 +16,12 @@ import {
 
 import { rejectUnknownKeys, requirePlainObject, validateStableId, validationError } from '../ports/validation.js';
 import { createProjectResourceCandidateDiscovery } from './project-resource-discovery.js';
+import { LOCAL_OWNER_PRINCIPAL_ID } from '../ports/commands.js';
+import type { ProjectResourceSourceInput, ProjectResourceSourceResult, ProjectResourceSourceDirectory } from '../ports/project-resource-sources.js';
 
 /** Trusted assembly directory. No path, principal or resource body is taken from a mutation request. */
 export interface ProjectResourceCandidateSources {
+  configure?: ProjectResourceSourceDirectory['configure'];
   getSource(projectId: string, sourceId: string): (ProjectResourceCandidateSource & { readonly projectId: string }) | null;
 }
 export interface ProjectResourceImportRequest {
@@ -28,6 +31,7 @@ export interface ProjectResourceImportRequest {
   readonly candidateDigest: string;
 }
 export interface ProjectResourceService {
+  configureSource(principal: TrustedPrincipal, input: unknown): Promise<ProjectResourceSourceResult>;
   assertWriteAccess(principal: TrustedPrincipal, projectId: string): void;
   discoverCandidates(principal: TrustedPrincipal, projectId: string, sourceIds: readonly string[]): Promise<ProjectResourceCandidateDiscoveryResult>;
   previewCandidates(principal: TrustedPrincipal, projectId: string, sourceIds: readonly string[], selectedResourceIds?: readonly string[]): Promise<ProjectResourceCandidatePreview>;
@@ -66,6 +70,27 @@ export function createProjectResourceService(deps: {
   readonly sourceReader: ProjectResourceCandidateSourceReader;
 }): ProjectResourceService {
   const discovery = createProjectResourceCandidateDiscovery({ sourceReader: deps.sourceReader });
+  async function configureSource(principal: TrustedPrincipal, value: unknown): Promise<ProjectResourceSourceResult> {
+    assertTrustedPrincipal(principal);
+    // This management operation accepts a local path, never an Agent-supplied authority claim.
+    if (principal.principalId !== LOCAL_OWNER_PRINCIPAL_ID) fail('ownership', 'owner_required');
+    const raw = requirePlainObject(value, CONTEXT, 'source');
+    rejectUnknownKeys(raw, ['projectId', 'sourceId', 'action', 'expectedRevision', 'manifestPath'], CONTEXT, 'source');
+    const projectId = validateStableId(raw.projectId, CONTEXT, 'projectId');
+    const sourceId = validateStableId(raw.sourceId, CONTEXT, 'sourceId');
+    authorize(principal, projectId, true);
+    read(projectId); // Confirm the project exists before touching any source file.
+    if ((raw.action !== 'register' && raw.action !== 'remove') || !Number.isSafeInteger(raw.expectedRevision)
+      || (raw.expectedRevision as number) < 0 || (raw.expectedRevision as number) >= Number.MAX_SAFE_INTEGER
+      || (raw.action === 'register' && (typeof raw.manifestPath !== 'string' || raw.manifestPath.length > 4096 || raw.manifestPath.includes('\0')))
+      || (raw.action === 'remove' && raw.manifestPath !== undefined)) fail('validation', 'invalid_source_registration');
+    if (!deps.sources.configure) fail('validation', 'source_registration_unavailable');
+    if (raw.action === 'register') {
+      const result = await discovery.discover({ projectId, sources: [{ sourceId, path: raw.manifestPath as string }] });
+      if (result.rejected.length || result.candidates.length === 0) fail('validation', 'invalid_source_manifest');
+    }
+    return deps.sources.configure(raw as unknown as ProjectResourceSourceInput);
+  }
   function authorize(principal: TrustedPrincipal, id: string, write: boolean) {
     assertTrustedPrincipal(principal);
     if (write) {
@@ -229,6 +254,7 @@ export function createProjectResourceService(deps: {
   }
 
   return {
+    configureSource,
     assertWriteAccess,
     discoverCandidates,
     previewCandidates,
