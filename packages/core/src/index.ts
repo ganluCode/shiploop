@@ -205,6 +205,7 @@ export * from './application/memory-service.js';
 export * from './application/memory-query-service.js';
 export * from './application/knowledge-query-service.js';
 export * from './application/project-service.js';
+export * from './application/repository-move-service.js';
 export * from './application/configuration-service.js';
 export * from './application/command-receipts-service.js';
 export * from './application/command-service.js';

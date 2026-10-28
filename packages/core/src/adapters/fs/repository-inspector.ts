@@ -39,7 +39,7 @@
  */
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { lstatSync, realpathSync, statSync } from 'node:fs';
+import { lstatSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { devNull } from 'node:os';
 import { isAbsolute, resolve, sep } from 'node:path';
 import {
@@ -437,6 +437,62 @@ export function createRepositoryInspector(options?: RepositoryInspectorOptions):
       throw error;
     }
     const hasUncommittedChanges = statusRaw.trim().length > 0;
+    let diffRaw = '';
+    if (headCommit !== null) {
+      try {
+        diffRaw = await runGitReadOnly(
+          config,
+          ['diff', '--no-ext-diff', '--binary', 'HEAD'],
+          canonicalPath,
+        );
+      } catch (error) {
+        if (error instanceof GitCommandFailure) throw mapGitFailure(error);
+        throw error;
+      }
+    }
+    let untrackedRaw = '';
+    try {
+      untrackedRaw = await runGitReadOnly(
+        config,
+        ['ls-files', '--others', '--exclude-standard', '-z'],
+        canonicalPath,
+      );
+    } catch (error) {
+      if (error instanceof GitCommandFailure) throw mapGitFailure(error);
+      throw error;
+    }
+    const untrackedDigest = createHash('sha256');
+    for (const relativePath of untrackedRaw.split('\u0000')) {
+      if (relativePath.length === 0) continue;
+      const absolutePath = resolve(canonicalPath, relativePath);
+      if (absolutePath !== canonicalPath && !absolutePath.startsWith(`${canonicalPath}${sep}`)) {
+        throw inspectionError('io', 'Git 输出路径超出仓库根', { reason: 'untracked_path_escape' });
+      }
+      let stat;
+      try {
+        stat = lstatSync(absolutePath);
+      } catch (error) {
+        throw mapFsFailure(error);
+      }
+      untrackedDigest.update(relativePath, 'utf8').update('\u0000', 'utf8');
+      if (stat.isFile()) {
+        try {
+          untrackedDigest.update(readFileSync(absolutePath));
+        } catch (error) {
+          throw mapFsFailure(error);
+        }
+      } else {
+        untrackedDigest.update(`special:${stat.mode}`, 'utf8');
+      }
+      untrackedDigest.update('\u0000', 'utf8');
+    }
+    const workingTreeDigest = createHash('sha256')
+      .update(statusRaw, 'utf8')
+      .update('\u0000', 'utf8')
+      .update(diffRaw, 'utf8')
+      .update('\u0000', 'utf8')
+      .update(untrackedDigest.digest('hex'), 'utf8')
+      .digest('hex');
 
     return {
       canonicalPath,
@@ -445,6 +501,7 @@ export function createRepositoryInspector(options?: RepositoryInspectorOptions):
       headCommit,
       hasInitialCommit: headCommit !== null,
       hasUncommittedChanges,
+      workingTreeDigest,
     };
   }
 

@@ -159,6 +159,7 @@ export interface BrownfieldBindingRef {
   readonly projectId: string;
   readonly repositoryBindingId: string;
   readonly bindingRevision: number;
+  readonly canonicalPath: string;
   readonly repoIdentity: string;
 }
 
@@ -181,6 +182,7 @@ export interface BrownfieldCodeIdentity {
 export interface BrownfieldMovePreviewInput {
   readonly schemaVersion: typeof BROWNFIELD_CONTRACT_SCHEMA_VERSION;
   readonly projectId: string;
+  readonly projectRevision: number;
   readonly oldBinding: BrownfieldBindingRef;
   readonly newRepository: BrownfieldRepositoryFacts;
 }
@@ -201,11 +203,12 @@ export interface BrownfieldMoveConfirmation {
 
 export function validateBrownfieldBindingRef(input: unknown, operation = 'brownfield.binding', field = 'binding'): BrownfieldBindingRef {
   const value = object(input, operation, field);
-  exactKeys(value, ['projectId', 'repositoryBindingId', 'bindingRevision', 'repoIdentity'], operation, field);
+  exactKeys(value, ['projectId', 'repositoryBindingId', 'bindingRevision', 'canonicalPath', 'repoIdentity'], operation, field);
   return {
     projectId: stableId(required(value, 'projectId', operation, field), operation, `${field}.projectId`),
     repositoryBindingId: stableId(required(value, 'repositoryBindingId', operation, field), operation, `${field}.repositoryBindingId`),
     bindingRevision: integer(required(value, 'bindingRevision', operation, field), operation, `${field}.bindingRevision`),
+    canonicalPath: absolutePath(required(value, 'canonicalPath', operation, field), operation, `${field}.canonicalPath`),
     repoIdentity: repoIdentity(required(value, 'repoIdentity', operation, field), operation, `${field}.repoIdentity`),
   };
 }
@@ -231,13 +234,16 @@ export function validateBrownfieldRepositoryFacts(input: unknown, operation = 'b
 
 function movePreviewBase(input: unknown, operation: string): BrownfieldMovePreviewInput {
   const value = object(input, operation, 'payload');
-  exactKeys(value, ['schemaVersion', 'projectId', 'oldBinding', 'newRepository'], operation, 'payload');
+  exactKeys(value, ['schemaVersion', 'projectId', 'projectRevision', 'oldBinding', 'newRepository'], operation, 'payload');
   version(required(value, 'schemaVersion', operation, 'payload'), operation, 'payload.schemaVersion');
   const projectId = stableId(required(value, 'projectId', operation, 'payload'), operation, 'payload.projectId');
+  const projectRevision = value.projectRevision === undefined
+    ? 1
+    : integer(value.projectRevision, operation, 'payload.projectRevision');
   const oldBinding = validateBrownfieldBindingRef(required(value, 'oldBinding', operation, 'payload'), operation, 'payload.oldBinding');
   if (oldBinding.projectId !== projectId) fail(operation, 'payload.oldBinding.projectId', '必须与 payload.projectId 相同');
   const newRepository = validateBrownfieldRepositoryFacts(required(value, 'newRepository', operation, 'payload'), operation, 'payload.newRepository');
-  return { schemaVersion: BROWNFIELD_CONTRACT_SCHEMA_VERSION, projectId, oldBinding, newRepository };
+  return { schemaVersion: BROWNFIELD_CONTRACT_SCHEMA_VERSION, projectId, projectRevision, oldBinding, newRepository };
 }
 
 export function computeBrownfieldMovePreviewDigest(input: BrownfieldMovePreviewInput): string {
@@ -257,10 +263,11 @@ export function createBrownfieldMovePreview(input: unknown): BrownfieldMovePrevi
 
 export function validateBrownfieldMovePreview(input: unknown): BrownfieldMovePreview {
   const value = object(input, 'brownfield.move.preview', 'payload');
-  exactKeys(value, ['schemaVersion', 'projectId', 'oldBinding', 'newRepository', 'previewDigest', 'requiresExplicitConfirmation', 'identityRelation'], 'brownfield.move.preview', 'payload');
+  exactKeys(value, ['schemaVersion', 'projectId', 'projectRevision', 'oldBinding', 'newRepository', 'previewDigest', 'requiresExplicitConfirmation', 'identityRelation'], 'brownfield.move.preview', 'payload');
   const normalized = movePreviewBase({
     schemaVersion: value.schemaVersion,
     projectId: value.projectId,
+    projectRevision: value.projectRevision,
     oldBinding: value.oldBinding,
     newRepository: value.newRepository,
   }, 'brownfield.move.preview');

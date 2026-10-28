@@ -33,6 +33,7 @@ function oldBinding() {
     projectId: PROJECT_ID,
     repositoryBindingId: BINDING_ID,
     bindingRevision: 3,
+    canonicalPath: '/tmp/old-repo',
     repoIdentity: OLD_REPO_IDENTITY,
   };
 }

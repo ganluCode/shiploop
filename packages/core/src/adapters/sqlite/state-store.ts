@@ -1352,6 +1352,60 @@ export function createSqliteStateAccess(
     return bindingFromRow(row);
   }
 
+  /** F-004：重新绑定的资格门控必须与绑定 CAS 位于同一 BEGIN IMMEDIATE。租约到期、PID 消失
+   * 或客户端断开都不改变这些持久事实；只有领域收尾/释放原语才可移除占用。 */
+  function assertRepositoryRebindIdle(projectId: string, operation: string): void {
+    const db = session.database;
+    const baselineOccupancy = db.prepare<[], { holder_operation_id: string | null }>(
+      "SELECT holder_operation_id FROM baseline_occupancy WHERE id = 'global'",
+    ).get();
+    if (baselineOccupancy?.holder_operation_id !== null && baselineOccupancy?.holder_operation_id !== undefined) {
+      throw conflict(operation, '基线占用尚未安全释放，拒绝重新绑定', { type: 'baseline_occupancy', projectId }, {
+        reason: 'baseline_occupancy_unresolved',
+      });
+    }
+    const activeBaseline = db.prepare<[string], { id: string }>(
+      "SELECT id FROM baseline_operations WHERE project_id = ? AND status IN ('accepted', 'running', 'cancelling', 'interrupted') LIMIT 1",
+    ).get(projectId);
+    if (activeBaseline !== undefined) {
+      throw conflict(operation, '项目存在活动基线，拒绝重新绑定', { type: 'baseline_operation', id: activeBaseline.id, projectId }, {
+        reason: 'active_baseline',
+      });
+    }
+    const activeExecution = db.prepare<[string, string], { id: string }>(
+      "SELECT id FROM runs WHERE project_id = ? AND status IN ('queued', 'running', 'pausing', 'paused', 'cancelling', 'interrupted') UNION ALL SELECT id FROM execution_batches WHERE project_id = ? AND status IN ('queued', 'running', 'pausing', 'paused', 'cancelling', 'interrupted') LIMIT 1",
+    ).get(projectId, projectId);
+    if (activeExecution !== undefined) {
+      throw conflict(operation, '项目存在待执行或运行中的 Work，拒绝重新绑定', { type: 'run', id: activeExecution.id, projectId }, {
+        reason: 'active_work',
+      });
+    }
+    const activeAttempt = db.prepare<[string], { id: string }>(
+      "SELECT id FROM attempts WHERE project_id = ? AND status IN ('preparing', 'executing', 'verifying') LIMIT 1",
+    ).get(projectId);
+    if (activeAttempt !== undefined) {
+      throw conflict(operation, '项目存在活动 Attempt，拒绝重新绑定', { type: 'attempt', id: activeAttempt.id, projectId }, {
+        reason: 'active_attempt',
+      });
+    }
+    const retainedLease = db.prepare<[string], { id: string }>(
+      "SELECT id FROM workspace_leases WHERE project_id = ? AND state IN ('held', 'quarantined') LIMIT 1",
+    ).get(projectId);
+    if (retainedLease !== undefined) {
+      throw conflict(operation, '项目存在持有或隔离中的工作区占用，拒绝重新绑定', { type: 'workspace_lease', id: retainedLease.id, projectId }, {
+        reason: 'workspace_occupancy_unresolved',
+      });
+    }
+    const uncertainStop = db.prepare<[string], { id: string }>(
+      "SELECT id FROM execution_stop_operations WHERE project_id = ? AND status IN ('stopping', 'uncertain') LIMIT 1",
+    ).get(projectId);
+    if (uncertainStop !== undefined) {
+      throw conflict(operation, '项目存在停止未确认或恢复隔离状态，拒绝重新绑定', { type: 'workspace_operation', id: uncertainStop.id, projectId }, {
+        reason: 'stop_unconfirmed',
+      });
+    }
+  }
+
   /**
    * F-003：在一个 BEGIN IMMEDIATE 内创建新 binding 身份并切换项目指针。
    * 旧 binding 行永不更新，因而基线/工作区/Git 记录的外键仍解析到原路径。
@@ -1367,6 +1421,12 @@ export function createSqliteStateAccess(
     const id = validateProjectId(projectId, operation, 'project');
     const valid = validateRebindRepositoryInput(input, operation);
     const project = selectProjectRow(session.database, id, operation);
+    if (project.status !== 'active') {
+      throw conflict(operation, '项目当前状态不允许重新绑定', { type: 'project', id }, {
+        reason: 'project_not_active', status: project.status,
+      });
+    }
+    assertRepositoryRebindIdle(id, operation);
     const previousRow = selectBindingRowByProjectId(session.database, id);
     if (previousRow === undefined) {
       throw notFound(operation, { type: 'repository_binding', projectId: id }, `项目 ${id} 尚无仓库绑定`);
