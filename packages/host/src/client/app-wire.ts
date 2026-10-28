@@ -203,6 +203,7 @@ import { HostProtocolError, isPlainObject } from '../contract/index.js';
 import type { HostOperation } from '../contract/index.js';
 import type { ProjectProfileQueryResult, ProjectProfileMatchQueryResult } from 'shiploop-core/protocol';
 import type { ProjectResourceConfiguration, ProjectResourceCandidateDiscoveryResult, ProjectResourceCandidatePreview } from 'shiploop-core';
+import { validateProjectResourceCandidate, validateProjectResourceSettings, PROJECT_RESOURCE_CANDIDATE_REASONS } from 'shiploop-core';
 
 
 
@@ -544,6 +545,15 @@ export function validateCommandReceiptWire(
   }
   if (expected.expectedProjectId !== undefined && (receipt.scope.kind !== 'project' || receipt.scope.projectId !== expected.expectedProjectId)) {
     malformed(operation, 'receipt_scope_mismatch');
+  }
+  if (receipt.status === 'completed' && ['project.resource.import', 'project.resource.enable', 'project.resource.disable', 'project.resource.revoke'].includes(receipt.operation)) {
+    const result = requirePlain(operation, receipt.result);
+    exactKeys(operation, result, ['configuration', 'resourceLoaded', 'runtimeExecuted', 'appliesTo']);
+    if (result.resourceLoaded !== false || result.runtimeExecuted !== false || result.appliesTo !== 'new_attempts_only') malformed(operation, 'project_resource_receipt_invalid');
+    let configuration: ProjectResourceConfiguration;
+    try { configuration = validateProjectResourceQueryWire('project.resources.list', result.configuration) as ProjectResourceConfiguration; }
+    catch { malformed(operation, 'project_resource_receipt_invalid'); }
+    if (receipt.scope.kind !== 'project' || configuration.projectId !== receipt.scope.projectId) malformed(operation, 'project_resource_receipt_scope_invalid');
   }
   if (receipt.status === 'completed' && (receipt.operation === 'execution.batch.finalize' || receipt.operation === 'phase.delivery.approve')) {
     let result;
@@ -6813,16 +6823,66 @@ function validateProjectResourceQueryWire(operation: HostOperation, body: unknow
   if (operation === 'project.resources.list') {
     exactKeys(operation, object, ['schemaVersion', 'projectId', 'revision', 'resources', 'digest']);
     if (typeof object.revision !== 'number' || !Number.isSafeInteger(object.revision) || object.revision < 0
-      || !Array.isArray(object.resources) || typeof object.digest !== 'string') malformed(operation, 'project_resource_configuration_invalid');
+      || !Array.isArray(object.resources) || object.resources.length > 64 || typeof object.digest !== 'string' || !/^[a-f0-9]{64}$/.test(object.digest)) malformed(operation, 'project_resource_configuration_invalid');
+    if (object.resources.length > 0) {
+      try { validateProjectResourceSettings({ schemaVersion: 1, projectId: object.projectId, resources: object.resources }, { operation }); }
+      catch { malformed(operation, 'project_resource_configuration_invalid'); }
+    }
     return object;
   }
   exactKeys(operation, object, operation === 'project.resources.preview'
     ? ['schemaVersion', 'projectId', 'entries', 'candidates', 'rejected', 'configurationChanged']
     : ['schemaVersion', 'projectId', 'sources', 'candidates', 'rejected', 'configurationChanged']);
-  if (!Array.isArray(object.candidates) || !Array.isArray(object.rejected) || object.configurationChanged !== false) {
+  if (!Array.isArray(object.candidates) || object.candidates.length > 2048 || !Array.isArray(object.rejected) || object.rejected.length > 32 || object.configurationChanged !== false) {
     malformed(operation, 'project_resource_candidates_invalid');
   }
-  if (operation === 'project.resources.preview' && !Array.isArray(object.entries)) malformed(operation, 'project_resource_preview_invalid');
+  for (const value of object.candidates) {
+    const candidate = requirePlain(operation, value);
+    const { metadata: rawMetadata, availability, ...identity } = candidate;
+    if (availability !== 'available' && availability !== 'unverified') malformed(operation, 'project_resource_candidate_invalid');
+    try {
+      const parsed = validateProjectResourceCandidate(identity);
+      if (parsed.projectId !== object.projectId || typeof identity.digest !== 'string' || identity.summary === undefined) malformed(operation, 'project_resource_candidate_invalid');
+    } catch { malformed(operation, 'project_resource_candidate_invalid'); }
+    const metadata = requirePlain(operation, rawMetadata);
+    exactKeys(operation, metadata, ['description', 'promptSummary', 'toolNames']);
+    if (![metadata.description, metadata.promptSummary].every(v => v === null || (typeof v === 'string' && v.length <= 4096))
+      || !Array.isArray(metadata.toolNames) || metadata.toolNames.length > 128 || metadata.toolNames.some(v => typeof v !== 'string' || v.length > 128)) malformed(operation, 'project_resource_metadata_invalid');
+  }
+  const reasons = new Set<string>(PROJECT_RESOURCE_CANDIDATE_REASONS);
+  for (const value of object.rejected) {
+    const item = requirePlain(operation, value);
+    exactKeys(operation, item, ['sourceId', 'reason']);
+    requireStableId(operation, item.sourceId);
+    if (typeof item.reason !== 'string' || !reasons.has(item.reason)) malformed(operation, 'project_resource_rejection_invalid');
+  }
+  if (operation === 'project.resources.preview') {
+    if (!Array.isArray(object.entries) || object.entries.length > 2080) malformed(operation, 'project_resource_preview_invalid');
+    for (const value of object.entries) {
+      const entry = requirePlain(operation, value);
+      exactKeys(operation, entry, ['sourceId', 'candidateId', 'name', 'status', 'reason']);
+      requireStableId(operation, entry.sourceId);
+      if (entry.candidateId !== null) requireStableId(operation, entry.candidateId);
+      if (!(entry.name === null || typeof entry.name === 'string') || !['pending', 'selected', 'conflict', 'rejected'].includes(entry.status as string)
+        || !(entry.reason === null || (typeof entry.reason === 'string' && (reasons.has(entry.reason) || ['already_selected', 'already_configured'].includes(entry.reason))))) malformed(operation, 'project_resource_preview_invalid');
+    }
+  } else {
+    if (!Array.isArray(object.sources) || object.sources.length > 32) malformed(operation, 'project_resource_sources_invalid');
+    for (const value of object.sources) {
+      const source = requirePlain(operation, value);
+      exactKeys(operation, source, ['sourceId', 'sourceDigest', 'status', 'candidateIds', 'error']);
+      requireStableId(operation, source.sourceId);
+      if (!Array.isArray(source.candidateIds) || source.candidateIds.length > 64) malformed(operation, 'project_resource_sources_invalid');
+      source.candidateIds.forEach(id => requireStableId(operation, id));
+      if (source.status === 'accepted') {
+        if (typeof source.sourceDigest !== 'string' || !/^[a-f0-9]{64}$/.test(source.sourceDigest) || source.error !== null) malformed(operation, 'project_resource_sources_invalid');
+      } else if (source.status === 'rejected') {
+        const error = requirePlain(operation, source.error);
+        exactKeys(operation, error, ['reason']);
+        if (source.sourceDigest !== null || source.candidateIds.length !== 0 || typeof error.reason !== 'string' || !reasons.has(error.reason)) malformed(operation, 'project_resource_sources_invalid');
+      } else malformed(operation, 'project_resource_sources_invalid');
+    }
+  }
   return object;
 }
 

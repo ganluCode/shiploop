@@ -101,6 +101,7 @@ const ALLOWED_OPTION_KEYS = [
   'capabilityCatalog',
   'runtimeRecoveryDescriptors',
   'runtimeRecoverySources',
+  'projectResourceSources',
   'platform',
   'env',
   'nativeAddonPath',
@@ -133,6 +134,8 @@ export interface HostStartOptions {
   readonly capabilityCatalog: RuntimeCapabilityCatalog;
   /** 可信恢复能力证据；仅静态装配，不能由 CLI、环境或请求提供。 */
   readonly runtimeRecoveryDescriptors?: readonly RuntimeRecoveryCapabilities[];
+  /** Trusted source resolver supplied by the embedding application, never argv or HTTP. */
+  readonly projectResourceSources?: CoreApplicationOptions['projectResourceSources'];
   /** Core 恢复来源权威；缺省时恢复来源请求保持拒绝。 */
   readonly runtimeRecoverySources?: RuntimeRecoverySourceReader;
   /** 平台注入口（默认 process.platform）；仅 'darwin' 受支持。 */
@@ -230,6 +233,10 @@ function validateStartOptions(options: HostStartOptions): void {
   }
   if (options.runtimeRecoveryDescriptors !== undefined && !Array.isArray(options.runtimeRecoveryDescriptors)) {
     throw invalidInput('invalid_recovery_descriptors', { field: 'runtimeRecoveryDescriptors' });
+  }
+  if (options.projectResourceSources !== undefined && (options.projectResourceSources === null
+    || typeof options.projectResourceSources !== 'object' || typeof options.projectResourceSources.getSource !== 'function')) {
+    throw invalidInput('trusted_resource_source_required', { field: 'projectResourceSources' });
   }
   if (options.runtimeRecoverySources !== undefined && (
     options.runtimeRecoverySources === null || typeof options.runtimeRecoverySources !== 'object'
@@ -380,6 +387,7 @@ export async function startHost(options: HostStartOptions): Promise<RunningHost>
       runtimeRecoveryDescriptors: recoveryDescriptors,
       ...(options.runtimeRecoverySources === undefined ? {}
         : { runtimeRecoverySources: options.runtimeRecoverySources }),
+      ...(options.projectResourceSources === undefined ? {} : { projectResourceSources: options.projectResourceSources }),
       workRuntimeFactory: options.workRuntimeFactory,
       batchDeliveryFactory: options.batchDeliveryFactory,
       featureDeliveryFactory: options.featureDeliveryFactory,

@@ -10,6 +10,14 @@ describe('P06-3 F-006 HostClient resource revision', () => {
       .toThrow(expect.objectContaining({ code: 'unsupported_schema_version' }));
   });
 
+  it('[case:resource-nested-wire] rejects malformed resource records and candidate bodies before display', () => {
+    expect(() => validateAppQueryResponse('project.resources.list', { schemaVersion: 1, projectId: randomUUID(), revision: 0,
+      digest: 'a'.repeat(64), resources: [{ path: '/private/secret' }] })).toThrow(expect.objectContaining({ code: 'response_malformed' }));
+    expect(() => validateAppQueryResponse('project.resources.candidates', { schemaVersion: 1, projectId: randomUUID(),
+      sources: [], candidates: [{ id: randomUUID(), content: 'secret' }], rejected: [], configurationChanged: false }))
+      .toThrow(expect.objectContaining({ code: 'response_malformed' }));
+  });
+
   it('[case:resource-initial-revision] sends revision zero in the import envelope without weakening other revision validators', async () => {
     let requestBody = '';
     const server = createServer((request, response) => {

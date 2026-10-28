@@ -14,4 +14,4 @@ shiploop project resource-revoke --project <id> --resource <id> --revision <n> -
 
 来源 ID 由可信项目来源目录提供，不能传文件路径或凭据。首次资源配置的 revision 为 0；之后使用当前列表返回的 revision。断线后以同一 command ID 和同一请求核对回执，不以新身份盲目重试。
 
-当前限制：生产 Host 尚未装配可信来源目录，默认无法发现或导入来源；此命令接线尚未通过完整授权与端到端验收。不要将局部测试通过解释为资源管理已交付。
+当前限制：可信嵌入方可向 `startHost` 注入 `projectResourceSources`；默认 Host 未装配来源目录，因此无法发现或导入来源。普通 CLI 通过既有 owner Host 连接，目前没有受限主体 CLI 凭据接线；受限 Work 通道不能由该命令替代。来源登记与受限身份入口需另行确定，不要将局部测试通过解释为资源管理已交付。
