@@ -539,6 +539,12 @@ export function createWorkEvidenceRecorder(deps: WorkEvidenceRecorderDeps): Work
 
       /** 单事件持久化（序列化 → 脱敏 → 界限 → 入块）；用量只计实际持久事件。 */
       const persistEvent = async (event: RuntimeEvent): Promise<void> => {
+        // Reserved producer diagnostic: omitted MCP content is a real coverage gap,
+        // even when its bounded summary was successfully delivered and persisted.
+        if (event.payload.kind === 'diagnostic' && event.payload.code === 'mcp.audit_gap') {
+          gaps.add('mcp_audit_gap');
+          diagnostics.add('mcp_audit_gap');
+        }
         const rawLine = JSON.stringify({
           v: WORK_EVIDENCE_SCHEMA_VERSION,
           sequence: event.sequence,

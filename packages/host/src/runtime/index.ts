@@ -59,6 +59,8 @@ export type {
   HostStartEntrySuccessResult,
   ParsedHostStartArgv,
 } from './start-entry.js';
+export { createMcpRuntimeAudit, McpAuditError, MCP_AUDIT_BODY_BYTES } from './mcp-runtime-audit.js';
+export type { McpRuntimeAudit, McpStderrAudit } from './mcp-runtime-audit.js';
 export { createMcpStdioConnection, createMcpStdioConnectionManager, startMcpStdioConnections, McpStdioError } from './mcp-stdio.js';
 export type {
   McpStdioCloseResult, McpStdioConnection, McpStdioConnectionManager, McpStdioConnectionOptions,

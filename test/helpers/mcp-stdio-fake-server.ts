@@ -10,6 +10,8 @@ export interface FakeMcpServerOptions {
   readonly spawnChild?: boolean;
   readonly ignoreTerminate?: boolean;
   readonly stderrBytes?: number;
+  /** Synthetic test value is resolved only from the child environment. */
+  readonly echoEnvironmentKey?: string;
   readonly toolName?: string;
   readonly discoveryFile?: string;
   readonly pagesFile?: string;

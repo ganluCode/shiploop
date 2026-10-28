@@ -111,6 +111,7 @@ export * from './application/execution-service.js';
 export * from './application/execution-workspace-retention.js';
 export * from './ports/fake-runtime-script.js';
 export * from './ports/work-evidence-recorder.js';
+export { createOutputRedactor, redactOutputText } from './application/output-redaction.js';
 export * from './ports/work-recording.js';
 export * from './ports/work-recording-query.js';
 export * from './ports/work-recording-store.js';

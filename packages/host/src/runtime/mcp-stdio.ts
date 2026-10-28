@@ -1,6 +1,7 @@
 /** Session-owned MCP lifecycle. Only trusted Host/Runner assembly supplies launch plans and registration. */
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
+import { StringDecoder } from 'node:string_decoder';
 import { dirname } from 'node:path';
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import {
@@ -8,7 +9,8 @@ import {
 } from '@earendil-works/pi-mcp';
 import type { InitializeResult, JsonRpcMessage, ServerCapabilities, Tool } from '@earendil-works/pi-mcp';
 import type { CommandProcessIdentity, WorkManagedProcess, WorkResourceSnapshot } from 'shiploop-core';
-import { stableStringify } from 'shiploop-core';
+import { createOutputRedactor, stableStringify } from 'shiploop-core';
+import { mcpPlanSecrets, redactMcpValue, type McpRuntimeAudit, type McpStderrAudit } from './mcp-runtime-audit.js';
 import type { McpStartupPlan, McpStartupServerPlan } from './mcp-startup-plan.js';
 import { createMcpToolCatalog, discoverMcpTools, McpToolCatalogError, type McpToolCatalog, type McpToolFailureReason } from './mcp-tool-catalog.js';
 
@@ -18,7 +20,7 @@ export type McpStdioStopStatus = 'confirmed' | 'unconfirmed' | 'unknown';
 export type McpStdioErrorCode = 'unsupported_platform' | 'invalid_startup_plan' | 'missing_executable'
   | 'spawn_failed' | 'process_exited_during_start' | 'process_registration_failed' | 'startup_plan_conflict'
   | 'handshake_timeout' | 'call_timeout' | 'call_cancelled' | 'incompatible_protocol' | 'incompatible_capabilities' | 'protocol_error'
-  | 'server_exited' | 'cleanup_unconfirmed' | 'closed' | 'tool_discovery_failed';
+  | 'server_exited' | 'cleanup_unconfirmed' | 'closed' | 'tool_discovery_failed' | 'audit_failed';
 
 /** Never includes executable, environment, server output or arbitrary SDK exception text. */
 export class McpStdioError extends Error {
@@ -85,6 +87,7 @@ export interface McpStdioProcessInspector {
 export interface McpStdioConnectionOptions {
   readonly plan: McpStartupPlan;
   readonly server?: McpStartupServerPlan;
+  readonly audit?: McpRuntimeAudit;
   readonly registerProcess: McpStdioProcessRegistrar;
   readonly platform?: string;
   readonly handshakeTimeoutMs?: number;
@@ -285,6 +288,12 @@ class McpStdioTransport {
   private child?: ChildProcessWithoutNullStreams;
   private buffer = Buffer.alloc(0);
   private stderrBuffer = Buffer.alloc(0);
+  private stderrObservedBytes = 0;
+  private stderrRedacted = false;
+  private stderrRetainedBytes = 0;
+  private readonly stderrDecoder = new StringDecoder('utf8');
+  private readonly stderrRedactor: ReturnType<typeof createOutputRedactor>;
+  private stderrEvidence: McpStderrAudit | undefined;
   private startPromise?: Promise<void>;
   private stopPromise?: Promise<McpStdioCloseResult>;
   private closed = false;
@@ -295,8 +304,12 @@ class McpStdioTransport {
   private totalBytes = 0;
   constructor(private readonly options: {
     server: McpStartupServerPlan; maxMessageBytes: number; maxStderrBytes: number;
-    closeTimeoutMs: number; inspector: McpStdioProcessInspector;
-  }) {}
+    closeTimeoutMs: number; inspector: McpStdioProcessInspector; secrets: readonly string[];
+  }) {
+    try { this.stderrRedactor = createOutputRedactor(options.secrets); }
+    catch { throw new McpStdioError('invalid_startup_plan'); }
+  }
+  get diagnostics(): McpStderrAudit | undefined { return this.stderrEvidence; }
   get processIdentity(): CommandProcessIdentity | null { return this.identity; }
   onMessage(listener: (message: JsonRpcMessage) => void): () => void { this.messages.add(listener); return () => { this.messages.delete(listener); }; }
   onError(listener: (error: Error) => void): () => void { this.errors.add(listener); return () => { this.errors.delete(listener); }; }
@@ -337,9 +350,15 @@ class McpStdioTransport {
       } catch { this.fail(new McpStdioError('protocol_error')); }
     }
   };
+  private retainStderr(text: string): void {
+    const clean = Buffer.from(text);
+    this.stderrRetainedBytes += clean.length;
+    this.stderrRedacted ||= text.includes('[REDACTED]');
+    this.stderrBuffer = Buffer.concat([this.stderrBuffer, clean]).subarray(-this.options.maxStderrBytes);
+  }
   private readonly stderr = (chunk: Buffer) => {
-    // Bounded private tail; server diagnostics never enter public errors or snapshots.
-    this.stderrBuffer = Buffer.concat([this.stderrBuffer, chunk]).subarray(-this.options.maxStderrBytes);
+    this.stderrObservedBytes += chunk.length;
+    this.retainStderr(this.stderrRedactor.feed(this.stderrDecoder.write(chunk)));
   };
   private readonly pipeError = () => { if (!this.closed) this.fail(new McpStdioError('protocol_error')); };
   start(): Promise<void> {
@@ -448,6 +467,10 @@ class McpStdioTransport {
     } finally {
       child?.stdout.off('data', this.stdout); child?.stderr.off('data', this.stderr);
       child?.stdin.destroy(); child?.stdout.destroy(); child?.stderr.destroy();
+      this.retainStderr(this.stderrRedactor.feed(this.stderrDecoder.end()) + this.stderrRedactor.end());
+      this.stderrEvidence = Object.freeze({ text: this.stderrBuffer.toString('utf8'), observedBytes: this.stderrObservedBytes,
+        retainedBytes: this.stderrBuffer.length, truncated: this.stderrRetainedBytes > this.stderrBuffer.length,
+        redacted: this.stderrRedacted });
       this.buffer = Buffer.alloc(0); this.stderrBuffer = Buffer.alloc(0);
       this.emitClose();
       this.messages.clear(); this.errors.clear(); this.closes.clear();
@@ -466,6 +489,10 @@ export function createMcpStdioConnection(options: McpStdioConnectionOptions): Mc
   // Snapshot before asynchronous registration. Mutable caller input cannot alter the approved spawn.
   const plan = freeze(structuredClone(options.plan));
   const server = selectServer(plan, options.server);
+  options.audit?.assertPlan(plan);
+  const secrets = mcpPlanSecrets(plan);
+  // Resolved credentials belong only in the private environment, never process argv.
+  if (server.argv.some(arg => secrets.some(secret => arg.includes(secret)))) throw new McpStdioError('invalid_startup_plan');
   if ((options.platform ?? process.platform) !== 'darwin' || process.platform !== 'darwin') throw new McpStdioError('unsupported_platform');
   if (typeof options.registerProcess !== 'function') throw new McpStdioError('invalid_startup_plan');
   const handshakeMs = bounded(options.handshakeTimeoutMs, 5_000, 60_000);
@@ -479,7 +506,7 @@ export function createMcpStdioConnection(options: McpStdioConnectionOptions): Mc
   const inspector = options.processInspector ?? realInspector;
   const transport = new McpStdioTransport({ server,
     maxMessageBytes: bounded(options.maxMessageBytes, 1_048_576, 8_388_608),
-    maxStderrBytes: bounded(options.maxStderrBytes, 65_536, 1_048_576), closeTimeoutMs: closeMs, inspector });
+    maxStderrBytes: bounded(options.maxStderrBytes, 65_536, 1_048_576), closeTimeoutMs: closeMs, inspector, secrets });
   let state: McpStdioConnectionState = 'not_started';
   let error: McpStdioError | null = null;
   let registration: McpStdioProcessRegistration | null = null;
@@ -499,6 +526,8 @@ export function createMcpStdioConnection(options: McpStdioConnectionOptions): Mc
   const fail = (cause: McpStdioError) => {
     if (state === 'available' && cause.code === 'process_exited_during_start') cause = new McpStdioError('server_exited');
     error ??= cause;
+    try { options.audit?.lifecycle(server.resourceId, 'failed', error.code); }
+    catch { /* The audit producer has already requested required-policy stop. */ }
     rejectFailure(error);
     if (state === 'available') {
       state = 'failed';
@@ -524,6 +553,8 @@ export function createMcpStdioConnection(options: McpStdioConnectionOptions): Mc
           error = new McpStdioError('cleanup_unconfirmed', error?.code);
           state = 'failed';
         } else if (state !== 'failed') state = 'closed';
+        try { options.audit?.lifecycle(server.resourceId, 'cleanup', error?.code ?? null, stopEvidence, transport.diagnostics); }
+        catch { error ??= new McpStdioError('audit_failed'); state = 'failed'; }
         return stopEvidence;
       } finally {
         options.signal?.removeEventListener('abort', onSessionAbort);
@@ -549,6 +580,7 @@ export function createMcpStdioConnection(options: McpStdioConnectionOptions): Mc
       state = 'starting';
       const deadline = deadlineFor(handshakeMs, outerDeadline);
       const execute = async (): Promise<McpStdioReady> => {
+        options.audit?.lifecycle(server.resourceId, 'starting', null);
         await transport.start();
         if (closing || Date.now() >= deadline) throw new McpStdioError('handshake_timeout');
         const processIdentity = transport.processIdentity;
@@ -572,14 +604,16 @@ export function createMcpStdioConnection(options: McpStdioConnectionOptions): Mc
         const tools = await discover(deadline);
         if (closing || error) throw error ?? new McpStdioError('closed');
         state = 'available';
-        return freeze({ initialize: initialized, protocolVersion: initialized.protocolVersion,
-          capabilities: initialized.capabilities, tools, processRegistration: registration });
+        options.audit?.lifecycle(server.resourceId, 'ready', null);
+        return freeze({ initialize: redactMcpValue(initialized, secrets), protocolVersion: initialized.protocolVersion,
+          capabilities: redactMcpValue(initialized.capabilities, secrets), tools: redactMcpValue(tools, secrets), processRegistration: registration });
       };
       startPromise = withinDeadline(Promise.race([execute(), failure]), deadline, 'handshake_timeout').catch(async cause => {
         error ??= cause instanceof McpStdioError ? cause : cause instanceof McpToolCatalogError
           ? new McpStdioError('tool_discovery_failed', undefined, cause.reason) : cause instanceof McpTimeoutError
           ? new McpStdioError('handshake_timeout') : new McpStdioError('protocol_error');
         state = 'failed';
+        try { options.audit?.lifecycle(server.resourceId, 'failed', error.code); } catch { /* stop requested */ }
         const result = await close();
         if (!result.confirmed && error.code !== 'cleanup_unconfirmed') error = new McpStdioError('cleanup_unconfirmed', error.code);
         throw error;
@@ -588,7 +622,7 @@ export function createMcpStdioConnection(options: McpStdioConnectionOptions): Mc
     },
     createToolCatalog() {
       if (state !== 'available' || closing || !client) return Promise.reject(error ?? new McpStdioError('closed'));
-      catalogPromise ??= createMcpToolCatalog({ plan, endpoints: [{ server,
+      catalogPromise ??= createMcpToolCatalog({ plan, audit: options.audit, endpoints: [{ server,
         discover: async signal => {
           if (state !== 'available' || closing) throw error ?? new McpStdioError('closed');
           const deadline = deadlineFor(handshakeMs, outerDeadline);

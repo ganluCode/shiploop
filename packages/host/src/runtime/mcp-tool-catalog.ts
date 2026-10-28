@@ -4,6 +4,7 @@ import {
   type CallToolResult, type ContentBlock,
 } from '@earendil-works/pi-mcp';
 import { stableStringify } from 'shiploop-core';
+import { mcpPlanSecrets, redactMcpValue, type McpRuntimeAudit } from './mcp-runtime-audit.js';
 import type { McpStartupPlan, McpStartupServerPlan } from './mcp-startup-plan.js';
 import type { PiSubmissionToolDefinition } from './pi-adapter.js';
 
@@ -289,6 +290,7 @@ function callFailureReason(error: unknown): McpToolFailureReason {
 export async function createMcpToolCatalog(input: {
   readonly plan: McpStartupPlan;
   readonly endpoints: readonly McpToolEndpoint[];
+  readonly audit?: McpRuntimeAudit;
   readonly maxConcurrentCalls?: number;
   readonly limits?: Partial<McpCallLimits>;
 }): Promise<McpToolCatalog> {
@@ -299,6 +301,8 @@ export async function createMcpToolCatalog(input: {
   }
   const limits = requestedLimits;
   const plan = structuredClone(input.plan);
+  input.audit?.assertPlan(plan);
+  const secrets = mcpPlanSecrets(plan);
   const names = new Set<string>();
   for (const mapping of plan.tools) {
     if (!/^[a-z][a-z0-9_-]{0,63}$/.test(mapping.piName) || names.has(mapping.piName)) fail('mapping_collision');
@@ -324,7 +328,7 @@ export async function createMcpToolCatalog(input: {
     }
   }
   let activeCalls = 0;
-  const dispatch: McpToolCatalog['dispatch'] = async (binding, params, signal, toolCallId = '') => {
+  const dispatchOnce: McpToolCatalog['dispatch'] = async (binding, params, signal, toolCallId = '') => {
     if (typeof toolCallId !== 'string' || Buffer.byteLength(toolCallId) > limits.maxToolCallIdBytes) fail('limit_exceeded');
     const entry = binding && entries.get(binding.piName);
     // Object identity makes mappings opaque: copying or importing one from another Session cannot authorize a call.
@@ -366,13 +370,13 @@ export async function createMcpToolCatalog(input: {
       // A tool-call id is supplied by the Pi closure below; the placeholder is replaced there.
       try {
         const raw = await entry.endpoint.call(binding.originalName, args, signal, context);
-        const result = validateCallResult(raw, limits);
-        return {
+        const result = redactMcpValue(validateCallResult(raw, limits), secrets);
+        return freeze({
           content: toLlmContent(result),
           details: result.structuredContent,
           structuredContent: result.structuredContent,
           isError: result.isError === true,
-        };
+        });
       } catch (error) {
         if (error instanceof McpToolCatalogError) throw error;
         throw new McpToolCatalogError(callFailureReason(error));
@@ -381,9 +385,17 @@ export async function createMcpToolCatalog(input: {
       activeCalls--;
     }
   };
+  const dispatch: McpToolCatalog['dispatch'] = (binding, params, signal, toolCallId = '') => {
+    const candidate = binding && entries.get(binding.piName);
+    const entry = candidate?.binding === binding ? candidate : undefined;
+    return input.audit ? input.audit.observeCall(entry?.server.resourceId ?? 'unresolved', entry?.binding.piName ?? 'unresolved',
+      toolCallId, params, () => dispatchOnce(binding, params, signal, toolCallId), callFailureReason)
+      : dispatchOnce(binding, params, signal, toolCallId);
+  };
   const tools = [...entries.values()].sort((a, b) => a.binding.piName.localeCompare(b.binding.piName)).map(entry => freeze({
-    name: entry.binding.piName, label: entry.binding.piName, description: entry.tool.description || 'Approved MCP tool',
-    parameters: entry.tool.inputSchema,
+    name: entry.binding.piName, label: entry.binding.piName,
+    description: redactMcpValue(entry.tool.description || 'Approved MCP tool', secrets),
+    parameters: redactMcpValue(entry.tool.inputSchema, secrets),
     execute: (toolCallId: string, params: unknown, signal?: AbortSignal) => dispatch(entry.binding, params, signal, toolCallId),
   }));
   return Object.freeze({ tools: Object.freeze(tools), resolve: (name: string) => entries.get(name)?.binding, dispatch });

@@ -39,6 +39,12 @@ if (config.mode === 'exit_on_start') process.exit(17);
 if (config.mode === 'stdout_noise') process.stdout.write('noise-before-json\n');
 if (config.mode === 'large_output') process.stdout.write('x'.repeat(2 * 1024 * 1024) + '\n');
 if (config.stderrBytes) process.stderr.write('private-diagnostic-'.repeat(Math.ceil(config.stderrBytes / 19)));
+const environmentEcho = config.echoEnvironmentKey ? process.env[config.echoEnvironmentKey] : undefined;
+if (environmentEcho) {
+  const split = Math.floor(environmentEcho.length / 2);
+  process.stderr.write(environmentEcho.slice(0, split));
+  process.stderr.write(environmentEcho.slice(split) + '\n');
+}
 let calls = 0;
 let buffer = '';
 process.stdin.setEncoding('utf8');
@@ -51,7 +57,7 @@ const initialize = id => {
     protocolVersion: config.mode === 'invalid_protocol' ? '1900-01-01' : '2025-11-25',
     capabilities: config.mode === 'missing_tools_capability' ? {} : { tools: {} },
     serverInfo: { name: 'shiploop-local-fake', version: '1.0.0' },
-    ...(config.instructions ? { instructions: config.instructions } : {}),
+    ...(config.instructions || environmentEcho ? { instructions: config.instructions ?? environmentEcho } : {}),
   });
   if (Number.isSafeInteger(config.parentExitAfterInitializeMs) && config.parentExitAfterInitializeMs >= 0) {
     setTimeout(() => process.exit(0), config.parentExitAfterInitializeMs);
@@ -90,7 +96,7 @@ process.stdin.on('data', chunk => {
       if (config.callMode === 'hang') continue;
       if (config.callMode === 'exit') process.exit(23);
       if (config.callMode === 'error') { rpcError(message.id); continue; }
-      send(message.id, { content: [{ type: 'text', text: config.callMode === 'large_output' ? 'x'.repeat(2 * 1024 * 1024) : 'fake result' }],
+      send(message.id, { content: [{ type: 'text', text: config.callMode === 'large_output' ? 'x'.repeat(2 * 1024 * 1024) : environmentEcho ?? 'fake result' }],
         ...(config.callMode === 'is_error' ? { isError: true } : {}) });
     }
   }

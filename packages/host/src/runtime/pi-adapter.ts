@@ -16,6 +16,7 @@ import { PI_SDK_VERSION, PI_NATIVE_SESSION_FORMAT, PI_NATIVE_SESSION_FORMAT_VERS
 export { PI_SDK_VERSION, PI_NATIVE_SESSION_FORMAT, PI_NATIVE_SESSION_FORMAT_VERSION } from './pi-sdk-contract.js';
 import type { PiPreparedRecovery } from './pi-native-session.js';
 import { observePiWithin, PI_ABORT_WAIT_MS, PI_STOP_WAIT_MS } from './pi-lifecycle.js';
+import { piEventToken as token } from './pi-event-identity.js';
 import type {
   CreateAgentSessionOptions,
 } from '@earendil-works/pi-coding-agent';
@@ -502,10 +503,6 @@ export function assertPiStartupCompatible(
   if (piRecoveryDecision(request, capabilities).mode === 'rejected') {
     throw startupError('execution_recovery_unsupported', 'recovery.mode');
   }
-}
-
-function token(value: string): string {
-  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(value) ? value : `pi-${createHash('sha256').update(value).digest('hex').slice(0, 20)}`;
 }
 
 function identityToken(value: unknown, fallback: string): string {
