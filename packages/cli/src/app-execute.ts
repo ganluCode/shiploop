@@ -196,10 +196,12 @@ import {
   formatBaselineEvidenceResult,
   formatBaselineListResult,
   formatBaselineOperationResult,
+  formatBaselineComparison,
   formatBaselinePreview,
   parseBaselineCheckPlanText,
 } from './app/baseline.js';
 import type {
+  BaselineAuthorizationView,
   BaselineCheckPlanView,
   BaselineOperationResultView,
   BaselineOperationStatusView,
@@ -1112,7 +1114,13 @@ async function executeProjectOverview(
       description: overview.project.description,
       labels: [...overview.project.labels],
     },
-    binding: overview.binding === null ? null : { canonicalPath: overview.binding.canonicalPath },
+    binding: overview.binding === null ? null : {
+      id: overview.binding.id,
+      canonicalPath: overview.binding.canonicalPath,
+      repoIdentity: overview.binding.repoIdentity,
+      revision: overview.binding.revision,
+      bindingRevision: overview.binding.bindingRevision,
+    },
     registration: overview.registration,
     settings: overview.settings,
     health: overview.health,
@@ -3155,11 +3163,39 @@ function baselineReceiptFailure(
   });
 }
 
+function baselineAuthorizationViewOf(
+  authorization: NonNullable<BaselineDetailResult['authorization']>,
+): BaselineAuthorizationView {
+  return {
+    projectId: authorization.projectId,
+    repositoryBindingId: authorization.repositoryBindingId,
+    ...(authorization.repositoryBindingRevision === undefined ? {} : { repositoryBindingRevision: authorization.repositoryBindingRevision }),
+    codeIdentity: authorization.codeIdentity,
+    ...(authorization.dirtyScope === undefined ? {} : { dirtyScope: authorization.dirtyScope }),
+    ...(authorization.environmentIdentity === undefined ? {} : { environmentIdentity: authorization.environmentIdentity }),
+    ...(authorization.missingFields === undefined ? {} : { missingFields: authorization.missingFields }),
+    policyRevision: authorization.policyRevision,
+    planDigest: authorization.planDigest,
+    plan: {
+      checks: authorization.plan.checks.map(check => ({
+        checkKey: check.checkKey,
+        kind: check.kind,
+        argv: [...check.argv],
+        ...(check.cwdRef === null || check.cwdRef === undefined ? {} : { cwdRef: check.cwdRef }),
+        ...(check.environmentRef === null || check.environmentRef === undefined ? {} : { environmentRef: check.environmentRef }),
+        timeoutMs: check.timeoutMs,
+        required: check.required,
+      })),
+    },
+  };
+}
+
 function operationResultOf(detail: BaselineDetailResult): BaselineOperationResultView {
   return buildBaselineOperationResult(
     detail.operation,
     detail.checks,
     detail.authorization === null ? null : detail.authorization.codeIdentity,
+    detail.authorization === null ? null : baselineAuthorizationViewOf(detail.authorization),
   );
 }
 
@@ -3530,6 +3566,17 @@ async function executeBaselineCommand(
         command,
         result,
         formatBaselineOperationResult(result),
+        [],
+        CLI_EXIT_OK,
+      );
+    }
+    case 'baseline.compare': {
+      const result = await client.compareBaselines(command.previousOperationId, command.currentOperationId);
+      return emitBaselineStreams(
+        io,
+        command,
+        result,
+        formatBaselineComparison(result),
         [],
         CLI_EXIT_OK,
       );

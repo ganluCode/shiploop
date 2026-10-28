@@ -91,6 +91,7 @@ export type AppCliCommandId =
   | 'baseline.run'
   | 'baseline.list'
   | 'baseline.status'
+  | 'baseline.compare'
   | 'baseline.cancel'
   | 'baseline.evidence'
   | 'phase.create'
@@ -207,6 +208,7 @@ export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'baseline.run',
   'baseline.list',
   'baseline.status',
+  'baseline.compare',
   'baseline.cancel',
   'baseline.evidence',
   'phase.create',
@@ -812,6 +814,16 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
     minPositionals: 1,
     maxPositionals: 1,
     positionalFields: ['operationId'],
+  },
+  'baseline.compare': {
+    command: 'baseline',
+    commandId: 'baseline.compare',
+    valueFlags: [],
+    boolFlags: [],
+    repeatableFlags: [],
+    minPositionals: 2,
+    maxPositionals: 2,
+    positionalFields: ['previousOperationId', 'currentOperationId'],
   },
   'baseline.cancel': {
     command: 'baseline',
@@ -1623,6 +1635,7 @@ const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, A
       run: 'baseline.run',
       list: 'baseline.list',
       status: 'baseline.status',
+      compare: 'baseline.compare',
       cancel: 'baseline.cancel',
       evidence: 'baseline.evidence',
     },
@@ -2638,7 +2651,18 @@ export interface ParsedBaselineStatus {
   readonly operationId: string;
 }
 
-/** `baseline cancel <operationId> --confirm`（唯一取消途径；必须显式）。 */
+export interface ParsedBaselineCompare {
+  readonly kind: 'command';
+  readonly command: 'baseline';
+  readonly commandId: 'baseline.compare';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly previousOperationId: string;
+  readonly currentOperationId: string;
+}
+
+/** `baseline cancel <operationId> --confirm`（唯一显式取消途径）。 */
 export interface ParsedBaselineCancel {
   readonly kind: 'command';
   readonly command: 'baseline';
@@ -3790,6 +3814,7 @@ export type ParsedAppCliCommand =
   | ParsedBaselineRun
   | ParsedBaselineList
   | ParsedBaselineStatus
+  | ParsedBaselineCompare
   | ParsedBaselineCancel
   | ParsedBaselineEvidence
   | ParsedPhaseCreate
@@ -4335,6 +4360,15 @@ function buildBaseline(scan: ScanResult, state: ParseState, spec: AppCommandSpec
         command: 'baseline',
         commandId: 'baseline.status',
         operationId: requireOperationId(scan.positionals[0] as string, state),
+      };
+    }
+    case 'baseline.compare': {
+      return {
+        ...base,
+        command: 'baseline',
+        commandId: 'baseline.compare',
+        previousOperationId: requireOperationId(scan.positionals[0] as string, state),
+        currentOperationId: requireOperationId(scan.positionals[1] as string, state),
       };
     }
     case 'baseline.cancel': {

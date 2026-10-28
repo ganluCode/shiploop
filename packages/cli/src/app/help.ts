@@ -400,7 +400,7 @@ const EVENTS_HELP = [
 ].join('\n');
 
 const BASELINE_HELP = [
-  'usage: shiploop baseline <preview|run|list|status|cancel|evidence> [options]',
+  'usage: shiploop baseline <preview|run|list|status|compare|cancel|evidence> [options]',
   '',
   '基线命令（获准基线检查；契约 §12.1）：',
   '  baseline preview --project <id> --input <file>         只读预览（不执行检查）',
@@ -507,6 +507,22 @@ const BASELINE_STATUS_HELP = [
   '',
 ].join('\n');
 
+const BASELINE_COMPARE_HELP = [
+  'usage: shiploop baseline compare <previousOperationId> <currentOperationId> [--data-root <abs>] [--json]',
+  '',
+  '只读比较同一项目选定的两次基线：',
+  '- 按检查项保留 fixed、regressed、new_failure、incomparable、not_run 等逐项诊断；',
+  '- 同时展示两侧代码/绑定/脏范围/环境身份、命令和证据引用；',
+  '- 历史身份缺失、命令或环境变化、无法确认相同失败时保留缺口，不提供自动豁免；',
+  '- 查询不会重跑检查，也不会修改基线、项目健康或数据库结果。',
+  '',
+  '位置参数：',
+  '  previousOperationId   历史基线 operationId（UUID v4）',
+  '  currentOperationId    当前基线 operationId（UUID v4）',
+  '',
+  EXIT_CODE_BLOCK,
+  '',
+].join('\n');
 const BASELINE_CANCEL_HELP = [
   'usage: shiploop baseline cancel <operationId> --confirm [--command-id <uuid>]',
   '                                [--data-root <abs>] [--json]',
@@ -2179,6 +2195,7 @@ const HELP_BY_SCOPE: Readonly<Record<AppHelpScope, string>> = Object.freeze({
   'baseline.run': BASELINE_RUN_HELP,
   'baseline.list': BASELINE_LIST_HELP,
   'baseline.status': BASELINE_STATUS_HELP,
+  'baseline.compare': BASELINE_COMPARE_HELP,
   'baseline.cancel': BASELINE_CANCEL_HELP,
   'baseline.evidence': BASELINE_EVIDENCE_HELP,
   phase: PHASE_HELP,
