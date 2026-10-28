@@ -21,7 +21,7 @@
 
 ## 本次 Runtime 验证
 
-受测工具链：Node 22.19.0、npm 10.9.3、Vitest 5.0.3。受测基线 commit：`cd518f95feeea560bd7add23fe6408f758e42b65`；测试执行时包含本 Task 工作树改动，最终交付 commit 以 Git 记录为准。
+受测工具链：Node 22.19.0、npm 10.9.3、Vitest 5.0.3。受测基线 commit：`cd518f95feeea560bd7add23fe6408f758e42b65`；最终交付 commit：`2a7ca94`。测试执行时包含本 Task 工作树改动。
 
 实际命令（在目标仓库根目录执行）：
 
