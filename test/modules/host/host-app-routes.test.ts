@@ -1125,6 +1125,8 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         'project.resources.list',
         'project.resources.candidates',
         'project.resources.preview',
+        // P06-3 / F-006：owner 管理入口来源登记经真实 Host 路由接线并宣告能力。
+        'project.resources.sources.configure',
       ],
       events: { transport: 'sse', route: '/v1/events', scopes: ['project', 'global'] },
     });
