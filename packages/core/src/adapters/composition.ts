@@ -71,6 +71,8 @@ import type { BaselineService } from '../application/baseline-service.js';
 import { createOnboardingService } from '../application/onboarding-service.js';
 import type { OnboardingService } from '../application/onboarding-service.js';
 import { createProjectProfileService } from '../application/project-profile-service.js';
+import { createProjectProfileDetectionService } from '../application/project-profile-detection.js';
+import { createProjectProfileInspector } from './fs/project-profile-inspector.js';
 import type { ProjectProfileService } from '../application/project-profile-service.js';
 import { createRepositoryMoveService } from '../application/repository-move-service.js';
 import type { RepositoryMoveService } from '../application/repository-move-service.js';
@@ -739,6 +741,19 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
         projectExists: projectId => session.database.prepare('SELECT 1 AS found FROM projects WHERE id = ?').get(projectId) !== undefined,
       },
     });
+    const projectProfileDetection = createProjectProfileDetectionService({
+      store: projectProfileStore,
+      inspector: createProjectProfileInspector(),
+      getBinding: projectId => stateStore.getRepositoryBinding(projectId),
+      bindingIsCurrent: binding => {
+        const row = session.database.prepare(`SELECT b.* FROM repository_bindings b
+          JOIN projects p ON p.repository_binding_id = b.id AND p.id = b.project_id
+          WHERE b.project_id = ?`).get(binding.projectId) as Record<string, unknown> | undefined;
+        return row !== undefined && row.id === binding.id && row.canonical_path === binding.canonicalPath
+          && row.revision === binding.revision && row.binding_revision === binding.bindingRevision
+          && row.repo_identity === binding.repoIdentity;
+      },
+    });
     const executionInputPrepare: ExecutionInputPreparePort = createExecutionInputPrepareService({
       views: createSqlitePlanAccess(session, { ...(nowUtcMs === undefined ? {} : { nowUtcMs }), profileStore: projectProfileStore }),
       inputs: createExecutionInputService({
@@ -1258,6 +1273,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       repositoryInspector,
       projectProfileService,
       projectResources: { service: projectResourceService, store: projectResourceStore },
+      projectProfileDetection,
       // F-009：配置命令的能力目录复检复用同一可信装配目录。
       capabilityCatalog,
       baselineService,

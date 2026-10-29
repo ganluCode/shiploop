@@ -1192,6 +1192,13 @@ async function executeProjectProfile(
       }
       return emitSuccess(io, command, result, profileMatchHumanLine(result));
     }
+    case 'project.profile-detect': {
+      const issuedAt = await replayIssuedAt(client, command.explicitCommandId);
+      const receipt = await client.detectProjectProfile({ projectId: command.projectId,
+        ...(command.explicitCommandId !== undefined ? { commandId: command.explicitCommandId } : {}) },
+      envelopeIdentityOptions(command.explicitCommandId, issuedAt));
+      return emitCommandReceipt(io, command, receipt);
+    }
     case 'project.profile-confirm':
     case 'project.profile-modify':
     case 'project.profile-reject': {
@@ -1295,6 +1302,7 @@ async function executeProjectCommand(
     case 'project.repository-move-confirm': {
       return executeProjectRepositoryMoveConfirm(io, command, client, repositoryMovePreview as BrownfieldMovePreview);
     }
+    case 'project.profile-detect':
     case 'project.profile-get':
     case 'project.profile-match':
     case 'project.profile-confirm':

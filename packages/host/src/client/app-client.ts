@@ -842,6 +842,7 @@ export interface HostClientApplication {
   /** P02-3 / F-006（§7.3）：注册状态与健康状态分开的项目概览。 */
   getProjectOverview(projectId: string): Promise<ProjectOverviewResult>;
   getProjectProfile(projectId: string): Promise<ProjectProfileQueryResult>;
+  detectProjectProfile(input: { readonly projectId: string; readonly commandId?: string }, options?: SubmitCommandOptions): Promise<CommandReceipt>;
   confirmProjectProfile(input: UpdateProjectProfileInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
   modifyProjectProfile(input: UpdateProjectProfileInput, options?: SubmitCommandOptions): Promise<CommandReceipt>;
   rejectProjectProfile(input: Omit<UpdateProjectProfileInput, 'profile'>, options?: SubmitCommandOptions): Promise<CommandReceipt>;
@@ -3001,6 +3002,14 @@ export function createHostClientApplication(context: AppClientContext): HostClie
       return validateAppQueryResponse('projects.overview', json);
     },
 
+    async detectProjectProfile(input: { readonly projectId: string; readonly commandId?: string }, options?: SubmitCommandOptions): Promise<CommandReceipt> {
+      const object = rejectUnknownInputKeys('commands.submit', input, ['projectId', 'commandId'] as const);
+      const projectId = requireProjectId('commands.submit', object.projectId as string);
+      return submitCommand({
+        ...optionalCommandIdInput('commands.submit', object.commandId), operation: 'project.profile.detect',
+        scope: { kind: 'project', projectId }, payload: {},
+      }, options);
+    },
     async confirmProjectProfile(input: UpdateProjectProfileInput, options?: SubmitCommandOptions): Promise<CommandReceipt> {
       const object = rejectUnknownInputKeys('commands.submit', input, ['projectId', 'expectedRevision', 'profile', 'commandId'] as const);
       const projectId = requireProjectId('commands.submit', object.projectId as string);

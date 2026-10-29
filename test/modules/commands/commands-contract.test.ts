@@ -151,7 +151,12 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       // P03-9 / F-010：finalization-only retryFinal（创建类；父 Batch revision 在事务内重核）。
       'execution.retryFinal',
       'project.register',
+      'project.repository.rebind',
       'project.metadata.update',
+      'project.profile.confirm',
+      'project.profile.detect',
+      'project.profile.modify',
+      'project.profile.reject',
       'settings.global.create',
       'settings.global.update',
       'settings.project.create',
@@ -178,6 +183,7 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       'feature.plan.revise',
       // P03-2 / F-001：Task 策略副本 CAS 编辑（project scope + task.strategy.write；Task 自身 revision CAS）。
       'task.strategy.update',
+      'task.strategy.reapply',
       // P03-2 / F-002：计划批准/拒绝决策（project scope + feature.plan.decide；Feature 聚合 CAS）。
       'feature.plan.decide',
       'task.approval.block',
@@ -210,6 +216,10 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       // P03-5 / F-011：人工丢弃预览（project scope + workspace.discard 能力位；
       // 创建类；只读检查与证据发布在事务外，事务内只持久化 completed 回执）。
       'workspace.discard.preview',
+      'project.resource.import',
+      'project.resource.enable',
+      'project.resource.disable',
+      'project.resource.revoke',
     ]);
     expect(COMMAND_OPERATION_SPECS).toEqual({
       'execution.attempt.cancel': { scopeKind: 'project', mutation: 'create', capability: 'execution.start' },
@@ -219,7 +229,12 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       'execution.resume': { scopeKind: 'project', mutation: 'update', capability: 'execution.start' },
       'execution.retryFinal': { scopeKind: 'project', mutation: 'create', capability: 'execution.start' },
       'project.register': { scopeKind: 'registration', mutation: 'create', capability: 'project.register' },
+      'project.repository.rebind': { scopeKind: 'project', mutation: 'update', capability: 'project.metadata.write' },
       'project.metadata.update': { scopeKind: 'project', mutation: 'update', capability: 'project.metadata.write' },
+      'project.profile.confirm': { scopeKind: 'project', mutation: 'update', capability: 'project.metadata.write' },
+      'project.profile.detect': { scopeKind: 'project', mutation: 'create', capability: 'project.metadata.write' },
+      'project.profile.modify': { scopeKind: 'project', mutation: 'update', capability: 'project.metadata.write' },
+      'project.profile.reject': { scopeKind: 'project', mutation: 'update', capability: 'project.metadata.write' },
       'settings.global.create': { scopeKind: 'global', mutation: 'create', capability: 'settings.global.write' },
       'settings.global.update': { scopeKind: 'global', mutation: 'update', capability: 'settings.global.write' },
       'settings.project.create': { scopeKind: 'project', mutation: 'create', capability: 'settings.project.write' },
@@ -240,6 +255,7 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       'plan.labels.update': { scopeKind: 'project', mutation: 'update', capability: 'plan.labels.write' },
       'feature.plan.revise': { scopeKind: 'project', mutation: 'update', capability: 'feature.plan.revise' },
       'task.strategy.update': { scopeKind: 'project', mutation: 'update', capability: 'task.strategy.write' },
+      'task.strategy.reapply': { scopeKind: 'project', mutation: 'create', capability: 'task.strategy.write' },
       'task.approval.block': { scopeKind: 'project', mutation: 'update', capability: 'feature.plan.decide' },
       'task.approval.approve': { scopeKind: 'project', mutation: 'update', capability: 'feature.plan.decide' },
       'task.approval.reject': { scopeKind: 'project', mutation: 'update', capability: 'feature.plan.decide' },
@@ -257,6 +273,10 @@ describe('F-002 冻结版本、能力与命令白名单', () => {
       'planning.candidate.decide': { scopeKind: 'project', mutation: 'update', capability: 'feature.plan.decide' },
       'workspace.discard': { scopeKind: 'project', mutation: 'create', capability: 'workspace.discard' },
       'workspace.discard.preview': { scopeKind: 'project', mutation: 'create', capability: 'workspace.discard' },
+      'project.resource.import': { scopeKind: 'project', mutation: 'update', capability: 'settings.project.write' },
+      'project.resource.enable': { scopeKind: 'project', mutation: 'update', capability: 'settings.project.write' },
+      'project.resource.disable': { scopeKind: 'project', mutation: 'update', capability: 'settings.project.write' },
+      'project.resource.revoke': { scopeKind: 'project', mutation: 'update', capability: 'settings.project.write' },
     });
     for (const spec of Object.values(COMMAND_OPERATION_SPECS)) {
       expect(APP_CAPABILITIES).toContain(spec.capability);

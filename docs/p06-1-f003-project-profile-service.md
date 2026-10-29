@@ -1,5 +1,9 @@
 # P06-1 F-003：Core ProjectProfile 决策
 
+后续补缺：首次候选现在可经 `project profile detect --project <id> --confirm` 登记。
+公开默认装配、原子性和首次检测限制见 [首次检测入口](p06-profile-detection-public-entry.md)。
+下文保留原 F-003 交付边界；不是描述当前所有公开命令的清单。
+
 `openCoreApplication().projectProfileService` 提供 `confirm`、`modify`、`reject`、`getCurrent`、`matchTaskModules`。这是 Core 应用能力，不是 Runtime 工具；不新增 HTTP/CLI 命令，命令信封/回执接入属于 F-005，Attempt 快照接入属于 F-004。
 
 ## 决策与版本

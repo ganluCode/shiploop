@@ -454,6 +454,30 @@ export function createSqliteProjectProfileStore(
     });
   };
   return {
+    createDetectedProjectProfile(input) {
+      const operation = `${OPERATION}.detect`;
+      return session.transactWrite(operation, () => {
+        const profile = validateProjectProfile(input.profile);
+        if (profile.version !== 1 || profile.confirmedBy !== null
+          || (profile.status !== 'candidate' && profile.status !== 'manual_configuration_required')) {
+          fail('validation', operation, '检测只能登记首版未确认候选');
+        }
+        if (input.modules.length) createModules(input.modules.map(module => ({ projectId: profile.projectId,
+          module, digest: computeCapabilityModuleDigest(module) })));
+        const saved = createProfile({ profile, evidence: input.evidence });
+        const at = timestamp(now, operation);
+        const payload = { action: 'detected', version: 1, previousVersion: 0,
+          actorDigest: createHash('sha256').update(input.actorId).digest('hex'), profileDigest: saved.profileDigest,
+          moduleCount: profile.modules.length, evidenceCount: input.evidence.length };
+        validateProfileAuditPayload(payload);
+        const nextSequence = db.prepare<[], { next: number }>('SELECT COALESCE(MAX(sequence), 0) + 1 AS next FROM state_events').get()?.next ?? 1;
+        db.prepare(`INSERT INTO state_events
+          (id, created_at, revision, updated_at, project_id, sequence, event_type, aggregate_type, aggregate_id, aggregate_revision, payload, occurred_at)
+          VALUES (?, ?, 1, ?, ?, ?, 'project_profile.detected', 'project_profile', ?, 1, ?, ?)`).run(
+          randomUUID(), at, at, profile.projectId, nextSequence, saved.profileId, JSON.stringify(payload), at);
+        return saved;
+      });
+    },
     createCapabilityModule(input): PersistedCapabilityModule {
       return createModules([input])[0]!;
     },

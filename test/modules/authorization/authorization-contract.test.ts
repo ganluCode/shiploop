@@ -218,6 +218,8 @@ function envelope(
         expectedRevision: expectedRevision ?? 1,
         payload: { displayName: '新名称' },
       } as ValidatedCommandEnvelope;
+    case 'project.profile.detect':
+      return { ...base, operation, scope: { kind: 'project', projectId: PROJECT_A }, expectedRevision: null, payload: {} };
     case 'project.profile.confirm':
     case 'project.profile.modify':
     case 'project.profile.reject':
@@ -480,12 +482,19 @@ function envelope(
         payload: { sourceId: 'source-1', sourceDigest: '0'.repeat(64), candidateId: 'candidate-1', candidateDigest: '0'.repeat(64) } };
     case 'project.resource.enable':
     case 'project.resource.disable':
+    case 'project.resource.revoke':
+      return { ...base, operation, scope: { kind: 'project', projectId: PROJECT_A }, expectedRevision: expectedRevision ?? 1,
+        payload: { resourceId: 'resource-1' } };
+    case 'feature.plan.decide':
+      return { ...base, operation, scope: { kind: 'project', projectId: PROJECT_A }, expectedRevision: expectedRevision ?? 1,
+        payload: { featureId: 'feature-1', decision: 'approve', planDigest: '0'.repeat(64) } } as ValidatedCommandEnvelope;
     default:
       throw new Error(`missing test envelope fixture for ${operation}`);
   }
 }
 
 const COMMANDS_MATRIX = [
+  { operation: 'project.profile.detect', scope: { kind: 'project', projectId: PROJECT_A }, revision: null, capability: 'project.metadata.write' },
   { operation: 'execution.stop.manual', scope: { kind: 'project', projectId: PROJECT_A }, revision: 1, capability: 'execution.start' },
   { operation: 'project.register', scope: { kind: 'registration' }, revision: null, capability: 'project.register' },
   { operation: 'project.metadata.update', scope: { kind: 'project', projectId: PROJECT_A }, revision: 2, capability: 'project.metadata.write' },

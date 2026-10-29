@@ -301,6 +301,7 @@ export const STATE_EVENT_TYPE_SPECS: Readonly<
   Record<PublicStateEventType, StateEventTypeSpec>
 > = Object.freeze({
   'project_profile.confirmed': { aggregateType: 'project_profile', scopeKind: 'project', payloadKind: 'projectProfile' },
+  'project_profile.detected': { aggregateType: 'project_profile', scopeKind: 'project', payloadKind: 'projectProfile' },
   'project_profile.modified': { aggregateType: 'project_profile', scopeKind: 'project', payloadKind: 'projectProfile' },
   'project_profile.rejected': { aggregateType: 'project_profile', scopeKind: 'project', payloadKind: 'projectProfile' },
   [PROJECT_REGISTERED_EVENT_TYPE]: Object.freeze({

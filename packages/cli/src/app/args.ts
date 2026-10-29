@@ -69,6 +69,7 @@ export type AppCliCommandId =
   | 'project.repository-move-preview'
   | 'project.repository-move-confirm'
   | 'project.profile-get'
+  | 'project.profile-detect'
   | 'project.profile-match'
   | 'project.profile-confirm'
   | 'project.profile-modify'
@@ -189,6 +190,7 @@ export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'project.repository-move-preview',
   'project.repository-move-confirm',
   'project.profile-get',
+  'project.profile-detect',
   'project.profile-match',
   'project.profile-confirm',
   'project.profile-modify',
@@ -602,6 +604,16 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
     minPositionals: 1,
     maxPositionals: 1,
     positionalFields: ['repositoryPath'],
+  },
+  'project.profile-detect': {
+    command: 'project',
+    commandId: 'project.profile-detect',
+    valueFlags: ['--project', '--command-id'],
+    boolFlags: ['--confirm'],
+    repeatableFlags: [],
+    minPositionals: 0,
+    maxPositionals: 1,
+    positionalFields: ['projectId'],
   },
   'project.profile-get': {
     command: 'project',
@@ -2398,6 +2410,18 @@ export interface ParsedProjectInit {
   readonly explicitCommandId?: string;
 }
 
+export interface ParsedProjectProfileDetect {
+  readonly kind: 'command';
+  readonly command: 'project';
+  readonly commandId: 'project.profile-detect';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly confirm: true;
+  readonly explicitCommandId?: string;
+}
+
 export interface ParsedProjectProfileGet {
   readonly kind: 'command';
   readonly command: 'project';
@@ -2452,6 +2476,7 @@ export interface ParsedProjectProfileReject extends ParsedProjectProfileWriteBas
 
 /** `project profile` commands use the Host profile query/command boundary. */
 export type ParsedProjectProfileCommand =
+  | ParsedProjectProfileDetect
   | ParsedProjectProfileGet
   | ParsedProjectProfileMatch
   | ParsedProjectProfileConfirm
@@ -4017,6 +4042,12 @@ function buildProjectProfile(scan: ScanResult, state: ParseState, spec: AppComma
   const base = baseResult(state, scan);
   const projectId = resolveProfileProjectId(scan, state);
   switch (spec.commandId) {
+    case 'project.profile-detect': {
+      if (!scan.bools.has('--confirm')) fail(state, 'confirmation_required', 'confirm');
+      const explicitCommandId = optionalCommandId(scan, state);
+      return { ...base, command: 'project', commandId: 'project.profile-detect', projectId, confirm: true,
+        ...(explicitCommandId !== undefined ? { explicitCommandId } : {}) };
+    }
     case 'project.profile-get':
       return { ...base, command: 'project', commandId: 'project.profile-get', projectId };
     case 'project.profile-match': {
@@ -4177,6 +4208,7 @@ function buildProject(scan: ScanResult, state: ParseState, spec: AppCommandSpec)
         ...(explicitCommandId !== undefined ? { explicitCommandId } : {}),
       };
     }
+    case 'project.profile-detect':
     case 'project.profile-get':
     case 'project.profile-match':
     case 'project.profile-confirm':
@@ -5828,12 +5860,13 @@ export function parseAppCliArgs(
       fail(state, 'missing_subcommand', 'profile');
     }
     const profileCommandId = ({
+      detect: 'project.profile-detect',
       get: 'project.profile-get',
       match: 'project.profile-match',
       confirm: 'project.profile-confirm',
       modify: 'project.profile-modify',
       reject: 'project.profile-reject',
-    } as const)[third as 'get' | 'match' | 'confirm' | 'modify' | 'reject'];
+    } as const)[third as 'detect' | 'get' | 'match' | 'confirm' | 'modify' | 'reject'];
     if (profileCommandId === undefined) {
       fail(state, 'unknown_subcommand', third);
     }

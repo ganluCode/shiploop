@@ -40,6 +40,8 @@ export interface ProjectProfileUpdateInput {
 }
 
 export interface ProjectProfileStore {
+  readonly createDetectedProjectProfile: (input: { readonly profile: ProjectProfile; readonly evidence: readonly DetectionEvidence[];
+    readonly modules: readonly CapabilityModule[]; readonly actorId: string }) => PersistedProjectProfile;
   readonly createCapabilityModule: (input: unknown) => PersistedCapabilityModule;
   readonly createCapabilityModules: (inputs: readonly unknown[]) => readonly PersistedCapabilityModule[];
   readonly getCapabilityModule: (projectId: unknown, moduleId: unknown, version?: unknown) => PersistedCapabilityModule;
@@ -50,15 +52,15 @@ export interface ProjectProfileStore {
   readonly listProjectProfiles: (projectId: unknown) => readonly PersistedProjectProfile[];
 }
 
-export const PROJECT_PROFILE_AUDIT_TYPES = ['project_profile.confirmed', 'project_profile.modified', 'project_profile.rejected'] as const;
+export const PROJECT_PROFILE_AUDIT_TYPES = ['project_profile.detected', 'project_profile.confirmed', 'project_profile.modified', 'project_profile.rejected'] as const;
 
 /** Durable and public audit payload uses only bounded counts and identity digests, never text or content refs. */
 export function validateProfileAuditPayload(raw: unknown): Readonly<Record<string, unknown>> {
   const context = { operation: 'project.profile.audit' };
   const payload = requirePlainObject(raw, context, 'payload');
   rejectUnknownKeys(payload, ['action', 'version', 'previousVersion', 'actorDigest', 'profileDigest', 'moduleCount', 'evidenceCount'], context, 'payload');
-  if (!['confirmed', 'modified', 'rejected'].includes(payload.action as string)
-    || !Number.isSafeInteger(payload.version) || (payload.version as number) < 2
+  if (!['detected', 'confirmed', 'modified', 'rejected'].includes(payload.action as string)
+    || !Number.isSafeInteger(payload.version) || (payload.action === 'detected' ? payload.version !== 1 : (payload.version as number) < 2)
     || !Number.isSafeInteger(payload.previousVersion) || payload.previousVersion !== (payload.version as number) - 1
     || !Number.isSafeInteger(payload.moduleCount) || (payload.moduleCount as number) < 0 || (payload.moduleCount as number) > 64
     || !Number.isSafeInteger(payload.evidenceCount) || (payload.evidenceCount as number) < 0 || (payload.evidenceCount as number) > 256

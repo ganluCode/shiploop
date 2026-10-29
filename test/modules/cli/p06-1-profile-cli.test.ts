@@ -12,6 +12,14 @@ function command(args: string[]): ParsedAppCliCommand {
 }
 
 describe('P06-1 F-006 Profile CLI arguments', () => {
+  it('[case:profile-detect-arguments] requires explicit confirmation and rejects paths and mutation payloads', () => {
+    expect(command(['project', 'profile', 'detect', PROJECT, '--confirm']))
+      .toMatchObject({ commandId: 'project.profile-detect', projectId: PROJECT, confirm: true });
+    expect(() => parseAppCliArgs(['project', 'profile', 'detect', PROJECT])).toThrow('明确确认');
+    for (const flag of ['--path', '--input', '--revision']) {
+      expect(() => parseAppCliArgs(['project', 'profile', 'detect', PROJECT, '--confirm', flag, '/tmp/untrusted'])).toThrow();
+    }
+  });
   it('[case:profile-query-input] parses profile get and match with explicit project scope', () => {
     expect(command(['project', 'profile', 'get', PROJECT])).toMatchObject({
       commandId: 'project.profile-get',

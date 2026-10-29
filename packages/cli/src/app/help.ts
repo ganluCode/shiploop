@@ -53,6 +53,7 @@ const PROJECT_HELP = [
   '  project get <projectId>                                            查看项目与绑定',
   '  project edit <projectId> --revision <int> [options]                编辑名称/说明/标签',
   '  project profile get <projectId>                              查看候选/确认画像与证据\n' +
+  '  project profile detect <projectId> --confirm                首次静态检测并保存未确认候选\n' +
   '  project profile match --project <id> [selectors]             查看任务匹配模块\n' +
   '  project profile confirm|modify ... --revision <int> --input <file> --confirm\n' +
   '                                                               确认或修改画像\n' +
@@ -207,6 +208,16 @@ const PROJECT_LABELS_HELP = [
   BOUNDARY_BLOCK,
   EXIT_CODE_BLOCK,
   '',
+].join('\n');
+
+const PROJECT_PROFILE_DETECT_HELP = [
+  'usage: shiploop project profile detect [<projectId> | --project <id>] --confirm',
+  '                                     [--command-id <uuid>] [--data-root <abs>] [--json]',
+  '',
+  '只读扫描已绑定仓库的静态清单，首次保存未确认候选画像、证据和能力描述符。',
+  '不执行项目脚本、不请求模型、不自动确认；未知语言需要手工配置。',
+  '已有画像时拒绝覆盖；相同命令身份可重放。确认仍使用 project profile confirm。',
+  '', BOUNDARY_BLOCK, EXIT_CODE_BLOCK, '',
 ].join('\n');
 
 const PROJECT_PROFILE_GET_HELP = [
@@ -2212,6 +2223,7 @@ const HELP_BY_SCOPE: Readonly<Record<AppHelpScope, string>> = Object.freeze({
   'project.repository-move-preview': 'usage: shiploop project move-preview <repository-path> --project <id> [--data-root <abs>] [--json]\n只读预览旧/新绑定身份、HEAD、脏状态与 previewDigest；不会修改项目或仓库。\n' + EXIT_CODE_BLOCK,
   'project.repository-move-confirm': 'usage: shiploop project move <repository-path> --project <id> --preview-file <file> --confirm [--command-id <uuid>] [--data-root <abs>] [--json]\n必须使用同一项目、目标与冻结预览摘要确认；不会按 remote 自动选择项目。\n' + EXIT_CODE_BLOCK,
   'project.profile-get': PROJECT_PROFILE_GET_HELP,
+  'project.profile-detect': PROJECT_PROFILE_DETECT_HELP,
   'project.profile-match': PROJECT_PROFILE_MATCH_HELP,
   'project.profile-confirm': PROJECT_PROFILE_CONFIRM_HELP,
   'project.profile-modify': PROJECT_PROFILE_MODIFY_HELP,

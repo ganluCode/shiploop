@@ -12,6 +12,7 @@
  * 更新复用 P01 既有 *_updated 写入，不重复。
  */
 import { submitPhaseMutation } from './phase-lifecycle.js';
+import type { ProjectProfileDetectionService, PreparedProfileDetection } from './project-profile-detection.js';
 import { submitFeaturePhaseMove } from './feature-phase.js';
 import { submitFeatureDagUpdate } from './feature-dag-update.js';
 import { randomBytes } from 'node:crypto';
@@ -172,6 +173,7 @@ export interface CommandServiceOptions {
   readonly atomicStore: AtomicCommandStore;
   /** P06-1：Profile confirm/modify/reject uses Core-owned authorization and version CAS. */
   readonly projectProfileService?: ProjectProfileService;
+  readonly projectProfileDetection?: ProjectProfileDetectionService;
 
   readonly repositoryInspector?: RepositoryInspector;
   /** F-009：配置命令的能力目录复检（可信装配注入；不传则配置命令 unsupported）。 */
@@ -731,6 +733,9 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
         if (envelope.operation === 'project.register' && repositoryInspector === undefined) {
           throw new PublicError('unsupported', operation);
         }
+        if (envelope.operation === 'project.profile.detect' && options.projectProfileDetection === undefined) {
+          throw new PublicError('unsupported', operation);
+        }
         if (envelope.operation === 'project.profile.confirm' || envelope.operation === 'project.profile.modify' || envelope.operation === 'project.profile.reject') {
           if (projectProfileService === undefined) throw new PublicError('unsupported', operation);
         }
@@ -807,6 +812,7 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
         }
         if (
           envelope.operation !== 'project.metadata.update' &&
+          envelope.operation !== 'project.profile.detect' &&
           envelope.operation !== 'project.profile.confirm' &&
           envelope.operation !== 'project.profile.modify' &&
           envelope.operation !== 'project.profile.reject' &&
@@ -878,6 +884,10 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
         }
 
         let profileMutationResult: import('../ports/project-profile-store.js').PersistedProjectProfile | undefined;
+        let preparedProfile: PreparedProfileDetection | undefined;
+        if (envelope.operation === 'project.profile.detect' && existing === undefined) {
+          preparedProfile = await options.projectProfileDetection!.prepare(principal, envelope.scope.projectId);
+        }
         let projectResourceCandidate: ProjectResourceCandidate | undefined;
         if (existing === undefined && projectResources !== undefined
           && (envelope.operation === 'project.resource.import' || envelope.operation === 'project.resource.enable'
@@ -1138,6 +1148,16 @@ export function createCommandService(options: CommandServiceOptions): CommandSer
               completedAt: new Date(now).toISOString(), resultRef: createResultRef(randomBytes(32)),
               result: { profile: profileMutationResult.profile, profileDigest: profileMutationResult.profileDigest },
             });
+            transaction.saveReceipt(receipt);
+            return receipt;
+          }
+          if (envelope.operation === 'project.profile.detect') {
+            if (!preparedProfile) throw new TypeError('Profile detection preparation missing');
+            const saved = options.projectProfileDetection!.commit(principal, preparedProfile);
+            const receipt = createCompletedReceipt({ principalId: principal.principalId, commandId: envelope.commandId,
+              operation: envelope.operation, scope: envelope.scope, requestDigest: digest, issuedAt: envelope.issuedAt,
+              completedAt: new Date(now).toISOString(), resultRef: createResultRef(randomBytes(32)),
+              result: { profile: saved.profile, profileDigest: saved.profileDigest } });
             transaction.saveReceipt(receipt);
             return receipt;
           }
