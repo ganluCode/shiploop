@@ -134,12 +134,15 @@ describe('P06-4 F-002 stdio MCP lifecycle', () => {
 
   it.each(['hang_initialize', 'hang_list'] as const)('[case:deadline-%s] rolls back a hanging handshake within a finite budget', async mode => {
     const root = box(), recorded = registrar();
+    const started = Date.now();
     const c = connection({ plan: plan(root, mode, { mode }), registerProcess: recorded.register,
-      handshakeTimeoutMs: 300, closeTimeoutMs: 100 });
+      // Handshake remains short; allow real macOS process census/TERM delivery under suite load.
+      handshakeTimeoutMs: 300, closeTimeoutMs: 1_000 });
     await expect(c.start()).rejects.toMatchObject({ code: 'handshake_timeout' });
     expect(c.state).toBe('failed');
     expect(recorded.values).toHaveLength(1);
     await expectGroupGone(recorded.values[0]!);
+    expect(Date.now() - started).toBeLessThan(7_000);
   });
 
   it.each([
