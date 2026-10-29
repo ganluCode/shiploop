@@ -35,6 +35,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { validateKnowledgeQueryResponse, MAX_KNOWLEDGE_SEARCH_RESPONSE_BYTES, MAX_KNOWLEDGE_READ_RESPONSE_BYTES } from 'shiploop-core/protocol';
 import {
+  toPublicTaskStrategyReapplicationPreview,
   isPublicError,
   PublicError as CorePublicError,
   WorkAccessError,
@@ -1482,30 +1483,8 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
     case 'task.strategy.reapply.preview': {
       const projectId = params.get('projectId');
       const taskIds = params.getAll('taskId');
-      result = await app.queryService.previewTaskStrategyReapplication(app.principal, { projectId, taskIds });
-      const preview = result as import('shiploop-core').TaskStrategyReapplicationPreview;
-      result = {
-        schemaVersion: preview.schemaVersion,
-        scope: preview.scope,
-        status: preview.status,
-        identity: preview.identity,
-        items: preview.items.map(item => ({
-          taskId: item.taskId,
-          featureId: item.featureId,
-          taskRevision: item.taskRevision,
-          complexity: item.complexity,
-          current: item.current,
-          candidate: item.candidate === null ? null : {
-            configSource: item.candidate.configSource,
-            configSourceKey: item.candidate.configSourceKey,
-            digest: item.candidate.digest,
-          },
-          diff: item.diff,
-          eligible: item.eligible,
-          reasons: item.reasons,
-        })),
-        blockedReasons: preview.blockedReasons,
-      };
+      const preview = await app.queryService.previewTaskStrategyReapplication(app.principal, { projectId, taskIds });
+      result = toPublicTaskStrategyReapplicationPreview(preview);
       break;
     }
     // P03-2 / F-007：审批决策查询分发（授权/可见性由 Core 单一权威复核；

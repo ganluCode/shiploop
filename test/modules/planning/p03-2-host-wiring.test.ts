@@ -39,6 +39,8 @@ import type { RunningHost } from '../../../packages/host/src/runtime/index.ts';
 import { openSqliteStorageSession } from '../../../packages/core/src/adapters/sqlite/session.ts';
 import { migrateSqliteStorage } from '../../../packages/core/src/adapters/sqlite/migrator.ts';
 import { createSqliteArtifactStore } from '../../../packages/core/src/adapters/sqlite/artifact-store.ts';
+import { createSqliteProjectProfileStore } from '../../../packages/core/src/adapters/sqlite/project-profile-store.ts';
+import { computeCapabilityModuleDigest } from '../../../packages/core/src/ports/project-profile-store.ts';
 import { createCommandsTestFixture, type CommandsTestFixture } from '../../helpers/p02-2/index.ts';
 import { loopbackRequest } from '../../helpers/host/index.ts';
 
@@ -192,6 +194,26 @@ async function setupWired(prefix: string): Promise<WiredSetup> {
       }),
     );
     const projectId = (registered.result as { project: { id: string } }).project.id;
+    const module = {
+      schemaVersion: 1 as const, id: 'language-node', version: '1.0.0',
+      scope: ['language:node'], appliesTo: ['.'], dependencies: [],
+      contentRef: 'artifact:language-node@1.0.0', status: 'candidate' as const,
+    };
+    const profile = {
+      schemaVersion: 1 as const, projectId, version: 1, revision: 'v1', status: 'candidate' as const,
+      modules: [{ id: module.id, version: module.version, roots: ['.'], languages: ['node'],
+        frameworks: [], capabilityRefs: [], checkRefs: [] }],
+      documentRefs: [], detectionEvidenceRefs: [], confirmedBy: null,
+    };
+    const session = openSqliteStorageSession({ path: box.dbPath });
+    try {
+      const profiles = createSqliteProjectProfileStore(session);
+      profiles.createCapabilityModule({ projectId, module, digest: computeCapabilityModuleDigest(module) });
+      profiles.createProjectProfile({ profile, evidence: [] });
+    } finally {
+      session.close();
+    }
+    asCompleted(await client.confirmProjectProfile({ projectId, expectedRevision: 1, profile }));
     asCompleted(
       await client.submitCommand({
         operation: 'settings.global.create',
@@ -271,7 +293,7 @@ describe('F-007 决策与授权查询 HostClient 纵向（真实 Host + SQLite�
     const s = await setupWired('decide');
     try {
       const { projectId, featureId, planDigest } = await s.seedApprovedCandidate('phase-decide');
-      expect(CURRENT_SCHEMA_VERSION).toBe(5);
+      expect(CURRENT_SCHEMA_VERSION).toBe(6);
 
       // 决策前：无当前决定，fail-closed validity 未批准。
       const before = await s.client.getFeatureApprovals(featureId);

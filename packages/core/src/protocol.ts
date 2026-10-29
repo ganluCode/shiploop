@@ -4,6 +4,7 @@
  * 服务端仍负责授权和业务语义，客户端校验不能替代服务端校验。
  */
 export * from './ports/batch-delivery-commands.js';
+export * from './ports/task-strategy-reapplication-wire.js';
 export * from './ports/knowledge-query.js';
 export * from './ports/memory-query.js';
 export * from './ports/knowledge-query-wire.js';

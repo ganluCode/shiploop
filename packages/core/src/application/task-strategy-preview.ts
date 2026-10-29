@@ -29,21 +29,8 @@ export const TASK_STRATEGY_REAPPLICATION_PREVIEW_OPERATION =
   'task.strategy.reapply.preview' as const;
 export const TASK_STRATEGY_REAPPLICATION_PREVIEW_SCHEMA_VERSION = 1 as const;
 
-export const TASK_STRATEGY_REAPPLICATION_BLOCK_REASONS = [
-  'project_not_found',
-  'task_not_found',
-  'cross_project',
-  'task_started',
-  'execution_history',
-  'active_execution_inputs',
-  'authorized_batch_scope',
-  'configuration_missing',
-  'configuration_invalid',
-  'unknown_runtime',
-  'incompatible_provider',
-  'unsupported_model',
-  'capability_catalog_unavailable',
-] as const;
+import { TASK_STRATEGY_REAPPLICATION_BLOCK_REASONS } from '../ports/task-strategy-reapplication-wire.js';
+export { TASK_STRATEGY_REAPPLICATION_BLOCK_REASONS } from '../ports/task-strategy-reapplication-wire.js';
 export type TaskStrategyReapplicationBlockReason =
   (typeof TASK_STRATEGY_REAPPLICATION_BLOCK_REASONS)[number];
 

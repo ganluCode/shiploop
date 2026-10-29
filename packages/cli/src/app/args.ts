@@ -2936,23 +2936,25 @@ export interface ParsedTaskStrategy {
   readonly explicitCommandId?: string;
 }
 
-/**
- * `task prepare <taskId> --project <id> --feature <id> --input <file>`：
- * 固定输入制品组准备（execution.input.prepare；创建类不携带 expectedRevision）；
- * `--input` 是 `{items: [...]}` 必需输入采集清单（必填——缺失必需输入必须
- * 显式声明，空清单由服务端明确拒绝）。
- */
+/** 默认策略只读预览：身份、来源、摘要、差异和阻塞原因。 */
 export interface ParsedTaskStrategyReapplyPreview {
   readonly kind: 'command'; readonly command: 'task'; readonly commandId: 'task.strategy-reapply-preview';
   readonly json: boolean; readonly startTimeoutMs: number; readonly dataRoot?: string;
   readonly projectId: string; readonly taskIds: readonly string[];
 }
 
+/** 冻结预览身份的显式确认。 */
 export interface ParsedTaskStrategyReapply {
   readonly kind: 'command'; readonly command: 'task'; readonly commandId: 'task.strategy-reapply';
   readonly json: boolean; readonly startTimeoutMs: number; readonly dataRoot?: string;
   readonly projectId: string; readonly inputFile: string; readonly confirm: true; readonly explicitCommandId?: string;
 }
+/**
+ * `task prepare <taskId> --project <id> --feature <id> --input <file>`：
+ * 固定输入制品组准备（execution.input.prepare；创建类不携带 expectedRevision）；
+ * `--input` 是 `{items: [...]}` 必需输入采集清单（必填——缺失必需输入必须
+ * 显式声明，空清单由服务端明确拒绝）。
+ */
 export interface ParsedTaskPrepare {
   readonly kind: 'command';
   readonly command: 'task';

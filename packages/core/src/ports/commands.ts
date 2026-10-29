@@ -2357,13 +2357,17 @@ export function validateCommandEnvelope(input: unknown): ValidatedCommandEnvelop
   }
   if (operation === 'task.strategy.reapply') {
     if (scope.kind !== 'project') fail(operation, 'invalid_input', 'scope.kind', 'scope mismatch');
-    return {
-      ...base,
-      operation,
-      scope,
-      expectedRevision: null,
-      payload: validateTaskStrategyReapplicationPayload(operation, object.payload),
-    };
+    try {
+      return {
+        ...base,
+        operation,
+        scope,
+        expectedRevision: null,
+        payload: validateTaskStrategyReapplicationPayload(operation, object.payload),
+      };
+    } catch (error) {
+      throw mapToPublicError(error, { operation });
+    }
   }
   if (operation === 'planning.candidate.decide') {
     if (scope.kind !== 'project') {

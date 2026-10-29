@@ -9,6 +9,7 @@ import {
 } from '../ports/commands.js';
 import type { CommandReceipt, ValidatedCommandEnvelope } from '../ports/commands.js';
 import { createResultRef } from '../ports/command-receipts.js';
+import { validateTaskStrategyReapplicationResult } from '../ports/task-strategy-reapplication-wire.js';
 import type { RuntimeCapabilityCatalog } from '../ports/runtime-capabilities.js';
 import type { TaskStrategyEditGuards } from './task-strategy-update.js';
 import { previewTaskStrategyReapplication } from './task-strategy-preview.js';
@@ -149,11 +150,11 @@ export function submitTaskStrategyReapplication(
   const receipt = createCompletedReceipt({
     ...identity,
     resultRef: createResultRef(randomBytes(32)),
-    result: {
+    result: validateTaskStrategyReapplicationResult({
       updatedTaskIds: updated.map((entry) => entry.taskId),
       taskRevisions: updated,
       updatedCount: updated.length,
-    },
+    }),
   });
   transaction.saveReceipt(receipt);
   return receipt;

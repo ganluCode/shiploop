@@ -410,6 +410,7 @@ export interface UpdateTaskStrategyInput {
   readonly commandId?: string;
 }
 export interface TaskStrategyReapplicationInput {
+  readonly confirmed: true;
   readonly projectId: string;
   readonly previewDigest: string;
   readonly globalSettingsRevision: number | null;
@@ -3598,32 +3599,36 @@ export function createHostClientApplication(context: AppClientContext): HostClie
       }
       const params = new URLSearchParams([['projectId', id], ...taskIds.map(taskId => ['taskId', requireStableIdInput('task.strategy.reapply.preview', taskId, 'taskId')] as [string, string])]);
       const json = await getJson('task.strategy.reapply.preview', `${TASK_STRATEGY_REAPPLICATION_ROUTE}?${params.toString()}`);
-      return validateTaskStrategyReapplicationPreviewWire(json, 'task.strategy.reapply.preview');
+      const result = validateTaskStrategyReapplicationPreviewWire(json, 'task.strategy.reapply.preview');
+      const selected = [...taskIds].sort();
+      if (result.identity.projectId !== id || result.identity.selectedTaskIds.length !== selected.length
+        || selected.some((taskId, index) => result.identity.selectedTaskIds[index] !== taskId)) {
+        throw new HostProtocolError('response_malformed', 'task.strategy.reapply.preview', '预览响应归属与请求不一致');
+      }
+      return result;
     },
 
     async reapplyTaskStrategy(
       input: TaskStrategyReapplicationInput,
       options?: SubmitCommandOptions,
     ): Promise<CommandReceipt> {
-      const object = rejectUnknownInputKeys('commands.submit', input, ['projectId', 'previewDigest', 'globalSettingsRevision', 'projectSettingsRevision', 'selectedTaskIds', 'expectedTaskRevisions', 'commandId']);
+      const object = rejectUnknownInputKeys('commands.submit', input, ['projectId', 'confirmed', 'previewDigest', 'globalSettingsRevision', 'projectSettingsRevision', 'selectedTaskIds', 'expectedTaskRevisions', 'commandId']);
       const projectId = requireProjectId('commands.submit', object.projectId as string);
-      const previewDigest = requireSha256Input('commands.submit', object.previewDigest, 'previewDigest');
-      if (object.globalSettingsRevision !== null && (!Number.isSafeInteger(object.globalSettingsRevision) || (object.globalSettingsRevision as number) < 1)) throw invalidInput('commands.submit', 'invalid_revision', 'globalSettingsRevision');
-      if (object.projectSettingsRevision !== null && (!Number.isSafeInteger(object.projectSettingsRevision) || (object.projectSettingsRevision as number) < 1)) throw invalidInput('commands.submit', 'invalid_revision', 'projectSettingsRevision');
-      if (!Array.isArray(object.selectedTaskIds) || object.selectedTaskIds.length === 0) throw invalidInput('commands.submit', 'invalid_task_ids', 'selectedTaskIds');
-      const selectedTaskIds = object.selectedTaskIds.map(taskId => requireStableIdInput('commands.submit', taskId, 'selectedTaskIds'));
-      if (!Array.isArray(object.expectedTaskRevisions) || object.expectedTaskRevisions.length !== selectedTaskIds.length) throw invalidInput('commands.submit', 'invalid_task_revisions', 'expectedTaskRevisions');
-      const expectedTaskRevisions = object.expectedTaskRevisions.map(entry => {
-        if (!isPlainObject(entry)) throw invalidInput('commands.submit', 'invalid_task_revisions', 'expectedTaskRevisions');
-        return { taskId: requireStableIdInput('commands.submit', entry.taskId, 'expectedTaskRevisions.taskId'), revision: requireExpectedRevisionInput('commands.submit', entry.revision) };
-      });
+      // 保留深层字段和未知键，由 Core 信封校验器单一权威拒绝；不投影丢弃错误输入。
       const receipt = await submitCommand({
         ...optionalCommandIdInput('commands.submit', object.commandId),
         operation: 'task.strategy.reapply',
         scope: { kind: 'project', projectId },
-        payload: { confirmed: true, previewDigest, globalSettingsRevision: object.globalSettingsRevision as number | null, projectSettingsRevision: object.projectSettingsRevision as number | null, selectedTaskIds, expectedTaskRevisions },
+        payload: Object.fromEntries(Object.entries(object).filter(([key]) => key !== 'projectId' && key !== 'commandId')),
       }, options);
-      if (receipt.status === 'completed') validateTaskStrategyReapplicationResultWire(receipt.result, 'commands.submit');
+      if (receipt.status === 'completed') {
+        const result = validateTaskStrategyReapplicationResultWire(receipt.result, 'commands.submit');
+        const expected = [...input.expectedTaskRevisions].sort((a, b) => a.taskId < b.taskId ? -1 : a.taskId > b.taskId ? 1 : 0);
+        if (result.taskRevisions.length !== expected.length || result.taskRevisions.some((entry, index) =>
+          entry.taskId !== expected[index]?.taskId || entry.revision !== expected[index]!.revision + 1)) {
+          throw new HostProtocolError('response_malformed', 'commands.submit', '策略更新回执目标与请求不一致');
+        }
+      }
       return receipt;
     },
 
