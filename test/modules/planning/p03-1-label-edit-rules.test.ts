@@ -99,21 +99,26 @@ describe('F-007 标签字段纯校验（复用规范化与 64/50 上限、严格
     ).toEqual({ entityType: 'phase', id: 'phase-1', labels: [] });
   });
 
-  it('entityType 限定 phase/feature/task；id 复用稳定 ID 规则', () => {
-    expect([...PLAN_ENTITY_TYPES]).toEqual(['phase', 'feature', 'task']);
+  it('entityType 限定 phase/feature/task/run；id 复用稳定 ID 规则', () => {
+    expect([...PLAN_ENTITY_TYPES]).toEqual(['phase', 'feature', 'task', 'run']);
+    expect(
+      validatePlanLabelsFields({ entityType: 'run', id: 'run-1', labels: [' Team ', 'team', 'e\u0301'] }, 'plan.labels.update'),
+    ).toEqual({ entityType: 'run', id: 'run-1', labels: ['team', 'é'] });
     validationFailure(
       () => validatePlanLabelsFields({ entityType: 'project', id: 'p-1', labels: [] }, 'plan.labels.update'),
       'entityType',
     );
-    validationFailure(
-      () => validatePlanLabelsFields({ entityType: 'task', id: 'bad id', labels: [] }, 'plan.labels.update'),
-      'id',
-    );
-    // labels 必须显式提交（编辑以完整标签集合为准；缺省不静默清空）。
-    validationFailure(
-      () => validatePlanLabelsFields({ entityType: 'task', id: 't-1' }, 'plan.labels.update'),
-      'labels',
-    );
+    for (const entityType of ['phase', 'feature', 'task', 'run']) {
+      validationFailure(
+        () => validatePlanLabelsFields({ entityType, id: 'bad id', labels: [] }, 'plan.labels.update'),
+        'id',
+      );
+      // labels 必须显式提交（编辑以完整标签集合为准；缺省不静默清空）。
+      validationFailure(
+        () => validatePlanLabelsFields({ entityType, id: 'entity-1' }, 'plan.labels.update'),
+        'labels',
+      );
+    }
   });
 
   it('非法标签按既有规则拒绝（空/空白、非字符串、长度>64、数量>50）', () => {
