@@ -67,6 +67,26 @@ function sameIdentity(left: { name: string; email: string }, right: { name: stri
   return left.name === right.name && left.email === right.email;
 }
 
+/** Excludes timestamps/evidence ids so two observations can be compared as the same Git/file fact. */
+function workspaceObservationDigest(inspection: WorkspaceInspection): string {
+  return JSON.stringify({
+    repository: {
+      repoIdentity: inspection.repository.repoIdentity,
+      canonicalPath: inspection.repository.canonicalPath,
+      gitCommonDir: inspection.repository.gitCommonDir,
+      branch: inspection.repository.branch,
+      baseCommit: inspection.repository.baseCommit,
+      headCommit: inspection.repository.headCommit,
+    },
+    registration: inspection.registration,
+    statusPorcelainBase64: inspection.statusPorcelainBase64,
+    refsDigest: inspection.refsDigest,
+    codeDigest: inspection.codeDigest,
+    ignoredDigest: inspection.ignoredDigest,
+    contents: inspection.contents,
+  });
+}
+
 async function reconcileGitOperation(baseline: WorkspaceBaseline | null,
   operation: GitOperationRecord, facts: Awaited<ReturnType<RecoveryGitReader['facts']>> | null,
   gaps: string[]): Promise<WorkRecoveryGitOperationFacts> {
@@ -163,6 +183,47 @@ export function createWorkRecoveryReconciler(options: WorkRecoveryReconcilerOpti
         }
       }
 
+      const firstInspection = inspection;
+      const recheckWorkspace = async (): Promise<void> => {
+        if (baseline === null) return;
+        let current: WorkspaceInspection | null = null;
+        try {
+          current = await options.inspect(source.projectId, baseline);
+          if (firstInspection !== null
+            && workspaceObservationDigest(firstInspection) !== workspaceObservationDigest(current)) {
+            addGap(gaps, 'workspace_changed_during_recovery');
+          }
+          if (inspection !== null
+            && workspaceObservationDigest(inspection) !== workspaceObservationDigest(current)) {
+            addGap(gaps, 'workspace_changed_between_rechecks');
+          }
+          inspection = current;
+        } catch (error) {
+          addGap(gaps, `workspace_recheck_${errorReason(error)}`);
+        }
+        try {
+          const currentLocks = await options.git.locks(baseline);
+          locks = currentLocks;
+          if (currentLocks.length > 0) addGap(gaps, 'git_lock_present');
+        } catch {
+          addGap(gaps, 'git_lock_probe_failed');
+        }
+        if (current !== null) {
+          const head = current.repository.headCommit;
+          try {
+            if (!(await options.git.isAncestor(source.projectId, baseline, baseline.baseCommit, head))) {
+              addGap(gaps, 'head_not_descended_from_base');
+            }
+            if (snapshot.workspace?.headCommit != null
+              && !(await options.git.isAncestor(source.projectId, baseline, snapshot.workspace.headCommit, head))) {
+              addGap(gaps, 'recorded_head_not_ancestor');
+            }
+          } catch {
+            addGap(gaps, 'git_ancestry_check_failed');
+          }
+        }
+      };
+
       let facts: Awaited<ReturnType<RecoveryGitReader['facts']>> | null = null;
       if (baseline !== null && locks.length === 0 && snapshot.pendingGitOperations.length > 0) {
         try { facts = await options.git.facts(source.projectId, baseline); }
@@ -221,6 +282,7 @@ export function createWorkRecoveryReconciler(options: WorkRecoveryReconcilerOpti
       const recoverySelection = attempt.inputSnapshot.rework?.recovery.selection;
       const recoverySource = recoverySelection !== undefined && recoverySelection.mode !== 'new'
         ? recoverySelection.source : undefined;
+      await recheckWorkspace();
       if (recoverySource !== undefined) {
         if (recoverySource.sourceProjectId !== source.projectId) addGap(gaps, 'native_archive_source_project_mismatch');
         const artifact = snapshot.artifacts.find(record => record.id === recoverySource.nativeArchiveRef);
@@ -236,11 +298,15 @@ export function createWorkRecoveryReconciler(options: WorkRecoveryReconcilerOpti
         else {
           const token = await options.stopVerifier.verify(snapshot.resources);
           if (token === null) addGap(gaps, 'stop_unconfirmed');
-          else release = { mode: 'stopped', token };
+          else {
+            const gapsBeforeStopRecheck = gaps.length;
+            await recheckWorkspace();
+            if (gaps.length === gapsBeforeStopRecheck) release = { mode: 'stopped', token };
+          }
         }
       }
 
-      const status = gaps.length === 0 ? 'reconciled' : 'quarantined';
+      let status: WorkRecoveryReconciliationEvidence['status'] = gaps.length === 0 ? 'reconciled' : 'quarantined';
       const runtime = {
         launchReceipt: launched ? 'present' as const : 'missing' as const,
         stopReceipt: neverStarted ? 'not_applicable' as const
@@ -265,24 +331,7 @@ export function createWorkRecoveryReconciler(options: WorkRecoveryReconcilerOpti
           : source.stopConfirmed ? 'confirmed_stopped' as const : 'not_referenced' as const,
         opened: false as const,
       };
-      const workspace = inspection === null || baseline === null ? null : {
-        id: snapshot.workspace!.id,
-        status: status === 'reconciled' ? 'retained' as const : 'quarantined' as const,
-        canonicalPath: baseline.canonicalPath,
-        repoIdentity: baseline.repoIdentity,
-        branch: inspection.repository.branch,
-        baseCommit: baseline.baseCommit,
-        headCommit: inspection.repository.headCommit,
-        codeDigest: inspection.codeDigest,
-        registrationDigest: createHash('sha256').update(JSON.stringify(inspection.registration)).digest('hex'),
-        trackedCount: inspection.contents.tracked.length,
-        untrackedCount: inspection.contents.untracked.length,
-        ignoredCount: inspection.contents.ignored.length,
-        retainedTrackedCount: inspection.contents.tracked.length,
-        retainedUntrackedCount: inspection.contents.untracked.length,
-        locks,
-      };
-      const evidence: WorkRecoveryReconciliationEvidence = {
+      const buildEvidence = (): WorkRecoveryReconciliationEvidence => ({
         schemaVersion: WORK_RECOVERY_RECONCILIATION_SCHEMA_VERSION,
         kind: WORK_RECOVERY_RECONCILIATION_KIND,
         projectId: attempt.projectId,
@@ -294,9 +343,25 @@ export function createWorkRecoveryReconciler(options: WorkRecoveryReconcilerOpti
         hostInstanceId: attempt.hostInstanceId,
         executionVersion: attempt.executionVersion,
         status,
-        gaps,
+        gaps: [...gaps],
         startupGaps,
-        workspace,
+        workspace: inspection === null || baseline === null ? null : {
+          id: snapshot.workspace!.id,
+          status: status === 'reconciled' ? 'retained' as const : 'quarantined' as const,
+          canonicalPath: baseline.canonicalPath,
+          repoIdentity: baseline.repoIdentity,
+          branch: inspection.repository.branch,
+          baseCommit: baseline.baseCommit,
+          headCommit: inspection.repository.headCommit,
+          codeDigest: inspection.codeDigest,
+          registrationDigest: createHash('sha256').update(JSON.stringify(inspection.registration)).digest('hex'),
+          trackedCount: inspection.contents.tracked.length,
+          untrackedCount: inspection.contents.untracked.length,
+          ignoredCount: inspection.contents.ignored.length,
+          retainedTrackedCount: inspection.contents.tracked.length,
+          retainedUntrackedCount: inspection.contents.untracked.length,
+          locks,
+        },
         recording: {
           sessionId: snapshot.session?.id ?? null,
           status: snapshot.session?.status ?? null,
@@ -314,8 +379,19 @@ export function createWorkRecoveryReconciler(options: WorkRecoveryReconcilerOpti
           '确认恢复证据完整前不得创建新 Attempt、复用工作区或继续原生会话。',
         ] : [],
         observedAtUtcMs: now(),
-      };
-      const evidenceRef = await options.publishEvidence(source.projectId, evidence);
+      });
+      let evidence = buildEvidence();
+      let evidenceRef = await options.publishEvidence(source.projectId, evidence);
+      // Publishing is asynchronous and may overlap an external editor. Recheck once
+      // after publication; a changed fact invalidates the just-built release evidence.
+      const gapsBeforePublishRecheck = gaps.length;
+      await recheckWorkspace();
+      if (gaps.length > gapsBeforePublishRecheck) {
+        status = 'quarantined';
+        release = { mode: 'none' };
+        evidence = buildEvidence();
+        evidenceRef = await options.publishEvidence(source.projectId, evidence);
+      }
       if (status === 'quarantined') options.store.quarantine(source, evidence, evidenceRef, snapshot.recoveryFingerprint);
       else options.store.finish(source, evidence, evidenceRef, release, snapshot.recoveryFingerprint);
       return { status, gaps, evidenceRef, alreadyReconciled: false };

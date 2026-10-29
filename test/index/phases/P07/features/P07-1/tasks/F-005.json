@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "task_id": "F-005",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/recovery/p03-9-f006-recovery-reconciliation.test.ts", "all": true },
+      { "file": "test/modules/recovery/p03-9-f005-startup-recovery.test.ts", "all": true },
+      { "file": "test/modules/recovery/p03-9-f007-recovery-continuation.test.ts", "all": true },
+      { "file": "test/modules/recovery/p03-9-f008-workflow-resume.test.ts", "all": true },
+      { "file": "test/modules/workspace/p03-5-git-operation-lock.test.ts", "all": true },
+      { "file": "test/modules/workspace/p03-10-git-worktree-negatives.test.ts", "all": true }
+    ]
+  }]
+}

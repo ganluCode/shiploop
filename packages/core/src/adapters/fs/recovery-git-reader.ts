@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, readFileSync, realpathSync } from 'node:fs';
+import { lstatSync, readFileSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import type { GitCommitDriver } from '../../ports/controlled-git-commit.js';
 import type { WorkspaceBaseline } from '../../ports/workspace.js';
@@ -10,6 +10,16 @@ function inside(root: string, path: string): boolean {
   return suffix === '' || (!isAbsolute(suffix) && suffix !== '..' && !suffix.startsWith(`..${sep}`));
 }
 
+function lockExists(path: string): boolean {
+  try {
+    lstatSync(path);
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT' || code === 'ENOTDIR') return false;
+    throw error;
+  }
+}
 function worktreeGitDirectory(baseline: WorkspaceBaseline): string {
   const dotGit = join(baseline.canonicalPath, '.git');
   const stat = lstatSync(dotGit);
@@ -104,7 +114,7 @@ export function createRecoveryGitReader(options: {
         ['common:packed-refs.lock', join(baseline.gitCommonDir, 'packed-refs.lock')],
         ['common:config.lock', join(baseline.gitCommonDir, 'config.lock')],
       ] as const;
-      return candidates.filter(([, path]) => existsSync(path)).map(([name]) => name);
+      return candidates.filter(([, path]) => lockExists(path)).map(([name]) => name);
     },
     async facts(projectId, baseline) {
       return options.driverFor(projectId).open(baseline, () => undefined).facts();

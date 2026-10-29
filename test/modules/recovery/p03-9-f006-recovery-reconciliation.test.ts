@@ -79,10 +79,13 @@ async function publishJson(f: BindingFixture, value: unknown): Promise<string> {
     locator: `evidence/${randomUUID()}.json`, content: [body] })).artifact.id;
 }
 
-function recoveryStack(f: BindingFixture) {
+function recoveryStack(f: BindingFixture, options: {
+  readonly onFinalize?: () => void;
+  readonly onPublish?: (evidence: unknown) => void;
+} = {}) {
   const stopVerifier = createWorkResourceStopVerifier({
     process: { recoverStop: async () => ({ confirmed: true }) },
-    finalize: async () => true,
+    finalize: async () => { options.onFinalize?.(); return true; },
   });
   const resources = createSqliteWorkResourceAccess(f.session, {
     workspaceAuthority: f.authority, stopVerifier, nowUtcMs: () => NOW,
@@ -98,7 +101,10 @@ function recoveryStack(f: BindingFixture) {
     git: createRecoveryGitReader({ driverFor: () => createGitCommitDriver({ confirmProcessIdentity: confirm }) }),
     artifacts: f.verifier,
     stopVerifier,
-    publishEvidence: (_projectId, evidence) => publishJson(f, evidence),
+    publishEvidence: (_projectId, evidence) => {
+      options.onPublish?.(evidence);
+      return publishJson(f, evidence);
+    },
     nowUtcMs: () => NOW,
   });
   const startup = createWorkStartupRecovery({
@@ -351,6 +357,60 @@ describe.skipIf(process.platform !== 'darwin')('P03-9 / F-006 recovery reconcili
       sourceDigest: null, sourceVerified: false, singleWriter: 'confirmed_stopped', opened: false,
     });
     expect(evidence.recording).toMatchObject({ status: 'stopped', watermark: 5 });
+  }, 20_000);
+
+  it('[case:post-stop-content-drift] rejects workspace drift after stop verification and preserves the holder', async () => {
+    const f = await openBindingFixture();
+    const claim = f.claimAndLaunch('t-1');
+    seedWorkspace(f, claim.receipt);
+    markRunning(f, claim.receipt);
+    seedStoppedSession(f, claim.receipt);
+    const root = f.workspace.canonicalPath;
+    const original = readFileSync(join(root, 'src/a.ts'), 'utf8');
+    const stack = recoveryStack(f, {
+      onFinalize: () => writeFileSync(join(root, 'src/a.ts'), `${original}external drift\n`),
+    });
+
+    await stack.startup.recover();
+
+    expect(stack.startup.state()).toEqual({ status: 'blocked', reason: 'workspace_reconciliation_required' });
+    expect(f.query('SELECT status FROM managed_workspaces')).toEqual({ status: 'quarantined' });
+    expect(f.query("SELECT COUNT(*) AS n FROM workspace_leases WHERE state = 'quarantined'")).toEqual({ n: 3 });
+    expect(f.query('SELECT COUNT(*) AS n FROM attempts')).toEqual({ n: 1 });
+    expect(readFileSync(join(root, 'src/a.ts'), 'utf8')).toBe(`${original}external drift\n`);
+    const evidence = await recoveryEvidence(f, claim.receipt.attempt.id);
+    expect(evidence.gaps).toEqual(expect.arrayContaining(['workspace_changed_during_recovery']));
+    expect(evidence.taskPassed).toBe(false);
+    expect(evidence.newAttemptCreated).toBe(false);
+  }, 20_000);
+
+  it('[case:post-publish-content-drift] quarantines drift introduced while publishing evidence', async () => {
+    const f = await openBindingFixture();
+    const claim = f.claimAndLaunch('t-1');
+    seedWorkspace(f, claim.receipt);
+    markRunning(f, claim.receipt);
+    seedStoppedSession(f, claim.receipt);
+    const root = f.workspace.canonicalPath;
+    const original = readFileSync(join(root, 'src/a.ts'), 'utf8');
+    let published = false;
+    const stack = recoveryStack(f, {
+      onPublish: (evidence) => {
+        if (!published && (evidence as { kind?: unknown }).kind === 'work-recovery-reconciliation') {
+          published = true;
+          writeFileSync(join(root, 'src/a.ts'), `${original}publish drift\n`);
+        }
+      },
+    });
+
+    await stack.startup.recover();
+
+    expect(stack.startup.state()).toEqual({ status: 'blocked', reason: 'workspace_reconciliation_required' });
+    expect(f.query('SELECT status FROM managed_workspaces')).toEqual({ status: 'quarantined' });
+    expect(f.query("SELECT COUNT(*) AS n FROM workspace_leases WHERE state = 'quarantined'")).toEqual({ n: 3 });
+    expect(readFileSync(join(root, 'src/a.ts'), 'utf8')).toBe(`${original}publish drift\n`);
+    const evidence = await recoveryEvidence(f, claim.receipt.attempt.id);
+    expect(evidence.gaps).toEqual(expect.arrayContaining(['workspace_changed_during_recovery']));
+    expect(evidence.newAttemptCreated).toBe(false);
   }, 20_000);
 
   it('marks a pending Artifact reference as an unresolved gap during repeated reconciliation', async () => {
