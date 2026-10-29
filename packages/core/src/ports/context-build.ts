@@ -1001,6 +1001,16 @@ function validateKnowledgeBudget(value: unknown, field: string): ContextKnowledg
   };
 }
 
+/** Reuse the ContextBuilder knowledge contract when persisting an Attempt. */
+export function validateContextKnowledgeInput(value: unknown, projectId: string): ContextKnowledgeInput {
+  return validateKnowledge(value, 'knowledge', projectId);
+}
+
+/** Validate the frozen knowledge budget at storage boundaries. */
+export function validateContextKnowledgeBudget(value: unknown): ContextKnowledgeBudget {
+  return validateKnowledgeBudget(value, 'knowledgeBudget');
+}
+
 function validateTask(value: unknown, field: string): ContextTaskInput {
   if (value === undefined || value === null) {
     throw contextError('missing_required_input', field, '当前 Task 固定输入是必需字段');

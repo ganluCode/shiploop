@@ -32,6 +32,9 @@ import {
   DEFAULT_EXECUTION_INPUT_CONTEXT_BUDGET,
   createExecutionInputPrepareService,
 } from '../../../packages/core/src/application/execution-input-prepare.ts';
+import { createExecutionKnowledgeReader } from '../../../packages/core/src/application/execution-knowledge.ts';
+import { createSqliteDocumentStore } from '../../../packages/core/src/adapters/sqlite/document-store.ts';
+import { createSqliteQueryStore } from '../../../packages/core/src/adapters/sqlite/query-store.ts';
 import { createExecutionPreviewService } from '../../../packages/core/src/application/execution-preview.ts';
 import { createExecutionStartService } from '../../../packages/core/src/application/execution-start.ts';
 import { createExecutionInputBindingService } from '../../../packages/core/src/application/execution-input-binding.ts';
@@ -64,6 +67,16 @@ export const FAKE_STRATEGY = { runtime: 'fake', provider: 'test-provider', model
 const sha256 = (value: string | Buffer): string => createHash('sha256').update(value).digest('hex');
 
 export interface BindingFixtureOptions {
+  /** Explicit existing repository, owned by the caller (never cleaned by this fixture). */
+  readonly repositoryPath?: string;
+  /** Seed real managed knowledge before preparation; only selection requests are returned. */
+  readonly prepareKnowledge?: (context: {
+    projectId: string;
+    session: SqliteStorageSession;
+    artifacts: ReturnType<typeof createSqliteArtifactStore>;
+    publisher: ReturnType<typeof createArtifactPublisher>;
+    verifier: ReturnType<typeof createArtifactVerifier>;
+  }) => Promise<readonly Record<string, unknown>[]>;
   /** Explicit requirement body for separately authorized acceptance probes. */
   readonly requirementContent?: string;
   /** Trusted Runtime strategy for adapter composition tests; default retains Fake fixtures. */
@@ -117,6 +130,7 @@ export interface BindingFixture {
   readonly verifier: ReturnType<typeof createArtifactVerifier>;
   readonly publisher: ReturnType<typeof createArtifactPublisher>;
   readonly bindingService: ReturnType<typeof createExecutionInputBindingService>;
+  readonly submit: (operation: string, payload: Record<string, unknown>, extra?: Record<string, unknown>) => Promise<CommandReceipt>;
   /** 推进夹具时钟（毫秒）。 */
   advance(ms: number): void;
   /** 认领（不启动）。 */
@@ -194,6 +208,10 @@ export async function openBindingFixture(options: BindingFixtureOptions = {}): P
         builder: createContextBuilder({ budget: DEFAULT_EXECUTION_INPUT_CONTEXT_BUDGET }),
         publisher, verifier,
         permissions: TRUSTED_PROJECT_PERMISSIONS_READER,
+        ...(options.prepareKnowledge === undefined ? {} : { knowledge: createExecutionKnowledgeReader({
+          documents: createSqliteDocumentStore(session), documentQuery: createSqliteQueryStore(session),
+          memoryQuery: createSqliteQueryStore(session), verifier,
+        }) }),
         limits: { maxRequiredItems: 8 },
         nowMs: nowUtcMs,
       }),
@@ -220,7 +238,7 @@ export async function openBindingFixture(options: BindingFixtureOptions = {}): P
 
     const registered = requireCompleted(
       await submit('project.register', {
-        repositoryPath: box.repoDirA, displayName: 'Binding', description: null, labels: [],
+        repositoryPath: options.repositoryPath ?? box.repoDirA, displayName: 'Binding', description: null, labels: [],
       }, { scope: { kind: 'registration' } }),
       'project.register',
     );
@@ -316,10 +334,12 @@ export async function openBindingFixture(options: BindingFixtureOptions = {}): P
       'feature.plan.decide',
     );
 
+    const knowledge = await options.prepareKnowledge?.({ projectId, session: activeSession, artifacts, publisher, verifier });
     /* 真实准备：发布 snapshot/manifest/prompt 制品组。 */
     const prepareFor = async (taskId: string): Promise<PreparedExecutionInputGroup> => {
       const receipt = await submit('execution.input.prepare', {
         featureId, taskId,
+        ...(knowledge === undefined ? {} : { knowledge }),
         items: taskId === 't-1'
           ? [{ purpose: 'requirements', source: { kind: 'artifact', artifactId: requirementArtifactId } }]
           : taskId === 't-2'
@@ -340,6 +360,8 @@ export async function openBindingFixture(options: BindingFixtureOptions = {}): P
         featureId,
         taskId,
         group,
+        ...(result['knowledge'] === undefined ? {} : { knowledge: result['knowledge'] as PreparedExecutionInputGroup['knowledge'] }),
+        ...(result['knowledgeBudget'] === undefined ? {} : { knowledgeBudget: result['knowledgeBudget'] as PreparedExecutionInputGroup['knowledgeBudget'] }),
         requiredInputs: requiredInputs as unknown as PreparedExecutionInputGroup['requiredInputs'],
         digests: result['digests'] as PreparedExecutionInputGroup['digests'],
         approval: result['approval'] as PreparedExecutionInputGroup['approval'],
@@ -374,9 +396,10 @@ export async function openBindingFixture(options: BindingFixtureOptions = {}): P
     }
     const runId = started.runId;
 
-    const authority = createWorkWorkspaceAuthority({ authorizedRoots: [box.root] });
+    const repositoryPath = options.repositoryPath ?? box.repoDirA;
+    const authority = createWorkWorkspaceAuthority({ authorizedRoots: [box.root, repositoryPath] });
     const bindingRecord = createSqliteStateAccess(session).getRepositoryBinding(projectId);
-    const workspace = await authority.verify(bindingRecord, box.repoDirA);
+    const workspace = await authority.verify(bindingRecord, repositoryPath);
     const resources = () => createSqliteWorkResourceAccess(activeSession, { workspaceAuthority: authority, nowUtcMs });
 
     const claimTask = (taskId: string): ClaimedAttempt => {
@@ -432,7 +455,7 @@ export async function openBindingFixture(options: BindingFixtureOptions = {}): P
       attempts: createSqliteAttemptAccess(activeSession),
       resources: resources(),
       workspaceAuthority: authority,
-      workspaceRoots: { 'workspace-root': box.root },
+      workspaceRoots: { 'workspace-root': options.repositoryPath ?? box.root },
       publisher,
       ...(recoveryCatalog !== undefined ? { recoveryCatalog } : {}),
       ...(options.recoverySources === undefined ? {} : {
@@ -447,6 +470,7 @@ export async function openBindingFixture(options: BindingFixtureOptions = {}): P
       box, session: activeSession, projectId, featureId, runId, startEnvelope,
       requirementArtifactId, requirementContent,
       workspace, authority, artifacts, verifier, publisher, bindingService,
+      submit: (operation, payload, extra = {}) => submit(operation, payload, { scope, ...extra }),
       advance, claimTask, launch, claimAndLaunch, expireLeases, createResources: resources, bindingInput,
       query: (sql: string, ...params: unknown[]) => db.prepare(sql).get(...params as never[]),
       close() { if (session) captureP04SqliteEvidence(session, 'binding'); session?.close(); box.cleanup(); },
