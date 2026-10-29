@@ -33,6 +33,8 @@ F-006 补齐 Task Verifier 的持久进程身份、迟到结果围栏和输出�
 
 ## 本地验证与交接范围
 
+以下为首次提交 `50b536f` 的本地分组记录；后续独立验收失败及本次返工见末节。
+
 本地分组验证覆盖 46 项不同用例：上述真实 Host 8 项、VerificationStore 26 项、停止/重探测 4 项、Schema 对齐 5 项、Verifier 时间限制 2 项及真实检查超时 1 项。原始 RED、调试失败、后续通过日志均保留；这是分组运行的合集，不声称一次执行了完整索引。
 
 日志位于 Feature workspace 的 `verifications/F-006/runtime-logs/`，每次均由受控助手保留 stdout/stderr、真实退出码及 sidecar：
@@ -57,3 +59,23 @@ F-006 补齐 Task Verifier 的持久进程身份、迟到结果围栏和输出�
 仓库 Task 索引为 `test/index/phases/P07/features/P07-1/tasks/F-006.json`，Harness selection 仅引用此索引。索引额外登记既有 Node 执行器、聚合、显式继续、跨层检查选择、启动恢复、恢复核对和时间限制的较广回归，由 Nezha 独立执行；未在本地运行的部分不记为通过。
 
 未执行全仓测试、组合 verify、Phase 验收、live 模型或发布；不据此声明 Feature/Phase 验收通过。分配分支沿用既有名称，不由 Runtime 创建、切换或改名；预先存在的分支命名异常仍见 F-001 交接。
+
+## F-006 第二次执行：独立验收失败修复
+
+首次独立合集运行 11 文件、171 项，其中 169 项通过、2 项失败，不能将原本地通过记录解读为独立验收通过。原证据保留在 `verifications/F-006/aed195c78fb0453e8a1d6513fc71a400/`，本次未覆盖。
+
+- `work-startup-recovery.ts`：逐个核验登记进程时区分返回未确认与探测抛错，分别保留 `stop_unconfirmed` / `stop_failed`。一项探测异常不会中断其余 Verifier 核验，初次恢复和后续重探测都保持隔离。新增两项回归覆盖这两个阶段，保留旧观察不变。
+- `attempt-dispatch.ts`：Runtime 启动准入将 Batch 绝对截止时间与次数预算分开归因；截止返回既有启动契约的 `deadline_exhausted`，次数耗尽仍为 `budget_exhausted`。两类情况继续拒绝启动，不重置预算或延长截止时间；原时间限制断言保持不变。
+- 本次 Runtime 仅执行两个具体失败回归、停止重探测文件及真实挂起 Verifier 场景，共 9 项通过；未重复执行整个独立合集。更广回归仍由 Nezha 执行。索引追加派发/Task 认领回归，保留既有选择，共 13 文件；Harness selection 继续引用同一仓库索引。
+
+本次 invocation 的日志均位于 `verifications/F-006/runtime-logs/`：
+
+| 内容 | 结果与日志 |
+| --- | --- |
+| 原两项失败复现 | exit 1，`test-_g7esxvz.log` |
+| 两项修复及停止重探测 | 8 项通过，`test-axmjx4ce.log` |
+| 真实 Verifier/后代重启停止与隔离 | 1 项通过，`test-fn6hjdwg.log` |
+| TypeScript 类型检查 | exit 0，`test-7z6y9e7o.log` |
+| 模块边界检查 | exit 0，470 文件/0 诊断，`test-56usomv2.log` |
+
+本次完成声明绑定当前 invocation，由 Nezha 独立决定是否验收通过；不沿用上次声明替代本次提交，也不修改正式 Task/Feature 元数据或人工门禁。

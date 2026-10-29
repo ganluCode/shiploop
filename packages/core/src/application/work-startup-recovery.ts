@@ -18,18 +18,22 @@ export function createWorkStartupRecovery(options: WorkStartupRecoveryOptions) {
       return recovery;
     },
   };
-  async function stopAll(target: WorkStartupRecoveryTarget): Promise<boolean> {
-    if (target.processIdentity === null) return false;
+  async function stopAll(target: WorkStartupRecoveryTarget): Promise<{
+    readonly confirmed: boolean;
+    readonly reason: 'stop_failed' | 'stop_unconfirmed' | null;
+  }> {
+    if (target.processIdentity === null) return { confirmed: false, reason: 'stop_unconfirmed' };
     const identities = [target.processIdentity, ...(target.verificationProcesses ?? [])];
     // A bounded census is stopped sequentially; each adapter verifies PID birth and descendants.
     let confirmed = true;
+    let failed = false;
     for (const identity of identities) {
       try {
         const stop = await observeWithin(Promise.resolve().then(() => options.process.recoverStop?.(identity)), 5_000);
         if (stop?.confirmed !== true) confirmed = false;
-      } catch { confirmed = false; }
+      } catch { confirmed = false; failed = true; }
     }
-    return confirmed;
+    return { confirmed, reason: failed ? 'stop_failed' : confirmed ? null : 'stop_unconfirmed' };
   }
   async function run(): Promise<WorkStartupRecoveryState> {
     try {
@@ -51,9 +55,10 @@ export function createWorkStartupRecovery(options: WorkStartupRecoveryOptions) {
         const gaps = previous.gaps.filter(gap => gap !== 'stop_unconfirmed' && gap !== 'stop_failed');
         let stopConfirmed = false;
         try {
-          stopConfirmed = await stopAll(previous);
-        } catch { /* retain the old failed observation and add a fresh failure below */ }
-        if (!stopConfirmed) gaps.push('stop_unconfirmed');
+          const stop = await stopAll(previous);
+          stopConfirmed = stop.confirmed;
+          if (stop.reason !== null) gaps.push(stop.reason);
+        } catch { gaps.push('stop_failed'); }
         return {
           ...previous,
           stopConfirmed,
@@ -83,8 +88,9 @@ export function createWorkStartupRecovery(options: WorkStartupRecoveryOptions) {
           let stopConfirmed = false;
           if (target.processIdentity !== null && gaps.length === 0) {
             try {
-              stopConfirmed = await stopAll(target);
-              if (!stopConfirmed) gaps.push('stop_unconfirmed');
+              const stop = await stopAll(target);
+              stopConfirmed = stop.confirmed;
+              if (stop.reason !== null) gaps.push(stop.reason);
             } catch { gaps.push('stop_failed'); }
           } else if (target.processIdentity === null) gaps.push('process_identity_missing');
           evidence = { ...target, schemaVersion: 1, kind: 'work-startup-recovery',

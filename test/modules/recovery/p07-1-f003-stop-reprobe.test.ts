@@ -94,6 +94,30 @@ describe('P07-1 F-003 bounded recovery reprobe', () => {
 });
 
 describe('P07-1 F-006 Verifier stop evidence', () => {
+  it.each(['initial', 'reprobe'] as const)('[case:p07-verifier-stop-failed-%s] retains probe errors while still checking every registered Verifier', async mode => {
+    const verifier = { ...identity, launchId: '22222222-2222-4333-8444-555555555555', pid: 4243, processGroupId: 4243 };
+    const old = { ...evidence(), verificationProcesses: [verifier] };
+    const store = storeFor(old);
+    if (mode === 'initial') {
+      store.fence = () => ({ targets: [{ ...target, verificationProcesses: [verifier], gaps: [] }],
+        limited: false, retained: true, reconcilable: [] });
+      store.readObservation = () => null;
+    }
+    const recoverStop = vi.fn(async (process: { readonly pid: number }) => {
+      if (process.pid === identity.pid) throw new Error('controlled_probe_failure');
+      return { confirmed: false };
+    });
+    const recovery = createWorkStartupRecovery({ store, process: { recoverStop },
+      publishEvidence: async () => 'probe-error-artifact', nowUtcMs: () => 200 });
+    await recovery.recover();
+    expect(recoverStop.mock.calls.map(([process]) => process.pid)).toEqual([4242, 4243]);
+    expect(store.observedCalls[0]!.evidence).toMatchObject({ stopConfirmed: false,
+      verificationProcesses: [verifier], gaps: expect.arrayContaining(['stop_failed']) });
+    expect(recovery.state().status).toBe('blocked');
+    expect(old.observationRevision).toBe(1);
+    expect(old.gaps).toEqual(['stop_unconfirmed', 'workspace_not_reconciled']);
+  });
+
   it('[case:p07-verifier-stop-unknown] probes every registered process even when Runtime stop is unknown and preserves isolation until a fresh reprobe', async () => {
     const verifier = { ...identity, launchId: '22222222-2222-4333-8444-555555555555', pid: 4243, processGroupId: 4243 };
     const old = { ...evidence(), verificationProcesses: [verifier] };

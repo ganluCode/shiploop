@@ -55,8 +55,9 @@ export function createSqliteAttemptDispatchAccess(session: SqliteStorageSession,
     if (!Array.isArray(featureIds) || !featureIds.includes(attempt.featureId)) deny('feature_outside_batch_scope');
     const batchBudget = batch.budgetSnapshot.batch;
     const now = options.nowUtcMs();
-    if (batch.attemptsCreated > batchBudget.maxTotalAttempts || now >= batch.deadlineAtUtcMs
+    if (batch.attemptsCreated > batchBudget.maxTotalAttempts
       || run.attemptsCreated > run.maxAttemptsPerRun) deny('budget_exhausted');
+    if (now >= batch.deadlineAtUtcMs) deny('deadline_exhausted');
     const intent = execution.getRunDispatchIntentInTransaction(attempt.projectId, attempt.runId);
     if (!intent || intent.featureId !== attempt.featureId || intent.batchId !== batch.id
       || intent.authorizationDigest !== computeRunDispatchAuthorizationDigest({ projectId: run.projectId,
