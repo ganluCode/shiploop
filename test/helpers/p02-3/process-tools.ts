@@ -56,6 +56,8 @@ export interface SampleProcessOptions {
   /** 调用方负责构造隔离 env（如 isolated-environment.childEnv()）。 */
   readonly env?: NodeJS.ProcessEnv;
   readonly label?: string;
+  /** stdin 模式（默认 'ignore'）；stdio Fake server 等需要 'pipe' 驱动协议。 */
+  readonly stdin?: 'ignore' | 'pipe';
   /** stdout 采集上限（字节，默认 64 KiB）；超出即截断并标记 outputOverflow。 */
   readonly stdoutLimitBytes?: number;
   /** stderr 采集上限（字节，默认 64 KiB）。 */
@@ -81,6 +83,8 @@ export interface SampleProcess {
   readonly stderrBytes: number;
   /** stdout+stderr 任一超过采集上限。 */
   readonly outputOverflow: boolean;
+  /** stdin 流（仅 stdin: 'pipe' 时非 null；供 stdio 协议驱动）。 */
+  readonly stdin: NodeJS.WritableStream | null;
   readonly exited: Promise<SampleProcessExit>;
   /** 有界等待退出；超时返回 null（探测失败 ≠ 已停止，不抛错、不杀进程）。 */
   waitExit(timeoutMs: number): Promise<SampleProcessExit | null>;
@@ -103,7 +107,7 @@ export function spawnSampleProcess(options: SampleProcessOptions): SampleProcess
   const child: ChildProcess = spawn(command, args, {
     cwd: options.cwd,
     env: options.env ?? process.env,
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: [options.stdin ?? 'ignore', 'pipe', 'pipe'],
   });
 
   let stdout = '';
@@ -166,6 +170,9 @@ export function spawnSampleProcess(options: SampleProcessOptions): SampleProcess
     },
     get outputOverflow() {
       return outputOverflow;
+    },
+    get stdin() {
+      return options.stdin === 'pipe' ? child.stdin : null;
     },
     exited,
     async waitExit(timeoutMs: number): Promise<SampleProcessExit | null> {
