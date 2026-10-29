@@ -291,6 +291,7 @@ function completionFor(f: EligibleFinalizationFixture, nowMs: () => number): Fin
     confirmProcessIdentity: async identity => identity,
   });
   const delivery = createFinalizationGitDelivery({
+    publisher: f.publisher, artifacts: f.verifier,
     operations,
     inspector,
     driver: createGitCommitDriver({ confirmProcessIdentity: async identity => identity }),

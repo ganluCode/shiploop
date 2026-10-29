@@ -225,6 +225,12 @@ export function workRecoveryFingerprint(session: SqliteStorageSession, attemptId
   const runId = attempt.run_id;
   const queries = [
     ['attempts', 'run_id = ?', runId],
+    ['features', 'id = ?', attempt.feature_id],
+    ['approvals', 'subject_id = ?', attempt.feature_id],
+    ['task_approval_items', 'feature_id = ?', attempt.feature_id],
+    ['repository_bindings', 'project_id = ?', attempt.project_id],
+    ['project_settings', 'project_id = ?', attempt.project_id],
+    ['global_settings', '1 = 1 OR id = ?', attempt.project_id],
     ['tasks', 'feature_id = ?', attempt.feature_id],
     ['runs', 'id = ?', runId],
     ['execution_batches', 'id = (SELECT batch_id FROM runs WHERE id = ?)', runId],
@@ -244,6 +250,8 @@ export function workRecoveryFingerprint(session: SqliteStorageSession, attemptId
       UNION ALL SELECT run_id, input_ref AS ref FROM attempts
       UNION ALL SELECT a.run_id, s.result_ref AS ref FROM sessions s JOIN attempts a ON a.id = s.attempt_id
       UNION ALL SELECT b.run_id, c.output_artifact_id AS ref FROM check_results c JOIN verification_batches b ON b.id = c.batch_id
+      UNION ALL SELECT g.run_id, json_extract(j.value, '$.id') AS ref FROM git_operations g, json_each(g.verification_refs) j
+        WHERE json_extract(j.value, '$.kind') = 'artifact'
       ) WHERE run_id = ?)`, runId],
     ['git_operations', 'run_id = ?', runId],
     ['workspace_operations', 'workspace_id IN (SELECT id FROM managed_workspaces WHERE feature_id = ?)', attempt.feature_id],

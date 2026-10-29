@@ -206,6 +206,21 @@ export function createSqliteWorkRecoveryReconciliationStore(session: SqliteStora
             else refs.push(evidence.artifactId);
           }
         }
+        const pendingGitOperations = loadPendingGitOperations(source.projectId, source.runId);
+        for (const operation of pendingGitOperations) {
+          refs.push(...operation.intent.verificationRefs.filter(ref => ref.kind === 'artifact').map(ref => ref.id));
+          const batches = operation.intent.verificationRefs.filter(ref => ref.kind === 'verification_batch');
+          if (batches.length === 0) verificationGaps.push('git_verification_batch_invalid');
+          for (const ref of batches) {
+            try {
+              const batch = verification.getVerificationBatch(source.projectId, ref.id);
+              if (batch.status !== 'passed' || batch.featureId !== operation.intent.featureId
+                || batch.runId !== operation.intent.runId || batch.codeDigest !== ref.digest
+                || (operation.intent.attemptId !== null && batch.attemptId !== operation.intent.attemptId)
+                || batch.executionVersion !== operation.intent.executionVersion) verificationGaps.push('git_verification_batch_invalid');
+            } catch { verificationGaps.push('git_verification_batch_invalid'); }
+          }
+        }
         const pendingWorkspace = workspace === null ? [] : loadPendingWorkspaceOperations(source.projectId, source.runId, workspace.id);
         for (const operation of pendingWorkspace) {
           refs.push(...operation.result?.evidenceRefs ?? []);
@@ -213,7 +228,7 @@ export function createSqliteWorkRecoveryReconciliationStore(session: SqliteStora
         }
         if (new Set(refs).size > 64) verificationGaps.push('verification_artifact_limit');
         const dispatchLink = dispatch.link(dispatchAttempt(attempt));
-        const alreadyReconciled = run.status === 'paused' && workspace?.status === 'retained'
+        const alreadyReconciled = pendingGitOperations.length === 0 && run.status === 'paused' && workspace?.status === 'retained'
           && resources.leases.length === 0 && dispatchLink.gaps.length === 0
           && (dispatchLink.claim === null || dispatchLink.claim.state === 'released');
         return {
@@ -221,7 +236,7 @@ export function createSqliteWorkRecoveryReconciliationStore(session: SqliteStora
           recoveryFingerprint: workRecoveryFingerprint(session, attempt.id), dispatchGaps: dispatchLink.gaps,
           attempt, runStatus: run.status, workspace, session: sessionRecord, resources,
           artifacts: loadArtifacts(source.projectId, refs),
-          pendingGitOperations: loadPendingGitOperations(source.projectId, source.runId),
+          pendingGitOperations,
           pendingWorkspaceOperations: pendingWorkspace,
           alreadyReconciled,
           priorEvidenceRef: attempt.diagnosticRef,

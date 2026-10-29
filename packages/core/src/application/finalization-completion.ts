@@ -266,6 +266,7 @@ export function createFinalizationCompletionService(deps: FinalizationCompletion
     deliveryStatus: 'not_requested' | 'pending' | 'succeeded' | 'failed',
     reason: string,
     operationId: string | null,
+    assertCurrent?: () => void,
   ): { readonly ok: true; readonly run: RunRecord; readonly feature: FeatureRecord } | { readonly ok: false; readonly reason: string } {
     let current: { run: RunRecord; batch: ExecutionBatchRecord; feature: FeatureRecord };
     try {
@@ -293,8 +294,9 @@ export function createFinalizationCompletionService(deps: FinalizationCompletion
       return { ok: false, reason: `run_${current.run.status}` };
     }
     try {
-      const settled = deps.atomic.transact(`${FINALIZATION_COMPLETION_OPERATION}.settle`, transaction =>
-        transaction.finalizeFeatureDelivery({
+      const settled = deps.atomic.transact(`${FINALIZATION_COMPLETION_OPERATION}.settle`, transaction => {
+        assertCurrent?.();
+        return transaction.finalizeFeatureDelivery({
           projectId: run.projectId,
           featureId,
           batchId: run.batchId,
@@ -306,10 +308,11 @@ export function createFinalizationCompletionService(deps: FinalizationCompletion
           reason,
           deliveryStatus,
           operationId,
-        }));
+        });
+      });
       return { ok: true, run: settled.run, feature: settled.feature };
     } catch (error) {
-      if (isStorageError(error, 'conflict')) {
+      if (isStorageError(error, 'conflict') || (error instanceof Error && error.message === 'authorization_changed')) {
         return { ok: false, reason: 'control_interrupted' };
       }
       throw error;
@@ -321,6 +324,7 @@ export function createFinalizationCompletionService(deps: FinalizationCompletion
     plan: FinalizationRetryPlan,
     facts: ReturnType<ExecutionResumeFactsReader['readFacts']>,
     operationId: string,
+    expectedFence?: string,
   ): FinalizationCommitRequest | { readonly error: string } {
     const baseline = workspaceBaseline(facts);
     if (baseline === null) return { error: 'workspace_invalid' };
@@ -371,6 +375,13 @@ export function createFinalizationCompletionService(deps: FinalizationCompletion
       message: config.message,
       gitIdentity: config.gitIdentity,
       deliveryPolicyDigest: config.deliveryPolicyDigest,
+      assertCurrent() {
+        if ((expectedFence !== undefined && deps.facts.readFinalizationFence?.(run.projectId, run.id) !== expectedFence)
+          || JSON.stringify(deps.readDeliveryConfig?.(run.projectId, run.featureId)) !== JSON.stringify(config)
+          || controlReason(run, facts.batch, now()) !== null) {
+          throw Object.assign(new Error('authorization_changed'), { reason: 'authorization_changed' });
+        }
+      },
     };
   }
 
@@ -380,8 +391,9 @@ export function createFinalizationCompletionService(deps: FinalizationCompletion
     operation: FinalizationGitOperationView | null,
     reused: boolean,
     featureBefore: FeatureRecord,
+    assertCurrent?: () => void,
   ): Promise<FinalizationCompletionResult> {
-    const settled = settle(run, run.featureId, 'completed', 'succeeded', 'feature_finalized', operation?.operationId ?? null);
+    const settled = settle(run, run.featureId, 'completed', 'succeeded', 'feature_finalized', operation?.operationId ?? null, assertCurrent);
     if (!settled.ok) {
       return result('control_interrupted', run, featureBefore, settled.reason,
         { missingSteps: ['finalize'], approval: approvalAxis(plan), commit: commitAxis(plan, operation, reused) });
@@ -436,6 +448,7 @@ export function createFinalizationCompletionService(deps: FinalizationCompletion
         throw error;
       }
       const run = fresh.run;
+      const authorityFence = deps.facts.readFinalizationFence?.(projectId, runId);
       const scope = readScope(run);
       const featureBefore = readFeature(projectId, run.featureId);
       if (scope === null) return result('not_finalization_run', run, featureBefore, 'not_finalization_run');
@@ -555,7 +568,7 @@ export function createFinalizationCompletionService(deps: FinalizationCompletion
       if (existing === null) existing = candidateOperation;
 
       if (existing !== null && (existing.status === 'succeeded' || existing.status === 'no_change')) {
-        const request = commitRequest(run, plan, fresh.facts, existing.operationId);
+        const request = commitRequest(run, plan, fresh.facts, existing.operationId, authorityFence);
         if ('error' in request) {
           return failCommit(run, plan, existing, request.error, 'failed', featureBefore);
         }
@@ -569,17 +582,24 @@ export function createFinalizationCompletionService(deps: FinalizationCompletion
           return failCommit(run, plan, existing,
             verified.reasonCode ?? 'commit_facts_mismatch', 'failed', featureBefore, 'invalidated');
         }
-        return completeFrom(run, plan, existing, true, featureBefore);
+        return completeFrom(run, plan, existing, true, featureBefore, request.assertCurrent);
       }
 
       if (existing !== null && existing.status === 'pending') {
-        const request = commitRequest(run, plan, fresh.facts, existing.operationId);
+        const request = commitRequest(run, plan, fresh.facts, existing.operationId, authorityFence);
         if ('error' in request) {
           return failCommit(run, plan, existing, request.error, 'pending', featureBefore);
         }
-        const reconciled = await deps.delivery.reconcile(request, existing.operationId);
+        let reconciled;
+        try {
+          reconciled = await deps.delivery.reconcile(request, existing.operationId);
+        } catch (error) {
+          return result('invalidated', run, featureBefore, errorReason(error), {
+            missingSteps: ['commit'], approval: approvalAxis(plan), commit: commitAxis(plan, existing, false),
+          });
+        }
         if (reconciled.outcome === 'matched') {
-          return completeFrom(run, plan, operationView(reconciled.operation), true, featureBefore);
+          return completeFrom(run, plan, operationView(reconciled.operation), true, featureBefore, request.assertCurrent);
         }
         if (reconciled.outcome === 'not_executed') {
           return failCommit(run, plan, existing, 'commit_not_observed', 'pending', featureBefore, 'reconcile_required');
@@ -601,7 +621,7 @@ export function createFinalizationCompletionService(deps: FinalizationCompletion
       }
 
       const operationId = existing !== null ? newOperationId(existing.operationId) : candidateOperationId;
-      const request = commitRequest(run, plan, fresh.facts, operationId);
+      const request = commitRequest(run, plan, fresh.facts, operationId, authorityFence);
       if ('error' in request) {
         return failCommit(run, plan, existing, request.error, 'failed', featureBefore);
       }
@@ -619,7 +639,7 @@ export function createFinalizationCompletionService(deps: FinalizationCompletion
       }
 
       if (committed.status === 'succeeded' || committed.status === 'no_change') {
-        return completeFrom(run, plan, committed, false, featureBefore);
+        return completeFrom(run, plan, committed, false, featureBefore, request.assertCurrent);
       }
       if (committed.status === 'failed') {
         return failCommit(run, plan, committed, committed.reasonCode ?? 'commit_failed', 'failed', featureBefore);

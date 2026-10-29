@@ -118,7 +118,7 @@ function recoveryStack(f: BindingFixture, options: {
 }
 
 describe.skipIf(process.platform !== 'darwin')('P03-9 / F-006 recovery reconciliation', () => {
-  it('verifies the surviving Git/worktree facts, pauses the Run and releases only the matching recovered holder', async () => {
+  it('[case:stopped-holder-recovery] verifies the surviving Git/worktree facts, pauses the Run and releases only the matching recovered holder', async () => {
     const f = await openBindingFixture({ secondTask: true });
     const claim = f.claimAndLaunch('t-1');
     seedWorkspace(f, claim.receipt);
@@ -300,7 +300,7 @@ describe.skipIf(process.platform !== 'darwin')('P03-9 / F-006 recovery reconcili
     expect(f.query("SELECT COUNT(*) AS n FROM workspace_leases WHERE state = 'quarantined'"))
       .toEqual({ n: 3 });
   }, 20_000);
-  it('records an already executed commit against its pending intent without committing again', async () => {
+  it.each(['executed', 'not_executed'] as const)('[case:missing-original-git-evidence-%s] diagnoses pending Git intents without original verification artifacts and retains isolation', async execution => {
     const f = await openBindingFixture();
     const root = f.workspace.canonicalPath;
     const claim = f.claimAndLaunch('t-1');
@@ -310,11 +310,11 @@ describe.skipIf(process.platform !== 'darwin')('P03-9 / F-006 recovery reconcili
     const message = `Feature delivery\n\nShipLoop-Operation: ${operationId}\n`;
     writeFileSync(join(root, 'src/a.ts'), 'export const project = "pending-commit";\n');
     git(['add', 'src/a.ts'], root);
-    git(['-c', 'user.name=Pending', '-c', 'user.email=pending@example.invalid', '-c', 'commit.gpgsign=false',
+    if (execution === 'executed') git(['-c', 'user.name=Pending', '-c', 'user.email=pending@example.invalid', '-c', 'commit.gpgsign=false',
       'commit', '--quiet', '--cleanup=verbatim', '-m', message], root);
     const actualCommit = git(['rev-parse', 'HEAD'], root).trim();
-    const expectedHead = git(['rev-parse', 'HEAD^'], root).trim();
-    const candidateTree = git(['rev-parse', 'HEAD^{tree}'], root).trim();
+    const expectedHead = execution === 'executed' ? git(['rev-parse', 'HEAD^'], root).trim() : actualCommit;
+    const candidateTree = git(['write-tree'], root).trim();
     seedWorkspace(f, claim.receipt, { baseCommit: expectedHead });
     const b = f.workspace.binding, a = claim.receipt.attempt;
     const feature = f.query('SELECT revision FROM features WHERE id = ?', f.featureId) as { revision: number };
@@ -329,13 +329,15 @@ describe.skipIf(process.platform !== 'darwin')('P03-9 / F-006 recovery reconcili
     });
     const stack = recoveryStack(f);
     await stack.startup.recover();
-    expect(stack.startup.state()).toEqual({ status: 'complete', reason: null });
+    expect(stack.startup.state()).toEqual({ status: 'blocked', reason: 'workspace_reconciliation_required' });
     expect(git(['rev-parse', 'HEAD'], root).trim()).toBe(actualCommit);
     expect(f.query('SELECT status, actual_commit FROM git_operations WHERE id = ?', operationId))
       .toEqual({ status: 'pending', actual_commit: null });
     const evidence = await recoveryEvidence(f, a.id);
-    expect(evidence.gitOperations).toEqual([{ operationId, outcome: 'matched', actualCommit, actualTree: candidateTree,
-      reasonCode: null }]);
+    expect(evidence.gitOperations).toEqual([{ operationId, outcome: execution === 'executed' ? 'unknown' : 'not_executed',
+      actualCommit: execution === 'executed' ? actualCommit : null, actualTree: execution === 'executed' ? candidateTree : null,
+      reasonCode: execution === 'executed' ? 'verification_evidence_missing' : 'commit_not_observed' }]);
+    expect(evidence.gaps).toContain('git_verification_evidence_missing');
   }, 20_000);
 
   it('records native archive format metadata as read-only facts without opening the archive', async () => {

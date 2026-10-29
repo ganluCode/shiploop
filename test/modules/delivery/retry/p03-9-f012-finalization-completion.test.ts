@@ -159,7 +159,7 @@ async function bindEvidenceToCurrentSource(f: EligibleFinalizationFixture, conte
   );
 }
 
-function gitDeliveryFor(f: EligibleFinalizationFixture, nowMs: () => number = () => NOW) {
+function gitDeliveryFor(f: EligibleFinalizationFixture, nowMs: () => number = () => NOW, afterInspect?: () => void) {
   const operations = createSqliteGitOperationStore(f.box.session, { nowUtcMs: nowMs });
   const inspector = createWorkspaceInspector({
     authorizedRoots: [f.box.box.root, f.box.box.repoDirA],
@@ -168,8 +168,13 @@ function gitDeliveryFor(f: EligibleFinalizationFixture, nowMs: () => number = ()
   return {
     operations,
     delivery: createFinalizationGitDelivery({
+      publisher: f.publisher, artifacts: f.verifier,
       operations,
-      inspector,
+      inspector: { ...inspector, async inspect(baseline) {
+        const result = await inspector.inspect(baseline);
+        afterInspect?.();
+        return result;
+      } },
       driver: createGitCommitDriver({ confirmProcessIdentity: confirm }),
       lock: createGitPublicMetadataLock(),
       transact: callback => f.box.session.transactWrite('F012.git', callback),
@@ -245,7 +250,7 @@ function removeHook(f: EligibleFinalizationFixture): void {
 }
 
 describe('P03-9 / F-012 finalization completion', () => {
-  it('无差异时记录 no_change 并 CAS 完成 Feature，不启动 Runtime、不新增提交', async () => {
+  it('[case:final-no-change] 无差异时记录 no_change 并 CAS 完成 Feature，不启动 Runtime、不新增提交', async () => {
     const f = await prepareEligibleFixture({ taskCount: 1, budget: retryBudget() });
     try {
       const runId = await createFinalizationRun(f);
@@ -336,7 +341,7 @@ describe('P03-9 / F-012 finalization completion', () => {
     } finally { f.box.close(); }
   }, 180_000);
 
-  it('提交成功但回执丢失：不重复提交，只按真实 Git 事实核对并复用', async () => {
+  it('[case:final-lost-receipt] 提交成功但回执丢失：不重复提交，只按真实 Git 事实核对并复用', async () => {
     const f = await prepareEligibleFixture({ taskCount: 1, budget: retryBudget() });
     try {
       await bindEvidenceToCurrentSource(f, 'export const project = "finalization-delivery";\n');
@@ -369,7 +374,34 @@ describe('P03-9 / F-012 finalization completion', () => {
     } finally { f.box.close(); }
   }, 90_000);
 
-  it('hook 修改源码时等待重验/诊断，不 reset 代码、不标记 completed', async () => {
+  it('[case:final-reconcile-approval-drift] approval changed during real Feature reconciliation prevents receipt and business completion', async () => {
+    const f = await prepareEligibleFixture({ taskCount: 1, budget: retryBudget() });
+    try {
+      await bindEvidenceToCurrentSource(f, 'export const project = "approval-drift";\n');
+      const firstRun = await createFinalizationRun(f);
+      await verifyFinalization(f, firstRun);
+      f.box.session.database.exec(`CREATE TRIGGER receipt_fault BEFORE UPDATE ON git_operations
+        WHEN NEW.status <> 'pending' BEGIN SELECT RAISE(ABORT, 'injected receipt fault'); END`);
+      expect(await completionFor(f).execute({ projectId: f.box.projectId, runId: firstRun }))
+        .toMatchObject({ status: 'reconcile_required' });
+      f.box.session.database.exec('DROP TRIGGER receipt_fault');
+      const retryRun = await createFinalizationRun(f);
+      await verifyFinalization(f, retryRun);
+      const before = counts(f);
+      const delivery = gitDeliveryFor(f, () => NOW, () => {
+        f.box.session.database.prepare("UPDATE tasks SET manual_block = 1, revision = revision + 1 WHERE id = 't-1'").run();
+      }).delivery;
+      const result = await completionFor(f, { delivery }).execute({ projectId: f.box.projectId, runId: retryRun });
+      expect(result).toMatchObject({ status: 'invalidated', reason: 'authorization_changed' });
+      expect(row(f, "SELECT status FROM git_operations WHERE operation_type = 'feature_final_commit' ORDER BY rowid DESC LIMIT 1"))
+        .toEqual({ status: 'pending' });
+      expect(row(f, "SELECT manual_block FROM tasks WHERE id = 't-1'")).toEqual({ manual_block: 1 });
+      expect(row(f, 'SELECT status FROM features WHERE id = ?', f.box.featureId)).not.toEqual({ status: 'completed' });
+      expect(counts(f)).toEqual(before);
+    } finally { f.box.close(); }
+  }, 90_000);
+
+  it('[case:final-hook-source-drift] hook 修改源码时等待重验/诊断，不 reset 代码、不标记 completed', async () => {
     const f = await prepareEligibleFixture({ taskCount: 1, budget: retryBudget() });
     try {
       await bindEvidenceToCurrentSource(f, 'export const project = "hook-source";\n');
@@ -384,7 +416,7 @@ describe('P03-9 / F-012 finalization completion', () => {
     } finally { f.box.close(); }
   }, 60_000);
 
-  it('提交后取消竞争或旧回执不得覆盖当前终态', async () => {
+  it('[case:final-control-race] 提交后取消竞争或旧回执不得覆盖当前终态', async () => {
     const f = await prepareEligibleFixture({ taskCount: 1, budget: retryBudget() });
     try {
       await bindEvidenceToCurrentSource(f, 'export const project = "cancel-race";\n');

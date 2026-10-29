@@ -6,6 +6,7 @@
  * 核验计划/依赖/审批/worktree/占用/预算。这里只读，不创建 Attempt、不解除暂停、
  * 不启动 Runtime，也不读取供应商原生库。
  */
+import { createHash } from 'node:crypto';
 import type {
   ExecutionResumeFacts,
   ExecutionResumeFactsReader,
@@ -33,6 +34,43 @@ export function createSqliteExecutionResumeFactsReader(
   const now = options.nowUtcMs ?? Date.now;
   const attempts = createSqliteAttemptAccess(session);
   return {
+    readFinalizationFence(projectId, runId) {
+      const read = () => {
+        const db = session.database;
+        const run = db.prepare('SELECT feature_id, batch_id FROM runs WHERE project_id = ? AND id = ?')
+          .get(projectId, runId) as { feature_id: string; batch_id: string } | undefined;
+        if (!run) throw new StorageError('conflict', OPERATION, 'finalization_run_missing');
+        const queries: [string, string, string][] = [
+          ['projects', 'id = ?', projectId], ['runs', 'id = ?', runId],
+          ['execution_batches', 'id = ?', run.batch_id], ['features', 'id = ?', run.feature_id],
+          ['tasks', 'feature_id = ?', run.feature_id], ['approvals', 'subject_id = ?', run.feature_id],
+          ['task_approval_items', 'feature_id = ?', run.feature_id],
+          ['repository_bindings', 'project_id = ?', projectId], ['project_settings', 'project_id = ?', projectId],
+          ['global_settings', '1 = 1 OR id = ?', projectId],
+          ['managed_workspaces', 'feature_id = ?', run.feature_id],
+          ['workspace_leases', 'project_id = ?', projectId],
+          ['baseline_occupancy', 'id = ?', 'global'],
+          ['run_dispatch_claims', 'feature_id = ?', run.feature_id],
+          ['execution_slot_claims', 'feature_id = ?', run.feature_id],
+          ['feature_resource_leases', 'project_id = ?', projectId],
+          ['attempts', 'feature_id = ?', run.feature_id],
+          ['verification_batches', 'feature_id = ?', run.feature_id],
+          ['check_results', 'batch_id IN (SELECT id FROM verification_batches WHERE feature_id = ?)', run.feature_id],
+        ];
+        const rows = queries.map(([table, where, id]) => {
+          const values = db.prepare(`SELECT * FROM ${table} WHERE ${where} ORDER BY id LIMIT 1001`).all(id) as Record<string, unknown>[];
+          if (table === 'features') for (const value of values) {
+            // The receipt itself updates only this projection, not authority.
+            delete value.delivery_status;
+            delete value.updated_at;
+          }
+          if (values.length > 1000) throw new StorageError('conflict', OPERATION, 'finalization_authority_limit');
+          return [table, values];
+        });
+        return createHash('sha256').update(JSON.stringify(rows)).digest('hex');
+      };
+      return session.database.inTransaction ? read() : transactSqliteConsistentRead(session, OPERATION, read);
+    },
     readFacts(request: ExecutionResumeFactsRequest): ExecutionResumeFacts {
       if (request === null || typeof request !== 'object') {
         throw new StorageError('validation', OPERATION, 'resume facts request must be an object');

@@ -96,8 +96,11 @@ describe('F-004 Git commit reconciliation', () => {
     commit(f);
     const head = git(['rev-parse', 'HEAD'], f.root).trim();
     const result = await reconciler(f, verified).reconcile(request(f));
-    expect(result).toMatchObject({ outcome: 'failed', operation: { status: 'failed', actualCommit: head,
-      deliveryStatus: 'failed', reasonCode: kind === 'staged' ? 'candidate_tree_mismatch' : 'source_changed' } });
+    expect(result).toMatchObject({ outcome: kind === 'staged' ? 'unknown' : 'failed',
+      operation: { status: kind === 'staged' ? 'unknown' : 'failed', actualCommit: kind === 'staged' ? null : head,
+        deliveryStatus: kind === 'staged' ? 'pending' : 'failed',
+        reasonCode: kind === 'staged' ? 'candidate_tree_mismatch' : 'source_changed' } });
+    if (kind === 'staged') expect(claimed(f)).toBe(true);
     expect(readFileSync(join(f.root, 'source.ts'), 'utf8')).toContain('hook changed source');
     expect(git(['rev-list', '--count', 'HEAD'], f.root).trim()).toBe('2');
   });
@@ -117,7 +120,8 @@ describe('F-004 Git commit reconciliation', () => {
   it('cannot turn missing or wrong original verification evidence into delivery', async () => {
     const f = await gitCommitFixture(); await pending(f); commit(f);
     const result = await reconciler(f, null).reconcile(request(f));
-    expect(result).toMatchObject({ outcome: 'failed', reasonCode: 'verification_evidence_missing' });
+    expect(result).toMatchObject({ outcome: 'unknown', reasonCode: 'verification_evidence_missing' });
+    expect(claimed(f)).toBe(true);
   });
 
   it('keeps unknown processes and quarantined occupancy isolated without any scan or settlement', async () => {

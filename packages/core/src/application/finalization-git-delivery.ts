@@ -11,11 +11,11 @@
  * F-009/F-012 已确认没有活动 Attempt、held/quarantined 租约与遗留 writer；
  * 本适配器不自行接管进程，也不释放任何 Work 租约。
  */
+import { observeGitCommit } from './git-commit-observation.js';
 import { createHash } from 'node:crypto';
 import { createControlledGitCommitService, gitCommitSourceDigest } from './controlled-git-commit.js';
 import { createGitCommitReconciliationService } from './git-commit-reconciliation.js';
 import type { GitCommitAuthorization, GitCommitDriver } from '../ports/controlled-git-commit.js';
-import { gitOperationCommitMessage } from '../ports/controlled-git-commit.js';
 import type { GitCommitReconciliation } from '../ports/git-commit-reconciliation.js';
 import type { GitOperationRecord, GitOperationStore } from '../ports/git-operations.js';
 import type { GitPublicMetadataLock } from '../ports/git-public-metadata-lock.js';
@@ -28,6 +28,9 @@ import type {
 import type { WorkResourceSnapshot } from '../ports/work-resources.js';
 import type { WorkspaceInspection, WorkspaceInspector } from '../ports/workspace-inspector.js';
 import { verificationCodeIdentity } from '../ports/verification-aggregate.js';
+import { publishGitCommitInspection, readGitCommitInspection } from './git-commit-evidence.js';
+import type { ArtifactPublisher } from './artifact-publish.js';
+import type { ArtifactVerifier } from './artifact-verify.js';
 
 function safePath(path: string): boolean {
   return path.length > 0 && path.length <= 4096 && !path.startsWith('/')
@@ -42,6 +45,8 @@ export interface FinalizationGitDeliveryDeps {
   /** Synchronous write transaction shared with operation store and feature revision. */
   readonly transact: <T>(callback: () => T) => T;
   readonly readFeatureRevision: (projectId: string, featureId: string) => number;
+  readonly publisher?: Pick<ArtifactPublisher, 'publishArtifact'>;
+  readonly artifacts?: Pick<ArtifactVerifier, 'readVerifiedContent'>;
   readonly excludedPaths?: readonly string[];
   readonly nowMs?: () => number;
 }
@@ -168,6 +173,16 @@ export function createFinalizationGitDelivery(deps: FinalizationGitDeliveryDeps)
     };
   }
 
+  function authorizationReader(request: FinalizationCommitRequest, authorization: GitCommitAuthorization) {
+    return () => {
+      request.assertCurrent?.();
+      if (deps.readFeatureRevision(request.projectId, request.featureId) !== authorization.intent.expectedFeatureRevision) {
+        throw Object.assign(new Error('authorization_changed'), { reason: 'authorization_changed' });
+      }
+      return authorization;
+    };
+  }
+
   function controlled(request: FinalizationCommitRequest, baselineInspection: WorkspaceInspection) {
     const authorization = evidenceFor(request, baselineInspection);
     const built = view(request, authorization.allowedPaths, authorization.intent.codeDigest);
@@ -178,15 +193,15 @@ export function createFinalizationGitDelivery(deps: FinalizationGitDeliveryDeps)
       stopVerifier: stopVerifier(built.snapshot),
       lock: deps.lock,
       driver: deps.driver,
-      readAuthorization: () => authorization,
+      readAuthorization: authorizationReader(request, authorization),
       transact: deps.transact,
       excludedPaths: exclusions,
       nowMs: now,
     });
   }
 
-  function reconciler(request: FinalizationCommitRequest, baselineInspection: WorkspaceInspection) {
-    const authorization = evidenceFor(request, baselineInspection);
+  function reconciler(request: FinalizationCommitRequest, original: WorkspaceInspection | null) {
+    const authorization = view(request, [], request.codeDigest).authorization;
     const built = view(request, authorization.allowedPaths, authorization.intent.codeDigest);
     return createGitCommitReconciliationService({
       operations: deps.operations,
@@ -195,21 +210,11 @@ export function createFinalizationGitDelivery(deps: FinalizationGitDeliveryDeps)
       stopVerifier: stopVerifier(built.snapshot),
       lock: deps.lock,
       driver: deps.driver,
-      readAuthorization: () => authorization,
+      readAuthorization: authorizationReader(request, authorization),
       transact: deps.transact,
       excludedPaths: exclusions,
       nowMs: now,
-      readVerificationInspection(intent) {
-        // A pending operation proves the original expected HEAD and verified
-        // content identity. Reconstruct only that immutable view from current
-        // bytes; never synthesize evidence when the content identity differs.
-        const code = verificationCodeIdentity(baselineInspection);
-        if (code.codeDigest !== intent.codeDigest) return null;
-        return {
-          ...baselineInspection,
-          repository: { ...baselineInspection.repository, headCommit: intent.expectedHead },
-        };
-      },
+      readVerificationInspection: () => original,
     });
   }
 
@@ -259,11 +264,22 @@ export function createFinalizationGitDelivery(deps: FinalizationGitDeliveryDeps)
       if (operation.status !== 'succeeded' && operation.status !== 'no_change') {
         return { matched: false, reasonCode: 'operation_not_terminal' };
       }
-      const session = deps.driver.open(request.baseline, () => undefined);
+      request.assertCurrent?.();
+      const session = deps.driver.open(request.baseline, () => request.assertCurrent?.());
       const facts = await session.facts();
       const inspection = await deps.inspector.inspect(request.baseline);
-      const identity = verificationCodeIdentity(inspection);
-      if (inspection.repository.headCommit !== facts.head || identity.codeDigest !== operation.intent.codeDigest) {
+      request.assertCurrent?.();
+      const original = deps.artifacts ? await readGitCommitInspection(operation.intent, deps.artifacts) : null;
+      const sameSource = original !== null
+        ? gitCommitSourceDigest(original) === gitCommitSourceDigest(inspection)
+        : !operation.intent.verificationRefs.some(ref => ref.kind === 'artifact')
+          && verificationCodeIdentity(inspection).codeDigest === operation.intent.codeDigest;
+      if (inspection.repository.headCommit !== facts.head || !sameSource) {
+        return { matched: false, reasonCode: 'source_changed' };
+      }
+      const finalFacts = await session.facts();
+      request.assertCurrent?.();
+      if (JSON.stringify(finalFacts) !== JSON.stringify(facts) || (await session.stagedPaths()).length > 0) {
         return { matched: false, reasonCode: 'source_changed' };
       }
       if (operation.status === 'no_change') {
@@ -277,8 +293,9 @@ export function createFinalizationGitDelivery(deps: FinalizationGitDeliveryDeps)
         || facts.parents.length !== 1 || facts.parents[0] !== operation.intent.expectedHead) {
         return { matched: false, reasonCode: 'commit_facts_mismatch' };
       }
-      const message = gitOperationCommitMessage(operation.intent.message, operation.intent.operationId);
-      if (facts.message !== message) return { matched: false, reasonCode: 'commit_intent_mismatch' };
+      if (observeGitCommit(operation.intent, facts).outcome !== 'matched') {
+        return { matched: false, reasonCode: 'commit_intent_mismatch' };
+      }
       return { matched: true, reasonCode: null };
     },
 
@@ -290,7 +307,12 @@ export function createFinalizationGitDelivery(deps: FinalizationGitDeliveryDeps)
       if (before.codeDigest !== request.codeDigest) {
         throw Object.assign(new Error('source_changed'), { reason: 'source_changed' });
       }
-      const operation = await controlled(request, before).commit({
+      request.assertCurrent?.();
+      const evidenceRef = deps.publisher
+        ? await publishGitCommitInspection(deps.publisher, request.projectId, request.operationId, before) : null;
+      const operation = await controlled(evidenceRef === null ? request : {
+        ...request, verificationRefs: [...request.verificationRefs, evidenceRef],
+      }, before).commit({
         projectId: request.projectId,
         operationId: request.operationId,
       });
@@ -300,8 +322,9 @@ export function createFinalizationGitDelivery(deps: FinalizationGitDeliveryDeps)
     async reconcile(request, operationId): Promise<GitCommitReconciliation> {
       const operation = deps.operations.getGitOperation(request.projectId, operationId);
       const preserved = requestFromOperation(request, operation);
-      const before = await deps.inspector.inspect(preserved.baseline);
-      return reconciler(preserved, before).reconcile({ projectId: request.projectId, operationId });
+      request.assertCurrent?.();
+      const original = deps.artifacts ? await readGitCommitInspection(operation.intent, deps.artifacts) : null;
+      return reconciler(preserved, original).reconcile({ projectId: request.projectId, operationId });
     },
   };
 }

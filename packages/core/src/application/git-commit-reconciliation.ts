@@ -3,7 +3,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { StorageError } from '../ports/errors.js';
 import { isUuidV4 } from '../ports/commands.js';
 import { validateStableId } from '../ports/validation.js';
-import { gitOperationCommitMessage } from '../ports/controlled-git-commit.js';
+import { observeGitCommit } from './git-commit-observation.js';
 import type { GitCommitAuthorization, GitCommitRequest } from '../ports/controlled-git-commit.js';
 import type { GitOperationIntent, GitOperationRecord } from '../ports/git-operations.js';
 import type { GitCommitReconciliation, GitCommitReconciliationService } from '../ports/git-commit-reconciliation.js';
@@ -97,8 +97,7 @@ export function createGitCommitReconciliationService(deps: any): any {
       gitCommonDir: baseline.gitCommonDir, operationId: intent.operationId };
     // Keep a retained claim throughout inspection. Read-only reconciliation readers
     // may share an exact-owner stopped claim; SQL CAS chooses the sole settlement.
-    let freshLease;
-    try { freshLease = await deps.lock.acquire(lockInput); }
+    try { await deps.lock.acquire(lockInput); }
     catch (error) {
       if (!(await deps.lock.inspectRecovered?.(lockInput))) throw error;
     }
@@ -108,22 +107,28 @@ export function createGitCommitReconciliationService(deps: any): any {
       const raced = deps.operations.getGitOperation(request.projectId, request.operationId);
       if (raced.status !== 'pending') { releaseClaim = raced.status !== 'unknown'; return recorded(raced); }
       const driver = deps.driver.open(baseline, current);
-      const actual = await driver.facts();
+      let actual;
+      try { actual = await driver.facts(); }
+      catch {
+        const operation = deps.transact(() => {
+          current();
+          const latest = deps.operations.getGitOperation(request.projectId, request.operationId);
+          if (latest.status !== 'pending') return latest;
+          return deps.operations.finalizeGitOperation({ projectId: intent.projectId, operationId: intent.operationId,
+            expectedRevision: original.revision, status: 'unknown', actualCommit: null, actualTree: null,
+            exitCode: null, durationMs: null, reasonCode: 'git_facts_unavailable',
+            deliveryStatus: intent.operationType === 'task_commit' ? 'not_requested' : 'pending', settledAtUtcMs: now() }).operation;
+        });
+        return recorded(operation);
+      }
       const before = await deps.inspector.inspect(baseline);
       current();
       if (before.repository.headCommit !== actual.head) fail('head_changed_during_reconciliation');
-      const noChange = actual.head === intent.expectedHead && actual.tree === intent.candidateTree;
-      if (actual.head === intent.expectedHead && !noChange) {
-        // A surviving pending intent cannot distinguish never launched from a lost
-        // failing command response. No result is invented, and no retry is made.
+      const observed = observeGitCommit(intent, actual);
+      if (observed.outcome === 'not_executed') {
         return { outcome: 'not_executed', reasonCode: 'commit_not_observed', operation: original };
       }
-      const message = gitOperationCommitMessage(intent.message, intent.operationId);
-      const identity = { name: intent.gitIdentity.name, email: intent.gitIdentity.email };
-      let unknownReason: string | null = null;
-      if (!noChange && (actual.parents.length !== 1 || actual.parents[0] !== intent.expectedHead)) unknownReason = 'unexplained_head_drift';
-      else if (!noChange && (actual.message !== message || !isDeepStrictEqual(actual.author, identity)
-        || !isDeepStrictEqual(actual.committer, identity))) unknownReason = 'commit_intent_mismatch';
+      let unknownReason = observed.outcome === 'unknown' ? observed.reasonCode : null;
       let reason = unknownReason;
       if (unknownReason === null) {
         // write-tree may take index.lock even with GIT_OPTIONAL_LOCKS=0. Compare
@@ -134,7 +139,10 @@ export function createGitCommitReconciliationService(deps: any): any {
           if (verified === null || verificationCodeIdentity(verified).codeDigest !== intent.codeDigest
             || verified.repository.headCommit !== intent.expectedHead
             || verified.repository.canonicalPath !== intent.worktreePath
-            || verified.repository.repoIdentity !== intent.repoIdentity) reason = 'verification_evidence_missing';
+            || verified.repository.repoIdentity !== intent.repoIdentity) {
+            reason = 'verification_evidence_missing';
+            unknownReason = reason;
+          }
           else if (gitCommitSourceDigest(before) !== gitCommitSourceDigest(verified)) reason = 'source_changed';
         }
         if (reason === null && (authorization.verificationPassed !== true || intent.verificationRefs.length === 0
@@ -152,7 +160,7 @@ export function createGitCommitReconciliationService(deps: any): any {
         const latest = deps.operations.getGitOperation(request.projectId, request.operationId);
         if (latest.status !== 'pending') return latest;
         return deps.operations.finalizeGitOperation({ projectId: intent.projectId, operationId: intent.operationId,
-          expectedRevision: original.revision, status: unknownReason ? 'unknown' : reason ? 'failed' : noChange ? 'no_change' : 'succeeded',
+          expectedRevision: original.revision, status: unknownReason ? 'unknown' : reason ? 'failed' : 'succeeded',
           actualCommit: unknownReason ? null : actual.head, actualTree: unknownReason ? null : actual.tree,
           exitCode: null, durationMs: null, reasonCode: reason,
           deliveryStatus: intent.operationType === 'task_commit' ? 'not_requested' : unknownReason ? 'pending' : reason ? 'failed' : 'succeeded', settledAtUtcMs: now() }).operation;
@@ -163,8 +171,9 @@ export function createGitCommitReconciliationService(deps: any): any {
       // Unknown writers/results, source races and lost DB transactions preserve
       // the claim. Never take over by TTL, and never release Work occupancy here.
       if (releaseClaim) {
-        if (freshLease) await freshLease.release();
-        else if (!(await deps.lock.releaseRecovered(lockInput))) fail('git_claim_release_failed');
+        // Exact-owner recovery release is idempotent when overlapping readers
+        // already removed this claim. It still rejects another operation's claim.
+        if (!(await deps.lock.releaseRecovered(lockInput))) fail('git_claim_release_failed');
       }
     }
   } };

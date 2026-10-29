@@ -151,7 +151,7 @@ describe('F-003 controlled Git commit', () => {
     expect(result.status).toBe('succeeded');
     expect(readFileSync(join(f.root, 'source.ts'))).toEqual(body);
   });
-  it('commits the verified tree using confirmed identity, persists actual facts, and leaves a clean source', async () => {
+  it('[case:controlled-commit-normal] commits the verified tree using confirmed identity, persists actual facts, and leaves a clean source', async () => {
     const f = await fixture();
     const result = await f.execute();
     expect(result.status).toBe('succeeded');
@@ -185,7 +185,7 @@ describe('F-003 controlled Git commit', () => {
     expect(readFileSync(join(f.root, '.shiploop', 'audit.json'), 'utf8')).toBe('preserve Core artifact\n');
   });
 
-  it('returns real HEAD/tree and no_change without creating an empty commit', async () => {
+  it('[case:controlled-commit-no-change] returns real HEAD/tree and no_change without creating an empty commit', async () => {
     const f = await fixture();
     unlinkSync(join(f.root, 'source.ts'));
     await f.recapture([]);
@@ -320,7 +320,7 @@ describe('F-003 controlled Git commit', () => {
     expect(git(['rev-list', '--count', 'HEAD'], f.root).trim()).toBe('2');
   });
 
-  it('retains durable intent and actual Git side effects on receipt transaction failure', async () => {
+  it('[case:controlled-commit-receipt-failure] retains durable intent and actual Git side effects on receipt transaction failure', async () => {
     const f = await fixture();
     f.box.session.database.exec(`CREATE TRIGGER receipt_fault BEFORE UPDATE ON git_operations
       WHEN NEW.status <> 'pending' BEGIN SELECT RAISE(ABORT, 'injected receipt fault'); END`);

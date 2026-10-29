@@ -1,0 +1,21 @@
+{
+  "schema_version": 2,
+  "task_id": "F-007",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/delivery/p07-1-f007-git-receipt-recovery.test.ts", "all": true },
+      { "file": "test/modules/delivery/p07-1-f007-git-receipt-faults.test.ts", "all": true },
+      { "file": "test/modules/recovery/p07-1-f007-host-git-recovery.test.ts", "all": true },
+      { "file": "test/modules/delivery/retry/p07-1-f007-final-commit-host.test.ts", "all": true },
+      { "file": "test/modules/delivery/p03-8-f004-git-commit-reconciliation.test.ts", "all": true },
+      { "file": "test/modules/delivery/p03-8-f003-controlled-git-commit.test.ts", "cases": ["controlled-commit-normal", "controlled-commit-no-change", "controlled-commit-receipt-failure", "task-commit-cancel", "f008-blocked-replay"] },
+      { "file": "test/modules/delivery/p03-10-task-commit-store.test.ts", "all": true },
+      { "file": "test/modules/delivery/retry/p03-9-f012-finalization-completion.test.ts", "cases": ["final-no-change", "final-lost-receipt", "final-reconcile-approval-drift", "final-hook-source-drift", "final-control-race"] },
+      { "file": "test/modules/recovery/p03-9-f006-recovery-reconciliation.test.ts", "cases": ["stopped-holder-recovery", "missing-original-git-evidence-executed", "missing-original-git-evidence-not_executed", "post-stop-content-drift", "post-publish-content-drift"] },
+      { "file": "test/modules/recovery/p07-1-f004-sqlite-fencing.test.ts", "all": true },
+      { "file": "test/modules/recovery/p04-9-f007-dispatch-crash-windows.test.ts", "cases": ["reconciliation-rollback", "snapshot-drift", "terminal-receipt-before-dispatch-settlement"] },
+      { "file": "test/modules/workspace/p03-5-git-operation-lock.test.ts", "all": true }
+    ]
+  }]
+}

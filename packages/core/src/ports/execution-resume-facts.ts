@@ -63,5 +63,9 @@ export interface ExecutionResumeFacts {
 }
 
 export interface ExecutionResumeFactsReader {
+  /** Trusted synchronous authority seal; valid both outside and inside receipt CAS.
+   * Excludes Git operation rows so recording the operation cannot revoke itself.
+   */
+  readFinalizationFence?(projectId: string, runId: string): string;
   readFacts(request: ExecutionResumeFactsRequest): ExecutionResumeFacts;
 }

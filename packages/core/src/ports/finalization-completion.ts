@@ -106,6 +106,8 @@ export interface FinalizationCommitRequest {
   readonly message: string;
   readonly gitIdentity: ConfirmedGitIdentity;
   readonly deliveryPolicyDigest: string;
+  /** Trusted synchronous control/approval fence, rechecked inside receipt CAS. */
+  readonly assertCurrent?: () => void;
 }
 
 /** Git operation 的公开最小视图（不暴露原生路径或凭据）。 */

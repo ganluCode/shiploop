@@ -1,7 +1,9 @@
 import { verificationCodeIdentity } from '../ports/verification-aggregate.js';
 import { createHash } from 'node:crypto';
 import type { ArtifactVerifier } from './artifact-verify.js';
-import { gitOperationCommitMessage } from '../ports/controlled-git-commit.js';
+import { observeGitCommit } from './git-commit-observation.js';
+import { gitCommitSourceDigest } from './controlled-git-commit.js';
+import { readGitCommitInspection } from './git-commit-evidence.js';
 import type { GitOperationRecord } from '../ports/git-operations.js';
 import type { WorkResourceStopVerifier } from '../ports/work-resources.js';
 import type { WorkspaceInspection } from '../ports/workspace-inspector.js';
@@ -32,7 +34,7 @@ export interface WorkRecoveryReconcilerOptions {
   /** Trusted bounded inspector; must verify repository identity, registration, branch, HEAD and contents. */
   readonly inspect: (projectId: string, baseline: WorkspaceBaseline) => Promise<WorkspaceInspection>;
   readonly git: RecoveryGitReader;
-  readonly artifacts: Pick<ArtifactVerifier, 'verifyArtifact'>;
+  readonly artifacts: Pick<ArtifactVerifier, 'verifyArtifact'> & Partial<Pick<ArtifactVerifier, 'readVerifiedContent'>>;
   readonly stopVerifier: Pick<WorkResourceStopVerifier, 'verify'>;
   readonly publishEvidence: (projectId: string, evidence: WorkRecoveryReconciliationEvidence) => Promise<string>;
   readonly nowUtcMs?: () => number;
@@ -62,10 +64,6 @@ function addGap(gaps: string[], gap: string): void {
 
 function errorReason(error: unknown): string {
   return error instanceof WorkspaceInspectionError ? error.reason : 'inspection_failed';
-}
-
-function sameIdentity(left: { name: string; email: string }, right: { name: string; email: string }): boolean {
-  return left.name === right.name && left.email === right.email;
 }
 
 /** Excludes timestamps/evidence ids so two observations can be compared as the same Git/file fact. */
@@ -102,24 +100,9 @@ async function reconcileGitOperation(baseline: WorkspaceBaseline | null,
     return { operationId: intent.operationId, outcome: 'unknown', actualCommit: null, actualTree: null,
       reasonCode: 'git_operation_workspace_mismatch' };
   }
-  if (facts === null) {
-    return { operationId: intent.operationId, outcome: 'unknown', actualCommit: null, actualTree: null,
-      reasonCode: 'git_facts_unavailable' };
-  }
-  if (facts.head === intent.expectedHead) {
-    return { operationId: intent.operationId, outcome: 'not_executed', actualCommit: null, actualTree: null,
-      reasonCode: 'commit_not_observed' };
-  }
-  const message = gitOperationCommitMessage(intent.message, intent.operationId);
-  if (facts.parents.length === 1 && facts.parents[0] === intent.expectedHead
-    && facts.tree === intent.candidateTree && facts.message === message
-    && sameIdentity(facts.author, intent.gitIdentity) && sameIdentity(facts.committer, intent.gitIdentity)) {
-    return { operationId: intent.operationId, outcome: 'matched', actualCommit: facts.head, actualTree: facts.tree,
-      reasonCode: null };
-  }
-  addGap(gaps, 'git_commit_side_effect_unknown');
-  return { operationId: intent.operationId, outcome: 'unknown', actualCommit: null, actualTree: null,
-    reasonCode: 'commit_intent_mismatch' };
+  const observed = observeGitCommit(intent, facts);
+  if (observed.outcome === 'unknown') addGap(gaps, 'git_commit_side_effect_unknown');
+  return observed;
 }
 
 export function createWorkRecoveryReconciler(options: WorkRecoveryReconcilerOptions): WorkRecoveryReconciler {
@@ -160,9 +143,6 @@ export function createWorkRecoveryReconciler(options: WorkRecoveryReconcilerOpti
         }
         try {
           inspection = await options.inspect(source.projectId, baseline);
-          if ((snapshot.verificationCodeDigests ?? []).some(digest => digest !== verificationCodeIdentity(inspection!).codeDigest)) {
-            addGap(gaps, 'verification_code_changed');
-          }
         } catch (error) {
           addGap(gaps, `workspace_${errorReason(error)}`);
         }
@@ -210,6 +190,17 @@ export function createWorkRecoveryReconciler(options: WorkRecoveryReconcilerOpti
           const currentLocks = await options.git.locks(baseline);
           locks = currentLocks;
           if (currentLocks.length > 0) addGap(gaps, 'git_lock_present');
+          if (snapshot.pendingGitOperations.length > 0) {
+            const currentFacts = currentLocks.length === 0 ? await options.git.facts(source.projectId, baseline) : null;
+            if (JSON.stringify(currentFacts) !== JSON.stringify(facts)) {
+              addGap(gaps, 'git_facts_changed_during_recovery');
+              for (let index = 0; index < gitOperations.length; index++) {
+                gitOperations[index] = { operationId: gitOperations[index]!.operationId, outcome: 'unknown',
+                  actualCommit: currentFacts?.head ?? null, actualTree: currentFacts?.tree ?? null,
+                  reasonCode: 'git_facts_changed_during_recovery' };
+              }
+            }
+          }
         } catch {
           addGap(gaps, 'git_lock_probe_failed');
         }
@@ -235,8 +226,33 @@ export function createWorkRecoveryReconciler(options: WorkRecoveryReconcilerOpti
         catch { addGap(gaps, 'git_facts_unavailable'); }
       }
       const gitOperations: WorkRecoveryGitOperationFacts[] = [];
+      const verifiedCommitDigests = new Set<string>();
       for (const operation of snapshot.pendingGitOperations) {
-        gitOperations.push(await reconcileGitOperation(baseline, operation, facts, gaps));
+        let observed = await reconcileGitOperation(baseline, operation, facts, gaps);
+        const original = options.artifacts.readVerifiedContent
+          ? await readGitCommitInspection(operation.intent, { readVerifiedContent: options.artifacts.readVerifiedContent.bind(options.artifacts) })
+          : null;
+        if (original === null || snapshot.verificationGaps?.includes('git_verification_batch_invalid')) {
+          addGap(gaps, 'git_verification_evidence_missing');
+          if (observed.outcome === 'matched') {
+            observed = { ...observed, outcome: 'unknown', reasonCode: 'verification_evidence_missing' };
+          }
+        } else if (observed.outcome === 'matched') {
+          if (inspection === null || gitCommitSourceDigest(original) !== gitCommitSourceDigest(inspection)) {
+            addGap(gaps, 'git_verification_source_changed');
+            observed = { ...observed, outcome: 'unknown', reasonCode: 'source_changed' };
+          } else verifiedCommitDigests.add(operation.intent.codeDigest);
+        }
+        gitOperations.push(observed);
+        // Startup revoked the original writer's fence. Observed side effects are
+        // durable diagnosis, never permission to finalize that writer's business
+        // receipt or release its retained Git claim. Explicit trusted recovery is
+        // required; no model or new commit is launched here.
+        addGap(gaps, 'git_receipt_recovery_required');
+      }
+      if (inspection !== null && (snapshot.verificationCodeDigests ?? []).some(digest =>
+        digest !== verificationCodeIdentity(inspection!).codeDigest && !verifiedCommitDigests.has(digest))) {
+        addGap(gaps, 'verification_code_changed');
       }
       if (snapshot.pendingWorkspaceOperations.length > 0) addGap(gaps, 'unfinished_workspace_operation');
 
