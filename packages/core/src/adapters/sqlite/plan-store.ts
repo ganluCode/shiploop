@@ -21,6 +21,7 @@
  */
 import { validatePhaseMutationInput } from '../../ports/phase-lifecycle.js';
 import { validateFeaturePhaseMoveInput } from '../../ports/feature-phase.js';
+import { entityLabelCondition } from './entity-label-condition.js';
 import { randomUUID } from 'node:crypto';
 import type Database from 'better-sqlite3';
 import { StorageError } from '../../ports/errors.js';
@@ -58,7 +59,7 @@ import type { FeatureDependencyRecord } from '../../ports/feature-dag.js';
 import type { FeatureDagUpdateResult } from '../../ports/feature-dag-update.js';
 import { validateFeatureDag, evaluateFeatureDag } from '../../ports/feature-dag.js';
 import type { ArtifactInputRef } from '../../ports/artifact-store.js';
-import { assertPrincipalVisibility } from '../../ports/queries.js';
+import { assertPrincipalVisibility, PLAN_LIST_MAX_LIMIT } from '../../ports/queries.js';
 import type {
   FeatureApprovalsView,
   FeaturePlanView,
@@ -1997,9 +1998,9 @@ export function createSqlitePlanAccess(
         (typeof request.afterId !== 'string' || request.afterId.length === 0)) ||
       typeof request.limit !== 'number' ||
       !Number.isInteger(request.limit) ||
-      request.limit < 1
+      request.limit < 1 || request.limit > PLAN_LIST_MAX_LIMIT
     ) {
-      throw new TypeError('PlanStore.list: request 必须是 {afterId: string|null, limit: ≥1 整数}（已校验分页形态）');
+      throw new TypeError('PlanStore.list: request 必须是 {afterId: string|null, limit: 1..200 整数}（已校验分页形态）');
     }
   }
 
@@ -2039,6 +2040,9 @@ export function createSqlitePlanAccess(
     if (extraCondition !== undefined) {
       conditions.push(extraCondition);
     }
+    const labels = entityLabelCondition('labels', request);
+    conditions.push(labels.condition);
+    params.push(...labels.params);
     params.push(request.limit + 1);
     const rows = session.database
       .prepare<unknown[], unknown>(

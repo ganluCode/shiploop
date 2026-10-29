@@ -28,6 +28,9 @@
  * - principal 形状非法属于可信装配编程错误（TypeError），不折算客户端错误；
  *   其余错误经 mapToPublicError 脱敏映射（不回显路径/payload 原文/堆栈）。
  */
+import { createHash } from 'node:crypto';
+import { validateEntityLabelFilter } from '../ports/entity-label-query.js';
+import type { EntityLabelQueryReadStore, EntityLabelCountsResult, EntityLabelSelector, EntityLabelFilter, RunListResult } from '../ports/entity-label-query.js';
 import {
   assertTrustedPrincipal,
   authorizeEventSubscription,
@@ -447,6 +450,10 @@ export interface QueryService {
   ): Promise<DispatchQueueListResult>;
   /** P05-5 execution.resources.list：项目内 Feature 资源租约只读投影。 */
   listExecutionResources(principal: unknown, input: unknown): Promise<ResourceListResult>;
+  /** P06-6：项目内持久 Run 元数据列表（标签、稳定身份和父级过滤）。 */
+  listRuns(principal: unknown, input: unknown): Promise<RunListResult>;
+  /** P06-6：指定实体层的可见标签计数；复用对应列表筛选语义。 */
+  getLabelCounts(principal: unknown, input: unknown): Promise<EntityLabelCountsResult>;
   /** F-006 phases.list：项目内 Phase 层级列表（稳定排序、有限分页、受控游标）。 */
   listPhases(principal: unknown, input: unknown): Promise<PhaseListResult>;
   /** F-006 features.list：Phase 内 Feature 层级列表（游标绑定项目 + 父级）。 */
@@ -565,6 +572,8 @@ export interface QueryService {
 }
 
 export interface QueryServiceOptions {
+  /** P06-6：四层标签计数与持久 Run 列表；未装配时拒绝新查询。 */
+  readonly labelReads?: EntityLabelQueryReadStore;
   /** F-010 可见谓词下推的项目列表/计数窄读取端口。 */
   readonly projectReads: AuthorizedProjectReadStore;
   /** F-010 §8 一致读视图窄端口。 */
@@ -853,7 +862,7 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
 
   /** F-006：游标 → 键集排他下界（非法/跨根/跨项目/跨父级一律 invalid_cursor）。 */
   function planListRequest(
-    filter: ValidatedPlanListFilter,
+    filter: ValidatedPlanListFilter & Partial<EntityLabelFilter>,
     binding: PlanListCursorBinding,
     operation: string,
   ): PlanListRequest {
@@ -863,7 +872,32 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
           ? null
           : decodePlanListCursor(filter.cursor, binding, operation).lastId,
       limit: filter.limit,
+      ...(filter.labels === undefined ? {} : { labels: filter.labels, match: filter.match }),
     };
+  }
+
+  function labelSelector(object: Record<string, unknown>, operation: string): EntityLabelSelector {
+    if (typeof object.entity !== 'string' || !['phase', 'feature', 'task', 'run'].includes(object.entity)) {
+      throw new PublicError('invalid_input', operation);
+    }
+    const entity = object.entity as EntityLabelSelector['entity'];
+    const parents: { phaseId?: string; featureId?: string; batchId?: string } = {};
+    for (const [field, allowed] of [
+      ['phaseId', entity === 'feature'], ['featureId', entity === 'task' || entity === 'run'],
+      ['batchId', entity === 'run'],
+    ] as const) {
+      if (object[field] === undefined) continue;
+      if (!allowed) throw new PublicError('invalid_input', operation);
+      parents[field] = validateStableId(object[field], { operation }, field);
+    }
+    return { entity, projectId: object.projectId as string, ...parents };
+  }
+
+  function labelCursorBinding(scope: PlanListScope, filter: EntityLabelFilter, operation: string): PlanListCursorBinding {
+    // Ordering/duplicates are irrelevant; empty labels mean no constraint.
+    const rootIdentity = filter.labels.length === 0 ? dataRootIdentity : createHash('sha256')
+      .update(JSON.stringify([dataRootIdentity, filter.match, [...filter.labels].sort()])).digest('hex');
+    return createPlanListCursorBinding({ rootIdentity, scope }, operation);
   }
 
   return {
@@ -1910,6 +1944,44 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
       }
     },
 
+    async listRuns(principal: unknown, input: unknown): Promise<RunListResult> {
+      assertTrustedPrincipal(principal);
+      const operation = 'runs.list';
+      try {
+        requireCapability(principal, 'project.read', operation);
+        const object = requirePlainObject(input, { operation }, 'input');
+        rejectUnknownKeys(object, ['projectId', 'featureId', 'batchId', 'labels', 'match', 'limit', 'cursor'], { operation }, 'input');
+        const projectId = requireProjectId(object.projectId, operation);
+        requireProjectVisible(principal, projectId, operation);
+        const selector = labelSelector({ ...object, entity: 'run', projectId }, operation);
+        const filter = validateEntityLabelFilter(object, operation);
+        const binding = labelCursorBinding({ kind: 'runs', projectId, featureId: selector.featureId, batchId: selector.batchId }, filter, operation);
+        const request = planListRequest(filter, binding, operation);
+        if (options.labelReads === undefined) throw new PublicError('unsupported', operation);
+        const page = options.labelReads.listLabelRunRecords(principalProjectVisibility(principal), selector,
+          { ...request, labels: filter.labels, match: filter.match });
+        return { schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION, scope: 'run-list', records: page.records,
+          nextCursor: page.nextId === null ? null : encodePlanListCursor(page.nextId, binding), limit: filter.limit };
+      } catch (error) { throw mapToPublicError(error, { operation }); }
+    },
+
+    async getLabelCounts(principal: unknown, input: unknown): Promise<EntityLabelCountsResult> {
+      assertTrustedPrincipal(principal);
+      const operation = 'labels.counts';
+      try {
+        requireCapability(principal, 'project.read', operation);
+        const object = requirePlainObject(input, { operation }, 'input');
+        rejectUnknownKeys(object, ['entity', 'projectId', 'phaseId', 'featureId', 'batchId', 'labels', 'match'], { operation }, 'input');
+        const projectId = requireProjectId(object.projectId, operation);
+        requireProjectVisible(principal, projectId, operation);
+        const selector = labelSelector({ ...object, projectId }, operation);
+        const filter = validateEntityLabelFilter(object, operation);
+        if (options.labelReads === undefined) throw new PublicError('unsupported', operation);
+        return { entity: selector.entity,
+          labels: options.labelReads.countEntityLabels(principalProjectVisibility(principal), selector, filter) };
+      } catch (error) { throw mapToPublicError(error, { operation }); }
+    },
+
     async listPhases(principal: unknown, input: unknown): Promise<PhaseListResult> {
       assertTrustedPrincipal(principal);
       const operation = PHASES_LIST_OPERATION;
@@ -1918,11 +1990,11 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
         // 项目同一错误）；全量范围下未知项目自然空页，不泄漏存在性。
         requireCapability(principal, 'project.read', operation);
         const object = requirePlainObject(input, { operation }, 'input');
-        rejectUnknownKeys(object, ['projectId', 'limit', 'cursor'], { operation }, 'input');
+        rejectUnknownKeys(object, ['projectId', 'limit', 'cursor', 'labels', 'match'], { operation }, 'input');
         const projectId = requireProjectId(object.projectId, operation);
         requireProjectVisible(principal, projectId, operation);
-        const filter = validatedPlanFilter(object, operation);
-        const binding = planCursorBinding({ kind: 'phases', projectId }, operation);
+        const filter = validateEntityLabelFilter(object, operation);
+        const binding = labelCursorBinding({ kind: 'phases', projectId }, filter, operation);
         const page = planReads.listPhaseRecords(
           principalProjectVisibility(principal),
           projectId,
@@ -1946,7 +2018,7 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
       try {
         requireCapability(principal, 'project.read', operation);
         const object = requirePlainObject(input, { operation }, 'input');
-        rejectUnknownKeys(object, ['projectId', 'phaseId', 'limit', 'cursor'], { operation }, 'input');
+        rejectUnknownKeys(object, ['projectId', 'phaseId', 'limit', 'cursor', 'labels', 'match'], { operation }, 'input');
         const projectId = requireProjectId(object.projectId, operation);
         const phaseId = validateStableId(
           object.phaseId,
@@ -1954,8 +2026,8 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
           'phaseId',
         );
         requireProjectVisible(principal, projectId, operation);
-        const filter = validatedPlanFilter(object, operation);
-        const binding = planCursorBinding({ kind: 'features', projectId, phaseId }, operation);
+        const filter = validateEntityLabelFilter(object, operation);
+        const binding = labelCursorBinding({ kind: 'features', projectId, phaseId }, filter, operation);
         const page = planReads.listFeatureRecords(
           principalProjectVisibility(principal),
           projectId,
@@ -1980,7 +2052,7 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
       try {
         requireCapability(principal, 'project.read', operation);
         const object = requirePlainObject(input, { operation }, 'input');
-        rejectUnknownKeys(object, ['projectId', 'featureId', 'limit', 'cursor'], { operation }, 'input');
+        rejectUnknownKeys(object, ['projectId', 'featureId', 'limit', 'cursor', 'labels', 'match'], { operation }, 'input');
         const projectId = requireProjectId(object.projectId, operation);
         const featureId = validateStableId(
           object.featureId,
@@ -1988,8 +2060,8 @@ export function createQueryService(options: QueryServiceOptions): QueryService {
           'featureId',
         );
         requireProjectVisible(principal, projectId, operation);
-        const filter = validatedPlanFilter(object, operation);
-        const binding = planCursorBinding({ kind: 'tasks', projectId, featureId }, operation);
+        const filter = validateEntityLabelFilter(object, operation);
+        const binding = labelCursorBinding({ kind: 'tasks', projectId, featureId }, filter, operation);
         const page = planReads.listTaskRecords(
           principalProjectVisibility(principal),
           projectId,

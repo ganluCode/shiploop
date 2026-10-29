@@ -14,6 +14,8 @@
  * 全部实现共享 createSqliteStateAccess 的行映射/校验/事件原语，不另立第二套
  * 规则；import 本模块无副作用，会话生命周期由调用方管理，返回面不泄漏驱动句柄。
  */
+import { createSqliteEntityLabelQueryStore } from './entity-label-query-store.js';
+import type { EntityLabelQueryReadStore } from '../../ports/entity-label-query.js';
 import type { StateEventReadStore } from '../../ports/events.js';
 import type { PersistedStateEventRow } from '../../ports/events.js';
 import type {
@@ -129,6 +131,7 @@ import type { SqliteStateStoreOptions } from './state-store.js';
  * P05-9 / F-001 起追加 Batch 收尾聚合查询窄读取（BatchDeliveryQueryReadStore）。 */
 export interface SqliteQueryStore
   extends AuthorizedProjectReadStore,
+    EntityLabelQueryReadStore,
     ConsistentSnapshotStore,
     StateEventReadStore,
     RepositoryBindingLookupStore,
@@ -181,9 +184,11 @@ export function createSqliteQueryStore(
     session,
     options.nowUtcMs === undefined ? {} : { nowUtcMs: options.nowUtcMs },
   );
+  const labelQueries = createSqliteEntityLabelQueryStore(session);
   const knowledgeQueries = createSqliteDocumentQueryStore(session);
   const memoryQueries = createSqliteMemoryQueryStore(session);
   return {
+    ...labelQueries,
     listVisibleProjects(visibility: unknown, filter: unknown): ProjectPage {
       return access.listVisibleProjects(visibility, filter);
     },

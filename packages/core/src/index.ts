@@ -154,6 +154,7 @@ export * from './ports/command-receipts.js';
 export * from './ports/atomic-commands.js';
 export * from './ports/events.js';
 export * from './ports/queries.js';
+export * from './ports/entity-label-query.js';
 export * from './ports/authorization.js';
 export * from './ports/work-access.js';
 export * from './ports/project-resources.js';

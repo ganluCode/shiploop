@@ -1,0 +1,35 @@
+{
+  "schema_version": 2,
+  "task_id": "F-006",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/planning/p06-6-f006-label-queries.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/planning/p03-1-plan-queries.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/planning/p03-1-plan-queries-consistency.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/planning/p03-1-label-edit-command.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/planning/p03-1-label-edit-rules.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/execution/budget/p06-6-f004-run-labels.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

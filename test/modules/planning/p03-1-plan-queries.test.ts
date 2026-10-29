@@ -502,7 +502,7 @@ describe('F-006 层级列表：稳定排序、有限分页与受控游标', () =
       { projectId: s.projectIdA, principal: { principalId: 'x' } },
       { projectId: s.projectIdA, capabilities: ['project.read'] },
       { projectId: s.projectIdA, scope: { kind: 'all' } },
-      { projectId: s.projectIdA, labels: ['x'] },
+      { projectId: s.projectIdA, tags: ['x'] },
       {},
     ] as const) {
       await expectPublicError(() => s.app.queryService.listPhases(s.owner, badInput), {

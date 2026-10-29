@@ -1353,6 +1353,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       snapshots: queryStore,
       eventReads: queryStore,
       planReads: queryStore,
+      labelReads: queryStore,
       executionBudgetReads: queryStore,
       scheduleReads: queryStore,
       workspaceReads: queryStore,
