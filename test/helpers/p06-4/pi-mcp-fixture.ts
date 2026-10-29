@@ -12,21 +12,23 @@ import { processRows, until } from '../process-matrix.ts';
 export const MCP_WORK_PROJECT = '11111111-1111-4111-8111-111111111111';
 const SOURCE = '33333333-3333-4333-8333-333333333333';
 export async function mcpWorkFixture(options: {
+  projectId?: string;
   required?: boolean; transport?: 'stdio' | 'streamable_http'; selected?: boolean; server?: FakeMcpServerOptions;
 } = {}) {
   const box = createTempSandbox('shiploop-mcp-work-');
-  const request = piRequest({ projectId: MCP_WORK_PROJECT, strategy: { runtime: 'pi', provider: 'anthropic', model: 'claude-sonnet-4-5' },
+  const projectId = options.projectId ?? MCP_WORK_PROJECT;
+  const request = piRequest({ projectId, strategy: { runtime: 'pi', provider: 'anthropic', model: 'claude-sonnet-4-5' },
     limits: { timeoutMs: 10_000, maxEvents: 100, maxOutputBytes: 100_000 } });
   const transport = options.transport ?? 'stdio', required = options.required ?? true;
-  const selection = validateProjectResourceSelection({ schemaVersion: 1, projectId: MCP_WORK_PROJECT, revision: 1,
-    resources: options.selected === false ? [] : [{ projectId: MCP_WORK_PROJECT, sourceProjectId: MCP_WORK_PROJECT, kind: 'mcp', name: 'approved local',
+  const selection = validateProjectResourceSelection({ schemaVersion: 1, projectId, revision: 1,
+    resources: options.selected === false ? [] : [{ projectId, sourceProjectId: projectId, kind: 'mcp', name: 'approved local',
       sourceRef: SOURCE, sourceRevision: 'r1', version: '1.0.0', contentDigest: 'a'.repeat(64), transport,
       capabilities: [transport === 'stdio' ? 'mcp_stdio' : 'mcp_streamable_http'], credentialRef: null, required, onUnavailable: required ? 'reject' : 'omit' }],
     operations: [...PROJECT_RESOURCE_PUBLIC_OPERATIONS], allowGlobalScan: false, allowProjectDirectoryScan: false, allowSdkDefaultScan: false });
   const resourceId = selection.resources[0]?.id;
   const manifest = assembleProjectResourceLoadManifest(selection, selection.resources.map(resource => ({ ...resource,
     status: 'available', unavailableReason: null, loadedCapabilities: resource.capabilities })));
-  const snapshot = buildRuntimeWorkAccessSnapshot({ selection, loadManifest: manifest, projectId: MCP_WORK_PROJECT,
+  const snapshot = buildRuntimeWorkAccessSnapshot({ selection, loadManifest: manifest, projectId,
     runId: 'run-1', taskId: 'task-1', attemptId: 'attempt-1', invocationId: request.invocationId,
     executionVersion: request.executionVersion, owner: request.owner, strategy: { ...request.strategy, runtime: 'pi' }, permissions: request.permissions,
     grantId: 'grant-1', policyDigest: 'b'.repeat(64), authentication: { status: 'ready', digest: 'b'.repeat(64), sourceRef: SOURCE, kind: 'local_login' } });

@@ -6,8 +6,9 @@ const SCRIPT = fileURLToPath(new URL('./mcp-stdio-fake-server.mjs', import.meta.
 export interface FakeMcpServerOptions {
   readonly mode?: 'normal' | 'hang_initialize' | 'hang_list' | 'invalid_protocol' | 'missing_tools_capability'
     | 'exit_on_start' | 'exit_initialize' | 'stdout_noise' | 'large_output' | 'list_error';
-  readonly callMode?: 'normal' | 'error' | 'hang' | 'exit' | 'is_error' | 'large_output';
+  readonly callMode?: 'normal' | 'error' | 'hang' | 'exit' | 'is_error' | 'large_output' | 'late_on_cancel';
   readonly spawnChild?: boolean;
+  readonly holdOnStdinEnd?: boolean;
   readonly ignoreTerminate?: boolean;
   readonly stderrBytes?: number;
   /** Synthetic test value is resolved only from the child environment. */

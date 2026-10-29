@@ -56,7 +56,7 @@ export interface McpStdioProcessRegistry {
   snapshot(scope: McpStdioProcessScope): readonly WorkManagedProcess[];
   markStopped(registration: McpStdioProcessRegistration, result: McpStdioCloseResult): Promise<boolean>;
   recover(scope: McpStdioProcessScope,
-    stop: (identity: CommandProcessIdentity) => Promise<{ readonly confirmed: boolean }>): Promise<McpStdioProcessRecovery>;
+    stop?: (identity: CommandProcessIdentity) => Promise<{ readonly confirmed: boolean }>): Promise<McpStdioProcessRecovery>;
 }
 /** Resolve only after committing ownership. A late resolution cannot release protocol requests. */
 export type McpStdioProcessRegistrar = (registration: McpStdioProcessRegistration) => Promise<{ readonly launchId: string }>;
@@ -224,7 +224,7 @@ export function createMcpStdioProcessRegistry(options: { readonly path: string }
       registrations.splice(index, 1);
       try { persist(); return true; } catch { registrations.splice(index, 0, value); return false; }
     },
-    async recover(scope, stop) {
+    async recover(scope, stop = recoverMcpStdioProcess) {
       const current = this.list(scope);
       let observations: readonly { readonly confirmed: boolean }[];
       try { observations = await Promise.all(current.map(value => stop(value.processIdentity))); }
@@ -279,6 +279,45 @@ const realInspector: McpStdioProcessInspector = {
     return !rows.trim().split('\n').some(line => Number(line.trim().split(/\s+/)[1]) === pgid);
   },
 };
+
+/** Rebuilt Hosts have no ChildProcess handle. Only a fresh match may authorize a group signal. */
+export async function recoverMcpStdioProcess(input: CommandProcessIdentity, options: {
+  readonly processInspector?: McpStdioProcessInspector;
+  readonly closeTimeoutMs?: number;
+} = {}): Promise<McpStdioCloseResult> {
+  const identity = freeze(structuredClone(input));
+  if (process.platform !== 'darwin' || !identity || !Number.isSafeInteger(identity.pid) || identity.pid < 2
+    || identity.processGroupId !== identity.pid || typeof identity.startTime !== 'string' || !identity.startTime.trim()
+    || typeof identity.launchId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(identity.launchId)) {
+    throw new McpStdioError('invalid_startup_plan');
+  }
+  const inspector = options.processInspector ?? realInspector;
+  const graceMs = bounded(options.closeTimeoutMs, 1000, 10_000);
+  const deadline = Date.now() + graceMs * 2 + 1500;
+  const probe = <T>(operation: Promise<T>) => withinDeadline(operation, deadline, 'cleanup_unconfirmed');
+  const result = (confirmed: boolean): McpStdioCloseResult => freeze({
+    status: confirmed ? 'confirmed' : 'unconfirmed', confirmed, processIdentity: identity, pid: identity.pid,
+  });
+  const waitAbsent = async () => {
+    const until = Math.min(deadline, Date.now() + graceMs);
+    do {
+      if (await probe(inspector.groupAbsent(identity.processGroupId))) return true;
+      await new Promise<void>(resolve => setTimeout(resolve, Math.min(25, Math.max(1, until - Date.now()))));
+    } while (Date.now() < until);
+    return false;
+  };
+  try {
+    if (await probe(inspector.groupAbsent(identity.processGroupId))) return result(true);
+    // Without a live leader match, a stored PGID alone cannot authorize killing surviving members.
+    if (!await probe(inspector.matches(identity))) return result(false);
+    try { process.kill(-identity.processGroupId, 'SIGTERM'); } catch { return result(await waitAbsent()); }
+    if (await waitAbsent()) return result(true);
+    // The leader may exit during TERM. Recheck it before escalation rather than trusting a bare PGID.
+    if (!await probe(inspector.matches(identity))) return result(false);
+    try { process.kill(-identity.processGroupId, 'SIGKILL'); } catch { /* Absence must still be proven. */ }
+    return result(await waitAbsent());
+  } catch { return result(false); }
+}
 
 /** Own pipes only: nothing from the server is forwarded to Runner stdout or to a console. */
 class McpStdioTransport {

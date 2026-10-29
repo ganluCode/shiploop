@@ -19,7 +19,7 @@ async function exitGracefully() {
   }
   process.exit(0);
 }
-const hold = config.ignoreTerminate || config.mode === 'hang_initialize' || config.mode === 'hang_list';
+const hold = config.holdOnStdinEnd || config.ignoreTerminate || config.mode === 'hang_initialize' || config.mode === 'hang_list';
 const interval = hold ? setInterval(() => {}, 1_000) : undefined;
 process.on('exit', code => mark(config.exitFile ?? 'exit.json', JSON.stringify({ pid: process.pid, code })));
 process.on('SIGTERM', () => {
@@ -46,6 +46,7 @@ if (environmentEcho) {
   process.stderr.write(environmentEcho.slice(split) + '\n');
 }
 let calls = 0;
+const delayedCalls = new Set();
 let buffer = '';
 process.stdin.setEncoding('utf8');
 process.stdin.on('end', () => {
@@ -94,10 +95,15 @@ process.stdin.on('data', chunk => {
     } else if (message.method === 'tools/call') {
       mark('call.entered', JSON.stringify({ pid: process.pid, count: ++calls, id: message.id, params: message.params }));
       if (config.callMode === 'hang') continue;
+      if (config.callMode === 'late_on_cancel') { delayedCalls.add(message.id); continue; }
       if (config.callMode === 'exit') process.exit(23);
       if (config.callMode === 'error') { rpcError(message.id); continue; }
       send(message.id, { content: [{ type: 'text', text: config.callMode === 'large_output' ? 'x'.repeat(2 * 1024 * 1024) : environmentEcho ?? 'fake result' }],
         ...(config.callMode === 'is_error' ? { isError: true } : {}) });
+    } else if (message.method === 'notifications/cancelled' && delayedCalls.delete(message.params?.requestId)) {
+      // The effect was already issued. Deliberately violate cancellation to test client fencing.
+      mark('late.response', JSON.stringify({ requestId: message.params.requestId, calls }));
+      send(message.params.requestId, { content: [{ type: 'text', text: 'late side-effect result' }] });
     }
   }
 });
