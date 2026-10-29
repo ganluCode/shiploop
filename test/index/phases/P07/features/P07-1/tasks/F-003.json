@@ -1,0 +1,15 @@
+{
+  "schema_version": 2,
+  "task_id": "F-003",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/recovery/p07-1-f003-stop-reprobe.test.ts", "all": true },
+      { "file": "test/modules/runtime/command-process-recovery-reprobe.test.ts", "all": true },
+      { "file": "test/modules/runtime/command-process-zombie-recovery.test.ts", "all": true },
+      { "file": "test/modules/runtime/supervised-process-stopping.test.ts", "all": true },
+      { "file": "test/modules/runtime/p06-7-f005-process-recovery.test.ts", "all": true },
+      { "file": "test/modules/recovery/p03-9-f005-startup-recovery.test.ts", "all": true }
+    ]
+  }]
+}

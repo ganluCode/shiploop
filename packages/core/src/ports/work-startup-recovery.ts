@@ -20,6 +20,10 @@ export interface WorkStartupRecoveryEvidence extends WorkStartupRecoveryTarget {
   readonly stopConfirmed: boolean;
   readonly observedAtUtcMs: number;
   readonly workspaceReconciled: false;
+  /** Monotonic observation revision; schemaVersion remains the evidence contract version. */
+  readonly observationRevision?: number;
+  readonly observationKind?: 'initial' | 'reprobe';
+  readonly previousObservationAtUtcMs?: number | null;
 }
 export interface WorkStartupRecoveryStore {
   /** Short transaction: scan, quarantine and revoke old write eligibility before process I/O. */
@@ -27,6 +31,7 @@ export interface WorkStartupRecoveryStore {
     readonly retained: boolean; readonly dispatchBlocked?: boolean; readonly reconcilable: readonly WorkStartupRecoveryEvidence[] };
   /** Resume Artifact publication from the durable observation, without repeating stop I/O. */
   readObservation(target: WorkStartupRecoveryTarget): WorkStartupRecoveryEvidence | null;
+  /** Persist a fresh observation for the same fenced identity; historical observations remain immutable. */
   observed(evidence: WorkStartupRecoveryEvidence, evidenceRef: string | null): void;
   failed(): void;
   /** P05-1 / F-010：该 Attempt 是否已被规划恢复补完为终态（跳过通用逐个核对）。 */

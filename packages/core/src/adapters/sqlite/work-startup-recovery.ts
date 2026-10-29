@@ -8,7 +8,7 @@ import { createSqliteDispatchRecovery } from './dispatch-recovery.js';
 import type { SqliteStorageSession } from './session.js';
 
 const LIMIT = 128;
-type RecoveryPhase = 'fenced' | 'observed' | 'recorded' | 'run_interrupted' | 'scan_limited' | 'failed';
+type RecoveryPhase = 'fenced' | 'observed' | 'recorded' | 'reprobed' | 'run_interrupted' | 'scan_limited' | 'failed';
 interface AttemptRow {
   id: string; project_id: string; run_id: string; task_id: string; feature_id: string;
   owner_id: string; host_instance_id: string; execution_version: number; execution_stage: string;
@@ -35,6 +35,21 @@ export function createSqliteWorkStartupRecoveryStore(session: SqliteStorageSessi
       .get(phase, id === 'work-startup-recovery' ? GLOBAL_SETTINGS_ID : id);
     if (row) mapStateEvent({ ...row, payload: JSON.parse(row.payload) }, 'Work.startupRecovery.events');
     return row;
+  }
+  function findLatestObservation(id: string) {
+    const row = db.prepare<[string], Omit<PersistedStateEventRow, 'payload'> & { payload: string }>(`SELECT
+      id, sequence, event_type AS eventType, aggregate_type AS aggregateType, aggregate_id AS aggregateId,
+      aggregate_revision AS aggregateRevision, project_id AS projectId, payload, occurred_at AS occurredAtUtcMs
+      FROM state_events WHERE event_type IN ('work.recovery.updated', 'work.recovery.blocked')
+      AND json_extract(payload, '$.phase') IN ('observed', 'recorded', 'reprobed')
+      AND attempt_id = ? ORDER BY sequence DESC LIMIT 1`).get(id);
+    if (row) mapStateEvent({ ...row, payload: JSON.parse(row.payload) }, 'Work.startupRecovery.events');
+    return row;
+  }
+  function hasRecordedObservation(id: string): boolean {
+    return db.prepare<[string], { n: number }>(`SELECT COUNT(*) AS n FROM state_events
+      WHERE event_type IN ('work.recovery.updated', 'work.recovery.blocked')
+      AND json_extract(payload, '$.phase') IN ('recorded', 'reprobed') AND attempt_id = ?`).get(id)!.n > 0;
   }
   function event(phase: RecoveryPhase, projectId: string | null, runId: string | null,
     payload: object, attemptId: string | null = null, stage: string | null = null) {
@@ -140,7 +155,7 @@ export function createSqliteWorkStartupRecoveryStore(session: SqliteStorageSessi
           db.prepare(`UPDATE managed_workspaces SET status = 'quarantined', revision = revision + 1, updated_at = ?
             WHERE project_id = ? AND feature_id = ? AND status <> 'quarantined' AND status <> 'cleaned'`)
             .run(timestamp, row.project_id, row.feature_id);
-          if (!findEvent('recorded', row.id)) targets.push(target);
+          if (!hasRecordedObservation(row.id)) targets.push(target);
         }
         for (const run of runs.slice(0, LIMIT)) {
           // A queued authorization with no claim has no old execution to resume. Keep it
@@ -158,7 +173,10 @@ export function createSqliteWorkStartupRecoveryStore(session: SqliteStorageSessi
           JOIN attempts a ON a.id = e.attempt_id
           JOIN runs r ON r.project_id = a.project_id AND r.id = a.run_id
           LEFT JOIN managed_workspaces w ON w.project_id = a.project_id AND w.feature_id = a.feature_id
-          WHERE e.event_type = 'work.recovery.updated' AND json_extract(e.payload, '$.phase') = 'recorded'
+          WHERE e.event_type = 'work.recovery.updated' AND json_extract(e.payload, '$.phase') IN ('recorded', 'reprobed')
+            AND e.sequence = (SELECT MAX(latest.sequence) FROM state_events latest
+              WHERE latest.event_type = 'work.recovery.updated' AND latest.attempt_id = e.attempt_id
+                AND json_extract(latest.payload, '$.phase') IN ('recorded', 'reprobed'))
             AND a.status = 'interrupted'
             AND (w.attempt_id IS NULL OR w.attempt_id = a.id)
             AND NOT EXISTS (SELECT 1 FROM run_dispatch_claims c WHERE c.run_id = a.run_id
@@ -178,11 +196,12 @@ export function createSqliteWorkStartupRecoveryStore(session: SqliteStorageSessi
       });
     },
     readObservation(target) {
-      const row = findEvent('observed', target.attemptId);
+      const row = findLatestObservation(target.attemptId);
       if (!row) return null;
-      const { phase: _phase, evidenceRef: _ref, ...evidence } = JSON.parse(row.payload) as WorkStartupRecoveryEvidence & { phase: string; evidenceRef: null };
+      const { phase: _phase, evidenceRef: _ref, ...evidence } = JSON.parse(row.payload) as WorkStartupRecoveryEvidence & { phase: string; evidenceRef: string | null };
       const { schemaVersion: _schema, kind: _kind, stopConfirmed: _stopped, observedAtUtcMs: _at,
-        workspaceReconciled: _workspace, gaps, ...identity } = evidence;
+        workspaceReconciled: _workspace, observationRevision: _revision, observationKind: _observationKind,
+        previousObservationAtUtcMs: _previousObservationAt, gaps, ...identity } = evidence;
       const { gaps: currentGaps, ...currentIdentity } = target;
       if (!isDeepStrictEqual(identity, currentIdentity) || currentGaps.some(gap => !gaps.includes(gap))) {
         throw new TypeError('Recovery observation identity changed');
@@ -196,8 +215,9 @@ export function createSqliteWorkStartupRecoveryStore(session: SqliteStorageSessi
           || row.host_instance_id !== evidence.hostInstanceId || row.execution_version !== evidence.executionVersion) {
           throw new TypeError('Recovery observation identity changed');
         }
-        const phase = evidenceRef === null ? 'observed' : 'recorded';
-        if (findEvent(phase, row.id)) return;
+        const phase = (evidence.observationRevision ?? 1) > 1 || evidence.observationKind === 'reprobe'
+          ? 'reprobed' : evidenceRef === null ? 'observed' : 'recorded';
+        if (phase !== 'reprobed' && findEvent(phase, row.id)) return;
         const fenced = findEvent('fenced', row.id);
         if (!fenced || !isDeepStrictEqual(JSON.parse(fenced.payload).processIdentity, evidence.processIdentity)) {
           throw new TypeError('Recovery process identity changed');

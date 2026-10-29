@@ -200,6 +200,13 @@ export function createCommandProcessAdapter(options: CommandProcessAdapterOption
     });
     return pending;
   };
+  const recheckWithoutSignal = async (identity: CommandProcessIdentity): Promise<boolean> => {
+    let row: SupervisedProcessRow | null | undefined;
+    try { row = await probe.readSupervisorRow(identity.pid); }
+    catch { return false; }
+    if (row === undefined || (row !== null && !matchesSupervisorIdentity(row, identity))) return false;
+    return confirmGroupAbsence(identity, probe, stopBudgets);
+  };
   return {
     async recoverStop(input) {
       if (process.platform !== 'darwin' || !input || typeof input !== 'object') return { confirmed: false };
@@ -208,13 +215,17 @@ export function createCommandProcessAdapter(options: CommandProcessAdapterOption
           !Number.isSafeInteger(id.pid) || id.pid <= 1 || id.processGroupId !== id.pid ||
           typeof id.startTime !== 'string' || !id.startTime.length) return { confirmed: false };
       // One durable identity has one escalation attempt. Later recovery may
-      // recheck absence, but never repeat a previously delivered signal.
-      const previous = escalationResults.get(escalationKey(id));
-      const outcome = await escalateOnce(id);
-      if (previous !== undefined && !outcome.confirmed
-        && (outcome.identity === 'absent' || (outcome.identity === 'matched' && outcome.escalated))) {
-        return { confirmed: await confirmGroupAbsence(id, probe, stopBudgets) };
+      // recheck identity and group absence, but never repeat a previously
+      // delivered (or failed-to-deliver) signal.
+      const key = escalationKey(id);
+      const previous = escalationResults.get(key);
+      if (previous !== undefined) {
+        const outcome = await previous;
+        if (outcome.confirmed) return { confirmed: true };
+        if (outcome.identity === 'probe_failed') return { confirmed: false };
+        return { confirmed: await recheckWithoutSignal(id) };
       }
+      const outcome = await escalateOnce(id);
       return { confirmed: outcome.confirmed };
     },
     async start(input, confirm, signal) {

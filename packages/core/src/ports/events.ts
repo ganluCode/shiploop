@@ -265,11 +265,12 @@ function validateWorkRecoveryPayload(payload: Record<string, unknown>, operation
     if (payload.reason !== 'restart_recovery') corrupt(operation, 'event_payload_violation');
     return;
   }
-  const observation = payload.phase === 'observed' || payload.phase === 'recorded';
+  const observation = payload.phase === 'observed' || payload.phase === 'recorded' || payload.phase === 'reprobed';
   if (!observation && payload.phase !== 'fenced') corrupt(operation, 'event_payload_violation');
   exactPayloadKeys(operation, payload, ['schemaVersion', 'phase', 'projectId', 'runId', 'attemptId',
     'owner', 'hostInstanceId', 'executionVersion', 'executionStage', 'processIdentity', 'gaps', 'stopConfirmed', 'workspaceReconciled',
-    ...(observation ? ['kind', 'observedAtUtcMs', 'evidenceRef'] : [])]);
+    ...(observation ? ['kind', 'observedAtUtcMs', 'evidenceRef', ...(payload.phase === 'reprobed'
+      ? ['observationRevision', 'observationKind', 'previousObservationAtUtcMs'] : [])] : [])]);
   try {
     for (const key of ['projectId', 'runId', 'attemptId', 'owner', 'hostInstanceId']) validateStableId(payload[key], { operation }, key);
     if (payload.processIdentity !== null) validateWorkProcessIdentity(payload.processIdentity);
@@ -281,9 +282,14 @@ function validateWorkRecoveryPayload(payload: Record<string, unknown>, operation
     || payload.gaps.some(gap => typeof gap !== 'string' || !/^[a-z_]{1,64}$/.test(gap))) corrupt(operation, 'event_payload_violation');
   if ((payload.phase === 'fenced' && payload.stopConfirmed !== false)
     || (payload.stopConfirmed === true && payload.processIdentity === null)
-    || (observation && (payload.phase === 'observed') !== (payload.evidenceRef === null))) corrupt(operation, 'event_payload_violation');
+    || (payload.phase === 'observed' && payload.evidenceRef !== null)
+    || (payload.phase === 'recorded' && payload.evidenceRef === null)) corrupt(operation, 'event_payload_violation');
   if (observation && (payload.kind !== 'work-startup-recovery'
     || !isSafeInteger(payload.observedAtUtcMs, 0, Number.MAX_SAFE_INTEGER))) corrupt(operation, 'event_payload_violation');
+  if (payload.phase === 'reprobed' && (payload.observationKind !== 'reprobe'
+    || !isSafeInteger(payload.observationRevision, 2, Number.MAX_SAFE_INTEGER)
+    || (payload.previousObservationAtUtcMs !== null
+      && !isSafeInteger(payload.previousObservationAtUtcMs, 0, Number.MAX_SAFE_INTEGER)))) corrupt(operation, 'event_payload_violation');
   if (observation && payload.evidenceRef !== null) {
     try { validateStableId(payload.evidenceRef, { operation }, 'evidenceRef'); }
     catch { corrupt(operation, 'event_payload_violation'); }

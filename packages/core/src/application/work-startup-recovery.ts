@@ -30,9 +30,42 @@ export function createWorkStartupRecovery(options: WorkStartupRecoveryOptions) {
         if (planning.outcomes.length > 0) scan = options.store.fence();
       }
       const pending = new Map<string, WorkStartupRecoveryEvidence>();
+
+      const recheck = async (previous: WorkStartupRecoveryEvidence): Promise<WorkStartupRecoveryEvidence> => {
+        // A durable failure is a historical fact, not a release token. On a later
+        // controlled startup, recheck only the same committed process identity.
+        if (previous.stopConfirmed || previous.processIdentity === null) return previous;
+        const gaps = previous.gaps.filter(gap => gap !== 'stop_unconfirmed' && gap !== 'stop_failed');
+        let stopConfirmed = false;
+        try {
+          const stop = await observeWithin(Promise.resolve().then(() => options.process.recoverStop?.(previous.processIdentity)), 5_000);
+          stopConfirmed = stop?.confirmed === true;
+        } catch { /* retain the old failed observation and add a fresh failure below */ }
+        if (!stopConfirmed) gaps.push('stop_unconfirmed');
+        return {
+          ...previous,
+          stopConfirmed,
+          observedAtUtcMs: now(),
+          observationRevision: (previous.observationRevision ?? 1) + 1,
+          observationKind: 'reprobe',
+          previousObservationAtUtcMs: previous.observedAtUtcMs,
+          gaps: [...new Set(gaps)],
+        };
+      };
+
+      const persistObservation = async (projectId: string, previous: WorkStartupRecoveryEvidence | null,
+        evidence: WorkStartupRecoveryEvidence): Promise<WorkStartupRecoveryEvidence> => {
+        const changed = previous === null || evidence.observationRevision !== previous.observationRevision;
+        if (changed) options.store.observed(evidence, null);
+        const evidenceRef = await options.publishEvidence(projectId, evidence);
+        options.store.observed(evidence, evidenceRef);
+        return evidence;
+      };
+
       for (const target of scan.targets) {
         if (options.store.planningCompletionFinalized?.(target.attemptId) === true) continue;
-        let evidence = options.store.readObservation(target);
+        const previous = options.store.readObservation(target);
+        let evidence = previous;
         if (evidence === null) {
           const gaps = [...target.gaps];
           let stopConfirmed = false;
@@ -46,16 +79,15 @@ export function createWorkStartupRecovery(options: WorkStartupRecoveryOptions) {
           evidence = { ...target, schemaVersion: 1, kind: 'work-startup-recovery',
             stopConfirmed, observedAtUtcMs: now(), workspaceReconciled: false,
             gaps: [...new Set([...gaps, 'workspace_not_reconciled'])] } satisfies WorkStartupRecoveryEvidence;
-          // Save before crossing the Artifact boundary; restart reuses this observation.
-          options.store.observed(evidence, null);
+        } else {
+          evidence = await recheck(evidence);
         }
-        const evidenceRef = await options.publishEvidence(target.projectId, evidence);
-        options.store.observed(evidence, evidenceRef);
-        pending.set(evidence.attemptId, evidence);
+        pending.set(evidence.attemptId, await persistObservation(target.projectId, previous, evidence));
       }
-      for (const evidence of scan.reconcilable) {
-        if (options.store.planningCompletionFinalized?.(evidence.attemptId) === true) continue;
-        pending.set(evidence.attemptId, evidence);
+      for (const previous of scan.reconcilable) {
+        if (options.store.planningCompletionFinalized?.(previous.attemptId) === true) continue;
+        const evidence = await recheck(previous);
+        pending.set(evidence.attemptId, await persistObservation(previous.projectId, previous, evidence));
       }
 
       let reconciled = scan.dispatchBlocked !== true;
