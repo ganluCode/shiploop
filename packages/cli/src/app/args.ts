@@ -146,6 +146,7 @@ export type AppCliCommandId =
   | 'execution.finalize'
   | 'execution.schedule'
   | 'execution.attempts'
+  | 'execution.runs'
   | 'execution.diagnostics'
   | 'execution.dispatch'
   | 'execution.resources'
@@ -265,6 +266,7 @@ export const APP_CLI_COMMAND_IDS: readonly AppCliCommandId[] = Object.freeze([
   'execution.finalize',
   'execution.schedule',
   'execution.attempts',
+  'execution.runs',
   'execution.diagnostics',
   'execution.dispatch',
   'execution.resources',
@@ -400,6 +402,7 @@ export type AppCliParseReason =
   | 'invalid_attempt_id'
   | 'invalid_session_id'
   | 'invalid_record_type'
+  | 'invalid_entity'
   | 'concurrency_not_supported'
   | 'confirmation_required'
   | 'invalid_preview_file'
@@ -436,6 +439,7 @@ const REASON_MESSAGE: Readonly<Record<AppCliParseReason, string>> = Object.freez
   invalid_revision: 'revision 必须是 ≥ 1 的整数',
   invalid_limit: 'limit 必须是 1..200 的整数',
   invalid_match: 'match 只能是 any 或 all',
+  invalid_entity: 'entity 只能是 phase、feature、task 或 run',
   invalid_cursor: 'cursor 必须是非空字符串',
   invalid_command_id: 'commandId 必须是 UUID v4',
   invalid_input_file: 'input 必须是非空文件路径',
@@ -692,9 +696,9 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
   'project.labels': {
     command: 'project',
     commandId: 'project.labels',
-    valueFlags: [],
+    valueFlags: ['--entity', '--project', '--phase', '--feature', '--batch', '--label', '--match'],
     boolFlags: [],
-    repeatableFlags: [],
+    repeatableFlags: ['--label'],
     minPositionals: 0,
     maxPositionals: 0,
     positionalFields: [],
@@ -938,9 +942,9 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
   'phase.list': {
     command: 'phase',
     commandId: 'phase.list',
-    valueFlags: ['--project', '--limit', '--cursor'],
+    valueFlags: ['--project', '--label', '--match', '--limit', '--cursor'],
     boolFlags: [],
-    repeatableFlags: [],
+    repeatableFlags: ['--label'],
     minPositionals: 0,
     maxPositionals: 0,
     positionalFields: [],
@@ -988,9 +992,9 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
   'feature.list': {
     command: 'feature',
     commandId: 'feature.list',
-    valueFlags: ['--project', '--phase', '--limit', '--cursor'],
+    valueFlags: ['--project', '--phase', '--label', '--match', '--limit', '--cursor'],
     boolFlags: [],
-    repeatableFlags: [],
+    repeatableFlags: ['--label'],
     minPositionals: 0,
     maxPositionals: 0,
     positionalFields: [],
@@ -1028,9 +1032,9 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
   'task.list': {
     command: 'task',
     commandId: 'task.list',
-    valueFlags: ['--project', '--feature', '--limit', '--cursor'],
+    valueFlags: ['--project', '--feature', '--label', '--match', '--limit', '--cursor'],
     boolFlags: [],
-    repeatableFlags: [],
+    repeatableFlags: ['--label'],
     minPositionals: 0,
     maxPositionals: 0,
     positionalFields: [],
@@ -1331,6 +1335,16 @@ const SPECS: Readonly<Record<AppCliCommandId, AppCommandSpec>> = Object.freeze({
     minPositionals: 1,
     maxPositionals: 1,
     positionalFields: ['runId'],
+  },
+  'execution.runs': {
+    command: 'execution',
+    commandId: 'execution.runs',
+    valueFlags: ['--project', '--feature', '--batch', '--label', '--match', '--limit', '--cursor'],
+    boolFlags: [],
+    repeatableFlags: ['--label'],
+    minPositionals: 0,
+    maxPositionals: 0,
+    positionalFields: [],
   },
   'execution.attempts': {
     command: 'execution',
@@ -1705,6 +1719,7 @@ const SUBCOMMAND_TO_ID: Readonly<Record<AppCliCommand, Readonly<Record<string, A
       finalize: 'execution.finalize',
       schedule: 'execution.schedule',
       attempts: 'execution.attempts',
+      runs: 'execution.runs',
       diagnostics: 'execution.diagnostics',
       dispatch: 'execution.dispatch',
       resources: 'execution.resources',
@@ -2221,6 +2236,29 @@ function optionalPlanListPage(
   };
 }
 
+const LABEL_ENTITY_VALUES = ['phase', 'feature', 'task', 'run'] as const;
+
+/**
+ * P06-6 / F-007：可重复标签筛选 + any/all 匹配（提供 --label 或 --match 时才
+ * 进入解析结果；与项目列表同一口径，match 非法在解析层拒绝，标签规范化深
+ * 校验由 Core 单一权威复核）。
+ */
+function optionalEntityLabelFilter(
+  scan: ScanResult,
+  state: ParseState,
+): { labels?: readonly string[]; match?: 'any' | 'all' } {
+  const matchRaw = takeOption(scan, '--match');
+  const match = matchRaw ?? 'any';
+  if (match !== 'any' && match !== 'all') {
+    fail(state, 'invalid_match', 'match');
+  }
+  const labelValues = scan.options.get('--label');
+  return {
+    ...(labelValues !== undefined ? { labels: takeLabels(scan, state) } : {}),
+    ...(matchRaw !== undefined || labelValues !== undefined ? { match } : {}),
+  };
+}
+
 function isAbsolutePath(value: string): boolean {
   return value.startsWith('/');
 }
@@ -2517,6 +2555,14 @@ export interface ParsedProjectLabels {
   readonly json: boolean;
   readonly startTimeoutMs: number;
   readonly dataRoot?: string;
+  /** P06-6 / F-007：四层计数模式（提供 entity 时必填 --project）。 */
+  readonly entity?: 'phase' | 'feature' | 'task' | 'run';
+  readonly projectId?: string;
+  readonly phaseId?: string;
+  readonly featureId?: string;
+  readonly batchId?: string;
+  readonly labels?: readonly string[];
+  readonly match?: 'any' | 'all';
 }
 
 export interface ParsedConfigCreate {
@@ -2761,7 +2807,7 @@ export interface ParsedPhaseCreate {
   readonly explicitCommandId?: string;
 }
 
-/** `phase list --project <id> [--limit <int>] [--cursor <c>]`：层级分页。 */
+/** `phase list --project <id> [--label <l> ...] [--match any|all] [--limit <int>] [--cursor <c>]`：层级分页。 */
 export interface ParsedPhaseList {
   readonly kind: 'command';
   readonly command: 'phase';
@@ -2770,6 +2816,10 @@ export interface ParsedPhaseList {
   readonly startTimeoutMs: number;
   readonly dataRoot?: string;
   readonly projectId: string;
+  /** P06-6 / F-007：可重复标签筛选（提供时才存在；匹配语义见 match）。 */
+  readonly labels?: readonly string[];
+  /** P06-6 / F-007：any（缺省）命中任一 / all 命中全部；提供时才存在。 */
+  readonly match?: 'any' | 'all';
   readonly limit?: number;
   readonly cursor?: string;
 }
@@ -2835,6 +2885,9 @@ export interface ParsedFeatureList {
   readonly dataRoot?: string;
   readonly projectId: string;
   readonly phaseId: string;
+  /** P06-6 / F-007：可重复标签筛选与 any/all 匹配（提供时才存在）。 */
+  readonly labels?: readonly string[];
+  readonly match?: 'any' | 'all';
   readonly limit?: number;
   readonly cursor?: string;
 }
@@ -2879,6 +2932,9 @@ export interface ParsedTaskList {
   readonly dataRoot?: string;
   readonly projectId: string;
   readonly featureId: string;
+  /** P06-6 / F-007：可重复标签筛选与 any/all 匹配（提供时才存在）。 */
+  readonly labels?: readonly string[];
+  readonly match?: 'any' | 'all';
   readonly limit?: number;
   readonly cursor?: string;
 }
@@ -3159,6 +3215,26 @@ export interface ParsedExecutionAttempts {
   readonly dataRoot?: string;
   readonly projectId: string;
   readonly taskId: string;
+  readonly limit?: number;
+  readonly cursor?: string;
+}
+
+/**
+ * P06-6 / F-007：项目内 Run 持久元数据列表（execution.runs；runs.list 只读
+ * 查询，可选 featureId/batchId 父级 + 可重复标签筛选与 any/all 匹配）。
+ */
+export interface ParsedExecutionRuns {
+  readonly kind: 'command';
+  readonly command: 'execution';
+  readonly commandId: 'execution.runs';
+  readonly json: boolean;
+  readonly startTimeoutMs: number;
+  readonly dataRoot?: string;
+  readonly projectId: string;
+  readonly featureId?: string;
+  readonly batchId?: string;
+  readonly labels: readonly string[];
+  readonly match: 'any' | 'all';
   readonly limit?: number;
   readonly cursor?: string;
 }
@@ -3876,6 +3952,7 @@ export type ParsedAppCliCommand =
   | ParsedExecutionRevise
   | ParsedExecutionSchedule
   | ParsedExecutionAttempts
+  | ParsedExecutionRuns
   | ParsedExecutionDiagnostics
   | ParsedExecutionDispatch
   | ParsedExecutionResources
@@ -4190,7 +4267,35 @@ function buildProject(scan: ScanResult, state: ParseState, spec: AppCommandSpec)
       };
     }
     case 'project.labels': {
-      return { ...base, command: 'project', commandId: 'project.labels' };
+      // P06-6 / F-007：无参保持项目层计数旧形态；提供 --entity 进入四层计数
+      // 模式（其余筛选参数仅在该模式下可月）。
+      const entityRaw = takeOption(scan, '--entity');
+      const modeFlags = ['--project', '--phase', '--feature', '--batch', '--label', '--match'] as const;
+      const hasModeFlag = modeFlags.some((flag) => scan.options.has(flag));
+      if (entityRaw === undefined) {
+        if (hasModeFlag) {
+          fail(state, 'unknown_argument');
+        }
+        return { ...base, command: 'project', commandId: 'project.labels' };
+      }
+      if (!LABEL_ENTITY_VALUES.includes(entityRaw as (typeof LABEL_ENTITY_VALUES)[number])) {
+        fail(state, 'invalid_entity', 'entity');
+      }
+      const projectId = requireProjectId(requireOption(scan, '--project', state, 'project'), state);
+      const phaseRaw = takeOption(scan, '--phase');
+      const featureRaw = takeOption(scan, '--feature');
+      const batchRaw = takeOption(scan, '--batch');
+      return {
+        ...base,
+        command: 'project',
+        commandId: 'project.labels',
+        entity: entityRaw as 'phase' | 'feature' | 'task' | 'run',
+        projectId,
+        ...(phaseRaw !== undefined ? { phaseId: requirePlanId(phaseRaw, state, 'phase') } : {}),
+        ...(featureRaw !== undefined ? { featureId: requirePlanId(featureRaw, state, 'feature') } : {}),
+        ...(batchRaw !== undefined ? { batchId: requireBatchId(batchRaw, state) } : {}),
+        ...optionalEntityLabelFilter(scan, state),
+      };
     }
     default:
       fail(state, 'unknown_subcommand');
@@ -4634,6 +4739,24 @@ function buildExecution(
         commandId: 'execution.attempts',
         projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
         taskId: requirePlanId(scan.positionals[0] as string, state, 'taskId'),
+        ...optionalPlanListPage(scan, state),
+      };
+    }
+    // P06-6 / F-007：Run 持久元数据列表（runs.list 只读查询；标签规范化与
+    // 游标绑定由 Core 复核，CLI 不打开状态库）。
+    case 'execution.runs': {
+      const featureRaw = takeOption(scan, '--feature');
+      const batchRaw = takeOption(scan, '--batch');
+      const filter = optionalEntityLabelFilter(scan, state);
+      return {
+        ...base,
+        command: 'execution',
+        commandId: 'execution.runs',
+        projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
+        ...(featureRaw !== undefined ? { featureId: requirePlanId(featureRaw, state, 'feature') } : {}),
+        ...(batchRaw !== undefined ? { batchId: requireBatchId(batchRaw, state) } : {}),
+        labels: filter.labels ?? [],
+        match: filter.match ?? 'any',
         ...optionalPlanListPage(scan, state),
       };
     }
@@ -5218,6 +5341,7 @@ function buildPlanEntity(
         commandId: 'phase.list',
         projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
         ...optionalPlanListPage(scan, state),
+        ...optionalEntityLabelFilter(scan, state),
       };
     }
     case 'phase.get': {
@@ -5289,6 +5413,7 @@ function buildPlanEntity(
         projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
         phaseId: requirePlanIdOption(scan, '--phase', state, 'phaseId'),
         ...optionalPlanListPage(scan, state),
+        ...optionalEntityLabelFilter(scan, state),
       };
     }
     case 'feature.get': {
@@ -5386,6 +5511,7 @@ function buildPlanEntity(
         projectId: requireProjectId(requireOption(scan, '--project', state, 'project'), state),
         featureId: requirePlanIdOption(scan, '--feature', state, 'featureId'),
         ...optionalPlanListPage(scan, state),
+        ...optionalEntityLabelFilter(scan, state),
       };
     }
     case 'task.get': {

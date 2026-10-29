@@ -197,6 +197,10 @@ import type {
   SnapshotResult,
   TaskDetailResult,
   TaskListResult,
+  EntityLabelCountsResult,
+  LabelEntity,
+  PublicLabelRunRecord,
+  RunListResult,
   GitOperationDetailResult,
   GitOperationListResult,
   FeatureDeliveryDetailResult,
@@ -333,6 +337,10 @@ export type AppQueryOperation =
   | 'features.get'
   | 'tasks.list'
   | 'tasks.get'
+  // P06-6 / F-007：四层标签 Run 列表与实体标签计数查询（与 Core runs.list /
+  // labels.counts 操作身份同源）。
+  | 'runs.list'
+  | 'labels.counts'
   | 'task.strategy.reapply.preview'
   // P03-2 / F-007：审批决策查询（与 Core PLAN_APPROVAL_QUERY_OPERATION 同源）。
   | 'features.approvals'
@@ -1451,7 +1459,7 @@ interface ValidatedPlanListPage<R> {
 
 function validatePlanListPageOf<R>(
   operation: HostOperation,
-  scope: 'phase-list' | 'feature-list' | 'task-list',
+  scope: 'phase-list' | 'feature-list' | 'task-list' | 'run-list',
   validateRecord: (op: HostOperation, value: unknown) => R,
   body: unknown,
 ): ValidatedPlanListPage<R> {
@@ -1493,6 +1501,75 @@ function validateFeatureListPage(operation: HostOperation, body: unknown): Featu
 function validateTaskListPage(operation: HostOperation, body: unknown): TaskListResult {
   const page = validatePlanListPageOf(operation, 'task-list', validateTaskRecordWire, body);
   return { schemaVersion: page.schemaVersion, scope: 'task-list', records: page.records, nextCursor: page.nextCursor, limit: page.limit };
+}
+
+/**
+ * P06-6 / F-007：Run 列表记录（仅持久元数据投影；执行/配置快照不进入此
+ * 投影，字段集与 Core PublicLabelRunRecord 一一对应）。
+ */
+function validateLabelRunRecordWire(operation: HostOperation, value: unknown): PublicLabelRunRecord {
+  const object = requirePlain(operation, value);
+  exactKeys(operation, object, [
+    'id', 'projectId', 'featureId', 'batchId', 'labels', 'status', 'purpose', 'revision', 'createdAt', 'updatedAt',
+  ]);
+  const record = {
+    id: requireStableId(operation, object.id),
+    projectId: requireStableId(operation, object.projectId),
+    featureId: requireStableId(operation, object.featureId),
+    batchId: requireStableId(operation, object.batchId),
+    labels: requireLabelsArray(operation, object.labels),
+    status:
+      typeof object.status === 'string' && object.status.length > 0
+        ? object.status
+        : malformed(operation, 'run_status_invalid'),
+    purpose:
+      typeof object.purpose === 'string' && object.purpose.length > 0
+        ? object.purpose
+        : malformed(operation, 'run_purpose_invalid'),
+    revision: requirePositiveInteger(operation, object.revision),
+  };
+  if (!isIsoUtcDateTime(object.createdAt) || !isIsoUtcDateTime(object.updatedAt)) {
+    malformed(operation, 'run_time_invalid');
+  }
+  return { ...record, createdAt: object.createdAt, updatedAt: object.updatedAt };
+}
+
+function validateRunListPage(operation: HostOperation, body: unknown): RunListResult {
+  const page = validatePlanListPageOf(operation, 'run-list', validateLabelRunRecordWire, body);
+  return { schemaVersion: page.schemaVersion, scope: 'run-list', records: page.records, nextCursor: page.nextCursor, limit: page.limit };
+}
+
+const LABEL_ENTITIES: readonly LabelEntity[] = ['phase', 'feature', 'task', 'run'];
+
+/** P06-6 / F-007：四层实体标签去重计数（实体枚举 + 非负整数计数）。 */
+function validateEntityLabelCountsResultWire(
+  operation: HostOperation,
+  body: unknown,
+): EntityLabelCountsResult {
+  const object = requirePlain(operation, body);
+  exactKeys(operation, object, ['entity', 'labels']);
+  if (typeof object.entity !== 'string' || !LABEL_ENTITIES.includes(object.entity as LabelEntity)) {
+    malformed(operation, 'label_entity_invalid');
+  }
+  if (!Array.isArray(object.labels)) {
+    malformed(operation, 'label_counts_invalid');
+  }
+  const labels = object.labels.map((entry) => {
+    const record = requirePlain(operation, entry);
+    exactKeys(operation, record, ['label', 'count']);
+    if (typeof record.label !== 'string' || record.label.length === 0) {
+      malformed(operation, 'label_counts_invalid');
+    }
+    if (
+      typeof record.count !== 'number' ||
+      !Number.isSafeInteger(record.count) ||
+      record.count < 0
+    ) {
+      malformed(operation, 'label_counts_invalid');
+    }
+    return { label: record.label, count: record.count };
+  });
+  return { entity: object.entity as LabelEntity, labels };
 }
 
 /** features.get 完整 DAG 详情（Feature + 校验摘要 + 不可执行原因 + Task + 边）。 */
@@ -7230,6 +7307,17 @@ export function validateAppQueryResponse(
   body: unknown,
   expectation?: SnapshotExpectation,
 ): TaskListResult;
+// P06-6 / F-007：四层标签 Run 列表与实体标签计数查询响应重载。
+export function validateAppQueryResponse(
+  operation: 'runs.list',
+  body: unknown,
+  expectation?: SnapshotExpectation,
+): RunListResult;
+export function validateAppQueryResponse(
+  operation: 'labels.counts',
+  body: unknown,
+  expectation?: SnapshotExpectation,
+): EntityLabelCountsResult;
 export function validateAppQueryResponse(
   operation: 'tasks.get',
   body: unknown,
@@ -7527,6 +7615,10 @@ export function validateAppQueryResponse(
       return validateFeaturePlanDetailWire(operation, body);
     case 'tasks.list':
       return validateTaskListPage(operation, body);
+    case 'runs.list':
+      return validateRunListPage(operation, body);
+    case 'labels.counts':
+      return validateEntityLabelCountsResultWire(operation, body);
     case 'tasks.get': {
       const object = requirePlain(operation, body);
       exactKeys(operation, object, ['task']);

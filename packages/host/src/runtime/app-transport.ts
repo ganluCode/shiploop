@@ -99,7 +99,9 @@ import {
   PROJECT_LABEL_COUNTS_ROUTE,
   RECEIPTS_ROUTE_PREFIX,
   RESULTS_ROUTE_PREFIX,
+  RUNS_ROUTE,
   RUNS_ROUTE_PREFIX,
+  LABEL_COUNTS_ROUTE,
   RUN_SCHEDULE_ROUTE_SUFFIX,
   RUN_CONTROL_ROUTE_SUFFIX,
   RUN_RECOVERY_ROUTE_SUFFIX,
@@ -171,6 +173,10 @@ export type ApplicationOperation =
   | 'features.get'
   | 'tasks.list'
   | 'tasks.get'
+  // P06-6 / F-007：四层标签 Run 列表与实体标签计数只读查询（与 Core
+  // runs.list / labels.counts 操作身份同源）。
+  | 'runs.list'
+  | 'labels.counts'
   | 'task.strategy.reapply.preview'
   // P03-2 / F-007：Feature 审批决策查询（与 Core PLAN_APPROVAL_QUERY_OPERATION 同源）。
   | 'features.approvals'
@@ -404,10 +410,13 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
     }
     return undefined;
   }
-  // P03-4 / F-008：GET /v1/runs/:runId/schedule（恰两段；与 batches 同一
+  // P06-4 / F-008：GET /v1/runs/:runId/schedule（恰两段；与 batches 同一
   // 冻结形态）。P03-9 / F-013：GET /v1/runs/:runId/control 与
-  // /v1/runs/:runId/recovery 同一形态。其他 /v1/runs/* 形态一律未匹配 →
-  // 404 unknown_operation。
+  // /v1/runs/:runId/recovery 同一形态。P06-6 / F-007：GET /v1/runs 集合根
+  //（四层标签 Run 列表）。其他 /v1/runs/* 形态一律未匹配 → 404 unknown_operation。
+  if (path === RUNS_ROUTE) {
+    return { operation: 'runs.list', method: 'GET' };
+  }
   if (path.startsWith(RUNS_ROUTE_PREFIX)) {
     const segments = path.slice(RUNS_ROUTE_PREFIX.length).split('/');
     if (segments.some((segment) => segment.length === 0)) {
@@ -597,6 +606,10 @@ export function resolveAppRoute(path: string): ResolvedAppRoute | undefined {
   }
   if (path === TASK_STRATEGY_REAPPLICATION_ROUTE) {
     return { operation: 'task.strategy.reapply.preview', method: 'GET' };
+  }
+  // P06-6 / F-007：GET /v1/label-counts（四层实体标签去重计数集合根）。
+  if (path === LABEL_COUNTS_ROUTE) {
+    return { operation: 'labels.counts', method: 'GET' };
   }
   if (path === TASKS_ROUTE) {
     return { operation: 'tasks.list', method: 'GET' };
@@ -892,17 +905,27 @@ const QUERY_SPECS: Readonly<Partial<Record<ApplicationOperation, QuerySpec>>> = 
   'project.resources.candidates': Object.freeze({ allowed: ['sourceId'], repeatable: ['sourceId'] }),
   'project.resources.preview': Object.freeze({ allowed: ['sourceId', 'selectedResourceId'], repeatable: ['sourceId', 'selectedResourceId'] }),
   'repository.move.preview': Object.freeze({ allowed: ['path'], repeatable: [] }),
-  // P03-1 / F-009 §6.6：计划层级列表查询参数（父级身份 + 分页；取值规则由
-  // Core validatePlanListFilter 单一权威复核）。
+  // P03-1 / F-009 §6.6：计划层级列表查询参数（父级身份 + 分页；P06-6 /
+  // F-007 扩展可重复 label 与 match；取值规则由 Core 单一权威复核）。
   'phases.graph.get': Object.freeze({ allowed: ['projectId', 'limit', 'cursor'], repeatable: [] }),
-  'phases.list': Object.freeze({ allowed: ['projectId', 'limit', 'cursor'], repeatable: [] }),
+  'phases.list': Object.freeze({ allowed: ['projectId', 'limit', 'cursor', 'label', 'match'], repeatable: ['label'] }),
   'features.list': Object.freeze({
-    allowed: ['projectId', 'phaseId', 'limit', 'cursor'],
-    repeatable: [],
+    allowed: ['projectId', 'phaseId', 'limit', 'cursor', 'label', 'match'],
+    repeatable: ['label'],
   }),
   'tasks.list': Object.freeze({
-    allowed: ['projectId', 'featureId', 'limit', 'cursor'],
-    repeatable: [],
+    allowed: ['projectId', 'featureId', 'limit', 'cursor', 'label', 'match'],
+    repeatable: ['label'],
+  }),
+  // P06-6 / F-007：Run 列表与四层标签计数查询参数白名单（父级适用范围/
+  // 标签规范化/游标绑定由 Core 单一权威复核；计数不接受分页参数）。
+  'runs.list': Object.freeze({
+    allowed: ['projectId', 'featureId', 'batchId', 'limit', 'cursor', 'label', 'match'],
+    repeatable: ['label'],
+  }),
+  'labels.counts': Object.freeze({
+    allowed: ['entity', 'projectId', 'phaseId', 'featureId', 'batchId', 'label', 'match'],
+    repeatable: ['label'],
   }),
   'task.strategy.reapply.preview': Object.freeze({ allowed: ['projectId', 'taskId'], repeatable: ['taskId'] }),
   // P03-5 / F-011：工作区状态查询参数白名单（取值规则由 Core 单一权威复核）。
@@ -957,6 +980,26 @@ function parseQueryParams(
     }
   }
   return params;
+}
+
+/**
+ * P06-6 / F-007：四层标签列表/计数查询的 label/match 形态转换（与
+ * buildProjectListFilter 同一纪律：可重复 label 原样透传，match 不透明透传；
+ * 标签规范化、match 枚举、父级适用范围与游标绑定全部由 Core 单一权威复核）。
+ */
+function withEntityLabelFilter(
+  params: URLSearchParams,
+  query: Record<string, unknown>,
+): Record<string, unknown> {
+  const labels = params.getAll('label');
+  if (labels.length > 0) {
+    query.labels = labels;
+  }
+  const match = params.get('match');
+  if (match !== null) {
+    query.match = match;
+  }
+  return query;
 }
 
 /** projects.list 查询串 → Core 筛选对象（形态转换；取值规则仍由 Core 复核）。 */
@@ -1451,7 +1494,7 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
     case 'phases.list':
       result = await app.queryService.listPhases(
         app.principal,
-        buildPlanListQuery(params, operation, 'projectId'),
+        withEntityLabelFilter(params, buildPlanListQuery(params, operation, 'projectId')),
       );
       break;
     case 'phases.graph.get':
@@ -1465,7 +1508,7 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
     case 'features.list':
       result = await app.queryService.listFeatures(
         app.principal,
-        buildPlanListQuery(params, operation, 'projectId', 'phaseId'),
+        withEntityLabelFilter(params, buildPlanListQuery(params, operation, 'projectId', 'phaseId')),
       );
       break;
     case 'features.get':
@@ -1474,9 +1517,50 @@ async function handleQuery(input: ApplicationRequestInput): Promise<void> {
     case 'tasks.list':
       result = await app.queryService.listTasks(
         app.principal,
-        buildPlanListQuery(params, operation, 'projectId', 'featureId'),
+        withEntityLabelFilter(params, buildPlanListQuery(params, operation, 'projectId', 'featureId')),
       );
       break;
+    // P06-6 / F-007：四层标签 Run 列表（集合根 + 必填 projectId + 可选父级；
+    // 取值/可见性/游标绑定全部由 Core 单一权威复核，查询零写入）。
+    case 'runs.list': {
+      const query = withEntityLabelFilter(params, buildPlanListQuery(params, operation, 'projectId'));
+      for (const key of ['featureId', 'batchId']) {
+        if (params.has(key)) query[key] = params.get(key);
+      }
+      result = await app.queryService.listRuns(app.principal, query);
+      break;
+    }
+    // P06-6 / F-007：四层实体标签去重计数（entity 枚举为结构参数；父级适用
+    // 范围/标签语义由 Core 单一权威复核；不接受分页参数）。
+    case 'labels.counts': {
+      const entity = params.get('entity');
+      if (entity === null) {
+        reject(400, 'invalid_input', operation, 'labels.counts 必须携带 entity 查询参数', {
+          field: 'query.entity',
+          reason: 'missing_entity',
+        });
+      }
+      if (entity !== 'phase' && entity !== 'feature' && entity !== 'task' && entity !== 'run') {
+        reject(400, 'invalid_input', operation, "entity 必须是 'phase' | 'feature' | 'task' | 'run'", {
+          field: 'query.entity',
+          reason: 'invalid_entity',
+        });
+      }
+      const query: Record<string, unknown> = { entity };
+      const projectId = params.get('projectId');
+      if (projectId === null) {
+        reject(400, 'invalid_input', operation, 'labels.counts 必须携带 projectId 查询参数', {
+          field: 'query.projectId',
+          reason: 'missing_project_id',
+        });
+      }
+      query.projectId = projectId;
+      for (const key of ['phaseId', 'featureId', 'batchId']) {
+        if (params.has(key)) query[key] = params.get(key);
+      }
+      result = await app.queryService.getLabelCounts(app.principal, withEntityLabelFilter(params, query));
+      break;
+    }
     case 'tasks.get':
       result = await app.queryService.getTask(app.principal, pathParam?.value);
       break;

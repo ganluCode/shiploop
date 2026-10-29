@@ -54,6 +54,9 @@ import type {
   AttemptListResult,
   DispatchQueueListResult,
   ResourceListResult,
+  EntityLabelCountsResult,
+  LabelEntity,
+  RunListResult,
   BaselineDetailResult,
   BaselineComparisonResult,
   BaselineListResult,
@@ -152,7 +155,9 @@ import {
   PROJECT_LABEL_COUNTS_ROUTE,
   RECEIPTS_ROUTE_PREFIX,
   RESULTS_ROUTE_PREFIX,
+  RUNS_ROUTE,
   RUNS_ROUTE_PREFIX,
+  LABEL_COUNTS_ROUTE,
   RUN_CONTROL_ROUTE_SUFFIX,
   RUN_RECOVERY_ROUTE_SUFFIX,
   BATCH_CONTROL_ROUTE_SUFFIX,
@@ -372,6 +377,30 @@ export type ResourceListInput = DispatchQueueListInput;
 export interface PlanListPageInput {
   readonly limit?: number;
   readonly cursor?: string;
+}
+
+/** P06-6 / F-007：四层标签筛选输入（可重复标签 + any/all；规范化由 Core 复核）。 */
+export interface EntityLabelFilterInput {
+  readonly labels?: readonly string[];
+  readonly match?: 'any' | 'all';
+}
+
+/** 计划层级列表输入（分页 + 标签筛选；labels/match 缺省即无标签约束）。 */
+export interface PlanEntityListInput extends PlanListPageInput, EntityLabelFilterInput {}
+
+/** P06-6 / F-007：Run 列表输入（父级可选；查询零写入，仅持久元数据投影）。 */
+export interface RunListInput extends PlanEntityListInput {
+  readonly featureId?: string;
+  readonly batchId?: string;
+}
+
+/** P06-6 / F-007：四层实体标签计数输入（计数不接受分页参数）。 */
+export interface EntityLabelCountsInput extends EntityLabelFilterInput {
+  readonly entity: LabelEntity;
+  readonly projectId: string;
+  readonly phaseId?: string;
+  readonly featureId?: string;
+  readonly batchId?: string;
 }
 
 /** P03-8 / F-009 git.operations.list 父级选择（Feature 或 Run 二选一）。 */
@@ -884,26 +913,36 @@ export interface HostClientApplication {
     input: ReviseFeaturePlanInput,
     options?: SubmitCommandOptions,
   ): Promise<CommandReceipt>;
-  /** phases.list：项目内 Phase 层级列表（稳定排序、受控游标）。 */
-  listPhases(projectId: string, input?: PlanListPageInput): Promise<PhaseListResult>;
+  /** phases.list：项目内 Phase 层级列表（稳定排序、受控游标；P06-6 / F-007 扩展标签筛选）。 */
+  listPhases(projectId: string, input?: PlanEntityListInput): Promise<PhaseListResult>;
   /** phases.get：Phase 详情（真实父级/标签/revision）。 */
   getPhase(phaseId: string): Promise<PhaseDetailResult>;
-  /** features.list：Phase 内 Feature 层级列表。 */
+  /** features.list：Phase 内 Feature 层级列表（P06-6 / F-007 扩展标签筛选）。 */
   listFeatures(
     projectId: string,
     phaseId: string,
-    input?: PlanListPageInput,
+    input?: PlanEntityListInput,
   ): Promise<FeatureListResult>;
   /** features.get：Feature 详情与完整同 Feature Task DAG（一致读视图）。 */
   getFeature(featureId: string): Promise<FeatureDetailResult>;
-  /** tasks.list：Feature 内 Task 层级列表。 */
+  /** tasks.list：Feature 内 Task 层级列表（P06-6 / F-007 扩展标签筛选）。 */
   listTasks(
     projectId: string,
     featureId: string,
-    input?: PlanListPageInput,
+    input?: PlanEntityListInput,
   ): Promise<TaskListResult>;
   /** tasks.get：Task 详情（验收/引用/策略副本与来源）。 */
   getTask(taskId: string): Promise<TaskDetailResult>;
+  /**
+   * P06-6 / F-007 runs.list：项目内 Run 持久元数据列表（GET /v1/runs；
+   * 可选 featureId/batchId 父级 + 标签筛选；只读，不触达执行/配置快照）。
+   */
+  listRuns(projectId: string, input?: RunListInput): Promise<RunListResult>;
+  /**
+   * P06-6 / F-007 labels.counts：四层实体标签去重计数（GET /v1/label-counts；
+   * 与列表同一标签匹配语义，不接受分页参数）。
+   */
+  getLabelCounts(input: EntityLabelCountsInput): Promise<EntityLabelCountsResult>;
   /* ------------------------------------------------------------ *
    * P03-2 / F-007 决策/策略/输入准备命令与授权查询
    * ------------------------------------------------------------ */
@@ -1753,6 +1792,95 @@ function planListPath(
   }
   const paging = buildPlanListQuery(input, operation);
   const query = `${params.toString()}${paging.length === 0 ? '' : `&${paging}`}`;
+  return `${base}?${query}`;
+}
+
+/**
+ * P06-6 / F-007：四层标签列表查询串（分页 + 可重复 label + match；与
+ * buildProjectListQuery 同一形态纪律：标签为非空字符串且逐条不超上限，
+ * trim/NFC/小写/去重等规范化与 match 语义由 Core 单一权威复核）。
+ */
+const ENTITY_LABEL_LIST_INPUT_KEYS = ['limit', 'cursor', 'labels', 'match'] as const;
+const RUN_LIST_INPUT_KEYS = ['featureId', 'batchId', 'limit', 'cursor', 'labels', 'match'] as const;
+const LABEL_COUNTS_INPUT_KEYS = ['entity', 'projectId', 'phaseId', 'featureId', 'batchId', 'labels', 'match'] as const;
+
+/** labels/match 参数段（列表与计数共用；仅形态校验，规范化由 Core 复核）。 */
+function buildEntityLabelFilterQuery(
+  input: EntityLabelFilterInput,
+  operation: HostOperation,
+): string {
+  const params = new URLSearchParams();
+  if (input.labels !== undefined) {
+    if (
+      !Array.isArray(input.labels) ||
+      input.labels.length > 50 ||
+      !input.labels.every(
+        (label) => typeof label === 'string' && label.length > 0 && label.length <= 64,
+      )
+    ) {
+      throw invalidInput(operation, 'invalid_labels', 'labels');
+    }
+    for (const label of input.labels) {
+      params.append('label', label);
+    }
+  }
+  if (input.match !== undefined) {
+    if (input.match !== 'any' && input.match !== 'all') {
+      throw invalidInput(operation, 'invalid_match', 'match');
+    }
+    params.append('match', input.match);
+  }
+  return params.toString();
+}
+
+function buildEntityLabelListQuery(
+  input: PlanEntityListInput | undefined,
+  operation: HostOperation,
+): string {
+  if (input === undefined) {
+    return '';
+  }
+  const object = rejectUnknownInputKeys(operation, input, ENTITY_LABEL_LIST_INPUT_KEYS);
+  const params = new URLSearchParams();
+  if (object.limit !== undefined) {
+    if (
+      typeof object.limit !== 'number' ||
+      !Number.isInteger(object.limit) ||
+      object.limit < 1 ||
+      object.limit > PLAN_LIST_MAX_LIMIT
+    ) {
+      throw invalidInput(operation, 'invalid_limit', 'limit');
+    }
+    params.append('limit', String(object.limit));
+  }
+  if (object.cursor !== undefined) {
+    if (
+      typeof object.cursor !== 'string' ||
+      !object.cursor.startsWith(PLAN_LIST_CURSOR_PREFIX) ||
+      !/^[A-Za-z0-9_-]+$/.test(object.cursor.slice(PLAN_LIST_CURSOR_PREFIX.length))
+    ) {
+      throw invalidInput(operation, 'invalid_cursor', 'cursor');
+    }
+    params.append('cursor', object.cursor);
+  }
+  const filter = buildEntityLabelFilterQuery(object, operation);
+  const query = `${params.toString()}${filter.length === 0 ? '' : `&${filter}`}`;
+  return query;
+}
+
+/** 四层标签列表查询串（父级身份 + 分页 + 标签筛选；键序冻结）。 */
+function entityLabelListPath(
+  base: string,
+  parents: readonly [string, string][],
+  input: PlanEntityListInput | undefined,
+  operation: HostOperation,
+): string {
+  const params = new URLSearchParams();
+  for (const [key, value] of parents) {
+    params.append(key, value);
+  }
+  const suffix = buildEntityLabelListQuery(input, operation);
+  const query = `${params.toString()}${suffix.length === 0 ? '' : `&${suffix}`}`;
   return `${base}?${query}`;
 }
 
@@ -3236,12 +3364,12 @@ export function createHostClientApplication(context: AppClientContext): HostClie
       return receipt;
     },
 
-    async listPhases(projectId: string, input?: PlanListPageInput): Promise<PhaseListResult> {
+    async listPhases(projectId: string, input?: PlanEntityListInput): Promise<PhaseListResult> {
       context.assertOpen('phases.list');
       const id = requireProjectId('phases.list', projectId);
       const json = await getJson(
         'phases.list',
-        planListPath(PHASES_ROUTE, [['projectId', id]], input, 'phases.list'),
+        entityLabelListPath(PHASES_ROUTE, [['projectId', id]], input, 'phases.list'),
       );
       return validateAppQueryResponse('phases.list', json);
     },
@@ -3256,14 +3384,14 @@ export function createHostClientApplication(context: AppClientContext): HostClie
     async listFeatures(
       projectId: string,
       phaseId: string,
-      input?: PlanListPageInput,
+      input?: PlanEntityListInput,
     ): Promise<FeatureListResult> {
       context.assertOpen('features.list');
       const id = requireProjectId('features.list', projectId);
       const parent = requireStableIdInput('features.list', phaseId, 'phaseId');
       const json = await getJson(
         'features.list',
-        planListPath(FEATURES_ROUTE, [['projectId', id], ['phaseId', parent]], input, 'features.list'),
+        entityLabelListPath(FEATURES_ROUTE, [['projectId', id], ['phaseId', parent]], input, 'features.list'),
       );
       return validateAppQueryResponse('features.list', json);
     },
@@ -3278,16 +3406,68 @@ export function createHostClientApplication(context: AppClientContext): HostClie
     async listTasks(
       projectId: string,
       featureId: string,
-      input?: PlanListPageInput,
+      input?: PlanEntityListInput,
     ): Promise<TaskListResult> {
       context.assertOpen('tasks.list');
       const id = requireProjectId('tasks.list', projectId);
       const parent = requireStableIdInput('tasks.list', featureId, 'featureId');
       const json = await getJson(
         'tasks.list',
-        planListPath(TASKS_ROUTE, [['projectId', id], ['featureId', parent]], input, 'tasks.list'),
+        entityLabelListPath(TASKS_ROUTE, [['projectId', id], ['featureId', parent]], input, 'tasks.list'),
       );
       return validateAppQueryResponse('tasks.list', json);
+    },
+
+    async listRuns(projectId: string, input?: RunListInput): Promise<RunListResult> {
+      context.assertOpen('runs.list');
+      const id = requireProjectId('runs.list', projectId);
+      const object = input === undefined
+        ? {}
+        : rejectUnknownInputKeys('runs.list', input, RUN_LIST_INPUT_KEYS);
+      const parents: [string, string][] = [['projectId', id]];
+      if (object.featureId !== undefined) {
+        parents.push(['featureId', requireStableIdInput('runs.list', object.featureId, 'featureId')]);
+      }
+      if (object.batchId !== undefined) {
+        parents.push(['batchId', requireStableIdInput('runs.list', object.batchId, 'batchId')]);
+      }
+      // 父级已进查询参数；余下仅分页/标签筛选（键集已由 RUN_LIST_INPUT_KEYS 校验）。
+      const { featureId: _featureId, batchId: _batchId, ...filterInput } = object;
+      const json = await getJson(
+        'runs.list',
+        entityLabelListPath(RUNS_ROUTE, parents, filterInput as PlanEntityListInput, 'runs.list'),
+      );
+      return validateAppQueryResponse('runs.list', json);
+    },
+
+    async getLabelCounts(input: EntityLabelCountsInput): Promise<EntityLabelCountsResult> {
+      context.assertOpen('labels.counts');
+      const object = rejectUnknownInputKeys('labels.counts', input, LABEL_COUNTS_INPUT_KEYS);
+      if (
+        object.entity !== 'phase' &&
+        object.entity !== 'feature' &&
+        object.entity !== 'task' &&
+        object.entity !== 'run'
+      ) {
+        throw invalidInput('labels.counts', 'invalid_entity', 'entity');
+      }
+      const projectId = requireProjectId('labels.counts', object.projectId as string);
+      const params = new URLSearchParams();
+      params.append('entity', object.entity);
+      params.append('projectId', projectId);
+      if (object.phaseId !== undefined) {
+        params.append('phaseId', requireStableIdInput('labels.counts', object.phaseId, 'phaseId'));
+      }
+      if (object.featureId !== undefined) {
+        params.append('featureId', requireStableIdInput('labels.counts', object.featureId, 'featureId'));
+      }
+      if (object.batchId !== undefined) {
+        params.append('batchId', requireStableIdInput('labels.counts', object.batchId, 'batchId'));
+      }
+      const filter = buildEntityLabelFilterQuery(object, 'labels.counts');
+      const query = `${params.toString()}${filter.length === 0 ? '' : `&${filter}`}`;
+      const json = await getJson('labels.counts', `${LABEL_COUNTS_ROUTE}?${query}`);
+      return validateAppQueryResponse('labels.counts', json);
     },
 
     async getTask(taskId: string): Promise<TaskDetailResult> {

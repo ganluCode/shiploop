@@ -171,6 +171,12 @@ export type {
   PlanListResultBase, PublicTaskDependencyEdge, PublicTaskRecord,
   TaskDetailResult, TaskListResult,
 } from './ports/queries.js';
+// P06-6 / F-006 四层标签查询：Run 列表投影与实体标签计数公开形状（服务端负责
+// 授权；HostClient 线校验器复用同一形状，接线属 F-007）。
+export type {
+  EntityLabelCountsResult, EntityLabelCount, LabelEntity,
+  PublicLabelRunRecord, RunListResult,
+} from './ports/entity-label-query.js';
 // P03-2 / F-007 计划审批查询与决策记录：公开形状（服务端负责授权；HostClient
 // 线校验器复用同一形状与原因词汇）。
 export { PLAN_APPROVAL_QUERY_OPERATION, toPublicPlanApprovalRecord } from './ports/queries.js';

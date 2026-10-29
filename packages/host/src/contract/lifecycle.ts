@@ -179,6 +179,10 @@ export const APPLICATION_QUERY_CAPABILITIES = [
   'features.get',
   'tasks.list',
   'tasks.get',
+  // P06-6 / F-007：四层标签 Run 列表与实体标签计数只读查询真实接线（能力位
+  // 复用 project.read；与 Core runs.list / labels.counts 同步，不漂移）。
+  'runs.list',
+  'labels.counts',
   'task.strategy.reapply.preview',
   // P03-2 / F-007：Feature 审批决策查询（能力位复用 project.read；与 Core
   // PLAN_APPROVAL_QUERY_OPERATION 同步，不漂移）。

@@ -747,6 +747,8 @@ describe('F-011 传输纪律与版本门禁', () => {
         'feature.plan.revise',
         // P03-2 / F-001：Task 策略副本 CAS 编辑随 Core 白名单进入接线宣告。
         'task.strategy.update',
+        // P06-6 / F-004：默认策略批量重应用随 Core 白名单进入接线宣告。
+        'task.strategy.reapply',
         // P03-2 / F-002：计划批准/拒绝决策随 Core 白名单进入接线宣告。
         'feature.plan.decide',
         'task.approval.block',
@@ -1027,6 +1029,8 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         'feature.plan.revise',
         // P03-2 / F-001：Task 策略副本 CAS 编辑经既有 /v1/commands 通用路由接线。
         'task.strategy.update',
+        // P06-6 / F-004：默认策略批量重应用经既有 /v1/commands 通用路由接线。
+        'task.strategy.reapply',
         // P03-2 / F-002：计划批准/拒绝决策经既有 /v1/commands 通用路由接线。
         'feature.plan.decide',
         'task.approval.block',
@@ -1087,6 +1091,12 @@ describe('F-011 握手升版与真实 startHost 端到端装配', () => {
         'features.get',
         'tasks.list',
         'tasks.get',
+        // P06-6 / F-007：四层标签 Run 列表与实体标签计数查询真实接线
+        //（能力位复用 project.read；与 Core runs.list / labels.counts 同步）。
+        'runs.list',
+        'labels.counts',
+        // P06-6 / F-001：默认策略重应用只读预览查询真实接线。
+        'task.strategy.reapply.preview',
         // P03-2 / F-007：审批决策查询真实接线（能力位复用 project.read）。
         'features.approvals',
         // P03-3 / F-011：预算状态与修订历史只读查询经 Batch 路由真实接线。

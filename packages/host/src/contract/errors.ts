@@ -62,6 +62,10 @@ export const APP_OPERATIONS = [
   'features.get',
   'tasks.list',
   'tasks.get',
+  // P06-6 / F-007：四层标签 Run 列表与实体标签计数只读查询（能力位复用
+  // project.read；与 Core runs.list / labels.counts 同步，不漂移）。
+  'runs.list',
+  'labels.counts',
   'task.strategy.reapply.preview',
   // P03-2 / F-007：Feature 审批决策查询（当前决定 vs 历史 + 有效批准核验）。
   'features.approvals',

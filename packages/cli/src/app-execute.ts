@@ -357,6 +357,8 @@ type FeatureListResult = Awaited<ReturnType<HostClient['listFeatures']>>;
 type FeatureDetailResult = Awaited<ReturnType<HostClient['getFeature']>>;
 type TaskListResult = Awaited<ReturnType<HostClient['listTasks']>>;
 type TaskDetailResult = Awaited<ReturnType<HostClient['getTask']>>;
+type RunListResult = Awaited<ReturnType<HostClient['listRuns']>>;
+type EntityLabelCountsResult = Awaited<ReturnType<HostClient['getLabelCounts']>>;
 
 type ParsedPlanningCommand = Extract<ParsedAppCliCommand, { command: 'planning' }>;
 
@@ -673,6 +675,31 @@ function planListHumanLine(
     lines.push(`  nextCursor=${result.nextCursor}`);
   }
   return `${lines.join('\n')}\n`;
+}
+
+/** P06-6 / F-007：Run 列表人类可读行（只列持久元数据身份与状态）。 */
+function runListHumanLine(
+  result: { records: readonly { id: string; status: string }[]; nextCursor: string | null },
+): string {
+  const lines = [`shiploop execution runs: ${result.records.length} run(s)`];
+  for (const record of result.records) {
+    lines.push(`  - ${record.id} status=${record.status}`);
+  }
+  if (result.nextCursor !== null) {
+    lines.push(`  nextCursor=${result.nextCursor}`);
+  }
+  return `${lines.join('\n')}\n`;
+}
+
+/** P06-6 / F-007：四层实体标签计数人类可读行（entity + 去重计数）。 */
+function entityLabelCountsHumanLine(
+  result: { entity: string; labels: readonly { label: string; count: number }[] },
+): string {
+  const summary =
+    result.labels.length === 0
+      ? '（无标签）'
+      : result.labels.map((entry) => `${entry.label}=${entry.count}`).join(' ');
+  return `shiploop project labels (${result.entity}): ${summary}\n`;
 }
 
 function phaseDetailHumanLine(detail: PhaseDetailResult): string {
@@ -1331,8 +1358,21 @@ async function executeProjectCommand(
       return emitSuccess(io, command, result, projectDetailHumanLine(result));
     }
     case 'project.labels': {
-      const result = await client.countProjectLabels();
-      return emitSuccess(io, command, result, projectLabelsHumanLine(result));
+      // P06-6 / F-007：--entity 进入四层计数模式；无参保持项目层计数旧形态。
+      if (command.entity === undefined) {
+        const result = await client.countProjectLabels();
+        return emitSuccess(io, command, result, projectLabelsHumanLine(result));
+      }
+      const result = await client.getLabelCounts({
+        entity: command.entity,
+        projectId: command.projectId as string,
+        ...(command.phaseId !== undefined ? { phaseId: command.phaseId } : {}),
+        ...(command.featureId !== undefined ? { featureId: command.featureId } : {}),
+        ...(command.batchId !== undefined ? { batchId: command.batchId } : {}),
+        ...(command.labels !== undefined ? { labels: [...command.labels] } : {}),
+        ...(command.match !== undefined ? { match: command.match } : {}),
+      });
+      return emitSuccess(io, command, result, entityLabelCountsHumanLine(result));
     }
     default:
       return emitFailure(io, command.json, {
@@ -1680,6 +1720,8 @@ async function executePlanCommand(
     }
     case 'phase.list': {
       const result = await client.listPhases(command.projectId, {
+        ...(command.labels !== undefined ? { labels: [...command.labels] } : {}),
+        ...(command.match !== undefined ? { match: command.match } : {}),
         ...(command.limit !== undefined ? { limit: command.limit } : {}),
         ...(command.cursor !== undefined ? { cursor: command.cursor } : {}),
       });
@@ -1691,6 +1733,8 @@ async function executePlanCommand(
     }
     case 'feature.list': {
       const result = await client.listFeatures(command.projectId, command.phaseId, {
+        ...(command.labels !== undefined ? { labels: [...command.labels] } : {}),
+        ...(command.match !== undefined ? { match: command.match } : {}),
         ...(command.limit !== undefined ? { limit: command.limit } : {}),
         ...(command.cursor !== undefined ? { cursor: command.cursor } : {}),
       });
@@ -1702,6 +1746,8 @@ async function executePlanCommand(
     }
     case 'task.list': {
       const result = await client.listTasks(command.projectId, command.featureId, {
+        ...(command.labels !== undefined ? { labels: [...command.labels] } : {}),
+        ...(command.match !== undefined ? { match: command.match } : {}),
         ...(command.limit !== undefined ? { limit: command.limit } : {}),
         ...(command.cursor !== undefined ? { cursor: command.cursor } : {}),
       });
@@ -2233,6 +2279,19 @@ async function executeExecutionCommand(
       });
       const view = buildExecutionAttemptsView(result);
       return emitSuccess(io, command, view, formatExecutionAttemptsView(view));
+    }
+    // P06-6 / F-007：Run 持久元数据标签列表（runs.list 只读查询；不触达
+    // 执行/配置快照，不打开状态库）。
+    case 'execution.runs': {
+      const result = await client.listRuns(command.projectId, {
+        ...(command.featureId !== undefined ? { featureId: command.featureId } : {}),
+        ...(command.batchId !== undefined ? { batchId: command.batchId } : {}),
+        ...(command.labels.length > 0 ? { labels: [...command.labels] } : {}),
+        match: command.match,
+        ...(command.limit !== undefined ? { limit: command.limit } : {}),
+        ...(command.cursor !== undefined ? { cursor: command.cursor } : {}),
+      });
+      return emitSuccess(io, command, result, runListHumanLine(result));
     }
     case 'execution.diagnostics': {
       const result = await client.listAttemptDiagnostics(command.projectId, command.attemptId, {
