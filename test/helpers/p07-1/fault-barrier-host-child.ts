@@ -43,6 +43,20 @@ import {
 import { readChildConfig } from '../host/child-runtime.ts';
 
 const send = process.send?.bind(process);
+
+/** Trusted test-only IPC barrier after observable command/batch completion. */
+async function verificationBarrier(kind: string): Promise<void> {
+  send?.({ kind });
+  await new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => { process.off('message', release); reject(new Error(`${kind}: barrier timeout`)); }, 90_000);
+    const release = (message: unknown) => {
+      if ((message as { kind?: string })?.kind === `release_${kind}`) {
+        clearTimeout(timer); process.off('message', release); resolve();
+      }
+    };
+    process.on('message', release);
+  });
+}
 if (!send) throw new Error('fault-barrier-host-child 必须以 IPC 通道启动');
 
 const config = readChildConfig();
@@ -58,6 +72,7 @@ const verifierConfig = config.verifier === null || config.verifier === undefined
     readonly targetPath: string; readonly expectedContent: string;
     readonly checkTimeoutMs: number; readonly holdBudgetMs: number; readonly waitAttemptTimeoutMs: number;
     readonly stopGraceMs: number; readonly stopConfirmMs: number;
+    readonly testCount?: number; readonly descendantPath?: string;
   };
 if (verifierConfig !== undefined) {
   for (const field of ['checkRunner', 'markerPath', 'holdPath', 'targetPath', 'expectedContent'] as const) {
@@ -262,10 +277,21 @@ const runVerifierLoop = async (signal: AbortSignal): Promise<void> => {
     const identity = verificationCodeIdentity(inspection);
     const snapshot = JSON.parse(attempt.input_snapshot) as { approval: { checkPolicyDigest: string; planDigest: string } };
     const now = () => Date.now();
+    const processes = createCommandProcessAdapter({
+      stopGraceMs: verifierConfig.stopGraceMs, stopConfirmMs: verifierConfig.stopConfirmMs,
+    });
     const executor = createNodeTaskVerificationExecutor({
-      processes: createCommandProcessAdapter({
-        stopGraceMs: verifierConfig.stopGraceMs, stopConfirmMs: verifierConfig.stopConfirmMs,
-      }),
+      processes: {
+        ...processes,
+        async start(...args) {
+          const handle = await processes.start(...args);
+          if (config.verifierExitBarrier !== true) return handle;
+          return { ...handle, result: handle.result.then(async result => {
+            await verificationBarrier('verifier_command_exited');
+            return result;
+          }) };
+        },
+      },
       verification: createSqliteVerificationStore(probe, { nowUtcMs: now }),
       atomic: createSqliteAtomicCommandStore(probe, { nowUtcMs: now }),
       artifacts: createSqliteArtifactStore(probe, { nowUtcMs: now }),
@@ -300,12 +326,21 @@ const runVerifierLoop = async (signal: AbortSignal): Promise<void> => {
           checkKey: 'tests', scope: 'task' as const, kind: 'command' as const,
           argv: [process.execPath, '--no-warnings', verifierConfig.checkRunner,
             verifierConfig.markerPath, verifierConfig.holdPath, verifierConfig.targetPath,
-            verifierConfig.expectedContent, String(verifierConfig.holdBudgetMs)],
+            verifierConfig.expectedContent, String(verifierConfig.holdBudgetMs),
+            String(verifierConfig.testCount ?? 1), ...(verifierConfig.descendantPath ? [verifierConfig.descendantPath] : [])],
           cwdRef: null, environmentRef: null,
           timeout: verifierConfig.checkTimeoutMs, required: true, requirementRefs: [],
         }],
       },
       targets: ['p07-1-f001'],
+      ...(config.verifierBatchBarrier === true ? {
+        assertCurrentIdentity: async () => {
+          await verificationBarrier('verifier_check_saved');
+          const current = await createWorkspaceInspector({ authorizedRoots: [config.fixtureRoot as string],
+            confirmProcessIdentity: async process => ({ launchId: process.launchId }) }).inspect(baseline);
+          return verificationCodeIdentity(current).codeDigest === identity.codeDigest;
+        },
+      } : {}),
       signal,
     });
     send({
@@ -314,6 +349,7 @@ const runVerifierLoop = async (signal: AbortSignal): Promise<void> => {
       testCount: result.results[0]?.testCount ?? null,
     });
     if (result.status !== 'passed') return;
+    if (config.verifierCompletionBarrier === true) await verificationBarrier('verifier_batch_finalized');
     /* 公开收尾入口：passed 批次经真实 task committer 提交并结算（真实 Git 副作用）。 */
     const completion = await host.core.taskVerificationCompletion.complete({
       identity: {

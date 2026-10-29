@@ -105,6 +105,7 @@ const SCHEMA_TABLES = [
   ['planning_contexts', schema.planningContexts],
   // P03-7 / F-002：VerificationBatch / CheckResult 与不可变验证证据身份（迁移 v21）。
   ['verification_batches', schema.verificationBatches],
+  ['verification_processes', schema.verificationProcesses],
   ['check_results', schema.checkResults],
   // P03-8 / F-002：受控 Git 操作意图与回执（迁移 v26）。
   ['git_operations', schema.gitOperations],
@@ -468,11 +469,16 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
           actual.map((row) => row.name),
           `${tableName} 实际列必须与 Drizzle Schema 完全一致`,
         ).toEqual(drizzleColumns.map((column) => column.name));
+        const compositePrimary = getTableConfig(table).primaryKeys.flatMap(key => key.columns.map(column => column.name));
         for (const column of drizzleColumns) {
           const info = actual.find((row) => row.name === column.name);
           expect(info, `${tableName}.${column.name} 必须存在于实际 DDL`).toBeDefined();
-          if (column.primary) {
+          if (column.primary || compositePrimary.includes(column.name)) {
             expect(info?.pk, `${tableName}.${column.name} 必须是主键`).toBeGreaterThan(0);
+            if (compositePrimary.includes(column.name)) {
+              expect(info?.pk).toBe(compositePrimary.indexOf(column.name) + 1);
+              expect(info?.notnull).toBe(column.notNull ? 1 : 0);
+            }
           } else {
             expect(info?.pk, `${tableName}.${column.name} 不得是主键`).toBe(0);
             expect(info?.notnull, `${tableName}.${column.name} 的 NOT NULL 必须一致`).toBe(
@@ -546,6 +552,7 @@ describe('F-003 migrated DDL matches the Drizzle schema', () => {
       // 期望的外键映射（子列 → 父列；复合外键逐列对应），含 F-008 补齐的同项目复合外键
       // 与 P02-3 / F-007 基线四表的同项目复合外键/制品引用外键。
       const expectedFks = new Set([
+        'verification_processes:(batch_id)->verification_batches.(id)',
         'projects:(repository_binding_id)->repository_bindings.(id)',
         'projects:(id,repository_binding_id)->repository_bindings.(project_id,id)',
         'repository_bindings:(project_id)->projects.(id)',

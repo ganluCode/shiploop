@@ -1,3 +1,4 @@
+import { readVerificationProcesses } from './verification-processes.js';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { validateWorkProcessIdentity } from '../../ports/work-resources.js';
@@ -136,7 +137,11 @@ export function createSqliteWorkStartupRecoveryStore(session: SqliteStorageSessi
           if (workspace && (workspace.owner_id !== row.owner_id || workspace.host_instance_id !== row.host_instance_id
             || workspace.execution_version !== row.execution_version || workspace.run_id !== row.run_id
             || workspace.attempt_id !== row.id)) gaps.push('workspace_identity_mismatch');
+          let verificationProcesses: ReturnType<typeof readVerificationProcesses> | undefined = undefined;
+          try { verificationProcesses = readVerificationProcesses(session, row.project_id, row.id); }
+          catch { gaps.push('verifier_process_census_incomplete'); }
           const target: WorkStartupRecoveryTarget = { projectId: row.project_id, runId: row.run_id, attemptId: row.id,
+            ...(verificationProcesses?.length ? { verificationProcesses } : {}),
             owner: row.owner_id, hostInstanceId: row.host_instance_id, executionVersion: row.execution_version,
             executionStage: row.execution_stage, processIdentity, gaps };
           const fenced = findEvent('fenced', row.id);
@@ -146,7 +151,8 @@ export function createSqliteWorkStartupRecoveryStore(session: SqliteStorageSessi
               || previous.attemptId !== target.attemptId || previous.owner !== target.owner
               || previous.hostInstanceId !== target.hostInstanceId || previous.executionVersion !== target.executionVersion
               || previous.executionStage !== target.executionStage
-              || !isDeepStrictEqual(previous.processIdentity, processIdentity) || !Array.isArray(previous.gaps)) {
+              || !isDeepStrictEqual(previous.processIdentity, processIdentity)
+              || !isDeepStrictEqual(previous.verificationProcesses, target.verificationProcesses) || !Array.isArray(previous.gaps)) {
               throw new TypeError('Persisted recovery fence changed');
             }
             gaps.push(...previous.gaps);
@@ -257,6 +263,7 @@ export function createSqliteWorkStartupRecoveryStore(session: SqliteStorageSessi
           || fencedPayload.executionVersion !== evidence.executionVersion
           || fencedPayload.executionStage !== evidence.executionStage
           || !isDeeplyEqualProcessIdentity(fencedPayload.processIdentity, evidence.processIdentity)
+          || !isDeepStrictEqual(fencedPayload.verificationProcesses, evidence.verificationProcesses)
           || !Array.isArray(fencedPayload.gaps) || fencedPayload.gaps.some(gap => !evidence.gaps.includes(String(gap)))) {
           throw new TypeError('Recovery process identity changed');
         }

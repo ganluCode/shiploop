@@ -38,6 +38,7 @@ export interface WorkResourceSnapshot {
   readonly processIdentity: CommandProcessIdentity | null;
   /** Host managed child processes (for example MCP server groups) recovered with this invocation. */
   readonly managedProcesses?: readonly WorkManagedProcess[];
+  readonly verificationProcesses?: readonly CommandProcessIdentity[];
   readonly leases: readonly WorkspaceLeaseRecord[];
 }
 export interface WorkResourceAccess {

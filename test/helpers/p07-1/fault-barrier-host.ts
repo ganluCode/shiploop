@@ -133,6 +133,7 @@ export interface FaultBarrierFixtureOptions {
   /** 植入条件 post-commit 钩子并预置 hold 文件（Git 提交边界场景）。 */
   readonly gitBarrier?: boolean;
   readonly prefix?: string;
+  readonly dependentTask?: boolean;
 }
 
 export async function openFaultBarrierFixture(
@@ -140,6 +141,7 @@ export async function openFaultBarrierFixture(
 ): Promise<FaultBarrierFixture> {
   const env = createIsolatedHostEnvironment({ prefix: options.prefix ?? 'shiploop-p07f001-' });
   const fixture = await openBindingFixture({
+    secondTask: options.dependentTask, secondTaskDependsOnFirst: options.dependentTask,
     deliveryPolicy: {
       commitMode: 'task_and_feature',
       gitIdentity: { name: 'P07 F001 Owner', email: 'p07-f001@example.test', confirmed: true },

@@ -1,3 +1,4 @@
+import { createSqliteVerificationStore } from './verification-store.js';
 import { createSqliteDispatchRecovery, workRecoveryFingerprint } from './dispatch-recovery.js';
 import { createSqliteAttemptAccess } from './attempt-store.js';
 import { GIT_OPERATION_COLUMNS, gitOperationRecordFromRow } from './git-operations.js';
@@ -187,16 +188,36 @@ export function createSqliteWorkRecoveryReconciliationStore(session: SqliteStora
         const refs = [attempt.codeRef, attempt.diagnosticRef,
           sessionRecord?.resultRef ?? null,
           recoverySource?.nativeArchiveRef ?? null].filter((value): value is string => value !== null);
+        const verificationGaps: string[] = [];
+        const verification = createSqliteVerificationStore(session);
+        const verificationBatches = verification.listAttemptVerificationBatches(source.projectId, attempt.id);
+        if (verificationBatches.length > 64) verificationGaps.push('verification_history_limit');
+        for (const batch of verificationBatches.slice(0, 64)) {
+          if (batch.status === 'running') verificationGaps.push('verification_batch_incomplete');
+          if (batch.taskId !== attempt.taskId || batch.runId !== attempt.runId || batch.featureId !== attempt.featureId
+            || batch.executionVersion !== attempt.executionVersion
+            || batch.policyDigest !== attempt.inputSnapshot.approval?.checkPolicyDigest) verificationGaps.push('verification_identity_mismatch');
+          const results = verification.listCheckResults(source.projectId, batch.id);
+          if (batch.checkSnapshot.some(check => (check.required || batch.selection.selectedCheckKeys.includes(check.checkKey))
+            && !results.some(result => result.checkKey === check.checkKey))) verificationGaps.push('verification_checks_missing');
+          for (const check of results) {
+            const evidence = verification.readCheckResultEvidence(source.projectId, check.id);
+            if (evidence.status !== 'complete') verificationGaps.push('verification_output_incomplete');
+            else refs.push(evidence.artifactId);
+          }
+        }
         const pendingWorkspace = workspace === null ? [] : loadPendingWorkspaceOperations(source.projectId, source.runId, workspace.id);
         for (const operation of pendingWorkspace) {
           refs.push(...operation.result?.evidenceRefs ?? []);
           if (operation.result?.errorRef !== null && operation.result?.errorRef !== undefined) refs.push(operation.result.errorRef);
         }
+        if (new Set(refs).size > 64) verificationGaps.push('verification_artifact_limit');
         const dispatchLink = dispatch.link(dispatchAttempt(attempt));
         const alreadyReconciled = run.status === 'paused' && workspace?.status === 'retained'
           && resources.leases.length === 0 && dispatchLink.gaps.length === 0
           && (dispatchLink.claim === null || dispatchLink.claim.state === 'released');
         return {
+          verificationGaps, verificationCodeDigests: verificationBatches.map(batch => batch.codeDigest),
           recoveryFingerprint: workRecoveryFingerprint(session, attempt.id), dispatchGaps: dispatchLink.gaps,
           attempt, runStatus: run.status, workspace, session: sessionRecord, resources,
           artifacts: loadArtifacts(source.projectId, refs),

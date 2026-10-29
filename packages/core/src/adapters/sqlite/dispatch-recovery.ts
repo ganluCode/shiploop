@@ -243,6 +243,7 @@ export function workRecoveryFingerprint(session: SqliteStorageSession, attemptId
       SELECT run_id, code_ref AS ref FROM attempts UNION ALL SELECT run_id, diagnostic_ref AS ref FROM attempts
       UNION ALL SELECT run_id, input_ref AS ref FROM attempts
       UNION ALL SELECT a.run_id, s.result_ref AS ref FROM sessions s JOIN attempts a ON a.id = s.attempt_id
+      UNION ALL SELECT b.run_id, c.output_artifact_id AS ref FROM check_results c JOIN verification_batches b ON b.id = c.batch_id
       ) WHERE run_id = ?)`, runId],
     ['git_operations', 'run_id = ?', runId],
     ['workspace_operations', 'workspace_id IN (SELECT id FROM managed_workspaces WHERE feature_id = ?)', attempt.feature_id],
@@ -253,5 +254,9 @@ export function workRecoveryFingerprint(session: SqliteStorageSession, attemptId
     if (rows.length > LIMIT) recoveryConflict('recovery_history_limit');
     return [table, rows];
   });
+  const verifierProcesses = db.prepare(`SELECT p.* FROM verification_processes p JOIN verification_batches b ON b.id = p.batch_id
+    WHERE b.run_id = ? ORDER BY p.batch_id, p.check_key LIMIT ${LIMIT + 1}`).all(runId);
+  if (verifierProcesses.length > LIMIT) recoveryConflict('recovery_history_limit');
+  facts.push(['verification_processes', verifierProcesses]);
   return createHash('sha256').update(JSON.stringify(facts)).digest('hex');
 }

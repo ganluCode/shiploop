@@ -58,6 +58,7 @@ import type { BatchDeliveryFactory } from '../application/batch-delivery-command
 export type { BatchDeliveryFactory, BatchDeliveryDependencies } from '../application/batch-delivery-commands.js';
 import type { FeatureDeliveryFactory } from '../application/feature-delivery-commands.js';
 export type { FeatureDeliveryFactory, FeatureDeliveryDependencies } from '../application/feature-delivery-commands.js';
+import { verifyStoredVerificationOutputs } from '../application/verification-output-evidence.js';
 import { assertVerificationReuseIdentity, validateTaskVerificationContinue } from '../application/task-verification-continue.js';
 import type { CommandService } from '../application/command-service.js';
 import { createBaselineExecutionService } from '../application/baseline-execution.js';
@@ -1239,6 +1240,8 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       publisher: workspacePublisher,
       commitTask: input => commitTask({ ...input, codeDigest: input.observation.afterIdentity.codeDigest,
         expectedHead: input.observation.afterIdentity.headCommit }),
+      verifyEvidence: (projectId, batchId) => verifyStoredVerificationOutputs({ verification: verificationStore,
+        artifacts: artifactStore, files: artifactFileStore }, projectId, batchId),
       ...(nowUtcMs === undefined ? {} : { nowMs: nowUtcMs }),
     });
     const batchDelivery = (object.batchDeliveryFactory as BatchDeliveryFactory | undefined)?.({ atomicStore });
@@ -1312,14 +1315,11 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
           assertVerificationReuseIdentity(batch, batch.codeDigest);
           const verifier = createArtifactVerifier({ artifacts: artifactStore, files: artifactFileStore,
             limits: { maxReadBytes: 16_000_000 } });
+          await verifyStoredVerificationOutputs({ verification: verificationStore, artifacts: artifactStore,
+            files: artifactFileStore }, projectId, batch.id);
           const checks = verificationStore.listCheckResults(projectId, batch.id);
           if (checks.length === 0 || checks.some(check => check.status !== 'passed')) throw stale();
           const ids = new Set<string>();
-          for (const check of checks) {
-            const evidence = verificationStore.readCheckResultEvidence(projectId, check.id);
-            if (evidence.status !== 'complete') throw stale();
-            ids.add(evidence.artifactId);
-          }
           if (attempt.codeRef === null || attempt.diagnosticRef === null) throw stale();
           ids.add(attempt.codeRef);
           ids.add(attempt.diagnosticRef);

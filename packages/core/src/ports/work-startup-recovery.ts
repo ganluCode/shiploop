@@ -12,6 +12,7 @@ export interface WorkStartupRecoveryTarget {
   readonly executionVersion: number;
   readonly executionStage: string;
   readonly processIdentity: CommandProcessIdentity | null;
+  readonly verificationProcesses?: readonly CommandProcessIdentity[];
   readonly gaps: readonly string[];
 }
 export interface WorkStartupRecoveryEvidence extends WorkStartupRecoveryTarget {

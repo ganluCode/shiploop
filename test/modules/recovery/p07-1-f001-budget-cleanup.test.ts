@@ -99,22 +99,15 @@ describe.skipIf(process.platform !== 'darwin')('P07-1 / F-001 fault barrier fixt
     await waitFor(() => fixture.verifierMarker() !== undefined, '检查命令已启动', 90_000);
     const marker = fixture.verifierMarker()!;
 
-    /* 检查超时预算（4s）内：受监督进程组停止被强制执行——检查进程真实退出，
-     * 不等 hold 预算（120s）。已知产品缺口：executor 把超时映射为
-     * inconclusive+timedOut，而真实 verification store 契约要求 failed/error
-     *（p03-9-f004 只用 fake store 逐层断言，未暴露该冲突）。因此批次当前停在
-     * running 且夹具以 verifier_error 上报，不仍造有界定版；本用例验证的是
-     * 夹具的有界性与不伪通过，冲突修复属于后续产品 Task。 */
+    /* A timeout is a durable infrastructure error, with real process absence. */
     const startedAt = Date.now();
     await waitFor(() => !alive(marker.pid), '检查超时后有界停止检查进程', 30_000);
     expect(Date.now() - startedAt).toBeLessThan(30_000);
     const reported = await child.waitMessage(['verifier_error', 'verifier_result'], 30_000);
-    if (reported.kind === 'verifier_result') {
-      throw new Error(`产品缺口已修复（超时可定版）请更新本用例: ${JSON.stringify(reported)}`);
-    }
-    expect(reported).toMatchObject({ kind: 'verifier_error', name: 'StorageError' });
-    /* 不伪通过：Task 未通过、无提交副作用，批次保持 running 而非伪造定版。 */
-    expect(fixture.q('SELECT status FROM verification_batches')).toMatchObject({ status: 'running' });
+    expect(reported).toMatchObject({ kind: 'verifier_result', status: 'error',
+      checks: [{ checkKey: 'tests', status: 'error', reason: 'timed_out' }] });
+    expect(fixture.q('SELECT status FROM verification_batches')).toMatchObject({ status: 'error' });
+    expect(fixture.q('SELECT status, timed_out FROM check_results')).toEqual({ status: 'error', timed_out: 1 });
     expect(fixture.q('SELECT status FROM tasks')).toMatchObject({ status: 'running' });
     expect(attemptRow(fixture)).toMatchObject({ status: 'verifying' });
     expect(fixture.q('SELECT COUNT(*) AS n FROM git_operations')).toEqual({ n: 0 });

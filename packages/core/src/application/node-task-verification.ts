@@ -300,7 +300,7 @@ export function createNodeTaskVerificationExecutor(options: NodeTaskVerification
     const resultId = randomUUID();
     const saved = options.atomic.transact('verification.save-result', tx => options.verification.saveCheckResultInTransaction(tx, {
       resultId, projectId: input.projectId, batchId: input.batchId, checkKey: check.checkKey, status: 'not_run',
-      exitCode: null, signal: null, timedOut: false, outputArtifactId: null, outputTail: null, startedAtUtcMs: null, endedAtUtcMs: now(),
+      exitCode: null, signal: null, timedOut: false, outputArtifactId: null, outputTail: null, startedAtUtcMs: null, endedAtUtcMs: null,
     }));
     return { checkKey: check.checkKey, status: saved.result.status, reason, resultId: saved.result.id, testCount: null, evidence: null };
   }
@@ -333,6 +333,11 @@ export function createNodeTaskVerificationExecutor(options: NodeTaskVerification
         if (!launch.authorized || launch.invocationId === null) throw new CommandProcessError('confirmation_failed');
       }
       handle = await options.processes.start(request, async identity => {
+        options.atomic.transact('verification.confirm-check-process', tx => {
+          options.verification.confirmCheckProcessInTransaction?.(tx, {
+            projectId: input.projectId, batchId: input.batchId, checkKey: check.checkKey, processIdentity: identity,
+          });
+        });
         const confirmed = await confirm(identity);
         identityConfirmed = true;
         return confirmed;
@@ -347,9 +352,10 @@ export function createNodeTaskVerificationExecutor(options: NodeTaskVerification
       const resultReason: CommandProcessReason | null = captured.processReason;
       if (!captured.stopConfirmed) reason = 'stop_unconfirmed';
       else if (resultReason === 'missing_command' || resultReason === 'permission_denied' || resultReason === 'spawn_failed') { status = 'error'; reason = resultReason; }
-      else if (resultReason === 'timed_out') reason = boundedByParentDeadline
-        ? `${input.deadlineLayer ?? 'run'}_deadline_reached`
-        : resultReason;
+      else if (resultReason === 'timed_out') {
+        status = 'error';
+        reason = boundedByParentDeadline ? `${input.deadlineLayer ?? 'run'}_deadline_reached` : resultReason;
+      }
       else if (resultReason === 'cancelled' || resultReason === 'output_overflow') reason = resultReason;
       else if (!captured.integrity.complete || !captured.output || captured.report === null) reason = 'evidence_incomplete';
       else if (observed.report === null) reason = 'invalid_result_protocol';

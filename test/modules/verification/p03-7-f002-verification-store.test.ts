@@ -1,3 +1,4 @@
+import { readVerificationProcesses } from '../../../packages/core/src/adapters/sqlite/verification-processes.ts';
 import { currentSchemaVersion } from '../../helpers/current-schema.ts';
 /**
  * P03-7 / F-002 VerificationBatch / CheckResult 与不可变验证证据身份持久化（真实 SQLite，非 mock）。
@@ -112,6 +113,83 @@ async function fixture() {
   });
   return { box, db, ids, inputSnapshot, insertArtifact, insertAttempt, store, batchInput, resultInput };
 }
+
+describe('P07-1 F-006 verification recovery fences', () => {
+  it('[case:p07-verifier-upgrade] upgrades the predecessor database without rewriting facts and rolls back a failed verifier migration', async () => {
+    const sandbox = createTempSandbox('shiploop-p07-verifier-upgrade-');
+    const session = openSqliteStorageSession({ path: join(sandbox.path, 'state.sqlite') });
+    try {
+      await migrateSqliteStorage(session, { migrations: SQLITE_MIGRATIONS.slice(0, 53) });
+      session.database.prepare("INSERT INTO projects (id, created_at, updated_at, display_name) VALUES ('preserved', ?, ?, 'Preserved')").run(NOW, NOW);
+      const before = session.database.prepare('SELECT * FROM schema_migrations ORDER BY version').all();
+      const sql = SQLITE_MIGRATIONS[53]!.sql + '\nINSERT INTO nonexistent_migration_target VALUES (1);';
+      await expect(migrateSqliteStorage(session, { migrations: [...SQLITE_MIGRATIONS.slice(0, 53),
+        { version: 54, sql, checksum: createHash('sha256').update(sql).digest('hex') }] }))
+        .rejects.toMatchObject({ step: 'apply', version: 54 });
+      expect(session.database.prepare("SELECT name FROM sqlite_master WHERE name = 'verification_processes'").get()).toBeUndefined();
+      expect(session.database.prepare('SELECT * FROM schema_migrations ORDER BY version').all()).toEqual(before);
+      await migrateSqliteStorage(session);
+      expect(session.database.prepare('SELECT * FROM schema_migrations WHERE version <= 53 ORDER BY version').all()).toEqual(before);
+      expect(session.database.prepare("SELECT display_name FROM projects WHERE id = 'preserved'").get()).toEqual({ display_name: 'Preserved' });
+      expect(session.database.prepare('SELECT COUNT(*) AS n FROM verification_processes').get()).toEqual({ n: 0 });
+    } finally { session.close(); sandbox.cleanup(); }
+  });
+  it('[case:p07-process-identity] commits process identity before launch, rolls back on failure, and retains immutable identity across reopen', async () => {
+    const f = await fixture();
+    try {
+      f.insertAttempt();
+      const store = f.store();
+      store.createVerificationBatch(f.batchInput());
+      const atomic = createSqliteAtomicCommandStore(f.box.session);
+      const input = { projectId: f.box.projectId, batchId: 'vbatch-1', checkKey: 'unit-tests',
+        processIdentity: { launchId: randomUUID(), pid: 42, processGroupId: 42, startTime: 'trusted-birth' } };
+      expect(() => atomic.transact('test.confirm-rollback', tx => {
+        store.confirmCheckProcessInTransaction!(tx, input);
+        throw new Error('rollback');
+      })).toThrow('rollback');
+      expect(readVerificationProcesses(f.box.session, f.box.projectId, 'attempt-1')).toEqual([]);
+      atomic.transact('test.confirm', tx => store.confirmCheckProcessInTransaction!(tx, input));
+      expect(() => atomic.transact('test.confirm-conflict', tx => store.confirmCheckProcessInTransaction!(tx,
+        { ...input, processIdentity: { ...input.processIdentity, startTime: 'reused-pid' } }))).toThrow(/immutable/);
+      expect(() => f.db.prepare("DELETE FROM verification_processes WHERE batch_id = 'vbatch-1'").run()).toThrow(/immutable/);
+      f.box.session.close();
+      const reopened = openSqliteStorageSession({ path: f.box.box.dbPath });
+      try {
+        expect(readVerificationProcesses(reopened, f.box.projectId, 'attempt-1')).toEqual([input.processIdentity]);
+      } finally { reopened.close(); }
+    } finally { f.box.close(); }
+  });
+  it('[case:p07-required-results] refuses a passed batch with a missing selected check', async () => {
+    const f = await fixture();
+    try {
+      f.insertAttempt();
+      const store = f.store();
+      store.createVerificationBatch(f.batchInput());
+      store.saveCheckResult(f.resultInput());
+      store.createVerificationBatch(f.batchInput({ batchId: 'other-batch', codeDigest: HASH_C }));
+      store.saveCheckResult(f.resultInput({ resultId: 'other-result', batchId: 'other-batch',
+        checkKey: 'lint', outputArtifactId: 'output-2' }));
+      expect(() => store.finalizeVerificationBatch({ projectId: f.box.projectId, batchId: 'vbatch-1',
+        expectedRevision: 1, status: 'passed', endedAtUtcMs: NOW + 1000 })).toThrow(/checks|result/i);
+      expect(store.getVerificationBatch(f.box.projectId, 'vbatch-1').status).toBe('running');
+    } finally { f.box.close(); }
+  });
+
+  it('[case:p07-late-result] fences old check publication and batch finalization after recovery advances the Task version', async () => {
+    const f = await fixture();
+    try {
+      f.insertAttempt();
+      const store = f.store();
+      store.createVerificationBatch(f.batchInput({ checkSnapshot: [CHECK_UNIT],
+        selection: { schemaVersion: 1, mode: 'full_fallback', reason: 'full', selectedCheckKeys: ['unit-tests'] } }));
+      f.db.prepare('UPDATE tasks SET execution_version = execution_version + 1 WHERE id = ?').run(f.ids.taskId);
+      expect(() => store.saveCheckResult(f.resultInput())).toThrow(/stale|identity/i);
+      expect(() => store.finalizeVerificationBatch({ projectId: f.box.projectId, batchId: 'vbatch-1',
+        expectedRevision: 1, status: 'error', endedAtUtcMs: NOW + 1000 })).toThrow(/stale|identity/i);
+      expect(store.listCheckResults(f.box.projectId, 'vbatch-1')).toEqual([]);
+    } finally { f.box.close(); }
+  });
+});
 
 describe('P03-7 F-002 migration v21 verification schema', () => {
   it('appends v21 without changing the delivered v1-v20 checksums', () => {
@@ -381,10 +459,11 @@ describe('P03-7 F-002 verification store on real SQLite', () => {
       expect(() => store.saveCheckResult(f.resultInput({ outputArtifactId: 'foreign-output' }))).toThrow(expect.objectContaining({ kind: 'ownership' }));
       // 定版后的批次不再接受新结果。
       store.saveCheckResult(f.resultInput());
+      store.saveCheckResult(f.resultInput({ resultId: 'vres-lint', checkKey: 'lint', outputArtifactId: 'output-2' }));
       store.finalizeVerificationBatch({ projectId: f.box.projectId, batchId: 'vbatch-1', expectedRevision: 1, status: 'passed' });
       expect(() => store.saveCheckResult(f.resultInput({ resultId: 'vres-late', checkKey: 'lint', status: 'error', exitCode: null, outputArtifactId: null, outputTail: null, startedAtUtcMs: null, endedAtUtcMs: null })))
         .toThrow(expect.objectContaining({ kind: 'conflict' }));
-      expect(f.db.prepare('SELECT count(*) AS n FROM check_results').get()).toEqual({ n: 1 });
+      expect(f.db.prepare('SELECT count(*) AS n FROM check_results').get()).toEqual({ n: 2 });
     } finally { f.box.close(); }
   });
 
@@ -542,6 +621,7 @@ describe('P03-7 F-002 verification store on real SQLite', () => {
       const second = store.createVerificationBatch(f.batchInput({ batchId: 'vbatch-2', codeDigest: HASH_C }));
       expect(second.created).toBe(true);
       store.saveCheckResult(f.resultInput({ resultId: 'vres-3', batchId: 'vbatch-2', outputArtifactId: 'output-2', outputTail: '12 passed' }));
+      store.saveCheckResult(f.resultInput({ resultId: 'vres-4', batchId: 'vbatch-2', checkKey: 'lint', outputArtifactId: 'output-2' }));
       store.finalizeVerificationBatch({ projectId: f.box.projectId, batchId: 'vbatch-2', expectedRevision: 1, status: 'passed' });
       expect(store.getVerificationBatch(f.box.projectId, 'vbatch-1')).toEqual(historical);
       expect(store.listCheckResults(f.box.projectId, 'vbatch-1')).toEqual(historicalResults);
@@ -636,6 +716,7 @@ describe('P03-7 F-002 verification store on real SQLite', () => {
       const store = f.store();
       store.createVerificationBatch(f.batchInput());
       store.saveCheckResult(f.resultInput());
+      store.saveCheckResult(f.resultInput({ resultId: 'vres-lint', checkKey: 'lint', outputArtifactId: 'output-2' }));
       store.finalizeVerificationBatch({ projectId: f.box.projectId, batchId: 'vbatch-1', expectedRevision: 1, status: 'passed' });
       expect(f.db.prepare('SELECT * FROM tasks WHERE id = ?').get(f.ids.taskId)).toEqual(before.task);
       expect(f.db.prepare('SELECT * FROM execution_batches').all()).toEqual(before.batches);

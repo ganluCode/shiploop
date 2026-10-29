@@ -24,6 +24,8 @@ export interface WorkRecoveryReconciliationSnapshot {
   readonly runStatus: string;
   /** Adapter snapshot seal across asynchronous inspection/publication. */
   readonly recoveryFingerprint?: string;
+  readonly verificationGaps?: readonly string[];
+  readonly verificationCodeDigests?: readonly string[];
   readonly dispatchGaps?: readonly string[];
   readonly workspace: ManagedWorkspaceRecord | null;
   readonly session: WorkSessionRecord | null;

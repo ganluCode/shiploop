@@ -13,7 +13,8 @@
  * 用法：node check-runner.mjs <markerPath> <holdPath> <targetPath>
  *       <expectedContent> [holdBudgetMs]
  */
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
 import { argv, exit, ppid, pid, platform, version } from 'node:process';
 
 function reject(message) {
@@ -21,7 +22,7 @@ function reject(message) {
   exit(2);
 }
 
-const [, , markerPath, holdPath, targetPath, expectedContent, holdBudgetArg] = argv;
+const [, , markerPath, holdPath, targetPath, expectedContent, holdBudgetArg, testCountArg, descendantPath] = argv;
 if (typeof markerPath !== 'string' || markerPath === '') reject('markerPath 必填');
 if (typeof holdPath !== 'string' || holdPath === '') reject('holdPath 必填');
 if (typeof targetPath !== 'string' || targetPath === '') reject('targetPath 必填');
@@ -42,8 +43,15 @@ writeFileSync(markerPath, `${JSON.stringify({
   platform,
 })}\n`);
 
+if (descendantPath) {
+  // Same controlled process group, but ignores TERM to exercise escalation on restart.
+  spawn(process.execPath, ['-e', `const fs = require('node:fs'); process.on('SIGTERM', () => {});
+    fs.writeFileSync(process.argv[1] + '.pid', String(process.pid));
+    setInterval(() => fs.appendFileSync(process.argv[1], 'tick\\n'), 50);`, descendantPath], { stdio: 'ignore' });
+}
 const deadline = Date.now() + holdBudgetMs;
 while (existsSync(holdPath) && Date.now() < deadline) {
+  appendFileSync(`${markerPath}.heartbeat`, 'tick\n');
   await new Promise((resolve) => setTimeout(resolve, 100));
 }
 
@@ -62,7 +70,7 @@ console.log(`SHIPLOOP_NODE_CHECK_RESULT=${JSON.stringify({
   schemaVersion: 1,
   protocol: 'shiploop.node-check',
   collected: true,
-  testCount: 1,
+  testCount: testCountArg === undefined ? 1 : Number(testCountArg),
   targets: ['p07-1-f001'],
 })}`);
 if (failure !== null) process.stderr.write(`check-runner: ${failure}\n`);

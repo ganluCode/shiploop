@@ -61,6 +61,7 @@ export function createTaskVerificationCompletionService(deps: {
   readonly publisher: ArtifactPublisher;
   /** Trusted local Git delivery; missing adapter can never grant Task passed. */
   readonly commitTask?: (input: TaskVerificationCompletionInput) => Promise<void>;
+  readonly verifyEvidence?: (projectId: string, batchId: string) => Promise<void>;
   readonly nowMs?: () => number;
 }): TaskVerificationCompletionService {
   if (deps.lifecycle.recordAttemptCode === undefined) {
@@ -72,6 +73,7 @@ export function createTaskVerificationCompletionService(deps: {
     const { identity } = input;
     // 1) 只读重建机器观察：批次↔Attempt 身份、前后代码身份与证据一致性
     //    全部由 F-006/F-009 契约核对，不一致即抛结构化冲突，不产生部分写入。
+    await deps.verifyEvidence?.(identity.projectId, input.verificationBatchId);
     const classified = classifyStoredCodeAttempt(deps.verification,
       { projectId: identity.projectId, batchId: input.verificationBatchId, runId: input.runId,
         taskId: input.taskId, attemptKey: identity.attemptId },

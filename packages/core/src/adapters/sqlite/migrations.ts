@@ -4202,6 +4202,20 @@ const MIGRATION_053_SQL = `
 ALTER TABLE runs ADD COLUMN labels TEXT NOT NULL DEFAULT '[]'
   CONSTRAINT runs_labels_json_array_check CHECK (json_valid(labels) AND json_type(labels) = 'array');
 `;
+const MIGRATION_054_SQL = `
+-- Verifier identities are append-only facts, committed before workload acknowledgement.
+CREATE TABLE verification_processes (
+  batch_id TEXT NOT NULL REFERENCES verification_batches(id) ON DELETE RESTRICT,
+  check_key TEXT NOT NULL CONSTRAINT verification_processes_key_check CHECK (length(check_key) BETWEEN 1 AND 128),
+  process_identity TEXT NOT NULL CONSTRAINT verification_processes_identity_check CHECK (json_valid(process_identity) AND json_type(process_identity) = 'object'),
+  PRIMARY KEY (batch_id, check_key)
+);
+CREATE TRIGGER verification_processes_immutable_update BEFORE UPDATE ON verification_processes
+BEGIN SELECT RAISE(ABORT, 'verification process identity immutable'); END;
+CREATE TRIGGER verification_processes_immutable_delete BEFORE DELETE ON verification_processes
+BEGIN SELECT RAISE(ABORT, 'verification process identity immutable'); END;
+`;
+
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     version: 1,
@@ -4320,4 +4334,5 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 51, sql: MIGRATION_051_SQL, checksum: sha256Hex(MIGRATION_051_SQL) },
   { version: 52, sql: MIGRATION_052_SQL, checksum: sha256Hex(MIGRATION_052_SQL) },
   { version: 53, sql: MIGRATION_053_SQL, checksum: sha256Hex(MIGRATION_053_SQL) },
+  { version: 54, sql: MIGRATION_054_SQL, checksum: sha256Hex(MIGRATION_054_SQL) },
 ];

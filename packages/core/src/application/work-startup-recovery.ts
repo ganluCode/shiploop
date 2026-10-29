@@ -1,6 +1,6 @@
 import { observeWithin } from './execution-supervision.js';
 import type { PlanningStartupRecoveryResult } from '../ports/planning-recovery.js';
-import type { WorkStartupRecoveryEvidence, WorkStartupRecoveryOptions, WorkStartupRecoveryState } from '../ports/work-startup-recovery.js';
+import type { WorkStartupRecoveryEvidence, WorkStartupRecoveryOptions, WorkStartupRecoveryState, WorkStartupRecoveryTarget } from '../ports/work-startup-recovery.js';
 
 /** Conservative restart: no takeover, success settlement, workspace release or Runtime start. */
 export function createWorkStartupRecovery(options: WorkStartupRecoveryOptions) {
@@ -18,6 +18,19 @@ export function createWorkStartupRecovery(options: WorkStartupRecoveryOptions) {
       return recovery;
     },
   };
+  async function stopAll(target: WorkStartupRecoveryTarget): Promise<boolean> {
+    if (target.processIdentity === null) return false;
+    const identities = [target.processIdentity, ...(target.verificationProcesses ?? [])];
+    // A bounded census is stopped sequentially; each adapter verifies PID birth and descendants.
+    let confirmed = true;
+    for (const identity of identities) {
+      try {
+        const stop = await observeWithin(Promise.resolve().then(() => options.process.recoverStop?.(identity)), 5_000);
+        if (stop?.confirmed !== true) confirmed = false;
+      } catch { confirmed = false; }
+    }
+    return confirmed;
+  }
   async function run(): Promise<WorkStartupRecoveryState> {
     try {
       /* P05-1 / F-010：先 fence 撤销旧写入资格，再执行规划窗口恢复（受信制品
@@ -38,8 +51,7 @@ export function createWorkStartupRecovery(options: WorkStartupRecoveryOptions) {
         const gaps = previous.gaps.filter(gap => gap !== 'stop_unconfirmed' && gap !== 'stop_failed');
         let stopConfirmed = false;
         try {
-          const stop = await observeWithin(Promise.resolve().then(() => options.process.recoverStop?.(previous.processIdentity)), 5_000);
-          stopConfirmed = stop?.confirmed === true;
+          stopConfirmed = await stopAll(previous);
         } catch { /* retain the old failed observation and add a fresh failure below */ }
         if (!stopConfirmed) gaps.push('stop_unconfirmed');
         return {
@@ -71,8 +83,7 @@ export function createWorkStartupRecovery(options: WorkStartupRecoveryOptions) {
           let stopConfirmed = false;
           if (target.processIdentity !== null && gaps.length === 0) {
             try {
-              const stop = await observeWithin(Promise.resolve().then(() => options.process.recoverStop?.(target.processIdentity)), 5_000);
-              stopConfirmed = stop?.confirmed === true;
+              stopConfirmed = await stopAll(target);
               if (!stopConfirmed) gaps.push('stop_unconfirmed');
             } catch { gaps.push('stop_failed'); }
           } else if (target.processIdentity === null) gaps.push('process_identity_missing');

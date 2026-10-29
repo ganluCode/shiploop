@@ -655,6 +655,11 @@ export interface CheckResultMutation {
 
 /** P03-7 / F-002：Verification 访问面（读取 + 同端口下的事务化写入）。 */
 export interface VerificationStore {
+  /** Persist the supervised identity before acknowledging a check command. */
+  confirmCheckProcessInTransaction?(transaction: CommandTransaction, input: {
+    readonly projectId: string; readonly batchId: string; readonly checkKey: string;
+    readonly processIdentity: import('./command-process.js').CommandProcessIdentity;
+  }): void;
   getVerificationBatch(projectId: string, batchId: string): VerificationBatchRecord;
   /** 同 Attempt 的历史批次按创建顺序读回（历史失败记录不被新批次覆盖）。 */
   listAttemptVerificationBatches(projectId: string, attemptId: string): readonly VerificationBatchRecord[];

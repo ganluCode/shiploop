@@ -346,8 +346,8 @@ describe('P03-9 / F-004 layered time limits', () => {
       expect(Date.now() - started).toBeLessThan(8_000);
       expect(h.starts()).toBe(1);
       expect(h.results[0]).toMatchObject({ timedOut: true });
-      expect(result.results[0]).toMatchObject({ status: 'inconclusive', reason: 'timed_out' });
-      expect(result.status).toBe('inconclusive');
+      expect(result.results[0]).toMatchObject({ status: 'error', reason: 'timed_out' });
+      expect(result.status).toBe('error');
     } finally { h.box.cleanup(); }
   }, 15_000);
 });

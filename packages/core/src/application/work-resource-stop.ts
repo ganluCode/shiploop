@@ -31,7 +31,8 @@ export function createWorkResourceStopVerifier(options: {
       if (snapshot.processIdentity === null || snapshot.invocationId === null || snapshot.leases.length !== 3) return null;
       const managed = snapshot.managedProcesses ?? [];
       if (managed.some(item => !validManagedProcess(snapshot, item))) return null;
-      const identities = [snapshot.processIdentity, ...managed.map(item => item.processIdentity)];
+      const identities = [snapshot.processIdentity, ...managed.map(item => item.processIdentity),
+        ...(snapshot.verificationProcesses ?? [])];
       if (new Set(identities.map(processKey)).size !== identities.length) return null;
       const frozen = structuredClone(snapshot);
       const stop = options.process.recoverStop;

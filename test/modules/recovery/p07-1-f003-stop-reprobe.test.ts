@@ -93,6 +93,33 @@ describe('P07-1 F-003 bounded recovery reprobe', () => {
   });
 });
 
+describe('P07-1 F-006 Verifier stop evidence', () => {
+  it('[case:p07-verifier-stop-unknown] probes every registered process even when Runtime stop is unknown and preserves isolation until a fresh reprobe', async () => {
+    const verifier = { ...identity, launchId: '22222222-2222-4333-8444-555555555555', pid: 4243, processGroupId: 4243 };
+    const old = { ...evidence(), verificationProcesses: [verifier] };
+    const store = storeFor(old);
+    const recoverStop = vi.fn(async (process: { readonly pid: number }) => ({ confirmed: process.pid !== identity.pid }));
+    const reconcile = vi.fn(async (observed: WorkStartupRecoveryEvidence) => ({
+      status: observed.stopConfirmed ? 'reconciled' as const : 'quarantined' as const,
+      gaps: observed.stopConfirmed ? [] : ['stop_unconfirmed'], evidenceRef: 'diagnostic', alreadyReconciled: false,
+    }));
+    const recovery = createWorkStartupRecovery({ store, process: { recoverStop },
+      publishEvidence: async () => 'stop-artifact', reconcile, nowUtcMs: () => 200 });
+    await recovery.recover();
+    expect(recoverStop.mock.calls.map(([process]) => process.pid)).toEqual([4242, 4243]);
+    expect(store.observedCalls[0]!.evidence).toMatchObject({ stopConfirmed: false, verificationProcesses: [verifier], observationRevision: 2 });
+    expect(recovery.state().status).toBe('blocked');
+    const nextStore = storeFor(store.observedCalls[0]!.evidence);
+    const next = createWorkStartupRecovery({ store: nextStore, process: { recoverStop: async () => ({ confirmed: true }) },
+      publishEvidence: async () => 'new-stop-artifact', reconcile, nowUtcMs: () => 300 });
+    await next.recover();
+    expect(nextStore.observedCalls[0]!.evidence).toMatchObject({ stopConfirmed: true, observationRevision: 3 });
+    expect(next.state().status).toBe('complete');
+    expect(old.stopConfirmed).toBe(false);
+    expect(old.observationRevision).toBe(1);
+  });
+});
+
 describe('P07-1 F-003 retry after failed signal delivery', () => {
   it('rechecks group absence after an identity-matched signal was not delivered without sending a second signal', async () => {
     let groupPresent = true;

@@ -18,6 +18,8 @@
  *   承担；
  * - 行读取 fail-closed：损坏 JSON 抛 StorageError corrupt，不把原始内容泄漏进错误。
  */
+import { isDeepStrictEqual } from 'node:util';
+import { validateWorkProcessIdentity } from '../../ports/work-resources.js';
 import { StorageError } from '../../ports/errors.js';
 import { validateStableId } from '../../ports/validation.js';
 import type { CommandTransaction } from '../../ports/atomic-commands.js';
@@ -220,6 +222,15 @@ export function createSqliteVerificationStore(
     return { batch: verificationBatchRecordFromRow(row!), created: true };
   }
 
+  function assertCurrentBatch(batch: VerificationBatchRecord): void {
+    const attempt = readAttemptIdentity(batch.attemptId);
+    if (!attempt || attempt.project_id !== batch.projectId || attempt.feature_id !== batch.featureId
+      || attempt.run_id !== batch.runId || attempt.task_id !== batch.taskId
+      || attempt.execution_version !== batch.executionVersion || attempt.task_execution_version !== batch.executionVersion) {
+      fail('conflict', 'VerificationStore.write', 'Stale verification execution identity');
+    }
+  }
+
   function saveResultInTransaction(raw: unknown): CheckResultMutation {
     const operation = 'VerificationStore.saveResult';
     if (!db.inTransaction) throw new TypeError('Check result save requires a write transaction');
@@ -231,6 +242,7 @@ export function createSqliteVerificationStore(
       fail('ownership', operation, 'Verification batch belongs to another project', entity);
     }
     const batch = verificationBatchRecordFromRow(batchRow!);
+    assertCurrentBatch(batch);
     const definition = batch.checkSnapshot.find((entry) => entry.checkKey === input.checkKey);
     if (!definition) {
       fail('conflict', operation, 'Check is not part of the batch snapshot', entity);
@@ -299,6 +311,7 @@ export function createSqliteVerificationStore(
       fail('ownership', operation, 'Verification batch belongs to another project', entity);
     }
     const batch = verificationBatchRecordFromRow(row!);
+    assertCurrentBatch(batch);
     if (batch.status !== 'running') {
       fail('conflict', operation, 'Verification batch is already finalized', entity);
     }
@@ -309,7 +322,9 @@ export function createSqliteVerificationStore(
     // fail-closed：空检查或任何非 passed 结果都不能定版 passed（更严格的选择/必需性
     // 聚合由上层 Verifier 判定）。
     if (input.status === 'passed'
-      && (results.length === 0 || results.some((result) => result.status !== 'passed'))) {
+      && (results.length === 0 || results.some((result) => result.status !== 'passed')
+        || batch.checkSnapshot.some(check => (check.required || batch.selection.selectedCheckKeys.includes(check.checkKey))
+          && !results.some(result => result.checkKey === check.checkKey && result.status === 'passed')))) {
       fail('conflict', operation, 'Zero or non-passed checks cannot finalize as passed', entity);
     }
     const endedAt = input.endedAtUtcMs ?? now();
@@ -367,6 +382,25 @@ export function createSqliteVerificationStore(
   }
 
   return {
+    confirmCheckProcessInTransaction(_transaction, input) {
+      if (!db.inTransaction) throw new TypeError('Verifier confirmation requires a write transaction');
+      const batch = this.getVerificationBatch(input.projectId, input.batchId);
+      assertCurrentBatch(batch);
+      if (batch.status !== 'running' || !batch.selection.selectedCheckKeys.includes(input.checkKey)) {
+        fail('conflict', 'VerificationStore.confirmProcess', 'Check is not running in this batch');
+      }
+      const processIdentity = validateWorkProcessIdentity(input.processIdentity);
+      const existing = db.prepare<[string, string], { process_identity: string }>(
+        'SELECT process_identity FROM verification_processes WHERE batch_id = ? AND check_key = ?').get(batch.id, input.checkKey);
+      if (existing) {
+        if (!isDeepStrictEqual(JSON.parse(existing.process_identity), processIdentity)) {
+          fail('conflict', 'VerificationStore.confirmProcess', 'Check process identity is immutable');
+        }
+        return;
+      }
+      db.prepare('INSERT INTO verification_processes (batch_id, check_key, process_identity) VALUES (?, ?, ?)')
+        .run(batch.id, input.checkKey, JSON.stringify(processIdentity));
+    },
     getVerificationBatch(projectId: string, batchId: string): VerificationBatchRecord {
       const operation = 'VerificationStore.read';
       const validProjectId = validateStableId(projectId, { operation }, 'projectId');

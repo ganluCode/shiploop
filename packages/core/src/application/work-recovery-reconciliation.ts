@@ -1,3 +1,4 @@
+import { verificationCodeIdentity } from '../ports/verification-aggregate.js';
 import { createHash } from 'node:crypto';
 import type { ArtifactVerifier } from './artifact-verify.js';
 import { gitOperationCommitMessage } from '../ports/controlled-git-commit.js';
@@ -141,6 +142,7 @@ export function createWorkRecoveryReconciler(options: WorkRecoveryReconcilerOpti
         && !(neverStarted && ignoredNeverStartedGaps.has(gap)));
       for (const gap of startupGaps) addGap(gaps, `startup_${gap}`);
       for (const gap of snapshot.dispatchGaps ?? []) addGap(gaps, gap);
+      for (const gap of snapshot.verificationGaps ?? []) addGap(gaps, gap);
       if (!source.stopConfirmed && !neverStarted) addGap(gaps, 'stop_unconfirmed');
 
       if (attempt.id !== source.attemptId || attempt.projectId !== source.projectId || attempt.runId !== source.runId
@@ -158,6 +160,9 @@ export function createWorkRecoveryReconciler(options: WorkRecoveryReconcilerOpti
         }
         try {
           inspection = await options.inspect(source.projectId, baseline);
+          if ((snapshot.verificationCodeDigests ?? []).some(digest => digest !== verificationCodeIdentity(inspection!).codeDigest)) {
+            addGap(gaps, 'verification_code_changed');
+          }
         } catch (error) {
           addGap(gaps, `workspace_${errorReason(error)}`);
         }

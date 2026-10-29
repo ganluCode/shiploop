@@ -1,0 +1,21 @@
+{
+  "schema_version": 2,
+  "task_id": "F-006",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/recovery/p07-1-f006-verifier-recovery.test.ts", "all": true },
+      { "file": "test/modules/recovery/p07-1-f003-stop-reprobe.test.ts", "all": true },
+      { "file": "test/modules/recovery/p07-1-f001-budget-cleanup.test.ts", "cases": ["p07-f001-check-timeout"] },
+      { "file": "test/modules/verification/p03-7-f002-verification-store.test.ts", "all": true },
+      { "file": "test/modules/storage/sqlite/sqlite-schema-migrations.test.ts", "all": true },
+      { "file": "test/modules/verification/p03-7-f005-node-task-verification.test.ts", "all": true },
+      { "file": "test/modules/verification/p03-7-f006-verification-aggregate.test.ts", "all": true },
+      { "file": "test/modules/verification/p03-7-f012-verification-continue.test.ts", "all": true },
+      { "file": "test/modules/verification/p03-7-f016-verification-wiring.test.ts", "all": true },
+      { "file": "test/modules/recovery/p03-9-f005-startup-recovery.test.ts", "all": true },
+      { "file": "test/modules/recovery/p03-9-f006-recovery-reconciliation.test.ts", "all": true },
+      { "file": "test/modules/execution/control/p03-9-f004-time-limits.test.ts", "all": true }
+    ]
+  }]
+}

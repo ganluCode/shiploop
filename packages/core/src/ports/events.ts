@@ -269,11 +269,16 @@ function validateWorkRecoveryPayload(payload: Record<string, unknown>, operation
   if (!observation && payload.phase !== 'fenced') corrupt(operation, 'event_payload_violation');
   exactPayloadKeys(operation, payload, ['schemaVersion', 'phase', 'projectId', 'runId', 'attemptId',
     'owner', 'hostInstanceId', 'executionVersion', 'executionStage', 'processIdentity', 'gaps', 'stopConfirmed', 'workspaceReconciled',
+    ...(payload.verificationProcesses === undefined ? [] : ['verificationProcesses']),
     ...(observation ? ['kind', 'observedAtUtcMs', 'evidenceRef', ...(payload.phase === 'reprobed'
       ? ['observationRevision', 'observationKind', 'previousObservationAtUtcMs'] : [])] : [])]);
   try {
     for (const key of ['projectId', 'runId', 'attemptId', 'owner', 'hostInstanceId']) validateStableId(payload[key], { operation }, key);
     if (payload.processIdentity !== null) validateWorkProcessIdentity(payload.processIdentity);
+    if (payload.verificationProcesses !== undefined) {
+      if (!Array.isArray(payload.verificationProcesses) || payload.verificationProcesses.length > 256) throw new TypeError();
+      for (const identity of payload.verificationProcesses) validateWorkProcessIdentity(identity);
+    }
   } catch { corrupt(operation, 'event_payload_violation'); }
   if (!isSafeInteger(payload.executionVersion, 1, Number.MAX_SAFE_INTEGER)
     || !requireEventEnum(payload.executionStage, ATTEMPT_EXECUTION_STAGES)

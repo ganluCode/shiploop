@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { readVerificationProcesses } from './verification-processes.js';
 import { isDeepStrictEqual } from 'node:util';
 import { StorageError } from '../../ports/errors.js';
 import { validateNonNegativeInteger, requirePlainObject, rejectUnknownKeys, validateStableId } from '../../ports/validation.js';
@@ -62,7 +63,9 @@ export function createSqliteWorkResourceAccess(session: SqliteStorageSession, op
       return fail('corrupt', 'incomplete_resource_group');
     }
     const process = leases[0]?.processIdentity;
+    const verificationProcesses = readVerificationProcesses(session, identity.projectId, identity.attemptId);
     return { identity, invocationId: attempt.invocationId, leases,
+      ...(verificationProcesses.length ? { verificationProcesses } : {}),
       processIdentity: process?.schemaVersion === 2 ? validateWorkProcessIdentity({ launchId: process.launchId,
         pid: process.pid, processGroupId: process.processGroupId, startTime: process.startTime }) : null };
   }

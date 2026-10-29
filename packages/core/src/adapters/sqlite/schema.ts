@@ -47,6 +47,7 @@ import {
   check,
   foreignKey,
   index,
+  primaryKey,
   integer,
   sqliteTable,
   text,
@@ -2208,6 +2209,16 @@ export const verificationBatches = sqliteTable('verification_batches', {
   foreignKey({ name: 'verification_batches_attempt_fk', columns: [table.projectId, table.attemptId], foreignColumns: [attempts.projectId, attempts.id] }).onDelete('restrict'),
   uniqueIndex('verification_batches_project_id_id_unique').on(table.projectId, table.id),
   index('verification_batches_project_attempt_index').on(table.projectId, table.attemptId, table.id),
+]);
+
+export const verificationProcesses = sqliteTable('verification_processes', {
+  batchId: text('batch_id').notNull().references(() => verificationBatches.id, { onDelete: 'restrict' }),
+  checkKey: text('check_key').notNull(),
+  processIdentity: text('process_identity').notNull(),
+}, table => [
+  primaryKey({ columns: [table.batchId, table.checkKey] }),
+  check('verification_processes_key_check', sql`length(${table.checkKey}) BETWEEN 1 AND 128`),
+  check('verification_processes_identity_check', sql`json_valid(${table.processIdentity}) AND json_type(${table.processIdentity}) = 'object'`),
 ]);
 
 export const checkResults = sqliteTable('check_results', {
