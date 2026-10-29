@@ -1,0 +1,11 @@
+{
+  "schema_version": 2,
+  "task_id": "F-001",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/recovery/p07-1-f001-barrier-evidence.test.ts", "all": true },
+      { "file": "test/modules/recovery/p07-1-f001-budget-cleanup.test.ts", "all": true }
+    ]
+  }]
+}
