@@ -1,5 +1,9 @@
 # P06 存量接入与资源验收
 
+2026-10-29 最终决定：P06 影响范围离线验收和最小真实模型验证通过，负责人已确认放行。
+全仓历史回归明确延期到 CI，未执行且不作为本次签署前置。受测身份和最终报告见
+[负责人记录](acceptance/p06-owner-walkthrough.md)。
+
 `npm run accept:p06` 是开发验收入口，使用当前提交的前序 P06 代码、真实临时 Git/SQLite、loopback Host、脚本化 FakeRuntime 和本地无凭据 stdio MCP。入口不调用模型，不维护 ShipLoop 或 Nezha 的 Phase/Feature/Task 状态。
 
 ## 前提与命令

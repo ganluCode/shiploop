@@ -1,6 +1,16 @@
 # P06 负责人 walkthrough
 
-状态：模板与离线代操作路径已交付；负责人签署、live 和 `npm run verify` 仍待独立执行。
+状态：2026-10-29 负责人明确接受 P06，允许准备 P07；阶段验收通过。
+
+## 本次最终记录（优先于下文模板）
+
+- 受测提交：`5c1c13939d9a4d9bd841e676d41bd483fbe64618`，acceptance/p06。
+- P06 影响范围测试 149 文件、2134 项通过；离线 10 项通过。
+- 方舟 ark-agentplan/ark-code-latest 最小真实验证 3 请求通过，实际记录用量 1457 Token（partial），停止及临时资源清理已确认。
+- 负责人在本对话明确确认通过，正式聚合为 12 pass / 0 fail / 0 not_run，exitCode=0，报告完整性通过。
+- 最终报告：`/private/tmp/shiploop-p06-accept-20261029/reports-approved/p06-offline-20261029-005/summary.md`。
+- `npm run verify` / 全仓历史回归未执行；负责人同意按影响范围验收并延期全仓到 CI，不是已通过，也不再作为本次签署前置门槛。
+- 下文保留通用操作模板；其中旧的 verify 必需条件由本次明确决策替代。没有新跑模型或伪造历史测试。
 
 ## 受测身份与前提
 
