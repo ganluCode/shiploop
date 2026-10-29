@@ -131,7 +131,10 @@ describe('F-003 persistent Work resource gates', () => {
   it('rechecks binding revision in the write transaction after filesystem verification', async () => {
     const f = await fixture();
     try {
-      f.box.session.database.prepare('UPDATE repository_bindings SET revision = revision + 1').run();
+      // Binding facts are immutable in production; this controlled test models an
+      // external binding revision drift after filesystem verification.
+      f.box.session.database.exec('DROP TRIGGER repository_bindings_immutable');
+      f.box.session.database.prepare('UPDATE repository_bindings SET revision = revision + 1, binding_revision = binding_revision + 1').run();
       expect(() => f.tx(() => f.access.acquireInTransaction(f.identity, f.workspace, NOW + 1000))).toThrow(expect.objectContaining({ kind: 'conflict' }));
       expect(f.access.read(f.identity).leases).toEqual([]);
     } finally { f.box.close(); }
