@@ -530,6 +530,26 @@ export interface ExecutionRecoveryContinuationView {
   } | null;
 }
 
+export interface ExecutionRecoveryObservationView {
+  readonly attemptId: string;
+  readonly taskId: string;
+  readonly attemptNumber: number;
+  readonly phase: string;
+  readonly observationRevision: number;
+  readonly observedAt: string;
+  readonly evidenceRef: string | null;
+  readonly gaps: readonly string[];
+  readonly stopConfirmed: boolean;
+  readonly processIdentityRecorded: boolean;
+  readonly verificationProcessesCount: number;
+}
+
+export interface ExecutionRecoveryNextStepView {
+  readonly action: 'execution.resume' | 'execution.retry-final';
+  readonly executable: boolean;
+  readonly blockedBy: readonly string[];
+}
+
 export interface ExecutionRecoveryCliView {
   readonly operation: 'execution.run.recovery.get';
   readonly runId: string;
@@ -541,6 +561,19 @@ export interface ExecutionRecoveryCliView {
   readonly missingFinalSteps: readonly string[];
   readonly continuations: readonly ExecutionRecoveryContinuationView[];
   readonly recoveryTruncated: boolean;
+  readonly startup: {
+    readonly phase: string;
+    readonly interruptedAttempts: readonly { readonly attemptId: string; readonly taskId: string; readonly attemptNumber: number; readonly status: string; readonly executionStage: string }[];
+    readonly interruptedTruncated: boolean;
+    readonly observations: readonly ExecutionRecoveryObservationView[];
+    readonly observationTruncated: boolean;
+    readonly quarantinedLeases: number;
+    readonly heldLeases: number;
+    readonly workspace: { readonly workspaceId: string; readonly status: string; readonly revision: number } | null;
+    readonly pendingGitOperations: readonly { readonly operationId: string; readonly kind: string; readonly status: string; readonly attemptId: string | null }[];
+    readonly stopOperations: readonly { readonly operationId: string; readonly status: string; readonly stopConfirmed: boolean | null; readonly evidenceRef: string | null }[];
+    readonly nextSteps: readonly ExecutionRecoveryNextStepView[];
+  };
   readonly budget: {
     readonly batchId: string;
     readonly budgetRevision: number;
@@ -616,13 +649,62 @@ export function buildExecutionRecoveryCliView(
     missingFinalSteps,
     continuations: result.recovery.records.map(continuationView),
     recoveryTruncated: result.recovery.truncated,
+    startup: {
+      phase: result.startup.phase,
+      interruptedAttempts: result.startup.interruptedAttempts.map(attempt => ({
+        attemptId: attempt.attemptId,
+        taskId: attempt.taskId,
+        attemptNumber: attempt.attemptNumber,
+        status: attempt.status,
+        executionStage: attempt.executionStage,
+      })),
+      interruptedTruncated: result.startup.interruptedTruncated,
+      observations: result.startup.observations.map(observation => ({
+        attemptId: observation.attemptId,
+        taskId: observation.taskId,
+        attemptNumber: observation.attemptNumber,
+        phase: observation.phase,
+        observationRevision: observation.observationRevision,
+        observedAt: observation.observedAt,
+        evidenceRef: observation.evidenceRef,
+        gaps: [...observation.gaps],
+        stopConfirmed: observation.stopConfirmed,
+        processIdentityRecorded: observation.processIdentityRecorded,
+        verificationProcessesCount: observation.verificationProcessesCount,
+      })),
+      observationTruncated: result.startup.observationTruncated,
+      quarantinedLeases: result.startup.leases.filter(lease => lease.state === 'quarantined').length,
+      heldLeases: result.startup.leases.filter(lease => lease.state === 'held').length,
+      workspace: result.startup.workspace === null ? null : {
+        workspaceId: result.startup.workspace.workspaceId,
+        status: result.startup.workspace.status,
+        revision: result.startup.workspace.revision,
+      },
+      pendingGitOperations: result.startup.pendingGitOperations.map(operation => ({
+        operationId: operation.operationId,
+        kind: operation.kind,
+        status: operation.status,
+        attemptId: operation.attemptId,
+      })),
+      stopOperations: result.startup.stopOperations.map(operation => ({
+        operationId: operation.operationId,
+        status: operation.status,
+        stopConfirmed: operation.stopConfirmed,
+        evidenceRef: operation.evidenceRef,
+      })),
+      nextSteps: result.startup.nextSteps.map(step => ({
+        action: step.action,
+        executable: step.executable,
+        blockedBy: [...step.blockedBy],
+      })),
+    },
     budget: {
       batchId: result.budget.batchId,
       budgetRevision: result.budget.budgetRevision,
       counters: result.budget.counters,
       usage: result.budget.usage,
     },
-    note: '工作流 resume 由显式 execution.resume 发起；恢复模式 auto/new/required 由 Task 策略/输入快照决定；本查询只读，不接管旧执行、不创建 Attempt',
+    note: '工作流 resume 由显式 execution.resume 发起；恢复模式 auto/new/required 由 Task 策略/输入快照决定；本查询只读，不接管旧执行、不创建 Attempt；诊断资格不作为授权凭据',
   };
 }
 
@@ -632,11 +714,46 @@ export function formatExecutionRecoveryCliView(view: ExecutionRecoveryCliView): 
       `status=${view.status} reason=${view.reason ?? 'none'}`,
     `  finalization=${view.finalizationPresent ? 'present' : 'none'}` +
       `${view.missingFinalSteps.length > 0 ? ` missingSteps=${view.missingFinalSteps.join(',')}` : ''}`,
+    `  startup-recovery: phase=${view.startup.phase}` +
+      ` interrupted=${view.startup.interruptedAttempts.length}` +
+      `${view.startup.interruptedTruncated ? '+' : ''}` +
+      ` quarantinedLeases=${view.startup.quarantinedLeases} heldLeases=${view.startup.heldLeases}` +
+      ` workspace=${view.startup.workspace === null ? 'none' : `${view.startup.workspace.status}@r${view.startup.workspace.revision}`}`,
+  ];
+  for (const attempt of view.startup.interruptedAttempts) {
+    lines.push(`    interrupted: attempt=${attempt.attemptId} task=${attempt.taskId} #${attempt.attemptNumber}` +
+      ` stage=${attempt.executionStage}`);
+  }
+  for (const observation of view.startup.observations) {
+    lines.push(`    observation: attempt=${observation.attemptId} phase=${observation.phase}` +
+      ` rev=${observation.observationRevision} stopConfirmed=${observation.stopConfirmed}` +
+      ` evidence=${observation.evidenceRef ?? 'none'}` +
+      ` gaps=${observation.gaps.join(',') || 'none'}`);
+  }
+  if (view.startup.observationTruncated) {
+    lines.push('    observations: truncated（超限截断，完整列表走 Host 查询）');
+  }
+  for (const operation of view.startup.pendingGitOperations) {
+    lines.push(`    pending-git: operation=${operation.operationId} kind=${operation.kind}` +
+      ` status=${operation.status} attempt=${operation.attemptId ?? 'none'}`);
+  }
+  for (const operation of view.startup.stopOperations) {
+    lines.push(`    stop: operation=${operation.operationId} status=${operation.status}` +
+      ` stopConfirmed=${operation.stopConfirmed ?? 'unknown'} evidence=${operation.evidenceRef ?? 'none'}`);
+  }
+  for (const step of view.startup.nextSteps) {
+    lines.push(`    next-step: ${step.action} ${step.executable ? 'executable' : 'blocked'}` +
+      `${step.blockedBy.length > 0 ? ` blockedBy=${step.blockedBy.join(',')}` : ''}`);
+  }
+  if (view.startup.nextSteps.length === 0) {
+    lines.push('    next-step: none（目标已取消或无可用显式动作）');
+  }
+  lines.push(
     `  budget: batch=${view.budget.batchId} revision=${view.budget.budgetRevision} ` +
       `token=${view.budget.usage.tokenUsed ?? 'unknown'} cost=${view.budget.usage.costUsed ?? 'unknown'} ` +
       `runs=${view.budget.counters.runsCreated} attempts=${view.budget.counters.attemptsCreated} ` +
       `runtimeStarts=${view.budget.counters.runtimeStarts}`,
-  ];
+  );
   if (view.continuations.length === 0) {
     lines.push('  无续接记录/无恢复记录：该 Run 尚无同 Task 续接历史');
   }

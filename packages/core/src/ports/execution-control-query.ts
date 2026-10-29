@@ -154,6 +154,53 @@ export const EXECUTION_CONTROL_RUNS_MAX = 50;
 export const EXECUTION_CONTROL_STOP_OPERATIONS_MAX = 50;
 /** 恢复查询续接记录展示上限。 */
 export const EXECUTION_RECOVERY_CONTINUATIONS_MAX = 200;
+/** P07-1 / F-009：恢复诊断观察/隔离实体展示上限（与 Attempt 扫描同一量级）。 */
+export const EXECUTION_RECOVERY_OBSERVATIONS_MAX = 200;
+/** P07-1 / F-009：恢复诊断 pending Git 回执展示上限（与恢复核对同界）。 */
+export const EXECUTION_RECOVERY_GIT_OPERATIONS_MAX = 16;
+
+/* ------------------------------------------------------------------ *
+ * P07-1 / F-009：启动恢复诊断（持久事实派生；只读，不作为授权凭据）
+ * ------------------------------------------------------------------ */
+
+/** 恢复观察条目（state_events 中该 Attempt 的最新持久观察）。 */
+export interface ExecutionRunRecoveryObservationEntry {
+  readonly attemptId: string;
+  readonly taskId: string;
+  readonly attemptNumber: number;
+  readonly attemptStatus: string;
+  readonly executionStage: string;
+  readonly phase: 'observed' | 'recorded' | 'reprobed';
+  readonly observationRevision: number;
+  readonly observedAtUtcMs: number;
+  readonly evidenceRef: string | null;
+  readonly gaps: readonly string[];
+  readonly stopConfirmed: boolean;
+  /** 仅展示持久身份存在性；不回传 PID/启动细节等原始进程事实。 */
+  readonly processIdentityRecorded: boolean;
+  readonly verificationProcessesCount: number;
+}
+
+/** Run 启动恢复诊断视图（同一 BEGIN DEFERRED 一致读内组装）。 */
+export interface ExecutionRunRecoveryStartupView {
+  /** 本次恢复阶段：Run 内最落后 interrupted Attempt 的观察阶段派生。 */
+  readonly phase: 'none' | 'pending' | 'observed' | 'recorded' | 'reprobed';
+  readonly interruptedAttempts: readonly AttemptRecord[];
+  readonly interruptedTruncated: boolean;
+  /** 活动占用 Attempt（preparing/executing/verifying；仅供下一步派生，不公开投影）。 */
+  readonly activeAttempts: readonly AttemptRecord[];
+  readonly observations: readonly ExecutionRunRecoveryObservationEntry[];
+  readonly observationTruncated: boolean;
+  readonly leases: readonly ExecutionControlLeaseEntry[];
+  readonly workspace: {
+    readonly id: string;
+    readonly status: string;
+    readonly revision: number;
+    readonly attemptId: string | null;
+  } | null;
+  readonly pendingGitOperations: readonly import('./git-operations.js').GitOperationRecord[];
+  readonly stopOperations: readonly ExecutionStopOperationRecord[];
+}
 
 /* ------------------------------------------------------------------ *
  * 显式后续动作（冻结词汇；均为授权命令/人工动作，绝不暗示自动执行）
@@ -236,6 +283,8 @@ export interface ExecutionRunRecoveryView {
   readonly attemptsScanned: number;
   /** Feature 分轴持久事实（复用 P03-8 F-010 同一读视图）。 */
   readonly delivery: FeatureDeliveryView;
+  /** P07-1 / F-009：启动恢复诊断（持久事实派生；只读）。 */
+  readonly startup: ExecutionRunRecoveryStartupView;
 }
 
 /**
@@ -660,7 +709,83 @@ export interface RunRecoveryDetailResult {
       readonly costUsed: null;
     };
   };
+  /** P07-1 / F-009：启动恢复诊断（持久事实派生；诊断资格不作为授权凭据）。 */
+  readonly startup: {
+    readonly phase: 'none' | 'pending' | 'observed' | 'recorded' | 'reprobed';
+    readonly interruptedAttempts: readonly PublicExecutionControlAttempt[];
+    readonly interruptedTruncated: boolean;
+    readonly observations: readonly PublicRecoveryObservation[];
+    readonly observationTruncated: boolean;
+    readonly leases: readonly PublicExecutionControlLease[];
+    readonly workspace: {
+      readonly workspaceId: string;
+      readonly status: string;
+      readonly revision: number;
+      readonly attemptId: string | null;
+    } | null;
+    readonly pendingGitOperations: readonly PublicRecoveryGitOperation[];
+    readonly stopOperations: readonly PublicExecutionControlStopOperation[];
+    readonly nextSteps: readonly PublicRecoveryNextStep[];
+  };
 }
+
+/** P07-1 / F-009：恢复观察公开投影（不回传原始进程身份细节）。 */
+export interface PublicRecoveryObservation {
+  readonly attemptId: string;
+  readonly taskId: string;
+  readonly attemptNumber: number;
+  readonly attemptStatus: string;
+  readonly executionStage: string;
+  readonly phase: 'observed' | 'recorded' | 'reprobed';
+  readonly observationRevision: number;
+  readonly observedAt: string;
+  readonly evidenceRef: string | null;
+  readonly gaps: readonly string[];
+  readonly stopConfirmed: boolean;
+  readonly processIdentityRecorded: boolean;
+  readonly verificationProcessesCount: number;
+}
+
+/** P07-1 / F-009：pending Git 回执公开投影（受限事实；不含意图正文）。 */
+export interface PublicRecoveryGitOperation {
+  readonly operationId: string;
+  readonly attemptId: string | null;
+  readonly runId: string;
+  readonly kind: string;
+  readonly status: string;
+  readonly reasonCode: string | null;
+  readonly createdAt: string;
+}
+
+/** P07-1 / F-009：恢复诊断下一步（持久事实派生；不自动执行任何动作）。 */
+export interface PublicRecoveryNextStep {
+  readonly action: 'execution.resume' | 'execution.retry-final';
+  readonly executable: boolean;
+  /** executable=false 时的持久原因码（有界；来自 EXECUTION_RECOVERY_BLOCK_REASONS）。 */
+  readonly blockedBy: readonly string[];
+}
+
+export const EXECUTION_RECOVERY_BLOCK_REASONS = [
+  /** 目标已终态（succeeded/failed/cancelled），旧 Run 不复活。 */
+  'run_terminal',
+  /** 目标仍活动（queued/running/pausing/cancelling），无暂停/隔离可继续。 */
+  'run_active',
+  /** 存在活动 Attempt（preparing/executing/verifying）。 */
+  'active_attempt',
+  /** 存在 held 未收尾占用。 */
+  'open_occupancy',
+  /** 存在 quarantined 租约占用。 */
+  'quarantined_occupancy',
+  /** 受管工作区仍隔离（quarantined）。 */
+  'workspace_quarantined',
+  /** 恢复观察仍含未确认/失败停止缺口。 */
+  'stop_unconfirmed',
+  /** interrupted Attempt 尚无持久恢复观察（启动恢复门控未完成）。 */
+  'startup_recovery_pending',
+  /** finalization 收尾缺失（retry-final 不可用）。 */
+  'finalization_absent',
+] as const;
+export type ExecutionRecoveryBlockReason = (typeof EXECUTION_RECOVERY_BLOCK_REASONS)[number];
 
 /* ------------------------------------------------------------------ *
  * 纯投影与派生（确定性；不读时钟、不产生写入、不解析日志或模型文本）
@@ -999,5 +1124,103 @@ export function buildRunRecoveryDetailResult(view: ExecutionRunRecoveryView): Ru
       },
       usage: { tokenUsed: null, costUsed: null },
     },
+    startup: buildRunRecoveryStartupSection(view),
   };
+}
+
+/* ------------------------------------------------------------------ *
+ * P07-1 / F-009：启动恢复诊断投影（纯函数；不读时钟、不产生写入）
+ * ------------------------------------------------------------------ */
+
+function buildRunRecoveryStartupSection(view: ExecutionRunRecoveryView): RunRecoveryDetailResult['startup'] {
+  const startup = view.startup;
+  return {
+    phase: startup.phase,
+    interruptedAttempts: startup.interruptedAttempts.map(toPublicExecutionControlAttempt),
+    interruptedTruncated: startup.interruptedTruncated,
+    observations: startup.observations.map((observation) => ({
+      attemptId: observation.attemptId,
+      taskId: observation.taskId,
+      attemptNumber: observation.attemptNumber,
+      attemptStatus: observation.attemptStatus,
+      executionStage: observation.executionStage,
+      phase: observation.phase,
+      observationRevision: observation.observationRevision,
+      observedAt: iso(observation.observedAtUtcMs),
+      evidenceRef: observation.evidenceRef,
+      gaps: [...observation.gaps],
+      stopConfirmed: observation.stopConfirmed,
+      processIdentityRecorded: observation.processIdentityRecorded,
+      verificationProcessesCount: observation.verificationProcessesCount,
+    })),
+    observationTruncated: startup.observationTruncated,
+    leases: startup.leases.map(toPublicExecutionControlLease),
+    workspace: startup.workspace === null ? null : {
+      workspaceId: startup.workspace.id,
+      status: startup.workspace.status,
+      revision: startup.workspace.revision,
+      attemptId: startup.workspace.attemptId,
+    },
+    pendingGitOperations: startup.pendingGitOperations.map((operation) => ({
+      operationId: operation.intent.operationId,
+      attemptId: operation.intent.attemptId,
+      runId: operation.intent.runId,
+      kind: operation.intent.operationType,
+      status: operation.status,
+      reasonCode: operation.reasonCode,
+      createdAt: iso(operation.createdAtUtcMs),
+    })),
+    stopOperations: startup.stopOperations.map(toPublicExecutionControlStopOperation),
+    nextSteps: deriveRunRecoveryNextSteps(view),
+  };
+}
+
+/** 恢复诊断下一步：只从持久事实派生可执行/阻塞原因，不触发任何动作。
+ * pending Git 回执存在时，显式 resume 会先尝试受信结算（matched 才放行；
+ * unknown 保持隔离并拒绝）——隔离占用不因此预判为不可提交。 */
+export function deriveRunRecoveryNextSteps(view: ExecutionRunRecoveryView): readonly PublicRecoveryNextStep[] {
+  const steps: PublicRecoveryNextStep[] = [];
+  const status = view.run.status;
+  if (status !== 'cancelled') {
+    const blockedBy: ExecutionRecoveryBlockReason[] = [];
+    if (status === 'succeeded' || status === 'failed') {
+      blockedBy.push('run_terminal');
+    } else if (status !== 'paused' && status !== 'interrupted') {
+      blockedBy.push('run_active');
+    } else {
+      if (view.startup.activeAttempts.length > 0) {
+        blockedBy.push('active_attempt');
+      }
+      if (view.startup.leases.some((entry) => entry.lease.state === 'held')) {
+        blockedBy.push('open_occupancy');
+      }
+      /* 隔离占用无 pending 回执可结算时才预判阻塞；有回执时 resume 先结算。 */
+      const hasPendingReceipts = view.startup.pendingGitOperations.length > 0;
+      if (!hasPendingReceipts) {
+        if (view.startup.leases.some((entry) => entry.lease.state === 'quarantined')) {
+          blockedBy.push('quarantined_occupancy');
+        }
+        if (view.startup.workspace?.status === 'quarantined') {
+          blockedBy.push('workspace_quarantined');
+        }
+      }
+      if (view.startup.observations.some((observation) =>
+        observation.gaps.some((gap) => gap === 'stop_unconfirmed' || gap === 'stop_failed'))) {
+        blockedBy.push('stop_unconfirmed');
+      }
+      const observed = new Set(view.startup.observations.map((observation) => observation.attemptId));
+      if (view.startup.interruptedAttempts.some((attempt) => !observed.has(attempt.id))) {
+        blockedBy.push('startup_recovery_pending');
+      }
+    }
+    steps.push({ action: 'execution.resume', executable: blockedBy.length === 0, blockedBy });
+  }
+  if (status === 'failed') {
+    steps.push({
+      action: 'execution.retry-final',
+      executable: view.finalization !== null,
+      blockedBy: view.finalization === null ? ['finalization_absent'] : [],
+    });
+  }
+  return steps;
 }

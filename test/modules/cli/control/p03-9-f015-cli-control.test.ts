@@ -477,6 +477,18 @@ describe('F-015 恢复诊断视图（工作流 resume vs Fake 新 Session 降级
     },
     finalization: { present: false, scope: null, axes: null as never },
     recovery: { records: continuations as never, truncated: false, attemptsScanned: 2 },
+    startup: {
+      phase: 'none',
+      interruptedAttempts: [],
+      interruptedTruncated: false,
+      observations: [],
+      observationTruncated: false,
+      leases: [],
+      workspace: null,
+      pendingGitOperations: [],
+      stopOperations: [],
+      nextSteps: [{ action: 'execution.resume', executable: true, blockedBy: [] }],
+    },
     budget: {
       batchId: BATCH_ID,
       budgetRevision: 1,

@@ -96,7 +96,10 @@ import {
   EXECUTION_CONTROL_NEXT_ACTIONS,
   EXECUTION_CONTROL_RUNS_MAX,
   EXECUTION_CONTROL_STOP_OPERATIONS_MAX,
+  EXECUTION_RECOVERY_BLOCK_REASONS,
   EXECUTION_RECOVERY_CONTINUATIONS_MAX,
+  EXECUTION_RECOVERY_GIT_OPERATIONS_MAX,
+  EXECUTION_RECOVERY_OBSERVATIONS_MAX,
   validateRunFinalizationScope,
   TASK_STATUSES,
   EXECUTION_BUDGET_BLOCK_REASONS,
@@ -4382,6 +4385,7 @@ export function validateRunRecoveryDetailResultWire(
     'finalization',
     'recovery',
     'budget',
+    'startup',
   ]);
   if (object.schemaVersion !== WIRE_MESSAGE_SCHEMA_VERSION) {
     if (typeof object.schemaVersion === 'number') unsupportedVersion(operation, 'schemaVersion');
@@ -4456,7 +4460,132 @@ export function validateRunRecoveryDetailResultWire(
   if (usage.tokenUsed !== null || usage.costUsed !== null) {
     malformed(operation, 'execution_recovery_usage_invalid');
   }
+  validateRunRecoveryStartupWire(operation, object.startup);
   return object as unknown as RunRecoveryDetailResult;
+}
+
+/** P07-1 / F-009：恢复诊断 startup 节（冻结字段集；列表有界；不作为授权凭据）。 */
+function validateRunRecoveryStartupWire(operation: HostOperation, value: unknown): void {
+  const startup = requirePlain(operation, value);
+  exactKeys(operation, startup, [
+    'phase',
+    'interruptedAttempts',
+    'interruptedTruncated',
+    'observations',
+    'observationTruncated',
+    'leases',
+    'workspace',
+    'pendingGitOperations',
+    'stopOperations',
+    'nextSteps',
+  ]);
+  if (!( ['none', 'pending', 'observed', 'recorded', 'reprobed'] as readonly unknown[]).includes(startup.phase)) {
+    malformed(operation, 'execution_recovery_startup_phase_invalid');
+  }
+  if (!Array.isArray(startup.interruptedAttempts) || startup.interruptedAttempts.length > EXECUTION_CONTROL_ATTEMPTS_MAX
+    || typeof startup.interruptedTruncated !== 'boolean') {
+    malformed(operation, 'execution_recovery_startup_attempts_invalid');
+  }
+  for (const record of startup.interruptedAttempts as unknown[]) {
+    validateExecutionControlAttemptWire(operation, record);
+  }
+  if (!Array.isArray(startup.observations) || startup.observations.length > EXECUTION_RECOVERY_OBSERVATIONS_MAX
+    || typeof startup.observationTruncated !== 'boolean') {
+    malformed(operation, 'execution_recovery_startup_observations_invalid');
+  }
+  for (const record of startup.observations as unknown[]) {
+    const observation = requirePlain(operation, record);
+    exactKeys(operation, observation, [
+      'attemptId', 'taskId', 'attemptNumber', 'attemptStatus', 'executionStage',
+      'phase', 'observationRevision', 'observedAt', 'evidenceRef', 'gaps',
+      'stopConfirmed', 'processIdentityRecorded', 'verificationProcessesCount',
+    ]);
+    requireStableId(operation, observation.attemptId);
+    requireNonEmptyString(operation, observation.taskId, 'execution_recovery_observation_invalid');
+    requirePositiveInteger(operation, observation.attemptNumber);
+    if (observation.attemptStatus !== 'interrupted') {
+      malformed(operation, 'execution_recovery_observation_invalid');
+    }
+    requireNonEmptyString(operation, observation.executionStage, 'execution_recovery_observation_invalid');
+    if (!((['observed', 'recorded', 'reprobed'] as readonly unknown[]).includes(observation.phase))) {
+      malformed(operation, 'execution_recovery_observation_invalid');
+    }
+    requirePositiveInteger(operation, observation.observationRevision);
+    if (!isIsoUtcDateTime(observation.observedAt)) {
+      malformed(operation, 'execution_recovery_date_invalid');
+    }
+    requireStableIdOrNull(operation, observation.evidenceRef);
+    if (!Array.isArray(observation.gaps) || observation.gaps.length > 64
+      || observation.gaps.some((gap: unknown) => typeof gap !== 'string' || gap.length === 0 || gap.length > 128)) {
+      malformed(operation, 'execution_recovery_observation_invalid');
+    }
+    if (typeof observation.stopConfirmed !== 'boolean'
+      || typeof observation.processIdentityRecorded !== 'boolean'
+      || typeof observation.verificationProcessesCount !== 'number'
+      || !Number.isSafeInteger(observation.verificationProcessesCount) || observation.verificationProcessesCount < 0) {
+      malformed(operation, 'execution_recovery_observation_invalid');
+    }
+  }
+  if (!Array.isArray(startup.leases) || startup.leases.length > 600) {
+    malformed(operation, 'execution_recovery_startup_leases_invalid');
+  }
+  for (const lease of startup.leases as unknown[]) validateExecutionControlLeaseWire(operation, lease);
+  if (startup.workspace !== null) {
+    const workspace = requirePlain(operation, startup.workspace);
+    exactKeys(operation, workspace, ['workspaceId', 'status', 'revision', 'attemptId']);
+    requireStableId(operation, workspace.workspaceId);
+    if (!(WORKSPACE_STATUSES as readonly unknown[]).includes(workspace.status)) {
+      malformed(operation, 'execution_recovery_workspace_invalid');
+    }
+    requirePositiveInteger(operation, workspace.revision);
+    requireStableIdOrNull(operation, workspace.attemptId);
+  }
+  if (!Array.isArray(startup.pendingGitOperations) || startup.pendingGitOperations.length > EXECUTION_RECOVERY_GIT_OPERATIONS_MAX) {
+    malformed(operation, 'execution_recovery_startup_git_invalid');
+  }
+  for (const record of startup.pendingGitOperations as unknown[]) {
+    const receipt = requirePlain(operation, record);
+    exactKeys(operation, receipt, ['operationId', 'attemptId', 'runId', 'kind', 'status', 'reasonCode', 'createdAt']);
+    requireStableId(operation, receipt.operationId);
+    requireStableIdOrNull(operation, receipt.attemptId);
+    requireStableId(operation, receipt.runId);
+    requireNonEmptyString(operation, receipt.kind, 'execution_recovery_startup_git_invalid');
+    if (receipt.status !== 'pending') {
+      malformed(operation, 'execution_recovery_startup_git_invalid');
+    }
+    if (receipt.reasonCode !== null) requireNonEmptyString(operation, receipt.reasonCode, 'execution_recovery_startup_git_invalid');
+    if (!isIsoUtcDateTime(receipt.createdAt)) {
+      malformed(operation, 'execution_recovery_date_invalid');
+    }
+  }
+  if (!Array.isArray(startup.stopOperations)
+    || startup.stopOperations.length > EXECUTION_CONTROL_STOP_OPERATIONS_MAX) {
+    malformed(operation, 'execution_recovery_startup_stops_invalid');
+  }
+  for (const record of startup.stopOperations as unknown[]) {
+    validateExecutionControlStopOperationWire(operation, record);
+  }
+  if (!Array.isArray(startup.nextSteps) || startup.nextSteps.length > 2) {
+    malformed(operation, 'execution_recovery_startup_next_steps_invalid');
+  }
+  for (const record of startup.nextSteps as unknown[]) {
+    const step = requirePlain(operation, record);
+    exactKeys(operation, step, ['action', 'executable', 'blockedBy']);
+    if (step.action !== 'execution.resume' && step.action !== 'execution.retry-final') {
+      malformed(operation, 'execution_recovery_startup_next_steps_invalid');
+    }
+    if (typeof step.executable !== 'boolean') {
+      malformed(operation, 'execution_recovery_startup_next_steps_invalid');
+    }
+    if (!Array.isArray(step.blockedBy) || step.blockedBy.length > EXECUTION_RECOVERY_BLOCK_REASONS.length
+      || step.blockedBy.some((reason: unknown) =>
+        typeof reason !== 'string' || !(EXECUTION_RECOVERY_BLOCK_REASONS as readonly string[]).includes(reason))) {
+      malformed(operation, 'execution_recovery_startup_next_steps_invalid');
+    }
+    if (step.executable && step.blockedBy.length > 0) {
+      malformed(operation, 'execution_recovery_startup_next_steps_invalid');
+    }
+  }
 }
 
 /** execution.attempts.list：Task 的 Attempt 审计分页（受控游标复用计划规范）。 */

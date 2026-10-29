@@ -99,6 +99,10 @@ export interface BindingFixtureOptions {
   /** F-016：第三 Task（t-3，dependsOn: ['t-2']，独立 spec 输入）；须与 secondTask +
    * secondTaskDependsOnFirst 同用，构成 t-1→t-2→t-3 三 Task 链。 */
   readonly thirdTaskChained?: boolean;
+  /** P07-1 / F-009：经公开 Core 装配入口（project.profile.detect/confirm）确认项目
+   * Profile；P06 起真实 Host 认领链路要求已确认 Profile，需要真实派发/继续的
+   * 纵向用例显式开启。缺省不改变历史夹具形态。 */
+  readonly confirmProjectProfile?: boolean;
 }
 
 export interface BoundAttempt {
@@ -443,6 +447,42 @@ export async function openBindingFixture(options: BindingFixtureOptions = {}): P
       cwdRoot: 'workspace-root',
       ...overrides,
     });
+
+    /* P07-1 / F-009：可选经公开 Core 装配入口确认项目 Profile（与产品 Host/CLI
+     * 同一命令面）。绑定夹具自身命令通道未装配 Profile 端口，短开一次完整
+     * CoreApplication 提交后立即关闭；时钟注入固定值（位于盒子基准与
+     * BINDING_NOW 之间），保证 issuedAt 通过时序检查。 */
+    if (options.confirmProjectProfile === true) {
+      const profileNowMs = 1_900_000_100_000;
+      const profileApp = await box.openApplication({
+        capabilityCatalog,
+        nowUtcMs: () => profileNowMs,
+      });
+      try {
+        const submitProfile = async (operation: string, payload: Record<string, unknown>, extra: Record<string, unknown> = {}) => {
+          const receipt = await profileApp.commandService.submit(owner, {
+            schemaVersion: 5, commandId: randomUUID(), issuedAt: new Date(profileNowMs).toISOString(),
+            operation, payload, ...extra,
+          } as never);
+          if (receipt.status !== 'completed' || receipt.result === null) {
+            throw new Error(`project.profile 命令失败（${operation}）: ${JSON.stringify(receipt)}`);
+          }
+          return receipt as unknown as { result: Record<string, unknown> };
+        };
+        const detected = await submitProfile('project.profile.detect', {}, { scope });
+        const candidate = detected.result.profile;
+        if (typeof candidate !== 'object' || candidate === null) {
+          throw new Error(`project.profile.detect 未返回候选 Profile: ${JSON.stringify(detected.result)}`);
+        }
+        const revisionRow = db.prepare('SELECT revision FROM project_profiles WHERE project_id = ?'
+          + ' ORDER BY version DESC LIMIT 1').get(projectId) as { revision: number } | undefined;
+        if (revisionRow === undefined) throw new Error('project.profile.detect 未持久化候选 Profile');
+        await submitProfile('project.profile.confirm', { profile: candidate },
+          { scope, expectedRevision: revisionRow.revision });
+      } finally {
+        await profileApp.close();
+      }
+    }
 
     const recoveryCatalog: RuntimeRecoveryCatalog | undefined =
       options.recoveryDescriptors === undefined

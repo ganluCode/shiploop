@@ -150,7 +150,7 @@ function failureOf(outcome: CliOutcome): { code: string; details?: Record<string
 }
 
 async function openCase(): Promise<{ projectId: string; runId: string; dataRoot: string }> {
-  fixture = await openBindingFixture();
+  fixture = await openBindingFixture({ confirmProjectProfile: true });
   host = await startFakeHost({
     dataRoot: fixture.box.dataRoot,
     capabilityCatalog: catalog(),

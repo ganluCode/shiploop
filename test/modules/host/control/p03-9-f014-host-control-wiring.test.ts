@@ -33,7 +33,7 @@ import {
   APPLICATION_COMMAND_CAPABILITIES,
   APPLICATION_QUERY_CAPABILITIES,
 } from '../../../../packages/host/src/contract/lifecycle.ts';
-import { COMMAND_OPERATIONS } from '../../../../packages/core/src/ports/commands.ts';
+import { COMMAND_OPERATIONS, WIRE_MESSAGE_SCHEMA_VERSION } from '../../../../packages/core/src/ports/commands.ts';
 import { EXECUTION_CONTROL_QUERY_OPERATIONS } from '../../../../packages/core/src/protocol.ts';
 import type { CommandReceipt } from '../../../../packages/core/src/ports/commands.ts';
 import { openClaimFixture } from '../../../helpers/p03-4/task-claim-fixture.ts';
@@ -170,8 +170,9 @@ describe('P03-9 / F-014 能力白名单与线版本纪律', () => {
       expect(APP_OPERATIONS).toContain(operation);
       expect(APPLICATION_QUERY_CAPABILITIES).toContain(operation);
     }
-    // 本 Feature 未改变任何冻结线消息形状：仍是同一 v5，不猜测升版。
-    expect(CURRENT_SCHEMA_VERSION).toBe(5);
+    // 线消息版本守卫：P02-2→2、P02-3→3、P03-1→4、P03-2→5、P06-5（仓库移动能力）
+    // →6；本 Feature 未新增握手能力，不升版——但任何变化必须经本守卫显式可见。
+    expect(CURRENT_SCHEMA_VERSION).toBe(6);
 
     const { host, client, token } = await openHostedFixture();
     for (const operation of ['execution.pause', 'execution.cancel', 'execution.resume', 'execution.retryFinal']) {
@@ -194,7 +195,7 @@ describe('P03-9 / F-014 能力白名单与线版本纪律', () => {
       body: handshakeBody,
     });
     expect(current.statusCode).toBe(200);
-    for (const schemaVersion of [4, 6]) {
+    for (const schemaVersion of [4, 7]) {
       const oldOrUnknown = await loopbackRequest({
         port: host.port,
         method: 'POST',
@@ -357,13 +358,13 @@ describe('P03-9 / F-014 真实 Host 控制纵向', () => {
       error => isHostProtocolError(error) && error.code === 'forbidden',
     );
 
-    // 未认证传输请求：401，零业务写入。
+    // 未认证传输请求：401，零业务写入（命令信封是 Core 线消息 v5，非 Host 握手 v6）。
     const unauthorized = await loopbackRequest({
       port: host.port,
       method: 'POST',
       path: '/v1/commands',
       body: {
-        schemaVersion: CURRENT_SCHEMA_VERSION,
+        schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION,
         commandId: randomUUID(),
         issuedAt: new Date().toISOString(),
         operation: 'execution.pause',
@@ -381,7 +382,7 @@ describe('P03-9 / F-014 真实 Host 控制纵向', () => {
       path: '/v1/commands',
       token,
       body: {
-        schemaVersion: CURRENT_SCHEMA_VERSION,
+        schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION,
         commandId: randomUUID(),
         issuedAt: '2020-01-01T00:00:00.000Z',
         expiresAt: '2020-01-01T00:00:01.000Z',
@@ -403,7 +404,7 @@ describe('P03-9 / F-014 真实 Host 控制纵向', () => {
       path: '/v1/commands',
       token,
       body: {
-        schemaVersion: CURRENT_SCHEMA_VERSION,
+        schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION,
         commandId: randomUUID(),
         issuedAt: new Date().toISOString(),
         operation: 'execution.arbitrary.inject',
@@ -422,7 +423,7 @@ describe('P03-9 / F-014 真实 Host 控制纵向', () => {
     const { fixture, host, client } = await openHostedFixture();
     const revision = readRun(fixture).revision;
     const envelope = {
-      schemaVersion: CURRENT_SCHEMA_VERSION,
+      schemaVersion: WIRE_MESSAGE_SCHEMA_VERSION,
       commandId: randomUUID(),
       issuedAt: new Date().toISOString(),
       operation: 'execution.pause',

@@ -22,12 +22,15 @@ import { attemptFromRow, leaseFromRow, type LeaseRow } from './attempt-store.js'
 import {
   createSqliteExecutionAccess,
 } from './execution-store.js';
+import { GIT_OPERATION_COLUMNS, gitOperationRecordFromRow } from './git-operations.js';
 import type {
   ExecutionBatchControlView,
   ExecutionControlLeaseEntry,
   ExecutionControlQueryReadStore,
   ExecutionRunControlView,
   ExecutionRunRecoveryContinuationEntry,
+  ExecutionRunRecoveryObservationEntry,
+  ExecutionRunRecoveryStartupView,
   ExecutionRunRecoveryView,
   ExecutionResourceListPage,
   ExecutionResourceListRequest,
@@ -39,6 +42,8 @@ import {
   EXECUTION_CONTROL_RUNS_MAX,
   EXECUTION_CONTROL_STOP_OPERATIONS_MAX,
   EXECUTION_RECOVERY_CONTINUATIONS_MAX,
+  EXECUTION_RECOVERY_GIT_OPERATIONS_MAX,
+  EXECUTION_RECOVERY_OBSERVATIONS_MAX,
   validateRunFinalizationScope,
 } from '../../ports/execution-control-query.js';
 import type {
@@ -283,6 +288,166 @@ export function createSqliteExecutionControlQueryStore(
     };
   }
 
+  /* ------------------------------------------------------------ *
+   * P07-1 / F-009：启动恢复诊断（同一一致读内组装；只读，零写入）。   *
+   * ------------------------------------------------------------ */
+
+  function recoveryObservationFromRow(
+    operation: string,
+    projectId: string,
+    runId: string,
+    row: { readonly attempt_id: string | null; readonly payload: string; readonly occurred_at: number },
+  ): ExecutionRunRecoveryObservationEntry {
+    const message = '恢复观察事件损坏';
+    let payload: Record<string, unknown>;
+    try {
+      payload = JSON.parse(row.payload) as Record<string, unknown>;
+    } catch (error) {
+      throw corrupt(operation, `${message}: ${(error as Error).message}`, projectId, runId);
+    }
+    // 未知 schemaVersion/kind/phase fail-closed：不猜测降级解释。
+    if (payload.schemaVersion !== 1 || payload.kind !== 'work-startup-recovery'
+      || (payload.phase !== 'observed' && payload.phase !== 'recorded' && payload.phase !== 'reprobed')
+      || payload.attemptId !== row.attempt_id || payload.projectId !== projectId || payload.runId !== runId
+      || typeof payload.stopConfirmed !== 'boolean' || typeof payload.observedAtUtcMs !== 'number'
+      || !Array.isArray(payload.gaps) || payload.gaps.length > 64
+      || payload.gaps.some((gap) => typeof gap !== 'string' || gap.length === 0 || gap.length > 128)
+      || (payload.evidenceRef !== null && payload.evidenceRef !== undefined && typeof payload.evidenceRef !== 'string')
+      || (payload.observationRevision !== undefined
+        && (typeof payload.observationRevision !== 'number' || !Number.isSafeInteger(payload.observationRevision)
+          || payload.observationRevision < 1))) {
+      throw corrupt(operation, `${message}: 未知观察结构或版本`, projectId, runId);
+    }
+    const processIdentityRecorded = payload.processIdentity !== null && payload.processIdentity !== undefined;
+    const verificationProcesses = Array.isArray(payload.verificationProcesses) ? payload.verificationProcesses.length : 0;
+    return {
+      attemptId: payload.attemptId as string,
+      taskId: '',
+      attemptNumber: 0,
+      attemptStatus: 'interrupted',
+      executionStage: typeof payload.executionStage === 'string' ? payload.executionStage : '',
+      phase: payload.phase as 'observed' | 'recorded' | 'reprobed',
+      observationRevision: payload.observationRevision === undefined ? 1 : payload.observationRevision as number,
+      observedAtUtcMs: row.occurred_at,
+      evidenceRef: (payload.evidenceRef as string | null | undefined) ?? null,
+      gaps: payload.gaps as readonly string[],
+      stopConfirmed: payload.stopConfirmed as boolean,
+      processIdentityRecorded,
+      verificationProcessesCount: verificationProcesses,
+    };
+  }
+
+  /** 各 interrupted Attempt 的最新持久恢复观察（work.recovery.updated 最新 sequence）。 */
+  function listRecoveryObservations(
+    operation: string,
+    projectId: string,
+    runId: string,
+    attempts: readonly ReturnType<typeof attemptFromRow>[],
+  ): { observations: readonly ExecutionRunRecoveryObservationEntry[]; truncated: boolean } {
+    const attemptIds = attempts.map((attempt) => attempt.id);
+    if (attemptIds.length === 0) return { observations: [], truncated: false };
+    const placeholders = attemptIds.map(() => '?').join(',');
+    const rows = session.database
+      .prepare<[string, ...string[]], { readonly attempt_id: string | null; readonly payload: string; readonly occurred_at: number }>(
+        `SELECT e.attempt_id, e.payload, e.occurred_at FROM state_events e
+         WHERE e.project_id = ? AND e.event_type IN ('work.recovery.updated', 'work.recovery.blocked')
+           AND json_extract(e.payload, '$.phase') IN ('observed', 'recorded', 'reprobed')
+           AND e.attempt_id IN (${placeholders})
+           AND e.sequence = (SELECT MAX(latest.sequence) FROM state_events latest
+             WHERE latest.attempt_id = e.attempt_id
+               AND latest.event_type IN ('work.recovery.updated', 'work.recovery.blocked')
+               AND json_extract(latest.payload, '$.phase') IN ('observed', 'recorded', 'reprobed'))
+         ORDER BY e.attempt_id`,
+      )
+      .all(projectId, ...attemptIds) as { readonly attempt_id: string | null; readonly payload: string; readonly occurred_at: number }[];
+    const bounded = rows.slice(0, EXECUTION_RECOVERY_OBSERVATIONS_MAX + 1);
+    const truncated = bounded.length > EXECUTION_RECOVERY_OBSERVATIONS_MAX;
+    const visible = truncated ? bounded.slice(0, EXECUTION_RECOVERY_OBSERVATIONS_MAX) : bounded;
+    // taskId/attemptNumber 不在观察事件内：从同一一致读的 Attempt 行补齐身份投影。
+    const observations = visible.map((row) => {
+      const entry = recoveryObservationFromRow(operation, projectId, runId, row);
+      const attempt = attempts.find((candidate) => candidate.id === entry.attemptId);
+      if (attempt === undefined) {
+        throw corrupt(operation, '恢复观察与 Attempt 身份不一致', projectId, runId);
+      }
+      return { ...entry, taskId: attempt.taskId, attemptNumber: attempt.number };
+    });
+    return { observations, truncated };
+  }
+
+  function readRunRecoveryStartupView(
+    operation: string,
+    projectId: string,
+    runId: string,
+    featureId: string,
+    batchId: string,
+    attempts: readonly ReturnType<typeof attemptFromRow>[],
+    attemptsTruncated: boolean,
+  ): ExecutionRunRecoveryStartupView {
+    const interrupted = attempts.filter((attempt) => attempt.status === 'interrupted');
+    const interruptedTruncated = attemptsTruncated && interrupted.length === attempts.length;
+    const active = attempts.filter((attempt) => ['preparing', 'executing', 'verifying'].includes(attempt.status));
+    const { observations, truncated: observationTruncated } = listRecoveryObservations(
+      operation, projectId, runId, interrupted,
+    );
+    const leases = listLeases(projectId, attempts.map((attempt) => attempt.id));
+    const workspaceRow = session.database
+      .prepare<[string, string], { id: string; status: string; revision: number; attempt_id: string | null }>(
+        'SELECT id, status, revision, attempt_id FROM managed_workspaces WHERE project_id = ? AND feature_id = ?',
+      )
+      .get(projectId, featureId);
+    if (workspaceRow !== undefined && !['preparing', 'ready', 'retained', 'quarantined', 'cleanup_pending', 'cleaned']
+      .includes(workspaceRow.status)) {
+      throw corrupt(operation, `受管工作区状态损坏: ${workspaceRow.status}`, projectId, runId);
+    }
+    const gitRows = session.database
+      .prepare<[string, string, number]>(
+        `SELECT ${GIT_OPERATION_COLUMNS} FROM git_operations
+         WHERE project_id = ? AND run_id = ? AND status = 'pending' ORDER BY id LIMIT ?`,
+      )
+      .all(projectId, runId, EXECUTION_RECOVERY_GIT_OPERATIONS_MAX);
+    let pendingGitOperations;
+    try {
+      pendingGitOperations = gitRows.map((row) => gitOperationRecordFromRow(row as Parameters<typeof gitOperationRecordFromRow>[0]));
+    } catch (error) {
+      throw corrupt(operation, `pending Git 回执行损坏: ${(error as Error).message}`, projectId, runId);
+    }
+    // 观察阶段取最落后者：无观察 → pending；observed < recorded < reprobed。
+    const phaseOrder = { pending: 0, observed: 1, recorded: 2, reprobed: 3 } as const;
+    let phase: ExecutionRunRecoveryStartupView['phase'] = 'none';
+    if (interrupted.length > 0) {
+      const observedPhases = new Map(observations.map((observation) => [observation.attemptId, observation.phase]));
+      if (interrupted.every((attempt) => observedPhases.has(attempt.id))) {
+        phase = interrupted.reduce<'pending' | 'observed' | 'recorded' | 'reprobed'>(
+          (least, attempt) => {
+            const current = observedPhases.get(attempt.id)!;
+            return phaseOrder[current] < phaseOrder[least] ? current : least;
+          },
+          'reprobed',
+        );
+      } else {
+        phase = 'pending';
+      }
+    }
+    return {
+      phase,
+      interruptedAttempts: interrupted,
+      interruptedTruncated,
+      activeAttempts: active,
+      observations,
+      observationTruncated,
+      leases,
+      workspace: workspaceRow === undefined ? null : {
+        id: workspaceRow.id,
+        status: workspaceRow.status,
+        revision: workspaceRow.revision,
+        attemptId: workspaceRow.attempt_id,
+      },
+      pendingGitOperations,
+      stopOperations: listStopOperations(projectId, batchId, runId),
+    };
+  }
+
   function readRunRow(operation: string, projectId: string, runId: string): RunRecord | undefined {
     try {
       return execution.getExecutionRunInTransaction(projectId, runId);
@@ -427,6 +592,9 @@ export function createSqliteExecutionControlQueryStore(
           continuationsTruncated: scanned.truncated,
           attemptsScanned: scanned.scanned,
           delivery: deliveryView,
+          startup: readRunRecoveryStartupView(
+            operation, projectId, runId, runRecord.featureId, batch.id, scanned.attempts, scanned.truncated,
+          ),
         };
       });
     },
