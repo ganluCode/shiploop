@@ -4,7 +4,7 @@ import { dirname, join, resolve, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { validateAppQueryResponse } from '../../packages/host/src/client/app-wire.ts';
 import { validateP05ProductCapture } from './p05-product-evidence.ts';
-import { digestP06Checklist, loadP06Checklist, validateP06Checklist, type P06Checklist, type P06ReportStatus } from './p06-config.ts';
+import { digestP06Checklist, loadP06Checklist, validateP06Checklist, P06_ENTRY_STEP_ORDER, type P06Checklist, type P06ReportStatus } from './p06-config.ts';
 import { P06_REQUIRED_EVIDENCE_SCENARIOS, validateP06Scenario, verifyP06Scenario,
   type P06EvidenceIdentity, type P06ScenarioRecord } from './p06-evidence.ts';
 import { hashP06Bytes, hashP06Input, safeP06Json, safeP06Text } from './p06-facts.ts';
@@ -23,6 +23,7 @@ export type P06ReportInput = {
   readonly identity: P06EvidenceIdentity; readonly toolchain: Readonly<Record<string, string>>;
   readonly checks: readonly P06ReportCheckInput[]; readonly scenarios: readonly P06ScenarioRecord[];
   readonly products: readonly { readonly path: string }[];
+  readonly entry?: { readonly path: string };
   readonly gates?: readonly { readonly path: string; readonly execution: 'live' | 'manual' }[];
   readonly knownGaps: readonly string[];
 };
@@ -92,7 +93,7 @@ function filesIn(directory: string, prefix = ''): string[] {
 }
 const slot = (r: P06ScenarioRecord) => `${r.scenarioId}-a${r.attempt}`;
 function validateInput(input: P06ReportInput, checklist: P06Checklist): void {
-  keys(input, ['identity', 'toolchain', 'checks', 'scenarios', 'products', 'gates', 'knownGaps']); identity(input.identity);
+  keys(input, ['identity', 'toolchain', 'checks', 'scenarios', 'products', 'entry', 'gates', 'knownGaps']); identity(input.identity);
   if (!input.toolchain || !Object.keys(input.toolchain).length || Object.values(input.toolchain).some(v => typeof v !== 'string' || !v) ||
       !Array.isArray(input.knownGaps) || input.knownGaps.some(g => typeof g !== 'string' || !g)) fail('invalid_metadata');
   const ids = new Set<string>();
@@ -143,6 +144,35 @@ function validateGate(value: unknown, expected: P06EvidenceIdentity, execution: 
   return gate;
 }
 
+type EntryStep = { id: string; argv: string[]; status: P06ReportStatus; exitCode: number | null; timedOut: boolean; stoppedVerified: boolean | null; durationMs: number | null };
+function readEntryCapture(directory: string, ref: { readonly path: string }, expected: P06EvidenceIdentity) {
+  keys(ref, ['path']);
+  if (!/^entry\/[\w-]+\.json$/.test(ref.path)) fail('invalid_entry_path');
+  const raw = parse(directory, ref.path) as Record<string, any>;
+  keys(raw, ['schemaVersion', 'runId', 'testedCommit', 'inputDigest', 'steps', 'cleanup', 'sourceDrift', 'elapsedMs', 'overallTimeoutMs', 'selectedFiles']);
+  if (raw.schemaVersion !== 1 || !matchesIdentity({ runId: raw.runId, testedCommit: raw.testedCommit, inputDigest: raw.inputDigest }, expected) ||
+      !Array.isArray(raw.steps) || ![3, 4].includes(raw.steps.length)) fail('invalid_entry_identity');
+  const expectedOrder = [...P06_ENTRY_STEP_ORDER.slice(0, 3), ...(raw.steps.length === 4 ? ['p06-full-regression'] : [])];
+  const steps: EntryStep[] = raw.steps;
+  steps.forEach((step, index) => {
+    keys(step, ['id', 'argv', 'status', 'exitCode', 'timedOut', 'stoppedVerified', 'durationMs']);
+    if (step.id !== expectedOrder[index] || !['pass', 'fail', 'not_run'].includes(step.status) ||
+        !Array.isArray(step.argv) || !step.argv.length || step.argv.some(p => typeof p !== 'string' || !p) ||
+        (step.exitCode !== null && (!Number.isSafeInteger(step.exitCode) || step.exitCode < 0)) || typeof step.timedOut !== 'boolean' ||
+        (step.stoppedVerified !== null && typeof step.stoppedVerified !== 'boolean') ||
+        (step.durationMs !== null && (!Number.isFinite(step.durationMs) || step.durationMs < 0))) fail('invalid_entry_step');
+    if (step.status === 'pass' && (step.exitCode !== 0 || step.timedOut || step.stoppedVerified !== true || step.durationMs === null)) fail('invalid_entry_pass');
+    if (step.status === 'not_run' && (step.exitCode !== null || step.timedOut || step.durationMs !== null)) fail('invalid_entry_not_run');
+    if (index > 0 && steps.slice(0, index).some(s => s.status !== 'pass') && step.status !== 'not_run') fail('invalid_entry_continuation');
+  });
+  keys(raw.cleanup, ['processesGone', 'resourcesRemoved']);
+  if (typeof raw.cleanup.processesGone !== 'boolean' || typeof raw.cleanup.resourcesRemoved !== 'boolean' || typeof raw.sourceDrift !== 'boolean' ||
+      !Number.isSafeInteger(raw.elapsedMs) || raw.elapsedMs < 0 || !Number.isSafeInteger(raw.overallTimeoutMs) || raw.overallTimeoutMs < 1000 ||
+      !Array.isArray(raw.selectedFiles) || !raw.selectedFiles.length || new Set(raw.selectedFiles).size !== raw.selectedFiles.length ||
+      raw.selectedFiles.some((f: unknown) => typeof f !== 'string' || !/^test\/modules\/(?:[\w.-]+\/)*[\w.-]+\.test\.(ts|js)$/.test(f))) fail('invalid_entry_facts');
+  return { steps, failed: steps.some(s => s.status !== 'pass') || !raw.cleanup.processesGone || !raw.cleanup.resourcesRemoved || raw.sourceDrift || raw.elapsedMs > raw.overallTimeoutMs };
+}
+
 /** Recomputes every derived value from frozen checks and independently verified file contents. */
 export function buildP06AcceptanceReport(sourceDirectory: string, input: P06ReportInput, checklist = loadP06Checklist()): P06AcceptanceReport {
   validateP06Checklist(checklist); validateInput(input, checklist);
@@ -152,6 +182,8 @@ export function buildP06AcceptanceReport(sourceDirectory: string, input: P06Repo
     const bytes = readFile(sourceDirectory, path);
     material.set(path, { path, sha256: hashP06Bytes(bytes), sizeBytes: bytes.length });
   }
+  const entry = input.entry ? readEntryCapture(sourceDirectory, input.entry, input.identity) : null;
+  if (input.entry) add(input.entry.path);
   for (const record of input.scenarios) {
     if (record.status === 'not_run') continue;
     if (!verifyP06Scenario(sourceDirectory, record, input.identity).ok) fail('scenario_verification_failed');
@@ -183,6 +215,7 @@ export function buildP06AcceptanceReport(sourceDirectory: string, input: P06Repo
     let status: P06ReportStatus = claim?.status ?? 'not_run', reason: string | null = claim?.reason ?? null;
     if (item.group === 'deferred') { status = 'not_run'; reason = 'deferred_full_history_not_run'; }
     else if (item.execution === 'offline') {
+      if (input.entry) evidence.push({ category: 'command-exit', path: `${input.entry.path}#steps` }, { category: 'cleanup', path: `${input.entry.path}#cleanup` });
       const required = [...item.scenarioIds];
       if (item.id === 'P06-FR1-OFFLINE-CLOSURE') required.push('FR-1');
       if (item.id === 'P06-FR2-NEGATIVE-EVIDENCE') required.push('FR-2');
@@ -195,7 +228,8 @@ export function buildP06AcceptanceReport(sourceDirectory: string, input: P06Repo
       const failed = records.find(r => r.status === 'fail');
       const missing = required.filter(s => !records.some(r => r.scenarioId === s));
       const notRun = records.find(r => r.status === 'not_run');
-      if (failed || status === 'fail') { status = 'fail'; reason = failed?.reason ?? reason ?? 'check_failed'; }
+      if (entry?.failed) { status = 'fail'; reason = 'entry_step_or_cleanup_failed'; }
+      else if (failed || status === 'fail') { status = 'fail'; reason = failed?.reason ?? reason ?? 'check_failed'; }
       else if (status === 'not_run' || missing.length || notRun) { status = 'not_run'; reason = missing.length ? `missing_scenarios:${missing.join(',')}` : notRun?.reason ?? reason ?? 'not_run'; }
     } else {
       const external = gates.get(item.execution);
@@ -226,7 +260,8 @@ export function buildP06AcceptanceReport(sourceDirectory: string, input: P06Repo
   return { schemaVersion: 1, phase: 'P06', layer: 'phase-acceptance', identity: input.identity, checklist, checklistDigest: digestP06Checklist(checklist), request: input,
     checks, counts, offlineConclusion, conclusion, exitCode: conclusion === 'pass' ? 0 : 1, blockingIssues,
     knownGaps: [...input.knownGaps, ...checks.filter(c => c.status === 'not_run').map(c => `${c.checkId}:${c.reason}`)],
-    commands: input.scenarios.map(r => ({ scenarioId: r.scenarioId, attempt: r.attempt, argv: r.command, exitCode: r.exitCode })),
+    commands: [...input.scenarios.map(r => ({ scenarioId: r.scenarioId, attempt: r.attempt, argv: r.command, exitCode: r.exitCode })),
+      ...(entry?.steps.map(s => ({ scenarioId: `entry/${s.id}`, attempt: 1, argv: s.argv, exitCode: s.exitCode })) ?? [])],
     productReports, files: [...material.values()].sort((a, b) => a.path.localeCompare(b.path)) };
 }
 export function renderP06Summary(report: P06AcceptanceReport): string {

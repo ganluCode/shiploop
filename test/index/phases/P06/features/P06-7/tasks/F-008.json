@@ -1,0 +1,39 @@
+{
+  "schema_version": 2,
+  "task_id": "F-008",
+  "projects": [
+    {
+      "id": "shiploop",
+      "tests": [
+        {
+          "file": "test/modules/acceptance/p06-7-f008-entry.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/acceptance/p06-7-f008-demo.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/acceptance/p06-7-f004-knowledge-increment.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/acceptance/p06-7-f007-report.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/acceptance/p06-7-f006-evidence.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/acceptance/p06-acceptance-contract.test.ts",
+          "all": true
+        },
+        {
+          "file": "test/modules/acceptance/acceptance-process-cleanup.test.ts",
+          "all": true
+        }
+      ]
+    }
+  ]
+}

@@ -11,6 +11,7 @@
     { "task_id": "F-004", "index": "test/index/phases/P06/features/P06-7/tasks/F-004.json" },
     { "task_id": "F-005", "index": "test/index/phases/P06/features/P06-7/tasks/F-005.json" },
     { "task_id": "F-006", "index": "test/index/phases/P06/features/P06-7/tasks/F-006.json" },
-    { "task_id": "F-007", "index": "test/index/phases/P06/features/P06-7/tasks/F-007.json" }
+    { "task_id": "F-007", "index": "test/index/phases/P06/features/P06-7/tasks/F-007.json" },
+    { "task_id": "F-008", "index": "test/index/phases/P06/features/P06-7/tasks/F-008.json" }
   ]
 }
