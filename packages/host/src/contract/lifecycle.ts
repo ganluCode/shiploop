@@ -62,6 +62,7 @@ export const APPLICATION_COMMAND_CAPABILITIES = [
   'project.repository.rebind',
   'project.metadata.update',
   'project.profile.confirm',
+  'project.profile.detect',
   'project.profile.modify',
   'project.profile.reject',
   'settings.global.create',

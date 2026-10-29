@@ -134,6 +134,11 @@ export {
 } from './ports/events.js';
 export type { PublicStateEvent, PublicStateEventType } from './ports/events.js';
 export { validateProfileAuditPayload } from './ports/project-profile-store.js';
+export * from './ports/project-resource-sources.js';
+export * from './ports/project-resources.js';
+export * from './ports/project-resource-candidates.js';
+export { validateProjectResourceSettings } from './ports/project-resource-store.js';
+export * from './ports/brownfield.js';
 export {
   PROJECT_PROFILE_QUERY_SCHEMA_VERSION,
   createProjectProfileQueryResult,

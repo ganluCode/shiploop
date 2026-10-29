@@ -747,7 +747,7 @@ describe('P02-FR2-BASELINE-FAILURE 拒绝授权与缺命令/未知脚本', () =>
     expect(missingChecks).toHaveLength(1);
     expect(missingChecks[0]).toMatchObject({
       checkKey: 'p02-4-failure-missing-command',
-      status: 'error',
+      status: 'not_run',
       reasonCode: 'missing_command',
       timedOut: false,
     });
@@ -778,12 +778,12 @@ describe('P02-FR2-BASELINE-FAILURE 拒绝授权与缺命令/未知脚本', () =>
     const checkByKey = (key: string): Record<string, unknown> =>
       unknownChecks.find((entry) => entry.checkKey === key)!;
     expect(checkByKey('p02-4-failure-unknown-absent')).toMatchObject({
-      status: 'error',
+      status: 'not_run',
       reasonCode: 'unknown_script',
       timedOut: false,
     });
     expect(checkByKey('p02-4-failure-unknown-npm')).toMatchObject({
-      status: 'error',
+      status: 'not_run',
       reasonCode: 'unknown_script',
       timedOut: false,
     });
@@ -802,7 +802,7 @@ describe('P02-FR2-BASELINE-FAILURE 拒绝授权与缺命令/未知脚本', () =>
         }),
       ),
     );
-    expect(missingStatus.checks[0]).toMatchObject({ status: 'error', reasonCode: 'missing_command' });
+    expect(missingStatus.checks[0]).toMatchObject({ status: 'not_run', reasonCode: 'missing_command' });
     const unknownStatus = extractOperationSnapshot(
       resultOf(
         await f.runDistCli(['baseline', 'status', unknownOperationId, '--data-root', root, '--json'], {
@@ -843,20 +843,20 @@ describe('P02-FR2-BASELINE-FAILURE 拒绝授权与缺命令/未知脚本', () =>
     try {
       const missingRows = checkRowsOf(probe, missingOperationId);
       expect(missingRows).toHaveLength(1);
-      expect(missingRows[0]).toMatchObject({ status: 'error', reason_code: 'missing_command', exit_code: null });
+      expect(missingRows[0]).toMatchObject({ status: 'not_run', reason_code: 'missing_command', exit_code: null });
       expect(JSON.parse(missingRows[0]!.argv_json)).toEqual(missingPlan.checks[0]!.argv);
       const unknownRows = checkRowsOf(probe, unknownOperationId);
       expect(unknownRows).toHaveLength(3);
       const rowByKey = (key: string): CheckResultProbeRow =>
         unknownRows.find((row) => row.check_key === key)!;
       expect(rowByKey('p02-4-failure-unknown-absent')).toMatchObject({
-        status: 'error',
+        status: 'not_run',
         reason_code: 'unknown_script',
         exit_code: null,
       });
       expect(JSON.parse(rowByKey('p02-4-failure-unknown-absent').argv_json)).toEqual(['./absent-relative-script']);
       expect(rowByKey('p02-4-failure-unknown-npm')).toMatchObject({
-        status: 'error',
+        status: 'not_run',
         reason_code: 'unknown_script',
       });
       expect(JSON.parse(rowByKey('p02-4-failure-unknown-npm').argv_json)).toEqual(['npm', 'run', UNKNOWN_PACKAGE_SCRIPT]);

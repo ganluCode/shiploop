@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { createBaselineRepositoryGuard } from '../../../packages/core/src/adapters/fs/baseline-repository-guard.ts';
 import { createGitPublicMetadataLock } from '../../../packages/core/src/adapters/fs/git-public-metadata-lock.ts';
+import { deriveObservedRepoIdentity } from '../../../packages/core/src/adapters/fs/repository-inspector.ts';
 import { deriveRepoIdentity } from '../../../packages/core/src/ports/repository-inspector.ts';
 import { createBaselineFixture } from '../../helpers/p02-3/index.ts';
 import { createIsolatedHostEnvironment } from '../../helpers/host/index.ts';
@@ -22,13 +23,25 @@ function fixture() {
 }
 function input(box: ReturnType<typeof createBaselineFixture>, operationId = randomUUID()) {
   const gitCommonDir = realpathSync(join(box.repos.withHead, '.git'));
-  return { repoIdentity: deriveRepoIdentity(gitCommonDir), workspacePath: box.repos.withHead, gitCommonDir, operationId };
+  return { repoIdentity: deriveObservedRepoIdentity(gitCommonDir), workspacePath: box.repos.withHead, gitCommonDir, operationId };
 }
 function claimPath(lockInput: ReturnType<typeof input>) {
   return join(lockInput.gitCommonDir, 'shiploop-baseline.claim');
 }
 
 describe('F-003 Git public metadata lock', () => {
+  it('serializes legacy path bindings with P06 inode bindings without weakening forged identity checks', async () => {
+    const box = fixture(), modern = input(box), lock = createGitPublicMetadataLock();
+    const legacy = { ...modern, operationId: randomUUID(), repoIdentity: deriveRepoIdentity(modern.gitCommonDir) };
+    const lease = await lock.acquire(legacy);
+    try { await expect(lock.acquire(modern)).rejects.toMatchObject({ code: 'resource_busy' }); }
+    finally { await lease.release(); }
+    const next = await lock.acquire(modern);
+    try {
+      await expect(lock.acquire(legacy)).rejects.toMatchObject({ code: 'resource_busy' });
+      await expect(lock.acquire({ ...modern, repoIdentity: 'forged' })).rejects.toMatchObject({ code: 'conflict' });
+    } finally { await next.release(); }
+  });
   it('[case:baseline-work-lock] shares the common-dir claim between Work and baseline in both orders; release is idempotent', async () => {
     const box = fixture(), first = input(box), work = createGitPublicMetadataLock();
     const baseline = createBaselineRepositoryGuard();
@@ -100,7 +113,7 @@ describe('F-003 Git public metadata lock', () => {
     const lease = await lock.acquire({ ...owner, workspacePath: box.repos.alias, gitCommonDir: join(box.repos.alias, '.git') });
     await expect(createGitPublicMetadataLock().acquire(input(box))).rejects.toMatchObject({ code: 'resource_busy' });
     const cloneCommon = realpathSync(join(box.repos.cloneA, '.git'));
-    const clone = await lock.acquire({ ...owner, workspacePath: box.repos.cloneA, gitCommonDir: cloneCommon, repoIdentity: deriveRepoIdentity(cloneCommon) });
+    const clone = await lock.acquire({ ...owner, workspacePath: box.repos.cloneA, gitCommonDir: cloneCommon, repoIdentity: deriveObservedRepoIdentity(cloneCommon) });
     await clone.release();
     await lease.release();
   });

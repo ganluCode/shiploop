@@ -11,7 +11,7 @@
  * 均有界。
  */
 export type { KnowledgeReadResult, KnowledgeSearchResultSet } from 'shiploop-core/protocol';
-export type { BrownfieldMovePreview } from 'shiploop-core';
+export type { BrownfieldMovePreview } from 'shiploop-core/protocol';
 
 export { connectToHost, probeDiscoveredHost } from './host-client.js';
 export type {

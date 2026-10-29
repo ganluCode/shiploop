@@ -1,7 +1,7 @@
 import { realpathSync } from 'node:fs';
 import { createGitPublicMetadataLock } from './git-public-metadata-lock.js';
 import { PublicError, isUuidV4 } from '../../ports/commands.js';
-import { deriveRepoIdentity } from '../../ports/repository-inspector.js';
+import { deriveObservedRepoIdentity } from './repository-inspector.js';
 import type { GitPublicMetadataLock } from '../../ports/git-public-metadata-lock.js';
 import type { BaselineRepositoryGuard } from '../../ports/baseline-execution.js';
 
@@ -18,7 +18,7 @@ export function createBaselineRepositoryGuard(options: { lock?: GitPublicMetadat
       try {
         return await lock.releaseRecovered({
           operationId: input.operationId,
-          repoIdentity: deriveRepoIdentity(realpathSync(input.gitCommonDir)),
+          repoIdentity: deriveObservedRepoIdentity(realpathSync(input.gitCommonDir)),
           workspacePath: realpathSync(input.canonicalPath),
           gitCommonDir: realpathSync(input.gitCommonDir),
         });
@@ -29,7 +29,7 @@ export function createBaselineRepositoryGuard(options: { lock?: GitPublicMetadat
       try {
         const lease = await lock.acquire({
           operationId: input.operationId,
-          repoIdentity: deriveRepoIdentity(realpathSync(input.gitCommonDir)),
+          repoIdentity: deriveObservedRepoIdentity(realpathSync(input.gitCommonDir)),
           workspacePath: realpathSync(input.canonicalPath),
           gitCommonDir: realpathSync(input.gitCommonDir),
         });

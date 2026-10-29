@@ -151,7 +151,7 @@ describe('F-002 冻结常量与能力声明', () => {
     //（计划域命令/查询进入握手能力集合，见 docs/p03-1-plan-import-contract.md §5/§9.6）；
     // P03-2 / F-007 起升 v5（决策/策略/输入准备三命令与审批查询进入能力集合，
     // 见 docs/p03-2-plan-approval-contract.md）；发现 schemaVersion 与线协议版本不联动。
-    expect(CURRENT_SCHEMA_VERSION).toBe(5);
+    expect(CURRENT_SCHEMA_VERSION).toBe(6);
     expect(CURRENT_PROTOCOL_VERSION).toBe(1);
     expect([...SUPPORTED_PROTOCOL_VERSIONS]).toEqual([1]);
     expect(LOOPBACK_LISTEN_ADDRESS).toBe('127.0.0.1');
@@ -168,160 +168,159 @@ describe('F-002 冻结常量与能力声明', () => {
 
   it('capabilities 只声明真实接线的能力（P02-2 §11.3 结构化视图；idle-only graceful stop，F-012 起 events 为 SSE 结构化视图）', () => {
     expect(CURRENT_HOST_CAPABILITIES).toEqual({
-      lifecycleRoutes: ['handshake', 'status', 'stop'],
-      stop: {
-        modes: ['graceful'],
-        idempotency: 'commandId+requestDigest',
-        activityScope: 'idle-only',
-      },
-      application: {
-        commands: [
-          'execution.attempt.cancel',
-          'execution.stop.manual',
-          // P03-9 / F-001：Run/Batch Task 边界暂停经既有 /v1/commands 通用路由接线。
-          'execution.pause',
-          // P03-9 / F-002：Run/Batch 取消经同一命令路由接线。
-          'execution.cancel',
-          // P03-9 / F-008：显式工作流 resume 经同一命令路由接线。
-          'execution.resume',
-          // P03-9 / F-010：finalization-only retryFinal 经同一命令路由接线。
-          'execution.retryFinal',
-          'project.register',
-          'project.metadata.update',
-          'project.profile.confirm',
-          'project.profile.modify',
-          'project.profile.reject',
-          'settings.global.create',
-          'settings.global.update',
-          'settings.project.create',
-          'settings.project.update',
-          // P02-3：基线 preview/run（F-008）与 cancel（F-014）经既有 /v1/commands 路由真实接线。
-          'baseline.preview',
-          'baseline.run',
-          'baseline.cancel',
-          // P03-1 / F-004：Phase 创建经既有 /v1/commands 通用路由接线。
-          'phase.create',
-          // P05-2 / F-007：已接线的 Phase/Feature 命令。
-          'phase.metadata.update',
-          'phase.close',
-          'phase.reopen',
-          'phase.archive',
-          'feature.phase.move',
-          'feature.dag.update',
-          // P03-1 / F-005：计划导入经既有 /v1/commands 通用路由接线。
-          'feature.plan.import',
-          // P03-1 / F-007：纯标签 CAS 编辑经既有 /v1/commands 通用路由接线。
-          'plan.labels.update',
-          // P03-1 / F-008：实质计划修订经既有 /v1/commands 通用路由接线。
-          'feature.plan.revise',
-          // P03-2 / F-001：Task 策略副本 CAS 编辑经既有 /v1/commands 通用路由接线。
-          'task.strategy.update',
-          // P03-2 / F-002：计划批准/拒绝决策经既有 /v1/commands 通用路由接线。
-          'feature.plan.decide',
-          'task.approval.block',
-          'task.approval.approve',
-          'task.approval.reject',
-          'task.approval.unblock',
-          'task.verification.continue',
-          // P03-2 / F-006：执行输入制品组准备经既有 /v1/commands 通用路由接线
-          //（HostClient/CLI 入口属后续任务）。
-          'execution.input.prepare',
-          // P03-3 / F-004：单 Feature 执行 prepare 预览经既有 /v1/commands 通用
-          // 路由接线（只读预览；HostClient/CLI 入口属后续任务）。
-          'execution.preview',
-          // P03-3 / F-005：显式执行启动经既有 /v1/commands 通用路由接线（同一
-          // 命令面；HostClient/CLI 入口属 F-011/F-012）。
-          'execution.start',
-          // P03-3 / F-009：批次预算显式修订经既有 /v1/commands 通用路由接线
-          //（仅增额不自动启动或恢复 Run；HostClient/CLI 入口属 F-011/F-012）。
-          'execution.budget.revise',
-          'planning.start',
-          'planning.candidate.decide',
-          'workspace.discard',
-          'workspace.discard.preview',
-        ],
-        queries: [
-          'execution.sessions.list',
-          'execution.session.get',
-          'execution.session.evidence.get',
-          // P04-5 / F-007：Work 公开记录索引/有界正文只读查询真实接线。
-          'execution.recording.list',
-          'execution.recording.body.get',
-          'projects.list',
-          'projects.get',
-          'projects.binding.get',
-          'projects.labelCounts',
-          'projects.inspect',
-          'projects.overview',
-          'projects.profile.get',
-          'projects.profile.match',
-          'settings.global.get',
-          'settings.global.export',
-          'settings.project.get',
-          'settings.project.effective',
-          'settings.project.export',
-          'receipts.get',
-          'results.resolve',
-          'snapshot.get',
-          // P02-3 / F-014：基线分页/详情/证据正文查询真实接线。
-          'baselines.list',
-          'baselines.get',
-          'artifacts.get',
-          // P03-1 / F-009：计划域六项查询真实接线（能力位复用 project.read）。
-          'phases.list',
-          'phases.get',
-          'phases.graph.get',
-          'features.list',
-          'features.get',
-          'tasks.list',
-          'tasks.get',
-          // P03-2 / F-007：审批决策查询真实接线（能力位复用 project.read）。
-          'features.approvals',
-          'execution.budget.get',
-          'execution.budget.revisions',
-          // P03-4 / F-008：调度诊断与 Attempt 审计三查询真实接线（同上能力位）。
-          'execution.run.schedule',
-          'execution.attempts.list',
-          'execution.attempt.diagnostics',
-          // P03-7 / F-013：Task 机器证据/人审/返工链查询真实接线。
-          'execution.task.verification.get',
-          'execution.task.approvals.list',
-          'execution.task.rework-chain.list',
-          'workspaces.list',
-          'workspaces.get',
-          'workspace.operations.list',
-          'workspace.operations.get',
-          // P03-8 / F-009：Git 意图/实际提交/操作回执查询真实接线。
-          'git.operations.list',
-          'git.operations.get',
-          'git.repairs.list',
-          'git.repairs.get',
-          // P03-8 / F-010：Feature 分轴结果查询真实接线。
-          'features.delivery.get',
-          'features.report.get',
-          // P05-6 / F-005：固定集成计划只读查询。
-          'integration.plan.get',
-          // P03-9 / F-013：Run/Batch 控制进度、恢复诊断与 finalization 收尾结果查询真实接线。
-          'execution.run.control.get',
-          'execution.batch.control.get',
-          'execution.run.recovery.get',
-          // P04-9 / F-009：派发队列/执行槽位只读投影真实接线（无写入口）。
-          'execution.dispatch.list',
-          'execution.resources.list',
-          // P05-1 / F-012：规划上下文/候选只读查询真实接线（能力位复用 project.read）。
-          'planning.contexts.list',
-          'planning.context.get',
-          'planning.candidate.get',
-        ],
-        events: { transport: 'sse', route: '/v1/events', scopes: ['project', 'global'] },
-      },
-    });
+  "lifecycleRoutes": [
+    "handshake",
+    "status",
+    "stop"
+  ],
+  "stop": {
+    "modes": [
+      "graceful"
+    ],
+    "idempotency": "commandId+requestDigest",
+    "activityScope": "idle-only"
+  },
+  "application": {
+    "commands": [
+      "execution.attempt.cancel",
+      "execution.stop.manual",
+      "execution.pause",
+      "execution.cancel",
+      "execution.resume",
+      "execution.retryFinal",
+      "project.register",
+      "repository.move.confirm",
+      "project.repository.rebind",
+      "project.metadata.update",
+      "project.profile.confirm",
+      "project.profile.detect",
+      "project.profile.modify",
+      "project.profile.reject",
+      "settings.global.create",
+      "settings.global.update",
+      "settings.project.create",
+      "settings.project.update",
+      "baseline.preview",
+      "baseline.run",
+      "baseline.cancel",
+      "phase.create",
+      "phase.metadata.update",
+      "phase.close",
+      "phase.reopen",
+      "phase.archive",
+      "feature.phase.move",
+      "feature.dag.update",
+      "feature.plan.import",
+      "plan.labels.update",
+      "feature.plan.revise",
+      "task.strategy.update",
+      "task.strategy.reapply",
+      "feature.plan.decide",
+      "task.approval.block",
+      "task.approval.approve",
+      "task.approval.reject",
+      "task.approval.unblock",
+      "task.verification.continue",
+      "execution.input.prepare",
+      "execution.preview",
+      "execution.start",
+      "execution.budget.revise",
+      "planning.start",
+      "planning.candidate.decide",
+      "workspace.discard",
+      "workspace.discard.preview",
+      "project.resource.import",
+      "project.resource.enable",
+      "project.resource.disable",
+      "project.resource.revoke"
+    ],
+    "queries": [
+      "execution.sessions.list",
+      "execution.session.get",
+      "execution.session.evidence.get",
+      "execution.recording.list",
+      "execution.recording.body.get",
+      "projects.list",
+      "projects.get",
+      "projects.binding.get",
+      "projects.labelCounts",
+      "projects.inspect",
+      "projects.overview",
+      "projects.profile.get",
+      "projects.profile.match",
+      "settings.global.get",
+      "settings.global.export",
+      "settings.project.get",
+      "settings.project.effective",
+      "settings.project.export",
+      "receipts.get",
+      "results.resolve",
+      "snapshot.get",
+      "baselines.list",
+      "baselines.get",
+      "artifacts.get",
+      "phases.list",
+      "phases.get",
+      "phases.graph.get",
+      "features.list",
+      "features.get",
+      "tasks.list",
+      "tasks.get",
+      "runs.list",
+      "labels.counts",
+      "task.strategy.reapply.preview",
+      "features.approvals",
+      "execution.budget.get",
+      "execution.budget.revisions",
+      "execution.run.schedule",
+      "execution.attempts.list",
+      "execution.attempt.diagnostics",
+      "execution.task.verification.get",
+      "execution.task.approvals.list",
+      "execution.task.rework-chain.list",
+      "workspaces.list",
+      "workspaces.get",
+      "workspace.operations.list",
+      "workspace.operations.get",
+      "git.operations.list",
+      "git.operations.get",
+      "git.repairs.list",
+      "git.repairs.get",
+      "features.delivery.get",
+      "features.report.get",
+      "integration.plan.get",
+      "execution.run.control.get",
+      "execution.batch.control.get",
+      "execution.run.recovery.get",
+      "execution.dispatch.list",
+      "execution.resources.list",
+      "planning.contexts.list",
+      "planning.context.get",
+      "planning.candidate.get",
+      "project.resources.list",
+      "project.resources.candidates",
+      "project.resources.preview",
+      "project.resources.sources.configure",
+      "repository.move.preview"
+    ],
+    "events": {
+      "transport": "sse",
+      "route": "/v1/events",
+      "scopes": [
+        "project",
+        "global"
+      ]
+    }
+  }
+});
     // 接线宣告与 Core 支持面交叉核对（不漂移：Core 增删操作必须同步接线与宣告）。
     expect([...CURRENT_HOST_CAPABILITIES.application.commands]).toEqual(
       COMMAND_OPERATIONS.filter(operation => !(FEATURE_DELIVERY_COMMAND_CAPABILITIES as readonly string[]).includes(operation)
-        && operation !== 'execution.batch.finalize' && operation !== 'phase.delivery.approve' && operation !== 'git.operation.start'));
+        && operation !== 'execution.batch.finalize' && operation !== 'phase.delivery.approve' && operation !== 'git.operation.start')
+        .flatMap(operation => operation === 'project.register' ? [operation, 'repository.move.confirm'] : [operation]));
     // Core's optional integration-start adapter has no Host capability declaration.
-    expect([...hostCapabilitiesForDelivery(true, true, true).application.commands]).toEqual(COMMAND_OPERATIONS.filter(operation => operation !== 'git.operation.start'));
+    expect([...hostCapabilitiesForDelivery(true, true, true).application.commands]).toEqual(COMMAND_OPERATIONS.filter(operation => operation !== 'git.operation.start')
+      .flatMap(operation => operation === 'project.register' ? [operation, 'repository.move.confirm'] : [operation]));
     // P02-3：queries = P02-2 的 QUERY_OPERATIONS + 已接线的静态接入两项（F-006）
     // + 已接线的基线分页/详情/证据三项（F-014，与 BASELINE_QUERY_OPERATIONS 同步）
     // + P03-1 / F-009 计划域六项（与 PLAN_QUERY_OPERATIONS 同步，能力位复用 project.read）
@@ -350,6 +349,9 @@ describe('F-002 冻结常量与能力声明', () => {
       ...PLAN_QUERY_OPERATIONS.slice(0, 2),
       'phases.graph.get',
       ...PLAN_QUERY_OPERATIONS.slice(2),
+      'runs.list',
+      'labels.counts',
+      'task.strategy.reapply.preview',
       PLAN_APPROVAL_QUERY_OPERATION,
       'execution.budget.get',
       'execution.budget.revisions',
@@ -373,6 +375,11 @@ describe('F-002 冻结常量与能力声明', () => {
       // P05-1 / F-012：规划上下文/候选只读查询（与 Core
       // PLANNING_QUERY_OPERATIONS 同步，能力位复用 project.read）。
       ...PLANNING_QUERY_OPERATIONS,
+      'project.resources.list',
+      'project.resources.candidates',
+      'project.resources.preview',
+      'project.resources.sources.configure',
+      'repository.move.preview',
     ]);
     expect(CURRENT_HOST_CAPABILITIES.application.commands).toContain('baseline.cancel');
     expect(CURRENT_HOST_CAPABILITIES.application.queries).toContain('baselines.list');
@@ -587,7 +594,7 @@ describe('F-002 §8 握手请求校验', () => {
   it('合法请求只含 4 个冻结字段，通过结构与版本校验', () => {
     const parsed = validateHandshakeRequest(validHandshakeBody());
     expect(parsed).toEqual({
-      schemaVersion: 5,
+      schemaVersion: 6,
       protocolVersion: 1,
       hostInstanceId: INSTANCE_ID,
       dataRootIdentity: ROOT_IDENTITY,
@@ -1136,7 +1143,10 @@ describe('F-002 契约模块纯度（import 无端口/目录/进程副作用）'
     expect(files.length).toBeGreaterThanOrEqual(3);
     for (const file of files) {
       const source = readFileSync(file, 'utf-8');
-      expect(source, file).not.toMatch(forbiddenImport);
+      // Only the trusted stdio adapter may own MCP child processes.
+      if (file === join(runtimeSrcDir, 'mcp-stdio.ts')) {
+        expect(source).not.toMatch(/\bfrom\s+['"]node:(?:net|https|dgram|tls|cluster|worker_threads|readline)['"]/);
+      } else expect(source, file).not.toMatch(forbiddenImport);
       expect(source, file).not.toMatch(forbiddenPackage);
       // type-only 引用擦除后不加载 SDK；禁止所有静态值导入（包括 side-effect）。
       const valueImports = source.replaceAll(/\bimport\s+type\b[^;]*;/g, '');

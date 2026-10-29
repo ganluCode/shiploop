@@ -11,6 +11,7 @@ import type {
 } from '../../ports/integration-workspace.js';
 import type { GitPublicMetadataLock } from '../../ports/git-public-metadata-lock.js';
 import { createGitPublicMetadataLock } from './git-public-metadata-lock.js';
+import { deriveObservedRepoIdentity } from './repository-inspector.js';
 import { deriveRepoIdentity } from '../../ports/repository-inspector.js';
 import { createCommandProcessAdapter } from '../process/command-process.js';
 
@@ -177,7 +178,8 @@ export function createIntegrationGitWorkspace(options: {
     if (sourcePath !== plan.target.canonicalPath) throw new IntegrationGitError('path_changed');
     const snapshot = await sourceSnapshot(input);
     if (snapshot.commonDir !== plan.target.gitCommonDir
-      || deriveRepoIdentity(snapshot.commonDir) !== plan.target.repoIdentity) {
+      || (deriveObservedRepoIdentity(snapshot.commonDir) !== plan.target.repoIdentity
+        && deriveRepoIdentity(snapshot.commonDir) !== plan.target.repoIdentity)) {
       throw new IntegrationGitError('repo_identity_changed');
     }
     if (snapshot.head !== plan.target.baseCommit) throw new IntegrationGitError('target_head_drift');

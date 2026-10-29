@@ -532,77 +532,59 @@ describe('F-006 Host inspect/overview 路由与握手能力（真实 Host + SQLi
     expect(body.capabilities.application.queries).toContain('git.repairs.list');
     expect(body.capabilities.application.queries).toContain('git.repairs.get');
     expect(body.capabilities.application.queries).toContain('execution.batch.delivery.get');
-    // P04-9/P05-P06 additions keep the live query surface at 67 entries.
-    expect(body.capabilities.application.queries).toHaveLength(67);
+    // P06 includes bounded label, strategy and resource queries.
+    expect(body.capabilities.application.queries).toHaveLength(70);
     expect(body.capabilities.application.commands).toEqual([
-      'execution.attempt.cancel',
-      'execution.stop.manual',
-      // P03-9 / F-001：Run/Batch Task 边界暂停经既有 /v1/commands 通用路由接线。
-      'execution.pause',
-      // P03-9 / F-002：Run/Batch 取消经同一命令路由接线。
-      'execution.cancel',
-      'execution.resume',
-      'execution.retryFinal',
-      'project.register',
-      'project.metadata.update',
-      'project.profile.confirm',
-      'project.profile.modify',
-      'project.profile.reject',
-      'settings.global.create',
-      'settings.global.update',
-      'settings.project.create',
-      'settings.project.update',
-      // P02-3：基线 preview/run（F-008）与 cancel（F-014）经既有 /v1/commands 路由真实接线。
-      'baseline.preview',
-      'baseline.run',
-      'baseline.cancel',
-      // P03-1 / F-004：Phase 创建经既有 /v1/commands 通用路由接线（集合在 v3 内增量扩张）。
-      'phase.create',
-      'phase.metadata.update',
-      'phase.close',
-      'phase.reopen',
-      'phase.archive',
-      'feature.phase.move',
-      'feature.dag.update',
-      // P03-1 / F-005：计划导入经既有 /v1/commands 通用路由接线（v3 内增量扩张，同 F-004 先例）。
-      'feature.plan.import',
-      // P03-1 / F-007：纯标签 CAS 编辑经既有 /v1/commands 通用路由接线（v3 内增量扩张）。
-      'plan.labels.update',
-      // P03-1 / F-008：实质计划修订经既有 /v1/commands 通用路由接线（v3 内增量扩张）。
-      'feature.plan.revise',
-      // P03-2 / F-001：Task 策略副本 CAS 编辑经既有 /v1/commands 通用路由接线
-      //（v4 内增量宣告，升版随 F-007 接线定案 v5）。
-      'task.strategy.update',
-      // P03-2 / F-002：计划批准/拒绝决策经既有 /v1/commands 通用路由接线
-      //（v4 内增量宣告；决策查询路由与 HostClient 入口 F-007 已接线）。
-      'feature.plan.decide',
-      'task.approval.block',
-      'task.approval.approve',
-      'task.approval.reject',
-      'task.approval.unblock',
-      'task.verification.continue',
-      // P03-2 / F-006：执行输入制品组准备经既有 /v1/commands 通用路由接线
-      //（v4 内增量宣告；HostClient 入口 F-007、CLI 入口 F-008）。
-      'execution.input.prepare',
-      // P03-3 / F-004：单 Feature 执行 prepare 预览经既有 /v1/commands 通用路由
-      // 接线（v5 内增量宣告；HostClient/CLI 入口随后续任务）。
-      'execution.preview',
-      // P03-3 / F-005：显式执行启动经既有 /v1/commands 通用路由接线（v5 内
-      // 增量宣告；HostClient/CLI 入口属 F-011/F-012）。
-      'execution.start',
-      // P03-3 / F-009：批次预算显式修订经既有 /v1/commands 通用路由接线
-      //（v5 内增量宣告；仅增额不自动启动或恢复 Run；HostClient/CLI 入口属
-      // F-011/F-012）。
-      'execution.budget.revise',
-      'planning.start',
-      'planning.candidate.decide',
-      'workspace.discard',
-      'workspace.discard.preview',
-      'project.resource.import',
-      'project.resource.enable',
-      'project.resource.disable',
-      'project.resource.revoke',
-    ]);
+  "execution.attempt.cancel",
+  "execution.stop.manual",
+  "execution.pause",
+  "execution.cancel",
+  "execution.resume",
+  "execution.retryFinal",
+  "project.register",
+  "project.metadata.update",
+  "project.profile.confirm",
+  "project.profile.detect",
+  "project.profile.modify",
+  "project.profile.reject",
+  "settings.global.create",
+  "settings.global.update",
+  "settings.project.create",
+  "settings.project.update",
+  "baseline.preview",
+  "baseline.run",
+  "baseline.cancel",
+  "phase.create",
+  "phase.metadata.update",
+  "phase.close",
+  "phase.reopen",
+  "phase.archive",
+  "feature.phase.move",
+  "feature.dag.update",
+  "feature.plan.import",
+  "plan.labels.update",
+  "feature.plan.revise",
+  "task.strategy.update",
+  "task.strategy.reapply",
+  "feature.plan.decide",
+  "task.approval.block",
+  "task.approval.approve",
+  "task.approval.reject",
+  "task.approval.unblock",
+  "task.verification.continue",
+  "execution.input.prepare",
+  "execution.preview",
+  "execution.start",
+  "execution.budget.revise",
+  "planning.start",
+  "planning.candidate.decide",
+  "workspace.discard",
+  "workspace.discard.preview",
+  "project.resource.import",
+  "project.resource.enable",
+  "project.resource.disable",
+  "project.resource.revoke"
+]);
     // No delivery factory is installed in this fixture: do not advertise write capabilities.
     expect(body.capabilities.application.commands).not.toContain('feature.verification.continue');
     expect(body.capabilities.application.commands).not.toContain('git.operation.reconcile');

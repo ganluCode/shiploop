@@ -27,9 +27,9 @@
  * import 本模块无副作用：不发起网络、不读文件系统/argv/env。
  */
 import { createHash, randomUUID } from 'node:crypto';
-import type { ProjectResourceSourceInput, ProjectResourceSourceResult } from 'shiploop-core';
+import type { ProjectResourceSourceInput, ProjectResourceSourceResult } from 'shiploop-core/protocol';
 import type { ProjectProfileQueryResult, ProjectProfileMatchQueryResult, KnowledgeSearchInput, KnowledgeReadInput, MemorySearchInput, KnowledgeSearchResultSet, KnowledgeReadResult, MemorySearchResultSet } from 'shiploop-core/protocol';
-import type { ProjectResourceConfiguration, ProjectResourceCandidateDiscoveryResult, ProjectResourceCandidatePreview, BrownfieldMovePreview } from 'shiploop-core';
+import type { ProjectResourceConfiguration, ProjectResourceCandidateDiscoveryResult, ProjectResourceCandidatePreview, BrownfieldMovePreview } from 'shiploop-core/protocol';
 
 import { validateKnowledgeSearchInput, validateKnowledgeReadInput, validateMemorySearchInput, MAX_KNOWLEDGE_SEARCH_RESPONSE_BYTES, MAX_KNOWLEDGE_READ_RESPONSE_BYTES } from 'shiploop-core/protocol';
 

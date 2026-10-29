@@ -214,10 +214,10 @@ import type {
 import { HostProtocolError, isPlainObject } from '../contract/index.js';
 import type { HostOperation } from '../contract/index.js';
 import type { ProjectProfileQueryResult, ProjectProfileMatchQueryResult } from 'shiploop-core/protocol';
-import type { ProjectResourceConfiguration, ProjectResourceCandidateDiscoveryResult, ProjectResourceCandidatePreview } from 'shiploop-core';
-import { validateProjectResourceCandidate, validateProjectResourceSettings, PROJECT_RESOURCE_CANDIDATE_REASONS } from 'shiploop-core';
-import { validateBrownfieldMovePreview } from 'shiploop-core';
-import type { BrownfieldMovePreview } from 'shiploop-core';
+import type { ProjectResourceConfiguration, ProjectResourceCandidateDiscoveryResult, ProjectResourceCandidatePreview } from 'shiploop-core/protocol';
+import { validateProjectResourceCandidate, validateProjectResourceSettings, PROJECT_RESOURCE_CANDIDATE_REASONS } from 'shiploop-core/protocol';
+import { validateBrownfieldMovePreview } from 'shiploop-core/protocol';
+import type { BrownfieldMovePreview } from 'shiploop-core/protocol';
 
 
 
