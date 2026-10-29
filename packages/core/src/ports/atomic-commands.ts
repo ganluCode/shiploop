@@ -140,7 +140,7 @@ export interface CommandTransaction {
    * 跨项目 ownership（抛出零写入）；不改计划内容/策略/planDigest/planStatus，
    * 不向父子实体传播。
    */
-  updatePlanEntityLabels(input: unknown): PhaseRecord | FeatureRecord | TaskRecord;
+  updatePlanEntityLabels(input: unknown): PhaseRecord | FeatureRecord | TaskRecord | RunRecord;
   /** 创建 draft Feature（含最小 plan_status=draft、可选 planDigest 与来源引用）。 */
   insertFeature(input: unknown): FeatureRecord;
   /** 创建 pending Task（保存完整验收/引用/complexity/executionConfig 及来源）。 */

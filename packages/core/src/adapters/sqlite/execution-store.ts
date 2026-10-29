@@ -124,7 +124,7 @@ import type {
   ExecutionStopManualActionResult,
 } from '../../ports/execution-stop-manual.js';
 
-import { TASK_STATUSES } from '../../ports/plan-store.js';
+import { validateUpdatePlanEntityLabelsInput, TASK_STATUSES } from '../../ports/plan-store.js';
 import type { TaskStatus } from '../../ports/plan-store.js';
 import { assertPrincipalVisibility } from '../../ports/queries.js';
 import type { PlanListRequest, PlanRecordPage, SettingsScopeSnapshot } from '../../ports/queries.js';
@@ -352,6 +352,8 @@ export interface SqliteExecutionAccess {
   reviseBatchBudgetInTransaction(input: unknown): BatchBudgetRevisionResult;
   /** 创建执行 Run（派发身份/上限冻结；同 Feature 活动 Run 唯一兜底）。 */
   insertExecutionRunInTransaction(input: unknown): RunRecord;
+  /** 纯标签 CAS 编辑 Run；只触达 runs.labels/revision/updated_at。 */
+  updateExecutionRunLabelsInTransaction(input: unknown): RunRecord;
   /** 读取目标 Batch（同项目；缺失 not_found、跨项目 ownership）。 */
   getExecutionBatchInTransaction(projectId: string, batchId: string): ExecutionBatchRecord;
   /** 读取 Batch 的不可变成员范围（按 memberOrdinal；同项目归属已核验）。 */
@@ -1052,6 +1054,48 @@ export function createSqliteExecutionAccess(
       .prepare<[string], ExecutionBatchSqlRow>(`${SELECT_BATCH} WHERE id = ?`)
       .get(batchId) as ExecutionBatchSqlRow;
     return batchFromRow(updated, operation);
+  }
+
+  function updateExecutionRunLabelsInTransaction(input: unknown): RunRecord {
+    const operation = 'ExecutionStore.updateExecutionRunLabels';
+    assertOpen(operation);
+    assertInTransaction(operation);
+    const valid = validateUpdatePlanEntityLabelsInput(input, operation);
+    if (valid.entityType !== 'run') {
+      throw new StorageError('validation', operation, 'Run 标签原语只接受 entityType=run');
+    }
+    const entity: StorageEntityRef = { type: 'run', projectId: valid.projectId, id: valid.id };
+    const db = session.database;
+    const row = db.prepare<[string], { project_id: string; revision: number }>(
+      'SELECT project_id, revision FROM runs WHERE id = ?',
+    ).get(valid.id);
+    if (row === undefined) {
+      throw notFound(operation, entity, `Run ${valid.id} 不存在`);
+    }
+    if (row.project_id !== valid.projectId) {
+      throw ownership(operation, entity, 'Run 不属于声明的项目（跨项目目标被拒绝）');
+    }
+    if (row.revision !== valid.expectedRevision) {
+      throw new StorageError('conflict', operation, '标签编辑 CAS 不匹配（旧 revision 拒绝）', {
+        entity,
+        details: { reason: 'conflict', expectedRevision: valid.expectedRevision, actualRevision: row.revision },
+      });
+    }
+    const timestamp = nowUtcMs();
+    const changed = db.prepare(
+      'UPDATE runs SET labels = ?, revision = revision + 1, updated_at = ? WHERE project_id = ? AND id = ? AND revision = ?',
+    ).run(JSON.stringify(valid.labels), timestamp, valid.projectId, valid.id, valid.expectedRevision);
+    if (changed.changes !== 1) {
+      throw new StorageError('conflict', operation, '标签编辑 CAS 不匹配（竞争写入拒绝）', {
+        entity,
+        details: { reason: 'conflict', expectedRevision: valid.expectedRevision, actualRevision: row.revision + 1 },
+      });
+    }
+    const updated = db.prepare<[string], RunSqlRow>(`${SELECT_RUN} WHERE id = ?`).get(valid.id);
+    if (updated === undefined) {
+      throw executionCorruptError(operation, entity, 'Run 更新后无法读取');
+    }
+    return runFromRow(updated, operation);
   }
 
   function insertExecutionRunInTransaction(input: unknown): RunRecord {
@@ -3507,6 +3551,7 @@ export function createSqliteExecutionAccess(
     insertBatchBudgetRevisionInTransaction,
     reviseBatchBudgetInTransaction,
     insertExecutionRunInTransaction,
+    updateExecutionRunLabelsInTransaction,
     getExecutionBatchInTransaction,
     listExecutionBatchMemberFeatureIdsInTransaction,
     listExecutionRunsForWorkKeyInTransaction,

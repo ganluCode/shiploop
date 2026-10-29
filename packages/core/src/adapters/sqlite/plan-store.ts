@@ -1255,6 +1255,9 @@ export function createSqlitePlanAccess(
       projectId: valid.projectId,
       id: valid.id,
     };
+    if (valid.entityType === 'run') {
+      throw new StorageError('validation', operation, 'Run 标签由执行存储原语更新');
+    }
     // 表名/SELECT 来自冻结映射（非用户输入）；全部查询使用绑定参数。
     const spec = LABELS_EDIT_TARGET_SPECS[valid.entityType];
     const row = db

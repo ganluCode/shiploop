@@ -37,6 +37,7 @@ import {
 import type { CommandReceipt } from '../ports/commands.js';
 import { createResultRef } from '../ports/command-receipts.js';
 import { isStorageError } from '../ports/errors.js';
+import { EXECUTION_RUN_LABELS_UPDATED_EVENT_TYPE } from '../ports/execution-store.js';
 import {
   FEATURE_LABELS_UPDATED_EVENT_TYPE,
   PHASE_LABELS_UPDATED_EVENT_TYPE,
@@ -68,7 +69,7 @@ export const PLAN_LABELS_EDIT_IMPACT = Object.freeze({
 });
 
 /** 标签编辑事件类型（按目标实体冻结；payload 恒 {labelsUpdated:true}）。 */
-const LABELS_UPDATED_EVENT_TYPE_BY_ENTITY: Readonly<Record<PlanEntityType, string>> = Object.freeze({
+const LABELS_UPDATED_EVENT_TYPE_BY_ENTITY: Readonly<Record<Exclude<PlanEntityType, 'run'>, string>> = Object.freeze({
   phase: PHASE_LABELS_UPDATED_EVENT_TYPE,
   feature: FEATURE_LABELS_UPDATED_EVENT_TYPE,
   task: TASK_LABELS_UPDATED_EVENT_TYPE,
@@ -140,14 +141,25 @@ export function submitPlanLabelsUpdate(
   }
 
   // 3) 同事务脱敏事件（恒定 payload；不携带标签正文/批准语义）。
-  transaction.appendPlanEvent({
-    projectId,
-    eventType: LABELS_UPDATED_EVENT_TYPE_BY_ENTITY[entityType],
-    aggregateType: entityType,
-    aggregateId: updated.id,
-    aggregateRevision: updated.revision,
-    payload: { labelsUpdated: true },
-  });
+  if (entityType === 'run') {
+    transaction.appendExecutionEvent({
+      projectId,
+      eventType: EXECUTION_RUN_LABELS_UPDATED_EVENT_TYPE,
+      aggregateType: 'run',
+      aggregateId: updated.id,
+      aggregateRevision: updated.revision,
+      payload: { labelsUpdated: true },
+    });
+  } else {
+    transaction.appendPlanEvent({
+      projectId,
+      eventType: LABELS_UPDATED_EVENT_TYPE_BY_ENTITY[entityType],
+      aggregateType: entityType,
+      aggregateId: updated.id,
+      aggregateRevision: updated.revision,
+      payload: { labelsUpdated: true },
+    });
+  }
 
   // 4) completed 回执：有界结果只携带本次标签编辑事实（不回显计划正文/策略
   //    副本，不声称批准、可执行或执行结果）。

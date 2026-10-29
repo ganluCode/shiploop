@@ -715,3 +715,79 @@ describe('F-007 拒绝矩阵（非法输入/跨项目/缺能力均不写业务�
     ).toHaveLength(1);
   });
 });
+
+describe('F-005 Run 标签 CAS 编辑', () => {
+  it('[case:f005-run-label-cas] queued Run 标签编辑只改变自身元数据和脱敏事件', async () => {
+    const s = await setup();
+    const db = s.harness.session.database;
+    const budget = {
+      schemaVersion: 1,
+      batch: {
+        maxRuns: 2,
+        maxTotalAttempts: 8,
+        maxRuntimeStarts: 8,
+        maxNoProgressRuns: 1,
+        deadlineUtcMs: NOW + 3_600_000,
+      },
+      run: { maxAttemptsPerRun: 3, runTimeLimitMs: 3_600_000 },
+    };
+    const batchId = 'batch-f005';
+    const runId = 'run-f005';
+    const scopeSnapshot = { featureIds: [s.featureId], previewDigest: 'a'.repeat(64) };
+    const inputSnapshot = { inputDigest: 'b'.repeat(64), secretRef: 'credential-ref' };
+    const configSnapshot = { schemaVersion: 1, provider: 'pi', model: 'model-ref' };
+    db.prepare(
+      'INSERT INTO execution_batches (id, created_at, project_id, revision, updated_at, phase_id, feature_id, ' +
+        'scope_snapshot, config_snapshot, status, budget_revision, budget_snapshot, runs_created, attempts_created, ' +
+        'runtime_starts, no_progress_runs, deadline_at) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, \'queued\', 1, ?, 1, 0, 0, 0, ?) ',
+    ).run(
+      batchId, NOW, s.projectId, NOW, 'phase-1', s.featureId,
+      JSON.stringify(scopeSnapshot), JSON.stringify(configSnapshot), JSON.stringify(budget), budget.batch.deadlineUtcMs,
+    );
+    db.prepare(
+      'INSERT INTO runs (id, created_at, project_id, revision, updated_at, batch_id, feature_id, purpose, labels, ' +
+        'input_snapshot, config_snapshot, status, scope_digest, work_key, dispatch_ordinal, max_attempts_per_run, ' +
+        'run_time_limit_ms, attempts_created) VALUES (?, ?, ?, 1, ?, ?, ?, \'execute\', ?, ?, ?, \'queued\', ?, ?, 1, 3, ?, 0)',
+    ).run(
+      runId, NOW, s.projectId, NOW, batchId, s.featureId, JSON.stringify(['old']),
+      JSON.stringify(inputSnapshot), JSON.stringify(configSnapshot), 'a'.repeat(64), 'work-f005', budget.run.runTimeLimitMs,
+    );
+
+    const runColumns = 'status, batch_id, feature_id, purpose, labels, input_snapshot, config_snapshot, scope_digest, ' +
+      'work_key, dispatch_ordinal, max_attempts_per_run, run_time_limit_ms, attempts_created, reason, started_at, ended_at';
+    const batchColumns = 'scope_snapshot, config_snapshot, status, budget_revision, budget_snapshot, runs_created, attempts_created, ' +
+      'runtime_starts, no_progress_runs, deadline_at';
+    const before = db.prepare(`SELECT ${runColumns} FROM runs WHERE id = ?`).get(runId) as Record<string, unknown>;
+    const batchBefore = db.prepare(`SELECT ${batchColumns} FROM execution_batches WHERE id = ?`).get(batchId) as Record<string, unknown>;
+
+    const receipt = await s.service.submit(s.owner, s.labelsEnvelope('run', runId, [' New ', 'new', 'active '], 1));
+    expect(receipt).toMatchObject({ status: 'completed', operation: 'plan.labels.update', replayed: false });
+    expect(completedResult(receipt)).toMatchObject({ entityType: 'run', id: runId, labels: ['new', 'active'], revision: 2 });
+    expect(Object.keys((receipt as { result: unknown }).result as object).sort()).toEqual([
+      'entityType', 'id', 'labels', 'revision', 'updatedAt',
+    ]);
+    expect(db.prepare(`SELECT ${runColumns} FROM runs WHERE id = ?`).get(runId)).toEqual({
+      ...before, labels: JSON.stringify(['new', 'active']),
+    });
+    expect(db.prepare(`SELECT ${batchColumns} FROM execution_batches WHERE id = ?`).get(batchId)).toEqual(batchBefore);
+
+    const event = db.prepare(
+      "SELECT id, sequence, event_type, aggregate_type, aggregate_id, aggregate_revision, project_id, payload, occurred_at FROM state_events WHERE event_type = 'execution.run.labels.updated'",
+    ).get() as Record<string, unknown>;
+    expect(event).toMatchObject({
+      event_type: 'execution.run.labels.updated', aggregate_type: 'run', aggregate_id: runId,
+      aggregate_revision: 2, payload: '{\"labelsUpdated\":true}',
+    });
+    expect(mapStateEvent({
+      id: event.id,
+      sequence: event.sequence,
+      eventType: event.event_type,
+      aggregateType: event.aggregate_type,
+      aggregateId: event.aggregate_id,
+      aggregateRevision: event.aggregate_revision,
+      projectId: event.project_id,
+      payload: JSON.parse(String(event.payload)),
+      occurredAtUtcMs: event.occurred_at,
+    }).payload).toEqual({ labelsUpdated: true });
+  });
+});

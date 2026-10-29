@@ -43,6 +43,7 @@ import {
   requirePlainObject,
   validationError,
 } from './validation.js';
+import { validateUpdatePlanEntityLabelsInput } from './plan-store.js';
 import type { ValidationContext } from './validation.js';
 
 /**
@@ -51,9 +52,12 @@ import type { ValidationContext } from './validation.js';
  * 不携带预算数值/计划正文/输入正文/启动语义（派发不等于 Runtime 已启动）。
  */
 export const EXECUTION_RUN_DISPATCHED_EVENT_TYPE = 'execution.run.dispatched';
+export const EXECUTION_RUN_LABELS_UPDATED_EVENT_TYPE = 'execution.run.labels.updated';
 
-/**
- * P03-3 / F-009 批次预算修订事件（仅命令路径修订成功后写入；脱敏 payload 恒为
+/** P03-3 / F-005 执行 Run 标签编辑事件（脱敏 payload 恒为
+ * {labelsUpdated:true}，不携带标签正文或执行快照）。 */
+
+/** P03-3 / F-009 批次预算修订事件（仅命令路径修订成功后写入；脱敏 payload 恒为
  * {revised:true}，聚合为目标 Batch 自身，aggregateRevision=修订后 Batch 行 revision）。
  * 不携带预算数值、理由正文或批准主体身份（审计细节在不可变修订行与回执）。
  */
@@ -87,6 +91,7 @@ export const FEATURE_FINALIZATION_BLOCKED_EVENT_TYPE = 'feature.finalization_blo
 
 export const EXECUTION_EVENT_TYPES = [
   EXECUTION_RUN_DISPATCHED_EVENT_TYPE,
+  EXECUTION_RUN_LABELS_UPDATED_EVENT_TYPE,
   EXECUTION_BUDGET_REVISED_EVENT_TYPE,
   EXECUTION_RUN_PAUSED_EVENT_TYPE,
   EXECUTION_BATCH_PAUSED_EVENT_TYPE,
@@ -112,12 +117,13 @@ export type ExecutionEventType = (typeof EXECUTION_EVENT_TYPES)[number];
 interface ExecutionEventSpec {
   readonly aggregateType: 'run' | 'execution_batch' | 'task' | 'feature';
   readonly payloadKey:
-    | 'dispatched' | 'revised' | 'paused' | 'cancelling' | 'cancelled' | 'resumed'
+    | 'dispatched' | 'labelsUpdated' | 'revised' | 'paused' | 'cancelling' | 'cancelled' | 'resumed'
     | 'claimed' | 'updated' | 'blocked' | 'decided' | 'finalized';
 }
 
 const EXECUTION_EVENT_SPECS: Readonly<Record<ExecutionEventType, ExecutionEventSpec>> = Object.freeze({
   [EXECUTION_RUN_DISPATCHED_EVENT_TYPE]: Object.freeze({ aggregateType: 'run', payloadKey: 'dispatched' }),
+  [EXECUTION_RUN_LABELS_UPDATED_EVENT_TYPE]: Object.freeze({ aggregateType: 'run', payloadKey: 'labelsUpdated' }),
   [TASK_CLAIMED_EVENT_TYPE]: Object.freeze({ aggregateType: 'task', payloadKey: 'claimed' }),
   [ATTEMPT_UPDATED_EVENT_TYPE]: Object.freeze({ aggregateType: 'task', payloadKey: 'updated' }),
   [TASK_APPROVAL_BLOCKED_EVENT_TYPE]: Object.freeze({ aggregateType: 'task', payloadKey: 'blocked' }),
