@@ -65,6 +65,18 @@ export function createSqliteWorkStartupRecoveryStore(session: SqliteStorageSessi
         projectId === null ? 'global_settings' : 'run', aggregateId,
         revision, JSON.stringify({ ...payload, phase }), timestamp, runId, attemptId, stage);
   }
+  function assertRecoveryArtifact(id: string, projectId: string): void {
+    const artifact = db.prepare<[string], { project_id: string; status: string }>(
+      'SELECT project_id, status FROM artifacts WHERE id = ?',
+    ).get(id);
+    if (artifact === undefined || artifact.project_id !== projectId || artifact.status !== 'ready') {
+      throw new TypeError('Recovery evidence Artifact is not ready in the same project');
+    }
+  }
+
+  function isDeeplyEqualProcessIdentity(left: unknown, right: unknown): boolean {
+    return isDeepStrictEqual(left, right);
+  }
   return {
     fence() {
       return session.transactWrite('Work.startupRecovery.fence', () => {
@@ -118,8 +130,8 @@ export function createSqliteWorkStartupRecoveryStore(session: SqliteStorageSessi
               }
             }
           } catch { gaps.push('planning_input_snapshot_invalid'); }
-          const workspace = db.prepare<[string, string], { owner_id: string; host_instance_id: string; execution_version: number; run_id: string; attempt_id: string }>(
-            'SELECT owner_id, host_instance_id, execution_version, run_id, attempt_id FROM managed_workspaces WHERE project_id = ? AND feature_id = ?')
+          const workspace = db.prepare<[string, string], { id: string; project_id: string; owner_id: string; host_instance_id: string; execution_version: number; revision: number; run_id: string; attempt_id: string }>(
+            'SELECT id, project_id, revision, owner_id, host_instance_id, execution_version, run_id, attempt_id FROM managed_workspaces WHERE project_id = ? AND feature_id = ?')
             .get(row.project_id, row.feature_id);
           if (workspace && (workspace.owner_id !== row.owner_id || workspace.host_instance_id !== row.host_instance_id
             || workspace.execution_version !== row.execution_version || workspace.run_id !== row.run_id
@@ -129,8 +141,12 @@ export function createSqliteWorkStartupRecoveryStore(session: SqliteStorageSessi
             executionStage: row.execution_stage, processIdentity, gaps };
           const fenced = findEvent('fenced', row.id);
           if (fenced) {
-            const previous = JSON.parse(fenced.payload);
-            if (!isDeepStrictEqual(previous.processIdentity, processIdentity) || !Array.isArray(previous.gaps)) {
+            const previous = JSON.parse(fenced.payload) as WorkStartupRecoveryTarget & { processIdentity: unknown; gaps: unknown };
+            if (previous.projectId !== target.projectId || previous.runId !== target.runId
+              || previous.attemptId !== target.attemptId || previous.owner !== target.owner
+              || previous.hostInstanceId !== target.hostInstanceId || previous.executionVersion !== target.executionVersion
+              || previous.executionStage !== target.executionStage
+              || !isDeepStrictEqual(previous.processIdentity, processIdentity) || !Array.isArray(previous.gaps)) {
               throw new TypeError('Persisted recovery fence changed');
             }
             gaps.push(...previous.gaps);
@@ -138,23 +154,32 @@ export function createSqliteWorkStartupRecoveryStore(session: SqliteStorageSessi
             // Advance the Task fence, never mutate the immutable historical Attempt identity.
             const terminal = !['preparing', 'executing', 'verifying', 'interrupted'].includes(row.status);
             const changed = terminal ? { changes: 0 } : db.prepare(`UPDATE tasks SET execution_version = execution_version + 1,
-              revision = revision + 1, updated_at = ? WHERE id = ? AND execution_version = ? AND execution_version < ${Number.MAX_SAFE_INTEGER}`)
-              .run(timestamp, row.task_id, row.execution_version);
+              revision = revision + 1, updated_at = ? WHERE project_id = ? AND id = ? AND execution_version = ?
+                AND execution_version < ${Number.MAX_SAFE_INTEGER}`)
+              .run(timestamp, row.project_id, row.task_id, row.execution_version);
             if (terminal) gaps.push('terminal_attempt_reconciliation_required');
             else if (changed.changes === 0) gaps.push('task_version_mismatch');
             if (['preparing', 'executing', 'verifying'].includes(row.status)) {
               db.prepare(`UPDATE attempts SET status = 'interrupted', error_kind = COALESCE(error_kind, 'runtime'),
-                ended_at = COALESCE(ended_at, ?), revision = revision + 1, updated_at = ? WHERE id = ?`)
-                .run(Math.max(timestamp, row.started_at ?? row.created_at), timestamp, row.id);
+                ended_at = COALESCE(ended_at, ?), revision = revision + 1, updated_at = ?
+                WHERE project_id = ? AND id = ? AND owner_id = ? AND host_instance_id = ? AND execution_version = ?`)
+                .run(Math.max(timestamp, row.started_at ?? row.created_at), timestamp, row.project_id, row.id,
+                  row.owner_id, row.host_instance_id, row.execution_version);
             }
             event('fenced', row.project_id, row.run_id,
               { schemaVersion: 1, ...target, stopConfirmed: false, workspaceReconciled: false }, row.id, row.execution_stage);
           }
           db.prepare(`UPDATE workspace_leases SET state = 'quarantined', revision = revision + 1, updated_at = ?
-            WHERE owner_id = ? AND state <> 'quarantined'`).run(timestamp, row.id);
-          db.prepare(`UPDATE managed_workspaces SET status = 'quarantined', revision = revision + 1, updated_at = ?
-            WHERE project_id = ? AND feature_id = ? AND status <> 'quarantined' AND status <> 'cleaned'`)
-            .run(timestamp, row.project_id, row.feature_id);
+            WHERE project_id = ? AND owner_id = ? AND host_instance_id = ? AND execution_version = ? AND state <> 'quarantined'`)
+            .run(timestamp, row.project_id, row.id, row.host_instance_id, row.execution_version);
+          const workspaceOwnerActive = workspace !== undefined && db.prepare<[string], { id: string }>(
+            "SELECT id FROM attempts WHERE id = ? AND status IN ('preparing', 'executing', 'verifying') LIMIT 1",
+          ).get(workspace.attempt_id) !== undefined;
+          if (workspace && !workspaceOwnerActive) {
+            db.prepare(`UPDATE managed_workspaces SET status = 'quarantined', revision = revision + 1, updated_at = ?
+              WHERE project_id = ? AND id = ? AND revision = ? AND status <> 'cleaned'`)
+              .run(timestamp, workspace.project_id, workspace.id, workspace.revision);
+          }
           if (!hasRecordedObservation(row.id)) targets.push(target);
         }
         for (const run of runs.slice(0, LIMIT)) {
@@ -163,7 +188,7 @@ export function createSqliteWorkStartupRecoveryStore(session: SqliteStorageSessi
           const hasAttempt = db.prepare('SELECT id FROM attempts WHERE run_id = ? LIMIT 1').get(run.id);
           if ((run.status === 'queued' && !hasAttempt) || run.status === 'paused' || run.status === 'interrupted' || run.status === 'cancelling') continue;
           db.prepare(`UPDATE runs SET status = 'interrupted', reason = 'restart_recovery',
-            revision = revision + 1, updated_at = ? WHERE id = ?`).run(timestamp, run.id);
+            revision = revision + 1, updated_at = ? WHERE project_id = ? AND id = ?`).run(timestamp, run.project_id, run.id);
           event('run_interrupted', run.project_id, run.id,
             { schemaVersion: 1, reason: 'restart_recovery' });
         }
@@ -211,20 +236,36 @@ export function createSqliteWorkStartupRecoveryStore(session: SqliteStorageSessi
     observed(evidence: WorkStartupRecoveryEvidence, evidenceRef: string | null) {
       session.transactWrite('Work.startupRecovery.observed', () => {
         const row = db.prepare<[string], AttemptRow>('SELECT * FROM attempts WHERE id = ?').get(evidence.attemptId);
-        if (!row || row.project_id !== evidence.projectId || row.owner_id !== evidence.owner
-          || row.host_instance_id !== evidence.hostInstanceId || row.execution_version !== evidence.executionVersion) {
+        if (!row || row.project_id !== evidence.projectId
+          || row.run_id !== evidence.runId
+          || row.owner_id !== evidence.owner || row.host_instance_id !== evidence.hostInstanceId
+          || row.execution_version !== evidence.executionVersion || row.execution_stage !== evidence.executionStage
+          || evidence.schemaVersion !== 1 || evidence.kind !== 'work-startup-recovery'
+          || evidence.workspaceReconciled !== false || !Array.isArray(evidence.gaps)
+          || (evidence.observationKind !== undefined && !['initial', 'reprobe'].includes(evidence.observationKind))) {
           throw new TypeError('Recovery observation identity changed');
         }
         const phase = (evidence.observationRevision ?? 1) > 1 || evidence.observationKind === 'reprobe'
           ? 'reprobed' : evidenceRef === null ? 'observed' : 'recorded';
         if (phase !== 'reprobed' && findEvent(phase, row.id)) return;
         const fenced = findEvent('fenced', row.id);
-        if (!fenced || !isDeepStrictEqual(JSON.parse(fenced.payload).processIdentity, evidence.processIdentity)) {
+        if (!fenced) throw new TypeError('Recovery fence is missing');
+        const fencedPayload = JSON.parse(fenced.payload) as WorkStartupRecoveryTarget & { processIdentity: unknown; gaps: unknown };
+        if (fencedPayload.projectId !== evidence.projectId || fencedPayload.runId !== evidence.runId
+          || fencedPayload.attemptId !== evidence.attemptId || fencedPayload.owner !== evidence.owner
+          || fencedPayload.hostInstanceId !== evidence.hostInstanceId
+          || fencedPayload.executionVersion !== evidence.executionVersion
+          || fencedPayload.executionStage !== evidence.executionStage
+          || !isDeeplyEqualProcessIdentity(fencedPayload.processIdentity, evidence.processIdentity)
+          || !Array.isArray(fencedPayload.gaps) || fencedPayload.gaps.some(gap => !evidence.gaps.includes(String(gap)))) {
           throw new TypeError('Recovery process identity changed');
         }
-        if (evidenceRef !== null && row.status === 'interrupted') {
-          db.prepare('UPDATE attempts SET diagnostic_ref = ?, revision = revision + 1, updated_at = ? WHERE id = ?')
-            .run(evidenceRef, now(), row.id);
+        if (evidenceRef !== null) {
+          assertRecoveryArtifact(evidenceRef, evidence.projectId);
+          if (row.status === 'interrupted') {
+            db.prepare('UPDATE attempts SET diagnostic_ref = ?, revision = revision + 1, updated_at = ? WHERE project_id = ? AND id = ? AND owner_id = ? AND host_instance_id = ? AND execution_version = ?')
+              .run(evidenceRef, now(), row.project_id, row.id, row.owner_id, row.host_instance_id, row.execution_version);
+          }
         }
         event(phase, row.project_id, row.run_id,
           { ...evidence, evidenceRef }, row.id, row.execution_stage);

@@ -1,0 +1,16 @@
+{
+  "schema_version": 2,
+  "task_id": "F-004",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/recovery/p07-1-f004-sqlite-fencing.test.ts", "all": true },
+      { "file": "test/modules/recovery/p03-9-f005-startup-recovery.test.ts", "all": true },
+      { "file": "test/modules/recovery/p03-9-f006-recovery-reconciliation.test.ts", "all": true },
+      { "file": "test/modules/recovery/p05-4-f006-dispatch-recovery.test.ts", "all": true },
+      { "file": "test/modules/recovery/p05-5-f005-resource-recovery.test.ts", "all": true },
+      { "file": "test/modules/scheduling/p03-4-attempt-lifecycle.test.ts", "all": true },
+      { "file": "test/modules/scheduling/p03-4-work-resources.test.ts", "all": true }
+    ]
+  }]
+}

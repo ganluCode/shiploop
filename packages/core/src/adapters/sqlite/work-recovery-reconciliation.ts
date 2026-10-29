@@ -110,21 +110,57 @@ export function createSqliteWorkRecoveryReconciliationStore(session: SqliteStora
       executionVersion: snapshot.attempt.executionVersion };
   }
 
+  function assertEvidenceRef(evidenceRef: string, projectId: string): void {
+    const artifact = db.prepare<[string], { project_id: string; status: string }>(
+      'SELECT project_id, status FROM artifacts WHERE id = ?',
+    ).get(evidenceRef);
+    if (artifact === undefined || artifact.project_id !== projectId || artifact.status !== 'ready') {
+      fail('evidence_reference_invalid');
+    }
+  }
+
+  function assertEvidenceIdentity(source: WorkStartupRecoveryEvidence,
+    attempt: ReturnType<typeof attempts.getAttempt>, evidence: WorkRecoveryReconciliationEvidence,
+    expectedStatus: WorkRecoveryReconciliationEvidence['status']): void {
+    if (evidence.schemaVersion !== 1 || evidence.kind !== 'work-recovery-reconciliation'
+      || evidence.status !== expectedStatus || evidence.projectId !== source.projectId
+      || evidence.featureId !== attempt.featureId || evidence.runId !== source.runId
+      || evidence.taskId !== attempt.taskId || evidence.attemptId !== attempt.id
+      || evidence.owner !== attempt.owner || evidence.hostInstanceId !== attempt.hostInstanceId
+      || evidence.executionVersion !== attempt.executionVersion) {
+      fail('recovery_evidence_identity_changed');
+    }
+    const workspace = loadWorkspace(source.projectId, attempt.featureId);
+    if (evidence.workspace !== null && (workspace === null || evidence.workspace.id !== workspace.id)) {
+      fail('workspace_identity_changed');
+    }
+  }
+
+  function assertCurrentWorkspaceOwner(workspace: ManagedWorkspaceRecord, attempt: ReturnType<typeof attempts.getAttempt>): void {
+    if (workspace.projectId !== attempt.projectId || workspace.featureId !== attempt.featureId
+      || workspace.runId !== attempt.runId || workspace.attemptId !== attempt.id
+      || workspace.ownerId !== attempt.owner || workspace.hostInstanceId !== attempt.hostInstanceId
+      || workspace.executionVersion !== attempt.executionVersion) fail('workspace_identity_changed');
+  }
+
   function updateAttemptDiagnostic(attemptId: string, evidenceRef: string, timestamp: number): void {
     const changed = db.prepare(`UPDATE attempts SET diagnostic_ref = ?, revision = revision + 1, updated_at = ?
       WHERE id = ? AND status = 'interrupted'`).run(evidenceRef, timestamp, attemptId);
     if (changed.changes !== 1) fail('attempt_not_interrupted');
   }
 
-  function updateWorkspace(workspace: ManagedWorkspaceRecord, status: 'retained' | 'quarantined',
-    evidence: WorkRecoveryReconciliationEvidence, timestamp: number): void {
+  function updateWorkspace(workspace: ManagedWorkspaceRecord, attempt: ReturnType<typeof attempts.getAttempt>,
+    status: 'retained' | 'quarantined', evidence: WorkRecoveryReconciliationEvidence, timestamp: number): void {
+    assertCurrentWorkspaceOwner(workspace, attempt);
     if (workspace.status === 'cleaned') fail('workspace_cleaned');
     const headCommit = evidence.workspace?.headCommit ?? workspace.headCommit;
     const codeDigest = evidence.workspace?.codeDigest ?? workspace.codeDigest;
     if (workspace.status === status && workspace.headCommit === headCommit && workspace.codeDigest === codeDigest) return;
     const changed = db.prepare(`UPDATE managed_workspaces SET status = ?, head_commit = ?, code_digest = ?,
-      revision = revision + 1, updated_at = ? WHERE project_id = ? AND id = ? AND revision = ? AND status <> 'cleaned'`)
-      .run(status, headCommit, codeDigest, timestamp, workspace.projectId, workspace.id, workspace.revision);
+      revision = revision + 1, updated_at = ? WHERE project_id = ? AND id = ? AND revision = ? AND status <> 'cleaned'
+      AND feature_id = ? AND run_id = ? AND attempt_id = ? AND owner_id = ? AND host_instance_id = ? AND execution_version = ?`)
+      .run(status, headCommit, codeDigest, timestamp, workspace.projectId, workspace.id, workspace.revision,
+        attempt.featureId, attempt.runId, attempt.id, attempt.owner, attempt.hostInstanceId, attempt.executionVersion);
     if (changed.changes !== 1) fail('workspace_identity_changed');
   }
 
@@ -177,6 +213,8 @@ export function createSqliteWorkRecoveryReconciliationStore(session: SqliteStora
         assertFingerprint(source.attemptId, expectedFingerprint);
         const attempt = attempts.getAttempt(source.projectId, source.attemptId);
         assertSourceIdentity(source, attempt);
+        assertEvidenceRef(evidenceRef, source.projectId);
+        assertEvidenceIdentity(source, attempt, evidence, 'reconciled');
         if (attempt.status !== 'interrupted') fail('attempt_not_interrupted');
         const run = db.prepare<[string, string], { status: string; revision: number }>(
           'SELECT status, revision FROM runs WHERE project_id = ? AND id = ?').get(source.projectId, source.runId);
@@ -190,7 +228,8 @@ export function createSqliteWorkRecoveryReconciliationStore(session: SqliteStora
         if (evidence.status !== 'reconciled' || evidence.gaps.length !== 0) fail('reconciliation_incomplete');
         const workspace = loadWorkspace(source.projectId, attempt.featureId);
         if (workspace === null) fail('workspace_missing');
-        if (workspace!.id !== evidence.workspace?.id) fail('workspace_identity_changed');
+        assertCurrentWorkspaceOwner(workspace, attempt);
+        if (workspace.id !== evidence.workspace?.id) fail('workspace_identity_changed');
         const timestamp = now();
         updateAttemptDiagnostic(attempt.id, evidenceRef, timestamp);
         if (run!.status !== 'paused') {
@@ -199,7 +238,7 @@ export function createSqliteWorkRecoveryReconciliationStore(session: SqliteStora
             .run(timestamp, source.projectId, source.runId, run!.revision);
           if (changed.changes !== 1) fail('run_changed');
         }
-        updateWorkspace(workspace!, 'retained', evidence, timestamp);
+        updateWorkspace(workspace!, attempt, 'retained', evidence, timestamp);
         // F-016：恢复核对成功后，遗留 Attempt 已确认停止且无其他活动 Attempt；
         // Task 不能继续停留在 running，否则显式 resume 的 DAG 预演会把历史执行
         // 误判为 resource_busy。这里只回退未通过、无活动占用的 Task，不触碰已
@@ -222,6 +261,8 @@ export function createSqliteWorkRecoveryReconciliationStore(session: SqliteStora
         assertFingerprint(source.attemptId, expectedFingerprint);
         const attempt = attempts.getAttempt(source.projectId, source.attemptId);
         assertSourceIdentity(source, attempt);
+        assertEvidenceRef(evidenceRef, source.projectId);
+        assertEvidenceIdentity(source, attempt, evidence, 'quarantined');
         const task = db.prepare<[string], { execution_version: number }>('SELECT execution_version FROM tasks WHERE id = ?').get(attempt.taskId);
         if (task?.execution_version !== attempt.executionVersion + 1
           || dispatch.link(dispatchAttempt(attempt)).gaps.includes('dispatch_generation_changed')) fail('stale_recovery_identity');
@@ -229,7 +270,10 @@ export function createSqliteWorkRecoveryReconciliationStore(session: SqliteStora
         const timestamp = now();
         updateAttemptDiagnostic(attempt.id, evidenceRef, timestamp);
         const workspace = loadWorkspace(source.projectId, attempt.featureId);
-        if (workspace !== null) updateWorkspace(workspace, 'quarantined', evidence, timestamp);
+        if (workspace !== null) {
+          assertCurrentWorkspaceOwner(workspace, attempt);
+          updateWorkspace(workspace, attempt, 'quarantined', evidence, timestamp);
+        }
         const resourceIdentity = identity({ attempt });
         const resources = options.resources.readForRecovery(resourceIdentity);
         if (resources.leases.length > 0) options.resources.quarantineRecoveredInTransaction(resourceIdentity);
