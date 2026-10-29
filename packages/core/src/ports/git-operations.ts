@@ -291,6 +291,11 @@ export interface GitOperationStore {
     projectId: string,
     operationId: string,
   ): GitOperationRecord;
+  /** P07-1 / F-008：受信恢复收尾事务内补记已核对的回执；调用方拥有已打开的
+   * 写事务（与其它收尾写入原子提交），不自行开启事务。仅面向已被启动 fence
+   * 的 interrupted 旧 Attempt（意图身份/归属 + interrupted 状态检查），
+   * 不套用活跃写入者的 Task execution fence。 */
+  finalizeGitOperationInOpenTransaction(input: unknown): GitOperationFinalization;
 }
 
 const REGISTER_KEYS = [

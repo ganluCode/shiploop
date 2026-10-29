@@ -89,6 +89,11 @@ export interface ExecutionResumeServiceDeps {
   readonly permissions: ExecutionPermissionsReader;
   /** Trusted startup gate, invoked in the committing transaction. */
   readonly assertCanResume?: () => void;
+  /** P07-1 / F-008：显式 resume 前的受信补回执结算（matched 提交复用副作用
+   * 事实；失败保留隔离，由下方门控拒绝）。 */
+  readonly recoveryResumption?: {
+    settleReceiptBacklog(input: { projectId: string; targetKind: 'run' | 'batch' | 'feature'; targetId: string }): Promise<{ settled: boolean }>;
+  };
   readonly nowMs?: () => number;
 }
 
@@ -101,6 +106,12 @@ function asBatch(facts: ExecutionResumeFacts): ExecutionBatchRecord {
 
 function isTerminalStatus(status: string): boolean {
   return ['succeeded', 'failed', 'cancelled'].includes(status);
+}
+
+function asRunRevision(facts: ExecutionResumeFacts): number | null {
+  const target = facts.target as { revision?: unknown } | null;
+  return facts !== null && typeof facts === 'object' && Number.isSafeInteger(target?.revision)
+    ? (target as { revision: number }).revision : null;
 }
 
 function rejectReasonForDag(result: TaskDagResult, view: TaskDagView): ExecutionResumeRejectedReason | null {
@@ -234,6 +245,22 @@ export function createExecutionResumeService(deps: ExecutionResumeServiceDeps): 
       ? 'feature'
       : payload.runId !== null ? 'run' : 'batch';
     const targetId = payload.featureId ?? payload.runId ?? payload.batchId!;
+    /* P07-1 / F-008：先尝试受信补回执结算，再读取现场。结算失败或不可结算
+     * 时保持隔离，由后续门控按 recovery_unsafe/occupancy_unresolved 拒绝；
+     * run 目标记录结算前 revision，供提交信封在结算过渡下仍然命中。 */
+    let preSettlementRevision: number | null = null;
+    if (deps.recoveryResumption !== undefined) {
+      if (targetKind === 'run') {
+        try {
+          preSettlementRevision = asRunRevision(deps.facts.readFacts({ projectId, targetKind, targetId }));
+        } catch { preSettlementRevision = null; }
+      }
+      let settled = false;
+      try {
+        settled = (await deps.recoveryResumption.settleReceiptBacklog({ projectId, targetKind, targetId })).settled;
+      } catch { settled = false; }
+      if (!settled) preSettlementRevision = null;
+    }
     const notResumable = (reason: ExecutionResumeRejectedReason): PreparedExecutionResume => ({
       kind: 'not_resumable', reason, targetKind, targetId,
     });
@@ -428,6 +455,11 @@ export function createExecutionResumeService(deps: ExecutionResumeServiceDeps): 
 
     const digest = resumeDigest(view!, view!.approvals, checkPolicyDigest, strategies, permissions, inputs);
     const scope = dag === null ? { scope: 'approval' as const, nextTaskIds: [] } : scopeForDag(dag);
+    /* P07-1 / F-008：结算后 Run 恰好前进一个 revision 且处于 paused/restart_recovery
+     * 过渡时，保留结算前 revision 供提交信封命中；其余漂移仍按 stale 拒绝。 */
+    const settledFrom = preSettlementRevision !== null && targetKind === 'run'
+      && run.revision === preSettlementRevision + 1 && run.status === 'paused'
+      ? preSettlementRevision : undefined;
     return {
       kind: 'ready',
       projectId,
@@ -442,6 +474,7 @@ export function createExecutionResumeService(deps: ExecutionResumeServiceDeps): 
       resumeDigest: digest,
       workspace,
       observedHeadCommit,
+      ...(settledFrom !== undefined ? { preSettlementRevision: settledFrom } : {}),
     };
   }
 
@@ -562,7 +595,9 @@ export function createExecutionResumeService(deps: ExecutionResumeServiceDeps): 
         if (isStorageError(error, 'not_found') || isStorageError(error, 'ownership')) return rejected('not_resumable');
         throw error;
       }
-      if (currentRevision !== prepared.expectedRevision || envelope.expectedRevision !== prepared.expectedRevision) {
+      if (currentRevision !== prepared.expectedRevision ||
+          (envelope.expectedRevision !== prepared.expectedRevision
+            && envelope.expectedRevision !== prepared.preSettlementRevision)) {
         return rejected('stale_revision');
       }
       if (isTerminalStatus(currentStatus)) return rejected('already_terminal');

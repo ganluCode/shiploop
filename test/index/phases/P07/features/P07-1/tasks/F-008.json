@@ -1,0 +1,21 @@
+{
+  "schema_version": 2,
+  "task_id": "F-008",
+  "projects": [{
+    "id": "shiploop",
+    "tests": [
+      { "file": "test/modules/recovery/p07-1-f008-resume-resumption.test.ts", "all": true },
+      { "file": "test/modules/recovery/p03-9-f006-recovery-reconciliation.test.ts", "all": true },
+      { "file": "test/modules/recovery/p03-9-f008-workflow-resume.test.ts", "all": true },
+      { "file": "test/modules/recovery/p07-1-f007-host-git-recovery.test.ts", "all": true },
+      { "file": "test/modules/recovery/p07-1-f006-verifier-recovery.test.ts", "all": true },
+      { "file": "test/modules/recovery/p07-1-f004-sqlite-fencing.test.ts", "all": true },
+      { "file": "test/modules/recovery/p07-1-f003-stop-reprobe.test.ts", "all": true },
+      { "file": "test/modules/recovery/p03-9-f007-recovery-continuation.test.ts", "all": true },
+      { "file": "test/modules/runtime/recovery/p04-4-recovery-recording.test.ts", "all": true },
+      { "file": "test/modules/runtime/p03-10-runtime-recovery-negatives.test.ts", "all": true },
+      { "file": "test/modules/runtime/p04-3-runtime-request-retry.test.ts", "all": true },
+      { "file": "test/modules/acceptance/p03-10-f013-finalization-retry.test.ts", "all": true }
+    ]
+  }]
+}

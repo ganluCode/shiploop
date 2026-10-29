@@ -26,6 +26,7 @@
 import { assembleWorkExecution, type WorkRuntimeFactory, type WorkExecution } from './work-execution.js';
 import { createWorkStartupRecovery } from '../application/work-startup-recovery.js';
 import { createPlanningStartupRecovery } from '../application/planning-recovery.js';
+import { createWorkRecoveryResumptionService } from '../application/work-recovery-resumption.js';
 import { PublicError } from '../ports/commands.js';
 import { createSqliteWorkStartupRecoveryStore } from './sqlite/work-startup-recovery.js';
 import { createSqlitePlanningRecoveryStore } from './sqlite/planning-recovery.js';
@@ -928,6 +929,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       }),
       stopVerifier: workspaceStopVerifier,
       publishEvidence: (projectId, evidence) => publishWorkspaceEvidence(projectId, randomUUID(), { ...evidence }),
+      lock: workspaceGitLock,
       nowUtcMs,
     });
     const startupRecovery = createWorkStartupRecovery({
@@ -946,6 +948,17 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       }),
     });
     if (object.workStartupRecoveryRequired === true) startupRecovery.enter();
+    /* P07-1 / F-008：显式 resume 前的受信补回执结算：复用启动恢复核对器与
+     * 持久观察；全部积压解决后重评恢复门控并恢复周期调度（幂等）。 */
+    let resumeRecoveryCompletionHook: () => void = () => undefined;
+    const workRecoveryResumption = createWorkRecoveryResumptionService({
+      startupRecovery,
+      sources: createSqliteWorkStartupRecoveryStore(session, {
+        ...(nowUtcMs === undefined ? {} : { nowUtcMs }),
+      }),
+      reconciler: startupReconciler,
+      onRecoveryComplete: () => resumeRecoveryCompletionHook(),
+    });
     const taskClaims = createSqliteTaskClaimStore(session, {
       assertCanClaim() {
         if (startupRecovery.blocked()) throw new StorageError('conflict', 'TaskClaim.claimTask',
@@ -997,6 +1010,7 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
         if (startupRecovery.blocked()) throw new PublicError('resource_busy', 'execution.resume', undefined,
           { details: { reason: 'startup_recovery' } });
       },
+      recoveryResumption: workRecoveryResumption,
       ...(nowUtcMs === undefined ? {} : { nowMs: nowUtcMs }),
     });
     // P03-9 / F-010：retryFinal 先复用 F-009 只读资格/范围（真实证据按文件
@@ -1198,6 +1212,9 @@ export async function openCoreApplication(options: unknown): Promise<CoreApplica
       ...(object.planningExecution === undefined ? {} : {
         planningExecution: object.planningExecution as NonNullable<Parameters<typeof assembleWorkExecution>[0]['planningExecution']>,
       }) });
+    /* P07-1 / F-008：受信补回执后恢复状态重评为 complete 时，恢复周期调度
+     * （start 幂等；startup 时被 blocked 跳过的定时器在此补启）。 */
+    resumeRecoveryCompletionHook = () => { workExecution.start(); };
     // P03-9 / F-003：Verifier 停止登记与取消提交后的停止控制。Runtime 停止复用
     // WorkExecution.cancel 的既有受监督命令路径；Verifier 使用同一 CommandProcess
     // AbortSignal 停止路径。证据经既有 Artifact 发布，不写供应商私有存储。

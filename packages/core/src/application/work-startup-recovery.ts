@@ -6,6 +6,7 @@ import type { WorkStartupRecoveryEvidence, WorkStartupRecoveryOptions, WorkStart
 export function createWorkStartupRecovery(options: WorkStartupRecoveryOptions) {
   let state: WorkStartupRecoveryState = { status: 'idle', reason: null };
   let recovery: Promise<WorkStartupRecoveryState> | null = null;
+  let chained: Promise<unknown> = Promise.resolve();
   const now = options.nowUtcMs ?? Date.now;
   return {
     state: () => state,
@@ -16,6 +17,18 @@ export function createWorkStartupRecovery(options: WorkStartupRecoveryOptions) {
       state = { status: 'recovering', reason: 'startup_recovery' };
       recovery = run();
       return recovery;
+    },
+    /** P07-1 / F-008：显式受信补回执后重评恢复状态；串行化避免并发重入扫描。
+     * 管道幂等（已 reconcile 的现场立即短路），未解决隔离保持 blocked。 */
+    retry(): Promise<WorkStartupRecoveryState> {
+      const attempt = () => {
+        recovery = null;
+        state = { status: 'recovering', reason: 'startup_recovery' };
+        recovery = run();
+        return recovery;
+      };
+      chained = chained.then(attempt, attempt);
+      return chained as Promise<WorkStartupRecoveryState>;
     },
   };
   async function stopAll(target: WorkStartupRecoveryTarget): Promise<{

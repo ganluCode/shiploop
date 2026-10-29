@@ -1,7 +1,7 @@
 import { createSqliteVerificationStore } from './verification-store.js';
 import { createSqliteDispatchRecovery, workRecoveryFingerprint } from './dispatch-recovery.js';
 import { createSqliteAttemptAccess } from './attempt-store.js';
-import { GIT_OPERATION_COLUMNS, gitOperationRecordFromRow } from './git-operations.js';
+import { createSqliteGitOperationStore, GIT_OPERATION_COLUMNS, gitOperationRecordFromRow } from './git-operations.js';
 import { SESSION_COLUMNS, workSessionRecordFromRow } from './work-session-store.js';
 import { mapManagedWorkspaceRow, mapWorkspaceOperationRow } from './workspace.js';
 import { transactSqliteConsistentRead } from './state-store.js';
@@ -9,7 +9,7 @@ import type { SqliteStorageSession } from './session.js';
 import type { ArtifactRecord } from '../../ports/artifact-store.js';
 import { StorageError } from '../../ports/errors.js';
 import type { GitOperationRecord } from '../../ports/git-operations.js';
-import type { WorkRecoveryReconciliationEvidence, WorkRecoveryReconciliationSnapshot,
+import type { WorkRecoveryReconciliationEvidence, WorkRecoveryReceiptSettlement, WorkRecoveryReconciliationSnapshot,
   WorkRecoveryReconciliationStore, WorkRecoveryRelease } from '../../ports/work-recovery-reconciliation.js';
 import type { WorkResourceAccess, WorkResourceSnapshot } from '../../ports/work-resources.js';
 import type { WorkStartupRecoveryEvidence } from '../../ports/work-startup-recovery.js';
@@ -231,12 +231,17 @@ export function createSqliteWorkRecoveryReconciliationStore(session: SqliteStora
         const alreadyReconciled = pendingGitOperations.length === 0 && run.status === 'paused' && workspace?.status === 'retained'
           && resources.leases.length === 0 && dispatchLink.gaps.length === 0
           && (dispatchLink.claim === null || dispatchLink.claim.state === 'released');
+        const settledTaskCommitOperationIds = (db.prepare(
+          `SELECT id FROM git_operations WHERE project_id = ? AND attempt_id = ? AND operation_type = 'task_commit'
+           AND status IN ('succeeded', 'no_change') ORDER BY id LIMIT 16`,
+        ).all(source.projectId, attempt.id) as { id: string }[]).map(row => row.id);
         return {
           verificationGaps, verificationCodeDigests: verificationBatches.map(batch => batch.codeDigest),
           recoveryFingerprint: workRecoveryFingerprint(session, attempt.id), dispatchGaps: dispatchLink.gaps,
           attempt, runStatus: run.status, workspace, session: sessionRecord, resources,
           artifacts: loadArtifacts(source.projectId, refs),
           pendingGitOperations,
+          settledTaskCommitOperationIds,
           pendingWorkspaceOperations: pendingWorkspace,
           alreadyReconciled,
           priorEvidenceRef: attempt.diagnosticRef,
@@ -244,7 +249,8 @@ export function createSqliteWorkRecoveryReconciliationStore(session: SqliteStora
       }
     },
 
-    finish(source, evidence, evidenceRef, release: WorkRecoveryRelease, expectedFingerprint) {
+    finish(source, evidence, evidenceRef, release: WorkRecoveryRelease, expectedFingerprint,
+      settlements?: readonly WorkRecoveryReceiptSettlement[]) {
       session.transactWrite('WorkRecovery.finish', () => {
         assertFingerprint(source.attemptId, expectedFingerprint);
         const attempt = attempts.getAttempt(source.projectId, source.attemptId);
@@ -267,6 +273,28 @@ export function createSqliteWorkRecoveryReconciliationStore(session: SqliteStora
         assertCurrentWorkspaceOwner(workspace, attempt);
         if (workspace.id !== evidence.workspace?.id) fail('workspace_identity_changed');
         const timestamp = now();
+        /* P07-1 / F-008：显式补回执与占用释放/现场保留同一事务：仅接受同
+         * Attempt 的 pending task_commit 且 revision CAS 命中；重放同一回执
+         * 幂等（settled=false），其它终态/漂移均拒绝，不重放 Git/模型。 */
+        if (settlements !== undefined && settlements.length > 0) {
+          const gitOperations = createSqliteGitOperationStore(session, { nowUtcMs: now });
+          for (const settlement of settlements) {
+            const current = gitOperations.getGitOperation(source.projectId, settlement.operationId);
+            if (current.intent.operationType !== 'task_commit'
+              || current.intent.attemptId !== attempt.id || current.intent.runId !== source.runId
+              || current.intent.ownerId !== attempt.owner || current.intent.hostInstanceId !== attempt.hostInstanceId
+              || current.revision !== settlement.expectedRevision) fail('settlement_operation_changed');
+            const settled = gitOperations.finalizeGitOperationInOpenTransaction({
+              projectId: source.projectId, operationId: settlement.operationId,
+              expectedRevision: settlement.expectedRevision, status: 'succeeded',
+              actualCommit: settlement.actualCommit, actualTree: settlement.actualTree,
+              exitCode: null, durationMs: null, reasonCode: null,
+              deliveryStatus: 'not_requested', settledAtUtcMs: timestamp });
+            if (settled.operation.status !== 'succeeded' || settled.operation.actualCommit === null) {
+              fail('settlement_operation_changed');
+            }
+          }
+        }
         updateAttemptDiagnostic(attempt.id, evidenceRef, timestamp);
         if (run!.status !== 'paused') {
           const changed = db.prepare(`UPDATE runs SET status = 'paused', reason = 'restart_recovery',

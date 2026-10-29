@@ -429,6 +429,27 @@ export function createSqliteGitOperationStore(
     }
   }
 
+  function assertInterruptedAttemptIdentity(
+    intent: GitOperationIntent,
+    operation: string,
+    entity: StorageEntityRef,
+  ): void {
+    const row = db.prepare<[string | null, string, string, string, number],
+      { status: string; owner_id: string; host_instance_id: string }>(
+      `SELECT a.status, a.owner_id, a.host_instance_id FROM attempts a
+       WHERE a.id = ? AND a.project_id = ? AND a.feature_id = ? AND a.run_id = ?
+         AND a.execution_version = ?`,
+    ).get(intent.attemptId, intent.projectId, intent.featureId, intent.runId, intent.executionVersion);
+    if (!row || row.status !== 'interrupted') {
+      fail('conflict', operation, 'Recovery settlement requires the interrupted source Attempt', entity,
+        'recovery_attempt_not_interrupted');
+    }
+    if (row.owner_id !== intent.ownerId || row.host_instance_id !== intent.hostInstanceId) {
+      fail('ownership', operation, 'Recovery settlement owner/host does not match the Attempt', entity,
+        'attempt_owner_mismatch');
+    }
+  }
+
   function assertTaskIdentity(
     intent: GitOperationIntent,
     operation: string,
@@ -514,7 +535,7 @@ export function createSqliteGitOperationStore(
     };
   }
 
-  function finalizeInTransaction(raw: unknown): GitOperationFinalization {
+  function finalizeInTransaction(raw: unknown, recovery = false): GitOperationFinalization {
     const operation = 'GitOperationStore.finalize';
     assertOpen(operation);
     if (!db.inTransaction) {
@@ -549,7 +570,12 @@ export function createSqliteGitOperationStore(
     }
     assertFinalizationMatchesIntent(existing.intent, input, operation);
     if (existing.intent.operationType === GIT_OPERATION_TYPE_TASK_COMMIT) {
-      assertTaskIdentity(existing.intent, operation, entity);
+      /* P07-1 / F-008：受信恢复补回执面对的是已被启动 fence 提升过 Task
+       * execution_version 的旧 Attempt；不能套用活跃写入者的 Task 身份检查，
+       * 改为要求 Attempt 仍处 interrupted 且意图身份/归属一致（恢复收尾
+       * 事务另有 fingerprint/证据 CAS 兑底）。 */
+      if (recovery) assertInterruptedAttemptIdentity(existing.intent, operation, entity);
+      else assertTaskIdentity(existing.intent, operation, entity);
     }
     // A delayed receipt must never overwrite a newer operation's delivery axis.
     // rowid orders durable registration even when clock timestamps are identical.
@@ -724,6 +750,9 @@ export function createSqliteGitOperationStore(
     ): GitOperationRecord {
       void transaction;
       return readById(projectId, operationId);
+    },
+    finalizeGitOperationInOpenTransaction(input: unknown): GitOperationFinalization {
+      return finalizeInTransaction(input, true);
     },
   };
 }

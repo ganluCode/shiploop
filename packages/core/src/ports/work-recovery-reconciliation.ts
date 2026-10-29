@@ -33,6 +33,8 @@ export interface WorkRecoveryReconciliationSnapshot {
   readonly resources: WorkResourceSnapshot;
   readonly artifacts: readonly ArtifactRecord[];
   readonly pendingGitOperations: readonly GitOperationRecord[];
+  /** P07-1 / F-008：已结算 task_commit 回执（用于受信清理遗留公共元数据 claim）。 */
+  readonly settledTaskCommitOperationIds?: readonly string[];
   readonly pendingWorkspaceOperations: readonly WorkspaceOperationRecord[];
   readonly alreadyReconciled: boolean;
   readonly priorEvidenceRef: string | null;
@@ -130,11 +132,21 @@ export type WorkRecoveryRelease =
   | { readonly mode: 'unstarted' }
   | { readonly mode: 'stopped'; readonly token: object };
 
+/** P07-1 / F-008：显式补回执复用的已核对副作用事实（不重放 Git/模型）。 */
+export interface WorkRecoveryReceiptSettlement {
+  readonly operationId: string;
+  /** pending 回执的预期 revision（收尾事务内 CAS）。 */
+  readonly expectedRevision: number;
+  readonly actualCommit: string;
+  readonly actualTree: string;
+}
+
 export interface WorkRecoveryReconciliationStore {
   load(source: WorkStartupRecoveryEvidence): WorkRecoveryReconciliationSnapshot;
   /** Artifact is already durable; this transaction persists the outcome and releases only the matching holder. */
   finish(source: WorkStartupRecoveryEvidence, evidence: WorkRecoveryReconciliationEvidence,
-    evidenceRef: string, release: WorkRecoveryRelease, expectedFingerprint?: string): void;
+    evidenceRef: string, release: WorkRecoveryRelease, expectedFingerprint?: string,
+    settlements?: readonly WorkRecoveryReceiptSettlement[]): void;
   /** Persist the diagnosis, keep Run interrupted and retain/quarantine the recovered occupancy. */
   quarantine(source: WorkStartupRecoveryEvidence, evidence: WorkRecoveryReconciliationEvidence,
     evidenceRef: string, expectedFingerprint?: string): void;

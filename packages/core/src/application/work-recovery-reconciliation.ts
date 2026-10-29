@@ -9,11 +9,13 @@ import type { WorkResourceStopVerifier } from '../ports/work-resources.js';
 import type { WorkspaceInspection } from '../ports/workspace-inspector.js';
 import { WorkspaceInspectionError } from '../ports/workspace-inspector.js';
 import type { WorkspaceBaseline } from '../ports/workspace.js';
+import type { GitPublicMetadataLock } from '../ports/git-public-metadata-lock.js';
 import type { WorkStartupRecoveryEvidence } from '../ports/work-startup-recovery.js';
 import {
   WORK_RECOVERY_RECONCILIATION_KIND,
   WORK_RECOVERY_RECONCILIATION_SCHEMA_VERSION,
   type WorkRecoveryGitOperationFacts,
+  type WorkRecoveryReceiptSettlement,
   type WorkRecoveryReconciliationEvidence,
   type WorkRecoveryReconciliationResult,
   type RecoveryGitReader,
@@ -27,6 +29,10 @@ const ARTIFACT_CHECK_MAX = 64;
 
 export interface WorkRecoveryReconciler {
   reconcile(source: WorkStartupRecoveryEvidence): Promise<WorkRecoveryReconciliationResult>;
+  /** P07-1 / F-008：显式受信补回执：仅当全部 pending 提交实测 matched 且其余
+   * 事实与 reconcile 同标准核验时，在同一收尾事务内复用副作用事实结算回执
+   * 并释放隔离；任何未知/未执行/证据缺失部保持原隔离不变。 */
+  resolve(source: WorkStartupRecoveryEvidence): Promise<WorkRecoveryReconciliationResult>;
 }
 
 export interface WorkRecoveryReconcilerOptions {
@@ -37,6 +43,9 @@ export interface WorkRecoveryReconcilerOptions {
   readonly artifacts: Pick<ArtifactVerifier, 'verifyArtifact'> & Partial<Pick<ArtifactVerifier, 'readVerifiedContent'>>;
   readonly stopVerifier: Pick<WorkResourceStopVerifier, 'verify'>;
   readonly publishEvidence: (projectId: string, evidence: WorkRecoveryReconciliationEvidence) => Promise<string>;
+  /** P07-1 / F-008：显式结算后受信清理旧写入者的公共元数据 claim
+   *（仅在整组停止证据确认后；exact-owner 释放，缺失/他人持有保持不动）。 */
+  readonly lock?: GitPublicMetadataLock;
   readonly nowUtcMs?: () => number;
 }
 
@@ -56,6 +65,20 @@ function baselineOf(snapshot: WorkRecoveryReconciliationSnapshot): WorkspaceBase
 
 function resourceKey(baseline: WorkspaceBaseline): string {
   return `workspace:${createHash('sha256').update(JSON.stringify([baseline.repoIdentity, baseline.canonicalPath])).digest('hex')}`;
+}
+
+/** P07-1 / F-008：停止证据确认后清理已结算回执遗留的公共元数据 claim。
+ * Exact-owner 释放且幂等：缺失或他人持有的 claim 保持不动，失败可由下次显式
+ * 结算重试；不触碰原生 Git 锁。 */
+async function releaseSettledClaims(lock: GitPublicMetadataLock | undefined, baseline: WorkspaceBaseline | null,
+  operationIds: readonly string[]): Promise<void> {
+  if (lock === undefined || baseline === null || operationIds.length === 0) return;
+  for (const operationId of operationIds) {
+    try {
+      await lock.releaseRecovered({ repoIdentity: baseline.repoIdentity, workspacePath: baseline.canonicalPath,
+        gitCommonDir: baseline.gitCommonDir, operationId });
+    } catch { /* 保留现场，下次显式结算重试 */ }
+  }
 }
 
 function addGap(gaps: string[], gap: string): void {
@@ -108,9 +131,22 @@ async function reconcileGitOperation(baseline: WorkspaceBaseline | null,
 export function createWorkRecoveryReconciler(options: WorkRecoveryReconcilerOptions): WorkRecoveryReconciler {
   const now = options.nowUtcMs ?? Date.now;
   return {
-    async reconcile(source) {
+    reconcile(source) {
+      return runRecovery(source, false);
+    },
+    resolve(source) {
+      return runRecovery(source, true);
+    },
+  };
+
+  async function runRecovery(source: WorkStartupRecoveryEvidence, explicit: boolean): Promise<WorkRecoveryReconciliationResult> {
       const snapshot = options.store.load(source);
       if (snapshot.alreadyReconciled) {
+        /* P07-1 / F-008：结算已落库但 claim 清理可能通不过进程存活窗口；
+         * 幂等补清，不重复诊断写入。 */
+        if (explicit) {
+          await releaseSettledClaims(options.lock, baselineOf(snapshot), snapshot.settledTaskCommitOperationIds ?? []);
+        }
         return { status: 'reconciled', gaps: [], evidenceRef: snapshot.priorEvidenceRef, alreadyReconciled: true };
       }
       const attempt = snapshot.attempt;
@@ -194,6 +230,7 @@ export function createWorkRecoveryReconciler(options: WorkRecoveryReconcilerOpti
             const currentFacts = currentLocks.length === 0 ? await options.git.facts(source.projectId, baseline) : null;
             if (JSON.stringify(currentFacts) !== JSON.stringify(facts)) {
               addGap(gaps, 'git_facts_changed_during_recovery');
+              settlements.length = 0;
               for (let index = 0; index < gitOperations.length; index++) {
                 gitOperations[index] = { operationId: gitOperations[index]!.operationId, outcome: 'unknown',
                   actualCommit: currentFacts?.head ?? null, actualTree: currentFacts?.tree ?? null,
@@ -226,6 +263,7 @@ export function createWorkRecoveryReconciler(options: WorkRecoveryReconcilerOpti
         catch { addGap(gaps, 'git_facts_unavailable'); }
       }
       const gitOperations: WorkRecoveryGitOperationFacts[] = [];
+      const settlements: WorkRecoveryReceiptSettlement[] = [];
       const verifiedCommitDigests = new Set<string>();
       for (const operation of snapshot.pendingGitOperations) {
         let observed = await reconcileGitOperation(baseline, operation, facts, gaps);
@@ -246,9 +284,16 @@ export function createWorkRecoveryReconciler(options: WorkRecoveryReconcilerOpti
         gitOperations.push(observed);
         // Startup revoked the original writer's fence. Observed side effects are
         // durable diagnosis, never permission to finalize that writer's business
-        // receipt or release its retained Git claim. Explicit trusted recovery is
-        // required; no model or new commit is launched here.
-        addGap(gaps, 'git_receipt_recovery_required');
+        // receipt or release its retained Git claim; no model or new commit is
+        // launched here. P07-1 / F-008: only the explicit trusted resolve() may
+        // settle matched receipts and then only with every other fact verified.
+        if (explicit && observed.outcome === 'matched') {
+          settlements.push({ operationId: operation.intent.operationId,
+            expectedRevision: operation.revision, actualCommit: observed.actualCommit!,
+            actualTree: observed.actualTree! });
+        } else {
+          addGap(gaps, 'git_receipt_recovery_required');
+        }
       }
       if (inspection !== null && (snapshot.verificationCodeDigests ?? []).some(digest =>
         digest !== verificationCodeIdentity(inspection!).codeDigest && !verifiedCommitDigests.has(digest))) {
@@ -325,6 +370,14 @@ export function createWorkRecoveryReconciler(options: WorkRecoveryReconcilerOpti
             if (gaps.length === gapsBeforeStopRecheck) release = { mode: 'stopped', token };
           }
         }
+      }
+      /* P07-1 / F-008：整组停止证据确认后、收尾事务前清理旧写入者的公共
+       * 元数据 claim（含本次待结算与此前已结算回执）；收尾失败可幂等重试。 */
+      if (explicit && release.mode === 'stopped') {
+        await releaseSettledClaims(options.lock, baseline, [
+          ...settlements.map(settlement => settlement.operationId),
+          ...(snapshot.settledTaskCommitOperationIds ?? []),
+        ]);
       }
 
       let status: WorkRecoveryReconciliationEvidence['status'] = gaps.length === 0 ? 'reconciled' : 'quarantined';
@@ -410,12 +463,13 @@ export function createWorkRecoveryReconciler(options: WorkRecoveryReconcilerOpti
       if (gaps.length > gapsBeforePublishRecheck) {
         status = 'quarantined';
         release = { mode: 'none' };
+        settlements.length = 0;
         evidence = buildEvidence();
         evidenceRef = await options.publishEvidence(source.projectId, evidence);
       }
       if (status === 'quarantined') options.store.quarantine(source, evidence, evidenceRef, snapshot.recoveryFingerprint);
-      else options.store.finish(source, evidence, evidenceRef, release, snapshot.recoveryFingerprint);
+      else options.store.finish(source, evidence, evidenceRef, release, snapshot.recoveryFingerprint,
+        explicit && settlements.length > 0 ? settlements : undefined);
       return { status, gaps, evidenceRef, alreadyReconciled: false };
-    },
-  };
+  }
 }

@@ -37,6 +37,10 @@ export interface WorkStartupRecoveryStore {
   failed(): void;
   /** P05-1 / F-010：该 Attempt 是否已被规划恢复补完为终态（跳过通用逐个核对）。 */
   planningCompletionFinalized?(attemptId: string): boolean;
+  /** P07-1 / F-008：目标 Run/Batch/Feature 下仍持有 pending task_commit 回执的
+   * 已隔离恢复现场（重启诊断后未解决的受信补回执积压）。 */
+  loadRunReceiptBacklogSources?(projectId: string, targetKind: 'run' | 'batch' | 'feature',
+    targetId: string): readonly WorkStartupRecoveryEvidence[];
 }
 export interface WorkStartupRecoveryOptions {
   readonly store: WorkStartupRecoveryStore;

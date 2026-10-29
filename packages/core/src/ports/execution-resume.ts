@@ -95,6 +95,9 @@ export interface PreparedExecutionResumeReady {
   readonly resumeDigest: string;
   readonly workspace: { readonly workspaceId: string; readonly revision: number; readonly codeDigest: string | null } | null;
   readonly observedHeadCommit: string | null;
+  /** P07-1 / F-008：本次 prepare 内受信补回执把 Run 从 interrupted/restart_recovery
+   * 过渡到 paused 时的前一个 revision；提交时允许用户信封携带该值。 */
+  readonly preSettlementRevision?: number;
 }
 
 export interface PreparedExecutionResumeNotResumable {

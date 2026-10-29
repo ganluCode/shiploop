@@ -3,9 +3,11 @@ import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { validateWorkProcessIdentity } from '../../ports/work-resources.js';
 import { GLOBAL_SETTINGS_ID } from '../../ports/state-store.js';
+import { StorageError } from '../../ports/errors.js';
 import { mapStateEvent, type PersistedStateEventRow } from '../../ports/events.js';
 import type { WorkStartupRecoveryEvidence, WorkStartupRecoveryStore, WorkStartupRecoveryTarget } from '../../ports/work-startup-recovery.js';
 import { createSqliteDispatchRecovery } from './dispatch-recovery.js';
+import { transactSqliteConsistentRead } from './state-store.js';
 import type { SqliteStorageSession } from './session.js';
 
 const LIMIT = 128;
@@ -294,6 +296,30 @@ export function createSqliteWorkStartupRecoveryStore(session: SqliteStorageSessi
       } catch { return false; }
       const run = db.prepare<[string], { status: string }>('SELECT status FROM runs WHERE id = ?').get(row.run_id);
       return run !== undefined && ['succeeded', 'failed', 'cancelled'].includes(run.status);
+    },
+    loadRunReceiptBacklogSources(projectId, targetKind, targetId) {
+      const targetFilter = targetKind === 'run' ? 'AND a.run_id = ?'
+        : targetKind === 'feature' ? 'AND a.feature_id = ?' : 'AND r.batch_id = ?';
+      const read = () => {
+        const rows = db.prepare<string[], { payload: string }>(`SELECT e.payload FROM state_events e
+          JOIN attempts a ON a.id = e.attempt_id
+          JOIN runs r ON r.project_id = a.project_id AND r.id = a.run_id
+          WHERE e.event_type = 'work.recovery.updated'
+            AND json_extract(e.payload, '$.phase') IN ('recorded', 'reprobed')
+            AND e.sequence = (SELECT MAX(latest.sequence) FROM state_events latest
+              WHERE latest.event_type = 'work.recovery.updated' AND latest.attempt_id = e.attempt_id
+                AND json_extract(latest.payload, '$.phase') IN ('recorded', 'reprobed'))
+            AND a.project_id = ? AND a.status = 'interrupted'
+            AND r.status IN ('interrupted', 'paused')
+            ${targetFilter}
+            AND EXISTS (SELECT 1 FROM git_operations g WHERE g.project_id = a.project_id
+              AND g.attempt_id = a.id AND g.run_id = a.run_id AND g.status = 'pending'
+              AND g.operation_type = 'task_commit')
+          ORDER BY e.sequence LIMIT ${LIMIT + 1}`).all(projectId, targetId) as { payload: string }[];
+        if (rows.length > LIMIT) throw new StorageError('conflict', 'WorkStartupRecovery.backlog', 'recovery_history_limit');
+        return rows.map(row => JSON.parse(row.payload) as WorkStartupRecoveryEvidence);
+      };
+      return db.inTransaction ? read() : transactSqliteConsistentRead(session, 'WorkStartupRecovery.backlog', read);
     },
   };
 }
