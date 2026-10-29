@@ -130,6 +130,7 @@ import { assertPrincipalVisibility } from '../../ports/queries.js';
 import type { PlanListRequest, PlanRecordPage, SettingsScopeSnapshot } from '../../ports/queries.js';
 import { parseStoredSettingsPayload } from '../../ports/settings-schema.js';
 import { rejectUnknownKeys, requirePlainObject, validateStableId } from '../../ports/validation.js';
+import { parseStoredRunLabels } from './run-labels.js';
 import type { SqliteStorageSession } from './session.js';
 import { transactSqliteConsistentRead, visibilityCondition } from './state-store.js';
 
@@ -169,6 +170,7 @@ interface RunSqlRow {
   readonly batch_id: string;
   readonly feature_id: string;
   readonly purpose: string;
+  readonly labels: string;
   readonly input_snapshot: string;
   readonly config_snapshot: string;
   readonly status: string;
@@ -273,7 +275,7 @@ const SELECT_BATCH_SQL =
   'config_snapshot, status, budget_revision, budget_snapshot, runs_created, attempts_created, ' +
   'runtime_starts, no_progress_runs, deadline_at, reason, pause_requested_at FROM execution_batches';
 const SELECT_RUN_SQL =
-  'SELECT id, created_at, project_id, revision, updated_at, batch_id, feature_id, purpose, ' +
+  'SELECT id, created_at, project_id, revision, updated_at, batch_id, feature_id, purpose, labels, ' +
   'input_snapshot, config_snapshot, status, scope_digest, work_key, dispatch_ordinal, ' +
   'max_attempts_per_run, run_time_limit_ms, attempts_created, reason, started_at, ended_at, ' +
   'pause_requested_at FROM runs';
@@ -517,8 +519,10 @@ export function createSqliteExecutionAccess(
   })();
   const SELECT_BATCH = pauseColumnsPresent ? SELECT_BATCH_SQL
     : SELECT_BATCH_SQL.replace('reason, pause_requested_at FROM execution_batches', 'reason, NULL AS pause_requested_at FROM execution_batches');
-  const SELECT_RUN = pauseColumnsPresent ? SELECT_RUN_SQL
-    : SELECT_RUN_SQL.replace('pause_requested_at FROM runs', 'NULL AS pause_requested_at FROM runs');
+  const labelsColumnPresent = (session.database.prepare("SELECT 1 FROM pragma_table_info('runs') WHERE name = 'labels'").get() !== undefined);
+  const runSelect = labelsColumnPresent ? SELECT_RUN_SQL : SELECT_RUN_SQL.replace('purpose, labels, ', "purpose, '[]' AS labels, ");
+  const SELECT_RUN = pauseColumnsPresent ? runSelect
+    : runSelect.replace('pause_requested_at FROM runs', 'NULL AS pause_requested_at FROM runs');
 
   function assertOpen(operation: string): void {
     if (!session.isOpen()) {
@@ -615,6 +619,7 @@ export function createSqliteExecutionAccess(
       batchId: row.batch_id,
       featureId: row.feature_id,
       purpose: row.purpose,
+      labels: parseStoredRunLabels(row.labels, operation),
       inputSnapshot: parseJsonColumn(row.input_snapshot, operation, 'invalid_input_snapshot_json'),
       configSnapshot: parseJsonColumn(row.config_snapshot, operation, 'invalid_config_snapshot_json'),
       status: requireBatchStatus(row.status, operation, 'run'),
@@ -1081,12 +1086,16 @@ export function createSqliteExecutionAccess(
     } else if (batchRow.feature_id !== valid.featureId) {
       throw ownership(operation, entity, 'Run 的 Feature 不在父 Batch 的单 Feature 范围内');
     }
+    if (!labelsColumnPresent && valid.labels.length > 0) {
+      throw new StorageError('validation', operation, 'Run 标签需要先升级数据库到 v53', { entity });
+    }
     try {
-      db.prepare(
-        'INSERT INTO runs (id, created_at, project_id, revision, updated_at, batch_id, feature_id, purpose, ' +
-          'input_snapshot, config_snapshot, status, scope_digest, work_key, dispatch_ordinal, max_attempts_per_run, ' +
-          'run_time_limit_ms, attempts_created, reason) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)',
-      ).run(
+      const insertSql = 'INSERT INTO runs (id, created_at, project_id, revision, updated_at, batch_id, feature_id, purpose, ' +
+        (labelsColumnPresent ? 'labels, ' : '') +
+        'input_snapshot, config_snapshot, status, scope_digest, work_key, dispatch_ordinal, max_attempts_per_run, ' +
+        'run_time_limit_ms, attempts_created, reason) VALUES (?, ?, ?, 1, ?, ?, ?, ?, ' +
+        (labelsColumnPresent ? '?, ' : '') + '?, ?, ?, ?, ?, ?, ?, ?, 0, ?)';
+      db.prepare(insertSql).run(
         valid.runId,
         timestamp,
         valid.projectId,
@@ -1094,6 +1103,7 @@ export function createSqliteExecutionAccess(
         valid.batchId,
         valid.featureId,
         valid.purpose,
+        ...(labelsColumnPresent ? [JSON.stringify(valid.labels)] : []),
         JSON.stringify(valid.inputSnapshot),
         JSON.stringify(valid.configSnapshot),
         valid.status,

@@ -281,7 +281,7 @@ function submitMultiExecutionStart(
   const runIds: string[] = [];
   for (const fact of facts) {
     const workKey = computeExecutionWorkKey({ featureId: fact.snapshot.feature.id, purpose: EXECUTION_RUN_PURPOSE, planDigest: fact.snapshot.feature.planDigest!, inputs: fact.inputs });
-    const run = transaction.insertExecutionRun({ projectId: prepared.projectId, batchId: batch.id, featureId: fact.snapshot.feature.id, runId: randomUUID(), purpose: EXECUTION_RUN_PURPOSE,
+    const run = transaction.insertExecutionRun({ projectId: prepared.projectId, batchId: batch.id, featureId: fact.snapshot.feature.id, runId: randomUUID(), purpose: EXECUTION_RUN_PURPOSE, labels: envelope.payload.retryBatchId === null ? envelope.payload.labels : [],
       inputSnapshot: { schemaVersion: 1, previewDigest: prepared.previewDigest, workKey, planDigest: fact.snapshot.feature.planDigest, pendingTaskIds: fact.pendingTasks.map((task) => task.id).sort(), inputs: fact.inputs.map((input) => ({ artifactId: input.artifactId, version: input.version, contentHash: input.contentHash })), workspaceBaseline: { repositoryBindingId: binding.id, repositoryBindingRevision: binding.bindingRevision, baseCommit: resolveWorkspaceBaseCommit(deps, prepared.projectId, fact.snapshot.feature.id, prepared.code.headCommit ?? '') } },
       configSnapshot: { schemaVersion: 1, runLimits: prepared.budget.run }, status: 'queued', scopeDigest: prepared.previewDigest, workKey, dispatchOrdinal: 1,
       maxAttemptsPerRun: prepared.budget.run.maxAttemptsPerRun, runTimeLimitMs: prepared.budget.run.runTimeLimitMs, reason: context.schedulerAssembled ? null : EXECUTION_RUN_NOT_READY_REASON });
@@ -836,6 +836,7 @@ export function createExecutionStartService(deps: ExecutionStartServiceDeps): Ex
       let runScopeDigest: string;
       let runLimits: { readonly maxAttemptsPerRun: number; readonly runTimeLimitMs: number };
       let runInputSnapshot: Record<string, unknown>;
+      let runLabels: readonly string[];
       if (fresh !== null) {
         /* 11a. 首次明确授权：同 Phase 活动 Batch 唯一（另一批次持有 → 冲突抛出，
          * 零回执）；预算以提案判定（新批次零用量，deadline 以事务时钟重核）；
@@ -897,6 +898,7 @@ export function createExecutionStartService(deps: ExecutionStartServiceDeps): Ex
         dispatchOrdinal = 1;
         runScopeDigest = fresh.previewDigest;
         runLimits = fresh.budget.run;
+        runLabels = 'labels' in envelope.payload ? (envelope.payload.labels ?? []) : [];
         const binding = transaction.getRepositoryBinding(projectId);
         runInputSnapshot = { schemaVersion: 1, previewDigest: fresh.previewDigest, ...baseInputSnapshot,
           workspaceBaseline: { repositoryBindingId: binding.id, repositoryBindingRevision: binding.bindingRevision,
@@ -980,6 +982,7 @@ export function createExecutionStartService(deps: ExecutionStartServiceDeps): Ex
         };
         runInputSnapshot = { schemaVersion: 1, previewDigest: parentPreviewDigest, ...baseInputSnapshot,
           workspaceBaseline: workRuns[0].inputSnapshot.workspaceBaseline ?? null };
+        runLabels = [];
       }
 
       /* 12. Run 创建（派发身份/上限冻结；queued + 可查询排队原因；不启动任何
@@ -991,6 +994,7 @@ export function createExecutionStartService(deps: ExecutionStartServiceDeps): Ex
         featureId: feature.id,
         runId,
         purpose: EXECUTION_RUN_PURPOSE,
+        labels: runLabels,
         inputSnapshot: runInputSnapshot,
         configSnapshot: {
           schemaVersion: 1,

@@ -38,6 +38,7 @@ import { EXECUTION_RUN_STATUSES } from '../../ports/execution-store.js';
 import { FEATURE_PLAN_STATUSES } from '../../ports/plan-store.js';
 import { validateStableId } from '../../ports/validation.js';
 import { transactSqliteConsistentRead, visibilityCondition } from './state-store.js';
+import { parseStoredRunLabels } from './run-labels.js';
 import type { SqliteStorageSession } from './session.js';
 
 const OPERATION = 'PlanningQueryStore';
@@ -76,6 +77,7 @@ const SELECT_PLANNING_CONTEXT =
 interface RunFactsSqlRow {
   readonly id: string;
   readonly batch_id: string;
+  readonly labels: string;
   readonly purpose: string;
   readonly status: string;
   readonly reason: string | null;
@@ -207,6 +209,7 @@ function runFactsFromRow(row: RunFactsSqlRow, projectId: string): PlanningQueryR
   return {
     id: row.id,
     batchId: row.batch_id,
+    labels: parseStoredRunLabels(row.labels, `${OPERATION}.read`),
     purpose: PLANNING_RUN_PURPOSE,
     status: member(row.status, EXECUTION_RUN_STATUSES, 'runs.status'),
     reason: row.reason,
@@ -277,7 +280,7 @@ export function createSqlitePlanningQueryStore(
 
       const runRow = db
         .prepare<[string, string], RunFactsSqlRow>(
-          'SELECT id, batch_id, purpose, status, reason, started_at, ended_at, pause_requested_at, ' +
+          'SELECT id, batch_id, labels, purpose, status, reason, started_at, ended_at, pause_requested_at, ' +
             'attempts_created, max_attempts_per_run, run_time_limit_ms FROM runs WHERE project_id = ? AND id = ?',
         )
         .get(validProjectId, row.run_id);

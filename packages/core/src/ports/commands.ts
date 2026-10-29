@@ -46,7 +46,7 @@ import type { ValidatedPlanningRequest } from './planning-candidates.js';
 import { validateCreateProjectInput, validateUpdateProjectInput } from './state-store.js';
 import { validateExecutionStopManualPayload } from './execution-stop-manual.js';
 import type { ValidatedExecutionStopManualPayload } from './execution-stop-manual.js';
-import { validateStableId, validateSha256Digest } from './validation.js';
+import { validateStableId, validateSha256Digest, normalizeLabels } from './validation.js';
 import {
   PROJECT_RESOURCE_COMMAND_OPERATIONS,
   validateProjectResourceCommandPayload,
@@ -904,6 +904,7 @@ export type ValidatedExecutionStartPayload =
       readonly featureIds: readonly string[];
       readonly budget: Record<string, unknown>;
       readonly previewDigest: string;
+      readonly labels?: readonly string[];
       readonly retryBatchId: null;
     }
   | {
@@ -1947,7 +1948,7 @@ function validateExecutionPreviewPayload(
   return { featureIds, phaseId: null, budget: object.budget as Record<string, unknown> };
 }
 
-const EXECUTION_START_PAYLOAD_KEYS = ['featureIds', 'budget', 'previewDigest', 'retryBatchId'] as const;
+const EXECUTION_START_PAYLOAD_KEYS = ['featureIds', 'budget', 'previewDigest', 'labels', 'retryBatchId'] as const;
 const EXECUTION_BUDGET_REVISE_PAYLOAD_KEYS = ['batchId', 'budget', 'reason'] as const;
 
 /** previewDigest 形态：64 位小写十六进制 SHA-256（与预览结果同一摘要形态）。 */
@@ -2008,6 +2009,7 @@ function validateExecutionStartPayload(
     featureIds: scopeIds.featureIds,
     budget: scopeIds.budget,
     previewDigest,
+    labels: normalizeLabels(object.labels, { operation, entity: { type: 'run' } }, 'payload.labels'),
     retryBatchId: null,
   };
 }

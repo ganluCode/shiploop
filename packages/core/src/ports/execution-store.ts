@@ -38,6 +38,7 @@ import type { StorageEntityRef } from './errors.js';
 import { StorageError } from './errors.js';
 import {
   isPlainObject,
+  normalizeLabels,
   rejectUnknownKeys,
   requirePlainObject,
   validationError,
@@ -214,6 +215,7 @@ export interface RunRecord {
   readonly batchId: string;
   readonly featureId: string;
   readonly purpose: string;
+  readonly labels: readonly string[];
   readonly inputSnapshot: Readonly<Record<string, unknown>>;
   readonly configSnapshot: Readonly<Record<string, unknown>>;
   readonly status: ExecutionRunStatus;
@@ -672,6 +674,7 @@ export interface ValidatedExecutionRunInsertInput {
   readonly featureId: string;
   readonly runId: string;
   readonly purpose: string;
+  readonly labels: string[];
   readonly inputSnapshot: Readonly<Record<string, unknown>>;
   readonly configSnapshot: Readonly<Record<string, unknown>>;
   readonly status: ExecutionRunStatus;
@@ -689,6 +692,7 @@ const EXECUTION_RUN_INSERT_KEYS = [
   'featureId',
   'runId',
   'purpose',
+  'labels',
   'inputSnapshot',
   'configSnapshot',
   'status',
@@ -736,12 +740,14 @@ export function validateExecutionRunInsertInput(
   if (object.reason !== null && typeof object.reason !== 'string') {
     throw validationError(context, 'reason', '必须是字符串或 null', object.reason);
   }
+  const projectId = requireStableIdField(object.projectId, context, 'projectId');
   return {
-    projectId: requireStableIdField(object.projectId, context, 'projectId'),
+    projectId,
     batchId: requireStableIdField(object.batchId, context, 'batchId'),
     featureId: requireStableIdField(object.featureId, context, 'featureId'),
     runId: requireStableIdField(object.runId, context, 'runId'),
     purpose: object.purpose,
+    labels: normalizeLabels(object.labels, { ...context, entity: { type: 'run', projectId } }, 'labels'),
     inputSnapshot: requireBoundedSnapshot(object.inputSnapshot, context, 'inputSnapshot'),
     configSnapshot: requireBoundedSnapshot(object.configSnapshot, context, 'configSnapshot'),
     status: object.status as ExecutionRunStatus,

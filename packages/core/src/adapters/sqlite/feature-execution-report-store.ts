@@ -13,6 +13,7 @@ import { SESSION_COLUMNS, workSessionRecordFromRow, type SessionRow } from './wo
 import { VERIFICATION_BATCH_COLUMNS, CHECK_RESULT_COLUMNS, verificationBatchRecordFromRow,
   checkResultRecordFromRow, type VerificationBatchRow, type CheckResultRow } from './verification-store.js';
 import { transactSqliteConsistentRead } from './state-store.js';
+import { parseStoredRunLabels } from './run-labels.js';
 import type { SqliteStorageSession } from './session.js';
 
 const OPERATION = 'FeatureExecutionReport.read';
@@ -67,11 +68,11 @@ export function createSqliteFeatureExecutionReportStore(
             .all(projectId, ...prefixes.flatMap(p => [p, p])).map(row => artifactFromRow(row, { operation: OPERATION }));
           return { ...detail, evidence, evidenceTruncated: false, diagnostics, diagnosticsTruncated: false };
         });
-        const runs = pages<{ id: string; batch_id: string; status: FeatureDeliveryRunRow['status']; reason: string | null;
+        const runs = pages<{ id: string; batch_id: string; labels: string; status: FeatureDeliveryRunRow['status']; reason: string | null;
           started_at: number | null; ended_at: number | null }>(
-          'SELECT id, batch_id, status, reason, started_at, ended_at FROM runs WHERE project_id = ? AND feature_id = ? AND id > ? ORDER BY id LIMIT ?',
+          'SELECT id, batch_id, labels, status, reason, started_at, ended_at FROM runs WHERE project_id = ? AND feature_id = ? AND id > ? ORDER BY id LIMIT ?',
           projectId, featureId).map(r => ({ id: r.id, batchId: r.batch_id, status: r.status, reason: r.reason,
-          startedAtUtcMs: r.started_at, endedAtUtcMs: r.ended_at }));
+          startedAtUtcMs: r.started_at, endedAtUtcMs: r.ended_at, labels: parseStoredRunLabels(r.labels, OPERATION) }));
         const verifications = pages<VerificationBatchRow>(
           `SELECT ${VERIFICATION_BATCH_COLUMNS} FROM verification_batches WHERE project_id = ? AND feature_id = ? AND id > ? ORDER BY id LIMIT ?`,
           projectId, featureId).map(row => ({ batch: verificationBatchRecordFromRow(row), checks: db

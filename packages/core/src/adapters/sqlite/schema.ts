@@ -1216,6 +1216,8 @@ export const runs = sqliteTable('runs', {
     .references((): SQLiteColumn => features.id, { onDelete: 'restrict' }),
   /** 执行用途（execute/plan 等；非空）。 */
   purpose: text('purpose').notNull(),
+  /** 执行标签 JSON 数组；独立于输入/范围快照，默认空数组。 */
+  labels: text('labels').notNull().default('[]'),
   /** 本次输入快照（任务定义/依赖/验收规则 JSON 对象；不可变）。 */
   inputSnapshot: text('input_snapshot').notNull(),
   /** 脱敏配置快照（JSON 对象；不可变）。 */
@@ -1245,6 +1247,10 @@ export const runs = sqliteTable('runs', {
 }, (table) => [
   check('runs_revision_positive_check', sql`${table.revision} >= 1`),
   check('runs_purpose_not_empty_check', sql`length(${table.purpose}) > 0`),
+  check(
+    'runs_labels_json_array_check',
+    sql`json_valid(${table.labels}) AND json_type(${table.labels}) = 'array'`,
+  ),
   check(
     'runs_input_snapshot_json_check',
     sql`json_valid(${table.inputSnapshot}) AND json_type(${table.inputSnapshot}) = 'object'`,

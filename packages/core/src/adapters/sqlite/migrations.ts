@@ -4196,6 +4196,12 @@ CREATE TRIGGER baseline_authorizations_immutable_delete
 BEFORE DELETE ON baseline_authorizations
 BEGIN SELECT RAISE(ABORT, 'baseline authorization is immutable'); END;
 `;
+const MIGRATION_053_SQL = `
+-- v53（P06-6 / F-004）：Run 独立标签元数据；历史 Run 统一得到空数组。
+-- 标签不进入输入/范围快照或执行预算事实，规范化由受控写入口完成。
+ALTER TABLE runs ADD COLUMN labels TEXT NOT NULL DEFAULT '[]'
+  CONSTRAINT runs_labels_json_array_check CHECK (json_valid(labels) AND json_type(labels) = 'array');
+`;
 export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   {
     version: 1,
@@ -4313,4 +4319,5 @@ export const SQLITE_MIGRATIONS: readonly SqliteMigration[] = [
   { version: 50, sql: MIGRATION_050_SQL, checksum: sha256Hex(MIGRATION_050_SQL), foreignKeysOff: true },
   { version: 51, sql: MIGRATION_051_SQL, checksum: sha256Hex(MIGRATION_051_SQL) },
   { version: 52, sql: MIGRATION_052_SQL, checksum: sha256Hex(MIGRATION_052_SQL) },
+  { version: 53, sql: MIGRATION_053_SQL, checksum: sha256Hex(MIGRATION_053_SQL) },
 ];

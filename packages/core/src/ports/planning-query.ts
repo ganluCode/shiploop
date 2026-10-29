@@ -184,6 +184,7 @@ export function derivePlanningOutcomeAxes(input: {
 export interface PlanningQueryRunFacts {
   readonly id: string;
   readonly batchId: string;
+  readonly labels: readonly string[];
   readonly purpose: typeof PLANNING_RUN_PURPOSE;
   readonly status: ExecutionRunStatus;
   readonly reason: string | null;
@@ -367,6 +368,7 @@ export function toPublicPlanningContextRecord(
 export interface PublicPlanningRunRecord {
   readonly id: string;
   readonly batchId: string;
+  readonly labels: readonly string[];
   readonly purpose: typeof PLANNING_RUN_PURPOSE;
   readonly status: ExecutionRunStatus;
   readonly reason: string | null;
@@ -382,6 +384,7 @@ export function toPublicPlanningRunRecord(facts: PlanningQueryRunFacts): PublicP
   return {
     id: facts.id,
     batchId: facts.batchId,
+    labels: [...facts.labels],
     purpose: facts.purpose,
     status: facts.status,
     reason: facts.reason,

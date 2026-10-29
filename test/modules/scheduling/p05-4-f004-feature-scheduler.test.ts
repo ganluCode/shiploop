@@ -15,6 +15,7 @@ function run(id: string, featureId = id): RunRecord {
     batchId: 'batch-1',
     featureId,
     purpose: 'execute',
+    labels: [],
     inputSnapshot: {},
     configSnapshot: {},
     status: 'queued',
