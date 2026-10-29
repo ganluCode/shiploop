@@ -9,7 +9,7 @@
       { "file": "test/modules/recovery/p07-1-f007-host-git-recovery.test.ts", "all": true },
       { "file": "test/modules/delivery/retry/p07-1-f007-final-commit-host.test.ts", "all": true },
       { "file": "test/modules/delivery/p03-8-f004-git-commit-reconciliation.test.ts", "all": true },
-      { "file": "test/modules/delivery/p03-8-f003-controlled-git-commit.test.ts", "cases": ["controlled-commit-normal", "controlled-commit-no-change", "controlled-commit-receipt-failure", "task-commit-cancel", "f008-blocked-replay"] },
+      { "file": "test/modules/delivery/p03-8-f003-controlled-git-commit.test.ts", "cases": ["controlled-commit-normal", "controlled-commit-replay-identity", "controlled-commit-no-change", "controlled-commit-receipt-failure", "task-commit-cancel", "f008-blocked-replay"] },
       { "file": "test/modules/delivery/p03-10-task-commit-store.test.ts", "all": true },
       { "file": "test/modules/delivery/retry/p03-9-f012-finalization-completion.test.ts", "cases": ["final-no-change", "final-lost-receipt", "final-reconcile-approval-drift", "final-hook-source-drift", "final-control-race"] },
       { "file": "test/modules/recovery/p03-9-f006-recovery-reconciliation.test.ts", "cases": ["stopped-holder-recovery", "missing-original-git-evidence-executed", "missing-original-git-evidence-not_executed", "post-stop-content-drift", "post-publish-content-drift"] },

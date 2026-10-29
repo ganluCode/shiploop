@@ -164,7 +164,38 @@ describe('F-003 controlled Git commit', () => {
     expect(result.receipt?.deliveryStatus).toBe('succeeded');
     expect(git(['show', '-s', '--format=%B'], f.root)).toContain(`ShipLoop-Operation: ${result.intent.operationId}`);
     // A terminal replay only returns recorded facts, never creates an empty second commit.
+    expect(f.authorization.intent).not.toHaveProperty('integrationPlan');
+    expect(f.authorization.intent).not.toHaveProperty('budgetSnapshot');
+    expect(result.intent).toMatchObject({ integrationPlan: null, budgetSnapshot: null });
+    const saved = f.box.snapshot();
     expect(await f.execute()).toEqual(result);
+    f.authorization = { ...f.authorization, intent: { ...f.authorization.intent, integrationPlan: null, budgetSnapshot: null } };
+    expect(await f.execute()).toEqual(result);
+    expect(f.box.snapshot()).toEqual(saved);
+    expect(git(['rev-list', '--count', 'HEAD'], f.root).trim()).toBe('2');
+  });
+
+  it('[case:controlled-commit-replay-identity] canonical terminal replay still fences changed intent and revoked approval', async () => {
+    const f = await fixture();
+    const result = await f.execute();
+    const authorized = f.authorization;
+    const saved = f.box.snapshot();
+    const mutations: Partial<GitCommitAuthorization['intent']>[] = [
+      { ownerId: 'another-owner' }, { hostInstanceId: 'another-host' }, { executionVersion: 2 },
+      { expectedHead: result.actualCommit! }, { codeDigest: 'b'.repeat(64) },
+      { message: 'Changed delivery' }, { verificationRefs: [] },
+      { budgetSnapshot: { version: 2 } },
+    ];
+    for (const mutation of mutations) {
+      f.authorization = { ...authorized, intent: { ...authorized.intent, ...mutation } };
+      await expect(f.execute()).rejects.toMatchObject({ details: { reason: 'recorded_operation_not_current' } });
+    }
+    for (const key of ['verificationPassed', 'approvalCurrent', 'commitAuthorized', 'finalApprovalCurrent'] as const) {
+      f.authorization = { ...authorized, [key]: false };
+      await expect(f.execute()).rejects.toMatchObject({ details: { reason: 'recorded_operation_not_current' } });
+    }
+    expect(f.store.getGitOperation(f.box.projectId, result.intent.operationId)).toEqual(result);
+    expect(f.box.snapshot()).toEqual(saved);
     expect(git(['rev-list', '--count', 'HEAD'], f.root).trim()).toBe('2');
   });
 

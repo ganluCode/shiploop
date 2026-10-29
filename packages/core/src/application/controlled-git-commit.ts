@@ -3,7 +3,7 @@ import { isDeepStrictEqual } from 'node:util';
 import { StorageError } from '../ports/errors.js';
 import { isUuidV4 } from '../ports/commands.js';
 import { validateStableId } from '../ports/validation.js';
-import { validateGitOperationRegisterInput } from '../ports/git-operations.js';
+import { stripPrecondition, validateGitOperationRegisterInput } from '../ports/git-operations.js';
 import type { GitOperationStore, GitOperationRecord } from '../ports/git-operations.js';
 import { GitCommitProcessError, gitOperationCommitMessage } from '../ports/controlled-git-commit.js';
 import type { ControlledGitCommitService, GitCommitAuthorization, GitCommitDriver, GitCommitRequest } from '../ports/controlled-git-commit.js';
@@ -62,9 +62,15 @@ export function createControlledGitCommitService(deps: {
       if (previous.status === 'pending') fail('reconciliation_required');
       // Replays return historical facts, not a bypass of newly added human blocks/fencing.
       const current = deps.readAuthorization(request);
-      const { expectedFeatureRevision: _revision, ...currentIntent } = current.intent;
       if (current.verificationPassed !== true || current.approvalCurrent !== true || current.commitAuthorized !== true
-        || !isDeepStrictEqual({ ...currentIntent, candidateTree: previous.intent.candidateTree }, previous.intent)) {
+        || current.finalApprovalCurrent === false) fail('recorded_operation_not_current');
+      // SQLite stores optional integration fields as null. Compare the same
+      // validated intent shape used at registration, without changing its digest
+      // or ignoring identity/authorization fields during terminal replay.
+      const currentIntent = stripPrecondition(validateGitOperationRegisterInput({
+        ...current.intent, candidateTree: previous.intent.candidateTree,
+      }, OP));
+      if (!isDeepStrictEqual(currentIntent, previous.intent)) {
         fail('recorded_operation_not_current');
       }
       return previous;

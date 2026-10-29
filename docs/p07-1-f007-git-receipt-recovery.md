@@ -31,3 +31,13 @@
 Task 索引为 `test/index/phases/P07/features/P07-1/tasks/F-007.json`。其余已登记的受控提交正常/取消/回执失败、Task store fencing/回滚/投影、公共锁、派发恢复 CAS 等回归交 Nezha 独立执行，不能称为本地全部通过。P05 integration journal 未改动，不扩展到集成 journal 矩阵。
 
 本地类型检查通过（`test-4ldwe95w.log`）；模块边界检查通过（472 个生产文件、0 诊断，`test-l_qmffbr.log`）。未运行全仓、Phase 入口、真实模型或 live。Task 结果声明不代表 Feature/Phase 验收通过。启动保留隔离是有意的保守恢复：本 Task 没有新增绕过旧 fence、强制解除人工阻塞或直接清除 claim 的用户命令。
+
+## F-007 返工 attempt-2
+
+前次独立验收保留在 Harness `verifications/F-007/17fa55d211a948468eee6005f6775c91/`：第一组 8 文件、57 项通过，随后 `controlled-commit-normal` 在读取已有成功回执时抛出 `recorded_operation_not_current`，整次验收失败。其余后续分组没有验收通过结论，不用前轮本地结果覆盖该失败。
+
+根因是普通提交授权省略 `integrationPlan`/`budgetSnapshot`，持久记录将其规范化为 `null`，回放直接比较两种对象形状。`controlled-git-commit.ts` 现在复用注册入口的完整校验/规范化后比较 intent，保留原 digest、身份及授权检查；显式失效的最终批准同样拒绝回放。没有修改存储记录、历史迁移或已有回执。
+
+原失败用例补充省略字段/显式 null 均返回同一回执且数据库快照和提交数不变的断言；新增 `controlled-commit-replay-identity` 核验 owner/host/version/HEAD/代码/消息/验证引用/预算变化，以及四类授权撤销均拒绝，既有回执与事件不变。原 12 文件索引完整保留，仅追加该保护用例。
+
+本次 invocation 的局部 RED 为 `runtime-logs/test-nm_gmc6r.log`；修复后 2 项通过，`runtime-logs/test-itjd443q.log`，exit 0。类型检查 `test-sra9_8i4.log` 与边界检查 `test-coiidsf7.log`（472 文件、0 诊断）通过。日志均位于当前 Feature 的 `verifications/F-007/` 下。本轮只复验失败路径和新增行为，较广的 12 文件选择继续交 Nezha 独立验证；不声明整次独立验收通过。
